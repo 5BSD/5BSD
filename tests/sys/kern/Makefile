@@ -63,6 +63,7 @@ LIBADD.timerfd+=	pthread
 TEST_METADATA.timerfd+=	is_exclusive="true"
 ATF_TESTS_C+=	timerfd_cap_test
 ATF_TESTS_C+=	fcntl_readahead_cap_test
+ATF_TESTS_C+=	posix_fadvise_cap_test
 ATF_TESTS_C+=	tty_pts
 ATF_TESTS_C+=	unix_dgram
 ATF_TESTS_C+=	unix_passfd_dgram
