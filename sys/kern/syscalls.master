@@ -3383,12 +3383,12 @@
 		    _In_reads_(gidsetsize) const gid_t *gidset
 		);
 	}
-597	AUE_JAIL_ATTACH	STD {
+597	AUE_JAIL_ATTACH	STD|CAPENABLED {
 		int jail_attach_jd(
 		    int fd
 		);
 	}
-598	AUE_JAIL_REMOVE	STD {
+598	AUE_JAIL_REMOVE	STD|CAPENABLED {
 		int jail_remove_jd(
 		    int fd
 		);

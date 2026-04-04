@@ -16,6 +16,7 @@
 
 #include <errno.h>
 #include <jail.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -30,19 +31,19 @@
 static int
 create_jail_with_desc(const char *name)
 {
-	int desc_fd = -1;
+	char desc_str[16] = "";
 	int jid;
 
 	jid = jail_setv(JAIL_CREATE | JAIL_GET_DESC,
 	    "name", name,
 	    "path", "/",
 	    "persist", NULL,
-	    "desc", &desc_fd,
+	    "desc", desc_str,
 	    NULL);
 	if (jid < 0)
 		return (-1);
 
-	return (desc_fd);
+	return (atoi(desc_str));
 }
 
 /*
@@ -65,9 +66,11 @@ remove_jail_by_name(const char *name)
 static int
 modify_jail_via_desc(int fd)
 {
+	char desc_str[16];
 
+	snprintf(desc_str, sizeof(desc_str), "%d", fd);
 	return (jail_setv(JAIL_UPDATE | JAIL_USE_DESC,
-	    "desc", &fd,
+	    "desc", desc_str,
 	    "allow.raw_sockets", "true",
 	    NULL));
 }
@@ -123,6 +126,75 @@ ATF_TC_BODY(cap_jail_set, tc)
 ATF_TC_CLEANUP(cap_jail_set, tc)
 {
 	remove_jail_by_name("cap_set_test");
+}
+
+/*
+ * Test jail descriptor syscalls work in capability mode.
+ */
+ATF_TC_WITH_CLEANUP(cap_jail_capmode);
+ATF_TC_HEAD(cap_jail_capmode, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "Test jail_attach_jd and jail_remove_jd work in capability mode");
+}
+ATF_TC_BODY(cap_jail_capmode, tc)
+{
+	cap_rights_t rights;
+	int fd, error, status;
+	pid_t pid;
+
+	ATF_REQUIRE_FEATURE("security_capabilities");
+
+	remove_jail_by_name("cap_capmode_test");
+
+	fd = create_jail_with_desc("cap_capmode_test");
+	ATF_REQUIRE_MSG(fd >= 0, "create_jail_with_desc failed: %s",
+	    strerror(errno));
+
+	/* cap mode allows jail_attach_jd */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		cap_rights_init(&rights, CAP_JAIL_ATTACH);
+		error = cap_rights_limit(fd, &rights);
+		if (error != 0)
+			_exit(1);
+		if (cap_enter() != 0)
+			_exit(1);
+		error = jail_attach_jd(fd);
+		_exit(error == 0 ? 0 : 1);
+	}
+
+	waitpid(pid, &status, 0);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "jail_attach_jd should succeed in cap mode");
+
+	/* cap mode allows jail_remove_jd */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		cap_rights_init(&rights, CAP_JAIL_REMOVE);
+		error = cap_rights_limit(fd, &rights);
+		if (error != 0)
+			_exit(1);
+		if (cap_enter() != 0)
+			_exit(1);
+		error = jail_remove_jd(fd);
+		_exit(error == 0 ? 0 : 1);
+	}
+
+	waitpid(pid, &status, 0);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "jail_remove_jd should succeed in cap mode");
+
+	close(fd);
+}
+ATF_TC_CLEANUP(cap_jail_capmode, tc)
+{
+	remove_jail_by_name("cap_capmode_test");
 }
 
 /*
@@ -340,6 +412,7 @@ ATF_TC_CLEANUP(cap_jail_unlimited, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, cap_jail_set);
+	ATF_TP_ADD_TC(tp, cap_jail_capmode);
 	ATF_TP_ADD_TC(tp, cap_jail_attach);
 	ATF_TP_ADD_TC(tp, cap_jail_remove);
 	ATF_TP_ADD_TC(tp, cap_jail_both);

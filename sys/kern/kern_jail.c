@@ -1095,7 +1095,6 @@ kern_jail_set(struct thread *td, struct uio *optuio, int flags)
 		vfs_opterror(opts, "no valid operation (create or update)");
 		goto done_errmsg;
 	}
-
 	error = vfs_copyopt(opts, "desc", &jfd_in, sizeof(jfd_in));
 	if (error == ENOENT) {
 		if (flags & (JAIL_USE_DESC | JAIL_AT_DESC | JAIL_GET_DESC |
