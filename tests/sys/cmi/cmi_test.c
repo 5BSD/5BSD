@@ -24,6 +24,7 @@
 #include <fcntl.h>
 #include <jail.h>
 #include <signal.h>
+#include <sys/ptrace.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -3705,6 +3706,309 @@ ATF_TC_BODY(lock_trampoline, tc)
 	close(fd);
 }
 
+/* ================================================================
+ * cap_debug — process debug protection
+ * ================================================================ */
+
+/* Debug protocol — matches cmi_debug.c */
+#define	DEBUG_OP_SHIELD		1
+#define	DEBUG_OP_MINT		2
+#define	DEBUG_OP_ACTIVATE	3
+
+struct debug_request {
+	uint32_t	op;
+} __packed;
+
+/* Helper: connect to debug service and shield */
+static int
+debug_shield(void)
+{
+	struct cmi_call_args ca;
+	struct debug_request req;
+	int fd;
+
+	fd = cmi_connect("debug");
+	if (fd < 0)
+		return (-1);
+
+	req.op = DEBUG_OP_SHIELD;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	if (ioctl(fd, CMI_CALL, &ca) != 0) {
+		close(fd);
+		return (-1);
+	}
+	return (fd);
+}
+
+ATF_TC(debug_shield_blocks_ptrace);
+ATF_TC_HEAD(debug_shield_blocks_ptrace, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Shielded process cannot be ptraced");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_debug");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(debug_shield_blocks_ptrace, tc)
+{
+	int status;
+	pid_t pid;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		int shield_fd = debug_shield();
+		if (shield_fd < 0)
+			_exit(10);
+		/* Stay alive for parent to try ptrace. */
+		sleep(5);
+		close(shield_fd);
+		_exit(0);
+	}
+
+	/* Give child time to shield. */
+	usleep(100000);
+
+	/* ptrace should fail. */
+	ATF_CHECK_ERRNO(EACCES,
+	    ptrace(PT_ATTACH, pid, NULL, 0) == -1);
+
+	kill(pid, SIGKILL);
+	waitpid(pid, &status, 0);
+}
+
+ATF_TC(debug_close_unshields);
+ATF_TC_HEAD(debug_close_unshields, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Closing shield fd removes protection");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_debug");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(debug_close_unshields, tc)
+{
+	int sv[2], status;
+	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		char buf;
+		int shield_fd;
+
+		close(sv[0]);
+		shield_fd = debug_shield();
+		if (shield_fd < 0)
+			_exit(10);
+
+		/* Signal parent we're shielded. */
+		write(sv[1], "s", 1);
+
+		/* Wait for parent to tell us to unshield. */
+		read(sv[1], &buf, 1);
+		close(shield_fd);
+
+		/* Signal parent we're unshielded. */
+		write(sv[1], "u", 1);
+
+		/* Wait to be ptraced. */
+		sleep(5);
+		close(sv[1]);
+		_exit(0);
+	}
+
+	close(sv[1]);
+	{
+		char buf;
+		/* Wait for shield. */
+		read(sv[0], &buf, 1);
+
+		/* ptrace should fail while shielded. */
+		ATF_CHECK_ERRNO(EACCES,
+		    ptrace(PT_ATTACH, pid, NULL, 0) == -1);
+
+		/* Tell child to unshield. */
+		write(sv[0], "g", 1);
+
+		/* Wait for unshield. */
+		read(sv[0], &buf, 1);
+	}
+
+	/* ptrace should now succeed. */
+	ATF_CHECK(ptrace(PT_ATTACH, pid, NULL, 0) == 0);
+	waitpid(pid, &status, WUNTRACED);
+	ptrace(PT_DETACH, pid, NULL, 0);
+
+	kill(pid, SIGKILL);
+	waitpid(pid, &status, 0);
+	close(sv[0]);
+}
+
+ATF_TC(debug_shield_blocks_signal);
+ATF_TC_HEAD(debug_shield_blocks_signal, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Shielded process cannot be signaled");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_debug");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(debug_shield_blocks_signal, tc)
+{
+	int status;
+	pid_t pid;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		int shield_fd = debug_shield();
+		if (shield_fd < 0)
+			_exit(10);
+		sleep(5);
+		close(shield_fd);
+		_exit(0);
+	}
+
+	usleep(100000);
+
+	/* Signal should fail (except SIGKILL from root - that always works). */
+	ATF_CHECK_ERRNO(EACCES, kill(pid, SIGUSR1) == -1);
+
+	/* Clean up with SIGKILL - need to unshield first. */
+	/* Actually SIGKILL from root may be blocked too. Just terminate. */
+	kill(pid, SIGKILL);
+	waitpid(pid, &status, 0);
+}
+
+ATF_TC(debug_mint_and_activate);
+ATF_TC_HEAD(debug_mint_and_activate, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Mint debug token, activate it, ptrace succeeds");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_debug");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(debug_mint_and_activate, tc)
+{
+	struct cmi_call_args ca;
+	struct debug_request req;
+	int sv[2], status;
+	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		/* Child: shield, mint debug token, send to parent. */
+		struct msghdr msgh;
+		struct iovec iov;
+		union {
+			struct cmsghdr hdr;
+			char buf[CMSG_SPACE(sizeof(int))];
+		} cmsgbuf;
+		struct cmsghdr *cmsg;
+		char dummy = 'x';
+		int shield_fd, token_fd;
+		int reply_fds[1];
+
+		close(sv[0]);
+
+		shield_fd = debug_shield();
+		if (shield_fd < 0)
+			_exit(10);
+
+		/* Mint a debug token. */
+		req.op = DEBUG_OP_MINT;
+		memset(&ca, 0, sizeof(ca));
+		ca.req = &req;
+		ca.req_len = sizeof(req);
+		ca.reply_fds = reply_fds;
+		ca.reply_nfds = 1;
+		if (ioctl(shield_fd, CMI_CALL, &ca) != 0)
+			_exit(11);
+		token_fd = reply_fds[0];
+
+		/* Send token to parent via SCM_RIGHTS. */
+		memset(&msgh, 0, sizeof(msgh));
+		iov.iov_base = &dummy;
+		iov.iov_len = 1;
+		msgh.msg_iov = &iov;
+		msgh.msg_iovlen = 1;
+		msgh.msg_control = cmsgbuf.buf;
+		msgh.msg_controllen = sizeof(cmsgbuf.buf);
+		cmsg = CMSG_FIRSTHDR(&msgh);
+		cmsg->cmsg_level = SOL_SOCKET;
+		cmsg->cmsg_type = SCM_RIGHTS;
+		cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+		memcpy(CMSG_DATA(cmsg), &token_fd, sizeof(int));
+		sendmsg(sv[1], &msgh, 0);
+		close(token_fd);
+
+		/* Stay alive. */
+		sleep(5);
+		close(shield_fd);
+		close(sv[1]);
+		_exit(0);
+	}
+
+	/* Parent: receive token, activate it, ptrace child. */
+	close(sv[1]);
+	{
+		struct msghdr msgh;
+		struct iovec iov;
+		union {
+			struct cmsghdr hdr;
+			char buf[CMSG_SPACE(sizeof(int))];
+		} cmsgbuf;
+		struct cmsghdr *cmsg;
+		char dummy;
+		int token_fd;
+
+		/* Receive the debug token. */
+		memset(&msgh, 0, sizeof(msgh));
+		iov.iov_base = &dummy;
+		iov.iov_len = 1;
+		msgh.msg_iov = &iov;
+		msgh.msg_iovlen = 1;
+		msgh.msg_control = cmsgbuf.buf;
+		msgh.msg_controllen = sizeof(cmsgbuf.buf);
+		ATF_REQUIRE(recvmsg(sv[0], &msgh, 0) >= 0);
+		cmsg = CMSG_FIRSTHDR(&msgh);
+		ATF_REQUIRE(cmsg != NULL && cmsg->cmsg_type == SCM_RIGHTS);
+		memcpy(&token_fd, CMSG_DATA(cmsg), sizeof(int));
+
+		/* Without activation, ptrace should fail. */
+		usleep(100000);
+		ATF_CHECK_ERRNO(EACCES,
+		    ptrace(PT_ATTACH, pid, NULL, 0) == -1);
+
+		/* Activate the debug token. */
+		req.op = DEBUG_OP_ACTIVATE;
+		memset(&ca, 0, sizeof(ca));
+		ca.req = &req;
+		ca.req_len = sizeof(req);
+		ATF_REQUIRE(ioctl(token_fd, CMI_CALL, &ca) == 0);
+
+		/* Now ptrace should succeed. */
+		ATF_CHECK(ptrace(PT_ATTACH, pid, NULL, 0) == 0);
+		waitpid(pid, &status, WUNTRACED);
+		ptrace(PT_DETACH, pid, NULL, 0);
+
+		close(token_fd);
+	}
+
+	kill(pid, SIGKILL);
+	waitpid(pid, &status, 0);
+	close(sv[0]);
+}
+
 /* ================================================================ */
 ATF_TP_ADD_TCS(tp)
 {
@@ -3857,6 +4161,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, lock_prevents_transfer);
 	ATF_TP_ADD_TC(tp, lock_still_usable);
 	ATF_TP_ADD_TC(tp, lock_trampoline);
+
+	/* cap_debug */
+	ATF_TP_ADD_TC(tp, debug_shield_blocks_ptrace);
+	ATF_TP_ADD_TC(tp, debug_close_unshields);
+	ATF_TP_ADD_TC(tp, debug_shield_blocks_signal);
+	ATF_TP_ADD_TC(tp, debug_mint_and_activate);
 
 	return (atf_no_error());
 }

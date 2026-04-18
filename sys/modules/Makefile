@@ -211,6 +211,7 @@ SUBDIR=	\
 	jme \
 	kbdmux \
 	cmi \
+	cmi_debug \
 	cmi_jail \
 	cmi_keystore \
 	cmi_pair \

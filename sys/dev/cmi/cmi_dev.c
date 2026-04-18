@@ -496,6 +496,9 @@ cmi_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			for (i = 0; i < out_nfds; i++) {
 				err = finstall(td, out_fds[i], &fdbuf[i],
 				    0, NULL);
+				/* Drop the handler's ref (finstall took its own). */
+				fdrop(out_fds[i], td);
+				out_fds[i] = NULL;
 				if (err != 0) {
 					while (--i >= 0)
 						kern_close(td, fdbuf[i]);

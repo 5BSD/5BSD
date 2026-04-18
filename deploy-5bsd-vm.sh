@@ -71,6 +71,7 @@ kldload cmi         || { echo "FAIL: kldload cmi"; exit 1; }
 kldload cmi_keystore || { echo "FAIL: kldload cmi_keystore"; exit 1; }
 kldload cmi_pair    || { echo "FAIL: kldload cmi_pair"; exit 1; }
 kldload cmi_jail    || { echo "FAIL: kldload cmi_jail"; exit 1; }
+kldload cmi_debug    || { echo "FAIL: kldload cmi_debug"; exit 1; }
 echo "=== Verifying ==="
 kldstat -m cmi
 sysctl kern.cmi.services kern.cmi.instances
@@ -87,6 +88,7 @@ else
     done
 fi
 echo "=== Unloading ==="
+kldunload cmi_debug
 kldunload cmi_jail
 kldunload cmi_pair
 kldunload cmi_keystore
@@ -115,6 +117,7 @@ kldload cmi         || { echo "FAIL: kldload cmi"; exit 1; }
 kldload cmi_keystore || { echo "FAIL: kldload cmi_keystore"; exit 1; }
 kldload cmi_pair    || { echo "FAIL: kldload cmi_pair"; exit 1; }
 kldload cmi_jail    || { echo "FAIL: kldload cmi_jail"; exit 1; }
+kldload cmi_debug    || { echo "FAIL: kldload cmi_debug"; exit 1; }
 echo "=== Verifying ==="
 kldstat -m cmi
 sysctl kern.cmi.services kern.cmi.instances
@@ -131,6 +134,7 @@ else
     done
 fi
 echo "=== Unloading ==="
+kldunload cmi_debug
 kldunload cmi_jail
 kldunload cmi_pair
 kldunload cmi_keystore

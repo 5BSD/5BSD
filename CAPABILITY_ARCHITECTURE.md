@@ -667,34 +667,34 @@ Provider: `cmi`
 
 ## Roadmap
 
-### Fixed-size async messages
+### Phase 1: cap_debug — process debug protection
 
-Change async messaging to use fixed-size inline buffers instead of
-per-message malloc.  The `msg_size` parameter becomes the exact
-allocation size.  Per-service UMA zone replaces global malloc.
-Eliminates fragmentation and allocation overhead for the async path.
-Sync (CMI_CALL) stays variable — no queues involved.
+New CMI sync service (`cmi_debug`).  CMI_CALL activates protection
+on the calling process via MACF.  Protected processes cannot be
+debugged, traced, or signaled by unprivileged processes.  A debug
+capability can be minted and passed to authorized debuggers to
+override the protection.  Closing the shield removes protection.
 
-### Kernel-to-kernel messaging tests
+### Phase 2: Rename jail → namespace
+
+Rename `cmi_jail` to `cmi_namespace`.  More opaque, more
+capability-oriented.  Jails are a FreeBSD implementation detail;
+namespaces describe the abstraction.
+
+### Phase 3: Token capability (replaces keystore)
+
+Replace the keystore test fixture with `cmi_token` — a kernel-gated
+token capability.  Holding a token fd proves authorization.  Tokens
+cannot be copied — duplicating produces a new independent token.
+The kernel gates issuance and validates possession.
+
+### Phase 4: Kernel-to-kernel messaging tests
 
 Add a test service (`cmi_proxy`) that receives a capability fd
 in a message and uses `cmi_send()` to send a message on it.
 Proves kernel modules can talk to each other through capabilities.
-Exercises the only untested public API function.
 
-### Migrate existing capability modules to CMI
+### Phase 5: Migrate existing modules
 
-- **Keyvault** (sync): key storage and crypto ops. Capability fd =
-  authority to use a key. Eliminates custom /dev/ and ioctl
-  boilerplate.
-- **SecurityCoalitions** (sync): group termination. Coalition fd =
-  termination authority. Already integrates via close/fdrop.
-
-### cap_debug — process debug protection capability
-
-New CMI sync service (`cmi_debug`).  CMI_CALL activates protection
-on the calling process via MACF labels.  Protected processes cannot
-be debugged, traced, or signaled by unprivileged processes.  A
-debug capability can be minted and passed to authorized debuggers
-to override the protection.  Closing the capability removes
-protection.
+- **Keyvault** (sync): key storage and crypto ops via CMI.
+- **SecurityCoalitions** (sync): group termination via CMI.
