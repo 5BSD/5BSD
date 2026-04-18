@@ -39,7 +39,7 @@
 
 #define	CMI_MAXNAME		64
 #define	CMI_MAX_FDS		16
-#define	CMI_MAX_MSG		8192
+#define	CMI_MAX_MSG		7168	/* usable payload (8192 - 1024 header) */
 #define	CMI_DEFAULT_QUEUE_DEPTH	256
 #define	CMI_DEFAULT_TX_LIMIT	CMI_DEFAULT_QUEUE_DEPTH
 

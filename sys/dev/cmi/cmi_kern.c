@@ -118,23 +118,22 @@ cmi_msg_alloc(const void *data, size_t datalen,
 	struct cmi_msg *msg;
 	int i;
 
+	if (datalen > CMI_MSG_PAYLOAD_SIZE)
+		return (NULL);
+
 	msg = uma_zalloc(cmi_msg_zone, M_WAITOK | M_ZERO);
 
 	if (datalen > 0 && data != NULL) {
-		msg->cm_data = malloc(datalen, M_CMI, M_WAITOK);
 		memcpy(msg->cm_data, data, datalen);
 		msg->cm_datalen = datalen;
 	}
 
 	if (nfds > 0 && fds != NULL) {
-		msg->cm_fds = malloc(nfds * sizeof(struct file *),
-		    M_CMI, M_WAITOK | M_ZERO);
 		for (i = 0; i < nfds; i++) {
 			if (!fhold(fds[i])) {
 				while (--i >= 0)
 					fdrop(msg->cm_fds[i], curthread);
-				free(msg->cm_fds, M_CMI);
-				free(msg->cm_data, M_CMI);
+				msg->cm_nfds = 0;
 				uma_zfree(cmi_msg_zone, msg);
 				return (NULL);
 			}
@@ -142,10 +141,7 @@ cmi_msg_alloc(const void *data, size_t datalen,
 		}
 		msg->cm_nfds = nfds;
 
-		/* Copy Capsicum rights if provided. */
 		if (fcaps != NULL) {
-			msg->cm_fcaps = malloc(nfds * sizeof(struct filecaps),
-			    M_CMI, M_WAITOK | M_ZERO);
 			for (i = 0; i < nfds; i++)
 				filecaps_copy(&fcaps[i],
 				    &msg->cm_fcaps[i], true);
@@ -167,7 +163,6 @@ cmi_auto_reply(struct cmi_instance *s, uint64_t reply_token, int error)
 
 	msg = uma_zalloc(cmi_msg_zone, M_WAITOK | M_ZERO);
 	err32 = (uint32_t)(error != 0 ? error : EIO);
-	msg->cm_data = malloc(sizeof(err32), M_CMI, M_WAITOK);
 	memcpy(msg->cm_data, &err32, sizeof(err32));
 	msg->cm_datalen = sizeof(err32);
 	msg->cm_reply_token = reply_token;
@@ -287,7 +282,7 @@ cmi_service_create(const struct cmi_service_params *p,
     struct cmi_service **svcp)
 {
 	struct cmi_service *svc;
-	uint32_t msg_size, queue_depth, instance_limit;
+	uint32_t queue_depth, instance_limit;
 
 	if (p == NULL || p->name == NULL || p->name[0] == '\0')
 		return (EINVAL);
@@ -301,9 +296,6 @@ cmi_service_create(const struct cmi_service_params *p,
 	if (p->ops->co_handler != NULL && p->ops->co_call != NULL)
 		return (EINVAL);
 
-	msg_size = p->msg_size > 0 ? p->msg_size : CMI_MAX_MSG;
-	if (msg_size > CMI_MSG_SIZE_LIMIT)
-		return (EINVAL);
 	queue_depth = p->queue_depth > 0 ? p->queue_depth :
 	    CMI_MAX_QUEUED;
 	if (queue_depth > CMI_MAX_QUEUE_DEPTH)
@@ -318,7 +310,6 @@ cmi_service_create(const struct cmi_service_params *p,
 	svc->csvc_ops = p->ops;
 	svc->csvc_arg = p->arg;
 	svc->csvc_instance_limit = instance_limit;
-	svc->csvc_msg_size = msg_size;
 	svc->csvc_tx_limit = p->tx_limit > 0 ? p->tx_limit :
 	    CMI_MAX_QUEUED;
 	if (svc->csvc_tx_limit > CMI_MAX_TX_LIMIT)
@@ -527,12 +518,9 @@ cmi_reply(struct cmi_instance *s, uint64_t reply_token,
     struct file **out_fds, struct filecaps *out_fcaps, int out_nfds)
 {
 	struct cmi_msg *msg;
-	uint32_t limit;
 	int error;
 
-	limit = s->ci_service != NULL ? s->ci_service->csvc_msg_size :
-	    CMI_MAX_MSG;
-	if (outlen > limit)
+	if (outlen > CMI_MSG_PAYLOAD_SIZE)
 		return (EMSGSIZE);
 	if (out_nfds < 0 || out_nfds > CMI_MAX_FDS)
 		return (EINVAL);
@@ -564,12 +552,9 @@ cmi_notify(struct cmi_instance *s, const void *data, size_t datalen,
     struct file **fds, struct filecaps *fcaps, int nfds)
 {
 	struct cmi_msg *msg;
-	uint32_t limit;
 	int error;
 
-	limit = s->ci_service != NULL ? s->ci_service->csvc_msg_size :
-	    CMI_MAX_MSG;
-	if (datalen > limit)
+	if (datalen > CMI_MSG_PAYLOAD_SIZE)
 		return (EMSGSIZE);
 	if (nfds < 0 || nfds > CMI_MAX_FDS)
 		return (EINVAL);
@@ -686,13 +671,13 @@ cmi_msg_datalen(const struct cmi_msg *msg)
 struct file **
 cmi_msg_fds(const struct cmi_msg *msg)
 {
-	return (msg->cm_fds);
+	return (__DECONST(struct file **, msg->cm_fds));
 }
 
 struct filecaps *
 cmi_msg_fcaps(const struct cmi_msg *msg)
 {
-	return (msg->cm_fcaps);
+	return (__DECONST(struct filecaps *, msg->cm_fcaps));
 }
 
 int
@@ -808,30 +793,28 @@ cmi_send(struct file *fp, const void *data, size_t datalen,
 	svc = s->ci_service;
 	if (svc == NULL || svc->csvc_ops->co_handler == NULL)
 		return (EOPNOTSUPP);
-	if (datalen > svc->csvc_msg_size)
+	if (datalen > CMI_MSG_PAYLOAD_SIZE)
 		return (EMSGSIZE);
 	if (nfds < 0 || nfds > CMI_MAX_FDS)
 		return (EINVAL);
 
+	if (datalen > CMI_MSG_PAYLOAD_SIZE)
+		return (EMSGSIZE);
+
 	msg = uma_zalloc(cmi_msg_zone, M_WAITOK | M_ZERO);
 
 	if (datalen > 0 && data != NULL) {
-		msg->cm_data = malloc(datalen, M_CMI, M_WAITOK);
 		memcpy(msg->cm_data, data, datalen);
 		msg->cm_datalen = datalen;
 	}
 
 	if (nfds > 0 && fds != NULL) {
-		msg->cm_fds = malloc(nfds * sizeof(struct file *),
-		    M_CMI, M_WAITOK | M_ZERO);
 		for (i = 0; i < nfds; i++) {
 			if (!fhold(fds[i])) {
 				while (--i >= 0)
 					fdrop(msg->cm_fds[i], curthread);
-				free(msg->cm_fds, M_CMI);
-				msg->cm_fds = NULL;
-				free(msg->cm_data, M_CMI);
-				uma_zfree(cmi_msg_zone, msg);
+				msg->cm_nfds = 0;
+				cmi_msg_free(msg);
 				return (EBADF);
 			}
 			msg->cm_fds[i] = fds[i];
@@ -839,8 +822,6 @@ cmi_send(struct file *fp, const void *data, size_t datalen,
 		msg->cm_nfds = nfds;
 
 		if (fcaps != NULL) {
-			msg->cm_fcaps = malloc(nfds * sizeof(struct filecaps),
-			    M_CMI, M_WAITOK | M_ZERO);
 			for (i = 0; i < nfds; i++)
 				filecaps_copy(&fcaps[i],
 				    &msg->cm_fcaps[i], true);

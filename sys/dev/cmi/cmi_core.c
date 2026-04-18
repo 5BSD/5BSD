@@ -102,22 +102,13 @@ cmi_msg_free(struct cmi_msg *msg)
 {
 	int i;
 
-	if (msg->cm_fds != NULL) {
-		for (i = 0; i < msg->cm_nfds; i++) {
-			if (msg->cm_fds[i] != NULL)
-				fdrop(msg->cm_fds[i], curthread);
-		}
-		free(msg->cm_fds, M_CMI);
-	}
-	if (msg->cm_fcaps != NULL) {
-		for (i = 0; i < msg->cm_nfds; i++)
-			filecaps_free(&msg->cm_fcaps[i]);
-		free(msg->cm_fcaps, M_CMI);
+	for (i = 0; i < msg->cm_nfds; i++) {
+		if (msg->cm_fds[i] != NULL)
+			fdrop(msg->cm_fds[i], curthread);
+		filecaps_free(&msg->cm_fcaps[i]);
 	}
 	if (msg->cm_cred != NULL)
 		crfree(msg->cm_cred);
-	if (msg->cm_data != NULL)
-		free(msg->cm_data, M_CMI);
 	uma_zfree(cmi_msg_zone, msg);
 }
 
@@ -390,8 +381,8 @@ cmi_init(void)
 	    sizeof(struct cmi_instance), NULL, NULL, NULL, NULL,
 	    UMA_ALIGN_PTR, 0);
 	cmi_msg_zone = uma_zcreate("cmi_msg",
-	    sizeof(struct cmi_msg), NULL, NULL, NULL, NULL,
-	    UMA_ALIGN_PTR, 0);
+	    sizeof(struct cmi_msg) + CMI_MSG_PAYLOAD_SIZE,
+	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
 	cmi_stat_services = counter_u64_alloc(M_WAITOK);
 	cmi_stat_instances = counter_u64_alloc(M_WAITOK);
 	return (0);

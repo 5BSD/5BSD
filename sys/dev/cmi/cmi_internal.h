@@ -27,26 +27,50 @@
 #define	CMI_MAX_TX_LIMIT	4096	/* max configurable TX soft limit */
 #define	CMI_TX_HARD_MULT	4	/* TX hard limit = queue_depth * this */
 #define	CMI_DEF_INSTANCE_LIMIT	1024	/* default instances per service */
+/* CMI_MSG_SIZE_LIMIT removed — messages are fixed at CMI_MSG_SIZE. */
 #define	CMI_MAX_INSTANCES	(1024 * 1024) /* max instances per service */
-#define	CMI_MSG_SIZE_LIMIT	(64 * 1024 * 1024) /* absolute max msg_size */
 #define	CMI_MAX_SVC_THREADS	4	/* max taskqueue threads per service */
 #define	CMI_POLL_TICKS		(hz / 20) /* 50ms refcount poll interval */
 
 /*
- * Queued message — internal to the framework.
- * Service handlers see this as const via co_handler(msg).
+ * Fixed-size message — 8192 bytes (2 pages).
+ *
+ * Layout:
+ *   Header:  queue linkage, metadata, fd slots  (~1KB)
+ *   Payload: inline data buffer                  (~7KB)
+ *
+ * The entire message is a single UMA slab allocation.
+ * No malloc for payload or fd arrays.  Anything larger
+ * than the payload area must be sent via an attached fd
+ * (shared memory).
  */
+/*
+ * The UMA zone allocates sizeof(struct cmi_msg) + CMI_MSG_PAYLOAD_SIZE.
+ * CMI_MSG_PAYLOAD_SIZE is the usable payload area for user data.
+ * Anything larger must be sent via an attached fd (shared memory).
+ */
+#define	CMI_MSG_PAYLOAD_SIZE	7168
+
 struct cmi_msg {
+	/* Queue linkage. */
 	STAILQ_ENTRY(cmi_msg) cm_link;
-	void		*cm_data;
-	size_t		cm_datalen;
-	struct file	**cm_fds;
-	struct filecaps	*cm_fcaps;
-	int		cm_nfds;
+
+	/* Message metadata — kernel-stamped, unforgeable. */
 	uint64_t	cm_badge;
 	uint64_t	cm_reply_token;
 	struct ucred	*cm_cred;
 	pid_t		cm_pid;
+	uint32_t	cm_datalen;
+	uint8_t		cm_nfds;
+	uint8_t		cm_flags;
+	uint16_t	cm_reserved;
+
+	/* Inline fd slots — 16 max, no separate allocation. */
+	struct file	*cm_fds[CMI_MAX_FDS];
+	struct filecaps	cm_fcaps[CMI_MAX_FDS];
+
+	/* Inline payload — user data copied directly here. */
+	char		cm_data[];  /* sized by UMA zone: CMI_MSG_PAYLOAD_SIZE */
 };
 
 /* Instance flags (protected by ci_mtx). */
@@ -106,7 +130,6 @@ struct cmi_service {
 	volatile u_int	csvc_refcnt;
 	int		csvc_flags;
 	struct taskqueue *csvc_taskq;
-	uint32_t	csvc_msg_size;
 	uint32_t	csvc_queue_depth;
 	uint32_t	csvc_tx_limit;
 	uint32_t	csvc_svc_flags;	/* CMI_SVC_* from params */

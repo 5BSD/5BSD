@@ -137,7 +137,6 @@ struct cmi_service_params {
 	const char		*name;
 	const struct cmi_ops	*ops;
 	void			*arg;
-	uint32_t		msg_size;	/* 0 = CMI_MAX_MSG (8192) */
 	uint32_t		queue_depth;	/* 0 = CMI_DEFAULT_QUEUE_DEPTH */
 	uint32_t		tx_limit;	/* 0 = CMI_DEFAULT_TX_LIMIT */
 	uint32_t		instance_limit;	/* 0 = CMI_DEF_INSTANCE_LIMIT (1024) */

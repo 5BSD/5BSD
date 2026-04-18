@@ -136,8 +136,6 @@ cmi_instance_do_sendmsg(struct cmi_instance *s,
 {
 	struct cmi_service *svc;
 	struct cmi_msg *msg;
-	struct file **files;
-	void *buf;
 	int fdbuf[CMI_MAX_FDS];
 	int error, i;
 
@@ -155,73 +153,60 @@ cmi_instance_do_sendmsg(struct cmi_instance *s,
 	}
 	mtx_unlock(&s->ci_mtx);
 
-	if (args->payload_len > svc->csvc_msg_size)
+	if (args->payload_len > CMI_MSG_PAYLOAD_SIZE)
 		return (EMSGSIZE);
 	if (args->nfds > CMI_MAX_FDS)
 		return (EINVAL);
 
-	/* Copyin payload. */
-	buf = NULL;
+	/* Allocate fixed-size message — one allocation, no malloc. */
+	msg = uma_zalloc(cmi_msg_zone, M_WAITOK | M_ZERO);
+
+	/* Copyin payload directly into inline buffer. */
 	if (args->payload_len > 0) {
-		buf = malloc(args->payload_len, M_CMI, M_WAITOK);
-		error = copyin(args->payload, buf, args->payload_len);
+		error = copyin(args->payload, msg->cm_data,
+		    args->payload_len);
 		if (error != 0) {
-			free(buf, M_CMI);
+			uma_zfree(cmi_msg_zone, msg);
 			return (error);
 		}
 	}
+	msg->cm_datalen = args->payload_len;
 
-	/* Resolve attached fds with Capsicum rights. */
-	files = NULL;
+	/* Resolve attached fds directly into inline slots. */
 	if (args->nfds > 0) {
-		struct filecaps *fcaps;
-
 		error = copyin(args->fds, fdbuf, args->nfds * sizeof(int));
 		if (error != 0) {
-			free(buf, M_CMI);
+			uma_zfree(cmi_msg_zone, msg);
 			return (error);
 		}
-		files = malloc(args->nfds * sizeof(struct file *),
-		    M_CMI, M_WAITOK | M_ZERO);
-		fcaps = malloc(args->nfds * sizeof(struct filecaps),
-		    M_CMI, M_WAITOK | M_ZERO);
 		for (i = 0; i < (int)args->nfds; i++) {
 			error = fget_cap(td, fdbuf[i], &cap_no_rights,
-			    NULL, &files[i], &fcaps[i]);
+			    NULL, &msg->cm_fds[i], &msg->cm_fcaps[i]);
 			if (error != 0)
 				goto sendmsg_fd_err;
-			/* Reject non-passable descriptors. */
-			if (!(files[i]->f_ops->fo_flags & DFLAG_PASSABLE)) {
+			if (!(msg->cm_fds[i]->f_ops->fo_flags &
+			    DFLAG_PASSABLE)) {
 				error = EINVAL;
-				fdrop(files[i], td);
-				files[i] = NULL;
-				filecaps_free(&fcaps[i]);
+				fdrop(msg->cm_fds[i], td);
+				msg->cm_fds[i] = NULL;
+				filecaps_free(&msg->cm_fcaps[i]);
 				goto sendmsg_fd_err;
 			}
 		}
-
-		msg = uma_zalloc(cmi_msg_zone, M_WAITOK | M_ZERO);
-		msg->cm_fds = files;
-		msg->cm_fcaps = fcaps;
 		msg->cm_nfds = args->nfds;
 		goto sendmsg_build;
 
 sendmsg_fd_err:
 		while (--i >= 0) {
-			fdrop(files[i], td);
-			filecaps_free(&fcaps[i]);
+			fdrop(msg->cm_fds[i], td);
+			msg->cm_fds[i] = NULL;
+			filecaps_free(&msg->cm_fcaps[i]);
 		}
-		free(fcaps, M_CMI);
-		free(files, M_CMI);
-		free(buf, M_CMI);
+		uma_zfree(cmi_msg_zone, msg);
 		return (error);
 	}
 
-	msg = uma_zalloc(cmi_msg_zone, M_WAITOK | M_ZERO);
-
 sendmsg_build:
-	msg->cm_data = buf;
-	msg->cm_datalen = args->payload_len;
 	msg->cm_badge = s->ci_badge;
 	msg->cm_reply_token = args->reply_token;
 	msg->cm_cred = crhold(td->td_ucred);
@@ -333,9 +318,8 @@ cmi_instance_do_recvmsg(struct cmi_instance *s, struct file *fp,
 		memset(&args->trailer, 0, sizeof(args->trailer));
 	}
 	for (i = 0; i < nfds_out; i++) {
-		struct filecaps *fc;
+		struct filecaps *fc = &msg->cm_fcaps[i];
 
-		fc = (msg->cm_fcaps != NULL) ? &msg->cm_fcaps[i] : NULL;
 		error = finstall(td, msg->cm_fds[i], &fdbuf[i], 0, fc);
 		if (error != 0) {
 			while (--i >= 0)
@@ -442,13 +426,13 @@ cmi_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		memset(out_fds, 0, sizeof(out_fds));
 		err = 0;
 
-		if (ca->req_len > svc->csvc_msg_size) {
+		if (ca->req_len > CMI_MSG_PAYLOAD_SIZE) {
 			err = EMSGSIZE;
 			goto call_out;
 		}
 		/* Cap reply buffer at msg_size. */
-		if (ca->reply_len > svc->csvc_msg_size)
-			ca->reply_len = svc->csvc_msg_size;
+		if (ca->reply_len > CMI_MSG_PAYLOAD_SIZE)
+			ca->reply_len = CMI_MSG_PAYLOAD_SIZE;
 
 		if (ca->req_len > 0) {
 			req_buf = malloc(ca->req_len, M_CMI, M_WAITOK);
@@ -571,7 +555,7 @@ call_out:
 		if (svc != NULL) {
 			strlcpy(info->name, svc->csvc_name,
 			    sizeof(info->name));
-			info->msg_limit = svc->csvc_msg_size;
+			info->msg_limit = CMI_MSG_PAYLOAD_SIZE;
 			info->queue_depth = svc->csvc_queue_depth;
 			info->tx_limit = svc->csvc_tx_limit;
 			if (svc->csvc_ops->co_handler != NULL) {
