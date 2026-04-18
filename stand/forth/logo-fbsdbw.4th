@@ -32,21 +32,14 @@
 	1+ \ increase y for next time we're called
 ;
 
-: logo ( x y -- ) \ "FreeBSD" logo in B/W (13 rows x 21 columns)
+: logo ( x y -- ) \ "5BSD" logo in B/W (6 rows x 30 columns)
 
-	s"  ______"               logo+
-	s" |  ____| __ ___  ___ " logo+
-	s" | |__ | '__/ _ \/ _ \" logo+
-	s" |  __|| | |  __/  __/" logo+
-	s" | |   | | |    |    |" logo+
-	s" |_|   |_|  \___|\___|" logo+
-	s"  ____   _____ _____"   logo+
-	s" |  _ \ / ____|  __ \"  logo+
-	s" | |_) | (___ | |  | |" logo+
-	s" |  _ < \___ \| |  | |" logo+
-	s" | |_) |____) | |__| |" logo+
-	s" |     |      |      |" logo+
-	s" |____/|_____/|_____/"  logo+
+	s"  _____  ____   _____ _____  " logo+
+	s" | ____|| __ ) / ____|  __ \ " logo+
+	s" | |__  |  _ \| (___ | |  | |" logo+
+	s" |___ \ | |_) |\___ \| |  | |" logo+
+	s"  ___) ||____/ ____) | |__| |" logo+
+	s" |____/       |_____/|_____/ " logo+
 
 	2drop
 ;

@@ -49,8 +49,8 @@
 #		like the -V command
 #
 
-TYPE="FreeBSD"
-REVISION="16.0"
+TYPE="5BSD"
+REVISION="1.0"
 BRANCH="CURRENT"
 if [ -n "${BRANCH_OVERRIDE}" ]; then
 	BRANCH=${BRANCH_OVERRIDE}
