@@ -304,11 +304,17 @@
 /* Allows for posix_fadvise(2). */
 #define	CAP_POSIX_FADVISE	CAPRIGHT(1, 0x0000000020000000ULL)
 
+/* cmi capability message interface operations. */
+/* Allows sending requests on a cmi instance fd. */
+#define	CAP_CMI_SEND		CAPRIGHT(1, 0x0000000080000000ULL)
+/* Allows receiving replies on a cmi instance fd. */
+#define	CAP_CMI_RECV		CAPRIGHT(1, 0x0000000100000000ULL)
+
 /* All used bits for index 1. */
-#define	CAP_ALL1		CAPRIGHT(1, 0x000000006FFFFFFFULL)
+#define	CAP_ALL1		CAPRIGHT(1, 0x000000017FFFFFFFULL)
 
 /* Available bits for index 1. */
-#define	CAP_UNUSED1_31		CAPRIGHT(1, 0x0000000080000000ULL)
+#define	CAP_UNUSED1_33		CAPRIGHT(1, 0x0000000200000000ULL)
 /* ... */
 #define	CAP_UNUSED1_57		CAPRIGHT(1, 0x0100000000000000ULL)
 

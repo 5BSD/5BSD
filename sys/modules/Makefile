@@ -210,6 +210,10 @@ SUBDIR=	\
 	${_ixl} \
 	jme \
 	kbdmux \
+	cmi \
+	cmi_jail \
+	cmi_keystore \
+	cmi_pair \
 	kgssapi \
 	kgssapi_krb5 \
 	khelp \

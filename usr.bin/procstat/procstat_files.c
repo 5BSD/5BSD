@@ -425,6 +425,11 @@ procstat_files(struct procstat *procstat, struct kinfo_proc *kipp)
 			xo_emit("{eq:fd_type/inotify}");
 			break;
 
+		case PS_FST_TYPE_CMI:
+			str = "C";
+			xo_emit("{eq:fd_type/cmi}");
+			break;
+
 		case PS_FST_TYPE_NONE:
 			str = "?";
 			xo_emit("{eq:fd_type/none}");

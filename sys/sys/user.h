@@ -269,6 +269,7 @@ struct user {
 #define	KF_TYPE_TIMERFD	14
 #define	KF_TYPE_INOTIFY	15
 #define	KF_TYPE_JAILDESC	16
+#define	KF_TYPE_CMI	17
 #define	KF_TYPE_UNKNOWN	255
 
 #define	KF_VTYPE_VNON	0

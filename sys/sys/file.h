@@ -73,6 +73,7 @@ struct nameidata;
 #define	DTYPE_TIMERFD	14	/* timerfd */
 #define	DTYPE_INOTIFY	15	/* inotify descriptor */
 #define	DTYPE_JAILDESC	16	/* jail descriptor */
+#define	DTYPE_CMI	17	/* cmi capability descriptor */
 
 #ifdef _KERNEL
 
