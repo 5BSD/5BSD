@@ -2,6 +2,7 @@
 -- SPDX-License-Identifier: BSD-2-Clause
 --
 -- Copyright (c) 2018 Kyle Evans <kevans@FreeBSD.org>
+-- Copyright (c) 2026 The FreeBSD Foundation
 --
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions
@@ -29,21 +30,12 @@ return {
 	logo = {
 		ascii = {
 			image = {
-			    "  ```                        `",
-			    " s` `.....---.......--.```   -/",
-			    " +o   .--`         /y:`      +.",
-			    "  yo`:.            :o      `+-",
-			    "   y/               -/`   -o/",
-			    "  .-                  ::/sy+:.",
-			    "  /                     `--  /",
-			    " `:                          :`",
-			    " `:                          :`",
-			    "  /                          /",
-			    "  .-                        -.",
-			    "   --                      -.",
-			    "    `:`                  `:`",
-			    "      .--             `--.",
-			    "         .---.....----.",
+			    "  ______  ____   _____ _____",
+			    " | ____| | __ ) / ____|  __ \\",
+			    " | |__   |  _ \\| (___ | |  | |",
+			    " |___ \\  | |_) |\\___ \\| |  | |",
+			    "  ___) | |____/ ____) | |__| |",
+			    " |____/        |_____/|_____/",
 			},
 			shift = {x = 2, y = -1},
 		},

@@ -2,6 +2,7 @@
 -- SPDX-License-Identifier: BSD-2-Clause
 --
 -- Copyright (c) 2018 Kyle Evans <kevans@FreeBSD.org>
+-- Copyright (c) 2026 The FreeBSD Foundation
 --
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions
@@ -29,24 +30,15 @@ return {
 	logo = {
 		ascii = {
 			image = {
-		    "  \027[31m```                        \027[31;1m`\027[31m",
-		    " s` `.....---...\027[31;1m....--.```   -/\027[31m",
-		    " +o   .--`         \027[31;1m/y:`      +.\027[31m",
-		    "  yo`:.            \027[31;1m:o      `+-\027[31m",
-		    "   y/               \027[31;1m-/`   -o/\027[31m",
-		    "  .-                  \027[31;1m::/sy+:.\027[31m",
-		    "  /                     \027[31;1m`--  /\027[31m",
-		    " `:                          \027[31;1m:`\027[31m",
-		    " `:                          \027[31;1m:`\027[31m",
-		    "  /                          \027[31;1m/\027[31m",
-		    "  .-                        \027[31;1m-.\027[31m",
-		    "   --                      \027[31;1m-.\027[31m",
-		    "    `:`                  \027[31;1m`:`",
-		    "      \027[31;1m.--             `--.",
-		    "         .---.....----.\027[m",
+		    " \027[36m ______  ____   _____ _____\027[m",
+		    " \027[36m| ____| | __ ) / ____|  __ \\\027[m",
+		    " \027[36m| |__   |  _ \\| (___ | |  | |\027[m",
+		    " \027[33m|___ \\  | |_) |\\___ \\| |  | |\027[m",
+		    " \027[33m ___) | |____/ ____) | |__| |\027[m",
+		    " \027[33m|____/        |_____/|_____/\027[m",
 			},
 			requires_color = true,
-			shift = {x = 5, y = -1},
+			shift = {x = 2, y = -1},
 		},
 		fb = {
 			image = "/boot/images/freebsd-logo-rev.png",
