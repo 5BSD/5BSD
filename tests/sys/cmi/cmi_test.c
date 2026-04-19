@@ -5204,6 +5204,234 @@ ATF_TC_BODY(connect_reserved_nonzero, tc)
 	close(ctl);
 }
 
+ATF_TC(pair_nonblock_recv_empty);
+ATF_TC_HEAD(pair_nonblock_recv_empty, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "O_NONBLOCK RECVMSG on pair with no messages returns EAGAIN");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_pair");
+}
+ATF_TC_BODY(pair_nonblock_recv_empty, tc)
+{
+	struct cmi_recvmsg_args ra;
+	char buf[64];
+	int fd_a, fd_b, flags;
+
+	cmi_pair_pair(&fd_a, &fd_b);
+
+	flags = fcntl(fd_b, F_GETFL, 0);
+	ATF_REQUIRE(fcntl(fd_b, F_SETFL, flags | O_NONBLOCK) == 0);
+
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
+	ATF_CHECK_ERRNO(EAGAIN, ioctl(fd_b, CMI_RECVMSG, &ra) == -1);
+
+	close(fd_b);
+	close(fd_a);
+}
+
+ATF_TC(debug_fork_child_unshielded);
+ATF_TC_HEAD(debug_fork_child_unshielded, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Shielded parent forks — child is NOT shielded");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_debug");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(debug_fork_child_unshielded, tc)
+{
+	int sv[2], status;
+	pid_t child_pid, grandchild_pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	child_pid = fork();
+	ATF_REQUIRE(child_pid >= 0);
+
+	if (child_pid == 0) {
+		/* Child: shield self, then fork grandchild. */
+		int shield_fd;
+		pid_t gc;
+		char buf;
+
+		close(sv[0]);
+		shield_fd = debug_shield();
+		if (shield_fd < 0)
+			_exit(10);
+
+		gc = fork();
+		if (gc < 0)
+			_exit(11);
+		if (gc == 0) {
+			/* Grandchild: just wait. */
+			close(shield_fd);
+			sleep(5);
+			_exit(0);
+		}
+
+		/* Tell parent the grandchild pid. */
+		write(sv[1], &gc, sizeof(gc));
+
+		/* Wait for parent to test. */
+		read(sv[1], &buf, 1);
+
+		kill(gc, SIGKILL);
+		waitpid(gc, NULL, 0);
+		close(shield_fd);
+		close(sv[1]);
+		_exit(0);
+	}
+
+	close(sv[1]);
+
+	/* Read grandchild pid. */
+	ATF_REQUIRE(read(sv[0], &grandchild_pid, sizeof(grandchild_pid))
+	    == (ssize_t)sizeof(grandchild_pid));
+
+	usleep(100000);
+
+	/*
+	 * The child (shielded) should block ptrace.
+	 * The grandchild (unshielded, different pid) should allow it.
+	 */
+	ATF_CHECK_ERRNO(EACCES,
+	    ptrace(PT_ATTACH, child_pid, NULL, 0) == -1);
+
+	/* Grandchild is a different pid — not in shield table. */
+	ATF_CHECK(ptrace(PT_ATTACH, grandchild_pid, NULL, 0) == 0);
+	waitpid(grandchild_pid, &status, WUNTRACED);
+	ptrace(PT_DETACH, grandchild_pid, NULL, 0);
+
+	/* Tell child to clean up. */
+	write(sv[0], "x", 1);
+	waitpid(child_pid, &status, 0);
+	close(sv[0]);
+}
+
+ATF_TC(token_empty_label);
+ATF_TC_HEAD(token_empty_label, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Token with empty label is valid");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_token");
+}
+ATF_TC_BODY(token_empty_label, tc)
+{
+	struct cmi_call_args ca;
+	struct token_create_request cr;
+	struct token_request tr;
+	struct token_validate_reply vr;
+	int issuer_fd, token_fd;
+	int reply_fds[1];
+
+	issuer_fd = cmi_connect("token");
+	ATF_REQUIRE(issuer_fd >= 0);
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = TOKEN_OP_CREATE;
+	/* Empty label — cr.label is all zeros. */
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(issuer_fd, CMI_CALL, &ca) == 0);
+	token_fd = reply_fds[0];
+
+	tr.op = TOKEN_OP_VALIDATE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &tr;
+	ca.req_len = sizeof(tr);
+	ca.reply = &vr;
+	ca.reply_len = sizeof(vr);
+	ATF_REQUIRE(ioctl(token_fd, CMI_CALL, &ca) == 0);
+	ATF_CHECK_EQ(vr.valid, 1);
+	ATF_CHECK_STREQ(vr.label, "");
+
+	close(token_fd);
+	close(issuer_fd);
+}
+
+ATF_TC(token_terminate_issuer_tokens_survive);
+ATF_TC_HEAD(token_terminate_issuer_tokens_survive, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Terminating issuer does not invalidate tokens");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_token");
+}
+ATF_TC_BODY(token_terminate_issuer_tokens_survive, tc)
+{
+	struct cmi_call_args ca;
+	struct token_create_request cr;
+	struct token_request tr;
+	struct token_validate_reply vr;
+	int issuer_fd, token_fd;
+	int reply_fds[1];
+
+	issuer_fd = cmi_connect("token");
+	ATF_REQUIRE(issuer_fd >= 0);
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = TOKEN_OP_CREATE;
+	strlcpy(cr.label, "survive", sizeof(cr.label));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(issuer_fd, CMI_CALL, &ca) == 0);
+	token_fd = reply_fds[0];
+
+	/* Terminate the issuer. */
+	ATF_REQUIRE(ioctl(issuer_fd, CMI_TERMINATE, NULL) == 0);
+	close(issuer_fd);
+
+	/* Token is a separate instance — should still be valid. */
+	tr.op = TOKEN_OP_VALIDATE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &tr;
+	ca.req_len = sizeof(tr);
+	ca.reply = &vr;
+	ca.reply_len = sizeof(vr);
+	ATF_REQUIRE(ioctl(token_fd, CMI_CALL, &ca) == 0);
+	ATF_CHECK_EQ(vr.valid, 1);
+	ATF_CHECK_STREQ(vr.label, "survive");
+
+	close(token_fd);
+}
+
+ATF_TC(namespace_info_returns_jid);
+ATF_TC_HEAD(namespace_info_returns_jid, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "NS_OP_INFO returns valid jid for current namespace");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
+}
+ATF_TC_BODY(namespace_info_returns_jid, tc)
+{
+	struct cmi_call_args ca;
+	struct ns_request nr;
+	struct ns_info_reply info;
+	int fd;
+
+	fd = cmi_connect("namespace");
+	ATF_REQUIRE(fd >= 0);
+
+	nr.op = NS_OP_INFO;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = &info;
+	ca.reply_len = sizeof(info);
+	ATF_REQUIRE(ioctl(fd, CMI_CALL, &ca) == 0);
+	ATF_CHECK_EQ(info.status, 0);
+	/* Host jail is jid 0. */
+	ATF_CHECK_EQ(info.jid, 0);
+
+	close(fd);
+}
+
 ATF_TC(pair_double_create);
 ATF_TC_HEAD(pair_double_create, tc)
 {
@@ -5910,6 +6138,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, revoke_call_on_async);
 	ATF_TP_ADD_TC(tp, token_getinfo_features);
 	ATF_TP_ADD_TC(tp, close_during_blocked_recv);
+
+	/* Service-specific edge cases */
+	ATF_TP_ADD_TC(tp, pair_nonblock_recv_empty);
+	ATF_TP_ADD_TC(tp, debug_fork_child_unshielded);
+	ATF_TP_ADD_TC(tp, token_empty_label);
+	ATF_TP_ADD_TC(tp, token_terminate_issuer_tokens_survive);
+	ATF_TP_ADD_TC(tp, namespace_info_returns_jid);
 
 	/* Framework: additional */
 	ATF_TP_ADD_TC(tp, terminate_twice);
