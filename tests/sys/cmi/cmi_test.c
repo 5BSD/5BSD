@@ -4840,6 +4840,277 @@ ATF_TC_BODY(token_bad_op, tc)
 	close(fd);
 }
 
+/* ================================================================
+ * Additional framework edge cases
+ * ================================================================ */
+
+ATF_TC(kqueue_eof_on_terminate);
+ATF_TC_HEAD(kqueue_eof_on_terminate, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "kqueue fires EV_EOF when instance is terminated");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore");
+}
+ATF_TC_BODY(kqueue_eof_on_terminate, tc)
+{
+	struct kevent kev;
+	struct timespec ts;
+	int fd, kq, ret;
+
+	fd = cmi_connect("keystore");
+	ATF_REQUIRE(fd >= 0);
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&kev, fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE(kevent(kq, &kev, 1, NULL, 0, NULL) == 0);
+
+	/* Terminate the instance. */
+	ATF_REQUIRE(ioctl(fd, CMI_TERMINATE, NULL) == 0);
+
+	/* kqueue should fire with EV_EOF. */
+	ts.tv_sec = 1;
+	ts.tv_nsec = 0;
+	ret = kevent(kq, NULL, 0, &kev, 1, &ts);
+	ATF_CHECK(ret > 0);
+	ATF_CHECK((kev.flags & EV_EOF) != 0);
+
+	close(kq);
+	close(fd);
+}
+
+ATF_TC(max_payload_size);
+ATF_TC_HEAD(max_payload_size, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Send exactly CMI_MAX_MSG bytes, verify round trip");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore");
+}
+ATF_TC_BODY(max_payload_size, tc)
+{
+	char *big;
+	struct ks_request *req;
+	char buf[CMI_MAX_MSG];
+	uint32_t rlen;
+	int fd;
+
+	fd = cmi_connect("keystore");
+	ATF_REQUIRE(fd >= 0);
+
+	/* Build a STORE that fills max payload. */
+	big = calloc(1, CMI_MAX_MSG);
+	ATF_REQUIRE(big != NULL);
+	req = (struct ks_request *)big;
+	req->op = KS_OP_STORE;
+	req->keyid = 55555;
+	memset(big + sizeof(*req), 'A', CMI_MAX_MSG - sizeof(*req));
+	ATF_REQUIRE(cmi_send(fd, big, CMI_MAX_MSG, 0) == 0);
+
+	rlen = sizeof(buf);
+	ATF_REQUIRE(cmi_recv(fd, buf, &rlen, NULL) == 0);
+	free(big);
+
+	close(fd);
+}
+
+ATF_TC(payload_over_max);
+ATF_TC_HEAD(payload_over_max, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Send CMI_MAX_MSG+1 bytes returns EMSGSIZE");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore");
+}
+ATF_TC_BODY(payload_over_max, tc)
+{
+	struct cmi_sendmsg_args sa;
+	char *big;
+	int fd;
+
+	fd = cmi_connect("keystore");
+	ATF_REQUIRE(fd >= 0);
+
+	big = calloc(1, CMI_MAX_MSG + 1);
+	ATF_REQUIRE(big != NULL);
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = big;
+	sa.payload_len = CMI_MAX_MSG + 1;
+	ATF_CHECK_ERRNO(EMSGSIZE, ioctl(fd, CMI_SENDMSG, &sa) == -1);
+
+	free(big);
+	close(fd);
+}
+
+ATF_TC(token_fork_inherits);
+ATF_TC_HEAD(token_fork_inherits, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Token fd inherited by child is still valid");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_token");
+}
+ATF_TC_BODY(token_fork_inherits, tc)
+{
+	struct cmi_call_args ca;
+	struct token_create_request cr;
+	struct token_request tr;
+	struct token_validate_reply vr;
+	int issuer_fd, token_fd, status;
+	int reply_fds[1];
+	pid_t pid;
+
+	issuer_fd = cmi_connect("token");
+	ATF_REQUIRE(issuer_fd >= 0);
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = TOKEN_OP_CREATE;
+	strlcpy(cr.label, "fork_test", sizeof(cr.label));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(issuer_fd, CMI_CALL, &ca) == 0);
+	token_fd = reply_fds[0];
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(issuer_fd);
+		tr.op = TOKEN_OP_VALIDATE;
+		memset(&ca, 0, sizeof(ca));
+		ca.req = &tr;
+		ca.req_len = sizeof(tr);
+		ca.reply = &vr;
+		ca.reply_len = sizeof(vr);
+		if (ioctl(token_fd, CMI_CALL, &ca) != 0)
+			_exit(1);
+		if (vr.valid != 1)
+			_exit(2);
+		if (strcmp(vr.label, "fork_test") != 0)
+			_exit(3);
+		close(token_fd);
+		_exit(0);
+	}
+
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child exited with status %d", WEXITSTATUS(status));
+	close(token_fd);
+	close(issuer_fd);
+}
+
+ATF_TC(token_multiple_from_issuer);
+ATF_TC_HEAD(token_multiple_from_issuer, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Issuer can create multiple independent tokens");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_token");
+}
+ATF_TC_BODY(token_multiple_from_issuer, tc)
+{
+	struct cmi_call_args ca;
+	struct token_create_request cr;
+	struct token_request tr;
+	struct token_validate_reply vr;
+	int issuer_fd, tok1, tok2;
+	int reply_fds[1];
+
+	issuer_fd = cmi_connect("token");
+	ATF_REQUIRE(issuer_fd >= 0);
+
+	/* Create first token. */
+	memset(&cr, 0, sizeof(cr));
+	cr.op = TOKEN_OP_CREATE;
+	strlcpy(cr.label, "alpha", sizeof(cr.label));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(issuer_fd, CMI_CALL, &ca) == 0);
+	tok1 = reply_fds[0];
+
+	/* Create second token. */
+	strlcpy(cr.label, "beta", sizeof(cr.label));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(issuer_fd, CMI_CALL, &ca) == 0);
+	tok2 = reply_fds[0];
+
+	/* Both valid with different labels. */
+	tr.op = TOKEN_OP_VALIDATE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &tr;
+	ca.req_len = sizeof(tr);
+	ca.reply = &vr;
+	ca.reply_len = sizeof(vr);
+	ATF_REQUIRE(ioctl(tok1, CMI_CALL, &ca) == 0);
+	ATF_CHECK_STREQ(vr.label, "alpha");
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &tr;
+	ca.req_len = sizeof(tr);
+	ca.reply = &vr;
+	ca.reply_len = sizeof(vr);
+	ATF_REQUIRE(ioctl(tok2, CMI_CALL, &ca) == 0);
+	ATF_CHECK_STREQ(vr.label, "beta");
+
+	/* Revoke one, other still valid. */
+	tr.op = TOKEN_OP_REVOKE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &tr;
+	ca.req_len = sizeof(tr);
+	ATF_REQUIRE(ioctl(tok1, CMI_CALL, &ca) == 0);
+
+	tr.op = TOKEN_OP_VALIDATE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &tr;
+	ca.req_len = sizeof(tr);
+	ca.reply = &vr;
+	ca.reply_len = sizeof(vr);
+	ATF_REQUIRE(ioctl(tok2, CMI_CALL, &ca) == 0);
+	ATF_CHECK_EQ(vr.valid, 1);
+
+	close(tok2);
+	close(tok1);
+	close(issuer_fd);
+}
+
+ATF_TC(pair_kqueue_eof_on_close);
+ATF_TC_HEAD(pair_kqueue_eof_on_close, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "kqueue fires EV_EOF on pair when peer closes");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_pair");
+}
+ATF_TC_BODY(pair_kqueue_eof_on_close, tc)
+{
+	struct kevent kev;
+	struct timespec ts;
+	int fd_a, fd_b, kq, ret;
+
+	cmi_pair_pair(&fd_a, &fd_b);
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&kev, fd_b, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE(kevent(kq, &kev, 1, NULL, 0, NULL) == 0);
+
+	/* Close A — B should get EV_EOF. */
+	close(fd_a);
+
+	ts.tv_sec = 2;
+	ts.tv_nsec = 0;
+	ret = kevent(kq, NULL, 0, &kev, 1, &ts);
+	ATF_CHECK(ret > 0);
+	ATF_CHECK((kev.flags & EV_EOF) != 0);
+
+	close(kq);
+	close(fd_b);
+}
+
 ATF_TC(namespace_terminate_removes);
 ATF_TC_HEAD(namespace_terminate_removes, tc)
 {
@@ -5060,6 +5331,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, token_validate_on_issuer);
 	ATF_TP_ADD_TC(tp, token_create_from_token);
 	ATF_TP_ADD_TC(tp, token_bad_op);
+
+	/* Edge cases */
+	ATF_TP_ADD_TC(tp, kqueue_eof_on_terminate);
+	ATF_TP_ADD_TC(tp, max_payload_size);
+	ATF_TP_ADD_TC(tp, payload_over_max);
+	ATF_TP_ADD_TC(tp, token_fork_inherits);
+	ATF_TP_ADD_TC(tp, token_multiple_from_issuer);
+	ATF_TP_ADD_TC(tp, pair_kqueue_eof_on_close);
 
 	/* Namespace: terminate */
 	ATF_TP_ADD_TC(tp, namespace_terminate_removes);
