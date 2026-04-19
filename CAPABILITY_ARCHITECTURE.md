@@ -598,12 +598,12 @@ sys/dev/cmi/
     cmi_kern.c         KPI: dispatch, reply/notify/revoke, cmi_send
     cmi_keystore.c     sample: async key-value store
     cmi_pair.c         sample: async bidirectional capability pair
-    cmi_jail.c         sample: sync jail management
+    cmi_namespace.c         sample: sync namespace management
 
 sys/modules/cmi/           core module
 sys/modules/cmi_keystore/  keystore sample
 sys/modules/cmi_pair/      pair sample
-sys/modules/cmi_jail/      jail sample
+sys/modules/cmi_namespace/      namespace sample
 
 tests/sys/cmi/             77 ATF tests via kyua
 ```
@@ -675,11 +675,10 @@ debugged, traced, or signaled by unprivileged processes.  A debug
 capability can be minted and passed to authorized debuggers to
 override the protection.  Closing the shield removes protection.
 
-### Phase 2: Rename jail → namespace
+### Phase 2: Rename jail → namespace (DONE)
 
-Rename `cmi_jail` to `cmi_namespace`.  More opaque, more
-capability-oriented.  Jails are a FreeBSD implementation detail;
-namespaces describe the abstraction.
+Renamed `cmi_jail` to `cmi_namespace`.  Service name is now
+"namespace" instead of "jail".
 
 ### Phase 3: Token capability (replaces keystore)
 

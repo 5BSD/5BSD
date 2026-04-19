@@ -212,8 +212,8 @@ SUBDIR=	\
 	kbdmux \
 	cmi \
 	cmi_debug \
-	cmi_jail \
 	cmi_keystore \
+	cmi_namespace \
 	cmi_pair \
 	kgssapi \
 	kgssapi_krb5 \

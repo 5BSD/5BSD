@@ -1,6 +1,6 @@
 .PATH: ${SRCTOP}/sys/dev/cmi
 
-KMOD=	cmi_jail
-SRCS=	cmi_jail.c
+KMOD=	cmi_namespace
+SRCS=	cmi_namespace.c
 
 .include <bsd.kmod.mk>

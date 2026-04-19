@@ -63,14 +63,14 @@ KYUA
 #!/bin/sh
 set -e
 echo "=== Unloading stale modules ==="
-for m in cmi_jail cmi_pair cmi_keystore cmi; do
+for m in cmi_namespace cmi_pair cmi_keystore cmi; do
     kldunload "$m" 2>/dev/null || true
 done
 echo "=== Loading CMI ==="
 kldload cmi         || { echo "FAIL: kldload cmi"; exit 1; }
 kldload cmi_keystore || { echo "FAIL: kldload cmi_keystore"; exit 1; }
 kldload cmi_pair    || { echo "FAIL: kldload cmi_pair"; exit 1; }
-kldload cmi_jail    || { echo "FAIL: kldload cmi_jail"; exit 1; }
+kldload cmi_namespace    || { echo "FAIL: kldload cmi_namespace"; exit 1; }
 kldload cmi_debug    || { echo "FAIL: kldload cmi_debug"; exit 1; }
 echo "=== Verifying ==="
 kldstat -m cmi
@@ -89,7 +89,7 @@ else
 fi
 echo "=== Unloading ==="
 kldunload cmi_debug
-kldunload cmi_jail
+kldunload cmi_namespace
 kldunload cmi_pair
 kldunload cmi_keystore
 kldunload cmi
@@ -109,14 +109,14 @@ KYUA
 #!/bin/sh
 set -e
 echo "=== Unloading stale modules ==="
-for m in cmi_jail cmi_pair cmi_keystore cmi; do
+for m in cmi_namespace cmi_pair cmi_keystore cmi; do
     kldunload "$m" 2>/dev/null || true
 done
 echo "=== Loading CMI ==="
 kldload cmi         || { echo "FAIL: kldload cmi"; exit 1; }
 kldload cmi_keystore || { echo "FAIL: kldload cmi_keystore"; exit 1; }
 kldload cmi_pair    || { echo "FAIL: kldload cmi_pair"; exit 1; }
-kldload cmi_jail    || { echo "FAIL: kldload cmi_jail"; exit 1; }
+kldload cmi_namespace    || { echo "FAIL: kldload cmi_namespace"; exit 1; }
 kldload cmi_debug    || { echo "FAIL: kldload cmi_debug"; exit 1; }
 echo "=== Verifying ==="
 kldstat -m cmi
@@ -135,7 +135,7 @@ else
 fi
 echo "=== Unloading ==="
 kldunload cmi_debug
-kldunload cmi_jail
+kldunload cmi_namespace
 kldunload cmi_pair
 kldunload cmi_keystore
 kldunload cmi

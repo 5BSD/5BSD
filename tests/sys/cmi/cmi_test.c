@@ -2063,14 +2063,14 @@ ATF_TC_HEAD(call_flags_nonzero, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CMI_CALL with nonzero flags returns EINVAL on sync service");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
 ATF_TC_BODY(call_flags_nonzero, tc)
 {
 	struct cmi_call_args ca;
 	int fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
 	memset(&ca, 0, sizeof(ca));
@@ -2145,7 +2145,7 @@ ATF_TC_HEAD(terminate_sync_service, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CMI_TERMINATE works on sync-only service");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
 ATF_TC_BODY(terminate_sync_service, tc)
 {
@@ -2153,14 +2153,14 @@ ATF_TC_BODY(terminate_sync_service, tc)
 	uint32_t op;
 	int fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
 	/* Revoke via the token. */
 	ATF_REQUIRE(ioctl(fd, CMI_TERMINATE, NULL) == 0);
 
 	/* CALL should now fail. */
-	op = 1; /* JAIL_OP_INFO */
+	op = 1; /* NS_OP_INFO */
 	memset(&ca, 0, sizeof(ca));
 	ca.req = &op;
 	ca.req_len = sizeof(op);
@@ -2208,17 +2208,17 @@ ATF_TC_HEAD(sendmsg_on_sync_service, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CMI_SENDMSG on sync-only service returns EOPNOTSUPP");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
 ATF_TC_BODY(sendmsg_on_sync_service, tc)
 {
 	uint32_t op;
 	int fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
-	op = 1; /* JAIL_OP_INFO */
+	op = 1; /* NS_OP_INFO */
 	ATF_CHECK_ERRNO(EOPNOTSUPP, cmi_send(fd, &op, sizeof(op), 0) == -1);
 
 	close(fd);
@@ -2253,24 +2253,24 @@ ATF_TC_BODY(call_on_async_service, tc)
 	close(fd);
 }
 
-ATF_TC(jail_call_info);
-ATF_TC_HEAD(jail_call_info, tc)
+ATF_TC(namespace_call_info);
+ATF_TC_HEAD(namespace_call_info, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "CMI_CALL to jail service returns jail info");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	    "CMI_CALL to namespace service returns namespace info");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
-ATF_TC_BODY(jail_call_info, tc)
+ATF_TC_BODY(namespace_call_info, tc)
 {
 	struct cmi_call_args ca;
 	uint32_t op;
 	char reply[512];
 	int fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
-	op = 1; /* JAIL_OP_INFO */
+	op = 1; /* NS_OP_INFO */
 	memset(&ca, 0, sizeof(ca));
 	ca.req = &op;
 	ca.req_len = sizeof(op);
@@ -2282,26 +2282,26 @@ ATF_TC_BODY(jail_call_info, tc)
 	close(fd);
 }
 
-ATF_TC(jail_call_short_req);
-ATF_TC_HEAD(jail_call_short_req, tc)
+ATF_TC(namespace_call_short_req);
+ATF_TC_HEAD(namespace_call_short_req, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "CMI_CALL to jail with short request returns EINVAL");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	    "CMI_CALL to namespace with short request returns EINVAL");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
-ATF_TC_BODY(jail_call_short_req, tc)
+ATF_TC_BODY(namespace_call_short_req, tc)
 {
 	struct cmi_call_args ca;
 	char req[1] = { 0 };
 	char reply[64];
 	int fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
 	memset(&ca, 0, sizeof(ca));
 	ca.req = req;
-	ca.req_len = 1;  /* Too short for jail_request */
+	ca.req_len = 1;  /* Too short for ns_request */
 	ca.reply = reply;
 	ca.reply_len = sizeof(reply);
 	ATF_CHECK_ERRNO(EINVAL, ioctl(fd, CMI_CALL, &ca) == -1);
@@ -2309,21 +2309,21 @@ ATF_TC_BODY(jail_call_short_req, tc)
 	close(fd);
 }
 
-ATF_TC(jail_call_bad_op);
-ATF_TC_HEAD(jail_call_bad_op, tc)
+ATF_TC(namespace_call_bad_op);
+ATF_TC_HEAD(namespace_call_bad_op, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "CMI_CALL to jail with unknown op returns EOPNOTSUPP");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	    "CMI_CALL to namespace with unknown op returns EOPNOTSUPP");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
-ATF_TC_BODY(jail_call_bad_op, tc)
+ATF_TC_BODY(namespace_call_bad_op, tc)
 {
 	struct cmi_call_args ca;
 	uint32_t op;
 	char reply[64];
 	int fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
 	op = 99; /* Invalid operation */
@@ -2370,14 +2370,14 @@ ATF_TC_HEAD(getinfo_sync_features, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Sync service reports CALL but not SENDMSG or KQUEUE");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
 ATF_TC_BODY(getinfo_sync_features, tc)
 {
 	struct cmi_info_args info;
 	int fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
 	memset(&info, 0, sizeof(info));
@@ -2518,23 +2518,23 @@ ATF_TC_BODY(pair_getinfo, tc)
 }
 
 /* ================================================================
- * Jail: CALL with zero-length request
+ * Namespace: CALL with zero-length request
  * ================================================================ */
 
-ATF_TC(jail_call_zero_req);
-ATF_TC_HEAD(jail_call_zero_req, tc)
+ATF_TC(namespace_call_zero_req);
+ATF_TC_HEAD(namespace_call_zero_req, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "CMI_CALL to jail with zero-length request returns EINVAL");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	    "CMI_CALL to namespace with zero-length request returns EINVAL");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
-ATF_TC_BODY(jail_call_zero_req, tc)
+ATF_TC_BODY(namespace_call_zero_req, tc)
 {
 	struct cmi_call_args ca;
 	char reply[512];
 	int fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
 	memset(&ca, 0, sizeof(ca));
@@ -2546,27 +2546,27 @@ ATF_TC_BODY(jail_call_zero_req, tc)
 }
 
 /* ================================================================
- * Jail: getinfo
+ * Namespace: getinfo
  * ================================================================ */
 
-ATF_TC(jail_getinfo);
-ATF_TC_HEAD(jail_getinfo, tc)
+ATF_TC(namespace_getinfo);
+ATF_TC_HEAD(namespace_getinfo, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "GETINFO on jail returns sync-only metadata");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	    "GETINFO on namespace returns sync-only metadata");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
-ATF_TC_BODY(jail_getinfo, tc)
+ATF_TC_BODY(namespace_getinfo, tc)
 {
 	struct cmi_info_args info;
 	int fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
 	memset(&info, 0, sizeof(info));
 	ATF_REQUIRE(ioctl(fd, CMI_GETINFO, &info) == 0);
-	ATF_CHECK_STREQ(info.name, "jail");
+	ATF_CHECK_STREQ(info.name, "namespace");
 	ATF_CHECK(info.badge != 0);
 	ATF_CHECK(info.id != 0);
 	ATF_CHECK((info.features & CMI_INFO_F_CALL) != 0);
@@ -2577,23 +2577,23 @@ ATF_TC_BODY(jail_getinfo, tc)
 }
 
 /* ================================================================
- * Jail: multiple instances have different badges
+ * Namespace: multiple instances have different badges
  * ================================================================ */
 
-ATF_TC(jail_badge_unique);
-ATF_TC_HEAD(jail_badge_unique, tc)
+ATF_TC(namespace_badge_unique);
+ATF_TC_HEAD(namespace_badge_unique, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Each jail instance gets a unique badge");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	    "Each namespace instance gets a unique badge");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
-ATF_TC_BODY(jail_badge_unique, tc)
+ATF_TC_BODY(namespace_badge_unique, tc)
 {
 	struct cmi_info_args info1, info2;
 	int fd1, fd2;
 
-	fd1 = cmi_connect("jail");
-	fd2 = cmi_connect("jail");
+	fd1 = cmi_connect("namespace");
+	fd2 = cmi_connect("namespace");
 	ATF_REQUIRE(fd1 >= 0);
 	ATF_REQUIRE(fd2 >= 0);
 
@@ -2609,25 +2609,25 @@ ATF_TC_BODY(jail_badge_unique, tc)
 }
 
 /* ================================================================
- * Jail: revoke via token on sync service
+ * Namespace: revoke via token on sync service
  * then verify CALL fails
  * ================================================================ */
 
-ATF_TC(jail_revoke_then_call);
-ATF_TC_HEAD(jail_revoke_then_call, tc)
+ATF_TC(namespace_revoke_then_call);
+ATF_TC_HEAD(namespace_revoke_then_call, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Revoke jail instance, then CALL returns ECONNRESET");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	    "Revoke namespace instance, then CALL returns ECONNRESET");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
-ATF_TC_BODY(jail_revoke_then_call, tc)
+ATF_TC_BODY(namespace_revoke_then_call, tc)
 {
 	struct cmi_call_args ca;
 	uint32_t op;
 	char reply[512];
 	int fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
 	/* Revoke. */
@@ -2841,7 +2841,7 @@ ATF_TC_HEAD(noxfer_scm_rights, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Non-transferable capability cannot be passed via SCM_RIGHTS");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
 ATF_TC_BODY(noxfer_scm_rights, tc)
 {
@@ -2855,7 +2855,7 @@ ATF_TC_BODY(noxfer_scm_rights, tc)
 	char dummy = 'x';
 	int sv[2], fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
 
@@ -2887,7 +2887,7 @@ ATF_TC_HEAD(noxfer_cmi_attach, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Non-transferable fd cannot be attached to CMI_SENDMSG");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore cmi_jail");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore cmi_namespace");
 }
 ATF_TC_BODY(noxfer_cmi_attach, tc)
 {
@@ -2896,7 +2896,7 @@ ATF_TC_BODY(noxfer_cmi_attach, tc)
 	int ks_fd, jail_fd;
 
 	ks_fd = cmi_connect("keystore");
-	jail_fd = cmi_connect("jail");
+	jail_fd = cmi_connect("namespace");
 	ATF_REQUIRE(ks_fd >= 0);
 	ATF_REQUIRE(jail_fd >= 0);
 
@@ -3032,32 +3032,40 @@ ATF_TC_BODY(fdclose_dup_then_close_all, tc)
 }
 
 /* ================================================================
- * Jail: create a jail, enter it, verify via CMI
+ * Namespace: create a jail, enter it, verify via CMI
  * ================================================================ */
 
-/* Jail protocol — matches cmi_jail.c */
-#define	JAIL_OP_INFO	1
-#define	JAIL_OP_ATTACH	2
+/* Namespace protocol — matches cmi_namespace.c */
+#define	NS_OP_INFO	1
+#define	NS_OP_CREATE	2
+#define	NS_OP_ATTACH	3
+#define	NS_OP_REMOVE	4
+#define	NS_OP_MINT	5
 
-struct jail_request {
+struct ns_request {
 	uint32_t	op;
 } __packed;
 
-struct jail_info_reply {
+struct ns_create_request {
+	uint32_t	op;
+	char		hostname[256];
+} __packed;
+
+struct ns_info_reply {
 	uint32_t	status;
 	int		jid;
-	char		name[256]; /* MAXHOSTNAMELEN */
+	char		name[256];
 };
 
-ATF_TC(jail_enter_and_query);
-ATF_TC_HEAD(jail_enter_and_query, tc)
+ATF_TC(namespace_enter_and_query);
+ATF_TC_HEAD(namespace_enter_and_query, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Create a jail, enter it, CMI_CALL confirms process is inside");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	    "Create a namespace, enter it, CMI_CALL confirms process is inside");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(jail_enter_and_query, tc)
+ATF_TC_BODY(namespace_enter_and_query, tc)
 {
 	int status, jid;
 	pid_t pid;
@@ -3076,16 +3084,16 @@ ATF_TC_BODY(jail_enter_and_query, tc)
 
 	if (pid == 0) {
 		struct cmi_call_args ca;
-		struct jail_request req;
-		struct jail_info_reply reply;
+		struct ns_request req;
+		struct ns_info_reply reply;
 		int fd;
 
 		/* First, query from host — jid should be 0. */
-		fd = cmi_connect("jail");
+		fd = cmi_connect("namespace");
 		if (fd < 0)
 			_exit(10);
 
-		req.op = JAIL_OP_INFO;
+		req.op = NS_OP_INFO;
 		memset(&ca, 0, sizeof(ca));
 		ca.req = &req;
 		ca.req_len = sizeof(req);
@@ -3123,6 +3131,271 @@ ATF_TC_BODY(jail_enter_and_query, tc)
 
 	/* Clean up the jail. */
 	jail_remove(jid);
+}
+
+/* ================================================================
+ * Namespace: create, remove, mint, nest via CMI
+ * ================================================================ */
+
+ATF_TC(namespace_create_and_remove);
+ATF_TC_HEAD(namespace_create_and_remove, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Create a namespace via CMI, remove it");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(namespace_create_and_remove, tc)
+{
+	struct cmi_call_args ca;
+	struct ns_create_request cr;
+	struct ns_request nr;
+	int ns_fd, child_fd;
+	int reply_fds[1];
+
+	ns_fd = cmi_connect("namespace");
+	ATF_REQUIRE(ns_fd >= 0);
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = NS_OP_CREATE;
+	strlcpy(cr.hostname, "test_child", sizeof(cr.hostname));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(ns_fd, CMI_CALL, &ca) == 0);
+	ATF_REQUIRE_EQ(ca.reply_nfds, 1);
+	child_fd = reply_fds[0];
+	ATF_REQUIRE(child_fd >= 0);
+
+	nr.op = NS_OP_REMOVE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ATF_REQUIRE(ioctl(child_fd, CMI_CALL, &ca) == 0);
+
+	close(child_fd);
+	close(ns_fd);
+}
+
+ATF_TC(namespace_close_removes);
+ATF_TC_HEAD(namespace_close_removes, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Closing owner fd removes namespace via co_revoke");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(namespace_close_removes, tc)
+{
+	struct cmi_call_args ca;
+	struct ns_create_request cr;
+	int ns_fd, child_fd;
+	int reply_fds[1];
+
+	ns_fd = cmi_connect("namespace");
+	ATF_REQUIRE(ns_fd >= 0);
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = NS_OP_CREATE;
+	strlcpy(cr.hostname, "close_test", sizeof(cr.hostname));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(ns_fd, CMI_CALL, &ca) == 0);
+	child_fd = reply_fds[0];
+
+	close(child_fd);
+	close(ns_fd);
+}
+
+ATF_TC(namespace_mint_member);
+ATF_TC_HEAD(namespace_mint_member, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Member can info but not remove or create");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(namespace_mint_member, tc)
+{
+	struct cmi_call_args ca;
+	struct ns_create_request cr;
+	struct ns_request nr;
+	int ns_fd, owner_fd, member_fd;
+	int reply_fds[1];
+
+	ns_fd = cmi_connect("namespace");
+	ATF_REQUIRE(ns_fd >= 0);
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = NS_OP_CREATE;
+	strlcpy(cr.hostname, "mint_test", sizeof(cr.hostname));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(ns_fd, CMI_CALL, &ca) == 0);
+	owner_fd = reply_fds[0];
+
+	nr.op = NS_OP_MINT;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(owner_fd, CMI_CALL, &ca) == 0);
+	member_fd = reply_fds[0];
+
+	/* Member CAN do INFO. */
+	{
+		struct ns_info_reply info;
+		struct ns_request inforeq;
+
+		inforeq.op = NS_OP_INFO;
+		memset(&ca, 0, sizeof(ca));
+		ca.req = &inforeq;
+		ca.req_len = sizeof(inforeq);
+		ca.reply = &info;
+		ca.reply_len = sizeof(info);
+		ATF_CHECK(ioctl(member_fd, CMI_CALL, &ca) == 0);
+	}
+
+	/* Member CAN do ATTACH (get jid). */
+	{
+		struct ns_request areq;
+		int jid;
+
+		areq.op = NS_OP_ATTACH;
+		memset(&ca, 0, sizeof(ca));
+		ca.req = &areq;
+		ca.req_len = sizeof(areq);
+		ca.reply = &jid;
+		ca.reply_len = sizeof(jid);
+		ATF_CHECK(ioctl(member_fd, CMI_CALL, &ca) == 0);
+		ATF_CHECK(jid > 0);
+	}
+
+	/* Member cannot REMOVE. */
+	nr.op = NS_OP_REMOVE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ATF_CHECK_ERRNO(EPERM, ioctl(member_fd, CMI_CALL, &ca) == -1);
+
+	/* Member cannot CREATE. */
+	memset(&cr, 0, sizeof(cr));
+	cr.op = NS_OP_CREATE;
+	strlcpy(cr.hostname, "no_create", sizeof(cr.hostname));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_CHECK_ERRNO(EPERM, ioctl(member_fd, CMI_CALL, &ca) == -1);
+
+	/* Member cannot MINT. */
+	nr.op = NS_OP_MINT;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_CHECK_ERRNO(EPERM, ioctl(member_fd, CMI_CALL, &ca) == -1);
+
+	close(member_fd);
+	close(owner_fd);
+	close(ns_fd);
+}
+
+ATF_TC(namespace_nest);
+ATF_TC_HEAD(namespace_nest, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Create nested namespaces, remove parent cascades");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(namespace_nest, tc)
+{
+	struct cmi_call_args ca;
+	struct ns_create_request cr;
+	struct ns_request nr;
+	int ns_fd, parent_fd, child_fd;
+	int reply_fds[1];
+
+	ns_fd = cmi_connect("namespace");
+	ATF_REQUIRE(ns_fd >= 0);
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = NS_OP_CREATE;
+	strlcpy(cr.hostname, "parent", sizeof(cr.hostname));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(ns_fd, CMI_CALL, &ca) == 0);
+	parent_fd = reply_fds[0];
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = NS_OP_CREATE;
+	strlcpy(cr.hostname, "child", sizeof(cr.hostname));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(parent_fd, CMI_CALL, &ca) == 0);
+	child_fd = reply_fds[0];
+
+	/* Verify child is nested: ATTACH returns a jid, and we can
+	 * check that the child's jid is different from the parent's. */
+	{
+		struct ns_request areq;
+		int parent_jid, child_jid;
+
+		areq.op = NS_OP_ATTACH;
+		memset(&ca, 0, sizeof(ca));
+		ca.req = &areq;
+		ca.req_len = sizeof(areq);
+		ca.reply = &parent_jid;
+		ca.reply_len = sizeof(parent_jid);
+		ATF_REQUIRE(ioctl(parent_fd, CMI_CALL, &ca) == 0);
+		ATF_REQUIRE(parent_jid > 0);
+
+		memset(&ca, 0, sizeof(ca));
+		ca.req = &areq;
+		ca.req_len = sizeof(areq);
+		ca.reply = &child_jid;
+		ca.reply_len = sizeof(child_jid);
+		ATF_REQUIRE(ioctl(child_fd, CMI_CALL, &ca) == 0);
+		ATF_REQUIRE(child_jid > 0);
+
+		/* Parent and child have different jids. */
+		ATF_CHECK(parent_jid != child_jid);
+	}
+
+	/* Remove parent — child should cascade. */
+	nr.op = NS_OP_REMOVE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ATF_REQUIRE(ioctl(parent_fd, CMI_CALL, &ca) == 0);
+
+	/* Child's namespace is gone — REMOVE should fail. */
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ATF_CHECK(ioctl(child_fd, CMI_CALL, &ca) != 0);
+
+	close(child_fd);
+	close(parent_fd);
+	close(ns_fd);
 }
 
 /* ================================================================
@@ -3203,7 +3476,7 @@ ATF_TC_HEAD(revoke_call_blocks_call, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CMI_REVOKE_CALL blocks CALL");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
 ATF_TC_BODY(revoke_call_blocks_call, tc)
 {
@@ -3212,11 +3485,11 @@ ATF_TC_BODY(revoke_call_blocks_call, tc)
 	char reply[512];
 	int fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
 	/* CALL should work before revoke. */
-	op = JAIL_OP_INFO;
+	op = NS_OP_INFO;
 	memset(&ca, 0, sizeof(ca));
 	ca.req = &op;
 	ca.req_len = sizeof(op);
@@ -3375,7 +3648,7 @@ ATF_TC_HEAD(call_reply_fds_zero, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CMI_CALL with reply_nfds=0 works normally");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
 ATF_TC_BODY(call_reply_fds_zero, tc)
 {
@@ -3384,10 +3657,10 @@ ATF_TC_BODY(call_reply_fds_zero, tc)
 	char reply[512];
 	int fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
-	op = JAIL_OP_INFO;
+	op = NS_OP_INFO;
 	memset(&ca, 0, sizeof(ca));
 	ca.req = &op;
 	ca.req_len = sizeof(op);
@@ -3407,7 +3680,7 @@ ATF_TC_HEAD(call_reply_fds_buf_no_fds, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CMI_CALL with reply_fds buffer but handler returns 0 fds");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
 ATF_TC_BODY(call_reply_fds_buf_no_fds, tc)
 {
@@ -3417,10 +3690,10 @@ ATF_TC_BODY(call_reply_fds_buf_no_fds, tc)
 	int reply_fds[4];
 	int fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
-	op = JAIL_OP_INFO;
+	op = NS_OP_INFO;
 	memset(&ca, 0, sizeof(ca));
 	ca.req = &op;
 	ca.req_len = sizeof(op);
@@ -3440,7 +3713,7 @@ ATF_TC_HEAD(call_reply_nfds_too_many, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CMI_CALL with reply_nfds > CMI_MAX_FDS returns EINVAL");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_jail");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
 }
 ATF_TC_BODY(call_reply_nfds_too_many, tc)
 {
@@ -3448,10 +3721,10 @@ ATF_TC_BODY(call_reply_nfds_too_many, tc)
 	uint32_t op;
 	int fd;
 
-	fd = cmi_connect("jail");
+	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
-	op = JAIL_OP_INFO;
+	op = NS_OP_INFO;
 	memset(&ca, 0, sizeof(ca));
 	ca.req = &op;
 	ca.req_len = sizeof(op);
@@ -4009,6 +4282,174 @@ ATF_TC_BODY(debug_mint_and_activate, tc)
 	close(sv[0]);
 }
 
+ATF_TC(debug_token_close_revokes);
+ATF_TC_HEAD(debug_token_close_revokes, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Closing debug token revokes ptrace access");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_debug");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(debug_token_close_revokes, tc)
+{
+	int sv[2], status;
+	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		struct cmi_call_args ca;
+		struct debug_request req;
+		struct msghdr msgh;
+		struct iovec iov;
+		union {
+			struct cmsghdr hdr;
+			char buf[CMSG_SPACE(sizeof(int))];
+		} cmsgbuf;
+		struct cmsghdr *cmsg;
+		char dummy = 'x';
+		int shield_fd, token_fd;
+		int reply_fds[1];
+
+		close(sv[0]);
+		shield_fd = debug_shield();
+		if (shield_fd < 0)
+			_exit(10);
+
+		req.op = DEBUG_OP_MINT;
+		memset(&ca, 0, sizeof(ca));
+		ca.req = &req;
+		ca.req_len = sizeof(req);
+		ca.reply_fds = reply_fds;
+		ca.reply_nfds = 1;
+		if (ioctl(shield_fd, CMI_CALL, &ca) != 0)
+			_exit(11);
+		token_fd = reply_fds[0];
+
+		/* Send token to parent. */
+		memset(&msgh, 0, sizeof(msgh));
+		iov.iov_base = &dummy;
+		iov.iov_len = 1;
+		msgh.msg_iov = &iov;
+		msgh.msg_iovlen = 1;
+		msgh.msg_control = cmsgbuf.buf;
+		msgh.msg_controllen = sizeof(cmsgbuf.buf);
+		cmsg = CMSG_FIRSTHDR(&msgh);
+		cmsg->cmsg_level = SOL_SOCKET;
+		cmsg->cmsg_type = SCM_RIGHTS;
+		cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+		memcpy(CMSG_DATA(cmsg), &token_fd, sizeof(int));
+		sendmsg(sv[1], &msgh, 0);
+		close(token_fd);
+
+		sleep(10);
+		close(shield_fd);
+		close(sv[1]);
+		_exit(0);
+	}
+
+	close(sv[1]);
+	{
+		struct cmi_call_args ca;
+		struct debug_request req;
+		struct msghdr msgh;
+		struct iovec iov;
+		union {
+			struct cmsghdr hdr;
+			char buf[CMSG_SPACE(sizeof(int))];
+		} cmsgbuf;
+		struct cmsghdr *cmsg;
+		char dummy;
+		int token_fd;
+
+		memset(&msgh, 0, sizeof(msgh));
+		iov.iov_base = &dummy;
+		iov.iov_len = 1;
+		msgh.msg_iov = &iov;
+		msgh.msg_iovlen = 1;
+		msgh.msg_control = cmsgbuf.buf;
+		msgh.msg_controllen = sizeof(cmsgbuf.buf);
+		ATF_REQUIRE(recvmsg(sv[0], &msgh, 0) >= 0);
+		cmsg = CMSG_FIRSTHDR(&msgh);
+		ATF_REQUIRE(cmsg != NULL);
+		memcpy(&token_fd, CMSG_DATA(cmsg), sizeof(int));
+
+		/* Activate token. */
+		req.op = DEBUG_OP_ACTIVATE;
+		memset(&ca, 0, sizeof(ca));
+		ca.req = &req;
+		ca.req_len = sizeof(req);
+		ATF_REQUIRE(ioctl(token_fd, CMI_CALL, &ca) == 0);
+
+		usleep(100000);
+
+		/* ptrace should work. */
+		ATF_CHECK(ptrace(PT_ATTACH, pid, NULL, 0) == 0);
+		waitpid(pid, &status, WUNTRACED);
+		ptrace(PT_DETACH, pid, NULL, 0);
+
+		/* Close the token — revokes authorization. */
+		close(token_fd);
+
+		usleep(100000);
+
+		/* ptrace should fail again. */
+		ATF_CHECK_ERRNO(EACCES,
+		    ptrace(PT_ATTACH, pid, NULL, 0) == -1);
+	}
+
+	kill(pid, SIGKILL);
+	waitpid(pid, &status, 0);
+	close(sv[0]);
+}
+
+ATF_TC(namespace_terminate_removes);
+ATF_TC_HEAD(namespace_terminate_removes, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CMI_TERMINATE on namespace owner removes namespace");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(namespace_terminate_removes, tc)
+{
+	struct cmi_call_args ca;
+	struct ns_create_request cr;
+	struct ns_request nr;
+	int ns_fd, child_fd;
+	int reply_fds[1];
+
+	ns_fd = cmi_connect("namespace");
+	ATF_REQUIRE(ns_fd >= 0);
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = NS_OP_CREATE;
+	strlcpy(cr.hostname, "term_test", sizeof(cr.hostname));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(ns_fd, CMI_CALL, &ca) == 0);
+	child_fd = reply_fds[0];
+
+	/* CMI_TERMINATE should remove the namespace. */
+	ATF_REQUIRE(ioctl(child_fd, CMI_TERMINATE, NULL) == 0);
+
+	/* REMOVE should fail — already gone. */
+	nr.op = NS_OP_REMOVE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ATF_CHECK(ioctl(child_fd, CMI_CALL, &ca) != 0);
+
+	close(child_fd);
+	close(ns_fd);
+}
+
 /* ================================================================ */
 ATF_TP_ADD_TCS(tp)
 {
@@ -4108,9 +4549,9 @@ ATF_TP_ADD_TCS(tp)
 	/* Sync/async enforcement */
 	ATF_TP_ADD_TC(tp, sendmsg_on_sync_service);
 	ATF_TP_ADD_TC(tp, call_on_async_service);
-	ATF_TP_ADD_TC(tp, jail_call_info);
-	ATF_TP_ADD_TC(tp, jail_call_short_req);
-	ATF_TP_ADD_TC(tp, jail_call_bad_op);
+	ATF_TP_ADD_TC(tp, namespace_call_info);
+	ATF_TP_ADD_TC(tp, namespace_call_short_req);
+	ATF_TP_ADD_TC(tp, namespace_call_bad_op);
 
 	/* Feature bit introspection */
 	ATF_TP_ADD_TC(tp, getinfo_async_features);
@@ -4121,12 +4562,16 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, pair_stress);
 	ATF_TP_ADD_TC(tp, pair_getinfo);
 
-	/* Jail: additional coverage */
-	ATF_TP_ADD_TC(tp, jail_call_zero_req);
-	ATF_TP_ADD_TC(tp, jail_getinfo);
-	ATF_TP_ADD_TC(tp, jail_badge_unique);
-	ATF_TP_ADD_TC(tp, jail_revoke_then_call);
-	ATF_TP_ADD_TC(tp, jail_enter_and_query);
+	/* Namespace: additional coverage */
+	ATF_TP_ADD_TC(tp, namespace_call_zero_req);
+	ATF_TP_ADD_TC(tp, namespace_getinfo);
+	ATF_TP_ADD_TC(tp, namespace_badge_unique);
+	ATF_TP_ADD_TC(tp, namespace_revoke_then_call);
+	ATF_TP_ADD_TC(tp, namespace_enter_and_query);
+	ATF_TP_ADD_TC(tp, namespace_create_and_remove);
+	ATF_TP_ADD_TC(tp, namespace_close_removes);
+	ATF_TP_ADD_TC(tp, namespace_mint_member);
+	ATF_TP_ADD_TC(tp, namespace_nest);
 
 	/* Keystore: additional coverage */
 	ATF_TP_ADD_TC(tp, keystore_max_keys);
@@ -4167,6 +4612,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, debug_close_unshields);
 	ATF_TP_ADD_TC(tp, debug_shield_blocks_signal);
 	ATF_TP_ADD_TC(tp, debug_mint_and_activate);
+	ATF_TP_ADD_TC(tp, debug_token_close_revokes);
+
+	/* Namespace: terminate */
+	ATF_TP_ADD_TC(tp, namespace_terminate_removes);
 
 	return (atf_no_error());
 }
