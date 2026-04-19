@@ -667,6 +667,14 @@ Added `cmi_token` — kernel-gated authorization tokens.  Issuers
 create labeled tokens that prove authorization.  Tokens can be
 validated, revoked, and passed.  dup shares the same instance.
 
+### Process identity token
+
+CMI uses pid for process identification in the debug module.
+Pid reuse and exec persistence are known weaknesses.  A per-process
+random token that rotates on exec (similar to CACL's token) would
+strengthen the debug capability and any future capability that
+needs to identify a specific process image, not just a pid.
+
 ### Phase 4: Migrate Keyvault to CMI
 
 Migrate the Keyvault kernel module (~/Projects/Keyvault) to use
