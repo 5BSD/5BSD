@@ -209,11 +209,17 @@ ns_call(struct cmi_instance *s,
 			uio.uio_iovcnt = niov;
 			uio.uio_segflg = UIO_SYSSPACE;
 
-			error = kern_jail_set(curthread, &uio,
-			    JAIL_CREATE);
+			{
+				register_t saved_retval;
+
+				saved_retval = curthread->td_retval[0];
+				error = kern_jail_set(curthread, &uio,
+				    JAIL_CREATE);
+				child_jid = (int)curthread->td_retval[0];
+				curthread->td_retval[0] = saved_retval;
+			}
 			if (error != 0)
 				return (error);
-			child_jid = (int)curthread->td_retval[0];
 			if (child_jid <= 0)
 				return (EINVAL);
 		}
@@ -224,9 +230,10 @@ ns_call(struct cmi_instance *s,
 			struct prison *pr;
 			sx_xlock(&allprison_lock);
 			pr = prison_find(child_jid);
-			if (pr != NULL)
+			if (pr != NULL) {
+				prison_hold(pr);
 				prison_remove(pr);
-			else
+			} else
 				sx_xunlock(&allprison_lock);
 			return (error);
 		}
@@ -289,10 +296,9 @@ ns_call(struct cmi_instance *s,
 		pr = prison_find(jid);
 		if (pr != NULL) {
 			/* prison_find returns with pr_mtx held.
-			 * prison_remove needs both allprison_lock
-			 * xlocked and pr_mtx locked. */
+			 * prison_remove consumes a ref — hold first. */
+			prison_hold(pr);
 			prison_remove(pr);
-			/* prison_remove drops both locks. */
 		} else {
 			sx_xunlock(&allprison_lock);
 		}
@@ -367,9 +373,10 @@ ns_revoke(struct cmi_instance *s, uint64_t badge __unused,
 		mtx_unlock(&np->np_mtx);
 		sx_xlock(&allprison_lock);
 		pr = prison_find(jid);
-		if (pr != NULL)
+		if (pr != NULL) {
+			prison_hold(pr);
 			prison_remove(pr);
-		else
+		} else
 			sx_xunlock(&allprison_lock);
 	} else {
 		mtx_unlock(&np->np_mtx);
@@ -400,10 +407,8 @@ cmi_namespace_modevent(module_t mod __unused, int type, void *unused __unused)
 			};
 			error = cmi_service_create(&p, &ns_svc);
 		}
-		if (error != 0) {
-			printf("cmi_namespace: failed: %d\n", error);
+		if (error != 0)
 			return (error);
-		}
 		if (bootverbose)
 			printf("cmi_namespace: loaded\n");
 		return (0);
