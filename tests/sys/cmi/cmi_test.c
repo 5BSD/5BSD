@@ -2757,14 +2757,16 @@ ATF_TC_HEAD(keystore_uid_isolation, tc)
 }
 ATF_TC_BODY(keystore_uid_isolation, tc)
 {
+	uint32_t keyid;
 	int fd, status;
 	pid_t pid;
 
 	fd = cmi_connect("keystore");
 	ATF_REQUIRE(fd >= 0);
+	keyid = 70000 + (uint32_t)(getpid() & 0xffff);
 
 	/* Store as root (uid 0). */
-	cmi_store(fd, 70000, "rootdata", 8);
+	cmi_store(fd, keyid, "rootdata", 8);
 	close(fd);
 
 	/* Child changes uid and tries to fetch. */
@@ -2777,8 +2779,8 @@ ATF_TC_BODY(keystore_uid_isolation, tc)
 		uint32_t rlen;
 		int cfd;
 
-		/* Change to uid 65534 (nobody). */
-		if (setuid(65534) != 0)
+		/* Change to any non-root uid. */
+		if (setuid(1) != 0)
 			_exit(10);
 
 		cfd = cmi_connect("keystore");
@@ -2786,7 +2788,7 @@ ATF_TC_BODY(keystore_uid_isolation, tc)
 			_exit(11);
 
 		req.op = KS_OP_FETCH;
-		req.keyid = 70000;
+		req.keyid = keyid;
 		if (cmi_send(cfd, &req, sizeof(req), 0) != 0)
 			_exit(1);
 		rlen = sizeof(buf);
