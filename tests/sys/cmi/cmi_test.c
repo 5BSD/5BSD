@@ -991,8 +991,17 @@ ATF_TC_BODY(instance_fstat, tc)
 	req.op = KS_OP_FETCH;
 	req.keyid = 0;
 	ATF_REQUIRE(cmi_send(fd, &req, sizeof(req), 0) == 0);
-	usleep(100000);  /* wait for async dispatch */
 
+	/* Poll fstat until the reply arrives in the TX queue. */
+	{
+		int i;
+		for (i = 0; i < 100; i++) {
+			ATF_REQUIRE(fstat(fd, &sb) == 0);
+			if (sb.st_size >= 1)
+				break;
+			usleep(10000);
+		}
+	}
 	ATF_REQUIRE(fstat(fd, &sb) == 0);
 	ATF_CHECK(sb.st_size >= 1);
 
@@ -1872,7 +1881,7 @@ ATF_TC_HEAD(pair_close_one_end, tc)
 ATF_TC_BODY(pair_close_one_end, tc)
 {
 	char buf[64];
-	int fd_a, fd_b, flags;
+	int fd_a, fd_b, flags, i;
 
 	cmi_pair_pair(&fd_a, &fd_b);
 
@@ -1880,15 +1889,18 @@ ATF_TC_BODY(pair_close_one_end, tc)
 	close(fd_a);
 
 	/*
-	 * B should be revoked.  Set nonblock and try to send —
-	 * should get EPIPE or ECONNRESET.
+	 * B should be revoked.  Set nonblock and poll until
+	 * the revocation propagates (no usleep dependency).
 	 */
 	flags = fcntl(fd_b, F_GETFL, 0);
 	fcntl(fd_b, F_SETFL, flags | O_NONBLOCK);
 
-	/* Give the framework a moment to process the revocation. */
-	usleep(50000);
-
+	for (i = 0; i < 100; i++) {
+		if (cmi_send(fd_b, "x", 1, 0) == -1 &&
+		    (errno == EPIPE || errno == ECONNRESET))
+			break;
+		usleep(10000);
+	}
 	ATF_CHECK(cmi_send(fd_b, "x", 1, 0) == -1);
 	ATF_CHECK(errno == EPIPE || errno == ECONNRESET);
 
@@ -4025,31 +4037,46 @@ ATF_TC_HEAD(debug_shield_blocks_ptrace, tc)
 }
 ATF_TC_BODY(debug_shield_blocks_ptrace, tc)
 {
-	int status;
+	int sv[2], status;
 	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
 
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 
 	if (pid == 0) {
-		int shield_fd = debug_shield();
+		char buf;
+		int shield_fd;
+
+		close(sv[0]);
+		shield_fd = debug_shield();
 		if (shield_fd < 0)
 			_exit(10);
-		/* Stay alive for parent to try ptrace. */
-		sleep(5);
+		/* Signal parent we're shielded. */
+		write(sv[1], "s", 1);
+		/* Wait for parent to finish. */
+		read(sv[1], &buf, 1);
 		close(shield_fd);
+		close(sv[1]);
 		_exit(0);
 	}
 
-	/* Give child time to shield. */
-	usleep(100000);
+	close(sv[1]);
+	{
+		char buf;
+		/* Wait for child to shield. */
+		ATF_REQUIRE(read(sv[0], &buf, 1) == 1);
+	}
 
 	/* ptrace should fail. */
 	ATF_CHECK_ERRNO(EACCES,
 	    ptrace(PT_ATTACH, pid, NULL, 0) == -1);
 
-	kill(pid, SIGKILL);
+	/* Tell child to exit. */
+	write(sv[0], "x", 1);
 	waitpid(pid, &status, 0);
+	close(sv[0]);
 }
 
 ATF_TC(debug_close_unshields);
@@ -4132,30 +4159,41 @@ ATF_TC_HEAD(debug_shield_blocks_signal, tc)
 }
 ATF_TC_BODY(debug_shield_blocks_signal, tc)
 {
-	int status;
+	int sv[2], status;
 	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
 
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 
 	if (pid == 0) {
-		int shield_fd = debug_shield();
+		char buf;
+		int shield_fd;
+
+		close(sv[0]);
+		shield_fd = debug_shield();
 		if (shield_fd < 0)
 			_exit(10);
-		sleep(5);
+		write(sv[1], "s", 1);
+		read(sv[1], &buf, 1);
 		close(shield_fd);
+		close(sv[1]);
 		_exit(0);
 	}
 
-	usleep(100000);
+	close(sv[1]);
+	{
+		char buf;
+		ATF_REQUIRE(read(sv[0], &buf, 1) == 1);
+	}
 
-	/* Signal should fail (except SIGKILL from root - that always works). */
 	ATF_CHECK_ERRNO(EACCES, kill(pid, SIGUSR1) == -1);
 
-	/* Clean up with SIGKILL - need to unshield first. */
-	/* Actually SIGKILL from root may be blocked too. Just terminate. */
-	kill(pid, SIGKILL);
+	/* SIGKILL always works through the shield. */
+	write(sv[0], "x", 1);
 	waitpid(pid, &status, 0);
+	close(sv[0]);
 }
 
 ATF_TC(debug_mint_and_activate);
@@ -5120,13 +5158,21 @@ ATF_TC_HEAD(pair_send_after_peer_close, tc)
 }
 ATF_TC_BODY(pair_send_after_peer_close, tc)
 {
-	int fd_a, fd_b;
+	int fd_a, fd_b, i, flags;
 
 	cmi_pair_pair(&fd_a, &fd_b);
 	close(fd_a);
 
-	usleep(50000);
+	flags = fcntl(fd_b, F_GETFL, 0);
+	fcntl(fd_b, F_SETFL, flags | O_NONBLOCK);
 
+	/* Poll until revocation propagates. */
+	for (i = 0; i < 100; i++) {
+		if (cmi_send(fd_b, "x", 1, 0) == -1 &&
+		    (errno == EPIPE || errno == ECONNRESET))
+			break;
+		usleep(10000);
+	}
 	ATF_CHECK(cmi_send(fd_b, "dead", 4, 0) == -1);
 	ATF_CHECK(errno == EPIPE || errno == ECONNRESET);
 
