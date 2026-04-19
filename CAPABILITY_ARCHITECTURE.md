@@ -65,7 +65,7 @@ messaging.
 2. **Messages are the interface.**  Every operation goes through
    `CMI_SENDMSG`/`CMI_RECVMSG` (async) or `CMI_CALL` (sync).
    No direct struct access from userspace.  Kernel-to-kernel
-   messaging uses `cmi_send()`.
+   messaging uses CMI_CALL or CMI_SENDMSG.
 
 3. **The framework owns the descriptor.**  Services never touch
    `falloc`, `finit`, `finstall`, `fileops`, or `DTYPE_*`.
@@ -305,32 +305,12 @@ fdrop(fp, curthread);
 This is how services return new capabilities to clients.  The
 cmi_pair sample demonstrates this pattern.
 
-## Kernel-to-kernel messaging
-
-Kernel modules can send messages to capabilities they hold:
-
-```c
-int cmi_send(struct file *fp, const void *data, size_t datalen,
-    struct file **fds, struct filecaps *fcaps, int nfds,
-    uint64_t reply_token);
-```
-
-`fp` must be a `DTYPE_CMI` file.  The message enqueues on the
-target's RX queue and flows through the normal dispatch path.
-No copyin -- data is already in kernel memory.  Credentials
-are stamped as `curthread`'s ucred.
-
-This is how kernel modules talk to each other through capabilities
-instead of direct function calls.  The target service doesn't need
-to know whether the sender is userspace or kernel.
-
 ## Service parameters
 
 ```c
 struct cmi_service_params p = {
     .name          = "myservice",
     .ops           = &ops,
-    .msg_size      = 16384,      /* 0 = 8192, max 64MB */
     .queue_depth   = 64,         /* 0 = 256, max 4096 */
     .tx_limit      = 128,        /* 0 = 256, max 4096 */
     .instance_limit = 512,       /* 0 = 1024, max 1M */
@@ -595,7 +575,7 @@ sys/dev/cmi/
     cmi_ioctl.h        shared ioctl definitions
     cmi_core.c         module lifecycle, capability creation
     cmi_dev.c          capability operations (ioctls, kqueue, close)
-    cmi_kern.c         KPI: dispatch, reply/notify/revoke, cmi_send
+    cmi_kern.c         KPI: dispatch, reply/notify/revoke
     cmi_debug.c        cap_debug: process protection via MACF
     cmi_keystore.c     async test fixture: key-value store
     cmi_namespace.c    namespace management (create, nest, remove)
@@ -627,7 +607,6 @@ tests/sys/cmi/             116 ATF tests via kyua
 ### Messaging (from co_handler or sleeping context)
 - `cmi_reply(s, token, data, len, fds, fcaps, nfds)` -- reply to a message
 - `cmi_notify(s, data, len, fds, fcaps, nfds)` -- push notification
-- `cmi_send(fp, data, len, fds, fcaps, nfds, token)` -- kernel-side send
 
 ### Instance management
 - `cmi_instance_revoke(s)` -- tear down instance
@@ -688,13 +667,7 @@ Added `cmi_token` — kernel-gated authorization tokens.  Issuers
 create labeled tokens that prove authorization.  Tokens can be
 validated, revoked, and passed.  dup shares the same instance.
 
-### Phase 4: Kernel-to-kernel messaging tests
-
-Add a test service (`cmi_proxy`) that receives a capability fd
-in a message and uses `cmi_send()` to send a message on it.
-Proves kernel modules can talk to each other through capabilities.
-
-### Phase 5: Migrate Keyvault to CMI
+### Phase 4: Migrate Keyvault to CMI
 
 Migrate the Keyvault kernel module (~/Projects/Keyvault) to use
 CMI as its transport.  Sync service — key operations are

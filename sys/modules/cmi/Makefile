@@ -23,7 +23,6 @@ EXPORT_SYMS=	cmi_service_create	\
 		cmi_msg_badge		\
 		cmi_msg_token		\
 		cmi_msg_cred		\
-		cmi_msg_pid		\
-		cmi_send
+		cmi_msg_pid
 
 .include <bsd.kmod.mk>

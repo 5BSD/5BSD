@@ -176,16 +176,6 @@ uint64_t cmi_instance_get_id(struct cmi_instance *s);
 int	cmi_mint_fp(struct cmi_service *svc, uint64_t badge,
 	    struct file **fpp);
 
-/*
- * Kernel-side send — enqueue a message on an instance's RX queue
- * from kernel context.  Same effect as userspace CMI_SENDMSG but
- * without copyin (data is already in kernel memory).
- * fp must be a CMI capability (DTYPE_CMI).
- */
-int	cmi_send(struct file *fp, const void *data, size_t datalen,
-	    struct file **fds, struct filecaps *fcaps, int nfds,
-	    uint64_t reply_token);
-
 /* Message accessors — for use in co_handler. */
 const void	*cmi_msg_data(const struct cmi_msg *msg);
 size_t		 cmi_msg_datalen(const struct cmi_msg *msg);
