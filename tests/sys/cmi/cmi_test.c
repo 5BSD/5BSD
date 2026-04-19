@@ -5111,6 +5111,99 @@ ATF_TC_BODY(pair_kqueue_eof_on_close, tc)
 	close(fd_b);
 }
 
+ATF_TC(pair_send_after_peer_close);
+ATF_TC_HEAD(pair_send_after_peer_close, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SENDMSG after peer closes returns EPIPE or ECONNRESET");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_pair");
+}
+ATF_TC_BODY(pair_send_after_peer_close, tc)
+{
+	int fd_a, fd_b;
+
+	cmi_pair_pair(&fd_a, &fd_b);
+	close(fd_a);
+
+	usleep(50000);
+
+	ATF_CHECK(cmi_send(fd_b, "dead", 4, 0) == -1);
+	ATF_CHECK(errno == EPIPE || errno == ECONNRESET);
+
+	close(fd_b);
+}
+
+ATF_TC(pair_unpaired_send);
+ATF_TC_HEAD(pair_unpaired_send, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SENDMSG before PAIR_OP_CREATE with wrong op fails");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_pair");
+}
+ATF_TC_BODY(pair_unpaired_send, tc)
+{
+	char buf[64];
+	uint32_t rlen;
+	int fd;
+
+	fd = cmi_connect("pair");
+	ATF_REQUIRE(fd >= 0);
+
+	/* Send a non-CREATE message to unpaired instance. */
+	uint32_t val = 99;
+	ATF_REQUIRE(cmi_send(fd, &val, sizeof(val), 0) == 0);
+
+	/* Should get an error reply (handler returns EINVAL). */
+	rlen = sizeof(buf);
+	ATF_REQUIRE(cmi_recv(fd, buf, &rlen, NULL) == 0);
+	/* Error reply is 4 bytes (uint32_t errno). */
+	ATF_CHECK(rlen == 4);
+
+	close(fd);
+}
+
+ATF_TC(terminate_twice);
+ATF_TC_HEAD(terminate_twice, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CMI_TERMINATE twice is harmless");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore");
+}
+ATF_TC_BODY(terminate_twice, tc)
+{
+	int fd;
+
+	fd = cmi_connect("keystore");
+	ATF_REQUIRE(fd >= 0);
+
+	ATF_REQUIRE(ioctl(fd, CMI_TERMINATE, NULL) == 0);
+	/* Second terminate — instance already dead. */
+	ATF_CHECK(ioctl(fd, CMI_TERMINATE, NULL) == 0);
+
+	close(fd);
+}
+
+ATF_TC(connect_reserved_nonzero);
+ATF_TC_HEAD(connect_reserved_nonzero, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CMI_CONNECT with nonzero reserved fields returns EINVAL");
+}
+ATF_TC_BODY(connect_reserved_nonzero, tc)
+{
+	struct cmi_connect_args ca;
+	int ctl;
+
+	ctl = cmi_open();
+
+	memset(&ca, 0, sizeof(ca));
+	strlcpy(ca.name, "keystore", sizeof(ca.name));
+	ca._reserved[0] = 1;
+	ATF_CHECK_ERRNO(EINVAL, ioctl(ctl, CMI_CONNECT, &ca) == -1);
+
+	close(ctl);
+}
+
 ATF_TC(namespace_double_remove);
 ATF_TC_HEAD(namespace_double_remove, tc)
 {
@@ -5587,6 +5680,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, token_fork_inherits);
 	ATF_TP_ADD_TC(tp, token_multiple_from_issuer);
 	ATF_TP_ADD_TC(tp, pair_kqueue_eof_on_close);
+
+	/* Pair: edge cases */
+	ATF_TP_ADD_TC(tp, pair_send_after_peer_close);
+	ATF_TP_ADD_TC(tp, pair_unpaired_send);
+
+	/* Framework: additional */
+	ATF_TP_ADD_TC(tp, terminate_twice);
+	ATF_TP_ADD_TC(tp, connect_reserved_nonzero);
 
 	/* Namespace: edge cases */
 	ATF_TP_ADD_TC(tp, namespace_double_remove);
