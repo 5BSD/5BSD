@@ -5111,6 +5111,254 @@ ATF_TC_BODY(pair_kqueue_eof_on_close, tc)
 	close(fd_b);
 }
 
+ATF_TC(namespace_double_remove);
+ATF_TC_HEAD(namespace_double_remove, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Removing an already-removed namespace returns error");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(namespace_double_remove, tc)
+{
+	struct cmi_call_args ca;
+	struct ns_create_request cr;
+	struct ns_request nr;
+	int ns_fd, child_fd;
+	int reply_fds[1];
+
+	ns_fd = cmi_connect("namespace");
+	ATF_REQUIRE(ns_fd >= 0);
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = NS_OP_CREATE;
+	strlcpy(cr.hostname, "double_rm", sizeof(cr.hostname));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(ns_fd, CMI_CALL, &ca) == 0);
+	child_fd = reply_fds[0];
+
+	/* First remove succeeds. */
+	nr.op = NS_OP_REMOVE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ATF_REQUIRE(ioctl(child_fd, CMI_CALL, &ca) == 0);
+
+	/* Second remove fails (jid already cleared). */
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ATF_CHECK(ioctl(child_fd, CMI_CALL, &ca) != 0);
+
+	close(child_fd);
+	close(ns_fd);
+}
+
+ATF_TC(namespace_deep_nest);
+ATF_TC_HEAD(namespace_deep_nest, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Three levels of nesting, remove root cascades all");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(namespace_deep_nest, tc)
+{
+	struct cmi_call_args ca;
+	struct ns_create_request cr;
+	struct ns_request nr;
+	int ns_fd, l1_fd, l2_fd, l3_fd;
+	int reply_fds[1];
+
+	ns_fd = cmi_connect("namespace");
+	ATF_REQUIRE(ns_fd >= 0);
+
+	/* Level 1. */
+	memset(&cr, 0, sizeof(cr));
+	cr.op = NS_OP_CREATE;
+	strlcpy(cr.hostname, "level1", sizeof(cr.hostname));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(ns_fd, CMI_CALL, &ca) == 0);
+	l1_fd = reply_fds[0];
+
+	/* Level 2 nested in 1. */
+	strlcpy(cr.hostname, "level2", sizeof(cr.hostname));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(l1_fd, CMI_CALL, &ca) == 0);
+	l2_fd = reply_fds[0];
+
+	/* Level 3 nested in 2. */
+	strlcpy(cr.hostname, "level3", sizeof(cr.hostname));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(l2_fd, CMI_CALL, &ca) == 0);
+	l3_fd = reply_fds[0];
+
+	/* Remove level 1 — 2 and 3 should cascade. */
+	nr.op = NS_OP_REMOVE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ATF_REQUIRE(ioctl(l1_fd, CMI_CALL, &ca) == 0);
+
+	/* Level 2 should be dead. */
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ATF_CHECK(ioctl(l2_fd, CMI_CALL, &ca) != 0);
+
+	/* Level 3 should be dead. */
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ATF_CHECK(ioctl(l3_fd, CMI_CALL, &ca) != 0);
+
+	close(l3_fd);
+	close(l2_fd);
+	close(l1_fd);
+	close(ns_fd);
+}
+
+ATF_TC(namespace_member_survives_owner_close);
+ATF_TC_HEAD(namespace_member_survives_owner_close, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Member fd remains usable for INFO after owner closes");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(namespace_member_survives_owner_close, tc)
+{
+	struct cmi_call_args ca;
+	struct ns_create_request cr;
+	struct ns_request nr;
+	struct ns_info_reply info;
+	int ns_fd, owner_fd, member_fd;
+	int reply_fds[1];
+
+	ns_fd = cmi_connect("namespace");
+	ATF_REQUIRE(ns_fd >= 0);
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = NS_OP_CREATE;
+	strlcpy(cr.hostname, "survive", sizeof(cr.hostname));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(ns_fd, CMI_CALL, &ca) == 0);
+	owner_fd = reply_fds[0];
+
+	/* Mint member. */
+	nr.op = NS_OP_MINT;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(owner_fd, CMI_CALL, &ca) == 0);
+	member_fd = reply_fds[0];
+
+	/*
+	 * Close owner — namespace is destroyed (co_revoke).
+	 * Member fd is still open but namespace is gone.
+	 */
+	close(owner_fd);
+
+	/*
+	 * Member INFO still works (reads caller's current namespace,
+	 * not the destroyed one).
+	 */
+	nr.op = NS_OP_INFO;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = &info;
+	ca.reply_len = sizeof(info);
+	ATF_CHECK(ioctl(member_fd, CMI_CALL, &ca) == 0);
+
+	/* Member ATTACH should fail — namespace is gone. */
+	nr.op = NS_OP_ATTACH;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = &info;
+	ca.reply_len = sizeof(info);
+	ATF_CHECK(ioctl(member_fd, CMI_CALL, &ca) != 0);
+
+	close(member_fd);
+	close(ns_fd);
+}
+
+ATF_TC(getinfo_after_terminate);
+ATF_TC_HEAD(getinfo_after_terminate, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "GETINFO on terminated instance still returns metadata");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore");
+}
+ATF_TC_BODY(getinfo_after_terminate, tc)
+{
+	struct cmi_info_args info;
+	int fd;
+
+	fd = cmi_connect("keystore");
+	ATF_REQUIRE(fd >= 0);
+
+	ATF_REQUIRE(ioctl(fd, CMI_TERMINATE, NULL) == 0);
+
+	/* GETINFO should still work — it doesn't check DEAD. */
+	memset(&info, 0, sizeof(info));
+	ATF_CHECK(ioctl(fd, CMI_GETINFO, &info) == 0);
+	ATF_CHECK_STREQ(info.name, "keystore");
+
+	close(fd);
+}
+
+ATF_TC(capsicum_gates_terminate);
+ATF_TC_HEAD(capsicum_gates_terminate, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "cap_ioctls_limit can block CMI_TERMINATE");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore");
+}
+ATF_TC_BODY(capsicum_gates_terminate, tc)
+{
+	cap_rights_t rights;
+	cap_ioctl_t cmds[1];
+	int fd;
+
+	fd = cmi_connect("keystore");
+	ATF_REQUIRE(fd >= 0);
+
+	/* Restrict to GETINFO only. */
+	cap_rights_init(&rights, CAP_IOCTL);
+	ATF_REQUIRE(cap_rights_limit(fd, &rights) == 0);
+	cmds[0] = CMI_GETINFO;
+	ATF_REQUIRE(cap_ioctls_limit(fd, cmds, 1) == 0);
+
+	/* TERMINATE should be blocked. */
+	ATF_CHECK_ERRNO(ENOTCAPABLE, ioctl(fd, CMI_TERMINATE, NULL) == -1);
+
+	close(fd);
+}
+
 ATF_TC(namespace_terminate_removes);
 ATF_TC_HEAD(namespace_terminate_removes, tc)
 {
@@ -5340,8 +5588,15 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, token_multiple_from_issuer);
 	ATF_TP_ADD_TC(tp, pair_kqueue_eof_on_close);
 
-	/* Namespace: terminate */
+	/* Namespace: edge cases */
+	ATF_TP_ADD_TC(tp, namespace_double_remove);
+	ATF_TP_ADD_TC(tp, namespace_deep_nest);
+	ATF_TP_ADD_TC(tp, namespace_member_survives_owner_close);
 	ATF_TP_ADD_TC(tp, namespace_terminate_removes);
+
+	/* Framework: edge cases */
+	ATF_TP_ADD_TC(tp, getinfo_after_terminate);
+	ATF_TP_ADD_TC(tp, capsicum_gates_terminate);
 
 	return (atf_no_error());
 }
