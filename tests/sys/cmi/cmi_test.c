@@ -5204,6 +5204,222 @@ ATF_TC_BODY(connect_reserved_nonzero, tc)
 	close(ctl);
 }
 
+ATF_TC(pair_double_create);
+ATF_TC_HEAD(pair_double_create, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Second PAIR_OP_CREATE after pairing gets error reply");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_pair");
+}
+ATF_TC_BODY(pair_double_create, tc)
+{
+	uint32_t op;
+	char buf[64];
+	uint32_t rlen;
+	int fd_a, fd_b;
+
+	cmi_pair_pair(&fd_a, &fd_b);
+
+	/* Already paired — second CREATE should get error. */
+	op = PAIR_OP_CREATE;
+	ATF_REQUIRE(cmi_send(fd_a, &op, sizeof(op), 0) == 0);
+	rlen = sizeof(buf);
+	ATF_REQUIRE(cmi_recv(fd_a, buf, &rlen, NULL) == 0);
+	/* Error reply is 4 bytes. */
+	ATF_CHECK_EQ(rlen, 4);
+
+	close(fd_b);
+	close(fd_a);
+}
+
+ATF_TC(sendmsg_flags_nonzero);
+ATF_TC_HEAD(sendmsg_flags_nonzero, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SENDMSG with nonzero flags returns EINVAL");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore");
+}
+ATF_TC_BODY(sendmsg_flags_nonzero, tc)
+{
+	struct cmi_sendmsg_args sa;
+	int fd;
+
+	fd = cmi_connect("keystore");
+	ATF_REQUIRE(fd >= 0);
+
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = "x";
+	sa.payload_len = 1;
+	sa.flags = 1;
+	ATF_CHECK_ERRNO(EINVAL, ioctl(fd, CMI_SENDMSG, &sa) == -1);
+
+	close(fd);
+}
+
+ATF_TC(recvmsg_flags_nonzero);
+ATF_TC_HEAD(recvmsg_flags_nonzero, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "RECVMSG with nonzero flags returns EINVAL");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore");
+}
+ATF_TC_BODY(recvmsg_flags_nonzero, tc)
+{
+	struct cmi_recvmsg_args ra;
+	char buf[64];
+	int fd;
+
+	fd = cmi_connect("keystore");
+	ATF_REQUIRE(fd >= 0);
+
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
+	ra.flags = 1;
+	ATF_CHECK_ERRNO(EINVAL, ioctl(fd, CMI_RECVMSG, &ra) == -1);
+
+	close(fd);
+}
+
+ATF_TC(lock_idempotent);
+ATF_TC_HEAD(lock_idempotent, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CMI_LOCK twice is harmless");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore");
+}
+ATF_TC_BODY(lock_idempotent, tc)
+{
+	int fd;
+
+	fd = cmi_connect("keystore");
+	ATF_REQUIRE(fd >= 0);
+
+	ATF_REQUIRE(ioctl(fd, CMI_LOCK, NULL) == 0);
+	ATF_CHECK(ioctl(fd, CMI_LOCK, NULL) == 0);
+
+	close(fd);
+}
+
+ATF_TC(revoke_send_on_sync);
+ATF_TC_HEAD(revoke_send_on_sync, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "REVOKE_SEND on sync service — SENDMSG already EOPNOTSUPP");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
+}
+ATF_TC_BODY(revoke_send_on_sync, tc)
+{
+	struct cmi_sendmsg_args sa;
+	int fd;
+
+	fd = cmi_connect("namespace");
+	ATF_REQUIRE(fd >= 0);
+
+	/* Revoke send on a sync service. */
+	ATF_REQUIRE(ioctl(fd, CMI_REVOKE_SEND, NULL) == 0);
+
+	/* SENDMSG was already EOPNOTSUPP, now it's EACCES. */
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = "x";
+	sa.payload_len = 1;
+	ATF_CHECK(ioctl(fd, CMI_SENDMSG, &sa) == -1);
+	ATF_CHECK(errno == EACCES || errno == EOPNOTSUPP);
+
+	close(fd);
+}
+
+ATF_TC(revoke_call_on_async);
+ATF_TC_HEAD(revoke_call_on_async, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "REVOKE_CALL on async service — CALL already EOPNOTSUPP");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore");
+}
+ATF_TC_BODY(revoke_call_on_async, tc)
+{
+	struct cmi_call_args ca;
+	int fd;
+
+	fd = cmi_connect("keystore");
+	ATF_REQUIRE(fd >= 0);
+
+	ATF_REQUIRE(ioctl(fd, CMI_REVOKE_CALL, NULL) == 0);
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = "x";
+	ca.req_len = 1;
+	ATF_CHECK(ioctl(fd, CMI_CALL, &ca) == -1);
+	ATF_CHECK(errno == EACCES || errno == EOPNOTSUPP);
+
+	close(fd);
+}
+
+ATF_TC(token_getinfo_features);
+ATF_TC_HEAD(token_getinfo_features, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Token service reports CALL only, not SENDMSG");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_token");
+}
+ATF_TC_BODY(token_getinfo_features, tc)
+{
+	struct cmi_info_args info;
+	int fd;
+
+	fd = cmi_connect("token");
+	ATF_REQUIRE(fd >= 0);
+
+	memset(&info, 0, sizeof(info));
+	ATF_REQUIRE(ioctl(fd, CMI_GETINFO, &info) == 0);
+	ATF_CHECK_STREQ(info.name, "token");
+	ATF_CHECK((info.features & CMI_INFO_F_CALL) != 0);
+	ATF_CHECK((info.features & CMI_INFO_F_SENDMSG) == 0);
+	ATF_CHECK((info.features & CMI_INFO_F_KQUEUE) == 0);
+
+	close(fd);
+}
+
+ATF_TC(close_during_blocked_recv);
+ATF_TC_HEAD(close_during_blocked_recv, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Close fd from another thread while RECVMSG blocks");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore");
+}
+ATF_TC_BODY(close_during_blocked_recv, tc)
+{
+	int fd, status;
+	pid_t pid;
+
+	fd = cmi_connect("keystore");
+	ATF_REQUIRE(fd >= 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		/* Child: block on RECVMSG (no messages pending). */
+		struct cmi_recvmsg_args ra;
+		char buf[64];
+
+		memset(&ra, 0, sizeof(ra));
+		ra.payload = buf;
+		ra.payload_len = sizeof(buf);
+		/* This will block until parent closes or we get a signal. */
+		ioctl(fd, CMI_RECVMSG, &ra);
+		_exit(0);
+	}
+
+	/* Parent: give child time to block, then close. */
+	usleep(100000);
+	close(fd);
+
+	/* Child should unblock and exit. */
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK(WIFEXITED(status));
+}
+
 ATF_TC(namespace_double_remove);
 ATF_TC_HEAD(namespace_double_remove, tc)
 {
@@ -5684,6 +5900,16 @@ ATF_TP_ADD_TCS(tp)
 	/* Pair: edge cases */
 	ATF_TP_ADD_TC(tp, pair_send_after_peer_close);
 	ATF_TP_ADD_TC(tp, pair_unpaired_send);
+	ATF_TP_ADD_TC(tp, pair_double_create);
+
+	/* More framework edge cases */
+	ATF_TP_ADD_TC(tp, sendmsg_flags_nonzero);
+	ATF_TP_ADD_TC(tp, recvmsg_flags_nonzero);
+	ATF_TP_ADD_TC(tp, lock_idempotent);
+	ATF_TP_ADD_TC(tp, revoke_send_on_sync);
+	ATF_TP_ADD_TC(tp, revoke_call_on_async);
+	ATF_TP_ADD_TC(tp, token_getinfo_features);
+	ATF_TP_ADD_TC(tp, close_during_blocked_recv);
 
 	/* Framework: additional */
 	ATF_TP_ADD_TC(tp, terminate_twice);
