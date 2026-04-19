@@ -4282,6 +4282,150 @@ ATF_TC_BODY(debug_mint_and_activate, tc)
 	close(sv[0]);
 }
 
+ATF_TC(debug_double_shield);
+ATF_TC_HEAD(debug_double_shield, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Calling SHIELD twice is idempotent");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_debug");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(debug_double_shield, tc)
+{
+	struct cmi_call_args ca;
+	struct debug_request req;
+	int fd;
+
+	fd = debug_shield();
+	ATF_REQUIRE(fd >= 0);
+
+	/* Second shield should succeed (idempotent). */
+	req.op = DEBUG_OP_SHIELD;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ATF_CHECK(ioctl(fd, CMI_CALL, &ca) == 0);
+
+	close(fd);
+}
+
+ATF_TC(debug_mint_without_shield);
+ATF_TC_HEAD(debug_mint_without_shield, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "MINT without active shield returns EINVAL");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_debug");
+}
+ATF_TC_BODY(debug_mint_without_shield, tc)
+{
+	struct cmi_call_args ca;
+	struct debug_request req;
+	int fd, reply_fds[1];
+
+	fd = cmi_connect("debug");
+	ATF_REQUIRE(fd >= 0);
+
+	req.op = DEBUG_OP_MINT;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_CHECK_ERRNO(EINVAL, ioctl(fd, CMI_CALL, &ca) == -1);
+
+	close(fd);
+}
+
+ATF_TC(debug_shield_from_token);
+ATF_TC_HEAD(debug_shield_from_token, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Calling SHIELD on a token fd returns EINVAL");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_debug");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(debug_shield_from_token, tc)
+{
+	struct cmi_call_args ca;
+	struct debug_request req;
+	int fd, token_fd;
+	int reply_fds[1];
+
+	fd = debug_shield();
+	ATF_REQUIRE(fd >= 0);
+
+	/* Mint a token. */
+	req.op = DEBUG_OP_MINT;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(fd, CMI_CALL, &ca) == 0);
+	token_fd = reply_fds[0];
+
+	/* SHIELD on token should fail. */
+	req.op = DEBUG_OP_SHIELD;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ATF_CHECK_ERRNO(EINVAL, ioctl(token_fd, CMI_CALL, &ca) == -1);
+
+	close(token_fd);
+	close(fd);
+}
+
+ATF_TC(debug_activate_on_shield);
+ATF_TC_HEAD(debug_activate_on_shield, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Calling ACTIVATE on a shield fd returns EINVAL");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_debug");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(debug_activate_on_shield, tc)
+{
+	struct cmi_call_args ca;
+	struct debug_request req;
+	int fd;
+
+	fd = debug_shield();
+	ATF_REQUIRE(fd >= 0);
+
+	req.op = DEBUG_OP_ACTIVATE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ATF_CHECK_ERRNO(EINVAL, ioctl(fd, CMI_CALL, &ca) == -1);
+
+	close(fd);
+}
+
+ATF_TC(debug_bad_op);
+ATF_TC_HEAD(debug_bad_op, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Unknown debug op returns EOPNOTSUPP");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_debug");
+}
+ATF_TC_BODY(debug_bad_op, tc)
+{
+	struct cmi_call_args ca;
+	struct debug_request req;
+	int fd;
+
+	fd = cmi_connect("debug");
+	ATF_REQUIRE(fd >= 0);
+
+	req.op = 99;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ATF_CHECK_ERRNO(EOPNOTSUPP, ioctl(fd, CMI_CALL, &ca) == -1);
+
+	close(fd);
+}
+
 ATF_TC(debug_token_close_revokes);
 ATF_TC_HEAD(debug_token_close_revokes, tc)
 {
@@ -4612,6 +4756,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, debug_close_unshields);
 	ATF_TP_ADD_TC(tp, debug_shield_blocks_signal);
 	ATF_TP_ADD_TC(tp, debug_mint_and_activate);
+	ATF_TP_ADD_TC(tp, debug_double_shield);
+	ATF_TP_ADD_TC(tp, debug_mint_without_shield);
+	ATF_TP_ADD_TC(tp, debug_shield_from_token);
+	ATF_TP_ADD_TC(tp, debug_activate_on_shield);
+	ATF_TP_ADD_TC(tp, debug_bad_op);
 	ATF_TP_ADD_TC(tp, debug_token_close_revokes);
 
 	/* Namespace: terminate */

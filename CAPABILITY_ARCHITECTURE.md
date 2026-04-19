@@ -693,7 +693,9 @@ Add a test service (`cmi_proxy`) that receives a capability fd
 in a message and uses `cmi_send()` to send a message on it.
 Proves kernel modules can talk to each other through capabilities.
 
-### Phase 5: Migrate existing modules
+### Phase 5: Migrate Keyvault to CMI
 
-- **Keyvault** (sync): key storage and crypto ops via CMI.
-- **SecurityCoalitions** (sync): group termination via CMI.
+Migrate the Keyvault kernel module (~/Projects/Keyvault) to use
+CMI as its transport.  Sync service — key operations are
+request-reply in caller context.  Capability fd = authority to
+use a key.  Eliminates custom /dev/ and ioctl boilerplate.
