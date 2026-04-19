@@ -596,16 +596,20 @@ sys/dev/cmi/
     cmi_core.c         module lifecycle, capability creation
     cmi_dev.c          capability operations (ioctls, kqueue, close)
     cmi_kern.c         KPI: dispatch, reply/notify/revoke, cmi_send
-    cmi_keystore.c     sample: async key-value store
-    cmi_pair.c         sample: async bidirectional capability pair
-    cmi_namespace.c         sample: sync namespace management
+    cmi_debug.c        cap_debug: process protection via MACF
+    cmi_keystore.c     async test fixture: key-value store
+    cmi_namespace.c    namespace management (create, nest, remove)
+    cmi_pair.c         bidirectional capability pair
+    cmi_token.c        kernel-gated authorization tokens
 
 sys/modules/cmi/           core module
-sys/modules/cmi_keystore/  keystore sample
-sys/modules/cmi_pair/      pair sample
-sys/modules/cmi_namespace/      namespace sample
+sys/modules/cmi_debug/     debug shield
+sys/modules/cmi_keystore/  keystore test fixture
+sys/modules/cmi_namespace/ namespace management
+sys/modules/cmi_pair/      capability pair
+sys/modules/cmi_token/     authorization token
 
-tests/sys/cmi/             77 ATF tests via kyua
+tests/sys/cmi/             116 ATF tests via kyua
 ```
 
 ## Base system changes
@@ -667,25 +671,22 @@ Provider: `cmi`
 
 ## Roadmap
 
-### Phase 1: cap_debug — process debug protection
+### Phase 1: cap_debug — process debug protection (DONE)
 
-New CMI sync service (`cmi_debug`).  CMI_CALL activates protection
-on the calling process via MACF.  Protected processes cannot be
-debugged, traced, or signaled by unprivileged processes.  A debug
-capability can be minted and passed to authorized debuggers to
-override the protection.  Closing the shield removes protection.
+CMI sync service (`cmi_debug`) backed by MACF.  Shield protects
+from ptrace/signals.  Debug tokens authorize specific debuggers.
+Close removes protection.  Per-instance mutex for safety.
 
 ### Phase 2: Rename jail → namespace (DONE)
 
 Renamed `cmi_jail` to `cmi_namespace`.  Service name is now
 "namespace" instead of "jail".
 
-### Phase 3: Token capability (replaces keystore)
+### Phase 3: Token capability (DONE)
 
-Replace the keystore test fixture with `cmi_token` — a kernel-gated
-token capability.  Holding a token fd proves authorization.  Tokens
-cannot be copied — duplicating produces a new independent token.
-The kernel gates issuance and validates possession.
+Added `cmi_token` — kernel-gated authorization tokens.  Issuers
+create labeled tokens that prove authorization.  Tokens can be
+validated, revoked, and passed.  dup shares the same instance.
 
 ### Phase 4: Kernel-to-kernel messaging tests
 

@@ -70,6 +70,7 @@ echo "=== Loading CMI ==="
 kldload cmi         || { echo "FAIL: kldload cmi"; exit 1; }
 kldload cmi_keystore || { echo "FAIL: kldload cmi_keystore"; exit 1; }
 kldload cmi_pair    || { echo "FAIL: kldload cmi_pair"; exit 1; }
+kldload cmi_token    || { echo "FAIL: kldload cmi_token"; exit 1; }
 kldload cmi_namespace    || { echo "FAIL: kldload cmi_namespace"; exit 1; }
 kldload cmi_debug    || { echo "FAIL: kldload cmi_debug"; exit 1; }
 echo "=== Verifying ==="
@@ -90,6 +91,7 @@ fi
 echo "=== Unloading ==="
 kldunload cmi_debug
 kldunload cmi_namespace
+kldunload cmi_token
 kldunload cmi_pair
 kldunload cmi_keystore
 kldunload cmi
@@ -116,6 +118,7 @@ echo "=== Loading CMI ==="
 kldload cmi         || { echo "FAIL: kldload cmi"; exit 1; }
 kldload cmi_keystore || { echo "FAIL: kldload cmi_keystore"; exit 1; }
 kldload cmi_pair    || { echo "FAIL: kldload cmi_pair"; exit 1; }
+kldload cmi_token    || { echo "FAIL: kldload cmi_token"; exit 1; }
 kldload cmi_namespace    || { echo "FAIL: kldload cmi_namespace"; exit 1; }
 kldload cmi_debug    || { echo "FAIL: kldload cmi_debug"; exit 1; }
 echo "=== Verifying ==="
@@ -136,6 +139,7 @@ fi
 echo "=== Unloading ==="
 kldunload cmi_debug
 kldunload cmi_namespace
+kldunload cmi_token
 kldunload cmi_pair
 kldunload cmi_keystore
 kldunload cmi

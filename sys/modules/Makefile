@@ -215,6 +215,7 @@ SUBDIR=	\
 	cmi_keystore \
 	cmi_namespace \
 	cmi_pair \
+	cmi_token \
 	kgssapi \
 	kgssapi_krb5 \
 	khelp \

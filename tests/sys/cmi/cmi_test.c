@@ -4550,6 +4550,296 @@ ATF_TC_BODY(debug_token_close_revokes, tc)
 	close(sv[0]);
 }
 
+/* ================================================================
+ * Token capability
+ * ================================================================ */
+
+#define	TOKEN_OP_CREATE		1
+#define	TOKEN_OP_VALIDATE	2
+#define	TOKEN_OP_REVOKE		3
+#define	TOKEN_LABEL_MAX		64
+
+struct token_create_request {
+	uint32_t	op;
+	char		label[TOKEN_LABEL_MAX];
+} __packed;
+
+struct token_request {
+	uint32_t	op;
+} __packed;
+
+struct token_validate_reply {
+	uint32_t	valid;
+	uid_t		issuer_uid;
+	pid_t		issuer_pid;
+	char		label[TOKEN_LABEL_MAX];
+};
+
+ATF_TC(token_create_and_validate);
+ATF_TC_HEAD(token_create_and_validate, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Create a token, validate it");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_token");
+}
+ATF_TC_BODY(token_create_and_validate, tc)
+{
+	struct cmi_call_args ca;
+	struct token_create_request cr;
+	struct token_request tr;
+	struct token_validate_reply vr;
+	int issuer_fd, token_fd;
+	int reply_fds[1];
+
+	issuer_fd = cmi_connect("token");
+	ATF_REQUIRE(issuer_fd >= 0);
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = TOKEN_OP_CREATE;
+	strlcpy(cr.label, "test_auth", sizeof(cr.label));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(issuer_fd, CMI_CALL, &ca) == 0);
+	token_fd = reply_fds[0];
+	ATF_REQUIRE(token_fd >= 0);
+
+	/* Validate. */
+	tr.op = TOKEN_OP_VALIDATE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &tr;
+	ca.req_len = sizeof(tr);
+	ca.reply = &vr;
+	ca.reply_len = sizeof(vr);
+	ATF_REQUIRE(ioctl(token_fd, CMI_CALL, &ca) == 0);
+	ATF_CHECK_EQ(vr.valid, 1);
+	ATF_CHECK_STREQ(vr.label, "test_auth");
+	ATF_CHECK_EQ(vr.issuer_uid, getuid());
+	ATF_CHECK_EQ(vr.issuer_pid, getpid());
+
+	close(token_fd);
+	close(issuer_fd);
+}
+
+ATF_TC(token_revoke_invalidates);
+ATF_TC_HEAD(token_revoke_invalidates, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Revoking a token makes validate return invalid");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_token");
+}
+ATF_TC_BODY(token_revoke_invalidates, tc)
+{
+	struct cmi_call_args ca;
+	struct token_create_request cr;
+	struct token_request tr;
+	struct token_validate_reply vr;
+	int issuer_fd, token_fd;
+	int reply_fds[1];
+
+	issuer_fd = cmi_connect("token");
+	ATF_REQUIRE(issuer_fd >= 0);
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = TOKEN_OP_CREATE;
+	strlcpy(cr.label, "revoke_test", sizeof(cr.label));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(issuer_fd, CMI_CALL, &ca) == 0);
+	token_fd = reply_fds[0];
+
+	/* Revoke it. */
+	tr.op = TOKEN_OP_REVOKE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &tr;
+	ca.req_len = sizeof(tr);
+	ATF_REQUIRE(ioctl(token_fd, CMI_CALL, &ca) == 0);
+
+	/* Validate — should show invalid. */
+	tr.op = TOKEN_OP_VALIDATE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &tr;
+	ca.req_len = sizeof(tr);
+	ca.reply = &vr;
+	ca.reply_len = sizeof(vr);
+	ATF_REQUIRE(ioctl(token_fd, CMI_CALL, &ca) == 0);
+	ATF_CHECK_EQ(vr.valid, 0);
+	/* Label is still readable even after revoke. */
+	ATF_CHECK_STREQ(vr.label, "revoke_test");
+
+	close(token_fd);
+	close(issuer_fd);
+}
+
+ATF_TC(token_dup_shares_instance);
+ATF_TC_HEAD(token_dup_shares_instance, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Dup'd token shares instance — revoke one, both invalid");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_token");
+}
+ATF_TC_BODY(token_dup_shares_instance, tc)
+{
+	struct cmi_call_args ca;
+	struct token_create_request cr;
+	struct token_request tr;
+	struct token_validate_reply vr;
+	int issuer_fd, token_fd, dup_fd;
+	int reply_fds[1];
+
+	issuer_fd = cmi_connect("token");
+	ATF_REQUIRE(issuer_fd >= 0);
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = TOKEN_OP_CREATE;
+	strlcpy(cr.label, "dup_test", sizeof(cr.label));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(issuer_fd, CMI_CALL, &ca) == 0);
+	token_fd = reply_fds[0];
+
+	dup_fd = dup(token_fd);
+	ATF_REQUIRE(dup_fd >= 0);
+
+	/* Revoke via original. */
+	tr.op = TOKEN_OP_REVOKE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &tr;
+	ca.req_len = sizeof(tr);
+	ATF_REQUIRE(ioctl(token_fd, CMI_CALL, &ca) == 0);
+
+	/* Validate via dup — should be invalid. */
+	tr.op = TOKEN_OP_VALIDATE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &tr;
+	ca.req_len = sizeof(tr);
+	ca.reply = &vr;
+	ca.reply_len = sizeof(vr);
+	ATF_REQUIRE(ioctl(dup_fd, CMI_CALL, &ca) == 0);
+	ATF_CHECK_EQ(vr.valid, 0);
+
+	close(dup_fd);
+	close(token_fd);
+	close(issuer_fd);
+}
+
+ATF_TC(token_validate_on_issuer);
+ATF_TC_HEAD(token_validate_on_issuer, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "VALIDATE on issuer fd returns EINVAL");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_token");
+}
+ATF_TC_BODY(token_validate_on_issuer, tc)
+{
+	struct cmi_call_args ca;
+	struct token_create_request cr;
+	struct token_request tr;
+	struct token_validate_reply vr;
+	int issuer_fd, token_fd;
+	int reply_fds[1];
+
+	issuer_fd = cmi_connect("token");
+	ATF_REQUIRE(issuer_fd >= 0);
+
+	/* Create a token first so issuer role is set. */
+	memset(&cr, 0, sizeof(cr));
+	cr.op = TOKEN_OP_CREATE;
+	strlcpy(cr.label, "x", sizeof(cr.label));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(issuer_fd, CMI_CALL, &ca) == 0);
+	token_fd = reply_fds[0];
+	close(token_fd);
+
+	/* Validate on issuer should fail. */
+	tr.op = TOKEN_OP_VALIDATE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &tr;
+	ca.req_len = sizeof(tr);
+	ca.reply = &vr;
+	ca.reply_len = sizeof(vr);
+	ATF_CHECK_ERRNO(EINVAL, ioctl(issuer_fd, CMI_CALL, &ca) == -1);
+
+	close(issuer_fd);
+}
+
+ATF_TC(token_create_from_token);
+ATF_TC_HEAD(token_create_from_token, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CREATE on a token fd returns EINVAL");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_token");
+}
+ATF_TC_BODY(token_create_from_token, tc)
+{
+	struct cmi_call_args ca;
+	struct token_create_request cr;
+	int issuer_fd, token_fd;
+	int reply_fds[1];
+
+	issuer_fd = cmi_connect("token");
+	ATF_REQUIRE(issuer_fd >= 0);
+
+	memset(&cr, 0, sizeof(cr));
+	cr.op = TOKEN_OP_CREATE;
+	strlcpy(cr.label, "x", sizeof(cr.label));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(issuer_fd, CMI_CALL, &ca) == 0);
+	token_fd = reply_fds[0];
+
+	/* CREATE on token should fail. */
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &cr;
+	ca.req_len = sizeof(cr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_CHECK_ERRNO(EINVAL, ioctl(token_fd, CMI_CALL, &ca) == -1);
+
+	close(token_fd);
+	close(issuer_fd);
+}
+
+ATF_TC(token_bad_op);
+ATF_TC_HEAD(token_bad_op, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Unknown token op returns EOPNOTSUPP");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_token");
+}
+ATF_TC_BODY(token_bad_op, tc)
+{
+	struct cmi_call_args ca;
+	struct token_request tr;
+	int fd;
+
+	fd = cmi_connect("token");
+	ATF_REQUIRE(fd >= 0);
+
+	tr.op = 99;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &tr;
+	ca.req_len = sizeof(tr);
+	ATF_CHECK_ERRNO(EOPNOTSUPP, ioctl(fd, CMI_CALL, &ca) == -1);
+
+	close(fd);
+}
+
 ATF_TC(namespace_terminate_removes);
 ATF_TC_HEAD(namespace_terminate_removes, tc)
 {
@@ -4762,6 +5052,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, debug_activate_on_shield);
 	ATF_TP_ADD_TC(tp, debug_bad_op);
 	ATF_TP_ADD_TC(tp, debug_token_close_revokes);
+
+	/* Token capability */
+	ATF_TP_ADD_TC(tp, token_create_and_validate);
+	ATF_TP_ADD_TC(tp, token_revoke_invalidates);
+	ATF_TP_ADD_TC(tp, token_dup_shares_instance);
+	ATF_TP_ADD_TC(tp, token_validate_on_issuer);
+	ATF_TP_ADD_TC(tp, token_create_from_token);
+	ATF_TP_ADD_TC(tp, token_bad_op);
 
 	/* Namespace: terminate */
 	ATF_TP_ADD_TC(tp, namespace_terminate_removes);
