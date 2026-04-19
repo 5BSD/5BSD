@@ -10,7 +10,7 @@ SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 SRCTOP=$(CDPATH= cd "$SCRIPT_DIR/../../.." && pwd -P)
 
 CORE_MODULE="cmi"
-SERVICE_MODULES="cmi_keystore cmi_pair cmi_jail"
+SERVICE_MODULES="cmi_keystore cmi_pair cmi_namespace cmi_debug cmi_token"
 DTRACE_PROBES="connect send recv dispatch reply notify call revoke close"
 
 MODDIR="${MODDIR:-$SRCTOP/sys/modules}"
@@ -56,7 +56,7 @@ info "Building tests"
 
 # Unload any stale modules (reverse order)
 info "Unloading stale modules"
-for m in cmi_jail cmi_pair cmi_keystore $CORE_MODULE; do
+for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore $CORE_MODULE; do
 	kldunload "$m" 2>/dev/null || true
 done
 
@@ -107,8 +107,8 @@ if command -v dtrace >/dev/null 2>&1; then
 	# Fire probes and verify they fire.  write_read exercises
 	# connect, send, dispatch, reply, recv, close.
 	# pair_bidirectional adds notify.
-	# revoke_via_token adds revoke.
-	# jail_call_info adds call.
+	# terminate_instance adds revoke.
+	# namespace_call_info adds call.
 	info "DTrace live trace test"
 	dtrace -n '
 	    cmi:::connect  { traced++; }
@@ -122,7 +122,7 @@ if command -v dtrace >/dev/null 2>&1; then
 	    cmi:::close    { traced++; }
 	    tick-5s /traced > 0/ { printf("probes fired: %d", traced); exit(0); }
 	    tick-10s /traced == 0/ { printf("ERROR: no probes fired"); exit(1); }
-	' -c "sh -c './cmi_test write_read; ./cmi_test pair_bidirectional; ./cmi_test revoke_via_token; ./cmi_test jail_call_info'" 2>&1 | tail -5
+	' -c "sh -c './cmi_test write_read; ./cmi_test pair_bidirectional; ./cmi_test terminate_instance; ./cmi_test namespace_call_info'" 2>&1 | tail -5
 
 	info "DTrace probes verified"
 else
@@ -131,9 +131,9 @@ fi
 
 # Verify clean unload
 info "Testing module unload"
-kldunload cmi_jail || die "unload cmi_jail"
-kldunload cmi_pair || die "unload cmi_pair"
-kldunload cmi_keystore || die "unload cmi_keystore"
+for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore; do
+	kldunload "$m" || die "unload $m"
+done
 kldunload "$CORE_MODULE" || die "unload $CORE_MODULE"
 
 # Verify /dev/cmi is gone

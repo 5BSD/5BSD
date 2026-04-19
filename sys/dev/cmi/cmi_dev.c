@@ -498,7 +498,18 @@ cmi_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			ca->reply_len = 0;
 		}
 
-		/* Install reply fds into caller's fd table. */
+		/* Install reply fds into caller's fd table.
+		 * If handler returned fds but caller has no buffer,
+		 * drop them to avoid leaking. */
+		if (err == 0 && out_nfds > 0 && ca->reply_fds == NULL) {
+			for (i = 0; i < out_nfds; i++) {
+				if (out_fds[i] != NULL) {
+					fdrop(out_fds[i], td);
+					out_fds[i] = NULL;
+				}
+			}
+			out_nfds = 0;
+		}
 		if (err == 0 && out_nfds > 0 && ca->reply_fds != NULL) {
 			for (i = 0; i < out_nfds; i++) {
 				err = finstall(td, out_fds[i], &fdbuf[i],

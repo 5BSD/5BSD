@@ -176,7 +176,9 @@ ns_call(struct cmi_instance *s,
 				    ppr->pr_name, cr->hostname);
 				mtx_unlock(&ppr->pr_mtx);
 			} else {
-				strlcpy(name, cr->hostname, sizeof(name));
+				/* Parent gone — refuse to create top-level. */
+				sx_sunlock(&allprison_lock);
+				return (EINVAL);
 			}
 			sx_sunlock(&allprison_lock);
 		} else {
