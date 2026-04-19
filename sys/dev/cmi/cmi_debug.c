@@ -25,7 +25,6 @@
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
-#include <sys/sx.h>
 #include <sys/ucred.h>
 
 #include <security/mac/mac_policy.h>
@@ -58,7 +57,7 @@ struct debug_priv {
 /*
  * Global tables — protected by debug_sx.
  */
-static struct sx debug_sx;
+static struct mtx debug_mtx;
 
 /* Shield table: pids that are shielded. */
 struct shield_entry {
@@ -86,7 +85,7 @@ debug_is_shielded(pid_t pid)
 {
 	struct shield_entry *se;
 
-	sx_assert(&debug_sx, SA_LOCKED);
+	mtx_assert(&debug_mtx, MA_OWNED);
 	LIST_FOREACH(se, &debug_shields, se_link) {
 		if (se->se_pid == pid)
 			return (1);
@@ -99,7 +98,7 @@ debug_is_authorized(pid_t debugger, pid_t target)
 {
 	struct auth_entry *ae;
 
-	sx_assert(&debug_sx, SA_LOCKED);
+	mtx_assert(&debug_mtx, MA_OWNED);
 	LIST_FOREACH(ae, &debug_auths, ae_link) {
 		if (ae->ae_debugger == debugger && ae->ae_target == target)
 			return (1);
@@ -112,13 +111,17 @@ debug_shield_add(pid_t pid)
 {
 	struct shield_entry *se;
 
-	sx_xlock(&debug_sx);
+	se = malloc(sizeof(*se), M_CMI_DEBUG, M_WAITOK);
+	se->se_pid = pid;
+
+	mtx_lock(&debug_mtx);
 	if (!debug_is_shielded(pid)) {
-		se = malloc(sizeof(*se), M_CMI_DEBUG, M_WAITOK);
-		se->se_pid = pid;
 		LIST_INSERT_HEAD(&debug_shields, se, se_link);
+		mtx_unlock(&debug_mtx);
+	} else {
+		mtx_unlock(&debug_mtx);
+		free(se, M_CMI_DEBUG);
 	}
-	sx_xunlock(&debug_sx);
 }
 
 static void
@@ -127,7 +130,7 @@ debug_shield_remove(pid_t pid)
 	struct shield_entry *se;
 	struct auth_entry *ae, *ae_tmp;
 
-	sx_xlock(&debug_sx);
+	mtx_lock(&debug_mtx);
 	LIST_FOREACH(se, &debug_shields, se_link) {
 		if (se->se_pid == pid) {
 			LIST_REMOVE(se, se_link);
@@ -142,7 +145,7 @@ debug_shield_remove(pid_t pid)
 			free(ae, M_CMI_DEBUG);
 		}
 	}
-	sx_xunlock(&debug_sx);
+	mtx_unlock(&debug_mtx);
 }
 
 static void
@@ -150,13 +153,14 @@ debug_auth_add(pid_t debugger, pid_t target, struct cmi_instance *inst)
 {
 	struct auth_entry *ae;
 
-	sx_xlock(&debug_sx);
 	ae = malloc(sizeof(*ae), M_CMI_DEBUG, M_WAITOK);
 	ae->ae_debugger = debugger;
 	ae->ae_target = target;
 	ae->ae_inst = inst;
+
+	mtx_lock(&debug_mtx);
 	LIST_INSERT_HEAD(&debug_auths, ae, ae_link);
-	sx_xunlock(&debug_sx);
+	mtx_unlock(&debug_mtx);
 }
 
 static void
@@ -164,14 +168,14 @@ debug_auth_remove_by_inst(struct cmi_instance *inst)
 {
 	struct auth_entry *ae, *ae_tmp;
 
-	sx_xlock(&debug_sx);
+	mtx_lock(&debug_mtx);
 	LIST_FOREACH_SAFE(ae, &debug_auths, ae_link, ae_tmp) {
 		if (ae->ae_inst == inst) {
 			LIST_REMOVE(ae, ae_link);
 			free(ae, M_CMI_DEBUG);
 		}
 	}
-	sx_xunlock(&debug_sx);
+	mtx_unlock(&debug_mtx);
 }
 
 /*
@@ -243,6 +247,7 @@ debug_call(struct cmi_instance *s,
 	case DEBUG_OP_MINT: {
 		struct file *token_fp;
 		struct debug_priv *tp;
+		pid_t target;
 		int error;
 
 		if (dp->dp_is_token) {
@@ -257,22 +262,21 @@ debug_call(struct cmi_instance *s,
 			mtx_unlock(&dp->dp_mtx);
 			return (EINVAL);
 		}
+		target = dp->dp_target;
+		mtx_unlock(&dp->dp_mtx);
 
+		/* Mint outside the lock — cmi_mint_fp sleeps. */
 		error = cmi_mint_fp(debug_svc, 0, &token_fp);
-		if (error != 0) {
-			mtx_unlock(&dp->dp_mtx);
+		if (error != 0)
 			return (error);
-		}
 
+		/* Token was just created — no other thread has it yet. */
 		tp = cmi_instance_get_priv(token_fp->f_data);
 		if (tp != NULL) {
-			mtx_lock(&tp->dp_mtx);
 			tp->dp_is_token = 1;
-			tp->dp_target = dp->dp_target;
-			mtx_unlock(&tp->dp_mtx);
+			tp->dp_target = target;
 		}
 
-		mtx_unlock(&dp->dp_mtx);
 		reply_fds[0] = token_fp;
 		*reply_nfdsp = 1;
 		*replylenp = 0;
@@ -349,14 +353,14 @@ debug_mac_check_debug(struct ucred *cred, struct proc *p)
 	target_pid = p->p_pid;
 	caller_pid = curthread->td_proc->p_pid;
 
-	sx_slock(&debug_sx);
+	mtx_lock(&debug_mtx);
 	if (!debug_is_shielded(target_pid)) {
-		sx_sunlock(&debug_sx);
+		mtx_unlock(&debug_mtx);
 		return (0);		/* not shielded, allow */
 	}
 	/* Shielded — check for debug authorization. */
 	denied = !debug_is_authorized(caller_pid, target_pid);
-	sx_sunlock(&debug_sx);
+	mtx_unlock(&debug_mtx);
 
 	return (denied ? EACCES : 0);
 }
@@ -378,13 +382,13 @@ debug_mac_check_signal(struct ucred *cred, struct proc *p, int signum)
 	target_pid = p->p_pid;
 	caller_pid = curthread->td_proc->p_pid;
 
-	sx_slock(&debug_sx);
+	mtx_lock(&debug_mtx);
 	if (!debug_is_shielded(target_pid)) {
-		sx_sunlock(&debug_sx);
+		mtx_unlock(&debug_mtx);
 		return (0);
 	}
 	denied = !debug_is_authorized(caller_pid, target_pid);
-	sx_sunlock(&debug_sx);
+	mtx_unlock(&debug_mtx);
 
 	return (denied ? EACCES : 0);
 }
@@ -408,7 +412,7 @@ cmi_debug_modevent(module_t mod __unused, int type, void *unused __unused)
 
 	switch (type) {
 	case MOD_LOAD:
-		sx_init(&debug_sx, "cmi_debug");
+		mtx_init(&debug_mtx, "cmi_debug", NULL, MTX_DEF);
 		{
 			struct cmi_service_params p = {
 				.name = "debug",
@@ -417,7 +421,7 @@ cmi_debug_modevent(module_t mod __unused, int type, void *unused __unused)
 			error = cmi_service_create(&p, &debug_svc);
 		}
 		if (error != 0) {
-			sx_destroy(&debug_sx);
+			mtx_destroy(&debug_mtx);
 			return (error);
 		}
 		if (bootverbose)
@@ -426,13 +430,13 @@ cmi_debug_modevent(module_t mod __unused, int type, void *unused __unused)
 
 	case MOD_UNLOAD:
 		/* Refuse unload if shields or auths are active. */
-		sx_slock(&debug_sx);
+		mtx_lock(&debug_mtx);
 		if (!LIST_EMPTY(&debug_shields) ||
 		    !LIST_EMPTY(&debug_auths)) {
-			sx_sunlock(&debug_sx);
+			mtx_unlock(&debug_mtx);
 			return (EBUSY);
 		}
-		sx_sunlock(&debug_sx);
+		mtx_unlock(&debug_mtx);
 
 		if (debug_svc != NULL)
 			cmi_service_destroy(debug_svc);
@@ -441,7 +445,7 @@ cmi_debug_modevent(module_t mod __unused, int type, void *unused __unused)
 			struct shield_entry *se;
 			struct auth_entry *ae;
 
-			sx_xlock(&debug_sx);
+			mtx_lock(&debug_mtx);
 			while ((se = LIST_FIRST(&debug_shields)) != NULL) {
 				LIST_REMOVE(se, se_link);
 				free(se, M_CMI_DEBUG);
@@ -450,9 +454,9 @@ cmi_debug_modevent(module_t mod __unused, int type, void *unused __unused)
 				LIST_REMOVE(ae, ae_link);
 				free(ae, M_CMI_DEBUG);
 			}
-			sx_xunlock(&debug_sx);
+			mtx_unlock(&debug_mtx);
 		}
-		sx_destroy(&debug_sx);
+		mtx_destroy(&debug_mtx);
 		if (bootverbose)
 			printf("cmi_debug: unloaded\n");
 		return (0);

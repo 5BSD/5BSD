@@ -320,6 +320,10 @@ cmi_instance_do_recvmsg(struct cmi_instance *s, struct file *fp,
 	for (i = 0; i < nfds_out; i++) {
 		struct filecaps *fc = &msg->cm_fcaps[i];
 
+		/* Zeroed filecaps = no rights were set — pass NULL for full rights. */
+		if (fc->fc_rights.cr_rights[0] == 0 &&
+		    fc->fc_rights.cr_rights[1] == 0)
+			fc = NULL;
 		error = finstall(td, msg->cm_fds[i], &fdbuf[i], 0, fc);
 		if (error != 0) {
 			while (--i >= 0)
