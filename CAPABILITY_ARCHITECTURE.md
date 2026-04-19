@@ -667,17 +667,64 @@ Added `cmi_token` — kernel-gated authorization tokens.  Issuers
 create labeled tokens that prove authorization.  Tokens can be
 validated, revoked, and passed.  dup shares the same instance.
 
-### Process identity token
+### 1. Process identity in the CMI runtime
 
-CMI uses pid for process identification in the debug module.
-Pid reuse and exec persistence are known weaknesses.  A per-process
-random token that rotates on exec (similar to CACL's token) would
-strengthen the debug capability and any future capability that
-needs to identify a specific process image, not just a pid.
+The runtime should provide a per-process UUID that:
+- Stays the same across fork (child inherits parent's identity)
+- Rotates on exec (new program = new identity)
+- Is set by the kernel, not settable by userspace
+- Is available to all capabilities without each service
+  reinventing process identification
 
-### Phase 4: Migrate Keyvault to CMI
+This replaces pid-based identification in services like
+cap_debug.  Capabilities use the runtime-provided identity
+instead of raw pids.  Solves pid reuse, exec persistence,
+and gives capabilities a stable handle on "which process
+image is this" without trusting userspace.
 
-Migrate the Keyvault kernel module (~/Projects/Keyvault) to use
-CMI as its transport.  Sync service — key operations are
-request-reply in caller context.  Capability fd = authority to
-use a key.  Eliminates custom /dev/ and ioctl boilerplate.
+Open questions:
+- Where does it live? On the process struct? On the ucred?
+- Does it go in the credential trailer on every message?
+- How do capabilities query it for a remote process
+  (e.g. debug token needs to know the target's identity)?
+
+### 2. Shared capability store (replaces keystore)
+
+The keystore test fixture stores per-UID key-value data.
+The real version should be a shared data store for processes
+that hold the same capability.  The capability fd IS the
+access credential — if you hold it, you can read/write the
+shared data.  No UID check, no separate auth.
+
+Use cases:
+- Configuration shared between a supervisor and its workers
+- Session state accessible to any process holding the
+  session capability
+- Coordination data for a coalition of processes
+
+Open questions:
+- Is this async (queue-based) or sync (direct access)?
+- What's the data model — key-value, blob, structured?
+- Does the data die when the last holder closes?
+- Can holders see each other's writes in real time?
+
+### 3. Kernel-to-kernel capability communication
+
+We removed `cmi_send` because services shouldn't talk to
+each other directly — the holder composes.  But there are
+real cases where a service needs to operate on a capability
+it was given:
+
+- A proxy service forwards messages on a passed-in capability
+- A supervisor service terminates capabilities in a coalition
+- A broker mints capabilities on behalf of the caller
+
+The question: should this be message-based (reintroduce
+`cmi_send` with clear constraints) or should it be a
+different mechanism (direct instance-to-instance calls)?
+Or should the holder always mediate — pass the results
+back through the holder's thread?
+
+This needs design before code.  The wrong answer creates
+a capability system where services bypass the holder's
+authority.
