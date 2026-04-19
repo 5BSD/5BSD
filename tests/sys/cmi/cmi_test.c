@@ -5204,6 +5204,148 @@ ATF_TC_BODY(connect_reserved_nonzero, tc)
 	close(ctl);
 }
 
+ATF_TC(call_req_oversized);
+ATF_TC_HEAD(call_req_oversized, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CMI_CALL with req_len > max returns EMSGSIZE");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
+}
+ATF_TC_BODY(call_req_oversized, tc)
+{
+	struct cmi_call_args ca;
+	char *big;
+	char reply[64];
+	int fd;
+
+	fd = cmi_connect("namespace");
+	ATF_REQUIRE(fd >= 0);
+
+	big = calloc(1, CMI_MAX_MSG + 1);
+	ATF_REQUIRE(big != NULL);
+	memset(&ca, 0, sizeof(ca));
+	ca.req = big;
+	ca.req_len = CMI_MAX_MSG + 1;
+	ca.reply = reply;
+	ca.reply_len = sizeof(reply);
+	ATF_CHECK_ERRNO(EMSGSIZE, ioctl(fd, CMI_CALL, &ca) == -1);
+
+	free(big);
+	close(fd);
+}
+
+ATF_TC(debug_getinfo_call_feature);
+ATF_TC_HEAD(debug_getinfo_call_feature, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Debug service reports CALL feature, not SENDMSG");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_debug");
+}
+ATF_TC_BODY(debug_getinfo_call_feature, tc)
+{
+	struct cmi_info_args info;
+	int fd;
+
+	fd = cmi_connect("debug");
+	ATF_REQUIRE(fd >= 0);
+	memset(&info, 0, sizeof(info));
+	ATF_REQUIRE(ioctl(fd, CMI_GETINFO, &info) == 0);
+	ATF_CHECK_STREQ(info.name, "debug");
+	ATF_CHECK((info.features & CMI_INFO_F_CALL) != 0);
+	ATF_CHECK((info.features & CMI_INFO_F_SENDMSG) == 0);
+	close(fd);
+}
+
+ATF_TC(namespace_getinfo_call_feature);
+ATF_TC_HEAD(namespace_getinfo_call_feature, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Namespace service reports CALL feature, not SENDMSG");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
+}
+ATF_TC_BODY(namespace_getinfo_call_feature, tc)
+{
+	struct cmi_info_args info;
+	int fd;
+
+	fd = cmi_connect("namespace");
+	ATF_REQUIRE(fd >= 0);
+	memset(&info, 0, sizeof(info));
+	ATF_REQUIRE(ioctl(fd, CMI_GETINFO, &info) == 0);
+	ATF_CHECK_STREQ(info.name, "namespace");
+	ATF_CHECK((info.features & CMI_INFO_F_CALL) != 0);
+	ATF_CHECK((info.features & CMI_INFO_F_SENDMSG) == 0);
+	close(fd);
+}
+
+ATF_TC(pair_concurrent_writers);
+ATF_TC_HEAD(pair_concurrent_writers, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Multiple processes send on same pair end concurrently");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_pair");
+}
+ATF_TC_BODY(pair_concurrent_writers, tc)
+{
+	int fd_a, fd_b, status;
+	pid_t pids[4];
+	int i;
+
+	cmi_pair_pair(&fd_a, &fd_b);
+
+	/* Fork 4 children, each sends 10 messages on fd_a. */
+	for (i = 0; i < 4; i++) {
+		pids[i] = fork();
+		ATF_REQUIRE(pids[i] >= 0);
+		if (pids[i] == 0) {
+			int j;
+			close(fd_b);
+			for (j = 0; j < 10; j++) {
+				uint32_t val = (uint32_t)(i * 100 + j);
+				if (cmi_send(fd_a, &val, sizeof(val), 0) != 0)
+					_exit(1);
+			}
+			close(fd_a);
+			_exit(0);
+		}
+	}
+
+	/* Parent receives all 40 messages on fd_b. */
+	close(fd_a);
+	for (i = 0; i < 40; i++) {
+		char buf[64];
+		uint32_t rlen = sizeof(buf);
+		ATF_REQUIRE_MSG(cmi_recv(fd_b, buf, &rlen, NULL) == 0,
+		    "recv %d: %s", i, strerror(errno));
+		ATF_REQUIRE_EQ(rlen, sizeof(uint32_t));
+	}
+
+	for (i = 0; i < 4; i++) {
+		ATF_REQUIRE(waitpid(pids[i], &status, 0) == pids[i]);
+		ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	}
+
+	close(fd_b);
+}
+
+ATF_TC(rapid_connect_disconnect);
+ATF_TC_HEAD(rapid_connect_disconnect, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Rapid connect and close 100 times does not leak");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore");
+}
+ATF_TC_BODY(rapid_connect_disconnect, tc)
+{
+	int i;
+
+	for (i = 0; i < 100; i++) {
+		int fd = cmi_connect("keystore");
+		ATF_REQUIRE_MSG(fd >= 0, "connect %d: %s", i, strerror(errno));
+		close(fd);
+	}
+}
+
 ATF_TC(pair_nonblock_recv_empty);
 ATF_TC_HEAD(pair_nonblock_recv_empty, tc)
 {
@@ -6145,6 +6287,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, token_empty_label);
 	ATF_TP_ADD_TC(tp, token_terminate_issuer_tokens_survive);
 	ATF_TP_ADD_TC(tp, namespace_info_returns_jid);
+
+	/* More coverage */
+	ATF_TP_ADD_TC(tp, call_req_oversized);
+	ATF_TP_ADD_TC(tp, debug_getinfo_call_feature);
+	ATF_TP_ADD_TC(tp, namespace_getinfo_call_feature);
+	ATF_TP_ADD_TC(tp, pair_concurrent_writers);
+	ATF_TP_ADD_TC(tp, rapid_connect_disconnect);
 
 	/* Framework: additional */
 	ATF_TP_ADD_TC(tp, terminate_twice);
