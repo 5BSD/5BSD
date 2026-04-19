@@ -138,11 +138,11 @@ ns_call(struct cmi_instance *s,
 		const struct ns_create_request *cr;
 		struct file *child_fp;
 		struct ns_priv *child_np;
-		struct iovec jiov[10];
+		struct iovec jiov[12];
 		char path[] = "/";
 		char name[512];
 		int child_jid, error, persist, niov;
-		int parent_jid;
+		int parent_jid, jid_out;
 
 		mtx_lock(&np->np_mtx);
 		if (np->np_role != 0 && np->np_role != NS_ROLE_OWNER) {
@@ -203,17 +203,27 @@ ns_call(struct cmi_instance *s,
 		jiov[niov++].iov_len = sizeof("persist");
 		jiov[niov].iov_base = &persist;
 		jiov[niov++].iov_len = sizeof(persist);
+		/* Output: get the jid of the created jail. */
+		jid_out = 0;
+		jiov[niov].iov_base = __DECONST(void *, "jid");
+		jiov[niov++].iov_len = sizeof("jid");
+		jiov[niov].iov_base = &jid_out;
+		jiov[niov++].iov_len = sizeof(jid_out);
 
 		{
 			struct uio uio;
 
+			memset(&uio, 0, sizeof(uio));
 			uio.uio_iov = jiov;
 			uio.uio_iovcnt = niov;
 			uio.uio_segflg = UIO_SYSSPACE;
 
-			child_jid = kern_jail_set(curthread, &uio,
+			error = kern_jail_set(curthread, &uio,
 			    JAIL_CREATE);
-			if (child_jid < 0)
+			if (error != 0)
+				return (error);
+			child_jid = jid_out;
+			if (child_jid <= 0)
 				return (EINVAL);
 		}
 

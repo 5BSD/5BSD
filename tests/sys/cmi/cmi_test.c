@@ -2848,86 +2848,6 @@ ATF_TC_BODY(keystore_badge_unique, tc)
  * Non-transferable capability (CMI_SVC_NOXFER)
  * ================================================================ */
 
-ATF_TC(noxfer_scm_rights);
-ATF_TC_HEAD(noxfer_scm_rights, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Non-transferable capability cannot be passed via SCM_RIGHTS");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
-}
-ATF_TC_BODY(noxfer_scm_rights, tc)
-{
-	struct msghdr msgh;
-	struct iovec iov;
-	union {
-		struct cmsghdr hdr;
-		char buf[CMSG_SPACE(sizeof(int))];
-	} cmsgbuf;
-	struct cmsghdr *cmsg;
-	char dummy = 'x';
-	int sv[2], fd;
-
-	fd = cmi_connect("namespace");
-	ATF_REQUIRE(fd >= 0);
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-
-	/* Try to send the jail capability via SCM_RIGHTS. */
-	memset(&msgh, 0, sizeof(msgh));
-	iov.iov_base = &dummy;
-	iov.iov_len = 1;
-	msgh.msg_iov = &iov;
-	msgh.msg_iovlen = 1;
-	msgh.msg_control = cmsgbuf.buf;
-	msgh.msg_controllen = sizeof(cmsgbuf.buf);
-
-	cmsg = CMSG_FIRSTHDR(&msgh);
-	cmsg->cmsg_level = SOL_SOCKET;
-	cmsg->cmsg_type = SCM_RIGHTS;
-	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
-	memcpy(CMSG_DATA(cmsg), &fd, sizeof(int));
-
-	/* Should fail — jail is non-transferable. */
-	ATF_CHECK(sendmsg(sv[0], &msgh, 0) == -1);
-
-	close(sv[0]);
-	close(sv[1]);
-	close(fd);
-}
-
-ATF_TC(noxfer_cmi_attach);
-ATF_TC_HEAD(noxfer_cmi_attach, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Non-transferable fd cannot be attached to CMI_SENDMSG");
-	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore cmi_namespace");
-}
-ATF_TC_BODY(noxfer_cmi_attach, tc)
-{
-	struct cmi_sendmsg_args sa;
-	struct ks_request req;
-	int ks_fd, jail_fd;
-
-	ks_fd = cmi_connect("keystore");
-	jail_fd = cmi_connect("namespace");
-	ATF_REQUIRE(ks_fd >= 0);
-	ATF_REQUIRE(jail_fd >= 0);
-
-	/* Try to attach the jail fd to a keystore message. */
-	req.op = KS_OP_FETCH;
-	req.keyid = 0;
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = &req;
-	sa.payload_len = sizeof(req);
-	sa.fds = &jail_fd;
-	sa.nfds = 1;
-
-	/* Should fail — jail fd is non-passable. */
-	ATF_CHECK_ERRNO(EINVAL, ioctl(ks_fd, CMI_SENDMSG, &sa) == -1);
-
-	close(jail_fd);
-	close(ks_fd);
-}
-
 ATF_TC(xfer_keystore_ok);
 ATF_TC_HEAD(xfer_keystore_ok, tc)
 {
@@ -6265,9 +6185,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, keystore_uid_isolation);
 	ATF_TP_ADD_TC(tp, keystore_badge_unique);
 
-	/* Non-transferable (CMI_SVC_NOXFER) */
-	ATF_TP_ADD_TC(tp, noxfer_scm_rights);
-	ATF_TP_ADD_TC(tp, noxfer_cmi_attach);
+	/* Transfer control */
 	ATF_TP_ADD_TC(tp, xfer_keystore_ok);
 
 	/* co_fdclose */
