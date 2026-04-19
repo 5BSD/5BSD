@@ -5636,13 +5636,16 @@ ATF_TC_BODY(pair_double_create, tc)
 
 	cmi_pair_pair(&fd_a, &fd_b);
 
-	/* Already paired — second CREATE should get error. */
+	/*
+	 * Already paired — second CREATE is forwarded to peer
+	 * as data (pair is a pipe after pairing, not a command
+	 * interface).  Verify it arrives on fd_b.
+	 */
 	op = PAIR_OP_CREATE;
 	ATF_REQUIRE(cmi_send(fd_a, &op, sizeof(op), 0) == 0);
 	rlen = sizeof(buf);
-	ATF_REQUIRE(cmi_recv(fd_a, buf, &rlen, NULL) == 0);
-	/* Error reply is 4 bytes. */
-	ATF_CHECK_EQ(rlen, 4);
+	ATF_REQUIRE(cmi_recv(fd_b, buf, &rlen, NULL) == 0);
+	ATF_CHECK_EQ(rlen, sizeof(op));
 
 	close(fd_b);
 	close(fd_a);
