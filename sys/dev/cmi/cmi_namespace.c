@@ -138,11 +138,11 @@ ns_call(struct cmi_instance *s,
 		const struct ns_create_request *cr;
 		struct file *child_fp;
 		struct ns_priv *child_np;
-		struct iovec jiov[12];
+		struct iovec jiov[6];
 		char path[] = "/";
 		char name[512];
-		int child_jid, error, persist, niov;
-		int parent_jid, jid_out;
+		int child_jid, error, niov;
+		int parent_jid;
 
 		mtx_lock(&np->np_mtx);
 		if (np->np_role != 0 && np->np_role != NS_ROLE_OWNER) {
@@ -183,32 +183,23 @@ ns_call(struct cmi_instance *s,
 			strlcpy(name, cr->hostname, sizeof(name));
 		}
 
-		/* Create the namespace (jail). */
-		persist = 1;
+		/* Create the namespace (jail).
+		 * Match jail_setv(JAIL_CREATE, "name", ..., "path", "/",
+		 * "persist", NULL, NULL) which works from userspace.
+		 */
 		niov = 0;
-		jiov[niov].iov_base = __DECONST(void *, "path");
-		jiov[niov++].iov_len = sizeof("path");
-		jiov[niov].iov_base = path;
-		jiov[niov++].iov_len = sizeof(path);
 		jiov[niov].iov_base = __DECONST(void *, "name");
 		jiov[niov++].iov_len = sizeof("name");
 		jiov[niov].iov_base = name;
 		jiov[niov++].iov_len = strlen(name) + 1;
-		jiov[niov].iov_base = __DECONST(void *, "host.hostname");
-		jiov[niov++].iov_len = sizeof("host.hostname");
-		jiov[niov].iov_base = __DECONST(void *, cr->hostname);
-		jiov[niov++].iov_len = strnlen(cr->hostname,
-		    sizeof(cr->hostname)) + 1;
+		jiov[niov].iov_base = __DECONST(void *, "path");
+		jiov[niov++].iov_len = sizeof("path");
+		jiov[niov].iov_base = path;
+		jiov[niov++].iov_len = sizeof(path);
 		jiov[niov].iov_base = __DECONST(void *, "persist");
 		jiov[niov++].iov_len = sizeof("persist");
-		jiov[niov].iov_base = &persist;
-		jiov[niov++].iov_len = sizeof(persist);
-		/* Output: get the jid of the created jail. */
-		jid_out = 0;
-		jiov[niov].iov_base = __DECONST(void *, "jid");
-		jiov[niov++].iov_len = sizeof("jid");
-		jiov[niov].iov_base = &jid_out;
-		jiov[niov++].iov_len = sizeof(jid_out);
+		jiov[niov].iov_base = NULL;
+		jiov[niov++].iov_len = 0;
 
 		{
 			struct uio uio;
@@ -222,7 +213,7 @@ ns_call(struct cmi_instance *s,
 			    JAIL_CREATE);
 			if (error != 0)
 				return (error);
-			child_jid = jid_out;
+			child_jid = (int)curthread->td_retval[0];
 			if (child_jid <= 0)
 				return (EINVAL);
 		}
