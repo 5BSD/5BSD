@@ -167,7 +167,7 @@ pkg_get_myabi(void)
 	 * Use __FreeBSD_version rather than kernel version (uts.release) for
 	 * use in jails. This is equivalent to the value of uname -U.
 	 */
-	error = asprintf(&abi, "%s:%d:%s", uts.sysname, __FreeBSD_version/100000,
+	error = asprintf(&abi, "FreeBSD:%d:%s", __FreeBSD_version/100000,
 	    machine_arch);
 	if (error < 0)
 		return (NULL);
@@ -494,7 +494,7 @@ read_conf_file(const char *confpath, const char *requested_repo,
 	if (minor == NULL)
 		err(EXIT_FAILURE, "asprintf");
 	ucl_parser_register_variable(p, "ABI", abi);
-	ucl_parser_register_variable(p, "OSNAME", uts.sysname);
+	ucl_parser_register_variable(p, "OSNAME", "FreeBSD");
 	ucl_parser_register_variable(p, "RELEASE", major);
 	ucl_parser_register_variable(p, "VERSION_MAJOR", major);
 	ucl_parser_register_variable(p, "VERSION_MINOR", minor);
