@@ -472,7 +472,6 @@ cmi_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		if (rlen > 0)
 			reply_buf = malloc(rlen, M_CMI, M_WAITOK | M_ZERO);
 
-		/* Synchronous call in caller's thread. */
 		out_nfds = ca->reply_nfds;
 		SDT_PROBE3(cmi, , , call,
 		    svc->csvc_name, s->ci_badge, ca->req_len);
@@ -481,6 +480,10 @@ cmi_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		    reply_buf, &rlen,
 		    out_fds, &out_nfds,
 		    svc->csvc_arg);
+
+		/* Trim out_nfds to actual fds set by handler. */
+		while (out_nfds > 0 && out_fds[out_nfds - 1] == NULL)
+			out_nfds--;
 
 		if (err == 0 && rlen > 0 && reply_buf != NULL) {
 			if (rlen > ca->reply_len)

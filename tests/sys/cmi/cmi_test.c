@@ -5772,22 +5772,27 @@ ATF_TC_BODY(close_during_blocked_recv, tc)
 		/* Child: block on RECVMSG (no messages pending). */
 		struct cmi_recvmsg_args ra;
 		char buf[64];
+		int ret;
 
 		memset(&ra, 0, sizeof(ra));
 		ra.payload = buf;
 		ra.payload_len = sizeof(buf);
-		/* This will block until parent closes or we get a signal. */
-		ioctl(fd, CMI_RECVMSG, &ra);
-		_exit(0);
+		ret = ioctl(fd, CMI_RECVMSG, &ra);
+		/* Should unblock with ECONNRESET after terminate. */
+		if (ret == -1 && errno == ECONNRESET)
+			_exit(0);
+		_exit(1);
 	}
 
-	/* Parent: give child time to block, then close. */
+	/* Parent: give child time to block, then terminate. */
 	usleep(100000);
-	close(fd);
+	ATF_REQUIRE(ioctl(fd, CMI_TERMINATE, NULL) == 0);
 
-	/* Child should unblock and exit. */
+	/* Child should unblock with ECONNRESET and exit 0. */
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
-	ATF_CHECK(WIFEXITED(status));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child exited with status %d", WEXITSTATUS(status));
+	close(fd);
 }
 
 ATF_TC(namespace_double_remove);
