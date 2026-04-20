@@ -3,12 +3,14 @@
 # Deploy 5BSD kernel and tests to jaildesc-test VM
 #
 # Usage:
-#   ./deploy-5bsd-vm.sh [build|install|deploy|ssh-deploy|all]
+#   ./deploy-5bsd-vm.sh [build|install|deploy|ssh-deploy|reboot|test|all]
 #
 #   build       - Build kernel and tests
 #   install     - Install kernel to staging area (/tmp/vmroot)
 #   deploy      - Deploy to VM via disk mount (VM must be stopped)
 #   ssh-deploy  - Deploy to VM via SSH (VM must be running)
+#   reboot      - Reboot VM and wait for SSH
+#   test        - Run CMI tests on VM via SSH
 #   all         - Do everything (build + install + deploy)
 #
 
@@ -30,6 +32,30 @@ CMI_TESTS="cmi_test cmi_exec_helper"
 CMI_TESTDIR="${SRCDIR}/tests/sys/cmi"
 
 cd "$SRCDIR"
+
+ensure_loader_conf_line() {
+    _target="$1"
+    doas touch "$_target"
+    if ! doas grep -q '^cmi_load="YES"$' "$_target" 2>/dev/null; then
+        echo 'cmi_load="YES"' | doas tee -a "$_target" >/dev/null
+    fi
+}
+
+wait_for_vm_ssh() {
+    echo "=== Waiting for ${VM_IP} ==="
+    i=0
+    while [ "$i" -lt 60 ]; do
+        if ssh -o BatchMode=yes -o ConnectTimeout=2 "root@${VM_IP}" true \
+            >/dev/null 2>&1; then
+            echo "=== VM reachable ==="
+            return 0
+        fi
+        i=$((i + 1))
+        sleep 2
+    done
+    echo "ERROR: VM did not come back after reboot"
+    exit 1
+}
 
 build_kernel() {
     echo "=== Building kernel ==="
@@ -63,16 +89,18 @@ KYUA
 #!/bin/sh
 set -e
 echo "=== Unloading stale modules ==="
-for m in cmi_namespace cmi_pair cmi_keystore cmi; do
+for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
     kldunload "$m" 2>/dev/null || true
 done
-echo "=== Loading CMI ==="
-kldload cmi         || { echo "FAIL: kldload cmi"; exit 1; }
-kldload cmi_keystore || { echo "FAIL: kldload cmi_keystore"; exit 1; }
-kldload cmi_pair    || { echo "FAIL: kldload cmi_pair"; exit 1; }
-kldload cmi_token    || { echo "FAIL: kldload cmi_token"; exit 1; }
-kldload cmi_namespace    || { echo "FAIL: kldload cmi_namespace"; exit 1; }
-kldload cmi_debug    || { echo "FAIL: kldload cmi_debug"; exit 1; }
+echo "=== Verifying core CMI ==="
+if ! kldstat -m cmi >/dev/null 2>&1; then
+    echo 'FAIL: cmi not loaded at boot; add cmi_load="YES" to /boot/loader.conf and reboot'
+    exit 1
+fi
+echo "=== Loading service modules ==="
+for m in cmi_kernelstore cmi_keystore cmi_pair cmi_namespace cmi_debug cmi_token; do
+    kldload "$m" || { echo "FAIL: kldload $m"; exit 1; }
+done
 echo "=== Verifying ==="
 kldstat -m cmi
 sysctl kern.cmi.services kern.cmi.instances
@@ -88,14 +116,11 @@ else
         ./cmi_test "${tc}" || echo "FAILED: ${tc}"
     done
 fi
-echo "=== Unloading ==="
-kldunload cmi_debug
-kldunload cmi_namespace
-kldunload cmi_token
-kldunload cmi_pair
-kldunload cmi_keystore
-kldunload cmi
-[ ! -c /dev/cmi ] || { echo "FAIL: /dev/cmi still exists"; exit 1; }
+echo "=== Unloading modules ==="
+for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
+    kldunload "$m" || echo "WARN: unload $m failed"
+done
+[ -c /dev/cmi ] || { echo "FAIL: /dev/cmi missing after service unload"; exit 1; }
 echo "=== All tests passed ==="
 RUN
 }
@@ -111,16 +136,18 @@ KYUA
 #!/bin/sh
 set -e
 echo "=== Unloading stale modules ==="
-for m in cmi_namespace cmi_pair cmi_keystore cmi; do
+for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
     kldunload "$m" 2>/dev/null || true
 done
-echo "=== Loading CMI ==="
-kldload cmi         || { echo "FAIL: kldload cmi"; exit 1; }
-kldload cmi_keystore || { echo "FAIL: kldload cmi_keystore"; exit 1; }
-kldload cmi_pair    || { echo "FAIL: kldload cmi_pair"; exit 1; }
-kldload cmi_token    || { echo "FAIL: kldload cmi_token"; exit 1; }
-kldload cmi_namespace    || { echo "FAIL: kldload cmi_namespace"; exit 1; }
-kldload cmi_debug    || { echo "FAIL: kldload cmi_debug"; exit 1; }
+echo "=== Verifying core CMI ==="
+if ! kldstat -m cmi >/dev/null 2>&1; then
+    echo 'FAIL: cmi not loaded at boot; add cmi_load="YES" to /boot/loader.conf and reboot'
+    exit 1
+fi
+echo "=== Loading service modules ==="
+for m in cmi_kernelstore cmi_keystore cmi_pair cmi_namespace cmi_debug cmi_token; do
+    kldload "$m" || { echo "FAIL: kldload $m"; exit 1; }
+done
 echo "=== Verifying ==="
 kldstat -m cmi
 sysctl kern.cmi.services kern.cmi.instances
@@ -136,14 +163,11 @@ else
         ./cmi_test "${tc}" || echo "FAILED: ${tc}"
     done
 fi
-echo "=== Unloading ==="
-kldunload cmi_debug
-kldunload cmi_namespace
-kldunload cmi_token
-kldunload cmi_pair
-kldunload cmi_keystore
-kldunload cmi
-[ ! -c /dev/cmi ] || { echo "FAIL: /dev/cmi still exists"; exit 1; }
+echo "=== Unloading modules ==="
+for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
+    kldunload "$m" || echo "WARN: unload $m failed"
+done
+[ -c /dev/cmi ] || { echo "FAIL: /dev/cmi missing after service unload"; exit 1; }
 echo "=== All tests passed ==="
 RUN
 }
@@ -203,6 +227,9 @@ deploy_disk() {
     done
     deploy_cmi_scripts /mnt/tmp/cmi-tests
 
+    echo "Configuring boot loader for CMI..."
+    ensure_loader_conf_line /mnt/boot/loader.conf
+
     # Unmount and detach
     echo "Unmounting..."
     doas umount /mnt
@@ -254,10 +281,21 @@ deploy_ssh() {
     done
     deploy_cmi_scripts_ssh
 
+    # Ensure CMI loads at boot (NOTLATE MAC policy)
+    echo "Configuring boot loader for CMI..."
+    ssh "root@${VM_IP}" 'grep -q cmi_load /boot/loader.conf 2>/dev/null || echo "cmi_load=\"YES\"" >> /boot/loader.conf'
+
     echo "=== Deploy complete ==="
     echo "SSH: ssh root@${VM_IP}"
-    echo "Reboot VM to load new kernel: ssh root@${VM_IP} reboot"
-    echo "Run CMI tests: ssh root@${VM_IP} /tmp/cmi-tests/run-tests.sh"
+    echo "Reboot VM to load new kernel/core module: ./deploy-5bsd-vm.sh reboot"
+    echo "Run CMI tests: ./deploy-5bsd-vm.sh test"
+}
+
+reboot_vm() {
+    echo "=== Rebooting ${VM_IP} ==="
+    ssh "root@${VM_IP}" reboot || true
+    sleep 5
+    wait_for_vm_ssh
 }
 
 run_tests() {
@@ -266,13 +304,14 @@ run_tests() {
 }
 
 show_usage() {
-    echo "Usage: $0 [build|install|deploy|ssh-deploy|test|all]"
+    echo "Usage: $0 [build|install|deploy|ssh-deploy|reboot|test|all]"
     echo ""
     echo "Commands:"
     echo "  build       - Build kernel and tests"
     echo "  install     - Install kernel to staging area"
     echo "  deploy      - Deploy via disk mount (stops VM)"
     echo "  ssh-deploy  - Deploy via SSH (VM must be running)"
+    echo "  reboot      - Reboot VM and wait for SSH"
     echo "  test        - Run tests on VM via SSH"
     echo "  all         - Build, install, and deploy via disk"
     echo ""
@@ -292,6 +331,9 @@ case "${1:-}" in
         ;;
     ssh-deploy)
         deploy_ssh
+        ;;
+    reboot)
+        reboot_vm
         ;;
     test)
         run_tests

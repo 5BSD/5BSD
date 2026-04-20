@@ -1,0 +1,54 @@
+.\"
+.\" Copyright (c) 2026 The FreeBSD Foundation
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd April 19, 2026
+.Dt CMI_DEBUG 4
+.Os
+.Sh NAME
+.Nm cmi_debug
+.Nd CMI process debug protection service
+.Sh SYNOPSIS
+.Cd "kldload cmi"
+.Cd "kldload cmi_debug"
+.Sh DESCRIPTION
+The
+.Nm
+service protects a program from
+.Xr ptrace 2
+and unauthorized signals using the MACF framework.
+.Pp
+Protection is scoped by the program nonce: all processes sharing the
+same nonce (the calling process and its unexec'd fork descendants) are
+shielded.
+SIGKILL and SIGCONT are always allowed through the shield.
+.Pp
+All operations use
+.Dv CMI_CALL
+(synchronous).
+.Ss Operations
+.Bl -tag -width DEBUG_OP_ACTIVATE
+.It Dv DEBUG_OP_SHIELD
+Shield the calling program.
+Closing the shield fd removes protection.
+.It Dv DEBUG_OP_MINT
+Create a debug token (returned as a reply fd).
+Only available on an active shield instance.
+.It Dv DEBUG_OP_ACTIVATE
+Called on a debug token fd.
+Authorizes the calling program to ptrace/signal the shielded target.
+.El
+.Ss Wire protocol
+.Bd -literal
+#include <cmi_debug_proto.h>
+
+struct debug_request {
+    uint32_t op;
+    uint32_t _reserved;
+};
+.Ed
+.Sh SEE ALSO
+.Xr cmi 4 ,
+.Xr ptrace 2 ,
+.Xr mac 4

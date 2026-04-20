@@ -1,39 +1,22 @@
 #!/bin/sh
 #
-# cmi test runner.  Loads modules, runs ATF tests, verifies DTrace probes.
+# cmi test runner.  Loads service modules, runs ATF tests.
 # Must be run as root.
+#
+# Core CMI must be loaded at boot via loader.conf:
+#   echo 'cmi_load="YES"' >> /boot/loader.conf
 #
 
 set -e
 
 SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
-SRCTOP=$(CDPATH= cd "$SCRIPT_DIR/../../.." && pwd -P)
 
 CORE_MODULE="cmi"
-SERVICE_MODULES="cmi_keystore cmi_pair cmi_namespace cmi_debug cmi_token"
-DTRACE_PROBES="connect send recv dispatch reply notify call revoke close"
+SERVICE_MODULES="cmi_kernelstore cmi_keystore cmi_pair cmi_namespace cmi_debug cmi_token"
 
-MODDIR="${MODDIR:-$SRCTOP/sys/modules}"
-TESTDIR="${TESTDIR:-$SCRIPT_DIR}"
-CMI_TEST_BIN="${TESTDIR}/cmi_test"
+CMI_TEST_BIN="${SCRIPT_DIR}/cmi_test"
 die() { echo "FAIL: $1" >&2; exit 1; }
 info() { echo "=== $1 ==="; }
-
-run_atf_case() {
-	testcase=$1
-
-	"$CMI_TEST_BIN" -s "$TESTDIR" "$testcase"
-}
-
-run_atf_tests_fallback() {
-	testcases=$("$CMI_TEST_BIN" -l | awk '/^ident: / { print $2 }')
-	[ -n "$testcases" ] || die "no ATF test cases discovered"
-
-	for testcase in $testcases; do
-		info "ATF $testcase"
-		run_atf_case "$testcase" || die "ATF test failed: $testcase"
-	done
-}
 
 expected_services=0
 for _service in $SERVICE_MODULES; do
@@ -43,31 +26,34 @@ done
 # Check root
 [ "$(id -u)" -eq 0 ] || die "must be root"
 
-# Build everything
-info "Building modules"
-for d in $CORE_MODULE $SERVICE_MODULES; do
-	(cd "$MODDIR/$d" && make clean >/dev/null 2>&1 && make) ||
-	    die "build $d"
-done
+# Verify test binary exists
+[ -x "$CMI_TEST_BIN" ] || die "cmi_test not found at $CMI_TEST_BIN"
 
-info "Building tests"
-(cd "$TESTDIR" && make clean >/dev/null 2>&1 && make) ||
-    die "build tests"
-
-# Unload any stale modules (reverse order)
+# Unload any stale service modules (reverse order)
 info "Unloading stale modules"
-for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore $CORE_MODULE; do
+for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
 	kldunload "$m" 2>/dev/null || true
 done
 
-# Load modules
-info "Loading modules"
-kldload "$MODDIR/$CORE_MODULE/$CORE_MODULE.ko" || die "kldload $CORE_MODULE"
+# Core CMI must be loaded at boot via loader.conf (NOTLATE MAC policy).
+info "Verifying core module"
+if ! kldstat -m "$CORE_MODULE" >/dev/null 2>&1; then
+	echo ""
+	echo "CMI core module not loaded."
+	echo "Add to /boot/loader.conf and reboot:"
+	echo "  echo 'cmi_load=\"YES\"' >> /boot/loader.conf"
+	echo "  reboot"
+	die "$CORE_MODULE not loaded (requires loader.conf)"
+fi
+
+# Load service modules — try system path first, then local
+info "Loading service modules"
 for m in $SERVICE_MODULES; do
-	kldload "$MODDIR/$m/$m.ko" || die "kldload $m"
+	kldload "$m" 2>/dev/null || kldload "./${m}.ko" 2>/dev/null ||
+	    die "kldload $m"
 done
 
-# Verify modules loaded
+# Verify all modules loaded
 info "Verifying modules"
 kldstat -m "$CORE_MODULE" >/dev/null || die "$CORE_MODULE not loaded"
 for m in $SERVICE_MODULES; do
@@ -87,56 +73,30 @@ services=$(sysctl -n kern.cmi.services)
 
 # Run ATF tests
 info "Running ATF tests"
-cd "$TESTDIR"
+cd "$SCRIPT_DIR"
 if command -v kyua >/dev/null 2>&1; then
 	kyua test || die "kyua test failed"
 	kyua report
 else
 	# Fallback: enumerate tests and run them one at a time.
-	run_atf_tests_fallback
-fi
+	testcases=$("$CMI_TEST_BIN" -l | awk '/^ident: / { print $2 }')
+	[ -n "$testcases" ] || die "no ATF test cases discovered"
 
-# DTrace probe verification (if dtrace is available)
-if command -v dtrace >/dev/null 2>&1; then
-	info "Verifying DTrace probes"
-	for probe in $DTRACE_PROBES; do
-		dtrace -ln "cmi:::$probe" >/dev/null 2>&1 ||
-		    die "missing cmi probe: $probe"
+	for testcase in $testcases; do
+		info "ATF $testcase"
+		"$CMI_TEST_BIN" -s "$SCRIPT_DIR" "$testcase" ||
+		    die "ATF test failed: $testcase"
 	done
-
-	# Fire probes and verify they fire.  write_read exercises
-	# connect, send, dispatch, reply, recv, close.
-	# pair_bidirectional adds notify.
-	# terminate_instance adds revoke.
-	# namespace_call_info adds call.
-	info "DTrace live trace test"
-	dtrace -n '
-	    cmi:::connect  { traced++; }
-	    cmi:::send     { traced++; }
-	    cmi:::dispatch { traced++; }
-	    cmi:::reply    { traced++; }
-	    cmi:::recv     { traced++; }
-	    cmi:::notify   { traced++; }
-	    cmi:::call     { traced++; }
-	    cmi:::revoke   { traced++; }
-	    cmi:::close    { traced++; }
-	    tick-5s /traced > 0/ { printf("probes fired: %d", traced); exit(0); }
-	    tick-10s /traced == 0/ { printf("ERROR: no probes fired"); exit(1); }
-	' -c "sh -c './cmi_test write_read; ./cmi_test pair_bidirectional; ./cmi_test terminate_instance; ./cmi_test namespace_call_info'" 2>&1 | tail -5
-
-	info "DTrace probes verified"
-else
-	info "DTrace not available, skipping probe verification"
 fi
 
-# Verify clean unload
-info "Testing module unload"
-for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore; do
+# Verify clean service module unload
+# Core CMI stays loaded (boot-time NOTLATE MAC policy)
+info "Testing service module unload"
+for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
 	kldunload "$m" || die "unload $m"
 done
-kldunload "$CORE_MODULE" || die "unload $CORE_MODULE"
 
-# Verify /dev/cmi is gone
-[ ! -c /dev/cmi ] || die "/dev/cmi still exists after unload"
+# /dev/cmi should still exist (core stays loaded)
+[ -c /dev/cmi ] || die "/dev/cmi missing after service unload"
 
 info "All tests passed"

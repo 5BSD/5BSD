@@ -7,13 +7,13 @@ EXPORT_SYMS=	cmi_service_create	\
 		cmi_service_destroy	\
 		cmi_reply		\
 		cmi_notify		\
+		cmi_forward		\
 		cmi_instance_revoke	\
 		cmi_instance_hold	\
 		cmi_instance_rele	\
 		cmi_instance_set_priv	\
 		cmi_instance_get_priv	\
 		cmi_instance_get_badge	\
-		cmi_instance_get_id	\
 		cmi_mint_fp		\
 		cmi_msg_data		\
 		cmi_msg_datalen	\
@@ -23,6 +23,6 @@ EXPORT_SYMS=	cmi_service_create	\
 		cmi_msg_badge		\
 		cmi_msg_token		\
 		cmi_msg_cred		\
-		cmi_msg_pid
+		cmi_proc_nonce
 
 .include <bsd.kmod.mk>

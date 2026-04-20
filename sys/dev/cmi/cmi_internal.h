@@ -33,11 +33,11 @@
 #define	CMI_POLL_TICKS		(hz / 20) /* 50ms refcount poll interval */
 
 /*
- * Fixed-size message — 8192 bytes (2 pages).
+ * Fixed-size message — 16384 bytes (4 pages).
  *
  * Layout:
- *   Header:  queue linkage, metadata, fd slots  (~1KB)
- *   Payload: inline data buffer                  (~7KB)
+ *   Header:  queue linkage, metadata, 32 fd slots  (2KB reserved)
+ *   Payload: inline data buffer                     (14KB)
  *
  * The entire message is a single UMA slab allocation.
  * No malloc for payload or fd arrays.  Anything larger
@@ -49,7 +49,7 @@
  * CMI_MSG_PAYLOAD_SIZE is the usable payload area for user data.
  * Anything larger must be sent via an attached fd (shared memory).
  */
-#define	CMI_MSG_PAYLOAD_SIZE	7168
+#define	CMI_MSG_PAYLOAD_SIZE	14336
 
 struct cmi_msg {
 	/* Queue linkage. */
@@ -59,13 +59,12 @@ struct cmi_msg {
 	uint64_t	cm_badge;
 	uint64_t	cm_reply_token;
 	struct ucred	*cm_cred;
-	pid_t		cm_pid;
 	uint32_t	cm_datalen;
 	uint8_t		cm_nfds;
 	uint8_t		cm_flags;
 	uint16_t	cm_reserved;
 
-	/* Inline fd slots — 16 max, no separate allocation. */
+	/* Inline fd slots — 32 max, no separate allocation. */
 	struct file	*cm_fds[CMI_MAX_FDS];
 	struct filecaps	cm_fcaps[CMI_MAX_FDS];
 
@@ -92,7 +91,6 @@ struct cmi_instance {
 	struct cmi_service *ci_service;
 	void		*ci_priv;
 	uint64_t	ci_badge;
-	uint64_t	ci_id;
 
 	STAILQ_HEAD(, cmi_msg) ci_txq;
 	int		ci_txqlen;

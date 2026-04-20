@@ -6,12 +6,17 @@
  * cmi_debug — process debug protection capability.
  *
  * Sync-only CMI service.  Calling DEBUG_SHIELD protects the calling
- * process from ptrace and signals via MACF.  DEBUG_MINT creates a
- * debug token that authorizes a specific debugger to override the
- * shield.  Closing the shield fd removes protection.
+ * program (current process and all fork descendants sharing the
+ * same nonce) from ptrace and most signals via MACF.  SIGKILL and
+ * SIGCONT are always allowed through.  DEBUG_MINT creates a debug
+ * token that authorizes a specific debugger to override the shield.
+ * Closing the shield fd removes protection.
+ *
+ * Identity is based on the process nonce (from cmi_label), not pid.
+ * The nonce rotates on exec and is inherited across fork.
  *
  * Protocol (sync, via CALL):
- *   DEBUG_SHIELD:   protect calling process
+ *   DEBUG_SHIELD:   protect calling program (nonce-scoped)
  *   DEBUG_MINT:     create debug token (returned as reply fd)
  *   DEBUG_ACTIVATE: called on token fd, authorizes caller to debug
  */
@@ -30,48 +35,42 @@
 #include <security/mac/mac_policy.h>
 
 #include "cmi.h"
+#include "cmi_label.h"
+#include "cmi_debug_proto.h"
 
 MALLOC_DEFINE(M_CMI_DEBUG, "cmi_debug", "cmi debug service");
-
-#define	DEBUG_OP_SHIELD		1	/* shield calling process */
-#define	DEBUG_OP_MINT		2	/* create debug token */
-#define	DEBUG_OP_ACTIVATE	3	/* authorize caller (on token fd) */
-
-struct debug_request {
-	uint32_t	op;
-} __packed;
 
 /*
  * Per-instance state.
  *
- * Shield instances track the shielded pid.
- * Token instances track the target pid they authorize access to.
+ * Shield instances track the shielded process nonce.
+ * Token instances track the target nonce they authorize access to.
  */
 struct debug_priv {
 	struct mtx	dp_mtx;		/* per-instance lock */
-	pid_t		dp_target;	/* shielded pid (shield) or target (token) */
+	uint64_t	dp_target;	/* shielded nonce (shield) or target (token) */
 	int		dp_is_token;	/* 1 if this is a debug token */
 	int		dp_active;	/* 1 if shield/auth is active */
 };
 
 /*
- * Global tables — protected by debug_sx.
+ * Global tables — protected by debug_mtx.
  */
 static struct mtx debug_mtx;
 
-/* Shield table: pids that are shielded. */
+/* Shield table: nonces that are shielded. */
 struct shield_entry {
 	LIST_ENTRY(shield_entry) se_link;
-	pid_t		se_pid;
+	uint64_t	se_nonce;
 };
 static LIST_HEAD(, shield_entry) debug_shields =
     LIST_HEAD_INITIALIZER(debug_shields);
 
-/* Auth table: (debugger_pid, target_pid) pairs. */
+/* Auth table: (debugger_nonce, target_nonce) pairs. */
 struct auth_entry {
 	LIST_ENTRY(auth_entry) ae_link;
-	pid_t		ae_debugger;
-	pid_t		ae_target;
+	uint64_t	ae_debugger;
+	uint64_t	ae_target;
 	struct cmi_instance *ae_inst;
 };
 static LIST_HEAD(, auth_entry) debug_auths =
@@ -81,20 +80,20 @@ static struct cmi_service *debug_svc;
 static volatile uint64_t debug_next_badge = 1;
 
 static int
-debug_is_shielded(pid_t pid)
+debug_is_shielded(uint64_t nonce)
 {
 	struct shield_entry *se;
 
 	mtx_assert(&debug_mtx, MA_OWNED);
 	LIST_FOREACH(se, &debug_shields, se_link) {
-		if (se->se_pid == pid)
+		if (se->se_nonce == nonce)
 			return (1);
 	}
 	return (0);
 }
 
 static int
-debug_is_authorized(pid_t debugger, pid_t target)
+debug_is_authorized(uint64_t debugger, uint64_t target)
 {
 	struct auth_entry *ae;
 
@@ -107,15 +106,15 @@ debug_is_authorized(pid_t debugger, pid_t target)
 }
 
 static void
-debug_shield_add(pid_t pid)
+debug_shield_add(uint64_t nonce)
 {
 	struct shield_entry *se;
 
 	se = malloc(sizeof(*se), M_CMI_DEBUG, M_WAITOK);
-	se->se_pid = pid;
+	se->se_nonce = nonce;
 
 	mtx_lock(&debug_mtx);
-	if (!debug_is_shielded(pid)) {
+	if (!debug_is_shielded(nonce)) {
 		LIST_INSERT_HEAD(&debug_shields, se, se_link);
 		mtx_unlock(&debug_mtx);
 	} else {
@@ -125,14 +124,14 @@ debug_shield_add(pid_t pid)
 }
 
 static void
-debug_shield_remove(pid_t pid)
+debug_shield_remove(uint64_t nonce)
 {
 	struct shield_entry *se;
 	struct auth_entry *ae, *ae_tmp;
 
 	mtx_lock(&debug_mtx);
 	LIST_FOREACH(se, &debug_shields, se_link) {
-		if (se->se_pid == pid) {
+		if (se->se_nonce == nonce) {
 			LIST_REMOVE(se, se_link);
 			free(se, M_CMI_DEBUG);
 			break;
@@ -140,7 +139,7 @@ debug_shield_remove(pid_t pid)
 	}
 	/* Remove all auth entries for this target. */
 	LIST_FOREACH_SAFE(ae, &debug_auths, ae_link, ae_tmp) {
-		if (ae->ae_target == pid) {
+		if (ae->ae_target == nonce) {
 			LIST_REMOVE(ae, ae_link);
 			free(ae, M_CMI_DEBUG);
 		}
@@ -149,7 +148,7 @@ debug_shield_remove(pid_t pid)
 }
 
 static void
-debug_auth_add(pid_t debugger, pid_t target, struct cmi_instance *inst)
+debug_auth_add(uint64_t debugger, uint64_t target, struct cmi_instance *inst)
 {
 	struct auth_entry *ae;
 
@@ -216,6 +215,7 @@ debug_call(struct cmi_instance *s,
 {
 	const struct debug_request *dr;
 	struct debug_priv *dp;
+	uint64_t caller_nonce;
 
 	if (reqlen < sizeof(struct debug_request))
 		return (EINVAL);
@@ -224,6 +224,10 @@ debug_call(struct cmi_instance *s,
 	dp = cmi_instance_get_priv(s);
 	if (dp == NULL)
 		return (EINVAL);
+
+	caller_nonce = cmi_proc_nonce(curthread->td_ucred);
+	if (caller_nonce == 0)
+		return (ENXIO);	/* cmi_label not loaded */
 
 	mtx_lock(&dp->dp_mtx);
 
@@ -237,7 +241,7 @@ debug_call(struct cmi_instance *s,
 			mtx_unlock(&dp->dp_mtx);
 			return (0);
 		}
-		dp->dp_target = curthread->td_proc->p_pid;
+		dp->dp_target = caller_nonce;
 		dp->dp_active = 1;
 		mtx_unlock(&dp->dp_mtx);
 		debug_shield_add(dp->dp_target);
@@ -247,7 +251,7 @@ debug_call(struct cmi_instance *s,
 	case DEBUG_OP_MINT: {
 		struct file *token_fp;
 		struct debug_priv *tp;
-		pid_t target;
+		uint64_t target;
 		int error;
 
 		if (dp->dp_is_token) {
@@ -294,8 +298,7 @@ debug_call(struct cmi_instance *s,
 		}
 		dp->dp_active = 1;
 		mtx_unlock(&dp->dp_mtx);
-		debug_auth_add(curthread->td_proc->p_pid,
-		    dp->dp_target, s);
+		debug_auth_add(caller_nonce, dp->dp_target, s);
 		*replylenp = 0;
 		return (0);
 
@@ -344,22 +347,24 @@ static const struct cmi_ops debug_ops = {
 static int
 debug_mac_check_debug(struct ucred *cred, struct proc *p)
 {
-	pid_t caller_pid, target_pid;
+	uint64_t caller_nonce, target_nonce;
 	int denied;
 
 	if (curthread->td_proc == NULL)
 		return (0);	/* kernel thread, allow */
 
-	target_pid = p->p_pid;
-	caller_pid = curthread->td_proc->p_pid;
+	target_nonce = cmi_proc_nonce(p->p_ucred);
+	caller_nonce = cmi_proc_nonce(cred);
+	if (target_nonce == 0 || caller_nonce == 0)
+		return (0);	/* label not loaded, don't block */
 
 	mtx_lock(&debug_mtx);
-	if (!debug_is_shielded(target_pid)) {
+	if (!debug_is_shielded(target_nonce)) {
 		mtx_unlock(&debug_mtx);
 		return (0);		/* not shielded, allow */
 	}
 	/* Shielded — check for debug authorization. */
-	denied = !debug_is_authorized(caller_pid, target_pid);
+	denied = !debug_is_authorized(caller_nonce, target_nonce);
 	mtx_unlock(&debug_mtx);
 
 	return (denied ? EACCES : 0);
@@ -368,7 +373,7 @@ debug_mac_check_debug(struct ucred *cred, struct proc *p)
 static int
 debug_mac_check_signal(struct ucred *cred, struct proc *p, int signum)
 {
-	pid_t caller_pid, target_pid;
+	uint64_t caller_nonce, target_nonce;
 	int denied;
 
 	if (curthread->td_proc == NULL)
@@ -379,15 +384,17 @@ debug_mac_check_signal(struct ucred *cred, struct proc *p, int signum)
 	    signum == SIGKILL)
 		return (0);
 
-	target_pid = p->p_pid;
-	caller_pid = curthread->td_proc->p_pid;
+	target_nonce = cmi_proc_nonce(p->p_ucred);
+	caller_nonce = cmi_proc_nonce(cred);
+	if (target_nonce == 0 || caller_nonce == 0)
+		return (0);
 
 	mtx_lock(&debug_mtx);
-	if (!debug_is_shielded(target_pid)) {
+	if (!debug_is_shielded(target_nonce)) {
 		mtx_unlock(&debug_mtx);
 		return (0);
 	}
-	denied = !debug_is_authorized(caller_pid, target_pid);
+	denied = !debug_is_authorized(caller_nonce, target_nonce);
 	mtx_unlock(&debug_mtx);
 
 	return (denied ? EACCES : 0);

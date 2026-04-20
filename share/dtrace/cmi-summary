@@ -1,0 +1,45 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * cmi-summary -- aggregate CMI activity over time.
+ *
+ * Run for a period, then Ctrl-C to see totals.  Shows connects,
+ * messages, calls, and revokes per service, plus per-process
+ * breakdowns.
+ *
+ * Usage: cmi-summary    (Ctrl-C to print report)
+ */
+
+#pragma D option quiet
+
+cmi:::connect  { @conn[copyinstr(arg0)] = count(); }
+cmi:::send     { @msgs[copyinstr(arg0)] = count(); }
+cmi:::call     { @calls[copyinstr(arg0)] = count(); }
+cmi:::revoke   { @revokes[copyinstr(arg0)] = count(); }
+cmi:::close    { @closes[copyinstr(arg0)] = count(); }
+
+cmi:::connect  { @byproc[pid, execname] = count(); }
+
+dtrace:::END
+{
+	printf("--- Connects by service ---\n");
+	printa("  %-20s %@d\n", @conn);
+
+	printf("\n--- Messages by service ---\n");
+	printa("  %-20s %@d\n", @msgs);
+
+	printf("\n--- Calls by service ---\n");
+	printa("  %-20s %@d\n", @calls);
+
+	printf("\n--- Revokes by service ---\n");
+	printa("  %-20s %@d\n", @revokes);
+
+	printf("\n--- Closes by service ---\n");
+	printa("  %-20s %@d\n", @closes);
+
+	printf("\n--- Activity by process ---\n");
+	printa("  pid=%-6d %-16s %@d events\n", @byproc);
+}

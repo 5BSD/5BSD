@@ -212,6 +212,7 @@ SUBDIR=	\
 	kbdmux \
 	cmi \
 	cmi_debug \
+	cmi_kernelstore \
 	cmi_keystore \
 	cmi_namespace \
 	cmi_pair \

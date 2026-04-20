@@ -33,21 +33,11 @@
 #include <atf-c.h>
 
 #include "cmi_ioctl.h"
-
-/* Keystore protocol — matches cmi_keystore.c */
-#define	KS_OP_STORE	1
-#define	KS_OP_FETCH	2
-#define	KS_STATUS_OK		0
-#define	KS_STATUS_NOTFOUND	1
-
-struct ks_request {
-	uint32_t	op;
-	uint32_t	keyid;
-} __packed;
-
-struct ks_reply {
-	uint32_t	status;
-} __packed;
+#include "cmi_debug_proto.h"
+#include "cmi_token_proto.h"
+#include "cmi_namespace_proto.h"
+#include "cmi_keystore_proto.h"
+#include "cmi_kernelstore_proto.h"
 
 static int
 closed_fd(void)
@@ -121,6 +111,25 @@ cmi_recv(int fd, void *buf, uint32_t *lenp, uint64_t *tokenp)
 			*tokenp = ra.reply_token;
 	}
 	return (ret);
+}
+
+static void
+cmi_fetch_trailer(int fd, struct cmi_cred_trailer *trailer)
+{
+	struct cmi_call_args ca;
+	struct ns_request nr;
+	struct ns_info_reply info;
+
+	memset(&nr, 0, sizeof(nr));
+	nr.op = NS_OP_INFO;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = &info;
+	ca.reply_len = sizeof(info);
+	ATF_REQUIRE(ioctl(fd, CMI_CALL, &ca) == 0);
+	ATF_REQUIRE_EQ(info.status, 0);
+	*trailer = ca.trailer;
 }
 
 /* Helper: store a key via SENDMSG/RECVMSG round-trip */
@@ -1759,9 +1768,8 @@ ATF_TC_BODY(getinfo, tc)
 	ATF_REQUIRE(ioctl(fd, CMI_GETINFO, &info) == 0);
 	ATF_CHECK_STREQ(info.name, "keystore");
 	ATF_CHECK(info.badge != 0);
-	ATF_CHECK(info.id != 0);
 
-	/* Second instance should get different badge and ID. */
+	/* Second instance should get different badge. */
 	{
 		struct cmi_info_args info2;
 		int fd2 = cmi_connect("keystore");
@@ -1769,7 +1777,6 @@ ATF_TC_BODY(getinfo, tc)
 		ATF_REQUIRE(ioctl(fd2, CMI_GETINFO, &info2) == 0);
 		ATF_CHECK_STREQ(info2.name, "keystore");
 		ATF_CHECK(info2.badge != info.badge);
-		ATF_CHECK(info2.id != info.id);
 		close(fd2);
 	}
 
@@ -1871,6 +1878,121 @@ ATF_TC_BODY(pair_bidirectional, tc)
 	close(fd_a);
 }
 
+ATF_TC(pair_forwards_metadata);
+ATF_TC_HEAD(pair_forwards_metadata, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Pair forwarding preserves badge, reply token, and trailer");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_pair cmi_namespace");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(pair_forwards_metadata, tc)
+{
+	struct cmi_recvmsg_args ra;
+	struct cmi_info_args info;
+	struct cmi_cred_trailer trailer;
+	char payload[] = "meta";
+	char buf[64];
+	int fd_a, fd_b, ns_fd;
+
+	cmi_pair_pair(&fd_a, &fd_b);
+
+	memset(&info, 0, sizeof(info));
+	ATF_REQUIRE(ioctl(fd_a, CMI_GETINFO, &info) == 0);
+
+	ns_fd = cmi_connect("namespace");
+	ATF_REQUIRE(ns_fd >= 0);
+	cmi_fetch_trailer(ns_fd, &trailer);
+	ATF_REQUIRE(trailer.nonce != 0);
+
+	ATF_REQUIRE(cmi_send(fd_a, payload, sizeof(payload) - 1,
+	    0x123456789abcdef0ULL) == 0);
+
+	memset(&ra, 0, sizeof(ra));
+	memset(buf, 0, sizeof(buf));
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
+	ATF_REQUIRE(ioctl(fd_b, CMI_RECVMSG, &ra) == 0);
+	ATF_CHECK_EQ(ra.payload_len, sizeof(payload) - 1);
+	ATF_CHECK(memcmp(buf, payload, sizeof(payload) - 1) == 0);
+	ATF_CHECK_EQ(ra.badge, info.badge);
+	ATF_CHECK_EQ(ra.reply_token, 0x123456789abcdef0ULL);
+	ATF_CHECK_EQ(ra.trailer.uid, trailer.uid);
+	ATF_CHECK_EQ(ra.trailer.gid, trailer.gid);
+	ATF_CHECK_EQ(ra.trailer.prison_id, trailer.prison_id);
+	ATF_CHECK_EQ(ra.trailer.nonce, trailer.nonce);
+
+	close(ns_fd);
+	close(fd_b);
+	close(fd_a);
+}
+
+ATF_TC(pair_forwards_fds_and_metadata);
+ATF_TC_HEAD(pair_forwards_fds_and_metadata, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Pair forwarding preserves attached fds and metadata");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_pair cmi_namespace");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(pair_forwards_fds_and_metadata, tc)
+{
+	struct cmi_sendmsg_args sa;
+	struct cmi_recvmsg_args ra;
+	struct cmi_info_args info;
+	struct cmi_cred_trailer trailer;
+	int fd_a, fd_b, ns_fd, pipefd[2], recv_fd;
+	char buf[64];
+
+	cmi_pair_pair(&fd_a, &fd_b);
+	ATF_REQUIRE(pipe(pipefd) == 0);
+
+	memset(&info, 0, sizeof(info));
+	ATF_REQUIRE(ioctl(fd_a, CMI_GETINFO, &info) == 0);
+
+	ns_fd = cmi_connect("namespace");
+	ATF_REQUIRE(ns_fd >= 0);
+	cmi_fetch_trailer(ns_fd, &trailer);
+	ATF_REQUIRE(trailer.nonce != 0);
+
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = "fd";
+	sa.payload_len = 2;
+	sa.fds = &pipefd[0];
+	sa.nfds = 1;
+	sa.reply_token = 0xfeedfaceULL;
+	ATF_REQUIRE(ioctl(fd_a, CMI_SENDMSG, &sa) == 0);
+
+	memset(&ra, 0, sizeof(ra));
+	memset(buf, 0, sizeof(buf));
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
+	ra.fds = &recv_fd;
+	ra.nfds = 1;
+	ATF_REQUIRE(ioctl(fd_b, CMI_RECVMSG, &ra) == 0);
+	ATF_CHECK_EQ(ra.payload_len, 2);
+	ATF_CHECK(memcmp(buf, "fd", 2) == 0);
+	ATF_CHECK_EQ(ra.nfds, 1);
+	ATF_CHECK_EQ(ra.badge, info.badge);
+	ATF_CHECK_EQ(ra.reply_token, 0xfeedfaceULL);
+	ATF_CHECK_EQ(ra.trailer.uid, trailer.uid);
+	ATF_CHECK_EQ(ra.trailer.gid, trailer.gid);
+	ATF_CHECK_EQ(ra.trailer.prison_id, trailer.prison_id);
+	ATF_CHECK_EQ(ra.trailer.nonce, trailer.nonce);
+
+	ATF_REQUIRE(write(pipefd[1], "test", 4) == 4);
+	memset(buf, 0, sizeof(buf));
+	ATF_CHECK(read(recv_fd, buf, sizeof(buf)) == 4);
+	ATF_CHECK(memcmp(buf, "test", 4) == 0);
+
+	close(recv_fd);
+	close(pipefd[0]);
+	close(pipefd[1]);
+	close(ns_fd);
+	close(fd_b);
+	close(fd_a);
+}
+
 ATF_TC(pair_close_one_end);
 ATF_TC_HEAD(pair_close_one_end, tc)
 {
@@ -1962,6 +2084,87 @@ ATF_TC_BODY(pair_multiproc, tc)
 	close(fd_a);
 }
 
+ATF_TC(pair_crossproc_forwards_metadata);
+ATF_TC_HEAD(pair_crossproc_forwards_metadata, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Pair forwarding preserves child sender metadata across fork");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_pair cmi_namespace");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(pair_crossproc_forwards_metadata, tc)
+{
+	struct cmi_recvmsg_args ra;
+	struct cmi_info_args info;
+	struct cmi_cred_trailer expected;
+	char buf[64];
+	int fd_a, fd_b, ns_fd, status, sv[2];
+	pid_t pid;
+
+	cmi_pair_pair(&fd_a, &fd_b);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	memset(&info, 0, sizeof(info));
+	ATF_REQUIRE(ioctl(fd_b, CMI_GETINFO, &info) == 0);
+
+	ns_fd = cmi_connect("namespace");
+	ATF_REQUIRE(ns_fd >= 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		struct cmi_cred_trailer child_trailer;
+
+		close(fd_a);
+		close(sv[0]);
+
+		if (setgid(1) != 0)
+			_exit(10);
+		if (setuid(1) != 0)
+			_exit(11);
+
+		cmi_fetch_trailer(ns_fd, &child_trailer);
+		if (write(sv[1], &child_trailer, sizeof(child_trailer)) !=
+		    sizeof(child_trailer))
+			_exit(12);
+		if (cmi_send(fd_b, "childmeta", 9, 0xaabbccddULL) != 0)
+			_exit(13);
+		close(ns_fd);
+		close(fd_b);
+		close(sv[1]);
+		_exit(0);
+	}
+
+	close(fd_b);
+	close(sv[1]);
+
+	ATF_REQUIRE(read(sv[0], &expected, sizeof(expected)) ==
+	    sizeof(expected));
+	ATF_REQUIRE(expected.nonce != 0);
+
+	memset(&ra, 0, sizeof(ra));
+	memset(buf, 0, sizeof(buf));
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
+	ATF_REQUIRE(ioctl(fd_a, CMI_RECVMSG, &ra) == 0);
+	ATF_CHECK_EQ(ra.payload_len, 9);
+	ATF_CHECK(memcmp(buf, "childmeta", 9) == 0);
+	ATF_CHECK_EQ(ra.badge, info.badge);
+	ATF_CHECK_EQ(ra.reply_token, 0xaabbccddULL);
+	ATF_CHECK_EQ(ra.trailer.uid, expected.uid);
+	ATF_CHECK_EQ(ra.trailer.gid, expected.gid);
+	ATF_CHECK_EQ(ra.trailer.prison_id, expected.prison_id);
+	ATF_CHECK_EQ(ra.trailer.nonce, expected.nonce);
+
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+
+	close(ns_fd);
+	close(sv[0]);
+	close(fd_a);
+}
+
 /* ================================================================
  * Additional coverage
  * ================================================================ */
@@ -1999,7 +2202,7 @@ ATF_TC(credential_trailer);
 ATF_TC_HEAD(credential_trailer, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "RECVMSG trailer has correct uid and pid on RX path");
+	    "RECVMSG trailer is zeroed on kernel reply path");
 	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore");
 }
 ATF_TC_BODY(credential_trailer, tc)
@@ -2035,7 +2238,9 @@ ATF_TC_BODY(credential_trailer, tc)
 
 	/* Replies from kernel have zero trailer (no sender identity). */
 	ATF_CHECK_EQ(ra.trailer.uid, 0);
-	ATF_CHECK_EQ(ra.trailer.pid, 0);
+	ATF_CHECK_EQ(ra.trailer.gid, 0);
+	ATF_CHECK_EQ(ra.trailer.prison_id, 0);
+	ATF_CHECK_EQ(ra.trailer.nonce, 0);
 
 	close(fd);
 }
@@ -2162,7 +2367,7 @@ ATF_TC_HEAD(terminate_sync_service, tc)
 ATF_TC_BODY(terminate_sync_service, tc)
 {
 	struct cmi_call_args ca;
-	uint32_t op;
+	struct ns_request nr;
 	int fd;
 
 	fd = cmi_connect("namespace");
@@ -2172,12 +2377,12 @@ ATF_TC_BODY(terminate_sync_service, tc)
 	ATF_REQUIRE(ioctl(fd, CMI_TERMINATE, NULL) == 0);
 
 	/* CALL should now fail. */
-	op = 1; /* NS_OP_INFO */
+	nr.op = NS_OP_INFO;
 	memset(&ca, 0, sizeof(ca));
-	ca.req = &op;
-	ca.req_len = sizeof(op);
-	ca.reply = &op;
-	ca.reply_len = sizeof(op);
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = &nr;
+	ca.reply_len = sizeof(nr);
 	ATF_CHECK_ERRNO(ECONNRESET, ioctl(fd, CMI_CALL, &ca) == -1);
 
 	close(fd);
@@ -2275,17 +2480,17 @@ ATF_TC_HEAD(namespace_call_info, tc)
 ATF_TC_BODY(namespace_call_info, tc)
 {
 	struct cmi_call_args ca;
-	uint32_t op;
+	struct ns_request nr;
 	char reply[512];
 	int fd;
 
 	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
-	op = 1; /* NS_OP_INFO */
+	nr.op = NS_OP_INFO;
 	memset(&ca, 0, sizeof(ca));
-	ca.req = &op;
-	ca.req_len = sizeof(op);
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
 	ca.reply = reply;
 	ca.reply_len = sizeof(reply);
 	ATF_REQUIRE(ioctl(fd, CMI_CALL, &ca) == 0);
@@ -2331,17 +2536,17 @@ ATF_TC_HEAD(namespace_call_bad_op, tc)
 ATF_TC_BODY(namespace_call_bad_op, tc)
 {
 	struct cmi_call_args ca;
-	uint32_t op;
+	struct ns_request nr;
 	char reply[64];
 	int fd;
 
 	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
-	op = 99; /* Invalid operation */
+	nr.op = 99; /* Invalid operation */
 	memset(&ca, 0, sizeof(ca));
-	ca.req = &op;
-	ca.req_len = sizeof(op);
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
 	ca.reply = reply;
 	ca.reply_len = sizeof(reply);
 	ATF_CHECK_ERRNO(EOPNOTSUPP, ioctl(fd, CMI_CALL, &ca) == -1);
@@ -2511,18 +2716,16 @@ ATF_TC_BODY(pair_getinfo, tc)
 	ATF_REQUIRE(ioctl(fd_a, CMI_GETINFO, &info) == 0);
 	ATF_CHECK_STREQ(info.name, "pair");
 	ATF_CHECK(info.badge != 0);
-	ATF_CHECK(info.id != 0);
 	ATF_CHECK((info.features & CMI_INFO_F_SENDMSG) != 0);
 	ATF_CHECK((info.features & CMI_INFO_F_CALL) == 0);
 
-	/* Peer should have different badge and ID. */
+	/* Peer should have different badge. */
 	{
 		struct cmi_info_args info_b;
 		memset(&info_b, 0, sizeof(info_b));
 		ATF_REQUIRE(ioctl(fd_b, CMI_GETINFO, &info_b) == 0);
 		ATF_CHECK_STREQ(info_b.name, "pair");
 		ATF_CHECK(info_b.badge != info.badge);
-		ATF_CHECK(info_b.id != info.id);
 	}
 
 	close(fd_b);
@@ -2580,7 +2783,6 @@ ATF_TC_BODY(namespace_getinfo, tc)
 	ATF_REQUIRE(ioctl(fd, CMI_GETINFO, &info) == 0);
 	ATF_CHECK_STREQ(info.name, "namespace");
 	ATF_CHECK(info.badge != 0);
-	ATF_CHECK(info.id != 0);
 	ATF_CHECK((info.features & CMI_INFO_F_CALL) != 0);
 	ATF_CHECK((info.features & CMI_INFO_F_SENDMSG) == 0);
 	ATF_CHECK((info.features & CMI_INFO_F_KQUEUE) == 0);
@@ -2614,7 +2816,6 @@ ATF_TC_BODY(namespace_badge_unique, tc)
 	ATF_REQUIRE(ioctl(fd1, CMI_GETINFO, &info1) == 0);
 	ATF_REQUIRE(ioctl(fd2, CMI_GETINFO, &info2) == 0);
 	ATF_CHECK(info1.badge != info2.badge);
-	ATF_CHECK(info1.id != info2.id);
 
 	close(fd2);
 	close(fd1);
@@ -2635,7 +2836,7 @@ ATF_TC_HEAD(namespace_revoke_then_call, tc)
 ATF_TC_BODY(namespace_revoke_then_call, tc)
 {
 	struct cmi_call_args ca;
-	uint32_t op;
+	struct ns_request nr;
 	char reply[512];
 	int fd;
 
@@ -2646,10 +2847,10 @@ ATF_TC_BODY(namespace_revoke_then_call, tc)
 	ATF_REQUIRE(ioctl(fd, CMI_TERMINATE, NULL) == 0);
 
 	/* CALL should fail. */
-	op = 1;
+	nr.op = NS_OP_INFO;
 	memset(&ca, 0, sizeof(ca));
-	ca.req = &op;
-	ca.req_len = sizeof(op);
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
 	ca.reply = reply;
 	ca.reply_len = sizeof(reply);
 	ATF_CHECK_ERRNO(ECONNRESET, ioctl(fd, CMI_CALL, &ca) == -1);
@@ -2763,13 +2964,19 @@ ATF_TC_BODY(keystore_uid_isolation, tc)
 
 	fd = cmi_connect("keystore");
 	ATF_REQUIRE(fd >= 0);
-	keyid = 70000 + (uint32_t)(getpid() & 0xffff);
+	keyid = arc4random();
+	if (keyid == 0)
+		keyid = 1;
 
 	/* Store as root (uid 0). */
 	cmi_store(fd, keyid, "rootdata", 8);
-	close(fd);
 
-	/* Child changes uid and tries to fetch. */
+	/*
+	 * Child changes uid and tries to fetch using the inherited
+	 * capability.  The keystore policy keys off message credentials,
+	 * not connect-time credentials, so reopening /dev/cmi here would
+	 * only test control-device permissions.
+	 */
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
@@ -2777,34 +2984,32 @@ ATF_TC_BODY(keystore_uid_isolation, tc)
 		struct ks_reply reply;
 		char buf[256];
 		uint32_t rlen;
-		int cfd;
 
 		/* Change to any non-root uid. */
 		if (setuid(1) != 0)
 			_exit(10);
-
-		cfd = cmi_connect("keystore");
-		if (cfd < 0)
-			_exit(11);
+		if (getuid() != 1 || geteuid() != 1)
+			_exit(12);
 
 		req.op = KS_OP_FETCH;
 		req.keyid = keyid;
-		if (cmi_send(cfd, &req, sizeof(req), 0) != 0)
+		if (cmi_send(fd, &req, sizeof(req), 0) != 0)
 			_exit(1);
 		rlen = sizeof(buf);
-		if (cmi_recv(cfd, buf, &rlen, NULL) != 0)
+		if (cmi_recv(fd, buf, &rlen, NULL) != 0)
 			_exit(2);
 		memcpy(&reply, buf, sizeof(reply));
 		/* Should be NOTFOUND — different uid. */
 		if (reply.status != KS_STATUS_NOTFOUND)
 			_exit(3);
-		close(cfd);
+		close(fd);
 		_exit(0);
 	}
 
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "child exited with status %d", WEXITSTATUS(status));
+	close(fd);
 }
 
 /* ================================================================
@@ -2969,27 +3174,6 @@ ATF_TC_BODY(fdclose_dup_then_close_all, tc)
  * Namespace: create a jail, enter it, verify via CMI
  * ================================================================ */
 
-/* Namespace protocol — matches cmi_namespace.c */
-#define	NS_OP_INFO	1
-#define	NS_OP_CREATE	2
-#define	NS_OP_ATTACH	3
-#define	NS_OP_REMOVE	4
-#define	NS_OP_MINT	5
-
-struct ns_request {
-	uint32_t	op;
-} __packed;
-
-struct ns_create_request {
-	uint32_t	op;
-	char		hostname[256];
-} __packed;
-
-struct ns_info_reply {
-	uint32_t	status;
-	int		jid;
-	char		name[256];
-};
 
 ATF_TC(namespace_enter_and_query);
 ATF_TC_HEAD(namespace_enter_and_query, tc)
@@ -3415,7 +3599,7 @@ ATF_TC_HEAD(revoke_call_blocks_call, tc)
 ATF_TC_BODY(revoke_call_blocks_call, tc)
 {
 	struct cmi_call_args ca;
-	uint32_t op;
+	struct ns_request nr;
 	char reply[512];
 	int fd;
 
@@ -3423,10 +3607,10 @@ ATF_TC_BODY(revoke_call_blocks_call, tc)
 	ATF_REQUIRE(fd >= 0);
 
 	/* CALL should work before revoke. */
-	op = NS_OP_INFO;
+	nr.op = NS_OP_INFO;
 	memset(&ca, 0, sizeof(ca));
-	ca.req = &op;
-	ca.req_len = sizeof(op);
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
 	ca.reply = reply;
 	ca.reply_len = sizeof(reply);
 	ATF_REQUIRE(ioctl(fd, CMI_CALL, &ca) == 0);
@@ -3436,8 +3620,8 @@ ATF_TC_BODY(revoke_call_blocks_call, tc)
 
 	/* CALL should fail. */
 	memset(&ca, 0, sizeof(ca));
-	ca.req = &op;
-	ca.req_len = sizeof(op);
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
 	ca.reply = reply;
 	ca.reply_len = sizeof(reply);
 	ATF_CHECK_ERRNO(EACCES, ioctl(fd, CMI_CALL, &ca) == -1);
@@ -3587,17 +3771,17 @@ ATF_TC_HEAD(call_reply_fds_zero, tc)
 ATF_TC_BODY(call_reply_fds_zero, tc)
 {
 	struct cmi_call_args ca;
-	uint32_t op;
+	struct ns_request nr;
 	char reply[512];
 	int fd;
 
 	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
-	op = NS_OP_INFO;
+	nr.op = NS_OP_INFO;
 	memset(&ca, 0, sizeof(ca));
-	ca.req = &op;
-	ca.req_len = sizeof(op);
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
 	ca.reply = reply;
 	ca.reply_len = sizeof(reply);
 	ca.reply_fds = NULL;
@@ -3619,7 +3803,7 @@ ATF_TC_HEAD(call_reply_fds_buf_no_fds, tc)
 ATF_TC_BODY(call_reply_fds_buf_no_fds, tc)
 {
 	struct cmi_call_args ca;
-	uint32_t op;
+	struct ns_request nr;
 	char reply[512];
 	int reply_fds[4];
 	int fd;
@@ -3627,10 +3811,10 @@ ATF_TC_BODY(call_reply_fds_buf_no_fds, tc)
 	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
-	op = NS_OP_INFO;
+	nr.op = NS_OP_INFO;
 	memset(&ca, 0, sizeof(ca));
-	ca.req = &op;
-	ca.req_len = sizeof(op);
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
 	ca.reply = reply;
 	ca.reply_len = sizeof(reply);
 	ca.reply_fds = reply_fds;
@@ -3652,16 +3836,16 @@ ATF_TC_HEAD(call_reply_nfds_too_many, tc)
 ATF_TC_BODY(call_reply_nfds_too_many, tc)
 {
 	struct cmi_call_args ca;
-	uint32_t op;
+	struct ns_request nr;
 	int fd;
 
 	fd = cmi_connect("namespace");
 	ATF_REQUIRE(fd >= 0);
 
-	op = NS_OP_INFO;
+	nr.op = NS_OP_INFO;
 	memset(&ca, 0, sizeof(ca));
-	ca.req = &op;
-	ca.req_len = sizeof(op);
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
 	ca.reply_nfds = CMI_MAX_FDS + 1;
 	ATF_CHECK_ERRNO(EINVAL, ioctl(fd, CMI_CALL, &ca) == -1);
 
@@ -3917,14 +4101,6 @@ ATF_TC_BODY(lock_trampoline, tc)
  * cap_debug — process debug protection
  * ================================================================ */
 
-/* Debug protocol — matches cmi_debug.c */
-#define	DEBUG_OP_SHIELD		1
-#define	DEBUG_OP_MINT		2
-#define	DEBUG_OP_ACTIVATE	3
-
-struct debug_request {
-	uint32_t	op;
-} __packed;
 
 /* Helper: connect to debug service and shield */
 static int
@@ -4514,26 +4690,6 @@ ATF_TC_BODY(debug_token_close_revokes, tc)
  * Token capability
  * ================================================================ */
 
-#define	TOKEN_OP_CREATE		1
-#define	TOKEN_OP_VALIDATE	2
-#define	TOKEN_OP_REVOKE		3
-#define	TOKEN_LABEL_MAX		64
-
-struct token_create_request {
-	uint32_t	op;
-	char		label[TOKEN_LABEL_MAX];
-} __packed;
-
-struct token_request {
-	uint32_t	op;
-} __packed;
-
-struct token_validate_reply {
-	uint32_t	valid;
-	uid_t		issuer_uid;
-	pid_t		issuer_pid;
-	char		label[TOKEN_LABEL_MAX];
-};
 
 ATF_TC(token_create_and_validate);
 ATF_TC_HEAD(token_create_and_validate, tc)
@@ -4577,7 +4733,7 @@ ATF_TC_BODY(token_create_and_validate, tc)
 	ATF_CHECK_EQ(vr.valid, 1);
 	ATF_CHECK_STREQ(vr.label, "test_auth");
 	ATF_CHECK_EQ(vr.issuer_uid, getuid());
-	ATF_CHECK_EQ(vr.issuer_pid, getpid());
+	ATF_CHECK(vr.issuer_nonce != 0);
 
 	close(token_fd);
 	close(issuer_fd);
@@ -5341,15 +5497,15 @@ ATF_TC_BODY(pair_nonblock_recv_empty, tc)
 	close(fd_a);
 }
 
-ATF_TC(debug_fork_child_unshielded);
-ATF_TC_HEAD(debug_fork_child_unshielded, tc)
+ATF_TC(debug_fork_child_shielded);
+ATF_TC_HEAD(debug_fork_child_shielded, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Shielded parent forks — child is NOT shielded");
+	    "Shielded parent forks — child shares nonce, also shielded");
 	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_debug");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(debug_fork_child_unshielded, tc)
+ATF_TC_BODY(debug_fork_child_shielded, tc)
 {
 	int sv[2], status;
 	pid_t child_pid, grandchild_pid;
@@ -5403,15 +5559,15 @@ ATF_TC_BODY(debug_fork_child_unshielded, tc)
 
 	/*
 	 * The child (shielded) should block ptrace.
-	 * The grandchild (unshielded, different pid) should allow it.
+	 * The grandchild shares the same nonce (fork inherits),
+	 * so it is also shielded by the same shield entry.
 	 */
 	ATF_CHECK_ERRNO(EACCES,
 	    ptrace(PT_ATTACH, child_pid, NULL, 0) == -1);
 
-	/* Grandchild is a different pid — not in shield table. */
-	ATF_CHECK(ptrace(PT_ATTACH, grandchild_pid, NULL, 0) == 0);
-	waitpid(grandchild_pid, &status, WUNTRACED);
-	ptrace(PT_DETACH, grandchild_pid, NULL, 0);
+	/* Grandchild has the same nonce — also shielded. */
+	ATF_CHECK_ERRNO(EACCES,
+	    ptrace(PT_ATTACH, grandchild_pid, NULL, 0) == -1);
 
 	/* Tell child to clean up. */
 	write(sv[0], "x", 1);
@@ -6058,6 +6214,703 @@ ATF_TC_BODY(namespace_terminate_removes, tc)
 	close(ns_fd);
 }
 
+/* ================================================================
+ * Process nonce tests
+ * ================================================================ */
+
+/*
+ * Nonce is in the credential trailer.  Send a message, receive the
+ * reply, and check that the nonce field is non-zero.  (Replies from
+ * kernel handlers have zero trailer, so we test via a forked child
+ * that sends a message — the child's creds are stamped on RX.)
+ *
+ * Since keystore replies come from the kernel (zero trailer), we
+ * test the nonce via fork: parent and child should share the same
+ * nonce, and after exec the nonce should change.
+ */
+
+ATF_TC(nonce_nonzero);
+ATF_TC_HEAD(nonce_nonzero, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Program nonce is non-zero in credential trailer");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(nonce_nonzero, tc)
+{
+	int sv[2], status;
+	int fd;
+	pid_t pid;
+	uint64_t child_nonce;
+	struct ns_request nr;
+
+	fd = cmi_connect("namespace");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		struct cmi_call_args ca;
+		char reply[512];
+
+		close(sv[0]);
+		nr.op = NS_OP_INFO;
+		memset(&ca, 0, sizeof(ca));
+		ca.req = &nr;
+		ca.req_len = sizeof(nr);
+		ca.reply = reply;
+		ca.reply_len = sizeof(reply);
+		if (ioctl(fd, CMI_CALL, &ca) != 0)
+			_exit(10);
+		if (write(sv[1], &ca.trailer.nonce,
+		    sizeof(ca.trailer.nonce)) != sizeof(ca.trailer.nonce))
+			_exit(11);
+		close(fd);
+		close(sv[1]);
+		_exit(0);
+	}
+
+	close(sv[1]);
+	ATF_REQUIRE(read(sv[0], &child_nonce, sizeof(child_nonce)) ==
+	    sizeof(child_nonce));
+
+	ATF_CHECK_MSG(child_nonce != 0,
+	    "process nonce should be non-zero");
+
+	waitpid(pid, &status, 0);
+	close(fd);
+	close(sv[0]);
+}
+
+ATF_TC(nonce_inherits_fork);
+ATF_TC_HEAD(nonce_inherits_fork, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Forked child inherits parent's process nonce");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_namespace");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(nonce_inherits_fork, tc)
+{
+	int sv[2], status;
+	int fd;
+	uint64_t parent_nonce, child_nonce;
+	pid_t pid;
+	struct cmi_call_args ca;
+	struct ns_request nr;
+	char reply[512];
+
+	fd = cmi_connect("namespace");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	nr.op = NS_OP_INFO;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = reply;
+	ca.reply_len = sizeof(reply);
+	ATF_REQUIRE(ioctl(fd, CMI_CALL, &ca) == 0);
+	parent_nonce = ca.trailer.nonce;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		struct cmi_call_args child_ca;
+		char child_reply[512];
+
+		close(sv[0]);
+		memset(&child_ca, 0, sizeof(child_ca));
+		child_ca.req = &nr;
+		child_ca.req_len = sizeof(nr);
+		child_ca.reply = child_reply;
+		child_ca.reply_len = sizeof(child_reply);
+		if (ioctl(fd, CMI_CALL, &child_ca) != 0)
+			_exit(10);
+		if (write(sv[1], &child_ca.trailer.nonce,
+		    sizeof(child_ca.trailer.nonce)) !=
+		    sizeof(child_ca.trailer.nonce))
+			_exit(11);
+		close(fd);
+		close(sv[1]);
+		_exit(0);
+	}
+
+	close(sv[1]);
+	ATF_REQUIRE(read(sv[0], &child_nonce, sizeof(child_nonce)) ==
+	    sizeof(child_nonce));
+
+	ATF_CHECK_MSG(parent_nonce != 0, "parent nonce should be non-zero");
+	ATF_CHECK_MSG(child_nonce == parent_nonce,
+	    "child nonce 0x%lx should equal parent nonce 0x%lx",
+	    (unsigned long)child_nonce, (unsigned long)parent_nonce);
+
+	waitpid(pid, &status, 0);
+	close(fd);
+	close(sv[0]);
+}
+
+ATF_TC(nonce_trailer_zero_on_reply);
+ATF_TC_HEAD(nonce_trailer_zero_on_reply, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Kernel replies have zero nonce in trailer");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_keystore");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(nonce_trailer_zero_on_reply, tc)
+{
+	struct cmi_sendmsg_args sa;
+	struct cmi_recvmsg_args ra;
+	struct ks_request req;
+	char buf[128];
+	int fd;
+
+	fd = cmi_connect("keystore");
+	ATF_REQUIRE(fd >= 0);
+
+	req.op = KS_OP_FETCH;
+	req.keyid = 9999;
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = &req;
+	sa.payload_len = sizeof(req);
+	ATF_REQUIRE(ioctl(fd, CMI_SENDMSG, &sa) == 0);
+
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
+	ATF_REQUIRE(ioctl(fd, CMI_RECVMSG, &ra) == 0);
+
+	/* Replies from kernel handlers have zero trailer. */
+	ATF_CHECK_EQ(ra.trailer.nonce, 0);
+
+	close(fd);
+}
+
+ATF_TC(debug_shield_nonce_exec);
+ATF_TC_HEAD(debug_shield_nonce_exec, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Debug shield does not survive exec (nonce rotates)");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_debug");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(debug_shield_nonce_exec, tc)
+{
+	int sv[2], status;
+	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		char buf;
+		int shield_fd;
+
+		close(sv[0]);
+		shield_fd = debug_shield();
+		if (shield_fd < 0)
+			_exit(10);
+		/* Signal parent we're shielded. */
+		write(sv[1], "s", 1);
+		/* Wait for parent to verify shield. */
+		read(sv[1], &buf, 1);
+		/*
+		 * exec /bin/sleep — nonce rotates, shield keyed to
+		 * old nonce no longer applies.  shield_fd is CLOEXEC
+		 * so it closes, removing the shield entry too.
+		 */
+		execl("/bin/sleep", "sleep", "30", NULL);
+		_exit(11);
+	}
+
+	close(sv[1]);
+	{
+		char buf;
+		read(sv[0], &buf, 1);
+	}
+
+	/* Should be shielded now. */
+	ATF_CHECK_ERRNO(EACCES,
+	    ptrace(PT_ATTACH, pid, NULL, 0) == -1);
+
+	/* Tell child to exec. */
+	write(sv[0], "g", 1);
+	/* Give exec a moment. */
+	usleep(200000);
+
+	/*
+	 * After exec, shield fd was closed (CLOEXEC), so the shield
+	 * entry is removed via co_revoke.  ptrace should succeed.
+	 */
+	ATF_CHECK(ptrace(PT_ATTACH, pid, NULL, 0) == 0);
+	waitpid(pid, &status, WUNTRACED);
+	ptrace(PT_DETACH, pid, NULL, 0);
+
+	kill(pid, SIGKILL);
+	waitpid(pid, &status, 0);
+	close(sv[0]);
+}
+
+/* ================================================================
+ * KernelStore tests
+ * ================================================================ */
+
+
+static int
+kstore_put(int fd, const char *key, const void *val, size_t vallen)
+{
+	struct cmi_call_args ca;
+	char reqbuf[sizeof(struct kstore_request) + 4096];
+	struct kstore_request *kr = (struct kstore_request *)reqbuf;
+	struct kstore_status_reply sr;
+
+	memset(kr, 0, sizeof(*kr));
+	kr->op = KSTORE_OP_PUT;
+	strlcpy(kr->key, key, sizeof(kr->key));
+	if (vallen > 0)
+		memcpy(reqbuf + sizeof(*kr), val, vallen);
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = reqbuf;
+	ca.req_len = sizeof(*kr) + vallen;
+	ca.reply = &sr;
+	ca.reply_len = sizeof(sr);
+	if (ioctl(fd, CMI_CALL, &ca) != 0)
+		return (-1);
+	return (sr.status);
+}
+
+static int
+kstore_get(int fd, const char *key, void *buf, size_t buflen, size_t *outlen)
+{
+	struct cmi_call_args ca;
+	struct kstore_request kr;
+	char replybuf[sizeof(struct kstore_status_reply) + 4096];
+	struct kstore_status_reply *sr;
+
+	memset(&kr, 0, sizeof(kr));
+	kr.op = KSTORE_OP_GET;
+	strlcpy(kr.key, key, sizeof(kr.key));
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &kr;
+	ca.req_len = sizeof(kr);
+	ca.reply = replybuf;
+	ca.reply_len = sizeof(replybuf);
+	if (ioctl(fd, CMI_CALL, &ca) != 0)
+		return (-1);
+
+	sr = (struct kstore_status_reply *)replybuf;
+	if (sr->status != KSTORE_STATUS_OK)
+		return (sr->status);
+
+	size_t datalen = ca.reply_len - sizeof(*sr);
+	if (datalen > buflen)
+		datalen = buflen;
+	if (datalen > 0)
+		memcpy(buf, replybuf + sizeof(*sr), datalen);
+	if (outlen != NULL)
+		*outlen = datalen;
+	return (KSTORE_STATUS_OK);
+}
+
+static int
+kstore_delete(int fd, const char *key)
+{
+	struct cmi_call_args ca;
+	struct kstore_request kr;
+	struct kstore_status_reply sr;
+
+	memset(&kr, 0, sizeof(kr));
+	kr.op = KSTORE_OP_DELETE;
+	strlcpy(kr.key, key, sizeof(kr.key));
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &kr;
+	ca.req_len = sizeof(kr);
+	ca.reply = &sr;
+	ca.reply_len = sizeof(sr);
+	if (ioctl(fd, CMI_CALL, &ca) != 0)
+		return (-1);
+	return (sr.status);
+}
+
+static int
+kstore_mint(int fd)
+{
+	struct cmi_call_args ca;
+	struct kstore_request kr;
+	int reply_fds[1];
+
+	memset(&kr, 0, sizeof(kr));
+	kr.op = KSTORE_OP_MINT;
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &kr;
+	ca.req_len = sizeof(kr);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	if (ioctl(fd, CMI_CALL, &ca) != 0)
+		return (-1);
+	return (reply_fds[0]);
+}
+
+ATF_TC(kstore_put_get);
+ATF_TC_HEAD(kstore_put_get, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Put and get a value from kernelstore");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_kernelstore");
+}
+ATF_TC_BODY(kstore_put_get, tc)
+{
+	int fd;
+	char buf[128];
+	size_t len;
+
+	fd = cmi_connect("kernelstore");
+	ATF_REQUIRE(fd >= 0);
+
+	ATF_CHECK_EQ(kstore_put(fd, "hello", "world", 5), KSTORE_STATUS_OK);
+	ATF_CHECK_EQ(kstore_get(fd, "hello", buf, sizeof(buf), &len),
+	    KSTORE_STATUS_OK);
+	ATF_CHECK_EQ(len, 5);
+	ATF_CHECK(memcmp(buf, "world", 5) == 0);
+
+	close(fd);
+}
+
+ATF_TC(kstore_get_notfound);
+ATF_TC_HEAD(kstore_get_notfound, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Get on missing key returns NOTFOUND");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_kernelstore");
+}
+ATF_TC_BODY(kstore_get_notfound, tc)
+{
+	int fd;
+	char buf[128];
+	size_t len;
+
+	fd = cmi_connect("kernelstore");
+	ATF_REQUIRE(fd >= 0);
+
+	ATF_CHECK_EQ(kstore_get(fd, "nokey", buf, sizeof(buf), &len),
+	    KSTORE_STATUS_NOTFOUND);
+
+	close(fd);
+}
+
+ATF_TC(kstore_delete);
+ATF_TC_HEAD(kstore_delete, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Delete removes a key");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_kernelstore");
+}
+ATF_TC_BODY(kstore_delete, tc)
+{
+	int fd;
+	char buf[128];
+	size_t len;
+
+	fd = cmi_connect("kernelstore");
+	ATF_REQUIRE(fd >= 0);
+
+	ATF_CHECK_EQ(kstore_put(fd, "tmp", "data", 4), KSTORE_STATUS_OK);
+	ATF_CHECK_EQ(kstore_delete(fd, "tmp"), KSTORE_STATUS_OK);
+	ATF_CHECK_EQ(kstore_get(fd, "tmp", buf, sizeof(buf), &len),
+	    KSTORE_STATUS_NOTFOUND);
+
+	close(fd);
+}
+
+ATF_TC(kstore_overwrite);
+ATF_TC_HEAD(kstore_overwrite, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Put overwrites existing value");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_kernelstore");
+}
+ATF_TC_BODY(kstore_overwrite, tc)
+{
+	int fd;
+	char buf[128];
+	size_t len;
+
+	fd = cmi_connect("kernelstore");
+	ATF_REQUIRE(fd >= 0);
+
+	ATF_CHECK_EQ(kstore_put(fd, "k", "old", 3), KSTORE_STATUS_OK);
+	ATF_CHECK_EQ(kstore_put(fd, "k", "new", 3), KSTORE_STATUS_OK);
+	ATF_CHECK_EQ(kstore_get(fd, "k", buf, sizeof(buf), &len),
+	    KSTORE_STATUS_OK);
+	ATF_CHECK_EQ(len, 3);
+	ATF_CHECK(memcmp(buf, "new", 3) == 0);
+
+	close(fd);
+}
+
+ATF_TC(kstore_mint_shared);
+ATF_TC_HEAD(kstore_mint_shared, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Minted member sees same data as owner");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_kernelstore");
+}
+ATF_TC_BODY(kstore_mint_shared, tc)
+{
+	int owner_fd, member_fd;
+	char buf[128];
+	size_t len;
+
+	owner_fd = cmi_connect("kernelstore");
+	ATF_REQUIRE(owner_fd >= 0);
+
+	/* Owner puts a value. */
+	ATF_CHECK_EQ(kstore_put(owner_fd, "shared", "data", 4),
+	    KSTORE_STATUS_OK);
+
+	/* Mint a member. */
+	member_fd = kstore_mint(owner_fd);
+	ATF_REQUIRE(member_fd >= 0);
+
+	/* Member can read it. */
+	ATF_CHECK_EQ(kstore_get(member_fd, "shared", buf, sizeof(buf), &len),
+	    KSTORE_STATUS_OK);
+	ATF_CHECK_EQ(len, 4);
+	ATF_CHECK(memcmp(buf, "data", 4) == 0);
+
+	/* Member can write, owner can read it. */
+	ATF_CHECK_EQ(kstore_put(member_fd, "from_member", "hi", 2),
+	    KSTORE_STATUS_OK);
+	ATF_CHECK_EQ(kstore_get(owner_fd, "from_member", buf, sizeof(buf),
+	    &len), KSTORE_STATUS_OK);
+	ATF_CHECK_EQ(len, 2);
+	ATF_CHECK(memcmp(buf, "hi", 2) == 0);
+
+	close(member_fd);
+	close(owner_fd);
+}
+
+ATF_TC(kstore_member_no_mint);
+ATF_TC_HEAD(kstore_member_no_mint, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Members cannot mint");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_kernelstore");
+}
+ATF_TC_BODY(kstore_member_no_mint, tc)
+{
+	int owner_fd, member_fd;
+
+	owner_fd = cmi_connect("kernelstore");
+	ATF_REQUIRE(owner_fd >= 0);
+
+	member_fd = kstore_mint(owner_fd);
+	ATF_REQUIRE(member_fd >= 0);
+
+	/* Member trying to mint should fail. */
+	ATF_CHECK_EQ(kstore_mint(member_fd), -1);
+
+	close(member_fd);
+	close(owner_fd);
+}
+
+ATF_TC(kstore_close_destroys);
+ATF_TC_HEAD(kstore_close_destroys, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Closing all fds destroys the store");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_kernelstore");
+}
+ATF_TC_BODY(kstore_close_destroys, tc)
+{
+	int fd1, fd2;
+	char buf[128];
+	size_t len;
+
+	fd1 = cmi_connect("kernelstore");
+	ATF_REQUIRE(fd1 >= 0);
+
+	ATF_CHECK_EQ(kstore_put(fd1, "persist", "yes", 3),
+	    KSTORE_STATUS_OK);
+
+	fd2 = kstore_mint(fd1);
+	ATF_REQUIRE(fd2 >= 0);
+
+	/* Close owner — member still works. */
+	close(fd1);
+	ATF_CHECK_EQ(kstore_get(fd2, "persist", buf, sizeof(buf), &len),
+	    KSTORE_STATUS_OK);
+
+	/* Close last fd — store destroyed. New connect = empty store. */
+	close(fd2);
+
+	fd1 = cmi_connect("kernelstore");
+	ATF_REQUIRE(fd1 >= 0);
+	ATF_CHECK_EQ(kstore_get(fd1, "persist", buf, sizeof(buf), &len),
+	    KSTORE_STATUS_NOTFOUND);
+	close(fd1);
+}
+
+ATF_TC(kstore_separate_stores);
+ATF_TC_HEAD(kstore_separate_stores, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Two connects create separate stores");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_kernelstore");
+}
+ATF_TC_BODY(kstore_separate_stores, tc)
+{
+	int fd1, fd2;
+	char buf[128];
+	size_t len;
+
+	fd1 = cmi_connect("kernelstore");
+	fd2 = cmi_connect("kernelstore");
+	ATF_REQUIRE(fd1 >= 0);
+	ATF_REQUIRE(fd2 >= 0);
+
+	ATF_CHECK_EQ(kstore_put(fd1, "only_in_1", "v", 1),
+	    KSTORE_STATUS_OK);
+
+	/* fd2 has its own store — should not see fd1's data. */
+	ATF_CHECK_EQ(kstore_get(fd2, "only_in_1", buf, sizeof(buf), &len),
+	    KSTORE_STATUS_NOTFOUND);
+
+	close(fd2);
+	close(fd1);
+}
+
+ATF_TC(kstore_delete_notfound);
+ATF_TC_HEAD(kstore_delete_notfound, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Delete on missing key returns NOTFOUND");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_kernelstore");
+}
+ATF_TC_BODY(kstore_delete_notfound, tc)
+{
+	int fd;
+
+	fd = cmi_connect("kernelstore");
+	ATF_REQUIRE(fd >= 0);
+
+	ATF_CHECK_EQ(kstore_delete(fd, "nope"), KSTORE_STATUS_NOTFOUND);
+
+	close(fd);
+}
+
+ATF_TC(kstore_multiproc);
+ATF_TC_HEAD(kstore_multiproc, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Child process writes, parent reads via shared store");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_kernelstore");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(kstore_multiproc, tc)
+{
+	int owner_fd, member_fd, sv[2], status;
+	char buf[128];
+	size_t len;
+	pid_t pid;
+
+	owner_fd = cmi_connect("kernelstore");
+	ATF_REQUIRE(owner_fd >= 0);
+
+	member_fd = kstore_mint(owner_fd);
+	ATF_REQUIRE(member_fd >= 0);
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		char sig;
+		close(sv[0]);
+		close(owner_fd);
+		/* Child writes to the shared store. */
+		kstore_put(member_fd, "from_child", "hello", 5);
+		write(sv[1], "d", 1);
+		read(sv[1], &sig, 1);
+		close(member_fd);
+		close(sv[1]);
+		_exit(0);
+	}
+
+	close(sv[1]);
+	close(member_fd);
+
+	/* Wait for child to write. */
+	{
+		char sig;
+		read(sv[0], &sig, 1);
+	}
+
+	/* Parent reads child's data. */
+	ATF_CHECK_EQ(kstore_get(owner_fd, "from_child", buf, sizeof(buf),
+	    &len), KSTORE_STATUS_OK);
+	ATF_CHECK_EQ(len, 5);
+	ATF_CHECK(memcmp(buf, "hello", 5) == 0);
+
+	write(sv[0], "x", 1);
+	waitpid(pid, &status, 0);
+	close(owner_fd);
+	close(sv[0]);
+}
+
+ATF_TC(kstore_revoke_member);
+ATF_TC_HEAD(kstore_revoke_member, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Owner can revoke member via CMI_TERMINATE");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_kernelstore");
+}
+ATF_TC_BODY(kstore_revoke_member, tc)
+{
+	int owner_fd, member_fd;
+	char buf[128];
+	size_t len;
+
+	owner_fd = cmi_connect("kernelstore");
+	ATF_REQUIRE(owner_fd >= 0);
+
+	ATF_CHECK_EQ(kstore_put(owner_fd, "data", "val", 3),
+	    KSTORE_STATUS_OK);
+
+	member_fd = kstore_mint(owner_fd);
+	ATF_REQUIRE(member_fd >= 0);
+
+	/* Member can read before revoke. */
+	ATF_CHECK_EQ(kstore_get(member_fd, "data", buf, sizeof(buf), &len),
+	    KSTORE_STATUS_OK);
+
+	/* Owner terminates the member. */
+	ATF_REQUIRE(ioctl(member_fd, CMI_TERMINATE) == 0);
+
+	/* Member fd is dead — operations fail. */
+	ATF_CHECK_ERRNO(ECONNRESET,
+	    kstore_get(member_fd, "data", buf, sizeof(buf), &len) == -1);
+
+	/* Owner still works. */
+	ATF_CHECK_EQ(kstore_get(owner_fd, "data", buf, sizeof(buf), &len),
+	    KSTORE_STATUS_OK);
+
+	close(member_fd);
+	close(owner_fd);
+}
+
 /* ================================================================ */
 ATF_TP_ADD_TCS(tp)
 {
@@ -6137,8 +6990,11 @@ ATF_TP_ADD_TCS(tp)
 	/* Capability pair */
 	ATF_TP_ADD_TC(tp, pair_create);
 	ATF_TP_ADD_TC(tp, pair_bidirectional);
+	ATF_TP_ADD_TC(tp, pair_forwards_metadata);
+	ATF_TP_ADD_TC(tp, pair_forwards_fds_and_metadata);
 	ATF_TP_ADD_TC(tp, pair_close_one_end);
 	ATF_TP_ADD_TC(tp, pair_multiproc);
+	ATF_TP_ADD_TC(tp, pair_crossproc_forwards_metadata);
 
 	/* Additional coverage */
 	ATF_TP_ADD_TC(tp, getinfo_limits);
@@ -6257,7 +7113,7 @@ ATF_TP_ADD_TCS(tp)
 
 	/* Service-specific edge cases */
 	ATF_TP_ADD_TC(tp, pair_nonblock_recv_empty);
-	ATF_TP_ADD_TC(tp, debug_fork_child_unshielded);
+	ATF_TP_ADD_TC(tp, debug_fork_child_shielded);
 	ATF_TP_ADD_TC(tp, token_empty_label);
 	ATF_TP_ADD_TC(tp, token_terminate_issuer_tokens_survive);
 	ATF_TP_ADD_TC(tp, namespace_info_returns_jid);
@@ -6282,6 +7138,25 @@ ATF_TP_ADD_TCS(tp)
 	/* Framework: edge cases */
 	ATF_TP_ADD_TC(tp, getinfo_after_terminate);
 	ATF_TP_ADD_TC(tp, capsicum_gates_terminate);
+
+	/* KernelStore */
+	ATF_TP_ADD_TC(tp, kstore_put_get);
+	ATF_TP_ADD_TC(tp, kstore_get_notfound);
+	ATF_TP_ADD_TC(tp, kstore_delete);
+	ATF_TP_ADD_TC(tp, kstore_overwrite);
+	ATF_TP_ADD_TC(tp, kstore_mint_shared);
+	ATF_TP_ADD_TC(tp, kstore_member_no_mint);
+	ATF_TP_ADD_TC(tp, kstore_close_destroys);
+	ATF_TP_ADD_TC(tp, kstore_separate_stores);
+	ATF_TP_ADD_TC(tp, kstore_delete_notfound);
+	ATF_TP_ADD_TC(tp, kstore_multiproc);
+	ATF_TP_ADD_TC(tp, kstore_revoke_member);
+
+	/* Process nonce */
+	ATF_TP_ADD_TC(tp, nonce_nonzero);
+	ATF_TP_ADD_TC(tp, nonce_inherits_fork);
+	ATF_TP_ADD_TC(tp, nonce_trailer_zero_on_reply);
+	ATF_TP_ADD_TC(tp, debug_shield_nonce_exec);
 
 	return (atf_no_error());
 }

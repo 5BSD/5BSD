@@ -8,7 +8,7 @@
  *
  * ioctl(CMI_SENDMSG)  enqueue on RX, return immediately
  * ioctl(CMI_RECVMSG)  dequeue from TX (blocks if empty)
- * ioctl(CMI_GETINFO)  query service name, badge, instance ID, limits
+ * ioctl(CMI_GETINFO)  query service name, badge, limits
  *
  * read()/write() are disabled.  All messaging goes through the
  * structured ioctl API, which carries fds, reply tokens, and
@@ -39,6 +39,7 @@
 #include <vm/uma.h>
 
 #include "cmi_internal.h"
+#include "cmi_label.h"
 
 MALLOC_DECLARE(M_CMI);
 
@@ -210,7 +211,6 @@ sendmsg_build:
 	msg->cm_badge = s->ci_badge;
 	msg->cm_reply_token = args->reply_token;
 	msg->cm_cred = crhold(td->td_ucred);
-	msg->cm_pid = td->td_proc->p_pid;
 
 	/*
 	 * Enqueue on RX.  On success, msg (including buf and files)
@@ -311,9 +311,10 @@ cmi_instance_do_recvmsg(struct cmi_instance *s, struct file *fp,
 	if (msg->cm_cred != NULL) {
 		args->trailer.uid = msg->cm_cred->cr_uid;
 		args->trailer.gid = msg->cm_cred->cr_gid;
-		args->trailer.pid = msg->cm_pid;
 		args->trailer.prison_id =
 		    msg->cm_cred->cr_prison->pr_id;
+		args->trailer.nonce =
+		    cmi_proc_nonce(msg->cm_cred);
 	} else {
 		memset(&args->trailer, 0, sizeof(args->trailer));
 	}
@@ -477,6 +478,14 @@ cmi_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			reply_buf = malloc(rlen, M_CMI, M_WAITOK | M_ZERO);
 
 		out_nfds = ca->reply_nfds;
+
+		/* Stamp caller credentials — same contract as RECVMSG. */
+		ca->trailer.uid = td->td_ucred->cr_uid;
+		ca->trailer.gid = td->td_ucred->cr_gid;
+		ca->trailer.prison_id =
+		    td->td_ucred->cr_prison->pr_id;
+		ca->trailer.nonce = cmi_proc_nonce(td->td_ucred);
+
 		SDT_PROBE3(cmi, , , call,
 		    svc->csvc_name, s->ci_badge, ca->req_len);
 		err = svc->csvc_ops->co_call(s, req_buf, ca->req_len,
@@ -490,12 +499,20 @@ cmi_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			out_nfds--;
 
 		if (err == 0 && rlen > 0 && reply_buf != NULL) {
-			if (rlen > ca->reply_len)
-				rlen = ca->reply_len;
-			err = copyout(reply_buf, ca->reply, rlen);
+			if (rlen > ca->reply_len) {
+				/*
+				 * Reply too large for caller's buffer.
+				 * Report the required size so they can
+				 * retry.  Matches RECVMSG EMSGSIZE.
+				 */
+				ca->reply_len = rlen;
+				err = EMSGSIZE;
+			} else {
+				err = copyout(reply_buf, ca->reply, rlen);
+				ca->reply_len = rlen;
+			}
+		} else if (err == 0) {
 			ca->reply_len = rlen;
-		} else {
-			ca->reply_len = 0;
 		}
 
 		/* Install reply fds into caller's fd table.
@@ -588,7 +605,6 @@ call_out:
 		}
 		info->max_fds = CMI_MAX_FDS;
 		info->badge = s->ci_badge;
-		info->id = s->ci_id;
 		return (0);
 	}
 	case CMI_LOCK:
@@ -721,6 +737,18 @@ cmi_instance_fdclose(struct file *fp, int fd, struct thread *td)
 	s = fp->f_data;
 	if (s == NULL)
 		return;
+
+	/*
+	 * Skip if finalized — co_revoke already ran and the service
+	 * module may have unloaded.  The ops pointer could be stale.
+	 */
+	mtx_lock(&s->ci_mtx);
+	if (s->ci_flags & CMI_SF_FINALIZED) {
+		mtx_unlock(&s->ci_mtx);
+		return;
+	}
+	mtx_unlock(&s->ci_mtx);
+
 	svc = s->ci_service;
 	if (svc != NULL && svc->csvc_ops->co_fdclose != NULL)
 		svc->csvc_ops->co_fdclose(s, fd, td, svc->csvc_arg);

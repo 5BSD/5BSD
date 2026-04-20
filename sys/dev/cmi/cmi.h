@@ -68,7 +68,7 @@ enum cmi_revoke_reason {
  *       cmi_msg_fds(msg), cmi_msg_nfds(msg)
  *       cmi_msg_fcaps(msg)
  *       cmi_msg_badge(msg), cmi_msg_token(msg)
- *       cmi_msg_cred(msg), cmi_msg_pid(msg)
+ *       cmi_msg_cred(msg)
  *
  *     Return 0: message consumed.  Call cmi_reply() if the client
  *         expects a response.  No reply = fire-and-forget.
@@ -162,6 +162,11 @@ int	cmi_reply(struct cmi_instance *s, uint64_t reply_token,
 	    struct file **out_fds, struct filecaps *out_fcaps, int out_nfds);
 int	cmi_notify(struct cmi_instance *s, const void *data, size_t datalen,
 	    struct file **fds, struct filecaps *fcaps, int nfds);
+/*
+ * Forward an existing userspace-originated message to another instance.
+ * Preserves payload, fds, badge, reply_token, and sender credentials.
+ */
+int	cmi_forward(struct cmi_instance *s, const struct cmi_msg *msg);
 
 /* Instance management. */
 void	cmi_instance_revoke(struct cmi_instance *s);
@@ -170,7 +175,6 @@ void	cmi_instance_rele(struct cmi_instance *s);
 void	cmi_instance_set_priv(struct cmi_instance *s, void *priv);
 void   *cmi_instance_get_priv(struct cmi_instance *s);
 uint64_t cmi_instance_get_badge(struct cmi_instance *s);
-uint64_t cmi_instance_get_id(struct cmi_instance *s);
 
 /* Minting — create a capability from handler context. */
 int	cmi_mint_fp(struct cmi_service *svc, uint64_t badge,
@@ -185,7 +189,6 @@ int		 cmi_msg_nfds(const struct cmi_msg *msg);
 uint64_t	 cmi_msg_badge(const struct cmi_msg *msg);
 uint64_t	 cmi_msg_token(const struct cmi_msg *msg);
 struct ucred	*cmi_msg_cred(const struct cmi_msg *msg);
-pid_t		 cmi_msg_pid(const struct cmi_msg *msg);
 
 #endif /* _KERNEL */
 #endif /* _DEV_CMI_CMI_H_ */

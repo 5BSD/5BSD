@@ -7,7 +7,7 @@
  *
  * Demonstrates:
  *   - cmi_mint_fp() to create a capability from handler context
- *   - cmi_notify() for peer-to-peer message forwarding
+ *   - cmi_forward() for peer-to-peer message forwarding
  *   - cmi_instance_revoke() when the peer closes
  *   - per-instance private data via cmi_instance_set_priv()
  *   - co_revoke for cleanup
@@ -20,8 +20,9 @@
  *   4. Now A and B are connected: SENDMSG on A -> RECVMSG on B.
  *   5. Close either end -> the other gets ECONNRESET.
  *
- * After pairing, messages are forwarded to the peer via cmi_notify().
- * The sender gets no reply (fire-and-forget forwarding).
+ * After pairing, messages are forwarded to the peer via cmi_forward().
+ * The original sender metadata (badge, token, credential trailer) is
+ * preserved.  The sender gets no reply (fire-and-forget forwarding).
  */
 
 #include <sys/param.h>
@@ -118,9 +119,7 @@ pair_handler(struct cmi_instance *s, const struct cmi_msg *msg,
 	cmi_instance_hold(peer);
 	mtx_unlock(&pp->pp_mtx);
 
-	error = cmi_notify(peer, cmi_msg_data(msg),
-	    cmi_msg_datalen(msg), cmi_msg_fds(msg),
-	    cmi_msg_fcaps(msg), cmi_msg_nfds(msg));
+	error = cmi_forward(peer, msg);
 	cmi_instance_rele(peer);
 
 	return (error);
@@ -165,18 +164,10 @@ pair_revoke(struct cmi_instance *s, uint64_t badge __unused,
 	}
 }
 
-static void
-pair_fdclose(struct cmi_instance *s __unused, int fd __unused,
-    struct thread *td __unused, void *arg __unused)
-{
-	/* No-op.  Exercises the co_fdclose path in the framework. */
-}
-
 static const struct cmi_ops pair_ops = {
 	.co_connect = pair_connect,
 	.co_handler = pair_handler,
 	.co_revoke = pair_revoke,
-	.co_fdclose = pair_fdclose,
 };
 
 static int

@@ -112,8 +112,9 @@ cmi_instance_enqueue_tx(struct cmi_instance *s, struct cmi_msg *msg,
  * Returns NULL if fhold() fails on a racing close.
  */
 static struct cmi_msg *
-cmi_msg_alloc(const void *data, size_t datalen,
-    struct file **fds, struct filecaps *fcaps, int nfds)
+cmi_msg_alloc_full(const void *data, size_t datalen,
+    struct file * const *fds, const struct filecaps *fcaps, int nfds,
+    uint64_t badge, uint64_t reply_token, struct ucred *cred)
 {
 	struct cmi_msg *msg;
 	int i;
@@ -148,7 +149,21 @@ cmi_msg_alloc(const void *data, size_t datalen,
 		}
 	}
 
+	msg->cm_badge = badge;
+	msg->cm_reply_token = reply_token;
+	if (cred != NULL)
+		msg->cm_cred = crhold(cred);
+
 	return (msg);
+}
+
+static struct cmi_msg *
+cmi_msg_alloc(const void *data, size_t datalen,
+    struct file * const *fds, const struct filecaps *fcaps, int nfds)
+{
+
+	return (cmi_msg_alloc_full(data, datalen, fds, fcaps, nfds,
+	    0, 0, NULL));
 }
 
 /*
@@ -319,15 +334,20 @@ cmi_service_create(const struct cmi_service_params *p,
 	LIST_INIT(&svc->csvc_instances);
 	refcount_init(&svc->csvc_refcnt, 1);
 
-	svc->csvc_taskq = taskqueue_create("cmi_svc", M_WAITOK,
-	    taskqueue_thread_enqueue, &svc->csvc_taskq);
-	taskqueue_start_threads(&svc->csvc_taskq,
-	    MIN(mp_ncpus, CMI_MAX_SVC_THREADS), PWAIT, "cmi_%s", p->name);
+	/* Only create taskqueue if the service uses async dispatch. */
+	if (p->ops->co_handler != NULL) {
+		svc->csvc_taskq = taskqueue_create("cmi_svc", M_WAITOK,
+		    taskqueue_thread_enqueue, &svc->csvc_taskq);
+		taskqueue_start_threads(&svc->csvc_taskq,
+		    MIN(mp_ncpus, CMI_MAX_SVC_THREADS), PWAIT,
+		    "cmi_%s", p->name);
+	}
 
 	sx_xlock(&cmi_registry_lock);
 	if (cmi_service_lookup(p->name) != NULL) {
 		sx_xunlock(&cmi_registry_lock);
-		taskqueue_free(svc->csvc_taskq);
+		if (svc->csvc_taskq != NULL)
+			taskqueue_free(svc->csvc_taskq);
 		free(svc, M_CMI);
 		return (EEXIST);
 	}
@@ -409,7 +429,8 @@ void
 cmi_service_free(struct cmi_service *svc)
 {
 
-	taskqueue_free(svc->csvc_taskq);
+	if (svc->csvc_taskq != NULL)
+		taskqueue_free(svc->csvc_taskq);
 	free(svc, M_CMI);
 }
 
@@ -445,8 +466,34 @@ cmi_service_destroy(struct cmi_service *svc)
 	}
 	sx_xunlock(&cmi_registry_lock);
 
-	/* Wait for all in-flight handlers and calls to complete. */
-	taskqueue_drain_all(svc->csvc_taskq);
+	/* Wait for all in-flight async handlers to complete. */
+	if (svc->csvc_taskq != NULL)
+		taskqueue_drain_all(svc->csvc_taskq);
+
+	/*
+	 * Wait for in-flight sync calls to complete.  co_call runs in
+	 * the caller's thread, not the taskqueue.  ci_inflight tracks
+	 * both handlers and calls.  After taskqueue drain, any remaining
+	 * inflight count is from concurrent co_call invocations.
+	 */
+	{
+		bool busy;
+		do {
+			busy = false;
+			sx_slock(&cmi_registry_lock);
+			LIST_FOREACH(s, &svc->csvc_instances, ci_svc_link) {
+				mtx_lock(&s->ci_mtx);
+				if (s->ci_inflight > 0)
+					busy = true;
+				mtx_unlock(&s->ci_mtx);
+				if (busy)
+					break;
+			}
+			sx_sunlock(&cmi_registry_lock);
+			if (busy)
+				tsleep(svc, 0, "cmisyn", CMI_POLL_TICKS);
+		} while (busy);
+	}
 
 	/* Remove from registry. */
 	sx_xlock(&cmi_registry_lock);
@@ -534,7 +581,7 @@ cmi_reply(struct cmi_instance *s, uint64_t reply_token,
 		return (out_nfds > 0 ? EBADF : ENOMEM);
 
 	msg->cm_reply_token = reply_token;
-	/* cm_badge, cm_cred, cm_pid intentionally zero for service→client. */
+	/* cm_badge, cm_cred intentionally zero for service→client. */
 
 	mtx_lock(&s->ci_mtx);
 	error = cmi_instance_enqueue_tx(s, msg, true);
@@ -566,7 +613,7 @@ cmi_notify(struct cmi_instance *s, const void *data, size_t datalen,
 	msg = cmi_msg_alloc(data, datalen, fds, fcaps, nfds);
 	if (msg == NULL)
 		return (nfds > 0 ? EBADF : ENOMEM);
-	/* cm_badge, cm_cred, cm_pid intentionally zero for service→client. */
+	/* cm_badge, cm_cred intentionally zero for service→client. */
 
 	mtx_lock(&s->ci_mtx);
 	error = cmi_instance_enqueue_tx(s, msg, false);
@@ -575,6 +622,36 @@ cmi_notify(struct cmi_instance *s, const void *data, size_t datalen,
 	if (error == 0 && s->ci_service != NULL)
 		SDT_PROBE3(cmi, , , notify,
 		    s->ci_service->csvc_name, s->ci_badge, datalen);
+
+	return (error);
+}
+
+int
+cmi_forward(struct cmi_instance *s, const struct cmi_msg *src)
+{
+	struct cmi_msg *msg;
+	int error;
+
+	if (src == NULL)
+		return (EINVAL);
+	if (src->cm_datalen > CMI_MSG_PAYLOAD_SIZE)
+		return (EMSGSIZE);
+	if (src->cm_nfds > CMI_MAX_FDS)
+		return (EINVAL);
+
+	msg = cmi_msg_alloc_full(src->cm_data, src->cm_datalen,
+	    src->cm_fds, src->cm_fcaps, src->cm_nfds,
+	    src->cm_badge, src->cm_reply_token, src->cm_cred);
+	if (msg == NULL)
+		return (src->cm_nfds > 0 ? EBADF : ENOMEM);
+
+	mtx_lock(&s->ci_mtx);
+	error = cmi_instance_enqueue_tx(s, msg, false);
+	mtx_unlock(&s->ci_mtx);
+
+	if (error == 0 && s->ci_service != NULL)
+		SDT_PROBE3(cmi, , , notify,
+		    s->ci_service->csvc_name, s->ci_badge, src->cm_datalen);
 
 	return (error);
 }
@@ -645,12 +722,6 @@ cmi_instance_get_badge(struct cmi_instance *s)
 	return (s->ci_badge);
 }
 
-uint64_t
-cmi_instance_get_id(struct cmi_instance *s)
-{
-
-	return (s->ci_id);
-}
 
 /* ----------------------------------------------------------------
  * Message accessors — for co_handler.
@@ -704,11 +775,6 @@ cmi_msg_cred(const struct cmi_msg *msg)
 	return (msg->cm_cred);
 }
 
-pid_t
-cmi_msg_pid(const struct cmi_msg *msg)
-{
-	return (msg->cm_pid);
-}
 
 /* ----------------------------------------------------------------
  * Minting — service creates an instance and returns a struct file *.
@@ -764,4 +830,3 @@ cmi_mint_fp(struct cmi_service *svc, uint64_t badge,
 	*fpp = fp;
 	return (0);
 }
-

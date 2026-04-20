@@ -193,7 +193,6 @@ cmi_msg_fcaps(msg)     /* Capsicum rights on attached fds */
 cmi_msg_nfds(msg)      /* number of attached fds */
 cmi_msg_badge(msg)     /* this instance's badge */
 cmi_msg_cred(msg)      /* sender credentials at send time */
-cmi_msg_pid(msg)       /* sender PID at send time */
 ```
 
 **Return 0** after calling `cmi_reply()` to send a response.
@@ -322,7 +321,7 @@ struct cmi_service_params p = {
 
 | Parameter | Default | Max | Description |
 |---|---|---|---|
-| `msg_size` | 8192 | 64 MB | Max payload per message |
+| `msg_size` | 16384 | 16384 | Fixed message size (4 pages) |
 | `queue_depth` | 256 | 4096 | RX queue depth (async only) |
 | `tx_limit` | 256 | 4096 | TX soft limit for notifications |
 | `instance_limit` | 1024 | 1M | Max concurrent instances |
@@ -379,7 +378,12 @@ Most services don't need this.
 
 - **cmi.h** -- public API for service modules (opaque types, accessors)
 - **cmi_ioctl.h** -- shared kernel/userspace ioctl definitions
+- **cmi_label.h** -- program nonce accessor (`cmi_proc_nonce`)
 - **cmi_internal.h** -- framework internals (not for service modules)
+- **cmi_debug_proto.h** -- debug service wire protocol
+- **cmi_token_proto.h** -- token service wire protocol
+- **cmi_namespace_proto.h** -- namespace service wire protocol
+- **cmi_kernelstore_proto.h** -- kernelstore service wire protocol
 
 ---
 
@@ -438,7 +442,8 @@ for retry).
 ## Synchronous call (sync services)
 
 ```c
-struct my_request req = { .op = JAIL_ATTACH, .jid = 42 };
+struct ns_request req = { .op = NS_OP_INFO };
+char reply_buf[512];
 int recv_fds[4];
 struct cmi_call_args ca = {0};
 ca.req = &req;
@@ -448,11 +453,15 @@ ca.reply_len = sizeof(reply_buf);
 ca.reply_fds = recv_fds;     /* optional: receive fds from handler */
 ca.reply_nfds = 4;           /* max fds to receive */
 ioctl(cap, CMI_CALL, &ca);
+/* ca.reply_len = actual reply size */
 /* ca.reply_nfds = actual fds received */
+/* ca.trailer = caller's kernel-attested credentials */
 ```
 
 CALL returns directly -- no separate RECVMSG needed.  Returns
-EOPNOTSUPP if the service is async-only.
+EOPNOTSUPP if the service is async-only.  Returns EMSGSIZE
+(with `ca.reply_len` set to the required size) if the reply
+buffer is too small -- same contract as RECVMSG.
 
 ## Revoking a capability
 
@@ -492,7 +501,6 @@ struct cmi_info_args info;
 ioctl(cap, CMI_GETINFO, &info);
 /* info.name      -- service name */
 /* info.badge     -- this instance's badge */
-/* info.id        -- unique instance ID */
 /* info.msg_limit -- max payload bytes */
 /* info.features  -- CMI_INFO_F_* bitmask */
 ```
@@ -540,7 +548,8 @@ cap_ioctls_limit(cap, send_only, 1);
 | EAGAIN | SENDMSG | RX queue full |
 | EAGAIN | RECVMSG + O_NONBLOCK | No message |
 | EMSGSIZE | SENDMSG | Payload too large |
-| EMSGSIZE | RECVMSG | Buffer too small |
+| EMSGSIZE | RECVMSG | Buffer too small (reply_len = required) |
+| EMSGSIZE | CALL | Reply buffer too small (reply_len = required) |
 | EPIPE | SENDMSG | Instance dead |
 | ECONNRESET | RECVMSG / CALL | Instance revoked |
 | EOPNOTSUPP | SENDMSG on sync service | Wrong API |
@@ -577,13 +586,16 @@ sys/dev/cmi/
     cmi_dev.c          capability operations (ioctls, kqueue, close)
     cmi_kern.c         KPI: dispatch, reply/notify/revoke
     cmi_debug.c        cap_debug: process protection via MACF
+    cmi_kernelstore.c  shared capability-gated key-value store
     cmi_keystore.c     async test fixture: key-value store
+    cmi_label.h        public header: cmi_proc_nonce() accessor
     cmi_namespace.c    namespace management (create, nest, remove)
     cmi_pair.c         bidirectional capability pair
     cmi_token.c        kernel-gated authorization tokens
 
 sys/modules/cmi/           core module
 sys/modules/cmi_debug/     debug shield
+sys/modules/cmi_kernelstore/ shared key-value store
 sys/modules/cmi_keystore/  keystore test fixture
 sys/modules/cmi_namespace/ namespace management
 sys/modules/cmi_pair/      capability pair
@@ -612,7 +624,21 @@ tests/sys/cmi/             116 ATF tests via kyua
 - `cmi_instance_revoke(s)` -- tear down instance
 - `cmi_instance_hold(s)` / `cmi_instance_rele(s)` -- deferred work refcount
 - `cmi_instance_set_priv(s, priv)` / `cmi_instance_get_priv(s)` -- per-instance data
-- `cmi_instance_get_badge(s)` / `cmi_instance_get_id(s)` -- identity
+- `cmi_instance_get_badge(s)` -- service-assigned badge
+
+### Program identity (built into cmi core)
+- `cmi_proc_nonce(cred)` -- return 8-byte cryptographic nonce for a credential
+
+The nonce identifies the program image.  It is kernel-assigned,
+not settable by userspace.  Inherited across fork (same program),
+rotated on exec (new program).  Services use it instead of pid.
+The nonce rides in the credential trailer on every async message
+(`trailer.nonce`).  Zero is reserved as "not available" and is
+never generated.
+
+The nonce is implemented as a MACF credential label inside the
+cmi core module.  The internal struct is hidden behind the
+accessor — fields may be added without changing consumers.
 
 ### Minting
 - `cmi_mint_fp(svc, badge, &fp)` -- create new capability from handler
@@ -621,7 +647,7 @@ tests/sys/cmi/             116 ATF tests via kyua
 - `cmi_msg_data(msg)`, `cmi_msg_datalen(msg)`
 - `cmi_msg_fds(msg)`, `cmi_msg_fcaps(msg)`, `cmi_msg_nfds(msg)`
 - `cmi_msg_badge(msg)`, `cmi_msg_token(msg)`
-- `cmi_msg_cred(msg)`, `cmi_msg_pid(msg)`
+- `cmi_msg_cred(msg)`
 
 ## DTrace probes
 
@@ -667,46 +693,29 @@ Added `cmi_token` — kernel-gated authorization tokens.  Issuers
 create labeled tokens that prove authorization.  Tokens can be
 validated, revoked, and passed.  dup shares the same instance.
 
-### 1. Process identity in the CMI runtime
+### Phase 4: Program identity — nonce (DONE)
 
-The runtime should provide a per-process UUID that:
-- Stays the same across fork (child inherits parent's identity)
-- Rotates on exec (new program = new identity)
-- Is set by the kernel, not settable by userspace
-- Is available to all capabilities without each service
-  reinventing process identification
+Built into the cmi core module as a MACF credential label.
+8-byte cryptographic nonce (`arc4random_buf`, zero excluded).
+Identifies the program image: inherited across fork, rotated
+on exec.  Accessible via `cmi_proc_nonce(cred)`.
 
-This replaces pid-based identification in services like
-cap_debug.  Capabilities use the runtime-provided identity
-instead of raw pids.  Solves pid reuse, exec persistence,
-and gives capabilities a stable handle on "which process
-image is this" without trusting userspace.
+Removed pid from the framework:
+- `cm_pid` removed from internal message struct
+- `cmi_msg_pid()` removed from kernel API
+- `pid` removed from credential trailer (replaced by `nonce`)
+- `issuer_pid` removed from token validate reply
+- `cmi_debug` shield/auth tables keyed by nonce, not pid
+- Instance `id` removed (badge is the only per-instance identifier)
 
-Open questions:
-- Where does it live? On the process struct? On the ucred?
-- Does it go in the credential trailer on every message?
-- How do capabilities query it for a remote process
-  (e.g. debug token needs to know the target's identity)?
+### Phase 5: KernelStore — shared capability store (DONE)
 
-### 2. Shared capability store (replaces keystore)
-
-The keystore test fixture stores per-UID key-value data.
-The real version should be a shared data store for processes
-that hold the same capability.  The capability fd IS the
-access credential — if you hold it, you can read/write the
-shared data.  No UID check, no separate auth.
-
-Use cases:
-- Configuration shared between a supervisor and its workers
-- Session state accessible to any process holding the
-  session capability
-- Coordination data for a coalition of processes
-
-Open questions:
-- Is this async (queue-based) or sync (direct access)?
-- What's the data model — key-value, blob, structured?
-- Does the data die when the last holder closes?
-- Can holders see each other's writes in real time?
+Added `cmi_kernelstore` — sync CMI service.  Shared key-value
+store where the capability fd IS the credential.  Connect
+creates a new empty store.  Owner can MINT member fds to share
+access.  All holders PUT/GET/DELETE on the same backing store.
+Last close destroys the data.  Revoke via CMI_TERMINATE on the
+member fd.  256 keys max, 4096 bytes per value, string keys.
 
 ### 3. Kernel-to-kernel capability communication
 

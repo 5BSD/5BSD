@@ -24,27 +24,12 @@
 #include <sys/ucred.h>
 
 #include "cmi.h"
+#include "cmi_keystore_proto.h"
 
 MALLOC_DEFINE(M_CMI_KS, "cmi_ks", "cmi keystore");
 
-#define	KS_OP_STORE	1
-#define	KS_OP_FETCH	2
-
-#define	KS_STATUS_OK		0
-#define	KS_STATUS_NOTFOUND	1
-#define	KS_STATUS_ERR		2
-
 #define	KS_MAX_VALUE	4096
 #define	KS_MAX_KEYS	1024
-
-struct ks_request {
-	uint32_t	op;
-	uint32_t	keyid;
-} __packed;
-
-struct ks_reply {
-	uint32_t	status;
-} __packed;
 
 struct ks_entry {
 	LIST_ENTRY(ks_entry) ke_link;

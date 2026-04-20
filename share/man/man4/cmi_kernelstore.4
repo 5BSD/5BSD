@@ -1,0 +1,95 @@
+.\"
+.\" Copyright (c) 2026 The FreeBSD Foundation
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd April 19, 2026
+.Dt CMI_KERNELSTORE 4
+.Os
+.Sh NAME
+.Nm cmi_kernelstore
+.Nd CMI shared key-value store
+.Sh SYNOPSIS
+.Cd "kldload cmi"
+.Cd "kldload cmi_kernelstore"
+.Sh DESCRIPTION
+The
+.Nm
+service provides a shared, capability-gated key-value store.
+The capability fd IS the credential \(em if you hold it, you can
+read and write.
+No UID check, no separate authentication.
+.Pp
+Connecting creates a new empty store.
+The owner can mint member fds to share access with other processes.
+All holders operate on the same backing store.
+Closing the last fd destroys the store and all its data.
+.Pp
+Two roles exist:
+.Bl -tag -width "Member"
+.It Sy Owner
+Can PUT, GET, DELETE, and MINT.
+.It Sy Member
+Can PUT, GET, and DELETE.
+Cannot MINT further members.
+.El
+.Pp
+To revoke a member's access, the owner calls
+.Dv CMI_TERMINATE
+on the member fd.
+.Pp
+All operations use
+.Dv CMI_CALL
+(synchronous).
+.Ss Operations
+.Bl -tag -width KSTORE_OP_DELETE
+.It Dv KSTORE_OP_PUT
+Store a value under a string key.
+The value follows the request struct in the payload.
+Overwrites existing keys.
+.It Dv KSTORE_OP_GET
+Retrieve a value by key.
+Returns
+.Dv KSTORE_STATUS_NOTFOUND
+if the key does not exist.
+Returns
+.Er EMSGSIZE
+if the reply buffer is too small.
+.It Dv KSTORE_OP_DELETE
+Remove a key.
+.It Dv KSTORE_OP_MINT
+Create a member fd (owner only).
+Returned as a reply fd.
+.El
+.Ss Limits
+.Bl -tag -width KSTORE_MAX_VALUE
+.It Dv KSTORE_MAX_KEYS
+256 keys per store.
+.It Dv KSTORE_MAX_VALUE
+4096 bytes per value.
+.It Dv KSTORE_KEY_MAX
+64 bytes per key name.
+.El
+.Ss Wire protocol
+.Bd -literal
+#include <cmi_kernelstore_proto.h>
+
+struct kstore_request {
+    uint32_t op;
+    uint32_t _reserved;
+    char     key[KSTORE_KEY_MAX];
+};
+
+struct kstore_status_reply {
+    uint32_t status;
+};
+.Ed
+.Pp
+PUT appends the value after the
+.Vt kstore_request
+in the request payload.
+GET returns the value after the
+.Vt kstore_status_reply
+in the reply payload.
+.Sh SEE ALSO
+.Xr cmi 4

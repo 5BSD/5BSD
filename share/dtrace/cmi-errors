@@ -1,0 +1,44 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * cmi-errors -- trace CMI ioctl failures.
+ *
+ * Fires on every failed CMI ioctl and shows the errno, command,
+ * and calling process.  Useful for diagnosing capability access
+ * denials, queue full conditions, and terminated instances.
+ *
+ * Usage: cmi-errors
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-16s %-10s %-6s %s\n",
+	    "PID", "COMM", "IOCTL", "ERRNO", "TIME");
+}
+
+fbt::cmi_instance_ioctl:return
+/arg1 != 0/
+{
+	printf("%-6d %-16s %-10s %-6d %Y\n",
+	    pid, execname, "instance", arg1, walltimestamp);
+	@errs[arg1] = count();
+}
+
+fbt::cmi_cdev_ioctl:return
+/arg1 != 0/
+{
+	printf("%-6d %-16s %-10s %-6d %Y\n",
+	    pid, execname, "connect", arg1, walltimestamp);
+	@errs[arg1] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Error counts by errno ---\n");
+	printa("errno %-6@d: %@d\n", @errs);
+}

@@ -38,8 +38,8 @@
 #include <sys/types.h>
 
 #define	CMI_MAXNAME		64
-#define	CMI_MAX_FDS		16
-#define	CMI_MAX_MSG		7168	/* usable payload (8192 - 1024 header) */
+#define	CMI_MAX_FDS		32
+#define	CMI_MAX_MSG		14336	/* usable payload (16384 - 2048 header) */
 #define	CMI_DEFAULT_QUEUE_DEPTH	256
 #define	CMI_DEFAULT_TX_LIMIT	CMI_DEFAULT_QUEUE_DEPTH
 
@@ -50,8 +50,8 @@
 struct cmi_cred_trailer {
 	uid_t		uid;
 	gid_t		gid;
-	pid_t		pid;
 	int		prison_id;
+	uint64_t	nonce;		/* program identity (inherited on fork, rotates on exec) */
 };
 
 /*
@@ -108,6 +108,7 @@ struct cmi_call_args {
 	uint32_t	reply_len;	/* IN: buffer size, OUT: actual */
 	int		*reply_fds;	/* OUT: returned fds */
 	uint32_t	reply_nfds;	/* IN: max, OUT: actual */
+	struct cmi_cred_trailer trailer; /* OUT: caller credentials */
 	uint32_t	_reserved[2];
 };
 
@@ -121,7 +122,6 @@ struct cmi_call_args {
 struct cmi_info_args {
 	char		name[CMI_MAXNAME]; /* OUT: service name */
 	uint64_t	badge;		    /* OUT: capability badge */
-	uint64_t	id;		    /* OUT: capability ID */
 	uint32_t	msg_limit;	    /* OUT: max payload bytes */
 	uint32_t	queue_depth;	    /* OUT: max RX queue depth */
 	uint32_t	tx_limit;	    /* OUT: TX notification soft limit */

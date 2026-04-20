@@ -1,0 +1,76 @@
+.\"
+.\" Copyright (c) 2026 The FreeBSD Foundation
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd April 19, 2026
+.Dt CMI_NAMESPACE 4
+.Os
+.Sh NAME
+.Nm cmi_namespace
+.Nd CMI namespace management service
+.Sh SYNOPSIS
+.Cd "kldload cmi"
+.Cd "kldload cmi_namespace"
+.Sh DESCRIPTION
+The
+.Nm
+service manages namespaces backed by FreeBSD jails.
+Each instance represents authority over a namespace.
+.Pp
+Two roles exist:
+.Bl -tag -width "Member"
+.It Sy Owner
+Can create child namespaces, mint members, query info,
+get the jid for attachment, and remove the namespace.
+.It Sy Member
+Can query info and get the jid for attachment.
+.El
+.Pp
+Closing an owner fd destroys the namespace and all its children.
+.Pp
+All operations use
+.Dv CMI_CALL
+(synchronous).
+.Ss Operations
+.Bl -tag -width NS_OP_REMOVE
+.It Dv NS_OP_INFO
+Query the caller's current namespace (jid and name).
+.It Dv NS_OP_CREATE
+Create a child namespace with a given hostname.
+Returns an owner fd for the child.
+.It Dv NS_OP_ATTACH
+Returns the jid so the caller can call
+.Xr jail_attach 2
+themselves.
+The capability IS the authorization.
+.It Dv NS_OP_REMOVE
+Destroy the namespace and all children.
+.It Dv NS_OP_MINT
+Create a member fd for this namespace.
+.El
+.Ss Wire protocol
+.Bd -literal
+#include <cmi_namespace_proto.h>
+
+struct ns_request {
+    uint32_t op;
+    uint32_t _reserved;
+};
+
+struct ns_create_request {
+    uint32_t op;
+    uint32_t _reserved;
+    char     hostname[256];
+};
+
+struct ns_info_reply {
+    uint32_t status;
+    int      jid;
+    char     name[256];
+};
+.Ed
+.Sh SEE ALSO
+.Xr cmi 4 ,
+.Xr jail 2 ,
+.Xr jail_attach 2

@@ -36,30 +36,10 @@
 #include <sys/ucred.h>
 
 #include "cmi.h"
+#include "cmi_label.h"
+#include "cmi_token_proto.h"
 
 MALLOC_DEFINE(M_CMI_TOKEN, "cmi_token", "cmi token service");
-
-#define	TOKEN_OP_CREATE		1	/* create token (reply fd) */
-#define	TOKEN_OP_VALIDATE	2	/* check token is live */
-#define	TOKEN_OP_REVOKE		3	/* revoke this token */
-
-#define	TOKEN_LABEL_MAX		64
-
-struct token_create_request {
-	uint32_t	op;
-	char		label[TOKEN_LABEL_MAX];
-} __packed;
-
-struct token_request {
-	uint32_t	op;
-} __packed;
-
-struct token_validate_reply {
-	uint32_t	valid;		/* 1 = live, 0 = revoked */
-	uid_t		issuer_uid;	/* who created it */
-	pid_t		issuer_pid;	/* who created it */
-	char		label[TOKEN_LABEL_MAX];
-};
 
 #define	TOKEN_ROLE_ISSUER	1
 #define	TOKEN_ROLE_TOKEN	2
@@ -69,7 +49,7 @@ struct token_priv {
 	int		tp_role;
 	int		tp_valid;	/* 1 = live */
 	uid_t		tp_issuer_uid;
-	pid_t		tp_issuer_pid;
+	uint64_t	tp_issuer_nonce;
 	char		tp_label[TOKEN_LABEL_MAX];
 };
 
@@ -148,9 +128,11 @@ token_call(struct cmi_instance *s,
 			child_tp->tp_role = TOKEN_ROLE_TOKEN;
 			child_tp->tp_valid = 1;
 			child_tp->tp_issuer_uid = curthread->td_ucred->cr_uid;
-			child_tp->tp_issuer_pid = curthread->td_proc->p_pid;
-			strlcpy(child_tp->tp_label, cr->label,
-			    sizeof(child_tp->tp_label));
+			child_tp->tp_issuer_nonce =
+			    cmi_proc_nonce(curthread->td_ucred);
+			memcpy(child_tp->tp_label, cr->label,
+			    TOKEN_LABEL_MAX - 1);
+			child_tp->tp_label[TOKEN_LABEL_MAX - 1] = '\0';
 			mtx_unlock(&child_tp->tp_mtx);
 		}
 
@@ -163,8 +145,10 @@ token_call(struct cmi_instance *s,
 	case TOKEN_OP_VALIDATE: {
 		struct token_validate_reply *vr;
 
-		if (*replylenp < sizeof(struct token_validate_reply))
-			return (EINVAL);
+		if (*replylenp < sizeof(struct token_validate_reply)) {
+			*replylenp = sizeof(struct token_validate_reply);
+			return (EMSGSIZE);
+		}
 
 		vr = (struct token_validate_reply *)reply;
 		memset(vr, 0, sizeof(*vr));
@@ -176,7 +160,7 @@ token_call(struct cmi_instance *s,
 		}
 		vr->valid = tp->tp_valid;
 		vr->issuer_uid = tp->tp_issuer_uid;
-		vr->issuer_pid = tp->tp_issuer_pid;
+		vr->issuer_nonce = tp->tp_issuer_nonce;
 		strlcpy(vr->label, tp->tp_label, sizeof(vr->label));
 		mtx_unlock(&tp->tp_mtx);
 

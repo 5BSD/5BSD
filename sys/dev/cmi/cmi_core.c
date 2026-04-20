@@ -17,7 +17,9 @@
 #include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
+#include <sys/imgact.h>
 #include <sys/kernel.h>
+#include <sys/libkern.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
@@ -28,10 +30,15 @@
 #include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
 #include <sys/taskqueue.h>
+#include <sys/ucred.h>
 #include <sys/uio.h>
+#include <sys/vnode.h>
 #include <vm/uma.h>
 
+#include <security/mac/mac_policy.h>
+
 #include "cmi_internal.h"
+#include "cmi_label.h"
 
 MALLOC_DEFINE(M_CMI, "cmi", "cmi capability message interface");
 
@@ -75,6 +82,157 @@ SYSCTL_COUNTER_U64(_kern_cmi, OID_AUTO, services, CTLFLAG_RD,
 counter_u64_t cmi_stat_instances;
 SYSCTL_COUNTER_U64(_kern_cmi, OID_AUTO, instances, CTLFLAG_RD,
     &cmi_stat_instances, "Number of active instances");
+
+/* ----------------------------------------------------------------
+ * Process nonce — MACF credential label
+ *
+ * Attaches a cryptographic nonce to every credential.  The nonce
+ * identifies the program image: inherited across fork, rotated on
+ * exec.  Services read it via cmi_proc_nonce().
+ *
+ * The exec transition hook runs with the process lock held.  To avoid
+ * taking the MAC framework's sleepable dynamic-policy lock on that path,
+ * this policy must be registered as a static boot-time policy rather than
+ * a late-loadable/unloadable one.
+ * ---------------------------------------------------------------- */
+
+struct cmi_label {
+	uint64_t	cl_nonce;
+};
+
+static int cmi_label_slot;
+
+#define	SLOT(l)		((struct cmi_label *)mac_label_get((l), cmi_label_slot))
+#define	SLOT_SET(l, v)	mac_label_set((l), cmi_label_slot, (uintptr_t)(v))
+
+static void
+cmi_label_gen_nonce(struct cmi_label *cl)
+{
+
+	do {
+		arc4random_buf(&cl->cl_nonce, sizeof(cl->cl_nonce));
+	} while (cl->cl_nonce == 0);
+}
+
+static void
+cmi_cred_init_label(struct label *label)
+{
+	struct cmi_label *cl;
+
+	if (label == NULL)
+		return;
+	cl = malloc(sizeof(*cl), M_CMI, M_WAITOK | M_ZERO);
+	SLOT_SET(label, cl);
+}
+
+static void
+cmi_cred_create_init(struct ucred *cred)
+{
+	struct cmi_label *cl;
+
+	if (cred->cr_label == NULL)
+		return;
+	cl = SLOT(cred->cr_label);
+	if (cl != NULL)
+		cmi_label_gen_nonce(cl);
+}
+
+static void
+cmi_cred_copy_label(struct label *src, struct label *dest)
+{
+	struct cmi_label *scl, *dcl;
+
+	if (src == NULL || dest == NULL)
+		return;
+	scl = SLOT(src);
+	dcl = SLOT(dest);
+	if (scl != NULL && dcl != NULL)
+		*dcl = *scl;
+}
+
+static void
+cmi_cred_destroy_label(struct label *label)
+{
+	struct cmi_label *cl;
+
+	if (label == NULL)
+		return;
+	cl = SLOT(label);
+	if (cl != NULL) {
+		free(cl, M_CMI);
+		SLOT_SET(label, NULL);
+	}
+}
+
+static int
+cmi_execve_will_transition(struct ucred *old, struct vnode *vp,
+    struct label *vplabel, struct label *interpvplabel,
+    struct image_params *imgp, struct label *execlabel)
+{
+
+	return (1);
+}
+
+static void
+cmi_execve_transition(struct ucred *old, struct ucred *new,
+    struct vnode *vp, struct label *vplabel,
+    struct label *interpvplabel, struct image_params *imgp,
+    struct label *execlabel)
+{
+	struct cmi_label *cl;
+
+	if (new->cr_label == NULL)
+		return;
+	cl = SLOT(new->cr_label);
+	if (cl != NULL)
+		cmi_label_gen_nonce(cl);
+}
+
+uint64_t
+cmi_proc_nonce(struct ucred *cred)
+{
+	struct cmi_label *cl, *newcl;
+
+	if (cred == NULL || cred->cr_label == NULL)
+		return (0);
+	cl = SLOT(cred->cr_label);
+	if (cl == NULL) {
+		/*
+		 * Backfill missing labels for credentials that predate
+		 * policy registration.  Use M_NOWAIT because this accessor
+		 * is used from no-sleep contexts such as MAC hooks.
+		 */
+		newcl = malloc(sizeof(*newcl), M_CMI, M_NOWAIT | M_ZERO);
+		if (newcl == NULL)
+			return (0);
+		cmi_label_gen_nonce(newcl);
+
+		mtx_lock(&cred->cr_mtx);
+		cl = SLOT(cred->cr_label);
+		if (cl == NULL) {
+			SLOT_SET(cred->cr_label, newcl);
+			cl = newcl;
+			newcl = NULL;
+		}
+		mtx_unlock(&cred->cr_mtx);
+
+		if (newcl != NULL)
+			free(newcl, M_CMI);
+	}
+	return (cl->cl_nonce);
+}
+
+static struct mac_policy_ops cmi_label_mac_ops = {
+	.mpo_cred_init_label = cmi_cred_init_label,
+	.mpo_cred_create_init = cmi_cred_create_init,
+	.mpo_cred_copy_label = cmi_cred_copy_label,
+	.mpo_cred_destroy_label = cmi_cred_destroy_label,
+	.mpo_vnode_execve_will_transition = cmi_execve_will_transition,
+	.mpo_vnode_execve_transition = cmi_execve_transition,
+};
+
+MAC_POLICY_SET(&cmi_label_mac_ops, mac_cmi, "CMI credential nonce",
+    MPC_LOADTIME_FLAG_NOTLATE, &cmi_label_slot);
 
 /* ----------------------------------------------------------------
  * Service registry
@@ -134,7 +292,6 @@ cmi_instance_init(struct cmi_service *svc, uint64_t badge)
 	s->ci_rxqlimit = svc->csvc_queue_depth;
 	s->ci_service = svc;
 	s->ci_badge = badge;
-	s->ci_id = ((uint64_t)arc4random() << 32) | arc4random();
 	refcount_init(&s->ci_refcnt, 1);
 	TASK_INIT(&s->ci_task, 0, cmi_dispatch_task, s);
 	counter_u64_add(cmi_stat_instances, 1);

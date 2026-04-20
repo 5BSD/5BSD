@@ -38,29 +38,9 @@
 #include <sys/uio.h>
 
 #include "cmi.h"
+#include "cmi_namespace_proto.h"
 
 MALLOC_DEFINE(M_CMI_NS, "cmi_ns", "cmi namespace service");
-
-#define	NS_OP_INFO	1	/* query current namespace */
-#define	NS_OP_CREATE	2	/* create child, return owner fd */
-#define	NS_OP_ATTACH	3	/* enter this namespace */
-#define	NS_OP_REMOVE	4	/* destroy namespace + children */
-#define	NS_OP_MINT	5	/* create member fd */
-
-struct ns_request {
-	uint32_t	op;
-} __packed;
-
-struct ns_create_request {
-	uint32_t	op;		/* NS_OP_CREATE */
-	char		hostname[256];	/* child hostname */
-} __packed;
-
-struct ns_info_reply {
-	uint32_t	status;
-	int		jid;
-	char		name[256];	/* MAXHOSTNAMELEN */
-};
 
 #define	NS_ROLE_OWNER	1
 #define	NS_ROLE_MEMBER	2
@@ -96,6 +76,25 @@ ns_init(struct cmi_instance *s, void *arg __unused)
 	return (0);
 }
 
+static bool
+ns_jid_exists(int jid)
+{
+	struct prison *pr;
+	bool exists;
+
+	if (jid == 0)
+		return (false);
+
+	sx_slock(&allprison_lock);
+	pr = prison_find(jid);
+	exists = (pr != NULL);
+	if (pr != NULL)
+		mtx_unlock(&pr->pr_mtx);
+	sx_sunlock(&allprison_lock);
+
+	return (exists);
+}
+
 static int
 ns_call(struct cmi_instance *s,
     const void *req, size_t reqlen,
@@ -121,8 +120,10 @@ ns_call(struct cmi_instance *s,
 		struct ns_info_reply *info;
 		struct prison *pr;
 
-		if (*replylenp < sizeof(struct ns_info_reply))
-			return (EINVAL);
+		if (*replylenp < sizeof(struct ns_info_reply)) {
+			*replylenp = sizeof(struct ns_info_reply);
+			return (EMSGSIZE);
+		}
 
 		info = (struct ns_info_reply *)reply;
 		memset(info, 0, sizeof(*info));
@@ -164,25 +165,34 @@ ns_call(struct cmi_instance *s,
 		cr = (const struct ns_create_request *)req;
 
 		/*
-		 * Build the jail name.  If creating from an owner
-		 * that has a jid, nest under that jail's name.
+		 * NUL-terminate hostname — userspace may fill it
+		 * completely.  Use a safe local copy.
 		 */
-		if (parent_jid != 0) {
-			struct prison *ppr;
-			sx_slock(&allprison_lock);
-			ppr = prison_find(parent_jid);
-			if (ppr != NULL) {
-				snprintf(name, sizeof(name), "%s.%s",
-				    ppr->pr_name, cr->hostname);
-				mtx_unlock(&ppr->pr_mtx);
-			} else {
-				/* Parent gone — refuse to create top-level. */
+		{
+			char hostname[256];
+			memcpy(hostname, cr->hostname, sizeof(hostname) - 1);
+			hostname[sizeof(hostname) - 1] = '\0';
+
+			/*
+			 * Build the jail name.  If creating from an owner
+			 * that has a jid, nest under that jail's name.
+			 */
+			if (parent_jid != 0) {
+				struct prison *ppr;
+				sx_slock(&allprison_lock);
+				ppr = prison_find(parent_jid);
+				if (ppr != NULL) {
+					snprintf(name, sizeof(name), "%s.%s",
+					    ppr->pr_name, hostname);
+					mtx_unlock(&ppr->pr_mtx);
+				} else {
+					sx_sunlock(&allprison_lock);
+					return (EINVAL);
+				}
 				sx_sunlock(&allprison_lock);
-				return (EINVAL);
+			} else {
+				strlcpy(name, hostname, sizeof(name));
 			}
-			sx_sunlock(&allprison_lock);
-		} else {
-			strlcpy(name, cr->hostname, sizeof(name));
 		}
 
 		/* Create the namespace (jail).
@@ -260,23 +270,33 @@ ns_call(struct cmi_instance *s,
 		 * Return the jid so the caller can call jail_attach(2)
 		 * themselves.  The capability IS the authorization.
 		 */
-		mtx_lock(&np->np_mtx);
-		if (np->np_jid == 0) {
+		{
+			int jid;
+
+			mtx_lock(&np->np_mtx);
+			if (np->np_jid == 0) {
+				mtx_unlock(&np->np_mtx);
+				return (EINVAL);
+			}
+			if (!np->np_privileged) {
+				mtx_unlock(&np->np_mtx);
+				return (EPERM);
+			}
+			if (*replylenp < sizeof(int)) {
+				*replylenp = sizeof(int);
+				mtx_unlock(&np->np_mtx);
+				return (EMSGSIZE);
+			}
+			jid = np->np_jid;
 			mtx_unlock(&np->np_mtx);
-			return (EINVAL);
+
+			if (!ns_jid_exists(jid))
+				return (EINVAL);
+
+			*(int *)reply = jid;
+			*replylenp = sizeof(int);
+			return (0);
 		}
-		if (!np->np_privileged) {
-			mtx_unlock(&np->np_mtx);
-			return (EPERM);
-		}
-		if (*replylenp < sizeof(int)) {
-			mtx_unlock(&np->np_mtx);
-			return (EINVAL);
-		}
-		*(int *)reply = np->np_jid;
-		*replylenp = sizeof(int);
-		mtx_unlock(&np->np_mtx);
-		return (0);
 
 	case NS_OP_REMOVE: {
 		struct prison *pr;
@@ -303,6 +323,7 @@ ns_call(struct cmi_instance *s,
 			prison_remove(pr);
 		} else {
 			sx_xunlock(&allprison_lock);
+			return (EINVAL);
 		}
 		*replylenp = 0;
 		return (0);
@@ -324,6 +345,9 @@ ns_call(struct cmi_instance *s,
 		}
 		int jid = np->np_jid;
 		mtx_unlock(&np->np_mtx);
+
+		if (!ns_jid_exists(jid))
+			return (EINVAL);
 
 		if (*reply_nfdsp < 1)
 			return (EINVAL);
