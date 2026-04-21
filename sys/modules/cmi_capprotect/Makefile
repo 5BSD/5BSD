@@ -1,6 +1,6 @@
 .PATH: ${SRCTOP}/sys/dev/cmi
 
-KMOD=	cmi_debug
-SRCS=	cmi_debug.c
+KMOD=	cmi_capprotect
+SRCS=	cmi_capprotect.c
 
 .include <bsd.kmod.mk>

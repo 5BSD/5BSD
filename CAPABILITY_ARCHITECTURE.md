@@ -380,7 +380,7 @@ Most services don't need this.
 - **cmi_ioctl.h** -- shared kernel/userspace ioctl definitions
 - **cmi_label.h** -- program nonce accessor (`cmi_proc_nonce`)
 - **cmi_internal.h** -- framework internals (not for service modules)
-- **cmi_debug_proto.h** -- debug service wire protocol
+- **cmi_capprotect_proto.h** -- capability protection wire protocol
 - **cmi_token_proto.h** -- token service wire protocol
 - **cmi_namespace_proto.h** -- namespace service wire protocol
 - **cmi_kernelstore_proto.h** -- kernelstore service wire protocol
@@ -585,7 +585,7 @@ sys/dev/cmi/
     cmi_core.c         module lifecycle, capability creation
     cmi_dev.c          capability operations (ioctls, kqueue, close)
     cmi_kern.c         KPI: dispatch, reply/notify/revoke
-    cmi_debug.c        cap_debug: process protection via MACF
+    cmi_capprotect.c   capability protection (ptrace/signal/visibility via MACF)
     cmi_kernelstore.c  shared capability-gated key-value store
     cmi_keystore.c     async test fixture: key-value store
     cmi_label.h        public header: cmi_proc_nonce() accessor
@@ -594,7 +594,7 @@ sys/dev/cmi/
     cmi_token.c        kernel-gated authorization tokens
 
 sys/modules/cmi/           core module
-sys/modules/cmi_debug/     debug shield
+sys/modules/cmi_capprotect/ capability protection
 sys/modules/cmi_kernelstore/ shared key-value store
 sys/modules/cmi_keystore/  keystore test fixture
 sys/modules/cmi_namespace/ namespace management
@@ -676,11 +676,14 @@ Provider: `cmi`
 
 ## Roadmap
 
-### Phase 1: cap_debug — process debug protection (DONE)
+### Phase 1: Capability Protection (DONE)
 
-CMI sync service (`cmi_debug`) backed by MACF.  Shield protects
-from ptrace/signals.  Debug tokens authorize specific debuggers.
-Close removes protection.  Per-instance mutex for safety.
+CMI sync service (`cmi_capprotect`) backed by MACF.  Selective
+process integrity protection via flags: ptrace, signals, SIGKILL,
+SIGCONT, visibility, wait.  Same-nonce (fork family) freely
+interacts; foreign programs (different nonce) are blocked.  Access
+tokens grant foreign programs authorized access through the shield.
+Close removes protection.
 
 ### Phase 2: Rename jail → namespace (DONE)
 
@@ -705,7 +708,7 @@ Removed pid from the framework:
 - `cmi_msg_pid()` removed from kernel API
 - `pid` removed from credential trailer (replaced by `nonce`)
 - `issuer_pid` removed from token validate reply
-- `cmi_debug` shield/auth tables keyed by nonce, not pid
+- `cmi_capprotect` shield/auth tables keyed by nonce, not pid
 - Instance `id` removed (badge is the only per-instance identifier)
 
 ### Phase 5: KernelStore — shared capability store (DONE)

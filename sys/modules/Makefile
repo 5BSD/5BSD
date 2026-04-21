@@ -211,7 +211,7 @@ SUBDIR=	\
 	jme \
 	kbdmux \
 	cmi \
-	cmi_debug \
+	cmi_capprotect \
 	cmi_kernelstore \
 	cmi_keystore \
 	cmi_namespace \

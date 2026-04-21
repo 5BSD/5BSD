@@ -4,7 +4,7 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * cmi-shield -- trace debug shield activity.
+ * cmi-shield -- trace capability protection activity.
  *
  * Shows when processes are shielded/unshielded and when
  * ptrace/signal checks are denied by the shield.
@@ -22,21 +22,21 @@ dtrace:::BEGIN
 
 /* Shield activation via CMI_CALL */
 cmi:::call
-/copyinstr(arg0) == "debug"/
+/copyinstr(arg0) == "capprotect"/
 {
 	printf("%-6d %-16s %-10s badge=%d reqlen=%d\n",
 	    pid, execname, "CALL", arg1, arg2);
 }
 
 /* MAC check denied */
-fbt::debug_mac_check_debug:return
+fbt::cp_mac_check_ptrace:return
 /arg1 != 0/
 {
 	printf("%-6d %-16s %-10s denied (errno=%d)\n",
 	    pid, execname, "PTRACE", arg1);
 }
 
-fbt::debug_mac_check_signal:return
+fbt::cp_mac_check_signal:return
 /arg1 != 0/
 {
 	printf("%-6d %-16s %-10s denied (errno=%d)\n",
@@ -45,7 +45,7 @@ fbt::debug_mac_check_signal:return
 
 /* Shield removed via close/revoke */
 cmi:::revoke
-/copyinstr(arg0) == "debug"/
+/copyinstr(arg0) == "capprotect"/
 {
 	printf("%-6d %-16s %-10s badge=%d\n",
 	    pid, execname, "UNSHIELD", arg1);

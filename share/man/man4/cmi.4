@@ -135,11 +135,11 @@ Kill the instance.
 .Sh SERVICES
 The following services are provided as loadable kernel modules:
 .Bl -tag -width cmi_kernelstore
-.It Sy cmi_debug
-Process debug protection via MACF.
-Shield a program from ptrace and most signals.
-Mint debug tokens to authorize specific debuggers.
-SIGKILL and SIGCONT are always allowed.
+.It Sy cmi_capprotect
+Capability Protection via MACF.
+Selectively shield a program from ptrace, signals, visibility,
+and wait.  Same-nonce (fork family) processes interact freely;
+foreign programs are blocked.  Access tokens grant authorized access.
 .It Sy cmi_token
 Kernel-gated authorization tokens.
 Create labeled tokens, validate, and revoke.

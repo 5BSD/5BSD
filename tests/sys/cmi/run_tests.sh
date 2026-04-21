@@ -12,7 +12,8 @@ set -e
 SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 
 CORE_MODULE="cmi"
-SERVICE_MODULES="cmi_kernelstore cmi_keystore cmi_pair cmi_namespace cmi_debug cmi_token"
+BOOT_MODULES="cmi_capprotect"
+SERVICE_MODULES="cmi_kernelstore cmi_keystore cmi_pair cmi_namespace cmi_token"
 
 CMI_TEST_BIN="${SCRIPT_DIR}/cmi_test"
 die() { echo "FAIL: $1" >&2; exit 1; }
@@ -31,20 +32,28 @@ done
 
 # Unload any stale service modules (reverse order)
 info "Unloading stale modules"
-for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
+for m in cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
 	kldunload "$m" 2>/dev/null || true
 done
 
-# Core CMI must be loaded at boot via loader.conf (NOTLATE MAC policy).
-info "Verifying core module"
+# Core CMI and capprotect must be loaded at boot (NOTLATE MAC policies).
+info "Verifying boot modules"
 if ! kldstat -m "$CORE_MODULE" >/dev/null 2>&1; then
 	echo ""
 	echo "CMI core module not loaded."
 	echo "Add to /boot/loader.conf and reboot:"
 	echo "  echo 'cmi_load=\"YES\"' >> /boot/loader.conf"
-	echo "  reboot"
 	die "$CORE_MODULE not loaded (requires loader.conf)"
 fi
+for m in $BOOT_MODULES; do
+	if ! kldstat -m "$m" >/dev/null 2>&1; then
+		echo ""
+		echo "$m not loaded at boot."
+		echo "Add to /boot/loader.conf and reboot:"
+		echo "  echo '${m}_load=\"YES\"' >> /boot/loader.conf"
+		die "$m not loaded (requires loader.conf)"
+	fi
+done
 
 # Load service modules — try system path first, then local
 info "Loading service modules"
@@ -74,6 +83,7 @@ services=$(sysctl -n kern.cmi.services)
 # Run ATF tests
 info "Running ATF tests"
 cd "$SCRIPT_DIR"
+export TESTSDIR="$SCRIPT_DIR"
 if command -v kyua >/dev/null 2>&1; then
 	kyua test || die "kyua test failed"
 	kyua report
@@ -92,11 +102,11 @@ fi
 # Verify clean service module unload
 # Core CMI stays loaded (boot-time NOTLATE MAC policy)
 info "Testing service module unload"
-for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
+for m in cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
 	kldunload "$m" || die "unload $m"
 done
 
-# /dev/cmi should still exist (core stays loaded)
+# /dev/cmi and capprotect stay loaded (boot-time NOTLATE MAC policies)
 [ -c /dev/cmi ] || die "/dev/cmi missing after service unload"
 
 info "All tests passed"
