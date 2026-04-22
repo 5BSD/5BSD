@@ -34,7 +34,8 @@
 #define	CP_SF_WAIT		0x08	/* block wait4 from non-parent */
 #define	CP_SF_SIGKILL		0x10	/* block SIGKILL (unkillable) */
 #define	CP_SF_SIGCONT		0x20	/* block SIGCONT (unstoppable) */
-#define	CP_SF_ALL		0x3f
+#define	CP_SF_SCHED		0x40	/* block setpriority/cpuset manipulation */
+#define	CP_SF_ALL		0x7f
 
 struct cp_request {
 	uint32_t	op;

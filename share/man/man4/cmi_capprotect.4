@@ -63,7 +63,14 @@ Block SIGKILL from foreign programs.
 Makes the process unkillable except by the same program or authorized holders.
 .It Dv CP_SF_SIGCONT Ta 0x20
 Block SIGCONT from foreign programs.
-.It Dv CP_SF_ALL Ta 0x3f
+.It Dv CP_SF_SCHED Ta 0x40
+Block
+.Xr getpriority 2 ,
+.Xr setpriority 2 ,
+and
+.Xr cpuset 2
+manipulation from foreign programs.
+.It Dv CP_SF_ALL Ta 0x7f
 All protections.
 .El
 .Pp

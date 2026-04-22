@@ -28,17 +28,24 @@ TESTS="jaildesc_cap_test timerfd_cap_test fcntl_readahead_cap_test posix_fadvise
 TEST_OBJDIR="${OBJDIR}/home/koryheard/Projects/5BSD/amd64.amd64/tests/sys/kern"
 
 # CMI test binaries (built from source tree, not obj tree)
-CMI_TESTS="cmi_test cmi_exec_helper"
+CMI_TESTS="cmi_test cmi_shield_helper cmi_exec_helper"
 CMI_TESTDIR="${SRCDIR}/tests/sys/cmi"
 
 cd "$SRCDIR"
 
 ensure_loader_conf_line() {
     _target="$1"
+    _line="$2"
     doas touch "$_target"
-    if ! doas grep -q '^cmi_load="YES"$' "$_target" 2>/dev/null; then
-        echo 'cmi_load="YES"' | doas tee -a "$_target" >/dev/null
+    if ! doas grep -q "^${_line}\$" "$_target" 2>/dev/null; then
+        echo "$_line" | doas tee -a "$_target" >/dev/null
     fi
+}
+
+ensure_loader_conf() {
+    _target="$1"
+    ensure_loader_conf_line "$_target" 'cmi_load="YES"'
+    ensure_loader_conf_line "$_target" 'cmi_capprotect_load="YES"'
 }
 
 wait_for_vm_ssh() {
@@ -89,7 +96,7 @@ KYUA
 #!/bin/sh
 set -e
 echo "=== Unloading stale modules ==="
-for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
+for m in cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
     kldunload "$m" 2>/dev/null || true
 done
 echo "=== Verifying core CMI ==="
@@ -98,7 +105,11 @@ if ! kldstat -m cmi >/dev/null 2>&1; then
     exit 1
 fi
 echo "=== Loading service modules ==="
-for m in cmi_kernelstore cmi_keystore cmi_pair cmi_namespace cmi_debug cmi_token; do
+if ! kldstat -m cmi_capprotect >/dev/null 2>&1; then
+    echo 'FAIL: cmi_capprotect not loaded at boot; add cmi_capprotect_load="YES" to /boot/loader.conf and reboot'
+    exit 1
+fi
+for m in cmi_kernelstore cmi_keystore cmi_pair cmi_namespace cmi_token; do
     kldload "$m" || { echo "FAIL: kldload $m"; exit 1; }
 done
 echo "=== Verifying ==="
@@ -107,17 +118,18 @@ sysctl kern.cmi.services kern.cmi.instances
 [ -c /dev/cmi ] || { echo "FAIL: /dev/cmi missing"; exit 1; }
 echo "=== ATF tests ==="
 cd /tmp/cmi-tests
+export TESTSDIR=/tmp/cmi-tests
 if command -v kyua >/dev/null 2>&1; then
     kyua test
     kyua report
 else
     for tc in $(./cmi_test -l | grep '^ident:' | sed 's/ident: //'); do
         echo "--- ${tc} ---"
-        ./cmi_test "${tc}" || echo "FAILED: ${tc}"
+        ./cmi_test -s /tmp/cmi-tests "${tc}" || echo "FAILED: ${tc}"
     done
 fi
 echo "=== Unloading modules ==="
-for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
+for m in cmi_capprotect cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
     kldunload "$m" || echo "WARN: unload $m failed"
 done
 [ -c /dev/cmi ] || { echo "FAIL: /dev/cmi missing after service unload"; exit 1; }
@@ -136,7 +148,7 @@ KYUA
 #!/bin/sh
 set -e
 echo "=== Unloading stale modules ==="
-for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
+for m in cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
     kldunload "$m" 2>/dev/null || true
 done
 echo "=== Verifying core CMI ==="
@@ -145,7 +157,11 @@ if ! kldstat -m cmi >/dev/null 2>&1; then
     exit 1
 fi
 echo "=== Loading service modules ==="
-for m in cmi_kernelstore cmi_keystore cmi_pair cmi_namespace cmi_debug cmi_token; do
+if ! kldstat -m cmi_capprotect >/dev/null 2>&1; then
+    echo 'FAIL: cmi_capprotect not loaded at boot; add cmi_capprotect_load="YES" to /boot/loader.conf and reboot'
+    exit 1
+fi
+for m in cmi_kernelstore cmi_keystore cmi_pair cmi_namespace cmi_token; do
     kldload "$m" || { echo "FAIL: kldload $m"; exit 1; }
 done
 echo "=== Verifying ==="
@@ -154,17 +170,18 @@ sysctl kern.cmi.services kern.cmi.instances
 [ -c /dev/cmi ] || { echo "FAIL: /dev/cmi missing"; exit 1; }
 echo "=== ATF tests ==="
 cd /tmp/cmi-tests
+export TESTSDIR=/tmp/cmi-tests
 if command -v kyua >/dev/null 2>&1; then
     kyua test
     kyua report
 else
     for tc in $(./cmi_test -l | grep '^ident:' | sed 's/ident: //'); do
         echo "--- ${tc} ---"
-        ./cmi_test "${tc}" || echo "FAILED: ${tc}"
+        ./cmi_test -s /tmp/cmi-tests "${tc}" || echo "FAILED: ${tc}"
     done
 fi
 echo "=== Unloading modules ==="
-for m in cmi_debug cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
+for m in cmi_capprotect cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
     kldunload "$m" || echo "WARN: unload $m failed"
 done
 [ -c /dev/cmi ] || { echo "FAIL: /dev/cmi missing after service unload"; exit 1; }
@@ -228,7 +245,7 @@ deploy_disk() {
     deploy_cmi_scripts /mnt/tmp/cmi-tests
 
     echo "Configuring boot loader for CMI..."
-    ensure_loader_conf_line /mnt/boot/loader.conf
+    ensure_loader_conf /mnt/boot/loader.conf
 
     # Unmount and detach
     echo "Unmounting..."
@@ -281,9 +298,10 @@ deploy_ssh() {
     done
     deploy_cmi_scripts_ssh
 
-    # Ensure CMI loads at boot (NOTLATE MAC policy)
+    # Ensure CMI + capprotect load at boot (NOTLATE MAC policies)
     echo "Configuring boot loader for CMI..."
     ssh "root@${VM_IP}" 'grep -q cmi_load /boot/loader.conf 2>/dev/null || echo "cmi_load=\"YES\"" >> /boot/loader.conf'
+    ssh "root@${VM_IP}" 'grep -q cmi_capprotect_load /boot/loader.conf 2>/dev/null || echo "cmi_capprotect_load=\"YES\"" >> /boot/loader.conf'
 
     echo "=== Deploy complete ==="
     echo "SSH: ssh root@${VM_IP}"

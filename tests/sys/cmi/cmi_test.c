@@ -4746,6 +4746,40 @@ ATF_TC_BODY(cap_pro_fork_child_shielded, tc)
 	close(sv[0]);
 }
 
+ATF_TC(cap_pro_foreign_sched_blocked);
+ATF_TC_HEAD(cap_pro_foreign_sched_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Shield with SF_SCHED blocks foreign getpriority");
+	atf_tc_set_md_var(tc, "require.kmods", "cmi cmi_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_foreign_sched_blocked, tc)
+{
+	int sv[2], status;
+	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		char buf;
+		int fd;
+		close(sv[0]);
+		fd = capprotect_shield(CP_SF_SCHED);
+		if (fd < 0) _exit(10);
+		write(sv[1], "s", 1);
+		read(sv[1], &buf, 1);
+		close(fd); close(sv[1]); _exit(0);
+	}
+	close(sv[1]);
+	{ char buf; read(sv[0], &buf, 1); }
+	ATF_CHECK_EQ(run_shield_helper("sched", pid), 0);
+	write(sv[0], "g", 1);
+	waitpid(pid, &status, 0);
+	close(sv[0]);
+}
+
 ATF_TC(cap_pro_foreign_wait_blocked);
 ATF_TC_HEAD(cap_pro_foreign_wait_blocked, tc)
 {
@@ -7451,6 +7485,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cap_pro_bad_op);
 	ATF_TP_ADD_TC(tp, cap_pro_bad_flags);
 	ATF_TP_ADD_TC(tp, cap_pro_fork_child_shielded);
+	ATF_TP_ADD_TC(tp, cap_pro_foreign_sched_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_wait_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_authorize_grants_access);
 	ATF_TP_ADD_TC(tp, cap_pro_token_close_revokes);

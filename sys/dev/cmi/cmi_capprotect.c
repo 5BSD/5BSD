@@ -15,6 +15,7 @@
  *   CP_SF_WAIT    — block wait4 from non-parent processes
  *   CP_SF_SIGKILL — block SIGKILL (unkillable)
  *   CP_SF_SIGCONT — block SIGCONT (unstoppable)
+ *   CP_SF_SCHED   — block scheduling manipulation
  *
  * Flags=0 enables all protections.
  * Closing the capability fd removes protection.
@@ -527,11 +528,43 @@ cp_mac_proc_check_wait(struct ucred *cred, struct proc *p)
 	return (EACCES);
 }
 
+static int
+cp_mac_proc_check_sched(struct ucred *cred, struct proc *p)
+{
+	uint64_t caller_nonce, target_nonce;
+	uint32_t flags;
+	int denied;
+
+	if (curthread->td_proc == NULL)
+		return (0);
+	if (curthread->td_proc == p)
+		return (0);
+
+	target_nonce = cmi_proc_nonce(p->p_ucred);
+	caller_nonce = cmi_proc_nonce(cred);
+	if (target_nonce == 0 || caller_nonce == 0)
+		return (0);
+	if (caller_nonce == target_nonce)
+		return (0);
+
+	mtx_lock(&cp_lock);
+	flags = cp_shield_flags(target_nonce);
+	if ((flags & CP_SF_SCHED) == 0) {
+		mtx_unlock(&cp_lock);
+		return (0);
+	}
+	denied = !cp_is_authorized(caller_nonce, target_nonce);
+	mtx_unlock(&cp_lock);
+
+	return (denied ? EACCES : 0);
+}
+
 static struct mac_policy_ops cp_mac_ops = {
 	.mpo_proc_check_debug = cp_mac_check_ptrace,
 	.mpo_proc_check_signal = cp_mac_check_signal,
 	.mpo_cred_check_visible = cp_mac_cred_check_visible,
 	.mpo_proc_check_wait = cp_mac_proc_check_wait,
+	.mpo_proc_check_sched = cp_mac_proc_check_sched,
 };
 
 MAC_POLICY_SET(&cp_mac_ops, mac_cmi_capprotect, "CMI capability protection",

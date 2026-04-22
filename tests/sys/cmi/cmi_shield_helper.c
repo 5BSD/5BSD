@@ -17,6 +17,7 @@
 #include <sys/wait.h>
 
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 
 #include <errno.h>
 #include <signal.h>
@@ -85,6 +86,21 @@ try_sigcont(pid_t pid)
 		return (1);
 	if (errno == EACCES)
 		return (0);
+	return (2);
+}
+
+static int
+try_sched(pid_t pid)
+{
+	int prio;
+
+	/* getpriority goes through p_cansched → MAC hook. */
+	errno = 0;
+	prio = getpriority(PRIO_PROCESS, pid);
+	if (prio == -1 && errno == EACCES)
+		return (0);	/* denied — shield works */
+	if (errno == 0 || errno == ESRCH)
+		return (1);	/* allowed */
 	return (2);
 }
 
@@ -185,6 +201,8 @@ main(int argc, char **argv)
 		return (try_sigkill(pid));
 	if (strcmp(argv[1], "sigcont") == 0)
 		return (try_sigcont(pid));
+	if (strcmp(argv[1], "sched") == 0)
+		return (try_sched(pid));
 	if (strcmp(argv[1], "wait") == 0)
 		return (try_wait(pid));
 	if (strcmp(argv[1], "visibility") == 0)
