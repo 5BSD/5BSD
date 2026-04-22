@@ -152,7 +152,7 @@ MALLOC_DECLARE(M_MACTEMP);
  * label structure into any ABIs.  Historically, the slot array contained
  * unions of {long, void} but now contains uintptr_t.
  */
-#define	MAC_MAX_SLOTS	6
+#define	MAC_MAX_SLOTS	7
 #define	MAC_FLAG_INITIALIZED	0x0000001	/* Is initialized for use. */
 struct label {
 	int		l_flags;

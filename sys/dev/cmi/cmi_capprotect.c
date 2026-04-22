@@ -72,8 +72,14 @@ struct cp_priv {
 
 /*
  * Global tables — protected by cp_lock.
+ *
+ * Both tables use hash buckets keyed by nonce for O(1) lookup.
+ * The visibility hook (mpo_cred_check_visible) fires once per
+ * process per enumeration, so fast lookup matters under load.
  */
 static struct mtx cp_lock;
+
+#define	CP_HASH_SIZE	64	/* buckets, must be power of 2 */
 
 /* Shield table: nonces that are shielded (refcounted). */
 struct shield_entry {
@@ -82,8 +88,8 @@ struct shield_entry {
 	uint32_t	se_flags;
 	int		se_refcnt;
 };
-static LIST_HEAD(, shield_entry) cp_shields =
-    LIST_HEAD_INITIALIZER(cp_shields);
+static LIST_HEAD(, shield_entry) *cp_shield_hash;
+static u_long cp_shield_hashmask;
 
 /* Auth table: (accessor_nonce, target_nonce) pairs. */
 struct auth_entry {
@@ -92,11 +98,23 @@ struct auth_entry {
 	uint64_t	ae_target;
 	struct cmi_instance *ae_inst;
 };
-static LIST_HEAD(, auth_entry) cp_auths =
-    LIST_HEAD_INITIALIZER(cp_auths);
+static LIST_HEAD(, auth_entry) *cp_auth_hash;
+static u_long cp_auth_hashmask;
 
 static struct cmi_service *cp_svc;
 static volatile uint64_t cp_next_badge = 1;
+
+/*
+ * Fast-path: if no shields are active, MAC hooks return immediately
+ * without touching the mutex.  Incremented in cp_shield_add,
+ * decremented in cp_shield_remove (only when refcount hits 0).
+ * Read without the lock — a stale read just means one extra
+ * mutex cycle during a concurrent shield/unshield transition.
+ */
+static volatile int cp_active_shields;
+
+#define	CP_SHIELD_BUCKET(nonce)	(&cp_shield_hash[(nonce) & cp_shield_hashmask])
+#define	CP_AUTH_BUCKET(nonce)	(&cp_auth_hash[(nonce) & cp_auth_hashmask])
 
 /*
  * Returns the shield flags for a nonce, or 0 if not shielded.
@@ -107,7 +125,7 @@ cp_shield_flags(uint64_t nonce)
 	struct shield_entry *se;
 
 	mtx_assert(&cp_lock, MA_OWNED);
-	LIST_FOREACH(se, &cp_shields, se_link) {
+	LIST_FOREACH(se, CP_SHIELD_BUCKET(nonce), se_link) {
 		if (se->se_nonce == nonce)
 			return (se->se_flags);
 	}
@@ -120,7 +138,7 @@ cp_is_authorized(uint64_t accessor, uint64_t target)
 	struct auth_entry *ae;
 
 	mtx_assert(&cp_lock, MA_OWNED);
-	LIST_FOREACH(ae, &cp_auths, ae_link) {
+	LIST_FOREACH(ae, CP_AUTH_BUCKET(target), ae_link) {
 		if (ae->ae_accessor == accessor && ae->ae_target == target)
 			return (1);
 	}
@@ -138,17 +156,16 @@ cp_shield_add(uint64_t nonce, uint32_t flags)
 	se->se_refcnt = 1;
 
 	mtx_lock(&cp_lock);
-	LIST_FOREACH(existing, &cp_shields, se_link) {
+	LIST_FOREACH(existing, CP_SHIELD_BUCKET(nonce), se_link) {
 		if (existing->se_nonce == nonce) {
 			existing->se_refcnt++;
-			/* Flags are set by the first shield; additional
-			 * fds only add a refcount hold. */
 			mtx_unlock(&cp_lock);
 			free(se, M_CMI_CP);
 			return;
 		}
 	}
-	LIST_INSERT_HEAD(&cp_shields, se, se_link);
+	atomic_add_int(&cp_active_shields, 1);
+	LIST_INSERT_HEAD(CP_SHIELD_BUCKET(nonce), se, se_link);
 	mtx_unlock(&cp_lock);
 }
 
@@ -159,7 +176,7 @@ cp_shield_remove(uint64_t nonce)
 	struct auth_entry *ae, *ae_tmp;
 
 	mtx_lock(&cp_lock);
-	LIST_FOREACH(se, &cp_shields, se_link) {
+	LIST_FOREACH(se, CP_SHIELD_BUCKET(nonce), se_link) {
 		if (se->se_nonce == nonce) {
 			if (--se->se_refcnt > 0) {
 				mtx_unlock(&cp_lock);
@@ -167,11 +184,12 @@ cp_shield_remove(uint64_t nonce)
 			}
 			LIST_REMOVE(se, se_link);
 			free(se, M_CMI_CP);
+			atomic_subtract_int(&cp_active_shields, 1);
 			break;
 		}
 	}
 	/* Remove all auth entries for this target (only when fully unshielded). */
-	LIST_FOREACH_SAFE(ae, &cp_auths, ae_link, ae_tmp) {
+	LIST_FOREACH_SAFE(ae, CP_AUTH_BUCKET(nonce), ae_link, ae_tmp) {
 		if (ae->ae_target == nonce) {
 			LIST_REMOVE(ae, ae_link);
 			free(ae, M_CMI_CP);
@@ -191,7 +209,7 @@ cp_auth_add(uint64_t accessor, uint64_t target, struct cmi_instance *inst)
 	ae->ae_inst = inst;
 
 	mtx_lock(&cp_lock);
-	LIST_INSERT_HEAD(&cp_auths, ae, ae_link);
+	LIST_INSERT_HEAD(CP_AUTH_BUCKET(target), ae, ae_link);
 	mtx_unlock(&cp_lock);
 }
 
@@ -199,12 +217,15 @@ static void
 cp_auth_remove_by_inst(struct cmi_instance *inst)
 {
 	struct auth_entry *ae, *ae_tmp;
+	u_long i;
 
 	mtx_lock(&cp_lock);
-	LIST_FOREACH_SAFE(ae, &cp_auths, ae_link, ae_tmp) {
-		if (ae->ae_inst == inst) {
-			LIST_REMOVE(ae, ae_link);
-			free(ae, M_CMI_CP);
+	for (i = 0; i <= cp_auth_hashmask; i++) {
+		LIST_FOREACH_SAFE(ae, &cp_auth_hash[i], ae_link, ae_tmp) {
+			if (ae->ae_inst == inst) {
+				LIST_REMOVE(ae, ae_link);
+				free(ae, M_CMI_CP);
+			}
 		}
 	}
 	mtx_unlock(&cp_lock);
@@ -383,7 +404,18 @@ static const struct cmi_ops cp_ops = {
  *
  * Same-nonce (fork family) processes always pass through.
  * Only foreign programs (different nonce) are subject to the shield.
+ *
+ * Fast-path: if cp_active_shields == 0, no process on the system
+ * is shielded and all hooks return immediately (~10ns) without
+ * touching the mutex.
  * ---------------------------------------------------------------- */
+
+static __inline int
+cp_no_shields(void)
+{
+
+	return (atomic_load_int(&cp_active_shields) == 0);
+}
 
 static int
 cp_mac_check_ptrace(struct ucred *cred, struct proc *p)
@@ -402,6 +434,8 @@ cp_mac_check_ptrace(struct ucred *cred, struct proc *p)
 	if (target_nonce == 0 || caller_nonce == 0)
 		return (0);
 	if (caller_nonce == target_nonce)
+		return (0);
+	if (cp_no_shields())
 		return (0);
 
 	mtx_lock(&cp_lock);
@@ -433,6 +467,8 @@ cp_mac_check_signal(struct ucred *cred, struct proc *p, int signum)
 	if (target_nonce == 0 || caller_nonce == 0)
 		return (0);
 	if (caller_nonce == target_nonce)
+		return (0);
+	if (cp_no_shields())
 		return (0);
 
 	mtx_lock(&cp_lock);
@@ -479,6 +515,8 @@ cp_mac_cred_check_visible(struct ucred *cr1, struct ucred *cr2)
 		return (0);
 	if (observer_nonce == target_nonce)
 		return (0);
+	if (cp_no_shields())
+		return (0);
 
 	mtx_lock(&cp_lock);
 	flags = cp_shield_flags(target_nonce);
@@ -511,6 +549,8 @@ cp_mac_proc_check_wait(struct ucred *cred, struct proc *p)
 	if (target_nonce == 0 || caller_nonce == 0)
 		return (0);
 	if (caller_nonce == target_nonce)
+		return (0);
+	if (cp_no_shields())
 		return (0);
 
 	mtx_lock(&cp_lock);
@@ -545,6 +585,8 @@ cp_mac_proc_check_sched(struct ucred *cred, struct proc *p)
 	if (target_nonce == 0 || caller_nonce == 0)
 		return (0);
 	if (caller_nonce == target_nonce)
+		return (0);
+	if (cp_no_shields())
 		return (0);
 
 	mtx_lock(&cp_lock);
@@ -581,6 +623,10 @@ cmi_capprotect_modevent(module_t mod __unused, int type, void *unused __unused)
 
 	switch (type) {
 	case MOD_LOAD:
+		cp_shield_hash = hashinit(CP_HASH_SIZE, M_CMI_CP,
+		    &cp_shield_hashmask);
+		cp_auth_hash = hashinit(CP_HASH_SIZE, M_CMI_CP,
+		    &cp_auth_hashmask);
 		mtx_init(&cp_lock, "cmi_capprotect", NULL, MTX_DEF);
 		{
 			struct cmi_service_params p = {
@@ -591,6 +637,8 @@ cmi_capprotect_modevent(module_t mod __unused, int type, void *unused __unused)
 		}
 		if (error != 0) {
 			mtx_destroy(&cp_lock);
+			hashdestroy(cp_shield_hash, M_CMI_CP, cp_shield_hashmask);
+			hashdestroy(cp_auth_hash, M_CMI_CP, cp_auth_hashmask);
 			return (error);
 		}
 		if (bootverbose)
