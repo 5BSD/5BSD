@@ -457,6 +457,23 @@ mac_socket_check_send(struct ucred *cred, struct socket *so)
 	return (error);
 }
 
+MAC_CHECK_PROBE_DEFINE4(socket_check_setsockopt, "struct ucred *",
+    "struct socket *", "int", "int");
+
+int
+mac_socket_check_setsockopt(struct ucred *cred, struct socket *so,
+    int level, int optname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(socket_check_setsockopt, cred, so, so->so_label,
+	    level, optname);
+	MAC_CHECK_PROBE4(socket_check_setsockopt, error, cred, so, level,
+	    optname);
+
+	return (error);
+}
+
 MAC_CHECK_PROBE_DEFINE2(socket_check_stat, "struct ucred *",
     "struct socket *");
 

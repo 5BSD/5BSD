@@ -250,6 +250,7 @@ SUBDIR=	\
 	${_mac_seeotheruids} \
 	${_mac_stub} \
 	${_mac_test} \
+	${_mac_test_hooks} \
 	${_mac_veriexec} \
 	${_mac_veriexec_sha1} \
 	${_mac_veriexec_sha256} \
@@ -631,6 +632,7 @@ _mac_priority=	mac_priority
 _mac_seeotheruids= mac_seeotheruids
 _mac_stub=	mac_stub
 _mac_test=	mac_test
+_mac_test_hooks=	mac_test_hooks
 .if ${MK_VERIEXEC} != "no" || defined(ALL_MODULES)
 _mac_veriexec=	mac_veriexec
 _mac_veriexec_sha1= mac_veriexec_sha1

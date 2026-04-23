@@ -320,6 +320,11 @@ restart:
 				error = VOP_CREATE(ndp->ni_dvp, &ndp->ni_vp,
 				    &ndp->ni_cnd, vap);
 			vp = ndp->ni_vp;
+#ifdef MAC
+			if (error == 0 && vp != NULL)
+				mac_vnode_notify_create(cred, ndp->ni_dvp,
+				    vp, &ndp->ni_cnd);
+#endif
 			if (error == 0 && (fmode & O_EXCL) != 0 &&
 			    (fmode & (O_EXLOCK | O_SHLOCK)) != 0) {
 				VI_LOCK(vp);
@@ -495,6 +500,9 @@ vn_open_vnode(struct vnode *vp, int fmode, struct ucred *cred,
 	error = VOP_OPEN(vp, fmode, cred, td, fp);
 	if (error != 0)
 		return (error);
+#ifdef MAC
+	mac_vnode_notify_open(cred, vp, fmode);
+#endif
 
 	error = vn_open_vnode_advlock(vp, fmode, fp);
 	if (error == 0 && (fmode & FWRITE) != 0) {
@@ -1790,6 +1798,9 @@ retry:
 	error = mac_vnode_check_write(active_cred, fp->f_cred, vp);
 	if (error)
 		goto out;
+	error = mac_vnode_check_truncate(active_cred, vp);
+	if (error)
+		goto out;
 #endif
 	error = vn_truncate_locked(vp, length, (fp->f_flag & O_FSYNC) != 0,
 	    fp->f_cred);
@@ -1821,8 +1832,12 @@ vn_truncate_locked(struct vnode *vp, off_t length, bool sync,
 			vattr.va_vaflags |= VA_SYNC;
 		error = VOP_SETATTR(vp, &vattr, cred);
 		VOP_ADD_WRITECOUNT_CHECKED(vp, -1);
-		if (error == 0)
+		if (error == 0) {
 			INOTIFY(vp, IN_MODIFY);
+#ifdef MAC
+			mac_vnode_notify_truncate(cred, vp);
+#endif
+		}
 	}
 	return (error);
 }

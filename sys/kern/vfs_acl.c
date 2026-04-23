@@ -246,6 +246,8 @@ vacl_set_acl(struct thread *td, struct vnode *vp, acl_type_t type,
 	error = VOP_SETACL(vp, acl_type_unold(type), inkernelacl,
 	    td->td_ucred, td);
 #ifdef MAC
+	if (error == 0)
+		mac_vnode_notify_setacl(td->td_ucred, vp, type);
 out_unlock:
 #endif
 	VOP_UNLOCK(vp);

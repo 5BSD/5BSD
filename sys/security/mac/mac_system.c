@@ -59,6 +59,7 @@
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
+#include <sys/proc.h>
 #include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/vnode.h>
@@ -145,6 +146,147 @@ mac_kld_check_stat(struct ucred *cred)
 
 	MAC_POLICY_CHECK_NOSLEEP(kld_check_stat, cred);
 	MAC_CHECK_PROBE1(kld_check_stat, error, cred);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE1(kld_check_unload, "struct ucred *");
+
+int
+mac_kld_check_unload(struct ucred *cred)
+{
+	int error;
+
+	MAC_POLICY_CHECK(kld_check_unload, cred);
+	MAC_CHECK_PROBE1(kld_check_unload, error, cred);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(system_check_kas_info, "struct ucred *",
+    "struct proc *");
+
+int
+mac_system_check_kas_info_impl(struct ucred *cred, struct proc *p)
+{
+	int error;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	MAC_POLICY_CHECK_NOSLEEP(system_check_kas_info, cred, p);
+	MAC_CHECK_PROBE2(system_check_kas_info, error, cred, p);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(file_check_receive, "struct ucred *",
+    "struct file *");
+
+int
+mac_file_check_receive(struct ucred *cred, struct file *fp)
+{
+	int error;
+
+	MAC_POLICY_CHECK(file_check_receive, cred, fp);
+	MAC_CHECK_PROBE2(file_check_receive, error, cred, fp);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE3(file_check_dup, "struct ucred *",
+    "struct file *", "int");
+
+int
+mac_file_check_dup(struct ucred *cred, struct file *fp, int fd)
+{
+	int error;
+
+	MAC_POLICY_CHECK_NOSLEEP(file_check_dup, cred, fp, fd);
+	MAC_CHECK_PROBE3(file_check_dup, error, cred, fp, fd);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE3(file_check_inherit, "struct ucred *",
+    "struct ucred *", "struct file *");
+
+int
+mac_file_check_inherit(struct ucred *cred, struct ucred *newcred,
+    struct file *fp, int fd)
+{
+	int error;
+
+	MAC_POLICY_CHECK_NOSLEEP(file_check_inherit, cred, newcred, fp,
+	    fd);
+	MAC_CHECK_PROBE3(file_check_inherit, error, cred, newcred, fp);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE4(file_check_ioctl, "struct ucred *",
+    "struct file *", "int", "u_long");
+
+int
+mac_file_check_ioctl_impl(struct ucred *cred, struct file *fp, int fd,
+    u_long cmd)
+{
+	int error;
+
+	MAC_POLICY_CHECK(file_check_ioctl, cred, fp, fd, cmd);
+	MAC_CHECK_PROBE4(file_check_ioctl, error, cred, fp, fd, cmd);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE5(file_check_mmap, "struct ucred *",
+    "struct file *", "int", "int", "vm_size_t");
+
+int
+mac_file_check_mmap_impl(struct ucred *cred, struct file *fp, int fd,
+    int prot, int flags, vm_offset_t addr, vm_size_t size)
+{
+	int error;
+
+	MAC_POLICY_CHECK(file_check_mmap, cred, fp, fd, prot, flags, addr,
+	    size);
+	MAC_CHECK_PROBE5(file_check_mmap, error, cred, fp, fd, prot, size);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(file_notify_close, "struct ucred *",
+    "struct file *");
+
+void
+mac_file_notify_close(struct ucred *cred, struct file *fp, int fd)
+{
+
+	MAC_POLICY_PERFORM(file_notify_close, cred, fp, fd);
+	MAC_CHECK_PROBE2(file_notify_close, 0, cred, fp);
+}
+
+MAC_CHECK_PROBE_DEFINE2(pts_check_open, "struct ucred *", "int");
+
+int
+mac_pts_check_open(struct ucred *cred, int flags)
+{
+	int error;
+
+	MAC_POLICY_CHECK(pts_check_open, cred, flags);
+	MAC_CHECK_PROBE2(pts_check_open, error, cred, flags);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE1(vmm_check_create, "struct ucred *");
+
+int
+mac_vmm_check_create(struct ucred *cred, const char *vmname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(vmm_check_create, cred, vmname);
+	MAC_CHECK_PROBE1(vmm_check_create, error, cred);
 
 	return (error);
 }

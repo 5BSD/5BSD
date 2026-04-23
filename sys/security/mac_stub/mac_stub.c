@@ -560,6 +560,50 @@ stub_kld_check_stat(struct ucred *cred)
 }
 
 static int
+stub_kld_check_unload(struct ucred *cred)
+{
+
+	return (0);
+}
+
+static int
+stub_mount_check_mount(struct ucred *cred, const char *fspath,
+    const char *fstype, int flags)
+{
+
+	return (0);
+}
+
+static int
+stub_mount_check_remount(struct ucred *cred, struct mount *mp,
+    struct label *mplabel, int flags)
+{
+
+	return (0);
+}
+
+static int
+stub_mount_check_snapshot_create(struct ucred *cred, const char *snapname)
+{
+
+	return (0);
+}
+
+static int
+stub_mount_check_snapshot_delete(struct ucred *cred, const char *snapname)
+{
+
+	return (0);
+}
+
+static int
+stub_mount_check_snapshot_revert(struct ucred *cred, const char *snapname)
+{
+
+	return (0);
+}
+
+static int
 stub_mount_check_stat(struct ucred *cred, struct mount *mp,
     struct label *mplabel)
 {
@@ -989,6 +1033,248 @@ stub_proc_check_signal(struct ucred *cred, struct proc *p, int signum)
 
 static int
 stub_proc_check_wait(struct ucred *cred, struct proc *p)
+{
+
+	return (0);
+}
+
+static int
+stub_proc_check_core(struct ucred *cred, struct proc *p)
+{
+
+	return (0);
+}
+
+static int
+stub_proc_check_fork(struct ucred *cred, int flags)
+{
+
+	return (0);
+}
+
+static int
+stub_proc_check_mmap_anon(struct ucred *cred, vm_offset_t addr,
+    vm_size_t len, int prot, int flags)
+{
+
+	return (0);
+}
+
+static int
+stub_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
+    vm_size_t len, int prot)
+{
+
+	return (0);
+}
+
+static int
+stub_proc_check_syscall(struct ucred *cred, int syscall_num)
+{
+
+	return (0);
+}
+
+static void
+stub_proc_notify_exec_complete(struct proc *p)
+{
+
+}
+
+static void
+stub_proc_notify_exit(struct proc *p)
+{
+
+}
+
+static int
+stub_file_check_receive(struct ucred *cred, struct file *fp)
+{
+
+	return (0);
+}
+
+static int
+stub_file_check_inherit(struct ucred *cred, struct ucred *newcred,
+    struct file *fp, int fd)
+{
+
+	return (0);
+}
+
+static int
+stub_file_check_dup(struct ucred *cred, struct file *fp, int fd)
+{
+
+	return (0);
+}
+
+static int
+stub_file_check_ioctl(struct ucred *cred, struct file *fp, int fd,
+    u_long cmd)
+{
+
+	return (0);
+}
+
+static int
+stub_file_check_mmap(struct ucred *cred, struct file *fp, int fd,
+    int prot, int flags, vm_offset_t addr, vm_size_t size)
+{
+
+	return (0);
+}
+
+static void
+stub_file_notify_close(struct ucred *cred, struct file *fp, int fd)
+{
+
+}
+
+static int
+stub_system_check_kas_info(struct ucred *cred, struct proc *p)
+{
+
+	return (0);
+}
+
+static int
+stub_pts_check_open(struct ucred *cred, int flags)
+{
+
+	return (0);
+}
+
+static int
+stub_vmm_check_create(struct ucred *cred, const char *vmname)
+{
+
+	return (0);
+}
+
+static void
+stub_vnode_notify_create(struct ucred *cred, struct vnode *dvp,
+    struct vnode *vp, struct componentname *cnp)
+{
+
+}
+
+static void
+stub_vnode_notify_open(struct ucred *cred, struct vnode *vp, int fmode)
+{
+
+}
+
+static void
+stub_vnode_notify_rename(struct ucred *cred,
+    struct componentname *fromcnp, struct componentname *tocnp)
+{
+
+}
+
+static void
+stub_vnode_notify_unlink(struct ucred *cred, struct vnode *dvp,
+    struct vnode *vp, struct componentname *cnp)
+{
+
+}
+
+static void
+stub_vnode_notify_link(struct ucred *cred, struct vnode *dvp,
+    struct vnode *vp, struct componentname *cnp)
+{
+
+}
+
+static void
+stub_vnode_notify_truncate(struct ucred *cred, struct vnode *vp)
+{
+
+}
+
+static void
+stub_vnode_notify_setmode(struct ucred *cred, struct vnode *vp,
+    mode_t mode)
+{
+
+}
+
+static void
+stub_vnode_notify_setowner(struct ucred *cred, struct vnode *vp,
+    uid_t uid, gid_t gid)
+{
+
+}
+
+static void
+stub_vnode_notify_setflags(struct ucred *cred, struct vnode *vp,
+    u_long flags)
+{
+
+}
+
+static void
+stub_vnode_notify_setextattr(struct ucred *cred, struct vnode *vp,
+    int attrnamespace, const char *name)
+{
+
+}
+
+static void
+stub_vnode_notify_deleteextattr(struct ucred *cred, struct vnode *vp,
+    int attrnamespace, const char *name)
+{
+
+}
+
+static void
+stub_vnode_notify_setacl(struct ucred *cred, struct vnode *vp,
+    acl_type_t type)
+{
+
+}
+
+static void
+stub_vnode_notify_setutimes(struct ucred *cred, struct vnode *vp)
+{
+
+}
+
+static int
+stub_vnode_check_truncate(struct ucred *cred, struct vnode *vp,
+    struct label *vplabel)
+{
+
+	return (0);
+}
+
+static int
+stub_vnode_check_uipc_bind(struct ucred *cred, struct vnode *dvp,
+    struct label *dvplabel, struct componentname *cnp, struct vattr *vap)
+{
+
+	return (0);
+}
+
+static int
+stub_vnode_check_uipc_connect(struct ucred *cred, struct vnode *vp,
+    struct label *vplabel)
+{
+
+	return (0);
+}
+
+static int
+stub_socket_check_setsockopt(struct ucred *cred, struct socket *so,
+    struct label *solabel, int level, int optname)
+{
+
+	return (0);
+}
+
+static int
+stub_mount_check_umount(struct ucred *cred, struct mount *mp,
+    struct label *mplabel)
 {
 
 	return (0);
@@ -1880,12 +2166,19 @@ static struct mac_policy_ops stub_ops =
 
 	.mpo_kld_check_load = stub_kld_check_load,
 	.mpo_kld_check_stat = stub_kld_check_stat,
+	.mpo_kld_check_unload = stub_kld_check_unload,
 
 	.mpo_mbuf_copy_label = stub_copy_label,
 	.mpo_mbuf_destroy_label = stub_destroy_label,
 	.mpo_mbuf_init_label = stub_init_label_waitcheck,
 
+	.mpo_mount_check_mount = stub_mount_check_mount,
+	.mpo_mount_check_remount = stub_mount_check_remount,
+	.mpo_mount_check_snapshot_create = stub_mount_check_snapshot_create,
+	.mpo_mount_check_snapshot_delete = stub_mount_check_snapshot_delete,
+	.mpo_mount_check_snapshot_revert = stub_mount_check_snapshot_revert,
 	.mpo_mount_check_stat = stub_mount_check_stat,
+	.mpo_mount_check_umount = stub_mount_check_umount,
 	.mpo_mount_create = stub_mount_create,
 	.mpo_mount_destroy_label = stub_destroy_label,
 	.mpo_mount_init_label = stub_init_label,
@@ -1963,10 +2256,24 @@ static struct mac_policy_ops stub_ops =
 	.mpo_priv_check = stub_priv_check,
 	.mpo_priv_grant = stub_priv_grant,
 
+	.mpo_proc_check_core = stub_proc_check_core,
 	.mpo_proc_check_debug = stub_proc_check_debug,
+	.mpo_proc_check_fork = stub_proc_check_fork,
+	.mpo_proc_check_mmap_anon = stub_proc_check_mmap_anon,
+	.mpo_proc_check_mprotect = stub_proc_check_mprotect,
 	.mpo_proc_check_sched = stub_proc_check_sched,
 	.mpo_proc_check_signal = stub_proc_check_signal,
+	.mpo_proc_check_syscall = stub_proc_check_syscall,
 	.mpo_proc_check_wait = stub_proc_check_wait,
+	.mpo_proc_notify_exec_complete = stub_proc_notify_exec_complete,
+	.mpo_proc_notify_exit = stub_proc_notify_exit,
+
+	.mpo_file_check_inherit = stub_file_check_inherit,
+	.mpo_file_check_receive = stub_file_check_receive,
+	.mpo_file_check_dup = stub_file_check_dup,
+	.mpo_file_check_ioctl = stub_file_check_ioctl,
+	.mpo_file_check_mmap = stub_file_check_mmap,
+	.mpo_file_notify_close = stub_file_notify_close,
 
 	.mpo_socket_check_accept = stub_socket_check_accept,
 	.mpo_socket_check_bind = stub_socket_check_bind,
@@ -1978,6 +2285,7 @@ static struct mac_policy_ops stub_ops =
 	.mpo_socket_check_receive = stub_socket_check_receive,
 	.mpo_socket_check_relabel = stub_socket_check_relabel,
 	.mpo_socket_check_send = stub_socket_check_send,
+	.mpo_socket_check_setsockopt = stub_socket_check_setsockopt,
 	.mpo_socket_check_stat = stub_socket_check_stat,
 	.mpo_socket_check_visible = stub_socket_check_visible,
 	.mpo_socket_copy_label = stub_copy_label,
@@ -2043,6 +2351,7 @@ static struct mac_policy_ops stub_ops =
 	.mpo_system_check_swapoff = stub_system_check_swapoff,
 	.mpo_system_check_swapon = stub_system_check_swapon,
 	.mpo_system_check_sysctl = stub_system_check_sysctl,
+	.mpo_system_check_kas_info = stub_system_check_kas_info,
 
 	.mpo_thread_userret = stub_thread_userret,
 
@@ -2091,6 +2400,27 @@ static struct mac_policy_ops stub_ops =
 	.mpo_vnode_internalize_label = stub_internalize_label,
 	.mpo_vnode_relabel = stub_vnode_relabel,
 	.mpo_vnode_setlabel_extattr = stub_vnode_setlabel_extattr,
+
+	.mpo_vnode_check_truncate = stub_vnode_check_truncate,
+	.mpo_vnode_check_uipc_bind = stub_vnode_check_uipc_bind,
+	.mpo_vnode_check_uipc_connect = stub_vnode_check_uipc_connect,
+
+	.mpo_vnode_notify_create = stub_vnode_notify_create,
+	.mpo_vnode_notify_open = stub_vnode_notify_open,
+	.mpo_vnode_notify_rename = stub_vnode_notify_rename,
+	.mpo_vnode_notify_unlink = stub_vnode_notify_unlink,
+	.mpo_vnode_notify_link = stub_vnode_notify_link,
+	.mpo_vnode_notify_truncate = stub_vnode_notify_truncate,
+	.mpo_vnode_notify_setmode = stub_vnode_notify_setmode,
+	.mpo_vnode_notify_setowner = stub_vnode_notify_setowner,
+	.mpo_vnode_notify_setflags = stub_vnode_notify_setflags,
+	.mpo_vnode_notify_setextattr = stub_vnode_notify_setextattr,
+	.mpo_vnode_notify_deleteextattr = stub_vnode_notify_deleteextattr,
+	.mpo_vnode_notify_setacl = stub_vnode_notify_setacl,
+	.mpo_vnode_notify_setutimes = stub_vnode_notify_setutimes,
+
+	.mpo_pts_check_open = stub_pts_check_open,
+	.mpo_vmm_check_create = stub_vmm_check_create,
 };
 
 MAC_POLICY_SET(&stub_ops, mac_stub, "TrustedBSD MAC/Stub",

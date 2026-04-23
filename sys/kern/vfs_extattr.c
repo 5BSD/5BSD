@@ -209,8 +209,10 @@ extattr_set_vp(struct vnode *vp, int attrnamespace, const char *attrname,
 	    td->td_ucred, td);
 	cnt -= auio.uio_resid;
 	td->td_retval[0] = cnt;
-
 #ifdef MAC
+	if (error == 0)
+		mac_vnode_notify_setextattr(td->td_ucred, vp,
+		    attrnamespace, attrname);
 done:
 #endif
 	VOP_UNLOCK(vp);
@@ -557,6 +559,9 @@ extattr_delete_vp(struct vnode *vp, int attrnamespace, const char *attrname,
 		error = VOP_SETEXTATTR(vp, attrnamespace, attrname, NULL,
 		    td->td_ucred, td);
 #ifdef MAC
+	if (error == 0)
+		mac_vnode_notify_deleteextattr(td->td_ucred, vp,
+		    attrnamespace, attrname);
 done:
 #endif
 	VOP_UNLOCK(vp);

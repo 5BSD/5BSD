@@ -77,6 +77,9 @@
 #endif
 
 #include <security/audit/audit.h>
+#ifdef MAC
+#include <security/mac/mac_framework.h>
+#endif
 
 /*
  * The following macro defines how many bytes will be allocated from
@@ -792,6 +795,11 @@ kern_ioctl(struct thread *td, int fd, u_long com, caddr_t data)
 		break;
 	case FIONBIO:
 	case FIOASYNC:
+#ifdef MAC
+		error = mac_file_check_ioctl(td->td_ucred, fp, fd, com);
+		if (error != 0)
+			break;
+#endif
 		f_flag = com == FIONBIO ? FNONBLOCK : FASYNC;
 		tmp = *(int *)data;
 		fsetfl_lock(fp);
@@ -808,6 +816,11 @@ kern_ioctl(struct thread *td, int fd, u_long com, caddr_t data)
 		fsetfl_unlock(fp);
 		break;
 	default:
+#ifdef MAC
+		error = mac_file_check_ioctl(td->td_ucred, fp, fd, com);
+		if (error != 0)
+			break;
+#endif
 		error = fo_ioctl(fp, com, data, td->td_ucred, td);
 		break;
 	}

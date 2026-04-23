@@ -32,6 +32,10 @@
 #include <vm/vm.h>
 #include <vm/vm_object.h>
 
+#ifdef MAC
+#include <security/mac/mac_framework.h>
+#endif
+
 #include <dev/vmm/vmm_dev.h>
 #include <dev/vmm/vmm_mem.h>
 #include <dev/vmm/vmm_stat.h>
@@ -997,6 +1001,11 @@ vmmdev_create(const char *name, uint32_t flags, struct ucred *cred)
 	error = devfs_get_cdevpriv((void **)&priv);
 	if (error)
 		return (error);
+
+#ifdef MAC
+	if ((error = mac_vmm_check_create(cred, name)) != 0)
+		return (error);
+#endif
 
 	sx_xlock(&vmmdev_mtx);
 	sc = vmmdev_lookup(name, cred);

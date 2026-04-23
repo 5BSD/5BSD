@@ -159,7 +159,7 @@ memrw(struct cdev *dev, struct uio *uio, int flags)
 
 int
 memmmap(struct cdev *dev, vm_ooffset_t offset, vm_paddr_t *paddr,
-    int prot __unused, vm_memattr_t *memattr __unused)
+    int prot, vm_memattr_t *memattr __unused)
 {
 	if (dev2unit(dev) == CDEV_MINOR_MEM) {
 		*paddr = offset;

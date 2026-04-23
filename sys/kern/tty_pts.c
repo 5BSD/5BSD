@@ -66,6 +66,10 @@
 #include <sys/uio.h>
 #include <sys/user.h>
 
+#ifdef MAC
+#include <security/mac/mac_framework.h>
+#endif
+
 /*
  * Our utmp(5) format is limited to 8-byte TTY line names.  This means
  * we can at most allocate 1000 pseudo-terminals ("pts/999").  Allow
@@ -840,6 +844,11 @@ sys_posix_openpt(struct thread *td, struct posix_openpt_args *uap)
 	 */
 	if (uap->flags & ~(O_RDWR|O_NOCTTY|O_CLOEXEC))
 		return (EINVAL);
+#ifdef MAC
+	error = mac_pts_check_open(td->td_ucred, uap->flags);
+	if (error)
+		return (error);
+#endif
 
 	error = falloc(td, &fp, &fd, uap->flags);
 	if (error)

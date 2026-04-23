@@ -429,3 +429,94 @@ mac_proc_check_wait(struct ucred *cred, struct proc *p)
 
 	return (error);
 }
+
+MAC_CHECK_PROBE_DEFINE2(proc_check_core, "struct ucred *", "struct proc *");
+
+int
+mac_proc_check_core(struct ucred *cred, struct proc *p)
+{
+	int error;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	MAC_POLICY_CHECK_NOSLEEP(proc_check_core, cred, p);
+	MAC_CHECK_PROBE2(proc_check_core, error, cred, p);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE1(proc_check_fork, "struct ucred *");
+
+int
+mac_proc_check_fork_impl(struct ucred *cred, int flags)
+{
+	int error;
+
+	MAC_POLICY_CHECK(proc_check_fork, cred, flags);
+	MAC_CHECK_PROBE1(proc_check_fork, error, cred);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(proc_check_syscall, "struct ucred *", "int");
+
+int
+mac_proc_check_syscall_impl(struct ucred *cred, int syscall_num)
+{
+	int error;
+
+	MAC_POLICY_CHECK(proc_check_syscall, cred, syscall_num);
+	MAC_CHECK_PROBE2(proc_check_syscall, error, cred, syscall_num);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE3(proc_check_mmap_anon, "struct ucred *",
+    "vm_offset_t", "int");
+
+int
+mac_proc_check_mmap_anon_impl(struct ucred *cred, vm_offset_t addr,
+    vm_size_t len, int prot, int flags)
+{
+	int error;
+
+	MAC_POLICY_CHECK(proc_check_mmap_anon, cred, addr, len, prot,
+	    flags);
+	MAC_CHECK_PROBE3(proc_check_mmap_anon, error, cred, addr, prot);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(proc_check_mprotect, "struct ucred *", "int");
+
+int
+mac_proc_check_mprotect_impl(struct ucred *cred, vm_offset_t addr,
+    vm_size_t len, int prot)
+{
+	int error;
+
+	MAC_POLICY_CHECK(proc_check_mprotect, cred, addr, len, prot);
+	MAC_CHECK_PROBE2(proc_check_mprotect, error, cred, prot);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE1(proc_notify_exec_complete, "struct proc *");
+
+void
+mac_proc_notify_exec_complete(struct proc *p)
+{
+
+	MAC_POLICY_PERFORM(proc_notify_exec_complete, p);
+	MAC_CHECK_PROBE1(proc_notify_exec_complete, 0, p);
+}
+
+MAC_CHECK_PROBE_DEFINE1(proc_notify_exit, "struct proc *");
+
+void
+mac_proc_notify_exit(struct proc *p)
+{
+
+	MAC_POLICY_PERFORM(proc_notify_exit, p);
+	MAC_CHECK_PROBE1(proc_notify_exit, 0, p);
+}

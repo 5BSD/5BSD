@@ -95,6 +95,8 @@
 #include <vm/vm_radix.h>
 #include <vm/uma.h>
 
+#include <security/mac/mac_framework.h>
+
 #include <fs/devfs/devfs.h>
 
 #ifdef COMPAT_FREEBSD32
@@ -1088,7 +1090,6 @@ fill_kinfo_proc_only(struct proc *p, struct kinfo_proc *kp)
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
 	kp->ki_structsize = sizeof(*kp);
-	kp->ki_paddr = p;
 	kp->ki_addr =/* p->p_addr; */0; /* XXX */
 	kp->ki_args = p->p_args;
 	kp->ki_textvp = p->p_textvp;
@@ -1096,9 +1097,20 @@ fill_kinfo_proc_only(struct proc *p, struct kinfo_proc *kp)
 	kp->ki_tracep = ktr_get_tracevp(p, false);
 	kp->ki_traceflag = p->p_traceflag;
 #endif
-	kp->ki_fd = p->p_fd;
-	kp->ki_pd = p->p_pd;
-	kp->ki_vmspace = p->p_vmspace;
+#ifdef MAC
+	if (mac_system_check_kas_info(curthread->td_ucred, p) != 0) {
+		kp->ki_paddr = NULL;
+		kp->ki_fd = NULL;
+		kp->ki_pd = NULL;
+		kp->ki_vmspace = NULL;
+	} else
+#endif
+	{
+		kp->ki_paddr = p;
+		kp->ki_fd = p->p_fd;
+		kp->ki_pd = p->p_pd;
+		kp->ki_vmspace = p->p_vmspace;
+	}
 	kp->ki_flag = p->p_flag;
 	kp->ki_flag2 = p->p_flag2;
 	cred = p->p_ucred;

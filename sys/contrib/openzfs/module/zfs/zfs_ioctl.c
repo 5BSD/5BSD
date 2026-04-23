@@ -217,6 +217,10 @@
 
 #include "zfs_namecheck.h"
 #include "zfs_prop.h"
+
+#ifdef MAC
+#include <security/mac/mac_framework.h>
+#endif
 #include "zfs_deleg.h"
 #include "zfs_comutil.h"
 
@@ -795,9 +799,18 @@ zfs_secpolicy_set_fsacl(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 static int
 zfs_secpolicy_rollback(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 {
-	(void) innvl;
-	return (zfs_secpolicy_write_perms(zc->zc_name,
-	    ZFS_DELEG_PERM_ROLLBACK, cr));
+	const char *target = NULL;
+	int error;
+
+	(void) nvlist_lookup_string(innvl, "target", &target);
+	error = zfs_secpolicy_write_perms(zc->zc_name,
+	    ZFS_DELEG_PERM_ROLLBACK, cr);
+#ifdef MAC
+	if (error == 0)
+		error = mac_mount_check_snapshot_revert(cr,
+		    target != NULL ? target : zc->zc_name);
+#endif
+	return (error);
 }
 
 static int
@@ -944,6 +957,11 @@ zfs_secpolicy_destroy_snaps(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 	    pair = nextpair) {
 		nextpair = nvlist_next_nvpair(snaps, pair);
 		error = zfs_secpolicy_destroy_perms(nvpair_name(pair), cr);
+#ifdef MAC
+		if (error == 0 || error == ENOENT)
+			error = mac_mount_check_snapshot_delete(cr,
+			    nvpair_name(pair));
+#endif
 		if (error == ENOENT) {
 			/*
 			 * Ignore any snapshots that don't exist (we consider
@@ -1122,6 +1140,7 @@ zfs_secpolicy_snapshot(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 	for (pair = nvlist_next_nvpair(snaps, NULL); pair != NULL;
 	    pair = nvlist_next_nvpair(snaps, pair)) {
 		char *name = (char *)nvpair_name(pair);
+		const char *snapname = name;
 		char *atp = strchr(name, '@');
 
 		if (atp == NULL) {
@@ -1133,6 +1152,11 @@ zfs_secpolicy_snapshot(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 		*atp = '@';
 		if (error != 0)
 			break;
+#ifdef MAC
+		error = mac_mount_check_snapshot_create(cr, snapname);
+		if (error != 0)
+			break;
+#endif
 	}
 	return (error);
 }
@@ -4293,8 +4317,13 @@ zfs_ioc_destroy_snaps(const char *poolname, nvlist_t *innvl, nvlist_t *outnvl)
 		if (strncmp(name, poolname, poollen) != 0 ||
 		    (name[poollen] != '/' && name[poollen] != '@'))
 			return (SET_ERROR(EXDEV));
+	}
 
-		zfs_unmount_snap(nvpair_name(pair));
+	for (pair = nvlist_next_nvpair(snaps, NULL); pair != NULL;
+	    pair = nvlist_next_nvpair(snaps, pair)) {
+		const char *name = nvpair_name(pair);
+
+		zfs_unmount_snap(name);
 		if (spa_open(name, &spa, FTAG) == 0) {
 			zvol_remove_minors(spa, name, B_TRUE);
 			spa_close(spa, FTAG);

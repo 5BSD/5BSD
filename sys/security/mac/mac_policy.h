@@ -74,6 +74,7 @@ struct cdev;
 struct componentname;
 struct db_command;
 struct devfs_dirent;
+struct file;
 struct ifnet;
 struct image_params;
 struct inpcb;
@@ -284,6 +285,7 @@ typedef int	(*mpo_kenv_check_unset_t)(struct ucred *cred, char *name);
 typedef int	(*mpo_kld_check_load_t)(struct ucred *cred, struct vnode *vp,
 		    struct label *vplabel);
 typedef int	(*mpo_kld_check_stat_t)(struct ucred *cred);
+typedef int	(*mpo_kld_check_unload_t)(struct ucred *cred);
 
 typedef void	(*mpo_mbuf_copy_label_t)(struct label *src,
 		    struct label *dest);
@@ -489,6 +491,9 @@ typedef int	(*mpo_socket_check_relabel_t)(struct ucred *cred,
 		    struct label *newlabel);
 typedef int	(*mpo_socket_check_send_t)(struct ucred *cred,
 		    struct socket *so, struct label *solabel);
+typedef int	(*mpo_socket_check_setsockopt_t)(struct ucred *cred,
+		    struct socket *so, struct label *solabel,
+		    int level, int optname);
 typedef int	(*mpo_socket_check_stat_t)(struct ucred *cred,
 		    struct socket *so, struct label *solabel);
 typedef int	(*mpo_socket_check_visible_t)(struct ucred *cred,
@@ -737,6 +742,92 @@ typedef int	(*mpo_vnode_setlabel_extattr_t)(struct ucred *cred,
 		    struct vnode *vp, struct label *vplabel,
 		    struct label *intlabel);
 
+typedef int	(*mpo_proc_check_fork_t)(struct ucred *cred, int flags);
+typedef int	(*mpo_proc_check_core_t)(struct ucred *cred,
+		    struct proc *p);
+typedef int	(*mpo_proc_check_syscall_t)(struct ucred *cred,
+		    int syscall_num);
+typedef int	(*mpo_proc_check_mmap_anon_t)(struct ucred *cred,
+		    vm_offset_t addr, vm_size_t len, int prot, int flags);
+typedef int	(*mpo_proc_check_mprotect_t)(struct ucred *cred,
+		    vm_offset_t addr, vm_size_t len, int prot);
+typedef void	(*mpo_proc_notify_exec_complete_t)(struct proc *p);
+typedef void	(*mpo_proc_notify_exit_t)(struct proc *p);
+
+typedef int	(*mpo_file_check_receive_t)(struct ucred *cred,
+		    struct file *fp);
+typedef int	(*mpo_file_check_inherit_t)(struct ucred *cred,
+		    struct ucred *newcred, struct file *fp, int fd);
+typedef int	(*mpo_file_check_dup_t)(struct ucred *cred,
+		    struct file *fp, int fd);
+typedef int	(*mpo_file_check_ioctl_t)(struct ucred *cred,
+		    struct file *fp, int fd, u_long cmd);
+typedef int	(*mpo_file_check_mmap_t)(struct ucred *cred,
+		    struct file *fp, int fd, int prot, int flags,
+		    vm_offset_t addr, vm_size_t size);
+typedef void	(*mpo_file_notify_close_t)(struct ucred *cred,
+		    struct file *fp, int fd);
+
+typedef int	(*mpo_mount_check_mount_t)(struct ucred *cred,
+		    const char *fspath, const char *fstype, int flags);
+typedef int	(*mpo_mount_check_umount_t)(struct ucred *cred,
+		    struct mount *mp, struct label *mplabel);
+typedef int	(*mpo_mount_check_remount_t)(struct ucred *cred,
+		    struct mount *mp, struct label *mplabel, int flags);
+
+typedef int	(*mpo_system_check_kas_info_t)(struct ucred *cred,
+		    struct proc *p);
+
+typedef int	(*mpo_pts_check_open_t)(struct ucred *cred, int flags);
+
+typedef int	(*mpo_vmm_check_create_t)(struct ucred *cred,
+		    const char *vmname);
+
+typedef void	(*mpo_vnode_notify_create_t)(struct ucred *cred,
+		    struct vnode *dvp, struct vnode *vp,
+		    struct componentname *cnp);
+typedef void	(*mpo_vnode_notify_open_t)(struct ucred *cred,
+		    struct vnode *vp, int fmode);
+typedef void	(*mpo_vnode_notify_rename_t)(struct ucred *cred,
+		    struct componentname *fromcnp,
+		    struct componentname *tocnp);
+typedef void	(*mpo_vnode_notify_unlink_t)(struct ucred *cred,
+		    struct vnode *dvp, struct vnode *vp,
+		    struct componentname *cnp);
+typedef void	(*mpo_vnode_notify_link_t)(struct ucred *cred,
+		    struct vnode *dvp, struct vnode *vp,
+		    struct componentname *cnp);
+typedef void	(*mpo_vnode_notify_truncate_t)(struct ucred *cred,
+		    struct vnode *vp);
+typedef void	(*mpo_vnode_notify_setmode_t)(struct ucred *cred,
+		    struct vnode *vp, mode_t mode);
+typedef void	(*mpo_vnode_notify_setowner_t)(struct ucred *cred,
+		    struct vnode *vp, uid_t uid, gid_t gid);
+typedef void	(*mpo_vnode_notify_setflags_t)(struct ucred *cred,
+		    struct vnode *vp, u_long flags);
+typedef void	(*mpo_vnode_notify_setextattr_t)(struct ucred *cred,
+		    struct vnode *vp, int attrnamespace, const char *name);
+typedef void	(*mpo_vnode_notify_deleteextattr_t)(struct ucred *cred,
+		    struct vnode *vp, int attrnamespace, const char *name);
+typedef void	(*mpo_vnode_notify_setacl_t)(struct ucred *cred,
+		    struct vnode *vp, acl_type_t type);
+typedef void	(*mpo_vnode_notify_setutimes_t)(struct ucred *cred,
+		    struct vnode *vp);
+
+typedef int	(*mpo_vnode_check_truncate_t)(struct ucred *cred,
+		    struct vnode *vp, struct label *vplabel);
+typedef int	(*mpo_vnode_check_uipc_bind_t)(struct ucred *cred,
+		    struct vnode *dvp, struct label *dvplabel,
+		    struct componentname *cnp, struct vattr *vap);
+typedef int	(*mpo_vnode_check_uipc_connect_t)(struct ucred *cred,
+		    struct vnode *vp, struct label *vplabel);
+typedef int	(*mpo_mount_check_snapshot_create_t)(struct ucred *cred,
+		    const char *snapname);
+typedef int	(*mpo_mount_check_snapshot_delete_t)(struct ucred *cred,
+		    const char *snapname);
+typedef int	(*mpo_mount_check_snapshot_revert_t)(struct ucred *cred,
+		    const char *snapname);
+
 struct mac_policy_ops {
 	/*
 	 * Policy module operations.
@@ -846,12 +937,19 @@ struct mac_policy_ops {
 
 	mpo_kld_check_load_t			mpo_kld_check_load;
 	mpo_kld_check_stat_t			mpo_kld_check_stat;
+	mpo_kld_check_unload_t			mpo_kld_check_unload;
 
 	mpo_mbuf_copy_label_t			mpo_mbuf_copy_label;
 	mpo_mbuf_destroy_label_t		mpo_mbuf_destroy_label;
 	mpo_mbuf_init_label_t			mpo_mbuf_init_label;
 
+	mpo_mount_check_mount_t			mpo_mount_check_mount;
+	mpo_mount_check_remount_t		mpo_mount_check_remount;
+	mpo_mount_check_snapshot_create_t	mpo_mount_check_snapshot_create;
+	mpo_mount_check_snapshot_delete_t	mpo_mount_check_snapshot_delete;
+	mpo_mount_check_snapshot_revert_t	mpo_mount_check_snapshot_revert;
 	mpo_mount_check_stat_t			mpo_mount_check_stat;
+	mpo_mount_check_umount_t		mpo_mount_check_umount;
 	mpo_mount_create_t			mpo_mount_create;
 	mpo_mount_destroy_label_t		mpo_mount_destroy_label;
 	mpo_mount_init_label_t			mpo_mount_init_label;
@@ -929,12 +1027,26 @@ struct mac_policy_ops {
 	mpo_priv_check_t			mpo_priv_check;
 	mpo_priv_grant_t			mpo_priv_grant;
 
+	mpo_proc_check_core_t			mpo_proc_check_core;
 	mpo_proc_check_debug_t			mpo_proc_check_debug;
+	mpo_proc_check_fork_t			mpo_proc_check_fork;
+	mpo_proc_check_mmap_anon_t		mpo_proc_check_mmap_anon;
+	mpo_proc_check_mprotect_t		mpo_proc_check_mprotect;
 	mpo_proc_check_sched_t			mpo_proc_check_sched;
 	mpo_proc_check_signal_t			mpo_proc_check_signal;
+	mpo_proc_check_syscall_t		mpo_proc_check_syscall;
 	mpo_proc_check_wait_t			mpo_proc_check_wait;
 	mpo_proc_destroy_label_t		mpo_proc_destroy_label;
 	mpo_proc_init_label_t			mpo_proc_init_label;
+	mpo_proc_notify_exec_complete_t		mpo_proc_notify_exec_complete;
+	mpo_proc_notify_exit_t			mpo_proc_notify_exit;
+
+	mpo_file_check_inherit_t		mpo_file_check_inherit;
+	mpo_file_check_receive_t		mpo_file_check_receive;
+	mpo_file_check_dup_t			mpo_file_check_dup;
+	mpo_file_check_ioctl_t			mpo_file_check_ioctl;
+	mpo_file_check_mmap_t			mpo_file_check_mmap;
+	mpo_file_notify_close_t			mpo_file_notify_close;
 
 	mpo_socket_check_accept_t		mpo_socket_check_accept;
 	mpo_socket_check_bind_t			mpo_socket_check_bind;
@@ -946,6 +1058,7 @@ struct mac_policy_ops {
 	mpo_socket_check_receive_t		mpo_socket_check_receive;
 	mpo_socket_check_relabel_t		mpo_socket_check_relabel;
 	mpo_socket_check_send_t			mpo_socket_check_send;
+	mpo_socket_check_setsockopt_t		mpo_socket_check_setsockopt;
 	mpo_socket_check_stat_t			mpo_socket_check_stat;
 	mpo_socket_check_visible_t		mpo_socket_check_visible;
 	mpo_socket_copy_label_t			mpo_socket_copy_label;
@@ -977,6 +1090,7 @@ struct mac_policy_ops {
 	mpo_system_check_swapon_t		mpo_system_check_swapon;
 	mpo_system_check_swapoff_t		mpo_system_check_swapoff;
 	mpo_system_check_sysctl_t		mpo_system_check_sysctl;
+	mpo_system_check_kas_info_t		mpo_system_check_kas_info;
 
 	mpo_sysvmsg_cleanup_t			mpo_sysvmsg_cleanup;
 	mpo_sysvmsg_create_t			mpo_sysvmsg_create;
@@ -1059,6 +1173,27 @@ struct mac_policy_ops {
 	mpo_vnode_internalize_label_t		mpo_vnode_internalize_label;
 	mpo_vnode_relabel_t			mpo_vnode_relabel;
 	mpo_vnode_setlabel_extattr_t		mpo_vnode_setlabel_extattr;
+
+	mpo_vnode_check_truncate_t		mpo_vnode_check_truncate;
+	mpo_vnode_check_uipc_bind_t		mpo_vnode_check_uipc_bind;
+	mpo_vnode_check_uipc_connect_t		mpo_vnode_check_uipc_connect;
+
+	mpo_vnode_notify_create_t		mpo_vnode_notify_create;
+	mpo_vnode_notify_open_t			mpo_vnode_notify_open;
+	mpo_vnode_notify_rename_t		mpo_vnode_notify_rename;
+	mpo_vnode_notify_unlink_t		mpo_vnode_notify_unlink;
+	mpo_vnode_notify_link_t			mpo_vnode_notify_link;
+	mpo_vnode_notify_truncate_t		mpo_vnode_notify_truncate;
+	mpo_vnode_notify_setmode_t		mpo_vnode_notify_setmode;
+	mpo_vnode_notify_setowner_t		mpo_vnode_notify_setowner;
+	mpo_vnode_notify_setflags_t		mpo_vnode_notify_setflags;
+	mpo_vnode_notify_setextattr_t		mpo_vnode_notify_setextattr;
+	mpo_vnode_notify_deleteextattr_t	mpo_vnode_notify_deleteextattr;
+	mpo_vnode_notify_setacl_t		mpo_vnode_notify_setacl;
+	mpo_vnode_notify_setutimes_t		mpo_vnode_notify_setutimes;
+
+	mpo_pts_check_open_t			mpo_pts_check_open;
+	mpo_vmm_check_create_t			mpo_vmm_check_create;
 };
 
 /*

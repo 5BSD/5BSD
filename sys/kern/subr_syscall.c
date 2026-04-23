@@ -48,6 +48,9 @@
 #include <sys/ktrace.h>
 #endif
 #include <security/audit/audit.h>
+#ifdef MAC
+#include <security/mac/mac_framework.h>
+#endif
 
 static inline void
 syscallenter(struct thread *td)
@@ -162,6 +165,10 @@ syscallenter(struct thread *td)
 
 		AUDIT_SYSCALL_ENTER(sa->code, td);
 
+#ifdef MAC
+		error = mac_proc_check_syscall(td->td_ucred, sa->code);
+		if (error == 0)
+#endif
 		error = (se->sy_call)(td, sa->args);
 		/* Save the latest error return value. */
 		if (__predict_false((td->td_pflags & TDP_NERRNO) != 0))
@@ -190,6 +197,10 @@ syscallenter(struct thread *td)
 		if (!sy_thr_static)
 			syscall_thread_exit(td, se);
 	} else {
+#ifdef MAC
+		error = mac_proc_check_syscall(td->td_ucred, sa->code);
+		if (error == 0)
+#endif
 		error = (se->sy_call)(td, sa->args);
 		/* Save the latest error return value. */
 		if (__predict_false((td->td_pflags & TDP_NERRNO) != 0))

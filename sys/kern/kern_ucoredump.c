@@ -51,6 +51,8 @@
 #include <sys/ucoredump.h>
 #include <sys/wait.h>
 
+#include <security/mac/mac_framework.h>
+
 static int coredump(struct thread *td, const char **);
 
 int compress_user_cores = 0;
@@ -156,7 +158,11 @@ sigexit(struct thread *td, int sig)
 	 * XXX If another thread attempts to single-thread before us
 	 *     (e.g. via fork()), we won't get a dump at all.
 	 */
-	if (sig_do_core(sig) && thread_single(p, SINGLE_NO_EXIT) == 0) {
+	if (sig_do_core(sig)
+#ifdef MAC
+	    && mac_proc_check_core(td->td_ucred, p) == 0
+#endif
+	    && thread_single(p, SINGLE_NO_EXIT) == 0) {
 		const char *err = NULL;
 
 		p->p_sig = sig;

@@ -378,6 +378,12 @@ kern_mmap(struct thread *td, const struct mmap_req *mrp)
 		 *
 		 * This relies on VM_PROT_* matching PROT_*.
 		 */
+#ifdef MAC
+		error = mac_proc_check_mmap_anon(td->td_ucred, addr, size,
+		    prot, flags);
+		if (error)
+			goto done;
+#endif
 		error = vm_mmap_object(&vms->vm_map, &addr, size, prot,
 		    max_prot, flags, NULL, pos, FALSE, td);
 	} else {
@@ -411,6 +417,12 @@ kern_mmap(struct thread *td, const struct mmap_req *mrp)
 			if (error != 0)
 				goto done;
 		}
+#ifdef MAC
+		error = mac_file_check_mmap(td->td_ucred, fp, fd, prot, flags,
+		    addr, size);
+		if (error != 0)
+			goto done;
+#endif
 		if (fp->f_ops == &shm_ops && shm_largepage(fp->f_data))
 			addr = orig_addr;
 		/* This relies on VM_PROT_* matching PROT_*. */
@@ -676,7 +688,7 @@ kern_mprotect(struct thread *td, uintptr_t addr0, size_t size, int prot,
 {
 	vm_offset_t addr;
 	vm_size_t pageoff;
-	int vm_error, max_prot;
+	int error, vm_error, max_prot;
 
 	addr = addr0;
 	if ((prot & ~(_PROT_ALL | PROT_MAX(_PROT_ALL))) != 0)
@@ -699,6 +711,11 @@ kern_mprotect(struct thread *td, uintptr_t addr0, size_t size, int prot,
 	flags |= VM_MAP_PROTECT_SET_PROT;
 	if (max_prot != 0)
 		flags |= VM_MAP_PROTECT_SET_MAXPROT;
+#ifdef MAC
+	error = mac_proc_check_mprotect(td->td_ucred, addr, size, prot);
+	if (error)
+		return (error);
+#endif
 	vm_error = vm_map_protect(&td->td_proc->p_vmspace->vm_map,
 	    addr, addr + size, prot, max_prot, flags);
 

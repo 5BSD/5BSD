@@ -1179,6 +1179,11 @@ vfs_domount_first(
 	}
 	if (error == 0 && (fsflags & MNT_EMPTYDIR) != 0)
 		error = vn_dir_check_empty(vp);
+#ifdef MAC
+	if (error == 0)
+		error = mac_mount_check_mount(td->td_ucred, fspath,
+		    vfsp->vfc_name, fsflags);
+#endif
 	if (error == 0) {
 		VI_LOCK(vp);
 		if ((vp->v_iflag & VI_MOUNT) == 0 && vp->v_mountedhere == NULL)
@@ -1392,6 +1397,13 @@ vfs_domount_update(
 		vput(vp);
 		return (error);
 	}
+#ifdef MAC
+	error = mac_mount_check_remount(td->td_ucred, mp, fsflags);
+	if (error != 0) {
+		vput(vp);
+		return (error);
+	}
+#endif
 	if (vfs_busy(mp, MBF_NOWAIT)) {
 		vput(vp);
 		return (EBUSY);
@@ -2222,6 +2234,13 @@ dounmount(struct mount *mp, uint64_t flags, struct thread *td)
 		vfs_rel(mp);
 		return (error);
 	}
+#ifdef MAC
+	error = mac_mount_check_umount(td->td_ucred, mp);
+	if (error != 0) {
+		vfs_rel(mp);
+		return (error);
+	}
+#endif
 
 	if (recursive_forced_unmount && ((flags & MNT_FORCE) != 0))
 		flags |= MNT_RECURSE;

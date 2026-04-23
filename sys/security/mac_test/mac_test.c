@@ -994,6 +994,17 @@ test_kld_check_stat(struct ucred *cred)
 	return (0);
 }
 
+COUNTER_DECL(kld_check_unload);
+static int
+test_kld_check_unload(struct ucred *cred)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(kld_check_unload);
+
+	return (0);
+}
+
 COUNTER_DECL(mbuf_copy_label);
 static void
 test_mbuf_copy_label(struct label *src, struct label *dest)
@@ -1045,6 +1056,77 @@ test_mount_check_stat(struct ucred *cred, struct mount *mp,
 	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
 	LABEL_CHECK(mplabel, MAGIC_MOUNT);
 	COUNTER_INC(mount_check_stat);
+
+	return (0);
+}
+
+COUNTER_DECL(mount_check_mount);
+static int
+test_mount_check_mount(struct ucred *cred, const char *fspath,
+    const char *fstype, int flags)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(mount_check_mount);
+
+	return (0);
+}
+
+COUNTER_DECL(mount_check_remount);
+static int
+test_mount_check_remount(struct ucred *cred, struct mount *mp,
+    struct label *mplabel, int flags)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	LABEL_CHECK(mplabel, MAGIC_MOUNT);
+	COUNTER_INC(mount_check_remount);
+
+	return (0);
+}
+
+COUNTER_DECL(mount_check_umount);
+static int
+test_mount_check_umount(struct ucred *cred, struct mount *mp,
+    struct label *mplabel)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	LABEL_CHECK(mplabel, MAGIC_MOUNT);
+	COUNTER_INC(mount_check_umount);
+
+	return (0);
+}
+
+COUNTER_DECL(mount_check_snapshot_create);
+static int
+test_mount_check_snapshot_create(struct ucred *cred, const char *snapname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(mount_check_snapshot_create);
+
+	return (0);
+}
+
+COUNTER_DECL(mount_check_snapshot_delete);
+static int
+test_mount_check_snapshot_delete(struct ucred *cred, const char *snapname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(mount_check_snapshot_delete);
+
+	return (0);
+}
+
+COUNTER_DECL(mount_check_snapshot_revert);
+static int
+test_mount_check_snapshot_revert(struct ucred *cred, const char *snapname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(mount_check_snapshot_revert);
 
 	return (0);
 }
@@ -1834,6 +1916,358 @@ test_proc_check_wait(struct ucred *cred, struct proc *p)
 	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
 	LABEL_CHECK(p->p_ucred->cr_label, MAGIC_CRED);
 	COUNTER_INC(proc_check_wait);
+
+	return (0);
+}
+
+COUNTER_DECL(proc_check_core);
+static int
+test_proc_check_core(struct ucred *cred, struct proc *p)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(proc_check_core);
+
+	return (0);
+}
+
+COUNTER_DECL(proc_check_fork);
+static int
+test_proc_check_fork(struct ucred *cred, int flags)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(proc_check_fork);
+
+	return (0);
+}
+
+COUNTER_DECL(proc_check_mmap_anon);
+static int
+test_proc_check_mmap_anon(struct ucred *cred, vm_offset_t addr,
+    vm_size_t len, int prot, int flags)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(proc_check_mmap_anon);
+
+	return (0);
+}
+
+COUNTER_DECL(proc_check_mprotect);
+static int
+test_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
+    vm_size_t len, int prot)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(proc_check_mprotect);
+
+	return (0);
+}
+
+COUNTER_DECL(proc_check_syscall);
+static int
+test_proc_check_syscall(struct ucred *cred, int syscall_num)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(proc_check_syscall);
+
+	return (0);
+}
+
+COUNTER_DECL(proc_notify_exec_complete);
+static void
+test_proc_notify_exec_complete(struct proc *p)
+{
+
+	COUNTER_INC(proc_notify_exec_complete);
+}
+
+COUNTER_DECL(proc_notify_exit);
+static void
+test_proc_notify_exit(struct proc *p)
+{
+
+	COUNTER_INC(proc_notify_exit);
+}
+
+COUNTER_DECL(file_check_receive);
+static int
+test_file_check_receive(struct ucred *cred, struct file *fp)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(file_check_receive);
+
+	return (0);
+}
+
+COUNTER_DECL(file_check_inherit);
+static int
+test_file_check_inherit(struct ucred *cred, struct ucred *newcred,
+    struct file *fp, int fd)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(file_check_inherit);
+
+	return (0);
+}
+
+COUNTER_DECL(file_check_dup);
+static int
+test_file_check_dup(struct ucred *cred, struct file *fp, int fd)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(file_check_dup);
+
+	return (0);
+}
+
+COUNTER_DECL(file_check_ioctl);
+static int
+test_file_check_ioctl(struct ucred *cred, struct file *fp, int fd,
+    u_long cmd)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(file_check_ioctl);
+
+	return (0);
+}
+
+COUNTER_DECL(file_check_mmap);
+static int
+test_file_check_mmap(struct ucred *cred, struct file *fp, int fd,
+    int prot, int flags, vm_offset_t addr, vm_size_t size)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(file_check_mmap);
+
+	return (0);
+}
+
+COUNTER_DECL(file_notify_close);
+static void
+test_file_notify_close(struct ucred *cred, struct file *fp, int fd)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(file_notify_close);
+}
+
+COUNTER_DECL(system_check_kas_info);
+static int
+test_system_check_kas_info(struct ucred *cred, struct proc *p)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(system_check_kas_info);
+
+	return (0);
+}
+
+COUNTER_DECL(pts_check_open);
+static int
+test_pts_check_open(struct ucred *cred, int flags)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(pts_check_open);
+
+	return (0);
+}
+
+COUNTER_DECL(vmm_check_create);
+static int
+test_vmm_check_create(struct ucred *cred, const char *vmname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vmm_check_create);
+
+	return (0);
+}
+
+COUNTER_DECL(vnode_notify_create);
+static void
+test_vnode_notify_create(struct ucred *cred, struct vnode *dvp,
+    struct vnode *vp, struct componentname *cnp)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vnode_notify_create);
+}
+
+COUNTER_DECL(vnode_notify_open);
+static void
+test_vnode_notify_open(struct ucred *cred, struct vnode *vp, int fmode)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vnode_notify_open);
+}
+
+COUNTER_DECL(vnode_notify_rename);
+static void
+test_vnode_notify_rename(struct ucred *cred,
+    struct componentname *fromcnp, struct componentname *tocnp)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vnode_notify_rename);
+}
+
+COUNTER_DECL(vnode_notify_unlink);
+static void
+test_vnode_notify_unlink(struct ucred *cred, struct vnode *dvp,
+    struct vnode *vp, struct componentname *cnp)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vnode_notify_unlink);
+}
+
+COUNTER_DECL(vnode_notify_link);
+static void
+test_vnode_notify_link(struct ucred *cred, struct vnode *dvp,
+    struct vnode *vp, struct componentname *cnp)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vnode_notify_link);
+}
+
+COUNTER_DECL(vnode_notify_truncate);
+static void
+test_vnode_notify_truncate(struct ucred *cred, struct vnode *vp)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vnode_notify_truncate);
+}
+
+COUNTER_DECL(vnode_notify_setmode);
+static void
+test_vnode_notify_setmode(struct ucred *cred, struct vnode *vp,
+    mode_t mode)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vnode_notify_setmode);
+}
+
+COUNTER_DECL(vnode_notify_setowner);
+static void
+test_vnode_notify_setowner(struct ucred *cred, struct vnode *vp,
+    uid_t uid, gid_t gid)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vnode_notify_setowner);
+}
+
+COUNTER_DECL(vnode_notify_setflags);
+static void
+test_vnode_notify_setflags(struct ucred *cred, struct vnode *vp,
+    u_long flags)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vnode_notify_setflags);
+}
+
+COUNTER_DECL(vnode_notify_setextattr);
+static void
+test_vnode_notify_setextattr(struct ucred *cred, struct vnode *vp,
+    int attrnamespace, const char *name)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vnode_notify_setextattr);
+}
+
+COUNTER_DECL(vnode_notify_deleteextattr);
+static void
+test_vnode_notify_deleteextattr(struct ucred *cred, struct vnode *vp,
+    int attrnamespace, const char *name)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vnode_notify_deleteextattr);
+}
+
+COUNTER_DECL(vnode_notify_setacl);
+static void
+test_vnode_notify_setacl(struct ucred *cred, struct vnode *vp,
+    acl_type_t type)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vnode_notify_setacl);
+}
+
+COUNTER_DECL(vnode_notify_setutimes);
+static void
+test_vnode_notify_setutimes(struct ucred *cred, struct vnode *vp)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vnode_notify_setutimes);
+}
+
+COUNTER_DECL(vnode_check_truncate);
+static int
+test_vnode_check_truncate(struct ucred *cred, struct vnode *vp,
+    struct label *vplabel)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	LABEL_CHECK(vplabel, MAGIC_VNODE);
+	COUNTER_INC(vnode_check_truncate);
+
+	return (0);
+}
+
+COUNTER_DECL(vnode_check_uipc_bind);
+static int
+test_vnode_check_uipc_bind(struct ucred *cred, struct vnode *dvp,
+    struct label *dvplabel, struct componentname *cnp, struct vattr *vap)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	LABEL_CHECK(dvplabel, MAGIC_VNODE);
+	COUNTER_INC(vnode_check_uipc_bind);
+
+	return (0);
+}
+
+COUNTER_DECL(vnode_check_uipc_connect);
+static int
+test_vnode_check_uipc_connect(struct ucred *cred, struct vnode *vp,
+    struct label *vplabel)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	LABEL_CHECK(vplabel, MAGIC_VNODE);
+	COUNTER_INC(vnode_check_uipc_connect);
+
+	return (0);
+}
+
+COUNTER_DECL(socket_check_setsockopt);
+static int
+test_socket_check_setsockopt(struct ucred *cred, struct socket *so,
+    struct label *solabel, int level, int optname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	LABEL_CHECK(solabel, MAGIC_SOCKET);
+	COUNTER_INC(socket_check_setsockopt);
 
 	return (0);
 }
@@ -3348,12 +3782,19 @@ static struct mac_policy_ops test_ops =
 
 	.mpo_kld_check_load = test_kld_check_load,
 	.mpo_kld_check_stat = test_kld_check_stat,
+	.mpo_kld_check_unload = test_kld_check_unload,
 
 	.mpo_mbuf_copy_label = test_mbuf_copy_label,
 	.mpo_mbuf_destroy_label = test_mbuf_destroy_label,
 	.mpo_mbuf_init_label = test_mbuf_init_label,
 
+	.mpo_mount_check_mount = test_mount_check_mount,
+	.mpo_mount_check_remount = test_mount_check_remount,
+	.mpo_mount_check_snapshot_create = test_mount_check_snapshot_create,
+	.mpo_mount_check_snapshot_delete = test_mount_check_snapshot_delete,
+	.mpo_mount_check_snapshot_revert = test_mount_check_snapshot_revert,
 	.mpo_mount_check_stat = test_mount_check_stat,
+	.mpo_mount_check_umount = test_mount_check_umount,
 	.mpo_mount_create = test_mount_create,
 	.mpo_mount_destroy_label = test_mount_destroy_label,
 	.mpo_mount_init_label = test_mount_init_label,
@@ -3426,12 +3867,26 @@ static struct mac_policy_ops test_ops =
 	.mpo_prison_cleanup = test_prison_cleanup,
 	.mpo_prison_attached = test_prison_attached,
 
+	.mpo_proc_check_core = test_proc_check_core,
 	.mpo_proc_check_debug = test_proc_check_debug,
+	.mpo_proc_check_fork = test_proc_check_fork,
+	.mpo_proc_check_mmap_anon = test_proc_check_mmap_anon,
+	.mpo_proc_check_mprotect = test_proc_check_mprotect,
 	.mpo_proc_check_sched = test_proc_check_sched,
 	.mpo_proc_check_signal = test_proc_check_signal,
+	.mpo_proc_check_syscall = test_proc_check_syscall,
 	.mpo_proc_check_wait = test_proc_check_wait,
 	.mpo_proc_destroy_label = test_proc_destroy_label,
 	.mpo_proc_init_label = test_proc_init_label,
+	.mpo_proc_notify_exec_complete = test_proc_notify_exec_complete,
+	.mpo_proc_notify_exit = test_proc_notify_exit,
+
+	.mpo_file_check_inherit = test_file_check_inherit,
+	.mpo_file_check_receive = test_file_check_receive,
+	.mpo_file_check_dup = test_file_check_dup,
+	.mpo_file_check_ioctl = test_file_check_ioctl,
+	.mpo_file_check_mmap = test_file_check_mmap,
+	.mpo_file_notify_close = test_file_notify_close,
 
 	.mpo_socket_check_accept = test_socket_check_accept,
 	.mpo_socket_check_bind = test_socket_check_bind,
@@ -3442,6 +3897,7 @@ static struct mac_policy_ops test_ops =
 	.mpo_socket_check_receive = test_socket_check_receive,
 	.mpo_socket_check_relabel = test_socket_check_relabel,
 	.mpo_socket_check_send = test_socket_check_send,
+	.mpo_socket_check_setsockopt = test_socket_check_setsockopt,
 	.mpo_socket_check_stat = test_socket_check_stat,
 	.mpo_socket_check_visible = test_socket_check_visible,
 	.mpo_socket_copy_label = test_socket_copy_label,
@@ -3471,6 +3927,7 @@ static struct mac_policy_ops test_ops =
 	.mpo_system_check_swapoff = test_system_check_swapoff,
 	.mpo_system_check_swapon = test_system_check_swapon,
 	.mpo_system_check_sysctl = test_system_check_sysctl,
+	.mpo_system_check_kas_info = test_system_check_kas_info,
 
 	.mpo_vnode_check_access = test_vnode_check_access,
 	.mpo_sysvmsg_cleanup = test_sysvmsg_cleanup,
@@ -3543,6 +4000,27 @@ static struct mac_policy_ops test_ops =
 	.mpo_vnode_internalize_label = test_vnode_internalize_label,
 	.mpo_vnode_relabel = test_vnode_relabel,
 	.mpo_vnode_setlabel_extattr = test_vnode_setlabel_extattr,
+
+	.mpo_vnode_check_truncate = test_vnode_check_truncate,
+	.mpo_vnode_check_uipc_bind = test_vnode_check_uipc_bind,
+	.mpo_vnode_check_uipc_connect = test_vnode_check_uipc_connect,
+
+	.mpo_vnode_notify_create = test_vnode_notify_create,
+	.mpo_vnode_notify_open = test_vnode_notify_open,
+	.mpo_vnode_notify_rename = test_vnode_notify_rename,
+	.mpo_vnode_notify_unlink = test_vnode_notify_unlink,
+	.mpo_vnode_notify_link = test_vnode_notify_link,
+	.mpo_vnode_notify_truncate = test_vnode_notify_truncate,
+	.mpo_vnode_notify_setmode = test_vnode_notify_setmode,
+	.mpo_vnode_notify_setowner = test_vnode_notify_setowner,
+	.mpo_vnode_notify_setflags = test_vnode_notify_setflags,
+	.mpo_vnode_notify_setextattr = test_vnode_notify_setextattr,
+	.mpo_vnode_notify_deleteextattr = test_vnode_notify_deleteextattr,
+	.mpo_vnode_notify_setacl = test_vnode_notify_setacl,
+	.mpo_vnode_notify_setutimes = test_vnode_notify_setutimes,
+
+	.mpo_pts_check_open = test_pts_check_open,
+	.mpo_vmm_check_create = test_vmm_check_create,
 };
 
 MAC_POLICY_SET(&test_ops, mac_test, "TrustedBSD MAC/Test",

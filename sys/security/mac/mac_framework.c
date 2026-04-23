@@ -151,6 +151,13 @@ FPFLAG_RARE(pipe_check_poll);
 FPFLAG_RARE(pipe_check_read);
 FPFLAG_RARE(ifnet_create_mbuf);
 FPFLAG_RARE(ifnet_check_transmit);
+FPFLAG(file_check_ioctl);
+FPFLAG(file_check_mmap);
+FPFLAG(proc_check_fork);
+FPFLAG(proc_check_mmap_anon);
+FPFLAG(proc_check_mprotect);
+FPFLAG(proc_check_syscall);
+FPFLAG(system_check_kas_info);
 
 #undef FPFLAG
 #undef FPFLAG_RARE
@@ -458,6 +465,20 @@ struct mac_policy_fastpath_elem mac_policy_fastpath_array[] = {
 		.flag = &mac_ifnet_create_mbuf_fp_flag },
 	{ .offset = FPO(ifnet_check_transmit),
 		.flag = &mac_ifnet_check_transmit_fp_flag },
+	{ .offset = FPO(file_check_ioctl),
+		.flag = &mac_file_check_ioctl_fp_flag },
+	{ .offset = FPO(file_check_mmap),
+		.flag = &mac_file_check_mmap_fp_flag },
+	{ .offset = FPO(proc_check_fork),
+		.flag = &mac_proc_check_fork_fp_flag },
+	{ .offset = FPO(proc_check_mmap_anon),
+		.flag = &mac_proc_check_mmap_anon_fp_flag },
+	{ .offset = FPO(proc_check_mprotect),
+		.flag = &mac_proc_check_mprotect_fp_flag },
+	{ .offset = FPO(proc_check_syscall),
+		.flag = &mac_proc_check_syscall_fp_flag },
+	{ .offset = FPO(system_check_kas_info),
+		.flag = &mac_system_check_kas_info_fp_flag },
 };
 
 static void

@@ -639,8 +639,8 @@ restart:
 	vattr.va_type = VSOCK;
 	vattr.va_mode = mode;
 #ifdef MAC
-	error = mac_vnode_check_create(td->td_ucred, nd.ni_dvp, &nd.ni_cnd,
-	    &vattr);
+	error = mac_vnode_check_uipc_bind(td->td_ucred, nd.ni_dvp,
+	    &nd.ni_cnd, &vattr);
 #endif
 	if (error == 0) {
 		/*
@@ -2936,7 +2936,7 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 		goto bad;
 	}
 #ifdef MAC
-	error = mac_vnode_check_open(td->td_ucred, vp, VWRITE | VREAD);
+	error = mac_vnode_check_uipc_connect(td->td_ucred, vp);
 	if (error)
 		goto bad;
 #endif
@@ -3529,6 +3529,16 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				unp_freerights(fdep, newfds);
 				goto next;
 			}
+#ifdef MAC
+			for (int i = 0; i < newfds; i++) {
+				error = mac_file_check_receive(
+				    td->td_ucred, fdep[i]->fde_file);
+				if (error != 0) {
+					unp_freerights(fdep, newfds);
+					goto next;
+				}
+			}
+#endif
 			FILEDESC_XLOCK(fdesc);
 
 			/*

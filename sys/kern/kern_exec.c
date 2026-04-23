@@ -763,7 +763,7 @@ interpret:
 	fdunshare(td);
 	pdunshare(td);
 	/* close files on exec */
-	fdcloseexec(td);
+	fdcloseexec(td, imgp->newcred);
 
 	/*
 	 * Malloc things before we need locks.
@@ -958,6 +958,10 @@ interpret:
 
 	/* Set values passed into the program in registers. */
 	(*p->p_sysent->sv_setregs)(td, imgp, stack_base);
+
+#ifdef MAC
+	mac_proc_notify_exec_complete(p);
+#endif
 
 	VOP_MMAPPED(imgp->vp);
 

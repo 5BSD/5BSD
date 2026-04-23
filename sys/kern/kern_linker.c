@@ -691,6 +691,10 @@ linker_file_unload(linker_file_t file, int flags)
 	/* Refuse to unload modules if securelevel raised. */
 	if (prison0.pr_securelevel > 0)
 		return (EPERM);
+#ifdef MAC
+	if ((error = mac_kld_check_unload(curthread->td_ucred)) != 0)
+		return (error);
+#endif
 
 	sx_assert(&kld_sx, SA_XLOCKED);
 	KLD_DPF(FILE, ("linker_file_unload: lf->refs=%d\n", file->refs));

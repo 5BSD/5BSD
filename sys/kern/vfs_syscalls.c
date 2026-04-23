@@ -1787,6 +1787,11 @@ kern_linkat_vp(struct thread *td, struct vnode *vp, int fd, const char *path,
 				return (EAGAIN);
 			}
 			error = VOP_LINK(nd.ni_dvp, vp, &nd.ni_cnd);
+#ifdef MAC
+			if (error == 0)
+				mac_vnode_notify_link(td->td_ucred,
+				    nd.ni_dvp, vp, &nd.ni_cnd);
+#endif
 			VOP_VPUT_PAIR(nd.ni_dvp, &vp, true);
 			vn_finished_write(mp);
 			NDFREE_PNBUF(&nd);
@@ -2091,6 +2096,9 @@ restart:
 #endif
 		error = VOP_REMOVE(nd.ni_dvp, vp, &nd.ni_cnd);
 #ifdef MAC
+		if (error == 0)
+			mac_vnode_notify_unlink(td->td_ucred, nd.ni_dvp,
+			    vp, &nd.ni_cnd);
 out:
 #endif
 		vn_finished_write(mp);
@@ -2855,6 +2863,10 @@ setfflags(struct thread *td, struct vnode *vp, u_long flags)
 	if (error == 0)
 #endif
 		error = VOP_SETATTR(vp, &vattr, td->td_ucred);
+#ifdef MAC
+	if (error == 0)
+		mac_vnode_notify_setflags(td->td_ucred, vp, vattr.va_flags);
+#endif
 	VOP_UNLOCK(vp);
 	vn_finished_write(mp);
 	return (error);
@@ -2986,6 +2998,10 @@ setfmode(struct thread *td, struct ucred *cred, struct vnode *vp, int mode)
 	if (error == 0)
 #endif
 		error = VOP_SETATTR(vp, &vattr, cred);
+#ifdef MAC
+	if (error == 0)
+		mac_vnode_notify_setmode(cred, vp, vattr.va_mode);
+#endif
 	VOP_UNLOCK(vp);
 	vn_finished_write(mp);
 	return (error);
@@ -3113,6 +3129,11 @@ setfown(struct thread *td, struct ucred *cred, struct vnode *vp, uid_t uid,
 	if (error == 0)
 #endif
 		error = VOP_SETATTR(vp, &vattr, cred);
+#ifdef MAC
+	if (error == 0)
+		mac_vnode_notify_setowner(cred, vp, vattr.va_uid,
+		    vattr.va_gid);
+#endif
 	VOP_UNLOCK(vp);
 	vn_finished_write(mp);
 	return (error);
@@ -3336,6 +3357,10 @@ setutimes(struct thread *td, struct vnode *vp, const struct timespec *ts,
 #endif
 	if (error == 0)
 		error = VOP_SETATTR(vp, &vattr, td->td_ucred);
+#ifdef MAC
+	if (error == 0)
+		mac_vnode_notify_setutimes(td->td_ucred, vp);
+#endif
 	VOP_UNLOCK(vp);
 	vn_finished_write(mp);
 	return (error);
@@ -3599,6 +3624,9 @@ retry:
 	}
 #ifdef MAC
 	error = mac_vnode_check_write(td->td_ucred, NOCRED, vp);
+	if (error != 0)
+		goto out;
+	error = mac_vnode_check_truncate(td->td_ucred, vp);
 	if (error != 0)
 		goto out;
 #endif
@@ -3914,6 +3942,11 @@ out:
 	if (error == 0) {
 		error = VOP_RENAME(fromnd.ni_dvp, fromnd.ni_vp, &fromnd.ni_cnd,
 		    tond.ni_dvp, tond.ni_vp, &tond.ni_cnd, flags);
+#ifdef MAC
+		if (error == 0)
+			mac_vnode_notify_rename(td->td_ucred,
+			    &fromnd.ni_cnd, &tond.ni_cnd);
+#endif
 		NDFREE_PNBUF(&fromnd);
 		NDFREE_PNBUF(&tond);
 	} else {

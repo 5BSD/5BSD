@@ -1058,6 +1058,11 @@ fork1(struct thread *td, struct fork_req *fr)
 	if (pages == 0)
 		pages = kstack_pages;
 	/* Allocate new proc. */
+#ifdef MAC
+	error = mac_proc_check_fork(td->td_ucred, flags);
+	if (error)
+		goto fail2;
+#endif
 	newproc = uma_zalloc(proc_zone, M_WAITOK);
 	td2 = FIRST_THREAD_IN_PROC(newproc);
 	if (td2 == NULL) {

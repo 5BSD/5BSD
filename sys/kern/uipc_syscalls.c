@@ -1261,6 +1261,11 @@ kern_setsockopt(struct thread *td, int s, int level, int name, const void *val,
 	if (error == 0) {
 		sopt.sopt_rights = &fcaps.fc_rights;
 		so = fp->f_data;
+#ifdef MAC
+		error = mac_socket_check_setsockopt(td->td_ucred, so, level,
+		    name);
+		if (error == 0)
+#endif
 		error = sosetopt(so, &sopt);
 		fdrop(fp, td);
 	}

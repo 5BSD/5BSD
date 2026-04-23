@@ -396,7 +396,8 @@ mac_vnode_execve_transition(struct ucred *old, struct ucred *new,
 
 	ASSERT_VOP_LOCKED(vp, "mac_vnode_execve_transition");
 
-	MAC_POLICY_PERFORM(vnode_execve_transition, old, new, vp,
+	/* Caller holds PROC_LOCK(p), so policy callbacks must not sleep. */
+	MAC_POLICY_PERFORM_NOSLEEP(vnode_execve_transition, old, new, vp,
 	    vp->v_label, interpvplabel, imgp, imgp->execlabel);
 }
 
@@ -1007,6 +1008,49 @@ mac_mount_create(struct ucred *cred, struct mount *mp)
 	MAC_POLICY_PERFORM(mount_create, cred, mp, mp->mnt_label);
 }
 
+MAC_CHECK_PROBE_DEFINE3(mount_check_mount, "struct ucred *",
+    "const char *", "const char *");
+
+int
+mac_mount_check_mount(struct ucred *cred, const char *fspath,
+    const char *fstype, int flags)
+{
+	int error;
+
+	MAC_POLICY_CHECK(mount_check_mount, cred, fspath, fstype, flags);
+	MAC_CHECK_PROBE3(mount_check_mount, error, cred, fspath, fstype);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(mount_check_umount, "struct ucred *",
+    "struct mount *");
+
+int
+mac_mount_check_umount(struct ucred *cred, struct mount *mp)
+{
+	int error;
+
+	MAC_POLICY_CHECK(mount_check_umount, cred, mp, mp->mnt_label);
+	MAC_CHECK_PROBE2(mount_check_umount, error, cred, mp);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(mount_check_remount, "struct ucred *",
+    "struct mount *");
+
+int
+mac_mount_check_remount(struct ucred *cred, struct mount *mp, int flags)
+{
+	int error;
+
+	MAC_POLICY_CHECK(mount_check_remount, cred, mp, mp->mnt_label, flags);
+	MAC_CHECK_PROBE2(mount_check_remount, error, cred, mp);
+
+	return (error);
+}
+
 MAC_CHECK_PROBE_DEFINE2(mount_check_stat, "struct ucred *",
     "struct mount *");
 
@@ -1019,6 +1063,250 @@ mac_mount_check_stat(struct ucred *cred, struct mount *mount)
 	MAC_CHECK_PROBE2(mount_check_stat, error, cred, mount);
 
 	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(mount_check_snapshot_create, "struct ucred *",
+    "const char *");
+
+int
+mac_mount_check_snapshot_create(struct ucred *cred, const char *snapname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(mount_check_snapshot_create, cred, snapname);
+	MAC_CHECK_PROBE2(mount_check_snapshot_create, error, cred, snapname);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(mount_check_snapshot_delete, "struct ucred *",
+    "const char *");
+
+int
+mac_mount_check_snapshot_delete(struct ucred *cred, const char *snapname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(mount_check_snapshot_delete, cred, snapname);
+	MAC_CHECK_PROBE2(mount_check_snapshot_delete, error, cred, snapname);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(mount_check_snapshot_revert, "struct ucred *",
+    "const char *");
+
+int
+mac_mount_check_snapshot_revert(struct ucred *cred, const char *snapname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(mount_check_snapshot_revert, cred, snapname);
+	MAC_CHECK_PROBE2(mount_check_snapshot_revert, error, cred, snapname);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_check_truncate, "struct ucred *",
+    "struct vnode *");
+
+int
+mac_vnode_check_truncate(struct ucred *cred, struct vnode *vp)
+{
+	int error;
+
+	ASSERT_VOP_LOCKED(vp, "mac_vnode_check_truncate");
+
+	MAC_POLICY_CHECK(vnode_check_truncate, cred, vp, vp->v_label);
+	MAC_CHECK_PROBE2(vnode_check_truncate, error, cred, vp);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_check_uipc_bind, "struct ucred *",
+    "struct vnode *");
+
+int
+mac_vnode_check_uipc_bind(struct ucred *cred, struct vnode *dvp,
+    struct componentname *cnp, struct vattr *vap)
+{
+	int error;
+
+	ASSERT_VOP_LOCKED(dvp, "mac_vnode_check_uipc_bind");
+
+	MAC_POLICY_CHECK(vnode_check_uipc_bind, cred, dvp, dvp->v_label,
+	    cnp, vap);
+	MAC_CHECK_PROBE2(vnode_check_uipc_bind, error, cred, dvp);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_check_uipc_connect, "struct ucred *",
+    "struct vnode *");
+
+int
+mac_vnode_check_uipc_connect(struct ucred *cred, struct vnode *vp)
+{
+	int error;
+
+	ASSERT_VOP_LOCKED(vp, "mac_vnode_check_uipc_connect");
+
+	MAC_POLICY_CHECK(vnode_check_uipc_connect, cred, vp, vp->v_label);
+	MAC_CHECK_PROBE2(vnode_check_uipc_connect, error, cred, vp);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_notify_create, "struct ucred *",
+    "struct vnode *");
+
+void
+mac_vnode_notify_create(struct ucred *cred, struct vnode *dvp,
+    struct vnode *vp, struct componentname *cnp)
+{
+
+	MAC_POLICY_PERFORM(vnode_notify_create, cred, dvp, vp, cnp);
+	MAC_CHECK_PROBE2(vnode_notify_create, 0, cred, vp);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_notify_open, "struct ucred *",
+    "struct vnode *");
+
+void
+mac_vnode_notify_open(struct ucred *cred, struct vnode *vp, int fmode)
+{
+
+	MAC_POLICY_PERFORM(vnode_notify_open, cred, vp, fmode);
+	MAC_CHECK_PROBE2(vnode_notify_open, 0, cred, vp);
+}
+
+MAC_CHECK_PROBE_DEFINE1(vnode_notify_rename, "struct ucred *");
+
+void
+mac_vnode_notify_rename(struct ucred *cred, struct componentname *fromcnp,
+    struct componentname *tocnp)
+{
+
+	MAC_POLICY_PERFORM(vnode_notify_rename, cred, fromcnp, tocnp);
+	MAC_CHECK_PROBE1(vnode_notify_rename, 0, cred);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_notify_unlink, "struct ucred *",
+    "struct vnode *");
+
+void
+mac_vnode_notify_unlink(struct ucred *cred, struct vnode *dvp,
+    struct vnode *vp, struct componentname *cnp)
+{
+
+	MAC_POLICY_PERFORM(vnode_notify_unlink, cred, dvp, vp, cnp);
+	MAC_CHECK_PROBE2(vnode_notify_unlink, 0, cred, vp);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_notify_link, "struct ucred *",
+    "struct vnode *");
+
+void
+mac_vnode_notify_link(struct ucred *cred, struct vnode *dvp,
+    struct vnode *vp, struct componentname *cnp)
+{
+
+	MAC_POLICY_PERFORM(vnode_notify_link, cred, dvp, vp, cnp);
+	MAC_CHECK_PROBE2(vnode_notify_link, 0, cred, vp);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_notify_truncate, "struct ucred *",
+    "struct vnode *");
+
+void
+mac_vnode_notify_truncate(struct ucred *cred, struct vnode *vp)
+{
+
+	MAC_POLICY_PERFORM(vnode_notify_truncate, cred, vp);
+	MAC_CHECK_PROBE2(vnode_notify_truncate, 0, cred, vp);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_notify_setmode, "struct ucred *",
+    "struct vnode *");
+
+void
+mac_vnode_notify_setmode(struct ucred *cred, struct vnode *vp, mode_t mode)
+{
+
+	MAC_POLICY_PERFORM(vnode_notify_setmode, cred, vp, mode);
+	MAC_CHECK_PROBE2(vnode_notify_setmode, 0, cred, vp);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_notify_setowner, "struct ucred *",
+    "struct vnode *");
+
+void
+mac_vnode_notify_setowner(struct ucred *cred, struct vnode *vp,
+    uid_t uid, gid_t gid)
+{
+
+	MAC_POLICY_PERFORM(vnode_notify_setowner, cred, vp, uid, gid);
+	MAC_CHECK_PROBE2(vnode_notify_setowner, 0, cred, vp);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_notify_setflags, "struct ucred *",
+    "struct vnode *");
+
+void
+mac_vnode_notify_setflags(struct ucred *cred, struct vnode *vp, u_long flags)
+{
+
+	MAC_POLICY_PERFORM(vnode_notify_setflags, cred, vp, flags);
+	MAC_CHECK_PROBE2(vnode_notify_setflags, 0, cred, vp);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_notify_setextattr, "struct ucred *",
+    "struct vnode *");
+
+void
+mac_vnode_notify_setextattr(struct ucred *cred, struct vnode *vp,
+    int attrnamespace, const char *name)
+{
+
+	MAC_POLICY_PERFORM(vnode_notify_setextattr, cred, vp, attrnamespace,
+	    name);
+	MAC_CHECK_PROBE2(vnode_notify_setextattr, 0, cred, vp);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_notify_deleteextattr, "struct ucred *",
+    "struct vnode *");
+
+void
+mac_vnode_notify_deleteextattr(struct ucred *cred, struct vnode *vp,
+    int attrnamespace, const char *name)
+{
+
+	MAC_POLICY_PERFORM(vnode_notify_deleteextattr, cred, vp,
+	    attrnamespace, name);
+	MAC_CHECK_PROBE2(vnode_notify_deleteextattr, 0, cred, vp);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_notify_setacl, "struct ucred *",
+    "struct vnode *");
+
+void
+mac_vnode_notify_setacl(struct ucred *cred, struct vnode *vp,
+    acl_type_t type)
+{
+
+	MAC_POLICY_PERFORM(vnode_notify_setacl, cred, vp, type);
+	MAC_CHECK_PROBE2(vnode_notify_setacl, 0, cred, vp);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vnode_notify_setutimes, "struct ucred *",
+    "struct vnode *");
+
+void
+mac_vnode_notify_setutimes(struct ucred *cred, struct vnode *vp)
+{
+
+	MAC_POLICY_PERFORM(vnode_notify_setutimes, cred, vp);
+	MAC_CHECK_PROBE2(vnode_notify_setutimes, 0, cred, vp);
 }
 
 void

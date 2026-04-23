@@ -397,7 +397,7 @@ aq_if_attach_pre(if_ctx_t ctx)
 	ifp = iflib_get_ifp(ctx);
 	if_setcapenable(ifp,  IFCAP_RXCSUM | IFCAP_TXCSUM | IFCAP_HWCSUM |
 	    IFCAP_TSO | IFCAP_JUMBO_MTU | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_MTU |
-	    IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM;
+	    IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM);
 #endif
 	scctx->isc_tx_nsegments = 31,
 	scctx->isc_tx_tso_segments_max = 31;

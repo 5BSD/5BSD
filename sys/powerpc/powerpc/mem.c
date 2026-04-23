@@ -191,9 +191,9 @@ memmmap(struct cdev *dev, vm_ooffset_t offset, vm_paddr_t *paddr,
 {
 	int i;
 
-	if (dev2unit(dev) == CDEV_MINOR_MEM)
+	if (dev2unit(dev) == CDEV_MINOR_MEM) {
 		*paddr = offset;
-	else
+	} else
 		return (EFAULT);
 
 	for (i = 0; i < mem_range_softc.mr_ndesc; i++) {

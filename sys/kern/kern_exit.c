@@ -324,6 +324,11 @@ exit1(struct thread *td, int rval, int signo)
 		msleep(&p->p_lock, &p->p_mtx, PWAIT, "exithold", 0);
 
 	PROC_UNLOCK(p);
+
+#ifdef MAC
+	mac_proc_notify_exit(p);
+#endif
+
 	/* Drain the limit callout while we don't have the proc locked */
 	callout_drain(&p->p_limco);
 

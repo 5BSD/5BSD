@@ -57,6 +57,7 @@ struct bpf_d;
 struct cdev;
 struct componentname;
 struct devfs_dirent;
+struct file;
 struct ifnet;
 struct ifreq;
 struct image_params;
@@ -237,6 +238,7 @@ int	mac_kenv_check_unset(struct ucred *cred, char *name);
 
 int	mac_kld_check_load(struct ucred *cred, struct vnode *vp);
 int	mac_kld_check_stat(struct ucred *cred);
+int	mac_kld_check_unload(struct ucred *cred);
 
 void	mac_mbuf_copy(struct mbuf *, struct mbuf *);
 int	mac_mbuf_init(struct mbuf *, int);
@@ -245,7 +247,12 @@ void	mac_mbuf_tag_copy(struct m_tag *, struct m_tag *);
 void	mac_mbuf_tag_destroy(struct m_tag *);
 int	mac_mbuf_tag_init(struct m_tag *, int);
 
+int	mac_mount_check_mount(struct ucred *cred, const char *fspath,
+	    const char *fstype, int flags);
+int	mac_mount_check_remount(struct ucred *cred, struct mount *mp,
+	    int flags);
 int	mac_mount_check_stat(struct ucred *cred, struct mount *mp);
+int	mac_mount_check_umount(struct ucred *cred, struct mount *mp);
 void	mac_mount_create(struct ucred *cred, struct mount *mp);
 void	mac_mount_destroy(struct mount *);
 void	mac_mount_init(struct mount *);
@@ -403,14 +410,133 @@ mac_priv_grant(struct ucred *cred, int priv)
 	return (EPERM);
 }
 
+int	mac_proc_check_core(struct ucred *cred, struct proc *p);
 int	mac_proc_check_debug(struct ucred *cred, struct proc *p);
+
+int	mac_proc_check_fork_impl(struct ucred *cred, int flags);
+#ifdef MAC
+extern bool mac_proc_check_fork_fp_flag;
+#else
+#define mac_proc_check_fork_fp_flag false
+#endif
+#define mac_proc_check_fork_enabled() \
+	__predict_false(mac_proc_check_fork_fp_flag)
+static inline int
+mac_proc_check_fork(struct ucred *cred, int flags)
+{
+
+	if (mac_proc_check_fork_enabled())
+		return (mac_proc_check_fork_impl(cred, flags));
+	return (0);
+}
+
+int	mac_proc_check_mmap_anon_impl(struct ucred *cred, vm_offset_t addr,
+	    vm_size_t len, int prot, int flags);
+#ifdef MAC
+extern bool mac_proc_check_mmap_anon_fp_flag;
+#else
+#define mac_proc_check_mmap_anon_fp_flag false
+#endif
+#define mac_proc_check_mmap_anon_enabled() \
+	__predict_false(mac_proc_check_mmap_anon_fp_flag)
+static inline int
+mac_proc_check_mmap_anon(struct ucred *cred, vm_offset_t addr,
+    vm_size_t len, int prot, int flags)
+{
+
+	if (mac_proc_check_mmap_anon_enabled())
+		return (mac_proc_check_mmap_anon_impl(cred, addr, len,
+		    prot, flags));
+	return (0);
+}
+
+int	mac_proc_check_mprotect_impl(struct ucred *cred, vm_offset_t addr,
+	    vm_size_t len, int prot);
+#ifdef MAC
+extern bool mac_proc_check_mprotect_fp_flag;
+#else
+#define mac_proc_check_mprotect_fp_flag false
+#endif
+#define mac_proc_check_mprotect_enabled() \
+	__predict_false(mac_proc_check_mprotect_fp_flag)
+static inline int
+mac_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
+    vm_size_t len, int prot)
+{
+
+	if (mac_proc_check_mprotect_enabled())
+		return (mac_proc_check_mprotect_impl(cred, addr, len, prot));
+	return (0);
+}
+
 int	mac_proc_check_sched(struct ucred *cred, struct proc *p);
 int	mac_proc_check_signal(struct ucred *cred, struct proc *p,
 	    int signum);
+
+int	mac_proc_check_syscall_impl(struct ucred *cred, int syscall_num);
+#ifdef MAC
+extern bool mac_proc_check_syscall_fp_flag;
+#else
+#define mac_proc_check_syscall_fp_flag false
+#endif
+#define mac_proc_check_syscall_enabled() \
+	__predict_false(mac_proc_check_syscall_fp_flag)
+static inline int
+mac_proc_check_syscall(struct ucred *cred, int syscall_num)
+{
+
+	if (mac_proc_check_syscall_enabled())
+		return (mac_proc_check_syscall_impl(cred, syscall_num));
+	return (0);
+}
 int	mac_proc_check_wait(struct ucred *cred, struct proc *p);
 void	mac_proc_destroy(struct proc *);
 void	mac_proc_init(struct proc *);
+void	mac_proc_notify_exec_complete(struct proc *p);
+void	mac_proc_notify_exit(struct proc *p);
 void	mac_proc_vm_revoke(struct thread *td);
+
+int	mac_file_check_dup(struct ucred *cred, struct file *fp, int fd);
+int	mac_file_check_inherit(struct ucred *cred, struct ucred *newcred,
+	    struct file *fp, int fd);
+int	mac_file_check_ioctl_impl(struct ucred *cred, struct file *fp,
+	    int fd, u_long cmd);
+#ifdef MAC
+extern bool mac_file_check_ioctl_fp_flag;
+#else
+#define mac_file_check_ioctl_fp_flag false
+#endif
+#define mac_file_check_ioctl_enabled() \
+	__predict_false(mac_file_check_ioctl_fp_flag)
+static inline int
+mac_file_check_ioctl(struct ucred *cred, struct file *fp, int fd, u_long cmd)
+{
+
+	if (mac_file_check_ioctl_enabled())
+		return (mac_file_check_ioctl_impl(cred, fp, fd, cmd));
+	return (0);
+}
+int	mac_file_check_mmap_impl(struct ucred *cred, struct file *fp, int fd,
+	    int prot, int flags, vm_offset_t addr, vm_size_t size);
+#ifdef MAC
+extern bool mac_file_check_mmap_fp_flag;
+#else
+#define mac_file_check_mmap_fp_flag false
+#endif
+#define mac_file_check_mmap_enabled() \
+	__predict_false(mac_file_check_mmap_fp_flag)
+static inline int
+mac_file_check_mmap(struct ucred *cred, struct file *fp, int fd, int prot,
+    int flags, vm_offset_t addr, vm_size_t size)
+{
+
+	if (mac_file_check_mmap_enabled())
+		return (mac_file_check_mmap_impl(cred, fp, fd, prot, flags,
+		    addr, size));
+	return (0);
+}
+int	mac_file_check_receive(struct ucred *cred, struct file *fp);
+void	mac_file_notify_close(struct ucred *cred, struct file *fp, int fd);
 int	mac_execve_enter(struct image_params *imgp, struct mac *mac_p);
 void	mac_execve_exit(struct image_params *imgp);
 void	mac_execve_interpreter_enter(struct vnode *interpvp,
@@ -429,6 +555,8 @@ int	mac_socket_check_listen(struct ucred *cred, struct socket *so);
 int	mac_socket_check_poll(struct ucred *cred, struct socket *so);
 int	mac_socket_check_receive(struct ucred *cred, struct socket *so);
 int	mac_socket_check_send(struct ucred *cred, struct socket *so);
+int	mac_socket_check_setsockopt(struct ucred *cred, struct socket *so,
+	    int level, int optname);
 int	mac_socket_check_stat(struct ucred *cred, struct socket *so);
 int	mac_socket_check_visible(struct ucred *cred, struct socket *so);
 void	mac_socket_create_mbuf(struct socket *so, struct mbuf *m);
@@ -461,6 +589,22 @@ int	mac_system_check_swapon(struct ucred *cred, struct vnode *vp);
 int	mac_system_check_swapoff(struct ucred *cred, struct vnode *vp);
 int	mac_system_check_sysctl(struct ucred *cred, struct sysctl_oid *oidp,
 	    void *arg1, int arg2, struct sysctl_req *req);
+int	mac_system_check_kas_info_impl(struct ucred *cred, struct proc *p);
+#ifdef MAC
+extern bool mac_system_check_kas_info_fp_flag;
+#else
+#define mac_system_check_kas_info_fp_flag false
+#endif
+#define mac_system_check_kas_info_enabled() \
+	__predict_false(mac_system_check_kas_info_fp_flag)
+static inline int
+mac_system_check_kas_info(struct ucred *cred, struct proc *p)
+{
+
+	if (mac_system_check_kas_info_enabled())
+		return (mac_system_check_kas_info_impl(cred, p));
+	return (0);
+}
 
 void	mac_sysvmsg_cleanup(struct msg *msgptr);
 void	mac_sysvmsg_create(struct ucred *cred, struct msqid_kernel *msqkptr,
@@ -740,6 +884,45 @@ int	mac_vnode_execve_will_transition(struct ucred *cred,
 	    struct image_params *imgp);
 void	mac_vnode_relabel(struct ucred *cred, struct vnode *vp,
 	    struct label *newlabel);
+int	mac_vnode_check_truncate(struct ucred *cred, struct vnode *vp);
+int	mac_vnode_check_uipc_bind(struct ucred *cred, struct vnode *dvp,
+	    struct componentname *cnp, struct vattr *vap);
+int	mac_vnode_check_uipc_connect(struct ucred *cred, struct vnode *vp);
+void	mac_vnode_notify_create(struct ucred *cred, struct vnode *dvp,
+	    struct vnode *vp, struct componentname *cnp);
+void	mac_vnode_notify_open(struct ucred *cred, struct vnode *vp,
+	    int fmode);
+void	mac_vnode_notify_rename(struct ucred *cred,
+	    struct componentname *fromcnp, struct componentname *tocnp);
+void	mac_vnode_notify_unlink(struct ucred *cred, struct vnode *dvp,
+	    struct vnode *vp, struct componentname *cnp);
+void	mac_vnode_notify_link(struct ucred *cred, struct vnode *dvp,
+	    struct vnode *vp, struct componentname *cnp);
+void	mac_vnode_notify_truncate(struct ucred *cred, struct vnode *vp);
+void	mac_vnode_notify_setmode(struct ucred *cred, struct vnode *vp,
+	    mode_t mode);
+void	mac_vnode_notify_setowner(struct ucred *cred, struct vnode *vp,
+	    uid_t uid, gid_t gid);
+void	mac_vnode_notify_setflags(struct ucred *cred, struct vnode *vp,
+	    u_long flags);
+void	mac_vnode_notify_setextattr(struct ucred *cred, struct vnode *vp,
+	    int attrnamespace, const char *name);
+void	mac_vnode_notify_deleteextattr(struct ucred *cred, struct vnode *vp,
+	    int attrnamespace, const char *name);
+void	mac_vnode_notify_setacl(struct ucred *cred, struct vnode *vp,
+	    acl_type_t type);
+void	mac_vnode_notify_setutimes(struct ucred *cred, struct vnode *vp);
+
+int	mac_mount_check_snapshot_create(struct ucred *cred,
+	    const char *snapname);
+int	mac_mount_check_snapshot_delete(struct ucred *cred,
+	    const char *snapname);
+int	mac_mount_check_snapshot_revert(struct ucred *cred,
+	    const char *snapname);
+
+int	mac_pts_check_open(struct ucred *cred, int flags);
+
+int	mac_vmm_check_create(struct ucred *cred, const char *vmname);
 
 /*
  * Calls to help various file systems implement labeling functionality using

@@ -80,6 +80,10 @@
 
 #include <security/audit/audit.h>
 
+#ifdef MAC
+#include <security/mac/mac_framework.h>
+#endif
+
 #include <vm/uma.h>
 #include <vm/vm.h>
 
@@ -1085,6 +1089,11 @@ kern_dup(struct thread *td, u_int mode, int flags, int old, int new)
 
 	oldfde = &fdp->fd_ofiles[old];
 	oldfp = oldfde->fde_file;
+#ifdef MAC
+	error = mac_file_check_dup(td->td_ucred, oldfp, old);
+	if (error != 0)
+		goto unlock;
+#endif
 	if (!fhold(oldfp))
 		goto unlock;
 
@@ -1416,6 +1425,9 @@ closefp_impl(struct filedesc *fdp, int fd, struct file *fp, struct thread *td,
 		fp->f_ops->fo_fdclose(fp, fd, td);
 	FILEDESC_XUNLOCK(fdp);
 
+#ifdef MAC
+	mac_file_notify_close(td->td_ucred, fp, fd);
+#endif
 #ifdef AUDIT
 	if (AUDITING_TD(td) && audit)
 		audit_sysclose(td, fd, fp);
@@ -2888,7 +2900,7 @@ fdclose(struct thread *td, struct file *fp, int idx)
  * Close any files on exec?
  */
 void
-fdcloseexec(struct thread *td)
+fdcloseexec(struct thread *td, struct ucred *newcred)
 {
 	struct filedesc *fdp;
 	struct filedescent *fde;
@@ -2906,6 +2918,21 @@ fdcloseexec(struct thread *td)
 			fdfree(fdp, i);
 			(void) closefp(fdp, i, fp, td, false, false);
 			FILEDESC_UNLOCK_ASSERT(fdp);
+#ifdef MAC
+		} else {
+			FILEDESC_XLOCK(fdp);
+			if (mac_file_check_inherit(td->td_ucred,
+			    newcred, fp, i) != 0) {
+				fdfree(fdp, i);
+				(void) closefp(fdp, i, fp, td, false, false);
+				FILEDESC_UNLOCK_ASSERT(fdp);
+			} else {
+				FILEDESC_XUNLOCK(fdp);
+				if (fde->fde_flags & UF_FOCLOSE)
+					fde->fde_flags &= ~UF_FOCLOSE;
+			}
+		}
+#else
 		} else if (fde->fde_flags & UF_FOCLOSE) {
 			/*
 			 * https://austingroupbugs.net/view.php?id=1851
@@ -2913,6 +2940,7 @@ fdcloseexec(struct thread *td)
 			 */
 			fde->fde_flags &= ~UF_FOCLOSE;
 		}
+#endif
 	}
 }
 
