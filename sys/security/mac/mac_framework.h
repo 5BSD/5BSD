@@ -469,9 +469,13 @@ mac_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
 	return (0);
 }
 
+int	mac_proc_check_ktrace(struct ucred *cred, struct proc *target,
+	    int ops);
 int	mac_proc_check_sched(struct ucred *cred, struct proc *p);
 int	mac_proc_check_signal(struct ucred *cred, struct proc *p,
 	    int signum);
+int	mac_proc_check_suspend(struct ucred *cred, struct proc *p,
+	    int sig);
 
 int	mac_proc_check_syscall_impl(struct ucred *cred, int syscall_num);
 #ifdef MAC

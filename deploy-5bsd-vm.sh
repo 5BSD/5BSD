@@ -10,7 +10,7 @@
 #   deploy      - Deploy to VM via disk mount (VM must be stopped)
 #   ssh-deploy  - Deploy to VM via SSH (VM must be running)
 #   reboot      - Reboot VM and wait for SSH
-#   test        - Run CMI tests on VM via SSH
+#   test        - Run CAP_RT tests on VM via SSH
 #   all         - Do everything (build + install + deploy)
 #
 
@@ -23,13 +23,9 @@ VM_NAME="jaildesc-test"
 VM_DISK="/zroot/vm/${VM_NAME}/disk0.img"
 VM_IP="192.168.6.113"
 
-# Kern test binaries to copy
-TESTS="jaildesc_cap_test timerfd_cap_test fcntl_readahead_cap_test posix_fadvise_cap_test"
-TEST_OBJDIR="${OBJDIR}/home/koryheard/Projects/5BSD/amd64.amd64/tests/sys/kern"
-
-# CMI test binaries (built from source tree, not obj tree)
-CMI_TESTS="cmi_test cmi_shield_helper cmi_exec_helper"
-CMI_TESTDIR="${SRCDIR}/tests/sys/cmi"
+# CAP_RT test binaries
+CAP_RT_TESTS="cap_rt_test cap_rt_shield_helper cap_rt_exec_helper"
+CAP_RT_TESTDIR="${OBJDIR}${SRCDIR}/amd64.amd64/tests/sys/cap_rt"
 
 cd "$SRCDIR"
 
@@ -44,8 +40,8 @@ ensure_loader_conf_line() {
 
 ensure_loader_conf() {
     _target="$1"
-    ensure_loader_conf_line "$_target" 'cmi_load="YES"'
-    ensure_loader_conf_line "$_target" 'cmi_capprotect_load="YES"'
+    ensure_loader_conf_line "$_target" 'cap_rt_load="YES"'
+    ensure_loader_conf_line "$_target" 'cap_rt_capprotect_load="YES"'
 }
 
 wait_for_vm_ssh() {
@@ -71,10 +67,8 @@ build_kernel() {
 }
 
 build_tests() {
-    echo "=== Building kern tests ==="
-    MAKEOBJDIRPREFIX="$OBJDIR" make -j8 -C tests/sys/kern || echo "WARNING: some kern tests failed to build (non-fatal)"
-    echo "=== Building CMI tests ==="
-    (cd "$CMI_TESTDIR" && make clean >/dev/null 2>&1; make SRCTOP="$SRCDIR")
+    echo "=== Building CAP_RT tests ==="
+    MAKEOBJDIRPREFIX="$OBJDIR" make -j8 -C tests/sys/cap_rt SRCTOP="$SRCDIR"
     echo "=== Tests build complete ==="
 }
 
@@ -85,106 +79,106 @@ install_kernel() {
 }
 
 # Write Kyuafile and run-tests.sh to a local dir (for disk deploy)
-deploy_cmi_scripts() {
+deploy_cap_rt_scripts() {
     _dir="$1"
     doas sh -c "cat > ${_dir}/Kyuafile" <<'KYUA'
 syntax(2)
 test_suite("FreeBSD")
-atf_test_program{name="cmi_test"}
+atf_test_program{name="cap_rt_test"}
 KYUA
     doas sh -c "cat > ${_dir}/run-tests.sh && chmod +x ${_dir}/run-tests.sh" <<'RUN'
 #!/bin/sh
 set -e
 echo "=== Unloading stale modules ==="
-for m in cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
+for m in cap_rt_pair cap_rt_test_keystore cap_rt_test_kernelstore; do
     kldunload "$m" 2>/dev/null || true
 done
-echo "=== Verifying core CMI ==="
-if ! kldstat -m cmi >/dev/null 2>&1; then
-    echo 'FAIL: cmi not loaded at boot; add cmi_load="YES" to /boot/loader.conf and reboot'
+echo "=== Verifying core CAP_RT ==="
+if ! kldstat -m cap_rt >/dev/null 2>&1; then
+    echo 'FAIL: cap_rt not loaded at boot; add cap_rt_load="YES" to /boot/loader.conf and reboot'
     exit 1
 fi
 echo "=== Loading service modules ==="
-if ! kldstat -m cmi_capprotect >/dev/null 2>&1; then
-    echo 'FAIL: cmi_capprotect not loaded at boot; add cmi_capprotect_load="YES" to /boot/loader.conf and reboot'
+if ! kldstat -m cap_rt_capprotect >/dev/null 2>&1; then
+    echo 'FAIL: cap_rt_capprotect not loaded at boot; add cap_rt_capprotect_load="YES" to /boot/loader.conf and reboot'
     exit 1
 fi
-for m in cmi_kernelstore cmi_keystore cmi_pair cmi_namespace cmi_token; do
+for m in cap_rt_test_kernelstore cap_rt_test_keystore cap_rt_pair; do
     kldload "$m" || { echo "FAIL: kldload $m"; exit 1; }
 done
 echo "=== Verifying ==="
-kldstat -m cmi
-sysctl kern.cmi.services kern.cmi.instances
-[ -c /dev/cmi ] || { echo "FAIL: /dev/cmi missing"; exit 1; }
+kldstat -m cap_rt
+sysctl kern.cap_rt.services kern.cap_rt.instances
+[ -c /dev/cap_rt ] || { echo "FAIL: /dev/cap_rt missing"; exit 1; }
 echo "=== ATF tests ==="
-cd /tmp/cmi-tests
-export TESTSDIR=/tmp/cmi-tests
+cd /tmp/cap_rt-tests
+export TESTSDIR=/tmp/cap_rt-tests
 if command -v kyua >/dev/null 2>&1; then
     kyua test
     kyua report
 else
-    for tc in $(./cmi_test -l | grep '^ident:' | sed 's/ident: //'); do
+    for tc in $(./cap_rt_test -l | grep '^ident:' | sed 's/ident: //'); do
         echo "--- ${tc} ---"
-        ./cmi_test -s /tmp/cmi-tests "${tc}" || echo "FAILED: ${tc}"
+        ./cap_rt_test -s /tmp/cap_rt-tests "${tc}" || echo "FAILED: ${tc}"
     done
 fi
 echo "=== Unloading modules ==="
-for m in cmi_capprotect cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
+for m in cap_rt_capprotect cap_rt_pair cap_rt_test_keystore cap_rt_test_kernelstore; do
     kldunload "$m" || echo "WARN: unload $m failed"
 done
-[ -c /dev/cmi ] || { echo "FAIL: /dev/cmi missing after service unload"; exit 1; }
+[ -c /dev/cap_rt ] || { echo "FAIL: /dev/cap_rt missing after service unload"; exit 1; }
 echo "=== All tests passed ==="
 RUN
 }
 
 # Write scripts to VM via SSH
-deploy_cmi_scripts_ssh() {
-    cat <<'KYUA' | ssh "root@${VM_IP}" "cat > /tmp/cmi-tests/Kyuafile"
+deploy_cap_rt_scripts_ssh() {
+    cat <<'KYUA' | ssh "root@${VM_IP}" "cat > /tmp/cap_rt-tests/Kyuafile"
 syntax(2)
 test_suite("FreeBSD")
-atf_test_program{name="cmi_test"}
+atf_test_program{name="cap_rt_test"}
 KYUA
-    cat <<'RUN' | ssh "root@${VM_IP}" "cat > /tmp/cmi-tests/run-tests.sh && chmod +x /tmp/cmi-tests/run-tests.sh"
+    cat <<'RUN' | ssh "root@${VM_IP}" "cat > /tmp/cap_rt-tests/run-tests.sh && chmod +x /tmp/cap_rt-tests/run-tests.sh"
 #!/bin/sh
 set -e
 echo "=== Unloading stale modules ==="
-for m in cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
+for m in cap_rt_pair cap_rt_test_keystore cap_rt_test_kernelstore; do
     kldunload "$m" 2>/dev/null || true
 done
-echo "=== Verifying core CMI ==="
-if ! kldstat -m cmi >/dev/null 2>&1; then
-    echo 'FAIL: cmi not loaded at boot; add cmi_load="YES" to /boot/loader.conf and reboot'
+echo "=== Verifying core CAP_RT ==="
+if ! kldstat -m cap_rt >/dev/null 2>&1; then
+    echo 'FAIL: cap_rt not loaded at boot; add cap_rt_load="YES" to /boot/loader.conf and reboot'
     exit 1
 fi
 echo "=== Loading service modules ==="
-if ! kldstat -m cmi_capprotect >/dev/null 2>&1; then
-    echo 'FAIL: cmi_capprotect not loaded at boot; add cmi_capprotect_load="YES" to /boot/loader.conf and reboot'
+if ! kldstat -m cap_rt_capprotect >/dev/null 2>&1; then
+    echo 'FAIL: cap_rt_capprotect not loaded at boot; add cap_rt_capprotect_load="YES" to /boot/loader.conf and reboot'
     exit 1
 fi
-for m in cmi_kernelstore cmi_keystore cmi_pair cmi_namespace cmi_token; do
+for m in cap_rt_test_kernelstore cap_rt_test_keystore cap_rt_pair; do
     kldload "$m" || { echo "FAIL: kldload $m"; exit 1; }
 done
 echo "=== Verifying ==="
-kldstat -m cmi
-sysctl kern.cmi.services kern.cmi.instances
-[ -c /dev/cmi ] || { echo "FAIL: /dev/cmi missing"; exit 1; }
+kldstat -m cap_rt
+sysctl kern.cap_rt.services kern.cap_rt.instances
+[ -c /dev/cap_rt ] || { echo "FAIL: /dev/cap_rt missing"; exit 1; }
 echo "=== ATF tests ==="
-cd /tmp/cmi-tests
-export TESTSDIR=/tmp/cmi-tests
+cd /tmp/cap_rt-tests
+export TESTSDIR=/tmp/cap_rt-tests
 if command -v kyua >/dev/null 2>&1; then
     kyua test
     kyua report
 else
-    for tc in $(./cmi_test -l | grep '^ident:' | sed 's/ident: //'); do
+    for tc in $(./cap_rt_test -l | grep '^ident:' | sed 's/ident: //'); do
         echo "--- ${tc} ---"
-        ./cmi_test -s /tmp/cmi-tests "${tc}" || echo "FAILED: ${tc}"
+        ./cap_rt_test -s /tmp/cap_rt-tests "${tc}" || echo "FAILED: ${tc}"
     done
 fi
 echo "=== Unloading modules ==="
-for m in cmi_capprotect cmi_token cmi_namespace cmi_pair cmi_keystore cmi_kernelstore; do
+for m in cap_rt_capprotect cap_rt_pair cap_rt_test_keystore cap_rt_test_kernelstore; do
     kldunload "$m" || echo "WARN: unload $m failed"
 done
-[ -c /dev/cmi ] || { echo "FAIL: /dev/cmi missing after service unload"; exit 1; }
+[ -c /dev/cap_rt ] || { echo "FAIL: /dev/cap_rt missing after service unload"; exit 1; }
 echo "=== All tests passed ==="
 RUN
 }
@@ -222,29 +216,18 @@ deploy_disk() {
     echo "Copying kernel..."
     doas cp -r "${STAGEDIR}/boot/"* /mnt/boot/
 
-    # Copy tests
-    echo "Copying tests..."
-    for test in $TESTS; do
-        if [ -f "${TEST_OBJDIR}/${test}" ]; then
-            doas cp "${TEST_OBJDIR}/${test}" /mnt/usr/tests/sys/kern/
-            echo "  Copied ${test}"
-        else
-            echo "  WARNING: ${test} not found"
-        fi
-    done
-
-    # Copy CMI tests
-    echo "Copying CMI tests..."
-    doas mkdir -p /mnt/tmp/cmi-tests
-    for t in $CMI_TESTS; do
-        if [ -f "${CMI_TESTDIR}/${t}" ]; then
-            doas cp "${CMI_TESTDIR}/${t}" /mnt/tmp/cmi-tests/
+    # Copy CAP_RT tests
+    echo "Copying CAP_RT tests..."
+    doas mkdir -p /mnt/tmp/cap_rt-tests
+    for t in $CAP_RT_TESTS; do
+        if [ -f "${CAP_RT_TESTDIR}/${t}" ]; then
+            doas cp "${CAP_RT_TESTDIR}/${t}" /mnt/tmp/cap_rt-tests/
             echo "  Copied ${t}"
         fi
     done
-    deploy_cmi_scripts /mnt/tmp/cmi-tests
+    deploy_cap_rt_scripts /mnt/tmp/cap_rt-tests
 
-    echo "Configuring boot loader for CMI..."
+    echo "Configuring boot loader for CAP_RT..."
     ensure_loader_conf /mnt/boot/loader.conf
 
     # Unmount and detach
@@ -259,7 +242,7 @@ deploy_disk() {
     echo "=== Deploy complete ==="
     echo "Connect with: doas vm console ${VM_NAME}"
     echo "Or SSH: ssh root@${VM_IP}"
-    echo "Run CMI tests: ssh root@${VM_IP} /tmp/cmi-tests/run-tests.sh"
+    echo "Run CAP_RT tests: ssh root@${VM_IP} /tmp/cap_rt-tests/run-tests.sh"
 }
 
 deploy_ssh() {
@@ -276,37 +259,26 @@ deploy_ssh() {
     echo "Copying kernel via SSH..."
     cd "$STAGEDIR" && tar cf - boot | ssh "root@${VM_IP}" 'cd / && tar xvf -'
 
-    # Copy tests
-    echo "Copying tests via SSH..."
-    for test in $TESTS; do
-        if [ -f "${TEST_OBJDIR}/${test}" ]; then
-            scp "${TEST_OBJDIR}/${test}" "root@${VM_IP}:/usr/tests/sys/kern/"
-            echo "  Copied ${test}"
-        else
-            echo "  WARNING: ${test} not found"
-        fi
-    done
-
-    # Copy CMI tests
-    echo "Copying CMI tests via SSH..."
-    ssh "root@${VM_IP}" "mkdir -p /tmp/cmi-tests"
-    for t in $CMI_TESTS; do
-        if [ -f "${CMI_TESTDIR}/${t}" ]; then
-            scp "${CMI_TESTDIR}/${t}" "root@${VM_IP}:/tmp/cmi-tests/"
+    # Copy CAP_RT tests
+    echo "Copying CAP_RT tests via SSH..."
+    ssh "root@${VM_IP}" "mkdir -p /tmp/cap_rt-tests"
+    for t in $CAP_RT_TESTS; do
+        if [ -f "${CAP_RT_TESTDIR}/${t}" ]; then
+            scp "${CAP_RT_TESTDIR}/${t}" "root@${VM_IP}:/tmp/cap_rt-tests/"
             echo "  Copied ${t}"
         fi
     done
-    deploy_cmi_scripts_ssh
+    deploy_cap_rt_scripts_ssh
 
-    # Ensure CMI + capprotect load at boot (NOTLATE MAC policies)
-    echo "Configuring boot loader for CMI..."
-    ssh "root@${VM_IP}" 'grep -q cmi_load /boot/loader.conf 2>/dev/null || echo "cmi_load=\"YES\"" >> /boot/loader.conf'
-    ssh "root@${VM_IP}" 'grep -q cmi_capprotect_load /boot/loader.conf 2>/dev/null || echo "cmi_capprotect_load=\"YES\"" >> /boot/loader.conf'
+    # Ensure CAP_RT + capprotect load at boot (NOTLATE MAC policies)
+    echo "Configuring boot loader for CAP_RT..."
+    ssh "root@${VM_IP}" 'grep -q cap_rt_load /boot/loader.conf 2>/dev/null || echo "cap_rt_load=\"YES\"" >> /boot/loader.conf'
+    ssh "root@${VM_IP}" 'grep -q cap_rt_capprotect_load /boot/loader.conf 2>/dev/null || echo "cap_rt_capprotect_load=\"YES\"" >> /boot/loader.conf'
 
     echo "=== Deploy complete ==="
     echo "SSH: ssh root@${VM_IP}"
     echo "Reboot VM to load new kernel/core module: ./deploy-5bsd-vm.sh reboot"
-    echo "Run CMI tests: ./deploy-5bsd-vm.sh test"
+    echo "Run CAP_RT tests: ./deploy-5bsd-vm.sh test"
 }
 
 reboot_vm() {
@@ -318,7 +290,7 @@ reboot_vm() {
 
 run_tests() {
     echo "=== Running tests on ${VM_IP} ==="
-    ssh "root@${VM_IP}" /tmp/cmi-tests/run-tests.sh
+    ssh "root@${VM_IP}" /tmp/cap_rt-tests/run-tests.sh
 }
 
 show_usage() {

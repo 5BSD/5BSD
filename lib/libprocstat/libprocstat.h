@@ -72,7 +72,7 @@
 #define	PS_FST_TYPE_DEV		14
 #define	PS_FST_TYPE_EVENTFD	15
 #define	PS_FST_TYPE_INOTIFY	16
-#define	PS_FST_TYPE_CMI		17
+#define	PS_FST_TYPE_CAP_RT		17
 
 /*
  * Special descriptor numbers.

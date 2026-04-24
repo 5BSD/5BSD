@@ -1931,6 +1931,28 @@ test_proc_check_core(struct ucred *cred, struct proc *p)
 	return (0);
 }
 
+COUNTER_DECL(proc_check_ktrace);
+static int
+test_proc_check_ktrace(struct ucred *cred, struct proc *target, int ops)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(proc_check_ktrace);
+
+	return (0);
+}
+
+COUNTER_DECL(proc_check_suspend);
+static int
+test_proc_check_suspend(struct ucred *cred, struct proc *p, int sig)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(proc_check_suspend);
+
+	return (0);
+}
+
 COUNTER_DECL(proc_check_fork);
 static int
 test_proc_check_fork(struct ucred *cred, int flags)
@@ -3870,10 +3892,12 @@ static struct mac_policy_ops test_ops =
 	.mpo_proc_check_core = test_proc_check_core,
 	.mpo_proc_check_debug = test_proc_check_debug,
 	.mpo_proc_check_fork = test_proc_check_fork,
+	.mpo_proc_check_ktrace = test_proc_check_ktrace,
 	.mpo_proc_check_mmap_anon = test_proc_check_mmap_anon,
 	.mpo_proc_check_mprotect = test_proc_check_mprotect,
 	.mpo_proc_check_sched = test_proc_check_sched,
 	.mpo_proc_check_signal = test_proc_check_signal,
+	.mpo_proc_check_suspend = test_proc_check_suspend,
 	.mpo_proc_check_syscall = test_proc_check_syscall,
 	.mpo_proc_check_wait = test_proc_check_wait,
 	.mpo_proc_destroy_label = test_proc_destroy_label,

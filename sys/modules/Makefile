@@ -210,13 +210,11 @@ SUBDIR=	\
 	${_ixl} \
 	jme \
 	kbdmux \
-	cmi \
-	cmi_capprotect \
-	cmi_kernelstore \
-	cmi_keystore \
-	cmi_namespace \
-	cmi_pair \
-	cmi_token \
+	cap_rt \
+	cap_rt_capprotect \
+	cap_rt_test_kernelstore \
+	cap_rt_test_keystore \
+	cap_rt_pair \
 	kgssapi \
 	kgssapi_krb5 \
 	khelp \

@@ -1,13 +1,13 @@
-# CMI -- Capability Message Interface
+# CAP_RT -- Capability Message Interface
 
-CMI is a generic messaging interface for building capabilities on
+CAP_RT is a generic messaging interface for building capabilities on
 FreeBSD.  It supports async and sync messaging to kernel services
 (via loadable modules) and userspace-to-userspace IPC (via capability
 pairs).  All communication flows through file descriptors that are
 Capsicum-aware, kqueue-integrated, and delegable via fork, dup, or
 SCM_RIGHTS.
 
-## The problem CMI solves
+## The problem CAP_RT solves
 
 Adding a new Capsicum-aware kernel service to FreeBSD today requires
 touching the base system in multiple places:
@@ -37,21 +37,21 @@ ships with a base system release.  There is no uniformity across
 services -- each one has its own fileops, its own ioctl definitions,
 its own error conventions, and its own Capsicum rights.
 
-**CMI replaces all of this with one base system change** (`DTYPE_CMI`,
+**CAP_RT replaces all of this with one base system change** (`DTYPE_CAP_RT`,
 two reserved Capsicum rights, one device node) that enables unlimited
 kernel services as loadable modules.  No new syscalls, no new DTYPEs,
 no new `CAP_*` bits per service.  A service author writes message
 handlers in a kernel module, loads it, and userspace connects via
-`/dev/cmi`.
+`/dev/cap_rt`.
 
-For userspace-to-userspace IPC, the `cmi_pair` module provides
+For userspace-to-userspace IPC, the `cap_rt_pair` module provides
 bidirectional capability channels -- similar to `socketpair(2)` but
 as capability descriptors that can be restricted with
 `cap_ioctls_limit()` and revoked by closing one end.
 
-CMI coexists with the socket API.  Like Apple (Mach ports + BSD
+CAP_RT coexists with the socket API.  Like Apple (Mach ports + BSD
 sockets) and Android (Binder + sockets), FreeBSD gets both: sockets
-for network and traditional IPC, CMI for structured capability-based
+for network and traditional IPC, CAP_RT for structured capability-based
 messaging.
 
 ---
@@ -63,9 +63,9 @@ messaging.
    The framework rejects services that set both.
 
 2. **Messages are the interface.**  Every operation goes through
-   `CMI_SENDMSG`/`CMI_RECVMSG` (async) or `CMI_CALL` (sync).
+   `CAP_RT_SENDMSG`/`CAP_RT_RECVMSG` (async) or `CAP_RT_CALL` (sync).
    No direct struct access from userspace.  Kernel-to-kernel
-   messaging uses CMI_CALL or CMI_SENDMSG.
+   messaging uses CAP_RT_CALL or CAP_RT_SENDMSG.
 
 3. **The framework owns the descriptor.**  Services never touch
    `falloc`, `finit`, `finstall`, `fileops`, or `DTYPE_*`.
@@ -85,21 +85,21 @@ notifications through the same fd.
 ```
 userspace                    kernel
 ---------                    ------
-CMI_SENDMSG  ------>  RX queue  ------>  taskqueue  ----->  co_handler()
+CAP_RT_SENDMSG  ------>  RX queue  ------>  taskqueue  ----->  co_handler()
                                                                   |
-CMI_RECVMSG  <------  TX queue  <------  cmi_reply()  <--------+
+CAP_RT_RECVMSG  <------  TX queue  <------  cap_rt_reply()  <--------+
 ```
 
 Two queues per instance (like Mach ports, like NIC ring buffers):
-- **RX queue**: userspace → kernel.  `CMI_SENDMSG` enqueues, returns immediately.
-- **TX queue**: kernel → userspace.  `CMI_RECVMSG` dequeues, blocks if empty.
+- **RX queue**: userspace → kernel.  `CAP_RT_SENDMSG` enqueues, returns immediately.
+- **TX queue**: kernel → userspace.  `CAP_RT_RECVMSG` dequeues, blocks if empty.
 
 ### Sync model (co_call)
 
 ```
 userspace                    kernel
 ---------                    ------
-CMI_CALL  -------->  co_call() runs in caller's thread  -------->  return
+CAP_RT_CALL  -------->  co_call() runs in caller's thread  -------->  return
 ```
 
 No queues.  The handler runs as the calling process -- it can
@@ -111,41 +111,41 @@ No queues.  The handler runs as the calling process -- it can
 
 ## Writing a service
 
-A CMI service is a kernel module with one callback -- `co_handler`
+A CAP_RT service is a kernel module with one callback -- `co_handler`
 (async) or `co_call` (sync), never both:
 
 ```c
-#include "cmi.h"
-MODULE_DEPEND(echo, cmi, 1, 1, 1);
+#include "cap_rt.h"
+MODULE_DEPEND(echo, cap_rt, 1, 1, 1);
 
 static int
-echo_handler(struct cmi_instance *s, const struct cmi_msg *msg,
+echo_handler(struct cap_rt_instance *s, const struct cap_rt_msg *msg,
     void *arg)
 {
-    return (cmi_reply(s, cmi_msg_token(msg),
-        cmi_msg_data(msg), cmi_msg_datalen(msg),
+    return (cap_rt_reply(s, cap_rt_msg_token(msg),
+        cap_rt_msg_data(msg), cap_rt_msg_datalen(msg),
         NULL, NULL, 0));
 }
 
-static const struct cmi_ops echo_ops = {
+static const struct cap_rt_ops echo_ops = {
     .co_handler = echo_handler,
 };
 
-static struct cmi_service *svc;
+static struct cap_rt_service *svc;
 
 static int
 echo_modevent(module_t mod, int type, void *arg)
 {
     switch (type) {
     case MOD_LOAD: {
-        struct cmi_service_params p = {
+        struct cap_rt_service_params p = {
             .name = "echo",
             .ops  = &echo_ops,
         };
-        return (cmi_service_create(&p, &svc));
+        return (cap_rt_service_create(&p, &svc));
     }
     case MOD_UNLOAD:
-        cmi_service_destroy(svc);
+        cap_rt_service_destroy(svc);
         return (0);
     }
     return (EOPNOTSUPP);
@@ -159,7 +159,7 @@ send a message, get it back.
 
 | Callback | When | Thread | Can fail? |
 |---|---|---|---|
-| `co_connect` | `CMI_CONNECT`, before instance exists | Caller | Yes |
+| `co_connect` | `CAP_RT_CONNECT`, before instance exists | Caller | Yes |
 | `co_init` | After creation, before fd visible | Caller | Yes |
 | `co_handler` | Async message dispatch | Taskqueue | Yes (auto-error-reply) |
 | `co_call` | Sync call in caller's context | Caller | Yes |
@@ -172,9 +172,9 @@ All are optional except one of `co_handler` or `co_call`.
 
 | Reason | Meaning |
 |---|---|
-| `CMI_REVOKE_PEER_CLOSED` | Userspace called `close()` |
-| `CMI_REVOKE_BY_SERVICE` | Service called `cmi_instance_revoke()` or userspace sent `CMI_TERMINATE` |
-| `CMI_REVOKE_UNLOAD` | Module unload via `cmi_service_destroy()` |
+| `CAP_RT_REVOKE_PEER_CLOSED` | Userspace called `close()` |
+| `CAP_RT_REVOKE_BY_SERVICE` | Service called `cap_rt_instance_revoke()` or userspace sent `CAP_RT_TERMINATE` |
+| `CAP_RT_REVOKE_UNLOAD` | Module unload via `cap_rt_service_destroy()` |
 
 ## The async handler
 
@@ -185,17 +185,17 @@ locks held.
 Access the message through accessors -- the struct is opaque:
 
 ```c
-cmi_msg_data(msg)      /* payload bytes */
-cmi_msg_datalen(msg)   /* payload length */
-cmi_msg_token(msg)     /* correlation token set by sender */
-cmi_msg_fds(msg)       /* attached file pointers */
-cmi_msg_fcaps(msg)     /* Capsicum rights on attached fds */
-cmi_msg_nfds(msg)      /* number of attached fds */
-cmi_msg_badge(msg)     /* this instance's badge */
-cmi_msg_cred(msg)      /* sender credentials at send time */
+cap_rt_msg_data(msg)      /* payload bytes */
+cap_rt_msg_datalen(msg)   /* payload length */
+cap_rt_msg_token(msg)     /* correlation token set by sender */
+cap_rt_msg_fds(msg)       /* attached file pointers */
+cap_rt_msg_fcaps(msg)     /* Capsicum rights on attached fds */
+cap_rt_msg_nfds(msg)      /* number of attached fds */
+cap_rt_msg_badge(msg)     /* this instance's badge */
+cap_rt_msg_cred(msg)      /* sender credentials at send time */
 ```
 
-**Return 0** after calling `cmi_reply()` to send a response.
+**Return 0** after calling `cap_rt_reply()` to send a response.
 **Return 0** without replying for fire-and-forget messages.
 **Return nonzero** to have the framework send an error reply.
 
@@ -204,19 +204,19 @@ The message is valid only during the call.  Copy what you need.
 ## Replying
 
 ```c
-cmi_reply(s, cmi_msg_token(msg), data, len, fds, fcaps, nfds);
+cap_rt_reply(s, cap_rt_msg_token(msg), data, len, fds, fcaps, nfds);
 ```
 
 - `fds`: file pointers to attach.  NULL if none.
 - `fcaps`: Capsicum rights to preserve on those fds.  NULL = full rights.
-- `cmi_msg_token(msg)`: pass the sender's token back for correlation.
+- `cap_rt_msg_token(msg)`: pass the sender's token back for correlation.
 
 ## Notifications
 
 Push an unsolicited message to userspace (async services only):
 
 ```c
-cmi_notify(s, data, len, fds, fcaps, nfds);
+cap_rt_notify(s, data, len, fds, fcaps, nfds);
 ```
 
 Returns EAGAIN above the soft limit.  No reply token.
@@ -225,14 +225,14 @@ Returns EAGAIN above the soft limit.  No reply token.
 
 The badge is a uint64_t assigned by `co_connect` at instance creation.
 It's stamped on every inbound message.  The handler sees it via
-`cmi_msg_badge(msg)`.  Use it to identify which client sent a
+`cap_rt_msg_badge(msg)`.  Use it to identify which client sent a
 message.  Typical values: monotonic counter, hash key, user ID.
 
 ## Instance private data
 
 ```c
-cmi_instance_set_priv(s, my_state);
-struct my_state *st = cmi_instance_get_priv(s);
+cap_rt_instance_set_priv(s, my_state);
+struct my_state *st = cap_rt_instance_get_priv(s);
 ```
 
 Set in `co_init`, freed in `co_revoke`.
@@ -242,7 +242,7 @@ Set in `co_init`, freed in `co_revoke`.
 Tear down an instance from the service side:
 
 ```c
-cmi_instance_revoke(s);
+cap_rt_instance_revoke(s);
 ```
 
 The peer's next RECVMSG returns ECONNRESET.  `co_revoke` fires.
@@ -252,11 +252,11 @@ Do NOT call from inside `co_call`.
 Userspace can terminate the instance for all holders:
 
 ```c
-ioctl(fd, CMI_TERMINATE, NULL);
+ioctl(fd, CAP_RT_TERMINATE, NULL);
 ```
 
 The instance dies, all handles get ECONNRESET.  `co_revoke`
-fires.  Works regardless of any CMI_REVOKE_* restrictions.
+fires.  Works regardless of any CAP_RT_REVOKE_* restrictions.
 
 ## Granular revoke
 
@@ -265,29 +265,29 @@ the instance.  One-way latch -- once revoked, can't be restored.
 Affects the instance (all handles/dups).
 
 ```c
-ioctl(fd, CMI_REVOKE_SEND, NULL);   /* SENDMSG → EACCES */
-ioctl(fd, CMI_REVOKE_RECV, NULL);   /* RECVMSG → EACCES */
-ioctl(fd, CMI_REVOKE_CALL, NULL);   /* CALL → EACCES */
+ioctl(fd, CAP_RT_REVOKE_SEND, NULL);   /* SENDMSG → EACCES */
+ioctl(fd, CAP_RT_REVOKE_RECV, NULL);   /* RECVMSG → EACCES */
+ioctl(fd, CAP_RT_REVOKE_CALL, NULL);   /* CALL → EACCES */
 ```
 
-GETINFO always works.  `CMI_TERMINATE` always works (it's
+GETINFO always works.  `CAP_RT_TERMINATE` always works (it's
 a control operation, not a message).
 
 Use case: pass a capability to a process but restrict it to
 receive-only (revoke send + call before passing).
 
-## Preventing delegation (CMI_LOCK)
+## Preventing delegation (CAP_RT_LOCK)
 
 Permanently prevent a capability fd from being passed via
 SCM_RIGHTS.  One-way latch.
 
 ```c
-ioctl(fd, CMI_LOCK, NULL);
+ioctl(fd, CAP_RT_LOCK, NULL);
 /* sendmsg(SCM_RIGHTS) now fails for this fd */
 /* fork still inherits, dup still works */
 ```
 
-Services can also set `CMI_SVC_NOXFER` at creation time to
+Services can also set `CAP_RT_SVC_NOXFER` at creation time to
 make all instances non-transferable from birth.
 
 ## Minting new capabilities
@@ -296,24 +296,24 @@ Create an instance and return it as an attached fd in a reply:
 
 ```c
 struct file *fp;
-cmi_mint_fp(svc, badge, &fp);
-cmi_reply(s, token, NULL, 0, &fp, NULL, 1);
+cap_rt_mint_fp(svc, badge, &fp);
+cap_rt_reply(s, token, NULL, 0, &fp, NULL, 1);
 fdrop(fp, curthread);
 ```
 
 This is how services return new capabilities to clients.  The
-cmi_pair sample demonstrates this pattern.
+cap_rt_pair sample demonstrates this pattern.
 
 ## Service parameters
 
 ```c
-struct cmi_service_params p = {
+struct cap_rt_service_params p = {
     .name          = "myservice",
     .ops           = &ops,
     .queue_depth   = 64,         /* 0 = 256, max 4096 */
     .tx_limit      = 128,        /* 0 = 256, max 4096 */
     .instance_limit = 512,       /* 0 = 1024, max 1M */
-    .flags         = CMI_SVC_NOXFER, /* non-transferable */
+    .flags         = CAP_RT_SVC_NOXFER, /* non-transferable */
 };
 ```
 
@@ -325,14 +325,14 @@ struct cmi_service_params p = {
 | `queue_depth` | 256 | 4096 | RX queue depth (async only) |
 | `tx_limit` | 256 | 4096 | TX soft limit for notifications |
 | `instance_limit` | 1024 | 1M | Max concurrent instances |
-| `CMI_MAX_FDS` | 16 | 16 | Max fds per message (compile-time) |
+| `CAP_RT_MAX_FDS` | 16 | 16 | Max fds per message (compile-time) |
 | TX hard limit | 4x queue_depth | -- | TX hard limit, prevents unbounded growth |
 
 ### Service flags
 
 | Flag | Effect |
 |---|---|
-| `CMI_SVC_NOXFER` | Instances cannot be passed via SCM_RIGHTS |
+| `CAP_RT_SVC_NOXFER` | Instances cannot be passed via SCM_RIGHTS |
 
 ## Advanced: deferred replies
 
@@ -341,16 +341,16 @@ defer work (long crypto, disk I/O), it can reply later:
 
 ```c
 static int
-myservice_handler(struct cmi_instance *s, const struct cmi_msg *msg,
+myservice_handler(struct cap_rt_instance *s, const struct cap_rt_msg *msg,
     void *arg)
 {
     struct work *w = alloc_work();
     w->instance = s;
-    w->token = cmi_msg_token(msg);
-    memcpy(w->data, cmi_msg_data(msg), cmi_msg_datalen(msg));
+    w->token = cap_rt_msg_token(msg);
+    memcpy(w->data, cap_rt_msg_data(msg), cap_rt_msg_datalen(msg));
 
     /* Hold the instance so close doesn't free it. */
-    cmi_instance_hold(s);
+    cap_rt_instance_hold(s);
     taskqueue_enqueue(my_tq, &w->task);
     return (0);
 }
@@ -361,29 +361,28 @@ deferred_task(void *ctx, int pending)
 {
     struct work *w = ctx;
     uint32_t result = compute(w->data, w->datalen);
-    cmi_reply(w->instance, w->token,
+    cap_rt_reply(w->instance, w->token,
         &result, sizeof(result), NULL, NULL, 0);
-    cmi_instance_rele(w->instance);
+    cap_rt_instance_rele(w->instance);
     free_work(w);
 }
 ```
 
-`cmi_instance_hold()` prevents close from freeing the instance.
-`cmi_instance_rele()` releases the hold.  `co_revoke` fires
+`cap_rt_instance_hold()` prevents close from freeing the instance.
+`cap_rt_instance_rele()` releases the hold.  `co_revoke` fires
 only after all holds are released.
 
 Most services don't need this.
 
 ## Headers
 
-- **cmi.h** -- public API for service modules (opaque types, accessors)
-- **cmi_ioctl.h** -- shared kernel/userspace ioctl definitions
-- **cmi_label.h** -- program nonce accessor (`cmi_proc_nonce`)
-- **cmi_internal.h** -- framework internals (not for service modules)
-- **cmi_capprotect_proto.h** -- capability protection wire protocol
-- **cmi_token_proto.h** -- token service wire protocol
-- **cmi_namespace_proto.h** -- namespace service wire protocol
-- **cmi_kernelstore_proto.h** -- kernelstore service wire protocol
+- **cap_rt.h** -- public API for service modules (opaque types, accessors)
+- **cap_rt_ioctl.h** -- shared kernel/userspace ioctl definitions
+- **cap_rt_label.h** -- program nonce accessor (`cap_rt_proc_nonce`)
+- **cap_rt_internal.h** -- framework internals (not for service modules)
+- **cap_rt_capprotect_proto.h** -- capability protection wire protocol
+- **cap_rt_test_kernelstore_proto.h** -- test fixture: kernelstore wire protocol
+- **cap_rt_test_keystore_proto.h** -- test fixture: keystore wire protocol
 
 ---
 
@@ -392,29 +391,29 @@ Most services don't need this.
 ## Connecting
 
 ```c
-#include "cmi_ioctl.h"
+#include "cap_rt_ioctl.h"
 
-int ctl = open("/dev/cmi", O_RDWR);
-struct cmi_connect_args ca = {0};
+int ctl = open("/dev/cap_rt", O_RDWR);
+struct cap_rt_connect_args ca = {0};
 strlcpy(ca.name, "myservice", sizeof(ca.name));
-ioctl(ctl, CMI_CONNECT, &ca);
+ioctl(ctl, CAP_RT_CONNECT, &ca);
 close(ctl);
 
 int cap = ca.fd;   /* this is your capability */
 ```
 
-After connecting, you never need /dev/cmi again.  The capability
-fd can be passed via SCM_RIGHTS (unless `CMI_SVC_NOXFER`), inherited
+After connecting, you never need /dev/cap_rt again.  The capability
+fd can be passed via SCM_RIGHTS (unless `CAP_RT_SVC_NOXFER`), inherited
 across fork, or restricted via Capsicum.
 
 ## Sending a message (async services)
 
 ```c
-struct cmi_sendmsg_args sa = {0};
+struct cap_rt_sendmsg_args sa = {0};
 sa.payload = &request;
 sa.payload_len = sizeof(request);
 sa.reply_token = my_request_id;   /* optional correlation */
-ioctl(cap, CMI_SENDMSG, &sa);
+ioctl(cap, CAP_RT_SENDMSG, &sa);
 ```
 
 Returns immediately.  EAGAIN if the queue is full -- use
@@ -425,10 +424,10 @@ sync-only.
 
 ```c
 char buf[4096];
-struct cmi_recvmsg_args ra = {0};
+struct cap_rt_recvmsg_args ra = {0};
 ra.payload = buf;
 ra.payload_len = sizeof(buf);
-ioctl(cap, CMI_RECVMSG, &ra);
+ioctl(cap, CAP_RT_RECVMSG, &ra);
 /* ra.payload_len = actual bytes received */
 /* ra.reply_token = correlation token from request */
 /* ra.badge = sender's badge */
@@ -445,14 +444,14 @@ for retry).
 struct ns_request req = { .op = NS_OP_INFO };
 char reply_buf[512];
 int recv_fds[4];
-struct cmi_call_args ca = {0};
+struct cap_rt_call_args ca = {0};
 ca.req = &req;
 ca.req_len = sizeof(req);
 ca.reply = reply_buf;
 ca.reply_len = sizeof(reply_buf);
 ca.reply_fds = recv_fds;     /* optional: receive fds from handler */
 ca.reply_nfds = 4;           /* max fds to receive */
-ioctl(cap, CMI_CALL, &ca);
+ioctl(cap, CAP_RT_CALL, &ca);
 /* ca.reply_len = actual reply size */
 /* ca.reply_nfds = actual fds received */
 /* ca.trailer = caller's kernel-attested credentials */
@@ -472,46 +471,46 @@ From userspace, either close the fd or terminate the instance:
 close(cap);
 
 /* Option 2: terminate — instance dies immediately for all holders */
-ioctl(cap, CMI_TERMINATE, NULL);
+ioctl(cap, CAP_RT_TERMINATE, NULL);
 ```
 
-`CMI_TERMINATE` kills the instance regardless of how many handles
+`CAP_RT_TERMINATE` kills the instance regardless of how many handles
 exist.  All holders get ECONNRESET.  Works on both async and sync
-services, and works even if CMI_REVOKE_* restrictions are set.
+services, and works even if CAP_RT_REVOKE_* restrictions are set.
 
 ## Attaching file descriptors
 
 ```c
 int shm_fd = shm_open(SHM_ANON, O_RDWR, 0);
-struct cmi_sendmsg_args sa = {0};
+struct cap_rt_sendmsg_args sa = {0};
 sa.payload = &request;
 sa.payload_len = sizeof(request);
 sa.fds = &shm_fd;
 sa.nfds = 1;
-ioctl(cap, CMI_SENDMSG, &sa);
+ioctl(cap, CAP_RT_SENDMSG, &sa);
 ```
 
 Attached fds preserve Capsicum rights.  Non-passable descriptor
-types are rejected.  Up to `CMI_MAX_FDS` (16) per message.
+types are rejected.  Up to `CAP_RT_MAX_FDS` (16) per message.
 
 ## Querying service info
 
 ```c
-struct cmi_info_args info;
-ioctl(cap, CMI_GETINFO, &info);
+struct cap_rt_info_args info;
+ioctl(cap, CAP_RT_GETINFO, &info);
 /* info.name      -- service name */
 /* info.badge     -- this instance's badge */
 /* info.msg_limit -- max payload bytes */
-/* info.features  -- CMI_INFO_F_* bitmask */
+/* info.features  -- CAP_RT_INFO_F_* bitmask */
 ```
 
 Feature bits:
 
 | Bit | Meaning |
 |---|---|
-| `CMI_INFO_F_SENDMSG` | Async messaging supported |
-| `CMI_INFO_F_CALL` | Synchronous call supported |
-| `CMI_INFO_F_KQUEUE` | EVFILT_READ/WRITE supported |
+| `CAP_RT_INFO_F_SENDMSG` | Async messaging supported |
+| `CAP_RT_INFO_F_CALL` | Synchronous call supported |
+| `CAP_RT_INFO_F_KQUEUE` | EVFILT_READ/WRITE supported |
 
 A service has either `SENDMSG+KQUEUE` (async) or `CALL` (sync),
 never both.
@@ -531,7 +530,7 @@ Only meaningful for async services.
 Restrict which operations a capability fd can perform:
 
 ```c
-unsigned long send_only[] = { CMI_SENDMSG };
+unsigned long send_only[] = { CAP_RT_SENDMSG };
 cap_ioctls_limit(cap, send_only, 1);
 ```
 
@@ -539,7 +538,7 @@ cap_ioctls_limit(cap, send_only, 1);
 
 - **fork** -- child inherits the fd
 - **dup** -- shares the same capability (same queues)
-- **SCM_RIGHTS** -- pass to any process (unless `CMI_SVC_NOXFER`)
+- **SCM_RIGHTS** -- pass to any process (unless `CAP_RT_SVC_NOXFER`)
 
 ## Error summary
 
@@ -557,17 +556,17 @@ cap_ioctls_limit(cap, send_only, 1);
 | ENOENT | CONNECT | Service not registered |
 | ECONNABORTED | CONNECT | Service unloading |
 | ENOBUFS | (internal) | TX queue hard limit reached |
-| EACCES | SENDMSG / RECVMSG / CALL | Operation restricted via CMI_REVOKE_* |
+| EACCES | SENDMSG / RECVMSG / CALL | Operation restricted via CAP_RT_REVOKE_* |
 
 ## Security
 
-`/dev/cmi` is mode 0600 (root only).  Unprivileged processes cannot
+`/dev/cap_rt` is mode 0600 (root only).  Unprivileged processes cannot
 connect to services directly.  A broker daemon connects on their
 behalf and passes capability fds via SCM_RIGHTS.
 
 Capabilities can be attenuated before delegation:
-- `CMI_LOCK` prevents further SCM_RIGHTS passing
-- `CMI_REVOKE_SEND` / `CMI_REVOKE_RECV` / `CMI_REVOKE_CALL` strip operations
+- `CAP_RT_LOCK` prevents further SCM_RIGHTS passing
+- `CAP_RT_REVOKE_SEND` / `CAP_RT_REVOKE_RECV` / `CAP_RT_REVOKE_CALL` strip operations
 - `cap_ioctls_limit` restricts which ioctls the holder can perform
 
 These compose: lock the capability, strip send, restrict to RECVMSG+GETINFO
@@ -578,56 +577,52 @@ only, then pass it.  The recipient can receive notifications but nothing else.
 ## Source layout
 
 ```
-sys/dev/cmi/
-    cmi.h              public kernel API
-    cmi_internal.h     framework internals
-    cmi_ioctl.h        shared ioctl definitions
-    cmi_core.c         module lifecycle, capability creation
-    cmi_dev.c          capability operations (ioctls, kqueue, close)
-    cmi_kern.c         KPI: dispatch, reply/notify/revoke
-    cmi_capprotect.c   capability protection (ptrace/signal/visibility via MACF)
-    cmi_kernelstore.c  shared capability-gated key-value store
-    cmi_keystore.c     async test fixture: key-value store
-    cmi_label.h        public header: cmi_proc_nonce() accessor
-    cmi_namespace.c    namespace management (create, nest, remove)
-    cmi_pair.c         bidirectional capability pair
-    cmi_token.c        kernel-gated authorization tokens
+sys/dev/cap_rt/
+    cap_rt.h              public kernel API
+    cap_rt_internal.h     framework internals
+    cap_rt_ioctl.h        shared ioctl definitions
+    cap_rt_core.c         module lifecycle, capability creation
+    cap_rt_dev.c          capability operations (ioctls, kqueue, close)
+    cap_rt_kern.c         KPI: dispatch, reply/notify/revoke
+    cap_rt_capprotect.c          capability protection (ptrace/signal/visibility via MACF)
+    cap_rt_label.h               public header: cap_rt_proc_nonce() accessor
+    cap_rt_pair.c                bidirectional capability pair
+    cap_rt_test_kernelstore.c    test fixture: sync key-value store
+    cap_rt_test_keystore.c       test fixture: async key-value store
 
-sys/modules/cmi/           core module
-sys/modules/cmi_capprotect/ capability protection
-sys/modules/cmi_kernelstore/ shared key-value store
-sys/modules/cmi_keystore/  keystore test fixture
-sys/modules/cmi_namespace/ namespace management
-sys/modules/cmi_pair/      capability pair
-sys/modules/cmi_token/     authorization token
+sys/modules/cap_rt/                 core module
+sys/modules/cap_rt_capprotect/      capability protection
+sys/modules/cap_rt_pair/            capability pair
+sys/modules/cap_rt_test_kernelstore/ test fixture: sync key-value store
+sys/modules/cap_rt_test_keystore/   test fixture: async key-value store
 
-tests/sys/cmi/             116 ATF tests via kyua
+tests/sys/cap_rt/             116 ATF tests via kyua
 ```
 
 ## Base system changes
 
-- `DTYPE_CMI` (17) in sys/sys/file.h
-- `KF_TYPE_CMI` (17) in sys/sys/user.h
-- `CAP_CMI_SEND` / `CAP_CMI_RECV` in sys/sys/capsicum.h (reserved)
+- `DTYPE_CAP_RT` (17) in sys/sys/file.h
+- `KF_TYPE_CAP_RT` (17) in sys/sys/user.h
+- `CAP_CAP_RT_SEND` / `CAP_CAP_RT_RECV` in sys/sys/capsicum.h (reserved)
 
 ## Exported kernel API
 
 ### Service lifecycle
-- `cmi_service_create(params, &svc)` -- register a service
-- `cmi_service_destroy(svc)` -- unregister and drain
+- `cap_rt_service_create(params, &svc)` -- register a service
+- `cap_rt_service_destroy(svc)` -- unregister and drain
 
 ### Messaging (from co_handler or sleeping context)
-- `cmi_reply(s, token, data, len, fds, fcaps, nfds)` -- reply to a message
-- `cmi_notify(s, data, len, fds, fcaps, nfds)` -- push notification
+- `cap_rt_reply(s, token, data, len, fds, fcaps, nfds)` -- reply to a message
+- `cap_rt_notify(s, data, len, fds, fcaps, nfds)` -- push notification
 
 ### Instance management
-- `cmi_instance_revoke(s)` -- tear down instance
-- `cmi_instance_hold(s)` / `cmi_instance_rele(s)` -- deferred work refcount
-- `cmi_instance_set_priv(s, priv)` / `cmi_instance_get_priv(s)` -- per-instance data
-- `cmi_instance_get_badge(s)` -- service-assigned badge
+- `cap_rt_instance_revoke(s)` -- tear down instance
+- `cap_rt_instance_hold(s)` / `cap_rt_instance_rele(s)` -- deferred work refcount
+- `cap_rt_instance_set_priv(s, priv)` / `cap_rt_instance_get_priv(s)` -- per-instance data
+- `cap_rt_instance_get_badge(s)` -- service-assigned badge
 
-### Program identity (built into cmi core)
-- `cmi_proc_nonce(cred)` -- return 8-byte cryptographic nonce for a credential
+### Program identity (built into cap_rt core)
+- `cap_rt_proc_nonce(cred)` -- return 8-byte cryptographic nonce for a credential
 
 The nonce identifies the program image.  It is kernel-assigned,
 not settable by userspace.  Inherited across fork (same program),
@@ -637,21 +632,21 @@ The nonce rides in the credential trailer on every async message
 never generated.
 
 The nonce is implemented as a MACF credential label inside the
-cmi core module.  The internal struct is hidden behind the
+cap_rt core module.  The internal struct is hidden behind the
 accessor — fields may be added without changing consumers.
 
 ### Minting
-- `cmi_mint_fp(svc, badge, &fp)` -- create new capability from handler
+- `cap_rt_mint_fp(svc, badge, &fp)` -- create new capability from handler
 
 ### Message accessors
-- `cmi_msg_data(msg)`, `cmi_msg_datalen(msg)`
-- `cmi_msg_fds(msg)`, `cmi_msg_fcaps(msg)`, `cmi_msg_nfds(msg)`
-- `cmi_msg_badge(msg)`, `cmi_msg_token(msg)`
-- `cmi_msg_cred(msg)`
+- `cap_rt_msg_data(msg)`, `cap_rt_msg_datalen(msg)`
+- `cap_rt_msg_fds(msg)`, `cap_rt_msg_fcaps(msg)`, `cap_rt_msg_nfds(msg)`
+- `cap_rt_msg_badge(msg)`, `cap_rt_msg_token(msg)`
+- `cap_rt_msg_cred(msg)`
 
 ## DTrace probes
 
-Provider: `cmi`
+Provider: `cap_rt`
 
 | Probe | Args |
 |---|---|
@@ -669,8 +664,8 @@ Provider: `cmi`
 
 | Sysctl | Type | Description |
 |---|---|---|
-| `kern.cmi.services` | counter | Number of registered services |
-| `kern.cmi.instances` | counter | Number of active instances |
+| `kern.cap_rt.services` | counter | Number of registered services |
+| `kern.cap_rt.instances` | counter | Number of active instances |
 
 ---
 
@@ -678,51 +673,52 @@ Provider: `cmi`
 
 ### Phase 1: Capability Protection (DONE)
 
-CMI sync service (`cmi_capprotect`) backed by MACF.  Selective
+CAP_RT sync service (`cap_rt_capprotect`) backed by MACF.  Selective
 process integrity protection via flags: ptrace, signals, SIGKILL,
 SIGCONT, visibility, wait.  Same-nonce (fork family) freely
 interacts; foreign programs (different nonce) are blocked.  Access
 tokens grant foreign programs authorized access through the shield.
 Close removes protection.
 
-### Phase 2: Rename jail → namespace (DONE)
+### Phase 2: Namespace service (REMOVED)
 
-Renamed `cmi_jail` to `cmi_namespace`.  Service name is now
-"namespace" instead of "jail".
+The `cap_rt_namespace` service was removed.  Namespace management is
+better handled by `jaildesc` which provides direct jail descriptor
+support without duplicating jail configuration in a CAP_RT protocol.
 
-### Phase 3: Token capability (DONE)
+### Phase 3: Token capability (REMOVED)
 
-Added `cmi_token` — kernel-gated authorization tokens.  Issuers
-create labeled tokens that prove authorization.  Tokens can be
-validated, revoked, and passed.  dup shares the same instance.
+The `cap_rt_token` service was removed.  Any CAP_RT capability fd already
+proves kernel-granted authorization; a dedicated token service
+added no value beyond what the fd itself provides.
 
 ### Phase 4: Program identity — nonce (DONE)
 
-Built into the cmi core module as a MACF credential label.
+Built into the cap_rt core module as a MACF credential label.
 8-byte cryptographic nonce (`arc4random_buf`, zero excluded).
 Identifies the program image: inherited across fork, rotated
-on exec.  Accessible via `cmi_proc_nonce(cred)`.
+on exec.  Accessible via `cap_rt_proc_nonce(cred)`.
 
 Removed pid from the framework:
 - `cm_pid` removed from internal message struct
-- `cmi_msg_pid()` removed from kernel API
+- `cap_rt_msg_pid()` removed from kernel API
 - `pid` removed from credential trailer (replaced by `nonce`)
 - `issuer_pid` removed from token validate reply
-- `cmi_capprotect` shield/auth tables keyed by nonce, not pid
+- `cap_rt_capprotect` shield/auth tables keyed by nonce, not pid
 - Instance `id` removed (badge is the only per-instance identifier)
 
 ### Phase 5: KernelStore — shared capability store (DONE)
 
-Added `cmi_kernelstore` — sync CMI service.  Shared key-value
+Added `cap_rt_kernelstore` — sync CAP_RT service.  Shared key-value
 store where the capability fd IS the credential.  Connect
 creates a new empty store.  Owner can MINT member fds to share
 access.  All holders PUT/GET/DELETE on the same backing store.
-Last close destroys the data.  Revoke via CMI_TERMINATE on the
+Last close destroys the data.  Revoke via CAP_RT_TERMINATE on the
 member fd.  256 keys max, 4096 bytes per value, string keys.
 
 ### 3. Kernel-to-kernel capability communication
 
-We removed `cmi_send` because services shouldn't talk to
+We removed `cap_rt_send` because services shouldn't talk to
 each other directly — the holder composes.  But there are
 real cases where a service needs to operate on a capability
 it was given:
@@ -732,7 +728,7 @@ it was given:
 - A broker mints capabilities on behalf of the caller
 
 The question: should this be message-based (reintroduce
-`cmi_send` with clear constraints) or should it be a
+`cap_rt_send` with clear constraints) or should it be a
 different mechanism (direct instance-to-instance calls)?
 Or should the holder always mediate — pass the results
 back through the holder's thread?

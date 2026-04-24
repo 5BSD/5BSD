@@ -231,8 +231,8 @@ void mac_proc_notify_exit(struct proc *p);
   full cleanup.
 - Do NOT place this before line 326 — PROC_LOCK is held and the hook
   cannot sleep.
-- CMI capprotect cleanup is NOT tied to this hook. Capprotect shield
-  removal is driven by token fd close (`cmi_capprotect.c:374`), not
+- CAP_RT capprotect cleanup is NOT tied to this hook. Capprotect shield
+  removal is driven by token fd close (`cap_rt_capprotect.c:374`), not
   process exit. This hook is for policies that maintain per-process state
   outside the fd lifecycle (e.g., audit logs, resource trackers).
 

@@ -445,6 +445,38 @@ mac_proc_check_core(struct ucred *cred, struct proc *p)
 	return (error);
 }
 
+MAC_CHECK_PROBE_DEFINE3(proc_check_ktrace, "struct ucred *",
+    "struct proc *", "int");
+
+int
+mac_proc_check_ktrace(struct ucred *cred, struct proc *target, int ops)
+{
+	int error;
+
+	PROC_LOCK_ASSERT(target, MA_OWNED);
+
+	MAC_POLICY_CHECK_NOSLEEP(proc_check_ktrace, cred, target, ops);
+	MAC_CHECK_PROBE3(proc_check_ktrace, error, cred, target, ops);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE3(proc_check_suspend, "struct ucred *",
+    "struct proc *", "int");
+
+int
+mac_proc_check_suspend(struct ucred *cred, struct proc *p, int sig)
+{
+	int error;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	MAC_POLICY_CHECK_NOSLEEP(proc_check_suspend, cred, p, sig);
+	MAC_CHECK_PROBE3(proc_check_suspend, error, cred, p, sig);
+
+	return (error);
+}
+
 MAC_CHECK_PROBE_DEFINE1(proc_check_fork, "struct ucred *");
 
 int

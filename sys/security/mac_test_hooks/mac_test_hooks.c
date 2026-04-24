@@ -60,6 +60,10 @@ HOOK_CHECK_IMPL(proc_check_fork, struct ucred *cred __unused,
     int flags __unused)
 HOOK_CHECK_IMPL(proc_check_core, struct ucred *cred __unused,
     struct proc *p __unused)
+HOOK_CHECK_IMPL(proc_check_ktrace, struct ucred *cred __unused,
+    struct proc *target __unused, int ops __unused)
+HOOK_CHECK_IMPL(proc_check_suspend, struct ucred *cred __unused,
+    struct proc *p __unused, int sig __unused)
 HOOK_CHECK_IMPL(proc_check_syscall, struct ucred *cred __unused,
     int syscall_num __unused)
 HOOK_CHECK_IMPL(proc_check_mmap_anon, struct ucred *cred __unused,
@@ -150,6 +154,8 @@ HOOK_CHECK_IMPL(pts_check_open, struct ucred *cred __unused,
 static struct mac_policy_ops test_hooks_ops = {
 	.mpo_proc_check_fork = test_proc_check_fork,
 	.mpo_proc_check_core = test_proc_check_core,
+	.mpo_proc_check_ktrace = test_proc_check_ktrace,
+	.mpo_proc_check_suspend = test_proc_check_suspend,
 	.mpo_proc_check_syscall = test_proc_check_syscall,
 	.mpo_proc_check_mmap_anon = test_proc_check_mmap_anon,
 	.mpo_proc_check_mprotect = test_proc_check_mprotect,

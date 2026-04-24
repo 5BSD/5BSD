@@ -1,0 +1,115 @@
+.\"
+.\" Copyright (c) 2026 The FreeBSD Foundation
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd April 20, 2026
+.Dt CAP_RT_CAPPROTECT 4
+.Os
+.Sh NAME
+.Nm cap_rt_capprotect
+.Nd CAP_RT Capability Protection service
+.Sh SYNOPSIS
+.Cd "kldload cap_rt"
+.Cd "kldload cap_rt_capprotect"
+.Sh DESCRIPTION
+The
+.Nm
+service provides selective process integrity protection using the
+MACF framework.
+A process shields itself by calling
+.Dv CP_OP_SHIELD
+with a bitmask of desired protections.
+.Pp
+Protection is scoped by the program nonce: all processes sharing the
+same nonce (the calling process and its fork descendants) are considered
+the same program and can interact freely.
+Only foreign programs (different nonce, i.e., post-exec) are subject to
+the shield.
+The nonce rotates on
+.Xr execve 2 ,
+so protection does not survive exec.
+.Pp
+A shielded program can grant access to a foreign program by minting an
+access token
+.Pq Dv CP_OP_MINT
+and handing it to the foreign program.
+The recipient activates the token with
+.Dv CP_OP_AUTHORIZE
+to gain access through the shield.
+Closing the token fd revokes access.
+.Pp
+All operations use
+.Dv CAP_RT_CALL
+(synchronous).
+.Ss Shield flags
+.Bl -tag -width CP_SF_SIGKILL
+.It Dv CP_SF_PTRACE Ta 0x01
+Block
+.Xr ptrace 2
+attach from foreign programs.
+.It Dv CP_SF_SIGNAL Ta 0x02
+Block signals from foreign programs.
+SIGKILL and SIGCONT require their own flags.
+.It Dv CP_SF_VISIBLE Ta 0x04
+Hide the process from credential visibility checks
+.Pq Xr ps 1 , Xr top 1 , procfs enumeration .
+.It Dv CP_SF_WAIT Ta 0x08
+Block
+.Xr wait4 2
+from non-parent foreign processes.
+.It Dv CP_SF_SIGKILL Ta 0x10
+Block SIGKILL from foreign programs.
+Makes the process unkillable except by the same program or authorized holders.
+.It Dv CP_SF_SIGCONT Ta 0x20
+Block SIGCONT from foreign programs.
+.It Dv CP_SF_SCHED Ta 0x40
+Block
+.Xr getpriority 2 ,
+.Xr setpriority 2 ,
+and
+.Xr cpuset 2
+manipulation from foreign programs.
+.It Dv CP_SF_ALL Ta 0x7f
+All protections.
+.El
+.Pp
+Passing
+.Fa flags Ns = Ns 0
+enables all protections.
+.Ss Operations
+.Bl -tag -width CP_OP_AUTHORIZE
+.It Dv CP_OP_SHIELD
+Shield the calling program with the specified flags.
+Closing the capability fd removes protection.
+.It Dv CP_OP_MINT
+Create an access token (returned as a reply fd).
+Only available on an active shield instance.
+.It Dv CP_OP_AUTHORIZE
+Called on a token fd.
+Authorizes the calling program to interact with the shielded target
+despite the shield.
+.El
+.Ss Wire protocol
+.Bd -literal
+#include <cap_rt_capprotect_proto.h>
+
+struct cp_request {
+    uint32_t op;
+    uint32_t flags;    /* CP_SF_* bitmask (0 = all) */
+};
+.Ed
+.Sh EXAMPLES
+Shield a process from ptrace and signals:
+.Bd -literal
+int fd = cap_rt_connect("capprotect");
+struct cp_request req = { .op = CP_OP_SHIELD,
+    .flags = CP_SF_PTRACE | CP_SF_SIGNAL };
+struct cap_rt_call_args ca = { .req = &req, .req_len = sizeof(req) };
+ioctl(fd, CAP_RT_CALL, &ca);
+/* Protected until close(fd) */
+.Ed
+.Sh SEE ALSO
+.Xr cap_rt 4 ,
+.Xr ptrace 2 ,
+.Xr mac 4

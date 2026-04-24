@@ -751,6 +751,10 @@ typedef int	(*mpo_proc_check_mmap_anon_t)(struct ucred *cred,
 		    vm_offset_t addr, vm_size_t len, int prot, int flags);
 typedef int	(*mpo_proc_check_mprotect_t)(struct ucred *cred,
 		    vm_offset_t addr, vm_size_t len, int prot);
+typedef int	(*mpo_proc_check_ktrace_t)(struct ucred *cred,
+		    struct proc *target, int ops);
+typedef int	(*mpo_proc_check_suspend_t)(struct ucred *cred,
+		    struct proc *p, int sig);
 typedef void	(*mpo_proc_notify_exec_complete_t)(struct proc *p);
 typedef void	(*mpo_proc_notify_exit_t)(struct proc *p);
 
@@ -1032,8 +1036,10 @@ struct mac_policy_ops {
 	mpo_proc_check_fork_t			mpo_proc_check_fork;
 	mpo_proc_check_mmap_anon_t		mpo_proc_check_mmap_anon;
 	mpo_proc_check_mprotect_t		mpo_proc_check_mprotect;
+	mpo_proc_check_ktrace_t			mpo_proc_check_ktrace;
 	mpo_proc_check_sched_t			mpo_proc_check_sched;
 	mpo_proc_check_signal_t			mpo_proc_check_signal;
+	mpo_proc_check_suspend_t		mpo_proc_check_suspend;
 	mpo_proc_check_syscall_t		mpo_proc_check_syscall;
 	mpo_proc_check_wait_t			mpo_proc_check_wait;
 	mpo_proc_destroy_label_t		mpo_proc_destroy_label;

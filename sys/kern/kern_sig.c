@@ -91,6 +91,7 @@
 #include <machine/cpu.h>
 
 #include <security/audit/audit.h>
+#include <security/mac/mac_framework.h>
 
 #define	ONSIG	32		/* NSIG for osig* syscalls.  XXX. */
 
@@ -2518,6 +2519,11 @@ tdsendsignal(struct proc *p, struct thread *td, int sig, ksiginfo_t *ksi)
 		if (prop & SIGPROP_STOP) {
 			if (p->p_flag & (P_PPWAIT|P_WEXIT))
 				return (0);
+#ifdef MAC
+			if (mac_proc_check_suspend(td->td_ucred, p,
+			    sig) != 0)
+				return (0);
+#endif
 			p->p_flag |= P_STOPPED_SIG;
 			p->p_xsig = sig;
 			PROC_SLOCK(p);

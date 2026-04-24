@@ -103,11 +103,9 @@ MAN=	aac.4 \
 	cardbus.4 \
 	carp.4 \
 	cas.4 \
-	cmi.4 \
-	cmi_capprotect.4 \
-	cmi_kernelstore.4 \
-	cmi_namespace.4 \
-	cmi_token.4 \
+	cap_rt.4 \
+	cap_rt_capprotect.4 \
+	cap_rt_test_kernelstore.4 \
 	cc_cdg.4 \
 	cc_chd.4 \
 	cc_cubic.4 \

@@ -1,0 +1,214 @@
+.\"
+.\" Copyright (c) 2026 The FreeBSD Foundation
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd April 19, 2026
+.Dt CAP_RT 4
+.Os
+.Sh NAME
+.Nm cap_rt
+.Nd Capability Message Interface
+.Sh SYNOPSIS
+To load at boot (required for program nonce):
+.Bd -literal -offset indent
+echo 'cap_rt_load="YES"' >> /boot/loader.conf
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+driver provides a message-passing capability framework for kernel modules.
+Capabilities are represented as file descriptors of type
+.Dv DTYPE_CAP_RT .
+Each capability is an instance of a kernel service, accessed through
+structured ioctls.
+.Pp
+The framework supports two messaging models:
+.Bl -tag -width "Synchronous"
+.It Sy Asynchronous
+Messages are enqueued via
+.Dv CAP_RT_SENDMSG
+and dequeued via
+.Dv CAP_RT_RECVMSG .
+The service processes messages on a kernel taskqueue.
+.It Sy Synchronous
+Requests are made via
+.Dv CAP_RT_CALL .
+The service handler runs in the caller's thread context.
+A service is either async or sync, never both.
+.El
+.Pp
+The device node
+.Pa /dev/cap_rt
+is created at module load with mode 0600 (root only).
+.Ss Creating a capability
+Open
+.Pa /dev/cap_rt
+and issue
+.Dv CAP_RT_CONNECT
+with the name of the desired service.
+On success, a new capability file descriptor is returned in the
+.Va fd
+field.
+The
+.Pa /dev/cap_rt
+descriptor can then be closed.
+.Ss Credential trailer
+Every message carries a kernel-stamped credential trailer containing
+the sender's uid, gid, jail ID, and program nonce.
+The nonce is an 8-byte cryptographic random value that identifies the
+program image: it is inherited across
+.Xr fork 2
+and rotated on
+.Xr execve 2 .
+Zero is never a valid nonce.
+.Ss Capability control
+.Bl -tag -width CAP_RT_REVOKE_CALL
+.It Dv CAP_RT_LOCK
+Prevent the capability from being passed via
+.Dv SCM_RIGHTS .
+One-way latch.
+.It Dv CAP_RT_REVOKE_SEND
+Strip the ability to send async messages.
+.It Dv CAP_RT_REVOKE_RECV
+Strip the ability to receive async messages.
+.It Dv CAP_RT_REVOKE_CALL
+Strip the ability to make synchronous calls.
+.It Dv CAP_RT_TERMINATE
+Kill the instance for all holders.
+Subsequent operations return
+.Er ECONNRESET .
+.El
+.Ss Introspection
+.Dv CAP_RT_GETINFO
+returns the service name, badge, queue limits, and feature flags
+.Pq Dv CAP_RT_INFO_F_SENDMSG , CAP_RT_INFO_F_CALL , CAP_RT_INFO_F_KQUEUE .
+.Ss File descriptor passing
+Capabilities can carry up to 32 file descriptors per message.
+Attached fds preserve their Capsicum rights through the transfer.
+.Sh IOCTLS
+.Bl -tag -width CAP_RT_REVOKE_SEND
+.It Dv CAP_RT_CONNECT
+Connect to a named service.
+Returns a capability fd.
+.It Dv CAP_RT_SENDMSG
+Send an async message with optional fd attachment.
+.It Dv CAP_RT_RECVMSG
+Receive an async message.
+Blocks unless
+.Dv O_NONBLOCK
+is set.
+.It Dv CAP_RT_CALL
+Synchronous request/reply.
+Returns
+.Er EMSGSIZE
+with the required size if the reply buffer is too small.
+.It Dv CAP_RT_GETINFO
+Query capability metadata.
+.It Dv CAP_RT_LOCK
+Prevent SCM_RIGHTS delegation.
+.It Dv CAP_RT_REVOKE_SEND , CAP_RT_REVOKE_RECV , CAP_RT_REVOKE_CALL
+Strip specific abilities.
+.It Dv CAP_RT_TERMINATE
+Kill the instance.
+.El
+.Sh SERVICES
+The following services are provided as loadable kernel modules:
+.Bl -tag -width cap_rt_capprotect
+.It Sy cap_rt_capprotect
+Capability Protection via MACF.
+Selectively shield a program from ptrace, signals, visibility,
+and wait.  Same-nonce (fork family) processes interact freely;
+foreign programs are blocked.  Access tokens grant authorized access.
+.It Sy cap_rt_pair
+Bidirectional capability pair for peer-to-peer messaging.
+.El
+.Ss Test fixtures
+The following services exist for testing the CAP_RT framework.
+They are not intended for production use.
+.Bl -tag -width cap_rt_test_kernelstore
+.It Sy cap_rt_test_kernelstore
+Sync-only shared key-value store (256 keys, 4096 bytes per value).
+.It Sy cap_rt_test_keystore
+Async key-value store.
+.El
+.Sh LIMITS
+.Bl -tag -width CAP_RT_MSG_PAYLOAD_SIZE
+.It Dv CAP_RT_MAX_MSG
+14336 bytes (14 KB) maximum usable payload per message.
+.It Dv CAP_RT_MAX_FDS
+32 file descriptors per message.
+.It Dv CAP_RT_DEFAULT_QUEUE_DEPTH
+256 messages per async queue (configurable by service).
+.El
+.Pp
+Messages are fixed at 16384 bytes (4 pages) including a 2048-byte
+header reserved for framework use.
+Sync-only services do not allocate message queues.
+.Sh SYSCTL VARIABLES
+.Bl -tag -width kern.cap_rt.instances
+.It Va kern.cap_rt.services
+Number of registered services.
+.It Va kern.cap_rt.instances
+Number of active capability instances.
+.El
+.Sh DTRACE PROBES
+The
+.Nm
+provider defines the following probes:
+.Pp
+connect, send, recv, dispatch, reply, notify, call, revoke, close.
+.Sh FILES
+.Bl -tag -width /dev/cap_rt
+.It Pa /dev/cap_rt
+Control device for creating capabilities.
+.El
+.Sh ERRORS
+.Bl -tag -width Er
+.It Bq Er EAGAIN
+RX queue full (SENDMSG), or no message available with
+.Dv O_NONBLOCK
+(RECVMSG).
+.It Bq Er EACCES
+Operation revoked via
+.Dv CAP_RT_REVOKE_* .
+.It Bq Er ECONNRESET
+Instance terminated.
+.It Bq Er EMSGSIZE
+Payload too large (SENDMSG), or reply buffer too small
+(RECVMSG, CALL).
+The required size is returned in the length field.
+.It Bq Er ENOENT
+Service not found (CONNECT).
+.It Bq Er EOPNOTSUPP
+Wrong messaging model for this service.
+.El
+.Sh SEE ALSO
+.Xr capsicum 4 ,
+.Xr mac 4
+.Sh HISTORY
+The
+.Nm
+framework first appeared in
+.Fx 15.0
+as part of 5BSD.

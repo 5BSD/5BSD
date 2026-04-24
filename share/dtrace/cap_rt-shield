@@ -1,0 +1,52 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * cap_rt-shield -- trace capability protection activity.
+ *
+ * Shows when processes are shielded/unshielded and when
+ * ptrace/signal checks are denied by the shield.
+ *
+ * Usage: cap_rt-shield
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-16s %-10s %s\n",
+	    "PID", "COMM", "EVENT", "DETAIL");
+}
+
+/* Shield activation via CAP_RT_CALL */
+cap_rt:::call
+/copyinstr(arg0) == "capprotect"/
+{
+	printf("%-6d %-16s %-10s badge=%d reqlen=%d\n",
+	    pid, execname, "CALL", arg1, arg2);
+}
+
+/* MAC check denied */
+fbt::cp_mac_check_ptrace:return
+/arg1 != 0/
+{
+	printf("%-6d %-16s %-10s denied (errno=%d)\n",
+	    pid, execname, "PTRACE", arg1);
+}
+
+fbt::cp_mac_check_signal:return
+/arg1 != 0/
+{
+	printf("%-6d %-16s %-10s denied (errno=%d)\n",
+	    pid, execname, "SIGNAL", arg1);
+}
+
+/* Shield removed via close/revoke */
+cap_rt:::revoke
+/copyinstr(arg0) == "capprotect"/
+{
+	printf("%-6d %-16s %-10s badge=%d\n",
+	    pid, execname, "UNSHIELD", arg1);
+}

@@ -1485,6 +1485,12 @@ ktrcanset(struct thread *td, struct proc *targetp)
 	if (p_candebug(td, targetp) != 0)
 		return (0);
 
+#ifdef MAC
+	if (mac_proc_check_ktrace(td->td_ucred, targetp,
+	    targetp->p_traceflag) != 0)
+		return (0);
+#endif
+
 	return (1);
 }
 
