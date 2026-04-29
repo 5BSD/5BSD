@@ -128,16 +128,20 @@ hwt_owner_shutdown(struct hwt_owner *ho)
 		if (ctx == NULL)
 			break;
 
-		if (ctx->mode == HWT_MODE_THREAD)
-			hwt_contexthash_remove(ctx);
-
 		/*
-		 * A hook could be still dealing with this ctx right here.
+		 * Mark the context stopped before removing from the hash.
+		 * Any hwt_switch_in that already holds a reference will
+		 * see state != CTX_STATE_RUNNING and bail out before
+		 * touching the backend.  This closes the TOCTOU window
+		 * where a hook could call pt_backend_configure on a
+		 * context whose save_area is about to be freed.
 		 */
-
 		HWT_CTX_LOCK(ctx);
 		ctx->state = 0;
 		HWT_CTX_UNLOCK(ctx);
+
+		if (ctx->mode == HWT_MODE_THREAD)
+			hwt_contexthash_remove(ctx);
 
 		/* Ensure hooks invocation is now completed. */
 		while (refcount_load(&ctx->refcnt) > 0)

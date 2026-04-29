@@ -81,7 +81,9 @@
 #endif
 #define PT_SUPPORTED_FLAGS						\
 	(RTIT_CTL_MTCEN | RTIT_CTL_CR3FILTER | RTIT_CTL_DIS_TNT |	\
-	    RTIT_CTL_USER | RTIT_CTL_OS | RTIT_CTL_BRANCHEN)
+	    RTIT_CTL_USER | RTIT_CTL_OS | RTIT_CTL_BRANCHEN |		\
+	    RTIT_CTL_CYCEN | RTIT_CTL_MTC_FREQ_M |			\
+	    RTIT_CTL_CYC_THRESH_M | RTIT_CTL_PSB_FREQ_M)
 #define PT_XSAVE_MASK (XFEATURE_ENABLED_X87 | XFEATURE_ENABLED_SSE)
 #define PT_XSTATE_BV (PT_XSAVE_MASK | XFEATURE_ENABLED_PT)
 #define PT_MAX_IP_RANGES 2
@@ -183,20 +185,24 @@ pt_ctx_get_ext_area(struct pt_ctx *ctx)
 
 /*
  * Updates current trace buffer offset from the
- * ToPA MSRs. Records if the trace buffer wrapped.
+ * XSAVE area after XSAVES has stopped tracing.
+ * Must be called AFTER pt_cpu_toggle_local(false).
+ *
+ * Reading the MSR directly is incorrect because XSAVES modifies
+ * OUTPUT_MASK_PTRS (sets MaskOrTableOffset to max), destroying
+ * the page index.  The save area has the correct value.
  */
 static __inline void
-pt_update_buffer(struct pt_buffer *buf)
+pt_update_buffer(struct pt_ctx *ctx)
 {
-	uint64_t reg;
+	struct pt_ext_area *pt_ext;
 	uint64_t offset;
 
-	/* Update buffer offset. */
-	reg = rdmsr(MSR_IA32_RTIT_OUTPUT_MASK_PTRS);
-	offset = ((reg & PT_TOPA_PAGE_MASK) >> PT_TOPA_PAGE_SHIFT) * PAGE_SIZE;
-	offset += (reg >> 32);
+	pt_ext = pt_ctx_get_ext_area(ctx);
+	offset = ((pt_ext->rtit_output_mask_ptrs & PT_TOPA_PAGE_MASK) >> PT_TOPA_PAGE_SHIFT) * PAGE_SIZE;
+	offset += (pt_ext->rtit_output_mask_ptrs >> 32);
 
-	atomic_store_rel_64(&buf->offset, offset);
+	atomic_store_rel_64(&ctx->buf.offset, offset);
 }
 
 static __inline void
@@ -257,7 +263,8 @@ pt_cpu_start(void *dummy)
 	struct pt_cpu *cpu;
 
 	cpu = &pt_pcpu[curcpu];
-	MPASS(cpu->ctx != NULL);
+	if (cpu->ctx == NULL)
+		return;
 
 	dprintf("%s: curcpu %d\n", __func__, curcpu);
 	pt_cpu_set_state(curcpu, PT_ACTIVE);
@@ -289,7 +296,7 @@ pt_cpu_stop(void *dummy)
 		return;
 	}
 	pt_cpu_toggle_local(cpu->ctx->save_area, false);
-	pt_update_buffer(&ctx->buf);
+	pt_update_buffer(ctx);
 }
 
 /*
@@ -462,6 +469,86 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 	}
 	/* TODO: support for more config bits. */
 
+	/*
+	 * PSB frequency: controls how often the hardware emits a PSB
+	 * (Packet Stream Boundary) synchronization packet.  The 4-bit
+	 * encoding selects powers of 2 from 2K to 32M bytes of output.
+	 * Validate against CPUID leaf 0x14 subleaf 1 EBX[31:16] bitmap.
+	 */
+	if (cfg->psb_freq > 0) {
+		if ((pt_info.l0_ebx & CPUPT_PSB) == 0) {
+			printf("%s: CPU does not support configurable PSB\n",
+			    __func__);
+			return (ENXIO);
+		}
+		if (cfg->psb_freq > 0xf) {
+			printf("%s: psb_freq %u out of range (max 15)\n",
+			    __func__, cfg->psb_freq);
+			return (EINVAL);
+		}
+		if (((pt_info.l1_ebx >> CPUPT_PFE_BITMAP_S) &
+		    (1 << cfg->psb_freq)) == 0) {
+			printf("%s: psb_freq %u not supported by CPU\n",
+			    __func__, cfg->psb_freq);
+			return (EINVAL);
+		}
+		cfg->rtit_ctl |= (uint64_t)cfg->psb_freq <<
+		    RTIT_CTL_PSB_FREQ_S;
+	}
+
+	/*
+	 * MTC frequency: controls Mini Time Counter packet rate.
+	 * Validate against CPUID leaf 0x14 subleaf 1 EAX[31:16] bitmap.
+	 * RTIT_CTL_MTCEN must also be set.
+	 */
+	if (cfg->mtc_freq > 0) {
+		if ((pt_info.l0_ebx & CPUPT_MTC) == 0) {
+			printf("%s: CPU does not support MTC packets\n",
+			    __func__);
+			return (ENXIO);
+		}
+		if (cfg->mtc_freq > 0xf) {
+			printf("%s: mtc_freq %u out of range (max 15)\n",
+			    __func__, cfg->mtc_freq);
+			return (EINVAL);
+		}
+		if (((pt_info.l1_eax >> CPUPT_MTC_BITMAP_S) &
+		    (1 << cfg->mtc_freq)) == 0) {
+			printf("%s: mtc_freq %u not supported by CPU\n",
+			    __func__, cfg->mtc_freq);
+			return (EINVAL);
+		}
+		cfg->rtit_ctl |= RTIT_CTL_MTC_FREQ(cfg->mtc_freq);
+		cfg->rtit_ctl |= RTIT_CTL_MTCEN;
+	}
+
+	/*
+	 * Cycle-accurate threshold: controls CYC packet granularity.
+	 * CPUPT_PSB capability bit covers both PSB and CYC support.
+	 * Validate against CPUID leaf 0x14 subleaf 1 EBX[15:0] bitmap.
+	 */
+	if (cfg->cyc_thresh > 0) {
+		if ((pt_info.l0_ebx & CPUPT_PSB) == 0) {
+			printf("%s: CPU does not support cycle-accurate mode\n",
+			    __func__);
+			return (ENXIO);
+		}
+		if (cfg->cyc_thresh > 0xf) {
+			printf("%s: cyc_thresh %u out of range (max 15)\n",
+			    __func__, cfg->cyc_thresh);
+			return (EINVAL);
+		}
+		if ((((pt_info.l1_ebx & CPUPT_CT_BITMAP_M) >>
+		    CPUPT_CT_BITMAP_S) & (1 << cfg->cyc_thresh)) == 0) {
+			printf("%s: cyc_thresh %u not supported by CPU\n",
+			    __func__, cfg->cyc_thresh);
+			return (EINVAL);
+		}
+		cfg->rtit_ctl |= (uint64_t)cfg->cyc_thresh <<
+		    RTIT_CTL_CYC_THRESH_S;
+		cfg->rtit_ctl |= RTIT_CTL_CYCEN;
+	}
+
 	if (ctx->mode == HWT_MODE_CPU) {
 		TAILQ_FOREACH(hwt_cpu, &ctx->cpus, next) {
 			if (hwt_cpu->cpu_id != cpu_id)
@@ -513,11 +600,24 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 static void
 pt_backend_enable(struct hwt_context *ctx, int cpu_id)
 {
+
 	if (ctx->mode == HWT_MODE_CPU)
 		return;
 
 	KASSERT(curcpu == cpu_id,
 	    ("%s: attempting to start PT on another cpu", __func__));
+
+	/*
+	 * pt_backend_configure() is called by hwt_switch_in() immediately
+	 * before this function.  It iterates ctx->threads by thread_id and
+	 * sets pt_pcpu[cpu_id].ctx to the correct thread's pt_ctx.
+	 *
+	 * Do NOT restore cpu->ctx here.  The previous code used
+	 * TAILQ_FIRST(&ctx->threads) which always picked thread 0,
+	 * clobbering the correct value for other threads.  This caused
+	 * xrstors to load the wrong save area (GPF) and PT data to be
+	 * written to the wrong thread's buffer (cross-thread contamination).
+	 */
 	pt_cpu_start(NULL);
 	CPU_SET(cpu_id, &ctx->cpu_map);
 }
@@ -719,6 +819,61 @@ pt_backend_free_thread(struct hwt_thread *thr)
 	free(ctx, M_PT);
 }
 
+/*
+ * Stop PT cleanly: clear TraceEn first so OUTPUT_MASK_PTRS is
+ * stable, then read the exact final buffer position.
+ */
+static void
+pt_cpu_stop_clean(void *dummy)
+{
+	struct pt_cpu *cpu;
+	struct pt_ctx *ctx;
+	uint64_t reg;
+	uint64_t offset;
+
+	cpu = &pt_pcpu[curcpu];
+	ctx = cpu->ctx;
+	if (ctx == NULL)
+		return;
+
+	/* Clear TraceEn — PT stops immediately. */
+	reg = rdmsr(MSR_IA32_RTIT_CTL);
+	if (reg & RTIT_CTL_TRACEEN)
+		wrmsr(MSR_IA32_RTIT_CTL, reg & ~RTIT_CTL_TRACEEN);
+
+	/* OUTPUT_MASK_PTRS is now stable — read exact position. */
+	reg = rdmsr(MSR_IA32_RTIT_OUTPUT_MASK_PTRS);
+	offset = ((reg & PT_TOPA_PAGE_MASK) >> PT_TOPA_PAGE_SHIFT) * PAGE_SIZE;
+	offset += (reg >> 32);
+	atomic_store_rel_64(&ctx->buf.offset, offset);
+
+	pt_cpu_set_state(curcpu, PT_INACTIVE);
+}
+
+/*
+ * HWT backend stop operation.
+ *
+ * Cleanly stops PT on all active CPUs and records the exact
+ * buffer position.  Does not tear down the context.
+ */
+static void
+pt_backend_stop_op(struct hwt_context *ctx)
+{
+	struct pt_cpu *cpu;
+	int cpu_id;
+
+	if (CPU_EMPTY(&ctx->cpu_map))
+		return;
+
+	CPU_FOREACH_ISSET(cpu_id, &ctx->cpu_map) {
+		cpu = &pt_pcpu[cpu_id];
+		while (atomic_cmpset_int(&cpu->in_pcint_handler, 1, 0))
+			;
+	}
+	smp_rendezvous_cpus(ctx->cpu_map, NULL, pt_cpu_stop_clean,
+	    NULL, NULL);
+}
+
 static void
 pt_backend_dump(int cpu_id)
 {
@@ -737,6 +892,8 @@ static struct hwt_backend_ops pt_ops = {
 	.hwt_backend_enable_smp = pt_backend_enable_smp,
 	.hwt_backend_disable_smp = pt_backend_disable_smp,
 #endif
+
+	.hwt_backend_stop = pt_backend_stop_op,
 
 	.hwt_backend_read = pt_backend_read,
 	.hwt_backend_dump = pt_backend_dump,
@@ -763,7 +920,9 @@ pt_send_buffer_record(void *arg)
 	struct hwt_record_entry record;
 
 	struct pt_ctx *ctx = cpu->ctx;
-	pt_fill_buffer_record(ctx->id, &ctx->buf, &record);
+        if (ctx == NULL)
+                return;                                                                                                                                                                                                                                                                                                     
+        pt_fill_buffer_record(ctx->id, &ctx->buf, &record);                                                                                                                                                                                                                                                                 
 	hwt_record_ctx(ctx->hwt_ctx, &record, M_ZERO | M_NOWAIT);
 }
 static void
@@ -805,15 +964,19 @@ pt_topa_intr(struct trapframe *tf)
 	atomic_set_int(&cpu->in_pcint_handler, 1);
 
 	ctx = cpu->ctx;
-	KASSERT(ctx != NULL,
-	    ("%s: cpu %d: ToPA PMI interrupt without an active context",
-		__func__, curcpu));
+	if (ctx == NULL) {
+		pt_topa_status_clear();
+		atomic_set_int(&cpu->in_pcint_handler, 0);
+		return (1);
+	}
 	buf = &ctx->buf;
-	KASSERT(buf->topa_hw != NULL,
-	    ("%s: cpu %d: ToPA PMI interrupt with invalid buffer", __func__,
-		curcpu));
+	if (buf->topa_hw == NULL) {
+		pt_topa_status_clear();
+		atomic_set_int(&cpu->in_pcint_handler, 0);
+		return (1);
+	}
 	pt_cpu_toggle_local(ctx->save_area, false);
-	pt_update_buffer(buf);
+	pt_update_buffer(ctx);
 	pt_topa_status_clear();
 
 	if (pt_cpu_get_state(curcpu) == PT_ACTIVE) {
