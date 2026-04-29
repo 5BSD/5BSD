@@ -95,6 +95,7 @@ hwt_record_to_user(struct hwt_record_entry *ent,
 		strncpy(usr->fullpath, ent->fullpath, MAXPATHLEN);
 		break;
 	case HWT_RECORD_BUFFER:
+	case HWT_RECORD_OVERFLOW:
 		usr->buf_id = ent->buf_id;
 		usr->curpage = ent->curpage;
 		usr->offset = ent->offset;

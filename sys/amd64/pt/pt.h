@@ -34,6 +34,15 @@
 
 #define PT_IP_FILTER_MAX_RANGES (2) /* Intel SDM Vol. 3C, 33-29 */
 
+/*
+ * IP filter range modes (ADDR_CFG field encoding):
+ *   0  — disabled (default if nranges omits this range)
+ *   1  — FilterEn: trace only when IP is within [start, end)
+ *   2  — TraceStop: stop tracing when IP enters [start, end)
+ */
+#define	PT_RANGE_FILTER		1
+#define	PT_RANGE_TRACESTOP	2
+
 struct pt_cpu_config {
 	uint64_t rtit_ctl;
 	register_t cr3_filter;
@@ -41,6 +50,7 @@ struct pt_cpu_config {
 	struct ipf_range {
 		vm_offset_t start;
 		vm_offset_t end;
+		int mode;	/* PT_RANGE_FILTER or PT_RANGE_TRACESTOP */
 	} ip_ranges[PT_IP_FILTER_MAX_RANGES];
 	uint32_t mtc_freq;
 	uint32_t cyc_thresh;

@@ -82,8 +82,9 @@
 #define PT_SUPPORTED_FLAGS						\
 	(RTIT_CTL_MTCEN | RTIT_CTL_CR3FILTER | RTIT_CTL_DIS_TNT |	\
 	    RTIT_CTL_USER | RTIT_CTL_OS | RTIT_CTL_BRANCHEN |		\
-	    RTIT_CTL_CYCEN | RTIT_CTL_MTC_FREQ_M |			\
-	    RTIT_CTL_CYC_THRESH_M | RTIT_CTL_PSB_FREQ_M)
+	    RTIT_CTL_TSCEN | RTIT_CTL_CYCEN | RTIT_CTL_MTC_FREQ_M |	\
+	    RTIT_CTL_CYC_THRESH_M | RTIT_CTL_PSB_FREQ_M |		\
+	    RTIT_CTL_PTWEN | RTIT_CTL_FUPONPTW)
 #define PT_XSAVE_MASK (XFEATURE_ENABLED_X87 | XFEATURE_ENABLED_SSE)
 #define PT_XSTATE_BV (PT_XSAVE_MASK | XFEATURE_ENABLED_PT)
 #define PT_MAX_IP_RANGES 2
@@ -137,6 +138,7 @@ static struct pt_cpu {
 	enum pt_cpu_state state; /* used as part of trace stop protocol */
 	void *swi_cookie;	 /* Software interrupt handler context */
 	int in_pcint_handler;
+	int overflow_pending;
 } *pt_pcpu;
 
 /*
@@ -196,11 +198,13 @@ static __inline void
 pt_update_buffer(struct pt_ctx *ctx)
 {
 	struct pt_ext_area *pt_ext;
+	uint64_t reg;
 	uint64_t offset;
 
 	pt_ext = pt_ctx_get_ext_area(ctx);
-	offset = ((pt_ext->rtit_output_mask_ptrs & PT_TOPA_PAGE_MASK) >> PT_TOPA_PAGE_SHIFT) * PAGE_SIZE;
-	offset += (pt_ext->rtit_output_mask_ptrs >> 32);
+	reg = pt_ext->rtit_output_mask_ptrs;
+	offset = ((reg & PT_TOPA_PAGE_MASK) >> PT_TOPA_PAGE_SHIFT) * PAGE_SIZE;
+	offset += (reg >> 32);
 
 	atomic_store_rel_64(&ctx->buf.offset, offset);
 }
@@ -364,15 +368,38 @@ pt_configure_ranges(struct pt_ctx *ctx, struct pt_cpu_config *cfg)
 		}
 
 		switch (n) {
-		case 2:
-			pt_ext->rtit_ctl |= (1UL << RTIT_CTL_ADDR_CFG_S(1));
+		case 2: {
+			int mode1 = cfg->ip_ranges[1].mode;
+			if (mode1 == 0)
+				mode1 = PT_RANGE_FILTER;
+			if (mode1 < 1 || mode1 > 2) {
+				printf("%s: ip_ranges[1].mode %d invalid "
+				    "(1=filter, 2=tracestop)\n",
+				    __func__, cfg->ip_ranges[1].mode);
+				return (EINVAL);
+			}
+			pt_ext->rtit_ctl |=
+			    ((uint64_t)mode1 << RTIT_CTL_ADDR_CFG_S(1));
 			pt_ext->rtit_addr1_a = cfg->ip_ranges[1].start;
 			pt_ext->rtit_addr1_b = cfg->ip_ranges[1].end;
-		case 1:
-			pt_ext->rtit_ctl |= (1UL << RTIT_CTL_ADDR_CFG_S(0));
+		}
+		/* FALLTHROUGH */
+		case 1: {
+			int mode0 = cfg->ip_ranges[0].mode;
+			if (mode0 == 0)
+				mode0 = PT_RANGE_FILTER;
+			if (mode0 < 1 || mode0 > 2) {
+				printf("%s: ip_ranges[0].mode %d invalid "
+				    "(1=filter, 2=tracestop)\n",
+				    __func__, cfg->ip_ranges[0].mode);
+				return (EINVAL);
+			}
+			pt_ext->rtit_ctl |=
+			    ((uint64_t)mode0 << RTIT_CTL_ADDR_CFG_S(0));
 			pt_ext->rtit_addr0_a = cfg->ip_ranges[0].start;
 			pt_ext->rtit_addr0_b = cfg->ip_ranges[0].end;
 			break;
+		}
 		default:
 			error = (EINVAL);
 			break;
@@ -467,7 +494,18 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 			return (ENXIO);
 		}
 	}
-	/* TODO: support for more config bits. */
+	if (cfg->rtit_ctl & RTIT_CTL_PTWEN) {
+		if ((pt_info.l0_ebx & CPUPT_PRW) == 0) {
+			printf("%s: CPU does not support PTWRITE\n",
+			    __func__);
+			return (ENXIO);
+		}
+	}
+	if ((cfg->rtit_ctl & RTIT_CTL_FUPONPTW) &&
+	    !(cfg->rtit_ctl & RTIT_CTL_PTWEN)) {
+		printf("%s: FUPONPTW requires PTWEN\n", __func__);
+		return (EINVAL);
+	}
 
 	/*
 	 * PSB frequency: controls how often the hardware emits a PSB
@@ -520,6 +558,7 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 		}
 		cfg->rtit_ctl |= RTIT_CTL_MTC_FREQ(cfg->mtc_freq);
 		cfg->rtit_ctl |= RTIT_CTL_MTCEN;
+		cfg->rtit_ctl |= RTIT_CTL_TSCEN;
 	}
 
 	/*
@@ -547,6 +586,7 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 		cfg->rtit_ctl |= (uint64_t)cfg->cyc_thresh <<
 		    RTIT_CTL_CYC_THRESH_S;
 		cfg->rtit_ctl |= RTIT_CTL_CYCEN;
+		cfg->rtit_ctl |= RTIT_CTL_TSCEN;
 	}
 
 	if (ctx->mode == HWT_MODE_CPU) {
@@ -920,10 +960,20 @@ pt_send_buffer_record(void *arg)
 	struct hwt_record_entry record;
 
 	struct pt_ctx *ctx = cpu->ctx;
-        if (ctx == NULL)
-                return;                                                                                                                                                                                                                                                                                                     
-        pt_fill_buffer_record(ctx->id, &ctx->buf, &record);                                                                                                                                                                                                                                                                 
+	if (ctx == NULL)
+		return;
+	pt_fill_buffer_record(ctx->id, &ctx->buf, &record);
 	hwt_record_ctx(ctx->hwt_ctx, &record, M_ZERO | M_NOWAIT);
+
+	if (cpu->overflow_pending) {
+		struct hwt_record_entry ovf_rec;
+		ovf_rec.record_type = HWT_RECORD_OVERFLOW;
+		ovf_rec.buf_id = ctx->id;
+		ovf_rec.curpage = 0;
+		ovf_rec.offset = 0;
+		hwt_record_ctx(ctx->hwt_ctx, &ovf_rec, M_ZERO | M_NOWAIT);
+		cpu->overflow_pending = 0;
+	}
 }
 static void
 pt_topa_status_clear(void)
@@ -977,6 +1027,11 @@ pt_topa_intr(struct trapframe *tf)
 	}
 	pt_cpu_toggle_local(ctx->save_area, false);
 	pt_update_buffer(ctx);
+
+	/* Check for internal buffer overflow (data loss). */
+	if (rdmsr(MSR_IA32_RTIT_STATUS) & RTIT_STATUS_ERROR)
+		cpu->overflow_pending = 1;
+
 	pt_topa_status_clear();
 
 	if (pt_cpu_get_state(curcpu) == PT_ACTIVE) {
