@@ -35,6 +35,7 @@
 #include <sys/imgact.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
+#include <sys/malloc.h>
 #include <sys/membarrier.h>
 #include <sys/msgbuf.h>
 #include <sys/mqueue.h>
@@ -43,6 +44,7 @@
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/procctl.h>
+#include <sys/ptrace.h>
 #include <sys/reboot.h>
 #include <sys/random.h>
 #include <sys/resourcevar.h>
@@ -55,6 +57,7 @@
 #include <sys/sysent.h>
 #include <sys/sysproto.h>
 #include <sys/time.h>
+#include <sys/uio.h>
 #include <sys/unistd.h>
 #include <sys/vmmeter.h>
 #include <sys/vnode.h>
@@ -67,6 +70,8 @@
 #include <vm/swap_pager.h>
 
 #ifdef COMPAT_LINUX32
+#include <compat/freebsd32/freebsd32_misc.h>
+#include <compat/freebsd32/freebsd32_util.h>
 #include <machine/../linux32/linux.h>
 #include <machine/../linux32/linux32_proto.h>
 #else
@@ -2565,6 +2570,211 @@ linux_getcpu(struct thread *td, struct linux_getcpu_args *args)
 	if (args->node != NULL)
 		error = copyout(&node, args->node, sizeof(l_int));
 	return (error);
+}
+
+static int
+linux_process_vm_rw(struct thread *td, l_pid_t pid,
+    const struct iovec *lvec, l_ulong liovcnt,
+    const struct iovec *rvec_uptr, l_ulong riovcnt,
+    l_ulong flags, int rw)
+{
+	struct proc *p;
+	struct iovec *rvec;
+	struct uio *luio;
+	char buf[PAGE_SIZE];
+	ssize_t done;
+	int error;
+	size_t local_moved, remote_moved;
+
+	if (flags != 0)
+		return (EINVAL);
+	if (riovcnt > UIO_MAXIOV || liovcnt > UIO_MAXIOV)
+		return (EINVAL);
+	if (riovcnt == 0 || liovcnt == 0)
+		return (0);
+
+	/* Import local iovecs. */
+	luio = NULL;
+#ifdef COMPAT_LINUX32
+	error = freebsd32_copyinuio(PTRIN(lvec), liovcnt, &luio);
+#else
+	error = copyinuio(lvec, liovcnt, &luio);
+#endif
+	if (error != 0)
+		return (error);
+	luio->uio_rw = rw == 0 ? UIO_READ : UIO_WRITE;
+	luio->uio_segflg = UIO_USERSPACE;
+	luio->uio_td = td;
+
+	/*
+	 * Import remote iovecs.  These describe addresses in the
+	 * target process, so copy in only the iovec metadata.
+	 */
+	rvec = NULL;
+#ifdef COMPAT_LINUX32
+	error = freebsd32_copyiniov(PTRIN(rvec_uptr), riovcnt, &rvec, EINVAL);
+#else
+	error = copyiniov(__DECONST(struct iovec *, rvec_uptr), riovcnt,
+	    &rvec, EINVAL);
+#endif
+	if (error != 0)
+		goto out;
+
+	/* Find target process, check permission. */
+	p = NULL;
+	error = pget(pid, PGET_HOLD | PGET_CANDEBUG | PGET_NOTWEXIT, &p);
+	if (error != 0) {
+		if (error == EACCES)
+			error = EPERM;
+		goto out;
+	}
+
+	/* Transfer data between local and remote iovecs. */
+	done = 0;
+	for (l_ulong i = 0; i < riovcnt && luio->uio_resid > 0; i++) {
+		vm_offset_t raddr = (vm_offset_t)rvec[i].iov_base;
+		size_t rlen = rvec[i].iov_len;
+
+		while (rlen > 0 && luio->uio_resid > 0) {
+			struct iovec riov;
+			struct uio ruio;
+			int local_error;
+			size_t resid_before;
+			size_t chunk = MIN(rlen, MIN(PAGE_SIZE,
+			    luio->uio_resid));
+
+			riov.iov_base = buf;
+			riov.iov_len = chunk;
+			ruio.uio_iov = &riov;
+			ruio.uio_iovcnt = 1;
+			ruio.uio_offset = raddr;
+			ruio.uio_resid = chunk;
+			ruio.uio_segflg = UIO_SYSSPACE;
+			ruio.uio_td = td;
+
+			if (rw != 0) {
+				/* writev: local → buf → remote */
+				ruio.uio_rw = UIO_WRITE;
+				resid_before = luio->uio_resid;
+				local_error = uiomove(buf, chunk, luio);
+				local_moved = resid_before - luio->uio_resid;
+				if (local_moved == 0) {
+					error = local_error;
+					break;
+				}
+				riov.iov_len = local_moved;
+				ruio.uio_resid = local_moved;
+				error = proc_rwmem(p, &ruio);
+				remote_moved = local_moved - ruio.uio_resid;
+				done += remote_moved;
+				raddr += remote_moved;
+				rlen -= remote_moved;
+				if (error == 0 && remote_moved != local_moved)
+					error = EFAULT;
+				if (error == 0 && local_error != 0)
+					error = local_error;
+			} else {
+				/* readv: remote → buf → local */
+				ruio.uio_rw = UIO_READ;
+				error = proc_rwmem(p, &ruio);
+				remote_moved = chunk - ruio.uio_resid;
+				if (remote_moved == 0)
+					break;
+				resid_before = luio->uio_resid;
+				local_error = uiomove(buf, remote_moved, luio);
+				if (local_error != 0 &&
+				    luio->uio_resid == resid_before) {
+					error = local_error;
+					break;
+				}
+				local_moved = resid_before - luio->uio_resid;
+				done += local_moved;
+				raddr += local_moved;
+				rlen -= local_moved;
+				if (error == 0 && local_moved != remote_moved)
+					error = EFAULT;
+				if (error == 0 && local_error != 0)
+					error = local_error;
+			}
+			if (error != 0 || local_moved != remote_moved)
+				break;
+		}
+		if (error != 0)
+			break;
+	}
+
+	if (p != NULL)
+		PRELE(p);
+
+	/*
+	 * Like Linux: if any data was transferred, return byte count
+	 * even if an error occurred partway through.
+	 */
+	if (done > 0) {
+		td->td_retval[0] = done;
+		error = 0;
+	}
+
+out:
+	if (rvec != NULL)
+		free(rvec, M_IOV);
+	if (luio != NULL)
+		freeuio(luio);
+	return (error);
+}
+
+int
+linux_process_vm_readv(struct thread *td,
+    struct linux_process_vm_readv_args *args)
+{
+
+	return (linux_process_vm_rw(td, args->pid,
+	    (const struct iovec *)args->lvec, args->liovcnt,
+	    (const struct iovec *)args->rvec, args->riovcnt,
+	    args->flags, 0));
+}
+
+int
+linux_process_vm_writev(struct thread *td,
+    struct linux_process_vm_writev_args *args)
+{
+
+	return (linux_process_vm_rw(td, args->pid,
+	    (const struct iovec *)args->lvec, args->liovcnt,
+	    (const struct iovec *)args->rvec, args->riovcnt,
+	    args->flags, 1));
+}
+
+int
+linux_vhangup(struct thread *td, struct linux_vhangup_args *args)
+{
+	struct proc *p;
+	struct vnode *vp;
+
+	/*
+	 * Linux requires CAP_SYS_TTY_CONFIG and then revokes the
+	 * controlling terminal.  Map to FreeBSD's VOP_REVOKE on
+	 * the session's controlling tty vnode.
+	 */
+	if (priv_check(td, PRIV_TTY_STI) != 0)
+		return (EPERM);
+
+	p = td->td_proc;
+	PROC_LOCK(p);
+	if (p->p_pgrp == NULL || p->p_session->s_ttyvp == NULL) {
+		PROC_UNLOCK(p);
+		return (0);
+	}
+	vp = p->p_session->s_ttyvp;
+	vref(vp);
+	PROC_UNLOCK(p);
+
+	if (vn_lock(vp, LK_EXCLUSIVE) == 0) {
+		VOP_REVOKE(vp, REVOKEALL);
+		VOP_UNLOCK(vp);
+	}
+	vrele(vp);
+	return (0);
 }
 
 #if defined(__i386__) || defined(__amd64__)

@@ -1105,7 +1105,11 @@
 		int linux_gettid(void);
 	}
 187	AUE_NULL	STD {
-		int linux_readahead(void);
+		int linux_readahead(
+		    l_int fd,
+		    l_loff_t offset,
+		    l_size_t count
+		);
 	}
 188	AUE_NULL	STD {
 		int linux_setxattr(

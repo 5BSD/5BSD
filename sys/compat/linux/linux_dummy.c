@@ -56,7 +56,9 @@ UNIMPLEMENTED(query_module);	/* Added in Linux 2.2 removed in 2.6. */
 UNIMPLEMENTED(security);
 UNIMPLEMENTED(vserver);
 
-DUMMY(vhangup);
+DUMMY(setfsuid);
+DUMMY(setfsgid);
+/* vhangup -- moved to linux_misc.c */
 DUMMY(pivot_root);
 DUMMY(adjtimex);
 DUMMY(swapoff);
@@ -92,8 +94,8 @@ DUMMY(clock_adjtime);
 /* Linux 3.0: */
 DUMMY(setns);
 /* Linux 3.2: */
-DUMMY(process_vm_readv);
-DUMMY(process_vm_writev);
+/* process_vm_readv -- moved to linux_misc.c */
+/* process_vm_writev -- moved to linux_misc.c */
 /* Linux 3.8: */
 DUMMY(finit_module);
 DUMMY(sched_setattr);
