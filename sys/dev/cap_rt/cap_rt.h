@@ -132,6 +132,7 @@ struct cap_rt_ops {
  * Service creation flags.
  */
 #define	CAP_RT_SVC_NOXFER		0x0001	/* instances are non-transferable */
+#define	CAP_RT_SVC_KQUEUE		0x0002	/* advertise EVFILT_READ/WRITE */
 
 struct cap_rt_service_params {
 	const char		*name;

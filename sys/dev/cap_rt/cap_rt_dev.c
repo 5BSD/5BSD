@@ -599,7 +599,8 @@ call_out:
 			if (svc->csvc_ops->co_handler != NULL) {
 				info->features |= CAP_RT_INFO_F_SENDMSG;
 				info->features |= CAP_RT_INFO_F_KQUEUE;
-			}
+			} else if ((svc->csvc_svc_flags & CAP_RT_SVC_KQUEUE) != 0)
+				info->features |= CAP_RT_INFO_F_KQUEUE;
 			if (svc->csvc_ops->co_call != NULL)
 				info->features |= CAP_RT_INFO_F_CALL;
 		}
