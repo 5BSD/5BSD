@@ -12,7 +12,7 @@ set -e
 SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 
 CORE_MODULE="cap_rt"
-BOOT_MODULES="cap_rt_capprotect"
+BOOT_MODULES="cap_rt_capprotect cap_rt_file_isolation"
 SERVICE_MODULES="cap_rt_test_kernelstore cap_rt_test_keystore cap_rt_pair"
 
 CAP_RT_TEST_BIN="${SCRIPT_DIR}/cap_rt_test"
