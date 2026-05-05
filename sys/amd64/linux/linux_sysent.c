@@ -201,7 +201,7 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 184 = tuxcall */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 185 = security */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_gettid, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 186 = linux_gettid */
-	{ .sy_narg = AS(linux_readahead_args), .sy_call = (sy_call_t *)linux_readahead, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 187 = linux_readahead */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_readahead, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 187 = linux_readahead */
 	{ .sy_narg = AS(linux_setxattr_args), .sy_call = (sy_call_t *)linux_setxattr, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 188 = linux_setxattr */
 	{ .sy_narg = AS(linux_lsetxattr_args), .sy_call = (sy_call_t *)linux_lsetxattr, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 189 = linux_lsetxattr */
 	{ .sy_narg = AS(linux_fsetxattr_args), .sy_call = (sy_call_t *)linux_fsetxattr, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 190 = linux_fsetxattr */

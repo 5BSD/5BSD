@@ -638,9 +638,7 @@ struct linux_gettid_args {
 	syscallarg_t dummy;
 };
 struct linux_readahead_args {
-	char fd_l_[PADL_(l_int)]; l_int fd; char fd_r_[PADR_(l_int)];
-	char offset_l_[PADL_(l_loff_t)]; l_loff_t offset; char offset_r_[PADR_(l_loff_t)];
-	char count_l_[PADL_(l_size_t)]; l_size_t count; char count_r_[PADR_(l_size_t)];
+	syscallarg_t dummy;
 };
 struct linux_setxattr_args {
 	char path_l_[PADL_(const char *)]; const char * path; char path_r_[PADR_(const char *)];
@@ -1278,8 +1276,7 @@ struct linux_userfaultfd_args {
 };
 struct linux_membarrier_args {
 	char cmd_l_[PADL_(l_int)]; l_int cmd; char cmd_r_[PADR_(l_int)];
-	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
-	char cpu_id_l_[PADL_(l_int)]; l_int cpu_id; char cpu_id_r_[PADR_(l_int)];
+	char flags_l_[PADL_(l_int)]; l_int flags; char flags_r_[PADR_(l_int)];
 };
 struct linux_mlock2_args {
 	char start_l_[PADL_(l_ulong)]; l_ulong start; char start_r_[PADR_(l_ulong)];

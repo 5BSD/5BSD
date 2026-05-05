@@ -2206,8 +2206,7 @@
 375	AUE_NULL	STD {
 		int linux_membarrier(
 		    l_int cmd,
-		    l_uint flags,
-		    l_int cpu_id
+		    l_int flags
 		);
 	}
 ; Linux 4.4:

@@ -1428,11 +1428,7 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 	}
 	/* linux_readahead */
 	case 187: {
-		struct linux_readahead_args *p = params;
-		iarg[a++] = p->fd; /* l_int */
-		iarg[a++] = p->offset; /* l_loff_t */
-		iarg[a++] = p->count; /* l_size_t */
-		*n_args = 3;
+		*n_args = 0;
 		break;
 	}
 	/* linux_setxattr */
@@ -2543,9 +2539,8 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 	case 324: {
 		struct linux_membarrier_args *p = params;
 		iarg[a++] = p->cmd; /* l_int */
-		iarg[a++] = p->flags; /* l_uint */
-		iarg[a++] = p->cpu_id; /* l_int */
-		*n_args = 3;
+		iarg[a++] = p->flags; /* l_int */
+		*n_args = 2;
 		break;
 	}
 	/* linux_mlock2 */
@@ -5101,19 +5096,6 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_readahead */
 	case 187:
-		switch (ndx) {
-		case 0:
-			p = "l_int";
-			break;
-		case 1:
-			p = "l_loff_t";
-			break;
-		case 2:
-			p = "l_size_t";
-			break;
-		default:
-			break;
-		};
 		break;
 	/* linux_setxattr */
 	case 188:
@@ -6966,9 +6948,6 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			p = "l_int";
 			break;
 		case 1:
-			p = "l_uint";
-			break;
-		case 2:
 			p = "l_int";
 			break;
 		default:
@@ -8145,9 +8124,6 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 	case 186:
 	/* linux_readahead */
 	case 187:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
 	/* linux_setxattr */
 	case 188:
 		if (ndx == 0 || ndx == 1)
