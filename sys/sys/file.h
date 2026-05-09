@@ -144,6 +144,16 @@ typedef int fo_cmp_t(struct file *fp, struct file *fp1, struct thread *td);
 typedef	int fo_fork_t(struct filedesc *fdp, struct file *fp, struct file **fp1,
 		    struct proc *p1, struct thread *td);
 typedef int fo_spare_t(struct file *fp);
+/*
+ * fo_ioctl_check — optional per-ioctl Capsicum rights check.
+ * Called by kern_ioctl() after cap_ioctl_check() succeeds.
+ * The implementation inspects cmd and calls cap_check() against
+ * the fd's rights to enforce file-type-specific rights (e.g.
+ * CAP_CAP_RT_SEND for cap_rt SENDMSG).
+ * Return 0 to allow, ENOTCAPABLE to deny.
+ */
+typedef int fo_ioctl_check_t(struct file *fp, u_long cmd,
+		    const cap_rights_t *havep);
 typedef	int fo_flags_t;
 
 struct fileops {
@@ -169,7 +179,8 @@ struct fileops {
 	fo_fspacectl_t	*fo_fspacectl;
 	fo_cmp_t	*fo_cmp;
 	fo_fork_t	*fo_fork;
-	fo_spare_t	*fo_spares[8];	/* Spare slots */
+	fo_ioctl_check_t *fo_ioctl_check;
+	fo_spare_t	*fo_spares[7];	/* Spare slots */
 	fo_flags_t	fo_flags;	/* DFLAG_* below */
 };
 

@@ -216,6 +216,7 @@ SUBDIR=	\
 	cap_rt_test_kernelstore \
 	cap_rt_test_keystore \
 	cap_rt_pair \
+	cap_rt_identity \
 	cap_rt_file_isolation \
 	kgssapi \
 	kgssapi_krb5 \

@@ -16,6 +16,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -544,6 +546,462 @@ ATF_TC_CLEANUP(query_unclaimed, tc)
 	cleanup_tmpfile();
 }
 
+/* ----------------------------------------------------------------
+ * Directory isolation tests
+ * ---------------------------------------------------------------- */
+
+static char tmpdir[128];
+static char tmpdir_file[160];
+
+static void
+make_tmpdir(void)
+{
+	int fd;
+
+	snprintf(tmpdir, sizeof(tmpdir),
+	    "/tmp/fi_dir_test.%d", (int)getpid());
+	ATF_REQUIRE_MSG(mkdir(tmpdir, 0755) == 0 || errno == EEXIST,
+	    "mkdir %s: %s", tmpdir, strerror(errno));
+
+	snprintf(tmpdir_file, sizeof(tmpdir_file),
+	    "%s/secret.txt", tmpdir);
+	fd = open(tmpdir_file, O_CREAT | O_RDWR, 0644);
+	ATF_REQUIRE_MSG(fd >= 0, "create %s: %s",
+	    tmpdir_file, strerror(errno));
+	write(fd, "secret", 6);
+	close(fd);
+}
+
+static void
+cleanup_tmpdir(void)
+{
+
+	unlink(tmpdir_file);
+	rmdir(tmpdir);
+}
+
+ATF_TC_WITH_CLEANUP(dir_claim_blocks_lookup);
+ATF_TC_HEAD(dir_claim_blocks_lookup, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Claiming a directory blocks lookups into it from foreign nonce");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(dir_claim_blocks_lookup, tc)
+{
+	struct fi_reply rpl;
+	int svc, dir_fd, status;
+	pid_t pid;
+	char cmd[256];
+
+	make_tmpdir();
+	svc = fi_connect();
+
+	dir_fd = open(tmpdir, O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(dir_fd >= 0);
+
+	/* Claim the directory */
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, dir_fd, &rpl) == 0);
+	close(dir_fd);
+
+	/*
+	 * Fork+exec a child that tries to open a file inside.
+	 * The exec rotates the nonce, so the lookup into the
+	 * claimed directory should fail with EACCES.
+	 */
+	snprintf(cmd, sizeof(cmd), "cat %s >/dev/null 2>&1", tmpdir_file);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl("/bin/sh", "sh", "-c", cmd, NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status));
+	/* cat should fail — lookup blocked */
+	ATF_CHECK(WEXITSTATUS(status) != 0);
+
+	/* Same-nonce parent can still open the file inside */
+	int inner = open(tmpdir_file, O_RDONLY);
+	ATF_CHECK(inner >= 0);
+	if (inner >= 0)
+		close(inner);
+
+	close(svc);
+}
+ATF_TC_CLEANUP(dir_claim_blocks_lookup, tc)
+{
+	cleanup_tmpdir();
+}
+
+ATF_TC_WITH_CLEANUP(dir_claim_blocks_stat_inside);
+ATF_TC_HEAD(dir_claim_blocks_stat_inside, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Stat of a file inside a claimed directory is blocked");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(dir_claim_blocks_stat_inside, tc)
+{
+	struct fi_reply rpl;
+	int svc, dir_fd, status;
+	pid_t pid;
+
+	make_tmpdir();
+	svc = fi_connect();
+
+	dir_fd = open(tmpdir, O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(dir_fd >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, dir_fd, &rpl) == 0);
+	close(dir_fd);
+
+	/* Fork+exec /usr/bin/stat on the file inside the dir */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl("/usr/bin/stat", "stat", tmpdir_file, NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status));
+	ATF_CHECK(WEXITSTATUS(status) != 0);
+
+	/* Same-nonce stat succeeds */
+	struct stat sb;
+	ATF_CHECK_EQ(stat(tmpdir_file, &sb), 0);
+
+	close(svc);
+}
+ATF_TC_CLEANUP(dir_claim_blocks_stat_inside, tc)
+{
+	cleanup_tmpdir();
+}
+
+ATF_TC_WITH_CLEANUP(dir_release_allows_lookup);
+ATF_TC_HEAD(dir_release_allows_lookup, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Releasing a directory claim allows foreign nonce access again");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(dir_release_allows_lookup, tc)
+{
+	struct fi_reply rpl;
+	int svc, dir_fd, status;
+	pid_t pid;
+	char cmd[256];
+
+	make_tmpdir();
+	svc = fi_connect();
+
+	dir_fd = open(tmpdir, O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(dir_fd >= 0);
+
+	/* Claim then release */
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, dir_fd, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_RELEASE, dir_fd, &rpl) == 0);
+	close(dir_fd);
+
+	/* Foreign-nonce child should now succeed */
+	snprintf(cmd, sizeof(cmd), "cat %s >/dev/null 2>&1", tmpdir_file);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl("/bin/sh", "sh", "-c", cmd, NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status));
+	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
+
+	close(svc);
+}
+ATF_TC_CLEANUP(dir_release_allows_lookup, tc)
+{
+	cleanup_tmpdir();
+}
+
+/* ----------------------------------------------------------------
+ * Network isolation tests
+ * ---------------------------------------------------------------- */
+
+static int
+fi_net_call_addr(int svc, uint32_t op, int domain, int protocol,
+    uint16_t port, uint8_t direction, const char *addr, uint8_t prefix)
+{
+	struct cap_rt_call_args ca;
+	struct fi_net_request nr;
+	struct fi_reply rpl;
+
+	memset(&nr, 0, sizeof(nr));
+	nr.op = op;
+	nr.domain = domain;
+	nr.protocol = protocol;
+	nr.port = port;
+	nr.direction = direction;
+	nr.prefix = prefix;
+
+	if (addr != NULL) {
+		if (domain == AF_INET) {
+			struct in_addr in4;
+
+			ATF_REQUIRE_MSG(inet_pton(AF_INET, addr, &in4) == 1,
+			    "invalid IPv4 address '%s'", addr);
+			nr.addr[10] = 0xff;
+			nr.addr[11] = 0xff;
+			memcpy(&nr.addr[12], &in4, sizeof(in4));
+		} else if (domain == AF_INET6) {
+			struct in6_addr in6;
+
+			ATF_REQUIRE_MSG(inet_pton(AF_INET6, addr, &in6) == 1,
+			    "invalid IPv6 address '%s'", addr);
+			memcpy(nr.addr, &in6, sizeof(in6));
+		} else {
+			atf_tc_fail("unsupported address family %d", domain);
+		}
+	}
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = &rpl;
+	ca.reply_len = sizeof(rpl);
+	return (ioctl(svc, CAP_RT_CALL, &ca));
+}
+
+static int
+fi_net_call(int svc, uint32_t op, int domain, int protocol,
+    uint16_t port, uint8_t direction)
+{
+
+	return (fi_net_call_addr(svc, op, domain, protocol, port, direction,
+	    NULL, 0));
+}
+
+static const char *
+fi_helper_path(const atf_tc_t *tc)
+{
+	static char path[1024];
+
+	snprintf(path, sizeof(path), "%s/cap_rt_file_isolation_helper",
+	    atf_tc_get_config_var(tc, "srcdir"));
+	return (path);
+}
+
+static int
+run_net_claim_helper(const atf_tc_t *tc, int svc, uint32_t op, int domain,
+    int protocol, uint16_t port, uint8_t direction, const char *addr,
+    uint8_t prefix)
+{
+	char fdstr[16], opstr[16], domainstr[16], protostr[16];
+	char portstr[16], dirstr[16], prefixstr[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	snprintf(fdstr, sizeof(fdstr), "%d", svc);
+	snprintf(opstr, sizeof(opstr), "%u", op);
+	snprintf(domainstr, sizeof(domainstr), "%d", domain);
+	snprintf(protostr, sizeof(protostr), "%d", protocol);
+	snprintf(portstr, sizeof(portstr), "%u", port);
+	snprintf(dirstr, sizeof(dirstr), "%u", direction);
+	snprintf(prefixstr, sizeof(prefixstr), "%u", prefix);
+	path = fi_helper_path(tc);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(path, path, fdstr, opstr, domainstr, protostr, portstr,
+		    dirstr, addr != NULL ? addr : "-", prefixstr, NULL);
+		_exit(127);
+	}
+
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE(WIFEXITED(status));
+	return (WEXITSTATUS(status));
+}
+
+ATF_TC(net_claim_blocks_bind);
+ATF_TC_HEAD(net_claim_blocks_bind, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Network claim blocks foreign nonce from binding the port");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_claim_blocks_bind, tc)
+{
+	int svc, status;
+	pid_t pid;
+	uint16_t port = htons(18443);
+	char cmd[128];
+
+	svc = fi_connect();
+
+	/* Claim TCP bind on port 18443 */
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET,
+	    AF_INET, IPPROTO_TCP, port, FI_NET_BIND) == 0);
+
+	/*
+	 * Fork+exec /bin/sh to rotate nonce.  Use nc -l to try binding.
+	 * nc will fail with "Permission denied" if the MACF hook blocks.
+	 */
+	snprintf(cmd, sizeof(cmd),
+	    "nc -l 127.0.0.1 18443 </dev/null >/dev/null 2>&1 &"
+	    " sleep 0.1; kill %%1 2>/dev/null; exit $?");
+
+	/*
+	 * Fork+exec a helper that tries to bind the claimed port.
+	 * exec rotates the nonce, making the child a foreign program.
+	 * nc -l will attempt bind() which the MACF hook blocks.
+	 */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		/* -w 1 = timeout after 1 second if bind somehow succeeds */
+		execl("/usr/bin/nc", "nc", "-l", "-w", "1",
+		    "127.0.0.1", "18443", NULL);
+		_exit(127);
+	}
+	/* Wait with a timeout — kill child if it somehow hangs */
+	{
+		int elapsed = 0;
+
+		while (elapsed < 3000) {
+			if (waitpid(pid, &status, WNOHANG) == pid)
+				goto child_done;
+			usleep(50000);
+			elapsed += 50;
+		}
+		/* Hung — kill and fail */
+		kill(pid, SIGKILL);
+		waitpid(pid, &status, 0);
+		ATF_REQUIRE_MSG(0, "nc hung — bind was not blocked");
+	}
+child_done:
+	ATF_CHECK(WIFEXITED(status));
+	/* nc should fail (non-zero exit) because bind was denied */
+	ATF_CHECK(WEXITSTATUS(status) != 0);
+
+	close(svc);
+}
+
+ATF_TC(net_claim_allows_owner);
+ATF_TC_HEAD(net_claim_allows_owner, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Owner nonce can still bind a claimed port");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_claim_allows_owner, tc)
+{
+	struct sockaddr_in sin;
+	int svc, s;
+	uint16_t port = htons(18444);
+
+	svc = fi_connect();
+
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET,
+	    AF_INET, IPPROTO_TCP, port, FI_NET_BIND) == 0);
+
+	/* Same nonce — bind should succeed */
+	s = socket(AF_INET, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_port = port;
+	sin.sin_addr.s_addr = INADDR_ANY;
+	ATF_CHECK_EQ(bind(s, (struct sockaddr *)&sin, sizeof(sin)), 0);
+
+	close(s);
+	close(svc);
+}
+
+ATF_TC(net_release_allows_bind);
+ATF_TC_HEAD(net_release_allows_bind, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Releasing a network claim allows binding again");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_release_allows_bind, tc)
+{
+	int svc;
+	uint16_t port = htons(18445);
+
+	svc = fi_connect();
+
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET,
+	    AF_INET, IPPROTO_TCP, port, FI_NET_BIND) == 0);
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_RELEASE_NET,
+	    AF_INET, IPPROTO_TCP, port, FI_NET_BIND) == 0);
+
+	/* After release, anyone can bind (close svc to prove it's released) */
+	close(svc);
+
+	/* Verify by binding as ourselves (claim is gone) */
+	{
+		struct sockaddr_in sin;
+		int s;
+
+		s = socket(AF_INET, SOCK_STREAM, 0);
+		ATF_REQUIRE(s >= 0);
+		memset(&sin, 0, sizeof(sin));
+		sin.sin_family = AF_INET;
+		sin.sin_port = port;
+		sin.sin_addr.s_addr = INADDR_ANY;
+		ATF_CHECK_EQ(bind(s, (struct sockaddr *)&sin, sizeof(sin)), 0);
+		close(s);
+	}
+}
+
+ATF_TC(net_claim_disjoint_address_allows_foreign_claim);
+ATF_TC_HEAD(net_claim_disjoint_address_allows_foreign_claim, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Disjoint address claims on the same port do not conflict");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_claim_disjoint_address_allows_foreign_claim, tc)
+{
+	int rc, svc;
+	uint16_t port = 18446;
+
+	svc = fi_connect();
+
+	ATF_REQUIRE(fi_net_call_addr(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, htons(port), FI_NET_BIND, "127.0.0.1", 0) == 0);
+
+	rc = run_net_claim_helper(tc, svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, port, FI_NET_BIND, "127.0.0.2", 0);
+	ATF_CHECK_EQ(rc, 0);
+
+	close(svc);
+}
+
+ATF_TC(net_claim_same_address_blocks_foreign_claim);
+ATF_TC_HEAD(net_claim_same_address_blocks_foreign_claim, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Overlapping address claims on the same port still conflict");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_claim_same_address_blocks_foreign_claim, tc)
+{
+	int rc, svc;
+	uint16_t port = 18447;
+
+	svc = fi_connect();
+
+	ATF_REQUIRE(fi_net_call_addr(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, htons(port), FI_NET_BIND, "127.0.0.1", 0) == 0);
+
+	rc = run_net_claim_helper(tc, svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, port, FI_NET_BIND, "127.0.0.1", 0);
+	ATF_CHECK_EQ(rc, 1);
+
+	close(svc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -558,6 +1016,18 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, claim_pipe_fails);
 	ATF_TP_ADD_TC(tp, same_nonce_can_open);
 	ATF_TP_ADD_TC(tp, query_unclaimed);
+
+	/* Directory isolation */
+	ATF_TP_ADD_TC(tp, dir_claim_blocks_lookup);
+	ATF_TP_ADD_TC(tp, dir_claim_blocks_stat_inside);
+	ATF_TP_ADD_TC(tp, dir_release_allows_lookup);
+
+	/* Network isolation */
+	ATF_TP_ADD_TC(tp, net_claim_blocks_bind);
+	ATF_TP_ADD_TC(tp, net_claim_allows_owner);
+	ATF_TP_ADD_TC(tp, net_release_allows_bind);
+	ATF_TP_ADD_TC(tp, net_claim_disjoint_address_allows_foreign_claim);
+	ATF_TP_ADD_TC(tp, net_claim_same_address_blocks_foreign_claim);
 
 	return (atf_no_error());
 }

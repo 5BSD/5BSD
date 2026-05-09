@@ -78,14 +78,29 @@
 
 #include <sys/types.h>
 
-#define	FI_OP_CLAIM		1
-#define	FI_OP_RELEASE		2
-#define	FI_OP_QUERY		3
+/* --- Vnode operations (existing) --- */
+
+#define	FI_OP_CLAIM		1	/* claim vnode (file or dir) */
+#define	FI_OP_RELEASE		2	/* release vnode claim */
+#define	FI_OP_QUERY		3	/* query vnode claim status */
+
+/* --- Network operations (new) --- */
+
+#define	FI_OP_CLAIM_NET		4	/* claim network endpoint */
+#define	FI_OP_RELEASE_NET	5	/* release network claim */
+/* FI_OP_QUERY_NET (6) reserved — not yet implemented */
+
+/* --- Mount operations (reserved, not yet implemented) --- */
+#if 0
+#define	FI_OP_CLAIM_MOUNT	7	/* claim mount point */
+#define	FI_OP_RELEASE_MOUNT	8	/* release mount claim */
+#endif
 
 /* Query reply flags */
-#define	FI_QF_CLAIMED		0x01	/* vnode is isolated by someone */
+#define	FI_QF_CLAIMED		0x01	/* resource is isolated by someone */
 #define	FI_QF_MINE		0x02	/* isolated by caller's nonce */
 
+/* Vnode request (ops 1-3): pass target fd via req_fds[0] */
 struct fi_request {
 	uint32_t	op;
 	uint32_t	flags;		/* reserved, must be 0 */
@@ -95,5 +110,30 @@ struct fi_reply {
 	uint32_t	flags;		/* FI_QF_* for QUERY; 0 otherwise */
 	uint32_t	_pad;
 } __packed;
+
+/* Network claim direction flags */
+#define	FI_NET_BIND		0x01	/* gate bind() */
+#define	FI_NET_CONNECT		0x02	/* gate connect() */
+#define	FI_NET_ANY		0x03	/* bind + connect */
+/* Note: listen is not separately enforced — bind is the gate.
+ * socket create is enforced only for fully-wildcard (domain-wide) claims. */
+
+/*
+ * Network request (ops 4-6): no fd needed, endpoint in payload.
+ * Fields set to 0 match any value (wildcards).
+ */
+struct fi_net_request {
+	uint32_t	op;
+	uint32_t	flags;		/* reserved, must be 0 */
+	int32_t		domain;		/* AF_INET, AF_INET6, 0=any */
+	int32_t		protocol;	/* IPPROTO_TCP, IPPROTO_UDP, 0=any */
+	uint16_t	port;		/* network byte order, 0=any */
+	uint8_t		direction;	/* FI_NET_* bitmask */
+	uint8_t		prefix;		/* CIDR prefix len, 0=exact/any */
+	uint8_t		addr[16];	/* IPv6 or v4-mapped, all-zero=any */
+} __packed;
+
+/* Mount request (ops 7-8): pass fd on target filesystem via req_fds[0] */
+/* Uses struct fi_request (just op field needed) */
 
 #endif /* _DEV_CAP_RT_CAP_RT_FILE_ISOLATION_PROTO_H_ */

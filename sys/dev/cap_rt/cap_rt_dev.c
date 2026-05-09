@@ -57,6 +57,39 @@ static fo_fdclose_t	cap_rt_instance_fdclose;
 static fo_fill_kinfo_t	cap_rt_instance_fill_kinfo;
 static fo_cmp_t		cap_rt_instance_cmp;
 
+/*
+ * Capsicum per-ioctl rights enforcement.
+ *
+ * CAP_RT_SENDMSG  requires  CAP_CAP_RT_SEND
+ * CAP_RT_CALL     requires  CAP_CAP_RT_SEND (request) + CAP_CAP_RT_RECV (reply)
+ * CAP_RT_RECVMSG  requires  CAP_CAP_RT_RECV
+ *
+ * GETINFO, LOCK, REVOKE_*, TERMINATE are always allowed — they are
+ * introspection or capability-narrowing operations.
+ */
+static int
+cap_rt_instance_ioctl_check(struct file *fp __unused, u_long cmd,
+    const cap_rights_t *havep)
+{
+	cap_rights_t need;
+
+	switch (cmd) {
+	case CAP_RT_SENDMSG:
+		cap_rights_init(&need, CAP_IOCTL, CAP_CAP_RT_SEND);
+		break;
+	case CAP_RT_RECVMSG:
+		cap_rights_init(&need, CAP_IOCTL, CAP_CAP_RT_RECV);
+		break;
+	case CAP_RT_CALL:
+		cap_rights_init(&need, CAP_IOCTL, CAP_CAP_RT_SEND,
+		    CAP_CAP_RT_RECV);
+		break;
+	default:
+		return (0);
+	}
+	return (cap_check(havep, &need));
+}
+
 const struct fileops cap_rt_instance_ops = {
 	.fo_read = invfo_rdwr,
 	.fo_write = invfo_rdwr,
@@ -72,6 +105,7 @@ const struct fileops cap_rt_instance_ops = {
 	.fo_sendfile = invfo_sendfile,
 	.fo_fill_kinfo = cap_rt_instance_fill_kinfo,
 	.fo_cmp = cap_rt_instance_cmp,
+	.fo_ioctl_check = cap_rt_instance_ioctl_check,
 	.fo_flags = DFLAG_PASSABLE,
 };
 
@@ -91,6 +125,7 @@ const struct fileops cap_rt_instance_noxfer_ops = {
 	.fo_sendfile = invfo_sendfile,
 	.fo_fill_kinfo = cap_rt_instance_fill_kinfo,
 	.fo_cmp = cap_rt_instance_cmp,
+	.fo_ioctl_check = cap_rt_instance_ioctl_check,
 	.fo_flags = 0,
 };
 

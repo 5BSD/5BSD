@@ -764,6 +764,19 @@ kern_ioctl(struct thread *td, int fd, u_long com, caddr_t data)
 		fp = NULL;	/* fhold() was not called yet */
 		goto out;
 	}
+	/*
+	 * Per-file-type ioctl rights check.  Lets file types enforce
+	 * additional Capsicum rights for specific ioctl commands (e.g.
+	 * cap_rt requires CAP_CAP_RT_SEND for SENDMSG).
+	 */
+	if (fp->f_ops->fo_ioctl_check != NULL) {
+		error = fp->f_ops->fo_ioctl_check(fp, com,
+		    cap_rights(fdp, fd));
+		if (error != 0) {
+			fp = NULL;
+			goto out;
+		}
+	}
 	if (!fhold(fp)) {
 		error = EBADF;
 		fp = NULL;

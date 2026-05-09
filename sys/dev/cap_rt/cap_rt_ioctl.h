@@ -27,8 +27,13 @@
  *   close(fd)                        tear down (last close kills)
  *
  * read()/write() are not supported on capabilities.
- * Capsicum cap_ioctls_limit() restricts which ioctls a given fd
- * can perform.
+ *
+ * Capsicum integration:
+ *   cap_ioctls_limit() restricts which ioctls a given fd can perform.
+ *   cap_rights_limit() enforces per-operation rights:
+ *     CAP_CAP_RT_SEND   required for SENDMSG
+ *     CAP_CAP_RT_RECV   required for RECVMSG
+ *     CAP_CAP_RT_SEND + CAP_CAP_RT_RECV required for CALL
  */
 
 #ifndef _DEV_CAP_RT_CAP_RT_IOCTL_H_
