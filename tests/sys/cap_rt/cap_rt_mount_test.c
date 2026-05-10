@@ -295,6 +295,107 @@ ATF_TC_BODY(mount_tmpfs, tc)
 	close(fd);
 }
 
+ATF_TC(unmount_rejects_bad_flags);
+ATF_TC_HEAD(unmount_rejects_bad_flags, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "MOUNT_OP_UNMOUNT rejects unknown flags");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_mount");
+}
+ATF_TC_BODY(unmount_rejects_bad_flags, tc)
+{
+	struct unmount_request req;
+	struct mount_reply reply;
+	int fd;
+
+	fd = mount_connect();
+
+	memset(&req, 0, sizeof(req));
+	req.op = MOUNT_OP_UNMOUNT;
+	req.flags = 0xFFFF;
+	strlcpy(req.fspath, "/tmp", sizeof(req.fspath));
+	ATF_REQUIRE(mount_call_raw(fd, &req, sizeof(req),
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, MOUNT_STATUS_ERR);
+
+	close(fd);
+}
+
+ATF_TC(unmount_rejects_relative_path);
+ATF_TC_HEAD(unmount_rejects_relative_path, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "MOUNT_OP_UNMOUNT rejects relative paths");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_mount");
+}
+ATF_TC_BODY(unmount_rejects_relative_path, tc)
+{
+	struct unmount_request req;
+	struct mount_reply reply;
+	int fd;
+
+	fd = mount_connect();
+
+	memset(&req, 0, sizeof(req));
+	req.op = MOUNT_OP_UNMOUNT;
+	strlcpy(req.fspath, "tmp", sizeof(req.fspath));
+	ATF_REQUIRE(mount_call_raw(fd, &req, sizeof(req),
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, MOUNT_STATUS_ERR);
+
+	close(fd);
+}
+
+ATF_TC(mount_devfs);
+ATF_TC_HEAD(mount_devfs, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "MOUNT_OP_MOUNT mounts devfs on a test directory");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_mount");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mount_devfs, tc)
+{
+	struct mount_request mreq;
+	struct unmount_request ureq;
+	struct mount_reply reply;
+	struct stat sb;
+	char mntpath[MOUNT_MAXPATH];
+	char devnull[MOUNT_MAXPATH + 16];
+
+	snprintf(mntpath, sizeof(mntpath),
+	    "/tmp/cap_rt_devfs_test.%d", (int)getpid());
+	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
+
+	int fd = mount_connect();
+
+	memset(&mreq, 0, sizeof(mreq));
+	mreq.op = MOUNT_OP_MOUNT;
+	strlcpy(mreq.fstype, "devfs", sizeof(mreq.fstype));
+	strlcpy(mreq.fspath, mntpath, sizeof(mreq.fspath));
+	ATF_REQUIRE(mount_call_raw(fd, &mreq, sizeof(mreq),
+	    &reply, sizeof(reply)) == 0);
+	if (reply.status != MOUNT_STATUS_OK) {
+		rmdir(mntpath);
+		close(fd);
+		atf_tc_skip("devfs mount not permitted (jail config?)");
+	}
+
+	/* Verify /dev/null exists on the mount */
+	snprintf(devnull, sizeof(devnull), "%s/null", mntpath);
+	ATF_CHECK(stat(devnull, &sb) == 0);
+
+	memset(&ureq, 0, sizeof(ureq));
+	ureq.op = MOUNT_OP_UNMOUNT;
+	strlcpy(ureq.fspath, mntpath, sizeof(ureq.fspath));
+	ATF_REQUIRE(mount_call_raw(fd, &ureq, sizeof(ureq),
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, MOUNT_STATUS_OK);
+
+	rmdir(mntpath);
+	close(fd);
+}
+
 /* ----------------------------------------------------------------
  * Registration
  * ---------------------------------------------------------------- */
@@ -308,10 +409,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mount_rejects_dotdot_path);
 	ATF_TP_ADD_TC(tp, mount_allows_dotdot_in_name);
 	ATF_TP_ADD_TC(tp, mount_rejects_bad_flags);
+	ATF_TP_ADD_TC(tp, unmount_rejects_bad_flags);
+	ATF_TP_ADD_TC(tp, unmount_rejects_relative_path);
 	ATF_TP_ADD_TC(tp, mount_bad_op);
 
 	/* Functional */
 	ATF_TP_ADD_TC(tp, mount_tmpfs);
+	ATF_TP_ADD_TC(tp, mount_devfs);
 
 	return (atf_no_error());
 }
