@@ -115,6 +115,10 @@ mount_map_flags(uint32_t flags)
 		mnt_flags |= MNT_NOATIME;
 	if (flags & MOUNT_F_NOSYMFOLLOW)
 		mnt_flags |= MNT_NOSYMFOLLOW;
+	if (flags & MOUNT_F_NOCOVER)
+		mnt_flags |= MNT_NOCOVER;
+	if (flags & MOUNT_F_EMPTYDIR)
+		mnt_flags |= MNT_EMPTYDIR;
 
 	return (mnt_flags);
 }
@@ -189,7 +193,8 @@ mount_op_mount(const void *req, size_t reqlen,
 
 	/* Reject unknown flags. */
 	if (mr->flags & ~(MOUNT_F_RDONLY | MOUNT_F_NOEXEC |
-	    MOUNT_F_NOSUID | MOUNT_F_NOATIME | MOUNT_F_NOSYMFOLLOW)) {
+	    MOUNT_F_NOSUID | MOUNT_F_NOATIME | MOUNT_F_NOSYMFOLLOW |
+	    MOUNT_F_NOCOVER | MOUNT_F_EMPTYDIR)) {
 		rp->status = MOUNT_STATUS_ERR;
 		return (0);
 	}

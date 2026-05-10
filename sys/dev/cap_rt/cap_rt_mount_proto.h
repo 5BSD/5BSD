@@ -35,9 +35,15 @@
 #define	MOUNT_F_NOSUID		0x0004	/* MNT_NOSUID */
 #define	MOUNT_F_NOATIME		0x0008	/* MNT_NOATIME */
 #define	MOUNT_F_NOSYMFOLLOW	0x0010	/* MNT_NOSYMFOLLOW */
+#define	MOUNT_F_NOCOVER		0x0020	/* MNT_NOCOVER — don't cover existing mount */
+#define	MOUNT_F_EMPTYDIR	0x0040	/* MNT_EMPTYDIR — only mount on empty dir */
 
 /*
  * Request: mount
+ *
+ * cap_rt_mount is a capability-mediated mount gateway, not a full
+ * mount policy engine.  It constrains the broad shape of requests:
+ * approved fstypes, approved generic flags, and safe paths.
  *
  * Whitelisted fstypes: tmpfs, devfs, fdescfs, nullfs, procfs,
  *   linprocfs, linsysfs, fusefs.
@@ -50,7 +56,19 @@
  *   nullfs:     (use from field for source path)
  *   linprocfs:  (no special options)
  *   linsysfs:   (no special options)
- * Invalid options are rejected by the filesystem itself.
+ *
+ * The mount runs in the caller's thread context, so normal jail
+ * policy still applies.  The jail's allow.mount.* settings decide
+ * whether the filesystem may be mounted in that jail at all, and
+ * invalid fs-specific options are rejected by the filesystem itself.
+ *
+ * Example:
+ *   fstype="tmpfs", fspath="/var/run",
+ *   fsopts="size=64M,mode=1777"
+ *   - cap_rt_mount checks request shape, allowed fstype, flags, and path
+ *   - the jail checks allow.mount.* for tmpfs
+ *   - tmpfs validates size/mode
+ *
  * Empty string = no fs-specific options.
  */
 struct mount_request {
