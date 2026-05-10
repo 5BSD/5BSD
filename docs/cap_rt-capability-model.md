@@ -263,13 +263,18 @@ Capability-based filesystem mounting for sandboxed init daemons.
 | MOUNT_OP_MOUNT | Mount a filesystem (fstype, path, flags) |
 | MOUNT_OP_UNMOUNT | Unmount a filesystem path |
 
-Whitelisted fstypes: tmpfs, devfs, fdescfs, nullfs, procfs.
-Safe flags: RDONLY, NOEXEC, NOSUID, NOATIME, NOSYMFOLLOW.
-Path validation rejects relative paths and `..` traversal components.
+Whitelisted fstypes: tmpfs, devfs, fdescfs, nullfs, procfs,
+linprocfs, linsysfs, fusefs.
 
+Generic flags: RDONLY, NOEXEC, NOSUID, NOATIME, NOSYMFOLLOW.
+Fs-specific options via comma-separated key=value string:
+tmpfs `size=128M,mode=1777`, devfs `ruleset=4`, fdescfs `linrdlnk`.
+
+Path validation rejects relative paths and `..` traversal components.
 Runs in the caller's thread context, so mounts are scoped to the
 caller's jail namespace.  The jail's `allow.mount.*` parameters
-provide a second layer of enforcement.
+provide a second layer of enforcement.  Invalid fs-specific options
+are rejected by the filesystem's own mount handler.
 
 ## What a sandboxed process CANNOT do
 

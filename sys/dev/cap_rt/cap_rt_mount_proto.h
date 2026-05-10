@@ -39,12 +39,19 @@
 /*
  * Request: mount
  *
- * fsopts is a comma-separated string of fs-specific options:
- *   tmpfs:  "size=128M,mode=1777"
- *   devfs:  "ruleset=4"
- *   fdescfs: "linrdlnk"
- *   nullfs: (use from field instead)
- *   Empty string = no fs-specific options.
+ * Whitelisted fstypes: tmpfs, devfs, fdescfs, nullfs, procfs,
+ *   linprocfs, linsysfs, fusefs.
+ *
+ * fsopts is a comma-separated string of fs-specific options
+ * passed through to the filesystem's mount handler:
+ *   tmpfs:      "size=128M,mode=1777"
+ *   devfs:      "ruleset=4"
+ *   fdescfs:    "linrdlnk"
+ *   nullfs:     (use from field for source path)
+ *   linprocfs:  (no special options)
+ *   linsysfs:   (no special options)
+ * Invalid options are rejected by the filesystem itself.
+ * Empty string = no fs-specific options.
  */
 struct mount_request {
 	uint32_t	op;		/* MOUNT_OP_MOUNT */
