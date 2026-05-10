@@ -89,7 +89,7 @@ if command -v kyua >/dev/null 2>&1; then
 	kyua report
 else
 	# Fallback: enumerate tests from all test binaries.
-	ATF_TEST_BINS="cap_rt_test cap_rt_coalition_test cap_rt_isolation_test cap_rt_identity_test cap_rt_node_test cap_rt_accounting_test"
+	ATF_TEST_BINS="cap_rt_test cap_rt_coalition_test cap_rt_isolation_test cap_rt_identity_test cap_rt_node_test cap_rt_accounting_test cap_rt_procdesc_test"
 	for testbin in $ATF_TEST_BINS; do
 		testbin_path="${SCRIPT_DIR}/${testbin}"
 		[ -x "$testbin_path" ] || continue

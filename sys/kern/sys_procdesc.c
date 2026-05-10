@@ -331,7 +331,15 @@ procdesc_exit(struct proc *p)
 /*
  * procdesc_knote() - deliver a kqueue event to procdesc listeners.
  * Used by fork and exec paths to notify NOTE_FORK and NOTE_EXEC.
- * Caller must hold PROC_LOCK(p).
+ *
+ * Caller must hold PROC_LOCK(p).  p_procdesc is annotated as (e)
+ * (proctree_lock), but reading it under PROC_LOCK is safe here
+ * because:
+ *   - procdesc_exit() and procdesc_close() both hold PROC_LOCK
+ *     when they clear p_procdesc
+ *   - procdesc_reap() clears p_procdesc under proctree_lock only,
+ *     but it only runs on zombies; this function is called from
+ *     fork/exec where the process is definitionally alive
  */
 void
 procdesc_knote(struct proc *p, int event)
