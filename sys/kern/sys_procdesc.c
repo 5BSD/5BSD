@@ -332,14 +332,10 @@ procdesc_exit(struct proc *p)
  * procdesc_knote() - deliver a kqueue event to procdesc listeners.
  * Used by fork and exec paths to notify NOTE_FORK and NOTE_EXEC.
  *
- * Caller must hold PROC_LOCK(p).  p_procdesc is annotated as (e)
- * (proctree_lock), but reading it under PROC_LOCK is safe here
- * because:
- *   - procdesc_exit() and procdesc_close() both hold PROC_LOCK
- *     when they clear p_procdesc
- *   - procdesc_reap() clears p_procdesc under proctree_lock only,
- *     but it only runs on zombies; this function is called from
- *     fork/exec where the process is definitionally alive
+ * Caller must hold PROC_LOCK(p).  p_procdesc is an (e) field
+ * (protected by proctree_lock).  To respect the lock annotation
+ * without violating lock ordering (proctree > PROC_LOCK), we
+ * drop PROC_LOCK, take proctree_lock shared, and re-check.
  */
 void
 procdesc_knote(struct proc *p, int event)
@@ -347,14 +343,19 @@ procdesc_knote(struct proc *p, int event)
 	struct procdesc *pd;
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
+	PROC_UNLOCK(p);
+
+	sx_slock(&proctree_lock);
+	PROC_LOCK(p);
 
 	pd = p->p_procdesc;
-	if (pd == NULL)
-		return;
+	if (pd != NULL) {
+		PROCDESC_LOCK(pd);
+		KNOTE_LOCKED(&pd->pd_selinfo.si_note, event);
+		PROCDESC_UNLOCK(pd);
+	}
 
-	PROCDESC_LOCK(pd);
-	KNOTE_LOCKED(&pd->pd_selinfo.si_note, event);
-	PROCDESC_UNLOCK(pd);
+	sx_sunlock(&proctree_lock);
 }
 
 /*
