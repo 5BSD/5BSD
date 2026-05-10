@@ -539,6 +539,143 @@ ATF_TC_BODY(mount_fdescfs, tc)
 	close(fd);
 }
 
+ATF_TC(mount_linprocfs);
+ATF_TC_HEAD(mount_linprocfs, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "MOUNT_OP_MOUNT mounts linprocfs (Linux /proc)");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "cap_rt cap_rt_mount linprocfs");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mount_linprocfs, tc)
+{
+	struct mount_request mreq;
+	struct unmount_request ureq;
+	struct mount_reply reply;
+	struct stat sb;
+	char mntpath[MOUNT_MAXPATH];
+	char selfpath[MOUNT_MAXPATH + 16];
+
+	snprintf(mntpath, sizeof(mntpath),
+	    "/tmp/cap_rt_linprocfs_test.%d", (int)getpid());
+	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
+
+	int fd = mount_connect();
+
+	memset(&mreq, 0, sizeof(mreq));
+	mreq.op = MOUNT_OP_MOUNT;
+	strlcpy(mreq.fstype, "linprocfs", sizeof(mreq.fstype));
+	strlcpy(mreq.fspath, mntpath, sizeof(mreq.fspath));
+	ATF_REQUIRE(mount_call_raw(fd, &mreq, sizeof(mreq),
+	    &reply, sizeof(reply)) == 0);
+	ATF_REQUIRE_EQ(reply.status, MOUNT_STATUS_OK);
+
+	/* Linux procfs should have /proc/self */
+	snprintf(selfpath, sizeof(selfpath), "%s/self", mntpath);
+	ATF_CHECK(stat(selfpath, &sb) == 0);
+
+	memset(&ureq, 0, sizeof(ureq));
+	ureq.op = MOUNT_OP_UNMOUNT;
+	strlcpy(ureq.fspath, mntpath, sizeof(ureq.fspath));
+	mount_call_raw(fd, &ureq, sizeof(ureq), &reply, sizeof(reply));
+
+	rmdir(mntpath);
+	close(fd);
+}
+
+ATF_TC(mount_linsysfs);
+ATF_TC_HEAD(mount_linsysfs, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "MOUNT_OP_MOUNT mounts linsysfs (Linux /sys)");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "cap_rt cap_rt_mount linsysfs");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mount_linsysfs, tc)
+{
+	struct mount_request mreq;
+	struct unmount_request ureq;
+	struct mount_reply reply;
+	struct stat sb;
+	char mntpath[MOUNT_MAXPATH];
+	char devpath[MOUNT_MAXPATH + 16];
+
+	snprintf(mntpath, sizeof(mntpath),
+	    "/tmp/cap_rt_linsysfs_test.%d", (int)getpid());
+	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
+
+	int fd = mount_connect();
+
+	memset(&mreq, 0, sizeof(mreq));
+	mreq.op = MOUNT_OP_MOUNT;
+	strlcpy(mreq.fstype, "linsysfs", sizeof(mreq.fstype));
+	strlcpy(mreq.fspath, mntpath, sizeof(mreq.fspath));
+	ATF_REQUIRE(mount_call_raw(fd, &mreq, sizeof(mreq),
+	    &reply, sizeof(reply)) == 0);
+	ATF_REQUIRE_EQ(reply.status, MOUNT_STATUS_OK);
+
+	/* Linux sysfs should have /sys/devices */
+	snprintf(devpath, sizeof(devpath), "%s/devices", mntpath);
+	ATF_CHECK(stat(devpath, &sb) == 0);
+
+	memset(&ureq, 0, sizeof(ureq));
+	ureq.op = MOUNT_OP_UNMOUNT;
+	strlcpy(ureq.fspath, mntpath, sizeof(ureq.fspath));
+	mount_call_raw(fd, &ureq, sizeof(ureq), &reply, sizeof(reply));
+
+	rmdir(mntpath);
+	close(fd);
+}
+
+ATF_TC(mount_nullfs);
+ATF_TC_HEAD(mount_nullfs, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "MOUNT_OP_MOUNT mounts nullfs (loopback bind mount)");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_mount");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mount_nullfs, tc)
+{
+	struct mount_request mreq;
+	struct unmount_request ureq;
+	struct mount_reply reply;
+	struct stat sb;
+	char mntpath[MOUNT_MAXPATH];
+	char passwd[MOUNT_MAXPATH + 16];
+
+	snprintf(mntpath, sizeof(mntpath),
+	    "/tmp/cap_rt_nullfs_test.%d", (int)getpid());
+	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
+
+	int fd = mount_connect();
+
+	/* Bind-mount /etc onto our test dir */
+	memset(&mreq, 0, sizeof(mreq));
+	mreq.op = MOUNT_OP_MOUNT;
+	mreq.flags = MOUNT_F_RDONLY;
+	strlcpy(mreq.fstype, "nullfs", sizeof(mreq.fstype));
+	strlcpy(mreq.fspath, mntpath, sizeof(mreq.fspath));
+	strlcpy(mreq.from, "/etc", sizeof(mreq.from));
+	ATF_REQUIRE(mount_call_raw(fd, &mreq, sizeof(mreq),
+	    &reply, sizeof(reply)) == 0);
+	ATF_REQUIRE_EQ(reply.status, MOUNT_STATUS_OK);
+
+	/* /etc/passwd should be visible */
+	snprintf(passwd, sizeof(passwd), "%s/passwd", mntpath);
+	ATF_CHECK(stat(passwd, &sb) == 0);
+
+	memset(&ureq, 0, sizeof(ureq));
+	ureq.op = MOUNT_OP_UNMOUNT;
+	strlcpy(ureq.fspath, mntpath, sizeof(ureq.fspath));
+	mount_call_raw(fd, &ureq, sizeof(ureq), &reply, sizeof(reply));
+
+	rmdir(mntpath);
+	close(fd);
+}
+
 /* ----------------------------------------------------------------
  * Registration
  * ---------------------------------------------------------------- */
@@ -562,6 +699,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mount_tmpfs_with_opts);
 	ATF_TP_ADD_TC(tp, mount_procfs);
 	ATF_TP_ADD_TC(tp, mount_fdescfs);
+	ATF_TP_ADD_TC(tp, mount_linprocfs);
+	ATF_TP_ADD_TC(tp, mount_linsysfs);
+	ATF_TP_ADD_TC(tp, mount_nullfs);
 
 	return (atf_no_error());
 }
