@@ -220,6 +220,7 @@ SUBDIR=	\
 	cap_rt_node \
 	cap_rt_accounting \
 	cap_rt_isolation \
+	cap_rt_mount \
 	kgssapi \
 	kgssapi_krb5 \
 	khelp \
