@@ -858,6 +858,126 @@ unlock_finish:
 }
 
 /*
+ * Like kern_setcred(), but operates on a target process instead of
+ * td->td_proc.  Used by cap_rt_node to set credentials on a child
+ * process via a procdesc fd.
+ *
+ * Caller must NOT hold PROC_LOCK(p); the function acquires it internally.
+ * The process must not be exiting (caller should check P_WEXIT first).
+ * MAC label changes are not supported in this variant.
+ */
+int
+kern_setcred_proc(struct thread *td, struct proc *p, u_int flags,
+    struct setcred *wcred)
+{
+	struct ucred *new_cred, *old_cred, *to_free_cred = NULL;
+	struct uidinfo *uip = NULL, *ruip = NULL;
+	int error;
+	bool cred_set = false;
+
+	/* No MAC label changes on remote processes. */
+	if (flags & SETCREDF_MAC_LABEL)
+		return (ENOTSUP);
+
+	if (flags & ~SETCREDF_MASK)
+		return (EINVAL);
+
+	if ((flags & SETCREDF_SUPP_GROUPS) != 0 &&
+	    wcred->sc_supp_groups_nb > ngroups_max)
+		return (EINVAL);
+
+	if (flags & SETCREDF_UID)
+		uip = uifind(wcred->sc_uid);
+	if (flags & SETCREDF_RUID)
+		ruip = uifind(wcred->sc_ruid);
+	if (flags & SETCREDF_SUPP_GROUPS) {
+		groups_normalize(&wcred->sc_supp_groups_nb,
+		    wcred->sc_supp_groups);
+	}
+
+	new_cred = crget();
+	to_free_cred = new_cred;
+	if (flags & SETCREDF_SUPP_GROUPS)
+		crextend(new_cred, wcred->sc_supp_groups_nb);
+
+#ifdef MAC
+	mac_cred_setcred_enter();
+#endif
+
+	PROC_LOCK(p);
+	old_cred = crcopysafe(p, new_cred);
+
+	/* Check that the caller has privilege to modify credentials. */
+	error = priv_check(td, PRIV_CRED_SETCRED);
+	if (error != 0)
+		goto unlock_finish;
+
+	if (flags & SETCREDF_UID)
+		change_euid(new_cred, uip);
+	if (flags & SETCREDF_RUID)
+		change_ruid(new_cred, ruip);
+	if (flags & SETCREDF_SVUID)
+		change_svuid(new_cred, wcred->sc_svuid);
+
+	if (flags & SETCREDF_SUPP_GROUPS)
+		crsetgroups_internal(new_cred, wcred->sc_supp_groups_nb,
+		    wcred->sc_supp_groups);
+	if (flags & SETCREDF_GID)
+		change_egid(new_cred, wcred->sc_gid);
+	if (flags & SETCREDF_RGID)
+		change_rgid(new_cred, wcred->sc_rgid);
+	if (flags & SETCREDF_SVGID)
+		change_svgid(new_cred, wcred->sc_svgid);
+
+#ifdef MAC
+	error = mac_cred_check_setcred(flags, old_cred, new_cred);
+	if (error != 0)
+		goto unlock_finish;
+#endif
+
+#ifdef RACCT
+	crhold(new_cred);
+#endif
+
+	cred_set = proc_set_cred_enforce_proc_lim(p, new_cred);
+	if (cred_set) {
+		setsugid(p);
+#ifdef RACCT
+		racct_proc_ucred_changed(p, old_cred, new_cred);
+#endif
+		to_free_cred = old_cred;
+	} else {
+#ifdef RACCT
+		crfree(new_cred);
+#endif
+		error = EAGAIN;
+	}
+
+unlock_finish:
+	PROC_UNLOCK(p);
+
+#ifdef RACCT
+	if (cred_set) {
+#ifdef RCTL
+		rctl_proc_ucred_changed(p, new_cred);
+#endif
+		crfree(new_cred);
+	}
+#endif
+
+#ifdef MAC
+	mac_cred_setcred_exit();
+#endif
+	crfree(to_free_cred);
+	if (uip != NULL)
+		uifree(uip);
+	if (ruip != NULL)
+		uifree(ruip);
+
+	return (error);
+}
+
+/*
  * Use the clause in B.4.2.2 that allows setuid/setgid to be 4.2/4.3BSD
  * compatible.  It says that setting the uid/gid to euid/egid is a special
  * case of "appropriate privilege".  Once the rules are expanded out, this

@@ -3,11 +3,11 @@
  *
  * Copyright (c) 2026 Project5BSD
  *
- * Tests for cap_rt_file_isolation.
+ * Tests for cap_rt isolation.
  *
  * Requires:
  *   kldload cap_rt
- *   kldload cap_rt_file_isolation
+ *   kldload cap_rt_isolation
  */
 
 #include <sys/types.h>
@@ -30,7 +30,7 @@
 #include <atf-c.h>
 
 #include "cap_rt_ioctl.h"
-#include "cap_rt_file_isolation_proto.h"
+#include "cap_rt_isolation_proto.h"
 
 /* ----------------------------------------------------------------
  * Helpers
@@ -56,11 +56,11 @@ fi_connect(void)
 
 	ctl = cap_rt_open();
 	memset(&ca, 0, sizeof(ca));
-	strlcpy(ca.name, "file_isolation", sizeof(ca.name));
+	strlcpy(ca.name, "isolation", sizeof(ca.name));
 	if (ioctl(ctl, CAP_RT_CONNECT, &ca) != 0) {
 		if (errno == ENOENT)
-			atf_tc_skip("file_isolation service not loaded");
-		ATF_REQUIRE_MSG(0, "connect file_isolation: %s",
+			atf_tc_skip("isolation service not loaded");
+		ATF_REQUIRE_MSG(0, "connect isolation: %s",
 		    strerror(errno));
 	}
 	close(ctl);
@@ -142,14 +142,14 @@ ATF_TC_CLEANUP(claim_and_query, tc)
 	cleanup_tmpfile();
 }
 
-ATF_TC_WITH_CLEANUP(claim_blocks_open);
-ATF_TC_HEAD(claim_blocks_open, tc)
+ATF_TC_WITH_CLEANUP(claim_allows_same_nonce);
+ATF_TC_HEAD(claim_allows_same_nonce, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Isolated file cannot be opened by a child process after exec");
+	    "Forked child (same nonce) can open an isolated file");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(claim_blocks_open, tc)
+ATF_TC_BODY(claim_allows_same_nonce, tc)
 {
 	struct fi_reply rpl;
 	int svc, target, status;
@@ -163,35 +163,22 @@ ATF_TC_BODY(claim_blocks_open, tc)
 	close(target);
 
 	/*
-	 * Fork+exec a child.  The child's nonce rotates on exec,
-	 * so open should fail with EACCES.
+	 * Fork a child (no exec).  The child inherits the parent's
+	 * nonce, so it should be able to open the isolated file.
 	 */
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
-		/* Child: exec to rotate nonce, then try open */
-		execl("/bin/sh", "sh", "-c",
-		    tmppath[0] ? "" : "", NULL);
-		/*
-		 * Can't easily exec and then open in one shot.
-		 * Instead just try open directly — fork inherits
-		 * the nonce so this will succeed.  We test the
-		 * cross-nonce case via a different mechanism below.
-		 */
 		int fd = open(tmppath, O_RDONLY);
 		_exit(fd >= 0 ? 0 : errno);
 	}
 	waitpid(pid, &status, 0);
-	/*
-	 * Fork without exec inherits the nonce, so the child
-	 * can still open.  This validates the nonce-sharing model.
-	 */
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
 
 	close(svc);
 }
-ATF_TC_CLEANUP(claim_blocks_open, tc)
+ATF_TC_CLEANUP(claim_allows_same_nonce, tc)
 {
 	cleanup_tmpfile();
 }
@@ -401,14 +388,14 @@ ATF_TC_CLEANUP(double_claim_same_nonce, tc)
 	cleanup_tmpfile();
 }
 
-ATF_TC_WITH_CLEANUP(double_claim_diff_nonce);
-ATF_TC_HEAD(double_claim_diff_nonce, tc)
+ATF_TC_WITH_CLEANUP(child_reclaim_same_nonce);
+ATF_TC_HEAD(child_reclaim_same_nonce, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Claiming a vnode already claimed by a different nonce fails");
+	    "Forked child (same nonce) can re-claim an already-claimed vnode");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(double_claim_diff_nonce, tc)
+ATF_TC_BODY(child_reclaim_same_nonce, tc)
 {
 	struct fi_reply rpl;
 	int svc, target, pfd[2], status;
@@ -423,13 +410,6 @@ ATF_TC_BODY(double_claim_diff_nonce, tc)
 
 	ATF_REQUIRE(pipe(pfd) == 0);
 
-	/*
-	 * Fork+exec child to get a new nonce, then have it try to claim.
-	 * We can't easily do this without a helper binary, so instead
-	 * just verify EBUSY from a forked child (same nonce = transfer,
-	 * not EBUSY).  The different-nonce case is implicitly tested
-	 * by the open/stat/unlink blocking tests above.
-	 */
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
@@ -449,13 +429,12 @@ ATF_TC_BODY(double_claim_diff_nonce, tc)
 	int result;
 	ATF_REQUIRE(read(pfd[0], &result, sizeof(result)) == sizeof(result));
 	close(pfd[0]);
-	/* Same nonce fork: should succeed (transfer) */
 	ATF_CHECK_EQ(result, 0);
 
 	waitpid(pid, &status, 0);
 	close(svc);
 }
-ATF_TC_CLEANUP(double_claim_diff_nonce, tc)
+ATF_TC_CLEANUP(child_reclaim_same_nonce, tc)
 {
 	cleanup_tmpfile();
 }
@@ -578,6 +557,40 @@ cleanup_tmpdir(void)
 
 	unlink(tmpdir_file);
 	rmdir(tmpdir);
+}
+
+static char tmpsockpath[128];
+
+static int
+make_tmpunix_listener(void)
+{
+	struct sockaddr_un sun;
+	int s;
+
+	snprintf(tmpsockpath, sizeof(tmpsockpath),
+	    "/tmp/fi_sock_test.%d", (int)getpid());
+	unlink(tmpsockpath);
+
+	s = socket(AF_UNIX, SOCK_STREAM, 0);
+	ATF_REQUIRE_MSG(s >= 0, "socket(AF_UNIX): %s", strerror(errno));
+
+	memset(&sun, 0, sizeof(sun));
+	sun.sun_family = AF_UNIX;
+	strlcpy(sun.sun_path, tmpsockpath, sizeof(sun.sun_path));
+
+	ATF_REQUIRE_MSG(bind(s, (struct sockaddr *)&sun, sizeof(sun)) == 0,
+	    "bind %s: %s", tmpsockpath, strerror(errno));
+	ATF_REQUIRE_MSG(listen(s, 1) == 0, "listen %s: %s",
+	    tmpsockpath, strerror(errno));
+
+	return (s);
+}
+
+static void
+cleanup_tmpsock(void)
+{
+
+	unlink(tmpsockpath);
 }
 
 ATF_TC_WITH_CLEANUP(dir_claim_blocks_lookup);
@@ -770,6 +783,20 @@ fi_net_call_addr(int svc, uint32_t op, int domain, int protocol,
 }
 
 static int
+fi_net_call_raw(int svc, const struct fi_net_request *nr)
+{
+	struct cap_rt_call_args ca;
+	struct fi_reply rpl;
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = nr;
+	ca.req_len = sizeof(*nr);
+	ca.reply = &rpl;
+	ca.reply_len = sizeof(rpl);
+	return (ioctl(svc, CAP_RT_CALL, &ca));
+}
+
+static int
 fi_net_call(int svc, uint32_t op, int domain, int protocol,
     uint16_t port, uint8_t direction)
 {
@@ -783,7 +810,7 @@ fi_helper_path(const atf_tc_t *tc)
 {
 	static char path[1024];
 
-	snprintf(path, sizeof(path), "%s/cap_rt_file_isolation_helper",
+	snprintf(path, sizeof(path), "%s/cap_rt_isolation_helper",
 	    atf_tc_get_config_var(tc, "srcdir"));
 	return (path);
 }
@@ -813,6 +840,80 @@ run_net_claim_helper(const atf_tc_t *tc, int svc, uint32_t op, int domain,
 	if (pid == 0) {
 		execl(path, path, fdstr, opstr, domainstr, protostr, portstr,
 		    dirstr, addr != NULL ? addr : "-", prefixstr, NULL);
+		_exit(127);
+	}
+
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE(WIFEXITED(status));
+	return (WEXITSTATUS(status));
+}
+
+static int
+run_net_socket_helper(const atf_tc_t *tc, int domain, int type, int protocol)
+{
+	char domainstr[16], typestr[16], protostr[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	snprintf(domainstr, sizeof(domainstr), "%d", domain);
+	snprintf(typestr, sizeof(typestr), "%d", type);
+	snprintf(protostr, sizeof(protostr), "%d", protocol);
+	path = fi_helper_path(tc);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(path, path, "socket", domainstr, typestr, protostr, NULL);
+		_exit(127);
+	}
+
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE(WIFEXITED(status));
+	return (WEXITSTATUS(status));
+}
+
+static int
+run_net_connect_helper(const atf_tc_t *tc, int domain, int type, int protocol,
+    const char *addr, uint16_t port)
+{
+	char domainstr[16], typestr[16], protostr[16], portstr[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	snprintf(domainstr, sizeof(domainstr), "%d", domain);
+	snprintf(typestr, sizeof(typestr), "%d", type);
+	snprintf(protostr, sizeof(protostr), "%d", protocol);
+	snprintf(portstr, sizeof(portstr), "%u", port);
+	path = fi_helper_path(tc);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(path, path, "connect", domainstr, typestr, protostr,
+		    addr, portstr, NULL);
+		_exit(127);
+	}
+
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE(WIFEXITED(status));
+	return (WEXITSTATUS(status));
+}
+
+static int
+run_unix_connect_helper(const atf_tc_t *tc, const char *path)
+{
+	const char *helper;
+	pid_t pid;
+	int status;
+
+	helper = fi_helper_path(tc);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(helper, helper, "unix-connect", path, NULL);
 		_exit(127);
 	}
 
@@ -1002,20 +1103,654 @@ ATF_TC_BODY(net_claim_same_address_blocks_foreign_claim, tc)
 	close(svc);
 }
 
+ATF_TC(net_claim_blocks_connect);
+ATF_TC_HEAD(net_claim_blocks_connect, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Network connect claim blocks foreign nonce from connecting");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_claim_blocks_connect, tc)
+{
+	struct sockaddr_in sin;
+	int rc, svc, listener;
+	uint16_t port = 18448;
+
+	listener = socket(AF_INET, SOCK_STREAM, 0);
+	ATF_REQUIRE(listener >= 0);
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_port = htons(port);
+	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	ATF_REQUIRE(bind(listener, (struct sockaddr *)&sin, sizeof(sin)) == 0);
+	ATF_REQUIRE(listen(listener, 1) == 0);
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_net_call_addr(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, htons(port), FI_NET_CONNECT, "127.0.0.1", 0) == 0);
+
+	rc = run_net_connect_helper(tc, AF_INET, SOCK_STREAM, IPPROTO_TCP,
+	    "127.0.0.1", port);
+	ATF_CHECK_EQ(rc, 1);
+
+	close(svc);
+	close(listener);
+}
+
+ATF_TC(net_wildcard_blocks_socket_create);
+ATF_TC_HEAD(net_wildcard_blocks_socket_create, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Fully wildcard FI_NET_ANY claim blocks foreign socket creation");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_wildcard_blocks_socket_create, tc)
+{
+	int rc, s, svc;
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET,
+	    AF_INET, IPPROTO_TCP, 0, FI_NET_ANY) == 0);
+
+	s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	ATF_REQUIRE(s >= 0);
+	close(s);
+
+	rc = run_net_socket_helper(tc, AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	ATF_CHECK_EQ(rc, 1);
+
+	close(svc);
+}
+
+ATF_TC(net_claim_invalid_request);
+ATF_TC_HEAD(net_claim_invalid_request, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Invalid network claim arguments are rejected");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_claim_invalid_request, tc)
+{
+	struct fi_net_request nr;
+	int svc;
+
+	svc = fi_connect();
+
+	memset(&nr, 0, sizeof(nr));
+	nr.op = FI_OP_CLAIM_NET;
+	nr.domain = AF_INET;
+	nr.protocol = IPPROTO_TCP;
+	nr.port = htons(18449);
+	nr.direction = FI_NET_BIND;
+	nr.flags = 1;
+	ATF_CHECK_ERRNO(EINVAL, fi_net_call_raw(svc, &nr) == -1);
+
+	nr.flags = 0;
+	nr.direction = 0;
+	ATF_CHECK_ERRNO(EINVAL, fi_net_call_raw(svc, &nr) == -1);
+
+	nr.direction = 0x80;
+	ATF_CHECK_ERRNO(EINVAL, fi_net_call_raw(svc, &nr) == -1);
+
+	nr.direction = FI_NET_BIND;
+	nr.prefix = 129;
+	ATF_CHECK_ERRNO(EINVAL, fi_net_call_raw(svc, &nr) == -1);
+
+	close(svc);
+}
+
+ATF_TC_WITH_CLEANUP(unix_socket_claim_blocks_connect);
+ATF_TC_HEAD(unix_socket_claim_blocks_connect, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Claiming a Unix socket vnode blocks foreign connect()");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(unix_socket_claim_blocks_connect, tc)
+{
+	struct fi_reply rpl;
+	int rc, listener, svc, target;
+
+	listener = make_tmpunix_listener();
+
+	svc = fi_connect();
+	target = open(tmpsockpath, O_RDONLY);
+	ATF_REQUIRE_MSG(target >= 0, "open %s: %s",
+	    tmpsockpath, strerror(errno));
+
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	rc = run_unix_connect_helper(tc, tmpsockpath);
+	ATF_CHECK_EQ(rc, 1);
+
+	close(target);
+	close(svc);
+	close(listener);
+}
+ATF_TC_CLEANUP(unix_socket_claim_blocks_connect, tc)
+{
+	cleanup_tmpsock();
+}
+
+/* ----------------------------------------------------------------
+ * Cross-nonce enforcement tests.
+ *
+ * These fork+exec a child to rotate the nonce, then have the child
+ * attempt operations on the isolated file.  The exec helper is /bin/sh
+ * running a one-liner.  Exit 0 = operation succeeded (bad), nonzero =
+ * blocked (good).
+ * ---------------------------------------------------------------- */
+
+static int
+run_cross_nonce_op(const char *sh_cmd)
+{
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	if (pid < 0)
+		return (-1);
+	if (pid == 0) {
+		execl("/bin/sh", "sh", "-c", sh_cmd, NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	if (!WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
+ATF_TC_WITH_CLEANUP(cross_nonce_open_blocked);
+ATF_TC_HEAD(cross_nonce_open_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Foreign nonce (after exec) cannot open an isolated file");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cross_nonce_open_blocked, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+	char cmd[256];
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	close(target);
+
+	snprintf(cmd, sizeof(cmd),
+	    "exec cat '%s' >/dev/null 2>&1", tmppath);
+	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
+
+	close(svc);
+}
+ATF_TC_CLEANUP(cross_nonce_open_blocked, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(cross_nonce_chmod_blocked);
+ATF_TC_HEAD(cross_nonce_chmod_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Foreign nonce cannot chmod an isolated file");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cross_nonce_chmod_blocked, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+	char cmd[256];
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	close(target);
+
+	snprintf(cmd, sizeof(cmd), "exec chmod 777 '%s'", tmppath);
+	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
+
+	close(svc);
+}
+ATF_TC_CLEANUP(cross_nonce_chmod_blocked, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(cross_nonce_chown_blocked);
+ATF_TC_HEAD(cross_nonce_chown_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Foreign nonce cannot chown an isolated file");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cross_nonce_chown_blocked, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+	char cmd[256];
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	close(target);
+
+	snprintf(cmd, sizeof(cmd), "exec chown nobody '%s'", tmppath);
+	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
+
+	close(svc);
+}
+ATF_TC_CLEANUP(cross_nonce_chown_blocked, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(cross_nonce_link_blocked);
+ATF_TC_HEAD(cross_nonce_link_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Foreign nonce cannot hard-link an isolated file");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cross_nonce_link_blocked, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+	char cmd[256], linkpath[160];
+
+	make_tmpfile();
+	snprintf(linkpath, sizeof(linkpath), "%s.link", tmppath);
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	close(target);
+
+	snprintf(cmd, sizeof(cmd), "exec ln '%s' '%s'", tmppath, linkpath);
+	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
+
+	unlink(linkpath);
+	close(svc);
+}
+ATF_TC_CLEANUP(cross_nonce_link_blocked, tc)
+{
+	char linkpath[160];
+	snprintf(linkpath, sizeof(linkpath), "%s.link", tmppath);
+	unlink(linkpath);
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(cross_nonce_rename_blocked);
+ATF_TC_HEAD(cross_nonce_rename_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Foreign nonce cannot rename an isolated file");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cross_nonce_rename_blocked, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+	char cmd[256], newpath[160];
+
+	make_tmpfile();
+	snprintf(newpath, sizeof(newpath), "%s.new", tmppath);
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	close(target);
+
+	snprintf(cmd, sizeof(cmd), "exec mv '%s' '%s'", tmppath, newpath);
+	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
+
+	unlink(newpath);
+	close(svc);
+}
+ATF_TC_CLEANUP(cross_nonce_rename_blocked, tc)
+{
+	char newpath[160];
+	snprintf(newpath, sizeof(newpath), "%s.new", tmppath);
+	unlink(newpath);
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(cross_nonce_truncate_blocked);
+ATF_TC_HEAD(cross_nonce_truncate_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Foreign nonce cannot truncate an isolated file");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cross_nonce_truncate_blocked, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+	char cmd[256];
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	close(target);
+
+	snprintf(cmd, sizeof(cmd), "exec truncate -s 0 '%s'", tmppath);
+	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
+
+	close(svc);
+}
+ATF_TC_CLEANUP(cross_nonce_truncate_blocked, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(cross_nonce_utimes_blocked);
+ATF_TC_HEAD(cross_nonce_utimes_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Foreign nonce cannot touch (utimes) an isolated file");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cross_nonce_utimes_blocked, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+	char cmd[256];
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	close(target);
+
+	snprintf(cmd, sizeof(cmd), "exec touch '%s'", tmppath);
+	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
+
+	close(svc);
+}
+ATF_TC_CLEANUP(cross_nonce_utimes_blocked, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(cross_nonce_access_blocked);
+ATF_TC_HEAD(cross_nonce_access_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Foreign nonce cannot access(2)-check an isolated file");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cross_nonce_access_blocked, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+	char cmd[256];
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	close(target);
+
+	snprintf(cmd, sizeof(cmd), "exec test -r '%s'", tmppath);
+	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
+
+	close(svc);
+}
+ATF_TC_CLEANUP(cross_nonce_access_blocked, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(cross_nonce_readlink_blocked);
+ATF_TC_HEAD(cross_nonce_readlink_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Foreign nonce cannot readlink an isolated symlink");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cross_nonce_readlink_blocked, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+	char cmd[256], linkpath[160];
+
+	make_tmpfile();
+	snprintf(linkpath, sizeof(linkpath), "%s.sym", tmppath);
+	ATF_REQUIRE(symlink(tmppath, linkpath) == 0);
+
+	svc = fi_connect();
+	/*
+	 * Open the symlink itself (not the target) using O_PATH|O_NOFOLLOW.
+	 * This gives us an fd to the symlink vnode so we can claim it.
+	 */
+	target = open(linkpath, O_PATH | O_NOFOLLOW);
+	ATF_REQUIRE_MSG(target >= 0, "open symlink: %s", strerror(errno));
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	close(target);
+
+	snprintf(cmd, sizeof(cmd), "exec readlink '%s'", linkpath);
+	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
+
+	unlink(linkpath);
+	close(svc);
+}
+ATF_TC_CLEANUP(cross_nonce_readlink_blocked, tc)
+{
+	char linkpath[160];
+	snprintf(linkpath, sizeof(linkpath), "%s.sym", tmppath);
+	unlink(linkpath);
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(cross_nonce_exec_blocked);
+ATF_TC_HEAD(cross_nonce_exec_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Foreign nonce cannot exec an isolated executable");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cross_nonce_exec_blocked, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+	char cmd[256], exepath[160];
+
+	/* Create a trivially executable script. */
+	snprintf(exepath, sizeof(exepath),
+	    "/tmp/fi_exec_test.%d", (int)getpid());
+	target = open(exepath, O_CREAT | O_RDWR, 0755);
+	ATF_REQUIRE(target >= 0);
+	write(target, "#!/bin/sh\nexit 0\n", 17);
+	close(target);
+
+	svc = fi_connect();
+	target = open(exepath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	close(target);
+
+	/* The exec helper will have a different nonce after its own exec. */
+	snprintf(cmd, sizeof(cmd), "exec '%s'", exepath);
+	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
+
+	unlink(exepath);
+	close(svc);
+}
+ATF_TC_CLEANUP(cross_nonce_exec_blocked, tc)
+{
+	char exepath[160];
+	snprintf(exepath, sizeof(exepath),
+	    "/tmp/fi_exec_test.%d", (int)getpid());
+	unlink(exepath);
+}
+
+ATF_TC_WITH_CLEANUP(cross_nonce_chflags_blocked);
+ATF_TC_HEAD(cross_nonce_chflags_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Foreign nonce cannot chflags an isolated file");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cross_nonce_chflags_blocked, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+	char cmd[256];
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	close(target);
+
+	snprintf(cmd, sizeof(cmd), "exec chflags nodump '%s'", tmppath);
+	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
+
+	close(svc);
+}
+ATF_TC_CLEANUP(cross_nonce_chflags_blocked, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC(net_claim_rejects_bad_domain);
+ATF_TC_HEAD(net_claim_rejects_bad_domain, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_OP_CLAIM_NET rejects unsupported domain values");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_claim_rejects_bad_domain, tc)
+{
+	struct cap_rt_call_args ca;
+	struct fi_net_request nr;
+	struct fi_reply rpl;
+	int svc;
+
+	svc = fi_connect();
+
+	memset(&nr, 0, sizeof(nr));
+	nr.op = FI_OP_CLAIM_NET;
+	nr.domain = 99;	/* unsupported */
+	nr.protocol = 0;
+	nr.port = htons(12345);
+	nr.direction = FI_NET_BIND;
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = &rpl;
+	ca.reply_len = sizeof(rpl);
+	ATF_CHECK_ERRNO(EINVAL, ioctl(svc, CAP_RT_CALL, &ca) == -1);
+
+	close(svc);
+}
+
+ATF_TC(net_claim_rejects_bad_protocol);
+ATF_TC_HEAD(net_claim_rejects_bad_protocol, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_OP_CLAIM_NET rejects unsupported protocol values");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_claim_rejects_bad_protocol, tc)
+{
+	struct cap_rt_call_args ca;
+	struct fi_net_request nr;
+	struct fi_reply rpl;
+	int svc;
+
+	svc = fi_connect();
+
+	memset(&nr, 0, sizeof(nr));
+	nr.op = FI_OP_CLAIM_NET;
+	nr.domain = AF_INET;
+	nr.protocol = 99;	/* unsupported */
+	nr.port = htons(12345);
+	nr.direction = FI_NET_BIND;
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = &rpl;
+	ca.reply_len = sizeof(rpl);
+	ATF_CHECK_ERRNO(EINVAL, ioctl(svc, CAP_RT_CALL, &ca) == -1);
+
+	close(svc);
+}
+
+ATF_TC(net_claim_rejects_ipv4_prefix_above_32);
+ATF_TC_HEAD(net_claim_rejects_ipv4_prefix_above_32, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_OP_CLAIM_NET rejects AF_INET prefix > 32");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_claim_rejects_ipv4_prefix_above_32, tc)
+{
+	struct cap_rt_call_args ca;
+	struct fi_net_request nr;
+	struct fi_reply rpl;
+	int svc;
+
+	svc = fi_connect();
+
+	memset(&nr, 0, sizeof(nr));
+	nr.op = FI_OP_CLAIM_NET;
+	nr.domain = AF_INET;
+	nr.protocol = IPPROTO_TCP;
+	nr.port = htons(12345);
+	nr.direction = FI_NET_BIND;
+	nr.prefix = 33;		/* invalid for IPv4 */
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = &rpl;
+	ca.reply_len = sizeof(rpl);
+	ATF_CHECK_ERRNO(EINVAL, ioctl(svc, CAP_RT_CALL, &ca) == -1);
+
+	close(svc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, claim_and_query);
-	ATF_TP_ADD_TC(tp, claim_blocks_open);
+	ATF_TP_ADD_TC(tp, claim_allows_same_nonce);
 	ATF_TP_ADD_TC(tp, claim_blocks_stat);
 	ATF_TP_ADD_TC(tp, claim_blocks_unlink);
 	ATF_TP_ADD_TC(tp, release_allows_access);
 	ATF_TP_ADD_TC(tp, close_releases_claims);
 	ATF_TP_ADD_TC(tp, double_claim_same_nonce);
-	ATF_TP_ADD_TC(tp, double_claim_diff_nonce);
+	ATF_TP_ADD_TC(tp, child_reclaim_same_nonce);
 	ATF_TP_ADD_TC(tp, claim_pipe_fails);
 	ATF_TP_ADD_TC(tp, same_nonce_can_open);
 	ATF_TP_ADD_TC(tp, query_unclaimed);
+	ATF_TP_ADD_TC(tp, unix_socket_claim_blocks_connect);
+
+	/* Cross-nonce enforcement */
+	ATF_TP_ADD_TC(tp, cross_nonce_open_blocked);
+	ATF_TP_ADD_TC(tp, cross_nonce_chmod_blocked);
+	ATF_TP_ADD_TC(tp, cross_nonce_chown_blocked);
+	ATF_TP_ADD_TC(tp, cross_nonce_link_blocked);
+	ATF_TP_ADD_TC(tp, cross_nonce_rename_blocked);
+	ATF_TP_ADD_TC(tp, cross_nonce_truncate_blocked);
+	ATF_TP_ADD_TC(tp, cross_nonce_utimes_blocked);
+	ATF_TP_ADD_TC(tp, cross_nonce_access_blocked);
+	ATF_TP_ADD_TC(tp, cross_nonce_readlink_blocked);
+	ATF_TP_ADD_TC(tp, cross_nonce_exec_blocked);
+	ATF_TP_ADD_TC(tp, cross_nonce_chflags_blocked);
 
 	/* Directory isolation */
 	ATF_TP_ADD_TC(tp, dir_claim_blocks_lookup);
@@ -1028,6 +1763,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, net_release_allows_bind);
 	ATF_TP_ADD_TC(tp, net_claim_disjoint_address_allows_foreign_claim);
 	ATF_TP_ADD_TC(tp, net_claim_same_address_blocks_foreign_claim);
+	ATF_TP_ADD_TC(tp, net_claim_blocks_connect);
+	ATF_TP_ADD_TC(tp, net_wildcard_blocks_socket_create);
+	ATF_TP_ADD_TC(tp, net_claim_invalid_request);
+	ATF_TP_ADD_TC(tp, net_claim_rejects_bad_domain);
+	ATF_TP_ADD_TC(tp, net_claim_rejects_bad_protocol);
+	ATF_TP_ADD_TC(tp, net_claim_rejects_ipv4_prefix_above_32);
 
 	return (atf_no_error());
 }

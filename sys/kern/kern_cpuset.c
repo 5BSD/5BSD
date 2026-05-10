@@ -1366,6 +1366,80 @@ out:
 	return (error);
 }
 
+/*
+ * Like cpuset_setproc, but takes a locked struct proc * directly instead
+ * of looking up by PID.  Avoids PID reuse races for capability-based
+ * callers that already hold the process handle.
+ *
+ * Caller must hold PROC_LOCK(p).  Lock is released and reacquired
+ * internally as needed.
+ */
+int
+cpuset_setproc_mask(struct proc *p, cpuset_t *mask)
+{
+	struct setlist freelist;
+	struct setlist droplist;
+	struct domainlist domainlist;
+	struct cpuset *nset;
+	struct thread *td;
+	int needed;
+	int nfree;
+	int error;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	cpuset_freelist_init(&freelist, 1);
+	domainset_freelist_init(&domainlist, 1);
+	LIST_INIT(&droplist);
+	nfree = 0;
+
+	for (;;) {
+		td = FIRST_THREAD_IN_PROC(p);
+		if (td == NULL) {
+			error = ESRCH;
+			goto out;
+		}
+		needed = p->p_numthreads;
+		if (nfree >= needed)
+			break;
+		PROC_UNLOCK(p);
+		cpuset_freelist_add(&freelist, needed - nfree);
+		domainset_freelist_add(&domainlist, needed - nfree);
+		nfree = needed;
+		PROC_LOCK(p);
+	}
+
+	/* Validate mask against all threads. */
+	error = 0;
+	FOREACH_THREAD_IN_PROC(p, td) {
+		thread_lock(td);
+		error = cpuset_setproc_test_maskthread(td->td_cpuset,
+		    mask, NULL);
+		thread_unlock(td);
+		if (error)
+			goto out;
+	}
+
+	/* Apply mask to all threads. */
+	FOREACH_THREAD_IN_PROC(p, td) {
+		thread_lock(td);
+		error = cpuset_setproc_maskthread(td->td_cpuset, mask,
+		    NULL, &nset, &freelist, &domainlist);
+		if (error) {
+			thread_unlock(td);
+			break;
+		}
+		cpuset_rel_defer(&droplist, cpuset_update_thread(td, nset));
+		thread_unlock(td);
+	}
+out:
+	while ((nset = LIST_FIRST(&droplist)) != NULL)
+		cpuset_rel_complete(nset);
+	cpuset_freelist_free(&freelist);
+	domainset_freelist_free(&domainlist);
+	return (error);
+}
+
 static int
 bitset_strprint(char *buf, size_t bufsiz, const struct bitset *set, int setlen)
 {

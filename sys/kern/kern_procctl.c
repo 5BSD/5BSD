@@ -1172,7 +1172,7 @@ sys_procctl(struct thread *td, struct procctl_args *uap)
 	return (error);
 }
 
-static int
+int
 kern_procctl_single(struct thread *td, struct proc *p, int com, void *data)
 {
 

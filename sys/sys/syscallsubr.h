@@ -289,6 +289,8 @@ int	kern_pdwait(struct thread *td, int fd, int *status,
 	    int options, struct __wrusage *wrusage, siginfo_t *sip);
 int	kern_procctl(struct thread *td, enum idtype idtype, id_t id, int com,
 	    void *data);
+int	kern_procctl_single(struct thread *td, struct proc *p, int com,
+	    void *data);
 int	kern_pread(struct thread *td, int fd, void *buf, size_t nbyte,
 	    off_t offset);
 int	kern_preadv(struct thread *td, int fd, struct uio *auio, off_t offset);
@@ -326,6 +328,8 @@ int	kern_sendit(struct thread *td, int s, struct msghdr *mp, int flags,
 	    struct mbuf *control, enum uio_seg segflg);
 int	kern_setcred(struct thread *const td, const u_int flags,
 	    struct setcred *const wcred);
+int	kern_setcred_proc(struct thread *td, struct proc *p, u_int flags,
+	    struct setcred *wcred);
 int	kern_setgroups(struct thread *td, int *ngrpp, gid_t *groups);
 int	kern_setitimer(struct thread *, u_int, struct itimerval *,
 	    struct itimerval *);

@@ -85,6 +85,17 @@ Messages (SENDMSG, CALL) can carry up to 32 file descriptors.
 Capsicum rights on attached fds are preserved through transfer.
 The DFLAG_PASSABLE check prevents passing non-transferable fds.
 
+For some services, an attached fd is part of the authority model. For
+others, it is only a target designator. In particular:
+- `coalition` interprets attached fd rights as part of delegation policy
+- `node` and `accounting` treat an attached procdesc as naming the target
+  process; authority comes from possession of the service capability plus
+  possession of the procdesc itself, not from the procdesc's narrowed
+  `CAP_PD*` rights
+
+That difference is intentional. The runtime does not require every
+service to project attached-fd Capsicum rights into its own policy.
+
 ## Service model
 
 Today, `CAP_RT_CONNECT` resolves a named **kernel** service and returns
@@ -120,7 +131,7 @@ cap_rt is fully usable inside `cap_enter()`:
 | __mac_get_proc / __mac_set_proc | Yes (CAPENABLED) |
 | mac_syscall | **No** (not CAPENABLED) |
 
-Since cap_rt services (capprotect, file_isolation, coalition) use
+Since cap_rt services (capprotect, isolation, coalition) use
 CAP_RT_CALL, not mac_syscall, they are fully accessible inside a
 Capsicum sandbox.  The MAC syscall restriction does not matter.
 
@@ -152,9 +163,9 @@ interference.
 Access tokens are capability fds — they can be passed via messages,
 narrowed, and revoked.
 
-### file_isolation (sync, CAP_RT_CALL)
+### isolation (sync, CAP_RT_CALL)
 
-Vnode and network isolation by nonce.
+File, directory, Unix-socket, and network isolation by nonce.
 
 | Operation | What it does |
 |-----------|-------------|
@@ -183,6 +194,44 @@ Resource group management.
 | RUSAGE | Aggregate resource usage across members |
 
 Nested coalitions are supported with cycle detection.
+
+### node (sync, CAP_RT_CALL)
+
+Per-process inspection and control.
+
+| Operation | What it does |
+|-----------|-------------|
+| STAT | Get pid, state, name, and thread count |
+| CRED | Get uid, gid, groups, nonce, and jail identity |
+| RUSAGE | Get live resource usage |
+| GET_RLIMIT / SET_RLIMIT | Read or update one rlimit |
+| GET_RACCT | Read one racct counter |
+| GET_NICE / SET_NICE | Read or update process priority |
+| GET_AFFINITY / SET_AFFINITY | Read or update CPU affinity |
+| GET_PROCCTL / SET_PROCCTL | Read or update procctl state |
+
+For `node`, an attached procdesc identifies the target process. Its
+`CAP_PD*` rights are not treated as an independent authority filter.
+The authority model is: possession of the `node` capability plus
+possession of the procdesc.
+
+### accounting (sync, CAP_RT_CALL)
+
+Per-process racct and rctl operations.
+
+| Operation | What it does |
+|-----------|-------------|
+| CHARGE | Debit one racct resource |
+| RELEASE | Credit one racct resource |
+| SET | Set one racct resource absolutely |
+| ADD_RULE | Add one rctl enforcement rule |
+| REMOVE_RULE | Remove one rctl enforcement rule |
+| GET_RULES | Query active rctl rules |
+
+Like `node`, `accounting` uses an attached procdesc as a target
+designator. The effective authority is the `accounting` capability
+combined with possession of the procdesc, not the procdesc's narrowed
+`CAP_PD*` rights.
 
 ### pair (async, SENDMSG/RECVMSG)
 

@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Project5BSD
  *
- * cap_rt_file_isolation — Resource Isolation capability service.
+ * cap_rt_isolation — resource isolation capability service.
  *
  * Allows processes to claim resources so that only processes sharing
  * the claimer's CAP_RT nonce can interact with them.
@@ -45,7 +45,7 @@
 
 #include <dev/cap_rt/cap_rt.h>
 #include <dev/cap_rt/cap_rt_label.h>
-#include <dev/cap_rt/cap_rt_file_isolation_proto.h>
+#include <dev/cap_rt/cap_rt_isolation_proto.h>
 
 static MALLOC_DEFINE(M_FILE_ISOLATION, "cap_rt_fi",
     "cap_rt file isolation");
@@ -368,6 +368,32 @@ fi_net_addr_prefix_match(const struct in6_addr *a, const struct in6_addr *b,
 	    (b->s6_addr[full_bytes] & mask));
 }
 
+/*
+ * Map a user-supplied prefix length to the v4-mapped v6 address space.
+ * IPv4 addresses live at bytes 12-15 of the v6 address, so an IPv4
+ * /24 must compare at bit offset 96+24=120, not bit 24.
+ */
+static uint8_t
+fi_net_effective_prefix(int domain, uint8_t user_prefix)
+{
+
+	if (domain == AF_INET || domain == 0) {
+		/*
+		 * Heuristic: if the prefix fits in IPv4 range and the
+		 * domain is AF_INET (or unspecified with small prefix),
+		 * treat as IPv4 and offset into v4-mapped region.
+		 */
+		if (user_prefix == 0)
+			return (128);
+		if (user_prefix <= 32)
+			return (96 + user_prefix);
+		/* prefix > 32 for AF_INET is invalid; treat as exact */
+		return (128);
+	}
+	/* AF_INET6: prefix is already correct */
+	return (user_prefix == 0 ? 128 : MIN(user_prefix, (uint8_t)128));
+}
+
 static bool
 fi_net_claim_addr_overlap(const struct fi_net_claim *existing,
     const struct fi_net_request *nr)
@@ -380,9 +406,9 @@ fi_net_claim_addr_overlap(const struct fi_net_claim *existing,
 	    fi_net_addr_is_wildcard(&req_addr))
 		return (true);
 
-	existing_prefix = existing->fn_prefix == 0 ? 128 :
-	    MIN(existing->fn_prefix, (uint8_t)128);
-	req_prefix = nr->prefix == 0 ? 128 : MIN(nr->prefix, (uint8_t)128);
+	existing_prefix = fi_net_effective_prefix(existing->fn_domain,
+	    existing->fn_prefix);
+	req_prefix = fi_net_effective_prefix(nr->domain, nr->prefix);
 
 	return (fi_net_addr_prefix_match(&existing->fn_addr, &req_addr,
 	    MIN(existing_prefix, req_prefix)));
@@ -422,14 +448,17 @@ fi_net_addr_match(const struct fi_net_claim *nc, struct sockaddr *sa)
 		return (false);
 	}
 
-	/* Exact match if no prefix specified */
-	if (nc->fn_prefix == 0 || nc->fn_prefix >= 128)
-		return (memcmp(&nc->fn_addr, &sa_addr, 16) == 0);
-
-	/* CIDR prefix match */
+	/* CIDR prefix match — map user prefix to v4-mapped offset */
 	{
-		uint8_t full_bytes = nc->fn_prefix / 8;
-		uint8_t rem_bits = nc->fn_prefix % 8;
+		uint8_t prefix = fi_net_effective_prefix(nc->fn_domain,
+		    nc->fn_prefix);
+		uint8_t full_bytes, rem_bits;
+
+		if (prefix >= 128)
+			return (memcmp(&nc->fn_addr, &sa_addr, 16) == 0);
+
+		full_bytes = prefix / 8;
+		rem_bits = prefix % 8;
 
 		if (memcmp(&nc->fn_addr, &sa_addr, full_bytes) != 0)
 			return (false);
@@ -576,7 +605,13 @@ fi_check_socket_create(struct ucred *cred, int domain, int type __unused,
 				if (nc->fn_domain != 0 &&
 				    nc->fn_domain != domain)
 					continue;
+				/*
+				 * Match if protocols are equal, either is
+				 * wildcard (0), or caller used protocol=0
+				 * (kernel default for the socket type).
+				 */
 				if (nc->fn_protocol != 0 &&
+				    protocol != 0 &&
 				    nc->fn_protocol != protocol)
 					continue;
 				if (nc->fn_port != 0)
@@ -885,14 +920,22 @@ fi_do_claim_net(struct cap_rt_instance *s, struct fi_priv *priv,
 	return (0);
 }
 
+/*
+ * Release a network claim.  Search the global hash by nonce (not by
+ * instance), matching the vnode release model: any same-nonce instance
+ * can release a claim.
+ */
 static int
-fi_do_release_net(struct fi_priv *priv,
+fi_do_release_net(struct fi_priv *priv __unused,
     const struct fi_net_request *nr, uint64_t nonce)
 {
 	struct fi_net_claim *nc;
+	u_long bucket;
+
+	bucket = fi_net_hash_fn(nr->port, nr->domain);
 
 	rw_wlock(&fi_net_lock);
-	LIST_FOREACH(nc, &priv->fip_net_claims, fn_instlink) {
+	LIST_FOREACH(nc, &fi_net_hash[bucket], fn_hashlink) {
 		if (nc->fn_nonce != nonce)
 			continue;
 		if (nc->fn_port != nr->port)
@@ -977,8 +1020,20 @@ fi_call(struct cap_rt_instance *s,
 			return (EINVAL);
 		nr = (const struct fi_net_request *)req;
 		if (nr->flags != 0 || nr->direction == 0 ||
-		    (nr->direction & ~FI_NET_ANY) != 0 ||
-		    nr->prefix > 128)
+		    (nr->direction & ~FI_NET_ANY) != 0)
+			return (EINVAL);
+		/* Validate domain: AF_INET, AF_INET6, or 0 (wildcard) */
+		if (nr->domain != 0 && nr->domain != AF_INET &&
+		    nr->domain != AF_INET6)
+			return (EINVAL);
+		/* Validate protocol: IPPROTO_TCP, IPPROTO_UDP, or 0 */
+		if (nr->protocol != 0 && nr->protocol != IPPROTO_TCP &&
+		    nr->protocol != IPPROTO_UDP)
+			return (EINVAL);
+		/* Validate prefix: IPv4 max /32, IPv6 max /128 */
+		if (nr->domain == AF_INET && nr->prefix > 32)
+			return (EINVAL);
+		if (nr->prefix > 128)
 			return (EINVAL);
 		return (fi_do_claim_net(s, priv, nr, caller_nonce));
 	}
@@ -990,8 +1045,17 @@ fi_call(struct cap_rt_instance *s,
 			return (EINVAL);
 		nr = (const struct fi_net_request *)req;
 		if (nr->flags != 0 || nr->direction == 0 ||
-		    (nr->direction & ~FI_NET_ANY) != 0 ||
-		    nr->prefix > 128)
+		    (nr->direction & ~FI_NET_ANY) != 0)
+			return (EINVAL);
+		if (nr->domain != 0 && nr->domain != AF_INET &&
+		    nr->domain != AF_INET6)
+			return (EINVAL);
+		if (nr->protocol != 0 && nr->protocol != IPPROTO_TCP &&
+		    nr->protocol != IPPROTO_UDP)
+			return (EINVAL);
+		if (nr->domain == AF_INET && nr->prefix > 32)
+			return (EINVAL);
+		if (nr->prefix > 128)
 			return (EINVAL);
 		return (fi_do_release_net(priv, nr, caller_nonce));
 	}
@@ -1092,12 +1156,12 @@ static struct mac_policy_ops fi_mac_ops = {
 	.mpo_socket_check_connect	= fi_check_socket_connect,
 };
 
-MAC_POLICY_SET(&fi_mac_ops, mac_cap_rt_file_isolation,
-    "CAP_RT file isolation enforcement",
+MAC_POLICY_SET(&fi_mac_ops, mac_cap_rt_isolation,
+    "CAP_RT isolation enforcement",
     MPC_LOADTIME_FLAG_NOTLATE, NULL);
 
 static int
-cap_rt_file_isolation_modevent(module_t mod __unused, int type,
+cap_rt_isolation_modevent(module_t mod __unused, int type,
     void *unused __unused)
 {
 	struct cap_rt_service_params p;
@@ -1107,25 +1171,28 @@ cap_rt_file_isolation_modevent(module_t mod __unused, int type,
 	case MOD_LOAD:
 		fi_hash = hashinit(FI_HASH_SIZE, M_FILE_ISOLATION,
 		    &fi_hashmask);
-		rw_init(&fi_lock, "cap_rt_file_isolation");
+		rw_init(&fi_lock, "cap_rt_isolation");
 
 		fi_net_hash = hashinit(FI_NET_HASH_SIZE, M_FILE_ISOLATION,
 		    &fi_net_hashmask);
 		rw_init(&fi_net_lock, "cap_rt_fi_net");
 
 		memset(&p, 0, sizeof(p));
-		p.name = "file_isolation";
+		p.name = "isolation";
 		p.ops = &fi_ops;
 
 		error = cap_rt_service_create(&p, &fi_svc);
 		if (error != 0) {
+			rw_destroy(&fi_net_lock);
+			hashdestroy(fi_net_hash, M_FILE_ISOLATION,
+			    fi_net_hashmask);
 			rw_destroy(&fi_lock);
 			hashdestroy(fi_hash, M_FILE_ISOLATION,
 			    fi_hashmask);
 			return (error);
 		}
 		if (bootverbose)
-			printf("cap_rt_file_isolation: loaded\n");
+			printf("cap_rt_isolation: loaded\n");
 		return (0);
 
 	case MOD_UNLOAD:
@@ -1136,13 +1203,13 @@ cap_rt_file_isolation_modevent(module_t mod __unused, int type,
 	}
 }
 
-static moduledata_t cap_rt_file_isolation_mod = {
-	"cap_rt_file_isolation",
-	cap_rt_file_isolation_modevent,
+static moduledata_t cap_rt_isolation_mod = {
+	"cap_rt_isolation",
+	cap_rt_isolation_modevent,
 	NULL,
 };
 
-DECLARE_MODULE(cap_rt_file_isolation, cap_rt_file_isolation_mod,
+DECLARE_MODULE(cap_rt_isolation, cap_rt_isolation_mod,
     SI_SUB_DRIVERS, SI_ORDER_ANY);
-MODULE_DEPEND(cap_rt_file_isolation, cap_rt, 1, 1, 1);
-MODULE_VERSION(cap_rt_file_isolation, 1);
+MODULE_DEPEND(cap_rt_isolation, cap_rt, 1, 1, 1);
+MODULE_VERSION(cap_rt_isolation, 1);

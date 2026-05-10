@@ -3,10 +3,10 @@
  *
  * Copyright (c) 2026 Project5BSD
  *
- * cap_rt_file_isolation — wire protocol for File Isolation service.
+ * cap_rt_isolation — wire protocol for the isolation service.
  *
  * Shared between kernel and userspace.  Include this header
- * to construct CAP_RT_CALL requests for the "file_isolation" service.
+ * to construct CAP_RT_CALL requests for the "isolation" service.
  *
  * PURPOSE
  *
@@ -73,8 +73,8 @@
  *   until closed.
  */
 
-#ifndef _DEV_CAP_RT_CAP_RT_FILE_ISOLATION_PROTO_H_
-#define _DEV_CAP_RT_CAP_RT_FILE_ISOLATION_PROTO_H_
+#ifndef _DEV_CAP_RT_CAP_RT_ISOLATION_PROTO_H_
+#define _DEV_CAP_RT_CAP_RT_ISOLATION_PROTO_H_
 
 #include <sys/types.h>
 
@@ -136,4 +136,4 @@ struct fi_net_request {
 /* Mount request (ops 7-8): pass fd on target filesystem via req_fds[0] */
 /* Uses struct fi_request (just op field needed) */
 
-#endif /* _DEV_CAP_RT_CAP_RT_FILE_ISOLATION_PROTO_H_ */
+#endif /* _DEV_CAP_RT_CAP_RT_ISOLATION_PROTO_H_ */

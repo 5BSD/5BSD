@@ -171,6 +171,7 @@ int	cpuset_setthread(lwpid_t id, cpuset_t *);
 int	cpuset_setithread(lwpid_t id, int cpu);
 int	cpuset_create_root(struct prison *, struct cpuset **);
 int	cpuset_setproc_update_set(struct proc *, struct cpuset *);
+int	cpuset_setproc_mask(struct proc *, cpuset_t *);
 int	cpuset_which(cpuwhich_t, id_t, struct proc **,
 	    struct thread **, struct cpuset **);
 void	cpuset_kernthread(struct thread *);

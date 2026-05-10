@@ -217,7 +217,9 @@ SUBDIR=	\
 	cap_rt_test_keystore \
 	cap_rt_pair \
 	cap_rt_identity \
-	cap_rt_file_isolation \
+	cap_rt_node \
+	cap_rt_accounting \
+	cap_rt_isolation \
 	kgssapi \
 	kgssapi_krb5 \
 	khelp \

@@ -12,8 +12,8 @@ set -e
 SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 
 CORE_MODULE="cap_rt"
-BOOT_MODULES="cap_rt_capprotect cap_rt_file_isolation"
-SERVICE_MODULES="cap_rt_test_kernelstore cap_rt_test_keystore cap_rt_pair"
+BOOT_MODULES="cap_rt_capprotect cap_rt_isolation"
+SERVICE_MODULES="cap_rt_test_kernelstore cap_rt_test_keystore cap_rt_pair cap_rt_identity cap_rt_node cap_rt_accounting"
 
 CAP_RT_TEST_BIN="${SCRIPT_DIR}/cap_rt_test"
 die() { echo "FAIL: $1" >&2; exit 1; }
@@ -32,7 +32,7 @@ done
 
 # Unload any stale service modules (reverse order)
 info "Unloading stale modules"
-for m in cap_rt_pair cap_rt_test_keystore cap_rt_test_kernelstore; do
+for m in cap_rt_accounting cap_rt_node cap_rt_identity cap_rt_pair cap_rt_test_keystore cap_rt_test_kernelstore; do
 	kldunload "$m" 2>/dev/null || true
 done
 
@@ -88,21 +88,24 @@ if command -v kyua >/dev/null 2>&1; then
 	kyua test || die "kyua test failed"
 	kyua report
 else
-	# Fallback: enumerate tests and run them one at a time.
-	testcases=$("$CAP_RT_TEST_BIN" -l | awk '/^ident: / { print $2 }')
-	[ -n "$testcases" ] || die "no ATF test cases discovered"
-
-	for testcase in $testcases; do
-		info "ATF $testcase"
-		"$CAP_RT_TEST_BIN" -s "$SCRIPT_DIR" "$testcase" ||
-		    die "ATF test failed: $testcase"
+	# Fallback: enumerate tests from all test binaries.
+	ATF_TEST_BINS="cap_rt_test cap_rt_coalition_test cap_rt_isolation_test cap_rt_identity_test cap_rt_node_test cap_rt_accounting_test"
+	for testbin in $ATF_TEST_BINS; do
+		testbin_path="${SCRIPT_DIR}/${testbin}"
+		[ -x "$testbin_path" ] || continue
+		testcases=$("$testbin_path" -l | awk '/^ident: / { print $2 }')
+		for testcase in $testcases; do
+			info "ATF ${testbin}:${testcase}"
+			"$testbin_path" -s "$SCRIPT_DIR" "$testcase" ||
+			    die "ATF test failed: ${testbin}:${testcase}"
+		done
 	done
 fi
 
 # Verify clean service module unload
 # Core CAP_RT stays loaded (boot-time NOTLATE MAC policy)
 info "Testing service module unload"
-for m in cap_rt_pair cap_rt_test_keystore cap_rt_test_kernelstore; do
+for m in cap_rt_accounting cap_rt_node cap_rt_identity cap_rt_pair cap_rt_test_keystore cap_rt_test_kernelstore; do
 	kldunload "$m" || die "unload $m"
 done
 

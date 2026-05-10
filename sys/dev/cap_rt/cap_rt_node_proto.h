@@ -1,0 +1,227 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * cap_rt_node — wire protocol for the process node service.
+ *
+ * Observe and configure a process via an attached procdesc fd.
+ * If no fd is attached, the operation targets the caller (self).
+ */
+
+#ifndef _DEV_CAP_RT_CAP_RT_NODE_PROTO_H_
+#define _DEV_CAP_RT_CAP_RT_NODE_PROTO_H_
+
+/* Operations */
+#define	NODE_OP_STAT		1	/* get state, name, pid, threads */
+#define	NODE_OP_CRED		2	/* get uid/gid/groups/nonce/jail */
+#define	NODE_OP_RUSAGE		3	/* get live resource usage */
+#define	NODE_OP_GET_RLIMIT	4	/* get one resource limit */
+#define	NODE_OP_SET_RLIMIT	5	/* set one resource limit */
+#define	NODE_OP_GET_RACCT	6	/* get one racct counter */
+#define	NODE_OP_GET_NICE	7	/* get priority */
+#define	NODE_OP_SET_NICE	8	/* set priority */
+#define	NODE_OP_GET_AFFINITY	9	/* get cpuset mask */
+#define	NODE_OP_SET_AFFINITY	10	/* set cpuset mask */
+#define	NODE_OP_GET_PROCCTL	11	/* get procctl status */
+#define	NODE_OP_SET_PROCCTL	12	/* set procctl value */
+#define	NODE_OP_SET_CRED	13	/* set uid/gid/groups */
+#define	NODE_OP_SET_SESSION	14	/* create new session (setsid) */
+#define	NODE_OP_SET_PGRP	15	/* set process group (setpgid) */
+#define	NODE_OP_GET_UMASK	16	/* get file creation mask */
+#define	NODE_OP_SET_UMASK	17	/* set file creation mask */
+#define	NODE_OP_SET_LOGIN	18	/* set login name */
+
+/* Status codes */
+#define	NODE_STATUS_OK		0
+#define	NODE_STATUS_ERR		1
+#define	NODE_STATUS_DEAD	2	/* process has exited */
+#define	NODE_STATUS_EPERM	3	/* permission denied */
+
+/* Request header — all operations start with this. */
+struct node_request {
+	uint32_t	op;
+	uint32_t	resource;	/* RLIMIT_*, RACCT_*, procctl com */
+} __packed;
+
+/* For SET_RLIMIT */
+struct node_rlimit_set {
+	uint32_t	op;		/* NODE_OP_SET_RLIMIT */
+	uint32_t	resource;	/* RLIMIT_* */
+	int64_t		rlim_cur;
+	int64_t		rlim_max;
+} __packed;
+
+/* For SET_NICE */
+struct node_nice_set {
+	uint32_t	op;		/* NODE_OP_SET_NICE */
+	uint32_t	_pad;
+	int32_t		nice;
+	uint32_t	_pad2;
+} __packed;
+
+/* For SET_AFFINITY */
+#define	NODE_CPUSET_MAXSIZE	128	/* bytes, supports up to 1024 CPUs */
+
+struct node_affinity_set {
+	uint32_t	op;		/* NODE_OP_SET_AFFINITY */
+	uint32_t	size;		/* actual cpuset_t size in bytes */
+	uint8_t		mask[NODE_CPUSET_MAXSIZE];
+} __packed;
+
+/* For SET_PROCCTL */
+struct node_procctl_set {
+	uint32_t	op;		/* NODE_OP_SET_PROCCTL */
+	uint32_t	com;		/* PROC_* command */
+	int32_t		val;		/* command-specific value */
+	uint32_t	_pad;
+} __packed;
+
+/* For SET_CRED — set uid/gid/groups on target process */
+#define	NODE_CRED_MAXGROUPS	16
+
+#define	NODE_CREDF_UID		0x01
+#define	NODE_CREDF_RUID		0x02
+#define	NODE_CREDF_SVUID	0x04
+#define	NODE_CREDF_GID		0x08
+#define	NODE_CREDF_RGID		0x10
+#define	NODE_CREDF_SVGID	0x20
+#define	NODE_CREDF_GROUPS	0x40
+
+struct node_cred_set {
+	uint32_t	op;		/* NODE_OP_SET_CRED */
+	uint32_t	flags;		/* NODE_CREDF_* */
+	uint32_t	uid;
+	uint32_t	ruid;
+	uint32_t	svuid;
+	uint32_t	gid;
+	uint32_t	rgid;
+	uint32_t	svgid;
+	uint32_t	ngroups;
+	uint32_t	groups[NODE_CRED_MAXGROUPS];
+} __packed;
+
+/* For SET_PGRP */
+struct node_pgrp_set {
+	uint32_t	op;		/* NODE_OP_SET_PGRP */
+	uint32_t	_pad;
+	int32_t		pgid;		/* target pgid; 0 = own pid */
+	uint32_t	_pad2;
+} __packed;
+
+/* For SET_UMASK */
+struct node_umask_set {
+	uint32_t	op;		/* NODE_OP_SET_UMASK */
+	uint32_t	mask;		/* new umask (ALLPERMS bits) */
+} __packed;
+
+/* For SET_LOGIN */
+#define	NODE_MAXLOGNAME	17	/* MAXLOGNAME */
+
+struct node_login_set {
+	uint32_t	op;		/* NODE_OP_SET_LOGIN */
+	uint32_t	_pad;
+	char		name[NODE_MAXLOGNAME];
+	uint8_t		_pad2[3];	/* align to 4 bytes */
+} __packed;
+
+/* Reply: session/pgrp */
+struct node_session_reply {
+	uint32_t	status;
+	int32_t		sid;		/* new session id (= pid for setsid) */
+	int32_t		pgid;		/* new process group id */
+	uint32_t	_pad;
+} __packed;
+
+/* Reply: umask */
+struct node_umask_reply {
+	uint32_t	status;
+	uint32_t	mask;		/* current (or previous) mask */
+} __packed;
+
+/* Reply: login */
+struct node_login_reply {
+	uint32_t	status;
+	uint32_t	_pad;
+	char		name[NODE_MAXLOGNAME];
+	uint8_t		_pad2[3];
+} __packed;
+
+/* Reply: stat */
+struct node_stat_reply {
+	uint32_t	status;
+	int32_t		pid;
+	uint32_t	state;		/* PRS_NEW, PRS_NORMAL, PRS_ZOMBIE */
+	uint32_t	numthreads;
+	uint32_t	flags;		/* P_TRACED, P_JAILED, etc. subset */
+	uint32_t	_pad;
+	char		name[20];	/* MAXCOMLEN+1 */
+} __packed;
+
+/* Reply: cred */
+#define	NODE_MAXGROUPS	16
+
+struct node_cred_reply {
+	uint32_t	status;
+	uint32_t	uid;
+	uint32_t	gid;
+	uint32_t	ruid;
+	uint32_t	rgid;
+	int32_t		prison_id;
+	uint64_t	nonce;
+	uint32_t	ngroups;
+	uint32_t	groups[NODE_MAXGROUPS];
+} __packed;
+
+/* Reply: rusage */
+struct node_rusage_reply {
+	uint32_t	status;
+	uint32_t	_pad;
+	int64_t		utime_usec;	/* user time in microseconds */
+	int64_t		stime_usec;	/* system time in microseconds */
+	int64_t		maxrss;		/* max resident set size (KB) */
+	int64_t		nvcsw;		/* voluntary context switches */
+	int64_t		nivcsw;		/* involuntary context switches */
+	int64_t		inblock;	/* block input ops */
+	int64_t		oublock;	/* block output ops */
+} __packed;
+
+/* Reply: rlimit */
+struct node_rlimit_reply {
+	uint32_t	status;
+	uint32_t	resource;
+	int64_t		rlim_cur;
+	int64_t		rlim_max;
+} __packed;
+
+/* Reply: racct */
+struct node_racct_reply {
+	uint32_t	status;
+	uint32_t	resource;
+	int64_t		usage;
+	int64_t		limit;
+	int64_t		available;
+} __packed;
+
+/* Reply: nice */
+struct node_nice_reply {
+	uint32_t	status;
+	int32_t		nice;
+} __packed;
+
+/* Reply: affinity */
+struct node_affinity_reply {
+	uint32_t	status;
+	uint32_t	size;		/* actual cpuset_t size in bytes */
+	uint8_t		mask[NODE_CPUSET_MAXSIZE];
+} __packed;
+
+/* Reply: procctl */
+struct node_procctl_reply {
+	uint32_t	status;
+	uint32_t	com;
+	int32_t		val;
+	uint32_t	_pad;
+} __packed;
+
+#endif /* _DEV_CAP_RT_CAP_RT_NODE_PROTO_H_ */
