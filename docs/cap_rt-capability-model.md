@@ -199,16 +199,26 @@ Nested coalitions are supported with cycle detection.
 
 Per-process inspection and control.
 
-| Operation | What it does |
-|-----------|-------------|
-| STAT | Get pid, state, name, and thread count |
-| CRED | Get uid, gid, groups, nonce, and jail identity |
-| RUSAGE | Get live resource usage |
-| GET_RLIMIT / SET_RLIMIT | Read or update one rlimit |
-| GET_RACCT | Read one racct counter |
-| GET_NICE / SET_NICE | Read or update process priority |
-| GET_AFFINITY / SET_AFFINITY | Read or update CPU affinity |
-| GET_PROCCTL / SET_PROCCTL | Read or update procctl state |
+| Operation | What it does | Remote? |
+|-----------|-------------|---------|
+| STAT | Get pid, state, name, and thread count | yes |
+| CRED | Get uid, gid, groups, nonce, and jail identity | yes |
+| RUSAGE | Get live resource usage | yes |
+| GET_RLIMIT / SET_RLIMIT | Read or update one rlimit | yes |
+| GET_RACCT | Read one racct counter | yes |
+| GET_NICE / SET_NICE | Read or update process priority | yes |
+| GET_AFFINITY / SET_AFFINITY | Read or update CPU affinity | yes |
+| GET_PROCCTL / SET_PROCCTL | Read or update procctl state | yes |
+| SET_CRED | Set uid/gid/groups (via setcred) | yes |
+| GET_UMASK / SET_UMASK | Read or update file creation mask | yes |
+| SET_LOGIN | Set session login name | yes |
+| SET_SESSION | Create new session (setsid) | **self only** |
+| SET_PGRP | Set process group (setpgid) | **self only** |
+
+SET_SESSION and SET_PGRP are self-only because the kernel's
+`enterpgrp()` asserts `p == curproc` for session creation.  Remote
+targets get EOPNOTSUPP.  An init daemon should have the child call
+these on itself before exec.
 
 For `node`, an attached procdesc identifies the target process. Its
 `CAP_PD*` rights are not treated as an independent authority filter.

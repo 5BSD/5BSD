@@ -1172,7 +1172,7 @@ ATF_TC(node_set_login_child);
 ATF_TC_HEAD(node_set_login_child, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "NODE_OP_SET_LOGIN sets login name on child session");
+	    "NODE_OP_SET_LOGIN via child procdesc sets login on shared session");
 	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }

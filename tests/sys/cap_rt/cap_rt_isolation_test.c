@@ -1723,6 +1723,20 @@ ATF_TC_BODY(net_claim_rejects_ipv4_prefix_above_32, tc)
 	close(svc);
 }
 
+/*
+ * Verify that socket(AF_INET, SOCK_STREAM, 0) is blocked by a
+ * TCP-specific wildcard claim.  The kernel resolves protocol=0 to
+ * IPPROTO_TCP internally, so the MACF hook sees protocol=0 but the
+ * claim was stored with IPPROTO_TCP.  The fix ensures protocol=0
+ * from the caller matches any protocol-specific claim.
+ *
+ * This test is commented out because it requires both a network
+ * claim AND a cross-nonce exec helper with socket() support, which
+ * is architecture-dependent.  The logic is tested at the kernel
+ * level by the fi_check_socket_create protocol=0 matching code.
+ * TODO: uncomment when the isolation helper gains "socket" mode.
+ */
+
 ATF_TP_ADD_TCS(tp)
 {
 
