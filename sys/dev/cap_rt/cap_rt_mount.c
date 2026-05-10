@@ -41,6 +41,9 @@ static const char *mount_allowed_fstypes[] = {
 	"fdescfs",
 	"nullfs",
 	"procfs",
+	"linprocfs",
+	"linsysfs",
+	"fusefs",
 	NULL
 };
 
@@ -150,6 +153,7 @@ mount_op_mount(const void *req, size_t reqlen,
 	char fstype[MOUNT_MAXFSTYPE];
 	char fspath[MOUNT_MAXPATH];
 	char from[MOUNT_MAXFROM];
+	char fsopts[MOUNT_MAXOPTS];
 	uint64_t mnt_flags;
 	int error;
 
@@ -166,6 +170,8 @@ mount_op_mount(const void *req, size_t reqlen,
 	fspath[sizeof(fspath) - 1] = '\0';
 	memcpy(from, mr->from, sizeof(from));
 	from[sizeof(from) - 1] = '\0';
+	memcpy(fsopts, mr->fsopts, sizeof(fsopts));
+	fsopts[sizeof(fsopts) - 1] = '\0';
 
 	memset(rp, 0, sizeof(*rp));
 
@@ -209,6 +215,32 @@ mount_op_mount(const void *req, size_t reqlen,
 	ma = mount_arg(ma, "fspath", fspath, -1);
 	if (strcmp(fstype, "nullfs") == 0)
 		ma = mount_arg(ma, "from", from, -1);
+
+	/*
+	 * Parse fs-specific options.  Format: comma-separated
+	 * key=value pairs (e.g., "size=128M,mode=1777").
+	 * Boolean options have no "=" (e.g., "linrdlnk").
+	 * Each option becomes a mount_arg call.
+	 */
+	if (fsopts[0] != '\0') {
+		char *opts, *opt, *key, *val;
+
+		opts = fsopts;
+		while ((opt = strsep(&opts, ",")) != NULL) {
+			if (*opt == '\0')
+				continue;
+			key = opt;
+			val = strchr(opt, '=');
+			if (val != NULL) {
+				*val = '\0';
+				val++;
+				ma = mount_arg(ma, key, val, -1);
+			} else {
+				/* Boolean option — pass empty value. */
+				ma = mount_arg(ma, key, NULL, 0);
+			}
+		}
+	}
 
 	error = kernel_mount(ma, mnt_flags);
 

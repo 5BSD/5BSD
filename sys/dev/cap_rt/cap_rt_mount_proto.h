@@ -27,6 +27,7 @@
 #define	MOUNT_MAXPATH		256
 #define	MOUNT_MAXFSTYPE		16
 #define	MOUNT_MAXFROM		256	/* source path for nullfs */
+#define	MOUNT_MAXOPTS		256	/* fs-specific options string */
 
 /* Safe mount flags (subset of MNT_*) */
 #define	MOUNT_F_RDONLY		0x0001	/* MNT_RDONLY */
@@ -35,13 +36,23 @@
 #define	MOUNT_F_NOATIME		0x0008	/* MNT_NOATIME */
 #define	MOUNT_F_NOSYMFOLLOW	0x0010	/* MNT_NOSYMFOLLOW */
 
-/* Request: mount */
+/*
+ * Request: mount
+ *
+ * fsopts is a comma-separated string of fs-specific options:
+ *   tmpfs:  "size=128M,mode=1777"
+ *   devfs:  "ruleset=4"
+ *   fdescfs: "linrdlnk"
+ *   nullfs: (use from field instead)
+ *   Empty string = no fs-specific options.
+ */
 struct mount_request {
 	uint32_t	op;		/* MOUNT_OP_MOUNT */
 	uint32_t	flags;		/* MOUNT_F_* */
 	char		fstype[MOUNT_MAXFSTYPE];
 	char		fspath[MOUNT_MAXPATH];
 	char		from[MOUNT_MAXFROM];	/* source for nullfs; empty otherwise */
+	char		fsopts[MOUNT_MAXOPTS];	/* fs-specific options */
 } __packed;
 
 /* Request: unmount */
