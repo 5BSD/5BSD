@@ -102,6 +102,7 @@ void	 procdesc_new(struct proc *, int);
 void	 procdesc_finit(struct procdesc *, struct file *);
 pid_t	 procdesc_pid(struct file *);
 void	 procdesc_reap(struct proc *);
+void	 procdesc_knote(struct proc *, int);
 
 int	 procdesc_falloc(struct thread *, struct file **, int *, int,
 	    struct filecaps *);

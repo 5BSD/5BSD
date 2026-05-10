@@ -329,6 +329,27 @@ procdesc_exit(struct proc *p)
 }
 
 /*
+ * procdesc_knote() - deliver a kqueue event to procdesc listeners.
+ * Used by fork and exec paths to notify NOTE_FORK and NOTE_EXEC.
+ * Caller must hold PROC_LOCK(p).
+ */
+void
+procdesc_knote(struct proc *p, int event)
+{
+	struct procdesc *pd;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	pd = p->p_procdesc;
+	if (pd == NULL)
+		return;
+
+	PROCDESC_LOCK(pd);
+	KNOTE_LOCKED(&pd->pd_selinfo.si_note, event);
+	PROCDESC_UNLOCK(pd);
+}
+
+/*
  * When a process descriptor is reaped, perhaps as a result of close(), release
  * the process's reference on the process descriptor.
  */

@@ -785,6 +785,7 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 	 * Tell any interested parties about the new process.
 	 */
 	knote_fork(p1->p_klist, p2->p_pid);
+	procdesc_knote(p1, NOTE_FORK);
 
 	/*
 	 * Now can be swapped.

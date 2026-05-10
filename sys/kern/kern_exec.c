@@ -54,6 +54,7 @@
 #include <sys/namei.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
+#include <sys/procdesc.h>
 #include <sys/ptrace.h>
 #include <sys/reg.h>
 #include <sys/resourcevar.h>
@@ -909,6 +910,7 @@ interpret:
 	 * as we're now a bona fide freshly-execed process.
 	 */
 	KNOTE_LOCKED(p->p_klist, NOTE_EXEC);
+	procdesc_knote(p, NOTE_EXEC);
 	p->p_flag &= ~P_INEXEC;
 
 	/* clear "fork but no exec" flag, as we _are_ execing */
