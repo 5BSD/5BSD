@@ -254,6 +254,23 @@ Bidirectional process-to-process messaging.
 Messages sent to one end appear on the other.  Revoking one end
 delivers ECONNRESET to the peer.
 
+### mount (sync, CAP_RT_CALL)
+
+Capability-based filesystem mounting for sandboxed init daemons.
+
+| Operation | What it does |
+|-----------|-------------|
+| MOUNT_OP_MOUNT | Mount a filesystem (fstype, path, flags) |
+| MOUNT_OP_UNMOUNT | Unmount a filesystem path |
+
+Whitelisted fstypes: tmpfs, devfs, fdescfs, nullfs, procfs.
+Safe flags: RDONLY, NOEXEC, NOSUID, NOATIME, NOSYMFOLLOW.
+Path validation rejects relative paths and `..` traversal components.
+
+Runs in the caller's thread context, so mounts are scoped to the
+caller's jail namespace.  The jail's `allow.mount.*` parameters
+provide a second layer of enforcement.
+
 ## What a sandboxed process CANNOT do
 
 1. **Open new /dev/cap_rt connections** — must open before cap_enter,

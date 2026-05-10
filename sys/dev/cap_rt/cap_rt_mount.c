@@ -25,6 +25,7 @@
 #include <sys/mount.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
+#include <sys/syscallsubr.h>
 
 #include "cap_rt.h"
 #include "cap_rt_mount_proto.h"
@@ -238,6 +239,13 @@ mount_op_unmount(const void *req, size_t reqlen,
 	fspath[sizeof(fspath) - 1] = '\0';
 
 	if (!mount_path_valid(fspath, sizeof(fspath))) {
+		memset(rp, 0, sizeof(*rp));
+		rp->status = MOUNT_STATUS_ERR;
+		return (0);
+	}
+
+	/* Reject unknown unmount flags. */
+	if (ur->flags & ~MOUNT_F_FORCE) {
 		memset(rp, 0, sizeof(*rp));
 		rp->status = MOUNT_STATUS_ERR;
 		return (0);
