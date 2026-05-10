@@ -63,6 +63,7 @@ mount_fstype_allowed(const char *fstype)
 static bool
 mount_path_valid(const char *path, size_t maxlen)
 {
+	const char *p;
 	size_t len;
 
 	/* Must be null-terminated within the buffer. */
@@ -77,9 +78,17 @@ mount_path_valid(const char *path, size_t maxlen)
 	if (path[0] != '/')
 		return (false);
 
-	/* Reject ".." components. */
-	if (strstr(path, "..") != NULL)
-		return (false);
+	/*
+	 * Reject ".." as a path component.  Only match when ".." is
+	 * bounded by '/' or string boundaries — not when it appears
+	 * as part of a directory name like "..hidden".
+	 */
+	for (p = path; *p != '\0'; p++) {
+		if (p[0] == '.' && p[1] == '.' &&
+		    (p == path || p[-1] == '/') &&
+		    (p[2] == '/' || p[2] == '\0'))
+			return (false);
+	}
 
 	return (true);
 }
@@ -198,7 +207,7 @@ mount_op_mount(const void *req, size_t reqlen,
 	ma = mount_arg(ma, "fstype", fstype, -1);
 	ma = mount_arg(ma, "fspath", fspath, -1);
 	if (strcmp(fstype, "nullfs") == 0)
-		ma = mount_arg(ma, "target", from, -1);
+		ma = mount_arg(ma, "from", from, -1);
 
 	error = kernel_mount(ma, mnt_flags);
 

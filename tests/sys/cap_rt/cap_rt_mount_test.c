@@ -153,6 +153,42 @@ ATF_TC_BODY(mount_rejects_dotdot_path, tc)
 	close(fd);
 }
 
+ATF_TC(mount_allows_dotdot_in_name);
+ATF_TC_HEAD(mount_allows_dotdot_in_name, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "MOUNT_OP_MOUNT accepts paths with .. in directory names");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_mount");
+}
+ATF_TC_BODY(mount_allows_dotdot_in_name, tc)
+{
+	struct mount_request req;
+	struct mount_reply reply;
+	int fd;
+
+	fd = mount_connect();
+
+	/*
+	 * "/tmp/..hidden" has ".." in the directory name, not as a
+	 * path traversal component.  This should NOT be rejected.
+	 * The mount will likely fail with ENOENT (dir doesn't exist),
+	 * but it should not be rejected by path validation.
+	 */
+	memset(&req, 0, sizeof(req));
+	req.op = MOUNT_OP_MOUNT;
+	strlcpy(req.fstype, "tmpfs", sizeof(req.fstype));
+	strlcpy(req.fspath, "/tmp/..hidden", sizeof(req.fspath));
+	ATF_REQUIRE(mount_call_raw(fd, &req, sizeof(req),
+	    &reply, sizeof(reply)) == 0);
+	/* Should pass validation (not STATUS_ERR from path check).
+	 * Will fail with ENOENT or EPERM, not the validation error. */
+	ATF_CHECK(reply.status != MOUNT_STATUS_ERR ||
+	    reply.status == MOUNT_STATUS_ENOENT ||
+	    reply.status == MOUNT_STATUS_EPERM);
+
+	close(fd);
+}
+
 ATF_TC(mount_rejects_bad_flags);
 ATF_TC_HEAD(mount_rejects_bad_flags, tc)
 {
@@ -270,6 +306,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mount_rejects_bad_fstype);
 	ATF_TP_ADD_TC(tp, mount_rejects_relative_path);
 	ATF_TP_ADD_TC(tp, mount_rejects_dotdot_path);
+	ATF_TP_ADD_TC(tp, mount_allows_dotdot_in_name);
 	ATF_TP_ADD_TC(tp, mount_rejects_bad_flags);
 	ATF_TP_ADD_TC(tp, mount_bad_op);
 
