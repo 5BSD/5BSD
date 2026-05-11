@@ -46,22 +46,43 @@ MALLOC_DEFINE(M_CAP_RT, "cap_rt", "cap_rt capability message interface");
 SDT_PROVIDER_DEFINE(cap_rt);
 SDT_PROBE_DEFINE3(cap_rt, , , connect,
     "const char *", "uint64_t", "pid_t");
+SDT_PROBE_DEFINE5(cap_rt, , , connect__done,
+    "const char *", "uint64_t", "pid_t", "int", "sbintime_t");
 SDT_PROBE_DEFINE3(cap_rt, , , send,
     "const char *", "uint64_t", "uint32_t");
+SDT_PROBE_DEFINE6(cap_rt, , , send__done,
+    "const char *", "uint64_t", "uint32_t", "uint32_t", "int",
+    "sbintime_t");
 SDT_PROBE_DEFINE3(cap_rt, , , recv,
     "const char *", "uint64_t", "uint32_t");
+SDT_PROBE_DEFINE6(cap_rt, , , recv__done,
+    "const char *", "uint64_t", "uint32_t", "uint32_t", "int",
+    "sbintime_t");
 SDT_PROBE_DEFINE2(cap_rt, , , dispatch,
     "const char *", "uint64_t");
+SDT_PROBE_DEFINE4(cap_rt, , , dispatch__done,
+    "const char *", "uint64_t", "int", "sbintime_t");
 SDT_PROBE_DEFINE3(cap_rt, , , reply,
     "const char *", "uint64_t", "size_t");
+SDT_PROBE_DEFINE5(cap_rt, , , reply__done,
+    "const char *", "uint64_t", "size_t", "int", "sbintime_t");
 SDT_PROBE_DEFINE3(cap_rt, , , notify,
     "const char *", "uint64_t", "size_t");
+SDT_PROBE_DEFINE5(cap_rt, , , notify__done,
+    "const char *", "uint64_t", "size_t", "int", "sbintime_t");
 SDT_PROBE_DEFINE3(cap_rt, , , call,
     "const char *", "uint64_t", "uint32_t");
+SDT_PROBE_DEFINE6(cap_rt, , , call__done,
+    "const char *", "uint64_t", "uint32_t", "uint32_t", "int",
+    "sbintime_t");
 SDT_PROBE_DEFINE3(cap_rt, , , revoke,
     "const char *", "uint64_t", "int");
+SDT_PROBE_DEFINE4(cap_rt, , , revoke__done,
+    "const char *", "uint64_t", "int", "sbintime_t");
 SDT_PROBE_DEFINE2(cap_rt, , , close,
     "const char *", "uint64_t");
+SDT_PROBE_DEFINE5(cap_rt, , , queue__pressure,
+    "const char *", "uint64_t", "const char *", "int", "int");
 
 struct sx cap_rt_registry_lock;
 struct cap_rt_service_list cap_rt_services =
@@ -471,22 +492,32 @@ cap_rt_open(struct cdev *dev __unused, int oflags __unused,
 static int
 cap_rt_ioctl_connect(struct cap_rt_connect_args *args, struct thread *td)
 {
+	const char *svc_name __unused;
 	struct cap_rt_service *svc;
+	sbintime_t start __unused;
 	uint64_t badge;
 	int error;
 
+	start = getsbinuptime();
+	svc_name = "<invalid>";
 	if (args->flags != 0 || (args->_reserved[0] | args->_reserved[1] |
-	    args->_reserved[2] | args->_reserved[3]) != 0)
-		return (EINVAL);
+	    args->_reserved[2] | args->_reserved[3]) != 0) {
+		error = EINVAL;
+		goto out;
+	}
 	args->name[CAP_RT_MAXNAME - 1] = '\0';
-	if (args->name[0] == '\0')
-		return (EINVAL);
+	svc_name = args->name;
+	if (args->name[0] == '\0') {
+		error = EINVAL;
+		goto out;
+	}
 
 	sx_slock(&cap_rt_registry_lock);
 	svc = cap_rt_service_lookup(args->name);
 	if (svc == NULL || (svc->csvc_flags & CAP_RT_SVCF_DESTROYING)) {
 		sx_sunlock(&cap_rt_registry_lock);
-		return (ENOENT);
+		error = ENOENT;
+		goto out;
 	}
 	/* Hold a refcount so svc stays alive across co_connect. */
 	refcount_acquire(&svc->csvc_refcnt);
@@ -508,6 +539,9 @@ cap_rt_ioctl_connect(struct cap_rt_connect_args *args, struct thread *td)
 	 * Drop the one we took for the co_connect window.
 	 */
 	refcount_release(&svc->csvc_refcnt);
+out:
+	SDT_PROBE5(cap_rt, , , connect__done, svc_name, badge,
+	    td->td_proc->p_pid, error, getsbinuptime() - start);
 	return (error);
 }
 

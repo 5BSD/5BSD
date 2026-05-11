@@ -45,9 +45,13 @@ MALLOC_DECLARE(M_CAP_RT);
 
 SDT_PROVIDER_DECLARE(cap_rt);
 SDT_PROBE_DECLARE(cap_rt, , , send);
+SDT_PROBE_DECLARE(cap_rt, , , send__done);
 SDT_PROBE_DECLARE(cap_rt, , , recv);
+SDT_PROBE_DECLARE(cap_rt, , , recv__done);
 SDT_PROBE_DECLARE(cap_rt, , , call);
+SDT_PROBE_DECLARE(cap_rt, , , call__done);
 SDT_PROBE_DECLARE(cap_rt, , , close);
+SDT_PROBE_DECLARE(cap_rt, , , queue__pressure);
 
 static fo_ioctl_t	cap_rt_instance_ioctl;
 static fo_kqfilter_t	cap_rt_instance_kqfilter;
@@ -144,6 +148,12 @@ cap_rt_instance_enqueue_rx(struct cap_rt_instance *s, struct cap_rt_msg *msg)
 		return (ECONNRESET);
 	}
 	if (s->ci_rxqlen >= s->ci_rxqlimit) {
+		svc = s->ci_service;
+		if (svc != NULL) {
+			SDT_PROBE5(cap_rt, , , queue__pressure,
+			    svc->csvc_name, s->ci_badge, "rx",
+			    s->ci_rxqlen, s->ci_rxqlimit);
+		}
 		cap_rt_msg_free(msg);
 		return (EAGAIN);
 	}
@@ -172,27 +182,44 @@ cap_rt_instance_do_sendmsg(struct cap_rt_instance *s,
 {
 	struct cap_rt_service *svc;
 	struct cap_rt_msg *msg;
+	sbintime_t start __unused;
+	const char *svc_name __unused;
 	int fdbuf[CAP_RT_MAX_FDS];
 	int error, i;
 
-	if (args->flags != 0 || (args->_reserved[0] | args->_reserved[1] | args->_reserved[2] | args->_reserved[3]) != 0)
-		return (EINVAL);
+	start = getsbinuptime();
+	svc_name = "<none>";
+	error = 0;
+	if (args->flags != 0 || (args->_reserved[0] | args->_reserved[1] |
+	    args->_reserved[2] | args->_reserved[3]) != 0) {
+		error = EINVAL;
+		goto out;
+	}
 
 	svc = s->ci_service;
-	if (svc == NULL || svc->csvc_ops->co_handler == NULL)
-		return (EOPNOTSUPP);
+	if (svc != NULL)
+		svc_name = svc->csvc_name;
+	if (svc == NULL || svc->csvc_ops->co_handler == NULL) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
 
 	mtx_lock(&s->ci_mtx);
 	if (s->ci_flags & CAP_RT_SF_DEAD) {
 		mtx_unlock(&s->ci_mtx);
-		return (EPIPE);
+		error = EPIPE;
+		goto out;
 	}
 	mtx_unlock(&s->ci_mtx);
 
-	if (args->payload_len > CAP_RT_MSG_PAYLOAD_SIZE)
-		return (EMSGSIZE);
-	if (args->nfds > CAP_RT_MAX_FDS)
-		return (EINVAL);
+	if (args->payload_len > CAP_RT_MSG_PAYLOAD_SIZE) {
+		error = EMSGSIZE;
+		goto out;
+	}
+	if (args->nfds > CAP_RT_MAX_FDS) {
+		error = EINVAL;
+		goto out;
+	}
 
 	/* Allocate fixed-size message — one allocation, no malloc. */
 	msg = uma_zalloc(cap_rt_msg_zone, M_WAITOK | M_ZERO);
@@ -203,7 +230,7 @@ cap_rt_instance_do_sendmsg(struct cap_rt_instance *s,
 		    args->payload_len);
 		if (error != 0) {
 			uma_zfree(cap_rt_msg_zone, msg);
-			return (error);
+			goto out;
 		}
 	}
 	msg->cm_datalen = args->payload_len;
@@ -213,7 +240,7 @@ cap_rt_instance_do_sendmsg(struct cap_rt_instance *s,
 		error = copyin(args->fds, fdbuf, args->nfds * sizeof(int));
 		if (error != 0) {
 			uma_zfree(cap_rt_msg_zone, msg);
-			return (error);
+			goto out;
 		}
 		for (i = 0; i < (int)args->nfds; i++) {
 			error = fget_cap(td, fdbuf[i], &cap_no_rights,
@@ -239,7 +266,7 @@ sendmsg_fd_err:
 			filecaps_free(&msg->cm_fcaps[i]);
 		}
 		uma_zfree(cap_rt_msg_zone, msg);
-		return (error);
+		goto out;
 	}
 
 sendmsg_build:
@@ -260,6 +287,9 @@ sendmsg_build:
 		SDT_PROBE3(cap_rt, , , send,
 		    svc->csvc_name, s->ci_badge, args->payload_len);
 
+out:
+	SDT_PROBE6(cap_rt, , , send__done, svc_name, s->ci_badge,
+	    args->payload_len, args->nfds, error, getsbinuptime() - start);
 	return (error);
 }
 
@@ -268,17 +298,25 @@ cap_rt_instance_do_recvmsg(struct cap_rt_instance *s, struct file *fp,
     struct cap_rt_recvmsg_args *args, struct thread *td)
 {
 	struct cap_rt_msg *msg;
+	sbintime_t start __unused;
+	const char *svc_name __unused;
 	int fdbuf[CAP_RT_MAX_FDS];
 	int error, i, nfds_out;
 
-	if (args->flags != 0 || (args->_reserved[0] | args->_reserved[1] | args->_reserved[2] | args->_reserved[3]) != 0)
-		return (EINVAL);
+	start = getsbinuptime();
+	svc_name = (s->ci_service != NULL) ? s->ci_service->csvc_name : "<none>";
+	error = 0;
+	if (args->flags != 0 || (args->_reserved[0] | args->_reserved[1] | args->_reserved[2] | args->_reserved[3]) != 0) {
+		error = EINVAL;
+		goto out;
+	}
 
 	mtx_lock(&s->ci_mtx);
 	while (STAILQ_EMPTY(&s->ci_txq)) {
 		if (s->ci_flags & CAP_RT_SF_REVOKED) {
 			mtx_unlock(&s->ci_mtx);
-			return (ECONNRESET);
+			error = ECONNRESET;
+			goto out;
 		}
 		if (s->ci_flags & CAP_RT_SF_CLOSED) {
 			mtx_unlock(&s->ci_mtx);
@@ -287,17 +325,19 @@ cap_rt_instance_do_recvmsg(struct cap_rt_instance *s, struct file *fp,
 			args->badge = 0;
 			args->reply_token = 0;
 			memset(&args->trailer, 0, sizeof(args->trailer));
-			return (0);
+			error = 0;
+			goto out;
 		}
 		if (fp->f_flag & FNONBLOCK) {
 			mtx_unlock(&s->ci_mtx);
-			return (EAGAIN);
+			error = EAGAIN;
+			goto out;
 		}
 		error = msleep(&s->ci_txq, &s->ci_mtx,
 		    PCATCH, "cap_rtrv", 0);
 		if (error != 0) {
 			mtx_unlock(&s->ci_mtx);
-			return (error);
+			goto out;
 		}
 	}
 
@@ -312,18 +352,21 @@ cap_rt_instance_do_recvmsg(struct cap_rt_instance *s, struct file *fp,
 	if (msg->cm_datalen > args->payload_len) {
 		args->payload_len = msg->cm_datalen;
 		mtx_unlock(&s->ci_mtx);
-		return (EMSGSIZE);
+		error = EMSGSIZE;
+		goto out;
 	}
 	nfds_out = msg->cm_nfds;
 	if (nfds_out > 0 && args->fds == NULL) {
 		args->nfds = nfds_out;
 		mtx_unlock(&s->ci_mtx);
-		return (EMSGSIZE);
+		error = EMSGSIZE;
+		goto out;
 	}
 	if (nfds_out > (int)args->nfds) {
 		args->nfds = nfds_out;
 		mtx_unlock(&s->ci_mtx);
-		return (EMSGSIZE);
+		error = EMSGSIZE;
+		goto out;
 	}
 
 	STAILQ_REMOVE_HEAD(&s->ci_txq, cm_link);
@@ -336,7 +379,7 @@ cap_rt_instance_do_recvmsg(struct cap_rt_instance *s, struct file *fp,
 		error = copyout(msg->cm_data, args->payload, msg->cm_datalen);
 	if (error != 0) {
 		cap_rt_msg_free(msg);
-		return (error);
+		goto out;
 	}
 	args->payload_len = msg->cm_datalen;
 
@@ -366,7 +409,7 @@ cap_rt_instance_do_recvmsg(struct cap_rt_instance *s, struct file *fp,
 				kern_close(td, fdbuf[i]);
 			cap_rt_msg_free(msg);
 			args->nfds = 0;
-			return (error);
+			goto out;
 		}
 	}
 	if (nfds_out > 0 && args->fds != NULL) {
@@ -376,7 +419,7 @@ cap_rt_instance_do_recvmsg(struct cap_rt_instance *s, struct file *fp,
 				kern_close(td, fdbuf[i]);
 			cap_rt_msg_free(msg);
 			args->nfds = 0;
-			return (error);
+			goto out;
 		}
 	}
 	args->nfds = nfds_out;
@@ -386,7 +429,10 @@ cap_rt_instance_do_recvmsg(struct cap_rt_instance *s, struct file *fp,
 		    s->ci_service->csvc_name, s->ci_badge, args->payload_len);
 
 	cap_rt_msg_free(msg);
-	return (0);
+out:
+	SDT_PROBE6(cap_rt, , , recv__done, svc_name, s->ci_badge,
+	    args->payload_len, args->nfds, error, getsbinuptime() - start);
+	return (error);
 }
 
 static int
@@ -421,6 +467,9 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 	case CAP_RT_CALL: {
 		struct cap_rt_call_args *ca = (struct cap_rt_call_args *)data;
 		struct cap_rt_service *svc = s->ci_service;
+		sbintime_t start __unused;
+		bool held;
+		const char *svc_name __unused;
 		struct file **files;
 		struct filecaps *call_fcaps;
 		struct file *out_fds[CAP_RT_MAX_FDS];
@@ -430,22 +479,33 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		int out_nfds;
 		int err, i;
 
-		if (s->ci_restricted & CAP_RT_RF_NO_CALL)
-			return (EACCES);
+		start = getsbinuptime();
+		held = false;
+		svc_name = (svc != NULL) ? svc->csvc_name : "<none>";
+		if (s->ci_restricted & CAP_RT_RF_NO_CALL) {
+			err = EACCES;
+			goto call_done;
+		}
 		if (ca->flags != 0 || (ca->_reserved[0] |
-		    ca->_reserved[1]) != 0)
-			return (EINVAL);
-		if (svc == NULL || svc->csvc_ops->co_call == NULL)
-			return (EOPNOTSUPP);
-		if (ca->req_nfds > CAP_RT_MAX_FDS)
-			return (EINVAL);
-		if (ca->reply_nfds > CAP_RT_MAX_FDS)
-			return (EINVAL);
+		    ca->_reserved[1]) != 0) {
+			err = EINVAL;
+			goto call_done;
+		}
+		if (svc == NULL || svc->csvc_ops->co_call == NULL) {
+			err = EOPNOTSUPP;
+			goto call_done;
+		}
+		if (ca->req_nfds > CAP_RT_MAX_FDS ||
+		    ca->reply_nfds > CAP_RT_MAX_FDS) {
+			err = EINVAL;
+			goto call_done;
+		}
 
 		mtx_lock(&s->ci_mtx);
 		if (s->ci_flags & CAP_RT_SF_DEAD) {
 			mtx_unlock(&s->ci_mtx);
-			return (ECONNRESET);
+			err = ECONNRESET;
+			goto call_done;
 		}
 		/*
 		 * Hold instance alive and track as inflight so revoke
@@ -454,6 +514,7 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		 * concurrently; the service serializes if needed.
 		 */
 		cap_rt_instance_hold(s);
+		held = true;
 		s->ci_inflight++;
 		mtx_unlock(&s->ci_mtx);
 
@@ -617,7 +678,11 @@ call_out:
 			wakeup(&s->ci_inflight);
 		mtx_unlock(&s->ci_mtx);
 
-		cap_rt_instance_rele(s);
+		if (held)
+			cap_rt_instance_rele(s);
+call_done:
+		SDT_PROBE6(cap_rt, , , call__done, svc_name, s->ci_badge,
+		    ca->req_len, ca->reply_len, err, getsbinuptime() - start);
 		return (err);
 	}
 	case CAP_RT_GETINFO: {

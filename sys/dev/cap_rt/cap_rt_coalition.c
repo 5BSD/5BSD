@@ -86,6 +86,8 @@ SDT_PROBE_DEFINE1(cap_rt_coalition, , , close, "u_int");
 SDT_PROBE_DEFINE1(cap_rt_coalition, , , member__exit, "pid_t");
 SDT_PROBE_DEFINE1(cap_rt_coalition, , , leader__exit, "pid_t");
 SDT_PROBE_DEFINE2(cap_rt_coalition, , , fork__inherit, "pid_t", "pid_t");
+SDT_PROBE_DEFINE3(cap_rt_coalition, , , call__done,
+    "uint32_t", "int", "sbintime_t");
 
 MALLOC_DEFINE(M_COALITION, "cap_rt_coalition",
     "cap_rt coalition structures");
@@ -2007,19 +2009,32 @@ coalition_call(struct cap_rt_instance *s,
 	struct coalition *co;
 	const struct coalition_req_hdr *hdr;
 	struct coalition_reply *rpl;
+	sbintime_t start __unused;
+	uint32_t op __unused;
+	int error;
 	size_t reply_avail;
 
+	start = getsbinuptime();
+	op = 0;
+	error = 0;
 	co = cap_rt_instance_get_priv(s);
-	if (co == NULL)
-		return (EBADF);
+	if (co == NULL) {
+		error = EBADF;
+		goto out;
+	}
 
-	if (reqlen < sizeof(struct coalition_req_hdr))
-		return (EINVAL);
+	if (reqlen < sizeof(struct coalition_req_hdr)) {
+		error = EINVAL;
+		goto out;
+	}
 	hdr = req;
+	op = hdr->op;
 
 	/* All replies are at least coalition_reply sized */
-	if (*replylenp < sizeof(struct coalition_reply))
-		return (EMSGSIZE);
+	if (*replylenp < sizeof(struct coalition_reply)) {
+		error = EMSGSIZE;
+		goto out;
+	}
 
 	reply_avail = *replylenp;
 	rpl = reply;
@@ -2043,7 +2058,8 @@ coalition_call(struct cap_rt_instance *s,
 
 		if (reply_avail < sizeof(*esr)) {
 			*replylenp = sizeof(*esr);
-			return (EMSGSIZE);
+			error = EMSGSIZE;
+			goto out;
 		}
 		esr = reply;
 		esr->status = 0;
@@ -2075,7 +2091,8 @@ coalition_call(struct cap_rt_instance *s,
 
 		if (reply_avail < sizeof(*sr)) {
 			*replylenp = sizeof(*sr);
-			return (EMSGSIZE);
+			error = EMSGSIZE;
+			goto out;
 		}
 		sr = reply;
 		*replylenp = sizeof(*sr);
@@ -2481,7 +2498,10 @@ coalition_call(struct cap_rt_instance *s,
 		break;
 	}
 
-	return (0);
+out:
+	SDT_PROBE3(cap_rt_coalition, , , call__done, op, error,
+	    getsbinuptime() - start);
+	return (error);
 }
 
 static void

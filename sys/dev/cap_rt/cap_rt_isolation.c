@@ -31,6 +31,7 @@
 #include <sys/rwlock.h>
 #include <sys/malloc.h>
 #include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/vnode.h>
 #include <sys/file.h>
 #include <sys/proc.h>
@@ -49,6 +50,10 @@
 
 static MALLOC_DEFINE(M_FILE_ISOLATION, "cap_rt_fi",
     "cap_rt file isolation");
+
+SDT_PROVIDER_DEFINE(cap_rt_isolation);
+SDT_PROBE_DEFINE3(cap_rt_isolation, , , deny,
+    "const char *", "uint64_t", "uint64_t");
 
 /* ----------------------------------------------------------------
  * Isolation hash table
@@ -135,6 +140,7 @@ fi_check_vp(struct ucred *cred, struct vnode *vp)
 {
 	struct fi_claim *c;
 	uint64_t caller_nonce;
+	uint64_t owner_nonce __unused;
 
 	if (atomic_load_acq_int(&fi_claim_count) == 0)
 		return (0);
@@ -151,7 +157,10 @@ fi_check_vp(struct ucred *cred, struct vnode *vp)
 		rw_runlock(&fi_lock);
 		return (0);
 	}
+	owner_nonce = c->fi_nonce;
 	rw_runlock(&fi_lock);
+	SDT_PROBE3(cap_rt_isolation, , , deny, "vnode",
+	    owner_nonce, caller_nonce);
 	return (EACCES);
 }
 
@@ -293,6 +302,7 @@ fi_check_lookup(struct ucred *cred, struct vnode *dvp,
 {
 	struct fi_claim *c;
 	uint64_t caller_nonce;
+	uint64_t owner_nonce __unused;
 
 	/*
 	 * Separate fast-path counter for directory claims.
@@ -315,7 +325,10 @@ fi_check_lookup(struct ucred *cred, struct vnode *dvp,
 		rw_runlock(&fi_lock);
 		return (0);
 	}
+	owner_nonce = c->fi_nonce;
 	rw_runlock(&fi_lock);
+	SDT_PROBE3(cap_rt_isolation, , , deny, "lookup",
+	    owner_nonce, caller_nonce);
 	return (EACCES);
 }
 
@@ -517,6 +530,7 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 		int nbuckets = 4, i, j;
 		bool found_claim = false;
 		bool dup;
+		uint64_t denied_nonce __unused = 0;
 
 		buckets[0] = fi_net_hash_fn(port, domain);
 		buckets[1] = fi_net_hash_fn(0, domain);
@@ -557,11 +571,14 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 					return (0);
 				}
 				found_claim = true;
+				denied_nonce = nc->fn_nonce;
 			}
 		}
 
 		if (found_claim) {
 			rw_runlock(&fi_net_lock);
+			SDT_PROBE3(cap_rt_isolation, , , deny, "net",
+			    denied_nonce, caller_nonce);
 			return (EACCES);
 		}
 	}
@@ -628,6 +645,8 @@ fi_check_socket_create(struct ucred *cred, int domain, int type __unused,
 					return (0);
 				}
 				rw_runlock(&fi_net_lock);
+				SDT_PROBE3(cap_rt_isolation, , , deny,
+				    "socket_create", nc->fn_nonce, caller_nonce);
 				return (EACCES);
 			}
 		}

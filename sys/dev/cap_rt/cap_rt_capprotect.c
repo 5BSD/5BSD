@@ -48,6 +48,8 @@
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/ucred.h>
 
 #include <security/mac/mac_policy.h>
@@ -57,6 +59,10 @@
 #include "cap_rt_capprotect_proto.h"
 
 MALLOC_DEFINE(M_CAP_RT_CP, "cap_rt_cp", "cap_rt capability protection");
+
+SDT_PROVIDER_DEFINE(cap_rt_capprotect);
+SDT_PROBE_DEFINE3(cap_rt_capprotect, , , deny,
+    "const char *", "uint64_t", "uint64_t");
 
 /*
  * Per-instance state.
@@ -448,6 +454,10 @@ cp_mac_check_ptrace(struct ucred *cred, struct proc *p)
 	}
 	denied = !cp_is_authorized(caller_nonce, target_nonce);
 	mtx_unlock(&cp_lock);
+	if (denied) {
+		SDT_PROBE3(cap_rt_capprotect, , , deny, "ptrace",
+		    target_nonce, caller_nonce);
+	}
 
 	return (denied ? EACCES : 0);
 }
@@ -495,6 +505,10 @@ cp_mac_check_signal(struct ucred *cred, struct proc *p, int signum)
 
 	denied = !cp_is_authorized(caller_nonce, target_nonce);
 	mtx_unlock(&cp_lock);
+	if (denied) {
+		SDT_PROBE3(cap_rt_capprotect, , , deny, "signal",
+		    target_nonce, caller_nonce);
+	}
 
 	return (denied ? EACCES : 0);
 }
@@ -531,6 +545,8 @@ cp_mac_cred_check_visible(struct ucred *cr1, struct ucred *cr2)
 		return (0);
 	}
 	mtx_unlock(&cp_lock);
+	SDT_PROBE3(cap_rt_capprotect, , , deny, "visible",
+	    target_nonce, observer_nonce);
 
 	return (ESRCH);
 }
@@ -566,6 +582,8 @@ cp_mac_proc_check_wait(struct ucred *cred, struct proc *p)
 		return (0);
 	}
 	mtx_unlock(&cp_lock);
+	SDT_PROBE3(cap_rt_capprotect, , , deny, "wait",
+	    target_nonce, caller_nonce);
 
 	return (EACCES);
 }
@@ -599,6 +617,10 @@ cp_mac_proc_check_sched(struct ucred *cred, struct proc *p)
 	}
 	denied = !cp_is_authorized(caller_nonce, target_nonce);
 	mtx_unlock(&cp_lock);
+	if (denied) {
+		SDT_PROBE3(cap_rt_capprotect, , , deny, "sched",
+		    target_nonce, caller_nonce);
+	}
 
 	return (denied ? EACCES : 0);
 }
@@ -625,6 +647,8 @@ cp_mac_proc_check_core(struct ucred *cred __unused, struct proc *p)
 	mtx_lock(&cp_lock);
 	flags = cp_shield_flags(nonce);
 	mtx_unlock(&cp_lock);
+	if ((flags & CP_SF_CORE) != 0)
+		SDT_PROBE3(cap_rt_capprotect, , , deny, "core", nonce, 0);
 
 	return ((flags & CP_SF_CORE) ? EPERM : 0);
 }
@@ -665,6 +689,10 @@ cp_mac_proc_check_ktrace(struct ucred *cred, struct proc *p,
 	}
 	denied = !cp_is_authorized(caller_nonce, target_nonce);
 	mtx_unlock(&cp_lock);
+	if (denied) {
+		SDT_PROBE3(cap_rt_capprotect, , , deny, "ktrace",
+		    target_nonce, caller_nonce);
+	}
 
 	return (denied ? EACCES : 0);
 }
@@ -706,6 +734,10 @@ cp_mac_proc_check_suspend(struct ucred *cred, struct proc *p,
 	}
 	denied = !cp_is_authorized(caller_nonce, target_nonce);
 	mtx_unlock(&cp_lock);
+	if (denied) {
+		SDT_PROBE3(cap_rt_capprotect, , , deny, "suspend",
+		    target_nonce, caller_nonce);
+	}
 
 	return (denied ? EACCES : 0);
 }

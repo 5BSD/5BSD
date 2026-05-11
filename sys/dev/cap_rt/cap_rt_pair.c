@@ -31,11 +31,17 @@
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/ucred.h>
 
 #include "cap_rt.h"
 
 MALLOC_DEFINE(M_CAP_RT_PAIR, "cap_rt_pair", "cap_rt capability pair");
+
+SDT_PROVIDER_DEFINE(cap_rt_pair);
+SDT_PROBE_DEFINE4(cap_rt_pair, , , handler__done,
+    "uint32_t", "uint64_t", "int", "sbintime_t");
 
 #define	PAIR_OP_CREATE	1
 
@@ -65,10 +71,14 @@ pair_handler(struct cap_rt_instance *s, const struct cap_rt_msg *msg,
 	struct cap_rt_cap_pair *pp;
 	struct cap_rt_instance *peer;
 	struct file *peer_fp;
+	sbintime_t start __unused;
 	uint64_t peer_badge;
 	uint32_t op;
 	int error;
 
+	start = getsbinuptime();
+	op = 0;
+	error = 0;
 	pp = cap_rt_instance_get_priv(s);
 
 	if (pp == NULL) {
@@ -77,15 +87,20 @@ pair_handler(struct cap_rt_instance *s, const struct cap_rt_msg *msg,
 		 * Mint a peer capability and return it as an attached fd.
 		 */
 		if (cap_rt_msg_datalen(msg) < sizeof(uint32_t))
-			return (EINVAL);
+		{
+			error = EINVAL;
+			goto out;
+		}
 		memcpy(&op, cap_rt_msg_data(msg), sizeof(op));
-		if (op != PAIR_OP_CREATE)
-			return (EINVAL);
+		if (op != PAIR_OP_CREATE) {
+			error = EINVAL;
+			goto out;
+		}
 
 		peer_badge = atomic_fetchadd_64(&pair_next_badge, 1);
 		error = cap_rt_mint_fp(pair_svc, peer_badge, &peer_fp);
 		if (error != 0)
-			return (error);
+			goto out;
 		peer = peer_fp->f_data;
 
 		pp = malloc(sizeof(*pp), M_CAP_RT_PAIR, M_WAITOK | M_ZERO);
@@ -99,26 +114,30 @@ pair_handler(struct cap_rt_instance *s, const struct cap_rt_msg *msg,
 		error = cap_rt_reply(s, cap_rt_msg_token(msg), NULL, 0,
 		    &peer_fp, NULL, 1);
 		fdrop(peer_fp, curthread);
-		return (error);
+		goto out;
 	}
 
 	/* Already paired — forward to peer. */
 	mtx_lock(&pp->pp_mtx);
 	if (pp->pp_dead) {
 		mtx_unlock(&pp->pp_mtx);
-		return (ECONNRESET);
+		error = ECONNRESET;
+		goto out;
 	}
 	peer = (s == pp->pp_a) ? pp->pp_b : pp->pp_a;
 	if (peer == NULL) {
 		mtx_unlock(&pp->pp_mtx);
-		return (ECONNRESET);
+		error = ECONNRESET;
+		goto out;
 	}
 	cap_rt_instance_hold(peer);
 	mtx_unlock(&pp->pp_mtx);
 
 	error = cap_rt_forward(peer, msg);
 	cap_rt_instance_rele(peer);
-
+out:
+	SDT_PROBE4(cap_rt_pair, , , handler__done, op,
+	    cap_rt_instance_get_badge(s), error, getsbinuptime() - start);
 	return (error);
 }
 

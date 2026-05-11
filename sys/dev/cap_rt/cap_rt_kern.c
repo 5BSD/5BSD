@@ -32,9 +32,14 @@ MALLOC_DECLARE(M_CAP_RT);
 
 SDT_PROVIDER_DECLARE(cap_rt);
 SDT_PROBE_DECLARE(cap_rt, , , dispatch);
+SDT_PROBE_DECLARE(cap_rt, , , dispatch__done);
 SDT_PROBE_DECLARE(cap_rt, , , reply);
+SDT_PROBE_DECLARE(cap_rt, , , reply__done);
 SDT_PROBE_DECLARE(cap_rt, , , notify);
+SDT_PROBE_DECLARE(cap_rt, , , notify__done);
 SDT_PROBE_DECLARE(cap_rt, , , revoke);
+SDT_PROBE_DECLARE(cap_rt, , , revoke__done);
+SDT_PROBE_DECLARE(cap_rt, , , queue__pressure);
 
 /* ----------------------------------------------------------------
  * Queue helpers
@@ -90,10 +95,16 @@ cap_rt_instance_enqueue_tx(struct cap_rt_instance *s, struct cap_rt_msg *msg,
 	}
 	hard_limit = (int)s->ci_service->csvc_queue_depth * CAP_RT_TX_HARD_MULT;
 	if (!force && s->ci_txqlen >= (int)s->ci_service->csvc_tx_limit) {
+		SDT_PROBE5(cap_rt, , , queue__pressure,
+		    s->ci_service->csvc_name, s->ci_badge, "tx-soft",
+		    s->ci_txqlen, (int)s->ci_service->csvc_tx_limit);
 		cap_rt_msg_free(msg);
 		return (EAGAIN);
 	}
 	if (s->ci_txqlen >= hard_limit) {
+		SDT_PROBE5(cap_rt, , , queue__pressure,
+		    s->ci_service->csvc_name, s->ci_badge, "tx-hard",
+		    s->ci_txqlen, hard_limit);
 		cap_rt_msg_free(msg);
 		return (ENOBUFS);
 	}
@@ -203,6 +214,7 @@ cap_rt_dispatch_task(void *context, int pending __unused)
 	struct cap_rt_instance *s = context;
 	struct cap_rt_service *svc;
 	struct cap_rt_msg *msg;
+	sbintime_t start __unused;
 	int error;
 
 	svc = s->ci_service;
@@ -241,7 +253,11 @@ cap_rt_dispatch_task(void *context, int pending __unused)
 		 */
 		SDT_PROBE2(cap_rt, , , dispatch,
 		    svc->csvc_name, msg->cm_badge);
+		start = getsbinuptime();
 		error = svc->csvc_ops->co_handler(s, msg, svc->csvc_arg);
+		SDT_PROBE4(cap_rt, , , dispatch__done,
+		    svc->csvc_name, msg->cm_badge, error,
+		    getsbinuptime() - start);
 
 		if (error != 0)
 			cap_rt_auto_reply(s, msg->cm_reply_token, error);
@@ -368,10 +384,17 @@ cap_rt_instance_revoke_reason(struct cap_rt_instance *s,
     enum cap_rt_revoke_reason reason)
 {
 	struct cap_rt_service *svc = s->ci_service;
+	sbintime_t start __unused;
 
+	start = getsbinuptime();
 	mtx_lock(&s->ci_mtx);
 	if (s->ci_flags & CAP_RT_SF_DEAD) {
 		mtx_unlock(&s->ci_mtx);
+		if (svc != NULL) {
+			SDT_PROBE4(cap_rt, , , revoke__done,
+			    svc->csvc_name, s->ci_badge, reason,
+			    getsbinuptime() - start);
+		}
 		return;
 	}
 	s->ci_flags |= CAP_RT_SF_REVOKED;
@@ -389,6 +412,11 @@ cap_rt_instance_revoke_reason(struct cap_rt_instance *s,
 	 */
 	if (s->ci_handler_td == curthread) {
 		mtx_unlock(&s->ci_mtx);
+		if (svc != NULL) {
+			SDT_PROBE4(cap_rt, , , revoke__done,
+			    svc->csvc_name, s->ci_badge, reason,
+			    getsbinuptime() - start);
+		}
 		return;
 	}
 
@@ -404,12 +432,22 @@ cap_rt_instance_revoke_reason(struct cap_rt_instance *s,
 	 */
 	if (refcount_load(&s->ci_refcnt) > 1) {
 		mtx_unlock(&s->ci_mtx);
+		if (svc != NULL) {
+			SDT_PROBE4(cap_rt, , , revoke__done,
+			    svc->csvc_name, s->ci_badge, reason,
+			    getsbinuptime() - start);
+		}
 		return;
 	}
 
 	/* Guard: co_revoke fires exactly once. */
 	if (s->ci_flags & CAP_RT_SF_FINALIZED) {
 		mtx_unlock(&s->ci_mtx);
+		if (svc != NULL) {
+			SDT_PROBE4(cap_rt, , , revoke__done,
+			    svc->csvc_name, s->ci_badge, reason,
+			    getsbinuptime() - start);
+		}
 		return;
 	}
 	s->ci_flags |= CAP_RT_SF_FINALIZED;
@@ -418,6 +456,10 @@ cap_rt_instance_revoke_reason(struct cap_rt_instance *s,
 	if (svc != NULL && svc->csvc_ops->co_revoke != NULL)
 		svc->csvc_ops->co_revoke(s, s->ci_badge, reason,
 		    svc->csvc_arg);
+	if (svc != NULL) {
+		SDT_PROBE4(cap_rt, , , revoke__done, svc->csvc_name,
+		    s->ci_badge, reason, getsbinuptime() - start);
+	}
 }
 
 /*
@@ -565,8 +607,10 @@ cap_rt_reply(struct cap_rt_instance *s, uint64_t reply_token,
     struct file **out_fds, struct filecaps *out_fcaps, int out_nfds)
 {
 	struct cap_rt_msg *msg;
+	sbintime_t start __unused;
 	int error;
 
+	start = getsbinuptime();
 	if (outlen > CAP_RT_MSG_PAYLOAD_SIZE)
 		return (EMSGSIZE);
 	if (out_nfds < 0 || out_nfds > CAP_RT_MAX_FDS)
@@ -590,6 +634,10 @@ cap_rt_reply(struct cap_rt_instance *s, uint64_t reply_token,
 	if (error == 0 && s->ci_service != NULL)
 		SDT_PROBE3(cap_rt, , , reply,
 		    s->ci_service->csvc_name, s->ci_badge, outlen);
+	if (s->ci_service != NULL) {
+		SDT_PROBE5(cap_rt, , , reply__done, s->ci_service->csvc_name,
+		    s->ci_badge, outlen, error, getsbinuptime() - start);
+	}
 
 	return (error);
 }
@@ -599,8 +647,10 @@ cap_rt_notify(struct cap_rt_instance *s, const void *data, size_t datalen,
     struct file **fds, struct filecaps *fcaps, int nfds)
 {
 	struct cap_rt_msg *msg;
+	sbintime_t start __unused;
 	int error;
 
+	start = getsbinuptime();
 	if (datalen > CAP_RT_MSG_PAYLOAD_SIZE)
 		return (EMSGSIZE);
 	if (nfds < 0 || nfds > CAP_RT_MAX_FDS)
@@ -622,6 +672,10 @@ cap_rt_notify(struct cap_rt_instance *s, const void *data, size_t datalen,
 	if (error == 0 && s->ci_service != NULL)
 		SDT_PROBE3(cap_rt, , , notify,
 		    s->ci_service->csvc_name, s->ci_badge, datalen);
+	if (s->ci_service != NULL) {
+		SDT_PROBE5(cap_rt, , , notify__done, s->ci_service->csvc_name,
+		    s->ci_badge, datalen, error, getsbinuptime() - start);
+	}
 
 	return (error);
 }
