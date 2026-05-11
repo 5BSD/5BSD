@@ -256,25 +256,67 @@ delivers ECONNRESET to the peer.
 
 ### mount (sync, CAP_RT_CALL)
 
-Capability-based filesystem mounting for sandboxed init daemons.
+Capability-based filesystem mounting for sandboxed and jailed processes.
 
 | Operation | What it does |
 |-----------|-------------|
 | MOUNT_OP_MOUNT | Mount a filesystem (fstype, path, flags) |
 | MOUNT_OP_UNMOUNT | Unmount a filesystem path |
 
+`cap_rt_mount` is a capability-mediated mount gateway, not a full
+mount policy engine.
+
+What it is:
+- a way to perform a small, controlled set of mount and unmount
+  operations through `cap_rt`
+- a service that constrains the broad shape of mount requests:
+  whitelisted fstypes, generic flags, request format, and path safety
+
+What it is not:
+- not a replacement for jail mount policy
+- not a full per-filesystem option allowlist
+- not a way to bypass normal kernel or jail restrictions
+
 Whitelisted fstypes: tmpfs, devfs, fdescfs, nullfs, procfs,
 linprocfs, linsysfs, fusefs.
 
 Generic flags: RDONLY, NOEXEC, NOSUID, NOATIME, NOSYMFOLLOW.
-Fs-specific options via comma-separated key=value string:
+Fs-specific options use a comma-separated `key=value` string:
 tmpfs `size=128M,mode=1777`, devfs `ruleset=4`, fdescfs `linrdlnk`.
 
 Path validation rejects relative paths and `..` traversal components.
-Runs in the caller's thread context, so mounts are scoped to the
-caller's jail namespace.  The jail's `allow.mount.*` parameters
-provide a second layer of enforcement.  Invalid fs-specific options
-are rejected by the filesystem's own mount handler.
+The service runs in the caller's thread context, so the mount occurs
+in the caller's jail namespace.
+
+Enforcement is layered:
+1. `cap_rt_mount` constrains the broad shape of the request.
+2. The jail's `allow.mount.*` policy decides whether that filesystem
+   may be mounted in the caller's jail at all.
+3. The target filesystem's mount handler validates fs-specific option
+   names and values.
+
+So `fsopts` are intentionally passed through to the underlying mount
+implementation.  That is separation of responsibility, not missing
+validation.
+
+Example:
+If a process calls `MOUNT_OP_MOUNT` with `fstype="tmpfs"`,
+`fspath="/var/run"`, and `fsopts="size=64M,mode=1777"`:
+
+1. `cap_rt_mount` checks that `tmpfs` is on the allowed fstype list,
+   that the generic flags are allowed, and that `/var/run` is a safe
+   absolute path.
+2. The jail checks whether `allow.mount` and `allow.mount.tmpfs`
+   permit a `tmpfs` mount in that jail.
+3. The `tmpfs` mount handler checks whether `size=64M` and
+   `mode=1777` are valid `tmpfs` options.
+
+If step 1 fails, the service rejects the request before mount is
+attempted.
+If step 2 fails, the kernel denies the mount even though the request
+shape was valid.
+If step 3 fails, the filesystem rejects the bad option even though the
+service allowed `tmpfs` in general.
 
 ## What a sandboxed process CANNOT do
 
