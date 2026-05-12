@@ -604,7 +604,7 @@ cap_rt_modevent(module_t mod __unused, int type, void *unused __unused)
 		mda.mda_devsw = &cap_rt_cdevsw;
 		mda.mda_uid = UID_ROOT;
 		mda.mda_gid = GID_WHEEL;
-		mda.mda_mode = 0600;
+		mda.mda_mode = 0666;
 		error = make_dev_s(&mda, &cap_rt_cdev, "cap_rt");
 		if (error != 0) {
 			printf("cap_rt: failed to create /dev/cap_rt: %d\n",

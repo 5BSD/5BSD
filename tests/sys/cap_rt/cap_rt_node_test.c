@@ -1434,6 +1434,221 @@ ATF_TC_BODY(node_stat_dead_child, tc)
 }
 
 /* ----------------------------------------------------------------
+ * Edge case tests
+ * ---------------------------------------------------------------- */
+
+ATF_TC(node_rlimit_max_values);
+ATF_TC_HEAD(node_rlimit_max_values, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "NODE_OP_SET_RLIMIT with RLIM_INFINITY values round-trips");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(node_rlimit_max_values, tc)
+{
+	struct node_rlimit_set sreq;
+	struct node_rlimit_reply reply;
+	struct node_request greq;
+	struct rlimit orig;
+	int fd;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	ATF_REQUIRE(getrlimit(RLIMIT_NOFILE, &orig) == 0);
+
+	/* Set RLIMIT_NOFILE to RLIM_INFINITY for both cur and max */
+	memset(&sreq, 0, sizeof(sreq));
+	sreq.op = NODE_OP_SET_RLIMIT;
+	sreq.resource = RLIMIT_NOFILE;
+	sreq.rlim_cur = (int64_t)RLIM_INFINITY;
+	sreq.rlim_max = (int64_t)RLIM_INFINITY;
+	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+
+	/* Verify via GET */
+	memset(&greq, 0, sizeof(greq));
+	greq.op = NODE_OP_GET_RLIMIT;
+	greq.resource = RLIMIT_NOFILE;
+	ATF_REQUIRE(node_call_raw(fd, &greq, sizeof(greq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+	ATF_CHECK_EQ(reply.rlim_cur, (int64_t)RLIM_INFINITY);
+	ATF_CHECK_EQ(reply.rlim_max, (int64_t)RLIM_INFINITY);
+
+	/* Restore original limits */
+	sreq.rlim_cur = (int64_t)orig.rlim_cur;
+	sreq.rlim_max = (int64_t)orig.rlim_max;
+	node_call_raw(fd, &sreq, sizeof(sreq), NULL, 0,
+	    &reply, sizeof(reply));
+
+	close(fd);
+}
+
+ATF_TC(node_nice_boundary);
+ATF_TC_HEAD(node_nice_boundary, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "NODE_OP_SET_NICE at boundary values 20 and -20");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(node_nice_boundary, tc)
+{
+	struct node_nice_set sreq;
+	struct node_nice_reply reply;
+	struct node_request greq;
+	int fd, pd, status;
+	pid_t pid;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	/* Use a child so we don't permanently alter our own priority */
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+
+	/* Set nice to 20 (lowest priority) */
+	memset(&sreq, 0, sizeof(sreq));
+	sreq.op = NODE_OP_SET_NICE;
+	sreq.nice = 20;
+	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+
+	/* Verify via GET */
+	memset(&greq, 0, sizeof(greq));
+	greq.op = NODE_OP_GET_NICE;
+	ATF_REQUIRE(node_call_raw(fd, &greq, sizeof(greq), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+	ATF_CHECK_EQ(reply.nice, 20);
+
+	/* Set nice to -20 (highest priority, requires root) */
+	sreq.nice = -20;
+	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+
+	/* Verify via GET */
+	ATF_REQUIRE(node_call_raw(fd, &greq, sizeof(greq), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+	ATF_CHECK_EQ(reply.nice, -20);
+
+	pdkill(pd, SIGKILL);
+	waitpid(pid, &status, 0);
+	close(pd);
+	close(fd);
+}
+
+ATF_TC(node_stat_zombie);
+ATF_TC_HEAD(node_stat_zombie, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "NODE_OP_STAT on zombie child reports PRS_ZOMBIE state");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+}
+ATF_TC_BODY(node_stat_zombie, tc)
+{
+	struct node_request req;
+	struct node_stat_reply reply;
+	int fd, pd;
+	pid_t pid;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0)
+		_exit(0);
+
+	/*
+	 * Don't waitpid — let the child become a zombie.
+	 * Give it a moment to exit and transition to zombie state.
+	 */
+	usleep(100000);
+
+	memset(&req, 0, sizeof(req));
+	req.op = NODE_OP_STAT;
+	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+
+	/*
+	 * The zombie is not yet reaped, so it should still be visible
+	 * via procdesc.  Check that state indicates zombie (PRS_ZOMBIE=2)
+	 * or that the service reports NODE_STATUS_DEAD.
+	 */
+	if (reply.status == NODE_STATUS_OK) {
+		ATF_CHECK_EQ(reply.pid, (int32_t)pid);
+		ATF_CHECK_EQ(reply.state, 2); /* PRS_ZOMBIE */
+	} else {
+		ATF_CHECK_EQ(reply.status, NODE_STATUS_DEAD);
+	}
+
+	/* Reap the zombie */
+	waitpid(pid, NULL, 0);
+	close(pd);
+	close(fd);
+}
+
+ATF_TC(node_cred_ngroups_zero);
+ATF_TC_HEAD(node_cred_ngroups_zero, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "NODE_OP_SET_CRED with ngroups=0 clears supplementary groups");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(node_cred_ngroups_zero, tc)
+{
+	struct node_cred_set sreq;
+	struct node_cred_reply reply;
+	struct node_request greq;
+	int fd, pd, status;
+	pid_t pid;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+
+	/* Set credentials with ngroups=0 (clear supplementary groups) */
+	memset(&sreq, 0, sizeof(sreq));
+	sreq.op = NODE_OP_SET_CRED;
+	sreq.flags = NODE_CREDF_UID | NODE_CREDF_RUID |
+	    NODE_CREDF_GID | NODE_CREDF_RGID | NODE_CREDF_GROUPS;
+	sreq.uid = 65534;
+	sreq.ruid = 65534;
+	sreq.gid = 65534;
+	sreq.rgid = 65534;
+	sreq.ngroups = 0;
+	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+
+	/* Verify via CRED query that ngroups is 0 */
+	memset(&greq, 0, sizeof(greq));
+	greq.op = NODE_OP_CRED;
+	ATF_REQUIRE(node_call_raw(fd, &greq, sizeof(greq), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+	ATF_CHECK_EQ(reply.uid, 65534);
+	ATF_CHECK_EQ(reply.ngroups, 0);
+
+	pdkill(pd, SIGKILL);
+	waitpid(pid, &status, 0);
+	close(pd);
+	close(fd);
+}
+
+/* ----------------------------------------------------------------
  * Error cases
  * ---------------------------------------------------------------- */
 
@@ -1587,6 +1802,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, node_procctl_get_child);
 	ATF_TP_ADD_TC(tp, node_umask_child);
 	ATF_TP_ADD_TC(tp, node_stat_dead_child);
+
+	/* Edge cases */
+	ATF_TP_ADD_TC(tp, node_rlimit_max_values);
+	ATF_TP_ADD_TC(tp, node_nice_boundary);
+	ATF_TP_ADD_TC(tp, node_stat_zombie);
+	ATF_TP_ADD_TC(tp, node_cred_ngroups_zero);
 
 	/* Error cases */
 	ATF_TP_ADD_TC(tp, node_set_cred_eperm);

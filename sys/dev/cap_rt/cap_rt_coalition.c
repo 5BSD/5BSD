@@ -183,6 +183,8 @@ static u_int coalition_jail_osd_slot;
 struct coalition_jail_osd {
 	struct coalition	*cjo_coalition;
 	struct coalition_member	*cjo_member;
+	struct file		*cjo_fp;
+	struct task		cjo_cleanup_task;
 };
 
 static eventhandler_tag coalition_fork_tag;
@@ -231,6 +233,7 @@ static void	coalition_watchdog_callout_fn(void *arg);
 static void	coalition_watchdog_task_fn(void *context, int pending);
 static void	coalition_leader_callout_fn(void *arg);
 static void	coalition_leader_task_fn(void *context, int pending);
+static void	coalition_jail_cleanup_task_fn(void *context, int pending);
 
 /* Leader monitor polling interval: 100ms */
 #define	COALITION_LEADER_POLL_TICKS	(hz / 10)
@@ -273,7 +276,7 @@ coalition_alloc(void)
 	struct coalition *co;
 
 	co = uma_zalloc(coalition_zone, M_WAITOK | M_ZERO);
-	sx_init(&co->co_sx, "cap_rt_coalition");
+	sx_init_flags(&co->co_sx, "cap_rt_coalition", SX_DUPOK);
 	TAILQ_INIT(&co->co_members);
 	co->co_signal = SIGKILL;
 	co->co_nesting_depth = 0;
@@ -381,7 +384,8 @@ coalition_is_nested(struct file *fp)
  * ---------------------------------------------------------------- */
 
 static int
-coalition_jail_set_atomic(struct prison *pr, struct coalition *co)
+coalition_jail_set_atomic(struct prison *pr, struct coalition *co,
+    struct file *fp)
 {
 	struct coalition_jail_osd *cjo, *existing;
 
@@ -391,11 +395,18 @@ coalition_jail_set_atomic(struct prison *pr, struct coalition *co)
 	cjo = malloc(sizeof(*cjo), M_COALITION, M_WAITOK);
 	cjo->cjo_coalition = co;
 	cjo->cjo_member = NULL;
+	if (!fhold(fp)) {
+		free(cjo, M_COALITION);
+		return (EBADF);
+	}
+	cjo->cjo_fp = fp;
+	TASK_INIT(&cjo->cjo_cleanup_task, 0, coalition_jail_cleanup_task_fn, cjo);
 
 	prison_lock(pr);
 	existing = osd_jail_get(pr, coalition_jail_osd_slot);
 	if (existing != NULL) {
 		prison_unlock(pr);
+		fdrop(cjo->cjo_fp, NULL);
 		free(cjo, M_COALITION);
 		return (EBUSY);
 	}
@@ -419,25 +430,30 @@ coalition_jail_set_member(struct prison *pr, struct coalition_member *cm)
 }
 
 static void
-coalition_jail_osd_dtor(void *value)
+coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 {
-	struct coalition_jail_osd *cjo = value;
+	struct coalition_jail_osd *cjo = context;
 	struct coalition *co;
 	struct coalition_member *cm;
+	bool removed;
+	bool was_leader;
 
 	if (cjo == NULL)
 		return;
 
 	co = cjo->cjo_coalition;
-	cm = cjo->cjo_member;
+	cm = NULL;
+	removed = false;
+	was_leader = false;
 
-	if (cm != NULL) {
-		bool in_tailq;
-		bool was_leader = false;
-
+	if (co != NULL) {
 		sx_xlock(&co->co_sx);
-		in_tailq = (cm->cm_link.tqe_prev != NULL);
-		if (in_tailq) {
+		TAILQ_FOREACH(cm, &co->co_members, cm_link) {
+			if (cm->cm_dtype == DTYPE_JAILDESC &&
+			    cm->cm_fp == cjo->cjo_fp)
+				break;
+		}
+		if (cm != NULL) {
 			TAILQ_REMOVE(&co->co_members, cm, cm_link);
 			cm->cm_link.tqe_prev = NULL;
 			if ((co->co_flags & COF_HAS_LEADER) &&
@@ -447,22 +463,52 @@ coalition_jail_osd_dtor(void *value)
 				co->co_flags &= ~COF_HAS_LEADER;
 			}
 			coalition_notify_event(co, COALITION_NOTE_MEMBER_REMOVED);
+			removed = true;
 		}
 		sx_xunlock(&co->co_sx);
-
-		if (was_leader) {
-			SDT_PROBE1(cap_rt_coalition, , , leader__exit, 0);
-			coalition_terminate(co);
-		}
-
-		if (in_tailq) {
-			atomic_subtract_int(&co->co_member_count, 1);
-			atomic_subtract_int(&coalition_total_members, 1);
-			uma_zfree(coalition_member_zone, cm);
-			coalition_rel(co);
-		}
 	}
 
+	if (was_leader) {
+		SDT_PROBE1(cap_rt_coalition, , , leader__exit, 0);
+		coalition_terminate(co);
+	}
+
+	if (removed) {
+		atomic_subtract_int(&co->co_member_count, 1);
+		atomic_subtract_int(&coalition_total_members, 1);
+		if (cm->cm_fp != NULL)
+			fdrop(cm->cm_fp, NULL);
+		if (cm->cm_data != NULL)
+			prison_free((struct prison *)cm->cm_data);
+		uma_zfree(coalition_member_zone, cm);
+		coalition_rel(co);
+	}
+
+	if (cjo->cjo_fp != NULL)
+		fdrop(cjo->cjo_fp, NULL);
+	if (co != NULL)
+		coalition_rel(co);
+	free(cjo, M_COALITION);
+}
+
+static void
+coalition_jail_osd_dtor(void *value)
+{
+	struct coalition_jail_osd *cjo = value;
+	struct coalition *co;
+
+	if (cjo == NULL)
+		return;
+
+	co = cjo->cjo_coalition;
+
+	if (cjo->cjo_member != NULL) {
+		taskqueue_enqueue(taskqueue_thread, &cjo->cjo_cleanup_task);
+		return;
+	}
+
+	if (cjo->cjo_fp != NULL)
+		fdrop(cjo->cjo_fp, NULL);
 	if (co != NULL)
 		coalition_rel(co);
 	free(cjo, M_COALITION);
@@ -724,26 +770,29 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			fdrop(fp, td);
 			return (ESRCH);
 		}
-
-		rw_wlock(&coalition_proc_hash_lock);
 		sx_sunlock(&proctree_lock);
-
-		if (coalition_proc_hash_lookup(p) != NULL) {
-			rw_wunlock(&coalition_proc_hash_lock);
-			uma_zfree(coalition_member_zone, cm);
-			fdrop(fp, td);
-			return (EBUSY);
-		}
 
 		cm->cm_data = p;
 
+		/*
+		 * Lock order: co_sx → hash_lock.
+		 * Take co_sx first to match timer task paths.
+		 */
 		sx_xlock(&co->co_sx);
 		if (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) {
 			sx_xunlock(&co->co_sx);
-			rw_wunlock(&coalition_proc_hash_lock);
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			return (ESHUTDOWN);
+		}
+
+		rw_wlock(&coalition_proc_hash_lock);
+		if (coalition_proc_hash_lookup(p) != NULL) {
+			rw_wunlock(&coalition_proc_hash_lock);
+			sx_xunlock(&co->co_sx);
+			uma_zfree(coalition_member_zone, cm);
+			fdrop(fp, td);
+			return (EBUSY);
 		}
 
 		coalition_proc_hash_insert(cm, p);
@@ -775,16 +824,16 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			return (ESHUTDOWN);
 		}
 
-		/*
-		 * Take the OSD-owned coalition reference before
-		 * publishing the OSD entry so the destructor always
-		 * drops a live reference.
-		 */
-		coalition_ref(co);
-		error = coalition_jail_set_atomic(pr, co);
-		if (error != 0) {
-			coalition_rel(co);
-			sx_xunlock(&co->co_sx);
+			/*
+			 * Take the OSD-owned coalition reference before
+			 * publishing the OSD entry so the destructor always
+			 * drops a live reference.
+			 */
+			coalition_ref(co);
+			error = coalition_jail_set_atomic(pr, co, fp);
+			if (error != 0) {
+				coalition_rel(co);
+				sx_xunlock(&co->co_sx);
 			prison_free(pr);
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
@@ -945,19 +994,22 @@ coalition_join(struct coalition *co, struct thread *td)
 	p = td->td_proc;
 	cm = uma_zalloc(coalition_member_zone, M_WAITOK | M_ZERO);
 
-	rw_wlock(&coalition_proc_hash_lock);
-	if (coalition_proc_hash_lookup(p) != NULL) {
-		rw_wunlock(&coalition_proc_hash_lock);
-		uma_zfree(coalition_member_zone, cm);
-		return (EBUSY);
-	}
-
+	/*
+	 * Lock order: co_sx → hash_lock.
+	 */
 	sx_xlock(&co->co_sx);
 	if (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) {
 		sx_xunlock(&co->co_sx);
-		rw_wunlock(&coalition_proc_hash_lock);
 		uma_zfree(coalition_member_zone, cm);
 		return (ESHUTDOWN);
+	}
+
+	rw_wlock(&coalition_proc_hash_lock);
+	if (coalition_proc_hash_lookup(p) != NULL) {
+		rw_wunlock(&coalition_proc_hash_lock);
+		sx_xunlock(&co->co_sx);
+		uma_zfree(coalition_member_zone, cm);
+		return (EBUSY);
 	}
 
 	cm->cm_data = p;
@@ -966,6 +1018,7 @@ coalition_join(struct coalition *co, struct thread *td)
 	cm->cm_dtype = DTYPE_PROCDESC;
 
 	coalition_proc_hash_insert(cm, p);
+	rw_wunlock(&coalition_proc_hash_lock);
 	TAILQ_INSERT_TAIL(&co->co_members, cm, cm_link);
 
 	atomic_add_int(&co->co_member_count, 1);
@@ -974,7 +1027,6 @@ coalition_join(struct coalition *co, struct thread *td)
 	coalition_notify_event(co, COALITION_NOTE_MEMBER_ADDED);
 
 	sx_xunlock(&co->co_sx);
-	rw_wunlock(&coalition_proc_hash_lock);
 
 	SDT_PROBE2(cap_rt_coalition, , , join, p->p_pid, 0);
 	return (0);
@@ -1020,6 +1072,22 @@ coalition_signal_processes_locked(struct coalition *co, int sig)
 			}
 		}
 	}
+}
+
+static u_int
+coalition_count_process_members_locked(struct coalition *co)
+{
+	struct coalition_member *cm;
+	u_int count;
+
+	sx_assert(&co->co_sx, SA_XLOCKED);
+
+	count = 0;
+	TAILQ_FOREACH(cm, &co->co_members, cm_link) {
+		if (cm->cm_dtype == DTYPE_PROCDESC)
+			count++;
+	}
+	return (count);
 }
 
 static u_int
@@ -1270,6 +1338,7 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 {
 	struct file **jail_fps;
 	struct cap_rt_instance **cap_rt_cis;
+	bool had_process_members;
 	bool force_kill;
 	int jail_count, cap_rt_count;
 
@@ -1289,6 +1358,7 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 	/* Freeze membership during grace period */
 	co->co_manual_grace_count++;
 	coalition_update_grace_flag_locked(co);
+	had_process_members = (coalition_count_process_members_locked(co) != 0);
 
 	coalition_signal_processes_locked(co, sig);
 
@@ -1315,16 +1385,31 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 	}
 
 	force_kill = (coalition_count_live_procs_locked(co) != 0);
-	coalition_collect_external_members_locked(co, &jail_fps,
-	    &jail_count, &cap_rt_cis, &cap_rt_count);
 	if (co->co_manual_grace_count > 0)
 		co->co_manual_grace_count--;
 	coalition_update_grace_flag_locked(co);
-	coalition_terminate_members_locked(co, curthread, false,
-	    force_kill ? SIGKILL : 0);
-	sx_xunlock(&co->co_sx);
-	coalition_terminate_external_members(curthread, jail_fps, jail_count,
-	    cap_rt_cis, cap_rt_count);
+
+	if (force_kill || !had_process_members) {
+		/*
+		 * If processes are still alive after grace, escalate to
+		 * SIGKILL.  If there were never any process members, degrade
+		 * graceful termination into an immediate full termination for
+		 * the remaining member types.
+		 */
+		coalition_collect_external_members_locked(co, &jail_fps,
+		    &jail_count, &cap_rt_cis, &cap_rt_count);
+		coalition_terminate_members_locked(co, curthread, false,
+		    force_kill ? SIGKILL : 0);
+		sx_xunlock(&co->co_sx);
+		coalition_terminate_external_members(curthread, jail_fps,
+		    jail_count, cap_rt_cis, cap_rt_count);
+	} else {
+		/*
+		 * All processes exited during grace period —
+		 * coalition stays alive for reuse.
+		 */
+		sx_xunlock(&co->co_sx);
+	}
 	return (0);
 }
 
@@ -1402,6 +1487,7 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 
 	if (co->co_flags & COF_DEADLINE_GRACE) {
 		/* Grace expired — escalate to SIGKILL */
+		co->co_flags &= ~(COF_DEADLINE_ACTIVE | COF_DEADLINE_GRACE);
 		coalition_notify_event(co, COALITION_NOTE_DEADLINE_FIRED);
 		coalition_collect_external_members_locked(co, &jail_fps,
 		    &jail_count, &cap_rt_cis, &cap_rt_count);
@@ -1424,6 +1510,7 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 			    coalition_timeout_ticks(co->co_deadline_grace_ms),
 			    coalition_deadline_callout_fn, co);
 	} else {
+		co->co_flags &= ~COF_DEADLINE_ACTIVE;
 		coalition_notify_event(co, COALITION_NOTE_DEADLINE_FIRED);
 		coalition_collect_external_members_locked(co, &jail_fps,
 		    &jail_count, &cap_rt_cis, &cap_rt_count);
@@ -1470,6 +1557,7 @@ coalition_watchdog_task_fn(void *context, int pending __unused)
 		return;
 	}
 
+	co->co_flags &= ~COF_WATCHDOG_ACTIVE;
 	coalition_notify_event(co, COALITION_NOTE_WATCHDOG_FIRED);
 	coalition_collect_external_members_locked(co, &jail_fps,
 	    &jail_count, &cap_rt_cis, &cap_rt_count);
@@ -1637,10 +1725,10 @@ coalition_process_exit(void *arg __unused, struct proc *p)
 	bool we_own_cm = false;
 
 	sx_xlock(&co->co_sx);
-		if (cm->cm_link.tqe_prev != NULL) {
-			TAILQ_REMOVE(&co->co_members, cm, cm_link);
-			cm->cm_link.tqe_prev = NULL;
-			we_own_cm = true;
+	if (cm->cm_link.tqe_prev != NULL) {
+		TAILQ_REMOVE(&co->co_members, cm, cm_link);
+		cm->cm_link.tqe_prev = NULL;
+		we_own_cm = true;
 
 		if ((co->co_flags & COF_HAS_LEADER) &&
 		    co->co_leader == cm) {
@@ -1649,10 +1737,10 @@ coalition_process_exit(void *arg __unused, struct proc *p)
 			co->co_flags &= ~COF_HAS_LEADER;
 		}
 
-			atomic_subtract_int(&co->co_member_count, 1);
-			atomic_subtract_int(&coalition_total_members, 1);
-			coalition_notify_event(co, COALITION_NOTE_MEMBER_REMOVED);
-		}
+		atomic_subtract_int(&co->co_member_count, 1);
+		atomic_subtract_int(&coalition_total_members, 1);
+		coalition_notify_event(co, COALITION_NOTE_MEMBER_REMOVED);
+	}
 	sx_xunlock(&co->co_sx);
 
 	if (was_leader) {
@@ -1688,12 +1776,13 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 
 	ccm = uma_zalloc(coalition_member_zone, M_WAITOK | M_ZERO);
 
-	rw_wlock(&coalition_proc_hash_lock);
+	/*
+	 * Lock order: co_sx → hash_lock.
+	 */
 	sx_xlock(&co->co_sx);
 
 	if (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) {
 		sx_xunlock(&co->co_sx);
-		rw_wunlock(&coalition_proc_hash_lock);
 		uma_zfree(coalition_member_zone, ccm);
 		coalition_rel(co);
 		return;
@@ -1702,7 +1791,6 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	/* Enforce member limits — refuse fork inheritance if exceeded */
 	if (coalition_check_limits(co) != 0) {
 		sx_xunlock(&co->co_sx);
-		rw_wunlock(&coalition_proc_hash_lock);
 		uma_zfree(coalition_member_zone, ccm);
 		coalition_rel(co);
 		log(LOG_WARNING,
@@ -1715,7 +1803,9 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	ccm->cm_coalition = co;
 	ccm->cm_dtype = DTYPE_PROCDESC;
 
+	rw_wlock(&coalition_proc_hash_lock);
 	coalition_proc_hash_insert(ccm, child);
+	rw_wunlock(&coalition_proc_hash_lock);
 	TAILQ_INSERT_TAIL(&co->co_members, ccm, cm_link);
 
 	atomic_add_int(&co->co_member_count, 1);
@@ -1724,7 +1814,6 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	coalition_notify_event(co, COALITION_NOTE_MEMBER_ADDED);
 
 	sx_xunlock(&co->co_sx);
-	rw_wunlock(&coalition_proc_hash_lock);
 
 	SDT_PROBE2(cap_rt_coalition, , , fork__inherit,
 	    parent->p_pid, child->p_pid);
@@ -1749,114 +1838,57 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 	    atomic_load_acq_int(&co->co_member_count));
 
 	/*
-	 * Set COF_TERMINATING early so that any in-flight timer/monitor
-	 * tasks see it and bail out without re-arming their callouts.
-	 * This must happen before callout_drain to prevent the drain→
-	 * re-arm→use-after-free race.
+	 * Drain pending callouts/tasks before acquiring locks to
+	 * avoid deadlock.  callout_drain blocks until any running
+	 * handler completes and prevents rescheduling.
 	 */
-	sx_xlock(&co->co_sx);
-	co->co_flags |= COF_TERMINATING;
-	co->co_leader = NULL;
-	co->co_flags &= ~COF_HAS_LEADER;
-	co->co_manual_grace_count = 0;
-
-	/*
-	 * Clear active flags so tasks see them inactive.
-	 * Do NOT release refs here — the tasks will release their
-	 * own refs when they run and see COF_TERMINATING.  If the
-	 * callout hasn't fired yet, callout_drain stops it, and
-	 * then we release the ref afterward.
-	 */
-	co->co_flags &= ~(COF_DEADLINE_ACTIVE | COF_DEADLINE_GRACE |
-	    COF_WATCHDOG_ACTIVE | COF_LEADER_MONITOR);
-	coalition_update_grace_flag_locked(co);
-	sx_xunlock(&co->co_sx);
-
-	/*
-	 * For each timer: try to stop the callout.  If callout_stop
-	 * returns true, the callout was pending (never fired), so we
-	 * own the ref.  If false, the callout already fired and the
-	 * task either ran (released its ref) or is queued (will run
-	 * and release after taskqueue_drain).  Then drain the task
-	 * to ensure any queued execution completes.
-	 */
-	if (callout_stop(&co->co_deadline_callout))
-		coalition_rel(co);
+	callout_drain(&co->co_deadline_callout);
 	taskqueue_drain(taskqueue_thread, &co->co_deadline_task);
-
-	if (callout_stop(&co->co_watchdog_callout))
-		coalition_rel(co);
+	callout_drain(&co->co_watchdog_callout);
 	taskqueue_drain(taskqueue_thread, &co->co_watchdog_task);
-
-	if (callout_stop(&co->co_leader_callout))
-		coalition_rel(co);
+	callout_drain(&co->co_leader_callout);
 	taskqueue_drain(taskqueue_thread, &co->co_leader_task);
 
 	/*
-	 * Lock order: coalition_proc_hash_lock → co_sx.
+	 * Take co_sx alone first to release timer refs and
+	 * terminate members (which takes proctree_lock internally).
+	 * This avoids holding hash_lock across proctree_lock.
 	 */
-	rw_wlock(&coalition_proc_hash_lock);
 	sx_xlock(&co->co_sx);
 
 	/*
-	 * coalition_terminate_members_locked checks COF_TERMINATING
-	 * and returns early if already set.  We already set it above,
-	 * so just signal processes/sockets/shm directly here.
+	 * Release refs held by active timers.  The drains above
+	 * ensure nothing is running, so we can safely check flags
+	 * and release refs under the lock.
 	 */
-	{
-		struct proc *self;
-
-		self = (td != NULL) ? td->td_proc : NULL;
-		TAILQ_FOREACH(cm, &co->co_members, cm_link) {
-			if (cm->cm_dtype == DTYPE_CAP_RT ||
-			    cm->cm_dtype == DTYPE_JAILDESC)
-				continue;
-			if (cm->cm_dtype == DTYPE_PROCDESC) {
-				struct proc *p;
-				int sig = co->co_signal;
-
-				if (cm->cm_fp != NULL) {
-					struct procdesc *pd;
-
-					pd = cm->cm_fp->f_data;
-					sx_slock(&proctree_lock);
-					p = pd->pd_proc;
-					if (p != NULL) {
-						PROC_LOCK(p);
-						sx_sunlock(&proctree_lock);
-						if (p != self)
-							kern_psignal(p, sig);
-						PROC_UNLOCK(p);
-					} else {
-						sx_sunlock(&proctree_lock);
-					}
-				} else if (cm->cm_data != NULL) {
-					p = (struct proc *)atomic_load_acq_ptr(
-					    (uintptr_t *)&cm->cm_data);
-					if (p != NULL && p != self) {
-						PROC_LOCK(p);
-						kern_psignal(p, sig);
-						PROC_UNLOCK(p);
-					}
-				}
-			} else if (cm->cm_dtype == DTYPE_SOCKET &&
-			    cm->cm_fp != NULL) {
-				struct socket *so = cm->cm_fp->f_data;
-
-				(void)soshutdown(so, SHUT_RDWR);
-			} else if (cm->cm_dtype == DTYPE_SHM &&
-			    cm->cm_fp != NULL) {
-				(void)fo_truncate(cm->cm_fp, 0,
-				    td->td_ucred, td);
-			}
-		}
+	if (co->co_flags & COF_DEADLINE_ACTIVE) {
+		co->co_flags &= ~(COF_DEADLINE_ACTIVE | COF_DEADLINE_GRACE);
+		coalition_rel(co);
 	}
+	if (co->co_flags & COF_WATCHDOG_ACTIVE) {
+		co->co_flags &= ~COF_WATCHDOG_ACTIVE;
+		coalition_rel(co);
+	}
+	if (co->co_flags & COF_LEADER_MONITOR) {
+		co->co_flags &= ~COF_LEADER_MONITOR;
+		coalition_rel(co);
+	}
+
+	coalition_terminate_members_locked(co, td, true, co->co_signal);
+	sx_xunlock(&co->co_sx);
+
+	/*
+	 * Re-acquire co_sx to collect members.
+	 * COF_TERMINATING is set, so no new members will be added.
+	 */
+	sx_xlock(&co->co_sx);
 
 	/*
 	 * Collect members into cleanup/jail lists.
 	 * Mark every member as removed (tqe_prev = NULL) so the
 	 * exit handler won't double-remove/double-free.
-	 * Remove procdesc members from hash while we hold the lock.
+	 * Remove procdesc members from hash (acquire/release
+	 * hash_lock per-member to avoid lock order issues).
 	 */
 	cleanup_list = NULL;
 	cleanup_tailp = &cleanup_list;
@@ -1868,8 +1900,10 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 		cm->cm_link.tqe_prev = NULL;	/* sentinel for exit handler */
 
 		if (cm->cm_dtype == DTYPE_PROCDESC) {
+			rw_wlock(&coalition_proc_hash_lock);
 			if (cm->cm_hash.le_prev != NULL)
 				LIST_REMOVE(cm, cm_hash);
+			rw_wunlock(&coalition_proc_hash_lock);
 		}
 
 		if (cm->cm_dtype == DTYPE_JAILDESC) {
@@ -1887,7 +1921,6 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 	*jail_tailp = NULL;
 
 	sx_xunlock(&co->co_sx);
-	rw_wunlock(&coalition_proc_hash_lock);
 
 	/* Clean up non-jail members (no locks held) */
 	for (cm = cleanup_list; cm != NULL; ) {
@@ -1897,7 +1930,11 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 		atomic_subtract_int(&co->co_member_count, 1);
 		atomic_subtract_int(&coalition_total_members, 1);
 
-		/* Revoke cap_rt members before dropping reference */
+		/*
+		 * Revoke cap_rt members before dropping our file reference so
+		 * coalition close preserves terminate semantics and nested
+		 * coalition members tear themselves down before the last close.
+		 */
 		if (cm->cm_dtype == DTYPE_CAP_RT && cm->cm_fp != NULL) {
 			struct cap_rt_instance *ci = cm->cm_fp->f_data;
 
@@ -1944,11 +1981,14 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 			}
 		}
 
-		if (cm->cm_fp != NULL)
-			(void)coalition_jail_terminate(cm->cm_fp);
+			if (cm->cm_fp != NULL)
+				(void)coalition_jail_terminate(cm->cm_fp);
 
-		atomic_subtract_int(&co->co_member_count, 1);
-		atomic_subtract_int(&coalition_total_members, 1);
+			if (cm->cm_data != NULL)
+				prison_free((struct prison *)cm->cm_data);
+
+			atomic_subtract_int(&co->co_member_count, 1);
+			atomic_subtract_int(&coalition_total_members, 1);
 
 		if (cm->cm_fp != NULL)
 			fdrop(cm->cm_fp, td);
@@ -2449,18 +2489,20 @@ coalition_call(struct cap_rt_instance *s,
 				if (pd != NULL) {
 					sx_slock(&proctree_lock);
 					p = pd->pd_proc;
-					if (p != NULL) {
+					if (p != NULL)
 						PROC_LOCK(p);
-						sx_sunlock(&proctree_lock);
-					} else {
+					if (p == NULL) {
 						sx_sunlock(&proctree_lock);
 					}
 				}
 			} else if (cm->cm_data != NULL) {
+				sx_slock(&proctree_lock);
 				p = (struct proc *)atomic_load_acq_ptr(
 				    (uintptr_t *)&cm->cm_data);
 				if (p != NULL)
 					PROC_LOCK(p);
+				if (p == NULL)
+					sx_sunlock(&proctree_lock);
 			}
 			if (p == NULL)
 				continue;
@@ -2468,10 +2510,12 @@ coalition_call(struct cap_rt_instance *s,
 			if (p->p_state == PRS_ZOMBIE ||
 			    (p->p_flag & P_WEXIT)) {
 				PROC_UNLOCK(p);
+				sx_sunlock(&proctree_lock);
 				continue;
 			}
 			fill_kinfo_proc(p, &kp);
 			PROC_UNLOCK(p);
+			sx_sunlock(&proctree_lock);
 
 			rr->nprocs++;
 			rr->nthreads += kp.ki_numthreads;

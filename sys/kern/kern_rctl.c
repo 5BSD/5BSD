@@ -120,17 +120,6 @@ SYSCTL_PROC(_kern_racct_rctl, OID_AUTO, throttle_pct2,
     "Throttling penalty for container consumption, in percent");
 TUNABLE_INT("kern.racct.rctl.throttle_pct2", &rctl_throttle_pct2);
 
-/*
- * 'rctl_rule_link' connects a rule with every racct it's related to.
- * For example, rule 'user:X:openfiles:deny=N/process' is linked
- * with uidinfo for user X, and to each process of that user.
- */
-struct rctl_rule_link {
-	LIST_ENTRY(rctl_rule_link)	rrl_next;
-	struct rctl_rule		*rrl_rule;
-	int				rrl_exceeded;
-};
-
 struct dict {
 	const char	*d_name;
 	int		d_value;

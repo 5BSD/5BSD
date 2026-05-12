@@ -23,6 +23,7 @@
 #include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/procdesc.h>
+#include <sys/malloc.h>
 #include <sys/racct.h>
 #include <sys/rctl.h>
 #include <sys/sx.h>
@@ -135,7 +136,7 @@ acct_action_to_rctl(uint32_t action, uint32_t signal)
 	case ACCT_RULE_SIGNAL:
 		if (signal < 1 || signal > _SIG_MAXSIG)
 			return (-1);
-		return (RCTL_ACTION_SIGNAL_BASE + signal);
+		return ((int)signal);
 	default:
 		return (-1);
 	}
@@ -152,9 +153,9 @@ rctl_action_to_acct(int rctl_action, uint32_t *signalp)
 		return (ACCT_RULE_LOG);
 	if (rctl_action == RCTL_ACTION_THROTTLE)
 		return (ACCT_RULE_THROTTLE);
-	if (rctl_action >= RCTL_ACTION_SIGNAL_BASE &&
+	if (rctl_action >= 1 &&
 	    rctl_action <= RCTL_ACTION_SIGNAL_MAX) {
-		*signalp = rctl_action - RCTL_ACTION_SIGNAL_BASE;
+		*signalp = (uint32_t)rctl_action;
 		return (ACCT_RULE_SIGNAL);
 	}
 	return (0);
@@ -458,6 +459,6 @@ static moduledata_t cap_rt_accounting_mod = {
 	NULL,
 };
 
-DECLARE_MODULE(cap_rt_accounting, cap_rt_accounting_mod, SI_SUB_DRIVERS,
+DECLARE_MODULE(cap_rt_accounting, cap_rt_accounting_mod, SI_SUB_PSEUDO,
     SI_ORDER_ANY);
 MODULE_DEPEND(cap_rt_accounting, cap_rt, 1, 1, 1);

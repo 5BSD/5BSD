@@ -1796,23 +1796,35 @@ ATF_TC_BODY(graceful_terminate, tc)
 {
 	struct coalition_graceful_req gr;
 	struct coalition_reply rpl;
-	int cfd, proc_fd;
+	int cfd, proc_fd, sync_pipe[2];
 	int32_t status;
 	pid_t pid;
 	int wstatus;
+	char ch;
 
 	cfd = cap_rt_connect("coalition");
 	ATF_REQUIRE(cfd >= 0);
+
+	ATF_REQUIRE(pipe(sync_pipe) == 0);
 
 	pid = pdfork(&proc_fd, 0);
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
 		close(cfd);
+		close(sync_pipe[0]);
 		/* Ignore SIGTERM — force the grace period to expire */
 		signal(SIGTERM, SIG_IGN);
+		/* Signal parent that SIG_IGN is installed */
+		(void)write(sync_pipe[1], "r", 1);
+		close(sync_pipe[1]);
 		pause();
 		_exit(0);
 	}
+	close(sync_pipe[1]);
+
+	/* Wait for child to install SIG_IGN */
+	ATF_REQUIRE(read(sync_pipe[0], &ch, 1) == 1);
+	close(sync_pipe[0]);
 
 	ATF_REQUIRE(coalition_enlist(cfd, proc_fd, &status) == 0);
 	ATF_CHECK_EQ(status, 0);
@@ -2433,6 +2445,177 @@ ATF_TC_BODY(cap_rt_revoke_send_on_coalition, tc)
 }
 
 /* ================================================================
+ * Edge case tests
+ * ================================================================ */
+
+ATF_TC(deadline_zero_timeout);
+ATF_TC_HEAD(deadline_zero_timeout, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Deadline with timeout_ms=0 fires immediately");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_coalition");
+	atf_tc_set_md_var(tc, "timeout", "10");
+}
+ATF_TC_BODY(deadline_zero_timeout, tc)
+{
+	struct coalition_set_deadline_req dr;
+	struct coalition_stat_reply sr;
+	struct coalition_reply rpl;
+	int cfd;
+
+	cfd = cap_rt_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+
+	/* Set deadline with timeout_ms=0 — should fire immediately */
+	dr.op = COALITION_OP_SET_DEADLINE;
+	dr.timeout_ms = 0;
+	dr.signal = 0;
+	dr.grace_ms = 0;
+	ATF_REQUIRE(coalition_call(cfd, &dr, sizeof(dr), NULL, 0,
+	    &rpl, sizeof(rpl)) == 0);
+	ATF_CHECK_EQ(rpl.status, 0);
+
+	/* Give the callout a moment to fire */
+	usleep(100000);
+
+	/* Verify COF_TERMINATING is set */
+	ATF_REQUIRE(coalition_stat(cfd, &sr) == 0);
+	ATF_CHECK(sr.flags & COF_TERMINATING);
+
+	close(cfd);
+}
+
+ATF_TC(watchdog_reset_extends);
+ATF_TC_HEAD(watchdog_reset_extends, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Heartbeat resets watchdog, extending the deadline");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_coalition");
+	atf_tc_set_md_var(tc, "timeout", "10");
+}
+ATF_TC_BODY(watchdog_reset_extends, tc)
+{
+	struct coalition_set_watchdog_req wr;
+	struct coalition_stat_reply sr;
+	struct coalition_reply rpl;
+	int cfd;
+	int32_t status;
+
+	cfd = cap_rt_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+
+	/* Set watchdog with 200ms timeout */
+	wr.op = COALITION_OP_SET_WATCHDOG;
+	wr.timeout_ms = 200;
+	ATF_REQUIRE(coalition_call(cfd, &wr, sizeof(wr), NULL, 0,
+	    &rpl, sizeof(rpl)) == 0);
+	ATF_CHECK_EQ(rpl.status, 0);
+
+	/* At 100ms, send a heartbeat to reset the timer */
+	usleep(100000);
+	ATF_REQUIRE(coalition_op(cfd, COALITION_OP_HEARTBEAT, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+
+	/*
+	 * At 250ms total (150ms after heartbeat), the coalition should
+	 * still be alive because the heartbeat extended the 200ms window.
+	 */
+	usleep(150000);
+
+	ATF_REQUIRE(coalition_stat(cfd, &sr) == 0);
+	ATF_CHECK(sr.flags & COF_WATCHDOG_ACTIVE);
+	ATF_CHECK_EQ(sr.flags & COF_TERMINATING, 0);
+
+	/* Cancel watchdog to clean up */
+	wr.timeout_ms = 0;
+	ATF_REQUIRE(coalition_call(cfd, &wr, sizeof(wr), NULL, 0,
+	    &rpl, sizeof(rpl)) == 0);
+
+	close(cfd);
+}
+
+ATF_TC(enlist_after_close);
+ATF_TC_HEAD(enlist_after_close, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Enlisting on a closed coalition fd returns EBADF");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_coalition");
+}
+ATF_TC_BODY(enlist_after_close, tc)
+{
+	int cfd, sv[2];
+	int32_t status;
+
+	cfd = cap_rt_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	/* Close the coalition fd */
+	close(cfd);
+
+	/* Attempt to enlist on the closed fd — should get EBADF */
+	ATF_CHECK_ERRNO(EBADF,
+	    coalition_enlist(cfd, sv[0], &status) == -1);
+
+	close(sv[0]);
+	close(sv[1]);
+}
+
+ATF_TC(concurrent_enlist);
+ATF_TC_HEAD(concurrent_enlist, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Enlist 10 socket members, verify count, terminate and cleanup");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_coalition");
+}
+ATF_TC_BODY(concurrent_enlist, tc)
+{
+	struct coalition_stat_reply sr;
+	int cfd;
+	int sv[10][2];
+	int32_t status;
+	int i;
+
+	cfd = cap_rt_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+
+	/* Create and enlist 10 socket pairs */
+	for (i = 0; i < 10; i++) {
+		ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv[i]) == 0);
+		ATF_REQUIRE(coalition_enlist(cfd, sv[i][0], &status) == 0);
+		ATF_CHECK_EQ_MSG(status, 0,
+		    "enlist %d failed with status %d", i, status);
+	}
+
+	/* Verify member_count == 10 */
+	ATF_REQUIRE(coalition_stat(cfd, &sr) == 0);
+	ATF_CHECK_EQ(sr.member_count, 10);
+	ATF_CHECK_EQ(sr.other_count, 10);
+
+	/* Terminate — should shut down all 10 sockets */
+	ATF_REQUIRE(coalition_op(cfd, COALITION_OP_TERMINATE, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+
+	/* Verify all peers see EOF or error */
+	for (i = 0; i < 10; i++) {
+		char buf[1];
+		ssize_t n;
+
+		n = read(sv[i][1], buf, sizeof(buf));
+		ATF_CHECK_MSG(n == 0 || (n == -1 && errno == ECONNRESET),
+		    "socket %d peer: unexpected read result %zd (errno %d)",
+		    i, n, errno);
+	}
+
+	close(cfd);
+	for (i = 0; i < 10; i++) {
+		close(sv[i][0]);
+		close(sv[i][1]);
+	}
+}
+
+/* ================================================================
  * Test registration
  * ================================================================ */
 
@@ -2519,6 +2702,12 @@ ATF_TP_ADD_TCS(tp)
 	/* Rusage */
 	ATF_TP_ADD_TC(tp, rusage_empty);
 	ATF_TP_ADD_TC(tp, rusage_with_process);
+
+	/* Edge cases */
+	ATF_TP_ADD_TC(tp, deadline_zero_timeout);
+	ATF_TP_ADD_TC(tp, watchdog_reset_extends);
+	ATF_TP_ADD_TC(tp, enlist_after_close);
+	ATF_TP_ADD_TC(tp, concurrent_enlist);
 
 	/* Cap_rt descriptor type tracking */
 	ATF_TP_ADD_TC(tp, cap_rt_member_type_tracking);

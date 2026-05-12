@@ -45,9 +45,19 @@ struct uidinfo;
 struct loginclass;
 struct prison_racct;
 struct ucred;
-struct rctl_rule_link;
-
 #ifdef _KERNEL
+
+/*
+ * Links a rule to a subject's racct structure.  Each rctl_rule may be
+ * linked to multiple subjects (e.g., a per-user rule links to the
+ * uidinfo and to every process of that user).
+ */
+struct rctl_rule_link {
+	LIST_ENTRY(rctl_rule_link)	rrl_next;
+	struct rctl_rule		*rrl_rule;
+	int				rrl_exceeded;
+};
+
 
 /*
  * Rules describe an action to be taken when conditions defined

@@ -139,6 +139,6 @@ static moduledata_t cap_rt_identity_mod = {
 	NULL,
 };
 
-DECLARE_MODULE(cap_rt_identity, cap_rt_identity_mod, SI_SUB_DRIVERS,
+DECLARE_MODULE(cap_rt_identity, cap_rt_identity_mod, SI_SUB_PSEUDO,
     SI_ORDER_ANY);
 MODULE_DEPEND(cap_rt_identity, cap_rt, 1, 1, 1);

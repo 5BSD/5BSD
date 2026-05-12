@@ -826,6 +826,9 @@ fi_do_claim_net(struct cap_rt_instance *s, struct fi_priv *priv,
 
 	bucket = fi_net_hash_fn(nr->port, nr->domain);
 
+	/* Pre-allocate before taking the lock (M_WAITOK). */
+	nc = malloc(sizeof(*nc), M_FILE_ISOLATION, M_WAITOK | M_ZERO);
+
 	/*
 	 * Check for conflicts: reject if any existing claim from a
 	 * different nonce would overlap.  Overlap means: the new claim
@@ -885,6 +888,7 @@ fi_do_claim_net(struct cap_rt_instance *s, struct fi_priv *priv,
 				if (existing->fn_nonce != nonce) {
 					/* Foreign nonce — conflict */
 					rw_wunlock(&fi_net_lock);
+					free(nc, M_FILE_ISOLATION);
 					return (EBUSY);
 				}
 				/*
@@ -917,11 +921,11 @@ fi_do_claim_net(struct cap_rt_instance *s, struct fi_priv *priv,
 		    fn_instlink);
 		existing->fn_inst = s;
 		rw_wunlock(&fi_net_lock);
+		free(nc, M_FILE_ISOLATION);
 		return (0);
 	}
 
-	/* New claim — insert */
-	nc = malloc(sizeof(*nc), M_FILE_ISOLATION, M_WAITOK | M_ZERO);
+	/* New claim — insert (nc was pre-allocated above) */
 	nc->fn_domain = nr->domain;
 	nc->fn_protocol = nr->protocol;
 	nc->fn_port = nr->port;
@@ -1229,6 +1233,6 @@ static moduledata_t cap_rt_isolation_mod = {
 };
 
 DECLARE_MODULE(cap_rt_isolation, cap_rt_isolation_mod,
-    SI_SUB_DRIVERS, SI_ORDER_ANY);
+    SI_SUB_PSEUDO, SI_ORDER_ANY);
 MODULE_DEPEND(cap_rt_isolation, cap_rt, 1, 1, 1);
 MODULE_VERSION(cap_rt_isolation, 1);

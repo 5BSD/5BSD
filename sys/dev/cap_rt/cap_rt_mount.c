@@ -369,5 +369,5 @@ static moduledata_t cap_rt_mount_mod = {
 	NULL,
 };
 
-DECLARE_MODULE(cap_rt_mount, cap_rt_mount_mod, SI_SUB_DRIVERS, SI_ORDER_ANY);
+DECLARE_MODULE(cap_rt_mount, cap_rt_mount_mod, SI_SUB_PSEUDO, SI_ORDER_ANY);
 MODULE_DEPEND(cap_rt_mount, cap_rt, 1, 1, 1);

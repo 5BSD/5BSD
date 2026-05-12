@@ -408,10 +408,9 @@ node_op_set_affinity(struct thread *td __unused, struct proc *p,
 	}
 
 	/*
-	 * Use cpuset_setproc_mask directly — takes struct proc *,
-	 * no PID re-lookup, no reuse race.  PROC_LOCK is released
-	 * and reacquired internally as needed.  _PHOLD keeps the
-	 * proc struct alive across the unlock window.
+	 * cpuset_setproc_mask requires PROC_LOCK at entry but
+	 * releases and reacquires it internally as needed.
+	 * _PHOLD keeps the proc struct alive across unlock windows.
 	 */
 	_PHOLD(p);
 	error = cpuset_setproc_mask(p, &mask);
@@ -1077,5 +1076,5 @@ static moduledata_t cap_rt_node_mod = {
 	NULL,
 };
 
-DECLARE_MODULE(cap_rt_node, cap_rt_node_mod, SI_SUB_DRIVERS, SI_ORDER_ANY);
+DECLARE_MODULE(cap_rt_node, cap_rt_node_mod, SI_SUB_PSEUDO, SI_ORDER_ANY);
 MODULE_DEPEND(cap_rt_node, cap_rt, 1, 1, 1);

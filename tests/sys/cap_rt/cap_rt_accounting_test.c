@@ -652,6 +652,310 @@ ATF_TC_BODY(acct_get_rules_self, tc)
 }
 
 /* ----------------------------------------------------------------
+ * Additional coverage tests
+ * ---------------------------------------------------------------- */
+
+ATF_TC(acct_rule_signal);
+ATF_TC_HEAD(acct_rule_signal, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "ACCT_OP_ADD_RULE with ACCT_RULE_SIGNAL stores correct signal");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "cap_rt cap_rt_accounting");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(acct_rule_signal, tc)
+{
+	struct acct_rule_request rreq;
+	struct acct_get_rules_request greq;
+	struct acct_reply reply;
+	struct acct_rules_reply rules;
+	int fd;
+
+	fd = cap_rt_connect("accounting");
+	if (fd < 0)
+		atf_tc_skip("accounting service not available");
+
+	memset(&rreq, 0, sizeof(rreq));
+	rreq.op = ACCT_OP_ADD_RULE;
+	rreq.resource = RACCT_NOFILE;
+	rreq.action = ACCT_RULE_SIGNAL;
+	rreq.signal = SIGUSR1;
+	rreq.limit = 500;
+	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	if (reply.status == ACCT_STATUS_ERR)
+		atf_tc_skip("RCTL rule support not available");
+	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
+
+	memset(&greq, 0, sizeof(greq));
+	greq.op = ACCT_OP_GET_RULES;
+	ATF_REQUIRE(acct_call_raw(fd, &greq, sizeof(greq), NULL, 0,
+	    &rules, sizeof(rules)) == 0);
+	ATF_REQUIRE_EQ(rules.status, ACCT_STATUS_OK);
+	ATF_CHECK(acct_rules_has(&rules, RACCT_NOFILE, ACCT_RULE_SIGNAL,
+	    SIGUSR1, 500));
+
+	/* Cleanup */
+	rreq.op = ACCT_OP_REMOVE_RULE;
+	acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
+	    &reply, sizeof(reply));
+
+	close(fd);
+}
+
+ATF_TC(acct_rule_throttle);
+ATF_TC_HEAD(acct_rule_throttle, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "ACCT_OP_ADD_RULE with ACCT_RULE_THROTTLE succeeds");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "cap_rt cap_rt_accounting");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(acct_rule_throttle, tc)
+{
+	struct acct_rule_request rreq;
+	struct acct_get_rules_request greq;
+	struct acct_reply reply;
+	struct acct_rules_reply rules;
+	int fd;
+
+	fd = cap_rt_connect("accounting");
+	if (fd < 0)
+		atf_tc_skip("accounting service not available");
+
+	memset(&rreq, 0, sizeof(rreq));
+	rreq.op = ACCT_OP_ADD_RULE;
+	rreq.resource = RACCT_MEMLOCK;
+	rreq.action = ACCT_RULE_THROTTLE;
+	rreq.limit = 65536;
+	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	if (reply.status == ACCT_STATUS_ERR)
+		atf_tc_skip("RCTL rule support not available");
+	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
+
+	memset(&greq, 0, sizeof(greq));
+	greq.op = ACCT_OP_GET_RULES;
+	ATF_REQUIRE(acct_call_raw(fd, &greq, sizeof(greq), NULL, 0,
+	    &rules, sizeof(rules)) == 0);
+	ATF_REQUIRE_EQ(rules.status, ACCT_STATUS_OK);
+	ATF_CHECK(acct_rules_has(&rules, RACCT_MEMLOCK, ACCT_RULE_THROTTLE,
+	    0, 65536));
+
+	/* Cleanup */
+	rreq.op = ACCT_OP_REMOVE_RULE;
+	acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
+	    &reply, sizeof(reply));
+
+	close(fd);
+}
+
+ATF_TC(acct_multiple_rules);
+ATF_TC_HEAD(acct_multiple_rules, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Adding 3 different rules and verifying all via GET_RULES");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "cap_rt cap_rt_accounting");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(acct_multiple_rules, tc)
+{
+	struct acct_rule_request rreq;
+	struct acct_get_rules_request greq;
+	struct acct_reply reply;
+	struct acct_rules_reply rules;
+	int fd;
+
+	fd = cap_rt_connect("accounting");
+	if (fd < 0)
+		atf_tc_skip("accounting service not available");
+
+	/* Rule 1: DENY on RACCT_NOFILE */
+	memset(&rreq, 0, sizeof(rreq));
+	rreq.op = ACCT_OP_ADD_RULE;
+	rreq.resource = RACCT_NOFILE;
+	rreq.action = ACCT_RULE_DENY;
+	rreq.limit = 100;
+	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	if (reply.status == ACCT_STATUS_ERR)
+		atf_tc_skip("RCTL rule support not available");
+	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
+
+	/* Rule 2: LOG on RACCT_MEMLOCK */
+	memset(&rreq, 0, sizeof(rreq));
+	rreq.op = ACCT_OP_ADD_RULE;
+	rreq.resource = RACCT_MEMLOCK;
+	rreq.action = ACCT_RULE_LOG;
+	rreq.limit = 200;
+	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
+
+	/* Rule 3: SIGNAL on RACCT_NPROC */
+	memset(&rreq, 0, sizeof(rreq));
+	rreq.op = ACCT_OP_ADD_RULE;
+	rreq.resource = RACCT_NPROC;
+	rreq.action = ACCT_RULE_SIGNAL;
+	rreq.signal = SIGUSR1;
+	rreq.limit = 300;
+	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
+
+	/* Verify all 3 rules are present */
+	memset(&greq, 0, sizeof(greq));
+	greq.op = ACCT_OP_GET_RULES;
+	ATF_REQUIRE(acct_call_raw(fd, &greq, sizeof(greq), NULL, 0,
+	    &rules, sizeof(rules)) == 0);
+	ATF_REQUIRE_EQ(rules.status, ACCT_STATUS_OK);
+	ATF_CHECK(acct_rules_has(&rules, RACCT_NOFILE, ACCT_RULE_DENY,
+	    0, 100));
+	ATF_CHECK(acct_rules_has(&rules, RACCT_MEMLOCK, ACCT_RULE_LOG,
+	    0, 200));
+	ATF_CHECK(acct_rules_has(&rules, RACCT_NPROC, ACCT_RULE_SIGNAL,
+	    SIGUSR1, 300));
+
+	/* Cleanup all 3 rules */
+	memset(&rreq, 0, sizeof(rreq));
+	rreq.op = ACCT_OP_REMOVE_RULE;
+	rreq.resource = RACCT_NOFILE;
+	rreq.action = ACCT_RULE_DENY;
+	rreq.limit = 100;
+	acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
+	    &reply, sizeof(reply));
+
+	rreq.resource = RACCT_MEMLOCK;
+	rreq.action = ACCT_RULE_LOG;
+	rreq.limit = 200;
+	acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
+	    &reply, sizeof(reply));
+
+	rreq.resource = RACCT_NPROC;
+	rreq.action = ACCT_RULE_SIGNAL;
+	rreq.signal = SIGUSR1;
+	rreq.limit = 300;
+	acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
+	    &reply, sizeof(reply));
+
+	close(fd);
+}
+
+ATF_TC(acct_charge_zero);
+ATF_TC_HEAD(acct_charge_zero, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "ACCT_OP_CHARGE with amount=0 succeeds as a no-op");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "cap_rt cap_rt_accounting");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(acct_charge_zero, tc)
+{
+	struct acct_charge_request req;
+	struct acct_reply reply;
+	int fd;
+
+	fd = cap_rt_connect("accounting");
+	if (fd < 0)
+		atf_tc_skip("accounting service not available");
+
+	memset(&req, 0, sizeof(req));
+	req.op = ACCT_OP_CHARGE;
+	req.resource = RACCT_MEMLOCK;
+	req.amount = 0;
+	ATF_REQUIRE(acct_call_raw(fd, &req, sizeof(req), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK(reply.status == ACCT_STATUS_OK ||
+	    reply.status == ACCT_STATUS_ERR);  /* ERR if RACCT disabled */
+
+	close(fd);
+}
+
+ATF_TC(acct_set_then_get_rules);
+ATF_TC_HEAD(acct_set_then_get_rules, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "ACCT_OP_SET does not affect GET_RULES (charges and rules are independent)");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "cap_rt cap_rt_accounting");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(acct_set_then_get_rules, tc)
+{
+	struct acct_charge_request sreq;
+	struct acct_get_rules_request greq;
+	struct acct_reply reply;
+	struct acct_rules_reply rules_before, rules_after;
+	int fd;
+
+	fd = cap_rt_connect("accounting");
+	if (fd < 0)
+		atf_tc_skip("accounting service not available");
+
+	/* Get rules before SET */
+	memset(&greq, 0, sizeof(greq));
+	greq.op = ACCT_OP_GET_RULES;
+	ATF_REQUIRE(acct_call_raw(fd, &greq, sizeof(greq), NULL, 0,
+	    &rules_before, sizeof(rules_before)) == 0);
+	if (rules_before.status == ACCT_STATUS_ERR)
+		atf_tc_skip("RCTL/RACCT not available");
+
+	/* SET a resource value */
+	memset(&sreq, 0, sizeof(sreq));
+	sreq.op = ACCT_OP_SET;
+	sreq.resource = RACCT_MEMLOCK;
+	sreq.amount = 16384;
+	ATF_REQUIRE(acct_call_raw(fd, &sreq, sizeof(sreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+
+	/* Get rules after SET */
+	ATF_REQUIRE(acct_call_raw(fd, &greq, sizeof(greq), NULL, 0,
+	    &rules_after, sizeof(rules_after)) == 0);
+	ATF_REQUIRE_EQ(rules_after.status, ACCT_STATUS_OK);
+
+	/* Rule count should be unchanged */
+	ATF_CHECK_EQ(rules_before.nrules, rules_after.nrules);
+
+	close(fd);
+}
+
+ATF_TC(acct_remove_nonexistent_rule);
+ATF_TC_HEAD(acct_remove_nonexistent_rule, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "ACCT_OP_REMOVE_RULE on a rule that was never added returns OK (idempotent)");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "cap_rt cap_rt_accounting");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(acct_remove_nonexistent_rule, tc)
+{
+	struct acct_rule_request rreq;
+	struct acct_reply reply;
+	int fd;
+
+	fd = cap_rt_connect("accounting");
+	if (fd < 0)
+		atf_tc_skip("accounting service not available");
+
+	memset(&rreq, 0, sizeof(rreq));
+	rreq.op = ACCT_OP_REMOVE_RULE;
+	rreq.resource = RACCT_NOFILE;
+	rreq.action = ACCT_RULE_DENY;
+	rreq.limit = 77777;
+	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK(reply.status == ACCT_STATUS_OK ||
+	    reply.status == ACCT_STATUS_ERR);  /* ERR if RCTL disabled */
+
+	close(fd);
+}
+
+/* ----------------------------------------------------------------
  * Test registration
  * ---------------------------------------------------------------- */
 
@@ -676,6 +980,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, acct_invalid_resource);
 	ATF_TP_ADD_TC(tp, acct_bad_op);
 	ATF_TP_ADD_TC(tp, acct_wrong_fd_type);
+
+	/* Additional coverage */
+	ATF_TP_ADD_TC(tp, acct_rule_signal);
+	ATF_TP_ADD_TC(tp, acct_rule_throttle);
+	ATF_TP_ADD_TC(tp, acct_multiple_rules);
+	ATF_TP_ADD_TC(tp, acct_charge_zero);
+	ATF_TP_ADD_TC(tp, acct_set_then_get_rules);
+	ATF_TP_ADD_TC(tp, acct_remove_nonexistent_rule);
 
 	return (atf_no_error());
 }

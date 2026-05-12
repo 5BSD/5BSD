@@ -1214,7 +1214,7 @@ ATF_TC_BODY(unix_socket_claim_blocks_connect, tc)
 	listener = make_tmpunix_listener();
 
 	svc = fi_connect();
-	target = open(tmpsockpath, O_RDONLY);
+	target = open(tmpsockpath, O_PATH);
 	ATF_REQUIRE_MSG(target >= 0, "open %s: %s",
 	    tmpsockpath, strerror(errno));
 
@@ -1737,6 +1737,256 @@ ATF_TC_BODY(net_claim_rejects_ipv4_prefix_above_32, tc)
  * TODO: uncomment when the isolation helper gains "socket" mode.
  */
 
+ATF_TC_WITH_CLEANUP(release_unclaimed);
+ATF_TC_HEAD(release_unclaimed, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Releasing a vnode that was never claimed succeeds (idempotent)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(release_unclaimed, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+
+	/* Release without prior claim — should succeed */
+	ATF_CHECK(fi_call(svc, FI_OP_RELEASE, target, &rpl) == 0);
+
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(release_unclaimed, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(query_after_release);
+ATF_TC_HEAD(query_after_release, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Query after claim+release shows vnode is no longer claimed");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(query_after_release, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+
+	/* Claim, then release */
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_RELEASE, target, &rpl) == 0);
+
+	/* Query — should show not claimed */
+	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, target, &rpl) == 0);
+	ATF_CHECK_EQ(rpl.flags, 0);
+
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(query_after_release, tc)
+{
+	cleanup_tmpfile();
+}
+
+static char tmppath2[128];
+static char tmppath3[128];
+
+static void
+make_tmpfile2(void)
+{
+	int fd;
+
+	snprintf(tmppath2, sizeof(tmppath2),
+	    "/tmp/fi_test2.%d", (int)getpid());
+	fd = open(tmppath2, O_CREAT | O_RDWR, 0644);
+	ATF_REQUIRE_MSG(fd >= 0, "create %s: %s", tmppath2, strerror(errno));
+	close(fd);
+}
+
+static void
+make_tmpfile3(void)
+{
+	int fd;
+
+	snprintf(tmppath3, sizeof(tmppath3),
+	    "/tmp/fi_test3.%d", (int)getpid());
+	fd = open(tmppath3, O_CREAT | O_RDWR, 0644);
+	ATF_REQUIRE_MSG(fd >= 0, "create %s: %s", tmppath3, strerror(errno));
+	close(fd);
+}
+
+ATF_TC_WITH_CLEANUP(claim_multiple_files);
+ATF_TC_HEAD(claim_multiple_files, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Claim 3 files, verify each is claimed, close instance releases all");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(claim_multiple_files, tc)
+{
+	struct fi_reply rpl;
+	int svc, svc2, t1, t2, t3;
+
+	make_tmpfile();
+	make_tmpfile2();
+	make_tmpfile3();
+	svc = fi_connect();
+
+	t1 = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(t1 >= 0);
+	t2 = open(tmppath2, O_RDONLY);
+	ATF_REQUIRE(t2 >= 0);
+	t3 = open(tmppath3, O_RDONLY);
+	ATF_REQUIRE(t3 >= 0);
+
+	/* Claim all three */
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, t1, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, t2, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, t3, &rpl) == 0);
+
+	/* Query each — all should be claimed and ours */
+	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, t1, &rpl) == 0);
+	ATF_CHECK_EQ(rpl.flags, FI_QF_CLAIMED | FI_QF_MINE);
+	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, t2, &rpl) == 0);
+	ATF_CHECK_EQ(rpl.flags, FI_QF_CLAIMED | FI_QF_MINE);
+	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, t3, &rpl) == 0);
+	ATF_CHECK_EQ(rpl.flags, FI_QF_CLAIMED | FI_QF_MINE);
+
+	/* Close the instance — all claims should be released */
+	close(svc);
+
+	/* Verify via a new instance */
+	svc2 = fi_connect();
+	ATF_REQUIRE(fi_call(svc2, FI_OP_QUERY, t1, &rpl) == 0);
+	ATF_CHECK_EQ(rpl.flags, 0);
+	ATF_REQUIRE(fi_call(svc2, FI_OP_QUERY, t2, &rpl) == 0);
+	ATF_CHECK_EQ(rpl.flags, 0);
+	ATF_REQUIRE(fi_call(svc2, FI_OP_QUERY, t3, &rpl) == 0);
+	ATF_CHECK_EQ(rpl.flags, 0);
+
+	close(t1);
+	close(t2);
+	close(t3);
+	close(svc2);
+}
+ATF_TC_CLEANUP(claim_multiple_files, tc)
+{
+	cleanup_tmpfile();
+	unlink(tmppath2);
+	unlink(tmppath3);
+}
+
+ATF_TC(net_claim_ipv6);
+ATF_TC_HEAD(net_claim_ipv6, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Network claim with AF_INET6 on port 8080 bind succeeds");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_claim_ipv6, tc)
+{
+	int svc;
+
+	svc = fi_connect();
+
+	ATF_CHECK(fi_net_call(svc, FI_OP_CLAIM_NET,
+	    AF_INET6, IPPROTO_TCP, htons(8080), FI_NET_BIND) == 0);
+
+	/* Release to clean up */
+	ATF_CHECK(fi_net_call(svc, FI_OP_RELEASE_NET,
+	    AF_INET6, IPPROTO_TCP, htons(8080), FI_NET_BIND) == 0);
+
+	close(svc);
+}
+
+ATF_TC(net_release_unclaimed);
+ATF_TC_HEAD(net_release_unclaimed, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Releasing a network claim that was never made succeeds");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_release_unclaimed, tc)
+{
+	int svc;
+
+	svc = fi_connect();
+
+	/* Release without prior claim — should succeed (idempotent) */
+	ATF_CHECK(fi_net_call(svc, FI_OP_RELEASE_NET,
+	    AF_INET, IPPROTO_TCP, htons(19999), FI_NET_BIND) == 0);
+
+	close(svc);
+}
+
+ATF_TC(net_claim_protocol_wildcard);
+ATF_TC_HEAD(net_claim_protocol_wildcard, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Wildcard protocol claim blocks foreign nonce TCP claim on same port");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_claim_protocol_wildcard, tc)
+{
+	int rc, svc;
+	uint16_t port = 18460;
+
+	svc = fi_connect();
+
+	/* Claim with protocol=0 (wildcard) */
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET,
+	    AF_INET, 0, htons(port), FI_NET_BIND) == 0);
+
+	/* Foreign nonce tries to claim same port with IPPROTO_TCP — should fail */
+	rc = run_net_claim_helper(tc, svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, port, FI_NET_BIND, NULL, 0);
+	ATF_CHECK_EQ(rc, 1);
+
+	close(svc);
+}
+
+ATF_TC_WITH_CLEANUP(cross_nonce_write_blocked);
+ATF_TC_HEAD(cross_nonce_write_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Foreign nonce cannot open an isolated file for writing");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cross_nonce_write_blocked, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+	char cmd[256];
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	close(target);
+
+	/* Fork+exec child tries to open for writing — should get EACCES */
+	snprintf(cmd, sizeof(cmd),
+	    "exec dd if=/dev/zero of='%s' bs=1 count=1 2>/dev/null", tmppath);
+	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
+
+	close(svc);
+}
+ATF_TC_CLEANUP(cross_nonce_write_blocked, tc)
+{
+	cleanup_tmpfile();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1751,6 +2001,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, claim_pipe_fails);
 	ATF_TP_ADD_TC(tp, same_nonce_can_open);
 	ATF_TP_ADD_TC(tp, query_unclaimed);
+	ATF_TP_ADD_TC(tp, release_unclaimed);
+	ATF_TP_ADD_TC(tp, query_after_release);
+	ATF_TP_ADD_TC(tp, claim_multiple_files);
 	ATF_TP_ADD_TC(tp, unix_socket_claim_blocks_connect);
 
 	/* Cross-nonce enforcement */
@@ -1765,6 +2018,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cross_nonce_readlink_blocked);
 	ATF_TP_ADD_TC(tp, cross_nonce_exec_blocked);
 	ATF_TP_ADD_TC(tp, cross_nonce_chflags_blocked);
+	ATF_TP_ADD_TC(tp, cross_nonce_write_blocked);
 
 	/* Directory isolation */
 	ATF_TP_ADD_TC(tp, dir_claim_blocks_lookup);
@@ -1783,6 +2037,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, net_claim_rejects_bad_domain);
 	ATF_TP_ADD_TC(tp, net_claim_rejects_bad_protocol);
 	ATF_TP_ADD_TC(tp, net_claim_rejects_ipv4_prefix_above_32);
+	ATF_TP_ADD_TC(tp, net_claim_ipv6);
+	ATF_TP_ADD_TC(tp, net_release_unclaimed);
+	ATF_TP_ADD_TC(tp, net_claim_protocol_wildcard);
 
 	return (atf_no_error());
 }
