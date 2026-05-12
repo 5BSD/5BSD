@@ -37,9 +37,9 @@ wait_for_vm_ssh() {
     echo "=== Waiting for ${VM_IP} ==="
     i=0
     while [ "$i" -lt 60 ]; do
-        if ssh -o BatchMode=yes -o ConnectTimeout=2 "root@${VM_IP}" true \
-            >/dev/null 2>&1; then
+        if nc -z -w 2 "${VM_IP}" 22 >/dev/null 2>&1; then
             echo "=== VM reachable ==="
+            sleep 1  # give sshd a moment to fully initialize
             return 0
         fi
         i=$((i + 1))
@@ -122,6 +122,7 @@ done
 
 echo "=== Loading service modules ==="
 for m in $SERVICE_MODULES; do
+    kldstat -q -m "$m" 2>/dev/null && { echo "  $m: already loaded"; continue; }
     kldload "$m" || { echo "FAIL: kldload $m"; exit 1; }
     echo "  $m: loaded"
 done

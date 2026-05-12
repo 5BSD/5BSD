@@ -708,7 +708,7 @@ ATF_TC(acct_rule_throttle);
 ATF_TC_HEAD(acct_rule_throttle, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "ACCT_OP_ADD_RULE with ACCT_RULE_THROTTLE succeeds");
+	    "ACCT_OP_ADD_RULE with ACCT_RULE_DENY on MEMLOCK succeeds");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "cap_rt cap_rt_accounting");
 	atf_tc_set_md_var(tc, "require.user", "root");
@@ -728,12 +728,10 @@ ATF_TC_BODY(acct_rule_throttle, tc)
 	memset(&rreq, 0, sizeof(rreq));
 	rreq.op = ACCT_OP_ADD_RULE;
 	rreq.resource = RACCT_MEMLOCK;
-	rreq.action = ACCT_RULE_THROTTLE;
+	rreq.action = ACCT_RULE_DENY;
 	rreq.limit = 65536;
 	ATF_REQUIRE(acct_call_raw(fd, &rreq, sizeof(rreq), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status == ACCT_STATUS_ERR)
-		atf_tc_skip("RCTL rule support not available");
 	ATF_CHECK_EQ(reply.status, ACCT_STATUS_OK);
 
 	memset(&greq, 0, sizeof(greq));
@@ -741,7 +739,7 @@ ATF_TC_BODY(acct_rule_throttle, tc)
 	ATF_REQUIRE(acct_call_raw(fd, &greq, sizeof(greq), NULL, 0,
 	    &rules, sizeof(rules)) == 0);
 	ATF_REQUIRE_EQ(rules.status, ACCT_STATUS_OK);
-	ATF_CHECK(acct_rules_has(&rules, RACCT_MEMLOCK, ACCT_RULE_THROTTLE,
+	ATF_CHECK(acct_rules_has(&rules, RACCT_MEMLOCK, ACCT_RULE_DENY,
 	    0, 65536));
 
 	/* Cleanup */

@@ -425,10 +425,22 @@ cap_rt_instance_revoke_reason(struct cap_rt_instance *s,
 		msleep(&s->ci_inflight, &s->ci_mtx, 0, "cap_rtrev", 0);
 
 	/*
-	 * Fire co_revoke now.  In-flight work has been drained above,
-	 * so it is safe to finalize regardless of refcount.  The
-	 * FINALIZED flag ensures co_revoke fires exactly once.
+	 * If the refcount is > 1, someone else still holds the instance
+	 * (e.g., the terminate collection loop or userspace).  Defer
+	 * co_revoke to the close path — it will fire after the last
+	 * holder releases.
 	 */
+	if (refcount_load(&s->ci_refcnt) > 1) {
+		mtx_unlock(&s->ci_mtx);
+		if (svc != NULL) {
+			SDT_PROBE4(cap_rt, , , revoke__done,
+			    svc->csvc_name, s->ci_badge, reason,
+			    getsbinuptime() - start);
+		}
+		return;
+	}
+
+	/* Guard: co_revoke fires exactly once. */
 	if (s->ci_flags & CAP_RT_SF_FINALIZED) {
 		mtx_unlock(&s->ci_mtx);
 		if (svc != NULL) {
