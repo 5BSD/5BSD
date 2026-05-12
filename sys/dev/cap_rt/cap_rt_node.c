@@ -445,6 +445,224 @@ node_op_set_rtprio(struct thread *td, struct proc *p,
 	return (0);
 }
 
+/* ----------------------------------------------------------------
+ * Confinement operations
+ * ---------------------------------------------------------------- */
+
+static int
+node_op_get_pdeathsig(struct proc *p, void *reply, size_t *replylenp)
+{
+	struct node_pdeathsig_reply *rp = reply;
+
+	if (*replylenp < sizeof(*rp))
+		return (EINVAL);
+	*replylenp = sizeof(*rp);
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	memset(rp, 0, sizeof(*rp));
+	rp->status = NODE_STATUS_OK;
+	rp->signal = p->p_pdeathsig;
+
+	return (0);
+}
+
+static int
+node_op_set_pdeathsig(struct proc *p,
+    const void *req, size_t reqlen,
+    void *reply, size_t *replylenp)
+{
+	const struct node_pdeathsig_set *ps = req;
+	struct node_pdeathsig_reply *rp = reply;
+
+	if (reqlen < sizeof(*ps) || *replylenp < sizeof(*rp))
+		return (EINVAL);
+	*replylenp = sizeof(*rp);
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	memset(rp, 0, sizeof(*rp));
+
+	/*
+	 * Unlike the kernel's pdeathsig_ctl (self-only), we allow
+	 * remote targeting via procdesc.  The signal fires when the
+	 * target's actual parent exits — typically the pdfork caller.
+	 */
+	if (ps->signal != 0 && !_SIG_VALID(ps->signal)) {
+		rp->status = NODE_STATUS_ERR;
+		return (0);
+	}
+
+	p->p_pdeathsig = ps->signal;
+	rp->status = NODE_STATUS_OK;
+	rp->signal = ps->signal;
+
+	return (0);
+}
+
+static int
+node_op_reap_acquire(struct thread *td, struct proc *p,
+    void *reply, size_t *replylenp)
+{
+	struct node_status_reply *rp = reply;
+	int error;
+
+	if (*replylenp < sizeof(*rp))
+		return (EINVAL);
+	*replylenp = sizeof(*rp);
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	if (p != td->td_proc) {
+		memset(rp, 0, sizeof(*rp));
+		rp->status = NODE_STATUS_EPERM;
+		return (0);
+	}
+
+	if (p->p_flag & P_WEXIT) {
+		memset(rp, 0, sizeof(*rp));
+		rp->status = NODE_STATUS_DEAD;
+		return (0);
+	}
+
+	_PHOLD(p);
+	PROC_UNLOCK(p);
+	sx_xlock(&proctree_lock);
+	PROC_LOCK(p);
+
+	error = kern_procctl_single(td, p, PROC_REAP_ACQUIRE, NULL);
+
+	sx_xunlock(&proctree_lock);
+	_PRELE(p);
+
+	memset(rp, 0, sizeof(*rp));
+	rp->status = (error == 0) ? NODE_STATUS_OK : NODE_STATUS_ERR;
+
+	return (0);
+}
+
+static int
+node_op_reap_release(struct thread *td, struct proc *p,
+    void *reply, size_t *replylenp)
+{
+	struct node_status_reply *rp = reply;
+	int error;
+
+	if (*replylenp < sizeof(*rp))
+		return (EINVAL);
+	*replylenp = sizeof(*rp);
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	if (p != td->td_proc) {
+		memset(rp, 0, sizeof(*rp));
+		rp->status = NODE_STATUS_EPERM;
+		return (0);
+	}
+
+	_PHOLD(p);
+	PROC_UNLOCK(p);
+	sx_xlock(&proctree_lock);
+	PROC_LOCK(p);
+
+	error = kern_procctl_single(td, p, PROC_REAP_RELEASE, NULL);
+
+	sx_xunlock(&proctree_lock);
+	_PRELE(p);
+
+	memset(rp, 0, sizeof(*rp));
+	rp->status = (error == 0) ? NODE_STATUS_OK : NODE_STATUS_ERR;
+
+	return (0);
+}
+
+static int
+node_op_reap_status(struct thread *td, struct proc *p,
+    void *reply, size_t *replylenp)
+{
+	struct node_reap_status_reply *rp = reply;
+	struct procctl_reaper_status rs;
+	int error;
+
+	if (*replylenp < sizeof(*rp))
+		return (EINVAL);
+	*replylenp = sizeof(*rp);
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	_PHOLD(p);
+	PROC_UNLOCK(p);
+	sx_slock(&proctree_lock);
+	PROC_LOCK(p);
+
+	error = kern_procctl_single(td, p, PROC_REAP_STATUS, &rs);
+
+	sx_sunlock(&proctree_lock);
+	_PRELE(p);
+
+	memset(rp, 0, sizeof(*rp));
+	if (error == 0) {
+		rp->status = NODE_STATUS_OK;
+		rp->rs_flags = rs.rs_flags;
+		rp->rs_children = rs.rs_children;
+		rp->rs_descendants = rs.rs_descendants;
+		rp->rs_reaper = rs.rs_reaper;
+		rp->rs_pid = rs.rs_pid;
+	} else {
+		rp->status = NODE_STATUS_ERR;
+	}
+
+	return (0);
+}
+
+static int
+node_op_reap_kill(struct thread *td, struct proc *p,
+    const void *req, size_t reqlen,
+    void *reply, size_t *replylenp)
+{
+	const struct node_reap_kill_req *kr = req;
+	struct node_reap_kill_reply *rp = reply;
+	struct procctl_reaper_kill rk;
+	int error;
+
+	if (reqlen < sizeof(*kr) || *replylenp < sizeof(*rp))
+		return (EINVAL);
+	*replylenp = sizeof(*rp);
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	if (p != td->td_proc) {
+		memset(rp, 0, sizeof(*rp));
+		rp->status = NODE_STATUS_EPERM;
+		return (0);
+	}
+
+	memset(&rk, 0, sizeof(rk));
+	rk.rk_sig = kr->rk_sig;
+	rk.rk_flags = kr->rk_flags;
+	rk.rk_subtree = kr->rk_subtree;
+
+	_PHOLD(p);
+	PROC_UNLOCK(p);
+	sx_slock(&proctree_lock);
+	PROC_LOCK(p);
+
+	error = kern_procctl_single(td, p, PROC_REAP_KILL, &rk);
+
+	sx_sunlock(&proctree_lock);
+	_PRELE(p);
+
+	memset(rp, 0, sizeof(*rp));
+	if (error == 0) {
+		rp->status = NODE_STATUS_OK;
+		rp->rk_killed = rk.rk_killed;
+		rp->rk_fpid = rk.rk_fpid;
+	} else {
+		rp->status = (error == EPERM) ?
+		    NODE_STATUS_EPERM : NODE_STATUS_ERR;
+	}
+
+	return (0);
+}
+
 static int
 node_op_get_affinity(struct thread *td __unused, struct proc *p,
     void *reply, size_t *replylenp)
@@ -559,6 +777,13 @@ node_do_procctl(struct thread *td, struct proc *p, int com, void *data)
 	 */
 	need_slock = false;
 	switch (com) {
+	case PROC_SPROTECT:
+		/* PCTL_SLOCKED + PRIV_VM_MADV_PROTECT, no candebug */
+		need_slock = true;
+		error = priv_check(td, PRIV_VM_MADV_PROTECT);
+		if (error != 0)
+			return (error);
+		break;
 	case PROC_TRACE_CTL:
 	case PROC_TRAPCAP_CTL:
 	case PROC_NO_NEW_PRIVS_CTL:
@@ -662,6 +887,7 @@ node_op_set_procctl(struct thread *td, struct proc *p,
 
 	/* Only allow safe set commands. */
 	switch (ps->com) {
+	case PROC_SPROTECT:
 	case PROC_TRACE_CTL:
 	case PROC_TRAPCAP_CTL:
 	case PROC_PDEATHSIG_CTL:
@@ -1139,6 +1365,36 @@ node_call(struct cap_rt_instance *s __unused,
 	case NODE_OP_SET_RTPRIO:
 		error = node_op_set_rtprio(curthread, p, req, reqlen,
 		    reply, replylenp);
+		break;
+	/* Confinement operations */
+	case NODE_OP_GET_PDEATHSIG:
+		error = node_op_get_pdeathsig(p, reply, replylenp);
+		break;
+	case NODE_OP_SET_PDEATHSIG:
+		error = node_op_set_pdeathsig(p, req, reqlen,
+		    reply, replylenp);
+		break;
+	case NODE_OP_REAP_ACQUIRE:
+		error = node_op_reap_acquire(curthread, p, reply, replylenp);
+		break;
+	case NODE_OP_REAP_RELEASE:
+		error = node_op_reap_release(curthread, p, reply, replylenp);
+		break;
+	case NODE_OP_REAP_STATUS:
+		error = node_op_reap_status(curthread, p, reply, replylenp);
+		break;
+	case NODE_OP_REAP_KILL:
+		error = node_op_reap_kill(curthread, p, req, reqlen,
+		    reply, replylenp);
+		break;
+	case NODE_OP_REAP_GETPIDS:
+		/* Deferred: kernel reap_getpids uses copyout which
+		 * doesn't map to the CMI reply-buffer model. */
+		if (*replylenp >= sizeof(uint32_t)) {
+			*(uint32_t *)reply = NODE_STATUS_ERR;
+			*replylenp = sizeof(uint32_t);
+		}
+		error = 0;
 		break;
 	default:
 		error = EINVAL;

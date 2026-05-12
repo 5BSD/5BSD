@@ -33,6 +33,15 @@
 #define	NODE_OP_SET_LOGIN	18	/* set login name */
 #define	NODE_OP_GET_RTPRIO	19	/* get scheduler class + priority */
 #define	NODE_OP_SET_RTPRIO	20	/* set scheduler class + priority */
+/* Confinement operations */
+#define	NODE_OP_SET_PDEATHSIG	21	/* set parent-death signal on target */
+#define	NODE_OP_GET_PDEATHSIG	22	/* get parent-death signal */
+#define	NODE_OP_REAP_ACQUIRE	23	/* become reaper (self-only) */
+#define	NODE_OP_REAP_RELEASE	24	/* relinquish reaper (self-only) */
+#define	NODE_OP_REAP_STATUS	25	/* query reaper descendant info */
+#define	NODE_OP_REAP_GETPIDS	26	/* enumerate subtree PIDs */
+#define	NODE_OP_REAP_KILL	27	/* signal entire subtree */
+/* 28-29 reserved (capmode/chroot moved to capprotect service) */
 
 /* Status codes */
 #define	NODE_STATUS_OK		0
@@ -245,6 +254,66 @@ struct node_procctl_reply {
 	uint32_t	status;
 	uint32_t	com;
 	int32_t		val;
+	uint32_t	_pad;
+} __packed;
+
+/* For SET_PDEATHSIG */
+struct node_pdeathsig_set {
+	uint32_t	op;		/* NODE_OP_SET_PDEATHSIG */
+	uint32_t	signal;		/* signal number, 0 = disable */
+} __packed;
+
+/* Reply: pdeathsig */
+struct node_pdeathsig_reply {
+	uint32_t	status;
+	uint32_t	signal;		/* current pdeathsig value */
+} __packed;
+
+/* Reply: reap_status */
+struct node_reap_status_reply {
+	uint32_t	status;
+	uint32_t	rs_flags;	/* REAPER_STATUS_OWNED, etc. */
+	uint32_t	rs_children;	/* immediate children */
+	uint32_t	rs_descendants;	/* all descendants */
+	int32_t		rs_reaper;	/* reaper PID */
+	int32_t		rs_pid;		/* first child PID */
+} __packed;
+
+/* For REAP_KILL */
+struct node_reap_kill_req {
+	uint32_t	op;		/* NODE_OP_REAP_KILL */
+	uint32_t	rk_sig;		/* signal to send */
+	uint32_t	rk_flags;	/* REAPER_KILL_CHILDREN, etc. */
+	int32_t		rk_subtree;	/* PID for REAPER_KILL_SUBTREE */
+} __packed;
+
+/* Reply: reap_kill */
+struct node_reap_kill_reply {
+	uint32_t	status;
+	uint32_t	rk_killed;	/* processes signaled */
+	int32_t		rk_fpid;	/* first failed PID, -1 if none */
+	uint32_t	_pad;
+} __packed;
+
+/* For REAP_GETPIDS — reply is variable-length */
+#define	NODE_REAP_MAXPIDS	64
+
+struct node_reap_pidinfo {
+	int32_t		pi_pid;
+	int32_t		pi_subtree;
+	uint32_t	pi_flags;	/* REAPER_PIDINFO_VALID, etc. */
+	uint32_t	_pad;
+} __packed;
+
+struct node_reap_getpids_reply {
+	uint32_t	status;
+	uint32_t	nentries;
+	struct node_reap_pidinfo pids[NODE_REAP_MAXPIDS];
+} __packed;
+
+/* Reply: simple status-only (for chroot, capmode, reap acquire/release) */
+struct node_status_reply {
+	uint32_t	status;
 	uint32_t	_pad;
 } __packed;
 

@@ -50,12 +50,16 @@
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/sdt.h>
+#include <sys/capsicum.h>
 #include <sys/ucred.h>
+#include <sys/vnode.h>
 
 #include <security/mac/mac_policy.h>
 
 #include "cap_rt.h"
 #include "cap_rt_label.h"
+
+int	kern_chroot(struct thread *td, struct vnode *vp);
 #include "cap_rt_capprotect_proto.h"
 
 MALLOC_DEFINE(M_CAP_RT_CP, "cap_rt_cp", "cap_rt capability protection");
@@ -265,7 +269,7 @@ cp_init(struct cap_rt_instance *s, void *arg __unused)
 static int
 cp_call(struct cap_rt_instance *s,
     const void *req, size_t reqlen,
-    struct file **fds __unused, struct filecaps *fcaps __unused, int nfds __unused,
+    struct file **fds, struct filecaps *fcaps __unused, int nfds,
     void *reply __unused, size_t *replylenp,
     struct file **reply_fds, int *reply_nfdsp,
     void *arg __unused)
@@ -371,6 +375,68 @@ cp_call(struct cap_rt_instance *s,
 		cp_auth_add(caller_nonce, priv->cp_target, s);
 		*replylenp = 0;
 		return (0);
+
+	case CP_OP_CAPMODE: {
+		struct ucred *newcred, *oldcred;
+		struct proc *p;
+
+		mtx_unlock(&priv->cp_mtx);
+
+		p = curthread->td_proc;
+
+		/* Allocate before PROC_LOCK (crget does M_WAITOK) */
+		newcred = crget();
+		PROC_LOCK(p);
+
+		if (p->p_ucred->cr_flags & CRED_FLAG_CAPMODE) {
+			/* Already in capability mode — idempotent */
+			PROC_UNLOCK(p);
+			crfree(newcred);
+			*replylenp = 0;
+			return (0);
+		}
+
+		oldcred = crcopysafe(p, newcred);
+		newcred->cr_flags |= CRED_FLAG_CAPMODE;
+		proc_set_cred(p, newcred);
+		PROC_UNLOCK(p);
+		crfree(oldcred);
+
+		*replylenp = 0;
+		return (0);
+	}
+
+	case CP_OP_CHROOT: {
+		struct file *dir_fp;
+		struct vnode *vp;
+		int error;
+
+		mtx_unlock(&priv->cp_mtx);
+
+		if (nfds < 1 || fds[0] == NULL) {
+			return (EINVAL);
+		}
+		dir_fp = fds[0];
+		if (dir_fp->f_type != DTYPE_VNODE)
+			return (EINVAL);
+
+		vp = dir_fp->f_vnode;
+		if (vp->v_type != VDIR)
+			return (ENOTDIR);
+
+		/*
+		 * kern_chroot expects a locked+referenced vnode (as from
+		 * namei) and releases both the lock and the reference.
+		 * vn_lock only acquires the lock, so take an explicit
+		 * vref to match kern_chroot's vrele/vput.
+		 */
+		vref(vp);
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		error = kern_chroot(curthread, vp);
+
+		*replylenp = 0;
+		return (error);
+	}
 
 	default:
 		mtx_unlock(&priv->cp_mtx);

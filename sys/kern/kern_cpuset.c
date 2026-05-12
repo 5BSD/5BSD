@@ -1388,8 +1388,13 @@ cpuset_setproc_mask(struct proc *p, cpuset_t *mask)
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
-	cpuset_freelist_init(&freelist, 1);
-	domainset_freelist_init(&domainlist, 1);
+	/*
+	 * Start with empty freelists.  The pre-allocation in init(1)
+	 * would do M_WAITOK under PROC_LOCK, which WITNESS flags.
+	 * The loop below drops PROC_LOCK before allocating.
+	 */
+	cpuset_freelist_init(&freelist, 0);
+	domainset_freelist_init(&domainlist, 0);
 	LIST_INIT(&droplist);
 	nfree = 0;
 

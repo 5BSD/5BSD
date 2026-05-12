@@ -478,8 +478,12 @@ coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 		atomic_subtract_int(&coalition_total_members, 1);
 		if (cm->cm_fp != NULL)
 			fdrop(cm->cm_fp, NULL);
-		if (cm->cm_data != NULL)
-			prison_free((struct prison *)cm->cm_data);
+		if (cm->cm_data != NULL) {
+			struct prison *pr = cm->cm_data;
+
+			cm->cm_data = NULL;
+			prison_free(pr);
+		}
 		uma_zfree(coalition_member_zone, cm);
 		coalition_rel(co);
 	}
@@ -962,8 +966,11 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 	if (dtype == DTYPE_JAILDESC) {
 		struct prison *pr = cm->cm_data;
 
+		/*
+		 * cm_data owns the prison_hold() taken during enlist and must
+		 * keep that reference until member teardown.
+		 */
 		coalition_jail_set_member(pr, cm);
-		prison_free(pr);
 	}
 
 	atomic_add_int(&co->co_member_count, 1);
@@ -1984,8 +1991,11 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 			if (cm->cm_fp != NULL)
 				(void)coalition_jail_terminate(cm->cm_fp);
 
-			if (cm->cm_data != NULL)
-				prison_free((struct prison *)cm->cm_data);
+			if (cm->cm_data != NULL) {
+				pr = cm->cm_data;
+				cm->cm_data = NULL;
+				prison_free(pr);
+			}
 
 			atomic_subtract_int(&co->co_member_count, 1);
 			atomic_subtract_int(&coalition_total_members, 1);

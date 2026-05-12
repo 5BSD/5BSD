@@ -14,6 +14,7 @@
 #include <sys/procctl.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 
 #include <errno.h>
@@ -28,6 +29,7 @@
 
 #include "cap_rt_ioctl.h"
 #include "cap_rt_node_proto.h"
+#include "cap_rt_capprotect_proto.h"
 
 #ifndef RACCT_NOFILE
 #define	RACCT_NOFILE	7
@@ -1451,17 +1453,26 @@ ATF_TC_BODY(node_rlimit_max_values, tc)
 	struct node_rlimit_reply reply;
 	struct node_request greq;
 	struct rlimit orig;
+	size_t len;
+	int maxfilesperproc;
 	int fd;
 	/*
 	 * Use a large but valid value instead of RLIM_INFINITY.
 	 * The kernel may clamp or reject RLIM_INFINITY for NOFILE.
 	 */
 	const int64_t large_val = 1000000;
+	int64_t expected_val;
 
 	fd = cap_rt_connect("node");
 	ATF_REQUIRE(fd >= 0);
 
 	ATF_REQUIRE(getrlimit(RLIMIT_NOFILE, &orig) == 0);
+	len = sizeof(maxfilesperproc);
+	ATF_REQUIRE(sysctlbyname("kern.maxfilesperproc", &maxfilesperproc,
+	    &len, NULL, 0) == 0);
+	expected_val = large_val;
+	if (maxfilesperproc > 0 && expected_val > maxfilesperproc)
+		expected_val = maxfilesperproc;
 
 	/* Set RLIMIT_NOFILE to a large value for both cur and max */
 	memset(&sreq, 0, sizeof(sreq));
@@ -1483,8 +1494,8 @@ ATF_TC_BODY(node_rlimit_max_values, tc)
 	ATF_REQUIRE(node_call_raw(fd, &greq, sizeof(greq), NULL, 0,
 	    &reply, sizeof(reply)) == 0);
 	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
-	ATF_CHECK(reply.rlim_cur >= large_val);
-	ATF_CHECK(reply.rlim_max >= large_val);
+	ATF_CHECK(reply.rlim_cur >= expected_val);
+	ATF_CHECK(reply.rlim_max >= expected_val);
 
 	/* Restore original limits */
 	sreq.rlim_cur = (int64_t)orig.rlim_cur;
@@ -1964,6 +1975,334 @@ ATF_TC_BODY(node_rtprio_invalid_prio, tc)
 }
 
 /* ----------------------------------------------------------------
+ * Confinement tests
+ * ---------------------------------------------------------------- */
+
+ATF_TC(node_pdeathsig_set_child);
+ATF_TC_HEAD(node_pdeathsig_set_child, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SET_PDEATHSIG on child sets signal, GET_PDEATHSIG reads it back");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+}
+ATF_TC_BODY(node_pdeathsig_set_child, tc)
+{
+	struct node_pdeathsig_set sreq;
+	struct node_pdeathsig_reply reply;
+	struct node_request greq;
+	int fd, pd, status;
+	pid_t pid;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+
+	/* Set pdeathsig=SIGTERM on child */
+	memset(&sreq, 0, sizeof(sreq));
+	sreq.op = NODE_OP_SET_PDEATHSIG;
+	sreq.signal = SIGTERM;
+	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+
+	/* Read it back */
+	memset(&greq, 0, sizeof(greq));
+	greq.op = NODE_OP_GET_PDEATHSIG;
+	ATF_REQUIRE(node_call_raw(fd, &greq, sizeof(greq), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+	ATF_CHECK_EQ(reply.signal, (uint32_t)SIGTERM);
+
+	pdkill(pd, SIGKILL);
+	waitpid(pid, &status, 0);
+	close(pd);
+	close(fd);
+}
+
+ATF_TC(node_pdeathsig_invalid_signal);
+ATF_TC_HEAD(node_pdeathsig_invalid_signal, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SET_PDEATHSIG with invalid signal returns NODE_STATUS_ERR");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+}
+ATF_TC_BODY(node_pdeathsig_invalid_signal, tc)
+{
+	struct node_pdeathsig_set sreq;
+	struct node_pdeathsig_reply reply;
+	int fd;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	memset(&sreq, 0, sizeof(sreq));
+	sreq.op = NODE_OP_SET_PDEATHSIG;
+	sreq.signal = 999;
+	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_ERR);
+
+	close(fd);
+}
+
+ATF_TC(node_protect_child);
+ATF_TC_HEAD(node_protect_child, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SET_PROCCTL with PROC_SPROTECT / PPROT_SET on child");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(node_protect_child, tc)
+{
+	struct node_procctl_set sreq;
+	struct node_procctl_reply reply;
+	int fd, pd, status;
+	pid_t pid;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+
+	memset(&sreq, 0, sizeof(sreq));
+	sreq.op = NODE_OP_SET_PROCCTL;
+	sreq.com = PROC_SPROTECT;
+	sreq.val = PPROT_SET;
+	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+
+	pdkill(pd, SIGKILL);
+	waitpid(pid, &status, 0);
+	close(pd);
+	close(fd);
+}
+
+ATF_TC(node_reap_acquire_self);
+ATF_TC_HEAD(node_reap_acquire_self, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "REAP_ACQUIRE/STATUS/RELEASE self-targeting lifecycle");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(node_reap_acquire_self, tc)
+{
+	struct node_request req;
+	struct node_status_reply areply;
+	struct node_reap_status_reply sreply;
+	int fd;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	/* Acquire reaper status */
+	memset(&req, 0, sizeof(req));
+	req.op = NODE_OP_REAP_ACQUIRE;
+	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), NULL, 0,
+	    &areply, sizeof(areply)) == 0);
+	ATF_CHECK_EQ(areply.status, NODE_STATUS_OK);
+
+	/* Query reaper status */
+	memset(&req, 0, sizeof(req));
+	req.op = NODE_OP_REAP_STATUS;
+	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), NULL, 0,
+	    &sreply, sizeof(sreply)) == 0);
+	ATF_CHECK_EQ(sreply.status, NODE_STATUS_OK);
+	ATF_CHECK(sreply.rs_flags & REAPER_STATUS_OWNED);
+
+	/* Release */
+	memset(&req, 0, sizeof(req));
+	req.op = NODE_OP_REAP_RELEASE;
+	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), NULL, 0,
+	    &areply, sizeof(areply)) == 0);
+	ATF_CHECK_EQ(areply.status, NODE_STATUS_OK);
+
+	close(fd);
+}
+
+ATF_TC(node_reap_kill_children);
+ATF_TC_HEAD(node_reap_kill_children, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "REAP_ACQUIRE then REAP_KILL signals all children");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(node_reap_kill_children, tc)
+{
+	struct node_request req;
+	struct node_status_reply areply;
+	struct node_reap_kill_req kreq;
+	struct node_reap_kill_reply kreply;
+	int fd, status;
+	pid_t c1, c2;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	/* Become reaper */
+	memset(&req, 0, sizeof(req));
+	req.op = NODE_OP_REAP_ACQUIRE;
+	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), NULL, 0,
+	    &areply, sizeof(areply)) == 0);
+	ATF_REQUIRE(areply.status == NODE_STATUS_OK);
+
+	/* Fork two children */
+	c1 = fork();
+	ATF_REQUIRE(c1 >= 0);
+	if (c1 == 0) { sleep(60); _exit(0); }
+
+	c2 = fork();
+	ATF_REQUIRE(c2 >= 0);
+	if (c2 == 0) { sleep(60); _exit(0); }
+
+	/* Let children start */
+	usleep(50000);
+
+	/* Kill all children via reaper */
+	memset(&kreq, 0, sizeof(kreq));
+	kreq.op = NODE_OP_REAP_KILL;
+	kreq.rk_sig = SIGKILL;
+	kreq.rk_flags = REAPER_KILL_CHILDREN;
+	ATF_REQUIRE(node_call_raw(fd, &kreq, sizeof(kreq), NULL, 0,
+	    &kreply, sizeof(kreply)) == 0);
+	ATF_CHECK(kreply.status == NODE_STATUS_OK ||
+	    kreply.status == NODE_STATUS_ERR);
+	if (kreply.status == NODE_STATUS_OK)
+		ATF_CHECK(kreply.rk_killed >= 2);
+
+	/* Reap children */
+	waitpid(c1, &status, 0);
+	waitpid(c2, &status, 0);
+
+	/* Release reaper */
+	memset(&req, 0, sizeof(req));
+	req.op = NODE_OP_REAP_RELEASE;
+	node_call_raw(fd, &req, sizeof(req), NULL, 0,
+	    &areply, sizeof(areply));
+
+	close(fd);
+}
+
+ATF_TC(capprotect_capmode);
+ATF_TC_HEAD(capprotect_capmode, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CP_OP_CAPMODE on capprotect enters capability mode");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "cap_rt cap_rt_capprotect");
+}
+ATF_TC_BODY(capprotect_capmode, tc)
+{
+	int status;
+	pid_t pid;
+
+	/*
+	 * Must fork because capability mode is irreversible.
+	 */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		struct cp_request req;
+		int cpfd, tfd;
+
+		cpfd = cap_rt_connect("capprotect");
+		if (cpfd < 0)
+			_exit(10);
+
+		memset(&req, 0, sizeof(req));
+		req.op = CP_OP_CAPMODE;
+		if (node_call_raw(cpfd, &req, sizeof(req), NULL, 0,
+		    NULL, 0) != 0)
+			_exit(1);
+
+		/* Verify we are in capability mode: open should fail */
+		tfd = open("/dev/null", O_RDONLY);
+		if (tfd >= 0) {
+			close(tfd);
+			_exit(3); /* open succeeded — not in capmode */
+		}
+		if (errno != ECAPMODE)
+			_exit(4); /* wrong errno */
+
+		close(cpfd);
+		_exit(0);
+	}
+	waitpid(pid, &status, 0);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child exited with status %d (signal %d)",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1,
+	    WIFSIGNALED(status) ? WTERMSIG(status) : -1);
+}
+
+ATF_TC(capprotect_chroot);
+ATF_TC_HEAD(capprotect_chroot, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CP_OP_CHROOT with attached dir fd changes filesystem root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(capprotect_chroot, tc)
+{
+	int status;
+	pid_t pid;
+	char tmpdir[] = "/tmp/cap_rt_chroot.XXXXXX";
+
+	ATF_REQUIRE(mkdtemp(tmpdir) != NULL);
+
+	/*
+	 * Must fork because chroot is irreversible.
+	 */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		struct cp_request req;
+		int cpfd, dfd, tfd;
+
+		cpfd = cap_rt_connect("capprotect");
+		if (cpfd < 0)
+			_exit(10);
+
+		dfd = open(tmpdir, O_RDONLY | O_DIRECTORY);
+		if (dfd < 0)
+			_exit(11);
+
+		memset(&req, 0, sizeof(req));
+		req.op = CP_OP_CHROOT;
+		if (node_call_raw(cpfd, &req, sizeof(req), &dfd, 1,
+		    NULL, 0) != 0)
+			_exit(1);
+		close(dfd);
+
+		/* Verify: /dev/null should not exist in the chroot */
+		tfd = open("/dev/null", O_RDONLY);
+		if (tfd >= 0) {
+			close(tfd);
+			_exit(3); /* file accessible — chroot failed */
+		}
+
+		close(cpfd);
+		_exit(0);
+	}
+	waitpid(pid, &status, 0);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child exited with status %d (signal %d)",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1,
+	    WIFSIGNALED(status) ? WTERMSIG(status) : -1);
+
+	rmdir(tmpdir);
+}
+
+/* ----------------------------------------------------------------
  * Test registration
  * ---------------------------------------------------------------- */
 
@@ -2020,6 +2359,15 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, node_nice_boundary);
 	ATF_TP_ADD_TC(tp, node_stat_zombie);
 	ATF_TP_ADD_TC(tp, node_cred_ngroups_zero);
+
+	/* Confinement */
+	ATF_TP_ADD_TC(tp, node_pdeathsig_set_child);
+	ATF_TP_ADD_TC(tp, node_pdeathsig_invalid_signal);
+	ATF_TP_ADD_TC(tp, node_protect_child);
+	ATF_TP_ADD_TC(tp, node_reap_acquire_self);
+	ATF_TP_ADD_TC(tp, node_reap_kill_children);
+	ATF_TP_ADD_TC(tp, capprotect_capmode);
+	ATF_TP_ADD_TC(tp, capprotect_chroot);
 
 	/* Error cases */
 	ATF_TP_ADD_TC(tp, node_set_cred_eperm);

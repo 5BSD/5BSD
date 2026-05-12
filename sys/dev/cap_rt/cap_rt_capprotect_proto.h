@@ -17,6 +17,8 @@
 #define	CP_OP_SHIELD		1	/* shield calling program (nonce-scoped) */
 #define	CP_OP_MINT		2	/* create access token (returns reply fd) */
 #define	CP_OP_AUTHORIZE		3	/* authorize caller (on token fd) */
+#define	CP_OP_CAPMODE		4	/* enter Capsicum capability mode */
+#define	CP_OP_CHROOT		5	/* change filesystem root (dir fd attached) */
 
 /*
  * Shield flags — bitmask of desired protections.
