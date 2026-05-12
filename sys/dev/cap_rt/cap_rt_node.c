@@ -30,6 +30,7 @@
 #include <sys/racct.h>
 #include <sys/resource.h>
 #include <sys/resourcevar.h>
+#include <sys/rtprio.h>
 #include <sys/sched.h>
 #include <sys/stat.h>
 #include <sys/sx.h>
@@ -43,6 +44,16 @@
 #include "cap_rt_node_proto.h"
 
 extern struct sx proctree_lock;
+
+/* Verify wire-protocol constants match kernel definitions. */
+_Static_assert(NODE_RTPRIO_REALTIME == RTP_PRIO_REALTIME,
+    "NODE_RTPRIO_REALTIME != RTP_PRIO_REALTIME");
+_Static_assert(NODE_RTPRIO_NORMAL == RTP_PRIO_NORMAL,
+    "NODE_RTPRIO_NORMAL != RTP_PRIO_NORMAL");
+_Static_assert(NODE_RTPRIO_IDLE == RTP_PRIO_IDLE,
+    "NODE_RTPRIO_IDLE != RTP_PRIO_IDLE");
+_Static_assert(NODE_RTPRIO_FIFO == RTP_PRIO_FIFO,
+    "NODE_RTPRIO_FIFO != RTP_PRIO_FIFO");
 
 /* ----------------------------------------------------------------
  * Resolve target process: attached procdesc or self
@@ -334,6 +345,101 @@ node_op_set_nice(struct thread *td, struct proc *p,
 		rp->nice = p->p_nice - NZERO;
 	} else {
 		rp->status = NODE_STATUS_EPERM;
+	}
+
+	return (0);
+}
+
+static int
+node_op_get_rtprio(struct proc *p, void *reply, size_t *replylenp)
+{
+	struct node_rtprio_reply *rp = reply;
+	struct rtprio rtp;
+	struct thread *ttd;
+
+	if (*replylenp < sizeof(*rp))
+		return (EINVAL);
+	*replylenp = sizeof(*rp);
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	memset(rp, 0, sizeof(*rp));
+
+	ttd = FIRST_THREAD_IN_PROC(p);
+	if (ttd == NULL) {
+		rp->status = NODE_STATUS_DEAD;
+		return (0);
+	}
+
+	pri_to_rtp(ttd, &rtp);
+	rp->status = NODE_STATUS_OK;
+	rp->type = rtp.type;
+	rp->prio = rtp.prio;
+
+	return (0);
+}
+
+/*
+ * Respect the same sysctl that kern_rtprio uses.
+ */
+extern int unprivileged_idprio;
+
+static int
+node_op_set_rtprio(struct thread *td, struct proc *p,
+    const void *req, size_t reqlen,
+    void *reply, size_t *replylenp)
+{
+	const struct node_rtprio_set *rs = req;
+	struct node_rtprio_reply *rp = reply;
+	struct rtprio rtp;
+	struct thread *ttd;
+	int error;
+
+	if (reqlen < sizeof(*rs) || *replylenp < sizeof(*rp))
+		return (EINVAL);
+	*replylenp = sizeof(*rp);
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	error = p_cansched(td, p);
+	if (error == 0) {
+		switch (RTP_PRIO_BASE(rs->type)) {
+		case RTP_PRIO_REALTIME:
+			error = priv_check(td, PRIV_SCHED_RTPRIO);
+			break;
+		case RTP_PRIO_IDLE:
+			if (unprivileged_idprio == 0)
+				error = priv_check(td, PRIV_SCHED_IDPRIO);
+			break;
+		case RTP_PRIO_NORMAL:
+			break;
+		default:
+			error = EINVAL;
+			break;
+		}
+	}
+
+	ttd = (error == 0) ? FIRST_THREAD_IN_PROC(p) : NULL;
+	if (error == 0 && ttd == NULL)
+		error = ESRCH;
+
+	if (error == 0) {
+		rtp.type = rs->type;
+		rtp.prio = rs->prio;
+		error = rtp_to_pri(&rtp, ttd);
+	}
+
+	memset(rp, 0, sizeof(*rp));
+	if (error == 0) {
+		pri_to_rtp(ttd, &rtp);
+		rp->status = NODE_STATUS_OK;
+		rp->type = rtp.type;
+		rp->prio = rtp.prio;
+	} else if (error == EPERM || error == EACCES) {
+		rp->status = NODE_STATUS_EPERM;
+	} else if (error == ESRCH) {
+		rp->status = NODE_STATUS_DEAD;
+	} else {
+		rp->status = NODE_STATUS_ERR;
 	}
 
 	return (0);
@@ -1025,6 +1131,13 @@ node_call(struct cap_rt_instance *s __unused,
 		break;
 	case NODE_OP_SET_LOGIN:
 		error = node_op_set_login(curthread, p, req, reqlen,
+		    reply, replylenp);
+		break;
+	case NODE_OP_GET_RTPRIO:
+		error = node_op_get_rtprio(p, reply, replylenp);
+		break;
+	case NODE_OP_SET_RTPRIO:
+		error = node_op_set_rtprio(curthread, p, req, reqlen,
 		    reply, replylenp);
 		break;
 	default:

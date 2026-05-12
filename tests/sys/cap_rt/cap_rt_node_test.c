@@ -1767,6 +1767,203 @@ ATF_TC_BODY(node_invalid_procctl, tc)
 }
 
 /* ----------------------------------------------------------------
+ * Scheduler class (rtprio) tests
+ * ---------------------------------------------------------------- */
+
+ATF_TC(node_rtprio_get_self);
+ATF_TC_HEAD(node_rtprio_get_self, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "GET_RTPRIO returns current scheduler class for self");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(node_rtprio_get_self, tc)
+{
+	struct node_request req;
+	struct node_rtprio_reply reply;
+	int fd;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	memset(&req, 0, sizeof(req));
+	req.op = NODE_OP_GET_RTPRIO;
+	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+	/* Default process should be timeshare (NORMAL) */
+	ATF_CHECK_EQ(reply.type, NODE_RTPRIO_NORMAL);
+
+	close(fd);
+}
+
+ATF_TC(node_rtprio_set_idle_self);
+ATF_TC_HEAD(node_rtprio_set_idle_self, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SET_RTPRIO can switch self to idle class and back");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(node_rtprio_set_idle_self, tc)
+{
+	struct node_rtprio_set sreq;
+	struct node_rtprio_reply reply;
+	struct node_request greq;
+	int fd;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	/* Switch to idle class, priority 10 */
+	memset(&sreq, 0, sizeof(sreq));
+	sreq.op = NODE_OP_SET_RTPRIO;
+	sreq.type = NODE_RTPRIO_IDLE;
+	sreq.prio = 10;
+	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+	ATF_CHECK_EQ(reply.type, NODE_RTPRIO_IDLE);
+	ATF_CHECK_EQ(reply.prio, 10);
+
+	/* Verify via GET */
+	memset(&greq, 0, sizeof(greq));
+	greq.op = NODE_OP_GET_RTPRIO;
+	ATF_REQUIRE(node_call_raw(fd, &greq, sizeof(greq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+	ATF_CHECK_EQ(reply.type, NODE_RTPRIO_IDLE);
+	ATF_CHECK_EQ(reply.prio, 10);
+
+	/* Switch back to normal */
+	sreq.type = NODE_RTPRIO_NORMAL;
+	sreq.prio = 0;
+	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+	ATF_CHECK_EQ(reply.type, NODE_RTPRIO_NORMAL);
+
+	/* Verify switch-back via GET */
+	memset(&greq, 0, sizeof(greq));
+	greq.op = NODE_OP_GET_RTPRIO;
+	ATF_REQUIRE(node_call_raw(fd, &greq, sizeof(greq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+	ATF_CHECK_EQ(reply.type, NODE_RTPRIO_NORMAL);
+
+	close(fd);
+}
+
+ATF_TC(node_rtprio_set_realtime_child);
+ATF_TC_HEAD(node_rtprio_set_realtime_child, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SET_RTPRIO can switch child to realtime class via procdesc");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(node_rtprio_set_realtime_child, tc)
+{
+	struct node_rtprio_set sreq;
+	struct node_rtprio_reply reply;
+	struct node_request greq;
+	int fd, pd;
+	pid_t pid;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(fd);
+		pause();
+		_exit(0);
+	}
+
+	/* Set child to realtime FIFO, priority 5 */
+	memset(&sreq, 0, sizeof(sreq));
+	sreq.op = NODE_OP_SET_RTPRIO;
+	sreq.type = NODE_RTPRIO_REALTIME;
+	sreq.prio = 5;
+	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+	ATF_CHECK_EQ(reply.type, NODE_RTPRIO_REALTIME);
+	ATF_CHECK_EQ(reply.prio, 5);
+
+	/* Verify via GET on child */
+	memset(&greq, 0, sizeof(greq));
+	greq.op = NODE_OP_GET_RTPRIO;
+	ATF_REQUIRE(node_call_raw(fd, &greq, sizeof(greq), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+	ATF_CHECK_EQ(reply.type, NODE_RTPRIO_REALTIME);
+	ATF_CHECK_EQ(reply.prio, 5);
+
+	pdkill(pd, SIGKILL);
+	close(pd);
+	close(fd);
+}
+
+ATF_TC(node_rtprio_invalid_class);
+ATF_TC_HEAD(node_rtprio_invalid_class, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SET_RTPRIO rejects invalid scheduler class");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(node_rtprio_invalid_class, tc)
+{
+	struct node_rtprio_set sreq;
+	struct node_rtprio_reply reply;
+	int fd;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	memset(&sreq, 0, sizeof(sreq));
+	sreq.op = NODE_OP_SET_RTPRIO;
+	sreq.type = 99;	/* invalid class */
+	sreq.prio = 0;
+	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_ERR);
+
+	close(fd);
+}
+
+ATF_TC(node_rtprio_invalid_prio);
+ATF_TC_HEAD(node_rtprio_invalid_prio, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SET_RTPRIO rejects priority > RTP_PRIO_MAX");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(node_rtprio_invalid_prio, tc)
+{
+	struct node_rtprio_set sreq;
+	struct node_rtprio_reply reply;
+	int fd;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	memset(&sreq, 0, sizeof(sreq));
+	sreq.op = NODE_OP_SET_RTPRIO;
+	sreq.type = NODE_RTPRIO_REALTIME;
+	sreq.prio = 100;	/* > RTP_PRIO_MAX (31) */
+	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), NULL, 0,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_ERR);
+
+	close(fd);
+}
+
+/* ----------------------------------------------------------------
  * Test registration
  * ---------------------------------------------------------------- */
 
@@ -1810,6 +2007,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, node_procctl_get_child);
 	ATF_TP_ADD_TC(tp, node_umask_child);
 	ATF_TP_ADD_TC(tp, node_stat_dead_child);
+
+	/* Scheduler class (rtprio) */
+	ATF_TP_ADD_TC(tp, node_rtprio_get_self);
+	ATF_TP_ADD_TC(tp, node_rtprio_set_idle_self);
+	ATF_TP_ADD_TC(tp, node_rtprio_set_realtime_child);
+	ATF_TP_ADD_TC(tp, node_rtprio_invalid_class);
+	ATF_TP_ADD_TC(tp, node_rtprio_invalid_prio);
 
 	/* Edge cases */
 	ATF_TP_ADD_TC(tp, node_rlimit_max_values);

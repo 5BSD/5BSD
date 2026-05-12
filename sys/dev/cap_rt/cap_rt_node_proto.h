@@ -31,6 +31,8 @@
 #define	NODE_OP_GET_UMASK	16	/* get file creation mask */
 #define	NODE_OP_SET_UMASK	17	/* set file creation mask */
 #define	NODE_OP_SET_LOGIN	18	/* set login name */
+#define	NODE_OP_GET_RTPRIO	19	/* get scheduler class + priority */
+#define	NODE_OP_SET_RTPRIO	20	/* set scheduler class + priority */
 
 /* Status codes */
 #define	NODE_STATUS_OK		0
@@ -58,6 +60,28 @@ struct node_nice_set {
 	uint32_t	_pad;
 	int32_t		nice;
 	uint32_t	_pad2;
+} __packed;
+
+/* For SET_RTPRIO — scheduler class constants match sys/rtprio.h */
+#define	NODE_RTPRIO_REALTIME	2	/* RTP_PRIO_REALTIME (round-robin) */
+#define	NODE_RTPRIO_NORMAL	3	/* RTP_PRIO_NORMAL (timeshare) */
+#define	NODE_RTPRIO_IDLE	4	/* RTP_PRIO_IDLE */
+#define	NODE_RTPRIO_FIFO	10	/* RTP_PRIO_FIFO (REALTIME | 0x8) */
+#define	NODE_RTPRIO_MAX		31	/* RTP_PRIO_MAX */
+
+struct node_rtprio_set {
+	uint32_t	op;		/* NODE_OP_SET_RTPRIO */
+	uint32_t	type;		/* NODE_RTPRIO_* class */
+	uint32_t	prio;		/* 0-31 for RT/idle, ignored for normal */
+	uint32_t	_pad;
+} __packed;
+
+/* Reply: rtprio */
+struct node_rtprio_reply {
+	uint32_t	status;
+	uint32_t	type;		/* NODE_RTPRIO_* class */
+	uint32_t	prio;		/* 0-31 within class */
+	uint32_t	_pad;
 } __packed;
 
 /* For SET_AFFINITY */
