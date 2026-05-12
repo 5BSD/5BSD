@@ -1150,6 +1150,41 @@ static const struct cap_rt_ops fi_ops = {
 	.co_revoke	= fi_revoke,
 };
 
+/*
+ * File creation: if the parent directory is claimed by a nonce,
+ * only that nonce can create files in it.  Same logic as lookup.
+ */
+static int
+fi_check_create(struct ucred *cred, struct vnode *dvp,
+    struct label *dvplabel __unused, struct componentname *cnp __unused,
+    struct vattr *vap __unused)
+{
+	struct fi_claim *c;
+	uint64_t caller_nonce;
+	uint64_t owner_nonce __unused;
+
+	if (atomic_load_acq_int(&fi_dir_claim_count) == 0)
+		return (0);
+
+	caller_nonce = cap_rt_proc_nonce(cred);
+
+	rw_rlock(&fi_lock);
+	c = fi_claim_lookup(dvp);
+	if (c == NULL) {
+		rw_runlock(&fi_lock);
+		return (0);
+	}
+	if (caller_nonce != 0 && caller_nonce == c->fi_nonce) {
+		rw_runlock(&fi_lock);
+		return (0);
+	}
+	owner_nonce = c->fi_nonce;
+	rw_runlock(&fi_lock);
+	SDT_PROBE3(cap_rt_isolation, , , deny, "create",
+	    owner_nonce, caller_nonce);
+	return (EACCES);
+}
+
 static struct mac_policy_ops fi_mac_ops = {
 	/* Content access */
 	.mpo_vnode_check_open		= fi_check_open,
@@ -1171,6 +1206,7 @@ static struct mac_policy_ops fi_mac_ops = {
 	.mpo_vnode_check_readlink	= fi_check_readlink,
 	/* Directory traversal */
 	.mpo_vnode_check_lookup		= fi_check_lookup,
+	.mpo_vnode_check_create		= fi_check_create,
 	/* Unix domain sockets */
 	.mpo_vnode_check_uipc_connect	= fi_check_uipc_connect,
 	/* Network isolation */

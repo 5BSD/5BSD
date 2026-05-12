@@ -39,7 +39,11 @@
 #define	CP_SF_SCHED		0x40	/* block setpriority/cpuset manipulation */
 #define	CP_SF_CORE		0x80	/* suppress core dumps (prevent secret leakage) */
 #define	CP_SF_KTRACE		0x100	/* block ktrace (passive information disclosure) */
-#define	CP_SF_ALL		0x1ff
+#define	CP_SF_NOPRIVS		0x200	/* strip all privileges (priv_check returns EPERM) */
+#define	CP_SF_NOFORK		0x400	/* block fork/vfork/rfork */
+#define	CP_SF_NOIPC		0x800	/* block SysV and POSIX IPC */
+#define	CP_SF_NOFDRECV		0x1000	/* block incoming fd passing (SCM_RIGHTS) */
+#define	CP_SF_ALL		0x1fff
 
 struct cp_request {
 	uint32_t	op;

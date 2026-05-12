@@ -51,6 +51,10 @@
 #include <sys/queue.h>
 #include <sys/sdt.h>
 #include <sys/capsicum.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#include <sys/sem.h>
+#include <sys/shm.h>
 #include <sys/ucred.h>
 #include <sys/vnode.h>
 
@@ -808,7 +812,213 @@ cp_mac_proc_check_suspend(struct ucred *cred, struct proc *p,
 	return (denied ? EACCES : 0);
 }
 
+/*
+ * Self-restriction hooks — check the CALLER's own nonce shield.
+ * These restrict what the shielded process itself can do, not what
+ * others can do to it.
+ */
+
+static int
+cp_mac_priv_check(struct ucred *cred, int priv)
+{
+	uint64_t nonce;
+	uint32_t flags;
+
+	nonce = cap_rt_proc_nonce(cred);
+	if (nonce == 0 || cp_no_shields())
+		return (0);
+
+	mtx_lock(&cp_lock);
+	flags = cp_shield_flags(nonce);
+	mtx_unlock(&cp_lock);
+
+	if (flags & CP_SF_NOPRIVS) {
+		SDT_PROBE3(cap_rt_capprotect, , , deny, "priv",
+		    nonce, (uint64_t)priv);
+		return (EPERM);
+	}
+
+	return (0);
+}
+
+static int
+cp_mac_check_fork(struct ucred *cred, int flags __unused)
+{
+	uint64_t nonce;
+	uint32_t sflags;
+
+	nonce = cap_rt_proc_nonce(cred);
+	if (nonce == 0 || cp_no_shields())
+		return (0);
+
+	mtx_lock(&cp_lock);
+	sflags = cp_shield_flags(nonce);
+	mtx_unlock(&cp_lock);
+
+	if (sflags & CP_SF_NOFORK) {
+		SDT_PROBE3(cap_rt_capprotect, , , deny, "fork",
+		    nonce, (uint64_t)0);
+		return (EPERM);
+	}
+
+	return (0);
+}
+
+static int
+cp_mac_file_check_receive(struct ucred *cred, struct file *fp __unused)
+{
+	uint64_t nonce;
+	uint32_t flags;
+
+	nonce = cap_rt_proc_nonce(cred);
+	if (nonce == 0 || cp_no_shields())
+		return (0);
+
+	mtx_lock(&cp_lock);
+	flags = cp_shield_flags(nonce);
+	mtx_unlock(&cp_lock);
+
+	if (flags & CP_SF_NOFDRECV) {
+		SDT_PROBE3(cap_rt_capprotect, , , deny, "fd_receive",
+		    nonce, (uint64_t)0);
+		return (EACCES);
+	}
+
+	return (0);
+}
+
+/*
+ * IPC lockdown — block SysV and POSIX IPC for shielded nonces.
+ * One function handles all IPC hooks since the policy is binary.
+ */
+static int
+cp_mac_ipc_deny(struct ucred *cred)
+{
+	uint64_t nonce;
+	uint32_t flags;
+
+	nonce = cap_rt_proc_nonce(cred);
+	if (nonce == 0 || cp_no_shields())
+		return (0);
+
+	mtx_lock(&cp_lock);
+	flags = cp_shield_flags(nonce);
+	mtx_unlock(&cp_lock);
+
+	if (flags & CP_SF_NOIPC) {
+		SDT_PROBE3(cap_rt_capprotect, , , deny, "ipc",
+		    nonce, (uint64_t)0);
+		return (EACCES);
+	}
+
+	return (0);
+}
+
+/* SysV shm wrappers */
+static int
+cp_mac_sysvshm_check_shmat(struct ucred *cred,
+    struct shmid_kernel *shmsegptr __unused, int shmflg __unused)
+{
+	return (cp_mac_ipc_deny(cred));
+}
+
+static int
+cp_mac_sysvshm_check_shmctl(struct ucred *cred,
+    struct shmid_kernel *shmsegptr __unused, int cmd __unused)
+{
+	return (cp_mac_ipc_deny(cred));
+}
+
+static int
+cp_mac_sysvshm_check_shmdt(struct ucred *cred,
+    struct shmid_kernel *shmsegptr __unused)
+{
+	return (cp_mac_ipc_deny(cred));
+}
+
+static int
+cp_mac_sysvshm_check_shmget(struct ucred *cred,
+    struct shmid_kernel *shmsegptr __unused, int shmflg __unused)
+{
+	return (cp_mac_ipc_deny(cred));
+}
+
+/* SysV sem wrappers */
+static int
+cp_mac_sysvsem_check_semctl(struct ucred *cred,
+    struct semid_kernel *semakptr __unused, int cmd __unused)
+{
+	return (cp_mac_ipc_deny(cred));
+}
+
+static int
+cp_mac_sysvsem_check_semget(struct ucred *cred,
+    struct semid_kernel *semakptr __unused)
+{
+	return (cp_mac_ipc_deny(cred));
+}
+
+static int
+cp_mac_sysvsem_check_semop(struct ucred *cred,
+    struct semid_kernel *semakptr __unused, size_t accesstype __unused)
+{
+	return (cp_mac_ipc_deny(cred));
+}
+
+/* SysV msg wrappers */
+static int
+cp_mac_sysvmsq_check_msqget(struct ucred *cred,
+    struct msqid_kernel *msqkptr __unused)
+{
+	return (cp_mac_ipc_deny(cred));
+}
+
+static int
+cp_mac_sysvmsq_check_msqsnd(struct ucred *cred,
+    struct msqid_kernel *msqkptr __unused)
+{
+	return (cp_mac_ipc_deny(cred));
+}
+
+static int
+cp_mac_sysvmsq_check_msqrcv(struct ucred *cred,
+    struct msqid_kernel *msqkptr __unused)
+{
+	return (cp_mac_ipc_deny(cred));
+}
+
+static int
+cp_mac_sysvmsq_check_msqctl(struct ucred *cred,
+    struct msqid_kernel *msqkptr __unused, int cmd __unused)
+{
+	return (cp_mac_ipc_deny(cred));
+}
+
+/* POSIX shm wrappers */
+static int
+cp_mac_posixshm_check_create(struct ucred *cred,
+    const char *path __unused)
+{
+	return (cp_mac_ipc_deny(cred));
+}
+
+static int
+cp_mac_posixshm_check_open(struct ucred *cred,
+    struct shmfd *shmfd __unused, accmode_t accmode __unused)
+{
+	return (cp_mac_ipc_deny(cred));
+}
+
+/* POSIX sem wrappers */
+static int
+cp_mac_posixsem_check_open(struct ucred *cred,
+    struct ksem *ks __unused)
+{
+	return (cp_mac_ipc_deny(cred));
+}
+
 static struct mac_policy_ops cp_mac_ops = {
+	/* Existing shield hooks (protect target from foreign nonces) */
 	.mpo_proc_check_debug = cp_mac_check_ptrace,
 	.mpo_proc_check_signal = cp_mac_check_signal,
 	.mpo_cred_check_visible = cp_mac_cred_check_visible,
@@ -817,6 +1027,25 @@ static struct mac_policy_ops cp_mac_ops = {
 	.mpo_proc_check_core = cp_mac_proc_check_core,
 	.mpo_proc_check_ktrace = cp_mac_proc_check_ktrace,
 	.mpo_proc_check_suspend = cp_mac_proc_check_suspend,
+	/* Self-restriction hooks (restrict what shielded process can do) */
+	.mpo_priv_check = cp_mac_priv_check,
+	.mpo_proc_check_fork = cp_mac_check_fork,
+	.mpo_file_check_receive = cp_mac_file_check_receive,
+	/* IPC lockdown */
+	.mpo_sysvshm_check_shmat = cp_mac_sysvshm_check_shmat,
+	.mpo_sysvshm_check_shmctl = cp_mac_sysvshm_check_shmctl,
+	.mpo_sysvshm_check_shmdt = cp_mac_sysvshm_check_shmdt,
+	.mpo_sysvshm_check_shmget = cp_mac_sysvshm_check_shmget,
+	.mpo_sysvsem_check_semctl = cp_mac_sysvsem_check_semctl,
+	.mpo_sysvsem_check_semget = cp_mac_sysvsem_check_semget,
+	.mpo_sysvsem_check_semop = cp_mac_sysvsem_check_semop,
+	.mpo_sysvmsq_check_msqget = cp_mac_sysvmsq_check_msqget,
+	.mpo_sysvmsq_check_msqsnd = cp_mac_sysvmsq_check_msqsnd,
+	.mpo_sysvmsq_check_msqrcv = cp_mac_sysvmsq_check_msqrcv,
+	.mpo_sysvmsq_check_msqctl = cp_mac_sysvmsq_check_msqctl,
+	.mpo_posixshm_check_create = cp_mac_posixshm_check_create,
+	.mpo_posixshm_check_open = cp_mac_posixshm_check_open,
+	.mpo_posixsem_check_open = cp_mac_posixsem_check_open,
 };
 
 MAC_POLICY_SET(&cp_mac_ops, mac_cap_rt_capprotect, "CAP_RT capability protection",
