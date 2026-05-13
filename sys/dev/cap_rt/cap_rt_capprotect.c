@@ -917,28 +917,32 @@ cp_mac_ipc_deny(struct ucred *cred)
 /* SysV shm wrappers */
 static int
 cp_mac_sysvshm_check_shmat(struct ucred *cred,
-    struct shmid_kernel *shmsegptr __unused, int shmflg __unused)
+    struct shmid_kernel *shmsegptr __unused,
+    struct label *shmseglabel __unused, int shmflg __unused)
 {
 	return (cp_mac_ipc_deny(cred));
 }
 
 static int
 cp_mac_sysvshm_check_shmctl(struct ucred *cred,
-    struct shmid_kernel *shmsegptr __unused, int cmd __unused)
+    struct shmid_kernel *shmsegptr __unused,
+    struct label *shmseglabel __unused, int cmd __unused)
 {
 	return (cp_mac_ipc_deny(cred));
 }
 
 static int
 cp_mac_sysvshm_check_shmdt(struct ucred *cred,
-    struct shmid_kernel *shmsegptr __unused)
+    struct shmid_kernel *shmsegptr __unused,
+    struct label *shmseglabel __unused)
 {
 	return (cp_mac_ipc_deny(cred));
 }
 
 static int
 cp_mac_sysvshm_check_shmget(struct ucred *cred,
-    struct shmid_kernel *shmsegptr __unused, int shmflg __unused)
+    struct shmid_kernel *shmsegptr __unused,
+    struct label *shmseglabel __unused, int shmflg __unused)
 {
 	return (cp_mac_ipc_deny(cred));
 }
@@ -946,21 +950,24 @@ cp_mac_sysvshm_check_shmget(struct ucred *cred,
 /* SysV sem wrappers */
 static int
 cp_mac_sysvsem_check_semctl(struct ucred *cred,
-    struct semid_kernel *semakptr __unused, int cmd __unused)
+    struct semid_kernel *semakptr __unused,
+    struct label *semaklabel __unused, int cmd __unused)
 {
 	return (cp_mac_ipc_deny(cred));
 }
 
 static int
 cp_mac_sysvsem_check_semget(struct ucred *cred,
-    struct semid_kernel *semakptr __unused)
+    struct semid_kernel *semakptr __unused,
+    struct label *semaklabel __unused)
 {
 	return (cp_mac_ipc_deny(cred));
 }
 
 static int
 cp_mac_sysvsem_check_semop(struct ucred *cred,
-    struct semid_kernel *semakptr __unused, size_t accesstype __unused)
+    struct semid_kernel *semakptr __unused,
+    struct label *semaklabel __unused, size_t accesstype __unused)
 {
 	return (cp_mac_ipc_deny(cred));
 }
@@ -968,28 +975,32 @@ cp_mac_sysvsem_check_semop(struct ucred *cred,
 /* SysV msg wrappers */
 static int
 cp_mac_sysvmsq_check_msqget(struct ucred *cred,
-    struct msqid_kernel *msqkptr __unused)
+    struct msqid_kernel *msqkptr __unused,
+    struct label *msqklabel __unused)
 {
 	return (cp_mac_ipc_deny(cred));
 }
 
 static int
 cp_mac_sysvmsq_check_msqsnd(struct ucred *cred,
-    struct msqid_kernel *msqkptr __unused)
+    struct msqid_kernel *msqkptr __unused,
+    struct label *msqklabel __unused)
 {
 	return (cp_mac_ipc_deny(cred));
 }
 
 static int
 cp_mac_sysvmsq_check_msqrcv(struct ucred *cred,
-    struct msqid_kernel *msqkptr __unused)
+    struct msqid_kernel *msqkptr __unused,
+    struct label *msqklabel __unused)
 {
 	return (cp_mac_ipc_deny(cred));
 }
 
 static int
 cp_mac_sysvmsq_check_msqctl(struct ucred *cred,
-    struct msqid_kernel *msqkptr __unused, int cmd __unused)
+    struct msqid_kernel *msqkptr __unused,
+    struct label *msqklabel __unused, int cmd __unused)
 {
 	return (cp_mac_ipc_deny(cred));
 }
@@ -1004,7 +1015,8 @@ cp_mac_posixshm_check_create(struct ucred *cred,
 
 static int
 cp_mac_posixshm_check_open(struct ucred *cred,
-    struct shmfd *shmfd __unused, accmode_t accmode __unused)
+    struct shmfd *shmfd __unused, struct label *shmlabel __unused,
+    accmode_t accmode __unused)
 {
 	return (cp_mac_ipc_deny(cred));
 }
@@ -1012,7 +1024,7 @@ cp_mac_posixshm_check_open(struct ucred *cred,
 /* POSIX sem wrappers */
 static int
 cp_mac_posixsem_check_open(struct ucred *cred,
-    struct ksem *ks __unused)
+    struct ksem *ks __unused, struct label *kslabel __unused)
 {
 	return (cp_mac_ipc_deny(cred));
 }

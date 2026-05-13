@@ -3656,7 +3656,7 @@ ATF_TC_BODY(cap_pro_same_nonce_allowed, tc)
 		char buf;
 		int fd;
 		close(sv[0]);
-		fd = capprotect_shield(CP_SF_ALL);
+		fd = capprotect_shield(CP_SF_PROTECT);
 		if (fd < 0) _exit(10);
 		write(sv[1], "s", 1);
 		read(sv[1], &buf, 1);
@@ -3907,7 +3907,7 @@ ATF_TC_BODY(cap_pro_all_flags_blocks_all, tc)
 		char buf;
 		int fd;
 		close(sv[0]);
-		fd = capprotect_shield(CP_SF_ALL);
+		fd = capprotect_shield(CP_SF_PROTECT);
 		if (fd < 0) _exit(10);
 		write(sv[1], "s", 1);
 		read(sv[1], &buf, 1);
@@ -4145,7 +4145,7 @@ ATF_TC_BODY(cap_pro_bad_flags, tc)
 	ATF_REQUIRE(fd >= 0);
 	memset(&req, 0, sizeof(req));
 	req.op = CP_OP_SHIELD;
-	req.flags = 0x200;	/* undefined bit (above CP_SF_ALL) */
+	req.flags = 0x80000000;	/* undefined bit (above CP_SF_ALL) */
 	memset(&ca, 0, sizeof(ca));
 	ca.req = &req;
 	ca.req_len = sizeof(req);
@@ -4174,7 +4174,7 @@ ATF_TC_BODY(cap_pro_fork_child_shielded, tc)
 		pid_t gc;
 		char buf;
 		close(sv[0]);
-		shield_fd = capprotect_shield(CP_SF_ALL);
+		shield_fd = capprotect_shield(CP_SF_PROTECT);
 		if (shield_fd < 0) _exit(10);
 		gc = fork();
 		if (gc < 0) _exit(11);
