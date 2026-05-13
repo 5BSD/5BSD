@@ -58,6 +58,10 @@
 #include <sys/tree.h>
 #include <vm/uma.h>
 
+#ifdef MAC
+#include <security/mac/mac_framework.h>
+#endif
+
 #ifndef RACCT
 #error "The RCTL option requires the RACCT option"
 #endif
@@ -1877,6 +1881,14 @@ sys_rctl_add_rule(struct thread *td, struct rctl_add_rule_args *uap)
 	if (error != 0)
 		return (error);
 
+#ifdef MAC
+	error = mac_rctl_check_add_rule(td->td_ucred, inputstr);
+	if (error != 0) {
+		free(inputstr, M_RCTL);
+		return (error);
+	}
+#endif
+
 	sx_slock(&allproc_lock);
 	error = rctl_string_to_rule(inputstr, &rule);
 	free(inputstr, M_RCTL);
@@ -1921,6 +1933,14 @@ sys_rctl_remove_rule(struct thread *td, struct rctl_remove_rule_args *uap)
 	error = rctl_read_inbuf(&inputstr, uap->inbufp, uap->inbuflen);
 	if (error != 0)
 		return (error);
+
+#ifdef MAC
+	error = mac_rctl_check_remove_rule(td->td_ucred, inputstr);
+	if (error != 0) {
+		free(inputstr, M_RCTL);
+		return (error);
+	}
+#endif
 
 	sx_slock(&allproc_lock);
 	error = rctl_string_to_rule(inputstr, &filter);

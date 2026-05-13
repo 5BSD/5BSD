@@ -784,8 +784,21 @@ typedef int	(*mpo_system_check_kas_info_t)(struct ucred *cred,
 
 typedef int	(*mpo_pts_check_open_t)(struct ucred *cred, int flags);
 
+typedef int	(*mpo_rctl_check_add_rule_t)(struct ucred *cred,
+		    const char *rule);
+typedef int	(*mpo_rctl_check_remove_rule_t)(struct ucred *cred,
+		    const char *rule);
+
 typedef int	(*mpo_vmm_check_create_t)(struct ucred *cred,
 		    const char *vmname);
+typedef int	(*mpo_vmm_check_destroy_t)(struct ucred *cred,
+		    const char *vmname);
+typedef int	(*mpo_vmm_check_mem_access_t)(struct ucred *cred,
+		    const char *vmname, vm_paddr_t gpa, size_t len,
+		    int prot);
+typedef int	(*mpo_vmm_check_memseg_access_t)(struct ucred *cred,
+		    const char *vmname, const char *segname,
+		    vm_ooffset_t offset, int prot);
 
 typedef void	(*mpo_vnode_notify_create_t)(struct ucred *cred,
 		    struct vnode *dvp, struct vnode *vp,
@@ -1199,7 +1212,12 @@ struct mac_policy_ops {
 	mpo_vnode_notify_setutimes_t		mpo_vnode_notify_setutimes;
 
 	mpo_pts_check_open_t			mpo_pts_check_open;
+	mpo_rctl_check_add_rule_t		mpo_rctl_check_add_rule;
+	mpo_rctl_check_remove_rule_t		mpo_rctl_check_remove_rule;
 	mpo_vmm_check_create_t			mpo_vmm_check_create;
+	mpo_vmm_check_destroy_t			mpo_vmm_check_destroy;
+	mpo_vmm_check_mem_access_t		mpo_vmm_check_mem_access;
+	mpo_vmm_check_memseg_access_t		mpo_vmm_check_memseg_access;
 };
 
 /*

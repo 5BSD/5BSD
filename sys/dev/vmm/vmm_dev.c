@@ -206,6 +206,23 @@ vmmdev_lookup2(struct cdev *cdev)
 	return (cdev->si_drv1);
 }
 
+#ifdef MAC
+static int
+vmmdev_prot_from_nprot(int nprot)
+{
+	int prot;
+
+	prot = 0;
+	if ((nprot & PROT_READ) != 0)
+		prot |= VM_PROT_READ;
+	if ((nprot & PROT_WRITE) != 0)
+		prot |= VM_PROT_WRITE;
+	if ((nprot & PROT_EXEC) != 0)
+		prot |= VM_PROT_EXECUTE;
+	return (prot);
+}
+#endif
+
 static int
 vmmdev_rw(struct cdev *cdev, struct uio *uio, int flags)
 {
@@ -218,13 +235,19 @@ vmmdev_rw(struct cdev *cdev, struct uio *uio, int flags)
 	if (sc == NULL)
 		return (ENXIO);
 
+	prot = (uio->uio_rw == UIO_WRITE ? VM_PROT_WRITE : VM_PROT_READ);
+#ifdef MAC
+	error = mac_vmm_check_mem_access(curthread->td_ucred, vm_name(sc->vm),
+	    uio->uio_offset, uio->uio_resid, prot);
+	if (error != 0)
+		return (error);
+#endif
 	/*
 	 * Get a read lock on the guest memory map.
 	 */
 	vm_slock_memsegs(sc->vm);
 
 	error = 0;
-	prot = (uio->uio_rw == UIO_WRITE ? VM_PROT_WRITE : VM_PROT_READ);
 	maxaddr = vmm_sysmem_maxaddr(sc->vm);
 	while (uio->uio_resid > 0 && error == 0) {
 		gpa = uio->uio_offset;
@@ -818,6 +841,13 @@ vmmdev_mmap_single(struct cdev *cdev, vm_ooffset_t *offset, vm_size_t mapsize,
 		return (EINVAL);
 	}
 
+#ifdef MAC
+	error = mac_vmm_check_mem_access(curthread->td_ucred, vm_name(sc->vm),
+	    first, mapsize, vmmdev_prot_from_nprot(nprot));
+	if (error != 0)
+		return (error);
+#endif
+
 	/*
 	 * Get a read lock on the guest memory map.
 	 */
@@ -904,7 +934,14 @@ vmmdev_lookup_and_destroy(const char *name, struct ucred *cred)
 {
 	struct cdev *cdev;
 	struct vmmdev_softc *sc;
+	bool can_destroy;
 	int error;
+
+#ifdef MAC
+	error = mac_vmm_check_destroy(cred, name);
+	if (error != 0)
+		return (error);
+#endif
 
 	sx_xlock(&vmmdev_mtx);
 	sc = vmmdev_lookup(name, cred);
@@ -916,8 +953,9 @@ vmmdev_lookup_and_destroy(const char *name, struct ucred *cred)
 	/*
 	 * Only the creator of a VM or a privileged user can destroy it.
 	 */
-	if ((cred->cr_uid != sc->ucred->cr_uid ||
-	     cred->cr_prison != sc->ucred->cr_prison) &&
+	can_destroy = (cred->cr_uid == sc->ucred->cr_uid &&
+	    cred->cr_prison == sc->ucred->cr_prison);
+	if (!can_destroy &&
 	    (error = priv_check_cred(cred, PRIV_VMM_DESTROY)) != 0) {
 		sx_xunlock(&vmmdev_mtx);
 		return (error);
@@ -1004,6 +1042,14 @@ vmmdev_create(const char *name, uint32_t flags, struct ucred *cred)
 
 #ifdef MAC
 	if ((error = mac_vmm_check_create(cred, name)) != 0)
+		return (error);
+	/*
+	 * Auto-destroy runs from cdevpriv teardown, which cannot fail.
+	 * Authorize that future destruction up front while this request can
+	 * still be denied cleanly.
+	 */
+	if ((flags & VMMCTL_CREATE_DESTROY_ON_CLOSE) != 0 &&
+	    (error = mac_vmm_check_destroy(cred, name)) != 0)
 		return (error);
 #endif
 
@@ -1335,6 +1381,14 @@ devmem_mmap_single(struct cdev *cdev, vm_ooffset_t *offset, vm_size_t len,
 	last = *offset + len;
 	if ((nprot & PROT_EXEC) || first < 0 || first >= last)
 		return (EINVAL);
+
+#ifdef MAC
+	error = mac_vmm_check_memseg_access(curthread->td_ucred,
+	    vm_name(dsc->sc->vm), dsc->name, first,
+	    vmmdev_prot_from_nprot(nprot));
+	if (error != 0)
+		return (error);
+#endif
 
 	vm_slock_memsegs(dsc->sc->vm);
 

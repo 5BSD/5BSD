@@ -926,7 +926,15 @@ int	mac_mount_check_snapshot_revert(struct ucred *cred,
 
 int	mac_pts_check_open(struct ucred *cred, int flags);
 
+int	mac_rctl_check_add_rule(struct ucred *cred, const char *rule);
+int	mac_rctl_check_remove_rule(struct ucred *cred, const char *rule);
+
 int	mac_vmm_check_create(struct ucred *cred, const char *vmname);
+int	mac_vmm_check_destroy(struct ucred *cred, const char *vmname);
+int	mac_vmm_check_mem_access(struct ucred *cred, const char *vmname,
+	    vm_paddr_t gpa, size_t len, int prot);
+int	mac_vmm_check_memseg_access(struct ucred *cred, const char *vmname,
+	    const char *segname, vm_ooffset_t offset, int prot);
 
 /*
  * Calls to help various file systems implement labeling functionality using

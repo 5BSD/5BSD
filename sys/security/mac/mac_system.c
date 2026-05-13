@@ -278,7 +278,36 @@ mac_pts_check_open(struct ucred *cred, int flags)
 	return (error);
 }
 
-MAC_CHECK_PROBE_DEFINE1(vmm_check_create, "struct ucred *");
+MAC_CHECK_PROBE_DEFINE2(rctl_check_add_rule, "struct ucred *",
+    "const char *");
+
+int
+mac_rctl_check_add_rule(struct ucred *cred, const char *rule)
+{
+	int error;
+
+	MAC_POLICY_CHECK(rctl_check_add_rule, cred, rule);
+	MAC_CHECK_PROBE2(rctl_check_add_rule, error, cred, rule);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(rctl_check_remove_rule, "struct ucred *",
+    "const char *");
+
+int
+mac_rctl_check_remove_rule(struct ucred *cred, const char *rule)
+{
+	int error;
+
+	MAC_POLICY_CHECK(rctl_check_remove_rule, cred, rule);
+	MAC_CHECK_PROBE2(rctl_check_remove_rule, error, cred, rule);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vmm_check_create, "struct ucred *",
+    "const char *");
 
 int
 mac_vmm_check_create(struct ucred *cred, const char *vmname)
@@ -286,7 +315,54 @@ mac_vmm_check_create(struct ucred *cred, const char *vmname)
 	int error;
 
 	MAC_POLICY_CHECK(vmm_check_create, cred, vmname);
-	MAC_CHECK_PROBE1(vmm_check_create, error, cred);
+	MAC_CHECK_PROBE2(vmm_check_create, error, cred, vmname);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vmm_check_destroy, "struct ucred *",
+    "const char *");
+
+int
+mac_vmm_check_destroy(struct ucred *cred, const char *vmname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(vmm_check_destroy, cred, vmname);
+	MAC_CHECK_PROBE2(vmm_check_destroy, error, cred, vmname);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE5(vmm_check_mem_access, "struct ucred *",
+    "const char *", "vm_paddr_t", "size_t", "int");
+
+int
+mac_vmm_check_mem_access(struct ucred *cred, const char *vmname,
+    vm_paddr_t gpa, size_t len, int prot)
+{
+	int error;
+
+	MAC_POLICY_CHECK(vmm_check_mem_access, cred, vmname, gpa, len, prot);
+	MAC_CHECK_PROBE5(vmm_check_mem_access, error, cred, vmname, gpa,
+	    len, prot);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE5(vmm_check_memseg_access, "struct ucred *",
+    "const char *", "const char *", "vm_ooffset_t", "int");
+
+int
+mac_vmm_check_memseg_access(struct ucred *cred, const char *vmname,
+    const char *segname, vm_ooffset_t offset, int prot)
+{
+	int error;
+
+	MAC_POLICY_CHECK(vmm_check_memseg_access, cred, vmname, segname,
+	    offset, prot);
+	MAC_CHECK_PROBE5(vmm_check_memseg_access, error, cred, vmname,
+	    segname, offset, prot);
 
 	return (error);
 }
