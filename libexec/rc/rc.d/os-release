@@ -35,10 +35,10 @@ osrelease_start()
 		NAME=5BSD
 		VERSION="$_version"
 		VERSION_ID="$_version_id"
-		ID=5bsd
+		ID=freebsd
 		ANSI_COLOR="0;31"
 		PRETTY_NAME="5BSD $_version"
-		CPE_NAME="cpe:/o:5bsd:5bsd:$_version_id"
+		CPE_NAME="cpe:/o:freebsd:freebsd:$_version_id"
 		HOME_URL="${osrelease_home_url}"
 		DOCUMENTATION_URL="${osrelease_documentation_url}"
 		SUPPORT_URL="${osrelease_support_url}"
