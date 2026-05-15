@@ -21,6 +21,7 @@ FILES=	cli.lua \
 	drawer.lua \
 	hook.lua \
 	loader.lua \
+	gfx-5bsd.lua \
 	gfx-beastie.lua \
 	gfx-beastiebw.lua \
 	gfx-fbsdbw.lua \

@@ -167,7 +167,7 @@ local function select_components(components, options)
 	end
 
 	local bsddialog_args = {
-		"--backtitle", "FreeBSD Installer",
+		"--backtitle", "5BSD Installer",
 		"--title", "Select System Components",
 		"--nocancel",
 		"--disable-esc",

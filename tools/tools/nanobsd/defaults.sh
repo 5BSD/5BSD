@@ -90,7 +90,7 @@ WITHOUT_TESTS=true
 '
 
 # Kernel config file to use
-NANO_KERNEL=GENERIC
+NANO_KERNEL=5BSD
 
 # Kernel modules to install. If empty, no modules are installed.
 # Use "default" to install all built modules.

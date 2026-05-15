@@ -1,0 +1,9 @@
+#
+# 5BSD -- Kernel configuration for 5BSD daily driver
+#
+# Based on GENERIC with capability runtime support.
+#
+
+include GENERIC
+
+ident		5BSD

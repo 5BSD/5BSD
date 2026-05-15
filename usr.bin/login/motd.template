@@ -1,9 +1,2 @@
 
-Welcome to 5BSD!
-
-A capability system.
-
-System version:  uname -a
-Manual pages:    man man
-
-To change this login announcement, see motd(5).
+Welcome to 5BSD.

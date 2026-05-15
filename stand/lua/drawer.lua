@@ -540,7 +540,7 @@ default_shift = {x = 0, y = 0}
 shift = default_shift
 
 -- Module exports
-drawer.default_brand = 'fbsd'
+drawer.default_brand = '5bsd'
 drawer.default_color_logodef = 'none'
 drawer.default_bw_logodef = 'none'
 -- For when things go terribly wrong; this def should be present here in the
