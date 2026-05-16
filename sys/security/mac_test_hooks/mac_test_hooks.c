@@ -88,13 +88,15 @@ HOOK_CHECK_IMPL(file_check_mmap, struct ucred *cred __unused,
 HOOK_NOTIFY_IMPL(file_notify_close, struct ucred *cred __unused,
     struct file *fp __unused, int fd __unused)
 HOOK_CHECK_IMPL(mount_check_mount, struct ucred *cred __unused,
-    const char *fspath __unused, const char *fstype __unused,
-    int flags __unused)
-HOOK_CHECK_IMPL(mount_check_umount, struct ucred *cred __unused,
-    struct mount *mp __unused, struct label *mplabel __unused)
-HOOK_CHECK_IMPL(mount_check_remount, struct ucred *cred __unused,
+    struct vnode *vp __unused, struct label *vplabel __unused,
+    struct vfsconf *vfsp __unused, struct vfsoptlist **optlist __unused,
+    uint64_t fsflags __unused)
+HOOK_CHECK_IMPL(mount_check_unmount, struct ucred *cred __unused,
     struct mount *mp __unused, struct label *mplabel __unused,
-    int flags __unused)
+    uint64_t flags __unused)
+HOOK_CHECK_IMPL(mount_check_update, struct ucred *cred __unused,
+    struct mount *mp __unused, struct label *mplabel __unused,
+    struct vfsoptlist **optlist __unused, uint64_t fsflags __unused)
 HOOK_CHECK_IMPL(mount_check_snapshot_create, struct ucred *cred __unused,
     const char *snapname __unused)
 HOOK_CHECK_IMPL(mount_check_snapshot_delete, struct ucred *cred __unused,
@@ -168,8 +170,8 @@ static struct mac_policy_ops test_hooks_ops = {
 	.mpo_file_check_mmap = test_file_check_mmap,
 	.mpo_file_notify_close = test_file_notify_close,
 	.mpo_mount_check_mount = test_mount_check_mount,
-	.mpo_mount_check_umount = test_mount_check_umount,
-	.mpo_mount_check_remount = test_mount_check_remount,
+	.mpo_mount_check_unmount = test_mount_check_unmount,
+	.mpo_mount_check_update = test_mount_check_update,
 	.mpo_mount_check_snapshot_create = test_mount_check_snapshot_create,
 	.mpo_mount_check_snapshot_delete = test_mount_check_snapshot_delete,
 	.mpo_mount_check_snapshot_revert = test_mount_check_snapshot_revert,

@@ -567,22 +567,6 @@ stub_kld_check_unload(struct ucred *cred)
 }
 
 static int
-stub_mount_check_mount(struct ucred *cred, const char *fspath,
-    const char *fstype, int flags)
-{
-
-	return (0);
-}
-
-static int
-stub_mount_check_remount(struct ucred *cred, struct mount *mp,
-    struct label *mplabel, int flags)
-{
-
-	return (0);
-}
-
-static int
 stub_mount_check_snapshot_create(struct ucred *cred, const char *snapname)
 {
 
@@ -1267,14 +1251,6 @@ stub_vnode_check_uipc_connect(struct ucred *cred, struct vnode *vp,
 static int
 stub_socket_check_setsockopt(struct ucred *cred, struct socket *so,
     struct label *solabel, int level, int optname)
-{
-
-	return (0);
-}
-
-static int
-stub_mount_check_umount(struct ucred *cred, struct mount *mp,
-    struct label *mplabel)
 {
 
 	return (0);
@@ -2173,18 +2149,15 @@ static struct mac_policy_ops stub_ops =
 	.mpo_mbuf_init_label = stub_init_label_waitcheck,
 
 	.mpo_mount_check_mount = stub_mount_check_mount,
-	.mpo_mount_check_remount = stub_mount_check_remount,
+	.mpo_mount_check_update = stub_mount_check_update,
 	.mpo_mount_check_snapshot_create = stub_mount_check_snapshot_create,
 	.mpo_mount_check_snapshot_delete = stub_mount_check_snapshot_delete,
 	.mpo_mount_check_snapshot_revert = stub_mount_check_snapshot_revert,
 	.mpo_mount_check_stat = stub_mount_check_stat,
-	.mpo_mount_check_umount = stub_mount_check_umount,
+	.mpo_mount_check_unmount = stub_mount_check_unmount,
 	.mpo_mount_create = stub_mount_create,
 	.mpo_mount_destroy_label = stub_destroy_label,
 	.mpo_mount_init_label = stub_init_label,
-	.mpo_mount_check_mount = stub_mount_check_mount,
-	.mpo_mount_check_update = stub_mount_check_update,
-	.mpo_mount_check_unmount = stub_mount_check_unmount,
 
 	.mpo_netinet_arp_send = stub_netinet_arp_send,
 	.mpo_netinet_firewall_reply = stub_netinet_firewall_reply,

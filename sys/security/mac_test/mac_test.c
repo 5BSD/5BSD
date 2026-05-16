@@ -1060,44 +1060,6 @@ test_mount_check_stat(struct ucred *cred, struct mount *mp,
 	return (0);
 }
 
-COUNTER_DECL(mount_check_mount);
-static int
-test_mount_check_mount(struct ucred *cred, const char *fspath,
-    const char *fstype, int flags)
-{
-
-	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
-	COUNTER_INC(mount_check_mount);
-
-	return (0);
-}
-
-COUNTER_DECL(mount_check_remount);
-static int
-test_mount_check_remount(struct ucred *cred, struct mount *mp,
-    struct label *mplabel, int flags)
-{
-
-	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
-	LABEL_CHECK(mplabel, MAGIC_MOUNT);
-	COUNTER_INC(mount_check_remount);
-
-	return (0);
-}
-
-COUNTER_DECL(mount_check_umount);
-static int
-test_mount_check_umount(struct ucred *cred, struct mount *mp,
-    struct label *mplabel)
-{
-
-	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
-	LABEL_CHECK(mplabel, MAGIC_MOUNT);
-	COUNTER_INC(mount_check_umount);
-
-	return (0);
-}
-
 COUNTER_DECL(mount_check_snapshot_create);
 static int
 test_mount_check_snapshot_create(struct ucred *cred, const char *snapname)
@@ -3811,18 +3773,15 @@ static struct mac_policy_ops test_ops =
 	.mpo_mbuf_init_label = test_mbuf_init_label,
 
 	.mpo_mount_check_mount = test_mount_check_mount,
-	.mpo_mount_check_remount = test_mount_check_remount,
 	.mpo_mount_check_snapshot_create = test_mount_check_snapshot_create,
 	.mpo_mount_check_snapshot_delete = test_mount_check_snapshot_delete,
 	.mpo_mount_check_snapshot_revert = test_mount_check_snapshot_revert,
 	.mpo_mount_check_stat = test_mount_check_stat,
-	.mpo_mount_check_umount = test_mount_check_umount,
+	.mpo_mount_check_update = test_mount_check_update,
+	.mpo_mount_check_unmount = test_mount_check_unmount,
 	.mpo_mount_create = test_mount_create,
 	.mpo_mount_destroy_label = test_mount_destroy_label,
 	.mpo_mount_init_label = test_mount_init_label,
-	.mpo_mount_check_mount = test_mount_check_mount,
-	.mpo_mount_check_update = test_mount_check_update,
-	.mpo_mount_check_unmount = test_mount_check_unmount,
 
 	.mpo_netinet_arp_send = test_netinet_arp_send,
 	.mpo_netinet_fragment = test_netinet_fragment,

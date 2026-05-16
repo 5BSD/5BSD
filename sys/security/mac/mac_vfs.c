@@ -1008,49 +1008,6 @@ mac_mount_create(struct ucred *cred, struct mount *mp)
 	MAC_POLICY_PERFORM(mount_create, cred, mp, mp->mnt_label);
 }
 
-MAC_CHECK_PROBE_DEFINE3(mount_check_mount, "struct ucred *",
-    "const char *", "const char *");
-
-int
-mac_mount_check_mount(struct ucred *cred, const char *fspath,
-    const char *fstype, int flags)
-{
-	int error;
-
-	MAC_POLICY_CHECK(mount_check_mount, cred, fspath, fstype, flags);
-	MAC_CHECK_PROBE3(mount_check_mount, error, cred, fspath, fstype);
-
-	return (error);
-}
-
-MAC_CHECK_PROBE_DEFINE2(mount_check_umount, "struct ucred *",
-    "struct mount *");
-
-int
-mac_mount_check_umount(struct ucred *cred, struct mount *mp)
-{
-	int error;
-
-	MAC_POLICY_CHECK(mount_check_umount, cred, mp, mp->mnt_label);
-	MAC_CHECK_PROBE2(mount_check_umount, error, cred, mp);
-
-	return (error);
-}
-
-MAC_CHECK_PROBE_DEFINE2(mount_check_remount, "struct ucred *",
-    "struct mount *");
-
-int
-mac_mount_check_remount(struct ucred *cred, struct mount *mp, int flags)
-{
-	int error;
-
-	MAC_POLICY_CHECK(mount_check_remount, cred, mp, mp->mnt_label, flags);
-	MAC_CHECK_PROBE2(mount_check_remount, error, cred, mp);
-
-	return (error);
-}
-
 MAC_CHECK_PROBE_DEFINE2(mount_check_stat, "struct ucred *",
     "struct mount *");
 

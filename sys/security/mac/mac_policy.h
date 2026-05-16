@@ -772,12 +772,7 @@ typedef int	(*mpo_file_check_mmap_t)(struct ucred *cred,
 typedef void	(*mpo_file_notify_close_t)(struct ucred *cred,
 		    struct file *fp, int fd);
 
-typedef int	(*mpo_mount_check_mount_t)(struct ucred *cred,
-		    const char *fspath, const char *fstype, int flags);
-typedef int	(*mpo_mount_check_umount_t)(struct ucred *cred,
-		    struct mount *mp, struct label *mplabel);
-typedef int	(*mpo_mount_check_remount_t)(struct ucred *cred,
-		    struct mount *mp, struct label *mplabel, int flags);
+
 
 typedef int	(*mpo_system_check_kas_info_t)(struct ucred *cred,
 		    struct proc *p);
@@ -961,18 +956,15 @@ struct mac_policy_ops {
 	mpo_mbuf_init_label_t			mpo_mbuf_init_label;
 
 	mpo_mount_check_mount_t			mpo_mount_check_mount;
-	mpo_mount_check_remount_t		mpo_mount_check_remount;
 	mpo_mount_check_snapshot_create_t	mpo_mount_check_snapshot_create;
 	mpo_mount_check_snapshot_delete_t	mpo_mount_check_snapshot_delete;
 	mpo_mount_check_snapshot_revert_t	mpo_mount_check_snapshot_revert;
 	mpo_mount_check_stat_t			mpo_mount_check_stat;
-	mpo_mount_check_umount_t		mpo_mount_check_umount;
+	mpo_mount_check_update_t		mpo_mount_check_update;
+	mpo_mount_check_unmount_t		mpo_mount_check_unmount;
 	mpo_mount_create_t			mpo_mount_create;
 	mpo_mount_destroy_label_t		mpo_mount_destroy_label;
 	mpo_mount_init_label_t			mpo_mount_init_label;
-	mpo_mount_check_mount_t			mpo_mount_check_mount;
-	mpo_mount_check_update_t		mpo_mount_check_update;
-	mpo_mount_check_unmount_t		mpo_mount_check_unmount;
 
 	mpo_netinet_arp_send_t			mpo_netinet_arp_send;
 	mpo_netinet_firewall_reply_t		mpo_netinet_firewall_reply;

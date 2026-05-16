@@ -247,21 +247,16 @@ void	mac_mbuf_tag_copy(struct m_tag *, struct m_tag *);
 void	mac_mbuf_tag_destroy(struct m_tag *);
 int	mac_mbuf_tag_init(struct m_tag *, int);
 
-int	mac_mount_check_mount(struct ucred *cred, const char *fspath,
-	    const char *fstype, int flags);
-int	mac_mount_check_remount(struct ucred *cred, struct mount *mp,
-	    int flags);
-int	mac_mount_check_stat(struct ucred *cred, struct mount *mp);
-int	mac_mount_check_umount(struct ucred *cred, struct mount *mp);
-void	mac_mount_create(struct ucred *cred, struct mount *mp);
-void	mac_mount_destroy(struct mount *);
-void	mac_mount_init(struct mount *);
 int	mac_mount_check_mount(struct ucred *cred, struct vnode *vp,
 	    struct vfsconf *, struct vfsoptlist **optlist, uint64_t fsflags);
+int	mac_mount_check_stat(struct ucred *cred, struct mount *mp);
 int	mac_mount_check_update(struct ucred *cred, struct mount *mp,
 	    struct vfsoptlist **optlist, uint64_t fsflags);
 int	mac_mount_check_unmount(struct ucred *cred, struct mount *mp,
 	    uint64_t flags);
+void	mac_mount_create(struct ucred *cred, struct mount *mp);
+void	mac_mount_destroy(struct mount *);
+void	mac_mount_init(struct mount *);
 
 void	mac_netinet_arp_send(struct ifnet *ifp, struct mbuf *m);
 void	mac_netinet_firewall_reply(struct mbuf *mrecv, struct mbuf *msend);
