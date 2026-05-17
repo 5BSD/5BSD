@@ -3373,7 +3373,7 @@ linux_membarrier(struct thread *td, struct linux_membarrier_args *args)
 	if ((args->flags & LINUX_MEMBARRIER_CMD_FLAG_CPU) != 0)
 		flags |= MEMBARRIER_CMD_FLAG_CPU;
 
-	error = kern_membarrier(td, cmd, flags, args->cpu_id);
+	error = kern_membarrier(td, cmd, flags, 0);
 	if (error != 0)
 		return (error);
 
