@@ -161,12 +161,28 @@ Intel Processor Trace support with fixes over stock FreeBSD:
 
 ---
 
-## Building
+## Installing
+
+5BSD installs over FreeBSD 16-CURRENT via pkgbase.  Build packages
+from source, disable the upstream base repo, and `pkg upgrade`.
+ZFS boot environments provide rollback.
+
+See [docs/pkgbase-install.md](docs/pkgbase-install.md) for the
+full procedure.
 
 ```sh
-export MAKEOBJDIRPREFIX=/path/to/5BSD-obj
-make buildkernel KERNCONF=GENERIC
+make -j$(sysctl -n hw.ncpu) buildworld KERNCONF=5BSD
+make -j$(sysctl -n hw.ncpu) buildkernel KERNCONF=5BSD
+make stage-packages KERNCONF=5BSD
+make create-packages KERNCONF=5BSD
+
+bectl create pre-upgrade-$(date +%Y%m%d)
+pkg update && pkg upgrade
+reboot
 ```
+
+The kernel ident is `VBSD` (config(8) does not allow leading digits).
+Cap_rt modules load automatically via `stand/defaults/loader.conf`.
 
 ## Testing
 

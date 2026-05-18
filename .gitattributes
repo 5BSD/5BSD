@@ -3,3 +3,6 @@
 *.cpp  diff=cpp
 *.hpp  diff=cpp
 *.py   diff=python
+
+# Keep our README on upstream merges
+README.md merge=ours
