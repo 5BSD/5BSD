@@ -6,3 +6,51 @@
 
 # Keep our README on upstream merges
 README.md merge=ours
+
+# 5BSD branding and boot — always keep ours
+stand/defaults/loader.conf         merge=ours
+stand/forth/brand-fbsd.4th         merge=ours
+stand/forth/logo-fbsdbw.4th        merge=ours
+stand/lua/drawer.lua               merge=ours
+stand/lua/gfx-5bsd.lua             merge=ours
+stand/lua/gfx-fbsdbw.lua          merge=ours
+
+# MACF framework — prefer ours, warn on upstream changes
+sys/security/mac/mac_policy.h      merge=prefer-ours
+sys/security/mac/mac_framework.h   merge=prefer-ours
+sys/security/mac/mac_framework.c   merge=prefer-ours
+sys/security/mac/mac_internal.h    merge=prefer-ours
+sys/security/mac/mac_process.c     merge=prefer-ours
+sys/security/mac/mac_socket.c      merge=prefer-ours
+sys/security/mac/mac_system.c      merge=prefer-ours
+sys/security/mac/mac_vfs.c         merge=prefer-ours
+
+# Kernel hook callsites — prefer ours, warn on upstream changes
+sys/kern/kern_exec.c               merge=prefer-ours
+sys/kern/kern_exit.c               merge=prefer-ours
+sys/kern/kern_fork.c               merge=prefer-ours
+sys/kern/kern_descrip.c            merge=prefer-ours
+sys/kern/kern_sig.c                merge=prefer-ours
+sys/kern/kern_proc.c               merge=prefer-ours
+sys/kern/kern_procctl.c            merge=prefer-ours
+sys/kern/kern_prot.c               merge=prefer-ours
+sys/kern/kern_rctl.c               merge=prefer-ours
+sys/kern/kern_linker.c             merge=prefer-ours
+sys/kern/kern_ucoredump.c          merge=prefer-ours
+sys/kern/subr_syscall.c            merge=prefer-ours
+sys/kern/sys_generic.c             merge=prefer-ours
+sys/kern/tty_pts.c                 merge=prefer-ours
+sys/kern/uipc_syscalls.c           merge=prefer-ours
+sys/kern/uipc_usrreq.c            merge=prefer-ours
+sys/kern/vfs_acl.c                 merge=prefer-ours
+sys/kern/vfs_extattr.c             merge=prefer-ours
+sys/kern/vfs_mount.c               merge=prefer-ours
+sys/kern/vfs_syscalls.c            merge=prefer-ours
+sys/kern/vfs_vnops.c               merge=prefer-ours
+
+# Cap_rt / 5BSD headers — prefer ours, warn on upstream changes
+sys/sys/file.h                     merge=prefer-ours
+sys/sys/capsicum.h                 merge=prefer-ours
+sys/sys/caprights.h                merge=prefer-ours
+sys/sys/filedesc.h                 merge=prefer-ours
+sys/sys/rctl.h                     merge=prefer-ours
