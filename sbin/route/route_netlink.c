@@ -270,6 +270,8 @@ rtmsg_nl_int(struct nl_helper *h, int cmd, int rtm_flags, int fib, int rtm_addrs
 	if (rt_metrics->rmx_expire > 0)
 		snl_add_msg_attr_u32(&nw, NL_RTA_EXPIRES, rt_metrics->rmx_expire);
 
+	if (rt_metrics->rmx_metric > 0)
+		snl_add_msg_attr_u32(&nw, NL_RTA_PRIORITY, rt_metrics->rmx_metric);
 	if (rt_metrics->rmx_weight > 0)
 		snl_add_msg_attr_u32(&nw, NL_RTA_WEIGHT, rt_metrics->rmx_weight);
 
@@ -383,16 +385,18 @@ print_getmsg(struct nl_helper *h, struct nlmsghdr *hdr, struct sockaddr *dst)
 	struct rt_metrics rmx = {
 		.rmx_mtu = r.rtax_mtu,
 		.rmx_weight = r.rtax_weight,
+		.rmx_metric = r.rta_metric,
 		.rmx_expire = r.rta_expire,
 	};
 
-	printf("\n%9s %9s %9s %9s %9s %10s %9s\n", "recvpipe",
-	    "sendpipe", "ssthresh", "rtt,msec", "mtu   ", "weight", "expire");
+	printf("\n%9s %9s %9s %9s %9s %9s %9s %9s\n", "recvpipe", "sendpipe",
+	    "ssthresh", "rtt,msec", "mtu   ", "metric", "weight", "expire");
 	printf("%8lu  ", rmx.rmx_recvpipe);
 	printf("%8lu  ", rmx.rmx_sendpipe);
 	printf("%8lu  ", rmx.rmx_ssthresh);
 	printf("%8lu  ", 0UL);
 	printf("%8lu  ", rmx.rmx_mtu);
+	printf("%8lu  ", rmx.rmx_metric);
 	printf("%8lu  ", rmx.rmx_weight);
 	printf("%8ld \n", rmx.rmx_expire);
 }
@@ -436,6 +440,7 @@ print_nhop_getmsg(struct nl_helper *h, struct nlmsghdr *hdr, struct sockaddr *ds
 			.gw = r.rta_gw,
 			.ifindex = r.rta_oif,
 			.rtax_mtu = link.ifla_mtu,
+			.rta_metric = r.rta_metric,
 		};
 		printf("\tvia ");
 		print_nlmsg_route_nhop(h, &r, &nh, true);
@@ -539,6 +544,7 @@ print_nlmsg_route_nhop(struct nl_helper *h, struct snl_parsed_route *r,
 		if (nh->rtax_mtu == 0)
 			nh->rtax_mtu = link.ifla_mtu;
 		printf("iface %s ", link.ifla_ifname);
+		printf("metric %d ", nh->rta_metric);
 		printf("weight %d ", nh->rtnh_weight);
 		if (nh->rtax_mtu != 0)
 			printf("mtu %d ", nh->rtax_mtu);
