@@ -43,7 +43,7 @@ if [ -e ${2} ]; then
 	exit 1
 fi
 
-echo '/dev/ufs/FreeBSD_Install / ufs ro,noatime 1 1' > ${BASEBITSDIR}/etc/fstab
+echo '/dev/ufs/5BSD_Install / ufs ro,noatime 1 1' > ${BASEBITSDIR}/etc/fstab
 echo 'root_rw_mount="NO"' > ${BASEBITSDIR}/etc/rc.conf.local
 if [ -n "${METALOG}" ]; then
 	metalogfilename=$(mktemp /tmp/metalog.XXXXXX)
@@ -52,7 +52,7 @@ if [ -n "${METALOG}" ]; then
 	echo "./etc/rc.conf.local type=file uname=root gname=wheel mode=0644" >> ${metalogfilename}
 	MAKEFSARG=${metalogfilename}
 fi
-${MAKEFS} -D -N ${BASEBITSDIR}/etc -B little -o label=FreeBSD_Install -o version=2 ${2}.part ${MAKEFSARG}
+${MAKEFS} -D -N ${BASEBITSDIR}/etc -B little -o label=5BSD_Install -o version=2 ${2}.part ${MAKEFSARG}
 rm ${BASEBITSDIR}/etc/fstab
 rm ${BASEBITSDIR}/etc/rc.conf.local
 if [ -n "${METALOG}" ]; then
@@ -61,10 +61,14 @@ fi
 
 # Make an ESP in a file.
 espfilename=$(mktemp /tmp/efiboot.XXXXXX)
+espenvfilename=$(mktemp /tmp/loader.env.XXXXXX)
+echo 'boot_policy=strict' > ${espenvfilename}
 if [ -f "${BASEBITSDIR}/boot/loader_ia32.efi" ]; then
 	extra_args="${BASEBITSDIR}/boot/loader_ia32.efi bootia32"
 fi
-make_esp_file ${espfilename} ${fat32min} ${BASEBITSDIR}/boot/loader.efi bootx64 ${extra_args}
+ESP_LOADER_ENV=${espenvfilename} \
+    make_esp_file ${espfilename} ${fat32min} \
+    ${BASEBITSDIR}/boot/loader.efi bootx64 ${extra_args}
 
 ${MKIMG} -s mbr \
     -b ${BASEBITSDIR}/boot/mbr \
@@ -73,5 +77,5 @@ ${MKIMG} -s mbr \
     -a 2 \
     -o ${2}
 rm ${espfilename}
+rm ${espenvfilename}
 rm ${2}.part
-

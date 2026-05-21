@@ -101,7 +101,7 @@ PKGBASE_CLEAN=	env ${PKG_ENV} ${PKG_CMD} ${PKG_ARGS} ${PKGBASE_REPO_ARGS} clean 
 .endif
 
 .if !defined(VOLUME_LABEL) || empty(VOLUME_LABEL)
-VOLUME_LABEL=	FreeBSD_Install
+VOLUME_LABEL=	5BSD_Install
 .endif
 
 .if !exists(${PORTSDIR})
@@ -213,6 +213,22 @@ bootonly: pkgbase-repo-dir
 dvd: pkgbase-repo-dir
 .endif
 
+# These media targets are directories, so without explicit file dependencies
+# they can remain stale across installer/release script edits.
+DISC_STAGING_DEPS=	${.CURDIR}/Makefile ${.CURDIR}/rc.local
+BOOTONLY_STAGING_DEPS=	${.CURDIR}/Makefile ${.CURDIR}/rc.local
+DVD_STAGING_DEPS=	${.CURDIR}/Makefile ${.CURDIR}/rc.local
+.if !defined(NOPKGBASE) || empty(NOPKGBASE)
+DISC_STAGING_DEPS+=	${.CURDIR}/scripts/pkgbase-stage.lua \
+			${.CURDIR}/scripts/FreeBSD-base-offline.conf
+DVD_STAGING_DEPS+=	${.CURDIR}/scripts/pkgbase-stage.lua \
+			${.CURDIR}/scripts/FreeBSD-base-offline.conf
+.endif
+
+disc1: ${DISC_STAGING_DEPS}
+bootonly: ${BOOTONLY_STAGING_DEPS}
+dvd: ${DVD_STAGING_DEPS}
+
 pkgbase-repo:
 	mkdir -p pkgbase-repo
 	mkdir -p /tmp/ports /tmp/distfiles
@@ -224,7 +240,7 @@ pkgbase-repo.tar: pkgbase-repo
 
 pkgbase-repo-dir: pkgbase-repo
 	mkdir -p pkgbase-repo-dir
-	printf "FreeBSD-base: { url: "file://%s", enabled: yes }" \
+	printf 'FreeBSD-base: { url: "file://%s", enabled: yes }\n' \
 	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest \
 	    > pkgbase-repo-dir/FreeBSD-base.conf
 
@@ -281,8 +297,9 @@ disc1:
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo debug.witness.trace=0 >> ${.TARGET}/etc/sysctl.conf
 	echo vfs.mountroot.timeout=\"10\" >> ${.TARGET}/boot/loader.conf
+	echo vfs.root.mountfrom=\"ufs:/dev/ufs/5BSD_Install\" >> ${.TARGET}/boot/loader.conf
 	echo kernels_autodetect=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo loader_brand=\"install\" >> ${.TARGET}/boot/loader.conf
+	echo loader_brand=\"5bsd-install\" >> ${.TARGET}/boot/loader.conf
 	echo loader_menu_multi_user_prompt=\"Installer\" >> ${.TARGET}/boot/loader.conf
 	cp ${.CURDIR}/rc.local ${.TARGET}/etc
 	echo "./etc/resolv.conf type=link uname=root gname=wheel mode=0644 link=/tmp/bsdinstall_etc/resolv.conf" >> ${.TARGET}/METALOG
@@ -325,8 +342,9 @@ bootonly:
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo debug.witness.trace=0 >> ${.TARGET}/etc/sysctl.conf
 	echo vfs.mountroot.timeout=\"10\" >> ${.TARGET}/boot/loader.conf
+	echo vfs.root.mountfrom=\"ufs:/dev/ufs/5BSD_Install\" >> ${.TARGET}/boot/loader.conf
 	echo kernels_autodetect=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo loader_brand=\"install\" >> ${.TARGET}/boot/loader.conf
+	echo loader_brand=\"5bsd-install\" >> ${.TARGET}/boot/loader.conf
 	echo loader_menu_multi_user_prompt=\"Installer\" >> ${.TARGET}/boot/loader.conf
 	cp ${.CURDIR}/rc.local ${.TARGET}/etc
 	echo "./etc/resolv.conf type=link uname=root gname=wheel mode=0644 link=/tmp/bsdinstall_etc/resolv.conf" >> ${.TARGET}/METALOG
@@ -383,8 +401,9 @@ dvd:
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo debug.witness.trace=0 >> ${.TARGET}/etc/sysctl.conf
 	echo vfs.mountroot.timeout=\"10\" >> ${.TARGET}/boot/loader.conf
+	echo vfs.root.mountfrom=\"ufs:/dev/ufs/5BSD_Install\" >> ${.TARGET}/boot/loader.conf
 	echo kernels_autodetect=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo loader_brand=\"install\" >> ${.TARGET}/boot/loader.conf
+	echo loader_brand=\"5bsd-install\" >> ${.TARGET}/boot/loader.conf
 	echo loader_menu_multi_user_prompt=\"Installer\" >> ${.TARGET}/boot/loader.conf
 	cp ${.CURDIR}/rc.local ${.TARGET}/etc
 	echo "./etc/resolv.conf type=link uname=root gname=wheel mode=0644 link=/tmp/bsdinstall_etc/resolv.conf" >> ${.TARGET}/METALOG
@@ -403,21 +422,21 @@ bootonly-bootonly bootonly-memstick: bootonly
 	tar -cf- -C bootonly . | tar -xf- -C ${.TARGET}
 
 release.iso: disc1.iso
-disc1.iso: disc1-disc1
+disc1.iso: disc1-disc1 ${.CURDIR}/${TARGET}/mkisoimages.sh
 	cd disc1-disc1 && sh ${.CURDIR}/${TARGET}/mkisoimages.sh -b ${VOLUME_LABEL}_CD ../${.TARGET} ./METALOG ${XTRADIR}
 
-dvd1.iso: dvd pkg-stage
+dvd1.iso: dvd pkg-stage ${.CURDIR}/${TARGET}/mkisoimages.sh
 	cd dvd && sh ${.CURDIR}/${TARGET}/mkisoimages.sh -b ${VOLUME_LABEL}_DVD ../${.TARGET} ./METALOG ${XTRADIR}
 
-bootonly.iso: bootonly-bootonly
+bootonly.iso: bootonly-bootonly ${.CURDIR}/${TARGET}/mkisoimages.sh
 	cd bootonly-bootonly && sh ${.CURDIR}/${TARGET}/mkisoimages.sh -b ${VOLUME_LABEL}_BO ../${.TARGET} ./METALOG ${XTRADIR}
 
 memstick: memstick.img
-memstick.img: disc1-memstick
+memstick.img: disc1-memstick ${.CURDIR}/${TARGET}/make-memstick.sh
 	cd disc1-memstick && sh ${.CURDIR}/${TARGET}/make-memstick.sh ./METALOG ../${.TARGET}
 
 mini-memstick: mini-memstick.img
-mini-memstick.img: bootonly-memstick
+mini-memstick.img: bootonly-memstick ${.CURDIR}/${TARGET}/make-memstick.sh
 	cd bootonly-memstick && sh ${.CURDIR}/${TARGET}/make-memstick.sh ./METALOG ../${.TARGET}
 
 pkg-stage: dvd

@@ -494,9 +494,35 @@ menu_name_handlers = {
 	end,
 }
 
+local install_brand = {
+"  _____  ____   _____ _____  ",
+" | ____|| __ ) / ____|  __ \\ ",
+" | |__  |  _ \\| (___ | |  | |",
+" |___ \\ | |_) |\\___ \\| |  | |",
+"  ___) ||____/ ____) | |__| |",
+" |____/       |_____/|_____/ ",
+"        I n s t a l l e r     ",
+}
+
 branddefs = {
 	-- Indexed by valid values for loader_brand in loader.conf(5). Valid
 	-- keys are: graphic (table depicting graphic)
+	["5bsd"] = {
+		ascii = {
+			image = fbsd_brand,
+		},
+		fb = {
+			image = "/boot/images/5bsd-logo.png",
+		},
+	},
+	["5bsd-install"] = {
+		ascii = {
+			image = install_brand,
+		},
+		fb = {
+			image = "/boot/images/5bsd-logo.png",
+		},
+	},
 	["fbsd"] = {
 		ascii = {
 			image = fbsd_brand,

@@ -240,6 +240,8 @@ local function select_packages(pkg, options)
 	-- Note: if you update this list, you must also update the list in
 	-- release/scripts/pkgbase-stage.lua.
 	local kernel_packages = {
+		-- 5BSD custom kernel
+		["FreeBSD-kernel-5bsd"] = true,
 		-- Most architectures use this
 		["FreeBSD-kernel-generic"] = true,
 		-- PowerPC uses either of these, depending on platform
@@ -369,9 +371,11 @@ local function pkgbase()
 		os.exit(1)
 	end
 
-	-- Enable the FreeBSD-base repository for this system.
+	-- Do not leave the upstream base repository enabled on an installed
+	-- 5BSD system.  Third-party package repositories remain configured
+	-- separately, but base updates must come from a 5BSD repo instead.
 	assert(os.execute("mkdir -p " .. chroot .. "/usr/local/etc/pkg/repos"))
-	assert(os.execute("echo 'FreeBSD-base: { enabled: yes }' > " .. chroot .. "/usr/local/etc/pkg/repos/FreeBSD.conf"))
+	assert(os.execute("echo 'FreeBSD-base: { enabled: no }' > " .. chroot .. "/usr/local/etc/pkg/repos/FreeBSD.conf"))
 end
 
 pkgbase()

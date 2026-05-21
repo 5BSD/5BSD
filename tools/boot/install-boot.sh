@@ -76,6 +76,11 @@ make_esp_file() {
         shift; shift || : # Ignore failure to shift
     done
 
+    if [ -n "${ESP_LOADER_ENV}" ]; then
+        mkdir -p "${stagedir}/efi/freebsd"
+        cp "${ESP_LOADER_ENV}" "${stagedir}/efi/freebsd/loader.env"
+    fi
+
     makefs -t msdos \
 	-o fat_type=${fatbits} \
 	-o sectors_per_cluster=1 \
