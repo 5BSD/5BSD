@@ -75,6 +75,32 @@ The installer media uses the UFS label `5BSD_Install`, sets
 in the ESP loader environment so EFI loader does not fall back to an
 internal FreeBSD boot pool.
 
+## VM Installs
+
+For a VM, use release media instead of a custom deploy script. The
+cleanest path is usually an ISO:
+
+```sh
+cd /home/koryheard/Projects/5BSD/release
+doas make cdrom
+```
+
+Then attach:
+
+```sh
+/usr/obj/home/koryheard/Projects/5BSD/amd64.amd64/release/disc1.iso
+```
+
+as the VM install media and run `bsdinstall` normally against the VM
+disk.
+
+The memstick image is also usable in a VM, but attach it as a raw boot
+disk, not as a CD-ROM ISO:
+
+```sh
+/usr/obj/home/koryheard/Projects/5BSD/amd64.amd64/release/memstick.img
+```
+
 ## Troubleshooting
 
 If the image drops to `mountroot`, check that
