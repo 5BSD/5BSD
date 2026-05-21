@@ -1,0 +1,9 @@
+# Disable the upstream FreeBSD-base repository so that pkg upgrade
+# never replaces locally built 5BSD base packages with upstream ones.
+#
+# Copy this file to /usr/local/etc/pkg/repos/FreeBSD.conf.
+#
+# The default FreeBSD-ports and FreeBSD-ports-kmods repositories from
+# /etc/pkg/FreeBSD.conf remain enabled — only base is overridden here.
+
+FreeBSD-base: { enabled: no }

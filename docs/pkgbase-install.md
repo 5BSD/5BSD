@@ -6,34 +6,34 @@ USB installer described in `building-5bsd.md`.
 
 ## Repository Policy
 
-Base system updates must come from a 5BSD repo. Leave normal FreeBSD
-third-party package repos enabled, but disable upstream `FreeBSD-base`
-so `pkg upgrade` cannot replace the 5BSD kernel or world.
+Base system updates must come from a local 5BSD repo so `pkg upgrade`
+never replaces 5BSD packages with upstream FreeBSD ones.  Third-party
+packages continue to come from the normal FreeBSD ports repos.
+
+Two things are required:
+
+1. **Disable upstream FreeBSD-base** so it cannot override local packages.
+2. **Add a local 5BSD repo** pointing at the build output, with a high
+   priority so it wins over any remote source.
+
+Sample config files are provided in `docs/pkg/`:
 
 ```sh
 mkdir -p /usr/local/etc/pkg/repos
-
-cat > /usr/local/etc/pkg/repos/FreeBSD.conf <<'EOF'
-FreeBSD-base: { enabled: no }
-EOF
-
-cat > /usr/local/etc/pkg/repos/5BSD.conf <<'EOF'
-5BSD: {
-  url: "file:///usr/obj/usr/src/repo/${ABI}/latest",
-  enabled: yes,
-  priority: 100
-}
-EOF
+cp docs/pkg/FreeBSD.conf.sample /usr/local/etc/pkg/repos/FreeBSD.conf
+cp docs/pkg/5BSD.conf.sample    /usr/local/etc/pkg/repos/5BSD.conf
 ```
 
-Adjust the repo URL for your source tree. For
-`/home/user/5BSD`, use:
+Edit `/usr/local/etc/pkg/repos/5BSD.conf` and set the `url` to match
+your source tree.  The path must point at the repo directory created by
+`make create-packages`.  For example, if your source is in
+`/home/user/5BSD`:
 
-```sh
-file:///usr/obj/home/user/5BSD/repo/${ABI}/latest
+```
+url: "file:///usr/obj/home/user/5BSD/repo/${ABI}/latest"
 ```
 
-Verify:
+Verify both repos are visible and that `FreeBSD-base` is disabled:
 
 ```sh
 pkg -vv | sed -n '/Repositories:/,$p'

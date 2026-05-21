@@ -1,0 +1,18 @@
+# 5BSD local package repository
+#
+# Copy this file to /usr/local/etc/pkg/repos/5BSD.conf and adjust the
+# url to match your source tree location.  The path must point at the
+# repo directory created by "make create-packages".
+#
+# Example paths:
+#   file:///usr/obj/usr/src/repo/${ABI}/latest          (source in /usr/src)
+#   file:///usr/obj/home/user/5BSD/repo/${ABI}/latest   (source in ~/5BSD)
+#
+# Priority 100 ensures these packages are preferred over any remote
+# FreeBSD-base repo (which should be disabled — see FreeBSD.conf.sample).
+
+5BSD: {
+  url: "file:///usr/obj/usr/src/repo/${ABI}/latest",
+  enabled: yes,
+  priority: 100
+}
