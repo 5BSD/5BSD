@@ -639,8 +639,11 @@ restart:
 	vattr.va_type = VSOCK;
 	vattr.va_mode = mode;
 #ifdef MAC
-	error = mac_vnode_check_uipc_bind(td->td_ucred, nd.ni_dvp,
-	    &nd.ni_cnd, &vattr);
+	error = mac_vnode_check_create(td->td_ucred, nd.ni_dvp, &nd.ni_cnd,
+	    &vattr);
+	if (error == 0)
+		error = mac_vnode_check_uipc_bind(td->td_ucred, nd.ni_dvp,
+		    &nd.ni_cnd, &vattr);
 #endif
 	if (error == 0) {
 		/*
@@ -2756,7 +2759,9 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			if (error != 0)
 				break;
 #ifdef COMPAT_FREEBSD32
-			if (SV_PROC_FLAG(sopt->sopt_td->td_proc, SV_ILP32)) {
+			if (sopt->sopt_td &&
+			    SV_PROC_FLAG(sopt->sopt_td->td_proc, SV_ILP32))
+			{
 				struct xucred32 xu32 = {};
 				int i;
 
@@ -2936,6 +2941,9 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 		goto bad;
 	}
 #ifdef MAC
+	error = mac_vnode_check_open(td->td_ucred, vp, VWRITE | VREAD);
+	if (error)
+		goto bad;
 	error = mac_vnode_check_uipc_connect(td->td_ucred, vp);
 	if (error)
 		goto bad;
