@@ -49,6 +49,8 @@ bsdinstall_multicons_disabled()
 # resolv.conf from DHCP ends up in here, so make sure the directory exists
 mkdir /tmp/bsdinstall_etc
 
+export OSNAME=5BSD
+
 if bsdinstall_multicons_disabled; then
 	/usr/libexec/bsdinstall/startbsdinstall primary
 else

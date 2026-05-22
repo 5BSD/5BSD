@@ -219,14 +219,15 @@ fi
 
 if [ "$PKGBASE" == yes ]; then
 	if [ "$HAVE_BASE_PACKAGES" == yes ]; then
-		bsddialog --backtitle "$OSNAME Installer" --title "Network or Offline Installation" \
-		    --yes-label "Network" --no-label "Offline (Limited Packages)" --yesno \
-		    "Would you like to fetch packages from the internet or use the limited set of packages included in this installation media?" 0 0
+		bsddialog --backtitle "$OSNAME Installer" --title "Network Configuration" \
+		    --yes-label "Configure Network" --no-label "Offline" --yesno \
+		    "The base system will be installed from the packages included in this installation media. Would you like to configure networking for firmware and other packages?" 0 0
 		if [ $? -eq 1 ]; then
 			export BSDINSTALL_PKG_REPOS_DIR=/usr/freebsd-packages/repos/
 		else
 			bsdinstall netconfig || error
 			NETCONFIG_DONE=yes
+			export BSDINSTALL_PKG_REPOS_DIR=/usr/freebsd-packages/repos/
 		fi
 	else
 		bsddialog --backtitle "$OSNAME Installer" --title "Network Installation" \

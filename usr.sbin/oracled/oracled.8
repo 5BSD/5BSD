@@ -1,0 +1,88 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd May 21, 2026
+.Dt ORACLED 8
+.Os
+.Sh NAME
+.Nm oracled
+.Nd Oracle capability-world service manager
+.Sh SYNOPSIS
+.Nm
+.Op Fl d
+.Op Fl p Ar pidfile
+.Op Fl T
+.Sh DESCRIPTION
+.Nm
+is the userspace service manager for the Oracle capability world.
+It is started by
+.Xr rc 8
+and is not a replacement for
+.Xr init 8 .
+.Pp
+During startup,
+.Nm
+daemonizes, writes a pidfile, applies kernel process controls with
+.Xr procctl 2 ,
+opens
+.Pa /dev/cap_rt ,
+and waits for events.
+It uses
+.Xr kqueue 2
+to handle signals and child process exits.
+.Sh OPTIONS
+.Bl -tag -width "-p pidfile"
+.It Fl d
+Run in the foreground and log to standard error as well as syslog.
+.It Fl p Ar pidfile
+Write the process ID to
+.Ar pidfile
+instead of
+.Pa /var/run/oracled.pid .
+.It Fl T
+Test mode.
+Run without requiring root, without daemonizing, and without applying
+privileged process or capability-runtime setup.
+This option is intended for automated tests.
+.El
+.Sh PROCESS CONTROLS
+When not running in test mode,
+.Nm
+uses
+.Xr procctl 2
+to:
+.Bl -bullet
+.It
+become a reaper for its future child process subtree;
+.It
+verify and log reaper status;
+.It
+mark itself protected from swap-exhaustion kills;
+.It
+disable tracing and core dumps; and
+.It
+enable kernel logging for fatal signal exits.
+.El
+.Pp
+These controls do not provide authorization for ordinary signals sent by
+privileged users.
+Signal authorization and stronger access policy are expected to be provided by
+future CAP_RT and MAC policy integration.
+.Sh FILES
+.Bl -tag -width "/var/run/oracled.pid"
+.It Pa /var/run/oracled.pid
+Default pidfile.
+.It Pa /dev/cap_rt
+CAP_RT control device opened by
+.Nm .
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh SEE ALSO
+.Xr kqueue 2 ,
+.Xr procctl 2 ,
+.Xr cap_rt 4 ,
+.Xr rc 8
+.Sh HISTORY
+.Nm
+first appeared in 5BSD as the initial Oracle userspace service manager.

@@ -77,8 +77,8 @@ make_esp_file() {
     done
 
     if [ -n "${ESP_LOADER_ENV}" ]; then
-        mkdir -p "${stagedir}/efi/freebsd"
-        cp "${ESP_LOADER_ENV}" "${stagedir}/efi/freebsd/loader.env"
+        mkdir -p "${stagedir}/EFI/freebsd"
+        cp "${ESP_LOADER_ENV}" "${stagedir}/EFI/freebsd/loader.env"
     fi
 
     makefs -t msdos \
