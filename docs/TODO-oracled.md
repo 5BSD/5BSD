@@ -82,6 +82,40 @@ actual config reload or remove the opcode entirely.  If implemented,
 reload should re-read /etc/oracled.conf and apply deltas (new claims,
 changed integrity flags).
 
+## Deployment Profiles
+
+Ship multiple config profiles for different use cases:
+development, desktop, server, appliance.  Stored in
+/usr/share/oracled/ and selected at install or first boot.
+
+Before we can ship aggressive profiles, we need:
+
+1. **File access tracing** — use DTrace or cap_rt probes to
+   record what files each daemon opens at runtime.  Build a
+   database of daemon→file dependencies.  Without this data,
+   we don't know what claiming /etc/ssh breaks for sshd or
+   what claiming /var/log breaks for newsyslog.
+
+2. **Service capability manifests** — each daemon's manifest
+   declares what it needs (files, ports, system ops).  The
+   profile generator can verify that claims don't conflict
+   with declared needs.
+
+3. **oraclectl profile command** — `oraclectl profile server`
+   installs the appropriate config and validates it against
+   running services.
+
+4. **Dry-run mode** — `oracled -n` loads the config and
+   reports what would be claimed without actually claiming.
+   Shows conflicts with running processes.
+
+Profiles to create:
+
+- **development** — integrity only, no claims (current default)
+- **desktop** — kernel memory, boot, credentials, kldload
+- **server** — above + system binaries, logs, ports, sysctl
+- **appliance** — everything locked, full integrity hardening
+
 ## Control socket is interim
 
 The control socket (`/var/run/oracled.sock`) is interim infrastructure.
