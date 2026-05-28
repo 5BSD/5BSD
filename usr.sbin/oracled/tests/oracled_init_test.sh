@@ -183,7 +183,7 @@ syslog_init_complete_body()
 	atf_check -s exit:0 -o not-empty \
 	    grep "oracled\[$pid\].*enabled OOM protection" "$logfile"
 	atf_check -s exit:0 -o not-empty \
-	    grep "oracled\[$pid\].*claimed /dev/cap_rt" "$logfile"
+	    grep "oracled\[$pid\].*isolation.*claimed.*/dev/cap_rt" "$logfile"
 	atf_check -s exit:0 -o not-empty \
 	    grep "oracled\[$pid\].*integrity active" "$logfile"
 	atf_check -s exit:0 -o not-empty \
@@ -584,6 +584,106 @@ config_integrity_settings_cleanup()
 	rm -f integrity.conf
 }
 
+# --- config: claims parsing ---
+
+atf_test_case config_claims_paths cleanup
+config_claims_paths_head()
+{
+	atf_set "descr" "claims.paths are parsed from config"
+}
+config_claims_paths_body()
+{
+	local conffile="$(pwd)/claims.conf"
+	local pidfile="$(pwd)/claims_test.pid"
+	cat > "$conffile" <<'ENDCONF'
+claims {
+    paths = [
+        "/dev/null",
+        "/tmp",
+    ];
+}
+ENDCONF
+	oracled -T -f "$conffile" -p "$pidfile" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_claims_paths_cleanup()
+{
+	if [ -f claims_test.pid ]; then
+		kill "$(cat claims_test.pid)" 2>/dev/null || true
+		rm -f claims_test.pid
+	fi
+	rm -f claims.conf
+}
+
+atf_test_case config_claims_network cleanup
+config_claims_network_head()
+{
+	atf_set "descr" "claims.network is parsed from config"
+}
+config_claims_network_body()
+{
+	local conffile="$(pwd)/claims_net.conf"
+	local pidfile="$(pwd)/claims_net_test.pid"
+	cat > "$conffile" <<'ENDCONF'
+claims {
+    network = [
+        { port = 9999; protocol = "tcp"; direction = "bind"; },
+    ];
+}
+ENDCONF
+	oracled -T -f "$conffile" -p "$pidfile" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_claims_network_cleanup()
+{
+	if [ -f claims_net_test.pid ]; then
+		kill "$(cat claims_net_test.pid)" 2>/dev/null || true
+		rm -f claims_net_test.pid
+	fi
+	rm -f claims_net.conf
+}
+
+atf_test_case config_claims_bad_path cleanup
+config_claims_bad_path_head()
+{
+	atf_set "descr" "nonexistent claim path does not prevent startup"
+}
+config_claims_bad_path_body()
+{
+	local conffile="$(pwd)/claims_bad.conf"
+	local pidfile="$(pwd)/claims_bad_test.pid"
+	cat > "$conffile" <<'ENDCONF'
+claims {
+    paths = [
+        "/nonexistent/path/that/does/not/exist",
+    ];
+}
+ENDCONF
+	oracled -T -f "$conffile" -p "$pidfile" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
+	# Should start despite bad path (graceful degradation)
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_claims_bad_path_cleanup()
+{
+	if [ -f claims_bad_test.pid ]; then
+		kill "$(cat claims_bad_test.pid)" 2>/dev/null || true
+		rm -f claims_bad_test.pid
+	fi
+	rm -f claims_bad.conf
+}
+
 # --- syslog: initialization completed ---
 
 atf_test_case syslog_init_complete cleanup
@@ -608,7 +708,7 @@ syslog_init_complete_body()
 	atf_check -s exit:0 -o not-empty \
 	    grep "oracled\[$pid\].*enabled OOM protection" "$logfile"
 	atf_check -s exit:0 -o not-empty \
-	    grep "oracled\[$pid\].*claimed /dev/cap_rt" "$logfile"
+	    grep "oracled\[$pid\].*isolation.*claimed.*/dev/cap_rt" "$logfile"
 	atf_check -s exit:0 -o not-empty \
 	    grep "oracled\[$pid\].*integrity active" "$logfile"
 	atf_check -s exit:0 -o not-empty \
@@ -651,6 +751,9 @@ atf_init_test_cases()
 	atf_add_test_case config_cli_overrides_config
 	atf_add_test_case config_empty_file_uses_defaults
 	atf_add_test_case config_integrity_settings
+	atf_add_test_case config_claims_paths
+	atf_add_test_case config_claims_network
+	atf_add_test_case config_claims_bad_path
 
 	# Daemon behavior
 	atf_add_test_case test_mode_no_root

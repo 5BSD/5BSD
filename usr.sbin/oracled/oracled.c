@@ -9,7 +9,7 @@
  *   1. Parse arguments, load config, open syslog, acquire pidfile
  *   2. Daemonize (unless foreground mode)
  *   3. Harden process (procctl self-policy)
- *   4. Initialize cap_rt (open device, isolate, shield)
+ *   4. Initialize cap_rt (open device, claim resources, integrity)
  *   5. Create control socket
  *   6. Enter event loop
  *
@@ -17,7 +17,7 @@
  *   1. Kill process subtree
  *   2. Reap children
  *   3. Close control socket
- *   4. Release cap_rt services (shield, isolation, device)
+ *   4. Release cap_rt services (integrity, claims, device)
  *   5. Remove pidfile
  */
 

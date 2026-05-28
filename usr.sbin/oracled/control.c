@@ -38,10 +38,17 @@ static uint64_t
 uptime_usec(void)
 {
 	struct timespec now;
+	uint64_t sec;
+	long nsec;
 
 	clock_gettime(CLOCK_MONOTONIC, &now);
-	return ((uint64_t)(now.tv_sec - start_time.tv_sec) * 1000000 +
-	    (now.tv_nsec - start_time.tv_nsec) / 1000);
+	sec = now.tv_sec - start_time.tv_sec;
+	nsec = now.tv_nsec - start_time.tv_nsec;
+	if (nsec < 0) {
+		sec--;
+		nsec += 1000000000L;
+	}
+	return (sec * 1000000 + nsec / 1000);
 }
 
 int
@@ -56,6 +63,13 @@ ctl_setup(void)
 	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (fd == -1) {
 		syslog(LOG_ERR, "control socket: %m");
+		return (-1);
+	}
+
+	if (strlen(od.cfg.control_socket) >= sizeof(un.sun_path)) {
+		syslog(LOG_ERR, "control socket path too long: %s",
+		    od.cfg.control_socket);
+		close(fd);
 		return (-1);
 	}
 
@@ -136,7 +150,12 @@ readn(int fd, void *buf, size_t len)
 
 	for (off = 0; off < len; ) {
 		n = read(fd, (char *)buf + off, len - off);
-		if (n <= 0)
+		if (n == -1) {
+			if (errno == EINTR)
+				continue;
+			return (-1);
+		}
+		if (n == 0)
 			return (-1);
 		off += n;
 	}

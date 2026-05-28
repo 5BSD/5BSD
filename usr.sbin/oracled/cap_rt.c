@@ -99,6 +99,7 @@ static int
 cap_rt_svc_connect(const char *name)
 {
 	struct cap_rt_connect_args conn;
+	int fd;
 
 	memset(&conn, 0, sizeof(conn));
 	strlcpy(conn.name, name, sizeof(conn.name));
@@ -106,7 +107,9 @@ cap_rt_svc_connect(const char *name)
 		syslog(LOG_ERR, "cap_rt connect %s: %m", name);
 		return (-1);
 	}
-	return (conn.fd);
+	fd = conn.fd;
+	(void)fcntl(fd, F_SETFD, FD_CLOEXEC);
+	return (fd);
 }
 
 /*
@@ -114,14 +117,14 @@ cap_rt_svc_connect(const char *name)
  * service.  The isolation_fd must already be connected.
  */
 static int
-claim_path(const char *path, int flags)
+claim_path(const char *path)
 {
 	struct cap_rt_call_args call;
 	struct fi_request req;
 	struct fi_reply reply;
 	int fd;
 
-	fd = open(path, O_RDONLY | O_CLOEXEC | flags);
+	fd = open(path, O_RDONLY | O_CLOEXEC);
 	if (fd == -1) {
 		syslog(LOG_WARNING, "isolation: open %s: %m", path);
 		return (-1);
@@ -202,22 +205,45 @@ isolate_resources(void)
 	if (isolation_fd == -1)
 		return (-1);
 
+	int claimed, failed, total;
+
+	claimed = failed = 0;
+
 	/* Always claim /dev/cap_rt — oracled owns this device. */
-	claim_path("/dev/cap_rt", 0);
+	if (claim_path("/dev/cap_rt") == 0)
+		claimed++;
+	else
+		failed++;
 
 	/* Claim configured paths (files and directories). */
-	for (i = 0; i < od.cfg.nclaim_paths; i++)
-		claim_path(od.cfg.claim_paths[i], 0);
+	for (i = 0; i < od.cfg.nclaim_paths; i++) {
+		if (claim_path(od.cfg.claim_paths[i]) == 0)
+			claimed++;
+		else
+			failed++;
+	}
 
 	/* Claim configured network endpoints. */
-	for (i = 0; i < od.cfg.nclaim_net; i++)
-		claim_net(&od.cfg.claim_net[i]);
+	for (i = 0; i < od.cfg.nclaim_net; i++) {
+		if (claim_net(&od.cfg.claim_net[i]) == 0)
+			claimed++;
+		else
+			failed++;
+	}
+
+	total = claimed + failed;
+	if (failed > 0)
+		syslog(LOG_WARNING, "claims: %d/%d succeeded, "
+		    "%d failed", claimed, total, failed);
+	else if (total > 0)
+		syslog(LOG_INFO, "claims: %d/%d succeeded",
+		    claimed, total);
 
 	return (0);
 }
 
 static int
-shield_self(void)
+apply_integrity(void)
 {
 	struct cap_rt_call_args call;
 	struct cp_request req;
@@ -268,16 +294,16 @@ cap_rt_setup(void)
 	if (isolate_resources() == -1)
 		syslog(LOG_WARNING, "failed to connect isolation service");
 
-	if (shield_self() == -1)
-		syslog(LOG_WARNING, "failed to activate capprotect shield");
+	if (apply_integrity() == -1)
+		syslog(LOG_WARNING, "failed to activate integrity protection");
 
 	return (0);
 }
 
 /*
  * Release all cap_rt services.  Order matters: capprotect first
- * (removes shield), then isolation (releases claim), then the
- * control device itself.
+ * (removes integrity protection), then isolation (releases
+ * claims), then the control device itself.
  */
 void
 cap_rt_teardown(void)
@@ -286,7 +312,7 @@ cap_rt_teardown(void)
 	if (capprotect_fd >= 0) {
 		close(capprotect_fd);
 		capprotect_fd = -1;
-		syslog(LOG_INFO, "capprotect shield released");
+		syslog(LOG_INFO, "integrity protection released");
 	}
 	if (isolation_fd >= 0) {
 		close(isolation_fd);

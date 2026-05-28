@@ -170,9 +170,11 @@ Each object has:
 (integer),
 .Va protocol
 ("tcp" or "udp"),
-and
 .Va direction
-("bind", "connect", or "any").
+("bind", "connect", or "any"),
+and optionally
+.Va domain
+("inet6" or "any"; default is IPv4).
 Foreign nonces receive
 .Er EACCES
 on bind or connect to claimed endpoints.
@@ -198,9 +200,9 @@ when configured.
 .Nm
 exits with an error if the configuration file contains syntax errors.
 .Sh EXAMPLES
-Minimal configuration with hardened shield:
+Minimal configuration with full integrity hardening:
 .Bd -literal -offset indent
-shield {
+integrity {
     ptrace = true;
     signal = true;
     visible = true;
@@ -211,10 +213,16 @@ shield {
 }
 .Ed
 .Pp
-Disable device isolation for development:
+Claim sensitive files and a privileged port:
 .Bd -literal -offset indent
-isolation {
-    cap_rt = false;
+claims {
+    paths = [
+        "/dev/mem",
+        "/boot/kernel",
+    ];
+    network = [
+        { port = 443; protocol = "tcp"; direction = "bind"; },
+    ];
 }
 .Ed
 .Sh SEE ALSO
