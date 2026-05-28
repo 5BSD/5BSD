@@ -30,6 +30,8 @@
 #include "oracled_ctl.h"
 #include "commands.h"
 
+/* Module-private state. */
+static int control_sock = -1;
 static struct timespec start_time;
 
 static uint64_t
@@ -43,7 +45,7 @@ uptime_usec(void)
 }
 
 int
-setup_control_socket(void)
+ctl_setup(void)
 {
 	struct sockaddr_un un;
 	mode_t old_umask;
@@ -63,10 +65,6 @@ setup_control_socket(void)
 	un.sun_family = AF_LOCAL;
 	strlcpy(un.sun_path, od.cfg.control_socket, sizeof(un.sun_path));
 
-	/*
-	 * Set umask before bind to avoid a TOCTOU window where the
-	 * socket exists with default permissions.
-	 */
 	old_umask = umask(0077);
 	if (bind(fd, (struct sockaddr *)&un, sizeof(un)) == -1) {
 		syslog(LOG_ERR, "control bind %s: %m",
@@ -77,7 +75,6 @@ setup_control_socket(void)
 	}
 	(void)umask(old_umask);
 
-	/* Apply the configured mode (may widen from the umask). */
 	if (chmod(od.cfg.control_socket, od.cfg.control_socket_mode) == -1) {
 		syslog(LOG_ERR, "control chmod %s: %m",
 		    od.cfg.control_socket);
@@ -100,24 +97,31 @@ setup_control_socket(void)
 		return (-1);
 	}
 
+	control_sock = fd;
 	syslog(LOG_INFO, "control socket %s", od.cfg.control_socket);
-	return (fd);
+	return (0);
 }
 
 void
-teardown_control_socket(void)
+ctl_teardown(void)
 {
 
-	if (od.control_fd >= 0) {
-		close(od.control_fd);
-		od.control_fd = -1;
+	if (control_sock >= 0) {
+		close(control_sock);
+		control_sock = -1;
 		(void)unlink(od.cfg.control_socket);
 	}
 }
 
+int
+ctl_fd(void)
+{
+
+	return (control_sock);
+}
+
 /*
- * Read exactly len bytes from fd with a timeout.  Returns 0 on
- * success, -1 on short read, error, or timeout.
+ * Read exactly len bytes from fd with a timeout.
  */
 static int
 readn(int fd, void *buf, size_t len)
@@ -139,11 +143,6 @@ readn(int fd, void *buf, size_t len)
 	return (0);
 }
 
-/*
- * Read a payload string from the client fd.  Validates length,
- * reads the data, null-terminates, and rejects names with path
- * separators.  Returns 0 on success.
- */
 static int
 read_payload(int cfd, uint32_t datalen, char *buf, size_t bufsz,
     struct ctl_reply *reply)
@@ -159,7 +158,6 @@ read_payload(int cfd, uint32_t datalen, char *buf, size_t bufsz,
 	}
 	buf[datalen] = '\0';
 
-	/* Reject payloads containing path separators. */
 	if (strchr(buf, '/') != NULL) {
 		reply->status = EINVAL;
 		syslog(LOG_WARNING, "control: payload contains '/'");
@@ -170,10 +168,13 @@ read_payload(int cfd, uint32_t datalen, char *buf, size_t bufsz,
 
 /* ----------------------------------------------------------------
  * Connection dispatcher
+ *
+ * Returns a CTL_ACTION_* bitmask.  If CTL_ACTION_REBOOT is set,
+ * *reboot_howto is filled with the requested flags.
  * ---------------------------------------------------------------- */
 
 int
-handle_control_connection(void)
+ctl_handle(int *reboot_howto)
 {
 	struct ctl_request req;
 	struct ctl_reply reply;
@@ -182,25 +183,25 @@ handle_control_connection(void)
 	int cfd, action;
 	char payload[CTL_MAX_PAYLOAD + 1];
 
-	action = 0;
+	action = CTL_ACTION_NONE;
 
-	cfd = accept4(od.control_fd, NULL, NULL, SOCK_CLOEXEC);
+	cfd = accept4(control_sock, NULL, NULL, SOCK_CLOEXEC);
 	if (cfd == -1) {
 		if (errno != EAGAIN && errno != EWOULDBLOCK)
 			syslog(LOG_WARNING, "control accept: %m");
-		return (0);
+		return (CTL_ACTION_NONE);
 	}
 
 	if (getpeereid(cfd, &euid, &egid) != 0) {
 		syslog(LOG_WARNING, "control getpeereid: %m");
 		close(cfd);
-		return (0);
+		return (CTL_ACTION_NONE);
 	}
 
 	if (readn(cfd, &req, sizeof(req)) != 0) {
 		syslog(LOG_WARNING, "control read: short");
 		close(cfd);
-		return (0);
+		return (CTL_ACTION_NONE);
 	}
 
 	memset(&reply, 0, sizeof(reply));
@@ -250,7 +251,7 @@ handle_control_connection(void)
 		}
 		cmd_reboot(euid, req.flags, &reply);
 		if (reply.status == CTL_STATUS_OK) {
-			od.reboot_howto = req.flags;
+			*reboot_howto = req.flags;
 			action = CTL_ACTION_REBOOT;
 		}
 		break;

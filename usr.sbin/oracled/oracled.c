@@ -31,9 +31,7 @@
 
 #include "oracled.h"
 
-struct oracled_state od = {
-	.control_fd = -1,
-};
+struct oracled_state od;
 
 static void usage(void) __dead2;
 
@@ -138,8 +136,7 @@ main(int argc, char *argv[])
 
 	/* Phase 5: control socket. */
 	if (!od.test_mode) {
-		od.control_fd = setup_control_socket();
-		if (od.control_fd == -1)
+		if (ctl_setup() == -1)
 			syslog(LOG_WARNING, "failed to create control socket");
 	} else {
 		syslog(LOG_INFO, "test mode: skipping control socket");

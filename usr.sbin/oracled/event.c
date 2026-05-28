@@ -33,10 +33,6 @@ add_signal_event(int kq, int sig)
 	}
 }
 
-/*
- * Graceful shutdown.  reason > 0 is a signal number, 0 means
- * the control socket requested it.
- */
 static void
 shutdown_and_exit(int reason)
 {
@@ -49,7 +45,7 @@ shutdown_and_exit(int reason)
 	if (!od.test_mode)
 		kill_subtree();
 	reap_children();
-	teardown_control_socket();
+	ctl_teardown();
 	cap_rt_teardown();
 	pidfile_remove(od.pidfh);
 	closelog();
@@ -60,7 +56,7 @@ void
 event_loop(void)
 {
 	struct kevent kev;
-	int kq, nev;
+	int cfd, kq, nev;
 
 	kq = kqueue();
 	if (kq == -1) {
@@ -73,8 +69,9 @@ event_loop(void)
 	add_signal_event(kq, SIGTERM);
 	add_signal_event(kq, SIGINT);
 
-	if (od.control_fd >= 0) {
-		EV_SET(&kev, od.control_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	cfd = ctl_fd();
+	if (cfd >= 0) {
+		EV_SET(&kev, cfd, EVFILT_READ, EV_ADD, 0, 0, NULL);
 		if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
 			syslog(LOG_CRIT, "kevent control socket: %m");
 			exit(1);
@@ -93,14 +90,14 @@ event_loop(void)
 			continue;
 
 		if (kev.filter == EVFILT_READ &&
-		    (int)kev.ident == od.control_fd) {
-			int action;
+		    (int)kev.ident == cfd) {
+			int action, howto;
 
-			action = handle_control_connection();
+			howto = 0;
+			action = ctl_handle(&howto);
 			if (action & CTL_ACTION_REBOOT) {
 				shutdown_and_exit(0);
-				reboot(od.reboot_howto);
-				/* reboot(2) should not return. */
+				reboot(howto);
 				syslog(LOG_CRIT, "reboot(2) failed: %m");
 				_exit(1);
 			} else if (action & CTL_ACTION_SHUTDOWN) {

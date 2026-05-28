@@ -20,12 +20,13 @@
  * Set by main() during initialization, read by all modules.
  * Shutdown is coordinated through the 'running' flag and the
  * teardown functions.
+ *
+ * Module-private state (cap_rt fds, control socket fd) is kept
+ * in static variables within each module.
  */
 struct oracled_state {
 	struct pidfh		*pidfh;
 	struct oracled_config	 cfg;
-	int			 control_fd;
-	int			 reboot_howto;
 	bool			 foreground;
 	bool			 test_mode;
 	bool			 running;
@@ -33,18 +34,19 @@ struct oracled_state {
 
 extern struct oracled_state od;
 
-/* Return values from handle_control_connection(). */
-#define	CTL_ACTION_SHUTDOWN	0x01
-#define	CTL_ACTION_REBOOT	0x02
-
 /* cap_rt.c — capability runtime lifecycle */
 int	cap_rt_setup(void);
 void	cap_rt_teardown(void);
 
 /* control.c — control socket lifecycle */
-int	setup_control_socket(void);
-void	teardown_control_socket(void);
-int	handle_control_connection(void);
+#define	CTL_ACTION_NONE		0
+#define	CTL_ACTION_SHUTDOWN	0x01
+#define	CTL_ACTION_REBOOT	0x02
+
+int	ctl_setup(void);
+void	ctl_teardown(void);
+int	ctl_fd(void);
+int	ctl_handle(int *reboot_howto);
 
 /* event.c — main event loop */
 void	event_loop(void);
