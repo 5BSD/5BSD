@@ -221,6 +221,7 @@ SUBDIR=	\
 	cap_rt_accounting \
 	cap_rt_isolation \
 	cap_rt_mount \
+	cap_rt_system \
 	kgssapi \
 	kgssapi_krb5 \
 	khelp \
