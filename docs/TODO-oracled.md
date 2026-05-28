@@ -116,6 +116,33 @@ Profiles to create:
 - **server** — above + system binaries, logs, ports, sysctl
 - **appliance** — everything locked, full integrity hardening
 
+## bhyve VM Capability Gates
+
+Add VMM gates to cap_rt_system for bhyve hypervisor operations:
+
+- `SYS_GATE_VMM_CREATE` — `mac_vmm_check_create` (VM creation)
+- `SYS_GATE_VMM_DESTROY` — `mac_vmm_check_destroy` (VM destruction)
+- `SYS_GATE_VMM_MEM` — `mac_vmm_check_mem_access` (guest memory mmap/read/write)
+- `SYS_GATE_VMM_MEMSEG` — `mac_vmm_check_memseg_access` (memory segment access)
+
+All hooks are infrequent (setup-time, not per-instruction).
+Call sites are in `sys/dev/vmm/vmm_dev.c` lines 240, 845, 941,
+1044, 1386.
+
+With these gates, only token holders can create VMs or access
+guest memory.  Prevents unauthorized VM creation (resource DoS)
+and guest memory inspection (secret extraction).
+
+## rctl Rule Manipulation
+
+Add rctl gates to cap_rt_system:
+
+- `SYS_GATE_RCTL_ADD` — `mac_rctl_check_add_rule`
+- `SYS_GATE_RCTL_REMOVE` — `mac_rctl_check_remove_rule`
+
+Prevents a compromised root process from removing resource
+limits that contain it.
+
 ## Control socket is interim
 
 The control socket (`/var/run/oracled.sock`) is interim infrastructure.
