@@ -10,6 +10,9 @@
  * defaults apply.  Syntax errors are fatal.
  */
 
+#include <sys/socket.h>
+#include <netinet/in.h>
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,16 +36,14 @@ config_init_defaults(struct oracled_config *cfg)
 	    sizeof(cfg->control_socket));
 	cfg->control_socket_mode = ORACLED_DEFAULT_CTLMODE;
 
-	/* Shield defaults: conservative — don't break rc(8). */
-	cfg->shield_ptrace = true;
-	cfg->shield_signal = false;
-	cfg->shield_visible = false;
-	cfg->shield_wait = true;
-	cfg->shield_sched = true;
-	cfg->shield_core = false;
-	cfg->shield_ktrace = true;
-
-	cfg->isolate_cap_rt = true;
+	/* Integrity defaults: conservative — don't break rc(8). */
+	cfg->integrity_ptrace = true;
+	cfg->integrity_signal = false;
+	cfg->integrity_visible = false;
+	cfg->integrity_wait = true;
+	cfg->integrity_sched = true;
+	cfg->integrity_core = false;
+	cfg->integrity_ktrace = true;
 }
 
 static void
@@ -66,11 +67,6 @@ cfg_string(const ucl_object_t *obj, const char *key,
 		strlcpy(buf, ucl_object_tostring(o), bufsz);
 }
 
-/*
- * Parse control_socket_mode.  Accept a quoted string for octal
- * (e.g., "0700") or an integer.  Validate range and reject
- * world-accessible modes as a safety measure.
- */
 static void
 cfg_mode(const ucl_object_t *root, struct oracled_config *cfg)
 {
@@ -105,15 +101,127 @@ cfg_mode(const ucl_object_t *root, struct oracled_config *cfg)
 	cfg->control_socket_mode = (mode_t)val;
 }
 
+static void
+cfg_integrity(const ucl_object_t *root, struct oracled_config *cfg)
+{
+	const ucl_object_t *sec;
+
+	sec = ucl_object_lookup(root, "integrity");
+	if (sec == NULL || ucl_object_type(sec) != UCL_OBJECT)
+		return;
+
+	cfg_bool(sec, "ptrace", &cfg->integrity_ptrace);
+	cfg_bool(sec, "signal", &cfg->integrity_signal);
+	cfg_bool(sec, "visible", &cfg->integrity_visible);
+	cfg_bool(sec, "wait", &cfg->integrity_wait);
+	cfg_bool(sec, "sched", &cfg->integrity_sched);
+	cfg_bool(sec, "core", &cfg->integrity_core);
+	cfg_bool(sec, "ktrace", &cfg->integrity_ktrace);
+}
+
+static void
+cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
+{
+	const ucl_object_t *sec, *arr, *elem, *v;
+	ucl_object_iter_t it;
+	const char *s;
+
+	sec = ucl_object_lookup(root, "claims");
+	if (sec == NULL || ucl_object_type(sec) != UCL_OBJECT)
+		return;
+
+	/* claims.paths — string array */
+	arr = ucl_object_lookup(sec, "paths");
+	if (arr != NULL && ucl_object_type(arr) == UCL_ARRAY) {
+		it = NULL;
+		while ((elem = ucl_object_iterate(arr, &it, true))
+		    != NULL) {
+			if (ucl_object_type(elem) != UCL_STRING)
+				continue;
+			if (cfg->nclaim_paths >= ORACLED_MAX_PATH_CLAIMS) {
+				fprintf(stderr, "oracled: too many "
+				    "claim paths (max %d)\n",
+				    ORACLED_MAX_PATH_CLAIMS);
+				break;
+			}
+			strlcpy(cfg->claim_paths[cfg->nclaim_paths],
+			    ucl_object_tostring(elem), PATH_MAX);
+			cfg->nclaim_paths++;
+		}
+	}
+
+	/* claims.network — array of objects */
+	arr = ucl_object_lookup(sec, "network");
+	if (arr != NULL && ucl_object_type(arr) == UCL_ARRAY) {
+		it = NULL;
+		while ((elem = ucl_object_iterate(arr, &it, true))
+		    != NULL) {
+			struct oracled_net_claim *nc;
+
+			if (ucl_object_type(elem) != UCL_OBJECT)
+				continue;
+			if (cfg->nclaim_net >= ORACLED_MAX_NET_CLAIMS) {
+				fprintf(stderr, "oracled: too many "
+				    "network claims (max %d)\n",
+				    ORACLED_MAX_NET_CLAIMS);
+				break;
+			}
+			nc = &cfg->claim_net[cfg->nclaim_net];
+			memset(nc, 0, sizeof(*nc));
+
+			v = ucl_object_lookup(elem, "port");
+			if (v != NULL && ucl_object_type(v) == UCL_INT)
+				nc->port = (uint16_t)ucl_object_toint(v);
+
+			v = ucl_object_lookup(elem, "protocol");
+			if (v != NULL &&
+			    ucl_object_type(v) == UCL_STRING) {
+				s = ucl_object_tostring(v);
+				if (strcmp(s, "tcp") == 0)
+					nc->protocol = IPPROTO_TCP;
+				else if (strcmp(s, "udp") == 0)
+					nc->protocol = IPPROTO_UDP;
+			}
+
+			v = ucl_object_lookup(elem, "direction");
+			if (v != NULL &&
+			    ucl_object_type(v) == UCL_STRING) {
+				s = ucl_object_tostring(v);
+				if (strcmp(s, "bind") == 0)
+					nc->direction = 0x01;
+				else if (strcmp(s, "connect") == 0)
+					nc->direction = 0x02;
+				else if (strcmp(s, "any") == 0)
+					nc->direction = 0x03;
+			}
+			if (nc->direction == 0)
+				nc->direction = 0x01;
+
+			nc->domain = AF_INET;
+			v = ucl_object_lookup(elem, "domain");
+			if (v != NULL &&
+			    ucl_object_type(v) == UCL_STRING) {
+				s = ucl_object_tostring(v);
+				if (strcmp(s, "inet6") == 0)
+					nc->domain = AF_INET6;
+				else if (strcmp(s, "any") == 0)
+					nc->domain = 0;
+			}
+
+			cfg->nclaim_net++;
+		}
+	}
+}
+
 int
 config_load(struct oracled_config *cfg, const char *path)
 {
 	struct ucl_parser *parser;
-	const ucl_object_t *root, *shield, *isolation;
+	const ucl_object_t *root;
 
 	if (access(path, R_OK) != 0) {
 		if (errno == ENOENT)
-			return (0);	/* missing file — use defaults */
+			return (0);
 		fprintf(stderr, "oracled: %s: %s\n", path, strerror(errno));
 		return (-1);
 	}
@@ -133,7 +241,6 @@ config_load(struct oracled_config *cfg, const char *path)
 
 	root = ucl_parser_get_object(parser);
 	if (root == NULL) {
-		/* Empty file — treat as no config, use defaults. */
 		ucl_parser_free(parser);
 		cfg->loaded_from_file = true;
 		return (0);
@@ -145,26 +252,10 @@ config_load(struct oracled_config *cfg, const char *path)
 	    sizeof(cfg->control_socket));
 	cfg_mode(root, cfg);
 
-	/* Shield section */
-	shield = ucl_object_lookup(root, "shield");
-	if (shield != NULL && ucl_object_type(shield) == UCL_OBJECT) {
-		cfg_bool(shield, "ptrace", &cfg->shield_ptrace);
-		cfg_bool(shield, "signal", &cfg->shield_signal);
-		cfg_bool(shield, "visible", &cfg->shield_visible);
-		cfg_bool(shield, "wait", &cfg->shield_wait);
-		cfg_bool(shield, "sched", &cfg->shield_sched);
-		cfg_bool(shield, "core", &cfg->shield_core);
-		cfg_bool(shield, "ktrace", &cfg->shield_ktrace);
-	}
+	/* Sections */
+	cfg_integrity(root, cfg);
+	cfg_claims(root, cfg);
 
-	/* Isolation section */
-	isolation = ucl_object_lookup(root, "isolation");
-	if (isolation != NULL &&
-	    ucl_object_type(isolation) == UCL_OBJECT) {
-		cfg_bool(isolation, "cap_rt", &cfg->isolate_cap_rt);
-	}
-
-	/* UCL API requires non-const for unref. */
 	ucl_object_unref(__DECONST(ucl_object_t *, root));
 	ucl_parser_free(parser);
 
@@ -183,10 +274,12 @@ config_log(const struct oracled_config *cfg)
 	syslog(LOG_INFO, "config: pidfile=%s", cfg->pidfile);
 	syslog(LOG_INFO, "config: control_socket=%s mode=%04o",
 	    cfg->control_socket, cfg->control_socket_mode);
-	syslog(LOG_INFO, "config: shield ptrace=%d signal=%d visible=%d "
-	    "wait=%d sched=%d core=%d ktrace=%d",
-	    cfg->shield_ptrace, cfg->shield_signal, cfg->shield_visible,
-	    cfg->shield_wait, cfg->shield_sched, cfg->shield_core,
-	    cfg->shield_ktrace);
-	syslog(LOG_INFO, "config: isolate_cap_rt=%d", cfg->isolate_cap_rt);
+	syslog(LOG_INFO, "config: integrity ptrace=%d signal=%d "
+	    "visible=%d wait=%d sched=%d core=%d ktrace=%d",
+	    cfg->integrity_ptrace, cfg->integrity_signal,
+	    cfg->integrity_visible, cfg->integrity_wait,
+	    cfg->integrity_sched, cfg->integrity_core,
+	    cfg->integrity_ktrace);
+	syslog(LOG_INFO, "config: claims paths=%d network=%d",
+	    cfg->nclaim_paths, cfg->nclaim_net);
 }

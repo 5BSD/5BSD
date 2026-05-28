@@ -101,10 +101,12 @@ Default:
 File mode for the control socket.
 Default: 0700 (root only).
 .El
-.Ss Shield Flags
+.Ss Integrity
 The
-.Va shield
-section controls which capprotect flags are activated.
+.Va integrity
+section controls capprotect flags that protect
+.Nm
+from external interference.
 Each key is a boolean (true/false).
 .Bl -tag -width "visible"
 .It Va ptrace
@@ -128,7 +130,6 @@ from
 .Xr top 1 ,
 and procfs enumeration.
 Default: false.
-Enabling this makes the daemon invisible to system monitoring tools.
 .It Va wait
 Block wait4 from non-parent processes.
 Default: true.
@@ -138,25 +139,44 @@ Default: true.
 .It Va core
 Suppress core dumps to prevent leaking secrets from process memory.
 Default: false.
-Enable for hardened deployments.
 .It Va ktrace
 Block passive syscall tracing via
 .Xr ktrace 1 .
 Default: true.
 .El
-.Ss Isolation
+.Ss Claims
 The
-.Va isolation
-section controls device isolation.
-.Bl -tag -width "cap_rt"
-.It Va cap_rt
-Claim
+.Va claims
+section lists resources under oracle control.
+Resources listed here are claimed exclusively by
+.Nm
+at boot via the cap_rt isolation service.
+Once claimed, MACF hooks deny access from all other processes,
+including root.
 .Pa /dev/cap_rt
-exclusively via the isolation service.
-When enabled, foreign nonces receive
+is always claimed automatically.
+.Bl -tag -width "network"
+.It Va paths
+Array of file and directory paths to claim.
+Claiming a file blocks open, stat, chmod, chown, and other
+vnode operations.
+Claiming a directory blocks lookup into the subtree,
+preventing access to all files within.
+Default: empty.
+.It Va network
+Array of network endpoint objects to claim.
+Each object has:
+.Va port
+(integer),
+.Va protocol
+("tcp" or "udp"),
+and
+.Va direction
+("bind", "connect", or "any").
+Foreign nonces receive
 .Er EACCES
-on any access to the device.
-Default: true.
+on bind or connect to claimed endpoints.
+Default: empty.
 .El
 .Sh FILES
 .Bl -tag -width "/etc/oracled.conf"

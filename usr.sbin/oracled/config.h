@@ -10,10 +10,21 @@
 #include <sys/param.h>
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #define	ORACLED_DEFAULT_CONFFILE	"/etc/oracled.conf"
 #define	ORACLED_DEFAULT_PIDFILE	"/var/run/oracled.pid"
 #define	ORACLED_DEFAULT_CTLMODE	0700
+
+#define	ORACLED_MAX_PATH_CLAIMS		64
+#define	ORACLED_MAX_NET_CLAIMS		32
+
+struct oracled_net_claim {
+	int		domain;		/* AF_INET, AF_INET6, 0=any */
+	int		protocol;	/* IPPROTO_TCP, IPPROTO_UDP, 0=any */
+	uint16_t	port;		/* host byte order */
+	uint8_t		direction;	/* FI_NET_BIND/CONNECT/ANY */
+};
 
 struct oracled_config {
 	/* Paths */
@@ -21,17 +32,20 @@ struct oracled_config {
 	char		control_socket[PATH_MAX];
 	mode_t		control_socket_mode;
 
-	/* Shield flags */
-	bool		shield_ptrace;
-	bool		shield_signal;
-	bool		shield_visible;
-	bool		shield_wait;
-	bool		shield_sched;
-	bool		shield_core;
-	bool		shield_ktrace;
+	/* Integrity — capprotect flags for oracled itself */
+	bool		integrity_ptrace;
+	bool		integrity_signal;
+	bool		integrity_visible;
+	bool		integrity_wait;
+	bool		integrity_sched;
+	bool		integrity_core;
+	bool		integrity_ktrace;
 
-	/* Isolation */
-	bool		isolate_cap_rt;
+	/* Claims — resources under oracle control */
+	char		claim_paths[ORACLED_MAX_PATH_CLAIMS][PATH_MAX];
+	int		nclaim_paths;
+	struct oracled_net_claim claim_net[ORACLED_MAX_NET_CLAIMS];
+	int		nclaim_net;
 
 	/* Set by config_load if a file was actually parsed. */
 	bool		loaded_from_file;

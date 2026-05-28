@@ -63,19 +63,13 @@ cannot bypass these claims.
 ```ucl
 # /etc/oracled.conf — resource claims
 
-isolation {
-    cap_rt = true;
-
-    files = [
+claims {
+    paths = [
         "/dev/mem",
         "/dev/kmem",
         "/dev/bpf",
-    ];
-
-    directories = [
         "/boot/kernel",
     ];
-
     network = [
         { port = 22;  protocol = "tcp"; direction = "bind"; },
         { port = 80;  protocol = "tcp"; direction = "bind"; },
@@ -175,7 +169,7 @@ capabilities {
     ];
 }
 
-shield {
+integrity {
     ptrace = true;
     signal = true;
     visible = true;
@@ -215,36 +209,84 @@ capabilities {
 
 ---
 
+## Cap_rt Services Used
+
+Every cap_rt kernel service plays a role in the architecture:
+
+| Service | Used by | Purpose |
+|---------|---------|---------|
+| **isolation** | oracled | Claim files/dirs/ports at boot; mint tokens for agents |
+| **capprotect** | oracled + agents | oracled shields itself; agents self-shield after exec |
+| **coalition** | oracled | Group agent procdesc + jail descriptor; watchdog; clean termination |
+| **node** | oracled | SET_CRED on child via procdesc; SET_RLIMIT; reaper ops |
+| **accounting** | oracled | Per-agent rctl rules and resource limits |
+| **mount** | oracled | Filesystem setup inside agent jails (devfs, tmpfs, nullfs) |
+| **pair** | oracled ↔ agents | Authenticated bidirectional channel, no filesystem presence |
+| **identity** | agents | Agent verifies its own nonce after exec |
+
+---
+
 ## Agent Lifecycle
 
 ### Startup
 
+The startup sequence has a critical split at exec.  The process
+nonce rotates on exec, so any nonce-scoped operation (isolation
+authorize, capprotect shield) MUST happen AFTER exec in the
+agent binary, not before.
+
 ```
-1.  oracled reads /etc/oracled.d/net-agent.ucl
-2.  Resolves dependencies — waits for syslogd, devd
+ORACLED SIDE (before fork):
+
+1.  Read /etc/oracled.d/net-agent.ucl
+2.  Resolve dependencies — wait for syslogd, devd
 3.  If jail = true:
-      a. jail_create() — creates a new jail
+      a. jail_set() — create jail "oracled-{label}"
       b. Mount filesystems from capabilities.mounts
-      c. Set jail parameters (hostname, IP, allow.*)
+         via cap_rt mount service
+      c. Set jail parameters (hostname, allow.*)
 4.  Create cap_rt pair → fd_a (oracled), fd_b (agent)
-5.  Mint isolation tokens for each capability request:
+5.  Mint isolation tokens for each capability:
       - FI_OP_MINT for file capabilities
       - FI_OP_MINT_NET for network capabilities
-6.  pdfork() the agent
-7.  In the child (before exec):
-      a. Close ALL fds except:
-         - fd_b (pair channel to oracled)
-         - token fds (capability tokens)
-         - stdin/stdout/stderr (if configured)
-      b. Scrub environment — set only manifest-declared vars
-      c. Set credentials (uid, gid, groups)
-      d. If jail: jail_attach() — enter the jail
-      e. Apply capprotect shield from manifest
-      f. Authorize isolation tokens (FI_OP_AUTHORIZE each)
-      g. execve() the agent binary
-8.  oracled monitors via EVFILT_PROCDESC:
-      - NOTE_EXEC → log, mark job running
+6.  Connect to capprotect service → get shield_fd
+    (for agent to self-shield after exec)
+7.  Create coalition, set watchdog timeout
+8.  pdfork() the agent → get procdesc fd
+9.  Enlist agent procdesc + jail in coalition
+10. Use cap_rt node (SET_CRED via procdesc) to set uid/gid
+11. Use cap_rt accounting to set rctl rules via procdesc
+
+IN THE CHILD (before exec):
+
+12. Close ALL fds except:
+      - fd_b (pair channel)
+      - token fds (isolation tokens)
+      - shield_fd (capprotect, for self-shielding)
+      - stdin/stdout/stderr
+    Use closefrom() after the highest kept fd.
+13. Scrub environment completely (see below)
+14. If jail: jail_attach() — enter the jail
+15. execve() the agent binary
+
+AGENT BINARY (after exec — new nonce):
+
+16. Read ORACLED_PAIR_FD, ORACLED_TOKEN_FDS, ORACLED_SHIELD_FD
+    from environment
+17. Call FI_OP_AUTHORIZE on each token fd
+    (authorizes the agent's NEW post-exec nonce)
+18. Call CP_OP_SHIELD on shield_fd with manifest flags
+    (shields the agent's NEW nonce)
+19. Close shield_fd (shield persists via refcount)
+20. Send "ready" message on pair fd
+21. Begin managing domain services
+
+ORACLED SIDE (after fork):
+
+22. Monitor via EVFILT_PROCDESC:
+      - NOTE_EXEC → log, expect "ready" on pair
       - NOTE_EXIT → check restart policy
+23. Set coalition watchdog — agent must heartbeat
 ```
 
 ### Environment Scrubbing
@@ -253,78 +295,91 @@ Children MUST NOT inherit oracled's environment.  oracled holds
 cap_rt fds, isolation fds, and capprotect fds.  The child must
 not have access to any of these.
 
-Before exec:
+Before exec (step 13):
 
-1. **Close all fds** except the explicitly passed ones (pair fd,
-   token fds, stdio).  Use `closefrom()` after the highest
-   intended fd.
+1. **Close all fds** except the explicitly passed ones.
+   Use `closefrom(highest_kept_fd + 1)`.
 
 2. **Clear the environment** entirely.  Set only:
-   - Variables from the manifest `environment` section
+   - Variables from the manifest `environment {}` section
    - `PATH` (from manifest or default `/sbin:/bin:/usr/sbin:/usr/bin`)
    - `HOME` (from passwd entry for the configured user)
-   - `USER` (from manifest user)
-   - `SHELL` (from passwd entry)
+   - `USER` / `SHELL` (from passwd entry)
    - `ORACLED_PAIR_FD` — the pair channel fd number
-   - `ORACLED_TOKEN_FDS` — comma-separated list of token fd numbers
+   - `ORACLED_TOKEN_FDS` — comma-separated token fd numbers
+   - `ORACLED_SHIELD_FD` — capprotect fd for self-shielding
 
 3. **No `ORACLED_CTL_SOCK`** — agents do not know about the
    control socket.  They communicate only via the pair.
 
 4. **No cap_rt device access** — /dev/cap_rt is claimed by
-   oracled.  Agents cannot open it.  They use only the fds
-   they were given.
+   oracled.  Agents cannot open it directly.
 
 ### Jail Lifecycle
 
-When `jail = true`:
+Jails are ephemeral — they exist only while the agent runs.
+All resources created for a jail are tracked and cleaned up.
 
-**Creation (before fork)**:
+**Creation (before fork, step 3)**:
+
 ```
 jail_set():
-  - name = "oracled-{label}"  (e.g., "oracled-net-agent")
-  - path = "/var/jails/{label}" or tmpfs root
+  - name = "oracled-{label}"
+  - path = "/var/jails/{label}"
   - host.hostname = "{label}.oracled"
-  - persist = true (jail outlives creating process briefly)
-  - allow.raw_sockets (if manifest requests network)
-  - ip4/ip6 from manifest (if specified)
+  - persist = true
+  - allow.raw_sockets (if manifest has network capabilities)
 
-mount filesystems from capabilities.mounts:
-  - devfs → /dev (with restricted ruleset)
+mount via cap_rt mount service:
+  - devfs → /dev (restricted ruleset)
   - tmpfs → /var/run
-  - nullfs → /usr (read-only host filesystem)
+  - nullfs → /usr (read-only)
+
+enlist jail descriptor in coalition (step 9)
 ```
 
 **Destruction (on agent exit)**:
+
 ```
 1. Agent exits → NOTE_EXIT on procdesc
-2. oracled reaps the agent process
-3. If restart policy says stop:
-   a. Kill any remaining processes in the jail
-      (jail has its own reaper — agent was PID 1)
-   b. Unmount all filesystems in reverse order
-   c. jail_remove() the jail
-   d. Clean up /var/jails/{label}
-4. If restart policy says restart:
-   a. Kill remaining processes
-   b. Leave jail and mounts intact
-   c. Re-fork agent into the same jail
+2. oracled reaps the agent
+3. Coalition watchdog fires if agent missed heartbeat
+4. Coalition terminates remaining members:
+     - SIGTERM to processes, then SIGKILL after grace period
+     - jail_remove() for enlisted jail descriptors
+5. oracled unmounts all filesystems in reverse order
+6. oracled removes /var/jails/{label}
+7. If restart policy says restart:
+     - Re-create jail from scratch (clean slate)
+     - Re-fork agent with fresh tokens
 ```
 
-Jails are ephemeral — they exist only while the agent runs
-(or across restarts).  On `oraclectl shutdown`, all jails are
-destroyed in reverse dependency order.
+**Why clean slate on restart**: Re-using the jail risks state
+leakage from the previous run.  A crashed agent may have left
+corrupt files, stale sockets, or compromised state.  Fresh
+jail + fresh tokens = known-good starting point.
 
 ### Crash Recovery
 
-If oracled itself crashes:
+If oracled crashes:
 
-- All cap_rt fds close → isolation claims release, shields drop
-- Pair fds close → agents see ECONNRESET on their pair
-- Jails persist (they are kernel objects)
-- On restart, oracled re-claims resources, re-creates pairs
-- Agents that are still running in jails can be re-adopted
-  (or killed and restarted)
+- All cap_rt fds close automatically (kernel fd cleanup)
+- Isolation claims release → resources unprotected (window)
+- Capprotect shields drop → agents unshielded (window)
+- Pair fds close → agents see ECONNRESET
+- Coalition fds close → coalition terminate fires:
+  agents and jails are killed/removed by the kernel
+- On restart, oracled:
+  1. Scans for orphaned jails matching `oracled-*`
+  2. Kills processes and removes any found
+  3. Re-claims resources
+  4. Re-reads manifests, re-forks agents
+
+The coalition watchdog is the key cleanup mechanism.  When
+oracled's coalition fd closes, the coalition terminates all
+members — including jail descriptors.  This means orphaned
+jails are cleaned up by the kernel, not by oracled's restart
+logic.  The `oracled-*` scan is a safety net for edge cases.
 
 ---
 
@@ -411,7 +466,7 @@ satisfied (degraded boot, not a hard failure).
 
 6. **Per-service sandboxing** — systemd's `ProtectSystem=`,
    `PrivateTmp=`, `NoNewPrivileges=` are declarative sandbox
-   directives.  oracled's `shield {}` and `capabilities {}`
+   directives.  oracled's `integrity {}` and `capabilities {}`
    sections serve the same role but use MACF instead of
    namespaces.
 

@@ -78,7 +78,7 @@ isolation_cap_rt_stat_denied_cleanup()
 atf_test_case capprotect_visible_config cleanup
 capprotect_visible_config_head()
 {
-	atf_set "descr" "oracled visibility matches shield.visible config"
+	atf_set "descr" "oracled visibility matches integrity.visible config"
 	atf_set "require.user" "root"
 }
 capprotect_visible_config_body()
@@ -86,7 +86,7 @@ capprotect_visible_config_body()
 	require_pidfile
 	pid=$(cat /var/run/oracled.pid)
 	# Check the config file for visible setting.
-	if grep -q 'visible = true' /etc/oracled.conf 2>/dev/null; then
+	if grep -q 'visible.*true' /etc/oracled.conf 2>/dev/null; then
 		# visible=true: ps must NOT find the process.
 		atf_check -s not-exit:0 \
 		    sh -c "ps -p $pid -o pid= 2>/dev/null | grep -q ."
@@ -185,7 +185,7 @@ syslog_init_complete_body()
 	atf_check -s exit:0 -o not-empty \
 	    grep "oracled\[$pid\].*claimed /dev/cap_rt" "$logfile"
 	atf_check -s exit:0 -o not-empty \
-	    grep "oracled\[$pid\].*capprotect shield active" "$logfile"
+	    grep "oracled\[$pid\].*integrity active" "$logfile"
 	atf_check -s exit:0 -o not-empty \
 	    grep "oracled\[$pid\].*control socket" "$logfile"
 	atf_check -s exit:0 -o not-empty \
@@ -551,17 +551,17 @@ config_empty_file_uses_defaults_cleanup()
 	rm -f empty.conf
 }
 
-atf_test_case config_shield_settings cleanup
-config_shield_settings_head()
+atf_test_case config_integrity_settings cleanup
+config_integrity_settings_head()
 {
-	atf_set "descr" "shield settings are parsed from config"
+	atf_set "descr" "integrity settings are parsed from config"
 }
-config_shield_settings_body()
+config_integrity_settings_body()
 {
-	local conffile="$(pwd)/shield.conf"
-	local pidfile="$(pwd)/shield_test.pid"
+	local conffile="$(pwd)/integrity.conf"
+	local pidfile="$(pwd)/integrity_test.pid"
 	cat > "$conffile" <<'ENDCONF'
-shield {
+integrity {
     ptrace = false;
     ktrace = false;
     sched = false;
@@ -572,19 +572,16 @@ ENDCONF
 	local pid=$!
 	atf_check -s exit:0 -o ignore sh -c \
 	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
-	# oracled logs config values; check stderr (foreground via -T)
-	# Just verify it started — actual shield enforcement is tested
-	# in the capprotect tests against the live daemon.
 	atf_check -s exit:0 kill -TERM "$pid"
 	wait "$pid"
 }
-config_shield_settings_cleanup()
+config_integrity_settings_cleanup()
 {
-	if [ -f shield_test.pid ]; then
-		kill "$(cat shield_test.pid)" 2>/dev/null || true
-		rm -f shield_test.pid
+	if [ -f integrity_test.pid ]; then
+		kill "$(cat integrity_test.pid)" 2>/dev/null || true
+		rm -f integrity_test.pid
 	fi
-	rm -f shield.conf
+	rm -f integrity.conf
 }
 
 # --- syslog: initialization completed ---
@@ -613,7 +610,7 @@ syslog_init_complete_body()
 	atf_check -s exit:0 -o not-empty \
 	    grep "oracled\[$pid\].*claimed /dev/cap_rt" "$logfile"
 	atf_check -s exit:0 -o not-empty \
-	    grep "oracled\[$pid\].*capprotect shield active" "$logfile"
+	    grep "oracled\[$pid\].*integrity active" "$logfile"
 	atf_check -s exit:0 -o not-empty \
 	    grep "oracled\[$pid\].*control socket" "$logfile"
 	atf_check -s exit:0 -o not-empty \
@@ -653,7 +650,7 @@ atf_init_test_cases()
 	atf_add_test_case config_custom_pidfile
 	atf_add_test_case config_cli_overrides_config
 	atf_add_test_case config_empty_file_uses_defaults
-	atf_add_test_case config_shield_settings
+	atf_add_test_case config_integrity_settings
 
 	# Daemon behavior
 	atf_add_test_case test_mode_no_root

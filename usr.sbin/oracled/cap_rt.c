@@ -11,6 +11,8 @@
  */
 
 #include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #include <dev/cap_rt/cap_rt_ioctl.h>
 #include <dev/cap_rt/cap_rt_capprotect_proto.h>
@@ -30,27 +32,27 @@ static int isolation_fd = -1;
 static int capprotect_fd = -1;
 
 /*
- * Build the shield flags bitmask from the config.
+ * Build the integrity flags bitmask from config.
  */
 static uint32_t
-shield_flags_from_config(void)
+integrity_flags_from_config(void)
 {
 	uint32_t flags;
 
 	flags = 0;
-	if (od.cfg.shield_ptrace)
+	if (od.cfg.integrity_ptrace)
 		flags |= CP_SF_PTRACE;
-	if (od.cfg.shield_signal)
+	if (od.cfg.integrity_signal)
 		flags |= CP_SF_SIGNAL;
-	if (od.cfg.shield_visible)
+	if (od.cfg.integrity_visible)
 		flags |= CP_SF_VISIBLE;
-	if (od.cfg.shield_wait)
+	if (od.cfg.integrity_wait)
 		flags |= CP_SF_WAIT;
-	if (od.cfg.shield_sched)
+	if (od.cfg.integrity_sched)
 		flags |= CP_SF_SCHED;
-	if (od.cfg.shield_core)
+	if (od.cfg.integrity_core)
 		flags |= CP_SF_CORE;
-	if (od.cfg.shield_ktrace)
+	if (od.cfg.integrity_ktrace)
 		flags |= CP_SF_KTRACE;
 	return (flags);
 }
@@ -58,7 +60,7 @@ shield_flags_from_config(void)
 static const struct {
 	uint32_t	flag;
 	const char	*name;
-} shield_flag_names[] = {
+} integrity_flag_names[] = {
 	{ CP_SF_PTRACE,		"ptrace" },
 	{ CP_SF_SIGNAL,		"signal" },
 	{ CP_SF_VISIBLE,	"visible" },
@@ -69,25 +71,25 @@ static const struct {
 };
 
 static void
-log_shield_flags(uint32_t flags)
+log_integrity_flags(uint32_t flags)
 {
 	char buf[256];
 	size_t off;
 	unsigned i;
 
 	off = 0;
-	for (i = 0; i < nitems(shield_flag_names); i++) {
-		if (!(flags & shield_flag_names[i].flag))
+	for (i = 0; i < nitems(integrity_flag_names); i++) {
+		if (!(flags & integrity_flag_names[i].flag))
 			continue;
 		if (off > 0 && off < sizeof(buf) - 1)
 			buf[off++] = ' ';
-		off += strlcpy(buf + off, shield_flag_names[i].name,
+		off += strlcpy(buf + off, integrity_flag_names[i].name,
 		    sizeof(buf) - off);
 	}
 	if (off == 0)
 		strlcpy(buf, "(none)", sizeof(buf));
 
-	syslog(LOG_INFO, "capprotect shield active: %s", buf);
+	syslog(LOG_INFO, "integrity active: %s", buf);
 }
 
 /*
@@ -107,22 +109,21 @@ cap_rt_svc_connect(const char *name)
 	return (conn.fd);
 }
 
+/*
+ * Claim a single vnode (file or directory) via the isolation
+ * service.  The isolation_fd must already be connected.
+ */
 static int
-isolate_device(void)
+claim_path(const char *path, int flags)
 {
 	struct cap_rt_call_args call;
 	struct fi_request req;
 	struct fi_reply reply;
-	int dev_fd, iso_fd;
+	int fd;
 
-	iso_fd = cap_rt_svc_connect("isolation");
-	if (iso_fd == -1)
-		return (-1);
-
-	dev_fd = open("/dev/cap_rt", O_RDONLY | O_CLOEXEC);
-	if (dev_fd == -1) {
-		syslog(LOG_ERR, "open /dev/cap_rt for isolation: %m");
-		close(iso_fd);
+	fd = open(path, O_RDONLY | O_CLOEXEC | flags);
+	if (fd == -1) {
+		syslog(LOG_WARNING, "isolation: open %s: %m", path);
 		return (-1);
 	}
 
@@ -132,21 +133,86 @@ isolate_device(void)
 	memset(&call, 0, sizeof(call));
 	call.req = &req;
 	call.req_len = sizeof(req);
-	call.req_fds = &dev_fd;
+	call.req_fds = &fd;
 	call.req_nfds = 1;
 	call.reply = &reply;
 	call.reply_len = sizeof(reply);
 
-	if (ioctl(iso_fd, CAP_RT_CALL, &call) == -1) {
-		syslog(LOG_ERR, "isolation claim /dev/cap_rt: %m");
-		close(dev_fd);
-		close(iso_fd);
+	if (ioctl(isolation_fd, CAP_RT_CALL, &call) == -1) {
+		syslog(LOG_WARNING, "isolation: claim %s: %m", path);
+		close(fd);
 		return (-1);
 	}
 
-	close(dev_fd);
-	isolation_fd = iso_fd;
-	syslog(LOG_INFO, "claimed /dev/cap_rt via isolation");
+	close(fd);
+	syslog(LOG_INFO, "isolation: claimed %s", path);
+	return (0);
+}
+
+/*
+ * Claim a network endpoint via the isolation service.
+ */
+static int
+claim_net(const struct oracled_net_claim *nc)
+{
+	struct cap_rt_call_args call;
+	struct fi_net_request req;
+	struct fi_reply reply;
+
+	memset(&req, 0, sizeof(req));
+	req.op = FI_OP_CLAIM_NET;
+	req.domain = nc->domain;
+	req.protocol = nc->protocol;
+	req.port = htons(nc->port);
+	req.direction = nc->direction;
+
+	memset(&call, 0, sizeof(call));
+	call.req = &req;
+	call.req_len = sizeof(req);
+	call.reply = &reply;
+	call.reply_len = sizeof(reply);
+
+	if (ioctl(isolation_fd, CAP_RT_CALL, &call) == -1) {
+		syslog(LOG_WARNING, "isolation: claim port %u/%s: %m",
+		    nc->port,
+		    nc->protocol == IPPROTO_TCP ? "tcp" :
+		    nc->protocol == IPPROTO_UDP ? "udp" : "any");
+		return (-1);
+	}
+
+	syslog(LOG_INFO, "isolation: claimed port %u/%s %s",
+	    nc->port,
+	    nc->protocol == IPPROTO_TCP ? "tcp" :
+	    nc->protocol == IPPROTO_UDP ? "udp" : "any",
+	    nc->direction == 0x01 ? "bind" :
+	    nc->direction == 0x02 ? "connect" : "any");
+	return (0);
+}
+
+/*
+ * Connect to the isolation service and claim all configured
+ * resources.
+ */
+static int
+isolate_resources(void)
+{
+	int i;
+
+	isolation_fd = cap_rt_svc_connect("isolation");
+	if (isolation_fd == -1)
+		return (-1);
+
+	/* Always claim /dev/cap_rt — oracled owns this device. */
+	claim_path("/dev/cap_rt", 0);
+
+	/* Claim configured paths (files and directories). */
+	for (i = 0; i < od.cfg.nclaim_paths; i++)
+		claim_path(od.cfg.claim_paths[i], 0);
+
+	/* Claim configured network endpoints. */
+	for (i = 0; i < od.cfg.nclaim_net; i++)
+		claim_net(&od.cfg.claim_net[i]);
+
 	return (0);
 }
 
@@ -162,7 +228,7 @@ shield_self(void)
 	if (cp_fd == -1)
 		return (-1);
 
-	flags = shield_flags_from_config();
+	flags = integrity_flags_from_config();
 
 	memset(&req, 0, sizeof(req));
 	req.op = CP_OP_SHIELD;
@@ -180,7 +246,7 @@ shield_self(void)
 	}
 
 	capprotect_fd = cp_fd;
-	log_shield_flags(flags);
+	log_integrity_flags(flags);
 	return (0);
 }
 
@@ -199,13 +265,8 @@ cap_rt_setup(void)
 	}
 	syslog(LOG_INFO, "opened /dev/cap_rt");
 
-	if (od.cfg.isolate_cap_rt) {
-		if (isolate_device() == -1)
-			syslog(LOG_WARNING,
-			    "failed to isolate /dev/cap_rt");
-	} else {
-		syslog(LOG_INFO, "device isolation disabled by config");
-	}
+	if (isolate_resources() == -1)
+		syslog(LOG_WARNING, "failed to connect isolation service");
 
 	if (shield_self() == -1)
 		syslog(LOG_WARNING, "failed to activate capprotect shield");
