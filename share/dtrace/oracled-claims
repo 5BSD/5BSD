@@ -1,0 +1,53 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * oracled-claims -- trace resource claims at startup and runtime.
+ *
+ * Shows each path and network claim with success/failure status.
+ * On exit, prints a summary of claims by status.
+ *
+ * Usage: oracled-claims
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing oracled claims... Ctrl-C for summary.\n\n");
+	printf("%-6s %-8s %s\n", "PID", "STATUS", "RESOURCE");
+}
+
+oracled*:::claim-path
+{
+	printf("%-6d %-8s %s\n", pid, "OK", copyinstr(arg0));
+	@status["paths claimed"] = count();
+}
+
+oracled*:::claim-path-fail
+{
+	printf("%-6d %-8s %s\n", pid, "FAIL", copyinstr(arg0));
+	@status["paths failed"] = count();
+}
+
+oracled*:::claim-net
+{
+	printf("%-6d %-8s port %d/%s\n", pid, "OK", arg0,
+	    arg1 == 6 ? "tcp" : arg1 == 17 ? "udp" : "?");
+	@status["network claimed"] = count();
+}
+
+oracled*:::claim-net-fail
+{
+	printf("%-6d %-8s port %d/%s\n", pid, "FAIL", arg0,
+	    arg1 == 6 ? "tcp" : arg1 == 17 ? "udp" : "?");
+	@status["network failed"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Claim summary ---\n");
+	printa("  %-20s %@d\n", @status);
+}

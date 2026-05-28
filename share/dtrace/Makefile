@@ -7,11 +7,20 @@
 
 PACKAGE=	dtrace
 SCRIPTS=	blocking \
+		cap_rt-calls \
+		cap_rt-errors \
+		cap_rt-messages \
+		cap_rt-shield \
+		cap_rt-summary \
+		cap_rt-who \
 		disklatency \
 		disklatencycmd \
 		hotopen \
 		nfsattrstats \
 		nfsclienttime \
+		oracled-claims \
+		oracled-control \
+		oracled-lifecycle \
 		siftr \
 		tcpconn \
 		tcpdebug \

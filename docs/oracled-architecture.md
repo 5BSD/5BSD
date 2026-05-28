@@ -6,6 +6,30 @@ oracled is a **system authority** — the kernel's policy engine
 extended into userspace.  It owns system resources and delegates
 them to agents via capability tokens.
 
+oracled is built entirely on the cap_rt capability runtime.  It
+does not use traditional Unix access control for its core
+operations.  Every security-relevant action — resource claims,
+process protection, inter-process communication, credential
+management — flows through cap_rt kernel services:
+
+- **Isolation service**: claims files, directories, and network
+  endpoints.  Mints tokens for authorized access.
+- **Capprotect service**: shields oracled from external
+  interference (ptrace, signals, visibility).
+- **Pair service**: creates authenticated IPC channels to agents
+  with no filesystem presence.
+- **Coalition service**: groups agents for lifecycle management,
+  watchdog timers, and clean termination.
+- **Node service**: sets credentials, resource limits, and
+  process controls on children via procdesc.
+- **Accounting service**: enforces per-agent resource rules.
+- **Mount service**: sets up filesystems inside agent jails.
+- **Identity service**: verifies process nonces.
+
+The capability runtime provides MACF-enforced security that
+root cannot bypass.  oracled uses it for its own protection
+and as the mechanism for delegating authority to agents.
+
 It is NOT a traditional service manager.  It does not directly
 start sshd or nginx.  It starts **agents** — domain-specific
 service managers that each handle their own domain.  Some agents
@@ -508,6 +532,43 @@ satisfied (degraded boot, not a hard failure).
 14. **Pair channels** — kernel-authenticated IPC with no
     filesystem presence.  No socket to discover, no path
     to race.
+
+---
+
+## Observability
+
+oracled is instrumented with DTrace USDT probes and ships with
+ready-to-use DTrace scripts.  The probes are zero-cost when
+DTrace is not attached.
+
+### USDT Probes (provider: oracled)
+
+| Probe | Args | Fires when |
+|-------|------|------------|
+| `startup` | — | daemon initialization complete |
+| `shutdown` | reason | daemon shutting down (signal or socket) |
+| `config-load` | path | config file parsed |
+| `claim-path` | path | file/directory claimed successfully |
+| `claim-path-fail` | path | file/directory claim failed |
+| `claim-net` | port, proto | network endpoint claimed |
+| `claim-net-fail` | port, proto | network endpoint claim failed |
+| `integrity` | flags | capprotect integrity activated |
+| `ctl-accept` | uid | control socket connection accepted |
+| `ctl-cmd` | op, uid | control command dispatched |
+| `ctl-deny` | op, uid | control command denied (EPERM) |
+| `error` | subsys, msg | notable error |
+
+### DTrace Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `oracled-lifecycle` | Trace complete startup/shutdown sequence |
+| `oracled-claims` | Monitor resource claims with success/failure counts |
+| `oracled-control` | Trace control socket commands with UID and timing |
+
+The kernel cap_rt framework also provides DTrace probes
+(`cap_rt:::call`, `cap_rt:::send`, `cap_rt:::recv`, etc.)
+for tracing the underlying capability operations.
 
 ---
 
