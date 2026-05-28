@@ -20,6 +20,8 @@
 
 #include <sys/types.h>
 
+/* Default socket path — used by oraclectl to connect.
+ * The daemon reads its actual path from config. */
 #define	ORACLED_CTL_SOCK	"/var/run/oracled.sock"
 #define	CTL_VERSION		1
 #define	CTL_MAX_PAYLOAD		1024

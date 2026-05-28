@@ -10,6 +10,7 @@
 .Sh SYNOPSIS
 .Nm
 .Op Fl d
+.Op Fl f Ar conffile
 .Op Fl p Ar pidfile
 .Op Fl T
 .Sh DESCRIPTION
@@ -26,7 +27,13 @@ During startup,
 executes the following phases:
 .Bl -enum
 .It
-Daemonize, write pidfile, open syslog.
+Load configuration from
+.Pa /etc/oracled.conf
+(or the path given with
+.Fl f ) ,
+open syslog, acquire pidfile.
+.It
+Daemonize (unless foreground mode).
 .It
 Harden the process via
 .Xr procctl 2
@@ -34,52 +41,36 @@ Harden the process via
 .It
 Open
 .Pa /dev/cap_rt
-and claim it via the isolation service so that only
+and, if configured, claim it via the isolation service so that only
 .Nm
 can access the device.
-Foreign processes receive
-.Er EACCES
-from the MACF hook when attempting to open it.
 .It
-Shield itself via the capprotect service (block ptrace, ktrace,
-wait4, scheduler manipulation; hide from
-.Xr ps 1
-and
-.Xr top 1
-in production mode).
+Activate the capprotect shield with the flags specified in the
+configuration file.
 .It
-Create a control socket at
-.Pa /var/run/oracled.sock
-for administrative commands.
+Create a control socket for administrative commands.
 .It
 Enter the event loop.
 .El
 .Pp
 Administrative commands are sent via
 .Xr oraclectl 8 .
-The control socket supports shutdown, reload, kernel module
-loading and unloading, and system reboot.
-.Pp
-The control socket is interim infrastructure.
-The long-term plan replaces it with
-.Xr cap_rt 4
-pair channels when
-.Nm
-becomes the system init.
 .Sh OPTIONS
-.Bl -tag -width "-p pidfile"
+.Bl -tag -width "-f conffile"
 .It Fl d
 Run in the foreground and log to standard error as well as syslog.
-In this mode, the capprotect shield omits
-.Dv CP_SF_VISIBLE
-and
-.Dv CP_SF_CORE
-to ease debugging.
+.It Fl f Ar conffile
+Read configuration from
+.Ar conffile
+instead of
+.Pa /etc/oracled.conf .
 .It Fl p Ar pidfile
 Write the process ID to
 .Ar pidfile
-instead of
-.Pa /var/run/oracled.pid .
+instead of the configured pidfile path.
+Overrides the
+.Va pidfile
+setting in the configuration file.
 .It Fl T
 Test mode.
 Run without requiring root, without daemonizing, and without
@@ -87,68 +78,125 @@ applying privileged process controls, capability runtime setup,
 or the control socket.
 Intended for automated tests.
 .El
-.Sh PROCESS HARDENING
-When not running in test mode,
+.Sh CONFIGURATION
 .Nm
-uses
-.Xr procctl 2
-to:
-.Bl -bullet
-.It
-Become a subtree reaper for future child processes.
-.It
-Mark itself protected from OOM kills.
-.It
-Disable tracing and core dumps.
-.It
-Enable kernel logging for fatal signal exits.
+reads its configuration from
+.Pa /etc/oracled.conf
+in UCL format.
+The configuration file is optional \(em if it does not exist,
+compiled-in defaults are used.
+Syntax errors are fatal.
+.Pp
+The following keys are supported:
+.Bl -tag -width "control_socket_mode"
+.It Va pidfile
+Path to the pidfile.
+Default:
+.Pa /var/run/oracled.pid .
+.It Va control_socket
+Path to the control socket.
+Default:
+.Pa /var/run/oracled.sock .
+.It Va control_socket_mode
+File mode for the control socket.
+Default: 0700 (root only).
 .El
-.Pp
-Additionally,
+.Ss Shield Flags
+The
+.Va shield
+section controls which capprotect flags are activated.
+Each key is a boolean (true/false).
+.Bl -tag -width "visible"
+.It Va ptrace
+Block ptrace attach from foreign nonces.
+Default: true.
+.It Va signal
+Block all signals except SIGKILL and SIGCONT from foreign nonces.
+Default: false.
+Enabling this prevents
+.Xr rc 8
+from stopping
 .Nm
-activates a capprotect shield via the
-.Xr cap_rt 4
-MACF policy.
-The shield blocks ptrace attach, ktrace, wait4 status scraping,
-and scheduler manipulation from processes outside the
+via signals; use
+.Xr oraclectl 8
+for shutdown instead.
+.It Va visible
+Hide
 .Nm
-fork family.
-In production mode (the default), the shield also hides
-.Nm
-from process enumeration and suppresses core dumps.
-.Sh DEVICE ISOLATION
-.Nm
-claims
+from
+.Xr ps 1 ,
+.Xr top 1 ,
+and procfs enumeration.
+Default: false.
+Enabling this makes the daemon invisible to system monitoring tools.
+.It Va wait
+Block wait4 from non-parent processes.
+Default: true.
+.It Va sched
+Block scheduler priority and CPU affinity manipulation.
+Default: true.
+.It Va core
+Suppress core dumps to prevent leaking secrets from process memory.
+Default: false.
+Enable for hardened deployments.
+.It Va ktrace
+Block passive syscall tracing via
+.Xr ktrace 1 .
+Default: true.
+.El
+.Ss Isolation
+The
+.Va isolation
+section controls device isolation.
+.Bl -tag -width "cap_rt"
+.It Va cap_rt
+Claim
 .Pa /dev/cap_rt
-through the cap_rt isolation service.
-Once claimed, only processes sharing the
-.Nm
-nonce (its fork family) can open the device.
-All other processes, including root, receive
-.Er EACCES .
-.Pp
-The claim is held by the isolation service instance fd.
-If
-.Nm
-exits or crashes, the kernel closes the fd and releases the
-claim automatically.
+exclusively via the isolation service.
+When enabled, foreign nonces receive
+.Er EACCES
+on any access to the device.
+Default: true.
+.El
 .Sh FILES
-.Bl -tag -width "/var/run/oracled.sock"
+.Bl -tag -width "/etc/oracled.conf"
+.It Pa /etc/oracled.conf
+Configuration file (UCL format).
+Optional.
 .It Pa /var/run/oracled.pid
 Default pidfile.
 .It Pa /var/run/oracled.sock
-Control socket.
-Accepts commands from
-.Xr oraclectl 8 .
-Mode 0700 (root only).
+Default control socket (mode 0700).
 .It Pa /dev/cap_rt
-CAP_RT control device.
-Isolated by
+CAP_RT control device, isolated by
 .Nm
-at startup.
+when configured.
 .El
 .Sh EXIT STATUS
 .Ex -std
+.Pp
+.Nm
+exits with an error if the configuration file contains syntax errors.
+.Sh EXAMPLES
+Minimal configuration with hardened shield:
+.Bd -literal -offset indent
+shield {
+    ptrace = true;
+    signal = true;
+    visible = true;
+    wait = true;
+    sched = true;
+    core = true;
+    ktrace = true;
+}
+.Ed
+.Pp
+Disable device isolation for development:
+.Bd -literal -offset indent
+isolation {
+    cap_rt = false;
+}
+.Ed
 .Sh SEE ALSO
 .Xr kqueue 2 ,
 .Xr procctl 2 ,

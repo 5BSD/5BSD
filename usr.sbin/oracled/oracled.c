@@ -6,7 +6,7 @@
  * oracled — Oracle capability-world service manager.
  *
  * Startup lifecycle:
- *   1. Parse arguments, open syslog, acquire pidfile
+ *   1. Parse arguments, load config, open syslog, acquire pidfile
  *   2. Daemonize (unless foreground mode)
  *   3. Harden process (procctl self-policy)
  *   4. Initialize cap_rt (open device, isolate, shield)
@@ -25,12 +25,11 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <syslog.h>
 #include <unistd.h>
 
 #include "oracled.h"
-
-#define	ORACLED_PIDFILE	"/var/run/oracled.pid"
 
 struct oracled_state od = {
 	.control_fd = -1,
@@ -40,19 +39,22 @@ static void
 usage(void)
 {
 
-	fprintf(stderr, "usage: oracled [-dT] [-p pidfile]\n");
+	fprintf(stderr,
+	    "usage: oracled [-dT] [-f conffile] [-p pidfile]\n");
 	exit(1);
 }
 
 int
 main(int argc, char *argv[])
 {
-	const char *pidfile;
+	const char *conffile, *pidfile_override;
 	pid_t otherpid;
 	int ch;
 
-	pidfile = ORACLED_PIDFILE;
-	while ((ch = getopt(argc, argv, "dTp:")) != -1) {
+	conffile = ORACLED_DEFAULT_CONFFILE;
+	pidfile_override = NULL;
+
+	while ((ch = getopt(argc, argv, "dTf:p:")) != -1) {
 		switch (ch) {
 		case 'd':
 			od.foreground = true;
@@ -61,8 +63,11 @@ main(int argc, char *argv[])
 			od.foreground = true;
 			od.test_mode = true;
 			break;
+		case 'f':
+			conffile = optarg;
+			break;
 		case 'p':
-			pidfile = optarg;
+			pidfile_override = optarg;
 			break;
 		default:
 			usage();
@@ -73,19 +78,33 @@ main(int argc, char *argv[])
 	if (argc != 0)
 		usage();
 
-	/* Phase 1: logging and pidfile. */
+	/*
+	 * Phase 1: config, logging, pidfile.
+	 *
+	 * Load config before syslog so parse errors go to stderr.
+	 * CLI flags override config values after loading.
+	 */
+	config_init_defaults(&od.cfg);
+	if (config_load(&od.cfg, conffile) != 0)
+		errx(1, "configuration error");
+
+	/* CLI -p overrides config pidfile. */
+	if (pidfile_override != NULL)
+		strlcpy(od.cfg.pidfile, pidfile_override,
+		    sizeof(od.cfg.pidfile));
+
 	openlog("oracled", LOG_PID | (od.foreground ? LOG_PERROR : 0),
 	    LOG_DAEMON);
 
 	if (!od.test_mode && getuid() != 0)
 		errx(1, "must run as root");
 
-	od.pidfh = pidfile_open(pidfile, 0600, &otherpid);
+	od.pidfh = pidfile_open(od.cfg.pidfile, 0600, &otherpid);
 	if (od.pidfh == NULL) {
 		if (errno == EEXIST)
 			errx(1, "already running, pid %jd",
 			    (intmax_t)otherpid);
-		err(1, "cannot open pidfile %s", pidfile);
+		err(1, "cannot open pidfile %s", od.cfg.pidfile);
 	}
 
 	/* Phase 2: daemonize. */
@@ -97,6 +116,9 @@ main(int argc, char *argv[])
 		pidfile_remove(od.pidfh);
 		err(1, "pidfile_write");
 	}
+
+	/* Log config after daemon() so PID matches the pidfile. */
+	config_log(&od.cfg);
 
 	/* Phase 3: harden process. */
 	if (!od.test_mode)

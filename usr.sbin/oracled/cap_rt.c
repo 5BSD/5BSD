@@ -30,32 +30,30 @@ static int isolation_fd = -1;
 static int capprotect_fd = -1;
 
 /*
- * Shield flags: protect oracled from external interference.
- *
- * Base flags (always active):
- *   CP_SF_PTRACE   — block debugger attach
- *   CP_SF_WAIT     — block wait4 status scraping
- *   CP_SF_SCHED    — block priority/affinity manipulation
- *   CP_SF_KTRACE   — block passive syscall tracing
- *
- * Production flags (added when not in debug mode):
- *   CP_SF_VISIBLE  — hide from ps/top/procfs enumeration
- *   CP_SF_CORE     — suppress core dumps to prevent secret leakage
- *
- * Never included:
- *   CP_SF_SIGNAL   — blocks all signals including SIGTERM, which
- *                    prevents rc(8) from managing the daemon.
- *                    Revisit when oracled uses the control socket
- *                    exclusively for lifecycle management.
- *   CP_SF_SIGKILL  — must remain killable from a root console.
- *   CP_SF_NOPRIVS  — oracled needs root to manage processes.
- *   CP_SF_NOFORK   — oracled will spawn service children.
- *   CP_SF_NOIPC    — may need IPC for future service management.
- *   CP_SF_NOFDRECV — oracled will receive fds from clients.
+ * Build the shield flags bitmask from the config.
  */
-#define	ORACLED_SHIELD_BASE	(CP_SF_PTRACE | \
-				 CP_SF_WAIT | CP_SF_SCHED | CP_SF_KTRACE)
-#define	ORACLED_SHIELD_PROD	(CP_SF_VISIBLE | CP_SF_CORE)
+static uint32_t
+shield_flags_from_config(void)
+{
+	uint32_t flags;
+
+	flags = 0;
+	if (od.cfg.shield_ptrace)
+		flags |= CP_SF_PTRACE;
+	if (od.cfg.shield_signal)
+		flags |= CP_SF_SIGNAL;
+	if (od.cfg.shield_visible)
+		flags |= CP_SF_VISIBLE;
+	if (od.cfg.shield_wait)
+		flags |= CP_SF_WAIT;
+	if (od.cfg.shield_sched)
+		flags |= CP_SF_SCHED;
+	if (od.cfg.shield_core)
+		flags |= CP_SF_CORE;
+	if (od.cfg.shield_ktrace)
+		flags |= CP_SF_KTRACE;
+	return (flags);
+}
 
 static const struct {
 	uint32_t	flag;
@@ -171,9 +169,7 @@ shield_self(void)
 	if (cp_fd == -1)
 		return (-1);
 
-	flags = ORACLED_SHIELD_BASE;
-	if (!od.foreground)
-		flags |= ORACLED_SHIELD_PROD;
+	flags = shield_flags_from_config();
 
 	memset(&req, 0, sizeof(req));
 	req.op = CP_OP_SHIELD;
@@ -210,8 +206,13 @@ cap_rt_setup(void)
 	}
 	syslog(LOG_INFO, "opened /dev/cap_rt");
 
-	if (isolate_device() == -1)
-		syslog(LOG_WARNING, "failed to isolate /dev/cap_rt");
+	if (od.cfg.isolate_cap_rt) {
+		if (isolate_device() == -1)
+			syslog(LOG_WARNING,
+			    "failed to isolate /dev/cap_rt");
+	} else {
+		syslog(LOG_INFO, "device isolation disabled by config");
+	}
 
 	if (shield_self() == -1)
 		syslog(LOG_WARNING, "failed to activate capprotect shield");
@@ -231,13 +232,16 @@ cap_rt_teardown(void)
 	if (capprotect_fd >= 0) {
 		close(capprotect_fd);
 		capprotect_fd = -1;
+		syslog(LOG_INFO, "capprotect shield released");
 	}
 	if (isolation_fd >= 0) {
 		close(isolation_fd);
 		isolation_fd = -1;
+		syslog(LOG_INFO, "isolation claim released");
 	}
 	if (cap_rt_fd >= 0) {
 		close(cap_rt_fd);
 		cap_rt_fd = -1;
+		syslog(LOG_INFO, "closed /dev/cap_rt");
 	}
 }

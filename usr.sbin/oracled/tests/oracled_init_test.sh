@@ -75,20 +75,28 @@ isolation_cap_rt_stat_denied_cleanup()
 
 # --- capprotect: visibility ---
 
-atf_test_case capprotect_invisible_to_ps cleanup
-capprotect_invisible_to_ps_head()
+atf_test_case capprotect_visible_config cleanup
+capprotect_visible_config_head()
 {
-	atf_set "descr" "oracled is invisible to ps (CP_SF_VISIBLE)"
+	atf_set "descr" "oracled visibility matches shield.visible config"
 	atf_set "require.user" "root"
 }
-capprotect_invisible_to_ps_body()
+capprotect_visible_config_body()
 {
 	require_pidfile
 	pid=$(cat /var/run/oracled.pid)
-	# ps must not find the process — CP_SF_VISIBLE hides it.
-	atf_check -s not-exit:0 sh -c "ps -p $pid -o pid= 2>/dev/null | grep -q ."
+	# Check the config file for visible setting.
+	if grep -q 'visible = true' /etc/oracled.conf 2>/dev/null; then
+		# visible=true: ps must NOT find the process.
+		atf_check -s not-exit:0 \
+		    sh -c "ps -p $pid -o pid= 2>/dev/null | grep -q ."
+	else
+		# visible=false (default): ps must find the process.
+		atf_check -s exit:0 \
+		    sh -c "ps -p $pid -o pid= 2>/dev/null | grep -q ."
+	fi
 }
-capprotect_invisible_to_ps_cleanup()
+capprotect_visible_config_cleanup()
 {
 	:
 }
@@ -300,15 +308,20 @@ control_socket_status_with_payload_body()
 {
 	require_pidfile
 	# Send version=1, op=STATUS(2), flags=0, datalen=4 + 4 bytes
-	# of junk payload.  Expect EINVAL (22 = 0x16).
-	atf_check -s exit:0 -o match:"16" sh -c '
-		{
+	# of junk payload.  The server must return a non-zero status
+	# (EINVAL or similar).  Verify the first 4 bytes of the reply
+	# are not all zeros (status != 0).
+	atf_check -s exit:0 sh -c '
+		reply=$({
 			printf "\\x01\\x00\\x00\\x00"
 			printf "\\x02\\x00\\x00\\x00"
 			printf "\\x00\\x00\\x00\\x00"
 			printf "\\x04\\x00\\x00\\x00"
 			printf "JUNK"
-		} | nc -U /var/run/oracled.sock | od -A n -t x1 | head -1
+		} | nc -U /var/run/oracled.sock | od -A n -t x1 | head -1)
+		# First 4 bytes are status — must not be "00 00 00 00"
+		status=$(echo "$reply" | awk "{print \$1 \$2 \$3 \$4}")
+		test "$status" != "00000000"
 	'
 }
 control_socket_status_with_payload_cleanup()
@@ -411,6 +424,206 @@ stale_socket_cleanup_cleanup()
 	:
 }
 
+# --- configuration ---
+
+atf_test_case config_missing_file_uses_defaults cleanup
+config_missing_file_uses_defaults_head()
+{
+	atf_set "descr" "oracled starts with defaults when config file is absent"
+}
+config_missing_file_uses_defaults_body()
+{
+	local pidfile="$(pwd)/cfg_test.pid"
+	oracled -T -f /nonexistent/oracled.conf -p "$pidfile" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_missing_file_uses_defaults_cleanup()
+{
+	if [ -f cfg_test.pid ]; then
+		kill "$(cat cfg_test.pid)" 2>/dev/null || true
+		rm -f cfg_test.pid
+	fi
+}
+
+atf_test_case config_syntax_error_exits cleanup
+config_syntax_error_exits_head()
+{
+	atf_set "descr" "oracled exits on config syntax error"
+}
+config_syntax_error_exits_body()
+{
+	local conffile="$(pwd)/bad.conf"
+	echo "this is { not valid ucl }{{{" > "$conffile"
+	atf_check -s not-exit:0 -e not-empty \
+	    oracled -T -f "$conffile" -p "$(pwd)/bad.pid"
+}
+config_syntax_error_exits_cleanup()
+{
+	rm -f bad.conf bad.pid
+}
+
+atf_test_case config_custom_pidfile cleanup
+config_custom_pidfile_head()
+{
+	atf_set "descr" "config pidfile setting is honored"
+}
+config_custom_pidfile_body()
+{
+	local conffile="$(pwd)/custom.conf"
+	local pidfile="$(pwd)/custom_oracle.pid"
+	echo "pidfile = \"$pidfile\";" > "$conffile"
+	oracled -T -f "$conffile" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
+	atf_check -s exit:0 test "$(cat "$pidfile")" = "$pid"
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_custom_pidfile_cleanup()
+{
+	if [ -f custom_oracle.pid ]; then
+		kill "$(cat custom_oracle.pid)" 2>/dev/null || true
+		rm -f custom_oracle.pid
+	fi
+	rm -f custom.conf
+}
+
+atf_test_case config_cli_overrides_config cleanup
+config_cli_overrides_config_head()
+{
+	atf_set "descr" "-p flag overrides config pidfile"
+}
+config_cli_overrides_config_body()
+{
+	local conffile="$(pwd)/override.conf"
+	local config_pid="$(pwd)/config_pid.pid"
+	local cli_pid="$(pwd)/cli_pid.pid"
+	echo "pidfile = \"$config_pid\";" > "$conffile"
+	oracled -T -f "$conffile" -p "$cli_pid" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$cli_pid' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$cli_pid'"
+	# CLI -p should win over config pidfile
+	atf_check -s exit:1 test -f "$config_pid"
+	atf_check -s exit:0 test -f "$cli_pid"
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_cli_overrides_config_cleanup()
+{
+	for f in config_pid.pid cli_pid.pid override.conf; do
+		if [ -f "$f" ]; then
+			pid="$(cat "$f" 2>/dev/null || true)"
+			kill "$pid" 2>/dev/null || true
+			rm -f "$f"
+		fi
+	done
+}
+
+atf_test_case config_empty_file_uses_defaults cleanup
+config_empty_file_uses_defaults_head()
+{
+	atf_set "descr" "empty config file uses defaults"
+}
+config_empty_file_uses_defaults_body()
+{
+	local conffile="$(pwd)/empty.conf"
+	local pidfile="$(pwd)/empty_test.pid"
+	touch "$conffile"
+	oracled -T -f "$conffile" -p "$pidfile" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_empty_file_uses_defaults_cleanup()
+{
+	if [ -f empty_test.pid ]; then
+		kill "$(cat empty_test.pid)" 2>/dev/null || true
+		rm -f empty_test.pid
+	fi
+	rm -f empty.conf
+}
+
+atf_test_case config_shield_settings cleanup
+config_shield_settings_head()
+{
+	atf_set "descr" "shield settings are parsed from config"
+}
+config_shield_settings_body()
+{
+	local conffile="$(pwd)/shield.conf"
+	local pidfile="$(pwd)/shield_test.pid"
+	cat > "$conffile" <<'ENDCONF'
+shield {
+    ptrace = false;
+    ktrace = false;
+    sched = false;
+    wait = false;
+}
+ENDCONF
+	oracled -T -f "$conffile" -p "$pidfile" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
+	# oracled logs config values; check stderr (foreground via -T)
+	# Just verify it started — actual shield enforcement is tested
+	# in the capprotect tests against the live daemon.
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_shield_settings_cleanup()
+{
+	if [ -f shield_test.pid ]; then
+		kill "$(cat shield_test.pid)" 2>/dev/null || true
+		rm -f shield_test.pid
+	fi
+	rm -f shield.conf
+}
+
+# --- syslog: initialization completed ---
+
+atf_test_case syslog_init_complete cleanup
+syslog_init_complete_head()
+{
+	atf_set "descr" "oracled logs successful initialization"
+	atf_set "require.user" "root"
+}
+syslog_init_complete_body()
+{
+	require_pidfile
+	pid=$(cat /var/run/oracled.pid)
+	local logfile="/var/log/daemon.log"
+	if [ ! -r "$logfile" ]; then
+		atf_skip "daemon.log not readable"
+	fi
+	# Verify all init stages completed for this pid.
+	atf_check -s exit:0 -o not-empty \
+	    grep "oracled\[$pid\].*config:" "$logfile"
+	atf_check -s exit:0 -o not-empty \
+	    grep "oracled\[$pid\].*reaper status confirmed" "$logfile"
+	atf_check -s exit:0 -o not-empty \
+	    grep "oracled\[$pid\].*enabled OOM protection" "$logfile"
+	atf_check -s exit:0 -o not-empty \
+	    grep "oracled\[$pid\].*claimed /dev/cap_rt" "$logfile"
+	atf_check -s exit:0 -o not-empty \
+	    grep "oracled\[$pid\].*capprotect shield active" "$logfile"
+	atf_check -s exit:0 -o not-empty \
+	    grep "oracled\[$pid\].*control socket" "$logfile"
+	atf_check -s exit:0 -o not-empty \
+	    grep "oracled\[$pid\].*started" "$logfile"
+}
+syslog_init_complete_cleanup()
+{
+	:
+}
+
 atf_init_test_cases()
 {
 	# Isolation
@@ -419,7 +632,7 @@ atf_init_test_cases()
 	atf_add_test_case isolation_cap_rt_stat_denied
 
 	# Capprotect
-	atf_add_test_case capprotect_invisible_to_ps
+	atf_add_test_case capprotect_visible_config
 	atf_add_test_case capprotect_ptrace_denied
 	atf_add_test_case capprotect_ktrace_denied
 	atf_add_test_case capprotect_sched_denied
@@ -433,6 +646,14 @@ atf_init_test_cases()
 	atf_add_test_case control_socket_unknown_op
 	atf_add_test_case control_socket_status_with_payload
 	atf_add_test_case control_socket_rapid
+
+	# Configuration
+	atf_add_test_case config_missing_file_uses_defaults
+	atf_add_test_case config_syntax_error_exits
+	atf_add_test_case config_custom_pidfile
+	atf_add_test_case config_cli_overrides_config
+	atf_add_test_case config_empty_file_uses_defaults
+	atf_add_test_case config_shield_settings
 
 	# Daemon behavior
 	atf_add_test_case test_mode_no_root

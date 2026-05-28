@@ -12,6 +12,8 @@
 #include <libutil.h>
 #include <stdbool.h>
 
+#include "config.h"
+
 /*
  * Daemon state.
  *
@@ -20,11 +22,13 @@
  * teardown functions.
  */
 struct oracled_state {
-	struct pidfh	*pidfh;
-	int		 control_fd;
-	bool		 foreground;
-	bool		 test_mode;
-	bool		 running;
+	struct pidfh		*pidfh;
+	struct oracled_config	 cfg;
+	int			 control_fd;
+	int			 reboot_howto;
+	bool			 foreground;
+	bool			 test_mode;
+	bool			 running;
 };
 
 extern struct oracled_state od;
@@ -32,9 +36,6 @@ extern struct oracled_state od;
 /* Return values from handle_control_connection(). */
 #define	CTL_ACTION_SHUTDOWN	0x01
 #define	CTL_ACTION_REBOOT	0x02
-
-/* Reboot flags set by control.c, read by event.c. */
-extern int		 reboot_howto;
 
 /* cap_rt.c — capability runtime lifecycle */
 int	cap_rt_setup(void);

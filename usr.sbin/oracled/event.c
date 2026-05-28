@@ -92,7 +92,7 @@ event_loop(void)
 			action = handle_control_connection();
 			if (action & CTL_ACTION_REBOOT) {
 				shutdown_and_exit(0);
-				reboot(reboot_howto);
+				reboot(od.reboot_howto);
 			}
 			if (action & CTL_ACTION_SHUTDOWN)
 				shutdown_and_exit(0);

@@ -30,8 +30,6 @@
 #include "oracled_ctl.h"
 #include "commands.h"
 
-int reboot_howto;
-
 static struct timeval start_time;
 
 static uint64_t
@@ -58,40 +56,42 @@ setup_control_socket(void)
 		return (-1);
 	}
 
-	(void)unlink(ORACLED_CTL_SOCK);
+	(void)unlink(od.cfg.control_socket);
 
 	memset(&un, 0, sizeof(un));
 	un.sun_family = PF_LOCAL;
-	strlcpy(un.sun_path, ORACLED_CTL_SOCK, sizeof(un.sun_path));
+	strlcpy(un.sun_path, od.cfg.control_socket, sizeof(un.sun_path));
 
 	if (bind(fd, (struct sockaddr *)&un, sizeof(un)) == -1) {
-		syslog(LOG_ERR, "control bind %s: %m", ORACLED_CTL_SOCK);
+		syslog(LOG_ERR, "control bind %s: %m",
+		    od.cfg.control_socket);
 		close(fd);
 		return (-1);
 	}
 
-	if (chmod(ORACLED_CTL_SOCK, 0700) == -1) {
-		syslog(LOG_ERR, "control chmod %s: %m", ORACLED_CTL_SOCK);
+	if (chmod(od.cfg.control_socket, od.cfg.control_socket_mode) == -1) {
+		syslog(LOG_ERR, "control chmod %s: %m",
+		    od.cfg.control_socket);
 		close(fd);
-		(void)unlink(ORACLED_CTL_SOCK);
+		(void)unlink(od.cfg.control_socket);
 		return (-1);
 	}
 
 	if (listen(fd, 5) == -1) {
 		syslog(LOG_ERR, "control listen: %m");
 		close(fd);
-		(void)unlink(ORACLED_CTL_SOCK);
+		(void)unlink(od.cfg.control_socket);
 		return (-1);
 	}
 
 	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1) {
 		syslog(LOG_ERR, "control fcntl: %m");
 		close(fd);
-		(void)unlink(ORACLED_CTL_SOCK);
+		(void)unlink(od.cfg.control_socket);
 		return (-1);
 	}
 
-	syslog(LOG_INFO, "control socket %s", ORACLED_CTL_SOCK);
+	syslog(LOG_INFO, "control socket %s", od.cfg.control_socket);
 	return (fd);
 }
 
@@ -102,7 +102,7 @@ teardown_control_socket(void)
 	if (od.control_fd >= 0) {
 		close(od.control_fd);
 		od.control_fd = -1;
-		(void)unlink(ORACLED_CTL_SOCK);
+		(void)unlink(od.cfg.control_socket);
 	}
 }
 
@@ -235,7 +235,7 @@ handle_control_connection(void)
 		}
 		cmd_reboot(euid, req.flags, &reply);
 		if (reply.status == CTL_STATUS_OK) {
-			reboot_howto = req.flags;
+			od.reboot_howto = req.flags;
 			action = CTL_ACTION_REBOOT;
 		}
 		break;
