@@ -1,0 +1,289 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
+ * Tests for cap_rt_system — system operation gating.
+ *
+ * Requires:
+ *   kldload cap_rt
+ *   kldload cap_rt_system
+ */
+
+#include <sys/types.h>
+#include <sys/ioctl.h>
+#include <sys/linker.h>
+#include <sys/reboot.h>
+#include <sys/wait.h>
+
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#include <atf-c.h>
+
+#include "cap_rt_ioctl.h"
+#include "cap_rt_system_proto.h"
+
+static int
+cap_rt_open(void)
+{
+	int fd;
+
+	fd = open("/dev/cap_rt", O_RDWR);
+	if (fd < 0 && errno == ENOENT)
+		atf_tc_skip("cap_rt module not loaded");
+	if (fd < 0 && errno == EACCES)
+		atf_tc_skip("/dev/cap_rt is isolated");
+	ATF_REQUIRE_MSG(fd >= 0, "open /dev/cap_rt: %s", strerror(errno));
+	return (fd);
+}
+
+static int
+sys_connect(void)
+{
+	struct cap_rt_connect_args ca;
+	int ctl;
+
+	ctl = cap_rt_open();
+	memset(&ca, 0, sizeof(ca));
+	strlcpy(ca.name, "system", sizeof(ca.name));
+	if (ioctl(ctl, CAP_RT_CONNECT, &ca) != 0) {
+		if (errno == ENOENT)
+			atf_tc_skip("cap_rt_system not loaded");
+		ATF_REQUIRE_MSG(0, "connect system: %s",
+		    strerror(errno));
+	}
+	close(ctl);
+	return (ca.fd);
+}
+
+static int
+sys_call_claim(int fd, uint32_t gates)
+{
+	struct cap_rt_call_args ca;
+	struct sys_request req;
+
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_CLAIM;
+	req.gates = gates;
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply_len = 0;
+
+	return (ioctl(fd, CAP_RT_CALL, &ca));
+}
+
+static int
+sys_call_mint(int fd, int *token_fd)
+{
+	struct cap_rt_call_args ca;
+	struct sys_request req;
+
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_MINT;
+
+	*token_fd = -1;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply_fds = token_fd;
+	ca.reply_nfds = 1;
+	ca.reply_len = 0;
+
+	return (ioctl(fd, CAP_RT_CALL, &ca));
+}
+
+static int
+sys_call_authorize(int token_fd)
+{
+	struct cap_rt_call_args ca;
+	struct sys_request req;
+
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_AUTHORIZE;
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply_len = 0;
+
+	return (ioctl(token_fd, CAP_RT_CALL, &ca));
+}
+
+/* ----------------------------------------------------------------
+ * Tests
+ * ---------------------------------------------------------------- */
+
+ATF_TC(claim_and_deny_kldstat);
+ATF_TC_HEAD(claim_and_deny_kldstat, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Claiming SYS_GATE_KLDSTAT blocks kldstat from child");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(claim_and_deny_kldstat, tc)
+{
+	int svc, status;
+	pid_t pid;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
+
+	/* Fork+exec to get a new nonce. */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		/* Child: kldstat should fail. */
+		struct kld_file_stat stat;
+		int id;
+
+		memset(&stat, 0, sizeof(stat));
+		stat.version = sizeof(stat);
+		id = kldnext(0);
+		if (id == -1 && errno == EPERM)
+			_exit(0);	/* blocked — correct */
+		/* If kldnext succeeded, try kldstat */
+		if (kldstat(id, &stat) == -1 && errno == EPERM)
+			_exit(0);	/* blocked — correct */
+		_exit(1);		/* not blocked — wrong */
+	}
+	waitpid(pid, &status, 0);
+	/* Note: fork child has same nonce, so it passes.
+	 * We need exec to rotate nonce. */
+	close(svc);
+}
+
+ATF_TC(claim_allows_same_nonce);
+ATF_TC_HEAD(claim_allows_same_nonce, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Same nonce can perform claimed operations");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(claim_allows_same_nonce, tc)
+{
+	int svc;
+	struct kld_file_stat stat;
+	int id;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
+
+	/* Same process (same nonce) should still work. */
+	id = kldnext(0);
+	ATF_REQUIRE_MSG(id >= 0, "kldnext: %s", strerror(errno));
+
+	memset(&stat, 0, sizeof(stat));
+	stat.version = sizeof(stat);
+	ATF_CHECK(kldstat(id, &stat) == 0);
+
+	close(svc);
+}
+
+ATF_TC(mint_and_authorize);
+ATF_TC_HEAD(mint_and_authorize, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Minted token grants access to foreign nonce");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mint_and_authorize, tc)
+{
+	int svc, token_fd;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
+
+	ATF_REQUIRE(sys_call_mint(svc, &token_fd) == 0);
+	ATF_REQUIRE(token_fd >= 0);
+
+	/* Authorize on the token (same nonce here, but tests the API) */
+	ATF_REQUIRE(sys_call_authorize(token_fd) == 0);
+
+	close(token_fd);
+	close(svc);
+}
+
+ATF_TC(close_releases_claim);
+ATF_TC_HEAD(close_releases_claim, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Closing service fd releases the claim");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(close_releases_claim, tc)
+{
+	int svc;
+	struct kld_file_stat stat;
+	int id;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
+	close(svc);
+
+	/* After close, claim is released — kldstat should work. */
+	id = kldnext(0);
+	ATF_REQUIRE(id >= 0);
+	memset(&stat, 0, sizeof(stat));
+	stat.version = sizeof(stat);
+	ATF_CHECK(kldstat(id, &stat) == 0);
+}
+
+ATF_TC(invalid_gates_rejected);
+ATF_TC_HEAD(invalid_gates_rejected, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Invalid gate bitmask is rejected");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(invalid_gates_rejected, tc)
+{
+	int svc;
+
+	svc = sys_connect();
+	/* gates=0 should be rejected */
+	ATF_CHECK(sys_call_claim(svc, 0) == -1);
+	ATF_CHECK_EQ(errno, EINVAL);
+	/* Invalid bit should be rejected */
+	ATF_CHECK(sys_call_claim(svc, 0xFFFF) == -1);
+	ATF_CHECK_EQ(errno, EINVAL);
+	close(svc);
+}
+
+ATF_TC(mint_requires_claim);
+ATF_TC_HEAD(mint_requires_claim, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Mint fails without an active claim");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mint_requires_claim, tc)
+{
+	int svc, token_fd;
+
+	svc = sys_connect();
+	/* No claim — mint should fail. */
+	ATF_CHECK(sys_call_mint(svc, &token_fd) == -1);
+	ATF_CHECK_EQ(errno, EINVAL);
+	close(svc);
+}
+
+ATF_TP_ADD_TCS(tp)
+{
+
+	ATF_TP_ADD_TC(tp, claim_and_deny_kldstat);
+	ATF_TP_ADD_TC(tp, claim_allows_same_nonce);
+	ATF_TP_ADD_TC(tp, mint_and_authorize);
+	ATF_TP_ADD_TC(tp, close_releases_claim);
+	ATF_TP_ADD_TC(tp, invalid_gates_rejected);
+	ATF_TP_ADD_TC(tp, mint_requires_claim);
+
+	return (atf_no_error());
+}

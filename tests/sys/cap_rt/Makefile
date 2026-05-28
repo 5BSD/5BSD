@@ -8,6 +8,7 @@ ATF_TESTS_C+=	cap_rt_node_test
 ATF_TESTS_C+=	cap_rt_accounting_test
 ATF_TESTS_C+=	cap_rt_procdesc_test
 ATF_TESTS_C+=	cap_rt_mount_test
+ATF_TESTS_C+=	cap_rt_system_test
 PROGS+=		cap_rt_exec_helper
 PROGS+=		cap_rt_isolation_helper
 PROGS+=		cap_rt_shield_helper

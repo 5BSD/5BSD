@@ -1,0 +1,91 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd May 28, 2026
+.Dt CAP_RT_SYSTEM 4
+.Os
+.Sh NAME
+.Nm cap_rt_system
+.Nd CAP_RT system operation gating
+.Sh SYNOPSIS
+To load at boot:
+.Bd -literal -offset indent
+echo 'cap_rt_system_load="YES"' >> /boot/loader.conf
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+service gates privileged system operations via MACF hooks.
+Once an operation is claimed, all processes are denied except
+those with the claimer's nonce or an authorized token.
+Even root cannot bypass the MACF enforcement.
+.Pp
+Operations are claimed by bitmask.
+Multiple operations can be claimed in a single call.
+.Ss Gated Operations
+.Bl -tag -width "SYS_GATE_KLDUNLOAD"
+.It Dv SYS_GATE_KLDLOAD
+Kernel module loading via
+.Xr kldload 2 .
+.It Dv SYS_GATE_KLDUNLOAD
+Kernel module unloading via
+.Xr kldunload 2 .
+.It Dv SYS_GATE_KLDSTAT
+Kernel module enumeration via
+.Xr kldstat 2 .
+.It Dv SYS_GATE_REBOOT
+System reboot via
+.Xr reboot 2 .
+.It Dv SYS_GATE_SWAPON
+Adding swap devices via
+.Xr swapon 2 .
+.It Dv SYS_GATE_SWAPOFF
+Removing swap devices via
+.Xr swapoff 2 .
+.It Dv SYS_GATE_SYSCTL
+Security-relevant
+.Xr sysctl 3
+writes.
+Read operations are not gated.
+.It Dv SYS_GATE_KENV
+Kernel environment modification via
+.Xr kenv 2
+(set and unset only; get and dump are not gated).
+.It Dv SYS_GATE_ACCT
+Process accounting control via
+.Xr acct 2 .
+.El
+.Ss Protocol
+The service is accessed via
+.Dv CAP_RT_CALL
+on an instance fd obtained from
+.Dv CAP_RT_CONNECT
+with the service name
+.Dq system .
+.Pp
+Requests use
+.Vt struct sys_request
+with an operation code and a gates bitmask:
+.Bl -tag -width "SYS_OP_AUTHORIZE"
+.It Dv SYS_OP_CLAIM
+Claim the specified gates.
+The caller's nonce becomes the owner.
+.It Dv SYS_OP_RELEASE
+Release the claim.
+.It Dv SYS_OP_MINT
+Create an access token fd (returned as a reply fd).
+Only the claim owner can mint tokens.
+.It Dv SYS_OP_AUTHORIZE
+Called on a token fd.
+Adds the caller's nonce to the authorized set.
+Authorization persists while the token fd is open.
+.El
+.Sh SEE ALSO
+.Xr kldload 2 ,
+.Xr reboot 2 ,
+.Xr sysctl 3 ,
+.Xr cap_rt 4 ,
+.Xr oracled 8
+.Sh HISTORY
+.Nm
+first appeared in 5BSD.
