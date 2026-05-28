@@ -30,6 +30,7 @@
 #include <unistd.h>
 
 #include "oracled.h"
+#include "probes.h"
 
 struct oracled_state od;
 
@@ -87,6 +88,7 @@ main(int argc, char *argv[])
 	config_init_defaults(&od.cfg);
 	if (config_load(&od.cfg, conffile) != 0)
 		errx(1, "configuration error");
+	ORACLED_PROBE_CONFIG(conffile);
 
 	/* CLI -p overrides config pidfile. */
 	if (pidfile_override != NULL)
@@ -130,7 +132,7 @@ main(int argc, char *argv[])
 
 	/* Phase 4: capability runtime. */
 	if (!od.test_mode)
-		cap_rt_setup();
+		(void)cap_rt_setup();
 	else
 		syslog(LOG_INFO, "test mode: skipping cap_rt");
 
@@ -145,6 +147,7 @@ main(int argc, char *argv[])
 	/* Phase 6: event loop. */
 	od.running = true;
 	syslog(LOG_INFO, "started");
+	ORACLED_PROBE_STARTUP();
 	event_loop();
 	exit(0);
 }

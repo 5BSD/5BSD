@@ -29,6 +29,7 @@
 #include "oracled.h"
 #include "oracled_ctl.h"
 #include "commands.h"
+#include "probes.h"
 
 /* Module-private state. */
 static int control_sock = -1;
@@ -217,6 +218,8 @@ ctl_handle(int *reboot_howto)
 		return (CTL_ACTION_NONE);
 	}
 
+	ORACLED_PROBE_CTL_ACCEPT(euid);
+
 	if (readn(cfd, &req, sizeof(req)) != 0) {
 		syslog(LOG_WARNING, "control read: short");
 		close(cfd);
@@ -229,6 +232,8 @@ ctl_handle(int *reboot_howto)
 		reply.status = ENOTSUP;
 		goto out;
 	}
+
+	ORACLED_PROBE_CTL_CMD(req.op, euid);
 
 	switch (req.op) {
 	case CTL_OP_STATUS:

@@ -45,8 +45,13 @@ readn(int fd, void *buf, size_t len)
 
 	for (off = 0; off < len; ) {
 		n = read(fd, (char *)buf + off, len - off);
-		if (n <= 0)
-			return (n == 0 ? ECONNRESET : errno);
+		if (n == -1) {
+			if (errno == EINTR)
+				continue;
+			return (errno);
+		}
+		if (n == 0)
+			return (ECONNRESET);
 		off += n;
 	}
 	return (0);
@@ -60,8 +65,13 @@ writen(int fd, const void *buf, size_t len)
 
 	for (off = 0; off < len; ) {
 		n = write(fd, (const char *)buf + off, len - off);
-		if (n <= 0)
+		if (n == -1) {
+			if (errno == EINTR)
+				continue;
 			return (errno);
+		}
+		if (n == 0)
+			return (EIO);
 		off += n;
 	}
 	return (0);

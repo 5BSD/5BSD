@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 #include "oracled.h"
+#include "probes.h"
 
 /* Service instance fds — module-private. */
 static int cap_rt_fd = -1;
@@ -143,12 +144,14 @@ claim_path(const char *path)
 
 	if (ioctl(isolation_fd, CAP_RT_CALL, &call) == -1) {
 		syslog(LOG_WARNING, "isolation: claim %s: %m", path);
+		ORACLED_PROBE_CLAIM_PATH_FAIL(path);
 		close(fd);
 		return (-1);
 	}
 
 	close(fd);
 	syslog(LOG_INFO, "isolation: claimed %s", path);
+	ORACLED_PROBE_CLAIM_PATH(path);
 	return (0);
 }
 
@@ -176,6 +179,7 @@ claim_net(const struct oracled_net_claim *nc)
 	call.reply_len = sizeof(reply);
 
 	if (ioctl(isolation_fd, CAP_RT_CALL, &call) == -1) {
+		ORACLED_PROBE_CLAIM_NET_FAIL(nc->port, nc->protocol);
 		syslog(LOG_WARNING, "isolation: claim port %u/%s: %m",
 		    nc->port,
 		    nc->protocol == IPPROTO_TCP ? "tcp" :
@@ -183,6 +187,7 @@ claim_net(const struct oracled_net_claim *nc)
 		return (-1);
 	}
 
+	ORACLED_PROBE_CLAIM_NET(nc->port, nc->protocol);
 	syslog(LOG_INFO, "isolation: claimed port %u/%s %s",
 	    nc->port,
 	    nc->protocol == IPPROTO_TCP ? "tcp" :
@@ -199,13 +204,11 @@ claim_net(const struct oracled_net_claim *nc)
 static int
 isolate_resources(void)
 {
-	int i;
+	int claimed, failed, i, total;
 
 	isolation_fd = cap_rt_svc_connect("isolation");
 	if (isolation_fd == -1)
 		return (-1);
-
-	int claimed, failed, total;
 
 	claimed = failed = 0;
 
@@ -272,6 +275,7 @@ apply_integrity(void)
 	}
 
 	capprotect_fd = cp_fd;
+	ORACLED_PROBE_INTEGRITY(flags);
 	log_integrity_flags(flags);
 	return (0);
 }

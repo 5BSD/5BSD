@@ -13,4 +13,9 @@ CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD=		ucl util
 
+.if ${MK_DTRACE} != "no"
+SRCS+=		oracled_provider.d
+CFLAGS+=	-I${.OBJDIR}
+.endif
+
 .include <bsd.prog.mk>

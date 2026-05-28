@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "oracled.h"
+#include "probes.h"
 
 static void
 add_signal_event(int kq, int sig)
@@ -37,6 +38,7 @@ static void
 shutdown_and_exit(int reason)
 {
 
+	ORACLED_PROBE_SHUTDOWN(reason);
 	if (reason > 0)
 		syslog(LOG_INFO, "stopping on signal %d", reason);
 	else

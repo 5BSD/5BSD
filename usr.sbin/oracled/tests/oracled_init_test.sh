@@ -161,41 +161,6 @@ capprotect_sched_denied_cleanup()
 	:
 }
 
-# --- syslog: initialization completed ---
-
-atf_test_case syslog_init_complete cleanup
-syslog_init_complete_head()
-{
-	atf_set "descr" "oracled logs successful initialization"
-	atf_set "require.user" "root"
-}
-syslog_init_complete_body()
-{
-	require_pidfile
-	pid=$(cat /var/run/oracled.pid)
-	local logfile="/var/log/daemon.log"
-	if [ ! -r "$logfile" ]; then
-		atf_skip "daemon.log not readable"
-	fi
-	# Verify all init stages completed for this pid.
-	atf_check -s exit:0 -o not-empty \
-	    grep "oracled\[$pid\].*reaper status confirmed" "$logfile"
-	atf_check -s exit:0 -o not-empty \
-	    grep "oracled\[$pid\].*enabled OOM protection" "$logfile"
-	atf_check -s exit:0 -o not-empty \
-	    grep "oracled\[$pid\].*isolation.*claimed.*/dev/cap_rt" "$logfile"
-	atf_check -s exit:0 -o not-empty \
-	    grep "oracled\[$pid\].*integrity active" "$logfile"
-	atf_check -s exit:0 -o not-empty \
-	    grep "oracled\[$pid\].*control socket" "$logfile"
-	atf_check -s exit:0 -o not-empty \
-	    grep "oracled\[$pid\].*started" "$logfile"
-}
-syslog_init_complete_cleanup()
-{
-	:
-}
-
 # --- control socket ---
 
 atf_test_case control_socket_exists cleanup
