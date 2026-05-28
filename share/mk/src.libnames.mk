@@ -199,6 +199,7 @@ _LIBRARIES=	\
 		nv \
 		nvpair \
 		opencsd \
+		oraclectl \
 		pam \
 		panel \
 		panelw \

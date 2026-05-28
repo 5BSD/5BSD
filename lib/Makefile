@@ -79,6 +79,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libnv \
 	libnvmf \
 	libopenbsd \
+	liboraclectl \
 	libpam \
 	libpathconv \
 	libpcap \

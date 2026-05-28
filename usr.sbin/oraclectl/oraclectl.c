@@ -5,12 +5,9 @@
  *
  * oraclectl — command-line interface to oracled(8).
  *
- * Connects to the oracled control socket, sends a single command,
- * prints the result, and exits.
+ * Thin CLI wrapper around liboraclectl.  Each invocation opens a
+ * connection, sends one command, prints the result, and exits.
  */
-
-#include <sys/socket.h>
-#include <sys/un.h>
 
 #include <err.h>
 #include <errno.h>
@@ -20,81 +17,30 @@
 #include <sysexits.h>
 #include <unistd.h>
 
-#include "oracled_ctl.h"
+#include <oraclectl.h>
 
-static const char *sockpath = ORACLED_CTL_SOCK;
+static const char *sockpath;
 
 static int
-ctl_connect(void)
+open_or_die(void)
 {
-	struct sockaddr_un un;
 	int fd;
 
-	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
+	fd = oraclectl_open(sockpath);
 	if (fd == -1)
-		err(EX_OSERR, "socket");
-
-	memset(&un, 0, sizeof(un));
-	un.sun_family = AF_LOCAL;
-	strlcpy(un.sun_path, sockpath, sizeof(un.sun_path));
-
-	if (connect(fd, (struct sockaddr *)&un, sizeof(un)) == -1)
-		err(EX_UNAVAILABLE, "connect %s", sockpath);
-
+		err(EX_UNAVAILABLE, "connect %s",
+		    sockpath != NULL ? sockpath : ORACLED_CTL_SOCK);
 	return (fd);
 }
 
-static void
-ctl_send(int fd, uint32_t op, uint32_t flags,
-    const void *data, uint32_t datalen)
-{
-	struct ctl_request req;
-
-	memset(&req, 0, sizeof(req));
-	req.version = CTL_VERSION;
-	req.op = op;
-	req.flags = flags;
-	req.datalen = datalen;
-
-	if (write(fd, &req, sizeof(req)) != sizeof(req))
-		err(EX_IOERR, "write request");
-	if (datalen > 0) {
-		if (write(fd, data, datalen) != (ssize_t)datalen)
-			err(EX_IOERR, "write payload");
-	}
-}
-
-static struct ctl_reply
-ctl_recv(int fd)
-{
-	struct ctl_reply reply;
-	size_t off;
-	ssize_t n;
-
-	for (off = 0; off < sizeof(reply); ) {
-		n = read(fd, (char *)&reply + off, sizeof(reply) - off);
-		if (n <= 0) {
-			if (n == 0)
-				errx(EX_PROTOCOL, "connection closed");
-			err(EX_IOERR, "read reply");
-		}
-		off += n;
-	}
-	return (reply);
-}
-
 static int
-check_reply(struct ctl_reply *reply, const char *cmd)
+check(int error, const char *cmd)
 {
 
-	if (reply->status == CTL_STATUS_OK)
+	if (error == 0)
 		return (0);
-	if (reply->status == EPERM) {
-		warnx("%s: permission denied", cmd);
-		return (EX_NOPERM);
-	}
-	warnx("%s: %s", cmd, strerror(reply->status));
-	return (1);
+	warnx("%s: %s", cmd, strerror(error));
+	return (error == EPERM ? EX_NOPERM : 1);
 }
 
 /* ----------------------------------------------------------------
@@ -104,19 +50,18 @@ check_reply(struct ctl_reply *reply, const char *cmd)
 static int
 cmd_status(void)
 {
-	struct ctl_reply reply;
+	struct oraclectl_status st;
 	uint64_t up;
-	int fd;
+	int fd, error;
 
-	fd = ctl_connect();
-	ctl_send(fd, CTL_OP_STATUS, 0, NULL, 0);
-	reply = ctl_recv(fd);
+	fd = open_or_die();
+	error = oraclectl_status(fd, &st);
 	close(fd);
 
-	if (reply.status != CTL_STATUS_OK)
-		return (check_reply(&reply, "status"));
+	if (error != 0)
+		return (check(error, "status"));
 
-	up = reply.uptime_usec;
+	up = st.uptime_usec;
 	printf("oracled: running\n");
 	if (up < 1000000ULL)
 		printf("uptime:  %llu ms\n",
@@ -136,17 +81,14 @@ cmd_status(void)
 static int
 cmd_shutdown(void)
 {
-	struct ctl_reply reply;
-	int fd;
+	int fd, error;
 
-	fd = ctl_connect();
-	ctl_send(fd, CTL_OP_SHUTDOWN, 0, NULL, 0);
-	reply = ctl_recv(fd);
+	fd = open_or_die();
+	error = oraclectl_shutdown(fd);
 	close(fd);
 
-	if (reply.status != CTL_STATUS_OK)
-		return (check_reply(&reply, "shutdown"));
-
+	if (error != 0)
+		return (check(error, "shutdown"));
 	printf("oracled: shutdown initiated\n");
 	return (0);
 }
@@ -154,17 +96,14 @@ cmd_shutdown(void)
 static int
 cmd_reload(void)
 {
-	struct ctl_reply reply;
-	int fd;
+	int fd, error;
 
-	fd = ctl_connect();
-	ctl_send(fd, CTL_OP_RELOAD, 0, NULL, 0);
-	reply = ctl_recv(fd);
+	fd = open_or_die();
+	error = oraclectl_reload(fd);
 	close(fd);
 
-	if (reply.status != CTL_STATUS_OK)
-		return (check_reply(&reply, "reload"));
-
+	if (error != 0)
+		return (check(error, "reload"));
 	printf("oracled: reload initiated\n");
 	return (0);
 }
@@ -172,45 +111,29 @@ cmd_reload(void)
 static int
 cmd_kldload(const char *module)
 {
-	struct ctl_reply reply;
-	size_t len;
-	int fd;
+	int fd, error, id;
 
-	len = strlen(module);
-	if (len == 0 || len > CTL_MAX_PAYLOAD)
-		errx(EX_USAGE, "invalid module name");
-
-	fd = ctl_connect();
-	ctl_send(fd, CTL_OP_KLDLOAD, 0, module, len);
-	reply = ctl_recv(fd);
+	fd = open_or_die();
+	error = oraclectl_kldload(fd, module, &id);
 	close(fd);
 
-	if (reply.status != CTL_STATUS_OK)
-		return (check_reply(&reply, module));
-
-	printf("%s: loaded (id %u)\n", module, reply.flags);
+	if (error != 0)
+		return (check(error, module));
+	printf("%s: loaded (id %d)\n", module, id);
 	return (0);
 }
 
 static int
 cmd_kldunload(const char *module)
 {
-	struct ctl_reply reply;
-	size_t len;
-	int fd;
+	int fd, error;
 
-	len = strlen(module);
-	if (len == 0 || len > CTL_MAX_PAYLOAD)
-		errx(EX_USAGE, "invalid module name");
-
-	fd = ctl_connect();
-	ctl_send(fd, CTL_OP_KLDUNLOAD, 0, module, len);
-	reply = ctl_recv(fd);
+	fd = open_or_die();
+	error = oraclectl_kldunload(fd, module);
 	close(fd);
 
-	if (reply.status != CTL_STATUS_OK)
-		return (check_reply(&reply, module));
-
+	if (error != 0)
+		return (check(error, module));
 	printf("%s: unloaded\n", module);
 	return (0);
 }
@@ -218,17 +141,14 @@ cmd_kldunload(const char *module)
 static int
 cmd_reboot(void)
 {
-	struct ctl_reply reply;
-	int fd;
+	int fd, error;
 
-	fd = ctl_connect();
-	ctl_send(fd, CTL_OP_REBOOT, 0, NULL, 0);
-	reply = ctl_recv(fd);
+	fd = open_or_die();
+	error = oraclectl_reboot(fd, 0);
 	close(fd);
 
-	if (reply.status != CTL_STATUS_OK)
-		return (check_reply(&reply, "reboot"));
-
+	if (error != 0)
+		return (check(error, "reboot"));
 	printf("oracled: reboot initiated\n");
 	return (0);
 }
