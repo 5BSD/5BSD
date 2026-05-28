@@ -20,6 +20,7 @@
 #include <ucl.h>
 
 #include "config.h"
+#include "oracled_ctl.h"
 
 void
 config_init_defaults(struct oracled_config *cfg)
@@ -28,7 +29,7 @@ config_init_defaults(struct oracled_config *cfg)
 	memset(cfg, 0, sizeof(*cfg));
 	strlcpy(cfg->pidfile, ORACLED_DEFAULT_PIDFILE,
 	    sizeof(cfg->pidfile));
-	strlcpy(cfg->control_socket, ORACLED_DEFAULT_CTLSOCK,
+	strlcpy(cfg->control_socket, ORACLED_CTL_SOCK,
 	    sizeof(cfg->control_socket));
 	cfg->control_socket_mode = ORACLED_DEFAULT_CTLMODE;
 

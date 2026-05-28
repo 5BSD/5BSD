@@ -63,15 +63,9 @@ static const struct {
 	{ CP_SF_SIGNAL,		"signal" },
 	{ CP_SF_VISIBLE,	"visible" },
 	{ CP_SF_WAIT,		"wait" },
-	{ CP_SF_SIGKILL,	"sigkill" },
-	{ CP_SF_SIGCONT,	"sigcont" },
 	{ CP_SF_SCHED,		"sched" },
 	{ CP_SF_CORE,		"core" },
 	{ CP_SF_KTRACE,		"ktrace" },
-	{ CP_SF_NOPRIVS,	"noprivs" },
-	{ CP_SF_NOFORK,		"nofork" },
-	{ CP_SF_NOIPC,		"noipc" },
-	{ CP_SF_NOFDRECV,	"nofdrecv" },
 };
 
 static void

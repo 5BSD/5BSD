@@ -13,9 +13,7 @@
 
 #include <errno.h>
 #include <syslog.h>
-#include <unistd.h>
 
-#include "oracled.h"
 #include "oracled_ctl.h"
 #include "commands.h"
 
@@ -52,8 +50,9 @@ cmd_reload(uid_t euid, struct ctl_reply *reply)
 		    euid);
 		return;
 	}
-	reply->status = CTL_STATUS_OK;
-	syslog(LOG_INFO, "control: reload by uid %u", euid);
+	/* TODO: implement actual config reload. */
+	reply->status = ENOTSUP;
+	syslog(LOG_INFO, "control: reload not yet implemented");
 }
 
 void

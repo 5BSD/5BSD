@@ -8,13 +8,11 @@
 #define CONFIG_H
 
 #include <sys/param.h>
-#include <sys/stat.h>
 
 #include <stdbool.h>
 
 #define	ORACLED_DEFAULT_CONFFILE	"/etc/oracled.conf"
 #define	ORACLED_DEFAULT_PIDFILE	"/var/run/oracled.pid"
-#define	ORACLED_DEFAULT_CTLSOCK	"/var/run/oracled.sock"
 #define	ORACLED_DEFAULT_CTLMODE	0700
 
 struct oracled_config {
