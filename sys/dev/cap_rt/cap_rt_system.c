@@ -47,7 +47,6 @@ SDT_PROBE_DEFINE3(cap_rt_system, , , deny,
  * Per-instance state.
  */
 struct sys_priv {
-	struct mtx	sp_mtx;
 	uint32_t	sp_gates;	/* claimed gates (claim instances) */
 	uint64_t	sp_owner;	/* claimer nonce */
 	int		sp_is_token;
@@ -269,7 +268,6 @@ sys_init(struct cap_rt_instance *s, void *arg __unused)
 	struct sys_priv *priv;
 
 	priv = malloc(sizeof(*priv), M_CAP_RT_SYS, M_WAITOK | M_ZERO);
-	mtx_init(&priv->sp_mtx, "cap_rt_sys_priv", NULL, MTX_DEF);
 	cap_rt_instance_set_priv(s, priv);
 	return (0);
 }
@@ -461,7 +459,6 @@ sys_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
 		}
 	}
 
-	mtx_destroy(&priv->sp_mtx);
 	free(priv, M_CAP_RT_SYS);
 }
 
