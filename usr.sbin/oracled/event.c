@@ -44,14 +44,14 @@ shutdown_and_exit(int reason)
 	else
 		syslog(LOG_INFO, "stopping via control socket");
 
-	if (!test_mode)
+	if (!od.test_mode)
 		kill_subtree();
 	reap_children();
 	teardown_control_socket();
 	cap_rt_teardown();
-	pidfile_remove(pidfh);
+	pidfile_remove(od.pidfh);
 	closelog();
-	running = false;
+	od.running = false;
 }
 
 void
@@ -69,13 +69,13 @@ event_loop(void)
 	add_signal_event(kq, SIGTERM);
 	add_signal_event(kq, SIGINT);
 
-	if (control_fd >= 0) {
-		EV_SET(&kev, control_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	if (od.control_fd >= 0) {
+		EV_SET(&kev, od.control_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
 		if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
 			err(1, "kevent control socket");
 	}
 
-	while (running) {
+	while (od.running) {
 		nev = kevent(kq, NULL, 0, &kev, 1, NULL);
 		if (nev == -1) {
 			if (errno == EINTR)
@@ -86,7 +86,7 @@ event_loop(void)
 			continue;
 
 		if (kev.filter == EVFILT_READ &&
-		    (int)kev.ident == control_fd) {
+		    (int)kev.ident == od.control_fd) {
 			int action;
 
 			action = handle_control_connection();

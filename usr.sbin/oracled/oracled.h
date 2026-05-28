@@ -13,18 +13,21 @@
 #include <stdbool.h>
 
 /*
- * Daemon state — set by main(), read by all modules.
+ * Daemon state.
+ *
+ * Set by main() during initialization, read by all modules.
+ * Shutdown is coordinated through the 'running' flag and the
+ * teardown functions.
  */
-extern struct pidfh	*pidfh;
-extern bool		 foreground;
-extern bool		 test_mode;
-extern bool		 running;
+struct oracled_state {
+	struct pidfh	*pidfh;
+	int		 control_fd;
+	bool		 foreground;
+	bool		 test_mode;
+	bool		 running;
+};
 
-/*
- * Control socket fd — set by control.c, read by event.c for
- * kqueue registration.
- */
-extern int		 control_fd;
+extern struct oracled_state od;
 
 /* Return values from handle_control_connection(). */
 #define	CTL_ACTION_SHUTDOWN	0x01

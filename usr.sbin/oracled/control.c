@@ -11,16 +11,14 @@
  * oracled becomes the system init.
  *
  * Each client connection is one-shot: accept, authenticate via
- * getpeereid(), read request + payload, dispatch, write reply,
- * close.
+ * getpeereid(), read request + optional payload, dispatch to
+ * command handler, write reply, close.
  */
 
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/un.h>
-
-#include <sys/linker.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -30,6 +28,7 @@
 
 #include "oracled.h"
 #include "oracled_ctl.h"
+#include "commands.h"
 
 int reboot_howto;
 
@@ -100,9 +99,9 @@ void
 teardown_control_socket(void)
 {
 
-	if (control_fd >= 0) {
-		close(control_fd);
-		control_fd = -1;
+	if (od.control_fd >= 0) {
+		close(od.control_fd);
+		od.control_fd = -1;
 		(void)unlink(ORACLED_CTL_SOCK);
 	}
 }
@@ -134,148 +133,30 @@ readn(int fd, void *buf, size_t len)
 }
 
 /*
- * Require root.  Returns 0 if authorized, fills reply and returns
- * -1 if not.
+ * Read a payload string from the client fd.  Validates length,
+ * reads the data, and null-terminates.  Returns 0 on success.
  */
 static int
-require_root(uid_t euid, const char *op, struct ctl_reply *reply)
+read_payload(int cfd, uint32_t datalen, char *buf, size_t bufsz,
+    struct ctl_reply *reply)
 {
 
-	if (euid == 0)
-		return (0);
-	reply->status = EPERM;
-	syslog(LOG_WARNING, "control: %s denied for uid %u", op, euid);
-	return (-1);
-}
-
-/* ----------------------------------------------------------------
- * Command handlers
- * ---------------------------------------------------------------- */
-
-static void
-cmd_status(struct ctl_reply *reply)
-{
-
-	reply->status = CTL_STATUS_OK;
-	reply->uptime_usec = uptime_usec();
-}
-
-static int
-cmd_shutdown(uid_t euid, struct ctl_reply *reply)
-{
-
-	if (require_root(euid, "shutdown", reply) != 0)
-		return (0);
-	reply->status = CTL_STATUS_OK;
-	syslog(LOG_INFO, "control: shutdown by uid %u", euid);
-	return (1);
-}
-
-static void
-cmd_reload(uid_t euid, struct ctl_reply *reply)
-{
-
-	if (require_root(euid, "reload", reply) != 0)
-		return;
-	reply->status = CTL_STATUS_OK;
-	syslog(LOG_INFO, "control: reload by uid %u", euid);
-}
-
-static void
-cmd_kldload(uid_t euid, int cfd, uint32_t datalen, struct ctl_reply *reply)
-{
-	char name[CTL_MAX_PAYLOAD + 1];
-	int id;
-
-	if (require_root(euid, "kldload", reply) != 0)
-		return;
-	if (datalen == 0 || datalen > CTL_MAX_PAYLOAD) {
+	if (datalen == 0 || datalen >= bufsz) {
 		reply->status = EINVAL;
-		return;
+		return (-1);
 	}
-
-	if (readn(cfd, name, datalen) != 0) {
+	if (readn(cfd, buf, datalen) != 0) {
 		reply->status = EIO;
-		return;
+		return (-1);
 	}
-	name[datalen] = '\0';
-
-	syslog(LOG_INFO, "control: kldload \"%s\" by uid %u", name, euid);
-
-	id = kldload(name);
-	if (id == -1) {
-		reply->status = errno;
-		syslog(LOG_WARNING, "kldload \"%s\": %m", name);
-	} else {
-		reply->status = CTL_STATUS_OK;
-		reply->flags = id;	/* return module id */
-		syslog(LOG_INFO, "kldload \"%s\": id %d", name, id);
-	}
-}
-
-static void
-cmd_kldunload(uid_t euid, int cfd, uint32_t datalen, struct ctl_reply *reply)
-{
-	char name[CTL_MAX_PAYLOAD + 1];
-	int id;
-
-	if (require_root(euid, "kldunload", reply) != 0)
-		return;
-	if (datalen == 0 || datalen > CTL_MAX_PAYLOAD) {
-		reply->status = EINVAL;
-		return;
-	}
-
-	if (readn(cfd, name, datalen) != 0) {
-		reply->status = EIO;
-		return;
-	}
-	name[datalen] = '\0';
-
-	syslog(LOG_INFO, "control: kldunload \"%s\" by uid %u", name, euid);
-
-	id = kldfind(name);
-	if (id == -1) {
-		reply->status = errno;
-		syslog(LOG_WARNING, "kldfind \"%s\": %m", name);
-		return;
-	}
-
-	if (kldunload(id) == -1) {
-		reply->status = errno;
-		syslog(LOG_WARNING, "kldunload \"%s\" (id %d): %m", name, id);
-	} else {
-		reply->status = CTL_STATUS_OK;
-		syslog(LOG_INFO, "kldunload \"%s\": done", name);
-	}
-}
-
-static void
-cmd_reboot(uid_t euid, uint32_t howto, struct ctl_reply *reply)
-{
-
-	if (require_root(euid, "reboot", reply) != 0)
-		return;
-
-	syslog(LOG_INFO, "control: reboot (howto 0x%x) by uid %u",
-	    howto, euid);
-	reply->status = CTL_STATUS_OK;
-
-	/*
-	 * Reply first, then reboot.  The client receives the ack
-	 * before the system goes down.
-	 */
+	buf[datalen] = '\0';
+	return (0);
 }
 
 /* ----------------------------------------------------------------
  * Connection dispatcher
  * ---------------------------------------------------------------- */
 
-/*
- * Handle a single client connection.  Returns a bitmask:
- *   CTL_ACTION_SHUTDOWN — caller should initiate graceful shutdown
- *   CTL_ACTION_REBOOT   — caller should reboot the system
- */
 int
 handle_control_connection(void)
 {
@@ -284,10 +165,11 @@ handle_control_connection(void)
 	uid_t euid;
 	gid_t egid;
 	int cfd, action;
+	char payload[CTL_MAX_PAYLOAD + 1];
 
 	action = 0;
 
-	cfd = accept(control_fd, NULL, NULL);
+	cfd = accept(od.control_fd, NULL, NULL);
 	if (cfd == -1) {
 		if (errno != EAGAIN && errno != EWOULDBLOCK)
 			syslog(LOG_WARNING, "control accept: %m");
@@ -319,7 +201,7 @@ handle_control_connection(void)
 			reply.status = EINVAL;
 			break;
 		}
-		cmd_status(&reply);
+		cmd_status(uptime_usec(), &reply);
 		break;
 	case CTL_OP_SHUTDOWN:
 		if (req.datalen != 0) {
@@ -337,10 +219,14 @@ handle_control_connection(void)
 		cmd_reload(euid, &reply);
 		break;
 	case CTL_OP_KLDLOAD:
-		cmd_kldload(euid, cfd, req.datalen, &reply);
+		if (read_payload(cfd, req.datalen, payload,
+		    sizeof(payload), &reply) == 0)
+			cmd_kldload(euid, payload, &reply);
 		break;
 	case CTL_OP_KLDUNLOAD:
-		cmd_kldunload(euid, cfd, req.datalen, &reply);
+		if (read_payload(cfd, req.datalen, payload,
+		    sizeof(payload), &reply) == 0)
+			cmd_kldunload(euid, payload, &reply);
 		break;
 	case CTL_OP_REBOOT:
 		if (req.datalen != 0) {

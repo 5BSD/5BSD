@@ -172,7 +172,7 @@ shield_self(void)
 		return (-1);
 
 	flags = ORACLED_SHIELD_BASE;
-	if (!foreground)
+	if (!od.foreground)
 		flags |= ORACLED_SHIELD_PROD;
 
 	memset(&req, 0, sizeof(req));

@@ -3,7 +3,7 @@
 PACKAGE=runtime
 PROG=	oracled
 MAN=	oracled.8
-SRCS=	oracled.c cap_rt.c control.c event.c proc.c
+SRCS=	oracled.c cap_rt.c commands.c control.c event.c proc.c
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

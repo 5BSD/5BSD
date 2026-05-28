@@ -32,11 +32,9 @@
 
 #define	ORACLED_PIDFILE	"/var/run/oracled.pid"
 
-struct pidfh	*pidfh;
-bool		 foreground;
-bool		 test_mode;
-bool		 running = true;
-int		 control_fd = -1;
+struct oracled_state od = {
+	.control_fd = -1,
+};
 
 static void
 usage(void)
@@ -57,11 +55,11 @@ main(int argc, char *argv[])
 	while ((ch = getopt(argc, argv, "dTp:")) != -1) {
 		switch (ch) {
 		case 'd':
-			foreground = true;
+			od.foreground = true;
 			break;
 		case 'T':
-			foreground = true;
-			test_mode = true;
+			od.foreground = true;
+			od.test_mode = true;
 			break;
 		case 'p':
 			pidfile = optarg;
@@ -76,14 +74,14 @@ main(int argc, char *argv[])
 		usage();
 
 	/* Phase 1: logging and pidfile. */
-	openlog("oracled", LOG_PID | (foreground ? LOG_PERROR : 0),
+	openlog("oracled", LOG_PID | (od.foreground ? LOG_PERROR : 0),
 	    LOG_DAEMON);
 
-	if (!test_mode && getuid() != 0)
+	if (!od.test_mode && getuid() != 0)
 		errx(1, "must run as root");
 
-	pidfh = pidfile_open(pidfile, 0600, &otherpid);
-	if (pidfh == NULL) {
+	od.pidfh = pidfile_open(pidfile, 0600, &otherpid);
+	if (od.pidfh == NULL) {
 		if (errno == EEXIST)
 			errx(1, "already running, pid %jd",
 			    (intmax_t)otherpid);
@@ -91,37 +89,38 @@ main(int argc, char *argv[])
 	}
 
 	/* Phase 2: daemonize. */
-	if (!foreground && daemon(0, 0) == -1) {
-		pidfile_remove(pidfh);
+	if (!od.foreground && daemon(0, 0) == -1) {
+		pidfile_remove(od.pidfh);
 		err(1, "daemon");
 	}
-	if (pidfile_write(pidfh) == -1) {
-		pidfile_remove(pidfh);
+	if (pidfile_write(od.pidfh) == -1) {
+		pidfile_remove(od.pidfh);
 		err(1, "pidfile_write");
 	}
 
 	/* Phase 3: harden process. */
-	if (!test_mode)
+	if (!od.test_mode)
 		apply_procctl_self_policy();
 	else
 		syslog(LOG_INFO, "test mode: skipping procctl");
 
 	/* Phase 4: capability runtime. */
-	if (!test_mode)
+	if (!od.test_mode)
 		cap_rt_setup();
 	else
 		syslog(LOG_INFO, "test mode: skipping cap_rt");
 
 	/* Phase 5: control socket. */
-	if (!test_mode) {
-		control_fd = setup_control_socket();
-		if (control_fd == -1)
+	if (!od.test_mode) {
+		od.control_fd = setup_control_socket();
+		if (od.control_fd == -1)
 			syslog(LOG_WARNING, "failed to create control socket");
 	} else {
 		syslog(LOG_INFO, "test mode: skipping control socket");
 	}
 
 	/* Phase 6: event loop. */
+	od.running = true;
 	syslog(LOG_INFO, "started");
 	event_loop();
 }
