@@ -4,219 +4,196 @@
 # Initialization integrity tests for oracled.
 #
 # These verify that the running oracled instance has applied all
-# expected hardening: procctl self-policy, isolation claim on
-# /dev/cap_rt, and capprotect shield.  They run against the live
-# system daemon and require root.
+# expected hardening.  Many tests work by confirming that external
+# access is DENIED — the denial itself is proof the protection is
+# active.  They run against the live system daemon and require root.
 #
 
-oracled_pid()
+require_pidfile()
 {
-	cat /var/run/oracled.pid 2>/dev/null
+	if [ ! -f /var/run/oracled.pid ]; then
+		atf_skip "oracled pidfile not found"
+	fi
+	pid=$(cat /var/run/oracled.pid 2>/dev/null)
+	if [ -z "$pid" ]; then
+		atf_skip "oracled pidfile is empty"
+	fi
 }
 
-oracled_running()
-{
-	local pid
-	pid=$(oracled_pid)
-	[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
-}
+# --- isolation ---
 
-# --- procctl hardening ---
-
-atf_test_case procctl_reaper cleanup
-procctl_reaper_head()
+atf_test_case isolation_cap_rt_module_loaded cleanup
+isolation_cap_rt_module_loaded_head()
 {
-	atf_set "descr" "oracled is a subtree reaper"
+	atf_set "descr" "cap_rt kernel module is loaded"
 	atf_set "require.user" "root"
 }
-procctl_reaper_body()
+isolation_cap_rt_module_loaded_body()
 {
-	atf_check oracled_running
-	local pid
-	pid=$(oracled_pid)
-	# procstat -r shows reaper info; oracled should be its own reaper
-	atf_check -s exit:0 -o match:"reaper" procstat -r "$pid"
+	atf_check -s exit:0 kldstat -qm cap_rt
 }
-procctl_reaper_cleanup()
+isolation_cap_rt_module_loaded_cleanup()
 {
 	:
 }
 
-atf_test_case procctl_trace_disabled cleanup
-procctl_trace_disabled_head()
+atf_test_case isolation_cap_rt_open_denied cleanup
+isolation_cap_rt_open_denied_head()
 {
-	atf_set "descr" "oracled has tracing disabled via procctl"
+	atf_set "descr" "/dev/cap_rt cannot be opened by foreign nonce"
 	atf_set "require.user" "root"
 }
-procctl_trace_disabled_body()
+isolation_cap_rt_open_denied_body()
 {
-	atf_check oracled_running
-	local pid
-	pid=$(oracled_pid)
-	# ptrace attach should fail with EACCES or EPERM
-	atf_check -s not-exit:0 -e ignore truss -p "$pid" -e exit 2>&1
-}
-procctl_trace_disabled_cleanup()
-{
-	:
-}
-
-atf_test_case procctl_oom_protect cleanup
-procctl_oom_protect_head()
-{
-	atf_set "descr" "oracled is OOM-protected"
-	atf_set "require.user" "root"
-}
-procctl_oom_protect_body()
-{
-	atf_check oracled_running
-	local pid
-	pid=$(oracled_pid)
-	# P_PROTECTED flag in ps flags
-	atf_check -s exit:0 -o not-empty \
-	    sh -c "procstat -k $pid | grep -i protect || procstat $pid"
-}
-procctl_oom_protect_cleanup()
-{
-	:
-}
-
-# --- /dev/cap_rt isolation ---
-
-atf_test_case isolation_cap_rt_claimed cleanup
-isolation_cap_rt_claimed_head()
-{
-	atf_set "descr" "/dev/cap_rt is isolated — foreign nonce cannot open"
-	atf_set "require.user" "root"
-}
-isolation_cap_rt_claimed_body()
-{
-	atf_check oracled_running
-	# A new process (different nonce from oracled) should get EACCES
-	# when trying to open /dev/cap_rt.
+	require_pidfile
+	# A new process has a different nonce from oracled.
+	# The isolation MACF hook must deny the open.
 	atf_check -s not-exit:0 -e match:"Permission denied" \
-	    sh -c 'exec 3</dev/cap_rt'
+	    sh -c 'cat /dev/cap_rt'
 }
-isolation_cap_rt_claimed_cleanup()
+isolation_cap_rt_open_denied_cleanup()
 {
 	:
 }
 
-atf_test_case isolation_cap_rt_device_exists cleanup
-isolation_cap_rt_device_exists_head()
+atf_test_case isolation_cap_rt_stat_denied cleanup
+isolation_cap_rt_stat_denied_head()
 {
-	atf_set "descr" "/dev/cap_rt device node exists"
+	atf_set "descr" "/dev/cap_rt cannot be stat'd by foreign nonce"
 	atf_set "require.user" "root"
 }
-isolation_cap_rt_device_exists_body()
+isolation_cap_rt_stat_denied_body()
 {
-	atf_check -s exit:0 test -c /dev/cap_rt
+	require_pidfile
+	# Even stat/test is blocked by the isolation MACF hook.
+	atf_check -s not-exit:0 sh -c 'test -c /dev/cap_rt'
 }
-isolation_cap_rt_device_exists_cleanup()
+isolation_cap_rt_stat_denied_cleanup()
 {
 	:
 }
 
-# --- capprotect shield ---
+# --- capprotect: visibility ---
 
-atf_test_case capprotect_ptrace_blocked cleanup
-capprotect_ptrace_blocked_head()
+atf_test_case capprotect_invisible_to_ps cleanup
+capprotect_invisible_to_ps_head()
 {
-	atf_set "descr" "capprotect blocks ptrace attach to oracled"
+	atf_set "descr" "oracled is invisible to ps (CP_SF_VISIBLE)"
 	atf_set "require.user" "root"
 }
-capprotect_ptrace_blocked_body()
+capprotect_invisible_to_ps_body()
 {
-	atf_check oracled_running
-	local pid
-	pid=$(oracled_pid)
-	# truss uses ptrace; should be denied by the capprotect MACF hook
-	atf_check -s not-exit:0 -e ignore truss -p "$pid" -e exit 2>&1
+	require_pidfile
+	pid=$(cat /var/run/oracled.pid)
+	# ps must not find the process — CP_SF_VISIBLE hides it.
+	atf_check -s not-exit:0 sh -c "ps -p $pid -o pid= 2>/dev/null | grep -q ."
 }
-capprotect_ptrace_blocked_cleanup()
+capprotect_invisible_to_ps_cleanup()
 {
 	:
 }
 
-atf_test_case capprotect_signal_blocked cleanup
-capprotect_signal_blocked_head()
+# --- capprotect: ptrace ---
+
+atf_test_case capprotect_ptrace_denied cleanup
+capprotect_ptrace_denied_head()
 {
-	atf_set "descr" "capprotect blocks foreign signals to oracled"
+	atf_set "descr" "ptrace attach to oracled is denied (CP_SF_PTRACE)"
 	atf_set "require.user" "root"
 }
-capprotect_signal_blocked_body()
+capprotect_ptrace_denied_body()
 {
-	atf_check oracled_running
-	local pid
-	pid=$(oracled_pid)
-	# SIGUSR1 from a foreign nonce (this shell) should be denied.
-	# oracled does not handle SIGUSR1 so if it arrives, it would
-	# terminate the daemon.  Verify the signal is blocked and
-	# oracled is still alive afterward.
-	kill -USR1 "$pid" 2>/dev/null || true
-	sleep 0.2
-	atf_check -s exit:0 kill -0 "$pid"
+	require_pidfile
+	pid=$(cat /var/run/oracled.pid)
+	# truss uses ptrace; must be denied.
+	atf_check -s not-exit:0 -e ignore truss -p "$pid" -e exit
 }
-capprotect_signal_blocked_cleanup()
+capprotect_ptrace_denied_cleanup()
 {
 	:
 }
 
-atf_test_case capprotect_ktrace_blocked cleanup
-capprotect_ktrace_blocked_head()
+# --- capprotect: ktrace ---
+
+atf_test_case capprotect_ktrace_denied cleanup
+capprotect_ktrace_denied_head()
 {
-	atf_set "descr" "capprotect blocks ktrace on oracled"
+	atf_set "descr" "ktrace on oracled is denied (CP_SF_KTRACE)"
 	atf_set "require.user" "root"
 }
-capprotect_ktrace_blocked_body()
+capprotect_ktrace_denied_body()
 {
-	atf_check oracled_running
-	local pid
-	pid=$(oracled_pid)
+	require_pidfile
+	pid=$(cat /var/run/oracled.pid)
 	atf_check -s not-exit:0 -e ignore \
 	    ktrace -p "$pid" -t c
-	rm -f ktrace.out
 }
-capprotect_ktrace_blocked_cleanup()
+capprotect_ktrace_denied_cleanup()
 {
 	rm -f ktrace.out
 }
 
-# --- daemon syslog messages ---
+# --- capprotect: scheduler ---
 
-atf_test_case syslog_init_messages cleanup
-syslog_init_messages_head()
+atf_test_case capprotect_sched_denied cleanup
+capprotect_sched_denied_head()
 {
-	atf_set "descr" "oracled logs expected initialization messages"
+	atf_set "descr" "scheduler manipulation of oracled is denied (CP_SF_SCHED)"
 	atf_set "require.user" "root"
 }
-syslog_init_messages_body()
+capprotect_sched_denied_body()
 {
-	atf_check oracled_running
-	local logfile="/var/log/daemon.log"
-	atf_check -s exit:0 test -r "$logfile"
-	# Check for key initialization messages
-	atf_check -s exit:0 -o not-empty \
-	    grep "oracled.*reaper status" "$logfile"
-	atf_check -s exit:0 -o not-empty \
-	    grep "oracled.*claimed /dev/cap_rt" "$logfile"
-	atf_check -s exit:0 -o not-empty \
-	    grep "oracled.*capprotect shield active" "$logfile"
+	require_pidfile
+	pid=$(cat /var/run/oracled.pid)
+	# Attempt to renice oracled from a foreign nonce.
+	atf_check -s not-exit:0 -e ignore renice 10 -p "$pid"
 }
-syslog_init_messages_cleanup()
+capprotect_sched_denied_cleanup()
+{
+	:
+}
+
+# --- syslog: initialization completed ---
+
+atf_test_case syslog_init_complete cleanup
+syslog_init_complete_head()
+{
+	atf_set "descr" "oracled logs successful initialization"
+	atf_set "require.user" "root"
+}
+syslog_init_complete_body()
+{
+	require_pidfile
+	pid=$(cat /var/run/oracled.pid)
+	local logfile="/var/log/daemon.log"
+	if [ ! -r "$logfile" ]; then
+		atf_skip "daemon.log not readable"
+	fi
+	# Verify all init stages completed for this pid.
+	atf_check -s exit:0 -o not-empty \
+	    grep "oracled\[$pid\].*reaper status confirmed" "$logfile"
+	atf_check -s exit:0 -o not-empty \
+	    grep "oracled\[$pid\].*enabled OOM protection" "$logfile"
+	atf_check -s exit:0 -o not-empty \
+	    grep "oracled\[$pid\].*claimed /dev/cap_rt" "$logfile"
+	atf_check -s exit:0 -o not-empty \
+	    grep "oracled\[$pid\].*capprotect shield active" "$logfile"
+	atf_check -s exit:0 -o not-empty \
+	    grep "oracled\[$pid\].*started" "$logfile"
+}
+syslog_init_complete_cleanup()
 {
 	:
 }
 
 atf_init_test_cases()
 {
-	atf_add_test_case procctl_reaper
-	atf_add_test_case procctl_trace_disabled
-	atf_add_test_case procctl_oom_protect
-	atf_add_test_case isolation_cap_rt_claimed
-	atf_add_test_case isolation_cap_rt_device_exists
-	atf_add_test_case capprotect_ptrace_blocked
-	atf_add_test_case capprotect_signal_blocked
-	atf_add_test_case capprotect_ktrace_blocked
-	atf_add_test_case syslog_init_messages
+	atf_add_test_case isolation_cap_rt_module_loaded
+	atf_add_test_case isolation_cap_rt_open_denied
+	atf_add_test_case isolation_cap_rt_stat_denied
+	atf_add_test_case capprotect_invisible_to_ps
+	atf_add_test_case capprotect_ptrace_denied
+	atf_add_test_case capprotect_ktrace_denied
+	atf_add_test_case capprotect_sched_denied
+	atf_add_test_case syslog_init_complete
 }

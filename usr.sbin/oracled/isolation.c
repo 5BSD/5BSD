@@ -98,7 +98,6 @@ isolate_cap_rt_device(void)
  *
  * Base flags (always active):
  *   CP_SF_PTRACE   — block debugger attach
- *   CP_SF_SIGNAL   — block signals from foreign nonces
  *   CP_SF_WAIT     — block wait4 status scraping
  *   CP_SF_SCHED    — block priority/affinity manipulation
  *   CP_SF_KTRACE   — block passive syscall tracing
@@ -108,13 +107,19 @@ isolate_cap_rt_device(void)
  *   CP_SF_CORE     — suppress core dumps to prevent secret leakage
  *
  * Never included:
+ *   CP_SF_SIGNAL   — blocks all signals including SIGTERM, which
+ *                    prevents rc(8) from managing the daemon.
+ *                    rc uses kill -0 to check liveness and SIGTERM
+ *                    to request shutdown; both are blocked by this
+ *                    flag.  Revisit when oracled has a control
+ *                    socket for graceful shutdown.
  *   CP_SF_SIGKILL  — must remain killable from a root console.
  *   CP_SF_NOPRIVS  — oracled needs root to manage processes.
  *   CP_SF_NOFORK   — oracled will spawn service children.
  *   CP_SF_NOIPC    — may need IPC for future service management.
  *   CP_SF_NOFDRECV — oracled will receive fds from clients.
  */
-#define	ORACLED_SHIELD_BASE	(CP_SF_PTRACE | CP_SF_SIGNAL | \
+#define	ORACLED_SHIELD_BASE	(CP_SF_PTRACE | \
 				 CP_SF_WAIT | CP_SF_SCHED | CP_SF_KTRACE)
 #define	ORACLED_SHIELD_PROD	(CP_SF_VISIBLE | CP_SF_CORE)
 
