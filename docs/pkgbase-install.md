@@ -45,16 +45,30 @@ pkg -vv | sed -n '/Repositories:/,$p'
 cd /path/to/5BSD
 make -j$(sysctl -n hw.ncpu) buildworld KERNCONF=5BSD
 make -j$(sysctl -n hw.ncpu) buildkernel KERNCONF=5BSD
-make stage-packages KERNCONF=5BSD
-make create-packages KERNCONF=5BSD
+make -j$(sysctl -n hw.ncpu) stage-packages KERNCONF=5BSD
+make -j$(sysctl -n hw.ncpu) create-packages KERNCONF=5BSD
 ```
 
-If `create-packages` fails after world/kernel packages are written
-because source packages were not staged, finish the repo manually:
+After `create-packages` finishes, build the repo catalog and update
+the `latest` symlink.  Find the newest snapshot directory under the
+repo output:
+
+```sh
+ls /usr/obj/<srcdir>/repo/${ABI}/
+```
+
+Then generate the catalog and point `latest` at it:
 
 ```sh
 pkg repo /usr/obj/<srcdir>/repo/${ABI}/<version>
 ln -snf <version> /usr/obj/<srcdir>/repo/${ABI}/latest
+```
+
+For example, with source in `/usr/src`:
+
+```sh
+pkg repo /usr/obj/usr/src/repo/FreeBSD:16:aarch64/16.snap20260528233101
+ln -snf 16.snap20260528233101 /usr/obj/usr/src/repo/FreeBSD:16:aarch64/latest
 ```
 
 ## Install Or Upgrade
@@ -83,5 +97,19 @@ uname -i
 kldstat | grep cap_rt
 ```
 
-For later updates, rebuild packages, create a new boot environment,
-then run `pkg update && pkg upgrade`.
+For later updates, rebuild packages, regenerate the catalog, create a
+new boot environment, then upgrade:
+
+```sh
+cd /usr/src
+make -j$(sysctl -n hw.ncpu) buildworld KERNCONF=5BSD
+make -j$(sysctl -n hw.ncpu) buildkernel KERNCONF=5BSD
+make -j$(sysctl -n hw.ncpu) stage-packages KERNCONF=5BSD
+make -j$(sysctl -n hw.ncpu) create-packages KERNCONF=5BSD
+pkg repo /usr/obj/usr/src/repo/FreeBSD:16:aarch64/<new-version>
+ln -snf <new-version> /usr/obj/usr/src/repo/FreeBSD:16:aarch64/latest
+bectl create pre-upgrade
+pkg update -f
+pkg upgrade
+reboot
+```
