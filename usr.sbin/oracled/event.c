@@ -32,6 +32,8 @@ shutdown_and_exit(int sig)
 	if (!test_mode)
 		kill_subtree();
 	reap_children();
+	if (isolation_fd >= 0)
+		close(isolation_fd);
 	if (cap_rt_fd >= 0)
 		close(cap_rt_fd);
 	pidfile_remove(pidfh);

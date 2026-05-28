@@ -18,6 +18,7 @@
 
 struct pidfh	*pidfh;
 int		 cap_rt_fd = -1;
+int		 isolation_fd = -1;
 bool		 foreground;
 bool		 test_mode;
 bool		 running = true;
@@ -88,10 +89,14 @@ main(int argc, char *argv[])
 
 	if (!test_mode) {
 		cap_rt_fd = open("/dev/cap_rt", O_RDWR | O_CLOEXEC);
-		if (cap_rt_fd == -1)
+		if (cap_rt_fd == -1) {
 			syslog(LOG_WARNING, "open /dev/cap_rt failed: %m");
-		else
+		} else {
 			syslog(LOG_INFO, "opened /dev/cap_rt control device");
+			if (isolate_cap_rt_device() == -1)
+				syslog(LOG_WARNING,
+				    "failed to isolate /dev/cap_rt");
+		}
 	} else {
 		syslog(LOG_INFO, "test mode: skipping /dev/cap_rt open");
 	}

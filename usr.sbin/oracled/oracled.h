@@ -15,6 +15,7 @@
 /* Globals (defined in oracled.c). */
 extern struct pidfh	*pidfh;
 extern int		 cap_rt_fd;
+extern int		 isolation_fd;
 extern bool		 foreground;
 extern bool		 test_mode;
 extern bool		 running;
@@ -26,5 +27,8 @@ void	event_loop(void);
 void	reap_children(void);
 void	kill_subtree(void);
 void	apply_procctl_self_policy(void);
+
+/* isolation.c */
+int	isolate_cap_rt_device(void);
 
 #endif /* ORACLED_H */
