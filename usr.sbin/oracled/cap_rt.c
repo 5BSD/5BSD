@@ -130,6 +130,7 @@ claim_path(const char *path)
 	fd = open(path, O_RDONLY | O_CLOEXEC);
 	if (fd == -1) {
 		syslog(LOG_WARNING, "isolation: open %s: %m", path);
+		ORACLED_PROBE_CLAIM_PATH_FAIL(path);
 		return (-1);
 	}
 

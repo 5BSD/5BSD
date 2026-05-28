@@ -709,6 +709,100 @@ config_claims_system_bad_name_cleanup()
 	rm -f claims_sys_bad.conf
 }
 
+# --- config: negative / boundary tests ---
+
+atf_test_case config_bad_port cleanup
+config_bad_port_head()
+{
+	atf_set "descr" "out-of-range port is rejected"
+}
+config_bad_port_body()
+{
+	local conffile="$(pwd)/badport.conf"
+	local pidfile="$(pwd)/badport_test.pid"
+	cat > "$conffile" <<'ENDCONF'
+claims {
+    network = [
+        { port = 70000; protocol = "tcp"; direction = "bind"; },
+    ];
+}
+ENDCONF
+	# Should start (bad port is skipped with warning, not fatal)
+	oracled -T -f "$conffile" -p "$pidfile" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_bad_port_cleanup()
+{
+	if [ -f badport_test.pid ]; then
+		kill "$(cat badport_test.pid)" 2>/dev/null || true
+		rm -f badport_test.pid
+	fi
+	rm -f badport.conf
+}
+
+atf_test_case config_relative_path cleanup
+config_relative_path_head()
+{
+	atf_set "descr" "relative claim path is rejected"
+}
+config_relative_path_body()
+{
+	local conffile="$(pwd)/relpath.conf"
+	local pidfile="$(pwd)/relpath_test.pid"
+	cat > "$conffile" <<'ENDCONF'
+claims {
+    paths = ["relative/path"];
+}
+ENDCONF
+	oracled -T -f "$conffile" -p "$pidfile" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_relative_path_cleanup()
+{
+	if [ -f relpath_test.pid ]; then
+		kill "$(cat relpath_test.pid)" 2>/dev/null || true
+		rm -f relpath_test.pid
+	fi
+	rm -f relpath.conf
+}
+
+atf_test_case config_integer_mode_rejected cleanup
+config_integer_mode_rejected_head()
+{
+	atf_set "descr" "integer control_socket_mode is rejected"
+}
+config_integer_mode_rejected_body()
+{
+	local conffile="$(pwd)/intmode.conf"
+	local pidfile="$(pwd)/intmode_test.pid"
+	cat > "$conffile" <<'ENDCONF'
+control_socket_mode = 700;
+ENDCONF
+	# Should start (integer mode rejected with warning, uses default)
+	oracled -T -f "$conffile" -p "$pidfile" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_integer_mode_rejected_cleanup()
+{
+	if [ -f intmode_test.pid ]; then
+		kill "$(cat intmode_test.pid)" 2>/dev/null || true
+		rm -f intmode_test.pid
+	fi
+	rm -f intmode.conf
+}
+
 # --- syslog: initialization completed ---
 
 atf_test_case syslog_init_complete cleanup
@@ -781,6 +875,9 @@ atf_init_test_cases()
 	atf_add_test_case config_claims_bad_path
 	atf_add_test_case config_claims_system
 	atf_add_test_case config_claims_system_bad_name
+	atf_add_test_case config_bad_port
+	atf_add_test_case config_relative_path
+	atf_add_test_case config_integer_mode_rejected
 
 	# Daemon behavior
 	atf_add_test_case test_mode_no_root

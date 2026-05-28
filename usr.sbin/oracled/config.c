@@ -89,7 +89,13 @@ cfg_mode(const ucl_object_t *root, struct oracled_config *cfg)
 			return;
 		}
 	} else if (ucl_object_type(o) == UCL_INT) {
-		val = (long)ucl_object_toint(o);
+		/*
+		 * Integer mode is ambiguous: 700 is decimal, not
+		 * octal 0700.  Reject and require a quoted string.
+		 */
+		fprintf(stderr, "oracled: control_socket_mode must be "
+		    "a quoted string (e.g., \"0700\"), not an integer\n");
+		return;
 	} else {
 		return;
 	}
@@ -138,6 +144,14 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 		    != NULL) {
 			if (ucl_object_type(elem) != UCL_STRING)
 				continue;
+			s = ucl_object_tostring(elem);
+			if (s[0] == '\0')
+				continue;
+			if (s[0] != '/') {
+				fprintf(stderr, "oracled: claim path "
+				    "must be absolute: %s\n", s);
+				continue;
+			}
 			if (cfg->nclaim_paths >= ORACLED_MAX_PATH_CLAIMS) {
 				fprintf(stderr, "oracled: too many "
 				    "claim paths (max %d)\n",
@@ -145,7 +159,7 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 				break;
 			}
 			strlcpy(cfg->claim_paths[cfg->nclaim_paths],
-			    ucl_object_tostring(elem), PATH_MAX);
+			    s, PATH_MAX);
 			cfg->nclaim_paths++;
 		}
 	}
@@ -170,8 +184,15 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 			memset(nc, 0, sizeof(*nc));
 
 			v = ucl_object_lookup(elem, "port");
-			if (v != NULL && ucl_object_type(v) == UCL_INT)
-				nc->port = (uint16_t)ucl_object_toint(v);
+			if (v != NULL && ucl_object_type(v) == UCL_INT) {
+				int64_t pv = ucl_object_toint(v);
+				if (pv < 0 || pv > 65535) {
+					fprintf(stderr, "oracled: invalid "
+					    "port: %jd\n", (intmax_t)pv);
+					continue;
+				}
+				nc->port = (uint16_t)pv;
+			}
 
 			v = ucl_object_lookup(elem, "protocol");
 			if (v != NULL &&
@@ -181,6 +202,9 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 					nc->protocol = IPPROTO_TCP;
 				else if (strcmp(s, "udp") == 0)
 					nc->protocol = IPPROTO_UDP;
+				else
+					fprintf(stderr, "oracled: unknown "
+					    "protocol: %s\n", s);
 			}
 
 			v = ucl_object_lookup(elem, "direction");
