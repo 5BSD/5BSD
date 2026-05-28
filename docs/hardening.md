@@ -41,11 +41,11 @@ their deployment.
 
 integrity {
     ptrace = true;
-    signal = true;
-    visible = true;
+    signal = false;         # leave signalable for rc(8)
+    visible = false;        # leave visible for ps/top
     wait = true;
     sched = true;
-    core = true;
+    core = false;           # allow core dumps for debugging
     ktrace = true;
 }
 
@@ -61,11 +61,8 @@ claims {
         "/boot",
 
         # --- System binaries ---
-        # Prevent trojan replacement of system programs.
-        "/sbin",
+        # Prevent trojan replacement of privileged programs.
         "/usr/sbin",
-        "/usr/bin",
-        "/usr/lib",
         "/usr/libexec",
 
         # --- Credentials and configuration ---
