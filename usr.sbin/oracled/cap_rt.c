@@ -84,7 +84,9 @@ log_integrity_flags(uint32_t flags)
 	for (i = 0; i < nitems(integrity_flag_names); i++) {
 		if (!(flags & integrity_flag_names[i].flag))
 			continue;
-		if (off > 0 && off < sizeof(buf) - 1)
+		if (off >= sizeof(buf) - 1)
+			break;
+		if (off > 0)
 			buf[off++] = ' ';
 		off += strlcpy(buf + off, integrity_flag_names[i].name,
 		    sizeof(buf) - off);
@@ -207,7 +209,8 @@ claim_net(const struct oracled_net_claim *nc)
 static int
 isolate_resources(void)
 {
-	int claimed, failed, i, total;
+	unsigned int i;
+	int claimed, failed, total;
 
 	isolation_fd = cap_rt_svc_connect("isolation");
 	if (isolation_fd == -1)

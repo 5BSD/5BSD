@@ -43,9 +43,9 @@ struct oracled_config {
 
 	/* Claims — resources under oracle control */
 	char		claim_paths[ORACLED_MAX_PATH_CLAIMS][PATH_MAX];
-	int		nclaim_paths;
+	unsigned int	nclaim_paths;
 	struct oracled_net_claim claim_net[ORACLED_MAX_NET_CLAIMS];
-	int		nclaim_net;
+	unsigned int	nclaim_net;
 	uint32_t	claim_system;	/* SYS_GATE_* bitmask */
 
 	/* Set by config_load if a file was actually parsed. */

@@ -15,6 +15,7 @@
  */
 
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/un.h>
 
 #include <errno.h>
@@ -40,8 +41,14 @@ struct ctl_reply {
 static int
 readn(int fd, void *buf, size_t len)
 {
+	struct timeval tv;
 	ssize_t n;
 	size_t off;
+
+	/* 30-second timeout protects against unresponsive daemon. */
+	tv.tv_sec = 30;
+	tv.tv_usec = 0;
+	(void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
 	for (off = 0; off < len; ) {
 		n = read(fd, (char *)buf + off, len - off);
@@ -115,6 +122,11 @@ oraclectl_open(const char *path)
 
 	if (path == NULL)
 		path = ORACLED_CTL_SOCK;
+
+	if (strlen(path) >= sizeof(un.sun_path)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
 
 	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (fd == -1)

@@ -79,13 +79,18 @@ cfg_mode(const ucl_object_t *root, struct oracled_config *cfg)
 		return;
 
 	if (ucl_object_type(o) == UCL_STRING) {
+		const char *ms = ucl_object_tostring(o);
+		if (ms[0] == '\0') {
+			fprintf(stderr, "oracled: empty "
+			    "control_socket_mode\n");
+			return;
+		}
 		errno = 0;
-		val = strtol(ucl_object_tostring(o), &endp, 0);
-		if (*endp != '\0' || errno == ERANGE || val < 0 ||
-		    val > 07777) {
+		val = strtol(ms, &endp, 0);
+		if (endp == ms || *endp != '\0' || errno == ERANGE ||
+		    val < 0 || val > 07777) {
 			fprintf(stderr, "oracled: invalid "
-			    "control_socket_mode: %s\n",
-			    ucl_object_tostring(o));
+			    "control_socket_mode: %s\n", ms);
 			return;
 		}
 	} else if (ucl_object_type(o) == UCL_INT) {

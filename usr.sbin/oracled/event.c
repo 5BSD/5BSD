@@ -98,12 +98,15 @@ event_loop(void)
 			howto = 0;
 			action = ctl_handle(&howto);
 			if (action & CTL_ACTION_REBOOT) {
-				shutdown_and_exit(0);
+				syslog(LOG_INFO,
+				    "stopping via control socket");
 				reboot(howto);
+				/* reboot(2) should not return. */
 				syslog(LOG_CRIT, "reboot(2) failed: %m");
 				_exit(1);
 			} else if (action & CTL_ACTION_SHUTDOWN) {
 				shutdown_and_exit(0);
+				break;	/* exit loop immediately */
 			}
 			continue;
 		}
@@ -121,7 +124,7 @@ event_loop(void)
 		case SIGTERM:
 		case SIGINT:
 			shutdown_and_exit((int)kev.ident);
-			break;
+			break;	/* od.running is false, loop exits */
 		default:
 			break;
 		}
