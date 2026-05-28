@@ -51,6 +51,21 @@
  *       FI_QF_CLAIMED  — vnode is isolated
  *       FI_QF_MINE     — isolated by the caller's nonce
  *
+ * ACCESS TOKENS
+ *
+ *   FI_OP_MINT
+ *     Create an access token fd for a specific claim.  The token
+ *     is returned as a reply fd.  Only the claim owner (same nonce)
+ *     can mint tokens.  Pass the target vnode fd to identify which
+ *     claim.  For network claims, use FI_OP_MINT_NET with the
+ *     endpoint description in the payload.
+ *
+ *   FI_OP_AUTHORIZE
+ *     Called on a token fd by the process that received it.  Adds
+ *     the caller's nonce to the claim's authorized set.  The
+ *     authorization persists as long as the token fd is open.
+ *     Closing the token fd revokes the authorization.
+ *
  * ENFORCEMENT
  *
  *   The service registers MACF hooks for all vnode check operations
@@ -58,7 +73,8 @@
  *   table:
  *     - No entry          → allow (default-open)
  *     - Entry, nonce match → allow
- *     - Entry, nonce mismatch → EACCES
+ *     - Entry, authorized nonce → allow
+ *     - Entry, nonce mismatch and not authorized → EACCES
  *
  * LIFECYCLE
  *
@@ -90,6 +106,12 @@
 #define	FI_OP_RELEASE_NET	5	/* release network claim */
 /* FI_OP_QUERY_NET (6) reserved — not yet implemented */
 
+/* --- Access token operations --- */
+
+#define	FI_OP_MINT		10	/* mint vnode access token (reply fd) */
+#define	FI_OP_AUTHORIZE		11	/* activate token (add caller nonce) */
+#define	FI_OP_MINT_NET		12	/* mint network access token (reply fd) */
+
 /* --- Mount operations (reserved, not yet implemented) --- */
 #if 0
 #define	FI_OP_CLAIM_MOUNT	7	/* claim mount point */
@@ -99,6 +121,7 @@
 /* Query reply flags */
 #define	FI_QF_CLAIMED		0x01	/* resource is isolated by someone */
 #define	FI_QF_MINE		0x02	/* isolated by caller's nonce */
+#define	FI_QF_AUTHORIZED	0x04	/* caller is authorized via token */
 
 /* Vnode request (ops 1-3): pass target fd via req_fds[0] */
 struct fi_request {

@@ -88,9 +88,30 @@ struct fi_net_claim {
 	struct cap_rt_instance *fn_inst;
 };
 
+/*
+ * Authorization table: (accessor_nonce, owner_nonce) pairs.
+ * Keyed by owner_nonce (the claim holder).  When a MACF hook
+ * finds a claim, it checks whether the caller's nonce is in the
+ * auth table for that claim's nonce.
+ *
+ * Auth entries are bound to a token instance fd.  When the token
+ * fd closes, the auth entry is removed automatically.
+ */
+#define	FI_AUTH_HASH_SIZE	32
+
+struct fi_auth {
+	LIST_ENTRY(fi_auth)	fa_link;
+	uint64_t		fa_accessor;	/* authorized nonce */
+	uint64_t		fa_owner;	/* claim owner nonce */
+	struct cap_rt_instance	*fa_inst;	/* token instance (lifetime) */
+};
+
 struct fi_priv {
 	LIST_HEAD(, fi_claim)	    fip_claims;	    /* vnode claims */
 	LIST_HEAD(, fi_net_claim)   fip_net_claims; /* network claims */
+	/* Token state (for instances created by FI_OP_MINT). */
+	int			    fip_is_token;
+	uint64_t		    fip_token_owner; /* claim owner nonce */
 };
 
 static LIST_HEAD(, fi_claim)	*fi_hash;
@@ -98,6 +119,58 @@ static u_long			 fi_hashmask;
 static struct rwlock		 fi_lock;
 static volatile u_int		 fi_claim_count;	/* fast-path for file hooks */
 static volatile u_int		 fi_dir_claim_count;	/* fast-path for lookup hook */
+
+static LIST_HEAD(, fi_auth)	*fi_auth_hash;
+static u_long			 fi_auth_hashmask;
+static struct rwlock		 fi_auth_lock;
+
+#define	FI_AUTH_BUCKET(nonce)	(&fi_auth_hash[(nonce) & fi_auth_hashmask])
+
+static int
+fi_is_authorized(uint64_t accessor, uint64_t owner)
+{
+	struct fi_auth *fa;
+
+	rw_assert(&fi_auth_lock, RA_RLOCKED);
+	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
+		if (fa->fa_accessor == accessor && fa->fa_owner == owner)
+			return (1);
+	}
+	return (0);
+}
+
+static void
+fi_auth_add(uint64_t accessor, uint64_t owner, struct cap_rt_instance *inst)
+{
+	struct fi_auth *fa;
+
+	fa = malloc(sizeof(*fa), M_FILE_ISOLATION, M_WAITOK);
+	fa->fa_accessor = accessor;
+	fa->fa_owner = owner;
+	fa->fa_inst = inst;
+
+	rw_wlock(&fi_auth_lock);
+	LIST_INSERT_HEAD(FI_AUTH_BUCKET(owner), fa, fa_link);
+	rw_wunlock(&fi_auth_lock);
+}
+
+static void
+fi_auth_remove_by_inst(struct cap_rt_instance *inst)
+{
+	struct fi_auth *fa, *fa_tmp;
+	u_long i;
+
+	rw_wlock(&fi_auth_lock);
+	for (i = 0; i <= fi_auth_hashmask; i++) {
+		LIST_FOREACH_SAFE(fa, &fi_auth_hash[i], fa_link, fa_tmp) {
+			if (fa->fa_inst == inst) {
+				LIST_REMOVE(fa, fa_link);
+				free(fa, M_FILE_ISOLATION);
+			}
+		}
+	}
+	rw_wunlock(&fi_auth_lock);
+}
 
 static LIST_HEAD(, fi_net_claim) *fi_net_hash;
 static u_long			  fi_net_hashmask;
@@ -139,8 +212,7 @@ static int
 fi_check_vp(struct ucred *cred, struct vnode *vp)
 {
 	struct fi_claim *c;
-	uint64_t caller_nonce;
-	uint64_t owner_nonce __unused;
+	uint64_t caller_nonce, owner_nonce;
 
 	if (atomic_load_acq_int(&fi_claim_count) == 0)
 		return (0);
@@ -153,12 +225,23 @@ fi_check_vp(struct ucred *cred, struct vnode *vp)
 		rw_runlock(&fi_lock);
 		return (0);
 	}
-	if (caller_nonce != 0 && caller_nonce == c->fi_nonce) {
+	owner_nonce = c->fi_nonce;
+	if (caller_nonce != 0 && caller_nonce == owner_nonce) {
 		rw_runlock(&fi_lock);
 		return (0);
 	}
-	owner_nonce = c->fi_nonce;
 	rw_runlock(&fi_lock);
+
+	/* Check authorization table — caller may hold a token. */
+	if (caller_nonce != 0) {
+		rw_rlock(&fi_auth_lock);
+		if (fi_is_authorized(caller_nonce, owner_nonce)) {
+			rw_runlock(&fi_auth_lock);
+			return (0);
+		}
+		rw_runlock(&fi_auth_lock);
+	}
+
 	SDT_PROBE3(cap_rt_isolation, , , deny, "vnode",
 	    owner_nonce, caller_nonce);
 	return (EACCES);
@@ -327,6 +410,16 @@ fi_check_lookup(struct ucred *cred, struct vnode *dvp,
 	}
 	owner_nonce = c->fi_nonce;
 	rw_runlock(&fi_lock);
+
+	if (caller_nonce != 0) {
+		rw_rlock(&fi_auth_lock);
+		if (fi_is_authorized(caller_nonce, owner_nonce)) {
+			rw_runlock(&fi_auth_lock);
+			return (0);
+		}
+		rw_runlock(&fi_auth_lock);
+	}
+
 	SDT_PROBE3(cap_rt_isolation, , , deny, "lookup",
 	    owner_nonce, caller_nonce);
 	return (EACCES);
@@ -577,6 +670,16 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 
 		if (found_claim) {
 			rw_runlock(&fi_net_lock);
+			/* Check auth table before denying. */
+			if (caller_nonce != 0 && denied_nonce != 0) {
+				rw_rlock(&fi_auth_lock);
+				if (fi_is_authorized(caller_nonce,
+				    denied_nonce)) {
+					rw_runlock(&fi_auth_lock);
+					return (0);
+				}
+				rw_runlock(&fi_auth_lock);
+			}
 			SDT_PROBE3(cap_rt_isolation, , , deny, "net",
 			    denied_nonce, caller_nonce);
 			return (EACCES);
@@ -645,6 +748,16 @@ fi_check_socket_create(struct ucred *cred, int domain, int type __unused,
 					return (0);
 				}
 				rw_runlock(&fi_net_lock);
+				/* Check auth table. */
+				if (caller_nonce != 0) {
+					rw_rlock(&fi_auth_lock);
+					if (fi_is_authorized(caller_nonce,
+					    nc->fn_nonce)) {
+						rw_runlock(&fi_auth_lock);
+						return (0);
+					}
+					rw_runlock(&fi_auth_lock);
+				}
 				SDT_PROBE3(cap_rt_isolation, , , deny,
 				    "socket_create", nc->fn_nonce, caller_nonce);
 				return (EACCES);
@@ -805,9 +918,19 @@ fi_do_query(struct file *fp, uint64_t nonce, struct fi_reply *rpl)
 	rw_rlock(&fi_lock);
 	c = fi_claim_lookup(vp);
 	if (c != NULL) {
+		uint64_t owner = c->fi_nonce;
+
 		rpl->flags |= FI_QF_CLAIMED;
-		if (nonce != 0 && c->fi_nonce == nonce)
+		if (nonce != 0 && owner == nonce) {
 			rpl->flags |= FI_QF_MINE;
+		} else if (nonce != 0) {
+			rw_runlock(&fi_lock);
+			rw_rlock(&fi_auth_lock);
+			if (fi_is_authorized(nonce, owner))
+				rpl->flags |= FI_QF_AUTHORIZED;
+			rw_runlock(&fi_auth_lock);
+			return (0);
+		}
 	}
 	rw_runlock(&fi_lock);
 	return (0);
@@ -1082,6 +1205,113 @@ fi_call(struct cap_rt_instance *s,
 			return (EINVAL);
 		return (fi_do_release_net(priv, nr, caller_nonce));
 	}
+	case FI_OP_MINT: {
+		struct fi_claim *mc;
+		struct file *token_fp;
+		struct fi_priv *tp;
+		int error;
+
+		/*
+		 * Mint an access token for a vnode claim.  The caller
+		 * must be the claim owner (nonce match).  Pass the
+		 * target vnode fd in req_fds[0].
+		 */
+		if (priv->fip_is_token)
+			return (EINVAL);
+		if (nfds < 1)
+			return (EINVAL);
+		if (*reply_nfdsp < 1)
+			return (EINVAL);
+
+		if (fds[0]->f_vnode == NULL)
+			return (EINVAL);
+
+		rw_rlock(&fi_lock);
+		mc = fi_claim_lookup(fds[0]->f_vnode);
+		if (mc == NULL || mc->fi_nonce != caller_nonce) {
+			rw_runlock(&fi_lock);
+			return (mc == NULL ? ENOENT : EPERM);
+		}
+		rw_runlock(&fi_lock);
+
+		error = cap_rt_mint_fp(fi_svc, 0, &token_fp);
+		if (error != 0)
+			return (error);
+
+		tp = cap_rt_instance_get_priv(token_fp->f_data);
+		if (tp != NULL) {
+			tp->fip_is_token = 1;
+			tp->fip_token_owner = caller_nonce;
+		}
+
+		reply_fds[0] = token_fp;
+		*reply_nfdsp = 1;
+		*replylenp = sizeof(struct fi_reply);
+		return (0);
+	}
+
+	case FI_OP_MINT_NET: {
+		struct file *token_fp;
+		struct fi_priv *tp;
+		int error;
+
+		/*
+		 * Mint an access token for a network claim.  The
+		 * caller must own at least one network claim.
+		 */
+		if (priv->fip_is_token)
+			return (EINVAL);
+		if (*reply_nfdsp < 1)
+			return (EINVAL);
+
+		/* Verify the caller owns a matching net claim. */
+		{
+			struct fi_net_claim *nc;
+			bool found = false;
+
+			rw_rlock(&fi_net_lock);
+			LIST_FOREACH(nc, &priv->fip_net_claims, fn_instlink) {
+				if (nc->fn_nonce == caller_nonce) {
+					found = true;
+					break;
+				}
+			}
+			rw_runlock(&fi_net_lock);
+			if (!found)
+				return (ENOENT);
+		}
+
+		error = cap_rt_mint_fp(fi_svc, 0, &token_fp);
+		if (error != 0)
+			return (error);
+
+		tp = cap_rt_instance_get_priv(token_fp->f_data);
+		if (tp != NULL) {
+			tp->fip_is_token = 1;
+			tp->fip_token_owner = caller_nonce;
+		}
+
+		reply_fds[0] = token_fp;
+		*reply_nfdsp = 1;
+		*replylenp = sizeof(struct fi_reply);
+		return (0);
+	}
+
+	case FI_OP_AUTHORIZE:
+		/*
+		 * Called on a token fd.  Adds the caller's nonce to
+		 * the authorized set for the token's owner nonce.
+		 * The authorization lasts until this token fd closes.
+		 */
+		if (!priv->fip_is_token)
+			return (EINVAL);
+		if (priv->fip_token_owner == 0)
+			return (EINVAL);
+
+		fi_auth_add(caller_nonce, priv->fip_token_owner, s);
+		*replylenp = sizeof(struct fi_reply);
+		return (0);
+
 	default:
 		return (EOPNOTSUPP);
 	}
@@ -1136,6 +1366,9 @@ fi_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
 		rw_wunlock(&fi_net_lock);
 	}
 
+	/* Remove any auth entries created by this instance (token). */
+	fi_auth_remove_by_inst(s);
+
 	free(priv, M_FILE_ISOLATION);
 }
 
@@ -1180,6 +1413,16 @@ fi_check_create(struct ucred *cred, struct vnode *dvp,
 	}
 	owner_nonce = c->fi_nonce;
 	rw_runlock(&fi_lock);
+
+	if (caller_nonce != 0) {
+		rw_rlock(&fi_auth_lock);
+		if (fi_is_authorized(caller_nonce, owner_nonce)) {
+			rw_runlock(&fi_auth_lock);
+			return (0);
+		}
+		rw_runlock(&fi_auth_lock);
+	}
+
 	SDT_PROBE3(cap_rt_isolation, , , deny, "create",
 	    owner_nonce, caller_nonce);
 	return (EACCES);
@@ -1235,6 +1478,10 @@ cap_rt_isolation_modevent(module_t mod __unused, int type,
 		fi_net_hash = hashinit(FI_NET_HASH_SIZE, M_FILE_ISOLATION,
 		    &fi_net_hashmask);
 		rw_init(&fi_net_lock, "cap_rt_fi_net");
+
+		fi_auth_hash = hashinit(FI_AUTH_HASH_SIZE, M_FILE_ISOLATION,
+		    &fi_auth_hashmask);
+		rw_init(&fi_auth_lock, "cap_rt_fi_auth");
 
 		memset(&p, 0, sizeof(p));
 		p.name = "isolation";

@@ -2605,7 +2605,11 @@ ATF_TC_BODY(pair_stress, tc)
 		ATF_REQUIRE_MSG(cap_rt_recv(fd_b, buf, &rlen, NULL) == 0,
 		    "recv %d: %s", i, strerror(errno));
 		ATF_REQUIRE_EQ(rlen, sizeof(val));
-		ATF_CHECK_EQ(*(uint32_t *)buf, val);
+		{
+			uint32_t got;
+			memcpy(&got, buf, sizeof(got));
+			ATF_CHECK_EQ(got, val);
+		}
 	}
 
 	close(fd_b);
