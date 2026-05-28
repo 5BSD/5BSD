@@ -12,25 +12,42 @@
 #include <libutil.h>
 #include <stdbool.h>
 
-/* Globals (defined in oracled.c). */
+/*
+ * Daemon state — set by main(), read by all modules.
+ */
 extern struct pidfh	*pidfh;
-extern int		 cap_rt_fd;
-extern int		 isolation_fd;
-extern int		 capprotect_fd;
 extern bool		 foreground;
 extern bool		 test_mode;
 extern bool		 running;
 
-/* event.c */
+/*
+ * Control socket fd — set by control.c, read by event.c for
+ * kqueue registration.
+ */
+extern int		 control_fd;
+
+/* Return values from handle_control_connection(). */
+#define	CTL_ACTION_SHUTDOWN	0x01
+#define	CTL_ACTION_REBOOT	0x02
+
+/* Reboot flags set by control.c, read by event.c. */
+extern int		 reboot_howto;
+
+/* cap_rt.c — capability runtime lifecycle */
+int	cap_rt_setup(void);
+void	cap_rt_teardown(void);
+
+/* control.c — control socket lifecycle */
+int	setup_control_socket(void);
+void	teardown_control_socket(void);
+int	handle_control_connection(void);
+
+/* event.c — main event loop */
 void	event_loop(void);
 
-/* proc.c */
+/* proc.c — process management */
 void	reap_children(void);
 void	kill_subtree(void);
 void	apply_procctl_self_policy(void);
-
-/* isolation.c */
-int	isolate_cap_rt_device(void);
-int	shield_self(void);
 
 #endif /* ORACLED_H */

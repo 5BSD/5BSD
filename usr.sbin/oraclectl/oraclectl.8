@@ -1,0 +1,86 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd May 27, 2026
+.Dt ORACLECTL 8
+.Os
+.Sh NAME
+.Nm oraclectl
+.Nd control interface for oracled
+.Sh SYNOPSIS
+.Nm
+.Cm status
+.Nm
+.Cm shutdown
+.Nm
+.Cm reload
+.Nm
+.Cm kldload Ar module
+.Nm
+.Cm kldunload Ar module
+.Nm
+.Cm reboot
+.Sh DESCRIPTION
+.Nm
+sends administrative commands to a running
+.Xr oracled 8
+instance via its control socket at
+.Pa /var/run/oracled.sock .
+Each invocation connects, sends a single command, prints the
+result, and exits.
+.Pp
+The following commands are available:
+.Bl -tag -width "kldunload module"
+.It Cm status
+Query the daemon's status and uptime.
+This command does not require root privileges.
+.It Cm shutdown
+Request a graceful shutdown of
+.Xr oracled 8 .
+The daemon terminates its process subtree, releases all capability
+runtime resources, and exits.
+Requires root.
+.It Cm reload
+Request a configuration reload.
+Requires root.
+.It Cm kldload Ar module
+Load a kernel module through
+.Xr oracled 8 .
+The module is loaded by the daemon process, which may hold
+privileges or isolation claims that the caller does not.
+Requires root.
+.It Cm kldunload Ar module
+Unload a kernel module through
+.Xr oracled 8 .
+Requires root.
+.It Cm reboot
+Initiate a system reboot through
+.Xr oracled 8 .
+The daemon performs a graceful shutdown before rebooting.
+Requires root.
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Pp
+Privileged commands return
+.Er EX_NOPERM
+when executed by a non-root user.
+If
+.Xr oracled 8
+is not running,
+.Nm
+exits with
+.Er EX_UNAVAILABLE .
+.Sh FILES
+.Bl -tag -width "/var/run/oracled.sock"
+.It Pa /var/run/oracled.sock
+Unix domain socket used to communicate with
+.Xr oracled 8 .
+.El
+.Sh SEE ALSO
+.Xr kldload 8 ,
+.Xr oracled 8 ,
+.Xr reboot 8
+.Sh HISTORY
+.Nm
+first appeared in 5BSD.

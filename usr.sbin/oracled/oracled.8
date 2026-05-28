@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd May 21, 2026
+.Dd May 27, 2026
 .Dt ORACLED 8
 .Os
 .Sh NAME
@@ -17,23 +17,64 @@
 is the userspace service manager for the Oracle capability world.
 It is started by
 .Xr rc 8
-and is not a replacement for
-.Xr init 8 .
+and manages access to the
+.Xr cap_rt 4
+capability runtime.
 .Pp
 During startup,
 .Nm
-daemonizes, writes a pidfile, applies kernel process controls with
-.Xr procctl 2 ,
-opens
-.Pa /dev/cap_rt ,
-and waits for events.
-It uses
-.Xr kqueue 2
-to handle signals and child process exits.
+executes the following phases:
+.Bl -enum
+.It
+Daemonize, write pidfile, open syslog.
+.It
+Harden the process via
+.Xr procctl 2
+(subtree reaper, OOM protection, trace disable, signal-exit logging).
+.It
+Open
+.Pa /dev/cap_rt
+and claim it via the isolation service so that only
+.Nm
+can access the device.
+Foreign processes receive
+.Er EACCES
+from the MACF hook when attempting to open it.
+.It
+Shield itself via the capprotect service (block ptrace, ktrace,
+wait4, scheduler manipulation; hide from
+.Xr ps 1
+and
+.Xr top 1
+in production mode).
+.It
+Create a control socket at
+.Pa /var/run/oracled.sock
+for administrative commands.
+.It
+Enter the event loop.
+.El
+.Pp
+Administrative commands are sent via
+.Xr oraclectl 8 .
+The control socket supports shutdown, reload, kernel module
+loading and unloading, and system reboot.
+.Pp
+The control socket is interim infrastructure.
+The long-term plan replaces it with
+.Xr cap_rt 4
+pair channels when
+.Nm
+becomes the system init.
 .Sh OPTIONS
 .Bl -tag -width "-p pidfile"
 .It Fl d
 Run in the foreground and log to standard error as well as syslog.
+In this mode, the capprotect shield omits
+.Dv CP_SF_VISIBLE
+and
+.Dv CP_SF_CORE
+to ease debugging.
 .It Fl p Ar pidfile
 Write the process ID to
 .Ar pidfile
@@ -41,11 +82,12 @@ instead of
 .Pa /var/run/oracled.pid .
 .It Fl T
 Test mode.
-Run without requiring root, without daemonizing, and without applying
-privileged process or capability-runtime setup.
-This option is intended for automated tests.
+Run without requiring root, without daemonizing, and without
+applying privileged process controls, capability runtime setup,
+or the control socket.
+Intended for automated tests.
 .El
-.Sh PROCESS CONTROLS
+.Sh PROCESS HARDENING
 When not running in test mode,
 .Nm
 uses
@@ -53,28 +95,57 @@ uses
 to:
 .Bl -bullet
 .It
-become a reaper for its future child process subtree;
+Become a subtree reaper for future child processes.
 .It
-verify and log reaper status;
+Mark itself protected from OOM kills.
 .It
-mark itself protected from swap-exhaustion kills;
+Disable tracing and core dumps.
 .It
-disable tracing and core dumps; and
-.It
-enable kernel logging for fatal signal exits.
+Enable kernel logging for fatal signal exits.
 .El
 .Pp
-These controls do not provide authorization for ordinary signals sent by
-privileged users.
-Signal authorization and stronger access policy are expected to be provided by
-future CAP_RT and MAC policy integration.
+Additionally,
+.Nm
+activates a capprotect shield via the
+.Xr cap_rt 4
+MACF policy.
+The shield blocks ptrace attach, ktrace, wait4 status scraping,
+and scheduler manipulation from processes outside the
+.Nm
+fork family.
+In production mode (the default), the shield also hides
+.Nm
+from process enumeration and suppresses core dumps.
+.Sh DEVICE ISOLATION
+.Nm
+claims
+.Pa /dev/cap_rt
+through the cap_rt isolation service.
+Once claimed, only processes sharing the
+.Nm
+nonce (its fork family) can open the device.
+All other processes, including root, receive
+.Er EACCES .
+.Pp
+The claim is held by the isolation service instance fd.
+If
+.Nm
+exits or crashes, the kernel closes the fd and releases the
+claim automatically.
 .Sh FILES
-.Bl -tag -width "/var/run/oracled.pid"
+.Bl -tag -width "/var/run/oracled.sock"
 .It Pa /var/run/oracled.pid
 Default pidfile.
+.It Pa /var/run/oracled.sock
+Control socket.
+Accepts commands from
+.Xr oraclectl 8 .
+Mode 0700 (root only).
 .It Pa /dev/cap_rt
-CAP_RT control device opened by
-.Nm .
+CAP_RT control device.
+Isolated by
+.Nm
+at startup.
 .El
 .Sh EXIT STATUS
 .Ex -std
@@ -82,6 +153,7 @@ CAP_RT control device opened by
 .Xr kqueue 2 ,
 .Xr procctl 2 ,
 .Xr cap_rt 4 ,
+.Xr oraclectl 8 ,
 .Xr rc 8
 .Sh HISTORY
 .Nm

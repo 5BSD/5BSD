@@ -2,9 +2,15 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2026 Kory Heard
+ *
+ * Main event loop and shutdown sequencing.
+ *
+ * Uses kqueue(2) to multiplex signals and the control socket.
+ * Shutdown reverses the startup lifecycle (see oracled.c).
  */
 
 #include <sys/event.h>
+#include <sys/reboot.h>
 
 #include <err.h>
 #include <errno.h>
@@ -25,19 +31,24 @@ add_signal_event(int kq, int sig)
 		err(1, "kevent signal %d", sig);
 }
 
+/*
+ * Graceful shutdown.  reason > 0 is a signal number, 0 means
+ * the control socket requested it.
+ */
 static void
-shutdown_and_exit(int sig)
+shutdown_and_exit(int reason)
 {
-	syslog(LOG_INFO, "stopping on signal %d", sig);
+
+	if (reason > 0)
+		syslog(LOG_INFO, "stopping on signal %d", reason);
+	else
+		syslog(LOG_INFO, "stopping via control socket");
+
 	if (!test_mode)
 		kill_subtree();
 	reap_children();
-	if (capprotect_fd >= 0)
-		close(capprotect_fd);
-	if (isolation_fd >= 0)
-		close(isolation_fd);
-	if (cap_rt_fd >= 0)
-		close(cap_rt_fd);
+	teardown_control_socket();
+	cap_rt_teardown();
 	pidfile_remove(pidfh);
 	closelog();
 	running = false;
@@ -58,6 +69,12 @@ event_loop(void)
 	add_signal_event(kq, SIGTERM);
 	add_signal_event(kq, SIGINT);
 
+	if (control_fd >= 0) {
+		EV_SET(&kev, control_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+		if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
+			err(1, "kevent control socket");
+	}
+
 	while (running) {
 		nev = kevent(kq, NULL, 0, &kev, 1, NULL);
 		if (nev == -1) {
@@ -67,6 +84,20 @@ event_loop(void)
 		}
 		if (nev == 0)
 			continue;
+
+		if (kev.filter == EVFILT_READ &&
+		    (int)kev.ident == control_fd) {
+			int action;
+
+			action = handle_control_connection();
+			if (action & CTL_ACTION_REBOOT) {
+				shutdown_and_exit(0);
+				reboot(reboot_howto);
+			}
+			if (action & CTL_ACTION_SHUTDOWN)
+				shutdown_and_exit(0);
+			continue;
+		}
 
 		if (kev.filter != EVFILT_SIGNAL)
 			continue;

@@ -14,6 +14,36 @@ rcvar="oracled_enable"
 command="/usr/sbin/${name}"
 pidfile="/var/run/${name}.pid"
 
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+
+oracled_stop()
+{
+	if [ -S /var/run/oracled.sock ]; then
+		echo "Stopping ${name} via oraclectl."
+		/usr/sbin/oraclectl shutdown && return 0
+	fi
+	# Fallback: signal-based stop if control socket is unavailable.
+	if [ -f "${pidfile}" ]; then
+		echo "Stopping ${name} via signal."
+		kill -TERM "$(cat ${pidfile})" 2>/dev/null
+	fi
+}
+
+oracled_status()
+{
+	if [ -S /var/run/oracled.sock ]; then
+		/usr/sbin/oraclectl status && return 0
+	fi
+	# Fallback: pidfile check.
+	if [ -f "${pidfile}" ]; then
+		echo "${name} is running as pid $(cat ${pidfile})."
+		return 0
+	fi
+	echo "${name} is not running."
+	return 1
+}
+
 load_rc_config $name
 
 : ${oracled_enable:="YES"}

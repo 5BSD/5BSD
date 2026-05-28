@@ -43,6 +43,18 @@ Capabilities are represented as file descriptors of type
 Each capability is an instance of a kernel service, accessed through
 structured ioctls.
 .Pp
+The
+.Pa /dev/cap_rt
+device is normally claimed exclusively by
+.Xr oracled 8
+at boot via the isolation service.
+Once claimed, only
+.Xr oracled 8
+can open the device; all other processes receive
+.Er EACCES .
+Administrative access to capability services is provided through
+.Xr oraclectl 8 .
+.Pp
 The framework supports two messaging models:
 .Bl -tag -width "Synchronous"
 .It Sy Asynchronous
@@ -205,7 +217,9 @@ Wrong messaging model for this service.
 .El
 .Sh SEE ALSO
 .Xr capsicum 4 ,
-.Xr mac 4
+.Xr mac 4 ,
+.Xr oracled 8 ,
+.Xr oraclectl 8
 .Sh HISTORY
 The
 .Nm

@@ -56,6 +56,7 @@ SUBDIR=	adduser \
 	nmtree \
 	nologin \
 	oracled \
+	oraclectl \
 	pciconf \
 	periodic \
 	pnfsdscopymr \
