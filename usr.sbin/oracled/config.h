@@ -46,6 +46,7 @@ struct oracled_config {
 	int		nclaim_paths;
 	struct oracled_net_claim claim_net[ORACLED_MAX_NET_CLAIMS];
 	int		nclaim_net;
+	uint32_t	claim_system;	/* SYS_GATE_* bitmask */
 
 	/* Set by config_load if a file was actually parsed. */
 	bool		loaded_from_file;

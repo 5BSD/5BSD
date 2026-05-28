@@ -649,6 +649,66 @@ config_claims_bad_path_cleanup()
 	rm -f claims_bad.conf
 }
 
+atf_test_case config_claims_system cleanup
+config_claims_system_head()
+{
+	atf_set "descr" "claims.system gate names are parsed"
+}
+config_claims_system_body()
+{
+	local conffile="$(pwd)/claims_sys.conf"
+	local pidfile="$(pwd)/claims_sys_test.pid"
+	cat > "$conffile" <<'ENDCONF'
+claims {
+    system = ["kldload", "reboot"];
+}
+ENDCONF
+	oracled -T -f "$conffile" -p "$pidfile" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_claims_system_cleanup()
+{
+	if [ -f claims_sys_test.pid ]; then
+		kill "$(cat claims_sys_test.pid)" 2>/dev/null || true
+		rm -f claims_sys_test.pid
+	fi
+	rm -f claims_sys.conf
+}
+
+atf_test_case config_claims_system_bad_name cleanup
+config_claims_system_bad_name_head()
+{
+	atf_set "descr" "unknown system gate name warns but starts"
+}
+config_claims_system_bad_name_body()
+{
+	local conffile="$(pwd)/claims_sys_bad.conf"
+	local pidfile="$(pwd)/claims_sys_bad_test.pid"
+	cat > "$conffile" <<'ENDCONF'
+claims {
+    system = ["nosuchgate"];
+}
+ENDCONF
+	oracled -T -f "$conffile" -p "$pidfile" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_claims_system_bad_name_cleanup()
+{
+	if [ -f claims_sys_bad_test.pid ]; then
+		kill "$(cat claims_sys_bad_test.pid)" 2>/dev/null || true
+		rm -f claims_sys_bad_test.pid
+	fi
+	rm -f claims_sys_bad.conf
+}
+
 # --- syslog: initialization completed ---
 
 atf_test_case syslog_init_complete cleanup
@@ -719,6 +779,8 @@ atf_init_test_cases()
 	atf_add_test_case config_claims_paths
 	atf_add_test_case config_claims_network
 	atf_add_test_case config_claims_bad_path
+	atf_add_test_case config_claims_system
+	atf_add_test_case config_claims_system_bad_name
 
 	# Daemon behavior
 	atf_add_test_case test_mode_no_root

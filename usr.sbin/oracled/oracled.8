@@ -179,6 +179,26 @@ Foreign nonces receive
 .Er EACCES
 on bind or connect to claimed endpoints.
 Default: empty.
+.It Va system
+Array of system operation names to gate via the
+.Xr cap_rt_system 4
+service.
+Once claimed, even root is denied unless holding an authorized
+token from
+.Nm .
+Available operations:
+.Dq kldload ,
+.Dq kldunload ,
+.Dq kldstat ,
+.Dq reboot ,
+.Dq swapon ,
+.Dq swapoff ,
+.Dq sysctl ,
+.Dq kenv ,
+.Dq acct ,
+.Dq audit ,
+.Dq kenv_read .
+Default: empty (no system operations gated).
 .El
 .Sh FILES
 .Bl -tag -width "/etc/oracled.conf"

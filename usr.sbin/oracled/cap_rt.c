@@ -17,6 +17,7 @@
 #include <dev/cap_rt/cap_rt_ioctl.h>
 #include <dev/cap_rt/cap_rt_capprotect_proto.h>
 #include <dev/cap_rt/cap_rt_isolation_proto.h>
+#include <dev/cap_rt/cap_rt_system_proto.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -31,6 +32,7 @@
 static int cap_rt_fd = -1;
 static int isolation_fd = -1;
 static int capprotect_fd = -1;
+static int system_fd = -1;
 
 /*
  * Build the integrity flags bitmask from config.
@@ -281,6 +283,44 @@ apply_integrity(void)
 }
 
 /*
+ * Claim system operations via the cap_rt_system service.
+ */
+static int
+claim_system_gates(void)
+{
+	struct cap_rt_call_args call;
+	struct sys_request req;
+
+	if (od.cfg.claim_system == 0)
+		return (0);
+
+	system_fd = cap_rt_svc_connect("system");
+	if (system_fd == -1)
+		return (-1);
+
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_CLAIM;
+	req.gates = od.cfg.claim_system;
+
+	memset(&call, 0, sizeof(call));
+	call.req = &req;
+	call.req_len = sizeof(req);
+	call.reply_len = 0;
+
+	if (ioctl(system_fd, CAP_RT_CALL, &call) == -1) {
+		syslog(LOG_WARNING, "system: claim gates 0x%x: %m",
+		    od.cfg.claim_system);
+		close(system_fd);
+		system_fd = -1;
+		return (-1);
+	}
+
+	syslog(LOG_INFO, "system: claimed gates 0x%x",
+	    od.cfg.claim_system);
+	return (0);
+}
+
+/*
  * Initialize all cap_rt services.  Called once during startup.
  * Errors are logged but not fatal — oracled degrades gracefully.
  */
@@ -297,6 +337,9 @@ cap_rt_setup(void)
 
 	if (isolate_resources() == -1)
 		syslog(LOG_WARNING, "failed to connect isolation service");
+
+	if (claim_system_gates() == -1)
+		syslog(LOG_WARNING, "failed to claim system operations");
 
 	if (apply_integrity() == -1)
 		syslog(LOG_WARNING, "failed to activate integrity protection");
@@ -317,6 +360,11 @@ cap_rt_teardown(void)
 		close(capprotect_fd);
 		capprotect_fd = -1;
 		syslog(LOG_INFO, "integrity protection released");
+	}
+	if (system_fd >= 0) {
+		close(system_fd);
+		system_fd = -1;
+		syslog(LOG_INFO, "system gates released");
 	}
 	if (isolation_fd >= 0) {
 		close(isolation_fd);

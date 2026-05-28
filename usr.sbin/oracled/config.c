@@ -211,6 +211,50 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 			cfg->nclaim_net++;
 		}
 	}
+
+	/* claims.system — string array of gate names */
+	arr = ucl_object_lookup(sec, "system");
+	if (arr != NULL && ucl_object_type(arr) == UCL_ARRAY) {
+		static const struct {
+			const char	*name;
+			uint32_t	 gate;
+		} gate_names[] = {
+			{ "kldload",	0x0001 },
+			{ "kldunload",	0x0002 },
+			{ "kldstat",	0x0004 },
+			{ "reboot",	0x0008 },
+			{ "swapon",	0x0010 },
+			{ "swapoff",	0x0020 },
+			{ "sysctl",	0x0040 },
+			{ "kenv",	0x0080 },
+			{ "acct",	0x0100 },
+			{ "audit",	0x0200 },
+			{ "kenv_read",	0x0400 },
+		};
+		it = NULL;
+		while ((elem = ucl_object_iterate(arr, &it, true))
+		    != NULL) {
+			unsigned gi;
+			bool found;
+
+			if (ucl_object_type(elem) != UCL_STRING)
+				continue;
+			s = ucl_object_tostring(elem);
+			found = false;
+			for (gi = 0; gi < sizeof(gate_names) /
+			    sizeof(gate_names[0]); gi++) {
+				if (strcmp(s, gate_names[gi].name) == 0) {
+					cfg->claim_system |=
+					    gate_names[gi].gate;
+					found = true;
+					break;
+				}
+			}
+			if (!found)
+				fprintf(stderr, "oracled: unknown "
+				    "system gate: %s\n", s);
+		}
+	}
 }
 
 int
@@ -280,6 +324,6 @@ config_log(const struct oracled_config *cfg)
 	    cfg->integrity_visible, cfg->integrity_wait,
 	    cfg->integrity_sched, cfg->integrity_core,
 	    cfg->integrity_ktrace);
-	syslog(LOG_INFO, "config: claims paths=%d network=%d",
-	    cfg->nclaim_paths, cfg->nclaim_net);
+	syslog(LOG_INFO, "config: claims paths=%d network=%d system=0x%x",
+	    cfg->nclaim_paths, cfg->nclaim_net, cfg->claim_system);
 }
