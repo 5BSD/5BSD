@@ -35,6 +35,8 @@ struct oracled_state od = {
 	.control_fd = -1,
 };
 
+static void usage(void) __dead2;
+
 static void
 usage(void)
 {
@@ -107,14 +109,16 @@ main(int argc, char *argv[])
 		err(1, "cannot open pidfile %s", od.cfg.pidfile);
 	}
 
-	/* Phase 2: daemonize. */
+	/* Phase 2: daemonize.
+	 * After daemon(), stderr is closed — use syslog for errors. */
 	if (!od.foreground && daemon(0, 0) == -1) {
 		pidfile_remove(od.pidfh);
 		err(1, "daemon");
 	}
 	if (pidfile_write(od.pidfh) == -1) {
 		pidfile_remove(od.pidfh);
-		err(1, "pidfile_write");
+		syslog(LOG_CRIT, "pidfile_write: %m");
+		exit(1);
 	}
 
 	/* Log config after daemon() so PID matches the pidfile. */
@@ -145,4 +149,5 @@ main(int argc, char *argv[])
 	od.running = true;
 	syslog(LOG_INFO, "started");
 	event_loop();
+	exit(0);
 }

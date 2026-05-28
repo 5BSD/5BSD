@@ -17,38 +17,39 @@
 
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/time.h>
 #include <sys/un.h>
 
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "oracled.h"
 #include "oracled_ctl.h"
 #include "commands.h"
 
-static struct timeval start_time;
+static struct timespec start_time;
 
 static uint64_t
 uptime_usec(void)
 {
-	struct timeval now, delta;
+	struct timespec now;
 
-	gettimeofday(&now, NULL);
-	timersub(&now, &start_time, &delta);
-	return ((uint64_t)delta.tv_sec * 1000000 + delta.tv_usec);
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return ((uint64_t)(now.tv_sec - start_time.tv_sec) * 1000000 +
+	    (now.tv_nsec - start_time.tv_nsec) / 1000);
 }
 
 int
 setup_control_socket(void)
 {
 	struct sockaddr_un un;
+	mode_t old_umask;
 	int fd;
 
-	gettimeofday(&start_time, NULL);
+	clock_gettime(CLOCK_MONOTONIC, &start_time);
 
 	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (fd == -1) {
@@ -59,16 +60,24 @@ setup_control_socket(void)
 	(void)unlink(od.cfg.control_socket);
 
 	memset(&un, 0, sizeof(un));
-	un.sun_family = PF_LOCAL;
+	un.sun_family = AF_LOCAL;
 	strlcpy(un.sun_path, od.cfg.control_socket, sizeof(un.sun_path));
 
+	/*
+	 * Set umask before bind to avoid a TOCTOU window where the
+	 * socket exists with default permissions.
+	 */
+	old_umask = umask(0077);
 	if (bind(fd, (struct sockaddr *)&un, sizeof(un)) == -1) {
 		syslog(LOG_ERR, "control bind %s: %m",
 		    od.cfg.control_socket);
+		(void)umask(old_umask);
 		close(fd);
 		return (-1);
 	}
+	(void)umask(old_umask);
 
+	/* Apply the configured mode (may widen from the umask). */
 	if (chmod(od.cfg.control_socket, od.cfg.control_socket_mode) == -1) {
 		syslog(LOG_ERR, "control chmod %s: %m",
 		    od.cfg.control_socket);
@@ -117,8 +126,6 @@ readn(int fd, void *buf, size_t len)
 	ssize_t n;
 	size_t off;
 
-	/* 5-second timeout prevents a hung client from blocking the
-	 * event loop.  Set once — persists for the fd's lifetime. */
 	tv.tv_sec = 5;
 	tv.tv_usec = 0;
 	(void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -134,7 +141,8 @@ readn(int fd, void *buf, size_t len)
 
 /*
  * Read a payload string from the client fd.  Validates length,
- * reads the data, and null-terminates.  Returns 0 on success.
+ * reads the data, null-terminates, and rejects names with path
+ * separators.  Returns 0 on success.
  */
 static int
 read_payload(int cfd, uint32_t datalen, char *buf, size_t bufsz,
@@ -150,6 +158,13 @@ read_payload(int cfd, uint32_t datalen, char *buf, size_t bufsz,
 		return (-1);
 	}
 	buf[datalen] = '\0';
+
+	/* Reject payloads containing path separators. */
+	if (strchr(buf, '/') != NULL) {
+		reply->status = EINVAL;
+		syslog(LOG_WARNING, "control: payload contains '/'");
+		return (-1);
+	}
 	return (0);
 }
 
@@ -169,7 +184,7 @@ handle_control_connection(void)
 
 	action = 0;
 
-	cfd = accept(od.control_fd, NULL, NULL);
+	cfd = accept4(od.control_fd, NULL, NULL, SOCK_CLOEXEC);
 	if (cfd == -1) {
 		if (errno != EAGAIN && errno != EWOULDBLOCK)
 			syslog(LOG_WARNING, "control accept: %m");

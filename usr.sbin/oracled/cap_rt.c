@@ -82,8 +82,7 @@ log_shield_flags(uint32_t flags)
 	unsigned i;
 
 	off = 0;
-	for (i = 0; i < sizeof(shield_flag_names) /
-	    sizeof(shield_flag_names[0]); i++) {
+	for (i = 0; i < nitems(shield_flag_names); i++) {
 		if (!(flags & shield_flag_names[i].flag))
 			continue;
 		if (off > 0 && off < sizeof(buf) - 1)

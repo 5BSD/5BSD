@@ -12,9 +12,9 @@
 #include <sys/event.h>
 #include <sys/reboot.h>
 
-#include <err.h>
 #include <errno.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <syslog.h>
 #include <unistd.h>
 
@@ -27,8 +27,10 @@ add_signal_event(int kq, int sig)
 
 	signal(sig, SIG_IGN);
 	EV_SET(&kev, sig, EVFILT_SIGNAL, EV_ADD | EV_ENABLE, 0, 0, NULL);
-	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
-		err(1, "kevent signal %d", sig);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
+		syslog(LOG_CRIT, "kevent signal %d: %m", sig);
+		exit(1);
+	}
 }
 
 /*
@@ -61,8 +63,10 @@ event_loop(void)
 	int kq, nev;
 
 	kq = kqueue();
-	if (kq == -1)
-		err(1, "kqueue");
+	if (kq == -1) {
+		syslog(LOG_CRIT, "kqueue: %m");
+		exit(1);
+	}
 
 	add_signal_event(kq, SIGCHLD);
 	add_signal_event(kq, SIGHUP);
@@ -71,8 +75,10 @@ event_loop(void)
 
 	if (od.control_fd >= 0) {
 		EV_SET(&kev, od.control_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-		if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
-			err(1, "kevent control socket");
+		if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
+			syslog(LOG_CRIT, "kevent control socket: %m");
+			exit(1);
+		}
 	}
 
 	while (od.running) {
@@ -80,7 +86,8 @@ event_loop(void)
 		if (nev == -1) {
 			if (errno == EINTR)
 				continue;
-			err(1, "kevent wait");
+			syslog(LOG_CRIT, "kevent wait: %m");
+			exit(1);
 		}
 		if (nev == 0)
 			continue;
@@ -93,9 +100,12 @@ event_loop(void)
 			if (action & CTL_ACTION_REBOOT) {
 				shutdown_and_exit(0);
 				reboot(od.reboot_howto);
-			}
-			if (action & CTL_ACTION_SHUTDOWN)
+				/* reboot(2) should not return. */
+				syslog(LOG_CRIT, "reboot(2) failed: %m");
+				_exit(1);
+			} else if (action & CTL_ACTION_SHUTDOWN) {
 				shutdown_and_exit(0);
+			}
 			continue;
 		}
 

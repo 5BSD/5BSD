@@ -22,22 +22,24 @@
 
 #include "oracled_ctl.h"
 
+static const char *sockpath = ORACLED_CTL_SOCK;
+
 static int
 ctl_connect(void)
 {
 	struct sockaddr_un un;
 	int fd;
 
-	fd = socket(PF_LOCAL, SOCK_STREAM, 0);
+	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (fd == -1)
 		err(EX_OSERR, "socket");
 
 	memset(&un, 0, sizeof(un));
-	un.sun_family = PF_LOCAL;
-	strlcpy(un.sun_path, ORACLED_CTL_SOCK, sizeof(un.sun_path));
+	un.sun_family = AF_LOCAL;
+	strlcpy(un.sun_path, sockpath, sizeof(un.sun_path));
 
 	if (connect(fd, (struct sockaddr *)&un, sizeof(un)) == -1)
-		err(EX_UNAVAILABLE, "connect %s", ORACLED_CTL_SOCK);
+		err(EX_UNAVAILABLE, "connect %s", sockpath);
 
 	return (fd);
 }
@@ -227,7 +229,6 @@ cmd_reboot(void)
 	if (reply.status != CTL_STATUS_OK)
 		return (check_reply(&reply, "reboot"));
 
-	/* If we get here, the reply arrived before reboot. */
 	printf("oracled: reboot initiated\n");
 	return (0);
 }
@@ -236,12 +237,15 @@ cmd_reboot(void)
  * Main
  * ---------------------------------------------------------------- */
 
+static void usage(void) __dead2;
+
 static void
 usage(void)
 {
 
 	fprintf(stderr,
-	    "usage: oraclectl status\n"
+	    "usage: oraclectl [-s socket] command [args]\n"
+	    "       oraclectl status\n"
 	    "       oraclectl shutdown\n"
 	    "       oraclectl reload\n"
 	    "       oraclectl kldload <module>\n"
@@ -253,21 +257,34 @@ usage(void)
 int
 main(int argc, char *argv[])
 {
+	int ch;
 
-	if (argc < 2)
+	while ((ch = getopt(argc, argv, "s:")) != -1) {
+		switch (ch) {
+		case 's':
+			sockpath = optarg;
+			break;
+		default:
+			usage();
+		}
+	}
+	argc -= optind;
+	argv += optind;
+
+	if (argc < 1)
 		usage();
 
-	if (strcmp(argv[1], "status") == 0 && argc == 2)
+	if (strcmp(argv[0], "status") == 0 && argc == 1)
 		return (cmd_status());
-	if (strcmp(argv[1], "shutdown") == 0 && argc == 2)
+	if (strcmp(argv[0], "shutdown") == 0 && argc == 1)
 		return (cmd_shutdown());
-	if (strcmp(argv[1], "reload") == 0 && argc == 2)
+	if (strcmp(argv[0], "reload") == 0 && argc == 1)
 		return (cmd_reload());
-	if (strcmp(argv[1], "kldload") == 0 && argc == 3)
-		return (cmd_kldload(argv[2]));
-	if (strcmp(argv[1], "kldunload") == 0 && argc == 3)
-		return (cmd_kldunload(argv[2]));
-	if (strcmp(argv[1], "reboot") == 0 && argc == 2)
+	if (strcmp(argv[0], "kldload") == 0 && argc == 2)
+		return (cmd_kldload(argv[1]));
+	if (strcmp(argv[0], "kldunload") == 0 && argc == 2)
+		return (cmd_kldunload(argv[1]));
+	if (strcmp(argv[0], "reboot") == 0 && argc == 1)
 		return (cmd_reboot());
 
 	usage();

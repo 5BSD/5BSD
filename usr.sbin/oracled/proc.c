@@ -44,6 +44,7 @@ void
 kill_subtree(void)
 {
 	struct procctl_reaper_kill rk;
+	struct procctl_reaper_status rs;
 
 	memset(&rk, 0, sizeof(rk));
 	rk.rk_sig = SIGTERM;
@@ -51,10 +52,25 @@ kill_subtree(void)
 	if (procctl(P_PID, getpid(), PROC_REAP_KILL, &rk) == -1) {
 		if (errno != ESRCH)
 			syslog(LOG_WARNING, "PROC_REAP_KILL: %m");
-	} else if (rk.rk_killed > 0) {
-		syslog(LOG_INFO, "sent SIGTERM to %u descendant(s)",
-		    rk.rk_killed);
-		usleep(100000);
+		return;
+	}
+	if (rk.rk_killed == 0)
+		return;
+
+	syslog(LOG_INFO, "sent SIGTERM to %u descendant(s)", rk.rk_killed);
+	usleep(100000);
+	reap_children();
+
+	/* Escalate to SIGKILL if any descendants remain. */
+	memset(&rs, 0, sizeof(rs));
+	if (procctl(P_PID, getpid(), PROC_REAP_STATUS, &rs) == 0 &&
+	    rs.rs_descendants > 0) {
+		syslog(LOG_WARNING, "%u descendant(s) still alive, "
+		    "sending SIGKILL", rs.rs_descendants);
+		memset(&rk, 0, sizeof(rk));
+		rk.rk_sig = SIGKILL;
+		(void)procctl(P_PID, getpid(), PROC_REAP_KILL, &rk);
+		usleep(50000);
 		reap_children();
 	}
 }

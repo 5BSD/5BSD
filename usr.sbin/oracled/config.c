@@ -6,12 +6,13 @@
  * UCL configuration file parser for oracled.
  *
  * Reads /etc/oracled.conf (or a path given with -f) and populates
- * struct oracled_config.  Missing file is not an error — defaults
- * apply.  Syntax errors are fatal.
+ * struct oracled_config.  Missing or empty file is not an error —
+ * defaults apply.  Syntax errors are fatal.
  */
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
@@ -43,10 +44,6 @@ config_init_defaults(struct oracled_config *cfg)
 	cfg->isolate_cap_rt = true;
 }
 
-/*
- * Read a boolean from a UCL object, leaving *val unchanged if
- * the key is absent.
- */
 static void
 cfg_bool(const ucl_object_t *obj, const char *key, bool *val)
 {
@@ -57,10 +54,6 @@ cfg_bool(const ucl_object_t *obj, const char *key, bool *val)
 		*val = ucl_object_toboolean(o);
 }
 
-/*
- * Read a string from a UCL object into a fixed buffer, leaving
- * the buffer unchanged if the key is absent.
- */
 static void
 cfg_string(const ucl_object_t *obj, const char *key,
     char *buf, size_t bufsz)
@@ -70,6 +63,45 @@ cfg_string(const ucl_object_t *obj, const char *key,
 	o = ucl_object_lookup(obj, key);
 	if (o != NULL && ucl_object_type(o) == UCL_STRING)
 		strlcpy(buf, ucl_object_tostring(o), bufsz);
+}
+
+/*
+ * Parse control_socket_mode.  Accept a quoted string for octal
+ * (e.g., "0700") or an integer.  Validate range and reject
+ * world-accessible modes as a safety measure.
+ */
+static void
+cfg_mode(const ucl_object_t *root, struct oracled_config *cfg)
+{
+	const ucl_object_t *o;
+	long val;
+	char *endp;
+
+	o = ucl_object_lookup(root, "control_socket_mode");
+	if (o == NULL)
+		return;
+
+	if (ucl_object_type(o) == UCL_STRING) {
+		errno = 0;
+		val = strtol(ucl_object_tostring(o), &endp, 0);
+		if (*endp != '\0' || errno == ERANGE || val < 0 ||
+		    val > 07777) {
+			fprintf(stderr, "oracled: invalid "
+			    "control_socket_mode: %s\n",
+			    ucl_object_tostring(o));
+			return;
+		}
+	} else if (ucl_object_type(o) == UCL_INT) {
+		val = (long)ucl_object_toint(o);
+	} else {
+		return;
+	}
+
+	if ((val & 07) != 0)
+		fprintf(stderr, "oracled: warning: control_socket_mode "
+		    "%04lo is world-accessible\n", val);
+
+	cfg->control_socket_mode = (mode_t)val;
 }
 
 int
@@ -100,30 +132,17 @@ config_load(struct oracled_config *cfg, const char *path)
 
 	root = ucl_parser_get_object(parser);
 	if (root == NULL) {
-		fprintf(stderr, "oracled: %s: empty config\n", path);
+		/* Empty file — treat as no config, use defaults. */
 		ucl_parser_free(parser);
-		return (-1);
+		cfg->loaded_from_file = true;
+		return (0);
 	}
 
 	/* Top-level keys */
 	cfg_string(root, "pidfile", cfg->pidfile, sizeof(cfg->pidfile));
 	cfg_string(root, "control_socket", cfg->control_socket,
 	    sizeof(cfg->control_socket));
-
-	/* Parse mode as a string to support octal (e.g., "0700"). */
-	{
-		const ucl_object_t *o;
-		o = ucl_object_lookup(root, "control_socket_mode");
-		if (o != NULL) {
-			if (ucl_object_type(o) == UCL_STRING) {
-				cfg->control_socket_mode = (mode_t)
-				    strtol(ucl_object_tostring(o), NULL, 0);
-			} else if (ucl_object_type(o) == UCL_INT) {
-				cfg->control_socket_mode = (mode_t)
-				    ucl_object_toint(o);
-			}
-		}
-	}
+	cfg_mode(root, cfg);
 
 	/* Shield section */
 	shield = ucl_object_lookup(root, "shield");
@@ -144,6 +163,7 @@ config_load(struct oracled_config *cfg, const char *path)
 		cfg_bool(isolation, "cap_rt", &cfg->isolate_cap_rt);
 	}
 
+	/* UCL API requires non-const for unref. */
 	ucl_object_unref(__DECONST(ucl_object_t *, root));
 	ucl_parser_free(parser);
 
