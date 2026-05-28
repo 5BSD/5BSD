@@ -19,6 +19,7 @@
 struct pidfh	*pidfh;
 int		 cap_rt_fd = -1;
 int		 isolation_fd = -1;
+int		 capprotect_fd = -1;
 bool		 foreground;
 bool		 test_mode;
 bool		 running = true;
@@ -96,6 +97,9 @@ main(int argc, char *argv[])
 			if (isolate_cap_rt_device() == -1)
 				syslog(LOG_WARNING,
 				    "failed to isolate /dev/cap_rt");
+			if (shield_self() == -1)
+				syslog(LOG_WARNING,
+				    "failed to activate capprotect shield");
 		}
 	} else {
 		syslog(LOG_INFO, "test mode: skipping /dev/cap_rt open");

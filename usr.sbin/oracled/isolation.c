@@ -3,13 +3,13 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Claim /dev/cap_rt via the cap_rt_isolation service so that only
- * processes sharing oracled's nonce can open the device directly.
+ * cap_rt service setup: isolation claims and capprotect shield.
  */
 
 #include <sys/ioctl.h>
 
 #include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/cap_rt/cap_rt_capprotect_proto.h>
 #include <dev/cap_rt/cap_rt_isolation_proto.h>
 
 #include <errno.h>
@@ -80,5 +80,126 @@ isolate_cap_rt_device(void)
 	close(dev_fd);
 	isolation_fd = iso_fd;
 	syslog(LOG_INFO, "claimed /dev/cap_rt via isolation");
+	return (0);
+}
+
+/*
+ * Shield oracled via the capprotect service.
+ *
+ * Block foreign nonces from debugging, signalling, tracing, or
+ * manipulating the scheduler priority of this process.
+ *
+ * On success, sets capprotect_fd to the shield instance fd.
+ * The shield persists as long as capprotect_fd is open.
+ */
+
+/*
+ * Shield flags: protect oracled from external interference.
+ *
+ * Base flags (always active):
+ *   CP_SF_PTRACE   — block debugger attach
+ *   CP_SF_SIGNAL   — block signals from foreign nonces
+ *   CP_SF_WAIT     — block wait4 status scraping
+ *   CP_SF_SCHED    — block priority/affinity manipulation
+ *   CP_SF_KTRACE   — block passive syscall tracing
+ *
+ * Production flags (added when not in debug mode):
+ *   CP_SF_VISIBLE  — hide from ps/top/procfs enumeration
+ *   CP_SF_CORE     — suppress core dumps to prevent secret leakage
+ *
+ * Never included:
+ *   CP_SF_SIGKILL  — must remain killable from a root console.
+ *   CP_SF_NOPRIVS  — oracled needs root to manage processes.
+ *   CP_SF_NOFORK   — oracled will spawn service children.
+ *   CP_SF_NOIPC    — may need IPC for future service management.
+ *   CP_SF_NOFDRECV — oracled will receive fds from clients.
+ */
+#define	ORACLED_SHIELD_BASE	(CP_SF_PTRACE | CP_SF_SIGNAL | \
+				 CP_SF_WAIT | CP_SF_SCHED | CP_SF_KTRACE)
+#define	ORACLED_SHIELD_PROD	(CP_SF_VISIBLE | CP_SF_CORE)
+
+static const struct {
+	uint32_t	flag;
+	const char	*name;
+} shield_flag_names[] = {
+	{ CP_SF_PTRACE,		"ptrace" },
+	{ CP_SF_SIGNAL,		"signal" },
+	{ CP_SF_VISIBLE,	"visible" },
+	{ CP_SF_WAIT,		"wait" },
+	{ CP_SF_SIGKILL,	"sigkill" },
+	{ CP_SF_SIGCONT,	"sigcont" },
+	{ CP_SF_SCHED,		"sched" },
+	{ CP_SF_CORE,		"core" },
+	{ CP_SF_KTRACE,		"ktrace" },
+	{ CP_SF_NOPRIVS,	"noprivs" },
+	{ CP_SF_NOFORK,		"nofork" },
+	{ CP_SF_NOIPC,		"noipc" },
+	{ CP_SF_NOFDRECV,	"nofdrecv" },
+};
+
+static void
+log_shield_flags(uint32_t flags)
+{
+	char buf[256];
+	size_t off;
+	unsigned i;
+
+	off = 0;
+	for (i = 0; i < sizeof(shield_flag_names) /
+	    sizeof(shield_flag_names[0]); i++) {
+		if (!(flags & shield_flag_names[i].flag))
+			continue;
+		if (off > 0 && off < sizeof(buf) - 1)
+			buf[off++] = ' ';
+		off += strlcpy(buf + off, shield_flag_names[i].name,
+		    sizeof(buf) - off);
+	}
+	if (off == 0)
+		strlcpy(buf, "(none)", sizeof(buf));
+
+	syslog(LOG_INFO, "capprotect shield active: %s", buf);
+}
+
+int
+shield_self(void)
+{
+	struct cap_rt_connect_args conn;
+	struct cap_rt_call_args call;
+	struct cp_request req;
+	uint32_t flags;
+	int cp_fd;
+
+	if (cap_rt_fd < 0)
+		return (-1);
+
+	memset(&conn, 0, sizeof(conn));
+	strlcpy(conn.name, "capprotect", sizeof(conn.name));
+	if (ioctl(cap_rt_fd, CAP_RT_CONNECT, &conn) == -1) {
+		syslog(LOG_ERR, "cap_rt connect capprotect: %m");
+		return (-1);
+	}
+	cp_fd = conn.fd;
+
+	flags = ORACLED_SHIELD_BASE;
+	if (!foreground)
+		flags |= ORACLED_SHIELD_PROD;
+
+	memset(&req, 0, sizeof(req));
+	req.op = CP_OP_SHIELD;
+	req.flags = flags;
+
+	memset(&call, 0, sizeof(call));
+	call.req = &req;
+	call.req_len = sizeof(req);
+	call.reply_len = 0;
+
+	if (ioctl(cp_fd, CAP_RT_CALL, &call) == -1) {
+		syslog(LOG_ERR, "cap_rt capprotect shield: %m");
+		close(cp_fd);
+		return (-1);
+	}
+
+	capprotect_fd = cp_fd;
+	log_shield_flags(flags);
 	return (0);
 }

@@ -32,6 +32,8 @@ shutdown_and_exit(int sig)
 	if (!test_mode)
 		kill_subtree();
 	reap_children();
+	if (capprotect_fd >= 0)
+		close(capprotect_fd);
 	if (isolation_fd >= 0)
 		close(isolation_fd);
 	if (cap_rt_fd >= 0)

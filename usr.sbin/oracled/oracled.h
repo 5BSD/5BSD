@@ -16,6 +16,7 @@
 extern struct pidfh	*pidfh;
 extern int		 cap_rt_fd;
 extern int		 isolation_fd;
+extern int		 capprotect_fd;
 extern bool		 foreground;
 extern bool		 test_mode;
 extern bool		 running;
@@ -30,5 +31,6 @@ void	apply_procctl_self_policy(void);
 
 /* isolation.c */
 int	isolate_cap_rt_device(void);
+int	shield_self(void);
 
 #endif /* ORACLED_H */
