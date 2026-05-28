@@ -54,7 +54,22 @@ Kernel environment modification via
 .It Dv SYS_GATE_ACCT
 Process accounting control via
 .Xr acct 2 .
+.It Dv SYS_GATE_AUDIT
+Audit subsystem configuration via
+.Xr auditon 2
+and
+.Xr auditctl 2 .
+.It Dv SYS_GATE_KENV_READ
+Kernel environment reading via
+.Xr kenv 2
+(get and dump operations).
 .El
+.Pp
+Gates are combined as a bitmask.
+Claiming
+.Dv SYS_GATE_REBOOT | SYS_GATE_KLDLOAD
+gates only reboot and module loading; all other operations
+remain unrestricted.
 .Ss Protocol
 The service is accessed via
 .Dv CAP_RT_CALL

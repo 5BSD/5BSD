@@ -221,6 +221,35 @@ sys_mac_system_check_acct(struct ucred *cred, struct vnode *vp __unused,
 	return (sys_check_gate(cred, SYS_GATE_ACCT, "acct"));
 }
 
+static int
+sys_mac_system_check_auditon(struct ucred *cred, int cmd __unused)
+{
+
+	return (sys_check_gate(cred, SYS_GATE_AUDIT, "auditon"));
+}
+
+static int
+sys_mac_system_check_auditctl(struct ucred *cred, struct vnode *vp __unused,
+    struct label *vplabel __unused)
+{
+
+	return (sys_check_gate(cred, SYS_GATE_AUDIT, "auditctl"));
+}
+
+static int
+sys_mac_kenv_check_dump(struct ucred *cred)
+{
+
+	return (sys_check_gate(cred, SYS_GATE_KENV_READ, "kenv_dump"));
+}
+
+static int
+sys_mac_kenv_check_get(struct ucred *cred, char *name __unused)
+{
+
+	return (sys_check_gate(cred, SYS_GATE_KENV_READ, "kenv_get"));
+}
+
 /* ----------------------------------------------------------------
  * CAP_RT service operations
  * ---------------------------------------------------------------- */
@@ -458,6 +487,10 @@ static struct mac_policy_ops sys_mac_ops = {
 	.mpo_kenv_check_set		= sys_mac_kenv_check_set,
 	.mpo_kenv_check_unset		= sys_mac_kenv_check_unset,
 	.mpo_system_check_acct		= sys_mac_system_check_acct,
+	.mpo_system_check_auditon	= sys_mac_system_check_auditon,
+	.mpo_system_check_auditctl	= sys_mac_system_check_auditctl,
+	.mpo_kenv_check_dump		= sys_mac_kenv_check_dump,
+	.mpo_kenv_check_get		= sys_mac_kenv_check_get,
 };
 
 MAC_POLICY_SET(&sys_mac_ops, mac_cap_rt_system,

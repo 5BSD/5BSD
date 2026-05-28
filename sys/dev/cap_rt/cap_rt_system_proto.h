@@ -69,7 +69,9 @@
 #define	SYS_GATE_SYSCTL		0x0040
 #define	SYS_GATE_KENV		0x0080
 #define	SYS_GATE_ACCT		0x0100
-#define	SYS_GATE_ALL		0x01ff
+#define	SYS_GATE_AUDIT		0x0200	/* auditon + auditctl */
+#define	SYS_GATE_KENV_READ	0x0400	/* kenv get + dump */
+#define	SYS_GATE_ALL		0x07ff
 
 struct sys_request {
 	uint32_t	op;
