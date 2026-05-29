@@ -178,9 +178,9 @@ cmd_services(uint32_t flags, struct ctl_reply *reply,
 	};
 	struct svc_manifest *disk;
 	struct timespec now;
-	size_t off, rem;
+	size_t off;
 	unsigned i, j, ndisk;
-	int n, verbose;
+	int verbose;
 	bool found;
 
 	verbose = (flags & 1);
@@ -191,20 +191,13 @@ cmd_services(uint32_t flags, struct ctl_reply *reply,
 		return;
 	}
 
-#define	SVC_APPEND(...)	do {					\
-	rem = (off < sumlen) ? sumlen - off : 0;		\
-	n = snprintf(summary + off, rem, __VA_ARGS__);		\
-	if (n > 0) off += (size_t)n;				\
-	if (off >= sumlen) off = sumlen - 1;			\
-} while (0)
-
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	off = 0;
 
 	/* Section 1: Loaded services. */
-	SVC_APPEND("LOADED:\n");
+	BUF_APPEND(summary, sumlen, &off,"LOADED:\n");
 	if (od.services == NULL || od.nservices == 0) {
-		SVC_APPEND("  (none)\n");
+		BUF_APPEND(summary, sumlen, &off,"  (none)\n");
 	} else {
 		for (i = 0; i < od.nservices; i++) {
 			struct svc_runtime *svc = &od.services[i];
@@ -215,7 +208,7 @@ cmd_services(uint32_t flags, struct ctl_reply *reply,
 			else
 				state = "unknown";
 
-			SVC_APPEND("  %-20s %-8s", svc->manifest.label,
+			BUF_APPEND(summary, sumlen, &off,"  %-20s %-8s", svc->manifest.label,
 			    state);
 
 			if (svc->state == SVC_STATE_RUNNING ||
@@ -223,14 +216,14 @@ cmd_services(uint32_t flags, struct ctl_reply *reply,
 				long up = now.tv_sec -
 				    svc->last_start.tv_sec;
 				if (svc->last_start.tv_sec > 0)
-					SVC_APPEND(" pid %-6jd up %lds",
+					BUF_APPEND(summary, sumlen, &off," pid %-6jd up %lds",
 					    (intmax_t)svc->pid, up);
 				else
-					SVC_APPEND(" pid %-6jd",
+					BUF_APPEND(summary, sumlen, &off," pid %-6jd",
 					    (intmax_t)svc->pid);
 			}
 
-			SVC_APPEND(" restart=%s",
+			BUF_APPEND(summary, sumlen, &off," restart=%s",
 			    svc->manifest.restart == SVC_RESTART_ALWAYS ?
 			    "always" :
 			    svc->manifest.restart ==
@@ -238,29 +231,29 @@ cmd_services(uint32_t flags, struct ctl_reply *reply,
 			    "on-failure" : "never");
 
 			if (svc->restart_count > 0)
-				SVC_APPEND(" restarts=%u",
+				BUF_APPEND(summary, sumlen, &off," restarts=%u",
 				    svc->restart_count);
 
-			SVC_APPEND("\n");
+			BUF_APPEND(summary, sumlen, &off,"\n");
 
 			if (verbose) {
 				const struct svc_manifest *m =
 				    &svc->manifest;
 				unsigned k;
 
-				SVC_APPEND("    program:    %s\n",
+				BUF_APPEND(summary, sumlen, &off,"    program:    %s\n",
 				    m->program);
 				if (m->user[0] != '\0')
-					SVC_APPEND("    user:       %s\n",
+					BUF_APPEND(summary, sumlen, &off,"    user:       %s\n",
 					    m->user);
 				if (m->group[0] != '\0')
-					SVC_APPEND("    group:      %s\n",
+					BUF_APPEND(summary, sumlen, &off,"    group:      %s\n",
 					    m->group);
 				for (k = 0; k < m->ncap_paths; k++)
-					SVC_APPEND("    cap-path:   %s\n",
+					BUF_APPEND(summary, sumlen, &off,"    cap-path:   %s\n",
 					    m->cap_paths[k]);
 				for (k = 0; k < m->ncap_net; k++)
-					SVC_APPEND("    cap-net:    "
+					BUF_APPEND(summary, sumlen, &off,"    cap-net:    "
 					    "%s/%u %s\n",
 					    m->cap_net[k].protocol ==
 					    IPPROTO_TCP ? "tcp" : "udp",
@@ -271,23 +264,23 @@ cmd_services(uint32_t flags, struct ctl_reply *reply,
 					    ORACLED_NET_DIR_CONNECT ?
 					    "connect" : "any");
 				if (m->cap_system != 0)
-					SVC_APPEND("    cap-system: "
+					BUF_APPEND(summary, sumlen, &off,"    cap-system: "
 					    "0x%x\n", m->cap_system);
 				if (m->nprovides > 0) {
-					SVC_APPEND("    provides:   ");
+					BUF_APPEND(summary, sumlen, &off,"    provides:   ");
 					for (k = 0; k < m->nprovides; k++)
-						SVC_APPEND("%s%s",
+						BUF_APPEND(summary, sumlen, &off,"%s%s",
 						    k > 0 ? ", " : "",
 						    m->provides[k]);
-					SVC_APPEND("\n");
+					BUF_APPEND(summary, sumlen, &off,"\n");
 				}
 				if (m->nrequires > 0) {
-					SVC_APPEND("    requires:   ");
+					BUF_APPEND(summary, sumlen, &off,"    requires:   ");
 					for (k = 0; k < m->nrequires; k++)
-						SVC_APPEND("%s%s",
+						BUF_APPEND(summary, sumlen, &off,"%s%s",
 						    k > 0 ? ", " : "",
 						    m->requires[k]);
-					SVC_APPEND("\n");
+					BUF_APPEND(summary, sumlen, &off,"\n");
 				}
 			}
 		}
@@ -312,18 +305,16 @@ cmd_services(uint32_t flags, struct ctl_reply *reply,
 				}
 				if (!found) {
 					if (!have_unloaded) {
-						SVC_APPEND("\nAVAILABLE:\n");
+						BUF_APPEND(summary, sumlen, &off,"\nAVAILABLE:\n");
 						have_unloaded = true;
 					}
-					SVC_APPEND("  %-20s %s\n",
+					BUF_APPEND(summary, sumlen, &off,"  %-20s %s\n",
 					    disk[j].label, disk[j].program);
 				}
 			}
 		}
 		free(disk);
 	}
-
-#undef SVC_APPEND
 
 	reply->status = CTL_STATUS_OK;
 	reply->flags = (uint32_t)off;

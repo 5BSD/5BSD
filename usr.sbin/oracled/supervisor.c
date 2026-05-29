@@ -731,26 +731,20 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 	    nnew, nchanged, nremoved);
 
 	if (summary != NULL && sumlen > 0) {
-		size_t off = 0, rem;
-		int n;
-
-#define	RELOAD_APPEND(...)	do {				\
-	rem = (off < sumlen) ? sumlen - off : 0;		\
-	n = snprintf(summary + off, rem, __VA_ARGS__);		\
-	if (n > 0) off += (size_t)n;				\
-	if (off >= sumlen) off = sumlen - 1;			\
-} while (0)
+		size_t off = 0;
 
 		for (i = 0; i < nnew; i++)
-			RELOAD_APPEND("  added:    %s\n", new_labels[i]);
+			BUF_APPEND(summary, sumlen, &off,
+			    "  added:    %s\n", new_labels[i]);
 		for (i = 0; i < nchanged; i++)
-			RELOAD_APPEND("  changed:  %s\n", changed_labels[i]);
+			BUF_APPEND(summary, sumlen, &off,
+			    "  changed:  %s\n", changed_labels[i]);
 		for (i = 0; i < nremoved; i++)
-			RELOAD_APPEND("  removed:  %s\n", removed_labels[i]);
-		RELOAD_APPEND("reload: %u new, %u changed, %u removed\n",
+			BUF_APPEND(summary, sumlen, &off,
+			    "  removed:  %s\n", removed_labels[i]);
+		BUF_APPEND(summary, sumlen, &off,
+		    "reload: %u new, %u changed, %u removed\n",
 		    nnew, nchanged, nremoved);
-
-#undef RELOAD_APPEND
 	}
 
 	return (0);

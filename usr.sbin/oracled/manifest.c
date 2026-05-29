@@ -468,62 +468,53 @@ manifest_validate(const struct svc_manifest *m, char *errbuf, size_t errlen)
 int
 manifest_format_summary(const struct svc_manifest *m, char *buf, size_t len)
 {
-	size_t off, rem;
+	size_t off;
 	unsigned i;
-	int n;
 
 	if (len == 0)
 		return (0);
 
-/* Safe snprintf accumulator — clamps off at len to prevent overflow. */
-#define	SUMMARY_APPEND(...)	do {				\
-	rem = (off < len) ? len - off : 0;			\
-	n = snprintf(buf + off, rem, __VA_ARGS__);		\
-	if (n > 0) off += (size_t)n;				\
-	if (off >= len) off = len - 1;				\
-} while (0)
-
 	off = 0;
 
-	SUMMARY_APPEND("%s:\n", m->label);
-	SUMMARY_APPEND("  program:      %s\n", m->program);
+	BUF_APPEND(buf, len, &off, "%s:\n", m->label);
+	BUF_APPEND(buf, len, &off, "  program:      %s\n", m->program);
 
 	if (m->description[0] != '\0')
-		SUMMARY_APPEND("  description:  %s\n", m->description);
+		BUF_APPEND(buf, len, &off,"  description:  %s\n", m->description);
 	if (m->user[0] != '\0')
-		SUMMARY_APPEND("  user:         %s\n", m->user);
+		BUF_APPEND(buf, len, &off,"  user:         %s\n", m->user);
 	if (m->group[0] != '\0')
-		SUMMARY_APPEND("  group:        %s\n", m->group);
+		BUF_APPEND(buf, len, &off,"  group:        %s\n", m->group);
 
-	SUMMARY_APPEND("  restart:      %s\n",
+	BUF_APPEND(buf, len, &off,"  restart:      %s\n",
 	    m->restart == SVC_RESTART_ALWAYS ? "always" :
 	    m->restart == SVC_RESTART_ON_FAILURE ? "on-failure" : "never");
 
 	if (m->nprovides > 0) {
-		SUMMARY_APPEND("  provides:     [");
+		BUF_APPEND(buf, len, &off,"  provides:     [");
 		for (i = 0; i < m->nprovides; i++)
-			SUMMARY_APPEND("%s%s", i > 0 ? ", " : "",
+			BUF_APPEND(buf, len, &off,"%s%s", i > 0 ? ", " : "",
 			    m->provides[i]);
-		SUMMARY_APPEND("]\n");
+		BUF_APPEND(buf, len, &off,"]\n");
 	}
 
 	if (m->nrequires > 0) {
-		SUMMARY_APPEND("  requires:     [");
+		BUF_APPEND(buf, len, &off,"  requires:     [");
 		for (i = 0; i < m->nrequires; i++)
-			SUMMARY_APPEND("%s%s", i > 0 ? ", " : "",
+			BUF_APPEND(buf, len, &off,"%s%s", i > 0 ? ", " : "",
 			    m->requires[i]);
-		SUMMARY_APPEND("]\n");
+		BUF_APPEND(buf, len, &off,"]\n");
 	}
 
 	if (m->ncap_paths > 0 || m->ncap_net > 0 || m->cap_system != 0)
-		SUMMARY_APPEND("  capabilities:\n");
+		BUF_APPEND(buf, len, &off,"  capabilities:\n");
 
 	for (i = 0; i < m->ncap_paths; i++)
-		SUMMARY_APPEND("    path:       %s\n", m->cap_paths[i]);
+		BUF_APPEND(buf, len, &off,"    path:       %s\n", m->cap_paths[i]);
 
 	for (i = 0; i < m->ncap_net; i++) {
 		const struct oracled_net_claim *nc = &m->cap_net[i];
-		SUMMARY_APPEND("    network:    %s/%u %s\n",
+		BUF_APPEND(buf, len, &off,"    network:    %s/%u %s\n",
 		    nc->protocol == IPPROTO_TCP ? "tcp" :
 		    nc->protocol == IPPROTO_UDP ? "udp" : "?",
 		    nc->port,
@@ -533,9 +524,7 @@ manifest_format_summary(const struct svc_manifest *m, char *buf, size_t len)
 	}
 
 	if (m->cap_system != 0)
-		SUMMARY_APPEND("    system:     0x%x\n", m->cap_system);
-
-#undef SUMMARY_APPEND
+		BUF_APPEND(buf, len, &off,"    system:     0x%x\n", m->cap_system);
 
 	return ((int)off);
 }
