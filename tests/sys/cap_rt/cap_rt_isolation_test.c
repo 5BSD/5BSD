@@ -2090,7 +2090,7 @@ ATF_TC_BODY(token_authorize_grants_access, tc)
 	struct fi_reply rpl;
 	int svc, target, token;
 	pid_t pid;
-	int status, pipefd[2];
+	int status;
 
 	make_tmpfile();
 	svc = fi_connect();
@@ -2101,34 +2101,29 @@ ATF_TC_BODY(token_authorize_grants_access, tc)
 	token = fi_mint(svc, target);
 	ATF_REQUIRE(token >= 0);
 
-	ATF_REQUIRE(pipe(pipefd) == 0);
-
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
-		close(pipefd[0]);
+		char token_str[16];
+		const char *path;
+
 		close(svc);
 		close(target);
-		/* Authorize ourselves with the token. */
-		if (fi_authorize(token) != 0)
-			_exit(10);
-		close(token);
+
 		/*
-		 * Exec to rotate nonce... but we authorized before
-		 * exec, so the auth is for our PRE-exec nonce.
-		 * Instead, authorize WITHOUT exec to keep the same
-		 * nonce.  Try to open the file.
+		 * Exec the helper to rotate the nonce, then authorize
+		 * with the token and try to open the isolated file.
+		 * The token fd survives exec (no CLOEXEC).
 		 */
-		int fd = open(tmppath, O_RDONLY);
-		if (fd < 0)
-			_exit(1);
-		close(fd);
-		_exit(0);
+		path = fi_helper_path(tc);
+		snprintf(token_str, sizeof(token_str), "%d", token);
+		execl(path, path, "token-check", token_str, tmppath,
+		    NULL);
+		_exit(127);
 	}
-	close(pipefd[1]);
 	waitpid(pid, &status, 0);
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "child exit %d", status);
+	    "child exit %d (expected 0 = access granted)", status);
 
 	close(token);
 	close(target);
@@ -2151,7 +2146,8 @@ ATF_TC_BODY(token_close_revokes_access, tc)
 	struct fi_reply rpl;
 	int svc, target, token;
 	pid_t pid;
-	int status, pipefd[2];
+	int status, readyfd[2], gofd[2];
+	char buf;
 
 	make_tmpfile();
 	svc = fi_connect();
@@ -2162,41 +2158,51 @@ ATF_TC_BODY(token_close_revokes_access, tc)
 	token = fi_mint(svc, target);
 	ATF_REQUIRE(token >= 0);
 
-	ATF_REQUIRE(pipe(pipefd) == 0);
+	ATF_REQUIRE(pipe(readyfd) == 0);
+	ATF_REQUIRE(pipe(gofd) == 0);
 
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
-		char buf;
-		close(pipefd[1]);
+		char token_str[16], ready_str[16], go_str[16];
+		const char *path;
+
+		close(readyfd[0]);
+		close(gofd[1]);
 		close(svc);
 		close(target);
-		/* Authorize, then close the token. */
-		if (fi_authorize(token) != 0)
-			_exit(10);
-		close(token);
-		/* Wait for parent to signal us. */
-		read(pipefd[0], &buf, 1);
-		close(pipefd[0]);
-		/* Token is closed — auth should be revoked.
-		 * Try to open the file. */
-		int fd = open(tmppath, O_RDONLY);
-		if (fd < 0)
-			_exit(0);	/* blocked — correct */
-		close(fd);
-		_exit(1);		/* opened — wrong */
+
+		/*
+		 * Exec the helper to rotate the nonce.  Without exec
+		 * the child shares the parent's nonce and bypasses
+		 * isolation (same-nonce fast path).
+		 */
+		path = fi_helper_path(tc);
+		snprintf(token_str, sizeof(token_str), "%d", token);
+		snprintf(ready_str, sizeof(ready_str), "%d", readyfd[1]);
+		snprintf(go_str, sizeof(go_str), "%d", gofd[0]);
+		execl(path, path, "token-revoke", token_str, ready_str,
+		    go_str, tmppath, NULL);
+		_exit(127);
 	}
-	close(pipefd[0]);
-	/* Give child time to authorize and close token. */
-	usleep(100000);
+	close(readyfd[1]);
+	close(gofd[0]);
+
+	/* Wait for child to authorize and close its token copy. */
+	read(readyfd[0], &buf, 1);
+	close(readyfd[0]);
+
+	/* Close parent's token — last ref fires co_revoke. */
+	close(token);
+
 	/* Signal child to try the open. */
-	write(pipefd[1], "x", 1);
-	close(pipefd[1]);
+	write(gofd[1], "x", 1);
+	close(gofd[1]);
+
 	waitpid(pid, &status, 0);
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "child exit %d (expected 0 = blocked)", status);
 
-	close(token);
 	close(target);
 	close(svc);
 }
