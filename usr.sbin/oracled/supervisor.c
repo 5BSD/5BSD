@@ -102,13 +102,8 @@ supervisor_start(int kq)
 		return (-1);
 	}
 
-	if (od.nservices == 0) {
-		syslog(LOG_INFO, "supervisor: no services to start");
-		free(manifests);
-		return (0);
-	}
-
-	/* Allocate runtime state (fixed size to avoid realloc). */
+	/* Allocate runtime state (fixed size to avoid realloc).
+	 * Always allocate even with 0 services so reload can add. */
 	od.services = calloc(ORACLED_MAX_SERVICES, sizeof(*od.services));
 	if (od.services == NULL) {
 		syslog(LOG_ERR, "supervisor: calloc services: %m");

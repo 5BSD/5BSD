@@ -239,7 +239,8 @@ services_verbose_head()
 services_verbose_body()
 {
 	require_oracled
-	atf_check -s exit:0 -o match:"program:" oraclectl services -v
+	# With no services loaded, -v still succeeds and shows LOADED header.
+	atf_check -s exit:0 -o match:"LOADED:" oraclectl services -v
 }
 services_verbose_cleanup()
 {
@@ -275,7 +276,7 @@ check_path_traversal_body()
 {
 	require_oracled
 	# The '/' in the payload is rejected by the control socket
-	atf_check -s not-exit:0 oraclectl check ../../../etc/passwd
+	atf_check -s not-exit:0 -e ignore oraclectl check ../../../etc/passwd
 }
 check_path_traversal_cleanup()
 {
