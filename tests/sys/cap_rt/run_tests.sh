@@ -9,7 +9,7 @@
 
 set -e
 
-SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
+SCRIPT_DIR=${TESTSDIR:-$(CDPATH= cd "$(dirname "$0")" && pwd -P)}
 
 CORE_MODULE="cap_rt"
 BOOT_MODULES="cap_rt_capprotect cap_rt_isolation"

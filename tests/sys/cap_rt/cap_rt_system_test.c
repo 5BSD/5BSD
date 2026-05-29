@@ -116,22 +116,27 @@ sys_call_authorize(int token_fd)
 }
 
 /*
- * Fork+exec to get a new nonce, then try kldstat.
+ * Fork+exec to get a new nonce, then try kldnext(2) directly.
+ * kldstat(1) always exits 0 even when the syscall returns EPERM,
+ * so we exec the helper binary which calls kldnext(2) itself.
  * Returns child exit status: 0 = denied (good), 1 = allowed (bad).
  */
 static int
-run_cross_nonce_kldstat(void)
+run_cross_nonce_kldstat(const atf_tc_t *tc)
 {
 	pid_t pid;
 	int status;
+	char path[1024];
+	const char *dir;
+
+	dir = atf_tc_get_config_var(tc, "srcdir");
+	snprintf(path, sizeof(path), "%s/cap_rt_exec_helper", dir);
 
 	pid = fork();
 	if (pid < 0)
 		return (-1);
 	if (pid == 0) {
-		/* exec to rotate nonce, then try kldnext */
-		execl("/bin/sh", "sh", "-c",
-		    "kldstat >/dev/null 2>&1", NULL);
+		execl(path, path, "kldnext", NULL);
 		_exit(127);
 	}
 	waitpid(pid, &status, 0);
@@ -158,8 +163,8 @@ ATF_TC_BODY(claim_denies_foreign_nonce, tc)
 	svc = sys_connect();
 	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
 
-	rc = run_cross_nonce_kldstat();
-	ATF_CHECK_MSG(rc != 0, "kldstat should be denied for foreign nonce");
+	rc = run_cross_nonce_kldstat(tc);
+	ATF_CHECK_MSG(rc == 0, "kldnext should be denied for foreign nonce");
 
 	close(svc);
 }
@@ -227,14 +232,14 @@ ATF_TC_BODY(close_releases_claim, tc)
 	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
 
 	/* While claimed, foreign nonce is denied. */
-	rc = run_cross_nonce_kldstat();
-	ATF_CHECK(rc != 0);
+	rc = run_cross_nonce_kldstat(tc);
+	ATF_CHECK(rc == 0);
 
 	close(svc);
 
 	/* After close, claim released — foreign nonce allowed. */
-	rc = run_cross_nonce_kldstat();
-	ATF_CHECK_MSG(rc == 0, "kldstat should work after claim released");
+	rc = run_cross_nonce_kldstat(tc);
+	ATF_CHECK_MSG(rc != 0, "kldnext should work after claim released");
 }
 
 ATF_TC(token_close_revokes);
@@ -322,7 +327,7 @@ ATF_TC_BODY(selective_gates, tc)
 	ATF_CHECK(kldstat(id, &stat) == 0);
 
 	/* Foreign nonce should also be able to kldstat. */
-	ATF_CHECK(run_cross_nonce_kldstat() == 0);
+	ATF_CHECK(run_cross_nonce_kldstat(tc) != 0);
 
 	close(svc);
 }

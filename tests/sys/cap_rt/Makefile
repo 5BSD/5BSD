@@ -12,6 +12,7 @@ ATF_TESTS_C+=	cap_rt_system_test
 PROGS+=		cap_rt_exec_helper
 PROGS+=		cap_rt_isolation_helper
 PROGS+=		cap_rt_shield_helper
+BINDIR=		${TESTSDIR}
 
 CFLAGS+=	-I${SRCTOP}/sys/dev/cap_rt
 LIBADD.cap_rt_test+=	jail
