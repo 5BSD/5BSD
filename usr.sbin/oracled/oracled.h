@@ -87,6 +87,11 @@ struct svc_runtime {
 	unsigned	restart_count;
 	bool		restart_pending;	/* timer scheduled */
 	uintptr_t	timer_ident;		/* unique kevent ident */
+	bool		stop_kill_pending;	/* SIGKILL timer scheduled */
+	uintptr_t	stop_timer_ident;
+	bool		remove_pending;		/* remove after NOTE_EXIT */
+	bool		reload_pending;		/* swap manifest after NOTE_EXIT */
+	struct svc_manifest pending_manifest;
 	struct timespec	last_start;
 	struct timespec	last_exit;
 	int		last_exit_status;
@@ -108,6 +113,7 @@ struct oracled_state {
 	bool			 foreground;
 	bool			 test_mode;
 	bool			 running;
+	bool			 shutting_down;
 
 	/* Service launcher */
 	struct svc_runtime	*services;
@@ -126,8 +132,10 @@ int	cap_rt_create_pair(int *oracle_end, int *child_end);
 int	cap_rt_create_coalition(void);
 int	cap_rt_coalition_enlist(int coalition_fd, int member_fd);
 int	cap_rt_coalition_set_leader(int coalition_fd, int leader_fd);
-int	cap_rt_coalition_graceful(int coalition_fd, int sig, int timeout_ms);
+int	cap_rt_coalition_set_deadline(int coalition_fd, int timeout_ms,
+	    int sig, int grace_ms);
 int	cap_rt_coalition_terminate(int coalition_fd);
+int	cap_rt_coalition_recv_event(int coalition_fd, uint32_t *flagsp);
 
 /* control.c — control socket lifecycle */
 #define	CTL_ACTION_NONE		0
@@ -169,7 +177,10 @@ int	svc_exec(struct svc_runtime *svc, int kq);
 int	supervisor_start(int kq);
 void	supervisor_handle_procdesc(struct kevent *kev);
 void	supervisor_handle_pair(struct kevent *kev);
+void	supervisor_handle_timer(struct kevent *kev);
 void	supervisor_stop(int kq);
+bool	supervisor_is_stopped(void);
+void	supervisor_teardown_state(void);
 int	supervisor_reload(int kq, char *summary, size_t sumlen);
 int	supervisor_load_manifest(const char *path, int kq,
 	    char *summary, size_t sumlen);

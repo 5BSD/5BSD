@@ -8,10 +8,14 @@
  * Public kernel API for service modules.
  *
  * Architecture:
- *   CAP_RT_SENDMSG enqueues on the RX queue; returns immediately.
+ *   CAP_RT_CALL invokes co_call synchronously in the caller's thread.
+ *   CAP_RT_SENDMSG enqueues on the RX queue; returns EAGAIN if full.
  *   A per-service taskqueue dequeues and calls co_handler.
  *   The handler calls cap_rt_reply() to respond.
- *   CAP_RT_RECVMSG dequeues from the TX queue; blocks if empty.
+ *   CAP_RT_RECVMSG dequeues replies and notifications from the TX queue.
+ *   kqueue EVFILT_READ/WRITE report TX/RX queue readiness for RECVMSG
+ *   and SENDMSG.  Service events are delivered as RECVMSG payloads;
+ *   kqueue notes are readiness notifications, not event payloads.
  *   read()/write() are disabled; all I/O uses structured ioctls.
  */
 
@@ -60,7 +64,7 @@ enum cap_rt_revoke_reason {
  *     NULL → no init needed.
  *
  * co_handler(instance, msg, arg)
- *     Message handler.  Runs from the service's taskqueue.
+ *     Asynchronous SENDMSG handler.  Runs from the service's taskqueue.
  *     May sleep.  No cap_rt locks held.
  *
  *     Access msg fields via:
@@ -75,6 +79,28 @@ enum cap_rt_revoke_reason {
  *     Return nonzero: automatic error reply sent to the client.
  *     Never concurrent with another co_handler for the same instance.
  *     msg valid only during the call.
+ *
+ * co_call(instance, req, reqlen, fds, fcaps, nfds,
+ *         reply, replylenp, reply_fds, reply_nfdsp, arg)
+ *     Synchronous CALL handler in the ioctl caller's thread.
+ *     curthread IS the calling process — can jail_attach,
+ *     modify credentials, create fds, etc.
+ *     NULL = CAP_RT_CALL returns EOPNOTSUPP.
+ *     fds/nfds are resolved file pointers from the caller.
+ *     fcaps carries the caller's Capsicum rights for each fd
+ *     (NULL if no fds attached).
+ *     reply_fds/reply_nfdsp: output file pointers to return
+ *     to the caller.  Set *reply_nfdsp to the count.  The
+ *     framework installs them into the caller's fd table.
+ *     NULL if no fds to return.
+ *     Multiple co_call invocations may run concurrently —
+ *     the service must serialize if needed.
+ *     Do NOT call cap_rt_instance_revoke(s) from inside co_call.
+ *     Returns 0 on success, errno on failure.
+ *
+ * Services may implement co_handler, co_call, or both.  Services may
+ * also emit asynchronous outbound messages with cap_rt_notify() from
+ * either model when CAP_RT_SVC_NOTIFY is set.
  *
  * co_revoke(instance, badge, reason, arg)
  *     Called exactly once when an instance dies.  Fires after all
@@ -98,25 +124,6 @@ struct cap_rt_ops {
 		    enum cap_rt_revoke_reason reason, void *arg);
 	void	(*co_fdclose)(struct cap_rt_instance *s, int fd,
 		    struct thread *td, void *arg);
-	/*
-	 * co_call(instance, req, reqlen, fds, fcaps, nfds,
-	 *         reply, replylenp, reply_fds, reply_nfdsp, arg)
-	 *     Synchronous call in the ioctl caller's thread.
-	 *     curthread IS the calling process — can jail_attach,
-	 *     modify credentials, create fds, etc.
-	 *     NULL = CAP_RT_CALL returns EOPNOTSUPP.
-	 *     fds/nfds are resolved file pointers from the caller.
-	 *     fcaps carries the caller's Capsicum rights for each fd
-	 *     (NULL if no fds attached).
-	 *     reply_fds/reply_nfdsp: output file pointers to return
-	 *     to the caller.  Set *reply_nfdsp to the count.  The
-	 *     framework installs them into the caller's fd table.
-	 *     NULL if no fds to return.
-	 *     Multiple co_call invocations may run concurrently —
-	 *     the service must serialize if needed.
-	 *     Do NOT call cap_rt_instance_revoke(s) from inside co_call.
-	 *     Returns 0 on success, errno on failure.
-	 */
 	int	(*co_call)(struct cap_rt_instance *s,
 		    const void *req, size_t reqlen,
 		    struct file **fds, struct filecaps *fcaps, int nfds,
@@ -132,7 +139,8 @@ struct cap_rt_ops {
  * Service creation flags.
  */
 #define	CAP_RT_SVC_NOXFER		0x0001	/* instances are non-transferable */
-#define	CAP_RT_SVC_KQUEUE		0x0002	/* advertise EVFILT_READ/WRITE */
+#define	CAP_RT_SVC_NOTIFY		0x0002	/* emits async RECVMSG notifications */
+#define	CAP_RT_SVC_KQUEUE		CAP_RT_SVC_NOTIFY	/* compat */
 
 struct cap_rt_service_params {
 	const char		*name;

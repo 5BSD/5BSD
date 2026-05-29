@@ -60,15 +60,32 @@ The framework supports two messaging models:
 .It Sy Asynchronous
 Messages are enqueued via
 .Dv CAP_RT_SENDMSG
-and dequeued via
+and async replies or notifications are dequeued via
 .Dv CAP_RT_RECVMSG .
 The service processes messages on a kernel taskqueue.
 .It Sy Synchronous
 Requests are made via
 .Dv CAP_RT_CALL .
 The service handler runs in the caller's thread context.
-A service is either async or sync, never both.
 .El
+.Pp
+A service may expose asynchronous messaging, synchronous calls, or both.
+Services that do not accept
+.Dv CAP_RT_SENDMSG
+may still emit asynchronous notifications on
+.Dv CAP_RT_RECVMSG .
+.Xr kqueue 2
+readiness maps to the async queues:
+.Dv EVFILT_READ
+means
+.Dv CAP_RT_RECVMSG
+can make progress, and
+.Dv EVFILT_WRITE
+means space is available for
+.Dv CAP_RT_SENDMSG .
+Service-defined events are delivered as
+.Dv CAP_RT_RECVMSG
+payloads; kqueue notes provide readiness, not the event payload itself.
 .Pp
 The device node
 .Pa /dev/cap_rt
@@ -114,7 +131,7 @@ Subsequent operations return
 .Ss Introspection
 .Dv CAP_RT_GETINFO
 returns the service name, badge, queue limits, and feature flags
-.Pq Dv CAP_RT_INFO_F_SENDMSG , CAP_RT_INFO_F_CALL , CAP_RT_INFO_F_KQUEUE .
+.Pq Dv CAP_RT_INFO_F_SENDMSG , CAP_RT_INFO_F_RECVMSG , CAP_RT_INFO_F_CALL , CAP_RT_INFO_F_KQUEUE .
 .Ss File descriptor passing
 Capabilities can carry up to 32 file descriptors per message.
 Attached fds preserve their Capsicum rights through the transfer.
@@ -125,6 +142,11 @@ Connect to a named service.
 Returns a capability fd.
 .It Dv CAP_RT_SENDMSG
 Send an async message with optional fd attachment.
+Returns
+.Er EAGAIN
+if the RX queue is full; wait for
+.Dv EVFILT_WRITE
+and retry.
 .It Dv CAP_RT_RECVMSG
 Receive an async message.
 Blocks unless

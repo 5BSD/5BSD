@@ -6,7 +6,7 @@
  * cap_rt — message-passing capability framework.
  * Instance file descriptor operations.
  *
- * ioctl(CAP_RT_SENDMSG)  enqueue on RX, return immediately
+ * ioctl(CAP_RT_SENDMSG)  enqueue on RX, EAGAIN if full
  * ioctl(CAP_RT_RECVMSG)  dequeue from TX (blocks if empty)
  * ioctl(CAP_RT_GETINFO)  query service name, badge, limits
  *
@@ -278,6 +278,9 @@ sendmsg_build:
 	 * Enqueue on RX.  On success, msg (including buf and files)
 	 * is owned by the queue.  On failure, enqueue_rx frees msg
 	 * via cap_rt_msg_free which cleans up buf, files, and cred.
+	 *
+	 * If the RX queue is full, SENDMSG returns EAGAIN.  EVFILT_WRITE
+	 * is the readiness signal for retrying SENDMSG.
 	 */
 	mtx_lock(&s->ci_mtx);
 	error = cap_rt_instance_enqueue_rx(s, msg);
@@ -698,9 +701,13 @@ call_done:
 			info->tx_limit = svc->csvc_tx_limit;
 			if (svc->csvc_ops->co_handler != NULL) {
 				info->features |= CAP_RT_INFO_F_SENDMSG;
+				info->features |= CAP_RT_INFO_F_RECVMSG;
 				info->features |= CAP_RT_INFO_F_KQUEUE;
-			} else if ((svc->csvc_svc_flags & CAP_RT_SVC_KQUEUE) != 0)
+			}
+			if ((svc->csvc_svc_flags & CAP_RT_SVC_NOTIFY) != 0) {
+				info->features |= CAP_RT_INFO_F_RECVMSG;
 				info->features |= CAP_RT_INFO_F_KQUEUE;
+			}
 			if (svc->csvc_ops->co_call != NULL)
 				info->features |= CAP_RT_INFO_F_CALL;
 		}
@@ -806,17 +813,30 @@ static int
 cap_rt_instance_kqfilter(struct file *fp, struct knote *kn)
 {
 	struct cap_rt_instance *s;
+	struct cap_rt_service *svc;
+	bool can_recv, can_send;
 
 	s = fp->f_data;
 	if (s == NULL)
 		return (EBADF);
+	svc = s->ci_service;
+	if (svc == NULL)
+		return (EOPNOTSUPP);
+
+	can_send = svc->csvc_ops->co_handler != NULL;
+	can_recv = can_send ||
+	    (svc->csvc_svc_flags & CAP_RT_SVC_NOTIFY) != 0;
 
 	switch (kn->kn_filter) {
 	case EVFILT_READ:
+		if (!can_recv)
+			return (EOPNOTSUPP);
 		kn->kn_fop = &cap_rt_rfiltops;
 		knlist_add(&s->ci_rknotes, kn, 0);
 		return (0);
 	case EVFILT_WRITE:
+		if (!can_send)
+			return (EOPNOTSUPP);
 		kn->kn_fop = &cap_rt_wfiltops;
 		knlist_add(&s->ci_wknotes, kn, 0);
 		return (0);

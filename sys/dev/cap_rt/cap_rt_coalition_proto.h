@@ -5,8 +5,11 @@
  *
  * cap_rt_coalition — wire protocol for coalition capability service.
  *
- * All operations use CAP_RT_CALL.  Member fds are passed as attached
- * fds (req_fds), not as integer fd numbers in the payload.
+ * Operations may be issued synchronously with CAP_RT_CALL or
+ * asynchronously with CAP_RT_SENDMSG.  Async replies and notifications are
+ * delivered with CAP_RT_RECVMSG, and kqueue EVFILT_READ/EVFILT_WRITE map to
+ * RECVMSG/SENDMSG queue readiness.  Member fds are passed as attached fds,
+ * not as integer fd numbers in the payload.
  */
 
 #ifndef _CAP_RT_COALITION_PROTO_H_
@@ -67,6 +70,8 @@ struct coalition_enlist_set_reply {
  *   req:  coalition_req_hdr { .op = COALITION_OP_JOIN }
  *   reply: coalition_reply { .status }
  *   Enlists the calling process (no fd needed).
+ *   CALL-only: SENDMSG runs from the service taskqueue and has no caller
+ *   process context to join.
  */
 
 /*

@@ -58,7 +58,6 @@ kill_subtree(void)
 		return;
 
 	syslog(LOG_INFO, "sent SIGTERM to %u descendant(s)", rk.rk_killed);
-	usleep(100000);
 	reap_children();
 
 	/* Escalate to SIGKILL if any descendants remain. */
@@ -70,7 +69,6 @@ kill_subtree(void)
 		memset(&rk, 0, sizeof(rk));
 		rk.rk_sig = SIGKILL;
 		(void)procctl(P_PID, getpid(), PROC_REAP_KILL, &rk);
-		usleep(50000);
 		reap_children();
 	}
 }

@@ -544,10 +544,14 @@ cap_rt_create_pair(int *oracle_end, int *child_end)
 int
 cap_rt_create_coalition(void)
 {
+	int fd;
 
 	if (cap_rt_fd == -1)
 		return (-1);
-	return (cap_rt_svc_connect("coalition"));
+	fd = cap_rt_svc_connect("coalition");
+	if (fd >= 0)
+		(void)fcntl(fd, F_SETFL, O_NONBLOCK);
+	return (fd);
 }
 
 /*
@@ -601,20 +605,22 @@ cap_rt_coalition_set_leader(int coalition_fd, int leader_fd)
 }
 
 int
-cap_rt_coalition_graceful(int coalition_fd, int sig, int timeout_ms)
+cap_rt_coalition_set_deadline(int coalition_fd, int timeout_ms,
+    int sig, int grace_ms)
 {
 	struct cap_rt_call_args call;
-	struct coalition_graceful_req greq;
+	struct coalition_set_deadline_req dreq;
 	struct coalition_reply reply;
 
-	memset(&greq, 0, sizeof(greq));
-	greq.op = COALITION_OP_GRACEFUL;
-	greq.signal = sig;
-	greq.timeout_ms = (uint32_t)timeout_ms;
+	memset(&dreq, 0, sizeof(dreq));
+	dreq.op = COALITION_OP_SET_DEADLINE;
+	dreq.timeout_ms = (uint32_t)timeout_ms;
+	dreq.signal = sig;
+	dreq.grace_ms = (uint32_t)grace_ms;
 
 	memset(&call, 0, sizeof(call));
-	call.req = &greq;
-	call.req_len = sizeof(greq);
+	call.req = &dreq;
+	call.req_len = sizeof(dreq);
 	call.reply = &reply;
 	call.reply_len = sizeof(reply);
 
@@ -642,6 +648,29 @@ cap_rt_coalition_terminate(int coalition_fd)
 	if (ioctl(coalition_fd, CAP_RT_CALL, &call) == -1)
 		return (-1);
 	return (reply.status);
+}
+
+int
+cap_rt_coalition_recv_event(int coalition_fd, uint32_t *flagsp)
+{
+	struct cap_rt_recvmsg_args ra;
+	struct coalition_event_msg ev;
+
+	memset(&ev, 0, sizeof(ev));
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = &ev;
+	ra.payload_len = sizeof(ev);
+
+	if (ioctl(coalition_fd, CAP_RT_RECVMSG, &ra) == -1) {
+		if (errno == EAGAIN || errno == EWOULDBLOCK)
+			return (1);
+		return (-1);
+	}
+
+	if (ra.payload_len < sizeof(ev))
+		return (-1);
+	*flagsp = ev.flags;
+	return (0);
 }
 
 /*

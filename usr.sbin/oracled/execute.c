@@ -155,10 +155,8 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 			_exit(126);
 		if (setgid(gid) == -1)
 			_exit(126);
-		if (m->user[0] != '\0') {
-			if (setuid(uid) == -1)
-				_exit(126);
-		}
+		if (setuid(uid) == -1)
+			_exit(126);
 	}
 
 	/* Reset signal dispositions. */
@@ -181,7 +179,7 @@ int
 svc_exec(struct svc_runtime *svc, int kq)
 {
 	struct svc_manifest *m;
-	struct kevent kev[2];
+	struct kevent kev[3];
 	struct passwd *pw;
 	struct group *gr;
 	char homedir[PATH_MAX];
@@ -242,6 +240,17 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 		gid = gr->gr_gid;
 		have_creds = true;
+		if (m->user[0] == '\0') {
+			pw = getpwnam("nobody");
+			if (pw == NULL) {
+				syslog(LOG_ERR, "svc_exec %s: group-only "
+				    "manifest requires user nobody",
+				    m->label);
+				return (-1);
+			}
+			uid = pw->pw_uid;
+			strlcpy(homedir, pw->pw_dir, sizeof(homedir));
+		}
 	}
 
 	if (m->jail[0] != '\0')
@@ -344,8 +353,12 @@ svc_exec(struct svc_runtime *svc, int kq)
 	EV_SET(&kev[0], pd_fd, EVFILT_PROCDESC, EV_ADD,
 	    NOTE_EXIT | NOTE_EXEC, 0, svc);
 	EV_SET(&kev[1], oracle_end, EVFILT_READ, EV_ADD, 0, 0, svc);
+	if (coalition_fd >= 0)
+		EV_SET(&kev[2], coalition_fd, EVFILT_READ, EV_ADD, 0, 0,
+		    svc);
 
-	if (kevent(kq, kev, 2, NULL, 0, NULL) == -1) {
+	if (kevent(kq, kev, coalition_fd >= 0 ? 3 : 2, NULL, 0, NULL) ==
+	    -1) {
 		syslog(LOG_ERR, "svc_exec %s: kevent register: %m",
 		    m->label);
 		pdkill(pd_fd, SIGKILL);

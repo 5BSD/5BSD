@@ -5,17 +5,19 @@
  *
  * cap_rt_coalition — capability-based resource group management.
  *
- * A cap_rt CALL service that groups capabilities (cap_rt instances),
- * processes, jails, sockets, and other fd-based resources.  State-change
- * events are emitted as CAP_RT_RECVMSG notifications.  Terminating the
- * coalition revokes all members:
+ * A cap_rt service that groups capabilities (cap_rt instances), processes,
+ * jails, sockets, and other fd-based resources.  Operations may be issued
+ * synchronously with CAP_RT_CALL or asynchronously with CAP_RT_SENDMSG.
+ * Async replies and state-change events are emitted as CAP_RT_RECVMSG
+ * messages.  kqueue EVFILT_READ/EVFILT_WRITE report RECVMSG/SENDMSG
+ * readiness.  Terminating the coalition revokes all members:
  *
  *   - cap_rt members: cap_rt_instance_revoke()
  *   - processes: kern_psignal(SIGKILL)
  *   - jails: prison_remove()
  *   - sockets: soshutdown(SHUT_RDWR)
  *
- * Userspace API (via CAP_RT_CALL on coalition fd):
+ * Userspace API (via CAP_RT_CALL or CAP_RT_SENDMSG on coalition fd):
  *   COALITION_OP_ENLIST      — attach member fd
  *   COALITION_OP_JOIN        — self-join calling process
  *   COALITION_OP_ENLIST_SET  — attach multiple member fds
@@ -2558,6 +2560,53 @@ out:
 	return (error);
 }
 
+static int
+coalition_handler(struct cap_rt_instance *s, const struct cap_rt_msg *msg,
+    void *arg)
+{
+	union {
+		struct coalition_reply cr;
+		struct coalition_enlist_set_reply cesr;
+		struct coalition_stat_reply csr;
+		struct coalition_rusage_reply crr;
+	} reply;
+	const struct coalition_req_hdr *hdr;
+	const void *req;
+	size_t reqlen, replylen;
+	int error;
+
+	req = cap_rt_msg_data(msg);
+	reqlen = cap_rt_msg_datalen(msg);
+	memset(&reply, 0, sizeof(reply));
+	replylen = sizeof(reply);
+
+	if (reqlen < sizeof(*hdr)) {
+		reply.cr.status = EINVAL;
+		replylen = sizeof(reply.cr);
+		goto out;
+	}
+
+	hdr = req;
+	if (hdr->op == COALITION_OP_JOIN) {
+		reply.cr.status = EOPNOTSUPP;
+		replylen = sizeof(reply.cr);
+		goto out;
+	}
+
+	error = coalition_call(s, req, reqlen, cap_rt_msg_fds(msg),
+	    cap_rt_msg_fcaps(msg), cap_rt_msg_nfds(msg), &reply, &replylen,
+	    NULL, NULL, arg);
+	if (error != 0) {
+		memset(&reply, 0, sizeof(reply.cr));
+		reply.cr.status = error;
+		replylen = sizeof(reply.cr);
+	}
+
+out:
+	return (cap_rt_reply(s, cap_rt_msg_token(msg), &reply, replylen,
+	    NULL, NULL, 0));
+}
+
 static void
 coalition_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
     enum cap_rt_revoke_reason reason __unused, void *arg __unused)
@@ -2594,6 +2643,7 @@ coalition_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
 static const struct cap_rt_ops coalition_ops = {
 	.co_connect	= coalition_connect,
 	.co_init	= coalition_init,
+	.co_handler	= coalition_handler,
 	.co_call	= coalition_call,
 	.co_revoke	= coalition_revoke,
 };
@@ -2640,7 +2690,7 @@ coalition_mod_init(void)
 	memset(&p, 0, sizeof(p));
 	p.name = "coalition";
 	p.ops = &coalition_ops;
-	p.flags = CAP_RT_SVC_KQUEUE;
+	p.flags = CAP_RT_SVC_NOTIFY;
 
 	error = cap_rt_service_create(&p, &coalition_svc);
 	if (error != 0)

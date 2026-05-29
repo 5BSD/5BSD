@@ -164,6 +164,40 @@ coalition_recv_event(int fd, struct coalition_event_msg *ev)
 }
 
 static int
+coalition_sendmsg(int fd, const void *req, size_t reqlen,
+    const int *req_fds, int nfds, uint64_t token)
+{
+	struct cap_rt_sendmsg_args sa;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = req;
+	sa.payload_len = reqlen;
+	sa.fds = req_fds;
+	sa.nfds = nfds;
+	sa.reply_token = token;
+	return (ioctl(fd, CAP_RT_SENDMSG, &sa));
+}
+
+static int
+coalition_recvmsg(int fd, void *reply, uint32_t *replylenp,
+    uint64_t *tokenp)
+{
+	struct cap_rt_recvmsg_args ra;
+	int ret;
+
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = reply;
+	ra.payload_len = *replylenp;
+	ret = ioctl(fd, CAP_RT_RECVMSG, &ra);
+	if (ret == 0) {
+		*replylenp = ra.payload_len;
+		if (tokenp != NULL)
+			*tokenp = ra.reply_token;
+	}
+	return (ret);
+}
+
+static int
 kqueue_poll(int kq_fd, struct kevent *events, int nevents, int timeout_ms)
 {
 	struct timespec ts;
@@ -915,6 +949,98 @@ ATF_TC_BODY(kqueue_terminating_event, tc)
 	close(kq);
 }
 
+ATF_TC(async_stat_kqueue_roundtrip);
+ATF_TC_HEAD(async_stat_kqueue_roundtrip, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Coalition SENDMSG replies are exposed through kqueue/RECVMSG");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_coalition");
+}
+ATF_TC_BODY(async_stat_kqueue_roundtrip, tc)
+{
+	struct cap_rt_info_args info;
+	struct coalition_req_hdr hdr;
+	struct coalition_stat_reply sr;
+	struct kevent kev;
+	uint32_t replylen;
+	uint64_t token;
+	int cfd, kq;
+
+	cfd = cap_rt_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+
+	memset(&info, 0, sizeof(info));
+	ATF_REQUIRE(ioctl(cfd, CAP_RT_GETINFO, &info) == 0);
+	ATF_CHECK(info.features & CAP_RT_INFO_F_CALL);
+	ATF_CHECK(info.features & CAP_RT_INFO_F_SENDMSG);
+	ATF_CHECK(info.features & CAP_RT_INFO_F_RECVMSG);
+	ATF_CHECK(info.features & CAP_RT_INFO_F_KQUEUE);
+
+	EV_SET(&kev, cfd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, NULL);
+	ATF_REQUIRE(kevent(kq, &kev, 1, NULL, 0, NULL) == 0);
+	ATF_REQUIRE_MSG(kqueue_poll(kq, &kev, 1, 500) == 1,
+	    "did not receive send-side readiness");
+	ATF_CHECK_EQ(kev.filter, EVFILT_WRITE);
+
+	EV_SET(&kev, cfd, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, NULL);
+	ATF_REQUIRE(kevent(kq, &kev, 1, NULL, 0, NULL) == 0);
+
+	hdr.op = COALITION_OP_STAT;
+	ATF_REQUIRE(coalition_sendmsg(cfd, &hdr, sizeof(hdr), NULL, 0,
+	    0x12345678) == 0);
+
+	ATF_REQUIRE_MSG(kqueue_poll(kq, &kev, 1, 1000) == 1,
+	    "did not receive recv-side readiness for async STAT reply");
+	ATF_CHECK_EQ(kev.filter, EVFILT_READ);
+
+	memset(&sr, 0, sizeof(sr));
+	replylen = sizeof(sr);
+	token = 0;
+	ATF_REQUIRE(coalition_recvmsg(cfd, &sr, &replylen, &token) == 0);
+	ATF_CHECK_EQ(replylen, sizeof(sr));
+	ATF_CHECK_EQ(token, 0x12345678);
+	ATF_CHECK_EQ(sr.status, 0);
+	ATF_CHECK_EQ(sr.member_count, 0);
+
+	close(cfd);
+	close(kq);
+}
+
+ATF_TC(async_join_rejected);
+ATF_TC_HEAD(async_join_rejected, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Coalition JOIN is rejected on async SENDMSG path");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_coalition");
+}
+ATF_TC_BODY(async_join_rejected, tc)
+{
+	struct coalition_req_hdr hdr;
+	struct coalition_reply rpl;
+	uint32_t replylen;
+	uint64_t token;
+	int cfd;
+
+	cfd = cap_rt_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+
+	hdr.op = COALITION_OP_JOIN;
+	ATF_REQUIRE(coalition_sendmsg(cfd, &hdr, sizeof(hdr), NULL, 0,
+	    0xabcdef) == 0);
+
+	memset(&rpl, 0, sizeof(rpl));
+	replylen = sizeof(rpl);
+	token = 0;
+	ATF_REQUIRE(coalition_recvmsg(cfd, &rpl, &replylen, &token) == 0);
+	ATF_CHECK_EQ(replylen, sizeof(rpl));
+	ATF_CHECK_EQ(token, 0xabcdef);
+	ATF_CHECK_EQ(rpl.status, EOPNOTSUPP);
+
+	close(cfd);
+}
+
 /* ================================================================
  * Process join tests
  * ================================================================ */
@@ -1547,9 +1673,9 @@ ATF_TC_BODY(getinfo, tc)
 	ATF_CHECK_STREQ(info.name, "coalition");
 	ATF_CHECK(info.badge != 0);
 	ATF_CHECK(info.features & CAP_RT_INFO_F_CALL);
+	ATF_CHECK(info.features & CAP_RT_INFO_F_SENDMSG);
+	ATF_CHECK(info.features & CAP_RT_INFO_F_RECVMSG);
 	ATF_CHECK(info.features & CAP_RT_INFO_F_KQUEUE);
-	/* Sync service should not advertise async */
-	ATF_CHECK_EQ(info.features & CAP_RT_INFO_F_SENDMSG, 0);
 
 	close(fd);
 }
@@ -2401,20 +2527,12 @@ ATF_TC_BODY(coalition_is_cap_rt_type, tc)
 	ATF_REQUIRE(ioctl(fd, CAP_RT_GETINFO, &info) == 0);
 	ATF_CHECK_STREQ(info.name, "coalition");
 	ATF_CHECK(info.features & CAP_RT_INFO_F_CALL);
+	ATF_CHECK(info.features & CAP_RT_INFO_F_SENDMSG);
+	ATF_CHECK(info.features & CAP_RT_INFO_F_RECVMSG);
 	ATF_CHECK(info.features & CAP_RT_INFO_F_KQUEUE);
-	ATF_CHECK_EQ(info.features & CAP_RT_INFO_F_SENDMSG, 0);
 
 	/* fstat should work */
 	ATF_REQUIRE(fstat(fd, &sb) == 0);
-
-	/* Async operations should fail (sync-only service) */
-	struct cap_rt_sendmsg_args sa;
-	char payload[] = "test";
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = payload;
-	sa.payload_len = sizeof(payload);
-	ATF_CHECK_ERRNO(EOPNOTSUPP,
-	    ioctl(fd, CAP_RT_SENDMSG, &sa) == -1);
 
 	close(fd);
 }
@@ -2658,6 +2776,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, enlist_set_partial_failure);
 	ATF_TP_ADD_TC(tp, kqueue_member_added_event);
 	ATF_TP_ADD_TC(tp, kqueue_terminating_event);
+	ATF_TP_ADD_TC(tp, async_stat_kqueue_roundtrip);
+	ATF_TP_ADD_TC(tp, async_join_rejected);
 
 	/* Process join */
 	ATF_TP_ADD_TC(tp, join_self);

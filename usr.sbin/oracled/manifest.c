@@ -82,7 +82,12 @@ parse_string_array(const ucl_object_t *arr, char (*out)[ORACLED_LABEL_MAX],
 			    "(max %u)", label, what, maxn);
 			break;
 		}
-		strlcpy(out[*np], s, ORACLED_LABEL_MAX);
+		if (strlcpy(out[*np], s, ORACLED_LABEL_MAX) >=
+		    ORACLED_LABEL_MAX) {
+			syslog(LOG_WARNING, "manifest %s: %s too long, "
+			    "skipped: %s", label, what, s);
+			continue;
+		}
 		(*np)++;
 	}
 }

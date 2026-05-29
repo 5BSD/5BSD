@@ -11,9 +11,15 @@
  *   open("/dev/cap_rt") -> ioctl(CAP_RT_CONNECT, &args) -> capability fd
  *
  * Messaging:
- *   ioctl(fd, CAP_RT_SENDMSG, &args)    send async message
- *   ioctl(fd, CAP_RT_RECVMSG, &args)    receive async message (blocks)
+ *   ioctl(fd, CAP_RT_SENDMSG, &args)    send async message to service
+ *   ioctl(fd, CAP_RT_RECVMSG, &args)    receive async reply/notification
  *   ioctl(fd, CAP_RT_CALL, &args)       synchronous call (caller context)
+ *
+ * A service may expose CALL, SENDMSG/RECVMSG, or both.  kqueue readiness
+ * maps to async queue state: EVFILT_READ means RECVMSG can make progress,
+ * and EVFILT_WRITE means SENDMSG queue space is available.
+ * Service-defined events are delivered as RECVMSG payloads and surfaced
+ * through EVFILT_READ readiness.
  *
  * Introspection:
  *   ioctl(fd, CAP_RT_GETINFO, &args)    query capability metadata
@@ -71,6 +77,7 @@ struct cap_rt_connect_args {
 
 /*
  * Send a message with optional fd attachment and reply token.
+ * Returns EAGAIN when the RX queue is full; wait for EVFILT_WRITE and retry.
  */
 struct cap_rt_sendmsg_args {
 	const void	*payload;
@@ -83,8 +90,9 @@ struct cap_rt_sendmsg_args {
 };
 
 /*
- * Receive a message with optional fd extraction and metadata.
- * Blocks until a message is available (EAGAIN with O_NONBLOCK).
+ * Receive an async reply or service notification with optional fd
+ * extraction and metadata.  Blocks until a message is available
+ * (EAGAIN with O_NONBLOCK).
  */
 struct cap_rt_recvmsg_args {
 	void		*payload;
@@ -122,7 +130,8 @@ struct cap_rt_call_args {
  */
 #define	CAP_RT_INFO_F_SENDMSG	0x00000001u	/* async SENDMSG path */
 #define	CAP_RT_INFO_F_CALL	0x00000002u	/* synchronous CALL path */
-#define	CAP_RT_INFO_F_KQUEUE	0x00000004u	/* EVFILT_READ/WRITE support */
+#define	CAP_RT_INFO_F_KQUEUE	0x00000004u	/* kqueue readiness support */
+#define	CAP_RT_INFO_F_RECVMSG	0x00000008u	/* async RECVMSG path */
 
 struct cap_rt_info_args {
 	char		name[CAP_RT_MAXNAME]; /* OUT: service name */

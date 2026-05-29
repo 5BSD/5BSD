@@ -26,6 +26,9 @@
 
 int event_kq = -1;
 
+static bool pending_reboot;
+static int pending_reboot_howto;
+
 static void
 add_signal_event(int kq, int sig)
 {
@@ -40,8 +43,11 @@ add_signal_event(int kq, int sig)
 }
 
 static void
-shutdown_and_exit(int reason)
+shutdown_begin(int reason)
 {
+
+	if (od.shutting_down)
+		return;
 
 	ORACLED_PROBE_SHUTDOWN(reason);
 	if (reason > 0)
@@ -49,7 +55,13 @@ shutdown_and_exit(int reason)
 	else
 		syslog(LOG_INFO, "stopping via control socket");
 
+	od.shutting_down = true;
 	supervisor_stop(event_kq);
+}
+
+static void
+shutdown_finish(void)
+{
 
 	if (!od.test_mode)
 		kill_subtree();
@@ -57,6 +69,15 @@ shutdown_and_exit(int reason)
 	ctl_teardown();
 	cap_rt_teardown();
 	pidfile_remove(od.pidfh);
+	supervisor_teardown_state();
+
+	if (pending_reboot) {
+		reboot(pending_reboot_howto);
+		/* reboot(2) should not return. */
+		syslog(LOG_CRIT, "reboot(2) failed: %m");
+		_exit(1);
+	}
+
 	closelog();
 	od.running = false;
 }
@@ -107,41 +128,37 @@ event_loop(void)
 		    (int)kev.ident == cfd && kev.udata == NULL) {
 			int action, howto;
 
+			if (od.shutting_down)
+				continue;
 			howto = 0;
 			action = ctl_handle(&howto);
 			if (action & CTL_ACTION_REBOOT) {
 				syslog(LOG_INFO,
 				    "rebooting via control socket");
-				supervisor_stop(kq);
-				kill_subtree();
-				reap_children();
-				ctl_teardown();
-				cap_rt_teardown();
-				pidfile_remove(od.pidfh);
-				reboot(howto);
-				/* reboot(2) should not return. */
-				syslog(LOG_CRIT, "reboot(2) failed: %m");
-				_exit(1);
+				pending_reboot = true;
+				pending_reboot_howto = howto;
+				shutdown_begin(0);
 			} else if (action & CTL_ACTION_SHUTDOWN) {
-				shutdown_and_exit(0);
-				break;	/* exit loop immediately */
+				shutdown_begin(0);
 			}
+			if (od.shutting_down && supervisor_is_stopped())
+				shutdown_finish();
 			continue;
 		}
 
 		/* Process descriptor events (service lifecycle). */
 		if (kev.filter == EVFILT_PROCDESC) {
 			supervisor_handle_procdesc(&kev);
+			if (od.shutting_down && supervisor_is_stopped())
+				shutdown_finish();
 			continue;
 		}
 
 		/* Restart timer fired. */
 		if (kev.filter == EVFILT_TIMER && kev.udata != NULL) {
-			struct svc_runtime *svc = kev.udata;
-			svc->restart_pending = false;
-			syslog(LOG_INFO, "service %s: restart timer fired",
-			    svc->manifest.label);
-			svc_exec(svc, kq);
+			supervisor_handle_timer(&kev);
+			if (od.shutting_down && supervisor_is_stopped())
+				shutdown_finish();
 			continue;
 		}
 
@@ -160,16 +177,20 @@ event_loop(void)
 			reap_children();
 			break;
 		case SIGHUP:
-			syslog(LOG_INFO, "reload requested (SIGHUP)");
-			supervisor_reload(kq, NULL, 0);
+			if (!od.shutting_down) {
+				syslog(LOG_INFO, "reload requested (SIGHUP)");
+				supervisor_reload(kq, NULL, 0);
+			}
 			break;
 		case SIGTERM:
 		case SIGINT:
-			shutdown_and_exit((int)kev.ident);
+			shutdown_begin((int)kev.ident);
 			break;	/* od.running is false, loop exits */
 		default:
 			break;
 		}
+		if (od.shutting_down && supervisor_is_stopped())
+			shutdown_finish();
 	}
 
 	(void)close(kq);

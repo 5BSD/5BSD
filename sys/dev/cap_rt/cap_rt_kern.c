@@ -238,7 +238,7 @@ cap_rt_dispatch_task(void *context, int pending __unused)
 		s->ci_rxqlen--;
 		s->ci_inflight++;
 
-		/* Notify EVFILT_WRITE — space freed in RX. */
+		/* Notify EVFILT_WRITE — SENDMSG can retry. */
 		KNOTE_LOCKED(&s->ci_wknotes, 0);
 		s->ci_handler_td = curthread;
 		mtx_unlock(&s->ci_mtx);
@@ -323,9 +323,6 @@ cap_rt_service_create(const struct cap_rt_service_params *p,
 		return (EINVAL);
 	if (p->ops->co_handler == NULL && p->ops->co_call == NULL)
 		return (EINVAL);
-	/* A service must be async (co_handler) or sync (co_call), not both. */
-	if (p->ops->co_handler != NULL && p->ops->co_call != NULL)
-		return (EINVAL);
 
 	queue_depth = p->queue_depth > 0 ? p->queue_depth :
 	    CAP_RT_MAX_QUEUED;
@@ -350,7 +347,7 @@ cap_rt_service_create(const struct cap_rt_service_params *p,
 	LIST_INIT(&svc->csvc_instances);
 	refcount_init(&svc->csvc_refcnt, 1);
 
-	/* Only create taskqueue if the service uses async dispatch. */
+	/* Only create a taskqueue if the service accepts async SENDMSG. */
 	if (p->ops->co_handler != NULL) {
 		svc->csvc_taskq = taskqueue_create("cap_rt_svc", M_WAITOK,
 		    taskqueue_thread_enqueue, &svc->csvc_taskq);
