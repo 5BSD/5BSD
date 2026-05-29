@@ -72,16 +72,16 @@ vm_base_packages_list() {
 	# Output a list of package sets equivalent to what we get from
 	# "installworld installkernel distribution", aka. the full base
 	# system.
-	echo FreeBSD-set-base
-	[ -z "${WITHOUT_DEBUG_FILES}" ] && echo FreeBSD-set-base-dbg
-	echo FreeBSD-set-kernels
-	[ -z "${WITHOUT_KERNEL_SYMBOLS}" ] && echo FreeBSD-set-kernels-dbg
+	echo 5BSD-set-base
+	[ -z "${WITHOUT_DEBUG_FILES}" ] && echo 5BSD-set-base-dbg
+	echo 5BSD-set-kernels
+	[ -z "${WITHOUT_KERNEL_SYMBOLS}" ] && echo 5BSD-set-kernels-dbg
 	case ${TARGET_ARCH} in
 	amd64 | aarch64 | powerpc64)
-		echo FreeBSD-set-lib32
-		[ -z "${WITHOUT_DEBUG_FILES}" ] && echo FreeBSD-set-lib32-dbg
+		echo 5BSD-set-lib32
+		[ -z "${WITHOUT_DEBUG_FILES}" ] && echo 5BSD-set-lib32-dbg
 	esac
-	echo FreeBSD-set-tests
+	echo 5BSD-set-tests
 	# Also install pkg, since systems with a packaged base system should
 	# have the tools to upgrade themselves.
 	echo pkg
@@ -104,12 +104,12 @@ vm_install_base() {
 		pkg_cmd="$pkg_cmd -o METALOG=METALOG"
 		$pkg_cmd update
 		selected=$(vm_base_packages_list | vm_extra_filter_base_packages)
-		$pkg_cmd install -U -r FreeBSD-base $selected
+		$pkg_cmd install -U -r 5BSD-base $selected
 		metalog_add_data ./var/db/pkg/local.sqlite
 		mkdir -p ${DESTDIR}/usr/local/etc/pkg/repos
-		echo 'FreeBSD-base: { enabled: yes }' > ${DESTDIR}/usr/local/etc/pkg/repos/FreeBSD.conf
+		echo '5BSD-base: { enabled: yes }' > ${DESTDIR}/usr/local/etc/pkg/repos/5BSD.conf
 		metalog_add_data ./usr/local/etc/pkg/repos
-		metalog_add_data ./usr/local/etc/pkg/repos/FreeBSD.conf
+		metalog_add_data ./usr/local/etc/pkg/repos/5BSD.conf
 	else
 		cd ${WORLDDIR} && \
 			make DESTDIR=${DESTDIR} ${INSTALLOPTS} \

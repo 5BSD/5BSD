@@ -1,3 +1,5 @@
+PACKAGE=oracled
+
 LIB=	oraclectl
 SRCS=	oraclectl.c
 INCS=	oraclectl.h

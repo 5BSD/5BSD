@@ -220,9 +220,9 @@ BOOTONLY_STAGING_DEPS=	${.CURDIR}/Makefile ${.CURDIR}/rc.local
 DVD_STAGING_DEPS=	${.CURDIR}/Makefile ${.CURDIR}/rc.local
 .if !defined(NOPKGBASE) || empty(NOPKGBASE)
 DISC_STAGING_DEPS+=	${.CURDIR}/scripts/pkgbase-stage.lua \
-			${.CURDIR}/scripts/FreeBSD-base-offline.conf
+			${.CURDIR}/scripts/5BSD-base-offline.conf
 DVD_STAGING_DEPS+=	${.CURDIR}/scripts/pkgbase-stage.lua \
-			${.CURDIR}/scripts/FreeBSD-base-offline.conf
+			${.CURDIR}/scripts/5BSD-base-offline.conf
 .endif
 
 disc1: ${DISC_STAGING_DEPS}
@@ -240,9 +240,9 @@ pkgbase-repo.tar: pkgbase-repo
 
 pkgbase-repo-dir: pkgbase-repo
 	mkdir -p pkgbase-repo-dir
-	printf 'FreeBSD-base: { url: "file://%s", enabled: yes }\n' \
+	printf '5BSD-base: { url: "file://%s", enabled: yes }\n' \
 	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest \
-	    > pkgbase-repo-dir/FreeBSD-base.conf
+	    > pkgbase-repo-dir/5BSD-base.conf
 
 disc1:
 # Install system
@@ -261,7 +261,7 @@ disc1:
 	    ${.OBJDIR}/pkgbase-repo-dir \
 	    ${.TARGET}/usr/freebsd-packages/offline \
 	    "${_ALL_libcompats}" ${PKG_ABI} ${.OBJDIR}/pkgdb-disc1
-	cp ${.CURDIR}/scripts/FreeBSD-base-offline.conf \
+	cp ${.CURDIR}/scripts/5BSD-base-offline.conf \
 		${.TARGET}/usr/freebsd-packages/repos/
 	mtree -c -p ${.TARGET}/usr/freebsd-packages | \
 	    mtree -C -k type,mode,link,size | \
@@ -366,7 +366,7 @@ dvd:
 	    ${.OBJDIR}/pkgbase-repo-dir \
 	    ${.TARGET}/usr/freebsd-packages/offline \
 	    "${_ALL_libcompats}" ${PKG_ABI} ${.OBJDIR}/pkgdb-dvd
-	cp ${.CURDIR}/scripts/FreeBSD-base-offline.conf \
+	cp ${.CURDIR}/scripts/5BSD-base-offline.conf \
 		${.TARGET}/usr/freebsd-packages/repos/
 	mtree -c -p ${.TARGET}/usr/freebsd-packages | \
 	    mtree -C -k type,mode,link,size | \

@@ -1,4 +1,4 @@
-FreeBSD-base: {
+5BSD-base: {
   url: "pkg+https://pkg.FreeBSD.org/${ABI}/%%SUBURL%%",
   mirror_type: "srv",
   signature_type: "fingerprints",

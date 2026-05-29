@@ -15,12 +15,23 @@
 .Op Fl T
 .Sh DESCRIPTION
 .Nm
-is the userspace service manager for the Oracle capability world.
-It is started by
-.Xr rc 8
-and manages access to the
+is the system authority for the Oracle capability world \(em a thin
+layer that claims system resources via the
 .Xr cap_rt 4
-capability runtime.
+capability runtime and delegates them to services by fork/exec'ing
+declared programs and passing capability tokens.
+.Nm
+does not implement system operations itself; it starts programs that do.
+.Pp
+It is started by
+.Xr rc 8 .
+The default installation ships a standard set of system services
+(kernel module loading, reboot, sysctl, etc.) in
+.Pa /usr/libexec/oracled/ ,
+each with a manifest in
+.Pa /etc/oracled.d/ .
+Developers may replace any service by providing their own binary
+and manifest.
 .Pp
 During startup,
 .Nm
@@ -201,10 +212,25 @@ Available operations:
 Default: empty (no system operations gated).
 .El
 .Sh FILES
-.Bl -tag -width "/etc/oracled.conf"
+.Bl -tag -width "/usr/libexec/oracled/"
 .It Pa /etc/oracled.conf
 Configuration file (UCL format).
 Optional.
+.It Pa /etc/oracled.d/
+Service manifest directory.
+Each
+.Pa *.ucl
+file declares a service for
+.Nm
+to start, its dependencies, and the capability tokens it requires.
+.It Pa /usr/libexec/oracled/
+Default system service binaries.
+These implement system operations (kldload, reboot, sysctl, etc.)
+and are started by
+.Nm
+at boot.
+Replaceable by providing alternate manifests in
+.Pa /etc/oracled.d/ .
 .It Pa /var/run/oracled.pid
 Default pidfile.
 .It Pa /var/run/oracled.sock

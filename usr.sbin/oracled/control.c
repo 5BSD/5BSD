@@ -6,9 +6,9 @@
  * Control socket for oracled.
  *
  * Provides a unix domain socket at /var/run/oracled.sock for
- * administrative commands.  This is interim infrastructure — the
- * long-term plan replaces it with cap_rt pair channels when
- * oracled becomes the system init.
+ * administrative commands (status, shutdown, reload).  System
+ * operations (kldload, reboot) are here temporarily and will
+ * move to separate service programs in Phase 2.
  *
  * Each client connection is one-shot: accept, authenticate via
  * getpeereid(), read request + optional payload, dispatch to

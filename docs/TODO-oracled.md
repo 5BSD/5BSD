@@ -1,115 +1,158 @@
 # OracleD Architecture TODO
 
-## Move system operations out of oracled
+## Phase 2: Service Launcher
 
-oracled currently implements kldload, kldunload, and reboot
-directly in its control socket command handlers (commands.c).
-These are system administration operations that do not belong
-in the resource authority daemon.
+The oracle becomes a thin authority layer.  It claims resources,
+reads manifests, fork/execs declared services, and passes
+capability tokens.  System operations (kldload, reboot, sysctl,
+etc.) move out of oracled into separate, replaceable programs.
 
-### Current state (interim)
+### Default system services to ship
 
-```
-oraclectl kldload foo  →  oracled control socket  →  kldload(2)
-oraclectl reboot       →  oracled control socket  →  reboot(2)
-```
+Each is a standalone binary in `/usr/libexec/oracled/` with a
+matching manifest in `/etc/oracled.d/`:
 
-oracled holds the system gate claims AND performs the operations
-itself.  This works but violates the architecture: oracled should
-claim resources and delegate, not act.
+| Service | Binary | Tokens | Operations |
+|---------|--------|--------|------------|
+| sys-kldload | sys-kldload | kldload, kldunload, kldstat | Load/unload kernel modules |
+| sys-reboot | sys-reboot | reboot | Reboot, halt, poweroff |
+| sys-sysctl | sys-sysctl | sysctl | Sysctl write operations |
+| sys-kenv | sys-kenv | kenv | Kernel env get/set/unset |
+| sys-swap | sys-swap | swapon, swapoff | Swap device management |
+| sys-acct | sys-acct | acct | Process accounting control |
 
-### Target state
-
-```
-oraclectl kldload foo  →  system-agent  →  kldload(2)
-oraclectl reboot       →  system-agent  →  reboot(2)
-```
-
-A **system-agent** (jid0, not jailed) holds cap_rt_system tokens
-for kldload, kldunload, kldstat, reboot, swapon, swapoff, sysctl,
-kenv, and acct.  oracled mints the tokens and passes them to the
-agent at startup.  The agent provides its own control interface
-(pair channel from oracled, or its own socket).
-
-oraclectl routes commands to the appropriate agent instead of
-to oracled directly.
+Developers replace any of these by dropping in their own
+manifest with the same `provides` name.  The oracle does not
+care what it starts — it passes tokens and monitors the process.
 
 ### Steps
 
-1. Create system-agent binary (`usr.libexec/oracled/system-agent`)
-2. Agent receives system tokens via pair from oracled
-3. Agent authorizes tokens after exec
-4. Agent listens for commands on the pair
-5. oraclectl learns to route kldload/reboot to system-agent
-6. Remove CTL_OP_KLDLOAD, CTL_OP_KLDUNLOAD, CTL_OP_REBOOT
-   from oracled's control socket
-7. Remove kldload/reboot code from commands.c
+1. Manifest parser (`manifest.c`) — read `/etc/oracled.d/*.ucl`
+2. Dependency graph — DAG, topological sort, cycle rejection
+3. Fork/exec path (`execute.c`) — fd close, env scrub, cred
+   setup, token passing, pair channel, execve
+4. Procdesc monitoring (`supervisor.c`) — EVFILT_PROCDESC,
+   restart policies
+5. Write default system service binaries
+6. oraclectl routes kldload/reboot/etc. to system services
+   instead of dispatching to commands.c
+7. Remove CTL_OP_KLDLOAD, CTL_OP_KLDUNLOAD, CTL_OP_REBOOT
+   from the control socket
+8. Remove interim code from commands.c
 
 ### What stays in oracled's control socket
 
-- CTL_OP_STATUS — daemon status (always needed)
+- CTL_OP_STATUS — daemon status (always needed, richer output)
 - CTL_OP_SHUTDOWN — stop oracled itself (always needed)
+- CTL_OP_RELOAD — reload config and restart changed services
 
-### What moves to agents
+## Richer oraclectl status
 
-- kldload / kldunload → system-agent
-- reboot / halt / poweroff → system-agent
-- kenv set/unset → system-agent
-- sysctl write → system-agent (or a sysctl-agent)
-- Future: mount operations → storage-agent
-- Future: jail operations → container-agent
+`oraclectl status` currently shows only running/uptime.  It
+should report:
 
-### Commands to add to oraclectl
+- Active resource claims (paths, network, system ops)
+- Integrity flags in effect
+- Loaded cap_rt modules
+- Running services and their state (started, ready, failed)
+- Reserved JIDs and their assignments
+- Token counts per service
 
-When system-agent exists:
+## Reserved Jail IDs
 
-- `oraclectl halt` — reboot with RB_HALT
-- `oraclectl poweroff` — reboot with RB_POWEROFF
-- `oraclectl kenv set name=value`
-- `oraclectl kenv unset name`
-- `oraclectl sysctl name=value`
+Reserve the first JIDs for oracle infrastructure:
 
-### Dependencies
+- **JID 0** — host / oracle itself
+- **JID 1** — system services (default sys-svc set)
+- **JID 2** — reserved for future use
+- **JID 3+** — user jails
 
-- Phase 2: manifests + dependency graph (to start system-agent)
-- Phase 3: capability passing (to give system-agent tokens)
-- Phase 4 not required (system-agent runs in jid0)
+Need to determine:
+- How to enforce reserved JID allocation (kernel support or
+  convention?)
+- Whether JID 1 is a real jail or a logical grouping of jid0
+  services
+- Policy for JID 2 (Linux compat? audit? TBD)
+
+## Linux Compatibility Security Review
+
+The Linuxulator is always on in 5BSD.  Making it a baseline
+system component means its attack surface is always exposed.
+We need a thorough security review before shipping.
+
+Areas to audit:
+
+- **Syscall translation layer** — every Linux→FreeBSD syscall
+  mapping is a potential semantic gap.  Mismatched error codes,
+  flag handling, or side effects can be exploited.
+- **ELF loader / branding** — unbranded ELF binaries fall back
+  to ELFOSABI_LINUX.  Review whether this creates confusion
+  between native and Linux binaries in security-sensitive paths.
+- **linprocfs / linsysfs** — these expose kernel state under
+  Linux conventions.  Audit what information leaks across jail
+  boundaries and whether mount options are restrictive enough.
+- **VDSO (virtual dynamic shared object)** — the linux64 module
+  builds a VDSO mapped into every Linux process.  Review for
+  info leaks and ensure it cannot be used to bypass ASLR.
+- **Interaction with cap_rt** — verify that cap_rt MACF hooks
+  fire correctly on Linux-emulated syscalls (open, bind, etc.),
+  not just native ones.  A Linux process must not be able to
+  bypass isolation claims by going through the Linuxulator path.
+- **pty / devfs exposure** — the rc script loads the pty module
+  and mounts devfs inside the emulation path.  Review device
+  visibility and access control.
+- **Privilege boundaries** — Linux jails run under the oracle's
+  authority.  Verify that a compromised Linux process inside a
+  jail cannot escalate via Linuxulator-specific interfaces.
+
+This review blocks any production deployment with Linux jails.
+
+## Cross-Jail Compatibility
+
+The oracle's service abstraction solves FreeBSD/Linux jail
+compatibility.  A Linux jail's "reboot" talks to the oracle,
+which routes to the right implementation.
+
+Linux compatibility (Linuxulator) is always on in 5BSD —
+modules loaded at boot, rc.conf enabled by default.  This is
+a baseline assumption the oracle depends on.
+
+Still need to design:
+- Whether Linux jails get a shim library or use the pair
+  channel directly
+- Mapping between Linux syscall semantics and oracle operations
+- Whether linprocfs/linsysfs mounts inside jails are managed
+  by the oracle or by the jail's own init
 
 ## Remove CTL_OP_RELOAD
 
-The reload command is a stub returning ENOTSUP.  Either implement
-actual config reload or remove the opcode entirely.  If implemented,
-reload should re-read /etc/oracled.conf and apply deltas (new claims,
-changed integrity flags).
+The reload command is a stub returning ENOTSUP.  Once the
+service launcher exists, reload should:
+- Re-read manifests from `/etc/oracled.d/`
+- Diff against running services
+- Start new services, stop removed ones, restart changed ones
+- Re-read `/etc/oracled.conf` for claim/integrity changes
 
 ## Deployment Profiles
 
 Ship multiple config profiles for different use cases:
 development, desktop, server, appliance.  Stored in
-/usr/share/oracled/ and selected at install or first boot.
+`/usr/share/oracled/` and selected at install or first boot.
 
 Before we can ship aggressive profiles, we need:
 
 1. **File access tracing** — use DTrace or cap_rt probes to
    record what files each daemon opens at runtime.  Build a
-   database of daemon→file dependencies.  Without this data,
-   we don't know what claiming /etc/ssh breaks for sshd or
-   what claiming /var/log breaks for newsyslog.
-
+   database of daemon→file dependencies.
 2. **Service capability manifests** — each daemon's manifest
-   declares what it needs (files, ports, system ops).  The
-   profile generator can verify that claims don't conflict
-   with declared needs.
-
+   declares what it needs.  The profile generator verifies
+   claims don't conflict with declared needs.
 3. **oraclectl profile command** — `oraclectl profile server`
-   installs the appropriate config and validates it against
-   running services.
+   installs config and validates against running services.
+4. **Dry-run mode** — `oracled -n` loads config and reports
+   what would be claimed without actually claiming.
 
-4. **Dry-run mode** — `oracled -n` loads the config and
-   reports what would be claimed without actually claiming.
-   Shows conflicts with running processes.
-
-Profiles to create:
+Profiles:
 
 - **development** — integrity only, no claims (current default)
 - **desktop** — kernel memory, boot, credentials, kldload
@@ -118,37 +161,21 @@ Profiles to create:
 
 ## bhyve VM Capability Gates
 
-Add VMM gates to cap_rt_system for bhyve hypervisor operations:
+Add VMM gates to cap_rt_system:
 
-- `SYS_GATE_VMM_CREATE` — `mac_vmm_check_create` (VM creation)
-- `SYS_GATE_VMM_DESTROY` — `mac_vmm_check_destroy` (VM destruction)
-- `SYS_GATE_VMM_MEM` — `mac_vmm_check_mem_access` (guest memory mmap/read/write)
-- `SYS_GATE_VMM_MEMSEG` — `mac_vmm_check_memseg_access` (memory segment access)
-
-All hooks are infrequent (setup-time, not per-instruction).
-Call sites are in `sys/dev/vmm/vmm_dev.c` lines 240, 845, 941,
-1044, 1386.
+- `SYS_GATE_VMM_CREATE` — VM creation
+- `SYS_GATE_VMM_DESTROY` — VM destruction
+- `SYS_GATE_VMM_MEM` — guest memory access
+- `SYS_GATE_VMM_MEMSEG` — memory segment access
 
 With these gates, only token holders can create VMs or access
-guest memory.  Prevents unauthorized VM creation (resource DoS)
-and guest memory inspection (secret extraction).
+guest memory.
 
 ## rctl Rule Manipulation
 
 Add rctl gates to cap_rt_system:
 
-- `SYS_GATE_RCTL_ADD` — `mac_rctl_check_add_rule`
-- `SYS_GATE_RCTL_REMOVE` — `mac_rctl_check_remove_rule`
+- `SYS_GATE_RCTL_ADD` — add rule
+- `SYS_GATE_RCTL_REMOVE` — remove rule
 
-Prevents a compromised root process from removing resource
-limits that contain it.
-
-## Control socket is interim
-
-The control socket (`/var/run/oracled.sock`) is interim infrastructure.
-The long-term plan replaces it with cap_rt pair channels when oracled
-manages agents.  The socket remains for oraclectl (admin tool) but
-agents use pairs exclusively.
-
-Document this in oracled.8 and remove the "interim" comments once
-the pair-based architecture is implemented.
+Prevents compromised root from removing its own resource limits.

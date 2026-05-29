@@ -1,115 +1,111 @@
 # Installing 5BSD With Pkgbase
 
-Use this path when upgrading an existing FreeBSD 16-CURRENT pkgbase
-system to locally built 5BSD packages. For fresh installs, prefer the
-USB installer described in `building-5bsd.md`.
+## Fresh Install
 
-## Repository Policy
+For fresh installs, prefer the USB installer described in
+`building-5bsd.md`.  The installer ships an offline pkgbase repo
+with `5BSD-*` packages and handles everything.
 
-Base system updates must come from a local 5BSD repo so `pkg upgrade`
-never replaces 5BSD packages with upstream FreeBSD ones.  Third-party
-packages continue to come from the normal FreeBSD ports repos.
+## Migrating From FreeBSD Pkgbase
 
-Two things are required:
+If you are running a FreeBSD 16-CURRENT pkgbase system and want to
+switch to 5BSD packages, this is a one-time migration.  The package
+names change from `FreeBSD-*` to `5BSD-*`, so `pkg upgrade` alone
+cannot do it — pkg sees them as different packages.
 
-1. **Disable upstream FreeBSD-base** so it cannot override local packages.
-2. **Add a local 5BSD repo** pointing at the build output, with a high
-   priority so it wins over any remote source.
-
-Sample config files are provided in `docs/pkg/`:
-
-```sh
-mkdir -p /usr/local/etc/pkg/repos
-cp docs/pkg/FreeBSD.conf.sample /usr/local/etc/pkg/repos/FreeBSD.conf
-cp docs/pkg/5BSD.conf.sample    /usr/local/etc/pkg/repos/5BSD.conf
-```
-
-Edit `/usr/local/etc/pkg/repos/5BSD.conf` and set the `url` to match
-your source tree.  The path must point at the repo directory created by
-`make create-packages`.  For example, if your source is in
-`/home/user/5BSD`:
-
-```
-url: "file:///usr/obj/home/user/5BSD/repo/${ABI}/latest"
-```
-
-Verify both repos are visible and that `FreeBSD-base` is disabled:
-
-```sh
-pkg -vv | sed -n '/Repositories:/,$p'
-```
-
-## Build Packages
+### 1. Build 5BSD packages
 
 ```sh
 cd /path/to/5BSD
-make -j$(sysctl -n hw.ncpu) buildworld KERNCONF=5BSD
-make -j$(sysctl -n hw.ncpu) buildkernel KERNCONF=5BSD
-make -j$(sysctl -n hw.ncpu) stage-packages KERNCONF=5BSD
-make -j$(sysctl -n hw.ncpu) create-packages KERNCONF=5BSD
+make -j$(sysctl -n hw.ncpu) buildworld
+make -j$(sysctl -n hw.ncpu) buildkernel
+make -j$(sysctl -n hw.ncpu) packages
 ```
 
-After `create-packages` finishes, build the repo catalog and update
-the `latest` symlink.  Find the newest snapshot directory under the
-repo output:
-
-```sh
-ls /usr/obj/<srcdir>/repo/${ABI}/
-```
-
-Then generate the catalog and point `latest` at it:
+Build the repo catalog:
 
 ```sh
 pkg repo /usr/obj/<srcdir>/repo/${ABI}/<version>
 ln -snf <version> /usr/obj/<srcdir>/repo/${ABI}/latest
 ```
 
-For example, with source in `/usr/src`:
+### 2. Set up the local 5BSD repo
 
 ```sh
-pkg repo /usr/obj/usr/src/repo/FreeBSD:16:aarch64/16.snap20260528233101
-ln -snf 16.snap20260528233101 /usr/obj/usr/src/repo/FreeBSD:16:aarch64/latest
+mkdir -p /usr/local/etc/pkg/repos
 ```
 
-## Install Or Upgrade
-
-Create a boot environment before changing the base system:
+Disable the upstream FreeBSD-base repo:
 
 ```sh
-bectl create pre-5bsd-install
+cat > /usr/local/etc/pkg/repos/FreeBSD.conf <<'EOF'
+FreeBSD-base: { enabled: no }
+EOF
+```
+
+Add the local 5BSD repo:
+
+```sh
+cat > /usr/local/etc/pkg/repos/5BSD.conf <<'EOF'
+5BSD-base: {
+  url: "file:///usr/obj/<srcdir>/repo/${ABI}/latest",
+  enabled: yes
+}
+EOF
+```
+
+Edit the `url` to match your build output path.
+
+### 3. Create a boot environment and migrate
+
+```sh
+bectl create pre-5bsd-migration
 pkg update
-pkg delete FreeBSD-kernel-generic FreeBSD-kernel-generic-dbg
-pkg install FreeBSD-kernel-5bsd
-pkg upgrade
+```
+
+Remove the old FreeBSD base packages and install 5BSD replacements.
+This replaces the entire base system in one operation:
+
+```sh
+pkg delete -fa
+pkg install -r 5BSD-base 5BSD-set-base 5BSD-kernel-vbsd
 reboot
 ```
 
-Install third-party packages normally:
+After reboot, verify:
 
 ```sh
-pkg install vim tmux git
-```
-
-After reboot:
-
-```sh
-uname -i
+uname -i          # should show VBSD
 kldstat | grep cap_rt
+pkg query '%n' | head
 ```
 
-For later updates, rebuild packages, regenerate the catalog, create a
-new boot environment, then upgrade:
+If anything goes wrong, roll back:
 
 ```sh
-cd /usr/src
-make -j$(sysctl -n hw.ncpu) buildworld KERNCONF=5BSD
-make -j$(sysctl -n hw.ncpu) buildkernel KERNCONF=5BSD
-make -j$(sysctl -n hw.ncpu) stage-packages KERNCONF=5BSD
-make -j$(sysctl -n hw.ncpu) create-packages KERNCONF=5BSD
-pkg repo /usr/obj/usr/src/repo/FreeBSD:16:aarch64/<new-version>
-ln -snf <new-version> /usr/obj/usr/src/repo/FreeBSD:16:aarch64/latest
+bectl activate pre-5bsd-migration
+reboot
+```
+
+## Upgrading 5BSD to 5BSD
+
+Once you are on 5BSD packages, subsequent upgrades are straightforward:
+
+```sh
+cd /path/to/5BSD
+make -j$(sysctl -n hw.ncpu) buildworld
+make -j$(sysctl -n hw.ncpu) buildkernel
+make -j$(sysctl -n hw.ncpu) packages
+pkg repo /usr/obj/<srcdir>/repo/${ABI}/<new-version>
+ln -snf <new-version> /usr/obj/<srcdir>/repo/${ABI}/latest
 bectl create pre-upgrade
 pkg update -f
 pkg upgrade
 reboot
 ```
+
+## Repository Policy
+
+Base system updates must come from a local 5BSD repo so `pkg upgrade`
+never replaces 5BSD packages with upstream FreeBSD ones.  Third-party
+packages continue to come from the normal FreeBSD ports repos.

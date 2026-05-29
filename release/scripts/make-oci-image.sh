@@ -26,7 +26,7 @@ init_repo() {
 
 	mkdir -p ${workdir}/repos
 	cat > ${workdir}/repos/base.conf <<EOF
-FreeBSD-base: {
+5BSD-base: {
   url: "file:///usr/obj${srcdir}/repo/${abi}/latest"
   signature_type: "none"
   fingerprints: "none"

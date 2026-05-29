@@ -239,19 +239,22 @@ local function select_packages(pkg, options)
 
 	-- Note: if you update this list, you must also update the list in
 	-- release/scripts/pkgbase-stage.lua.
+	local prefix = "5BSD"
+
 	local kernel_packages = {
-		-- 5BSD custom kernel
-		["FreeBSD-kernel-5bsd"] = true,
+		-- 5BSD kernel (VBSD config)
+		[prefix .. "-kernel-vbsd"] = true,
 		-- Most architectures use this
-		["FreeBSD-kernel-generic"] = true,
+		[prefix .. "-kernel-generic"] = true,
 		-- PowerPC uses either of these, depending on platform
-		["FreeBSD-kernel-generic64"] = true,
-		["FreeBSD-kernel-generic64le"] = true,
+		[prefix .. "-kernel-generic64"] = true,
+		[prefix .. "-kernel-generic64le"] = true,
 	}
 
-	local rquery = capture(pkg .. "rquery -U -r FreeBSD-base %n")
+	local rquery = capture(pkg .. "rquery -U -r " .. prefix .. "-base %n")
+	local set_pattern = "^" .. prefix:gsub("%-", "%%-") .. "%-set%-(.+)$"
 	for package in rquery:gmatch("[^\n]+") do
-		local setname = package:match("^FreeBSD%-set%-(.+)$")
+		local setname = package:match(set_pattern)
 
 		if setname then
 			components[setname] = components[setname] or {}
@@ -361,13 +364,13 @@ local function pkgbase()
 
 	local packages = table.concat(select_packages(pkg, options), " ")
 
-	while not os.execute(pkg .. "install -U -F -y -r FreeBSD-base " .. packages) do
+	while not os.execute(pkg .. "install -U -F -y -r 5BSD-base " .. packages) do
 		if not prompt_yn("Fetching packages failed, try again?") then
 			os.exit(1)
 		end
 	end
 
-	if not os.execute(pkg .. "install -U -y -r FreeBSD-base " .. packages) then
+	if not os.execute(pkg .. "install -U -y -r 5BSD-base " .. packages) then
 		os.exit(1)
 	end
 
@@ -375,7 +378,7 @@ local function pkgbase()
 	-- 5BSD system.  Third-party package repositories remain configured
 	-- separately, but base updates must come from a 5BSD repo instead.
 	assert(os.execute("mkdir -p " .. chroot .. "/usr/local/etc/pkg/repos"))
-	assert(os.execute("echo 'FreeBSD-base: { enabled: no }' > " .. chroot .. "/usr/local/etc/pkg/repos/FreeBSD.conf"))
+	assert(os.execute("echo '5BSD-base: { enabled: no }' > " .. chroot .. "/usr/local/etc/pkg/repos/5BSD.conf"))
 end
 
 pkgbase()

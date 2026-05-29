@@ -2,9 +2,11 @@
 
 ## Overview
 
-oracled is a **system authority** — the kernel's policy engine
-extended into userspace.  It owns system resources and delegates
-them to agents via capability tokens.
+oracled is a **thin authority layer** — it claims system resources
+via the cap_rt capability runtime and delegates them to services
+by fork/exec'ing declared programs and passing capability tokens.
+The oracle itself is small.  It does not implement system
+operations; it starts programs that do.
 
 oracled is built entirely on the cap_rt capability runtime.  It
 does not use traditional Unix access control for its core
@@ -28,13 +30,34 @@ management — flows through cap_rt kernel services:
 
 The capability runtime provides MACF-enforced security that
 root cannot bypass.  oracled uses it for its own protection
-and as the mechanism for delegating authority to agents.
+and as the mechanism for delegating authority to services.
 
-It is NOT a traditional service manager.  It does not directly
-start sshd or nginx.  It starts **agents** — domain-specific
-service managers that each handle their own domain.  Some agents
-run in jid0 for core system work, others run in jails where they
-are PID 1.
+### Design Principle: The Oracle Abstracts Authority
+
+The oracle does not perform system operations — it authorizes
+them.  Operations like kldload, reboot, sysctl, and mount are
+performed by **separate programs** that the oracle starts and
+grants capability tokens to.  The default 5BSD installation
+ships a standard set of these services, but developers are free
+to replace any of them with their own implementations.
+
+This separation means:
+
+1. **The oracle stays small** — its job is to read config, claim
+   resources, fork/exec services, and pass tokens.
+2. **Developers customize the system** by writing their own
+   service programs, not by modifying the oracle.
+3. **The same interface works across jail types** — a FreeBSD
+   jail and a Linux jail both talk to the oracle for authority.
+   The oracle starts the right service implementation for each
+   context.  Same abstraction, different backends.
+
+### Two-Level Architecture
+
+oracled does not directly start end-user daemons like sshd or
+nginx.  It starts **agents** — domain-specific service managers
+that each handle their own domain.  Some agents run in jid0 for
+core system work, others run in jails where they are PID 1.
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -44,35 +67,44 @@ are PID 1.
                       │
           ┌───────────┴───────────┐
           │       oracled          │
+          │  (thin authority)      │
           │                        │
           │ 1. Claims resources    │
-          │ 2. Manages agents +    │
-          │    jid0 system services│
-          │ 3. Dependency ordering │
-          │ 4. Passes capabilities │
-          │    via cap_rt pairs    │
+          │ 2. Reads config        │
+          │ 3. Fork/execs services │
+          │ 4. Passes cap tokens   │
           └──┬──────┬──────┬──────┘
              │      │      │
         ─────┼──────┼──────┼───── jid0 ──────────
              │      │      │
-    ┌────────┤      │      │
-    │ syslogd │  devd│     │
-    │  (jid0) │(jid0)│     │
-    └─────────┘      │     │
-                     │     │
-        cap_rt pairs │     │
-                     │     │
-    ─────────────────┼─────┼─── jail boundary ───
-                     │     │
-              ┌──────┴──┐ ┌┴────────┐
-              │net-agent │ │app-agent│
-              │(jail,    │ │(jail,   │
-              │ PID 1)   │ │ PID 1)  │
-              │          │ │         │
-              │ sshd     │ │ webapp  │
-              │ nginx    │ │ podman  │
-              │ dhcpd    │ │ ctr     │
-              └──────────┘ └─────────┘
+    ┌────────┤  ┌───┴────┐ │
+    │ syslogd│  │sys-svc │ │   sys-svc handles
+    │  (jid0)│  │(jid0)  │ │   kldload, reboot,
+    └────────┘  │kldload │ │   sysctl, etc.
+                │reboot  │ │   (replaceable)
+                │sysctl  │ │
+                └────────┘ │
+                           │
+        cap_rt pairs       │
+                           │
+    ───────────────────────┼─── jail boundary ───
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+       ┌──────┴──┐  ┌─────┴───┐  ┌─────┴───┐
+       │net-agent │  │app-agent│  │linux-jail│
+       │(FreeBSD  │  │(FreeBSD │  │(Linux    │
+       │ jail)    │  │ jail)   │  │ jail)    │
+       │          │  │         │  │          │
+       │ sshd     │  │ webapp  │  │ systemd  │
+       │ nginx    │  │ podman  │  │ docker   │
+       └──────────┘  └─────────┘  └──────────┘
+
+Reserved JIDs:
+  JID 0 — host / oracle
+  JID 1 — system services (default sys-svc)
+  JID 2 — reserved for future use
+  JID 3+ — user jails
 ```
 
 ---
@@ -114,10 +146,18 @@ manifest, and oracled mints isolation tokens.
 
 oracled manages:
 
-- Core jid0 services (syslogd, devd, cron) — forked directly
-- Agents (net-agent, app-agent) — forked into jails or jid0
+- **System services** (jid0) — programs that implement system
+  operations (kldload, reboot, sysctl, etc.).  These are the
+  oracle's interface to the hardware.  The default set ships
+  with 5BSD but developers can replace any of them.
+- **Core jid0 services** (syslogd, devd, cron) — forked directly
+- **Agents** (net-agent, app-agent) — forked into jails or jid0
 - Dependency ordering between all of them
 - Restart policies
+
+oracled does NOT implement system operations itself.  It claims
+the cap_rt gates, then delegates by starting the appropriate
+service and passing it the capability tokens.
 
 ### Level 2 — agents (domain scope)
 
@@ -137,12 +177,99 @@ label = "net-agent";
 requires = ["syslogd"];
 ```
 
+### Cross-Jail Compatibility
+
+Because system operations flow through the oracle's service
+interface rather than direct syscalls, different jail types
+can share the same abstraction.  A FreeBSD jail's "reboot"
+and a Linux jail's "reboot" both request the operation from
+the oracle — the oracle routes to the right service
+implementation for that jail's context.
+
+This cleanly solves compatibility between FreeBSD native jails
+and Linux jails without each jail needing to know how the host
+kernel implements the operation.
+
+### Linux Compatibility is Always On
+
+5BSD ships with the Linuxulator enabled by default.  The
+`linux64` and `linux_common` kernel modules are loaded at
+boot (`loader.conf`), and `linux_enable="YES"` is the default
+in `rc.conf`.  This is a baseline system assumption, not an
+optional feature.
+
+The oracle's cross-jail abstraction depends on Linux
+compatibility being present — Linux jails need the Linuxulator
+ABI to run, and the oracle needs to be able to start services
+inside them.  Making it always-on eliminates a class of
+deployment failures where a Linux jail can't start because
+someone forgot to enable the Linuxulator.
+
+**Security note**: because the Linuxulator is always exposed,
+its attack surface is always present.  A full security review
+of the Linux compatibility layer is required before production
+deployment with Linux jails — see TODO-oracled.md for the
+audit checklist.  Of particular concern is verifying that
+cap_rt MACF hooks fire correctly on Linux-emulated syscalls,
+so that a Linux process cannot bypass isolation claims by
+going through the Linuxulator path instead of native syscalls.
+
 ---
 
 ## Manifest Format
 
-One format for jid0 services and agents.  The `jail` key and
-the `capabilities` section distinguish them.
+One format for jid0 services, system services, and agents.
+The `jail` key and the `capabilities` section distinguish them.
+
+### System service (replaceable)
+
+System services implement the operations the oracle abstracts.
+The default set ships with 5BSD.  A developer replaces one by
+dropping a different manifest with the same `provides` name.
+
+```ucl
+# /etc/oracled.d/sys-kldload.ucl — default kernel module loader
+
+label = "sys-kldload";
+description = "Kernel module load/unload service";
+program = "/usr/libexec/oracled/sys-kldload";
+
+provides = ["kldload"];
+requires = ["ORACLED"];
+
+user = "root";
+
+restart = "always";
+
+capabilities {
+    system = ["kldload", "kldunload", "kldstat"];
+}
+```
+
+```ucl
+# /etc/oracled.d/sys-reboot.ucl — default reboot service
+
+label = "sys-reboot";
+description = "System reboot/halt/poweroff service";
+program = "/usr/libexec/oracled/sys-reboot";
+
+provides = ["reboot"];
+requires = ["ORACLED"];
+
+user = "root";
+
+restart = "always";
+
+capabilities {
+    system = ["reboot"];
+}
+```
+
+A developer who needs custom reboot behavior (e.g., draining
+connections before halt, or coordinating with a hypervisor)
+replaces `sys-reboot.ucl` with their own manifest pointing
+to their own binary.  The oracle does not care — it starts
+whatever the config says and passes the tokens.
 
 ### jid0 system service
 
@@ -576,7 +703,7 @@ for tracing the underlying capability operations.
 
 ```
 lib/liboraclectl/              — client library for control socket
-lib/libagent/                  — agent framework library (Phase 5)
+lib/libagent/                  — agent framework library (planned)
 
 usr.sbin/oracled/
     # Core lifecycle (implemented)
@@ -591,7 +718,7 @@ usr.sbin/oracled/
 
     # Control interface — admin only (implemented)
     control.c                      socket server
-    commands.c / commands.h        command handlers
+    commands.c / commands.h        command handlers (interim)
     oracled_ctl.h                  wire protocol
 
     # Service manager (planned)
@@ -607,7 +734,16 @@ usr.sbin/oracled/
 
 usr.sbin/oraclectl/            — admin CLI tool (implemented)
 
-usr.libexec/oracled/           — standard agent binaries (Phase 6)
+usr.libexec/oracled/           — system services + agents
+    # Default system services (replaceable)
+    sys-kldload                    kernel module load/unload
+    sys-reboot                     reboot/halt/poweroff
+    sys-sysctl                     sysctl write operations
+    sys-kenv                       kernel environment get/set
+    sys-swap                       swapon/swapoff
+    sys-acct                       process accounting control
+
+    # Domain agents (planned)
     net-agent                      network services agent
     storage-agent                  storage services agent
 ```
@@ -616,34 +752,56 @@ usr.libexec/oracled/           — standard agent binaries (Phase 6)
 
 ## Implementation Phases
 
-### Phase 1: Resource Claims
+### Phase 1: Resource Claims (done)
 
-Extend config to claim files, directories, and network endpoints
-at boot.  Foundation for all capability granting.
+Config-driven claims for files, directories, and network
+endpoints at boot.  Foundation for all capability granting.
 
-### Phase 2: Manifests + Dependency Graph
+### Phase 2: Service Launcher
 
-Parse `/etc/oracled.d/*.ucl`.  Build dependency graph.  Start
-jid0 services in dependency order with procdesc monitoring.
+The core of the new architecture.  oracled reads service
+manifests from `/etc/oracled.d/*.ucl`, builds a dependency
+graph, and fork/execs declared programs in dependency order.
 
-### Phase 3: Capability Passing + Environment Scrub
+This phase delivers:
 
-Mint isolation tokens per manifest capabilities section.
-Clean fork path: close fds, scrub environment, set credentials,
-pass tokens + pair, exec.
+- **Manifest parser** — UCL format, one file per service
+- **Dependency graph** — DAG with topological sort, cycle
+  detection, degraded boot on missing deps
+- **Fork/exec path** — close fds, scrub environment, set
+  credentials, pass capability tokens + pair, exec
+- **Procdesc monitoring** — EVFILT_PROCDESC for exec/exit,
+  restart policies
+- **Default system services** — `sys-kldload`, `sys-reboot`,
+  `sys-sysctl`, etc. in `/usr/libexec/oracled/`
 
-### Phase 4: Jail Agents
+Once this lands, the interim control socket commands (kldload,
+reboot in commands.c) are removed.  oraclectl routes those
+commands to the appropriate system service instead.
 
-Create and destroy jails per manifest.  Agent becomes PID 1 in
-its jail.  Mount filesystems.  Clean up on exit.
+### Phase 3: Jail Agents
 
-### Phase 5: Agent Framework
+Create and destroy jails per manifest.  Agent becomes PID 1
+in its jail.  Mount filesystems.  Clean up on exit.
 
-Library (`libagent`) for writing agents.  Common pattern for
-receiving the pair, authorizing tokens, loading sub-manifests,
-supervising children.
+Reserved JIDs:
 
-### Phase 6: Standard Agents
+- **JID 0** — host / oracle
+- **JID 1** — system services jail (default sys-svc set)
+- **JID 2** — reserved
+- **JID 3+** — user jails
+
+Cross-jail compatibility: FreeBSD and Linux jails both
+request system operations through the oracle.  The oracle
+routes to the right service implementation per jail context.
+
+### Phase 4: Agent Framework
+
+Library (`libagent`) for writing agents and system services.
+Common pattern for receiving the pair, authorizing tokens,
+loading sub-manifests, supervising children.
+
+### Phase 5: Standard Agents
 
 Ship net-agent, storage-agent, container-agent with the base
 system.

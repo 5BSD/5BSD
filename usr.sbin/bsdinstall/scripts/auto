@@ -197,7 +197,7 @@ trap true SIGINT	# This section is optional
 trap error SIGINT	# Catch cntrl-C here
 if [ -z "$BSDINSTALL_SKIP_HOSTNAME" ]; then bsdinstall hostname || error "Set hostname failed"; fi
 
-if [ -f /usr/freebsd-packages/repos/FreeBSD-base-offline.conf ]; then
+if [ -f /usr/freebsd-packages/repos/5BSD-base-offline.conf ]; then
 	HAVE_BASE_PACKAGES=yes
 	PKGBASE_DEFAULT_BUTTON=--default-no
 else

@@ -13,7 +13,7 @@ SCRIPTSDIR_startbsdinstall=	${LIBEXECDIR}/bsdinstall
 UPDATE_DEPENDFILE= no
 
 FILESDIR=	${SHAREDIR}/bsdinstall
-FILES=		FreeBSD-base.conf
+FILES=		5BSD-base.conf
 
 _BRANCH!=	${MAKE} -C ${SRCTOP}/release -V BRANCH
 BRANCH?=	${_BRANCH:C/-p[0-9]+$//}
@@ -36,7 +36,7 @@ KEYSDIR=	pkg
 SUBURL=		base_latest
 .endif
 
-FreeBSD-base.conf: FreeBSD-base.conf.in
+5BSD-base.conf: 5BSD-base.conf.in
 	sed "s|%%SUBURL%%|${SUBURL}|;s|%%KEYSDIR%%|${KEYSDIR}|" < ${.ALLSRC} > ${.TARGET}
 
 .include <bsd.prog.mk>

@@ -1,6 +1,6 @@
 .include <src.opts.mk>
 
-PACKAGE=runtime
+PACKAGE=oracled
 PROG=	oracled
 MAN=	oracled.8
 SRCS=	oracled.c cap_rt.c commands.c config.c control.c event.c proc.c

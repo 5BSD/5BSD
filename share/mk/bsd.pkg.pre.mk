@@ -54,7 +54,7 @@ PKG_ABI_FILE?=	${WSTAGEDIR}/usr/bin/uname
 
 # These are used in the generated packages, and can be overridden for
 # downstream builds.
-PKG_NAME_PREFIX?=	FreeBSD
+PKG_NAME_PREFIX?=	5BSD
 PKG_MAINTAINER?=	re@FreeBSD.org
 PKG_WWW?=		https://www.FreeBSD.org
 

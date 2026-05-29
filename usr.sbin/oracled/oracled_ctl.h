@@ -7,9 +7,10 @@
  *
  * Shared between the daemon, oraclectl(8), and future libraries.
  *
- * This control socket is interim infrastructure.  The long-term
- * plan replaces it with cap_rt pair channels when oracled becomes
- * the system init.  Keep the protocol simple.
+ * The control socket handles administrative commands (status,
+ * shutdown).  System operations (kldload, reboot, etc.) will
+ * move to separate service programs once the service launcher
+ * is implemented.  Keep the protocol simple.
  *
  * Each connection is one-shot: connect, send request header
  * (plus optional payload), receive reply, close.
