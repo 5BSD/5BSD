@@ -901,6 +901,16 @@ cap_rt_instance_close(struct file *fp, struct thread *td __unused)
 	if (svc != NULL)
 		SDT_PROBE2(cap_rt, , , close, svc->csvc_name, s->ci_badge);
 
+	/*
+	 * Pre-drain: let any already-scheduled async task complete so
+	 * messages in the RX queue are dispatched to their handler
+	 * before we discard them.  Without this, a close that wins
+	 * the mutex race against the taskqueue destroys messages the
+	 * handler would have forwarded (e.g., cap_rt_pair).
+	 */
+	if (svc != NULL && svc->csvc_taskq != NULL)
+		taskqueue_drain(svc->csvc_taskq, &s->ci_task);
+
 	/* Mark closed and drain RX to prevent new dispatches. */
 	mtx_lock(&s->ci_mtx);
 	s->ci_flags |= CAP_RT_SF_CLOSED;
@@ -919,7 +929,8 @@ cap_rt_instance_close(struct file *fp, struct thread *td __unused)
 
 	mtx_unlock(&s->ci_mtx);
 
-	/* Drain the per-instance task so it can't run after free. */
+	/* Post-drain: catch any task re-scheduled between the
+	 * pre-drain and the CLOSED flag.  Harmless if nothing ran. */
 	if (svc != NULL && svc->csvc_taskq != NULL)
 		taskqueue_drain(svc->csvc_taskq, &s->ci_task);
 

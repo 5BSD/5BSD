@@ -399,7 +399,8 @@ cap_rt_instance_revoke_reason(struct cap_rt_instance *s,
 	}
 	s->ci_flags |= CAP_RT_SF_REVOKED;
 	cap_rt_instance_drain_rxq(s);
-	cap_rt_instance_drain_txq(s);
+	/* Do NOT drain the TX queue here — let the receiver read
+	 * already-queued messages before seeing ECONNRESET. */
 
 	wakeup(&s->ci_txq);
 	KNOTE_LOCKED(&s->ci_rknotes, 0);
