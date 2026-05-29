@@ -460,20 +460,237 @@ supervisor_load_manifest(const char *path, int kq,
 }
 
 /*
- * Reload daemon configuration (claims, integrity).
- * Does NOT re-scan the manifest directory.
+ * Gracefully stop a single service: SIGTERM via coalition (or pdkill),
+ * brief pause, then SIGKILL if still alive.
+ */
+static void
+svc_graceful_stop(struct svc_runtime *svc)
+{
+
+	if (svc->state != SVC_STATE_RUNNING &&
+	    svc->state != SVC_STATE_STARTING)
+		return;
+
+	svc->state = SVC_STATE_STOPPING;
+	syslog(LOG_INFO, "service %s: stopping (pid %jd)",
+	    svc->manifest.label, (intmax_t)svc->pid);
+
+	if (svc->coalition_fd >= 0)
+		cap_rt_coalition_graceful(svc->coalition_fd,
+		    SIGTERM, 5000);
+	else if (svc->pd_fd >= 0)
+		pdkill(svc->pd_fd, SIGTERM);
+
+	usleep(500000);
+
+	if (svc->state != SVC_STATE_STOPPED) {
+		if (svc->coalition_fd >= 0)
+			cap_rt_coalition_terminate(svc->coalition_fd);
+		else if (svc->pd_fd >= 0)
+			pdkill(svc->pd_fd, SIGKILL);
+
+		if (svc->pid > 0)
+			waitpid(svc->pid, NULL, WNOHANG);
+
+		svc_close_fds(svc);
+		svc->state = SVC_STATE_STOPPED;
+	}
+}
+
+/*
+ * Remove a service from the array by index, shifting remaining
+ * entries down.  Caller must re-register kevents afterward.
+ */
+static void
+svc_remove(unsigned idx)
+{
+	unsigned i;
+
+	if (idx >= od.nservices)
+		return;
+
+	for (i = idx; i < od.nservices - 1; i++)
+		od.services[i] = od.services[i + 1];
+
+	od.nservices--;
+
+	/* Clear the vacated slot. */
+	memset(&od.services[od.nservices], 0, sizeof(od.services[0]));
+	od.services[od.nservices].pd_fd = -1;
+	od.services[od.nservices].pair_fd = -1;
+	od.services[od.nservices].coalition_fd = -1;
+}
+
+/*
+ * Reload: re-scan the manifest directory and diff against running
+ * services.  Add new, restart changed, remove deleted.
+ *
+ * Order: add new services first, then restart changed, then
+ * stop removed.  This ensures dependencies are satisfied before
+ * dependents lose their providers.
  */
 int
 supervisor_reload(int kq)
 {
+	struct svc_manifest *disk;
+	unsigned ndisk, i, j;
+	unsigned nnew, nchanged, nremoved;
+	bool found;
+	char new_labels[ORACLED_MAX_SERVICES][ORACLED_LABEL_MAX];
+	char changed_labels[ORACLED_MAX_SERVICES][ORACLED_LABEL_MAX];
+	char removed_labels[ORACLED_MAX_SERVICES][ORACLED_LABEL_MAX];
 
-	syslog(LOG_INFO, "reload: refreshing configuration");
+	syslog(LOG_INFO, "reload: scanning %s", od.cfg.manifest_dir);
 	ORACLED_PROBE_RELOAD();
 
-	/* TODO: re-read oracled.conf and update claims/integrity. */
-	syslog(LOG_INFO, "reload: config refresh not yet implemented");
+	if (od.services == NULL) {
+		syslog(LOG_WARNING, "reload: supervisor not initialized");
+		return (-1);
+	}
 
-	(void)kq;
+	disk = calloc(ORACLED_MAX_SERVICES, sizeof(*disk));
+	if (disk == NULL) {
+		syslog(LOG_ERR, "reload: calloc: %m");
+		return (-1);
+	}
+
+	ndisk = 0;
+	if (manifest_load_dir(od.cfg.manifest_dir, disk,
+	    ORACLED_MAX_SERVICES, &ndisk) == -1) {
+		free(disk);
+		return (-1);
+	}
+
+	nnew = nchanged = nremoved = 0;
+
+	/* Phase 1: Identify new and changed manifests. */
+	for (j = 0; j < ndisk; j++) {
+		found = false;
+		for (i = 0; i < od.nservices; i++) {
+			if (strcmp(od.services[i].manifest.label,
+			    disk[j].label) == 0) {
+				found = true;
+				if (memcmp(&od.services[i].manifest,
+				    &disk[j],
+				    sizeof(struct svc_manifest)) != 0) {
+					strlcpy(changed_labels[nchanged],
+					    disk[j].label,
+					    ORACLED_LABEL_MAX);
+					/* Stash updated manifest for later. */
+					od.services[i].manifest = disk[j];
+					nchanged++;
+				}
+				break;
+			}
+		}
+		if (!found) {
+			if (od.nservices >= ORACLED_MAX_SERVICES) {
+				syslog(LOG_WARNING, "reload: cannot add "
+				    "'%s': limit reached", disk[j].label);
+				continue;
+			}
+			strlcpy(new_labels[nnew], disk[j].label,
+			    ORACLED_LABEL_MAX);
+			nnew++;
+			od.services[od.nservices].manifest = disk[j];
+			od.services[od.nservices].pd_fd = -1;
+			od.services[od.nservices].pair_fd = -1;
+			od.services[od.nservices].coalition_fd = -1;
+			od.services[od.nservices].state = SVC_STATE_STOPPED;
+			od.services[od.nservices].restart_pending = false;
+			od.nservices++;
+			ORACLED_PROBE_SVC_LOAD(disk[j].label);
+		}
+	}
+
+	/* Phase 2: Identify removed manifests. */
+	for (i = 0; i < od.nservices; i++) {
+		found = false;
+		for (j = 0; j < ndisk; j++) {
+			if (strcmp(od.services[i].manifest.label,
+			    disk[j].label) == 0) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			strlcpy(removed_labels[nremoved],
+			    od.services[i].manifest.label,
+			    ORACLED_LABEL_MAX);
+			nremoved++;
+		}
+	}
+
+	free(disk);
+
+	/* Phase 3: Re-sort if array changed. */
+	if (nnew > 0 || nremoved > 0) {
+		/* Cancel pending restart timers before sort. */
+		for (i = 0; i < od.nservices; i++) {
+			struct kevent kev;
+			EV_SET(&kev, TIMER_IDENT_BASE + i, EVFILT_TIMER,
+			    EV_DELETE, 0, 0, NULL);
+			(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+		}
+
+		if (depgraph_sort(od.services, od.nservices) == -1) {
+			syslog(LOG_ERR, "reload: depgraph_sort failed");
+			/* Array is unsorted but services keep running. */
+			svc_reregister_kevents(kq);
+			return (-1);
+		}
+		svc_reregister_kevents(kq);
+	}
+
+	/* Phase 4: Start new services (in dependency order). */
+	for (i = 0; i < od.nservices; i++) {
+		unsigned k;
+		for (k = 0; k < nnew; k++) {
+			if (strcmp(od.services[i].manifest.label,
+			    new_labels[k]) == 0) {
+				syslog(LOG_INFO, "reload: starting '%s'",
+				    new_labels[k]);
+				svc_exec(&od.services[i], kq);
+				break;
+			}
+		}
+	}
+
+	/* Phase 5: Restart changed services. */
+	for (i = 0; i < od.nservices; i++) {
+		unsigned k;
+		for (k = 0; k < nchanged; k++) {
+			if (strcmp(od.services[i].manifest.label,
+			    changed_labels[k]) == 0) {
+				syslog(LOG_INFO, "reload: restarting '%s' "
+				    "(manifest changed)",
+				    changed_labels[k]);
+				svc_graceful_stop(&od.services[i]);
+				svc_exec(&od.services[i], kq);
+				break;
+			}
+		}
+	}
+
+	/* Phase 6: Stop and remove deleted services (reverse order). */
+	for (i = od.nservices; i > 0; i--) {
+		unsigned k;
+		for (k = 0; k < nremoved; k++) {
+			if (strcmp(od.services[i - 1].manifest.label,
+			    removed_labels[k]) == 0) {
+				syslog(LOG_INFO, "reload: removing '%s'",
+				    removed_labels[k]);
+				svc_graceful_stop(&od.services[i - 1]);
+				svc_remove(i - 1);
+				/* Re-register after array shift. */
+				svc_reregister_kevents(kq);
+				break;
+			}
+		}
+	}
+
+	syslog(LOG_INFO, "reload: %u new, %u changed, %u removed",
+	    nnew, nchanged, nremoved);
 	return (0);
 }
 
@@ -487,46 +704,9 @@ supervisor_stop(int kq)
 
 	syslog(LOG_INFO, "supervisor: stopping %u services", od.nservices);
 
-	/* Stop in reverse dependency order: graceful first. */
-	for (i = od.nservices; i > 0; i--) {
-		struct svc_runtime *svc = &od.services[i - 1];
-
-		if (svc->state != SVC_STATE_RUNNING &&
-		    svc->state != SVC_STATE_STARTING)
-			continue;
-
-		svc->state = SVC_STATE_STOPPING;
-		syslog(LOG_INFO, "service %s: stopping (pid %jd)",
-		    svc->manifest.label, (intmax_t)svc->pid);
-
-		if (svc->coalition_fd >= 0)
-			cap_rt_coalition_graceful(svc->coalition_fd,
-			    SIGTERM, 5000);
-		else if (svc->pd_fd >= 0)
-			pdkill(svc->pd_fd, SIGTERM);
-	}
-
-	/* Brief pause for graceful shutdown. */
-	usleep(500000);
-
-	/* Forceful termination for anything still running. */
-	for (i = od.nservices; i > 0; i--) {
-		struct svc_runtime *svc = &od.services[i - 1];
-
-		if (svc->state == SVC_STATE_STOPPED)
-			continue;
-
-		if (svc->coalition_fd >= 0)
-			cap_rt_coalition_terminate(svc->coalition_fd);
-		else if (svc->pd_fd >= 0)
-			pdkill(svc->pd_fd, SIGKILL);
-
-		if (svc->pid > 0)
-			waitpid(svc->pid, NULL, 0);
-
-		svc_close_fds(svc);
-		svc->state = SVC_STATE_STOPPED;
-	}
+	/* Stop in reverse dependency order. */
+	for (i = od.nservices; i > 0; i--)
+		svc_graceful_stop(&od.services[i - 1]);
 
 	free(od.services);
 	od.services = NULL;
