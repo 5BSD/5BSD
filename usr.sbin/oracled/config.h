@@ -15,6 +15,7 @@
 #define	ORACLED_DEFAULT_CONFFILE	"/etc/oracled.conf"
 #define	ORACLED_DEFAULT_PIDFILE	"/var/run/oracled.pid"
 #define	ORACLED_DEFAULT_CTLMODE	0700
+#define	ORACLED_DEFAULT_MANIFEST_DIR	"/etc/oracled.d"
 
 #define	ORACLED_MAX_PATH_CLAIMS		64
 #define	ORACLED_MAX_NET_CLAIMS		32
@@ -47,6 +48,9 @@ struct oracled_config {
 	struct oracled_net_claim claim_net[ORACLED_MAX_NET_CLAIMS];
 	unsigned int	nclaim_net;
 	uint32_t	claim_system;	/* SYS_GATE_* bitmask */
+
+	/* Service manifest directory */
+	char		manifest_dir[PATH_MAX];
 
 	/* Set by config_load if a file was actually parsed. */
 	bool		loaded_from_file;

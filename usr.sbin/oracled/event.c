@@ -5,11 +5,14 @@
  *
  * Main event loop and shutdown sequencing.
  *
- * Uses kqueue(2) to multiplex signals and the control socket.
- * Shutdown reverses the startup lifecycle (see oracled.c).
+ * Uses kqueue(2) to multiplex signals, the control socket, and
+ * service lifecycle events (process descriptors, pair channels,
+ * restart timers).  Shutdown reverses the startup lifecycle
+ * (see oracled.c).
  */
 
 #include <sys/event.h>
+#include <sys/procdesc.h>
 #include <sys/reboot.h>
 
 #include <errno.h>
@@ -20,6 +23,8 @@
 
 #include "oracled.h"
 #include "probes.h"
+
+int event_kq = -1;
 
 static void
 add_signal_event(int kq, int sig)
@@ -44,6 +49,8 @@ shutdown_and_exit(int reason)
 	else
 		syslog(LOG_INFO, "stopping via control socket");
 
+	supervisor_stop(event_kq);
+
 	if (!od.test_mode)
 		kill_subtree();
 	reap_children();
@@ -65,6 +72,7 @@ event_loop(void)
 		syslog(LOG_CRIT, "kqueue: %m");
 		exit(1);
 	}
+	event_kq = kq;
 
 	add_signal_event(kq, SIGCHLD);
 	add_signal_event(kq, SIGHUP);
@@ -80,6 +88,9 @@ event_loop(void)
 		}
 	}
 
+	/* Load manifests and launch agents. */
+	supervisor_start(kq);
+
 	while (od.running) {
 		nev = kevent(kq, NULL, 0, &kev, 1, NULL);
 		if (nev == -1) {
@@ -91,8 +102,9 @@ event_loop(void)
 		if (nev == 0)
 			continue;
 
+		/* Control socket — identified by fd and NULL udata. */
 		if (kev.filter == EVFILT_READ &&
-		    (int)kev.ident == cfd) {
+		    (int)kev.ident == cfd && kev.udata == NULL) {
 			int action, howto;
 
 			howto = 0;
@@ -111,6 +123,28 @@ event_loop(void)
 			continue;
 		}
 
+		/* Process descriptor events (service lifecycle). */
+		if (kev.filter == EVFILT_PROCDESC) {
+			supervisor_handle_procdesc(&kev);
+			continue;
+		}
+
+		/* Restart timer fired. */
+		if (kev.filter == EVFILT_TIMER && kev.udata != NULL) {
+			struct svc_runtime *svc = kev.udata;
+			syslog(LOG_INFO, "service %s: restart timer fired",
+			    svc->manifest.label);
+			svc_exec(svc, kq);
+			continue;
+		}
+
+		/* Pair channel events (service communication). */
+		if (kev.filter == EVFILT_READ && kev.udata != NULL) {
+			supervisor_handle_pair(&kev);
+			continue;
+		}
+
+		/* Signal events. */
 		if (kev.filter != EVFILT_SIGNAL)
 			continue;
 
@@ -131,4 +165,5 @@ event_loop(void)
 	}
 
 	(void)close(kq);
+	event_kq = -1;
 }

@@ -683,6 +683,10 @@ DTrace is not attached.
 | `ctl-accept` | uid | control socket connection accepted |
 | `ctl-cmd` | op, uid | control command dispatched |
 | `ctl-deny` | op, uid | control command denied (EPERM) |
+| `svc-start` | label, pid | service fork/exec'd |
+| `svc-exec` | label, pid | service exec confirmed (NOTE_EXEC) |
+| `svc-exit` | label, pid, status | service exited |
+| `svc-restart` | label, count | service restart scheduled |
 | `error` | subsys, msg | notable error |
 
 ### DTrace Scripts
@@ -692,6 +696,7 @@ DTrace is not attached.
 | `oracled-lifecycle` | Trace complete startup/shutdown sequence |
 | `oracled-claims` | Monitor resource claims with success/failure counts |
 | `oracled-control` | Trace control socket commands with UID and timing |
+| `oracled-services` | Trace service lifecycle (start/exec/exit/restart) |
 
 The kernel cap_rt framework also provides DTrace probes
 (`cap_rt:::call`, `cap_rt:::send`, `cap_rt:::recv`, etc.)

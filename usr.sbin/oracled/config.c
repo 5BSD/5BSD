@@ -23,6 +23,7 @@
 #include <ucl.h>
 
 #include "config.h"
+#include "gates.h"
 #include "oracled_ctl.h"
 
 void
@@ -35,6 +36,9 @@ config_init_defaults(struct oracled_config *cfg)
 	strlcpy(cfg->control_socket, ORACLED_CTL_SOCK,
 	    sizeof(cfg->control_socket));
 	cfg->control_socket_mode = ORACLED_DEFAULT_CTLMODE;
+
+	strlcpy(cfg->manifest_dir, ORACLED_DEFAULT_MANIFEST_DIR,
+	    sizeof(cfg->manifest_dir));
 
 	/* Integrity defaults: conservative — don't break rc(8). */
 	cfg->integrity_ptrace = true;
@@ -244,22 +248,6 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 	/* claims.system — string array of gate names */
 	arr = ucl_object_lookup(sec, "system");
 	if (arr != NULL && ucl_object_type(arr) == UCL_ARRAY) {
-		static const struct {
-			const char	*name;
-			uint32_t	 gate;
-		} gate_names[] = {
-			{ "kldload",	0x0001 },
-			{ "kldunload",	0x0002 },
-			{ "kldstat",	0x0004 },
-			{ "reboot",	0x0008 },
-			{ "swapon",	0x0010 },
-			{ "swapoff",	0x0020 },
-			{ "sysctl",	0x0040 },
-			{ "kenv",	0x0080 },
-			{ "acct",	0x0100 },
-			{ "audit",	0x0200 },
-			{ "kenv_read",	0x0400 },
-		};
 		it = NULL;
 		while ((elem = ucl_object_iterate(arr, &it, true))
 		    != NULL) {
@@ -270,8 +258,7 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 				continue;
 			s = ucl_object_tostring(elem);
 			found = false;
-			for (gi = 0; gi < sizeof(gate_names) /
-			    sizeof(gate_names[0]); gi++) {
+			for (gi = 0; gi < nitems(gate_names); gi++) {
 				if (strcmp(s, gate_names[gi].name) == 0) {
 					cfg->claim_system |=
 					    gate_names[gi].gate;
@@ -323,6 +310,8 @@ config_load(struct oracled_config *cfg, const char *path)
 	cfg_string(root, "pidfile", cfg->pidfile, sizeof(cfg->pidfile));
 	cfg_string(root, "control_socket", cfg->control_socket,
 	    sizeof(cfg->control_socket));
+	cfg_string(root, "manifest_dir", cfg->manifest_dir,
+	    sizeof(cfg->manifest_dir));
 	cfg_mode(root, cfg);
 
 	/* Sections */
@@ -353,6 +342,7 @@ config_log(const struct oracled_config *cfg)
 	    cfg->integrity_visible, cfg->integrity_wait,
 	    cfg->integrity_sched, cfg->integrity_core,
 	    cfg->integrity_ktrace);
+	syslog(LOG_INFO, "config: manifest_dir=%s", cfg->manifest_dir);
 	syslog(LOG_INFO, "config: claims paths=%d network=%d system=0x%x",
 	    cfg->nclaim_paths, cfg->nclaim_net, cfg->claim_system);
 }

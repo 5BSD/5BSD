@@ -49,6 +49,16 @@
 #define	ORACLED_PROBE_CTL_DENY(op, uid)	\
 	DTRACE_PROBE2(oracled, ctl__deny, op, uid)
 
+/* Service lifecycle */
+#define	ORACLED_PROBE_SVC_START(label, pid)	\
+	DTRACE_PROBE2(oracled, svc__start, label, pid)
+#define	ORACLED_PROBE_SVC_EXEC(label, pid)	\
+	DTRACE_PROBE2(oracled, svc__exec, label, pid)
+#define	ORACLED_PROBE_SVC_EXIT(label, pid, status)	\
+	DTRACE_PROBE3(oracled, svc__exit, label, pid, status)
+#define	ORACLED_PROBE_SVC_RESTART(label, count)	\
+	DTRACE_PROBE2(oracled, svc__restart, label, count)
+
 /* Errors */
 #define	ORACLED_PROBE_ERROR(subsys, msg)	\
 	DTRACE_PROBE2(oracled, error, subsys, msg)

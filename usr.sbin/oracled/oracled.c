@@ -12,13 +12,16 @@
  *   4. Initialize cap_rt (open device, claim resources, integrity)
  *   5. Create control socket
  *   6. Enter event loop
+ *      6a. Load manifests, sort dependencies, launch services
+ *      6b. Main kevent loop (control + signals + procdesc + pairs)
  *
  * Shutdown lifecycle (see event.c):
- *   1. Kill process subtree
- *   2. Reap children
- *   3. Close control socket
- *   4. Release cap_rt services (integrity, claims, device)
- *   5. Remove pidfile
+ *   1. Stop services (graceful, then forceful via coalition)
+ *   2. Kill process subtree (backstop)
+ *   3. Reap children
+ *   4. Close control socket
+ *   5. Release cap_rt services (integrity, claims, device)
+ *   6. Remove pidfile
  */
 
 #include <err.h>
