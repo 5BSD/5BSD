@@ -28,6 +28,24 @@
 #include "oracled.h"
 #include "gates.h"
 
+/*
+ * Copy a UCL string into a fixed buffer, rejecting truncation.
+ * Returns 0 on success, -1 if the source was too long.
+ */
+static int
+safe_copy(const char *src, char *dst, size_t dstsz, const char *field,
+    const char *label, const char *path)
+{
+
+	if (strlcpy(dst, src, dstsz) >= dstsz) {
+		syslog(LOG_ERR, "manifest %s: %s too long (max %zu): %s",
+		    label[0] != '\0' ? label : path,
+		    field, dstsz - 1, src);
+		return (-1);
+	}
+	return (0);
+}
+
 static int
 parse_restart(const char *s)
 {
@@ -95,7 +113,12 @@ parse_cap_paths(const ucl_object_t *arr, struct svc_manifest *m)
 			    ORACLED_MAX_CAP_PATHS);
 			break;
 		}
-		strlcpy(m->cap_paths[m->ncap_paths], s, PATH_MAX);
+		if (strlcpy(m->cap_paths[m->ncap_paths], s,
+		    PATH_MAX) >= PATH_MAX) {
+			syslog(LOG_WARNING, "manifest %s: capability "
+			    "path too long, skipped: %s", m->label, s);
+			continue;
+		}
 		m->ncap_paths++;
 	}
 }
@@ -134,17 +157,14 @@ parse_cap_system(const ucl_object_t *arr, struct svc_manifest *m)
 static void
 parse_cap_network(const ucl_object_t *arr, struct svc_manifest *m)
 {
-	const ucl_object_t *elem, *v;
+	const ucl_object_t *elem;
 	ucl_object_iter_t it;
-	const char *s;
 
 	if (arr == NULL || ucl_object_type(arr) != UCL_ARRAY)
 		return;
 
 	it = NULL;
 	while ((elem = ucl_object_iterate(arr, &it, true)) != NULL) {
-		struct oracled_net_claim *nc;
-
 		if (ucl_object_type(elem) != UCL_OBJECT)
 			continue;
 		if (m->ncap_net >= ORACLED_MAX_CAP_NET) {
@@ -153,56 +173,9 @@ parse_cap_network(const ucl_object_t *arr, struct svc_manifest *m)
 			    ORACLED_MAX_CAP_NET);
 			break;
 		}
-		nc = &m->cap_net[m->ncap_net];
-		memset(nc, 0, sizeof(*nc));
-
-		v = ucl_object_lookup(elem, "port");
-		if (v != NULL && ucl_object_type(v) == UCL_INT) {
-			int64_t pv = ucl_object_toint(v);
-			if (pv < 0 || pv > 65535) {
-				syslog(LOG_WARNING, "manifest %s: invalid "
-				    "port: %jd", m->label, (intmax_t)pv);
-				continue;
-			}
-			nc->port = (uint16_t)pv;
-		}
-
-		v = ucl_object_lookup(elem, "protocol");
-		if (v != NULL && ucl_object_type(v) == UCL_STRING) {
-			s = ucl_object_tostring(v);
-			if (strcmp(s, "tcp") == 0)
-				nc->protocol = IPPROTO_TCP;
-			else if (strcmp(s, "udp") == 0)
-				nc->protocol = IPPROTO_UDP;
-			else
-				syslog(LOG_WARNING, "manifest %s: unknown "
-				    "protocol: %s", m->label, s);
-		}
-
-		v = ucl_object_lookup(elem, "direction");
-		if (v != NULL && ucl_object_type(v) == UCL_STRING) {
-			s = ucl_object_tostring(v);
-			if (strcmp(s, "bind") == 0)
-				nc->direction = ORACLED_NET_DIR_BIND;
-			else if (strcmp(s, "connect") == 0)
-				nc->direction = ORACLED_NET_DIR_CONNECT;
-			else if (strcmp(s, "any") == 0)
-				nc->direction = ORACLED_NET_DIR_ANY;
-		}
-		if (nc->direction == 0)
-			nc->direction = ORACLED_NET_DIR_BIND;
-
-		nc->domain = AF_INET;
-		v = ucl_object_lookup(elem, "domain");
-		if (v != NULL && ucl_object_type(v) == UCL_STRING) {
-			s = ucl_object_tostring(v);
-			if (strcmp(s, "inet6") == 0)
-				nc->domain = AF_INET6;
-			else if (strcmp(s, "any") == 0)
-				nc->domain = 0;
-		}
-
-		m->ncap_net++;
+		if (parse_ucl_net_claim(elem,
+		    &m->cap_net[m->ncap_net], m->label) == 0)
+			m->ncap_net++;
 	}
 }
 
@@ -265,7 +238,9 @@ manifest_load_file(const char *path, struct svc_manifest *m)
 		syslog(LOG_ERR, "manifest: %s: missing or empty label", path);
 		goto out;
 	}
-	strlcpy(m->label, ucl_object_tostring(o), sizeof(m->label));
+	if (safe_copy(ucl_object_tostring(o), m->label, sizeof(m->label),
+	    "label", "", path) == -1)
+		goto out;
 
 	/* program (required, absolute path) */
 	o = ucl_object_lookup(root, "program");
@@ -279,25 +254,36 @@ manifest_load_file(const char *path, struct svc_manifest *m)
 		    m->label, s);
 		goto out;
 	}
-	strlcpy(m->program, s, sizeof(m->program));
+	if (safe_copy(s, m->program, sizeof(m->program),
+	    "program", m->label, path) == -1)
+		goto out;
 
-	/* Optional string fields */
+	/* Optional string fields — reject truncation on security-relevant ones. */
 	o = ucl_object_lookup(root, "description");
 	if (o != NULL && ucl_object_type(o) == UCL_STRING)
 		strlcpy(m->description, ucl_object_tostring(o),
-		    sizeof(m->description));
+		    sizeof(m->description));  /* truncation OK for description */
 
 	o = ucl_object_lookup(root, "user");
-	if (o != NULL && ucl_object_type(o) == UCL_STRING)
-		strlcpy(m->user, ucl_object_tostring(o), sizeof(m->user));
+	if (o != NULL && ucl_object_type(o) == UCL_STRING) {
+		if (safe_copy(ucl_object_tostring(o), m->user,
+		    sizeof(m->user), "user", m->label, path) == -1)
+			goto out;
+	}
 
 	o = ucl_object_lookup(root, "group");
-	if (o != NULL && ucl_object_type(o) == UCL_STRING)
-		strlcpy(m->group, ucl_object_tostring(o), sizeof(m->group));
+	if (o != NULL && ucl_object_type(o) == UCL_STRING) {
+		if (safe_copy(ucl_object_tostring(o), m->group,
+		    sizeof(m->group), "group", m->label, path) == -1)
+			goto out;
+	}
 
 	o = ucl_object_lookup(root, "jail");
-	if (o != NULL && ucl_object_type(o) == UCL_STRING)
-		strlcpy(m->jail, ucl_object_tostring(o), sizeof(m->jail));
+	if (o != NULL && ucl_object_type(o) == UCL_STRING) {
+		if (safe_copy(ucl_object_tostring(o), m->jail,
+		    sizeof(m->jail), "jail", m->label, path) == -1)
+			goto out;
+	}
 
 	/* restart policy */
 	o = ucl_object_lookup(root, "restart");

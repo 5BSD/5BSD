@@ -65,4 +65,9 @@ void	config_init_defaults(struct oracled_config *cfg);
 int	config_load(struct oracled_config *cfg, const char *path);
 void	config_log(const struct oracled_config *cfg);
 
+/* Shared UCL parser for network claim objects (used by config.c and manifest.c). */
+struct ucl_object_s;	/* forward decl to avoid ucl.h dependency in header */
+int	parse_ucl_net_claim(const struct ucl_object_s *elem,
+	    struct oracled_net_claim *nc, const char *label);
+
 #endif /* CONFIG_H */

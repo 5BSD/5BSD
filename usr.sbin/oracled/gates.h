@@ -12,7 +12,7 @@
 #ifndef GATES_H
 #define GATES_H
 
-#include <stdint.h>
+#include <dev/cap_rt/cap_rt_system_proto.h>
 
 struct gate_entry {
 	const char	*name;
@@ -20,17 +20,17 @@ struct gate_entry {
 };
 
 static const struct gate_entry gate_names[] = {
-	{ "kldload",	0x0001 },
-	{ "kldunload",	0x0002 },
-	{ "kldstat",	0x0004 },
-	{ "reboot",	0x0008 },
-	{ "swapon",	0x0010 },
-	{ "swapoff",	0x0020 },
-	{ "sysctl",	0x0040 },
-	{ "kenv",	0x0080 },
-	{ "acct",	0x0100 },
-	{ "audit",	0x0200 },
-	{ "kenv_read",	0x0400 },
+	{ "kldload",	SYS_GATE_KLDLOAD },
+	{ "kldunload",	SYS_GATE_KLDUNLOAD },
+	{ "kldstat",	SYS_GATE_KLDSTAT },
+	{ "reboot",	SYS_GATE_REBOOT },
+	{ "swapon",	SYS_GATE_SWAPON },
+	{ "swapoff",	SYS_GATE_SWAPOFF },
+	{ "sysctl",	SYS_GATE_SYSCTL },
+	{ "kenv",	SYS_GATE_KENV },
+	{ "acct",	SYS_GATE_ACCT },
+	{ "audit",	SYS_GATE_AUDIT },
+	{ "kenv_read",	SYS_GATE_KENV_READ },
 };
 
 #endif /* GATES_H */

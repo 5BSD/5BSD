@@ -5,12 +5,14 @@
  *
  * Client library for the oracled(8) control socket.
  *
- * Each function opens a connection, sends a request, reads the
- * reply, and closes.  The caller provides an fd from
- * oraclectl_open() for reuse across multiple calls, or passes -1
- * to let the function connect and disconnect automatically.
+ * The caller opens a connection with oraclectl_open(), sends
+ * one command, then closes the fd.  Each daemon connection is
+ * one-shot — the daemon closes after replying, so fds cannot
+ * be reused across calls.
  *
  * All functions return 0 on success or an errno on failure.
+ * The return value may be a transport error (from read/write)
+ * or a daemon-reported error (from the reply status field).
  * They never call err(), exit(), or write to stderr.
  */
 

@@ -41,20 +41,24 @@ find_provider(struct svc_runtime *svcs, unsigned nsvc, const char *name)
 
 /*
  * Check for duplicate labels and duplicate provides names.
- * Logs warnings but does not fail — first-wins semantics.
+ * Duplicate labels are fatal — they break reload diffing
+ * and service identity.  Duplicate provides are warnings.
  */
-static void
+static int
 check_duplicates(struct svc_runtime *svcs, unsigned nsvc)
 {
 	unsigned i, j, pi, pj;
+	int rv = 0;
 
 	for (i = 0; i < nsvc; i++) {
 		for (j = i + 1; j < nsvc; j++) {
 			if (strcmp(svcs[i].manifest.label,
-			    svcs[j].manifest.label) == 0)
-				syslog(LOG_WARNING, "depgraph: duplicate "
-				    "label '%s' (files will shadow)",
+			    svcs[j].manifest.label) == 0) {
+				syslog(LOG_ERR, "depgraph: duplicate "
+				    "label '%s'",
 				    svcs[i].manifest.label);
+				rv = -1;
+			}
 		}
 		for (pi = 0; pi < svcs[i].manifest.nprovides; pi++) {
 			for (j = i + 1; j < nsvc; j++) {
@@ -74,6 +78,7 @@ check_duplicates(struct svc_runtime *svcs, unsigned nsvc)
 			}
 		}
 	}
+	return (rv);
 }
 
 int
@@ -97,7 +102,8 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 	if (nsvc > ORACLED_MAX_SERVICES)
 		return (-1);
 
-	check_duplicates(svcs, nsvc);
+	if (check_duplicates(svcs, nsvc) == -1)
+		return (-1);
 
 	memset(adj, 0, sizeof(adj));
 	memset(indeg, 0, sizeof(indeg));

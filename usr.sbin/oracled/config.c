@@ -23,6 +23,69 @@
 #include <ucl.h>
 
 #include "config.h"
+
+/*
+ * Parse a single UCL network claim object into an oracled_net_claim.
+ * Shared between config.c and manifest.c.
+ * Returns 0 on success, -1 to skip this entry (bad port).
+ */
+int
+parse_ucl_net_claim(const ucl_object_t *elem, struct oracled_net_claim *nc,
+    const char *label)
+{
+	const ucl_object_t *v;
+	const char *s;
+
+	memset(nc, 0, sizeof(*nc));
+
+	v = ucl_object_lookup(elem, "port");
+	if (v != NULL && ucl_object_type(v) == UCL_INT) {
+		int64_t pv = ucl_object_toint(v);
+		if (pv < 0 || pv > 65535) {
+			syslog(LOG_WARNING, "%s: invalid port: %jd",
+			    label, (intmax_t)pv);
+			return (-1);
+		}
+		nc->port = (uint16_t)pv;
+	}
+
+	v = ucl_object_lookup(elem, "protocol");
+	if (v != NULL && ucl_object_type(v) == UCL_STRING) {
+		s = ucl_object_tostring(v);
+		if (strcmp(s, "tcp") == 0)
+			nc->protocol = IPPROTO_TCP;
+		else if (strcmp(s, "udp") == 0)
+			nc->protocol = IPPROTO_UDP;
+		else
+			syslog(LOG_WARNING, "%s: unknown protocol: %s",
+			    label, s);
+	}
+
+	v = ucl_object_lookup(elem, "direction");
+	if (v != NULL && ucl_object_type(v) == UCL_STRING) {
+		s = ucl_object_tostring(v);
+		if (strcmp(s, "bind") == 0)
+			nc->direction = ORACLED_NET_DIR_BIND;
+		else if (strcmp(s, "connect") == 0)
+			nc->direction = ORACLED_NET_DIR_CONNECT;
+		else if (strcmp(s, "any") == 0)
+			nc->direction = ORACLED_NET_DIR_ANY;
+	}
+	if (nc->direction == 0)
+		nc->direction = ORACLED_NET_DIR_BIND;
+
+	nc->domain = AF_INET;
+	v = ucl_object_lookup(elem, "domain");
+	if (v != NULL && ucl_object_type(v) == UCL_STRING) {
+		s = ucl_object_tostring(v);
+		if (strcmp(s, "inet6") == 0)
+			nc->domain = AF_INET6;
+		else if (strcmp(s, "any") == 0)
+			nc->domain = 0;
+	}
+
+	return (0);
+}
 #include "gates.h"
 #include "oracled_ctl.h"
 
@@ -179,8 +242,6 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 		it = NULL;
 		while ((elem = ucl_object_iterate(arr, &it, true))
 		    != NULL) {
-			struct oracled_net_claim *nc;
-
 			if (ucl_object_type(elem) != UCL_OBJECT)
 				continue;
 			if (cfg->nclaim_net >= ORACLED_MAX_NET_CLAIMS) {
@@ -189,59 +250,10 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 				    ORACLED_MAX_NET_CLAIMS);
 				break;
 			}
-			nc = &cfg->claim_net[cfg->nclaim_net];
-			memset(nc, 0, sizeof(*nc));
-
-			v = ucl_object_lookup(elem, "port");
-			if (v != NULL && ucl_object_type(v) == UCL_INT) {
-				int64_t pv = ucl_object_toint(v);
-				if (pv < 0 || pv > 65535) {
-					fprintf(stderr, "oracled: invalid "
-					    "port: %jd\n", (intmax_t)pv);
-					continue;
-				}
-				nc->port = (uint16_t)pv;
-			}
-
-			v = ucl_object_lookup(elem, "protocol");
-			if (v != NULL &&
-			    ucl_object_type(v) == UCL_STRING) {
-				s = ucl_object_tostring(v);
-				if (strcmp(s, "tcp") == 0)
-					nc->protocol = IPPROTO_TCP;
-				else if (strcmp(s, "udp") == 0)
-					nc->protocol = IPPROTO_UDP;
-				else
-					fprintf(stderr, "oracled: unknown "
-					    "protocol: %s\n", s);
-			}
-
-			v = ucl_object_lookup(elem, "direction");
-			if (v != NULL &&
-			    ucl_object_type(v) == UCL_STRING) {
-				s = ucl_object_tostring(v);
-				if (strcmp(s, "bind") == 0)
-					nc->direction = ORACLED_NET_DIR_BIND;
-				else if (strcmp(s, "connect") == 0)
-					nc->direction = ORACLED_NET_DIR_CONNECT;
-				else if (strcmp(s, "any") == 0)
-					nc->direction = ORACLED_NET_DIR_ANY;
-			}
-			if (nc->direction == 0)
-				nc->direction = ORACLED_NET_DIR_BIND;
-
-			nc->domain = AF_INET;
-			v = ucl_object_lookup(elem, "domain");
-			if (v != NULL &&
-			    ucl_object_type(v) == UCL_STRING) {
-				s = ucl_object_tostring(v);
-				if (strcmp(s, "inet6") == 0)
-					nc->domain = AF_INET6;
-				else if (strcmp(s, "any") == 0)
-					nc->domain = 0;
-			}
-
-			cfg->nclaim_net++;
+			if (parse_ucl_net_claim(elem,
+			    &cfg->claim_net[cfg->nclaim_net],
+			    "config") == 0)
+				cfg->nclaim_net++;
 		}
 	}
 

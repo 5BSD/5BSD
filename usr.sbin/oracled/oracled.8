@@ -447,9 +447,10 @@ Set if
 .Va user
 is specified in the manifest.
 .It Ev HOME
-Home directory of the agent user, or
-.Pa /var/empty
-if no user is specified.
+Home directory of the agent user.
+Only set when
+.Va user
+is specified in the manifest.
 .El
 .Sh DTRACE PROBES
 .Nm
