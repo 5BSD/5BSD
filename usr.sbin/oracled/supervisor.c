@@ -112,6 +112,9 @@ supervisor_start(int kq)
 		return (-1);
 	}
 
+	if (od.nservices == 0)
+		syslog(LOG_INFO, "supervisor: no services to start");
+
 	/* Copy manifests into runtime structs and initialize fds. */
 	for (i = 0; i < od.nservices; i++) {
 		od.services[i].manifest = manifests[i];
