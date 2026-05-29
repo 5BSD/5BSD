@@ -330,10 +330,11 @@ supervisor_handle_pair(struct kevent *kev)
 	/*
 	 * Agent sent a message on the pair channel.
 	 * Future: handle oracle protocol messages.
-	 * For now, drain and log to prevent busy-loop
+	 * For now, drain completely to prevent busy-loop
 	 * (kqueue is level-triggered for EVFILT_READ).
 	 */
-	(void)read(svc->pair_fd, drain, sizeof(drain));
+	while (read(svc->pair_fd, drain, sizeof(drain)) > 0)
+		;
 	syslog(LOG_DEBUG, "service %s: pair channel activity",
 	    svc->manifest.label);
 }
@@ -532,6 +533,7 @@ supervisor_load_manifest(const char *path, int kq,
 			EV_SET(&kev, od.services[i].timer_ident,
 			    EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
 			(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+			od.services[i].timer_ident = 0;
 		}
 	}
 
@@ -615,6 +617,8 @@ svc_graceful_stop(struct svc_runtime *svc, int kq)
 	    svc->manifest.label, (intmax_t)svc->pid);
 
 	if (svc->coalition_fd >= 0) {
+		/* Send SIGTERM immediately (1ms deadline), escalate
+		 * to coalition-level kill after 5s grace period. */
 		if (cap_rt_coalition_set_deadline(svc->coalition_fd,
 		    1, SIGTERM, 5000) != 0)
 			syslog(LOG_WARNING, "service %s: coalition "

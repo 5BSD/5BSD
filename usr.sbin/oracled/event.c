@@ -63,6 +63,10 @@ static void
 shutdown_finish(void)
 {
 
+	if (!od.shutting_down)
+		return;
+	od.shutting_down = false;	/* prevent re-entry */
+
 	if (!od.test_mode)
 		kill_subtree();
 	reap_children();
@@ -185,7 +189,7 @@ event_loop(void)
 		case SIGTERM:
 		case SIGINT:
 			shutdown_begin((int)kev.ident);
-			break;	/* od.running is false, loop exits */
+			break;	/* shutdown_finish sets od.running=false */
 		default:
 			break;
 		}

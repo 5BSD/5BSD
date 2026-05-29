@@ -23,6 +23,8 @@
 #include <ucl.h>
 
 #include "config.h"
+#include "gates.h"
+#include "oracled_ctl.h"
 
 /*
  * Parse a single UCL network claim object into an oracled_net_claim.
@@ -86,8 +88,6 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct oracled_net_claim *nc,
 
 	return (0);
 }
-#include "gates.h"
-#include "oracled_ctl.h"
 
 void
 config_init_defaults(struct oracled_config *cfg)
