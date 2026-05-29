@@ -77,6 +77,8 @@ schedule_restart(struct svc_runtime *svc, int kq, unsigned svc_index)
 	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
 		syslog(LOG_ERR, "service %s: kevent timer: %m",
 		    svc->manifest.label);
+	else
+		svc->restart_pending = true;
 }
 
 /*
@@ -120,8 +122,8 @@ supervisor_start(int kq)
 		return (0);
 	}
 
-	/* Allocate runtime state. */
-	od.services = calloc(od.nservices, sizeof(*od.services));
+	/* Allocate runtime state (fixed size to avoid realloc). */
+	od.services = calloc(ORACLED_MAX_SERVICES, sizeof(*od.services));
 	if (od.services == NULL) {
 		syslog(LOG_ERR, "supervisor: calloc services: %m");
 		free(manifests);
@@ -271,6 +273,208 @@ supervisor_handle_pair(struct kevent *kev)
 	 */
 	syslog(LOG_DEBUG, "service %s: pair channel activity",
 	    svc->manifest.label);
+}
+
+/*
+ * Re-register kevent udata pointers for all running services.
+ * Called after depgraph_sort moves array entries.
+ */
+static void
+svc_reregister_kevents(int kq)
+{
+	struct kevent kev;
+	unsigned i;
+
+	for (i = 0; i < od.nservices; i++) {
+		struct svc_runtime *svc = &od.services[i];
+
+		if (svc->state == SVC_STATE_STOPPED &&
+		    !svc->restart_pending)
+			continue;
+
+		if (svc->pd_fd >= 0) {
+			EV_SET(&kev, svc->pd_fd, EVFILT_PROCDESC,
+			    EV_ADD, NOTE_EXIT | NOTE_EXEC, 0, svc);
+			if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
+				syslog(LOG_WARNING,
+				    "reload: re-register pd_fd for %s: %m",
+				    svc->manifest.label);
+		}
+		if (svc->pair_fd >= 0) {
+			EV_SET(&kev, svc->pair_fd, EVFILT_READ,
+			    EV_ADD, 0, 0, svc);
+			if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
+				syslog(LOG_WARNING,
+				    "reload: re-register pair_fd for %s: %m",
+				    svc->manifest.label);
+		}
+		/* Re-schedule pending restart timers with new udata. */
+		if (svc->restart_pending) {
+			int idx = svc_index(svc);
+			if (idx >= 0)
+				schedule_restart(svc, kq, (unsigned)idx);
+		}
+	}
+}
+
+/*
+ * Validate a manifest file without loading it.
+ * Writes a human-readable summary into summary/sumlen.
+ * Returns 0 on success, -1 on error (summary contains the error).
+ */
+int
+supervisor_check_manifest(const char *path, char *summary, size_t sumlen)
+{
+	struct svc_manifest m;
+	char errbuf[256];
+	int off;
+
+	if (manifest_load_file(path, &m) == -1) {
+		snprintf(summary, sumlen, "error: failed to parse %s", path);
+		return (-1);
+	}
+
+	if (manifest_validate(&m, errbuf, sizeof(errbuf)) == -1) {
+		snprintf(summary, sumlen, "error: %s", errbuf);
+		return (-1);
+	}
+
+	off = manifest_format_summary(&m, summary, sumlen);
+	snprintf(summary + off, sumlen - off, "  status:       OK (dry run)\n");
+	return (0);
+}
+
+/*
+ * Load a single manifest file, add it to the services array,
+ * sort dependencies, and launch the new service.
+ * Writes result into summary/sumlen.
+ * Returns 0 on success, -1 on error.
+ */
+int
+supervisor_load_manifest(const char *path, int kq,
+    char *summary, size_t sumlen)
+{
+	struct svc_manifest m;
+	struct svc_runtime *svc;
+	char errbuf[256];
+	unsigned i;
+
+	if (od.services == NULL) {
+		snprintf(summary, sumlen, "error: supervisor not initialized");
+		return (-1);
+	}
+
+	/* Parse. */
+	if (manifest_load_file(path, &m) == -1) {
+		snprintf(summary, sumlen, "error: failed to parse %s", path);
+		return (-1);
+	}
+
+	/* Validate. */
+	if (manifest_validate(&m, errbuf, sizeof(errbuf)) == -1) {
+		snprintf(summary, sumlen, "error: %s", errbuf);
+		return (-1);
+	}
+
+	/* Check for duplicate label. */
+	for (i = 0; i < od.nservices; i++) {
+		if (strcmp(od.services[i].manifest.label, m.label) == 0) {
+			snprintf(summary, sumlen,
+			    "error: service \"%s\" already loaded", m.label);
+			return (-1);
+		}
+	}
+
+	/* Check capacity. */
+	if (od.nservices >= ORACLED_MAX_SERVICES) {
+		snprintf(summary, sumlen,
+		    "error: service limit reached (%d)", ORACLED_MAX_SERVICES);
+		return (-1);
+	}
+
+	/* Cancel pending restart timers before sort. */
+	for (i = 0; i < od.nservices; i++) {
+		struct kevent kev;
+		EV_SET(&kev, TIMER_IDENT_BASE + i, EVFILT_TIMER,
+		    EV_DELETE, 0, 0, NULL);
+		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+	}
+
+	/* Add new service. */
+	svc = &od.services[od.nservices];
+	svc->manifest = m;
+	svc->pd_fd = -1;
+	svc->pair_fd = -1;
+	svc->coalition_fd = -1;
+	svc->state = SVC_STATE_STOPPED;
+	svc->restart_pending = false;
+	od.nservices++;
+
+	syslog(LOG_INFO, "reload: new service \"%s\"", m.label);
+	ORACLED_PROBE_SVC_LOAD(m.label);
+
+	/* Re-sort dependencies. */
+	if (depgraph_sort(od.services, od.nservices) == -1) {
+		syslog(LOG_ERR, "reload: depgraph_sort failed after adding "
+		    "\"%s\"", m.label);
+		/* Roll back: remove the entry we just added. */
+		od.nservices--;
+		memset(svc, 0, sizeof(*svc));
+		svc->pd_fd = -1;
+		svc->pair_fd = -1;
+		svc->coalition_fd = -1;
+		/* Re-sort the original set to restore order. */
+		(void)depgraph_sort(od.services, od.nservices);
+		svc_reregister_kevents(kq);
+		snprintf(summary, sumlen,
+		    "error: dependency cycle after adding \"%s\"", m.label);
+		return (-1);
+	}
+
+	/* Re-register kevents for all services (sort moved entries). */
+	svc_reregister_kevents(kq);
+
+	/* Find and launch the new service (it moved during sort). */
+	for (i = 0; i < od.nservices; i++) {
+		if (strcmp(od.services[i].manifest.label, m.label) == 0) {
+			svc = &od.services[i];
+			break;
+		}
+	}
+
+	manifest_log(&svc->manifest);
+
+	if (svc_exec(svc, kq) == -1) {
+		snprintf(summary, sumlen,
+		    "%s: validated OK\n%s: loaded, failed to start",
+		    m.label, m.label);
+		return (0);	/* loaded successfully, just didn't start */
+	}
+
+	snprintf(summary, sumlen,
+	    "%s: validated OK\n%s: loaded, started (pid %jd)",
+	    m.label, m.label, (intmax_t)svc->pid);
+
+	ORACLED_PROBE_SVC_START(m.label, svc->pid);
+	return (0);
+}
+
+/*
+ * Reload daemon configuration (claims, integrity).
+ * Does NOT re-scan the manifest directory.
+ */
+int
+supervisor_reload(int kq)
+{
+
+	syslog(LOG_INFO, "reload: refreshing configuration");
+	ORACLED_PROBE_RELOAD();
+
+	/* TODO: re-read oracled.conf and update claims/integrity. */
+	syslog(LOG_INFO, "reload: config refresh not yet implemented");
+
+	(void)kq;
+	return (0);
 }
 
 void

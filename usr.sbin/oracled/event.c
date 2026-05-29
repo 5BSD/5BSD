@@ -111,7 +111,13 @@ event_loop(void)
 			action = ctl_handle(&howto);
 			if (action & CTL_ACTION_REBOOT) {
 				syslog(LOG_INFO,
-				    "stopping via control socket");
+				    "rebooting via control socket");
+				supervisor_stop(kq);
+				kill_subtree();
+				reap_children();
+				ctl_teardown();
+				cap_rt_teardown();
+				pidfile_remove(od.pidfh);
 				reboot(howto);
 				/* reboot(2) should not return. */
 				syslog(LOG_CRIT, "reboot(2) failed: %m");
@@ -119,6 +125,8 @@ event_loop(void)
 			} else if (action & CTL_ACTION_SHUTDOWN) {
 				shutdown_and_exit(0);
 				break;	/* exit loop immediately */
+			} else if (action & CTL_ACTION_RELOAD) {
+				supervisor_reload(kq);
 			}
 			continue;
 		}
@@ -132,6 +140,7 @@ event_loop(void)
 		/* Restart timer fired. */
 		if (kev.filter == EVFILT_TIMER && kev.udata != NULL) {
 			struct svc_runtime *svc = kev.udata;
+			svc->restart_pending = false;
 			syslog(LOG_INFO, "service %s: restart timer fired",
 			    svc->manifest.label);
 			svc_exec(svc, kq);
@@ -153,7 +162,8 @@ event_loop(void)
 			reap_children();
 			break;
 		case SIGHUP:
-			syslog(LOG_INFO, "reload requested");
+			syslog(LOG_INFO, "reload requested (SIGHUP)");
+			supervisor_reload(kq);
 			break;
 		case SIGTERM:
 		case SIGINT:

@@ -59,6 +59,12 @@
 #define	ORACLED_PROBE_SVC_RESTART(label, count)	\
 	DTRACE_PROBE2(oracled, svc__restart, label, count)
 
+/* Reload and dynamic loading */
+#define	ORACLED_PROBE_RELOAD()	\
+	DTRACE_PROBE(oracled, reload)
+#define	ORACLED_PROBE_SVC_LOAD(label)	\
+	DTRACE_PROBE1(oracled, svc__load, label)
+
 /* Errors */
 #define	ORACLED_PROBE_ERROR(subsys, msg)	\
 	DTRACE_PROBE2(oracled, error, subsys, msg)

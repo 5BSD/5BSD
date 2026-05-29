@@ -28,6 +28,10 @@
 #define	ORACLECTL_KLDLOAD	4
 #define	ORACLECTL_KLDUNLOAD	5
 #define	ORACLECTL_REBOOT	6
+#define	ORACLECTL_CHECK		7
+#define	ORACLECTL_LOAD		8
+#define	ORACLECTL_SERVICES	9
+#define	ORACLECTL_SUMMARY_MAX	2048
 
 /* Status reply from oracled. */
 struct oraclectl_status {
@@ -44,6 +48,11 @@ int	oraclectl_reload(int fd);
 int	oraclectl_kldload(int fd, const char *module, int *idp);
 int	oraclectl_kldunload(int fd, const char *module);
 int	oraclectl_reboot(int fd, int howto);
+int	oraclectl_check(int fd, const char *filename,
+	    char *summary, size_t sumlen);
+int	oraclectl_load(int fd, const char *filename,
+	    char *summary, size_t sumlen);
+int	oraclectl_services(int fd, char *summary, size_t sumlen);
 __END_DECLS
 
 #endif /* !_ORACLECTL_H_ */

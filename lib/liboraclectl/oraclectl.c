@@ -234,3 +234,70 @@ oraclectl_reboot(int fd, int howto)
 		return (error);
 	return (rpl.status);
 }
+
+/*
+ * Helper: do_call + read summary text from reply.flags bytes.
+ */
+static int
+do_call_summary(int fd, uint32_t op, const void *data, uint32_t datalen,
+    char *summary, size_t sumlen, struct ctl_reply *rpl)
+{
+	int error;
+	uint32_t textlen;
+
+	error = do_call(fd, op, 0, data, datalen, rpl);
+	if (error != 0)
+		return (error);
+
+	textlen = rpl->flags;
+	if (textlen > 0 && summary != NULL && sumlen > 0) {
+		if (textlen >= sumlen)
+			textlen = (uint32_t)(sumlen - 1);
+		error = readn(fd, summary, textlen);
+		if (error != 0)
+			return (error);
+		summary[textlen] = '\0';
+	} else if (summary != NULL && sumlen > 0) {
+		summary[0] = '\0';
+	}
+	return (rpl->status);
+}
+
+int
+oraclectl_check(int fd, const char *filename,
+    char *summary, size_t sumlen)
+{
+	struct ctl_reply rpl;
+	size_t len;
+
+	len = strlen(filename);
+	if (len == 0 || len > ORACLECTL_MAX_PAYLOAD)
+		return (EINVAL);
+
+	return (do_call_summary(fd, ORACLECTL_CHECK, filename, len,
+	    summary, sumlen, &rpl));
+}
+
+int
+oraclectl_load(int fd, const char *filename,
+    char *summary, size_t sumlen)
+{
+	struct ctl_reply rpl;
+	size_t len;
+
+	len = strlen(filename);
+	if (len == 0 || len > ORACLECTL_MAX_PAYLOAD)
+		return (EINVAL);
+
+	return (do_call_summary(fd, ORACLECTL_LOAD, filename, len,
+	    summary, sumlen, &rpl));
+}
+
+int
+oraclectl_services(int fd, char *summary, size_t sumlen)
+{
+	struct ctl_reply rpl;
+
+	return (do_call_summary(fd, ORACLECTL_SERVICES, NULL, 0,
+	    summary, sumlen, &rpl));
+}

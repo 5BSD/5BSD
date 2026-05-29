@@ -85,6 +85,7 @@ struct svc_runtime {
 
 	/* Restart tracking */
 	unsigned	restart_count;
+	bool		restart_pending;	/* timer scheduled */
 	struct timespec	last_start;
 	struct timespec	last_exit;
 	int		last_exit_status;
@@ -131,6 +132,7 @@ int	cap_rt_coalition_terminate(int coalition_fd);
 #define	CTL_ACTION_NONE		0
 #define	CTL_ACTION_SHUTDOWN	0x01
 #define	CTL_ACTION_REBOOT	0x02
+#define	CTL_ACTION_RELOAD	0x04
 
 int	ctl_setup(void);
 void	ctl_teardown(void);
@@ -147,9 +149,14 @@ void	kill_subtree(void);
 void	apply_procctl_self_policy(void);
 
 /* manifest.c — service manifest parsing */
+int	manifest_load_file(const char *path, struct svc_manifest *m);
 int	manifest_load_dir(const char *dirpath,
 	    struct svc_manifest *out, unsigned maxsvc, unsigned *nsvc);
 void	manifest_log(const struct svc_manifest *m);
+int	manifest_validate(const struct svc_manifest *m,
+	    char *errbuf, size_t errlen);
+int	manifest_format_summary(const struct svc_manifest *m,
+	    char *buf, size_t len);
 
 /* depgraph.c — dependency graph */
 int	depgraph_sort(struct svc_runtime *svcs, unsigned nsvc);
@@ -162,5 +169,10 @@ int	supervisor_start(int kq);
 void	supervisor_handle_procdesc(struct kevent *kev);
 void	supervisor_handle_pair(struct kevent *kev);
 void	supervisor_stop(int kq);
+int	supervisor_reload(int kq);
+int	supervisor_load_manifest(const char *path, int kq,
+	    char *summary, size_t sumlen);
+int	supervisor_check_manifest(const char *path,
+	    char *summary, size_t sumlen);
 
 #endif /* ORACLED_H */

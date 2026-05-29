@@ -153,6 +153,57 @@ cmd_reboot(void)
 	return (0);
 }
 
+static int
+cmd_check(const char *filename)
+{
+	char summary[ORACLECTL_SUMMARY_MAX];
+	int fd, error;
+
+	fd = open_or_die();
+	error = oraclectl_check(fd, filename, summary, sizeof(summary));
+	close(fd);
+
+	if (summary[0] != '\0')
+		printf("%s", summary);
+	if (error != 0 && summary[0] == '\0')
+		return (check(error, filename));
+	return (error != 0 ? 1 : 0);
+}
+
+static int
+cmd_load(const char *filename)
+{
+	char summary[ORACLECTL_SUMMARY_MAX];
+	int fd, error;
+
+	fd = open_or_die();
+	error = oraclectl_load(fd, filename, summary, sizeof(summary));
+	close(fd);
+
+	if (summary[0] != '\0')
+		printf("%s", summary);
+	if (error != 0 && summary[0] == '\0')
+		return (check(error, filename));
+	return (error != 0 ? 1 : 0);
+}
+
+static int
+cmd_services(void)
+{
+	char summary[ORACLECTL_SUMMARY_MAX];
+	int fd, error;
+
+	fd = open_or_die();
+	error = oraclectl_services(fd, summary, sizeof(summary));
+	close(fd);
+
+	if (error != 0)
+		return (check(error, "services"));
+	if (summary[0] != '\0')
+		printf("%s", summary);
+	return (0);
+}
+
 /* ----------------------------------------------------------------
  * Main
  * ---------------------------------------------------------------- */
@@ -166,8 +217,11 @@ usage(void)
 	fprintf(stderr,
 	    "usage: oraclectl [-s socket] command [args]\n"
 	    "       oraclectl status\n"
-	    "       oraclectl shutdown\n"
+	    "       oraclectl services\n"
+	    "       oraclectl check <manifest.ucl>\n"
+	    "       oraclectl load <manifest.ucl>\n"
 	    "       oraclectl reload\n"
+	    "       oraclectl shutdown\n"
 	    "       oraclectl kldload <module>\n"
 	    "       oraclectl kldunload <module>\n"
 	    "       oraclectl reboot\n");
@@ -196,6 +250,12 @@ main(int argc, char *argv[])
 
 	if (strcmp(argv[0], "status") == 0 && argc == 1)
 		return (cmd_status());
+	if (strcmp(argv[0], "services") == 0 && argc == 1)
+		return (cmd_services());
+	if (strcmp(argv[0], "check") == 0 && argc == 2)
+		return (cmd_check(argv[1]));
+	if (strcmp(argv[0], "load") == 0 && argc == 2)
+		return (cmd_load(argv[1]));
 	if (strcmp(argv[0], "shutdown") == 0 && argc == 1)
 		return (cmd_shutdown());
 	if (strcmp(argv[0], "reload") == 0 && argc == 1)

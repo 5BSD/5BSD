@@ -202,8 +202,10 @@ ctl_handle(int *reboot_howto)
 	gid_t egid;
 	int cfd, action;
 	char payload[CTL_MAX_PAYLOAD + 1];
+	char summary[CTL_SUMMARY_MAX];
 
 	action = CTL_ACTION_NONE;
+	summary[0] = '\0';
 
 	cfd = accept4(control_sock, NULL, NULL, SOCK_CLOEXEC);
 	if (cfd == -1) {
@@ -256,7 +258,8 @@ ctl_handle(int *reboot_howto)
 			reply.status = EINVAL;
 			break;
 		}
-		cmd_reload(euid, &reply);
+		if (cmd_reload(euid, &reply))
+			action = CTL_ACTION_RELOAD;
 		break;
 	case CTL_OP_KLDLOAD:
 		if (read_payload(cfd, req.datalen, payload,
@@ -279,6 +282,25 @@ ctl_handle(int *reboot_howto)
 			action = CTL_ACTION_REBOOT;
 		}
 		break;
+	case CTL_OP_CHECK:
+		if (read_payload(cfd, req.datalen, payload,
+		    sizeof(payload), &reply) == 0)
+			cmd_check(euid, payload, &reply,
+			    summary, sizeof(summary));
+		break;
+	case CTL_OP_LOAD:
+		if (read_payload(cfd, req.datalen, payload,
+		    sizeof(payload), &reply) == 0)
+			cmd_load(euid, payload, event_kq, &reply,
+			    summary, sizeof(summary));
+		break;
+	case CTL_OP_SERVICES:
+		if (req.datalen != 0) {
+			reply.status = EINVAL;
+			break;
+		}
+		cmd_services(&reply, summary, sizeof(summary));
+		break;
 	default:
 		reply.status = ENOTSUP;
 		break;
@@ -286,6 +308,10 @@ ctl_handle(int *reboot_howto)
 
 out:
 	(void)write(cfd, &reply, sizeof(reply));
+	/* Send summary text for opcodes that use it. */
+	if ((req.op == CTL_OP_CHECK || req.op == CTL_OP_LOAD ||
+	    req.op == CTL_OP_SERVICES) && reply.flags > 0)
+		(void)write(cfd, summary, reply.flags);
 	close(cfd);
 	return (action);
 }

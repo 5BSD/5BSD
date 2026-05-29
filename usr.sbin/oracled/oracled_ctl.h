@@ -36,6 +36,9 @@
 #define	CTL_OP_KLDLOAD		4	/* load kernel module (root) */
 #define	CTL_OP_KLDUNLOAD	5	/* unload kernel module (root) */
 #define	CTL_OP_REBOOT		6	/* system reboot (root) */
+#define	CTL_OP_CHECK		7	/* validate manifest (root) */
+#define	CTL_OP_LOAD		8	/* validate + load + start (root) */
+#define	CTL_OP_SERVICES		9	/* list loaded services (any) */
 
 /*
  * Request header.  For variable-length commands (kldload,
@@ -50,6 +53,7 @@ struct ctl_request {
 } __packed;
 
 #define	CTL_STATUS_OK		0
+#define	CTL_SUMMARY_MAX		2048	/* max summary text for CHECK/LOAD */
 
 struct ctl_reply {
 	uint32_t	status;		/* 0 = ok, nonzero = errno */

@@ -27,6 +27,10 @@ provider oracled {
 	probe svc__exec(const char *label, pid_t pid);
 	probe svc__exit(const char *label, pid_t pid, int status);
 	probe svc__restart(const char *label, unsigned int count);
+	probe svc__load(const char *label);
+
+	/* Reload */
+	probe reload();
 
 	/* Errors */
 	probe error(const char *subsys, const char *msg);

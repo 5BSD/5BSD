@@ -111,18 +111,18 @@ status_uptime_cleanup()
 
 # --- reload command ---
 
-atf_test_case reload_not_implemented cleanup
-reload_not_implemented_head()
+atf_test_case reload_succeeds cleanup
+reload_succeeds_head()
 {
-	atf_set "descr" "oraclectl reload returns not-implemented"
+	atf_set "descr" "oraclectl reload returns success"
 	atf_set "require.user" "root"
 }
-reload_not_implemented_body()
+reload_succeeds_body()
 {
 	require_oracled
-	atf_check -s not-exit:0 -e ignore oraclectl reload
+	atf_check -s exit:0 -o match:"reload initiated" oraclectl reload
 }
-reload_not_implemented_cleanup()
+reload_succeeds_cleanup()
 {
 	:
 }
@@ -204,7 +204,7 @@ atf_init_test_cases()
 	atf_add_test_case status_uptime
 
 	# Operations
-	atf_add_test_case reload_not_implemented
+	atf_add_test_case reload_succeeds
 	atf_add_test_case kldload_nonexistent
 	atf_add_test_case kldload_already_loaded
 
