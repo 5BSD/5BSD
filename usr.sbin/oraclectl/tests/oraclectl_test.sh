@@ -114,13 +114,13 @@ status_uptime_cleanup()
 atf_test_case reload_succeeds cleanup
 reload_succeeds_head()
 {
-	atf_set "descr" "oraclectl reload returns success"
+	atf_set "descr" "oraclectl reload returns success with summary"
 	atf_set "require.user" "root"
 }
 reload_succeeds_body()
 {
 	require_oracled
-	atf_check -s exit:0 -o match:"reload initiated" oraclectl reload
+	atf_check -s exit:0 -o match:"reload:" oraclectl reload
 }
 reload_succeeds_cleanup()
 {

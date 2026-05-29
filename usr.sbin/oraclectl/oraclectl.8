@@ -13,6 +13,15 @@
 .Cm status
 .Nm
 .Op Fl s Ar socket
+.Cm services
+.Nm
+.Op Fl s Ar socket
+.Cm check Ar manifest.ucl
+.Nm
+.Op Fl s Ar socket
+.Cm load Ar manifest.ucl
+.Nm
+.Op Fl s Ar socket
 .Cm shutdown
 .Nm
 .Op Fl s Ar socket
@@ -49,6 +58,23 @@ The following commands are available:
 .It Cm status
 Query the daemon's status and uptime.
 This command does not require root privileges.
+.It Cm services
+List all loaded services with their current state, process ID,
+uptime, and restart policy.
+This command does not require root privileges.
+.It Cm check Ar manifest.ucl
+Validate a service manifest without loading it.
+Prints a summary of the service configuration including program
+path, user, group, restart policy, dependencies, and capabilities.
+The manifest file must be in the configured manifest directory.
+Requires root.
+.It Cm load Ar manifest.ucl
+Validate, load, and start a service from a manifest file.
+The manifest is parsed, validated (program must exist, user and
+group must resolve), added to the dependency graph, and the
+service is launched.
+Duplicate labels are rejected.
+Requires root.
 .It Cm shutdown
 Request a graceful shutdown of
 .Xr oracled 8 .
@@ -56,7 +82,10 @@ The daemon terminates its process subtree, releases all capability
 runtime resources, and exits.
 Requires root.
 .It Cm reload
-Request a configuration reload.
+Re-scan the manifest directory and diff against running services.
+New manifests are loaded and started, changed manifests cause
+a graceful restart, and removed manifests cause a graceful stop.
+Prints a summary of what was added, changed, and removed.
 Requires root.
 .It Cm kldload Ar module
 Load a kernel module through

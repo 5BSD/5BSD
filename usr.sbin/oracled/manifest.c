@@ -415,9 +415,13 @@ log_label_list(const char *prefix, const char (*names)[ORACLED_LABEL_MAX],
 
 	off = 0;
 	for (i = 0; i < count && off < sizeof(buf) - 1; i++) {
+		size_t rem, n;
+
 		if (i > 0 && off < sizeof(buf) - 1)
 			buf[off++] = ' ';
-		off += strlcpy(buf + off, names[i], sizeof(buf) - off);
+		rem = sizeof(buf) - off;
+		n = strlcpy(buf + off, names[i], rem);
+		off += (n < rem) ? n : rem - 1;
 	}
 	buf[off] = '\0';
 	syslog(LOG_INFO, "    %s: %s", prefix, buf);

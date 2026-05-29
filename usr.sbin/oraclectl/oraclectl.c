@@ -96,15 +96,19 @@ cmd_shutdown(void)
 static int
 cmd_reload(void)
 {
+	char summary[ORACLECTL_SUMMARY_MAX];
 	int fd, error;
 
 	fd = open_or_die();
-	error = oraclectl_reload(fd);
+	error = oraclectl_reload(fd, summary, sizeof(summary));
 	close(fd);
 
 	if (error != 0)
 		return (check(error, "reload"));
-	printf("oracled: reload initiated\n");
+	if (summary[0] != '\0')
+		printf("%s", summary);
+	else
+		printf("reload: no changes\n");
 	return (0);
 }
 

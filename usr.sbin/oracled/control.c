@@ -258,8 +258,7 @@ ctl_handle(int *reboot_howto)
 			reply.status = EINVAL;
 			break;
 		}
-		if (cmd_reload(euid, &reply))
-			action = CTL_ACTION_RELOAD;
+		cmd_reload(euid, event_kq, &reply, summary, sizeof(summary));
 		break;
 	case CTL_OP_KLDLOAD:
 		if (read_payload(cfd, req.datalen, payload,
@@ -310,7 +309,8 @@ out:
 	(void)write(cfd, &reply, sizeof(reply));
 	/* Send summary text for opcodes that use it. */
 	if ((req.op == CTL_OP_CHECK || req.op == CTL_OP_LOAD ||
-	    req.op == CTL_OP_SERVICES) && reply.flags > 0)
+	    req.op == CTL_OP_SERVICES || req.op == CTL_OP_RELOAD) &&
+	    reply.flags > 0)
 		(void)write(cfd, summary, reply.flags);
 	close(cfd);
 	return (action);

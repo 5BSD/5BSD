@@ -175,18 +175,6 @@ oraclectl_shutdown(int fd)
 }
 
 int
-oraclectl_reload(int fd)
-{
-	struct ctl_reply rpl;
-	int error;
-
-	error = do_call(fd, ORACLECTL_RELOAD, 0, NULL, 0, &rpl);
-	if (error != 0)
-		return (error);
-	return (rpl.status);
-}
-
-int
 oraclectl_kldload(int fd, const char *module, int *idp)
 {
 	struct ctl_reply rpl;
@@ -290,6 +278,15 @@ oraclectl_load(int fd, const char *filename,
 		return (EINVAL);
 
 	return (do_call_summary(fd, ORACLECTL_LOAD, filename, len,
+	    summary, sumlen, &rpl));
+}
+
+int
+oraclectl_reload(int fd, char *summary, size_t sumlen)
+{
+	struct ctl_reply rpl;
+
+	return (do_call_summary(fd, ORACLECTL_RELOAD, NULL, 0,
 	    summary, sumlen, &rpl));
 }
 

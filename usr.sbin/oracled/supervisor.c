@@ -29,8 +29,8 @@
 #define	RESTART_MAX_DELAY_SEC	30
 #define	RESTART_RESET_SEC	60	/* reset counter after stability */
 
-/* Unique kevent ident offset for restart timers. */
-#define	TIMER_IDENT_BASE	10000
+/* Monotonic counter for unique restart timer idents. */
+static uintptr_t timer_next_ident = 10000;
 
 /*
  * Close all service fds and reset runtime state.
@@ -57,7 +57,7 @@ svc_close_fds(struct svc_runtime *svc)
  * Schedule a delayed restart via EVFILT_TIMER on the kqueue.
  */
 static void
-schedule_restart(struct svc_runtime *svc, int kq, unsigned svc_index)
+schedule_restart(struct svc_runtime *svc, int kq)
 {
 	struct kevent kev;
 	unsigned delay;
@@ -71,7 +71,8 @@ schedule_restart(struct svc_runtime *svc, int kq, unsigned svc_index)
 	syslog(LOG_INFO, "service %s: scheduling restart in %us",
 	    svc->manifest.label, delay);
 
-	EV_SET(&kev, TIMER_IDENT_BASE + svc_index, EVFILT_TIMER,
+	svc->timer_ident = timer_next_ident++;
+	EV_SET(&kev, svc->timer_ident, EVFILT_TIMER,
 	    EV_ADD | EV_ONESHOT, NOTE_SECONDS, delay, svc);
 
 	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
@@ -79,22 +80,6 @@ schedule_restart(struct svc_runtime *svc, int kq, unsigned svc_index)
 		    svc->manifest.label);
 	else
 		svc->restart_pending = true;
-}
-
-/*
- * Find the index of a service in the global array.
- */
-static int
-svc_index(struct svc_runtime *svc)
-{
-	int idx;
-
-	if (od.services == NULL)
-		return (-1);
-	idx = (int)(svc - od.services);
-	if (idx < 0 || (unsigned)idx >= od.nservices)
-		return (-1);
-	return (idx);
 }
 
 int
@@ -170,7 +155,6 @@ supervisor_handle_procdesc(struct kevent *kev)
 	struct svc_runtime *svc;
 	struct timespec now;
 	long uptime_sec;
-	int idx;
 
 	svc = kev->udata;
 	if (svc == NULL)
@@ -213,10 +197,6 @@ supervisor_handle_procdesc(struct kevent *kev)
 		if (was_stopping)
 			return;
 
-		idx = svc_index(svc);
-		if (idx < 0)
-			return;
-
 		switch (svc->manifest.restart) {
 		case SVC_RESTART_NEVER:
 			return;
@@ -241,7 +221,7 @@ supervisor_handle_procdesc(struct kevent *kev)
 
 		/* Backoff if it died too fast. */
 		if (uptime_sec < RESTART_MIN_UPTIME_SEC) {
-			schedule_restart(svc, event_kq, (unsigned)idx);
+			schedule_restart(svc, event_kq);
 		} else {
 			syslog(LOG_INFO, "service %s: restarting "
 			    "(count %u)", svc->manifest.label,
@@ -255,6 +235,7 @@ void
 supervisor_handle_pair(struct kevent *kev)
 {
 	struct svc_runtime *svc;
+	char drain[512];
 
 	svc = kev->udata;
 	if (svc == NULL)
@@ -269,8 +250,10 @@ supervisor_handle_pair(struct kevent *kev)
 	/*
 	 * Agent sent a message on the pair channel.
 	 * Future: handle oracle protocol messages.
-	 * For now, drain and log.
+	 * For now, drain and log to prevent busy-loop
+	 * (kqueue is level-triggered for EVFILT_READ).
 	 */
+	(void)read(svc->pair_fd, drain, sizeof(drain));
 	syslog(LOG_DEBUG, "service %s: pair channel activity",
 	    svc->manifest.label);
 }
@@ -308,12 +291,11 @@ svc_reregister_kevents(int kq)
 				    "reload: re-register pair_fd for %s: %m",
 				    svc->manifest.label);
 		}
-		/* Re-schedule pending restart timers with new udata. */
-		if (svc->restart_pending) {
-			int idx = svc_index(svc);
-			if (idx >= 0)
-				schedule_restart(svc, kq, (unsigned)idx);
-		}
+		/* Re-schedule pending restart timers with new udata.
+		 * The old timer was cancelled before the sort; create
+		 * a fresh one with a 1-second minimum delay. */
+		if (svc->restart_pending)
+			schedule_restart(svc, kq);
 	}
 }
 
@@ -325,22 +307,33 @@ svc_reregister_kevents(int kq)
 int
 supervisor_check_manifest(const char *path, char *summary, size_t sumlen)
 {
-	struct svc_manifest m;
+	struct svc_manifest *m;
 	char errbuf[256];
-	int off;
+	int off, rv;
 
-	if (manifest_load_file(path, &m) == -1) {
+	m = calloc(1, sizeof(*m));
+	if (m == NULL) {
+		snprintf(summary, sumlen, "error: out of memory");
+		return (-1);
+	}
+
+	if (manifest_load_file(path, m) == -1) {
 		snprintf(summary, sumlen, "error: failed to parse %s", path);
+		free(m);
 		return (-1);
 	}
 
-	if (manifest_validate(&m, errbuf, sizeof(errbuf)) == -1) {
+	if (manifest_validate(m, errbuf, sizeof(errbuf)) == -1) {
 		snprintf(summary, sumlen, "error: %s", errbuf);
+		free(m);
 		return (-1);
 	}
 
-	off = manifest_format_summary(&m, summary, sumlen);
-	snprintf(summary + off, sumlen - off, "  status:       OK (dry run)\n");
+	off = manifest_format_summary(m, summary, sumlen);
+	if ((size_t)off < sumlen)
+		snprintf(summary + off, sumlen - off,
+		    "  status:       OK (dry run)\n");
+	free(m);
 	return (0);
 }
 
@@ -354,7 +347,7 @@ int
 supervisor_load_manifest(const char *path, int kq,
     char *summary, size_t sumlen)
 {
-	struct svc_manifest m;
+	struct svc_manifest *m;
 	struct svc_runtime *svc;
 	char errbuf[256];
 	unsigned i;
@@ -364,23 +357,32 @@ supervisor_load_manifest(const char *path, int kq,
 		return (-1);
 	}
 
+	m = calloc(1, sizeof(*m));
+	if (m == NULL) {
+		snprintf(summary, sumlen, "error: out of memory");
+		return (-1);
+	}
+
 	/* Parse. */
-	if (manifest_load_file(path, &m) == -1) {
+	if (manifest_load_file(path, m) == -1) {
 		snprintf(summary, sumlen, "error: failed to parse %s", path);
+		free(m);
 		return (-1);
 	}
 
 	/* Validate. */
-	if (manifest_validate(&m, errbuf, sizeof(errbuf)) == -1) {
+	if (manifest_validate(m, errbuf, sizeof(errbuf)) == -1) {
 		snprintf(summary, sumlen, "error: %s", errbuf);
+		free(m);
 		return (-1);
 	}
 
 	/* Check for duplicate label. */
 	for (i = 0; i < od.nservices; i++) {
-		if (strcmp(od.services[i].manifest.label, m.label) == 0) {
+		if (strcmp(od.services[i].manifest.label, m->label) == 0) {
 			snprintf(summary, sumlen,
-			    "error: service \"%s\" already loaded", m.label);
+			    "error: service \"%s\" already loaded", m->label);
+			free(m);
 			return (-1);
 		}
 	}
@@ -389,20 +391,24 @@ supervisor_load_manifest(const char *path, int kq,
 	if (od.nservices >= ORACLED_MAX_SERVICES) {
 		snprintf(summary, sumlen,
 		    "error: service limit reached (%d)", ORACLED_MAX_SERVICES);
+		free(m);
 		return (-1);
 	}
 
 	/* Cancel pending restart timers before sort. */
 	for (i = 0; i < od.nservices; i++) {
-		struct kevent kev;
-		EV_SET(&kev, TIMER_IDENT_BASE + i, EVFILT_TIMER,
-		    EV_DELETE, 0, 0, NULL);
-		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+		if (od.services[i].restart_pending &&
+		    od.services[i].timer_ident != 0) {
+			struct kevent kev;
+			EV_SET(&kev, od.services[i].timer_ident,
+			    EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
+			(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+		}
 	}
 
 	/* Add new service. */
 	svc = &od.services[od.nservices];
-	svc->manifest = m;
+	svc->manifest = *m;
 	svc->pd_fd = -1;
 	svc->pair_fd = -1;
 	svc->coalition_fd = -1;
@@ -410,13 +416,14 @@ supervisor_load_manifest(const char *path, int kq,
 	svc->restart_pending = false;
 	od.nservices++;
 
-	syslog(LOG_INFO, "reload: new service \"%s\"", m.label);
-	ORACLED_PROBE_SVC_LOAD(m.label);
+	syslog(LOG_INFO, "reload: new service \"%s\"", m->label);
+	ORACLED_PROBE_SVC_LOAD(m->label);
 
 	/* Re-sort dependencies. */
 	if (depgraph_sort(od.services, od.nservices) == -1) {
 		syslog(LOG_ERR, "reload: depgraph_sort failed after adding "
-		    "\"%s\"", m.label);
+		    "\"%s\"", m->label);
+		ORACLED_PROBE_ERROR("load", "depgraph_sort failed");
 		/* Roll back: remove the entry we just added. */
 		od.nservices--;
 		memset(svc, 0, sizeof(*svc));
@@ -427,7 +434,8 @@ supervisor_load_manifest(const char *path, int kq,
 		(void)depgraph_sort(od.services, od.nservices);
 		svc_reregister_kevents(kq);
 		snprintf(summary, sumlen,
-		    "error: dependency cycle after adding \"%s\"", m.label);
+		    "error: dependency cycle after adding \"%s\"", m->label);
+		free(m);
 		return (-1);
 	}
 
@@ -436,7 +444,7 @@ supervisor_load_manifest(const char *path, int kq,
 
 	/* Find and launch the new service (it moved during sort). */
 	for (i = 0; i < od.nservices; i++) {
-		if (strcmp(od.services[i].manifest.label, m.label) == 0) {
+		if (strcmp(od.services[i].manifest.label, m->label) == 0) {
 			svc = &od.services[i];
 			break;
 		}
@@ -447,15 +455,17 @@ supervisor_load_manifest(const char *path, int kq,
 	if (svc_exec(svc, kq) == -1) {
 		snprintf(summary, sumlen,
 		    "%s: validated OK\n%s: loaded, failed to start",
-		    m.label, m.label);
+		    m->label, m->label);
+		free(m);
 		return (0);	/* loaded successfully, just didn't start */
 	}
 
 	snprintf(summary, sumlen,
 	    "%s: validated OK\n%s: loaded, started (pid %jd)",
-	    m.label, m.label, (intmax_t)svc->pid);
+	    m->label, m->label, (intmax_t)svc->pid);
 
-	ORACLED_PROBE_SVC_START(m.label, svc->pid);
+	ORACLED_PROBE_SVC_START(m->label, svc->pid);
+	free(m);
 	return (0);
 }
 
@@ -530,7 +540,7 @@ svc_remove(unsigned idx)
  * dependents lose their providers.
  */
 int
-supervisor_reload(int kq)
+supervisor_reload(int kq, char *summary, size_t sumlen)
 {
 	struct svc_manifest *disk;
 	unsigned ndisk, i, j;
@@ -543,14 +553,23 @@ supervisor_reload(int kq)
 	syslog(LOG_INFO, "reload: scanning %s", od.cfg.manifest_dir);
 	ORACLED_PROBE_RELOAD();
 
+	if (summary != NULL && sumlen > 0)
+		summary[0] = '\0';
+
 	if (od.services == NULL) {
 		syslog(LOG_WARNING, "reload: supervisor not initialized");
+		if (summary != NULL && sumlen > 0)
+			snprintf(summary, sumlen,
+			    "error: supervisor not initialized\n");
 		return (-1);
 	}
 
 	disk = calloc(ORACLED_MAX_SERVICES, sizeof(*disk));
 	if (disk == NULL) {
 		syslog(LOG_ERR, "reload: calloc: %m");
+		if (summary != NULL && sumlen > 0)
+			snprintf(summary, sumlen,
+			    "error: out of memory\n");
 		return (-1);
 	}
 
@@ -623,18 +642,22 @@ supervisor_reload(int kq)
 
 	free(disk);
 
-	/* Phase 3: Re-sort if array changed. */
-	if (nnew > 0 || nremoved > 0) {
+	/* Phase 3: Re-sort if any services added, removed, or changed. */
+	if (nnew > 0 || nremoved > 0 || nchanged > 0) {
 		/* Cancel pending restart timers before sort. */
 		for (i = 0; i < od.nservices; i++) {
-			struct kevent kev;
-			EV_SET(&kev, TIMER_IDENT_BASE + i, EVFILT_TIMER,
-			    EV_DELETE, 0, 0, NULL);
-			(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+			if (od.services[i].restart_pending &&
+			    od.services[i].timer_ident != 0) {
+				struct kevent kev;
+				EV_SET(&kev, od.services[i].timer_ident,
+				    EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
+				(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+			}
 		}
 
 		if (depgraph_sort(od.services, od.nservices) == -1) {
 			syslog(LOG_ERR, "reload: depgraph_sort failed");
+			ORACLED_PROBE_ERROR("reload", "depgraph_sort failed");
 			/* Array is unsorted but services keep running. */
 			svc_reregister_kevents(kq);
 			return (-1);
@@ -691,6 +714,30 @@ supervisor_reload(int kq)
 
 	syslog(LOG_INFO, "reload: %u new, %u changed, %u removed",
 	    nnew, nchanged, nremoved);
+
+	if (summary != NULL && sumlen > 0) {
+		size_t off = 0, rem;
+		int n;
+
+#define	RELOAD_APPEND(...)	do {				\
+	rem = (off < sumlen) ? sumlen - off : 0;		\
+	n = snprintf(summary + off, rem, __VA_ARGS__);		\
+	if (n > 0) off += (size_t)n;				\
+	if (off >= sumlen) off = sumlen - 1;			\
+} while (0)
+
+		for (i = 0; i < nnew; i++)
+			RELOAD_APPEND("  added:    %s\n", new_labels[i]);
+		for (i = 0; i < nchanged; i++)
+			RELOAD_APPEND("  changed:  %s\n", changed_labels[i]);
+		for (i = 0; i < nremoved; i++)
+			RELOAD_APPEND("  removed:  %s\n", removed_labels[i]);
+		RELOAD_APPEND("reload: %u new, %u changed, %u removed\n",
+		    nnew, nchanged, nremoved);
+
+#undef RELOAD_APPEND
+	}
+
 	return (0);
 }
 

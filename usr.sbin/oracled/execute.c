@@ -47,8 +47,11 @@ build_token_fds_str(char *buf, size_t bufsz, unsigned ntokens)
 	for (i = 0; i < ntokens && off < bufsz - 1; i++) {
 		if (i > 0 && off < bufsz - 1)
 			buf[off++] = ',';
-		off += (size_t)snprintf(buf + off, bufsz - off, "%u",
-		    SVC_TOKEN_BASE + i);
+		off += (size_t)snprintf(buf + off,
+		    off < bufsz ? bufsz - off : 0,
+		    "%u", SVC_TOKEN_BASE + i);
+		if (off >= bufsz)
+			off = bufsz - 1;
 	}
 	buf[off] = '\0';
 }

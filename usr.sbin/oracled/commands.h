@@ -13,7 +13,8 @@ struct ctl_reply;
 
 void	cmd_status(uint64_t uptime, struct ctl_reply *reply);
 int	cmd_shutdown(uid_t euid, struct ctl_reply *reply);
-int	cmd_reload(uid_t euid, struct ctl_reply *reply);
+void	cmd_reload(uid_t euid, int kq, struct ctl_reply *reply,
+	    char *summary, size_t sumlen);
 void	cmd_check(uid_t euid, const char *filename, struct ctl_reply *reply,
 	    char *summary, size_t sumlen);
 void	cmd_load(uid_t euid, const char *filename, int kq,

@@ -90,7 +90,7 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 	unsigned qhead, qtail, sorted;
 	struct svc_runtime *tmp;
 	unsigned i, k;
-	int provider, rv;
+	int provider;
 
 	if (nsvc == 0)
 		return (0);
@@ -165,7 +165,6 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 		return (-1);
 	}
 
-	rv = 0;
 	for (i = 0; i < nsvc; i++)
 		tmp[i] = svcs[order[i]];
 	for (i = 0; i < nsvc; i++)
@@ -173,5 +172,5 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 	free(tmp);
 
 	syslog(LOG_INFO, "depgraph: sorted %u services", nsvc);
-	return (rv);
+	return (0);
 }

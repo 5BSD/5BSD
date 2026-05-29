@@ -86,6 +86,7 @@ struct svc_runtime {
 	/* Restart tracking */
 	unsigned	restart_count;
 	bool		restart_pending;	/* timer scheduled */
+	uintptr_t	timer_ident;		/* unique kevent ident */
 	struct timespec	last_start;
 	struct timespec	last_exit;
 	int		last_exit_status;
@@ -169,7 +170,7 @@ int	supervisor_start(int kq);
 void	supervisor_handle_procdesc(struct kevent *kev);
 void	supervisor_handle_pair(struct kevent *kev);
 void	supervisor_stop(int kq);
-int	supervisor_reload(int kq);
+int	supervisor_reload(int kq, char *summary, size_t sumlen);
 int	supervisor_load_manifest(const char *path, int kq,
 	    char *summary, size_t sumlen);
 int	supervisor_check_manifest(const char *path,

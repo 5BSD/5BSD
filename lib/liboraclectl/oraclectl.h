@@ -44,7 +44,7 @@ __BEGIN_DECLS
 int	oraclectl_open(const char *sockpath);
 int	oraclectl_status(int fd, struct oraclectl_status *st);
 int	oraclectl_shutdown(int fd);
-int	oraclectl_reload(int fd);
+int	oraclectl_reload(int fd, char *summary, size_t sumlen);
 int	oraclectl_kldload(int fd, const char *module, int *idp);
 int	oraclectl_kldunload(int fd, const char *module);
 int	oraclectl_reboot(int fd, int howto);

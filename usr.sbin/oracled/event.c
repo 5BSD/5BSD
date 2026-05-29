@@ -125,8 +125,6 @@ event_loop(void)
 			} else if (action & CTL_ACTION_SHUTDOWN) {
 				shutdown_and_exit(0);
 				break;	/* exit loop immediately */
-			} else if (action & CTL_ACTION_RELOAD) {
-				supervisor_reload(kq);
 			}
 			continue;
 		}
@@ -163,7 +161,7 @@ event_loop(void)
 			break;
 		case SIGHUP:
 			syslog(LOG_INFO, "reload requested (SIGHUP)");
-			supervisor_reload(kq);
+			supervisor_reload(kq, NULL, 0);
 			break;
 		case SIGTERM:
 		case SIGINT:
