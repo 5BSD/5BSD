@@ -21,7 +21,7 @@ doas git sparse-checkout set ports-mgmt/pkg Mk Templates Keywords
 ## Build
 
 ```sh
-cd /home/koryheard/Projects/5BSD
+cd /usr/src
 doas make -j$(sysctl -n hw.ncpu) buildworld
 doas make -j$(sysctl -n hw.ncpu) buildkernel
 cd release
@@ -32,7 +32,7 @@ doas make memstick
 The image is written to:
 
 ```sh
-/usr/obj/home/koryheard/Projects/5BSD/amd64.amd64/release/memstick.img
+/usr/obj/usr/src/amd64.amd64/release/memstick.img
 ```
 
 The release target stages a fresh system, adds the installer
@@ -51,7 +51,7 @@ geom disk list
 Write the image, replacing `daX` with the USB device:
 
 ```sh
-doas dd if=/usr/obj/home/koryheard/Projects/5BSD/amd64.amd64/release/memstick.img of=/dev/daX bs=1m status=progress
+doas dd if=/usr/obj/usr/src/amd64.amd64/release/memstick.img of=/dev/daX bs=1m status=progress
 ```
 
 ## Expected Boot
@@ -80,14 +80,14 @@ For a VM, use release media instead of a custom deploy script. The
 cleanest path is usually an ISO:
 
 ```sh
-cd /home/koryheard/Projects/5BSD/release
+cd /usr/src/release
 doas make cdrom
 ```
 
 Then attach:
 
 ```sh
-/usr/obj/home/koryheard/Projects/5BSD/amd64.amd64/release/disc1.iso
+/usr/obj/usr/src/amd64.amd64/release/disc1.iso
 ```
 
 as the VM install media and run `bsdinstall` normally against the VM
@@ -97,7 +97,7 @@ The memstick image is also usable in a VM, but attach it as a raw boot
 disk, not as a CD-ROM ISO:
 
 ```sh
-/usr/obj/home/koryheard/Projects/5BSD/amd64.amd64/release/memstick.img
+/usr/obj/usr/src/amd64.amd64/release/memstick.img
 ```
 
 ## Troubleshooting
