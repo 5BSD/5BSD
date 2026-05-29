@@ -15,6 +15,7 @@
 #include <sys/wait.h>
 
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -311,7 +312,7 @@ supervisor_check_manifest(const char *path, char *summary, size_t sumlen)
 {
 	struct svc_manifest *m;
 	char errbuf[256];
-	int off, rv;
+	int off;
 
 	m = calloc(1, sizeof(*m));
 	if (m == NULL) {

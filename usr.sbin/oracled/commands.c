@@ -11,6 +11,8 @@
 
 #include <sys/linker.h>
 #include <sys/reboot.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #include <errno.h>
 #include <stdio.h>

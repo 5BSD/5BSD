@@ -200,7 +200,7 @@ cfg_integrity(const ucl_object_t *root, struct oracled_config *cfg)
 static void
 cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 {
-	const ucl_object_t *sec, *arr, *elem, *v;
+	const ucl_object_t *sec, *arr, *elem;
 	ucl_object_iter_t it;
 	const char *s;
 

@@ -13,6 +13,7 @@
 
 #include <sys/event.h>
 #include <sys/procdesc.h>
+#include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
