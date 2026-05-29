@@ -33,7 +33,7 @@
 static int
 resolve_manifest_path(const char *filename, char *buf, size_t bufsz)
 {
-	char constructed[PATH_MAX], resolved[PATH_MAX];
+	char constructed[PATH_MAX], resolved[PATH_MAX], canonical_dir[PATH_MAX];
 	size_t dirlen;
 	int n;
 
@@ -45,9 +45,13 @@ resolve_manifest_path(const char *filename, char *buf, size_t bufsz)
 	if (realpath(constructed, resolved) == NULL)
 		return (-1);
 
-	/* Verify the resolved path is within manifest_dir. */
-	dirlen = strlen(od.cfg.manifest_dir);
-	if (strncmp(resolved, od.cfg.manifest_dir, dirlen) != 0 ||
+	/* Canonicalize manifest_dir too, so symlinked dirs work. */
+	if (realpath(od.cfg.manifest_dir, canonical_dir) == NULL)
+		return (-1);
+
+	/* Verify the resolved path is within the canonical dir. */
+	dirlen = strlen(canonical_dir);
+	if (strncmp(resolved, canonical_dir, dirlen) != 0 ||
 	    (resolved[dirlen] != '/' && resolved[dirlen] != '\0'))
 		return (-1);
 

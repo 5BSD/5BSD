@@ -163,6 +163,29 @@ readn(int fd, void *buf, size_t len)
 	return (0);
 }
 
+/*
+ * Write exactly len bytes to fd, retrying on EINTR and short writes.
+ */
+static int
+writen(int fd, const void *buf, size_t len)
+{
+	ssize_t n;
+	size_t off;
+
+	for (off = 0; off < len; ) {
+		n = write(fd, (const char *)buf + off, len - off);
+		if (n == -1) {
+			if (errno == EINTR)
+				continue;
+			return (-1);
+		}
+		if (n == 0)
+			return (-1);
+		off += n;
+	}
+	return (0);
+}
+
 static int
 read_payload(int cfd, uint32_t datalen, char *buf, size_t bufsz,
     struct ctl_reply *reply)
@@ -306,12 +329,16 @@ ctl_handle(int *reboot_howto)
 	}
 
 out:
-	(void)write(cfd, &reply, sizeof(reply));
+	if (writen(cfd, &reply, sizeof(reply)) == -1) {
+		syslog(LOG_WARNING, "control: write reply: %m");
+		close(cfd);
+		return (action);
+	}
 	/* Send summary text for opcodes that use it. */
 	if ((req.op == CTL_OP_CHECK || req.op == CTL_OP_LOAD ||
 	    req.op == CTL_OP_SERVICES || req.op == CTL_OP_RELOAD) &&
 	    reply.flags > 0)
-		(void)write(cfd, summary, reply.flags);
+		(void)writen(cfd, summary, reply.flags);
 	close(cfd);
 	return (action);
 }

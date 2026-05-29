@@ -244,6 +244,8 @@ supervisor_handle_pair(struct kevent *kev)
 	if (kev->flags & EV_EOF) {
 		syslog(LOG_INFO, "service %s: pair channel closed",
 		    svc->manifest.label);
+		close(svc->pair_fd);
+		svc->pair_fd = -1;
 		return;
 	}
 
@@ -548,6 +550,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 	bool found;
 	char new_labels[ORACLED_MAX_SERVICES][ORACLED_LABEL_MAX];
 	char changed_labels[ORACLED_MAX_SERVICES][ORACLED_LABEL_MAX];
+	unsigned changed_disk_idx[ORACLED_MAX_SERVICES];
 	char removed_labels[ORACLED_MAX_SERVICES][ORACLED_LABEL_MAX];
 
 	syslog(LOG_INFO, "reload: scanning %s", od.cfg.manifest_dir);
@@ -595,17 +598,24 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 					strlcpy(changed_labels[nchanged],
 					    disk[j].label,
 					    ORACLED_LABEL_MAX);
-					/* Stash updated manifest for later. */
-					od.services[i].manifest = disk[j];
+					changed_disk_idx[nchanged] = j;
 					nchanged++;
 				}
 				break;
 			}
 		}
 		if (!found) {
+			char vbuf[256];
+
 			if (od.nservices >= ORACLED_MAX_SERVICES) {
 				syslog(LOG_WARNING, "reload: cannot add "
 				    "'%s': limit reached", disk[j].label);
+				continue;
+			}
+			if (manifest_validate(&disk[j], vbuf,
+			    sizeof(vbuf)) == -1) {
+				syslog(LOG_WARNING, "reload: rejecting "
+				    "'%s': %s", disk[j].label, vbuf);
 				continue;
 			}
 			strlcpy(new_labels[nnew], disk[j].label,
@@ -640,7 +650,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 		}
 	}
 
-	free(disk);
+	/* disk array is kept alive until Phase 5 uses changed_disk_idx. */
 
 	/* Phase 3: Re-sort if any services added, removed, or changed. */
 	if (nnew > 0 || nremoved > 0 || nchanged > 0) {
@@ -679,7 +689,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 		}
 	}
 
-	/* Phase 5: Restart changed services. */
+	/* Phase 5: Stop changed services, swap manifest, restart. */
 	for (i = 0; i < od.nservices; i++) {
 		unsigned k;
 		for (k = 0; k < nchanged; k++) {
@@ -689,6 +699,9 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 				    "(manifest changed)",
 				    changed_labels[k]);
 				svc_graceful_stop(&od.services[i]);
+				/* Now swap to the new manifest. */
+				od.services[i].manifest =
+				    disk[changed_disk_idx[k]];
 				svc_exec(&od.services[i], kq);
 				break;
 			}
@@ -711,6 +724,8 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			}
 		}
 	}
+
+	free(disk);
 
 	syslog(LOG_INFO, "reload: %u new, %u changed, %u removed",
 	    nnew, nchanged, nremoved);

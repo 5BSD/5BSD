@@ -523,6 +523,12 @@ cap_rt_create_pair(int *oracle_end, int *child_end)
 		return (-1);
 	}
 
+	if (peer_fd < 0) {
+		syslog(LOG_WARNING, "create_pair: recvmsg returned no fd");
+		close(pair_fd);
+		return (-1);
+	}
+
 	(void)fcntl(pair_fd, F_SETFD, FD_CLOEXEC);
 	(void)fcntl(peer_fd, F_SETFD, FD_CLOEXEC);
 

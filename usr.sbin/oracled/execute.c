@@ -78,15 +78,17 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 	nullfd = open("/dev/null", O_RDWR);
 	if (nullfd == -1)
 		_exit(126);
-	(void)dup2(nullfd, STDIN_FILENO);
-	(void)dup2(nullfd, STDOUT_FILENO);
-	(void)dup2(nullfd, STDERR_FILENO);
+	if (dup2(nullfd, STDIN_FILENO) == -1 ||
+	    dup2(nullfd, STDOUT_FILENO) == -1 ||
+	    dup2(nullfd, STDERR_FILENO) == -1)
+		_exit(126);
 	if (nullfd > STDERR_FILENO)
 		(void)close(nullfd);
 
 	/* Place pair channel at well-known fd 3. */
 	if (child_pair_fd != SVC_PAIR_FD) {
-		(void)dup2(child_pair_fd, SVC_PAIR_FD);
+		if (dup2(child_pair_fd, SVC_PAIR_FD) == -1)
+			_exit(126);
 		(void)close(child_pair_fd);
 	}
 
@@ -94,7 +96,8 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 	for (i = 0; i < ntokens; i++) {
 		fd = (int)(SVC_TOKEN_BASE + i);
 		if (token_fds[i] != fd) {
-			(void)dup2(token_fds[i], fd);
+			if (dup2(token_fds[i], fd) == -1)
+				_exit(126);
 			(void)close(token_fds[i]);
 		}
 	}
@@ -103,9 +106,12 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 	closefrom(SVC_TOKEN_BASE + (int)ntokens);
 
 	/* Clear close-on-exec for the fds we keep. */
-	(void)fcntl(SVC_PAIR_FD, F_SETFD, 0);
-	for (i = 0; i < ntokens; i++)
-		(void)fcntl(SVC_TOKEN_BASE + (int)i, F_SETFD, 0);
+	if (fcntl(SVC_PAIR_FD, F_SETFD, 0) == -1)
+		_exit(126);
+	for (i = 0; i < ntokens; i++) {
+		if (fcntl(SVC_TOKEN_BASE + (int)i, F_SETFD, 0) == -1)
+			_exit(126);
+	}
 
 	/* Build minimal environment. */
 	envc = 0;
@@ -140,16 +146,14 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 
 	/* Set credentials if specified.  Failures are fatal — running
 	 * as root when the manifest requested an unprivileged user
-	 * is a privilege escalation. */
+	 * is a privilege escalation.  Always drop group before user;
+	 * if only user is set, gid comes from the user's passwd entry. */
 	if (have_creds) {
-		if (m->group[0] != '\0' || m->user[0] != '\0') {
-			if (initgroups(m->user, gid) == -1)
-				_exit(126);
-		}
-		if (m->group[0] != '\0') {
-			if (setgid(gid) == -1)
-				_exit(126);
-		}
+		if (initgroups(m->user[0] != '\0' ? m->user : "nobody",
+		    gid) == -1)
+			_exit(126);
+		if (setgid(gid) == -1)
+			_exit(126);
 		if (m->user[0] != '\0') {
 			if (setuid(uid) == -1)
 				_exit(126);
@@ -340,9 +344,20 @@ svc_exec(struct svc_runtime *svc, int kq)
 	    NOTE_EXIT | NOTE_EXEC, 0, svc);
 	EV_SET(&kev[1], oracle_end, EVFILT_READ, EV_ADD, 0, 0, svc);
 
-	if (kevent(kq, kev, 2, NULL, 0, NULL) == -1)
-		syslog(LOG_WARNING, "svc_exec %s: kevent register: %m",
+	if (kevent(kq, kev, 2, NULL, 0, NULL) == -1) {
+		syslog(LOG_ERR, "svc_exec %s: kevent register: %m",
 		    m->label);
+		pdkill(pd_fd, SIGKILL);
+		waitpid(pid, NULL, WNOHANG);
+		close(svc->pd_fd); svc->pd_fd = -1;
+		close(svc->pair_fd); svc->pair_fd = -1;
+		if (svc->coalition_fd >= 0) {
+			close(svc->coalition_fd);
+			svc->coalition_fd = -1;
+		}
+		svc->state = SVC_STATE_STOPPED;
+		return (-1);
+	}
 
 	syslog(LOG_INFO, "service %s: started pid %jd",
 	    m->label, (intmax_t)pid);
