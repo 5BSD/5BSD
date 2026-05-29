@@ -171,10 +171,12 @@ cmd_services(struct ctl_reply *reply, char *summary, size_t sumlen)
 	static const char *state_names[] = {
 		"stopped", "starting", "running", "stopping"
 	};
+	struct svc_manifest *disk;
 	struct timespec now;
 	size_t off, rem;
-	unsigned i;
+	unsigned i, j, ndisk;
 	int n;
+	bool found;
 
 	if (sumlen == 0) {
 		reply->status = CTL_STATUS_OK;
@@ -190,10 +192,12 @@ cmd_services(struct ctl_reply *reply, char *summary, size_t sumlen)
 } while (0)
 
 	clock_gettime(CLOCK_MONOTONIC, &now);
-
 	off = 0;
+
+	/* Section 1: Loaded services. */
+	SVC_APPEND("LOADED:\n");
 	if (od.services == NULL || od.nservices == 0) {
-		SVC_APPEND("no services loaded\n");
+		SVC_APPEND("  (none)\n");
 	} else {
 		for (i = 0; i < od.nservices; i++) {
 			struct svc_runtime *svc = &od.services[i];
@@ -204,11 +208,13 @@ cmd_services(struct ctl_reply *reply, char *summary, size_t sumlen)
 			else
 				state = "unknown";
 
-			SVC_APPEND("%-20s %-8s", svc->manifest.label, state);
+			SVC_APPEND("  %-20s %-8s", svc->manifest.label,
+			    state);
 
 			if (svc->state == SVC_STATE_RUNNING ||
 			    svc->state == SVC_STATE_STARTING) {
-				long up = now.tv_sec - svc->last_start.tv_sec;
+				long up = now.tv_sec -
+				    svc->last_start.tv_sec;
 				if (svc->last_start.tv_sec > 0)
 					SVC_APPEND(" pid %-6jd up %lds",
 					    (intmax_t)svc->pid, up);
@@ -220,7 +226,8 @@ cmd_services(struct ctl_reply *reply, char *summary, size_t sumlen)
 			SVC_APPEND(" restart=%s",
 			    svc->manifest.restart == SVC_RESTART_ALWAYS ?
 			    "always" :
-			    svc->manifest.restart == SVC_RESTART_ON_FAILURE ?
+			    svc->manifest.restart ==
+			    SVC_RESTART_ON_FAILURE ?
 			    "on-failure" : "never");
 
 			if (svc->restart_count > 0)
@@ -229,6 +236,36 @@ cmd_services(struct ctl_reply *reply, char *summary, size_t sumlen)
 
 			SVC_APPEND("\n");
 		}
+	}
+
+	/* Section 2: Known manifests on disk but not loaded. */
+	disk = calloc(ORACLED_MAX_SERVICES, sizeof(*disk));
+	if (disk != NULL) {
+		ndisk = 0;
+		if (manifest_load_dir(od.cfg.manifest_dir, disk,
+		    ORACLED_MAX_SERVICES, &ndisk) == 0 && ndisk > 0) {
+			bool have_unloaded = false;
+
+			for (j = 0; j < ndisk; j++) {
+				found = false;
+				for (i = 0; i < od.nservices; i++) {
+					if (strcmp(od.services[i].manifest.label,
+					    disk[j].label) == 0) {
+						found = true;
+						break;
+					}
+				}
+				if (!found) {
+					if (!have_unloaded) {
+						SVC_APPEND("\nAVAILABLE:\n");
+						have_unloaded = true;
+					}
+					SVC_APPEND("  %-20s %s\n",
+					    disk[j].label, disk[j].program);
+				}
+			}
+		}
+		free(disk);
 	}
 
 #undef SVC_APPEND
