@@ -15,10 +15,13 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <grp.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <unistd.h>
 
 #include <ucl.h>
 
@@ -180,14 +183,14 @@ parse_cap_network(const ucl_object_t *arr, struct svc_manifest *m)
 		if (v != NULL && ucl_object_type(v) == UCL_STRING) {
 			s = ucl_object_tostring(v);
 			if (strcmp(s, "bind") == 0)
-				nc->direction = 0x01;
+				nc->direction = ORACLED_NET_DIR_BIND;
 			else if (strcmp(s, "connect") == 0)
-				nc->direction = 0x02;
+				nc->direction = ORACLED_NET_DIR_CONNECT;
 			else if (strcmp(s, "any") == 0)
-				nc->direction = 0x03;
+				nc->direction = ORACLED_NET_DIR_ANY;
 		}
 		if (nc->direction == 0)
-			nc->direction = 0x01;
+			nc->direction = ORACLED_NET_DIR_BIND;
 
 		nc->domain = AF_INET;
 		v = ucl_object_lookup(elem, "domain");
@@ -221,7 +224,7 @@ parse_capabilities(const ucl_object_t *root, struct svc_manifest *m)
  * Parse a single manifest file into a svc_manifest struct.
  * Returns 0 on success, -1 on error (logged).
  */
-static int
+int
 manifest_load_file(const char *path, struct svc_manifest *m)
 {
 	struct ucl_parser *parser;
@@ -438,4 +441,111 @@ manifest_log(const struct svc_manifest *m)
 		syslog(LOG_INFO, "    capabilities: paths=%u network=%u "
 		    "system=0x%x", m->ncap_paths, m->ncap_net,
 		    m->cap_system);
+}
+
+/*
+ * Validate a parsed manifest for runtime correctness:
+ * program must exist and be executable, user/group must resolve.
+ * Returns 0 on success, -1 with error message in errbuf.
+ */
+int
+manifest_validate(const struct svc_manifest *m, char *errbuf, size_t errlen)
+{
+
+	if (access(m->program, X_OK) != 0) {
+		snprintf(errbuf, errlen, "program \"%s\": %s",
+		    m->program, strerror(errno));
+		return (-1);
+	}
+
+	if (m->user[0] != '\0' && getpwnam(m->user) == NULL) {
+		snprintf(errbuf, errlen, "user \"%s\" not found", m->user);
+		return (-1);
+	}
+
+	if (m->group[0] != '\0' && getgrnam(m->group) == NULL) {
+		snprintf(errbuf, errlen, "group \"%s\" not found", m->group);
+		return (-1);
+	}
+
+	return (0);
+}
+
+/*
+ * Format a human-readable summary of a manifest into buf.
+ * Returns the number of bytes written (excluding NUL).
+ */
+int
+manifest_format_summary(const struct svc_manifest *m, char *buf, size_t len)
+{
+	size_t off, rem;
+	unsigned i;
+	int n;
+
+	if (len == 0)
+		return (0);
+
+/* Safe snprintf accumulator — clamps off at len to prevent overflow. */
+#define	SUMMARY_APPEND(...)	do {				\
+	rem = (off < len) ? len - off : 0;			\
+	n = snprintf(buf + off, rem, __VA_ARGS__);		\
+	if (n > 0) off += (size_t)n;				\
+	if (off >= len) off = len - 1;				\
+} while (0)
+
+	off = 0;
+
+	SUMMARY_APPEND("%s:\n", m->label);
+	SUMMARY_APPEND("  program:      %s\n", m->program);
+
+	if (m->description[0] != '\0')
+		SUMMARY_APPEND("  description:  %s\n", m->description);
+	if (m->user[0] != '\0')
+		SUMMARY_APPEND("  user:         %s\n", m->user);
+	if (m->group[0] != '\0')
+		SUMMARY_APPEND("  group:        %s\n", m->group);
+
+	SUMMARY_APPEND("  restart:      %s\n",
+	    m->restart == SVC_RESTART_ALWAYS ? "always" :
+	    m->restart == SVC_RESTART_ON_FAILURE ? "on-failure" : "never");
+
+	if (m->nprovides > 0) {
+		SUMMARY_APPEND("  provides:     [");
+		for (i = 0; i < m->nprovides; i++)
+			SUMMARY_APPEND("%s%s", i > 0 ? ", " : "",
+			    m->provides[i]);
+		SUMMARY_APPEND("]\n");
+	}
+
+	if (m->nrequires > 0) {
+		SUMMARY_APPEND("  requires:     [");
+		for (i = 0; i < m->nrequires; i++)
+			SUMMARY_APPEND("%s%s", i > 0 ? ", " : "",
+			    m->requires[i]);
+		SUMMARY_APPEND("]\n");
+	}
+
+	if (m->ncap_paths > 0 || m->ncap_net > 0 || m->cap_system != 0)
+		SUMMARY_APPEND("  capabilities:\n");
+
+	for (i = 0; i < m->ncap_paths; i++)
+		SUMMARY_APPEND("    path:       %s\n", m->cap_paths[i]);
+
+	for (i = 0; i < m->ncap_net; i++) {
+		const struct oracled_net_claim *nc = &m->cap_net[i];
+		SUMMARY_APPEND("    network:    %s/%u %s\n",
+		    nc->protocol == IPPROTO_TCP ? "tcp" :
+		    nc->protocol == IPPROTO_UDP ? "udp" : "?",
+		    nc->port,
+		    nc->direction == ORACLED_NET_DIR_BIND ? "bind" :
+		    nc->direction == ORACLED_NET_DIR_CONNECT ? "connect" :
+		    "any");
+	}
+
+	if (m->cap_system != 0)
+		SUMMARY_APPEND("    system:     0x%x\n", m->cap_system);
+
+#undef SUMMARY_APPEND
+
+	return ((int)off);
 }

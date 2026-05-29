@@ -202,8 +202,8 @@ claim_net(const struct oracled_net_claim *nc)
 	    nc->port,
 	    nc->protocol == IPPROTO_TCP ? "tcp" :
 	    nc->protocol == IPPROTO_UDP ? "udp" : "any",
-	    nc->direction == 0x01 ? "bind" :
-	    nc->direction == 0x02 ? "connect" : "any");
+	    nc->direction == ORACLED_NET_DIR_BIND ? "bind" :
+	    nc->direction == ORACLED_NET_DIR_CONNECT ? "connect" : "any");
 	return (0);
 }
 

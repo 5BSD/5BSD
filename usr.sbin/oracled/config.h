@@ -20,11 +20,16 @@
 #define	ORACLED_MAX_PATH_CLAIMS		64
 #define	ORACLED_MAX_NET_CLAIMS		32
 
+/* Network claim direction flags (match cap_rt_isolation_proto.h). */
+#define	ORACLED_NET_DIR_BIND	0x01
+#define	ORACLED_NET_DIR_CONNECT	0x02
+#define	ORACLED_NET_DIR_ANY	0x03
+
 struct oracled_net_claim {
 	int		domain;		/* AF_INET, AF_INET6, 0=any */
 	int		protocol;	/* IPPROTO_TCP, IPPROTO_UDP, 0=any */
 	uint16_t	port;		/* host byte order */
-	uint8_t		direction;	/* FI_NET_BIND/CONNECT/ANY */
+	uint8_t		direction;	/* ORACLED_NET_DIR_* */
 };
 
 struct oracled_config {

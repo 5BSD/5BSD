@@ -135,14 +135,22 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 
 	env[envc] = NULL;
 
-	/* Set credentials if specified. */
+	/* Set credentials if specified.  Failures are fatal — running
+	 * as root when the manifest requested an unprivileged user
+	 * is a privilege escalation. */
 	if (have_creds) {
-		if (m->group[0] != '\0' || m->user[0] != '\0')
-			(void)initgroups(m->user, gid);
-		if (m->group[0] != '\0')
-			(void)setgid(gid);
-		if (m->user[0] != '\0')
-			(void)setuid(uid);
+		if (m->group[0] != '\0' || m->user[0] != '\0') {
+			if (initgroups(m->user, gid) == -1)
+				_exit(126);
+		}
+		if (m->group[0] != '\0') {
+			if (setgid(gid) == -1)
+				_exit(126);
+		}
+		if (m->user[0] != '\0') {
+			if (setuid(uid) == -1)
+				_exit(126);
+		}
 	}
 
 	/* Reset signal dispositions. */

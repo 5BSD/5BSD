@@ -221,14 +221,14 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 			    ucl_object_type(v) == UCL_STRING) {
 				s = ucl_object_tostring(v);
 				if (strcmp(s, "bind") == 0)
-					nc->direction = 0x01;
+					nc->direction = ORACLED_NET_DIR_BIND;
 				else if (strcmp(s, "connect") == 0)
-					nc->direction = 0x02;
+					nc->direction = ORACLED_NET_DIR_CONNECT;
 				else if (strcmp(s, "any") == 0)
-					nc->direction = 0x03;
+					nc->direction = ORACLED_NET_DIR_ANY;
 			}
 			if (nc->direction == 0)
-				nc->direction = 0x01;
+				nc->direction = ORACLED_NET_DIR_BIND;
 
 			nc->domain = AF_INET;
 			v = ucl_object_lookup(elem, "domain");
