@@ -52,7 +52,8 @@ int	oraclectl_check(int fd, const char *filename,
 	    char *summary, size_t sumlen);
 int	oraclectl_load(int fd, const char *filename,
 	    char *summary, size_t sumlen);
-int	oraclectl_services(int fd, char *summary, size_t sumlen);
+int	oraclectl_services(int fd, uint32_t flags, char *summary,
+	    size_t sumlen);
 __END_DECLS
 
 #endif /* !_ORACLECTL_H_ */

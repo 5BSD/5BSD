@@ -843,6 +843,94 @@ config_manifest_dir_cleanup()
 	cleanup_common
 }
 
+# --- service launch (test mode) ---
+
+atf_test_case svc_test_mode_skips_exec cleanup
+svc_test_mode_skips_exec_head()
+{
+	atf_set "descr" "Test mode logs skip message for each service"
+}
+svc_test_mode_skips_exec_body()
+{
+	mkdir -p oracled.d
+	cat > oracled.d/mysvc.ucl <<EOF
+label = "mysvc";
+program = "/bin/sleep";
+EOF
+	start_oracled
+	grep "test mode, skipping exec" oracled.log || \
+	    atf_fail "expected skip message in log"
+	stop_oracled
+}
+svc_test_mode_skips_exec_cleanup()
+{
+	cleanup_common
+}
+
+atf_test_case svc_launch_order_logged cleanup
+svc_launch_order_logged_head()
+{
+	atf_set "descr" "Services are launched in dependency order"
+}
+svc_launch_order_logged_body()
+{
+	mkdir -p oracled.d
+	cat > oracled.d/aaa-base.ucl <<EOF
+label = "base";
+program = "/bin/true";
+provides = ["base"];
+EOF
+	cat > oracled.d/zzz-app.ucl <<EOF
+label = "app";
+program = "/bin/true";
+requires = ["base"];
+EOF
+	start_oracled
+	# base should appear before app in the log
+	base_line=$(grep -n 'service base:' oracled.log | head -1 | cut -d: -f1)
+	app_line=$(grep -n 'service app:' oracled.log | head -1 | cut -d: -f1)
+	if [ -z "$base_line" ] || [ -z "$app_line" ]; then
+		cat oracled.log
+		atf_fail "expected both services in log"
+	fi
+	if [ "$app_line" -le "$base_line" ]; then
+		atf_fail "app should be launched after base"
+	fi
+	stop_oracled
+}
+svc_launch_order_logged_cleanup()
+{
+	cleanup_common
+}
+
+atf_test_case svc_capabilities_logged cleanup
+svc_capabilities_logged_head()
+{
+	atf_set "descr" "Service capabilities are logged at startup"
+}
+svc_capabilities_logged_body()
+{
+	mkdir -p oracled.d
+	cat > oracled.d/capsvc.ucl <<EOF
+label = "capsvc";
+program = "/bin/true";
+capabilities {
+    paths = ["/var/log"];
+    system = ["kldload", "reboot"];
+}
+EOF
+	start_oracled
+	grep "capabilities: paths=1" oracled.log || \
+	    atf_fail "expected capability log line"
+	grep "system=0x" oracled.log || \
+	    atf_fail "expected system gate bitmask in log"
+	stop_oracled
+}
+svc_capabilities_logged_cleanup()
+{
+	cleanup_common
+}
+
 atf_init_test_cases()
 {
 	# Manifest parsing
@@ -878,4 +966,9 @@ atf_init_test_cases()
 
 	# Config
 	atf_add_test_case config_manifest_dir
+
+	# Service launch (test mode — verifies log output)
+	atf_add_test_case svc_test_mode_skips_exec
+	atf_add_test_case svc_launch_order_logged
+	atf_add_test_case svc_capabilities_logged
 }

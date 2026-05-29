@@ -166,7 +166,8 @@ cmd_load(uid_t euid, const char *filename, int kq, struct ctl_reply *reply,
 }
 
 void
-cmd_services(struct ctl_reply *reply, char *summary, size_t sumlen)
+cmd_services(uint32_t flags, struct ctl_reply *reply,
+    char *summary, size_t sumlen)
 {
 	static const char *state_names[] = {
 		"stopped", "starting", "running", "stopping"
@@ -175,8 +176,10 @@ cmd_services(struct ctl_reply *reply, char *summary, size_t sumlen)
 	struct timespec now;
 	size_t off, rem;
 	unsigned i, j, ndisk;
-	int n;
+	int n, verbose;
 	bool found;
+
+	verbose = (flags & 1);
 
 	if (sumlen == 0) {
 		reply->status = CTL_STATUS_OK;
@@ -235,6 +238,54 @@ cmd_services(struct ctl_reply *reply, char *summary, size_t sumlen)
 				    svc->restart_count);
 
 			SVC_APPEND("\n");
+
+			if (verbose) {
+				const struct svc_manifest *m =
+				    &svc->manifest;
+				unsigned k;
+
+				SVC_APPEND("    program:    %s\n",
+				    m->program);
+				if (m->user[0] != '\0')
+					SVC_APPEND("    user:       %s\n",
+					    m->user);
+				if (m->group[0] != '\0')
+					SVC_APPEND("    group:      %s\n",
+					    m->group);
+				for (k = 0; k < m->ncap_paths; k++)
+					SVC_APPEND("    cap-path:   %s\n",
+					    m->cap_paths[k]);
+				for (k = 0; k < m->ncap_net; k++)
+					SVC_APPEND("    cap-net:    "
+					    "%s/%u %s\n",
+					    m->cap_net[k].protocol ==
+					    IPPROTO_TCP ? "tcp" : "udp",
+					    m->cap_net[k].port,
+					    m->cap_net[k].direction ==
+					    ORACLED_NET_DIR_BIND ? "bind" :
+					    m->cap_net[k].direction ==
+					    ORACLED_NET_DIR_CONNECT ?
+					    "connect" : "any");
+				if (m->cap_system != 0)
+					SVC_APPEND("    cap-system: "
+					    "0x%x\n", m->cap_system);
+				if (m->nprovides > 0) {
+					SVC_APPEND("    provides:   ");
+					for (k = 0; k < m->nprovides; k++)
+						SVC_APPEND("%s%s",
+						    k > 0 ? ", " : "",
+						    m->provides[k]);
+					SVC_APPEND("\n");
+				}
+				if (m->nrequires > 0) {
+					SVC_APPEND("    requires:   ");
+					for (k = 0; k < m->nrequires; k++)
+						SVC_APPEND("%s%s",
+						    k > 0 ? ", " : "",
+						    m->requires[k]);
+					SVC_APPEND("\n");
+				}
+			}
 		}
 	}
 

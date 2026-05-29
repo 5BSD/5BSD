@@ -227,13 +227,14 @@ oraclectl_reboot(int fd, int howto)
  * Helper: do_call + read summary text from reply.flags bytes.
  */
 static int
-do_call_summary(int fd, uint32_t op, const void *data, uint32_t datalen,
+do_call_summary(int fd, uint32_t op, uint32_t flags,
+    const void *data, uint32_t datalen,
     char *summary, size_t sumlen, struct ctl_reply *rpl)
 {
 	int error;
 	uint32_t textlen;
 
-	error = do_call(fd, op, 0, data, datalen, rpl);
+	error = do_call(fd, op, flags, data, datalen, rpl);
 	if (error != 0)
 		return (error);
 
@@ -262,7 +263,7 @@ oraclectl_check(int fd, const char *filename,
 	if (len == 0 || len > ORACLECTL_MAX_PAYLOAD)
 		return (EINVAL);
 
-	return (do_call_summary(fd, ORACLECTL_CHECK, filename, len,
+	return (do_call_summary(fd, ORACLECTL_CHECK, 0, filename, len,
 	    summary, sumlen, &rpl));
 }
 
@@ -277,7 +278,7 @@ oraclectl_load(int fd, const char *filename,
 	if (len == 0 || len > ORACLECTL_MAX_PAYLOAD)
 		return (EINVAL);
 
-	return (do_call_summary(fd, ORACLECTL_LOAD, filename, len,
+	return (do_call_summary(fd, ORACLECTL_LOAD, 0, filename, len,
 	    summary, sumlen, &rpl));
 }
 
@@ -286,15 +287,15 @@ oraclectl_reload(int fd, char *summary, size_t sumlen)
 {
 	struct ctl_reply rpl;
 
-	return (do_call_summary(fd, ORACLECTL_RELOAD, NULL, 0,
+	return (do_call_summary(fd, ORACLECTL_RELOAD, 0, NULL, 0,
 	    summary, sumlen, &rpl));
 }
 
 int
-oraclectl_services(int fd, char *summary, size_t sumlen)
+oraclectl_services(int fd, uint32_t flags, char *summary, size_t sumlen)
 {
 	struct ctl_reply rpl;
 
-	return (do_call_summary(fd, ORACLECTL_SERVICES, NULL, 0,
+	return (do_call_summary(fd, ORACLECTL_SERVICES, flags, NULL, 0,
 	    summary, sumlen, &rpl));
 }

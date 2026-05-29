@@ -190,6 +190,117 @@ shutdown_stops_daemon_cleanup()
 	fi
 }
 
+# --- usage: check and load need a filename ---
+
+atf_test_case usage_check_no_file
+usage_check_no_file_head()
+{
+	atf_set "descr" "oraclectl check without filename prints usage"
+}
+usage_check_no_file_body()
+{
+	atf_check -s not-exit:0 -e match:"usage:" oraclectl check
+}
+
+atf_test_case usage_load_no_file
+usage_load_no_file_head()
+{
+	atf_set "descr" "oraclectl load without filename prints usage"
+}
+usage_load_no_file_body()
+{
+	atf_check -s not-exit:0 -e match:"usage:" oraclectl load
+}
+
+# --- services command ---
+
+atf_test_case services_shows_loaded cleanup
+services_shows_loaded_head()
+{
+	atf_set "descr" "oraclectl services lists loaded services"
+	atf_set "require.user" "root"
+}
+services_shows_loaded_body()
+{
+	require_oracled
+	atf_check -s exit:0 -o match:"LOADED:" oraclectl services
+}
+services_shows_loaded_cleanup()
+{
+	:
+}
+
+atf_test_case services_verbose cleanup
+services_verbose_head()
+{
+	atf_set "descr" "oraclectl services -v shows capabilities"
+	atf_set "require.user" "root"
+}
+services_verbose_body()
+{
+	require_oracled
+	atf_check -s exit:0 -o match:"program:" oraclectl services -v
+}
+services_verbose_cleanup()
+{
+	:
+}
+
+# --- check command ---
+
+atf_test_case check_nonexistent cleanup
+check_nonexistent_head()
+{
+	atf_set "descr" "oraclectl check with nonexistent manifest fails"
+	atf_set "require.user" "root"
+}
+check_nonexistent_body()
+{
+	require_oracled
+	atf_check -s not-exit:0 -o match:"error:" \
+	    oraclectl check nosuch.ucl
+}
+check_nonexistent_cleanup()
+{
+	:
+}
+
+atf_test_case check_path_traversal cleanup
+check_path_traversal_head()
+{
+	atf_set "descr" "oraclectl check rejects path traversal"
+	atf_set "require.user" "root"
+}
+check_path_traversal_body()
+{
+	require_oracled
+	# The '/' in the payload is rejected by the control socket
+	atf_check -s not-exit:0 oraclectl check ../../../etc/passwd
+}
+check_path_traversal_cleanup()
+{
+	:
+}
+
+# --- kldunload ---
+
+atf_test_case kldunload_nonexistent cleanup
+kldunload_nonexistent_head()
+{
+	atf_set "descr" "oraclectl kldunload of nonexistent module fails"
+	atf_set "require.user" "root"
+}
+kldunload_nonexistent_body()
+{
+	require_oracled
+	atf_check -s not-exit:0 -e match:"nosuchmodule" \
+	    oraclectl kldunload nosuchmodule
+}
+kldunload_nonexistent_cleanup()
+{
+	:
+}
+
 atf_init_test_cases()
 {
 	# Argument handling (no root needed)
@@ -197,16 +308,27 @@ atf_init_test_cases()
 	atf_add_test_case usage_bad_command
 	atf_add_test_case usage_kldload_no_module
 	atf_add_test_case usage_extra_args
+	atf_add_test_case usage_check_no_file
+	atf_add_test_case usage_load_no_file
 	atf_add_test_case connect_no_daemon
 
 	# Status
 	atf_add_test_case status_running
 	atf_add_test_case status_uptime
 
+	# Services
+	atf_add_test_case services_shows_loaded
+	atf_add_test_case services_verbose
+
+	# Check
+	atf_add_test_case check_nonexistent
+	atf_add_test_case check_path_traversal
+
 	# Operations
 	atf_add_test_case reload_succeeds
 	atf_add_test_case kldload_nonexistent
 	atf_add_test_case kldload_already_loaded
+	atf_add_test_case kldunload_nonexistent
 
 	# Shutdown (must be last — it stops the daemon)
 	atf_add_test_case shutdown_stops_daemon

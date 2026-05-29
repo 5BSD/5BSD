@@ -192,13 +192,14 @@ cmd_load(const char *filename)
 }
 
 static int
-cmd_services(void)
+cmd_services(int verbose)
 {
 	char summary[ORACLECTL_SUMMARY_MAX];
 	int fd, error;
 
 	fd = open_or_die();
-	error = oraclectl_services(fd, summary, sizeof(summary));
+	error = oraclectl_services(fd, (uint32_t)verbose, summary,
+	    sizeof(summary));
 	close(fd);
 
 	if (error != 0)
@@ -221,7 +222,7 @@ usage(void)
 	fprintf(stderr,
 	    "usage: oraclectl [-s socket] command [args]\n"
 	    "       oraclectl status\n"
-	    "       oraclectl services\n"
+	    "       oraclectl services [-v]\n"
 	    "       oraclectl check <manifest.ucl>\n"
 	    "       oraclectl load <manifest.ucl>\n"
 	    "       oraclectl reload\n"
@@ -255,7 +256,10 @@ main(int argc, char *argv[])
 	if (strcmp(argv[0], "status") == 0 && argc == 1)
 		return (cmd_status());
 	if (strcmp(argv[0], "services") == 0 && argc == 1)
-		return (cmd_services());
+		return (cmd_services(0));
+	if (strcmp(argv[0], "services") == 0 && argc == 2 &&
+	    strcmp(argv[1], "-v") == 0)
+		return (cmd_services(1));
 	if (strcmp(argv[0], "check") == 0 && argc == 2)
 		return (cmd_check(argv[1]));
 	if (strcmp(argv[0], "load") == 0 && argc == 2)

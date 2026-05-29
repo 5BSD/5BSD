@@ -298,7 +298,7 @@ ctl_handle(int *reboot_howto)
 			reply.status = EINVAL;
 			break;
 		}
-		cmd_services(&reply, summary, sizeof(summary));
+		cmd_services(req.flags, &reply, summary, sizeof(summary));
 		break;
 	default:
 		reply.status = ENOTSUP;
