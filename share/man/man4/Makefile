@@ -106,7 +106,6 @@ MAN=	aac.4 \
 	cap_rt.4 \
 	cap_rt_capprotect.4 \
 	cap_rt_system.4 \
-	cap_rt_test_kernelstore.4 \
 	cc_cdg.4 \
 	cc_chd.4 \
 	cc_cubic.4 \

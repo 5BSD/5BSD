@@ -1,0 +1,791 @@
+# CAP_RT -- Capability Message Interface
+
+## Design Stance
+
+cap_rt is a **capability transport, supervision, and policy substrate**
+for BSD sandboxes.  It is a generic messaging interface for building
+capabilities on FreeBSD, supporting async and sync messaging to kernel
+services (via loadable modules) and userspace-to-userspace IPC (via
+capability pairs).
+
+All communication flows through file descriptors that are
+Capsicum-aware, kqueue-integrated, and delegable via fork, dup, or
+SCM_RIGHTS.
+
+cap_rt is **not** intended to be a microkernel IPC substrate, a
+remote-object runtime, or a Binder/Mach clone.  It centers on:
+
+- Capability file descriptors as the unit of authority
+- Explicit delegation and narrowing
+- Kernel-stamped identity and credential metadata
+- Revocation, supervision, and policy enforcement
+
+The runtime does **not** currently aim to provide general remote
+object references, port-right algebra, VM-integrated message passing,
+or IDL-generated RPC machinery.
+
+## The Problem CAP_RT Solves
+
+Adding a new Capsicum-aware kernel service to FreeBSD today requires
+touching the base system in multiple places:
+
+1. **New capability rights** in `sys/sys/capsicum.h` -- every new
+   operation needs a `CAP_*` constant from a finite bitspace (57 bits
+   per index).
+2. **New descriptor type** in `sys/sys/file.h` -- a new `DTYPE_*`,
+   new `struct fileops`, and all the boilerplate.
+3. **New syscall** (often) -- entry in `syscalls.master`, handler,
+   userspace wrapper.
+4. **procstat support** in `usr.bin/procstat` and `lib/libprocstat`.
+5. **Manual queue/lock/lifecycle code** -- every service reinvents
+   message queuing, reference counting, teardown ordering, and
+   credential handling.
+
+**CAP_RT replaces all of this with one base system change** (`DTYPE_CAP_RT`,
+two reserved Capsicum rights, one device node) that enables unlimited
+kernel services as loadable modules.  No new syscalls, no new DTYPEs,
+no new `CAP_*` bits per service.
+
+CAP_RT coexists with the socket API.  Like Apple (Mach ports + BSD
+sockets) and Android (Binder + sockets), FreeBSD gets both: sockets
+for network and traditional IPC, CAP_RT for structured capability-based
+messaging.
+
+---
+
+## Design Rules
+
+1. **A service is async OR sync, never both.**  Pick `co_handler`
+   (async, taskqueue dispatch) or `co_call` (sync, caller's thread).
+2. **Messages are the interface.**  Every operation goes through
+   `CAP_RT_SENDMSG`/`CAP_RT_RECVMSG` (async) or `CAP_RT_CALL` (sync).
+   No direct struct access from userspace.
+3. **The framework owns the descriptor.**  Services never touch
+   `falloc`, `finit`, `finstall`, `fileops`, or `DTYPE_*`.
+
+---
+
+## How It Works
+
+A capability is a file descriptor connected to a kernel service.
+Userspace sends messages through the fd.  The kernel dispatches
+them to the service's handler.
+
+### Async model (co_handler)
+
+```
+userspace                    kernel
+---------                    ------
+CAP_RT_SENDMSG  ------>  RX queue  ------>  taskqueue  ----->  co_handler()
+                                                                  |
+CAP_RT_RECVMSG  <------  TX queue  <------  cap_rt_reply()  <--------+
+```
+
+Two queues per instance: RX (userspace to kernel) and TX (kernel to
+userspace).
+
+### Sync model (co_call)
+
+```
+userspace                    kernel
+---------                    ------
+CAP_RT_CALL  -------->  co_call() runs in caller's thread  -------->  return
+```
+
+No queues.  The handler runs as the calling process.
+
+---
+
+## Identity
+
+Every credential carries a 64-bit **nonce** (program identity):
+- Inherited across fork (same program)
+- Rotated on exec (new program)
+- Kernel-assigned; userspace cannot set or forge it
+
+The nonce is implemented as a MACF credential label inside the
+cap_rt core module.  Accessible via `cap_rt_proc_nonce(cred)`.
+Zero is reserved as "not available" and is never generated.
+
+### How a process learns nonces
+
+| Source | Mechanism |
+|--------|-----------|
+| Peer's nonce | `cap_rt_cred_trailer.nonce` on every RECVMSG and CALL |
+| Own nonce | `identity` service: `IDENTITY_OP_SELF` via CAP_RT_CALL |
+| Child's nonce (procdesc) | `identity` service: `IDENTITY_OP_QUERY` with attached procdesc fd |
+
+---
+
+## File Descriptors and Capabilities
+
+The unit of authority is the **instance fd** returned by CAP_RT_CONNECT.
+
+### Operations on an instance fd
+
+| Operation | Ioctl | Capsicum Right | Effect |
+|-----------|-------|----------------|--------|
+| Send async message | CAP_RT_SENDMSG | CAP_CAP_RT_SEND | Enqueue on service RX queue |
+| Receive async message | CAP_RT_RECVMSG | CAP_CAP_RT_RECV | Dequeue from TX queue (blocks) |
+| Synchronous call | CAP_RT_CALL | CAP_CAP_RT_SEND + CAP_CAP_RT_RECV | Run handler in caller thread |
+| Query metadata | CAP_RT_GETINFO | (none) | Read service name, badge, limits, features |
+| Prevent delegation | CAP_RT_LOCK | (none) | Disable SCM_RIGHTS transfer (one-way) |
+| Strip send | CAP_RT_REVOKE_SEND | (none) | Block future SENDMSG (one-way) |
+| Strip recv | CAP_RT_REVOKE_RECV | (none) | Block future RECVMSG (one-way) |
+| Strip call | CAP_RT_REVOKE_CALL | (none) | Block future CALL (one-way) |
+| Destroy instance | CAP_RT_TERMINATE | (none) | Kill for all holders |
+| kqueue readiness | EVFILT_READ / EVFILT_WRITE | (none) | TX has data / RX has space |
+
+### Capability narrowing
+
+Rights can only be reduced, never re-escalated:
+
+1. **cap_rights_limit()** -- restrict Capsicum rights on the fd.
+2. **cap_ioctls_limit()** -- whitelist specific ioctl commands.
+3. **CAP_RT_REVOKE_SEND/RECV/CALL** -- instance-level one-way latch.
+4. **CAP_RT_LOCK** -- prevent fd transfer via SCM_RIGHTS.
+
+All four compose.  A process can hand a child a send-only,
+non-transferable handle by combining them.
+
+Services can also set `CAP_RT_SVC_NOXFER` at creation time to
+make all instances non-transferable from birth.
+
+### fd passing in messages
+
+Messages (SENDMSG, CALL) can carry up to `CAP_RT_MAX_FDS` (16)
+file descriptors.  Capsicum rights on attached fds are preserved.
+The DFLAG_PASSABLE check prevents passing non-transferable fds.
+
+### Delegation
+
+- **fork** -- child inherits the fd
+- **dup** -- shares the same capability (same queues)
+- **SCM_RIGHTS** -- pass to any process (unless `CAP_RT_SVC_NOXFER`)
+
+---
+
+## Capsicum Sandbox Compatibility
+
+cap_rt is fully usable inside `cap_enter()`:
+
+| Operation | Available in Capsicum mode? |
+|-----------|---------------------------|
+| CAP_RT_CONNECT (on /dev/cap_rt) | Yes, if fd opened before cap_enter |
+| SENDMSG, RECVMSG, CALL | Yes, with appropriate rights |
+| GETINFO, LOCK, REVOKE_*, TERMINATE | Yes |
+| kqueue on instance fd | Yes |
+| __mac_get_proc / __mac_set_proc | Yes (CAPENABLED) |
+| mac_syscall | **No** (not CAPENABLED) |
+
+### What a sandboxed process CANNOT do
+
+1. **Open new /dev/cap_rt connections** -- must open before cap_enter
+   or receive the fd from a supervisor.
+2. **Forge credentials** -- nonce, uid, gid, prison_id are
+   kernel-stamped.
+3. **Re-escalate rights** -- all narrowing is one-way.
+4. **Call mac_syscall()** -- use CAP_RT_CALL instead.
+5. **Bypass service access control** -- co_connect checks credentials.
+6. **Send on a recv-only fd** -- enforced by Capsicum rights and
+   instance restriction flags.
+
+---
+
+# Kernel Developer Guide
+
+## Writing a Service
+
+A CAP_RT service is a kernel module with one callback -- `co_handler`
+(async) or `co_call` (sync), never both:
+
+```c
+#include "cap_rt.h"
+MODULE_DEPEND(echo, cap_rt, 1, 1, 1);
+
+static int
+echo_handler(struct cap_rt_instance *s, const struct cap_rt_msg *msg,
+    void *arg)
+{
+    return (cap_rt_reply(s, cap_rt_msg_token(msg),
+        cap_rt_msg_data(msg), cap_rt_msg_datalen(msg),
+        NULL, NULL, 0));
+}
+
+static const struct cap_rt_ops echo_ops = {
+    .co_handler = echo_handler,
+};
+
+static struct cap_rt_service *svc;
+
+static int
+echo_modevent(module_t mod, int type, void *arg)
+{
+    switch (type) {
+    case MOD_LOAD: {
+        struct cap_rt_service_params p = {
+            .name = "echo",
+            .ops  = &echo_ops,
+        };
+        return (cap_rt_service_create(&p, &svc));
+    }
+    case MOD_UNLOAD:
+        cap_rt_service_destroy(svc);
+        return (0);
+    }
+    return (EOPNOTSUPP);
+}
+```
+
+## Lifecycle Callbacks
+
+| Callback | When | Thread | Can fail? |
+|---|---|---|---|
+| `co_connect` | `CAP_RT_CONNECT`, before instance exists | Caller | Yes |
+| `co_init` | After creation, before fd visible | Caller | Yes |
+| `co_handler` | Async message dispatch | Taskqueue | Yes (auto-error-reply) |
+| `co_call` | Sync call in caller's context | Caller | Yes |
+| `co_revoke` | Instance dying, after all work drains | Varies | No (void) |
+| `co_fdclose` | Specific fd closed, instance may survive | Caller | No (void) |
+
+All are optional except one of `co_handler` or `co_call`.
+
+### Revocation reasons
+
+| Reason | Meaning |
+|---|---|
+| `CAP_RT_REVOKE_PEER_CLOSED` | Userspace called `close()` |
+| `CAP_RT_REVOKE_BY_SERVICE` | Service called `cap_rt_instance_revoke()` or userspace sent `CAP_RT_TERMINATE` |
+| `CAP_RT_REVOKE_UNLOAD` | Module unload via `cap_rt_service_destroy()` |
+
+## The Async Handler
+
+`co_handler` is called from a per-service taskqueue.  One message
+at a time per instance (never concurrent).  May sleep.  No framework
+locks held.
+
+Access the message through accessors -- the struct is opaque:
+
+```c
+cap_rt_msg_data(msg)      /* payload bytes */
+cap_rt_msg_datalen(msg)   /* payload length */
+cap_rt_msg_token(msg)     /* correlation token set by sender */
+cap_rt_msg_fds(msg)       /* attached file pointers */
+cap_rt_msg_fcaps(msg)     /* Capsicum rights on attached fds */
+cap_rt_msg_nfds(msg)      /* number of attached fds */
+cap_rt_msg_badge(msg)     /* this instance's badge */
+cap_rt_msg_cred(msg)      /* sender credentials at send time */
+```
+
+**Return 0** after calling `cap_rt_reply()` to send a response.
+**Return 0** without replying for fire-and-forget messages.
+**Return nonzero** to have the framework send an error reply.
+
+The message is valid only during the call.  Copy what you need.
+
+## Replying
+
+```c
+cap_rt_reply(s, cap_rt_msg_token(msg), data, len, fds, fcaps, nfds);
+```
+
+- `fds`: file pointers to attach.  NULL if none.
+- `fcaps`: Capsicum rights to preserve on those fds.  NULL = full rights.
+- `cap_rt_msg_token(msg)`: pass the sender's token back for correlation.
+
+## Notifications
+
+Push an unsolicited message to userspace (async services only):
+
+```c
+cap_rt_notify(s, data, len, fds, fcaps, nfds);
+```
+
+Returns EAGAIN above the soft limit.  No reply token.
+
+## Badges
+
+The badge is a uint64_t assigned by `co_connect` at instance creation.
+It's stamped on every inbound message.  The handler sees it via
+`cap_rt_msg_badge(msg)`.  Typical values: monotonic counter, hash key,
+user ID.
+
+## Instance Private Data
+
+```c
+cap_rt_instance_set_priv(s, my_state);
+struct my_state *st = cap_rt_instance_get_priv(s);
+```
+
+Set in `co_init`, freed in `co_revoke`.
+
+## Revocation
+
+Tear down an instance from the service side:
+
+```c
+cap_rt_instance_revoke(s);
+```
+
+The peer's next RECVMSG returns ECONNRESET.  `co_revoke` fires.
+Safe to call from inside `co_handler` (self-revoke).
+Do NOT call from inside `co_call`.
+
+## Minting New Capabilities
+
+Create an instance and return it as an attached fd in a reply:
+
+```c
+struct file *fp;
+cap_rt_mint_fp(svc, badge, &fp);
+cap_rt_reply(s, token, NULL, 0, &fp, NULL, 1);
+fdrop(fp, curthread);
+```
+
+## Service Parameters
+
+```c
+struct cap_rt_service_params p = {
+    .name          = "myservice",
+    .ops           = &ops,
+    .queue_depth   = 64,         /* 0 = 256, max 4096 */
+    .tx_limit      = 128,        /* 0 = 256, max 4096 */
+    .instance_limit = 512,       /* 0 = 1024, max 1M */
+    .flags         = CAP_RT_SVC_NOXFER,
+};
+```
+
+### Tunables
+
+| Parameter | Default | Max | Description |
+|---|---|---|---|
+| `msg_size` | 16384 | 16384 | Fixed message size (4 pages) |
+| `queue_depth` | 256 | 4096 | RX queue depth (async only) |
+| `tx_limit` | 256 | 4096 | TX soft limit for notifications |
+| `instance_limit` | 1024 | 1M | Max concurrent instances |
+| `CAP_RT_MAX_FDS` | 16 | 16 | Max fds per message (compile-time) |
+| TX hard limit | 4x queue_depth | -- | Prevents unbounded growth |
+
+## Advanced: Deferred Replies
+
+If the handler needs to defer work (long crypto, disk I/O):
+
+```c
+static int
+myservice_handler(struct cap_rt_instance *s, const struct cap_rt_msg *msg,
+    void *arg)
+{
+    struct work *w = alloc_work();
+    w->instance = s;
+    w->token = cap_rt_msg_token(msg);
+    memcpy(w->data, cap_rt_msg_data(msg), cap_rt_msg_datalen(msg));
+
+    cap_rt_instance_hold(s);
+    taskqueue_enqueue(my_tq, &w->task);
+    return (0);
+}
+
+static void
+deferred_task(void *ctx, int pending)
+{
+    struct work *w = ctx;
+    uint32_t result = compute(w->data, w->datalen);
+    cap_rt_reply(w->instance, w->token,
+        &result, sizeof(result), NULL, NULL, 0);
+    cap_rt_instance_rele(w->instance);
+    free_work(w);
+}
+```
+
+`cap_rt_instance_hold()` prevents close from freeing the instance.
+`cap_rt_instance_rele()` releases the hold.
+
+---
+
+# Userspace Developer Guide
+
+## Connecting
+
+```c
+#include "cap_rt_ioctl.h"
+
+int ctl = open("/dev/cap_rt", O_RDWR);
+struct cap_rt_connect_args ca = {0};
+strlcpy(ca.name, "myservice", sizeof(ca.name));
+ioctl(ctl, CAP_RT_CONNECT, &ca);
+close(ctl);
+
+int cap = ca.fd;   /* this is your capability */
+```
+
+After connecting, you never need /dev/cap_rt again.  The capability
+fd can be passed via SCM_RIGHTS (unless `CAP_RT_SVC_NOXFER`), inherited
+across fork, or restricted via Capsicum.
+
+## Sending a Message (async)
+
+```c
+struct cap_rt_sendmsg_args sa = {0};
+sa.payload = &request;
+sa.payload_len = sizeof(request);
+sa.reply_token = my_request_id;
+ioctl(cap, CAP_RT_SENDMSG, &sa);
+```
+
+Returns immediately.  EAGAIN if the queue is full -- use
+kqueue(EVFILT_WRITE) to wait.
+
+## Receiving a Message (async)
+
+```c
+char buf[4096];
+struct cap_rt_recvmsg_args ra = {0};
+ra.payload = buf;
+ra.payload_len = sizeof(buf);
+ioctl(cap, CAP_RT_RECVMSG, &ra);
+/* ra.payload_len = actual bytes received */
+/* ra.reply_token = correlation token */
+```
+
+Blocks until a message is available.  EAGAIN with O_NONBLOCK.
+EMSGSIZE if buffer too small (message stays queued for retry).
+
+## Synchronous Call
+
+```c
+struct ns_request req = { .op = NS_OP_INFO };
+char reply_buf[512];
+int recv_fds[4];
+struct cap_rt_call_args ca = {0};
+ca.req = &req;
+ca.req_len = sizeof(req);
+ca.reply = reply_buf;
+ca.reply_len = sizeof(reply_buf);
+ca.reply_fds = recv_fds;
+ca.reply_nfds = 4;
+ioctl(cap, CAP_RT_CALL, &ca);
+```
+
+## Attaching File Descriptors
+
+```c
+int shm_fd = shm_open(SHM_ANON, O_RDWR, 0);
+struct cap_rt_sendmsg_args sa = {0};
+sa.payload = &request;
+sa.payload_len = sizeof(request);
+sa.fds = &shm_fd;
+sa.nfds = 1;
+ioctl(cap, CAP_RT_SENDMSG, &sa);
+```
+
+## Querying Service Info
+
+```c
+struct cap_rt_info_args info;
+ioctl(cap, CAP_RT_GETINFO, &info);
+```
+
+Feature bits:
+
+| Bit | Meaning |
+|---|---|
+| `CAP_RT_INFO_F_SENDMSG` | Async messaging supported |
+| `CAP_RT_INFO_F_CALL` | Synchronous call supported |
+| `CAP_RT_INFO_F_KQUEUE` | EVFILT_READ/WRITE supported |
+
+## Event Loop Integration
+
+```c
+EV_SET(&kev, cap, EVFILT_READ, EV_ADD, 0, 0, NULL);   /* msg ready */
+EV_SET(&kev, cap, EVFILT_WRITE, EV_ADD, 0, 0, NULL);   /* can send */
+```
+
+EV_EOF fires when the capability is revoked.
+
+## Error Summary
+
+| Error | Context | Meaning |
+|---|---|---|
+| EAGAIN | SENDMSG | RX queue full |
+| EAGAIN | RECVMSG + O_NONBLOCK | No message |
+| EMSGSIZE | SENDMSG | Payload too large |
+| EMSGSIZE | RECVMSG / CALL | Buffer too small (reply_len = required) |
+| EPIPE | SENDMSG | Instance dead |
+| ECONNRESET | RECVMSG / CALL | Instance revoked |
+| EOPNOTSUPP | SENDMSG on sync / CALL on async | Wrong API |
+| ENOENT | CONNECT | Service not registered |
+| ECONNABORTED | CONNECT | Service unloading |
+| ENOBUFS | (internal) | TX queue hard limit reached |
+| EACCES | SENDMSG / RECVMSG / CALL | Operation restricted via CAP_RT_REVOKE_* |
+
+## Security
+
+`/dev/cap_rt` is mode 0600 (root only).  Unprivileged processes cannot
+connect directly.  A broker daemon connects on their behalf and passes
+capability fds via SCM_RIGHTS.
+
+Capabilities can be attenuated before delegation:
+- `CAP_RT_LOCK` prevents further SCM_RIGHTS passing
+- `CAP_RT_REVOKE_SEND` / `CAP_RT_REVOKE_RECV` / `CAP_RT_REVOKE_CALL` strip operations
+- `cap_ioctls_limit` restricts which ioctls the holder can perform
+
+---
+
+## Services Available Today
+
+### identity (sync, CAP_RT_CALL)
+
+Program identity queries.
+
+| Operation | What it does |
+|-----------|-------------|
+| IDENTITY_OP_SELF | Returns caller's own nonce |
+| IDENTITY_OP_QUERY | Returns nonce of process via attached procdesc fd |
+
+### capprotect (sync, CAP_RT_CALL)
+
+Program shielding -- protects a process (by nonce) from external
+interference.
+
+| Operation | What it does |
+|-----------|-------------|
+| SHIELD | Set protection flags (ptrace, signals, visibility, wait, unkillable, unstoppable, sched, coredump, ktrace) |
+| MINT | Create an access token granting cross-nonce access |
+| AUTHORIZE | Present a token to gain access to a shielded process |
+
+### isolation (sync, CAP_RT_CALL)
+
+File, directory, Unix-socket, and network isolation by nonce.
+
+| Operation | What it does |
+|-----------|-------------|
+| CLAIM_VNODE | Isolate a file/directory to caller's nonce |
+| RELEASE_VNODE | Release a vnode claim |
+| CLAIM_NETWORK | Isolate a port/address/protocol/direction tuple |
+| RELEASE_NETWORK | Release a network claim |
+| QUERY | Check claim status |
+
+### coalition (sync, CAP_RT_CALL)
+
+Resource group management.
+
+| Operation | What it does |
+|-----------|-------------|
+| ENLIST | Add process, jail, socket, or fd to a coalition |
+| TERMINATE | Kill all members |
+| STAT | Query membership and state |
+| SIGNAL | Send signal to all process members |
+| DEADLINE | Set a time-bounded lifetime |
+| WATCHDOG | Require periodic checkins |
+| LEADER | Designate a leader process |
+| RUSAGE | Aggregate resource usage |
+
+### node (sync, CAP_RT_CALL)
+
+Per-process inspection and control via attached procdesc.
+
+| Operation | What it does | Remote? |
+|-----------|-------------|---------|
+| STAT | Get pid, state, name, thread count | yes |
+| CRED | Get uid, gid, groups, nonce, jail identity | yes |
+| RUSAGE | Get live resource usage | yes |
+| GET/SET_RLIMIT | Read or update one rlimit | yes |
+| GET_RACCT | Read one racct counter | yes |
+| GET/SET_NICE | Read or update priority | yes |
+| GET/SET_AFFINITY | Read or update CPU affinity | yes |
+| GET/SET_PROCCTL | Read or update procctl state | yes |
+| SET_CRED | Set uid/gid/groups (via setcred) | yes |
+| GET/SET_UMASK | Read or update file creation mask | yes |
+| SET_LOGIN | Set session login name | yes |
+| SET_SESSION | Create new session (setsid) | **self only** |
+| SET_PGRP | Set process group (setpgid) | **self only** |
+
+### accounting (sync, CAP_RT_CALL)
+
+Per-process racct and rctl operations via attached procdesc.
+
+| Operation | What it does |
+|-----------|-------------|
+| CHARGE | Debit one racct resource |
+| RELEASE | Credit one racct resource |
+| SET | Set one racct resource absolutely |
+| ADD_RULE / REMOVE_RULE | Add or remove rctl enforcement rules |
+| GET_RULES | Query active rctl rules |
+
+### pair (async, SENDMSG/RECVMSG)
+
+Bidirectional process-to-process messaging.  `PAIR_OP_CREATE` creates
+a connected pair; returns two fds.  Revoking one end delivers
+ECONNRESET to the peer.
+
+### mount (sync, CAP_RT_CALL)
+
+Capability-based filesystem mounting for sandboxed and jailed processes.
+
+| Operation | What it does |
+|-----------|-------------|
+| MOUNT_OP_MOUNT | Mount a filesystem (fstype, path, flags) |
+| MOUNT_OP_UNMOUNT | Unmount a filesystem path |
+
+Whitelisted fstypes: tmpfs, devfs, fdescfs, nullfs, procfs,
+linprocfs, linsysfs, fusefs.  Path validation rejects relative
+paths and `..` traversal.  Enforcement is layered: cap_rt_mount
+constrains request shape, jail `allow.mount.*` decides filesystem
+policy, the filesystem handler validates fs-specific options.
+
+---
+
+## Service Model: Future Direction
+
+Today, `CAP_RT_CONNECT` resolves named kernel services.  The intended
+direction is:
+
+- Service names resolved through a registrar (not a flat global
+  kernel namespace)
+- Namespaces scoped per supervisor, per jail, or per policy domain
+- Services may be kernel-backed or userspace-hosted
+- Bind/open operations can be brokered for policy, launch, and audit
+
+In that model, cap_rt remains the transport and authority layer,
+while the registrar and supervisor provide naming, lifecycle, and
+policy.
+
+---
+
+## Source Layout
+
+```
+sys/dev/cap_rt/
+    cap_rt.h              public kernel API
+    cap_rt_internal.h     framework internals
+    cap_rt_ioctl.h        shared ioctl definitions
+    cap_rt_core.c         module lifecycle, capability creation
+    cap_rt_dev.c          capability operations (ioctls, kqueue, close)
+    cap_rt_kern.c         KPI: dispatch, reply/notify/revoke
+    cap_rt_capprotect.c   capability protection (ptrace/signal/visibility via MACF)
+    cap_rt_label.h        public header: cap_rt_proc_nonce() accessor
+    cap_rt_pair.c         bidirectional capability pair
+    cap_rt_test_kernelstore.c  test fixture: sync key-value store
+    cap_rt_test_keystore.c     test fixture: async key-value store
+
+sys/modules/cap_rt/                 core module
+sys/modules/cap_rt_capprotect/      capability protection
+sys/modules/cap_rt_pair/            capability pair
+sys/modules/cap_rt_test_kernelstore/ test fixture
+sys/modules/cap_rt_test_keystore/   test fixture
+
+tests/sys/cap_rt/             116 ATF tests via kyua
+```
+
+## Base System Changes
+
+- `DTYPE_CAP_RT` (17) in sys/sys/file.h
+- `KF_TYPE_CAP_RT` (17) in sys/sys/user.h
+- `CAP_CAP_RT_SEND` / `CAP_CAP_RT_RECV` in sys/sys/capsicum.h (reserved)
+
+## Exported Kernel API
+
+### Service lifecycle
+- `cap_rt_service_create(params, &svc)` -- register a service
+- `cap_rt_service_destroy(svc)` -- unregister and drain
+
+### Messaging (from co_handler or sleeping context)
+- `cap_rt_reply(s, token, data, len, fds, fcaps, nfds)` -- reply
+- `cap_rt_notify(s, data, len, fds, fcaps, nfds)` -- push notification
+
+### Instance management
+- `cap_rt_instance_revoke(s)` -- tear down instance
+- `cap_rt_instance_hold(s)` / `cap_rt_instance_rele(s)` -- deferred work refcount
+- `cap_rt_instance_set_priv(s, priv)` / `cap_rt_instance_get_priv(s)` -- per-instance data
+- `cap_rt_instance_get_badge(s)` -- service-assigned badge
+
+### Program identity
+- `cap_rt_proc_nonce(cred)` -- return 8-byte cryptographic nonce
+
+### Minting
+- `cap_rt_mint_fp(svc, badge, &fp)` -- create new capability from handler
+
+### Message accessors
+- `cap_rt_msg_data(msg)`, `cap_rt_msg_datalen(msg)`
+- `cap_rt_msg_fds(msg)`, `cap_rt_msg_fcaps(msg)`, `cap_rt_msg_nfds(msg)`
+- `cap_rt_msg_badge(msg)`, `cap_rt_msg_token(msg)`
+- `cap_rt_msg_cred(msg)`
+
+## Headers
+
+- **cap_rt.h** -- public API for service modules
+- **cap_rt_ioctl.h** -- shared kernel/userspace ioctl definitions
+- **cap_rt_label.h** -- program nonce accessor
+- **cap_rt_internal.h** -- framework internals (not for service modules)
+- **cap_rt_capprotect_proto.h** -- capability protection wire protocol
+- **cap_rt_test_kernelstore_proto.h** -- test fixture wire protocol
+- **cap_rt_test_keystore_proto.h** -- test fixture wire protocol
+
+## DTrace Probes
+
+Provider: `cap_rt`
+
+| Probe | Args |
+|---|---|
+| `connect` | service name, badge, pid |
+| `send` | service name, badge, payload len |
+| `recv` | service name, badge, payload len |
+| `dispatch` | service name, badge |
+| `reply` | service name, badge, payload len |
+| `notify` | service name, badge, payload len |
+| `call` | service name, badge, req len |
+| `revoke` | service name, badge, reason |
+| `close` | service name, badge |
+
+## Sysctls
+
+| Sysctl | Type | Description |
+|---|---|---|
+| `kern.cap_rt.services` | counter | Number of registered services |
+| `kern.cap_rt.instances` | counter | Number of active instances |
+
+---
+
+## Roadmap
+
+### Phase 1: Capability Protection (DONE)
+
+Selective process integrity protection via MACF.  Same-nonce (fork
+family) freely interacts; foreign programs are blocked.  Access tokens
+grant authorized access through the shield.
+
+### Phase 2: Namespace service (REMOVED)
+
+Replaced by `jaildesc` which provides direct jail descriptor support.
+
+### Phase 3: Token capability (REMOVED)
+
+Any CAP_RT capability fd already proves authorization; a dedicated
+token service added no value.
+
+### Phase 4: Program identity -- nonce (DONE)
+
+MACF credential label.  8-byte cryptographic nonce.  Inherited
+across fork, rotated on exec.  PID removed from the framework
+entirely.
+
+### Phase 5: KernelStore (DONE)
+
+Sync CAP_RT service.  Shared key-value store where the capability
+fd IS the credential.  Owner can MINT member fds.
+
+### Kernel-to-kernel capability communication
+
+Needs design before code.  The wrong answer creates a capability
+system where services bypass the holder's authority.
+
+---
+
+## Explicit Non-Goals
+
+Unless concrete requirements force them, the runtime does not need:
+- Remote object references
+- Complex RPC stub generation
+- Mach-style port-right algebra
+- VM-integrated zero-copy IPC
+- A general distributed-object model
