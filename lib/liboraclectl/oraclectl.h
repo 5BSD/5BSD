@@ -13,30 +13,29 @@
 #include <sys/types.h>
 #include <stdint.h>
 
+#include "oracled_ctl.h"
+
 /*
- * Wire protocol constants — duplicated here so library users
- * do not need the daemon's private headers.
+ * Public aliases for wire protocol constants defined in oracled_ctl.h.
  */
-#define	ORACLED_CTL_SOCK	"/var/run/oracled.sock"
-#define	ORACLECTL_VERSION	1
-#define	ORACLECTL_MAX_PAYLOAD	1024
+#define	ORACLECTL_VERSION	CTL_VERSION
+#define	ORACLECTL_MAX_PAYLOAD	CTL_MAX_PAYLOAD
 
 /* Opcodes. */
-#define	ORACLECTL_SHUTDOWN	1
-#define	ORACLECTL_STATUS	2
-#define	ORACLECTL_RELOAD	3
-#define	ORACLECTL_KLDLOAD	4
-#define	ORACLECTL_KLDUNLOAD	5
-#define	ORACLECTL_REBOOT	6
-#define	ORACLECTL_CHECK		7
-#define	ORACLECTL_LOAD		8
-#define	ORACLECTL_SERVICES	9
-#define	ORACLECTL_SUMMARY_MAX	2048
+#define	ORACLECTL_SHUTDOWN	CTL_OP_SHUTDOWN
+#define	ORACLECTL_STATUS	CTL_OP_STATUS
+#define	ORACLECTL_RELOAD	CTL_OP_RELOAD
+#define	ORACLECTL_KLDLOAD	CTL_OP_KLDLOAD
+#define	ORACLECTL_KLDUNLOAD	CTL_OP_KLDUNLOAD
+#define	ORACLECTL_REBOOT	CTL_OP_REBOOT
+#define	ORACLECTL_CHECK		CTL_OP_CHECK
+#define	ORACLECTL_LOAD		CTL_OP_LOAD
+#define	ORACLECTL_SERVICES	CTL_OP_SERVICES
+#define	ORACLECTL_SUMMARY_MAX	CTL_SUMMARY_MAX
 
 /* Status reply from oracled. */
 struct oraclectl_status {
 	int		error;		/* 0 on success, errno on failure */
-	uint32_t	flags;		/* op-specific (e.g., kldload id) */
 	uint64_t	uptime_usec;	/* daemon uptime in microseconds */
 };
 

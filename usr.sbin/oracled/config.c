@@ -22,6 +22,8 @@
 
 #include <ucl.h>
 
+#include <dev/cap_rt/cap_rt_capprotect_proto.h>
+
 #include "config.h"
 #include "gates.h"
 #include "oracled_ctl.h"
@@ -104,13 +106,8 @@ config_init_defaults(struct oracled_config *cfg)
 	    sizeof(cfg->manifest_dir));
 
 	/* Integrity defaults: conservative — don't break rc(8). */
-	cfg->integrity_ptrace = true;
-	cfg->integrity_signal = false;
-	cfg->integrity_visible = false;
-	cfg->integrity_wait = true;
-	cfg->integrity_sched = true;
-	cfg->integrity_core = false;
-	cfg->integrity_ktrace = true;
+	cfg->integrity_flags = CP_SF_PTRACE | CP_SF_WAIT | CP_SF_SCHED |
+	    CP_SF_KTRACE;
 }
 
 static void
@@ -179,22 +176,40 @@ cfg_mode(const ucl_object_t *root, struct oracled_config *cfg)
 	cfg->control_socket_mode = (mode_t)val;
 }
 
+static const struct {
+	const char	*name;
+	uint32_t	 flag;
+} integrity_cfg_map[] = {
+	{ "ptrace",	CP_SF_PTRACE },
+	{ "signal",	CP_SF_SIGNAL },
+	{ "visible",	CP_SF_VISIBLE },
+	{ "wait",	CP_SF_WAIT },
+	{ "sched",	CP_SF_SCHED },
+	{ "core",	CP_SF_CORE },
+	{ "ktrace",	CP_SF_KTRACE },
+};
+
 static void
 cfg_integrity(const ucl_object_t *root, struct oracled_config *cfg)
 {
-	const ucl_object_t *sec;
+	const ucl_object_t *sec, *o;
+	unsigned i;
 
 	sec = ucl_object_lookup(root, "integrity");
 	if (sec == NULL || ucl_object_type(sec) != UCL_OBJECT)
 		return;
 
-	cfg_bool(sec, "ptrace", &cfg->integrity_ptrace);
-	cfg_bool(sec, "signal", &cfg->integrity_signal);
-	cfg_bool(sec, "visible", &cfg->integrity_visible);
-	cfg_bool(sec, "wait", &cfg->integrity_wait);
-	cfg_bool(sec, "sched", &cfg->integrity_sched);
-	cfg_bool(sec, "core", &cfg->integrity_core);
-	cfg_bool(sec, "ktrace", &cfg->integrity_ktrace);
+	for (i = 0; i < nitems(integrity_cfg_map); i++) {
+		o = ucl_object_lookup(sec, integrity_cfg_map[i].name);
+		if (o != NULL && ucl_object_type(o) == UCL_BOOLEAN) {
+			if (ucl_object_toboolean(o))
+				cfg->integrity_flags |=
+				    integrity_cfg_map[i].flag;
+			else
+				cfg->integrity_flags &=
+				    ~integrity_cfg_map[i].flag;
+		}
+	}
 }
 
 static void
@@ -348,12 +363,7 @@ config_log(const struct oracled_config *cfg)
 	syslog(LOG_INFO, "config: pidfile=%s", cfg->pidfile);
 	syslog(LOG_INFO, "config: control_socket=%s mode=%04o",
 	    cfg->control_socket, cfg->control_socket_mode);
-	syslog(LOG_INFO, "config: integrity ptrace=%d signal=%d "
-	    "visible=%d wait=%d sched=%d core=%d ktrace=%d",
-	    cfg->integrity_ptrace, cfg->integrity_signal,
-	    cfg->integrity_visible, cfg->integrity_wait,
-	    cfg->integrity_sched, cfg->integrity_core,
-	    cfg->integrity_ktrace);
+	syslog(LOG_INFO, "config: integrity_flags=0x%x", cfg->integrity_flags);
 	syslog(LOG_INFO, "config: manifest_dir=%s", cfg->manifest_dir);
 	syslog(LOG_INFO, "config: claims paths=%d network=%d system=0x%x",
 	    cfg->nclaim_paths, cfg->nclaim_net, cfg->claim_system);

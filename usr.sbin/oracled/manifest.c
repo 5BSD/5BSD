@@ -283,13 +283,6 @@ manifest_load_file(const char *path, struct svc_manifest *m)
 			goto out;
 	}
 
-	o = ucl_object_lookup(root, "jail");
-	if (o != NULL && ucl_object_type(o) == UCL_STRING) {
-		if (safe_copy(ucl_object_tostring(o), m->jail,
-		    sizeof(m->jail), "jail", m->label, path) == -1)
-			goto out;
-	}
-
 	/* restart policy */
 	o = ucl_object_lookup(root, "restart");
 	if (o != NULL && ucl_object_type(o) == UCL_STRING) {
@@ -405,16 +398,9 @@ log_label_list(const char *prefix, const char (*names)[ORACLED_LABEL_MAX],
 	unsigned i;
 
 	off = 0;
-	for (i = 0; i < count && off < sizeof(buf) - 1; i++) {
-		size_t rem, n;
-
-		if (i > 0 && off < sizeof(buf) - 1)
-			buf[off++] = ' ';
-		rem = sizeof(buf) - off;
-		n = strlcpy(buf + off, names[i], rem);
-		off += (n < rem) ? n : rem - 1;
-	}
-	buf[off] = '\0';
+	for (i = 0; i < count; i++)
+		BUF_APPEND(buf, sizeof(buf), &off, "%s%s",
+		    i > 0 ? " " : "", names[i]);
 	syslog(LOG_INFO, "    %s: %s", prefix, buf);
 }
 
@@ -422,12 +408,9 @@ void
 manifest_log(const struct svc_manifest *m)
 {
 
-	syslog(LOG_INFO, "  service: %s program=%s restart=%s%s%s",
+	syslog(LOG_INFO, "  service: %s program=%s restart=%s",
 	    m->label, m->program,
-	    m->restart == SVC_RESTART_ALWAYS ? "always" :
-	    m->restart == SVC_RESTART_ON_FAILURE ? "on-failure" : "never",
-	    m->jail[0] != '\0' ? " jail=" : "",
-	    m->jail[0] != '\0' ? m->jail : "");
+	    restart_policy_name(m->restart));
 	if (m->nprovides > 0)
 		log_label_list("provides", m->provides, m->nprovides);
 	if (m->nrequires > 0)
@@ -492,8 +475,7 @@ manifest_format_summary(const struct svc_manifest *m, char *buf, size_t len)
 		BUF_APPEND(buf, len, &off,"  group:        %s\n", m->group);
 
 	BUF_APPEND(buf, len, &off,"  restart:      %s\n",
-	    m->restart == SVC_RESTART_ALWAYS ? "always" :
-	    m->restart == SVC_RESTART_ON_FAILURE ? "on-failure" : "never");
+	    restart_policy_name(m->restart));
 
 	if (m->nprovides > 0) {
 		BUF_APPEND(buf, len, &off,"  provides:     [");
@@ -520,12 +502,9 @@ manifest_format_summary(const struct svc_manifest *m, char *buf, size_t len)
 	for (i = 0; i < m->ncap_net; i++) {
 		const struct oracled_net_claim *nc = &m->cap_net[i];
 		BUF_APPEND(buf, len, &off,"    network:    %s/%u %s\n",
-		    nc->protocol == IPPROTO_TCP ? "tcp" :
-		    nc->protocol == IPPROTO_UDP ? "udp" : "?",
+		    net_protocol_name(nc->protocol),
 		    nc->port,
-		    nc->direction == ORACLED_NET_DIR_BIND ? "bind" :
-		    nc->direction == ORACLED_NET_DIR_CONNECT ? "connect" :
-		    "any");
+		    net_direction_name(nc->direction));
 	}
 
 	if (m->cap_system != 0)

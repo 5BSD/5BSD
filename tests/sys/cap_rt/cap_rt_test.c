@@ -713,125 +713,76 @@ ATF_TC_BODY(reply_token_correlation, tc)
  * Fd passing tests — various descriptor types
  * ================================================================ */
 
-ATF_TC(fd_passing_pipe);
-ATF_TC_HEAD(fd_passing_pipe, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "SENDMSG with pipe-fd attachment");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
-}
-ATF_TC_BODY(fd_passing_pipe, tc)
+/*
+ * fd passing tests.  We test three fd types (pipe, socket, /dev/null)
+ * individually in fd_passing_single, and all three together in
+ * fd_passing_multiple.
+ */
+
+static void
+fd_passing_send_one(int svc_fd, int pass_fd)
 {
 	struct cap_rt_sendmsg_args sa;
 	struct ks_request req;
 	struct ks_reply reply;
-	int fd, pipefd[2];
-
-	fd = cap_rt_connect("test_keystore");
-	ATF_REQUIRE(fd >= 0);
-	ATF_REQUIRE(pipe(pipefd) == 0);
+	uint32_t rlen;
 
 	req.op = KS_OP_FETCH;
 	req.keyid = 0;
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = &req;
 	sa.payload_len = sizeof(req);
-	sa.fds = &pipefd[0];
+	sa.fds = &pass_fd;
 	sa.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, CAP_RT_SENDMSG, &sa) == 0);
+	ATF_REQUIRE(ioctl(svc_fd, CAP_RT_SENDMSG, &sa) == 0);
 
-	{
-		uint32_t rlen = sizeof(reply);
-		ATF_REQUIRE(cap_rt_recv(fd, &reply, &rlen, NULL) == 0);
-	}
+	rlen = sizeof(reply);
+	ATF_REQUIRE(cap_rt_recv(svc_fd, &reply, &rlen, NULL) == 0);
+}
 
+ATF_TC(fd_passing_single);
+ATF_TC_HEAD(fd_passing_single, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SENDMSG with pipe, socket, and /dev/null fd attachments");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
+}
+ATF_TC_BODY(fd_passing_single, tc)
+{
+	int fd, pipefd[2], sv[2], devnull;
+
+	fd = cap_rt_connect("test_keystore");
+	ATF_REQUIRE(fd >= 0);
+
+	/* pipe fd */
+	ATF_REQUIRE(pipe(pipefd) == 0);
+	fd_passing_send_one(fd, pipefd[0]);
 	close(pipefd[0]);
 	close(pipefd[1]);
-	close(fd);
-}
 
-ATF_TC(fd_passing_socket);
-ATF_TC_HEAD(fd_passing_socket, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "SENDMSG with socket fd attachment");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
-}
-ATF_TC_BODY(fd_passing_socket, tc)
-{
-	struct cap_rt_sendmsg_args sa;
-	struct ks_request req;
-	struct ks_reply reply;
-	int fd, sv[2];
-
-	fd = cap_rt_connect("test_keystore");
-	ATF_REQUIRE(fd >= 0);
+	/* socket fd */
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-
-	req.op = KS_OP_FETCH;
-	req.keyid = 0;
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = &req;
-	sa.payload_len = sizeof(req);
-	sa.fds = &sv[0];
-	sa.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, CAP_RT_SENDMSG, &sa) == 0);
-
-	{
-		uint32_t rlen = sizeof(reply);
-		ATF_REQUIRE(cap_rt_recv(fd, &reply, &rlen, NULL) == 0);
-	}
-
+	fd_passing_send_one(fd, sv[0]);
 	close(sv[0]);
 	close(sv[1]);
-	close(fd);
-}
 
-ATF_TC(fd_passing_devnull);
-ATF_TC_HEAD(fd_passing_devnull, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "SENDMSG with /dev/null fd attachment");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
-}
-ATF_TC_BODY(fd_passing_devnull, tc)
-{
-	struct cap_rt_sendmsg_args sa;
-	struct ks_request req;
-	struct ks_reply reply;
-	int fd, devnull;
-
-	fd = cap_rt_connect("test_keystore");
-	ATF_REQUIRE(fd >= 0);
+	/* /dev/null fd */
 	devnull = open("/dev/null", O_RDWR);
 	ATF_REQUIRE(devnull >= 0);
-
-	req.op = KS_OP_FETCH;
-	req.keyid = 0;
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = &req;
-	sa.payload_len = sizeof(req);
-	sa.fds = &devnull;
-	sa.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, CAP_RT_SENDMSG, &sa) == 0);
-
-	{
-		uint32_t rlen = sizeof(reply);
-		ATF_REQUIRE(cap_rt_recv(fd, &reply, &rlen, NULL) == 0);
-	}
-
+	fd_passing_send_one(fd, devnull);
 	close(devnull);
+
 	close(fd);
 }
 
-ATF_TC(fd_passing_multiple_types);
-ATF_TC_HEAD(fd_passing_multiple_types, tc)
+ATF_TC(fd_passing_multiple);
+ATF_TC_HEAD(fd_passing_multiple, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG with pipe + socket + file fds in one message");
 	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
 }
-ATF_TC_BODY(fd_passing_multiple_types, tc)
+ATF_TC_BODY(fd_passing_multiple, tc)
 {
 	struct cap_rt_sendmsg_args sa;
 	struct ks_request req;
@@ -2970,93 +2921,65 @@ ATF_TC_BODY(fdclose_dup_then_close_all, tc)
  * Granular revoke
  * ================================================================ */
 
-ATF_TC(revoke_send_blocks_send);
-ATF_TC_HEAD(revoke_send_blocks_send, tc)
+ATF_TC(revoke_blocks_operations);
+ATF_TC_HEAD(revoke_blocks_operations, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "CAP_RT_REVOKE_SEND blocks SENDMSG, RECVMSG still works");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
+	    "CAP_RT_REVOKE_{SEND,RECV,CALL} each block their operation");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "cap_rt cap_rt_test_keystore cap_rt_test_kernelstore");
 }
-ATF_TC_BODY(revoke_send_blocks_send, tc)
+ATF_TC_BODY(revoke_blocks_operations, tc)
 {
 	struct ks_request req;
+	struct cap_rt_recvmsg_args ra;
+	struct cap_rt_call_args ca;
+	struct kstore_request kr;
+	struct kstore_status_reply sr;
 	char buf[256];
 	uint32_t rlen;
 	int fd;
 
+	/*
+	 * REVOKE_SEND: blocks SENDMSG, RECVMSG still works.
+	 */
 	fd = cap_rt_connect("test_keystore");
 	ATF_REQUIRE(fd >= 0);
 
-	/* Send a message before revoking — should work. */
 	req.op = KS_OP_FETCH;
 	req.keyid = 0;
 	ATF_REQUIRE(cap_rt_send(fd, &req, sizeof(req), 0) == 0);
-
-	/* Consume the reply. */
 	rlen = sizeof(buf);
 	ATF_REQUIRE(cap_rt_recv(fd, buf, &rlen, NULL) == 0);
 
-	/* Revoke send. */
 	ATF_REQUIRE(ioctl(fd, CAP_RT_REVOKE_SEND, NULL) == 0);
-
-	/* SENDMSG should fail. */
 	ATF_CHECK_ERRNO(EACCES, cap_rt_send(fd, &req, sizeof(req), 0) == -1);
-
 	close(fd);
-}
 
-ATF_TC(revoke_recv_blocks_recv);
-ATF_TC_HEAD(revoke_recv_blocks_recv, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "CAP_RT_REVOKE_RECV blocks RECVMSG, SENDMSG still works");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
-}
-ATF_TC_BODY(revoke_recv_blocks_recv, tc)
-{
-	struct ks_request req;
-	struct cap_rt_recvmsg_args ra;
-	char buf[256];
-	int fd;
-
+	/*
+	 * REVOKE_RECV: blocks RECVMSG, SENDMSG still works.
+	 */
 	fd = cap_rt_connect("test_keystore");
 	ATF_REQUIRE(fd >= 0);
 
-	/* Revoke recv. */
 	ATF_REQUIRE(ioctl(fd, CAP_RT_REVOKE_RECV, NULL) == 0);
 
-	/* SENDMSG should still work. */
 	req.op = KS_OP_FETCH;
 	req.keyid = 0;
 	ATF_CHECK(cap_rt_send(fd, &req, sizeof(req), 0) == 0);
 
-	/* RECVMSG should fail. */
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = buf;
 	ra.payload_len = sizeof(buf);
 	ATF_CHECK_ERRNO(EACCES, ioctl(fd, CAP_RT_RECVMSG, &ra) == -1);
-
 	close(fd);
-}
 
-ATF_TC(revoke_call_blocks_call);
-ATF_TC_HEAD(revoke_call_blocks_call, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "CAP_RT_REVOKE_CALL blocks CALL");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_kernelstore");
-}
-ATF_TC_BODY(revoke_call_blocks_call, tc)
-{
-	struct cap_rt_call_args ca;
-	struct kstore_request kr;
-	struct kstore_status_reply sr;
-	int fd;
-
+	/*
+	 * REVOKE_CALL: blocks CALL.
+	 */
 	fd = cap_rt_connect("test_kernelstore");
 	ATF_REQUIRE(fd >= 0);
 
-	/* CALL should work before revoke. */
 	memset(&kr, 0, sizeof(kr));
 	kr.op = KSTORE_OP_GET;
 	strlcpy(kr.key, "_test", sizeof(kr.key));
@@ -3067,17 +2990,14 @@ ATF_TC_BODY(revoke_call_blocks_call, tc)
 	ca.reply_len = sizeof(sr);
 	ATF_REQUIRE(ioctl(fd, CAP_RT_CALL, &ca) == 0);
 
-	/* Revoke call. */
 	ATF_REQUIRE(ioctl(fd, CAP_RT_REVOKE_CALL, NULL) == 0);
 
-	/* CALL should fail. */
 	memset(&ca, 0, sizeof(ca));
 	ca.req = &kr;
 	ca.req_len = sizeof(kr);
 	ca.reply = &sr;
 	ca.reply_len = sizeof(sr);
 	ATF_CHECK_ERRNO(EACCES, ioctl(fd, CAP_RT_CALL, &ca) == -1);
-
 	close(fd);
 }
 
@@ -6031,10 +5951,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reply_token_correlation);
 
 	/* Fd passing — multiple descriptor types */
-	ATF_TP_ADD_TC(tp, fd_passing_pipe);
-	ATF_TP_ADD_TC(tp, fd_passing_socket);
-	ATF_TP_ADD_TC(tp, fd_passing_devnull);
-	ATF_TP_ADD_TC(tp, fd_passing_multiple_types);
+	ATF_TP_ADD_TC(tp, fd_passing_single);
+	ATF_TP_ADD_TC(tp, fd_passing_multiple);
 	ATF_TP_ADD_TC(tp, fd_too_many);
 
 	/* kqueue */
@@ -6123,9 +6041,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, fdclose_dup_then_close_all);
 
 	/* Granular revoke */
-	ATF_TP_ADD_TC(tp, revoke_send_blocks_send);
-	ATF_TP_ADD_TC(tp, revoke_recv_blocks_recv);
-	ATF_TP_ADD_TC(tp, revoke_call_blocks_call);
+	ATF_TP_ADD_TC(tp, revoke_blocks_operations);
 	ATF_TP_ADD_TC(tp, revoke_send_recv_both);
 	ATF_TP_ADD_TC(tp, revoke_is_permanent);
 	ATF_TP_ADD_TC(tp, revoke_affects_all_dups);

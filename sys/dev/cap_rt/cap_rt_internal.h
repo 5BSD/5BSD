@@ -27,7 +27,6 @@
 #define	CAP_RT_MAX_TX_LIMIT	4096	/* max configurable TX soft limit */
 #define	CAP_RT_TX_HARD_MULT	4	/* TX hard limit = queue_depth * this */
 #define	CAP_RT_DEF_INSTANCE_LIMIT	1024	/* default instances per service */
-/* CAP_RT_MSG_SIZE_LIMIT removed — messages are fixed at CAP_RT_MSG_SIZE. */
 #define	CAP_RT_MAX_INSTANCES	(1024 * 1024) /* max instances per service */
 #define	CAP_RT_MAX_SVC_THREADS	4	/* max taskqueue threads per service */
 #define	CAP_RT_POLL_TICKS		(hz / 20) /* 50ms refcount poll interval */
@@ -61,8 +60,6 @@ struct cap_rt_msg {
 	struct ucred	*cm_cred;
 	uint32_t	cm_datalen;
 	uint8_t		cm_nfds;
-	uint8_t		cm_flags;
-	uint16_t	cm_reserved;
 
 	/* Inline fd slots — 32 max, no separate allocation. */
 	struct file	*cm_fds[CAP_RT_MAX_FDS];

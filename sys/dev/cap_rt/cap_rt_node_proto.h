@@ -295,22 +295,6 @@ struct node_reap_kill_reply {
 	uint32_t	_pad;
 } __packed;
 
-/* For REAP_GETPIDS — reply is variable-length */
-#define	NODE_REAP_MAXPIDS	64
-
-struct node_reap_pidinfo {
-	int32_t		pi_pid;
-	int32_t		pi_subtree;
-	uint32_t	pi_flags;	/* REAPER_PIDINFO_VALID, etc. */
-	uint32_t	_pad;
-} __packed;
-
-struct node_reap_getpids_reply {
-	uint32_t	status;
-	uint32_t	nentries;
-	struct node_reap_pidinfo pids[NODE_REAP_MAXPIDS];
-} __packed;
-
 /* Reply: simple status-only (for chroot, capmode, reap acquire/release) */
 struct node_status_reply {
 	uint32_t	status;

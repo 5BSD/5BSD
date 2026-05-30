@@ -140,7 +140,6 @@ struct cap_rt_ops {
  */
 #define	CAP_RT_SVC_NOXFER		0x0001	/* instances are non-transferable */
 #define	CAP_RT_SVC_NOTIFY		0x0002	/* emits async RECVMSG notifications */
-#define	CAP_RT_SVC_KQUEUE		CAP_RT_SVC_NOTIFY	/* compat */
 
 struct cap_rt_service_params {
 	const char		*name;
@@ -184,6 +183,9 @@ void	cap_rt_instance_rele(struct cap_rt_instance *s);
 void	cap_rt_instance_set_priv(struct cap_rt_instance *s, void *priv);
 void   *cap_rt_instance_get_priv(struct cap_rt_instance *s);
 uint64_t cap_rt_instance_get_badge(struct cap_rt_instance *s);
+
+/* Resolve target process from attached procdesc fd array, or self. */
+int	cap_rt_resolve_proc(struct file **fds, int nfds, struct proc **pp);
 
 /* Minting — create a capability from handler context. */
 int	cap_rt_mint_fp(struct cap_rt_service *svc, uint64_t badge,

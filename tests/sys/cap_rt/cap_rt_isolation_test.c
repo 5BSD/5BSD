@@ -1308,18 +1308,33 @@ run_cross_nonce_op(const char *sh_cmd)
 	return (WEXITSTATUS(status));
 }
 
-ATF_TC_WITH_CLEANUP(cross_nonce_open_blocked);
-ATF_TC_HEAD(cross_nonce_open_blocked, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Foreign nonce (after exec) cannot open an isolated file");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(cross_nonce_open_blocked, tc)
+/*
+ * Table-driven cross-nonce enforcement tests.
+ *
+ * Each entry describes a syscall that a foreign nonce should be unable
+ * to perform on an isolated file.  The setup/claim/fork+exec/cleanup
+ * pattern is identical for all of them; only the shell command varies.
+ *
+ * We group them into three ATF test cases so that ATF reporting still
+ * shows which category failed:
+ *   cross_nonce_read_blocked      — open (read) and open (write)
+ *   cross_nonce_metadata_blocked  — chmod, chown, chflags, utimes,
+ *                                   access, truncate, readlink
+ *   cross_nonce_lifecycle_blocked — link, rename, exec
+ */
+
+struct cross_nonce_op {
+	const char	*name;		/* human-readable label */
+	const char	*cmd_fmt;	/* printf fmt; %s = file path */
+};
+
+static void
+run_simple_cross_nonce_table(const struct cross_nonce_op *ops, size_t nops)
 {
 	struct fi_reply rpl;
 	int svc, target;
 	char cmd[256];
+	size_t i;
 
 	make_tmpfile();
 	svc = fi_connect();
@@ -1328,90 +1343,111 @@ ATF_TC_BODY(cross_nonce_open_blocked, tc)
 	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
 	close(target);
 
-	snprintf(cmd, sizeof(cmd),
-	    "exec cat '%s' >/dev/null 2>&1", tmppath);
-	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
+	for (i = 0; i < nops; i++) {
+		snprintf(cmd, sizeof(cmd), ops[i].cmd_fmt, tmppath);
+		ATF_CHECK_MSG(run_cross_nonce_op(cmd) != 0,
+		    "%s was not blocked on isolated file", ops[i].name);
+	}
 
 	close(svc);
 }
-ATF_TC_CLEANUP(cross_nonce_open_blocked, tc)
+
+/* -- read group (open for read, open for write) -- */
+
+ATF_TC_WITH_CLEANUP(cross_nonce_read_blocked);
+ATF_TC_HEAD(cross_nonce_read_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Foreign nonce cannot open an isolated file for reading or writing");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cross_nonce_read_blocked, tc)
+{
+	static const struct cross_nonce_op ops[] = {
+		{ "open(read)",  "exec cat '%s' >/dev/null 2>&1" },
+		{ "open(write)",
+		  "exec dd if=/dev/zero of='%s' bs=1 count=1 2>/dev/null" },
+	};
+
+	run_simple_cross_nonce_table(ops, sizeof(ops) / sizeof(ops[0]));
+}
+ATF_TC_CLEANUP(cross_nonce_read_blocked, tc)
 {
 	cleanup_tmpfile();
 }
 
-ATF_TC_WITH_CLEANUP(cross_nonce_chmod_blocked);
-ATF_TC_HEAD(cross_nonce_chmod_blocked, tc)
+/* -- metadata group (chmod, chown, chflags, utimes, access, truncate,
+ *    readlink) -- */
+
+ATF_TC_WITH_CLEANUP(cross_nonce_metadata_blocked);
+ATF_TC_HEAD(cross_nonce_metadata_blocked, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Foreign nonce cannot chmod an isolated file");
+	    "Foreign nonce cannot modify metadata of an isolated file "
+	    "(chmod, chown, chflags, utimes, access, truncate, readlink)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(cross_nonce_chmod_blocked, tc)
+ATF_TC_BODY(cross_nonce_metadata_blocked, tc)
 {
-	struct fi_reply rpl;
-	int svc, target;
-	char cmd[256];
-
-	make_tmpfile();
-	svc = fi_connect();
-	target = open(tmppath, O_RDONLY);
-	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
-	close(target);
-
-	snprintf(cmd, sizeof(cmd), "exec chmod 777 '%s'", tmppath);
-	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
-
-	close(svc);
-}
-ATF_TC_CLEANUP(cross_nonce_chmod_blocked, tc)
-{
-	cleanup_tmpfile();
-}
-
-ATF_TC_WITH_CLEANUP(cross_nonce_chown_blocked);
-ATF_TC_HEAD(cross_nonce_chown_blocked, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Foreign nonce cannot chown an isolated file");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(cross_nonce_chown_blocked, tc)
-{
-	struct fi_reply rpl;
-	int svc, target;
-	char cmd[256];
-
-	make_tmpfile();
-	svc = fi_connect();
-	target = open(tmppath, O_RDONLY);
-	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
-	close(target);
-
-	snprintf(cmd, sizeof(cmd), "exec chown nobody '%s'", tmppath);
-	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
-
-	close(svc);
-}
-ATF_TC_CLEANUP(cross_nonce_chown_blocked, tc)
-{
-	cleanup_tmpfile();
-}
-
-ATF_TC_WITH_CLEANUP(cross_nonce_link_blocked);
-ATF_TC_HEAD(cross_nonce_link_blocked, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Foreign nonce cannot hard-link an isolated file");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(cross_nonce_link_blocked, tc)
-{
+	static const struct cross_nonce_op simple_ops[] = {
+		{ "chmod",    "exec chmod 777 '%s'" },
+		{ "chown",    "exec chown nobody '%s'" },
+		{ "chflags",  "exec chflags nodump '%s'" },
+		{ "utimes",   "exec touch '%s'" },
+		{ "access",   "exec test -r '%s'" },
+		{ "truncate", "exec truncate -s 0 '%s'" },
+	};
 	struct fi_reply rpl;
 	int svc, target;
 	char cmd[256], linkpath[160];
 
+	/* Test simple metadata ops via the table */
+	run_simple_cross_nonce_table(simple_ops,
+	    sizeof(simple_ops) / sizeof(simple_ops[0]));
+
+	/*
+	 * readlink needs special setup: create a symlink and claim it.
+	 */
+	snprintf(linkpath, sizeof(linkpath), "%s.sym", tmppath);
+	ATF_REQUIRE(symlink(tmppath, linkpath) == 0);
+
+	svc = fi_connect();
+	target = open(linkpath, O_PATH | O_NOFOLLOW);
+	ATF_REQUIRE_MSG(target >= 0, "open symlink: %s", strerror(errno));
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	close(target);
+
+	snprintf(cmd, sizeof(cmd), "exec readlink '%s'", linkpath);
+	ATF_CHECK_MSG(run_cross_nonce_op(cmd) != 0,
+	    "readlink was not blocked on isolated symlink");
+
+	unlink(linkpath);
+	close(svc);
+}
+ATF_TC_CLEANUP(cross_nonce_metadata_blocked, tc)
+{
+	char linkpath[160];
+	snprintf(linkpath, sizeof(linkpath), "%s.sym", tmppath);
+	unlink(linkpath);
+	cleanup_tmpfile();
+}
+
+/* -- lifecycle group (link, rename, exec) -- */
+
+ATF_TC_WITH_CLEANUP(cross_nonce_lifecycle_blocked);
+ATF_TC_HEAD(cross_nonce_lifecycle_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Foreign nonce cannot link, rename, or exec an isolated file");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cross_nonce_lifecycle_blocked, tc)
+{
+	struct fi_reply rpl;
+	int svc, target;
+	char cmd[256], linkpath[160], newpath[160], exepath[160];
+
+	/* -- hard link -- */
 	make_tmpfile();
 	snprintf(linkpath, sizeof(linkpath), "%s.link", tmppath);
 	svc = fi_connect();
@@ -1421,199 +1457,20 @@ ATF_TC_BODY(cross_nonce_link_blocked, tc)
 	close(target);
 
 	snprintf(cmd, sizeof(cmd), "exec ln '%s' '%s'", tmppath, linkpath);
-	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
-
+	ATF_CHECK_MSG(run_cross_nonce_op(cmd) != 0,
+	    "link was not blocked on isolated file");
 	unlink(linkpath);
-	close(svc);
-}
-ATF_TC_CLEANUP(cross_nonce_link_blocked, tc)
-{
-	char linkpath[160];
-	snprintf(linkpath, sizeof(linkpath), "%s.link", tmppath);
-	unlink(linkpath);
-	cleanup_tmpfile();
-}
 
-ATF_TC_WITH_CLEANUP(cross_nonce_rename_blocked);
-ATF_TC_HEAD(cross_nonce_rename_blocked, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Foreign nonce cannot rename an isolated file");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(cross_nonce_rename_blocked, tc)
-{
-	struct fi_reply rpl;
-	int svc, target;
-	char cmd[256], newpath[160];
-
-	make_tmpfile();
+	/* -- rename -- */
 	snprintf(newpath, sizeof(newpath), "%s.new", tmppath);
-	svc = fi_connect();
-	target = open(tmppath, O_RDONLY);
-	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
-	close(target);
-
 	snprintf(cmd, sizeof(cmd), "exec mv '%s' '%s'", tmppath, newpath);
-	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
-
+	ATF_CHECK_MSG(run_cross_nonce_op(cmd) != 0,
+	    "rename was not blocked on isolated file");
 	unlink(newpath);
-	close(svc);
-}
-ATF_TC_CLEANUP(cross_nonce_rename_blocked, tc)
-{
-	char newpath[160];
-	snprintf(newpath, sizeof(newpath), "%s.new", tmppath);
-	unlink(newpath);
-	cleanup_tmpfile();
-}
-
-ATF_TC_WITH_CLEANUP(cross_nonce_truncate_blocked);
-ATF_TC_HEAD(cross_nonce_truncate_blocked, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Foreign nonce cannot truncate an isolated file");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(cross_nonce_truncate_blocked, tc)
-{
-	struct fi_reply rpl;
-	int svc, target;
-	char cmd[256];
-
-	make_tmpfile();
-	svc = fi_connect();
-	target = open(tmppath, O_RDONLY);
-	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
-	close(target);
-
-	snprintf(cmd, sizeof(cmd), "exec truncate -s 0 '%s'", tmppath);
-	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
 
 	close(svc);
-}
-ATF_TC_CLEANUP(cross_nonce_truncate_blocked, tc)
-{
-	cleanup_tmpfile();
-}
 
-ATF_TC_WITH_CLEANUP(cross_nonce_utimes_blocked);
-ATF_TC_HEAD(cross_nonce_utimes_blocked, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Foreign nonce cannot touch (utimes) an isolated file");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(cross_nonce_utimes_blocked, tc)
-{
-	struct fi_reply rpl;
-	int svc, target;
-	char cmd[256];
-
-	make_tmpfile();
-	svc = fi_connect();
-	target = open(tmppath, O_RDONLY);
-	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
-	close(target);
-
-	snprintf(cmd, sizeof(cmd), "exec touch '%s'", tmppath);
-	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
-
-	close(svc);
-}
-ATF_TC_CLEANUP(cross_nonce_utimes_blocked, tc)
-{
-	cleanup_tmpfile();
-}
-
-ATF_TC_WITH_CLEANUP(cross_nonce_access_blocked);
-ATF_TC_HEAD(cross_nonce_access_blocked, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Foreign nonce cannot access(2)-check an isolated file");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(cross_nonce_access_blocked, tc)
-{
-	struct fi_reply rpl;
-	int svc, target;
-	char cmd[256];
-
-	make_tmpfile();
-	svc = fi_connect();
-	target = open(tmppath, O_RDONLY);
-	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
-	close(target);
-
-	snprintf(cmd, sizeof(cmd), "exec test -r '%s'", tmppath);
-	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
-
-	close(svc);
-}
-ATF_TC_CLEANUP(cross_nonce_access_blocked, tc)
-{
-	cleanup_tmpfile();
-}
-
-ATF_TC_WITH_CLEANUP(cross_nonce_readlink_blocked);
-ATF_TC_HEAD(cross_nonce_readlink_blocked, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Foreign nonce cannot readlink an isolated symlink");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(cross_nonce_readlink_blocked, tc)
-{
-	struct fi_reply rpl;
-	int svc, target;
-	char cmd[256], linkpath[160];
-
-	make_tmpfile();
-	snprintf(linkpath, sizeof(linkpath), "%s.sym", tmppath);
-	ATF_REQUIRE(symlink(tmppath, linkpath) == 0);
-
-	svc = fi_connect();
-	/*
-	 * Open the symlink itself (not the target) using O_PATH|O_NOFOLLOW.
-	 * This gives us an fd to the symlink vnode so we can claim it.
-	 */
-	target = open(linkpath, O_PATH | O_NOFOLLOW);
-	ATF_REQUIRE_MSG(target >= 0, "open symlink: %s", strerror(errno));
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
-	close(target);
-
-	snprintf(cmd, sizeof(cmd), "exec readlink '%s'", linkpath);
-	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
-
-	unlink(linkpath);
-	close(svc);
-}
-ATF_TC_CLEANUP(cross_nonce_readlink_blocked, tc)
-{
-	char linkpath[160];
-	snprintf(linkpath, sizeof(linkpath), "%s.sym", tmppath);
-	unlink(linkpath);
-	cleanup_tmpfile();
-}
-
-ATF_TC_WITH_CLEANUP(cross_nonce_exec_blocked);
-ATF_TC_HEAD(cross_nonce_exec_blocked, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Foreign nonce cannot exec an isolated executable");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(cross_nonce_exec_blocked, tc)
-{
-	struct fi_reply rpl;
-	int svc, target;
-	char cmd[256], exepath[160];
-
-	/* Create a trivially executable script. */
+	/* -- exec -- */
 	snprintf(exepath, sizeof(exepath),
 	    "/tmp/fi_exec_test.%d", (int)getpid());
 	target = open(exepath, O_CREAT | O_RDWR, 0755);
@@ -1627,50 +1484,28 @@ ATF_TC_BODY(cross_nonce_exec_blocked, tc)
 	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
 	close(target);
 
-	/* The exec helper will have a different nonce after its own exec. */
 	snprintf(cmd, sizeof(cmd), "exec '%s'", exepath);
-	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
+	ATF_CHECK_MSG(run_cross_nonce_op(cmd) != 0,
+	    "exec was not blocked on isolated executable");
 
 	unlink(exepath);
 	close(svc);
 }
-ATF_TC_CLEANUP(cross_nonce_exec_blocked, tc)
+ATF_TC_CLEANUP(cross_nonce_lifecycle_blocked, tc)
 {
-	char exepath[160];
+	char linkpath[160], newpath[160], exepath[160];
+
+	snprintf(linkpath, sizeof(linkpath), "%s.link", tmppath);
+	unlink(linkpath);
+	snprintf(newpath, sizeof(newpath), "%s.new", tmppath);
+	unlink(newpath);
 	snprintf(exepath, sizeof(exepath),
 	    "/tmp/fi_exec_test.%d", (int)getpid());
 	unlink(exepath);
-}
-
-ATF_TC_WITH_CLEANUP(cross_nonce_chflags_blocked);
-ATF_TC_HEAD(cross_nonce_chflags_blocked, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Foreign nonce cannot chflags an isolated file");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(cross_nonce_chflags_blocked, tc)
-{
-	struct fi_reply rpl;
-	int svc, target;
-	char cmd[256];
-
-	make_tmpfile();
-	svc = fi_connect();
-	target = open(tmppath, O_RDONLY);
-	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
-	close(target);
-
-	snprintf(cmd, sizeof(cmd), "exec chflags nodump '%s'", tmppath);
-	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
-
-	close(svc);
-}
-ATF_TC_CLEANUP(cross_nonce_chflags_blocked, tc)
-{
 	cleanup_tmpfile();
 }
+
+/* chflags is now tested in cross_nonce_metadata_blocked */
 
 ATF_TC(net_claim_rejects_bad_domain);
 ATF_TC_HEAD(net_claim_rejects_bad_domain, tc)
@@ -2012,37 +1847,7 @@ ATF_TC_BODY(net_claim_protocol_wildcard, tc)
 	close(svc);
 }
 
-ATF_TC_WITH_CLEANUP(cross_nonce_write_blocked);
-ATF_TC_HEAD(cross_nonce_write_blocked, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Foreign nonce cannot open an isolated file for writing");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(cross_nonce_write_blocked, tc)
-{
-	struct fi_reply rpl;
-	int svc, target;
-	char cmd[256];
-
-	make_tmpfile();
-	svc = fi_connect();
-	target = open(tmppath, O_RDONLY);
-	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
-	close(target);
-
-	/* Fork+exec child tries to open for writing — should get EACCES */
-	snprintf(cmd, sizeof(cmd),
-	    "exec dd if=/dev/zero of='%s' bs=1 count=1 2>/dev/null", tmppath);
-	ATF_CHECK(run_cross_nonce_op(cmd) != 0);
-
-	close(svc);
-}
-ATF_TC_CLEANUP(cross_nonce_write_blocked, tc)
-{
-	cleanup_tmpfile();
-}
+/* write is now tested in cross_nonce_read_blocked */
 
 /* ----------------------------------------------------------------
  * Access token tests (FI_OP_MINT / FI_OP_AUTHORIZE)
@@ -2307,19 +2112,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, claim_multiple_files);
 	ATF_TP_ADD_TC(tp, unix_socket_claim_blocks_connect);
 
-	/* Cross-nonce enforcement */
-	ATF_TP_ADD_TC(tp, cross_nonce_open_blocked);
-	ATF_TP_ADD_TC(tp, cross_nonce_chmod_blocked);
-	ATF_TP_ADD_TC(tp, cross_nonce_chown_blocked);
-	ATF_TP_ADD_TC(tp, cross_nonce_link_blocked);
-	ATF_TP_ADD_TC(tp, cross_nonce_rename_blocked);
-	ATF_TP_ADD_TC(tp, cross_nonce_truncate_blocked);
-	ATF_TP_ADD_TC(tp, cross_nonce_utimes_blocked);
-	ATF_TP_ADD_TC(tp, cross_nonce_access_blocked);
-	ATF_TP_ADD_TC(tp, cross_nonce_readlink_blocked);
-	ATF_TP_ADD_TC(tp, cross_nonce_exec_blocked);
-	ATF_TP_ADD_TC(tp, cross_nonce_chflags_blocked);
-	ATF_TP_ADD_TC(tp, cross_nonce_write_blocked);
+	/* Cross-nonce enforcement (table-driven) */
+	ATF_TP_ADD_TC(tp, cross_nonce_read_blocked);
+	ATF_TP_ADD_TC(tp, cross_nonce_metadata_blocked);
+	ATF_TP_ADD_TC(tp, cross_nonce_lifecycle_blocked);
 
 	/* Directory isolation */
 	ATF_TP_ADD_TC(tp, dir_claim_blocks_lookup);

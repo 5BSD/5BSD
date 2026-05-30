@@ -56,43 +56,6 @@ _Static_assert(NODE_RTPRIO_FIFO == RTP_PRIO_FIFO,
     "NODE_RTPRIO_FIFO != RTP_PRIO_FIFO");
 
 /* ----------------------------------------------------------------
- * Resolve target process: attached procdesc or self
- *
- * On success, returns with PROC_LOCK held.  Caller must PROC_UNLOCK.
- * ---------------------------------------------------------------- */
-static int
-node_resolve_proc(struct file **fds, int nfds, struct proc **pp)
-{
-	struct procdesc *pd;
-	struct proc *p;
-
-	if (nfds == 0 || fds == NULL || fds[0] == NULL) {
-		/* Self */
-		p = curthread->td_proc;
-		PROC_LOCK(p);
-		*pp = p;
-		return (0);
-	}
-
-	if (fds[0]->f_type != DTYPE_PROCDESC)
-		return (EINVAL);
-
-	pd = fds[0]->f_data;
-
-	sx_slock(&proctree_lock);
-	p = pd->pd_proc;
-	if (p == NULL) {
-		sx_sunlock(&proctree_lock);
-		return (ESRCH);
-	}
-	PROC_LOCK(p);
-	sx_sunlock(&proctree_lock);
-
-	*pp = p;
-	return (0);
-}
-
-/* ----------------------------------------------------------------
  * Operation handlers
  * ---------------------------------------------------------------- */
 
@@ -499,7 +462,7 @@ node_op_set_pdeathsig(struct proc *p,
 }
 
 static int
-node_op_reap_acquire(struct thread *td, struct proc *p,
+node_op_reap(struct thread *td, struct proc *p, int cmd,
     void *reply, size_t *replylenp)
 {
 	struct node_status_reply *rp = reply;
@@ -517,7 +480,7 @@ node_op_reap_acquire(struct thread *td, struct proc *p,
 		return (0);
 	}
 
-	if (p->p_flag & P_WEXIT) {
+	if (cmd == PROC_REAP_ACQUIRE && (p->p_flag & P_WEXIT)) {
 		memset(rp, 0, sizeof(*rp));
 		rp->status = NODE_STATUS_DEAD;
 		return (0);
@@ -528,42 +491,7 @@ node_op_reap_acquire(struct thread *td, struct proc *p,
 	sx_xlock(&proctree_lock);
 	PROC_LOCK(p);
 
-	error = kern_procctl_single(td, p, PROC_REAP_ACQUIRE, NULL);
-
-	sx_xunlock(&proctree_lock);
-	_PRELE(p);
-
-	memset(rp, 0, sizeof(*rp));
-	rp->status = (error == 0) ? NODE_STATUS_OK : NODE_STATUS_ERR;
-
-	return (0);
-}
-
-static int
-node_op_reap_release(struct thread *td, struct proc *p,
-    void *reply, size_t *replylenp)
-{
-	struct node_status_reply *rp = reply;
-	int error;
-
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
-
-	PROC_LOCK_ASSERT(p, MA_OWNED);
-
-	if (p != td->td_proc) {
-		memset(rp, 0, sizeof(*rp));
-		rp->status = NODE_STATUS_EPERM;
-		return (0);
-	}
-
-	_PHOLD(p);
-	PROC_UNLOCK(p);
-	sx_xlock(&proctree_lock);
-	PROC_LOCK(p);
-
-	error = kern_procctl_single(td, p, PROC_REAP_RELEASE, NULL);
+	error = kern_procctl_single(td, p, cmd, NULL);
 
 	sx_xunlock(&proctree_lock);
 	_PRELE(p);
@@ -664,7 +592,7 @@ node_op_reap_kill(struct thread *td, struct proc *p,
 }
 
 static int
-node_op_get_affinity(struct thread *td __unused, struct proc *p,
+node_op_get_affinity(struct proc *p,
     void *reply, size_t *replylenp)
 {
 	struct node_affinity_reply *rp = reply;
@@ -702,7 +630,7 @@ node_op_get_affinity(struct thread *td __unused, struct proc *p,
 }
 
 static int
-node_op_set_affinity(struct thread *td __unused, struct proc *p,
+node_op_set_affinity(struct proc *p,
     const void *req, size_t reqlen,
     void *reply, size_t *replylenp)
 {
@@ -1272,7 +1200,7 @@ node_call(struct cap_rt_instance *s __unused,
 	 * identifier.  Narrow what the caller can do by narrowing
 	 * the service fd (CAP_CAP_RT_SEND/RECV, revoke operations).
 	 */
-	error = node_resolve_proc(fds, nfds, &p);
+	error = cap_rt_resolve_proc(fds, nfds, &p);
 	if (error == ESRCH) {
 		if (*replylenp >= sizeof(uint32_t)) {
 			*(uint32_t *)reply = NODE_STATUS_DEAD;
@@ -1313,10 +1241,10 @@ node_call(struct cap_rt_instance *s __unused,
 		    reply, replylenp);
 		break;
 	case NODE_OP_GET_AFFINITY:
-		error = node_op_get_affinity(curthread, p, reply, replylenp);
+		error = node_op_get_affinity(p, reply, replylenp);
 		break;
 	case NODE_OP_SET_AFFINITY:
-		error = node_op_set_affinity(curthread, p, req, reqlen,
+		error = node_op_set_affinity(p, req, reqlen,
 		    reply, replylenp);
 		break;
 	case NODE_OP_GET_PROCCTL:
@@ -1375,10 +1303,12 @@ node_call(struct cap_rt_instance *s __unused,
 		    reply, replylenp);
 		break;
 	case NODE_OP_REAP_ACQUIRE:
-		error = node_op_reap_acquire(curthread, p, reply, replylenp);
+		error = node_op_reap(curthread, p, PROC_REAP_ACQUIRE,
+		    reply, replylenp);
 		break;
 	case NODE_OP_REAP_RELEASE:
-		error = node_op_reap_release(curthread, p, reply, replylenp);
+		error = node_op_reap(curthread, p, PROC_REAP_RELEASE,
+		    reply, replylenp);
 		break;
 	case NODE_OP_REAP_STATUS:
 		error = node_op_reap_status(curthread, p, reply, replylenp);
@@ -1386,15 +1316,6 @@ node_call(struct cap_rt_instance *s __unused,
 	case NODE_OP_REAP_KILL:
 		error = node_op_reap_kill(curthread, p, req, reqlen,
 		    reply, replylenp);
-		break;
-	case NODE_OP_REAP_GETPIDS:
-		/* Deferred: kernel reap_getpids uses copyout which
-		 * doesn't map to the CMI reply-buffer model. */
-		if (*replylenp >= sizeof(uint32_t)) {
-			*(uint32_t *)reply = NODE_STATUS_ERR;
-			*replylenp = sizeof(uint32_t);
-		}
-		error = 0;
 		break;
 	default:
 		error = EINVAL;

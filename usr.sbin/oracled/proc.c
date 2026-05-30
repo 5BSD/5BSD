@@ -19,10 +19,9 @@
 void
 reap_children(void)
 {
-	int saved_errno, status;
+	int status;
 	pid_t pid;
 
-	saved_errno = errno;
 	for (;;) {
 		pid = waitpid(-1, &status, WNOHANG);
 		if (pid <= 0)
@@ -37,7 +36,6 @@ reap_children(void)
 			syslog(LOG_INFO, "reaped child %jd", (intmax_t)pid);
 		}
 	}
-	errno = saved_errno;
 }
 
 void

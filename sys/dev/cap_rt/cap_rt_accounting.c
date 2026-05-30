@@ -22,50 +22,13 @@
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
-#include <sys/procdesc.h>
 #include <sys/malloc.h>
 #include <sys/racct.h>
 #include <sys/rctl.h>
-#include <sys/sx.h>
 
 #include "cap_rt.h"
 #include "cap_rt_accounting_proto.h"
 
-extern struct sx proctree_lock;
-
-/* ----------------------------------------------------------------
- * Resolve target process: attached procdesc or self
- * ---------------------------------------------------------------- */
-static int
-acct_resolve_proc(struct file **fds, int nfds, struct proc **pp)
-{
-	struct procdesc *pd;
-	struct proc *p;
-
-	if (nfds == 0 || fds == NULL || fds[0] == NULL) {
-		p = curthread->td_proc;
-		PROC_LOCK(p);
-		*pp = p;
-		return (0);
-	}
-
-	if (fds[0]->f_type != DTYPE_PROCDESC)
-		return (EINVAL);
-
-	pd = fds[0]->f_data;
-
-	sx_slock(&proctree_lock);
-	p = pd->pd_proc;
-	if (p == NULL) {
-		sx_sunlock(&proctree_lock);
-		return (ESRCH);
-	}
-	PROC_LOCK(p);
-	sx_sunlock(&proctree_lock);
-
-	*pp = p;
-	return (0);
-}
 
 /* ----------------------------------------------------------------
  * Operation handlers
@@ -180,8 +143,8 @@ acct_error_status(int error)
 #endif
 
 static int
-acct_op_add_rule(struct proc *p, const void *req, size_t reqlen,
-    void *reply, size_t *replylenp)
+acct_op_rctl_rule(struct proc *p, const void *req, size_t reqlen,
+    void *reply, size_t *replylenp, bool add)
 {
 	const struct acct_rule_request *rr = req;
 	struct acct_reply *rp = reply;
@@ -231,68 +194,7 @@ acct_op_add_rule(struct proc *p, const void *req, size_t reqlen,
 		rule->rr_action = rctl_action;
 		rule->rr_amount = rr->limit;
 
-		error = rctl_rule_add(rule);
-		rctl_rule_release(rule);
-		rp->status = acct_error_status(error);
-
-		PROC_LOCK(p);
-		_PRELE(p);
-	}
-#else
-	rp->status = ACCT_STATUS_ERR;
-#endif
-
-	return (0);
-}
-
-static int
-acct_op_remove_rule(struct proc *p, const void *req, size_t reqlen,
-    void *reply, size_t *replylenp)
-{
-	const struct acct_rule_request *rr = req;
-	struct acct_reply *rp = reply;
-
-	if (reqlen < sizeof(*rr) || *replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
-
-	memset(rp, 0, sizeof(*rp));
-
-#ifdef RCTL
-	{
-		struct rctl_rule *rule;
-		int rctl_action;
-		int error;
-
-		if (rr->resource > RACCT_MAX) {
-			rp->status = ACCT_STATUS_ERR;
-			return (0);
-		}
-
-		rctl_action = acct_action_to_rctl(rr->action, rr->signal);
-		if (rctl_action < 0) {
-			rp->status = ACCT_STATUS_ERR;
-			return (0);
-		}
-
-		PROC_LOCK_ASSERT(p, MA_OWNED);
-
-		if (p->p_flag & P_WEXIT) {
-			rp->status = ACCT_STATUS_DEAD;
-			return (0);
-		}
-		_PHOLD(p);
-		PROC_UNLOCK(p);
-
-		rule = rctl_rule_alloc(M_WAITOK | M_ZERO);
-		rule->rr_subject_type = RCTL_SUBJECT_TYPE_PROCESS;
-		rule->rr_subject.rs_proc = p;
-		rule->rr_per = RCTL_SUBJECT_TYPE_PROCESS;
-		rule->rr_resource = rr->resource;
-		rule->rr_action = rctl_action;
-		rule->rr_amount = rr->limit;
-
-		error = rctl_rule_remove(rule);
+		error = add ? rctl_rule_add(rule) : rctl_rule_remove(rule);
 		rctl_rule_release(rule);
 		rp->status = acct_error_status(error);
 
@@ -380,7 +282,7 @@ accounting_call(struct cap_rt_instance *s __unused,
 	 * Authority comes from holding the accounting service fd.
 	 * The procdesc is an opaque target identifier.
 	 */
-	error = acct_resolve_proc(fds, nfds, &p);
+	error = cap_rt_resolve_proc(fds, nfds, &p);
 	if (error == ESRCH) {
 		if (*replylenp >= sizeof(uint32_t)) {
 			*(uint32_t *)reply = ACCT_STATUS_DEAD;
@@ -400,10 +302,12 @@ accounting_call(struct cap_rt_instance *s __unused,
 		error = acct_op_charge(p, req, reqlen, reply, replylenp);
 		break;
 	case ACCT_OP_ADD_RULE:
-		error = acct_op_add_rule(p, req, reqlen, reply, replylenp);
+		error = acct_op_rctl_rule(p, req, reqlen, reply, replylenp,
+		    true);
 		break;
 	case ACCT_OP_REMOVE_RULE:
-		error = acct_op_remove_rule(p, req, reqlen, reply, replylenp);
+		error = acct_op_rctl_rule(p, req, reqlen, reply, replylenp,
+		    false);
 		break;
 	case ACCT_OP_GET_RULES:
 		error = acct_op_get_rules(p, reply, replylenp);

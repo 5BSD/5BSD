@@ -38,14 +38,8 @@ struct oracled_config {
 	char		control_socket[PATH_MAX];
 	mode_t		control_socket_mode;
 
-	/* Integrity — capprotect flags for oracled itself */
-	bool		integrity_ptrace;
-	bool		integrity_signal;
-	bool		integrity_visible;
-	bool		integrity_wait;
-	bool		integrity_sched;
-	bool		integrity_core;
-	bool		integrity_ktrace;
+	/* Integrity — capprotect shield bitmask (CP_SF_* flags) */
+	uint32_t	integrity_flags;
 
 	/* Claims — resources under oracle control */
 	char		claim_paths[ORACLED_MAX_PATH_CLAIMS][PATH_MAX];

@@ -30,6 +30,23 @@
 #include "oracled.h"
 #include "probes.h"
 
+/*
+ * Helper: perform a simple CAP_RT_CALL with no fd-passing.
+ */
+static int
+cap_rt_do_call(int fd, const void *req, size_t reqlen,
+    void *reply, size_t replylen)
+{
+	struct cap_rt_call_args call;
+
+	memset(&call, 0, sizeof(call));
+	call.req = req;
+	call.req_len = reqlen;
+	call.reply = reply;
+	call.reply_len = replylen;
+	return (ioctl(fd, CAP_RT_CALL, &call));
+}
+
 /* Pair service protocol (defined in kernel module, no public header). */
 #define	PAIR_OP_CREATE	1
 
@@ -38,32 +55,6 @@ static int cap_rt_fd = -1;
 static int isolation_fd = -1;
 static int capprotect_fd = -1;
 static int system_fd = -1;
-
-/*
- * Build the integrity flags bitmask from config.
- */
-static uint32_t
-integrity_flags_from_config(void)
-{
-	uint32_t flags;
-
-	flags = 0;
-	if (od.cfg.integrity_ptrace)
-		flags |= CP_SF_PTRACE;
-	if (od.cfg.integrity_signal)
-		flags |= CP_SF_SIGNAL;
-	if (od.cfg.integrity_visible)
-		flags |= CP_SF_VISIBLE;
-	if (od.cfg.integrity_wait)
-		flags |= CP_SF_WAIT;
-	if (od.cfg.integrity_sched)
-		flags |= CP_SF_SCHED;
-	if (od.cfg.integrity_core)
-		flags |= CP_SF_CORE;
-	if (od.cfg.integrity_ktrace)
-		flags |= CP_SF_KTRACE;
-	return (flags);
-}
 
 static const struct {
 	uint32_t	flag;
@@ -89,12 +80,8 @@ log_integrity_flags(uint32_t flags)
 	for (i = 0; i < nitems(integrity_flag_names); i++) {
 		if (!(flags & integrity_flag_names[i].flag))
 			continue;
-		if (off >= sizeof(buf) - 1)
-			break;
-		if (off > 0)
-			buf[off++] = ' ';
-		off += strlcpy(buf + off, integrity_flag_names[i].name,
-		    sizeof(buf) - off);
+		BUF_APPEND(buf, sizeof(buf), &off, "%s%s",
+		    off > 0 ? " " : "", integrity_flag_names[i].name);
 	}
 	if (off == 0)
 		strlcpy(buf, "(none)", sizeof(buf));
@@ -118,7 +105,12 @@ cap_rt_svc_connect(const char *name)
 		return (-1);
 	}
 	fd = conn.fd;
-	(void)fcntl(fd, F_SETFD, FD_CLOEXEC);
+	if (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1) {
+		syslog(LOG_WARNING, "cap_rt connect %s: fcntl CLOEXEC: %m",
+		    name);
+		close(fd);
+		return (-1);
+	}
 	return (fd);
 }
 
@@ -171,7 +163,6 @@ claim_path(const char *path)
 static int
 claim_net(const struct oracled_net_claim *nc)
 {
-	struct cap_rt_call_args call;
 	struct fi_net_request req;
 	struct fi_reply reply;
 
@@ -182,28 +173,18 @@ claim_net(const struct oracled_net_claim *nc)
 	req.port = htons(nc->port);
 	req.direction = nc->direction;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-
-	if (ioctl(isolation_fd, CAP_RT_CALL, &call) == -1) {
+	if (cap_rt_do_call(isolation_fd, &req, sizeof(req),
+	    &reply, sizeof(reply)) == -1) {
 		ORACLED_PROBE_CLAIM_NET_FAIL(nc->port, nc->protocol);
 		syslog(LOG_WARNING, "isolation: claim port %u/%s: %m",
-		    nc->port,
-		    nc->protocol == IPPROTO_TCP ? "tcp" :
-		    nc->protocol == IPPROTO_UDP ? "udp" : "any");
+		    nc->port, net_protocol_name(nc->protocol));
 		return (-1);
 	}
 
 	ORACLED_PROBE_CLAIM_NET(nc->port, nc->protocol);
 	syslog(LOG_INFO, "isolation: claimed port %u/%s %s",
-	    nc->port,
-	    nc->protocol == IPPROTO_TCP ? "tcp" :
-	    nc->protocol == IPPROTO_UDP ? "udp" : "any",
-	    nc->direction == ORACLED_NET_DIR_BIND ? "bind" :
-	    nc->direction == ORACLED_NET_DIR_CONNECT ? "connect" : "any");
+	    nc->port, net_protocol_name(nc->protocol),
+	    net_direction_name(nc->direction));
 	return (0);
 }
 
@@ -259,7 +240,6 @@ isolate_resources(void)
 static int
 apply_integrity(void)
 {
-	struct cap_rt_call_args call;
 	struct cp_request req;
 	uint32_t flags;
 	int cp_fd;
@@ -268,18 +248,13 @@ apply_integrity(void)
 	if (cp_fd == -1)
 		return (-1);
 
-	flags = integrity_flags_from_config();
+	flags = od.cfg.integrity_flags;
 
 	memset(&req, 0, sizeof(req));
 	req.op = CP_OP_SHIELD;
 	req.flags = flags;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.reply_len = 0;
-
-	if (ioctl(cp_fd, CAP_RT_CALL, &call) == -1) {
+	if (cap_rt_do_call(cp_fd, &req, sizeof(req), NULL, 0) == -1) {
 		syslog(LOG_ERR, "capprotect shield: %m");
 		close(cp_fd);
 		return (-1);
@@ -297,7 +272,6 @@ apply_integrity(void)
 static int
 claim_system_gates(void)
 {
-	struct cap_rt_call_args call;
 	struct sys_request req;
 
 	if (od.cfg.claim_system == 0)
@@ -311,12 +285,7 @@ claim_system_gates(void)
 	req.op = SYS_OP_CLAIM;
 	req.gates = od.cfg.claim_system;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.reply_len = 0;
-
-	if (ioctl(system_fd, CAP_RT_CALL, &call) == -1) {
+	if (cap_rt_do_call(system_fd, &req, sizeof(req), NULL, 0) == -1) {
 		syslog(LOG_WARNING, "system: claim gates 0x%x: %m",
 		    od.cfg.claim_system);
 		close(system_fd);
@@ -529,8 +498,18 @@ cap_rt_create_pair(int *oracle_end, int *child_end)
 		return (-1);
 	}
 
-	(void)fcntl(pair_fd, F_SETFD, FD_CLOEXEC);
-	(void)fcntl(peer_fd, F_SETFD, FD_CLOEXEC);
+	if (fcntl(pair_fd, F_SETFD, FD_CLOEXEC) == -1) {
+		syslog(LOG_WARNING, "create_pair: fcntl CLOEXEC pair_fd: %m");
+		close(pair_fd);
+		close(peer_fd);
+		return (-1);
+	}
+	if (fcntl(peer_fd, F_SETFD, FD_CLOEXEC) == -1) {
+		syslog(LOG_WARNING, "create_pair: fcntl CLOEXEC peer_fd: %m");
+		close(pair_fd);
+		close(peer_fd);
+		return (-1);
+	}
 
 	*oracle_end = pair_fd;
 	*child_end = peer_fd;
@@ -608,7 +587,6 @@ int
 cap_rt_coalition_set_deadline(int coalition_fd, int timeout_ms,
     int sig, int grace_ms)
 {
-	struct cap_rt_call_args call;
 	struct coalition_set_deadline_req dreq;
 	struct coalition_reply reply;
 
@@ -618,13 +596,8 @@ cap_rt_coalition_set_deadline(int coalition_fd, int timeout_ms,
 	dreq.signal = sig;
 	dreq.grace_ms = (uint32_t)grace_ms;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &dreq;
-	call.req_len = sizeof(dreq);
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-
-	if (ioctl(coalition_fd, CAP_RT_CALL, &call) == -1)
+	if (cap_rt_do_call(coalition_fd, &dreq, sizeof(dreq),
+	    &reply, sizeof(reply)) == -1)
 		return (-1);
 	return (reply.status);
 }
@@ -632,20 +605,14 @@ cap_rt_coalition_set_deadline(int coalition_fd, int timeout_ms,
 int
 cap_rt_coalition_terminate(int coalition_fd)
 {
-	struct cap_rt_call_args call;
 	struct coalition_req_hdr req;
 	struct coalition_reply reply;
 
 	memset(&req, 0, sizeof(req));
 	req.op = COALITION_OP_TERMINATE;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-
-	if (ioctl(coalition_fd, CAP_RT_CALL, &call) == -1)
+	if (cap_rt_do_call(coalition_fd, &req, sizeof(req),
+	    &reply, sizeof(reply)) == -1)
 		return (-1);
 	return (reply.status);
 }

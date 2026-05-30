@@ -9,6 +9,8 @@
 
 #include <sys/types.h>
 #include <sys/event.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #include <libutil.h>
 #include <stdbool.h>
@@ -48,7 +50,6 @@ struct svc_manifest {
 	char		program[PATH_MAX];
 	char		user[64];
 	char		group[64];
-	char		jail[ORACLED_LABEL_MAX];	/* jail name, empty = jid0 */
 
 	/* Dependency graph edges */
 	char		provides[ORACLED_MAX_PROVIDES][ORACLED_LABEL_MAX];
@@ -93,8 +94,6 @@ struct svc_runtime {
 	bool		reload_pending;		/* swap manifest after NOTE_EXIT */
 	struct svc_manifest pending_manifest;
 	struct timespec	last_start;
-	struct timespec	last_exit;
-	int		last_exit_status;
 };
 
 /*
@@ -186,6 +185,52 @@ int	supervisor_load_manifest(const char *path, int kq,
 	    char *summary, size_t sumlen);
 int	supervisor_check_manifest(const char *path,
 	    char *summary, size_t sumlen);
+
+/*
+ * Formatting helpers for human-readable names.
+ * Used by manifest.c, commands.c, and cap_rt.c.
+ */
+static inline const char *
+restart_policy_name(int policy)
+{
+
+	switch (policy) {
+	case SVC_RESTART_ALWAYS:
+		return ("always");
+	case SVC_RESTART_ON_FAILURE:
+		return ("on-failure");
+	default:
+		return ("never");
+	}
+}
+
+static inline const char *
+net_direction_name(int dir)
+{
+
+	switch (dir) {
+	case ORACLED_NET_DIR_BIND:
+		return ("bind");
+	case ORACLED_NET_DIR_CONNECT:
+		return ("connect");
+	default:
+		return ("any");
+	}
+}
+
+static inline const char *
+net_protocol_name(int proto)
+{
+
+	switch (proto) {
+	case IPPROTO_TCP:
+		return ("tcp");
+	case IPPROTO_UDP:
+		return ("udp");
+	default:
+		return ("any");
+	}
+}
 
 /*
  * Safe snprintf accumulator.  Appends formatted text to buf at

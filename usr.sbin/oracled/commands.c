@@ -226,11 +226,7 @@ cmd_services(uint32_t flags, struct ctl_reply *reply,
 			}
 
 			BUF_APPEND(summary, sumlen, &off," restart=%s",
-			    svc->manifest.restart == SVC_RESTART_ALWAYS ?
-			    "always" :
-			    svc->manifest.restart ==
-			    SVC_RESTART_ON_FAILURE ?
-			    "on-failure" : "never");
+			    restart_policy_name(svc->manifest.restart));
 
 			if (svc->restart_count > 0)
 				BUF_APPEND(summary, sumlen, &off," restarts=%u",
@@ -257,14 +253,9 @@ cmd_services(uint32_t flags, struct ctl_reply *reply,
 				for (k = 0; k < m->ncap_net; k++)
 					BUF_APPEND(summary, sumlen, &off,"    cap-net:    "
 					    "%s/%u %s\n",
-					    m->cap_net[k].protocol ==
-					    IPPROTO_TCP ? "tcp" : "udp",
+					    net_protocol_name(m->cap_net[k].protocol),
 					    m->cap_net[k].port,
-					    m->cap_net[k].direction ==
-					    ORACLED_NET_DIR_BIND ? "bind" :
-					    m->cap_net[k].direction ==
-					    ORACLED_NET_DIR_CONNECT ?
-					    "connect" : "any");
+					    net_direction_name(m->cap_net[k].direction));
 				if (m->cap_system != 0)
 					BUF_APPEND(summary, sumlen, &off,"    cap-system: "
 					    "0x%x\n", m->cap_system);

@@ -28,7 +28,7 @@ cap_rt:::call
 	self->reqlen = arg2;
 }
 
-cap_rt:::close
+cap_rt:::call-done
 /self->ts/
 {
 	this->delta = (timestamp - self->ts) / 1000;
@@ -39,7 +39,7 @@ cap_rt:::close
 	self->svc = 0;
 }
 
-/* Fallback: if close doesn't fire, clear on revoke */
+/* Fallback: if call-done doesn't fire, clear on revoke */
 cap_rt:::revoke
 /self->ts/
 {

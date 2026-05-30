@@ -26,20 +26,6 @@
 
 #include "oraclectl.h"
 
-/* Wire protocol structs — match oracled_ctl.h exactly. */
-struct ctl_request {
-	uint32_t	version;
-	uint32_t	op;
-	uint32_t	flags;
-	uint32_t	datalen;
-} __packed;
-
-struct ctl_reply {
-	uint32_t	status;
-	uint32_t	flags;
-	uint64_t	uptime_usec;
-} __packed;
-
 static int
 readn(int fd, void *buf, size_t len)
 {
@@ -158,7 +144,6 @@ oraclectl_status(int fd, struct oraclectl_status *st)
 		return (error);
 	if (st != NULL) {
 		st->error = rpl.status;
-		st->flags = rpl.flags;
 		st->uptime_usec = rpl.uptime_usec;
 	}
 	return (rpl.status);
