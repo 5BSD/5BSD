@@ -1014,13 +1014,11 @@ cap_rt_instance_fill_kinfo(struct file *fp, struct kinfo_file *kif,
 
 	kif->kf_type = KF_TYPE_CAP_RT;
 	s = fp->f_data;
-	if (s != NULL) {
-		svc = s->ci_service;
-		if (svc != NULL)
-			snprintf(kif->kf_path, sizeof(kif->kf_path),
-			    "cap_rt:%s[%ju]", svc->csvc_name,
-			    (uintmax_t)s->ci_badge);
-	}
+	svc = s->ci_service;
+	if (svc != NULL)
+		snprintf(kif->kf_path, sizeof(kif->kf_path),
+		    "cap_rt:%s[%ju]", svc->csvc_name,
+		    (uintmax_t)s->ci_badge);
 	return (0);
 }
 

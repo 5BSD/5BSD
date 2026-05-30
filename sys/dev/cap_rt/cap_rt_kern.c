@@ -709,13 +709,6 @@ cap_rt_forward(struct cap_rt_instance *s, const struct cap_rt_msg *src)
 	struct cap_rt_msg *msg;
 	int error;
 
-	if (src == NULL)
-		return (EINVAL);
-	if (src->cm_datalen > CAP_RT_MSG_PAYLOAD_SIZE)
-		return (EMSGSIZE);
-	if (src->cm_nfds > CAP_RT_MAX_FDS)
-		return (EINVAL);
-
 	msg = cap_rt_msg_alloc_full(src->cm_data, src->cm_datalen,
 	    src->cm_fds, src->cm_fcaps, src->cm_nfds,
 	    src->cm_badge, src->cm_reply_token, src->cm_cred);

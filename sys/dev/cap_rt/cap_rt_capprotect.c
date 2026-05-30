@@ -473,8 +473,14 @@ cp_no_shields(void)
 	return (atomic_load_int(&cp_active_shields) == 0);
 }
 
+/*
+ * Shared helper for shield hooks that follow the standard pattern:
+ * self-check, zero-nonce early-out, same-nonce early-out, fast-path,
+ * lock, flag check, auth check, unlock, probe, return.
+ */
 static int
-cp_mac_check_ptrace(struct ucred *cred, struct proc *p)
+cp_check_shield(struct ucred *cred, struct proc *p, uint32_t flag,
+    const char *name)
 {
 	uint64_t caller_nonce, target_nonce;
 	uint32_t flags;
@@ -494,18 +500,25 @@ cp_mac_check_ptrace(struct ucred *cred, struct proc *p)
 
 	mtx_lock(&cp_lock);
 	flags = cp_shield_flags(target_nonce);
-	if ((flags & CP_SF_PTRACE) == 0) {
+	if ((flags & flag) == 0) {
 		mtx_unlock(&cp_lock);
 		return (0);
 	}
 	denied = !cp_is_authorized(caller_nonce, target_nonce);
 	mtx_unlock(&cp_lock);
 	if (denied) {
-		SDT_PROBE3(cap_rt_capprotect, , , deny, "ptrace",
+		SDT_PROBE3(cap_rt_capprotect, , , deny, name,
 		    target_nonce, caller_nonce);
 	}
 
 	return (denied ? EACCES : 0);
+}
+
+static int
+cp_mac_check_ptrace(struct ucred *cred, struct proc *p)
+{
+
+	return (cp_check_shield(cred, p, CP_SF_PTRACE, "ptrace"));
 }
 
 static int
@@ -633,36 +646,8 @@ cp_mac_proc_check_wait(struct ucred *cred, struct proc *p)
 static int
 cp_mac_proc_check_sched(struct ucred *cred, struct proc *p)
 {
-	uint64_t caller_nonce, target_nonce;
-	uint32_t flags;
-	int denied;
 
-	if (curthread->td_proc == p)
-		return (0);
-
-	target_nonce = cap_rt_proc_nonce(p->p_ucred);
-	caller_nonce = cap_rt_proc_nonce(cred);
-	if (target_nonce == 0 || caller_nonce == 0)
-		return (0);
-	if (caller_nonce == target_nonce)
-		return (0);
-	if (cp_no_shields())
-		return (0);
-
-	mtx_lock(&cp_lock);
-	flags = cp_shield_flags(target_nonce);
-	if ((flags & CP_SF_SCHED) == 0) {
-		mtx_unlock(&cp_lock);
-		return (0);
-	}
-	denied = !cp_is_authorized(caller_nonce, target_nonce);
-	mtx_unlock(&cp_lock);
-	if (denied) {
-		SDT_PROBE3(cap_rt_capprotect, , , deny, "sched",
-		    target_nonce, caller_nonce);
-	}
-
-	return (denied ? EACCES : 0);
+	return (cp_check_shield(cred, p, CP_SF_SCHED, "sched"));
 }
 
 /*
@@ -703,36 +688,8 @@ static int
 cp_mac_proc_check_ktrace(struct ucred *cred, struct proc *p,
     int ops __unused)
 {
-	uint64_t caller_nonce, target_nonce;
-	uint32_t flags;
-	int denied;
 
-	if (curthread->td_proc == p)
-		return (0);
-
-	target_nonce = cap_rt_proc_nonce(p->p_ucred);
-	caller_nonce = cap_rt_proc_nonce(cred);
-	if (target_nonce == 0 || caller_nonce == 0)
-		return (0);
-	if (caller_nonce == target_nonce)
-		return (0);
-	if (cp_no_shields())
-		return (0);
-
-	mtx_lock(&cp_lock);
-	flags = cp_shield_flags(target_nonce);
-	if ((flags & CP_SF_KTRACE) == 0) {
-		mtx_unlock(&cp_lock);
-		return (0);
-	}
-	denied = !cp_is_authorized(caller_nonce, target_nonce);
-	mtx_unlock(&cp_lock);
-	if (denied) {
-		SDT_PROBE3(cap_rt_capprotect, , , deny, "ktrace",
-		    target_nonce, caller_nonce);
-	}
-
-	return (denied ? EACCES : 0);
+	return (cp_check_shield(cred, p, CP_SF_KTRACE, "ktrace"));
 }
 
 /*
@@ -746,36 +703,8 @@ static int
 cp_mac_proc_check_suspend(struct ucred *cred, struct proc *p,
     int sig __unused)
 {
-	uint64_t caller_nonce, target_nonce;
-	uint32_t flags;
-	int denied;
 
-	if (curthread->td_proc == p)
-		return (0);
-
-	target_nonce = cap_rt_proc_nonce(p->p_ucred);
-	caller_nonce = cap_rt_proc_nonce(cred);
-	if (target_nonce == 0 || caller_nonce == 0)
-		return (0);
-	if (caller_nonce == target_nonce)
-		return (0);
-	if (cp_no_shields())
-		return (0);
-
-	mtx_lock(&cp_lock);
-	flags = cp_shield_flags(target_nonce);
-	if ((flags & CP_SF_SIGNAL) == 0) {
-		mtx_unlock(&cp_lock);
-		return (0);
-	}
-	denied = !cp_is_authorized(caller_nonce, target_nonce);
-	mtx_unlock(&cp_lock);
-	if (denied) {
-		SDT_PROBE3(cap_rt_capprotect, , , deny, "suspend",
-		    target_nonce, caller_nonce);
-	}
-
-	return (denied ? EACCES : 0);
+	return (cp_check_shield(cred, p, CP_SF_SIGNAL, "suspend"));
 }
 
 /*
@@ -785,7 +714,8 @@ cp_mac_proc_check_suspend(struct ucred *cred, struct proc *p,
  */
 
 static int
-cp_mac_priv_check(struct ucred *cred, int priv)
+cp_check_self_restrict(struct ucred *cred, uint32_t flag, const char *name,
+    int errcode)
 {
 	uint64_t nonce;
 	uint32_t flags;
@@ -798,59 +728,35 @@ cp_mac_priv_check(struct ucred *cred, int priv)
 	flags = cp_shield_flags(nonce);
 	mtx_unlock(&cp_lock);
 
-	if (flags & CP_SF_NOPRIVS) {
-		SDT_PROBE3(cap_rt_capprotect, , , deny, "priv",
-		    nonce, (uint64_t)priv);
-		return (EPERM);
+	if (flags & flag) {
+		SDT_PROBE3(cap_rt_capprotect, , , deny, name,
+		    nonce, (uint64_t)0);
+		return (errcode);
 	}
 
 	return (0);
+}
+
+static int
+cp_mac_priv_check(struct ucred *cred, int priv __unused)
+{
+
+	return (cp_check_self_restrict(cred, CP_SF_NOPRIVS, "priv", EPERM));
 }
 
 static int
 cp_mac_check_fork(struct ucred *cred, int flags __unused)
 {
-	uint64_t nonce;
-	uint32_t sflags;
 
-	nonce = cap_rt_proc_nonce(cred);
-	if (nonce == 0 || cp_no_shields())
-		return (0);
-
-	mtx_lock(&cp_lock);
-	sflags = cp_shield_flags(nonce);
-	mtx_unlock(&cp_lock);
-
-	if (sflags & CP_SF_NOFORK) {
-		SDT_PROBE3(cap_rt_capprotect, , , deny, "fork",
-		    nonce, (uint64_t)0);
-		return (EPERM);
-	}
-
-	return (0);
+	return (cp_check_self_restrict(cred, CP_SF_NOFORK, "fork", EPERM));
 }
 
 static int
 cp_mac_file_check_receive(struct ucred *cred, struct file *fp __unused)
 {
-	uint64_t nonce;
-	uint32_t flags;
 
-	nonce = cap_rt_proc_nonce(cred);
-	if (nonce == 0 || cp_no_shields())
-		return (0);
-
-	mtx_lock(&cp_lock);
-	flags = cp_shield_flags(nonce);
-	mtx_unlock(&cp_lock);
-
-	if (flags & CP_SF_NOFDRECV) {
-		SDT_PROBE3(cap_rt_capprotect, , , deny, "fd_receive",
-		    nonce, (uint64_t)0);
-		return (EACCES);
-	}
-
-	return (0);
+	return (cp_check_self_restrict(cred, CP_SF_NOFDRECV, "fd_receive",
+	    EACCES));
 }
 
 /*

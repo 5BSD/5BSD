@@ -25,21 +25,8 @@
 #include <atf-c.h>
 
 #include "cap_rt_ioctl.h"
+#include "cap_rt_test_helpers.h"
 #include "cap_rt_system_proto.h"
-
-static int
-cap_rt_open(void)
-{
-	int fd;
-
-	fd = open("/dev/cap_rt", O_RDWR);
-	if (fd < 0 && errno == ENOENT)
-		atf_tc_skip("cap_rt module not loaded");
-	if (fd < 0 && errno == EACCES)
-		atf_tc_skip("/dev/cap_rt is isolated");
-	ATF_REQUIRE_MSG(fd >= 0, "open /dev/cap_rt: %s", strerror(errno));
-	return (fd);
-}
 
 static int
 sys_connect(void)

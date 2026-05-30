@@ -28,45 +28,13 @@
 #include <atf-c.h>
 
 #include "cap_rt_ioctl.h"
+#include "cap_rt_test_helpers.h"
 #include "cap_rt_node_proto.h"
 #include "cap_rt_capprotect_proto.h"
 
 #ifndef RACCT_NOFILE
 #define	RACCT_NOFILE	7
 #endif
-
-/* ----------------------------------------------------------------
- * Helpers
- * ---------------------------------------------------------------- */
-
-static int
-cap_rt_open(void)
-{
-	int fd;
-
-	fd = open("/dev/cap_rt", O_RDWR);
-	if (fd < 0 && errno == ENOENT)
-		atf_tc_skip("cap_rt module not loaded");
-	ATF_REQUIRE_MSG(fd >= 0, "open /dev/cap_rt: %s", strerror(errno));
-	return (fd);
-}
-
-static int
-cap_rt_connect(const char *name)
-{
-	struct cap_rt_connect_args ca;
-	int ctl;
-
-	ctl = cap_rt_open();
-	memset(&ca, 0, sizeof(ca));
-	strlcpy(ca.name, name, sizeof(ca.name));
-	if (ioctl(ctl, CAP_RT_CONNECT, &ca) != 0) {
-		close(ctl);
-		return (-1);
-	}
-	close(ctl);
-	return (ca.fd);
-}
 
 static int
 node_call_raw(int fd, const void *req, size_t reqlen,

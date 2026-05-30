@@ -111,7 +111,7 @@ struct fi_priv {
 	LIST_HEAD(, fi_claim)	    fip_claims;	    /* vnode claims */
 	LIST_HEAD(, fi_net_claim)   fip_net_claims; /* network claims */
 	/* Token state (for instances created by FI_OP_MINT). */
-	int			    fip_is_token;
+	bool			    fip_is_token;
 	uint64_t		    fip_token_owner; /* claim owner nonce */
 };
 
@@ -1155,6 +1155,67 @@ fi_do_release_net(const struct fi_net_request *nr, uint64_t nonce)
 	return (ENOENT);
 }
 
+/*
+ * Validate a network claim/release request.  Returns 0 on success
+ * and sets *nrp to the validated request pointer.
+ */
+static int
+fi_validate_net_request(const void *req, size_t reqlen,
+    const struct fi_net_request **nrp)
+{
+	const struct fi_net_request *nr;
+
+	if (reqlen < sizeof(struct fi_net_request))
+		return (EINVAL);
+	nr = (const struct fi_net_request *)req;
+	if (nr->flags != 0 || nr->direction == 0 ||
+	    (nr->direction & ~FI_NET_ANY) != 0)
+		return (EINVAL);
+	/* Validate domain: AF_INET, AF_INET6, or 0 (wildcard) */
+	if (nr->domain != 0 && nr->domain != AF_INET &&
+	    nr->domain != AF_INET6)
+		return (EINVAL);
+	/* Validate protocol: IPPROTO_TCP, IPPROTO_UDP, or 0 */
+	if (nr->protocol != 0 && nr->protocol != IPPROTO_TCP &&
+	    nr->protocol != IPPROTO_UDP)
+		return (EINVAL);
+	/* Validate prefix: IPv4 max /32, IPv6 max /128 */
+	if (nr->domain == AF_INET && nr->prefix > 32)
+		return (EINVAL);
+	if (nr->prefix > 128)
+		return (EINVAL);
+	*nrp = nr;
+	return (0);
+}
+
+/*
+ * Mint a token fd, set it as a token with the given owner nonce,
+ * and fill the reply fd slot.  Shared by FI_OP_MINT and FI_OP_MINT_NET.
+ */
+static int
+fi_mint_token(uint64_t caller_nonce, struct file **reply_fds,
+    int *reply_nfdsp, size_t *replylenp)
+{
+	struct file *token_fp;
+	struct fi_priv *tp;
+	int error;
+
+	error = cap_rt_mint_fp(fi_svc, 0, &token_fp);
+	if (error != 0)
+		return (error);
+
+	tp = cap_rt_instance_get_priv(token_fp->f_data);
+	if (tp != NULL) {
+		tp->fip_is_token = true;
+		tp->fip_token_owner = caller_nonce;
+	}
+
+	reply_fds[0] = token_fp;
+	*reply_nfdsp = 1;
+	*replylenp = sizeof(struct fi_reply);
+	return (0);
+}
+
 /* ----------------------------------------------------------------
  * Service call handler
  * ---------------------------------------------------------------- */
@@ -1164,7 +1225,7 @@ fi_call(struct cap_rt_instance *s,
     const void *req, size_t reqlen,
     struct file **fds, struct filecaps *fcaps __unused, int nfds,
     void *reply, size_t *replylenp,
-    struct file **reply_fds __unused, int *reply_nfdsp __unused,
+    struct file **reply_fds, int *reply_nfdsp,
     void *arg __unused)
 {
 	const struct fi_request *fr;
@@ -1208,54 +1269,25 @@ fi_call(struct cap_rt_instance *s,
 	case FI_OP_CLAIM_NET:
 	{
 		const struct fi_net_request *nr;
+		int error;
 
-		if (reqlen < sizeof(struct fi_net_request))
-			return (EINVAL);
-		nr = (const struct fi_net_request *)req;
-		if (nr->flags != 0 || nr->direction == 0 ||
-		    (nr->direction & ~FI_NET_ANY) != 0)
-			return (EINVAL);
-		/* Validate domain: AF_INET, AF_INET6, or 0 (wildcard) */
-		if (nr->domain != 0 && nr->domain != AF_INET &&
-		    nr->domain != AF_INET6)
-			return (EINVAL);
-		/* Validate protocol: IPPROTO_TCP, IPPROTO_UDP, or 0 */
-		if (nr->protocol != 0 && nr->protocol != IPPROTO_TCP &&
-		    nr->protocol != IPPROTO_UDP)
-			return (EINVAL);
-		/* Validate prefix: IPv4 max /32, IPv6 max /128 */
-		if (nr->domain == AF_INET && nr->prefix > 32)
-			return (EINVAL);
-		if (nr->prefix > 128)
-			return (EINVAL);
+		error = fi_validate_net_request(req, reqlen, &nr);
+		if (error != 0)
+			return (error);
 		return (fi_do_claim_net(s, priv, nr, caller_nonce));
 	}
 	case FI_OP_RELEASE_NET:
 	{
 		const struct fi_net_request *nr;
+		int error;
 
-		if (reqlen < sizeof(struct fi_net_request))
-			return (EINVAL);
-		nr = (const struct fi_net_request *)req;
-		if (nr->flags != 0 || nr->direction == 0 ||
-		    (nr->direction & ~FI_NET_ANY) != 0)
-			return (EINVAL);
-		if (nr->domain != 0 && nr->domain != AF_INET &&
-		    nr->domain != AF_INET6)
-			return (EINVAL);
-		if (nr->protocol != 0 && nr->protocol != IPPROTO_TCP &&
-		    nr->protocol != IPPROTO_UDP)
-			return (EINVAL);
-		if (nr->domain == AF_INET && nr->prefix > 32)
-			return (EINVAL);
-		if (nr->prefix > 128)
-			return (EINVAL);
+		error = fi_validate_net_request(req, reqlen, &nr);
+		if (error != 0)
+			return (error);
 		return (fi_do_release_net(nr, caller_nonce));
 	}
 	case FI_OP_MINT: {
 		struct fi_claim *mc;
-		struct file *token_fp;
-		struct fi_priv *tp;
 		int error;
 
 		/*
@@ -1281,25 +1313,12 @@ fi_call(struct cap_rt_instance *s,
 		}
 		rw_runlock(&fi_lock);
 
-		error = cap_rt_mint_fp(fi_svc, 0, &token_fp);
-		if (error != 0)
-			return (error);
-
-		tp = cap_rt_instance_get_priv(token_fp->f_data);
-		if (tp != NULL) {
-			tp->fip_is_token = 1;
-			tp->fip_token_owner = caller_nonce;
-		}
-
-		reply_fds[0] = token_fp;
-		*reply_nfdsp = 1;
-		*replylenp = sizeof(struct fi_reply);
-		return (0);
+		error = fi_mint_token(caller_nonce, reply_fds, reply_nfdsp,
+		    replylenp);
+		return (error);
 	}
 
 	case FI_OP_MINT_NET: {
-		struct file *token_fp;
-		struct fi_priv *tp;
 		int error;
 
 		/*
@@ -1328,20 +1347,9 @@ fi_call(struct cap_rt_instance *s,
 				return (ENOENT);
 		}
 
-		error = cap_rt_mint_fp(fi_svc, 0, &token_fp);
-		if (error != 0)
-			return (error);
-
-		tp = cap_rt_instance_get_priv(token_fp->f_data);
-		if (tp != NULL) {
-			tp->fip_is_token = 1;
-			tp->fip_token_owner = caller_nonce;
-		}
-
-		reply_fds[0] = token_fp;
-		*reply_nfdsp = 1;
-		*replylenp = sizeof(struct fi_reply);
-		return (0);
+		error = fi_mint_token(caller_nonce, reply_fds, reply_nfdsp,
+		    replylenp);
+		return (error);
 	}
 
 	case FI_OP_AUTHORIZE:

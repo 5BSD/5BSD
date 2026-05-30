@@ -39,7 +39,7 @@
 #define	NODE_OP_REAP_ACQUIRE	23	/* become reaper (self-only) */
 #define	NODE_OP_REAP_RELEASE	24	/* relinquish reaper (self-only) */
 #define	NODE_OP_REAP_STATUS	25	/* query reaper descendant info */
-#define	NODE_OP_REAP_GETPIDS	26	/* enumerate subtree PIDs */
+/* 26 reserved */
 #define	NODE_OP_REAP_KILL	27	/* signal entire subtree */
 /* 28-29 reserved (capmode/chroot moved to capprotect service) */
 

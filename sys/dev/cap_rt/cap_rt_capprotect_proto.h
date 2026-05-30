@@ -44,12 +44,11 @@
 #define	CP_SF_NOIPC		0x800	/* block SysV and POSIX IPC */
 #define	CP_SF_NOFDRECV		0x1000	/* block incoming fd passing (SCM_RIGHTS) */
 
-/* Foreign-protection flags — restrict what others can do to us */
-#define	CP_SF_PROTECT		0x1ff
-/* Self-restriction flags — restrict what we can do */
-#define	CP_SF_RESTRICT		(CP_SF_NOPRIVS | CP_SF_NOFORK | \
+#define	CP_SF_ALL		(CP_SF_PTRACE | CP_SF_SIGNAL | CP_SF_VISIBLE | \
+				 CP_SF_WAIT | CP_SF_SIGKILL | CP_SF_SIGCONT | \
+				 CP_SF_SCHED | CP_SF_CORE | CP_SF_KTRACE | \
+				 CP_SF_NOPRIVS | CP_SF_NOFORK | \
 				 CP_SF_NOIPC | CP_SF_NOFDRECV)
-#define	CP_SF_ALL		(CP_SF_PROTECT | CP_SF_RESTRICT)
 
 struct cp_request {
 	uint32_t	op;

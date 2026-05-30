@@ -49,8 +49,8 @@ SDT_PROBE_DEFINE3(cap_rt_system, , , deny,
 struct sys_priv {
 	uint32_t	sp_gates;	/* claimed gates (claim instances) */
 	uint64_t	sp_owner;	/* claimer nonce */
-	int		sp_is_token;
-	int		sp_active;
+	bool		sp_is_token;
+	bool		sp_active;
 };
 
 /*
@@ -333,7 +333,7 @@ sys_call(struct cap_rt_instance *s,
 				existing->sc_refcnt++;
 				priv->sp_gates = sr->gates;
 				priv->sp_owner = caller_nonce;
-				priv->sp_active = 1;
+				priv->sp_active = true;
 				mtx_unlock(&sys_lock);
 				free(sc, M_CAP_RT_SYS);
 				return (0);
@@ -343,7 +343,7 @@ sys_call(struct cap_rt_instance *s,
 		atomic_add_int(&sys_active_claims, 1);
 		priv->sp_gates = sr->gates;
 		priv->sp_owner = caller_nonce;
-		priv->sp_active = 1;
+		priv->sp_active = true;
 		mtx_unlock(&sys_lock);
 		return (0);
 	}
@@ -367,7 +367,7 @@ sys_call(struct cap_rt_instance *s,
 				break;
 			}
 		}
-		priv->sp_active = 0;
+		priv->sp_active = false;
 		mtx_unlock(&sys_lock);
 		return (0);
 	}
@@ -398,7 +398,7 @@ sys_call(struct cap_rt_instance *s,
 
 		tp = cap_rt_instance_get_priv(token_fp->f_data);
 		if (tp != NULL) {
-			tp->sp_is_token = 1;
+			tp->sp_is_token = true;
 			tp->sp_owner = mint_owner;
 			tp->sp_gates = mint_gates;
 		}
@@ -430,7 +430,7 @@ sys_call(struct cap_rt_instance *s,
 		sa->sa_gates = priv->sp_gates;
 		sa->sa_inst = s;
 		LIST_INSERT_HEAD(&sys_auths, sa, sa_link);
-		priv->sp_active = 1;
+		priv->sp_active = true;
 		mtx_unlock(&sys_lock);
 		return (0);
 	}
@@ -458,7 +458,7 @@ sys_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
 		free(priv, M_CAP_RT_SYS);
 		return;
 	}
-	priv->sp_active = 0;
+	priv->sp_active = false;
 
 	if (priv->sp_is_token) {
 		/* Remove auth entries for this token. */

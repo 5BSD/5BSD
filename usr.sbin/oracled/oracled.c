@@ -134,9 +134,11 @@ main(int argc, char *argv[])
 		syslog(LOG_INFO, "test mode: skipping procctl");
 
 	/* Phase 4: capability runtime. */
-	if (!od.test_mode)
-		(void)cap_rt_setup();
-	else
+	if (!od.test_mode) {
+		if (cap_rt_setup() == -1)
+			syslog(LOG_WARNING,
+			    "cap_rt not available — services will run without capability tokens");
+	} else
 		syslog(LOG_INFO, "test mode: skipping cap_rt");
 
 	/* Phase 5: control socket. */

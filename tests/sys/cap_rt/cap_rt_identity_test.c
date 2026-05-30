@@ -26,6 +26,7 @@
 #include <atf-c.h>
 
 #include "cap_rt_ioctl.h"
+#include "cap_rt_test_helpers.h"
 #include "cap_rt_identity_proto.h"
 
 #ifndef CAP_CAP_RT_SEND
@@ -35,39 +36,6 @@
 #ifndef CAP_CAP_RT_RECV
 #define	CAP_CAP_RT_RECV		CAPRIGHT(1, 0x0000000100000000ULL)
 #endif
-
-/* ----------------------------------------------------------------
- * Helpers
- * ---------------------------------------------------------------- */
-
-static int
-cap_rt_open(void)
-{
-	int fd;
-
-	fd = open("/dev/cap_rt", O_RDWR);
-	if (fd < 0 && errno == ENOENT)
-		atf_tc_skip("cap_rt module not loaded");
-	ATF_REQUIRE_MSG(fd >= 0, "open /dev/cap_rt: %s", strerror(errno));
-	return (fd);
-}
-
-static int
-cap_rt_connect(const char *name)
-{
-	struct cap_rt_connect_args ca;
-	int ctl;
-
-	ctl = cap_rt_open();
-	memset(&ca, 0, sizeof(ca));
-	strlcpy(ca.name, name, sizeof(ca.name));
-	if (ioctl(ctl, CAP_RT_CONNECT, &ca) != 0) {
-		close(ctl);
-		return (-1);
-	}
-	close(ctl);
-	return (ca.fd);
-}
 
 static int
 identity_call(int fd, const struct identity_request *req,

@@ -21,23 +21,12 @@
 #include <atf-c.h>
 
 #include "cap_rt_ioctl.h"
+#include "cap_rt_test_helpers.h"
 #include "cap_rt_mount_proto.h"
 
 /* ----------------------------------------------------------------
  * Helpers
  * ---------------------------------------------------------------- */
-
-static int
-cap_rt_open(void)
-{
-	int fd;
-
-	fd = open("/dev/cap_rt", O_RDWR);
-	if (fd < 0 && errno == ENOENT)
-		atf_tc_skip("cap_rt module not loaded");
-	ATF_REQUIRE_MSG(fd >= 0, "open /dev/cap_rt: %s", strerror(errno));
-	return (fd);
-}
 
 static int
 mount_connect(void)
