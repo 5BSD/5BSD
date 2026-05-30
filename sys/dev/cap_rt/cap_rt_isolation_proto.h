@@ -112,12 +112,6 @@
 #define	FI_OP_AUTHORIZE		11	/* activate token (add caller nonce) */
 #define	FI_OP_MINT_NET		12	/* mint network access token (reply fd) */
 
-/* --- Mount operations (reserved, not yet implemented) --- */
-#if 0
-#define	FI_OP_CLAIM_MOUNT	7	/* claim mount point */
-#define	FI_OP_RELEASE_MOUNT	8	/* release mount claim */
-#endif
-
 /* Query reply flags */
 #define	FI_QF_CLAIMED		0x01	/* resource is isolated by someone */
 #define	FI_QF_MINE		0x02	/* isolated by caller's nonce */
@@ -155,8 +149,5 @@ struct fi_net_request {
 	uint8_t		prefix;		/* CIDR prefix len, 0=exact/any */
 	uint8_t		addr[16];	/* IPv6 or v4-mapped, all-zero=any */
 } __packed;
-
-/* Mount request (ops 7-8): pass fd on target filesystem via req_fds[0] */
-/* Uses struct fi_request (just op field needed) */
 
 #endif /* _DEV_CAP_RT_CAP_RT_ISOLATION_PROTO_H_ */

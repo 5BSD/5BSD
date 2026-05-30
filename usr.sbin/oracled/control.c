@@ -148,6 +148,7 @@ readn(int fd, void *buf, size_t len)
 	tv.tv_sec = 5;
 	tv.tv_usec = 0;
 	(void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+	(void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
 	for (off = 0; off < len; ) {
 		n = read(fd, (char *)buf + off, len - off);

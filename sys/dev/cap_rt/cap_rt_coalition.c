@@ -563,7 +563,7 @@ coalition_jail_terminate(struct file *fp)
  * ---------------------------------------------------------------- */
 
 static int
-coalition_check_limits(struct coalition *co)
+coalition_check_limits(void)
 {
 	u_int max, cur;
 
@@ -573,7 +573,6 @@ coalition_check_limits(struct coalition *co)
 		if (cur >= max)
 			return (ENOMEM);
 	}
-	(void)co;
 	return (0);
 }
 
@@ -703,9 +702,8 @@ coalition_apply_redepth_locked(struct coalition *co, u_int depth)
 }
 
 /*
- * Compute the maximum nesting depth below 'co'.
- * Returns 0 if no nested children, 1 if one level, etc.
- * Bounded by max_depth to prevent stack overflow.
+ * Return true if 'fp' is already enlisted in coalition 'co'.
+ * Caller must hold co_sx.
  */
 static bool
 coalition_has_member(struct coalition *co, struct file *fp)
@@ -742,7 +740,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 	 * opposite enlists (A←B and B←A) from both passing.
 	 */
 
-	error = coalition_check_limits(co);
+	error = coalition_check_limits();
 	if (error != 0)
 		return (error);
 
@@ -996,7 +994,7 @@ coalition_join(struct coalition *co, struct thread *td)
 	struct proc *p;
 	int error;
 
-	error = coalition_check_limits(co);
+	error = coalition_check_limits();
 	if (error != 0)
 		return (error);
 
@@ -1303,12 +1301,6 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 			(void)soshutdown(so, SHUT_RDWR);
 			continue;
 		}
-
-		/* SHM */
-		if (cm->cm_dtype == DTYPE_SHM && cm->cm_fp != NULL) {
-			(void)fo_truncate(cm->cm_fp, 0, td->td_ucred, td);
-			continue;
-		}
 	}
 }
 
@@ -1506,18 +1498,18 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 		    cap_rt_cis, cap_rt_count);
 		coalition_rel(co);
 		return;
-		} else if (co->co_deadline_signal != 0 &&
-		    co->co_deadline_grace_ms > 0) {
-			coalition_signal_processes_locked(co, co->co_deadline_signal);
-			coalition_notify_event(co,
-			    COALITION_NOTE_DEADLINE_FIRED |
-			    COALITION_NOTE_GRACE_STARTED);
-			co->co_flags |= COF_DEADLINE_GRACE;
-			coalition_update_grace_flag_locked(co);
-			coalition_ref(co);
-			callout_reset(&co->co_deadline_callout,
-			    coalition_timeout_ticks(co->co_deadline_grace_ms),
-			    coalition_deadline_callout_fn, co);
+	} else if (co->co_deadline_signal != 0 &&
+	    co->co_deadline_grace_ms > 0) {
+		coalition_signal_processes_locked(co, co->co_deadline_signal);
+		coalition_notify_event(co,
+		    COALITION_NOTE_DEADLINE_FIRED |
+		    COALITION_NOTE_GRACE_STARTED);
+		co->co_flags |= COF_DEADLINE_GRACE;
+		coalition_update_grace_flag_locked(co);
+		coalition_ref(co);
+		callout_reset(&co->co_deadline_callout,
+		    coalition_timeout_ticks(co->co_deadline_grace_ms),
+		    coalition_deadline_callout_fn, co);
 	} else {
 		co->co_flags &= ~COF_DEADLINE_ACTIVE;
 		coalition_notify_event(co, COALITION_NOTE_DEADLINE_FIRED);
@@ -1623,9 +1615,12 @@ coalition_leader_task_fn(void *context, int pending __unused)
 	}
 
 	ci = leader->cm_fp->f_data;
-	if (ci != NULL &&
-	    (ci->ci_flags & (CAP_RT_SF_CLOSED | CAP_RT_SF_REVOKED)))
-		dead = true;
+	if (ci != NULL) {
+		mtx_lock(&ci->ci_mtx);
+		if (ci->ci_flags & (CAP_RT_SF_CLOSED | CAP_RT_SF_REVOKED))
+			dead = true;
+		mtx_unlock(&ci->ci_mtx);
+	}
 
 	if (dead) {
 		co->co_leader = NULL;
@@ -1798,7 +1793,7 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	}
 
 	/* Enforce member limits — refuse fork inheritance if exceeded */
-	if (coalition_check_limits(co) != 0) {
+	if (coalition_check_limits() != 0) {
 		sx_xunlock(&co->co_sx);
 		uma_zfree(coalition_member_zone, ccm);
 		coalition_rel(co);

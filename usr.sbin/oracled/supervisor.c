@@ -40,6 +40,48 @@ static void svc_remove(unsigned idx);
 static void svc_reregister_kevents(int kq);
 
 /*
+ * Compare two manifests field-by-field, skipping label (used for
+ * matching) and description (cosmetic).  Returns true if any
+ * operationally significant field differs.
+ */
+static bool
+manifest_changed(const struct svc_manifest *a, const struct svc_manifest *b)
+{
+
+	if (strcmp(a->program, b->program) != 0)
+		return (true);
+	if (strcmp(a->user, b->user) != 0)
+		return (true);
+	if (strcmp(a->group, b->group) != 0)
+		return (true);
+	if (a->restart != b->restart)
+		return (true);
+	if (a->ncap_paths != b->ncap_paths)
+		return (true);
+	if (memcmp(a->cap_paths, b->cap_paths,
+	    a->ncap_paths * sizeof(a->cap_paths[0])) != 0)
+		return (true);
+	if (a->ncap_net != b->ncap_net)
+		return (true);
+	if (memcmp(a->cap_net, b->cap_net,
+	    a->ncap_net * sizeof(a->cap_net[0])) != 0)
+		return (true);
+	if (a->nprovides != b->nprovides)
+		return (true);
+	if (memcmp(a->provides, b->provides,
+	    a->nprovides * sizeof(a->provides[0])) != 0)
+		return (true);
+	if (a->nrequires != b->nrequires)
+		return (true);
+	if (memcmp(a->requires, b->requires,
+	    a->nrequires * sizeof(a->requires[0])) != 0)
+		return (true);
+	if (a->cap_system != b->cap_system)
+		return (true);
+	return (false);
+}
+
+/*
  * Close all service fds and reset runtime state.
  */
 static void
@@ -152,7 +194,6 @@ supervisor_start(int kq)
 	if (od.nservices == 0)
 		syslog(LOG_INFO, "supervisor: no services to start");
 
-	/* Copy manifests into runtime structs and initialize fds. */
 	for (i = 0; i < od.nservices; i++) {
 		od.services[i].manifest = manifests[i];
 		od.services[i].pd_fd = -1;
@@ -162,7 +203,6 @@ supervisor_start(int kq)
 	}
 	free(manifests);
 
-	/* Topological sort. */
 	if (depgraph_sort(od.services, od.nservices) == -1) {
 		/*
 		 * Keep the runtime array allocated so a later reload can
@@ -172,11 +212,9 @@ supervisor_start(int kq)
 		return (-1);
 	}
 
-	/* Log service order. */
 	for (i = 0; i < od.nservices; i++)
 		manifest_log(&od.services[i].manifest);
 
-	/* Launch services in dependency order. */
 	for (i = 0; i < od.nservices; i++) {
 		if (svc_exec(&od.services[i], kq) == -1)
 			syslog(LOG_WARNING, "supervisor: failed to start %s",
@@ -195,10 +233,9 @@ supervisor_handle_procdesc(struct kevent *kev)
 	long uptime_sec;
 
 	svc = kev->udata;
-	if (svc == NULL)
-		return;
 
-	if (kev->fflags & NOTE_EXEC) {
+	if ((kev->fflags & NOTE_EXEC) &&
+	    svc->state == SVC_STATE_STARTING) {
 		svc->state = SVC_STATE_RUNNING;
 		syslog(LOG_INFO, "service %s: exec confirmed (pid %jd)",
 		    svc->manifest.label, (intmax_t)svc->pid);
@@ -207,24 +244,24 @@ supervisor_handle_procdesc(struct kevent *kev)
 
 	if (kev->fflags & NOTE_EXIT) {
 		int was_stopping;
+		int exit_status;
 		bool reload_pending, remove_pending;
 
-		svc->last_exit_status = (int)kev->data;
-		clock_gettime(CLOCK_MONOTONIC, &svc->last_exit);
+		exit_status = (int)kev->data;
 
-		if (WIFEXITED(svc->last_exit_status))
+		if (WIFEXITED(exit_status))
 			syslog(LOG_INFO, "service %s: exited status %d "
 			    "(pid %jd)", svc->manifest.label,
-			    WEXITSTATUS(svc->last_exit_status),
+			    WEXITSTATUS(exit_status),
 			    (intmax_t)svc->pid);
-		else if (WIFSIGNALED(svc->last_exit_status))
-			syslog(LOG_INFO, "service %s: killed by signal %d "
+		else if (WIFSIGNALED(exit_status))
+			syslog(LOG_WARNING, "service %s: killed by signal %d "
 			    "(pid %jd)", svc->manifest.label,
-			    WTERMSIG(svc->last_exit_status),
+			    WTERMSIG(exit_status),
 			    (intmax_t)svc->pid);
 
 		ORACLED_PROBE_SVC_EXIT(svc->manifest.label, svc->pid,
-		    svc->last_exit_status);
+		    exit_status);
 
 		was_stopping = (svc->state == SVC_STATE_STOPPING);
 		reload_pending = svc->reload_pending;
@@ -261,8 +298,8 @@ supervisor_handle_procdesc(struct kevent *kev)
 		case SVC_RESTART_NEVER:
 			return;
 		case SVC_RESTART_ON_FAILURE:
-			if (WIFEXITED(svc->last_exit_status) &&
-			    WEXITSTATUS(svc->last_exit_status) == 0)
+			if (WIFEXITED(exit_status) &&
+			    WEXITSTATUS(exit_status) == 0)
 				return;
 			break;
 		case SVC_RESTART_ALWAYS:
@@ -295,11 +332,8 @@ void
 supervisor_handle_pair(struct kevent *kev)
 {
 	struct svc_runtime *svc;
-	char drain[512];
 
 	svc = kev->udata;
-	if (svc == NULL)
-		return;
 
 	if ((int)kev->ident == svc->coalition_fd) {
 		uint32_t flags;
@@ -328,14 +362,16 @@ supervisor_handle_pair(struct kevent *kev)
 	}
 
 	/*
-	 * Agent sent a message on the pair channel.
-	 * Future: handle oracle protocol messages.
-	 * For now, drain completely to prevent busy-loop
-	 * (kqueue is level-triggered for EVFILT_READ).
+	 * The pair channel exists for future oracle protocol use
+	 * but is not currently read.  Disable the kqueue filter to
+	 * avoid a busy-loop (EVFILT_READ is level-triggered).
 	 */
-	while (read(svc->pair_fd, drain, sizeof(drain)) > 0)
-		;
-	syslog(LOG_DEBUG, "service %s: pair channel activity",
+	{
+		struct kevent kev;
+		EV_SET(&kev, svc->pair_fd, EVFILT_READ, EV_DISABLE, 0, 0, svc);
+		(void)kevent(event_kq, &kev, 1, NULL, 0, NULL);
+	}
+	syslog(LOG_DEBUG, "service %s: pair channel activity (disabled)",
 	    svc->manifest.label);
 }
 
@@ -345,8 +381,6 @@ supervisor_handle_timer(struct kevent *kev)
 	struct svc_runtime *svc;
 
 	svc = kev->udata;
-	if (svc == NULL)
-		return;
 
 	if (svc->stop_kill_pending && kev->ident == svc->stop_timer_ident) {
 		svc->stop_kill_pending = false;
@@ -804,9 +838,8 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			if (strcmp(od.services[i].manifest.label,
 			    disk[j].label) == 0) {
 				found = true;
-				if (memcmp(&od.services[i].manifest,
-				    &disk[j],
-				    sizeof(struct svc_manifest)) != 0) {
+				if (manifest_changed(&od.services[i].manifest,
+				    &disk[j])) {
 					char vbuf[256];
 
 					if (manifest_validate(&disk[j], vbuf,

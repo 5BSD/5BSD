@@ -15,7 +15,6 @@
 #include <sys/procdesc.h>
 #include <sys/wait.h>
 
-#include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
 #include <pwd.h>
@@ -86,14 +85,12 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 	if (nullfd > STDERR_FILENO)
 		(void)close(nullfd);
 
-	/* Place pair channel at well-known fd 3. */
 	if (child_pair_fd != SVC_PAIR_FD) {
 		if (dup2(child_pair_fd, SVC_PAIR_FD) == -1)
 			_exit(126);
 		(void)close(child_pair_fd);
 	}
 
-	/* Place token fds at 4..N. */
 	for (i = 0; i < ntokens; i++) {
 		fd = (int)(SVC_TOKEN_BASE + i);
 		if (token_fds[i] != fd) {
@@ -103,10 +100,8 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 		}
 	}
 
-	/* Close everything above our fds. */
 	closefrom(SVC_TOKEN_BASE + (int)ntokens);
 
-	/* Clear close-on-exec for the fds we keep. */
 	if (fcntl(SVC_PAIR_FD, F_SETFD, 0) == -1)
 		_exit(126);
 	for (i = 0; i < ntokens; i++) {
@@ -159,11 +154,15 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 			_exit(126);
 	}
 
-	/* Reset signal dispositions. */
+	/* Reset signal dispositions and unblock all signals. */
 	for (i = 1; i < NSIG; i++)
 		(void)signal(i, SIG_DFL);
+	{
+		sigset_t emptyset;
+		sigemptyset(&emptyset);
+		(void)sigprocmask(SIG_SETMASK, &emptyset, NULL);
+	}
 
-	/* Exec. */
 	argv[0] = strrchr(m->program, '/');
 	if (argv[0] != NULL)
 		argv[0]++;
@@ -252,11 +251,6 @@ svc_exec(struct svc_runtime *svc, int kq)
 			strlcpy(homedir, pw->pw_dir, sizeof(homedir));
 		}
 	}
-
-	if (m->jail[0] != '\0')
-		syslog(LOG_WARNING, "svc_exec %s: jail '%s' requested "
-		    "but jail support not yet implemented",
-		    m->label, m->jail);
 
 	/* Create pair channel. */
 	if (cap_rt_create_pair(&oracle_end, &child_end) == -1) {

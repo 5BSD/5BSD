@@ -102,8 +102,6 @@ sys_check_gate(struct ucred *cred, uint32_t gate, const char *name)
 		return (0);
 
 	caller_nonce = cap_rt_proc_nonce(cred);
-	if (caller_nonce == 0)
-		return (0);
 
 	mtx_lock(&sys_lock);
 
@@ -112,9 +110,20 @@ sys_check_gate(struct ucred *cred, uint32_t gate, const char *name)
 		if (!(sc->sc_gates & gate))
 			continue;
 		/* Same nonce — always allow. */
-		if (caller_nonce == sc->sc_nonce) {
+		if (caller_nonce != 0 &&
+		    caller_nonce == sc->sc_nonce) {
 			mtx_unlock(&sys_lock);
 			return (0);
+		}
+		/*
+		 * Unlabeled (nonce 0) processes are denied when a
+		 * gate is claimed -- they have no identity to authorize.
+		 */
+		if (caller_nonce == 0) {
+			mtx_unlock(&sys_lock);
+			SDT_PROBE3(cap_rt_system, , , deny, name,
+			    sc->sc_nonce, (uint64_t)0);
+			return (EPERM);
 		}
 		/* Foreign nonce — check authorization. */
 		LIST_FOREACH(sa, &sys_auths, sa_link) {
@@ -303,12 +312,8 @@ sys_call(struct cap_rt_instance *s,
 	case SYS_OP_CLAIM: {
 		struct sys_claim *sc, *existing;
 
-		if (priv->sp_is_token)
-			return (EINVAL);
 		if (sr->gates == 0 || (sr->gates & ~SYS_GATE_ALL) != 0)
 			return (EINVAL);
-		if (priv->sp_active)
-			return (0); /* already claimed */
 
 		sc = malloc(sizeof(*sc), M_CAP_RT_SYS, M_WAITOK);
 		sc->sc_nonce = caller_nonce;
@@ -316,36 +321,41 @@ sys_call(struct cap_rt_instance *s,
 		sc->sc_refcnt = 1;
 
 		mtx_lock(&sys_lock);
+		if (priv->sp_is_token || priv->sp_active) {
+			mtx_unlock(&sys_lock);
+			free(sc, M_CAP_RT_SYS);
+			return (priv->sp_active ? 0 : EINVAL);
+		}
 		/* Check for existing claim from same nonce. */
 		LIST_FOREACH(existing, &sys_claims, sc_link) {
 			if (existing->sc_nonce == caller_nonce) {
 				existing->sc_gates |= sr->gates;
 				existing->sc_refcnt++;
-				mtx_unlock(&sys_lock);
-				free(sc, M_CAP_RT_SYS);
 				priv->sp_gates = sr->gates;
 				priv->sp_owner = caller_nonce;
 				priv->sp_active = 1;
+				mtx_unlock(&sys_lock);
+				free(sc, M_CAP_RT_SYS);
 				return (0);
 			}
 		}
 		LIST_INSERT_HEAD(&sys_claims, sc, sc_link);
 		atomic_add_int(&sys_active_claims, 1);
-		mtx_unlock(&sys_lock);
-
 		priv->sp_gates = sr->gates;
 		priv->sp_owner = caller_nonce;
 		priv->sp_active = 1;
+		mtx_unlock(&sys_lock);
 		return (0);
 	}
 
 	case SYS_OP_RELEASE: {
 		struct sys_claim *sc;
 
-		if (!priv->sp_active || priv->sp_is_token)
-			return (EINVAL);
-
 		mtx_lock(&sys_lock);
+		if (!priv->sp_active || priv->sp_is_token) {
+			mtx_unlock(&sys_lock);
+			return (EINVAL);
+		}
 		LIST_FOREACH(sc, &sys_claims, sc_link) {
 			if (sc->sc_nonce == priv->sp_owner) {
 				if (--sc->sc_refcnt <= 0) {
@@ -357,20 +367,28 @@ sys_call(struct cap_rt_instance *s,
 				break;
 			}
 		}
-		mtx_unlock(&sys_lock);
 		priv->sp_active = 0;
+		mtx_unlock(&sys_lock);
 		return (0);
 	}
 
 	case SYS_OP_MINT: {
 		struct file *token_fp;
 		struct sys_priv *tp;
+		uint64_t mint_owner;
+		uint32_t mint_gates;
 		int error;
 
-		if (priv->sp_is_token)
+		mtx_lock(&sys_lock);
+		if (priv->sp_is_token || !priv->sp_active) {
+			mtx_unlock(&sys_lock);
 			return (EINVAL);
-		if (!priv->sp_active)
-			return (EINVAL);
+		}
+		/* Snapshot priv fields under lock. */
+		mint_owner = priv->sp_owner;
+		mint_gates = priv->sp_gates;
+		mtx_unlock(&sys_lock);
+
 		if (*reply_nfdsp < 1)
 			return (EINVAL);
 
@@ -381,8 +399,8 @@ sys_call(struct cap_rt_instance *s,
 		tp = cap_rt_instance_get_priv(token_fp->f_data);
 		if (tp != NULL) {
 			tp->sp_is_token = 1;
-			tp->sp_owner = priv->sp_owner;
-			tp->sp_gates = priv->sp_gates;
+			tp->sp_owner = mint_owner;
+			tp->sp_gates = mint_gates;
 		}
 
 		reply_fds[0] = token_fp;
@@ -393,22 +411,27 @@ sys_call(struct cap_rt_instance *s,
 	case SYS_OP_AUTHORIZE: {
 		struct sys_auth *sa;
 
-		if (!priv->sp_is_token)
-			return (EINVAL);
-		if (priv->sp_active)
-			return (0); /* already authorized */
+		sa = malloc(sizeof(*sa), M_CAP_RT_SYS, M_WAITOK | M_ZERO);
 
-		sa = malloc(sizeof(*sa), M_CAP_RT_SYS, M_WAITOK);
+		mtx_lock(&sys_lock);
+		if (!priv->sp_is_token) {
+			mtx_unlock(&sys_lock);
+			free(sa, M_CAP_RT_SYS);
+			return (EINVAL);
+		}
+		if (priv->sp_active) {
+			mtx_unlock(&sys_lock);
+			free(sa, M_CAP_RT_SYS);
+			return (0); /* already authorized */
+		}
+
 		sa->sa_accessor = caller_nonce;
 		sa->sa_owner = priv->sp_owner;
 		sa->sa_gates = priv->sp_gates;
 		sa->sa_inst = s;
-
-		mtx_lock(&sys_lock);
 		LIST_INSERT_HEAD(&sys_auths, sa, sa_link);
-		mtx_unlock(&sys_lock);
-
 		priv->sp_active = 1;
+		mtx_unlock(&sys_lock);
 		return (0);
 	}
 
@@ -429,35 +452,37 @@ sys_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
 	if (priv == NULL)
 		return;
 
-	if (priv->sp_active) {
-		if (priv->sp_is_token) {
-			/* Remove auth entries for this token. */
-			mtx_lock(&sys_lock);
-			LIST_FOREACH_SAFE(sa, &sys_auths, sa_link,
-			    sa_tmp) {
-				if (sa->sa_inst == s) {
-					LIST_REMOVE(sa, sa_link);
-					free(sa, M_CAP_RT_SYS);
-				}
+	mtx_lock(&sys_lock);
+	if (!priv->sp_active) {
+		mtx_unlock(&sys_lock);
+		free(priv, M_CAP_RT_SYS);
+		return;
+	}
+	priv->sp_active = 0;
+
+	if (priv->sp_is_token) {
+		/* Remove auth entries for this token. */
+		LIST_FOREACH_SAFE(sa, &sys_auths, sa_link, sa_tmp) {
+			if (sa->sa_inst == s) {
+				LIST_REMOVE(sa, sa_link);
+				free(sa, M_CAP_RT_SYS);
 			}
-			mtx_unlock(&sys_lock);
-		} else {
-			/* Release claim. */
-			mtx_lock(&sys_lock);
-			LIST_FOREACH(sc, &sys_claims, sc_link) {
-				if (sc->sc_nonce == priv->sp_owner) {
-					if (--sc->sc_refcnt <= 0) {
-						LIST_REMOVE(sc, sc_link);
-						atomic_subtract_int(
-						    &sys_active_claims, 1);
-						free(sc, M_CAP_RT_SYS);
-					}
-					break;
+		}
+	} else {
+		/* Release claim. */
+		LIST_FOREACH(sc, &sys_claims, sc_link) {
+			if (sc->sc_nonce == priv->sp_owner) {
+				if (--sc->sc_refcnt <= 0) {
+					LIST_REMOVE(sc, sc_link);
+					atomic_subtract_int(
+					    &sys_active_claims, 1);
+					free(sc, M_CAP_RT_SYS);
 				}
+				break;
 			}
-			mtx_unlock(&sys_lock);
 		}
 	}
+	mtx_unlock(&sys_lock);
 
 	free(priv, M_CAP_RT_SYS);
 }

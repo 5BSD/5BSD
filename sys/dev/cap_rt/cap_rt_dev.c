@@ -204,13 +204,10 @@ cap_rt_instance_do_sendmsg(struct cap_rt_instance *s,
 		goto out;
 	}
 
-	mtx_lock(&s->ci_mtx);
-	if (s->ci_flags & CAP_RT_SF_DEAD) {
-		mtx_unlock(&s->ci_mtx);
+	if (atomic_load_acq_int(&s->ci_flags) & CAP_RT_SF_DEAD) {
 		error = EPIPE;
 		goto out;
 	}
-	mtx_unlock(&s->ci_mtx);
 
 	if (args->payload_len > CAP_RT_MSG_PAYLOAD_SIZE) {
 		error = EMSGSIZE;
@@ -378,7 +375,7 @@ cap_rt_instance_do_recvmsg(struct cap_rt_instance *s, struct file *fp,
 
 	/* Copyout payload. */
 	error = 0;
-	if (msg->cm_datalen > 0 && msg->cm_data != NULL)
+	if (msg->cm_datalen > 0)
 		error = copyout(msg->cm_data, args->payload, msg->cm_datalen);
 	if (error != 0) {
 		cap_rt_msg_free(msg);
@@ -445,8 +442,6 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 	struct cap_rt_instance *s;
 
 	s = fp->f_data;
-	if (s == NULL)
-		return (EBADF);
 
 	switch (cmd) {
 	case FIONBIO:
@@ -593,7 +588,9 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		    out_fds, &out_nfds,
 		    svc->csvc_arg);
 
-		/* Trim out_nfds to actual fds set by handler. */
+		/* Clamp and trim out_nfds to actual fds set by handler. */
+		if (out_nfds > CAP_RT_MAX_FDS)
+			out_nfds = CAP_RT_MAX_FDS;
 		while (out_nfds > 0 && out_fds[out_nfds - 1] == NULL)
 			out_nfds--;
 
@@ -719,8 +716,12 @@ call_done:
 		/*
 		 * Permanently prevent this fd from being passed via
 		 * SCM_RIGHTS.  One-way latch — cannot be undone.
+		 * Use atomic_store_rel to ensure the new f_ops is
+		 * visible to concurrent readers on weakly-ordered
+		 * architectures.
 		 */
-		fp->f_ops = &cap_rt_instance_noxfer_ops;
+		atomic_store_rel_ptr((volatile uintptr_t *)&fp->f_ops,
+		    (uintptr_t)&cap_rt_instance_noxfer_ops);
 		return (0);
 	case CAP_RT_REVOKE_SEND:
 		atomic_set_int(&s->ci_restricted, CAP_RT_RF_NO_SEND);
@@ -817,8 +818,6 @@ cap_rt_instance_kqfilter(struct file *fp, struct knote *kn)
 	bool can_recv, can_send;
 
 	s = fp->f_data;
-	if (s == NULL)
-		return (EBADF);
 	svc = s->ci_service;
 	if (svc == NULL)
 		return (EOPNOTSUPP);
@@ -856,8 +855,6 @@ cap_rt_instance_fdclose(struct file *fp, int fd, struct thread *td)
 	struct cap_rt_service *svc;
 
 	s = fp->f_data;
-	if (s == NULL)
-		return;
 
 	/*
 	 * Skip if finalized — co_revoke already ran and the service
@@ -887,12 +884,8 @@ cap_rt_instance_stat(struct file *fp, struct stat *sb,
 
 	bzero(sb, sizeof(*sb));
 	s = fp->f_data;
-	if (s == NULL)
-		return (EBADF);
 	sb->st_mode = S_IFREG | S_IRWXU;
-	mtx_lock(&s->ci_mtx);
-	sb->st_size = s->ci_txqlen;
-	mtx_unlock(&s->ci_mtx);
+	sb->st_size = atomic_load_acq_int(&s->ci_txqlen);
 	return (0);
 }
 
@@ -903,9 +896,6 @@ cap_rt_instance_close(struct file *fp, struct thread *td __unused)
 	struct cap_rt_service *svc;
 
 	s = fp->f_data;
-	if (s == NULL)
-		return (0);
-
 	fp->f_data = NULL;
 	svc = s->ci_service;
 

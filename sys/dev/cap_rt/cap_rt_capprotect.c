@@ -47,6 +47,7 @@
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
+#include <machine/atomic.h>
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/sdt.h>
@@ -79,11 +80,10 @@ SDT_PROBE_DEFINE3(cap_rt_capprotect, , , deny,
  * Token instances track the target nonce they authorize access to.
  */
 struct cp_priv {
-	struct mtx	cp_mtx;
 	uint64_t	cp_target;	/* shielded nonce (shield) or target (token) */
 	uint32_t	cp_flags;	/* CP_SF_* bitmask (shield instances) */
-	int		cp_is_token;	/* 1 if this is an access token */
-	int		cp_active;	/* 1 if shield/auth is active */
+	volatile int	cp_is_token;	/* 1 if this is an access token (write-once) */
+	volatile int	cp_active;	/* 1 if shield/auth is active (write-once) */
 };
 
 /*
@@ -175,6 +175,7 @@ cp_shield_add(uint64_t nonce, uint32_t flags)
 	LIST_FOREACH(existing, CP_SHIELD_BUCKET(nonce), se_link) {
 		if (existing->se_nonce == nonce) {
 			existing->se_refcnt++;
+			existing->se_flags |= flags;
 			mtx_unlock(&cp_lock);
 			free(se, M_CAP_RT_CP);
 			return;
@@ -265,7 +266,6 @@ cp_init(struct cap_rt_instance *s, void *arg __unused)
 	struct cp_priv *priv;
 
 	priv = malloc(sizeof(*priv), M_CAP_RT_CP, M_WAITOK | M_ZERO);
-	mtx_init(&priv->cp_mtx, "cap_rt_cp_priv", NULL, MTX_DEF);
 	cap_rt_instance_set_priv(s, priv);
 	return (0);
 }
@@ -294,35 +294,32 @@ cp_call(struct cap_rt_instance *s,
 	if (caller_nonce == 0)
 		return (ENXIO);	/* cap_rt_label not loaded */
 
-	mtx_lock(&priv->cp_mtx);
-
 	switch (cr->op) {
 	case CP_OP_SHIELD: {
 		uint32_t flags;
 
-		if (priv->cp_is_token) {
-			mtx_unlock(&priv->cp_mtx);
+		if (atomic_load_acq_int(&priv->cp_is_token))
 			return (EINVAL);
-		}
-		if (priv->cp_active) {
+		if (atomic_load_acq_int(&priv->cp_active)) {
 			/*
 			 * Shield is one-shot per fd — flags are immutable
 			 * once set.  To change flags, close and re-open.
 			 */
-			mtx_unlock(&priv->cp_mtx);
 			return (0);
 		}
 		flags = cr->flags;
 		if (flags == 0)
 			flags = CP_SF_ALL;
-		if (flags & ~CP_SF_ALL) {
-			mtx_unlock(&priv->cp_mtx);
+		if (flags & ~CP_SF_ALL)
 			return (EINVAL);
-		}
+		/*
+		 * Write-once: set target and flags before activating.
+		 * atomic_cmpset_int ensures only one caller wins the race.
+		 */
 		priv->cp_target = caller_nonce;
 		priv->cp_flags = flags;
-		priv->cp_active = 1;
-		mtx_unlock(&priv->cp_mtx);
+		if (!atomic_cmpset_int(&priv->cp_active, 0, 1))
+			return (0);	/* lost race — already activated */
 		cp_shield_add(priv->cp_target, flags);
 		*replylenp = 0;
 		return (0);
@@ -334,20 +331,13 @@ cp_call(struct cap_rt_instance *s,
 		uint64_t target;
 		int error;
 
-		if (priv->cp_is_token) {
-			mtx_unlock(&priv->cp_mtx);
+		if (atomic_load_acq_int(&priv->cp_is_token))
 			return (EINVAL);
-		}
-		if (!priv->cp_active) {
-			mtx_unlock(&priv->cp_mtx);
+		if (!atomic_load_acq_int(&priv->cp_active))
 			return (EINVAL);
-		}
-		if (*reply_nfdsp < 1) {
-			mtx_unlock(&priv->cp_mtx);
+		if (*reply_nfdsp < 1)
 			return (EINVAL);
-		}
 		target = priv->cp_target;
-		mtx_unlock(&priv->cp_mtx);
 
 		error = cap_rt_mint_fp(cp_svc, 0, &token_fp);
 		if (error != 0)
@@ -366,16 +356,10 @@ cp_call(struct cap_rt_instance *s,
 	}
 
 	case CP_OP_AUTHORIZE:
-		if (!priv->cp_is_token) {
-			mtx_unlock(&priv->cp_mtx);
+		if (!atomic_load_acq_int(&priv->cp_is_token))
 			return (EINVAL);
-		}
-		if (priv->cp_active) {
-			mtx_unlock(&priv->cp_mtx);
-			return (0);
-		}
-		priv->cp_active = 1;
-		mtx_unlock(&priv->cp_mtx);
+		if (!atomic_cmpset_int(&priv->cp_active, 0, 1))
+			return (0);	/* already authorized */
 		cp_auth_add(caller_nonce, priv->cp_target, s);
 		*replylenp = 0;
 		return (0);
@@ -383,8 +367,6 @@ cp_call(struct cap_rt_instance *s,
 	case CP_OP_CAPMODE: {
 		struct ucred *newcred, *oldcred;
 		struct proc *p;
-
-		mtx_unlock(&priv->cp_mtx);
 
 		p = curthread->td_proc;
 
@@ -415,8 +397,6 @@ cp_call(struct cap_rt_instance *s,
 		struct vnode *vp;
 		int error;
 
-		mtx_unlock(&priv->cp_mtx);
-
 		if (nfds < 1 || fds[0] == NULL) {
 			return (EINVAL);
 		}
@@ -443,7 +423,6 @@ cp_call(struct cap_rt_instance *s,
 	}
 
 	default:
-		mtx_unlock(&priv->cp_mtx);
 		return (EOPNOTSUPP);
 	}
 }
@@ -458,15 +437,14 @@ cp_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
 	if (priv == NULL)
 		return;
 
-	if (priv->cp_active) {
-		if (priv->cp_is_token) {
+	if (atomic_load_acq_int(&priv->cp_active)) {
+		if (atomic_load_acq_int(&priv->cp_is_token)) {
 			cp_auth_remove_by_inst(s);
 		} else {
 			cp_shield_remove(priv->cp_target);
 		}
 	}
 
-	mtx_destroy(&priv->cp_mtx);
 	free(priv, M_CAP_RT_CP);
 }
 
@@ -502,8 +480,6 @@ cp_mac_check_ptrace(struct ucred *cred, struct proc *p)
 	uint32_t flags;
 	int denied;
 
-	if (curthread->td_proc == NULL)
-		return (0);
 	if (curthread->td_proc == p)
 		return (0);
 
@@ -539,8 +515,6 @@ cp_mac_check_signal(struct ucred *cred, struct proc *p, int signum)
 	uint32_t flags;
 	int denied;
 
-	if (curthread->td_proc == NULL)
-		return (0);
 	if (curthread->td_proc == p)
 		return (0);
 
@@ -627,8 +601,6 @@ cp_mac_proc_check_wait(struct ucred *cred, struct proc *p)
 	uint64_t caller_nonce, target_nonce;
 	uint32_t flags;
 
-	if (curthread->td_proc == NULL)
-		return (0);
 	if (p->p_pptr == curthread->td_proc)
 		return (0);
 
@@ -665,8 +637,6 @@ cp_mac_proc_check_sched(struct ucred *cred, struct proc *p)
 	uint32_t flags;
 	int denied;
 
-	if (curthread->td_proc == NULL)
-		return (0);
 	if (curthread->td_proc == p)
 		return (0);
 
@@ -737,8 +707,6 @@ cp_mac_proc_check_ktrace(struct ucred *cred, struct proc *p,
 	uint32_t flags;
 	int denied;
 
-	if (curthread->td_proc == NULL)
-		return (0);
 	if (curthread->td_proc == p)
 		return (0);
 
@@ -782,8 +750,6 @@ cp_mac_proc_check_suspend(struct ucred *cred, struct proc *p,
 	uint32_t flags;
 	int denied;
 
-	if (curthread->td_proc == NULL)
-		return (0);
 	if (curthread->td_proc == p)
 		return (0);
 

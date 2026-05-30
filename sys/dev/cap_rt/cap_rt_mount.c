@@ -43,7 +43,6 @@ static const char *mount_allowed_fstypes[] = {
 	"procfs",
 	"linprocfs",
 	"linsysfs",
-	"fusefs",
 	NULL
 };
 
@@ -206,7 +205,46 @@ mount_op_mount(const void *req, size_t reqlen,
 		return (0);
 	}
 
+	/*
+	 * Validate fs-specific options before building mntarg.
+	 * Reject keys that match framework-set arguments to prevent
+	 * callers from overriding the validated fstype, fspath, or from.
+	 */
+	if (fsopts[0] != '\0') {
+		static const char *reserved_keys[] = {
+			"fstype", "fspath", "from", "errmsg", "update", NULL
+		};
+		char check[MOUNT_MAXOPTS];
+		char *opts, *opt, *eq;
+		const char **rk;
+
+		memcpy(check, fsopts, sizeof(check));
+		opts = check;
+		while ((opt = strsep(&opts, ",")) != NULL) {
+			if (*opt == '\0')
+				continue;
+			/* Isolate key by truncating at '='. */
+			eq = strchr(opt, '=');
+			if (eq != NULL)
+				*eq = '\0';
+			for (rk = reserved_keys; *rk != NULL; rk++) {
+				if (strcmp(opt, *rk) == 0) {
+					rp->status = MOUNT_STATUS_ERR;
+					return (0);
+				}
+			}
+		}
+	}
+
 	mnt_flags = mount_map_flags(mr->flags);
+
+	/*
+	 * Always force MNT_NOSYMFOLLOW to prevent symlink TOCTOU
+	 * between our textual path validation and kernel VFS
+	 * resolution.  Also force MNT_NODEV to prevent device
+	 * node creation on user-controlled mounts.
+	 */
+	mnt_flags |= MNT_NOSYMFOLLOW | MNT_NODEV;
 
 	/*
 	 * Build the mount argument list using kernel_mount(9).
@@ -355,9 +393,7 @@ cap_rt_mount_modevent(module_t mod __unused, int type, void *data __unused)
 			printf("cap_rt_mount: create failed: %d\n", error);
 		return (error);
 	case MOD_UNLOAD:
-		if (mount_svc != NULL)
-			cap_rt_service_destroy(mount_svc);
-		return (0);
+		return (EBUSY);
 	default:
 		return (EOPNOTSUPP);
 	}

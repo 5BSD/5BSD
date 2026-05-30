@@ -1002,6 +1002,13 @@ stub_proc_check_debug(struct ucred *cred, struct proc *p)
 }
 
 static int
+stub_proc_check_ktrace(struct ucred *cred, struct proc *target, int ops)
+{
+
+	return (0);
+}
+
+static int
 stub_proc_check_sched(struct ucred *cred, struct proc *p)
 {
 
@@ -1010,6 +1017,13 @@ stub_proc_check_sched(struct ucred *cred, struct proc *p)
 
 static int
 stub_proc_check_signal(struct ucred *cred, struct proc *p, int signum)
+{
+
+	return (0);
+}
+
+static int
+stub_proc_check_suspend(struct ucred *cred, struct proc *p, int sig)
 {
 
 	return (0);
@@ -1130,7 +1144,44 @@ stub_pts_check_open(struct ucred *cred, int flags)
 }
 
 static int
+stub_rctl_check_add_rule(struct ucred *cred, const char *rule)
+{
+
+	return (0);
+}
+
+static int
+stub_rctl_check_remove_rule(struct ucred *cred, const char *rule)
+{
+
+	return (0);
+}
+
+static int
 stub_vmm_check_create(struct ucred *cred, const char *vmname)
+{
+
+	return (0);
+}
+
+static int
+stub_vmm_check_destroy(struct ucred *cred, const char *vmname)
+{
+
+	return (0);
+}
+
+static int
+stub_vmm_check_mem_access(struct ucred *cred, const char *vmname,
+    vm_paddr_t gpa, size_t len, int prot)
+{
+
+	return (0);
+}
+
+static int
+stub_vmm_check_memseg_access(struct ucred *cred, const char *vmname,
+    const char *segname, vm_ooffset_t offset, int prot)
 {
 
 	return (0);
@@ -2234,8 +2285,10 @@ static struct mac_policy_ops stub_ops =
 	.mpo_proc_check_fork = stub_proc_check_fork,
 	.mpo_proc_check_mmap_anon = stub_proc_check_mmap_anon,
 	.mpo_proc_check_mprotect = stub_proc_check_mprotect,
+	.mpo_proc_check_ktrace = stub_proc_check_ktrace,
 	.mpo_proc_check_sched = stub_proc_check_sched,
 	.mpo_proc_check_signal = stub_proc_check_signal,
+	.mpo_proc_check_suspend = stub_proc_check_suspend,
 	.mpo_proc_check_syscall = stub_proc_check_syscall,
 	.mpo_proc_check_wait = stub_proc_check_wait,
 	.mpo_proc_notify_exec_complete = stub_proc_notify_exec_complete,
@@ -2393,7 +2446,12 @@ static struct mac_policy_ops stub_ops =
 	.mpo_vnode_notify_setutimes = stub_vnode_notify_setutimes,
 
 	.mpo_pts_check_open = stub_pts_check_open,
+	.mpo_rctl_check_add_rule = stub_rctl_check_add_rule,
+	.mpo_rctl_check_remove_rule = stub_rctl_check_remove_rule,
 	.mpo_vmm_check_create = stub_vmm_check_create,
+	.mpo_vmm_check_destroy = stub_vmm_check_destroy,
+	.mpo_vmm_check_mem_access = stub_vmm_check_mem_access,
+	.mpo_vmm_check_memseg_access = stub_vmm_check_memseg_access,
 };
 
 MAC_POLICY_SET(&stub_ops, mac_stub, "TrustedBSD MAC/Stub",

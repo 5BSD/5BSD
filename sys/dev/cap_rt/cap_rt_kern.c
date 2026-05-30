@@ -26,7 +26,11 @@
 #include <sys/taskqueue.h>
 #include <vm/uma.h>
 
+#include <sys/procdesc.h>
+
 #include "cap_rt_internal.h"
+
+extern struct sx proctree_lock;
 
 MALLOC_DECLARE(M_CAP_RT);
 
@@ -40,6 +44,43 @@ SDT_PROBE_DECLARE(cap_rt, , , notify__done);
 SDT_PROBE_DECLARE(cap_rt, , , revoke);
 SDT_PROBE_DECLARE(cap_rt, , , revoke__done);
 SDT_PROBE_DECLARE(cap_rt, , , queue__pressure);
+
+/* ----------------------------------------------------------------
+ * Resolve target process: attached procdesc or self
+ *
+ * On success, returns with PROC_LOCK held.  Caller must PROC_UNLOCK.
+ * ---------------------------------------------------------------- */
+int
+cap_rt_resolve_proc(struct file **fds, int nfds, struct proc **pp)
+{
+	struct procdesc *pd;
+	struct proc *p;
+
+	if (nfds == 0 || fds == NULL || fds[0] == NULL) {
+		/* Self */
+		p = curthread->td_proc;
+		PROC_LOCK(p);
+		*pp = p;
+		return (0);
+	}
+
+	if (fds[0]->f_type != DTYPE_PROCDESC)
+		return (EINVAL);
+
+	pd = fds[0]->f_data;
+
+	sx_slock(&proctree_lock);
+	p = pd->pd_proc;
+	if (p == NULL) {
+		sx_sunlock(&proctree_lock);
+		return (ESRCH);
+	}
+	PROC_LOCK(p);
+	sx_sunlock(&proctree_lock);
+
+	*pp = p;
+	return (0);
+}
 
 /* ----------------------------------------------------------------
  * Queue helpers
@@ -132,6 +173,8 @@ cap_rt_msg_alloc_full(const void *data, size_t datalen,
 
 	if (datalen > CAP_RT_MSG_PAYLOAD_SIZE)
 		return (NULL);
+	KASSERT(nfds <= CAP_RT_MAX_FDS,
+	    ("%s: nfds %d > CAP_RT_MAX_FDS", __func__, nfds));
 
 	msg = uma_zalloc(cap_rt_msg_zone, M_WAITOK | M_ZERO);
 
@@ -387,12 +430,7 @@ cap_rt_instance_revoke_reason(struct cap_rt_instance *s,
 	mtx_lock(&s->ci_mtx);
 	if (s->ci_flags & CAP_RT_SF_DEAD) {
 		mtx_unlock(&s->ci_mtx);
-		if (svc != NULL) {
-			SDT_PROBE4(cap_rt, , , revoke__done,
-			    svc->csvc_name, s->ci_badge, reason,
-			    getsbinuptime() - start);
-		}
-		return;
+		goto out;
 	}
 	s->ci_flags |= CAP_RT_SF_REVOKED;
 	cap_rt_instance_drain_rxq(s);
@@ -410,12 +448,7 @@ cap_rt_instance_revoke_reason(struct cap_rt_instance *s,
 	 */
 	if (s->ci_handler_td == curthread) {
 		mtx_unlock(&s->ci_mtx);
-		if (svc != NULL) {
-			SDT_PROBE4(cap_rt, , , revoke__done,
-			    svc->csvc_name, s->ci_badge, reason,
-			    getsbinuptime() - start);
-		}
-		return;
+		goto out;
 	}
 
 	/* Wait for in-flight handlers and calls. */
@@ -430,23 +463,13 @@ cap_rt_instance_revoke_reason(struct cap_rt_instance *s,
 	 */
 	if (refcount_load(&s->ci_refcnt) > 1) {
 		mtx_unlock(&s->ci_mtx);
-		if (svc != NULL) {
-			SDT_PROBE4(cap_rt, , , revoke__done,
-			    svc->csvc_name, s->ci_badge, reason,
-			    getsbinuptime() - start);
-		}
-		return;
+		goto out;
 	}
 
 	/* Guard: co_revoke fires exactly once. */
 	if (s->ci_flags & CAP_RT_SF_FINALIZED) {
 		mtx_unlock(&s->ci_mtx);
-		if (svc != NULL) {
-			SDT_PROBE4(cap_rt, , , revoke__done,
-			    svc->csvc_name, s->ci_badge, reason,
-			    getsbinuptime() - start);
-		}
-		return;
+		goto out;
 	}
 	s->ci_flags |= CAP_RT_SF_FINALIZED;
 	mtx_unlock(&s->ci_mtx);
@@ -454,6 +477,8 @@ cap_rt_instance_revoke_reason(struct cap_rt_instance *s,
 	if (svc != NULL && svc->csvc_ops->co_revoke != NULL)
 		svc->csvc_ops->co_revoke(s, s->ci_badge, reason,
 		    svc->csvc_arg);
+
+out:
 	if (svc != NULL) {
 		SDT_PROBE4(cap_rt, , , revoke__done, svc->csvc_name,
 		    s->ci_badge, reason, getsbinuptime() - start);
@@ -743,10 +768,11 @@ cap_rt_instance_hold(struct cap_rt_instance *s)
 void
 cap_rt_instance_rele(struct cap_rt_instance *s)
 {
+	bool last;
 
-	refcount_release(&s->ci_refcnt);
+	last = refcount_release(&s->ci_refcnt);
 	/* Wake close/revoke only when refcnt might have reached their threshold. */
-	if (refcount_load(&s->ci_refcnt) <= 2)
+	if (!last && refcount_load(&s->ci_refcnt) <= 2)
 		wakeup(s);
 }
 

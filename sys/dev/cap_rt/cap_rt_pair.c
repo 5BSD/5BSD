@@ -30,6 +30,7 @@
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
+#include <sys/refcount.h>
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/sdt.h>
@@ -50,7 +51,16 @@ struct cap_rt_cap_pair {
 	struct cap_rt_instance	*pp_a;
 	struct cap_rt_instance	*pp_b;
 	int			pp_dead;
+	volatile u_int		pp_refcnt;	/* 1 per endpoint */
 };
+
+static void
+pair_free(struct cap_rt_cap_pair *pp)
+{
+
+	mtx_destroy(&pp->pp_mtx);
+	free(pp, M_CAP_RT_PAIR);
+}
 
 static struct cap_rt_service *pair_svc;
 static volatile uint64_t pair_next_badge = 1;
@@ -107,6 +117,7 @@ pair_handler(struct cap_rt_instance *s, const struct cap_rt_msg *msg,
 		mtx_init(&pp->pp_mtx, "cap_rt_pair", NULL, MTX_DEF);
 		pp->pp_a = s;
 		pp->pp_b = peer;
+		pp->pp_refcnt = 2;	/* one per endpoint */
 
 		cap_rt_instance_set_priv(s, pp);
 		cap_rt_instance_set_priv(peer, pp);
@@ -147,6 +158,8 @@ pair_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
 {
 	struct cap_rt_cap_pair *pp;
 	struct cap_rt_instance *peer;
+	bool do_revoke = false;
+	bool last;
 
 	pp = cap_rt_instance_get_priv(s);
 	if (pp == NULL)
@@ -162,22 +175,23 @@ pair_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
 		peer = pp->pp_a;
 	}
 
-	if (peer == NULL) {
-		mtx_unlock(&pp->pp_mtx);
-		mtx_destroy(&pp->pp_mtx);
-		free(pp, M_CAP_RT_PAIR);
-		return;
-	}
-
-	if (!pp->pp_dead) {
+	if (peer != NULL && !pp->pp_dead) {
 		pp->pp_dead = 1;
 		cap_rt_instance_hold(peer);
-		mtx_unlock(&pp->pp_mtx);
+		do_revoke = true;
+	}
+
+	mtx_unlock(&pp->pp_mtx);
+
+	if (do_revoke) {
 		cap_rt_instance_revoke(peer);
 		cap_rt_instance_rele(peer);
-	} else {
-		mtx_unlock(&pp->pp_mtx);
 	}
+
+	/* Last endpoint to detach frees the pair struct. */
+	last = refcount_release(&pp->pp_refcnt);
+	if (last)
+		pair_free(pp);
 }
 
 static const struct cap_rt_ops pair_ops = {
@@ -209,11 +223,7 @@ cap_rt_pair_modevent(module_t mod __unused, int type, void *unused __unused)
 		return (0);
 
 	case MOD_UNLOAD:
-		if (pair_svc != NULL)
-			cap_rt_service_destroy(pair_svc);
-		if (bootverbose)
-			printf("cap_rt_pair: unloaded\n");
-		return (0);
+		return (EBUSY);
 
 	default:
 		return (EOPNOTSUPP);

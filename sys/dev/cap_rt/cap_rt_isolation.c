@@ -74,6 +74,7 @@ struct fi_claim {
  * ---------------------------------------------------------------- */
 
 #define	FI_NET_HASH_SIZE	32
+#define	FI_NET_MAX_DENIED	16	/* max distinct nonces checked per lookup */
 
 struct fi_net_claim {
 	LIST_ENTRY(fi_net_claim) fn_hashlink;
@@ -205,16 +206,18 @@ fi_claim_lookup(struct vnode *vp)
  * ---------------------------------------------------------------- */
 
 /*
- * Return EACCES if vp is isolated and cred's nonce does not match.
- * Returns 0 (allow) in all other cases.
+ * Shared logic for vnode isolation checks.  Fast-path via the given
+ * atomic claim counter, then rw_rlock fi_lock, lookup, nonce compare,
+ * auth check, and deny with DTrace probe on mismatch.
  */
 static int
-fi_check_vp(struct ucred *cred, struct vnode *vp)
+fi_check_vp_common(struct ucred *cred, struct vnode *vp,
+    volatile int *claim_count, const char *probe_name)
 {
 	struct fi_claim *c;
 	uint64_t caller_nonce, owner_nonce;
 
-	if (atomic_load_acq_int(&fi_claim_count) == 0)
+	if (atomic_load_acq_int(claim_count) == 0)
 		return (0);
 
 	caller_nonce = cap_rt_proc_nonce(cred);
@@ -242,9 +245,20 @@ fi_check_vp(struct ucred *cred, struct vnode *vp)
 		rw_runlock(&fi_auth_lock);
 	}
 
-	SDT_PROBE3(cap_rt_isolation, , , deny, "vnode",
+	SDT_PROBE3(cap_rt_isolation, , , deny, probe_name,
 	    owner_nonce, caller_nonce);
 	return (EACCES);
+}
+
+/*
+ * Return EACCES if vp is isolated and cred's nonce does not match.
+ * Returns 0 (allow) in all other cases.
+ */
+static int
+fi_check_vp(struct ucred *cred, struct vnode *vp)
+{
+
+	return (fi_check_vp_common(cred, vp, &fi_claim_count, "vnode"));
 }
 
 /* --- Content access --- */
@@ -383,9 +397,6 @@ static int
 fi_check_lookup(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel __unused, struct componentname *cnp __unused)
 {
-	struct fi_claim *c;
-	uint64_t caller_nonce;
-	uint64_t owner_nonce __unused;
 
 	/*
 	 * Separate fast-path counter for directory claims.
@@ -393,36 +404,7 @@ fi_check_lookup(struct ucred *cred, struct vnode *dvp,
 	 * it must be zero-cost when no directories are claimed —
 	 * even if file claims exist.
 	 */
-	if (atomic_load_acq_int(&fi_dir_claim_count) == 0)
-		return (0);
-
-	caller_nonce = cap_rt_proc_nonce(cred);
-
-	rw_rlock(&fi_lock);
-	c = fi_claim_lookup(dvp);
-	if (c == NULL) {
-		rw_runlock(&fi_lock);
-		return (0);
-	}
-	if (caller_nonce != 0 && caller_nonce == c->fi_nonce) {
-		rw_runlock(&fi_lock);
-		return (0);
-	}
-	owner_nonce = c->fi_nonce;
-	rw_runlock(&fi_lock);
-
-	if (caller_nonce != 0) {
-		rw_rlock(&fi_auth_lock);
-		if (fi_is_authorized(caller_nonce, owner_nonce)) {
-			rw_runlock(&fi_auth_lock);
-			return (0);
-		}
-		rw_runlock(&fi_auth_lock);
-	}
-
-	SDT_PROBE3(cap_rt_isolation, , , deny, "lookup",
-	    owner_nonce, caller_nonce);
-	return (EACCES);
+	return (fi_check_vp_common(cred, dvp, &fi_dir_claim_count, "lookup"));
 }
 
 /* --- Unix domain sockets --- */
@@ -623,7 +605,7 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 		int nbuckets = 4, i, j;
 		bool found_claim = false;
 		bool dup;
-		uint64_t denied_nonce __unused = 0;
+		uint64_t denied_nonce = 0;
 
 		buckets[0] = fi_net_hash_fn(port, domain);
 		buckets[1] = fi_net_hash_fn(0, domain);
@@ -669,16 +651,82 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 		}
 
 		if (found_claim) {
+			/*
+			 * Collect all distinct denied nonces before
+			 * releasing fi_net_lock so the auth check
+			 * covers every claiming owner, not just the
+			 * last one found.
+			 */
+			uint64_t denied[FI_NET_MAX_DENIED];
+			int ndeny = 0;
+
+			for (i = 0; i < nitems(buckets); i++) {
+				bool dup = false;
+				for (j = 0; j < i; j++) {
+					if (buckets[j] == buckets[i]) {
+						dup = true;
+						break;
+					}
+				}
+				if (dup)
+					continue;
+				LIST_FOREACH(nc, &fi_net_hash[buckets[i]],
+				    fn_hashlink) {
+					int k;
+
+					if (!(nc->fn_direction & direction))
+						continue;
+					if (nc->fn_domain != 0 &&
+					    nc->fn_domain != domain)
+						continue;
+					if (nc->fn_protocol != 0 &&
+					    nc->fn_protocol != protocol)
+						continue;
+					if (nc->fn_port != 0 &&
+					    nc->fn_port != port)
+						continue;
+					if (!fi_net_addr_match(nc, sa))
+						continue;
+					if (caller_nonce != 0 &&
+					    caller_nonce == nc->fn_nonce)
+						continue;
+					/* Deduplicate nonces. */
+					for (k = 0; k < ndeny; k++) {
+						if (denied[k] ==
+						    nc->fn_nonce)
+							break;
+					}
+					if (k == ndeny) {
+						if (ndeny < FI_NET_MAX_DENIED)
+							denied[ndeny++] =
+							    nc->fn_nonce;
+						else
+							ndeny = -1; /* overflow */
+					}
+					if (ndeny < 0)
+						break;
+				}
+				if (ndeny < 0)
+					break;
+			}
 			rw_runlock(&fi_net_lock);
-			/* Check auth table before denying. */
-			if (caller_nonce != 0 && denied_nonce != 0) {
+
+			/* Check auth table against every denied nonce. */
+			if (caller_nonce != 0 && ndeny > 0) {
+				bool authorized = true;
+
 				rw_rlock(&fi_auth_lock);
-				if (fi_is_authorized(caller_nonce,
-				    denied_nonce)) {
-					rw_runlock(&fi_auth_lock);
-					return (0);
+				for (i = 0; i < ndeny; i++) {
+					if (!fi_is_authorized(caller_nonce,
+					    denied[i])) {
+						denied_nonce = denied[i];
+						authorized = false;
+						break;
+					}
 				}
 				rw_runlock(&fi_auth_lock);
+				if (authorized)
+					return (0);
 			}
 			SDT_PROBE3(cap_rt_isolation, , , deny, "net",
 			    denied_nonce, caller_nonce);
@@ -1072,8 +1120,7 @@ fi_do_claim_net(struct cap_rt_instance *s, struct fi_priv *priv,
  * can release a claim.
  */
 static int
-fi_do_release_net(struct fi_priv *priv __unused,
-    const struct fi_net_request *nr, uint64_t nonce)
+fi_do_release_net(const struct fi_net_request *nr, uint64_t nonce)
 {
 	struct fi_net_claim *nc;
 	u_long bucket;
@@ -1203,7 +1250,7 @@ fi_call(struct cap_rt_instance *s,
 			return (EINVAL);
 		if (nr->prefix > 128)
 			return (EINVAL);
-		return (fi_do_release_net(priv, nr, caller_nonce));
+		return (fi_do_release_net(nr, caller_nonce));
 	}
 	case FI_OP_MINT: {
 		struct fi_claim *mc;
@@ -1392,40 +1439,8 @@ fi_check_create(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel __unused, struct componentname *cnp __unused,
     struct vattr *vap __unused)
 {
-	struct fi_claim *c;
-	uint64_t caller_nonce;
-	uint64_t owner_nonce __unused;
 
-	if (atomic_load_acq_int(&fi_dir_claim_count) == 0)
-		return (0);
-
-	caller_nonce = cap_rt_proc_nonce(cred);
-
-	rw_rlock(&fi_lock);
-	c = fi_claim_lookup(dvp);
-	if (c == NULL) {
-		rw_runlock(&fi_lock);
-		return (0);
-	}
-	if (caller_nonce != 0 && caller_nonce == c->fi_nonce) {
-		rw_runlock(&fi_lock);
-		return (0);
-	}
-	owner_nonce = c->fi_nonce;
-	rw_runlock(&fi_lock);
-
-	if (caller_nonce != 0) {
-		rw_rlock(&fi_auth_lock);
-		if (fi_is_authorized(caller_nonce, owner_nonce)) {
-			rw_runlock(&fi_auth_lock);
-			return (0);
-		}
-		rw_runlock(&fi_auth_lock);
-	}
-
-	SDT_PROBE3(cap_rt_isolation, , , deny, "create",
-	    owner_nonce, caller_nonce);
-	return (EACCES);
+	return (fi_check_vp_common(cred, dvp, &fi_dir_claim_count, "create"));
 }
 
 static struct mac_policy_ops fi_mac_ops = {

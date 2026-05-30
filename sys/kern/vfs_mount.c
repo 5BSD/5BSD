@@ -2230,7 +2230,7 @@ dounmount(struct mount *mp, uint64_t flags, struct thread *td)
 		return (error);
 	}
 #ifdef MAC
-	error = mac_mount_check_unmount(td->td_ucred, mp, 0);
+	error = mac_mount_check_unmount(td->td_ucred, mp, flags);
 	if (error != 0) {
 		vfs_rel(mp);
 		return (error);

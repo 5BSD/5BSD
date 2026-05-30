@@ -140,8 +140,6 @@ cap_rt_cred_init_label(struct label *label)
 {
 	struct cap_rt_label *cl;
 
-	if (label == NULL)
-		return;
 	cl = malloc(sizeof(*cl), M_CAP_RT, M_WAITOK | M_ZERO);
 	SLOT_SET(label, cl);
 }
@@ -151,8 +149,6 @@ cap_rt_cred_create_init(struct ucred *cred)
 {
 	struct cap_rt_label *cl;
 
-	if (cred->cr_label == NULL)
-		return;
 	cl = SLOT(cred->cr_label);
 	if (cl != NULL)
 		cap_rt_label_gen_nonce(cl);
@@ -163,8 +159,6 @@ cap_rt_cred_copy_label(struct label *src, struct label *dest)
 {
 	struct cap_rt_label *scl, *dcl;
 
-	if (src == NULL || dest == NULL)
-		return;
 	scl = SLOT(src);
 	dcl = SLOT(dest);
 	if (scl != NULL && dcl != NULL)
@@ -176,8 +170,6 @@ cap_rt_cred_destroy_label(struct label *label)
 {
 	struct cap_rt_label *cl;
 
-	if (label == NULL)
-		return;
 	cl = SLOT(label);
 	if (cl != NULL) {
 		free(cl, M_CAP_RT);
@@ -202,8 +194,6 @@ cap_rt_execve_transition(struct ucred *old, struct ucred *new,
 {
 	struct cap_rt_label *cl;
 
-	if (new->cr_label == NULL)
-		return;
 	cl = SLOT(new->cr_label);
 	if (cl != NULL)
 		cap_rt_label_gen_nonce(cl);
@@ -471,23 +461,13 @@ cap_rt_instance_create(struct cap_rt_service *svc, struct thread *td,
  * Character device — /dev/cap_rt
  * ---------------------------------------------------------------- */
 
-static d_open_t		cap_rt_open;
 static d_ioctl_t	cap_rt_cdev_ioctl;
 
 static struct cdevsw cap_rt_cdevsw = {
 	.d_version =	D_VERSION,
-	.d_open =	cap_rt_open,
 	.d_ioctl =	cap_rt_cdev_ioctl,
 	.d_name =	"cap_rt",
 };
-
-static int
-cap_rt_open(struct cdev *dev __unused, int oflags __unused,
-    int devtype __unused, struct thread *td __unused)
-{
-
-	return (0);
-}
 
 static int
 cap_rt_ioctl_connect(struct cap_rt_connect_args *args, struct thread *td)
@@ -495,7 +475,7 @@ cap_rt_ioctl_connect(struct cap_rt_connect_args *args, struct thread *td)
 	const char *svc_name __unused;
 	struct cap_rt_service *svc;
 	sbintime_t start __unused;
-	uint64_t badge;
+	uint64_t badge = 0;
 	int error;
 
 	start = getsbinuptime();
@@ -523,13 +503,12 @@ cap_rt_ioctl_connect(struct cap_rt_connect_args *args, struct thread *td)
 	refcount_acquire(&svc->csvc_refcnt);
 	sx_sunlock(&cap_rt_registry_lock);
 
-	badge = 0;
 	if (svc->csvc_ops->co_connect != NULL) {
 		error = svc->csvc_ops->co_connect(td->td_ucred,
 		    svc->csvc_arg, &badge);
 		if (error != 0) {
 			refcount_release(&svc->csvc_refcnt);
-			return (error);
+			goto out;
 		}
 	}
 
