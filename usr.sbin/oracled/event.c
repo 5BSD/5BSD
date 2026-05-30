@@ -26,6 +26,8 @@
 
 int event_kq = -1;
 
+#define	SHUTDOWN_TIMER_IDENT	99999
+
 static bool pending_reboot;
 static int pending_reboot_howto;
 
@@ -57,6 +59,15 @@ shutdown_begin(int reason)
 
 	od.shutting_down = true;
 	supervisor_stop(event_kq);
+
+	/* Arm a 30-second shutdown watchdog timer. */
+	{
+		struct kevent kev;
+		EV_SET(&kev, SHUTDOWN_TIMER_IDENT, EVFILT_TIMER,
+		    EV_ADD | EV_ONESHOT, NOTE_SECONDS, 30, NULL);
+		if (kevent(event_kq, &kev, 1, NULL, 0, NULL) == -1)
+			syslog(LOG_WARNING, "shutdown watchdog timer: %m");
+	}
 }
 
 static void
@@ -66,6 +77,14 @@ shutdown_finish(void)
 	if (!od.shutting_down)
 		return;
 	od.shutting_down = false;	/* prevent re-entry */
+
+	/* Cancel the shutdown watchdog timer if it hasn't fired. */
+	{
+		struct kevent kev;
+		EV_SET(&kev, SHUTDOWN_TIMER_IDENT, EVFILT_TIMER,
+		    EV_DELETE, 0, 0, NULL);
+		(void)kevent(event_kq, &kev, 1, NULL, 0, NULL);
+	}
 
 	if (!od.test_mode)
 		kill_subtree();
@@ -155,6 +174,15 @@ event_loop(void)
 			supervisor_handle_procdesc(&kev);
 			if (od.shutting_down && supervisor_is_stopped())
 				shutdown_finish();
+			continue;
+		}
+
+		/* Shutdown watchdog timer. */
+		if (kev.filter == EVFILT_TIMER && kev.udata == NULL &&
+		    kev.ident == SHUTDOWN_TIMER_IDENT) {
+			syslog(LOG_WARNING,
+			    "shutdown timed out after 30 seconds");
+			shutdown_finish();
 			continue;
 		}
 

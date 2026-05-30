@@ -212,6 +212,7 @@ manifest_load_file(const char *path, struct svc_manifest *m)
 
 	memset(m, 0, sizeof(*m));
 	m->restart = SVC_RESTART_NEVER;
+	m->stop_timeout = 5;
 
 	parser = ucl_parser_new(UCL_PARSER_DEFAULT);
 	if (parser == NULL) {
@@ -292,6 +293,17 @@ manifest_load_file(const char *path, struct svc_manifest *m)
 			    "policy: %s", m->label, ucl_object_tostring(o));
 		else
 			m->restart = rp;
+	}
+
+	/* stop_timeout */
+	o = ucl_object_lookup(root, "stop_timeout");
+	if (o != NULL && ucl_object_type(o) == UCL_INT) {
+		int64_t v = ucl_object_toint(o);
+		if (v < 1)
+			v = 1;
+		if (v > 300)
+			v = 300;
+		m->stop_timeout = (int)v;
 	}
 
 	/* provides / requires */

@@ -64,7 +64,8 @@ build_token_fds_str(char *buf, size_t bufsz, unsigned ntokens)
 static void __dead2
 child_exec(struct svc_manifest *m, int child_pair_fd,
     int *token_fds, unsigned ntokens,
-    uid_t uid, gid_t gid, bool have_creds, const char *homedir)
+    uid_t uid, gid_t gid, bool have_creds, const char *homedir,
+    gid_t *groups, int ngroups)
 {
 	char pair_env[64], token_env[256], label_env[128];
 	char user_env[128], home_env[PATH_MAX + 8];
@@ -145,8 +146,7 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 	 * is a privilege escalation.  Always drop group before user;
 	 * if only user is set, gid comes from the user's passwd entry. */
 	if (have_creds) {
-		if (initgroups(m->user[0] != '\0' ? m->user : "nobody",
-		    gid) == -1)
+		if (setgroups(ngroups, groups) == -1)
 			_exit(126);
 		if (setgid(gid) == -1)
 			_exit(126);
@@ -187,6 +187,8 @@ svc_exec(struct svc_runtime *svc, int kq)
 	unsigned ntokens;
 	uid_t uid;
 	gid_t gid;
+	gid_t groups[NGROUPS_MAX + 1];
+	int ngroups;
 	bool have_creds;
 	pid_t pid;
 	int pd_fd;
@@ -216,6 +218,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	/* Resolve credentials before fork. */
 	uid = 0;
 	gid = 0;
+	ngroups = 0;
 	have_creds = false;
 	homedir[0] = '\0';
 	if (m->user[0] != '\0') {
@@ -249,6 +252,18 @@ svc_exec(struct svc_runtime *svc, int kq)
 			}
 			uid = pw->pw_uid;
 			strlcpy(homedir, pw->pw_dir, sizeof(homedir));
+		}
+	}
+
+	/* Build supplementary group list in the parent (async-signal-safe
+	 * setgroups() is used in the child instead of initgroups()). */
+	if (have_creds) {
+		ngroups = NGROUPS_MAX + 1;
+		if (getgrouplist(m->user[0] != '\0' ? m->user : "nobody",
+		    gid, groups, &ngroups) == -1) {
+			syslog(LOG_ERR, "svc_exec %s: getgrouplist: %m",
+			    m->label);
+			return (-1);
 		}
 	}
 
@@ -316,7 +331,8 @@ svc_exec(struct svc_runtime *svc, int kq)
 		/* Child — does not return. */
 		child_exec(m, child_end, token_fds, ntokens,
 		    uid, gid, have_creds,
-		    homedir[0] != '\0' ? homedir : NULL);
+		    homedir[0] != '\0' ? homedir : NULL,
+		    groups, ngroups);
 		/* NOTREACHED */
 	}
 

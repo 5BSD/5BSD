@@ -172,7 +172,7 @@ cmd_load(uid_t euid, const char *filename, int kq, struct ctl_reply *reply,
 }
 
 void
-cmd_services(uint32_t flags, struct ctl_reply *reply,
+cmd_services(uid_t euid, uint32_t flags, struct ctl_reply *reply,
     char *summary, size_t sumlen)
 {
 	static const char *state_names[] = {
@@ -184,6 +184,13 @@ cmd_services(uint32_t flags, struct ctl_reply *reply,
 	unsigned i, j, ndisk;
 	int verbose;
 	bool found;
+
+	if (euid != 0) {
+		reply->status = EPERM;
+		syslog(LOG_WARNING, "control: services denied uid %u", euid);
+		ORACLED_PROBE_CTL_DENY(CTL_OP_SERVICES, euid);
+		return;
+	}
 
 	verbose = (flags & 1);
 

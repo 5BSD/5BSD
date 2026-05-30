@@ -80,7 +80,7 @@ ctl_setup(void)
 	un.sun_family = AF_LOCAL;
 	strlcpy(un.sun_path, od.cfg.control_socket, sizeof(un.sun_path));
 
-	old_umask = umask(0077);
+	old_umask = umask(~od.cfg.control_socket_mode & 0777);
 	if (bind(fd, (struct sockaddr *)&un, sizeof(un)) == -1) {
 		syslog(LOG_ERR, "control bind %s: %m",
 		    od.cfg.control_socket);
@@ -89,14 +89,6 @@ ctl_setup(void)
 		return (-1);
 	}
 	(void)umask(old_umask);
-
-	if (chmod(od.cfg.control_socket, od.cfg.control_socket_mode) == -1) {
-		syslog(LOG_ERR, "control chmod %s: %m",
-		    od.cfg.control_socket);
-		close(fd);
-		(void)unlink(od.cfg.control_socket);
-		return (-1);
-	}
 
 	if (listen(fd, 5) == -1) {
 		syslog(LOG_ERR, "control listen: %m");
@@ -145,7 +137,7 @@ readn(int fd, void *buf, size_t len)
 	ssize_t n;
 	size_t off;
 
-	tv.tv_sec = 5;
+	tv.tv_sec = 2;
 	tv.tv_usec = 0;
 	(void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 	(void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -322,7 +314,7 @@ ctl_handle(int *reboot_howto)
 			reply.status = EINVAL;
 			break;
 		}
-		cmd_services(req.flags, &reply, summary, sizeof(summary));
+		cmd_services(euid, req.flags, &reply, summary, sizeof(summary));
 		break;
 	default:
 		reply.status = ENOTSUP;

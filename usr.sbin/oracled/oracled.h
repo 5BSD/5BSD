@@ -65,6 +65,7 @@ struct svc_manifest {
 	uint32_t	cap_system;	/* SYS_GATE_* bitmask */
 
 	int		restart;	/* SVC_RESTART_* */
+	int		stop_timeout;	/* seconds before SIGKILL (default 5) */
 };
 
 /*

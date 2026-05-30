@@ -29,6 +29,8 @@
 #define	RESTART_MIN_UPTIME_SEC	5	/* rapid restart threshold */
 #define	RESTART_MAX_DELAY_SEC	30
 #define	RESTART_RESET_SEC	60	/* reset counter after stability */
+#define	RESTART_MAX_FAILURES	5	/* circuit breaker threshold */
+#define	RESTART_WINDOW_SEC	300	/* circuit breaker window (unused) */
 
 /* Monotonic counters for unique timer idents.  High bit
  * distinguishes stop timers from restart timers. */
@@ -77,6 +79,8 @@ manifest_changed(const struct svc_manifest *a, const struct svc_manifest *b)
 	    a->nrequires * sizeof(a->requires[0])) != 0)
 		return (true);
 	if (a->cap_system != b->cap_system)
+		return (true);
+	if (a->stop_timeout != b->stop_timeout)
 		return (true);
 	return (false);
 }
@@ -138,7 +142,8 @@ schedule_stop_kill(struct svc_runtime *svc, int kq)
 
 	svc->stop_timer_ident = stop_timer_next_ident++;
 	EV_SET(&kev, svc->stop_timer_ident, EVFILT_TIMER,
-	    EV_ADD | EV_ONESHOT, NOTE_SECONDS, 5, svc);
+	    EV_ADD | EV_ONESHOT, NOTE_SECONDS,
+	    svc->manifest.stop_timeout, svc);
 
 	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
 		syslog(LOG_ERR, "service %s: stop timer: %m",
@@ -316,6 +321,15 @@ supervisor_handle_procdesc(struct kevent *kev)
 		if (uptime_sec >= RESTART_RESET_SEC)
 			svc->restart_count = 1;
 
+		/* Circuit breaker: disable service after too many failures. */
+		if (svc->restart_count >= RESTART_MAX_FAILURES) {
+			syslog(LOG_CRIT, "service %s: failed %u times, "
+			    "disabling", svc->manifest.label,
+			    svc->restart_count);
+			svc->state = SVC_STATE_STOPPED;
+			return;
+		}
+
 		/* Backoff if it died too fast. */
 		if (uptime_sec < RESTART_MIN_UPTIME_SEC) {
 			schedule_restart(svc, event_kq);
@@ -367,9 +381,9 @@ supervisor_handle_pair(struct kevent *kev)
 	 * avoid a busy-loop (EVFILT_READ is level-triggered).
 	 */
 	{
-		struct kevent kev;
-		EV_SET(&kev, svc->pair_fd, EVFILT_READ, EV_DISABLE, 0, 0, svc);
-		(void)kevent(event_kq, &kev, 1, NULL, 0, NULL);
+		struct kevent disable_kev;
+		EV_SET(&disable_kev, svc->pair_fd, EVFILT_READ, EV_DISABLE, 0, 0, svc);
+		(void)kevent(event_kq, &disable_kev, 1, NULL, 0, NULL);
 	}
 	syslog(LOG_DEBUG, "service %s: pair channel activity (disabled)",
 	    svc->manifest.label);
