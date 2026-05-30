@@ -75,6 +75,10 @@ SDT_PROBE_DEFINE3(cap_rt, , , call,
 SDT_PROBE_DEFINE6(cap_rt, , , call__done,
     "const char *", "uint64_t", "uint32_t", "uint32_t", "int",
     "sbintime_t");
+SDT_PROBE_DEFINE3(cap_rt, , , forward,
+    "const char *", "uint64_t", "size_t");
+SDT_PROBE_DEFINE4(cap_rt, , , forward__done,
+    "const char *", "uint64_t", "size_t", "int");
 SDT_PROBE_DEFINE3(cap_rt, , , revoke,
     "const char *", "uint64_t", "int");
 SDT_PROBE_DEFINE4(cap_rt, , , revoke__done,
@@ -104,18 +108,12 @@ counter_u64_t cap_rt_stat_instances;
 SYSCTL_COUNTER_U64(_kern_cap_rt, OID_AUTO, instances, CTLFLAG_RD,
     &cap_rt_stat_instances, "Number of active instances");
 
-/* ----------------------------------------------------------------
- * Process nonce — MACF credential label
- *
- * Attaches a cryptographic nonce to every credential.  The nonce
- * identifies the program image: inherited across fork, rotated on
- * exec.  Services read it via cap_rt_proc_nonce().
- *
+/*
  * The exec transition hook runs with the process lock held.  To avoid
  * taking the MAC framework's sleepable dynamic-policy lock on that path,
  * this policy must be registered as a static boot-time policy rather than
  * a late-loadable/unloadable one.
- * ---------------------------------------------------------------- */
+ */
 
 struct cap_rt_label {
 	uint64_t	cl_nonce;
@@ -245,10 +243,6 @@ static struct mac_policy_ops cap_rt_label_mac_ops = {
 MAC_POLICY_SET(&cap_rt_label_mac_ops, mac_cap_rt, "CAP_RT credential nonce",
     MPC_LOADTIME_FLAG_NOTLATE, &cap_rt_label_slot);
 
-/* ----------------------------------------------------------------
- * Service registry
- * ---------------------------------------------------------------- */
-
 struct cap_rt_service *
 cap_rt_service_lookup(const char *name)
 {
@@ -261,10 +255,6 @@ cap_rt_service_lookup(const char *name)
 	}
 	return (NULL);
 }
-
-/* ----------------------------------------------------------------
- * Message lifecycle
- * ---------------------------------------------------------------- */
 
 void
 cap_rt_msg_free(struct cap_rt_msg *msg)
@@ -280,10 +270,6 @@ cap_rt_msg_free(struct cap_rt_msg *msg)
 		crfree(msg->cm_cred);
 	uma_zfree(cap_rt_msg_zone, msg);
 }
-
-/* ----------------------------------------------------------------
- * Instance init / free — shared by all creation paths.
- * ---------------------------------------------------------------- */
 
 /*
  * Allocate and initialize an instance.  Does NOT reserve a slot,
@@ -376,17 +362,18 @@ cap_rt_instance_link(struct cap_rt_service *svc, struct cap_rt_instance *s)
 	return (0);
 }
 
-/* ----------------------------------------------------------------
- * Instance creation — CAP_RT_CONNECT and cap_rt_mint_fp
- * ---------------------------------------------------------------- */
-
-int
-cap_rt_instance_create(struct cap_rt_service *svc, struct thread *td,
-    uint64_t badge, int *fdp)
+/*
+ * Shared instance setup: reserve slot, allocate instance, create a
+ * struct file, run co_init, and link into the service list.  On
+ * success the caller owns one reference on the returned fp.
+ */
+static int
+cap_rt_instance_setup(struct cap_rt_service *svc, struct thread *td,
+    uint64_t badge, struct file **fpp)
 {
 	struct cap_rt_instance *s;
 	struct file *fp;
-	int error, fd;
+	int error;
 
 	error = cap_rt_service_reserve(svc);
 	if (error != 0)
@@ -405,7 +392,6 @@ cap_rt_instance_create(struct cap_rt_service *svc, struct thread *td,
 	    (svc->csvc_svc_flags & CAP_RT_SVC_NOXFER) ?
 	    &cap_rt_instance_noxfer_ops : &cap_rt_instance_ops);
 
-	/* Run co_init before the fd is visible to userspace. */
 	if (svc->csvc_ops->co_init != NULL) {
 		error = svc->csvc_ops->co_init(s, svc->csvc_arg);
 		if (error != 0) {
@@ -424,22 +410,31 @@ cap_rt_instance_create(struct cap_rt_service *svc, struct thread *td,
 	}
 
 	/*
-	 * Link before finstall.  Once finstall publishes the fd,
-	 * another thread can close() it immediately.  If close sees
-	 * !LINKED it skips the unlink and service-ref release,
-	 * leaking the reservation.  Linking first ensures close
-	 * always cleans up correctly.
-	 *
-	 * cap_rt_instance_link rechecks DESTROYING under xlock so a
-	 * racing service_destroy cannot miss this instance.
+	 * Link before the fd is visible.  cap_rt_instance_link rechecks
+	 * DESTROYING under xlock so a racing service_destroy cannot miss
+	 * this instance.
 	 */
 	error = cap_rt_instance_link(svc, s);
 	if (error != 0) {
-		/* Service tearing down — let close fire co_revoke. */
 		fdrop(fp, td);
 		cap_rt_service_unreserve(svc);
 		return (error);
 	}
+
+	*fpp = fp;
+	return (0);
+}
+
+int
+cap_rt_instance_create(struct cap_rt_service *svc, struct thread *td,
+    uint64_t badge, int *fdp)
+{
+	struct file *fp;
+	int error, fd;
+
+	error = cap_rt_instance_setup(svc, td, badge, &fp);
+	if (error != 0)
+		return (error);
 
 	/*
 	 * Install the fd.  From this point close handles all cleanup
@@ -451,15 +446,25 @@ cap_rt_instance_create(struct cap_rt_service *svc, struct thread *td,
 		return (error);
 
 	SDT_PROBE3(cap_rt, , , connect,
-	    svc->csvc_name, s->ci_badge, td->td_proc->p_pid);
+	    svc->csvc_name, badge, td->td_proc->p_pid);
 
 	*fdp = fd;
 	return (0);
 }
 
-/* ----------------------------------------------------------------
- * Character device — /dev/cap_rt
- * ---------------------------------------------------------------- */
+/*
+ * Mint an instance and return a struct file * without installing an fd.
+ * Safe to call from handler (taskqueue) context.  The caller holds one
+ * reference on the returned fp and must fdrop() after passing it as an
+ * attached descriptor in cap_rt_reply() or cap_rt_notify().
+ */
+int
+cap_rt_mint_fp(struct cap_rt_service *svc, uint64_t badge,
+    struct file **fpp)
+{
+
+	return (cap_rt_instance_setup(svc, curthread, badge, fpp));
+}
 
 static d_ioctl_t	cap_rt_cdev_ioctl;
 
@@ -537,10 +542,6 @@ cap_rt_cdev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 		return (ENOTTY);
 	}
 }
-
-/* ----------------------------------------------------------------
- * Module lifecycle
- * ---------------------------------------------------------------- */
 
 int
 cap_rt_init(void)

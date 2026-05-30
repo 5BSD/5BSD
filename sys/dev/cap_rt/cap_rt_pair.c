@@ -70,8 +70,7 @@ pair_connect(struct ucred *cred __unused, void *arg __unused,
     uint64_t *badge_out)
 {
 
-	*badge_out = atomic_fetchadd_64(&pair_next_badge, 1);
-	return (0);
+	return (CAP_RT_CONNECT_BADGE(pair_next_badge, badge_out));
 }
 
 static int
@@ -88,7 +87,6 @@ pair_handler(struct cap_rt_instance *s, const struct cap_rt_msg *msg,
 
 	start = getsbinuptime();
 	op = 0;
-	error = 0;
 	pp = cap_rt_instance_get_priv(s);
 
 	if (pp == NULL) {

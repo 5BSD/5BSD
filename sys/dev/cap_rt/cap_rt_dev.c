@@ -133,10 +133,6 @@ const struct fileops cap_rt_instance_noxfer_ops = {
 	.fo_flags = 0,
 };
 
-/* ----------------------------------------------------------------
- * RX enqueue helper — enqueue on RX queue, schedule taskqueue
- * ---------------------------------------------------------------- */
-
 static int
 cap_rt_instance_enqueue_rx(struct cap_rt_instance *s, struct cap_rt_msg *msg)
 {
@@ -167,15 +163,6 @@ cap_rt_instance_enqueue_rx(struct cap_rt_instance *s, struct cap_rt_msg *msg)
 	return (0);
 }
 
-/* ----------------------------------------------------------------
- * ioctl — SENDMSG, RECVMSG, GETINFO
- *
- * CAP_RT_SENDMSG and CAP_RT_RECVMSG are the canonical message API.
- * read()/write() are disabled (invfo_rdwr).  Capsicum ioctl
- * whitelisting via cap_ioctls_limit() controls which operations
- * a restricted fd can perform.
- * ---------------------------------------------------------------- */
-
 static int
 cap_rt_instance_do_sendmsg(struct cap_rt_instance *s,
     struct cap_rt_sendmsg_args *args, struct thread *td)
@@ -189,7 +176,6 @@ cap_rt_instance_do_sendmsg(struct cap_rt_instance *s,
 
 	start = getsbinuptime();
 	svc_name = "<none>";
-	error = 0;
 	if (args->flags != 0 || (args->_reserved[0] | args->_reserved[1] |
 	    args->_reserved[2] | args->_reserved[3]) != 0) {
 		error = EINVAL;
@@ -218,7 +204,6 @@ cap_rt_instance_do_sendmsg(struct cap_rt_instance *s,
 		goto out;
 	}
 
-	/* Allocate fixed-size message — one allocation, no malloc. */
 	msg = uma_zalloc(cap_rt_msg_zone, M_WAITOK | M_ZERO);
 
 	/* Copyin payload directly into inline buffer. */
@@ -232,7 +217,6 @@ cap_rt_instance_do_sendmsg(struct cap_rt_instance *s,
 	}
 	msg->cm_datalen = args->payload_len;
 
-	/* Resolve attached fds directly into inline slots. */
 	if (args->nfds > 0) {
 		error = copyin(args->fds, fdbuf, args->nfds * sizeof(int));
 		if (error != 0) {
@@ -374,7 +358,6 @@ cap_rt_instance_do_recvmsg(struct cap_rt_instance *s, struct file *fp,
 	mtx_unlock(&s->ci_mtx);
 
 	/* Copyout payload. */
-	error = 0;
 	if (msg->cm_datalen > 0)
 		error = copyout(msg->cm_data, args->payload, msg->cm_datalen);
 	if (error != 0) {
@@ -475,34 +458,34 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		int fdbuf[CAP_RT_MAX_FDS];
 		size_t rlen;
 		int out_nfds;
-		int err, i;
+		int error, i;
 
 		start = getsbinuptime();
 		held = false;
 		svc_name = (svc != NULL) ? svc->csvc_name : "<none>";
 		if (s->ci_restricted & CAP_RT_RF_NO_CALL) {
-			err = EACCES;
+			error = EACCES;
 			goto call_done;
 		}
 		if (ca->flags != 0 || (ca->_reserved[0] |
 		    ca->_reserved[1]) != 0) {
-			err = EINVAL;
+			error = EINVAL;
 			goto call_done;
 		}
 		if (svc == NULL || svc->csvc_ops->co_call == NULL) {
-			err = EOPNOTSUPP;
+			error = EOPNOTSUPP;
 			goto call_done;
 		}
 		if (ca->req_nfds > CAP_RT_MAX_FDS ||
 		    ca->reply_nfds > CAP_RT_MAX_FDS) {
-			err = EINVAL;
+			error = EINVAL;
 			goto call_done;
 		}
 
 		mtx_lock(&s->ci_mtx);
 		if (s->ci_flags & CAP_RT_SF_DEAD) {
 			mtx_unlock(&s->ci_mtx);
-			err = ECONNRESET;
+			error = ECONNRESET;
 			goto call_done;
 		}
 		/*
@@ -523,10 +506,10 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		reply_buf = NULL;
 		out_nfds = 0;
 		memset(out_fds, 0, sizeof(out_fds));
-		err = 0;
+		error = 0;
 
 		if (ca->req_len > CAP_RT_MSG_PAYLOAD_SIZE) {
-			err = EMSGSIZE;
+			error = EMSGSIZE;
 			goto call_out;
 		}
 		/* Cap reply buffer at msg_size. */
@@ -535,16 +518,16 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 
 		if (ca->req_len > 0) {
 			req_buf = malloc(ca->req_len, M_CAP_RT, M_WAITOK);
-			err = copyin(ca->req, req_buf, ca->req_len);
-			if (err != 0)
+			error = copyin(ca->req, req_buf, ca->req_len);
+			if (error != 0)
 				goto call_out;
 		}
 
 		/* Resolve attached fds with Capsicum rights. */
 		if (ca->req_nfds > 0) {
-			err = copyin(ca->req_fds, fdbuf,
+			error = copyin(ca->req_fds, fdbuf,
 			    ca->req_nfds * sizeof(int));
-			if (err != 0)
+			if (error != 0)
 				goto call_out;
 			files = malloc(ca->req_nfds * sizeof(struct file *),
 			    M_CAP_RT, M_WAITOK | M_ZERO);
@@ -552,10 +535,10 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			    sizeof(struct filecaps), M_CAP_RT,
 			    M_WAITOK | M_ZERO);
 			for (i = 0; i < (int)ca->req_nfds; i++) {
-				err = fget_cap(td, fdbuf[i],
+				error = fget_cap(td, fdbuf[i],
 				    &cap_no_rights, NULL,
 				    &files[i], &call_fcaps[i]);
-				if (err != 0) {
+				if (error != 0) {
 					while (--i >= 0) {
 						fdrop(files[i], td);
 						files[i] = NULL;
@@ -582,7 +565,7 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 
 		SDT_PROBE3(cap_rt, , , call,
 		    svc->csvc_name, s->ci_badge, ca->req_len);
-		err = svc->csvc_ops->co_call(s, req_buf, ca->req_len,
+		error = svc->csvc_ops->co_call(s, req_buf, ca->req_len,
 		    files, call_fcaps, ca->req_nfds,
 		    reply_buf, &rlen,
 		    out_fds, &out_nfds,
@@ -594,7 +577,7 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		while (out_nfds > 0 && out_fds[out_nfds - 1] == NULL)
 			out_nfds--;
 
-		if (err == 0 && rlen > 0 && reply_buf != NULL) {
+		if (error == 0 && rlen > 0 && reply_buf != NULL) {
 			if (rlen > ca->reply_len) {
 				/*
 				 * Reply too large for caller's buffer.
@@ -602,19 +585,19 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 				 * retry.  Matches RECVMSG EMSGSIZE.
 				 */
 				ca->reply_len = rlen;
-				err = EMSGSIZE;
+				error = EMSGSIZE;
 			} else {
-				err = copyout(reply_buf, ca->reply, rlen);
+				error = copyout(reply_buf, ca->reply, rlen);
 				ca->reply_len = rlen;
 			}
-		} else if (err == 0) {
+		} else if (error == 0) {
 			ca->reply_len = rlen;
 		}
 
 		/* Install reply fds into caller's fd table.
 		 * If handler returned fds but caller has no buffer,
 		 * drop them to avoid leaking. */
-		if (err == 0 && out_nfds > 0 && ca->reply_fds == NULL) {
+		if (error == 0 && out_nfds > 0 && ca->reply_fds == NULL) {
 			for (i = 0; i < out_nfds; i++) {
 				if (out_fds[i] != NULL) {
 					fdrop(out_fds[i], td);
@@ -623,35 +606,35 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			}
 			out_nfds = 0;
 		}
-		if (err == 0 && out_nfds > 0 && ca->reply_fds != NULL) {
+		if (error == 0 && out_nfds > 0 && ca->reply_fds != NULL) {
 			for (i = 0; i < out_nfds; i++) {
-				err = finstall(td, out_fds[i], &fdbuf[i],
+				error = finstall(td, out_fds[i], &fdbuf[i],
 				    0, NULL);
 				/* Drop the handler's ref (finstall took its own). */
 				fdrop(out_fds[i], td);
 				out_fds[i] = NULL;
-				if (err != 0) {
+				if (error != 0) {
 					while (--i >= 0)
 						kern_close(td, fdbuf[i]);
 					out_nfds = 0;
 					break;
 				}
 			}
-			if (err == 0) {
-				err = copyout(fdbuf, ca->reply_fds,
+			if (error == 0) {
+				error = copyout(fdbuf, ca->reply_fds,
 				    out_nfds * sizeof(int));
-				if (err != 0) {
+				if (error != 0) {
 					for (i = 0; i < out_nfds; i++)
 						kern_close(td, fdbuf[i]);
 					out_nfds = 0;
 				}
 			}
 		}
-		ca->reply_nfds = (err == 0) ? out_nfds : 0;
+		ca->reply_nfds = (error == 0) ? out_nfds : 0;
 
 call_out:
 		/* Drop reply fds not installed (error path). */
-		if (err != 0) {
+		if (error != 0) {
 			for (i = 0; i < out_nfds; i++) {
 				if (out_fds[i] != NULL)
 					fdrop(out_fds[i], td);
@@ -682,8 +665,8 @@ call_out:
 			cap_rt_instance_rele(s);
 call_done:
 		SDT_PROBE6(cap_rt, , , call__done, svc_name, s->ci_badge,
-		    ca->req_len, ca->reply_len, err, getsbinuptime() - start);
-		return (err);
+		    ca->req_len, ca->reply_len, error, getsbinuptime() - start);
+		return (error);
 	}
 	case CAP_RT_GETINFO: {
 		struct cap_rt_info_args *info = (struct cap_rt_info_args *)data;
@@ -739,10 +722,6 @@ call_done:
 		return (ENOTTY);
 	}
 }
-
-/* ----------------------------------------------------------------
- * kqueue
- * ---------------------------------------------------------------- */
 
 /* EVFILT_READ */
 static void
@@ -844,10 +823,6 @@ cap_rt_instance_kqfilter(struct file *fp, struct knote *kn)
 	}
 }
 
-/* ----------------------------------------------------------------
- * fdclose — per-fd notification (fires even if other refs remain)
- * ---------------------------------------------------------------- */
-
 static void
 cap_rt_instance_fdclose(struct file *fp, int fd, struct thread *td)
 {
@@ -871,10 +846,6 @@ cap_rt_instance_fdclose(struct file *fp, int fd, struct thread *td)
 	if (svc != NULL && svc->csvc_ops->co_fdclose != NULL)
 		svc->csvc_ops->co_fdclose(s, fd, td, svc->csvc_arg);
 }
-
-/* ----------------------------------------------------------------
- * Stat / close / fill_kinfo / cmp
- * ---------------------------------------------------------------- */
 
 static int
 cap_rt_instance_stat(struct file *fp, struct stat *sb,

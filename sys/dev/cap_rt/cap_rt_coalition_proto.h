@@ -76,6 +76,10 @@ struct coalition_enlist_set_reply {
 
 /*
  * Generic reply — returned for most operations.
+ *
+ * Note: coalition uses raw errno values in the status field (e.g.,
+ * ESRCH, EINVAL, EPERM) rather than defining its own status codes.
+ * This differs from cap_rt_node which uses NODE_STATUS_* constants.
  */
 struct coalition_reply {
 	int32_t		status;		/* 0 = success, errno on failure */

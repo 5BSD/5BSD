@@ -2027,8 +2027,7 @@ coalition_connect(struct ucred *cred __unused, void *arg __unused,
 			return (ENOMEM);
 	}
 
-	*badge_out = atomic_fetchadd_64(&coalition_next_badge, 1);
-	return (0);
+	return (CAP_RT_CONNECT_BADGE(coalition_next_badge, badge_out));
 }
 
 static int

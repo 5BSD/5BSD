@@ -45,6 +45,13 @@
 
 extern struct sx proctree_lock;
 
+#define	NODE_REPLY_INIT(rp, replylenp) do {			\
+	if (*(replylenp) < sizeof(*(rp)))			\
+		return (EINVAL);				\
+	*(replylenp) = sizeof(*(rp));				\
+	memset((rp), 0, sizeof(*(rp)));				\
+} while (0)
+
 /* Verify wire-protocol constants match kernel definitions. */
 _Static_assert(NODE_RTPRIO_REALTIME == RTP_PRIO_REALTIME,
     "NODE_RTPRIO_REALTIME != RTP_PRIO_REALTIME");
@@ -55,22 +62,15 @@ _Static_assert(NODE_RTPRIO_IDLE == RTP_PRIO_IDLE,
 _Static_assert(NODE_RTPRIO_FIFO == RTP_PRIO_FIFO,
     "NODE_RTPRIO_FIFO != RTP_PRIO_FIFO");
 
-/* ----------------------------------------------------------------
- * Operation handlers
- * ---------------------------------------------------------------- */
-
 static int
 node_op_stat(struct proc *p, void *reply, size_t *replylenp)
 {
 	struct node_stat_reply *rp = reply;
 
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
+	NODE_REPLY_INIT(rp, replylenp);
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
-	memset(rp, 0, sizeof(*rp));
 	rp->status = NODE_STATUS_OK;
 	rp->pid = p->p_pid;
 	rp->state = p->p_state;
@@ -89,13 +89,10 @@ node_op_cred(struct proc *p, void *reply, size_t *replylenp)
 	struct ucred *cr;
 	int i, ng;
 
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
+	NODE_REPLY_INIT(rp, replylenp);
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
-	memset(rp, 0, sizeof(*rp));
 	cr = p->p_ucred;
 	rp->status = NODE_STATUS_OK;
 	rp->uid = cr->cr_uid;
@@ -121,16 +118,13 @@ node_op_rusage(struct proc *p, void *reply, size_t *replylenp)
 	struct node_rusage_reply *rp = reply;
 	struct rusage ru;
 
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
+	NODE_REPLY_INIT(rp, replylenp);
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	PROC_STATLOCK(p);
 	rufetch(p, &ru);
 	PROC_STATUNLOCK(p);
 
-	memset(rp, 0, sizeof(*rp));
 	rp->status = NODE_STATUS_OK;
 	rp->utime_usec = (int64_t)ru.ru_utime.tv_sec * 1000000 +
 	    ru.ru_utime.tv_usec;
@@ -152,9 +146,7 @@ node_op_get_rlimit(struct proc *p, uint32_t resource,
 	struct node_rlimit_reply *rp = reply;
 	struct rlimit rl;
 
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
+	NODE_REPLY_INIT(rp, replylenp);
 
 	if (resource >= RLIM_NLIMITS)
 		return (EINVAL);
@@ -162,7 +154,6 @@ node_op_get_rlimit(struct proc *p, uint32_t resource,
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	lim_rlimit_proc(p, resource, &rl);
 
-	memset(rp, 0, sizeof(*rp));
 	rp->status = NODE_STATUS_OK;
 	rp->resource = resource;
 	rp->rlim_cur = rl.rlim_cur;
@@ -227,16 +218,13 @@ node_op_get_racct(struct proc *p, uint32_t resource,
 {
 	struct node_racct_reply *rp = reply;
 
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
+	NODE_REPLY_INIT(rp, replylenp);
 
 	if (resource > RACCT_MAX)
 		return (EINVAL);
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
-	memset(rp, 0, sizeof(*rp));
 	rp->resource = resource;
 
 #ifdef RACCT
@@ -260,13 +248,10 @@ node_op_get_nice(struct proc *p, void *reply, size_t *replylenp)
 {
 	struct node_nice_reply *rp = reply;
 
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
+	NODE_REPLY_INIT(rp, replylenp);
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
-	memset(rp, 0, sizeof(*rp));
 	rp->status = NODE_STATUS_OK;
 	rp->nice = p->p_nice - NZERO;
 
@@ -320,12 +305,9 @@ node_op_get_rtprio(struct proc *p, void *reply, size_t *replylenp)
 	struct rtprio rtp;
 	struct thread *ttd;
 
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
+	NODE_REPLY_INIT(rp, replylenp);
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
-	memset(rp, 0, sizeof(*rp));
 
 	ttd = FIRST_THREAD_IN_PROC(p);
 	if (ttd == NULL) {
@@ -408,21 +390,15 @@ node_op_set_rtprio(struct thread *td, struct proc *p,
 	return (0);
 }
 
-/* ----------------------------------------------------------------
- * Confinement operations
- * ---------------------------------------------------------------- */
-
 static int
 node_op_get_pdeathsig(struct proc *p, void *reply, size_t *replylenp)
 {
 	struct node_pdeathsig_reply *rp = reply;
 
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
+	NODE_REPLY_INIT(rp, replylenp);
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
-	memset(rp, 0, sizeof(*rp));
+
 	rp->status = NODE_STATUS_OK;
 	rp->signal = p->p_pdeathsig;
 
@@ -468,20 +444,16 @@ node_op_reap(struct thread *td, struct proc *p, int cmd,
 	struct node_status_reply *rp = reply;
 	int error;
 
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
+	NODE_REPLY_INIT(rp, replylenp);
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
 	if (p != td->td_proc) {
-		memset(rp, 0, sizeof(*rp));
 		rp->status = NODE_STATUS_EPERM;
 		return (0);
 	}
 
 	if (cmd == PROC_REAP_ACQUIRE && (p->p_flag & P_WEXIT)) {
-		memset(rp, 0, sizeof(*rp));
 		rp->status = NODE_STATUS_DEAD;
 		return (0);
 	}
@@ -496,7 +468,6 @@ node_op_reap(struct thread *td, struct proc *p, int cmd,
 	sx_xunlock(&proctree_lock);
 	_PRELE(p);
 
-	memset(rp, 0, sizeof(*rp));
 	rp->status = (error == 0) ? NODE_STATUS_OK : NODE_STATUS_ERR;
 
 	return (0);
@@ -510,9 +481,7 @@ node_op_reap_status(struct thread *td, struct proc *p,
 	struct procctl_reaper_status rs;
 	int error;
 
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
+	NODE_REPLY_INIT(rp, replylenp);
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
@@ -525,8 +494,6 @@ node_op_reap_status(struct thread *td, struct proc *p,
 
 	sx_sunlock(&proctree_lock);
 	_PRELE(p);
-
-	memset(rp, 0, sizeof(*rp));
 	if (error == 0) {
 		rp->status = NODE_STATUS_OK;
 		rp->rs_flags = rs.rs_flags;
@@ -600,9 +567,7 @@ node_op_get_affinity(struct proc *p,
 	cpuset_t mask;
 	size_t sz;
 
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
+	NODE_REPLY_INIT(rp, replylenp);
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
@@ -618,7 +583,6 @@ node_op_get_affinity(struct proc *p,
 		thread_unlock(ttd);
 	}
 
-	memset(rp, 0, sizeof(*rp));
 	rp->status = NODE_STATUS_OK;
 	sz = sizeof(cpuset_t);
 	if (sz > NODE_CPUSET_MAXSIZE)
@@ -762,9 +726,7 @@ node_op_get_procctl(struct thread *td, struct proc *p,
 	struct node_procctl_reply *rp = reply;
 	int val, error;
 
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
+	NODE_REPLY_INIT(rp, replylenp);
 
 	/* Only allow status-query commands. */
 	switch (com) {
@@ -787,7 +749,6 @@ node_op_get_procctl(struct thread *td, struct proc *p,
 	val = 0;
 	error = node_do_procctl(td, p, com, &val);
 
-	memset(rp, 0, sizeof(*rp));
 	if (error == 0) {
 		rp->status = NODE_STATUS_OK;
 		rp->com = com;
@@ -959,9 +920,7 @@ node_op_set_session(struct proc *p, void *reply, size_t *replylenp)
 	struct session *newsess;
 	int error;
 
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
+	NODE_REPLY_INIT(rp, replylenp);
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	PROC_UNLOCK(p);
@@ -995,7 +954,6 @@ again_sess:
 
 	PROC_LOCK(p);
 
-	memset(rp, 0, sizeof(*rp));
 	if (error == 0) {
 		rp->status = NODE_STATUS_OK;
 		rp->sid = p->p_pid;
@@ -1086,14 +1044,11 @@ node_op_get_umask(struct proc *p, void *reply, size_t *replylenp)
 	struct node_umask_reply *rp = reply;
 	struct pwddesc *pdp;
 
-	if (*replylenp < sizeof(*rp))
-		return (EINVAL);
-	*replylenp = sizeof(*rp);
+	NODE_REPLY_INIT(rp, replylenp);
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	pdp = p->p_pd;
 
-	memset(rp, 0, sizeof(*rp));
 	PWDDESC_XLOCK(pdp);
 	rp->mask = pdp->pd_cmask;
 	PWDDESC_XUNLOCK(pdp);
@@ -1171,10 +1126,6 @@ node_op_set_login(struct thread *td, struct proc *p,
 
 	return (0);
 }
-
-/* ----------------------------------------------------------------
- * co_call handler
- * ---------------------------------------------------------------- */
 
 static int
 node_call(struct cap_rt_instance *s __unused,
@@ -1325,10 +1276,6 @@ node_call(struct cap_rt_instance *s __unused,
 	PROC_UNLOCK(p);
 	return (error);
 }
-
-/* ----------------------------------------------------------------
- * Service registration
- * ---------------------------------------------------------------- */
 
 static struct cap_rt_ops node_ops = {
 	.co_call = node_call,

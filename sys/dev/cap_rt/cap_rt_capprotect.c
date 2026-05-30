@@ -82,8 +82,8 @@ SDT_PROBE_DEFINE3(cap_rt_capprotect, , , deny,
 struct cp_priv {
 	uint64_t	cp_target;	/* shielded nonce (shield) or target (token) */
 	uint32_t	cp_flags;	/* CP_SF_* bitmask (shield instances) */
-	volatile int	cp_is_token;	/* 1 if this is an access token (write-once) */
-	volatile int	cp_active;	/* 1 if shield/auth is active (write-once) */
+	volatile int	cp_is_token;	/* int for atomic_cmpset_int */
+	volatile int	cp_active;	/* int for atomic_cmpset_int */
 };
 
 /*
@@ -248,16 +248,12 @@ cp_auth_remove_by_inst(struct cap_rt_instance *inst)
 	mtx_unlock(&cp_lock);
 }
 
-/* ----------------------------------------------------------------
- * CAP_RT service operations
- * ---------------------------------------------------------------- */
-
 static int
 cp_connect(struct ucred *cred __unused, void *arg __unused,
     uint64_t *badge_out)
 {
-	*badge_out = atomic_fetchadd_64(&cp_next_badge, 1);
-	return (0);
+
+	return (CAP_RT_CONNECT_BADGE(cp_next_badge, badge_out));
 }
 
 static int
@@ -455,8 +451,8 @@ static const struct cap_rt_ops cp_ops = {
 	.co_revoke = cp_revoke,
 };
 
-/* ----------------------------------------------------------------
- * MACF policy — selective enforcement based on shield flags
+/*
+ * MACF policy — selective enforcement based on shield flags.
  *
  * Same-nonce (fork family) processes always pass through.
  * Only foreign programs (different nonce) are subject to the shield.
@@ -464,7 +460,7 @@ static const struct cap_rt_ops cp_ops = {
  * Fast-path: if cp_active_shields == 0, no process on the system
  * is shielded and all hooks return immediately (~10ns) without
  * touching the mutex.
- * ---------------------------------------------------------------- */
+ */
 
 static __inline int
 cp_no_shields(void)
@@ -786,120 +782,66 @@ cp_mac_ipc_deny(struct ucred *cred)
 	return (0);
 }
 
-/* SysV shm wrappers */
-static int
-cp_mac_sysvshm_check_shmat(struct ucred *cred,
-    struct shmid_kernel *shmsegptr __unused,
-    struct label *shmseglabel __unused, int shmflg __unused)
-{
-	return (cp_mac_ipc_deny(cred));
+/*
+ * CP_IPC_CHECK — generate a one-liner MAC hook that delegates to
+ * cp_mac_ipc_deny(cred).  All extra parameters are unused.
+ */
+#define	CP_IPC_CHECK(name, ...)						\
+static int								\
+name(struct ucred *cred, __VA_ARGS__)					\
+{									\
+	return (cp_mac_ipc_deny(cred));					\
 }
 
-static int
-cp_mac_sysvshm_check_shmctl(struct ucred *cred,
+/* SysV shm */
+CP_IPC_CHECK(cp_mac_sysvshm_check_shmat,
+    struct shmid_kernel *shmsegptr __unused,
+    struct label *shmseglabel __unused, int shmflg __unused)
+CP_IPC_CHECK(cp_mac_sysvshm_check_shmctl,
     struct shmid_kernel *shmsegptr __unused,
     struct label *shmseglabel __unused, int cmd __unused)
-{
-	return (cp_mac_ipc_deny(cred));
-}
-
-static int
-cp_mac_sysvshm_check_shmdt(struct ucred *cred,
+CP_IPC_CHECK(cp_mac_sysvshm_check_shmdt,
     struct shmid_kernel *shmsegptr __unused,
     struct label *shmseglabel __unused)
-{
-	return (cp_mac_ipc_deny(cred));
-}
-
-static int
-cp_mac_sysvshm_check_shmget(struct ucred *cred,
+CP_IPC_CHECK(cp_mac_sysvshm_check_shmget,
     struct shmid_kernel *shmsegptr __unused,
     struct label *shmseglabel __unused, int shmflg __unused)
-{
-	return (cp_mac_ipc_deny(cred));
-}
 
-/* SysV sem wrappers */
-static int
-cp_mac_sysvsem_check_semctl(struct ucred *cred,
+/* SysV sem */
+CP_IPC_CHECK(cp_mac_sysvsem_check_semctl,
     struct semid_kernel *semakptr __unused,
     struct label *semaklabel __unused, int cmd __unused)
-{
-	return (cp_mac_ipc_deny(cred));
-}
-
-static int
-cp_mac_sysvsem_check_semget(struct ucred *cred,
+CP_IPC_CHECK(cp_mac_sysvsem_check_semget,
     struct semid_kernel *semakptr __unused,
     struct label *semaklabel __unused)
-{
-	return (cp_mac_ipc_deny(cred));
-}
-
-static int
-cp_mac_sysvsem_check_semop(struct ucred *cred,
+CP_IPC_CHECK(cp_mac_sysvsem_check_semop,
     struct semid_kernel *semakptr __unused,
     struct label *semaklabel __unused, size_t accesstype __unused)
-{
-	return (cp_mac_ipc_deny(cred));
-}
 
-/* SysV msg wrappers */
-static int
-cp_mac_sysvmsq_check_msqget(struct ucred *cred,
+/* SysV msg */
+CP_IPC_CHECK(cp_mac_sysvmsq_check_msqget,
     struct msqid_kernel *msqkptr __unused,
     struct label *msqklabel __unused)
-{
-	return (cp_mac_ipc_deny(cred));
-}
-
-static int
-cp_mac_sysvmsq_check_msqsnd(struct ucred *cred,
+CP_IPC_CHECK(cp_mac_sysvmsq_check_msqsnd,
     struct msqid_kernel *msqkptr __unused,
     struct label *msqklabel __unused)
-{
-	return (cp_mac_ipc_deny(cred));
-}
-
-static int
-cp_mac_sysvmsq_check_msqrcv(struct ucred *cred,
+CP_IPC_CHECK(cp_mac_sysvmsq_check_msqrcv,
     struct msqid_kernel *msqkptr __unused,
     struct label *msqklabel __unused)
-{
-	return (cp_mac_ipc_deny(cred));
-}
-
-static int
-cp_mac_sysvmsq_check_msqctl(struct ucred *cred,
+CP_IPC_CHECK(cp_mac_sysvmsq_check_msqctl,
     struct msqid_kernel *msqkptr __unused,
     struct label *msqklabel __unused, int cmd __unused)
-{
-	return (cp_mac_ipc_deny(cred));
-}
 
-/* POSIX shm wrappers */
-static int
-cp_mac_posixshm_check_create(struct ucred *cred,
+/* POSIX shm */
+CP_IPC_CHECK(cp_mac_posixshm_check_create,
     const char *path __unused)
-{
-	return (cp_mac_ipc_deny(cred));
-}
-
-static int
-cp_mac_posixshm_check_open(struct ucred *cred,
+CP_IPC_CHECK(cp_mac_posixshm_check_open,
     struct shmfd *shmfd __unused, struct label *shmlabel __unused,
     accmode_t accmode __unused)
-{
-	return (cp_mac_ipc_deny(cred));
-}
 
-/* POSIX sem wrappers */
-static int
-cp_mac_posixsem_check_open(struct ucred *cred,
+/* POSIX sem */
+CP_IPC_CHECK(cp_mac_posixsem_check_open,
     struct ksem *ks __unused, struct label *kslabel __unused)
-{
-	return (cp_mac_ipc_deny(cred));
-}
 
 static struct mac_policy_ops cp_mac_ops = {
 	/* Existing shield hooks (protect target from foreign nonces) */
@@ -934,10 +876,6 @@ static struct mac_policy_ops cp_mac_ops = {
 
 MAC_POLICY_SET(&cp_mac_ops, mac_cap_rt_capprotect, "CAP_RT capability protection",
     MPC_LOADTIME_FLAG_NOTLATE, NULL);
-
-/* ----------------------------------------------------------------
- * Module lifecycle
- * ---------------------------------------------------------------- */
 
 static int
 cap_rt_capprotect_modevent(module_t mod __unused, int type, void *unused __unused)

@@ -41,15 +41,16 @@ SDT_PROBE_DECLARE(cap_rt, , , reply);
 SDT_PROBE_DECLARE(cap_rt, , , reply__done);
 SDT_PROBE_DECLARE(cap_rt, , , notify);
 SDT_PROBE_DECLARE(cap_rt, , , notify__done);
+SDT_PROBE_DECLARE(cap_rt, , , forward);
+SDT_PROBE_DECLARE(cap_rt, , , forward__done);
 SDT_PROBE_DECLARE(cap_rt, , , revoke);
 SDT_PROBE_DECLARE(cap_rt, , , revoke__done);
 SDT_PROBE_DECLARE(cap_rt, , , queue__pressure);
 
-/* ----------------------------------------------------------------
- * Resolve target process: attached procdesc or self
- *
+/*
+ * Resolve target process: attached procdesc or self.
  * On success, returns with PROC_LOCK held.  Caller must PROC_UNLOCK.
- * ---------------------------------------------------------------- */
+ */
 int
 cap_rt_resolve_proc(struct file **fds, int nfds, struct proc **pp)
 {
@@ -81,10 +82,6 @@ cap_rt_resolve_proc(struct file **fds, int nfds, struct proc **pp)
 	*pp = p;
 	return (0);
 }
-
-/* ----------------------------------------------------------------
- * Queue helpers
- * ---------------------------------------------------------------- */
 
 void
 cap_rt_instance_drain_txq(struct cap_rt_instance *s)
@@ -241,16 +238,15 @@ cap_rt_auto_reply(struct cap_rt_instance *s, uint64_t reply_token, int error)
 	mtx_unlock(&s->ci_mtx);
 }
 
-/* ----------------------------------------------------------------
- * Taskqueue dispatch — dequeue from RX, call handler
+/*
+ * Taskqueue dispatch — dequeue from RX, call handler.
  *
  * Each service has a taskqueue with up to min(ncpus, 4) threads.
  * Each instance has its own struct task.  The taskqueue guarantees
  * that the same task is never run concurrently on two threads,
  * giving per-instance handler serialization with cross-instance
  * parallelism.
- * ---------------------------------------------------------------- */
-
+ */
 void
 cap_rt_dispatch_task(void *context, int pending __unused)
 {
@@ -346,10 +342,6 @@ cap_rt_dispatch_task(void *context, int pending __unused)
 	mtx_unlock(&s->ci_mtx);
 	cap_rt_instance_rele(s);
 }
-
-/* ----------------------------------------------------------------
- * Service lifecycle
- * ---------------------------------------------------------------- */
 
 int
 cap_rt_service_create(const struct cap_rt_service_params *p,
@@ -620,10 +612,6 @@ cap_rt_service_destroy(struct cap_rt_service *svc)
 		cap_rt_service_free(svc);
 }
 
-/* ----------------------------------------------------------------
- * Reply and notify
- * ---------------------------------------------------------------- */
-
 int
 cap_rt_reply(struct cap_rt_instance *s, uint64_t reply_token,
     const void *out, size_t outlen,
@@ -709,6 +697,10 @@ cap_rt_forward(struct cap_rt_instance *s, const struct cap_rt_msg *src)
 	struct cap_rt_msg *msg;
 	int error;
 
+	if (s->ci_service != NULL)
+		SDT_PROBE3(cap_rt, , , forward,
+		    s->ci_service->csvc_name, s->ci_badge, src->cm_datalen);
+
 	msg = cap_rt_msg_alloc_full(src->cm_data, src->cm_datalen,
 	    src->cm_fds, src->cm_fcaps, src->cm_nfds,
 	    src->cm_badge, src->cm_reply_token, src->cm_cred);
@@ -719,16 +711,13 @@ cap_rt_forward(struct cap_rt_instance *s, const struct cap_rt_msg *src)
 	error = cap_rt_instance_enqueue_tx(s, msg, false);
 	mtx_unlock(&s->ci_mtx);
 
-	if (error == 0 && s->ci_service != NULL)
-		SDT_PROBE3(cap_rt, , , notify,
-		    s->ci_service->csvc_name, s->ci_badge, src->cm_datalen);
+	if (s->ci_service != NULL)
+		SDT_PROBE4(cap_rt, , , forward__done,
+		    s->ci_service->csvc_name, s->ci_badge,
+		    src->cm_datalen, error);
 
 	return (error);
 }
-
-/* ----------------------------------------------------------------
- * Revocation
- * ---------------------------------------------------------------- */
 
 void
 cap_rt_instance_revoke(struct cap_rt_instance *s)
@@ -741,16 +730,6 @@ cap_rt_instance_revoke(struct cap_rt_instance *s)
 	cap_rt_instance_revoke_reason(s, CAP_RT_REVOKE_BY_SERVICE);
 }
 
-/* ----------------------------------------------------------------
- * Instance private data and badge
- * ---------------------------------------------------------------- */
-
-/*
- * Instance hold/release for deferred work.  The handler calls hold()
- * before stashing the instance pointer, and the deferred task calls
- * rele() when done.  Close waits for the refcount to reach 1 before
- * freeing.
- */
 void
 cap_rt_instance_hold(struct cap_rt_instance *s)
 {
@@ -790,10 +769,6 @@ cap_rt_instance_get_badge(struct cap_rt_instance *s)
 	return (s->ci_badge);
 }
 
-
-/* ----------------------------------------------------------------
- * Message accessors — for co_handler.
- * ---------------------------------------------------------------- */
 
 const void *
 cap_rt_msg_data(const struct cap_rt_msg *msg)
@@ -841,60 +816,4 @@ struct ucred *
 cap_rt_msg_cred(const struct cap_rt_msg *msg)
 {
 	return (msg->cm_cred);
-}
-
-
-/* ----------------------------------------------------------------
- * Minting — service creates an instance and returns a struct file *.
- * Safe to call from handler (taskqueue) context.  The caller holds
- * one reference on the returned fp and must fdrop() after passing
- * it as an attached descriptor in cap_rt_reply() or cap_rt_notify().
- * ---------------------------------------------------------------- */
-int
-cap_rt_mint_fp(struct cap_rt_service *svc, uint64_t badge,
-    struct file **fpp)
-{
-	struct cap_rt_instance *s;
-	struct file *fp;
-	int error;
-
-	error = cap_rt_service_reserve(svc);
-	if (error != 0)
-		return (error);
-
-	s = cap_rt_instance_init(svc, badge);
-
-	error = falloc_noinstall(curthread, &fp);
-	if (error != 0) {
-		cap_rt_instance_free(s);
-		cap_rt_service_unreserve(svc);
-		return (error);
-	}
-
-	finit(fp, FREAD | FWRITE, DTYPE_CAP_RT, s,
-	    (svc->csvc_svc_flags & CAP_RT_SVC_NOXFER) ?
-	    &cap_rt_instance_noxfer_ops : &cap_rt_instance_ops);
-
-	if (svc->csvc_ops->co_init != NULL) {
-		error = svc->csvc_ops->co_init(s, svc->csvc_arg);
-		if (error != 0) {
-			mtx_lock(&s->ci_mtx);
-			s->ci_flags |= CAP_RT_SF_FINALIZED;
-			mtx_unlock(&s->ci_mtx);
-			fdrop(fp, curthread);
-			cap_rt_service_unreserve(svc);
-			return (error);
-		}
-	}
-
-	/* Link before returning — see cap_rt_instance_create for rationale. */
-	error = cap_rt_instance_link(svc, s);
-	if (error != 0) {
-		fdrop(fp, curthread);
-		cap_rt_service_unreserve(svc);
-		return (error);
-	}
-
-	*fpp = fp;
-	return (0);
 }

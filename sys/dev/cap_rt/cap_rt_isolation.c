@@ -852,8 +852,7 @@ fi_connect(struct ucred *cred __unused, void *arg __unused,
 {
 	static volatile uint64_t next_badge;
 
-	*badge_out = atomic_fetchadd_64(&next_badge, 1);
-	return (0);
+	return (CAP_RT_CONNECT_BADGE(next_badge, badge_out));
 }
 
 static int

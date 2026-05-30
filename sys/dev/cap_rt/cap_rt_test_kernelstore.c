@@ -129,8 +129,7 @@ kstore_connect(struct ucred *cred __unused, void *arg __unused,
     uint64_t *badge_out)
 {
 
-	*badge_out = atomic_fetchadd_64(&kstore_next_badge, 1);
-	return (0);
+	return (CAP_RT_CONNECT_BADGE(kstore_next_badge, badge_out));
 }
 
 static int

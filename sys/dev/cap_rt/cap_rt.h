@@ -201,5 +201,12 @@ uint64_t	 cap_rt_msg_badge(const struct cap_rt_msg *msg);
 uint64_t	 cap_rt_msg_token(const struct cap_rt_msg *msg);
 struct ucred	*cap_rt_msg_cred(const struct cap_rt_msg *msg);
 
+/*
+ * Common connect-callback pattern: assign a monotonic badge.
+ * Usage: return (CAP_RT_CONNECT_BADGE(my_counter, badge_out));
+ */
+#define	CAP_RT_CONNECT_BADGE(counter, badge_out)		\
+	(*(badge_out) = atomic_fetchadd_64(&(counter), 1), 0)
+
 #endif /* _KERNEL */
 #endif /* _DEV_CAP_RT_CAP_RT_H_ */
