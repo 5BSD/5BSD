@@ -605,7 +605,7 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 		int nbuckets = 4, i, j;
 		bool found_claim = false;
 		bool dup;
-		uint64_t denied_nonce = 0;
+		uint64_t denied_nonce __unused = 0;
 
 		buckets[0] = fi_net_hash_fn(port, domain);
 		buckets[1] = fi_net_hash_fn(0, domain);

@@ -49,6 +49,12 @@ struct acct_rule_request {
 	uint64_t	limit;		/* trigger threshold */
 } __packed;
 
+/* Request: get_rules */
+struct acct_get_rules_request {
+	uint32_t	op;		/* ACCT_OP_GET_RULES */
+	uint32_t	_reserved;
+} __packed;
+
 /* Reply: charge / release / set / add_rule / remove_rule */
 struct acct_reply {
 	uint32_t	status;

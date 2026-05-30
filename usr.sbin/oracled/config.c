@@ -111,16 +111,6 @@ config_init_defaults(struct oracled_config *cfg)
 }
 
 static void
-cfg_bool(const ucl_object_t *obj, const char *key, bool *val)
-{
-	const ucl_object_t *o;
-
-	o = ucl_object_lookup(obj, key);
-	if (o != NULL && ucl_object_type(o) == UCL_BOOLEAN)
-		*val = ucl_object_toboolean(o);
-}
-
-static void
 cfg_string(const ucl_object_t *obj, const char *key,
     char *buf, size_t bufsz)
 {

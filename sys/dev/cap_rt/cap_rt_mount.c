@@ -241,10 +241,9 @@ mount_op_mount(const void *req, size_t reqlen,
 	/*
 	 * Always force MNT_NOSYMFOLLOW to prevent symlink TOCTOU
 	 * between our textual path validation and kernel VFS
-	 * resolution.  Also force MNT_NODEV to prevent device
-	 * node creation on user-controlled mounts.
+	 * resolution.
 	 */
-	mnt_flags |= MNT_NOSYMFOLLOW | MNT_NODEV;
+	mnt_flags |= MNT_NOSYMFOLLOW;
 
 	/*
 	 * Build the mount argument list using kernel_mount(9).
