@@ -41,7 +41,7 @@ try_ptrace(pid_t pid)
 		ptrace(PT_DETACH, pid, NULL, 0);
 		return (1);	/* succeeded — shield didn't block */
 	}
-	if (errno == EACCES || errno == ESRCH)
+	if (errno == EACCES || errno == ESRCH || errno == EPERM)
 		return (0);	/* denied or hidden — shield works */
 	return (2);		/* unexpected error */
 }
@@ -52,7 +52,7 @@ try_signal(pid_t pid)
 
 	if (kill(pid, SIGUSR1) == 0)
 		return (1);
-	if (errno == EACCES || errno == ESRCH)
+	if (errno == EACCES || errno == EPERM || errno == ESRCH)
 		return (0);
 	return (2);
 }
@@ -64,7 +64,7 @@ try_signal0(pid_t pid)
 
 	if (kill(pid, 0) == 0)
 		return (1);
-	if (errno == EACCES || errno == ESRCH)
+	if (errno == EACCES || errno == EPERM || errno == ESRCH)
 		return (0);
 	return (2);
 }
@@ -75,7 +75,7 @@ try_sigkill(pid_t pid)
 
 	if (kill(pid, SIGKILL) == 0)
 		return (1);
-	if (errno == EACCES || errno == ESRCH)
+	if (errno == EACCES || errno == EPERM || errno == ESRCH)
 		return (0);
 	return (2);
 }
@@ -86,7 +86,7 @@ try_sigcont(pid_t pid)
 
 	if (kill(pid, SIGCONT) == 0)
 		return (1);
-	if (errno == EACCES || errno == ESRCH)
+	if (errno == EACCES || errno == EPERM || errno == ESRCH)
 		return (0);
 	return (2);
 }
@@ -109,7 +109,7 @@ try_sched(pid_t pid)
 
 	if (setpriority(PRIO_PROCESS, pid, prio) == 0)
 		return (1);	/* allowed — shield didn't block */
-	if (errno == EACCES)
+	if (errno == EACCES || errno == EPERM)
 		return (0);	/* denied — shield works */
 	return (2);
 }
@@ -221,7 +221,7 @@ try_suspend(pid_t pid)
 		kill(pid, SIGCONT);
 		return (1);
 	}
-	if (errno == EACCES || errno == ESRCH)
+	if (errno == EACCES || errno == EPERM || errno == ESRCH)
 		return (0);	/* denied or hidden — shield works */
 	return (2);
 }

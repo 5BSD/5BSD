@@ -41,6 +41,7 @@
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/module.h>
+#include <sys/osd.h>
 #include <sys/proc.h>
 #include <sys/lock.h>
 #include <sys/sx.h>
@@ -187,6 +188,7 @@ struct coalition_jail_osd {
 	struct coalition_member	*cjo_member;
 	struct file		*cjo_fp;
 	struct task		cjo_cleanup_task;
+	bool			cjo_cleanup_queued;
 };
 
 static eventhandler_tag coalition_fork_tag;
@@ -390,6 +392,7 @@ coalition_jail_set_atomic(struct prison *pr, struct coalition *co,
     struct file *fp)
 {
 	struct coalition_jail_osd *cjo, *existing;
+	void **rsv;
 
 	if (coalition_jail_osd_slot == 0)
 		return (ENXIO);
@@ -397,22 +400,25 @@ coalition_jail_set_atomic(struct prison *pr, struct coalition *co,
 	cjo = malloc(sizeof(*cjo), M_COALITION, M_WAITOK);
 	cjo->cjo_coalition = co;
 	cjo->cjo_member = NULL;
+	cjo->cjo_cleanup_queued = false;
 	if (!fhold(fp)) {
 		free(cjo, M_COALITION);
 		return (EBADF);
 	}
 	cjo->cjo_fp = fp;
 	TASK_INIT(&cjo->cjo_cleanup_task, 0, coalition_jail_cleanup_task_fn, cjo);
+	rsv = osd_reserve(coalition_jail_osd_slot);
 
 	prison_lock(pr);
 	existing = osd_jail_get(pr, coalition_jail_osd_slot);
 	if (existing != NULL) {
 		prison_unlock(pr);
+		osd_free_reserved(rsv);
 		fdrop(cjo->cjo_fp, NULL);
 		free(cjo, M_COALITION);
 		return (EBUSY);
 	}
-	osd_jail_set(pr, coalition_jail_osd_slot, cjo);
+	osd_jail_set_reserved(pr, coalition_jail_osd_slot, rsv, cjo);
 	prison_unlock(pr);
 	return (0);
 }
@@ -508,8 +514,12 @@ coalition_jail_osd_dtor(void *value)
 
 	co = cjo->cjo_coalition;
 
-	if (cjo->cjo_member != NULL) {
-		taskqueue_enqueue(taskqueue_thread, &cjo->cjo_cleanup_task);
+	if (cjo->cjo_member != NULL || cjo->cjo_cleanup_queued) {
+		if (!cjo->cjo_cleanup_queued) {
+			cjo->cjo_cleanup_queued = true;
+			taskqueue_enqueue(taskqueue_thread,
+			    &cjo->cjo_cleanup_task);
+		}
 		return;
 	}
 
@@ -1299,6 +1309,12 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 			struct socket *so = cm->cm_fp->f_data;
 
 			(void)soshutdown(so, SHUT_RDWR);
+			continue;
+		}
+
+		/* SHM — truncate to zero */
+		if (cm->cm_dtype == DTYPE_SHM && cm->cm_fp != NULL) {
+			(void)fo_truncate(cm->cm_fp, 0, td->td_ucred, td);
 			continue;
 		}
 	}

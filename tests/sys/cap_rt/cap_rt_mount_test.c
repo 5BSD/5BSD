@@ -460,7 +460,7 @@ ATF_TC_HEAD(mount_procfs, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "MOUNT_OP_MOUNT mounts procfs");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_mount");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_mount procfs");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(mount_procfs, tc)
@@ -490,7 +490,7 @@ ATF_TC_BODY(mount_procfs, tc)
 		atf_tc_skip("procfs mount not permitted");
 	}
 
-	snprintf(curproc, sizeof(curproc), "%s/curproc", mntpath);
+	snprintf(curproc, sizeof(curproc), "%s/%d", mntpath, (int)getpid());
 	ATF_CHECK(stat(curproc, &sb) == 0);
 
 	memset(&ureq, 0, sizeof(ureq));
@@ -582,8 +582,8 @@ ATF_TC_BODY(mount_linprocfs, tc)
 	    &reply, sizeof(reply)) == 0);
 	ATF_REQUIRE_EQ(reply.status, MOUNT_STATUS_OK);
 
-	/* Linux procfs should have /proc/self */
-	snprintf(selfpath, sizeof(selfpath), "%s/self", mntpath);
+	/* linprocfs exposes numeric pid directories for all processes */
+	snprintf(selfpath, sizeof(selfpath), "%s/%d", mntpath, (int)getpid());
 	ATF_CHECK(stat(selfpath, &sb) == 0);
 
 	memset(&ureq, 0, sizeof(ureq));

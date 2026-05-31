@@ -10,6 +10,7 @@
  *   kldload cap_rt_test_keystore
  */
 
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/capsicum.h>
 #include <sys/ioctl.h>
@@ -17,6 +18,7 @@
 #include <sys/jail.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/un.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
@@ -48,6 +50,13 @@ closed_fd(void)
 	ATF_REQUIRE_MSG(fd >= 0, "open /dev/null: %s", strerror(errno));
 	ATF_REQUIRE(close(fd) == 0);
 	return (fd);
+}
+
+static uint32_t
+cap_rt_missing_key(void)
+{
+
+	return (0xffff0000u | ((uint32_t)getpid() & 0xffffu));
 }
 
 /* Helper: send a message via CAP_RT_SENDMSG */
@@ -695,19 +704,26 @@ fd_passing_send_one(int svc_fd, int pass_fd)
 	struct cap_rt_sendmsg_args sa;
 	struct ks_request req;
 	struct ks_reply reply;
-	uint32_t rlen;
 
 	req.op = KS_OP_FETCH;
-	req.keyid = 0;
+	req.keyid = cap_rt_missing_key();
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = &req;
 	sa.payload_len = sizeof(req);
 	sa.fds = &pass_fd;
 	sa.nfds = 1;
-	ATF_REQUIRE(ioctl(svc_fd, CAP_RT_SENDMSG, &sa) == 0);
+	ATF_REQUIRE_MSG(ioctl(svc_fd, CAP_RT_SENDMSG, &sa) == 0,
+	    "SENDMSG: %s", strerror(errno));
 
-	rlen = sizeof(reply);
-	ATF_REQUIRE(cap_rt_recv(svc_fd, &reply, &rlen, NULL) == 0);
+	{
+		struct cap_rt_recvmsg_args dbg;
+		memset(&dbg, 0, sizeof(dbg));
+		dbg.payload = &reply;
+		dbg.payload_len = sizeof(reply);
+		ATF_REQUIRE_MSG(ioctl(svc_fd, CAP_RT_RECVMSG, &dbg) == 0,
+		    "RECVMSG: %s (payload_len=%u nfds=%u)",
+		    strerror(errno), dbg.payload_len, dbg.nfds);
+	}
 }
 
 ATF_TC(fd_passing_single);
@@ -770,17 +786,19 @@ ATF_TC_BODY(fd_passing_multiple, tc)
 	ATF_REQUIRE(fds[2] >= 0);
 
 	req.op = KS_OP_FETCH;
-	req.keyid = 0;
+	req.keyid = cap_rt_missing_key();
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = &req;
 	sa.payload_len = sizeof(req);
 	sa.fds = fds;
 	sa.nfds = 3;
-	ATF_REQUIRE(ioctl(fd, CAP_RT_SENDMSG, &sa) == 0);
+	ATF_REQUIRE_MSG(ioctl(fd, CAP_RT_SENDMSG, &sa) == 0,
+	    "SENDMSG multi: %s", strerror(errno));
 
 	{
 		uint32_t rlen = sizeof(reply);
-		ATF_REQUIRE(cap_rt_recv(fd, &reply, &rlen, NULL) == 0);
+		ATF_REQUIRE_MSG(cap_rt_recv(fd, &reply, &rlen, NULL) == 0,
+		    "RECVMSG multi: %s (rlen=%u)", strerror(errno), rlen);
 	}
 
 	close(fds[2]);
@@ -848,7 +866,7 @@ ATF_TC_BODY(kqueue_read, tc)
 	ATF_REQUIRE(kevent(kq, &kev, 1, NULL, 0, NULL) == 0);
 
 	req.op = KS_OP_FETCH;
-	req.keyid = 0;
+	req.keyid = cap_rt_missing_key();
 	ATF_REQUIRE(cap_rt_send(fd, &req, sizeof(req), 0) == 0);
 
 	ts.tv_sec = 2;
@@ -918,7 +936,7 @@ ATF_TC_BODY(instance_fstat, tc)
 
 	/* Trigger a reply. */
 	req.op = KS_OP_FETCH;
-	req.keyid = 0;
+	req.keyid = cap_rt_missing_key();
 	ATF_REQUIRE(cap_rt_send(fd, &req, sizeof(req), 0) == 0);
 
 	/* Poll fstat until the reply arrives in the TX queue. */
@@ -1012,7 +1030,7 @@ ATF_TC_BODY(capability_delegation, tc)
 		struct cap_rt_recvmsg_args ra;
 
 		req.op = KS_OP_FETCH;
-		req.keyid = 0;
+		req.keyid = cap_rt_missing_key();
 		memset(&sa, 0, sizeof(sa));
 		sa.payload = &req;
 		sa.payload_len = sizeof(req);
@@ -1088,7 +1106,7 @@ ATF_TC_BODY(scm_rights_passing, tc)
 			struct cap_rt_recvmsg_args ra;
 
 			req.op = KS_OP_FETCH;
-			req.keyid = 0;
+			req.keyid = cap_rt_missing_key();
 			memset(&sa, 0, sizeof(sa));
 			sa.payload = &req;
 			sa.payload_len = sizeof(req);
@@ -1383,7 +1401,7 @@ ATF_TC_BODY(sendmsg_bad_fd, tc)
 
 	badfd = closed_fd();
 	req.op = KS_OP_FETCH;
-	req.keyid = 0;
+	req.keyid = cap_rt_missing_key();
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = &req;
 	sa.payload_len = sizeof(req);
@@ -1525,10 +1543,12 @@ ATF_TC_BODY(dup_shared_instance, tc)
 	{
 		uint32_t rlen;
 		req.op = KS_OP_FETCH;
-		req.keyid = 0;
-		ATF_REQUIRE(cap_rt_send(fd, &req, sizeof(req), 0) == 0);
+		req.keyid = cap_rt_missing_key();
+		ATF_REQUIRE_MSG(cap_rt_send(fd, &req, sizeof(req), 0) == 0,
+		    "SENDMSG: %s", strerror(errno));
 		rlen = sizeof(reply);
-		ATF_REQUIRE(cap_rt_recv(fd2, &reply, &rlen, NULL) == 0);
+		ATF_REQUIRE_MSG(cap_rt_recv(fd2, &reply, &rlen, NULL) == 0,
+		    "RECVMSG on dup: %s (rlen=%u)", strerror(errno), rlen);
 	}
 
 	close(fd2);
@@ -1621,7 +1641,7 @@ ATF_TC_BODY(write_after_close_child, tc)
 	 * CAP_RT_SENDMSG should succeed.
 	 */
 	req.op = KS_OP_FETCH;
-	req.keyid = 0;
+	req.keyid = cap_rt_missing_key();
 	ATF_CHECK(cap_rt_send(fd, &req, sizeof(req), 0) == 0);
 	rlen = sizeof(buf);
 	ATF_CHECK(cap_rt_recv(fd, buf, &rlen, NULL) == 0);
@@ -2144,7 +2164,7 @@ ATF_TC_BODY(credential_trailer, tc)
 	 * the sender's creds back in the payload.
 	 */
 	req.op = KS_OP_FETCH;
-	req.keyid = 0;
+	req.keyid = cap_rt_missing_key();
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = &req;
 	sa.payload_len = sizeof(req);
@@ -2271,7 +2291,7 @@ ATF_TC_BODY(terminate_then_send, tc)
 
 	/* Subsequent send should fail. */
 	req.op = KS_OP_FETCH;
-	req.keyid = 0;
+	req.keyid = cap_rt_missing_key();
 	ATF_CHECK_ERRNO(EPIPE, cap_rt_send(fd, &req, sizeof(req), 0) == -1);
 
 	close(fd);
@@ -2381,7 +2401,7 @@ ATF_TC_BODY(call_on_async_service, tc)
 	ATF_REQUIRE(fd >= 0);
 
 	req.op = KS_OP_FETCH;
-	req.keyid = 0;
+	req.keyid = cap_rt_missing_key();
 	memset(&ca, 0, sizeof(ca));
 	ca.req = &req;
 	ca.req_len = sizeof(req);
@@ -2917,7 +2937,7 @@ ATF_TC_BODY(revoke_blocks_operations, tc)
 	ATF_REQUIRE(fd >= 0);
 
 	req.op = KS_OP_FETCH;
-	req.keyid = 0;
+	req.keyid = cap_rt_missing_key();
 	ATF_REQUIRE(cap_rt_send(fd, &req, sizeof(req), 0) == 0);
 	rlen = sizeof(buf);
 	ATF_REQUIRE(cap_rt_recv(fd, buf, &rlen, NULL) == 0);
@@ -2935,7 +2955,7 @@ ATF_TC_BODY(revoke_blocks_operations, tc)
 	ATF_REQUIRE(ioctl(fd, CAP_RT_REVOKE_RECV, NULL) == 0);
 
 	req.op = KS_OP_FETCH;
-	req.keyid = 0;
+	req.keyid = cap_rt_missing_key();
 	ATF_CHECK(cap_rt_send(fd, &req, sizeof(req), 0) == 0);
 
 	memset(&ra, 0, sizeof(ra));
@@ -2994,7 +3014,7 @@ ATF_TC_BODY(revoke_send_recv_both, tc)
 
 	/* Both blocked. */
 	req.op = KS_OP_FETCH;
-	req.keyid = 0;
+	req.keyid = cap_rt_missing_key();
 	ATF_CHECK_ERRNO(EACCES, cap_rt_send(fd, &req, sizeof(req), 0) == -1);
 
 	memset(&ra, 0, sizeof(ra));
@@ -3031,7 +3051,7 @@ ATF_TC_BODY(revoke_is_permanent, tc)
 
 	/* Still blocked. */
 	req.op = KS_OP_FETCH;
-	req.keyid = 0;
+	req.keyid = cap_rt_missing_key();
 	ATF_CHECK_ERRNO(EACCES, cap_rt_send(fd, &req, sizeof(req), 0) == -1);
 
 	close(fd);
@@ -3059,7 +3079,7 @@ ATF_TC_BODY(revoke_affects_all_dups, tc)
 
 	/* fd2 should also be blocked — same instance. */
 	req.op = KS_OP_FETCH;
-	req.keyid = 0;
+	req.keyid = cap_rt_missing_key();
 	ATF_CHECK_ERRNO(EACCES, cap_rt_send(fd2, &req, sizeof(req), 0) == -1);
 
 	close(fd2);
@@ -3454,13 +3474,30 @@ shield_helper_path(void)
 {
 	static char path[256];
 	const char *dir;
+	char self[PATH_MAX];
+	int mib[4];
+	size_t len;
 
-	/* ATF sets TESTSDIR; deploy scripts set it too. */
 	dir = getenv("TESTSDIR");
 	if (dir == NULL)
 		dir = getenv("SRCDIR");
+	if (dir == NULL) {
+		/* Derive from our own binary path via sysctl. */
+		mib[0] = CTL_KERN;
+		mib[1] = KERN_PROC;
+		mib[2] = KERN_PROC_PATHNAME;
+		mib[3] = -1;
+		len = sizeof(self);
+		if (sysctl(mib, 4, self, &len, NULL, 0) == 0) {
+			char *slash = strrchr(self, '/');
+			if (slash != NULL) {
+				*slash = '\0';
+				dir = self;
+			}
+		}
+	}
 	if (dir == NULL)
-		dir = "/tmp/cap_rt-tests";
+		dir = "/usr/tests/sys/cap_rt";
 	snprintf(path, sizeof(path), "%s/cap_rt_shield_helper", dir);
 	return (path);
 }
