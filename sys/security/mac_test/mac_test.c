@@ -2077,6 +2077,128 @@ test_vmm_check_create(struct ucred *cred, const char *vmname)
 	return (0);
 }
 
+COUNTER_DECL(vmm_check_passthrough);
+static int
+test_vmm_check_passthrough(struct ucred *cred, const char *vmname,
+    int bus, int slot, int func)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vmm_check_passthrough);
+
+	return (0);
+}
+
+COUNTER_DECL(vmm_check_alloc_memseg);
+static int
+test_vmm_check_alloc_memseg(struct ucred *cred, const char *vmname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vmm_check_alloc_memseg);
+
+	return (0);
+}
+
+COUNTER_DECL(vmm_check_reinit);
+static int
+test_vmm_check_reinit(struct ucred *cred, const char *vmname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(vmm_check_reinit);
+
+	return (0);
+}
+
+COUNTER_DECL(zfs_check_send);
+static int
+test_zfs_check_send(struct ucred *cred, const char *dsname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(zfs_check_send);
+
+	return (0);
+}
+
+COUNTER_DECL(zfs_check_receive);
+static int
+test_zfs_check_receive(struct ucred *cred, const char *dsname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(zfs_check_receive);
+
+	return (0);
+}
+
+COUNTER_DECL(zfs_check_dataset_destroy);
+static int
+test_zfs_check_dataset_destroy(struct ucred *cred, const char *dsname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(zfs_check_dataset_destroy);
+
+	return (0);
+}
+
+COUNTER_DECL(zfs_check_pool_destroy);
+static int
+test_zfs_check_pool_destroy(struct ucred *cred, const char *poolname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(zfs_check_pool_destroy);
+
+	return (0);
+}
+
+COUNTER_DECL(zfs_check_pool_export);
+static int
+test_zfs_check_pool_export(struct ucred *cred, const char *poolname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(zfs_check_pool_export);
+
+	return (0);
+}
+
+COUNTER_DECL(zfs_check_key_load);
+static int
+test_zfs_check_key_load(struct ucred *cred, const char *dsname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(zfs_check_key_load);
+
+	return (0);
+}
+
+COUNTER_DECL(zfs_check_key_unload);
+static int
+test_zfs_check_key_unload(struct ucred *cred, const char *dsname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(zfs_check_key_unload);
+
+	return (0);
+}
+
+COUNTER_DECL(zfs_check_key_change);
+static int
+test_zfs_check_key_change(struct ucred *cred, const char *dsname)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(zfs_check_key_change);
+
+	return (0);
+}
+
 COUNTER_DECL(vnode_notify_create);
 static void
 test_vnode_notify_create(struct ucred *cred, struct vnode *dvp,
@@ -4004,6 +4126,17 @@ static struct mac_policy_ops test_ops =
 
 	.mpo_pts_check_open = test_pts_check_open,
 	.mpo_vmm_check_create = test_vmm_check_create,
+	.mpo_vmm_check_passthrough = test_vmm_check_passthrough,
+	.mpo_vmm_check_alloc_memseg = test_vmm_check_alloc_memseg,
+	.mpo_vmm_check_reinit = test_vmm_check_reinit,
+	.mpo_zfs_check_send = test_zfs_check_send,
+	.mpo_zfs_check_receive = test_zfs_check_receive,
+	.mpo_zfs_check_dataset_destroy = test_zfs_check_dataset_destroy,
+	.mpo_zfs_check_pool_destroy = test_zfs_check_pool_destroy,
+	.mpo_zfs_check_pool_export = test_zfs_check_pool_export,
+	.mpo_zfs_check_key_load = test_zfs_check_key_load,
+	.mpo_zfs_check_key_unload = test_zfs_check_key_unload,
+	.mpo_zfs_check_key_change = test_zfs_check_key_change,
 };
 
 MAC_POLICY_SET(&test_ops, mac_test, "TrustedBSD MAC/Test",

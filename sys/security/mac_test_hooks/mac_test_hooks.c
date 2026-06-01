@@ -107,6 +107,29 @@ HOOK_CHECK_IMPL(system_check_kas_info, struct ucred *cred __unused,
     struct proc *p __unused)
 HOOK_CHECK_IMPL(vmm_check_create, struct ucred *cred __unused,
     const char *vmname __unused)
+HOOK_CHECK_IMPL(vmm_check_passthrough, struct ucred *cred __unused,
+    const char *vmname __unused, int bus __unused, int slot __unused,
+    int func __unused)
+HOOK_CHECK_IMPL(vmm_check_alloc_memseg, struct ucred *cred __unused,
+    const char *vmname __unused)
+HOOK_CHECK_IMPL(vmm_check_reinit, struct ucred *cred __unused,
+    const char *vmname __unused)
+HOOK_CHECK_IMPL(zfs_check_send, struct ucred *cred __unused,
+    const char *dsname __unused)
+HOOK_CHECK_IMPL(zfs_check_receive, struct ucred *cred __unused,
+    const char *dsname __unused)
+HOOK_CHECK_IMPL(zfs_check_dataset_destroy, struct ucred *cred __unused,
+    const char *dsname __unused)
+HOOK_CHECK_IMPL(zfs_check_pool_destroy, struct ucred *cred __unused,
+    const char *poolname __unused)
+HOOK_CHECK_IMPL(zfs_check_pool_export, struct ucred *cred __unused,
+    const char *poolname __unused)
+HOOK_CHECK_IMPL(zfs_check_key_load, struct ucred *cred __unused,
+    const char *dsname __unused)
+HOOK_CHECK_IMPL(zfs_check_key_unload, struct ucred *cred __unused,
+    const char *dsname __unused)
+HOOK_CHECK_IMPL(zfs_check_key_change, struct ucred *cred __unused,
+    const char *dsname __unused)
 HOOK_NOTIFY_IMPL(vnode_notify_create, struct ucred *cred __unused,
     struct vnode *dvp __unused, struct vnode *vp __unused,
     struct componentname *cnp __unused)
@@ -177,6 +200,17 @@ static struct mac_policy_ops test_hooks_ops = {
 	.mpo_mount_check_snapshot_revert = test_mount_check_snapshot_revert,
 	.mpo_system_check_kas_info = test_system_check_kas_info,
 	.mpo_vmm_check_create = test_vmm_check_create,
+	.mpo_vmm_check_passthrough = test_vmm_check_passthrough,
+	.mpo_vmm_check_alloc_memseg = test_vmm_check_alloc_memseg,
+	.mpo_vmm_check_reinit = test_vmm_check_reinit,
+	.mpo_zfs_check_send = test_zfs_check_send,
+	.mpo_zfs_check_receive = test_zfs_check_receive,
+	.mpo_zfs_check_dataset_destroy = test_zfs_check_dataset_destroy,
+	.mpo_zfs_check_pool_destroy = test_zfs_check_pool_destroy,
+	.mpo_zfs_check_pool_export = test_zfs_check_pool_export,
+	.mpo_zfs_check_key_load = test_zfs_check_key_load,
+	.mpo_zfs_check_key_unload = test_zfs_check_key_unload,
+	.mpo_zfs_check_key_change = test_zfs_check_key_change,
 	.mpo_vnode_notify_create = test_vnode_notify_create,
 	.mpo_vnode_notify_open = test_vnode_notify_open,
 	.mpo_vnode_notify_rename = test_vnode_notify_rename,

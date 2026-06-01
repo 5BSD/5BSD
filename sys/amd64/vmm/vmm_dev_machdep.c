@@ -594,3 +594,55 @@ vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd, caddr_t data,
 
 	return (error);
 }
+
+void
+vmmdev_ppt_get_bdf(u_long cmd, caddr_t data, int *bus, int *slot, int *func)
+{
+
+	switch (cmd) {
+	case VM_BIND_PPTDEV:
+	case VM_UNBIND_PPTDEV:
+	case VM_PPTDEV_DISABLE_MSIX: {
+		struct vm_pptdev *pptdev;
+
+		pptdev = (struct vm_pptdev *)data;
+		*bus = pptdev->bus;
+		*slot = pptdev->slot;
+		*func = pptdev->func;
+		break;
+	}
+	case VM_MAP_PPTDEV_MMIO:
+	case VM_UNMAP_PPTDEV_MMIO: {
+		struct vm_pptdev_mmio *pptmmio;
+
+		pptmmio = (struct vm_pptdev_mmio *)data;
+		*bus = pptmmio->bus;
+		*slot = pptmmio->slot;
+		*func = pptmmio->func;
+		break;
+	}
+	case VM_PPTDEV_MSI: {
+		struct vm_pptdev_msi *pptmsi;
+
+		pptmsi = (struct vm_pptdev_msi *)data;
+		*bus = pptmsi->bus;
+		*slot = pptmsi->slot;
+		*func = pptmsi->func;
+		break;
+	}
+	case VM_PPTDEV_MSIX: {
+		struct vm_pptdev_msix *pptmsix;
+
+		pptmsix = (struct vm_pptdev_msix *)data;
+		*bus = pptmsix->bus;
+		*slot = pptmsix->slot;
+		*func = pptmsix->func;
+		break;
+	}
+	default:
+		*bus = -1;
+		*slot = -1;
+		*func = -1;
+		break;
+	}
+}

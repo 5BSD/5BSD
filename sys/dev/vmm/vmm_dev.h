@@ -26,6 +26,8 @@ int	vmm_modcleanup(void);
 
 int	vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd,
 	    caddr_t data, int fflag, struct thread *td);
+void	vmmdev_ppt_get_bdf(u_long cmd, caddr_t data, int *bus, int *slot,
+	    int *func);
 
 /*
  * Entry in an ioctl handler table.  A number of generic ioctls are defined,

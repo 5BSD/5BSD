@@ -1187,6 +1187,84 @@ stub_vmm_check_memseg_access(struct ucred *cred, const char *vmname,
 	return (0);
 }
 
+static int
+stub_vmm_check_passthrough(struct ucred *cred, const char *vmname,
+    int bus, int slot, int func)
+{
+
+	return (0);
+}
+
+static int
+stub_vmm_check_alloc_memseg(struct ucred *cred, const char *vmname)
+{
+
+	return (0);
+}
+
+static int
+stub_vmm_check_reinit(struct ucred *cred, const char *vmname)
+{
+
+	return (0);
+}
+
+static int
+stub_zfs_check_send(struct ucred *cred, const char *dsname)
+{
+
+	return (0);
+}
+
+static int
+stub_zfs_check_receive(struct ucred *cred, const char *dsname)
+{
+
+	return (0);
+}
+
+static int
+stub_zfs_check_dataset_destroy(struct ucred *cred, const char *dsname)
+{
+
+	return (0);
+}
+
+static int
+stub_zfs_check_pool_destroy(struct ucred *cred, const char *poolname)
+{
+
+	return (0);
+}
+
+static int
+stub_zfs_check_pool_export(struct ucred *cred, const char *poolname)
+{
+
+	return (0);
+}
+
+static int
+stub_zfs_check_key_load(struct ucred *cred, const char *dsname)
+{
+
+	return (0);
+}
+
+static int
+stub_zfs_check_key_unload(struct ucred *cred, const char *dsname)
+{
+
+	return (0);
+}
+
+static int
+stub_zfs_check_key_change(struct ucred *cred, const char *dsname)
+{
+
+	return (0);
+}
+
 static void
 stub_vnode_notify_create(struct ucred *cred, struct vnode *dvp,
     struct vnode *vp, struct componentname *cnp)
@@ -2452,6 +2530,17 @@ static struct mac_policy_ops stub_ops =
 	.mpo_vmm_check_destroy = stub_vmm_check_destroy,
 	.mpo_vmm_check_mem_access = stub_vmm_check_mem_access,
 	.mpo_vmm_check_memseg_access = stub_vmm_check_memseg_access,
+	.mpo_vmm_check_passthrough = stub_vmm_check_passthrough,
+	.mpo_vmm_check_alloc_memseg = stub_vmm_check_alloc_memseg,
+	.mpo_vmm_check_reinit = stub_vmm_check_reinit,
+	.mpo_zfs_check_send = stub_zfs_check_send,
+	.mpo_zfs_check_receive = stub_zfs_check_receive,
+	.mpo_zfs_check_dataset_destroy = stub_zfs_check_dataset_destroy,
+	.mpo_zfs_check_pool_destroy = stub_zfs_check_pool_destroy,
+	.mpo_zfs_check_pool_export = stub_zfs_check_pool_export,
+	.mpo_zfs_check_key_load = stub_zfs_check_key_load,
+	.mpo_zfs_check_key_unload = stub_zfs_check_key_unload,
+	.mpo_zfs_check_key_change = stub_zfs_check_key_change,
 };
 
 MAC_POLICY_SET(&stub_ops, mac_stub, "TrustedBSD MAC/Stub",

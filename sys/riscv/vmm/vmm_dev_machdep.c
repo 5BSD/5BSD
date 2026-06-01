@@ -138,3 +138,13 @@ vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd, caddr_t data,
 
 	return (error);
 }
+
+void
+vmmdev_ppt_get_bdf(u_long cmd __unused, caddr_t data __unused, int *bus,
+    int *slot, int *func)
+{
+
+	*bus = -1;
+	*slot = -1;
+	*func = -1;
+}

@@ -930,6 +930,19 @@ int	mac_vmm_check_mem_access(struct ucred *cred, const char *vmname,
 	    vm_paddr_t gpa, size_t len, int prot);
 int	mac_vmm_check_memseg_access(struct ucred *cred, const char *vmname,
 	    const char *segname, vm_ooffset_t offset, int prot);
+int	mac_vmm_check_passthrough(struct ucred *cred, const char *vmname,
+	    int bus, int slot, int func);
+int	mac_vmm_check_alloc_memseg(struct ucred *cred, const char *vmname);
+int	mac_vmm_check_reinit(struct ucred *cred, const char *vmname);
+
+int	mac_zfs_check_send(struct ucred *cred, const char *dsname);
+int	mac_zfs_check_receive(struct ucred *cred, const char *dsname);
+int	mac_zfs_check_dataset_destroy(struct ucred *cred, const char *dsname);
+int	mac_zfs_check_pool_destroy(struct ucred *cred, const char *poolname);
+int	mac_zfs_check_pool_export(struct ucred *cred, const char *poolname);
+int	mac_zfs_check_key_load(struct ucred *cred, const char *dsname);
+int	mac_zfs_check_key_unload(struct ucred *cred, const char *dsname);
+int	mac_zfs_check_key_change(struct ucred *cred, const char *dsname);
 
 /*
  * Calls to help various file systems implement labeling functionality using

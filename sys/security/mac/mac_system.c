@@ -367,6 +367,163 @@ mac_vmm_check_memseg_access(struct ucred *cred, const char *vmname,
 	return (error);
 }
 
+MAC_CHECK_PROBE_DEFINE5(vmm_check_passthrough, "struct ucred *",
+    "const char *", "int", "int", "int");
+
+int
+mac_vmm_check_passthrough(struct ucred *cred, const char *vmname,
+    int bus, int slot, int func)
+{
+	int error;
+
+	MAC_POLICY_CHECK(vmm_check_passthrough, cred, vmname, bus, slot,
+	    func);
+	MAC_CHECK_PROBE5(vmm_check_passthrough, error, cred, vmname, bus,
+	    slot, func);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vmm_check_alloc_memseg, "struct ucred *",
+    "const char *");
+
+int
+mac_vmm_check_alloc_memseg(struct ucred *cred, const char *vmname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(vmm_check_alloc_memseg, cred, vmname);
+	MAC_CHECK_PROBE2(vmm_check_alloc_memseg, error, cred, vmname);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vmm_check_reinit, "struct ucred *",
+    "const char *");
+
+int
+mac_vmm_check_reinit(struct ucred *cred, const char *vmname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(vmm_check_reinit, cred, vmname);
+	MAC_CHECK_PROBE2(vmm_check_reinit, error, cred, vmname);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(zfs_check_send, "struct ucred *",
+    "const char *");
+
+int
+mac_zfs_check_send(struct ucred *cred, const char *dsname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(zfs_check_send, cred, dsname);
+	MAC_CHECK_PROBE2(zfs_check_send, error, cred, dsname);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(zfs_check_receive, "struct ucred *",
+    "const char *");
+
+int
+mac_zfs_check_receive(struct ucred *cred, const char *dsname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(zfs_check_receive, cred, dsname);
+	MAC_CHECK_PROBE2(zfs_check_receive, error, cred, dsname);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(zfs_check_dataset_destroy, "struct ucred *",
+    "const char *");
+
+int
+mac_zfs_check_dataset_destroy(struct ucred *cred, const char *dsname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(zfs_check_dataset_destroy, cred, dsname);
+	MAC_CHECK_PROBE2(zfs_check_dataset_destroy, error, cred, dsname);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(zfs_check_pool_destroy, "struct ucred *",
+    "const char *");
+
+int
+mac_zfs_check_pool_destroy(struct ucred *cred, const char *poolname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(zfs_check_pool_destroy, cred, poolname);
+	MAC_CHECK_PROBE2(zfs_check_pool_destroy, error, cred, poolname);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(zfs_check_pool_export, "struct ucred *",
+    "const char *");
+
+int
+mac_zfs_check_pool_export(struct ucred *cred, const char *poolname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(zfs_check_pool_export, cred, poolname);
+	MAC_CHECK_PROBE2(zfs_check_pool_export, error, cred, poolname);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(zfs_check_key_load, "struct ucred *",
+    "const char *");
+
+int
+mac_zfs_check_key_load(struct ucred *cred, const char *dsname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(zfs_check_key_load, cred, dsname);
+	MAC_CHECK_PROBE2(zfs_check_key_load, error, cred, dsname);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(zfs_check_key_unload, "struct ucred *",
+    "const char *");
+
+int
+mac_zfs_check_key_unload(struct ucred *cred, const char *dsname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(zfs_check_key_unload, cred, dsname);
+	MAC_CHECK_PROBE2(zfs_check_key_unload, error, cred, dsname);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(zfs_check_key_change, "struct ucred *",
+    "const char *");
+
+int
+mac_zfs_check_key_change(struct ucred *cred, const char *dsname)
+{
+	int error;
+
+	MAC_POLICY_CHECK(zfs_check_key_change, cred, dsname);
+	MAC_CHECK_PROBE2(zfs_check_key_change, error, cred, dsname);
+
+	return (error);
+}
+
 MAC_CHECK_PROBE_DEFINE2(system_check_acct, "struct ucred *",
     "struct vnode *");
 

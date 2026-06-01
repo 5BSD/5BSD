@@ -495,7 +495,48 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 		error = priv_check(td, PRIV_VMM_PPTDEV);
 		if (error != 0)
 			return (error);
+#ifdef MAC
+		{
+			int ppt_bus, ppt_slot, ppt_func;
+
+			WITNESS_WARN(WARN_SLEEPOK | WARN_GIANTOK, NULL,
+			    "mac_vmm_check_passthrough");
+			vmmdev_ppt_get_bdf(cmd, data, &ppt_bus, &ppt_slot,
+			    &ppt_func);
+			error = mac_vmm_check_passthrough(td->td_ucred,
+			    vm_name(sc->vm), ppt_bus, ppt_slot, ppt_func);
+			if (error != 0)
+				return (error);
+		}
+#endif
 	}
+
+#ifdef MAC
+	WITNESS_WARN(WARN_SLEEPOK | WARN_GIANTOK, NULL,
+	    "mac_vmm_check_alloc_memseg/reinit");
+	switch (cmd) {
+	case VM_ALLOC_MEMSEG:
+#ifdef __amd64__
+#ifdef COMPAT_FREEBSD12
+	case VM_ALLOC_MEMSEG_12:
+#endif
+#ifdef COMPAT_FREEBSD14
+	case VM_ALLOC_MEMSEG_14:
+#endif
+#endif
+		error = mac_vmm_check_alloc_memseg(td->td_ucred,
+		    vm_name(sc->vm));
+		if (error != 0)
+			return (error);
+		break;
+	case VM_REINIT:
+		error = mac_vmm_check_reinit(td->td_ucred,
+		    vm_name(sc->vm));
+		if (error != 0)
+			return (error);
+		break;
+	}
+#endif
 
 	if ((ioctl->flags & VMMDEV_IOCTL_XLOCK_MEMSEGS) != 0)
 		vm_xlock_memsegs(sc->vm);

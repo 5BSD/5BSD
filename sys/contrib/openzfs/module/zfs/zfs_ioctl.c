@@ -850,6 +850,10 @@ zfs_secpolicy_send(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 	}
 	dsl_dataset_rele(ds, FTAG);
 	dsl_pool_rele(dp, FTAG);
+#ifdef MAC
+	if (error == 0)
+		error = mac_zfs_check_send(cr, zc->zc_name);
+#endif
 
 	return (error);
 }
@@ -867,6 +871,10 @@ zfs_secpolicy_send_new(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 		error = zfs_secpolicy_write_perms(zc->zc_name,
 		    ZFS_DELEG_PERM_SEND_RAW, cr);
 	}
+#ifdef MAC
+	if (error == 0)
+		error = mac_zfs_check_send(cr, zc->zc_name);
+#endif
 	return (error);
 }
 
@@ -918,18 +926,24 @@ zfs_secpolicy_destroy_perms(const char *name, cred_t *cr)
 		if ((error = zfs_secpolicy_zoned_uid_deleg(name,
 		    ZFS_DELEG_PERM_DESTROY, cr)) != 0)
 			return (error);
-		return (zfs_secpolicy_zoned_uid_deleg(name,
-		    ZFS_DELEG_PERM_MOUNT, cr));
-	}
-	if (result == ZONE_ADMIN_DENIED)
+		error = zfs_secpolicy_zoned_uid_deleg(name,
+		    ZFS_DELEG_PERM_MOUNT, cr);
+	} else if (result == ZONE_ADMIN_DENIED) {
 		return (SET_ERROR(EPERM));
+	} else {
+		/* NOT_APPLICABLE: continue with existing checks */
+		if ((error = zfs_secpolicy_write_perms(name,
+		    ZFS_DELEG_PERM_MOUNT, cr)) != 0)
+			return (error);
 
-	/* NOT_APPLICABLE: continue with existing checks */
-	if ((error = zfs_secpolicy_write_perms(name,
-	    ZFS_DELEG_PERM_MOUNT, cr)) != 0)
-		return (error);
-
-	return (zfs_secpolicy_write_perms(name, ZFS_DELEG_PERM_DESTROY, cr));
+		error = zfs_secpolicy_write_perms(name, ZFS_DELEG_PERM_DESTROY,
+		    cr);
+	}
+#ifdef MAC
+	if (error == 0)
+		error = mac_zfs_check_dataset_destroy(cr, name);
+#endif
+	return (error);
 }
 
 static int
@@ -1102,8 +1116,13 @@ zfs_secpolicy_recv(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 	    ZFS_DELEG_PERM_MOUNT, cr)) != 0)
 		return (error);
 
-	return (zfs_secpolicy_write_perms(zc->zc_name,
-	    ZFS_DELEG_PERM_CREATE, cr));
+	error = zfs_secpolicy_write_perms(zc->zc_name,
+	    ZFS_DELEG_PERM_CREATE, cr);
+#ifdef MAC
+	if (error == 0)
+		error = mac_zfs_check_receive(cr, zc->zc_name);
+#endif
+	return (error);
 }
 
 int
@@ -1292,6 +1311,11 @@ zfs_secpolicy_create_clone(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 /*
  * Policy for pool operations - create/destroy pools, add vdevs, etc.  Requires
  * SYS_CONFIG privilege, which is not available in a local zone.
+ *
+ * Note: this function is shared by many pool ioctls.  Callers that perform
+ * irreversible pool operations (destroy, export) must invoke their own MAC
+ * hook (e.g. mac_zfs_check_pool_destroy) from the ioctl handler, since this
+ * function cannot distinguish the operation being performed.
  */
 int
 zfs_secpolicy_config(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
@@ -1771,6 +1795,11 @@ static int
 zfs_ioc_pool_destroy(zfs_cmd_t *zc)
 {
 	int error;
+#ifdef MAC
+	error = mac_zfs_check_pool_destroy(CRED(), zc->zc_name);
+	if (error != 0)
+		return (error);
+#endif
 	zfs_log_history(zc);
 	error = spa_destroy(zc->zc_name);
 
@@ -1821,6 +1850,11 @@ zfs_ioc_pool_export(zfs_cmd_t *zc)
 	boolean_t force = (boolean_t)zc->zc_cookie;
 	boolean_t hardforce = (boolean_t)zc->zc_guid;
 
+#ifdef MAC
+	error = mac_zfs_check_pool_export(CRED(), zc->zc_name);
+	if (error != 0)
+		return (error);
+#endif
 	zfs_log_history(zc);
 	error = spa_export(zc->zc_name, NULL, force, hardforce);
 
@@ -7557,6 +7591,12 @@ zfs_ioc_load_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 		goto error;
 	}
 
+#ifdef MAC
+	ret = mac_zfs_check_key_load(CRED(), dsname);
+	if (ret != 0)
+		goto error;
+#endif
+
 	hidden_args = fnvlist_lookup_nvlist(innvl, ZPOOL_HIDDEN_ARGS);
 
 	ret = dsl_crypto_params_create_nvlist(DCP_CMD_NONE, NULL,
@@ -7595,6 +7635,12 @@ zfs_ioc_unload_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 		ret = (SET_ERROR(EINVAL));
 		goto out;
 	}
+
+#ifdef MAC
+	ret = mac_zfs_check_key_unload(CRED(), dsname);
+	if (ret != 0)
+		goto out;
+#endif
 
 	ret = spa_keystore_unload_wkey(dsname);
 	if (ret != 0)
@@ -7636,6 +7682,12 @@ zfs_ioc_change_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 		ret = (SET_ERROR(EINVAL));
 		goto error;
 	}
+
+#ifdef MAC
+	ret = mac_zfs_check_key_change(CRED(), dsname);
+	if (ret != 0)
+		goto error;
+#endif
 
 	(void) nvlist_lookup_uint64(innvl, "crypt_cmd", &cmd);
 	(void) nvlist_lookup_nvlist(innvl, "props", &props);

@@ -794,6 +794,29 @@ typedef int	(*mpo_vmm_check_mem_access_t)(struct ucred *cred,
 typedef int	(*mpo_vmm_check_memseg_access_t)(struct ucred *cred,
 		    const char *vmname, const char *segname,
 		    vm_ooffset_t offset, int prot);
+typedef int	(*mpo_vmm_check_passthrough_t)(struct ucred *cred,
+		    const char *vmname, int bus, int slot, int func);
+typedef int	(*mpo_vmm_check_alloc_memseg_t)(struct ucred *cred,
+		    const char *vmname);
+typedef int	(*mpo_vmm_check_reinit_t)(struct ucred *cred,
+		    const char *vmname);
+
+typedef int	(*mpo_zfs_check_send_t)(struct ucred *cred,
+		    const char *dsname);
+typedef int	(*mpo_zfs_check_receive_t)(struct ucred *cred,
+		    const char *dsname);
+typedef int	(*mpo_zfs_check_dataset_destroy_t)(struct ucred *cred,
+		    const char *dsname);
+typedef int	(*mpo_zfs_check_pool_destroy_t)(struct ucred *cred,
+		    const char *poolname);
+typedef int	(*mpo_zfs_check_pool_export_t)(struct ucred *cred,
+		    const char *poolname);
+typedef int	(*mpo_zfs_check_key_load_t)(struct ucred *cred,
+		    const char *dsname);
+typedef int	(*mpo_zfs_check_key_unload_t)(struct ucred *cred,
+		    const char *dsname);
+typedef int	(*mpo_zfs_check_key_change_t)(struct ucred *cred,
+		    const char *dsname);
 
 typedef void	(*mpo_vnode_notify_create_t)(struct ucred *cred,
 		    struct vnode *dvp, struct vnode *vp,
@@ -1210,6 +1233,17 @@ struct mac_policy_ops {
 	mpo_vmm_check_destroy_t			mpo_vmm_check_destroy;
 	mpo_vmm_check_mem_access_t		mpo_vmm_check_mem_access;
 	mpo_vmm_check_memseg_access_t		mpo_vmm_check_memseg_access;
+	mpo_vmm_check_passthrough_t		mpo_vmm_check_passthrough;
+	mpo_vmm_check_alloc_memseg_t		mpo_vmm_check_alloc_memseg;
+	mpo_vmm_check_reinit_t			mpo_vmm_check_reinit;
+	mpo_zfs_check_send_t			mpo_zfs_check_send;
+	mpo_zfs_check_receive_t			mpo_zfs_check_receive;
+	mpo_zfs_check_dataset_destroy_t		mpo_zfs_check_dataset_destroy;
+	mpo_zfs_check_pool_destroy_t		mpo_zfs_check_pool_destroy;
+	mpo_zfs_check_pool_export_t		mpo_zfs_check_pool_export;
+	mpo_zfs_check_key_load_t		mpo_zfs_check_key_load;
+	mpo_zfs_check_key_unload_t		mpo_zfs_check_key_unload;
+	mpo_zfs_check_key_change_t		mpo_zfs_check_key_change;
 };
 
 /*
