@@ -72,6 +72,8 @@ MALLOC_DEFINE(M_CAP_RT_CP, "cap_rt_cp", "cap_rt capability protection");
 SDT_PROVIDER_DEFINE(cap_rt_capprotect);
 SDT_PROBE_DEFINE3(cap_rt_capprotect, , , deny,
     "const char *", "uint64_t", "uint64_t");
+SDT_PROBE_DEFINE6(cap_rt_capprotect, , , state,
+    "const char *", "uint64_t", "uint64_t", "uint32_t", "pid_t", "int");
 
 /*
  * Per-instance state.
@@ -97,12 +99,12 @@ static struct mtx cp_lock;
 
 #define	CP_HASH_SIZE	64	/* buckets, must be power of 2 */
 
-/* Shield table: nonces that are shielded (refcounted). */
+/* Shield table: nonces that are shielded, refcounted per flag. */
 struct shield_entry {
 	LIST_ENTRY(shield_entry) se_link;
 	uint64_t	se_nonce;
 	uint32_t	se_flags;
-	int		se_refcnt;
+	u_int		se_flag_refs[32];
 };
 static LIST_HEAD(, shield_entry) *cp_shield_hash;
 static u_long cp_shield_hashmask;
@@ -112,6 +114,7 @@ struct auth_entry {
 	LIST_ENTRY(auth_entry) ae_link;
 	uint64_t	ae_accessor;
 	uint64_t	ae_target;
+	uint32_t	ae_flags;
 	struct cap_rt_instance *ae_inst;
 };
 static LIST_HEAD(, auth_entry) *cp_auth_hash;
@@ -149,16 +152,47 @@ cp_shield_flags(uint64_t nonce)
 }
 
 static int
-cp_is_authorized(uint64_t accessor, uint64_t target)
+cp_is_authorized(uint64_t accessor, uint64_t target, uint32_t flag)
 {
 	struct auth_entry *ae;
 
 	mtx_assert(&cp_lock, MA_OWNED);
 	LIST_FOREACH(ae, CP_AUTH_BUCKET(target), ae_link) {
-		if (ae->ae_accessor == accessor && ae->ae_target == target)
+		if (ae->ae_accessor == accessor && ae->ae_target == target &&
+		    (ae->ae_flags & flag) != 0)
 			return (1);
 	}
 	return (0);
+}
+
+static void
+cp_shield_ref_flags(struct shield_entry *se, uint32_t flags)
+{
+	uint32_t bit;
+	u_int i;
+
+	mtx_assert(&cp_lock, MA_OWNED);
+	for (i = 0, bit = 1; i < nitems(se->se_flag_refs); i++, bit <<= 1) {
+		if ((flags & bit) == 0)
+			continue;
+		se->se_flag_refs[i]++;
+		se->se_flags |= bit;
+	}
+}
+
+static void
+cp_shield_unref_flags(struct shield_entry *se, uint32_t flags)
+{
+	uint32_t bit;
+	u_int i;
+
+	mtx_assert(&cp_lock, MA_OWNED);
+	for (i = 0, bit = 1; i < nitems(se->se_flag_refs); i++, bit <<= 1) {
+		if ((flags & bit) == 0 || se->se_flag_refs[i] == 0)
+			continue;
+		if (--se->se_flag_refs[i] == 0)
+			se->se_flags &= ~bit;
+	}
 }
 
 static void
@@ -168,26 +202,26 @@ cp_shield_add(uint64_t nonce, uint32_t flags)
 
 	se = malloc(sizeof(*se), M_CAP_RT_CP, M_WAITOK);
 	se->se_nonce = nonce;
-	se->se_flags = flags;
-	se->se_refcnt = 1;
+	se->se_flags = 0;
+	memset(se->se_flag_refs, 0, sizeof(se->se_flag_refs));
 
 	mtx_lock(&cp_lock);
 	LIST_FOREACH(existing, CP_SHIELD_BUCKET(nonce), se_link) {
 		if (existing->se_nonce == nonce) {
-			existing->se_refcnt++;
-			existing->se_flags |= flags;
+			cp_shield_ref_flags(existing, flags);
 			mtx_unlock(&cp_lock);
 			free(se, M_CAP_RT_CP);
 			return;
 		}
 	}
+	cp_shield_ref_flags(se, flags);
 	atomic_add_int(&cp_active_shields, 1);
 	LIST_INSERT_HEAD(CP_SHIELD_BUCKET(nonce), se, se_link);
 	mtx_unlock(&cp_lock);
 }
 
 static void
-cp_shield_remove(uint64_t nonce)
+cp_shield_remove(uint64_t nonce, uint32_t flags)
 {
 	struct shield_entry *se;
 	struct auth_entry *ae, *ae_tmp;
@@ -195,7 +229,8 @@ cp_shield_remove(uint64_t nonce)
 	mtx_lock(&cp_lock);
 	LIST_FOREACH(se, CP_SHIELD_BUCKET(nonce), se_link) {
 		if (se->se_nonce == nonce) {
-			if (--se->se_refcnt > 0) {
+			cp_shield_unref_flags(se, flags);
+			if (se->se_flags != 0) {
 				mtx_unlock(&cp_lock);
 				return;
 			}
@@ -216,13 +251,15 @@ cp_shield_remove(uint64_t nonce)
 }
 
 static void
-cp_auth_add(uint64_t accessor, uint64_t target, struct cap_rt_instance *inst)
+cp_auth_add(uint64_t accessor, uint64_t target, uint32_t flags,
+    struct cap_rt_instance *inst)
 {
 	struct auth_entry *ae;
 
 	ae = malloc(sizeof(*ae), M_CAP_RT_CP, M_WAITOK);
 	ae->ae_accessor = accessor;
 	ae->ae_target = target;
+	ae->ae_flags = flags;
 	ae->ae_inst = inst;
 
 	mtx_lock(&cp_lock);
@@ -287,8 +324,11 @@ cp_call(struct cap_rt_instance *s,
 		return (EINVAL);
 
 	caller_nonce = cap_rt_proc_nonce(curthread->td_ucred);
-	if (caller_nonce == 0)
+	if (caller_nonce == 0) {
+		SDT_PROBE3(cap_rt_capprotect, , , deny, (uintptr_t)"nonce",
+		    (uint64_t)0, (uint64_t)0);
 		return (ENXIO);	/* cap_rt_label not loaded */
+	}
 
 	switch (cr->op) {
 	case CP_OP_SHIELD: {
@@ -306,8 +346,12 @@ cp_call(struct cap_rt_instance *s,
 		flags = cr->flags;
 		if (flags == 0)
 			flags = CP_SF_ALL;
-		if (flags & ~CP_SF_ALL)
+		if (flags & ~CP_SF_ALL) {
+			SDT_PROBE6(cap_rt_capprotect, , , state, (uintptr_t)"shield-error",
+			    caller_nonce, caller_nonce, flags,
+			    curthread->td_proc->p_pid, EINVAL);
 			return (EINVAL);
+		}
 		/*
 		 * Write-once: set target and flags before activating.
 		 * atomic_cmpset_int ensures only one caller wins the race.
@@ -317,6 +361,9 @@ cp_call(struct cap_rt_instance *s,
 		if (!atomic_cmpset_int(&priv->cp_active, 0, 1))
 			return (0);	/* lost race — already activated */
 		cp_shield_add(priv->cp_target, flags);
+		SDT_PROBE6(cap_rt_capprotect, , , state, (uintptr_t)"shield",
+		    priv->cp_target, caller_nonce, flags,
+		    curthread->td_proc->p_pid, 0);
 		*replylenp = 0;
 		return (0);
 	}
@@ -335,30 +382,38 @@ cp_call(struct cap_rt_instance *s,
 			return (EINVAL);
 		target = priv->cp_target;
 
-		error = cap_rt_mint_fp(cp_svc, 0, &token_fp);
-		if (error != 0)
-			return (error);
+			error = cap_rt_mint_fp(cp_svc, 0, &token_fp);
+			if (error != 0)
+				return (error);
 
-		tp = cap_rt_instance_get_priv(token_fp->f_data);
-		if (tp != NULL) {
-			tp->cp_is_token = 1;
-			tp->cp_target = target;
-		}
+			tp = cap_rt_instance_get_priv(token_fp->f_data);
+			if (tp != NULL) {
+				tp->cp_is_token = 1;
+				tp->cp_target = target;
+				tp->cp_flags = priv->cp_flags;
+			}
 
-		reply_fds[0] = token_fp;
+			reply_fds[0] = token_fp;
 		*reply_nfdsp = 1;
 		*replylenp = 0;
+		SDT_PROBE6(cap_rt_capprotect, , , state, (uintptr_t)"token-mint",
+		    target, caller_nonce, priv->cp_flags,
+		    curthread->td_proc->p_pid, 0);
 		return (0);
 	}
 
-	case CP_OP_AUTHORIZE:
-		if (!atomic_load_acq_int(&priv->cp_is_token))
-			return (EINVAL);
-		if (!atomic_cmpset_int(&priv->cp_active, 0, 1))
-			return (0);	/* already authorized */
-		cp_auth_add(caller_nonce, priv->cp_target, s);
-		*replylenp = 0;
-		return (0);
+		case CP_OP_AUTHORIZE:
+			if (!atomic_load_acq_int(&priv->cp_is_token))
+				return (EINVAL);
+			if (!atomic_cmpset_int(&priv->cp_active, 0, 1))
+				return (0);	/* already authorized */
+			cp_auth_add(caller_nonce, priv->cp_target,
+			    priv->cp_flags, s);
+			SDT_PROBE6(cap_rt_capprotect, , , state,
+			    "authorize", priv->cp_target, caller_nonce,
+			    priv->cp_flags, curthread->td_proc->p_pid, 0);
+			*replylenp = 0;
+			return (0);
 
 	case CP_OP_CAPMODE: {
 		struct ucred *newcred, *oldcred;
@@ -384,6 +439,9 @@ cp_call(struct cap_rt_instance *s,
 		PROC_UNLOCK(p);
 		crfree(oldcred);
 
+		SDT_PROBE6(cap_rt_capprotect, , , state, (uintptr_t)"capmode",
+		    caller_nonce, caller_nonce, 0,
+		    curthread->td_proc->p_pid, 0);
 		*replylenp = 0;
 		return (0);
 	}
@@ -414,6 +472,14 @@ cp_call(struct cap_rt_instance *s,
 		vn_lock(vp, LK_SHARED | LK_RETRY);
 		error = kern_chroot(curthread, vp);
 
+		if (error == 0)
+			SDT_PROBE6(cap_rt_capprotect, , , state, (uintptr_t)"chroot",
+			    caller_nonce, caller_nonce, 0,
+			    curthread->td_proc->p_pid, 0);
+		else
+			SDT_PROBE6(cap_rt_capprotect, , , state, (uintptr_t)"chroot-error",
+			    caller_nonce, caller_nonce, 0,
+			    curthread->td_proc->p_pid, error);
 		*replylenp = 0;
 		return (error);
 	}
@@ -435,9 +501,15 @@ cp_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
 
 	if (atomic_load_acq_int(&priv->cp_active)) {
 		if (atomic_load_acq_int(&priv->cp_is_token)) {
+			SDT_PROBE6(cap_rt_capprotect, , , state,
+			    "token-remove", priv->cp_target, 0,
+			    priv->cp_flags, curthread->td_proc->p_pid, 0);
 			cp_auth_remove_by_inst(s);
 		} else {
-			cp_shield_remove(priv->cp_target);
+			SDT_PROBE6(cap_rt_capprotect, , , state,
+			    "shield-remove", priv->cp_target, 0,
+			    priv->cp_flags, curthread->td_proc->p_pid, 0);
+			cp_shield_remove(priv->cp_target, priv->cp_flags);
 		}
 	}
 
@@ -500,7 +572,7 @@ cp_check_shield(struct ucred *cred, struct proc *p, uint32_t flag,
 		mtx_unlock(&cp_lock);
 		return (0);
 	}
-	denied = !cp_is_authorized(caller_nonce, target_nonce);
+	denied = !cp_is_authorized(caller_nonce, target_nonce, flag);
 	mtx_unlock(&cp_lock);
 	if (denied) {
 		SDT_PROBE3(cap_rt_capprotect, , , deny, name,
@@ -556,10 +628,12 @@ cp_mac_check_signal(struct ucred *cred, struct proc *p, int signum)
 		}
 	}
 
-	denied = !cp_is_authorized(caller_nonce, target_nonce);
+	denied = !cp_is_authorized(caller_nonce, target_nonce, flags &
+	    (signum == SIGKILL ? CP_SF_SIGKILL :
+	    (signum == SIGCONT ? CP_SF_SIGCONT : CP_SF_SIGNAL)));
 	mtx_unlock(&cp_lock);
 	if (denied) {
-		SDT_PROBE3(cap_rt_capprotect, , , deny, "signal",
+		SDT_PROBE3(cap_rt_capprotect, , , deny, (uintptr_t)"signal",
 		    target_nonce, caller_nonce);
 	}
 
@@ -593,12 +667,12 @@ cp_mac_cred_check_visible(struct ucred *cr1, struct ucred *cr2)
 		mtx_unlock(&cp_lock);
 		return (0);
 	}
-	if (cp_is_authorized(observer_nonce, target_nonce)) {
+	if (cp_is_authorized(observer_nonce, target_nonce, CP_SF_VISIBLE)) {
 		mtx_unlock(&cp_lock);
 		return (0);
 	}
 	mtx_unlock(&cp_lock);
-	SDT_PROBE3(cap_rt_capprotect, , , deny, "visible",
+	SDT_PROBE3(cap_rt_capprotect, , , deny, (uintptr_t)"visible",
 	    target_nonce, observer_nonce);
 
 	return (ESRCH);
@@ -628,12 +702,12 @@ cp_mac_proc_check_wait(struct ucred *cred, struct proc *p)
 		mtx_unlock(&cp_lock);
 		return (0);
 	}
-	if (cp_is_authorized(caller_nonce, target_nonce)) {
+	if (cp_is_authorized(caller_nonce, target_nonce, CP_SF_WAIT)) {
 		mtx_unlock(&cp_lock);
 		return (0);
 	}
 	mtx_unlock(&cp_lock);
-	SDT_PROBE3(cap_rt_capprotect, , , deny, "wait",
+	SDT_PROBE3(cap_rt_capprotect, , , deny, (uintptr_t)"wait",
 	    target_nonce, caller_nonce);
 
 	return (EACCES);
@@ -669,7 +743,7 @@ cp_mac_proc_check_core(struct ucred *cred __unused, struct proc *p)
 	flags = cp_shield_flags(nonce);
 	mtx_unlock(&cp_lock);
 	if ((flags & CP_SF_CORE) != 0)
-		SDT_PROBE3(cap_rt_capprotect, , , deny, "core", nonce, 0);
+		SDT_PROBE3(cap_rt_capprotect, , , deny, (uintptr_t)"core", nonce, 0);
 
 	return ((flags & CP_SF_CORE) ? EPERM : 0);
 }
@@ -774,7 +848,7 @@ cp_mac_ipc_deny(struct ucred *cred)
 	mtx_unlock(&cp_lock);
 
 	if (flags & CP_SF_NOIPC) {
-		SDT_PROBE3(cap_rt_capprotect, , , deny, "ipc",
+		SDT_PROBE3(cap_rt_capprotect, , , deny, (uintptr_t)"ipc",
 		    nonce, (uint64_t)0);
 		return (EACCES);
 	}
@@ -893,6 +967,7 @@ cap_rt_capprotect_modevent(module_t mod __unused, int type, void *unused __unuse
 			struct cap_rt_service_params p = {
 				.name = "capprotect",
 				.ops = &cp_ops,
+				.flags = CAP_RT_SVC_MINTABLE,
 			};
 			error = cap_rt_service_create(&p, &cp_svc);
 		}

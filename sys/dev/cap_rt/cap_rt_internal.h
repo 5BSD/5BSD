@@ -80,54 +80,67 @@ struct cap_rt_msg {
 #define	CAP_RT_RF_NO_SEND		0x0001
 #define	CAP_RT_RF_NO_RECV		0x0002
 #define	CAP_RT_RF_NO_CALL		0x0004
+#define	CAP_RT_RF_NO_MINT		0x0008
 
 /*
  * Instance — one per struct file.  Internal layout.
+ *
+ * Locking:
+ *   (I)   Immutable after creation.
+ *   (M)   Protected by ci_mtx.
+ *   (R)   Protected by refcount (ci_refcnt).
+ *   (A)   Atomic operations only (one-way latch).
+ *   (L)   Protected by cap_rt_registry_lock (xlock).
  */
 struct cap_rt_instance {
-	struct cap_rt_service *ci_service;
-	void		*ci_priv;
-	uint64_t	ci_badge;
+	struct cap_rt_service *ci_service;	/* (I) owning service */
+	void		*ci_priv;		/* (I) service-private data */
+	uint64_t	ci_badge;		/* (I) connection badge */
 
-	STAILQ_HEAD(, cap_rt_msg) ci_txq;
-	int		ci_txqlen;
-	struct knlist	ci_rknotes;	/* EVFILT_READ */
+	STAILQ_HEAD(, cap_rt_msg) ci_txq;	/* (M) outbound queue */
+	int		ci_txqlen;		/* (M) outbound count */
+	struct knlist	ci_rknotes;		/* (M) EVFILT_READ knotes */
 
-	STAILQ_HEAD(, cap_rt_msg) ci_rxq;
-	int		ci_rxqlen;
-	int		ci_rxqlimit;
-	struct knlist	ci_wknotes;	/* EVFILT_WRITE */
+	STAILQ_HEAD(, cap_rt_msg) ci_rxq;	/* (M) inbound queue */
+	int		ci_rxqlen;		/* (M) inbound count */
+	int		ci_rxqlimit;		/* (I) max RX depth */
+	struct knlist	ci_wknotes;		/* (M) EVFILT_WRITE knotes */
 
-	struct task	ci_task;
-	struct mtx	ci_mtx;
-	volatile u_int	ci_refcnt;
-	int		ci_flags;
-	int		ci_restricted;	/* CAP_RT_RF_* one-way latch */
-	int		ci_inflight;	/* active co_handler + co_call count */
-	struct thread	*ci_handler_td;
+	struct task	ci_task;		/* (I) taskqueue task */
+	struct mtx	ci_mtx;			/* instance lock */
+	volatile u_int	ci_refcnt;		/* (R) reference count */
+	int		ci_flags;		/* (M) CAP_RT_SF_* */
+	int		ci_restricted;		/* (A) CAP_RT_RF_* one-way latch */
+	int		ci_inflight;		/* (M) active handler+call count */
+	struct thread	*ci_handler_td;		/* (M) current handler thread */
 
-	LIST_ENTRY(cap_rt_instance) ci_svc_link;
+	LIST_ENTRY(cap_rt_instance) ci_svc_link; /* (L) service list link */
 };
 
 #define	CAP_RT_SVCF_DESTROYING	0x0001
 
 /*
  * Registered service — internal layout.
+ *
+ * Locking:
+ *   (I)   Immutable after cap_rt_service_create.
+ *   (L)   Protected by cap_rt_registry_lock (xlock).
+ *   (R)   Protected by refcount (csvc_refcnt).
  */
 struct cap_rt_service {
-	LIST_ENTRY(cap_rt_service) csvc_link;
-	char		csvc_name[CAP_RT_MAXNAME];
-	const struct cap_rt_ops *csvc_ops;
-	void		*csvc_arg;
-	LIST_HEAD(, cap_rt_instance) csvc_instances;
-	int		csvc_ninstances;
-	int		csvc_instance_limit;
-	volatile u_int	csvc_refcnt;
-	int		csvc_flags;
-	struct taskqueue *csvc_taskq;
-	uint32_t	csvc_queue_depth;
-	uint32_t	csvc_tx_limit;
-	uint32_t	csvc_svc_flags;	/* CAP_RT_SVC_* from params */
+	LIST_ENTRY(cap_rt_service) csvc_link;	/* (L) registry list link */
+	char		csvc_name[CAP_RT_MAXNAME]; /* (I) service name */
+	const struct cap_rt_ops *csvc_ops;	/* (I) operation callbacks */
+	void		*csvc_arg;		/* (I) callback argument */
+	LIST_HEAD(, cap_rt_instance) csvc_instances; /* (L) instance list */
+	int		csvc_ninstances;	/* (L) instance count */
+	int		csvc_instance_limit;	/* (I) max instances */
+	volatile u_int	csvc_refcnt;		/* (R) reference count */
+	int		csvc_flags;		/* (L) CAP_RT_SVCF_* */
+	struct taskqueue *csvc_taskq;		/* (I) async dispatch queue */
+	uint32_t	csvc_queue_depth;	/* (I) per-instance RX limit */
+	uint32_t	csvc_tx_limit;		/* (I) per-instance TX soft limit */
+	uint32_t	csvc_svc_flags;		/* (I) CAP_RT_SVC_* from params */
 };
 
 /* Globals. */

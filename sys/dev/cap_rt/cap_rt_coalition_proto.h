@@ -12,8 +12,8 @@
  * not as integer fd numbers in the payload.
  */
 
-#ifndef _CAP_RT_COALITION_PROTO_H_
-#define _CAP_RT_COALITION_PROTO_H_
+#ifndef _DEV_CAP_RT_CAP_RT_COALITION_PROTO_H_
+#define _DEV_CAP_RT_CAP_RT_COALITION_PROTO_H_
 
 #include <sys/types.h>
 
@@ -211,4 +211,4 @@ struct coalition_event_msg {
  */
 #define	COALITION_MAX_NESTING	16
 
-#endif /* _CAP_RT_COALITION_PROTO_H_ */
+#endif /* _DEV_CAP_RT_CAP_RT_COALITION_PROTO_H_ */

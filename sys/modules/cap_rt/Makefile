@@ -1,7 +1,7 @@
 .PATH: ${SRCTOP}/sys/dev/cap_rt
 
 KMOD=	cap_rt
-SRCS=	cap_rt_core.c cap_rt_dev.c cap_rt_kern.c
+SRCS=	cap_rt_core.c cap_rt_dev.c cap_rt_kern.c cap_rt_label.c
 
 EXPORT_SYMS=	cap_rt_service_create	\
 		cap_rt_service_destroy	\

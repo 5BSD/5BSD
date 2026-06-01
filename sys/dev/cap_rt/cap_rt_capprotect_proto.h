@@ -24,11 +24,10 @@
  * Shield flags — bitmask of desired protections.
  * Pass in cp_request.flags.  Zero means all protections.
  *
- * Flags are set once per fd (one-shot).  Protection is per-nonce:
- * the first shield call for a nonce sets the policy, additional
- * shield fds for the same nonce add a refcount hold but do not
- * change the active flags.  Protection drops only when all shield
- * fds for the nonce are closed.
+ * Flags are set once per fd (one-shot).  Protection is per-nonce and
+ * refcounted per flag: additional shield fds for the same nonce add
+ * their own flags, and closing a shield fd removes only the flags that
+ * fd contributed.
  */
 #define	CP_SF_PTRACE		0x01	/* block ptrace attach */
 #define	CP_SF_SIGNAL		0x02	/* block signals (except SIGKILL/SIGCONT) */

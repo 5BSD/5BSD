@@ -41,7 +41,8 @@ struct oraclectl_status {
 
 __BEGIN_DECLS
 int	oraclectl_open(const char *sockpath);
-int	oraclectl_status(int fd, struct oraclectl_status *st);
+int	oraclectl_status(int fd, struct oraclectl_status *st,
+	    char *summary, size_t sumlen);
 int	oraclectl_shutdown(int fd);
 int	oraclectl_reload(int fd, char *summary, size_t sumlen);
 int	oraclectl_kldload(int fd, const char *module, int *idp);

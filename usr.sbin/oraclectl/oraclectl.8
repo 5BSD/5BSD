@@ -16,12 +16,6 @@
 .Cm services
 .Nm
 .Op Fl s Ar socket
-.Cm check Ar manifest.ucl
-.Nm
-.Op Fl s Ar socket
-.Cm load Ar manifest.ucl
-.Nm
-.Op Fl s Ar socket
 .Cm shutdown
 .Nm
 .Op Fl s Ar socket
@@ -71,19 +65,6 @@ in a separate
 .Dq AVAILABLE
 section.
 This command does not require root privileges.
-.It Cm check Ar manifest.ucl
-Validate a service manifest without loading it.
-Prints a summary of the service configuration including program
-path, user, group, restart policy, dependencies, and capabilities.
-The manifest file must be in the configured manifest directory.
-Requires root.
-.It Cm load Ar manifest.ucl
-Validate, load, and start a service from a manifest file.
-The manifest is parsed, validated (program must exist, user and
-group must resolve), added to the dependency graph, and the
-service is launched.
-Duplicate labels are rejected.
-Requires root.
 .It Cm shutdown
 Request a graceful shutdown of
 .Xr oracled 8 .
@@ -133,7 +114,8 @@ Unix domain socket used to communicate with
 .Sh SEE ALSO
 .Xr kldload 8 ,
 .Xr oracled 8 ,
-.Xr reboot 8
+.Xr reboot 8 ,
+.Xr servicectl 8
 .Sh HISTORY
 .Nm
 first appeared in 5BSD.

@@ -1,0 +1,102 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * capsicum-changes -- trace Capsicum authority narrowing.
+ *
+ * Shows cap_enter(), cap_rights_limit(), cap_ioctls_limit(), and
+ * cap_fcntls_limit() events with credentials and final errno.
+ *
+ * Usage: capsicum-changes
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-6s %-6s %-8s %-16s %-8s %-8s %s\n",
+	    "PID", "UID", "GID", "FD", "EVENT", "TYPE", "ERRNO",
+	    "DETAIL");
+}
+
+capsicum:::mode-enter
+{
+	printf("%-6d %-6d %-6d %-8s %-16s %-8s %-8d %s\n",
+	    arg0, ((struct ucred *)arg1)->cr_uid,
+	    ((struct ucred *)arg1)->cr_gid, "-", "MODE-ENTER",
+	    "-", arg2, "");
+}
+
+capsicum:::rights-limit
+{
+	printf("%-6d %-6d %-6d %-8d %-16s %-8d %-8d rightsp=%p\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0, "RIGHTS-LIMIT",
+	    arg5, arg4, arg3);
+}
+
+capsicum:::ioctls-limit
+{
+	printf("%-6d %-6d %-6d %-8d %-16s %-8s %-8d ncmds=%d cmds=%p\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0, "IOCTLS-LIMIT",
+	    "-", arg5, arg4, arg3);
+}
+
+capsicum:::fcntls-limit
+{
+	printf("%-6d %-6d %-6d %-8d %-16s %-8d %-8d rights=0x%x\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0, "FCNTLS-LIMIT",
+	    arg5, arg4, arg3);
+}
+
+capsicum:::ioctl-deny
+{
+	printf("%-6d %-6d %-6d %-8d %-16s %-8d %-8d cmd=%d\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0, "IOCTL-DENY",
+	    arg4, arg5, arg3);
+}
+
+capsicum:::fcntl-deny
+{
+	printf("%-6d %-6d %-6d %-8d %-16s %-8d %-8d cmd=%d\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0, "FCNTL-DENY",
+	    arg4, arg5, arg3);
+}
+
+capsicum:::check-deny
+{
+	printf("%-6d %-6d %-6d %-8s %-16s %-8s %-8d type=%d have=%p need=%p\n",
+	    arg2, ((struct ucred *)arg3)->cr_uid,
+	    ((struct ucred *)arg3)->cr_gid, "-", "CHECK-DENY",
+	    "-", arg5, arg4, arg0, arg1);
+}
+
+capsicum:::rights-get
+{
+	printf("%-6d %-6d %-6d %-8d %-16s %-8d %-8d rightsp=%p\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0, "RIGHTS-GET",
+	    arg5, arg4, arg3);
+}
+
+capsicum:::ioctls-get
+{
+	printf("%-6d %-6d %-6d %-8d %-16s %-8s %-8d max=%d count=%d\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0, "IOCTLS-GET",
+	    "-", arg5, arg3, arg4);
+}
+
+capsicum:::fcntls-get
+{
+	printf("%-6d %-6d %-6d %-8d %-16s %-8d %-8d rights=0x%x\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0, "FCNTLS-GET",
+	    arg5, arg4, arg3);
+}

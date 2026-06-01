@@ -27,46 +27,67 @@
 #include "probes.h"
 
 /*
- * Resolve a manifest filename to a safe absolute path within
- * the manifest directory.  Returns 0 on success with the path
- * written to buf, or -1 if the resolved path escapes the
- * manifest directory (symlink, .., etc.).
+ * Apply claim-related fields from newcfg into the live config.
+ * Used by cmd_reload() and the SIGHUP handler in event.c.
  */
-static int
-resolve_manifest_path(const char *filename, char *buf, size_t bufsz)
+void
+config_apply_claims(const struct oracled_config *newcfg)
 {
-	char constructed[PATH_MAX], resolved[PATH_MAX], canonical_dir[PATH_MAX];
-	size_t dirlen;
-	int n;
 
-	n = snprintf(constructed, sizeof(constructed), "%s/%s",
-	    od.cfg.manifest_dir, filename);
-	if (n < 0 || (size_t)n >= sizeof(constructed))
-		return (-1);
-
-	if (realpath(constructed, resolved) == NULL)
-		return (-1);
-
-	/* Canonicalize manifest_dir too, so symlinked dirs work. */
-	if (realpath(od.cfg.manifest_dir, canonical_dir) == NULL)
-		return (-1);
-
-	/* Verify the resolved path is within the canonical dir. */
-	dirlen = strlen(canonical_dir);
-	if (strncmp(resolved, canonical_dir, dirlen) != 0 ||
-	    (resolved[dirlen] != '/' && resolved[dirlen] != '\0'))
-		return (-1);
-
-	strlcpy(buf, resolved, bufsz);
-	return (0);
+	memcpy(od.cfg.claim_paths, newcfg->claim_paths,
+	    sizeof(od.cfg.claim_paths));
+	od.cfg.nclaim_paths = newcfg->nclaim_paths;
+	memcpy(od.cfg.claim_net, newcfg->claim_net,
+	    sizeof(od.cfg.claim_net));
+	od.cfg.nclaim_net = newcfg->nclaim_net;
+	od.cfg.claim_system = newcfg->claim_system;
+	strlcpy(od.cfg.manifest_dir, newcfg->manifest_dir,
+	    sizeof(od.cfg.manifest_dir));
 }
 
 void
-cmd_status(uint64_t uptime, struct ctl_reply *reply)
+cmd_status(uint64_t uptime, struct ctl_reply *reply,
+    char *summary, size_t sumlen)
 {
+	size_t off;
 
 	reply->status = CTL_STATUS_OK;
 	reply->uptime_usec = uptime;
+
+	if (summary == NULL || sumlen == 0)
+		return;
+
+	off = 0;
+
+	/* Config source. */
+	BUF_APPEND(summary, sumlen, &off, "CONFIG:\n");
+	BUF_APPEND(summary, sumlen, &off, "  file:         %s%s\n",
+	    od.conffile,
+	    od.cfg.loaded_from_file ? "" : " (defaults)");
+	BUF_APPEND(summary, sumlen, &off, "  service_mgr:  %s\n",
+	    od.cfg.service_manager);
+
+	BUF_APPEND(summary, sumlen, &off, "\n");
+
+	/* Capability claims and integrity from cap_rt. */
+	if (!od.test_mode)
+		cap_rt_format_status(summary, sumlen, &off);
+	else {
+		BUF_APPEND(summary, sumlen, &off,
+		    "INTEGRITY:\n  (test mode)\n");
+		BUF_APPEND(summary, sumlen, &off,
+		    "\nCLAIMS:\n  (test mode)\n");
+	}
+
+	/* Bootstrap status. */
+	BUF_APPEND(summary, sumlen, &off, "\nSERVICED:\n");
+	BUF_APPEND(summary, sumlen, &off, "  status: %s\n",
+	    oracle_proto_is_ready() ? "ready" : "not ready");
+	if (bootstrap_pid() > 0)
+		BUF_APPEND(summary, sumlen, &off, "  pid:    %jd\n",
+		    (intmax_t)bootstrap_pid());
+
+	reply->flags = (uint32_t)off;
 }
 
 int
@@ -85,9 +106,12 @@ cmd_shutdown(uid_t euid, struct ctl_reply *reply)
 }
 
 void
-cmd_reload(uid_t euid, int kq, struct ctl_reply *reply,
+cmd_reload(uid_t euid, int kq __unused, struct ctl_reply *reply,
     char *summary, size_t sumlen)
 {
+	struct oracled_config newcfg;
+	size_t off;
+	int claims_failed;
 
 	if (euid != 0) {
 		reply->status = EPERM;
@@ -98,223 +122,78 @@ cmd_reload(uid_t euid, int kq, struct ctl_reply *reply,
 
 	syslog(LOG_INFO, "control: reload uid %u", euid);
 
-	if (supervisor_reload(kq, summary, sumlen) == -1)
-		reply->status = EIO;
-	else
-		reply->status = CTL_STATUS_OK;
-	reply->flags = (uint32_t)strlen(summary);
-}
-
-void
-cmd_check(uid_t euid, const char *filename, struct ctl_reply *reply,
-    char *summary, size_t sumlen)
-{
-	char path[PATH_MAX];
-
-	if (euid != 0) {
-		reply->status = EPERM;
-		syslog(LOG_WARNING, "control: check denied uid %u", euid);
-		ORACLED_PROBE_CTL_DENY(CTL_OP_CHECK, euid);
-		return;
-	}
-
-	if (resolve_manifest_path(filename, path, sizeof(path)) == -1) {
-		reply->status = EINVAL;
-		snprintf(summary, sumlen, "error: invalid manifest path");
-		reply->flags = (uint32_t)strlen(summary);
-		syslog(LOG_WARNING, "control: check \"%s\": path rejected",
-		    filename);
-		return;
-	}
-
-	if (supervisor_check_manifest(path, summary, sumlen) == -1) {
-		reply->status = EINVAL;
-		syslog(LOG_INFO, "control: check \"%s\": %s", filename,
-		    summary);
-	} else {
-		reply->status = CTL_STATUS_OK;
-		syslog(LOG_INFO, "control: check \"%s\": OK", filename);
-	}
-	reply->flags = (uint32_t)strlen(summary);
-}
-
-void
-cmd_load(uid_t euid, const char *filename, int kq, struct ctl_reply *reply,
-    char *summary, size_t sumlen)
-{
-	char path[PATH_MAX];
-
-	if (euid != 0) {
-		reply->status = EPERM;
-		syslog(LOG_WARNING, "control: load denied uid %u", euid);
-		ORACLED_PROBE_CTL_DENY(CTL_OP_LOAD, euid);
-		return;
-	}
-
-	if (resolve_manifest_path(filename, path, sizeof(path)) == -1) {
-		reply->status = EINVAL;
-		snprintf(summary, sumlen, "error: invalid manifest path");
-		reply->flags = (uint32_t)strlen(summary);
-		syslog(LOG_WARNING, "control: load \"%s\": path rejected",
-		    filename);
-		return;
-	}
-
-	if (supervisor_load_manifest(path, kq, summary, sumlen) == -1) {
-		reply->status = EINVAL;
-		syslog(LOG_WARNING, "control: load \"%s\": %s", filename,
-		    summary);
-	} else {
-		reply->status = CTL_STATUS_OK;
-		syslog(LOG_INFO, "control: load \"%s\": OK", filename);
-	}
-	reply->flags = (uint32_t)strlen(summary);
-}
-
-void
-cmd_services(uid_t euid, uint32_t flags, struct ctl_reply *reply,
-    char *summary, size_t sumlen)
-{
-	static const char *state_names[] = {
-		"stopped", "starting", "running", "stopping"
-	};
-	struct svc_manifest *disk;
-	struct timespec now;
-	size_t off;
-	unsigned i, j, ndisk;
-	int verbose;
-	bool found;
-
-	if (euid != 0) {
-		reply->status = EPERM;
-		syslog(LOG_WARNING, "control: services denied uid %u", euid);
-		ORACLED_PROBE_CTL_DENY(CTL_OP_SERVICES, euid);
-		return;
-	}
-
-	verbose = (flags & 1);
-
-	if (sumlen == 0) {
-		reply->status = CTL_STATUS_OK;
-		reply->flags = 0;
-		return;
-	}
-
-	clock_gettime(CLOCK_MONOTONIC, &now);
 	off = 0;
+	claims_failed = 0;
 
-	/* Section 1: Loaded services. */
-	BUF_APPEND(summary, sumlen, &off,"LOADED:\n");
-	if (od.services == NULL || od.nservices == 0) {
-		BUF_APPEND(summary, sumlen, &off,"  (none)\n");
+	/*
+	 * Phase 1: Re-read configuration file for claims changes.
+	 * Acquire new claims before releasing old ones so running
+	 * services never lose a claim they depend on.
+	 */
+	config_init_defaults(&newcfg);
+	if (config_load(&newcfg, od.conffile) == -1) {
+		syslog(LOG_WARNING, "reload: config parse error, "
+		    "keeping existing config");
+		BUF_APPEND(summary, sumlen, &off,
+		    "warning: config parse error, claims unchanged\n");
 	} else {
-		for (i = 0; i < od.nservices; i++) {
-			struct svc_runtime *svc = &od.services[i];
-			const char *state;
-
-			if ((unsigned)svc->state < nitems(state_names))
-				state = state_names[svc->state];
-			else
-				state = "unknown";
-
-			BUF_APPEND(summary, sumlen, &off,"  %-20s %-8s", svc->manifest.label,
-			    state);
-
-			if (svc->state == SVC_STATE_RUNNING ||
-			    svc->state == SVC_STATE_STARTING) {
-				long up = now.tv_sec -
-				    svc->last_start.tv_sec;
-				if (svc->last_start.tv_sec > 0)
-					BUF_APPEND(summary, sumlen, &off," pid %-6jd up %lds",
-					    (intmax_t)svc->pid, up);
-				else
-					BUF_APPEND(summary, sumlen, &off," pid %-6jd",
-					    (intmax_t)svc->pid);
-			}
-
-			BUF_APPEND(summary, sumlen, &off," restart=%s",
-			    restart_policy_name(svc->manifest.restart));
-
-			if (svc->restart_count > 0)
-				BUF_APPEND(summary, sumlen, &off," restarts=%u",
-				    svc->restart_count);
-
-			BUF_APPEND(summary, sumlen, &off,"\n");
-
-			if (verbose) {
-				const struct svc_manifest *m =
-				    &svc->manifest;
-				unsigned k;
-
-				BUF_APPEND(summary, sumlen, &off,"    program:    %s\n",
-				    m->program);
-				if (m->user[0] != '\0')
-					BUF_APPEND(summary, sumlen, &off,"    user:       %s\n",
-					    m->user);
-				if (m->group[0] != '\0')
-					BUF_APPEND(summary, sumlen, &off,"    group:      %s\n",
-					    m->group);
-				for (k = 0; k < m->ncap_paths; k++)
-					BUF_APPEND(summary, sumlen, &off,"    cap-path:   %s\n",
-					    m->cap_paths[k]);
-				for (k = 0; k < m->ncap_net; k++)
-					BUF_APPEND(summary, sumlen, &off,"    cap-net:    "
-					    "%s/%u %s\n",
-					    net_protocol_name(m->cap_net[k].protocol),
-					    m->cap_net[k].port,
-					    net_direction_name(m->cap_net[k].direction));
-				if (m->cap_system != 0)
-					BUF_APPEND(summary, sumlen, &off,"    cap-system: "
-					    "0x%x\n", m->cap_system);
-				if (m->nprovides > 0) {
-					BUF_APPEND(summary, sumlen, &off,"    provides:   ");
-					for (k = 0; k < m->nprovides; k++)
-						BUF_APPEND(summary, sumlen, &off,"%s%s",
-						    k > 0 ? ", " : "",
-						    m->provides[k]);
-					BUF_APPEND(summary, sumlen, &off,"\n");
-				}
-				if (m->nrequires > 0) {
-					BUF_APPEND(summary, sumlen, &off,"    requires:   ");
-					for (k = 0; k < m->nrequires; k++)
-						BUF_APPEND(summary, sumlen, &off,"%s%s",
-						    k > 0 ? ", " : "",
-						    m->requires[k]);
-					BUF_APPEND(summary, sumlen, &off,"\n");
-				}
-			}
+		if (!od.test_mode) {
+			claims_failed = cap_rt_reload_claims(&newcfg);
+			if (claims_failed == -1)
+				BUF_APPEND(summary, sumlen, &off,
+				    "warning: some claim changes failed\n");
 		}
+		config_apply_claims(&newcfg);
 	}
 
-	/* Section 2: Known manifests on disk but not loaded. */
-	disk = calloc(ORACLED_MAX_SERVICES, sizeof(*disk));
-	if (disk != NULL) {
-		ndisk = 0;
-		if (manifest_load_dir(od.cfg.manifest_dir, disk,
-		    ORACLED_MAX_SERVICES, &ndisk) == 0 && ndisk > 0) {
-			bool have_unloaded = false;
+	/*
+	 * Service manifest reload is handled by serviced.
+	 * SIGHUP is forwarded to serviced by the bootstrap.
+	 */
+	reply->status = CTL_STATUS_OK;
+	reply->flags = (uint32_t)off;
+}
 
-			for (j = 0; j < ndisk; j++) {
-				found = false;
-				for (i = 0; i < od.nservices; i++) {
-					if (strcmp(od.services[i].manifest.label,
-					    disk[j].label) == 0) {
-						found = true;
-						break;
-					}
-				}
-				if (!found) {
-					if (!have_unloaded) {
-						BUF_APPEND(summary, sumlen, &off,"\nAVAILABLE:\n");
-						have_unloaded = true;
-					}
-					BUF_APPEND(summary, sumlen, &off,"  %-20s %s\n",
-					    disk[j].label, disk[j].program);
-				}
-			}
-		}
-		free(disk);
-	}
+/*
+ * cmd_check and cmd_load are handled by serviced.
+ * Kept as stubs so the control socket dispatch doesn't break.
+ */
+void
+cmd_check(uid_t euid __unused, const char *filename __unused,
+    struct ctl_reply *reply, char *summary, size_t sumlen)
+{
+
+	reply->status = ENOSYS;
+	snprintf(summary, sumlen,
+	    "check: use servicectl(8) instead of oraclectl");
+	reply->flags = (uint32_t)strlen(summary);
+}
+
+void
+cmd_load(uid_t euid __unused, const char *filename __unused,
+    int kq __unused, struct ctl_reply *reply, char *summary, size_t sumlen)
+{
+
+	reply->status = ENOSYS;
+	snprintf(summary, sumlen,
+	    "load: use servicectl(8) instead of oraclectl");
+	reply->flags = (uint32_t)strlen(summary);
+}
+
+void
+cmd_services(uid_t euid __unused, uint32_t flags __unused,
+    struct ctl_reply *reply, char *summary, size_t sumlen)
+{
+	size_t off;
+
+	off = 0;
+	BUF_APPEND(summary, sumlen, &off,
+	    "oracled: authority init (services managed by serviced)\n");
+	BUF_APPEND(summary, sumlen, &off,
+	    "serviced: %s\n",
+	    oracle_proto_is_ready() ? "ready" : "not ready");
+	BUF_APPEND(summary, sumlen, &off,
+	    "serviced pid: %jd\n", (intmax_t)bootstrap_pid());
 
 	reply->status = CTL_STATUS_OK;
 	reply->flags = (uint32_t)off;

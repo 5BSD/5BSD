@@ -344,6 +344,45 @@ ATF_TC_BODY(multiple_claims, tc)
 	close(svc2);
 }
 
+ATF_TC(refcount_partial_close);
+ATF_TC_HEAD(refcount_partial_close, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Closing one claim preserves the other's gate enforcement");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(refcount_partial_close, tc)
+{
+	int svc1, svc2, rc;
+
+	svc1 = sys_connect();
+	svc2 = sys_connect();
+
+	/* svc1 claims KLDSTAT, svc2 claims KLDSTAT + REBOOT. */
+	ATF_REQUIRE(sys_call_claim(svc1, SYS_GATE_KLDSTAT) == 0);
+	ATF_REQUIRE(sys_call_claim(svc2, SYS_GATE_KLDSTAT | SYS_GATE_REBOOT) == 0);
+
+	/* Foreign nonce denied. */
+	rc = run_cross_nonce_kldstat(tc);
+	ATF_CHECK_MSG(rc == 0, "kldnext should be denied (both active)");
+
+	/* Close svc1 — svc2 still holds KLDSTAT. */
+	close(svc1);
+
+	/* Foreign nonce should STILL be denied. */
+	rc = run_cross_nonce_kldstat(tc);
+	ATF_CHECK_MSG(rc == 0,
+	    "kldnext should still be denied (svc2 holds KLDSTAT)");
+
+	/* Close svc2 — all claims released. */
+	close(svc2);
+
+	/* Foreign nonce should now be allowed. */
+	rc = run_cross_nonce_kldstat(tc);
+	ATF_CHECK_MSG(rc != 0,
+	    "kldnext should work after all claims released");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -356,6 +395,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mint_requires_claim);
 	ATF_TP_ADD_TC(tp, selective_gates);
 	ATF_TP_ADD_TC(tp, multiple_claims);
+	ATF_TP_ADD_TC(tp, refcount_partial_close);
 
 	return (atf_no_error());
 }

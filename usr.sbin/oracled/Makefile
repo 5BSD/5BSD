@@ -3,8 +3,9 @@
 PACKAGE=oracled
 PROG=	oracled
 MAN=	oracled.8
-SRCS=	oracled.c cap_rt.c commands.c config.c control.c depgraph.c \
-	event.c execute.c manifest.c proc.c supervisor.c
+SRCS=	oracled.c bootstrap.c cap_rt_setup.c cap_rt_claims.c cap_rt_mint.c \
+	cap_rt_coal.c commands.c config.c control.c event.c oracle_proto.c \
+	proc.c
 CONFS=	oracled.conf
 
 HAS_TESTS=

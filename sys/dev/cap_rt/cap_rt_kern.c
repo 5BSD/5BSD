@@ -29,6 +29,7 @@
 #include <sys/procdesc.h>
 
 #include "cap_rt_internal.h"
+#include "cap_rt_label.h"
 
 extern struct sx proctree_lock;
 
@@ -45,11 +46,16 @@ SDT_PROBE_DECLARE(cap_rt, , , forward);
 SDT_PROBE_DECLARE(cap_rt, , , forward__done);
 SDT_PROBE_DECLARE(cap_rt, , , revoke);
 SDT_PROBE_DECLARE(cap_rt, , , revoke__done);
+SDT_PROBE_DECLARE(cap_rt, , , instance__finalize);
+SDT_PROBE_DECLARE(cap_rt, , , state);
+SDT_PROBE_DECLARE(cap_rt, , , service__create);
+SDT_PROBE_DECLARE(cap_rt, , , service__destroy);
 SDT_PROBE_DECLARE(cap_rt, , , queue__pressure);
 
 /*
  * Resolve target process: attached procdesc or self.
- * On success, returns with PROC_LOCK held.  Caller must PROC_UNLOCK.
+ * On success, returns with PROC_LOCK held and _PHOLD active.
+ * Caller must PROC_UNLOCK and _PRELE.
  */
 int
 cap_rt_resolve_proc(struct file **fds, int nfds, struct proc **pp)
@@ -61,6 +67,7 @@ cap_rt_resolve_proc(struct file **fds, int nfds, struct proc **pp)
 		/* Self */
 		p = curthread->td_proc;
 		PROC_LOCK(p);
+		_PHOLD(p);
 		*pp = p;
 		return (0);
 	}
@@ -77,6 +84,7 @@ cap_rt_resolve_proc(struct file **fds, int nfds, struct proc **pp)
 		return (ESRCH);
 	}
 	PROC_LOCK(p);
+	_PHOLD(p);
 	sx_sunlock(&proctree_lock);
 
 	*pp = p;
@@ -183,6 +191,9 @@ cap_rt_msg_alloc_full(const void *data, size_t datalen,
 	if (nfds > 0 && fds != NULL) {
 		for (i = 0; i < nfds; i++) {
 			if (!fhold(fds[i])) {
+				SDT_PROBE5(cap_rt, , , queue__pressure,
+				    "<msg>", (uint64_t)0, "fhold-failed",
+				    i, nfds);
 				while (--i >= 0)
 					fdrop(msg->cm_fds[i], curthread);
 				msg->cm_nfds = 0;
@@ -226,6 +237,7 @@ cap_rt_auto_reply(struct cap_rt_instance *s, uint64_t reply_token, int error)
 {
 	struct cap_rt_msg *msg;
 	uint32_t err32;
+	int tx_error;
 
 	msg = uma_zalloc(cap_rt_msg_zone, M_WAITOK | M_ZERO);
 	err32 = (uint32_t)(error != 0 ? error : EIO);
@@ -234,8 +246,12 @@ cap_rt_auto_reply(struct cap_rt_instance *s, uint64_t reply_token, int error)
 	msg->cm_reply_token = reply_token;
 
 	mtx_lock(&s->ci_mtx);
-	cap_rt_instance_enqueue_tx(s, msg, true);
+	tx_error = cap_rt_instance_enqueue_tx(s, msg, true);
 	mtx_unlock(&s->ci_mtx);
+	if (tx_error != 0 && s->ci_service != NULL)
+		SDT_PROBE5(cap_rt, , , queue__pressure,
+		    s->ci_service->csvc_name, s->ci_badge, "auto-reply-drop",
+		    s->ci_txqlen, 0);
 }
 
 /*
@@ -393,6 +409,9 @@ cap_rt_service_create(const struct cap_rt_service_params *p,
 
 	sx_xlock(&cap_rt_registry_lock);
 	if (cap_rt_service_lookup(p->name) != NULL) {
+		SDT_PROBE5(cap_rt, , , queue__pressure,
+		    p->name, (uint64_t)0, "service-duplicate",
+		    0, 0);
 		sx_xunlock(&cap_rt_registry_lock);
 		if (svc->csvc_taskq != NULL)
 			taskqueue_free(svc->csvc_taskq);
@@ -404,6 +423,9 @@ cap_rt_service_create(const struct cap_rt_service_params *p,
 	sx_xunlock(&cap_rt_registry_lock);
 
 	*svcp = svc;
+	SDT_PROBE5(cap_rt, , , service__create, svc->csvc_name,
+	    svc->csvc_svc_flags, svc->csvc_queue_depth, svc->csvc_tx_limit,
+	    svc->csvc_instance_limit);
 	return (0);
 }
 
@@ -466,6 +488,15 @@ cap_rt_instance_revoke_reason(struct cap_rt_instance *s,
 	s->ci_flags |= CAP_RT_SF_FINALIZED;
 	mtx_unlock(&s->ci_mtx);
 
+	if (svc != NULL) {
+		SDT_PROBE6(cap_rt, , , instance__finalize,
+		    svc->csvc_name, s->ci_badge, reason,
+		    curthread->td_proc->p_pid, curthread->td_ucred,
+		    cap_rt_proc_nonce(curthread->td_ucred));
+		SDT_PROBE6(cap_rt, , , state, svc->csvc_name, s->ci_badge,
+		    s->ci_flags, s->ci_restricted, curthread->td_proc->p_pid,
+		    cap_rt_proc_nonce(curthread->td_ucred));
+	}
 	if (svc != NULL && svc->csvc_ops->co_revoke != NULL)
 		svc->csvc_ops->co_revoke(s, s->ci_badge, reason,
 		    svc->csvc_arg);
@@ -496,6 +527,9 @@ cap_rt_service_destroy(struct cap_rt_service *svc)
 {
 	struct cap_rt_instance *s;
 	bool need_revoke;
+
+	SDT_PROBE2(cap_rt, , , service__destroy, svc->csvc_name,
+	    svc->csvc_svc_flags);
 
 	/*
 	 * Mark destroying and revoke all instances under xlock.
@@ -595,6 +629,13 @@ cap_rt_service_destroy(struct cap_rt_service *svc)
 		if (s == NULL)
 			break;
 
+		SDT_PROBE6(cap_rt, , , instance__finalize,
+		    svc->csvc_name, s->ci_badge, CAP_RT_REVOKE_UNLOAD,
+		    curthread->td_proc->p_pid, curthread->td_ucred,
+		    cap_rt_proc_nonce(curthread->td_ucred));
+		SDT_PROBE6(cap_rt, , , state, svc->csvc_name, s->ci_badge,
+		    s->ci_flags, s->ci_restricted, curthread->td_proc->p_pid,
+		    cap_rt_proc_nonce(curthread->td_ucred));
 		if (svc->csvc_ops->co_revoke != NULL)
 			svc->csvc_ops->co_revoke(s, s->ci_badge,
 			    CAP_RT_REVOKE_UNLOAD, svc->csvc_arg);
@@ -618,7 +659,7 @@ cap_rt_reply(struct cap_rt_instance *s, uint64_t reply_token,
     struct file **out_fds, struct filecaps *out_fcaps, int out_nfds)
 {
 	struct cap_rt_msg *msg;
-	sbintime_t start __unused;
+	sbintime_t start;
 	int error;
 
 	start = getsbinuptime();
@@ -632,8 +673,10 @@ cap_rt_reply(struct cap_rt_instance *s, uint64_t reply_token,
 		return (EINVAL);
 
 	msg = cap_rt_msg_alloc(out, outlen, out_fds, out_fcaps, out_nfds);
-	if (msg == NULL)
-		return (out_nfds > 0 ? EBADF : ENOMEM);
+	if (msg == NULL) {
+		error = out_nfds > 0 ? EBADF : ENOMEM;
+		goto done;
+	}
 
 	msg->cm_reply_token = reply_token;
 	/* cm_badge, cm_cred intentionally zero for service→client. */
@@ -642,6 +685,7 @@ cap_rt_reply(struct cap_rt_instance *s, uint64_t reply_token,
 	error = cap_rt_instance_enqueue_tx(s, msg, true);
 	mtx_unlock(&s->ci_mtx);
 
+done:
 	if (error == 0 && s->ci_service != NULL)
 		SDT_PROBE3(cap_rt, , , reply,
 		    s->ci_service->csvc_name, s->ci_badge, outlen);
@@ -658,7 +702,7 @@ cap_rt_notify(struct cap_rt_instance *s, const void *data, size_t datalen,
     struct file **fds, struct filecaps *fcaps, int nfds)
 {
 	struct cap_rt_msg *msg;
-	sbintime_t start __unused;
+	sbintime_t start;
 	int error;
 
 	start = getsbinuptime();
@@ -672,14 +716,17 @@ cap_rt_notify(struct cap_rt_instance *s, const void *data, size_t datalen,
 		return (EINVAL);
 
 	msg = cap_rt_msg_alloc(data, datalen, fds, fcaps, nfds);
-	if (msg == NULL)
-		return (nfds > 0 ? EBADF : ENOMEM);
+	if (msg == NULL) {
+		error = nfds > 0 ? EBADF : ENOMEM;
+		goto done;
+	}
 	/* cm_badge, cm_cred intentionally zero for service→client. */
 
 	mtx_lock(&s->ci_mtx);
 	error = cap_rt_instance_enqueue_tx(s, msg, false);
 	mtx_unlock(&s->ci_mtx);
 
+done:
 	if (error == 0 && s->ci_service != NULL)
 		SDT_PROBE3(cap_rt, , , notify,
 		    s->ci_service->csvc_name, s->ci_badge, datalen);
@@ -695,8 +742,10 @@ int
 cap_rt_forward(struct cap_rt_instance *s, const struct cap_rt_msg *src)
 {
 	struct cap_rt_msg *msg;
+	sbintime_t start __unused;
 	int error;
 
+	start = getsbinuptime();
 	if (s->ci_service != NULL)
 		SDT_PROBE3(cap_rt, , , forward,
 		    s->ci_service->csvc_name, s->ci_badge, src->cm_datalen);
@@ -712,9 +761,9 @@ cap_rt_forward(struct cap_rt_instance *s, const struct cap_rt_msg *src)
 	mtx_unlock(&s->ci_mtx);
 
 	if (s->ci_service != NULL)
-		SDT_PROBE4(cap_rt, , , forward__done,
+		SDT_PROBE5(cap_rt, , , forward__done,
 		    s->ci_service->csvc_name, s->ci_badge,
-		    src->cm_datalen, error);
+		    src->cm_datalen, error, getsbinuptime() - start);
 
 	return (error);
 }

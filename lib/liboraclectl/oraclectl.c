@@ -72,6 +72,10 @@ writen(int fd, const void *buf, size_t len)
 	return (0);
 }
 
+static int do_call_summary(int fd, uint32_t op, uint32_t flags,
+    const void *data, uint32_t datalen,
+    char *summary, size_t sumlen, struct ctl_reply *rpl);
+
 static int
 do_call(int fd, uint32_t op, uint32_t flags,
     const void *data, uint32_t datalen, struct ctl_reply *rpl)
@@ -134,12 +138,14 @@ oraclectl_open(const char *path)
 }
 
 int
-oraclectl_status(int fd, struct oraclectl_status *st)
+oraclectl_status(int fd, struct oraclectl_status *st,
+    char *summary, size_t sumlen)
 {
 	struct ctl_reply rpl;
 	int error;
 
-	error = do_call(fd, ORACLECTL_STATUS, 0, NULL, 0, &rpl);
+	error = do_call_summary(fd, ORACLECTL_STATUS, 0, NULL, 0,
+	    summary, sumlen, &rpl);
 	if (error != 0)
 		return (error);
 	if (st != NULL) {

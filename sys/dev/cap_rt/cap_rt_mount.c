@@ -25,10 +25,17 @@
 #include <sys/mount.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
+#include <sys/sdt.h>
 #include <sys/syscallsubr.h>
 
 #include "cap_rt.h"
 #include "cap_rt_mount_proto.h"
+
+SDT_PROVIDER_DEFINE(cap_rt_mount);
+SDT_PROBE_DEFINE6(cap_rt_mount, , , state,
+    "const char *", "const char *", "const char *", "uint32_t", "pid_t", "int");
+SDT_PROBE_DEFINE3(cap_rt_mount, , , deny,
+    "const char *", "const char *", "const char *");
 
 /*
  * Allowed filesystem types.  Only these can be mounted through the
@@ -181,12 +188,14 @@ mount_op_mount(const void *req, size_t reqlen,
 	/* Validate filesystem type. */
 	if (!mount_fstype_allowed(fstype)) {
 		rp->status = MOUNT_STATUS_EPERM;
+		SDT_PROBE3(cap_rt_mount, , , deny, (uintptr_t)"mount", (uintptr_t)fstype, (uintptr_t)fspath);
 		return (0);
 	}
 
 	/* Validate mount path. */
 	if (!mount_path_valid(fspath, sizeof(fspath))) {
 		rp->status = MOUNT_STATUS_ERR;
+		SDT_PROBE3(cap_rt_mount, , , deny, (uintptr_t)"mount", (uintptr_t)fstype, (uintptr_t)fspath);
 		return (0);
 	}
 
@@ -202,6 +211,7 @@ mount_op_mount(const void *req, size_t reqlen,
 	if (strcmp(fstype, "nullfs") == 0 &&
 	    !mount_path_valid(from, sizeof(from))) {
 		rp->status = MOUNT_STATUS_ERR;
+		SDT_PROBE3(cap_rt_mount, , , deny, (uintptr_t)"mount", (uintptr_t)fstype, (uintptr_t)from);
 		return (0);
 	}
 
@@ -288,6 +298,8 @@ mount_op_mount(const void *req, size_t reqlen,
 
 	memset(rp, 0, sizeof(*rp));
 	rp->status = mount_error_status(error);
+	SDT_PROBE6(cap_rt_mount, , , state, (uintptr_t)"mount", (uintptr_t)fstype, (uintptr_t)fspath,
+	    rp->status, curthread->td_proc->p_pid, error);
 	return (0);
 }
 
@@ -315,6 +327,7 @@ mount_op_unmount(const void *req, size_t reqlen,
 	if (!mount_path_valid(fspath, sizeof(fspath))) {
 		memset(rp, 0, sizeof(*rp));
 		rp->status = MOUNT_STATUS_ERR;
+		SDT_PROBE3(cap_rt_mount, , , deny, (uintptr_t)"unmount", (uintptr_t)"", (uintptr_t)fspath);
 		return (0);
 	}
 
@@ -333,6 +346,8 @@ mount_op_unmount(const void *req, size_t reqlen,
 
 	memset(rp, 0, sizeof(*rp));
 	rp->status = mount_error_status(error);
+	SDT_PROBE6(cap_rt_mount, , , state, (uintptr_t)"unmount", (uintptr_t)"", (uintptr_t)fspath,
+	    rp->status, curthread->td_proc->p_pid, error);
 	return (0);
 }
 

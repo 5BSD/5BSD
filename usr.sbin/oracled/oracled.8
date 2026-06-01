@@ -126,8 +126,22 @@ File mode for the control socket.
 Default: 0700 (root only).
 .It Va manifest_dir
 Directory containing service manifest files.
+Passed to
+.Xr serviced 8
+via the
+.Ev SERVICED_MANIFEST_DIR
+environment variable.
 Default:
 .Pa /etc/oracled.d .
+.It Va service_manager
+Path to the service manager binary started by
+.Nm
+at bootstrap.
+The binary inherits a cap_rt pair channel, delegated service
+instance file descriptors, and the manifest directory path.
+Default:
+.Pa /usr/libexec/oracled/serviced .
+If empty, no service manager is started.
 .El
 .Ss Integrity
 The

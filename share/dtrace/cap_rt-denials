@@ -1,0 +1,100 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * cap_rt-denials -- denied capability operations across CAP_RT subsystems.
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-18s %-20s %-14s %-18s %-18s %s\n",
+	    "PID", "PROVIDER", "EVENT", "OP", "OWNER", "ACCESSOR",
+	    "DETAIL");
+}
+
+cap_rt:::ioctl-deny
+{
+	printf("%-6d %-18s %-20s cmd=%-10d %-18s 0x%016x svc=%s badge=%d uid=%d gid=%d\n",
+	    arg3, "cap_rt", "ioctl-deny", arg2, "-", arg5,
+	    copyinstr(arg0), arg1, ((struct ucred *)arg4)->cr_uid,
+	    ((struct ucred *)arg4)->cr_gid);
+	@denies["cap_rt", "ioctl"] = count();
+}
+
+cap_rt:::error
+/arg5 != 0/
+{
+	printf("%-6d %-18s %-20s cmd=%-10d %-18s 0x%016x svc=%s badge=%d errno=%d\n",
+	    arg3, "cap_rt", "error", arg2, "-", arg4, copyinstr(arg0),
+	    arg1, arg5);
+	@errors[copyinstr(arg0), arg2, arg5] = count();
+}
+
+capsicum:::check-deny,
+capsicum:::ioctl-deny,
+capsicum:::fcntl-deny
+{
+	printf("%-6d %-18s %-20s %-14s %-18s %-18s errno=%d\n",
+	    pid, "capsicum", probename, "-", "-", "-", arg5);
+	@denies["capsicum", probename] = count();
+}
+
+fd:::pass-deny
+{
+	printf("%-6d %-18s %-20s fd=%-10d %-18s %-18s type=%d errno=%d uid=%d gid=%d\n",
+	    arg2, "fd", "pass-deny", arg1, "-", "-", arg4, arg5,
+	    ((struct ucred *)arg3)->cr_uid, ((struct ucred *)arg3)->cr_gid);
+	@denies["fd", "pass-deny"] = count();
+}
+
+cap_rt_capprotect:::deny,
+cap_rt_system:::deny,
+cap_rt_isolation:::deny
+{
+	printf("%-6d %-18s %-20s %-14s 0x%016x 0x%016x\n",
+	    pid, probemod, "deny", copyinstr(arg0), arg1, arg2);
+	@denies[probemod, copyinstr(arg0)] = count();
+}
+
+cap_rt_mount:::deny
+{
+	printf("%-6d %-18s %-20s %-14s %-18s %-18s fstype=%s\n",
+	    pid, "cap_rt_mount", "deny", copyinstr(arg0), "-", "-",
+	    copyinstr(arg1));
+	@denies["cap_rt_mount", copyinstr(arg0)] = count();
+}
+
+cap_rt_acct:::deny
+{
+	printf("%-6d %-18s %-20s %-14s %-18s %-18s uid=%d errno=%d\n",
+	    pid, "cap_rt_acct", "deny", copyinstr(arg0), "-", "-",
+	    arg1, arg2);
+	@denies["cap_rt_acct", copyinstr(arg0)] = count();
+}
+
+cap_rt_node:::deny
+{
+	printf("%-6d %-18s %-20s %-14s %-18s %-18s target=%d\n",
+	    pid, "cap_rt_node", "deny", copyinstr(arg0), "-", "-",
+	    arg1);
+	@denies["cap_rt_node", copyinstr(arg0)] = count();
+}
+
+cap_rt_coalition:::deny
+{
+	printf("%-6d %-18s %-20s %-14s %-18s %-18s errno=%d\n",
+	    arg2, "cap_rt_coalition", "deny", copyinstr(arg0), "-", "-",
+	    arg1);
+	@denies["cap_rt_coalition", copyinstr(arg0)] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Denials by provider/op ---\n");
+	printa("%-20s %-20s %@d\n", @denies);
+
+	printf("\n--- CAP_RT errors by service/cmd/errno ---\n");
+	printa("%-16s cmd=%-10d errno=%-6d %@d\n", @errors);
+}

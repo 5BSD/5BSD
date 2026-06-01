@@ -81,6 +81,7 @@
 #include <sys/rwlock.h>
 #include <sys/socket.h>
 #include <sys/socketvar.h>
+#include <sys/sdt.h>
 #include <sys/signalvar.h>
 #include <sys/stat.h>
 #include <sys/sysent.h>
@@ -93,6 +94,14 @@
 #include <sys/vnode.h>
 
 #include <net/vnet.h>
+
+SDT_PROVIDER_DECLARE(fd);
+SDT_PROBE_DEFINE6(fd, , , scm__rights__send,
+    "struct file *", "int", "pid_t", "struct ucred *", "short", "int");
+SDT_PROBE_DEFINE6(fd, , , scm__rights__recv,
+    "struct file *", "int", "pid_t", "struct ucred *", "short", "int");
+SDT_PROBE_DEFINE6(fd, , , pass__deny,
+    "struct file *", "int", "pid_t", "struct ucred *", "short", "int");
 
 #ifdef DDB
 #include <ddb/ddb.h>
@@ -3576,6 +3585,9 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				    (restrict_rights(fp, td) ?
 				    O_RESOLVE_BENEATH : 0), &fdep[i]->fde_caps);
 				unp_externalize_fp(fp);
+				SDT_PROBE6(fd, , , scm__rights__recv, fp,
+				    *fdp, td->td_proc->p_pid, td->td_ucred,
+				    fp->f_type, newfds);
 			}
 
 			/*
@@ -3774,6 +3786,10 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
 					goto out;
 				}
 				if (!(fp->f_ops->fo_flags & DFLAG_PASSABLE)) {
+					SDT_PROBE6(fd, , , pass__deny, fp,
+					    *fdp, td->td_proc->p_pid,
+					    td->td_ucred, fp->f_type,
+					    EOPNOTSUPP);
 					FILEDESC_SUNLOCK(fdesc);
 					error = EOPNOTSUPP;
 					goto out;
@@ -3811,6 +3827,10 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
 				filecaps_copy(&fde->fde_caps,
 				    &fdep[i]->fde_caps, true);
 				unp_internalize_fp(fdep[i]->fde_file);
+				SDT_PROBE6(fd, , , scm__rights__send,
+				    fdep[i]->fde_file, *fdp,
+				    td->td_proc->p_pid, td->td_ucred,
+				    fdep[i]->fde_file->f_type, oldfds);
 			}
 			FILEDESC_SUNLOCK(fdesc);
 			break;

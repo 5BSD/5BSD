@@ -7,9 +7,17 @@
 
 PACKAGE=	dtrace
 SCRIPTS=	blocking \
+		cap_rt-audit \
+		capsicum-changes \
 		cap_rt-calls \
+		cap_rt-delegation \
+		cap_rt-denials \
 		cap_rt-errors \
+		cap_rt-fds \
+		cap_rt-holders \
 		cap_rt-messages \
+		cap_rt-nonces \
+		cap_rt-services \
 		cap_rt-shield \
 		cap_rt-summary \
 		cap_rt-who \

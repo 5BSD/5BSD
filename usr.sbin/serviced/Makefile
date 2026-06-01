@@ -1,0 +1,17 @@
+.include <src.opts.mk>
+
+PACKAGE=serviced
+PROG=	serviced
+MAN=	serviced.8
+SRCS=	serviced.c caprt_direct.c depgraph.c execute.c manifest.c \
+	naming.c oracle_client.c reload.c sctl.c svc_proto.c supervisor.c
+
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+=	tests
+
+CFLAGS+=	-I${SRCTOP}/sys
+CFLAGS+=	-I${SRCTOP}/usr.sbin/oracled
+CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
+LIBADD=		ucl util
+
+.include <bsd.prog.mk>

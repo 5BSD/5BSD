@@ -1,0 +1,322 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd June 1, 2026
+.Dt LIBSERVICE 3
+.Os
+.Sh NAME
+.Nm service_init ,
+.Nm service_ready ,
+.Nm service_register ,
+.Nm service_unregister ,
+.Nm service_lookup ,
+.Nm service_accept ,
+.Nm service_send ,
+.Nm service_recv ,
+.Nm service_pair_fd
+.Nd client library for services managed by serviced
+.Sh LIBRARY
+.Lb libservice
+.Sh SYNOPSIS
+.In libservice.h
+.Ft int
+.Fn service_init void
+.Ft int
+.Fn service_ready void
+.Ft int
+.Fn service_register "const char *name"
+.Ft int
+.Fn service_unregister "const char *name"
+.Ft int
+.Fn service_lookup "const char *name"
+.Ft int
+.Fn service_accept "char *client_label" "size_t labelsz"
+.Ft int
+.Fn service_send "int fd" "const void *data" "size_t len"
+.Ft ssize_t
+.Fn service_recv "int fd" "void *buf" "size_t bufsz" "int *peer_fd"
+.Ft int
+.Fn service_pair_fd void
+.Sh DESCRIPTION
+The
+.Nm libservice
+library provides a clean API for services managed by
+.Xr serviced 8
+to communicate with the service manager over their inherited
+cap_rt pair channel.
+Services link against
+.Nm libservice
+and never need to include cap_rt headers or issue ioctls directly.
+.Pp
+.Fn service_init
+initializes the library by reading the
+.Ev ORACLED_PAIR_FD
+environment variable to obtain the pair file descriptor
+inherited from
+.Xr serviced 8 .
+This function must be called before any other function in the
+library.
+.Pp
+.Fn service_ready
+reports readiness to
+.Xr serviced 8 .
+This notifies the service manager that the service has completed
+initialization and is ready to serve requests.
+.Pp
+.Fn service_register
+registers a reverse-domain name
+.Fa name
+(e.g.,
+.Dq org.freebsd.sshd )
+with the
+.Xr serviced 8
+naming registry.
+After registration, other services can connect via
+.Fn service_lookup .
+The name must contain at least one dot, consist only of
+alphanumerics, dots, hyphens, and underscores, and must not
+exceed 255 characters.
+.Pp
+.Fn service_unregister
+removes a previously registered name from the naming registry.
+Only the service that registered the name may remove it.
+.Pp
+.Fn service_lookup
+connects to a named service by requesting a brokered connection
+from
+.Xr serviced 8 .
+The service manager creates a new cap_rt pair, pushes one end
+to the provider and returns the other end to the caller.
+On success, a file descriptor for the bidirectional pair endpoint
+is returned.
+.Pp
+.Fn service_accept
+blocks until a client connects to one of this service's
+registered names via
+.Fn service_lookup .
+On success, a file descriptor for the client connection is
+returned.
+If
+.Fa client_label
+is not
+.Dv NULL ,
+the connecting service's label is copied into it, up to
+.Fa labelsz
+bytes.
+Notifications that arrive during an in-progress RPC are queued
+internally and delivered from subsequent calls to
+.Fn service_accept .
+.Pp
+.Fn service_send
+sends a message on an arbitrary cap_rt pair file descriptor
+.Fa fd .
+This is a convenience wrapper around the
+.Dv CAP_RT_SENDMSG
+ioctl.
+.Pp
+.Fn service_recv
+receives a message from a cap_rt pair file descriptor
+.Fa fd .
+Up to
+.Fa bufsz
+bytes are read into
+.Fa buf .
+If
+.Fa peer_fd
+is not
+.Dv NULL
+and the message carries an attached file descriptor, it is
+stored in
+.Fa *peer_fd ;
+otherwise
+.Fa *peer_fd
+is set to \-1.
+This is a convenience wrapper around the
+.Dv CAP_RT_RECVMSG
+ioctl.
+.Pp
+.Fn service_pair_fd
+returns the pair file descriptor to
+.Xr serviced 8
+that was established during
+.Fn service_init .
+This is useful for registering the fd with
+.Xr kqueue 2
+for event-driven services.
+Returns \-1 if the library has not been initialized.
+.Sh RETURN VALUES
+.Fn service_init ,
+.Fn service_ready ,
+.Fn service_register ,
+.Fn service_unregister ,
+and
+.Fn service_send
+return 0 on success and \-1 on failure, setting
+.Va errno .
+.Pp
+.Fn service_lookup
+and
+.Fn service_accept
+return a non-negative file descriptor on success and \-1 on
+failure, setting
+.Va errno .
+.Pp
+.Fn service_recv
+returns the number of bytes received on success and \-1 on
+failure, setting
+.Va errno .
+.Pp
+.Fn service_pair_fd
+returns the pair file descriptor, or \-1 if the library has not
+been initialized.
+.Sh EXAMPLES
+Basic provider pattern:
+.Bd -literal -offset indent
+#include <libservice.h>
+#include <stdio.h>
+
+int
+main(void)
+{
+    char label[64];
+    int client_fd;
+
+    if (service_init() == -1)
+        return (1);
+
+    service_ready();
+    service_register("org.example.myservice");
+
+    for (;;) {
+        client_fd = service_accept(label, sizeof(label));
+        if (client_fd == -1)
+            break;
+        printf("client connected: %s\\n", label);
+        /* handle client_fd ... */
+    }
+
+    service_unregister("org.example.myservice");
+    return (0);
+}
+.Ed
+.Pp
+Basic client pattern:
+.Bd -literal -offset indent
+#include <libservice.h>
+#include <stdio.h>
+
+int
+main(void)
+{
+    int peer;
+    char buf[256];
+    ssize_t n;
+
+    if (service_init() == -1)
+        return (1);
+
+    service_ready();
+
+    peer = service_lookup("org.example.myservice");
+    if (peer == -1)
+        return (1);
+
+    service_send(peer, "hello", 5);
+    n = service_recv(peer, buf, sizeof(buf), NULL);
+    if (n > 0)
+        printf("received %zd bytes\\n", n);
+
+    return (0);
+}
+.Ed
+.Sh ERRORS
+The following errors are common to multiple functions:
+.Bl -tag -width Er
+.It Bq Er ENOTCONN
+The library has not been initialized via
+.Fn service_init ,
+or the pair fd has become invalid.
+.It Bq Er EINVAL
+An invalid argument was passed (e.g., a malformed name).
+.El
+.Pp
+.Fn service_init
+may fail with:
+.Bl -tag -width Er
+.It Bq Er ENOENT
+The
+.Ev ORACLED_PAIR_FD
+environment variable is not set.
+.It Bq Er EINVAL
+The value of
+.Ev ORACLED_PAIR_FD
+is not a valid file descriptor number.
+.El
+.Pp
+.Fn service_register
+may fail with:
+.Bl -tag -width Er
+.It Bq Er ENAMETOOLONG
+The name exceeds 255 characters.
+.It Bq Er EEXIST
+The name is already registered by another service.
+.It Bq Er ENOSPC
+The service has reached its per-service registration limit (32).
+.El
+.Pp
+.Fn service_unregister
+may fail with:
+.Bl -tag -width Er
+.It Bq Er ENAMETOOLONG
+The name exceeds 255 characters.
+.It Bq Er ENOENT
+The name is not registered.
+.It Bq Er EPERM
+The name is registered by a different service.
+.El
+.Pp
+.Fn service_lookup
+may fail with:
+.Bl -tag -width Er
+.It Bq Er ENAMETOOLONG
+The name exceeds 255 characters.
+.It Bq Er ENOENT
+The name is not registered.
+.It Bq Er ELOOP
+The caller attempted to connect to itself.
+.It Bq Er ECONNRESET
+The provider's pair channel has closed.
+.It Bq Er EIO
+Failed to create a pair or notify the provider.
+.El
+.Sh CAVEATS
+The library is not thread-safe.
+The internal pair fd and notification queue are stored in static
+variables; concurrent access from multiple threads will produce
+undefined behavior.
+.Pp
+The library is not safe to use across
+.Xr fork 2
+without a subsequent
+.Xr execve 2 .
+The pair fd is shared between parent and child after fork, and
+interleaved messages will corrupt protocol state.
+.Pp
+.Fn service_accept
+blocks on the pair fd.
+If the service needs to multiplex the pair fd with other event
+sources, use
+.Fn service_pair_fd
+to obtain the fd and register it with
+.Xr kqueue 2
+or
+.Xr poll 2 ,
+then call
+.Fn service_accept
+only when the fd is readable.
+.Sh SEE ALSO
+.Xr kqueue 2 ,
+.Xr serviced 8
+.Sh HISTORY
+.Nm libservice
+first appeared in 5BSD.

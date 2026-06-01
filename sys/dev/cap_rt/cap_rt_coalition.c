@@ -91,6 +91,8 @@ SDT_PROBE_DEFINE1(cap_rt_coalition, , , leader__exit, "pid_t");
 SDT_PROBE_DEFINE2(cap_rt_coalition, , , fork__inherit, "pid_t", "pid_t");
 SDT_PROBE_DEFINE3(cap_rt_coalition, , , call__done,
     "uint32_t", "int", "sbintime_t");
+SDT_PROBE_DEFINE3(cap_rt_coalition, , , deny,
+    "const char *", "int", "pid_t");
 
 MALLOC_DEFINE(M_COALITION, "cap_rt_coalition",
     "cap_rt coalition structures");
@@ -751,8 +753,11 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 	 */
 
 	error = coalition_check_limits();
-	if (error != 0)
+	if (error != 0) {
+		SDT_PROBE3(cap_rt_coalition, , , deny, (uintptr_t)"enlist-limit",
+		    ENOMEM, curthread->td_proc->p_pid);
 		return (error);
+	}
 
 	if (!fhold(fp))
 		return (EBADF);
@@ -782,6 +787,8 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			sx_sunlock(&proctree_lock);
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
+			SDT_PROBE3(cap_rt_coalition, , , deny,
+			    "enlist-dead", ESRCH, td->td_proc->p_pid);
 			return (ESRCH);
 		}
 		sx_sunlock(&proctree_lock);
@@ -797,6 +804,8 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			sx_xunlock(&co->co_sx);
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
+			SDT_PROBE3(cap_rt_coalition, , , deny,
+			    "enlist-shutdown", ESHUTDOWN, td->td_proc->p_pid);
 			return (ESHUTDOWN);
 		}
 
@@ -806,6 +815,8 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			sx_xunlock(&co->co_sx);
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
+			SDT_PROBE3(cap_rt_coalition, , , deny,
+			    "enlist-busy", EBUSY, td->td_proc->p_pid);
 			return (EBUSY);
 		}
 
@@ -822,6 +833,9 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			JAILDESC_UNLOCK(jd);
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
+			SDT_PROBE3(cap_rt_coalition, , , deny,
+			    "enlist-invalid-jail", ENOENT,
+			    td->td_proc->p_pid);
 			return (ENOENT);
 		}
 		prison_hold(pr);
@@ -835,6 +849,9 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			prison_free(pr);
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
+			SDT_PROBE3(cap_rt_coalition, , , deny,
+			    "enlist-shutdown", ESHUTDOWN,
+			    td->td_proc->p_pid);
 			return (ESHUTDOWN);
 		}
 
@@ -897,6 +914,8 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			sx_xunlock(&coalition_nest_lock);
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
+			SDT_PROBE3(cap_rt_coalition, , , deny,
+			    "enlist-cycle", error, td->td_proc->p_pid);
 			return (error);
 		}
 
@@ -908,6 +927,9 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			sx_xunlock(&coalition_nest_lock);
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
+			SDT_PROBE3(cap_rt_coalition, , , deny,
+			    "enlist-shutdown", ESHUTDOWN,
+			    td->td_proc->p_pid);
 			return (ESHUTDOWN);
 		}
 
@@ -917,6 +939,9 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			sx_xunlock(&coalition_nest_lock);
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
+			SDT_PROBE3(cap_rt_coalition, , , deny,
+			    "enlist-busy", EBUSY,
+			    td->td_proc->p_pid);
 			return (EBUSY);
 		}
 
@@ -928,6 +953,9 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			sx_xunlock(&coalition_nest_lock);
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
+			SDT_PROBE3(cap_rt_coalition, , , deny,
+			    "enlist-busy", EBUSY,
+			    td->td_proc->p_pid);
 			return (EBUSY);
 		}
 
@@ -957,6 +985,9 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			sx_xunlock(&co->co_sx);
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
+			SDT_PROBE3(cap_rt_coalition, , , deny,
+			    "enlist-shutdown", ESHUTDOWN,
+			    td->td_proc->p_pid);
 			return (ESHUTDOWN);
 		}
 
@@ -964,6 +995,9 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			sx_xunlock(&co->co_sx);
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
+			SDT_PROBE3(cap_rt_coalition, , , deny,
+			    "enlist-busy", EBUSY,
+			    td->td_proc->p_pid);
 			return (EBUSY);
 		}
 	}
@@ -1005,8 +1039,11 @@ coalition_join(struct coalition *co, struct thread *td)
 	int error;
 
 	error = coalition_check_limits();
-	if (error != 0)
+	if (error != 0) {
+		SDT_PROBE3(cap_rt_coalition, , , deny, (uintptr_t)"join-limit",
+		    ENOMEM, td->td_proc->p_pid);
 		return (error);
+	}
 
 	p = td->td_proc;
 	cm = uma_zalloc(coalition_member_zone, M_WAITOK | M_ZERO);
@@ -1018,6 +1055,8 @@ coalition_join(struct coalition *co, struct thread *td)
 	if (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) {
 		sx_xunlock(&co->co_sx);
 		uma_zfree(coalition_member_zone, cm);
+		SDT_PROBE3(cap_rt_coalition, , , deny,
+		    "join-shutdown", ESHUTDOWN, p->p_pid);
 		return (ESHUTDOWN);
 	}
 
@@ -1026,6 +1065,8 @@ coalition_join(struct coalition *co, struct thread *td)
 		rw_wunlock(&coalition_proc_hash_lock);
 		sx_xunlock(&co->co_sx);
 		uma_zfree(coalition_member_zone, cm);
+		SDT_PROBE3(cap_rt_coalition, , , deny,
+		    "join-busy", EBUSY, p->p_pid);
 		return (EBUSY);
 	}
 
@@ -1737,18 +1778,25 @@ coalition_process_exit(void *arg __unused, struct proc *p)
 	rw_wunlock(&coalition_proc_hash_lock);
 
 	/*
-	 * Try to remove the member from the coalition's TAILQ.
-	 * If tqe_prev is NULL, coalition_close_internal() already
-	 * claimed this member — it owns the free.  We must not
-	 * touch cm after releasing co_sx in that case.
+	 * Re-find the member on the coalition's TAILQ under co_sx.
+	 *
+	 * We cannot dereference cm after dropping hash_lock because
+	 * coalition_close_internal() may have already removed it from
+	 * the TAILQ, freed it, and moved on — making cm a dangling
+	 * pointer.  Instead, search by proc pointer (p is still alive
+	 * as the exiting process, and each proc can only be in one
+	 * coalition).
 	 */
-	bool we_own_cm = false;
+	cm = NULL;
 
 	sx_xlock(&co->co_sx);
-	if (cm->cm_link.tqe_prev != NULL) {
+	TAILQ_FOREACH(cm, &co->co_members, cm_link) {
+		if (cm->cm_data == p)
+			break;
+	}
+	if (cm != NULL) {
 		TAILQ_REMOVE(&co->co_members, cm, cm_link);
 		cm->cm_link.tqe_prev = NULL;
-		we_own_cm = true;
 
 		if ((co->co_flags & COF_HAS_LEADER) &&
 		    co->co_leader == cm) {
@@ -1768,7 +1816,7 @@ coalition_process_exit(void *arg __unused, struct proc *p)
 		coalition_terminate(co);
 	}
 
-	if (we_own_cm) {
+	if (cm != NULL) {
 		if (cm->cm_fp != NULL)
 			fdrop(cm->cm_fp, curthread);
 		uma_zfree(coalition_member_zone, cm);
@@ -1813,6 +1861,8 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 		sx_xunlock(&co->co_sx);
 		uma_zfree(coalition_member_zone, ccm);
 		coalition_rel(co);
+		SDT_PROBE3(cap_rt_coalition, , , deny, (uintptr_t)"fork-limit",
+		    ENOMEM, child->p_pid);
 		log(LOG_WARNING,
 		    "cap_rt_coalition: fork denied by member limit\n");
 		return;
@@ -2700,7 +2750,7 @@ coalition_mod_init(void)
 	memset(&p, 0, sizeof(p));
 	p.name = "coalition";
 	p.ops = &coalition_ops;
-	p.flags = CAP_RT_SVC_NOTIFY;
+	p.flags = CAP_RT_SVC_NOTIFY | CAP_RT_SVC_MINTABLE;
 
 	error = cap_rt_service_create(&p, &coalition_svc);
 	if (error != 0)

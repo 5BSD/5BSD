@@ -60,14 +60,59 @@ Still need to design:
 - Whether linprocfs/linsysfs mounts inside jails are managed
   by the oracle or by the jail's own init
 
-## Remove CTL_OP_RELOAD
+## cap_rt Kernel Service Gaps
 
-The reload command is a stub returning ENOTSUP.  Once the
-service launcher is fully integrated, reload should:
-- Re-read manifests from `/etc/oracled.d/`
-- Diff against running services
-- Start new, stop removed, restart changed
-- Re-read `/etc/oracled.conf` for claim/integrity changes
+### Isolation service
+
+- `FI_OP_QUERY_NET` (op 6) — reserved but not implemented.
+  Needed so `oraclectl status` can verify network claims are
+  actually held by the kernel, not just tracked in config.
+  Path claims already use `FI_OP_QUERY` for verification.
+
+- Batch claim/release — `cap_rt_reload_claims` does individual
+  ioctls in a loop.  A `FI_OP_CLAIM_BATCH` would make reload
+  atomic (all-or-nothing) instead of partially-applied on failure.
+
+- Claim enumeration — no way to list all active claims from
+  userspace.  A `FI_OP_LIST_CLAIMS` would let status show ground
+  truth independent of config state.
+
+### Token narrowing
+
+Tokens currently grant full access to a claim.  No way to mint
+a narrowed token (e.g., read-only path access, bind-only on a
+port).  The isolation proto has flags fields reserved but unused.
+
+### Instance enumeration
+
+No way to query how many cap_rt instances a service holds or
+which services hold instances of which cap_rt services.  Useful
+for debugging leaked fds.
+
+## Pair Channel Protocol (Phase 4 prerequisite)
+
+The pair channel is created but `supervisor.c:379` says "not
+currently read."  Agents need a defined request/reply protocol
+over the pair for:
+
+- Requesting additional capabilities at runtime
+- Reporting health/readiness (currently no "ready" handshake)
+- Requesting sub-service launches from the oracle
+
+## Jail Service (Phase 3 prerequisite)
+
+Coalitions can enlist jail descriptors, but there is no cap_rt
+service for creating jails with capability-enforced parameters.
+Currently `jail_set()` is a raw syscall.  A jail service would
+let oracled create jails via cap_rt with the same token/authorize
+pattern.
+
+### Mount service scoping
+
+The mount service exists but there is no mechanism for oracled
+to delegate scoped mount rights (e.g., "this agent can mount
+tmpfs inside its jail but not nullfs").  The current
+mint/authorize is all-or-nothing.
 
 ## Deployment Profiles
 

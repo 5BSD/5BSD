@@ -17,7 +17,6 @@
 #include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
-#include <sys/imgact.h>
 #include <sys/kernel.h>
 #include <sys/libkern.h>
 #include <sys/lock.h>
@@ -26,16 +25,13 @@
 #include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/refcount.h>
+#include <sys/sbuf.h>
 #include <sys/sx.h>
-#include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
 #include <sys/taskqueue.h>
 #include <sys/ucred.h>
 #include <sys/uio.h>
-#include <sys/vnode.h>
 #include <vm/uma.h>
-
-#include <security/mac/mac_policy.h>
 
 #include "cap_rt_internal.h"
 #include "cap_rt_label.h"
@@ -77,14 +73,52 @@ SDT_PROBE_DEFINE6(cap_rt, , , call__done,
     "sbintime_t");
 SDT_PROBE_DEFINE3(cap_rt, , , forward,
     "const char *", "uint64_t", "size_t");
-SDT_PROBE_DEFINE4(cap_rt, , , forward__done,
-    "const char *", "uint64_t", "size_t", "int");
+SDT_PROBE_DEFINE5(cap_rt, , , forward__done,
+    "const char *", "uint64_t", "size_t", "int", "sbintime_t");
 SDT_PROBE_DEFINE3(cap_rt, , , revoke,
     "const char *", "uint64_t", "int");
 SDT_PROBE_DEFINE4(cap_rt, , , revoke__done,
     "const char *", "uint64_t", "int", "sbintime_t");
 SDT_PROBE_DEFINE2(cap_rt, , , close,
     "const char *", "uint64_t");
+SDT_PROBE_DEFINE6(cap_rt, , , fd__install,
+    "const char *", "uint64_t", "int", "pid_t", "struct ucred *",
+    "uint64_t");
+SDT_PROBE_DEFINE6(cap_rt, , , fd__close,
+    "const char *", "uint64_t", "int", "pid_t", "struct ucred *",
+    "uint64_t");
+SDT_PROBE_DEFINE6(cap_rt, , , control,
+    "const char *", "uint64_t", "u_long", "pid_t", "struct ucred *",
+    "uint64_t");
+SDT_PROBE_DEFINE6(cap_rt, , , fd__receive,
+    "const char *", "uint64_t", "int", "pid_t", "struct ucred *",
+    "uint64_t");
+SDT_PROBE_DEFINE6(cap_rt, , , ioctl__deny,
+    "const char *", "uint64_t", "u_long", "pid_t", "struct ucred *",
+    "uint64_t");
+SDT_PROBE_DEFINE6(cap_rt, , , error,
+    "const char *", "uint64_t", "u_long", "pid_t", "uint64_t", "int");
+SDT_PROBE_DEFINE6(cap_rt, , , instance__create,
+    "const char *", "uint64_t", "pid_t", "struct ucred *", "uint64_t",
+    "uint32_t");
+SDT_PROBE_DEFINE6(cap_rt, , , instance__finalize,
+    "const char *", "uint64_t", "int", "pid_t", "struct ucred *",
+    "uint64_t");
+SDT_PROBE_DEFINE6(cap_rt, , , instance__lastclose,
+    "const char *", "uint64_t", "int", "pid_t", "struct ucred *",
+    "uint64_t");
+SDT_PROBE_DEFINE6(cap_rt, , , rights__change,
+    "const char *", "uint64_t", "u_long", "pid_t", "struct ucred *",
+    "uint64_t");
+SDT_PROBE_DEFINE6(cap_rt, , , state,
+    "const char *", "uint64_t", "int", "int", "pid_t", "uint64_t");
+SDT_PROBE_DEFINE6(cap_rt, , , fd__mint,
+    "const char *", "uint64_t", "pid_t", "struct ucred *", "uint64_t",
+    "uint32_t");
+SDT_PROBE_DEFINE5(cap_rt, , , service__create,
+    "const char *", "uint32_t", "uint32_t", "uint32_t", "uint32_t");
+SDT_PROBE_DEFINE2(cap_rt, , , service__destroy,
+    "const char *", "uint32_t");
 SDT_PROBE_DEFINE5(cap_rt, , , queue__pressure,
     "const char *", "uint64_t", "const char *", "int", "int");
 
@@ -108,140 +142,65 @@ counter_u64_t cap_rt_stat_instances;
 SYSCTL_COUNTER_U64(_kern_cap_rt, OID_AUTO, instances, CTLFLAG_RD,
     &cap_rt_stat_instances, "Number of active instances");
 
-/*
- * The exec transition hook runs with the process lock held.  To avoid
- * taking the MAC framework's sleepable dynamic-policy lock on that path,
- * this policy must be registered as a static boot-time policy rather than
- * a late-loadable/unloadable one.
- */
-
-struct cap_rt_label {
-	uint64_t	cl_nonce;
-};
-
-static int cap_rt_label_slot;
-
-#define	SLOT(l)		((struct cap_rt_label *)mac_label_get((l), cap_rt_label_slot))
-#define	SLOT_SET(l, v)	mac_label_set((l), cap_rt_label_slot, (uintptr_t)(v))
-
-static void
-cap_rt_label_gen_nonce(struct cap_rt_label *cl)
+static int
+cap_rt_sysctl_service_names(SYSCTL_HANDLER_ARGS)
 {
+	struct cap_rt_service *svc;
+	struct sbuf sb;
+	int error;
 
-	do {
-		arc4random_buf(&cl->cl_nonce, sizeof(cl->cl_nonce));
-	} while (cl->cl_nonce == 0);
+	error = sysctl_wire_old_buffer(req, 0);
+	if (error != 0)
+		return (error);
+	sbuf_new_for_sysctl(&sb, NULL, 128, req);
+	sbuf_clear_flags(&sb, SBUF_INCLUDENUL);
+	sx_slock(&cap_rt_registry_lock);
+	LIST_FOREACH(svc, &cap_rt_services, csvc_link)
+		(void)sbuf_printf(&sb, "%s\n", svc->csvc_name);
+	sx_sunlock(&cap_rt_registry_lock);
+	error = sbuf_finish(&sb);
+	sbuf_delete(&sb);
+	return (error);
 }
 
-static void
-cap_rt_cred_init_label(struct label *label)
-{
-	struct cap_rt_label *cl;
-
-	cl = malloc(sizeof(*cl), M_CAP_RT, M_WAITOK | M_ZERO);
-	SLOT_SET(label, cl);
-}
-
-static void
-cap_rt_cred_create_init(struct ucred *cred)
-{
-	struct cap_rt_label *cl;
-
-	cl = SLOT(cred->cr_label);
-	if (cl != NULL)
-		cap_rt_label_gen_nonce(cl);
-}
-
-static void
-cap_rt_cred_copy_label(struct label *src, struct label *dest)
-{
-	struct cap_rt_label *scl, *dcl;
-
-	scl = SLOT(src);
-	dcl = SLOT(dest);
-	if (scl != NULL && dcl != NULL)
-		*dcl = *scl;
-}
-
-static void
-cap_rt_cred_destroy_label(struct label *label)
-{
-	struct cap_rt_label *cl;
-
-	cl = SLOT(label);
-	if (cl != NULL) {
-		free(cl, M_CAP_RT);
-		SLOT_SET(label, NULL);
-	}
-}
+SYSCTL_PROC(_kern_cap_rt, OID_AUTO, service_names,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    cap_rt_sysctl_service_names, "A",
+    "Newline-separated list of registered cap_rt service names");
 
 static int
-cap_rt_execve_will_transition(struct ucred *old, struct vnode *vp,
-    struct label *vplabel, struct label *interpvplabel,
-    struct image_params *imgp, struct label *execlabel)
+cap_rt_sysctl_service_details(SYSCTL_HANDLER_ARGS)
 {
+	struct cap_rt_service *svc;
+	struct sbuf sb;
+	int error;
 
-	return (1);
-}
-
-static void
-cap_rt_execve_transition(struct ucred *old, struct ucred *new,
-    struct vnode *vp, struct label *vplabel,
-    struct label *interpvplabel, struct image_params *imgp,
-    struct label *execlabel)
-{
-	struct cap_rt_label *cl;
-
-	cl = SLOT(new->cr_label);
-	if (cl != NULL)
-		cap_rt_label_gen_nonce(cl);
-}
-
-uint64_t
-cap_rt_proc_nonce(struct ucred *cred)
-{
-	struct cap_rt_label *cl, *newcl;
-
-	if (cred == NULL || cred->cr_label == NULL)
-		return (0);
-	cl = SLOT(cred->cr_label);
-	if (cl == NULL) {
-		/*
-		 * Backfill missing labels for credentials that predate
-		 * policy registration.  Use M_NOWAIT because this accessor
-		 * is used from no-sleep contexts such as MAC hooks.
-		 */
-		newcl = malloc(sizeof(*newcl), M_CAP_RT, M_NOWAIT | M_ZERO);
-		if (newcl == NULL)
-			return (0);
-		cap_rt_label_gen_nonce(newcl);
-
-		mtx_lock(&cred->cr_mtx);
-		cl = SLOT(cred->cr_label);
-		if (cl == NULL) {
-			SLOT_SET(cred->cr_label, newcl);
-			cl = newcl;
-			newcl = NULL;
-		}
-		mtx_unlock(&cred->cr_mtx);
-
-		if (newcl != NULL)
-			free(newcl, M_CAP_RT);
+	error = sysctl_wire_old_buffer(req, 0);
+	if (error != 0)
+		return (error);
+	sbuf_new_for_sysctl(&sb, NULL, 256, req);
+	sbuf_clear_flags(&sb, SBUF_INCLUDENUL);
+	sx_slock(&cap_rt_registry_lock);
+	LIST_FOREACH(svc, &cap_rt_services, csvc_link) {
+		(void)sbuf_printf(&sb,
+		    "%s flags=0x%x svc_flags=0x%x queue_depth=%u "
+		    "tx_limit=%u instance_limit=%d instances=%d "
+		    "destroying=%d\n",
+		    svc->csvc_name, svc->csvc_flags, svc->csvc_svc_flags,
+		    svc->csvc_queue_depth, svc->csvc_tx_limit,
+		    svc->csvc_instance_limit, svc->csvc_ninstances,
+		    (svc->csvc_flags & CAP_RT_SVCF_DESTROYING) != 0);
 	}
-	return (cl->cl_nonce);
+	sx_sunlock(&cap_rt_registry_lock);
+	error = sbuf_finish(&sb);
+	sbuf_delete(&sb);
+	return (error);
 }
 
-static struct mac_policy_ops cap_rt_label_mac_ops = {
-	.mpo_cred_init_label = cap_rt_cred_init_label,
-	.mpo_cred_create_init = cap_rt_cred_create_init,
-	.mpo_cred_copy_label = cap_rt_cred_copy_label,
-	.mpo_cred_destroy_label = cap_rt_cred_destroy_label,
-	.mpo_vnode_execve_will_transition = cap_rt_execve_will_transition,
-	.mpo_vnode_execve_transition = cap_rt_execve_transition,
-};
-
-MAC_POLICY_SET(&cap_rt_label_mac_ops, mac_cap_rt, "CAP_RT credential nonce",
-    MPC_LOADTIME_FLAG_NOTLATE, &cap_rt_label_slot);
+SYSCTL_PROC(_kern_cap_rt, OID_AUTO, service_details,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    cap_rt_sysctl_service_details, "A",
+    "Registered cap_rt services with flags, limits, and instance counts");
 
 struct cap_rt_service *
 cap_rt_service_lookup(const char *name)
@@ -321,6 +280,9 @@ cap_rt_service_reserve(struct cap_rt_service *svc)
 	sx_xlock(&cap_rt_registry_lock);
 	if (svc->csvc_ninstances >= svc->csvc_instance_limit ||
 	    (svc->csvc_flags & CAP_RT_SVCF_DESTROYING)) {
+		SDT_PROBE5(cap_rt, , , queue__pressure,
+		    svc->csvc_name, (uint64_t)0, "instance-limit",
+		    svc->csvc_ninstances, svc->csvc_instance_limit);
 		sx_xunlock(&cap_rt_registry_lock);
 		return (EAGAIN);
 	}
@@ -353,6 +315,9 @@ cap_rt_instance_link(struct cap_rt_service *svc, struct cap_rt_instance *s)
 
 	sx_xlock(&cap_rt_registry_lock);
 	if (svc->csvc_flags & CAP_RT_SVCF_DESTROYING) {
+		SDT_PROBE5(cap_rt, , , queue__pressure,
+		    svc->csvc_name, (uint64_t)0, "instance-link-race",
+		    svc->csvc_ninstances, svc->csvc_instance_limit);
 		sx_xunlock(&cap_rt_registry_lock);
 		return (ECONNABORTED);
 	}
@@ -380,6 +345,9 @@ cap_rt_instance_setup(struct cap_rt_service *svc, struct thread *td,
 		return (error);
 
 	s = cap_rt_instance_init(svc, badge);
+	SDT_PROBE6(cap_rt, , , instance__create, svc->csvc_name, badge,
+	    td->td_proc->p_pid, td->td_ucred,
+	    cap_rt_proc_nonce(td->td_ucred), svc->csvc_svc_flags);
 
 	error = falloc_noinstall(td, &fp);
 	if (error != 0) {
@@ -447,6 +415,9 @@ cap_rt_instance_create(struct cap_rt_service *svc, struct thread *td,
 
 	SDT_PROBE3(cap_rt, , , connect,
 	    svc->csvc_name, badge, td->td_proc->p_pid);
+	SDT_PROBE6(cap_rt, , , fd__install, svc->csvc_name, badge, fd,
+	    td->td_proc->p_pid, td->td_ucred,
+	    cap_rt_proc_nonce(td->td_ucred));
 
 	*fdp = fd;
 	return (0);
@@ -462,8 +433,16 @@ int
 cap_rt_mint_fp(struct cap_rt_service *svc, uint64_t badge,
     struct file **fpp)
 {
+	int error;
 
-	return (cap_rt_instance_setup(svc, curthread, badge, fpp));
+	error = cap_rt_instance_setup(svc, curthread, badge, fpp);
+	if (error == 0) {
+		SDT_PROBE6(cap_rt, , , fd__mint, svc->csvc_name, badge,
+		    curthread->td_proc->p_pid, curthread->td_ucred,
+		    cap_rt_proc_nonce(curthread->td_ucred),
+		    svc->csvc_svc_flags);
+	}
+	return (error);
 }
 
 static d_ioctl_t	cap_rt_cdev_ioctl;
@@ -512,6 +491,9 @@ cap_rt_ioctl_connect(struct cap_rt_connect_args *args, struct thread *td)
 		error = svc->csvc_ops->co_connect(td->td_ucred,
 		    svc->csvc_arg, &badge);
 		if (error != 0) {
+			SDT_PROBE6(cap_rt, , , error, svc->csvc_name,
+			    badge, (u_long)CAP_RT_CONNECT, td->td_proc->p_pid,
+			    cap_rt_proc_nonce(td->td_ucred), error);
 			refcount_release(&svc->csvc_refcnt);
 			goto out;
 		}

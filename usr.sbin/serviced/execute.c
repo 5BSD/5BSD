@@ -3,12 +3,17 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Service fork/exec for oracled.
+ * Service fork/exec for serviced.
  *
  * Creates a pair channel, mints capability tokens, pdfork()s a
  * child, scrubs its environment and fds, sets credentials, and
  * exec()s the program from the manifest.  Registers the process
  * descriptor and pair channel on the kqueue for supervision.
+ *
+ * Unlike oracled, serviced does not hold /dev/cap_rt directly.
+ * Pair and coalition creation use the delegated cap_rt fd
+ * (caprt_direct.c).  Token minting goes through the oracle
+ * pair channel (oracle_client.c).
  */
 
 #include <sys/event.h>
@@ -25,12 +30,11 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#include "oracled.h"
-#include "probes.h"
+#include "serviced.h"
 
 #define	SVC_PAIR_FD	3	/* well-known fd for the pair channel */
 #define	SVC_TOKEN_BASE	4	/* tokens start at fd 4 */
-#define	SVC_MAX_TOKENS	(ORACLED_MAX_CAP_PATHS + 2)	/* paths + net + system */
+#define	SVC_MAX_TOKENS	(SERVICED_MAX_CAP_PATHS + SERVICED_MAX_CAP_NET + 1)
 #define	SVC_MAX_ENV	16
 
 /*
@@ -86,19 +90,45 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 	if (nullfd > STDERR_FILENO)
 		(void)close(nullfd);
 
-	if (child_pair_fd != SVC_PAIR_FD) {
-		if (dup2(child_pair_fd, SVC_PAIR_FD) == -1)
-			_exit(126);
-		(void)close(child_pair_fd);
+	/*
+	 * Remap fds into their well-known positions.  First move all
+	 * source fds above the reserved range to avoid clobbering a
+	 * source fd that occupies a target slot (e.g., child_pair_fd
+	 * could be 4 which is SVC_TOKEN_BASE, or token_fds[0] could
+	 * be 3 which is SVC_PAIR_FD).
+	 */
+	{
+		int safe_base;
+
+		safe_base = SVC_TOKEN_BASE + (int)ntokens + 1;
+		if (child_pair_fd < safe_base) {
+			fd = fcntl(child_pair_fd, F_DUPFD, safe_base);
+			if (fd == -1)
+				_exit(126);
+			(void)close(child_pair_fd);
+			child_pair_fd = fd;
+		}
+		for (i = 0; i < ntokens; i++) {
+			if (token_fds[i] < safe_base) {
+				fd = fcntl(token_fds[i], F_DUPFD, safe_base);
+				if (fd == -1)
+					_exit(126);
+				(void)close(token_fds[i]);
+				token_fds[i] = fd;
+			}
+		}
 	}
+
+	/* Now safe to map into final positions. */
+	if (dup2(child_pair_fd, SVC_PAIR_FD) == -1)
+		_exit(126);
+	(void)close(child_pair_fd);
 
 	for (i = 0; i < ntokens; i++) {
 		fd = (int)(SVC_TOKEN_BASE + i);
-		if (token_fds[i] != fd) {
-			if (dup2(token_fds[i], fd) == -1)
-				_exit(126);
-			(void)close(token_fds[i]);
-		}
+		if (dup2(token_fds[i], fd) == -1)
+			_exit(126);
+		(void)close(token_fds[i]);
 	}
 
 	closefrom(SVC_TOKEN_BASE + (int)ntokens);
@@ -202,13 +232,6 @@ svc_exec(struct svc_runtime *svc, int kq)
 		return (-1);
 	}
 
-	/* Test mode: validate but don't fork. */
-	if (od.test_mode) {
-		syslog(LOG_INFO, "service %s: test mode, skipping exec",
-		    m->label);
-		return (0);
-	}
-
 	if (access(m->program, X_OK) != 0) {
 		syslog(LOG_ERR, "svc_exec %s: %s not executable: %m",
 		    m->label, m->program);
@@ -267,25 +290,27 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 	}
 
-	/* Create pair channel. */
-	if (cap_rt_create_pair(&oracle_end, &child_end) == -1) {
+	/* Create pair channel via oracle. */
+	if (caprt_create_pair(
+	    &oracle_end, &child_end) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: failed to create pair",
 		    m->label);
 		return (-1);
 	}
 
-	/* Create coalition. */
-	coalition_fd = cap_rt_create_coalition();
+	/* Create coalition via oracle. */
+	coalition_fd = caprt_create_coalition();
 	if (coalition_fd == -1) {
 		syslog(LOG_WARNING, "svc_exec %s: failed to create coalition",
 		    m->label);
 		/* Continue without coalition — not fatal. */
 	}
 
-	/* Mint tokens. */
+	/* Mint tokens via oracle. */
 	ntokens = 0;
 	for (i = 0; i < m->ncap_paths; i++) {
-		int tfd = cap_rt_mint_path_token(m->cap_paths[i]);
+		int tfd = oracle_mint_path(sd.oracle_pair_fd,
+		    m->cap_paths[i]);
 		if (tfd == -1) {
 			syslog(LOG_WARNING, "svc_exec %s: failed to mint "
 			    "token for %s", m->label, m->cap_paths[i]);
@@ -293,16 +318,18 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 		token_fds[ntokens++] = tfd;
 	}
-	if (m->ncap_net > 0) {
-		int tfd = cap_rt_mint_net_token();
-		if (tfd == -1)
+	for (i = 0; i < m->ncap_net; i++) {
+		int tfd = oracle_mint_net(sd.oracle_pair_fd, &m->cap_net[i]);
+		if (tfd == -1) {
 			syslog(LOG_WARNING, "svc_exec %s: failed to mint "
-			    "network token", m->label);
-		else
-			token_fds[ntokens++] = tfd;
+			    "network token %u", m->label, i);
+			continue;
+		}
+		token_fds[ntokens++] = tfd;
 	}
 	if (m->cap_system != 0) {
-		int tfd = cap_rt_mint_system_token(m->cap_system);
+		int tfd = oracle_mint_system(sd.oracle_pair_fd,
+		    m->cap_system);
 		if (tfd == -1)
 			syslog(LOG_WARNING, "svc_exec %s: failed to mint "
 			    "system token", m->label);
@@ -343,10 +370,10 @@ svc_exec(struct svc_runtime *svc, int kq)
 
 	/* Enlist in coalition and set as leader. */
 	if (coalition_fd >= 0) {
-		if (cap_rt_coalition_enlist(coalition_fd, pd_fd) != 0)
+		if (caprt_coalition_enlist(coalition_fd, pd_fd) != 0)
 			syslog(LOG_WARNING, "svc_exec %s: coalition "
 			    "enlist: %m", m->label);
-		if (cap_rt_coalition_set_leader(coalition_fd, pd_fd) != 0)
+		if (caprt_coalition_set_leader(coalition_fd, pd_fd) != 0)
 			syslog(LOG_WARNING, "svc_exec %s: coalition "
 			    "set_leader: %m", m->label);
 	}
@@ -373,18 +400,20 @@ svc_exec(struct svc_runtime *svc, int kq)
 		    m->label);
 		pdkill(pd_fd, SIGKILL);
 		waitpid(pid, NULL, WNOHANG);
-		close(svc->pd_fd); svc->pd_fd = -1;
-		close(svc->pair_fd); svc->pair_fd = -1;
+		close(svc->pd_fd);
+		svc->pd_fd = -1;
+		close(svc->pair_fd);
+		svc->pair_fd = -1;
 		if (svc->coalition_fd >= 0) {
 			close(svc->coalition_fd);
 			svc->coalition_fd = -1;
 		}
+		svc->pid = 0;
 		svc->state = SVC_STATE_STOPPED;
 		return (-1);
 	}
 
 	syslog(LOG_INFO, "service %s: started pid %jd",
 	    m->label, (intmax_t)pid);
-	ORACLED_PROBE_SVC_START(m->label, pid);
 	return (0);
 }

@@ -132,6 +132,21 @@ Subsequent operations return
 .Dv CAP_RT_GETINFO
 returns the service name, badge, queue limits, and feature flags
 .Pq Dv CAP_RT_INFO_F_SENDMSG , CAP_RT_INFO_F_RECVMSG , CAP_RT_INFO_F_CALL , CAP_RT_INFO_F_KQUEUE .
+Standard file-descriptor tools such as
+.Xr procstat 1
+show
+.Nm
+descriptors as
+.Dq cap_rt:service[badge] .
+The path may include compact state suffixes such as
+.Dq :noxfer ,
+.Dq :no-send ,
+.Dq :no-recv ,
+.Dq :no-call ,
+.Dq :no-mint ,
+.Dq :revoked ,
+and
+.Dq :closed .
 .Ss File descriptor passing
 Capabilities can carry up to 32 file descriptors per message.
 Attached fds preserve their Capsicum rights through the transfer.
@@ -205,6 +220,11 @@ Sync-only services do not allocate message queues.
 Number of registered services.
 .It Va kern.cap_rt.instances
 Number of active capability instances.
+.It Va kern.cap_rt.service_names
+Newline-separated list of registered service names.
+.It Va kern.cap_rt.service_details
+Newline-separated list of registered services with flags, queue depth,
+TX limit, instance limit, active instance count, and destroying state.
 .El
 .Sh DTRACE PROBES
 The
@@ -212,6 +232,56 @@ The
 provider defines the following probes:
 .Pp
 connect, send, recv, dispatch, reply, notify, call, revoke, close.
+.Pp
+Additional descriptor and control probes are provided for delegation
+tracing:
+.Pp
+fd-install, fd-receive, fd-close, fd-mint, control, ioctl-deny,
+rights-change, state, error, instance-create, instance-finalize,
+instance-lastclose, service-create, service-destroy.
+.Pp
+The descriptor probes include the service name, badge, fd, pid,
+credential pointer, and nonce.  The control probe includes the
+service name, badge, ioctl command, pid, credential pointer, and nonce.
+The state probe passes service name, badge, instance flags, restriction
+bits, pid, and nonce so scripts do not have to infer descriptor state
+from prior events.
+These probes cover descriptor events visible to
+.Nm
+itself; generic
+.Xr dup 2 ,
+fork inheritance, and
+.Dv SCM_RIGHTS
+transfer through Unix sockets require fd-layer instrumentation.
+.Pp
+Related providers include
+.Va fd
+for descriptor install, dup, close, fork inheritance,
+.Dv SCM_RIGHTS
+send/receive, and pass-deny events;
+.Va capsicum
+for rights/ioctl/fcntl limit, get, check, and denial events;
+.Va cap_rt_nonce
+for nonce assign, copy, backfill, and exec-rotate events;
+and subsystem providers
+.Va cap_rt_capprotect ,
+.Va cap_rt_isolation ,
+and
+.Va cap_rt_system
+for claim, token, authorization, release, and denial events.
+.Pp
+Installed DTrace scripts for observing
+.Nm
+and related descriptor authority include
+.Pa cap_rt-audit ,
+.Pa cap_rt-denials ,
+.Pa cap_rt-fds ,
+.Pa cap_rt-holders ,
+.Pa cap_rt-delegation ,
+.Pa cap_rt-nonces ,
+.Pa cap_rt-services ,
+and
+.Pa capsicum-changes .
 .Sh FILES
 .Bl -tag -width /dev/cap_rt
 .It Pa /dev/cap_rt

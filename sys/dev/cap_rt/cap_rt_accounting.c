@@ -21,13 +21,21 @@
 #include <sys/lock.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
+#include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/malloc.h>
 #include <sys/racct.h>
 #include <sys/rctl.h>
+#include <sys/sdt.h>
 
 #include "cap_rt.h"
 #include "cap_rt_accounting_proto.h"
+
+SDT_PROVIDER_DEFINE(cap_rt_acct);
+SDT_PROBE_DEFINE6(cap_rt_acct, , , state,
+    "const char *", "uint32_t", "int64_t", "uint32_t", "pid_t", "int");
+SDT_PROBE_DEFINE3(cap_rt_acct, , , deny,
+    "const char *", "uid_t", "int");
 
 
 /* ----------------------------------------------------------------
@@ -64,15 +72,27 @@ acct_op_charge(struct proc *p, const void *req, size_t reqlen,
 		error = racct_add(p, cr->resource, cr->amount);
 		rp->status = (error == 0) ?
 		    ACCT_STATUS_OK : ACCT_STATUS_DENIED;
+		SDT_PROBE6(cap_rt_acct, , , state, (uintptr_t)"charge",
+		    cr->resource, cr->amount, rp->status, p->p_pid, error);
+		if (rp->status == ACCT_STATUS_DENIED)
+			SDT_PROBE3(cap_rt_acct, , , deny, (uintptr_t)"racct-limit",
+			    p->p_ucred->cr_uid, error);
 		break;
 	case ACCT_OP_RELEASE:
 		racct_sub(p, cr->resource, cr->amount);
 		rp->status = ACCT_STATUS_OK;
+		SDT_PROBE6(cap_rt_acct, , , state, (uintptr_t)"release",
+		    cr->resource, cr->amount, rp->status, p->p_pid, 0);
 		break;
 	case ACCT_OP_SET:
 		error = racct_set(p, cr->resource, cr->amount);
 		rp->status = (error == 0) ?
 		    ACCT_STATUS_OK : ACCT_STATUS_DENIED;
+		SDT_PROBE6(cap_rt_acct, , , state, (uintptr_t)"set",
+		    cr->resource, cr->amount, rp->status, p->p_pid, error);
+		if (rp->status == ACCT_STATUS_DENIED)
+			SDT_PROBE3(cap_rt_acct, , , deny, (uintptr_t)"racct-limit",
+			    p->p_ucred->cr_uid, error);
 		break;
 	default:
 		return (EINVAL);
@@ -197,6 +217,13 @@ acct_op_rctl_rule(struct proc *p, const void *req, size_t reqlen,
 		error = add ? rctl_rule_add(rule) : rctl_rule_remove(rule);
 		rctl_rule_release(rule);
 		rp->status = acct_error_status(error);
+		SDT_PROBE6(cap_rt_acct, , , state,
+		    (uintptr_t)(add ? "rule-add" : "rule-remove"),
+		    rr->resource, rr->limit, rp->status, p->p_pid, error);
+		if (rp->status == ACCT_STATUS_EPERM)
+			SDT_PROBE3(cap_rt_acct, , , deny,
+			    (uintptr_t)(add ? "rule-add" : "rule-remove"),
+			    p->p_ucred->cr_uid, error);
 
 		PROC_LOCK(p);
 		_PRELE(p);
@@ -318,6 +345,7 @@ accounting_call(struct cap_rt_instance *s __unused,
 	}
 
 	PROC_UNLOCK(p);
+	_PRELE(p);
 	return (error);
 }
 
@@ -325,7 +353,22 @@ accounting_call(struct cap_rt_instance *s __unused,
  * Service registration
  * ---------------------------------------------------------------- */
 
+static int
+accounting_connect(struct ucred *cred, void *arg __unused,
+    uint64_t *badge_out __unused)
+{
+
+	/* Accounting operations require root. */
+	if (priv_check_cred(cred, PRIV_ACCT) != 0) {
+		SDT_PROBE3(cap_rt_acct, , , deny, (uintptr_t)"connect",
+		    cred->cr_uid, EPERM);
+		return (EPERM);
+	}
+	return (0);
+}
+
 static struct cap_rt_ops accounting_ops = {
+	.co_connect = accounting_connect,
 	.co_call = accounting_call,
 };
 

@@ -1,0 +1,52 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * cap_rt-nonces -- trace CAP_RT credential nonce lifecycle.
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-6s %-6s %-14s %-18s %-18s %s\n",
+	    "PID", "UID", "GID", "EVENT", "OLD", "NEW", "DETAIL");
+}
+
+cap_rt_nonce:::assign
+{
+	printf("%-6d %-6d %-6d %-14s %-18s 0x%016x cred=%p\n",
+	    arg2, ((struct ucred *)arg0)->cr_uid,
+	    ((struct ucred *)arg0)->cr_gid, "assign", "-", arg1, arg0);
+	@events["assign"] = count();
+}
+
+cap_rt_nonce:::backfill
+{
+	printf("%-6d %-6d %-6d %-14s %-18s 0x%016x cred=%p\n",
+	    arg2, ((struct ucred *)arg0)->cr_uid,
+	    ((struct ucred *)arg0)->cr_gid, "backfill", "-", arg1, arg0);
+	@events["backfill"] = count();
+}
+
+cap_rt_nonce:::copy
+{
+	printf("%-6d %-6s %-6s %-14s 0x%016x 0x%016x label-copy\n",
+	    pid, "-", "-", "copy", arg0, arg1);
+	@events["copy"] = count();
+}
+
+cap_rt_nonce:::exec-rotate
+{
+	printf("%-6d %-6d %-6d %-14s 0x%016x 0x%016x oldcred=%p newcred=%p\n",
+	    arg0, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, "exec-rotate", arg3, arg4,
+	    arg1, arg2);
+	@events["exec-rotate"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Nonce lifecycle events ---\n");
+	printa("%-16s %@d\n", @events);
+}

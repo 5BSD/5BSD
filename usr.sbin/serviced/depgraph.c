@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Dependency graph for oracled service manifests.
+ * Dependency graph for serviced service manifests.
  *
  * Topological sort using Kahn's algorithm.  Reorders the service
  * array in-place so that startup iterates forward and shutdown
@@ -15,7 +15,7 @@
 #include <string.h>
 #include <syslog.h>
 
-#include "oracled.h"
+#include "serviced.h"
 
 /*
  * Find which service provides a given capability name.
@@ -42,7 +42,8 @@ find_provider(struct svc_runtime *svcs, unsigned nsvc, const char *name)
 /*
  * Check for duplicate labels and duplicate provides names.
  * Duplicate labels are fatal — they break reload diffing
- * and service identity.  Duplicate provides are warnings.
+ * and service identity.  Duplicate provides are fatal because
+ * naming authorization grants by provides[].
  */
 static int
 check_duplicates(struct svc_runtime *svcs, unsigned nsvc)
@@ -67,13 +68,15 @@ check_duplicates(struct svc_runtime *svcs, unsigned nsvc)
 					if (strcmp(
 					    svcs[i].manifest.provides[pi],
 					    svcs[j].manifest.provides[pj])
-					    == 0)
-						syslog(LOG_WARNING,
+					    == 0) {
+						syslog(LOG_ERR,
 						    "depgraph: '%s' and '%s' "
 						    "both provide '%s'",
 						    svcs[i].manifest.label,
 						    svcs[j].manifest.label,
 						    svcs[i].manifest.provides[pi]);
+						rv = -1;
+					}
 				}
 			}
 		}
@@ -88,10 +91,10 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 	 * adj[i][j] = 1 means service i depends on service j
 	 * (j must start before i).
 	 */
-	uint8_t adj[ORACLED_MAX_SERVICES][ORACLED_MAX_SERVICES];
-	unsigned indeg[ORACLED_MAX_SERVICES];
-	unsigned queue[ORACLED_MAX_SERVICES];
-	unsigned order[ORACLED_MAX_SERVICES];
+	uint8_t adj[SERVICED_MAX_SERVICES][SERVICED_MAX_SERVICES];
+	unsigned indeg[SERVICED_MAX_SERVICES];
+	unsigned queue[SERVICED_MAX_SERVICES];
+	unsigned order[SERVICED_MAX_SERVICES];
 	unsigned qhead, qtail, sorted;
 	struct svc_runtime *tmp;
 	unsigned i, k;
@@ -99,7 +102,7 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 
 	if (nsvc == 0)
 		return (0);
-	if (nsvc > ORACLED_MAX_SERVICES)
+	if (nsvc > SERVICED_MAX_SERVICES)
 		return (-1);
 
 	if (check_duplicates(svcs, nsvc) == -1)

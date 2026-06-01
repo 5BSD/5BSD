@@ -37,14 +37,15 @@
 #include <sys/ucred.h>
 
 #include "cap_rt.h"
+#include "cap_rt_pair_proto.h"
 
 MALLOC_DEFINE(M_CAP_RT_PAIR, "cap_rt_pair", "cap_rt capability pair");
 
 SDT_PROVIDER_DEFINE(cap_rt_pair);
 SDT_PROBE_DEFINE4(cap_rt_pair, , , handler__done,
     "uint32_t", "uint64_t", "int", "sbintime_t");
-
-#define	PAIR_OP_CREATE	1
+SDT_PROBE_DEFINE5(cap_rt_pair, , , state,
+    "const char *", "uint32_t", "uint64_t", "int", "int");
 
 struct cap_rt_cap_pair {
 	struct mtx		pp_mtx;
@@ -107,8 +108,11 @@ pair_handler(struct cap_rt_instance *s, const struct cap_rt_msg *msg,
 
 		peer_badge = atomic_fetchadd_64(&pair_next_badge, 1);
 		error = cap_rt_mint_fp(pair_svc, peer_badge, &peer_fp);
-		if (error != 0)
+		if (error != 0) {
+			SDT_PROBE5(cap_rt_pair, , , state, (uintptr_t)"mint-error",
+			    op, cap_rt_instance_get_badge(s), error, 0);
 			goto out;
+		}
 		peer = peer_fp->f_data;
 
 		pp = malloc(sizeof(*pp), M_CAP_RT_PAIR, M_WAITOK | M_ZERO);
@@ -130,12 +134,16 @@ pair_handler(struct cap_rt_instance *s, const struct cap_rt_msg *msg,
 	mtx_lock(&pp->pp_mtx);
 	if (pp->pp_dead) {
 		mtx_unlock(&pp->pp_mtx);
+		SDT_PROBE5(cap_rt_pair, , , state, (uintptr_t)"peer-dead",
+		    0, cap_rt_instance_get_badge(s), ECONNRESET, 0);
 		error = ECONNRESET;
 		goto out;
 	}
 	peer = (s == pp->pp_a) ? pp->pp_b : pp->pp_a;
 	if (peer == NULL) {
 		mtx_unlock(&pp->pp_mtx);
+		SDT_PROBE5(cap_rt_pair, , , state, (uintptr_t)"peer-dead",
+		    0, cap_rt_instance_get_badge(s), ECONNRESET, 0);
 		error = ECONNRESET;
 		goto out;
 	}
@@ -182,6 +190,8 @@ pair_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
 	mtx_unlock(&pp->pp_mtx);
 
 	if (do_revoke) {
+		SDT_PROBE5(cap_rt_pair, , , state, (uintptr_t)"revoke",
+		    0, cap_rt_instance_get_badge(s), 0, 0);
 		cap_rt_instance_revoke(peer);
 		cap_rt_instance_rele(peer);
 	}
@@ -209,6 +219,7 @@ cap_rt_pair_modevent(module_t mod __unused, int type, void *unused __unused)
 			struct cap_rt_service_params p = {
 				.name = "pair",
 				.ops = &pair_ops,
+				.flags = CAP_RT_SVC_MINTABLE,
 			};
 			error = cap_rt_service_create(&p, &pair_svc);
 		}

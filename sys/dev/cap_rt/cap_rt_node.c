@@ -23,7 +23,6 @@
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
-#include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/procdesc.h>
 #include <sys/procctl.h>
@@ -35,6 +34,7 @@
 #include <sys/stat.h>
 #include <sys/sx.h>
 #include <sys/syscallsubr.h>
+#include <sys/sdt.h>
 #include <sys/ucred.h>
 
 #include <vm/uma.h>
@@ -42,6 +42,12 @@
 #include "cap_rt.h"
 #include "cap_rt_label.h"
 #include "cap_rt_node_proto.h"
+
+SDT_PROVIDER_DEFINE(cap_rt_node);
+SDT_PROBE_DEFINE6(cap_rt_node, , , call__done,
+    "uint32_t", "pid_t", "pid_t", "uint32_t", "int", "sbintime_t");
+SDT_PROBE_DEFINE3(cap_rt_node, , , deny,
+    "const char *", "pid_t", "pid_t");
 
 extern struct sx proctree_lock;
 
@@ -206,6 +212,8 @@ node_op_set_rlimit(struct thread *td, struct proc *p,
 		rp->rlim_max = rl.rlim_max;
 	} else {
 		rp->status = NODE_STATUS_EPERM;
+		SDT_PROBE3(cap_rt_node, , , deny, (uintptr_t)"set-rlimit",
+		    p->p_pid, curthread->td_proc->p_pid);
 	}
 	rp->resource = rs->resource;
 
@@ -259,13 +267,13 @@ node_op_get_nice(struct proc *p, void *reply, size_t *replylenp)
 }
 
 static int
-node_op_set_nice(struct thread *td, struct proc *p,
+node_op_set_nice(struct thread *td __unused, struct proc *p,
     const void *req, size_t reqlen,
     void *reply, size_t *replylenp)
 {
 	const struct node_nice_set *ns = req;
 	struct node_nice_reply *rp = reply;
-	int error;
+	int n;
 
 	if (reqlen < sizeof(*ns) || *replylenp < sizeof(*rp))
 		return (EINVAL);
@@ -273,27 +281,16 @@ node_op_set_nice(struct thread *td, struct proc *p,
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
-	error = p_cansched(td, p);
-	if (error == 0) {
-		int n = ns->nice;
-		if (n > PRIO_MAX)
-			n = PRIO_MAX;
-		if (n < PRIO_MIN)
-			n = PRIO_MIN;
-		if (n < p->p_nice - NZERO &&
-		    priv_check(td, PRIV_SCHED_SETPRIORITY) != 0)
-			error = EACCES;
-		else
-			sched_nice(p, n);
-	}
+	n = ns->nice;
+	if (n > PRIO_MAX)
+		n = PRIO_MAX;
+	if (n < PRIO_MIN)
+		n = PRIO_MIN;
+	sched_nice(p, n);
 
 	memset(rp, 0, sizeof(*rp));
-	if (error == 0) {
-		rp->status = NODE_STATUS_OK;
-		rp->nice = p->p_nice - NZERO;
-	} else {
-		rp->status = NODE_STATUS_EPERM;
-	}
+	rp->status = NODE_STATUS_OK;
+	rp->nice = p->p_nice - NZERO;
 
 	return (0);
 }
@@ -326,10 +323,8 @@ node_op_get_rtprio(struct proc *p, void *reply, size_t *replylenp)
 /*
  * Respect the same sysctl that kern_rtprio uses.
  */
-extern int unprivileged_idprio;
-
 static int
-node_op_set_rtprio(struct thread *td, struct proc *p,
+node_op_set_rtprio(struct thread *td __unused, struct proc *p,
     const void *req, size_t reqlen,
     void *reply, size_t *replylenp)
 {
@@ -345,33 +340,25 @@ node_op_set_rtprio(struct thread *td, struct proc *p,
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
-	error = p_cansched(td, p);
-	if (error == 0) {
-		switch (RTP_PRIO_BASE(rs->type)) {
-		case RTP_PRIO_REALTIME:
-			error = priv_check(td, PRIV_SCHED_RTPRIO);
-			break;
-		case RTP_PRIO_IDLE:
-			if (unprivileged_idprio == 0)
-				error = priv_check(td, PRIV_SCHED_IDPRIO);
-			break;
-		case RTP_PRIO_NORMAL:
-			break;
-		default:
-			error = EINVAL;
-			break;
-		}
+	switch (RTP_PRIO_BASE(rs->type)) {
+	case RTP_PRIO_REALTIME:
+	case RTP_PRIO_IDLE:
+	case RTP_PRIO_NORMAL:
+		break;
+	default:
+		return (EINVAL);
 	}
 
-	ttd = (error == 0) ? FIRST_THREAD_IN_PROC(p) : NULL;
-	if (error == 0 && ttd == NULL)
-		error = ESRCH;
-
-	if (error == 0) {
-		rtp.type = rs->type;
-		rtp.prio = rs->prio;
-		error = rtp_to_pri(&rtp, ttd);
+	ttd = FIRST_THREAD_IN_PROC(p);
+	if (ttd == NULL) {
+		memset(rp, 0, sizeof(*rp));
+		rp->status = NODE_STATUS_DEAD;
+		return (0);
 	}
+
+	rtp.type = rs->type;
+	rtp.prio = rs->prio;
+	error = rtp_to_pri(&rtp, ttd);
 
 	memset(rp, 0, sizeof(*rp));
 	if (error == 0) {
@@ -379,10 +366,6 @@ node_op_set_rtprio(struct thread *td, struct proc *p,
 		rp->status = NODE_STATUS_OK;
 		rp->type = rtp.type;
 		rp->prio = rtp.prio;
-	} else if (error == EPERM || error == EACCES) {
-		rp->status = NODE_STATUS_EPERM;
-	} else if (error == ESRCH) {
-		rp->status = NODE_STATUS_DEAD;
 	} else {
 		rp->status = NODE_STATUS_ERR;
 	}
@@ -469,6 +452,9 @@ node_op_reap(struct thread *td, struct proc *p, int cmd,
 	_PRELE(p);
 
 	rp->status = (error == 0) ? NODE_STATUS_OK : NODE_STATUS_ERR;
+	if (rp->status != NODE_STATUS_OK)
+		SDT_PROBE3(cap_rt_node, , , deny, (uintptr_t)"reap",
+		    p->p_pid, curthread->td_proc->p_pid);
 
 	return (0);
 }
@@ -638,18 +624,19 @@ node_op_set_affinity(struct proc *p,
 		rp->size = sz;
 		memcpy(rp->mask, &mask, sz);
 	} else {
-		rp->status = (error == EPERM) ?
-		    NODE_STATUS_EPERM : NODE_STATUS_ERR;
+		rp->status = NODE_STATUS_ERR;
+		SDT_PROBE3(cap_rt_node, , , deny, (uintptr_t)"set-affinity",
+		    p->p_pid, curthread->td_proc->p_pid);
 	}
 
 	return (0);
 }
 
 /*
- * Procctl wrapper that enforces the same authorization and locking
- * contract as kern_procctl(), but operates on a struct proc * directly
- * instead of looking up by PID.  Consults the procctl_cmds_info table
- * for lock_tree and need_candebug requirements.
+ * Procctl wrapper that provides the same locking contract as
+ * kern_procctl(), but operates on a struct proc * directly
+ * instead of looking up by PID.  Authority is in the node fd;
+ * no DAC checks.
  */
 static int
 node_do_procctl(struct thread *td, struct proc *p, int com, void *data)
@@ -660,43 +647,20 @@ node_do_procctl(struct thread *td, struct proc *p, int com, void *data)
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
 	/*
-	 * Determine lock/authorization requirements from the command
-	 * table, matching what kern_procctl() does.
-	 *
-	 * Commands requiring PCTL_SLOCKED need proctree_lock shared.
-	 * Commands with need_candebug require p_candebug().
-	 * All STATUS queries are PCTL_UNLOCKED + no candebug.
+	 * Determine locking requirements from the command table.
+	 * Authority comes from holding the node capability fd —
+	 * no DAC/candebug checks.
 	 */
 	need_slock = false;
 	switch (com) {
 	case PROC_SPROTECT:
-		/* PCTL_SLOCKED + PRIV_VM_MADV_PROTECT, no candebug */
-		need_slock = true;
-		error = priv_check(td, PRIV_VM_MADV_PROTECT);
-		if (error != 0)
-			return (error);
-		break;
 	case PROC_TRACE_CTL:
 	case PROC_TRAPCAP_CTL:
 	case PROC_NO_NEW_PRIVS_CTL:
 	case PROC_LOGSIGEXIT_CTL:
-		/* PCTL_SLOCKED + need_candebug */
 		need_slock = true;
-		/* FALLTHROUGH */
-	case PROC_ASLR_CTL:
-	case PROC_PROTMAX_CTL:
-	case PROC_STACKGAP_CTL:
-	case PROC_WXMAP_CTL:
-		/* need_candebug, may or may not need slock */
-		error = p_candebug(td, p);
-		if (error != 0)
-			return (error);
-		break;
-	case PROC_PDEATHSIG_CTL:
-		/* No candebug needed */
 		break;
 	default:
-		/* STATUS queries — no authorization needed */
 		break;
 	}
 
@@ -899,6 +863,9 @@ node_op_set_cred(struct thread *td, struct proc *p,
 	} else {
 		rp->status = (error == EPERM || error == EACCES) ?
 		    NODE_STATUS_EPERM : NODE_STATUS_ERR;
+		if (rp->status == NODE_STATUS_EPERM)
+			SDT_PROBE3(cap_rt_node, , , deny, (uintptr_t)"set-cred",
+			    p->p_pid, curthread->td_proc->p_pid);
 	}
 
 	return (0);
@@ -960,6 +927,8 @@ again_sess:
 		rp->pgid = p->p_pid;
 	} else {
 		rp->status = NODE_STATUS_EPERM;
+		SDT_PROBE3(cap_rt_node, , , deny, (uintptr_t)"set-session",
+		    p->p_pid, curthread->td_proc->p_pid);
 	}
 
 	return (0);
@@ -1033,6 +1002,8 @@ again_pgrp:
 		rp->pgid = p->p_pgid;
 	} else {
 		rp->status = NODE_STATUS_EPERM;
+		SDT_PROBE3(cap_rt_node, , , deny, (uintptr_t)"set-pgrp",
+		    p->p_pid, curthread->td_proc->p_pid);
 	}
 
 	return (0);
@@ -1070,6 +1041,7 @@ node_op_set_umask(struct proc *p, const void *req, size_t reqlen,
 	*replylenp = sizeof(*rp);
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
+
 	pdp = p->p_pd;
 
 	memset(rp, 0, sizeof(*rp));
@@ -1083,24 +1055,17 @@ node_op_set_umask(struct proc *p, const void *req, size_t reqlen,
 }
 
 static int
-node_op_set_login(struct thread *td, struct proc *p,
+node_op_set_login(struct thread *td __unused, struct proc *p,
     const void *req, size_t reqlen,
     void *reply, size_t *replylenp)
 {
 	const struct node_login_set *ls = req;
 	struct node_login_reply *rp = reply;
-	int error;
+	char logintmp[NODE_MAXLOGNAME];
 
 	if (reqlen < sizeof(*ls) || *replylenp < sizeof(*rp))
 		return (EINVAL);
 	*replylenp = sizeof(*rp);
-
-	error = priv_check(td, PRIV_PROC_SETLOGIN);
-	if (error != 0) {
-		memset(rp, 0, sizeof(*rp));
-		rp->status = NODE_STATUS_EPERM;
-		return (0);
-	}
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
@@ -1109,19 +1074,15 @@ node_op_set_login(struct thread *td, struct proc *p,
 	 * ls->name is a fixed-size char array from untrusted input;
 	 * if all bytes are non-NUL, strlcpy would scan past the buffer.
 	 */
-	{
-		char logintmp[NODE_MAXLOGNAME];
+	memcpy(logintmp, ls->name, sizeof(logintmp));
+	logintmp[sizeof(logintmp) - 1] = '\0';
 
-		memcpy(logintmp, ls->name, sizeof(logintmp));
-		logintmp[sizeof(logintmp) - 1] = '\0';
-
-		memset(rp, 0, sizeof(*rp));
-		SESS_LOCK(p->p_session);
-		strlcpy(p->p_session->s_login, logintmp,
-		    sizeof(p->p_session->s_login));
-		strlcpy(rp->name, p->p_session->s_login, sizeof(rp->name));
-		SESS_UNLOCK(p->p_session);
-	}
+	memset(rp, 0, sizeof(*rp));
+	SESS_LOCK(p->p_session);
+	strlcpy(p->p_session->s_login, logintmp,
+	    sizeof(p->p_session->s_login));
+	strlcpy(rp->name, p->p_session->s_login, sizeof(rp->name));
+	SESS_UNLOCK(p->p_session);
 	rp->status = NODE_STATUS_OK;
 
 	return (0);
@@ -1137,7 +1098,11 @@ node_call(struct cap_rt_instance *s __unused,
 {
 	const struct node_request *nr;
 	struct proc *p;
+	sbintime_t start;
+	pid_t target_pid;
 	int error;
+
+	start = getsbinuptime();
 
 	if (reqlen < sizeof(*nr))
 		return (EINVAL);
@@ -1156,12 +1121,26 @@ node_call(struct cap_rt_instance *s __unused,
 		if (*replylenp >= sizeof(uint32_t)) {
 			*(uint32_t *)reply = NODE_STATUS_DEAD;
 			*replylenp = sizeof(uint32_t);
+			SDT_PROBE3(cap_rt_node, , , deny, (uintptr_t)"resolve-proc",
+			    0, curthread->td_proc->p_pid);
+			SDT_PROBE6(cap_rt_node, , , call__done, nr->op,
+			    0, curthread->td_proc->p_pid, NODE_STATUS_DEAD,
+			    0, getsbinuptime() - start);
 			return (0);
 		}
+		SDT_PROBE6(cap_rt_node, , , call__done, nr->op, 0,
+		    curthread->td_proc->p_pid, 0, error,
+		    getsbinuptime() - start);
 		return (error);
 	}
-	if (error != 0)
+	if (error != 0) {
+		SDT_PROBE6(cap_rt_node, , , call__done, nr->op, 0,
+		    curthread->td_proc->p_pid, 0, error,
+		    getsbinuptime() - start);
 		return (error);
+	}
+
+	target_pid = p->p_pid;
 
 	/* p is PROC_LOCKed from here. */
 	switch (nr->op) {
@@ -1274,6 +1253,12 @@ node_call(struct cap_rt_instance *s __unused,
 	}
 
 	PROC_UNLOCK(p);
+	_PRELE(p);
+	SDT_PROBE6(cap_rt_node, , , call__done, nr->op, target_pid,
+	    curthread->td_proc->p_pid,
+	    (error == 0 && *replylenp >= sizeof(uint32_t)) ?
+	    *(const uint32_t *)reply : 0,
+	    error, getsbinuptime() - start);
 	return (error);
 }
 

@@ -54,6 +54,8 @@ static MALLOC_DEFINE(M_FILE_ISOLATION, "cap_rt_fi",
 SDT_PROVIDER_DEFINE(cap_rt_isolation);
 SDT_PROBE_DEFINE3(cap_rt_isolation, , , deny,
     "const char *", "uint64_t", "uint64_t");
+SDT_PROBE_DEFINE6(cap_rt_isolation, , , state,
+    "const char *", "uint64_t", "uint64_t", "uint64_t", "int", "int");
 
 /* ----------------------------------------------------------------
  * Isolation hash table
@@ -66,6 +68,7 @@ struct fi_claim {
 	LIST_ENTRY(fi_claim)	fi_instlink;	/* per-instance list */
 	struct vnode		*fi_vp;		/* held vnode ref */
 	uint64_t		 fi_nonce;	/* owning nonce */
+	uint64_t		 fi_id;		/* unique claim id */
 	struct cap_rt_instance	*fi_inst;	/* owning instance */
 };
 
@@ -86,6 +89,7 @@ struct fi_net_claim {
 	uint8_t		fn_prefix;	/* CIDR prefix, 0=any */
 	struct in6_addr	fn_addr;	/* v6 or v4-mapped, zero=any */
 	uint64_t	fn_nonce;
+	uint64_t	fn_id;
 	struct cap_rt_instance *fn_inst;
 };
 
@@ -104,6 +108,9 @@ struct fi_auth {
 	LIST_ENTRY(fi_auth)	fa_link;
 	uint64_t		fa_accessor;	/* authorized nonce */
 	uint64_t		fa_owner;	/* claim owner nonce */
+	uint64_t		fa_claim_id;	/* exact claim this token covers */
+	bool			fa_is_net;
+	struct fi_net_request	fa_net;
 	struct cap_rt_instance	*fa_inst;	/* token instance (lifetime) */
 };
 
@@ -113,6 +120,9 @@ struct fi_priv {
 	/* Token state (for instances created by FI_OP_MINT). */
 	bool			    fip_is_token;
 	uint64_t		    fip_token_owner; /* claim owner nonce */
+	uint64_t		    fip_token_claim_id;
+	bool			    fip_token_is_net;
+	struct fi_net_request	    fip_token_net;
 };
 
 static LIST_HEAD(, fi_claim)	*fi_hash;
@@ -120,6 +130,7 @@ static u_long			 fi_hashmask;
 static struct rwlock		 fi_lock;
 static volatile u_int		 fi_claim_count;	/* fast-path for file hooks */
 static volatile u_int		 fi_dir_claim_count;	/* fast-path for lookup hook */
+static volatile uint64_t	 fi_next_claim_id = 1;
 
 static LIST_HEAD(, fi_auth)	*fi_auth_hash;
 static u_long			 fi_auth_hashmask;
@@ -127,27 +138,99 @@ static struct rwlock		 fi_auth_lock;
 
 #define	FI_AUTH_BUCKET(nonce)	(&fi_auth_hash[(nonce) & fi_auth_hashmask])
 
+static bool	fi_net_addr_match(const struct fi_net_claim *nc,
+		    struct sockaddr *sa);
+
+static uint64_t
+fi_alloc_claim_id(void)
+{
+	uint64_t id;
+
+	do {
+		id = atomic_fetchadd_64(&fi_next_claim_id, 1);
+	} while (id == 0);
+	return (id);
+}
+
 static int
-fi_is_authorized(uint64_t accessor, uint64_t owner)
+fi_is_authorized(uint64_t accessor, uint64_t owner, uint64_t claim_id)
 {
 	struct fi_auth *fa;
 
 	rw_assert(&fi_auth_lock, RA_RLOCKED);
 	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
-		if (fa->fa_accessor == accessor && fa->fa_owner == owner)
+		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    fa->fa_claim_id == claim_id && !fa->fa_is_net)
+			return (1);
+	}
+	return (0);
+}
+
+static bool
+fi_auth_net_matches(const struct fi_auth *fa, int domain, int protocol,
+    struct sockaddr *sa, uint8_t direction)
+{
+	struct fi_net_claim ac;
+	uint16_t port = 0;
+
+	if (!fa->fa_is_net)
+		return (false);
+	if (sa != NULL) {
+		if (sa->sa_family == AF_INET)
+			port = ((struct sockaddr_in *)sa)->sin_port;
+		else if (sa->sa_family == AF_INET6)
+			port = ((struct sockaddr_in6 *)sa)->sin6_port;
+	}
+	if ((fa->fa_net.direction & direction) != direction)
+		return (false);
+	if (fa->fa_net.domain != 0 && fa->fa_net.domain != domain)
+		return (false);
+	if (fa->fa_net.protocol != 0 && protocol != 0 &&
+	    fa->fa_net.protocol != protocol)
+		return (false);
+	if (fa->fa_net.port != 0 && fa->fa_net.port != port)
+		return (false);
+
+	memset(&ac, 0, sizeof(ac));
+	ac.fn_domain = fa->fa_net.domain;
+	ac.fn_protocol = fa->fa_net.protocol;
+	ac.fn_port = fa->fa_net.port;
+	ac.fn_direction = fa->fa_net.direction;
+	ac.fn_prefix = fa->fa_net.prefix;
+	memcpy(&ac.fn_addr, fa->fa_net.addr, sizeof(ac.fn_addr));
+	return (fi_net_addr_match(&ac, sa));
+}
+
+static int
+fi_is_authorized_net(uint64_t accessor, uint64_t owner, uint64_t claim_id,
+    int domain, int protocol, struct sockaddr *sa, uint8_t direction)
+{
+	struct fi_auth *fa;
+
+	rw_assert(&fi_auth_lock, RA_RLOCKED);
+	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
+		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    fa->fa_claim_id == claim_id &&
+		    fi_auth_net_matches(fa, domain, protocol, sa, direction))
 			return (1);
 	}
 	return (0);
 }
 
 static void
-fi_auth_add(uint64_t accessor, uint64_t owner, struct cap_rt_instance *inst)
+fi_auth_add(uint64_t accessor, uint64_t owner, uint64_t claim_id,
+    const struct fi_net_request *net, struct cap_rt_instance *inst)
 {
 	struct fi_auth *fa;
 
 	fa = malloc(sizeof(*fa), M_FILE_ISOLATION, M_WAITOK);
 	fa->fa_accessor = accessor;
 	fa->fa_owner = owner;
+	fa->fa_claim_id = claim_id;
+	if (net != NULL) {
+		fa->fa_is_net = true;
+		fa->fa_net = *net;
+	}
 	fa->fa_inst = inst;
 
 	rw_wlock(&fi_auth_lock);
@@ -215,7 +298,7 @@ fi_check_vp_common(struct ucred *cred, struct vnode *vp,
     volatile int *claim_count, const char *probe_name)
 {
 	struct fi_claim *c;
-	uint64_t caller_nonce, owner_nonce;
+	uint64_t caller_nonce, owner_nonce, claim_id;
 
 	if (atomic_load_acq_int(claim_count) == 0)
 		return (0);
@@ -227,18 +310,19 @@ fi_check_vp_common(struct ucred *cred, struct vnode *vp,
 	if (c == NULL) {
 		rw_runlock(&fi_lock);
 		return (0);
-	}
-	owner_nonce = c->fi_nonce;
-	if (caller_nonce != 0 && caller_nonce == owner_nonce) {
-		rw_runlock(&fi_lock);
-		return (0);
+		}
+		owner_nonce = c->fi_nonce;
+		claim_id = c->fi_id;
+		if (caller_nonce != 0 && caller_nonce == owner_nonce) {
+			rw_runlock(&fi_lock);
+			return (0);
 	}
 	rw_runlock(&fi_lock);
 
 	/* Check authorization table — caller may hold a token. */
 	if (caller_nonce != 0) {
 		rw_rlock(&fi_auth_lock);
-		if (fi_is_authorized(caller_nonce, owner_nonce)) {
+		if (fi_is_authorized(caller_nonce, owner_nonce, claim_id)) {
 			rw_runlock(&fi_auth_lock);
 			return (0);
 		}
@@ -502,6 +586,39 @@ fi_net_claim_addr_overlap(const struct fi_net_claim *existing,
 	    MIN(existing_prefix, req_prefix)));
 }
 
+static bool
+fi_net_claim_covers_request(const struct fi_net_claim *nc,
+    const struct fi_net_request *nr)
+{
+	struct in6_addr req_addr;
+	uint8_t claim_prefix, req_prefix;
+
+	if ((nc->fn_direction & nr->direction) != nr->direction)
+		return (false);
+	if (nc->fn_domain != 0 &&
+	    (nr->domain == 0 || nc->fn_domain != nr->domain))
+		return (false);
+	if (nc->fn_protocol != 0 &&
+	    (nr->protocol == 0 || nc->fn_protocol != nr->protocol))
+		return (false);
+	if (nc->fn_port != 0 &&
+	    (nr->port == 0 || nc->fn_port != nr->port))
+		return (false);
+
+	memcpy(&req_addr, nr->addr, sizeof(req_addr));
+	if (fi_net_addr_is_wildcard(&nc->fn_addr))
+		return (true);
+	if (fi_net_addr_is_wildcard(&req_addr))
+		return (false);
+
+	claim_prefix = fi_net_effective_prefix(nc->fn_domain, nc->fn_prefix);
+	req_prefix = fi_net_effective_prefix(nr->domain, nr->prefix);
+	if (claim_prefix > req_prefix)
+		return (false);
+	return (fi_net_addr_prefix_match(&nc->fn_addr, &req_addr,
+	    claim_prefix));
+}
+
 /*
  * Compare address from sockaddr against a claim's address/prefix.
  * Returns true if the address matches the claim.
@@ -605,7 +722,8 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 		int nbuckets = 4, i, j;
 		bool found_claim = false;
 		bool dup;
-		uint64_t denied_nonce __unused = 0;
+			uint64_t denied_nonce __unused = 0;
+			uint64_t denied_claim_id = 0;
 
 		buckets[0] = fi_net_hash_fn(port, domain);
 		buckets[1] = fi_net_hash_fn(0, domain);
@@ -645,91 +763,27 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 					rw_runlock(&fi_net_lock);
 					return (0);
 				}
-				found_claim = true;
-				denied_nonce = nc->fn_nonce;
-			}
-		}
-
-		if (found_claim) {
-			/*
-			 * Collect all distinct denied nonces before
-			 * releasing fi_net_lock so the auth check
-			 * covers every claiming owner, not just the
-			 * last one found.
-			 */
-			uint64_t denied[FI_NET_MAX_DENIED];
-			int ndeny = 0;
-
-			for (i = 0; i < nitems(buckets); i++) {
-				bool dup = false;
-				for (j = 0; j < i; j++) {
-					if (buckets[j] == buckets[i]) {
-						dup = true;
-						break;
-					}
+					found_claim = true;
+					denied_nonce = nc->fn_nonce;
+					denied_claim_id = nc->fn_id;
 				}
-				if (dup)
-					continue;
-				LIST_FOREACH(nc, &fi_net_hash[buckets[i]],
-				    fn_hashlink) {
-					int k;
-
-					if (!(nc->fn_direction & direction))
-						continue;
-					if (nc->fn_domain != 0 &&
-					    nc->fn_domain != domain)
-						continue;
-					if (nc->fn_protocol != 0 &&
-					    nc->fn_protocol != protocol)
-						continue;
-					if (nc->fn_port != 0 &&
-					    nc->fn_port != port)
-						continue;
-					if (!fi_net_addr_match(nc, sa))
-						continue;
-					if (caller_nonce != 0 &&
-					    caller_nonce == nc->fn_nonce)
-						continue;
-					/* Deduplicate nonces. */
-					for (k = 0; k < ndeny; k++) {
-						if (denied[k] ==
-						    nc->fn_nonce)
-							break;
-					}
-					if (k == ndeny) {
-						if (ndeny < FI_NET_MAX_DENIED)
-							denied[ndeny++] =
-							    nc->fn_nonce;
-						else
-							ndeny = -1; /* overflow */
-					}
-					if (ndeny < 0)
-						break;
-				}
-				if (ndeny < 0)
-					break;
 			}
-			rw_runlock(&fi_net_lock);
 
-			/* Check auth table against every denied nonce. */
-			if (caller_nonce != 0 && ndeny > 0) {
-				bool authorized = true;
+			if (found_claim) {
+				rw_runlock(&fi_net_lock);
 
-				rw_rlock(&fi_auth_lock);
-				for (i = 0; i < ndeny; i++) {
-					if (!fi_is_authorized(caller_nonce,
-					    denied[i])) {
-						denied_nonce = denied[i];
-						authorized = false;
-						break;
+				if (caller_nonce != 0 && denied_claim_id != 0) {
+					rw_rlock(&fi_auth_lock);
+					if (fi_is_authorized_net(caller_nonce,
+					    denied_nonce, denied_claim_id, domain,
+					    protocol, sa, direction)) {
+						rw_runlock(&fi_auth_lock);
+						return (0);
 					}
+					rw_runlock(&fi_auth_lock);
 				}
-				rw_runlock(&fi_auth_lock);
-				if (authorized)
-					return (0);
-			}
-			SDT_PROBE3(cap_rt_isolation, , , deny, "net",
-			    denied_nonce, caller_nonce);
+				SDT_PROBE3(cap_rt_isolation, , , deny, (uintptr_t)"net",
+				    denied_nonce, caller_nonce);
 			return (EACCES);
 		}
 	}
@@ -795,19 +849,29 @@ fi_check_socket_create(struct ucred *cred, int domain, int type __unused,
 					rw_runlock(&fi_net_lock);
 					return (0);
 				}
-				rw_runlock(&fi_net_lock);
-				/* Check auth table. */
-				if (caller_nonce != 0) {
-					rw_rlock(&fi_auth_lock);
-					if (fi_is_authorized(caller_nonce,
-					    nc->fn_nonce)) {
+				{
+					uint64_t owner_nonce = nc->fn_nonce;
+					uint64_t claim_id = nc->fn_id;
+
+					rw_runlock(&fi_net_lock);
+					/* Check auth table. */
+					if (caller_nonce != 0) {
+						rw_rlock(&fi_auth_lock);
+						if (fi_is_authorized_net(
+						    caller_nonce, owner_nonce,
+						    claim_id, domain,
+						    protocol, NULL,
+						    FI_NET_ANY)) {
+							rw_runlock(
+							    &fi_auth_lock);
+							return (0);
+						}
 						rw_runlock(&fi_auth_lock);
-						return (0);
 					}
-					rw_runlock(&fi_auth_lock);
+					SDT_PROBE3(cap_rt_isolation, , ,
+					    deny, "socket_create",
+					    owner_nonce, caller_nonce);
 				}
-				SDT_PROBE3(cap_rt_isolation, , , deny,
-				    "socket_create", nc->fn_nonce, caller_nonce);
 				return (EACCES);
 			}
 		}
@@ -893,6 +957,8 @@ fi_do_claim(struct cap_rt_instance *s, struct fi_priv *priv,
 			rw_wunlock(&fi_lock);
 			vrele(vp);
 			free(c, M_FILE_ISOLATION);
+			SDT_PROBE3(cap_rt_isolation, , , deny,
+			    "claim-conflict", nonce, existing->fi_nonce);
 			return (EBUSY);
 		}
 		/*
@@ -906,15 +972,20 @@ fi_do_claim(struct cap_rt_instance *s, struct fi_priv *priv,
 		rw_wunlock(&fi_lock);
 		vrele(vp);
 		free(c, M_FILE_ISOLATION);
+		SDT_PROBE6(cap_rt_isolation, , , state, (uintptr_t)"claim-move",
+		    nonce, nonce, existing->fi_id, FI_OP_CLAIM, 0);
 		return (0);
 	}
 
 	LIST_INSERT_HEAD(&fi_hash[fi_hash_vp(vp)], c, fi_hashlink);
 	LIST_INSERT_HEAD(&priv->fip_claims, c, fi_instlink);
+	c->fi_id = fi_alloc_claim_id();
 	atomic_add_int(&fi_claim_count, 1);
 	if (vp->v_type == VDIR)
 		atomic_add_int(&fi_dir_claim_count, 1);
 	rw_wunlock(&fi_lock);
+	SDT_PROBE6(cap_rt_isolation, , , state, (uintptr_t)"claim",
+	    nonce, nonce, c->fi_id, FI_OP_CLAIM, 0);
 	return (0);
 }
 
@@ -936,6 +1007,8 @@ fi_do_release(struct file *fp, uint64_t nonce)
 	}
 	if (c->fi_nonce != nonce) {
 		rw_wunlock(&fi_lock);
+		SDT_PROBE3(cap_rt_isolation, , , deny,
+		    "release-wrong-nonce", nonce, c->fi_nonce);
 		return (EACCES);
 	}
 	LIST_REMOVE(c, fi_hashlink);
@@ -946,6 +1019,8 @@ fi_do_release(struct file *fp, uint64_t nonce)
 	rw_wunlock(&fi_lock);
 
 	vrele(c->fi_vp);
+	SDT_PROBE6(cap_rt_isolation, , , state, (uintptr_t)"release",
+	    nonce, nonce, c->fi_id, FI_OP_RELEASE, 0);
 	free(c, M_FILE_ISOLATION);
 	return (0);
 }
@@ -966,6 +1041,7 @@ fi_do_query(struct file *fp, uint64_t nonce, struct fi_reply *rpl)
 	c = fi_claim_lookup(vp);
 	if (c != NULL) {
 		uint64_t owner = c->fi_nonce;
+		uint64_t claim_id = c->fi_id;
 
 		rpl->flags |= FI_QF_CLAIMED;
 		if (nonce != 0 && owner == nonce) {
@@ -973,7 +1049,7 @@ fi_do_query(struct file *fp, uint64_t nonce, struct fi_reply *rpl)
 		} else if (nonce != 0) {
 			rw_runlock(&fi_lock);
 			rw_rlock(&fi_auth_lock);
-			if (fi_is_authorized(nonce, owner))
+			if (fi_is_authorized(nonce, owner, claim_id))
 				rpl->flags |= FI_QF_AUTHORIZED;
 			rw_runlock(&fi_auth_lock);
 			return (0);
@@ -1059,6 +1135,9 @@ fi_do_claim_net(struct cap_rt_instance *s, struct fi_priv *priv,
 					/* Foreign nonce — conflict */
 					rw_wunlock(&fi_net_lock);
 					free(nc, M_FILE_ISOLATION);
+					SDT_PROBE3(cap_rt_isolation, , , deny,
+					    "net-claim-conflict", nonce,
+					    existing->fn_nonce);
 					return (EBUSY);
 				}
 				/*
@@ -1092,6 +1171,8 @@ fi_do_claim_net(struct cap_rt_instance *s, struct fi_priv *priv,
 		existing->fn_inst = s;
 		rw_wunlock(&fi_net_lock);
 		free(nc, M_FILE_ISOLATION);
+		SDT_PROBE6(cap_rt_isolation, , , state, (uintptr_t)"net-claim-move",
+		    nonce, nonce, existing->fn_id, FI_OP_CLAIM_NET, 0);
 		return (0);
 	}
 
@@ -1104,12 +1185,15 @@ fi_do_claim_net(struct cap_rt_instance *s, struct fi_priv *priv,
 	memcpy(&nc->fn_addr, nr->addr, sizeof(nc->fn_addr));
 	nc->fn_nonce = nonce;
 	nc->fn_inst = s;
+	nc->fn_id = fi_alloc_claim_id();
 
 	LIST_INSERT_HEAD(&fi_net_hash[bucket], nc, fn_hashlink);
 	LIST_INSERT_HEAD(&priv->fip_net_claims, nc, fn_instlink);
 	atomic_add_int(&fi_net_claim_count, 1);
 	rw_wunlock(&fi_net_lock);
 
+	SDT_PROBE6(cap_rt_isolation, , , state, (uintptr_t)"net-claim",
+	    nonce, nonce, nc->fn_id, FI_OP_CLAIM_NET, 0);
 	return (0);
 }
 
@@ -1147,6 +1231,8 @@ fi_do_release_net(const struct fi_net_request *nr, uint64_t nonce)
 		LIST_REMOVE(nc, fn_instlink);
 		atomic_subtract_int(&fi_net_claim_count, 1);
 		rw_wunlock(&fi_net_lock);
+		SDT_PROBE6(cap_rt_isolation, , , state, (uintptr_t)"net-release",
+		    nonce, nonce, nc->fn_id, FI_OP_RELEASE_NET, 0);
 		free(nc, M_FILE_ISOLATION);
 		return (0);
 	}
@@ -1192,7 +1278,8 @@ fi_validate_net_request(const void *req, size_t reqlen,
  * and fill the reply fd slot.  Shared by FI_OP_MINT and FI_OP_MINT_NET.
  */
 static int
-fi_mint_token(uint64_t caller_nonce, struct file **reply_fds,
+fi_mint_token(uint64_t caller_nonce, uint64_t claim_id,
+    const struct fi_net_request *net, struct file **reply_fds,
     int *reply_nfdsp, size_t *replylenp)
 {
 	struct file *token_fp;
@@ -1200,18 +1287,36 @@ fi_mint_token(uint64_t caller_nonce, struct file **reply_fds,
 	int error;
 
 	error = cap_rt_mint_fp(fi_svc, 0, &token_fp);
-	if (error != 0)
+	if (error != 0) {
+		SDT_PROBE6(cap_rt_isolation, , , state, (uintptr_t)"mint-error",
+		    caller_nonce, caller_nonce, (uint64_t)0,
+		    (net != NULL ? FI_OP_MINT_NET : FI_OP_MINT), error);
 		return (error);
+	}
 
 	tp = cap_rt_instance_get_priv(token_fp->f_data);
-	if (tp != NULL) {
-		tp->fip_is_token = true;
-		tp->fip_token_owner = caller_nonce;
+	if (tp == NULL) {
+		SDT_PROBE6(cap_rt_isolation, , , state, (uintptr_t)"mint-priv-null",
+		    caller_nonce, caller_nonce, claim_id,
+		    (net != NULL ? FI_OP_MINT_NET : FI_OP_MINT), ENOMEM);
+		fdrop(token_fp, curthread);
+		return (ENOMEM);
+	}
+	tp->fip_is_token = true;
+	tp->fip_token_owner = caller_nonce;
+	tp->fip_token_claim_id = claim_id;
+	if (net != NULL) {
+		tp->fip_token_is_net = true;
+		tp->fip_token_net = *net;
 	}
 
 	reply_fds[0] = token_fp;
 	*reply_nfdsp = 1;
 	*replylenp = sizeof(struct fi_reply);
+	SDT_PROBE6(cap_rt_isolation, , , state,
+	    (net != NULL ? "net-token-mint" : "token-mint"),
+	    caller_nonce, caller_nonce, claim_id,
+	    (net != NULL ? FI_OP_MINT_NET : FI_OP_MINT), 0);
 	return (0);
 }
 
@@ -1243,8 +1348,11 @@ fi_call(struct cap_rt_instance *s,
 		return (EINVAL);
 
 	caller_nonce = cap_rt_proc_nonce(curthread->td_ucred);
-	if (caller_nonce == 0)
+	if (caller_nonce == 0) {
+		SDT_PROBE3(cap_rt_isolation, , , deny, (uintptr_t)"nonce",
+		    (uint64_t)0, (uint64_t)0);
 		return (ENXIO);
+	}
 
 	rpl = reply;
 	rpl->flags = 0;
@@ -1285,9 +1393,10 @@ fi_call(struct cap_rt_instance *s,
 			return (error);
 		return (fi_do_release_net(nr, caller_nonce));
 	}
-	case FI_OP_MINT: {
-		struct fi_claim *mc;
-		int error;
+		case FI_OP_MINT: {
+			struct fi_claim *mc;
+			uint64_t claim_id;
+			int error;
 
 		/*
 		 * Mint an access token for a vnode claim.  The caller
@@ -1306,50 +1415,98 @@ fi_call(struct cap_rt_instance *s,
 
 		rw_rlock(&fi_lock);
 		mc = fi_claim_lookup(fds[0]->f_vnode);
-		if (mc == NULL || mc->fi_nonce != caller_nonce) {
+			if (mc == NULL) {
+				rw_runlock(&fi_lock);
+				SDT_PROBE6(cap_rt_isolation, , , state,
+				    "mint-no-claim", caller_nonce,
+				    (uint64_t)0, (uint64_t)0,
+				    FI_OP_MINT, ENOENT);
+				return (ENOENT);
+			}
+			if (mc->fi_nonce != caller_nonce) {
+				uint64_t owner = mc->fi_nonce;
+
+				rw_runlock(&fi_lock);
+				SDT_PROBE6(cap_rt_isolation, , , state,
+				    "mint-wrong-nonce", caller_nonce,
+				    owner, (uint64_t)0,
+				    FI_OP_MINT, EPERM);
+				return (EPERM);
+			}
+			claim_id = mc->fi_id;
 			rw_runlock(&fi_lock);
-			return (mc == NULL ? ENOENT : EPERM);
+
+			error = fi_mint_token(caller_nonce, claim_id, NULL, reply_fds,
+			    reply_nfdsp, replylenp);
+			return (error);
 		}
-		rw_runlock(&fi_lock);
 
-		error = fi_mint_token(caller_nonce, reply_fds, reply_nfdsp,
-		    replylenp);
-		return (error);
-	}
+		case FI_OP_MINT_NET: {
+			const struct fi_net_request *nr;
+			int error;
+			uint64_t claim_id;
 
-	case FI_OP_MINT_NET: {
-		int error;
+			/*
+			 * Mint an access token for a network claim.  The
+			 * caller must own the exact endpoint claim described
+			 * by the request payload.
+			 */
+			error = fi_validate_net_request(req, reqlen, &nr);
+			if (error != 0)
+				return (error);
+			if (priv->fip_is_token)
+				return (EINVAL);
+			if (*reply_nfdsp < 1)
+				return (EINVAL);
 
-		/*
-		 * Mint an access token for a network claim.  The
-		 * caller must own at least one network claim.
-		 */
-		if (priv->fip_is_token)
-			return (EINVAL);
-		if (*reply_nfdsp < 1)
-			return (EINVAL);
+			/* Verify the caller owns the exact net claim. */
+			{
+				struct fi_net_claim *nc;
+				bool found = false;
+				u_long buckets[4];
+				int i, j;
 
-		/* Verify the caller owns a matching net claim. */
-		{
-			struct fi_net_claim *nc;
-			bool found = false;
+				buckets[0] = fi_net_hash_fn(nr->port, nr->domain);
+				buckets[1] = fi_net_hash_fn(0, nr->domain);
+				buckets[2] = fi_net_hash_fn(nr->port, 0);
+				buckets[3] = fi_net_hash_fn(0, 0);
+				rw_rlock(&fi_net_lock);
+				for (i = 0; i < nitems(buckets) && !found; i++) {
+					bool dup = false;
 
-			rw_rlock(&fi_net_lock);
-			LIST_FOREACH(nc, &priv->fip_net_claims, fn_instlink) {
-				if (nc->fn_nonce == caller_nonce) {
-					found = true;
-					break;
+					for (j = 0; j < i; j++) {
+						if (buckets[j] == buckets[i]) {
+							dup = true;
+							break;
+						}
+					}
+					if (dup)
+						continue;
+					LIST_FOREACH(nc, &fi_net_hash[buckets[i]],
+					    fn_hashlink) {
+						if (nc->fn_nonce != caller_nonce)
+							continue;
+						if (!fi_net_claim_covers_request(nc, nr))
+							continue;
+						claim_id = nc->fn_id;
+						found = true;
+						break;
+					}
+				}
+				rw_runlock(&fi_net_lock);
+				if (!found) {
+					SDT_PROBE6(cap_rt_isolation, , , state,
+					    "mint-net-no-claim", caller_nonce,
+					    (uint64_t)0, (uint64_t)0,
+					    FI_OP_MINT_NET, ENOENT);
+					return (ENOENT);
 				}
 			}
-			rw_runlock(&fi_net_lock);
-			if (!found)
-				return (ENOENT);
-		}
 
-		error = fi_mint_token(caller_nonce, reply_fds, reply_nfdsp,
-		    replylenp);
-		return (error);
-	}
+			error = fi_mint_token(caller_nonce, claim_id, nr, reply_fds,
+			    reply_nfdsp, replylenp);
+			return (error);
+		}
 
 	case FI_OP_AUTHORIZE:
 		/*
@@ -1357,12 +1514,19 @@ fi_call(struct cap_rt_instance *s,
 		 * the authorized set for the token's owner nonce.
 		 * The authorization lasts until this token fd closes.
 		 */
-		if (!priv->fip_is_token)
-			return (EINVAL);
-		if (priv->fip_token_owner == 0)
-			return (EINVAL);
+			if (!priv->fip_is_token)
+				return (EINVAL);
+			if (priv->fip_token_owner == 0)
+				return (EINVAL);
 
-		fi_auth_add(caller_nonce, priv->fip_token_owner, s);
+			fi_auth_add(caller_nonce, priv->fip_token_owner,
+			    priv->fip_token_claim_id,
+			    priv->fip_token_is_net ? &priv->fip_token_net : NULL,
+			    s);
+		SDT_PROBE6(cap_rt_isolation, , , state,
+		    (priv->fip_token_is_net ? "net-authorize" : "authorize"),
+		    priv->fip_token_owner, caller_nonce,
+		    priv->fip_token_claim_id, FI_OP_AUTHORIZE, 0);
 		*replylenp = sizeof(struct fi_reply);
 		return (0);
 
@@ -1402,6 +1566,8 @@ fi_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
 
 	while ((c = LIST_FIRST(&batch)) != NULL) {
 		LIST_REMOVE(c, fi_instlink);
+		SDT_PROBE6(cap_rt_isolation, , , state, (uintptr_t)"claim-remove",
+		    c->fi_nonce, 0, c->fi_id, FI_OP_RELEASE, 0);
 		vrele(c->fi_vp);
 		free(c, M_FILE_ISOLATION);
 	}
@@ -1415,6 +1581,9 @@ fi_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
 			LIST_REMOVE(nc, fn_hashlink);
 			LIST_REMOVE(nc, fn_instlink);
 			atomic_subtract_int(&fi_net_claim_count, 1);
+			SDT_PROBE6(cap_rt_isolation, , , state,
+			    "net-claim-remove", nc->fn_nonce, 0, nc->fn_id,
+			    FI_OP_RELEASE_NET, 0);
 			free(nc, M_FILE_ISOLATION);
 		}
 		rw_wunlock(&fi_net_lock);

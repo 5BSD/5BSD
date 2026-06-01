@@ -165,6 +165,80 @@ main(int argc, char **argv)
 	unsigned long port, direction, prefix;
 
 	/*
+	 * net-token-bind <token_fd> <port>
+	 *
+	 * Authorize on the token, then try to bind a TCP socket
+	 * on 127.0.0.1:<port>.
+	 * Returns 0 if bind succeeds, 1 if blocked, 10 if
+	 * authorize failed.
+	 */
+	if (argc == 4 && strcmp(argv[1], "net-token-bind") == 0) {
+		int token_fd, s, error;
+		struct sockaddr_in sin;
+
+		token_fd = (int)strtol(argv[2], &end, 10);
+		if (*end != '\0')
+			return (2);
+		port = strtoul(argv[3], &end, 10);
+		if (*end != '\0' || port > UINT16_MAX)
+			return (2);
+		if (fi_authorize(token_fd) != 0)
+			return (10);
+		close(token_fd);
+
+		s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		if (s < 0) {
+			if (errno == EACCES || errno == EPERM)
+				return (1);
+			return (2);
+		}
+		memset(&sin, 0, sizeof(sin));
+		sin.sin_family = AF_INET;
+		sin.sin_port = htons((uint16_t)port);
+		sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+		error = bind(s, (struct sockaddr *)&sin, sizeof(sin));
+		close(s);
+		if (error == 0)
+			return (0);
+		if (errno == EACCES || errno == EPERM)
+			return (1);
+		return (2);
+	}
+
+	/*
+	 * net-try-bind <port>
+	 *
+	 * Try to bind a TCP socket on 127.0.0.1:<port> without any token.
+	 * Returns 0 if bind succeeds, 1 if blocked.
+	 */
+	if (argc == 3 && strcmp(argv[1], "net-try-bind") == 0) {
+		int s, error;
+		struct sockaddr_in sin;
+
+		port = strtoul(argv[2], &end, 10);
+		if (*end != '\0' || port > UINT16_MAX)
+			return (2);
+
+		s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		if (s < 0) {
+			if (errno == EACCES || errno == EPERM)
+				return (1);
+			return (2);
+		}
+		memset(&sin, 0, sizeof(sin));
+		sin.sin_family = AF_INET;
+		sin.sin_port = htons((uint16_t)port);
+		sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+		error = bind(s, (struct sockaddr *)&sin, sizeof(sin));
+		close(s);
+		if (error == 0)
+			return (0);
+		if (errno == EACCES || errno == EPERM)
+			return (1);
+		return (2);
+	}
+
+	/*
 	 * token-check <token_fd> <filepath>
 	 *
 	 * Authorize on the token, then try to open the file.

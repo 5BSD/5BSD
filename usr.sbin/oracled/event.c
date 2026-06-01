@@ -6,9 +6,13 @@
  * Main event loop and shutdown sequencing.
  *
  * Uses kqueue(2) to multiplex signals, the control socket, and
- * service lifecycle events (process descriptors, pair channels,
- * restart timers).  Shutdown reverses the startup lifecycle
+ * bootstrap lifecycle events (serviced process descriptor and
+ * pair channel protocol).  Shutdown reverses the startup lifecycle
  * (see oracled.c).
+ *
+ * The daemon is strictly single-threaded.  Reload (SIGHUP or
+ * CTL_OP_RELOAD) updates authority claims only — service management
+ * is handled by serviced.
  */
 
 #include <sys/event.h>
@@ -22,6 +26,7 @@
 #include <unistd.h>
 
 #include "oracled.h"
+#include "commands.h"
 #include "probes.h"
 
 int event_kq = -1;
@@ -58,9 +63,8 @@ shutdown_begin(int reason)
 		syslog(LOG_INFO, "stopping via control socket");
 
 	od.shutting_down = true;
-	supervisor_stop(event_kq);
+	bootstrap_stop();
 
-	/* Arm a 30-second shutdown watchdog timer. */
 	{
 		struct kevent kev;
 		EV_SET(&kev, SHUTDOWN_TIMER_IDENT, EVFILT_TIMER,
@@ -76,9 +80,8 @@ shutdown_finish(void)
 
 	if (!od.shutting_down)
 		return;
-	od.shutting_down = false;	/* prevent re-entry */
+	od.shutting_down = false;
 
-	/* Cancel the shutdown watchdog timer if it hasn't fired. */
 	{
 		struct kevent kev;
 		EV_SET(&kev, SHUTDOWN_TIMER_IDENT, EVFILT_TIMER,
@@ -92,17 +95,53 @@ shutdown_finish(void)
 	ctl_teardown();
 	cap_rt_teardown();
 	pidfile_remove(od.pidfh);
-	supervisor_teardown_state();
 
 	if (pending_reboot) {
 		reboot(pending_reboot_howto);
-		/* reboot(2) should not return. */
 		syslog(LOG_CRIT, "reboot(2) failed: %m");
 		_exit(1);
 	}
 
 	closelog();
 	od.running = false;
+}
+
+static void
+handle_action(int action, int howto)
+{
+
+	if (action & CTL_ACTION_REBOOT) {
+		syslog(LOG_INFO, "rebooting via control socket");
+		pending_reboot = true;
+		pending_reboot_howto = howto;
+		shutdown_begin(0);
+	} else if (action & CTL_ACTION_SHUTDOWN) {
+		shutdown_begin(0);
+	}
+}
+
+/*
+ * SIGHUP reload: re-read config, update authority claims.
+ * Service manifest reload is handled by serviced.
+ */
+static void
+sighup_reload(void)
+{
+	struct oracled_config newcfg;
+
+	syslog(LOG_INFO, "reload requested (SIGHUP)");
+	config_init_defaults(&newcfg);
+	if (config_load(&newcfg, od.conffile) == 0) {
+		if (!od.test_mode)
+			cap_rt_reload_claims(&newcfg);
+		config_apply_claims(&newcfg);
+	} else {
+		syslog(LOG_WARNING,
+		    "reload: config parse error, keeping existing");
+	}
+
+	/* Forward SIGHUP to serviced so it reloads manifests. */
+	bootstrap_signal(SIGHUP);
 }
 
 void
@@ -118,6 +157,12 @@ event_loop(void)
 	}
 	event_kq = kq;
 
+	/*
+	 * Ignore SIGPIPE — nonblocking write() on a closed client
+	 * socket must return EPIPE, not kill the daemon.
+	 */
+	signal(SIGPIPE, SIG_IGN);
+
 	add_signal_event(kq, SIGCHLD);
 	add_signal_event(kq, SIGHUP);
 	add_signal_event(kq, SIGTERM);
@@ -132,8 +177,8 @@ event_loop(void)
 		}
 	}
 
-	/* Load manifests and launch agents. */
-	supervisor_start(kq);
+	/* Start serviced as our single child. */
+	bootstrap_start(kq);
 
 	while (od.running) {
 		nev = kevent(kq, NULL, 0, &kev, 1, NULL);
@@ -146,34 +191,51 @@ event_loop(void)
 		if (nev == 0)
 			continue;
 
-		/* Control socket — identified by fd and NULL udata. */
+		/* Listening socket — accept new connections. */
 		if (kev.filter == EVFILT_READ &&
 		    (int)kev.ident == cfd && kev.udata == NULL) {
-			int action, howto;
-
-			if (od.shutting_down)
-				continue;
-			howto = 0;
-			action = ctl_handle(&howto);
-			if (action & CTL_ACTION_REBOOT) {
-				syslog(LOG_INFO,
-				    "rebooting via control socket");
-				pending_reboot = true;
-				pending_reboot_howto = howto;
-				shutdown_begin(0);
-			} else if (action & CTL_ACTION_SHUTDOWN) {
-				shutdown_begin(0);
-			}
-			if (od.shutting_down && supervisor_is_stopped())
+			if (!od.shutting_down)
+				(void)ctl_accept();
+			if (od.shutting_down && bootstrap_is_stopped())
 				shutdown_finish();
 			continue;
 		}
 
-		/* Process descriptor events (service lifecycle). */
-		if (kev.filter == EVFILT_PROCDESC) {
-			supervisor_handle_procdesc(&kev);
-			if (od.shutting_down && supervisor_is_stopped())
+		/* Client connection events. */
+		if (ctl_is_conn_event(&kev)) {
+			int action, howto;
+
+			howto = 0;
+			action = ctl_conn_event(&kev, &howto);
+			if (action != CTL_ACTION_NONE)
+				handle_action(action, howto);
+			if (od.shutting_down && bootstrap_is_stopped())
 				shutdown_finish();
+			continue;
+		}
+
+		/* Bootstrap: serviced process descriptor. */
+		if (bootstrap_is_procdesc(&kev)) {
+			bootstrap_handle_exit(&kev, kq);
+			if (od.shutting_down && bootstrap_is_stopped())
+				shutdown_finish();
+			continue;
+		}
+
+		/* Bootstrap: pair channel protocol from serviced. */
+		if (bootstrap_is_pair(&kev)) {
+			if (kev.flags & EV_EOF) {
+				syslog(LOG_WARNING,
+				    "serviced pair closed unexpectedly");
+			} else {
+				oracle_proto_dispatch(&kev);
+			}
+			continue;
+		}
+
+		/* Bootstrap: restart timer for serviced. */
+		if (bootstrap_is_timer(&kev)) {
+			bootstrap_handle_timer(&kev, kq);
 			continue;
 		}
 
@@ -186,20 +248,6 @@ event_loop(void)
 			continue;
 		}
 
-		/* Restart timer fired. */
-		if (kev.filter == EVFILT_TIMER && kev.udata != NULL) {
-			supervisor_handle_timer(&kev);
-			if (od.shutting_down && supervisor_is_stopped())
-				shutdown_finish();
-			continue;
-		}
-
-		/* Pair channel events (service communication). */
-		if (kev.filter == EVFILT_READ && kev.udata != NULL) {
-			supervisor_handle_pair(&kev);
-			continue;
-		}
-
 		/* Signal events. */
 		if (kev.filter != EVFILT_SIGNAL)
 			continue;
@@ -209,19 +257,17 @@ event_loop(void)
 			reap_children();
 			break;
 		case SIGHUP:
-			if (!od.shutting_down) {
-				syslog(LOG_INFO, "reload requested (SIGHUP)");
-				supervisor_reload(kq, NULL, 0);
-			}
+			if (!od.shutting_down)
+				sighup_reload();
 			break;
 		case SIGTERM:
 		case SIGINT:
 			shutdown_begin((int)kev.ident);
-			break;	/* shutdown_finish sets od.running=false */
+			break;
 		default:
 			break;
 		}
-		if (od.shutting_down && supervisor_is_stopped())
+		if (od.shutting_down && bootstrap_is_stopped())
 			shutdown_finish();
 	}
 

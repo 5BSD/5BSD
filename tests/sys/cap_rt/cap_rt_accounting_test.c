@@ -922,11 +922,38 @@ ATF_TC_BODY(acct_remove_nonexistent_rule, tc)
 }
 
 /* ----------------------------------------------------------------
+ * Connect authorization
+ * ---------------------------------------------------------------- */
+
+ATF_TC(acct_unprivileged_connect_denied);
+ATF_TC_HEAD(acct_unprivileged_connect_denied, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Non-root connect to accounting is denied with EPERM");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "cap_rt cap_rt_accounting");
+	atf_tc_set_md_var(tc, "require.user", "unprivileged");
+}
+ATF_TC_BODY(acct_unprivileged_connect_denied, tc)
+{
+	int fd;
+
+	fd = cap_rt_connect("accounting");
+	ATF_CHECK_MSG(fd == -1, "unprivileged connect should fail");
+	ATF_CHECK_EQ(errno, EPERM);
+	if (fd >= 0)
+		close(fd);
+}
+
+/* ----------------------------------------------------------------
  * Test registration
  * ---------------------------------------------------------------- */
 
 ATF_TP_ADD_TCS(tp)
 {
+	/* Connect authorization */
+	ATF_TP_ADD_TC(tp, acct_unprivileged_connect_denied);
+
 	/* Self-targeting */
 	ATF_TP_ADD_TC(tp, acct_charge_self);
 	ATF_TP_ADD_TC(tp, acct_release_self);

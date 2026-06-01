@@ -140,6 +140,7 @@ struct cap_rt_ops {
  */
 #define	CAP_RT_SVC_NOXFER		0x0001	/* instances are non-transferable */
 #define	CAP_RT_SVC_NOTIFY		0x0002	/* emits async RECVMSG notifications */
+#define	CAP_RT_SVC_MINTABLE		0x0004	/* instances can mint new instances */
 
 struct cap_rt_service_params {
 	const char		*name;
@@ -184,7 +185,19 @@ void	cap_rt_instance_set_priv(struct cap_rt_instance *s, void *priv);
 void   *cap_rt_instance_get_priv(struct cap_rt_instance *s);
 uint64_t cap_rt_instance_get_badge(struct cap_rt_instance *s);
 
-/* Resolve target process from attached procdesc fd array, or self. */
+/*
+ * Resolve target process from attached procdesc fd array, or self.
+ *
+ * If nfds > 0, the first fd must be a process descriptor.  If nfds == 0,
+ * the calling process is used.
+ *
+ * On success, returns 0 with:
+ *   - PROC_LOCK held on *pp
+ *   - _PHOLD active on *pp (prevents exit)
+ * The caller MUST call PROC_UNLOCK(*pp) and _PRELE(*pp) when done.
+ *
+ * On failure, returns an errno and *pp is unchanged.
+ */
 int	cap_rt_resolve_proc(struct file **fds, int nfds, struct proc **pp);
 
 /* Minting — create a capability from handler context. */

@@ -1727,7 +1727,7 @@ ATF_TC_BODY(getinfo, tc)
  * Capability pair tests (requires cap_rt_pair module)
  * ================================================================ */
 
-#define	PAIR_OP_CREATE	1
+#include "cap_rt_pair_proto.h"
 
 /*
  * Helper: connect to pair service, send PAIR_OP_CREATE, receive peer fd.
@@ -5290,6 +5290,86 @@ ATF_TC_BODY(capsicum_gates_terminate, tc)
 }
 
 /* ================================================================
+ * Mint restriction tests (CAP_CAP_RT_MINT + REVOKE_MINT)
+ * ================================================================ */
+
+static int
+pair_mint_instance(int fd)
+{
+	struct cap_rt_mint_instance_args ma;
+
+	memset(&ma, 0, sizeof(ma));
+	if (ioctl(fd, CAP_RT_MINT_INSTANCE, &ma) != 0)
+		return (-1);
+	return (ma.fd);
+}
+
+ATF_TC(capsicum_mint_right);
+ATF_TC_HEAD(capsicum_mint_right, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Stripping CAP_CAP_RT_MINT blocks MINT_INSTANCE");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+}
+ATF_TC_BODY(capsicum_mint_right, tc)
+{
+	cap_rights_t rights;
+	int fd, minted;
+
+	fd = cap_rt_connect("pair");
+	ATF_REQUIRE(fd >= 0);
+
+	/* Mint should work before limiting. */
+	minted = pair_mint_instance(fd);
+	ATF_REQUIRE_MSG(minted >= 0, "mint before limit: %s", strerror(errno));
+	close(minted);
+
+	/* Strip CAP_CAP_RT_MINT, keep IOCTL. */
+	cap_rights_init(&rights, CAP_IOCTL, CAP_CAP_RT_SEND, CAP_CAP_RT_RECV);
+	ATF_REQUIRE(cap_rights_limit(fd, &rights) == 0);
+
+	/* Mint should now fail with ENOTCAPABLE. */
+	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	    ioctl(fd, CAP_RT_MINT_INSTANCE, &(struct cap_rt_mint_instance_args){0}) == -1);
+
+	close(fd);
+}
+
+ATF_TC(revoke_mint_blocks_minting);
+ATF_TC_HEAD(revoke_mint_blocks_minting, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CAP_RT_REVOKE_MINT blocks MINT_INSTANCE on all fds");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+}
+ATF_TC_BODY(revoke_mint_blocks_minting, tc)
+{
+	int fd, fd2, minted;
+
+	fd = cap_rt_connect("pair");
+	ATF_REQUIRE(fd >= 0);
+
+	/* Dup before revoking — both fds share the instance. */
+	fd2 = dup(fd);
+	ATF_REQUIRE(fd2 >= 0);
+
+	/* Mint works before revoke. */
+	minted = pair_mint_instance(fd);
+	ATF_REQUIRE(minted >= 0);
+	close(minted);
+
+	/* Revoke minting. */
+	ATF_REQUIRE(ioctl(fd, CAP_RT_REVOKE_MINT, NULL) == 0);
+
+	/* Both fds should be blocked. */
+	ATF_CHECK_ERRNO(EACCES, pair_mint_instance(fd) == -1);
+	ATF_CHECK_ERRNO(EACCES, pair_mint_instance(fd2) == -1);
+
+	close(fd2);
+	close(fd);
+}
+
+/* ================================================================
  * Process nonce tests
  * ================================================================ */
 
@@ -6147,6 +6227,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cap_pro_token_close_revokes);
 	ATF_TP_ADD_TC(tp, cap_pro_delegated_access);
 	ATF_TP_ADD_TC(tp, cap_pro_refcount_shield);
+
+	/* Mint restriction */
+	ATF_TP_ADD_TC(tp, capsicum_mint_right);
+	ATF_TP_ADD_TC(tp, revoke_mint_blocks_minting);
 
 	return (atf_no_error());
 }

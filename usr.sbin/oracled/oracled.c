@@ -91,6 +91,7 @@ main(int argc, char *argv[])
 	config_init_defaults(&od.cfg);
 	if (config_load(&od.cfg, conffile) != 0)
 		errx(1, "configuration error");
+	strlcpy(od.conffile, conffile, sizeof(od.conffile));
 	ORACLED_PROBE_CONFIG(conffile);
 
 	/* CLI -p overrides config pidfile. */
@@ -135,16 +136,21 @@ main(int argc, char *argv[])
 
 	/* Phase 4: capability runtime. */
 	if (!od.test_mode) {
-		if (cap_rt_setup() == -1)
-			syslog(LOG_WARNING,
-			    "cap_rt not available — services will run without capability tokens");
+		if (cap_rt_setup() == -1) {
+			syslog(LOG_ERR,
+			    "cap_rt not available, cannot start");
+			exit(1);
+		}
 	} else
 		syslog(LOG_INFO, "test mode: skipping cap_rt");
 
 	/* Phase 5: control socket. */
 	if (!od.test_mode) {
-		if (ctl_setup() == -1)
-			syslog(LOG_WARNING, "failed to create control socket");
+		if (ctl_setup() == -1) {
+			syslog(LOG_ERR,
+			    "failed to create control socket, cannot start");
+			exit(1);
+		}
 	} else {
 		syslog(LOG_INFO, "test mode: skipping control socket");
 	}

@@ -40,6 +40,7 @@
  *     CAP_CAP_RT_SEND   required for SENDMSG
  *     CAP_CAP_RT_RECV   required for RECVMSG
  *     CAP_CAP_RT_SEND + CAP_CAP_RT_RECV required for CALL
+ *     CAP_CAP_RT_MINT   required for MINT_INSTANCE
  */
 
 #ifndef _DEV_CAP_RT_CAP_RT_IOCTL_H_
@@ -59,9 +60,9 @@
  * Credential trailer -- kernel-stamped, unforgeable.
  */
 struct cap_rt_cred_trailer {
-	uid_t		uid;
-	gid_t		gid;
-	int		prison_id;
+	uint32_t	uid;
+	uint32_t	gid;
+	int32_t		prison_id;
 	uint64_t	nonce;		/* program identity (inherited on fork, rotates on exec) */
 };
 
@@ -154,5 +155,20 @@ struct cap_rt_info_args {
 #define	CAP_RT_REVOKE_RECV		_IO('Y', 8)
 #define	CAP_RT_REVOKE_CALL		_IO('Y', 9)
 #define	CAP_RT_TERMINATE		_IO('Y', 10)
+#define	CAP_RT_REVOKE_MINT		_IO('Y', 12)
+
+/*
+ * Mint a new instance of the same service from an existing instance.
+ * Only available on services created with CAP_RT_SVC_MINTABLE.
+ * The service's co_connect callback runs to authorize the mint.
+ * The caller keeps their original instance.
+ */
+struct cap_rt_mint_instance_args {
+	int		fd;		/* OUT: new instance fd */
+	uint32_t	flags;		/* reserved, must be 0 */
+	uint32_t	_reserved[2];
+};
+
+#define	CAP_RT_MINT_INSTANCE	_IOWR('Y', 11, struct cap_rt_mint_instance_args)
 
 #endif /* _DEV_CAP_RT_CAP_RT_IOCTL_H_ */

@@ -136,7 +136,8 @@ struct fi_reply {
  * socket create is enforced only for fully-wildcard (domain-wide) claims. */
 
 /*
- * Network request (ops 4-6): no fd needed, endpoint in payload.
+ * Network request (ops 4-6 and FI_OP_MINT_NET): no fd needed, endpoint
+ * in payload.
  * Fields set to 0 match any value (wildcards).
  */
 struct fi_net_request {

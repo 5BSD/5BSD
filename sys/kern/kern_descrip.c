@@ -65,6 +65,7 @@
 #include <sys/sbuf.h>
 #include <sys/signalvar.h>
 #include <sys/kdb.h>
+#include <sys/sdt.h>
 #include <sys/smr.h>
 #include <sys/stat.h>
 #include <sys/sx.h>
@@ -98,6 +99,16 @@ static MALLOC_DEFINE(M_SIGIO, "sigio", "sigio structures");
 MALLOC_DEFINE(M_FILECAPS, "filecaps", "descriptor capabilities");
 
 MALLOC_DECLARE(M_FADVISE);
+
+SDT_PROVIDER_DEFINE(fd);
+SDT_PROBE_DEFINE6(fd, , , install,
+    "struct file *", "int", "pid_t", "struct ucred *", "short", "int");
+SDT_PROBE_DEFINE6(fd, , , dup,
+    "struct file *", "int", "int", "pid_t", "struct ucred *", "short");
+SDT_PROBE_DEFINE6(fd, , , close,
+    "struct file *", "int", "pid_t", "struct ucred *", "short", "u_int");
+SDT_PROBE_DEFINE6(fd, , , fork__inherit,
+    "struct file *", "int", "pid_t", "pid_t", "struct ucred *", "short");
 
 static __read_mostly uma_zone_t file_zone;
 static __read_mostly uma_zone_t filedesc0_zone;
@@ -1168,6 +1179,8 @@ kern_dup(struct thread *td, u_int mode, int flags, int old, int new)
 	seqc_write_end(&newfde->fde_seqc);
 #endif
 	td->td_retval[0] = new;
+	SDT_PROBE6(fd, , , dup, oldfp, old, new, p->p_pid,
+	    td->td_ucred, oldfp->f_type);
 
 	error = 0;
 
@@ -1423,6 +1436,8 @@ closefp_impl(struct filedesc *fdp, int fd, struct file *fp, struct thread *td,
 
 	if (fp->f_ops->fo_fdclose != NULL)
 		fp->f_ops->fo_fdclose(fp, fd, td);
+	SDT_PROBE6(fd, , , close, fp, fd, td->td_proc->p_pid,
+	    td->td_ucred, fp->f_type, refcount_load(&fp->f_count));
 	FILEDESC_XUNLOCK(fdp);
 
 #ifdef MAC
@@ -2336,6 +2351,8 @@ finstall_refed(struct thread *td, struct file *fp, int *fd, int flags,
 	error = fdalloc(td, 0, fd);
 	if (__predict_true(error == 0)) {
 		_finstall(fdp, fp, *fd, flags, fcaps);
+		SDT_PROBE6(fd, , , install, fp, *fd, td->td_proc->p_pid,
+		    td->td_ucred, fp->f_type, flags);
 	}
 	FILEDESC_XUNLOCK(fdp);
 	return (error);
@@ -2613,6 +2630,9 @@ fdcopy(struct filedesc *fdp, struct proc *p1)
 			nfde->fde_file = fp;
 		filecaps_copy(&ofde->fde_caps, &nfde->fde_caps, true);
 		fdused_init(newfdp, i);
+		SDT_PROBE6(fd, , , fork__inherit, nfde->fde_file, i,
+		    curthread->td_proc->p_pid, p1->p_pid, curthread->td_ucred,
+		    nfde->fde_file->f_type);
 	}
 	MPASS(newfdp->fd_freefile != -1);
 	FILEDESC_SUNLOCK(fdp);

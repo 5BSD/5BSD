@@ -1,0 +1,91 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd June 1, 2026
+.Dt SERVICECTL 8
+.Os
+.Sh NAME
+.Nm servicectl
+.Nd control interface to serviced
+.Sh SYNOPSIS
+.Nm
+.Op Fl s Ar socket
+.Ar command
+.Sh DESCRIPTION
+.Nm
+is the administrative command-line interface to
+.Xr serviced 8 .
+Each invocation opens a connection to the
+.Xr serviced 8
+control socket, sends one command, prints the result, and exits.
+.Sh COMMANDS
+.Bl -tag -width "services"
+.It Cm status
+Display the overall status of
+.Xr serviced 8
+and a table of all loaded services.
+For each service, the output includes the label, current state
+.Pq running, stopped, starting, or stopping ,
+PID (if running), restart policy, and restart count.
+Available to any user.
+.It Cm services
+List all loaded services.
+The output is identical to the
+.Cm status
+command.
+Available to any user.
+.It Cm reload
+Reload service manifests from disk.
+New manifests are loaded and their services started, changed
+manifests trigger a graceful restart of the affected service,
+and manifests removed from disk cause the corresponding service
+to be gracefully stopped.
+The dependency graph is re-validated before any changes are
+applied; if the new graph would contain a cycle, the reload
+is rejected and running services are unaffected.
+.Pp
+Requires root privileges.
+.El
+.Sh OPTIONS
+.Bl -tag -width "-s socket"
+.It Fl s Ar socket
+Connect to the
+.Xr serviced 8
+control socket at
+.Ar socket
+instead of the default
+.Pa /var/run/serviced.sock .
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Pp
+.Nm
+exits 0 on success and >0 if an error occurred.
+An exit status of
+.Dv EX_UNAVAILABLE
+(69) indicates that the control socket could not be reached,
+typically because
+.Xr serviced 8
+is not running.
+.Sh EXAMPLES
+Check whether
+.Xr serviced 8
+is running and list services:
+.Bd -literal -offset indent
+# servicectl status
+.Ed
+.Pp
+Reload manifests after adding a new service:
+.Bd -literal -offset indent
+# servicectl reload
+.Ed
+.Pp
+Connect to an alternate control socket:
+.Bd -literal -offset indent
+# servicectl -s /tmp/test-serviced.sock status
+.Ed
+.Sh SEE ALSO
+.Xr serviced 8
+.Sh HISTORY
+.Nm
+first appeared in 5BSD.

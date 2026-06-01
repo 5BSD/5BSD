@@ -309,13 +309,14 @@
 #define	CAP_CAP_RT_SEND		CAPRIGHT(1, 0x0000000080000000ULL)
 /* Allows receiving replies on a cap_rt instance fd. */
 #define	CAP_CAP_RT_RECV		CAPRIGHT(1, 0x0000000100000000ULL)
+/* Allows minting a fresh instance from a mintable cap_rt instance fd. */
+#define	CAP_CAP_RT_MINT		CAPRIGHT(1, 0x0000000200000000ULL)
 
 /* All used bits for index 1. */
-#define	CAP_ALL1		CAPRIGHT(1, 0x00000001EFFFFFFFULL)
+#define	CAP_ALL1		CAPRIGHT(1, 0x00000003EFFFFFFFULL)
 
 /* Available bits for index 1. */
 #define	CAP_UNUSED1_28		CAPRIGHT(1, 0x0000000010000000ULL)
-#define	CAP_UNUSED1_33		CAPRIGHT(1, 0x0000000200000000ULL)
 /* ... */
 #define	CAP_UNUSED1_57		CAPRIGHT(1, 0x0100000000000000ULL)
 

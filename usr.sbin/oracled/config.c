@@ -104,6 +104,8 @@ config_init_defaults(struct oracled_config *cfg)
 
 	strlcpy(cfg->manifest_dir, ORACLED_DEFAULT_MANIFEST_DIR,
 	    sizeof(cfg->manifest_dir));
+	strlcpy(cfg->service_manager, ORACLED_DEFAULT_SVC_MANAGER,
+	    sizeof(cfg->service_manager));
 
 	/* Integrity defaults: conservative — don't break rc(8). */
 	cfg->integrity_flags = CP_SF_PTRACE | CP_SF_WAIT | CP_SF_SCHED |
@@ -329,6 +331,8 @@ config_load(struct oracled_config *cfg, const char *path)
 	    sizeof(cfg->control_socket));
 	cfg_string(root, "manifest_dir", cfg->manifest_dir,
 	    sizeof(cfg->manifest_dir));
+	cfg_string(root, "service_manager", cfg->service_manager,
+	    sizeof(cfg->service_manager));
 	cfg_mode(root, cfg);
 
 	/* Sections */

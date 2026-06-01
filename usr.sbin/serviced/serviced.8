@@ -1,0 +1,457 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd June 1, 2026
+.Dt SERVICED 8
+.Os
+.Sh NAME
+.Nm serviced
+.Nd Oracle capability-world service manager
+.Sh SYNOPSIS
+.Nm
+.Op Fl d Ar manifest_dir
+.Sh DESCRIPTION
+.Nm
+is the service manager for the Oracle capability world.
+It is started by
+.Xr oracled 8
+via
+.Xr pdfork 2
+as a single child process and inherits a cap_rt pair channel
+for requesting capability tokens, pairs, and coalitions from the
+oracle.
+.Pp
+.Nm
+reads service manifests from a manifest directory, topologically
+sorts them by dependency, and launches each service via
+.Xr pdfork 2 .
+It supervises service lifecycle through
+.Xr kqueue 2
+process descriptors, enforces restart policies with exponential
+backoff and circuit-breaker protection, and operates a naming
+registry that allows services to find and connect to each other
+by reverse-domain names.
+.Pp
+Administrative commands are sent via
+.Xr servicectl 8
+over a local control socket.
+.Pp
+During startup,
+.Nm
+executes the following phases:
+.Bl -enum
+.It
+Inherit the pair fd from the
+.Ev ORACLED_PAIR_FD
+environment variable and optional delegated service instance fds
+from
+.Ev SERVICED_PAIR_SVC_FD ,
+.Ev SERVICED_COALITION_SVC_FD ,
+and
+.Ev SERVICED_CAPPROTECT_FD .
+.It
+Apply capprotect shield if a capprotect service instance fd was
+inherited, hardening the process against ptrace, wait, scheduler
+manipulation, and ktrace.
+.It
+Create a
+.Xr kqueue 2
+and register the oracle pair fd for EOF detection (oracle death).
+.It
+Create a control socket at
+.Pa /var/run/serviced.sock .
+.It
+Register signal handlers for
+.Dv SIGTERM ,
+.Dv SIGINT ,
+.Dv SIGHUP ,
+and
+.Dv SIGCHLD .
+.It
+Send
+.Dv ORACLE_OP_READY
+to
+.Xr oracled 8
+on the pair channel.
+.It
+Load service manifests from the manifest directory, topologically
+sort by dependency, and fork/exec each service via
+.Xr pdfork 2 .
+.It
+Enter the event loop, monitoring services via process descriptors,
+pair channels, coalition events, control socket connections, signals,
+and restart timers.
+.El
+.Sh OPTIONS
+.Bl -tag -width "-d manifest_dir"
+.It Fl d Ar manifest_dir
+Read service manifests from
+.Ar manifest_dir
+instead of the directory specified by the
+.Ev SERVICED_MANIFEST_DIR
+environment variable or the default
+.Pa /etc/oracled.d .
+.El
+.Sh INHERITED FILE DESCRIPTORS
+.Nm
+inherits the following file descriptors from
+.Xr oracled 8 :
+.Bl -tag -width "capprotect (fd 6)"
+.It pair (fd 3)
+Cap_rt pair channel back to
+.Xr oracled 8 .
+Used to request capability tokens, pairs, and coalitions.
+Always required.
+.It pair_svc (fd 4)
+Delegated cap_rt pair service instance.
+Allows
+.Nm
+to create pair channels for its children directly, without
+round-tripping through
+.Xr oracled 8 .
+Optional.
+.It coalition_svc (fd 5)
+Delegated cap_rt coalition service instance.
+Allows
+.Nm
+to create coalitions for process grouping.
+Optional.
+.It capprotect (fd 6)
+Delegated capprotect service instance.
+.Nm
+uses this to apply an integrity shield at startup, then closes
+the fd.
+Optional.
+.El
+.Sh ENVIRONMENT
+.Bl -tag -width "SERVICED_COALITION_SVC_FD"
+.It Ev ORACLED_PAIR_FD
+File descriptor number for the cap_rt pair channel back to
+.Xr oracled 8 .
+Always 3.
+Required.
+.It Ev SERVICED_PAIR_SVC_FD
+File descriptor number for the delegated pair service instance.
+Optional.
+.It Ev SERVICED_COALITION_SVC_FD
+File descriptor number for the delegated coalition service instance.
+Optional.
+.It Ev SERVICED_CAPPROTECT_FD
+File descriptor number for the delegated capprotect service instance.
+Optional.
+.It Ev SERVICED_MANIFEST_DIR
+Directory containing service manifest files.
+Overridden by the
+.Fl d
+flag.
+Default:
+.Pa /etc/oracled.d .
+.El
+.Sh SERVICE MANIFESTS
+Service manifests are UCL files in the manifest directory.
+Each
+.Pa *.ucl
+file declares one service.
+Files are loaded in lexicographic order and topologically sorted
+by dependency before launch.
+Invalid manifests are logged and skipped.
+.Pp
+The following keys are supported:
+.Bl -tag -width "capabilities"
+.It Va label Pq required
+Unique name for the service.
+Used in log messages, dependency references, the naming registry,
+and control socket responses.
+Maximum 63 characters.
+.It Va program Pq required
+Absolute path to the service binary.
+Must be executable.
+.It Va description
+Human-readable description.
+Cosmetic only.
+.It Va user
+Run the service as this user.
+Sets uid, gid, and supplementary groups via
+.Xr getpwnam 3
+and
+.Xr getgrouplist 3 .
+Credential failures are fatal to prevent privilege escalation.
+.It Va group
+Run the service with this primary group.
+Overrides the group from
+.Va user
+if both are set.
+.It Va restart
+Restart policy when the service exits.
+One of:
+.Dq never
+(default),
+.Dq always ,
+or
+.Dq on-failure
+(restart only on non-zero exit).
+.It Va stop_timeout
+Seconds to wait after
+.Dv SIGTERM
+before sending
+.Dv SIGKILL .
+Clamped to the range 1\(en300.
+Default: 5.
+.It Va provides
+Array of capability names this service provides.
+Used by the dependency graph to determine start order.
+.It Va requires
+Array of capability names this service depends on.
+The service will not start until all required capabilities are
+available.
+.It Va capabilities
+Object containing capability tokens to delegate to the service:
+.Bl -tag -width "network"
+.It Va paths
+Array of absolute paths.
+.Nm
+requests an isolation access token for each path from the oracle
+and passes it to the service.
+.It Va network
+Array of network endpoint objects.
+Each object has:
+.Va port
+(integer),
+.Va protocol
+("tcp" or "udp"),
+.Va direction
+("bind", "connect", or "any"),
+and optionally
+.Va domain
+("inet6" or "any"; default is IPv4).
+.It Va system
+Array of system gate names (e.g.,
+.Dq kldload ,
+.Dq reboot ,
+.Dq sysctl ) .
+.Nm
+requests a system access token from the oracle with the specified
+gates.
+.El
+.El
+.Ss Service Environment
+Each service receives a minimal environment:
+.Bl -tag -width "ORACLED_TOKEN_FDS"
+.It Ev PATH
+.Pa /sbin:/bin:/usr/sbin:/usr/bin
+.It Ev ORACLED_PAIR_FD
+File descriptor number for the cap_rt pair channel back to
+.Nm
+(always 3).
+Services use this via
+.Xr libservice 3
+to report readiness, register names, and look up other services.
+.It Ev ORACLED_TOKEN_FDS
+Comma-separated list of file descriptor numbers for capability
+tokens (starting at 4).
+Only set if the manifest declares capabilities.
+.It Ev ORACLED_LABEL
+The service label from the manifest.
+.It Ev USER
+Set if
+.Va user
+is specified in the manifest.
+.It Ev HOME
+Home directory of the service user.
+Only set when
+.Va user
+is specified.
+.El
+.Pp
+Standard I/O (fds 0, 1, 2) is redirected to
+.Pa /dev/null .
+All file descriptors above the token range are closed via
+.Xr closefrom 2 .
+.Sh SERVICE LIFECYCLE
+.Ss Dependency Sorting
+Before launch, manifests are topologically sorted so that
+providers start before their dependents.
+A dependency cycle is a fatal error; no services are started.
+.Ss Fork and Exec
+Each service is launched with
+.Xr pdfork 2 ,
+yielding a process descriptor that
+.Nm
+monitors via
+.Dv EVFILT_PROCDESC
+for
+.Dv NOTE_EXEC
+(exec confirmed) and
+.Dv NOTE_EXIT
+(process exited).
+.Ss Restart Policies
+.Bl -tag -width "on-failure"
+.It Dq never
+The service is not restarted.
+.It Dq always
+The service is restarted unconditionally after exit.
+.It Dq on-failure
+The service is restarted only if it exited with a non-zero status
+or was killed by a signal.
+.El
+.Ss Exponential Backoff
+If a service dies within 5 seconds of starting (a rapid restart),
+the restart is delayed with exponential backoff:
+2 seconds, 4 seconds, 6 seconds, up to a maximum of 30 seconds.
+If the service runs for at least 60 seconds, the restart counter
+is reset.
+.Ss Circuit Breaker
+After 5 consecutive rapid failures, the service is disabled and
+not restarted.
+A manual reload via
+.Xr servicectl 8
+or
+.Dv SIGHUP
+will re-evaluate the manifest.
+.Ss Graceful Shutdown
+When stopping a service,
+.Nm
+sends
+.Dv SIGTERM
+via
+.Xr pdkill 2
+and starts a timer for the service's
+.Va stop_timeout
+(default 5 seconds).
+If the service has not exited when the timer fires,
+.Dv SIGKILL
+is sent.
+.Sh NAMING REGISTRY
+.Nm
+provides a naming registry that allows services to discover
+and connect to each other using reverse-domain names
+(e.g.,
+.Dq org.freebsd.sshd ) .
+.Pp
+Services interact with the registry via
+.Xr libservice 3
+over their pair channel to
+.Nm .
+The following operations are supported:
+.Bl -tag -width "UNREGISTER"
+.It Dv REGISTER
+Register a reverse-domain name.
+The name must contain at least one dot and consist only of
+alphanumerics, dots, hyphens, and underscores.
+Each service may register up to 32 names.
+Duplicate names are rejected with
+.Er EEXIST .
+.It Dv UNREGISTER
+Remove a previously registered name.
+Only the owning service may unregister a name.
+.It Dv LOOKUP
+Connect to a named service.
+.Nm
+creates a new cap_rt pair, pushes one end to the provider service
+as a
+.Dv SVC_OP_NEW_CLIENT
+notification, and returns the other end to the requester.
+A service cannot look up itself
+.Pq Er ELOOP .
+.El
+.Pp
+When a service exits, all names it registered are automatically
+removed.
+.Sh SIGNALS
+.Bl -tag -width "SIGTERM"
+.It Dv SIGHUP
+Reload service manifests.
+New services are started, changed manifests trigger a graceful
+restart, and removed manifests trigger a graceful stop.
+The dependency graph is re-validated before any mutations are
+applied; if the new graph contains a cycle, the reload is
+rejected and running services are unaffected.
+.It Dv SIGTERM , SIGINT
+Initiate graceful shutdown.
+All services are stopped in reverse dependency order.
+.Nm
+exits after all services have terminated or been killed.
+.It Dv SIGCHLD
+Reap stray child processes.
+.El
+.Sh CONTROL SOCKET
+.Nm
+listens on a
+.Ux Ns -domain
+stream socket at
+.Pa /var/run/serviced.sock
+(mode 0700).
+The
+.Xr servicectl 8
+utility communicates with
+.Nm
+over this socket.
+.Pp
+The following commands are supported:
+.Bl -tag -width "services"
+.It status
+Return daemon status and a summary of all loaded services with
+their current state, PID, restart policy, and restart count.
+Available to any user.
+.It services
+List all loaded services (same output as
+.Cm status ) .
+Available to any user.
+.It reload
+Reload manifests from disk.
+Requires root.
+.El
+.Sh FILES
+.Bl -tag -width "/var/run/serviced.sock"
+.It Pa /etc/oracled.d/
+Default manifest directory.
+Each
+.Pa *.ucl
+file declares a service.
+.It Pa /var/run/serviced.sock
+Control socket (mode 0700).
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Pp
+.Nm
+exits with an error if the
+.Ev ORACLED_PAIR_FD
+environment variable is not set or the pair fd is invalid.
+.Sh EXAMPLES
+Minimal service manifest:
+.Bd -literal -offset indent
+# /etc/oracled.d/myservice.ucl
+label = "myservice";
+program = "/usr/local/sbin/myservice";
+restart = "always";
+.Ed
+.Pp
+Service with dependencies and capabilities:
+.Bd -literal -offset indent
+label = "webapp";
+program = "/usr/local/sbin/webapp";
+user = "www";
+group = "www";
+provides = ["http"];
+requires = ["database"];
+restart = "on-failure";
+stop_timeout = 10;
+capabilities {
+    paths = ["/var/www"];
+    network = [
+        { port = 8080; protocol = "tcp"; direction = "bind"; },
+    ];
+}
+.Ed
+.Sh SEE ALSO
+.Xr kqueue 2 ,
+.Xr pdfork 2 ,
+.Xr libservice 3 ,
+.Xr cap_rt 4 ,
+.Xr oracled 8 ,
+.Xr servicectl 8
+.Sh HISTORY
+.Nm
+first appeared in 5BSD as the service manager for the Oracle
+capability world.

@@ -51,6 +51,15 @@ SDT_PROBE_DECLARE(cap_rt, , , recv__done);
 SDT_PROBE_DECLARE(cap_rt, , , call);
 SDT_PROBE_DECLARE(cap_rt, , , call__done);
 SDT_PROBE_DECLARE(cap_rt, , , close);
+SDT_PROBE_DECLARE(cap_rt, , , fd__close);
+SDT_PROBE_DECLARE(cap_rt, , , fd__receive);
+SDT_PROBE_DECLARE(cap_rt, , , control);
+SDT_PROBE_DECLARE(cap_rt, , , ioctl__deny);
+SDT_PROBE_DECLARE(cap_rt, , , error);
+SDT_PROBE_DECLARE(cap_rt, , , instance__finalize);
+SDT_PROBE_DECLARE(cap_rt, , , instance__lastclose);
+SDT_PROBE_DECLARE(cap_rt, , , rights__change);
+SDT_PROBE_DECLARE(cap_rt, , , state);
 SDT_PROBE_DECLARE(cap_rt, , , queue__pressure);
 
 static fo_ioctl_t	cap_rt_instance_ioctl;
@@ -67,15 +76,19 @@ static fo_cmp_t		cap_rt_instance_cmp;
  * CAP_RT_SENDMSG  requires  CAP_CAP_RT_SEND
  * CAP_RT_CALL     requires  CAP_CAP_RT_SEND (request) + CAP_CAP_RT_RECV (reply)
  * CAP_RT_RECVMSG  requires  CAP_CAP_RT_RECV
+ * CAP_RT_MINT_INSTANCE requires CAP_CAP_RT_MINT
  *
  * GETINFO, LOCK, REVOKE_*, TERMINATE are always allowed — they are
  * introspection or capability-narrowing operations.
  */
 static int
-cap_rt_instance_ioctl_check(struct file *fp __unused, u_long cmd,
+cap_rt_instance_ioctl_check(struct file *fp, u_long cmd,
     const cap_rights_t *havep)
 {
+	struct cap_rt_instance *s;
+	struct cap_rt_service *svc;
 	cap_rights_t need;
+	int error;
 
 	switch (cmd) {
 	case CAP_RT_SENDMSG:
@@ -88,10 +101,24 @@ cap_rt_instance_ioctl_check(struct file *fp __unused, u_long cmd,
 		cap_rights_init(&need, CAP_IOCTL, CAP_CAP_RT_SEND,
 		    CAP_CAP_RT_RECV);
 		break;
+	case CAP_RT_MINT_INSTANCE:
+		cap_rights_init(&need, CAP_IOCTL, CAP_CAP_RT_MINT);
+		break;
 	default:
 		return (0);
 	}
-	return (cap_check(havep, &need));
+	error = cap_check(havep, &need);
+	if (error != 0) {
+		s = fp->f_data;
+		svc = s != NULL ? s->ci_service : NULL;
+		if (svc != NULL) {
+			SDT_PROBE6(cap_rt, , , ioctl__deny,
+			    svc->csvc_name, s->ci_badge, cmd,
+			    curthread->td_proc->p_pid, curthread->td_ucred,
+			    cap_rt_proc_nonce(curthread->td_ucred));
+		}
+	}
+	return (error);
 }
 
 const struct fileops cap_rt_instance_ops = {
@@ -132,6 +159,76 @@ const struct fileops cap_rt_instance_noxfer_ops = {
 	.fo_ioctl_check = cap_rt_instance_ioctl_check,
 	.fo_flags = 0,
 };
+
+static void
+cap_rt_probe_fd_receive(struct file *fp, int fd, struct thread *td)
+{
+	struct cap_rt_instance *rs;
+	struct cap_rt_service *rsvc;
+
+	if (fp->f_type != DTYPE_CAP_RT || fp->f_data == NULL)
+		return;
+
+	rs = fp->f_data;
+	rsvc = rs->ci_service;
+	if (rsvc == NULL)
+		return;
+
+	SDT_PROBE6(cap_rt, , , fd__receive, rsvc->csvc_name,
+	    rs->ci_badge, fd, td->td_proc->p_pid, td->td_ucred,
+	    cap_rt_proc_nonce(td->td_ucred));
+}
+
+static void
+cap_rt_probe_control(struct cap_rt_instance *s, u_long cmd, struct thread *td)
+{
+	struct cap_rt_service *svc;
+
+	svc = s->ci_service;
+	if (svc == NULL)
+		return;
+
+	SDT_PROBE6(cap_rt, , , control, svc->csvc_name, s->ci_badge,
+	    cmd, td->td_proc->p_pid, td->td_ucred,
+	    cap_rt_proc_nonce(td->td_ucred));
+}
+
+static void
+cap_rt_probe_error(struct cap_rt_instance *s, u_long op, int error,
+    struct thread *td)
+{
+	struct cap_rt_service *svc;
+	const char *svc_name;
+
+	if (error == 0)
+		return;
+	svc = s->ci_service;
+	svc_name = svc != NULL ? svc->csvc_name : "<none>";
+	SDT_PROBE6(cap_rt, , , error, svc_name, s->ci_badge, op,
+	    td->td_proc->p_pid, cap_rt_proc_nonce(td->td_ucred), error);
+}
+
+static void
+cap_rt_probe_rights_change(struct cap_rt_instance *s, u_long cmd,
+    struct thread *td)
+{
+	struct cap_rt_service *svc;
+	int flags, restricted;
+
+	svc = s->ci_service;
+	if (svc == NULL)
+		return;
+	mtx_lock(&s->ci_mtx);
+	flags = s->ci_flags;
+	restricted = s->ci_restricted;
+	mtx_unlock(&s->ci_mtx);
+	SDT_PROBE6(cap_rt, , , rights__change, svc->csvc_name,
+	    s->ci_badge, cmd, td->td_proc->p_pid, td->td_ucred,
+	    cap_rt_proc_nonce(td->td_ucred));
+	SDT_PROBE6(cap_rt, , , state, svc->csvc_name, s->ci_badge,
+	    flags, restricted, td->td_proc->p_pid,
+	    cap_rt_proc_nonce(td->td_ucred));
+}
 
 static int
 cap_rt_instance_enqueue_rx(struct cap_rt_instance *s, struct cap_rt_msg *msg)
@@ -274,6 +371,7 @@ sendmsg_build:
 out:
 	SDT_PROBE6(cap_rt, , , send__done, svc_name, s->ci_badge,
 	    args->payload_len, args->nfds, error, getsbinuptime() - start);
+	cap_rt_probe_error(s, CAP_RT_SENDMSG, error, td);
 	return (error);
 }
 
@@ -394,6 +492,7 @@ cap_rt_instance_do_recvmsg(struct cap_rt_instance *s, struct file *fp,
 			args->nfds = 0;
 			goto out;
 		}
+		cap_rt_probe_fd_receive(msg->cm_fds[i], fdbuf[i], td);
 	}
 	if (nfds_out > 0 && args->fds != NULL) {
 		error = copyout(fdbuf, args->fds, nfds_out * sizeof(int));
@@ -415,6 +514,7 @@ cap_rt_instance_do_recvmsg(struct cap_rt_instance *s, struct file *fp,
 out:
 	SDT_PROBE6(cap_rt, , , recv__done, svc_name, s->ci_badge,
 	    args->payload_len, args->nfds, error, getsbinuptime() - start);
+	cap_rt_probe_error(s, CAP_RT_RECVMSG, error, td);
 	return (error);
 }
 
@@ -436,13 +536,17 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		 */
 		return (0);
 	case CAP_RT_SENDMSG:
-		if (s->ci_restricted & CAP_RT_RF_NO_SEND)
+		if (s->ci_restricted & CAP_RT_RF_NO_SEND) {
+			cap_rt_probe_error(s, cmd, EACCES, td);
 			return (EACCES);
+		}
 		return (cap_rt_instance_do_sendmsg(s,
 		    (struct cap_rt_sendmsg_args *)data, td));
 	case CAP_RT_RECVMSG:
-		if (s->ci_restricted & CAP_RT_RF_NO_RECV)
+		if (s->ci_restricted & CAP_RT_RF_NO_RECV) {
+			cap_rt_probe_error(s, cmd, EACCES, td);
 			return (EACCES);
+		}
 		return (cap_rt_instance_do_recvmsg(s, fp,
 		    (struct cap_rt_recvmsg_args *)data, td));
 	case CAP_RT_CALL: {
@@ -608,9 +712,22 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		}
 		if (error == 0 && out_nfds > 0 && ca->reply_fds != NULL) {
 			for (i = 0; i < out_nfds; i++) {
+				struct filecaps *install_fcaps;
+				int j;
+
+				install_fcaps = NULL;
+				for (j = 0; j < (int)ca->req_nfds; j++) {
+					if (out_fds[i] == files[j]) {
+						install_fcaps = &call_fcaps[j];
+						break;
+					}
+				}
 				error = finstall(td, out_fds[i], &fdbuf[i],
-				    0, NULL);
-				/* Drop the handler's ref (finstall took its own). */
+				    0, install_fcaps);
+				if (error == 0)
+					cap_rt_probe_fd_receive(out_fds[i],
+					    fdbuf[i], td);
+				/* Drop handler's ref (finstall took its own). */
 				fdrop(out_fds[i], td);
 				out_fds[i] = NULL;
 				if (error != 0) {
@@ -666,6 +783,7 @@ call_out:
 call_done:
 		SDT_PROBE6(cap_rt, , , call__done, svc_name, s->ci_badge,
 		    ca->req_len, ca->reply_len, error, getsbinuptime() - start);
+		cap_rt_probe_error(s, CAP_RT_CALL, error, td);
 		return (error);
 	}
 	case CAP_RT_GETINFO: {
@@ -705,19 +823,81 @@ call_done:
 		 */
 		atomic_store_rel_ptr((volatile uintptr_t *)&fp->f_ops,
 		    (uintptr_t)&cap_rt_instance_noxfer_ops);
+		cap_rt_probe_control(s, cmd, td);
+		cap_rt_probe_rights_change(s, cmd, td);
 		return (0);
 	case CAP_RT_REVOKE_SEND:
 		atomic_set_int(&s->ci_restricted, CAP_RT_RF_NO_SEND);
+		cap_rt_probe_control(s, cmd, td);
+		cap_rt_probe_rights_change(s, cmd, td);
 		return (0);
 	case CAP_RT_REVOKE_RECV:
 		atomic_set_int(&s->ci_restricted, CAP_RT_RF_NO_RECV);
+		cap_rt_probe_control(s, cmd, td);
+		cap_rt_probe_rights_change(s, cmd, td);
 		return (0);
 	case CAP_RT_REVOKE_CALL:
 		atomic_set_int(&s->ci_restricted, CAP_RT_RF_NO_CALL);
+		cap_rt_probe_control(s, cmd, td);
+		cap_rt_probe_rights_change(s, cmd, td);
+		return (0);
+	case CAP_RT_REVOKE_MINT:
+		atomic_set_int(&s->ci_restricted, CAP_RT_RF_NO_MINT);
+		cap_rt_probe_control(s, cmd, td);
+		cap_rt_probe_rights_change(s, cmd, td);
 		return (0);
 	case CAP_RT_TERMINATE:
+		cap_rt_probe_control(s, cmd, td);
 		cap_rt_instance_revoke(s);
 		return (0);
+	case CAP_RT_MINT_INSTANCE: {
+		struct cap_rt_mint_instance_args *ma;
+		struct cap_rt_service *svc;
+		uint64_t badge;
+		int error, newfd;
+
+		ma = (struct cap_rt_mint_instance_args *)data;
+		if (ma->flags != 0 ||
+		    (ma->_reserved[0] | ma->_reserved[1]) != 0) {
+			cap_rt_probe_error(s, cmd, EINVAL, td);
+			return (EINVAL);
+		}
+
+		if (s->ci_restricted & CAP_RT_RF_NO_MINT) {
+			cap_rt_probe_error(s, cmd, EACCES, td);
+			return (EACCES);
+		}
+		svc = s->ci_service;
+		if (svc == NULL) {
+			cap_rt_probe_error(s, cmd, ENXIO, td);
+			return (ENXIO);
+		}
+		if (!(svc->csvc_svc_flags & CAP_RT_SVC_MINTABLE)) {
+			cap_rt_probe_error(s, cmd, EOPNOTSUPP, td);
+			return (EOPNOTSUPP);
+		}
+
+		/* Run co_connect for authorization. */
+		badge = 0;
+		if (svc->csvc_ops->co_connect != NULL) {
+			error = svc->csvc_ops->co_connect(td->td_ucred,
+			    svc->csvc_arg, &badge);
+			if (error != 0) {
+				cap_rt_probe_error(s, cmd, error, td);
+				return (error);
+			}
+		}
+
+		error = cap_rt_instance_create(svc, td, badge, &newfd);
+		if (error != 0) {
+			cap_rt_probe_error(s, cmd, error, td);
+			return (error);
+		}
+
+		ma->fd = newfd;
+		cap_rt_probe_control(s, cmd, td);
+		return (0);
+	}
 	default:
 		return (ENOTTY);
 	}
@@ -843,6 +1023,10 @@ cap_rt_instance_fdclose(struct file *fp, int fd, struct thread *td)
 	mtx_unlock(&s->ci_mtx);
 
 	svc = s->ci_service;
+	if (svc != NULL)
+		SDT_PROBE6(cap_rt, , , fd__close, svc->csvc_name,
+		    s->ci_badge, fd, td->td_proc->p_pid, td->td_ucred,
+		    cap_rt_proc_nonce(td->td_ucred));
 	if (svc != NULL && svc->csvc_ops->co_fdclose != NULL)
 		svc->csvc_ops->co_fdclose(s, fd, td, svc->csvc_arg);
 }
@@ -939,6 +1123,16 @@ cap_rt_instance_close(struct file *fp, struct thread *td __unused)
 			reason = CAP_RT_REVOKE_PEER_CLOSED;
 		mtx_unlock(&s->ci_mtx);
 
+		if (svc != NULL) {
+			SDT_PROBE6(cap_rt, , , instance__finalize,
+			    svc->csvc_name, s->ci_badge, reason,
+			    td->td_proc->p_pid, td->td_ucred,
+			    cap_rt_proc_nonce(td->td_ucred));
+			SDT_PROBE6(cap_rt, , , state, svc->csvc_name,
+			    s->ci_badge, s->ci_flags, s->ci_restricted,
+			    td->td_proc->p_pid,
+			    cap_rt_proc_nonce(td->td_ucred));
+		}
 		if (svc != NULL && svc->csvc_ops->co_revoke != NULL)
 			svc->csvc_ops->co_revoke(s, s->ci_badge,
 			    reason, svc->csvc_arg);
@@ -967,6 +1161,14 @@ cap_rt_instance_close(struct file *fp, struct thread *td __unused)
 			refcount_release(&svc->csvc_refcnt);
 	}
 
+	if (svc != NULL) {
+		SDT_PROBE6(cap_rt, , , instance__lastclose, svc->csvc_name,
+		    s->ci_badge, 0, td->td_proc->p_pid, td->td_ucred,
+		    cap_rt_proc_nonce(td->td_ucred));
+		SDT_PROBE6(cap_rt, , , state, svc->csvc_name, s->ci_badge,
+		    s->ci_flags, s->ci_restricted, td->td_proc->p_pid,
+		    cap_rt_proc_nonce(td->td_ucred));
+	}
 	cap_rt_instance_free(s);
 
 	/* Release close's own ref.  May be the last — frees svc. */
@@ -982,14 +1184,27 @@ cap_rt_instance_fill_kinfo(struct file *fp, struct kinfo_file *kif,
 {
 	struct cap_rt_instance *s;
 	struct cap_rt_service *svc;
+	int flags, restricted;
 
 	kif->kf_type = KF_TYPE_CAP_RT;
 	s = fp->f_data;
 	svc = s->ci_service;
-	if (svc != NULL)
+	if (svc != NULL) {
+		mtx_lock(&s->ci_mtx);
+		flags = s->ci_flags;
+		restricted = s->ci_restricted;
+		mtx_unlock(&s->ci_mtx);
 		snprintf(kif->kf_path, sizeof(kif->kf_path),
-		    "cap_rt:%s[%ju]", svc->csvc_name,
-		    (uintmax_t)s->ci_badge);
+		    "cap_rt:%s[%ju]%s%s%s%s%s%s%s",
+		    svc->csvc_name, (uintmax_t)s->ci_badge,
+		    fp->f_ops == &cap_rt_instance_noxfer_ops ? ":noxfer" : "",
+		    (restricted & CAP_RT_RF_NO_SEND) != 0 ? ":no-send" : "",
+		    (restricted & CAP_RT_RF_NO_RECV) != 0 ? ":no-recv" : "",
+		    (restricted & CAP_RT_RF_NO_CALL) != 0 ? ":no-call" : "",
+		    (restricted & CAP_RT_RF_NO_MINT) != 0 ? ":no-mint" : "",
+		    (flags & CAP_RT_SF_REVOKED) != 0 ? ":revoked" : "",
+		    (flags & CAP_RT_SF_CLOSED) != 0 ? ":closed" : "");
+	}
 	return (0);
 }
 

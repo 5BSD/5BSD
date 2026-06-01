@@ -109,6 +109,139 @@ status_uptime_cleanup()
 	:
 }
 
+# --- status command: negative ---
+
+atf_test_case status_shows_cap_rt_claim cleanup
+status_shows_cap_rt_claim_head()
+{
+	atf_set "descr" "oraclectl status always shows /dev/cap_rt in claims"
+	atf_set "require.user" "root"
+}
+status_shows_cap_rt_claim_body()
+{
+	require_oracled
+	atf_check -s exit:0 -o match:"/dev/cap_rt" oraclectl status
+}
+status_shows_cap_rt_claim_cleanup()
+{
+	:
+}
+
+atf_test_case status_shows_integrity_flags cleanup
+status_shows_integrity_flags_head()
+{
+	atf_set "descr" "oraclectl status shows specific integrity flag names"
+	atf_set "require.user" "root"
+}
+status_shows_integrity_flags_body()
+{
+	require_oracled
+	# Default integrity flags include ptrace, wait, sched, ktrace.
+	atf_check -s exit:0 -o match:"ptrace" oraclectl status
+	atf_check -s exit:0 -o match:"ktrace" oraclectl status
+}
+status_shows_integrity_flags_cleanup()
+{
+	:
+}
+
+atf_test_case status_socket_path cleanup
+status_socket_path_head()
+{
+	atf_set "descr" "oraclectl -s with nonexistent socket fails cleanly"
+}
+status_socket_path_body()
+{
+	atf_check -s not-exit:0 -e match:"connect" \
+	    oraclectl -s /nonexistent/socket.sock status
+}
+status_socket_path_cleanup()
+{
+	:
+}
+
+# --- status command: policy output ---
+
+atf_test_case status_shows_config cleanup
+status_shows_config_head()
+{
+	atf_set "descr" "oraclectl status shows config section"
+	atf_set "require.user" "root"
+}
+status_shows_config_body()
+{
+	require_oracled
+	atf_check -s exit:0 -o match:"CONFIG:" oraclectl status
+}
+status_shows_config_cleanup()
+{
+	:
+}
+
+atf_test_case status_shows_integrity cleanup
+status_shows_integrity_head()
+{
+	atf_set "descr" "oraclectl status shows integrity flags"
+	atf_set "require.user" "root"
+}
+status_shows_integrity_body()
+{
+	require_oracled
+	atf_check -s exit:0 -o match:"INTEGRITY:" oraclectl status
+}
+status_shows_integrity_cleanup()
+{
+	:
+}
+
+atf_test_case status_shows_claims cleanup
+status_shows_claims_head()
+{
+	atf_set "descr" "oraclectl status shows resource claims"
+	atf_set "require.user" "root"
+}
+status_shows_claims_body()
+{
+	require_oracled
+	atf_check -s exit:0 -o match:"CLAIMS:" oraclectl status
+}
+status_shows_claims_cleanup()
+{
+	:
+}
+
+atf_test_case status_shows_services cleanup
+status_shows_services_head()
+{
+	atf_set "descr" "oraclectl status shows service summary"
+	atf_set "require.user" "root"
+}
+status_shows_services_body()
+{
+	require_oracled
+	atf_check -s exit:0 -o match:"SERVICES:" oraclectl status
+}
+status_shows_services_cleanup()
+{
+	:
+}
+
+atf_test_case status_shows_manifest_dir cleanup
+status_shows_manifest_dir_head()
+{
+	atf_set "descr" "oraclectl status shows manifest_dir path"
+	atf_set "require.user" "root"
+}
+status_shows_manifest_dir_body()
+{
+	require_oracled
+	atf_check -s exit:0 -o match:"manifest_dir:" oraclectl status
+}
+status_shows_manifest_dir_cleanup()
+{
+	:
+}
+
 # --- reload command ---
 
 atf_test_case reload_succeeds cleanup
@@ -123,6 +256,83 @@ reload_succeeds_body()
 	atf_check -s exit:0 -o match:"reload:" oraclectl reload
 }
 reload_succeeds_cleanup()
+{
+	:
+}
+
+atf_test_case reload_idempotent cleanup
+reload_idempotent_head()
+{
+	atf_set "descr" "repeated reloads with no changes succeed"
+	atf_set "require.user" "root"
+}
+reload_idempotent_body()
+{
+	require_oracled
+	atf_check -s exit:0 -o match:"reload:" oraclectl reload
+	atf_check -s exit:0 -o match:"reload:" oraclectl reload
+	atf_check -s exit:0 -o match:"reload:" oraclectl reload
+}
+reload_idempotent_cleanup()
+{
+	:
+}
+
+atf_test_case reload_then_status cleanup
+reload_then_status_head()
+{
+	atf_set "descr" "status works correctly after a reload"
+	atf_set "require.user" "root"
+}
+reload_then_status_body()
+{
+	require_oracled
+	atf_check -s exit:0 -o ignore oraclectl reload
+	atf_check -s exit:0 -o match:"oracled: running" oraclectl status
+	atf_check -s exit:0 -o match:"CLAIMS:" oraclectl status
+}
+reload_then_status_cleanup()
+{
+	:
+}
+
+# --- reload command: negative ---
+
+atf_test_case reload_returns_summary cleanup
+reload_returns_summary_head()
+{
+	atf_set "descr" "oraclectl reload returns a change summary"
+	atf_set "require.user" "root"
+}
+reload_returns_summary_body()
+{
+	require_oracled
+	# Even with no changes, reload reports its results.
+	atf_check -s exit:0 -o match:"new.*changed.*removed" oraclectl reload
+}
+reload_returns_summary_cleanup()
+{
+	:
+}
+
+atf_test_case reload_status_coherent cleanup
+reload_status_coherent_head()
+{
+	atf_set "descr" "status is coherent after multiple reloads"
+	atf_set "require.user" "root"
+}
+reload_status_coherent_body()
+{
+	require_oracled
+	atf_check -s exit:0 -o ignore oraclectl reload
+	atf_check -s exit:0 -o ignore oraclectl reload
+	# Status must still show all expected sections.
+	atf_check -s exit:0 -o match:"CONFIG:" oraclectl status
+	atf_check -s exit:0 -o match:"INTEGRITY:" oraclectl status
+	atf_check -s exit:0 -o match:"CLAIMS:" oraclectl status
+	atf_check -s exit:0 -o match:"SERVICES:" oraclectl status
+}
+reload_status_coherent_cleanup()
 {
 	:
 }
@@ -210,6 +420,68 @@ usage_load_no_file_head()
 usage_load_no_file_body()
 {
 	atf_check -s not-exit:0 -e match:"usage:" oraclectl load
+}
+
+# --- usage: negative ---
+
+atf_test_case usage_kldunload_no_module
+usage_kldunload_no_module_head()
+{
+	atf_set "descr" "oraclectl kldunload without module name prints usage"
+}
+usage_kldunload_no_module_body()
+{
+	atf_check -s not-exit:0 -e match:"usage:" oraclectl kldunload
+}
+
+atf_test_case usage_services_bad_flag
+usage_services_bad_flag_head()
+{
+	atf_set "descr" "oraclectl services with bad flag prints usage"
+}
+usage_services_bad_flag_body()
+{
+	atf_check -s not-exit:0 -e match:"usage:" oraclectl services -x
+}
+
+atf_test_case usage_load_extra_args
+usage_load_extra_args_head()
+{
+	atf_set "descr" "oraclectl load with extra args prints usage"
+}
+usage_load_extra_args_body()
+{
+	atf_check -s not-exit:0 -e match:"usage:" oraclectl load a b
+}
+
+atf_test_case usage_reload_extra_args
+usage_reload_extra_args_head()
+{
+	atf_set "descr" "oraclectl reload with extra args prints usage"
+}
+usage_reload_extra_args_body()
+{
+	atf_check -s not-exit:0 -e match:"usage:" oraclectl reload extra
+}
+
+atf_test_case usage_shutdown_extra_args
+usage_shutdown_extra_args_head()
+{
+	atf_set "descr" "oraclectl shutdown with extra args prints usage"
+}
+usage_shutdown_extra_args_body()
+{
+	atf_check -s not-exit:0 -e match:"usage:" oraclectl shutdown now
+}
+
+atf_test_case usage_reboot_extra_args
+usage_reboot_extra_args_head()
+{
+	atf_set "descr" "oraclectl reboot with extra args prints usage"
+}
+usage_reboot_extra_args_body()
+{
+	atf_check -s not-exit:0 -e match:"usage:" oraclectl reboot hard
 }
 
 # --- services command ---
@@ -316,6 +588,14 @@ atf_init_test_cases()
 	# Status
 	atf_add_test_case status_running
 	atf_add_test_case status_uptime
+	atf_add_test_case status_shows_config
+	atf_add_test_case status_shows_integrity
+	atf_add_test_case status_shows_claims
+	atf_add_test_case status_shows_services
+	atf_add_test_case status_shows_manifest_dir
+	atf_add_test_case status_shows_cap_rt_claim
+	atf_add_test_case status_shows_integrity_flags
+	atf_add_test_case status_socket_path
 
 	# Services
 	atf_add_test_case services_shows_loaded
@@ -325,8 +605,22 @@ atf_init_test_cases()
 	atf_add_test_case check_nonexistent
 	atf_add_test_case check_path_traversal
 
-	# Operations
+	# Reload
 	atf_add_test_case reload_succeeds
+	atf_add_test_case reload_idempotent
+	atf_add_test_case reload_then_status
+	atf_add_test_case reload_returns_summary
+	atf_add_test_case reload_status_coherent
+
+	# Usage (negative — no root needed)
+	atf_add_test_case usage_kldunload_no_module
+	atf_add_test_case usage_services_bad_flag
+	atf_add_test_case usage_load_extra_args
+	atf_add_test_case usage_reload_extra_args
+	atf_add_test_case usage_shutdown_extra_args
+	atf_add_test_case usage_reboot_extra_args
+
+	# Operations
 	atf_add_test_case kldload_nonexistent
 	atf_add_test_case kldload_already_loaded
 	atf_add_test_case kldunload_nonexistent

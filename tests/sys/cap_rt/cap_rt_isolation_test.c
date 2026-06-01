@@ -843,6 +843,39 @@ fi_net_call(int svc, uint32_t op, int domain, int protocol,
 	    NULL, 0));
 }
 
+/*
+ * Mint a network access token.  Returns the token fd on success, -1 on
+ * failure.  The request describes the endpoint the token covers.
+ */
+static int
+fi_net_mint(int svc, int domain, int protocol, uint16_t port,
+    uint8_t direction)
+{
+	struct cap_rt_call_args ca;
+	struct fi_net_request nr;
+	struct fi_reply rpl;
+	int token_fd;
+
+	memset(&nr, 0, sizeof(nr));
+	nr.op = FI_OP_MINT_NET;
+	nr.domain = domain;
+	nr.protocol = protocol;
+	nr.port = port;
+	nr.direction = direction;
+
+	token_fd = -1;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = &rpl;
+	ca.reply_len = sizeof(rpl);
+	ca.reply_fds = &token_fd;
+	ca.reply_nfds = 1;
+	if (ioctl(svc, CAP_RT_CALL, &ca) != 0)
+		return (-1);
+	return (token_fd);
+}
+
 static const char *
 fi_helper_path(const atf_tc_t *tc)
 {
@@ -2082,6 +2115,291 @@ ATF_TC_CLEANUP(token_query_shows_authorized, tc)
 	cleanup_tmpfile();
 }
 
+/*
+ * Claim-ID scoping: a token minted for file A must NOT authorize
+ * access to file B, even when both are claimed by the same nonce.
+ */
+ATF_TC_WITH_CLEANUP(token_scoped_to_claim);
+ATF_TC_HEAD(token_scoped_to_claim, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Token for file A does not authorize access to file B");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(token_scoped_to_claim, tc)
+{
+	struct fi_reply rpl;
+	int svc, target_a, target_b, token;
+	pid_t pid;
+	int status;
+
+	make_tmpfile();
+	make_tmpfile2();
+	svc = fi_connect();
+
+	target_a = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target_a >= 0);
+	target_b = open(tmppath2, O_RDONLY);
+	ATF_REQUIRE(target_b >= 0);
+
+	/* Claim both files. */
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target_a, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target_b, &rpl) == 0);
+
+	/* Mint token for file A only. */
+	token = fi_mint(svc, target_a);
+	ATF_REQUIRE_MSG(token >= 0, "fi_mint: %s", strerror(errno));
+
+	/*
+	 * Fork+exec to get a foreign nonce.  The child authorizes with
+	 * the token (scoped to A) and tries to open file B.
+	 * File B should be DENIED — the token doesn't cover it.
+	 */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		char token_str[16];
+		const char *path;
+
+		close(svc);
+		close(target_a);
+		close(target_b);
+
+		path = fi_helper_path(tc);
+		snprintf(token_str, sizeof(token_str), "%d", token);
+		/* token-check: authorize + try to open the given path */
+		execl(path, path, "token-check", token_str, tmppath2,
+		    NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	/*
+	 * token-check returns 0 if open succeeds, 1 if denied.
+	 * We expect denied (1) — the token is for file A, not file B.
+	 */
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 1,
+	    "child exit %d (expected 1 = access denied for wrong file)",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+
+	close(token);
+	close(target_b);
+	close(target_a);
+	close(svc);
+}
+ATF_TC_CLEANUP(token_scoped_to_claim, tc)
+{
+	cleanup_tmpfile();
+	unlink(tmppath2);
+}
+
+/* ----------------------------------------------------------------
+ * Network access token tests (FI_OP_MINT_NET / FI_OP_AUTHORIZE)
+ * ---------------------------------------------------------------- */
+
+/*
+ * Run a child (fork+exec for nonce rotation) that authorizes with
+ * a network token and tries to bind.
+ * Returns child exit status: 0 = bind succeeded, 1 = denied, 10 = auth failed.
+ */
+static int
+run_net_token_bind(const atf_tc_t *tc, int token_fd, uint16_t port)
+{
+	char token_str[16], port_str[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	path = fi_helper_path(tc);
+	snprintf(token_str, sizeof(token_str), "%d", token_fd);
+	snprintf(port_str, sizeof(port_str), "%u", (unsigned)port);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(path, path, "net-token-bind", token_str, port_str,
+		    NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	if (!WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
+/*
+ * Run a child that tries to bind without any token.
+ * Returns: 0 = bind succeeded, 1 = denied.
+ */
+static int
+run_net_try_bind(const atf_tc_t *tc, uint16_t port)
+{
+	char port_str[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	path = fi_helper_path(tc);
+	snprintf(port_str, sizeof(port_str), "%u", (unsigned)port);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(path, path, "net-try-bind", port_str, NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	if (!WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
+ATF_TC(net_token_mint_returns_fd);
+ATF_TC_HEAD(net_token_mint_returns_fd, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_OP_MINT_NET returns a valid token fd");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_token_mint_returns_fd, tc)
+{
+	int svc, token;
+	uint16_t port = htons(18550);
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET,
+	    AF_INET, IPPROTO_TCP, port, FI_NET_BIND) == 0);
+
+	token = fi_net_mint(svc, AF_INET, IPPROTO_TCP, port, FI_NET_BIND);
+	ATF_REQUIRE_MSG(token >= 0, "fi_net_mint: %s", strerror(errno));
+
+	close(token);
+	close(svc);
+}
+
+ATF_TC(net_token_authorize_grants_bind);
+ATF_TC_HEAD(net_token_authorize_grants_bind, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Authorized foreign nonce can bind a claimed port");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_token_authorize_grants_bind, tc)
+{
+	int svc, token, rc;
+	uint16_t port_net = htons(18551);
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET,
+	    AF_INET, IPPROTO_TCP, port_net, FI_NET_BIND) == 0);
+
+	/* Without token, foreign nonce is denied. */
+	rc = run_net_try_bind(tc, 18551);
+	ATF_REQUIRE_MSG(rc == 1, "bind should be denied without token (got %d)", rc);
+
+	/* Mint token and authorize in the child. */
+	token = fi_net_mint(svc, AF_INET, IPPROTO_TCP, port_net, FI_NET_BIND);
+	ATF_REQUIRE(token >= 0);
+
+	rc = run_net_token_bind(tc, token, 18551);
+	ATF_CHECK_MSG(rc == 0,
+	    "bind should succeed with authorized token (got %d)", rc);
+
+	close(token);
+	close(svc);
+}
+
+ATF_TC(net_token_scoped_to_endpoint);
+ATF_TC_HEAD(net_token_scoped_to_endpoint, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Token for port A does not authorize bind on port B");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_token_scoped_to_endpoint, tc)
+{
+	int svc, token, rc;
+	uint16_t port_a = htons(18552);
+	uint16_t port_b = htons(18553);
+
+	svc = fi_connect();
+
+	/* Claim both ports. */
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET,
+	    AF_INET, IPPROTO_TCP, port_a, FI_NET_BIND) == 0);
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET,
+	    AF_INET, IPPROTO_TCP, port_b, FI_NET_BIND) == 0);
+
+	/* Mint token for port A only. */
+	token = fi_net_mint(svc, AF_INET, IPPROTO_TCP, port_a, FI_NET_BIND);
+	ATF_REQUIRE(token >= 0);
+
+	/* Child authorizes with port-A token, tries to bind port B. */
+	rc = run_net_token_bind(tc, token, 18553);
+	ATF_CHECK_MSG(rc == 1,
+	    "bind port B should be denied with port-A token (got %d)", rc);
+
+	close(token);
+	close(svc);
+}
+
+ATF_TC(net_token_close_revokes);
+ATF_TC_HEAD(net_token_close_revokes, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Closing the network token fd revokes authorization");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_token_close_revokes, tc)
+{
+	int svc, token, rc;
+	uint16_t port_net = htons(18554);
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET,
+	    AF_INET, IPPROTO_TCP, port_net, FI_NET_BIND) == 0);
+
+	/* Mint, authorize from a child, verify it works. */
+	token = fi_net_mint(svc, AF_INET, IPPROTO_TCP, port_net, FI_NET_BIND);
+	ATF_REQUIRE(token >= 0);
+
+	rc = run_net_token_bind(tc, token, 18554);
+	ATF_REQUIRE_MSG(rc == 0,
+	    "bind should work with token (got %d)", rc);
+
+	/*
+	 * The child authorized and exited.  Close the token — this
+	 * removes the auth entry.  A new foreign nonce should be denied.
+	 */
+	close(token);
+
+	rc = run_net_try_bind(tc, 18554);
+	ATF_CHECK_MSG(rc == 1,
+	    "bind should be denied after token close (got %d)", rc);
+
+	close(svc);
+}
+
+ATF_TC(net_token_mint_requires_claim);
+ATF_TC_HEAD(net_token_mint_requires_claim, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_OP_MINT_NET fails without a covering claim");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_token_mint_requires_claim, tc)
+{
+	int svc, token;
+	uint16_t port_net = htons(18555);
+
+	svc = fi_connect();
+
+	/* No claim — mint should fail. */
+	token = fi_net_mint(svc, AF_INET, IPPROTO_TCP, port_net, FI_NET_BIND);
+	ATF_CHECK_MSG(token == -1, "mint without claim should fail");
+
+	close(svc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -2133,6 +2451,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, token_close_revokes_access);
 	ATF_TP_ADD_TC(tp, token_mint_requires_ownership);
 	ATF_TP_ADD_TC(tp, token_query_shows_authorized);
+	ATF_TP_ADD_TC(tp, token_scoped_to_claim);
+
+	/* Network access tokens */
+	ATF_TP_ADD_TC(tp, net_token_mint_returns_fd);
+	ATF_TP_ADD_TC(tp, net_token_authorize_grants_bind);
+	ATF_TP_ADD_TC(tp, net_token_scoped_to_endpoint);
+	ATF_TP_ADD_TC(tp, net_token_close_revokes);
+	ATF_TP_ADD_TC(tp, net_token_mint_requires_claim);
 
 	return (atf_no_error());
 }

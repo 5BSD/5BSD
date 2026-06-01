@@ -1,0 +1,41 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * cap_rt-services -- trace CAP_RT service registration lifecycle.
+ *
+ * Usage: cap_rt-services
+ *
+ * For a point-in-time baseline before tracing, run:
+ *     sysctl kern.cap_rt.service_details
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-10s %-20s %-8s %-8s %-8s %-8s\n",
+	    "EVENT", "SERVICE", "FLAGS", "QUEUE", "TX", "LIMIT");
+}
+
+cap_rt:::service-create
+{
+	printf("%-10s %-20s 0x%-6x %-8d %-8d %-8d\n",
+	    "CREATE", copyinstr(arg0), arg1, arg2, arg3, arg4);
+	@running[copyinstr(arg0)] = sum(1);
+}
+
+cap_rt:::service-destroy
+{
+	printf("%-10s %-20s 0x%-6x %-8s %-8s %-8s\n",
+	    "DESTROY", copyinstr(arg0), arg1, "-", "-", "-");
+	@running[copyinstr(arg0)] = sum(-1);
+}
+
+dtrace:::END
+{
+	printf("\n--- Net service changes observed ---\n");
+	printa("%-20s delta=%@d\n", @running);
+}

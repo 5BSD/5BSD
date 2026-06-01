@@ -10,17 +10,21 @@
  * operations (kldload, reboot) are here temporarily and will
  * move to separate service programs in Phase 2.
  *
- * Each client connection is one-shot: accept, authenticate via
- * getpeereid(), read request + optional payload, dispatch to
- * command handler, write reply, close.
+ * Each client connection is one-shot and fully nonblocking:
+ * accept → kqueue-driven read of request → dispatch → kqueue-
+ * driven write of reply → close.  No client can stall the
+ * event loop.
  */
 
+#include <sys/event.h>
+#include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
 #include <time.h>
@@ -34,6 +38,47 @@
 /* Module-private state. */
 static int control_sock = -1;
 static struct timespec start_time;
+
+#define	CTL_CONN_TIMEOUT_SEC	2
+#define	CTL_CONN_MAX		16
+
+/*
+ * Per-connection nonblocking state machine.
+ *
+ * Lifecycle: READING_HDR → [READING_PAYLOAD →] dispatch →
+ *            WRITING_REPLY → [WRITING_SUMMARY →] DONE.
+ */
+enum ctl_conn_state {
+	CTL_CONN_READING_HDR,
+	CTL_CONN_READING_PAYLOAD,
+	CTL_CONN_WRITING_REPLY,
+	CTL_CONN_WRITING_SUMMARY,
+	CTL_CONN_DONE
+};
+
+struct ctl_conn {
+	TAILQ_ENTRY(ctl_conn)	entry;
+	int			fd;
+	uid_t			euid;
+	enum ctl_conn_state	state;
+	size_t			offset;
+
+	struct ctl_request	req;
+	char			payload[CTL_MAX_PAYLOAD + 1];
+
+	struct ctl_reply	reply;
+	char			summary[CTL_SUMMARY_MAX];
+	uint32_t		summary_len;
+	int			action;
+	int			reboot_howto;
+
+	uintptr_t		timer_ident;
+};
+
+static TAILQ_HEAD(, ctl_conn) conn_list = TAILQ_HEAD_INITIALIZER(conn_list);
+static unsigned nconns;
+static uintptr_t conn_timer_next = 50000;
+#define	CTL_CONN_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 2))
 
 static uint64_t
 uptime_usec(void)
@@ -51,6 +96,294 @@ uptime_usec(void)
 	}
 	return (sec * 1000000 + nsec / 1000);
 }
+
+static void
+conn_destroy(struct ctl_conn *c)
+{
+	struct kevent kev;
+
+	/* Remove kqueue filters. */
+	EV_SET(&kev, c->fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+	(void)kevent(event_kq, &kev, 1, NULL, 0, NULL);
+	EV_SET(&kev, c->fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
+	(void)kevent(event_kq, &kev, 1, NULL, 0, NULL);
+
+	if (c->timer_ident != 0) {
+		EV_SET(&kev, c->timer_ident, EVFILT_TIMER,
+		    EV_DELETE, 0, 0, NULL);
+		(void)kevent(event_kq, &kev, 1, NULL, 0, NULL);
+	}
+
+	close(c->fd);
+	TAILQ_REMOVE(&conn_list, c, entry);
+	nconns--;
+	free(c);
+}
+
+static void
+conn_arm_timeout(struct ctl_conn *c)
+{
+	struct kevent kev;
+
+	c->timer_ident = CTL_CONN_TIMER_BIT | conn_timer_next++;
+	EV_SET(&kev, c->timer_ident, EVFILT_TIMER,
+	    EV_ADD | EV_ONESHOT, NOTE_SECONDS, CTL_CONN_TIMEOUT_SEC, c);
+	if (kevent(event_kq, &kev, 1, NULL, 0, NULL) == -1)
+		syslog(LOG_WARNING, "control: conn timeout: %m");
+}
+
+/*
+ * Dispatch the command.  Fills reply + summary, transitions to
+ * writing, and switches the kqueue filter from read to write.
+ */
+static void
+conn_dispatch(struct ctl_conn *c)
+{
+	struct ctl_request *req;
+	struct ctl_reply *reply;
+	struct kevent kev[2];
+
+	req = &c->req;
+	reply = &c->reply;
+	memset(reply, 0, sizeof(*reply));
+	c->summary[0] = '\0';
+	c->summary_len = 0;
+	c->action = CTL_ACTION_NONE;
+
+	if (req->version != CTL_VERSION) {
+		reply->status = ENOTSUP;
+		goto write;
+	}
+
+	ORACLED_PROBE_CTL_CMD(req->op, c->euid);
+
+	switch (req->op) {
+	case CTL_OP_STATUS:
+		if (req->datalen != 0) {
+			reply->status = EINVAL;
+			break;
+		}
+		cmd_status(uptime_usec(), reply,
+		    c->summary, sizeof(c->summary));
+		break;
+	case CTL_OP_SHUTDOWN:
+		if (req->datalen != 0) {
+			reply->status = EINVAL;
+			break;
+		}
+		if (cmd_shutdown(c->euid, reply))
+			c->action = CTL_ACTION_SHUTDOWN;
+		break;
+	case CTL_OP_RELOAD:
+		if (req->datalen != 0) {
+			reply->status = EINVAL;
+			break;
+		}
+		cmd_reload(c->euid, event_kq, reply,
+		    c->summary, sizeof(c->summary));
+		break;
+	case CTL_OP_KLDLOAD:
+		if (req->datalen == 0 ||
+		    req->datalen >= sizeof(c->payload)) {
+			reply->status = EINVAL;
+			break;
+		}
+		c->payload[req->datalen] = '\0';
+		if (strchr(c->payload, '/') != NULL) {
+			reply->status = EINVAL;
+			syslog(LOG_WARNING,
+			    "control: payload contains '/'");
+			break;
+		}
+		cmd_kldload(c->euid, c->payload, reply);
+		break;
+	case CTL_OP_KLDUNLOAD:
+		if (req->datalen == 0 ||
+		    req->datalen >= sizeof(c->payload)) {
+			reply->status = EINVAL;
+			break;
+		}
+		c->payload[req->datalen] = '\0';
+		if (strchr(c->payload, '/') != NULL) {
+			reply->status = EINVAL;
+			syslog(LOG_WARNING,
+			    "control: payload contains '/'");
+			break;
+		}
+		cmd_kldunload(c->euid, c->payload, reply);
+		break;
+	case CTL_OP_REBOOT:
+		if (req->datalen != 0) {
+			reply->status = EINVAL;
+			break;
+		}
+		cmd_reboot(c->euid, req->flags, reply);
+		if (reply->status == CTL_STATUS_OK) {
+			c->reboot_howto = req->flags;
+			c->action = CTL_ACTION_REBOOT;
+		}
+		break;
+	case CTL_OP_CHECK:
+		if (req->datalen == 0 ||
+		    req->datalen >= sizeof(c->payload)) {
+			reply->status = EINVAL;
+			break;
+		}
+		c->payload[req->datalen] = '\0';
+		if (strchr(c->payload, '/') != NULL) {
+			reply->status = EINVAL;
+			syslog(LOG_WARNING,
+			    "control: payload contains '/'");
+			break;
+		}
+		cmd_check(c->euid, c->payload, reply,
+		    c->summary, sizeof(c->summary));
+		break;
+	case CTL_OP_LOAD:
+		if (req->datalen == 0 ||
+		    req->datalen >= sizeof(c->payload)) {
+			reply->status = EINVAL;
+			break;
+		}
+		c->payload[req->datalen] = '\0';
+		if (strchr(c->payload, '/') != NULL) {
+			reply->status = EINVAL;
+			syslog(LOG_WARNING,
+			    "control: payload contains '/'");
+			break;
+		}
+		cmd_load(c->euid, c->payload, event_kq, reply,
+		    c->summary, sizeof(c->summary));
+		break;
+	case CTL_OP_SERVICES:
+		if (req->datalen != 0) {
+			reply->status = EINVAL;
+			break;
+		}
+		cmd_services(c->euid, req->flags, reply,
+		    c->summary, sizeof(c->summary));
+		break;
+	default:
+		reply->status = ENOTSUP;
+		break;
+	}
+
+write:
+	if ((req->op == CTL_OP_STATUS || req->op == CTL_OP_CHECK ||
+	    req->op == CTL_OP_LOAD || req->op == CTL_OP_SERVICES ||
+	    req->op == CTL_OP_RELOAD) && reply->flags > 0)
+		c->summary_len = reply->flags;
+
+	c->state = CTL_CONN_WRITING_REPLY;
+	c->offset = 0;
+
+	EV_SET(&kev[0], c->fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+	EV_SET(&kev[1], c->fd, EVFILT_WRITE, EV_ADD, 0, 0, c);
+	(void)kevent(event_kq, kev, 2, NULL, 0, NULL);
+}
+
+static void
+conn_handle_read(struct ctl_conn *c)
+{
+	char *dst;
+	size_t want;
+	ssize_t n;
+
+	switch (c->state) {
+	case CTL_CONN_READING_HDR:
+		dst = (char *)&c->req + c->offset;
+		want = sizeof(c->req) - c->offset;
+		break;
+	case CTL_CONN_READING_PAYLOAD:
+		dst = c->payload + c->offset;
+		want = c->req.datalen - c->offset;
+		break;
+	default:
+		c->state = CTL_CONN_DONE;
+		return;
+	}
+
+	n = read(c->fd, dst, want);
+	if (n == -1) {
+		if (errno == EINTR || errno == EAGAIN)
+			return;
+		c->state = CTL_CONN_DONE;
+		return;
+	}
+	if (n == 0) {
+		c->state = CTL_CONN_DONE;
+		return;
+	}
+
+	c->offset += (size_t)n;
+
+	if (c->state == CTL_CONN_READING_HDR &&
+	    c->offset == sizeof(c->req)) {
+		if (c->req.datalen > 0 &&
+		    c->req.datalen < sizeof(c->payload)) {
+			c->state = CTL_CONN_READING_PAYLOAD;
+			c->offset = 0;
+		} else {
+			conn_dispatch(c);
+		}
+	} else if (c->state == CTL_CONN_READING_PAYLOAD &&
+	    c->offset == c->req.datalen) {
+		conn_dispatch(c);
+	}
+}
+
+static void
+conn_handle_write(struct ctl_conn *c)
+{
+	const char *src;
+	size_t total;
+	ssize_t n;
+
+	switch (c->state) {
+	case CTL_CONN_WRITING_REPLY:
+		src = (const char *)&c->reply + c->offset;
+		total = sizeof(c->reply);
+		break;
+	case CTL_CONN_WRITING_SUMMARY:
+		src = c->summary + c->offset;
+		total = c->summary_len;
+		break;
+	default:
+		c->state = CTL_CONN_DONE;
+		return;
+	}
+
+	n = write(c->fd, src, total - c->offset);
+	if (n == -1) {
+		if (errno == EINTR || errno == EAGAIN)
+			return;
+		c->state = CTL_CONN_DONE;
+		return;
+	}
+	if (n == 0) {
+		c->state = CTL_CONN_DONE;
+		return;
+	}
+
+	c->offset += (size_t)n;
+
+	if (c->state == CTL_CONN_WRITING_REPLY &&
+	    c->offset == sizeof(c->reply)) {
+		if (c->summary_len > 0) {
+			c->state = CTL_CONN_WRITING_SUMMARY;
+			c->offset = 0;
+		} else {
+			c->state = CTL_CONN_DONE;
+		}
+	} else if (c->state == CTL_CONN_WRITING_SUMMARY &&
+	    c->offset == c->summary_len) {
+		c->state = CTL_CONN_DONE;
+	}
+}
+
+/* ----------------------------------------------------------------
+ * Public API
+ * ---------------------------------------------------------------- */
 
 int
 ctl_setup(void)
@@ -112,6 +445,10 @@ ctl_setup(void)
 void
 ctl_teardown(void)
 {
+	struct ctl_conn *c, *tmp;
+
+	TAILQ_FOREACH_SAFE(c, &conn_list, entry, tmp)
+		conn_destroy(c);
 
 	if (control_sock >= 0) {
 		close(control_sock);
@@ -127,106 +464,27 @@ ctl_fd(void)
 	return (control_sock);
 }
 
-/*
- * Read exactly len bytes from fd with a timeout.
- */
-static int
-readn(int fd, void *buf, size_t len)
-{
-	struct timeval tv;
-	ssize_t n;
-	size_t off;
-
-	tv.tv_sec = 2;
-	tv.tv_usec = 0;
-	(void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-	(void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-	for (off = 0; off < len; ) {
-		n = read(fd, (char *)buf + off, len - off);
-		if (n == -1) {
-			if (errno == EINTR)
-				continue;
-			return (-1);
-		}
-		if (n == 0)
-			return (-1);
-		off += n;
-	}
-	return (0);
-}
-
-/*
- * Write exactly len bytes to fd, retrying on EINTR and short writes.
- */
-static int
-writen(int fd, const void *buf, size_t len)
-{
-	ssize_t n;
-	size_t off;
-
-	for (off = 0; off < len; ) {
-		n = write(fd, (const char *)buf + off, len - off);
-		if (n == -1) {
-			if (errno == EINTR)
-				continue;
-			return (-1);
-		}
-		if (n == 0)
-			return (-1);
-		off += n;
-	}
-	return (0);
-}
-
-static int
-read_payload(int cfd, uint32_t datalen, char *buf, size_t bufsz,
-    struct ctl_reply *reply)
-{
-
-	if (datalen == 0 || datalen >= bufsz) {
-		reply->status = EINVAL;
-		return (-1);
-	}
-	if (readn(cfd, buf, datalen) != 0) {
-		reply->status = EIO;
-		return (-1);
-	}
-	buf[datalen] = '\0';
-
-	if (strchr(buf, '/') != NULL) {
-		reply->status = EINVAL;
-		syslog(LOG_WARNING, "control: payload contains '/'");
-		return (-1);
-	}
-	return (0);
-}
-
-/* ----------------------------------------------------------------
- * Connection dispatcher
- *
- * Returns a CTL_ACTION_* bitmask.  If CTL_ACTION_REBOOT is set,
- * *reboot_howto is filled with the requested flags.
- * ---------------------------------------------------------------- */
-
 int
-ctl_handle(int *reboot_howto)
+ctl_accept(void)
 {
-	struct ctl_request req;
-	struct ctl_reply reply;
+	struct ctl_conn *c;
+	struct kevent kev;
 	uid_t euid;
 	gid_t egid;
-	int cfd, action;
-	char payload[CTL_MAX_PAYLOAD + 1];
-	char summary[CTL_SUMMARY_MAX];
+	int cfd;
 
-	action = CTL_ACTION_NONE;
-	summary[0] = '\0';
-
-	cfd = accept4(control_sock, NULL, NULL, SOCK_CLOEXEC);
+	cfd = accept4(control_sock, NULL, NULL,
+	    SOCK_CLOEXEC | SOCK_NONBLOCK);
 	if (cfd == -1) {
 		if (errno != EAGAIN && errno != EWOULDBLOCK)
 			syslog(LOG_WARNING, "control accept: %m");
+		return (CTL_ACTION_NONE);
+	}
+
+	if (nconns >= CTL_CONN_MAX) {
+		syslog(LOG_WARNING,
+		    "control: too many connections, rejecting");
+		close(cfd);
 		return (CTL_ACTION_NONE);
 	}
 
@@ -238,100 +496,83 @@ ctl_handle(int *reboot_howto)
 
 	ORACLED_PROBE_CTL_ACCEPT(euid);
 
-	if (readn(cfd, &req, sizeof(req)) != 0) {
-		syslog(LOG_WARNING, "control read: short");
+	c = calloc(1, sizeof(*c));
+	if (c == NULL) {
+		syslog(LOG_ERR, "control: calloc conn: %m");
 		close(cfd);
 		return (CTL_ACTION_NONE);
 	}
 
-	memset(&reply, 0, sizeof(reply));
+	c->fd = cfd;
+	c->euid = euid;
+	c->state = CTL_CONN_READING_HDR;
 
-	if (req.version != CTL_VERSION) {
-		reply.status = ENOTSUP;
-		goto out;
+	TAILQ_INSERT_TAIL(&conn_list, c, entry);
+	nconns++;
+
+	EV_SET(&kev, cfd, EVFILT_READ, EV_ADD, 0, 0, c);
+	if (kevent(event_kq, &kev, 1, NULL, 0, NULL) == -1) {
+		syslog(LOG_WARNING, "control: kevent register: %m");
+		conn_destroy(c);
+		return (CTL_ACTION_NONE);
 	}
 
-	ORACLED_PROBE_CTL_CMD(req.op, euid);
+	conn_arm_timeout(c);
+	return (CTL_ACTION_NONE);
+}
 
-	switch (req.op) {
-	case CTL_OP_STATUS:
-		if (req.datalen != 0) {
-			reply.status = EINVAL;
-			break;
-		}
-		cmd_status(uptime_usec(), &reply);
-		break;
-	case CTL_OP_SHUTDOWN:
-		if (req.datalen != 0) {
-			reply.status = EINVAL;
-			break;
-		}
-		if (cmd_shutdown(euid, &reply))
-			action = CTL_ACTION_SHUTDOWN;
-		break;
-	case CTL_OP_RELOAD:
-		if (req.datalen != 0) {
-			reply.status = EINVAL;
-			break;
-		}
-		cmd_reload(euid, event_kq, &reply, summary, sizeof(summary));
-		break;
-	case CTL_OP_KLDLOAD:
-		if (read_payload(cfd, req.datalen, payload,
-		    sizeof(payload), &reply) == 0)
-			cmd_kldload(euid, payload, &reply);
-		break;
-	case CTL_OP_KLDUNLOAD:
-		if (read_payload(cfd, req.datalen, payload,
-		    sizeof(payload), &reply) == 0)
-			cmd_kldunload(euid, payload, &reply);
-		break;
-	case CTL_OP_REBOOT:
-		if (req.datalen != 0) {
-			reply.status = EINVAL;
-			break;
-		}
-		cmd_reboot(euid, req.flags, &reply);
-		if (reply.status == CTL_STATUS_OK) {
-			*reboot_howto = req.flags;
-			action = CTL_ACTION_REBOOT;
-		}
-		break;
-	case CTL_OP_CHECK:
-		if (read_payload(cfd, req.datalen, payload,
-		    sizeof(payload), &reply) == 0)
-			cmd_check(euid, payload, &reply,
-			    summary, sizeof(summary));
-		break;
-	case CTL_OP_LOAD:
-		if (read_payload(cfd, req.datalen, payload,
-		    sizeof(payload), &reply) == 0)
-			cmd_load(euid, payload, event_kq, &reply,
-			    summary, sizeof(summary));
-		break;
-	case CTL_OP_SERVICES:
-		if (req.datalen != 0) {
-			reply.status = EINVAL;
-			break;
-		}
-		cmd_services(euid, req.flags, &reply, summary, sizeof(summary));
-		break;
-	default:
-		reply.status = ENOTSUP;
-		break;
+int
+ctl_conn_event(struct kevent *kev, int *reboot_howto)
+{
+	struct ctl_conn *c;
+	int action;
+
+	c = kev->udata;
+	action = CTL_ACTION_NONE;
+
+	if (kev->filter == EVFILT_TIMER) {
+		syslog(LOG_WARNING, "control: client timeout");
+		c->timer_ident = 0;
+		conn_destroy(c);
+		return (CTL_ACTION_NONE);
 	}
 
-out:
-	if (writen(cfd, &reply, sizeof(reply)) == -1) {
-		syslog(LOG_WARNING, "control: write reply: %m");
-		close(cfd);
-		return (action);
+	if (kev->flags & EV_EOF &&
+	    c->state <= CTL_CONN_READING_PAYLOAD) {
+		conn_destroy(c);
+		return (CTL_ACTION_NONE);
 	}
-	/* Send summary text for opcodes that use it. */
-	if ((req.op == CTL_OP_CHECK || req.op == CTL_OP_LOAD ||
-	    req.op == CTL_OP_SERVICES || req.op == CTL_OP_RELOAD) &&
-	    reply.flags > 0)
-		(void)writen(cfd, summary, reply.flags);
-	close(cfd);
+
+	if (kev->filter == EVFILT_READ)
+		conn_handle_read(c);
+	else if (kev->filter == EVFILT_WRITE)
+		conn_handle_write(c);
+
+	if (c->state == CTL_CONN_DONE) {
+		action = c->action;
+		if (reboot_howto != NULL)
+			*reboot_howto = c->reboot_howto;
+		conn_destroy(c);
+	}
+
 	return (action);
+}
+
+bool
+ctl_is_conn_event(struct kevent *kev)
+{
+	struct ctl_conn *c;
+
+	if (kev->filter == EVFILT_TIMER && kev->udata != NULL &&
+	    ((uintptr_t)kev->ident & CTL_CONN_TIMER_BIT) != 0)
+		return (true);
+
+	if ((kev->filter == EVFILT_READ || kev->filter == EVFILT_WRITE) &&
+	    kev->udata != NULL) {
+		TAILQ_FOREACH(c, &conn_list, entry) {
+			if (c == kev->udata)
+				return (true);
+		}
+	}
+	return (false);
 }

@@ -840,6 +840,411 @@ syslog_init_complete_cleanup()
 	:
 }
 
+# --- control socket: negative / edge cases ---
+
+atf_test_case control_socket_reload_with_payload cleanup
+control_socket_reload_with_payload_head()
+{
+	atf_set "descr" "reload with unexpected payload is rejected"
+	atf_set "require.user" "root"
+}
+control_socket_reload_with_payload_body()
+{
+	require_pidfile
+	# Send version=1, op=RELOAD(3), flags=0, datalen=4 + 4 bytes junk.
+	# Must return non-zero status (EINVAL).
+	atf_check -s exit:0 sh -c '
+		reply=$({
+			printf "\\x01\\x00\\x00\\x00"
+			printf "\\x03\\x00\\x00\\x00"
+			printf "\\x00\\x00\\x00\\x00"
+			printf "\\x04\\x00\\x00\\x00"
+			printf "JUNK"
+		} | nc -U /var/run/oracled.sock | od -A n -t x1 | head -1)
+		status=$(echo "$reply" | awk "{print \$1 \$2 \$3 \$4}")
+		test "$status" != "00000000"
+	'
+}
+control_socket_reload_with_payload_cleanup()
+{
+	:
+}
+
+atf_test_case control_socket_shutdown_with_payload cleanup
+control_socket_shutdown_with_payload_head()
+{
+	atf_set "descr" "shutdown with unexpected payload is rejected"
+	atf_set "require.user" "root"
+}
+control_socket_shutdown_with_payload_body()
+{
+	require_pidfile
+	# Send version=1, op=SHUTDOWN(1), flags=0, datalen=4 + 4 bytes junk.
+	atf_check -s exit:0 sh -c '
+		reply=$({
+			printf "\\x01\\x00\\x00\\x00"
+			printf "\\x01\\x00\\x00\\x00"
+			printf "\\x00\\x00\\x00\\x00"
+			printf "\\x04\\x00\\x00\\x00"
+			printf "JUNK"
+		} | nc -U /var/run/oracled.sock | od -A n -t x1 | head -1)
+		status=$(echo "$reply" | awk "{print \$1 \$2 \$3 \$4}")
+		test "$status" != "00000000"
+	'
+}
+control_socket_shutdown_with_payload_cleanup()
+{
+	:
+}
+
+atf_test_case control_socket_reboot_with_payload cleanup
+control_socket_reboot_with_payload_head()
+{
+	atf_set "descr" "reboot with unexpected payload is rejected"
+	atf_set "require.user" "root"
+}
+control_socket_reboot_with_payload_body()
+{
+	require_pidfile
+	# Send version=1, op=REBOOT(6), flags=0, datalen=4 + 4 bytes junk.
+	atf_check -s exit:0 sh -c '
+		reply=$({
+			printf "\\x01\\x00\\x00\\x00"
+			printf "\\x06\\x00\\x00\\x00"
+			printf "\\x00\\x00\\x00\\x00"
+			printf "\\x04\\x00\\x00\\x00"
+			printf "JUNK"
+		} | nc -U /var/run/oracled.sock | od -A n -t x1 | head -1)
+		status=$(echo "$reply" | awk "{print \$1 \$2 \$3 \$4}")
+		test "$status" != "00000000"
+	'
+}
+control_socket_reboot_with_payload_cleanup()
+{
+	:
+}
+
+atf_test_case control_socket_services_with_payload cleanup
+control_socket_services_with_payload_head()
+{
+	atf_set "descr" "services with unexpected payload is rejected"
+	atf_set "require.user" "root"
+}
+control_socket_services_with_payload_body()
+{
+	require_pidfile
+	# Send version=1, op=SERVICES(9), flags=0, datalen=4 + 4 bytes junk.
+	atf_check -s exit:0 sh -c '
+		reply=$({
+			printf "\\x01\\x00\\x00\\x00"
+			printf "\\x09\\x00\\x00\\x00"
+			printf "\\x00\\x00\\x00\\x00"
+			printf "\\x04\\x00\\x00\\x00"
+			printf "JUNK"
+		} | nc -U /var/run/oracled.sock | od -A n -t x1 | head -1)
+		status=$(echo "$reply" | awk "{print \$1 \$2 \$3 \$4}")
+		test "$status" != "00000000"
+	'
+}
+control_socket_services_with_payload_cleanup()
+{
+	:
+}
+
+atf_test_case control_socket_empty_connect cleanup
+control_socket_empty_connect_head()
+{
+	atf_set "descr" "daemon handles client that connects and disconnects"
+	atf_set "require.user" "root"
+}
+control_socket_empty_connect_body()
+{
+	require_pidfile
+	# Connect and immediately close — should not crash daemon.
+	atf_check -s exit:0 sh -c \
+	    "echo '' | nc -U /var/run/oracled.sock || true"
+	# Daemon should still be responsive.
+	atf_check -s exit:0 -o match:"running" oraclectl status
+}
+control_socket_empty_connect_cleanup()
+{
+	:
+}
+
+atf_test_case control_socket_status_shows_claims cleanup
+control_socket_status_shows_claims_head()
+{
+	atf_set "descr" "oraclectl status shows cap_rt claims on live daemon"
+	atf_set "require.user" "root"
+}
+control_socket_status_shows_claims_body()
+{
+	require_pidfile
+	# Live daemon should show /dev/cap_rt in claims.
+	atf_check -s exit:0 -o match:"/dev/cap_rt" oraclectl status
+	# Should show path count.
+	atf_check -s exit:0 -o match:"paths:" oraclectl status
+	# Should show network count.
+	atf_check -s exit:0 -o match:"network:" oraclectl status
+	# Should show system gates.
+	atf_check -s exit:0 -o match:"system:" oraclectl status
+}
+control_socket_status_shows_claims_cleanup()
+{
+	:
+}
+
+# --- nonblocking control socket ---
+
+atf_test_case control_socket_slow_client cleanup
+control_socket_slow_client_head()
+{
+	atf_set "descr" "slow client does not block daemon from serving others"
+	atf_set "require.user" "root"
+}
+control_socket_slow_client_body()
+{
+	require_pidfile
+	# Open a connection that sends nothing (holds the socket open).
+	# Use nc in the background with a sleep to keep it connected.
+	(sleep 3 | nc -U /var/run/oracled.sock) &
+	slow_pid=$!
+	sleep 0.2
+
+	# While the slow client is connected, the daemon must still respond.
+	atf_check -s exit:0 -o match:"running" oraclectl status
+	atf_check -s exit:0 -o match:"running" oraclectl status
+
+	kill "$slow_pid" 2>/dev/null || true
+	wait "$slow_pid" 2>/dev/null || true
+}
+control_socket_slow_client_cleanup()
+{
+	:
+}
+
+atf_test_case control_socket_concurrent_clients cleanup
+control_socket_concurrent_clients_head()
+{
+	atf_set "descr" "multiple clients get responses concurrently"
+	atf_set "require.user" "root"
+}
+control_socket_concurrent_clients_body()
+{
+	require_pidfile
+	# Launch 5 status queries in parallel.
+	for i in 1 2 3 4 5; do
+		oraclectl status > "/tmp/ctl_concurrent_${i}.out" 2>&1 &
+	done
+	wait
+
+	# All must have received a valid response.
+	for i in 1 2 3 4 5; do
+		atf_check -s exit:0 -o ignore \
+		    grep "running" "/tmp/ctl_concurrent_${i}.out"
+	done
+}
+control_socket_concurrent_clients_cleanup()
+{
+	rm -f /tmp/ctl_concurrent_*.out
+}
+
+atf_test_case control_socket_client_timeout cleanup
+control_socket_client_timeout_head()
+{
+	atf_set "descr" "unresponsive client is disconnected after timeout"
+	atf_set "require.user" "root"
+}
+control_socket_client_timeout_body()
+{
+	require_pidfile
+	# Connect and send a partial request (only 8 of 16 header bytes).
+	# The daemon should time out and close the connection.
+	atf_check -s exit:0 sh -c '
+		{
+			printf "\\x01\\x00\\x00\\x00"
+			printf "\\x02\\x00\\x00\\x00"
+			sleep 5
+		} | nc -U /var/run/oracled.sock >/dev/null 2>&1 || true
+	'
+	# Daemon must still be responsive after the timeout.
+	atf_check -s exit:0 -o match:"running" oraclectl status
+}
+control_socket_client_timeout_cleanup()
+{
+	:
+}
+
+atf_test_case control_socket_sighup_nonblocking cleanup
+control_socket_sighup_nonblocking_head()
+{
+	atf_set "descr" "SIGHUP reload does not block status queries"
+	atf_set "require.user" "root"
+}
+control_socket_sighup_nonblocking_body()
+{
+	require_pidfile
+	pid=$(cat /var/run/oracled.pid)
+
+	# Send SIGHUP and immediately query status.
+	kill -HUP "$pid"
+	atf_check -s exit:0 -o match:"running" oraclectl status
+}
+control_socket_sighup_nonblocking_cleanup()
+{
+	:
+}
+
+# --- early-close and SIGPIPE ---
+
+atf_test_case control_socket_early_close_status cleanup
+control_socket_early_close_status_head()
+{
+	atf_set "descr" "client that closes before reading summary does not crash daemon"
+	atf_set "require.user" "root"
+}
+control_socket_early_close_status_body()
+{
+	require_pidfile
+	# Send a valid STATUS request, read only the 16-byte reply header,
+	# then close immediately (before the daemon sends summary text).
+	# This triggers a write to a closed socket — must not SIGPIPE.
+	atf_check -s exit:0 sh -c '
+		{
+			printf "\\x01\\x00\\x00\\x00"
+			printf "\\x02\\x00\\x00\\x00"
+			printf "\\x00\\x00\\x00\\x00"
+			printf "\\x00\\x00\\x00\\x00"
+		} | nc -U /var/run/oracled.sock | dd bs=16 count=1 of=/dev/null 2>/dev/null
+	'
+	# Daemon must still be alive.
+	atf_check -s exit:0 -o match:"running" oraclectl status
+}
+control_socket_early_close_status_cleanup()
+{
+	:
+}
+
+atf_test_case control_socket_early_close_services cleanup
+control_socket_early_close_services_head()
+{
+	atf_set "descr" "services client closing mid-summary does not crash daemon"
+	atf_set "require.user" "root"
+}
+control_socket_early_close_services_body()
+{
+	require_pidfile
+	# Send SERVICES request, read 1 byte of response, then close.
+	atf_check -s exit:0 sh -c '
+		{
+			printf "\\x01\\x00\\x00\\x00"
+			printf "\\x09\\x00\\x00\\x00"
+			printf "\\x00\\x00\\x00\\x00"
+			printf "\\x00\\x00\\x00\\x00"
+		} | nc -U /var/run/oracled.sock | dd bs=1 count=1 of=/dev/null 2>/dev/null
+	'
+	atf_check -s exit:0 -o match:"running" oraclectl status
+}
+control_socket_early_close_services_cleanup()
+{
+	:
+}
+
+atf_test_case control_socket_early_close_reload cleanup
+control_socket_early_close_reload_head()
+{
+	atf_set "descr" "reload client closing mid-summary does not crash daemon"
+	atf_set "require.user" "root"
+}
+control_socket_early_close_reload_body()
+{
+	require_pidfile
+	# Send RELOAD request, read 1 byte, close.
+	atf_check -s exit:0 sh -c '
+		{
+			printf "\\x01\\x00\\x00\\x00"
+			printf "\\x03\\x00\\x00\\x00"
+			printf "\\x00\\x00\\x00\\x00"
+			printf "\\x00\\x00\\x00\\x00"
+		} | nc -U /var/run/oracled.sock | dd bs=1 count=1 of=/dev/null 2>/dev/null
+	'
+	atf_check -s exit:0 -o match:"running" oraclectl status
+}
+control_socket_early_close_reload_cleanup()
+{
+	:
+}
+
+# --- concurrent SIGHUP plus operations ---
+
+atf_test_case sighup_during_status cleanup
+sighup_during_status_head()
+{
+	atf_set "descr" "SIGHUP during rapid status queries does not corrupt responses"
+	atf_set "require.user" "root"
+}
+sighup_during_status_body()
+{
+	require_pidfile
+	pid=$(cat /var/run/oracled.pid)
+
+	# Fire off status queries while sending SIGHUPs.
+	for i in 1 2 3 4 5; do
+		kill -HUP "$pid"
+		atf_check -s exit:0 -o match:"running" oraclectl status
+	done
+}
+sighup_during_status_cleanup()
+{
+	:
+}
+
+atf_test_case sighup_during_reload cleanup
+sighup_during_reload_head()
+{
+	atf_set "descr" "SIGHUP interleaved with oraclectl reload is safe"
+	atf_set "require.user" "root"
+}
+sighup_during_reload_body()
+{
+	require_pidfile
+	pid=$(cat /var/run/oracled.pid)
+
+	# Interleave SIGHUP and control socket reloads.
+	kill -HUP "$pid"
+	atf_check -s exit:0 -o ignore oraclectl reload
+	kill -HUP "$pid"
+	atf_check -s exit:0 -o ignore oraclectl reload
+	# Daemon must be healthy.
+	atf_check -s exit:0 -o match:"running" oraclectl status
+	atf_check -s exit:0 -o match:"CLAIMS:" oraclectl status
+}
+sighup_during_reload_cleanup()
+{
+	:
+}
+
+# --- services available to non-root ---
+
+atf_test_case control_socket_services_any_user cleanup
+control_socket_services_any_user_head()
+{
+	atf_set "descr" "services listing does not require root"
+	atf_set "require.user" "root"
+}
+control_socket_services_any_user_body()
+{
+	require_pidfile
+	# The control socket is mode 0700 owned by root, so non-root
+	# can't connect at all.  But verify the daemon doesn't return
+	# EPERM for root — the permission check was removed.
+	atf_check -s exit:0 -o match:"LOADED:" oraclectl services
+}
+control_socket_services_any_user_cleanup()
+{
+	:
+}
+
 atf_init_test_cases()
 {
 	# Isolation
@@ -862,6 +1267,22 @@ atf_init_test_cases()
 	atf_add_test_case control_socket_unknown_op
 	atf_add_test_case control_socket_status_with_payload
 	atf_add_test_case control_socket_rapid
+	atf_add_test_case control_socket_reload_with_payload
+	atf_add_test_case control_socket_shutdown_with_payload
+	atf_add_test_case control_socket_reboot_with_payload
+	atf_add_test_case control_socket_services_with_payload
+	atf_add_test_case control_socket_empty_connect
+	atf_add_test_case control_socket_status_shows_claims
+	atf_add_test_case control_socket_slow_client
+	atf_add_test_case control_socket_concurrent_clients
+	atf_add_test_case control_socket_client_timeout
+	atf_add_test_case control_socket_sighup_nonblocking
+	atf_add_test_case control_socket_early_close_status
+	atf_add_test_case control_socket_early_close_services
+	atf_add_test_case control_socket_early_close_reload
+	atf_add_test_case sighup_during_status
+	atf_add_test_case sighup_during_reload
+	atf_add_test_case control_socket_services_any_user
 
 	# Configuration
 	atf_add_test_case config_missing_file_uses_defaults

@@ -51,11 +51,12 @@ static int
 cmd_status(void)
 {
 	struct oraclectl_status st;
+	char summary[ORACLECTL_SUMMARY_MAX];
 	uint64_t up;
 	int fd, error;
 
 	fd = open_or_die();
-	error = oraclectl_status(fd, &st);
+	error = oraclectl_status(fd, &st, summary, sizeof(summary));
 	close(fd);
 
 	if (error != 0)
@@ -75,6 +76,9 @@ cmd_status(void)
 	else
 		printf("uptime:  %llu hours\n",
 		    (unsigned long long)(up / 3600000000ULL));
+
+	if (summary[0] != '\0')
+		printf("\n%s", summary);
 	return (0);
 }
 
@@ -158,40 +162,6 @@ cmd_reboot(void)
 }
 
 static int
-cmd_check(const char *filename)
-{
-	char summary[ORACLECTL_SUMMARY_MAX];
-	int fd, error;
-
-	fd = open_or_die();
-	error = oraclectl_check(fd, filename, summary, sizeof(summary));
-	close(fd);
-
-	if (summary[0] != '\0')
-		printf("%s", summary);
-	if (error != 0 && summary[0] == '\0')
-		return (check(error, filename));
-	return (error != 0 ? 1 : 0);
-}
-
-static int
-cmd_load(const char *filename)
-{
-	char summary[ORACLECTL_SUMMARY_MAX];
-	int fd, error;
-
-	fd = open_or_die();
-	error = oraclectl_load(fd, filename, summary, sizeof(summary));
-	close(fd);
-
-	if (summary[0] != '\0')
-		printf("%s", summary);
-	if (error != 0 && summary[0] == '\0')
-		return (check(error, filename));
-	return (error != 0 ? 1 : 0);
-}
-
-static int
 cmd_services(int verbose)
 {
 	char summary[ORACLECTL_SUMMARY_MAX];
@@ -223,8 +193,6 @@ usage(void)
 	    "usage: oraclectl [-s socket] command [args]\n"
 	    "       oraclectl status\n"
 	    "       oraclectl services [-v]\n"
-	    "       oraclectl check <manifest.ucl>\n"
-	    "       oraclectl load <manifest.ucl>\n"
 	    "       oraclectl reload\n"
 	    "       oraclectl shutdown\n"
 	    "       oraclectl kldload <module>\n"
@@ -260,10 +228,10 @@ main(int argc, char *argv[])
 	if (strcmp(argv[0], "services") == 0 && argc == 2 &&
 	    strcmp(argv[1], "-v") == 0)
 		return (cmd_services(1));
-	if (strcmp(argv[0], "check") == 0 && argc == 2)
-		return (cmd_check(argv[1]));
-	if (strcmp(argv[0], "load") == 0 && argc == 2)
-		return (cmd_load(argv[1]));
+	if (strcmp(argv[0], "check") == 0 || strcmp(argv[0], "load") == 0) {
+		warnx("%s: use servicectl(8) instead", argv[0]);
+		return (EX_USAGE);
+	}
 	if (strcmp(argv[0], "shutdown") == 0 && argc == 1)
 		return (cmd_shutdown());
 	if (strcmp(argv[0], "reload") == 0 && argc == 1)

@@ -74,6 +74,7 @@
 #include <sys/syscallsubr.h>
 #include <sys/sysproto.h>
 #include <sys/sysctl.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/ucred.h>
 #include <sys/uio.h>
@@ -87,6 +88,29 @@
 bool __read_frequently trap_enotcap;
 SYSCTL_BOOL(_kern, OID_AUTO, trap_enotcap, CTLFLAG_RWTUN, &trap_enotcap, 0,
     "Deliver SIGTRAP on ECAPMODE and ENOTCAPABLE");
+
+SDT_PROVIDER_DEFINE(capsicum);
+SDT_PROBE_DEFINE3(capsicum, , , mode__enter,
+    "pid_t", "struct ucred *", "int");
+SDT_PROBE_DEFINE6(capsicum, , , rights__limit,
+    "int", "pid_t", "struct ucred *", "cap_rights_t *", "int", "short");
+SDT_PROBE_DEFINE6(capsicum, , , ioctls__limit,
+    "int", "pid_t", "struct ucred *", "u_long *", "size_t", "int");
+SDT_PROBE_DEFINE6(capsicum, , , fcntls__limit,
+    "int", "pid_t", "struct ucred *", "uint32_t", "int", "short");
+SDT_PROBE_DEFINE6(capsicum, , , ioctl__deny,
+    "int", "pid_t", "struct ucred *", "u_long", "short", "int");
+SDT_PROBE_DEFINE6(capsicum, , , fcntl__deny,
+    "int", "pid_t", "struct ucred *", "int", "short", "int");
+SDT_PROBE_DEFINE6(capsicum, , , check__deny,
+    "cap_rights_t *", "cap_rights_t *", "pid_t", "struct ucred *", "int",
+    "int");
+SDT_PROBE_DEFINE6(capsicum, , , rights__get,
+    "int", "pid_t", "struct ucred *", "cap_rights_t *", "int", "short");
+SDT_PROBE_DEFINE6(capsicum, , , ioctls__get,
+    "int", "pid_t", "struct ucred *", "size_t", "int", "int");
+SDT_PROBE_DEFINE6(capsicum, , , fcntls__get,
+    "int", "pid_t", "struct ucred *", "uint32_t", "int", "short");
 
 #ifdef CAPABILITY_MODE
 
@@ -114,6 +138,8 @@ sys_cap_enter(struct thread *td, struct cap_enter_args *uap)
 	proc_set_cred(p, newcred);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
+	SDT_PROBE3(capsicum, , , mode__enter, p->p_pid,
+	    td->td_ucred, 0);
 	return (0);
 }
 
@@ -162,6 +188,9 @@ _cap_check(const cap_rights_t *havep, const cap_rights_t *needp,
 	if (!cap_rights_contains(havep, needp)) {
 		if (CAP_TRACING(curthread))
 			ktrcapfail(type, rights);
+		SDT_PROBE6(capsicum, , , check__deny, havep, needp,
+		    curthread->td_proc->p_pid, curthread->td_ucred, type,
+		    ENOTCAPABLE);
 		return (ENOTCAPABLE);
 	}
 	return (0);
@@ -233,15 +262,19 @@ kern_cap_rights_limit(struct thread *td, int fd, cap_rights_t *rights)
 	struct filedescent *fdep;
 	u_long *ioctls;
 	int error;
+	short ftype;
 
 	fdp = td->td_proc->p_fd;
+	ftype = -1;
 	FILEDESC_XLOCK(fdp);
 	fdep = fdeget_noref(fdp, fd);
 	if (fdep == NULL) {
 		FILEDESC_XUNLOCK(fdp);
-		return (EBADF);
+		error = EBADF;
+		goto out_probe;
 	}
 	ioctls = NULL;
+	ftype = fdep->fde_file->f_type;
 	error = _cap_check(cap_rights(fdp, fd), rights, CAPFAIL_INCREASE);
 	if (error == 0) {
 		seqc_write_begin(&fdep->fde_seqc);
@@ -257,6 +290,9 @@ kern_cap_rights_limit(struct thread *td, int fd, cap_rights_t *rights)
 	}
 	FILEDESC_XUNLOCK(fdp);
 	free(ioctls, M_FILECAPS);
+out_probe:
+	SDT_PROBE6(capsicum, , , rights__limit, fd, td->td_proc->p_pid,
+	    td->td_ucred, rights, error, ftype);
 	return (error);
 }
 
@@ -310,22 +346,31 @@ int
 sys___cap_rights_get(struct thread *td, struct __cap_rights_get_args *uap)
 {
 	struct filedesc *fdp;
+	struct filedescent *fdep;
 	cap_rights_t rights;
 	int error, fd, i, n;
-
-	if (uap->version != CAP_RIGHTS_VERSION_00)
-		return (EINVAL);
+	short ftype;
 
 	fd = uap->fd;
+	cap_rights_init_zero(&rights);
+	ftype = -1;
+	error = 0;
+	if (uap->version != CAP_RIGHTS_VERSION_00) {
+		error = EINVAL;
+		goto out_probe;
+	}
 
 	AUDIT_ARG_FD(fd);
 
 	fdp = td->td_proc->p_fd;
 	FILEDESC_SLOCK(fdp);
-	if (fget_noref(fdp, fd) == NULL) {
+	fdep = fdeget_noref(fdp, fd);
+	if (fdep == NULL) {
 		FILEDESC_SUNLOCK(fdp);
-		return (EBADF);
+		error = EBADF;
+		goto out_probe;
 	}
+	ftype = fdep->fde_file->f_type;
 	rights = *cap_rights(fdp, fd);
 	FILEDESC_SUNLOCK(fdp);
 	n = uap->version + 2;
@@ -336,8 +381,10 @@ sys___cap_rights_get(struct thread *td, struct __cap_rights_get_args *uap)
 		 * If it does, we have to return an error.
 		 */
 		for (i = n; i < CAPARSIZE(&rights); i++) {
-			if ((rights.cr_rights[i] & ~(0x7FULL << 57)) != 0)
-				return (EINVAL);
+			if ((rights.cr_rights[i] & ~(0x7FULL << 57)) != 0) {
+				error = EINVAL;
+				goto out_probe;
+			}
 		}
 	}
 	error = copyout(&rights, uap->rightsp, sizeof(rights.cr_rights[0]) * n);
@@ -345,6 +392,9 @@ sys___cap_rights_get(struct thread *td, struct __cap_rights_get_args *uap)
 	if (error == 0 && KTRPOINT(td, KTR_STRUCT))
 		ktrcaprights(&rights);
 #endif
+out_probe:
+	SDT_PROBE6(capsicum, , , rights__get, fd, td->td_proc->p_pid,
+	    td->td_ucred, &rights, error, ftype);
 	return (error);
 }
 
@@ -378,6 +428,9 @@ cap_ioctl_check(struct filedesc *fdp, int fd, u_long cmd)
 			return (0);
 	}
 
+	SDT_PROBE6(capsicum, , , ioctl__deny, fd,
+	    curthread->td_proc->p_pid, curthread->td_ucred, cmd,
+	    fdep->fde_file->f_type, ENOTCAPABLE);
 	return (ENOTCAPABLE);
 }
 
@@ -417,10 +470,11 @@ kern_cap_ioctls_limit(struct thread *td, int fd, u_long *cmds, size_t ncmds)
 {
 	struct filedesc *fdp;
 	struct filedescent *fdep;
-	u_long *ocmds;
+	u_long *newcmds, *ocmds;
 	int error;
 
 	AUDIT_ARG_FD(fd);
+	newcmds = cmds;
 
 	if (ncmds > IOCTLS_MAX_COUNT) {
 		error = EINVAL;
@@ -451,6 +505,8 @@ kern_cap_ioctls_limit(struct thread *td, int fd, u_long *cmds, size_t ncmds)
 out:
 	FILEDESC_XUNLOCK(fdp);
 out_free:
+	SDT_PROBE6(capsicum, , , ioctls__limit, fd,
+	    td->td_proc->p_pid, td->td_ucred, newcmds, ncmds, error);
 	free(cmds, M_FILECAPS);
 	return (error);
 }
@@ -538,6 +594,9 @@ sys_cap_ioctls_get(struct thread *td, struct cap_ioctls_get_args *uap)
 
 	error = 0;
 out:
+	SDT_PROBE6(capsicum, , , ioctls__get, fd,
+	    td->td_proc->p_pid, td->td_ucred, maxcmds,
+	    error == 0 ? td->td_retval[0] : -1, error);
 	free(cmdsp, M_FILECAPS);
 	return (error);
 }
@@ -563,11 +622,20 @@ cap_fcntl_check_fde(struct filedescent *fdep, int cmd)
 int
 cap_fcntl_check(struct filedesc *fdp, int fd, int cmd)
 {
+	struct filedescent *fdep;
+	int error;
 
 	KASSERT(fd >= 0 && fd < fdp->fd_nfiles,
 	    ("%s: invalid fd=%d", __func__, fd));
 
-	return (cap_fcntl_check_fde(&fdp->fd_ofiles[fd], cmd));
+	fdep = &fdp->fd_ofiles[fd];
+	error = cap_fcntl_check_fde(fdep, cmd);
+	if (error != 0) {
+		SDT_PROBE6(capsicum, , , fcntl__deny, fd,
+		    curthread->td_proc->p_pid, curthread->td_ucred, cmd,
+		    fdep->fde_file->f_type, error);
+	}
+	return (error);
 }
 
 int
@@ -576,16 +644,20 @@ sys_cap_fcntls_limit(struct thread *td, struct cap_fcntls_limit_args *uap)
 	struct filedesc *fdp;
 	struct filedescent *fdep;
 	uint32_t fcntlrights;
-	int fd;
+	int error, fd;
+	short ftype;
 
 	fd = uap->fd;
 	fcntlrights = uap->fcntlrights;
+	ftype = -1;
 
 	AUDIT_ARG_FD(fd);
 	AUDIT_ARG_FCNTL_RIGHTS(fcntlrights);
 
-	if ((fcntlrights & ~CAP_FCNTL_ALL) != 0)
-		return (EINVAL);
+	if ((fcntlrights & ~CAP_FCNTL_ALL) != 0) {
+		error = EINVAL;
+		goto out_probe;
+	}
 
 	fdp = td->td_proc->p_fd;
 	FILEDESC_XLOCK(fdp);
@@ -593,20 +665,27 @@ sys_cap_fcntls_limit(struct thread *td, struct cap_fcntls_limit_args *uap)
 	fdep = fdeget_noref(fdp, fd);
 	if (fdep == NULL) {
 		FILEDESC_XUNLOCK(fdp);
-		return (EBADF);
+		error = EBADF;
+		goto out_probe;
 	}
+	ftype = fdep->fde_file->f_type;
 
 	if ((fcntlrights & ~fdep->fde_fcntls) != 0) {
 		FILEDESC_XUNLOCK(fdp);
-		return (ENOTCAPABLE);
+		error = ENOTCAPABLE;
+		goto out_probe;
 	}
 
 	seqc_write_begin(&fdep->fde_seqc);
 	fdep->fde_fcntls = fcntlrights;
 	seqc_write_end(&fdep->fde_seqc);
 	FILEDESC_XUNLOCK(fdp);
+	error = 0;
 
-	return (0);
+out_probe:
+	SDT_PROBE6(capsicum, , , fcntls__limit, fd,
+	    td->td_proc->p_pid, td->td_ucred, fcntlrights, error, ftype);
+	return (error);
 }
 
 int
@@ -615,9 +694,12 @@ sys_cap_fcntls_get(struct thread *td, struct cap_fcntls_get_args *uap)
 	struct filedesc *fdp;
 	struct filedescent *fdep;
 	uint32_t rights;
-	int fd;
+	int error, fd;
+	short ftype;
 
 	fd = uap->fd;
+	rights = 0;
+	ftype = -1;
 
 	AUDIT_ARG_FD(fd);
 
@@ -626,12 +708,18 @@ sys_cap_fcntls_get(struct thread *td, struct cap_fcntls_get_args *uap)
 	fdep = fdeget_noref(fdp, fd);
 	if (fdep == NULL) {
 		FILEDESC_SUNLOCK(fdp);
-		return (EBADF);
+		error = EBADF;
+		goto out_probe;
 	}
 	rights = fdep->fde_fcntls;
+	ftype = fdep->fde_file->f_type;
 	FILEDESC_SUNLOCK(fdp);
 
-	return (copyout(&rights, uap->fcntlrightsp, sizeof(rights)));
+	error = copyout(&rights, uap->fcntlrightsp, sizeof(rights));
+out_probe:
+	SDT_PROBE6(capsicum, , , fcntls__get, fd,
+	    td->td_proc->p_pid, td->td_ucred, rights, error, ftype);
+	return (error);
 }
 
 #else /* !CAPABILITIES */

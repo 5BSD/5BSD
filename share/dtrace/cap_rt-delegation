@@ -1,0 +1,94 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * cap_rt-delegation -- trace CAP_RT movement through fd-layer operations.
+ *
+ * Shows cap_rt fds as they are duped, inherited across fork, passed over
+ * Unix-domain SCM_RIGHTS, received through cap_rt messages, and closed.
+ *
+ * Usage: cap_rt-delegation
+ */
+
+#pragma D option quiet
+
+#define DTYPE_CAP_RT 17
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-6s %-6s %-8s %-12s %-16s %-8s %s\n",
+	    "PID", "UID", "GID", "FD", "EVENT", "SERVICE", "BADGE",
+	    "DETAIL");
+}
+
+cap_rt:::fd-install
+{
+	printf("%-6d %-6d %-6d %-8d %-12s %-16s %-8d nonce=0x%016x\n",
+	    arg3, ((struct ucred *)arg4)->cr_uid,
+	    ((struct ucred *)arg4)->cr_gid, arg2, "RT-INSTALL",
+	    copyinstr(arg0), arg1, arg5);
+}
+
+cap_rt:::fd-receive
+{
+	printf("%-6d %-6d %-6d %-8d %-12s %-16s %-8d nonce=0x%016x\n",
+	    arg3, ((struct ucred *)arg4)->cr_uid,
+	    ((struct ucred *)arg4)->cr_gid, arg2, "RT-RECV",
+	    copyinstr(arg0), arg1, arg5);
+}
+
+fd:::dup
+/arg5 == DTYPE_CAP_RT/
+{
+	printf("%-6d %-6d %-6d %-8d %-12s %-16s %-8s oldfd=%d\n",
+	    arg3, ((struct ucred *)arg4)->cr_uid,
+	    ((struct ucred *)arg4)->cr_gid, arg2, "DUP", "-", "-",
+	    arg1);
+}
+
+fd:::fork-inherit
+/arg5 == DTYPE_CAP_RT/
+{
+	printf("%-6d %-6d %-6d %-8d %-12s %-16s %-8s parent=%d\n",
+	    arg3, ((struct ucred *)arg4)->cr_uid,
+	    ((struct ucred *)arg4)->cr_gid, arg1, "FORK", "-", "-",
+	    arg2);
+}
+
+fd:::scm-rights-send
+/arg4 == DTYPE_CAP_RT/
+{
+	printf("%-6d %-6d %-6d %-8d %-12s %-16s %-8s nfds=%d\n",
+	    arg2, ((struct ucred *)arg3)->cr_uid,
+	    ((struct ucred *)arg3)->cr_gid, arg1, "SCM-SEND", "-", "-",
+	    arg5);
+}
+
+fd:::scm-rights-recv
+/arg4 == DTYPE_CAP_RT/
+{
+	printf("%-6d %-6d %-6d %-8d %-12s %-16s %-8s nfds=%d\n",
+	    arg2, ((struct ucred *)arg3)->cr_uid,
+	    ((struct ucred *)arg3)->cr_gid, arg1, "SCM-RECV", "-", "-",
+	    arg5);
+}
+
+fd:::close
+/arg4 == DTYPE_CAP_RT/
+{
+	printf("%-6d %-6d %-6d %-8d %-12s %-16s %-8s ref=%d\n",
+	    arg2, ((struct ucred *)arg3)->cr_uid,
+	    ((struct ucred *)arg3)->cr_gid, arg1, "FD-CLOSE", "-", "-",
+	    arg5);
+}
+
+fd:::pass-deny
+/arg4 == DTYPE_CAP_RT/
+{
+	printf("%-6d %-6d %-6d %-8d %-12s %-16s %-8s errno=%d\n",
+	    arg2, ((struct ucred *)arg3)->cr_uid,
+	    ((struct ucred *)arg3)->cr_gid, arg1, "PASS-DENY", "-", "-",
+	    arg5);
+}

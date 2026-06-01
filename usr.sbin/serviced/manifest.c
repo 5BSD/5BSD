@@ -3,9 +3,9 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Service manifest parser for oracled.
+ * Service manifest parser for serviced.
  *
- * Reads UCL manifests from /etc/oracled.d/ and populates svc_manifest
+ * Reads UCL manifests from the manifest directory and populates svc_manifest
  * structs.  Invalid manifests are logged and skipped.  Missing
  * directory is not an error (no services to start).
  */
@@ -25,8 +25,72 @@
 
 #include <ucl.h>
 
-#include "oracled.h"
+#include "serviced.h"
 #include "gates.h"
+
+/*
+ * Parse a UCL network claim object.
+ * Intentionally duplicated from oracled/config.c because the struct
+ * type differs (serviced_net_claim vs oracled_net_claim).  The field
+ * layout is identical.
+ */
+static int
+parse_ucl_net_claim(const ucl_object_t *elem, struct serviced_net_claim *nc,
+    const char *label)
+{
+	const ucl_object_t *v;
+	const char *s;
+
+	memset(nc, 0, sizeof(*nc));
+
+	v = ucl_object_lookup(elem, "port");
+	if (v != NULL && ucl_object_type(v) == UCL_INT) {
+		int64_t pv = ucl_object_toint(v);
+		if (pv < 0 || pv > 65535) {
+			syslog(LOG_WARNING, "%s: invalid port: %jd",
+			    label, (intmax_t)pv);
+			return (-1);
+		}
+		nc->port = (uint16_t)pv;
+	}
+
+	v = ucl_object_lookup(elem, "protocol");
+	if (v != NULL && ucl_object_type(v) == UCL_STRING) {
+		s = ucl_object_tostring(v);
+		if (strcmp(s, "tcp") == 0)
+			nc->protocol = IPPROTO_TCP;
+		else if (strcmp(s, "udp") == 0)
+			nc->protocol = IPPROTO_UDP;
+		else
+			syslog(LOG_WARNING, "%s: unknown protocol: %s",
+			    label, s);
+	}
+
+	v = ucl_object_lookup(elem, "direction");
+	if (v != NULL && ucl_object_type(v) == UCL_STRING) {
+		s = ucl_object_tostring(v);
+		if (strcmp(s, "bind") == 0)
+			nc->direction = SERVICED_NET_DIR_BIND;
+		else if (strcmp(s, "connect") == 0)
+			nc->direction = SERVICED_NET_DIR_CONNECT;
+		else if (strcmp(s, "any") == 0)
+			nc->direction = SERVICED_NET_DIR_ANY;
+	}
+	if (nc->direction == 0)
+		nc->direction = SERVICED_NET_DIR_BIND;
+
+	nc->domain = AF_INET;
+	v = ucl_object_lookup(elem, "domain");
+	if (v != NULL && ucl_object_type(v) == UCL_STRING) {
+		s = ucl_object_tostring(v);
+		if (strcmp(s, "inet6") == 0)
+			nc->domain = AF_INET6;
+		else if (strcmp(s, "any") == 0)
+			nc->domain = 0;
+	}
+
+	return (0);
+}
 
 /*
  * Copy a UCL string into a fixed buffer, rejecting truncation.
@@ -60,7 +124,7 @@ parse_restart(const char *s)
 }
 
 static void
-parse_string_array(const ucl_object_t *arr, char (*out)[ORACLED_LABEL_MAX],
+parse_string_array(const ucl_object_t *arr, char (*out)[SERVICED_LABEL_MAX],
     unsigned maxn, unsigned *np, const char *what, const char *label)
 {
 	const ucl_object_t *elem;
@@ -82,8 +146,8 @@ parse_string_array(const ucl_object_t *arr, char (*out)[ORACLED_LABEL_MAX],
 			    "(max %u)", label, what, maxn);
 			break;
 		}
-		if (strlcpy(out[*np], s, ORACLED_LABEL_MAX) >=
-		    ORACLED_LABEL_MAX) {
+		if (strlcpy(out[*np], s, SERVICED_LABEL_MAX) >=
+		    SERVICED_LABEL_MAX) {
 			syslog(LOG_WARNING, "manifest %s: %s too long, "
 			    "skipped: %s", label, what, s);
 			continue;
@@ -112,10 +176,10 @@ parse_cap_paths(const ucl_object_t *arr, struct svc_manifest *m)
 			    "must be absolute: %s", m->label, s);
 			continue;
 		}
-		if (m->ncap_paths >= ORACLED_MAX_CAP_PATHS) {
+		if (m->ncap_paths >= SERVICED_MAX_CAP_PATHS) {
 			syslog(LOG_WARNING, "manifest %s: too many "
 			    "capability paths (max %d)", m->label,
-			    ORACLED_MAX_CAP_PATHS);
+			    SERVICED_MAX_CAP_PATHS);
 			break;
 		}
 		if (strlcpy(m->cap_paths[m->ncap_paths], s,
@@ -172,10 +236,10 @@ parse_cap_network(const ucl_object_t *arr, struct svc_manifest *m)
 	while ((elem = ucl_object_iterate(arr, &it, true)) != NULL) {
 		if (ucl_object_type(elem) != UCL_OBJECT)
 			continue;
-		if (m->ncap_net >= ORACLED_MAX_CAP_NET) {
+		if (m->ncap_net >= SERVICED_MAX_CAP_NET) {
 			syslog(LOG_WARNING, "manifest %s: too many "
 			    "network capabilities (max %d)", m->label,
-			    ORACLED_MAX_CAP_NET);
+			    SERVICED_MAX_CAP_NET);
 			break;
 		}
 		if (parse_ucl_net_claim(elem,
@@ -308,10 +372,10 @@ manifest_load_file(const char *path, struct svc_manifest *m)
 
 	/* provides / requires */
 	parse_string_array(ucl_object_lookup(root, "provides"),
-	    m->provides, ORACLED_MAX_PROVIDES, &m->nprovides,
+	    m->provides, SERVICED_MAX_PROVIDES, &m->nprovides,
 	    "provides", m->label);
 	parse_string_array(ucl_object_lookup(root, "requires"),
-	    m->requires, ORACLED_MAX_REQUIRES, &m->nrequires,
+	    m->requires, SERVICED_MAX_REQUIRES, &m->nrequires,
 	    "requires", m->label);
 
 	/* capabilities */
@@ -338,7 +402,7 @@ manifest_load_dir(const char *dirpath,
 	DIR *d;
 	struct dirent *de;
 	char path[PATH_MAX];
-	char *names[ORACLED_MAX_SERVICES];
+	char *names[SERVICED_MAX_SERVICES];
 	unsigned nnames, i;
 	size_t len;
 
@@ -361,9 +425,9 @@ manifest_load_dir(const char *dirpath,
 		len = strlen(de->d_name);
 		if (len < 5 || strcmp(de->d_name + len - 4, ".ucl") != 0)
 			continue;
-		if (nnames >= ORACLED_MAX_SERVICES) {
+		if (nnames >= SERVICED_MAX_SERVICES) {
 			syslog(LOG_WARNING, "manifest: too many files in "
-			    "%s (max %d)", dirpath, ORACLED_MAX_SERVICES);
+			    "%s (max %d)", dirpath, SERVICED_MAX_SERVICES);
 			break;
 		}
 		names[nnames] = strdup(de->d_name);
@@ -402,7 +466,7 @@ manifest_load_dir(const char *dirpath,
 }
 
 static void
-log_label_list(const char *prefix, const char (*names)[ORACLED_LABEL_MAX],
+log_label_list(const char *prefix, const char (*names)[SERVICED_LABEL_MAX],
     unsigned count)
 {
 	char buf[512];
@@ -448,15 +512,13 @@ manifest_validate(const struct svc_manifest *m, char *errbuf, size_t errlen)
 		return (-1);
 	}
 
-	if (m->user[0] != '\0' && getpwnam(m->user) == NULL) {
-		snprintf(errbuf, errlen, "user \"%s\" not found", m->user);
-		return (-1);
-	}
-
-	if (m->group[0] != '\0' && getgrnam(m->group) == NULL) {
-		snprintf(errbuf, errlen, "group \"%s\" not found", m->group);
-		return (-1);
-	}
+	/*
+	 * User/group validation is deferred to svc_exec() time.
+	 * getpwnam/getgrnam can block on NIS/LDAP and must not
+	 * run in the event loop (reload/check paths).  svc_exec()
+	 * already resolves credentials before fork and fails with
+	 * a clear error if the user/group does not exist.
+	 */
 
 	return (0);
 }
@@ -512,7 +574,7 @@ manifest_format_summary(const struct svc_manifest *m, char *buf, size_t len)
 		BUF_APPEND(buf, len, &off,"    path:       %s\n", m->cap_paths[i]);
 
 	for (i = 0; i < m->ncap_net; i++) {
-		const struct oracled_net_claim *nc = &m->cap_net[i];
+		const struct serviced_net_claim *nc = &m->cap_net[i];
 		BUF_APPEND(buf, len, &off,"    network:    %s/%u %s\n",
 		    net_protocol_name(nc->protocol),
 		    nc->port,
