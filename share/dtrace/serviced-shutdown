@@ -1,0 +1,59 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * serviced-shutdown -- trace shutdown drain behavior.
+ *
+ * Shows the shutdown sequence: drain start, per-service stop and
+ * exit events, stop-kill escalations, and total drain duration.
+ *
+ * Usage: serviced-shutdown
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing serviced shutdown... waiting for shutdown.\n\n");
+}
+
+serviced*:::shutdown-start
+{
+	printf("[%Y] *** SHUTDOWN DRAIN: %d services ***\n",
+	    walltimestamp, arg0);
+}
+
+serviced*:::svc-stop
+{
+	printf("[%Y]   STOP  %-20s pid %d\n", walltimestamp,
+	    copyinstr(arg0), arg1);
+}
+
+serviced*:::timeout-fire
+/copyinstr(arg1) == "stop-kill"/
+{
+	printf("[%Y]   KILL  %-20s (timeout escalation)\n",
+	    walltimestamp, copyinstr(arg0));
+}
+
+serviced*:::svc-exit
+{
+	printf("[%Y]   EXIT  %-20s pid %d status %d\n",
+	    walltimestamp, copyinstr(arg0), arg1, arg2);
+}
+
+serviced*:::shutdown-done
+{
+	this->ms = arg0 / 1000000;
+	printf("[%Y] *** DRAIN COMPLETE: %d ms ***\n",
+	    walltimestamp, this->ms);
+}
+
+oracled*:::shutdown-done
+{
+	this->ms = arg0 / 1000000;
+	printf("[%Y] *** ORACLED SHUTDOWN COMPLETE: %d ms ***\n",
+	    walltimestamp, this->ms);
+}

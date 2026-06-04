@@ -79,6 +79,7 @@ struct svc_manifest {
 
 	int		restart;	/* SVC_RESTART_* */
 	int		stop_timeout;	/* seconds before SIGKILL (default 5) */
+	unsigned	max_failures;	/* circuit breaker threshold (default 10) */
 };
 
 /*

@@ -18,6 +18,7 @@
 #include <syslog.h>
 
 #include "serviced.h"
+#include "serviced_probes.h"
 
 /*
  * Compare two manifests field-by-field, skipping label (used for
@@ -59,6 +60,8 @@ manifest_changed(const struct svc_manifest *a, const struct svc_manifest *b)
 	if (a->cap_system != b->cap_system)
 		return (true);
 	if (a->stop_timeout != b->stop_timeout)
+		return (true);
+	if (a->max_failures != b->max_failures)
 		return (true);
 	return (false);
 }
@@ -353,6 +356,7 @@ supervisor_load_manifest(const char *path, int kq,
 	sd.nservices++;
 
 	syslog(LOG_INFO, "reload: new service \"%s\"", m->label);
+	SERVICED_PROBE_SVC_LOAD(m->label);
 
 	/* Re-sort dependencies. */
 	if (depgraph_sort(sd.services, sd.nservices) == -1) {
@@ -635,6 +639,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 
 	syslog(LOG_INFO, "reload: %u new, %u changed, %u removed",
 	    nnew, nchanged, nremoved);
+	SERVICED_PROBE_RELOAD(nnew, nchanged, nremoved);
 
 	if (summary != NULL && sumlen > 0) {
 		size_t off = 0;

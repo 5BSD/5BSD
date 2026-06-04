@@ -1,0 +1,45 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * serviced-timeouts -- trace timer arm and fire events.
+ *
+ * Shows restart backoff timers and stop-kill escalation timers.
+ * Useful for understanding service restart behavior and shutdown
+ * timing under load.
+ *
+ * Usage: serviced-timeouts
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing serviced timers... Ctrl-C for summary.\n\n");
+	printf("%-20s %-20s %-10s %-8s %s\n",
+	    "TIME", "SERVICE", "TYPE", "EVENT", "DETAIL");
+}
+
+serviced*:::timeout-arm
+{
+	printf("%-20Y %-20s %-10s %-8s %d seconds\n", walltimestamp,
+	    copyinstr(arg0), copyinstr(arg1), "ARM", arg2);
+	@armed[copyinstr(arg1)] = count();
+}
+
+serviced*:::timeout-fire
+{
+	printf("%-20Y %-20s %-10s %-8s\n", walltimestamp,
+	    copyinstr(arg0), copyinstr(arg1), "FIRE");
+	@fired[copyinstr(arg1)] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Timers armed ---\n");
+	printa("  %-12s %@d\n", @armed);
+	printf("\n--- Timers fired ---\n");
+	printa("  %-12s %@d\n", @fired);
+}

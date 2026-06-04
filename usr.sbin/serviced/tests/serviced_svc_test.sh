@@ -211,6 +211,7 @@ circuit_breaker_disables_body()
 label = "crash";
 program = "$(pwd)/crash.sh";
 restart = "always";
+max_failures = 3;
 EOF
 
 	start_stack

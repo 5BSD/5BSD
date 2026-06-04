@@ -559,6 +559,7 @@ service_restart_circuit_breaker_body()
 label = "crash";
 program = "$(pwd)/crash.sh";
 restart = "always";
+max_failures = 3;
 EOF
 
 	start_stress_oracled
@@ -1068,6 +1069,7 @@ crash_throttle_mixed_exit_modes_body()
 label = "die-signal";
 program = "$(pwd)/die-signal.sh";
 restart = "always";
+max_failures = 3;
 EOF
 
 	start_stress_oracled

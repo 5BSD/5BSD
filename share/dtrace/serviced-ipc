@@ -1,0 +1,48 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * serviced-ipc -- trace service pair channel messages.
+ *
+ * Shows each message received from a service on its pair channel
+ * (ready, register, unregister, lookup) and the reply sent back.
+ *
+ * Usage: serviced-ipc
+ */
+
+#pragma D option quiet
+
+inline string svc_op[uint32_t op] =
+	op == 1 ? "READY" :
+	op == 2 ? "REGISTER" :
+	op == 3 ? "UNREGISTER" :
+	op == 4 ? "LOOKUP" :
+	"UNKNOWN";
+
+dtrace:::BEGIN
+{
+	printf("Tracing service pair IPC... Ctrl-C for summary.\n\n");
+	printf("%-20s %-5s %-20s %-12s %s\n",
+	    "TIME", "DIR", "SERVICE", "OP", "STATUS");
+}
+
+serviced*:::ipc-recv
+{
+	printf("%-20Y %-5s %-20s %-12s\n", walltimestamp,
+	    "RECV", copyinstr(arg0), svc_op[arg1]);
+	@msgs[copyinstr(arg0), svc_op[arg1]] = count();
+}
+
+serviced*:::ipc-reply
+{
+	printf("%-20Y %-5s %-20s %-12s status=%d\n", walltimestamp,
+	    "REPLY", copyinstr(arg0), svc_op[arg1], arg2);
+}
+
+dtrace:::END
+{
+	printf("\n--- Messages by service ---\n");
+	printa("  %-20s %-12s %@d\n", @msgs);
+}

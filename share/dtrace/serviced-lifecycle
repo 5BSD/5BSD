@@ -1,0 +1,75 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * serviced-lifecycle -- trace service state transitions.
+ *
+ * Shows each service lifecycle event: start, exec, exit, restart,
+ * stop, disable.  On exit, prints per-service event counts.
+ *
+ * Usage: serviced-lifecycle
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing serviced lifecycle... Ctrl-C for summary.\n\n");
+	printf("%-20s %-20s %-10s %s\n",
+	    "TIME", "SERVICE", "EVENT", "DETAIL");
+}
+
+serviced*:::svc-start
+{
+	printf("%-20Y %-20s %-10s pid %d\n", walltimestamp,
+	    copyinstr(arg0), "START", arg1);
+	@events[copyinstr(arg0), "start"] = count();
+}
+
+serviced*:::svc-exec
+{
+	printf("%-20Y %-20s %-10s pid %d\n", walltimestamp,
+	    copyinstr(arg0), "EXEC", arg1);
+}
+
+serviced*:::svc-exit
+{
+	printf("%-20Y %-20s %-10s pid %d status %d\n", walltimestamp,
+	    copyinstr(arg0), "EXIT", arg1, arg2);
+	@events[copyinstr(arg0), "exit"] = count();
+}
+
+serviced*:::svc-restart
+{
+	printf("%-20Y %-20s %-10s count %d\n", walltimestamp,
+	    copyinstr(arg0), "RESTART", arg1);
+	@events[copyinstr(arg0), "restart"] = count();
+}
+
+serviced*:::svc-stop
+{
+	printf("%-20Y %-20s %-10s pid %d\n", walltimestamp,
+	    copyinstr(arg0), "STOP", arg1);
+	@events[copyinstr(arg0), "stop"] = count();
+}
+
+serviced*:::svc-disabled
+{
+	printf("%-20Y %-20s %-10s after %d failures\n", walltimestamp,
+	    copyinstr(arg0), "DISABLED", arg1);
+	@events[copyinstr(arg0), "disabled"] = count();
+}
+
+serviced*:::svc-load
+{
+	printf("%-20Y %-20s %-10s\n", walltimestamp,
+	    copyinstr(arg0), "LOAD");
+}
+
+dtrace:::END
+{
+	printf("\n--- Events by service ---\n");
+	printa("  %-20s %-10s %@d\n", @events);
+}

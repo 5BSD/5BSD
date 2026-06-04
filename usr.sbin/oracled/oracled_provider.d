@@ -6,9 +6,10 @@ provider oracled {
 	/* Lifecycle */
 	probe startup();
 	probe shutdown(int reason);
+	probe shutdown__done(uint64_t duration_ns);
 	probe config__load(const char *path);
 
-	/* Claims */
+	/* Claims — authority resource acquisition at startup/reload */
 	probe claim__path(const char *path);
 	probe claim__path__fail(const char *path);
 	probe claim__net(int port, int protocol);
@@ -20,17 +21,25 @@ provider oracled {
 	/* Control socket */
 	probe ctl__accept(uid_t uid);
 	probe ctl__cmd(uint32_t op, uid_t uid);
+	probe ctl__cmd__done(uint32_t op, uid_t uid, int status, uint64_t duration_ns);
 	probe ctl__deny(uint32_t op, uid_t uid);
-
-	/* Service lifecycle */
-	probe svc__start(const char *label, pid_t pid);
-	probe svc__exec(const char *label, pid_t pid);
-	probe svc__exit(const char *label, pid_t pid, int status);
-	probe svc__restart(const char *label, unsigned int count);
-	probe svc__load(const char *label);
 
 	/* Reload */
 	probe reload();
+
+	/* Token minting — serviced requests capabilities for children */
+	probe mint__path(const char *path, int result);
+	probe mint__net(int port, int protocol, int result);
+	probe mint__system(uint32_t gates, int result);
+	probe pair__create(int result);
+	probe coalition__create(int result);
+
+	/* Oracle protocol IPC — pair channel to serviced */
+	probe ipc__recv(uint32_t op);
+	probe ipc__reply(uint32_t op, int status);
+
+	/* Connection tracking */
+	probe conn__count(unsigned int nconns);
 
 	/* Errors */
 	probe error(const char *subsys, const char *msg);

@@ -28,12 +28,12 @@
 #include <dev/cap_rt/cap_rt_ioctl.h>
 
 #include "serviced.h"
+#include "serviced_probes.h"
 
 /* Restart backoff parameters. */
 #define	RESTART_MIN_UPTIME_SEC	5	/* rapid restart threshold */
 #define	RESTART_MAX_DELAY_SEC	30
 #define	RESTART_RESET_SEC	60	/* reset counter after stability */
-#define	RESTART_MAX_FAILURES	5	/* circuit breaker threshold */
 
 /* Monotonic counters for unique timer idents.  High bit
  * distinguishes stop timers from restart timers. */
@@ -79,6 +79,7 @@ schedule_restart(struct svc_runtime *svc, int kq)
 
 	syslog(LOG_INFO, "service %s: scheduling restart in %us",
 	    svc->manifest.label, delay);
+	SERVICED_PROBE_SVC_RESTART(svc->manifest.label, svc->restart_count);
 
 	svc->timer_ident = timer_next_ident++;
 	EV_SET(&kev, svc->timer_ident, EVFILT_TIMER,
@@ -87,8 +88,11 @@ schedule_restart(struct svc_runtime *svc, int kq)
 	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
 		syslog(LOG_ERR, "service %s: kevent timer: %m",
 		    svc->manifest.label);
-	else
+	else {
 		svc->restart_pending = true;
+		SERVICED_PROBE_TIMEOUT_ARM(svc->manifest.label,
+		    "restart", delay);
+	}
 }
 
 static void
@@ -104,8 +108,11 @@ schedule_stop_kill(struct svc_runtime *svc, int kq)
 	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
 		syslog(LOG_ERR, "service %s: stop timer: %m",
 		    svc->manifest.label);
-	else
+	else {
 		svc->stop_kill_pending = true;
+		SERVICED_PROBE_TIMEOUT_ARM(svc->manifest.label,
+		    "stop-kill", (unsigned)svc->manifest.stop_timeout);
+	}
 }
 
 static void
@@ -200,6 +207,7 @@ supervisor_handle_procdesc(struct kevent *kev)
 		svc->state = SVC_STATE_RUNNING;
 		syslog(LOG_INFO, "service %s: exec confirmed (pid %jd)",
 		    svc->manifest.label, (intmax_t)svc->pid);
+		SERVICED_PROBE_SVC_EXEC(svc->manifest.label, svc->pid);
 	}
 
 	if (kev->fflags & NOTE_EXIT) {
@@ -219,6 +227,9 @@ supervisor_handle_procdesc(struct kevent *kev)
 			    "(pid %jd)", svc->manifest.label,
 			    WTERMSIG(exit_status),
 			    (intmax_t)svc->pid);
+
+		SERVICED_PROBE_SVC_EXIT(svc->manifest.label,
+		    svc->pid, exit_status);
 
 		was_stopping = (svc->state == SVC_STATE_STOPPING);
 		reload_pending = svc->reload_pending;
@@ -273,9 +284,11 @@ supervisor_handle_procdesc(struct kevent *kev)
 			svc->restart_count = 1;
 
 		/* Circuit breaker: disable service after too many failures. */
-		if (svc->restart_count >= RESTART_MAX_FAILURES) {
+		if (svc->restart_count >= svc->manifest.max_failures) {
 			syslog(LOG_CRIT, "service %s: failed %u times, "
 			    "disabling", svc->manifest.label,
+			    svc->restart_count);
+			SERVICED_PROBE_SVC_DISABLED(svc->manifest.label,
 			    svc->restart_count);
 			svc->state = SVC_STATE_STOPPED;
 			return;
@@ -303,6 +316,7 @@ supervisor_handle_timer(struct kevent *kev)
 	if (svc->stop_kill_pending && kev->ident == svc->stop_timer_ident) {
 		svc->stop_kill_pending = false;
 		svc->stop_timer_ident = 0;
+		SERVICED_PROBE_TIMEOUT_FIRE(svc->manifest.label, "stop-kill");
 		syslog(LOG_WARNING, "service %s: stop timeout, "
 		    "sending SIGKILL", svc->manifest.label);
 		if (svc->pd_fd >= 0)
@@ -313,6 +327,7 @@ supervisor_handle_timer(struct kevent *kev)
 	if (svc->restart_pending && kev->ident == svc->timer_ident) {
 		svc->restart_pending = false;
 		svc->timer_ident = 0;
+		SERVICED_PROBE_TIMEOUT_FIRE(svc->manifest.label, "restart");
 		if (sd.shutting_down) {
 			syslog(LOG_INFO, "service %s: restart cancelled "
 			    "(shutting down)", svc->manifest.label);
@@ -339,6 +354,7 @@ svc_graceful_stop(struct svc_runtime *svc, int kq)
 	svc->state = SVC_STATE_STOPPING;
 	syslog(LOG_INFO, "service %s: stopping (pid %jd)",
 	    svc->manifest.label, (intmax_t)svc->pid);
+	SERVICED_PROBE_SVC_STOP(svc->manifest.label, svc->pid);
 
 	if (svc->pd_fd >= 0)
 		pdkill(svc->pd_fd, SIGTERM);

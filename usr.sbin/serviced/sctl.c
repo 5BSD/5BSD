@@ -31,6 +31,7 @@
 
 #include "serviced.h"
 #include "serviced_ctl.h"
+#include "serviced_probes.h"
 
 /* Module-private state. */
 static int sctl_sock = -1;
@@ -42,8 +43,8 @@ static char sctl_path[PATH_MAX];
 /*
  * Per-connection nonblocking state machine.
  *
- * Lifecycle: READING_HDR -> dispatch -> WRITING_REPLY ->
- *            [WRITING_SUMMARY ->] DONE.
+ * Lifecycle: READING_HDR -> [READING_PAYLOAD ->] dispatch ->
+ *            WRITING_REPLY -> [WRITING_SUMMARY ->] DONE.
  */
 enum sctl_conn_state {
 	SCTL_CONN_READING_HDR,
@@ -68,6 +69,7 @@ struct sctl_conn {
 	char			payload[SERVICED_CTL_MAX_PAYLOAD + 1];
 
 	uintptr_t		timer_ident;
+	struct timespec		accept_ts;	/* monotonic time at accept */
 };
 
 static TAILQ_HEAD(, sctl_conn) conn_list = TAILQ_HEAD_INITIALIZER(conn_list);
@@ -168,6 +170,7 @@ conn_destroy(struct sctl_conn *c)
 	close(c->fd);
 	TAILQ_REMOVE(&conn_list, c, entry);
 	nconns--;
+	SERVICED_PROBE_CONN_CLOSE(nconns);
 	free(c);
 }
 
@@ -208,6 +211,8 @@ conn_dispatch(struct sctl_conn *c)
 		goto write;
 	}
 
+	SERVICED_PROBE_SCTL_CMD(req->op, c->euid);
+
 	switch (req->op) {
 	case SCTL_OP_STATUS:
 	case SCTL_OP_SERVICES:
@@ -233,6 +238,7 @@ conn_dispatch(struct sctl_conn *c)
 			reply->flags = (uint32_t)strlen(c->summary);
 			syslog(LOG_WARNING,
 			    "sctl: reload denied uid %u", c->euid);
+			SERVICED_PROBE_SCTL_DENY(req->op, c->euid);
 		} else {
 			supervisor_reload(serviced_kq,
 			    c->summary, sizeof(c->summary));
@@ -248,6 +254,7 @@ conn_dispatch(struct sctl_conn *c)
 			    "%s: permission denied",
 			    req->op == SCTL_OP_CHECK ? "check" : "load");
 			reply->flags = (uint32_t)strlen(c->summary);
+			SERVICED_PROBE_SCTL_DENY(req->op, c->euid);
 		} else if (req->datalen == 0) {
 			reply->status = EINVAL;
 			snprintf(c->summary, sizeof(c->summary),
@@ -574,9 +581,11 @@ sctl_accept(void)
 	c->fd = cfd;
 	c->euid = euid;
 	c->state = SCTL_CONN_READING_HDR;
+	clock_gettime(CLOCK_MONOTONIC, &c->accept_ts);
 
 	TAILQ_INSERT_TAIL(&conn_list, c, entry);
 	nconns++;
+	SERVICED_PROBE_CONN_ACCEPT(euid, nconns);
 
 	EV_SET(&kev, cfd, EVFILT_READ, EV_ADD, 0, 0, c);
 	if (kevent(serviced_kq, &kev, 1, NULL, 0, NULL) == -1) {
@@ -613,8 +622,18 @@ sctl_conn_event(struct kevent *kev)
 	else if (kev->filter == EVFILT_WRITE)
 		conn_handle_write(c);
 
-	if (c->state == SCTL_CONN_DONE)
+	if (c->state == SCTL_CONN_DONE) {
+		struct timespec now;
+		uint64_t dur;
+
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		dur = (uint64_t)(now.tv_sec - c->accept_ts.tv_sec) *
+		    1000000000ULL +
+		    (uint64_t)(now.tv_nsec - c->accept_ts.tv_nsec);
+		SERVICED_PROBE_SCTL_CMD_DONE(c->req.op, c->euid,
+		    c->reply.status, dur);
 		conn_destroy(c);
+	}
 }
 
 bool

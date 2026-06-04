@@ -31,6 +31,7 @@
 #include <unistd.h>
 
 #include "serviced.h"
+#include "serviced_probes.h"
 
 #define	SVC_PAIR_FD	3	/* well-known fd for the pair channel */
 #define	SVC_TOKEN_BASE	4	/* tokens start at fd 4 */
@@ -295,15 +296,20 @@ svc_exec(struct svc_runtime *svc, int kq)
 	    &oracle_end, &child_end) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: failed to create pair",
 		    m->label);
+		SERVICED_PROBE_CAP_PAIR(m->label, -1);
 		return (-1);
 	}
+	SERVICED_PROBE_CAP_PAIR(m->label, 0);
 
 	/* Create coalition via oracle. */
 	coalition_fd = caprt_create_coalition();
 	if (coalition_fd == -1) {
 		syslog(LOG_WARNING, "svc_exec %s: failed to create coalition",
 		    m->label);
+		SERVICED_PROBE_CAP_COALITION(m->label, -1);
 		/* Continue without coalition — not fatal. */
+	} else {
+		SERVICED_PROBE_CAP_COALITION(m->label, 0);
 	}
 
 	/* Mint tokens via oracle. */
@@ -314,8 +320,10 @@ svc_exec(struct svc_runtime *svc, int kq)
 		if (tfd == -1) {
 			syslog(LOG_WARNING, "svc_exec %s: failed to mint "
 			    "token for %s", m->label, m->cap_paths[i]);
+			SERVICED_PROBE_CAP_MINT(m->label, "path", -1);
 			continue;
 		}
+		SERVICED_PROBE_CAP_MINT(m->label, "path", 0);
 		token_fds[ntokens++] = tfd;
 	}
 	for (i = 0; i < m->ncap_net; i++) {
@@ -323,18 +331,23 @@ svc_exec(struct svc_runtime *svc, int kq)
 		if (tfd == -1) {
 			syslog(LOG_WARNING, "svc_exec %s: failed to mint "
 			    "network token %u", m->label, i);
+			SERVICED_PROBE_CAP_MINT(m->label, "net", -1);
 			continue;
 		}
+		SERVICED_PROBE_CAP_MINT(m->label, "net", 0);
 		token_fds[ntokens++] = tfd;
 	}
 	if (m->cap_system != 0) {
 		int tfd = oracle_mint_system(sd.oracle_pair_fd,
 		    m->cap_system);
-		if (tfd == -1)
+		if (tfd == -1) {
 			syslog(LOG_WARNING, "svc_exec %s: failed to mint "
 			    "system token", m->label);
-		else
+			SERVICED_PROBE_CAP_MINT(m->label, "system", -1);
+		} else {
+			SERVICED_PROBE_CAP_MINT(m->label, "system", 0);
 			token_fds[ntokens++] = tfd;
+		}
 	}
 
 	if (ntokens > 0)
@@ -415,5 +428,6 @@ svc_exec(struct svc_runtime *svc, int kq)
 
 	syslog(LOG_INFO, "service %s: started pid %jd",
 	    m->label, (intmax_t)pid);
+	SERVICED_PROBE_SVC_START(m->label, pid);
 	return (0);
 }

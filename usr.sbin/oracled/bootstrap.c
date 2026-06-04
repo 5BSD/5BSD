@@ -27,6 +27,7 @@
 
 #include "oracled.h"
 #include "oracled_svc_proto.h"
+#include "probes.h"
 
 /* Restart policy constants. */
 #define	BOOTSTRAP_MIN_UPTIME	5	/* seconds before reset */
@@ -264,6 +265,7 @@ bootstrap_start(int kq)
 	pid = pdfork(&pd_fd, PD_CLOEXEC);
 	if (pid == -1) {
 		syslog(LOG_ERR, "bootstrap: pdfork: %m");
+		ORACLED_PROBE_ERROR("bootstrap", "pdfork failed");
 		close(oracle_end);
 		close(child_end);
 		if (dfds.pair_svc_fd >= 0) close(dfds.pair_svc_fd);
@@ -389,6 +391,7 @@ bootstrap_handle_exit(struct kevent *kev, int kq)
 		syslog(LOG_CRIT,
 		    "bootstrap: serviced failed %u times, giving up",
 		    bs.restart_count);
+		ORACLED_PROBE_ERROR("bootstrap", "circuit breaker tripped");
 		return;
 	}
 

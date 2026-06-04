@@ -1,0 +1,44 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * serviced-latency -- measure servicectl command latency.
+ *
+ * Shows each completed control command with its total latency
+ * (accept to reply-written) and builds histograms by command.
+ *
+ * Usage: serviced-latency
+ */
+
+#pragma D option quiet
+
+inline string sctl_op[uint32_t op] =
+	op == 1 ? "status" :
+	op == 2 ? "reload" :
+	op == 3 ? "services" :
+	op == 4 ? "check" :
+	op == 5 ? "load" :
+	"unknown";
+
+dtrace:::BEGIN
+{
+	printf("Tracing servicectl latency... Ctrl-C for histograms.\n\n");
+	printf("%-20s %-12s %-6s %-8s %s\n",
+	    "TIME", "COMMAND", "UID", "STATUS", "LATENCY");
+}
+
+serviced*:::sctl-cmd-done
+{
+	this->us = arg3 / 1000;
+	printf("%-20Y %-12s %-6d %-8d %d us\n", walltimestamp,
+	    sctl_op[arg0], arg1, arg2, this->us);
+	@lat[sctl_op[arg0]] = quantize(this->us);
+}
+
+dtrace:::END
+{
+	printf("\n--- Latency by command (microseconds) ---\n");
+	printa(@lat);
+}

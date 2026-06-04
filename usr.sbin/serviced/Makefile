@@ -14,4 +14,9 @@ CFLAGS+=	-I${SRCTOP}/usr.sbin/oracled
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD=		ucl util
 
+.if ${MK_DTRACE} != "no"
+SRCS+=		serviced_provider.d
+CFLAGS+=	-I${.OBJDIR}
+.endif
+
 .include <bsd.prog.mk>

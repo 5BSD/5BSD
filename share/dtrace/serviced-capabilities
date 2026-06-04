@@ -1,0 +1,55 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * serviced-capabilities -- trace per-service capability acquisition.
+ *
+ * Shows each capability token, pair, and coalition created for a
+ * service during exec.  On exit, prints capability counts by service.
+ *
+ * Usage: serviced-capabilities
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing serviced capability flow... Ctrl-C for summary.\n\n");
+	printf("%-20s %-20s %-10s %s\n",
+	    "TIME", "SERVICE", "TYPE", "RESULT");
+}
+
+serviced*:::cap-mint
+{
+	printf("%-20Y %-20s %-10s %s\n", walltimestamp,
+	    copyinstr(arg0), copyinstr(arg1),
+	    arg2 == 0 ? "OK" : "FAIL");
+	@by_svc[copyinstr(arg0), copyinstr(arg1)] = count();
+	@by_result[arg2 == 0 ? "success" : "failure"] = count();
+}
+
+serviced*:::cap-pair
+{
+	printf("%-20Y %-20s %-10s %s\n", walltimestamp,
+	    copyinstr(arg0), "pair",
+	    arg1 == 0 ? "OK" : "FAIL");
+	@by_svc[copyinstr(arg0), "pair"] = count();
+}
+
+serviced*:::cap-coalition
+{
+	printf("%-20Y %-20s %-10s %s\n", walltimestamp,
+	    copyinstr(arg0), "coalition",
+	    arg1 == 0 ? "OK" : "FAIL");
+	@by_svc[copyinstr(arg0), "coalition"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Capabilities by service ---\n");
+	printa("  %-20s %-10s %@d\n", @by_svc);
+	printf("\n--- Overall ---\n");
+	printa("  %-10s %@d\n", @by_result);
+}

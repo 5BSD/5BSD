@@ -22,6 +22,7 @@
 
 #include "oracled.h"
 #include "oracled_svc_proto.h"
+#include "probes.h"
 
 static int	proto_pair_fd = -1;
 static bool	serviced_ready;
@@ -52,6 +53,7 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 		syslog(LOG_WARNING, "oracle_proto: reply: %m");
 		return (-1);
 	}
+	ORACLED_PROBE_IPC_REPLY(0, status); /* op filled by caller context */
 	return (0);
 }
 
@@ -127,16 +129,19 @@ handle_mint_path(const void *payload, uint32_t len, uint64_t reply_token)
 	if (!path_is_claimed(req->path)) {
 		syslog(LOG_NOTICE, "oracle_proto: mint_path denied: %s",
 		    req->path);
+		ORACLED_PROBE_MINT_PATH(req->path, EACCES);
 		proto_reply(EACCES, reply_token, NULL, 0);
 		return;
 	}
 
 	token_fd = cap_rt_mint_path_token(req->path);
 	if (token_fd == -1) {
+		ORACLED_PROBE_MINT_PATH(req->path, EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
 		return;
 	}
 
+	ORACLED_PROBE_MINT_PATH(req->path, 0);
 	proto_reply(0, reply_token, &token_fd, 1);
 	close(token_fd);
 }
@@ -173,16 +178,19 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 	if (!net_is_claimed(&nc)) {
 		syslog(LOG_NOTICE, "oracle_proto: mint_net denied: %u/%d",
 		    nc.port, nc.protocol);
+		ORACLED_PROBE_MINT_NET(nc.port, nc.protocol, EACCES);
 		proto_reply(EACCES, reply_token, NULL, 0);
 		return;
 	}
 
 	token_fd = cap_rt_mint_net_token(&nc);
 	if (token_fd == -1) {
+		ORACLED_PROBE_MINT_NET(nc.port, nc.protocol, EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
 		return;
 	}
 
+	ORACLED_PROBE_MINT_NET(nc.port, nc.protocol, 0);
 	proto_reply(0, reply_token, &token_fd, 1);
 	close(token_fd);
 }
@@ -203,16 +211,19 @@ handle_mint_system(const void *payload, uint32_t len, uint64_t reply_token)
 		syslog(LOG_NOTICE,
 		    "oracle_proto: mint_system denied: 0x%x not in 0x%x",
 		    req->gates, od.cfg.claim_system);
+		ORACLED_PROBE_MINT_SYSTEM(req->gates, EACCES);
 		proto_reply(EACCES, reply_token, NULL, 0);
 		return;
 	}
 
 	token_fd = cap_rt_mint_system_token(req->gates);
 	if (token_fd == -1) {
+		ORACLED_PROBE_MINT_SYSTEM(req->gates, EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
 		return;
 	}
 
+	ORACLED_PROBE_MINT_SYSTEM(req->gates, 0);
 	proto_reply(0, reply_token, &token_fd, 1);
 	close(token_fd);
 }
@@ -223,10 +234,12 @@ handle_create_pair(uint64_t reply_token)
 	int fds[2];
 
 	if (cap_rt_create_pair(&fds[0], &fds[1]) == -1) {
+		ORACLED_PROBE_PAIR_CREATE(EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
 		return;
 	}
 
+	ORACLED_PROBE_PAIR_CREATE(0);
 	proto_reply(0, reply_token, fds, 2);
 	close(fds[0]);
 	close(fds[1]);
@@ -239,10 +252,12 @@ handle_create_coalition(uint64_t reply_token)
 
 	cfd = cap_rt_create_coalition();
 	if (cfd == -1) {
+		ORACLED_PROBE_COALITION_CREATE(EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
 		return;
 	}
 
+	ORACLED_PROBE_COALITION_CREATE(0);
 	proto_reply(0, reply_token, &cfd, 1);
 	close(cfd);
 }
@@ -307,6 +322,7 @@ proto_dispatch_one(void)
 	}
 
 	memcpy(&op, buf, sizeof(op));
+	ORACLED_PROBE_IPC_RECV(op);
 
 	switch (op) {
 	case ORACLE_OP_MINT_PATH:

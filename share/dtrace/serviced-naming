@@ -1,0 +1,62 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * serviced-naming -- trace the naming registry.
+ *
+ * Shows name registrations, unregistrations, lookups, and denials
+ * in the reverse-domain-name service registry.
+ *
+ * Usage: serviced-naming
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing naming registry... Ctrl-C for summary.\n\n");
+	printf("%-20s %-8s %-30s %s\n",
+	    "TIME", "EVENT", "NAME", "SERVICE");
+}
+
+serviced*:::naming-register
+{
+	printf("%-20Y %-8s %-30s %s\n", walltimestamp,
+	    "REG", copyinstr(arg0), copyinstr(arg1));
+	@ops["register"] = count();
+}
+
+serviced*:::naming-unregister
+{
+	printf("%-20Y %-8s %-30s\n", walltimestamp,
+	    "UNREG", copyinstr(arg0));
+	@ops["unregister"] = count();
+}
+
+serviced*:::naming-lookup
+{
+	printf("%-20Y %-8s %-30s %s\n", walltimestamp,
+	    "LOOKUP", copyinstr(arg0), copyinstr(arg1));
+	@ops["lookup"] = count();
+	@lookups[copyinstr(arg0)] = count();
+}
+
+serviced*:::naming-deny
+{
+	printf("%-20Y %-8s %-30s errno=%d\n", walltimestamp,
+	    "DENY", copyinstr(arg0), arg1);
+	@ops["denied"] = count();
+	@denials[copyinstr(arg0)] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Operation counts ---\n");
+	printa("  %-12s %@d\n", @ops);
+	printf("\n--- Top looked-up names ---\n");
+	printa("  %-30s %@d\n", @lookups);
+	printf("\n--- Denied names ---\n");
+	printa("  %-30s %@d\n", @denials);
+}

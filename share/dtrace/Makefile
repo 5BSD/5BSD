@@ -28,7 +28,18 @@ SCRIPTS=	blocking \
 		nfsclienttime \
 		oracled-claims \
 		oracled-control \
+		oracled-ipc \
+		oracled-latency \
 		oracled-lifecycle \
+		oracled-minting \
+		serviced-capabilities \
+		serviced-connections \
+		serviced-ipc \
+		serviced-latency \
+		serviced-lifecycle \
+		serviced-naming \
+		serviced-shutdown \
+		serviced-timeouts \
 		siftr \
 		tcpconn \
 		tcpdebug \

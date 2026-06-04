@@ -35,6 +35,7 @@ int event_kq = -1;
 
 static bool pending_reboot;
 static int pending_reboot_howto;
+static struct timespec shutdown_start_ts;
 
 static void
 add_signal_event(int kq, int sig)
@@ -63,6 +64,7 @@ shutdown_begin(int reason)
 		syslog(LOG_INFO, "stopping via control socket");
 
 	od.shutting_down = true;
+	clock_gettime(CLOCK_MONOTONIC, &shutdown_start_ts);
 	bootstrap_stop();
 
 	{
@@ -102,6 +104,16 @@ shutdown_finish(void)
 		_exit(1);
 	}
 
+	{
+		struct timespec now;
+		uint64_t dur;
+
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		dur = (uint64_t)(now.tv_sec - shutdown_start_ts.tv_sec) *
+		    1000000000ULL +
+		    (uint64_t)(now.tv_nsec - shutdown_start_ts.tv_nsec);
+		ORACLED_PROBE_SHUTDOWN_DONE(dur);
+	}
 	closelog();
 	od.running = false;
 }
@@ -130,6 +142,7 @@ sighup_reload(void)
 	struct oracled_config newcfg;
 
 	syslog(LOG_INFO, "reload requested (SIGHUP)");
+	ORACLED_PROBE_RELOAD();
 	config_init_defaults(&newcfg);
 	if (config_load(&newcfg, od.conffile) == 0) {
 		if (!od.test_mode)

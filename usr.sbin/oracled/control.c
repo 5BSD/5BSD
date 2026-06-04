@@ -73,6 +73,7 @@ struct ctl_conn {
 	int			reboot_howto;
 
 	uintptr_t		timer_ident;
+	struct timespec		accept_ts;	/* monotonic time at accept */
 };
 
 static TAILQ_HEAD(, ctl_conn) conn_list = TAILQ_HEAD_INITIALIZER(conn_list);
@@ -117,6 +118,7 @@ conn_destroy(struct ctl_conn *c)
 	close(c->fd);
 	TAILQ_REMOVE(&conn_list, c, entry);
 	nconns--;
+	ORACLED_PROBE_CONN_COUNT(nconns);
 	free(c);
 }
 
@@ -506,9 +508,11 @@ ctl_accept(void)
 	c->fd = cfd;
 	c->euid = euid;
 	c->state = CTL_CONN_READING_HDR;
+	clock_gettime(CLOCK_MONOTONIC, &c->accept_ts);
 
 	TAILQ_INSERT_TAIL(&conn_list, c, entry);
 	nconns++;
+	ORACLED_PROBE_CONN_COUNT(nconns);
 
 	EV_SET(&kev, cfd, EVFILT_READ, EV_ADD, 0, 0, c);
 	if (kevent(event_kq, &kev, 1, NULL, 0, NULL) == -1) {
@@ -549,6 +553,15 @@ ctl_conn_event(struct kevent *kev, int *reboot_howto)
 		conn_handle_write(c);
 
 	if (c->state == CTL_CONN_DONE) {
+		struct timespec now;
+		uint64_t dur;
+
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		dur = (uint64_t)(now.tv_sec - c->accept_ts.tv_sec) *
+		    1000000000ULL +
+		    (uint64_t)(now.tv_nsec - c->accept_ts.tv_nsec);
+		ORACLED_PROBE_CTL_CMD_DONE(c->req.op, c->euid,
+		    c->reply.status, dur);
 		action = c->action;
 		if (reboot_howto != NULL)
 			*reboot_howto = c->reboot_howto;

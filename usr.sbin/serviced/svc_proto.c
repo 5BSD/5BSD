@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include "serviced.h"
+#include "serviced_probes.h"
 #include "serviced_svc_proto.h"
 
 /*
@@ -49,6 +50,8 @@ svc_pair_reply(struct svc_runtime *svc, int status,
 	if (ioctl(svc->pair_fd, CAP_RT_SENDMSG, &sa) == -1)
 		syslog(LOG_WARNING, "service %s: pair reply: %m",
 		    svc->manifest.label);
+	else
+		SERVICED_PROBE_IPC_REPLY(svc->manifest.label, 0, status);
 }
 
 static void
@@ -185,6 +188,7 @@ supervisor_handle_pair(struct kevent *kev)
 	}
 
 	memcpy(&op, buf, sizeof(op));
+	SERVICED_PROBE_IPC_RECV(svc->manifest.label, op);
 
 	switch (op) {
 	case SVC_OP_READY:

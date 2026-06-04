@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #include "serviced.h"
+#include "serviced_probes.h"
 #include "serviced_svc_proto.h"
 
 #define	NAMING_HASH_SIZE	64
@@ -127,6 +128,7 @@ naming_register(const char *name, struct svc_runtime *owner)
 	if (!name_valid(name)) {
 		syslog(LOG_WARNING, "naming: invalid name '%s' from '%s'",
 		    name, owner->manifest.label);
+		SERVICED_PROBE_NAMING_DENY(name, EINVAL);
 		return (EINVAL);
 	}
 
@@ -153,6 +155,7 @@ naming_register(const char *name, struct svc_runtime *owner)
 			syslog(LOG_WARNING,
 			    "naming: '%s' denied: not in label or provides[] "
 			    "for '%s'", name, owner->manifest.label);
+			SERVICED_PROBE_NAMING_DENY(name, EACCES);
 			return (EACCES);
 		}
 	}
@@ -187,6 +190,7 @@ naming_register(const char *name, struct svc_runtime *owner)
 
 	syslog(LOG_INFO, "naming: '%s' registered by '%s'",
 	    name, owner->manifest.label);
+	SERVICED_PROBE_NAMING_REGISTER(name, owner->manifest.label);
 	return (0);
 }
 
@@ -210,6 +214,7 @@ naming_unregister(const char *name, struct svc_runtime *owner)
 			*pp = e->next;
 			free(e);
 			syslog(LOG_INFO, "naming: '%s' unregistered", name);
+			SERVICED_PROBE_NAMING_UNREGISTER(name);
 			return (0);
 		}
 	}
@@ -321,6 +326,7 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 
 	syslog(LOG_DEBUG, "naming: '%s' connected '%s' to '%s'",
 	    name, requester->manifest.label, provider->manifest.label);
+	SERVICED_PROBE_NAMING_LOOKUP(name, requester->manifest.label);
 
 	*errp = 0;
 	return (client_end);

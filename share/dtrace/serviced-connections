@@ -1,0 +1,57 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * serviced-connections -- trace control socket connections.
+ *
+ * Shows connection accept/close events with the current connection
+ * count.  Tracks high-water mark and connection rates.
+ *
+ * Usage: serviced-connections
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing control socket connections... Ctrl-C for summary.\n\n");
+	printf("%-20s %-8s %-6s %-6s %s\n",
+	    "TIME", "DAEMON", "EVENT", "CONNS", "DETAIL");
+	sctl_hwm = 0;
+	ctl_hwm = 0;
+}
+
+serviced*:::conn-accept
+{
+	printf("%-20Y %-8s %-6s %-6d uid=%d\n", walltimestamp,
+	    "sctl", "OPEN", arg1, arg0);
+	sctl_hwm = arg1 > sctl_hwm ? arg1 : sctl_hwm;
+	@sctl_rate["accept"] = count();
+}
+
+serviced*:::conn-close
+{
+	printf("%-20Y %-8s %-6s %-6d\n", walltimestamp,
+	    "sctl", "CLOSE", arg0);
+	@sctl_rate["close"] = count();
+}
+
+oracled*:::conn-count
+{
+	printf("%-20Y %-8s %-6s %-6d\n", walltimestamp,
+	    "ctl", "COUNT", arg0);
+	ctl_hwm = arg0 > ctl_hwm ? arg0 : ctl_hwm;
+	@ctl_rate["change"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- serviced control socket ---\n");
+	printa("  %-8s %@d\n", @sctl_rate);
+	printf("  high-water: %d\n", sctl_hwm);
+	printf("\n--- oracled control socket ---\n");
+	printa("  %-8s %@d\n", @ctl_rate);
+	printf("  high-water: %d\n", ctl_hwm);
+}

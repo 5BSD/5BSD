@@ -1,0 +1,65 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * oracled-minting -- trace capability token minting requests.
+ *
+ * Shows each token mint request from serviced with the resource
+ * being minted and the result (0=success, errno=failure).
+ *
+ * Usage: oracled-minting
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing oracled token minting... Ctrl-C for summary.\n\n");
+	printf("%-20s %-8s %-8s %s\n",
+	    "TIME", "TYPE", "RESULT", "RESOURCE");
+}
+
+oracled*:::mint-path
+{
+	printf("%-20Y %-8s %-8s %s\n", walltimestamp,
+	    "path", arg1 == 0 ? "OK" : "DENIED",
+	    copyinstr(arg0));
+	@by_result[arg1 == 0 ? "path:ok" : "path:denied"] = count();
+}
+
+oracled*:::mint-net
+{
+	printf("%-20Y %-8s %-8s port %d/%s\n", walltimestamp,
+	    "net", arg2 == 0 ? "OK" : "DENIED",
+	    arg0, arg1 == 6 ? "tcp" : arg1 == 17 ? "udp" : "?");
+	@by_result[arg2 == 0 ? "net:ok" : "net:denied"] = count();
+}
+
+oracled*:::mint-system
+{
+	printf("%-20Y %-8s %-8s gates=0x%x\n", walltimestamp,
+	    "system", arg1 == 0 ? "OK" : "DENIED", arg0);
+	@by_result[arg1 == 0 ? "system:ok" : "system:denied"] = count();
+}
+
+oracled*:::pair-create
+{
+	printf("%-20Y %-8s %-8s\n", walltimestamp,
+	    "pair", arg0 == 0 ? "OK" : "FAIL");
+	@by_result[arg0 == 0 ? "pair:ok" : "pair:fail"] = count();
+}
+
+oracled*:::coalition-create
+{
+	printf("%-20Y %-8s %-8s\n", walltimestamp,
+	    "coalit", arg0 == 0 ? "OK" : "FAIL");
+	@by_result[arg0 == 0 ? "coalition:ok" : "coalition:fail"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Minting summary ---\n");
+	printa("  %-24s %@d\n", @by_result);
+}

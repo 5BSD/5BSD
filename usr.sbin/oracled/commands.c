@@ -121,6 +121,7 @@ cmd_reload(uid_t euid, int kq __unused, struct ctl_reply *reply,
 	}
 
 	syslog(LOG_INFO, "control: reload uid %u", euid);
+	ORACLED_PROBE_RELOAD();
 
 	off = 0;
 	claims_failed = 0;

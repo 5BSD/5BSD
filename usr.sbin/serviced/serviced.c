@@ -37,6 +37,7 @@
 #include <unistd.h>
 
 #include "serviced.h"
+#include "serviced_probes.h"
 
 struct serviced_state sd;
 int serviced_kq;
@@ -304,9 +305,13 @@ main(int argc, char *argv[])
 
 	/* Graceful shutdown: stop all services. */
 	supervisor_stop(serviced_kq);
+	SERVICED_PROBE_SHUTDOWN_START(sd.nservices);
 	{
 		struct kevent sevents[8];
+		struct timespec drain_start;
 		int w, si, sn;
+
+		clock_gettime(CLOCK_MONOTONIC, &drain_start);
 
 		w = 0;
 		while (!supervisor_is_stopped() && w < 600) {  /* 60 seconds */
@@ -321,6 +326,16 @@ main(int argc, char *argv[])
 				}
 			}
 			w++;
+		}
+		{
+			struct timespec now;
+			uint64_t dur;
+
+			clock_gettime(CLOCK_MONOTONIC, &now);
+			dur = (uint64_t)(now.tv_sec - drain_start.tv_sec) *
+			    1000000000ULL +
+			    (uint64_t)(now.tv_nsec - drain_start.tv_nsec);
+			SERVICED_PROBE_SHUTDOWN_DONE(dur);
 		}
 	}
 	supervisor_teardown_state();
