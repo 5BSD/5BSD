@@ -333,6 +333,9 @@ config_load(struct oracled_config *cfg, const char *path)
 	    sizeof(cfg->manifest_dir));
 	cfg_string(root, "service_manager", cfg->service_manager,
 	    sizeof(cfg->service_manager));
+	cfg_string(root, "serviced_control_socket",
+	    cfg->serviced_control_socket,
+	    sizeof(cfg->serviced_control_socket));
 	cfg_mode(root, cfg);
 
 	/* Sections */

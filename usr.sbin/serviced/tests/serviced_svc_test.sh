@@ -263,7 +263,7 @@ EOF
 	atf_check -s exit:0 -o ignore oraclectl -s "$sockpath" shutdown
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
-	atf_check -s not-exit:0 kill -0 "$svc_pid"
+	atf_check -s not-exit:0 -e ignore kill -0 "$svc_pid"
 }
 shutdown_kills_sigterm_ignorer_cleanup()
 {
@@ -310,7 +310,8 @@ EOF
 	atf_check -s exit:0 -o ignore oraclectl -s "$sockpath" shutdown
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
-	atf_check -s not-exit:0 kill -0 "$child_pid"
+	atf_check -s not-exit:0 -e ignore kill -0 "$child_pid"
+	atf_check -s not-exit:0 -e ignore kill -0 "$(cat subtree-parent.pid)"
 }
 shutdown_kills_subtree_cleanup()
 {

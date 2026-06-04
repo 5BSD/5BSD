@@ -62,12 +62,23 @@ kill_subtree(void)
 	memset(&rs, 0, sizeof(rs));
 	if (procctl(P_PID, getpid(), PROC_REAP_STATUS, &rs) == 0 &&
 	    rs.rs_descendants > 0) {
+		int attempts;
+
 		syslog(LOG_WARNING, "%u descendant(s) still alive, "
 		    "sending SIGKILL", rs.rs_descendants);
 		memset(&rk, 0, sizeof(rk));
 		rk.rk_sig = SIGKILL;
 		(void)procctl(P_PID, getpid(), PROC_REAP_KILL, &rk);
-		reap_children();
+
+		/* Wait for all descendants to actually exit. */
+		for (attempts = 0; attempts < 50; attempts++) {
+			reap_children();
+			memset(&rs, 0, sizeof(rs));
+			if (procctl(P_PID, getpid(), PROC_REAP_STATUS,
+			    &rs) != 0 || rs.rs_descendants == 0)
+				break;
+			usleep(10000); /* 10ms */
+		}
 	}
 }
 

@@ -104,8 +104,8 @@ cleanup_common()
 	pkill -9 -f "oracled.d" 2>/dev/null || true
 	sleep 0.2
 	rm -rf oracled.pid oracled.conf oracled.d oracled.sock \
-	    oracled.log *.out *.pid *.sh *.c \
-	    provider_svc client_svc ready_svc
+	    serviced.sock oracled.log lookup-name *.out *.pid *.sh *.c \
+	    provider_svc client_svc ready_svc squat_svc
 }
 
 write_executable()

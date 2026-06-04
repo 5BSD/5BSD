@@ -463,7 +463,16 @@ sctl_setup(void)
 	struct sockaddr_un un;
 	int fd;
 
-	strlcpy(sctl_path, SERVICED_CTL_SOCK, sizeof(sctl_path));
+	{
+		const char *env_path;
+
+		env_path = getenv("SERVICED_CONTROL_SOCKET");
+		if (env_path != NULL && env_path[0] != '\0')
+			strlcpy(sctl_path, env_path, sizeof(sctl_path));
+		else
+			strlcpy(sctl_path, SERVICED_CTL_SOCK,
+			    sizeof(sctl_path));
+	}
 
 	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (fd == -1) {

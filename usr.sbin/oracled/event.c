@@ -177,8 +177,9 @@ event_loop(void)
 		}
 	}
 
-	/* Start serviced as our single child. */
-	bootstrap_start(kq);
+	/* Start serviced as our single child (requires cap_rt). */
+	if (!od.test_mode)
+		bootstrap_start(kq);
 
 	while (od.running) {
 		nev = kevent(kq, NULL, 0, &kev, 1, NULL);

@@ -96,7 +96,7 @@ int main(void)
 	return 0;
 }
 CEOF
-	atf_check -s exit:0 cc -Wall -I/usr/src/sys -o ready_svc ready_svc.c
+	atf_check -s exit:0 -e ignore cc -Wall -I/usr/src/sys -o ready_svc ready_svc.c
 }
 
 #
@@ -169,7 +169,7 @@ int main(void)
 	if (!fd_str) return 1;
 	pair_fd = atoi(fd_str);
 
-	name = getenv("PROVIDER_NAME");
+	name = getenv("ORACLED_LABEL");
 	if (!name) name = "test.provider.default";
 
 	/* Send READY. */
@@ -227,7 +227,7 @@ int main(void)
 	return 0;
 }
 CEOF
-	atf_check -s exit:0 cc -Wall -I/usr/src/sys -o provider_svc provider_svc.c
+	atf_check -s exit:0 -e ignore cc -Wall -I/usr/src/sys -o provider_svc provider_svc.c
 }
 
 #
@@ -265,7 +265,7 @@ int main(void)
 	struct svc_req_hdr ready_req;
 	struct svc_lookup_req lookup_req;
 	struct svc_reply rpl;
-	const char *fd_str, *name;
+	const char *fd_str, *name = NULL;
 	int pair_fd, peer_fd;
 	char msg[256];
 	FILE *out;
@@ -274,8 +274,20 @@ int main(void)
 	if (!fd_str) return 1;
 	pair_fd = atoi(fd_str);
 
-	name = getenv("LOOKUP_NAME");
-	if (!name) name = "test.provider.default";
+	/* Read lookup name from file (env vars are stripped by serviced). */
+	{
+		FILE *lf = fopen("lookup-name", "r");
+		static char lbuf[256];
+		if (lf != NULL) {
+			if (fgets(lbuf, sizeof(lbuf), lf) != NULL) {
+				size_t l = strlen(lbuf);
+				if (l > 0 && lbuf[l-1] == '\n') lbuf[l-1] = '\0';
+				name = lbuf;
+			}
+			fclose(lf);
+		}
+	}
+	if (!name) name = "test.provider";
 
 	/* Send READY. */
 	ready_req.op = SVC_OP_READY;
@@ -334,7 +346,7 @@ int main(void)
 	return 0;
 }
 CEOF
-	atf_check -s exit:0 cc -Wall -I/usr/src/sys -o client_svc client_svc.c
+	atf_check -s exit:0 -e ignore cc -Wall -I/usr/src/sys -o client_svc client_svc.c
 }
 
 # -------------------------------------------------------------------
@@ -391,8 +403,6 @@ naming_register_and_lookup_body()
 	find_serviced
 
 	prepare_paths
-	export PROVIDER_NAME="test.provider"
-	export LOOKUP_NAME="test.provider"
 
 	cat > "$manifestdir/aaa-provider.ucl" <<EOF
 label = "test.provider";
@@ -404,6 +414,8 @@ label = "client";
 program = "$(pwd)/client_svc";
 requires = ["test-api"];
 EOF
+	# Client reads lookup target from file.
+	echo "test.provider" > lookup-name
 	write_config
 	start_oracled
 
@@ -443,7 +455,7 @@ EOF
 }
 naming_register_and_lookup_cleanup()
 {
-	unset PROVIDER_NAME LOOKUP_NAME 2>/dev/null || true
+	rm -f lookup-name
 	cleanup_common
 }
 
@@ -463,7 +475,7 @@ naming_lookup_nonexistent_body()
 	find_serviced
 
 	prepare_paths
-	export LOOKUP_NAME="no.such.service"
+	echo "no.such.service" > lookup-name
 
 	cat > "$manifestdir/client.ucl" <<EOF
 label = "client";
@@ -483,7 +495,7 @@ EOF
 }
 naming_lookup_nonexistent_cleanup()
 {
-	unset LOOKUP_NAME 2>/dev/null || true
+	rm -f lookup-name
 	cleanup_common
 }
 
@@ -503,7 +515,6 @@ naming_auto_unregister_on_exit_body()
 	find_serviced
 
 	prepare_paths
-	export PROVIDER_NAME="test.unreg"
 
 	cat > "$manifestdir/provider.ucl" <<EOF
 label = "test.unreg";
@@ -522,8 +533,7 @@ EOF
 	# Kill the provider.
 	provider_pid=$(grep "^pid=" provider-registered.out 2>/dev/null | head -1 | cut -d= -f2)
 	if [ -z "$provider_pid" ]; then
-		# Get pid from log instead.
-		provider_pid=$(grep "service provider: exec confirmed (pid" "$logfile" | head -1 | sed 's/.*pid \([0-9]*\)).*/\1/')
+		provider_pid=$(grep "service test.unreg: exec confirmed (pid" "$logfile" | head -1 | sed 's/.*pid \([0-9]*\)).*/\1/')
 	fi
 	if [ -n "$provider_pid" ]; then
 		kill "$provider_pid" 2>/dev/null || true
@@ -532,11 +542,10 @@ EOF
 
 	# Check the log for auto-unregister.
 	atf_check -s exit:0 -o ignore \
-	    grep "auto-unregistered.*provider" "$logfile"
+	    grep "auto-unregistered.*test.unreg" "$logfile"
 }
 naming_auto_unregister_on_exit_cleanup()
 {
-	unset PROVIDER_NAME 2>/dev/null || true
 	cleanup_common
 }
 
@@ -627,7 +636,7 @@ int main(void)
 	return (0);
 }
 CEOF
-	atf_check -s exit:0 cc -Wall -I/usr/src/sys -o squat_svc squat_svc.c
+	atf_check -s exit:0 -e ignore cc -Wall -I/usr/src/sys -o squat_svc squat_svc.c
 
 	start_oracled
 	prepare_paths

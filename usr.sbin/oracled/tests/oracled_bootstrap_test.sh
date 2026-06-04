@@ -93,7 +93,7 @@ send_op(int pair_fd, uint32_t op)
 int
 main(void)
 {
-	const char *fd_str, *mode;
+	const char *fd_str, *mode = NULL;
 	int pair_fd;
 	FILE *out;
 
@@ -384,6 +384,9 @@ bootstrap_no_service_manager_head()
 }
 bootstrap_no_service_manager_body()
 {
+	if ! sh -c 'exec 3</dev/cap_rt' 2>/dev/null; then
+		atf_skip "/dev/cap_rt not available"
+	fi
 	prepare_paths
 	mkdir -p "$(pwd)/oracled.d"
 

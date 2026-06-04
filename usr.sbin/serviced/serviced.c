@@ -166,7 +166,7 @@ main(int argc, char *argv[])
 	sd.coalition_svc_fd = -1;
 	sd.capprotect_fd = -1;
 
-	openlog("serviced", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	openlog("serviced", LOG_PID | LOG_NDELAY | LOG_PERROR, LOG_DAEMON);
 
 	/* Parse arguments. */
 	while ((ch = getopt(argc, argv, "d:")) != -1) {

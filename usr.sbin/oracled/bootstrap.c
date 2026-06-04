@@ -73,20 +73,28 @@ bootstrap_child_exec(int child_pair_fd, const struct bootstrap_delegate_fds *d)
 	char pair_env[64];
 	char pair_svc_env[64], coalition_svc_env[64], capprotect_env[64];
 	char manifest_env[PATH_MAX + 32];
-	char *env[8];
+	char ctlsock_env[PATH_MAX + 32];
+	char *env[9];
 	char *argv[2];
 	int nullfd, fd, safe_base;
 	int src_fds[4], dst_fds[4];
 	unsigned envc, i, nfds;
 
-	/* Redirect stdio to /dev/null. */
+	/*
+	 * Redirect stdio to /dev/null.  In foreground mode, preserve
+	 * stderr so serviced's LOG_PERROR output reaches the same
+	 * destination as oracled's (useful for test log capture).
+	 */
 	nullfd = open("/dev/null", O_RDWR);
 	if (nullfd == -1)
 		_exit(126);
 	if (dup2(nullfd, STDIN_FILENO) == -1 ||
-	    dup2(nullfd, STDOUT_FILENO) == -1 ||
-	    dup2(nullfd, STDERR_FILENO) == -1)
+	    dup2(nullfd, STDOUT_FILENO) == -1)
 		_exit(126);
+	if (!od.foreground) {
+		if (dup2(nullfd, STDERR_FILENO) == -1)
+			_exit(126);
+	}
 	if (nullfd > STDERR_FILENO)
 		(void)close(nullfd);
 
@@ -171,6 +179,13 @@ bootstrap_child_exec(int child_pair_fd, const struct bootstrap_delegate_fds *d)
 		(void)snprintf(manifest_env, sizeof(manifest_env),
 		    "SERVICED_MANIFEST_DIR=%s", od.cfg.manifest_dir);
 		env[envc++] = manifest_env;
+	}
+
+	if (od.cfg.serviced_control_socket[0] != '\0') {
+		(void)snprintf(ctlsock_env, sizeof(ctlsock_env),
+		    "SERVICED_CONTROL_SOCKET=%s",
+		    od.cfg.serviced_control_socket);
+		env[envc++] = ctlsock_env;
 	}
 
 	env[envc] = NULL;

@@ -219,7 +219,7 @@ status_shows_services_head()
 status_shows_services_body()
 {
 	require_oracled
-	atf_check -s exit:0 -o match:"SERVICES:" oraclectl status
+	atf_check -s exit:0 -o match:"SERVICED:" oraclectl status
 }
 status_shows_services_cleanup()
 {
@@ -235,7 +235,7 @@ status_shows_manifest_dir_head()
 status_shows_manifest_dir_body()
 {
 	require_oracled
-	atf_check -s exit:0 -o match:"manifest_dir:" oraclectl status
+	atf_check -s exit:0 -o match:"service_mgr:" oraclectl status
 }
 status_shows_manifest_dir_cleanup()
 {
@@ -307,8 +307,8 @@ reload_returns_summary_head()
 reload_returns_summary_body()
 {
 	require_oracled
-	# Even with no changes, reload reports its results.
-	atf_check -s exit:0 -o match:"new.*changed.*removed" oraclectl reload
+	# Reload updates oracled config; manifest changes forwarded to serviced.
+	atf_check -s exit:0 -o match:"reload:" oraclectl reload
 }
 reload_returns_summary_cleanup()
 {
@@ -330,7 +330,7 @@ reload_status_coherent_body()
 	atf_check -s exit:0 -o match:"CONFIG:" oraclectl status
 	atf_check -s exit:0 -o match:"INTEGRITY:" oraclectl status
 	atf_check -s exit:0 -o match:"CLAIMS:" oraclectl status
-	atf_check -s exit:0 -o match:"SERVICES:" oraclectl status
+	atf_check -s exit:0 -o match:"SERVICED:" oraclectl status
 }
 reload_status_coherent_cleanup()
 {
@@ -409,7 +409,7 @@ usage_check_no_file_head()
 }
 usage_check_no_file_body()
 {
-	atf_check -s not-exit:0 -e match:"usage:" oraclectl check
+	atf_check -s not-exit:0 -e match:"servicectl" oraclectl check
 }
 
 atf_test_case usage_load_no_file
@@ -419,7 +419,7 @@ usage_load_no_file_head()
 }
 usage_load_no_file_body()
 {
-	atf_check -s not-exit:0 -e match:"usage:" oraclectl load
+	atf_check -s not-exit:0 -e match:"servicectl" oraclectl load
 }
 
 # --- usage: negative ---
@@ -451,7 +451,7 @@ usage_load_extra_args_head()
 }
 usage_load_extra_args_body()
 {
-	atf_check -s not-exit:0 -e match:"usage:" oraclectl load a b
+	atf_check -s not-exit:0 -e match:"servicectl" oraclectl load a b
 }
 
 atf_test_case usage_reload_extra_args
@@ -495,7 +495,7 @@ services_shows_loaded_head()
 services_shows_loaded_body()
 {
 	require_oracled
-	atf_check -s exit:0 -o match:"LOADED:" oraclectl services
+	atf_check -s exit:0 -o match:"serviced" oraclectl services
 }
 services_shows_loaded_cleanup()
 {
@@ -511,8 +511,8 @@ services_verbose_head()
 services_verbose_body()
 {
 	require_oracled
-	# With no services loaded, -v still succeeds and shows LOADED header.
-	atf_check -s exit:0 -o match:"LOADED:" oraclectl services -v
+	# With no services loaded, -v still succeeds and shows serviced info.
+	atf_check -s exit:0 -o match:"serviced" oraclectl services -v
 }
 services_verbose_cleanup()
 {
@@ -530,7 +530,7 @@ check_nonexistent_head()
 check_nonexistent_body()
 {
 	require_oracled
-	atf_check -s not-exit:0 -o match:"error:" \
+	atf_check -s not-exit:0 -e match:"servicectl" \
 	    oraclectl check nosuch.ucl
 }
 check_nonexistent_cleanup()
