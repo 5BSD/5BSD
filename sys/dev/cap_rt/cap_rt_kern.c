@@ -84,6 +84,11 @@ cap_rt_resolve_proc(struct file **fds, int nfds, struct proc **pp)
 		return (ESRCH);
 	}
 	PROC_LOCK(p);
+	if (p->p_flag & P_WEXIT) {
+		PROC_UNLOCK(p);
+		sx_sunlock(&proctree_lock);
+		return (ESRCH);
+	}
 	_PHOLD(p);
 	sx_sunlock(&proctree_lock);
 

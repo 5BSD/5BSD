@@ -346,7 +346,9 @@ node_op_set_rtprio(struct thread *td __unused, struct proc *p,
 	case RTP_PRIO_NORMAL:
 		break;
 	default:
-		return (EINVAL);
+		memset(rp, 0, sizeof(*rp));
+		rp->status = NODE_STATUS_ERR;
+		return (0);
 	}
 
 	ttd = FIRST_THREAD_IN_PROC(p);
@@ -436,7 +438,7 @@ node_op_reap(struct thread *td, struct proc *p, int cmd,
 		return (0);
 	}
 
-	if (cmd == PROC_REAP_ACQUIRE && (p->p_flag & P_WEXIT)) {
+	if (p->p_flag & P_WEXIT) {
 		rp->status = NODE_STATUS_DEAD;
 		return (0);
 	}
@@ -470,6 +472,11 @@ node_op_reap_status(struct thread *td, struct proc *p,
 	NODE_REPLY_INIT(rp, replylenp);
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	if (p->p_flag & P_WEXIT) {
+		rp->status = NODE_STATUS_DEAD;
+		return (0);
+	}
 
 	_PHOLD(p);
 	PROC_UNLOCK(p);
@@ -1098,8 +1105,8 @@ node_call(struct cap_rt_instance *s __unused,
 {
 	const struct node_request *nr;
 	struct proc *p;
-	sbintime_t start;
-	pid_t target_pid;
+	sbintime_t start __unused;
+	pid_t target_pid __unused;
 	int error;
 
 	start = getsbinuptime();
@@ -1252,8 +1259,8 @@ node_call(struct cap_rt_instance *s __unused,
 		break;
 	}
 
-	PROC_UNLOCK(p);
 	_PRELE(p);
+	PROC_UNLOCK(p);
 	SDT_PROBE6(cap_rt_node, , , call__done, nr->op, target_pid,
 	    curthread->td_proc->p_pid,
 	    (error == 0 && *replylenp >= sizeof(uint32_t)) ?

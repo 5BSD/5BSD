@@ -344,8 +344,8 @@ accounting_call(struct cap_rt_instance *s __unused,
 		break;
 	}
 
-	PROC_UNLOCK(p);
 	_PRELE(p);
+	PROC_UNLOCK(p);
 	return (error);
 }
 

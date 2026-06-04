@@ -223,7 +223,7 @@ fi_auth_add(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 {
 	struct fi_auth *fa;
 
-	fa = malloc(sizeof(*fa), M_FILE_ISOLATION, M_WAITOK);
+	fa = malloc(sizeof(*fa), M_FILE_ISOLATION, M_WAITOK | M_ZERO);
 	fa->fa_accessor = accessor;
 	fa->fa_owner = owner;
 	fa->fa_claim_id = claim_id;
@@ -1424,7 +1424,7 @@ fi_call(struct cap_rt_instance *s,
 				return (ENOENT);
 			}
 			if (mc->fi_nonce != caller_nonce) {
-				uint64_t owner = mc->fi_nonce;
+				uint64_t owner __unused = mc->fi_nonce;
 
 				rw_runlock(&fi_lock);
 				SDT_PROBE6(cap_rt_isolation, , , state,
