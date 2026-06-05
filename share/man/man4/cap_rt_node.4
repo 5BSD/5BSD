@@ -1,0 +1,509 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd June 5, 2026
+.Dt CAP_RT_NODE 4
+.Os
+.Sh NAME
+.Nm cap_rt_node
+.Nd CAP_RT per-process inspection and control service
+.Sh SYNOPSIS
+To load at boot:
+.Bd -literal -offset indent
+echo 'cap_rt_node_load="YES"' >> /boot/loader.conf
+.Ed
+.Pp
+Wire protocol header:
+.Bd -literal -offset indent
+#include <dev/cap_rt/cap_rt_node_proto.h>
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+service provides per-process inspection and control via attached
+process descriptors.
+It replaces direct syscall-based process management with a
+capability-mediated interface.
+.Pp
+The service is accessed via
+.Dv CAP_RT_CALL
+on an instance fd obtained from
+.Dv CAP_RT_CONNECT
+with the service name
+.Dq node .
+All operations are synchronous.
+.Pp
+If a process descriptor fd is attached to the call, the operation
+targets the process identified by that descriptor.
+If no fd is attached, the operation targets the caller.
+Authority comes from holding the node service fd, not from
+Capsicum rights on the process descriptor.
+.Ss Request Header
+All operations begin with the following wire structure:
+.Bd -literal -offset indent
+struct node_request {
+	uint32_t	op;	  /* NODE_OP_* */
+	uint32_t	resource; /* RLIMIT_*, RACCT_*, procctl com */
+} __packed;
+.Ed
+.Ss Status Codes
+Every reply begins with a
+.Vt uint32_t
+status field:
+.Bl -column "Dv NODE_STATUS_EPERM" "Value" -offset indent
+.It Sy Constant Ta Sy Value Ta Sy Meaning
+.It Dv NODE_STATUS_OK Ta 0 Ta success
+.It Dv NODE_STATUS_ERR Ta 1 Ta general error
+.It Dv NODE_STATUS_DEAD Ta 2 Ta process has exited
+.It Dv NODE_STATUS_EPERM Ta 3 Ta permission denied
+.El
+.Ss Observation Operations
+.Bl -tag -width "NODE_OP_GET_PROCCTL"
+.It Dv NODE_OP_STAT Pq 1
+Return the target process's PID, state, thread count, a subset of
+.Dv p_flag
+flags, and the command name.
+.Bd -literal -offset indent
+struct node_stat_reply {
+	uint32_t	status;
+	int32_t		pid;
+	uint32_t	state;
+	uint32_t	numthreads;
+	uint32_t	flags;
+	uint32_t	_pad;
+	char		name[20];
+} __packed;
+.Ed
+.It Dv NODE_OP_CRED Pq 2
+Return the target's credentials: effective and real uid/gid,
+supplementary groups, jail identity, and capability nonce.
+.Bd -literal -offset indent
+struct node_cred_reply {
+	uint32_t	status;
+	uint32_t	uid;
+	uint32_t	gid;
+	uint32_t	ruid;
+	uint32_t	rgid;
+	int32_t		prison_id;
+	uint64_t	nonce;
+	uint32_t	ngroups;
+	uint32_t	groups[NODE_MAXGROUPS]; /* 16 */
+} __packed;
+.Ed
+.It Dv NODE_OP_RUSAGE Pq 3
+Return live resource usage for the target process.
+.Bd -literal -offset indent
+struct node_rusage_reply {
+	uint32_t	status;
+	uint32_t	_pad;
+	int64_t		utime_usec;
+	int64_t		stime_usec;
+	int64_t		maxrss;
+	int64_t		nvcsw;
+	int64_t		nivcsw;
+	int64_t		inblock;
+	int64_t		oublock;
+} __packed;
+.Ed
+.It Dv NODE_OP_GET_RLIMIT Pq 4
+Return the current and maximum values for the resource limit
+specified in
+.Fa resource .
+The resource is a
+.Dv RLIMIT_*
+constant.
+.Bd -literal -offset indent
+struct node_rlimit_reply {
+	uint32_t	status;
+	uint32_t	resource;
+	int64_t		rlim_cur;
+	int64_t		rlim_max;
+} __packed;
+.Ed
+.It Dv NODE_OP_GET_RACCT Pq 6
+Return the current usage, limit, and available headroom for the
+racct
+counter specified in
+.Fa resource .
+Returns
+.Dv NODE_STATUS_ERR
+if the kernel was not built with
+.Dv RACCT .
+.Bd -literal -offset indent
+struct node_racct_reply {
+	uint32_t	status;
+	uint32_t	resource;
+	int64_t		usage;
+	int64_t		limit;
+	int64_t		available;
+} __packed;
+.Ed
+.It Dv NODE_OP_GET_NICE Pq 7
+Return the target's scheduling priority (nice value).
+.Bd -literal -offset indent
+struct node_nice_reply {
+	uint32_t	status;
+	int32_t		nice;
+} __packed;
+.Ed
+.It Dv NODE_OP_GET_AFFINITY Pq 9
+Return the target's CPU affinity mask as a cpuset bitmask.
+The mask is the union of all thread masks in the process.
+.Bd -literal -offset indent
+#define	NODE_CPUSET_MAXSIZE	128
+
+struct node_affinity_reply {
+	uint32_t	status;
+	uint32_t	size;
+	uint8_t		mask[NODE_CPUSET_MAXSIZE];
+} __packed;
+.Ed
+.It Dv NODE_OP_GET_PROCCTL Pq 11
+Return the value of a
+.Xr procctl 2
+status query.
+The
+.Fa resource
+field in the request header selects the command.
+Allowed commands:
+.Dv PROC_TRACE_STATUS ,
+.Dv PROC_TRAPCAP_STATUS ,
+.Dv PROC_PDEATHSIG_STATUS ,
+.Dv PROC_ASLR_STATUS ,
+.Dv PROC_PROTMAX_STATUS ,
+.Dv PROC_STACKGAP_STATUS ,
+.Dv PROC_NO_NEW_PRIVS_STATUS ,
+.Dv PROC_WXMAP_STATUS ,
+.Dv PROC_LOGSIGEXIT_STATUS .
+.Bd -literal -offset indent
+struct node_procctl_reply {
+	uint32_t	status;
+	uint32_t	com;
+	int32_t		val;
+	uint32_t	_pad;
+} __packed;
+.Ed
+.It Dv NODE_OP_GET_UMASK Pq 16
+Return the target's file creation mask.
+.Bd -literal -offset indent
+struct node_umask_reply {
+	uint32_t	status;
+	uint32_t	mask;
+} __packed;
+.Ed
+.It Dv NODE_OP_GET_RTPRIO Pq 19
+Return the scheduler class and priority of the target's first thread.
+.Bd -literal -offset indent
+struct node_rtprio_reply {
+	uint32_t	status;
+	uint32_t	type;	/* NODE_RTPRIO_* */
+	uint32_t	prio;	/* 0\(en31 within class */
+	uint32_t	_pad;
+} __packed;
+.Ed
+.Pp
+Scheduler class constants:
+.Bl -column "Dv NODE_RTPRIO_REALTIME" "Value" -offset indent
+.It Sy Constant Ta Sy Value
+.It Dv NODE_RTPRIO_REALTIME Ta 2
+.It Dv NODE_RTPRIO_NORMAL Ta 3
+.It Dv NODE_RTPRIO_IDLE Ta 4
+.It Dv NODE_RTPRIO_FIFO Ta 10
+.El
+.It Dv NODE_OP_GET_PDEATHSIG Pq 22
+Return the signal that will be delivered to the target when its
+parent exits.
+A value of 0 means disabled.
+.Bd -literal -offset indent
+struct node_pdeathsig_reply {
+	uint32_t	status;
+	uint32_t	signal;
+} __packed;
+.Ed
+.El
+.Ss Control Operations
+.Bl -tag -width "NODE_OP_SET_PDEATHSIG"
+.It Dv NODE_OP_SET_RLIMIT Pq 5
+Set a resource limit on the target process.
+.Bd -literal -offset indent
+struct node_rlimit_set {
+	uint32_t	op;
+	uint32_t	resource;
+	int64_t		rlim_cur;
+	int64_t		rlim_max;
+} __packed;
+.Ed
+.Pp
+Returns
+.Vt struct node_rlimit_reply
+with the resulting limit values.
+.It Dv NODE_OP_SET_NICE Pq 8
+Set the target's scheduling priority.
+Values are clamped to
+.Dv PRIO_MIN
+through
+.Dv PRIO_MAX .
+.Bd -literal -offset indent
+struct node_nice_set {
+	uint32_t	op;
+	uint32_t	_pad;
+	int32_t		nice;
+	uint32_t	_pad2;
+} __packed;
+.Ed
+.It Dv NODE_OP_SET_AFFINITY Pq 10
+Set the target's CPU affinity mask.
+.Bd -literal -offset indent
+struct node_affinity_set {
+	uint32_t	op;
+	uint32_t	size;
+	uint8_t		mask[NODE_CPUSET_MAXSIZE];
+} __packed;
+.Ed
+.It Dv NODE_OP_SET_PROCCTL Pq 12
+Set a
+.Xr procctl 2
+value on the target.
+Allowed commands:
+.Dv PROC_SPROTECT ,
+.Dv PROC_TRACE_CTL ,
+.Dv PROC_TRAPCAP_CTL ,
+.Dv PROC_PDEATHSIG_CTL ,
+.Dv PROC_ASLR_CTL ,
+.Dv PROC_PROTMAX_CTL ,
+.Dv PROC_STACKGAP_CTL ,
+.Dv PROC_NO_NEW_PRIVS_CTL ,
+.Dv PROC_WXMAP_CTL ,
+.Dv PROC_LOGSIGEXIT_CTL .
+.Bd -literal -offset indent
+struct node_procctl_set {
+	uint32_t	op;
+	uint32_t	com;
+	int32_t		val;
+	uint32_t	_pad;
+} __packed;
+.Ed
+.It Dv NODE_OP_SET_CRED Pq 13
+Set credentials on the target process via
+.Xr setcred 2 .
+The
+.Fa flags
+field selects which fields to apply:
+.Bl -column "Dv NODE_CREDF_GROUPS" "0x40" -offset indent
+.It Sy Flag Ta Sy Value Ta Sy Field
+.It Dv NODE_CREDF_UID Ta 0x01 Ta effective uid
+.It Dv NODE_CREDF_RUID Ta 0x02 Ta real uid
+.It Dv NODE_CREDF_SVUID Ta 0x04 Ta saved uid
+.It Dv NODE_CREDF_GID Ta 0x08 Ta effective gid
+.It Dv NODE_CREDF_RGID Ta 0x10 Ta real gid
+.It Dv NODE_CREDF_SVGID Ta 0x20 Ta saved gid
+.It Dv NODE_CREDF_GROUPS Ta 0x40 Ta supplementary groups
+.El
+.Bd -literal -offset indent
+struct node_cred_set {
+	uint32_t	op;
+	uint32_t	flags;
+	uint32_t	uid;
+	uint32_t	ruid;
+	uint32_t	svuid;
+	uint32_t	gid;
+	uint32_t	rgid;
+	uint32_t	svgid;
+	uint32_t	ngroups;
+	uint32_t	groups[NODE_CRED_MAXGROUPS]; /* 16 */
+} __packed;
+.Ed
+.Pp
+Returns
+.Vt struct node_cred_reply
+with the resulting credentials.
+At most
+.Dv NODE_CRED_MAXGROUPS
+(16) supplementary groups may be set.
+.It Dv NODE_OP_SET_SESSION Pq 14
+Create a new session, equivalent to
+.Xr setsid 2 .
+Self-only: returns
+.Er EOPNOTSUPP
+if the target is not the caller.
+.Bd -literal -offset indent
+struct node_session_reply {
+	uint32_t	status;
+	int32_t		sid;
+	int32_t		pgid;
+	uint32_t	_pad;
+} __packed;
+.Ed
+.It Dv NODE_OP_SET_PGRP Pq 15
+Set the process group, equivalent to
+.Xr setpgid 2 .
+Self-only: returns
+.Er EOPNOTSUPP
+if the target is not the caller.
+.Bd -literal -offset indent
+struct node_pgrp_set {
+	uint32_t	op;
+	uint32_t	_pad;
+	int32_t		pgid;	/* 0 = own pid */
+	uint32_t	_pad2;
+} __packed;
+.Ed
+.Pp
+Returns
+.Vt struct node_session_reply .
+.It Dv NODE_OP_SET_UMASK Pq 17
+Set the file creation mask.
+Returns the previous mask in the reply.
+.Bd -literal -offset indent
+struct node_umask_set {
+	uint32_t	op;
+	uint32_t	mask;
+} __packed;
+.Ed
+.It Dv NODE_OP_SET_LOGIN Pq 18
+Set the session login name.
+The name is truncated to
+.Dv NODE_MAXLOGNAME
+(17) bytes including the NUL terminator.
+.Bd -literal -offset indent
+struct node_login_set {
+	uint32_t	op;
+	uint32_t	_pad;
+	char		name[NODE_MAXLOGNAME];
+	uint8_t		_pad2[3];
+} __packed;
+.Ed
+.Pp
+Returns:
+.Bd -literal -offset indent
+struct node_login_reply {
+	uint32_t	status;
+	uint32_t	_pad;
+	char		name[NODE_MAXLOGNAME];
+	uint8_t		_pad2[3];
+} __packed;
+.Ed
+.It Dv NODE_OP_SET_RTPRIO Pq 20
+Set the scheduler class and priority of the target's first thread.
+.Bd -literal -offset indent
+struct node_rtprio_set {
+	uint32_t	op;
+	uint32_t	type;	/* NODE_RTPRIO_* */
+	uint32_t	prio;	/* 0\(en31 for RT/idle */
+	uint32_t	_pad;
+} __packed;
+.Ed
+.Pp
+Returns
+.Vt struct node_rtprio_reply .
+.It Dv NODE_OP_SET_PDEATHSIG Pq 21
+Set the signal delivered to the target when its parent exits.
+Unlike the kernel's self-only
+.Xr procctl 2
+interface, this allows remote targeting via the attached process
+descriptor.
+Set to 0 to disable.
+.Bd -literal -offset indent
+struct node_pdeathsig_set {
+	uint32_t	op;
+	uint32_t	signal;
+} __packed;
+.Ed
+.El
+.Ss Process Reaper Operations
+These operations manage the process reaper facility.
+.Dv NODE_OP_REAP_ACQUIRE
+and
+.Dv NODE_OP_REAP_RELEASE
+are self-only: the target must be the caller.
+.Bl -tag -width "NODE_OP_REAP_RELEASE"
+.It Dv NODE_OP_REAP_ACQUIRE Pq 23
+Become the reaper for descendant processes.
+Self-only.
+Returns
+.Vt struct node_status_reply .
+.It Dv NODE_OP_REAP_RELEASE Pq 24
+Relinquish the reaper role.
+Self-only.
+Returns
+.Vt struct node_status_reply .
+.Bd -literal -offset indent
+struct node_status_reply {
+	uint32_t	status;
+	uint32_t	_pad;
+} __packed;
+.Ed
+.It Dv NODE_OP_REAP_STATUS Pq 25
+Query the reaper's descendant information.
+.Bd -literal -offset indent
+struct node_reap_status_reply {
+	uint32_t	status;
+	uint32_t	rs_flags;
+	uint32_t	rs_children;
+	uint32_t	rs_descendants;
+	int32_t		rs_reaper;
+	int32_t		rs_pid;
+} __packed;
+.Ed
+.It Dv NODE_OP_REAP_KILL Pq 27
+Signal an entire subtree of reaped processes.
+Self-only.
+.Bd -literal -offset indent
+struct node_reap_kill_req {
+	uint32_t	op;
+	uint32_t	rk_sig;
+	uint32_t	rk_flags;
+	int32_t		rk_subtree;
+} __packed;
+
+struct node_reap_kill_reply {
+	uint32_t	status;
+	uint32_t	rk_killed;
+	int32_t		rk_fpid;
+	uint32_t	_pad;
+} __packed;
+.Ed
+.El
+.Sh DTRACE PROBES
+The following DTrace probes are provided under the
+.Nm cap_rt_node
+provider:
+.Bl -tag -width "call__done"
+.It Cm call__done Ns Pq Ar op, target_pid, caller_pid, status, error, duration
+Fires after every operation completes.
+.It Cm deny Ns Pq Ar reason, target_pid, caller_pid
+Fires when a mutating operation is denied.
+.El
+.Sh ERRORS
+In addition to the status codes returned in the reply structure,
+the service returns the following
+.Xr errno 2
+values from the
+.Xr cap_rt 4
+call:
+.Bl -tag -width "EOPNOTSUPP"
+.It Bq Er EINVAL
+The request is too small, the reply buffer is too small,
+.Fa resource
+is out of range, or the operation code is unknown.
+.It Bq Er ESRCH
+The attached process descriptor refers to a process that no longer
+exists.
+The reply status is set to
+.Dv NODE_STATUS_DEAD
+when the reply buffer is large enough.
+.It Bq Er EOPNOTSUPP
+.Dv NODE_OP_SET_SESSION
+or
+.Dv NODE_OP_SET_PGRP
+was called with a remote target.
+These operations are self-only.
+.El
+.Sh SEE ALSO
+.Xr pdfork 2 ,
+.Xr procctl 2 ,
+.Xr setpriority 2 ,
+.Xr cap_rt 4
+.Sh HISTORY
+.Nm
+first appeared in 5BSD.

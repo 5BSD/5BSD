@@ -1,0 +1,251 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd June 5, 2026
+.Dt CAP_RT_MOUNT 4
+.Os
+.Sh NAME
+.Nm cap_rt_mount
+.Nd CAP_RT capability-based filesystem mounting
+.Sh SYNOPSIS
+To load at boot:
+.Bd -literal -offset indent
+echo 'cap_rt_mount_load="YES"' >> /boot/loader.conf
+.Ed
+.Pp
+Wire protocol header:
+.Bd -literal -offset indent
+#include <dev/cap_rt/cap_rt_mount_proto.h>
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+service provides capability-mediated filesystem mounting and unmounting
+via
+.Dv CAP_RT_CALL .
+The service is registered under the name
+.Dq mount .
+.Pp
+The service handler runs in the caller's thread context via
+.Fn kernel_mount 9 ,
+so mounts are scoped to the caller's jail and chroot namespace.
+Enforcement is layered: the service constrains the request shape
+(allowed filesystem types, validated paths, approved flags), and
+the jail's
+.Va allow.mount.*
+parameters decide whether the filesystem type is permitted in
+that jail.
+.Ss Operations
+Requests begin with a
+.Vt uint32_t
+operation code:
+.Bl -tag -width "MOUNT_OP_UNMOUNT"
+.It Dv MOUNT_OP_MOUNT Pq 1
+Mount a filesystem.
+Uses
+.Vt struct mount_request .
+.It Dv MOUNT_OP_UNMOUNT Pq 2
+Unmount a filesystem.
+Uses
+.Vt struct unmount_request .
+.El
+.Ss Wire Structures
+.Bd -literal -offset indent
+#define MOUNT_MAXPATH    256
+#define MOUNT_MAXFSTYPE   16
+#define MOUNT_MAXFROM    256
+#define MOUNT_MAXOPTS    256
+
+struct mount_request {
+	uint32_t  op;                     /* MOUNT_OP_MOUNT */
+	uint32_t  flags;                  /* MOUNT_F_* */
+	char      fstype[MOUNT_MAXFSTYPE];
+	char      fspath[MOUNT_MAXPATH];
+	char      from[MOUNT_MAXFROM];    /* source for nullfs */
+	char      fsopts[MOUNT_MAXOPTS];  /* fs-specific options */
+} __packed;
+
+struct unmount_request {
+	uint32_t  op;                     /* MOUNT_OP_UNMOUNT */
+	uint32_t  flags;                  /* 0 or MOUNT_F_FORCE */
+	char      fspath[MOUNT_MAXPATH];
+} __packed;
+
+struct mount_reply {
+	uint32_t  status;
+	uint32_t  _pad;
+} __packed;
+.Ed
+.Ss Mount Flags
+.Bl -column "Dv MOUNT_F_NOSYMFOLLOW" "0x0040" "MNT_NOSYMFOLLOW" -offset indent
+.It Sy Constant Ta Sy Value Ta Sy Kernel flag
+.It Dv MOUNT_F_RDONLY Ta 0x0001 Ta MNT_RDONLY
+.It Dv MOUNT_F_NOEXEC Ta 0x0002 Ta MNT_NOEXEC
+.It Dv MOUNT_F_NOSUID Ta 0x0004 Ta MNT_NOSUID
+.It Dv MOUNT_F_NOATIME Ta 0x0008 Ta MNT_NOATIME
+.It Dv MOUNT_F_NOSYMFOLLOW Ta 0x0010 Ta MNT_NOSYMFOLLOW
+.It Dv MOUNT_F_NOCOVER Ta 0x0020 Ta MNT_NOCOVER
+.It Dv MOUNT_F_EMPTYDIR Ta 0x0040 Ta MNT_EMPTYDIR
+.El
+.Pp
+.Dv MNT_NOSYMFOLLOW
+is always forced regardless of the caller's flags, to prevent symlink
+TOCTOU between textual path validation and VFS resolution.
+.Pp
+For unmount,
+.Dv MOUNT_F_FORCE
+.Pq 0x8000
+maps to
+.Dv MNT_FORCE .
+.Ss Status Codes
+.Bl -column "Dv MOUNT_STATUS_ENOENT" "Value" -offset indent
+.It Sy Constant Ta Sy Value
+.It Dv MOUNT_STATUS_OK Ta 0
+.It Dv MOUNT_STATUS_ERR Ta 1
+.It Dv MOUNT_STATUS_EPERM Ta 2
+.It Dv MOUNT_STATUS_ENOENT Ta 3
+.It Dv MOUNT_STATUS_EBUSY Ta 4
+.El
+.Ss Allowed Filesystem Types
+The following filesystem types are whitelisted:
+.Pp
+.Bl -bullet -compact
+.It
+tmpfs
+.It
+devfs
+.It
+fdescfs
+.It
+nullfs
+.It
+procfs
+.It
+linprocfs
+.It
+linsysfs
+.El
+.Pp
+Any other filesystem type is rejected with
+.Dv MOUNT_STATUS_EPERM .
+.Ss Filesystem-Specific Options
+The
+.Fa fsopts
+field carries a comma-separated string of key=value pairs
+passed through to the filesystem's mount handler.
+Boolean options omit the value (e.g.,
+.Dq linrdlnk ) .
+The following keys are reserved and rejected:
+.Dq fstype ,
+.Dq fspath ,
+.Dq from ,
+.Dq errmsg ,
+and
+.Dq update .
+.Ss Path Validation
+All paths must be absolute and null-terminated within the buffer.
+Paths containing
+.Dq ..
+components (bounded by
+.Ql /
+or string boundaries) are rejected.
+For
+.Dv nullfs
+mounts, both
+.Fa fspath
+and
+.Fa from
+are validated.
+.Sh DTRACE PROBES
+The following DTrace probes are provided under the
+.Nm cap_rt_mount
+provider:
+.Bl -tag -width "state"
+.It Cm state Ns Pq Ar op, fstype, fspath, status, pid, error
+Fires on completion of mount and unmount operations.
+.It Cm deny Ns Pq Ar op, fstype, path
+Fires when a request is denied due to disallowed filesystem type
+or invalid path.
+.El
+.Sh EXAMPLES
+Mount tmpfs on
+.Pa /var/run :
+.Bd -literal -offset indent
+#include <dev/cap_rt/cap_rt_mount_proto.h>
+
+int mfd;
+struct mount_request req;
+struct mount_reply reply;
+
+mfd = cap_rt_connect("mount");
+
+memset(&req, 0, sizeof(req));
+req.op = MOUNT_OP_MOUNT;
+req.flags = MOUNT_F_NOSUID | MOUNT_F_NOEXEC;
+strlcpy(req.fstype, "tmpfs", sizeof(req.fstype));
+strlcpy(req.fspath, "/var/run", sizeof(req.fspath));
+strlcpy(req.fsopts, "size=64M,mode=1777", sizeof(req.fsopts));
+
+cap_rt_call(mfd, &req, sizeof(req), &reply, sizeof(reply));
+if (reply.status != MOUNT_STATUS_OK)
+	errx(1, "mount failed: status %u", reply.status);
+.Ed
+.Pp
+Unmount a filesystem:
+.Bd -literal -offset indent
+struct unmount_request ureq;
+struct mount_reply reply;
+
+memset(&ureq, 0, sizeof(ureq));
+ureq.op = MOUNT_OP_UNMOUNT;
+strlcpy(ureq.fspath, "/var/run", sizeof(ureq.fspath));
+
+cap_rt_call(mfd, &ureq, sizeof(ureq), &reply, sizeof(reply));
+.Ed
+.Pp
+Mount a nullfs overlay:
+.Bd -literal -offset indent
+struct mount_request req;
+struct mount_reply reply;
+
+memset(&req, 0, sizeof(req));
+req.op = MOUNT_OP_MOUNT;
+req.flags = MOUNT_F_RDONLY;
+strlcpy(req.fstype, "nullfs", sizeof(req.fstype));
+strlcpy(req.fspath, "/usr/local", sizeof(req.fspath));
+strlcpy(req.from, "/packages/usr-local", sizeof(req.from));
+
+cap_rt_call(mfd, &req, sizeof(req), &reply, sizeof(reply));
+.Ed
+.Sh ERRORS
+.Bl -tag -width Er
+.It Bq Er EINVAL
+Request too small, reply buffer too small, unknown operation code,
+or unknown flags in the request.
+.El
+.Pp
+Application-level errors are returned in the
+.Fa status
+field of
+.Vt struct mount_reply
+rather than as
+.Xr ioctl 2
+error codes.
+.Dv MOUNT_STATUS_EPERM
+indicates a disallowed filesystem type or a jail policy denial.
+.Dv MOUNT_STATUS_ENOENT
+indicates the mountpoint does not exist.
+.Dv MOUNT_STATUS_EBUSY
+indicates the mountpoint is busy.
+.Dv MOUNT_STATUS_ERR
+indicates invalid paths, unknown flags, reserved option keys,
+or other errors.
+.Sh SEE ALSO
+.Xr mount 2 ,
+.Xr unmount 2 ,
+.Xr cap_rt 4 ,
+.Xr jail 8 ,
+.Xr oracled 8
+.Sh HISTORY
+.Nm
+first appeared in 5BSD.

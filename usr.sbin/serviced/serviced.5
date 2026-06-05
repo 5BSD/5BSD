@@ -1,0 +1,333 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd June 5, 2026
+.Dt SERVICED 5
+.Os
+.Sh NAME
+.Nm serviced
+.Nd service manifest format for 5BSD
+.Sh DESCRIPTION
+Service manifests are UCL files read by
+.Xr serviced 8
+from the manifest directory
+.Pa /etc/oracled.d .
+Each
+.Pa *.ucl
+file declares one service.
+A maximum of 64 services may be loaded at any time.
+.Pp
+Labels must be globally unique across all manifests.
+Labels and capability names should use reverse-domain format
+(containing at least one dot) for the naming registry.
+.Ss Required Keys
+.Bl -tag -width "program"
+.It Va label
+Unique service identifier (e.g.,
+.Dq org.freebsd.sshd ) .
+Maximum 63 characters.
+Used in log messages, dependency references, the naming registry,
+and control socket responses.
+.It Va program
+Absolute path to the service executable.
+The file must exist and be executable.
+.El
+.Ss Optional Keys
+.Bl -tag -width "max_failures"
+.It Va description
+Human-readable description of the service.
+Cosmetic only.
+.It Va user
+Drop privileges to this user before executing the service.
+The user is resolved via
+.Xr getpwnam 3
+and supplementary groups via
+.Xr getgrouplist 3 .
+If the user does not exist, the manifest is rejected to prevent
+privilege escalation.
+.It Va group
+Drop privileges to this primary group.
+Overrides the group obtained from
+.Va user
+if both are specified.
+If the group does not exist, the manifest is rejected.
+.It Va restart
+Restart policy when the service exits.
+One of:
+.Bl -tag -width "on-failure" -compact
+.It Dq never
+Do not restart the service.
+This is the default.
+.It Dq always
+Restart unconditionally after exit.
+.It Dq on-failure
+Restart only on non-zero exit status or signal death.
+.El
+.It Va stop_timeout
+Seconds to wait after sending
+.Dv SIGTERM
+before escalating to
+.Dv SIGKILL .
+Clamped to the range 1\(en300.
+Default: 5.
+.It Va max_failures
+Circuit breaker threshold.
+After this many consecutive rapid failures, the service is permanently
+disabled until the next manifest reload.
+Clamped to the range 1\(en100.
+Default: 10.
+.It Va provides
+Array of capability names this service exports.
+Maximum 8 entries.
+Names must be unique across all loaded manifests; duplicate
+.Va provides
+names cause the manifest reload to be rejected.
+.It Va requires
+Array of capability names this service depends on.
+Maximum 8 entries.
+The service will not start until all required capabilities are
+available.
+.It Va capabilities
+Object containing capability tokens to delegate to the service.
+See
+.Sx Capabilities
+below.
+.It Va jail
+Object describing a jail to create for the service at launch time.
+See
+.Sx Jail
+below.
+.El
+.Ss Capabilities
+The
+.Va capabilities
+object requests capability tokens from
+.Xr oracled 8
+on behalf of the service.
+It may contain the following sub-keys:
+.Bl -tag -width "network"
+.It Va paths
+Array of absolute filesystem paths (maximum 16).
+.Xr serviced 8
+requests an isolation access token from the oracle for each path
+and passes it to the service at launch.
+.It Va files
+Array of fine-grained file capability objects (maximum 16).
+Each object contains:
+.Bl -tag -width "actions" -compact
+.It Va path
+Absolute path to the target file.
+Required.
+.It Va actions
+A string, array of strings, or
+.Dq * .
+Individual action names are:
+.Dq read ,
+.Dq write ,
+.Dq exec ,
+.Dq create ,
+.Dq delete ,
+.Dq stat ,
+.Dq lookup ,
+.Dq append ,
+.Dq rename_from ,
+.Dq rename_to ,
+.Dq link ,
+.Dq setattr ,
+.Dq truncate ,
+and
+.Dq uipc_connect .
+The special values
+.Dq *
+and
+.Dq all
+grant all actions.
+.El
+.It Va network
+Array of network endpoint capability objects (maximum 16).
+Each object contains:
+.Bl -tag -width "direction" -compact
+.It Va domain
+Address family:
+.Dq inet
+(default),
+.Dq inet6 ,
+or
+.Dq * .
+.It Va protocol
+Transport protocol:
+.Dq tcp ,
+.Dq udp ,
+or
+.Dq * .
+.It Va port
+Integer port number, or
+.Dq * .
+.It Va ports
+Port range as a string
+.Dq min-max ,
+or
+.Dq * .
+Only one of
+.Va port
+or
+.Va ports
+should be specified.
+.It Va direction
+.Dq bind
+(default),
+.Dq connect ,
+or
+.Dq * .
+.It Va address
+IP address or CIDR notation (e.g.,
+.Dq 10.0.0.0/24 ) .
+Optional.
+.It Va prefix
+CIDR prefix length as an integer.
+Optional; provides an alternative to embedding the prefix in
+.Va address .
+.El
+.It Va jails
+Array of jail operation tokens (maximum 16).
+Grants the service authority to perform jail operations via
+delegated capability tokens.
+.It Va system
+Array of system gate names (maximum 16).
+.Xr serviced 8
+requests a system access token from the oracle with the specified
+gates and passes it to the service.
+See
+.Xr cap_rt_system 4
+for the list of available gate names.
+.El
+.Ss Jail
+The optional
+.Va jail
+object creates a jail for the service at launch time.
+It contains the following keys:
+.Bl -tag -width "hostname"
+.It Va name Pq required
+Jail name.
+.It Va path Pq required
+Root filesystem path for the jail.
+.It Va hostname
+Hostname inside the jail.
+Defaults to the value of
+.Va name .
+.It Va ip4
+IPv4 address to assign to the jail.
+.El
+.Ss Dependency Resolution
+Before launching services,
+.Xr serviced 8
+topologically sorts all loaded manifests by their
+.Va provides
+and
+.Va requires
+declarations.
+Services that provide capabilities are started before services
+that require them.
+.Pp
+The following rules apply:
+.Bl -bullet
+.It
+.Dq ORACLED
+is an implicit provider that is always satisfied.
+Services may list it in
+.Va requires
+without a corresponding
+.Va provides .
+.It
+Unknown providers (those not declared by any loaded manifest) produce
+a warning but are treated as satisfied.
+.It
+Dependency cycles are fatal: no services are started if a cycle is
+detected.
+.It
+Duplicate
+.Va label
+values or duplicate
+.Va provides
+names across manifests cause the entire reload to be rejected.
+.El
+.Sh EXAMPLES
+Minimal service manifest:
+.Bd -literal -offset indent
+# /etc/oracled.d/myservice.ucl
+label = "myservice";
+program = "/usr/local/sbin/myservice";
+restart = "always";
+.Ed
+.Pp
+Service with dependencies and file capabilities:
+.Bd -literal -offset indent
+label = "org.freebsd.webapp";
+program = "/usr/local/sbin/webapp";
+description = "Example web application";
+user = "www";
+group = "www";
+provides = ["http"];
+requires = ["database"];
+restart = "on-failure";
+stop_timeout = 10;
+max_failures = 20;
+capabilities {
+    paths = ["/var/www"];
+    files = [
+        {
+            path = "/var/log/webapp.log";
+            actions = ["write", "create", "append"];
+        },
+    ];
+    network = [
+        {
+            port = 8080;
+            protocol = "tcp";
+            direction = "bind";
+            address = "127.0.0.1";
+        },
+        {
+            domain = "inet";
+            protocol = "tcp";
+            direction = "connect";
+            address = "10.0.0.0/24";
+            ports = "5432-5433";
+        },
+    ];
+    system = ["sysctl"];
+}
+.Ed
+.Pp
+Service running inside a jail:
+.Bd -literal -offset indent
+label = "org.freebsd.sandboxed";
+program = "/usr/local/sbin/sandboxed";
+restart = "on-failure";
+jail {
+    name = "sandboxed";
+    path = "/var/jails/sandboxed";
+    hostname = "sandboxed.local";
+    ip4 = "10.0.0.2";
+}
+.Ed
+.Sh FILES
+.Bl -tag -width "/etc/oracled.d/"
+.It Pa /etc/oracled.d/
+Default manifest directory.
+Each
+.Pa *.ucl
+file declares one service.
+.El
+.Sh SEE ALSO
+.Xr cap_rt 4 ,
+.Xr cap_rt_isolation 4 ,
+.Xr cap_rt_system 4 ,
+.Xr oracled.conf 5 ,
+.Xr oracled 8 ,
+.Xr serviced 8 ,
+.Xr servicectl 8
+.Sh HISTORY
+The
+.Nm
+manifest format first appeared in 5BSD.

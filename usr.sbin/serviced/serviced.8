@@ -1,58 +1,62 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd June 1, 2026
+.Dd June 5, 2026
 .Dt SERVICED 8
 .Os
 .Sh NAME
 .Nm serviced
-.Nd Oracle capability-world service manager
+.Nd 5BSD capability-based service manager
 .Sh SYNOPSIS
 .Nm
 .Op Fl d Ar manifest_dir
 .Sh DESCRIPTION
 .Nm
-is the service manager for the Oracle capability world.
+is the service manager for 5BSD.
 It is started by
 .Xr oracled 8
-via
+as a single child process via
 .Xr pdfork 2
-as a single child process and inherits a cap_rt pair channel
-for requesting capability tokens, pairs, and coalitions from the
-oracle.
+and inherits a cap_rt pair channel for requesting capability tokens,
+pairs, and coalitions from the oracle.
 .Pp
 .Nm
-reads service manifests from a manifest directory, topologically
-sorts them by dependency, and launches each service via
+reads service manifests (UCL files) from a manifest directory,
+topologically sorts them by dependency, and launches each service via
 .Xr pdfork 2 .
 It supervises service lifecycle through
 .Xr kqueue 2
-process descriptors, enforces restart policies with exponential
-backoff and circuit-breaker protection, and operates a naming
-registry that allows services to find and connect to each other
-by reverse-domain names.
+process descriptors, enforces restart policies with linear backoff
+and circuit-breaker protection, and operates a naming registry that
+allows services to discover and connect to each other by
+reverse-domain names.
 .Pp
 Administrative commands are sent via
 .Xr servicectl 8
 over a local control socket.
-.Pp
-During startup,
+.Ss Startup Sequence
 .Nm
-executes the following phases:
+executes the following phases during startup:
 .Bl -enum
 .It
 Inherit the pair fd from the
 .Ev ORACLED_PAIR_FD
-environment variable and optional delegated service instance fds
-from
+environment variable and optional delegated service instance fds from
 .Ev SERVICED_PAIR_SVC_FD ,
 .Ev SERVICED_COALITION_SVC_FD ,
 and
 .Ev SERVICED_CAPPROTECT_FD .
 .It
-Apply capprotect shield if a capprotect service instance fd was
+Apply a capprotect shield if a capprotect service instance fd was
 inherited, hardening the process against ptrace, wait, scheduler
 manipulation, and ktrace.
+The shield does not block signals, allowing
+.Dv SIGHUP
+and
+.Dv SIGTERM
+from
+.Xr oracled 8 .
+The capprotect fd is closed after use.
 .It
 Create a
 .Xr kqueue 2
@@ -74,8 +78,8 @@ to
 .Xr oracled 8
 on the pair channel.
 .It
-Load service manifests from the manifest directory, topologically
-sort by dependency, and fork/exec each service via
+Load service manifests from the manifest directory, topologically sort
+by dependency, and fork/exec each service via
 .Xr pdfork 2 .
 .It
 Enter the event loop, monitoring services via process descriptors,
@@ -119,8 +123,7 @@ Optional.
 .It capprotect (fd 6)
 Delegated capprotect service instance.
 .Nm
-uses this to apply an integrity shield at startup, then closes
-the fd.
+uses this to apply an integrity shield at startup, then closes the fd.
 Optional.
 .El
 .Sh ENVIRONMENT
@@ -146,6 +149,11 @@ Overridden by the
 flag.
 Default:
 .Pa /etc/oracled.d .
+.It Ev SERVICED_CONTROL_SOCKET
+Path for the control socket.
+Default:
+.Pa /var/run/serviced.sock .
+Optional.
 .El
 .Sh SERVICE MANIFESTS
 Service manifests are UCL files in the manifest directory.
@@ -156,8 +164,10 @@ Files are loaded in lexicographic order and topologically sorted
 by dependency before launch.
 Invalid manifests are logged and skipped.
 .Pp
+A maximum of 64 services may be loaded.
+.Pp
 The following keys are supported:
-.Bl -tag -width "capabilities"
+.Bl -tag -width "max_failures"
 .It Va label Pq required
 Unique name for the service.
 Used in log messages, dependency references, the naming registry,
@@ -197,33 +207,112 @@ before sending
 .Dv SIGKILL .
 Clamped to the range 1\(en300.
 Default: 5.
+.It Va max_failures
+Circuit breaker threshold.
+After this many consecutive rapid failures, the service is permanently
+disabled until the next manifest reload.
+Clamped to the range 1\(en100.
+Default: 10.
 .It Va provides
 Array of capability names this service provides.
+Maximum 8 entries.
 Used by the dependency graph to determine start order.
+Names must be unique across all loaded manifests.
 .It Va requires
 Array of capability names this service depends on.
+Maximum 8 entries.
 The service will not start until all required capabilities are
 available.
 .It Va capabilities
-Object containing capability tokens to delegate to the service:
+Object containing capability tokens to delegate to the service.
+See
+.Sx Capabilities
+below.
+.It Va jail
+Object describing a jail to create for the service.
+See
+.Sx Jail
+below.
+.El
+.Ss Capabilities
+The
+.Va capabilities
+object may contain the following arrays:
 .Bl -tag -width "network"
 .It Va paths
-Array of absolute paths.
+Array of absolute filesystem paths (maximum 16).
 .Nm
 requests an isolation access token for each path from the oracle
 and passes it to the service.
-.It Va network
-Array of network endpoint objects.
+.It Va files
+Array of fine-grained file capability objects (maximum 16).
 Each object has:
-.Va port
-(integer),
-.Va protocol
-("tcp" or "udp"),
-.Va direction
-("bind", "connect", or "any"),
-and optionally
-.Va domain
-("inet6" or "any"; default is IPv4).
+.Bl -tag -width "actions" -compact
+.It Va path
+Target file path (required).
+.It Va actions
+A string or array of
+.Dv FI_FS_*
+operation names:
+.Dq read ,
+.Dq write ,
+.Dq exec ,
+.Dq create ,
+.Dq delete ,
+.Dq stat ,
+.Dq lookup ,
+.Dq append ,
+.Dq rename_from ,
+.Dq rename_to ,
+.Dq link ,
+.Dq setattr ,
+.Dq truncate ,
+.Dq uipc_connect ,
+or
+.Dq *
+/
+.Dq all
+for all operations.
+.El
+.It Va network
+Array of network endpoint objects (maximum 16).
+Each object has:
+.Bl -tag -width "direction" -compact
+.It Va domain
+Address family:
+.Dq inet
+(default),
+.Dq inet6 ,
+or
+.Dq * .
+.It Va protocol
+Transport protocol:
+.Dq tcp ,
+.Dq udp ,
+or
+.Dq * .
+.It Va port
+Integer port number, or
+.Dq * .
+.It Va ports
+Port range as
+.Dq min-max ,
+or
+.Dq * .
+.It Va direction
+.Dq bind
+(default),
+.Dq connect ,
+or
+.Dq * .
+.It Va address
+IP address or CIDR notation (optional).
+.It Va prefix
+CIDR prefix length (optional).
+.El
+.It Va jails
+Array of jail operation tokens (maximum 16).
+Grants the service authority to perform jail operations.
 .It Va system
 Array of system gate names (e.g.,
 .Dq kldload ,
@@ -233,9 +322,22 @@ Array of system gate names (e.g.,
 requests a system access token from the oracle with the specified
 gates.
 .El
+.Ss Jail
+The optional
+.Va jail
+object creates a jail for the service at launch time:
+.Bl -tag -width "hostname"
+.It Va name Pq required
+Jail name.
+.It Va path Pq required
+Root filesystem path for the jail.
+.It Va hostname
+Hostname inside the jail.
+.It Va ip4
+IPv4 address to assign to the jail.
 .El
-.Ss Service Environment
-Each service receives a minimal environment:
+.Sh SERVICE ENVIRONMENT
+Each launched service receives a minimal environment:
 .Bl -tag -width "ORACLED_TOKEN_FDS"
 .It Ev PATH
 .Pa /sbin:/bin:/usr/sbin:/usr/bin
@@ -269,10 +371,17 @@ All file descriptors above the token range are closed via
 .Xr closefrom 2 .
 .Sh SERVICE LIFECYCLE
 .Ss Dependency Sorting
-Before launch, manifests are topologically sorted so that
-providers start before their dependents.
+Before launch, manifests are topologically sorted using Kahn's
+algorithm so that providers start before their dependents.
+.Dq ORACLED
+is an implicit provider that is always satisfied.
+.Pp
+Duplicate labels or
+.Va provides
+names across manifests are fatal.
 A dependency cycle is a fatal error; no services are started.
-.Ss Fork and Exec
+Unknown providers are warned about but treated as satisfied.
+.Ss Fork, Exec, and Coalitions
 Each service is launched with
 .Xr pdfork 2 ,
 yielding a process descriptor that
@@ -284,6 +393,26 @@ for
 (exec confirmed) and
 .Dv NOTE_EXIT
 (process exited).
+.Pp
+Each service is enlisted in a coalition.
+The process descriptor is set as the coalition leader, providing
+resource grouping for the service and any children it creates.
+.Ss Service States
+A service transitions through the following states:
+.Bl -tag -width "STOPPING (3)" -compact
+.It STOPPED (0)
+Not running.
+.It STARTING (1)
+Process created via
+.Xr pdfork 2 ,
+awaiting
+.Dv NOTE_EXEC .
+.It RUNNING (2)
+.Dv NOTE_EXEC
+received; service is executing.
+.It STOPPING (3)
+Graceful shutdown in progress.
+.El
 .Ss Restart Policies
 .Bl -tag -width "on-failure"
 .It Dq never
@@ -294,20 +423,24 @@ The service is restarted unconditionally after exit.
 The service is restarted only if it exited with a non-zero status
 or was killed by a signal.
 .El
-.Ss Exponential Backoff
+.Ss Linear Backoff
 If a service dies within 5 seconds of starting (a rapid restart),
-the restart is delayed with exponential backoff:
-2 seconds, 4 seconds, 6 seconds, up to a maximum of 30 seconds.
+the restart is delayed with linear backoff: the delay is
+.Va restart_count
+multiplied by 2 seconds (i.e., 2, 4, 6, 8, ...), capped at
+30 seconds.
 If the service runs for at least 60 seconds, the restart counter
 is reset.
 .Ss Circuit Breaker
-After 5 consecutive rapid failures, the service is disabled and
-not restarted.
-A manual reload via
-.Xr servicectl 8
-or
+After
+.Va max_failures
+consecutive rapid failures (default 10), the service is permanently
+disabled and not restarted.
+A manifest reload via
 .Dv SIGHUP
-will re-evaluate the manifest.
+or the
+.Cm reload
+control socket command will re-evaluate the manifest.
 .Ss Graceful Shutdown
 When stopping a service,
 .Nm
@@ -321,12 +454,22 @@ and starts a timer for the service's
 If the service has not exited when the timer fires,
 .Dv SIGKILL
 is sent.
+.Pp
+During daemon shutdown, services are stopped in reverse dependency
+order.
+The kevent loop is drained for up to 60 seconds, after which
+.Nm
+closes the control socket and exits.
 .Sh NAMING REGISTRY
 .Nm
 provides a naming registry that allows services to discover
 and connect to each other using reverse-domain names
 (e.g.,
 .Dq org.freebsd.sshd ) .
+.Pp
+The registry is implemented as a hash table with 64 buckets.
+Names may be up to 255 characters long.
+Each service may register up to 32 names.
 .Pp
 Services interact with the registry via
 .Xr libservice 3
@@ -338,7 +481,11 @@ The following operations are supported:
 Register a reverse-domain name.
 The name must contain at least one dot and consist only of
 alphanumerics, dots, hyphens, and underscores.
-Each service may register up to 32 names.
+The name must appear in the service's
+.Va label
+or
+.Va provides
+array; registration is denied otherwise.
 Duplicate names are rejected with
 .Er EEXIST .
 .It Dv UNREGISTER
@@ -350,22 +497,68 @@ Connect to a named service.
 creates a new cap_rt pair, pushes one end to the provider service
 as a
 .Dv SVC_OP_NEW_CLIENT
-notification, and returns the other end to the requester.
+notification (which includes the requesting client's label),
+and returns the other end to the requester.
 A service cannot look up itself
 .Pq Er ELOOP .
 .El
 .Pp
 When a service exits, all names it registered are automatically
 removed.
-.Sh SIGNALS
-.Bl -tag -width "SIGTERM"
-.It Dv SIGHUP
-Reload service manifests.
+.Sh CONTROL SOCKET
+.Nm
+listens on a
+.Ux Ns -domain
+stream socket at
+.Pa /var/run/serviced.sock
+(mode 0700).
+A maximum of 16 simultaneous connections are accepted, each with
+a 2-second timeout.
+.Pp
+The
+.Xr servicectl 8
+utility communicates with
+.Nm
+over this socket.
+.Pp
+The following commands are supported:
+.Bl -tag -width "SCTL_OP_LOAD (5)"
+.It Dv SCTL_OP_STATUS (1)
+Return daemon status and a summary of all loaded services with
+their current state, PID, restart policy, and restart count.
+Available to any user.
+.It Dv SCTL_OP_SERVICES (2)
+List all loaded services.
+Same output as
+.Dv SCTL_OP_STATUS .
+Available to any user.
+.It Dv SCTL_OP_RELOAD (3)
+Reload manifests from disk.
 New services are started, changed manifests trigger a graceful
 restart, and removed manifests trigger a graceful stop.
 The dependency graph is re-validated before any mutations are
 applied; if the new graph contains a cycle, the reload is
 rejected and running services are unaffected.
+Requires root.
+.It Dv SCTL_OP_CHECK (4)
+Dry-run validation of a manifest file.
+The payload is the filename to check.
+Returns success if the manifest parses and validates correctly
+without loading it.
+Requires root.
+.It Dv SCTL_OP_LOAD (5)
+Load and start a single manifest file.
+The payload is the filename to load.
+The manifest is parsed, validated, and the service is started
+immediately.
+Requires root.
+.El
+.Sh SIGNALS
+.Bl -tag -width "SIGTERM"
+.It Dv SIGHUP
+Reload service manifests.
+Equivalent to
+.Dv SCTL_OP_RELOAD .
 .It Dv SIGTERM , SIGINT
 Initiate graceful shutdown.
 All services are stopped in reverse dependency order.
@@ -374,32 +567,112 @@ exits after all services have terminated or been killed.
 .It Dv SIGCHLD
 Reap stray child processes.
 .El
-.Sh CONTROL SOCKET
+.Sh DTRACE PROBES
 .Nm
-listens on a
-.Ux Ns -domain
-stream socket at
-.Pa /var/run/serviced.sock
-(mode 0700).
-The
-.Xr servicectl 8
-utility communicates with
-.Nm
-over this socket.
-.Pp
-The following commands are supported:
-.Bl -tag -width "services"
-.It status
-Return daemon status and a summary of all loaded services with
-their current state, PID, restart policy, and restart count.
-Available to any user.
-.It services
-List all loaded services (same output as
-.Cm status ) .
-Available to any user.
-.It reload
-Reload manifests from disk.
-Requires root.
+provides DTrace USDT probes under the
+.Ql serviced
+provider.
+.Ss Service Lifecycle
+.Bl -tag -width "svc-disabled(label, count)" -compact
+.It svc-start Ns ( Ns Ar label , pid Ns )
+Service process created.
+.It svc-exec Ns ( Ns Ar label , pid Ns )
+Service exec confirmed via
+.Dv NOTE_EXEC .
+.It svc-exit Ns ( Ns Ar label , pid , status Ns )
+Service process exited.
+.It svc-restart Ns ( Ns Ar label , count Ns )
+Service restart initiated.
+.It svc-stop Ns ( Ns Ar label , pid Ns )
+Service stop requested.
+.It svc-load Ns ( Ns Ar label Ns )
+Service manifest loaded.
+.It svc-disabled Ns ( Ns Ar label , count Ns )
+Service disabled by circuit breaker.
+.It svc-count Ns ( Ns Ar n Ns )
+Total loaded service count changed.
+.El
+.Ss Manifest Reload
+.Bl -tag -width "svc-removed(label)" -compact
+.It reload Ns ( Ns Ar nnew , nchanged , nremoved Ns )
+Manifest reload completed.
+.It svc-removed Ns ( Ns Ar label Ns )
+Service removed during reload.
+.It svc-changed Ns ( Ns Ar label Ns )
+Service manifest changed during reload.
+.El
+.Ss Naming
+.Bl -tag -width "naming-unregister(name)" -compact
+.It naming-register Ns ( Ns Ar name , owner Ns )
+Name registered.
+.It naming-unregister Ns ( Ns Ar name Ns )
+Name unregistered.
+.It naming-lookup Ns ( Ns Ar name , requester Ns )
+Name lookup performed.
+.It naming-deny Ns ( Ns Ar name , errno Ns )
+Name operation denied.
+.It naming-count Ns ( Ns Ar n Ns )
+Total registered name count changed.
+.El
+.Ss Control Socket
+.Bl -tag -width "sctl-cmd-done(op, uid, status, duration_ns)" -compact
+.It sctl-cmd Ns ( Ns Ar op , uid Ns )
+Control command received.
+.It sctl-cmd-done Ns ( Ns Ar op , uid , status , duration_ns Ns )
+Control command completed.
+.It sctl-deny Ns ( Ns Ar op , uid Ns )
+Control command denied (insufficient privileges).
+.El
+.Ss Capabilities
+.Bl -tag -width "cap-coalition(label, result)" -compact
+.It cap-mint Ns ( Ns Ar label , type , result Ns )
+Capability token minted.
+.It cap-pair Ns ( Ns Ar label , result Ns )
+Pair channel created.
+.It cap-coalition Ns ( Ns Ar label , result Ns )
+Coalition created.
+.El
+.Ss Exec Setup
+.Bl -tag -width "svc-exec-done(label, duration_ns, ntokens)" -compact
+.It svc-exec-done Ns ( Ns Ar label , duration_ns , ntokens Ns )
+Service exec setup completed.
+.It svc-exec-fail Ns ( Ns Ar label , errno Ns )
+Service exec setup failed.
+.El
+.Ss IPC
+.Bl -tag -width "ipc-reply(label, op, status)" -compact
+.It ipc-recv Ns ( Ns Ar label , op Ns )
+IPC message received from service.
+.It ipc-reply Ns ( Ns Ar label , op , status Ns )
+IPC reply sent to service.
+.El
+.Ss Timeouts
+.Bl -tag -width "timeout-fire(label, type)" -compact
+.It timeout-arm Ns ( Ns Ar label , type , seconds Ns )
+Timer armed.
+.It timeout-fire Ns ( Ns Ar label , type Ns )
+Timer expired.
+.El
+.Ss Connections
+.Bl -tag -width "conn-close(nconns)" -compact
+.It conn-accept Ns ( Ns Ar uid , nconns Ns )
+Control socket connection accepted.
+.It conn-close Ns ( Ns Ar nconns Ns )
+Control socket connection closed.
+.El
+.Ss Shutdown
+.Bl -tag -width "shutdown-done(duration_ns)" -compact
+.It shutdown-start Ns ( Ns Ar nservices Ns )
+Graceful shutdown initiated.
+.It shutdown-done Ns ( Ns Ar duration_ns Ns )
+Shutdown completed.
+.El
+.Ss Errors
+.Bl -tag -width "oracle-disconnected()" -compact
+.It error Ns ( Ns Ar subsys , msg Ns )
+Error occurred in subsystem.
+.It oracle-disconnected Ns ( Ns )
+Oracle pair channel closed unexpectedly.
 .El
 .Sh FILES
 .Bl -tag -width "/var/run/serviced.sock"
@@ -437,11 +710,37 @@ provides = ["http"];
 requires = ["database"];
 restart = "on-failure";
 stop_timeout = 10;
+max_failures = 20;
 capabilities {
     paths = ["/var/www"];
-    network = [
-        { port = 8080; protocol = "tcp"; direction = "bind"; },
+    files = [
+        {
+            path = "/var/log/webapp.log";
+            actions = ["write", "create", "append"];
+        },
     ];
+    network = [
+        {
+            port = 8080;
+            protocol = "tcp";
+            direction = "bind";
+            address = "127.0.0.1";
+        },
+    ];
+    system = ["sysctl"];
+}
+.Ed
+.Pp
+Service running inside a jail:
+.Bd -literal -offset indent
+label = "sandboxed";
+program = "/usr/local/sbin/sandboxed";
+restart = "on-failure";
+jail {
+    name = "sandboxed";
+    path = "/var/jails/sandboxed";
+    hostname = "sandboxed.local";
+    ip4 = "10.0.0.2";
 }
 .Ed
 .Sh SEE ALSO

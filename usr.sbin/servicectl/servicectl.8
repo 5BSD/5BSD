@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd June 1, 2026
+.Dd June 5, 2026
 .Dt SERVICECTL 8
 .Os
 .Sh NAME
@@ -10,7 +10,13 @@
 .Sh SYNOPSIS
 .Nm
 .Op Fl s Ar socket
-.Ar command
+.Cm status | services | reload
+.Nm
+.Op Fl s Ar socket
+.Cm check Ar manifest
+.Nm
+.Op Fl s Ar socket
+.Cm load Ar manifest
 .Sh DESCRIPTION
 .Nm
 is the administrative command-line interface to
@@ -19,7 +25,7 @@ Each invocation opens a connection to the
 .Xr serviced 8
 control socket, sends one command, prints the result, and exits.
 .Sh COMMANDS
-.Bl -tag -width "services"
+.Bl -tag -width "check manifest"
 .It Cm status
 Display the overall status of
 .Xr serviced 8
@@ -43,6 +49,24 @@ to be gracefully stopped.
 The dependency graph is re-validated before any changes are
 applied; if the new graph would contain a cycle, the reload
 is rejected and running services are unaffected.
+.Pp
+Requires root privileges.
+.It Cm check Ar manifest
+Validate a service manifest file without loading it.
+.Ar manifest
+is a filename relative to the manifest directory
+.Pq typically Pa /etc/oracled.d/ .
+Checks that the program exists and is executable, that the
+specified user and group exist, and that the manifest parses
+correctly.
+.Pp
+Requires root privileges.
+.It Cm load Ar manifest
+Load a service manifest and start the service.
+.Ar manifest
+is a filename relative to the manifest directory.
+The service is added to the running set, the dependency graph
+is re-sorted, and the service is launched.
 .Pp
 Requires root privileges.
 .El
@@ -80,11 +104,22 @@ Reload manifests after adding a new service:
 # servicectl reload
 .Ed
 .Pp
+Validate a manifest before loading:
+.Bd -literal -offset indent
+# servicectl check myservice.ucl
+.Ed
+.Pp
+Load and start a new service:
+.Bd -literal -offset indent
+# servicectl load myservice.ucl
+.Ed
+.Pp
 Connect to an alternate control socket:
 .Bd -literal -offset indent
 # servicectl -s /tmp/test-serviced.sock status
 .Ed
 .Sh SEE ALSO
+.Xr serviced 5 ,
 .Xr serviced 8
 .Sh HISTORY
 .Nm

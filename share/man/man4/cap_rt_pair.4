@@ -1,0 +1,161 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd June 5, 2026
+.Dt CAP_RT_PAIR 4
+.Os
+.Sh NAME
+.Nm cap_rt_pair
+.Nd CAP_RT bidirectional capability pair
+.Sh SYNOPSIS
+To load at boot:
+.Bd -literal -offset indent
+echo 'cap_rt_pair_load="YES"' >> /boot/loader.conf
+.Ed
+.Pp
+Wire protocol header:
+.Bd -literal -offset indent
+#include <dev/cap_rt/cap_rt_pair_proto.h>
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+service creates connected pairs of capability descriptors for
+peer-to-peer messaging.
+Each pair consists of two endpoints; a message sent on one endpoint
+is delivered to the other.
+.Pp
+The service is registered under the name
+.Dq pair
+with the
+.Dv CAP_RT_SVC_MINTABLE
+flag, allowing holders to mint additional instances via
+.Dv CAP_RT_MINT_INSTANCE .
+.Ss Protocol
+.Bl -enum -compact
+.It
+Connect to
+.Dq pair
+via
+.Dv CAP_RT_CONNECT
+to obtain endpoint A.
+.It
+Send
+.Dv PAIR_OP_CREATE
+via
+.Dv CAP_RT_SENDMSG
+on A.
+.It
+Receive the reply via
+.Dv CAP_RT_RECVMSG ;
+the reply carries endpoint B as an attached fd.
+.It
+Endpoints A and B are now connected:
+.Dv CAP_RT_SENDMSG
+on A delivers to
+.Dv CAP_RT_RECVMSG
+on B, and vice versa.
+.It
+Closing either endpoint revokes the other.
+.El
+.Ss Wire Constants
+.Bd -literal -offset indent
+#define PAIR_OP_CREATE  1
+.Ed
+.Pp
+The
+.Dv PAIR_OP_CREATE
+operation is the only operation.
+It is sent as a
+.Vt uint32_t
+payload via
+.Dv CAP_RT_SENDMSG
+on an unpaired instance.
+The reply, received via
+.Dv CAP_RT_RECVMSG ,
+carries the peer fd.
+.Ss Message Forwarding
+After pairing, messages are forwarded to the peer via the kernel's
+.Fn cap_rt_forward
+path.
+The original sender's credentials (badge, token, and credential trailer)
+are preserved through the forward.
+Forwarding is fire-and-forget; the sender receives no reply.
+.Ss Revocation
+Closing or revoking one endpoint delivers
+.Er ECONNRESET
+to the peer.
+Any subsequent
+.Dv CAP_RT_SENDMSG
+on the surviving endpoint returns
+.Er ECONNRESET .
+.Sh DTRACE PROBES
+The following DTrace probes are provided under the
+.Nm cap_rt_pair
+provider:
+.Bl -tag -width "handler-done"
+.It Cm create Ns Pq Ar badge_a, badge_b, error
+Fires when a pair is successfully created.
+.Ar badge_a
+and
+.Ar badge_b
+are the badges of the two endpoints.
+.It Cm forward Ns Pq Ar src_badge, dst_badge, datalen
+Fires when a message is forwarded from one endpoint to its peer.
+.It Cm handler-done Ns Pq Ar op, badge, error, elapsed
+Fires on completion of every handler invocation.
+.Ar elapsed
+is an
+.Vt sbintime_t
+duration.
+.It Cm state Ns Pq Ar event, op, badge, error, aux
+Fires on state changes including
+.Dq mint-error ,
+.Dq peer-dead ,
+and
+.Dq revoke .
+.El
+.Pp
+Example one-liner to trace pair creation:
+.Bd -literal -offset indent
+dtrace -n 'cap_rt_pair::create { printf("a=%u b=%u err=%d",
+    arg0, arg1, arg2); }'
+.Ed
+.Sh EXAMPLES
+Create a pair and exchange a message:
+.Bd -literal -offset indent
+#include <dev/cap_rt/cap_rt_pair_proto.h>
+
+int a_fd, b_fd;
+uint32_t op;
+
+/* Connect to the pair service */
+a_fd = cap_rt_connect("pair");
+
+/* Create the pair */
+op = PAIR_OP_CREATE;
+cap_rt_sendmsg(a_fd, &op, sizeof(op), NULL, 0);
+
+/* Receive the peer fd */
+b_fd = cap_rt_recvmsg(a_fd, NULL, 0);
+
+/* Now a_fd and b_fd are connected */
+cap_rt_sendmsg(a_fd, msg, msglen, NULL, 0);
+cap_rt_recvmsg(b_fd, buf, buflen);  /* receives msg */
+.Ed
+.Sh ERRORS
+.Bl -tag -width Er
+.It Bq Er ECONNRESET
+The peer endpoint has been closed or revoked.
+.It Bq Er EINVAL
+The message payload is too small, or an operation other than
+.Dv PAIR_OP_CREATE
+was sent on an unpaired instance.
+.El
+.Sh SEE ALSO
+.Xr cap_rt 4 ,
+.Xr cap_rt_identity 4 ,
+.Xr oracled 8
+.Sh HISTORY
+.Nm
+first appeared in 5BSD.

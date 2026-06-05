@@ -1,12 +1,12 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd May 28, 2026
+.Dd June 5, 2026
 .Dt ORACLED 8
 .Os
 .Sh NAME
 .Nm oracled
-.Nd Oracle capability-world service manager
+.Nd Oracle authority daemon
 .Sh SYNOPSIS
 .Nm
 .Op Fl d
@@ -15,28 +15,25 @@
 .Op Fl T
 .Sh DESCRIPTION
 .Nm
-is the system authority for the Oracle capability world \(em a thin
-layer that claims system resources via the
+is the system authority daemon for the Oracle capability world.
+It claims system resources exclusively via the
 .Xr cap_rt 4
-capability runtime and delegates them to agents by fork/exec'ing
-declared programs and passing capability tokens.
-.Nm
-does not start individual daemons or manage services directly.
-It starts
-.Em agents ,
-each of which is an init system for its own domain.
+capability runtime, protects its own integrity via
+.Xr cap_rt_capprotect 4 ,
+and manages a single child process,
+.Xr serviced 8 ,
+which reads service manifests and supervises individual services.
 .Pp
-It is started by
+.Nm
+does not start or manage services directly.
+It mints capability tokens on request from
+.Xr serviced 8
+via the oracle protocol, a message-passing channel over a cap_rt
+pair descriptor.
+.Pp
+.Nm
+is started by
 .Xr rc 8 .
-The standard agent binary is
-.Pa /usr/libexec/oracled/agent .
-The oracle forks multiple instances of it, each with a different
-label and different capability tokens.
-Agent manifests are in
-.Pa /etc/oracled.d/ ;
-each agent reads its own service directory at
-.Pa /etc/oracled.d/{label}.d/
-to manage native services, app bundles, or containers.
 .Pp
 During startup,
 .Nm
@@ -49,7 +46,11 @@ Load configuration from
 .Fl f ) ,
 open syslog, acquire pidfile.
 .It
-Daemonize (unless foreground mode).
+Daemonize (unless
+.Fl d
+or
+.Fl T
+is given).
 .It
 Harden the process via
 .Xr procctl 2
@@ -57,27 +58,29 @@ Harden the process via
 .It
 Open
 .Pa /dev/cap_rt
-and, if configured, claim it via the isolation service so that only
-.Nm
-can access the device.
+and claim configured resources via the
+.Xr cap_rt_isolation 4
+service.
 .It
-Activate the capprotect shield with the flags specified in the
-configuration file.
+Claim system gates via the
+.Xr cap_rt_system 4
+service.
+.It
+Activate the
+.Xr cap_rt_capprotect 4
+shield with the flags specified in the configuration file.
 .It
 Create a control socket for administrative commands.
 .It
-Load agent manifests from
-.Pa /etc/oracled.d/ ,
-sort by dependency order, and launch each agent with
+Start
+.Xr serviced 8
+as a single child process via
 .Xr pdfork 2 .
 .It
-Enter the event loop, monitoring agents via
-.Xr kqueue 2
-process descriptors.
+Enter the event loop, monitoring the serviced process descriptor
+and control socket connections via
+.Xr kqueue 2 .
 .El
-.Pp
-Administrative commands are sent via
-.Xr oraclectl 8 .
 .Sh OPTIONS
 .Bl -tag -width "-f conffile"
 .It Fl d
@@ -96,10 +99,10 @@ Overrides the
 setting in the configuration file.
 .It Fl T
 Test mode.
-Run without requiring root, without daemonizing, and without
-applying privileged process controls, capability runtime setup,
-or the control socket.
-Manifests are parsed and sorted but services are not launched.
+Run in the foreground without daemonizing, without
+.Xr cap_rt 4
+or control socket hardening.
+Manifests are parsed but services are not launched.
 Intended for automated tests.
 .El
 .Sh CONFIGURATION
@@ -112,7 +115,7 @@ compiled-in defaults are used.
 Syntax errors are fatal.
 .Pp
 The following keys are supported:
-.Bl -tag -width "control_socket_mode"
+.Bl -tag -width "serviced_control_socket"
 .It Va pidfile
 Path to the pidfile.
 Default:
@@ -137,19 +140,28 @@ Default:
 Path to the service manager binary started by
 .Nm
 at bootstrap.
-The binary inherits a cap_rt pair channel, delegated service
-instance file descriptors, and the manifest directory path.
 Default:
 .Pa /usr/libexec/oracled/serviced .
 If empty, no service manager is started.
+.It Va serviced_control_socket
+Path to the control socket for
+.Xr serviced 8 .
+Passed via the
+.Ev SERVICED_CONTROL_SOCKET
+environment variable.
+Default: empty.
 .El
 .Ss Integrity
 The
 .Va integrity
-section controls capprotect flags that protect
+section controls
+.Xr cap_rt_capprotect 4
+flags that protect
 .Nm
 from external interference.
 Each key is a boolean (true/false).
+The default integrity flags are
+.Dv CP_SF_PTRACE | CP_SF_WAIT | CP_SF_SCHED | CP_SF_KTRACE .
 .Bl -tag -width "visible"
 .It Va ptrace
 Block ptrace attach from foreign nonces.
@@ -161,9 +173,7 @@ Enabling this prevents
 .Xr rc 8
 from stopping
 .Nm
-via signals; use
-.Xr oraclectl 8
-for shutdown instead.
+via signals; use the control socket for shutdown instead.
 .It Va visible
 Hide
 .Nm
@@ -192,11 +202,15 @@ The
 section lists resources under oracle control.
 Resources listed here are claimed exclusively by
 .Nm
-at boot via the cap_rt isolation service.
+at boot via the
+.Xr cap_rt_isolation 4
+service.
 Once claimed, MACF hooks deny access from all other processes,
 including root.
 .Pa /dev/cap_rt
 is always claimed automatically.
+.Pp
+Claim limits: at most 64 paths, 32 network claims, and 32 jail claims.
 .Bl -tag -width "network"
 .It Va paths
 Array of file and directory paths to claim.
@@ -209,17 +223,41 @@ Default: empty.
 Array of network endpoint objects to claim.
 Each object has:
 .Va port
-(integer),
+(integer, range string such as
+.Dq 80-8000 ,
+.Dq *
+for all ports, or
+.Dq .\&<1024
+for privileged ports),
 .Va protocol
-("tcp" or "udp"),
+.Pq Dq tcp , Dq udp , Dq any , No or Dq * ,
 .Va direction
-("bind", "connect", or "any"),
+.Pq Dq bind , Dq connect , Dq any , No or Dq * ,
 and optionally
 .Va domain
-("inet6" or "any"; default is IPv4).
+.Pq Dq inet , Dq inet6 , Dq any , No or Dq * ; No default is Dq inet
+and
+.Va address
+(CIDR notation or
+.Dq * ;
+optional).
 Foreign nonces receive
 .Er EACCES
 on bind or connect to claimed endpoints.
+Default: empty.
+.It Va jails
+Array of jail claims.
+Each element may be an integer JID, a string jail name, or an
+object with:
+.Va jid
+(integer),
+.Va name
+(string),
+.Va actions
+.Pq Dq * No or array of Dq create , Dq get , Dq set , Dq remove , Dq attach ,
+and optionally
+.Va path
+(jail root path).
 Default: empty.
 .It Va system
 Array of system operation names to gate via the
@@ -237,235 +275,95 @@ Available operations:
 .Dq swapoff ,
 .Dq sysctl ,
 .Dq kenv ,
+.Dq kenv_read ,
 .Dq acct ,
-.Dq audit ,
-.Dq kenv_read .
+.Dq audit .
 Default: empty (no system operations gated).
 .El
-.Sh AGENT MANIFESTS
+.Sh CONTROL SOCKET
 .Nm
-does not start individual daemons directly.
-It starts
-.Em agents
-\(em each agent is an init system for its own domain.
-Agent manifests are UCL files in
-.Pa /etc/oracled.d/
-(or the directory given by the
-.Va manifest_dir
-configuration key).
-Each
-.Pa *.ucl
-file declares one agent to fork.
-Files are loaded in lexicographic order.
-Invalid manifests are logged and skipped.
+listens on a Unix domain socket at
+.Pa /var/run/oracled.sock
+(mode 0700 by default) for administrative commands.
+The socket accepts at most 16 concurrent connections with a
+2-second timeout per operation.
+The protocol version is 1.
 .Pp
-The standard agent binary is
-.Pa /usr/libexec/oracled/agent .
-The oracle forks multiple instances of it, each with a different
-label and set of capability tokens.
-Each agent reads its own service configuration from
-.Pa /etc/oracled.d/{label}.d/
-and manages its own children: forking binaries, dropping
-credentials, supervising restarts, and delegating sub-tokens.
-.Pp
-The oracle reads
-.Pa *.ucl
-files from the manifest directory and ignores subdirectories.
-Agents read their matching
-.Pa .d/
-subdirectory.
-There is no overlap.
-.Pp
-The following keys are supported in agent manifests:
-.Bl -tag -width "capabilities"
-.It Va label Pq required
-Unique name for the agent.
-Used in log messages, dependency references, and to locate the
-agent's service directory at
-.Pa /etc/oracled.d/{label}.d/ .
-.It Va program Pq required
-Absolute path to the agent binary.
-Typically
-.Pa /usr/libexec/oracled/agent
-for all agents.
-.It Va description
-Human-readable description.
-.It Va user
-Run the agent as this user.
-Sets uid, gid, and supplementary groups via
-.Xr getpwnam 3 .
-The
-.Ev HOME
-environment variable is set to the user's home directory.
-Agents typically run as root so they can set credentials for
-their own children; individual services within the agent drop
-privileges as needed.
-.It Va group
-Run the agent with this primary group.
-Overrides the group from
-.Va user
-if both are set.
-.It Va jail
-Run the agent inside a jail with this name.
-If omitted, the agent runs in jid0 (the host context).
-The oracle manages jail creation and JID assignment;
-agents do not choose their own JID.
-JIDs 0\(en2 are reserved for oracle infrastructure.
-User jails start at JID 3.
-.Pp
-Jail support is not yet implemented.
-If set, a warning is logged and the agent runs in jid0.
-.It Va provides
-Array of capability names this agent provides.
-Used by the dependency graph to determine start order.
-Other agents reference these names in their
-.Va requires
-arrays.
-.It Va requires
-Array of capability names this agent depends on.
-The agent will not start until all required capabilities are
-available.
-The special name
-.Dq ORACLED
-is always satisfied and refers to
-.Nm
-itself being ready.
-Unknown providers are warned but treated as satisfied.
-.It Va restart
-Restart policy when the agent exits.
-One of:
-.Dq never
-(default),
-.Dq always ,
-or
-.Dq on-failure
-(restart only on non-zero exit).
-Rapid restarts (agent dies within 5 seconds) are delayed
-with exponential backoff up to 30 seconds.
-.It Va capabilities
-Object containing capability tokens to delegate to the agent:
-.Bl -tag -width "network"
-.It Va paths
-Array of absolute paths.
-.Nm
-mints an isolation access token for each path and passes it
-to the agent.
-The agent must call
-.Dv FI_OP_AUTHORIZE
-on each token after exec to activate access.
-The agent may further delegate these to its children.
-.It Va network
-Array of network endpoint objects to delegate.
-Each object has the same format as
-.Va claims.network
-in the configuration file:
-.Va port
-(integer),
-.Va protocol
-("tcp" or "udp"),
-.Va direction
-("bind", "connect", or "any"),
-and optionally
-.Va domain
-("inet6" or "any"; default is IPv4).
-.Nm
-mints a network isolation token covering the oracle's claimed
-endpoints and passes it to the agent.
-.It Va system
-Array of system gate names (same names as in the
-.Va claims.system
-configuration).
-.Nm
-mints a system access token with the specified gates and passes
-it to the agent.
+The following operations are supported:
+.Bl -tag -width "CTL_OP_SERVICES (9)"
+.It Dv CTL_OP_SHUTDOWN (1)
+Initiate graceful shutdown.
+Root only.
+.It Dv CTL_OP_STATUS (2)
+Query daemon status, active claims, and integrity flags.
+Any user.
+.It Dv CTL_OP_RELOAD (3)
+Reload configuration, update claims, and forward
+.Dv SIGHUP
+to
+.Xr serviced 8 .
+Root only.
+.It Dv CTL_OP_KLDLOAD (4)
+Load a kernel module.
+Root only.
+Requires the
+.Dq kldload
+system gate to be claimed.
+.It Dv CTL_OP_KLDUNLOAD (5)
+Unload a kernel module.
+Root only.
+Requires the
+.Dq kldunload
+system gate to be claimed.
+.It Dv CTL_OP_REBOOT (6)
+Reboot the system.
+Root only.
+Accepts flags: 0 for reboot or
+.Dv RB_POWEROFF
+for poweroff.
+Requires the
+.Dq reboot
+system gate to be claimed.
+.It Dv CTL_OP_CHECK (7)
+Validate a service manifest.
+Root only.
+Delegated to
+.Xr serviced 8 .
+.It Dv CTL_OP_LOAD (8)
+Load a service at runtime.
+Root only.
+Delegated to
+.Xr serviced 8 .
+.It Dv CTL_OP_SERVICES (9)
+List services and serviced status.
+Any user.
 .El
+.Sh SIGNALS
+.Bl -tag -width "SIGTERM, SIGINT"
+.It Dv SIGHUP
+Reload configuration, update claims (acquiring new claims and
+releasing removed ones), and forward
+.Dv SIGHUP
+to
+.Xr serviced 8 .
+.It Dv SIGTERM , SIGINT
+Initiate graceful shutdown.
+.It Dv SIGCHLD
+Reap children and restart
+.Xr serviced 8
+according to the restart policy.
 .El
-.Ss Examples
-System agent managing core jid0 services:
-.Bd -literal -offset indent
-# /etc/oracled.d/system.ucl
-label = "system";
-program = "/usr/libexec/oracled/agent";
-provides = ["system"];
-requires = ["ORACLED"];
-restart = "always";
-capabilities {
-    paths = ["/var/log", "/var/run"];
-    system = ["kldload", "kldunload", "kldstat",
-              "reboot", "sysctl"];
-}
-# Agent reads /etc/oracled.d/system.d/ for:
-#   syslogd.ucl, devd.ucl, sys-kldload.ucl, etc.
-.Ed
 .Pp
-Network agent managing services in a jail:
-.Bd -literal -offset indent
-# /etc/oracled.d/network.ucl
-label = "network";
-program = "/usr/libexec/oracled/agent";
-provides = ["networking"];
-requires = ["system"];
-jail = "net";
-restart = "always";
-capabilities {
-    paths = ["/etc/ssh", "/usr/local/etc/nginx"];
-    network = [
-        { port = 22; protocol = "tcp"; direction = "bind"; },
-        { port = 80; protocol = "tcp"; direction = "bind"; },
-        { port = 443; protocol = "tcp"; direction = "bind"; },
-    ];
-}
-# Agent reads /etc/oracled.d/network.d/ for:
-#   sshd.ucl, nginx.ucl, dhcpd.ucl
-.Ed
-.Pp
-Container agent running an OCI workload:
-.Bd -literal -offset indent
-# /etc/oracled.d/webapp.ucl
-label = "webapp";
-program = "/usr/libexec/oracled/agent";
-requires = ["networking"];
-jail = "webapp";
-restart = "on-failure";
-capabilities {
-    network = [
-        { port = 8080; protocol = "tcp"; direction = "bind"; },
-    ];
-}
-# Agent reads /etc/oracled.d/webapp.d/ for
-# container image config (OCI/Podman)
-.Ed
-.Ss Agent Environment
-Each agent receives a minimal environment:
-.Bl -tag -width "ORACLED_TOKEN_FDS"
-.It Ev PATH
-.Pa /sbin:/bin:/usr/sbin:/usr/bin
-.It Ev ORACLED_PAIR_FD
-File descriptor number for the cap_rt pair channel back to
+The serviced restart policy uses exponential backoff.
+If
+.Xr serviced 8
+runs for at least 5 seconds, the crash counter resets and restart
+is immediate.
+If it crashes within 5 seconds, the delay starts at 1 second and
+doubles up to a maximum of 30 seconds.
+After 10 consecutive fast crashes, the circuit breaker trips and
 .Nm
-(always 3).
-.It Ev ORACLED_TOKEN_FDS
-Comma-separated list of file descriptor numbers for capability
-tokens (starting at 4).
-Each token must be authorized via
-.Dv FI_OP_AUTHORIZE
-or
-.Dv SYS_OP_AUTHORIZE
-after exec.
-.It Ev ORACLED_LABEL
-The agent label from the manifest.
-The agent uses this to locate its service directory at
-.Pa /etc/oracled.d/{label}.d/ .
-.It Ev USER
-Set if
-.Va user
-is specified in the manifest.
-.It Ev HOME
-Home directory of the agent user.
-Only set when
-.Va user
-is specified in the manifest.
-.El
+gives up restarting.
 .Sh DTRACE PROBES
 .Nm
 is instrumented with DTrace USDT probes in the
@@ -473,87 +371,175 @@ is instrumented with DTrace USDT probes in the
 provider.
 Probes are zero-cost when DTrace is not attached.
 .Pp
-.Bl -tag -width "claim-path-fail(path)" -compact
+.Em Lifecycle:
+.Bl -tag -width "shutdown-done(duration_ns)" -compact
 .It Li startup
 Daemon initialization complete.
 .It Li shutdown(reason)
 Daemon shutting down.
 Reason is a signal number or 0 for control socket shutdown.
+.It Li shutdown-done(duration_ns)
+Shutdown sequence complete.
 .It Li config-load(path)
 Configuration file parsed.
+.El
+.Pp
+.Em Claims:
+.Bl -tag -width "claim-net-release(port_min, port_max, protocol)" -compact
 .It Li claim-path(path)
 File or directory claimed successfully.
 .It Li claim-path-fail(path)
 File or directory claim failed.
-.It Li claim-net(port, protocol)
+.It Li claim-path-release(path)
+Path claim released.
+.It Li claim-net(port_min, port_max, protocol)
 Network endpoint claimed.
-.It Li claim-net-fail(port, protocol)
+.It Li claim-net-fail(port_min, port_max, protocol)
 Network endpoint claim failed.
+.It Li claim-net-release(port_min, port_max, protocol)
+Network claim released.
+.It Li claim-jail-release(name, actions)
+Jail claim released.
+.It Li claim-system-release(gates)
+System gates released.
+.El
+.Pp
+.Em Integrity:
+.Bl -tag -width "integrity(flags)" -compact
 .It Li integrity(flags)
 Capprotect integrity shield activated.
+.El
+.Pp
+.Em Control:
+.Bl -tag -width "ctl-cmd-done(op, uid, status, duration_ns)" -compact
 .It Li ctl-accept(uid)
 Control socket connection accepted.
 .It Li ctl-cmd(op, uid)
 Control command dispatched.
+.It Li ctl-cmd-done(op, uid, status, duration_ns)
+Control command completed.
 .It Li ctl-deny(op, uid)
 Control command denied (EPERM).
-.It Li svc-start(label, pid)
-Service fork/exec'd.
-.It Li svc-exec(label, pid)
-Service exec confirmed via
-.Dv NOTE_EXEC .
-.It Li svc-exit(label, pid, status)
-Service exited.
-.It Li svc-restart(label, count)
-Service restart scheduled.
-.It Li svc-load(label)
-New service manifest loaded at runtime.
+.El
+.Pp
+.Em Reload:
+.Bl -tag -width "reload-claims-done(acquired, released, failed)" -compact
 .It Li reload()
 Configuration reload initiated.
+.It Li reload-claims-start(nacquire, nrelease)
+Claim delta computation complete.
+.It Li reload-claims-done(acquired, released, failed)
+Claim update complete.
+.El
+.Pp
+.Em Minting:
+.Bl -tag -width "mint-system(gates, result)" -compact
+.It Li mint-path(path, result)
+Path isolation token minted.
+.It Li mint-net(port_min, port_max, protocol, result)
+Network isolation token minted.
+.It Li mint-jail(jid, name, actions, result)
+Jail isolation token minted.
+.It Li mint-system(gates, result)
+System gate token minted.
+.It Li create-jail(name, result)
+Jail created.
+.It Li pair-create(result)
+Pair channel created.
+.It Li coalition-create(result)
+Coalition created.
+.El
+.Pp
+.Em IPC:
+.Bl -tag -width "ipc-dispatch-done(op, status, duration_ns)" -compact
+.It Li ipc-recv(op)
+Oracle protocol message received from serviced.
+.It Li ipc-reply(op, status)
+Oracle protocol reply sent.
+.It Li ipc-dispatch-done(op, status, duration_ns)
+Oracle protocol dispatch complete.
+.El
+.Pp
+.Em Bootstrap:
+.Bl -tag -width "bootstrap-restart(count, delay_sec)" -compact
+.It Li bootstrap-start(pid)
+Serviced process started.
+.It Li bootstrap-exit(pid, status)
+Serviced process exited.
+.It Li bootstrap-restart(count, delay_sec)
+Serviced restart scheduled.
+.El
+.Pp
+.Em Connections:
+.Bl -tag -width "conn-count(nconns)" -compact
+.It Li conn-count(nconns)
+Control socket connection count changed.
+.El
+.Pp
+.Em Errors:
+.Bl -tag -width "error(subsys, msg)" -compact
 .It Li error(subsys, msg)
 Notable error.
 .El
 .Pp
-Example: trace all service lifecycle events:
+Example: trace all minting operations:
 .Bd -literal -offset indent
-dtrace -n 'oracled*:::svc-*'
+dtrace -n 'oracled*:::mint-*'
+.Ed
+.Pp
+Example: trace serviced lifecycle:
+.Bd -literal -offset indent
+dtrace -n 'oracled*:::bootstrap-*'
 .Ed
 .Sh FILES
-.Bl -tag -width "/usr/libexec/oracled/"
+.Bl -tag -width "/usr/libexec/oracled/serviced"
 .It Pa /etc/oracled.conf
 Configuration file (UCL format).
 Optional.
 .It Pa /etc/oracled.d/
 Service manifest directory.
-Each
+Passed to
+.Xr serviced 8 ,
+which reads
 .Pa *.ucl
-file declares a service for
+files from this directory.
+.It Pa /usr/libexec/oracled/serviced
+Default service manager binary.
+Started by
 .Nm
-to start, its dependencies, and the capability tokens it requires.
-.It Pa /usr/libexec/oracled/
-Default system service binaries.
-These implement system operations (kldload, reboot, sysctl, etc.)
-and are started by
-.Nm
-at boot.
-Replaceable by providing alternate manifests in
-.Pa /etc/oracled.d/ .
+as its single child process.
 .It Pa /var/run/oracled.pid
 Default pidfile.
 .It Pa /var/run/oracled.sock
 Default control socket (mode 0700).
 .It Pa /dev/cap_rt
-CAP_RT control device, isolated by
+CAP_RT control device, claimed exclusively by
 .Nm
-when configured.
+at startup.
 .El
 .Sh EXIT STATUS
 .Ex -std
 .Pp
 .Nm
-exits with an error if the configuration file contains syntax errors.
+exits with an error if the configuration file contains syntax errors,
+if the pidfile cannot be acquired, or if required
+.Xr cap_rt 4
+operations fail.
 .Sh EXAMPLES
-Minimal configuration with full integrity hardening:
+Minimal configuration with default claims:
+.Bd -literal -offset indent
+pidfile = "/var/run/oracled.pid";
+control_socket = "/var/run/oracled.sock";
+manifest_dir = "/etc/oracled.d";
+service_manager = "/usr/libexec/oracled/serviced";
+.Ed
+.Pp
+Full integrity hardening (note: enabling
+.Va signal
+prevents
+.Xr rc 8
+from sending signals to
+.Nm ) :
 .Bd -literal -offset indent
 integrity {
     ptrace = true;
@@ -566,7 +552,7 @@ integrity {
 }
 .Ed
 .Pp
-Claim sensitive files and a privileged port:
+Claim sensitive files, a privileged port range, and system operations:
 .Bd -literal -offset indent
 claims {
     paths = [
@@ -574,21 +560,25 @@ claims {
         "/boot/kernel",
     ];
     network = [
-        { port = 443; protocol = "tcp"; direction = "bind"; },
+        {
+            port = ".<1024";
+            protocol = "tcp";
+            direction = "bind";
+            domain = "inet";
+            address = "192.0.2.0/24";
+        },
     ];
-}
-.Ed
-.Pp
-Service manifest for a kernel module loader:
-.Bd -literal -offset indent
-# /etc/oracled.d/sys-kldload.ucl
-label = "sys-kldload";
-program = "/usr/libexec/oracled/sys-kldload";
-provides = ["kldload"];
-requires = ["ORACLED"];
-restart = "always";
-capabilities {
-    system = ["kldload", "kldunload", "kldstat"];
+    jails = [
+        "webjail",
+        {
+            jid = 10;
+            name = "dbjail";
+            actions = ["create", "attach"];
+            path = "/usr/local/jails/dbjail";
+        },
+    ];
+    system = ["kldload", "kldunload", "kldstat",
+              "reboot", "sysctl"];
 }
 .Ed
 .Sh SEE ALSO
@@ -596,8 +586,10 @@ capabilities {
 .Xr pdfork 2 ,
 .Xr procctl 2 ,
 .Xr cap_rt 4 ,
-.Xr oraclectl 8 ,
-.Xr rc 8
+.Xr cap_rt_capprotect 4 ,
+.Xr cap_rt_isolation 4 ,
+.Xr cap_rt_system 4 ,
+.Xr serviced 8
 .Sh HISTORY
 .Nm
-first appeared in 5BSD as the initial Oracle userspace service manager.
+first appeared in 5BSD as the Oracle authority daemon.

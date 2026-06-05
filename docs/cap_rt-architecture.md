@@ -42,7 +42,7 @@ touching the base system in multiple places:
    credential handling.
 
 **CAP_RT replaces all of this with one base system change** (`DTYPE_CAP_RT`,
-two reserved Capsicum rights, one device node) that enables unlimited
+three reserved Capsicum rights, one device node) that enables unlimited
 kernel services as loadable modules.  No new syscalls, no new DTYPEs,
 no new `CAP_*` bits per service.
 
@@ -130,12 +130,14 @@ The unit of authority is the **instance fd** returned by CAP_RT_CONNECT.
 |-----------|-------|----------------|--------|
 | Send async message | CAP_RT_SENDMSG | CAP_CAP_RT_SEND | Enqueue on service RX queue |
 | Receive async message | CAP_RT_RECVMSG | CAP_CAP_RT_RECV | Dequeue from TX queue (blocks) |
-| Synchronous call | CAP_RT_CALL | CAP_CAP_RT_SEND + CAP_CAP_RT_RECV | Run handler in caller thread |
+| Synchronous call | CAP_RT_CALL | CAP_CAP_RT_SEND + CAP_CAP_RT_RECV + CAP_IOCTL | Run handler in caller thread |
 | Query metadata | CAP_RT_GETINFO | (none) | Read service name, badge, limits, features |
 | Prevent delegation | CAP_RT_LOCK | (none) | Disable SCM_RIGHTS transfer (one-way) |
 | Strip send | CAP_RT_REVOKE_SEND | (none) | Block future SENDMSG (one-way) |
 | Strip recv | CAP_RT_REVOKE_RECV | (none) | Block future RECVMSG (one-way) |
 | Strip call | CAP_RT_REVOKE_CALL | (none) | Block future CALL (one-way) |
+| Strip mint | CAP_RT_REVOKE_MINT | (none) | Block future MINT_INSTANCE (one-way) |
+| Mint instance | CAP_RT_MINT_INSTANCE | CAP_CAP_RT_MINT | Create new instance from mintable service |
 | Destroy instance | CAP_RT_TERMINATE | (none) | Kill for all holders |
 | kqueue readiness | EVFILT_READ / EVFILT_WRITE | (none) | TX has data / RX has space |
 
@@ -145,7 +147,7 @@ Rights can only be reduced, never re-escalated:
 
 1. **cap_rights_limit()** -- restrict Capsicum rights on the fd.
 2. **cap_ioctls_limit()** -- whitelist specific ioctl commands.
-3. **CAP_RT_REVOKE_SEND/RECV/CALL** -- instance-level one-way latch.
+3. **CAP_RT_REVOKE_SEND/RECV/CALL/MINT** -- instance-level one-way latch.
 4. **CAP_RT_LOCK** -- prevent fd transfer via SCM_RIGHTS.
 
 All four compose.  A process can hand a child a send-only,
@@ -156,7 +158,7 @@ make all instances non-transferable from birth.
 
 ### fd passing in messages
 
-Messages (SENDMSG, CALL) can carry up to `CAP_RT_MAX_FDS` (16)
+Messages (SENDMSG, CALL) can carry up to `CAP_RT_MAX_FDS` (32)
 file descriptors.  Capsicum rights on attached fds are preserved.
 The DFLAG_PASSABLE check prevents passing non-transferable fds.
 
@@ -177,6 +179,7 @@ cap_rt is fully usable inside `cap_enter()`:
 | CAP_RT_CONNECT (on /dev/cap_rt) | Yes, if fd opened before cap_enter |
 | SENDMSG, RECVMSG, CALL | Yes, with appropriate rights |
 | GETINFO, LOCK, REVOKE_*, TERMINATE | Yes |
+| MINT_INSTANCE | Yes, with CAP_CAP_RT_MINT right |
 | kqueue on instance fd | Yes |
 | __mac_get_proc / __mac_set_proc | Yes (CAPENABLED) |
 | mac_syscall | **No** (not CAPENABLED) |
@@ -307,6 +310,17 @@ cap_rt_notify(s, data, len, fds, fcaps, nfds);
 
 Returns EAGAIN above the soft limit.  No reply token.
 
+## Forwarding
+
+Forward a received message to another instance:
+
+```c
+cap_rt_forward(s, msg);
+```
+
+Transfers the message (including attached fds) to the target instance's
+RX queue.  Useful for proxy and routing services.
+
 ## Badges
 
 The badge is a uint64_t assigned by `co_connect` at instance creation.
@@ -346,6 +360,19 @@ cap_rt_reply(s, token, NULL, 0, &fp, NULL, 1);
 fdrop(fp, curthread);
 ```
 
+## Process Resolution
+
+Resolve a procdesc from message fds:
+
+```c
+struct proc *p;
+cap_rt_resolve_proc(cap_rt_msg_fds(msg), cap_rt_msg_nfds(msg), &p);
+```
+
+Searches the attached fds for a procdesc and returns the referenced
+process.  Used by services that operate on a target process (node,
+accounting, identity).
+
 ## Service Parameters
 
 ```c
@@ -367,7 +394,7 @@ struct cap_rt_service_params p = {
 | `queue_depth` | 256 | 4096 | RX queue depth (async only) |
 | `tx_limit` | 256 | 4096 | TX soft limit for notifications |
 | `instance_limit` | 1024 | 1M | Max concurrent instances |
-| `CAP_RT_MAX_FDS` | 16 | 16 | Max fds per message (compile-time) |
+| `CAP_RT_MAX_FDS` | 32 | 32 | Max fds per message (compile-time) |
 | TX hard limit | 4x queue_depth | -- | Prevents unbounded growth |
 
 ## Advanced: Deferred Replies
@@ -521,6 +548,7 @@ EV_EOF fires when the capability is revoked.
 | ECONNABORTED | CONNECT | Service unloading |
 | ENOBUFS | (internal) | TX queue hard limit reached |
 | EACCES | SENDMSG / RECVMSG / CALL | Operation restricted via CAP_RT_REVOKE_* |
+| EBADF | SENDMSG / CALL | fd hold failed during message construction |
 
 ## Security
 
@@ -530,7 +558,7 @@ capability fds via SCM_RIGHTS.
 
 Capabilities can be attenuated before delegation:
 - `CAP_RT_LOCK` prevents further SCM_RIGHTS passing
-- `CAP_RT_REVOKE_SEND` / `CAP_RT_REVOKE_RECV` / `CAP_RT_REVOKE_CALL` strip operations
+- `CAP_RT_REVOKE_SEND` / `CAP_RT_REVOKE_RECV` / `CAP_RT_REVOKE_CALL` / `CAP_RT_REVOKE_MINT` strip operations
 - `cap_ioctls_limit` restricts which ioctls the holder can perform
 
 ---
@@ -553,9 +581,60 @@ interference.
 
 | Operation | What it does |
 |-----------|-------------|
-| SHIELD | Set protection flags (ptrace, signals, visibility, wait, unkillable, unstoppable, sched, coredump, ktrace) |
-| MINT | Create an access token granting cross-nonce access |
-| AUTHORIZE | Present a token to gain access to a shielded process |
+| CP_OP_SHIELD | Set protection flags on a nonce |
+| CP_OP_MINT | Create an access token granting cross-nonce access |
+| CP_OP_AUTHORIZE | Present a token to gain access to a shielded process |
+| CP_OP_CAPMODE | Force Capsicum capability mode on a process |
+| CP_OP_CHROOT | Set a chroot for a process |
+
+Shield flags:
+
+| Flag | Value | Meaning |
+|------|-------|---------|
+| CP_SF_PTRACE | 0x001 | Block ptrace |
+| CP_SF_SIGNAL | 0x002 | Block signals |
+| CP_SF_VISIBLE | 0x004 | Hide from process listing |
+| CP_SF_WAIT | 0x008 | Block wait4 |
+| CP_SF_SIGKILL | 0x010 | Block SIGKILL |
+| CP_SF_SIGCONT | 0x020 | Block SIGCONT |
+| CP_SF_SCHED | 0x040 | Block scheduler manipulation |
+| CP_SF_CORE | 0x080 | Block core dumps |
+| CP_SF_KTRACE | 0x100 | Block ktrace |
+| CP_SF_NOPRIVS | 0x200 | Drop extra privileges |
+| CP_SF_NOFORK | 0x400 | Prevent fork |
+| CP_SF_NOIPC | 0x800 | Block SysV IPC |
+| CP_SF_NOFDRECV | 0x1000 | Block fd receive via SCM_RIGHTS |
+| CP_SF_ALL | 0x1fff | All flags combined |
+
+### system (sync, CAP_RT_CALL)
+
+Privileged system operations gated through capability tokens.
+Allows sandboxed processes to perform controlled system calls
+(kldload, reboot, sysctl, etc.) via narrowed gate tokens.
+
+| Operation | What it does |
+|-----------|-------------|
+| SYS_OP_CLAIM | Claim system gate authority for a nonce |
+| SYS_OP_RELEASE | Release system gate authority |
+| SYS_OP_MINT | Create a gate token with restricted gates |
+| SYS_OP_AUTHORIZE | Activate a gate token for the caller's nonce |
+
+System gates:
+
+| Gate | Value | Controls |
+|------|-------|----------|
+| SYS_GATE_KLDLOAD | 0x001 | Module loading |
+| SYS_GATE_KLDUNLOAD | 0x002 | Module unloading |
+| SYS_GATE_KLDSTAT | 0x004 | Module status query |
+| SYS_GATE_REBOOT | 0x008 | System reboot |
+| SYS_GATE_SWAPON | 0x010 | Enable swap |
+| SYS_GATE_SWAPOFF | 0x020 | Disable swap |
+| SYS_GATE_SYSCTL | 0x040 | sysctl writes |
+| SYS_GATE_KENV | 0x080 | Kernel environment writes |
+| SYS_GATE_ACCT | 0x100 | Process accounting |
+| SYS_GATE_AUDIT | 0x200 | Audit control |
+| SYS_GATE_KENV_READ | 0x400 | Kernel environment reads |
+| SYS_GATE_ALL | 0x7ff | All gates |
 
 ### isolation (sync, CAP_RT_CALL)
 
@@ -625,12 +704,16 @@ Resource group management.
 | Operation | What it does |
 |-----------|-------------|
 | ENLIST | Add process, jail, socket, or fd to a coalition |
+| JOIN | Join an existing coalition |
+| ENLIST_SET | Enlist multiple members in one call |
 | TERMINATE | Kill all members |
 | STAT | Query membership and state |
-| SIGNAL | Send signal to all process members |
-| DEADLINE | Set a time-bounded lifetime |
-| WATCHDOG | Require periodic checkins |
-| LEADER | Designate a leader process |
+| SET_SIGNAL | Set signal for coalition-wide delivery |
+| GRACEFUL | Graceful shutdown with signal and timeout |
+| SET_DEADLINE | Set a time-bounded lifetime |
+| SET_WATCHDOG | Require periodic checkins |
+| HEARTBEAT | Watchdog checkin |
+| SET_LEADER | Designate a leader process |
 | RUSAGE | Aggregate resource usage |
 
 ### node (sync, CAP_RT_CALL)
@@ -731,7 +814,7 @@ sys/dev/cap_rt/
 usr.sbin/oracled/         oracle authority daemon
 usr.sbin/serviced/        service manager daemon
 
-share/dtrace/cap_rt-*     DTrace scripts (13 kernel, 1 coalition)
+share/dtrace/cap_rt-*     DTrace scripts (14 cap_rt scripts)
 share/dtrace/oracled-*    DTrace scripts (8 oracled)
 share/dtrace/serviced-*   DTrace scripts (10 serviced)
 
@@ -742,7 +825,7 @@ tests/sys/cap_rt/         ATF kernel tests via kyua
 
 - `DTYPE_CAP_RT` (17) in sys/sys/file.h
 - `KF_TYPE_CAP_RT` (17) in sys/sys/user.h
-- `CAP_CAP_RT_SEND` / `CAP_CAP_RT_RECV` in sys/sys/capsicum.h (reserved)
+- `CAP_CAP_RT_SEND` / `CAP_CAP_RT_RECV` / `CAP_CAP_RT_MINT` in sys/sys/capsicum.h (reserved)
 
 ## Exported Kernel API
 
@@ -753,6 +836,7 @@ tests/sys/cap_rt/         ATF kernel tests via kyua
 ### Messaging (from co_handler or sleeping context)
 - `cap_rt_reply(s, token, data, len, fds, fcaps, nfds)` -- reply
 - `cap_rt_notify(s, data, len, fds, fcaps, nfds)` -- push notification
+- `cap_rt_forward(s, msg)` -- forward message to another instance
 
 ### Instance management
 - `cap_rt_instance_revoke(s)` -- tear down instance
@@ -765,6 +849,9 @@ tests/sys/cap_rt/         ATF kernel tests via kyua
 
 ### Minting
 - `cap_rt_mint_fp(svc, badge, &fp)` -- create new capability from handler
+
+### Process resolution
+- `cap_rt_resolve_proc(fds, nfds, &proc)` -- resolve procdesc from message fds
 
 ### Message accessors
 - `cap_rt_msg_data(msg)`, `cap_rt_msg_datalen(msg)`
@@ -794,7 +881,7 @@ Provider: `cap_rt` (core messaging)
 
 | Probe | Args |
 |---|---|
-| `connect` | service name, badge, pid |
+| `connect` / `connect-done` | service name, badge, pid [, error, time] |
 | `send` / `send-done` | service name, badge, payload len [, nfds, error, time] |
 | `recv` / `recv-done` | service name, badge, payload len [, nfds, error, time] |
 | `dispatch` / `dispatch-done` | service name, badge [, error, time] |
@@ -879,51 +966,19 @@ Provider: `cap_rt_pair` (bidirectional messaging)
 |---|---|---|
 | `kern.cap_rt.services` | counter | Number of registered services |
 | `kern.cap_rt.instances` | counter | Number of active instances |
+| `kern.cap_rt.service_names` | string | Newline-separated service list |
+| `kern.cap_rt.service_details` | string | Service details (flags, limits, counts) |
 
 ---
 
 ## Roadmap
 
-### Phase 1: Capability Protection (DONE)
-
-Selective process integrity protection via MACF.  Same-nonce (fork
-family) freely interacts; foreign programs are blocked.  Access tokens
-grant authorized access through the shield.
-
-### Phase 2: Namespace service (REMOVED)
-
-Replaced by `jaildesc` which provides direct jail descriptor support.
-
-### Phase 3: Token capability (REMOVED)
-
-Any CAP_RT capability fd already proves authorization; a dedicated
-token service added no value.
-
-### Phase 4: Program identity -- nonce (DONE)
-
-MACF credential label.  8-byte cryptographic nonce.  Inherited
-across fork, rotated on exec.  PID removed from the framework
-entirely.
-
-### Phase 5: KernelStore (DONE)
-
-Sync CAP_RT service.  Shared key-value store where the capability
-fd IS the credential.  Owner can MINT member fds.
-
-### Phase 6: Resource isolation (DONE)
-
-File, network, and jail isolation via claims and narrowed tokens.
-MACF hooks enforce vnode, socket, and prison operations.  Action
-masks scope file tokens (read/write/exec/create/delete/etc.),
-network tokens carry port ranges and CIDR prefixes, jail tokens
-carry create/get/set/remove/attach masks.
-
-### Phase 7: Oracle and service manager (DONE)
-
-Two-daemon architecture: oracled holds kernel claims and mints
-tokens; serviced manages service lifecycle, manifests, and
-dependency ordering.  Oracle pair protocol delegates narrowed
-tokens to services.  DTrace observability across all subsystems.
+Phases 1-7 are complete: program identity (nonces), capability
+protection (MACF shields), file/network/jail isolation (claims and
+tokens), resource groups (coalitions), per-process control (node),
+accounting (racct/rctl), capability pairs, filesystem mounting,
+system gate enforcement, and the two-daemon architecture (oracled +
+serviced).
 
 ### Kernel-to-kernel capability communication
 
