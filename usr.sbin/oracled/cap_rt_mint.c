@@ -113,6 +113,8 @@ cap_rt_mint_net_token(const struct oracled_net_claim *nc)
 	req.port_min = htons(nc->port_min);
 	req.port_max = htons(nc->port_max);
 	req.direction = nc->direction;
+	req.prefix = nc->prefix;
+	memcpy(req.addr, nc->addr, sizeof(req.addr));
 
 	memset(&call, 0, sizeof(call));
 	call.req = &req;

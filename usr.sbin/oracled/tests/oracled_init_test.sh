@@ -1248,6 +1248,65 @@ control_socket_services_any_user_cleanup()
 	:
 }
 
+atf_test_case config_claims_files_alias cleanup
+config_claims_files_alias_head()
+{
+	atf_set "descr" "claims.files is accepted as alias for claims.paths"
+}
+config_claims_files_alias_body()
+{
+	local conffile="$(pwd)/files_alias.conf"
+	local pidfile="$(pwd)/files_alias_test.pid"
+	cat > "$conffile" <<'ENDCONF'
+claims {
+    files = ["/dev/cap_rt", "/etc/oracled.conf"];
+}
+ENDCONF
+	oracled -T -f "$conffile" -p "$pidfile" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_claims_files_alias_cleanup()
+{
+	if [ -f files_alias_test.pid ]; then
+		kill "$(cat files_alias_test.pid)" 2>/dev/null || true
+	fi
+}
+
+atf_test_case config_claims_network_address cleanup
+config_claims_network_address_head()
+{
+	atf_set "descr" "claims.network with CIDR address is parsed"
+}
+config_claims_network_address_body()
+{
+	local conffile="$(pwd)/net_addr.conf"
+	local pidfile="$(pwd)/net_addr_test.pid"
+	cat > "$conffile" <<'ENDCONF'
+claims {
+    network = [
+        { port = 443; protocol = "tcp"; direction = "bind"; address = "10.0.0.0/8"; },
+        { port = 80; protocol = "tcp"; direction = "bind"; address = "::1"; },
+    ];
+}
+ENDCONF
+	oracled -T -f "$conffile" -p "$pidfile" &
+	local pid=$!
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
+	atf_check -s exit:0 kill -TERM "$pid"
+	wait "$pid"
+}
+config_claims_network_address_cleanup()
+{
+	if [ -f net_addr_test.pid ]; then
+		kill "$(cat net_addr_test.pid)" 2>/dev/null || true
+	fi
+}
+
 atf_init_test_cases()
 {
 	# Isolation
@@ -1296,6 +1355,8 @@ atf_init_test_cases()
 	atf_add_test_case config_integrity_settings
 	atf_add_test_case config_claims_paths
 	atf_add_test_case config_claims_network
+	atf_add_test_case config_claims_files_alias
+	atf_add_test_case config_claims_network_address
 	atf_add_test_case config_claims_bad_path
 	atf_add_test_case config_claims_system
 	atf_add_test_case config_claims_system_bad_name

@@ -33,6 +33,8 @@ struct oracled_net_claim {
 	uint16_t	port_min;	/* host byte order */
 	uint16_t	port_max;	/* host byte order */
 	uint8_t		direction;	/* ORACLED_NET_DIR_* */
+	uint8_t		prefix;		/* CIDR prefix len, 0=exact/any */
+	uint8_t		addr[16];	/* IPv6 or v4-mapped, all-zero=any */
 };
 
 struct oracled_jail_claim {

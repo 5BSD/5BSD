@@ -40,8 +40,8 @@
 
 #define	SVC_PAIR_FD	3	/* well-known fd for the pair channel */
 #define	SVC_TOKEN_BASE	4	/* tokens start at fd 4 */
-#define	SVC_MAX_TOKENS	(SERVICED_MAX_CAP_PATHS + SERVICED_MAX_CAP_NET + \
-			    SERVICED_MAX_CAP_JAIL + 1)
+#define	SVC_MAX_TOKENS	(SERVICED_MAX_CAP_PATHS + SERVICED_MAX_CAP_FILES + \
+			    SERVICED_MAX_CAP_NET + SERVICED_MAX_CAP_JAIL + 1)
 #define	SVC_MAX_ENV	16
 
 /*
@@ -343,6 +343,19 @@ svc_exec(struct svc_runtime *svc, int kq)
 			goto fail_tokens;
 		}
 		SERVICED_PROBE_CAP_MINT(m->label, "path", 0);
+		token_fds[ntokens++] = tfd;
+	}
+	for (i = 0; i < m->ncap_files; i++) {
+		int tfd = oracle_mint_file(sd.oracle_pair_fd,
+		    m->cap_files[i].path, m->cap_files[i].actions);
+		if (tfd == -1) {
+			syslog(LOG_ERR, "svc_exec %s: failed to mint "
+			    "file token for %s", m->label,
+			    m->cap_files[i].path);
+			SERVICED_PROBE_CAP_MINT(m->label, "file", -1);
+			goto fail_tokens;
+		}
+		SERVICED_PROBE_CAP_MINT(m->label, "file", 0);
 		token_fds[ntokens++] = tfd;
 	}
 	for (i = 0; i < m->ncap_net; i++) {

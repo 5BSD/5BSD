@@ -27,6 +27,7 @@
 #define	SERVICED_MAX_PROVIDES		8
 #define	SERVICED_MAX_REQUIRES		8
 #define	SERVICED_MAX_CAP_PATHS		16
+#define	SERVICED_MAX_CAP_FILES		16
 #define	SERVICED_MAX_CAP_NET		16
 #define	SERVICED_MAX_CAP_JAIL		16
 #define	SERVICED_LABEL_MAX		64
@@ -47,12 +48,19 @@
 #define	SERVICED_NET_DIR_CONNECT	0x02
 #define	SERVICED_NET_DIR_ANY		0x03
 
+struct serviced_file_cap {
+	char		path[PATH_MAX];
+	uint64_t	actions;	/* FI_FS_* mask */
+};
+
 struct serviced_net_claim {
 	int		domain;		/* AF_INET, AF_INET6, 0=any */
 	int		protocol;	/* IPPROTO_TCP, IPPROTO_UDP, 0=any */
 	uint16_t	port_min;	/* host byte order */
 	uint16_t	port_max;	/* host byte order */
 	uint8_t		direction;	/* SERVICED_NET_DIR_* */
+	uint8_t		prefix;		/* CIDR prefix len, 0=exact/any */
+	uint8_t		addr[16];	/* IPv6 or v4-mapped, all-zero=any */
 };
 
 struct serviced_jail_claim {
@@ -82,6 +90,8 @@ struct svc_manifest {
 	/* Capabilities to delegate */
 	char		cap_paths[SERVICED_MAX_CAP_PATHS][PATH_MAX];
 	unsigned	ncap_paths;
+	struct serviced_file_cap cap_files[SERVICED_MAX_CAP_FILES];
+	unsigned	ncap_files;
 	struct serviced_net_claim cap_net[SERVICED_MAX_CAP_NET];
 	unsigned	ncap_net;
 	struct serviced_jail_claim cap_jail[SERVICED_MAX_CAP_JAIL];

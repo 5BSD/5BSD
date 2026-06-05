@@ -19,5 +19,9 @@ int	parse_port_range_obj(const struct ucl_object_s *v,
 	    uint16_t *minp, uint16_t *maxp);
 int	parse_jail_action_string(const char *s, uint32_t *actionsp);
 int	parse_jail_actions(const struct ucl_object_s *v, uint32_t *actionsp);
+int	parse_address_string(const char *s, uint8_t addr[16],
+	    uint8_t *prefixp, int *domainp);
+int	parse_file_action_string(const char *s, uint64_t *actionsp);
+int	parse_file_actions(const struct ucl_object_s *v, uint64_t *actionsp);
 
 #endif /* CLAIM_PARSE_H */

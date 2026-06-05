@@ -311,6 +311,8 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 	nc.port_min = req->port_min;
 	nc.port_max = req->port_max;
 	nc.direction = req->direction;
+	nc.prefix = req->prefix;
+	memcpy(nc.addr, req->addr, sizeof(nc.addr));
 
 	if (!net_is_claimed(&nc)) {
 		syslog(LOG_NOTICE, "oracle_proto: mint_net denied: %u-%u/%d",

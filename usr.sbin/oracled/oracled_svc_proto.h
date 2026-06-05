@@ -101,7 +101,9 @@ struct oracle_mint_net_req {
 	uint16_t	port_min;	/* host byte order */
 	uint16_t	port_max;	/* host byte order */
 	uint8_t		direction;	/* FI_NET_* compatible bitmask */
-	uint8_t		_reserved[5];
+	uint8_t		prefix;		/* CIDR prefix len, 0=exact/any */
+	uint8_t		_reserved[2];
+	uint8_t		addr[16];	/* IPv6 or v4-mapped, all-zero=any */
 };
 
 /*

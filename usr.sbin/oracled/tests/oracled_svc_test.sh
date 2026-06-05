@@ -1855,6 +1855,174 @@ manifest_jail_missing_path_cleanup()
 	cleanup_common
 }
 
+# --- capabilities: files ---
+
+atf_test_case manifest_cap_files cleanup
+manifest_cap_files_head()
+{
+	atf_set "descr" "capabilities.files section with actions is parsed"
+	atf_set "require.user" "root"
+}
+manifest_cap_files_body()
+{
+	require_cap_rt
+	prepare_paths
+
+	cat > "$manifestdir/filecap.ucl" <<EOF
+label = "file-svc";
+program = "/usr/bin/true";
+capabilities {
+    files = [
+        { path = "/etc/resolv.conf"; actions = ["read", "stat"]; },
+        { path = "/var/run/myapp"; actions = ["lookup", "create", "delete"]; },
+    ];
+}
+EOF
+
+	write_config
+	oracled -d -f "$conffile" >"$logfile" 2>&1 &
+	daemon_pid=$!
+
+	i=0
+	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	sleep 1
+
+	atf_check -s exit:0 -o ignore sh -c \
+	    "grep 'capabilities:.*files=2' '$logfile'"
+	stop_oracled
+}
+manifest_cap_files_cleanup()
+{
+	cleanup_common
+}
+
+atf_test_case manifest_cap_files_bad_action cleanup
+manifest_cap_files_bad_action_head()
+{
+	atf_set "descr" "unknown file action is warned and entry skipped"
+	atf_set "require.user" "root"
+}
+manifest_cap_files_bad_action_body()
+{
+	require_cap_rt
+	prepare_paths
+
+	cat > "$manifestdir/badaction.ucl" <<EOF
+label = "badaction-svc";
+program = "/usr/bin/true";
+capabilities {
+    files = [
+        { path = "/etc/resolv.conf"; actions = ["read", "fakeperm"]; },
+    ];
+}
+EOF
+
+	write_config
+	oracled -d -f "$conffile" >"$logfile" 2>&1 &
+	daemon_pid=$!
+
+	i=0
+	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	sleep 1
+
+	atf_check -s exit:0 -o ignore sh -c \
+	    "grep 'invalid file actions' '$logfile'"
+	stop_oracled
+}
+manifest_cap_files_bad_action_cleanup()
+{
+	cleanup_common
+}
+
+atf_test_case manifest_cap_files_relative_path cleanup
+manifest_cap_files_relative_path_head()
+{
+	atf_set "descr" "relative path in capabilities.files is warned"
+	atf_set "require.user" "root"
+}
+manifest_cap_files_relative_path_body()
+{
+	require_cap_rt
+	prepare_paths
+
+	cat > "$manifestdir/relfile.ucl" <<EOF
+label = "relfile-svc";
+program = "/usr/bin/true";
+capabilities {
+    files = [
+        { path = "relative/path"; actions = ["read"]; },
+    ];
+}
+EOF
+
+	write_config
+	oracled -d -f "$conffile" >"$logfile" 2>&1 &
+	daemon_pid=$!
+
+	i=0
+	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	sleep 1
+
+	atf_check -s exit:0 -o ignore sh -c \
+	    "grep 'must be absolute.*relative/path' '$logfile'"
+	stop_oracled
+}
+manifest_cap_files_relative_path_cleanup()
+{
+	cleanup_common
+}
+
+atf_test_case manifest_cap_network_address cleanup
+manifest_cap_network_address_head()
+{
+	atf_set "descr" "capabilities.network with CIDR address is parsed"
+	atf_set "require.user" "root"
+}
+manifest_cap_network_address_body()
+{
+	require_cap_rt
+	prepare_paths
+
+	cat > "$manifestdir/netaddr.ucl" <<EOF
+label = "netaddr-svc";
+program = "/usr/bin/true";
+capabilities {
+    network = [
+        { port = 443; protocol = "tcp"; direction = "connect"; address = "10.0.0.0/8"; },
+        { port = 80; protocol = "tcp"; direction = "connect"; address = "192.168.1.1"; },
+    ];
+}
+EOF
+
+	write_config
+	oracled -d -f "$conffile" >"$logfile" 2>&1 &
+	daemon_pid=$!
+
+	i=0
+	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	sleep 1
+
+	atf_check -s exit:0 -o ignore sh -c \
+	    "grep 'capabilities:.*network=2' '$logfile'"
+	stop_oracled
+}
+manifest_cap_network_address_cleanup()
+{
+	cleanup_common
+}
+
 atf_init_test_cases()
 {
 	# Manifest parsing
@@ -1869,6 +2037,10 @@ atf_init_test_cases()
 
 	atf_add_test_case manifest_unknown_field_ignored
 	atf_add_test_case manifest_cap_network
+	atf_add_test_case manifest_cap_files
+	atf_add_test_case manifest_cap_files_bad_action
+	atf_add_test_case manifest_cap_files_relative_path
+	atf_add_test_case manifest_cap_network_address
 	atf_add_test_case manifest_all_fields
 
 	# Bad manifest inputs

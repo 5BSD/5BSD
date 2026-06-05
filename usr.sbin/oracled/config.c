@@ -172,6 +172,20 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct oracled_net_claim *nc,
 		}
 	}
 
+	v = ucl_object_lookup(elem, "address");
+	if (v != NULL && ucl_object_type(v) == UCL_STRING) {
+		int addr_domain = 0;
+		if (parse_address_string(ucl_object_tostring(v),
+		    nc->addr, &nc->prefix, &addr_domain) != 0) {
+			syslog(LOG_ERR, "%s: invalid address: %s",
+			    label, ucl_object_tostring(v));
+			return (-1);
+		}
+		/* Address implies domain if not explicitly set */
+		if (nc->domain == AF_INET && addr_domain != 0)
+			nc->domain = addr_domain;
+	}
+
 	return (0);
 }
 
@@ -299,8 +313,10 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 	if (sec == NULL || ucl_object_type(sec) != UCL_OBJECT)
 		return;
 
-	/* claims.paths — string array */
+	/* claims.paths / claims.files — string array */
 	arr = ucl_object_lookup(sec, "paths");
+	if (arr == NULL)
+		arr = ucl_object_lookup(sec, "files");
 	if (arr != NULL && ucl_object_type(arr) == UCL_ARRAY) {
 		it = NULL;
 		while ((elem = ucl_object_iterate(arr, &it, true))

@@ -207,6 +207,8 @@ oracle_mint_net(int pair_fd, const struct serviced_net_claim *nc)
 	req.port_min = nc->port_min;
 	req.port_max = nc->port_max;
 	req.direction = nc->direction;
+	req.prefix = nc->prefix;
+	memcpy(req.addr, nc->addr, sizeof(req.addr));
 
 	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1, NULL);
 	if (status < 0)

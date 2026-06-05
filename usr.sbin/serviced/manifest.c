@@ -282,6 +282,53 @@ parse_cap_paths(const ucl_object_t *arr, struct svc_manifest *m)
 }
 
 static void
+parse_cap_files(const ucl_object_t *arr, struct svc_manifest *m)
+{
+	const ucl_object_t *elem, *pv, *av;
+	ucl_object_iter_t it;
+
+	if (arr == NULL || ucl_object_type(arr) != UCL_ARRAY)
+		return;
+
+	it = NULL;
+	while ((elem = ucl_object_iterate(arr, &it, true)) != NULL) {
+		if (ucl_object_type(elem) != UCL_OBJECT)
+			continue;
+		if (m->ncap_files >= SERVICED_MAX_CAP_FILES) {
+			syslog(LOG_WARNING, "manifest %s: too many "
+			    "file capabilities (max %d)", m->label,
+			    SERVICED_MAX_CAP_FILES);
+			break;
+		}
+		pv = ucl_object_lookup(elem, "path");
+		if (pv == NULL || ucl_object_type(pv) != UCL_STRING)
+			continue;
+		if (ucl_object_tostring(pv)[0] != '/') {
+			syslog(LOG_WARNING, "manifest %s: file capability "
+			    "path must be absolute: %s", m->label,
+			    ucl_object_tostring(pv));
+			continue;
+		}
+		if (strlcpy(m->cap_files[m->ncap_files].path,
+		    ucl_object_tostring(pv),
+		    sizeof(m->cap_files[m->ncap_files].path)) >= PATH_MAX) {
+			syslog(LOG_WARNING, "manifest %s: file capability "
+			    "path too long, skipped: %s", m->label,
+			    ucl_object_tostring(pv));
+			continue;
+		}
+		av = ucl_object_lookup(elem, "actions");
+		if (parse_file_actions(av,
+		    &m->cap_files[m->ncap_files].actions) != 0) {
+			syslog(LOG_ERR, "manifest %s: invalid file actions",
+			    m->label);
+			continue;
+		}
+		m->ncap_files++;
+	}
+}
+
+static void
 parse_cap_system(const ucl_object_t *arr, struct svc_manifest *m)
 {
 	const ucl_object_t *elem;
@@ -373,6 +420,7 @@ parse_capabilities(const ucl_object_t *root, struct svc_manifest *m)
 		return;
 
 	parse_cap_paths(ucl_object_lookup(sec, "paths"), m);
+	parse_cap_files(ucl_object_lookup(sec, "files"), m);
 	parse_cap_network(ucl_object_lookup(sec, "network"), m);
 	parse_cap_jails(ucl_object_lookup(sec, "jails"), m);
 	parse_cap_system(ucl_object_lookup(sec, "system"), m);
@@ -677,11 +725,11 @@ manifest_log(const struct svc_manifest *m)
 		log_label_list("provides", m->provides, m->nprovides);
 	if (m->nrequires > 0)
 		log_label_list("requires", m->requires, m->nrequires);
-	if (m->ncap_paths > 0 || m->ncap_net > 0 || m->ncap_jail > 0 ||
-	    m->cap_system != 0)
-		syslog(LOG_INFO, "    capabilities: paths=%u network=%u "
-		    "jails=%u system=0x%x", m->ncap_paths, m->ncap_net,
-		    m->ncap_jail, m->cap_system);
+	if (m->ncap_paths > 0 || m->ncap_files > 0 || m->ncap_net > 0 ||
+	    m->ncap_jail > 0 || m->cap_system != 0)
+		syslog(LOG_INFO, "    capabilities: paths=%u files=%u "
+		    "network=%u jails=%u system=0x%x", m->ncap_paths,
+		    m->ncap_files, m->ncap_net, m->ncap_jail, m->cap_system);
 	if (m->has_jail)
 		syslog(LOG_INFO, "    jail: %s path=%s", m->jail_name,
 		    m->jail_path);
@@ -757,12 +805,17 @@ manifest_format_summary(const struct svc_manifest *m, char *buf, size_t len)
 		BUF_APPEND(buf, len, &off,"]\n");
 	}
 
-	if (m->ncap_paths > 0 || m->ncap_net > 0 || m->ncap_jail > 0 ||
-	    m->cap_system != 0)
+	if (m->ncap_paths > 0 || m->ncap_files > 0 || m->ncap_net > 0 ||
+	    m->ncap_jail > 0 || m->cap_system != 0)
 		BUF_APPEND(buf, len, &off,"  capabilities:\n");
 
 	for (i = 0; i < m->ncap_paths; i++)
 		BUF_APPEND(buf, len, &off,"    path:       %s\n", m->cap_paths[i]);
+
+	for (i = 0; i < m->ncap_files; i++)
+		BUF_APPEND(buf, len, &off,"    file:       %s actions=0x%jx\n",
+		    m->cap_files[i].path,
+		    (uintmax_t)m->cap_files[i].actions);
 
 	for (i = 0; i < m->ncap_net; i++) {
 		const struct serviced_net_claim *nc = &m->cap_net[i];
