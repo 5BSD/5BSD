@@ -555,15 +555,64 @@ interference.
 
 ### isolation (sync, CAP_RT_CALL)
 
-File, directory, Unix-socket, and network isolation by nonce.
+File, directory, Unix-socket, network, and jail isolation by nonce.
+Claims establish broad ownership; tokens delegate narrowed access.
+
+**File/directory operations:**
 
 | Operation | What it does |
 |-----------|-------------|
-| CLAIM_VNODE | Isolate a file/directory to caller's nonce |
-| RELEASE_VNODE | Release a vnode claim |
-| CLAIM_NETWORK | Isolate a port/address/protocol/direction tuple |
-| RELEASE_NETWORK | Release a network claim |
-| QUERY | Check claim status |
+| CLAIM | Isolate a file/directory to caller's nonce (by vnode, not path) |
+| RELEASE | Release a vnode claim |
+| QUERY | Check claim status and authorization |
+| MINT | Create an access token with FI_FS_* action mask |
+| AUTHORIZE | Activate a token for the caller's nonce |
+
+File action masks for token narrowing:
+
+| Action | Meaning |
+|--------|---------|
+| LOOKUP | Traverse a directory during path resolution |
+| STAT | Inspect metadata |
+| READ | Read file data or symlink target |
+| WRITE | Write existing file data |
+| APPEND | Append-only write |
+| CREATE | Create a directory entry |
+| DELETE | Unlink a file or remove a directory |
+| RENAME_FROM / RENAME_TO | Move names between directories |
+| LINK | Create a hard link |
+| EXEC | Execute a file |
+| SETATTR | chmod, chown, chflags, utimes |
+| TRUNCATE | Truncate file content |
+| UIPC_CONNECT | Connect to a Unix domain socket |
+
+**Network operations:**
+
+| Operation | What it does |
+|-----------|-------------|
+| CLAIM_NET | Isolate a network endpoint (domain, protocol, port range, direction, CIDR address) |
+| RELEASE_NET | Release a network claim |
+| QUERY_NET | Check network claim status |
+| MINT_NET | Create a network access token scoped to an endpoint |
+
+Network claims support port ranges (min..max), CIDR address prefixes
+(e.g., 10.0.0.0/8), protocol wildcards, and direction (bind/connect/any).
+
+**Jail operations:**
+
+| Operation | What it does |
+|-----------|-------------|
+| CLAIM_JAIL | Claim a jail by JID, name, or both |
+| RELEASE_JAIL | Release a jail claim |
+| QUERY_JAIL | Check jail claim status |
+| MINT_JAIL | Create a jail access token with FI_JAIL_* action mask |
+
+Jail action masks: CREATE, GET, SET, REMOVE, ATTACH.
+
+**MACF enforcement:** Claims are enforced via MAC policy hooks on
+vnode operations, socket bind/connect, and jail create/get/set/remove/attach.
+Owner nonce always passes.  Foreign nonces are denied unless authorized
+via a token whose action mask covers the requested operation.
 
 ### coalition (sync, CAP_RT_CALL)
 
@@ -662,19 +711,27 @@ sys/dev/cap_rt/
     cap_rt_core.c         module lifecycle, capability creation
     cap_rt_dev.c          capability operations (ioctls, kqueue, close)
     cap_rt_kern.c         KPI: dispatch, reply/notify/revoke
+    cap_rt_label.c/h      program nonce (identity) MACF label
+    cap_rt_identity.c     identity service (SELF, QUERY)
+    cap_rt_isolation.c    file/net/jail isolation (claims, tokens, MACF)
     cap_rt_capprotect.c   capability protection (ptrace/signal/visibility via MACF)
-    cap_rt_label.h        public header: cap_rt_proc_nonce() accessor
+    cap_rt_system.c       system gate enforcement via MACF
+    cap_rt_coalition.c    resource group management (enlist, terminate, timers)
+    cap_rt_node.c         per-process inspection/control via procdesc
+    cap_rt_accounting.c   per-process racct/rctl operations
+    cap_rt_mount.c        capability-based filesystem mounting
     cap_rt_pair.c         bidirectional capability pair
     cap_rt_test_kernelstore.c  test fixture: sync key-value store
     cap_rt_test_keystore.c     test fixture: async key-value store
 
-sys/modules/cap_rt/                 core module
-sys/modules/cap_rt_capprotect/      capability protection
-sys/modules/cap_rt_pair/            capability pair
-sys/modules/cap_rt_test_kernelstore/ test fixture
-sys/modules/cap_rt_test_keystore/   test fixture
+usr.sbin/oracled/         oracle authority daemon
+usr.sbin/serviced/        service manager daemon
 
-tests/sys/cap_rt/             116 ATF tests via kyua
+share/dtrace/cap_rt-*     DTrace scripts (13 kernel, 1 coalition)
+share/dtrace/oracled-*    DTrace scripts (8 oracled)
+share/dtrace/serviced-*   DTrace scripts (10 serviced)
+
+tests/sys/cap_rt/         ATF kernel tests via kyua
 ```
 
 ## Base System Changes
@@ -717,25 +774,100 @@ tests/sys/cap_rt/             116 ATF tests via kyua
 - **cap_rt_ioctl.h** -- shared kernel/userspace ioctl definitions
 - **cap_rt_label.h** -- program nonce accessor
 - **cap_rt_internal.h** -- framework internals (not for service modules)
+- **cap_rt_isolation_proto.h** -- file/net/jail isolation wire protocol
 - **cap_rt_capprotect_proto.h** -- capability protection wire protocol
-- **cap_rt_test_kernelstore_proto.h** -- test fixture wire protocol
-- **cap_rt_test_keystore_proto.h** -- test fixture wire protocol
+- **cap_rt_system_proto.h** -- system gate wire protocol
+- **cap_rt_coalition_proto.h** -- coalition wire protocol
+- **cap_rt_pair_proto.h** -- capability pair wire protocol
+- **cap_rt_identity_proto.h** -- identity service wire protocol
+- **cap_rt_node_proto.h** -- node service wire protocol
+- **cap_rt_accounting_proto.h** -- accounting service wire protocol
+- **cap_rt_mount_proto.h** -- mount service wire protocol
 
 ## DTrace Probes
 
-Provider: `cap_rt`
+Provider: `cap_rt` (core messaging)
 
 | Probe | Args |
 |---|---|
 | `connect` | service name, badge, pid |
-| `send` | service name, badge, payload len |
-| `recv` | service name, badge, payload len |
-| `dispatch` | service name, badge |
-| `reply` | service name, badge, payload len |
-| `notify` | service name, badge, payload len |
-| `call` | service name, badge, req len |
-| `revoke` | service name, badge, reason |
+| `send` / `send-done` | service name, badge, payload len [, nfds, error, time] |
+| `recv` / `recv-done` | service name, badge, payload len [, nfds, error, time] |
+| `dispatch` / `dispatch-done` | service name, badge [, error, time] |
+| `reply` / `reply-done` | service name, badge, payload len [, error, time] |
+| `notify` / `notify-done` | service name, badge, payload len [, error, time] |
+| `call` / `call-done` | service name, badge, req len [, reply len, error, time] |
+| `forward` / `forward-done` | service name, badge, payload len [, error, time] |
+| `revoke` / `revoke-done` | service name, badge, reason [, time] |
 | `close` | service name, badge |
+| `fd-install` / `fd-close` / `fd-receive` | service name, badge, fd, pid, cred, nonce |
+| `fd-mint` | service name, badge, pid, cred, nonce, svc flags |
+| `instance-create` / `instance-finalize` / `instance-lastclose` | service name, badge, ... |
+| `service-create` / `service-destroy` | service name, flags, ... |
+| `control` / `ioctl-deny` / `rights-change` | service name, badge, cmd, pid, cred, nonce |
+| `queue-pressure` | service name, badge, reason, current, limit |
+| `error` | service name, badge, cmd, pid, nonce, errno |
+
+Provider: `cap_rt_isolation` (file/net/jail enforcement)
+
+| Probe | Args |
+|---|---|
+| `deny` | name, owner nonce, caller nonce |
+| `deny-action` | name, owner nonce, caller nonce, claim id, actions |
+| `deny-net` | owner nonce, caller nonce, claim id, domain, proto\|dir, port |
+| `deny-jail` | owner nonce, caller nonce, claim id, jid, name, actions |
+| `allow-action` | name, owner nonce, caller nonce, claim id, actions |
+| `allow-net` | owner nonce, caller nonce, claim id, domain, proto\|dir, port |
+| `allow-jail` | owner nonce, caller nonce, claim id, jid, name, actions |
+| `token-narrow` | type, owner nonce, claim id, actions, 0 |
+| `query` | type, caller nonce, 0, 0, reply flags |
+| `state` | name, nonce, nonce, claim id, op, errno |
+
+Provider: `cap_rt_capprotect` (shield enforcement)
+
+| Probe | Args |
+|---|---|
+| `deny` | hook name, target nonce, caller nonce |
+| `allow` | hook name, target nonce, caller nonce |
+| `state` | op name, target nonce, caller nonce, flags, pid, error |
+
+Provider: `cap_rt_system` (gate enforcement)
+
+| Probe | Args |
+|---|---|
+| `deny` | gate name, owner nonce, caller nonce |
+| `allow` | gate name, owner nonce, caller nonce |
+| `state` | op name, owner nonce, caller nonce, gates, pid, error |
+
+Provider: `cap_rt_coalition` (resource groups)
+
+| Probe | Args |
+|---|---|
+| `create` | badge |
+| `enlist` | dtype, error |
+| `join` | pid, error |
+| `terminate` | member count, error |
+| `close` | member count |
+| `member-exit` / `leader-exit` | pid |
+| `fork-inherit` | parent pid, child pid |
+| `signal-set` | signal, 0 |
+| `deadline-set` | timeout ms, signal, grace ms, 0 |
+| `watchdog-set` | timeout ms, 0 |
+| `heartbeat` | timeout ms |
+| `deadline-expire` | phase, signal |
+| `watchdog-expire` | signal |
+| `graceful` | signal, timeout ms, 0 |
+| `call-done` | op, error, time |
+| `deny` | reason, errno, pid |
+
+Provider: `cap_rt_pair` (bidirectional messaging)
+
+| Probe | Args |
+|---|---|
+| `create` | badge A, badge B, 0 |
+| `forward` | src badge, dst badge, data len |
+| `handler-done` | op, badge, error, time |
+| `state` | name, op, badge, error, 0 |
 
 ## Sysctls
 
@@ -773,6 +905,21 @@ entirely.
 
 Sync CAP_RT service.  Shared key-value store where the capability
 fd IS the credential.  Owner can MINT member fds.
+
+### Phase 6: Resource isolation (DONE)
+
+File, network, and jail isolation via claims and narrowed tokens.
+MACF hooks enforce vnode, socket, and prison operations.  Action
+masks scope file tokens (read/write/exec/create/delete/etc.),
+network tokens carry port ranges and CIDR prefixes, jail tokens
+carry create/get/set/remove/attach masks.
+
+### Phase 7: Oracle and service manager (DONE)
+
+Two-daemon architecture: oracled holds kernel claims and mints
+tokens; serviced manages service lifecycle, manifests, and
+dependency ordering.  Oracle pair protocol delegates narrowed
+tokens to services.  DTrace observability across all subsystems.
 
 ### Kernel-to-kernel capability communication
 
