@@ -23,6 +23,7 @@ Kernel isolation protocol:
 - `FI_OP_QUERY` queries a vnode claim.
 - `FI_OP_CLAIM_NET` claims a network endpoint.
 - `FI_OP_RELEASE_NET` releases a network endpoint.
+- `FI_OP_QUERY_NET` queries a network endpoint claim.
 - `FI_OP_MINT` mints a full vnode access token.
 - `FI_OP_MINT_NET` mints a full network access token.
 - `FI_OP_AUTHORIZE` activates a token for the caller nonce.
@@ -31,11 +32,13 @@ Kernel enforcement:
 
 - Vnode claims are keyed by vnode identity, not path.
 - Directory claims gate traversal through `mpo_vnode_check_lookup`.
-- Current vnode authorization does not distinguish operations.  A
-  vnode token grants all checked operations against that claim.
+- Vnode authorization supports narrowed action masks through
+  `FI_OP_MINT`; callers supply a valid `FI_FS_*` mask to scope
+  the minted token.
 - Network claims already support domain, protocol, port, direction,
-  address, and CIDR prefix.
-- Network wildcards are represented as zero values.
+  address, CIDR prefix, and port ranges.
+- Network wildcards are represented as zero values except port
+  wildcard, which is the explicit range `0..65535`.
 
 Userland policy:
 
@@ -43,9 +46,41 @@ Userland policy:
   `claim_system`.
 - serviced manifests have `cap_paths[]`, `cap_net[]`, and
   `cap_system`.
-- The oracled-to-serviced mint protocol currently sends a path or
-  network tuple, but no filesystem action mask, network port range,
-  or address range.
+- The oracled-to-serviced mint protocol carries filesystem action
+  masks and ranged network tuples.
+
+Implementation checkpoint:
+
+- `FI_OP_QUERY_NET` is implemented in the kernel and oracled status
+  uses it to mark network claims that are not held.
+- `FI_OP_CLAIM_NET`, `FI_OP_RELEASE_NET`, and `FI_OP_MINT_NET` carry
+  `port_min`/`port_max`; there is no separate `NET2` API.
+- Network parser forms include `ports = "*"`, `ports = "A-B"`,
+  `ports = ".N"`/`ports = "<N"`, and wildcard protocol/domain/
+  direction values.
+- DTrace has a generic denial probe and a network-specific denial
+  probe with owner nonce, caller nonce, claim id, domain, packed
+  protocol/direction, and host-order port.
+- DTrace oracled probes for claim-net and mint-net carry port_min
+  and port_max for range visibility.  The redundant `port` field
+  was removed from `oracled_net_claim` and `serviced_net_claim`.
+- Jail mint probes (mint-jail) are declared and fired.
+- Directory namespace MACF hooks (unlink, link, rename_from,
+  rename_to) check both the directory vnode and the file vnode,
+  matching the create hook pattern.
+- Port/jail UCL parsers are shared between oracled and serviced
+  via claim_parse.c / claim_parse.h.
+- Jail MACF enforcement releases fi_jail_lock before acquiring
+  fi_auth_lock, matching the vnode and net lock ordering patterns.
+- Jail claim matching requires both JID and name to match when
+  both are specified in the claim.  Single-key claims match on
+  that key alone.  This prevents a token for "oracled.net" JID 5
+  from authorizing operations on a different jail reusing JID 5.
+- `fi_check_prison_create` bounds the jail name from `vfs_getopt`
+  into a NUL-terminated stack buffer before matching.
+- Invalid action bits in jail claim requests are now rejected
+  even when actions are optional (claim/release paths).
+- Jail claim conflict fires a DTrace deny probe.
 
 ## Naming
 
@@ -111,6 +146,20 @@ oracled validates that each requested capability is covered by an
 oracle-owned claim, then asks `cap_rt_isolation` to mint a narrowed
 token.  The kernel stores the narrowed token policy and MACF hooks
 check the requested action against that policy.
+
+Token activation must be multi-consumer and idempotent:
+
+- Multiple processes may receive the same token fd and call
+  `FI_OP_AUTHORIZE`.
+- Each distinct caller nonce should be added to the authorization set
+  for that token's owner/claim.
+- Repeated `FI_OP_AUTHORIZE` calls by the same nonce on the same token
+  must not create duplicate authorization entries.
+- `dup()` creates multiple fd references to the same token file
+  instance; all references share one token lifetime.
+- Authorization entries should be removed when the token instance is
+  revoked, which happens when the final fd reference to that token
+  instance is closed.
 
 ## Filesystem Actions
 
@@ -192,41 +241,35 @@ Directory semantics:
 
 ## Protocol Changes
 
-Prefer v2 operations instead of silently changing the meaning of the
-existing packed structs.
+Prefer v2 operations for filesystem actions because the old file
+request shape cannot carry an action mask.  Network never reached a
+stable 1.0 API, so use the normal network request shape with range
+fields instead of carrying separate `*_NET2` operations.
 
-Suggested additions:
+Keep the oracled-to-serviced pair protocol identity at 0.0.1 while
+these additions land.  New requests may be added as compatible opcodes,
+but `ORACLE_PROTO_VERSION` should not be bumped until the existing
+0.0.1 message meanings or required startup negotiation actually change.
 
-```c
-#define FI_OP_CLAIM_FILE2       20
-#define FI_OP_RELEASE_FILE2     21
-#define FI_OP_QUERY_FILE2       22
-#define FI_OP_MINT_FILE2        23
-#define FI_OP_CLAIM_NET2        24
-#define FI_OP_RELEASE_NET2      25
-#define FI_OP_QUERY_NET2        26
-#define FI_OP_MINT_NET2         27
-```
-
-Suggested file request:
+The vnode request struct (`struct fi_request`) now carries an `actions`
+field used by `FI_OP_MINT` and `FI_OP_QUERY`:
 
 ```c
-struct fi_file_request_v2 {
+struct fi_request {
     uint32_t op;
     uint32_t flags;
-    uint64_t actions;
+    uint64_t actions;   /* FI_FS_* mask */
 };
 ```
 
-The target is still passed as an fd.  `actions` is meaningful for
-minting and query filtering.  Claim operations may require
-`actions == 0` or may record maximum claim actions if we choose to
-make claims narrower later.
+The target is still passed as an fd.  `actions` is required for
+minting (scopes the token) and query filtering.  Claim and release
+operations ignore the field.
 
-Suggested network request:
+Network request:
 
 ```c
-struct fi_net_request_v2 {
+struct fi_net_request {
     uint32_t op;
     uint32_t flags;
     int32_t domain;
@@ -257,8 +300,8 @@ Extend token/auth state:
 
 - add `fa_fs_actions` to `struct fi_auth`
 - add `fip_token_fs_actions` to `struct fi_priv`
-- keep `fa_net` for network tokens, but move to v2 range fields
-  when `FI_OP_MINT_NET2` lands
+- keep `fa_net` for network tokens, using the ranged
+  `struct fi_net_request`
 
 Change common authorization:
 
@@ -292,12 +335,10 @@ Tasks:
 - Extend global network claims to include address/prefix and port
   ranges.
 - Extend the oracle pair protocol:
-  - `ORACLE_OP_MINT_FILE2`
-  - `ORACLE_OP_MINT_NET2`
-  - possibly keep `ORACLE_OP_MINT_PATH` as a compatibility wrapper
+  - `ORACLE_OP_MINT_PATH` (uses `FI_OP_MINT` with actions mask)
+  - `ORACLE_OP_MINT_NET` carries port ranges
 - Validate requested service capabilities against oracle-owned claims.
-- Add `FI_OP_QUERY_NET2` use so status can verify network claims from
-  kernel state.
+- Keep `FI_OP_QUERY_NET` status verification covered by tests.
 - Include action/range information in status output.
 
 Suggested oracle structs:
@@ -334,7 +375,7 @@ Tasks:
   as a full-access file token during transition.
 - Replace `serviced_net_claim` with `serviced_net_cap` using the same
   range/address shape as oracled.
-- Request `ORACLE_OP_MINT_FILE2` and `ORACLE_OP_MINT_NET2`.
+- Request `ORACLE_OP_MINT_PATH` and ranged `ORACLE_OP_MINT_NET`.
 - Pass token fds to children and authorize after exec as today.
 
 Suggested manifest form:
@@ -370,6 +411,8 @@ The kernel already has MACF prison hooks that can enforce this:
 
 - `mpo_prison_check_create(cred, opts, flags)` runs before a new jail
   is allocated and receives the raw `vfsoptlist`.
+- `mpo_prison_check_get(cred, pr, opts, flags)` runs before jail
+  metadata is exposed.
 - `mpo_prison_check_set(cred, pr, opts, flags)` runs before updates.
 - `mpo_prison_check_attach(cred, pr)` runs before attach.
 - `mpo_prison_check_remove(cred, pr)` runs before removal.
@@ -381,6 +424,11 @@ hook runs.  That means `cap_rt_jail` can deny a specific-JID create
 unless the caller owns a matching `claim_jid`.  The create hook can
 also inspect requested jail name and other options before the jail is
 visible.
+
+Jail descriptor operations resolve to a `struct prison` before attach
+or remove.  `jail_attach_jd(2)` still reaches
+`mpo_prison_check_attach`, and jail descriptor cleanup/removal should
+be treated as the same authority question as numeric JID removal.
 
 Important enforcement constraint: MACF prison check hooks run through
 `MAC_POLICY_CHECK_NOSLEEP`.  They must consult already-loaded in-memory
@@ -527,7 +575,7 @@ Kernel isolation tests:
 - net range token permits included port and denies excluded port
 - net CIDR token permits included address and denies excluded address
 - wildcard protocol token covers TCP and UDP if configured
-- `FI_OP_QUERY_NET2` reports kernel state
+- `FI_OP_QUERY_NET` reports kernel state
 - exact file token does not authorize sibling files
 - directory `LOOKUP` does not imply `CREATE`
 - directory `CREATE` does not imply `DELETE`
@@ -535,6 +583,11 @@ Kernel isolation tests:
 - `READ` does not imply `EXEC`
 - replacing a file via rename requires destination-side authority
 - token authorization is revoked when the token fd closes
+- repeated authorization by the same nonce is idempotent
+- two different nonces can authorize the same token and both gain
+  access
+- duplicated token fds share one token lifetime, and authorization
+  remains active until the final duplicate is closed
 - overlapping foreign network claims return `EBUSY`
 - same-nonce overlapping network claims do not create duplicate
   denial state
@@ -629,9 +682,10 @@ Recommended implementation order:
 
 1. Add protocol constants and action/range structs.
 2. Add filesystem action-aware token storage and MACF checks.
-3. Add network port range support and `FI_OP_QUERY_NET2`.
+3. Add network port range support and `FI_OP_QUERY_NET`.  Done.
 4. Update oracled config structs and parser.
-5. Update oracle pair protocol for file/net v2 mint requests.
+5. Update oracle pair protocol for file mint requests and ranged net
+   mint requests.
 6. Update serviced manifest structs and parser.
 7. Add focused kernel tests.
 8. Add oracled/serviced parser and delegation tests.

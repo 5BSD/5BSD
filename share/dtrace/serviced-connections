@@ -46,6 +46,13 @@ oracled*:::conn-count
 	@ctl_rate["change"] = count();
 }
 
+serviced*:::oracle-disconnected
+{
+	printf("%-20Y %-8s %-6s %-6d\n", walltimestamp,
+	    "oracle", "DISCON", 0);
+	@sctl_rate["oracle-dc"] = count();
+}
+
 dtrace:::END
 {
 	printf("\n--- serviced control socket ---\n");

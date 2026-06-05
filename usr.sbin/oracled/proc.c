@@ -82,46 +82,52 @@ kill_subtree(void)
 	}
 }
 
-void
+int
 apply_procctl_self_policy(void)
 {
 	struct procctl_reaper_status rs;
 	int ctl;
 
 	if (procctl(P_PID, getpid(), PROC_REAP_ACQUIRE, NULL) == -1) {
-		syslog(LOG_WARNING, "PROC_REAP_ACQUIRE failed: %m");
-	} else {
-		syslog(LOG_INFO, "acquired process subtree reaper status");
+		syslog(LOG_ERR, "PROC_REAP_ACQUIRE failed: %m");
+		return (-1);
 	}
+	syslog(LOG_INFO, "acquired process subtree reaper status");
 
 	memset(&rs, 0, sizeof(rs));
 	if (procctl(P_PID, getpid(), PROC_REAP_STATUS, &rs) == -1) {
-		syslog(LOG_WARNING, "PROC_REAP_STATUS failed: %m");
-	} else if ((rs.rs_flags & REAPER_STATUS_OWNED) == 0) {
-		syslog(LOG_WARNING,
+		syslog(LOG_ERR, "PROC_REAP_STATUS failed: %m");
+		return (-1);
+	}
+	if ((rs.rs_flags & REAPER_STATUS_OWNED) == 0) {
+		syslog(LOG_ERR,
 		    "process is not reported as reaper; reaper pid %jd",
 		    (intmax_t)rs.rs_reaper);
-	} else {
-		syslog(LOG_INFO,
-		    "reaper status confirmed: children=%u descendants=%u",
-		    rs.rs_children, rs.rs_descendants);
+		return (-1);
 	}
+	syslog(LOG_INFO,
+	    "reaper status confirmed: children=%u descendants=%u",
+	    rs.rs_children, rs.rs_descendants);
 
 	ctl = PPROT_SET;
-	if (procctl(P_PID, getpid(), PROC_SPROTECT, &ctl) == -1)
-		syslog(LOG_WARNING, "PROC_SPROTECT failed: %m");
-	else
-		syslog(LOG_INFO, "enabled OOM protection");
+	if (procctl(P_PID, getpid(), PROC_SPROTECT, &ctl) == -1) {
+		syslog(LOG_ERR, "PROC_SPROTECT failed: %m");
+		return (-1);
+	}
+	syslog(LOG_INFO, "enabled OOM protection");
 
 	ctl = PROC_TRACE_CTL_DISABLE_EXEC;
-	if (procctl(P_PID, getpid(), PROC_TRACE_CTL, &ctl) == -1)
-		syslog(LOG_WARNING, "PROC_TRACE_CTL failed: %m");
-	else
-		syslog(LOG_INFO, "disabled tracing and core dumps");
+	if (procctl(P_PID, getpid(), PROC_TRACE_CTL, &ctl) == -1) {
+		syslog(LOG_ERR, "PROC_TRACE_CTL failed: %m");
+		return (-1);
+	}
+	syslog(LOG_INFO, "disabled tracing and core dumps");
 
 	ctl = PROC_LOGSIGEXIT_CTL_FORCE_ENABLE;
 	if (procctl(P_PID, getpid(), PROC_LOGSIGEXIT_CTL, &ctl) == -1)
 		syslog(LOG_WARNING, "PROC_LOGSIGEXIT_CTL failed: %m");
 	else
 		syslog(LOG_INFO, "enabled signal-exit logging");
+
+	return (0);
 }

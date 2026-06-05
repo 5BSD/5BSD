@@ -30,11 +30,29 @@ oracled*:::mint-path
 }
 
 oracled*:::mint-net
+/arg0 == arg1/
 {
 	printf("%-20Y %-8s %-8s port %d/%s\n", walltimestamp,
-	    "net", arg2 == 0 ? "OK" : "DENIED",
-	    arg0, arg1 == 6 ? "tcp" : arg1 == 17 ? "udp" : "?");
-	@by_result[arg2 == 0 ? "net:ok" : "net:denied"] = count();
+	    "net", arg3 == 0 ? "OK" : "DENIED",
+	    arg0, arg2 == 6 ? "tcp" : arg2 == 17 ? "udp" : "?");
+	@by_result[arg3 == 0 ? "net:ok" : "net:denied"] = count();
+}
+
+oracled*:::mint-net
+/arg0 != arg1/
+{
+	printf("%-20Y %-8s %-8s port %d-%d/%s\n", walltimestamp,
+	    "net", arg3 == 0 ? "OK" : "DENIED",
+	    arg0, arg1, arg2 == 6 ? "tcp" : arg2 == 17 ? "udp" : "?");
+	@by_result[arg3 == 0 ? "net:ok" : "net:denied"] = count();
+}
+
+oracled*:::mint-jail
+{
+	printf("%-20Y %-8s %-8s jid=%d name=%s actions=0x%x\n",
+	    walltimestamp, "jail", arg3 == 0 ? "OK" : "DENIED",
+	    arg0, copyinstr(arg1), arg2);
+	@by_result[arg3 == 0 ? "jail:ok" : "jail:denied"] = count();
 }
 
 oracled*:::mint-system

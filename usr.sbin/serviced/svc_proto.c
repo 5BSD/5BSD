@@ -47,10 +47,11 @@ svc_pair_reply(struct svc_runtime *svc, int status,
 		sa.nfds = (uint32_t)nfds;
 	}
 
-	if (ioctl(svc->pair_fd, CAP_RT_SENDMSG, &sa) == -1)
+	if (ioctl(svc->pair_fd, CAP_RT_SENDMSG, &sa) == -1) {
 		syslog(LOG_WARNING, "service %s: pair reply: %m",
 		    svc->manifest.label);
-	else
+		SERVICED_PROBE_ERROR("svc_proto", "pair reply failed");
+	} else
 		SERVICED_PROBE_IPC_REPLY(svc->manifest.label, 0, status);
 }
 

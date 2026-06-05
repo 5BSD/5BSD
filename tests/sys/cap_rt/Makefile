@@ -17,5 +17,7 @@ BINDIR=		${TESTSDIR}
 CFLAGS+=	-I${SRCTOP}/sys/dev/cap_rt
 LIBADD.cap_rt_test+=	jail
 LIBADD.cap_rt_coalition_test+=	jail
+LIBADD.cap_rt_isolation_test+=	jail
+LIBADD.cap_rt_isolation_helper+=	jail
 
 .include <bsd.test.mk>

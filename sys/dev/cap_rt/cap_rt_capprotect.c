@@ -72,6 +72,8 @@ MALLOC_DEFINE(M_CAP_RT_CP, "cap_rt_cp", "cap_rt capability protection");
 SDT_PROVIDER_DEFINE(cap_rt_capprotect);
 SDT_PROBE_DEFINE3(cap_rt_capprotect, , , deny,
     "const char *", "uint64_t", "uint64_t");
+SDT_PROBE_DEFINE3(cap_rt_capprotect, , , allow,
+    "const char *", "uint64_t", "uint64_t");
 SDT_PROBE_DEFINE6(cap_rt_capprotect, , , state,
     "const char *", "uint64_t", "uint64_t", "uint32_t", "pid_t", "int");
 
@@ -577,6 +579,9 @@ cp_check_shield(struct ucred *cred, struct proc *p, uint32_t flag,
 	if (denied) {
 		SDT_PROBE3(cap_rt_capprotect, , , deny, name,
 		    target_nonce, caller_nonce);
+	} else {
+		SDT_PROBE3(cap_rt_capprotect, , , allow, name,
+		    target_nonce, caller_nonce);
 	}
 
 	return (denied ? EACCES : 0);
@@ -635,6 +640,9 @@ cp_mac_check_signal(struct ucred *cred, struct proc *p, int signum)
 	if (denied) {
 		SDT_PROBE3(cap_rt_capprotect, , , deny, (uintptr_t)"signal",
 		    target_nonce, caller_nonce);
+	} else {
+		SDT_PROBE3(cap_rt_capprotect, , , allow, (uintptr_t)"signal",
+		    target_nonce, caller_nonce);
 	}
 
 	return (denied ? EACCES : 0);
@@ -669,6 +677,8 @@ cp_mac_cred_check_visible(struct ucred *cr1, struct ucred *cr2)
 	}
 	if (cp_is_authorized(observer_nonce, target_nonce, CP_SF_VISIBLE)) {
 		mtx_unlock(&cp_lock);
+		SDT_PROBE3(cap_rt_capprotect, , , allow, (uintptr_t)"visible",
+		    target_nonce, observer_nonce);
 		return (0);
 	}
 	mtx_unlock(&cp_lock);
@@ -704,6 +714,8 @@ cp_mac_proc_check_wait(struct ucred *cred, struct proc *p)
 	}
 	if (cp_is_authorized(caller_nonce, target_nonce, CP_SF_WAIT)) {
 		mtx_unlock(&cp_lock);
+		SDT_PROBE3(cap_rt_capprotect, , , allow, (uintptr_t)"wait",
+		    target_nonce, caller_nonce);
 		return (0);
 	}
 	mtx_unlock(&cp_lock);

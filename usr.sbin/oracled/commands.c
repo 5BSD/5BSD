@@ -40,6 +40,9 @@ config_apply_claims(const struct oracled_config *newcfg)
 	memcpy(od.cfg.claim_net, newcfg->claim_net,
 	    sizeof(od.cfg.claim_net));
 	od.cfg.nclaim_net = newcfg->nclaim_net;
+	memcpy(od.cfg.claim_jail, newcfg->claim_jail,
+	    sizeof(od.cfg.claim_jail));
+	od.cfg.nclaim_jail = newcfg->nclaim_jail;
 	od.cfg.claim_system = newcfg->claim_system;
 	strlcpy(od.cfg.manifest_dir, newcfg->manifest_dir,
 	    sizeof(od.cfg.manifest_dir));

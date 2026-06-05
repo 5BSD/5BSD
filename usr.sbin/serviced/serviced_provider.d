@@ -14,6 +14,8 @@ provider serviced {
 
 	/* Manifest reload */
 	probe reload(unsigned int nnew, unsigned int nchanged, unsigned int nremoved);
+	probe svc__removed(const char *label);
+	probe svc__changed(const char *label);
 
 	/* Naming registry */
 	probe naming__register(const char *name, const char *owner);
@@ -30,6 +32,13 @@ provider serviced {
 	probe cap__mint(const char *label, const char *type, int result);
 	probe cap__pair(const char *label, int result);
 	probe cap__coalition(const char *label, int result);
+
+	/* Service exec setup duration (pair + tokens + fork) */
+	probe svc__exec__done(const char *label, uint64_t duration_ns, unsigned int ntokens);
+
+	/* Resource counts */
+	probe svc__count(unsigned int nservices);
+	probe naming__count(unsigned int nnames);
 
 	/* Service IPC — pair channel messages */
 	probe ipc__recv(const char *label, uint32_t op);
@@ -49,4 +58,6 @@ provider serviced {
 
 	/* Errors */
 	probe error(const char *subsys, const char *msg);
+	probe svc__exec__fail(const char *label, int error);
+	probe oracle__disconnected(void);
 };

@@ -41,6 +41,10 @@
 /* Manifest reload */
 #define	SERVICED_PROBE_RELOAD(nnew, nchanged, nremoved)	\
 	DTRACE_PROBE3(serviced, reload, nnew, nchanged, nremoved)
+#define	SERVICED_PROBE_SVC_REMOVED(label)	\
+	DTRACE_PROBE1(serviced, svc__removed, label)
+#define	SERVICED_PROBE_SVC_CHANGED(label)	\
+	DTRACE_PROBE1(serviced, svc__changed, label)
 
 /* Naming registry */
 #define	SERVICED_PROBE_NAMING_REGISTER(name, owner)	\
@@ -67,6 +71,16 @@
 	DTRACE_PROBE2(serviced, cap__pair, label, result)
 #define	SERVICED_PROBE_CAP_COALITION(label, result)	\
 	DTRACE_PROBE2(serviced, cap__coalition, label, result)
+
+/* Service exec setup duration */
+#define	SERVICED_PROBE_SVC_EXEC_DONE(label, duration_ns, ntokens)	\
+	DTRACE_PROBE3(serviced, svc__exec__done, label, duration_ns, ntokens)
+
+/* Resource counts */
+#define	SERVICED_PROBE_SVC_COUNT(nservices)	\
+	DTRACE_PROBE1(serviced, svc__count, nservices)
+#define	SERVICED_PROBE_NAMING_COUNT(nnames)	\
+	DTRACE_PROBE1(serviced, naming__count, nnames)
 
 /* Service IPC — pair channel messages */
 #define	SERVICED_PROBE_IPC_RECV(label, op)	\
@@ -95,5 +109,9 @@
 /* Errors */
 #define	SERVICED_PROBE_ERROR(subsys, msg)	\
 	DTRACE_PROBE2(serviced, error, subsys, msg)
+#define	SERVICED_PROBE_SVC_EXEC_FAIL(label, error)	\
+	DTRACE_PROBE2(serviced, svc__exec__fail, label, error)
+#define	SERVICED_PROBE_ORACLE_DISCONNECTED()	\
+	DTRACE_PROBE(serviced, oracle__disconnected)
 
 #endif /* SERVICED_PROBES_H */

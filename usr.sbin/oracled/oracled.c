@@ -129,9 +129,13 @@ main(int argc, char *argv[])
 	config_log(&od.cfg);
 
 	/* Phase 3: harden process. */
-	if (!od.test_mode)
-		apply_procctl_self_policy();
-	else
+	if (!od.test_mode) {
+		if (apply_procctl_self_policy() == -1) {
+			syslog(LOG_ERR,
+			    "failed to apply process hardening policy");
+			return (1);
+		}
+	} else
 		syslog(LOG_INFO, "test mode: skipping procctl");
 
 	/* Phase 4: capability runtime. */

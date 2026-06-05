@@ -1,0 +1,49 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * serviced-exec-latency -- measure service exec setup time.
+ *
+ * Shows the total time to create a pair, mint tokens, and pdfork
+ * each service.  Helps identify slow oracle round-trips.
+ *
+ * Usage: serviced-exec-latency
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing service exec setup... Ctrl-C for summary.\n\n");
+	printf("%-20s %-20s %-8s %s\n",
+	    "TIME", "SERVICE", "TOKENS", "LATENCY");
+}
+
+serviced*:::svc-exec-done
+{
+	this->ms = arg1 / 1000000;
+	this->us = arg1 / 1000;
+	printf("%-20Y %-20s %-8d %d ms\n", walltimestamp,
+	    copyinstr(arg0), arg2, this->ms);
+	@lat[copyinstr(arg0)] = quantize(this->us);
+	@avg[copyinstr(arg0)] = avg(this->us);
+}
+
+serviced*:::svc-exec-fail
+{
+	printf("%-20Y %-20s %-8s error %d\n", walltimestamp,
+	    copyinstr(arg0), "FAIL", arg1);
+	@fail[copyinstr(arg0)] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Avg exec setup by service (microseconds) ---\n");
+	printa("  %-20s %@d\n", @avg);
+	printf("\n--- Exec setup latency distribution (microseconds) ---\n");
+	printa(@lat);
+	printf("\n--- Exec failures by service ---\n");
+	printa("  %-20s %@d\n", @fail);
+}

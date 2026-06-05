@@ -42,6 +42,8 @@ MALLOC_DEFINE(M_CAP_RT_SYS, "cap_rt_sys", "cap_rt system gates");
 SDT_PROVIDER_DEFINE(cap_rt_system);
 SDT_PROBE_DEFINE3(cap_rt_system, , , deny,
     "const char *", "uint64_t", "uint64_t");
+SDT_PROBE_DEFINE3(cap_rt_system, , , allow,
+    "const char *", "uint64_t", "uint64_t");
 SDT_PROBE_DEFINE6(cap_rt_system, , , state,
     "const char *", "uint64_t", "uint64_t", "uint32_t", "pid_t", "int");
 
@@ -163,6 +165,8 @@ sys_check_gate(struct ucred *cred, uint32_t gate, const char *name)
 			    sa->sa_owner == sc->sc_nonce &&
 			    (sa->sa_gates & gate)) {
 				mtx_unlock(&sys_lock);
+				SDT_PROBE3(cap_rt_system, , , allow,
+				    name, sc->sc_nonce, caller_nonce);
 				return (0);
 			}
 		}

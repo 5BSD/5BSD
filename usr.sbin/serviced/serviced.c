@@ -117,6 +117,7 @@ event_loop(void)
 				if (kev->flags & EV_EOF) {
 					syslog(LOG_CRIT,
 					    "oracle died, stopping all services");
+					SERVICED_PROBE_ORACLE_DISCONNECTED();
 					sd.shutting_down = true;
 					sd.running = false;
 					supervisor_stop(serviced_kq);
@@ -290,8 +291,10 @@ main(int argc, char *argv[])
 	add_signal_event(serviced_kq, SIGCHLD);
 
 	/* Tell oracled we're ready. */
-	if (oracle_send_ready(sd.oracle_pair_fd) != 0)
-		syslog(LOG_WARNING, "failed to send READY to oracled");
+	if (oracle_send_ready(sd.oracle_pair_fd) != 0) {
+		syslog(LOG_ERR, "failed to send READY to oracled");
+		return (1);
+	}
 
 	sd.running = true;
 	syslog(LOG_INFO, "serviced started, manifest_dir=%s",

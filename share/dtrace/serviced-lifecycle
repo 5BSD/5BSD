@@ -68,6 +68,26 @@ serviced*:::svc-load
 	    copyinstr(arg0), "LOAD");
 }
 
+serviced*:::svc-removed
+{
+	printf("%-20Y %-20s %-10s\n", walltimestamp,
+	    copyinstr(arg0), "REMOVED");
+	@events[copyinstr(arg0), "removed"] = count();
+}
+
+serviced*:::svc-changed
+{
+	printf("%-20Y %-20s %-10s\n", walltimestamp,
+	    copyinstr(arg0), "CHANGED");
+	@events[copyinstr(arg0), "changed"] = count();
+}
+
+serviced*:::oracle-disconnected
+{
+	printf("%-20Y %-20s %-10s\n", walltimestamp,
+	    "-", "ORACLE-DC");
+}
+
 dtrace:::END
 {
 	printf("\n--- Events by service ---\n");

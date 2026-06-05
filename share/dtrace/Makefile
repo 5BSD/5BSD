@@ -26,18 +26,22 @@ SCRIPTS=	blocking \
 		hotopen \
 		nfsattrstats \
 		nfsclienttime \
+		oracled-bootstrap \
 		oracled-claims \
 		oracled-control \
+		oracled-errors \
 		oracled-ipc \
 		oracled-latency \
 		oracled-lifecycle \
 		oracled-minting \
 		serviced-capabilities \
 		serviced-connections \
+		serviced-exec-latency \
 		serviced-ipc \
 		serviced-latency \
 		serviced-lifecycle \
 		serviced-naming \
+		serviced-resources \
 		serviced-shutdown \
 		serviced-timeouts \
 		siftr \

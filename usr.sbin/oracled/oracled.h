@@ -14,6 +14,7 @@
 
 #include <libutil.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <time.h>
 
 #include "config.h"
@@ -44,7 +45,9 @@ extern struct oracled_state od;
 int	cap_rt_setup(void);
 void	cap_rt_teardown(void);
 int	cap_rt_mint_path_token(const char *path);
+int	cap_rt_mint_file_token(const char *path, uint64_t actions);
 int	cap_rt_mint_net_token(const struct oracled_net_claim *nc);
+int	cap_rt_mint_jail_token(const struct oracled_jail_claim *jc);
 int	cap_rt_mint_system_token(uint32_t gates);
 int	cap_rt_create_pair(int *oracle_end, int *child_end);
 int	cap_rt_create_coalition(void);
@@ -98,7 +101,7 @@ int	oracle_proto_fd(void);
 /* proc.c — process management */
 void	reap_children(void);
 void	kill_subtree(void);
-void	apply_procctl_self_policy(void);
+int	apply_procctl_self_policy(void);
 
 /*
  * Formatting helpers for cap_rt status display.

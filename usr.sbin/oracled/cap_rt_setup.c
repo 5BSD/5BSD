@@ -86,7 +86,8 @@ cap_rt_svc_connect(const char *name)
 
 /*
  * Initialize all cap_rt services.  Called once during startup.
- * Errors are logged but not fatal — oracled degrades gracefully.
+ * All subsystems are required — oracled must not start without
+ * its full resource claim set and integrity protection.
  */
 int
 cap_rt_setup(void)
@@ -94,21 +95,31 @@ cap_rt_setup(void)
 
 	cap_rt_fd = open("/dev/cap_rt", O_RDWR | O_CLOEXEC);
 	if (cap_rt_fd == -1) {
-		syslog(LOG_WARNING, "open /dev/cap_rt: %m");
+		syslog(LOG_ERR, "open /dev/cap_rt: %m");
 		return (-1);
 	}
 	syslog(LOG_INFO, "opened /dev/cap_rt");
 
-	if (isolate_resources() == -1)
-		syslog(LOG_WARNING, "failed to connect isolation service");
+	if (isolate_resources() == -1) {
+		syslog(LOG_ERR, "failed to connect isolation service");
+		goto fail;
+	}
 
-	if (claim_system_gates() == -1)
-		syslog(LOG_WARNING, "failed to claim system operations");
+	if (claim_system_gates() == -1) {
+		syslog(LOG_ERR, "failed to claim system operations");
+		goto fail;
+	}
 
-	if (apply_integrity() == -1)
-		syslog(LOG_WARNING, "failed to activate integrity protection");
+	if (apply_integrity() == -1) {
+		syslog(LOG_ERR, "failed to activate integrity protection");
+		goto fail;
+	}
 
 	return (0);
+
+fail:
+	cap_rt_teardown();
+	return (-1);
 }
 
 /*

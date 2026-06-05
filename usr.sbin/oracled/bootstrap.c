@@ -250,17 +250,29 @@ bootstrap_start(int kq)
 	 * instances for each service it launches.
 	 */
 	dfds.pair_svc_fd = cap_rt_connect_for_delegate("pair");
-	if (dfds.pair_svc_fd == -1)
-		syslog(LOG_WARNING, "bootstrap: pair service not available, "
-		    "serviced will use oracle protocol");
+	if (dfds.pair_svc_fd == -1) {
+		syslog(LOG_ERR, "bootstrap: pair service not available");
+		close(oracle_end);
+		close(child_end);
+		return (-1);
+	}
 	dfds.coalition_svc_fd = cap_rt_connect_for_delegate("coalition");
-	if (dfds.coalition_svc_fd == -1)
-		syslog(LOG_WARNING, "bootstrap: coalition service not "
-		    "available");
+	if (dfds.coalition_svc_fd == -1) {
+		syslog(LOG_ERR, "bootstrap: coalition service not available");
+		close(oracle_end);
+		close(child_end);
+		close(dfds.pair_svc_fd);
+		return (-1);
+	}
 	dfds.capprotect_fd = cap_rt_connect_for_delegate("capprotect");
-	if (dfds.capprotect_fd == -1)
-		syslog(LOG_WARNING, "bootstrap: capprotect service not "
-		    "available");
+	if (dfds.capprotect_fd == -1) {
+		syslog(LOG_ERR, "bootstrap: capprotect service not available");
+		close(oracle_end);
+		close(child_end);
+		close(dfds.pair_svc_fd);
+		close(dfds.coalition_svc_fd);
+		return (-1);
+	}
 
 	pid = pdfork(&pd_fd, PD_CLOEXEC);
 	if (pid == -1) {
@@ -315,6 +327,7 @@ bootstrap_start(int kq)
 
 	syslog(LOG_INFO, "bootstrap: started serviced pid %jd",
 	    (intmax_t)pid);
+	ORACLED_PROBE_BOOTSTRAP_START(pid);
 	return (0);
 }
 
@@ -358,6 +371,8 @@ bootstrap_handle_exit(struct kevent *kev, int kq)
 		syslog(LOG_WARNING, "bootstrap: serviced killed by signal %d",
 		    WTERMSIG(status));
 
+	ORACLED_PROBE_BOOTSTRAP_EXIT(bs.pid, status);
+
 	/* Clean up. */
 	close(bs.pd_fd);
 	bs.pd_fd = -1;
@@ -399,6 +414,7 @@ bootstrap_handle_exit(struct kevent *kev, int kq)
 	if (delay > BOOTSTRAP_MAX_DELAY)
 		delay = BOOTSTRAP_MAX_DELAY;
 
+	ORACLED_PROBE_BOOTSTRAP_RESTART(bs.restart_count, delay);
 	bootstrap_schedule_restart(kq, delay);
 }
 

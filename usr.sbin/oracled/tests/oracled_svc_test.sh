@@ -954,6 +954,9 @@ capabilities {
     network = [
         { port = 443; protocol = "tcp"; direction = "bind"; },
         { port = 80; protocol = "tcp"; direction = "bind"; },
+        { ports = "*"; protocol = "*"; direction = "*"; domain = "*"; },
+        { ports = "10000-10010"; protocol = "udp"; direction = "connect"; },
+        { ports = ".1024"; protocol = "any"; direction = "any"; },
     ];
 }
 EOF
@@ -970,7 +973,7 @@ EOF
 	sleep 1
 
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'capabilities: paths=0 network=2 system=0x0' '$logfile'"
+	    "grep 'capabilities: paths=0 network=5 system=0x0' '$logfile'"
 	stop_oracled
 }
 manifest_cap_network_cleanup()
@@ -1767,6 +1770,91 @@ svc_capabilities_logged_cleanup()
 	cleanup_common
 }
 
+# --- jail manifest ---
+
+atf_test_case manifest_jail_section cleanup
+manifest_jail_section_head()
+{
+	atf_set "descr" "manifest with jail section is parsed correctly"
+	atf_set "require.user" "root"
+}
+manifest_jail_section_body()
+{
+	require_cap_rt
+	prepare_paths
+
+	cat > "$manifestdir/jailed.ucl" <<EOF
+label = "jailed-svc";
+program = "/usr/bin/true";
+jail {
+    name = "oracled.test-jail";
+    path = "/";
+    hostname = "test-jail";
+    ip4 = "10.0.0.99";
+}
+EOF
+
+	write_config
+	oracled -d -f "$conffile" >"$logfile" 2>&1 &
+	daemon_pid=$!
+
+	i=0
+	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	sleep 1
+
+	atf_check -s exit:0 -o ignore sh -c \
+	    "grep 'jail: oracled.test-jail path=/' '$logfile'"
+	stop_oracled
+}
+manifest_jail_section_cleanup()
+{
+	cleanup_common
+}
+
+atf_test_case manifest_jail_missing_path cleanup
+manifest_jail_missing_path_head()
+{
+	atf_set "descr" "manifest with jail section missing path is rejected"
+	atf_set "require.user" "root"
+}
+manifest_jail_missing_path_body()
+{
+	require_cap_rt
+	prepare_paths
+
+	cat > "$manifestdir/badjail.ucl" <<EOF
+label = "badjail-svc";
+program = "/usr/bin/true";
+jail {
+    name = "oracled.bad-jail";
+}
+EOF
+
+	write_config
+	oracled -d -f "$conffile" >"$logfile" 2>&1 &
+	daemon_pid=$!
+
+	i=0
+	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	sleep 1
+
+	atf_check -s exit:0 -o ignore sh -c \
+	    "grep 'jail section requires path' '$logfile'"
+	atf_check -s exit:0 -o ignore sh -c \
+	    "grep '0 services loaded' '$logfile'"
+	stop_oracled
+}
+manifest_jail_missing_path_cleanup()
+{
+	cleanup_common
+}
+
 atf_init_test_cases()
 {
 	# Manifest parsing
@@ -1819,4 +1907,8 @@ atf_init_test_cases()
 	# Service launch
 	atf_add_test_case svc_launch_order_logged
 	atf_add_test_case svc_capabilities_logged
+
+	# Jail manifest
+	atf_add_test_case manifest_jail_section
+	atf_add_test_case manifest_jail_missing_path
 }

@@ -597,6 +597,9 @@ config_claims_network_body()
 claims {
     network = [
         { port = 9999; protocol = "tcp"; direction = "bind"; },
+        { ports = "*"; protocol = "*"; direction = "*"; domain = "*"; },
+        { ports = "10000-10010"; protocol = "udp"; direction = "connect"; },
+        { ports = ".1024"; protocol = "any"; direction = "any"; },
     ];
 }
 ENDCONF

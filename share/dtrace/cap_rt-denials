@@ -58,6 +58,21 @@ cap_rt_isolation:::deny
 	@denies[probemod, copyinstr(arg0)] = count();
 }
 
+cap_rt_isolation:::allow-action
+{
+	printf("%-6d %-18s %-20s %-14s 0x%016x 0x%016x\n",
+	    pid, "cap_rt_isolation", "allow", copyinstr(arg0), arg1, arg2);
+	@allows["isolation", copyinstr(arg0)] = count();
+}
+
+cap_rt_capprotect:::allow,
+cap_rt_system:::allow
+{
+	printf("%-6d %-18s %-20s %-14s 0x%016x 0x%016x\n",
+	    pid, probemod, "allow", copyinstr(arg0), arg1, arg2);
+	@allows[probemod, copyinstr(arg0)] = count();
+}
+
 cap_rt_mount:::deny
 {
 	printf("%-6d %-18s %-20s %-14s %-18s %-18s fstype=%s\n",
@@ -97,4 +112,7 @@ dtrace:::END
 
 	printf("\n--- CAP_RT errors by service/cmd/errno ---\n");
 	printa("%-16s cmd=%-10d errno=%-6d %@d\n", @errors);
+
+	printf("\n--- Allows by provider/op ---\n");
+	printa("%-20s %-20s %@d\n", @allows);
 }

@@ -42,6 +42,10 @@
 MALLOC_DEFINE(M_CAP_RT_PAIR, "cap_rt_pair", "cap_rt capability pair");
 
 SDT_PROVIDER_DEFINE(cap_rt_pair);
+SDT_PROBE_DEFINE3(cap_rt_pair, , , create,
+    "uint64_t", "uint64_t", "int");
+SDT_PROBE_DEFINE3(cap_rt_pair, , , forward,
+    "uint64_t", "uint64_t", "size_t");
 SDT_PROBE_DEFINE4(cap_rt_pair, , , handler__done,
     "uint32_t", "uint64_t", "int", "sbintime_t");
 SDT_PROBE_DEFINE5(cap_rt_pair, , , state,
@@ -127,6 +131,9 @@ pair_handler(struct cap_rt_instance *s, const struct cap_rt_msg *msg,
 		error = cap_rt_reply(s, cap_rt_msg_token(msg), NULL, 0,
 		    &peer_fp, NULL, 1);
 		fdrop(peer_fp, curthread);
+		if (error == 0)
+			SDT_PROBE3(cap_rt_pair, , , create,
+			    cap_rt_instance_get_badge(s), peer_badge, 0);
 		goto out;
 	}
 
@@ -150,6 +157,9 @@ pair_handler(struct cap_rt_instance *s, const struct cap_rt_msg *msg,
 	cap_rt_instance_hold(peer);
 	mtx_unlock(&pp->pp_mtx);
 
+	SDT_PROBE3(cap_rt_pair, , , forward,
+	    cap_rt_instance_get_badge(s), cap_rt_instance_get_badge(peer),
+	    cap_rt_msg_datalen(msg));
 	error = cap_rt_forward(peer, msg);
 	cap_rt_instance_rele(peer);
 out:

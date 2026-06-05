@@ -1,0 +1,56 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * serviced-resources -- track service and naming registry counts.
+ *
+ * Shows live resource count changes: loaded services, registered
+ * names, and connection counts.
+ *
+ * Usage: serviced-resources
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracking serviced resource counts... Ctrl-C to stop.\n\n");
+	printf("%-20s %-16s %s\n", "TIME", "RESOURCE", "COUNT");
+}
+
+serviced*:::svc-count
+{
+	printf("%-20Y %-16s %d\n", walltimestamp, "services", arg0);
+	@hwm["services"] = max(arg0);
+}
+
+serviced*:::naming-count
+{
+	printf("%-20Y %-16s %d\n", walltimestamp, "names", arg0);
+	@hwm["names"] = max(arg0);
+}
+
+serviced*:::conn-accept
+{
+	printf("%-20Y %-16s %d\n", walltimestamp, "connections", arg1);
+	@hwm["connections"] = max(arg1);
+}
+
+serviced*:::conn-close
+{
+	printf("%-20Y %-16s %d\n", walltimestamp, "connections", arg0);
+}
+
+oracled*:::conn-count
+{
+	printf("%-20Y %-16s %d\n", walltimestamp, "ctl-connections", arg0);
+	@hwm["ctl-connections"] = max(arg0);
+}
+
+dtrace:::END
+{
+	printf("\n--- High-water marks ---\n");
+	printa("  %-16s %@d\n", @hwm);
+}

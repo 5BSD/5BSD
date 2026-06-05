@@ -100,6 +100,23 @@ cap_rt_isolation:::deny
 	@denies[probemod, copyinstr(arg0)] = count();
 }
 
+cap_rt_capprotect:::allow,
+cap_rt_system:::allow
+{
+	printf("%-6d %-6s %-6s %-18s %-14s %-16s %-10s owner=0x%016x accessor=0x%016x\n",
+	    pid, "-", "-", "-", "allow", probemod, copyinstr(arg0),
+	    arg1, arg2);
+	@allows[probemod, copyinstr(arg0)] = count();
+}
+
+cap_rt_isolation:::allow-action
+{
+	printf("%-6d %-6s %-6s %-18s %-14s %-16s %-10s owner=0x%016x accessor=0x%016x\n",
+	    pid, "-", "-", "-", "allow", "isolation", copyinstr(arg0),
+	    arg1, arg2);
+	@allows["isolation", copyinstr(arg0)] = count();
+}
+
 cap_rt_node:::call-done
 {
 	printf("%-6d %-6s %-6s %-18s %-14s %-16s %-10d op=%-6d status=%-6d errno=%d\n",
@@ -156,6 +173,20 @@ cap_rt_pair:::state
 	@subsys["pair", copyinstr(arg0)] = count();
 }
 
+cap_rt_pair:::create
+{
+	printf("%-6d %-6s %-6s %-18s %-14s %-16s %-10d peer=%d\n",
+	    pid, "-", "-", "-", "pair-create", "pair", arg0, arg1);
+	@events["pair-create"] = count();
+}
+
+cap_rt_pair:::forward
+{
+	printf("%-6d %-6s %-6s %-18s %-14s %-16s %-10d dst=%d len=%d\n",
+	    pid, "-", "-", "-", "pair-fwd", "pair", arg0, arg1, arg2);
+	@events["pair-forward"] = count();
+}
+
 cap_rt_coalition:::deny
 {
 	printf("%-6d %-6s %-6s %-18s %-14s %-16s %-10s errno=%d\n",
@@ -177,4 +208,7 @@ dtrace:::END
 
 	printf("\n--- Denials ---\n");
 	printa("%-20s %-16s %@d\n", @denies);
+
+	printf("\n--- Allows ---\n");
+	printa("%-20s %-16s %@d\n", @allows);
 }

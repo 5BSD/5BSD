@@ -13,6 +13,7 @@
 #include <sys/types.h>
 
 #include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/cap_rt/cap_rt_isolation_proto.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -161,18 +162,25 @@ oracle_mint_path(int pair_fd, const char *path)
 }
 
 int
-oracle_mint_net(int pair_fd, const struct serviced_net_claim *nc)
+oracle_mint_file(int pair_fd, const char *path, uint64_t actions)
 {
-	struct oracle_mint_net_req req;
+	struct oracle_mint_file_req req;
 	int token_fd;
 	int status;
 
+	if (actions == 0 || (actions & ~FI_FS_ALL) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (strlen(path) >= sizeof(req.path)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+
 	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_MINT_NET;
-	req.domain = nc->domain;
-	req.protocol = nc->protocol;
-	req.port = nc->port;
-	req.direction = nc->direction;
+	req.op = ORACLE_OP_MINT_FILE;
+	req.actions = actions;
+	strlcpy(req.path, path, sizeof(req.path));
 
 	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1,
 	    NULL);
@@ -183,6 +191,107 @@ oracle_mint_net(int pair_fd, const struct serviced_net_claim *nc)
 		return (-1);
 	}
 	return (token_fd);
+}
+
+int
+oracle_mint_net(int pair_fd, const struct serviced_net_claim *nc)
+{
+	struct oracle_mint_net_req req;
+	int token_fd;
+	int status;
+
+	memset(&req, 0, sizeof(req));
+	req.op = ORACLE_OP_MINT_NET;
+	req.domain = nc->domain;
+	req.protocol = nc->protocol;
+	req.port_min = nc->port_min;
+	req.port_max = nc->port_max;
+	req.direction = nc->direction;
+
+	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1, NULL);
+	if (status < 0)
+		return (-1);
+	if (status != 0) {
+		errno = status;
+		return (-1);
+	}
+	return (token_fd);
+}
+
+int
+oracle_mint_jail(int pair_fd, const struct serviced_jail_claim *jc)
+{
+	struct oracle_mint_jail_req req;
+	int token_fd;
+	int status;
+
+	if (jc->jid < 0 || jc->actions == 0 ||
+	    (jc->actions & ~FI_JAIL_ALL) != 0 ||
+	    (jc->jid == 0 && jc->name[0] == '\0')) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.op = ORACLE_OP_MINT_JAIL;
+	req.jid = jc->jid;
+	req.actions = jc->actions;
+	strlcpy(req.name, jc->name, sizeof(req.name));
+
+	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1, NULL);
+	if (status < 0)
+		return (-1);
+	if (status != 0) {
+		errno = status;
+		return (-1);
+	}
+	return (token_fd);
+}
+
+int
+oracle_create_jail(int pair_fd, const char *name, const char *path,
+    const char *hostname, const char *ip4_addr)
+{
+	struct oracle_create_jail_req req;
+	int jd;
+	int status;
+
+	if (name == NULL || name[0] == '\0' ||
+	    path == NULL || path[0] != '/') {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.op = ORACLE_OP_CREATE_JAIL;
+	if (strlcpy(req.name, name, sizeof(req.name)) >= sizeof(req.name) ||
+	    strlcpy(req.path, path, sizeof(req.path)) >= sizeof(req.path)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	if (hostname != NULL && hostname[0] != '\0') {
+		if (strlcpy(req.hostname, hostname,
+		    sizeof(req.hostname)) >= sizeof(req.hostname)) {
+			errno = ENAMETOOLONG;
+			return (-1);
+		}
+	}
+	if (ip4_addr != NULL && ip4_addr[0] != '\0') {
+		if (strlcpy(req.ip4_addr, ip4_addr,
+		    sizeof(req.ip4_addr)) >= sizeof(req.ip4_addr)) {
+			errno = ENAMETOOLONG;
+			return (-1);
+		}
+	}
+
+	status = oracle_rpc(pair_fd, &req, sizeof(req), &jd, 1, NULL);
+	if (status < 0)
+		return (-1);
+	if (status != 0) {
+		errno = status;
+		return (-1);
+	}
+	return (jd);
 }
 
 int

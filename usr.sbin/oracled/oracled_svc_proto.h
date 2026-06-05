@@ -23,7 +23,10 @@
 #include <sys/types.h>
 #include <sys/param.h>		/* PATH_MAX */
 
-#define	ORACLE_PROTO_VERSION	1
+#define	ORACLE_PROTO_VERSION_MAJOR	0
+#define	ORACLE_PROTO_VERSION_MINOR	0
+#define	ORACLE_PROTO_VERSION_PATCH	1
+#define	ORACLE_PROTO_VERSION		1
 
 /*
  * Operation codes — first 4 bytes of every request payload.
@@ -35,6 +38,8 @@
 #define	ORACLE_OP_CREATE_COALITION	5	/* create a new coalition */
 #define	ORACLE_OP_READY			6	/* serviced initialization complete */
 #define	ORACLE_OP_PING			7	/* liveness check */
+#define	ORACLE_OP_MINT_FILE		8	/* mint narrowed file token */
+#define	ORACLE_OP_MINT_JAIL		9	/* mint jail isolation token */
 
 /*
  * Common request header — used for operations with no extra parameters
@@ -60,23 +65,83 @@ struct oracle_mint_path_req {
 };
 
 /*
+ * ORACLE_OP_MINT_FILE
+ *   req:  oracle_mint_file_req
+ *   reply: oracle_reply { .status }
+ *   reply_fds[0] = isolation token fd (on success)
+ *
+ * Requests a narrowed file isolation token.  oracled validates that
+ * path is within its claimed set before minting and asks
+ * cap_rt_isolation to constrain authorization to the given FI_FS_*
+ * action mask.
+ */
+struct oracle_mint_file_req {
+	uint32_t	op;		/* ORACLE_OP_MINT_FILE */
+	uint32_t	_pad;
+	uint64_t	actions;	/* FI_FS_* compatible mask */
+	char		path[PATH_MAX];
+};
+
+/*
  * ORACLE_OP_MINT_NET
  *   req:  oracle_mint_net_req
  *   reply: oracle_reply { .status }
  *   reply_fds[0] = network isolation token fd (on success)
  *
- * Mints a network isolation token for the requested endpoint.  oracled
- * validates that the endpoint is covered by one of its claimed network
- * endpoints before minting.
+ * Mints a network isolation token for the requested endpoint or range.
+ * oracled validates that the endpoint is covered by one of its claimed
+ * network endpoints before minting.  Ports are in host byte order;
+ * 0..65535 means any port.
  */
 struct oracle_mint_net_req {
 	uint32_t	op;		/* ORACLE_OP_MINT_NET */
 	uint32_t	_pad;
 	int32_t		domain;		/* AF_INET, AF_INET6, 0=any */
 	int32_t		protocol;	/* IPPROTO_TCP, IPPROTO_UDP, 0=any */
-	uint16_t	port;		/* host byte order, 0=any */
+	uint16_t	port_min;	/* host byte order */
+	uint16_t	port_max;	/* host byte order */
 	uint8_t		direction;	/* FI_NET_* compatible bitmask */
 	uint8_t		_reserved[5];
+};
+
+/*
+ * ORACLE_OP_MINT_JAIL
+ *   req:  oracle_mint_jail_req
+ *   reply: oracle_reply { .status }
+ *   reply_fds[0] = jail isolation token fd (on success)
+ *
+ * Mints a jail isolation token for the requested JID/name and action
+ * mask.  JID 0 means no JID key.  Empty name means no name key.
+ */
+struct oracle_mint_jail_req {
+	uint32_t	op;		/* ORACLE_OP_MINT_JAIL */
+	uint32_t	actions;	/* FI_JAIL_* compatible mask */
+	int32_t		jid;		/* 0=not specified */
+	uint32_t	_pad;
+	char		name[64];	/* empty=not specified */
+};
+
+/*
+ * ORACLE_OP_CREATE_JAIL
+ *   req:  oracle_create_jail_req
+ *   reply: oracle_reply { .status }
+ *   reply_fds[0] = jail descriptor fd (on success)
+ *
+ * Creates a persist jail with the given name and path, returning a
+ * jail descriptor fd.  oracled validates that the jail name is within
+ * its claimed set before creating.  The jail is created by oracled
+ * (which holds the cap_rt claim) and the descriptor is passed to
+ * serviced for jail_attach_jd / jail_remove_jd.
+ */
+#define	ORACLE_OP_CREATE_JAIL		10
+
+struct oracle_create_jail_req {
+	uint32_t	op;		/* ORACLE_OP_CREATE_JAIL */
+	uint32_t	_pad;
+	char		name[64];	/* jail name (required) */
+	char		path[PATH_MAX];	/* jail root path (required) */
+	char		hostname[64];	/* host.hostname (empty=use name) */
+	char		ip4_addr[64];	/* ip4.addr (empty=inherit) */
 };
 
 /*

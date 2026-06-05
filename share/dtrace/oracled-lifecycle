@@ -32,9 +32,17 @@ oracled*:::claim-path
 }
 
 oracled*:::claim-net
+/arg0 == arg1/
 {
 	printf("[%Y] claimed port: %d/%s\n", walltimestamp,
-	    arg0, arg1 == 6 ? "tcp" : arg1 == 17 ? "udp" : "?");
+	    arg0, arg2 == 6 ? "tcp" : arg2 == 17 ? "udp" : "?");
+}
+
+oracled*:::claim-net
+/arg0 != arg1/
+{
+	printf("[%Y] claimed port: %d-%d/%s\n", walltimestamp,
+	    arg0, arg1, arg2 == 6 ? "tcp" : arg2 == 17 ? "udp" : "?");
 }
 
 oracled*:::integrity
@@ -51,6 +59,18 @@ oracled*:::shutdown
 {
 	printf("[%Y] *** oracled shutdown (reason=%d) ***\n",
 	    walltimestamp, arg0);
+}
+
+oracled*:::reload-claims-start
+{
+	printf("[%Y] reload claims: acquiring %d, releasing %d\n",
+	    walltimestamp, arg0, arg1);
+}
+
+oracled*:::reload-claims-done
+{
+	printf("[%Y] reload claims done: acquired %d, released %d, failed %d\n",
+	    walltimestamp, arg0, arg1, arg2);
 }
 
 oracled*:::error

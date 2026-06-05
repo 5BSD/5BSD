@@ -16,10 +16,14 @@
  * pair channel (oracle_client.c).
  */
 
+#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/event.h>
+#include <sys/jail.h>
 #include <sys/procdesc.h>
 #include <sys/wait.h>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
 #include <pwd.h>
@@ -28,6 +32,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "serviced.h"
@@ -35,7 +40,8 @@
 
 #define	SVC_PAIR_FD	3	/* well-known fd for the pair channel */
 #define	SVC_TOKEN_BASE	4	/* tokens start at fd 4 */
-#define	SVC_MAX_TOKENS	(SERVICED_MAX_CAP_PATHS + SERVICED_MAX_CAP_NET + 1)
+#define	SVC_MAX_TOKENS	(SERVICED_MAX_CAP_PATHS + SERVICED_MAX_CAP_NET + \
+			    SERVICED_MAX_CAP_JAIL + 1)
 #define	SVC_MAX_ENV	16
 
 /*
@@ -68,7 +74,7 @@ build_token_fds_str(char *buf, size_t bufsz, unsigned ntokens)
  */
 static void __dead2
 child_exec(struct svc_manifest *m, int child_pair_fd,
-    int *token_fds, unsigned ntokens,
+    int *token_fds, unsigned ntokens, int jail_fd,
     uid_t uid, gid_t gid, bool have_creds, const char *homedir,
     gid_t *groups, int ngroups)
 {
@@ -130,6 +136,16 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 		if (dup2(token_fds[i], fd) == -1)
 			_exit(126);
 		(void)close(token_fds[i]);
+	}
+
+	/* Attach to jail descriptor before closefrom() destroys it.
+	 * Must also happen before credential drop since jail_attach_jd
+	 * requires root. */
+	if (jail_fd >= 0) {
+		if (jail_attach_jd(jail_fd) == -1)
+			_exit(126);
+		(void)close(jail_fd);
+		jail_fd = -1;
 	}
 
 	closefrom(SVC_TOKEN_BASE + (int)ntokens);
@@ -212,6 +228,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	struct kevent kev[3];
 	struct passwd *pw;
 	struct group *gr;
+	struct timespec exec_start;
 	char homedir[PATH_MAX];
 	int oracle_end, child_end, coalition_fd;
 	int token_fds[SVC_MAX_TOKENS];
@@ -226,6 +243,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	unsigned i;
 
 	m = &svc->manifest;
+	clock_gettime(CLOCK_MONOTONIC, &exec_start);
 
 	if (svc->state != SVC_STATE_STOPPED) {
 		syslog(LOG_WARNING, "svc_exec %s: not stopped (state %d)",
@@ -304,13 +322,14 @@ svc_exec(struct svc_runtime *svc, int kq)
 	/* Create coalition via oracle. */
 	coalition_fd = caprt_create_coalition();
 	if (coalition_fd == -1) {
-		syslog(LOG_WARNING, "svc_exec %s: failed to create coalition",
+		syslog(LOG_ERR, "svc_exec %s: failed to create coalition",
 		    m->label);
 		SERVICED_PROBE_CAP_COALITION(m->label, -1);
-		/* Continue without coalition — not fatal. */
-	} else {
-		SERVICED_PROBE_CAP_COALITION(m->label, 0);
+		close(oracle_end);
+		close(child_end);
+		return (-1);
 	}
+	SERVICED_PROBE_CAP_COALITION(m->label, 0);
 
 	/* Mint tokens via oracle. */
 	ntokens = 0;
@@ -318,10 +337,10 @@ svc_exec(struct svc_runtime *svc, int kq)
 		int tfd = oracle_mint_path(sd.oracle_pair_fd,
 		    m->cap_paths[i]);
 		if (tfd == -1) {
-			syslog(LOG_WARNING, "svc_exec %s: failed to mint "
+			syslog(LOG_ERR, "svc_exec %s: failed to mint "
 			    "token for %s", m->label, m->cap_paths[i]);
 			SERVICED_PROBE_CAP_MINT(m->label, "path", -1);
-			continue;
+			goto fail_tokens;
 		}
 		SERVICED_PROBE_CAP_MINT(m->label, "path", 0);
 		token_fds[ntokens++] = tfd;
@@ -329,47 +348,71 @@ svc_exec(struct svc_runtime *svc, int kq)
 	for (i = 0; i < m->ncap_net; i++) {
 		int tfd = oracle_mint_net(sd.oracle_pair_fd, &m->cap_net[i]);
 		if (tfd == -1) {
-			syslog(LOG_WARNING, "svc_exec %s: failed to mint "
+			syslog(LOG_ERR, "svc_exec %s: failed to mint "
 			    "network token %u", m->label, i);
 			SERVICED_PROBE_CAP_MINT(m->label, "net", -1);
-			continue;
+			goto fail_tokens;
 		}
 		SERVICED_PROBE_CAP_MINT(m->label, "net", 0);
+		token_fds[ntokens++] = tfd;
+	}
+	for (i = 0; i < m->ncap_jail; i++) {
+		int tfd = oracle_mint_jail(sd.oracle_pair_fd,
+		    &m->cap_jail[i]);
+		if (tfd == -1) {
+			syslog(LOG_ERR, "svc_exec %s: failed to mint "
+			    "jail token %u", m->label, i);
+			SERVICED_PROBE_CAP_MINT(m->label, "jail", -1);
+			goto fail_tokens;
+		}
+		SERVICED_PROBE_CAP_MINT(m->label, "jail", 0);
 		token_fds[ntokens++] = tfd;
 	}
 	if (m->cap_system != 0) {
 		int tfd = oracle_mint_system(sd.oracle_pair_fd,
 		    m->cap_system);
 		if (tfd == -1) {
-			syslog(LOG_WARNING, "svc_exec %s: failed to mint "
+			syslog(LOG_ERR, "svc_exec %s: failed to mint "
 			    "system token", m->label);
 			SERVICED_PROBE_CAP_MINT(m->label, "system", -1);
-		} else {
-			SERVICED_PROBE_CAP_MINT(m->label, "system", 0);
-			token_fds[ntokens++] = tfd;
+			goto fail_tokens;
 		}
+		SERVICED_PROBE_CAP_MINT(m->label, "system", 0);
+		token_fds[ntokens++] = tfd;
 	}
 
 	if (ntokens > 0)
 		syslog(LOG_DEBUG, "svc_exec %s: minted %u tokens",
 		    m->label, ntokens);
 
+	/* Create jail via oracle if manifest specifies one. */
+	svc->jail_fd = -1;
+	if (m->has_jail) {
+		svc->jail_fd = oracle_create_jail(sd.oracle_pair_fd,
+		    m->jail_name, m->jail_path,
+		    m->jail_hostname, m->jail_ip4_addr);
+		if (svc->jail_fd == -1) {
+			syslog(LOG_ERR, "svc_exec %s: failed to create jail %s: %m",
+			    m->label, m->jail_name);
+			SERVICED_PROBE_CAP_MINT(m->label, "jail-create", -1);
+			goto fail_tokens;
+		}
+		syslog(LOG_INFO, "svc_exec %s: created jail %s jd=%d",
+		    m->label, m->jail_name, svc->jail_fd);
+		SERVICED_PROBE_CAP_MINT(m->label, "jail-create", 0);
+	}
+
 	/* Fork via pdfork for process descriptor. */
 	pid = pdfork(&pd_fd, PD_CLOEXEC);
 	if (pid == -1) {
 		syslog(LOG_ERR, "svc_exec %s: pdfork: %m", m->label);
-		close(oracle_end);
-		close(child_end);
-		if (coalition_fd >= 0)
-			close(coalition_fd);
-		for (i = 0; i < ntokens; i++)
-			close(token_fds[i]);
-		return (-1);
+		goto fail_tokens;
 	}
 
 	if (pid == 0) {
 		/* Child — does not return. */
 		child_exec(m, child_end, token_fds, ntokens,
+		    svc->jail_fd,
 		    uid, gid, have_creds,
 		    homedir[0] != '\0' ? homedir : NULL,
 		    groups, ngroups);
@@ -382,13 +425,15 @@ svc_exec(struct svc_runtime *svc, int kq)
 		close(token_fds[i]);
 
 	/* Enlist in coalition and set as leader. */
-	if (coalition_fd >= 0) {
-		if (caprt_coalition_enlist(coalition_fd, pd_fd) != 0)
-			syslog(LOG_WARNING, "svc_exec %s: coalition "
-			    "enlist: %m", m->label);
-		if (caprt_coalition_set_leader(coalition_fd, pd_fd) != 0)
-			syslog(LOG_WARNING, "svc_exec %s: coalition "
-			    "set_leader: %m", m->label);
+	if (caprt_coalition_enlist(coalition_fd, pd_fd) != 0) {
+		syslog(LOG_ERR, "svc_exec %s: coalition enlist: %m",
+		    m->label);
+		goto fail_postfork;
+	}
+	if (caprt_coalition_set_leader(coalition_fd, pd_fd) != 0) {
+		syslog(LOG_ERR, "svc_exec %s: coalition set_leader: %m",
+		    m->label);
+		goto fail_postfork;
 	}
 
 	/* Store state. */
@@ -403,12 +448,9 @@ svc_exec(struct svc_runtime *svc, int kq)
 	EV_SET(&kev[0], pd_fd, EVFILT_PROCDESC, EV_ADD,
 	    NOTE_EXIT | NOTE_EXEC, 0, svc);
 	EV_SET(&kev[1], oracle_end, EVFILT_READ, EV_ADD, 0, 0, svc);
-	if (coalition_fd >= 0)
-		EV_SET(&kev[2], coalition_fd, EVFILT_READ, EV_ADD, 0, 0,
-		    svc);
+	EV_SET(&kev[2], coalition_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
 
-	if (kevent(kq, kev, coalition_fd >= 0 ? 3 : 2, NULL, 0, NULL) ==
-	    -1) {
+	if (kevent(kq, kev, 3, NULL, 0, NULL) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: kevent register: %m",
 		    m->label);
 		pdkill(pd_fd, SIGKILL);
@@ -417,9 +459,12 @@ svc_exec(struct svc_runtime *svc, int kq)
 		svc->pd_fd = -1;
 		close(svc->pair_fd);
 		svc->pair_fd = -1;
-		if (svc->coalition_fd >= 0) {
-			close(svc->coalition_fd);
-			svc->coalition_fd = -1;
+		close(svc->coalition_fd);
+		svc->coalition_fd = -1;
+		if (svc->jail_fd >= 0) {
+			jail_remove_jd(svc->jail_fd);
+			close(svc->jail_fd);
+			svc->jail_fd = -1;
 		}
 		svc->pid = 0;
 		svc->state = SVC_STATE_STOPPED;
@@ -429,5 +474,44 @@ svc_exec(struct svc_runtime *svc, int kq)
 	syslog(LOG_INFO, "service %s: started pid %jd",
 	    m->label, (intmax_t)pid);
 	SERVICED_PROBE_SVC_START(m->label, pid);
+
+	{
+		struct timespec exec_end;
+		uint64_t dur;
+
+		clock_gettime(CLOCK_MONOTONIC, &exec_end);
+		dur = (uint64_t)(exec_end.tv_sec - exec_start.tv_sec) *
+		    1000000000ULL +
+		    (uint64_t)(exec_end.tv_nsec - exec_start.tv_nsec);
+		SERVICED_PROBE_SVC_EXEC_DONE(m->label, dur, ntokens);
+	}
 	return (0);
+
+fail_postfork:
+	/* child_end and token_fds already closed by parent path above. */
+	SERVICED_PROBE_SVC_EXEC_FAIL(m->label, errno);
+	pdkill(pd_fd, SIGKILL);
+	waitpid(pid, NULL, WNOHANG);
+	close(pd_fd);
+	close(oracle_end);
+	close(coalition_fd);
+	if (svc->jail_fd >= 0) {
+		jail_remove_jd(svc->jail_fd);
+		close(svc->jail_fd);
+		svc->jail_fd = -1;
+	}
+	return (-1);
+
+fail_tokens:
+	close(oracle_end);
+	close(child_end);
+	close(coalition_fd);
+	for (i = 0; i < ntokens; i++)
+		close(token_fds[i]);
+	if (svc->jail_fd >= 0) {
+		jail_remove_jd(svc->jail_fd);
+		close(svc->jail_fd);
+		svc->jail_fd = -1;
+	}
+	return (-1);
 }

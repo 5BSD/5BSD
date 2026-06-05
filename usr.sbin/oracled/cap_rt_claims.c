@@ -40,8 +40,22 @@ net_claim_eq(const struct oracled_net_claim *a,
 
 	return (a->domain == b->domain &&
 	    a->protocol == b->protocol &&
-	    a->port == b->port &&
+	    a->port_min == b->port_min &&
+	    a->port_max == b->port_max &&
 	    a->direction == b->direction);
+}
+
+static void
+net_claim_port_string(const struct oracled_net_claim *nc, char *buf,
+    size_t len)
+{
+
+	if (nc->port_min == 0 && nc->port_max == UINT16_MAX)
+		strlcpy(buf, "*", len);
+	else if (nc->port_min == nc->port_max)
+		snprintf(buf, len, "%u", nc->port_min);
+	else
+		snprintf(buf, len, "%u-%u", nc->port_min, nc->port_max);
 }
 
 static bool
@@ -55,6 +69,40 @@ net_claim_in(const struct oracled_net_claim *needle,
 			return (true);
 	}
 	return (false);
+}
+
+static bool
+jail_claim_eq(const struct oracled_jail_claim *a,
+    const struct oracled_jail_claim *b)
+{
+
+	return (a->jid == b->jid && a->actions == b->actions &&
+	    strcmp(a->name, b->name) == 0);
+}
+
+static bool
+jail_claim_in(const struct oracled_jail_claim *needle,
+    const struct oracled_jail_claim *haystack, unsigned nhaystack)
+{
+	unsigned i;
+
+	for (i = 0; i < nhaystack; i++) {
+		if (jail_claim_eq(needle, &haystack[i]))
+			return (true);
+	}
+	return (false);
+}
+
+static void
+jail_claim_string(const struct oracled_jail_claim *jc, char *buf, size_t len)
+{
+
+	if (jc->jid != 0 && jc->name[0] != '\0')
+		snprintf(buf, len, "%s#%d", jc->name, jc->jid);
+	else if (jc->jid != 0)
+		snprintf(buf, len, "#%d", jc->jid);
+	else
+		strlcpy(buf, jc->name, len);
 }
 
 static bool
@@ -86,6 +134,7 @@ query_path_claimed(const char *path)
 
 	memset(&req, 0, sizeof(req));
 	req.op = FI_OP_QUERY;
+	req.actions = FI_FS_ALL;
 
 	memset(&call, 0, sizeof(call));
 	call.req = &req;
@@ -101,6 +150,52 @@ query_path_claimed(const char *path)
 	}
 
 	close(fd);
+	return ((reply.flags & FI_QF_MINE) != 0);
+}
+
+static bool
+query_net_claimed(const struct oracled_net_claim *nc)
+{
+	struct fi_net_request req;
+	struct fi_reply reply;
+
+	if (cap_rt_isolation_fd == -1)
+		return (false);
+
+	memset(&req, 0, sizeof(req));
+	req.op = FI_OP_QUERY_NET;
+	req.domain = nc->domain;
+	req.protocol = nc->protocol;
+	req.port_min = htons(nc->port_min);
+	req.port_max = htons(nc->port_max);
+	req.direction = nc->direction;
+
+	if (cap_rt_do_call(cap_rt_isolation_fd, &req, sizeof(req),
+	    &reply, sizeof(reply)) == -1)
+		return (false);
+
+	return ((reply.flags & FI_QF_MINE) != 0);
+}
+
+static bool
+query_jail_claimed(const struct oracled_jail_claim *jc)
+{
+	struct fi_jail_request req;
+	struct fi_reply reply;
+
+	if (cap_rt_isolation_fd == -1)
+		return (false);
+
+	memset(&req, 0, sizeof(req));
+	req.op = FI_OP_QUERY_JAIL;
+	req.jid = jc->jid;
+	req.actions = jc->actions;
+	strlcpy(req.name, jc->name, sizeof(req.name));
+
+	if (cap_rt_do_call(cap_rt_isolation_fd, &req, sizeof(req),
+	    &reply, sizeof(reply)) == -1)
+		return (false);
+
 	return ((reply.flags & FI_QF_MINE) != 0);
 }
 
@@ -192,26 +287,55 @@ claim_net(const struct oracled_net_claim *nc)
 {
 	struct fi_net_request req;
 	struct fi_reply reply;
+	char portbuf[32];
 
 	memset(&req, 0, sizeof(req));
 	req.op = FI_OP_CLAIM_NET;
 	req.domain = nc->domain;
 	req.protocol = nc->protocol;
-	req.port = htons(nc->port);
+	req.port_min = htons(nc->port_min);
+	req.port_max = htons(nc->port_max);
 	req.direction = nc->direction;
+	net_claim_port_string(nc, portbuf, sizeof(portbuf));
 
 	if (cap_rt_do_call(cap_rt_isolation_fd, &req, sizeof(req),
 	    &reply, sizeof(reply)) == -1) {
-		ORACLED_PROBE_CLAIM_NET_FAIL(nc->port, nc->protocol);
-		syslog(LOG_WARNING, "isolation: claim port %u/%s: %m",
-		    nc->port, net_protocol_name(nc->protocol));
+		ORACLED_PROBE_CLAIM_NET_FAIL(nc->port_min, nc->port_max,
+		    nc->protocol);
+		syslog(LOG_WARNING, "isolation: claim port %s/%s: %m",
+		    portbuf, net_protocol_name(nc->protocol));
 		return (-1);
 	}
 
-	ORACLED_PROBE_CLAIM_NET(nc->port, nc->protocol);
-	syslog(LOG_INFO, "isolation: claimed port %u/%s %s",
-	    nc->port, net_protocol_name(nc->protocol),
+	ORACLED_PROBE_CLAIM_NET(nc->port_min, nc->port_max, nc->protocol);
+	syslog(LOG_INFO, "isolation: claimed port %s/%s %s",
+	    portbuf, net_protocol_name(nc->protocol),
 	    net_direction_name(nc->direction));
+	return (0);
+}
+
+static int
+claim_jail(const struct oracled_jail_claim *jc)
+{
+	struct fi_jail_request req;
+	struct fi_reply reply;
+	char jailbuf[96];
+
+	memset(&req, 0, sizeof(req));
+	req.op = FI_OP_CLAIM_JAIL;
+	req.jid = jc->jid;
+	req.actions = jc->actions;
+	strlcpy(req.name, jc->name, sizeof(req.name));
+	jail_claim_string(jc, jailbuf, sizeof(jailbuf));
+
+	if (cap_rt_do_call(cap_rt_isolation_fd, &req, sizeof(req),
+	    &reply, sizeof(reply)) == -1) {
+		syslog(LOG_WARNING, "isolation: claim jail %s: %m", jailbuf);
+		return (-1);
+	}
+
+	syslog(LOG_INFO, "isolation: claimed jail %s actions=0x%x",
+	    jailbuf, jc->actions);
 	return (0);
 }
 
@@ -254,6 +378,7 @@ release_path(const char *path)
 
 	close(fd);
 	syslog(LOG_INFO, "isolation: released %s", path);
+	ORACLED_PROBE_CLAIM_PATH_RELEASE(path);
 	return (0);
 }
 
@@ -265,6 +390,7 @@ release_net(const struct oracled_net_claim *nc)
 {
 	struct fi_net_request req;
 	struct fi_reply reply;
+	char portbuf[32];
 
 	if (cap_rt_isolation_fd == -1)
 		return (-1);
@@ -273,19 +399,52 @@ release_net(const struct oracled_net_claim *nc)
 	req.op = FI_OP_RELEASE_NET;
 	req.domain = nc->domain;
 	req.protocol = nc->protocol;
-	req.port = htons(nc->port);
+	req.port_min = htons(nc->port_min);
+	req.port_max = htons(nc->port_max);
 	req.direction = nc->direction;
+	net_claim_port_string(nc, portbuf, sizeof(portbuf));
 
 	if (cap_rt_do_call(cap_rt_isolation_fd, &req, sizeof(req),
 	    &reply, sizeof(reply)) == -1) {
-		syslog(LOG_WARNING, "isolation: release port %u/%s: %m",
-		    nc->port, net_protocol_name(nc->protocol));
+		syslog(LOG_WARNING, "isolation: release port %s/%s: %m",
+		    portbuf, net_protocol_name(nc->protocol));
 		return (-1);
 	}
 
-	syslog(LOG_INFO, "isolation: released port %u/%s %s",
-	    nc->port, net_protocol_name(nc->protocol),
+	syslog(LOG_INFO, "isolation: released port %s/%s %s",
+	    portbuf, net_protocol_name(nc->protocol),
 	    net_direction_name(nc->direction));
+	ORACLED_PROBE_CLAIM_NET_RELEASE(nc->port_min, nc->port_max,
+	    nc->protocol);
+	return (0);
+}
+
+static int
+release_jail(const struct oracled_jail_claim *jc)
+{
+	struct fi_jail_request req;
+	struct fi_reply reply;
+	char jailbuf[96];
+
+	if (cap_rt_isolation_fd == -1)
+		return (-1);
+
+	memset(&req, 0, sizeof(req));
+	req.op = FI_OP_RELEASE_JAIL;
+	req.jid = jc->jid;
+	req.actions = jc->actions;
+	strlcpy(req.name, jc->name, sizeof(req.name));
+	jail_claim_string(jc, jailbuf, sizeof(jailbuf));
+
+	if (cap_rt_do_call(cap_rt_isolation_fd, &req, sizeof(req),
+	    &reply, sizeof(reply)) == -1) {
+		syslog(LOG_WARNING, "isolation: release jail %s: %m",
+		    jailbuf);
+		return (-1);
+	}
+
+	syslog(LOG_INFO, "isolation: released jail %s", jailbuf);
+	ORACLED_PROBE_CLAIM_JAIL_RELEASE(jc->name, jc->actions);
 	return (0);
 }
 
@@ -311,6 +470,7 @@ release_system_gates(uint32_t gates)
 	}
 
 	syslog(LOG_INFO, "system: released gates 0x%x", gates);
+	ORACLED_PROBE_CLAIM_SYSTEM_RELEASE(gates);
 	return (0);
 }
 
@@ -349,6 +509,14 @@ isolate_resources(void)
 	/* Claim configured network endpoints. */
 	for (i = 0; i < od.cfg.nclaim_net; i++) {
 		if (claim_net(&od.cfg.claim_net[i]) == 0)
+			claimed++;
+		else
+			failed++;
+	}
+
+	/* Claim configured jails. */
+	for (i = 0; i < od.cfg.nclaim_jail; i++) {
+		if (claim_jail(&od.cfg.claim_jail[i]) == 0)
 			claimed++;
 		else
 			failed++;
@@ -450,9 +618,11 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 {
 	const struct oracled_config *oldcfg;
 	unsigned i;
+	unsigned nacquire, nrelease;
 	int acquired, released, failed;
 	bool path_ok[ORACLED_MAX_PATH_CLAIMS];
 	bool net_ok[ORACLED_MAX_NET_CLAIMS];
+	bool jail_ok[ORACLED_MAX_JAIL_CLAIMS];
 	uint32_t gates_acquired, gates_released;
 
 	oldcfg = &od.cfg;
@@ -466,11 +636,53 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 		return (0);
 	}
 
+	/* Pre-compute acquire/release counts for the start probe. */
+	nacquire = nrelease = 0;
+	for (i = 0; i < newcfg->nclaim_paths; i++) {
+		if (!path_in(newcfg->claim_paths[i],
+		    oldcfg->claim_paths, oldcfg->nclaim_paths))
+			nacquire++;
+	}
+	for (i = 0; i < newcfg->nclaim_net; i++) {
+		if (!net_claim_in(&newcfg->claim_net[i],
+		    oldcfg->claim_net, oldcfg->nclaim_net))
+			nacquire++;
+	}
+	for (i = 0; i < newcfg->nclaim_jail; i++) {
+		if (!jail_claim_in(&newcfg->claim_jail[i],
+		    oldcfg->claim_jail, oldcfg->nclaim_jail))
+			nacquire++;
+	}
+	if (newcfg->claim_system != oldcfg->claim_system &&
+	    (newcfg->claim_system & ~oldcfg->claim_system) != 0)
+		nacquire++;
+	for (i = 0; i < oldcfg->nclaim_paths; i++) {
+		if (!path_in(oldcfg->claim_paths[i],
+		    newcfg->claim_paths, newcfg->nclaim_paths))
+			nrelease++;
+	}
+	for (i = 0; i < oldcfg->nclaim_net; i++) {
+		if (!net_claim_in(&oldcfg->claim_net[i],
+		    newcfg->claim_net, newcfg->nclaim_net))
+			nrelease++;
+	}
+	for (i = 0; i < oldcfg->nclaim_jail; i++) {
+		if (!jail_claim_in(&oldcfg->claim_jail[i],
+		    newcfg->claim_jail, newcfg->nclaim_jail))
+			nrelease++;
+	}
+	if (newcfg->claim_system != oldcfg->claim_system &&
+	    (oldcfg->claim_system & ~newcfg->claim_system) != 0)
+		nrelease++;
+	ORACLED_PROBE_RELOAD_CLAIMS_START(nacquire, nrelease);
+
 	/* Track which new claims succeed. */
 	for (i = 0; i < newcfg->nclaim_paths; i++)
 		path_ok[i] = true;
 	for (i = 0; i < newcfg->nclaim_net; i++)
 		net_ok[i] = true;
+	for (i = 0; i < newcfg->nclaim_jail; i++)
+		jail_ok[i] = true;
 
 	/*
 	 * Phase 1: Acquire new path claims.
@@ -505,6 +717,21 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 	/*
 	 * Phase 3: Acquire new system gates.
 	 */
+	for (i = 0; i < newcfg->nclaim_jail; i++) {
+		if (!jail_claim_in(&newcfg->claim_jail[i],
+		    oldcfg->claim_jail, oldcfg->nclaim_jail)) {
+			if (claim_jail(&newcfg->claim_jail[i]) == 0) {
+				acquired++;
+			} else {
+				jail_ok[i] = false;
+				failed++;
+			}
+		}
+	}
+
+	/*
+	 * Phase 4: Acquire new system gates.
+	 */
 	if (newcfg->claim_system != oldcfg->claim_system) {
 		uint32_t new_gates;
 
@@ -532,7 +759,7 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 	}
 
 	/*
-	 * Phase 4: Release old path claims no longer in config.
+	 * Phase 5: Release old path claims no longer in config.
 	 */
 	for (i = 0; i < oldcfg->nclaim_paths; i++) {
 		if (!path_in(oldcfg->claim_paths[i],
@@ -545,7 +772,7 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 	}
 
 	/*
-	 * Phase 5: Release old network claims no longer in config.
+	 * Phase 6: Release old network claims no longer in config.
 	 */
 	for (i = 0; i < oldcfg->nclaim_net; i++) {
 		if (!net_claim_in(&oldcfg->claim_net[i],
@@ -558,7 +785,20 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 	}
 
 	/*
-	 * Phase 6: Release old system gates no longer in config.
+	 * Phase 7: Release old jail claims no longer in config.
+	 */
+	for (i = 0; i < oldcfg->nclaim_jail; i++) {
+		if (!jail_claim_in(&oldcfg->claim_jail[i],
+		    newcfg->claim_jail, newcfg->nclaim_jail)) {
+			if (release_jail(&oldcfg->claim_jail[i]) == 0)
+				released++;
+			else
+				failed++;
+		}
+	}
+
+	/*
+	 * Phase 8: Release old system gates no longer in config.
 	 */
 	if (newcfg->claim_system != oldcfg->claim_system) {
 		uint32_t old_gates;
@@ -575,7 +815,7 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 	}
 
 	/*
-	 * Phase 7: Build effective config — only include claims that
+	 * Phase 9: Build effective config — only include claims that
 	 * are actually held by the kernel.  This is written back to
 	 * the newcfg struct (which the caller passes to
 	 * config_apply_claims).
@@ -615,11 +855,25 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 				n++;
 			} else {
 				syslog(LOG_WARNING, "reload: dropping failed "
-				    "net claim port %u from effective config",
-				    newcfg->claim_net[i].port);
+				    "net claim from effective config");
 			}
 		}
 		eff->nclaim_net = n;
+
+		/* Jails: keep only those that succeeded or were already held. */
+		n = 0;
+		for (i = 0; i < newcfg->nclaim_jail; i++) {
+			if (jail_ok[i]) {
+				if (n != i)
+					eff->claim_jail[n] =
+					    newcfg->claim_jail[i];
+				n++;
+			} else {
+				syslog(LOG_WARNING, "reload: dropping failed "
+				    "jail claim from effective config");
+			}
+		}
+		eff->nclaim_jail = n;
 
 		/* System gates: add only what was acquired, remove only
 		 * what was released. */
@@ -630,6 +884,7 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 
 	syslog(LOG_INFO, "reload: claims %d acquired, %d released, %d failed",
 	    acquired, released, failed);
+	ORACLED_PROBE_RELOAD_CLAIMS_DONE(acquired, released, failed);
 	return (failed > 0 ? -1 : 0);
 }
 
@@ -676,17 +931,32 @@ cap_rt_format_status(char *buf, size_t bufsz, size_t *offp)
 		    verified ? "" : " [NOT HELD]");
 	}
 
-	/* Network claims.  FI_OP_QUERY_NET is not yet implemented
-	 * in the kernel (reserved as op 6), so we report config
-	 * state only.  TODO: verify when FI_OP_QUERY_NET lands. */
+	/* Network claims — verified against kernel via FI_OP_QUERY_NET. */
 	BUF_APPEND(buf, bufsz, offp, "  network:  %u\n",
 	    od.cfg.nclaim_net);
 	for (i = 0; i < od.cfg.nclaim_net; i++) {
 		const struct oracled_net_claim *nc = &od.cfg.claim_net[i];
+		char portbuf[32];
 
-		BUF_APPEND(buf, bufsz, offp, "    %s/%u %s\n",
-		    net_protocol_name(nc->protocol), nc->port,
-		    net_direction_name(nc->direction));
+		net_claim_port_string(nc, portbuf, sizeof(portbuf));
+		verified = query_net_claimed(nc);
+		BUF_APPEND(buf, bufsz, offp, "    %s/%s %s%s\n",
+		    net_protocol_name(nc->protocol), portbuf,
+		    net_direction_name(nc->direction),
+		    verified ? "" : " [NOT HELD]");
+	}
+
+	/* Jail claims — verified against kernel via FI_OP_QUERY_JAIL. */
+	BUF_APPEND(buf, bufsz, offp, "  jails:    %u\n",
+	    od.cfg.nclaim_jail);
+	for (i = 0; i < od.cfg.nclaim_jail; i++) {
+		const struct oracled_jail_claim *jc = &od.cfg.claim_jail[i];
+		char jailbuf[96];
+
+		jail_claim_string(jc, jailbuf, sizeof(jailbuf));
+		verified = query_jail_claimed(jc);
+		BUF_APPEND(buf, bufsz, offp, "    %s actions=0x%x%s\n",
+		    jailbuf, jc->actions, verified ? "" : " [NOT HELD]");
 	}
 
 	/* System gates. */

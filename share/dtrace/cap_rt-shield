@@ -50,3 +50,10 @@ cap_rt:::revoke
 	printf("%-6d %-16s %-10s badge=%d\n",
 	    pid, execname, "UNSHIELD", arg1);
 }
+
+/* Shield check allowed (authorized foreign nonce) */
+cap_rt_capprotect:::allow
+{
+	printf("%-6d %-16s %-10s %s target=0x%016x caller=0x%016x\n",
+	    pid, execname, "ALLOW", copyinstr(arg0), arg1, arg2);
+}

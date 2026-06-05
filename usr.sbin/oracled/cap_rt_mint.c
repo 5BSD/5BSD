@@ -37,6 +37,13 @@
 int
 cap_rt_mint_path_token(const char *path)
 {
+
+	return (cap_rt_mint_file_token(path, FI_FS_ALL));
+}
+
+int
+cap_rt_mint_file_token(const char *path, uint64_t actions)
+{
 	struct cap_rt_call_args call;
 	struct fi_request req;
 	struct fi_reply reply;
@@ -57,6 +64,7 @@ cap_rt_mint_path_token(const char *path)
 
 	memset(&req, 0, sizeof(req));
 	req.op = FI_OP_MINT;
+	req.actions = actions;
 
 	memset(&call, 0, sizeof(call));
 	call.req = &req;
@@ -102,7 +110,8 @@ cap_rt_mint_net_token(const struct oracled_net_claim *nc)
 	req.op = FI_OP_MINT_NET;
 	req.domain = nc->domain;
 	req.protocol = nc->protocol;
-	req.port = htons(nc->port);
+	req.port_min = htons(nc->port_min);
+	req.port_max = htons(nc->port_max);
 	req.direction = nc->direction;
 
 	memset(&call, 0, sizeof(call));
@@ -115,6 +124,44 @@ cap_rt_mint_net_token(const struct oracled_net_claim *nc)
 
 	if (ioctl(cap_rt_isolation_fd, CAP_RT_CALL, &call) == -1) {
 		syslog(LOG_WARNING, "mint_net_token: %m");
+		return (-1);
+	}
+
+	return (token_fd);
+}
+
+int
+cap_rt_mint_jail_token(const struct oracled_jail_claim *jc)
+{
+	struct cap_rt_call_args call;
+	struct fi_jail_request req;
+	struct fi_reply reply;
+	int token_fd;
+
+	if (cap_rt_isolation_fd == -1) {
+		syslog(LOG_WARNING, "mint_jail_token: isolation not connected");
+		return (-1);
+	}
+
+	token_fd = -1;
+
+	memset(&req, 0, sizeof(req));
+	req.op = FI_OP_MINT_JAIL;
+	req.jid = jc->jid;
+	req.actions = jc->actions;
+	strlcpy(req.name, jc->name, sizeof(req.name));
+
+	memset(&call, 0, sizeof(call));
+	call.req = &req;
+	call.req_len = sizeof(req);
+	call.reply = &reply;
+	call.reply_len = sizeof(reply);
+	call.reply_fds = &token_fd;
+	call.reply_nfds = 1;
+
+	if (ioctl(cap_rt_isolation_fd, CAP_RT_CALL, &call) == -1) {
+		syslog(LOG_WARNING, "mint_jail_token: jid=%d name=%s: %m",
+		    jc->jid, jc->name);
 		return (-1);
 	}
 

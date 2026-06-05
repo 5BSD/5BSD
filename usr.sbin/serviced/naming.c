@@ -39,6 +39,7 @@ struct naming_entry {
 };
 
 static struct naming_entry *naming_hash[NAMING_HASH_SIZE];
+static unsigned naming_total;
 
 static unsigned
 name_hash(const char *name)
@@ -178,8 +179,10 @@ naming_register(const char *name, struct svc_runtime *owner)
 	}
 
 	e = calloc(1, sizeof(*e));
-	if (e == NULL)
+	if (e == NULL) {
+		SERVICED_PROBE_ERROR("naming", "register alloc failed");
 		return (ENOMEM);
+	}
 
 	strlcpy(e->name, name, sizeof(e->name));
 	e->owner = owner;
@@ -188,9 +191,11 @@ naming_register(const char *name, struct svc_runtime *owner)
 	e->next = naming_hash[h];
 	naming_hash[h] = e;
 
+	naming_total++;
 	syslog(LOG_INFO, "naming: '%s' registered by '%s'",
 	    name, owner->manifest.label);
 	SERVICED_PROBE_NAMING_REGISTER(name, owner->manifest.label);
+	SERVICED_PROBE_NAMING_COUNT(naming_total);
 	return (0);
 }
 
@@ -213,8 +218,10 @@ naming_unregister(const char *name, struct svc_runtime *owner)
 			}
 			*pp = e->next;
 			free(e);
+			naming_total--;
 			syslog(LOG_INFO, "naming: '%s' unregistered", name);
 			SERVICED_PROBE_NAMING_UNREGISTER(name);
+			SERVICED_PROBE_NAMING_COUNT(naming_total);
 			return (0);
 		}
 	}
@@ -241,11 +248,13 @@ naming_remove_owner(struct svc_runtime *owner)
 				    e->name, owner->manifest.label);
 				*pp = e->next;
 				free(e);
+				naming_total--;
 			} else {
 				pp = &e->next;
 			}
 		}
 	}
+	SERVICED_PROBE_NAMING_COUNT(naming_total);
 }
 
 /*
@@ -285,6 +294,7 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 	    &provider_end, &client_end) != 0) {
 		syslog(LOG_WARNING,
 		    "naming: lookup '%s': failed to create pair", name);
+		SERVICED_PROBE_ERROR("naming", "lookup pair creation failed");
 		*errp = EIO;
 		return (-1);
 	}

@@ -34,6 +34,8 @@
 #include <sys/sdt.h>
 #include <sys/vnode.h>
 #include <sys/file.h>
+#include <sys/jail.h>
+#include <sys/mount.h>
 #include <sys/proc.h>
 #include <sys/ucred.h>
 #include <sys/imgact.h>
@@ -54,6 +56,22 @@ static MALLOC_DEFINE(M_FILE_ISOLATION, "cap_rt_fi",
 SDT_PROVIDER_DEFINE(cap_rt_isolation);
 SDT_PROBE_DEFINE3(cap_rt_isolation, , , deny,
     "const char *", "uint64_t", "uint64_t");
+SDT_PROBE_DEFINE5(cap_rt_isolation, , , deny__action,
+    "const char *", "uint64_t", "uint64_t", "uint64_t", "uint64_t");
+SDT_PROBE_DEFINE6(cap_rt_isolation, , , deny__net,
+    "uint64_t", "uint64_t", "uint64_t", "int", "uint32_t", "uint16_t");
+SDT_PROBE_DEFINE6(cap_rt_isolation, , , deny__jail,
+    "uint64_t", "uint64_t", "uint64_t", "int", "const char *", "uint32_t");
+SDT_PROBE_DEFINE5(cap_rt_isolation, , , allow__action,
+    "const char *", "uint64_t", "uint64_t", "uint64_t", "uint64_t");
+SDT_PROBE_DEFINE6(cap_rt_isolation, , , allow__net,
+    "uint64_t", "uint64_t", "uint64_t", "int", "uint32_t", "uint16_t");
+SDT_PROBE_DEFINE6(cap_rt_isolation, , , allow__jail,
+    "uint64_t", "uint64_t", "uint64_t", "int", "const char *", "uint32_t");
+SDT_PROBE_DEFINE5(cap_rt_isolation, , , token__narrow,
+    "const char *", "uint64_t", "uint64_t", "uint64_t", "uint64_t");
+SDT_PROBE_DEFINE5(cap_rt_isolation, , , query,
+    "const char *", "uint64_t", "uint64_t", "uint64_t", "uint32_t");
 SDT_PROBE_DEFINE6(cap_rt_isolation, , , state,
     "const char *", "uint64_t", "uint64_t", "uint64_t", "int", "int");
 
@@ -84,13 +102,29 @@ struct fi_net_claim {
 	LIST_ENTRY(fi_net_claim) fn_instlink;
 	int		fn_domain;	/* AF_INET, AF_INET6, 0=any */
 	int		fn_protocol;	/* IPPROTO_TCP, etc., 0=any */
-	uint16_t	fn_port;	/* network byte order, 0=any */
+	uint16_t	fn_port_min;	/* host byte order */
+	uint16_t	fn_port_max;	/* host byte order */
 	uint8_t		fn_direction;	/* FI_NET_* bitmask */
 	uint8_t		fn_prefix;	/* CIDR prefix, 0=any */
 	struct in6_addr	fn_addr;	/* v6 or v4-mapped, zero=any */
 	uint64_t	fn_nonce;
 	uint64_t	fn_id;
 	struct cap_rt_instance *fn_inst;
+};
+
+/* ----------------------------------------------------------------
+ * Jail isolation table
+ * ---------------------------------------------------------------- */
+
+struct fi_jail_claim {
+	LIST_ENTRY(fi_jail_claim) fj_link;
+	LIST_ENTRY(fi_jail_claim) fj_instlink;
+	int32_t		fj_jid;
+	uint32_t	fj_actions;
+	char		fj_name[sizeof(((struct fi_jail_request *)0)->name)];
+	uint64_t	fj_nonce;
+	uint64_t	fj_id;
+	struct cap_rt_instance *fj_inst;
 };
 
 /*
@@ -109,20 +143,27 @@ struct fi_auth {
 	uint64_t		fa_accessor;	/* authorized nonce */
 	uint64_t		fa_owner;	/* claim owner nonce */
 	uint64_t		fa_claim_id;	/* exact claim this token covers */
+	uint64_t		fa_fs_actions;	/* FI_FS_* for vnode tokens */
 	bool			fa_is_net;
+	bool			fa_is_jail;
 	struct fi_net_request	fa_net;
+	struct fi_jail_request	fa_jail;
 	struct cap_rt_instance	*fa_inst;	/* token instance (lifetime) */
 };
 
 struct fi_priv {
 	LIST_HEAD(, fi_claim)	    fip_claims;	    /* vnode claims */
 	LIST_HEAD(, fi_net_claim)   fip_net_claims; /* network claims */
+	LIST_HEAD(, fi_jail_claim)  fip_jail_claims; /* jail claims */
 	/* Token state (for instances created by FI_OP_MINT). */
 	bool			    fip_is_token;
 	uint64_t		    fip_token_owner; /* claim owner nonce */
 	uint64_t		    fip_token_claim_id;
+	uint64_t		    fip_token_fs_actions;
 	bool			    fip_token_is_net;
+	bool			    fip_token_is_jail;
 	struct fi_net_request	    fip_token_net;
+	struct fi_jail_request	    fip_token_jail;
 };
 
 static LIST_HEAD(, fi_claim)	*fi_hash;
@@ -136,10 +177,16 @@ static LIST_HEAD(, fi_auth)	*fi_auth_hash;
 static u_long			 fi_auth_hashmask;
 static struct rwlock		 fi_auth_lock;
 
+static LIST_HEAD(, fi_jail_claim) fi_jail_claims;
+static struct rwlock		 fi_jail_lock;
+static volatile u_int		 fi_jail_claim_count;	/* fast-path for jail hooks */
+
 #define	FI_AUTH_BUCKET(nonce)	(&fi_auth_hash[(nonce) & fi_auth_hashmask])
 
 static bool	fi_net_addr_match(const struct fi_net_claim *nc,
 		    struct sockaddr *sa);
+static bool	fi_net_claim_covers_request(const struct fi_net_claim *nc,
+		    const struct fi_net_request *nr);
 
 static uint64_t
 fi_alloc_claim_id(void)
@@ -153,14 +200,97 @@ fi_alloc_claim_id(void)
 }
 
 static int
-fi_is_authorized(uint64_t accessor, uint64_t owner, uint64_t claim_id)
+fi_is_authorized(uint64_t accessor, uint64_t owner, uint64_t claim_id,
+    uint64_t actions)
 {
 	struct fi_auth *fa;
 
 	rw_assert(&fi_auth_lock, RA_RLOCKED);
 	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
 		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
-		    fa->fa_claim_id == claim_id && !fa->fa_is_net)
+		    fa->fa_claim_id == claim_id && !fa->fa_is_net &&
+		    !fa->fa_is_jail &&
+		    (fa->fa_fs_actions & actions) == actions)
+			return (1);
+	}
+	return (0);
+}
+
+static bool
+fi_jail_req_matches(const struct fi_jail_request *claim,
+    const struct fi_jail_request *req)
+{
+
+	/*
+	 * When the claim specifies both JID and name, require both keys
+	 * to be present in the request and both to match.  This prevents
+	 * a token for jail "oracled.net" JID 5 from authorizing
+	 * operations keyed only by JID 5 (which could be reused).
+	 *
+	 * Exception: FI_JAIL_CREATE requests may have JID 0 because the
+	 * JID is not allocated until after creation succeeds.  When the
+	 * request is create-only and carries no JID, match on name alone
+	 * even if the claim has both keys.
+	 *
+	 * When only one key is specified in the claim, match on that key
+	 * alone, requiring the request to also supply it.
+	 */
+	if (claim->jid != 0 && claim->name[0] != '\0') {
+		if (req->jid == 0 && req->name[0] != '\0' &&
+		    req->actions == FI_JAIL_CREATE) {
+			/* Pre-create: JID unknown, match name only. */
+			return (strcmp(claim->name, req->name) == 0);
+		}
+		/* Post-create: request must supply both keys. */
+		return (req->jid == claim->jid &&
+		    req->name[0] != '\0' &&
+		    strcmp(claim->name, req->name) == 0);
+	}
+	/* Claim has one key — match on that key. */
+	if (claim->jid != 0)
+		return (req->jid != 0 && claim->jid == req->jid);
+	if (claim->name[0] != '\0')
+		return (req->name[0] != '\0' &&
+		    strcmp(claim->name, req->name) == 0);
+	return (false);
+}
+
+static bool
+fi_jail_claim_matches(const struct fi_jail_claim *claim,
+    const struct fi_jail_request *req)
+{
+	struct fi_jail_request cr;
+
+	memset(&cr, 0, sizeof(cr));
+	cr.jid = claim->fj_jid;
+	cr.actions = claim->fj_actions;
+	strlcpy(cr.name, claim->fj_name, sizeof(cr.name));
+	return (fi_jail_req_matches(&cr, req));
+}
+
+static bool
+fi_auth_jail_matches(const struct fi_auth *fa,
+    const struct fi_jail_request *req)
+{
+
+	if (!fa->fa_is_jail)
+		return (false);
+	if ((fa->fa_jail.actions & req->actions) != req->actions)
+		return (false);
+	return (fi_jail_req_matches(&fa->fa_jail, req));
+}
+
+static int
+fi_is_authorized_jail(uint64_t accessor, uint64_t owner, uint64_t claim_id,
+    const struct fi_jail_request *req)
+{
+	struct fi_auth *fa;
+
+	rw_assert(&fi_auth_lock, RA_RLOCKED);
+	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
+		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    fa->fa_claim_id == claim_id &&
+		    fi_auth_jail_matches(fa, req))
 			return (1);
 	}
 	return (0);
@@ -171,16 +301,18 @@ fi_auth_net_matches(const struct fi_auth *fa, int domain, int protocol,
     struct sockaddr *sa, uint8_t direction)
 {
 	struct fi_net_claim ac;
-	uint16_t port = 0;
+	uint16_t port = 0, port_min, port_max;
 
 	if (!fa->fa_is_net)
 		return (false);
 	if (sa != NULL) {
 		if (sa->sa_family == AF_INET)
-			port = ((struct sockaddr_in *)sa)->sin_port;
+			port = ntohs(((struct sockaddr_in *)sa)->sin_port);
 		else if (sa->sa_family == AF_INET6)
-			port = ((struct sockaddr_in6 *)sa)->sin6_port;
+			port = ntohs(((struct sockaddr_in6 *)sa)->sin6_port);
 	}
+	port_min = ntohs(fa->fa_net.port_min);
+	port_max = ntohs(fa->fa_net.port_max);
 	if ((fa->fa_net.direction & direction) != direction)
 		return (false);
 	if (fa->fa_net.domain != 0 && fa->fa_net.domain != domain)
@@ -188,13 +320,14 @@ fi_auth_net_matches(const struct fi_auth *fa, int domain, int protocol,
 	if (fa->fa_net.protocol != 0 && protocol != 0 &&
 	    fa->fa_net.protocol != protocol)
 		return (false);
-	if (fa->fa_net.port != 0 && fa->fa_net.port != port)
+	if (port < port_min || port > port_max)
 		return (false);
 
 	memset(&ac, 0, sizeof(ac));
 	ac.fn_domain = fa->fa_net.domain;
 	ac.fn_protocol = fa->fa_net.protocol;
-	ac.fn_port = fa->fa_net.port;
+	ac.fn_port_min = port_min;
+	ac.fn_port_max = port_max;
 	ac.fn_direction = fa->fa_net.direction;
 	ac.fn_prefix = fa->fa_net.prefix;
 	memcpy(&ac.fn_addr, fa->fa_net.addr, sizeof(ac.fn_addr));
@@ -217,23 +350,78 @@ fi_is_authorized_net(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 	return (0);
 }
 
-static void
-fi_auth_add(uint64_t accessor, uint64_t owner, uint64_t claim_id,
-    const struct fi_net_request *net, struct cap_rt_instance *inst)
+static bool
+fi_auth_net_covers_request(const struct fi_auth *fa,
+    const struct fi_net_request *nr)
+{
+	struct fi_net_claim ac;
+
+	if (!fa->fa_is_net)
+		return (false);
+
+	memset(&ac, 0, sizeof(ac));
+	ac.fn_domain = fa->fa_net.domain;
+	ac.fn_protocol = fa->fa_net.protocol;
+	ac.fn_port_min = ntohs(fa->fa_net.port_min);
+	ac.fn_port_max = ntohs(fa->fa_net.port_max);
+	ac.fn_direction = fa->fa_net.direction;
+	ac.fn_prefix = fa->fa_net.prefix;
+	memcpy(&ac.fn_addr, fa->fa_net.addr, sizeof(ac.fn_addr));
+	return (fi_net_claim_covers_request(&ac, nr));
+}
+
+static int
+fi_is_authorized_net_request(uint64_t accessor, uint64_t owner,
+    uint64_t claim_id, const struct fi_net_request *nr)
 {
 	struct fi_auth *fa;
+
+	rw_assert(&fi_auth_lock, RA_RLOCKED);
+	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
+		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    fa->fa_claim_id == claim_id &&
+		    fi_auth_net_covers_request(fa, nr))
+			return (1);
+	}
+	return (0);
+}
+
+static void
+fi_auth_add(uint64_t accessor, uint64_t owner, uint64_t claim_id,
+    uint64_t fs_actions, const struct fi_net_request *net,
+    const struct fi_jail_request *jail,
+    struct cap_rt_instance *inst)
+{
+	struct fi_auth *fa, *existing;
 
 	fa = malloc(sizeof(*fa), M_FILE_ISOLATION, M_WAITOK | M_ZERO);
 	fa->fa_accessor = accessor;
 	fa->fa_owner = owner;
 	fa->fa_claim_id = claim_id;
+	fa->fa_fs_actions = fs_actions;
 	if (net != NULL) {
 		fa->fa_is_net = true;
 		fa->fa_net = *net;
 	}
+	if (jail != NULL) {
+		fa->fa_is_jail = true;
+		fa->fa_jail = *jail;
+	}
 	fa->fa_inst = inst;
 
 	rw_wlock(&fi_auth_lock);
+	LIST_FOREACH(existing, FI_AUTH_BUCKET(owner), fa_link) {
+		if (existing->fa_accessor == accessor &&
+		    existing->fa_owner == owner &&
+		    existing->fa_claim_id == claim_id &&
+		    existing->fa_inst == inst &&
+		    existing->fa_is_net == (net != NULL) &&
+		    existing->fa_is_jail == (jail != NULL)) {
+			rw_wunlock(&fi_auth_lock);
+			free(fa, M_FILE_ISOLATION);
+			return;
+		}
+	}
 	LIST_INSERT_HEAD(FI_AUTH_BUCKET(owner), fa, fa_link);
 	rw_wunlock(&fi_auth_lock);
 }
@@ -295,7 +483,7 @@ fi_claim_lookup(struct vnode *vp)
  */
 static int
 fi_check_vp_common(struct ucred *cred, struct vnode *vp,
-    volatile int *claim_count, const char *probe_name)
+    volatile u_int *claim_count, const char *probe_name, uint64_t actions)
 {
 	struct fi_claim *c;
 	uint64_t caller_nonce, owner_nonce, claim_id;
@@ -310,20 +498,27 @@ fi_check_vp_common(struct ucred *cred, struct vnode *vp,
 	if (c == NULL) {
 		rw_runlock(&fi_lock);
 		return (0);
-		}
-		owner_nonce = c->fi_nonce;
-		claim_id = c->fi_id;
-		if (caller_nonce != 0 && caller_nonce == owner_nonce) {
-			rw_runlock(&fi_lock);
-			return (0);
+	}
+	owner_nonce = c->fi_nonce;
+	claim_id = c->fi_id;
+	if (caller_nonce != 0 && caller_nonce == owner_nonce) {
+		rw_runlock(&fi_lock);
+		SDT_PROBE5(cap_rt_isolation, , , allow__action,
+		    probe_name, owner_nonce, caller_nonce, claim_id,
+		    actions);
+		return (0);
 	}
 	rw_runlock(&fi_lock);
 
 	/* Check authorization table — caller may hold a token. */
 	if (caller_nonce != 0) {
 		rw_rlock(&fi_auth_lock);
-		if (fi_is_authorized(caller_nonce, owner_nonce, claim_id)) {
+		if (fi_is_authorized(caller_nonce, owner_nonce, claim_id,
+		    actions)) {
 			rw_runlock(&fi_auth_lock);
+			SDT_PROBE5(cap_rt_isolation, , , allow__action,
+			    probe_name, owner_nonce, caller_nonce,
+			    claim_id, actions);
 			return (0);
 		}
 		rw_runlock(&fi_auth_lock);
@@ -331,6 +526,8 @@ fi_check_vp_common(struct ucred *cred, struct vnode *vp,
 
 	SDT_PROBE3(cap_rt_isolation, , , deny, probe_name,
 	    owner_nonce, caller_nonce);
+	SDT_PROBE5(cap_rt_isolation, , , deny__action, probe_name,
+	    owner_nonce, caller_nonce, claim_id, actions);
 	return (EACCES);
 }
 
@@ -339,20 +536,44 @@ fi_check_vp_common(struct ucred *cred, struct vnode *vp,
  * Returns 0 (allow) in all other cases.
  */
 static int
-fi_check_vp(struct ucred *cred, struct vnode *vp)
+fi_check_vp_action(struct ucred *cred, struct vnode *vp, uint64_t actions)
 {
 
-	return (fi_check_vp_common(cred, vp, &fi_claim_count, "vnode"));
+	return (fi_check_vp_common(cred, vp, &fi_claim_count, "vnode",
+	    actions));
+}
+
+static uint64_t
+fi_actions_from_accmode(accmode_t accmode)
+{
+	uint64_t actions;
+
+	actions = 0;
+	if ((accmode & VREAD) != 0)
+		actions |= FI_FS_READ;
+	if ((accmode & VWRITE) != 0)
+		actions |= FI_FS_WRITE;
+	if ((accmode & VAPPEND) != 0)
+		actions |= FI_FS_APPEND;
+	if ((accmode & VEXEC) != 0)
+		actions |= FI_FS_EXEC;
+	if ((accmode & VREAD_ATTRIBUTES) != 0)
+		actions |= FI_FS_STAT;
+	if ((accmode & (VWRITE_ATTRIBUTES | VWRITE_ACL | VWRITE_OWNER)) != 0)
+		actions |= FI_FS_SETATTR;
+	if (actions == 0)
+		actions = FI_FS_STAT;
+	return (actions);
 }
 
 /* --- Content access --- */
 
 static int
 fi_check_open(struct ucred *cred, struct vnode *vp,
-    struct label *vplabel __unused, accmode_t accmode __unused)
+    struct label *vplabel __unused, accmode_t accmode)
 {
 
-	return (fi_check_vp(cred, vp));
+	return (fi_check_vp_action(cred, vp, fi_actions_from_accmode(accmode)));
 }
 
 static int
@@ -361,48 +582,72 @@ fi_check_exec(struct ucred *cred, struct vnode *vp,
     struct label *execlabel __unused)
 {
 
-	return (fi_check_vp(cred, vp));
+	return (fi_check_vp_action(cred, vp, FI_FS_EXEC));
 }
 
 /* --- Namespace mutation --- */
 
 static int
-fi_check_unlink(struct ucred *cred, struct vnode *dvp __unused,
+fi_check_unlink(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel __unused, struct vnode *vp,
     struct label *vplabel __unused, struct componentname *cnp __unused)
 {
+	int error;
 
-	return (fi_check_vp(cred, vp));
+	/* Check directory: removing a name requires DELETE on the dir. */
+	error = fi_check_vp_common(cred, dvp, &fi_dir_claim_count,
+	    "unlink-dir", FI_FS_DELETE);
+	if (error != 0)
+		return (error);
+	return (fi_check_vp_action(cred, vp, FI_FS_DELETE));
 }
 
 static int
-fi_check_link(struct ucred *cred, struct vnode *dvp __unused,
+fi_check_link(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel __unused, struct vnode *vp,
     struct label *vplabel __unused, struct componentname *cnp __unused)
 {
+	int error;
 
-	return (fi_check_vp(cred, vp));
+	/* Check destination directory: adding a name requires LINK on the dir. */
+	error = fi_check_vp_common(cred, dvp, &fi_dir_claim_count,
+	    "link-dir", FI_FS_LINK);
+	if (error != 0)
+		return (error);
+	return (fi_check_vp_action(cred, vp, FI_FS_LINK));
 }
 
 static int
-fi_check_rename_from(struct ucred *cred, struct vnode *dvp __unused,
+fi_check_rename_from(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel __unused, struct vnode *vp,
     struct label *vplabel __unused, struct componentname *cnp __unused)
 {
+	int error;
 
-	return (fi_check_vp(cred, vp));
+	/* Check source directory: moving a name out requires RENAME_FROM. */
+	error = fi_check_vp_common(cred, dvp, &fi_dir_claim_count,
+	    "rename-from-dir", FI_FS_RENAME_FROM);
+	if (error != 0)
+		return (error);
+	return (fi_check_vp_action(cred, vp, FI_FS_RENAME_FROM));
 }
 
 static int
-fi_check_rename_to(struct ucred *cred, struct vnode *dvp __unused,
+fi_check_rename_to(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel __unused, struct vnode *vp,
     struct label *vplabel __unused, int samedir __unused,
     struct componentname *cnp __unused)
 {
+	int error;
 
+	/* Check destination directory: moving a name in requires RENAME_TO. */
+	error = fi_check_vp_common(cred, dvp, &fi_dir_claim_count,
+	    "rename-to-dir", FI_FS_RENAME_TO);
+	if (error != 0)
+		return (error);
 	if (vp == NULL)
 		return (0);	/* target does not exist yet */
-	return (fi_check_vp(cred, vp));
+	return (fi_check_vp_action(cred, vp, FI_FS_RENAME_TO));
 }
 
 /* --- Metadata mutation --- */
@@ -412,7 +657,7 @@ fi_check_setmode(struct ucred *cred, struct vnode *vp,
     struct label *vplabel __unused, mode_t mode __unused)
 {
 
-	return (fi_check_vp(cred, vp));
+	return (fi_check_vp_action(cred, vp, FI_FS_SETATTR));
 }
 
 static int
@@ -421,7 +666,7 @@ fi_check_setowner(struct ucred *cred, struct vnode *vp,
     gid_t gid __unused)
 {
 
-	return (fi_check_vp(cred, vp));
+	return (fi_check_vp_action(cred, vp, FI_FS_SETATTR));
 }
 
 static int
@@ -429,7 +674,7 @@ fi_check_setflags(struct ucred *cred, struct vnode *vp,
     struct label *vplabel __unused, u_long flags __unused)
 {
 
-	return (fi_check_vp(cred, vp));
+	return (fi_check_vp_action(cred, vp, FI_FS_SETATTR));
 }
 
 static int
@@ -438,7 +683,7 @@ fi_check_setutimes(struct ucred *cred, struct vnode *vp,
     struct timespec mtime __unused)
 {
 
-	return (fi_check_vp(cred, vp));
+	return (fi_check_vp_action(cred, vp, FI_FS_SETATTR));
 }
 
 static int
@@ -446,7 +691,7 @@ fi_check_truncate(struct ucred *cred, struct vnode *vp,
     struct label *vplabel __unused)
 {
 
-	return (fi_check_vp(cred, vp));
+	return (fi_check_vp_action(cred, vp, FI_FS_TRUNCATE));
 }
 
 /* --- Information disclosure --- */
@@ -456,15 +701,15 @@ fi_check_stat(struct ucred *active_cred, struct ucred *file_cred __unused,
     struct vnode *vp, struct label *vplabel __unused)
 {
 
-	return (fi_check_vp(active_cred, vp));
+	return (fi_check_vp_action(active_cred, vp, FI_FS_STAT));
 }
 
 static int
 fi_check_access(struct ucred *cred, struct vnode *vp,
-    struct label *vplabel __unused, accmode_t accmode __unused)
+    struct label *vplabel __unused, accmode_t accmode)
 {
 
-	return (fi_check_vp(cred, vp));
+	return (fi_check_vp_action(cred, vp, fi_actions_from_accmode(accmode)));
 }
 
 static int
@@ -472,7 +717,7 @@ fi_check_readlink(struct ucred *cred, struct vnode *vp,
     struct label *vplabel __unused)
 {
 
-	return (fi_check_vp(cred, vp));
+	return (fi_check_vp_action(cred, vp, FI_FS_READ));
 }
 
 /* --- Directory traversal --- */
@@ -488,7 +733,8 @@ fi_check_lookup(struct ucred *cred, struct vnode *dvp,
 	 * it must be zero-cost when no directories are claimed —
 	 * even if file claims exist.
 	 */
-	return (fi_check_vp_common(cred, dvp, &fi_dir_claim_count, "lookup"));
+	return (fi_check_vp_common(cred, dvp, &fi_dir_claim_count, "lookup",
+	    FI_FS_LOOKUP));
 }
 
 /* --- Unix domain sockets --- */
@@ -498,7 +744,7 @@ fi_check_uipc_connect(struct ucred *cred, struct vnode *vp,
     struct label *vplabel __unused)
 {
 
-	return (fi_check_vp(cred, vp));
+	return (fi_check_vp_action(cred, vp, FI_FS_UIPC_CONNECT));
 }
 
 /* ----------------------------------------------------------------
@@ -510,6 +756,28 @@ fi_net_hash_fn(uint16_t port, int domain)
 {
 
 	return (((u_long)port ^ (u_long)domain) & fi_net_hashmask);
+}
+
+static __inline uint16_t
+fi_net_hash_port(uint16_t port_min, uint16_t port_max)
+{
+
+	return (port_min == port_max ? port_min : 0);
+}
+
+static __inline bool
+fi_net_port_in_range(const struct fi_net_claim *nc, uint16_t port)
+{
+
+	return (port >= nc->fn_port_min && port <= nc->fn_port_max);
+}
+
+static __inline bool
+fi_net_port_ranges_overlap(uint16_t amin, uint16_t amax, uint16_t bmin,
+    uint16_t bmax)
+{
+
+	return (amin <= bmax && bmin <= amax);
 }
 
 static bool
@@ -591,6 +859,7 @@ fi_net_claim_covers_request(const struct fi_net_claim *nc,
     const struct fi_net_request *nr)
 {
 	struct in6_addr req_addr;
+	uint16_t port_min, port_max;
 	uint8_t claim_prefix, req_prefix;
 
 	if ((nc->fn_direction & nr->direction) != nr->direction)
@@ -601,8 +870,9 @@ fi_net_claim_covers_request(const struct fi_net_claim *nc,
 	if (nc->fn_protocol != 0 &&
 	    (nr->protocol == 0 || nc->fn_protocol != nr->protocol))
 		return (false);
-	if (nc->fn_port != 0 &&
-	    (nr->port == 0 || nc->fn_port != nr->port))
+	port_min = ntohs(nr->port_min);
+	port_max = ntohs(nr->port_max);
+	if (nc->fn_port_min > port_min || nc->fn_port_max < port_max)
 		return (false);
 
 	memcpy(&req_addr, nr->addr, sizeof(req_addr));
@@ -694,10 +964,10 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 	if (sa != NULL) {
 		if (sa->sa_family == AF_INET) {
 			struct sockaddr_in *sin = (struct sockaddr_in *)sa;
-			port = sin->sin_port;
+			port = ntohs(sin->sin_port);
 		} else if (sa->sa_family == AF_INET6) {
 			struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)sa;
-			port = sin6->sin6_port;
+			port = ntohs(sin6->sin6_port);
 		}
 	}
 
@@ -720,10 +990,10 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 	{
 		u_long buckets[4];
 		int nbuckets = 4, i, j;
-		bool found_claim = false;
 		bool dup;
-			uint64_t denied_nonce __unused = 0;
-			uint64_t denied_claim_id = 0;
+#define	NET_DENY_MAX	8
+		struct { uint64_t nonce; uint64_t claim_id; } denied[NET_DENY_MAX];
+		int ndeny = 0;
 
 		buckets[0] = fi_net_hash_fn(port, domain);
 		buckets[1] = fi_net_hash_fn(0, domain);
@@ -751,8 +1021,7 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 				if (nc->fn_protocol != 0 &&
 				    nc->fn_protocol != protocol)
 					continue;
-				if (nc->fn_port != 0 &&
-				    nc->fn_port != port)
+				if (!fi_net_port_in_range(nc, port))
 					continue;
 				if (!fi_net_addr_match(nc, sa))
 					continue;
@@ -761,31 +1030,60 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 				    caller_nonce == nc->fn_nonce) {
 					/* Our claim — allow */
 					rw_runlock(&fi_net_lock);
+					SDT_PROBE6(cap_rt_isolation, , ,
+					    allow__net, nc->fn_nonce,
+					    caller_nonce, nc->fn_id,
+					    domain,
+					    ((uint32_t)protocol << 8) |
+					    direction, port);
 					return (0);
 				}
-					found_claim = true;
-					denied_nonce = nc->fn_nonce;
-					denied_claim_id = nc->fn_id;
+				if (ndeny < NET_DENY_MAX) {
+					denied[ndeny].nonce = nc->fn_nonce;
+					denied[ndeny].claim_id = nc->fn_id;
+					ndeny++;
 				}
 			}
+		}
 
-			if (found_claim) {
-				rw_runlock(&fi_net_lock);
+		if (ndeny > 0) {
+			rw_runlock(&fi_net_lock);
 
-				if (caller_nonce != 0 && denied_claim_id != 0) {
-					rw_rlock(&fi_auth_lock);
+			/*
+			 * Check authorization against every matching
+			 * foreign claim.  Allow if any is authorized.
+			 */
+			if (caller_nonce != 0) {
+				rw_rlock(&fi_auth_lock);
+				for (i = 0; i < ndeny; i++) {
 					if (fi_is_authorized_net(caller_nonce,
-					    denied_nonce, denied_claim_id, domain,
+					    denied[i].nonce,
+					    denied[i].claim_id, domain,
 					    protocol, sa, direction)) {
 						rw_runlock(&fi_auth_lock);
+						SDT_PROBE6(cap_rt_isolation, , ,
+						    allow__net,
+						    denied[i].nonce,
+						    caller_nonce,
+						    denied[i].claim_id,
+						    domain,
+						    ((uint32_t)protocol << 8) |
+						    direction, port);
 						return (0);
 					}
-					rw_runlock(&fi_auth_lock);
 				}
-				SDT_PROBE3(cap_rt_isolation, , , deny, (uintptr_t)"net",
-				    denied_nonce, caller_nonce);
+				rw_runlock(&fi_auth_lock);
+			}
+			SDT_PROBE3(cap_rt_isolation, , , deny,
+			    (uintptr_t)"net",
+			    denied[0].nonce, caller_nonce);
+			SDT_PROBE6(cap_rt_isolation, , , deny__net,
+			    denied[0].nonce, caller_nonce,
+			    denied[0].claim_id, domain,
+			    ((uint32_t)protocol << 8) | direction, port);
 			return (EACCES);
 		}
+#undef NET_DENY_MAX
 	}
 
 	rw_runlock(&fi_net_lock);
@@ -836,7 +1134,8 @@ fi_check_socket_create(struct ucred *cred, int domain, int type __unused,
 				    protocol != 0 &&
 				    nc->fn_protocol != protocol)
 					continue;
-				if (nc->fn_port != 0)
+				if (nc->fn_port_min != 0 ||
+				    nc->fn_port_max != UINT16_MAX)
 					continue;
 				if (nc->fn_direction != FI_NET_ANY)
 					continue;
@@ -871,6 +1170,11 @@ fi_check_socket_create(struct ucred *cred, int domain, int type __unused,
 					SDT_PROBE3(cap_rt_isolation, , ,
 					    deny, "socket_create",
 					    owner_nonce, caller_nonce);
+					SDT_PROBE6(cap_rt_isolation, , ,
+					    deny__net, owner_nonce,
+					    caller_nonce, claim_id, domain,
+					    ((uint32_t)protocol << 8) |
+					    FI_NET_ANY, 0);
 				}
 				return (EACCES);
 			}
@@ -927,6 +1231,7 @@ fi_init(struct cap_rt_instance *s, void *arg __unused)
 	priv = malloc(sizeof(*priv), M_FILE_ISOLATION, M_WAITOK | M_ZERO);
 	LIST_INIT(&priv->fip_claims);
 	LIST_INIT(&priv->fip_net_claims);
+	LIST_INIT(&priv->fip_jail_claims);
 	cap_rt_instance_set_priv(s, priv);
 	return (0);
 }
@@ -1026,7 +1331,8 @@ fi_do_release(struct file *fp, uint64_t nonce)
 }
 
 static int
-fi_do_query(struct file *fp, uint64_t nonce, struct fi_reply *rpl)
+fi_do_query(struct file *fp, uint64_t nonce, uint64_t actions,
+    struct fi_reply *rpl)
 {
 	struct vnode *vp;
 	struct fi_claim *c;
@@ -1049,7 +1355,7 @@ fi_do_query(struct file *fp, uint64_t nonce, struct fi_reply *rpl)
 		} else if (nonce != 0) {
 			rw_runlock(&fi_lock);
 			rw_rlock(&fi_auth_lock);
-			if (fi_is_authorized(nonce, owner, claim_id))
+			if (fi_is_authorized(nonce, owner, claim_id, actions))
 				rpl->flags |= FI_QF_AUTHORIZED;
 			rw_runlock(&fi_auth_lock);
 			return (0);
@@ -1069,8 +1375,12 @@ fi_do_claim_net(struct cap_rt_instance *s, struct fi_priv *priv,
 {
 	struct fi_net_claim *nc, *existing;
 	u_long bucket;
+	uint16_t port_min, port_max;
 
-	bucket = fi_net_hash_fn(nr->port, nr->domain);
+	port_min = ntohs(nr->port_min);
+	port_max = ntohs(nr->port_max);
+	bucket = fi_net_hash_fn(fi_net_hash_port(port_min, port_max),
+	    nr->domain);
 
 	/* Pre-allocate before taking the lock (M_WAITOK). */
 	nc = malloc(sizeof(*nc), M_FILE_ISOLATION, M_WAITOK | M_ZERO);
@@ -1091,27 +1401,36 @@ fi_do_claim_net(struct cap_rt_instance *s, struct fi_priv *priv,
 		int nb = 4, bi, bj;
 		bool bdup;
 
-		scan_buckets[0] = fi_net_hash_fn(nr->port, nr->domain);
-		scan_buckets[1] = fi_net_hash_fn(0, nr->domain);
-		scan_buckets[2] = fi_net_hash_fn(nr->port, 0);
-		scan_buckets[3] = fi_net_hash_fn(0, 0);
+		if (port_min != port_max) {
+			nb = (int)fi_net_hashmask + 1;
+		} else {
+			scan_buckets[0] = fi_net_hash_fn(port_min,
+			    nr->domain);
+			scan_buckets[1] = fi_net_hash_fn(0, nr->domain);
+			scan_buckets[2] = fi_net_hash_fn(port_min, 0);
+			scan_buckets[3] = fi_net_hash_fn(0, 0);
+		}
 
 		for (bi = 0; bi < nb; bi++) {
 			bdup = false;
-			for (bj = 0; bj < bi; bj++) {
-				if (scan_buckets[bj] == scan_buckets[bi]) {
-					bdup = true;
-					break;
+			if (port_min == port_max) {
+				for (bj = 0; bj < bi; bj++) {
+					if (scan_buckets[bj] ==
+					    scan_buckets[bi]) {
+						bdup = true;
+						break;
+					}
 				}
+				if (bdup)
+					continue;
 			}
-			if (bdup)
-				continue;
-			LIST_FOREACH(existing, &fi_net_hash[scan_buckets[bi]],
+			LIST_FOREACH(existing, &fi_net_hash[
+			    port_min == port_max ? scan_buckets[bi] : bi],
 			    fn_hashlink) {
 				/* Check overlap: ports */
-				if (existing->fn_port != 0 &&
-				    nr->port != 0 &&
-				    existing->fn_port != nr->port)
+				if (!fi_net_port_ranges_overlap(
+				    existing->fn_port_min,
+				    existing->fn_port_max, port_min, port_max))
 					continue;
 				/* Check overlap: domains */
 				if (existing->fn_domain != 0 &&
@@ -1157,7 +1476,8 @@ fi_do_claim_net(struct cap_rt_instance *s, struct fi_priv *priv,
 	LIST_FOREACH(existing, &fi_net_hash[bucket], fn_hashlink) {
 		if (existing->fn_nonce != nonce)
 			continue;
-		if (existing->fn_port != nr->port ||
+		if (existing->fn_port_min != port_min ||
+		    existing->fn_port_max != port_max ||
 		    existing->fn_domain != nr->domain ||
 		    existing->fn_direction != nr->direction ||
 		    existing->fn_protocol != nr->protocol ||
@@ -1179,7 +1499,8 @@ fi_do_claim_net(struct cap_rt_instance *s, struct fi_priv *priv,
 	/* New claim — insert (nc was pre-allocated above) */
 	nc->fn_domain = nr->domain;
 	nc->fn_protocol = nr->protocol;
-	nc->fn_port = nr->port;
+	nc->fn_port_min = port_min;
+	nc->fn_port_max = port_max;
 	nc->fn_direction = nr->direction;
 	nc->fn_prefix = nr->prefix;
 	memcpy(&nc->fn_addr, nr->addr, sizeof(nc->fn_addr));
@@ -1207,14 +1528,19 @@ fi_do_release_net(const struct fi_net_request *nr, uint64_t nonce)
 {
 	struct fi_net_claim *nc;
 	u_long bucket;
+	uint16_t port_min, port_max;
 
-	bucket = fi_net_hash_fn(nr->port, nr->domain);
+	port_min = ntohs(nr->port_min);
+	port_max = ntohs(nr->port_max);
+	bucket = fi_net_hash_fn(fi_net_hash_port(port_min, port_max),
+	    nr->domain);
 
 	rw_wlock(&fi_net_lock);
 	LIST_FOREACH(nc, &fi_net_hash[bucket], fn_hashlink) {
 		if (nc->fn_nonce != nonce)
 			continue;
-		if (nc->fn_port != nr->port)
+		if (nc->fn_port_min != port_min ||
+		    nc->fn_port_max != port_max)
 			continue;
 		if (nc->fn_domain != nr->domain)
 			continue;
@@ -1240,15 +1566,269 @@ fi_do_release_net(const struct fi_net_request *nr, uint64_t nonce)
 	return (ENOENT);
 }
 
+static int
+fi_do_query_net(const struct fi_net_request *nr, uint64_t nonce,
+    struct fi_reply *rpl)
+{
+	struct fi_net_claim *nc;
+	u_long buckets[4];
+	uint16_t port_min, port_max, hash_port;
+	int i, j;
+	bool dup;
+#define	NET_QUERY_MAX	8
+	struct { uint64_t nonce; uint64_t claim_id; } matches[NET_QUERY_MAX];
+	int nmatches = 0;
+
+	port_min = ntohs(nr->port_min);
+	port_max = ntohs(nr->port_max);
+	hash_port = fi_net_hash_port(port_min, port_max);
+
+	buckets[0] = fi_net_hash_fn(hash_port, nr->domain);
+	buckets[1] = fi_net_hash_fn(0, nr->domain);
+	buckets[2] = fi_net_hash_fn(hash_port, 0);
+	buckets[3] = fi_net_hash_fn(0, 0);
+
+	rpl->flags = 0;
+	rw_rlock(&fi_net_lock);
+	for (i = 0; i < nitems(buckets); i++) {
+		dup = false;
+		for (j = 0; j < i; j++) {
+			if (buckets[j] == buckets[i]) {
+				dup = true;
+				break;
+			}
+		}
+		if (dup)
+			continue;
+		LIST_FOREACH(nc, &fi_net_hash[buckets[i]], fn_hashlink) {
+			if (!fi_net_claim_covers_request(nc, nr))
+				continue;
+			rpl->flags |= FI_QF_CLAIMED;
+			if (nonce != 0 && nc->fn_nonce == nonce) {
+				rpl->flags |= FI_QF_MINE;
+				rw_runlock(&fi_net_lock);
+				return (0);
+			}
+			if (nmatches < NET_QUERY_MAX) {
+				matches[nmatches].nonce = nc->fn_nonce;
+				matches[nmatches].claim_id = nc->fn_id;
+				nmatches++;
+			}
+		}
+	}
+	rw_runlock(&fi_net_lock);
+
+	/* Check authorization against all matching foreign claims. */
+	if (nmatches > 0 && nonce != 0) {
+		rw_rlock(&fi_auth_lock);
+		for (i = 0; i < nmatches; i++) {
+			if (fi_is_authorized_net_request(nonce,
+			    matches[i].nonce, matches[i].claim_id, nr)) {
+				rpl->flags |= FI_QF_AUTHORIZED;
+				break;
+			}
+		}
+		rw_runlock(&fi_auth_lock);
+	}
+	SDT_PROBE5(cap_rt_isolation, , , query, "net", nonce,
+	    (uint64_t)0, (uint64_t)0, rpl->flags);
+	return (0);
+#undef NET_QUERY_MAX
+}
+
+static int
+fi_validate_jail_request(const void *req, size_t reqlen,
+    struct fi_jail_request *out, bool need_actions)
+{
+	const struct fi_jail_request *jr;
+
+	if (reqlen < sizeof(*jr))
+		return (EINVAL);
+	jr = req;
+	if (jr->flags != 0 || jr->jid < 0)
+		return (EINVAL);
+	if (memchr(jr->name, '\0', sizeof(jr->name)) == NULL)
+		return (ENAMETOOLONG);
+	if (jr->jid == 0 && jr->name[0] == '\0')
+		return (EINVAL);
+	if (need_actions &&
+	    (jr->actions == 0 || (jr->actions & ~FI_JAIL_ALL) != 0))
+		return (EINVAL);
+	/* Even when actions are optional, reject invalid bits. */
+	if (!need_actions && jr->actions != 0 &&
+	    (jr->actions & ~FI_JAIL_ALL) != 0)
+		return (EINVAL);
+	*out = *jr;
+	return (0);
+}
+
+/*
+ * Conflict predicate for jail claims.  Two claims overlap if they
+ * share a JID or share a name, and their action masks intersect.
+ * This is intentionally broader than request-matching: a claim for
+ * {jid=5,name=A} must conflict with {jid=5,name=B} to prevent
+ * a foreign process from claiming the same JID under a different name.
+ */
+static bool
+fi_jail_claims_overlap(const struct fi_jail_claim *a,
+    const struct fi_jail_request *b)
+{
+	uint32_t b_actions;
+
+	b_actions = b->actions != 0 ? b->actions : FI_JAIL_ALL;
+	if ((a->fj_actions & b_actions) == 0)
+		return (false);
+
+	/* Same JID (when both specify one). */
+	if (a->fj_jid != 0 && b->jid != 0 && a->fj_jid == b->jid)
+		return (true);
+	/* Same name (when both specify one). */
+	if (a->fj_name[0] != '\0' && b->name[0] != '\0' &&
+	    strcmp(a->fj_name, b->name) == 0)
+		return (true);
+	return (false);
+}
+
+static int
+fi_do_claim_jail(struct cap_rt_instance *s, struct fi_priv *priv,
+    const struct fi_jail_request *jr, uint64_t nonce)
+{
+	struct fi_jail_claim *jc, *existing;
+
+	jc = malloc(sizeof(*jc), M_FILE_ISOLATION, M_WAITOK | M_ZERO);
+	jc->fj_jid = jr->jid;
+	jc->fj_actions = jr->actions != 0 ? jr->actions : FI_JAIL_ALL;
+	strlcpy(jc->fj_name, jr->name, sizeof(jc->fj_name));
+	jc->fj_nonce = nonce;
+	jc->fj_id = fi_alloc_claim_id();
+	jc->fj_inst = s;
+
+	rw_wlock(&fi_jail_lock);
+	LIST_FOREACH(existing, &fi_jail_claims, fj_link) {
+		if (!fi_jail_claims_overlap(existing, jr))
+			continue;
+		if (existing->fj_nonce != nonce) {
+			rw_wunlock(&fi_jail_lock);
+			free(jc, M_FILE_ISOLATION);
+			SDT_PROBE3(cap_rt_isolation, , , deny,
+			    "jail-claim-conflict", nonce,
+			    existing->fj_nonce);
+			return (EBUSY);
+		}
+		if (existing->fj_jid == jc->fj_jid &&
+		    strcmp(existing->fj_name, jc->fj_name) == 0) {
+			/* Same identity — merge action masks. */
+			existing->fj_actions |= jc->fj_actions;
+			if (existing->fj_inst != s) {
+				LIST_REMOVE(existing, fj_instlink);
+				LIST_INSERT_HEAD(&priv->fip_jail_claims,
+				    existing, fj_instlink);
+				existing->fj_inst = s;
+			}
+			rw_wunlock(&fi_jail_lock);
+			free(jc, M_FILE_ISOLATION);
+			return (0);
+		}
+	}
+
+	LIST_INSERT_HEAD(&fi_jail_claims, jc, fj_link);
+	LIST_INSERT_HEAD(&priv->fip_jail_claims, jc, fj_instlink);
+	atomic_add_int(&fi_jail_claim_count, 1);
+	rw_wunlock(&fi_jail_lock);
+	SDT_PROBE6(cap_rt_isolation, , , state, "jail-claim",
+	    nonce, nonce, jc->fj_id, FI_OP_CLAIM_JAIL, 0);
+	return (0);
+}
+
+static int
+fi_do_release_jail(const struct fi_jail_request *jr, uint64_t nonce)
+{
+	struct fi_jail_claim *jc;
+	uint32_t release_actions;
+
+	release_actions = jr->actions != 0 ? jr->actions : FI_JAIL_ALL;
+
+	rw_wlock(&fi_jail_lock);
+	LIST_FOREACH(jc, &fi_jail_claims, fj_link) {
+		if (jc->fj_jid != jr->jid ||
+		    strcmp(jc->fj_name, jr->name) != 0)
+			continue;
+		if (jc->fj_nonce != nonce) {
+			rw_wunlock(&fi_jail_lock);
+			return (EPERM);
+		}
+		jc->fj_actions &= ~release_actions;
+		if (jc->fj_actions == 0) {
+			LIST_REMOVE(jc, fj_link);
+			LIST_REMOVE(jc, fj_instlink);
+			atomic_subtract_int(&fi_jail_claim_count, 1);
+			rw_wunlock(&fi_jail_lock);
+			SDT_PROBE6(cap_rt_isolation, , , state,
+			    "jail-release", nonce, nonce, jc->fj_id,
+			    FI_OP_RELEASE_JAIL, 0);
+			free(jc, M_FILE_ISOLATION);
+		} else {
+			rw_wunlock(&fi_jail_lock);
+			SDT_PROBE6(cap_rt_isolation, , , state,
+			    "jail-release-partial", nonce, nonce,
+			    jc->fj_id, FI_OP_RELEASE_JAIL, 0);
+		}
+		return (0);
+	}
+	rw_wunlock(&fi_jail_lock);
+	return (ENOENT);
+}
+
+static int
+fi_do_query_jail(const struct fi_jail_request *jr, uint64_t nonce,
+    struct fi_reply *rpl)
+{
+	struct fi_jail_claim *jc;
+	uint64_t owner_nonce;
+	uint64_t claim_id;
+
+	rw_rlock(&fi_jail_lock);
+	LIST_FOREACH(jc, &fi_jail_claims, fj_link) {
+		if (!fi_jail_claim_matches(jc, jr))
+			continue;
+		rpl->flags |= FI_QF_CLAIMED;
+		owner_nonce = jc->fj_nonce;
+		claim_id = jc->fj_id;
+		if (nonce != 0 && owner_nonce == nonce) {
+			rpl->flags |= FI_QF_MINE;
+			rw_runlock(&fi_jail_lock);
+			SDT_PROBE5(cap_rt_isolation, , , query, "jail",
+			    nonce, (uint64_t)0, (uint64_t)0, rpl->flags);
+			return (0);
+		}
+		rw_runlock(&fi_jail_lock);
+		if (nonce != 0) {
+			rw_rlock(&fi_auth_lock);
+			if (fi_is_authorized_jail(nonce, owner_nonce,
+			    claim_id, jr))
+				rpl->flags |= FI_QF_AUTHORIZED;
+			rw_runlock(&fi_auth_lock);
+		}
+		SDT_PROBE5(cap_rt_isolation, , , query, "jail",
+		    nonce, (uint64_t)0, (uint64_t)0, rpl->flags);
+		return (0);
+	}
+	rw_runlock(&fi_jail_lock);
+	SDT_PROBE5(cap_rt_isolation, , , query, "jail",
+	    nonce, (uint64_t)0, (uint64_t)0, rpl->flags);
+	return (0);
+}
+
 /*
  * Validate a network claim/release request.  Returns 0 on success
  * and sets *nrp to the validated request pointer.
  */
 static int
 fi_validate_net_request(const void *req, size_t reqlen,
-    const struct fi_net_request **nrp)
+    struct fi_net_request *out)
 {
 	const struct fi_net_request *nr;
+	uint16_t port_min, port_max;
 
 	if (reqlen < sizeof(struct fi_net_request))
 		return (EINVAL);
@@ -1269,7 +1849,11 @@ fi_validate_net_request(const void *req, size_t reqlen,
 		return (EINVAL);
 	if (nr->prefix > 128)
 		return (EINVAL);
-	*nrp = nr;
+	port_min = ntohs(nr->port_min);
+	port_max = ntohs(nr->port_max);
+	if (port_min > port_max)
+		return (EINVAL);
+	*out = *nr;
 	return (0);
 }
 
@@ -1278,8 +1862,9 @@ fi_validate_net_request(const void *req, size_t reqlen,
  * and fill the reply fd slot.  Shared by FI_OP_MINT and FI_OP_MINT_NET.
  */
 static int
-fi_mint_token(uint64_t caller_nonce, uint64_t claim_id,
-    const struct fi_net_request *net, struct file **reply_fds,
+fi_mint_token(uint64_t caller_nonce, uint64_t claim_id, uint64_t fs_actions,
+    const struct fi_net_request *net, const struct fi_jail_request *jail,
+    struct file **reply_fds,
     int *reply_nfdsp, size_t *replylenp)
 {
 	struct file *token_fp;
@@ -1305,18 +1890,35 @@ fi_mint_token(uint64_t caller_nonce, uint64_t claim_id,
 	tp->fip_is_token = true;
 	tp->fip_token_owner = caller_nonce;
 	tp->fip_token_claim_id = claim_id;
+	tp->fip_token_fs_actions = fs_actions;
 	if (net != NULL) {
 		tp->fip_token_is_net = true;
 		tp->fip_token_net = *net;
+	}
+	if (jail != NULL) {
+		tp->fip_token_is_jail = true;
+		tp->fip_token_jail = *jail;
 	}
 
 	reply_fds[0] = token_fp;
 	*reply_nfdsp = 1;
 	*replylenp = sizeof(struct fi_reply);
+
+	if ((net == NULL && jail == NULL && fs_actions != FI_FS_ALL) ||
+	    net != NULL ||
+	    (jail != NULL && jail->actions != FI_JAIL_ALL)) {
+		SDT_PROBE5(cap_rt_isolation, , , token__narrow,
+		    (net != NULL ? "net" :
+		    (jail != NULL ? "jail" : "file")),
+		    caller_nonce, claim_id, fs_actions, (uint64_t)0);
+	}
+
 	SDT_PROBE6(cap_rt_isolation, , , state,
-	    (net != NULL ? "net-token-mint" : "token-mint"),
+	    (net != NULL ? "net-token-mint" :
+	    (jail != NULL ? "jail-token-mint" : "token-mint")),
 	    caller_nonce, caller_nonce, claim_id,
-	    (net != NULL ? FI_OP_MINT_NET : FI_OP_MINT), 0);
+	    (net != NULL ? FI_OP_MINT_NET :
+	    (jail != NULL ? FI_OP_MINT_JAIL : FI_OP_MINT)), 0);
 	return (0);
 }
 
@@ -1361,89 +1963,143 @@ fi_call(struct cap_rt_instance *s,
 
 	switch (fr->op) {
 	case FI_OP_CLAIM:
+		if (reqlen < sizeof(struct fi_request) || fr->flags != 0)
+			return (EINVAL);
 		if (nfds < 1)
 			return (EINVAL);
 		return (fi_do_claim(s, priv, fds[0], caller_nonce));
 	case FI_OP_RELEASE:
+		if (reqlen < sizeof(struct fi_request) || fr->flags != 0)
+			return (EINVAL);
 		if (nfds < 1)
 			return (EINVAL);
 		return (fi_do_release(fds[0], caller_nonce));
 	case FI_OP_QUERY:
+		if (reqlen < sizeof(struct fi_request) || fr->flags != 0)
+			return (EINVAL);
+		if (fr->actions == 0 || (fr->actions & ~FI_FS_ALL) != 0)
+			return (EINVAL);
 		if (nfds < 1)
 			return (EINVAL);
-		return (fi_do_query(fds[0], caller_nonce, rpl));
+		return (fi_do_query(fds[0], caller_nonce, fr->actions, rpl));
 
 	case FI_OP_CLAIM_NET:
 	{
-		const struct fi_net_request *nr;
+		struct fi_net_request nr;
 		int error;
 
 		error = fi_validate_net_request(req, reqlen, &nr);
 		if (error != 0)
 			return (error);
-		return (fi_do_claim_net(s, priv, nr, caller_nonce));
+		return (fi_do_claim_net(s, priv, &nr, caller_nonce));
 	}
 	case FI_OP_RELEASE_NET:
 	{
-		const struct fi_net_request *nr;
+		struct fi_net_request nr;
 		int error;
 
 		error = fi_validate_net_request(req, reqlen, &nr);
 		if (error != 0)
 			return (error);
-		return (fi_do_release_net(nr, caller_nonce));
+		return (fi_do_release_net(&nr, caller_nonce));
 	}
-		case FI_OP_MINT: {
-			struct fi_claim *mc;
-			uint64_t claim_id;
-			int error;
+	case FI_OP_QUERY_NET:
+	{
+		struct fi_net_request nr;
+		int error;
+
+		error = fi_validate_net_request(req, reqlen, &nr);
+		if (error != 0)
+			return (error);
+		return (fi_do_query_net(&nr, caller_nonce, rpl));
+	}
+	case FI_OP_CLAIM_JAIL:
+	{
+		struct fi_jail_request jr;
+		int error;
+
+		error = fi_validate_jail_request(req, reqlen, &jr, false);
+		if (error != 0)
+			return (error);
+		return (fi_do_claim_jail(s, priv, &jr, caller_nonce));
+	}
+	case FI_OP_RELEASE_JAIL:
+	{
+		struct fi_jail_request jr;
+		int error;
+
+		error = fi_validate_jail_request(req, reqlen, &jr, false);
+		if (error != 0)
+			return (error);
+		return (fi_do_release_jail(&jr, caller_nonce));
+	}
+	case FI_OP_QUERY_JAIL:
+	{
+		struct fi_jail_request jr;
+		int error;
+
+		error = fi_validate_jail_request(req, reqlen, &jr, true);
+		if (error != 0)
+			return (error);
+		return (fi_do_query_jail(&jr, caller_nonce, rpl));
+	}
+	case FI_OP_MINT: {
+		struct fi_claim *mc;
+		uint64_t actions, claim_id;
+		int error;
 
 		/*
 		 * Mint an access token for a vnode claim.  The caller
-		 * must be the claim owner (nonce match).  Pass the
-		 * target vnode fd in req_fds[0].
+		 * must supply a valid FI_FS_* actions mask and be the
+		 * claim owner (nonce match).  Pass the target vnode fd
+		 * in req_fds[0].
 		 */
+		if (reqlen < sizeof(struct fi_request) || fr->flags != 0)
+			return (EINVAL);
+		actions = fr->actions;
+		if (actions == 0 || (actions & ~FI_FS_ALL) != 0)
+			return (EINVAL);
 		if (priv->fip_is_token)
 			return (EINVAL);
 		if (nfds < 1)
 			return (EINVAL);
 		if (*reply_nfdsp < 1)
 			return (EINVAL);
-
 		if (fds[0]->f_vnode == NULL)
 			return (EINVAL);
 
 		rw_rlock(&fi_lock);
 		mc = fi_claim_lookup(fds[0]->f_vnode);
-			if (mc == NULL) {
-				rw_runlock(&fi_lock);
-				SDT_PROBE6(cap_rt_isolation, , , state,
-				    "mint-no-claim", caller_nonce,
-				    (uint64_t)0, (uint64_t)0,
-				    FI_OP_MINT, ENOENT);
-				return (ENOENT);
-			}
-			if (mc->fi_nonce != caller_nonce) {
-				uint64_t owner __unused = mc->fi_nonce;
-
-				rw_runlock(&fi_lock);
-				SDT_PROBE6(cap_rt_isolation, , , state,
-				    "mint-wrong-nonce", caller_nonce,
-				    owner, (uint64_t)0,
-				    FI_OP_MINT, EPERM);
-				return (EPERM);
-			}
-			claim_id = mc->fi_id;
+		if (mc == NULL) {
 			rw_runlock(&fi_lock);
-
-			error = fi_mint_token(caller_nonce, claim_id, NULL, reply_fds,
-			    reply_nfdsp, replylenp);
-			return (error);
+			SDT_PROBE6(cap_rt_isolation, , , state,
+			    "mint-no-claim", caller_nonce,
+			    (uint64_t)0, (uint64_t)0,
+			    FI_OP_MINT, ENOENT);
+			return (ENOENT);
 		}
+		if (mc->fi_nonce != caller_nonce) {
+			uint64_t owner __unused = mc->fi_nonce;
+
+			rw_runlock(&fi_lock);
+			SDT_PROBE6(cap_rt_isolation, , , state,
+			    "mint-wrong-nonce", caller_nonce,
+			    owner, (uint64_t)0,
+			    FI_OP_MINT, EPERM);
+			return (EPERM);
+		}
+		claim_id = mc->fi_id;
+		rw_runlock(&fi_lock);
+
+		error = fi_mint_token(caller_nonce, claim_id, actions,
+		    NULL, NULL, reply_fds, reply_nfdsp, replylenp);
+		return (error);
+	}
 
 		case FI_OP_MINT_NET: {
-			const struct fi_net_request *nr;
+			struct fi_net_request nr;
 			int error;
+			uint16_t port_min, port_max, hash_port;
 			uint64_t claim_id;
 
 			/*
@@ -1466,9 +2122,12 @@ fi_call(struct cap_rt_instance *s,
 				u_long buckets[4];
 				int i, j;
 
-				buckets[0] = fi_net_hash_fn(nr->port, nr->domain);
-				buckets[1] = fi_net_hash_fn(0, nr->domain);
-				buckets[2] = fi_net_hash_fn(nr->port, 0);
+				port_min = ntohs(nr.port_min);
+				port_max = ntohs(nr.port_max);
+				hash_port = fi_net_hash_port(port_min, port_max);
+				buckets[0] = fi_net_hash_fn(hash_port, nr.domain);
+				buckets[1] = fi_net_hash_fn(0, nr.domain);
+				buckets[2] = fi_net_hash_fn(hash_port, 0);
 				buckets[3] = fi_net_hash_fn(0, 0);
 				rw_rlock(&fi_net_lock);
 				for (i = 0; i < nitems(buckets) && !found; i++) {
@@ -1486,7 +2145,8 @@ fi_call(struct cap_rt_instance *s,
 					    fn_hashlink) {
 						if (nc->fn_nonce != caller_nonce)
 							continue;
-						if (!fi_net_claim_covers_request(nc, nr))
+						if (!fi_net_claim_covers_request(nc,
+						    &nr))
 							continue;
 						claim_id = nc->fn_id;
 						found = true;
@@ -1503,8 +2163,53 @@ fi_call(struct cap_rt_instance *s,
 				}
 			}
 
-			error = fi_mint_token(caller_nonce, claim_id, nr, reply_fds,
-			    reply_nfdsp, replylenp);
+			error = fi_mint_token(caller_nonce, claim_id, 0, &nr,
+			    NULL, reply_fds, reply_nfdsp, replylenp);
+			return (error);
+		}
+
+		case FI_OP_MINT_JAIL: {
+			struct fi_jail_request jr;
+			struct fi_jail_claim *jc;
+			uint64_t claim_id;
+			bool found;
+			int error;
+
+			error = fi_validate_jail_request(req, reqlen, &jr,
+			    true);
+			if (error != 0)
+				return (error);
+			if (priv->fip_is_token)
+				return (EINVAL);
+			if (*reply_nfdsp < 1)
+				return (EINVAL);
+
+			found = false;
+			claim_id = 0;
+			rw_rlock(&fi_jail_lock);
+			LIST_FOREACH(jc, &fi_jail_claims, fj_link) {
+				if (jc->fj_nonce != caller_nonce)
+					continue;
+				if ((jc->fj_actions & jr.actions) !=
+				    jr.actions)
+					continue;
+				if (!fi_jail_claim_matches(jc, &jr))
+					continue;
+				claim_id = jc->fj_id;
+				found = true;
+				break;
+			}
+			rw_runlock(&fi_jail_lock);
+			if (!found) {
+				SDT_PROBE6(cap_rt_isolation, , , state,
+				    "mint-jail-no-claim", caller_nonce,
+				    (uint64_t)0, (uint64_t)0,
+				    FI_OP_MINT_JAIL, ENOENT);
+				return (ENOENT);
+			}
+
+			error = fi_mint_token(caller_nonce, claim_id, 0, NULL,
+			    &jr, reply_fds, reply_nfdsp, replylenp);
 			return (error);
 		}
 
@@ -1520,11 +2225,15 @@ fi_call(struct cap_rt_instance *s,
 				return (EINVAL);
 
 			fi_auth_add(caller_nonce, priv->fip_token_owner,
-			    priv->fip_token_claim_id,
+			    priv->fip_token_claim_id, priv->fip_token_fs_actions,
 			    priv->fip_token_is_net ? &priv->fip_token_net : NULL,
+			    priv->fip_token_is_jail ?
+			    &priv->fip_token_jail : NULL,
 			    s);
 		SDT_PROBE6(cap_rt_isolation, , , state,
-		    (priv->fip_token_is_net ? "net-authorize" : "authorize"),
+		    (priv->fip_token_is_net ? "net-authorize" :
+		    (priv->fip_token_is_jail ? "jail-authorize" :
+		    "authorize")),
 		    priv->fip_token_owner, caller_nonce,
 		    priv->fip_token_claim_id, FI_OP_AUTHORIZE, 0);
 		*replylenp = sizeof(struct fi_reply);
@@ -1589,6 +2298,23 @@ fi_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
 		rw_wunlock(&fi_net_lock);
 	}
 
+	/* Release all jail claims */
+	{
+		struct fi_jail_claim *jc;
+
+		rw_wlock(&fi_jail_lock);
+		while ((jc = LIST_FIRST(&priv->fip_jail_claims)) != NULL) {
+			LIST_REMOVE(jc, fj_link);
+			LIST_REMOVE(jc, fj_instlink);
+			atomic_subtract_int(&fi_jail_claim_count, 1);
+			SDT_PROBE6(cap_rt_isolation, , , state,
+			    "jail-claim-remove", jc->fj_nonce, 0, jc->fj_id,
+			    FI_OP_RELEASE_JAIL, 0);
+			free(jc, M_FILE_ISOLATION);
+		}
+		rw_wunlock(&fi_jail_lock);
+	}
+
 	/* Remove any auth entries created by this instance (token). */
 	fi_auth_remove_by_inst(s);
 
@@ -1616,7 +2342,141 @@ fi_check_create(struct ucred *cred, struct vnode *dvp,
     struct vattr *vap __unused)
 {
 
-	return (fi_check_vp_common(cred, dvp, &fi_dir_claim_count, "create"));
+	return (fi_check_vp_common(cred, dvp, &fi_dir_claim_count, "create",
+	    FI_FS_CREATE));
+}
+
+static int
+fi_check_jail_common(struct ucred *cred, int32_t jid, const char *name,
+    uint32_t actions, const char *what)
+{
+	struct fi_jail_claim *jc;
+	struct fi_jail_request req;
+	uint64_t caller_nonce, owner_nonce, claim_id;
+	char claim_name[sizeof(((struct fi_jail_request *)0)->name)];
+
+	if (atomic_load_acq_int(&fi_jail_claim_count) == 0)
+		return (0);
+
+	memset(&req, 0, sizeof(req));
+	req.jid = jid;
+	req.actions = actions;
+	if (name != NULL)
+		strlcpy(req.name, name, sizeof(req.name));
+
+	caller_nonce = cap_rt_proc_nonce(cred);
+	rw_rlock(&fi_jail_lock);
+	LIST_FOREACH(jc, &fi_jail_claims, fj_link) {
+		if ((jc->fj_actions & actions) != actions)
+			continue;
+		if (!fi_jail_claim_matches(jc, &req))
+			continue;
+		if (caller_nonce != 0 && caller_nonce == jc->fj_nonce) {
+			rw_runlock(&fi_jail_lock);
+			SDT_PROBE6(cap_rt_isolation, , , allow__jail,
+			    jc->fj_nonce, caller_nonce, jc->fj_id,
+			    jid, what, actions);
+			return (0);
+		}
+		owner_nonce = jc->fj_nonce;
+		claim_id = jc->fj_id;
+		strlcpy(claim_name, jc->fj_name, sizeof(claim_name));
+		rw_runlock(&fi_jail_lock);
+		if (caller_nonce != 0) {
+			rw_rlock(&fi_auth_lock);
+			if (fi_is_authorized_jail(caller_nonce, owner_nonce,
+			    claim_id, &req)) {
+				rw_runlock(&fi_auth_lock);
+				SDT_PROBE6(cap_rt_isolation, , ,
+				    allow__jail, owner_nonce,
+				    caller_nonce, claim_id,
+				    jid, what, actions);
+				return (0);
+			}
+			rw_runlock(&fi_auth_lock);
+		}
+		SDT_PROBE3(cap_rt_isolation, , , deny, what, owner_nonce,
+		    caller_nonce);
+		SDT_PROBE6(cap_rt_isolation, , , deny__jail, owner_nonce,
+		    caller_nonce, claim_id, jid, claim_name, actions);
+		return (EACCES);
+	}
+	rw_runlock(&fi_jail_lock);
+	return (0);
+}
+
+static int
+fi_check_prison_create(struct ucred *cred, struct vfsoptlist *opts,
+    int flags __unused)
+{
+	char *name;
+	char namebuf[sizeof(((struct fi_jail_request *)0)->name)];
+	int error, jid, len;
+
+	jid = 0;
+	error = vfs_copyopt(opts, "jid", &jid, sizeof(jid));
+	if (error != 0 && error != ENOENT)
+		return (0);
+	name = NULL;
+	error = vfs_getopt(opts, "name", (void **)&name, &len);
+	if (error != 0 && error != ENOENT)
+		name = NULL;
+	/*
+	 * Bound the name to our buffer size.  vfs_getopt returns a
+	 * pointer into the option list; ensure we have a NUL-terminated
+	 * copy before passing to the matcher.
+	 */
+	if (name != NULL) {
+		if (len <= 0 || (size_t)len >= sizeof(namebuf))
+			name = NULL;
+		else {
+			memcpy(namebuf, name, (size_t)len);
+			namebuf[len] = '\0';
+			name = namebuf;
+		}
+	}
+	if (jid == 0 && name == NULL)
+		return (0);
+	return (fi_check_jail_common(cred, jid, name, FI_JAIL_CREATE,
+	    "jail_create"));
+}
+
+static int
+fi_check_prison_get(struct ucred *cred, struct prison *pr,
+    struct label *label __unused, struct vfsoptlist *opts __unused,
+    int flags __unused)
+{
+
+	return (fi_check_jail_common(cred, pr->pr_id, pr->pr_name,
+	    FI_JAIL_GET, "jail_get"));
+}
+
+static int
+fi_check_prison_set(struct ucred *cred, struct prison *pr,
+    struct label *label __unused, struct vfsoptlist *opts __unused,
+    int flags __unused)
+{
+
+	return (fi_check_jail_common(cred, pr->pr_id, pr->pr_name,
+	    FI_JAIL_SET, "jail_set"));
+}
+
+static int
+fi_check_prison_remove(struct ucred *cred, struct prison *pr,
+    struct label *label __unused)
+{
+
+	return (fi_check_jail_common(cred, pr->pr_id, pr->pr_name,
+	    FI_JAIL_REMOVE, "jail_remove"));
+}
+
+static int
+fi_check_prison_attach(struct ucred *cred, struct prison *pr,
+    struct label *label __unused)
+{
+
+	return (fi_check_jail_common(cred, pr->pr_id, pr->pr_name,
+	    FI_JAIL_ATTACH, "jail_attach"));
 }
 
 static struct mac_policy_ops fi_mac_ops = {
@@ -1647,6 +2507,12 @@ static struct mac_policy_ops fi_mac_ops = {
 	.mpo_socket_check_create	= fi_check_socket_create,
 	.mpo_socket_check_bind		= fi_check_socket_bind,
 	.mpo_socket_check_connect	= fi_check_socket_connect,
+	/* Jail isolation */
+	.mpo_prison_check_create	= fi_check_prison_create,
+	.mpo_prison_check_get		= fi_check_prison_get,
+	.mpo_prison_check_set		= fi_check_prison_set,
+	.mpo_prison_check_remove	= fi_check_prison_remove,
+	.mpo_prison_check_attach	= fi_check_prison_attach,
 };
 
 MAC_POLICY_SET(&fi_mac_ops, mac_cap_rt_isolation,
@@ -1669,6 +2535,8 @@ cap_rt_isolation_modevent(module_t mod __unused, int type,
 		fi_net_hash = hashinit(FI_NET_HASH_SIZE, M_FILE_ISOLATION,
 		    &fi_net_hashmask);
 		rw_init(&fi_net_lock, "cap_rt_fi_net");
+		LIST_INIT(&fi_jail_claims);
+		rw_init(&fi_jail_lock, "cap_rt_fi_jail");
 
 		fi_auth_hash = hashinit(FI_AUTH_HASH_SIZE, M_FILE_ISOLATION,
 		    &fi_auth_hashmask);
@@ -1680,6 +2548,7 @@ cap_rt_isolation_modevent(module_t mod __unused, int type,
 
 		error = cap_rt_service_create(&p, &fi_svc);
 		if (error != 0) {
+			rw_destroy(&fi_jail_lock);
 			rw_destroy(&fi_net_lock);
 			hashdestroy(fi_net_hash, M_FILE_ISOLATION,
 			    fi_net_hashmask);

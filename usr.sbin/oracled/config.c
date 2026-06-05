@@ -14,6 +14,7 @@
 #include <netinet/in.h>
 
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,10 +24,75 @@
 #include <ucl.h>
 
 #include <dev/cap_rt/cap_rt_capprotect_proto.h>
+#include <dev/cap_rt/cap_rt_isolation_proto.h>
 
+#include "claim_parse.h"
 #include "config.h"
 #include "gates.h"
 #include "oracled_ctl.h"
+
+static int
+parse_ucl_jail_claim(const ucl_object_t *elem, struct oracled_jail_claim *jc,
+    const char *label)
+{
+	const ucl_object_t *v;
+	int64_t jid;
+
+	memset(jc, 0, sizeof(*jc));
+	jc->actions = FI_JAIL_ALL;
+
+	switch (ucl_object_type(elem)) {
+	case UCL_INT:
+		jid = ucl_object_toint(elem);
+		if (jid <= 0 || jid > INT32_MAX)
+			return (-1);
+		jc->jid = (int32_t)jid;
+		return (0);
+	case UCL_STRING:
+		if (strlcpy(jc->name, ucl_object_tostring(elem),
+		    sizeof(jc->name)) >= sizeof(jc->name))
+			return (-1);
+		return (jc->name[0] != '\0' ? 0 : -1);
+	case UCL_OBJECT:
+		break;
+	default:
+		return (-1);
+	}
+
+	v = ucl_object_lookup(elem, "jid");
+	if (v != NULL) {
+		if (ucl_object_type(v) != UCL_INT)
+			return (-1);
+		jid = ucl_object_toint(v);
+		if (jid <= 0 || jid > INT32_MAX)
+			return (-1);
+		jc->jid = (int32_t)jid;
+	}
+	v = ucl_object_lookup(elem, "name");
+	if (v != NULL) {
+		if (ucl_object_type(v) != UCL_STRING)
+			return (-1);
+		if (strlcpy(jc->name, ucl_object_tostring(v),
+		    sizeof(jc->name)) >= sizeof(jc->name))
+			return (-1);
+	}
+	v = ucl_object_lookup(elem, "actions");
+	if (parse_jail_actions(v, &jc->actions) != 0) {
+		syslog(LOG_WARNING, "%s: invalid jail actions", label);
+		return (-1);
+	}
+	v = ucl_object_lookup(elem, "path");
+	if (v != NULL) {
+		if (ucl_object_type(v) != UCL_STRING)
+			return (-1);
+		if (strlcpy(jc->path, ucl_object_tostring(v),
+		    sizeof(jc->path)) >= sizeof(jc->path))
+			return (-1);
+		if (jc->path[0] != '/')
+			return (-1);
+	}
+	return ((jc->jid != 0 || jc->name[0] != '\0') ? 0 : -1);
+}
 
 /*
  * Parse a single UCL network claim object into an oracled_net_claim.
@@ -41,28 +107,34 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct oracled_net_claim *nc,
 	const char *s;
 
 	memset(nc, 0, sizeof(*nc));
+	nc->port_min = 0;
+	nc->port_max = UINT16_MAX;
 
 	v = ucl_object_lookup(elem, "port");
-	if (v != NULL && ucl_object_type(v) == UCL_INT) {
-		int64_t pv = ucl_object_toint(v);
-		if (pv < 0 || pv > 65535) {
-			syslog(LOG_WARNING, "%s: invalid port: %jd",
-			    label, (intmax_t)pv);
+	if (v == NULL)
+		v = ucl_object_lookup(elem, "ports");
+	if (v != NULL) {
+		if (parse_port_range_obj(v, &nc->port_min,
+		    &nc->port_max) != 0) {
+			syslog(LOG_WARNING, "%s: invalid port range", label);
 			return (-1);
 		}
-		nc->port = (uint16_t)pv;
 	}
 
 	v = ucl_object_lookup(elem, "protocol");
 	if (v != NULL && ucl_object_type(v) == UCL_STRING) {
 		s = ucl_object_tostring(v);
-		if (strcmp(s, "tcp") == 0)
+		if (strcmp(s, "*") == 0 || strcmp(s, "any") == 0)
+			nc->protocol = 0;
+		else if (strcmp(s, "tcp") == 0)
 			nc->protocol = IPPROTO_TCP;
 		else if (strcmp(s, "udp") == 0)
 			nc->protocol = IPPROTO_UDP;
-		else
-			syslog(LOG_WARNING, "%s: unknown protocol: %s",
+		else {
+			syslog(LOG_ERR, "%s: unknown protocol: %s",
 			    label, s);
+			return (-1);
+		}
 	}
 
 	v = ucl_object_lookup(elem, "direction");
@@ -72,8 +144,13 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct oracled_net_claim *nc,
 			nc->direction = ORACLED_NET_DIR_BIND;
 		else if (strcmp(s, "connect") == 0)
 			nc->direction = ORACLED_NET_DIR_CONNECT;
-		else if (strcmp(s, "any") == 0)
+		else if (strcmp(s, "*") == 0 || strcmp(s, "any") == 0)
 			nc->direction = ORACLED_NET_DIR_ANY;
+		else {
+			syslog(LOG_ERR, "%s: unknown direction: %s",
+			    label, s);
+			return (-1);
+		}
 	}
 	if (nc->direction == 0)
 		nc->direction = ORACLED_NET_DIR_BIND;
@@ -82,10 +159,17 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct oracled_net_claim *nc,
 	v = ucl_object_lookup(elem, "domain");
 	if (v != NULL && ucl_object_type(v) == UCL_STRING) {
 		s = ucl_object_tostring(v);
-		if (strcmp(s, "inet6") == 0)
+		if (strcmp(s, "inet") == 0)
+			nc->domain = AF_INET;
+		else if (strcmp(s, "inet6") == 0)
 			nc->domain = AF_INET6;
-		else if (strcmp(s, "any") == 0)
+		else if (strcmp(s, "*") == 0 || strcmp(s, "any") == 0)
 			nc->domain = 0;
+		else {
+			syslog(LOG_ERR, "%s: unknown domain: %s",
+			    label, s);
+			return (-1);
+		}
 	}
 
 	return (0);
@@ -264,6 +348,29 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 		}
 	}
 
+	/* claims.jails — array of JIDs, names, or objects */
+	arr = ucl_object_lookup(sec, "jails");
+	if (arr == NULL)
+		arr = ucl_object_lookup(sec, "jail");
+	if (arr != NULL && ucl_object_type(arr) == UCL_ARRAY) {
+		it = NULL;
+		while ((elem = ucl_object_iterate(arr, &it, true))
+		    != NULL) {
+			if (cfg->nclaim_jail >= ORACLED_MAX_JAIL_CLAIMS) {
+				fprintf(stderr, "oracled: too many "
+				    "jail claims (max %d)\n",
+				    ORACLED_MAX_JAIL_CLAIMS);
+				break;
+			}
+			if (parse_ucl_jail_claim(elem,
+			    &cfg->claim_jail[cfg->nclaim_jail],
+			    "config") == 0)
+				cfg->nclaim_jail++;
+			else
+				fprintf(stderr, "oracled: invalid jail claim\n");
+		}
+	}
+
 	/* claims.system — string array of gate names */
 	arr = ucl_object_lookup(sec, "system");
 	if (arr != NULL && ucl_object_type(arr) == UCL_ARRAY) {
@@ -362,6 +469,7 @@ config_log(const struct oracled_config *cfg)
 	    cfg->control_socket, cfg->control_socket_mode);
 	syslog(LOG_INFO, "config: integrity_flags=0x%x", cfg->integrity_flags);
 	syslog(LOG_INFO, "config: manifest_dir=%s", cfg->manifest_dir);
-	syslog(LOG_INFO, "config: claims paths=%d network=%d system=0x%x",
-	    cfg->nclaim_paths, cfg->nclaim_net, cfg->claim_system);
+	syslog(LOG_INFO, "config: claims paths=%d network=%d jails=%d "
+	    "system=0x%x", cfg->nclaim_paths, cfg->nclaim_net,
+	    cfg->nclaim_jail, cfg->claim_system);
 }

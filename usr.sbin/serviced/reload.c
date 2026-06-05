@@ -57,8 +57,25 @@ manifest_changed(const struct svc_manifest *a, const struct svc_manifest *b)
 	if (memcmp(a->requires, b->requires,
 	    a->nrequires * sizeof(a->requires[0])) != 0)
 		return (true);
+	if (a->ncap_jail != b->ncap_jail)
+		return (true);
+	if (memcmp(a->cap_jail, b->cap_jail,
+	    a->ncap_jail * sizeof(a->cap_jail[0])) != 0)
+		return (true);
 	if (a->cap_system != b->cap_system)
 		return (true);
+	if (a->has_jail != b->has_jail)
+		return (true);
+	if (a->has_jail) {
+		if (strcmp(a->jail_name, b->jail_name) != 0)
+			return (true);
+		if (strcmp(a->jail_path, b->jail_path) != 0)
+			return (true);
+		if (strcmp(a->jail_hostname, b->jail_hostname) != 0)
+			return (true);
+		if (strcmp(a->jail_ip4_addr, b->jail_ip4_addr) != 0)
+			return (true);
+	}
 	if (a->stop_timeout != b->stop_timeout)
 		return (true);
 	if (a->max_failures != b->max_failures)
@@ -126,6 +143,7 @@ svc_remove(unsigned idx)
 	sd.services[sd.nservices].pd_fd = -1;
 	sd.services[sd.nservices].pair_fd = -1;
 	sd.services[sd.nservices].coalition_fd = -1;
+	sd.services[sd.nservices].jail_fd = -1;
 }
 
 /*
@@ -351,6 +369,7 @@ supervisor_load_manifest(const char *path, int kq,
 	svc->pd_fd = -1;
 	svc->pair_fd = -1;
 	svc->coalition_fd = -1;
+	svc->jail_fd = -1;
 	svc->state = SVC_STATE_STOPPED;
 	svc->restart_pending = false;
 	sd.nservices++;
@@ -368,6 +387,7 @@ supervisor_load_manifest(const char *path, int kq,
 		svc->pd_fd = -1;
 		svc->pair_fd = -1;
 		svc->coalition_fd = -1;
+		svc->jail_fd = -1;
 		/* Re-sort the original set to restore order. */
 		(void)depgraph_sort(sd.services, sd.nservices);
 		svc_reregister_kevents(kq);
@@ -590,6 +610,8 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 				syslog(LOG_INFO, "reload: restarting '%s' "
 				    "(manifest changed)",
 				    sd.services[i].manifest.label);
+				SERVICED_PROBE_SVC_CHANGED(
+				    sd.services[i].manifest.label);
 				if (sd.services[i].state == SVC_STATE_STOPPED) {
 					sd.services[i].manifest = disk[di];
 					continue;
@@ -605,6 +627,8 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			if (label_in(removed_labels, nremoved,
 			    sd.services[i - 1].manifest.label)) {
 				syslog(LOG_INFO, "reload: removing '%s'",
+				    sd.services[i - 1].manifest.label);
+				SERVICED_PROBE_SVC_REMOVED(
 				    sd.services[i - 1].manifest.label);
 				if (sd.services[i - 1].state == SVC_STATE_STOPPED) {
 					svc_remove(i - 1);
@@ -640,6 +664,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 	syslog(LOG_INFO, "reload: %u new, %u changed, %u removed",
 	    nnew, nchanged, nremoved);
 	SERVICED_PROBE_RELOAD(nnew, nchanged, nremoved);
+	SERVICED_PROBE_SVC_COUNT(sd.nservices);
 
 	if (summary != NULL && sumlen > 0) {
 		size_t off = 0;

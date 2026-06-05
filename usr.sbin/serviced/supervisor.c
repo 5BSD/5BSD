@@ -13,7 +13,10 @@
  * dispatch lives in svc_proto.c.
  */
 
+#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/event.h>
+#include <sys/jail.h>
 #include <sys/procdesc.h>
 #include <sys/wait.h>
 
@@ -59,6 +62,11 @@ svc_close_fds(struct svc_runtime *svc)
 	if (svc->coalition_fd >= 0) {
 		close(svc->coalition_fd);
 		svc->coalition_fd = -1;
+	}
+	if (svc->jail_fd >= 0) {
+		jail_remove_jd(svc->jail_fd);
+		close(svc->jail_fd);
+		svc->jail_fd = -1;
 	}
 }
 
@@ -167,6 +175,7 @@ supervisor_start(int kq)
 		sd.services[i].pd_fd = -1;
 		sd.services[i].pair_fd = -1;
 		sd.services[i].coalition_fd = -1;
+		sd.services[i].jail_fd = -1;
 		sd.services[i].state = SVC_STATE_STOPPED;
 	}
 	free(manifests);
@@ -190,6 +199,7 @@ supervisor_start(int kq)
 	}
 
 	syslog(LOG_INFO, "supervisor: %u services launched", sd.nservices);
+	SERVICED_PROBE_SVC_COUNT(sd.nservices);
 	return (0);
 }
 

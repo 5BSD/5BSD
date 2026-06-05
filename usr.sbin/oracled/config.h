@@ -20,6 +20,7 @@
 
 #define	ORACLED_MAX_PATH_CLAIMS		64
 #define	ORACLED_MAX_NET_CLAIMS		32
+#define	ORACLED_MAX_JAIL_CLAIMS		32
 
 /* Network claim direction flags (match cap_rt_isolation_proto.h). */
 #define	ORACLED_NET_DIR_BIND	0x01
@@ -29,8 +30,16 @@
 struct oracled_net_claim {
 	int		domain;		/* AF_INET, AF_INET6, 0=any */
 	int		protocol;	/* IPPROTO_TCP, IPPROTO_UDP, 0=any */
-	uint16_t	port;		/* host byte order */
+	uint16_t	port_min;	/* host byte order */
+	uint16_t	port_max;	/* host byte order */
 	uint8_t		direction;	/* ORACLED_NET_DIR_* */
+};
+
+struct oracled_jail_claim {
+	int32_t		jid;		/* 0=not specified */
+	uint32_t	actions;	/* FI_JAIL_* mask */
+	char		name[64];	/* empty=not specified */
+	char		path[PATH_MAX];	/* allowed root prefix, empty=any */
 };
 
 struct oracled_config {
@@ -47,6 +56,8 @@ struct oracled_config {
 	unsigned int	nclaim_paths;
 	struct oracled_net_claim claim_net[ORACLED_MAX_NET_CLAIMS];
 	unsigned int	nclaim_net;
+	struct oracled_jail_claim claim_jail[ORACLED_MAX_JAIL_CLAIMS];
+	unsigned int	nclaim_jail;
 	uint32_t	claim_system;	/* SYS_GATE_* bitmask */
 
 	/* Service manifest directory (passed to serviced) */

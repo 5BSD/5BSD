@@ -11,7 +11,9 @@
  */
 
 #include <sys/types.h>
+#include <sys/param.h>
 #include <sys/ioctl.h>
+#include <sys/jail.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -22,6 +24,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +39,8 @@
 /* ----------------------------------------------------------------
  * Helpers
  * ---------------------------------------------------------------- */
+
+static int	run_net_try_bind(const atf_tc_t *, uint16_t);
 
 static int
 fi_connect(void)
@@ -57,13 +62,15 @@ fi_connect(void)
 }
 
 static int
-fi_call(int fd, uint32_t op, int target_fd, struct fi_reply *rpl)
+fi_call(int fd, uint32_t op, int target_fd, uint64_t actions,
+    struct fi_reply *rpl)
 {
 	struct cap_rt_call_args ca;
 	struct fi_request req;
 
 	memset(&req, 0, sizeof(req));
 	req.op = op;
+	req.actions = actions;
 	memset(&ca, 0, sizeof(ca));
 	ca.req = &req;
 	ca.req_len = sizeof(req);
@@ -79,7 +86,7 @@ fi_call(int fd, uint32_t op, int target_fd, struct fi_reply *rpl)
  * on success, -1 on failure.
  */
 static int
-fi_mint(int svc_fd, int target_fd)
+fi_mint(int svc_fd, int target_fd, uint64_t actions)
 {
 	struct cap_rt_call_args ca;
 	struct fi_request req;
@@ -88,6 +95,7 @@ fi_mint(int svc_fd, int target_fd)
 
 	memset(&req, 0, sizeof(req));
 	req.op = FI_OP_MINT;
+	req.actions = actions;
 	token_fd = -1;
 	memset(&ca, 0, sizeof(ca));
 	ca.req = &req;
@@ -106,7 +114,7 @@ fi_mint(int svc_fd, int target_fd)
 /*
  * Authorize the caller on a token fd.
  */
-static int
+static int __unused
 fi_authorize(int token_fd)
 {
 	struct cap_rt_call_args ca;
@@ -166,10 +174,10 @@ ATF_TC_BODY(claim_and_query, tc)
 	ATF_REQUIRE(target >= 0);
 
 	/* Claim */
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 
 	/* Query — should be claimed and ours */
-	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, target, FI_FS_ALL, &rpl) == 0);
 	ATF_CHECK_EQ(rpl.flags, FI_QF_CLAIMED | FI_QF_MINE);
 
 	close(target);
@@ -197,7 +205,7 @@ ATF_TC_BODY(claim_allows_same_nonce, tc)
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 	close(target);
 
 	/*
@@ -239,7 +247,7 @@ ATF_TC_BODY(claim_blocks_stat, tc)
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 	close(target);
 
 	/*
@@ -284,7 +292,7 @@ ATF_TC_BODY(claim_blocks_unlink, tc)
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 	close(target);
 
 	/* Child with new nonce via exec tries to unlink */
@@ -325,14 +333,14 @@ ATF_TC_BODY(release_allows_access, tc)
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_RELEASE, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_RELEASE, target, 0, &rpl) == 0);
 	close(target);
 
 	/* Query should show not claimed */
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, target, FI_FS_ALL, &rpl) == 0);
 	ATF_CHECK_EQ(rpl.flags, 0);
 	close(target);
 
@@ -370,14 +378,14 @@ ATF_TC_BODY(close_releases_claims, tc)
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 
 	/* Close the instance — claim should be released */
 	close(svc);
 
 	/* Verify via a new instance */
 	svc2 = fi_connect();
-	ATF_REQUIRE(fi_call(svc2, FI_OP_QUERY, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc2, FI_OP_QUERY, target, FI_FS_ALL, &rpl) == 0);
 	ATF_CHECK_EQ(rpl.flags, 0);
 
 	close(target);
@@ -407,15 +415,15 @@ ATF_TC_BODY(double_claim_same_nonce, tc)
 	ATF_REQUIRE(target >= 0);
 
 	/* Claim via first instance */
-	ATF_REQUIRE(fi_call(svc1, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc1, FI_OP_CLAIM, target, 0, &rpl) == 0);
 
 	/* Re-claim via second instance (same nonce) — should succeed */
-	ATF_REQUIRE(fi_call(svc2, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc2, FI_OP_CLAIM, target, 0, &rpl) == 0);
 
 	/* Close first instance — claim should survive (owned by svc2) */
 	close(svc1);
 
-	ATF_REQUIRE(fi_call(svc2, FI_OP_QUERY, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc2, FI_OP_QUERY, target, FI_FS_ALL, &rpl) == 0);
 	ATF_CHECK_EQ(rpl.flags, FI_QF_CLAIMED | FI_QF_MINE);
 
 	close(target);
@@ -443,7 +451,7 @@ ATF_TC_BODY(child_reclaim_same_nonce, tc)
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 	close(target);
 
 	ATF_REQUIRE(pipe(pfd) == 0);
@@ -455,7 +463,7 @@ ATF_TC_BODY(child_reclaim_same_nonce, tc)
 		int csvc = fi_connect();
 		/* Same nonce, should transfer (succeed) */
 		target = open(tmppath, O_RDONLY);
-		int ret = fi_call(csvc, FI_OP_CLAIM, target, &rpl);
+		int ret = fi_call(csvc, FI_OP_CLAIM, target, 0, &rpl);
 		int result = (ret == 0) ? 0 : errno;
 		write(pfd[1], &result, sizeof(result));
 		close(target);
@@ -491,7 +499,7 @@ ATF_TC_BODY(claim_pipe_fails, tc)
 
 	svc = fi_connect();
 	ATF_REQUIRE(pipe(pfd) == 0);
-	ATF_CHECK_ERRNO(EINVAL, fi_call(svc, FI_OP_CLAIM, pfd[0], &rpl) == -1);
+	ATF_CHECK_ERRNO(EINVAL, fi_call(svc, FI_OP_CLAIM, pfd[0], 0, &rpl) == -1);
 	close(pfd[0]);
 	close(pfd[1]);
 	close(svc);
@@ -514,7 +522,7 @@ ATF_TC_BODY(same_nonce_can_open, tc)
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 	close(target);
 
 	/* Forked child (same nonce) should succeed */
@@ -552,7 +560,7 @@ ATF_TC_BODY(query_unclaimed, tc)
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
 
-	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, target, FI_FS_ALL, &rpl) == 0);
 	ATF_CHECK_EQ(rpl.flags, 0);
 
 	close(target);
@@ -652,7 +660,7 @@ ATF_TC_BODY(dir_claim_blocks_lookup, tc)
 	ATF_REQUIRE(dir_fd >= 0);
 
 	/* Claim the directory */
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, dir_fd, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, dir_fd, 0, &rpl) == 0);
 	close(dir_fd);
 
 	/*
@@ -703,7 +711,7 @@ ATF_TC_BODY(dir_claim_blocks_stat_inside, tc)
 
 	dir_fd = open(tmpdir, O_RDONLY | O_DIRECTORY);
 	ATF_REQUIRE(dir_fd >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, dir_fd, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, dir_fd, 0, &rpl) == 0);
 	close(dir_fd);
 
 	/* Fork+exec /usr/bin/stat on the file inside the dir */
@@ -749,8 +757,8 @@ ATF_TC_BODY(dir_release_allows_lookup, tc)
 	ATF_REQUIRE(dir_fd >= 0);
 
 	/* Claim then release */
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, dir_fd, &rpl) == 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_RELEASE, dir_fd, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, dir_fd, 0, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_RELEASE, dir_fd, 0, &rpl) == 0);
 	close(dir_fd);
 
 	/* Foreign-nonce child should now succeed */
@@ -788,7 +796,13 @@ fi_net_call_addr(int svc, uint32_t op, int domain, int protocol,
 	nr.op = op;
 	nr.domain = domain;
 	nr.protocol = protocol;
-	nr.port = port;
+	if (port == 0) {
+		nr.port_min = htons(0);
+		nr.port_max = htons(UINT16_MAX);
+	} else {
+		nr.port_min = port;
+		nr.port_max = port;
+	}
 	nr.direction = direction;
 	nr.prefix = prefix;
 
@@ -835,6 +849,53 @@ fi_net_call_raw(int svc, const struct fi_net_request *nr)
 }
 
 static int
+fi_net_call2(int svc, uint32_t op, int domain, int protocol,
+    uint16_t port_min, uint16_t port_max, uint8_t direction)
+{
+	struct cap_rt_call_args ca;
+	struct fi_net_request nr;
+	struct fi_reply rpl;
+
+	memset(&nr, 0, sizeof(nr));
+	nr.op = op;
+	nr.domain = domain;
+	nr.protocol = protocol;
+	nr.port_min = htons(port_min);
+	nr.port_max = htons(port_max);
+	nr.direction = direction;
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = &rpl;
+	ca.reply_len = sizeof(rpl);
+	return (ioctl(svc, CAP_RT_CALL, &ca));
+}
+
+static int
+fi_net_query2(int svc, int domain, int protocol, uint16_t port_min,
+    uint16_t port_max, uint8_t direction, struct fi_reply *rpl)
+{
+	struct cap_rt_call_args ca;
+	struct fi_net_request nr;
+
+	memset(&nr, 0, sizeof(nr));
+	nr.op = FI_OP_QUERY_NET;
+	nr.domain = domain;
+	nr.protocol = protocol;
+	nr.port_min = htons(port_min);
+	nr.port_max = htons(port_max);
+	nr.direction = direction;
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = rpl;
+	ca.reply_len = sizeof(*rpl);
+	return (ioctl(svc, CAP_RT_CALL, &ca));
+}
+
+static int
 fi_net_call(int svc, uint32_t op, int domain, int protocol,
     uint16_t port, uint8_t direction)
 {
@@ -860,7 +921,43 @@ fi_net_mint(int svc, int domain, int protocol, uint16_t port,
 	nr.op = FI_OP_MINT_NET;
 	nr.domain = domain;
 	nr.protocol = protocol;
-	nr.port = port;
+	if (port == 0) {
+		nr.port_min = htons(0);
+		nr.port_max = htons(UINT16_MAX);
+	} else {
+		nr.port_min = port;
+		nr.port_max = port;
+	}
+	nr.direction = direction;
+
+	token_fd = -1;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = &rpl;
+	ca.reply_len = sizeof(rpl);
+	ca.reply_fds = &token_fd;
+	ca.reply_nfds = 1;
+	if (ioctl(svc, CAP_RT_CALL, &ca) != 0)
+		return (-1);
+	return (token_fd);
+}
+
+static int
+fi_net_mint2(int svc, int domain, int protocol, uint16_t port_min,
+    uint16_t port_max, uint8_t direction)
+{
+	struct cap_rt_call_args ca;
+	struct fi_net_request nr;
+	struct fi_reply rpl;
+	int token_fd;
+
+	memset(&nr, 0, sizeof(nr));
+	nr.op = FI_OP_MINT_NET;
+	nr.domain = domain;
+	nr.protocol = protocol;
+	nr.port_min = htons(port_min);
+	nr.port_max = htons(port_max);
 	nr.direction = direction;
 
 	token_fd = -1;
@@ -916,6 +1013,71 @@ run_net_claim_helper(const atf_tc_t *tc, int svc, uint32_t op, int domain,
 
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
 	ATF_REQUIRE(WIFEXITED(status));
+	return (WEXITSTATUS(status));
+}
+
+static int
+run_net_range_claim_helper(const atf_tc_t *tc, int svc, uint32_t op, int domain,
+    int protocol, uint16_t port_min, uint16_t port_max, uint8_t direction)
+{
+	char fdstr[16], opstr[16], domainstr[16], protostr[16];
+	char minstr[16], maxstr[16], dirstr[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	snprintf(fdstr, sizeof(fdstr), "%d", svc);
+	snprintf(opstr, sizeof(opstr), "%u", op);
+	snprintf(domainstr, sizeof(domainstr), "%d", domain);
+	snprintf(protostr, sizeof(protostr), "%d", protocol);
+	snprintf(minstr, sizeof(minstr), "%u", port_min);
+	snprintf(maxstr, sizeof(maxstr), "%u", port_max);
+	snprintf(dirstr, sizeof(dirstr), "%u", direction);
+	path = fi_helper_path(tc);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(path, path, "net-range", fdstr, opstr, domainstr,
+		    protostr, minstr, maxstr, dirstr, NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	if (!WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
+static int
+run_net_query_helper(const atf_tc_t *tc, int svc, int domain, int protocol,
+    uint16_t port_min, uint16_t port_max, uint8_t direction,
+    uint32_t expected_flags)
+{
+	char fdstr[16], domainstr[16], protostr[16];
+	char minstr[16], maxstr[16], dirstr[16], flagstr[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	snprintf(fdstr, sizeof(fdstr), "%d", svc);
+	snprintf(domainstr, sizeof(domainstr), "%d", domain);
+	snprintf(protostr, sizeof(protostr), "%d", protocol);
+	snprintf(minstr, sizeof(minstr), "%u", port_min);
+	snprintf(maxstr, sizeof(maxstr), "%u", port_max);
+	snprintf(dirstr, sizeof(dirstr), "%u", direction);
+	snprintf(flagstr, sizeof(flagstr), "%u", expected_flags);
+	path = fi_helper_path(tc);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(path, path, "net-query", fdstr, domainstr, protostr,
+		    minstr, maxstr, dirstr, flagstr, NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	if (!WIFEXITED(status))
+		return (-1);
 	return (WEXITSTATUS(status));
 }
 
@@ -1002,10 +1164,8 @@ ATF_TC_HEAD(net_claim_blocks_bind, tc)
 }
 ATF_TC_BODY(net_claim_blocks_bind, tc)
 {
-	int svc, status;
-	pid_t pid;
+	int rc, svc;
 	uint16_t port = htons(18443);
-	char cmd[128];
 
 	svc = fi_connect();
 
@@ -1014,45 +1174,12 @@ ATF_TC_BODY(net_claim_blocks_bind, tc)
 	    AF_INET, IPPROTO_TCP, port, FI_NET_BIND) == 0);
 
 	/*
-	 * Fork+exec /bin/sh to rotate nonce.  Use nc -l to try binding.
-	 * nc will fail with "Permission denied" if the MACF hook blocks.
+	 * Fork+exec the helper to rotate the nonce, then try to
+	 * bind the claimed port.  The MACF hook should deny it.
 	 */
-	snprintf(cmd, sizeof(cmd),
-	    "nc -l 127.0.0.1 18443 </dev/null >/dev/null 2>&1 &"
-	    " sleep 0.1; kill %%1 2>/dev/null; exit $?");
-
-	/*
-	 * Fork+exec a helper that tries to bind the claimed port.
-	 * exec rotates the nonce, making the child a foreign program.
-	 * nc -l will attempt bind() which the MACF hook blocks.
-	 */
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		/* -w 1 = timeout after 1 second if bind somehow succeeds */
-		execl("/usr/bin/nc", "nc", "-l", "-w", "1",
-		    "127.0.0.1", "18443", NULL);
-		_exit(127);
-	}
-	/* Wait with a timeout — kill child if it somehow hangs */
-	{
-		int elapsed = 0;
-
-		while (elapsed < 3000) {
-			if (waitpid(pid, &status, WNOHANG) == pid)
-				goto child_done;
-			usleep(50000);
-			elapsed += 50;
-		}
-		/* Hung — kill and fail */
-		kill(pid, SIGKILL);
-		waitpid(pid, &status, 0);
-		ATF_REQUIRE_MSG(0, "nc hung — bind was not blocked");
-	}
-child_done:
-	ATF_CHECK(WIFEXITED(status));
-	/* nc should fail (non-zero exit) because bind was denied */
-	ATF_CHECK(WEXITSTATUS(status) != 0);
+	rc = run_net_try_bind(tc, 18443);
+	ATF_CHECK_MSG(rc == 1,
+	    "foreign nonce bind should be denied (got %d)", rc);
 
 	close(svc);
 }
@@ -1251,7 +1378,8 @@ ATF_TC_BODY(net_claim_invalid_request, tc)
 	nr.op = FI_OP_CLAIM_NET;
 	nr.domain = AF_INET;
 	nr.protocol = IPPROTO_TCP;
-	nr.port = htons(18449);
+	nr.port_min = htons(18449);
+	nr.port_max = htons(18449);
 	nr.direction = FI_NET_BIND;
 	nr.flags = 1;
 	ATF_CHECK_ERRNO(EINVAL, fi_net_call_raw(svc, &nr) == -1);
@@ -1289,7 +1417,7 @@ ATF_TC_BODY(unix_socket_claim_blocks_connect, tc)
 	ATF_REQUIRE_MSG(target >= 0, "open %s: %s",
 	    tmpsockpath, strerror(errno));
 
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 	rc = run_unix_connect_helper(tc, tmpsockpath);
 	ATF_CHECK_EQ(rc, 1);
 
@@ -1362,7 +1490,7 @@ run_simple_cross_nonce_table(const struct cross_nonce_op *ops, size_t nops)
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 	close(target);
 
 	for (i = 0; i < nops; i++) {
@@ -1436,7 +1564,7 @@ ATF_TC_BODY(cross_nonce_metadata_blocked, tc)
 	svc = fi_connect();
 	target = open(linkpath, O_PATH | O_NOFOLLOW);
 	ATF_REQUIRE_MSG(target >= 0, "open symlink: %s", strerror(errno));
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 	close(target);
 
 	snprintf(cmd, sizeof(cmd), "exec readlink '%s'", linkpath);
@@ -1475,7 +1603,7 @@ ATF_TC_BODY(cross_nonce_lifecycle_blocked, tc)
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 	close(target);
 
 	snprintf(cmd, sizeof(cmd), "exec ln '%s' '%s'", tmppath, linkpath);
@@ -1503,7 +1631,7 @@ ATF_TC_BODY(cross_nonce_lifecycle_blocked, tc)
 	svc = fi_connect();
 	target = open(exepath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 	close(target);
 
 	snprintf(cmd, sizeof(cmd), "exec '%s'", exepath);
@@ -1549,7 +1677,8 @@ ATF_TC_BODY(net_claim_rejects_bad_domain, tc)
 	nr.op = FI_OP_CLAIM_NET;
 	nr.domain = 99;	/* unsupported */
 	nr.protocol = 0;
-	nr.port = htons(12345);
+	nr.port_min = htons(12345);
+	nr.port_max = htons(12345);
 	nr.direction = FI_NET_BIND;
 
 	memset(&ca, 0, sizeof(ca));
@@ -1582,7 +1711,8 @@ ATF_TC_BODY(net_claim_rejects_bad_protocol, tc)
 	nr.op = FI_OP_CLAIM_NET;
 	nr.domain = AF_INET;
 	nr.protocol = 99;	/* unsupported */
-	nr.port = htons(12345);
+	nr.port_min = htons(12345);
+	nr.port_max = htons(12345);
 	nr.direction = FI_NET_BIND;
 
 	memset(&ca, 0, sizeof(ca));
@@ -1615,7 +1745,8 @@ ATF_TC_BODY(net_claim_rejects_ipv4_prefix_above_32, tc)
 	nr.op = FI_OP_CLAIM_NET;
 	nr.domain = AF_INET;
 	nr.protocol = IPPROTO_TCP;
-	nr.port = htons(12345);
+	nr.port_min = htons(12345);
+	nr.port_max = htons(12345);
 	nr.direction = FI_NET_BIND;
 	nr.prefix = 33;		/* invalid for IPv4 */
 
@@ -1665,7 +1796,7 @@ ATF_TC_BODY(release_unclaimed, tc)
 	 * error (e.g., ENOENT) since nothing was claimed.  Just
 	 * verify the call does not crash; any return is acceptable.
 	 */
-	(void)fi_call(svc, FI_OP_RELEASE, target, &rpl);
+	(void)fi_call(svc, FI_OP_RELEASE, target, 0, &rpl);
 
 	close(target);
 	close(svc);
@@ -1693,11 +1824,11 @@ ATF_TC_BODY(query_after_release, tc)
 	ATF_REQUIRE(target >= 0);
 
 	/* Claim, then release */
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_RELEASE, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_RELEASE, target, 0, &rpl) == 0);
 
 	/* Query — should show not claimed */
-	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, target, FI_FS_ALL, &rpl) == 0);
 	ATF_CHECK_EQ(rpl.flags, 0);
 
 	close(target);
@@ -1760,16 +1891,16 @@ ATF_TC_BODY(claim_multiple_files, tc)
 	ATF_REQUIRE(t3 >= 0);
 
 	/* Claim all three */
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, t1, &rpl) == 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, t2, &rpl) == 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, t3, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, t1, 0, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, t2, 0, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, t3, 0, &rpl) == 0);
 
 	/* Query each — all should be claimed and ours */
-	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, t1, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, t1, FI_FS_ALL, &rpl) == 0);
 	ATF_CHECK_EQ(rpl.flags, FI_QF_CLAIMED | FI_QF_MINE);
-	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, t2, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, t2, FI_FS_ALL, &rpl) == 0);
 	ATF_CHECK_EQ(rpl.flags, FI_QF_CLAIMED | FI_QF_MINE);
-	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, t3, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_QUERY, t3, FI_FS_ALL, &rpl) == 0);
 	ATF_CHECK_EQ(rpl.flags, FI_QF_CLAIMED | FI_QF_MINE);
 
 	/* Close the instance — all claims should be released */
@@ -1777,11 +1908,11 @@ ATF_TC_BODY(claim_multiple_files, tc)
 
 	/* Verify via a new instance */
 	svc2 = fi_connect();
-	ATF_REQUIRE(fi_call(svc2, FI_OP_QUERY, t1, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc2, FI_OP_QUERY, t1, FI_FS_ALL, &rpl) == 0);
 	ATF_CHECK_EQ(rpl.flags, 0);
-	ATF_REQUIRE(fi_call(svc2, FI_OP_QUERY, t2, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc2, FI_OP_QUERY, t2, FI_FS_ALL, &rpl) == 0);
 	ATF_CHECK_EQ(rpl.flags, 0);
-	ATF_REQUIRE(fi_call(svc2, FI_OP_QUERY, t3, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc2, FI_OP_QUERY, t3, FI_FS_ALL, &rpl) == 0);
 	ATF_CHECK_EQ(rpl.flags, 0);
 
 	close(t1);
@@ -1869,11 +2000,120 @@ ATF_TC_BODY(net_claim_protocol_wildcard, tc)
 	close(svc);
 }
 
+ATF_TC(net_claim_range_blocks_foreign_exact);
+ATF_TC_HEAD(net_claim_range_blocks_foreign_exact, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_OP_CLAIM_NET port range blocks foreign exact claim inside range");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_claim_range_blocks_foreign_exact, tc)
+{
+	int rc, svc;
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_net_call2(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, 19000, 19010, FI_NET_BIND) == 0);
+
+	rc = run_net_claim_helper(tc, svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, 19005, FI_NET_BIND, NULL, 0);
+	ATF_CHECK_MSG(rc == 1,
+	    "foreign exact claim inside range should fail (got %d)", rc);
+
+	close(svc);
+}
+
+ATF_TC(net_claim_exact_blocks_foreign_range);
+ATF_TC_HEAD(net_claim_exact_blocks_foreign_range, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Exact claim blocks overlapping foreign FI_OP_CLAIM_NET range");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_claim_exact_blocks_foreign_range, tc)
+{
+	int rc, svc;
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, htons(19100), FI_NET_BIND) == 0);
+
+	rc = run_net_range_claim_helper(tc, svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, 19095, 19105, FI_NET_BIND);
+	ATF_CHECK_MSG(rc == 1,
+	    "foreign range overlapping exact claim should fail (got %d)", rc);
+
+	close(svc);
+}
+
+ATF_TC(net_query_reports_range_claims);
+ATF_TC_HEAD(net_query_reports_range_claims, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_OP_QUERY_NET reports owner, foreign, and unclaimed ranges");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_query_reports_range_claims, tc)
+{
+	struct fi_reply rpl;
+	int rc, svc;
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_net_call2(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, 19200, 19210, FI_NET_BIND) == 0);
+
+	ATF_REQUIRE(fi_net_query2(svc, AF_INET, IPPROTO_TCP, 19205, 19205,
+	    FI_NET_BIND, &rpl) == 0);
+	ATF_CHECK_EQ(rpl.flags, FI_QF_CLAIMED | FI_QF_MINE);
+
+	ATF_REQUIRE(fi_net_query2(svc, AF_INET, IPPROTO_TCP, 19211, 19211,
+	    FI_NET_BIND, &rpl) == 0);
+	ATF_CHECK_EQ(rpl.flags, 0);
+
+	rc = run_net_query_helper(tc, svc, AF_INET, IPPROTO_TCP, 19205,
+	    19205, FI_NET_BIND, FI_QF_CLAIMED);
+	ATF_CHECK_MSG(rc == 0,
+	    "foreign query inside range should report claimed only (got %d)",
+	    rc);
+
+	close(svc);
+}
+
 /* write is now tested in cross_nonce_read_blocked */
 
 /* ----------------------------------------------------------------
  * Access token tests (FI_OP_MINT / FI_OP_AUTHORIZE)
  * ---------------------------------------------------------------- */
+
+static int
+run_token_open(const atf_tc_t *tc, int token_fd, const char *path_arg,
+    const char *mode, bool twice)
+{
+	char token_str[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	path = fi_helper_path(tc);
+	snprintf(token_str, sizeof(token_str), "%d", token_fd);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		if (twice) {
+			execl(path, path, "token-open", token_str, path_arg,
+			    mode, "twice", NULL);
+		} else {
+			execl(path, path, "token-open", token_str, path_arg,
+			    mode, NULL);
+		}
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	if (!WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
 
 ATF_TC_WITH_CLEANUP(token_mint_returns_fd);
 ATF_TC_HEAD(token_mint_returns_fd, tc)
@@ -1891,9 +2131,9 @@ ATF_TC_BODY(token_mint_returns_fd, tc)
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 
-	token = fi_mint(svc, target);
+	token = fi_mint(svc, target, FI_FS_ALL);
 	ATF_REQUIRE_MSG(token >= 0, "fi_mint: %s", strerror(errno));
 
 	close(token);
@@ -1923,9 +2163,9 @@ ATF_TC_BODY(token_authorize_grants_access, tc)
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 
-	token = fi_mint(svc, target);
+	token = fi_mint(svc, target, FI_FS_ALL);
 	ATF_REQUIRE(token >= 0);
 
 	pid = fork();
@@ -1980,9 +2220,9 @@ ATF_TC_BODY(token_close_revokes_access, tc)
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 
-	token = fi_mint(svc, target);
+	token = fi_mint(svc, target, FI_FS_ALL);
 	ATF_REQUIRE(token >= 0);
 
 	ATF_REQUIRE(pipe(readyfd) == 0);
@@ -2055,7 +2295,7 @@ ATF_TC_BODY(token_mint_requires_ownership, tc)
 	ATF_REQUIRE(target >= 0);
 
 	/* Don't claim — try to mint directly. Should fail. */
-	token = fi_mint(svc, target);
+	token = fi_mint(svc, target, FI_FS_ALL);
 	ATF_CHECK_MSG(token == -1, "mint without claim should fail");
 
 	close(target);
@@ -2084,27 +2324,41 @@ ATF_TC_BODY(token_query_shows_authorized, tc)
 	svc = fi_connect();
 	target = open(tmppath, O_RDONLY);
 	ATF_REQUIRE(target >= 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
 
-	token = fi_mint(svc, target);
+	token = fi_mint(svc, target, FI_FS_ALL);
 	ATF_REQUIRE(token >= 0);
 
-	/* Authorize in a forked child (same nonce). */
+	/*
+	 * Fork+exec to rotate the nonce.  The child authorizes with
+	 * the token, then queries the vnode.  Since the child has a
+	 * foreign nonce but is authorized via the token, the query
+	 * should report FI_QF_CLAIMED | FI_QF_AUTHORIZED.
+	 */
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
-		close(svc);
-		close(target);
-		if (fi_authorize(token) != 0)
-			_exit(10);
-		/* Query from child (same nonce as parent, but
-		 * authorized via token — check FI_QF_AUTHORIZED). */
-		/* Child has same nonce so it shows as MINE anyway.
-		 * This test just verifies authorize doesn't fail. */
-		_exit(0);
+		char token_str[16], svc_str[16], target_str[16];
+		const char *path;
+
+		path = fi_helper_path(tc);
+		snprintf(token_str, sizeof(token_str), "%d", token);
+		snprintf(svc_str, sizeof(svc_str), "%d", svc);
+		snprintf(target_str, sizeof(target_str), "%d", target);
+		execl(path, path, "token-query", token_str, svc_str,
+		    target_str, NULL);
+		_exit(127);
 	}
 	waitpid(pid, &status, 0);
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	/*
+	 * token-query returns rpl.flags & 0x07 as exit code.
+	 * Expect FI_QF_CLAIMED | FI_QF_AUTHORIZED = 0x05.
+	 */
+	ATF_CHECK_MSG(WIFEXITED(status) &&
+	    WEXITSTATUS(status) == (FI_QF_CLAIMED | FI_QF_AUTHORIZED),
+	    "child exit %d (expected %d = CLAIMED|AUTHORIZED)",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1,
+	    FI_QF_CLAIMED | FI_QF_AUTHORIZED);
 
 	close(token);
 	close(target);
@@ -2143,11 +2397,11 @@ ATF_TC_BODY(token_scoped_to_claim, tc)
 	ATF_REQUIRE(target_b >= 0);
 
 	/* Claim both files. */
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target_a, &rpl) == 0);
-	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target_b, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target_a, 0, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target_b, 0, &rpl) == 0);
 
 	/* Mint token for file A only. */
-	token = fi_mint(svc, target_a);
+	token = fi_mint(svc, target_a, FI_FS_ALL);
 	ATF_REQUIRE_MSG(token >= 0, "fi_mint: %s", strerror(errno));
 
 	/*
@@ -2192,6 +2446,152 @@ ATF_TC_CLEANUP(token_scoped_to_claim, tc)
 	unlink(tmppath2);
 }
 
+ATF_TC_WITH_CLEANUP(token_read_only_denies_write);
+ATF_TC_HEAD(token_read_only_denies_write, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_OP_MINT read-only token grants read but denies write");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(token_read_only_denies_write, tc)
+{
+	struct fi_reply rpl;
+	int svc, target, token, rc;
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDWR);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
+
+	token = fi_mint(svc, target, FI_FS_READ);
+	ATF_REQUIRE_MSG(token >= 0, "fi_mint: %s", strerror(errno));
+
+	rc = run_token_open(tc, token, tmppath, "read", false);
+	ATF_CHECK_MSG(rc == 0, "read should succeed with read token (got %d)",
+	    rc);
+
+	rc = run_token_open(tc, token, tmppath, "write", false);
+	ATF_CHECK_MSG(rc == 1, "write should be denied with read token (got %d)",
+	    rc);
+
+	close(token);
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(token_read_only_denies_write, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(token_authorize_idempotent);
+ATF_TC_HEAD(token_authorize_idempotent, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Repeated FI_OP_AUTHORIZE on one token is idempotent");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(token_authorize_idempotent, tc)
+{
+	struct fi_reply rpl;
+	int svc, target, token, rc;
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
+
+	token = fi_mint(svc, target, FI_FS_READ);
+	ATF_REQUIRE(token >= 0);
+
+	rc = run_token_open(tc, token, tmppath, "read", true);
+	ATF_CHECK_MSG(rc == 0,
+	    "repeated authorize should still permit read (got %d)", rc);
+
+	close(token);
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(token_authorize_idempotent, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(token_dup_lifetime);
+ATF_TC_HEAD(token_dup_lifetime, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Duplicated token fds keep one token instance alive");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(token_dup_lifetime, tc)
+{
+	struct fi_reply rpl;
+	int svc, target, token, token_dup;
+	pid_t pid;
+	int status, readyfd[2], gofd[2];
+	char buf;
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
+
+	token = fi_mint(svc, target, FI_FS_READ);
+	ATF_REQUIRE(token >= 0);
+	token_dup = dup(token);
+	ATF_REQUIRE(token_dup >= 0);
+
+	ATF_REQUIRE(pipe(readyfd) == 0);
+	ATF_REQUIRE(pipe(gofd) == 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		char token_str[16], ready_str[16], go_str[16];
+		const char *path;
+
+		close(readyfd[0]);
+		close(gofd[1]);
+		close(token_dup);
+		close(svc);
+		close(target);
+
+		path = fi_helper_path(tc);
+		snprintf(token_str, sizeof(token_str), "%d", token);
+		snprintf(ready_str, sizeof(ready_str), "%d", readyfd[1]);
+		snprintf(go_str, sizeof(go_str), "%d", gofd[0]);
+		execl(path, path, "token-revoke", token_str, ready_str,
+		    go_str, tmppath, NULL);
+		_exit(127);
+	}
+	close(readyfd[1]);
+	close(gofd[0]);
+
+	read(readyfd[0], &buf, 1);
+	close(readyfd[0]);
+
+	close(token);
+
+	write(gofd[1], "x", 1);
+	close(gofd[1]);
+
+	waitpid(pid, &status, 0);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 1,
+	    "child exit %d (expected 1 = still authorized via dup)",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+
+	close(token_dup);
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(token_dup_lifetime, tc)
+{
+	cleanup_tmpfile();
+}
+
 /* ----------------------------------------------------------------
  * Network access token tests (FI_OP_MINT_NET / FI_OP_AUTHORIZE)
  * ---------------------------------------------------------------- */
@@ -2217,6 +2617,41 @@ run_net_token_bind(const atf_tc_t *tc, int token_fd, uint16_t port)
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
 		execl(path, path, "net-token-bind", token_str, port_str,
+		    NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	if (!WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
+static int
+run_net_token_query(const atf_tc_t *tc, int svc, int token_fd, int domain,
+    int protocol, uint16_t port_min, uint16_t port_max, uint8_t direction,
+    uint32_t expected_flags)
+{
+	char fdstr[16], token_str[16], domainstr[16], protostr[16];
+	char minstr[16], maxstr[16], dirstr[16], flagstr[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	path = fi_helper_path(tc);
+	snprintf(fdstr, sizeof(fdstr), "%d", svc);
+	snprintf(token_str, sizeof(token_str), "%d", token_fd);
+	snprintf(domainstr, sizeof(domainstr), "%d", domain);
+	snprintf(protostr, sizeof(protostr), "%d", protocol);
+	snprintf(minstr, sizeof(minstr), "%u", port_min);
+	snprintf(maxstr, sizeof(maxstr), "%u", port_max);
+	snprintf(dirstr, sizeof(dirstr), "%u", direction);
+	snprintf(flagstr, sizeof(flagstr), "%u", expected_flags);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(path, path, "net-token-query", fdstr, token_str,
+		    domainstr, protostr, minstr, maxstr, dirstr, flagstr,
 		    NULL);
 		_exit(127);
 	}
@@ -2400,6 +2835,1546 @@ ATF_TC_BODY(net_token_mint_requires_claim, tc)
 	close(svc);
 }
 
+ATF_TC(net_token_query_shows_authorized_range);
+ATF_TC_HEAD(net_token_query_shows_authorized_range, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_OP_QUERY_NET reports token authorization for a port range");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_token_query_shows_authorized_range, tc)
+{
+	int rc, svc, token;
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_net_call2(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, 19300, 19310, FI_NET_BIND) == 0);
+
+	token = fi_net_mint2(svc, AF_INET, IPPROTO_TCP, 19300, 19310,
+	    FI_NET_BIND);
+	ATF_REQUIRE(token >= 0);
+
+	rc = run_net_token_query(tc, svc, token, AF_INET, IPPROTO_TCP,
+	    19305, 19305, FI_NET_BIND, FI_QF_CLAIMED | FI_QF_AUTHORIZED);
+	ATF_CHECK_MSG(rc == 0,
+	    "authorized foreign query inside token range failed (got %d)", rc);
+
+	close(token);
+	close(svc);
+}
+
+ATF_TC(net_token_range_does_not_authorize_other_claim);
+ATF_TC_HEAD(net_token_range_does_not_authorize_other_claim, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Network token for one range does not authorize another claim");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_token_range_does_not_authorize_other_claim, tc)
+{
+	int rc, svc, token;
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_net_call2(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, 19320, 19330, FI_NET_BIND) == 0);
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, htons(19340), FI_NET_BIND) == 0);
+
+	token = fi_net_mint2(svc, AF_INET, IPPROTO_TCP, 19320, 19330,
+	    FI_NET_BIND);
+	ATF_REQUIRE(token >= 0);
+
+	rc = run_net_token_query(tc, svc, token, AF_INET, IPPROTO_TCP,
+	    19340, 19340, FI_NET_BIND, FI_QF_CLAIMED);
+	ATF_CHECK_MSG(rc == 0,
+	    "range token must not report authorization on other claim "
+	    "(got %d)", rc);
+
+	rc = run_net_token_bind(tc, token, 19340);
+	ATF_CHECK_MSG(rc == 1,
+	    "range token must not permit bind on other claim (got %d)", rc);
+
+	close(token);
+	close(svc);
+}
+
+/* ----------------------------------------------------------------
+ * Additional coverage tests
+ * ---------------------------------------------------------------- */
+
+/*
+ * Wildcard claim (0..65535) must block an exact bind from a foreign nonce.
+ */
+ATF_TC(net_wildcard_claim_blocks_exact_bind);
+ATF_TC_HEAD(net_wildcard_claim_blocks_exact_bind, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Wildcard 0..65535 claim blocks foreign exact bind on port 443");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_wildcard_claim_blocks_exact_bind, tc)
+{
+	int rc, svc;
+
+	svc = fi_connect();
+
+	/* Claim 0..65535 (wildcard) */
+	ATF_REQUIRE(fi_net_call2(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, 0, 65535, FI_NET_BIND) == 0);
+
+	/* Foreign nonce tries to bind port 443 — should be blocked. */
+	rc = run_net_try_bind(tc, 443);
+	ATF_CHECK_MSG(rc == 1,
+	    "wildcard claim should block foreign bind on 443 (got %d)", rc);
+
+	close(svc);
+}
+
+/*
+ * Range-vs-range overlap: claim 19500-19510, foreign claims 19505-19515.
+ */
+ATF_TC(net_claim_range_vs_range_overlap);
+ATF_TC_HEAD(net_claim_range_vs_range_overlap, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Overlapping foreign range claims conflict");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_claim_range_vs_range_overlap, tc)
+{
+	int rc, svc;
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_net_call2(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, 19500, 19510, FI_NET_BIND) == 0);
+
+	/* Foreign nonce tries overlapping range. */
+	rc = run_net_range_claim_helper(tc, svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, 19505, 19515, FI_NET_BIND);
+	ATF_CHECK_MSG(rc == 1,
+	    "overlapping foreign range claim should fail (got %d)", rc);
+
+	close(svc);
+}
+
+/*
+ * Byte-order regression: port 256 (0x0100) has different host and network
+ * representations on little-endian.  Verify the claim and enforcement
+ * use the same representation end to end.
+ */
+ATF_TC(net_byte_order_port_256);
+ATF_TC_HEAD(net_byte_order_port_256, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Port 256 byte-order regression — claim and bind agree");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_byte_order_port_256, tc)
+{
+	struct sockaddr_in sin;
+	int svc, s;
+
+	svc = fi_connect();
+
+	/* Claim port 256 via the range API (host-order in, htons inside). */
+	ATF_REQUIRE(fi_net_call2(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, 256, 256, FI_NET_BIND) == 0);
+
+	/* Same nonce bind on port 256 — should succeed. */
+	s = socket(AF_INET, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_port = htons(256);
+	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	ATF_CHECK_MSG(bind(s, (struct sockaddr *)&sin, sizeof(sin)) == 0,
+	    "owner bind on port 256 should succeed");
+	close(s);
+
+	/* Foreign nonce should be blocked on port 256. */
+	{
+		int rc = run_net_try_bind(tc, 256);
+		ATF_CHECK_MSG(rc == 1,
+		    "foreign bind on port 256 should be denied (got %d)", rc);
+	}
+
+	close(svc);
+}
+
+/*
+ * STAT-only token denies READ.
+ */
+ATF_TC_WITH_CLEANUP(token_stat_only_denies_read);
+ATF_TC_HEAD(token_stat_only_denies_read, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_OP_MINT stat-only token denies open for read");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(token_stat_only_denies_read, tc)
+{
+	struct fi_reply rpl;
+	int svc, target, token, rc;
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
+
+	/* Mint a STAT-only token. */
+	token = fi_mint(svc, target, FI_FS_STAT);
+	ATF_REQUIRE_MSG(token >= 0, "fi_mint STAT: %s", strerror(errno));
+
+	/* STAT-only should deny read. */
+	rc = run_token_open(tc, token, tmppath, "read", false);
+	ATF_CHECK_MSG(rc == 1,
+	    "open(read) should be denied with STAT-only token (got %d)", rc);
+
+	close(token);
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(token_stat_only_denies_read, tc)
+{
+	cleanup_tmpfile();
+}
+
+/*
+ * MINT rejects invalid action masks.
+ */
+ATF_TC_WITH_CLEANUP(mint_rejects_invalid_actions);
+ATF_TC_HEAD(mint_rejects_invalid_actions, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_OP_MINT rejects actions=0 and out-of-range bits");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mint_rejects_invalid_actions, tc)
+{
+	struct fi_reply rpl;
+	int svc, target, token;
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
+
+	/* actions = 0 should fail. */
+	token = fi_mint(svc, target, 0);
+	ATF_CHECK_MSG(token == -1 && errno == EINVAL,
+	    "mint with actions=0 should return EINVAL (got token=%d errno=%d)",
+	    token, errno);
+
+	/* Bit outside FI_FS_ALL should fail. */
+	token = fi_mint(svc, target, 0x8000);
+	ATF_CHECK_MSG(token == -1 && errno == EINVAL,
+	    "mint with invalid action bit should return EINVAL (got token=%d errno=%d)",
+	    token, errno);
+
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(mint_rejects_invalid_actions, tc)
+{
+	cleanup_tmpfile();
+}
+
+/*
+ * Two different nonces can authorize the same token and both gain access.
+ */
+ATF_TC_WITH_CLEANUP(token_two_nonces_authorize);
+ATF_TC_HEAD(token_two_nonces_authorize, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Two distinct nonces can authorize the same token");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(token_two_nonces_authorize, tc)
+{
+	struct fi_reply rpl;
+	int svc, target, token, rc;
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
+
+	token = fi_mint(svc, target, FI_FS_ALL);
+	ATF_REQUIRE(token >= 0);
+
+	/*
+	 * First foreign nonce authorizes and opens — should succeed.
+	 * run_token_open does fork+exec (new nonce), authorize, open.
+	 */
+	rc = run_token_open(tc, token, tmppath, "read", false);
+	ATF_CHECK_MSG(rc == 0,
+	    "first nonce authorize+open should succeed (got %d)", rc);
+
+	/*
+	 * Second foreign nonce authorizes and opens — should also succeed.
+	 * Each fork+exec creates a new nonce.
+	 */
+	rc = run_token_open(tc, token, tmppath, "read", false);
+	ATF_CHECK_MSG(rc == 0,
+	    "second nonce authorize+open should succeed (got %d)", rc);
+
+	close(token);
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(token_two_nonces_authorize, tc)
+{
+	cleanup_tmpfile();
+}
+
+/*
+ * Network token range enforcement: claim 19600-19699, mint token for
+ * 19600-19699, verify child can bind 19650 but not 19700.
+ */
+ATF_TC(net_token_range_bind_inside_outside);
+ATF_TC_HEAD(net_token_range_bind_inside_outside, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Network token for range permits bind inside but denies outside");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_token_range_bind_inside_outside, tc)
+{
+	int svc, token, rc;
+
+	svc = fi_connect();
+
+	/* Claim 19600-19699 and also 19700 individually. */
+	ATF_REQUIRE(fi_net_call2(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, 19600, 19699, FI_NET_BIND) == 0);
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, htons(19700), FI_NET_BIND) == 0);
+
+	/* Mint token for the range only. */
+	token = fi_net_mint2(svc, AF_INET, IPPROTO_TCP, 19600, 19699,
+	    FI_NET_BIND);
+	ATF_REQUIRE(token >= 0);
+
+	/* Inside the range — should succeed. */
+	rc = run_net_token_bind(tc, token, 19650);
+	ATF_CHECK_MSG(rc == 0,
+	    "bind inside token range should succeed (got %d)", rc);
+
+	/* Outside the range — should be denied. */
+	rc = run_net_token_bind(tc, token, 19700);
+	ATF_CHECK_MSG(rc == 1,
+	    "bind outside token range should be denied (got %d)", rc);
+
+	close(token);
+	close(svc);
+}
+
+/*
+ * Directory claim with narrowed token: CREATE does not imply DELETE.
+ */
+ATF_TC_WITH_CLEANUP(dir_token_create_no_delete);
+ATF_TC_HEAD(dir_token_create_no_delete, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Directory token with LOOKUP+CREATE does not authorize unlink");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(dir_token_create_no_delete, tc)
+{
+	struct fi_reply rpl;
+	int svc, dir_fd, token, status;
+	pid_t pid;
+
+	make_tmpdir();
+	svc = fi_connect();
+
+	dir_fd = open(tmpdir, O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(dir_fd >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, dir_fd, 0, &rpl) == 0);
+
+	/* Mint a token with only LOOKUP + CREATE (no DELETE). */
+	token = fi_mint(svc, dir_fd, FI_FS_LOOKUP | FI_FS_CREATE);
+	ATF_REQUIRE_MSG(token >= 0, "fi_mint dir: %s", strerror(errno));
+	close(dir_fd);
+
+	/*
+	 * Fork+exec a child that authorizes with the token and tries
+	 * to unlink a file inside the directory.  The exec rotates
+	 * the nonce.  The child should be DENIED because the token
+	 * does not include FI_FS_DELETE.
+	 */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		char token_str[16];
+		const char *path;
+
+		close(svc);
+		path = fi_helper_path(tc);
+		snprintf(token_str, sizeof(token_str), "%d", token);
+		/* Use token-check to authorize, then try open which
+		 * requires directory LOOKUP.  A second test below
+		 * tries unlink via shell. */
+		execl(path, path, "token-check", token_str, tmpdir_file,
+		    NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	/*
+	 * The token has LOOKUP so traversal succeeds, but open the file
+	 * requires FI_FS_READ on the file vnode which the dir token
+	 * doesn't cover (it's scoped to the directory claim only).
+	 * So this should be denied.
+	 */
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 1,
+	    "LOOKUP dir token should not grant file read (exit %d)",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+
+	close(token);
+	close(svc);
+}
+ATF_TC_CLEANUP(dir_token_create_no_delete, tc)
+{
+	cleanup_tmpdir();
+}
+
+/* ----------------------------------------------------------------
+ * Additional narrowed-token and action-mask tests
+ * ---------------------------------------------------------------- */
+
+/*
+ * Helper: run the helper with a given command, token fd, and path arg.
+ * Returns the helper's exit code.
+ */
+static int
+run_token_helper(const atf_tc_t *tc, const char *cmd, int token_fd,
+    const char *arg1, const char *arg2)
+{
+	char token_str[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	path = fi_helper_path(tc);
+	snprintf(token_str, sizeof(token_str), "%d", token_fd);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		if (arg2 != NULL)
+			execl(path, path, cmd, token_str, arg1, arg2, NULL);
+		else
+			execl(path, path, cmd, token_str, arg1, NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	if (!WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
+/*
+ * Mint a network access token with address/CIDR.
+ */
+static int
+fi_net_mint_addr(int svc, int domain, int protocol, uint16_t port,
+    uint8_t direction, const char *addr, uint8_t prefix)
+{
+	struct cap_rt_call_args ca;
+	struct fi_net_request nr;
+	struct fi_reply rpl;
+	int token_fd;
+
+	memset(&nr, 0, sizeof(nr));
+	nr.op = FI_OP_MINT_NET;
+	nr.domain = domain;
+	nr.protocol = protocol;
+	nr.port_min = port;
+	nr.port_max = port;
+	nr.direction = direction;
+	nr.prefix = prefix;
+
+	if (addr != NULL) {
+		if (domain == AF_INET) {
+			struct in_addr in4;
+
+			if (inet_pton(AF_INET, addr, &in4) != 1)
+				return (-1);
+			nr.addr[10] = 0xff;
+			nr.addr[11] = 0xff;
+			memcpy(&nr.addr[12], &in4, sizeof(in4));
+		} else if (domain == AF_INET6) {
+			struct in6_addr in6;
+
+			if (inet_pton(AF_INET6, addr, &in6) != 1)
+				return (-1);
+			memcpy(nr.addr, &in6, sizeof(in6));
+		}
+	}
+
+	token_fd = -1;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &nr;
+	ca.req_len = sizeof(nr);
+	ca.reply = &rpl;
+	ca.reply_len = sizeof(rpl);
+	ca.reply_fds = &token_fd;
+	ca.reply_nfds = 1;
+	if (ioctl(svc, CAP_RT_CALL, &ca) != 0)
+		return (-1);
+	return (token_fd);
+}
+
+/*
+ * WRITE token denies exec.
+ */
+ATF_TC_WITH_CLEANUP(token_write_denies_exec);
+ATF_TC_HEAD(token_write_denies_exec, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_FS_WRITE token does not authorize exec");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(token_write_denies_exec, tc)
+{
+	struct fi_reply rpl;
+	int svc, target, token, rc;
+	const char *sh = "/bin/sh";
+
+	svc = fi_connect();
+	target = open(sh, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
+
+	token = fi_mint(svc, target, FI_FS_WRITE);
+	ATF_REQUIRE_MSG(token >= 0, "fi_mint WRITE: %s", strerror(errno));
+
+	rc = run_token_open(tc, token, sh, "exec", false);
+	ATF_CHECK_MSG(rc == 1,
+	    "exec should be denied with WRITE-only token (got %d)", rc);
+
+	close(token);
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(token_write_denies_exec, tc)
+{
+}
+
+/*
+ * READ token denies exec.
+ */
+ATF_TC_WITH_CLEANUP(token_read_denies_exec);
+ATF_TC_HEAD(token_read_denies_exec, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_FS_READ token does not authorize exec");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(token_read_denies_exec, tc)
+{
+	struct fi_reply rpl;
+	int svc, target, token, rc;
+	const char *sh = "/bin/sh";
+
+	svc = fi_connect();
+	target = open(sh, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
+
+	token = fi_mint(svc, target, FI_FS_READ);
+	ATF_REQUIRE_MSG(token >= 0, "fi_mint READ: %s", strerror(errno));
+
+	rc = run_token_open(tc, token, sh, "exec", false);
+	ATF_CHECK_MSG(rc == 1,
+	    "exec should be denied with READ-only token (got %d)", rc);
+
+	close(token);
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(token_read_denies_exec, tc)
+{
+}
+
+/*
+ * Directory LOOKUP-only token does not imply CREATE.
+ */
+ATF_TC_WITH_CLEANUP(dir_token_lookup_no_create);
+ATF_TC_HEAD(dir_token_lookup_no_create, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Directory token with LOOKUP only does not authorize create");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(dir_token_lookup_no_create, tc)
+{
+	struct fi_reply rpl;
+	int svc, dir_fd, token, rc;
+	char newfile[160];
+
+	make_tmpdir();
+	svc = fi_connect();
+
+	dir_fd = open(tmpdir, O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(dir_fd >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, dir_fd, 0, &rpl) == 0);
+
+	/* Mint LOOKUP only — no CREATE. */
+	token = fi_mint(svc, dir_fd, FI_FS_LOOKUP);
+	ATF_REQUIRE_MSG(token >= 0, "fi_mint LOOKUP: %s", strerror(errno));
+	close(dir_fd);
+
+	snprintf(newfile, sizeof(newfile), "%s/new_file.txt", tmpdir);
+	rc = run_token_helper(tc, "token-create", token, newfile, NULL);
+	ATF_CHECK_MSG(rc == 1,
+	    "create should be denied with LOOKUP-only token (got %d)", rc);
+
+	close(token);
+	close(svc);
+}
+ATF_TC_CLEANUP(dir_token_lookup_no_create, tc)
+{
+	cleanup_tmpdir();
+}
+
+/*
+ * Unix socket connect requires FI_FS_UIPC_CONNECT token.
+ */
+ATF_TC_WITH_CLEANUP(token_uipc_connect);
+ATF_TC_HEAD(token_uipc_connect, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_FS_UIPC_CONNECT token allows Unix socket connect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(token_uipc_connect, tc)
+{
+	struct fi_reply rpl;
+	int svc, listener, sock_fd, token, rc;
+
+	listener = make_tmpunix_listener();
+	svc = fi_connect();
+
+	sock_fd = open(tmpsockpath, O_RDONLY);
+	ATF_REQUIRE(sock_fd >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, sock_fd, 0, &rpl) == 0);
+
+	/* READ-only token should NOT allow connect. */
+	token = fi_mint(svc, sock_fd, FI_FS_READ);
+	ATF_REQUIRE(token >= 0);
+	rc = run_token_helper(tc, "token-uipc-connect", token, tmpsockpath,
+	    NULL);
+	ATF_CHECK_MSG(rc == 1,
+	    "connect should be denied with READ token (got %d)", rc);
+	close(token);
+
+	/* UIPC_CONNECT token should allow connect. */
+	token = fi_mint(svc, sock_fd, FI_FS_UIPC_CONNECT);
+	ATF_REQUIRE(token >= 0);
+	rc = run_token_helper(tc, "token-uipc-connect", token, tmpsockpath,
+	    NULL);
+	ATF_CHECK_MSG(rc == 0,
+	    "connect should succeed with UIPC_CONNECT token (got %d)", rc);
+
+	close(token);
+	close(sock_fd);
+	close(listener);
+	close(svc);
+}
+ATF_TC_CLEANUP(token_uipc_connect, tc)
+{
+	cleanup_tmpsock();
+}
+
+/*
+ * Same nonce can claim overlapping port ranges without conflict.
+ */
+ATF_TC(net_same_nonce_overlap_no_conflict);
+ATF_TC_HEAD(net_same_nonce_overlap_no_conflict, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Same nonce claiming overlapping port ranges does not conflict");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_same_nonce_overlap_no_conflict, tc)
+{
+	int svc;
+
+	svc = fi_connect();
+
+	/* Claim 19800-19899 */
+	ATF_REQUIRE(fi_net_call2(svc, FI_OP_CLAIM_NET,
+	    AF_INET, IPPROTO_TCP, 19800, 19899, FI_NET_BIND) == 0);
+
+	/* Claim overlapping 19850-19950 from same nonce — should succeed */
+	ATF_REQUIRE(fi_net_call2(svc, FI_OP_CLAIM_NET,
+	    AF_INET, IPPROTO_TCP, 19850, 19950, FI_NET_BIND) == 0);
+
+	/* Owner can still bind in the overlap region */
+	{
+		struct sockaddr_in sin;
+		int s;
+
+		s = socket(AF_INET, SOCK_STREAM, 0);
+		ATF_REQUIRE(s >= 0);
+		memset(&sin, 0, sizeof(sin));
+		sin.sin_family = AF_INET;
+		sin.sin_port = htons(19875);
+		sin.sin_addr.s_addr = INADDR_ANY;
+		ATF_CHECK_EQ(bind(s, (struct sockaddr *)&sin, sizeof(sin)), 0);
+		close(s);
+	}
+
+	close(svc);
+}
+
+/*
+ * Network CIDR token: bind inside the subnet is allowed,
+ * bind outside is denied.
+ */
+ATF_TC(net_cidr_token_inside_outside);
+ATF_TC_HEAD(net_cidr_token_inside_outside, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CIDR network token allows bind inside subnet, "
+	    "foreign nonce without token is denied");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_cidr_token_inside_outside, tc)
+{
+	int svc, token, rc;
+	uint16_t port = htons(18600);
+
+	svc = fi_connect();
+
+	/* Claim 127.0.0.0/8 on port 18600 */
+	ATF_REQUIRE(fi_net_call_addr(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, port, FI_NET_BIND, "127.0.0.0", 8) == 0);
+
+	/* Without token, foreign nonce is denied. */
+	rc = run_net_try_bind(tc, 18600);
+	ATF_CHECK_MSG(rc == 1,
+	    "bind should be denied without token (got %d)", rc);
+
+	/* Mint token for the same /8 */
+	token = fi_net_mint_addr(svc, AF_INET, IPPROTO_TCP, port,
+	    FI_NET_BIND, "127.0.0.0", 8);
+	ATF_REQUIRE_MSG(token >= 0, "fi_net_mint_addr: %s", strerror(errno));
+
+	/* Child with token should be able to bind 127.0.0.1:18600 */
+	rc = run_net_token_bind(tc, token, 18600);
+	ATF_CHECK_MSG(rc == 0,
+	    "bind inside CIDR should succeed with token (got %d)", rc);
+
+	close(token);
+	close(svc);
+}
+
+/*
+ * Rename requires authority on both source and destination directories.
+ */
+ATF_TC_WITH_CLEANUP(rename_requires_both_dirs);
+ATF_TC_HEAD(rename_requires_both_dirs, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Rename requires RENAME_FROM on source and RENAME_TO on dest");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(rename_requires_both_dirs, tc)
+{
+	struct fi_reply rpl;
+	int svc, src_fd, dst_fd, token_from, token_both, rc;
+	char srcdir[128], dstdir[128], srcfile[160], dstfile[160];
+	int fd;
+
+	snprintf(srcdir, sizeof(srcdir),
+	    "/tmp/fi_rename_src.%d", (int)getpid());
+	snprintf(dstdir, sizeof(dstdir),
+	    "/tmp/fi_rename_dst.%d", (int)getpid());
+
+	ATF_REQUIRE(mkdir(srcdir, 0755) == 0 || errno == EEXIST);
+	ATF_REQUIRE(mkdir(dstdir, 0755) == 0 || errno == EEXIST);
+
+	snprintf(srcfile, sizeof(srcfile), "%s/file.txt", srcdir);
+	snprintf(dstfile, sizeof(dstfile), "%s/file.txt", dstdir);
+
+	fd = open(srcfile, O_CREAT | O_WRONLY, 0644);
+	ATF_REQUIRE(fd >= 0);
+	close(fd);
+
+	svc = fi_connect();
+
+	src_fd = open(srcdir, O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(src_fd >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, src_fd, 0, &rpl) == 0);
+
+	dst_fd = open(dstdir, O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(dst_fd >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, dst_fd, 0, &rpl) == 0);
+
+	/*
+	 * Token with only RENAME_FROM on source dir — rename should
+	 * be denied because we lack RENAME_TO on dest dir.
+	 */
+	token_from = fi_mint(svc, src_fd,
+	    FI_FS_LOOKUP | FI_FS_RENAME_FROM);
+	ATF_REQUIRE(token_from >= 0);
+
+	rc = run_token_helper(tc, "token-rename", token_from, srcfile,
+	    dstfile);
+	ATF_CHECK_MSG(rc == 1,
+	    "rename should be denied without RENAME_TO on dest (got %d)", rc);
+	close(token_from);
+
+	close(src_fd);
+	close(dst_fd);
+	close(svc);
+
+	/* Clean up */
+	unlink(srcfile);
+	unlink(dstfile);
+	rmdir(srcdir);
+	rmdir(dstdir);
+}
+ATF_TC_CLEANUP(rename_requires_both_dirs, tc)
+{
+	char srcdir[128], dstdir[128], srcfile[160], dstfile[160];
+
+	snprintf(srcdir, sizeof(srcdir),
+	    "/tmp/fi_rename_src.%d", (int)getpid());
+	snprintf(dstdir, sizeof(dstdir),
+	    "/tmp/fi_rename_dst.%d", (int)getpid());
+	snprintf(srcfile, sizeof(srcfile), "%s/file.txt", srcdir);
+	snprintf(dstfile, sizeof(dstfile), "%s/file.txt", dstdir);
+	unlink(srcfile);
+	unlink(dstfile);
+	rmdir(srcdir);
+	rmdir(dstdir);
+}
+
+/* ----------------------------------------------------------------
+ * Jail isolation tests
+ * ---------------------------------------------------------------- */
+
+static int
+fi_jail_call(int svc, uint32_t op, int32_t jid, const char *name,
+    uint32_t actions, struct fi_reply *rpl)
+{
+	struct cap_rt_call_args ca;
+	struct fi_jail_request jr;
+
+	memset(&jr, 0, sizeof(jr));
+	jr.op = op;
+	jr.jid = jid;
+	jr.actions = actions;
+	if (name != NULL)
+		strlcpy(jr.name, name, sizeof(jr.name));
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &jr;
+	ca.req_len = sizeof(jr);
+	ca.reply = rpl;
+	ca.reply_len = sizeof(*rpl);
+	return (ioctl(svc, CAP_RT_CALL, &ca));
+}
+
+static int
+fi_jail_mint(int svc, int32_t jid, const char *name, uint32_t actions)
+{
+	struct cap_rt_call_args ca;
+	struct fi_jail_request jr;
+	struct fi_reply rpl;
+	int token_fd;
+
+	memset(&jr, 0, sizeof(jr));
+	jr.op = FI_OP_MINT_JAIL;
+	jr.jid = jid;
+	jr.actions = actions;
+	if (name != NULL)
+		strlcpy(jr.name, name, sizeof(jr.name));
+
+	token_fd = -1;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &jr;
+	ca.req_len = sizeof(jr);
+	ca.reply = &rpl;
+	ca.reply_len = sizeof(rpl);
+	ca.reply_fds = &token_fd;
+	ca.reply_nfds = 1;
+	if (ioctl(svc, CAP_RT_CALL, &ca) != 0)
+		return (-1);
+	return (token_fd);
+}
+
+/*
+ * Run a child (fork+exec for nonce rotation) that tries to create a jail.
+ * Returns: 0 = jail created, 1 = denied, 2 = other error.
+ * If jid_out != NULL, the created JID is written there on success.
+ */
+static int
+run_jail_create_helper(const atf_tc_t *tc, const char *name, int *jid_out)
+{
+	const char *path;
+	pid_t pid;
+	int status, pfd[2];
+
+	path = fi_helper_path(tc);
+
+	ATF_REQUIRE(pipe(pfd) == 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(pfd[0]);
+		dup2(pfd[1], STDOUT_FILENO);
+		close(pfd[1]);
+		execl(path, path, "jail-create", name, NULL);
+		_exit(127);
+	}
+	close(pfd[1]);
+
+	/* Read JID from child stdout */
+	{
+		char buf[32];
+		ssize_t n = read(pfd[0], buf, sizeof(buf) - 1);
+		close(pfd[0]);
+		if (n > 0 && jid_out != NULL) {
+			buf[n] = '\0';
+			*jid_out = (int)strtol(buf, NULL, 10);
+		}
+	}
+
+	waitpid(pid, &status, 0);
+	if (!WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
+/*
+ * Run a child that tries to jail_get on a JID.
+ * Returns: 0 = success, 1 = denied.
+ */
+static int
+run_jail_get_helper(const atf_tc_t *tc, int jid)
+{
+	char jidstr[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	path = fi_helper_path(tc);
+	snprintf(jidstr, sizeof(jidstr), "%d", jid);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(path, path, "jail-get", jidstr, NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	if (!WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
+/*
+ * Run a child that tries to jail_remove a JID.
+ * Returns: 0 = success, 1 = denied.
+ */
+static int
+run_jail_remove_helper(const atf_tc_t *tc, int jid)
+{
+	char jidstr[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	path = fi_helper_path(tc);
+	snprintf(jidstr, sizeof(jidstr), "%d", jid);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(path, path, "jail-remove", jidstr, NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	if (!WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
+/*
+ * Run a child that authorizes with a jail token, then creates a jail.
+ * Returns: 0 = jail created, 1 = denied, 10 = auth failed.
+ * If jid_out != NULL, the created JID is written there on success.
+ */
+static int
+run_jail_token_create_helper(const atf_tc_t *tc, int token_fd,
+    const char *name, int *jid_out)
+{
+	char token_str[16];
+	const char *path;
+	pid_t pid;
+	int status, pfd[2];
+
+	path = fi_helper_path(tc);
+	snprintf(token_str, sizeof(token_str), "%d", token_fd);
+
+	ATF_REQUIRE(pipe(pfd) == 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(pfd[0]);
+		dup2(pfd[1], STDOUT_FILENO);
+		close(pfd[1]);
+		execl(path, path, "jail-token-create", token_str, name, NULL);
+		_exit(127);
+	}
+	close(pfd[1]);
+
+	{
+		char buf[32];
+		ssize_t n = read(pfd[0], buf, sizeof(buf) - 1);
+		close(pfd[0]);
+		if (n > 0 && jid_out != NULL) {
+			buf[n] = '\0';
+			*jid_out = (int)strtol(buf, NULL, 10);
+		}
+	}
+
+	waitpid(pid, &status, 0);
+	if (!WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
+/*
+ * Remove a jail by JID, ignoring errors (for cleanup).
+ */
+static void
+cleanup_jail(int jid)
+{
+
+	if (jid > 0)
+		jail_remove(jid);
+}
+
+static void
+cleanup_jail_by_name(const char *name)
+{
+	struct iovec iov[4];
+	int jid;
+	char namebuf[64];
+
+	strlcpy(namebuf, name, sizeof(namebuf));
+	iov[0].iov_base = __DECONST(char *, "name");
+	iov[0].iov_len = sizeof("name");
+	iov[1].iov_base = namebuf;
+	iov[1].iov_len = strlen(namebuf) + 1;
+	iov[2].iov_base = __DECONST(char *, "lastjid");
+	iov[2].iov_len = sizeof("lastjid");
+	jid = 0;
+	iov[3].iov_base = &jid;
+	iov[3].iov_len = sizeof(jid);
+
+	jid = jail_get(iov, 4, 0);
+	if (jid > 0)
+		jail_remove(jid);
+}
+
+/* -- Jail claim/release/query -- */
+
+ATF_TC_WITH_CLEANUP(jail_claim_blocks_create);
+ATF_TC_HEAD(jail_claim_blocks_create, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Claiming a jail name blocks foreign nonce from jail_set(JAIL_CREATE)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_claim_blocks_create, tc)
+{
+	struct fi_reply rpl;
+	int rc, svc;
+
+	svc = fi_connect();
+
+	/* Claim jail name with CREATE action */
+	ATF_REQUIRE(fi_jail_call(svc, FI_OP_CLAIM_JAIL, 0,
+	    "fi_test_jail", FI_JAIL_CREATE, &rpl) == 0);
+
+	/* Foreign nonce should be denied */
+	rc = run_jail_create_helper(tc, "fi_test_jail", NULL);
+	ATF_CHECK_MSG(rc == 1,
+	    "foreign jail_set(JAIL_CREATE) should be denied (got %d)", rc);
+
+	close(svc);
+}
+ATF_TC_CLEANUP(jail_claim_blocks_create, tc)
+{
+	cleanup_jail_by_name("fi_test_jail");
+}
+
+ATF_TC_WITH_CLEANUP(jail_claim_allows_owner);
+ATF_TC_HEAD(jail_claim_allows_owner, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Owner nonce can still create a claimed jail");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_claim_allows_owner, tc)
+{
+	struct fi_reply rpl;
+	int svc, jid;
+	struct iovec iov[6];
+	int persist = 1;
+
+	svc = fi_connect();
+
+	ATF_REQUIRE(fi_jail_call(svc, FI_OP_CLAIM_JAIL, 0,
+	    "fi_test_owner", FI_JAIL_CREATE, &rpl) == 0);
+
+	/* Same nonce — jail_set should succeed */
+	iov[0].iov_base = __DECONST(char *, "name");
+	iov[0].iov_len = sizeof("name");
+	iov[1].iov_base = __DECONST(char *, "fi_test_owner");
+	iov[1].iov_len = sizeof("fi_test_owner");
+	iov[2].iov_base = __DECONST(char *, "path");
+	iov[2].iov_len = sizeof("path");
+	iov[3].iov_base = __DECONST(char *, "/");
+	iov[3].iov_len = sizeof("/");
+	iov[4].iov_base = __DECONST(char *, "persist");
+	iov[4].iov_len = sizeof("persist");
+	iov[5].iov_base = &persist;
+	iov[5].iov_len = sizeof(persist);
+
+	jid = jail_set(iov, 6, JAIL_CREATE);
+	ATF_CHECK_MSG(jid >= 0, "owner jail_set should succeed: %s",
+	    strerror(errno));
+
+	cleanup_jail(jid);
+	close(svc);
+}
+ATF_TC_CLEANUP(jail_claim_allows_owner, tc)
+{
+	cleanup_jail_by_name("fi_test_owner");
+}
+
+ATF_TC_WITH_CLEANUP(jail_release_allows_create);
+ATF_TC_HEAD(jail_release_allows_create, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Releasing a jail claim allows foreign nonce to create the jail");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_release_allows_create, tc)
+{
+	struct fi_reply rpl;
+	int rc, svc, jid = 0;
+
+	svc = fi_connect();
+
+	ATF_REQUIRE(fi_jail_call(svc, FI_OP_CLAIM_JAIL, 0,
+	    "fi_test_release", FI_JAIL_CREATE, &rpl) == 0);
+	ATF_REQUIRE(fi_jail_call(svc, FI_OP_RELEASE_JAIL, 0,
+	    "fi_test_release", 0, &rpl) == 0);
+
+	/* After release, foreign nonce should succeed */
+	rc = run_jail_create_helper(tc, "fi_test_release", &jid);
+	ATF_CHECK_MSG(rc == 0,
+	    "jail_set after release should succeed (got %d)", rc);
+
+	cleanup_jail(jid);
+	close(svc);
+}
+ATF_TC_CLEANUP(jail_release_allows_create, tc)
+{
+	cleanup_jail_by_name("fi_test_release");
+}
+
+ATF_TC(jail_claim_query);
+ATF_TC_HEAD(jail_claim_query, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_OP_QUERY_JAIL reports claimed and mine flags");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_claim_query, tc)
+{
+	struct fi_reply rpl;
+	int svc;
+
+	svc = fi_connect();
+
+	ATF_REQUIRE(fi_jail_call(svc, FI_OP_CLAIM_JAIL, 0,
+	    "fi_test_query", FI_JAIL_ALL, &rpl) == 0);
+
+	memset(&rpl, 0, sizeof(rpl));
+	ATF_REQUIRE(fi_jail_call(svc, FI_OP_QUERY_JAIL, 0,
+	    "fi_test_query", FI_JAIL_CREATE, &rpl) == 0);
+	ATF_CHECK_EQ(rpl.flags, FI_QF_CLAIMED | FI_QF_MINE);
+
+	close(svc);
+}
+
+ATF_TC(jail_query_unclaimed);
+ATF_TC_HEAD(jail_query_unclaimed, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FI_OP_QUERY_JAIL on unclaimed name returns zero flags");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_query_unclaimed, tc)
+{
+	struct fi_reply rpl;
+	int svc;
+
+	svc = fi_connect();
+
+	memset(&rpl, 0, sizeof(rpl));
+	ATF_REQUIRE(fi_jail_call(svc, FI_OP_QUERY_JAIL, 0,
+	    "fi_test_noexist", FI_JAIL_CREATE, &rpl) == 0);
+	ATF_CHECK_EQ(rpl.flags, 0);
+
+	close(svc);
+}
+
+ATF_TC(jail_close_releases_claims);
+ATF_TC_HEAD(jail_close_releases_claims, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Closing the instance fd releases jail claims");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_close_releases_claims, tc)
+{
+	struct fi_reply rpl;
+	int svc, svc2;
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_jail_call(svc, FI_OP_CLAIM_JAIL, 0,
+	    "fi_test_close", FI_JAIL_ALL, &rpl) == 0);
+
+	close(svc);
+
+	svc2 = fi_connect();
+	memset(&rpl, 0, sizeof(rpl));
+	ATF_REQUIRE(fi_jail_call(svc2, FI_OP_QUERY_JAIL, 0,
+	    "fi_test_close", FI_JAIL_CREATE, &rpl) == 0);
+	ATF_CHECK_EQ(rpl.flags, 0);
+
+	close(svc2);
+}
+
+ATF_TC_WITH_CLEANUP(jail_claim_blocks_get);
+ATF_TC_HEAD(jail_claim_blocks_get, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Jail GET claim blocks foreign nonce from jail_get");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_claim_blocks_get, tc)
+{
+	struct fi_reply rpl;
+	int rc, svc, jid;
+	struct iovec iov[6];
+	int persist = 1;
+
+	/* First create a real jail so jail_get has something to query */
+	iov[0].iov_base = __DECONST(char *, "name");
+	iov[0].iov_len = sizeof("name");
+	iov[1].iov_base = __DECONST(char *, "fi_test_get");
+	iov[1].iov_len = sizeof("fi_test_get");
+	iov[2].iov_base = __DECONST(char *, "path");
+	iov[2].iov_len = sizeof("path");
+	iov[3].iov_base = __DECONST(char *, "/");
+	iov[3].iov_len = sizeof("/");
+	iov[4].iov_base = __DECONST(char *, "persist");
+	iov[4].iov_len = sizeof("persist");
+	iov[5].iov_base = &persist;
+	iov[5].iov_len = sizeof(persist);
+
+	jid = jail_set(iov, 6, JAIL_CREATE);
+	ATF_REQUIRE_MSG(jid >= 0, "create jail: %s", strerror(errno));
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_jail_call(svc, FI_OP_CLAIM_JAIL, jid,
+	    "fi_test_get", FI_JAIL_GET, &rpl) == 0);
+
+	/* Foreign nonce jail_get should be denied */
+	rc = run_jail_get_helper(tc, jid);
+	ATF_CHECK_MSG(rc == 1,
+	    "foreign jail_get should be denied (got %d)", rc);
+
+	close(svc);
+	cleanup_jail(jid);
+}
+ATF_TC_CLEANUP(jail_claim_blocks_get, tc)
+{
+	cleanup_jail_by_name("fi_test_get");
+}
+
+ATF_TC_WITH_CLEANUP(jail_claim_blocks_remove);
+ATF_TC_HEAD(jail_claim_blocks_remove, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Jail REMOVE claim blocks foreign nonce from jail_remove");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_claim_blocks_remove, tc)
+{
+	struct fi_reply rpl;
+	int rc, svc, jid;
+	struct iovec iov[6];
+	int persist = 1;
+
+	/* Create a real jail */
+	iov[0].iov_base = __DECONST(char *, "name");
+	iov[0].iov_len = sizeof("name");
+	iov[1].iov_base = __DECONST(char *, "fi_test_rm");
+	iov[1].iov_len = sizeof("fi_test_rm");
+	iov[2].iov_base = __DECONST(char *, "path");
+	iov[2].iov_len = sizeof("path");
+	iov[3].iov_base = __DECONST(char *, "/");
+	iov[3].iov_len = sizeof("/");
+	iov[4].iov_base = __DECONST(char *, "persist");
+	iov[4].iov_len = sizeof("persist");
+	iov[5].iov_base = &persist;
+	iov[5].iov_len = sizeof(persist);
+
+	jid = jail_set(iov, 6, JAIL_CREATE);
+	ATF_REQUIRE_MSG(jid >= 0, "create jail: %s", strerror(errno));
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_jail_call(svc, FI_OP_CLAIM_JAIL, jid,
+	    "fi_test_rm", FI_JAIL_REMOVE, &rpl) == 0);
+
+	/* Foreign nonce jail_remove should be denied */
+	rc = run_jail_remove_helper(tc, jid);
+	ATF_CHECK_MSG(rc == 1,
+	    "foreign jail_remove should be denied (got %d)", rc);
+
+	close(svc);
+	cleanup_jail(jid);
+}
+ATF_TC_CLEANUP(jail_claim_blocks_remove, tc)
+{
+	cleanup_jail_by_name("fi_test_rm");
+}
+
+/* -- Jail token tests -- */
+
+ATF_TC_WITH_CLEANUP(jail_token_create_grants_access);
+ATF_TC_HEAD(jail_token_create_grants_access, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Jail CREATE token allows foreign nonce to create the jail");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_token_create_grants_access, tc)
+{
+	struct fi_reply rpl;
+	int rc, svc, token, jid = 0;
+
+	svc = fi_connect();
+
+	ATF_REQUIRE(fi_jail_call(svc, FI_OP_CLAIM_JAIL, 0,
+	    "fi_test_tok", FI_JAIL_CREATE, &rpl) == 0);
+
+	token = fi_jail_mint(svc, 0, "fi_test_tok", FI_JAIL_CREATE);
+	ATF_REQUIRE_MSG(token >= 0, "fi_jail_mint: %s", strerror(errno));
+
+	/* Foreign nonce with token should succeed */
+	rc = run_jail_token_create_helper(tc, token, "fi_test_tok", &jid);
+	ATF_CHECK_MSG(rc == 0,
+	    "token holder jail_set should succeed (got %d)", rc);
+
+	cleanup_jail(jid);
+	close(token);
+	close(svc);
+}
+ATF_TC_CLEANUP(jail_token_create_grants_access, tc)
+{
+	cleanup_jail_by_name("fi_test_tok");
+}
+
+ATF_TC_WITH_CLEANUP(jail_token_wrong_action_denied);
+ATF_TC_HEAD(jail_token_wrong_action_denied, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Jail GET token does not authorize CREATE");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_token_wrong_action_denied, tc)
+{
+	struct fi_reply rpl;
+	int rc, svc, token;
+
+	svc = fi_connect();
+
+	/* Claim with ALL actions */
+	ATF_REQUIRE(fi_jail_call(svc, FI_OP_CLAIM_JAIL, 0,
+	    "fi_test_wrong", FI_JAIL_ALL, &rpl) == 0);
+
+	/* Mint token with GET only */
+	token = fi_jail_mint(svc, 0, "fi_test_wrong", FI_JAIL_GET);
+	ATF_REQUIRE_MSG(token >= 0, "fi_jail_mint: %s", strerror(errno));
+
+	/* Foreign nonce tries CREATE with GET-only token — should be denied */
+	rc = run_jail_token_create_helper(tc, token, "fi_test_wrong", NULL);
+	ATF_CHECK_MSG(rc == 1,
+	    "CREATE with GET-only token should be denied (got %d)", rc);
+
+	close(token);
+	close(svc);
+}
+ATF_TC_CLEANUP(jail_token_wrong_action_denied, tc)
+{
+	cleanup_jail_by_name("fi_test_wrong");
+}
+
+ATF_TC(jail_claim_invalid_request);
+ATF_TC_HEAD(jail_claim_invalid_request, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Invalid jail claim arguments are rejected");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_claim_invalid_request, tc)
+{
+	struct fi_reply rpl;
+	int svc;
+
+	svc = fi_connect();
+
+	/* Both JID and name empty — should fail */
+	ATF_CHECK_ERRNO(EINVAL, fi_jail_call(svc, FI_OP_CLAIM_JAIL,
+	    0, NULL, 0, &rpl) == -1);
+
+	/* Name only, no actions — should succeed (actions default to ALL) */
+	ATF_CHECK(fi_jail_call(svc, FI_OP_CLAIM_JAIL,
+	    0, "fi_test_inval", 0, &rpl) == 0);
+
+	close(svc);
+}
+
+ATF_TC(jail_double_claim_same_nonce);
+ATF_TC_HEAD(jail_double_claim_same_nonce, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Re-claiming a jail from the same nonce transfers ownership");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_double_claim_same_nonce, tc)
+{
+	struct fi_reply rpl;
+	int svc1, svc2;
+
+	svc1 = fi_connect();
+	svc2 = fi_connect();
+
+	/* Claim via first instance */
+	ATF_REQUIRE(fi_jail_call(svc1, FI_OP_CLAIM_JAIL, 0,
+	    "fi_test_dbl", FI_JAIL_ALL, &rpl) == 0);
+
+	/* Re-claim via second instance (same nonce) */
+	ATF_REQUIRE(fi_jail_call(svc2, FI_OP_CLAIM_JAIL, 0,
+	    "fi_test_dbl", FI_JAIL_ALL, &rpl) == 0);
+
+	/* Close first instance — claim should survive via svc2 */
+	close(svc1);
+
+	memset(&rpl, 0, sizeof(rpl));
+	ATF_REQUIRE(fi_jail_call(svc2, FI_OP_QUERY_JAIL, 0,
+	    "fi_test_dbl", FI_JAIL_CREATE, &rpl) == 0);
+	ATF_CHECK_EQ(rpl.flags, FI_QF_CLAIMED | FI_QF_MINE);
+
+	close(svc2);
+}
+
+/* -- Jail stress tests -- */
+
+ATF_TC_WITH_CLEANUP(jail_stress_claim_release);
+ATF_TC_HEAD(jail_stress_claim_release, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Rapid jail claim/release cycles concurrent with jail operations");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(jail_stress_claim_release, tc)
+{
+	struct fi_reply rpl;
+	int svc, i, rc;
+	pid_t children[4];
+	int status;
+
+	svc = fi_connect();
+
+	/*
+	 * Rapidly claim and release the same jail name while forked
+	 * children (foreign nonces) attempt to create that jail.
+	 * This exercises the TOCTOU window between fi_jail_lock
+	 * release and fi_auth_lock acquire in fi_check_jail_common.
+	 * Any kernel panic here indicates a NOSLEEP violation or
+	 * use-after-free in the jail hook path.
+	 */
+
+	/* Launch children that repeatedly try to create the jail */
+	for (i = 0; i < 4; i++) {
+		children[i] = fork();
+		ATF_REQUIRE(children[i] >= 0);
+		if (children[i] == 0) {
+			const char *path = fi_helper_path(tc);
+			int iter;
+
+			for (iter = 0; iter < 50; iter++) {
+				pid_t p = fork();
+				if (p < 0)
+					continue;
+				if (p == 0) {
+					execl(path, path, "jail-create",
+					    "fi_stress_jail", NULL);
+					_exit(127);
+				}
+				int s;
+				waitpid(p, &s, 0);
+				/* Clean up any jail we created */
+				if (WIFEXITED(s) && WEXITSTATUS(s) == 0)
+					cleanup_jail_by_name("fi_stress_jail");
+			}
+			_exit(0);
+		}
+	}
+
+	/* Parent rapidly claims and releases */
+	for (i = 0; i < 200; i++) {
+		rc = fi_jail_call(svc, FI_OP_CLAIM_JAIL, 0,
+		    "fi_stress_jail", FI_JAIL_CREATE, &rpl);
+		if (rc == 0) {
+			fi_jail_call(svc, FI_OP_RELEASE_JAIL, 0,
+			    "fi_stress_jail", 0, &rpl);
+		}
+	}
+
+	/* Wait for all children */
+	for (i = 0; i < 4; i++) {
+		waitpid(children[i], &status, 0);
+		ATF_CHECK(WIFEXITED(status));
+	}
+
+	close(svc);
+}
+ATF_TC_CLEANUP(jail_stress_claim_release, tc)
+{
+	cleanup_jail_by_name("fi_stress_jail");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -2444,6 +4419,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, net_claim_ipv6);
 	ATF_TP_ADD_TC(tp, net_release_unclaimed);
 	ATF_TP_ADD_TC(tp, net_claim_protocol_wildcard);
+	ATF_TP_ADD_TC(tp, net_claim_range_blocks_foreign_exact);
+	ATF_TP_ADD_TC(tp, net_claim_exact_blocks_foreign_range);
+	ATF_TP_ADD_TC(tp, net_query_reports_range_claims);
 
 	/* Access tokens */
 	ATF_TP_ADD_TC(tp, token_mint_returns_fd);
@@ -2452,6 +4430,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, token_mint_requires_ownership);
 	ATF_TP_ADD_TC(tp, token_query_shows_authorized);
 	ATF_TP_ADD_TC(tp, token_scoped_to_claim);
+	ATF_TP_ADD_TC(tp, token_read_only_denies_write);
+	ATF_TP_ADD_TC(tp, token_authorize_idempotent);
+	ATF_TP_ADD_TC(tp, token_dup_lifetime);
 
 	/* Network access tokens */
 	ATF_TP_ADD_TC(tp, net_token_mint_returns_fd);
@@ -2459,6 +4440,40 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, net_token_scoped_to_endpoint);
 	ATF_TP_ADD_TC(tp, net_token_close_revokes);
 	ATF_TP_ADD_TC(tp, net_token_mint_requires_claim);
+	ATF_TP_ADD_TC(tp, net_token_query_shows_authorized_range);
+	ATF_TP_ADD_TC(tp, net_token_range_does_not_authorize_other_claim);
+
+	/* Additional coverage */
+	ATF_TP_ADD_TC(tp, net_wildcard_claim_blocks_exact_bind);
+	ATF_TP_ADD_TC(tp, net_claim_range_vs_range_overlap);
+	ATF_TP_ADD_TC(tp, net_byte_order_port_256);
+	ATF_TP_ADD_TC(tp, token_stat_only_denies_read);
+	ATF_TP_ADD_TC(tp, mint_rejects_invalid_actions);
+	ATF_TP_ADD_TC(tp, token_two_nonces_authorize);
+	ATF_TP_ADD_TC(tp, net_token_range_bind_inside_outside);
+	ATF_TP_ADD_TC(tp, dir_token_create_no_delete);
+	ATF_TP_ADD_TC(tp, token_write_denies_exec);
+	ATF_TP_ADD_TC(tp, token_read_denies_exec);
+	ATF_TP_ADD_TC(tp, dir_token_lookup_no_create);
+	ATF_TP_ADD_TC(tp, token_uipc_connect);
+	ATF_TP_ADD_TC(tp, net_same_nonce_overlap_no_conflict);
+	ATF_TP_ADD_TC(tp, net_cidr_token_inside_outside);
+	ATF_TP_ADD_TC(tp, rename_requires_both_dirs);
+
+	/* Jail isolation */
+	ATF_TP_ADD_TC(tp, jail_claim_blocks_create);
+	ATF_TP_ADD_TC(tp, jail_claim_allows_owner);
+	ATF_TP_ADD_TC(tp, jail_release_allows_create);
+	ATF_TP_ADD_TC(tp, jail_claim_query);
+	ATF_TP_ADD_TC(tp, jail_query_unclaimed);
+	ATF_TP_ADD_TC(tp, jail_close_releases_claims);
+	ATF_TP_ADD_TC(tp, jail_claim_blocks_get);
+	ATF_TP_ADD_TC(tp, jail_claim_blocks_remove);
+	ATF_TP_ADD_TC(tp, jail_token_create_grants_access);
+	ATF_TP_ADD_TC(tp, jail_token_wrong_action_denied);
+	ATF_TP_ADD_TC(tp, jail_claim_invalid_request);
+	ATF_TP_ADD_TC(tp, jail_double_claim_same_nonce);
+	ATF_TP_ADD_TC(tp, jail_stress_claim_release);
 
 	return (atf_no_error());
 }

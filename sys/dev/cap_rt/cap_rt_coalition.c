@@ -93,6 +93,20 @@ SDT_PROBE_DEFINE3(cap_rt_coalition, , , call__done,
     "uint32_t", "int", "sbintime_t");
 SDT_PROBE_DEFINE3(cap_rt_coalition, , , deny,
     "const char *", "int", "pid_t");
+SDT_PROBE_DEFINE2(cap_rt_coalition, , , signal__set,
+    "int", "int");
+SDT_PROBE_DEFINE4(cap_rt_coalition, , , deadline__set,
+    "uint32_t", "int", "uint32_t", "int");
+SDT_PROBE_DEFINE2(cap_rt_coalition, , , watchdog__set,
+    "uint32_t", "int");
+SDT_PROBE_DEFINE1(cap_rt_coalition, , , heartbeat,
+    "uint32_t");
+SDT_PROBE_DEFINE2(cap_rt_coalition, , , deadline__expire,
+    "const char *", "int");
+SDT_PROBE_DEFINE1(cap_rt_coalition, , , watchdog__expire,
+    "int");
+SDT_PROBE_DEFINE3(cap_rt_coalition, , , graceful,
+    "int", "uint32_t", "int");
 
 MALLOC_DEFINE(M_COALITION, "cap_rt_coalition",
     "cap_rt coalition structures");
@@ -1419,6 +1433,8 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 	had_process_members = (coalition_count_process_members_locked(co) != 0);
 
 	coalition_signal_processes_locked(co, sig);
+	SDT_PROBE3(cap_rt_coalition, , , graceful,
+	    sig, timeout_ms, 0);
 
 	elapsed = 0;
 	while (elapsed < timeout_ms) {
@@ -1546,6 +1562,8 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 	if (co->co_flags & COF_DEADLINE_GRACE) {
 		/* Grace expired — escalate to SIGKILL */
 		co->co_flags &= ~(COF_DEADLINE_ACTIVE | COF_DEADLINE_GRACE);
+		SDT_PROBE2(cap_rt_coalition, , , deadline__expire,
+		    (uintptr_t)"grace-escalate", SIGKILL);
 		coalition_notify_event(co, COALITION_NOTE_DEADLINE_FIRED);
 		coalition_collect_external_members_locked(co, &jail_fps,
 		    &jail_count, &cap_rt_cis, &cap_rt_count);
@@ -1562,6 +1580,8 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 		    COALITION_NOTE_DEADLINE_FIRED |
 		    COALITION_NOTE_GRACE_STARTED);
 		co->co_flags |= COF_DEADLINE_GRACE;
+		SDT_PROBE2(cap_rt_coalition, , , deadline__expire,
+		    (uintptr_t)"grace-start", co->co_deadline_signal);
 		coalition_update_grace_flag_locked(co);
 		coalition_ref(co);
 		callout_reset(&co->co_deadline_callout,
@@ -1569,6 +1589,8 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 		    coalition_deadline_callout_fn, co);
 	} else {
 		co->co_flags &= ~COF_DEADLINE_ACTIVE;
+		SDT_PROBE2(cap_rt_coalition, , , deadline__expire,
+		    (uintptr_t)"immediate", co->co_deadline_signal != 0 ? co->co_deadline_signal : SIGKILL);
 		coalition_notify_event(co, COALITION_NOTE_DEADLINE_FIRED);
 		coalition_collect_external_members_locked(co, &jail_fps,
 		    &jail_count, &cap_rt_cis, &cap_rt_count);
@@ -1616,6 +1638,7 @@ coalition_watchdog_task_fn(void *context, int pending __unused)
 	}
 
 	co->co_flags &= ~COF_WATCHDOG_ACTIVE;
+	SDT_PROBE1(cap_rt_coalition, , , watchdog__expire, SIGKILL);
 	coalition_notify_event(co, COALITION_NOTE_WATCHDOG_FIRED);
 	coalition_collect_external_members_locked(co, &jail_fps,
 	    &jail_count, &cap_rt_cis, &cap_rt_count);
@@ -2257,6 +2280,8 @@ coalition_call(struct cap_rt_instance *s,
 			break;
 		}
 		co->co_signal = ssr->signal;
+		SDT_PROBE2(cap_rt_coalition, , , signal__set,
+		    ssr->signal, 0);
 		sx_xunlock(&co->co_sx);
 		rpl->status = 0;
 		break;
@@ -2328,6 +2353,8 @@ coalition_call(struct cap_rt_instance *s,
 		callout_reset(&co->co_deadline_callout,
 		    coalition_timeout_ticks(dr->timeout_ms),
 		    coalition_deadline_callout_fn, co);
+		SDT_PROBE4(cap_rt_coalition, , , deadline__set,
+		    dr->timeout_ms, dr->signal, dr->grace_ms, 0);
 		sx_xunlock(&co->co_sx);
 		rpl->status = 0;
 		break;
@@ -2377,6 +2404,8 @@ coalition_call(struct cap_rt_instance *s,
 		callout_reset(&co->co_watchdog_callout,
 		    coalition_timeout_ticks(wr->timeout_ms),
 		    coalition_watchdog_callout_fn, co);
+		SDT_PROBE2(cap_rt_coalition, , , watchdog__set,
+		    wr->timeout_ms, 0);
 		sx_xunlock(&co->co_sx);
 		rpl->status = 0;
 		break;
@@ -2414,6 +2443,8 @@ coalition_call(struct cap_rt_instance *s,
 		callout_reset(&co->co_watchdog_callout,
 		    coalition_timeout_ticks(co->co_watchdog_timeout_ms),
 		    coalition_watchdog_callout_fn, co);
+		SDT_PROBE1(cap_rt_coalition, , , heartbeat,
+		    co->co_watchdog_timeout_ms);
 		sx_xunlock(&co->co_sx);
 		rpl->status = 0;
 			break;
