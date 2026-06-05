@@ -132,6 +132,27 @@ run_cross_nonce_kldstat(const atf_tc_t *tc)
 	return (WEXITSTATUS(status));
 }
 
+static int
+sys_call_mint_narrow(int fd, uint32_t gates, int *token_fd)
+{
+	struct cap_rt_call_args ca;
+	struct sys_request req;
+
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_MINT;
+	req.gates = gates;
+
+	*token_fd = -1;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply_fds = token_fd;
+	ca.reply_nfds = 1;
+	ca.reply_len = 0;
+
+	return (ioctl(fd, CAP_RT_CALL, &ca));
+}
+
 /* ----------------------------------------------------------------
  * Tests
  * ---------------------------------------------------------------- */
@@ -383,6 +404,75 @@ ATF_TC_BODY(refcount_partial_close, tc)
 	    "kldnext should work after all claims released");
 }
 
+ATF_TC(mint_narrow_subset);
+ATF_TC_HEAD(mint_narrow_subset, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Minting with a subset of claimed gates succeeds");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mint_narrow_subset, tc)
+{
+	int svc, token_fd;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc,
+	    SYS_GATE_KLDSTAT | SYS_GATE_REBOOT) == 0);
+
+	ATF_REQUIRE(sys_call_mint_narrow(svc, SYS_GATE_KLDSTAT,
+	    &token_fd) == 0);
+	ATF_REQUIRE(token_fd >= 0);
+
+	ATF_REQUIRE(sys_call_authorize(token_fd) == 0);
+	close(token_fd);
+	close(svc);
+}
+
+ATF_TC(mint_narrow_rejects_unclaimed);
+ATF_TC_HEAD(mint_narrow_rejects_unclaimed, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Minting with gates outside the claim fails");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mint_narrow_rejects_unclaimed, tc)
+{
+	int svc, token_fd;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
+
+	ATF_CHECK(sys_call_mint_narrow(svc,
+	    SYS_GATE_KLDSTAT | SYS_GATE_REBOOT, &token_fd) != 0);
+	ATF_CHECK(errno == EINVAL);
+
+	close(svc);
+}
+
+ATF_TC(mint_narrow_zero_gives_all);
+ATF_TC_HEAD(mint_narrow_zero_gives_all, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Minting with gates=0 gives full claimed scope");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mint_narrow_zero_gives_all, tc)
+{
+	int svc, token_fd;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc,
+	    SYS_GATE_KLDSTAT | SYS_GATE_REBOOT) == 0);
+
+	/* gates=0 should give all claimed gates */
+	ATF_REQUIRE(sys_call_mint(svc, &token_fd) == 0);
+	ATF_REQUIRE(token_fd >= 0);
+
+	ATF_REQUIRE(sys_call_authorize(token_fd) == 0);
+	close(token_fd);
+	close(svc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -396,6 +486,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, selective_gates);
 	ATF_TP_ADD_TC(tp, multiple_claims);
 	ATF_TP_ADD_TC(tp, refcount_partial_close);
+	ATF_TP_ADD_TC(tp, mint_narrow_subset);
+	ATF_TP_ADD_TC(tp, mint_narrow_rejects_unclaimed);
+	ATF_TP_ADD_TC(tp, mint_narrow_zero_gives_all);
 
 	return (atf_no_error());
 }

@@ -442,6 +442,17 @@ sys_call(struct cap_rt_instance *s,
 		mint_gates = priv->sp_gates;
 		mtx_unlock(&sys_lock);
 
+		/*
+		 * Narrow: if the caller requests specific gates,
+		 * intersect with the claim's gates.  Zero means
+		 * "all gates from the claim" (backward compat).
+		 */
+		if (sr->gates != 0) {
+			if (sr->gates & ~mint_gates)
+				return (EINVAL);  /* requesting gates not owned */
+			mint_gates = sr->gates;
+		}
+
 		if (*reply_nfdsp < 1)
 			return (EINVAL);
 

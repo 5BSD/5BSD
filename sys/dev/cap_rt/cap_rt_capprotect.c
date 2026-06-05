@@ -374,6 +374,7 @@ cp_call(struct cap_rt_instance *s,
 		struct file *token_fp;
 		struct cp_priv *tp;
 		uint64_t target;
+		uint32_t token_flags;
 		int error;
 
 		if (atomic_load_acq_int(&priv->cp_is_token))
@@ -384,6 +385,18 @@ cp_call(struct cap_rt_instance *s,
 			return (EINVAL);
 		target = priv->cp_target;
 
+		/*
+		 * Narrow: if the caller requests specific flags,
+		 * intersect with the shield's flags.  Zero means
+		 * "all flags from the shield" (backward compat).
+		 */
+		token_flags = priv->cp_flags;
+		if (cr->flags != 0) {
+			if (cr->flags & ~token_flags)
+				return (EINVAL);  /* requesting flags not shielded */
+			token_flags = cr->flags;
+		}
+
 			error = cap_rt_mint_fp(cp_svc, 0, &token_fp);
 			if (error != 0)
 				return (error);
@@ -392,14 +405,14 @@ cp_call(struct cap_rt_instance *s,
 			if (tp != NULL) {
 				tp->cp_is_token = 1;
 				tp->cp_target = target;
-				tp->cp_flags = priv->cp_flags;
+				tp->cp_flags = token_flags;
 			}
 
 			reply_fds[0] = token_fp;
 		*reply_nfdsp = 1;
 		*replylenp = 0;
 		SDT_PROBE6(cap_rt_capprotect, , , state, (uintptr_t)"token-mint",
-		    target, caller_nonce, priv->cp_flags,
+		    target, caller_nonce, token_flags,
 		    curthread->td_proc->p_pid, 0);
 		return (0);
 	}

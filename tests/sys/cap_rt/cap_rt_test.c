@@ -4652,6 +4652,100 @@ ATF_TC_BODY(cap_pro_refcount_shield, tc)
 	close(sv[0]);
 }
 
+ATF_TC(cap_pro_mint_narrow_subset);
+ATF_TC_HEAD(cap_pro_mint_narrow_subset, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "MINT with subset of shield flags succeeds");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_mint_narrow_subset, tc)
+{
+	struct cap_rt_call_args ca;
+	struct cp_request req;
+	int fd, token_fd, reply_fds[1];
+
+	fd = capprotect_shield(CP_SF_PTRACE | CP_SF_SIGNAL | CP_SF_VISIBLE);
+	ATF_REQUIRE(fd >= 0);
+
+	memset(&req, 0, sizeof(req));
+	req.op = CP_OP_MINT;
+	req.flags = CP_SF_SIGNAL;  /* narrowed: only signal access */
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(fd, CAP_RT_CALL, &ca) == 0);
+	token_fd = reply_fds[0];
+	ATF_CHECK(token_fd >= 0);
+	close(token_fd);
+	close(fd);
+}
+
+ATF_TC(cap_pro_mint_narrow_rejects_unshielded);
+ATF_TC_HEAD(cap_pro_mint_narrow_rejects_unshielded, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "MINT with flags outside shield scope fails");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_mint_narrow_rejects_unshielded, tc)
+{
+	struct cap_rt_call_args ca;
+	struct cp_request req;
+	int fd, reply_fds[1];
+
+	fd = capprotect_shield(CP_SF_PTRACE | CP_SF_SIGNAL);
+	ATF_REQUIRE(fd >= 0);
+
+	memset(&req, 0, sizeof(req));
+	req.op = CP_OP_MINT;
+	req.flags = CP_SF_VISIBLE;  /* not in shield scope */
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_CHECK(ioctl(fd, CAP_RT_CALL, &ca) != 0);
+	ATF_CHECK(errno == EINVAL);
+	close(fd);
+}
+
+ATF_TC(cap_pro_mint_narrow_zero_gives_all);
+ATF_TC_HEAD(cap_pro_mint_narrow_zero_gives_all, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "MINT with flags=0 gives full shield scope");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_mint_narrow_zero_gives_all, tc)
+{
+	struct cap_rt_call_args ca;
+	struct cp_request req;
+	int fd, token_fd, reply_fds[1];
+
+	fd = capprotect_shield(CP_SF_PTRACE | CP_SF_SIGNAL);
+	ATF_REQUIRE(fd >= 0);
+
+	memset(&req, 0, sizeof(req));
+	req.op = CP_OP_MINT;
+	req.flags = 0;  /* should get all shield flags */
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply_fds = reply_fds;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(fd, CAP_RT_CALL, &ca) == 0);
+	token_fd = reply_fds[0];
+	ATF_CHECK(token_fd >= 0);
+	close(token_fd);
+	close(fd);
+}
+
 /* ================================================================
  * Token capability
  * ================================================================ */
@@ -6227,6 +6321,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cap_pro_token_close_revokes);
 	ATF_TP_ADD_TC(tp, cap_pro_delegated_access);
 	ATF_TP_ADD_TC(tp, cap_pro_refcount_shield);
+	ATF_TP_ADD_TC(tp, cap_pro_mint_narrow_subset);
+	ATF_TP_ADD_TC(tp, cap_pro_mint_narrow_rejects_unshielded);
+	ATF_TP_ADD_TC(tp, cap_pro_mint_narrow_zero_gives_all);
 
 	/* Mint restriction */
 	ATF_TP_ADD_TC(tp, capsicum_mint_right);
