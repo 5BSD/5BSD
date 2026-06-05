@@ -55,8 +55,11 @@ messaging.
 
 ## Design Rules
 
-1. **A service is async OR sync, never both.**  Pick `co_handler`
-   (async, taskqueue dispatch) or `co_call` (sync, caller's thread).
+1. **A service implements `co_handler`, `co_call`, or both.**
+   `co_handler` handles async messages (taskqueue dispatch).
+   `co_call` handles sync calls (caller's thread).  Most services
+   use one or the other, but both can be provided when a service
+   needs sync operations alongside async messaging.
 2. **Messages are the interface.**  Every operation goes through
    `CAP_RT_SENDMSG`/`CAP_RT_RECVMSG` (async) or `CAP_RT_CALL` (sync).
    No direct struct access from userspace.
@@ -196,8 +199,8 @@ cap_rt is fully usable inside `cap_enter()`:
 
 ## Writing a Service
 
-A CAP_RT service is a kernel module with one callback -- `co_handler`
-(async) or `co_call` (sync), never both:
+A CAP_RT service is a kernel module that implements `co_handler`
+(async), `co_call` (sync), or both:
 
 ```c
 #include "cap_rt.h"
@@ -248,7 +251,8 @@ echo_modevent(module_t mod, int type, void *arg)
 | `co_revoke` | Instance dying, after all work drains | Varies | No (void) |
 | `co_fdclose` | Specific fd closed, instance may survive | Caller | No (void) |
 
-All are optional except one of `co_handler` or `co_call`.
+All are optional except at least one of `co_handler` or `co_call`
+(both may be provided).
 
 ### Revocation reasons
 
