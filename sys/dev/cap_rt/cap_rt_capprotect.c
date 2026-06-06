@@ -854,6 +854,23 @@ cp_mac_file_check_receive(struct ucred *cred, struct file *fp __unused)
 	    EACCES));
 }
 
+static int
+cp_mac_vnode_check_exec(struct ucred *cred, struct vnode *vp __unused,
+    struct label *vplabel __unused, struct image_params *imgp __unused,
+    struct label *execlabel __unused)
+{
+
+	return (cp_check_self_restrict(cred, CP_SF_NOEXEC, "exec", EPERM));
+}
+
+static int
+cp_mac_socket_check_create(struct ucred *cred, int domain __unused,
+    int type __unused, int protocol __unused)
+{
+
+	return (cp_check_self_restrict(cred, CP_SF_NOSOCK, "socket", EPERM));
+}
+
 /*
  * IPC lockdown — block SysV and POSIX IPC for shielded nonces.
  * One function handles all IPC hooks since the policy is binary.
@@ -956,6 +973,8 @@ static struct mac_policy_ops cp_mac_ops = {
 	.mpo_priv_check = cp_mac_priv_check,
 	.mpo_proc_check_fork = cp_mac_check_fork,
 	.mpo_file_check_receive = cp_mac_file_check_receive,
+	.mpo_vnode_check_exec = cp_mac_vnode_check_exec,
+	.mpo_socket_check_create = cp_mac_socket_check_create,
 	/* IPC lockdown */
 	.mpo_sysvshm_check_shmat = cp_mac_sysvshm_check_shmat,
 	.mpo_sysvshm_check_shmctl = cp_mac_sysvshm_check_shmctl,

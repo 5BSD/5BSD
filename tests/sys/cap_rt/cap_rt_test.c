@@ -4747,6 +4747,169 @@ ATF_TC_BODY(cap_pro_mint_narrow_zero_gives_all, tc)
 }
 
 /* ================================================================
+ * Self-restriction: CP_SF_NOEXEC / CP_SF_NOSOCK
+ * ================================================================ */
+
+ATF_TC(cap_pro_noexec_blocks_exec);
+ATF_TC_HEAD(cap_pro_noexec_blocks_exec, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CP_SF_NOEXEC prevents execve in shielded child");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_noexec_blocks_exec, tc)
+{
+	int sv[2], status;
+	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int fd;
+		close(sv[0]);
+		fd = capprotect_shield(CP_SF_NOEXEC);
+		if (fd < 0) _exit(10);
+		write(sv[1], "r", 1);
+		/* Try to exec — should fail with EPERM. */
+		execl("/bin/true", "true", NULL);
+		/* If we get here, exec failed as expected. */
+		_exit(errno == EPERM ? 0 : 1);
+	}
+	close(sv[1]);
+	{ char buf; read(sv[0], &buf, 1); }
+	waitpid(pid, &status, 0);
+	close(sv[0]);
+	ATF_CHECK(WIFEXITED(status));
+	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
+}
+
+ATF_TC(cap_pro_noexec_unshield_allows_exec);
+ATF_TC_HEAD(cap_pro_noexec_unshield_allows_exec, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Closing shield fd removes CP_SF_NOEXEC, exec succeeds");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_noexec_unshield_allows_exec, tc)
+{
+	int status;
+	pid_t pid;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int fd;
+		fd = capprotect_shield(CP_SF_NOEXEC);
+		if (fd < 0) _exit(10);
+		close(fd);
+		execl("/bin/true", "true", NULL);
+		_exit(1);  /* exec failed unexpectedly */
+	}
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status));
+	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
+}
+
+ATF_TC(cap_pro_nosock_blocks_socket);
+ATF_TC_HEAD(cap_pro_nosock_blocks_socket, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CP_SF_NOSOCK prevents socket() in shielded child");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_nosock_blocks_socket, tc)
+{
+	int status;
+	pid_t pid;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int fd, sock;
+		fd = capprotect_shield(CP_SF_NOSOCK);
+		if (fd < 0) _exit(10);
+		sock = socket(AF_UNIX, SOCK_STREAM, 0);
+		if (sock >= 0) {
+			close(sock);
+			close(fd);
+			_exit(1);  /* socket should have failed */
+		}
+		close(fd);
+		_exit(errno == EPERM ? 0 : 2);
+	}
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status));
+	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
+}
+
+ATF_TC(cap_pro_nosock_unshield_allows_socket);
+ATF_TC_HEAD(cap_pro_nosock_unshield_allows_socket, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Closing shield fd removes CP_SF_NOSOCK, socket succeeds");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_nosock_unshield_allows_socket, tc)
+{
+	int status;
+	pid_t pid;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int fd, sock;
+		fd = capprotect_shield(CP_SF_NOSOCK);
+		if (fd < 0) _exit(10);
+		close(fd);
+		sock = socket(AF_UNIX, SOCK_STREAM, 0);
+		if (sock < 0) _exit(1);  /* socket should have worked */
+		close(sock);
+		_exit(0);
+	}
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status));
+	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
+}
+
+ATF_TC(cap_pro_nosock_socketpair_blocked);
+ATF_TC_HEAD(cap_pro_nosock_socketpair_blocked, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CP_SF_NOSOCK also blocks socketpair()");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_nosock_socketpair_blocked, tc)
+{
+	int status;
+	pid_t pid;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int fd, sv[2];
+		fd = capprotect_shield(CP_SF_NOSOCK);
+		if (fd < 0) _exit(10);
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0) {
+			close(sv[0]);
+			close(sv[1]);
+			close(fd);
+			_exit(1);  /* socketpair should have failed */
+		}
+		close(fd);
+		_exit(errno == EPERM ? 0 : 2);
+	}
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status));
+	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
+}
+
+/* ================================================================
  * Token capability
  * ================================================================ */
 
@@ -6324,6 +6487,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cap_pro_mint_narrow_subset);
 	ATF_TP_ADD_TC(tp, cap_pro_mint_narrow_rejects_unshielded);
 	ATF_TP_ADD_TC(tp, cap_pro_mint_narrow_zero_gives_all);
+	ATF_TP_ADD_TC(tp, cap_pro_noexec_blocks_exec);
+	ATF_TP_ADD_TC(tp, cap_pro_noexec_unshield_allows_exec);
+	ATF_TP_ADD_TC(tp, cap_pro_nosock_blocks_socket);
+	ATF_TP_ADD_TC(tp, cap_pro_nosock_unshield_allows_socket);
+	ATF_TP_ADD_TC(tp, cap_pro_nosock_socketpair_blocked);
 
 	/* Mint restriction */
 	ATF_TP_ADD_TC(tp, capsicum_mint_right);
