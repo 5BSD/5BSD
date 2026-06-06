@@ -220,6 +220,16 @@ struct node_pdeathsig_reply {
 	uint32_t	signal;
 } __packed;
 .Ed
+.It Dv NODE_OP_GET_PGRP Pq 26
+Return the target process's process group ID.
+No privilege check needed (observation only).
+Not self-only.
+.Bd -literal -offset indent
+struct node_pgrp_reply {
+	uint32_t	status;
+	int32_t		pgid;
+} __packed;
+.Ed
 .El
 .Ss Control Operations
 .Bl -tag -width "NODE_OP_SET_PDEATHSIG"
@@ -409,6 +419,25 @@ struct node_pdeathsig_set {
 	uint32_t	signal;
 } __packed;
 .Ed
+.It Dv NODE_OP_SIGNAL Pq 30
+Send a signal to the target process.
+The signal number must be in the range 1 to
+.Dv NSIG Ns \-1 .
+Uses the
+.Fn p_cansignal
+permission check followed by
+.Fn kern_psignal .
+Not self-only \(em the primary use case is signaling a child
+held via a process descriptor.
+.Bd -literal -offset indent
+struct node_signal_req {
+	uint32_t	op;
+	uint32_t	signal;
+} __packed;
+.Ed
+.Pp
+Returns
+.Vt struct node_status_reply .
 .El
 .Ss Process Reaper Operations
 These operations manage the process reaper facility.
@@ -443,6 +472,32 @@ struct node_reap_status_reply {
 	uint32_t	rs_descendants;
 	int32_t		rs_reaper;
 	int32_t		rs_pid;
+} __packed;
+.Ed
+.It Dv NODE_OP_REAP_GETPIDS Pq 28
+Return a list of descendant process IDs under the reaper.
+Self-only.
+The reply is variable-length: a header with a count field
+followed by an array of entries, capped to what fits in the
+reply buffer.
+.Pp
+Each entry contains the descendant's PID, the subtree root PID,
+and flags distinguishing direct children from deeper descendants.
+.Bd -literal -offset indent
+#define	NODE_REAP_PIDINFO_CHILD		0x0001
+#define	NODE_REAP_PIDINFO_DESCENDANT	0x0002
+
+struct node_reap_pidentry {
+	int32_t		pid;
+	int32_t		subtree;
+	uint32_t	flags;
+	uint32_t	_pad;
+} __packed;
+
+struct node_reap_getpids_reply {
+	uint32_t	status;
+	uint32_t	count;
+	struct node_reap_pidentry entries[];
 } __packed;
 .Ed
 .It Dv NODE_OP_REAP_KILL Pq 27
@@ -485,7 +540,8 @@ call:
 .It Bq Er EINVAL
 The request is too small, the reply buffer is too small,
 .Fa resource
-is out of range, or the operation code is unknown.
+is out of range, the signal number is out of range, or the
+operation code is unknown.
 .It Bq Er ESRCH
 The attached process descriptor refers to a process that no longer
 exists.
@@ -498,6 +554,10 @@ or
 .Dv NODE_OP_SET_PGRP
 was called with a remote target.
 These operations are self-only.
+.Dv NODE_OP_REAP_GETPIDS
+also returns
+.Dv NODE_STATUS_EPERM
+in the reply when the target is not the caller.
 .El
 .Sh SEE ALSO
 .Xr pdfork 2 ,

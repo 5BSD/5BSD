@@ -733,8 +733,11 @@ Per-process inspection and control via attached procdesc.
 | SET_CRED | Set uid/gid/groups (via setcred) | yes |
 | GET/SET_UMASK | Read or update file creation mask | yes |
 | SET_LOGIN | Set session login name | yes |
+| GET_PGRP | Get process group id | yes |
 | SET_SESSION | Create new session (setsid) | **self only** |
 | SET_PGRP | Set process group (setpgid) | **self only** |
+| SIGNAL | Send signal to target process | yes |
+| REAP_GETPIDS | List reaped descendant PIDs | **self only** |
 
 ### accounting (sync, CAP_RT_CALL)
 

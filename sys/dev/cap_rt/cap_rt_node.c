@@ -35,6 +35,7 @@
 #include <sys/sx.h>
 #include <sys/syscallsubr.h>
 #include <sys/sdt.h>
+#include <sys/signalvar.h>
 #include <sys/ucred.h>
 
 #include <vm/uma.h>
@@ -1096,6 +1097,139 @@ node_op_set_login(struct thread *td __unused, struct proc *p,
 }
 
 static int
+node_op_get_pgrp(struct proc *p, void *reply, size_t *replylenp)
+{
+	struct node_pgrp_reply *rp = reply;
+
+	NODE_REPLY_INIT(rp, replylenp);
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	if (p->p_pgrp == NULL) {
+		rp->status = NODE_STATUS_DEAD;
+		return (0);
+	}
+
+	rp->status = NODE_STATUS_OK;
+	rp->pgid = p->p_pgrp->pg_id;
+
+	return (0);
+}
+
+static int
+node_op_reap_getpids(struct thread *td, struct proc *p,
+    void *reply, size_t *replylenp)
+{
+	struct node_reap_getpids_reply *rp = reply;
+	struct proc *reap, *p2;
+	size_t hdr_sz, max_entries;
+	uint32_t i;
+
+	hdr_sz = sizeof(*rp);
+	if (*replylenp < hdr_sz)
+		return (EINVAL);
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	if (p != td->td_proc) {
+		memset(rp, 0, hdr_sz);
+		*replylenp = hdr_sz;
+		rp->status = NODE_STATUS_EPERM;
+		return (0);
+	}
+
+	if (p->p_flag & P_WEXIT) {
+		memset(rp, 0, hdr_sz);
+		*replylenp = hdr_sz;
+		rp->status = NODE_STATUS_DEAD;
+		return (0);
+	}
+
+	/* How many entries fit in the reply buffer? */
+	max_entries = (*replylenp - hdr_sz) / sizeof(struct node_reap_pidentry);
+	if (max_entries > NODE_REAP_GETPIDS_MAX)
+		max_entries = NODE_REAP_GETPIDS_MAX;
+
+	/*
+	 * Walk the reap list directly.  kern_procctl_single cannot be
+	 * used here because reap_getpids() does copyout() to a
+	 * userspace pointer internally.
+	 *
+	 * Lock ordering: release PROC_LOCK, acquire proctree_lock (sx),
+	 * then reacquire PROC_LOCK.  _PHOLD keeps proc alive.
+	 */
+	_PHOLD(p);
+	PROC_UNLOCK(p);
+	sx_slock(&proctree_lock);
+
+	reap = (p->p_treeflag & P_TREE_REAPER) == 0 ? p->p_reaper : p;
+
+	memset(rp, 0, hdr_sz);
+	rp->status = NODE_STATUS_OK;
+	i = 0;
+	LIST_FOREACH(p2, &reap->p_reaplist, p_reapsibling) {
+		if (i >= max_entries)
+			break;
+		rp->entries[i].pid = p2->p_pid;
+		rp->entries[i].subtree = p2->p_reapsubtree;
+		rp->entries[i].flags = 0;
+		rp->entries[i]._pad = 0;
+		if (proc_realparent(p2) == reap)
+			rp->entries[i].flags |= NODE_REAP_PIDINFO_CHILD;
+		else
+			rp->entries[i].flags |= NODE_REAP_PIDINFO_DESCENDANT;
+		i++;
+	}
+	rp->count = i;
+
+	sx_sunlock(&proctree_lock);
+	PROC_LOCK(p);
+	_PRELE(p);
+
+	*replylenp = hdr_sz + i * sizeof(struct node_reap_pidentry);
+	return (0);
+}
+
+static int
+node_op_signal(struct thread *td, struct proc *p,
+    const void *req, size_t reqlen,
+    void *reply, size_t *replylenp)
+{
+	const struct node_signal_req *sr = req;
+	struct node_status_reply *rp = reply;
+	int sig, error;
+
+	if (reqlen < sizeof(*sr) || *replylenp < sizeof(*rp))
+		return (EINVAL);
+	*replylenp = sizeof(*rp);
+
+	sig = sr->signal;
+	if (sig < 1 || sig >= NSIG)
+		return (EINVAL);
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	memset(rp, 0, sizeof(*rp));
+
+	if (p->p_flag & P_WEXIT) {
+		rp->status = NODE_STATUS_DEAD;
+		return (0);
+	}
+
+	error = p_cansignal(td, p, sig);
+	if (error != 0) {
+		rp->status = NODE_STATUS_EPERM;
+		SDT_PROBE3(cap_rt_node, , , deny, (uintptr_t)"signal",
+		    p->p_pid, curthread->td_proc->p_pid);
+		return (0);
+	}
+
+	kern_psignal(p, sig);
+	rp->status = NODE_STATUS_OK;
+
+	return (0);
+}
+
+static int
 node_call(struct cap_rt_instance *s __unused,
     const void *req, size_t reqlen,
     struct file **fds, struct filecaps *fcaps __unused, int nfds,
@@ -1252,6 +1386,17 @@ node_call(struct cap_rt_instance *s __unused,
 		break;
 	case NODE_OP_REAP_KILL:
 		error = node_op_reap_kill(curthread, p, req, reqlen,
+		    reply, replylenp);
+		break;
+	case NODE_OP_GET_PGRP:
+		error = node_op_get_pgrp(p, reply, replylenp);
+		break;
+	case NODE_OP_REAP_GETPIDS:
+		error = node_op_reap_getpids(curthread, p,
+		    reply, replylenp);
+		break;
+	case NODE_OP_SIGNAL:
+		error = node_op_signal(curthread, p, req, reqlen,
 		    reply, replylenp);
 		break;
 	default:

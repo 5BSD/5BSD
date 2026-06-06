@@ -2271,6 +2271,260 @@ ATF_TC_BODY(capprotect_chroot, tc)
 }
 
 /* ----------------------------------------------------------------
+ * GET_PGRP, REAP_GETPIDS, SIGNAL tests
+ * ---------------------------------------------------------------- */
+
+ATF_TC(node_get_pgrp_child);
+ATF_TC_HEAD(node_get_pgrp_child, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "NODE_OP_GET_PGRP on child returns correct process group");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+}
+ATF_TC_BODY(node_get_pgrp_child, tc)
+{
+	struct node_request req;
+	struct node_pgrp_reply reply;
+	int fd, pd, status, sv[2];
+	pid_t pid, child_pgrp;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		pid_t my_pgrp;
+
+		close(fd);
+		close(sv[0]);
+		/* Report our pgrp to parent */
+		my_pgrp = getpgrp();
+		write(sv[1], &my_pgrp, sizeof(my_pgrp));
+		/* Wait for parent to finish testing */
+		read(sv[1], &my_pgrp, sizeof(my_pgrp));
+		_exit(0);
+	}
+	close(sv[1]);
+
+	/* Read child's pgrp */
+	ATF_REQUIRE(read(sv[0], &child_pgrp, sizeof(child_pgrp)) ==
+	    (ssize_t)sizeof(child_pgrp));
+
+	memset(&req, 0, sizeof(req));
+	req.op = NODE_OP_GET_PGRP;
+	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+	ATF_CHECK_EQ(reply.pgid, child_pgrp);
+
+	/* Let child exit */
+	write(sv[0], "x", 1);
+	close(sv[0]);
+	waitpid(pid, &status, 0);
+	close(pd);
+	close(fd);
+}
+
+ATF_TC(node_reap_getpids);
+ATF_TC_HEAD(node_reap_getpids, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "REAP_GETPIDS returns list of reaped descendant PIDs");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(node_reap_getpids, tc)
+{
+	struct node_request req;
+	struct node_status_reply areply;
+	char reply_buf[4096];
+	struct node_reap_getpids_reply *gp;
+	int fd, status;
+	pid_t c1, c2, c3;
+	uint32_t i;
+	int found1, found2, found3;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	/* Become reaper */
+	memset(&req, 0, sizeof(req));
+	req.op = NODE_OP_REAP_ACQUIRE;
+	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), NULL, 0,
+	    &areply, sizeof(areply)) == 0);
+	ATF_REQUIRE(areply.status == NODE_STATUS_OK);
+
+	/* Fork three children */
+	c1 = fork();
+	ATF_REQUIRE(c1 >= 0);
+	if (c1 == 0) { sleep(60); _exit(0); }
+
+	c2 = fork();
+	ATF_REQUIRE(c2 >= 0);
+	if (c2 == 0) { sleep(60); _exit(0); }
+
+	c3 = fork();
+	ATF_REQUIRE(c3 >= 0);
+	if (c3 == 0) { sleep(60); _exit(0); }
+
+	/* Let children start */
+	usleep(50000);
+
+	/* Get descendant PIDs */
+	memset(&req, 0, sizeof(req));
+	req.op = NODE_OP_REAP_GETPIDS;
+	memset(reply_buf, 0, sizeof(reply_buf));
+	ATF_REQUIRE(node_call_raw(fd, &req, sizeof(req), NULL, 0,
+	    reply_buf, sizeof(reply_buf)) == 0);
+	gp = (struct node_reap_getpids_reply *)reply_buf;
+	ATF_CHECK_EQ(gp->status, NODE_STATUS_OK);
+	ATF_CHECK(gp->count >= 3);
+
+	/* Verify all three children appear in the list */
+	found1 = found2 = found3 = 0;
+	for (i = 0; i < gp->count; i++) {
+		if (gp->entries[i].pid == c1)
+			found1 = 1;
+		if (gp->entries[i].pid == c2)
+			found2 = 1;
+		if (gp->entries[i].pid == c3)
+			found3 = 1;
+	}
+	ATF_CHECK_MSG(found1, "child c1 (pid %d) not in getpids list", c1);
+	ATF_CHECK_MSG(found2, "child c2 (pid %d) not in getpids list", c2);
+	ATF_CHECK_MSG(found3, "child c3 (pid %d) not in getpids list", c3);
+
+	/* Verify direct children have CHILD flag */
+	for (i = 0; i < gp->count; i++) {
+		if (gp->entries[i].pid == c1 ||
+		    gp->entries[i].pid == c2 ||
+		    gp->entries[i].pid == c3)
+			ATF_CHECK_MSG(
+			    gp->entries[i].flags & NODE_REAP_PIDINFO_CHILD,
+			    "pid %d missing CHILD flag",
+			    gp->entries[i].pid);
+	}
+
+	/* Clean up */
+	kill(c1, SIGKILL);
+	kill(c2, SIGKILL);
+	kill(c3, SIGKILL);
+	waitpid(c1, &status, 0);
+	waitpid(c2, &status, 0);
+	waitpid(c3, &status, 0);
+
+	memset(&req, 0, sizeof(req));
+	req.op = NODE_OP_REAP_RELEASE;
+	node_call_raw(fd, &req, sizeof(req), NULL, 0,
+	    &areply, sizeof(areply));
+
+	close(fd);
+}
+
+ATF_TC(node_signal_child);
+ATF_TC_HEAD(node_signal_child, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "NODE_OP_SIGNAL sends signal to child via procdesc");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+}
+ATF_TC_BODY(node_signal_child, tc)
+{
+	struct node_signal_req sreq;
+	struct node_status_reply reply;
+	int fd, pd, status, sv[2];
+	pid_t pid;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		sigset_t set;
+		int sig;
+
+		close(fd);
+		close(sv[0]);
+
+		/* Tell parent we're ready */
+		write(sv[1], "r", 1);
+		close(sv[1]);
+
+		/* Wait for SIGUSR1 */
+		sigemptyset(&set);
+		sigaddset(&set, SIGUSR1);
+		sigprocmask(SIG_BLOCK, &set, NULL);
+		sigwait(&set, &sig);
+
+		/* Exit 0 if we got SIGUSR1, 1 otherwise */
+		_exit(sig == SIGUSR1 ? 0 : 1);
+	}
+	close(sv[1]);
+
+	/* Wait for child to be ready */
+	{
+		char buf;
+		ATF_REQUIRE(read(sv[0], &buf, 1) == 1);
+	}
+	close(sv[0]);
+
+	/* Send SIGUSR1 via NODE_OP_SIGNAL */
+	memset(&sreq, 0, sizeof(sreq));
+	sreq.op = NODE_OP_SIGNAL;
+	sreq.signal = SIGUSR1;
+	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), &pd, 1,
+	    &reply, sizeof(reply)) == 0);
+	ATF_CHECK_EQ(reply.status, NODE_STATUS_OK);
+
+	/* Verify child received the signal and exited cleanly */
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child exit status %d (signal %d)",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1,
+	    WIFSIGNALED(status) ? WTERMSIG(status) : -1);
+
+	close(pd);
+	close(fd);
+}
+
+ATF_TC(node_signal_invalid);
+ATF_TC_HEAD(node_signal_invalid, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "NODE_OP_SIGNAL rejects invalid signal numbers");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_node");
+}
+ATF_TC_BODY(node_signal_invalid, tc)
+{
+	struct node_signal_req sreq;
+	struct node_status_reply reply;
+	int fd;
+
+	fd = cap_rt_connect("node");
+	ATF_REQUIRE(fd >= 0);
+
+	/* Signal 0 is invalid */
+	memset(&sreq, 0, sizeof(sreq));
+	sreq.op = NODE_OP_SIGNAL;
+	sreq.signal = 0;
+	ATF_CHECK_ERRNO(EINVAL,
+	    node_call_raw(fd, &sreq, sizeof(sreq), NULL, 0,
+	    &reply, sizeof(reply)) == -1);
+
+	/* Signal >= NSIG is invalid */
+	sreq.signal = 128;
+	ATF_CHECK_ERRNO(EINVAL,
+	    node_call_raw(fd, &sreq, sizeof(sreq), NULL, 0,
+	    &reply, sizeof(reply)) == -1);
+
+	close(fd);
+}
+
+/* ----------------------------------------------------------------
  * Test registration
  * ---------------------------------------------------------------- */
 
@@ -2334,6 +2588,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, node_protect_child);
 	ATF_TP_ADD_TC(tp, node_reap_acquire_self);
 	ATF_TP_ADD_TC(tp, node_reap_kill_children);
+	ATF_TP_ADD_TC(tp, node_get_pgrp_child);
+	ATF_TP_ADD_TC(tp, node_reap_getpids);
+	ATF_TP_ADD_TC(tp, node_signal_child);
+	ATF_TP_ADD_TC(tp, node_signal_invalid);
 	ATF_TP_ADD_TC(tp, capprotect_capmode);
 	ATF_TP_ADD_TC(tp, capprotect_chroot);
 

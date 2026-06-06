@@ -39,9 +39,11 @@
 #define	NODE_OP_REAP_ACQUIRE	23	/* become reaper (self-only) */
 #define	NODE_OP_REAP_RELEASE	24	/* relinquish reaper (self-only) */
 #define	NODE_OP_REAP_STATUS	25	/* query reaper descendant info */
-/* 26 reserved */
+#define	NODE_OP_GET_PGRP	26	/* get process group id */
 #define	NODE_OP_REAP_KILL	27	/* signal entire subtree */
-/* 28-29 reserved (capmode/chroot moved to capprotect service) */
+#define	NODE_OP_REAP_GETPIDS	28	/* get descendant pid list */
+/* 29 reserved */
+#define	NODE_OP_SIGNAL		30	/* send signal to target process */
 
 /* Status codes */
 #define	NODE_STATUS_OK		0
@@ -299,6 +301,42 @@ struct node_reap_kill_reply {
 struct node_status_reply {
 	uint32_t	status;
 	uint32_t	_pad;
+} __packed;
+
+/* Reply: pgrp */
+struct node_pgrp_reply {
+	uint32_t	status;
+	int32_t		pgid;
+} __packed;
+
+/* For SIGNAL */
+struct node_signal_req {
+	uint32_t	op;		/* NODE_OP_SIGNAL */
+	uint32_t	signal;		/* signal number (1..NSIG-1) */
+} __packed;
+
+/* Reply: reap_getpids — variable length */
+#define	NODE_REAP_PIDINFO_CHILD		0x0001	/* direct child of reaper */
+#define	NODE_REAP_PIDINFO_DESCENDANT	0x0002	/* deeper descendant */
+
+struct node_reap_pidentry {
+	int32_t		pid;
+	int32_t		subtree;	/* subtree root pid */
+	uint32_t	flags;		/* NODE_REAP_PIDINFO_* */
+	uint32_t	_pad;
+} __packed;
+
+/*
+ * Variable-length reply: count followed by entries.
+ * Maximum entries capped to what fits in CAP_RT_MAX_MSG.
+ */
+#define	NODE_REAP_GETPIDS_MAX						\
+    ((14336 - sizeof(uint32_t) * 2) / sizeof(struct node_reap_pidentry))
+
+struct node_reap_getpids_reply {
+	uint32_t	status;
+	uint32_t	count;		/* entries returned */
+	struct node_reap_pidentry entries[];
 } __packed;
 
 #endif /* _DEV_CAP_RT_CAP_RT_NODE_PROTO_H_ */
