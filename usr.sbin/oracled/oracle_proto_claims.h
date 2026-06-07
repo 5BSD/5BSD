@@ -20,6 +20,10 @@ int	auto_claim_path(const char *path, int *errp);
 int	auto_claim_net(const struct oracled_net_claim *nc, int *errp);
 int	auto_claim_jail(const struct oracled_jail_claim *jc, int *errp);
 int	auto_claim_system(uint32_t gates, int *errp);
+void	release_auto_claim_path(const char *path);
+void	release_auto_claim_net(const struct oracled_net_claim *nc);
+void	release_auto_claim_jail(const struct oracled_jail_claim *jc);
+void	release_auto_claim_system(uint32_t gates);
 
 /* Explicit claim/release handlers (called from dispatch switch). */
 void	handle_claim_path(const void *payload, uint32_t len,

@@ -43,7 +43,9 @@ net_claim_eq(const struct oracled_net_claim *a,
 	    a->protocol == b->protocol &&
 	    a->port_min == b->port_min &&
 	    a->port_max == b->port_max &&
-	    a->direction == b->direction);
+	    a->direction == b->direction &&
+	    a->prefix == b->prefix &&
+	    memcmp(a->addr, b->addr, sizeof(a->addr)) == 0);
 }
 
 static void
@@ -170,6 +172,8 @@ query_net_claimed(const struct oracled_net_claim *nc)
 	req.port_min = htons(nc->port_min);
 	req.port_max = htons(nc->port_max);
 	req.direction = nc->direction;
+	req.prefix = nc->prefix;
+	memcpy(req.addr, nc->addr, sizeof(req.addr));
 
 	if (cap_rt_do_call(cap_rt_isolation_fd, &req, sizeof(req),
 	    &reply, sizeof(reply)) == -1)
@@ -297,6 +301,8 @@ cap_rt_claim_net(const struct oracled_net_claim *nc)
 	req.port_min = htons(nc->port_min);
 	req.port_max = htons(nc->port_max);
 	req.direction = nc->direction;
+	req.prefix = nc->prefix;
+	memcpy(req.addr, nc->addr, sizeof(req.addr));
 	net_claim_port_string(nc, portbuf, sizeof(portbuf));
 
 	if (cap_rt_do_call(cap_rt_isolation_fd, &req, sizeof(req),
@@ -403,6 +409,8 @@ cap_rt_release_net(const struct oracled_net_claim *nc)
 	req.port_min = htons(nc->port_min);
 	req.port_max = htons(nc->port_max);
 	req.direction = nc->direction;
+	req.prefix = nc->prefix;
+	memcpy(req.addr, nc->addr, sizeof(req.addr));
 	net_claim_port_string(nc, portbuf, sizeof(portbuf));
 
 	if (cap_rt_do_call(cap_rt_isolation_fd, &req, sizeof(req),
@@ -964,16 +972,23 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 #undef CARRY_FORWARD
 
 		/* System gates: add only what was acquired, remove only
-		 * what was released.  Preserve dynamic refcounts. */
+		 * what was released.  Preserve dynamic refcounts for
+		 * service-owned gates that remain service-owned. */
 		eff->claim_system = oldcfg->claim_system;
 		eff->claim_system |= gates_acquired;
 		eff->claim_system &= ~gates_released;
 		eff->claim_system_policy = newcfg->claim_system_policy;
 		eff->claim_system_service = oldcfg->claim_system_service;
 		eff->claim_system_service &= ~gates_released;
+		eff->claim_system_service &= ~eff->claim_system_policy;
 		memcpy(eff->claim_system_refcount,
 		    oldcfg->claim_system_refcount,
 		    sizeof(eff->claim_system_refcount));
+		for (i = 0; i < ORACLED_SYSTEM_GATE_NBITS; i++) {
+			if ((gates_released | eff->claim_system_policy) &
+			    (1U << i))
+				eff->claim_system_refcount[i] = 0;
+		}
 	}
 
 	syslog(LOG_INFO, "reload: claims %d acquired, %d released, %d failed",

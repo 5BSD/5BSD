@@ -230,6 +230,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	struct group *gr;
 	struct timespec exec_start;
 	char homedir[PATH_MAX];
+	struct svc_manifest minted_manifest;
 	int oracle_end, child_end, coalition_fd;
 	int token_fds[SVC_MAX_TOKENS];
 	unsigned ntokens;
@@ -243,6 +244,8 @@ svc_exec(struct svc_runtime *svc, int kq)
 	unsigned i;
 
 	m = &svc->manifest;
+	memset(&minted_manifest, 0, sizeof(minted_manifest));
+	strlcpy(minted_manifest.label, m->label, sizeof(minted_manifest.label));
 	clock_gettime(CLOCK_MONOTONIC, &exec_start);
 
 	if (svc->state != SVC_STATE_STOPPED) {
@@ -351,8 +354,17 @@ svc_exec(struct svc_runtime *svc, int kq)
 #define	MINT_CHECK_DEADLINE() do {					\
 	clock_gettime(CLOCK_MONOTONIC, &mint_now);			\
 	elapsed_ms = (uint64_t)(mint_now.tv_sec - mint_start.tv_sec) *	\
-	    1000 + (uint64_t)(mint_now.tv_nsec - mint_start.tv_nsec) /	\
-	    1000000;							\
+	    1000;							\
+	if (mint_now.tv_nsec >= mint_start.tv_nsec) {			\
+		elapsed_ms +=						\
+		    (uint64_t)(mint_now.tv_nsec - mint_start.tv_nsec) /	\
+		    1000000;						\
+	} else {							\
+		elapsed_ms -= 1000;					\
+		elapsed_ms +=						\
+		    (uint64_t)(1000000000L + mint_now.tv_nsec -		\
+		    mint_start.tv_nsec) / 1000000;			\
+	}								\
 	if (elapsed_ms > SVC_MINT_DEADLINE_MS) {			\
 		syslog(LOG_ERR, "svc_exec %s: mint deadline exceeded "	\
 		    "(%ju ms, %u/%u tokens)", m->label,			\
@@ -366,6 +378,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	for (i = 0; i < m->ncap_paths; i++) {
 		int tfd = oracle_mint_path(sd.oracle_pair_fd,
 		    m->cap_paths[i]);
+
 		if (tfd == -1) {
 			syslog(LOG_ERR, "svc_exec %s: failed to mint "
 			    "token for %s", m->label, m->cap_paths[i]);
@@ -374,11 +387,15 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 		SERVICED_PROBE_CAP_MINT(m->label, "path", 0);
 		token_fds[ntokens++] = tfd;
+		strlcpy(minted_manifest.cap_paths[
+		    minted_manifest.ncap_paths++], m->cap_paths[i],
+		    PATH_MAX);
 		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_files; i++) {
 		int tfd = oracle_mint_file(sd.oracle_pair_fd,
 		    m->cap_files[i].path, m->cap_files[i].actions);
+
 		if (tfd == -1) {
 			syslog(LOG_ERR, "svc_exec %s: failed to mint "
 			    "file token for %s", m->label,
@@ -388,10 +405,13 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 		SERVICED_PROBE_CAP_MINT(m->label, "file", 0);
 		token_fds[ntokens++] = tfd;
+		minted_manifest.cap_files[minted_manifest.ncap_files++] =
+		    m->cap_files[i];
 		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_net; i++) {
 		int tfd = oracle_mint_net(sd.oracle_pair_fd, &m->cap_net[i]);
+
 		if (tfd == -1) {
 			syslog(LOG_ERR, "svc_exec %s: failed to mint "
 			    "network token %u", m->label, i);
@@ -400,11 +420,14 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 		SERVICED_PROBE_CAP_MINT(m->label, "net", 0);
 		token_fds[ntokens++] = tfd;
+		minted_manifest.cap_net[minted_manifest.ncap_net++] =
+		    m->cap_net[i];
 		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_jail; i++) {
 		int tfd = oracle_mint_jail(sd.oracle_pair_fd,
 		    &m->cap_jail[i]);
+
 		if (tfd == -1) {
 			syslog(LOG_ERR, "svc_exec %s: failed to mint "
 			    "jail token %u", m->label, i);
@@ -413,11 +436,14 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 		SERVICED_PROBE_CAP_MINT(m->label, "jail", 0);
 		token_fds[ntokens++] = tfd;
+		minted_manifest.cap_jail[minted_manifest.ncap_jail++] =
+		    m->cap_jail[i];
 		MINT_CHECK_DEADLINE();
 	}
 	if (m->cap_system != 0) {
 		int tfd = oracle_mint_system(sd.oracle_pair_fd,
 		    m->cap_system);
+
 		if (tfd == -1) {
 			syslog(LOG_ERR, "svc_exec %s: failed to mint "
 			    "system token", m->label);
@@ -426,6 +452,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 		SERVICED_PROBE_CAP_MINT(m->label, "system", 0);
 		token_fds[ntokens++] = tfd;
+		minted_manifest.cap_system = m->cap_system;
 	}
 
 #undef MINT_CHECK_DEADLINE
@@ -505,6 +532,8 @@ svc_exec(struct svc_runtime *svc, int kq)
 		    m->label);
 		pdkill(pd_fd, SIGKILL);
 		waitpid(pid, NULL, WNOHANG);
+		oracle_release_manifest(sd.oracle_pair_fd,
+		    &minted_manifest);
 		close(svc->pd_fd);
 		svc->pd_fd = -1;
 		close(svc->pair_fd);
@@ -542,6 +571,7 @@ fail_postfork:
 	SERVICED_PROBE_SVC_EXEC_FAIL(m->label, errno);
 	pdkill(pd_fd, SIGKILL);
 	waitpid(pid, NULL, WNOHANG);
+	oracle_release_manifest(sd.oracle_pair_fd, &minted_manifest);
 	close(pd_fd);
 	close(oracle_end);
 	close(coalition_fd);
@@ -553,6 +583,7 @@ fail_postfork:
 	return (-1);
 
 fail_tokens:
+	oracle_release_manifest(sd.oracle_pair_fd, &minted_manifest);
 	close(oracle_end);
 	close(child_end);
 	close(coalition_fd);

@@ -145,6 +145,7 @@ handle_mint_path(const void *payload, uint32_t len, uint64_t reply_token)
 
 	token_fd = cap_rt_mint_path_token(req->path);
 	if (token_fd == -1) {
+		release_auto_claim_path(req->path);
 		ORACLED_PROBE_MINT_PATH(req->path, EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
 		return;
@@ -191,6 +192,7 @@ handle_mint_file(const void *payload, uint32_t len, uint64_t reply_token)
 
 	token_fd = cap_rt_mint_file_token(req->path, req->actions);
 	if (token_fd == -1) {
+		release_auto_claim_path(req->path);
 		ORACLED_PROBE_MINT_PATH(req->path, EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
 		return;
@@ -223,6 +225,16 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
+	if (req->protocol != 0 && req->protocol != IPPROTO_TCP &&
+	    req->protocol != IPPROTO_UDP) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	if (req->prefix > 128 ||
+	    (req->domain == AF_INET && req->prefix > 32)) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
 	if (req->port_min > req->port_max) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
@@ -251,6 +263,7 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 
 	token_fd = cap_rt_mint_net_token(&nc);
 	if (token_fd == -1) {
+		release_auto_claim_net(&nc);
 		ORACLED_PROBE_MINT_NET(nc.port_min, nc.port_max, nc.protocol,
 		    EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
@@ -308,6 +321,7 @@ handle_mint_jail(const void *payload, uint32_t len, uint64_t reply_token)
 
 	token_fd = cap_rt_mint_jail_token(&jc);
 	if (token_fd == -1) {
+		release_auto_claim_jail(&jc);
 		ORACLED_PROBE_MINT_JAIL(jc.jid, jc.name, jc.actions, EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
 		return;
@@ -454,6 +468,7 @@ handle_mint_system(const void *payload, uint32_t len, uint64_t reply_token)
 
 	token_fd = cap_rt_mint_system_token(req->gates);
 	if (token_fd == -1) {
+		release_auto_claim_system(req->gates);
 		ORACLED_PROBE_MINT_SYSTEM(req->gates, EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
 		return;

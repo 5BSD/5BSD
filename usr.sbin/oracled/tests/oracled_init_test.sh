@@ -900,16 +900,16 @@ control_socket_shutdown_with_payload_cleanup()
 	:
 }
 
-atf_test_case control_socket_reboot_with_payload cleanup
-control_socket_reboot_with_payload_head()
+atf_test_case control_socket_unknown_op_with_payload cleanup
+control_socket_unknown_op_with_payload_head()
 {
-	atf_set "descr" "reboot with unexpected payload is rejected"
+	atf_set "descr" "unknown op with unexpected payload is rejected"
 	atf_set "require.user" "root"
 }
-control_socket_reboot_with_payload_body()
+control_socket_unknown_op_with_payload_body()
 {
 	require_pidfile
-	# Send version=1, op=REBOOT(6), flags=0, datalen=4 + 4 bytes junk.
+	# Send version=1, op=6 (unused), flags=0, datalen=4 + 4 bytes junk.
 	atf_check -s exit:0 sh -c '
 		reply=$({
 			printf "\\x01\\x00\\x00\\x00"
@@ -922,7 +922,7 @@ control_socket_reboot_with_payload_body()
 		test "$status" != "00000000"
 	'
 }
-control_socket_reboot_with_payload_cleanup()
+control_socket_unknown_op_with_payload_cleanup()
 {
 	:
 }
@@ -1331,7 +1331,7 @@ atf_init_test_cases()
 	atf_add_test_case control_socket_rapid
 	atf_add_test_case control_socket_reload_with_payload
 	atf_add_test_case control_socket_shutdown_with_payload
-	atf_add_test_case control_socket_reboot_with_payload
+	atf_add_test_case control_socket_unknown_op_with_payload
 	atf_add_test_case control_socket_services_with_payload
 	atf_add_test_case control_socket_empty_connect
 	atf_add_test_case control_socket_status_shows_claims

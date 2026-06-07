@@ -54,7 +54,9 @@ find_net_claim(const struct oracled_net_claim *nc)
 		    c->protocol == nc->protocol &&
 		    c->port_min == nc->port_min &&
 		    c->port_max == nc->port_max &&
-		    c->direction == nc->direction)
+		    c->direction == nc->direction &&
+		    c->prefix == nc->prefix &&
+		    memcmp(c->addr, nc->addr, sizeof(c->addr)) == 0)
 			return ((int)i);
 	}
 	return (-1);
@@ -267,6 +269,99 @@ auto_claim_system(uint32_t gates, int *errp)
 	return (0);
 }
 
+void
+release_auto_claim_path(const char *path)
+{
+	uint32_t new_refcount;
+	int idx;
+
+	idx = find_path_claim(path);
+	if (idx < 0 ||
+	    od.cfg.claim_path_source[idx] != CLAIM_SOURCE_SERVICE ||
+	    od.cfg.claim_path_refcount[idx] == 0)
+		return;
+
+	od.cfg.claim_path_refcount[idx]--;
+	new_refcount = od.cfg.claim_path_refcount[idx];
+	if (new_refcount == 0) {
+		cap_rt_release_path(path);
+		remove_path_claim((unsigned)idx);
+	}
+	ORACLED_PROBE_DYN_RELEASE_PATH(path, new_refcount, 0);
+}
+
+void
+release_auto_claim_net(const struct oracled_net_claim *nc)
+{
+	uint32_t new_refcount;
+	int idx;
+
+	idx = find_net_claim(nc);
+	if (idx < 0 ||
+	    od.cfg.claim_net_source[idx] != CLAIM_SOURCE_SERVICE ||
+	    od.cfg.claim_net_refcount[idx] == 0)
+		return;
+
+	od.cfg.claim_net_refcount[idx]--;
+	new_refcount = od.cfg.claim_net_refcount[idx];
+	if (new_refcount == 0) {
+		cap_rt_release_net(&od.cfg.claim_net[idx]);
+		remove_net_claim((unsigned)idx);
+	}
+	ORACLED_PROBE_DYN_RELEASE_NET(nc->port_min, nc->port_max,
+	    nc->protocol, new_refcount, 0);
+}
+
+void
+release_auto_claim_jail(const struct oracled_jail_claim *jc)
+{
+	uint32_t new_refcount;
+	int idx;
+
+	idx = find_jail_claim(jc);
+	if (idx < 0 ||
+	    od.cfg.claim_jail_source[idx] != CLAIM_SOURCE_SERVICE ||
+	    od.cfg.claim_jail_refcount[idx] == 0)
+		return;
+
+	od.cfg.claim_jail_refcount[idx]--;
+	new_refcount = od.cfg.claim_jail_refcount[idx];
+	if (new_refcount == 0) {
+		cap_rt_release_jail(&od.cfg.claim_jail[idx]);
+		remove_jail_claim((unsigned)idx);
+	}
+	ORACLED_PROBE_DYN_RELEASE_JAIL(jc->name, jc->actions, new_refcount, 0);
+}
+
+void
+release_auto_claim_system(uint32_t gates)
+{
+	uint32_t release_bits;
+	unsigned bit;
+
+	release_bits = 0;
+	for (bit = 0; bit < ORACLED_SYSTEM_GATE_NBITS; bit++) {
+		if (!(gates & (1U << bit)))
+			continue;
+		if (od.cfg.claim_system_policy & (1U << bit))
+			continue;
+		if (!(od.cfg.claim_system_service & (1U << bit)))
+			continue;
+		if (od.cfg.claim_system_refcount[bit] == 0)
+			continue;
+		od.cfg.claim_system_refcount[bit]--;
+		if (od.cfg.claim_system_refcount[bit] == 0)
+			release_bits |= (1U << bit);
+	}
+
+	if (release_bits != 0) {
+		cap_rt_release_system_gates(release_bits);
+		od.cfg.claim_system &= ~release_bits;
+		od.cfg.claim_system_service &= ~release_bits;
+	}
+	ORACLED_PROBE_DYN_RELEASE_SYSTEM(gates, release_bits, 0);
+}
+
 /* --- Explicit claim handlers --- */
 
 void
@@ -313,6 +408,10 @@ handle_claim_net(const void *payload, uint32_t len, uint64_t reply_token)
 	if (req->direction == 0 || (req->direction & ~ORACLED_NET_DIR_ANY) != 0 ||
 	    (req->domain != 0 && req->domain != AF_INET &&
 	    req->domain != AF_INET6) ||
+	    (req->protocol != 0 && req->protocol != IPPROTO_TCP &&
+	    req->protocol != IPPROTO_UDP) ||
+	    req->prefix > 128 ||
+	    (req->domain == AF_INET && req->prefix > 32) ||
 	    req->port_min > req->port_max) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
@@ -473,6 +572,10 @@ handle_release_net(const void *payload, uint32_t len, uint64_t reply_token)
 	if (req->direction == 0 || (req->direction & ~ORACLED_NET_DIR_ANY) != 0 ||
 	    (req->domain != 0 && req->domain != AF_INET &&
 	    req->domain != AF_INET6) ||
+	    (req->protocol != 0 && req->protocol != IPPROTO_TCP &&
+	    req->protocol != IPPROTO_UDP) ||
+	    req->prefix > 128 ||
+	    (req->domain == AF_INET && req->prefix > 32) ||
 	    req->port_min > req->port_max) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;

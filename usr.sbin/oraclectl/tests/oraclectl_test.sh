@@ -36,16 +36,6 @@ usage_bad_command_body()
 	atf_check -s not-exit:0 -e match:"usage:" oraclectl nosuchcommand
 }
 
-atf_test_case usage_kldload_no_module
-usage_kldload_no_module_head()
-{
-	atf_set "descr" "oraclectl kldload without module name prints usage"
-}
-usage_kldload_no_module_body()
-{
-	atf_check -s not-exit:0 -e match:"usage:" oraclectl kldload
-}
-
 atf_test_case usage_extra_args
 usage_extra_args_head()
 {
@@ -337,43 +327,6 @@ reload_status_coherent_cleanup()
 	:
 }
 
-# --- kldload / kldunload ---
-
-atf_test_case kldload_nonexistent cleanup
-kldload_nonexistent_head()
-{
-	atf_set "descr" "oraclectl kldload with bad module returns error"
-	atf_set "require.user" "root"
-}
-kldload_nonexistent_body()
-{
-	require_oracled
-	atf_check -s not-exit:0 -e match:"No such file" \
-	    oraclectl kldload no_such_module_ever
-}
-kldload_nonexistent_cleanup()
-{
-	:
-}
-
-atf_test_case kldload_already_loaded cleanup
-kldload_already_loaded_head()
-{
-	atf_set "descr" "oraclectl kldload of already loaded module returns error"
-	atf_set "require.user" "root"
-}
-kldload_already_loaded_body()
-{
-	require_oracled
-	# cap_rt is always loaded when oracled is running.
-	atf_check -s not-exit:0 -e ignore \
-	    oraclectl kldload cap_rt
-}
-kldload_already_loaded_cleanup()
-{
-	:
-}
-
 # --- shutdown command ---
 
 atf_test_case shutdown_stops_daemon cleanup
@@ -424,16 +377,6 @@ usage_load_no_file_body()
 
 # --- usage: negative ---
 
-atf_test_case usage_kldunload_no_module
-usage_kldunload_no_module_head()
-{
-	atf_set "descr" "oraclectl kldunload without module name prints usage"
-}
-usage_kldunload_no_module_body()
-{
-	atf_check -s not-exit:0 -e match:"usage:" oraclectl kldunload
-}
-
 atf_test_case usage_services_bad_flag
 usage_services_bad_flag_head()
 {
@@ -472,16 +415,6 @@ usage_shutdown_extra_args_head()
 usage_shutdown_extra_args_body()
 {
 	atf_check -s not-exit:0 -e match:"usage:" oraclectl shutdown now
-}
-
-atf_test_case usage_reboot_extra_args
-usage_reboot_extra_args_head()
-{
-	atf_set "descr" "oraclectl reboot with extra args prints usage"
-}
-usage_reboot_extra_args_body()
-{
-	atf_check -s not-exit:0 -e match:"usage:" oraclectl reboot hard
 }
 
 # --- services command ---
@@ -555,31 +488,11 @@ check_path_traversal_cleanup()
 	:
 }
 
-# --- kldunload ---
-
-atf_test_case kldunload_nonexistent cleanup
-kldunload_nonexistent_head()
-{
-	atf_set "descr" "oraclectl kldunload of nonexistent module fails"
-	atf_set "require.user" "root"
-}
-kldunload_nonexistent_body()
-{
-	require_oracled
-	atf_check -s not-exit:0 -e match:"nosuchmodule" \
-	    oraclectl kldunload nosuchmodule
-}
-kldunload_nonexistent_cleanup()
-{
-	:
-}
-
 atf_init_test_cases()
 {
 	# Argument handling (no root needed)
 	atf_add_test_case usage_no_args
 	atf_add_test_case usage_bad_command
-	atf_add_test_case usage_kldload_no_module
 	atf_add_test_case usage_extra_args
 	atf_add_test_case usage_check_no_file
 	atf_add_test_case usage_load_no_file
@@ -613,17 +526,10 @@ atf_init_test_cases()
 	atf_add_test_case reload_status_coherent
 
 	# Usage (negative — no root needed)
-	atf_add_test_case usage_kldunload_no_module
 	atf_add_test_case usage_services_bad_flag
 	atf_add_test_case usage_load_extra_args
 	atf_add_test_case usage_reload_extra_args
 	atf_add_test_case usage_shutdown_extra_args
-	atf_add_test_case usage_reboot_extra_args
-
-	# Operations
-	atf_add_test_case kldload_nonexistent
-	atf_add_test_case kldload_already_loaded
-	atf_add_test_case kldunload_nonexistent
 
 	# Shutdown (must be last — it stops the daemon)
 	atf_add_test_case shutdown_stops_daemon

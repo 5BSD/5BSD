@@ -15,12 +15,58 @@
 #ifndef CLAIM_CHECK_H
 #define CLAIM_CHECK_H
 
+#include <sys/socket.h>
+
 #include <stdbool.h>
+#include <stdint.h>
 #include <string.h>
+
+#include <dev/cap_rt/cap_rt_isolation_proto.h>
 
 #include "oracled.h"
 #include "config.h"
 #include "gates.h"
+
+static inline bool
+claim_net_addr_is_wildcard(const uint8_t addr[16])
+{
+	static const uint8_t zero_addr[16];
+
+	return (memcmp(addr, zero_addr, sizeof(zero_addr)) == 0);
+}
+
+static inline uint8_t
+claim_net_effective_prefix(int domain, uint8_t prefix)
+{
+
+	if (domain == AF_INET || domain == 0) {
+		if (prefix == 0)
+			return (128);
+		if (prefix <= 32)
+			return ((uint8_t)(96 + prefix));
+		return (128);
+	}
+	return (prefix == 0 ? 128 : (prefix > 128 ? 128 : prefix));
+}
+
+static inline bool
+claim_net_addr_prefix_match(const uint8_t a[16], const uint8_t b[16],
+    uint8_t prefix)
+{
+	uint8_t full_bytes, rem_bits, mask;
+
+	if (prefix >= 128)
+		return (memcmp(a, b, 16) == 0);
+
+	full_bytes = prefix / 8;
+	rem_bits = prefix % 8;
+	if (memcmp(a, b, full_bytes) != 0)
+		return (false);
+	if (rem_bits == 0)
+		return (true);
+	mask = (uint8_t)(0xff << (8 - rem_bits));
+	return ((a[full_bytes] & mask) == (b[full_bytes] & mask));
+}
 
 static inline bool
 claim_path_covered(const struct oracled_config *cfg, const char *path)
@@ -49,6 +95,16 @@ claim_net_entry_covers(const struct oracled_net_claim *claim,
 		return (false);
 	if (claim->port_min > req->port_min ||
 	    claim->port_max < req->port_max)
+		return (false);
+	if (claim_net_addr_is_wildcard(claim->addr))
+		return (true);
+	if (claim_net_addr_is_wildcard(req->addr))
+		return (false);
+	if (claim_net_effective_prefix(claim->domain, claim->prefix) >
+	    claim_net_effective_prefix(req->domain, req->prefix))
+		return (false);
+	if (!claim_net_addr_prefix_match(claim->addr, req->addr,
+	    claim_net_effective_prefix(claim->domain, claim->prefix)))
 		return (false);
 	return (true);
 }

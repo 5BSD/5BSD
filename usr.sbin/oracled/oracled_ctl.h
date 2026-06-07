@@ -8,9 +8,8 @@
  * Shared between the daemon, oraclectl(8), and future libraries.
  *
  * The control socket handles administrative commands (status,
- * shutdown).  System operations (kldload, reboot, etc.) will
- * move to separate service programs once the service launcher
- * is implemented.  Keep the protocol simple.
+ * shutdown, reload, and service-manager queries).  System operations
+ * are delegated to separate service programs.
  *
  * Each connection is one-shot: connect, send request header
  * (plus optional payload), receive reply, close.
@@ -39,14 +38,13 @@
 #define	CTL_OP_VERIFY		10	/* validate config + manifests (any) */
 
 /*
- * Request header.  For variable-length commands (kldload,
- * kldunload), datalen bytes of payload follow immediately
- * after the header.
+ * Request header.  For variable-length commands, datalen bytes of
+ * payload follow immediately after the header.
  */
 struct ctl_request {
 	uint32_t	version;
 	uint32_t	op;
-	uint32_t	flags;		/* op-specific (reboot howto) */
+	uint32_t	flags;		/* op-specific */
 	uint32_t	datalen;	/* payload bytes following header */
 } __packed;
 

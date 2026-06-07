@@ -259,7 +259,7 @@ verify_manifest(const char *filepath, const struct oracled_config *cfg,
 
 	caps = ucl_object_lookup(top, "capabilities");
 	if (caps == NULL) {
-		ucl_object_unref((ucl_object_t *)top);
+		ucl_object_unref(__DECONST(ucl_object_t *, top));
 		ucl_parser_free(parser);
 		return;
 	}
@@ -361,7 +361,7 @@ verify_manifest(const char *filepath, const struct oracled_config *cfg,
 		}
 	}
 
-	ucl_object_unref((ucl_object_t *)top);
+	ucl_object_unref(__DECONST(ucl_object_t *, top));
 	ucl_parser_free(parser);
 }
 

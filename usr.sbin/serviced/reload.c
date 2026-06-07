@@ -42,6 +42,11 @@ manifest_changed(const struct svc_manifest *a, const struct svc_manifest *b)
 	if (memcmp(a->cap_paths, b->cap_paths,
 	    a->ncap_paths * sizeof(a->cap_paths[0])) != 0)
 		return (true);
+	if (a->ncap_files != b->ncap_files)
+		return (true);
+	if (memcmp(a->cap_files, b->cap_files,
+	    a->ncap_files * sizeof(a->cap_files[0])) != 0)
+		return (true);
 	if (a->ncap_net != b->ncap_net)
 		return (true);
 	if (memcmp(a->cap_net, b->cap_net,

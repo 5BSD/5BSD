@@ -370,27 +370,6 @@ Reload configuration, update claims, and forward
 to
 .Xr serviced 8 .
 Root only.
-.It Dv CTL_OP_KLDLOAD (4)
-Load a kernel module.
-Root only.
-Requires the
-.Dq kldload
-system gate to be claimed.
-.It Dv CTL_OP_KLDUNLOAD (5)
-Unload a kernel module.
-Root only.
-Requires the
-.Dq kldunload
-system gate to be claimed.
-.It Dv CTL_OP_REBOOT (6)
-Reboot the system.
-Root only.
-Accepts flags: 0 for reboot or
-.Dv RB_POWEROFF
-for poweroff.
-Requires the
-.Dq reboot
-system gate to be claimed.
 .It Dv CTL_OP_CHECK (7)
 Validate a service manifest.
 Root only.

@@ -23,15 +23,6 @@
 .Nm
 .Op Fl s Ar socket
 .Cm reload
-.Nm
-.Op Fl s Ar socket
-.Cm kldload Ar module
-.Nm
-.Op Fl s Ar socket
-.Cm kldunload Ar module
-.Nm
-.Op Fl s Ar socket
-.Cm reboot
 .Sh DESCRIPTION
 .Nm
 sends administrative commands to a running
@@ -51,7 +42,7 @@ Each invocation connects, sends a single command, prints the
 result, and exits.
 .Pp
 The following commands are available:
-.Bl -tag -width "kldunload module"
+.Bl -tag -width "services -v"
 .It Cm status
 Query the daemon's status and uptime.
 The output includes:
@@ -116,21 +107,6 @@ New manifests are loaded and started, changed manifests cause
 a graceful restart, and removed manifests cause a graceful stop.
 Prints a summary of what was added, changed, and removed.
 Requires root.
-.It Cm kldload Ar module
-Load a kernel module through
-.Xr oracled 8 .
-The module is loaded by the daemon process, which may hold
-privileges or isolation claims that the caller does not.
-Requires root.
-.It Cm kldunload Ar module
-Unload a kernel module through
-.Xr oracled 8 .
-Requires root.
-.It Cm reboot
-Initiate a system reboot through
-.Xr oracled 8 .
-The daemon performs a graceful shutdown before rebooting.
-Requires root.
 .El
 .Sh EXIT STATUS
 .Ex -std
@@ -151,9 +127,7 @@ Unix domain socket used to communicate with
 .Xr oracled 8 .
 .El
 .Sh SEE ALSO
-.Xr kldload 8 ,
 .Xr oracled 8 ,
-.Xr reboot 8 ,
 .Xr servicectl 8
 .Sh HISTORY
 .Nm

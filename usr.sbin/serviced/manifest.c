@@ -124,6 +124,38 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct serviced_net_claim *nc,
 		}
 	}
 
+	v = ucl_object_lookup(elem, "address");
+	if (v != NULL && ucl_object_type(v) == UCL_STRING) {
+		int addr_domain = 0;
+
+		if (parse_address_string(ucl_object_tostring(v),
+		    nc->addr, &nc->prefix, &addr_domain) != 0) {
+			syslog(LOG_ERR, "%s: invalid address: %s",
+			    label, ucl_object_tostring(v));
+			return (-1);
+		}
+		if (nc->domain == AF_INET && addr_domain != 0)
+			nc->domain = addr_domain;
+	}
+
+	v = ucl_object_lookup(elem, "prefix");
+	if (v != NULL) {
+		int64_t pfx;
+
+		if (ucl_object_type(v) != UCL_INT) {
+			syslog(LOG_ERR, "%s: invalid prefix", label);
+			return (-1);
+		}
+		pfx = ucl_object_toint(v);
+		if (pfx < 0 || pfx > 128 ||
+		    (nc->domain == AF_INET && pfx > 32)) {
+			syslog(LOG_ERR, "%s: invalid prefix: %jd",
+			    label, (intmax_t)pfx);
+			return (-1);
+		}
+		nc->prefix = (uint8_t)pfx;
+	}
+
 	return (0);
 }
 

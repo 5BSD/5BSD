@@ -186,6 +186,24 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct oracled_net_claim *nc,
 			nc->domain = addr_domain;
 	}
 
+	v = ucl_object_lookup(elem, "prefix");
+	if (v != NULL) {
+		int64_t pfx;
+
+		if (ucl_object_type(v) != UCL_INT) {
+			syslog(LOG_ERR, "%s: invalid prefix", label);
+			return (-1);
+		}
+		pfx = ucl_object_toint(v);
+		if (pfx < 0 || pfx > 128 ||
+		    (nc->domain == AF_INET && pfx > 32)) {
+			syslog(LOG_ERR, "%s: invalid prefix: %jd",
+			    label, (intmax_t)pfx);
+			return (-1);
+		}
+		nc->prefix = (uint8_t)pfx;
+	}
+
 	return (0);
 }
 
