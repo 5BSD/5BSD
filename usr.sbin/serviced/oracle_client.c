@@ -24,9 +24,6 @@
 
 #include "serviced.h"
 
-/* Shared between oracled and serviced. */
-#include "../oracled/oracled_svc_proto.h"
-
 static volatile uint64_t next_reply_token = 1;
 
 /* Timeout for oracle replies (milliseconds). */

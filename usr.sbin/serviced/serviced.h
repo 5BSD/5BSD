@@ -20,6 +20,8 @@
 #include <stdint.h>
 #include <time.h>
 
+#include "../oracled/oracled_svc_proto.h"
+
 /*
  * Service launcher constants.
  */
@@ -289,6 +291,5 @@ net_protocol_name(int proto)
 	}
 }
 
-/* BUF_APPEND is defined in oracled_svc_proto.h (shared with oracled). */
 
 #endif /* SERVICED_H */
