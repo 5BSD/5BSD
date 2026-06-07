@@ -137,6 +137,37 @@ struct oracle_mint_jail_req {
  */
 #define	ORACLE_OP_CREATE_JAIL		10
 
+/*
+ * Dynamic claim/release operations.
+ *
+ * These allow serviced to dynamically extend the oracle's claimed
+ * resource set at runtime.  The oracle maintains a global reference
+ * count per dynamic claim.  Manifest claims (CLAIM_SOURCE_POLICY)
+ * are immortal and cannot be released via this channel.
+ *
+ * Request structs are shared with the corresponding MINT operations
+ * (same payload, different op).  Claims return oracle_reply with no
+ * attached fds.  Releases return oracle_reply with no attached fds.
+ *
+ * Mint handlers (MINT_PATH, MINT_NET, etc.) implicitly auto-claim
+ * resources not already in the oracle's claimed set.  Services do
+ * not need to send explicit CLAIM before MINT — the oracle handles
+ * it in one trip.  The refcount is bumped on each mint/claim, even
+ * for resources already claimed dynamically.
+ *
+ * Error returns:
+ *   CLAIM:   ENOSPC (array full), EIO (kernel claim failed)
+ *   RELEASE: ENOENT (not found), EPERM (manifest/internal claim)
+ */
+#define	ORACLE_OP_CLAIM_PATH		11	/* dynamically claim a path */
+#define	ORACLE_OP_CLAIM_NET		12	/* dynamically claim a network endpoint */
+#define	ORACLE_OP_CLAIM_JAIL		13	/* dynamically claim a jail */
+#define	ORACLE_OP_CLAIM_SYSTEM		14	/* dynamically claim system gates */
+#define	ORACLE_OP_RELEASE_PATH		15	/* release a dynamic path claim */
+#define	ORACLE_OP_RELEASE_NET		16	/* release a dynamic network claim */
+#define	ORACLE_OP_RELEASE_JAIL		17	/* release a dynamic jail claim */
+#define	ORACLE_OP_RELEASE_SYSTEM	18	/* release dynamic system gates */
+
 struct oracle_create_jail_req {
 	uint32_t	op;		/* ORACLE_OP_CREATE_JAIL */
 	uint32_t	_pad;
@@ -211,5 +242,20 @@ struct oracle_reply {
  * CREATE_PAIR returns 2, everything else returns 0 or 1.
  */
 #define	ORACLE_MAX_REPLY_FDS	2
+
+/*
+ * Safe snprintf accumulator.  Appends formatted text to buf at
+ * offset *offp, clamping to prevent overflow.
+ *
+ * Shared between oracled and serviced for status formatting.
+ */
+#ifndef BUF_APPEND
+#define	BUF_APPEND(buf, bufsz, offp, ...)	do {			\
+	size_t _rem = (*(offp) < (bufsz)) ? (bufsz) - *(offp) : 0;	\
+	int _n = snprintf((buf) + *(offp), _rem, __VA_ARGS__);		\
+	if (_n > 0) *(offp) += (size_t)_n;				\
+	if (*(offp) >= (bufsz)) *(offp) = (bufsz) - 1;			\
+} while (0)
+#endif /* BUF_APPEND */
 
 #endif /* ORACLED_SVC_PROTO_H */

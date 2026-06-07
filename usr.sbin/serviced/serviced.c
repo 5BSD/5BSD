@@ -231,7 +231,7 @@ main(int argc, char *argv[])
 			strlcpy(sd.manifest_dir, manifest_dir_env,
 			    sizeof(sd.manifest_dir));
 		else
-			strlcpy(sd.manifest_dir, "/etc/oracled.d",
+			strlcpy(sd.manifest_dir, "/etc/serviced.d",
 			    sizeof(sd.manifest_dir));
 	}
 

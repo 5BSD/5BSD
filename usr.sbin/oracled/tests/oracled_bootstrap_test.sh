@@ -175,7 +175,7 @@ write_config()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
-manifest_dir = "$(pwd)/oracled.d";
+manifest_dir = "$(pwd)/serviced.d";
 service_manager = "$serviced_bin";
 EOF
 }
@@ -183,7 +183,7 @@ EOF
 start_oracled()
 {
 	prepare_paths
-	mkdir -p "$(pwd)/oracled.d"
+	mkdir -p "$(pwd)/serviced.d"
 	write_config
 
 	oracled -d -f "$conffile" >"$logfile" 2>&1 &
@@ -225,7 +225,7 @@ cleanup_common()
 	stop_oracled
 	pkill -9 -f "mock_serviced" 2>/dev/null || true
 	sleep 0.2
-	rm -rf oracled.pid oracled.conf oracled.d oracled.sock \
+	rm -rf oracled.pid oracled.conf serviced.d oracled.sock \
 	    oracled.log mock_serviced mock_serviced.c mock-mode \
 	    serviced-started.out serviced-ping-ok.out
 }
@@ -388,14 +388,14 @@ bootstrap_no_service_manager_body()
 		atf_skip "/dev/cap_rt not available"
 	fi
 	prepare_paths
-	mkdir -p "$(pwd)/oracled.d"
+	mkdir -p "$(pwd)/serviced.d"
 
 	# Config with empty service_manager.
 	cat > "$conffile" <<EOF
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
-manifest_dir = "$(pwd)/oracled.d";
+manifest_dir = "$(pwd)/serviced.d";
 service_manager = "";
 EOF
 

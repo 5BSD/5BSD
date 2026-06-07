@@ -5,8 +5,17 @@ PROG=	oracled
 MAN=	oracled.8
 SRCS=	oracled.c bootstrap.c cap_rt_setup.c cap_rt_claims.c cap_rt_mint.c \
 	cap_rt_coal.c claim_parse.c commands.c config.c control.c event.c \
-	oracle_proto.c proc.c
+	oracle_proto.c oracle_proto_claims.c proc.c
 CONFS=	oracled.conf
+
+FILESDIR_examples=	${SHAREDIR}/examples/oracled
+FILESGROUPS+=		examples
+examples=	examples/desktop.conf \
+		examples/server.conf \
+		examples/embedded.conf \
+		examples/kldmgrd.ucl \
+		examples/rebootd.ucl \
+		examples/dynamic_claims.d
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

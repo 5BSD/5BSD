@@ -54,7 +54,7 @@ cap_rt_mint_file_token(const char *path, uint64_t actions)
 		return (-1);
 	}
 
-	fd = open(path, O_RDONLY | O_CLOEXEC);
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
 	if (fd == -1) {
 		syslog(LOG_WARNING, "mint_path_token: open %s: %m", path);
 		return (-1);

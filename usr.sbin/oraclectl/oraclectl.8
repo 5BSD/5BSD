@@ -13,7 +13,10 @@
 .Cm status
 .Nm
 .Op Fl s Ar socket
-.Cm services
+.Cm services Op Fl v
+.Nm
+.Op Fl s Ar socket
+.Cm verify
 .Nm
 .Op Fl s Ar socket
 .Cm shutdown
@@ -51,6 +54,33 @@ The following commands are available:
 .Bl -tag -width "kldunload module"
 .It Cm status
 Query the daemon's status and uptime.
+The output includes:
+.Bl -tag -width "SERVICED" -compact
+.It Sy CONFIG
+Configuration file path and service manager binary.
+.It Sy INTEGRITY
+Active
+.Xr cap_rt_capprotect 4
+shield flags.
+.It Sy CLAIMS
+All active resource claims, grouped by type (paths, network, jails,
+system gates).
+Each claim is annotated with its provenance:
+.Ql [policy]
+for claims from
+.Xr oracled.conf 5
+or
+.Ql [service, refcount=N]
+for dynamic claims created at runtime.
+Each claim is verified against the kernel via
+.Dv FI_OP_QUERY ;
+claims the kernel no longer holds are marked
+.Ql [NOT HELD] .
+.It Sy SERVICED
+Ready/not-ready status and PID of
+.Xr serviced 8 .
+.El
+.Pp
 This command does not require root privileges.
 .It Cm services Op Fl v
 List all loaded services with their current state, process ID,
@@ -64,6 +94,15 @@ Services with manifests on disk but not yet loaded are shown
 in a separate
 .Dq AVAILABLE
 section.
+This command does not require root privileges.
+.It Cm verify
+Cross-check
+.Xr oracled.conf 5
+claims against all service manifests in the manifest directory.
+Reports capability paths, network endpoints, jails, and system gates
+requested by services that are not covered by any active oracle claim.
+Checks against all active claims, including dynamic claims held at the
+time of the query.
 This command does not require root privileges.
 .It Cm shutdown
 Request a graceful shutdown of

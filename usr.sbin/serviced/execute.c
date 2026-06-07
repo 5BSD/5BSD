@@ -331,8 +331,38 @@ svc_exec(struct svc_runtime *svc, int kq)
 	}
 	SERVICED_PROBE_CAP_COALITION(m->label, 0);
 
-	/* Mint tokens via oracle. */
+	/*
+	 * Mint tokens via oracle.  The oracle auto-claims resources
+	 * not already in its manifest — one trip per token.
+	 *
+	 * Each mint is a synchronous RPC with SERVICED_RPC_TIMEOUT_MS
+	 * timeout.  Track total elapsed time and abort if the mint
+	 * phase exceeds SVC_MINT_DEADLINE_MS to avoid blocking the
+	 * event loop for an unbounded duration.
+	 */
+#define	SVC_MINT_DEADLINE_MS	2000	/* max total mint phase */
+	{
+	struct timespec mint_start, mint_now;
+	uint64_t elapsed_ms;
+
+	clock_gettime(CLOCK_MONOTONIC, &mint_start);
 	ntokens = 0;
+
+#define	MINT_CHECK_DEADLINE() do {					\
+	clock_gettime(CLOCK_MONOTONIC, &mint_now);			\
+	elapsed_ms = (uint64_t)(mint_now.tv_sec - mint_start.tv_sec) *	\
+	    1000 + (uint64_t)(mint_now.tv_nsec - mint_start.tv_nsec) /	\
+	    1000000;							\
+	if (elapsed_ms > SVC_MINT_DEADLINE_MS) {			\
+		syslog(LOG_ERR, "svc_exec %s: mint deadline exceeded "	\
+		    "(%ju ms, %u/%u tokens)", m->label,			\
+		    (uintmax_t)elapsed_ms, ntokens,			\
+		    m->ncap_paths + m->ncap_files + m->ncap_net +	\
+		    m->ncap_jail + (m->cap_system != 0 ? 1u : 0u));	\
+		goto fail_tokens;					\
+	}								\
+} while (0)
+
 	for (i = 0; i < m->ncap_paths; i++) {
 		int tfd = oracle_mint_path(sd.oracle_pair_fd,
 		    m->cap_paths[i]);
@@ -344,6 +374,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 		SERVICED_PROBE_CAP_MINT(m->label, "path", 0);
 		token_fds[ntokens++] = tfd;
+		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_files; i++) {
 		int tfd = oracle_mint_file(sd.oracle_pair_fd,
@@ -357,6 +388,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 		SERVICED_PROBE_CAP_MINT(m->label, "file", 0);
 		token_fds[ntokens++] = tfd;
+		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_net; i++) {
 		int tfd = oracle_mint_net(sd.oracle_pair_fd, &m->cap_net[i]);
@@ -368,6 +400,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 		SERVICED_PROBE_CAP_MINT(m->label, "net", 0);
 		token_fds[ntokens++] = tfd;
+		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_jail; i++) {
 		int tfd = oracle_mint_jail(sd.oracle_pair_fd,
@@ -380,6 +413,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 		SERVICED_PROBE_CAP_MINT(m->label, "jail", 0);
 		token_fds[ntokens++] = tfd;
+		MINT_CHECK_DEADLINE();
 	}
 	if (m->cap_system != 0) {
 		int tfd = oracle_mint_system(sd.oracle_pair_fd,
@@ -392,6 +426,9 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 		SERVICED_PROBE_CAP_MINT(m->label, "system", 0);
 		token_fds[ntokens++] = tfd;
+	}
+
+#undef MINT_CHECK_DEADLINE
 	}
 
 	if (ntokens > 0)

@@ -1,0 +1,696 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
+ * Dynamic claim/release handlers for the oracle pair protocol.
+ *
+ * Split from oracle_proto.c.  Contains auto-claim helpers (called
+ * from mint handlers), explicit CLAIM/RELEASE handlers (dispatched
+ * from oracle_proto.c), find/remove array helpers, and the
+ * sweep-on-serviced-exit logic.
+ */
+
+#include <sys/types.h>
+#include <sys/param.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#include <dev/cap_rt/cap_rt_isolation_proto.h>
+
+#include <errno.h>
+#include <string.h>
+#include <syslog.h>
+
+#include "oracled.h"
+#include "oracled_svc_proto.h"
+#include "cap_rt_priv.h"
+#include "probes.h"
+#include "oracle_proto_claims.h"
+
+/* --- Find helpers --- */
+
+static int
+find_path_claim(const char *path)
+{
+	unsigned i;
+
+	for (i = 0; i < od.cfg.nclaim_paths; i++) {
+		if (strcmp(od.cfg.claim_paths[i], path) == 0)
+			return ((int)i);
+	}
+	return (-1);
+}
+
+static int
+find_net_claim(const struct oracled_net_claim *nc)
+{
+	unsigned i;
+
+	for (i = 0; i < od.cfg.nclaim_net; i++) {
+		const struct oracled_net_claim *c = &od.cfg.claim_net[i];
+
+		if (c->domain == nc->domain &&
+		    c->protocol == nc->protocol &&
+		    c->port_min == nc->port_min &&
+		    c->port_max == nc->port_max &&
+		    c->direction == nc->direction)
+			return ((int)i);
+	}
+	return (-1);
+}
+
+static int
+find_jail_claim(const struct oracled_jail_claim *jc)
+{
+	unsigned i;
+
+	for (i = 0; i < od.cfg.nclaim_jail; i++) {
+		const struct oracled_jail_claim *c = &od.cfg.claim_jail[i];
+
+		if (c->jid == jc->jid && c->actions == jc->actions &&
+		    strcmp(c->name, jc->name) == 0)
+			return ((int)i);
+	}
+	return (-1);
+}
+
+/* --- Remove helpers --- */
+
+static void
+remove_path_claim(unsigned idx)
+{
+	unsigned n;
+
+	n = od.cfg.nclaim_paths - 1;
+	if (idx < n) {
+		memmove(&od.cfg.claim_paths[idx], &od.cfg.claim_paths[idx + 1],
+		    (n - idx) * sizeof(od.cfg.claim_paths[0]));
+		memmove(&od.cfg.claim_path_source[idx],
+		    &od.cfg.claim_path_source[idx + 1],
+		    (n - idx) * sizeof(od.cfg.claim_path_source[0]));
+		memmove(&od.cfg.claim_path_refcount[idx],
+		    &od.cfg.claim_path_refcount[idx + 1],
+		    (n - idx) * sizeof(od.cfg.claim_path_refcount[0]));
+	}
+	od.cfg.nclaim_paths = n;
+}
+
+static void
+remove_net_claim(unsigned idx)
+{
+	unsigned n;
+
+	n = od.cfg.nclaim_net - 1;
+	if (idx < n) {
+		memmove(&od.cfg.claim_net[idx], &od.cfg.claim_net[idx + 1],
+		    (n - idx) * sizeof(od.cfg.claim_net[0]));
+		memmove(&od.cfg.claim_net_source[idx],
+		    &od.cfg.claim_net_source[idx + 1],
+		    (n - idx) * sizeof(od.cfg.claim_net_source[0]));
+		memmove(&od.cfg.claim_net_refcount[idx],
+		    &od.cfg.claim_net_refcount[idx + 1],
+		    (n - idx) * sizeof(od.cfg.claim_net_refcount[0]));
+	}
+	od.cfg.nclaim_net = n;
+}
+
+static void
+remove_jail_claim(unsigned idx)
+{
+	unsigned n;
+
+	n = od.cfg.nclaim_jail - 1;
+	if (idx < n) {
+		memmove(&od.cfg.claim_jail[idx], &od.cfg.claim_jail[idx + 1],
+		    (n - idx) * sizeof(od.cfg.claim_jail[0]));
+		memmove(&od.cfg.claim_jail_source[idx],
+		    &od.cfg.claim_jail_source[idx + 1],
+		    (n - idx) * sizeof(od.cfg.claim_jail_source[0]));
+		memmove(&od.cfg.claim_jail_refcount[idx],
+		    &od.cfg.claim_jail_refcount[idx + 1],
+		    (n - idx) * sizeof(od.cfg.claim_jail_refcount[0]));
+	}
+	od.cfg.nclaim_jail = n;
+}
+
+/* --- Auto-claim helpers --- */
+
+int
+auto_claim_path(const char *path, int *errp)
+{
+	int idx;
+
+	idx = find_path_claim(path);
+	if (idx >= 0) {
+		if (od.cfg.claim_path_source[idx] == CLAIM_SOURCE_SERVICE)
+			od.cfg.claim_path_refcount[idx]++;
+		return (0);
+	}
+
+	if (od.cfg.nclaim_paths >= ORACLED_MAX_PATH_CLAIMS) {
+		*errp = ENOSPC;
+		return (-1);
+	}
+	if (cap_rt_claim_path(path) != 0) {
+		*errp = EIO;
+		return (-1);
+	}
+
+	idx = (int)od.cfg.nclaim_paths;
+	strlcpy(od.cfg.claim_paths[idx], path, PATH_MAX);
+	od.cfg.claim_path_source[idx] = CLAIM_SOURCE_SERVICE;
+	od.cfg.claim_path_refcount[idx] = 1;
+	od.cfg.nclaim_paths++;
+
+	syslog(LOG_INFO, "oracle_proto: auto-claimed %s", path);
+	ORACLED_PROBE_DYN_CLAIM_PATH(path, 0);
+	return (0);
+}
+
+int
+auto_claim_net(const struct oracled_net_claim *nc, int *errp)
+{
+	int idx;
+
+	idx = find_net_claim(nc);
+	if (idx >= 0) {
+		if (od.cfg.claim_net_source[idx] == CLAIM_SOURCE_SERVICE)
+			od.cfg.claim_net_refcount[idx]++;
+		return (0);
+	}
+
+	if (od.cfg.nclaim_net >= ORACLED_MAX_NET_CLAIMS) {
+		*errp = ENOSPC;
+		return (-1);
+	}
+	if (cap_rt_claim_net(nc) != 0) {
+		*errp = EIO;
+		return (-1);
+	}
+
+	idx = (int)od.cfg.nclaim_net;
+	od.cfg.claim_net[idx] = *nc;
+	od.cfg.claim_net_source[idx] = CLAIM_SOURCE_SERVICE;
+	od.cfg.claim_net_refcount[idx] = 1;
+	od.cfg.nclaim_net++;
+
+	syslog(LOG_INFO, "oracle_proto: auto-claimed net %u-%u/%d",
+	    nc->port_min, nc->port_max, nc->protocol);
+	ORACLED_PROBE_DYN_CLAIM_NET(nc->port_min, nc->port_max,
+	    nc->protocol, 0);
+	return (0);
+}
+
+int
+auto_claim_jail(const struct oracled_jail_claim *jc, int *errp)
+{
+	int idx;
+
+	idx = find_jail_claim(jc);
+	if (idx >= 0) {
+		if (od.cfg.claim_jail_source[idx] == CLAIM_SOURCE_SERVICE)
+			od.cfg.claim_jail_refcount[idx]++;
+		return (0);
+	}
+
+	if (od.cfg.nclaim_jail >= ORACLED_MAX_JAIL_CLAIMS) {
+		*errp = ENOSPC;
+		return (-1);
+	}
+	if (cap_rt_claim_jail(jc) != 0) {
+		*errp = EIO;
+		return (-1);
+	}
+
+	idx = (int)od.cfg.nclaim_jail;
+	od.cfg.claim_jail[idx] = *jc;
+	od.cfg.claim_jail_source[idx] = CLAIM_SOURCE_SERVICE;
+	od.cfg.claim_jail_refcount[idx] = 1;
+	od.cfg.nclaim_jail++;
+
+	syslog(LOG_INFO, "oracle_proto: auto-claimed jail %s", jc->name);
+	ORACLED_PROBE_DYN_CLAIM_JAIL(jc->name, jc->actions, 0);
+	return (0);
+}
+
+int
+auto_claim_system(uint32_t gates, int *errp)
+{
+	uint32_t new_bits;
+	unsigned bit;
+
+	new_bits = gates & ~od.cfg.claim_system;
+	if (new_bits != 0) {
+		if (cap_rt_claim_system_gate_bits(new_bits) != 0) {
+			*errp = EIO;
+			return (-1);
+		}
+		od.cfg.claim_system |= new_bits;
+		od.cfg.claim_system_service |= new_bits;
+	}
+
+	for (bit = 0; bit < ORACLED_SYSTEM_GATE_NBITS; bit++) {
+		if (!(gates & (1U << bit)))
+			continue;
+		if (od.cfg.claim_system_policy & (1U << bit))
+			continue;
+		od.cfg.claim_system_refcount[bit]++;
+	}
+
+	if (new_bits != 0) {
+		syslog(LOG_INFO,
+		    "oracle_proto: auto-claimed system gates 0x%x",
+		    new_bits);
+		ORACLED_PROBE_DYN_CLAIM_SYSTEM(gates, 0);
+	}
+	return (0);
+}
+
+/* --- Explicit claim handlers --- */
+
+void
+handle_claim_path(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	const struct oracle_mint_path_req *req;
+	int err;
+
+	if (len < sizeof(*req)) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	req = payload;
+
+	if (strnlen(req->path, PATH_MAX) >= PATH_MAX) {
+		proto_reply(ENAMETOOLONG, reply_token, NULL, 0);
+		return;
+	}
+	if (req->path[0] != '/') {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+
+	if (auto_claim_path(req->path, &err) != 0) {
+		proto_reply(err, reply_token, NULL, 0);
+		return;
+	}
+	proto_reply(0, reply_token, NULL, 0);
+}
+
+void
+handle_claim_net(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	const struct oracle_mint_net_req *req;
+	struct oracled_net_claim nc;
+	int err;
+
+	if (len < sizeof(*req)) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	req = payload;
+
+	if (req->direction == 0 || (req->direction & ~ORACLED_NET_DIR_ANY) != 0 ||
+	    (req->domain != 0 && req->domain != AF_INET &&
+	    req->domain != AF_INET6) ||
+	    req->port_min > req->port_max) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+
+	memset(&nc, 0, sizeof(nc));
+	nc.domain = req->domain;
+	nc.protocol = req->protocol;
+	nc.port_min = req->port_min;
+	nc.port_max = req->port_max;
+	nc.direction = req->direction;
+	nc.prefix = req->prefix;
+	memcpy(nc.addr, req->addr, sizeof(nc.addr));
+
+	if (auto_claim_net(&nc, &err) != 0) {
+		proto_reply(err, reply_token, NULL, 0);
+		return;
+	}
+	proto_reply(0, reply_token, NULL, 0);
+}
+
+void
+handle_claim_jail(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	const struct oracle_mint_jail_req *req;
+	struct oracled_jail_claim jc;
+	int err;
+
+	if (len < sizeof(*req)) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	req = payload;
+
+	if (req->jid < 0 || req->actions == 0 ||
+	    (req->actions & ~FI_JAIL_ALL) != 0) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	if (memchr(req->name, '\0', sizeof(req->name)) == NULL) {
+		proto_reply(ENAMETOOLONG, reply_token, NULL, 0);
+		return;
+	}
+	if (req->jid == 0 && req->name[0] == '\0') {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+
+	memset(&jc, 0, sizeof(jc));
+	jc.jid = req->jid;
+	jc.actions = req->actions;
+	strlcpy(jc.name, req->name, sizeof(jc.name));
+
+	if (auto_claim_jail(&jc, &err) != 0) {
+		proto_reply(err, reply_token, NULL, 0);
+		return;
+	}
+	proto_reply(0, reply_token, NULL, 0);
+}
+
+void
+handle_claim_system(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	const struct oracle_mint_system_req *req;
+	int err;
+
+	if (len < sizeof(*req)) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	req = payload;
+
+	if (req->gates == 0) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+
+	if (auto_claim_system(req->gates, &err) != 0) {
+		proto_reply(err, reply_token, NULL, 0);
+		return;
+	}
+	proto_reply(0, reply_token, NULL, 0);
+}
+
+/* --- Release handlers --- */
+
+void
+handle_release_path(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	const struct oracle_mint_path_req *req;
+	int idx;
+
+	if (len < sizeof(*req)) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	req = payload;
+
+	if (strnlen(req->path, PATH_MAX) >= PATH_MAX) {
+		proto_reply(ENAMETOOLONG, reply_token, NULL, 0);
+		return;
+	}
+	if (req->path[0] != '/') {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+
+	idx = find_path_claim(req->path);
+	if (idx < 0) {
+		ORACLED_PROBE_DYN_RELEASE_PATH(req->path, 0, ENOENT);
+		proto_reply(ENOENT, reply_token, NULL, 0);
+		return;
+	}
+
+	if (od.cfg.claim_path_source[idx] != CLAIM_SOURCE_SERVICE) {
+		syslog(LOG_NOTICE,
+		    "oracle_proto: release_path denied (manifest): %s",
+		    req->path);
+		ORACLED_PROBE_DYN_RELEASE_PATH(req->path, 0, EPERM);
+		proto_reply(EPERM, reply_token, NULL, 0);
+		return;
+	}
+
+	od.cfg.claim_path_refcount[idx]--;
+	{
+		uint32_t new_refcount = od.cfg.claim_path_refcount[idx];
+
+		if (new_refcount == 0) {
+			cap_rt_release_path(req->path);
+			syslog(LOG_INFO,
+			    "oracle_proto: released dynamic claim %s",
+			    req->path);
+			remove_path_claim((unsigned)idx);
+		} else {
+			syslog(LOG_DEBUG,
+			    "oracle_proto: release_path %s refcount=%u",
+			    req->path, new_refcount);
+		}
+
+		ORACLED_PROBE_DYN_RELEASE_PATH(req->path, new_refcount, 0);
+	}
+	proto_reply(0, reply_token, NULL, 0);
+}
+
+void
+handle_release_net(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	const struct oracle_mint_net_req *req;
+	struct oracled_net_claim nc;
+	int idx;
+
+	if (len < sizeof(*req)) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	req = payload;
+
+	if (req->direction == 0 || (req->direction & ~ORACLED_NET_DIR_ANY) != 0 ||
+	    (req->domain != 0 && req->domain != AF_INET &&
+	    req->domain != AF_INET6) ||
+	    req->port_min > req->port_max) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+
+	memset(&nc, 0, sizeof(nc));
+	nc.domain = req->domain;
+	nc.protocol = req->protocol;
+	nc.port_min = req->port_min;
+	nc.port_max = req->port_max;
+	nc.direction = req->direction;
+	nc.prefix = req->prefix;
+	memcpy(nc.addr, req->addr, sizeof(nc.addr));
+
+	idx = find_net_claim(&nc);
+	if (idx < 0) {
+		ORACLED_PROBE_DYN_RELEASE_NET(nc.port_min, nc.port_max,
+		    nc.protocol, 0, ENOENT);
+		proto_reply(ENOENT, reply_token, NULL, 0);
+		return;
+	}
+
+	if (od.cfg.claim_net_source[idx] != CLAIM_SOURCE_SERVICE) {
+		ORACLED_PROBE_DYN_RELEASE_NET(nc.port_min, nc.port_max,
+		    nc.protocol, 0, EPERM);
+		proto_reply(EPERM, reply_token, NULL, 0);
+		return;
+	}
+
+	od.cfg.claim_net_refcount[idx]--;
+	{
+		uint32_t new_refcount = od.cfg.claim_net_refcount[idx];
+
+		if (new_refcount == 0) {
+			cap_rt_release_net(&od.cfg.claim_net[idx]);
+			syslog(LOG_INFO,
+			    "oracle_proto: released dynamic net claim %u-%u/%d",
+			    nc.port_min, nc.port_max, nc.protocol);
+			remove_net_claim((unsigned)idx);
+		}
+
+		ORACLED_PROBE_DYN_RELEASE_NET(nc.port_min, nc.port_max,
+		    nc.protocol, new_refcount, 0);
+	}
+	proto_reply(0, reply_token, NULL, 0);
+}
+
+void
+handle_release_jail(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	const struct oracle_mint_jail_req *req;
+	struct oracled_jail_claim jc;
+	int idx;
+
+	if (len < sizeof(*req)) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	req = payload;
+
+	if (req->jid < 0 || req->actions == 0 ||
+	    (req->actions & ~FI_JAIL_ALL) != 0) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	if (memchr(req->name, '\0', sizeof(req->name)) == NULL) {
+		proto_reply(ENAMETOOLONG, reply_token, NULL, 0);
+		return;
+	}
+	if (req->jid == 0 && req->name[0] == '\0') {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+
+	memset(&jc, 0, sizeof(jc));
+	jc.jid = req->jid;
+	jc.actions = req->actions;
+	strlcpy(jc.name, req->name, sizeof(jc.name));
+
+	idx = find_jail_claim(&jc);
+	if (idx < 0) {
+		ORACLED_PROBE_DYN_RELEASE_JAIL(jc.name, jc.actions, 0, ENOENT);
+		proto_reply(ENOENT, reply_token, NULL, 0);
+		return;
+	}
+
+	if (od.cfg.claim_jail_source[idx] != CLAIM_SOURCE_SERVICE) {
+		ORACLED_PROBE_DYN_RELEASE_JAIL(jc.name, jc.actions, 0, EPERM);
+		proto_reply(EPERM, reply_token, NULL, 0);
+		return;
+	}
+
+	od.cfg.claim_jail_refcount[idx]--;
+	{
+		uint32_t new_refcount = od.cfg.claim_jail_refcount[idx];
+
+		if (new_refcount == 0) {
+			cap_rt_release_jail(&od.cfg.claim_jail[idx]);
+			syslog(LOG_INFO,
+			    "oracle_proto: released dynamic jail claim %s",
+			    jc.name);
+			remove_jail_claim((unsigned)idx);
+		}
+
+		ORACLED_PROBE_DYN_RELEASE_JAIL(jc.name, jc.actions,
+		    new_refcount, 0);
+	}
+	proto_reply(0, reply_token, NULL, 0);
+}
+
+void
+handle_release_system(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	const struct oracle_mint_system_req *req;
+	uint32_t release_bits;
+	unsigned bit;
+
+	if (len < sizeof(*req)) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	req = payload;
+
+	if (req->gates == 0) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+
+	if (req->gates & od.cfg.claim_system_policy) {
+		syslog(LOG_NOTICE,
+		    "oracle_proto: release_system denied (manifest): 0x%x",
+		    req->gates);
+		ORACLED_PROBE_DYN_RELEASE_SYSTEM(req->gates, 0, EPERM);
+		proto_reply(EPERM, reply_token, NULL, 0);
+		return;
+	}
+
+	if ((req->gates & od.cfg.claim_system_service) != req->gates) {
+		ORACLED_PROBE_DYN_RELEASE_SYSTEM(req->gates, 0, ENOENT);
+		proto_reply(ENOENT, reply_token, NULL, 0);
+		return;
+	}
+
+	release_bits = 0;
+	for (bit = 0; bit < ORACLED_SYSTEM_GATE_NBITS; bit++) {
+		if (!(req->gates & (1U << bit)))
+			continue;
+		if (od.cfg.claim_system_refcount[bit] == 0)
+			continue;
+		od.cfg.claim_system_refcount[bit]--;
+		if (od.cfg.claim_system_refcount[bit] == 0)
+			release_bits |= (1U << bit);
+	}
+
+	if (release_bits != 0) {
+		cap_rt_release_system_gates(release_bits);
+		od.cfg.claim_system &= ~release_bits;
+		od.cfg.claim_system_service &= ~release_bits;
+		syslog(LOG_INFO,
+		    "oracle_proto: released dynamic system gates 0x%x",
+		    release_bits);
+	}
+
+	ORACLED_PROBE_DYN_RELEASE_SYSTEM(req->gates, release_bits, 0);
+	proto_reply(0, reply_token, NULL, 0);
+}
+
+/* --- Sweep --- */
+
+void
+sweep_dynamic_claims(void)
+{
+	unsigned i;
+	uint32_t release_gates;
+
+	for (i = od.cfg.nclaim_paths; i > 0; i--) {
+		if (od.cfg.claim_path_source[i - 1] == CLAIM_SOURCE_SERVICE) {
+			cap_rt_release_path(od.cfg.claim_paths[i - 1]);
+			syslog(LOG_INFO,
+			    "oracle_proto: sweep released path %s",
+			    od.cfg.claim_paths[i - 1]);
+			remove_path_claim(i - 1);
+		}
+	}
+
+	for (i = od.cfg.nclaim_net; i > 0; i--) {
+		if (od.cfg.claim_net_source[i - 1] == CLAIM_SOURCE_SERVICE) {
+			cap_rt_release_net(&od.cfg.claim_net[i - 1]);
+			syslog(LOG_INFO,
+			    "oracle_proto: sweep released net claim");
+			remove_net_claim(i - 1);
+		}
+	}
+
+	for (i = od.cfg.nclaim_jail; i > 0; i--) {
+		if (od.cfg.claim_jail_source[i - 1] == CLAIM_SOURCE_SERVICE) {
+			cap_rt_release_jail(&od.cfg.claim_jail[i - 1]);
+			syslog(LOG_INFO,
+			    "oracle_proto: sweep released jail %s",
+			    od.cfg.claim_jail[i - 1].name);
+			remove_jail_claim(i - 1);
+		}
+	}
+
+	release_gates = 0;
+	for (i = 0; i < ORACLED_SYSTEM_GATE_NBITS; i++) {
+		if (od.cfg.claim_system_refcount[i] > 0 &&
+		    !(od.cfg.claim_system_policy & (1U << i))) {
+			release_gates |= (1U << i);
+			od.cfg.claim_system_refcount[i] = 0;
+		}
+	}
+	if (release_gates != 0) {
+		cap_rt_release_system_gates(release_gates);
+		od.cfg.claim_system &= ~release_gates;
+		od.cfg.claim_system_service &= ~release_gates;
+		syslog(LOG_INFO,
+		    "oracle_proto: sweep released system gates 0x%x",
+		    release_gates);
+	}
+}

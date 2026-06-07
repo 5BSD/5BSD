@@ -32,6 +32,9 @@
 #define	SERVICED_MAX_CAP_JAIL		16
 #define	SERVICED_LABEL_MAX		64
 
+/* Timeout for cap_rt pair RPC calls (oracle and direct). */
+#define	SERVICED_RPC_TIMEOUT_MS		100
+
 /* Restart policy */
 #define	SVC_RESTART_NEVER		0
 #define	SVC_RESTART_ALWAYS		1
@@ -185,7 +188,15 @@ int	oracle_create_jail(int pair_fd, const char *name, const char *path,
 int	oracle_create_pair(int pair_fd, int *our_end, int *child_end);
 int	oracle_create_coalition(int pair_fd);
 int	oracle_send_ready(int pair_fd);
-int	oracle_ping(int pair_fd);
+int	oracle_claim_path(int pair_fd, const char *path);
+int	oracle_claim_net(int pair_fd, const struct serviced_net_claim *nc);
+int	oracle_claim_jail(int pair_fd, const struct serviced_jail_claim *jc);
+int	oracle_claim_system(int pair_fd, uint32_t gates);
+int	oracle_release_path(int pair_fd, const char *path);
+int	oracle_release_net(int pair_fd, const struct serviced_net_claim *nc);
+int	oracle_release_jail(int pair_fd, const struct serviced_jail_claim *jc);
+int	oracle_release_system(int pair_fd, uint32_t gates);
+int	oracle_release_manifest(int pair_fd, const struct svc_manifest *m);
 
 /* manifest.c — service manifest parsing */
 int	manifest_load_file(const char *path, struct svc_manifest *m);
@@ -278,18 +289,6 @@ net_protocol_name(int proto)
 	}
 }
 
-/*
- * Safe snprintf accumulator.  Appends formatted text to buf at
- * offset *offp, clamping to prevent overflow.  Caller must
- * declare: size_t off = 0;
- *
- * Usage: BUF_APPEND(buf, sizeof(buf), &off, "fmt", ...);
- */
-#define	BUF_APPEND(buf, bufsz, offp, ...)	do {			\
-	size_t _rem = (*(offp) < (bufsz)) ? (bufsz) - *(offp) : 0;	\
-	int _n = snprintf((buf) + *(offp), _rem, __VA_ARGS__);		\
-	if (_n > 0) *(offp) += (size_t)_n;				\
-	if (*(offp) >= (bufsz)) *(offp) = (bufsz) - 1;			\
-} while (0)
+/* BUF_APPEND is defined in oracled_svc_proto.h (shared with oracled). */
 
 #endif /* SERVICED_H */

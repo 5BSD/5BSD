@@ -31,7 +31,7 @@
 #include "gates.h"
 #include "oracled_ctl.h"
 
-static int
+int
 parse_ucl_jail_claim(const ucl_object_t *elem, struct oracled_jail_claim *jc,
     const char *label)
 {
@@ -339,6 +339,8 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 			}
 			strlcpy(cfg->claim_paths[cfg->nclaim_paths],
 			    s, PATH_MAX);
+			cfg->claim_path_source[cfg->nclaim_paths] =
+			    CLAIM_SOURCE_POLICY;
 			cfg->nclaim_paths++;
 		}
 	}
@@ -359,8 +361,11 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 			}
 			if (parse_ucl_net_claim(elem,
 			    &cfg->claim_net[cfg->nclaim_net],
-			    "config") == 0)
+			    "config") == 0) {
+				cfg->claim_net_source[cfg->nclaim_net] =
+				    CLAIM_SOURCE_POLICY;
 				cfg->nclaim_net++;
+			}
 		}
 	}
 
@@ -380,8 +385,11 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 			}
 			if (parse_ucl_jail_claim(elem,
 			    &cfg->claim_jail[cfg->nclaim_jail],
-			    "config") == 0)
+			    "config") == 0) {
+				cfg->claim_jail_source[cfg->nclaim_jail] =
+				    CLAIM_SOURCE_POLICY;
 				cfg->nclaim_jail++;
+			}
 			else
 				fprintf(stderr, "oracled: invalid jail claim\n");
 		}
@@ -413,6 +421,9 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 				    "system gate: %s\n", s);
 		}
 	}
+
+	/* Record policy-originated system gates. */
+	cfg->claim_system_policy = cfg->claim_system;
 }
 
 int

@@ -134,18 +134,4 @@ net_protocol_name(int proto)
 	}
 }
 
-/*
- * Safe snprintf accumulator.  Appends formatted text to buf at
- * offset *offp, clamping to prevent overflow.  Caller must
- * declare: size_t off = 0;
- *
- * Usage: BUF_APPEND(buf, sizeof(buf), &off, "fmt", ...);
- */
-#define	BUF_APPEND(buf, bufsz, offp, ...)	do {			\
-	size_t _rem = (*(offp) < (bufsz)) ? (bufsz) - *(offp) : 0;	\
-	int _n = snprintf((buf) + *(offp), _rem, __VA_ARGS__);		\
-	if (_n > 0) *(offp) += (size_t)_n;				\
-	if (*(offp) >= (bufsz)) *(offp) = (bufsz) - 1;			\
-} while (0)
-
 #endif /* ORACLED_H */

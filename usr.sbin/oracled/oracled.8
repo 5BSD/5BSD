@@ -135,7 +135,7 @@ via the
 .Ev SERVICED_MANIFEST_DIR
 environment variable.
 Default:
-.Pa /etc/oracled.d .
+.Pa /etc/serviced.d .
 .It Va service_manager
 Path to the service manager binary started by
 .Nm
@@ -200,7 +200,9 @@ Default: true.
 The
 .Va claims
 section lists resources under oracle control.
-Resources listed here are claimed exclusively by
+Resources listed here are
+.Em policy claims :
+claimed exclusively by
 .Nm
 at boot via the
 .Xr cap_rt_isolation 4
@@ -211,6 +213,71 @@ including root.
 is always claimed automatically.
 .Pp
 Claim limits: at most 64 paths, 32 network claims, and 32 jail claims.
+.Pp
+.Bf -symbolic
+Paths on network filesystems (NFS, FUSE) may block during
+.Xr open 2
+if the server is unreachable.
+.Nm
+opens claimed paths with
+.Dv O_NONBLOCK ,
+which prevents blocking on FIFOs and device nodes, but does not
+help with network filesystems because the block occurs during
+VFS name resolution.
+To protect a network mount point without contacting the server,
+claim the parent directory instead (e.g.,
+.Pa /mnt
+rather than
+.Pa /mnt/nfs ) .
+A future
+.Dv FI_OP_CLAIM_PATH
+operation that performs path resolution kernel-side with
+.Dv NOCROSSMOUNT
+would resolve this limitation.
+.Ef
+.Ss Dynamic Claims
+Resources not pre-declared in
+.Nm oracled.conf
+are
+.Em auto-claimed
+on the first mint request from
+.Xr serviced 8 .
+These
+.Em dynamic claims
+.Pq Dv CLAIM_SOURCE_SERVICE
+are reference-counted: each mint or explicit claim bumps the
+refcount; each release decrements it.
+When the refcount reaches zero, the kernel claim is released and the
+entry is removed from the oracle's state.
+.Pp
+Policy claims
+.Pq from Nm oracled.conf
+are immortal and cannot be released via the pair channel.
+Release attempts return
+.Er EPERM ,
+which
+.Xr serviced 8
+silently ignores.
+.Pp
+When
+.Xr serviced 8
+exits or crashes, all dynamic claims are swept: released from the
+kernel and removed from the oracle's state.
+Policy claims survive across serviced restarts.
+.Pp
+On configuration reload
+.Pq Dv SIGHUP ,
+dynamic claims are carried forward.
+If a dynamic claim now appears in the reloaded configuration, it is
+upgraded to a policy claim and becomes immortal.
+.Pp
+.Xr oraclectl 8
+.Cm status
+annotates each claim with its provenance:
+.Ql [policy]
+for manifest claims or
+.Ql [service, refcount=N]
+for dynamic claims.
 .Bl -tag -width "network"
 .It Va paths
 Array of file and directory paths to claim.
@@ -337,6 +404,11 @@ Delegated to
 .It Dv CTL_OP_SERVICES (9)
 List services and serviced status.
 Any user.
+.It Dv CTL_OP_VERIFY (10)
+Cross-check oracle claims against all service manifests.
+Reports capabilities requested by services that are not covered by
+any active oracle claim (policy or dynamic).
+Any user.
 .El
 .Sh SIGNALS
 .Bl -tag -width "SIGTERM, SIGINT"
@@ -402,6 +474,29 @@ Network claim released.
 Jail claim released.
 .It Li claim-system-release(gates)
 System gates released.
+.El
+.Pp
+.Em Dynamic Claims:
+.Bl -tag -width "dyn-release-net(port_min, port_max, protocol, refcount, result)" -compact
+.It Li dyn-claim-path(path, result)
+Dynamic path claim created or refcount bumped.
+.It Li dyn-claim-net(port_min, port_max, protocol, result)
+Dynamic network claim created or refcount bumped.
+.It Li dyn-claim-jail(name, actions, result)
+Dynamic jail claim created or refcount bumped.
+.It Li dyn-claim-system(gates, result)
+Dynamic system gate claim created or refcount bumped.
+.It Li dyn-release-path(path, refcount, result)
+Dynamic path claim released.
+Refcount is the value after decrement.
+.It Li dyn-release-net(port_min, port_max, protocol, refcount, result)
+Dynamic network claim released.
+.It Li dyn-release-jail(name, actions, refcount, result)
+Dynamic jail claim released.
+.It Li dyn-release-system(gates, released, result)
+Dynamic system gate claim released.
+.Ar released
+is the bitmask of gates whose refcount reached zero.
 .El
 .Pp
 .Em Integrity:
@@ -491,12 +586,24 @@ Example: trace serviced lifecycle:
 .Bd -literal -offset indent
 dtrace -n 'oracled*:::bootstrap-*'
 .Ed
+.Pp
+Example: trace dynamic claim acquisition:
+.Bd -literal -offset indent
+dtrace -n 'oracled*:::dyn-claim-* { printf("%s result=%d",
+    copyinstr(arg0), arg1); }'
+.Ed
+.Pp
+Example: trace dynamic claim release with refcount:
+.Bd -literal -offset indent
+dtrace -n 'oracled*:::dyn-release-* { printf("refcount=%d result=%d",
+    arg1, arg2); }'
+.Ed
 .Sh FILES
 .Bl -tag -width "/usr/libexec/oracled/serviced"
 .It Pa /etc/oracled.conf
 Configuration file (UCL format).
 Optional.
-.It Pa /etc/oracled.d/
+.It Pa /etc/serviced.d/
 Service manifest directory.
 Passed to
 .Xr serviced 8 ,
@@ -530,7 +637,7 @@ Minimal configuration with default claims:
 .Bd -literal -offset indent
 pidfile = "/var/run/oracled.pid";
 control_socket = "/var/run/oracled.sock";
-manifest_dir = "/etc/oracled.d";
+manifest_dir = "/etc/serviced.d";
 service_manager = "/usr/libexec/oracled/serviced";
 .Ed
 .Pp

@@ -57,7 +57,7 @@ prepare_paths()
 {
 	pidfile="$(pwd)/oracled.pid"
 	conffile="$(pwd)/oracled.conf"
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	sockpath="$(pwd)/oracled.sock"
 	sctl_sockpath="$(pwd)/serviced.sock"
 	logfile="$(pwd)/oracled.log"
@@ -122,7 +122,7 @@ cleanup_common()
 {
 	stop_stack
 	sleep 0.2
-	rm -rf oracled.pid oracled.conf oracled.d oracled.sock \
+	rm -rf oracled.pid oracled.conf serviced.d oracled.sock \
 	    serviced.sock oracled.log *.out *.sh
 }
 

@@ -1,0 +1,16 @@
+# Reboot/shutdown manager — controls reboot(2) via capability token.
+# Only useful when the system gate "reboot" is claimed in oracled.conf
+# (embedded profile).
+#
+# On desktop and server profiles (reboot ungated), this service has
+# no token and processes can reboot directly.
+
+label = "rebootd";
+program = "/usr/sbin/rebootd";
+description = "Reboot and shutdown manager";
+restart = "on-failure";
+provides = ["reboot"];
+
+capabilities {
+    system = ["reboot"];
+}

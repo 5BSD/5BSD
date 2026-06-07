@@ -30,7 +30,8 @@
 static volatile uint64_t next_reply_token = 1;
 
 /* Timeout for oracle replies (milliseconds). */
-#define	ORACLE_RPC_TIMEOUT_MS	100
+#define	ORACLE_RPC_TIMEOUT_MS	SERVICED_RPC_TIMEOUT_MS
+#define	ORACLE_DRAIN_REPOLL_MS	10	/* short re-poll for stragglers */
 
 /*
  * Send a request and wait for the reply.
@@ -382,17 +383,353 @@ oracle_send_ready(int pair_fd)
 	return (status);
 }
 
+/* --- Dynamic claim/release operations --- */
+
 int
-oracle_ping(int pair_fd)
+oracle_claim_path(int pair_fd, const char *path)
 {
-	struct oracle_req_hdr req;
+	struct oracle_mint_path_req req;
 	int status;
 
+	if (strlen(path) >= sizeof(req.path)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+
 	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_PING;
+	req.op = ORACLE_OP_CLAIM_PATH;
+	strlcpy(req.path, path, sizeof(req.path));
 
 	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
 	if (status < 0)
 		return (-1);
-	return (status);
+	if (status != 0) {
+		errno = status;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+oracle_claim_net(int pair_fd, const struct serviced_net_claim *nc)
+{
+	struct oracle_mint_net_req req;
+	int status;
+
+	memset(&req, 0, sizeof(req));
+	req.op = ORACLE_OP_CLAIM_NET;
+	req.domain = nc->domain;
+	req.protocol = nc->protocol;
+	req.port_min = nc->port_min;
+	req.port_max = nc->port_max;
+	req.direction = nc->direction;
+	req.prefix = nc->prefix;
+	memcpy(req.addr, nc->addr, sizeof(req.addr));
+
+	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
+	if (status < 0)
+		return (-1);
+	if (status != 0) {
+		errno = status;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+oracle_claim_jail(int pair_fd, const struct serviced_jail_claim *jc)
+{
+	struct oracle_mint_jail_req req;
+	int status;
+
+	memset(&req, 0, sizeof(req));
+	req.op = ORACLE_OP_CLAIM_JAIL;
+	req.jid = jc->jid;
+	req.actions = jc->actions;
+	strlcpy(req.name, jc->name, sizeof(req.name));
+
+	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
+	if (status < 0)
+		return (-1);
+	if (status != 0) {
+		errno = status;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+oracle_claim_system(int pair_fd, uint32_t gates)
+{
+	struct oracle_mint_system_req req;
+	int status;
+
+	memset(&req, 0, sizeof(req));
+	req.op = ORACLE_OP_CLAIM_SYSTEM;
+	req.gates = gates;
+
+	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
+	if (status < 0)
+		return (-1);
+	if (status != 0) {
+		errno = status;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+oracle_release_path(int pair_fd, const char *path)
+{
+	struct oracle_mint_path_req req;
+	int status;
+
+	if (strlen(path) >= sizeof(req.path)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.op = ORACLE_OP_RELEASE_PATH;
+	strlcpy(req.path, path, sizeof(req.path));
+
+	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
+	if (status < 0)
+		return (-1);
+	if (status != 0) {
+		errno = status;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+oracle_release_net(int pair_fd, const struct serviced_net_claim *nc)
+{
+	struct oracle_mint_net_req req;
+	int status;
+
+	memset(&req, 0, sizeof(req));
+	req.op = ORACLE_OP_RELEASE_NET;
+	req.domain = nc->domain;
+	req.protocol = nc->protocol;
+	req.port_min = nc->port_min;
+	req.port_max = nc->port_max;
+	req.direction = nc->direction;
+	req.prefix = nc->prefix;
+	memcpy(req.addr, nc->addr, sizeof(req.addr));
+
+	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
+	if (status < 0)
+		return (-1);
+	if (status != 0) {
+		errno = status;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+oracle_release_jail(int pair_fd, const struct serviced_jail_claim *jc)
+{
+	struct oracle_mint_jail_req req;
+	int status;
+
+	memset(&req, 0, sizeof(req));
+	req.op = ORACLE_OP_RELEASE_JAIL;
+	req.jid = jc->jid;
+	req.actions = jc->actions;
+	strlcpy(req.name, jc->name, sizeof(req.name));
+
+	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
+	if (status < 0)
+		return (-1);
+	if (status != 0) {
+		errno = status;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+oracle_release_system(int pair_fd, uint32_t gates)
+{
+	struct oracle_mint_system_req req;
+	int status;
+
+	memset(&req, 0, sizeof(req));
+	req.op = ORACLE_OP_RELEASE_SYSTEM;
+	req.gates = gates;
+
+	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
+	if (status < 0)
+		return (-1);
+	if (status != 0) {
+		errno = status;
+		return (-1);
+	}
+	return (0);
+}
+
+/* --- Batched release --- */
+
+/*
+ * Send a release message without waiting for the reply.
+ * Returns a token that can be drained later, or 0 on send failure.
+ */
+static uint64_t
+oracle_release_send(int pair_fd, const void *req, uint32_t reqlen)
+{
+	struct cap_rt_sendmsg_args sa;
+	uint64_t token;
+
+	token = __atomic_fetch_add(&next_reply_token, 1,
+	    __ATOMIC_RELAXED);
+
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = req;
+	sa.payload_len = reqlen;
+	sa.reply_token = token;
+
+	if (ioctl(pair_fd, CAP_RT_SENDMSG, &sa) == -1) {
+		syslog(LOG_WARNING, "oracle_release_send: sendmsg: %m");
+		return (0);
+	}
+	return (token);
+}
+
+/*
+ * Drain pending release replies.  Blocks once for up to
+ * ORACLE_RPC_TIMEOUT_MS, then reads as many replies as are
+ * available.  Returns the number of replies successfully drained.
+ */
+static int
+oracle_release_drain(int pair_fd, unsigned expected)
+{
+	struct cap_rt_recvmsg_args ra;
+	struct oracle_reply rpl;
+	struct pollfd pfd;
+	unsigned drained;
+	int rv, timeout;
+
+	if (expected == 0)
+		return (0);
+
+	pfd.fd = pair_fd;
+	pfd.events = POLLIN;
+	drained = 0;
+	timeout = ORACLE_RPC_TIMEOUT_MS;
+
+	/*
+	 * Poll-and-read loop: wait for replies, drain what's
+	 * available, re-poll if more are expected.  Use the full
+	 * timeout on the first poll; subsequent polls use a short
+	 * timeout since the oracle is actively processing.
+	 */
+	while (drained < expected) {
+		rv = poll(&pfd, 1, timeout);
+		if (rv == -1) {
+			if (errno == EINTR)
+				continue;
+			syslog(LOG_WARNING,
+			    "oracle_release_drain: poll: %m");
+			break;
+		}
+		if (rv == 0)
+			break;		/* timeout */
+		if (pfd.revents & (POLLERR | POLLHUP))
+			break;
+
+		while (drained < expected) {
+			memset(&ra, 0, sizeof(ra));
+			ra.payload = &rpl;
+			ra.payload_len = sizeof(rpl);
+
+			if (ioctl(pair_fd, CAP_RT_RECVMSG, &ra) == -1) {
+				if (errno == EAGAIN)
+					break;	/* back to poll */
+				syslog(LOG_WARNING,
+				    "oracle_release_drain: recvmsg: %m");
+				return ((int)drained);
+			}
+			drained++;
+		}
+
+		timeout = ORACLE_DRAIN_REPOLL_MS;
+	}
+
+	return ((int)drained);
+}
+
+/*
+ * Release all capabilities from a manifest in one burst.
+ * Sends all release messages, then drains replies in a single
+ * blocking window.  Returns the number of releases sent.
+ */
+int
+oracle_release_manifest(int pair_fd, const struct svc_manifest *m)
+{
+	unsigned i, nsent;
+
+	nsent = 0;
+
+	for (i = 0; i < m->ncap_paths; i++) {
+		struct oracle_mint_path_req req;
+
+		memset(&req, 0, sizeof(req));
+		req.op = ORACLE_OP_RELEASE_PATH;
+		strlcpy(req.path, m->cap_paths[i], sizeof(req.path));
+		if (oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
+			nsent++;
+	}
+	for (i = 0; i < m->ncap_files; i++) {
+		struct oracle_mint_path_req req;
+
+		memset(&req, 0, sizeof(req));
+		req.op = ORACLE_OP_RELEASE_PATH;
+		strlcpy(req.path, m->cap_files[i].path, sizeof(req.path));
+		if (oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
+			nsent++;
+	}
+	for (i = 0; i < m->ncap_net; i++) {
+		struct oracle_mint_net_req req;
+
+		memset(&req, 0, sizeof(req));
+		req.op = ORACLE_OP_RELEASE_NET;
+		req.domain = m->cap_net[i].domain;
+		req.protocol = m->cap_net[i].protocol;
+		req.port_min = m->cap_net[i].port_min;
+		req.port_max = m->cap_net[i].port_max;
+		req.direction = m->cap_net[i].direction;
+		req.prefix = m->cap_net[i].prefix;
+		memcpy(req.addr, m->cap_net[i].addr, sizeof(req.addr));
+		if (oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
+			nsent++;
+	}
+	for (i = 0; i < m->ncap_jail; i++) {
+		struct oracle_mint_jail_req req;
+
+		memset(&req, 0, sizeof(req));
+		req.op = ORACLE_OP_RELEASE_JAIL;
+		req.jid = m->cap_jail[i].jid;
+		req.actions = m->cap_jail[i].actions;
+		strlcpy(req.name, m->cap_jail[i].name, sizeof(req.name));
+		if (oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
+			nsent++;
+	}
+	if (m->cap_system != 0) {
+		struct oracle_mint_system_req req;
+
+		memset(&req, 0, sizeof(req));
+		req.op = ORACLE_OP_RELEASE_SYSTEM;
+		req.gates = m->cap_system;
+		if (oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
+			nsent++;
+	}
+
+	/* One blocking window to drain all replies. */
+	if (nsent > 0)
+		oracle_release_drain(pair_fd, nsent);
+
+	return ((int)nsent);
 }

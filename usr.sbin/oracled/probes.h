@@ -50,6 +50,24 @@
 #define	ORACLED_PROBE_CLAIM_SYSTEM_RELEASE(gates)	\
 	DTRACE_PROBE1(oracled, claim__system__release, gates)
 
+/* Dynamic claims — runtime claim/release via pair channel */
+#define	ORACLED_PROBE_DYN_CLAIM_PATH(path, result)	\
+	DTRACE_PROBE2(oracled, dyn__claim__path, path, result)
+#define	ORACLED_PROBE_DYN_CLAIM_NET(port_min, port_max, proto, result)	\
+	DTRACE_PROBE4(oracled, dyn__claim__net, port_min, port_max, proto, result)
+#define	ORACLED_PROBE_DYN_CLAIM_JAIL(name, actions, result)	\
+	DTRACE_PROBE3(oracled, dyn__claim__jail, name, actions, result)
+#define	ORACLED_PROBE_DYN_CLAIM_SYSTEM(gates, result)	\
+	DTRACE_PROBE2(oracled, dyn__claim__system, gates, result)
+#define	ORACLED_PROBE_DYN_RELEASE_PATH(path, refcount, result)	\
+	DTRACE_PROBE3(oracled, dyn__release__path, path, refcount, result)
+#define	ORACLED_PROBE_DYN_RELEASE_NET(port_min, port_max, proto, refcount, result)	\
+	DTRACE_PROBE5(oracled, dyn__release__net, port_min, port_max, proto, refcount, result)
+#define	ORACLED_PROBE_DYN_RELEASE_JAIL(name, actions, refcount, result)	\
+	DTRACE_PROBE4(oracled, dyn__release__jail, name, actions, refcount, result)
+#define	ORACLED_PROBE_DYN_RELEASE_SYSTEM(gates, released, result)	\
+	DTRACE_PROBE3(oracled, dyn__release__system, gates, released, result)
+
 /* Integrity */
 #define	ORACLED_PROBE_INTEGRITY(flags)	\
 	DTRACE_PROBE1(oracled, integrity, flags)

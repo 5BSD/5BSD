@@ -1,0 +1,16 @@
+# Kernel module manager — controls kldload/kldunload via capability tokens.
+# Only useful when system gates "kldload" and "kldunload" are claimed
+# in oracled.conf (server and embedded profiles).
+#
+# On a desktop profile (no gates), this service has no tokens and
+# processes can load modules directly.
+
+label = "kldmgrd";
+program = "/usr/sbin/kldmgrd";
+description = "Kernel module loading manager";
+restart = "on-failure";
+provides = ["kldmgr"];
+
+capabilities {
+    system = ["kldload", "kldunload"];
+}

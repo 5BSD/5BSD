@@ -94,7 +94,7 @@ Read service manifests from
 instead of the directory specified by the
 .Ev SERVICED_MANIFEST_DIR
 environment variable or the default
-.Pa /etc/oracled.d .
+.Pa /etc/serviced.d .
 .El
 .Sh INHERITED FILE DESCRIPTORS
 .Nm
@@ -148,7 +148,7 @@ Overridden by the
 .Fl d
 flag.
 Default:
-.Pa /etc/oracled.d .
+.Pa /etc/serviced.d .
 .It Ev SERVICED_CONTROL_SOCKET
 Path for the control socket.
 Default:
@@ -441,6 +441,39 @@ A manifest reload via
 or the
 .Cm reload
 control socket command will re-evaluate the manifest.
+.Ss Dynamic Claims
+When
+.Nm
+launches a service, it mints capability tokens via the oracle pair
+channel.
+If the requested resource is not already claimed by the oracle,
+the oracle auto-claims it dynamically with a global reference count.
+.Pp
+When a service exits,
+.Nm
+releases all capabilities from the service's manifest via the pair
+channel.
+Release messages are sent for every path, network endpoint, jail,
+and system gate in the manifest.
+The oracle decrements refcounts for dynamic claims; claims whose
+refcount reaches zero are released from the kernel.
+Policy claims
+.Pq from Xr oracled.conf 5
+return
+.Er EPERM
+on release, which is silently ignored.
+.Pp
+If
+.Nm
+itself exits or crashes, the oracle sweeps all dynamic claims,
+releasing them from the kernel.
+Policy claims survive across
+.Nm
+restarts.
+.Pp
+Releases use a batched send-then-drain pattern: all release messages
+are sent in a burst, then replies are drained in a single blocking
+window, regardless of how many capabilities are being released.
 .Ss Graceful Shutdown
 When stopping a service,
 .Nm
@@ -676,7 +709,7 @@ Oracle pair channel closed unexpectedly.
 .El
 .Sh FILES
 .Bl -tag -width "/var/run/serviced.sock"
-.It Pa /etc/oracled.d/
+.It Pa /etc/serviced.d/
 Default manifest directory.
 Each
 .Pa *.ucl
@@ -694,7 +727,7 @@ environment variable is not set or the pair fd is invalid.
 .Sh EXAMPLES
 Minimal service manifest:
 .Bd -literal -offset indent
-# /etc/oracled.d/myservice.ucl
+# /etc/serviced.d/myservice.ucl
 label = "myservice";
 program = "/usr/local/sbin/myservice";
 restart = "always";

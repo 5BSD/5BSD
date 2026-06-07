@@ -239,7 +239,7 @@ stop_stress_oracled()
 cleanup_common()
 {
 	stop_stress_oracled
-	rm -rf oracled.pid oracled.conf oracled.d oracled.sock \
+	rm -rf oracled.pid oracled.conf serviced.d oracled.sock \
 	    oracled.log rawctl rawctl.c fdprobe fdprobe.c ctl_*.out \
 	    *.pid *.out *.sh outside.ucl escaped.ucl
 }
@@ -330,7 +330,7 @@ prepare_paths()
 {
 	pidfile="$(pwd)/oracled.pid"
 	conffile="$(pwd)/oracled.conf"
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	sockpath="$(pwd)/oracled.sock"
 	logfile="$(pwd)/oracled.log"
 }
@@ -346,7 +346,7 @@ control_early_close_status_does_not_kill_body()
 	local i status_pid services_pid reload_pid
 
 	build_rawctl
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	write_many_manifests 64
 	start_stress_oracled
 
@@ -374,7 +374,7 @@ control_partial_client_timeout_storm_body()
 	local i pids
 
 	build_rawctl
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	start_stress_oracled
 
@@ -414,7 +414,7 @@ control_malformed_header_flood_body()
 	local i status_pid services_pid reload_pid
 
 	build_rawctl
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	start_stress_oracled
 
@@ -444,7 +444,7 @@ reload_manifest_churn_under_control_load_body()
 {
 	local i status_pid services_pid reload_pid
 
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	write_many_manifests 8
 	start_stress_oracled
 
@@ -526,7 +526,7 @@ control_nonroot_denied_head()
 }
 control_nonroot_denied_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	if ! id nobody >/dev/null 2>&1; then
 		atf_skip "nobody user not available"
@@ -550,7 +550,7 @@ service_restart_circuit_breaker_head()
 }
 service_restart_circuit_breaker_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	write_executable "$(pwd)/crash.sh" \
 	    '#!/bin/sh' \
@@ -586,7 +586,7 @@ service_shutdown_kills_sigterm_ignorer_body()
 {
 	local svc_pid
 
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	write_executable "$(pwd)/ignore-term.sh" \
 	    '#!/bin/sh' \
@@ -629,7 +629,7 @@ service_shutdown_kills_subtree_body()
 {
 	local child_pid
 
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	write_executable "$(pwd)/subtree.sh" \
 	    '#!/bin/sh' \
@@ -674,7 +674,7 @@ service_child_environment_is_minimal_head()
 }
 service_child_environment_is_minimal_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	write_executable "$(pwd)/env-probe.sh" \
 	    '#!/bin/sh' \
@@ -716,7 +716,7 @@ parser_manifest_boundaries_head()
 }
 parser_manifest_boundaries_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	long_label="abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
 	cat > "$manifestdir/overlong.ucl" <<EOF
@@ -807,7 +807,7 @@ reload_dependency_transaction_rollback_head()
 }
 reload_dependency_transaction_rollback_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	cat > "$manifestdir/base.ucl" <<EOF
 label = "base";
@@ -851,7 +851,7 @@ reload_dependency_order_status_head()
 }
 reload_dependency_order_status_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	start_stress_oracled
 
@@ -894,7 +894,7 @@ service_pair_fd_contract_head()
 }
 service_pair_fd_contract_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	build_fdprobe
 	cat > "$manifestdir/pair-probe.ucl" <<EOF
@@ -991,7 +991,7 @@ sandbox_capprotect_denies_foreign_ptrace_head()
 }
 sandbox_capprotect_denies_foreign_ptrace_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	if ! command -v truss >/dev/null 2>&1; then
 		atf_skip "truss not available"
@@ -1013,7 +1013,7 @@ sandbox_isolation_denies_foreign_cap_rt_open_head()
 }
 sandbox_isolation_denies_foreign_cap_rt_open_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	start_stress_oracled
 	atf_check -s not-exit:0 -e ignore sh -c 'cat /dev/cap_rt >/dev/null'
@@ -1035,7 +1035,7 @@ control_payload_and_fragment_abuse_body()
 	local i
 
 	build_rawctl
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	start_stress_oracled
 
@@ -1060,7 +1060,7 @@ crash_throttle_mixed_exit_modes_head()
 }
 crash_throttle_mixed_exit_modes_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	write_executable "$(pwd)/die-signal.sh" \
 	    '#!/bin/sh' \
@@ -1096,7 +1096,7 @@ restart_never_no_restart_head()
 }
 restart_never_no_restart_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	write_executable "$(pwd)/exit0.sh" \
 	    '#!/bin/sh' \
@@ -1135,7 +1135,7 @@ restart_never_no_restart_on_failure_head()
 }
 restart_never_no_restart_on_failure_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	write_executable "$(pwd)/exit1.sh" \
 	    '#!/bin/sh' \
@@ -1172,7 +1172,7 @@ restart_on_failure_ignores_clean_exit_head()
 }
 restart_on_failure_ignores_clean_exit_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	write_executable "$(pwd)/clean.sh" \
 	    '#!/bin/sh' \
@@ -1209,7 +1209,7 @@ restart_on_failure_restarts_on_error_head()
 }
 restart_on_failure_restarts_on_error_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	# Exit 1 the first time, then sleep (so circuit breaker doesn't fire).
 	write_executable "$(pwd)/fail-once.sh" \
@@ -1252,7 +1252,7 @@ restart_always_restarts_on_clean_exit_head()
 }
 restart_always_restarts_on_clean_exit_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	# Exit 0 the first time, then sleep.
 	write_executable "$(pwd)/exit0-always.sh" \
@@ -1294,7 +1294,7 @@ restart_on_failure_restarts_on_signal_head()
 }
 restart_on_failure_restarts_on_signal_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	write_executable "$(pwd)/sigdie.sh" \
 	    '#!/bin/sh' \
@@ -1337,7 +1337,7 @@ restart_backoff_on_rapid_crash_head()
 }
 restart_backoff_on_rapid_crash_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	write_executable "$(pwd)/fastcrash.sh" \
 	    '#!/bin/sh' \
@@ -1374,7 +1374,7 @@ shutdown_reverse_dependency_order_head()
 }
 shutdown_reverse_dependency_order_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	# A provides "base", B requires "base".
 	# On shutdown, B must stop before A.
@@ -1434,7 +1434,7 @@ shutdown_stop_timeout_escalates_head()
 }
 shutdown_stop_timeout_escalates_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	write_executable "$(pwd)/stubborn.sh" \
 	    '#!/bin/sh' \
@@ -1482,7 +1482,7 @@ service_runs_as_specified_user_head()
 }
 service_runs_as_specified_user_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	write_executable "$(pwd)/whoami-svc.sh" \
 	    '#!/bin/sh' \
@@ -1523,7 +1523,7 @@ reload_during_restart_head()
 }
 reload_during_restart_body()
 {
-	manifestdir="$(pwd)/oracled.d"
+	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	write_executable "$(pwd)/crashloop.sh" \
 	    '#!/bin/sh' \

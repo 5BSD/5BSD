@@ -28,4 +28,14 @@ int	isolate_resources(void);
 int	apply_integrity(void);
 int	claim_system_gates(void);
 
+/* Claim/release primitives (cap_rt_claims.c). */
+int	cap_rt_claim_path(const char *path);
+int	cap_rt_claim_net(const struct oracled_net_claim *nc);
+int	cap_rt_claim_jail(const struct oracled_jail_claim *jc);
+int	cap_rt_claim_system_gate_bits(uint32_t gates);
+int	cap_rt_release_path(const char *path);
+int	cap_rt_release_net(const struct oracled_net_claim *nc);
+int	cap_rt_release_jail(const struct oracled_jail_claim *jc);
+int	cap_rt_release_system_gates(uint32_t gates);
+
 #endif /* CAP_RT_PRIV_H */

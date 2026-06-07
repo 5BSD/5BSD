@@ -184,47 +184,6 @@ conn_dispatch(struct ctl_conn *c)
 		cmd_reload(c->euid, event_kq, reply,
 		    c->summary, sizeof(c->summary));
 		break;
-	case CTL_OP_KLDLOAD:
-		if (req->datalen == 0 ||
-		    req->datalen >= sizeof(c->payload)) {
-			reply->status = EINVAL;
-			break;
-		}
-		c->payload[req->datalen] = '\0';
-		if (strchr(c->payload, '/') != NULL) {
-			reply->status = EINVAL;
-			syslog(LOG_WARNING,
-			    "control: payload contains '/'");
-			break;
-		}
-		cmd_kldload(c->euid, c->payload, reply);
-		break;
-	case CTL_OP_KLDUNLOAD:
-		if (req->datalen == 0 ||
-		    req->datalen >= sizeof(c->payload)) {
-			reply->status = EINVAL;
-			break;
-		}
-		c->payload[req->datalen] = '\0';
-		if (strchr(c->payload, '/') != NULL) {
-			reply->status = EINVAL;
-			syslog(LOG_WARNING,
-			    "control: payload contains '/'");
-			break;
-		}
-		cmd_kldunload(c->euid, c->payload, reply);
-		break;
-	case CTL_OP_REBOOT:
-		if (req->datalen != 0) {
-			reply->status = EINVAL;
-			break;
-		}
-		cmd_reboot(c->euid, req->flags, reply);
-		if (reply->status == CTL_STATUS_OK) {
-			c->reboot_howto = req->flags;
-			c->action = CTL_ACTION_REBOOT;
-		}
-		break;
 	case CTL_OP_CHECK:
 		if (req->datalen == 0 ||
 		    req->datalen >= sizeof(c->payload)) {
@@ -265,6 +224,13 @@ conn_dispatch(struct ctl_conn *c)
 		cmd_services(c->euid, req->flags, reply,
 		    c->summary, sizeof(c->summary));
 		break;
+	case CTL_OP_VERIFY:
+		if (req->datalen != 0) {
+			reply->status = EINVAL;
+			break;
+		}
+		cmd_verify(reply, c->summary, sizeof(c->summary));
+		break;
 	default:
 		reply->status = ENOTSUP;
 		break;
@@ -273,7 +239,8 @@ conn_dispatch(struct ctl_conn *c)
 write:
 	if ((req->op == CTL_OP_STATUS || req->op == CTL_OP_CHECK ||
 	    req->op == CTL_OP_LOAD || req->op == CTL_OP_SERVICES ||
-	    req->op == CTL_OP_RELOAD) && reply->flags > 0)
+	    req->op == CTL_OP_RELOAD || req->op == CTL_OP_VERIFY) &&
+	    reply->flags > 0)
 		c->summary_len = reply->flags;
 
 	c->state = CTL_CONN_WRITING_REPLY;

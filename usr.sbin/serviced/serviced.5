@@ -11,7 +11,7 @@
 Service manifests are UCL files read by
 .Xr serviced 8
 from the manifest directory
-.Pa /etc/oracled.d .
+.Pa /etc/serviced.d .
 Each
 .Pa *.ucl
 file declares one service.
@@ -104,6 +104,19 @@ The
 object requests capability tokens from
 .Xr oracled 8
 on behalf of the service.
+Resources listed here that are not pre-declared in
+.Xr oracled.conf 5
+are automatically claimed by the oracle at runtime.
+These
+.Em dynamic claims
+are reference-counted across all services; when the last service
+using a dynamic claim exits, the claim is released from the kernel.
+Resources that are declared in
+.Xr oracled.conf 5
+are
+.Em policy claims
+and are never released.
+.Pp
 It may contain the following sub-keys:
 .Bl -tag -width "network"
 .It Va paths
@@ -254,7 +267,7 @@ names across manifests cause the entire reload to be rejected.
 .Sh EXAMPLES
 Minimal service manifest:
 .Bd -literal -offset indent
-# /etc/oracled.d/myservice.ucl
+# /etc/serviced.d/myservice.ucl
 label = "myservice";
 program = "/usr/local/sbin/myservice";
 restart = "always";
@@ -312,8 +325,8 @@ jail {
 }
 .Ed
 .Sh FILES
-.Bl -tag -width "/etc/oracled.d/"
-.It Pa /etc/oracled.d/
+.Bl -tag -width "/etc/serviced.d/"
+.It Pa /etc/serviced.d/
 Default manifest directory.
 Each
 .Pa *.ucl

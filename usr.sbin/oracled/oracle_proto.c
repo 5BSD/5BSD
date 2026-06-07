@@ -29,7 +29,9 @@
 
 #include "oracled.h"
 #include "oracled_svc_proto.h"
+#include "cap_rt_priv.h"
 #include "probes.h"
+#include "oracle_proto_claims.h"
 
 static int	proto_pair_fd = -1;
 static bool	serviced_ready;
@@ -43,7 +45,7 @@ static int dispatch_status;
 /*
  * Send a reply with optional attached fds.
  */
-static int
+int
 proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 {
 	struct cap_rt_sendmsg_args sa;
@@ -72,83 +74,12 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 /*
  * Validate that a path is within the oracle's claimed set.
  */
-static bool
-path_is_claimed(const char *path)
-{
-	unsigned i;
+#include "claim_check.h"
 
-	for (i = 0; i < od.cfg.nclaim_paths; i++) {
-		if (strcmp(od.cfg.claim_paths[i], path) == 0)
-			return (true);
-	}
-	return (false);
-}
-
-static bool
-net_claim_covers(const struct oracled_net_claim *claim,
-    const struct oracled_net_claim *req)
-{
-
-	if ((claim->direction & req->direction) != req->direction)
-		return (false);
-	if (claim->domain != 0 &&
-	    (req->domain == 0 || claim->domain != req->domain))
-		return (false);
-	if (claim->protocol != 0 &&
-	    (req->protocol == 0 || claim->protocol != req->protocol))
-		return (false);
-	if (claim->port_min > req->port_min ||
-	    claim->port_max < req->port_max)
-		return (false);
-	return (true);
-}
-
-static bool
-net_is_claimed(const struct oracled_net_claim *req)
-{
-	unsigned i;
-
-	for (i = 0; i < od.cfg.nclaim_net; i++) {
-		if (net_claim_covers(&od.cfg.claim_net[i], req))
-			return (true);
-	}
-	return (false);
-}
-
-static bool
-jail_claim_covers(const struct oracled_jail_claim *claim,
-    const struct oracled_jail_claim *req)
-{
-
-	if ((claim->actions & req->actions) != req->actions)
-		return (false);
-	/*
-	 * When the claim specifies both JID and name, require both keys
-	 * to be present in the request and both to match.  This mirrors
-	 * the kernel's fi_jail_req_matches() and prevents a request
-	 * with only a matching JID from covering a claim intended for
-	 * a specific name + JID pair.
-	 *
-	 * Exception: FI_JAIL_CREATE requests carry no JID (the jail
-	 * doesn't exist yet).  Match on name alone in that case.
-	 *
-	 * When only one key is specified, match on that key alone.
-	 */
-	if (claim->jid != 0 && claim->name[0] != '\0') {
-		if (req->jid == 0 && req->name[0] != '\0' &&
-		    req->actions == FI_JAIL_CREATE)
-			return (strcmp(claim->name, req->name) == 0);
-		return (req->jid == claim->jid &&
-		    req->name[0] != '\0' &&
-		    strcmp(claim->name, req->name) == 0);
-	}
-	if (claim->jid != 0)
-		return (req->jid != 0 && claim->jid == req->jid);
-	if (claim->name[0] != '\0')
-		return (req->name[0] != '\0' &&
-		    strcmp(claim->name, req->name) == 0);
-	return (false);
-}
+/* Convenience wrappers using the global config. */
+#define	path_is_claimed(p)	claim_path_covered(&od.cfg, (p))
+#define	net_is_claimed(r)	claim_net_covered(&od.cfg, (r))
+#define	jail_is_claimed(r)	claim_jail_covered(&od.cfg, (r))
 
 /*
  * Verify that the requested jail path is allowed by the matching
@@ -179,18 +110,6 @@ jail_path_allowed(const char *jail_name, const char *req_path)
 	return (false);
 }
 
-static bool
-jail_is_claimed(const struct oracled_jail_claim *req)
-{
-	unsigned i;
-
-	for (i = 0; i < od.cfg.nclaim_jail; i++) {
-		if (jail_claim_covers(&od.cfg.claim_jail[i], req))
-			return (true);
-	}
-	return (false);
-}
-
 static void
 handle_mint_path(const void *payload, uint32_t len, uint64_t reply_token)
 {
@@ -214,12 +133,14 @@ handle_mint_path(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 
-	if (!path_is_claimed(req->path)) {
-		syslog(LOG_NOTICE, "oracle_proto: mint_path denied: %s",
-		    req->path);
-		ORACLED_PROBE_MINT_PATH(req->path, EACCES);
-		proto_reply(EACCES, reply_token, NULL, 0);
-		return;
+	{
+		int err;
+
+		if (auto_claim_path(req->path, &err) != 0) {
+			ORACLED_PROBE_MINT_PATH(req->path, err);
+			proto_reply(err, reply_token, NULL, 0);
+			return;
+		}
 	}
 
 	token_fd = cap_rt_mint_path_token(req->path);
@@ -258,12 +179,14 @@ handle_mint_file(const void *payload, uint32_t len, uint64_t reply_token)
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
-	if (!path_is_claimed(req->path)) {
-		syslog(LOG_NOTICE, "oracle_proto: mint_file denied: %s",
-		    req->path);
-		ORACLED_PROBE_MINT_PATH(req->path, EACCES);
-		proto_reply(EACCES, reply_token, NULL, 0);
-		return;
+	{
+		int err;
+
+		if (auto_claim_path(req->path, &err) != 0) {
+			ORACLED_PROBE_MINT_PATH(req->path, err);
+			proto_reply(err, reply_token, NULL, 0);
+			return;
+		}
 	}
 
 	token_fd = cap_rt_mint_file_token(req->path, req->actions);
@@ -314,13 +237,16 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 	nc.prefix = req->prefix;
 	memcpy(nc.addr, req->addr, sizeof(nc.addr));
 
-	if (!net_is_claimed(&nc)) {
-		syslog(LOG_NOTICE, "oracle_proto: mint_net denied: %u-%u/%d",
-		    nc.port_min, nc.port_max, nc.protocol);
-		ORACLED_PROBE_MINT_NET(nc.port_min, nc.port_max, nc.protocol,
-		    EACCES);
-		proto_reply(EACCES, reply_token, NULL, 0);
-		return;
+	{
+		int err;
+
+		if (auto_claim_net(&nc, &err) != 0 &&
+		    !net_is_claimed(&nc)) {
+			ORACLED_PROBE_MINT_NET(nc.port_min, nc.port_max,
+			    nc.protocol, err);
+			proto_reply(err, reply_token, NULL, 0);
+			return;
+		}
 	}
 
 	token_fd = cap_rt_mint_net_token(&nc);
@@ -368,13 +294,16 @@ handle_mint_jail(const void *payload, uint32_t len, uint64_t reply_token)
 	jc.actions = req->actions;
 	strlcpy(jc.name, req->name, sizeof(jc.name));
 
-	if (!jail_is_claimed(&jc)) {
-		syslog(LOG_NOTICE, "oracle_proto: mint_jail denied: "
-		    "jid=%d name=%s actions=0x%x", jc.jid, jc.name,
-		    jc.actions);
-		ORACLED_PROBE_MINT_JAIL(jc.jid, jc.name, jc.actions, EACCES);
-		proto_reply(EACCES, reply_token, NULL, 0);
-		return;
+	{
+		int err;
+
+		if (auto_claim_jail(&jc, &err) != 0 &&
+		    !jail_is_claimed(&jc)) {
+			ORACLED_PROBE_MINT_JAIL(jc.jid, jc.name, jc.actions,
+			    err);
+			proto_reply(err, reply_token, NULL, 0);
+			return;
+		}
 	}
 
 	token_fd = cap_rt_mint_jail_token(&jc);
@@ -513,13 +442,14 @@ handle_mint_system(const void *payload, uint32_t len, uint64_t reply_token)
 	}
 	req = payload;
 
-	if ((req->gates & od.cfg.claim_system) != req->gates) {
-		syslog(LOG_NOTICE,
-		    "oracle_proto: mint_system denied: 0x%x not in 0x%x",
-		    req->gates, od.cfg.claim_system);
-		ORACLED_PROBE_MINT_SYSTEM(req->gates, EACCES);
-		proto_reply(EACCES, reply_token, NULL, 0);
-		return;
+	{
+		int err;
+
+		if (auto_claim_system(req->gates, &err) != 0) {
+			ORACLED_PROBE_MINT_SYSTEM(req->gates, err);
+			proto_reply(err, reply_token, NULL, 0);
+			return;
+		}
 	}
 
 	token_fd = cap_rt_mint_system_token(req->gates);
@@ -585,6 +515,8 @@ handle_ping(uint64_t reply_token)
 
 	proto_reply(0, reply_token, NULL, 0);
 }
+
+/* Claim/release handlers and sweep are in oracle_proto_claims.c. */
 
 /*
  * Dispatch a single request from the pair channel.
@@ -677,6 +609,30 @@ proto_dispatch_one(void)
 	case ORACLE_OP_PING:
 		handle_ping(ra.reply_token);
 		break;
+	case ORACLE_OP_CLAIM_PATH:
+		handle_claim_path(&buf, ra.payload_len, ra.reply_token);
+		break;
+	case ORACLE_OP_CLAIM_NET:
+		handle_claim_net(&buf, ra.payload_len, ra.reply_token);
+		break;
+	case ORACLE_OP_CLAIM_JAIL:
+		handle_claim_jail(&buf, ra.payload_len, ra.reply_token);
+		break;
+	case ORACLE_OP_CLAIM_SYSTEM:
+		handle_claim_system(&buf, ra.payload_len, ra.reply_token);
+		break;
+	case ORACLE_OP_RELEASE_PATH:
+		handle_release_path(&buf, ra.payload_len, ra.reply_token);
+		break;
+	case ORACLE_OP_RELEASE_NET:
+		handle_release_net(&buf, ra.payload_len, ra.reply_token);
+		break;
+	case ORACLE_OP_RELEASE_JAIL:
+		handle_release_jail(&buf, ra.payload_len, ra.reply_token);
+		break;
+	case ORACLE_OP_RELEASE_SYSTEM:
+		handle_release_system(&buf, ra.payload_len, ra.reply_token);
+		break;
 	default:
 		syslog(LOG_WARNING, "oracle_proto: unknown op %u", op);
 		proto_reply(ENOTSUP, ra.reply_token, NULL, 0);
@@ -723,6 +679,7 @@ void
 oracle_proto_reset(void)
 {
 
+	sweep_dynamic_claims();
 	serviced_ready = false;
 	nonce_set = false;
 }

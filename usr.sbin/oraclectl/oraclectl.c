@@ -117,47 +117,19 @@ cmd_reload(void)
 }
 
 static int
-cmd_kldload(const char *module)
+cmd_verify(void)
 {
-	int fd, error, id;
-
-	fd = open_or_die();
-	error = oraclectl_kldload(fd, module, &id);
-	close(fd);
-
-	if (error != 0)
-		return (check(error, module));
-	printf("%s: loaded (id %d)\n", module, id);
-	return (0);
-}
-
-static int
-cmd_kldunload(const char *module)
-{
+	char summary[ORACLECTL_SUMMARY_MAX];
 	int fd, error;
 
 	fd = open_or_die();
-	error = oraclectl_kldunload(fd, module);
+	error = oraclectl_verify(fd, summary, sizeof(summary));
 	close(fd);
 
 	if (error != 0)
-		return (check(error, module));
-	printf("%s: unloaded\n", module);
-	return (0);
-}
-
-static int
-cmd_reboot(void)
-{
-	int fd, error;
-
-	fd = open_or_die();
-	error = oraclectl_reboot(fd, 0);
-	close(fd);
-
-	if (error != 0)
-		return (check(error, "reboot"));
-	printf("oracled: reboot initiated\n");
+		return (check(error, "verify"));
+	if (summary[0] != '\0')
+		printf("%s", summary);
 	return (0);
 }
 
@@ -193,11 +165,9 @@ usage(void)
 	    "usage: oraclectl [-s socket] command [args]\n"
 	    "       oraclectl status\n"
 	    "       oraclectl services [-v]\n"
+	    "       oraclectl verify\n"
 	    "       oraclectl reload\n"
-	    "       oraclectl shutdown\n"
-	    "       oraclectl kldload <module>\n"
-	    "       oraclectl kldunload <module>\n"
-	    "       oraclectl reboot\n");
+	    "       oraclectl shutdown\n");
 	exit(EX_USAGE);
 }
 
@@ -232,16 +202,12 @@ main(int argc, char *argv[])
 		warnx("%s: use servicectl(8) instead", argv[0]);
 		return (EX_USAGE);
 	}
+	if (strcmp(argv[0], "verify") == 0 && argc == 1)
+		return (cmd_verify());
 	if (strcmp(argv[0], "shutdown") == 0 && argc == 1)
 		return (cmd_shutdown());
 	if (strcmp(argv[0], "reload") == 0 && argc == 1)
 		return (cmd_reload());
-	if (strcmp(argv[0], "kldload") == 0 && argc == 2)
-		return (cmd_kldload(argv[1]));
-	if (strcmp(argv[0], "kldunload") == 0 && argc == 2)
-		return (cmd_kldunload(argv[1]));
-	if (strcmp(argv[0], "reboot") == 0 && argc == 1)
-		return (cmd_reboot());
 
 	usage();
 	return (EX_USAGE);

@@ -33,12 +33,10 @@
 #define	CTL_OP_SHUTDOWN		1	/* graceful shutdown (root) */
 #define	CTL_OP_STATUS		2	/* query daemon status (any) */
 #define	CTL_OP_RELOAD		3	/* reload configuration (root) */
-#define	CTL_OP_KLDLOAD		4	/* load kernel module (root) */
-#define	CTL_OP_KLDUNLOAD	5	/* unload kernel module (root) */
-#define	CTL_OP_REBOOT		6	/* system reboot (root) */
 #define	CTL_OP_CHECK		7	/* validate manifest (root) */
 #define	CTL_OP_LOAD		8	/* validate + load + start (root) */
 #define	CTL_OP_SERVICES		9	/* list loaded services (any) */
+#define	CTL_OP_VERIFY		10	/* validate config + manifests (any) */
 
 /*
  * Request header.  For variable-length commands (kldload,

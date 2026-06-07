@@ -27,6 +27,7 @@
 #include <unistd.h>
 
 #include "oracled.h"
+#include "oracled_svc_proto.h"
 #include "gates.h"
 #include "probes.h"
 #include "cap_rt_priv.h"
@@ -128,7 +129,7 @@ query_path_claimed(const char *path)
 	if (cap_rt_isolation_fd == -1)
 		return (false);
 
-	fd = open(path, O_RDONLY | O_CLOEXEC);
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
 	if (fd == -1)
 		return (false);
 
@@ -240,15 +241,15 @@ log_integrity_flags(uint32_t flags)
  * Claim a single vnode (file or directory) via the isolation
  * service.  The isolation_fd must already be connected.
  */
-static int
-claim_path(const char *path)
+int
+cap_rt_claim_path(const char *path)
 {
 	struct cap_rt_call_args call;
 	struct fi_request req;
 	struct fi_reply reply;
 	int fd;
 
-	fd = open(path, O_RDONLY | O_CLOEXEC);
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
 	if (fd == -1) {
 		syslog(LOG_WARNING, "isolation: open %s: %m", path);
 		ORACLED_PROBE_CLAIM_PATH_FAIL(path);
@@ -282,8 +283,8 @@ claim_path(const char *path)
 /*
  * Claim a network endpoint via the isolation service.
  */
-static int
-claim_net(const struct oracled_net_claim *nc)
+int
+cap_rt_claim_net(const struct oracled_net_claim *nc)
 {
 	struct fi_net_request req;
 	struct fi_reply reply;
@@ -314,12 +315,12 @@ claim_net(const struct oracled_net_claim *nc)
 	return (0);
 }
 
-static int
-claim_jail(const struct oracled_jail_claim *jc)
+int
+cap_rt_claim_jail(const struct oracled_jail_claim *jc)
 {
 	struct fi_jail_request req;
 	struct fi_reply reply;
-	char jailbuf[96];
+	char jailbuf[ORACLED_JAIL_DESC_MAX];
 
 	memset(&req, 0, sizeof(req));
 	req.op = FI_OP_CLAIM_JAIL;
@@ -342,8 +343,8 @@ claim_jail(const struct oracled_jail_claim *jc)
 /*
  * Release a single vnode claim via the isolation service.
  */
-static int
-release_path(const char *path)
+int
+cap_rt_release_path(const char *path)
 {
 	struct cap_rt_call_args call;
 	struct fi_request req;
@@ -353,7 +354,7 @@ release_path(const char *path)
 	if (cap_rt_isolation_fd == -1)
 		return (-1);
 
-	fd = open(path, O_RDONLY | O_CLOEXEC);
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
 	if (fd == -1) {
 		syslog(LOG_WARNING, "isolation: release open %s: %m", path);
 		return (-1);
@@ -385,8 +386,8 @@ release_path(const char *path)
 /*
  * Release a network endpoint claim via the isolation service.
  */
-static int
-release_net(const struct oracled_net_claim *nc)
+int
+cap_rt_release_net(const struct oracled_net_claim *nc)
 {
 	struct fi_net_request req;
 	struct fi_reply reply;
@@ -419,12 +420,12 @@ release_net(const struct oracled_net_claim *nc)
 	return (0);
 }
 
-static int
-release_jail(const struct oracled_jail_claim *jc)
+int
+cap_rt_release_jail(const struct oracled_jail_claim *jc)
 {
 	struct fi_jail_request req;
 	struct fi_reply reply;
-	char jailbuf[96];
+	char jailbuf[ORACLED_JAIL_DESC_MAX];
 
 	if (cap_rt_isolation_fd == -1)
 		return (-1);
@@ -451,8 +452,8 @@ release_jail(const struct oracled_jail_claim *jc)
 /*
  * Release system gate claims.
  */
-static int
-release_system_gates(uint32_t gates)
+int
+cap_rt_release_system_gates(uint32_t gates)
 {
 	struct sys_request req;
 
@@ -493,14 +494,14 @@ isolate_resources(void)
 	claimed = failed = 0;
 
 	/* Always claim /dev/cap_rt — oracled owns this device. */
-	if (claim_path("/dev/cap_rt") == 0)
+	if (cap_rt_claim_path("/dev/cap_rt") == 0)
 		claimed++;
 	else
 		failed++;
 
 	/* Claim configured paths (files and directories). */
 	for (i = 0; i < od.cfg.nclaim_paths; i++) {
-		if (claim_path(od.cfg.claim_paths[i]) == 0)
+		if (cap_rt_claim_path(od.cfg.claim_paths[i]) == 0)
 			claimed++;
 		else
 			failed++;
@@ -508,7 +509,7 @@ isolate_resources(void)
 
 	/* Claim configured network endpoints. */
 	for (i = 0; i < od.cfg.nclaim_net; i++) {
-		if (claim_net(&od.cfg.claim_net[i]) == 0)
+		if (cap_rt_claim_net(&od.cfg.claim_net[i]) == 0)
 			claimed++;
 		else
 			failed++;
@@ -516,7 +517,7 @@ isolate_resources(void)
 
 	/* Claim configured jails. */
 	for (i = 0; i < od.cfg.nclaim_jail; i++) {
-		if (claim_jail(&od.cfg.claim_jail[i]) == 0)
+		if (cap_rt_claim_jail(&od.cfg.claim_jail[i]) == 0)
 			claimed++;
 		else
 			failed++;
@@ -592,6 +593,38 @@ claim_system_gates(void)
 
 	syslog(LOG_INFO, "system: claimed gates 0x%x",
 	    od.cfg.claim_system);
+	return (0);
+}
+
+/*
+ * Claim specific system gate bits via the cap_rt_system service.
+ * Used by the dynamic claim handler.
+ */
+int
+cap_rt_claim_system_gate_bits(uint32_t gates)
+{
+	struct sys_request req;
+
+	if (gates == 0)
+		return (0);
+
+	if (cap_rt_system_fd == -1) {
+		cap_rt_system_fd = cap_rt_svc_connect("system");
+		if (cap_rt_system_fd == -1)
+			return (-1);
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_CLAIM;
+	req.gates = gates;
+
+	if (cap_rt_do_call(cap_rt_system_fd, &req, sizeof(req),
+	    NULL, 0) == -1) {
+		syslog(LOG_WARNING, "system: claim gates 0x%x: %m", gates);
+		return (-1);
+	}
+
+	syslog(LOG_INFO, "system: claimed gates 0x%x", gates);
 	return (0);
 }
 
@@ -690,7 +723,7 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 	for (i = 0; i < newcfg->nclaim_paths; i++) {
 		if (!path_in(newcfg->claim_paths[i],
 		    oldcfg->claim_paths, oldcfg->nclaim_paths)) {
-			if (claim_path(newcfg->claim_paths[i]) == 0) {
+			if (cap_rt_claim_path(newcfg->claim_paths[i]) == 0) {
 				acquired++;
 			} else {
 				path_ok[i] = false;
@@ -705,7 +738,7 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 	for (i = 0; i < newcfg->nclaim_net; i++) {
 		if (!net_claim_in(&newcfg->claim_net[i],
 		    oldcfg->claim_net, oldcfg->nclaim_net)) {
-			if (claim_net(&newcfg->claim_net[i]) == 0) {
+			if (cap_rt_claim_net(&newcfg->claim_net[i]) == 0) {
 				acquired++;
 			} else {
 				net_ok[i] = false;
@@ -720,7 +753,7 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 	for (i = 0; i < newcfg->nclaim_jail; i++) {
 		if (!jail_claim_in(&newcfg->claim_jail[i],
 		    oldcfg->claim_jail, oldcfg->nclaim_jail)) {
-			if (claim_jail(&newcfg->claim_jail[i]) == 0) {
+			if (cap_rt_claim_jail(&newcfg->claim_jail[i]) == 0) {
 				acquired++;
 			} else {
 				jail_ok[i] = false;
@@ -764,7 +797,7 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 	for (i = 0; i < oldcfg->nclaim_paths; i++) {
 		if (!path_in(oldcfg->claim_paths[i],
 		    newcfg->claim_paths, newcfg->nclaim_paths)) {
-			if (release_path(oldcfg->claim_paths[i]) == 0)
+			if (cap_rt_release_path(oldcfg->claim_paths[i]) == 0)
 				released++;
 			else
 				failed++;
@@ -777,7 +810,7 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 	for (i = 0; i < oldcfg->nclaim_net; i++) {
 		if (!net_claim_in(&oldcfg->claim_net[i],
 		    newcfg->claim_net, newcfg->nclaim_net)) {
-			if (release_net(&oldcfg->claim_net[i]) == 0)
+			if (cap_rt_release_net(&oldcfg->claim_net[i]) == 0)
 				released++;
 			else
 				failed++;
@@ -790,7 +823,7 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 	for (i = 0; i < oldcfg->nclaim_jail; i++) {
 		if (!jail_claim_in(&oldcfg->claim_jail[i],
 		    newcfg->claim_jail, newcfg->nclaim_jail)) {
-			if (release_jail(&oldcfg->claim_jail[i]) == 0)
+			if (cap_rt_release_jail(&oldcfg->claim_jail[i]) == 0)
 				released++;
 			else
 				failed++;
@@ -805,7 +838,7 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 
 		old_gates = oldcfg->claim_system & ~newcfg->claim_system;
 		if (old_gates != 0) {
-			if (release_system_gates(old_gates) == 0) {
+			if (cap_rt_release_system_gates(old_gates) == 0) {
 				gates_released = old_gates;
 				released++;
 			} else {
@@ -819,6 +852,11 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 	 * are actually held by the kernel.  This is written back to
 	 * the newcfg struct (which the caller passes to
 	 * config_apply_claims).
+	 *
+	 * Dynamic claims (CLAIM_SOURCE_SERVICE) from the old config
+	 * are carried forward — they persist across reloads.  If a
+	 * previously-dynamic claim now appears in the manifest, it is
+	 * upgraded to CLAIM_SOURCE_POLICY (immortal).
 	 */
 	{
 		struct oracled_config *eff;
@@ -830,13 +868,15 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 		 */
 		eff = __DECONST(struct oracled_config *, newcfg);
 
-		/* Paths: keep only those that succeeded or were already held. */
+		/* Paths: keep successful policy claims. */
 		n = 0;
 		for (i = 0; i < newcfg->nclaim_paths; i++) {
 			if (path_ok[i]) {
 				if (n != i)
 					strlcpy(eff->claim_paths[n],
 					    newcfg->claim_paths[i], PATH_MAX);
+				eff->claim_path_source[n] = CLAIM_SOURCE_POLICY;
+				eff->claim_path_refcount[n] = 0;
 				n++;
 			} else {
 				syslog(LOG_WARNING, "reload: dropping failed "
@@ -844,42 +884,96 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 				    newcfg->claim_paths[i]);
 			}
 		}
+		/*
+		 * Carry forward dynamic claims from the old config.
+		 * Skip entries already covered by the new manifest.
+		 */
+#define	CARRY_FORWARD(arr, src, rc, nold, in_fn, max)	do {	\
+	for (i = 0; i < (nold); i++) {				\
+		if (oldcfg->src[i] != CLAIM_SOURCE_SERVICE)	\
+			continue;				\
+		if (in_fn(&oldcfg->arr[i], eff->arr, n))	\
+			continue;				\
+		if (n >= (max))					\
+			break;					\
+		eff->arr[n] = oldcfg->arr[i];			\
+		eff->src[n] = CLAIM_SOURCE_SERVICE;		\
+		eff->rc[n] = oldcfg->rc[i];			\
+		n++;						\
+	}							\
+} while (0)
+
+		/* Paths: path_in has a different signature, keep inline. */
+		for (i = 0; i < oldcfg->nclaim_paths; i++) {
+			if (oldcfg->claim_path_source[i] !=
+			    CLAIM_SOURCE_SERVICE)
+				continue;
+			if (path_in(oldcfg->claim_paths[i],
+			    eff->claim_paths, n))
+				continue;
+			if (n >= ORACLED_MAX_PATH_CLAIMS)
+				break;
+			strlcpy(eff->claim_paths[n],
+			    oldcfg->claim_paths[i], PATH_MAX);
+			eff->claim_path_source[n] = CLAIM_SOURCE_SERVICE;
+			eff->claim_path_refcount[n] =
+			    oldcfg->claim_path_refcount[i];
+			n++;
+		}
 		eff->nclaim_paths = n;
 
-		/* Network: keep only those that succeeded or were already held. */
+		/* Network: keep successful policy claims. */
 		n = 0;
 		for (i = 0; i < newcfg->nclaim_net; i++) {
 			if (net_ok[i]) {
 				if (n != i)
 					eff->claim_net[n] = newcfg->claim_net[i];
+				eff->claim_net_source[n] = CLAIM_SOURCE_POLICY;
+				eff->claim_net_refcount[n] = 0;
 				n++;
 			} else {
 				syslog(LOG_WARNING, "reload: dropping failed "
 				    "net claim from effective config");
 			}
 		}
+		CARRY_FORWARD(claim_net, claim_net_source,
+		    claim_net_refcount, oldcfg->nclaim_net,
+		    net_claim_in, ORACLED_MAX_NET_CLAIMS);
 		eff->nclaim_net = n;
 
-		/* Jails: keep only those that succeeded or were already held. */
+		/* Jails: keep successful policy claims. */
 		n = 0;
 		for (i = 0; i < newcfg->nclaim_jail; i++) {
 			if (jail_ok[i]) {
 				if (n != i)
 					eff->claim_jail[n] =
 					    newcfg->claim_jail[i];
+				eff->claim_jail_source[n] = CLAIM_SOURCE_POLICY;
+				eff->claim_jail_refcount[n] = 0;
 				n++;
 			} else {
 				syslog(LOG_WARNING, "reload: dropping failed "
 				    "jail claim from effective config");
 			}
 		}
+		CARRY_FORWARD(claim_jail, claim_jail_source,
+		    claim_jail_refcount, oldcfg->nclaim_jail,
+		    jail_claim_in, ORACLED_MAX_JAIL_CLAIMS);
 		eff->nclaim_jail = n;
 
+#undef CARRY_FORWARD
+
 		/* System gates: add only what was acquired, remove only
-		 * what was released. */
+		 * what was released.  Preserve dynamic refcounts. */
 		eff->claim_system = oldcfg->claim_system;
 		eff->claim_system |= gates_acquired;
 		eff->claim_system &= ~gates_released;
+		eff->claim_system_policy = newcfg->claim_system_policy;
+		eff->claim_system_service = oldcfg->claim_system_service;
+		eff->claim_system_service &= ~gates_released;
+		memcpy(eff->claim_system_refcount,
+		    oldcfg->claim_system_refcount,
+		    sizeof(eff->claim_system_refcount));
 	}
 
 	syslog(LOG_INFO, "reload: claims %d acquired, %d released, %d failed",
@@ -926,9 +1020,16 @@ cap_rt_format_status(char *buf, size_t bufsz, size_t *offp)
 	    verified ? "" : " [NOT HELD]");
 	for (i = 0; i < od.cfg.nclaim_paths; i++) {
 		verified = query_path_claimed(od.cfg.claim_paths[i]);
-		BUF_APPEND(buf, bufsz, offp, "    %s%s\n",
-		    od.cfg.claim_paths[i],
-		    verified ? "" : " [NOT HELD]");
+		if (od.cfg.claim_path_source[i] == CLAIM_SOURCE_SERVICE)
+			BUF_APPEND(buf, bufsz, offp,
+			    "    %s [service, refcount=%u]%s\n",
+			    od.cfg.claim_paths[i],
+			    od.cfg.claim_path_refcount[i],
+			    verified ? "" : " [NOT HELD]");
+		else
+			BUF_APPEND(buf, bufsz, offp, "    %s [policy]%s\n",
+			    od.cfg.claim_paths[i],
+			    verified ? "" : " [NOT HELD]");
 	}
 
 	/* Network claims — verified against kernel via FI_OP_QUERY_NET. */
@@ -940,10 +1041,19 @@ cap_rt_format_status(char *buf, size_t bufsz, size_t *offp)
 
 		net_claim_port_string(nc, portbuf, sizeof(portbuf));
 		verified = query_net_claimed(nc);
-		BUF_APPEND(buf, bufsz, offp, "    %s/%s %s%s\n",
-		    net_protocol_name(nc->protocol), portbuf,
-		    net_direction_name(nc->direction),
-		    verified ? "" : " [NOT HELD]");
+		if (od.cfg.claim_net_source[i] == CLAIM_SOURCE_SERVICE)
+			BUF_APPEND(buf, bufsz, offp,
+			    "    %s/%s %s [service, refcount=%u]%s\n",
+			    net_protocol_name(nc->protocol), portbuf,
+			    net_direction_name(nc->direction),
+			    od.cfg.claim_net_refcount[i],
+			    verified ? "" : " [NOT HELD]");
+		else
+			BUF_APPEND(buf, bufsz, offp,
+			    "    %s/%s %s [policy]%s\n",
+			    net_protocol_name(nc->protocol), portbuf,
+			    net_direction_name(nc->direction),
+			    verified ? "" : " [NOT HELD]");
 	}
 
 	/* Jail claims — verified against kernel via FI_OP_QUERY_JAIL. */
@@ -951,29 +1061,54 @@ cap_rt_format_status(char *buf, size_t bufsz, size_t *offp)
 	    od.cfg.nclaim_jail);
 	for (i = 0; i < od.cfg.nclaim_jail; i++) {
 		const struct oracled_jail_claim *jc = &od.cfg.claim_jail[i];
-		char jailbuf[96];
+		char jailbuf[ORACLED_JAIL_DESC_MAX];
 
 		jail_claim_string(jc, jailbuf, sizeof(jailbuf));
 		verified = query_jail_claimed(jc);
-		BUF_APPEND(buf, bufsz, offp, "    %s actions=0x%x%s\n",
-		    jailbuf, jc->actions, verified ? "" : " [NOT HELD]");
+		if (od.cfg.claim_jail_source[i] == CLAIM_SOURCE_SERVICE)
+			BUF_APPEND(buf, bufsz, offp,
+			    "    %s actions=0x%x [service, refcount=%u]%s\n",
+			    jailbuf, jc->actions,
+			    od.cfg.claim_jail_refcount[i],
+			    verified ? "" : " [NOT HELD]");
+		else
+			BUF_APPEND(buf, bufsz, offp,
+			    "    %s actions=0x%x [policy]%s\n",
+			    jailbuf, jc->actions,
+			    verified ? "" : " [NOT HELD]");
 	}
 
-	/* System gates. */
+	/* System gates — with provenance per gate. */
 	BUF_APPEND(buf, bufsz, offp, "  system:   ");
 	if (od.cfg.claim_system == 0) {
 		BUF_APPEND(buf, bufsz, offp, "(none)\n");
 	} else {
-		first = true;
-		for (i = 0; i < nitems(gate_names); i++) {
-			if (od.cfg.claim_system & gate_names[i].gate) {
-				BUF_APPEND(buf, bufsz, offp, "%s%s",
-				    first ? "" : " ",
-				    gate_names[i].name);
-				first = false;
-			}
-		}
-		BUF_APPEND(buf, bufsz, offp, " (0x%x)\n",
+		BUF_APPEND(buf, bufsz, offp, "(0x%x)\n",
 		    od.cfg.claim_system);
+		for (i = 0; i < nitems(gate_names); i++) {
+			uint32_t g = gate_names[i].gate;
+			unsigned bit;
+
+			if (!(od.cfg.claim_system & g))
+				continue;
+			/* Find the bit index for refcount lookup. */
+			for (bit = 0; bit < ORACLED_SYSTEM_GATE_NBITS; bit++) {
+				if ((1U << bit) == g)
+					break;
+			}
+			if (od.cfg.claim_system_policy & g)
+				BUF_APPEND(buf, bufsz, offp,
+				    "    %s [policy]\n",
+				    gate_names[i].name);
+			else if (od.cfg.claim_system_service & g)
+				BUF_APPEND(buf, bufsz, offp,
+				    "    %s [service, refcount=%u]\n",
+				    gate_names[i].name,
+				    bit < ORACLED_SYSTEM_GATE_NBITS ?
+				    od.cfg.claim_system_refcount[bit] : 0);
+			else
+				BUF_APPEND(buf, bufsz, offp,
+				    "    %s\n", gate_names[i].name);
+		}
 	}
 }

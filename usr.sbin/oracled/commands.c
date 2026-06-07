@@ -14,16 +14,19 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
 #include <time.h>
+#include <ucl.h>
 
 #include "oracled.h"
 #include "oracled_ctl.h"
 #include "commands.h"
+#include "oracled_svc_proto.h"
 #include "probes.h"
 
 /*
@@ -36,14 +39,30 @@ config_apply_claims(const struct oracled_config *newcfg)
 
 	memcpy(od.cfg.claim_paths, newcfg->claim_paths,
 	    sizeof(od.cfg.claim_paths));
+	memcpy(od.cfg.claim_path_source, newcfg->claim_path_source,
+	    sizeof(od.cfg.claim_path_source));
+	memcpy(od.cfg.claim_path_refcount, newcfg->claim_path_refcount,
+	    sizeof(od.cfg.claim_path_refcount));
 	od.cfg.nclaim_paths = newcfg->nclaim_paths;
 	memcpy(od.cfg.claim_net, newcfg->claim_net,
 	    sizeof(od.cfg.claim_net));
+	memcpy(od.cfg.claim_net_source, newcfg->claim_net_source,
+	    sizeof(od.cfg.claim_net_source));
+	memcpy(od.cfg.claim_net_refcount, newcfg->claim_net_refcount,
+	    sizeof(od.cfg.claim_net_refcount));
 	od.cfg.nclaim_net = newcfg->nclaim_net;
 	memcpy(od.cfg.claim_jail, newcfg->claim_jail,
 	    sizeof(od.cfg.claim_jail));
+	memcpy(od.cfg.claim_jail_source, newcfg->claim_jail_source,
+	    sizeof(od.cfg.claim_jail_source));
+	memcpy(od.cfg.claim_jail_refcount, newcfg->claim_jail_refcount,
+	    sizeof(od.cfg.claim_jail_refcount));
 	od.cfg.nclaim_jail = newcfg->nclaim_jail;
 	od.cfg.claim_system = newcfg->claim_system;
+	od.cfg.claim_system_policy = newcfg->claim_system_policy;
+	od.cfg.claim_system_service = newcfg->claim_system_service;
+	memcpy(od.cfg.claim_system_refcount, newcfg->claim_system_refcount,
+	    sizeof(od.cfg.claim_system_refcount));
 	strlcpy(od.cfg.manifest_dir, newcfg->manifest_dir,
 	    sizeof(od.cfg.manifest_dir));
 }
@@ -203,79 +222,201 @@ cmd_services(uid_t euid __unused, uint32_t flags __unused,
 	reply->flags = (uint32_t)off;
 }
 
-void
-cmd_kldload(uid_t euid, const char *name, struct ctl_reply *reply)
-{
-	int id;
+/*
+ * Verify: cross-check oracled.conf claims against all service manifests.
+ * Reports warnings for capability requests not covered by oracle claims.
+ * Uses the same claim validation functions as oracle_proto.c (runtime).
+ */
 
-	if (euid != 0) {
-		reply->status = EPERM;
-		syslog(LOG_WARNING, "control: kldload denied uid %u", euid);
-		ORACLED_PROBE_CTL_DENY(CTL_OP_KLDLOAD, euid);
+#include "claim_check.h"
+
+static void
+verify_manifest(const char *filepath, const struct oracled_config *cfg,
+    char *summary, size_t sumlen, size_t *offp, int *warns)
+{
+	struct ucl_parser *parser;
+	const ucl_object_t *top, *caps, *obj, *iter;
+	ucl_object_iter_t it;
+	const char *label, *s;
+
+	parser = ucl_parser_new(0);
+	if (!ucl_parser_add_file(parser, filepath)) {
+		BUF_APPEND(summary, sumlen, offp,
+		    "  %s: parse error\n", filepath);
+		(*warns)++;
+		ucl_parser_free(parser);
 		return;
 	}
 
-	id = kldload(name);
-	if (id == -1) {
-		reply->status = errno;
-		syslog(LOG_WARNING, "control: kldload \"%s\": %m", name);
-	} else {
-		reply->status = CTL_STATUS_OK;
-		reply->flags = id;
-		syslog(LOG_INFO, "control: kldload \"%s\" id %d uid %u",
-		    name, id, euid);
+	top = ucl_parser_get_object(parser);
+	if (top == NULL) {
+		ucl_parser_free(parser);
+		return;
 	}
+
+	obj = ucl_object_lookup(top, "label");
+	label = (obj != NULL) ? ucl_object_tostring(obj) : filepath;
+
+	caps = ucl_object_lookup(top, "capabilities");
+	if (caps == NULL) {
+		ucl_object_unref((ucl_object_t *)top);
+		ucl_parser_free(parser);
+		return;
+	}
+
+	/* Check paths — same logic as oracle_proto runtime validation */
+	obj = ucl_object_lookup(caps, "paths");
+	if (obj != NULL) {
+		it = NULL;
+		while ((iter = ucl_object_iterate(obj, &it, true)) != NULL) {
+			s = ucl_object_tostring(iter);
+			if (s == NULL)
+				continue;
+			if (!claim_path_covered(cfg, s)) {
+				BUF_APPEND(summary, sumlen, offp,
+				    "  %s: path \"%s\" not covered by "
+				    "oracle claims\n", label, s);
+				(*warns)++;
+			}
+		}
+	}
+
+	/* Check network claims */
+	obj = ucl_object_lookup(caps, "network");
+	if (obj != NULL) {
+		it = NULL;
+		while ((iter = ucl_object_iterate(obj, &it, true)) != NULL) {
+			struct oracled_net_claim nc;
+
+			if (ucl_object_type(iter) != UCL_OBJECT)
+				continue;
+			if (parse_ucl_net_claim(iter, &nc, label) != 0)
+				continue;
+			if (!claim_net_covered(cfg, &nc)) {
+				char portbuf[32];
+
+				if (nc.port_min == nc.port_max)
+					snprintf(portbuf, sizeof(portbuf),
+					    "%u", nc.port_min);
+				else
+					snprintf(portbuf, sizeof(portbuf),
+					    "%u-%u", nc.port_min, nc.port_max);
+				BUF_APPEND(summary, sumlen, offp,
+				    "  %s: network %s/%s %s not covered by "
+				    "oracle claims\n", label, portbuf,
+				    nc.protocol == IPPROTO_TCP ? "tcp" :
+				    nc.protocol == IPPROTO_UDP ? "udp" : "any",
+				    nc.direction == ORACLED_NET_DIR_BIND ?
+				    "bind" : nc.direction ==
+				    ORACLED_NET_DIR_CONNECT ? "connect" : "any");
+				(*warns)++;
+			}
+		}
+	}
+
+	/* Check jail claims */
+	obj = ucl_object_lookup(caps, "jails");
+	if (obj != NULL) {
+		it = NULL;
+		while ((iter = ucl_object_iterate(obj, &it, true)) != NULL) {
+			struct oracled_jail_claim jc;
+			char jailbuf[ORACLED_JAIL_DESC_MAX];
+
+			if (parse_ucl_jail_claim(iter, &jc, label) != 0)
+				continue;
+			if (!claim_jail_covered(cfg, &jc)) {
+				if (jc.name[0] != '\0')
+					strlcpy(jailbuf, jc.name,
+					    sizeof(jailbuf));
+				else
+					snprintf(jailbuf, sizeof(jailbuf),
+					    "jid=%d", jc.jid);
+				BUF_APPEND(summary, sumlen, offp,
+				    "  %s: jail \"%s\" not covered by "
+				    "oracle claims\n", label, jailbuf);
+				(*warns)++;
+			}
+		}
+	}
+
+	/* Check system gates */
+	obj = ucl_object_lookup(caps, "system");
+	if (obj != NULL) {
+		it = NULL;
+		while ((iter = ucl_object_iterate(obj, &it, true)) != NULL) {
+			s = ucl_object_tostring(iter);
+			if (s == NULL)
+				continue;
+			if (claim_gate_name_to_bit(s) == 0) {
+				BUF_APPEND(summary, sumlen, offp,
+				    "  %s: unknown system gate \"%s\"\n",
+				    label, s);
+				(*warns)++;
+			} else if (!claim_system_covered(cfg, s)) {
+				BUF_APPEND(summary, sumlen, offp,
+				    "  %s: system gate \"%s\" not claimed "
+				    "by oracle\n", label, s);
+				(*warns)++;
+			}
+		}
+	}
+
+	ucl_object_unref((ucl_object_t *)top);
+	ucl_parser_free(parser);
 }
 
 void
-cmd_kldunload(uid_t euid, const char *name, struct ctl_reply *reply)
+cmd_verify(struct ctl_reply *reply, char *summary, size_t sumlen)
 {
-	int id;
+	DIR *dir;
+	struct dirent *dp;
+	char filepath[PATH_MAX];
+	size_t off;
+	int warns, manifests;
+	const struct oracled_config *cfg = &od.cfg;
 
-	if (euid != 0) {
-		reply->status = EPERM;
-		syslog(LOG_WARNING, "control: kldunload denied uid %u", euid);
-		ORACLED_PROBE_CTL_DENY(CTL_OP_KLDUNLOAD, euid);
-		return;
+	off = 0;
+	warns = 0;
+	manifests = 0;
+
+	BUF_APPEND(summary, sumlen, &off,
+	    "VERIFY: %s + %s (checking against all active claims)\n",
+	    od.conffile, cfg->manifest_dir);
+
+	if (cfg->nclaim_paths == 0 && cfg->claim_system == 0 &&
+	    cfg->nclaim_net == 0 && cfg->nclaim_jail == 0) {
+		BUF_APPEND(summary, sumlen, &off,
+		    "  oracle has no claims (permissive mode)\n"
+		    "  all capability requests will succeed trivially\n");
 	}
 
-	id = kldfind(name);
-	if (id == -1) {
-		reply->status = errno;
-		syslog(LOG_WARNING, "control: kldunload \"%s\": %m", name);
-		return;
+	dir = opendir(cfg->manifest_dir);
+	if (dir == NULL) {
+		BUF_APPEND(summary, sumlen, &off,
+		    "  warning: cannot open manifest_dir: %s\n",
+		    strerror(errno));
+		warns++;
+		goto done;
 	}
 
-	if (kldunload(id) == -1) {
-		reply->status = errno;
-		syslog(LOG_WARNING, "control: kldunload \"%s\" id %d: %m",
-		    name, id);
-	} else {
-		reply->status = CTL_STATUS_OK;
-		syslog(LOG_INFO, "control: kldunload \"%s\" uid %u",
-		    name, euid);
+	while ((dp = readdir(dir)) != NULL) {
+		size_t nlen = strlen(dp->d_name);
+		if (nlen < 5 ||
+		    strcmp(dp->d_name + nlen - 4, ".ucl") != 0)
+			continue;
+		snprintf(filepath, sizeof(filepath), "%s/%s",
+		    cfg->manifest_dir, dp->d_name);
+		manifests++;
+		verify_manifest(filepath, cfg, summary, sumlen, &off,
+		    &warns);
 	}
-}
+	closedir(dir);
 
-void
-cmd_reboot(uid_t euid, uint32_t howto, struct ctl_reply *reply)
-{
+	BUF_APPEND(summary, sumlen, &off,
+	    "\n%d manifest(s) checked, %d warning(s)\n",
+	    manifests, warns);
 
-	if (euid != 0) {
-		reply->status = EPERM;
-		syslog(LOG_WARNING, "control: reboot denied uid %u", euid);
-		ORACLED_PROBE_CTL_DENY(CTL_OP_REBOOT, euid);
-		return;
-	}
-
-	/* Only allow clean reboot (0) and poweroff (RB_POWEROFF). */
-	if (howto != 0 && howto != RB_POWEROFF) {
-		reply->status = EINVAL;
-		syslog(LOG_WARNING, "control: reboot rejected howto=0x%x "
-		    "uid %u", howto, euid);
-		return;
-	}
-
-	syslog(LOG_INFO, "control: reboot howto=0x%x uid %u", howto, euid);
+done:
 	reply->status = CTL_STATUS_OK;
+	reply->flags = (uint32_t)off;
 }

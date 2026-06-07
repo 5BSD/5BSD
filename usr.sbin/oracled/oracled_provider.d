@@ -19,6 +19,16 @@ provider oracled {
 	probe claim__jail__release(const char *name, uint32_t actions);
 	probe claim__system__release(uint32_t gates);
 
+	/* Dynamic claims — runtime claim/release via pair channel */
+	probe dyn__claim__path(const char *path, int result);
+	probe dyn__claim__net(int port_min, int port_max, int protocol, int result);
+	probe dyn__claim__jail(const char *name, uint32_t actions, int result);
+	probe dyn__claim__system(uint32_t gates, int result);
+	probe dyn__release__path(const char *path, uint32_t refcount, int result);
+	probe dyn__release__net(int port_min, int port_max, int protocol, uint32_t refcount, int result);
+	probe dyn__release__jail(const char *name, uint32_t actions, uint32_t refcount, int result);
+	probe dyn__release__system(uint32_t gates, uint32_t released, int result);
+
 	/* Integrity */
 	probe integrity(uint32_t flags);
 

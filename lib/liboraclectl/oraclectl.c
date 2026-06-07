@@ -167,55 +167,6 @@ oraclectl_shutdown(int fd)
 	return (rpl.status);
 }
 
-int
-oraclectl_kldload(int fd, const char *module, int *idp)
-{
-	struct ctl_reply rpl;
-	size_t len;
-	int error;
-
-	len = strlen(module);
-	if (len == 0 || len > ORACLECTL_MAX_PAYLOAD)
-		return (EINVAL);
-
-	error = do_call(fd, ORACLECTL_KLDLOAD, 0, module, len, &rpl);
-	if (error != 0)
-		return (error);
-	if (rpl.status == 0 && idp != NULL)
-		*idp = (int)rpl.flags;
-	return (rpl.status);
-}
-
-int
-oraclectl_kldunload(int fd, const char *module)
-{
-	struct ctl_reply rpl;
-	size_t len;
-	int error;
-
-	len = strlen(module);
-	if (len == 0 || len > ORACLECTL_MAX_PAYLOAD)
-		return (EINVAL);
-
-	error = do_call(fd, ORACLECTL_KLDUNLOAD, 0, module, len, &rpl);
-	if (error != 0)
-		return (error);
-	return (rpl.status);
-}
-
-int
-oraclectl_reboot(int fd, int howto)
-{
-	struct ctl_reply rpl;
-	int error;
-
-	error = do_call(fd, ORACLECTL_REBOOT, (uint32_t)howto,
-	    NULL, 0, &rpl);
-	if (error != 0)
-		return (error);
-	return (rpl.status);
-}
-
 /*
  * Helper: do_call + read summary text from reply.flags bytes.
  */
@@ -290,5 +241,14 @@ oraclectl_services(int fd, uint32_t flags, char *summary, size_t sumlen)
 	struct ctl_reply rpl;
 
 	return (do_call_summary(fd, ORACLECTL_SERVICES, flags, NULL, 0,
+	    summary, sumlen, &rpl));
+}
+
+int
+oraclectl_verify(int fd, char *summary, size_t sumlen)
+{
+	struct ctl_reply rpl;
+
+	return (do_call_summary(fd, ORACLECTL_VERIFY, 0, NULL, 0,
 	    summary, sumlen, &rpl));
 }

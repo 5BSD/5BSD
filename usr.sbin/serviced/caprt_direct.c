@@ -31,7 +31,7 @@
 #include "serviced.h"
 
 /* Timeout for cap_rt pair recvmsg (milliseconds). */
-#define	CAPRT_DIRECT_TIMEOUT_MS	100
+#define	CAPRT_DIRECT_TIMEOUT_MS	SERVICED_RPC_TIMEOUT_MS
 
 /*
  * Mint a fresh instance from an existing service instance fd.

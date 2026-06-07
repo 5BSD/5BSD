@@ -43,7 +43,7 @@ Default:
 Directory containing service manifest files passed to
 .Xr serviced 8 .
 Default:
-.Pa /etc/oracled.d .
+.Pa /etc/serviced.d .
 .It Va service_manager
 Path to the service manager binary.
 Default:
@@ -132,6 +132,26 @@ including root.
 .Pa /dev/cap_rt
 is always claimed automatically regardless of configuration.
 .Pp
+Claims declared here are
+.Em policy claims
+.Pq Dv CLAIM_SOURCE_POLICY .
+They are acquired at boot, survive
+.Xr serviced 8
+restarts, and cannot be released via the pair channel.
+.Pp
+Resources requested by services but not listed here are auto-claimed
+dynamically at runtime with reference counting.
+These
+.Em dynamic claims
+are released from the kernel when no service needs them.
+.Xr oraclectl 8
+.Cm status
+shows
+.Ql [policy]
+for manifest claims and
+.Ql [service, refcount=N]
+for dynamic claims.
+.Pp
 Claim limits: at most 64 paths, 32 network claims, and 32 jail claims.
 .Bl -tag -width "network"
 .It Va paths
@@ -140,6 +160,9 @@ Claiming a file blocks open, stat, chmod, chown, and other
 vnode operations.
 Claiming a directory blocks lookup into the subtree,
 preventing access to all files within.
+Paths on network filesystems (NFS, FUSE) may block at boot if the
+server is unreachable; to protect a network mount point, claim the
+parent directory instead.
 Default: empty.
 .It Va network
 Array of network endpoint objects to claim.
@@ -253,7 +276,7 @@ Minimal configuration relying on compiled-in defaults:
 .Bd -literal -offset indent
 pidfile = "/var/run/oracled.pid";
 control_socket = "/var/run/oracled.sock";
-manifest_dir = "/etc/oracled.d";
+manifest_dir = "/etc/serviced.d";
 service_manager = "/usr/libexec/oracled/serviced";
 .Ed
 .Pp

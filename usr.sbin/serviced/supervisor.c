@@ -71,6 +71,20 @@ svc_close_fds(struct svc_runtime *svc)
 }
 
 /*
+ * Release claims for this service's capabilities.  Sends all
+ * release messages in a burst, then drains replies in a single
+ * blocking window (~100ms worst case regardless of count).
+ * The oracle returns EPERM for manifest claims (harmless) and
+ * decrements the refcount for dynamic ones.
+ */
+static void
+svc_release_dynamic_claims(struct svc_runtime *svc)
+{
+
+	oracle_release_manifest(sd.oracle_pair_fd, &svc->manifest);
+}
+
+/*
  * Schedule a delayed restart via EVFILT_TIMER on the kqueue.
  */
 void
@@ -248,6 +262,10 @@ supervisor_handle_procdesc(struct kevent *kev)
 		waitpid(svc->pid, NULL, WNOHANG);
 		cancel_stop_timer(svc);
 		naming_remove_owner(svc);
+
+		/* Release dynamic claims for this service. */
+		svc_release_dynamic_claims(svc);
+
 		svc_close_fds(svc);
 		svc->state = SVC_STATE_STOPPED;
 
