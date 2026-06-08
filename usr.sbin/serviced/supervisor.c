@@ -152,71 +152,6 @@ cancel_stop_timer(struct svc_runtime *svc)
 	svc->stop_timer_ident = 0;
 }
 
-int
-supervisor_start(int kq)
-{
-	struct svc_manifest *manifests;
-	unsigned i;
-
-	manifests = calloc(SERVICED_MAX_SERVICES, sizeof(*manifests));
-	if (manifests == NULL) {
-		syslog(LOG_ERR, "supervisor: calloc manifests: %m");
-		return (-1);
-	}
-
-	sd.nservices = 0;
-	if (manifest_load_dir(sd.manifest_dir, manifests,
-	    SERVICED_MAX_SERVICES, &sd.nservices) == -1) {
-		free(manifests);
-		return (-1);
-	}
-
-	/* Allocate runtime state (fixed size to avoid realloc).
-	 * Always allocate even with 0 services so reload can add. */
-	sd.services = calloc(SERVICED_MAX_SERVICES, sizeof(*sd.services));
-	if (sd.services == NULL) {
-		syslog(LOG_ERR, "supervisor: calloc services: %m");
-		free(manifests);
-		sd.nservices = 0;
-		return (-1);
-	}
-
-	if (sd.nservices == 0)
-		syslog(LOG_INFO, "supervisor: no services to start");
-
-	for (i = 0; i < sd.nservices; i++) {
-		sd.services[i].manifest = manifests[i];
-		sd.services[i].pd_fd = -1;
-		sd.services[i].pair_fd = -1;
-		sd.services[i].coalition_fd = -1;
-		sd.services[i].jail_fd = -1;
-		sd.services[i].state = SVC_STATE_STOPPED;
-	}
-	free(manifests);
-
-	if (depgraph_sort(sd.services, sd.nservices) == -1) {
-		/*
-		 * Keep the runtime array allocated so a later reload can
-		 * recover after the manifest set is fixed.
-		 */
-		sd.nservices = 0;
-		return (-1);
-	}
-
-	for (i = 0; i < sd.nservices; i++)
-		manifest_log(&sd.services[i].manifest);
-
-	for (i = 0; i < sd.nservices; i++) {
-		if (svc_exec(&sd.services[i], kq) == -1)
-			syslog(LOG_WARNING, "supervisor: failed to start %s",
-			    sd.services[i].manifest.label);
-	}
-
-	syslog(LOG_INFO, "supervisor: %u services launched", sd.nservices);
-	SERVICED_PROBE_SVC_COUNT(sd.nservices);
-	return (0);
-}
-
 void
 supervisor_handle_procdesc(struct kevent *kev)
 {
@@ -228,7 +163,13 @@ supervisor_handle_procdesc(struct kevent *kev)
 
 	if ((kev->fflags & NOTE_EXEC) &&
 	    svc->state == SVC_STATE_STARTING) {
-		svc->state = SVC_STATE_RUNNING;
+		/*
+		 * NOTE_EXEC confirms the child has exec'd, but don't
+		 * promote to RUNNING yet — wait for the SVC_OP_READY
+		 * protocol message.  This ensures on-demand waiters
+		 * are only drained after the service has registered
+		 * its name and is ready to accept connections.
+		 */
 		syslog(LOG_INFO, "service %s: exec confirmed (pid %jd)",
 		    svc->manifest.label, (intmax_t)svc->pid);
 		SERVICED_PROBE_SVC_EXEC(svc->manifest.label, svc->pid);
@@ -283,6 +224,7 @@ supervisor_handle_procdesc(struct kevent *kev)
 			memset(&svc->pending_manifest, 0,
 			    sizeof(svc->pending_manifest));
 			svc->reload_pending = false;
+			svc->restart_count = 0;
 			svc_exec(svc, serviced_kq);
 			return;
 		}

@@ -37,6 +37,7 @@ prepare_paths()
 	sockpath="$(pwd)/oracled.sock"
 	logfile="$(pwd)/oracled.log"
 	mkdir -p "$manifestdir"
+	mkdir -p "${APPS_DIR}" "${USER_APPS_DIR}"
 }
 
 write_config()
@@ -49,6 +50,9 @@ control_socket_mode = "0700";
 manifest_dir = "$manifestdir";
 service_manager = "$serviced_bin";
 EOF
+	# Export bundle directory overrides so serviced scans test-local paths.
+	export SERVICED_BUNDLE_DIR_SYSTEM="${APPS_DIR}"
+	export SERVICED_BUNDLE_DIR_USER="${USER_APPS_DIR}"
 }
 
 start_stack()
@@ -80,10 +84,11 @@ start_stack()
 
 wait_for_file()
 {
-	local path i
+	local path max i
 	path="$1"
+	max=$(( ${2:-15} * 10 ))
 	i=0
-	while [ ! -s "$path" ] && [ "$i" -lt 150 ]; do
+	while [ ! -s "$path" ] && [ "$i" -lt "$max" ]; do
 		i=$((i + 1))
 		sleep 0.1
 	done
@@ -122,4 +127,122 @@ require_cc()
 	if ! command -v cc >/dev/null 2>&1; then
 		atf_skip "cc not available"
 	fi
+}
+
+# --- Bundle test helpers ---
+
+export WORK="$(pwd)"
+APPS_DIR="${WORK}/System/Applications"
+USER_APPS_DIR="${WORK}/Applications"
+CTL_SOCK="${WORK}/serviced.sock"
+
+# Create a system bundle (.app) in the fake /System/Applications.
+# Usage: create_system_bundle <name> <bundle_id> <program> <provides> [ucl_extra]
+create_system_bundle()
+{
+	local name="$1" bid="$2" prog="$3" provides="$4" extra="${5:-}"
+	local dir="${APPS_DIR}/${name}.app"
+
+	mkdir -p "${dir}/Contents/5BSD/Services"
+	mkdir -p "${dir}/Contents/bin"
+
+	cat > "${dir}/Contents/bin/${prog}" <<-'SVCEOF'
+	#!/bin/sh
+	# Minimal test service: write ready file then sleep.
+	touch "${WORK:-/tmp}/${0##*/}.ready"
+	exec sleep 3600
+	SVCEOF
+	chmod 755 "${dir}/Contents/bin/${prog}"
+
+	cat > "${dir}/Contents/5BSD/Services/${prog}.ucl" <<-UCL
+	bundle_id = "${bid}";
+	version = "1.0";
+	author = "test";
+	program = "${prog}";
+	provides = ["${provides}"];
+	${extra}
+	UCL
+
+	echo "${dir}"
+}
+
+# Create a system bundle with requires.
+create_system_bundle_with_requires()
+{
+	local name="$1" bid="$2" prog="$3" provides="$4" requires="$5"
+	create_system_bundle "$name" "$bid" "$prog" "$provides" \
+	    "requires = [\"${requires}\"];"
+}
+
+# Create a user bundle (.app) in the fake /Applications.
+# Usage: create_user_bundle <name> <bundle_id> <program> <provides> [ucl_extra]
+create_user_bundle()
+{
+	local name="$1" bid="$2" prog="$3" provides="$4" extra="${5:-}"
+	local dir="${USER_APPS_DIR}/${name}.app"
+
+	mkdir -p "${dir}/Contents/5BSD/Services"
+	mkdir -p "${dir}/Contents/bin"
+
+	cat > "${dir}/Contents/bin/${prog}" <<-'SVCEOF'
+	#!/bin/sh
+	touch "${WORK:-/tmp}/${0##*/}.ready"
+	exec sleep 3600
+	SVCEOF
+	chmod 755 "${dir}/Contents/bin/${prog}"
+
+	cat > "${dir}/Contents/5BSD/Services/${prog}.ucl" <<-UCL
+	bundle_id = "${bid}";
+	version = "1.0";
+	author = "test";
+	program = "${prog}";
+	provides = ["${provides}"];
+	${extra}
+	UCL
+
+	echo "${dir}"
+}
+
+# Create a user bundle with custom UCL content (full file).
+create_user_bundle_custom()
+{
+	local name="$1" prog="$2" ucl_content="$3"
+	local dir="${USER_APPS_DIR}/${name}.app"
+
+	mkdir -p "${dir}/Contents/5BSD/Services"
+	mkdir -p "${dir}/Contents/bin"
+
+	printf '#!/bin/sh\nexec sleep 3600\n' > "${dir}/Contents/bin/${prog}"
+	chmod 755 "${dir}/Contents/bin/${prog}"
+
+	printf '%s\n' "${ucl_content}" > \
+	    "${dir}/Contents/5BSD/Services/${prog}.ucl"
+
+	echo "${dir}"
+}
+
+# Run a lookup client that connects to a named service.
+# Requires a compiled lookup_client binary.
+run_lookup_client()
+{
+	local name="$1" timeout="${2:-5}"
+
+	timeout "$timeout" ./lookup_client "$name" 2>&1
+}
+
+# Start the stack expecting it to fail (for negative tests).
+start_stack_expect_failure()
+{
+	prepare_paths
+	write_config
+
+	oracled -d -f "$conffile" >"$logfile" 2>&1 &
+	local pid=$!
+	sleep 1
+	# If it's still running, it didn't fail as expected
+	if kill -0 "$pid" 2>/dev/null; then
+		kill "$pid" 2>/dev/null
+		return 1
+	fi
+	return 0
 }

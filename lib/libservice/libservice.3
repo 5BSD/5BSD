@@ -67,7 +67,7 @@ initialization and is ready to serve requests.
 registers a reverse-domain name
 .Fa name
 (e.g.,
-.Dq org.freebsd.sshd )
+.Dq org.5bsd.sshd )
 with the
 .Xr serviced 8
 naming registry.
@@ -286,6 +286,14 @@ The name is not registered.
 The caller attempted to connect to itself.
 .It Bq Er ECONNRESET
 The provider's pair channel has closed.
+.It Bq Er EDEADLK
+An on-demand circular dependency was detected
+(the provider requires a service that the caller provides).
+.It Bq Er ETIMEDOUT
+The lookup RPC did not complete within the internal timeout
+(100 ms).
+This can occur if the provider is being launched on-demand
+and has not yet registered.
 .It Bq Er EIO
 Failed to create a pair or notify the provider.
 .El

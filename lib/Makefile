@@ -33,6 +33,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	geom \
 	lib9p \
 	libalias \
+	libappbundle \
 	libarchive \
 	libbegemot \
 	libblocksruntime \
@@ -92,6 +93,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	librt \
 	librtld_db \
 	libsbuf \
+	libservice \
 	libsmb \
 	libstdbuf \
 	libstdthreads \

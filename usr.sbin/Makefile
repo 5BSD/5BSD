@@ -47,6 +47,7 @@ SUBDIR=	adduser \
 	mpsutil \
 	mptutil \
 	mtest \
+	kldmgrd \
 	newsyslog \
 	nfscbd \
 	nfsd \
@@ -70,6 +71,7 @@ SUBDIR=	adduser \
 	pwm \
 	quot \
 	rarpd \
+	rebootd \
 	rmt \
 	rpcbind \
 	rpc.lockd \
@@ -78,6 +80,8 @@ SUBDIR=	adduser \
 	rtprio \
 	rwhod \
 	service \
+	servicectl \
+	serviced \
 	services_mkdb \
 	sesutil \
 	setfib \

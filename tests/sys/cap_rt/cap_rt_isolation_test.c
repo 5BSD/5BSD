@@ -3215,22 +3215,17 @@ ATF_TC_BODY(dir_token_create_no_delete, tc)
 		close(svc);
 		path = fi_helper_path(tc);
 		snprintf(token_str, sizeof(token_str), "%d", token);
-		/* Use token-check to authorize, then try open which
-		 * requires directory LOOKUP.  A second test below
-		 * tries unlink via shell. */
-		execl(path, path, "token-check", token_str, tmpdir_file,
+		execl(path, path, "token-unlink", token_str, tmpdir_file,
 		    NULL);
 		_exit(127);
 	}
 	waitpid(pid, &status, 0);
 	/*
-	 * The token has LOOKUP so traversal succeeds, but open the file
-	 * requires FI_FS_READ on the file vnode which the dir token
-	 * doesn't cover (it's scoped to the directory claim only).
-	 * So this should be denied.
+	 * The token has LOOKUP but not DELETE — unlink should be
+	 * denied because the directory claim requires FI_FS_DELETE.
 	 */
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 1,
-	    "LOOKUP dir token should not grant file read (exit %d)",
+	    "unlink should be denied without DELETE (exit %d)",
 	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
 
 	close(token);
@@ -3459,8 +3454,9 @@ ATF_TC_BODY(token_uipc_connect, tc)
 	listener = make_tmpunix_listener();
 	svc = fi_connect();
 
-	sock_fd = open(tmpsockpath, O_RDONLY);
-	ATF_REQUIRE(sock_fd >= 0);
+	sock_fd = open(tmpsockpath, O_PATH);
+	ATF_REQUIRE_MSG(sock_fd >= 0, "open %s: %s",
+	    tmpsockpath, strerror(errno));
 	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, sock_fd, 0, &rpl) == 0);
 
 	/* READ-only token should NOT allow connect. */
@@ -3587,7 +3583,7 @@ ATF_TC_HEAD(rename_requires_both_dirs, tc)
 ATF_TC_BODY(rename_requires_both_dirs, tc)
 {
 	struct fi_reply rpl;
-	int svc, src_fd, dst_fd, token_from, token_both, rc;
+	int svc, src_fd, dst_fd, token_from, rc;
 	char srcdir[128], dstdir[128], srcfile[160], dstfile[160];
 	int fd;
 

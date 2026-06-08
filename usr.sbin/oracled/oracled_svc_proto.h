@@ -6,7 +6,7 @@
  * oracled service manager pair channel protocol.
  *
  * Shared between oracled(8) and serviced(8).  Messages are exchanged
- * over a cap_rt NOXFER pair channel using CAP_RT_SENDMSG/CAP_RT_RECVMSG
+ * over a restricted cap_rt pair channel using CAP_RT_SENDMSG/CAP_RT_RECVMSG
  * with reply_token correlation.
  *
  * serviced inherits one end of the pair as fd 3 (ORACLED_PAIR_FD).
@@ -197,7 +197,7 @@ struct oracle_mint_system_req {
  *   reply: oracle_reply { .status }
  *   reply_fds[0] = endpoint A, reply_fds[1] = endpoint B
  *
- * Creates a new NOXFER pair channel for serviced to pass to a
+ * Creates a new restricted pair channel for serviced to pass to a
  * launched service.  serviced keeps one end, gives the other
  * to the child via pdfork.
  */

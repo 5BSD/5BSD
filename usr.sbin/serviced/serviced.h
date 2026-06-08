@@ -11,109 +11,23 @@
 
 #include <sys/types.h>
 #include <sys/event.h>
-#include <sys/param.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 
-#include <stdbool.h>
 #include <stdio.h>
-#include <stdint.h>
 #include <time.h>
 
+#include "serviced_manifest.h"
 #include "../oracled/oracled_svc_proto.h"
-
-/*
- * Service launcher constants.
- */
-#define	SERVICED_MAX_SERVICES		64
-#define	SERVICED_MAX_PROVIDES		8
-#define	SERVICED_MAX_REQUIRES		8
-#define	SERVICED_MAX_CAP_PATHS		16
-#define	SERVICED_MAX_CAP_FILES		16
-#define	SERVICED_MAX_CAP_NET		16
-#define	SERVICED_MAX_CAP_JAIL		16
-#define	SERVICED_LABEL_MAX		64
 
 /* Timeout for cap_rt pair RPC calls (oracle and direct). */
 #define	SERVICED_RPC_TIMEOUT_MS		100
 
-/* Restart policy */
-#define	SVC_RESTART_NEVER		0
-#define	SVC_RESTART_ALWAYS		1
-#define	SVC_RESTART_ON_FAILURE		2
-
 /* Service runtime state */
 #define	SVC_STATE_STOPPED		0
 #define	SVC_STATE_STARTING		1	/* pdfork'd, awaiting NOTE_EXEC */
-#define	SVC_STATE_RUNNING		2	/* NOTE_EXEC received */
+#define	SVC_STATE_RUNNING		2	/* SVC_OP_READY received */
 #define	SVC_STATE_STOPPING		3	/* graceful shutdown in progress */
-
-/* Network claim direction flags (match cap_rt_isolation_proto.h). */
-#define	SERVICED_NET_DIR_BIND		0x01
-#define	SERVICED_NET_DIR_CONNECT	0x02
-#define	SERVICED_NET_DIR_ANY		0x03
-
-struct serviced_file_cap {
-	char		path[PATH_MAX];
-	uint64_t	actions;	/* FI_FS_* mask */
-};
-
-struct serviced_net_claim {
-	int		domain;		/* AF_INET, AF_INET6, 0=any */
-	int		protocol;	/* IPPROTO_TCP, IPPROTO_UDP, 0=any */
-	uint16_t	port_min;	/* host byte order */
-	uint16_t	port_max;	/* host byte order */
-	uint8_t		direction;	/* SERVICED_NET_DIR_* */
-	uint8_t		prefix;		/* CIDR prefix len, 0=exact/any */
-	uint8_t		addr[16];	/* IPv6 or v4-mapped, all-zero=any */
-};
-
-struct serviced_jail_claim {
-	int32_t		jid;		/* 0=not specified */
-	uint32_t	actions;	/* FI_JAIL_* mask */
-	char		name[64];	/* empty=not specified */
-};
-
-/*
- * Parsed service manifest from the manifest directory (UCL format).
- *
- * Immutable after manifest_load_dir().
- */
-struct svc_manifest {
-	char		label[SERVICED_LABEL_MAX];
-	char		description[256];
-	char		program[PATH_MAX];
-	char		user[64];
-	char		group[64];
-
-	/* Dependency graph edges */
-	char		provides[SERVICED_MAX_PROVIDES][SERVICED_LABEL_MAX];
-	unsigned	nprovides;
-	char		requires[SERVICED_MAX_REQUIRES][SERVICED_LABEL_MAX];
-	unsigned	nrequires;
-
-	/* Capabilities to delegate */
-	char		cap_paths[SERVICED_MAX_CAP_PATHS][PATH_MAX];
-	unsigned	ncap_paths;
-	struct serviced_file_cap cap_files[SERVICED_MAX_CAP_FILES];
-	unsigned	ncap_files;
-	struct serviced_net_claim cap_net[SERVICED_MAX_CAP_NET];
-	unsigned	ncap_net;
-	struct serviced_jail_claim cap_jail[SERVICED_MAX_CAP_JAIL];
-	unsigned	ncap_jail;
-	uint32_t	cap_system;	/* SYS_GATE_* bitmask */
-
-	/* Jail to create and attach child into (optional). */
-	bool		has_jail;
-	char		jail_name[64];
-	char		jail_path[PATH_MAX];
-	char		jail_hostname[64];
-	char		jail_ip4_addr[64];
-
-	int		restart;	/* SVC_RESTART_* */
-	int		stop_timeout;	/* seconds before SIGKILL (default 5) */
-	unsigned	max_failures;	/* circuit breaker threshold (default 10) */
-};
 
 /*
  * Runtime state for a launched service.
@@ -143,17 +57,33 @@ struct svc_runtime {
 	bool		reload_pending;		/* swap manifest after NOTE_EXIT */
 	struct svc_manifest pending_manifest;
 	struct timespec	last_start;
+
+	/* Attribution */
+	char		launched_by[SERVICED_LABEL_MAX]; /* who triggered launch */
+	uint64_t	requester_nonce;	/* identity nonce of requester */
+	struct timespec	launch_time;
+	unsigned	connection_count;	/* active pair connections */
+
+	/* Bundle origin */
+	unsigned	bundle_idx;		/* index in bundle registry */
+	unsigned	bundle_svc_idx;		/* service index within bundle */
 };
 
 /*
  * Daemon state.
  */
+#define	SERVICED_BUNDLE_DIR_SYSTEM_DEFAULT	"/System/Applications"
+#define	SERVICED_BUNDLE_DIR_USER_DEFAULT		"/Applications"
+
+extern const char *serviced_bundle_dir_system;
+extern const char *serviced_bundle_dir_user;
+
 struct serviced_state {
 	int		oracle_pair_fd;		/* pair to oracled (fd 3) */
 	int		pair_svc_fd;		/* pair service instance (fd 4) */
 	int		coalition_svc_fd;	/* coalition service instance (fd 5) */
 	int		capprotect_fd;		/* capprotect service instance (fd 6) */
-	char		manifest_dir[PATH_MAX];
+	int		identity_fd;		/* cap_rt_identity service instance */
 	bool		running;
 	bool		shutting_down;
 
@@ -202,13 +132,6 @@ int	oracle_release_manifest(int pair_fd, const struct svc_manifest *m);
 
 /* manifest.c — service manifest parsing */
 int	manifest_load_file(const char *path, struct svc_manifest *m);
-int	manifest_load_dir(const char *dirpath,
-	    struct svc_manifest *out, unsigned maxsvc, unsigned *nsvc);
-void	manifest_log(const struct svc_manifest *m);
-int	manifest_validate(const struct svc_manifest *m,
-	    char *errbuf, size_t errlen);
-int	manifest_format_summary(const struct svc_manifest *m,
-	    char *buf, size_t len);
 
 /* depgraph.c — dependency graph */
 int	depgraph_sort(struct svc_runtime *svcs, unsigned nsvc);
@@ -217,7 +140,6 @@ int	depgraph_sort(struct svc_runtime *svcs, unsigned nsvc);
 int	svc_exec(struct svc_runtime *svc, int kq);
 
 /* supervisor.c — service lifecycle orchestration */
-int	supervisor_start(int kq);
 void	supervisor_handle_procdesc(struct kevent *kev);
 void	supervisor_handle_timer(struct kevent *kev);
 void	supervisor_stop(int kq);
@@ -231,17 +153,37 @@ void	supervisor_handle_pair(struct kevent *kev);
 
 /* reload.c — hot reload logic */
 int	supervisor_reload(int kq, char *summary, size_t sumlen);
-int	supervisor_load_manifest(const char *path, int kq,
-	    char *summary, size_t sumlen);
-int	supervisor_check_manifest(const char *path,
-	    char *summary, size_t sumlen);
+struct svc_runtime *svc_by_label(const char *label);
 void	svc_remove(unsigned idx);
 void	svc_reregister_kevents(int kq);
+
+/* bundle_registry.c — .app bundle scanning and provides lookup */
+struct appbundle;
+int	bundle_registry_init(void);
+int	bundle_registry_lookup(const char *name, unsigned *bundle_idx,
+	    unsigned *service_idx);
+struct appbundle *bundle_registry_get(unsigned idx);
+bool	bundle_registry_is_system(unsigned idx);
+unsigned bundle_registry_count(void);
+void	bundle_registry_teardown(void);
+
+/* startup.c — tier-based parallel service launch */
+int	startup_launch_system(int kq);
+
+/* on_demand.c — on-demand service launch for user bundles */
+int	on_demand_launch(const char *name, struct svc_runtime *requester,
+	    uint64_t reply_token, int kq);
+void	on_demand_check_ready(struct svc_runtime *svc, int kq);
+void	on_demand_timeout(uintptr_t ident, int kq);
+bool	on_demand_is_timer(uintptr_t ident);
+void	on_demand_teardown(int kq);
 
 /* naming.c — reverse-domain-name service registry */
 int	naming_register(const char *name, struct svc_runtime *owner);
 int	naming_unregister(const char *name, struct svc_runtime *owner);
 void	naming_remove_owner(struct svc_runtime *owner);
+void	naming_rebind_owner(struct svc_runtime *old_owner,
+	    struct svc_runtime *new_owner);
 int	naming_lookup(const char *name, struct svc_runtime *requester,
 	    int *errp);
 

@@ -71,7 +71,7 @@ struct svc_req_hdr {
  *   req:  svc_register_req
  *   reply: svc_reply { .status }
  *
- * Register a reverse-domain name (e.g., "org.freebsd.sshd").
+ * Register a reverse-domain name (e.g., "org.5bsd.sshd").
  * The name is bound to the calling service.  Only one service
  * may own a name at a time.  EEXIST if already registered.
  *

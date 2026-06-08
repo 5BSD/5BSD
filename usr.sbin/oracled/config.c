@@ -11,6 +11,7 @@
  */
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 
 #include <errno.h>
@@ -444,16 +445,29 @@ cfg_claims(const ucl_object_t *root, struct oracled_config *cfg)
 	cfg->claim_system_policy = cfg->claim_system;
 }
 
+/* Maximum config file size (1 MB). */
+#define	CONFIG_MAX_UCL_SIZE	(1024 * 1024)
+
 int
 config_load(struct oracled_config *cfg, const char *path)
 {
 	struct ucl_parser *parser;
 	const ucl_object_t *root;
+	struct stat csb;
 
-	if (access(path, R_OK) != 0) {
+	if (stat(path, &csb) == -1) {
 		if (errno == ENOENT)
 			return (0);
 		fprintf(stderr, "oracled: %s: %s\n", path, strerror(errno));
+		return (-1);
+	}
+	if (!S_ISREG(csb.st_mode)) {
+		fprintf(stderr, "oracled: %s: not a regular file\n", path);
+		return (-1);
+	}
+	if (csb.st_size > CONFIG_MAX_UCL_SIZE) {
+		fprintf(stderr, "oracled: %s: file too large (%jd bytes)\n",
+		    path, (intmax_t)csb.st_size);
 		return (-1);
 	}
 

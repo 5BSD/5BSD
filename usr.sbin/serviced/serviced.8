@@ -9,7 +9,6 @@
 .Nd 5BSD capability-based service manager
 .Sh SYNOPSIS
 .Nm
-.Op Fl d Ar manifest_dir
 .Sh DESCRIPTION
 .Nm
 is the service manager for 5BSD.
@@ -21,8 +20,11 @@ and inherits a cap_rt pair channel for requesting capability tokens,
 pairs, and coalitions from the oracle.
 .Pp
 .Nm
-reads service manifests (UCL files) from a manifest directory,
-topologically sorts them by dependency, and launches each service via
+scans application bundles from
+.Pa /System/Applications
+and
+.Pa /Applications ,
+topologically sorts services by dependency, and launches each via
 .Xr pdfork 2 .
 It supervises service lifecycle through
 .Xr kqueue 2
@@ -78,23 +80,13 @@ to
 .Xr oracled 8
 on the pair channel.
 .It
-Load service manifests from the manifest directory, topologically sort
+Scan application bundles, topologically sort services
 by dependency, and fork/exec each service via
 .Xr pdfork 2 .
 .It
 Enter the event loop, monitoring services via process descriptors,
 pair channels, coalition events, control socket connections, signals,
 and restart timers.
-.El
-.Sh OPTIONS
-.Bl -tag -width "-d manifest_dir"
-.It Fl d Ar manifest_dir
-Read service manifests from
-.Ar manifest_dir
-instead of the directory specified by the
-.Ev SERVICED_MANIFEST_DIR
-environment variable or the default
-.Pa /etc/serviced.d .
 .El
 .Sh INHERITED FILE DESCRIPTORS
 .Nm
@@ -142,21 +134,25 @@ Optional.
 .It Ev SERVICED_CAPPROTECT_FD
 File descriptor number for the delegated capprotect service instance.
 Optional.
-.It Ev SERVICED_MANIFEST_DIR
-Directory containing service manifest files.
-Overridden by the
-.Fl d
-flag.
-Default:
-.Pa /etc/serviced.d .
 .It Ev SERVICED_CONTROL_SOCKET
 Path for the control socket.
 Default:
 .Pa /var/run/serviced.sock .
 Optional.
+.It Ev SERVICED_BUNDLE_DIR_SYSTEM
+Override the system bundle directory.
+Default:
+.Pa /System/Applications .
+Primarily useful for testing.
+.It Ev SERVICED_BUNDLE_DIR_USER
+Override the user bundle directory.
+Default:
+.Pa /Applications .
+Primarily useful for testing.
 .El
 .Sh SERVICE MANIFESTS
-Service manifests are UCL files in the manifest directory.
+Service manifests are UCL files embedded in application bundles under
+.Pa Contents/5BSD/Services/ .
 Each
 .Pa *.ucl
 file declares one service.
@@ -498,7 +494,7 @@ closes the control socket and exits.
 provides a naming registry that allows services to discover
 and connect to each other using reverse-domain names
 (e.g.,
-.Dq org.freebsd.sshd ) .
+.Dq org.5bsd.sshd ) .
 .Pp
 The registry is implemented as a hash table with 64 buckets.
 Names may be up to 255 characters long.
@@ -555,7 +551,7 @@ utility communicates with
 over this socket.
 .Pp
 The following commands are supported:
-.Bl -tag -width "SCTL_OP_LOAD (5)"
+.Bl -tag -width "SCTL_OP_STOP_SVC (6)"
 .It Dv SCTL_OP_STATUS (1)
 Return daemon status and a summary of all loaded services with
 their current state, PID, restart policy, and restart count.
@@ -566,24 +562,32 @@ Same output as
 .Dv SCTL_OP_STATUS .
 Available to any user.
 .It Dv SCTL_OP_RELOAD (3)
-Reload manifests from disk.
+Reload service bundles from disk.
 New services are started, changed manifests trigger a graceful
-restart, and removed manifests trigger a graceful stop.
+restart, and removed bundles trigger a graceful stop.
 The dependency graph is re-validated before any mutations are
 applied; if the new graph contains a cycle, the reload is
 rejected and running services are unaffected.
 Requires root.
 .It Dv SCTL_OP_CHECK (4)
-Dry-run validation of a manifest file.
-The payload is the filename to check.
-Returns success if the manifest parses and validates correctly
-without loading it.
-Requires root.
+Legacy op, no longer supported.
+Returns
+.Er ENOTSUP .
+Use
+.Cm servicectl verify
+instead.
 .It Dv SCTL_OP_LOAD (5)
-Load and start a single manifest file.
-The payload is the filename to load.
-The manifest is parsed, validated, and the service is started
-immediately.
+Legacy op, no longer supported.
+Returns
+.Er ENOTSUP .
+Use
+.Cm servicectl install
++
+.Cm reload
+instead.
+.It Dv SCTL_OP_STOP_SVC (6)
+Stop a named service.
+The payload is the service label.
 Requires root.
 .El
 .Sh SIGNALS
@@ -709,11 +713,10 @@ Oracle pair channel closed unexpectedly.
 .El
 .Sh FILES
 .Bl -tag -width "/var/run/serviced.sock"
-.It Pa /etc/serviced.d/
-Default manifest directory.
-Each
-.Pa *.ucl
-file declares a service.
+.It Pa /System/Applications/
+System application bundles.
+.It Pa /Applications/
+User-installed application bundles.
 .It Pa /var/run/serviced.sock
 Control socket (mode 0700).
 .El
@@ -727,7 +730,7 @@ environment variable is not set or the pair fd is invalid.
 .Sh EXAMPLES
 Minimal service manifest:
 .Bd -literal -offset indent
-# /etc/serviced.d/myservice.ucl
+# myservice.ucl
 label = "myservice";
 program = "/usr/local/sbin/myservice";
 restart = "always";

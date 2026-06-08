@@ -5,7 +5,7 @@
  *
  * Reverse-domain-name service registry.
  *
- * Services register names (e.g., "org.freebsd.sshd") via their pair
+ * Services register names (e.g., "org.5bsd.sshd") via their pair
  * channel to serviced.  Clients look up names and receive a pair
  * endpoint to the named service.  serviced brokers the connection
  * by creating a new pair (via oracled) and pushing one end to each
@@ -255,6 +255,27 @@ naming_remove_owner(struct svc_runtime *owner)
 		}
 	}
 	SERVICED_PROBE_NAMING_COUNT(naming_total);
+}
+
+/*
+ * Rebind registry ownership after sd.services[] compaction.
+ */
+void
+naming_rebind_owner(struct svc_runtime *old_owner,
+    struct svc_runtime *new_owner)
+{
+	struct naming_entry *e;
+	unsigned i;
+
+	if (old_owner == new_owner)
+		return;
+
+	for (i = 0; i < NAMING_HASH_SIZE; i++) {
+		for (e = naming_hash[i]; e != NULL; e = e->next) {
+			if (e->owner == old_owner)
+				e->owner = new_owner;
+		}
+	}
 }
 
 /*

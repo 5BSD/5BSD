@@ -56,6 +56,21 @@ provider serviced {
 	probe conn__accept(uid_t uid, unsigned int nconns);
 	probe conn__close(unsigned int nconns);
 
+	/* Startup orchestration */
+	probe startup__begin(unsigned int nservices, unsigned int ntiers);
+	probe startup__tier(unsigned int tier, unsigned int launched);
+	probe startup__done(uint64_t duration_ms);
+
+	/* On-demand launch */
+	probe on__demand__launch(const char *name, const char *requester);
+	probe on__demand__coalesce(const char *name);
+	probe on__demand__ready(const char *name, unsigned int nwaiters);
+	probe on__demand__timeout(const char *name);
+
+	/* Bundle registry */
+	probe bundle__load(const char *name, unsigned int nservices, int system);
+	probe bundle__scan(const char *dir, unsigned int nbundles);
+
 	/* Errors */
 	probe error(const char *subsys, const char *msg);
 	probe svc__exec__fail(const char *label, int error);

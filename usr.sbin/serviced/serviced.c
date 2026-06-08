@@ -7,14 +7,14 @@
  *
  * Started by oracled as its single child.  Inherits a cap_rt pair
  * on fd 3 for requesting tokens, pairs, and coalitions from the
- * oracle.  Reads service manifests, dependency-sorts, pdfork/execs
+ * oracle.  Scans application bundles, dependency-sorts, pdfork/execs
  * services, and manages their lifecycle (restart, shutdown).
  *
  * Startup sequence:
  *   1. Inherit pair fd from ORACLED_PAIR_FD env (fd 3)
  *   2. Create kqueue, register pair + signals
  *   3. Send ORACLE_OP_READY to oracled
- *   4. Load manifests from SERVICED_MANIFEST_DIR
+ *   4. Scan bundle directories
  *   5. Dependency sort
  *   6. Fork/exec services (requesting tokens from oracled)
  *   7. Enter event loop
@@ -36,11 +36,16 @@
 #include <syslog.h>
 #include <unistd.h>
 
+#include <libappbundle.h>
+
 #include "serviced.h"
 #include "serviced_probes.h"
 
 struct serviced_state sd;
 int serviced_kq;
+
+const char *serviced_bundle_dir_system = SERVICED_BUNDLE_DIR_SYSTEM_DEFAULT;
+const char *serviced_bundle_dir_user = SERVICED_BUNDLE_DIR_USER_DEFAULT;
 
 static void
 add_signal_event(int kq, int sig)
@@ -131,9 +136,13 @@ event_loop(void)
 				continue;
 			}
 
-			/* Restart and stop-kill timers. */
+			/* Restart, stop-kill, and on-demand timers. */
 			if (kev->filter == EVFILT_TIMER) {
-				supervisor_handle_timer(kev);
+				if (on_demand_is_timer(kev->ident))
+					on_demand_timeout(kev->ident,
+					    serviced_kq);
+				else
+					supervisor_handle_timer(kev);
 				continue;
 			}
 
@@ -151,7 +160,7 @@ static void
 usage(void)
 {
 
-	fprintf(stderr, "usage: serviced [-d manifest_dir]\n");
+	fprintf(stderr, "usage: serviced\n");
 	exit(1);
 }
 
@@ -159,7 +168,7 @@ int
 main(int argc, char *argv[])
 {
 	struct kevent kev;
-	const char *pair_fd_str, *s, *manifest_dir_env;
+	const char *pair_fd_str, *s;
 	int ch;
 
 	memset(&sd, 0, sizeof(sd));
@@ -167,16 +176,13 @@ main(int argc, char *argv[])
 	sd.pair_svc_fd = -1;
 	sd.coalition_svc_fd = -1;
 	sd.capprotect_fd = -1;
+	sd.identity_fd = -1;
 
 	openlog("serviced", LOG_PID | LOG_NDELAY | LOG_PERROR, LOG_DAEMON);
 
 	/* Parse arguments. */
-	while ((ch = getopt(argc, argv, "d:")) != -1) {
+	while ((ch = getopt(argc, argv, "")) != -1) {
 		switch (ch) {
-		case 'd':
-			strlcpy(sd.manifest_dir, optarg,
-			    sizeof(sd.manifest_dir));
-			break;
 		default:
 			usage();
 		}
@@ -215,24 +221,33 @@ main(int argc, char *argv[])
 		sd.capprotect_fd = (int)strtol(s, NULL, 10);
 		if (sd.capprotect_fd < 0) sd.capprotect_fd = -1;
 	}
+	s = getenv("SERVICED_IDENTITY_FD");
+	if (s != NULL) {
+		sd.identity_fd = (int)strtol(s, NULL, 10);
+		if (sd.identity_fd < 0) sd.identity_fd = -1;
+	}
 	if (sd.pair_svc_fd >= 0) {
 		(void)fcntl(sd.pair_svc_fd, F_SETFL, O_NONBLOCK);
 		syslog(LOG_INFO, "inherited service fds: pair=%d "
-		    "coalition=%d capprotect=%d",
-		    sd.pair_svc_fd, sd.coalition_svc_fd, sd.capprotect_fd);
+		    "coalition=%d capprotect=%d identity=%d",
+		    sd.pair_svc_fd, sd.coalition_svc_fd,
+		    sd.capprotect_fd, sd.identity_fd);
 	}
 	if (sd.coalition_svc_fd >= 0)
 		(void)fcntl(sd.coalition_svc_fd, F_SETFL, O_NONBLOCK);
 
-	/* Manifest dir: CLI flag > env > default. */
-	if (sd.manifest_dir[0] == '\0') {
-		manifest_dir_env = getenv("SERVICED_MANIFEST_DIR");
-		if (manifest_dir_env != NULL)
-			strlcpy(sd.manifest_dir, manifest_dir_env,
-			    sizeof(sd.manifest_dir));
-		else
-			strlcpy(sd.manifest_dir, "/etc/serviced.d",
-			    sizeof(sd.manifest_dir));
+	/* Override bundle directories from environment (for testing). */
+	s = getenv("SERVICED_BUNDLE_DIR_SYSTEM");
+	if (s != NULL && s[0] != '\0')
+		serviced_bundle_dir_system = s;
+	s = getenv("SERVICED_BUNDLE_DIR_USER");
+	if (s != NULL && s[0] != '\0')
+		serviced_bundle_dir_user = s;
+
+	/* Initialize bundle registry (scan /System/Applications + /Applications). */
+	if (bundle_registry_init() == -1) {
+		syslog(LOG_CRIT, "bundle registry init failed — aborting");
+		return (1);
 	}
 
 	/* Apply capprotect shield if available. */
@@ -297,17 +312,20 @@ main(int argc, char *argv[])
 	}
 
 	sd.running = true;
-	syslog(LOG_INFO, "serviced started, manifest_dir=%s",
-	    sd.manifest_dir);
+	syslog(LOG_INFO, "serviced started, %u bundles registered",
+	    bundle_registry_count());
 
-	/* Load manifests, dependency sort, launch services. */
-	if (supervisor_start(serviced_kq) != 0)
-		syslog(LOG_WARNING, "supervisor_start failed");
+	/* Launch system services (tier-based parallel). */
+	if (startup_launch_system(serviced_kq) != 0)
+		syslog(LOG_WARNING, "startup_launch_system failed");
 
 	event_loop();
 
-	/* Graceful shutdown: stop all services. */
-	supervisor_stop(serviced_kq);
+	/* Graceful shutdown: ensure services are stopping.
+	 * supervisor_stop() may have already been called from the
+	 * signal handler — it's idempotent (checks sd.nservices). */
+	if (!sd.shutting_down)
+		supervisor_stop(serviced_kq);
 	SERVICED_PROBE_SHUTDOWN_START(sd.nservices);
 	{
 		struct kevent sevents[8];
@@ -332,7 +350,7 @@ main(int argc, char *argv[])
 		}
 		{
 			struct timespec now;
-			uint64_t dur;
+			uint64_t dur __unused;
 
 			clock_gettime(CLOCK_MONOTONIC, &now);
 			dur = (uint64_t)(now.tv_sec - drain_start.tv_sec) *
@@ -341,7 +359,9 @@ main(int argc, char *argv[])
 			SERVICED_PROBE_SHUTDOWN_DONE(dur);
 		}
 	}
+	on_demand_teardown(serviced_kq);
 	supervisor_teardown_state();
+	bundle_registry_teardown();
 	sctl_teardown();
 
 	syslog(LOG_INFO, "serviced exiting");

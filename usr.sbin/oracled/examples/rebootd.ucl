@@ -5,11 +5,14 @@
 # On desktop and server profiles (reboot ungated), this service has
 # no token and processes can reboot directly.
 
-label = "rebootd";
-program = "/usr/sbin/rebootd";
-description = "Reboot and shutdown manager";
+bundle_id = "org.5bsd.systemcontrol";
+version = "1.0";
+author = "5BSD";
+
+program = "rebootd";
+provides = ["org.5bsd.system.reboot"];
+on_demand = false;
 restart = "on-failure";
-provides = ["reboot"];
 
 capabilities {
     system = ["reboot"];

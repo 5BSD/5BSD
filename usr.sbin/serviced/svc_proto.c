@@ -64,6 +64,8 @@ handle_svc_ready(struct svc_runtime *svc, uint64_t reply_token)
 		svc->state = SVC_STATE_RUNNING;
 		syslog(LOG_INFO, "service %s: reported ready",
 		    svc->manifest.label);
+		/* Drain any on-demand waiters for this service. */
+		on_demand_check_ready(svc, serviced_kq);
 	}
 	svc_pair_reply(svc, 0, reply_token, NULL, 0);
 }
@@ -132,12 +134,22 @@ handle_svc_lookup(struct svc_runtime *svc, const void *payload,
 
 	client_fd = naming_lookup(req->name, svc, &error);
 	if (client_fd < 0) {
+		if (error == ENOENT) {
+			/* Try on-demand launch from bundle registry. */
+			if (on_demand_launch(req->name, svc,
+			    reply_token, serviced_kq) == 0)
+				return;  /* reply deferred until ready */
+			/* on_demand_launch failed — use its errno if set. */
+			if (errno == EDEADLK)
+				error = EDEADLK;
+		}
 		svc_pair_reply(svc, error, reply_token, NULL, 0);
 		return;
 	}
 
 	svc_pair_reply(svc, 0, reply_token, &client_fd, 1);
 	close(client_fd);
+	svc->connection_count++;
 }
 
 void

@@ -339,135 +339,83 @@ servicectl_reload_nonroot_cleanup()
 }
 
 # ===================================================================
-# servicectl check — validates a manifest
+# servicectl verify — validates a bundle
 # ===================================================================
 
-atf_test_case servicectl_check cleanup
-servicectl_check_head()
+atf_test_case servicectl_verify cleanup
+servicectl_verify_head()
 {
-	atf_set "descr" "servicectl check validates a manifest file"
-	atf_set "require.user" "root"
+	atf_set "descr" "servicectl verify validates a .app bundle"
 }
-servicectl_check_body()
+servicectl_verify_body()
 {
 	find_servicectl
-	prepare_paths
-
-	cat > "$manifestdir/valid.ucl" <<EOF
-label = "valid-check";
-program = "/usr/bin/true";
+	local bdir="$(pwd)/VerifyTest.app"
+	mkdir -p "${bdir}/Contents/5BSD/Services"
+	mkdir -p "${bdir}/Contents/bin"
+	printf '#!/bin/sh\nexec sleep 3600\n' > "${bdir}/Contents/bin/verifyd"
+	chmod 755 "${bdir}/Contents/bin/verifyd"
+	cat > "${bdir}/Contents/5BSD/Services/verifyd.ucl" <<EOF
+bundle_id = "org.test.verify";
+version = "1.0";
+author = "test";
+program = "verifyd";
+provides = ["org.test.verify.svc"];
 EOF
 
-	start_stack
-	if [ ! -S "$sctl_sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_skip "serviced control socket not available"
-	fi
-
-	atf_check -s exit:0 -o ignore \
-	    "$servicectl_bin" -s "$sctl_sockpath" check valid.ucl
+	atf_check -s exit:0 -o match:"PASSED" \
+	    "$servicectl_bin" verify "${bdir}"
 }
-servicectl_check_cleanup()
+servicectl_verify_cleanup()
 {
-	cleanup_common
+	rm -rf VerifyTest.app
 }
 
 # ===================================================================
-# servicectl check — rejects path traversal
+# servicectl verify — rejects invalid bundle
 # ===================================================================
 
-atf_test_case servicectl_check_path_traversal cleanup
-servicectl_check_path_traversal_head()
+atf_test_case servicectl_verify_invalid cleanup
+servicectl_verify_invalid_head()
 {
-	atf_set "descr" "servicectl check rejects path traversal"
-	atf_set "require.user" "root"
+	atf_set "descr" "servicectl verify rejects invalid bundle"
 }
-servicectl_check_path_traversal_body()
+servicectl_verify_invalid_body()
 {
 	find_servicectl
-	start_stack
-	if [ ! -S "$sctl_sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_skip "serviced control socket not available"
-	fi
-
-	atf_check -s not-exit:0 -e ignore \
-	    "$servicectl_bin" -s "$sctl_sockpath" check "../../../etc/passwd"
-}
-servicectl_check_path_traversal_cleanup()
-{
-	cleanup_common
-}
-
-# ===================================================================
-# servicectl load — loads and starts a service
-# ===================================================================
-
-atf_test_case servicectl_load cleanup
-servicectl_load_head()
-{
-	atf_set "descr" "servicectl load starts a new service"
-	atf_set "require.user" "root"
-}
-servicectl_load_body()
-{
-	find_servicectl
-
-	start_stack
-	if [ ! -S "$sctl_sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_skip "serviced control socket not available"
-	fi
-
-	write_executable "$(pwd)/load-svc.sh" \
-	    '#!/bin/sh' \
-	    'echo $$ > load-svc.pid' \
-	    'sleep 60'
-	cat > "$manifestdir/load-svc.ucl" <<EOF
-label = "load-svc";
-program = "$(pwd)/load-svc.sh";
+	local bdir="$(pwd)/BadBundle.app"
+	mkdir -p "${bdir}/Contents/5BSD/Services"
+	# No bin directory, no program binary
+	cat > "${bdir}/Contents/5BSD/Services/bad.ucl" <<EOF
+bundle_id = "org.test.bad";
+program = "nonexistent";
+provides = ["org.test.bad.svc"];
 EOF
 
-	atf_check -s exit:0 -o ignore -e ignore \
-	    "$servicectl_bin" -s "$sctl_sockpath" load load-svc.ucl
-
-	i=0
-	while [ ! -s load-svc.pid ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ ! -s load-svc.pid ]; then
-		cat "$logfile" 2>/dev/null
-		atf_skip "loaded service did not start"
-	fi
-
-	atf_check -s exit:0 -o match:"load-svc" \
-	    "$servicectl_bin" -s "$sctl_sockpath" services
+	atf_check -s not-exit:0 -e match:"FAILED\|invalid\|not found" \
+	    "$servicectl_bin" verify "${bdir}"
 }
-servicectl_load_cleanup()
+servicectl_verify_invalid_cleanup()
 {
-	if [ -f load-svc.pid ]; then
-		kill "$(cat load-svc.pid)" 2>/dev/null || true
-	fi
-	cleanup_common
+	rm -rf BadBundle.app
 }
 
 # ===================================================================
-# servicectl check/load — rejected without filename
+# servicectl stop — requires label argument
 # ===================================================================
 
-atf_test_case servicectl_check_no_arg cleanup
-servicectl_check_no_arg_head()
+atf_test_case servicectl_stop_no_arg cleanup
+servicectl_stop_no_arg_head()
 {
-	atf_set "descr" "servicectl check without filename fails"
+	atf_set "descr" "servicectl stop without label fails"
 }
-servicectl_check_no_arg_body()
+servicectl_stop_no_arg_body()
 {
 	find_servicectl
 	atf_check -s not-exit:0 -e match:"requires" \
-	    "$servicectl_bin" check
+	    "$servicectl_bin" stop
 }
-servicectl_check_no_arg_cleanup()
+servicectl_stop_no_arg_cleanup()
 {
 	:
 }
@@ -565,11 +513,10 @@ atf_init_test_cases()
 	atf_add_test_case servicectl_usage
 	atf_add_test_case servicectl_reload_nonroot
 
-	# check/load
-	atf_add_test_case servicectl_check
-	atf_add_test_case servicectl_check_path_traversal
-	atf_add_test_case servicectl_load
-	atf_add_test_case servicectl_check_no_arg
+	# verify/stop
+	atf_add_test_case servicectl_verify
+	atf_add_test_case servicectl_verify_invalid
+	atf_add_test_case servicectl_stop_no_arg
 
 	# adversarial
 	atf_add_test_case sctl_oversized_payload

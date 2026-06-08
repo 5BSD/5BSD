@@ -27,7 +27,7 @@
 #define	SCTL_OP_RELOAD		3	/* reload manifests (root) */
 #define	SCTL_OP_CHECK		4	/* validate manifest (root) */
 #define	SCTL_OP_LOAD		5	/* load + start service (root) */
-#define	SCTL_OP_STOP_SVC	6	/* stop a named service (root) — not yet implemented */
+#define	SCTL_OP_STOP_SVC	6	/* stop a named service (root) */
 
 struct sctl_request {
 	uint32_t	version;

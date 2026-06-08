@@ -20,7 +20,16 @@
 #ifndef SERVICED_PROBES_H
 #define SERVICED_PROBES_H
 
+#ifdef WITH_DTRACE
 #include <sys/sdt.h>
+#else
+/* No-op stubs when DTrace is disabled. */
+#define	DTRACE_PROBE(...)
+#define	DTRACE_PROBE1(...)
+#define	DTRACE_PROBE2(...)
+#define	DTRACE_PROBE3(...)
+#define	DTRACE_PROBE4(...)
+#endif
 
 /* Service lifecycle */
 #define	SERVICED_PROBE_SVC_START(label, pid)	\
@@ -105,6 +114,30 @@
 	DTRACE_PROBE2(serviced, conn__accept, uid, nconns)
 #define	SERVICED_PROBE_CONN_CLOSE(nconns)	\
 	DTRACE_PROBE1(serviced, conn__close, nconns)
+
+/* Startup orchestration */
+#define	SERVICED_PROBE_STARTUP_BEGIN(nservices, ntiers)	\
+	DTRACE_PROBE2(serviced, startup__begin, nservices, ntiers)
+#define	SERVICED_PROBE_STARTUP_TIER(tier, launched)	\
+	DTRACE_PROBE2(serviced, startup__tier, tier, launched)
+#define	SERVICED_PROBE_STARTUP_DONE(duration_ms)	\
+	DTRACE_PROBE1(serviced, startup__done, duration_ms)
+
+/* On-demand launch */
+#define	SERVICED_PROBE_ON_DEMAND_LAUNCH(name, requester)	\
+	DTRACE_PROBE2(serviced, on__demand__launch, name, requester)
+#define	SERVICED_PROBE_ON_DEMAND_COALESCE(name)	\
+	DTRACE_PROBE1(serviced, on__demand__coalesce, name)
+#define	SERVICED_PROBE_ON_DEMAND_READY(name, nwaiters)	\
+	DTRACE_PROBE2(serviced, on__demand__ready, name, nwaiters)
+#define	SERVICED_PROBE_ON_DEMAND_TIMEOUT(name)	\
+	DTRACE_PROBE1(serviced, on__demand__timeout, name)
+
+/* Bundle registry */
+#define	SERVICED_PROBE_BUNDLE_LOAD(name, nservices, system)	\
+	DTRACE_PROBE3(serviced, bundle__load, name, nservices, system)
+#define	SERVICED_PROBE_BUNDLE_SCAN(dir, nbundles)	\
+	DTRACE_PROBE2(serviced, bundle__scan, dir, nbundles)
 
 /* Errors */
 #define	SERVICED_PROBE_ERROR(subsys, msg)	\

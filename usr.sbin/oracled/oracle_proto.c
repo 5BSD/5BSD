@@ -5,7 +5,7 @@
  *
  * oracled pair channel protocol handler.
  *
- * Receives requests from serviced over the NOXFER pair channel,
+ * Receives requests from serviced over the restricted pair channel,
  * validates them against the oracle's claimed resource set, and
  * dispatches to cap_rt to mint tokens or create pairs/coalitions.
  * Replies are sent back over the same pair with attached fds.

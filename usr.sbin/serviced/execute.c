@@ -254,6 +254,17 @@ svc_exec(struct svc_runtime *svc, int kq)
 		return (-1);
 	}
 
+	if (m->program[0] != '/') {
+		syslog(LOG_ERR, "svc_exec %s: program must be absolute: %s",
+		    m->label, m->program);
+		return (-1);
+	}
+	if (strstr(m->program, "/../") != NULL ||
+	    strstr(m->program, "/..") == m->program + strlen(m->program) - 3) {
+		syslog(LOG_ERR, "svc_exec %s: path traversal in program: %s",
+		    m->label, m->program);
+		return (-1);
+	}
 	if (access(m->program, X_OK) != 0) {
 		syslog(LOG_ERR, "svc_exec %s: %s not executable: %m",
 		    m->label, m->program);
@@ -556,7 +567,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 
 	{
 		struct timespec exec_end;
-		uint64_t dur;
+		uint64_t dur __unused;
 
 		clock_gettime(CLOCK_MONOTONIC, &exec_end);
 		dur = (uint64_t)(exec_end.tv_sec - exec_start.tv_sec) *

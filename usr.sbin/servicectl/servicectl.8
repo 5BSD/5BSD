@@ -13,10 +13,16 @@
 .Cm status | services | reload
 .Nm
 .Op Fl s Ar socket
-.Cm check Ar manifest
+.Cm stop Ar label
 .Nm
 .Op Fl s Ar socket
-.Cm load Ar manifest
+.Cm install Ar path.app
+.Nm
+.Op Fl s Ar socket
+.Cm verify Ar path.app
+.Nm
+.Op Fl s Ar socket
+.Cm bundles
 .Sh DESCRIPTION
 .Nm
 is the administrative command-line interface to
@@ -51,24 +57,38 @@ applied; if the new graph would contain a cycle, the reload
 is rejected and running services are unaffected.
 .Pp
 Requires root privileges.
-.It Cm check Ar manifest
-Validate a service manifest file without loading it.
-.Ar manifest
-is a filename relative to the manifest directory
-.Pq typically Pa /etc/serviced.d/ .
-Checks that the program exists and is executable, that the
-specified user and group exist, and that the manifest parses
-correctly.
+.It Cm stop Ar label
+Gracefully stop a running service.
+Sends SIGTERM and waits for the service's configured
+.Va stop_timeout
+before escalating to SIGKILL.
 .Pp
 Requires root privileges.
-.It Cm load Ar manifest
-Load a service manifest and start the service.
-.Ar manifest
-is a filename relative to the manifest directory.
-The service is added to the running set, the dependency graph
-is re-sorted, and the service is launched.
+.It Cm install Ar path.app
+Install a
+.Pa .app
+bundle to
+.Pa /Applications/ .
+The bundle is verified before installation.
+After copying, run
+.Cm servicectl reload
+to register the new services.
 .Pp
 Requires root privileges.
+.It Cm verify Ar path.app
+Validate a
+.Pa .app
+bundle's integrity.
+Checks that the bundle structure is correct, all Service.ucl files
+parse successfully, binaries exist and are executable, provides names
+are unique, and no self-dependencies exist.
+Prints a summary of the bundle's services on success.
+.It Cm bundles
+List all installed bundles from
+.Pa /System/Applications/
+and
+.Pa /Applications/ ,
+showing bundle ID, version, and service count for each.
 .El
 .Sh OPTIONS
 .Bl -tag -width "-s socket"
@@ -104,14 +124,15 @@ Reload manifests after adding a new service:
 # servicectl reload
 .Ed
 .Pp
-Validate a manifest before loading:
+Install and activate a bundle:
 .Bd -literal -offset indent
-# servicectl check myservice.ucl
+# servicectl install /path/to/MyApp.app
+# servicectl reload
 .Ed
 .Pp
-Load and start a new service:
+Verify a bundle's integrity:
 .Bd -literal -offset indent
-# servicectl load myservice.ucl
+# servicectl verify /path/to/MyApp.app
 .Ed
 .Pp
 Connect to an alternate control socket:

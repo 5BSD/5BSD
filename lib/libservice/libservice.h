@@ -13,7 +13,7 @@
  *
  *   service_init();
  *   service_ready();
- *   service_register("org.freebsd.myservice");
+ *   service_register("org.5bsd.myservice");
  *
  *   for (;;) {
  *       int client = service_accept();
@@ -23,7 +23,7 @@
  * Or for a client connecting to another service:
  *
  *   service_init();
- *   int peer = service_lookup("org.freebsd.myservice");
+ *   int peer = service_lookup("org.5bsd.myservice");
  *   // talk to peer
  */
 

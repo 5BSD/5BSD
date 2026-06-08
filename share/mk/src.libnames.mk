@@ -111,6 +111,7 @@ _LIBRARIES=	\
 		80211 \
 		9p \
 		alias \
+		appbundle \
 		archive \
 		asn1 \
 		avl \
@@ -219,6 +220,7 @@ _LIBRARIES=	\
 		rtld_db \
 		sbuf \
 		sdp \
+		service \
 		sm \
 		smb \
 		spl \
@@ -312,6 +314,8 @@ LIBVERIEXEC?=	${LIBVERIEXECDIR}/libveriexec.a
 # 2nd+ order consumers.  Auto-generating this would be better.
 _DP_80211=	sbuf bsdxml
 _DP_9p=		sbuf
+_DP_appbundle=	ucl
+_DP_service=
 .if ${MK_CASPER} != "no"
 _DP_9p+=	casper cap_pwd cap_grp
 .endif

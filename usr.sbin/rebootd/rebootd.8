@@ -1,0 +1,91 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd June 6, 2026
+.Dt REBOOTD 8
+.Os
+.Sh NAME
+.Nm rebootd
+.Nd reboot and shutdown manager
+.Sh DESCRIPTION
+.Nm
+is a service managed by
+.Xr serviced 8
+that provides controlled system reboot and shutdown.
+It receives a system gate token for
+.Dq reboot
+from the Oracle and exposes it to authorized clients via the
+naming registry as
+.Dq org.5bsd.system.reboot .
+.Pp
+On profiles where the reboot system gate is not claimed
+(e.g., desktop and server profiles),
+.Nm
+starts but has no token.
+Processes can reboot directly via
+.Xr reboot 2
+without going through
+.Nm .
+.Pp
+On the embedded profile, the reboot gate is claimed by the
+Oracle and
+.Nm
+is the only path to reboot or shut down the system.
+This allows future policy enforcement such as validating boot
+environments before permitting a reboot.
+.Sh PROTOCOL
+Clients connect via
+.Fn service_lookup "org.5bsd.system.reboot"
+and exchange messages over the resulting pair fd.
+.Pp
+All requests use
+.Vt struct reboot_req
+with the following operation codes:
+.Bl -tag -width REBOOT_OP_SHUTDOWN
+.It Dv REBOOT_OP_REBOOT Pq 1
+Reboot the system.
+The
+.Fa flags
+field may contain
+.Dv RB_HALT ,
+.Dv RB_POWEROFF ,
+or
+.Dv RB_REROOT .
+Other flags are masked out for safety.
+Returns
+.Vt struct reboot_reply .
+This call does not return on success.
+.It Dv REBOOT_OP_SHUTDOWN Pq 2
+Perform a clean shutdown
+.Pq Dv RB_HALT | RB_POWEROFF .
+Returns
+.Vt struct reboot_reply .
+This call does not return on success.
+.It Dv REBOOT_OP_STATUS Pq 3
+Query whether a shutdown is already in progress.
+Returns
+.Vt struct reboot_reply
+with status
+.Dv REBOOT_STATUS_PENDING
+if a shutdown has been initiated, or
+.Dv REBOOT_STATUS_OK
+otherwise.
+.El
+.Sh MANIFEST
+A typical manifest for
+.Nm :
+.Bd -literal -offset indent
+bundle_id = "org.5bsd.systemcontrol";
+program = "rebootd";
+provides = ["org.5bsd.system.reboot"];
+restart = "on-failure";
+capabilities {
+    system = ["reboot"];
+}
+.Ed
+.Sh SEE ALSO
+.Xr reboot 2 ,
+.Xr libservice 3 ,
+.Xr oracled 8 ,
+.Xr serviced 8

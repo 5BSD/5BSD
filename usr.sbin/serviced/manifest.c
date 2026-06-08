@@ -11,18 +11,15 @@
  */
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 
-#include <dirent.h>
 #include <errno.h>
-#include <grp.h>
 #include <limits.h>
-#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
-#include <unistd.h>
 
 #include <ucl.h>
 
@@ -31,19 +28,6 @@
 #include "claim_parse.h"
 #include "serviced.h"
 #include "gates.h"
-
-static void
-net_claim_port_string(const struct serviced_net_claim *nc, char *buf,
-    size_t len)
-{
-
-	if (nc->port_min == 0 && nc->port_max == UINT16_MAX)
-		strlcpy(buf, "*", len);
-	else if (nc->port_min == nc->port_max)
-		snprintf(buf, len, "%u", nc->port_min);
-	else
-		snprintf(buf, len, "%u-%u", nc->port_min, nc->port_max);
-}
 
 /*
  * Parse a UCL network claim object.
@@ -458,6 +442,9 @@ parse_capabilities(const ucl_object_t *root, struct svc_manifest *m)
 	parse_cap_system(ucl_object_lookup(sec, "system"), m);
 }
 
+/* Maximum manifest file size (1 MB). */
+#define	MANIFEST_MAX_UCL_SIZE	(1024 * 1024)
+
 /*
  * Parse a single manifest file into a svc_manifest struct.
  * Returns 0 on success, -1 on error (logged).
@@ -468,12 +455,24 @@ manifest_load_file(const char *path, struct svc_manifest *m)
 	struct ucl_parser *parser;
 	const ucl_object_t *root, *o;
 	const char *s;
+	struct stat msb;
 	int rv;
 
 	memset(m, 0, sizeof(*m));
 	m->restart = SVC_RESTART_NEVER;
 	m->stop_timeout = 5;
 	m->max_failures = 10;
+
+	/* Reject unreasonably large files before parsing. */
+	if (stat(path, &msb) == -1 || !S_ISREG(msb.st_mode)) {
+		syslog(LOG_ERR, "manifest: %s: not a regular file", path);
+		return (-1);
+	}
+	if (msb.st_size > MANIFEST_MAX_UCL_SIZE) {
+		syslog(LOG_ERR, "manifest: %s: file too large (%jd bytes)",
+		    path, (intmax_t)msb.st_size);
+		return (-1);
+	}
 
 	parser = ucl_parser_new(UCL_PARSER_DEFAULT);
 	if (parser == NULL) {
@@ -654,231 +653,6 @@ out:
 	return (rv);
 }
 
-static int
-name_cmp(const void *a, const void *b)
-{
-
-	return (strcmp(*(const char *const *)a, *(const char *const *)b));
-}
-
-int
-manifest_load_dir(const char *dirpath,
-    struct svc_manifest *out, unsigned maxsvc, unsigned *nsvc)
-{
-	DIR *d;
-	struct dirent *de;
-	char path[PATH_MAX];
-	char *names[SERVICED_MAX_SERVICES];
-	unsigned nnames, i;
-	size_t len;
-
-	*nsvc = 0;
-	nnames = 0;
-
-	d = opendir(dirpath);
-	if (d == NULL) {
-		if (errno == ENOENT) {
-			syslog(LOG_INFO, "manifest: %s not found, "
-			    "no services", dirpath);
-			return (0);
-		}
-		syslog(LOG_ERR, "manifest: opendir %s: %m", dirpath);
-		return (-1);
-	}
-
-	/* Collect .ucl filenames. */
-	while ((de = readdir(d)) != NULL) {
-		len = strlen(de->d_name);
-		if (len < 5 || strcmp(de->d_name + len - 4, ".ucl") != 0)
-			continue;
-		if (nnames >= SERVICED_MAX_SERVICES) {
-			syslog(LOG_WARNING, "manifest: too many files in "
-			    "%s (max %d)", dirpath, SERVICED_MAX_SERVICES);
-			break;
-		}
-		names[nnames] = strdup(de->d_name);
-		if (names[nnames] == NULL) {
-			syslog(LOG_ERR, "manifest: strdup: %m");
-			break;
-		}
-		nnames++;
-	}
-	closedir(d);
-
-	/* Sort for deterministic load order. */
-	qsort(names, nnames, sizeof(names[0]), name_cmp);
-
-	/* Parse each file. */
-	for (i = 0; i < nnames; i++) {
-		if (*nsvc >= maxsvc) {
-			syslog(LOG_WARNING, "manifest: service limit "
-			    "reached (%u)", maxsvc);
-			break;
-		}
-		snprintf(path, sizeof(path), "%s/%s", dirpath, names[i]);
-		if (manifest_load_file(path, &out[*nsvc]) == 0) {
-			syslog(LOG_INFO, "manifest: loaded %s", out[*nsvc].label);
-			(*nsvc)++;
-		}
-	}
-
-	/* Clean up name list. */
-	for (i = 0; i < nnames; i++)
-		free(names[i]);
-
-	syslog(LOG_INFO, "manifest: %u services loaded from %s",
-	    *nsvc, dirpath);
-	return (0);
-}
-
-static void
-log_label_list(const char *prefix, const char (*names)[SERVICED_LABEL_MAX],
-    unsigned count)
-{
-	char buf[512];
-	size_t off;
-	unsigned i;
-
-	off = 0;
-	for (i = 0; i < count; i++)
-		BUF_APPEND(buf, sizeof(buf), &off, "%s%s",
-		    i > 0 ? " " : "", names[i]);
-	syslog(LOG_INFO, "    %s: %s", prefix, buf);
-}
-
-void
-manifest_log(const struct svc_manifest *m)
-{
-
-	syslog(LOG_INFO, "  service: %s program=%s restart=%s",
-	    m->label, m->program,
-	    restart_policy_name(m->restart));
-	if (m->nprovides > 0)
-		log_label_list("provides", m->provides, m->nprovides);
-	if (m->nrequires > 0)
-		log_label_list("requires", m->requires, m->nrequires);
-	if (m->ncap_paths > 0 || m->ncap_files > 0 || m->ncap_net > 0 ||
-	    m->ncap_jail > 0 || m->cap_system != 0)
-		syslog(LOG_INFO, "    capabilities: paths=%u files=%u "
-		    "network=%u jails=%u system=0x%x", m->ncap_paths,
-		    m->ncap_files, m->ncap_net, m->ncap_jail, m->cap_system);
-	if (m->has_jail)
-		syslog(LOG_INFO, "    jail: %s path=%s", m->jail_name,
-		    m->jail_path);
-}
-
-/*
- * Validate a parsed manifest for runtime correctness:
- * program must exist and be executable, user/group must resolve.
- * Returns 0 on success, -1 with error message in errbuf.
- */
-int
-manifest_validate(const struct svc_manifest *m, char *errbuf, size_t errlen)
-{
-
-	if (access(m->program, X_OK) != 0) {
-		snprintf(errbuf, errlen, "program \"%s\": %s",
-		    m->program, strerror(errno));
-		return (-1);
-	}
-
-	/*
-	 * User/group validation is deferred to svc_exec() time.
-	 * getpwnam/getgrnam can block on NIS/LDAP and must not
-	 * run in the event loop (reload/check paths).  svc_exec()
-	 * already resolves credentials before fork and fails with
-	 * a clear error if the user/group does not exist.
-	 */
-
-	return (0);
-}
-
-/*
- * Format a human-readable summary of a manifest into buf.
- * Returns the number of bytes written (excluding NUL).
- */
-int
-manifest_format_summary(const struct svc_manifest *m, char *buf, size_t len)
-{
-	size_t off;
-	unsigned i;
-
-	if (len == 0)
-		return (0);
-
-	off = 0;
-
-	BUF_APPEND(buf, len, &off, "%s:\n", m->label);
-	BUF_APPEND(buf, len, &off, "  program:      %s\n", m->program);
-
-	if (m->description[0] != '\0')
-		BUF_APPEND(buf, len, &off,"  description:  %s\n", m->description);
-	if (m->user[0] != '\0')
-		BUF_APPEND(buf, len, &off,"  user:         %s\n", m->user);
-	if (m->group[0] != '\0')
-		BUF_APPEND(buf, len, &off,"  group:        %s\n", m->group);
-
-	BUF_APPEND(buf, len, &off,"  restart:      %s\n",
-	    restart_policy_name(m->restart));
-
-	if (m->nprovides > 0) {
-		BUF_APPEND(buf, len, &off,"  provides:     [");
-		for (i = 0; i < m->nprovides; i++)
-			BUF_APPEND(buf, len, &off,"%s%s", i > 0 ? ", " : "",
-			    m->provides[i]);
-		BUF_APPEND(buf, len, &off,"]\n");
-	}
-
-	if (m->nrequires > 0) {
-		BUF_APPEND(buf, len, &off,"  requires:     [");
-		for (i = 0; i < m->nrequires; i++)
-			BUF_APPEND(buf, len, &off,"%s%s", i > 0 ? ", " : "",
-			    m->requires[i]);
-		BUF_APPEND(buf, len, &off,"]\n");
-	}
-
-	if (m->ncap_paths > 0 || m->ncap_files > 0 || m->ncap_net > 0 ||
-	    m->ncap_jail > 0 || m->cap_system != 0)
-		BUF_APPEND(buf, len, &off,"  capabilities:\n");
-
-	for (i = 0; i < m->ncap_paths; i++)
-		BUF_APPEND(buf, len, &off,"    path:       %s\n", m->cap_paths[i]);
-
-	for (i = 0; i < m->ncap_files; i++)
-		BUF_APPEND(buf, len, &off,"    file:       %s actions=0x%jx\n",
-		    m->cap_files[i].path,
-		    (uintmax_t)m->cap_files[i].actions);
-
-	for (i = 0; i < m->ncap_net; i++) {
-		const struct serviced_net_claim *nc = &m->cap_net[i];
-		char portbuf[32];
-
-		net_claim_port_string(nc, portbuf, sizeof(portbuf));
-		BUF_APPEND(buf, len, &off,"    network:    %s/%s %s\n",
-		    net_protocol_name(nc->protocol),
-		    portbuf,
-		    net_direction_name(nc->direction));
-	}
-
-	for (i = 0; i < m->ncap_jail; i++) {
-		const struct serviced_jail_claim *jc = &m->cap_jail[i];
-
-		if (jc->jid != 0 && jc->name[0] != '\0')
-			BUF_APPEND(buf, len, &off,
-			    "    jail:       %s#%d actions=0x%x\n",
-			    jc->name, jc->jid, jc->actions);
-		else if (jc->jid != 0)
-			BUF_APPEND(buf, len, &off,
-			    "    jail:       #%d actions=0x%x\n",
-			    jc->jid, jc->actions);
-		else
-			BUF_APPEND(buf, len, &off,
-			    "    jail:       %s actions=0x%x\n",
-			    jc->name, jc->actions);
-	}
-
-	if (m->cap_system != 0)
-		BUF_APPEND(buf, len, &off,"    system:     0x%x\n", m->cap_system);
-
-	return ((int)off);
-}
+/* manifest_log, manifest_validate, manifest_format_summary removed:
+ * no callers remain after supervisor_check_manifest / supervisor_load_manifest
+ * were deleted.  manifest_load_file is retained for potential future use. */

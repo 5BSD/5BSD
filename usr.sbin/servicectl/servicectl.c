@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 #include "serviced_ctl.h"
+#include "servicectl.h"
 
 static const char *sockpath = SERVICED_CTL_SOCK;
 
@@ -202,44 +203,23 @@ cmd_reload(void)
 }
 
 static int
-cmd_check(const char *filename)
+cmd_stop(const char *label)
 {
 	char summary[SERVICED_CTL_SUMMARY_MAX];
 	int error;
 
 	summary[0] = '\0';
-	error = sctl_rpc(SCTL_OP_CHECK, 0, filename,
+	error = sctl_rpc(SCTL_OP_STOP_SVC, 0, label,
 	    summary, sizeof(summary));
 	if (error != 0) {
-		warnx("check: %s", summary[0] != '\0' ?
+		warnx("stop: %s", summary[0] != '\0' ?
 		    summary : strerror(error));
 		return (1);
 	}
 	if (summary[0] != '\0')
-		printf("%s", summary);
+		printf("%s\n", summary);
 	else
-		printf("check: ok\n");
-	return (0);
-}
-
-static int
-cmd_load(const char *filename)
-{
-	char summary[SERVICED_CTL_SUMMARY_MAX];
-	int error;
-
-	summary[0] = '\0';
-	error = sctl_rpc(SCTL_OP_LOAD, 0, filename,
-	    summary, sizeof(summary));
-	if (error != 0) {
-		warnx("load: %s", summary[0] != '\0' ?
-		    summary : strerror(error));
-		return (1);
-	}
-	if (summary[0] != '\0')
-		printf("%s", summary);
-	else
-		printf("load: ok\n");
+		printf("stop: ok\n");
 	return (0);
 }
 
@@ -253,9 +233,11 @@ usage(void)
 	    "commands:\n"
 	    "  status              show serviced status and service list\n"
 	    "  services            list loaded services\n"
-	    "  reload              reload service manifests\n"
-	    "  check <manifest>    validate a manifest file\n"
-	    "  load <manifest>     load and start a service\n");
+	    "  reload              reload service bundles\n"
+	    "  stop <label>        stop a running service\n"
+	    "  install <path.app>  install a .app bundle to /Applications/\n"
+	    "  verify <path.app>   validate bundle integrity\n"
+	    "  bundles             list all registered bundles\n");
 	exit(EX_USAGE);
 }
 
@@ -288,16 +270,23 @@ main(int argc, char *argv[])
 		return (cmd_services());
 	if (strcmp(cmd, "reload") == 0 && argc == 1)
 		return (cmd_reload());
-	if (strcmp(cmd, "check") == 0) {
+	if (strcmp(cmd, "stop") == 0) {
 		if (argc != 2)
-			errx(EX_USAGE, "check requires exactly one manifest filename");
-		return (cmd_check(argv[1]));
+			errx(EX_USAGE, "stop requires a service label");
+		return (cmd_stop(argv[1]));
 	}
-	if (strcmp(cmd, "load") == 0) {
+	if (strcmp(cmd, "install") == 0) {
 		if (argc != 2)
-			errx(EX_USAGE, "load requires a manifest filename");
-		return (cmd_load(argv[1]));
+			errx(EX_USAGE, "install requires a .app bundle path");
+		return (cmd_install(argv[1]));
 	}
+	if (strcmp(cmd, "verify") == 0) {
+		if (argc != 2)
+			errx(EX_USAGE, "verify requires a .app bundle path");
+		return (cmd_verify(argv[1]));
+	}
+	if (strcmp(cmd, "bundles") == 0 && argc == 1)
+		return (cmd_bundles());
 
 	warnx("unknown command: %s", cmd);
 	usage();

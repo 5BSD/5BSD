@@ -1,0 +1,81 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd June 6, 2026
+.Dt KLDMGRD 8
+.Os
+.Sh NAME
+.Nm kldmgrd
+.Nd kernel module loading manager
+.Sh DESCRIPTION
+.Nm
+is a service managed by
+.Xr serviced 8
+that provides controlled kernel module loading and unloading.
+It receives system gate tokens for
+.Dq kldload
+and
+.Dq kldunload
+from the Oracle and exposes them to authorized clients via the
+naming registry as
+.Dq org.5bsd.system.kldmgr .
+.Pp
+On profiles where the kldload and kldunload system gates are not
+claimed (e.g., the desktop profile),
+.Nm
+starts but has no tokens.
+Processes can load modules directly via
+.Xr kldload 2
+without going through
+.Nm .
+.Pp
+On server and embedded profiles, the gates are claimed by the
+Oracle and
+.Nm
+is the only path to load or unload kernel modules.
+.Sh PROTOCOL
+Clients connect via
+.Fn service_lookup "org.5bsd.system.kldmgr"
+and exchange messages over the resulting pair fd.
+.Pp
+All requests use
+.Vt struct kldmgr_req
+with the following operation codes:
+.Bl -tag -width KLDMGR_OP_UNLOAD
+.It Dv KLDMGR_OP_LOAD Pq 1
+Load the kernel module named in
+.Fa name .
+Returns
+.Vt struct kldmgr_reply
+with the module id on success.
+.It Dv KLDMGR_OP_UNLOAD Pq 2
+Unload the kernel module named in
+.Fa name .
+Returns
+.Vt struct kldmgr_reply .
+.It Dv KLDMGR_OP_LIST Pq 3
+List all loaded kernel modules.
+Returns
+.Vt struct kldmgr_list_reply
+with a count and array of entries.
+.El
+.Sh MANIFEST
+A typical manifest for
+.Nm :
+.Bd -literal -offset indent
+bundle_id = "org.5bsd.systemcontrol";
+program = "kldmgrd";
+provides = ["org.5bsd.system.kldmgr"];
+restart = "on-failure";
+capabilities {
+    system = ["kldload", "kldunload"];
+}
+.Ed
+.Sh SEE ALSO
+.Xr kldload 2 ,
+.Xr kldunload 2 ,
+.Xr kldstat 2 ,
+.Xr libservice 3 ,
+.Xr oracled 8 ,
+.Xr serviced 8

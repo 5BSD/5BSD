@@ -168,7 +168,7 @@ Default: empty.
 Array of network endpoint objects to claim.
 Each object supports the following keys:
 .Bl -tag -width "direction"
-.It Va port
+.It Va port Pq or Va ports
 Port number, range, or wildcard.
 May be an integer, a range string
 .Pq e.g., Dq 80-8000 ,
@@ -176,7 +176,10 @@ May be an integer, a range string
 for all ports (0\(en65535), or
 .Dq .\&<1024
 for privileged ports (0\(en1023).
-Required.
+Optional; default is all ports (0\(en65535).
+.Va ports
+is accepted as an alias for
+.Va port .
 .It Va protocol
 .Dq tcp ,
 .Dq udp ,

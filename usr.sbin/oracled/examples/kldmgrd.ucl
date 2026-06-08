@@ -5,11 +5,14 @@
 # On a desktop profile (no gates), this service has no tokens and
 # processes can load modules directly.
 
-label = "kldmgrd";
-program = "/usr/sbin/kldmgrd";
-description = "Kernel module loading manager";
+bundle_id = "org.5bsd.systemcontrol";
+version = "1.0";
+author = "5BSD";
+
+program = "kldmgrd";
+provides = ["org.5bsd.system.kldmgr"];
+on_demand = false;
 restart = "on-failure";
-provides = ["kldmgr"];
 
 capabilities {
     system = ["kldload", "kldunload"];

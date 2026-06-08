@@ -75,7 +75,7 @@ struct sctl_conn {
 static TAILQ_HEAD(, sctl_conn) conn_list = TAILQ_HEAD_INITIALIZER(conn_list);
 static unsigned nconns;
 static uintptr_t conn_timer_next = 50000;
-#define	SCTL_CONN_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 2))
+#define	SCTL_CONN_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 3))
 
 /*
  * Format status summary.
@@ -139,6 +139,15 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 			if (svc->restart_count > 0)
 				BUF_APPEND(summary, sumlen, &off,
 				    " restarts=%u", svc->restart_count);
+
+			if (svc->launched_by[0] != '\0')
+				BUF_APPEND(summary, sumlen, &off,
+				    " by=%s", svc->launched_by);
+
+			if (svc->connection_count > 0)
+				BUF_APPEND(summary, sumlen, &off,
+				    " conns=%u", svc->connection_count);
+
 			BUF_APPEND(summary, sumlen, &off, "\n");
 		}
 	}
@@ -240,79 +249,70 @@ conn_dispatch(struct sctl_conn *c)
 			    "sctl: reload denied uid %u", c->euid);
 			SERVICED_PROBE_SCTL_DENY(req->op, c->euid);
 		} else {
-			supervisor_reload(serviced_kq,
-			    c->summary, sizeof(c->summary));
-			reply->status = 0;
+			if (supervisor_reload(serviced_kq,
+			    c->summary, sizeof(c->summary)) == -1)
+				reply->status = (uint32_t)-1;
+			else
+				reply->status = 0;
 			reply->flags = (uint32_t)strlen(c->summary);
 		}
 		break;
 	case SCTL_OP_CHECK:
 	case SCTL_OP_LOAD:
+		/*
+		 * Legacy ops — superseded by bundle-based service
+		 * management.  Use 'servicectl install' + 'reload'.
+		 */
+		reply->status = ENOTSUP;
+		snprintf(c->summary, sizeof(c->summary),
+		    "%s: use bundle install + reload",
+		    req->op == SCTL_OP_CHECK ? "check" : "load");
+		reply->flags = (uint32_t)strlen(c->summary);
+		break;
+	case SCTL_OP_STOP_SVC:
 		if (c->euid != 0) {
 			reply->status = EPERM;
 			snprintf(c->summary, sizeof(c->summary),
-			    "%s: permission denied",
-			    req->op == SCTL_OP_CHECK ? "check" : "load");
+			    "stop: permission denied");
 			reply->flags = (uint32_t)strlen(c->summary);
 			SERVICED_PROBE_SCTL_DENY(req->op, c->euid);
 		} else if (req->datalen == 0) {
 			reply->status = EINVAL;
 			snprintf(c->summary, sizeof(c->summary),
-			    "%s: missing filename",
-			    req->op == SCTL_OP_CHECK ? "check" : "load");
+			    "stop: missing service label");
 			reply->flags = (uint32_t)strlen(c->summary);
 		} else {
-			char mpath[PATH_MAX];
-			char resolved[PATH_MAX];
-			char canon_dir[PATH_MAX];
-			int n;
-			size_t dlen;
+			struct svc_runtime *svc;
+			unsigned si;
 
-			/*
-			 * Resolve the filename within manifest_dir.
-			 * Reject paths with slashes, .., or symlinks
-			 * that escape the configured directory.
-			 */
-			if (strchr(c->payload, '/') != NULL) {
-				reply->status = EINVAL;
-				snprintf(c->summary, sizeof(c->summary),
-				    "filename must not contain /");
-				reply->flags =
-				    (uint32_t)strlen(c->summary);
-				break;
+			svc = NULL;
+			for (si = 0; si < sd.nservices; si++) {
+				if (strcmp(sd.services[si].manifest.label,
+				    c->payload) == 0) {
+					svc = &sd.services[si];
+					break;
+				}
 			}
-			n = snprintf(mpath, sizeof(mpath), "%s/%s",
-			    sd.manifest_dir, c->payload);
-			if (n < 0 || (size_t)n >= sizeof(mpath) ||
-			    realpath(mpath, resolved) == NULL ||
-			    realpath(sd.manifest_dir, canon_dir) == NULL) {
-				reply->status = EINVAL;
+			if (svc == NULL) {
+				reply->status = ENOENT;
 				snprintf(c->summary, sizeof(c->summary),
-				    "invalid manifest path");
-				reply->flags =
-				    (uint32_t)strlen(c->summary);
-				break;
-			}
-			dlen = strlen(canon_dir);
-			if (strncmp(resolved, canon_dir, dlen) != 0 ||
-			    (resolved[dlen] != '/' &&
-			    resolved[dlen] != '\0')) {
-				reply->status = EINVAL;
+				    "stop: service \"%s\" not found",
+				    c->payload);
+			} else if (svc->state == SVC_STATE_STOPPED) {
+				reply->status = EALREADY;
 				snprintf(c->summary, sizeof(c->summary),
-				    "manifest path escapes manifest_dir");
-				reply->flags =
-				    (uint32_t)strlen(c->summary);
-				break;
-			}
-			if (req->op == SCTL_OP_CHECK) {
-				reply->status =
-				    supervisor_check_manifest(resolved,
-				    c->summary, sizeof(c->summary));
+				    "stop: \"%s\" already stopped",
+				    c->payload);
+			} else if (svc->state == SVC_STATE_STOPPING) {
+				reply->status = EALREADY;
+				snprintf(c->summary, sizeof(c->summary),
+				    "stop: \"%s\" already stopping",
+				    c->payload);
 			} else {
-				reply->status =
-				    supervisor_load_manifest(resolved,
-				    serviced_kq, c->summary,
-				    sizeof(c->summary));
+				svc_graceful_stop(svc, serviced_kq);
+				reply->status = 0;
+				snprintf(c->summary, sizeof(c->summary),
+				    "stop: \"%s\" stopping", c->payload);
 			}
 			reply->flags = (uint32_t)strlen(c->summary);
 		}
@@ -624,7 +624,7 @@ sctl_conn_event(struct kevent *kev)
 
 	if (c->state == SCTL_CONN_DONE) {
 		struct timespec now;
-		uint64_t dur;
+		uint64_t dur __unused;
 
 		clock_gettime(CLOCK_MONOTONIC, &now);
 		dur = (uint64_t)(now.tv_sec - c->accept_ts.tv_sec) *
