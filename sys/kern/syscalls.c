@@ -608,4 +608,5 @@ const char *syscallnames[] = {
 	"pdrfork",			/* 600 = pdrfork */
 	"pdwait",			/* 601 = pdwait */
 	"renameat2",			/* 602 = renameat2 */
+	"cap_xfer_limit",			/* 603 = cap_xfer_limit */
 };

@@ -18,6 +18,7 @@
 #include <sys/jail.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/sysctl.h>
 #include <sys/un.h>
 #include <sys/resource.h>
@@ -40,6 +41,25 @@
 #include "cap_rt_capprotect_proto.h"
 #include "cap_rt_test_keystore_proto.h"
 #include "cap_rt_test_kernelstore_proto.h"
+
+#ifndef SYS_cap_xfer_limit
+#define	SYS_cap_xfer_limit	603
+#endif
+
+#ifndef CAP_XFER_UNLIMITED
+#define	CAP_XFER_UNLIMITED	0
+#define	CAP_XFER_ONCE		1
+#define	CAP_XFER_NONE		2
+#endif
+
+static int
+cap_xfer_limit_syscall(int fd, int state)
+{
+
+	return (syscall(SYS_cap_xfer_limit, fd, state));
+}
+
+#define	cap_xfer_limit	cap_xfer_limit_syscall
 
 static int
 closed_fd(void)
@@ -2789,7 +2809,7 @@ ATF_TC_BODY(keystore_badge_unique, tc)
 }
 
 /* ================================================================
- * Non-transferable capability (CAP_RT_SVC_NOXFER)
+ * Descriptor transfer state (CAP_XFER)
  * ================================================================ */
 
 ATF_TC(xfer_keystore_ok);
@@ -3221,17 +3241,17 @@ ATF_TC_BODY(call_reply_nfds_too_many, tc)
 }
 
 /* ================================================================
- * CAP_RT_LOCK — per-instance transfer lock
+ * CAP_XFER_NONE — per-descriptor transfer lock
  * ================================================================ */
 
-ATF_TC(lock_prevents_transfer);
-ATF_TC_HEAD(lock_prevents_transfer, tc)
+ATF_TC(xfer_none_prevents_transfer);
+ATF_TC_HEAD(xfer_none_prevents_transfer, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "CAP_RT_LOCK prevents SCM_RIGHTS transfer");
+	    "CAP_XFER_NONE prevents SCM_RIGHTS transfer");
 	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
 }
-ATF_TC_BODY(lock_prevents_transfer, tc)
+ATF_TC_BODY(xfer_none_prevents_transfer, tc)
 {
 	struct msghdr msgh;
 	struct iovec iov;
@@ -3288,8 +3308,8 @@ ATF_TC_BODY(lock_prevents_transfer, tc)
 		}
 	}
 
-	/* Lock it. */
-	ATF_REQUIRE(ioctl(fd, CAP_RT_LOCK, NULL) == 0);
+	/* Prevent further descriptor transfer. */
+	ATF_REQUIRE(cap_xfer_limit(fd, CAP_XFER_NONE) == 0);
 
 	/* After lock — transfer should fail. */
 	memset(&msgh, 0, sizeof(msgh));
@@ -3311,14 +3331,14 @@ ATF_TC_BODY(lock_prevents_transfer, tc)
 	close(fd);
 }
 
-ATF_TC(lock_still_usable);
-ATF_TC_HEAD(lock_still_usable, tc)
+ATF_TC(xfer_none_still_usable);
+ATF_TC_HEAD(xfer_none_still_usable, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Locked capability still works for messaging");
+	    "CAP_XFER_NONE capability still works for messaging");
 	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
 }
-ATF_TC_BODY(lock_still_usable, tc)
+ATF_TC_BODY(xfer_none_still_usable, tc)
 {
 	struct ks_request req;
 	char buf[256];
@@ -3328,8 +3348,8 @@ ATF_TC_BODY(lock_still_usable, tc)
 	fd = cap_rt_connect("test_keystore");
 	ATF_REQUIRE(fd >= 0);
 
-	/* Lock it. */
-	ATF_REQUIRE(ioctl(fd, CAP_RT_LOCK, NULL) == 0);
+	/* Prevent transfer, but keep normal cap_rt operations usable. */
+	ATF_REQUIRE(cap_xfer_limit(fd, CAP_XFER_NONE) == 0);
 
 	/* Should still work for normal messaging. */
 	cap_rt_store(fd, 85000, "locked", 6);
@@ -3344,14 +3364,14 @@ ATF_TC_BODY(lock_still_usable, tc)
 	close(fd);
 }
 
-ATF_TC(lock_trampoline);
-ATF_TC_HEAD(lock_trampoline, tc)
+ATF_TC(xfer_none_trampoline);
+ATF_TC_HEAD(xfer_none_trampoline, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Trampoline receives capability, locks it, cannot forward");
+	    "Trampoline receives capability, sets CAP_XFER_NONE, cannot forward");
 	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
 }
-ATF_TC_BODY(lock_trampoline, tc)
+ATF_TC_BODY(xfer_none_trampoline, tc)
 {
 	int sv[2], fd, status;
 	pid_t pid;
@@ -3364,7 +3384,7 @@ ATF_TC_BODY(lock_trampoline, tc)
 	ATF_REQUIRE(pid >= 0);
 
 	if (pid == 0) {
-		/* Child (trampoline): receive fd, lock it, try to forward. */
+		/* Child (trampoline): receive fd, restrict transfer, try to forward. */
 		struct msghdr msgh;
 		struct iovec iov;
 		union {
@@ -3393,8 +3413,8 @@ ATF_TC_BODY(lock_trampoline, tc)
 			_exit(2);
 		memcpy(&received_fd, CMSG_DATA(cmsg), sizeof(int));
 
-		/* Lock it — no further transfers. */
-		if (ioctl(received_fd, CAP_RT_LOCK, NULL) != 0)
+		/* No further transfers. */
+		if (cap_xfer_limit(received_fd, CAP_XFER_NONE) != 0)
 			_exit(3);
 
 		/* Verify it still works. */
@@ -5374,22 +5394,22 @@ ATF_TC_BODY(recvmsg_flags_nonzero, tc)
 	close(fd);
 }
 
-ATF_TC(lock_idempotent);
-ATF_TC_HEAD(lock_idempotent, tc)
+ATF_TC(xfer_none_idempotent);
+ATF_TC_HEAD(xfer_none_idempotent, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "CAP_RT_LOCK twice is harmless");
+	    "CAP_XFER_NONE twice is harmless");
 	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
 }
-ATF_TC_BODY(lock_idempotent, tc)
+ATF_TC_BODY(xfer_none_idempotent, tc)
 {
 	int fd;
 
 	fd = cap_rt_connect("test_keystore");
 	ATF_REQUIRE(fd >= 0);
 
-	ATF_REQUIRE(ioctl(fd, CAP_RT_LOCK, NULL) == 0);
-	ATF_CHECK(ioctl(fd, CAP_RT_LOCK, NULL) == 0);
+	ATF_REQUIRE(cap_xfer_limit(fd, CAP_XFER_NONE) == 0);
+	ATF_CHECK(cap_xfer_limit(fd, CAP_XFER_NONE) == 0);
 
 	close(fd);
 }
@@ -6396,10 +6416,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, call_reply_fds_buf_no_fds);
 	ATF_TP_ADD_TC(tp, call_reply_nfds_too_many);
 
-	/* CAP_RT_LOCK */
-	ATF_TP_ADD_TC(tp, lock_prevents_transfer);
-	ATF_TP_ADD_TC(tp, lock_still_usable);
-	ATF_TP_ADD_TC(tp, lock_trampoline);
+	/* CAP_XFER_NONE */
+	ATF_TP_ADD_TC(tp, xfer_none_prevents_transfer);
+	ATF_TP_ADD_TC(tp, xfer_none_still_usable);
+	ATF_TP_ADD_TC(tp, xfer_none_trampoline);
 
 	/* Edge cases */
 	ATF_TP_ADD_TC(tp, kqueue_eof_on_terminate);
@@ -6415,7 +6435,7 @@ ATF_TP_ADD_TCS(tp)
 	/* More framework edge cases */
 	ATF_TP_ADD_TC(tp, sendmsg_flags_nonzero);
 	ATF_TP_ADD_TC(tp, recvmsg_flags_nonzero);
-	ATF_TP_ADD_TC(tp, lock_idempotent);
+	ATF_TP_ADD_TC(tp, xfer_none_idempotent);
 	ATF_TP_ADD_TC(tp, revoke_send_on_sync);
 	ATF_TP_ADD_TC(tp, revoke_call_on_async);
 	ATF_TP_ADD_TC(tp, close_during_blocked_recv);

@@ -339,6 +339,7 @@ fdfree(struct filedesc *fdp, int fd)
 	seqc_write_begin(&fde->fde_seqc);
 #endif
 	fde->fde_file = NULL;
+	fde->fde_xfer_state = CAP_XFER_UNLIMITED;
 #ifdef CAPABILITIES
 	seqc_write_end(&fde->fde_seqc);
 #endif
@@ -2329,6 +2330,7 @@ _finstall(struct filedesc *fdp, struct file *fp, int fd, int flags,
 #endif
 	fde->fde_file = fp;
 	fde->fde_flags = open_to_fde_flags(flags, true);
+	fde->fde_xfer_state = CAP_XFER_UNLIMITED;
 	if (fcaps != NULL)
 		filecaps_move(fcaps, &fde->fde_caps);
 	else

@@ -3555,6 +3555,14 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 5;
 		break;
 	}
+	/* cap_xfer_limit */
+	case 603: {
+		struct cap_xfer_limit_args *p = params;
+		iarg[a++] = p->fd; /* int */
+		iarg[a++] = p->state; /* int */
+		*n_args = 2;
+		break;
+	}
 	default:
 		*n_args = 0;
 		break;
@@ -9521,6 +9529,19 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
+	/* cap_xfer_limit */
+	case 603:
+		switch (ndx) {
+		case 0:
+			p = "int";
+			break;
+		case 1:
+			p = "int";
+			break;
+		default:
+			break;
+		};
+		break;
 	default:
 		break;
 	};
@@ -11546,6 +11567,11 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* renameat2 */
 	case 602:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* cap_xfer_limit */
+	case 603:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

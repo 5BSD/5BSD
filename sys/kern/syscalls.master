@@ -3429,4 +3429,10 @@
 		    int flags
 		);
 	}
+603	AUE_CAP_XFER_LIMIT	STD|CAPENABLED {
+		int cap_xfer_limit(
+		    int fd,
+		    int state
+		);
+	}
 ; vim: syntax=off

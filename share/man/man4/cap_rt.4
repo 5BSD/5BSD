@@ -113,10 +113,6 @@ and rotated on
 Zero is never a valid nonce.
 .Ss Capability control
 .Bl -tag -width CAP_RT_REVOKE_MINT
-.It Dv CAP_RT_LOCK
-Prevent the capability from being passed via
-.Dv SCM_RIGHTS .
-One-way latch.
 .It Dv CAP_RT_REVOKE_SEND
 Strip the ability to send async messages.
 .It Dv CAP_RT_REVOKE_RECV
@@ -149,7 +145,6 @@ show
 descriptors as
 .Dq cap_rt:service[badge] .
 The path may include compact state suffixes such as
-.Dq :noxfer ,
 .Dq :no-send ,
 .Dq :no-recv ,
 .Dq :no-call ,
@@ -183,7 +178,6 @@ Required for
 .Pp
 The following ioctls are always allowed without a rights check:
 .Dv CAP_RT_GETINFO ,
-.Dv CAP_RT_LOCK ,
 .Dv CAP_RT_REVOKE_SEND ,
 .Dv CAP_RT_REVOKE_RECV ,
 .Dv CAP_RT_REVOKE_CALL ,
@@ -193,9 +187,6 @@ and
 .Ss Service creation flags
 Kernel modules register services with the following optional flags:
 .Bl -tag -width CAP_RT_SVC_MINTABLE
-.It Dv CAP_RT_SVC_NOXFER Pq 0x0001
-Instances are non-transferable via
-.Dv SCM_RIGHTS .
 .It Dv CAP_RT_SVC_NOTIFY Pq 0x0002
 Service emits async notifications.
 .It Dv CAP_RT_SVC_MINTABLE Pq 0x0004
@@ -227,9 +218,6 @@ with the required size if the reply buffer is too small.
 .It Dv CAP_RT_GETINFO
 Query capability metadata: service name, badge, queue limits, and
 feature flags.
-.It Dv CAP_RT_LOCK
-Prevent SCM_RIGHTS delegation.
-One-way latch.
 .It Dv CAP_RT_REVOKE_SEND
 Strip send ability.
 One-way latch.
@@ -520,7 +508,7 @@ Narrow a capability for delegation to an untrusted child:
 /* Strip send and mint, keep only recv and call */
 ioctl(capfd, CAP_RT_REVOKE_SEND, NULL);
 ioctl(capfd, CAP_RT_REVOKE_MINT, NULL);
-ioctl(capfd, CAP_RT_LOCK, NULL);  /* prevent further delegation */
+cap_xfer_limit(capfd, CAP_XFER_NONE);  /* prevent further delegation */
 .Ed
 .Pp
 Poll for async messages with

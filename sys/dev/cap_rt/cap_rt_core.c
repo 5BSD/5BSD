@@ -356,9 +356,7 @@ cap_rt_instance_setup(struct cap_rt_service *svc, struct thread *td,
 		return (error);
 	}
 
-	finit(fp, FREAD | FWRITE, DTYPE_CAP_RT, s,
-	    (svc->csvc_svc_flags & CAP_RT_SVC_NOXFER) ?
-	    &cap_rt_instance_noxfer_ops : &cap_rt_instance_ops);
+	finit(fp, FREAD | FWRITE, DTYPE_CAP_RT, s, &cap_rt_instance_ops);
 
 	if (svc->csvc_ops->co_init != NULL) {
 		error = svc->csvc_ops->co_init(s, svc->csvc_arg);

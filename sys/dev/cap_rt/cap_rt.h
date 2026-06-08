@@ -138,7 +138,6 @@ struct cap_rt_ops {
 /*
  * Service creation flags.
  */
-#define	CAP_RT_SVC_NOXFER		0x0001	/* instances are non-transferable */
 #define	CAP_RT_SVC_NOTIFY		0x0002	/* emits async RECVMSG notifications */
 #define	CAP_RT_SVC_MINTABLE		0x0004	/* instances can mint new instances */
 

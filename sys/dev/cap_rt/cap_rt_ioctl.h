@@ -25,7 +25,6 @@
  *   ioctl(fd, CAP_RT_GETINFO, &args)    query capability metadata
  *
  * Capability control:
- *   ioctl(fd, CAP_RT_LOCK, NULL)        prevent SCM_RIGHTS delegation
  *   ioctl(fd, CAP_RT_REVOKE_SEND, NULL) strip send ability (one-way)
  *   ioctl(fd, CAP_RT_REVOKE_RECV, NULL) strip recv ability (one-way)
  *   ioctl(fd, CAP_RT_REVOKE_CALL, NULL) strip call ability (one-way)
@@ -150,7 +149,6 @@ struct cap_rt_info_args {
 #define	CAP_RT_RECVMSG		_IOWR('Y', 3, struct cap_rt_recvmsg_args)
 #define	CAP_RT_CALL		_IOWR('Y', 4, struct cap_rt_call_args)
 #define	CAP_RT_GETINFO		_IOR('Y', 5, struct cap_rt_info_args)
-#define	CAP_RT_LOCK		_IO('Y', 6)
 #define	CAP_RT_REVOKE_SEND		_IO('Y', 7)
 #define	CAP_RT_REVOKE_RECV		_IO('Y', 8)
 #define	CAP_RT_REVOKE_CALL		_IO('Y', 9)

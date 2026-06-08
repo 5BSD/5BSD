@@ -78,7 +78,7 @@ static fo_cmp_t		cap_rt_instance_cmp;
  * CAP_RT_RECVMSG  requires  CAP_CAP_RT_RECV
  * CAP_RT_MINT_INSTANCE requires CAP_CAP_RT_MINT
  *
- * GETINFO, LOCK, REVOKE_*, TERMINATE are always allowed — they are
+ * GETINFO, REVOKE_*, TERMINATE are always allowed — they are
  * introspection or capability-narrowing operations.
  */
 static int
@@ -138,26 +138,6 @@ const struct fileops cap_rt_instance_ops = {
 	.fo_cmp = cap_rt_instance_cmp,
 	.fo_ioctl_check = cap_rt_instance_ioctl_check,
 	.fo_flags = DFLAG_PASSABLE,
-};
-
-/* Non-transferable variant — cannot be passed via SCM_RIGHTS. */
-const struct fileops cap_rt_instance_noxfer_ops = {
-	.fo_read = invfo_rdwr,
-	.fo_write = invfo_rdwr,
-	.fo_truncate = invfo_truncate,
-	.fo_ioctl = cap_rt_instance_ioctl,
-	.fo_poll = invfo_poll,
-	.fo_kqfilter = cap_rt_instance_kqfilter,
-	.fo_stat = cap_rt_instance_stat,
-	.fo_close = cap_rt_instance_close,
-	.fo_fdclose = cap_rt_instance_fdclose,
-	.fo_chmod = invfo_chmod,
-	.fo_chown = invfo_chown,
-	.fo_sendfile = invfo_sendfile,
-	.fo_fill_kinfo = cap_rt_instance_fill_kinfo,
-	.fo_cmp = cap_rt_instance_cmp,
-	.fo_ioctl_check = cap_rt_instance_ioctl_check,
-	.fo_flags = 0,
 };
 
 static void
@@ -335,7 +315,54 @@ cap_rt_instance_do_sendmsg(struct cap_rt_instance *s,
 			}
 		}
 		msg->cm_nfds = args->nfds;
-		goto sendmsg_build;
+
+		/* Check and consume transfer state under exclusive lock. */
+		{
+			struct filedesc *fdesc = td->td_proc->p_fd;
+			struct filedescent *fde;
+
+			FILEDESC_XLOCK(fdesc);
+			for (i = 0; i < (int)args->nfds; i++) {
+				fde = &fdesc->fd_ofiles[fdbuf[i]];
+				if (fde->fde_file != msg->cm_fds[i]) {
+					FILEDESC_XUNLOCK(fdesc);
+					error = EBADF;
+					i = (int)args->nfds;
+					goto sendmsg_fd_err;
+				}
+				if (fde->fde_xfer_state == CAP_XFER_NONE) {
+					FILEDESC_XUNLOCK(fdesc);
+					error = ENOTCAPABLE;
+					i = (int)args->nfds;
+					goto sendmsg_fd_err;
+				}
+			}
+			for (i = 0; i < (int)args->nfds; i++) {
+				fde = &fdesc->fd_ofiles[fdbuf[i]];
+				if (fde->fde_xfer_state == CAP_XFER_ONCE) {
+					fde->fde_xfer_state = CAP_XFER_NONE;
+					msg->cm_xfer_state[i] = CAP_XFER_NONE;
+				} else {
+					msg->cm_xfer_state[i] =
+					    fde->fde_xfer_state;
+				}
+			}
+			FILEDESC_XUNLOCK(fdesc);
+
+			msg->cm_badge = s->ci_badge;
+			msg->cm_reply_token = args->reply_token;
+			msg->cm_cred = crhold(td->td_ucred);
+
+			mtx_lock(&s->ci_mtx);
+			error = cap_rt_instance_enqueue_rx(s, msg);
+			mtx_unlock(&s->ci_mtx);
+
+			if (error == 0)
+				SDT_PROBE3(cap_rt, , , send,
+				    svc->csvc_name, s->ci_badge,
+				    args->payload_len);
+			goto out;
+		}
 
 sendmsg_fd_err:
 		while (--i >= 0) {
@@ -347,19 +374,11 @@ sendmsg_fd_err:
 		goto out;
 	}
 
-sendmsg_build:
+	/* No fds — build and enqueue directly. */
 	msg->cm_badge = s->ci_badge;
 	msg->cm_reply_token = args->reply_token;
 	msg->cm_cred = crhold(td->td_ucred);
 
-	/*
-	 * Enqueue on RX.  On success, msg (including buf and files)
-	 * is owned by the queue.  On failure, enqueue_rx frees msg
-	 * via cap_rt_msg_free which cleans up buf, files, and cred.
-	 *
-	 * If the RX queue is full, SENDMSG returns EAGAIN.  EVFILT_WRITE
-	 * is the readiness signal for retrying SENDMSG.
-	 */
 	mtx_lock(&s->ci_mtx);
 	error = cap_rt_instance_enqueue_rx(s, msg);
 	mtx_unlock(&s->ci_mtx);
@@ -477,22 +496,50 @@ cap_rt_instance_do_recvmsg(struct cap_rt_instance *s, struct file *fp,
 	} else {
 		memset(&args->trailer, 0, sizeof(args->trailer));
 	}
-	for (i = 0; i < nfds_out; i++) {
-		struct filecaps *fc = &msg->cm_fcaps[i];
+	{
+		struct filedesc *fdesc = td->td_proc->p_fd;
+		int installed;
 
-		/* Zeroed filecaps = no rights were set — pass NULL for full rights. */
-		if (fc->fc_rights.cr_rights[0] == 0 &&
-		    fc->fc_rights.cr_rights[1] == 0)
-			fc = NULL;
-		error = finstall(td, msg->cm_fds[i], &fdbuf[i], 0, fc);
-		if (error != 0) {
-			while (--i >= 0)
+		for (i = 0; i < nfds_out; i++) {
+			if (!fhold(msg->cm_fds[i])) {
+				/* Drop refs already taken. */
+				while (--i >= 0)
+					fdrop(msg->cm_fds[i], td);
+				error = EBADF;
+				cap_rt_msg_free(msg);
+				args->nfds = 0;
+				goto out;
+			}
+		}
+		FILEDESC_XLOCK(fdesc);
+		for (installed = 0; installed < nfds_out; installed++) {
+			struct filecaps *fc = &msg->cm_fcaps[installed];
+
+			error = fdalloc(td, 0, &fdbuf[installed]);
+			if (error != 0)
+				break;
+			if (fc->fc_rights.cr_rights[0] == 0 &&
+			    fc->fc_rights.cr_rights[1] == 0)
+				fc = NULL;
+			_finstall(fdesc, msg->cm_fds[installed],
+			    fdbuf[installed], 0, fc);
+			fdesc->fd_ofiles[fdbuf[installed]].fde_xfer_state =
+			    msg->cm_xfer_state[installed];
+		}
+		FILEDESC_XUNLOCK(fdesc);
+		if (installed < nfds_out) {
+			/* fdrop refs for fds not installed. */
+			for (i = installed; i < nfds_out; i++)
+				fdrop(msg->cm_fds[i], td);
+			/* Close fds that were installed. */
+			for (i = 0; i < installed; i++)
 				kern_close(td, fdbuf[i]);
 			cap_rt_msg_free(msg);
 			args->nfds = 0;
 			goto out;
 		}
-		cap_rt_probe_fd_receive(msg->cm_fds[i], fdbuf[i], td);
+		for (i = 0; i < nfds_out; i++)
+			cap_rt_probe_fd_receive(msg->cm_fds[i], fdbuf[i], td);
 	}
 	if (nfds_out > 0 && args->fds != NULL) {
 		error = copyout(fdbuf, args->fds, nfds_out * sizeof(int));
@@ -557,6 +604,7 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		const char *svc_name __unused;
 		struct file **files;
 		struct filecaps *call_fcaps;
+		uint8_t call_xfer_state[CAP_RT_MAX_FDS];
 		struct file *out_fds[CAP_RT_MAX_FDS];
 		void *req_buf, *reply_buf;
 		int fdbuf[CAP_RT_MAX_FDS];
@@ -639,17 +687,61 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			    sizeof(struct filecaps), M_CAP_RT,
 			    M_WAITOK | M_ZERO);
 			for (i = 0; i < (int)ca->req_nfds; i++) {
-				error = fget_cap(td, fdbuf[i],
-				    &cap_no_rights, NULL,
-				    &files[i], &call_fcaps[i]);
+				error = fget_cap(td, fdbuf[i], &cap_no_rights,
+				    NULL, &files[i], &call_fcaps[i]);
 				if (error != 0) {
 					while (--i >= 0) {
 						fdrop(files[i], td);
 						files[i] = NULL;
-						filecaps_free(&call_fcaps[i]);
 					}
 					goto call_out;
 				}
+			}
+
+			/* Check and consume transfer state. */
+			error = 0;
+			{
+				struct filedesc *fdesc = td->td_proc->p_fd;
+				struct filedescent *fde;
+
+				FILEDESC_XLOCK(fdesc);
+				for (i = 0; i < (int)ca->req_nfds; i++) {
+					fde = &fdesc->fd_ofiles[fdbuf[i]];
+					if (fde->fde_file != files[i]) {
+						error = EBADF;
+						break;
+					}
+					if (fde->fde_xfer_state ==
+					    CAP_XFER_NONE) {
+						error = ENOTCAPABLE;
+						break;
+					}
+				}
+				if (error == 0) {
+					for (i = 0; i < (int)ca->req_nfds;
+					    i++) {
+						fde = &fdesc->fd_ofiles[
+						    fdbuf[i]];
+						if (fde->fde_xfer_state ==
+						    CAP_XFER_ONCE) {
+							fde->fde_xfer_state =
+							    CAP_XFER_NONE;
+							call_xfer_state[i] =
+							    CAP_XFER_NONE;
+						} else {
+							call_xfer_state[i] =
+							    fde->fde_xfer_state;
+						}
+					}
+				}
+				FILEDESC_XUNLOCK(fdesc);
+			}
+			if (error != 0) {
+				for (i = 0; i < (int)ca->req_nfds; i++) {
+					fdrop(files[i], td);
+					files[i] = NULL;
+				}
+				goto call_out;
 			}
 		}
 
@@ -713,20 +805,42 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		if (error == 0 && out_nfds > 0 && ca->reply_fds != NULL) {
 			for (i = 0; i < out_nfds; i++) {
 				struct filecaps *install_fcaps;
-				int j;
+				int j, k;
 
 				install_fcaps = NULL;
-				for (j = 0; j < (int)ca->req_nfds; j++) {
-					if (out_fds[i] == files[j]) {
-						install_fcaps = &call_fcaps[j];
+				j = -1;
+				for (k = 0; k < (int)ca->req_nfds; k++) {
+					if (out_fds[i] == files[k]) {
+						install_fcaps = &call_fcaps[k];
+						j = k;
 						break;
 					}
 				}
-				error = finstall(td, out_fds[i], &fdbuf[i],
-				    0, install_fcaps);
-				if (error == 0)
+				if (!fhold(out_fds[i])) {
+					error = EBADF;
+				} else {
+					struct filedesc *fdesc;
+
+					fdesc = td->td_proc->p_fd;
+					FILEDESC_XLOCK(fdesc);
+					error = fdalloc(td, 0, &fdbuf[i]);
+					if (error == 0) {
+						_finstall(fdesc, out_fds[i],
+						    fdbuf[i], 0, install_fcaps);
+						if (j >= 0)
+							fdesc->fd_ofiles[
+							    fdbuf[i]].
+							    fde_xfer_state =
+							    call_xfer_state[j];
+					}
+					FILEDESC_XUNLOCK(fdesc);
+					if (error != 0)
+						fdrop(out_fds[i], td);
+				}
+				if (error == 0) {
 					cap_rt_probe_fd_receive(out_fds[i],
 					    fdbuf[i], td);
+				}
 				/* Drop handler's ref (finstall took its own). */
 				fdrop(out_fds[i], td);
 				out_fds[i] = NULL;
@@ -813,19 +927,6 @@ call_done:
 		info->badge = s->ci_badge;
 		return (0);
 	}
-	case CAP_RT_LOCK:
-		/*
-		 * Permanently prevent this fd from being passed via
-		 * SCM_RIGHTS.  One-way latch — cannot be undone.
-		 * Use atomic_store_rel to ensure the new f_ops is
-		 * visible to concurrent readers on weakly-ordered
-		 * architectures.
-		 */
-		atomic_store_rel_ptr((volatile uintptr_t *)&fp->f_ops,
-		    (uintptr_t)&cap_rt_instance_noxfer_ops);
-		cap_rt_probe_control(s, cmd, td);
-		cap_rt_probe_rights_change(s, cmd, td);
-		return (0);
 	case CAP_RT_REVOKE_SEND:
 		atomic_set_int(&s->ci_restricted, CAP_RT_RF_NO_SEND);
 		cap_rt_probe_control(s, cmd, td);
@@ -1195,9 +1296,8 @@ cap_rt_instance_fill_kinfo(struct file *fp, struct kinfo_file *kif,
 		restricted = s->ci_restricted;
 		mtx_unlock(&s->ci_mtx);
 		snprintf(kif->kf_path, sizeof(kif->kf_path),
-		    "cap_rt:%s[%ju]%s%s%s%s%s%s%s",
+		    "cap_rt:%s[%ju]%s%s%s%s%s%s",
 		    svc->csvc_name, (uintmax_t)s->ci_badge,
-		    fp->f_ops == &cap_rt_instance_noxfer_ops ? ":noxfer" : "",
 		    (restricted & CAP_RT_RF_NO_SEND) != 0 ? ":no-send" : "",
 		    (restricted & CAP_RT_RF_NO_RECV) != 0 ? ":no-recv" : "",
 		    (restricted & CAP_RT_RF_NO_CALL) != 0 ? ":no-call" : "",

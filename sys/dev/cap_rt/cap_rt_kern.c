@@ -175,7 +175,8 @@ cap_rt_instance_enqueue_tx(struct cap_rt_instance *s, struct cap_rt_msg *msg,
  */
 static struct cap_rt_msg *
 cap_rt_msg_alloc_full(const void *data, size_t datalen,
-    struct file * const *fds, const struct filecaps *fcaps, int nfds,
+    struct file * const *fds, const struct filecaps *fcaps,
+    const uint8_t *xfer_state, int nfds,
     uint64_t badge, uint64_t reply_token, struct ucred *cred)
 {
 	struct cap_rt_msg *msg;
@@ -214,6 +215,9 @@ cap_rt_msg_alloc_full(const void *data, size_t datalen,
 				filecaps_copy(&fcaps[i],
 				    &msg->cm_fcaps[i], true);
 		}
+		if (xfer_state != NULL)
+			memcpy(msg->cm_xfer_state, xfer_state,
+			    nfds * sizeof(uint8_t));
 	}
 
 	msg->cm_badge = badge;
@@ -229,7 +233,7 @@ cap_rt_msg_alloc(const void *data, size_t datalen,
     struct file * const *fds, const struct filecaps *fcaps, int nfds)
 {
 
-	return (cap_rt_msg_alloc_full(data, datalen, fds, fcaps, nfds,
+	return (cap_rt_msg_alloc_full(data, datalen, fds, fcaps, NULL, nfds,
 	    0, 0, NULL));
 }
 
@@ -756,7 +760,7 @@ cap_rt_forward(struct cap_rt_instance *s, const struct cap_rt_msg *src)
 		    s->ci_service->csvc_name, s->ci_badge, src->cm_datalen);
 
 	msg = cap_rt_msg_alloc_full(src->cm_data, src->cm_datalen,
-	    src->cm_fds, src->cm_fcaps, src->cm_nfds,
+	    src->cm_fds, src->cm_fcaps, src->cm_xfer_state, src->cm_nfds,
 	    src->cm_badge, src->cm_reply_token, src->cm_cred);
 	if (msg == NULL)
 		return (src->cm_nfds > 0 ? EBADF : ENOMEM);

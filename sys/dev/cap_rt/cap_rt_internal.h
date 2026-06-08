@@ -64,6 +64,7 @@ struct cap_rt_msg {
 	/* Inline fd slots — 32 max, no separate allocation. */
 	struct file	*cm_fds[CAP_RT_MAX_FDS];
 	struct filecaps	cm_fcaps[CAP_RT_MAX_FDS];
+	uint8_t		cm_xfer_state[CAP_RT_MAX_FDS];
 
 	/* Inline payload — user data copied directly here. */
 	char		cm_data[];  /* sized by UMA zone: CAP_RT_MSG_PAYLOAD_SIZE */
@@ -170,7 +171,6 @@ void	cap_rt_instance_drain_txq(struct cap_rt_instance *s);
 void	cap_rt_instance_drain_rxq(struct cap_rt_instance *s);
 void	cap_rt_service_free(struct cap_rt_service *svc);
 extern const struct fileops cap_rt_instance_ops;
-extern const struct fileops cap_rt_instance_noxfer_ops;
 
 #endif /* _KERNEL */
 #endif /* _DEV_CAP_RT_CAP_RT_INTERNAL_H_ */

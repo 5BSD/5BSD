@@ -132,7 +132,6 @@ The unit of authority is the **instance fd** returned by CAP_RT_CONNECT.
 | Receive async message | CAP_RT_RECVMSG | CAP_CAP_RT_RECV | Dequeue from TX queue (blocks) |
 | Synchronous call | CAP_RT_CALL | CAP_CAP_RT_SEND + CAP_CAP_RT_RECV + CAP_IOCTL | Run handler in caller thread |
 | Query metadata | CAP_RT_GETINFO | (none) | Read service name, badge, limits, features |
-| Prevent delegation | CAP_RT_LOCK | (none) | Disable SCM_RIGHTS transfer (one-way) |
 | Strip send | CAP_RT_REVOKE_SEND | (none) | Block future SENDMSG (one-way) |
 | Strip recv | CAP_RT_REVOKE_RECV | (none) | Block future RECVMSG (one-way) |
 | Strip call | CAP_RT_REVOKE_CALL | (none) | Block future CALL (one-way) |
@@ -140,6 +139,7 @@ The unit of authority is the **instance fd** returned by CAP_RT_CONNECT.
 | Mint instance | CAP_RT_MINT_INSTANCE | CAP_CAP_RT_MINT | Create new instance from mintable service |
 | Destroy instance | CAP_RT_TERMINATE | (none) | Kill for all holders |
 | kqueue readiness | EVFILT_READ / EVFILT_WRITE | (none) | TX has data / RX has space |
+| Prevent delegation | cap_xfer_limit(fd, CAP_XFER_NONE) | (syscall) | Disable fd transfer (one-way) |
 
 ### Capability narrowing
 
@@ -148,25 +148,23 @@ Rights can only be reduced, never re-escalated:
 1. **cap_rights_limit()** -- restrict Capsicum rights on the fd.
 2. **cap_ioctls_limit()** -- whitelist specific ioctl commands.
 3. **CAP_RT_REVOKE_SEND/RECV/CALL/MINT** -- instance-level one-way latch.
-4. **CAP_RT_LOCK** -- prevent fd transfer via SCM_RIGHTS.
+4. **cap_xfer_limit(..., CAP_XFER_NONE)** -- prevent fd transfer via SCM_RIGHTS and cap_rt messages.
 
 All four compose.  A process can hand a child a send-only,
 non-transferable handle by combining them.
-
-Services can also set `CAP_RT_SVC_NOXFER` at creation time to
-make all instances non-transferable from birth.
 
 ### fd passing in messages
 
 Messages (SENDMSG, CALL) can carry up to `CAP_RT_MAX_FDS` (32)
 file descriptors.  Capsicum rights on attached fds are preserved.
-The DFLAG_PASSABLE check prevents passing non-transferable fds.
+The DFLAG_PASSABLE check and per-fd CAP_XFER state prevent passing
+non-transferable fds.
 
 ### Delegation
 
 - **fork** -- child inherits the fd
 - **dup** -- shares the same capability (same queues)
-- **SCM_RIGHTS** -- pass to any process (unless `CAP_RT_SVC_NOXFER`)
+- **SCM_RIGHTS** -- pass to any process unless CAP_XFER state blocks it
 
 ---
 
@@ -382,7 +380,7 @@ struct cap_rt_service_params p = {
     .queue_depth   = 64,         /* 0 = 256, max 4096 */
     .tx_limit      = 128,        /* 0 = 256, max 4096 */
     .instance_limit = 512,       /* 0 = 1024, max 1M */
-    .flags         = CAP_RT_SVC_NOXFER,
+    .flags         = CAP_RT_SVC_NOTIFY,
 };
 ```
 
@@ -450,8 +448,8 @@ int cap = ca.fd;   /* this is your capability */
 ```
 
 After connecting, you never need /dev/cap_rt again.  The capability
-fd can be passed via SCM_RIGHTS (unless `CAP_RT_SVC_NOXFER`), inherited
-across fork, or restricted via Capsicum.
+fd can be passed via SCM_RIGHTS unless CAP_XFER state blocks it,
+inherited across fork, or restricted via Capsicum.
 
 ## Sending a Message (async)
 
@@ -557,7 +555,7 @@ connect directly.  A broker daemon connects on their behalf and passes
 capability fds via SCM_RIGHTS.
 
 Capabilities can be attenuated before delegation:
-- `CAP_RT_LOCK` prevents further SCM_RIGHTS passing
+- `cap_xfer_limit(fd, CAP_XFER_NONE)` prevents further SCM_RIGHTS and cap_rt fd passing
 - `CAP_RT_REVOKE_SEND` / `CAP_RT_REVOKE_RECV` / `CAP_RT_REVOKE_CALL` / `CAP_RT_REVOKE_MINT` strip operations
 - `cap_ioctls_limit` restricts which ioctls the holder can perform
 

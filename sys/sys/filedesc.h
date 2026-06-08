@@ -57,6 +57,7 @@ struct filedescent {
 	struct file	*fde_file;	/* file structure for open file */
 	struct filecaps	 fde_caps;	/* per-descriptor rights */
 	uint8_t		 fde_flags;	/* per-process open file flags */
+	uint8_t		 fde_xfer_state; /* transfer state (CAP_XFER_*) */
 	seqc_t		 fde_seqc;	/* keep file and caps in sync */
 };
 #define	fde_rights	fde_caps.fc_rights
@@ -72,6 +73,7 @@ fde_copy(struct filedescent *from, struct filedescent *to)
 	to->fde_file = from->fde_file;
 	to->fde_caps = from->fde_caps;
 	to->fde_flags = from->fde_flags;
+	to->fde_xfer_state = from->fde_xfer_state;
 }
 #endif
 

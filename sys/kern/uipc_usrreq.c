@@ -102,6 +102,10 @@ SDT_PROBE_DEFINE6(fd, , , scm__rights__recv,
     "struct file *", "int", "pid_t", "struct ucred *", "short", "int");
 SDT_PROBE_DEFINE6(fd, , , pass__deny,
     "struct file *", "int", "pid_t", "struct ucred *", "short", "int");
+SDT_PROBE_DEFINE6(fd, , , xfer__deny,
+    "struct file *", "int", "pid_t", "struct ucred *", "short", "int");
+SDT_PROBE_DEFINE6(fd, , , xfer__consume,
+    "struct file *", "int", "pid_t", "struct ucred *", "short", "int");
 
 #ifdef DDB
 #include <ddb/ddb.h>
@@ -3584,6 +3588,8 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				_finstall(fdesc, fp, *fdp, fdflags |
 				    (restrict_rights(fp, td) ?
 				    O_RESOLVE_BENEATH : 0), &fdep[i]->fde_caps);
+				fdesc->fd_ofiles[*fdp].fde_xfer_state =
+				    fdep[i]->fde_xfer_state;
 				unp_externalize_fp(fp);
 				SDT_PROBE6(fd, , , scm__rights__recv, fp,
 				    *fdp, td->td_proc->p_pid, td->td_ucred,
@@ -3777,11 +3783,11 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
 			 * files.  If not, reject the entire operation.
 			 */
 			fdp = data;
-			FILEDESC_SLOCK(fdesc);
+			FILEDESC_XLOCK(fdesc);
 			for (i = 0; i < oldfds; i++, fdp++) {
 				fp = fget_noref(fdesc, *fdp);
 				if (fp == NULL) {
-					FILEDESC_SUNLOCK(fdesc);
+					FILEDESC_XUNLOCK(fdesc);
 					error = EBADF;
 					goto out;
 				}
@@ -3790,8 +3796,18 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
 					    *fdp, td->td_proc->p_pid,
 					    td->td_ucred, fp->f_type,
 					    EOPNOTSUPP);
-					FILEDESC_SUNLOCK(fdesc);
+					FILEDESC_XUNLOCK(fdesc);
 					error = EOPNOTSUPP;
+					goto out;
+				}
+				if (fdesc->fd_ofiles[*fdp].fde_xfer_state ==
+				    CAP_XFER_NONE) {
+					SDT_PROBE6(fd, , , xfer__deny, fp,
+					    *fdp, td->td_proc->p_pid,
+					    td->td_ucred, fp->f_type,
+					    ENOTCAPABLE);
+					FILEDESC_XUNLOCK(fdesc);
+					error = ENOTCAPABLE;
 					goto out;
 				}
 			}
@@ -3802,19 +3818,20 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
 			 */
 			m = sbcreatecontrol(NULL, newlen, SCM_RIGHTS,
 			    SOL_SOCKET, M_WAITOK);
-			fdp = data;
-			for (i = 0; i < oldfds; i++, fdp++) {
-				if (!fhold(fdesc->fd_ofiles[*fdp].fde_file)) {
-					fdp = data;
-					for (j = 0; j < i; j++, fdp++) {
-						fdrop(fdesc->fd_ofiles[*fdp].
-						    fde_file, td);
+				fdp = data;
+				for (i = 0; i < oldfds; i++, fdp++) {
+					if (!fhold(fdesc->fd_ofiles[*fdp].fde_file)) {
+						fdp = data;
+						for (j = 0; j < i; j++, fdp++) {
+							fdrop(fdesc->fd_ofiles[*fdp].
+							    fde_file, td);
+						}
+						FILEDESC_XUNLOCK(fdesc);
+						m_freem(m);
+						error = EBADF;
+						goto out;
 					}
-					FILEDESC_SUNLOCK(fdesc);
-					error = EBADF;
-					goto out;
 				}
-			}
 			fdp = data;
 			fdep = (struct filedescent **)
 			    CMSG_DATA(mtod(m, struct cmsghdr *));
@@ -3826,13 +3843,24 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
 				fdep[i]->fde_file = fde->fde_file;
 				filecaps_copy(&fde->fde_caps,
 				    &fdep[i]->fde_caps, true);
+				if (fde->fde_xfer_state == CAP_XFER_ONCE) {
+					fde->fde_xfer_state = CAP_XFER_NONE;
+					fdep[i]->fde_xfer_state = CAP_XFER_NONE;
+					SDT_PROBE6(fd, , , xfer__consume,
+					    fde->fde_file, *fdp,
+					    td->td_proc->p_pid, td->td_ucred,
+					    fde->fde_file->f_type, oldfds);
+				} else {
+					fdep[i]->fde_xfer_state =
+					    fde->fde_xfer_state;
+				}
 				unp_internalize_fp(fdep[i]->fde_file);
 				SDT_PROBE6(fd, , , scm__rights__send,
 				    fdep[i]->fde_file, *fdp,
 				    td->td_proc->p_pid, td->td_ucred,
 				    fdep[i]->fde_file->f_type, oldfds);
 			}
-			FILEDESC_SUNLOCK(fdesc);
+			FILEDESC_XUNLOCK(fdesc);
 			break;
 
 		case SCM_TIMESTAMP:

@@ -100,6 +100,7 @@ int	kern_break(struct thread *td, uintptr_t *addr);
 int	kern_cap_ioctls_limit(struct thread *td, int fd, u_long *cmds,
 	    size_t ncmds);
 int	kern_cap_rights_limit(struct thread *td, int fd, cap_rights_t *rights);
+int	kern_cap_xfer_limit(struct thread *td, int fd, int state);
 int	kern_chdir(struct thread *td, const char *path, enum uio_seg pathseg);
 int	kern_clock_getcpuclockid2(struct thread *td, id_t id, int which,
 	    clockid_t *clk_id);

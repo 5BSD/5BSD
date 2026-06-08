@@ -45,6 +45,15 @@
 #include <sys/file.h>
 #include <sys/fcntl.h>
 
+/*
+ * Descriptor transfer state (fde_xfer_state).
+ * Orthogonal to capability rights — lives on struct filedescent,
+ * not inside cap_rights_t.  Monotonically decreasing; can only tighten.
+ */
+#define	CAP_XFER_UNLIMITED	0	/* no restriction (default) */
+#define	CAP_XFER_ONCE		1	/* one send, then exhausted */
+#define	CAP_XFER_NONE		2	/* no transfer permitted */
+
 #ifndef _KERNEL
 #include <stdbool.h>
 #endif
@@ -557,6 +566,10 @@ ssize_t cap_ioctls_get(int fd, cap_ioctl_t *cmds, size_t maxcmds);
  * Limits allowed fcntls for the given descriptor (CAP_FCNTL_*).
  */
 int cap_fcntls_limit(int fd, uint32_t fcntlrights);
+/*
+ * Limits descriptor transfer state for the given descriptor (CAP_XFER_*).
+ */
+int cap_xfer_limit(int fd, int state);
 /*
  * Returns bitmask of allowed fcntls for the given descriptor.
  */
