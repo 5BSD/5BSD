@@ -32,6 +32,7 @@
 #include "cap_rt_priv.h"
 #include "probes.h"
 #include "oracle_proto_claims.h"
+#include "req_validate.h"
 
 static int	proto_pair_fd = -1;
 static bool	serviced_ready;
@@ -114,33 +115,17 @@ static void
 handle_mint_path(const void *payload, uint32_t len, uint64_t reply_token)
 {
 	const struct oracle_path_req *req;
-	int token_fd;
+	int err, token_fd;
 
-	if (len < sizeof(*req)) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	req = payload;
-
-	/* Ensure null-terminated. */
-	if (strnlen(req->path, PATH_MAX) >= PATH_MAX) {
-		proto_reply(ENAMETOOLONG, reply_token, NULL, 0);
+	if (!validate_path_req(payload, len, &req, &err)) {
+		proto_reply(err, reply_token, NULL, 0);
 		return;
 	}
 
-	if (req->path[0] != '/') {
-		proto_reply(EINVAL, reply_token, NULL, 0);
+	if (auto_claim_path(req->path, &err) != 0) {
+		ORACLED_PROBE_MINT_PATH(req->path, err);
+		proto_reply(err, reply_token, NULL, 0);
 		return;
-	}
-
-	{
-		int err;
-
-		if (auto_claim_path(req->path, &err) != 0) {
-			ORACLED_PROBE_MINT_PATH(req->path, err);
-			proto_reply(err, reply_token, NULL, 0);
-			return;
-		}
 	}
 
 	token_fd = cap_rt_mint_path_token(req->path);
@@ -206,59 +191,20 @@ handle_mint_file(const void *payload, uint32_t len, uint64_t reply_token)
 static void
 handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_net_req *req;
 	struct ort_net_claim nc;
-	int token_fd;
+	int err, token_fd;
 
-	if (len < sizeof(*req)) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	req = payload;
-
-	if (req->direction == 0 || (req->direction & ~ORT_NET_DIR_ANY) != 0) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	if (req->domain != 0 && req->domain != AF_INET &&
-	    req->domain != AF_INET6) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	if (req->protocol != 0 && req->protocol != IPPROTO_TCP &&
-	    req->protocol != IPPROTO_UDP) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	if (req->prefix > 128 ||
-	    (req->domain == AF_INET && req->prefix > 32)) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	if (req->port_min > req->port_max) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
+	if (!validate_net_req(payload, len, &nc, &err)) {
+		proto_reply(err, reply_token, NULL, 0);
 		return;
 	}
 
-	memset(&nc, 0, sizeof(nc));
-	nc.domain = req->domain;
-	nc.protocol = req->protocol;
-	nc.port_min = req->port_min;
-	nc.port_max = req->port_max;
-	nc.direction = req->direction;
-	nc.prefix = req->prefix;
-	memcpy(nc.addr, req->addr, sizeof(nc.addr));
-
-	{
-		int err;
-
-		if (auto_claim_net(&nc, &err) != 0 &&
-		    !net_is_claimed(&nc)) {
-			ORACLED_PROBE_MINT_NET(nc.port_min, nc.port_max,
-			    nc.protocol, err);
-			proto_reply(err, reply_token, NULL, 0);
-			return;
-		}
+	if (auto_claim_net(&nc, &err) != 0 &&
+	    !net_is_claimed(&nc)) {
+		ORACLED_PROBE_MINT_NET(nc.port_min, nc.port_max,
+		    nc.protocol, err);
+		proto_reply(err, reply_token, NULL, 0);
+		return;
 	}
 
 	token_fd = cap_rt_mint_net_token(&nc);
@@ -278,45 +224,20 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 static void
 handle_mint_jail(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_jail_req *req;
 	struct oracled_jail_claim jc;
-	int token_fd;
+	int err, token_fd;
 
-	if (len < sizeof(*req)) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	req = payload;
-
-	if (req->jid < 0 || (req->actions == 0 ||
-	    (req->actions & ~FI_JAIL_ALL) != 0)) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	if (memchr(req->name, '\0', sizeof(req->name)) == NULL) {
-		proto_reply(ENAMETOOLONG, reply_token, NULL, 0);
-		return;
-	}
-	if (req->jid == 0 && req->name[0] == '\0') {
-		proto_reply(EINVAL, reply_token, NULL, 0);
+	if (!validate_jail_req(payload, len, &jc, &err)) {
+		proto_reply(err, reply_token, NULL, 0);
 		return;
 	}
 
-	memset(&jc, 0, sizeof(jc));
-	jc.jid = req->jid;
-	jc.actions = req->actions;
-	strlcpy(jc.name, req->name, sizeof(jc.name));
-
-	{
-		int err;
-
-		if (auto_claim_jail(&jc, &err) != 0 &&
-		    !jail_is_claimed(&jc)) {
-			ORACLED_PROBE_MINT_JAIL(jc.jid, jc.name, jc.actions,
-			    err);
-			proto_reply(err, reply_token, NULL, 0);
-			return;
-		}
+	if (auto_claim_jail(&jc, &err) != 0 &&
+	    !jail_is_claimed(&jc)) {
+		ORACLED_PROBE_MINT_JAIL(jc.jid, jc.name, jc.actions,
+		    err);
+		proto_reply(err, reply_token, NULL, 0);
+		return;
 	}
 
 	token_fd = cap_rt_mint_jail_token(&jc);

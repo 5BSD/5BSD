@@ -27,6 +27,7 @@
 #include "cap_rt_priv.h"
 #include "probes.h"
 #include "oracle_proto_claims.h"
+#include "req_validate.h"
 
 /* --- Find helpers --- */
 
@@ -77,64 +78,40 @@ find_jail_claim(const struct oracled_jail_claim *jc)
 	return (-1);
 }
 
-/* --- Remove helpers --- */
-
-static void
-remove_path_claim(unsigned idx)
-{
-	unsigned n;
-
-	n = od.cfg.nclaim_paths - 1;
-	if (idx < n) {
-		memmove(&od.cfg.claim_paths[idx], &od.cfg.claim_paths[idx + 1],
-		    (n - idx) * sizeof(od.cfg.claim_paths[0]));
-		memmove(&od.cfg.claim_path_source[idx],
-		    &od.cfg.claim_path_source[idx + 1],
-		    (n - idx) * sizeof(od.cfg.claim_path_source[0]));
-		memmove(&od.cfg.claim_path_refcount[idx],
-		    &od.cfg.claim_path_refcount[idx + 1],
-		    (n - idx) * sizeof(od.cfg.claim_path_refcount[0]));
-	}
-	od.cfg.nclaim_paths = n;
+/*
+ * --- Remove helpers ---
+ *
+ * Each claim type stores data, source, and refcount in parallel
+ * arrays.  Removal shifts all three with memmove and decrements
+ * the count.  The bodies are identical across types.
+ */
+#define	DEFINE_REMOVE_CLAIM(type, data_arr, src_arr, ref_arr, count)	\
+static void								\
+remove_##type##_claim(unsigned idx)					\
+{									\
+	unsigned n;							\
+									\
+	n = od.cfg.count - 1;						\
+	if (idx < n) {							\
+		memmove(&od.cfg.data_arr[idx],				\
+		    &od.cfg.data_arr[idx + 1],				\
+		    (n - idx) * sizeof(od.cfg.data_arr[0]));		\
+		memmove(&od.cfg.src_arr[idx],				\
+		    &od.cfg.src_arr[idx + 1],				\
+		    (n - idx) * sizeof(od.cfg.src_arr[0]));		\
+		memmove(&od.cfg.ref_arr[idx],				\
+		    &od.cfg.ref_arr[idx + 1],				\
+		    (n - idx) * sizeof(od.cfg.ref_arr[0]));		\
+	}								\
+	od.cfg.count = n;						\
 }
 
-static void
-remove_net_claim(unsigned idx)
-{
-	unsigned n;
-
-	n = od.cfg.nclaim_net - 1;
-	if (idx < n) {
-		memmove(&od.cfg.claim_net[idx], &od.cfg.claim_net[idx + 1],
-		    (n - idx) * sizeof(od.cfg.claim_net[0]));
-		memmove(&od.cfg.claim_net_source[idx],
-		    &od.cfg.claim_net_source[idx + 1],
-		    (n - idx) * sizeof(od.cfg.claim_net_source[0]));
-		memmove(&od.cfg.claim_net_refcount[idx],
-		    &od.cfg.claim_net_refcount[idx + 1],
-		    (n - idx) * sizeof(od.cfg.claim_net_refcount[0]));
-	}
-	od.cfg.nclaim_net = n;
-}
-
-static void
-remove_jail_claim(unsigned idx)
-{
-	unsigned n;
-
-	n = od.cfg.nclaim_jail - 1;
-	if (idx < n) {
-		memmove(&od.cfg.claim_jail[idx], &od.cfg.claim_jail[idx + 1],
-		    (n - idx) * sizeof(od.cfg.claim_jail[0]));
-		memmove(&od.cfg.claim_jail_source[idx],
-		    &od.cfg.claim_jail_source[idx + 1],
-		    (n - idx) * sizeof(od.cfg.claim_jail_source[0]));
-		memmove(&od.cfg.claim_jail_refcount[idx],
-		    &od.cfg.claim_jail_refcount[idx + 1],
-		    (n - idx) * sizeof(od.cfg.claim_jail_refcount[0]));
-	}
-	od.cfg.nclaim_jail = n;
-}
+DEFINE_REMOVE_CLAIM(path, claim_paths, claim_path_source,
+    claim_path_refcount, nclaim_paths)
+DEFINE_REMOVE_CLAIM(net, claim_net, claim_net_source,
+    claim_net_refcount, nclaim_net)
+DEFINE_REMOVE_CLAIM(jail, claim_jail, claim_jail_source,
+    claim_jail_refcount, nclaim_jail)
 
 /* --- Auto-claim helpers --- */
 
@@ -370,18 +347,8 @@ handle_claim_path(const void *payload, uint32_t len, uint64_t reply_token)
 	const struct oracle_path_req *req;
 	int err;
 
-	if (len < sizeof(*req)) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	req = payload;
-
-	if (strnlen(req->path, PATH_MAX) >= PATH_MAX) {
-		proto_reply(ENAMETOOLONG, reply_token, NULL, 0);
-		return;
-	}
-	if (req->path[0] != '/') {
-		proto_reply(EINVAL, reply_token, NULL, 0);
+	if (!validate_path_req(payload, len, &req, &err)) {
+		proto_reply(err, reply_token, NULL, 0);
 		return;
 	}
 
@@ -395,36 +362,13 @@ handle_claim_path(const void *payload, uint32_t len, uint64_t reply_token)
 void
 handle_claim_net(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_net_req *req;
 	struct ort_net_claim nc;
 	int err;
 
-	if (len < sizeof(*req)) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
+	if (!validate_net_req(payload, len, &nc, &err)) {
+		proto_reply(err, reply_token, NULL, 0);
 		return;
 	}
-	req = payload;
-
-	if (req->direction == 0 || (req->direction & ~ORT_NET_DIR_ANY) != 0 ||
-	    (req->domain != 0 && req->domain != AF_INET &&
-	    req->domain != AF_INET6) ||
-	    (req->protocol != 0 && req->protocol != IPPROTO_TCP &&
-	    req->protocol != IPPROTO_UDP) ||
-	    req->prefix > 128 ||
-	    (req->domain == AF_INET && req->prefix > 32) ||
-	    req->port_min > req->port_max) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-
-	memset(&nc, 0, sizeof(nc));
-	nc.domain = req->domain;
-	nc.protocol = req->protocol;
-	nc.port_min = req->port_min;
-	nc.port_max = req->port_max;
-	nc.direction = req->direction;
-	nc.prefix = req->prefix;
-	memcpy(nc.addr, req->addr, sizeof(nc.addr));
 
 	if (auto_claim_net(&nc, &err) != 0) {
 		proto_reply(err, reply_token, NULL, 0);
@@ -436,34 +380,13 @@ handle_claim_net(const void *payload, uint32_t len, uint64_t reply_token)
 void
 handle_claim_jail(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_jail_req *req;
 	struct oracled_jail_claim jc;
 	int err;
 
-	if (len < sizeof(*req)) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
+	if (!validate_jail_req(payload, len, &jc, &err)) {
+		proto_reply(err, reply_token, NULL, 0);
 		return;
 	}
-	req = payload;
-
-	if (req->jid < 0 || req->actions == 0 ||
-	    (req->actions & ~FI_JAIL_ALL) != 0) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	if (memchr(req->name, '\0', sizeof(req->name)) == NULL) {
-		proto_reply(ENAMETOOLONG, reply_token, NULL, 0);
-		return;
-	}
-	if (req->jid == 0 && req->name[0] == '\0') {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-
-	memset(&jc, 0, sizeof(jc));
-	jc.jid = req->jid;
-	jc.actions = req->actions;
-	strlcpy(jc.name, req->name, sizeof(jc.name));
 
 	if (auto_claim_jail(&jc, &err) != 0) {
 		proto_reply(err, reply_token, NULL, 0);
@@ -502,20 +425,10 @@ void
 handle_release_path(const void *payload, uint32_t len, uint64_t reply_token)
 {
 	const struct oracle_path_req *req;
-	int idx;
+	int err, idx;
 
-	if (len < sizeof(*req)) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	req = payload;
-
-	if (strnlen(req->path, PATH_MAX) >= PATH_MAX) {
-		proto_reply(ENAMETOOLONG, reply_token, NULL, 0);
-		return;
-	}
-	if (req->path[0] != '/') {
-		proto_reply(EINVAL, reply_token, NULL, 0);
+	if (!validate_path_req(payload, len, &req, &err)) {
+		proto_reply(err, reply_token, NULL, 0);
 		return;
 	}
 
@@ -567,36 +480,13 @@ handle_release_path(const void *payload, uint32_t len, uint64_t reply_token)
 void
 handle_release_net(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_net_req *req;
 	struct ort_net_claim nc;
-	int idx;
+	int err, idx;
 
-	if (len < sizeof(*req)) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
+	if (!validate_net_req(payload, len, &nc, &err)) {
+		proto_reply(err, reply_token, NULL, 0);
 		return;
 	}
-	req = payload;
-
-	if (req->direction == 0 || (req->direction & ~ORT_NET_DIR_ANY) != 0 ||
-	    (req->domain != 0 && req->domain != AF_INET &&
-	    req->domain != AF_INET6) ||
-	    (req->protocol != 0 && req->protocol != IPPROTO_TCP &&
-	    req->protocol != IPPROTO_UDP) ||
-	    req->prefix > 128 ||
-	    (req->domain == AF_INET && req->prefix > 32) ||
-	    req->port_min > req->port_max) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-
-	memset(&nc, 0, sizeof(nc));
-	nc.domain = req->domain;
-	nc.protocol = req->protocol;
-	nc.port_min = req->port_min;
-	nc.port_max = req->port_max;
-	nc.direction = req->direction;
-	nc.prefix = req->prefix;
-	memcpy(nc.addr, req->addr, sizeof(nc.addr));
 
 	idx = find_net_claim(&nc);
 	if (idx < 0) {
@@ -642,34 +532,13 @@ handle_release_net(const void *payload, uint32_t len, uint64_t reply_token)
 void
 handle_release_jail(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_jail_req *req;
 	struct oracled_jail_claim jc;
-	int idx;
+	int err, idx;
 
-	if (len < sizeof(*req)) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
+	if (!validate_jail_req(payload, len, &jc, &err)) {
+		proto_reply(err, reply_token, NULL, 0);
 		return;
 	}
-	req = payload;
-
-	if (req->jid < 0 || req->actions == 0 ||
-	    (req->actions & ~FI_JAIL_ALL) != 0) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	if (memchr(req->name, '\0', sizeof(req->name)) == NULL) {
-		proto_reply(ENAMETOOLONG, reply_token, NULL, 0);
-		return;
-	}
-	if (req->jid == 0 && req->name[0] == '\0') {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-
-	memset(&jc, 0, sizeof(jc));
-	jc.jid = req->jid;
-	jc.actions = req->actions;
-	strlcpy(jc.name, req->name, sizeof(jc.name));
 
 	idx = find_jail_claim(&jc);
 	if (idx < 0) {
