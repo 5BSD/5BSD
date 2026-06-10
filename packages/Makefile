@@ -39,6 +39,7 @@ SUBDIR=	blocklist \
 	lib9p \
 	libarchive \
 	libcapbundle \
+	liboraclectl \
 	liboraclert \
 	libservice \
 	libbegemot \

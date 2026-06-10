@@ -20,18 +20,13 @@
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
  * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING OUT OF THE
+ * USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-comment = "5BSD capability oracle daemon and control utility"
+comment = "Control library for 5BSD oracle capability services"
 
 desc = <<EOD
-oracled is the 5BSD capability oracle daemon.  It mediates dynamic cap_rt
-claim/release between services with reference counting, allowing services to
-negotiate capability access at runtime.
-
-This package provides the oracled(8) daemon and the oraclectl(8) CLI control
-utility.
+liboraclectl provides the client-side control API used by oraclectl(8),
+servicectl(8), and related tools to communicate with oracled(8).
 EOD
