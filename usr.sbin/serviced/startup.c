@@ -24,12 +24,42 @@
 #include <syslog.h>
 #include <time.h>
 
-#include <libappbundle.h>
+#include <libcapbundle.h>
 
 #include "serviced.h"
 #include "serviced_probes.h"
 
 #define	TIER_READY_TIMEOUT_SEC	10
+
+/*
+ * Log a loaded manifest's key attributes for operational visibility.
+ */
+static void
+log_loaded_manifest(const struct svc_manifest *m)
+{
+	unsigned j;
+
+	syslog(LOG_INFO, "startup: loaded %s restart=%s",
+	    m->label, restart_policy_name(m->restart));
+
+	for (j = 0; j < m->nprovides; j++)
+		syslog(LOG_INFO, "startup: %s provides: %s",
+		    m->label, m->provides[j]);
+	for (j = 0; j < m->nrequires; j++)
+		syslog(LOG_INFO, "startup: %s requires: %s",
+		    m->label, m->requires[j]);
+
+	if (m->ncap_paths + m->ncap_files + m->ncap_net +
+	    m->cap_system > 0)
+		syslog(LOG_INFO, "startup: %s capabilities: "
+		    "paths=%u files=%u network=%u system=0x%x",
+		    m->label, m->ncap_paths, m->ncap_files,
+		    m->ncap_net, m->cap_system);
+
+	if (m->has_jail)
+		syslog(LOG_INFO, "startup: %s jail: %s path=%s",
+		    m->label, m->jail_name, m->jail_path);
+}
 
 /*
  * Assign tiers based on dependency depth.
@@ -129,13 +159,26 @@ wait_tier_ready(struct svc_runtime *svcs, unsigned n, unsigned tier,
 				supervisor_handle_pair(&events[i]);
 			else if (events[i].filter == EVFILT_TIMER)
 				supervisor_handle_timer(&events[i]);
+			else if (events[i].filter == EVFILT_SIGNAL) {
+				int sig = (int)events[i].ident;
+
+				if (sig == SIGTERM || sig == SIGINT) {
+					syslog(LOG_INFO,
+					    "startup: signal %d during "
+					    "tier wait, aborting", sig);
+					sd.running = false;
+					return (-1);
+				}
+			}
 		}
 
-		/* Recount ready services. */
+		/* Recount ready + crashed services. */
 		ready_count = 0;
 		for (i = 0; i < n; i++) {
-			if (tiers[i] == tier &&
-			    svcs[i].state == SVC_STATE_RUNNING)
+			if (tiers[i] != tier)
+				continue;
+			if (svcs[i].state == SVC_STATE_RUNNING ||
+			    svcs[i].state == SVC_STATE_STOPPED)
 				ready_count++;
 		}
 	}
@@ -159,8 +202,8 @@ startup_launch_system(int kq)
 	unsigned nmanifests, i, bi, si;
 	unsigned *tiers;
 	unsigned max_tier, tier;
-	struct appbundle *b;
-	struct appbundle_service *asvc;
+	struct capbundle *b;
+	struct capbundle_service *asvc;
 	struct timespec start_ts;
 
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
@@ -178,11 +221,11 @@ startup_launch_system(int kq)
 		if (b == NULL)
 			continue;
 
-		for (si = 0; si < appbundle_nservices(b); si++) {
-			asvc = appbundle_service(b, si);
+		for (si = 0; si < capbundle_nservices(b); si++) {
+			asvc = capbundle_service(b, si);
 			if (asvc == NULL)
 				continue;
-			if (appbundle_svc_on_demand(asvc))
+			if (capbundle_svc_on_demand(asvc))
 				continue;
 			if (nmanifests >= SERVICED_MAX_SERVICES) {
 				syslog(LOG_WARNING,
@@ -191,13 +234,14 @@ startup_launch_system(int kq)
 			}
 
 			/* Fill svc_manifest from bundle service. */
-			if (appbundle_svc_fill_manifest(asvc,
+			if (capbundle_svc_fill_manifest(asvc,
 			    &manifests[nmanifests]) == -1) {
 				syslog(LOG_WARNING,
 				    "startup: skipping invalid bundle service "
-				    "'%s'", appbundle_svc_label(asvc));
+				    "'%s'", capbundle_svc_label(asvc));
 				continue;
 			}
+			log_loaded_manifest(&manifests[nmanifests]);
 			nmanifests++;
 		}
 	}
@@ -234,8 +278,11 @@ startup_launch_system(int kq)
 					snprintf(path, sizeof(path), "%s/%s",
 					    manifest_dir, de->d_name);
 					if (manifest_load_file(path,
-					    &manifests[nmanifests]) == 0)
+					    &manifests[nmanifests]) == 0) {
+						log_loaded_manifest(
+						    &manifests[nmanifests]);
 						nmanifests++;
+					}
 				}
 				closedir(d);
 			}
@@ -250,6 +297,8 @@ startup_launch_system(int kq)
 		free(manifests);
 		return (-1);
 	}
+
+	syslog(LOG_INFO, "startup: %u services loaded", nmanifests);
 
 	if (nmanifests == 0) {
 		syslog(LOG_INFO, "startup: no boot services to launch");
@@ -297,6 +346,8 @@ startup_launch_system(int kq)
 		for (i = 0; i < sd.nservices; i++) {
 			if (tiers[i] != tier)
 				continue;
+			syslog(LOG_INFO, "startup: service: %s",
+			    sd.services[i].manifest.label);
 			if (svc_exec(&sd.services[i], kq) == 0)
 				launched++;
 			else

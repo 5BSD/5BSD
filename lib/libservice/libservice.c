@@ -13,6 +13,7 @@
 #include <sys/ioctl.h>
 
 #include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/cap_rt/cap_rt_capprotect_proto.h>
 
 #include <errno.h>
 #include <stdint.h>
@@ -24,6 +25,7 @@
 #include "serviced_svc_proto.h"
 
 static int pair_fd = -1;
+static int capprotect_fd = -1;
 static uint64_t next_token = 1;
 
 /*
@@ -151,6 +153,12 @@ service_init(void)
 		errno = EINVAL;
 		return (-1);
 	}
+	s = getenv("ORACLED_CAPPROTECT_FD");
+	if (s != NULL && s[0] != '\0') {
+		capprotect_fd = (int)strtol(s, NULL, 10);
+		if (capprotect_fd < 0)
+			capprotect_fd = -1;
+	}
 	return (0);
 }
 
@@ -159,6 +167,30 @@ service_pair_fd(void)
 {
 
 	return (pair_fd);
+}
+
+int
+service_protect(uint32_t flags)
+{
+	struct cap_rt_call_args call;
+	struct cp_request req;
+
+	if (capprotect_fd < 0) {
+		errno = ENOTSUP;
+		return (-1);
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.op = CP_OP_SHIELD;
+	req.flags = flags;
+
+	memset(&call, 0, sizeof(call));
+	call.req = &req;
+	call.req_len = sizeof(req);
+
+	if (ioctl(capprotect_fd, CAP_RT_CALL, &call) == -1)
+		return (-1);
+	return (0);
 }
 
 int

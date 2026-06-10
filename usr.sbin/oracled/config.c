@@ -96,12 +96,12 @@ parse_ucl_jail_claim(const ucl_object_t *elem, struct oracled_jail_claim *jc,
 }
 
 /*
- * Parse a single UCL network claim object into an oracled_net_claim.
+ * Parse a single UCL network claim object into an ort_net_claim.
  * Shared between config.c and manifest.c.
  * Returns 0 on success, -1 to skip this entry (bad port).
  */
 int
-parse_ucl_net_claim(const ucl_object_t *elem, struct oracled_net_claim *nc,
+parse_ucl_net_claim(const ucl_object_t *elem, struct ort_net_claim *nc,
     const char *label)
 {
 	const ucl_object_t *v;
@@ -142,11 +142,11 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct oracled_net_claim *nc,
 	if (v != NULL && ucl_object_type(v) == UCL_STRING) {
 		s = ucl_object_tostring(v);
 		if (strcmp(s, "bind") == 0)
-			nc->direction = ORACLED_NET_DIR_BIND;
+			nc->direction = ORT_NET_DIR_BIND;
 		else if (strcmp(s, "connect") == 0)
-			nc->direction = ORACLED_NET_DIR_CONNECT;
+			nc->direction = ORT_NET_DIR_CONNECT;
 		else if (strcmp(s, "*") == 0 || strcmp(s, "any") == 0)
-			nc->direction = ORACLED_NET_DIR_ANY;
+			nc->direction = ORT_NET_DIR_ANY;
 		else {
 			syslog(LOG_ERR, "%s: unknown direction: %s",
 			    label, s);
@@ -154,7 +154,7 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct oracled_net_claim *nc,
 		}
 	}
 	if (nc->direction == 0)
-		nc->direction = ORACLED_NET_DIR_BIND;
+		nc->direction = ORT_NET_DIR_BIND;
 
 	nc->domain = AF_INET;
 	v = ucl_object_lookup(elem, "domain");

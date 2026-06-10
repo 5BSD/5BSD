@@ -92,7 +92,7 @@ cap_rt_mint_file_token(const char *path, uint64_t actions)
  * Returns the token fd on success, -1 on failure.
  */
 int
-cap_rt_mint_net_token(const struct oracled_net_claim *nc)
+cap_rt_mint_net_token(const struct ort_net_claim *nc)
 {
 	struct cap_rt_call_args call;
 	struct fi_net_request req;

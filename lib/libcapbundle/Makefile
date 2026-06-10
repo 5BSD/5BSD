@@ -1,22 +1,19 @@
 .include <src.opts.mk>
 
 PACKAGE=lib${LIB}
-LIB=	appbundle
+LIB=	capbundle
 SHLIB_MAJOR=	1
-MAN=	libappbundle.3
+MAN=	libcapbundle.3
 
-SRCS=	libappbundle.c claim_parse.c
-INCS=	libappbundle.h
-
-.PATH:	${SRCTOP}/usr.sbin/oracled
+SRCS=	libcapbundle.c libcapbundle_parse.c libcapbundle_verify.c
+INCS=	libcapbundle.h
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
 CFLAGS+=	-I${SRCTOP}/sys
-CFLAGS+=	-I${SRCTOP}/usr.sbin/serviced
-CFLAGS+=	-I${SRCTOP}/usr.sbin/oracled
+CFLAGS+=	-I${SRCTOP}/lib/liboraclert
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		ucl
+LIBADD=		oraclert ucl
 
 .include <bsd.lib.mk>

@@ -216,3 +216,66 @@ caprt_coalition_set_leader(int coalition_fd, int leader_fd)
 		return (-1);
 	return (reply.status);
 }
+
+int
+caprt_coalition_graceful(int coalition_fd, int sig, unsigned timeout_ms)
+{
+	struct cap_rt_call_args call;
+	struct coalition_graceful_req req;
+	struct coalition_reply reply;
+
+	memset(&req, 0, sizeof(req));
+	req.op = COALITION_OP_GRACEFUL;
+	req.signal = sig;
+	req.timeout_ms = timeout_ms;
+
+	memset(&call, 0, sizeof(call));
+	call.req = &req;
+	call.req_len = sizeof(req);
+	call.reply = &reply;
+	call.reply_len = sizeof(reply);
+
+	if (ioctl(coalition_fd, CAP_RT_CALL, &call) == -1)
+		return (-1);
+	if (reply.status != 0) {
+		errno = reply.status;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * Terminate all processes in a coalition.
+ * Sends SIGKILL to every member via the kernel.
+ */
+int
+caprt_coalition_terminate(int coalition_fd)
+{
+	struct cap_rt_call_args call;
+	struct coalition_req_hdr req;
+	struct coalition_reply reply;
+
+	memset(&req, 0, sizeof(req));
+	req.op = COALITION_OP_TERMINATE;
+
+	memset(&call, 0, sizeof(call));
+	call.req = &req;
+	call.req_len = sizeof(req);
+	call.reply = &reply;
+	call.reply_len = sizeof(reply);
+
+	if (ioctl(coalition_fd, CAP_RT_CALL, &call) == -1)
+		return (-1);
+	return (reply.status);
+}
+
+int
+caprt_mint_capprotect(void)
+{
+
+	if (sd.capprotect_fd < 0) {
+		errno = ENOTSUP;
+		return (-1);
+	}
+	return (mint_instance(sd.capprotect_fd));
+}

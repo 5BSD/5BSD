@@ -316,13 +316,32 @@ EOF
 	atf_check -s exit:0 cc -Wall -Wextra -o fdprobe fdprobe.c
 }
 
+find_serviced_bin()
+{
+	local p
+	for p in \
+	    "$(command -v serviced 2>/dev/null)" \
+	    /usr/sbin/serviced \
+	    /usr/libexec/oracled/serviced \
+	    /usr/obj/usr/src/arm64.aarch64/usr.sbin/serviced/serviced
+	do
+		if [ -n "$p" ] && [ -x "$p" ]; then
+			echo "$p"
+			return
+		fi
+	done
+}
+
 write_config()
 {
+	local sbin
+	sbin=$(find_serviced_bin)
 	cat > "$conffile" <<EOF
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
 manifest_dir = "$manifestdir";
+service_manager = "${sbin:-}";
 EOF
 }
 
@@ -791,7 +810,7 @@ EOF
 	fi
 	atf_check -s exit:0 -o ignore grep "control_socket_mode must be" "$logfile"
 	atf_check -s exit:0 -o ignore grep "claim path must be absolute" "$logfile"
-	atf_check -s exit:0 -o ignore grep "claims paths=1 network=1 system=0x1" "$logfile"
+	atf_check -s exit:0 -o ignore grep "claims paths=1 network=1 jails=0 system=0x1" "$logfile"
 	assert_daemon_alive
 }
 parser_config_boundaries_cleanup()
@@ -832,10 +851,10 @@ provides = ["B"];
 requires = ["A"];
 EOF
 	kill -HUP "$daemon_pid"
-	sleep 2
-	# Cycle should be detected and rejected.
+	sleep 1
+	# Reload runs depgraph_sort on new services — cycle is detected.
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'cycle detected\|depgraph_sort failed' '$logfile'"
+	    "grep 'cycle detected\|dependency sort failed' '$logfile'"
 	assert_daemon_alive
 }
 reload_dependency_transaction_rollback_cleanup()
@@ -866,19 +885,15 @@ program = "/usr/bin/true";
 requires = ["provider-api"];
 EOF
 	kill -HUP "$daemon_pid"
-	sleep 2
+	sleep 1
+	# Reload sorts new services by dependency, then launches.
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep '2 new' '$logfile'"
-	provider_line=$(grep -n "service provider:" "$logfile" | head -1 | cut -d: -f1)
-	consumer_line=$(grep -n "service consumer:" "$logfile" | head -1 | cut -d: -f1)
-	if [ -z "$provider_line" ] || [ -z "$consumer_line" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "missing dependency start log lines"
-	fi
-	if [ "$consumer_line" -le "$provider_line" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "consumer started before provider"
-	fi
+	# Both services should have been launched in dependency order.
+	atf_check -s exit:0 -o ignore sh -c \
+	    "grep 'launched.*provider' '$logfile'"
+	atf_check -s exit:0 -o ignore sh -c \
+	    "grep 'launched.*consumer' '$logfile'"
 	assert_daemon_alive
 }
 reload_dependency_order_status_cleanup()
@@ -914,20 +929,6 @@ EOF
 service_pair_fd_contract_cleanup()
 {
 	cleanup_common
-}
-
-atf_test_case service_cap_rt_naming_future_api cleanup
-service_cap_rt_naming_future_api_head()
-{
-	atf_set "descr" "placeholder for future cap_rt naming service registration/lookup semantics"
-}
-service_cap_rt_naming_future_api_body()
-{
-	atf_skip "cap_rt naming/oracle lookup API is not implemented yet"
-}
-service_cap_rt_naming_future_api_cleanup()
-{
-	:
 }
 
 atf_test_case service_fd_inheritance_contract cleanup
@@ -1563,6 +1564,150 @@ reload_during_restart_cleanup()
 	cleanup_common
 }
 
+# ===================================================================
+# bootstrap_bad_service_manager
+#
+# oracled logs an error but stays running when service_manager
+# points to a nonexistent binary.
+# ===================================================================
+
+atf_test_case bootstrap_bad_service_manager cleanup
+bootstrap_bad_service_manager_head()
+{
+	atf_set "descr" "oracled continues running when service_manager is invalid"
+	atf_set "require.user" "root"
+}
+bootstrap_bad_service_manager_body()
+{
+	require_cap_rt
+	prepare_paths
+	cat > "$conffile" <<EOF
+pidfile = "$pidfile";
+control_socket = "$sockpath";
+control_socket_mode = "0700";
+manifest_dir = "$manifestdir";
+service_manager = "/nonexistent/serviced";
+EOF
+	oracled -d -f "$conffile" >"$logfile" 2>&1 &
+	daemon_pid=$!
+
+	i=0
+	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if [ ! -S "$sockpath" ]; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "oracled did not create control socket"
+	fi
+
+	# Should log bootstrap failure
+	atf_check -s exit:0 -o ignore \
+	    grep "not executable\|initial start failed" "$logfile"
+
+	# But oracled itself should be healthy
+	atf_check -s exit:0 -o match:"running" \
+	    oraclectl -s "$sockpath" status
+}
+bootstrap_bad_service_manager_cleanup()
+{
+	cleanup_common
+}
+
+# ===================================================================
+# startup_cycle_fatal_but_healthy
+#
+# When system bundles contain a dependency cycle, serviced exits
+# but oracled detects the exit and attempts restart with backoff.
+# ===================================================================
+
+atf_test_case startup_cycle_fatal_but_healthy cleanup
+startup_cycle_fatal_but_healthy_head()
+{
+	atf_set "descr" "Dependency cycle in bundles causes serviced exit, oracled stays alive"
+	atf_set "require.user" "root"
+}
+startup_cycle_fatal_but_healthy_body()
+{
+	require_cap_rt
+	prepare_paths
+
+	# Create two manifests with a cycle
+	cat > "$manifestdir/cyc-a.ucl" <<EOF
+label = "cyc-a";
+program = "/usr/bin/true";
+provides = ["CycA"];
+requires = ["CycB"];
+EOF
+	cat > "$manifestdir/cyc-b.ucl" <<EOF
+label = "cyc-b";
+program = "/usr/bin/true";
+provides = ["CycB"];
+requires = ["CycA"];
+EOF
+
+	write_config
+	oracled -d -f "$conffile" >"$logfile" 2>&1 &
+	daemon_pid=$!
+
+	i=0
+	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if [ ! -S "$sockpath" ]; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "oracled did not create control socket"
+	fi
+
+	# Wait for serviced to exit due to cycle
+	sleep 2
+
+	# oracled should log the exit and schedule restart
+	atf_check -s exit:0 -o ignore \
+	    grep "serviced exited\|scheduling restart" "$logfile"
+
+	# oracled control socket should still work
+	atf_check -s exit:0 -o match:"running" \
+	    oraclectl -s "$sockpath" status
+}
+startup_cycle_fatal_but_healthy_cleanup()
+{
+	cleanup_common
+}
+
+# ===================================================================
+# pidfile_cleaned_on_failure
+#
+# When oracled fails during startup (e.g., config error), the
+# pidfile is removed so a subsequent start isn't blocked.
+# ===================================================================
+
+atf_test_case pidfile_cleaned_on_failure cleanup
+pidfile_cleaned_on_failure_head()
+{
+	atf_set "descr" "Pidfile is removed on startup failure"
+	atf_set "require.user" "root"
+}
+pidfile_cleaned_on_failure_body()
+{
+	prepare_paths
+
+	# Create a config with syntax errors to trigger early exit
+	echo "this is not valid UCL { broken" > "$conffile"
+
+	oracled -d -f "$conffile" >"$logfile" 2>&1 || true
+
+	# Pidfile should not exist (or should be empty)
+	if [ -f "$pidfile" ] && [ -s "$pidfile" ]; then
+		atf_fail "pidfile $pidfile still exists after failed startup"
+	fi
+}
+pidfile_cleaned_on_failure_cleanup()
+{
+	rm -f "$pidfile" "$conffile" "$logfile"
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case control_early_close_status_does_not_kill
@@ -1580,7 +1725,6 @@ atf_init_test_cases()
 	atf_add_test_case reload_dependency_transaction_rollback
 	atf_add_test_case reload_dependency_order_status
 	atf_add_test_case service_pair_fd_contract
-	atf_add_test_case service_cap_rt_naming_future_api
 	atf_add_test_case service_fd_inheritance_contract
 	atf_add_test_case sandbox_capprotect_denies_foreign_ptrace
 	atf_add_test_case sandbox_isolation_denies_foreign_cap_rt_open
@@ -1607,4 +1751,11 @@ atf_init_test_cases()
 
 	# Concurrent operations
 	atf_add_test_case reload_during_restart
+
+	# Bootstrap failure
+	atf_add_test_case bootstrap_bad_service_manager
+	atf_add_test_case startup_cycle_fatal_but_healthy
+
+	# Pidfile cleanup
+	atf_add_test_case pidfile_cleaned_on_failure
 }

@@ -409,9 +409,93 @@ libservice_lookup_fail_cleanup()
 	cleanup_common
 }
 
+# ===================================================================
+# service_protect — makes process unptraceable
+# ===================================================================
+
+atf_test_case service_protect_test cleanup
+service_protect_test_head()
+{
+	atf_set "descr" "service_protect makes the process unptraceable"
+	atf_set "require.user" "root"
+	atf_set "require.progs" "ktrace"
+}
+service_protect_test_body()
+{
+	cat > ls_protect.c <<'CEOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <libservice.h>
+
+int
+main(void)
+{
+	FILE *out;
+
+	if (service_init() == -1)
+		return (1);
+	if (service_ready() == -1)
+		return (1);
+
+	/* Apply full protection. */
+	if (service_protect(0x3F) == -1) {
+		out = fopen("ls-protect.out", "w");
+		if (out != NULL) {
+			fprintf(out, "protect_failed\n");
+			fclose(out);
+		}
+		sleep(30);
+		return (1);
+	}
+
+	out = fopen("ls-protect.out", "w");
+	if (out != NULL) {
+		fprintf(out, "pid=%d\nprotected=yes\n", getpid());
+		fclose(out);
+	}
+	sleep(30);
+	return (0);
+}
+CEOF
+	cc_with_libservice -o ls_protect ls_protect.c
+
+	prepare_paths
+	cat > "$manifestdir/ls-protect.ucl" <<EOF
+label = "ls-protect";
+program = "$(pwd)/ls_protect";
+EOF
+
+	start_stack
+	if ! wait_for_file ls-protect.out; then
+		cat "$logfile" 2>/dev/null
+		atf_skip "service did not start"
+	fi
+
+	# Verify service_protect succeeded.
+	atf_check -s exit:0 -o match:"protected=yes" cat ls-protect.out
+
+	# Extract the pid.
+	svc_pid=$(grep "^pid=" ls-protect.out | cut -d= -f2)
+	if [ -z "$svc_pid" ]; then
+		atf_fail "could not determine service pid"
+	fi
+
+	# ktrace -p should fail with EPERM on a protected process.
+	atf_check -s not-exit:0 -e ignore \
+	    ktrace -p "$svc_pid"
+}
+service_protect_test_cleanup()
+{
+	pkill -9 -f ls_protect 2>/dev/null || true
+	cleanup_common
+	rm -f ls_protect ls_protect.c
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case libservice_ready
 	atf_add_test_case libservice_naming
 	atf_add_test_case libservice_lookup_fail
+	atf_add_test_case service_protect_test
 }

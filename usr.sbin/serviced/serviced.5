@@ -9,10 +9,10 @@
 .Nd service manifest format for 5BSD
 .Sh DESCRIPTION
 Service manifests are UCL files that declare one service each.
-They are typically embedded in application bundles under
-.Pa Contents/5BSD/Services/
+They are typically embedded in capability bundles under
+.Pa etc/
 and parsed by
-.Xr libappbundle 3 .
+.Xr libcapbundle 3 .
 A maximum of 64 services may be loaded at any time.
 .Pp
 Labels must be globally unique across all manifests.
@@ -331,19 +331,19 @@ jail {
 }
 .Ed
 .Sh FILES
-.Bl -tag -width "/System/Applications/"
-.It Pa /System/Applications/
-System application bundles.
+.Bl -tag -width "/Capabilities/System/"
+.It Pa /Capabilities/System/
+System capability bundles.
 Each
-.Pa *.app
+.Pa *.cap
 directory may contain Service.ucl files in the same format;
 see
-.Xr libappbundle 3 .
-.It Pa /Applications/
-User-installed application bundles.
+.Xr libcapbundle 3 .
+.It Pa /Capabilities/
+User-installed capability bundles.
 .El
 .Sh SEE ALSO
-.Xr libappbundle 3 ,
+.Xr libcapbundle 3 ,
 .Xr cap_rt 4 ,
 .Xr cap_rt_isolation 4 ,
 .Xr cap_rt_system 4 ,

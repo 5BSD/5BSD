@@ -384,6 +384,157 @@ multi_cap_batched_release_cleanup()
 }
 
 # ===================================================================
+# duplicate_release_no_underflow
+#
+# Verify that a duplicate release does not underflow the refcount.
+# After a service exits (automatic release), the claims should be
+# gone.  A subsequent reload that starts a new service for the same
+# path should claim from refcount=1, not UINT32_MAX.
+# ===================================================================
+
+atf_test_case duplicate_release_no_underflow cleanup
+duplicate_release_no_underflow_head()
+{
+	atf_set "descr" "Duplicate release returns error, does not underflow refcount"
+	atf_set "require.user" "root"
+	atf_set "timeout" "60"
+}
+duplicate_release_no_underflow_body()
+{
+	require_cap_rt
+	start_stack
+
+	write_executable dup_svc <<'SEOF'
+#!/bin/sh
+echo $$ > dup-svc.pid
+echo "running" > dup-svc-running.out
+while true; do sleep 1; done
+SEOF
+
+	cat > "$manifestdir/dup.ucl" <<EOF
+label = "dup-svc";
+program = "$(pwd)/dup_svc";
+capabilities {
+    paths = ["/var/tmp"];
+}
+EOF
+	kill -HUP "$daemon_pid"
+
+	if ! wait_for_file dup-svc-running.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "service did not start"
+	fi
+
+	# Kill the service — auto-release fires, refcount -> 0, claim released
+	kill "$(cat dup-svc.pid)" 2>/dev/null || true
+	wait_for_log "released dynamic claim /var/tmp"
+	sleep 1
+
+	# Now start a new service claiming the same path — if refcount
+	# underflowed to UINT32_MAX, the auto-claim would see it as
+	# already claimed with a huge refcount instead of claiming fresh.
+	write_executable dup2_svc <<'SEOF'
+#!/bin/sh
+echo $$ > dup2-svc.pid
+echo "running" > dup2-svc-running.out
+while true; do sleep 1; done
+SEOF
+
+	cat > "$manifestdir/dup2.ucl" <<EOF
+label = "dup2-svc";
+program = "$(pwd)/dup2_svc";
+capabilities {
+    paths = ["/var/tmp"];
+}
+EOF
+	kill -HUP "$daemon_pid"
+
+	if ! wait_for_file dup2-svc-running.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "second service did not start"
+	fi
+
+	# Verify fresh claim with refcount=1 (not UINT32_MAX)
+	oraclectl -s "$sockpath" status > status-dup.out 2>&1
+	atf_check -s exit:0 -o match:"/var/tmp.*service.*refcount=1" \
+	    cat status-dup.out
+}
+duplicate_release_no_underflow_cleanup()
+{
+	cleanup_common
+	rm -f dup_svc dup2_svc dup-svc-running.out dup2-svc-running.out \
+	    dup-svc.pid dup2-svc.pid status-dup.out
+}
+
+# ===================================================================
+# sweep_all_claim_types
+#
+# Verify that when serviced exits, ALL dynamic claim types are
+# swept — not just paths.  Uses a service with path AND network
+# capabilities.
+# ===================================================================
+
+atf_test_case sweep_all_claim_types cleanup
+sweep_all_claim_types_head()
+{
+	atf_set "descr" "Sweep on serviced exit releases path and network claims"
+	atf_set "require.user" "root"
+	atf_set "timeout" "60"
+}
+sweep_all_claim_types_body()
+{
+	require_cap_rt
+	start_stack
+
+	write_executable sweep_svc <<'SEOF'
+#!/bin/sh
+echo $$ > sweep-svc.pid
+echo "running" > sweep-svc-running.out
+while true; do sleep 1; done
+SEOF
+
+	cat > "$manifestdir/sweep.ucl" <<EOF
+label = "sweep-svc";
+program = "$(pwd)/sweep_svc";
+capabilities {
+    paths = ["/var/tmp"];
+    network = [
+        { port = 9999; protocol = "tcp"; direction = "bind"; },
+    ];
+}
+EOF
+	kill -HUP "$daemon_pid"
+
+	if ! wait_for_file sweep-svc-running.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "service did not start"
+	fi
+
+	# Verify both claim types exist
+	oraclectl -s "$sockpath" status > status-sweep-before.out 2>&1
+	atf_check -s exit:0 -o match:"/var/tmp.*service" \
+	    cat status-sweep-before.out
+
+	# Kill service — both claim types should be released
+	kill "$(cat sweep-svc.pid)" 2>/dev/null || true
+	wait_for_log "released dynamic claim /var/tmp"
+	sleep 1
+
+	# Verify /var/tmp is gone
+	oraclectl -s "$sockpath" status > status-sweep-after.out 2>&1
+	if grep -q "/var/tmp.*service" status-sweep-after.out; then
+		cat status-sweep-after.out
+		atf_fail "path claim survived sweep"
+	fi
+}
+sweep_all_claim_types_cleanup()
+{
+	cleanup_common
+	rm -f sweep_svc sweep-svc-running.out sweep-svc.pid \
+	    status-sweep-before.out status-sweep-after.out
+}
+
+# ===================================================================
 
 atf_init_test_cases()
 {
@@ -391,4 +542,6 @@ atf_init_test_cases()
 	atf_add_test_case dynamic_claim_fully_released
 	atf_add_test_case policy_claim_immune_to_release
 	atf_add_test_case multi_cap_batched_release
+	atf_add_test_case duplicate_release_no_underflow
+	atf_add_test_case sweep_all_claim_types
 }

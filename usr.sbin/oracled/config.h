@@ -12,6 +12,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <oraclert.h>
+
 #define	ORACLED_DEFAULT_CONFFILE	"/etc/oracled.conf"
 #define	ORACLED_DEFAULT_PIDFILE	"/var/run/oracled.pid"
 #define	ORACLED_DEFAULT_CTLMODE	0700
@@ -27,21 +29,6 @@
 /* Claim provenance — where a claim originated. */
 #define	CLAIM_SOURCE_POLICY	0x01	/* from oracled.conf policy section */
 #define	CLAIM_SOURCE_SERVICE	0x02	/* auto-registered from service request */
-
-/* Network claim direction flags (match cap_rt_isolation_proto.h). */
-#define	ORACLED_NET_DIR_BIND	0x01
-#define	ORACLED_NET_DIR_CONNECT	0x02
-#define	ORACLED_NET_DIR_ANY	0x03
-
-struct oracled_net_claim {
-	int		domain;		/* AF_INET, AF_INET6, 0=any */
-	int		protocol;	/* IPPROTO_TCP, IPPROTO_UDP, 0=any */
-	uint16_t	port_min;	/* host byte order */
-	uint16_t	port_max;	/* host byte order */
-	uint8_t		direction;	/* ORACLED_NET_DIR_* */
-	uint8_t		prefix;		/* CIDR prefix len, 0=exact/any */
-	uint8_t		addr[16];	/* IPv6 or v4-mapped, all-zero=any */
-};
 
 struct oracled_jail_claim {
 	int32_t		jid;		/* 0=not specified */
@@ -64,7 +51,7 @@ struct oracled_config {
 	uint8_t		claim_path_source[ORACLED_MAX_PATH_CLAIMS];
 	uint32_t	claim_path_refcount[ORACLED_MAX_PATH_CLAIMS];
 	unsigned int	nclaim_paths;
-	struct oracled_net_claim claim_net[ORACLED_MAX_NET_CLAIMS];
+	struct ort_net_claim claim_net[ORACLED_MAX_NET_CLAIMS];
 	uint8_t		claim_net_source[ORACLED_MAX_NET_CLAIMS];
 	uint32_t	claim_net_refcount[ORACLED_MAX_NET_CLAIMS];
 	unsigned int	nclaim_net;
@@ -97,7 +84,7 @@ void	config_log(const struct oracled_config *cfg);
 /* Shared UCL parsers (used by config.c, manifest.c, commands.c). */
 struct ucl_object_s;	/* forward decl to avoid ucl.h dependency in header */
 int	parse_ucl_net_claim(const struct ucl_object_s *elem,
-	    struct oracled_net_claim *nc, const char *label);
+	    struct ort_net_claim *nc, const char *label);
 int	parse_ucl_jail_claim(const struct ucl_object_s *elem,
 	    struct oracled_jail_claim *jc, const char *label);
 

@@ -133,26 +133,31 @@ main(int argc, char *argv[])
 		if (apply_procctl_self_policy() == -1) {
 			syslog(LOG_ERR,
 			    "failed to apply process hardening policy");
+			pidfile_remove(od.pidfh);
 			return (1);
 		}
-	} else
+	} else {
 		syslog(LOG_INFO, "test mode: skipping procctl");
+	}
 
 	/* Phase 4: capability runtime. */
 	if (!od.test_mode) {
 		if (cap_rt_setup() == -1) {
 			syslog(LOG_ERR,
 			    "cap_rt not available, cannot start");
+			pidfile_remove(od.pidfh);
 			exit(1);
 		}
-	} else
+	} else {
 		syslog(LOG_INFO, "test mode: skipping cap_rt");
+	}
 
 	/* Phase 5: control socket. */
 	if (!od.test_mode) {
 		if (ctl_setup() == -1) {
 			syslog(LOG_ERR,
 			    "failed to create control socket, cannot start");
+			pidfile_remove(od.pidfh);
 			exit(1);
 		}
 	} else {

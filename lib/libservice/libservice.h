@@ -32,6 +32,8 @@
 
 #include <sys/types.h>
 
+#include <stdint.h>
+
 __BEGIN_DECLS
 
 /*
@@ -46,6 +48,13 @@ int	service_init(void);
  * Returns -1 if not initialized.
  */
 int	service_pair_fd(void);
+
+/*
+ * Apply cap_rt_capprotect shielding to this service process.
+ * The service must have inherited ORACLED_CAPPROTECT_FD from serviced.
+ * A flags value of 0 uses capprotect's default.
+ */
+int	service_protect(uint32_t flags);
 
 /*
  * Report readiness to serviced.  Dependents waiting on this

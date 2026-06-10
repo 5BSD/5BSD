@@ -663,6 +663,136 @@ naming_unauthorized_name_rejected_cleanup()
 	rm -f squat_svc squat_svc.c squat-result.out
 }
 
+# -------------------------------------------------------------------
+# Test: self-lookup returns ELOOP
+# -------------------------------------------------------------------
+
+atf_test_case naming_self_lookup_eloop cleanup
+naming_self_lookup_eloop_head()
+{
+	atf_set "descr" "service looking up its own name gets ELOOP"
+	atf_set "require.user" "root"
+}
+naming_self_lookup_eloop_body()
+{
+	require_cc
+	cat > selfloop_svc.c <<'CEOF'
+#include <sys/types.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <dev/cap_rt/cap_rt_ioctl.h>
+
+#define SVC_OP_READY    1
+#define SVC_OP_REGISTER 2
+#define SVC_OP_LOOKUP   4
+#define SERVICED_NAME_MAX 255
+
+struct svc_req_hdr { uint32_t op; };
+struct svc_register_req {
+	uint32_t op;
+	uint32_t flags;
+	char name[SERVICED_NAME_MAX + 1];
+};
+struct svc_lookup_req {
+	uint32_t op;
+	uint32_t flags;
+	char name[SERVICED_NAME_MAX + 1];
+};
+struct svc_reply { int32_t status; };
+
+static int
+send_recv(int fd, const void *req, uint32_t reqlen, uint64_t token,
+    struct svc_reply *rpl)
+{
+	struct cap_rt_sendmsg_args sa;
+	struct cap_rt_recvmsg_args ra;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = req;
+	sa.payload_len = reqlen;
+	sa.reply_token = token;
+	if (ioctl(fd, CAP_RT_SENDMSG, &sa) == -1) return (-1);
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = rpl;
+	ra.payload_len = sizeof(*rpl);
+	if (ioctl(fd, CAP_RT_RECVMSG, &ra) == -1) return (-1);
+	return (0);
+}
+
+int main(void)
+{
+	struct svc_req_hdr ready_req;
+	struct svc_register_req reg_req;
+	struct svc_lookup_req lookup_req;
+	struct svc_reply rpl;
+	const char *fd_str;
+	int pair_fd;
+	FILE *out;
+
+	fd_str = getenv("ORACLED_PAIR_FD");
+	if (!fd_str) return (1);
+	pair_fd = atoi(fd_str);
+
+	/* Send READY. */
+	ready_req.op = SVC_OP_READY;
+	if (send_recv(pair_fd, &ready_req, sizeof(ready_req), 1, &rpl) == -1)
+		return (1);
+
+	/* Register our own name. */
+	memset(&reg_req, 0, sizeof(reg_req));
+	reg_req.op = SVC_OP_REGISTER;
+	strlcpy(reg_req.name, "selfloop.test", sizeof(reg_req.name));
+	if (send_recv(pair_fd, &reg_req, sizeof(reg_req), 2, &rpl) == -1)
+		return (1);
+	if (rpl.status != 0) return (1);
+
+	/* Look up our own name — should get ELOOP. */
+	memset(&lookup_req, 0, sizeof(lookup_req));
+	lookup_req.op = SVC_OP_LOOKUP;
+	strlcpy(lookup_req.name, "selfloop.test", sizeof(lookup_req.name));
+	if (send_recv(pair_fd, &lookup_req, sizeof(lookup_req), 3, &rpl) == -1)
+		return (1);
+
+	out = fopen("selfloop-result.out", "w");
+	if (out != NULL) {
+		fprintf(out, "status=%d\n", rpl.status);
+		fclose(out);
+	}
+	sleep(30);
+	return (0);
+}
+CEOF
+	atf_check -s exit:0 -e ignore cc -Wall -I/usr/src/sys -o selfloop_svc selfloop_svc.c
+
+	find_serviced
+	prepare_paths
+	cat > "$manifestdir/selfloop.ucl" <<EOF
+label = "selfloop.test";
+program = "$(pwd)/selfloop_svc";
+provides = ["selfloop.test"];
+EOF
+	write_config
+	start_oracled
+
+	if ! wait_for_file selfloop-result.out; then
+		cat "$logfile" 2>/dev/null
+		atf_skip "service did not start"
+	fi
+
+	# status=62 is ELOOP on FreeBSD
+	atf_check -s exit:0 -o match:"status=62" cat selfloop-result.out
+}
+naming_self_lookup_eloop_cleanup()
+{
+	pkill -9 -f selfloop_svc 2>/dev/null || true
+	cleanup_common
+	rm -f selfloop_svc selfloop_svc.c selfloop-result.out
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case service_ready_protocol
@@ -670,4 +800,5 @@ atf_init_test_cases()
 	atf_add_test_case naming_lookup_nonexistent
 	atf_add_test_case naming_auto_unregister_on_exit
 	atf_add_test_case naming_unauthorized_name_rejected
+	atf_add_test_case naming_self_lookup_eloop
 }

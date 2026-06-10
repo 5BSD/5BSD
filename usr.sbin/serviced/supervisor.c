@@ -289,8 +289,14 @@ supervisor_handle_timer(struct kevent *kev)
 		SERVICED_PROBE_TIMEOUT_FIRE(svc->manifest.label, "stop-kill");
 		syslog(LOG_WARNING, "service %s: stop timeout, "
 		    "sending SIGKILL", svc->manifest.label);
-		if (svc->pd_fd >= 0)
+		if (svc->coalition_fd >= 0) {
+			if (caprt_coalition_terminate(svc->coalition_fd) == -1)
+				syslog(LOG_WARNING,
+				    "service %s: coalition terminate: %m",
+				    svc->manifest.label);
+		} else if (svc->pd_fd >= 0) {
 			pdkill(svc->pd_fd, SIGKILL);
+		}
 		return;
 	}
 
@@ -326,9 +332,21 @@ svc_graceful_stop(struct svc_runtime *svc, int kq)
 	    svc->manifest.label, (intmax_t)svc->pid);
 	SERVICED_PROBE_SVC_STOP(svc->manifest.label, svc->pid);
 
-	if (svc->pd_fd >= 0)
-		pdkill(svc->pd_fd, SIGTERM);
-	schedule_stop_kill(svc, kq);
+	if (svc->coalition_fd >= 0) {
+		if (caprt_coalition_graceful(svc->coalition_fd, SIGTERM,
+		    (unsigned)svc->manifest.stop_timeout * 1000) == -1) {
+			syslog(LOG_WARNING,
+			    "service %s: coalition graceful: %m",
+			    svc->manifest.label);
+			if (svc->pd_fd >= 0)
+				pdkill(svc->pd_fd, SIGTERM);
+			schedule_stop_kill(svc, kq);
+		}
+	} else {
+		if (svc->pd_fd >= 0)
+			pdkill(svc->pd_fd, SIGTERM);
+		schedule_stop_kill(svc, kq);
+	}
 }
 
 void

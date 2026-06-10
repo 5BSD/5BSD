@@ -12,16 +12,16 @@
 
 #include <stdint.h>
 
-struct oracled_net_claim;
+struct ort_net_claim;
 struct oracled_jail_claim;
 
 /* Auto-claim helpers (called from mint handlers in oracle_proto.c). */
 int	auto_claim_path(const char *path, int *errp);
-int	auto_claim_net(const struct oracled_net_claim *nc, int *errp);
+int	auto_claim_net(const struct ort_net_claim *nc, int *errp);
 int	auto_claim_jail(const struct oracled_jail_claim *jc, int *errp);
 int	auto_claim_system(uint32_t gates, int *errp);
 void	release_auto_claim_path(const char *path);
-void	release_auto_claim_net(const struct oracled_net_claim *nc);
+void	release_auto_claim_net(const struct ort_net_claim *nc);
 void	release_auto_claim_jail(const struct oracled_jail_claim *jc);
 void	release_auto_claim_system(uint32_t gates);
 

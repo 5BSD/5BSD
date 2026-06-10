@@ -286,7 +286,7 @@ verify_manifest(const char *filepath, const struct oracled_config *cfg,
 	if (obj != NULL) {
 		it = NULL;
 		while ((iter = ucl_object_iterate(obj, &it, true)) != NULL) {
-			struct oracled_net_claim nc;
+			struct ort_net_claim nc;
 
 			if (ucl_object_type(iter) != UCL_OBJECT)
 				continue;
@@ -306,9 +306,9 @@ verify_manifest(const char *filepath, const struct oracled_config *cfg,
 				    "oracle claims\n", label, portbuf,
 				    nc.protocol == IPPROTO_TCP ? "tcp" :
 				    nc.protocol == IPPROTO_UDP ? "udp" : "any",
-				    nc.direction == ORACLED_NET_DIR_BIND ?
+				    nc.direction == ORT_NET_DIR_BIND ?
 				    "bind" : nc.direction ==
-				    ORACLED_NET_DIR_CONNECT ? "connect" : "any");
+				    ORT_NET_DIR_CONNECT ? "connect" : "any");
 				(*warns)++;
 			}
 		}

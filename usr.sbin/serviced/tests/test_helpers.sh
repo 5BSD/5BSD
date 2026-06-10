@@ -49,6 +49,7 @@ control_socket = "$sockpath";
 control_socket_mode = "0700";
 manifest_dir = "$manifestdir";
 service_manager = "$serviced_bin";
+serviced_control_socket = "${CTL_SOCK}";
 EOF
 	# Export bundle directory overrides so serviced scans test-local paths.
 	export SERVICED_BUNDLE_DIR_SYSTEM="${APPS_DIR}"
@@ -132,29 +133,29 @@ require_cc()
 # --- Bundle test helpers ---
 
 export WORK="$(pwd)"
-APPS_DIR="${WORK}/System/Applications"
-USER_APPS_DIR="${WORK}/Applications"
+APPS_DIR="${WORK}/Capabilities/System"
+USER_APPS_DIR="${WORK}/Capabilities"
 CTL_SOCK="${WORK}/serviced.sock"
 
-# Create a system bundle (.app) in the fake /System/Applications.
+# Create a system bundle (.cap) in the fake /Capabilities/System.
 # Usage: create_system_bundle <name> <bundle_id> <program> <provides> [ucl_extra]
 create_system_bundle()
 {
 	local name="$1" bid="$2" prog="$3" provides="$4" extra="${5:-}"
-	local dir="${APPS_DIR}/${name}.app"
+	local dir="${APPS_DIR}/${name}.cap"
 
-	mkdir -p "${dir}/Contents/5BSD/Services"
-	mkdir -p "${dir}/Contents/bin"
+	mkdir -p "${dir}/etc"
+	mkdir -p "${dir}/bin"
 
-	cat > "${dir}/Contents/bin/${prog}" <<-'SVCEOF'
+	cat > "${dir}/bin/${prog}" <<-SVCEOF
 	#!/bin/sh
 	# Minimal test service: write ready file then sleep.
-	touch "${WORK:-/tmp}/${0##*/}.ready"
+	touch "${WORK}/\${0##*/}.ready"
 	exec sleep 3600
 	SVCEOF
-	chmod 755 "${dir}/Contents/bin/${prog}"
+	chmod 755 "${dir}/bin/${prog}"
 
-	cat > "${dir}/Contents/5BSD/Services/${prog}.ucl" <<-UCL
+	cat > "${dir}/etc/${prog}.ucl" <<-UCL
 	bundle_id = "${bid}";
 	version = "1.0";
 	author = "test";
@@ -174,24 +175,24 @@ create_system_bundle_with_requires()
 	    "requires = [\"${requires}\"];"
 }
 
-# Create a user bundle (.app) in the fake /Applications.
+# Create a user bundle (.cap) in the fake /Capabilities.
 # Usage: create_user_bundle <name> <bundle_id> <program> <provides> [ucl_extra]
 create_user_bundle()
 {
 	local name="$1" bid="$2" prog="$3" provides="$4" extra="${5:-}"
-	local dir="${USER_APPS_DIR}/${name}.app"
+	local dir="${USER_APPS_DIR}/${name}.cap"
 
-	mkdir -p "${dir}/Contents/5BSD/Services"
-	mkdir -p "${dir}/Contents/bin"
+	mkdir -p "${dir}/etc"
+	mkdir -p "${dir}/bin"
 
-	cat > "${dir}/Contents/bin/${prog}" <<-'SVCEOF'
+	cat > "${dir}/bin/${prog}" <<-SVCEOF
 	#!/bin/sh
-	touch "${WORK:-/tmp}/${0##*/}.ready"
+	touch "${WORK}/\${0##*/}.ready"
 	exec sleep 3600
 	SVCEOF
-	chmod 755 "${dir}/Contents/bin/${prog}"
+	chmod 755 "${dir}/bin/${prog}"
 
-	cat > "${dir}/Contents/5BSD/Services/${prog}.ucl" <<-UCL
+	cat > "${dir}/etc/${prog}.ucl" <<-UCL
 	bundle_id = "${bid}";
 	version = "1.0";
 	author = "test";
@@ -207,16 +208,16 @@ create_user_bundle()
 create_user_bundle_custom()
 {
 	local name="$1" prog="$2" ucl_content="$3"
-	local dir="${USER_APPS_DIR}/${name}.app"
+	local dir="${USER_APPS_DIR}/${name}.cap"
 
-	mkdir -p "${dir}/Contents/5BSD/Services"
-	mkdir -p "${dir}/Contents/bin"
+	mkdir -p "${dir}/etc"
+	mkdir -p "${dir}/bin"
 
-	printf '#!/bin/sh\nexec sleep 3600\n' > "${dir}/Contents/bin/${prog}"
-	chmod 755 "${dir}/Contents/bin/${prog}"
+	printf '#!/bin/sh\nexec sleep 3600\n' > "${dir}/bin/${prog}"
+	chmod 755 "${dir}/bin/${prog}"
 
 	printf '%s\n' "${ucl_content}" > \
-	    "${dir}/Contents/5BSD/Services/${prog}.ucl"
+	    "${dir}/etc/${prog}.ucl"
 
 	echo "${dir}"
 }

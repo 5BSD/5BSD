@@ -12,6 +12,6 @@ HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
 CFLAGS+=	-I${SRCTOP}/sys
-CFLAGS+=	-I${SRCTOP}/usr.sbin/serviced
+CFLAGS+=	-I${SRCTOP}/lib/liboraclert
 
 .include <bsd.lib.mk>

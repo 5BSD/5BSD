@@ -21,6 +21,7 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#include "oraclectl.h"
 #include "serviced_ctl.h"
 #include "servicectl.h"
 
@@ -49,41 +50,21 @@ sctl_connect(void)
 static void
 write_all(int fd, const void *buf, size_t len)
 {
-	const char *p;
-	ssize_t n;
-	size_t off;
+	int error;
 
-	p = buf;
-	for (off = 0; off < len; off += (size_t)n) {
-		n = write(fd, p + off, len - off);
-		if (n == -1) {
-			if (errno == EINTR)
-				continue;
-			err(1, "write");
-		}
-		if (n == 0)
-			errx(1, "short write");
-	}
+	error = oraclectl_writen(fd, buf, len);
+	if (error != 0)
+		errc(1, error, "write");
 }
 
 static void
 read_all(int fd, void *buf, size_t len)
 {
-	char *p;
-	ssize_t n;
-	size_t off;
+	int error;
 
-	p = buf;
-	for (off = 0; off < len; off += (size_t)n) {
-		n = read(fd, p + off, len - off);
-		if (n == 0)
-			errx(1, "connection closed");
-		if (n == -1) {
-			if (errno == EINTR)
-				continue;
-			err(1, "read");
-		}
-	}
+	error = oraclectl_readn(fd, buf, len);
+	if (error != 0)
+		errc(1, error, "read");
 }
 
 /*
@@ -235,8 +216,8 @@ usage(void)
 	    "  services            list loaded services\n"
 	    "  reload              reload service bundles\n"
 	    "  stop <label>        stop a running service\n"
-	    "  install <path.app>  install a .app bundle to /Applications/\n"
-	    "  verify <path.app>   validate bundle integrity\n"
+	    "  install <path.cap>  install a .cap bundle to /Capabilities/\n"
+	    "  verify <path.cap>   validate bundle integrity\n"
 	    "  bundles             list all registered bundles\n");
 	exit(EX_USAGE);
 }
@@ -277,12 +258,12 @@ main(int argc, char *argv[])
 	}
 	if (strcmp(cmd, "install") == 0) {
 		if (argc != 2)
-			errx(EX_USAGE, "install requires a .app bundle path");
+			errx(EX_USAGE, "install requires a .cap bundle path");
 		return (cmd_install(argv[1]));
 	}
 	if (strcmp(cmd, "verify") == 0) {
 		if (argc != 2)
-			errx(EX_USAGE, "verify requires a .app bundle path");
+			errx(EX_USAGE, "verify requires a .cap bundle path");
 		return (cmd_verify(argv[1]));
 	}
 	if (strcmp(cmd, "bundles") == 0 && argc == 1)

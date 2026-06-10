@@ -18,7 +18,7 @@
 #include <string.h>
 #include <syslog.h>
 
-#include <libappbundle.h>
+#include <libcapbundle.h>
 
 #include "serviced.h"
 #include "serviced_probes.h"
@@ -66,25 +66,82 @@ static bool
 manifest_equal(const struct svc_manifest *a, const struct svc_manifest *b)
 {
 
-	return (memcmp(a, b, sizeof(*a)) == 0);
+	if (strcmp(a->label, b->label) != 0 ||
+	    strcmp(a->program, b->program) != 0 ||
+	    strcmp(a->user, b->user) != 0 ||
+	    strcmp(a->group, b->group) != 0 ||
+	    a->restart != b->restart ||
+	    a->stop_timeout != b->stop_timeout ||
+	    a->max_failures != b->max_failures ||
+	    a->on_demand != b->on_demand ||
+	    a->nprovides != b->nprovides ||
+	    a->nrequires != b->nrequires ||
+	    a->ncap_paths != b->ncap_paths ||
+	    a->ncap_net != b->ncap_net ||
+	    a->ncap_files != b->ncap_files ||
+	    a->ncap_jail != b->ncap_jail ||
+	    a->cap_system != b->cap_system ||
+	    a->has_jail != b->has_jail)
+		return (false);
+	if (a->has_jail &&
+	    (strcmp(a->jail_name, b->jail_name) != 0 ||
+	    strcmp(a->jail_path, b->jail_path) != 0 ||
+	    strcmp(a->jail_hostname, b->jail_hostname) != 0 ||
+	    strcmp(a->jail_ip4_addr, b->jail_ip4_addr) != 0))
+		return (false);
+	return (memcmp(a->provides, b->provides,
+	    sizeof(a->provides)) == 0 &&
+	    memcmp(a->requires, b->requires,
+	    sizeof(a->requires)) == 0 &&
+	    memcmp(a->cap_paths, b->cap_paths,
+	    sizeof(a->cap_paths)) == 0 &&
+	    memcmp(a->cap_net, b->cap_net,
+	    sizeof(a->cap_net)) == 0 &&
+	    memcmp(a->cap_files, b->cap_files,
+	    sizeof(a->cap_files)) == 0 &&
+	    memcmp(a->cap_jail, b->cap_jail,
+	    sizeof(a->cap_jail)) == 0);
 }
 
 static bool
 bundle_service_manifest(const char *label, struct svc_manifest *m)
 {
 	unsigned bi, si;
-	struct appbundle *ab;
-	struct appbundle_service *asvc;
+	struct capbundle *ab;
+	struct capbundle_service *asvc;
 
-	if (bundle_registry_lookup(label, &bi, &si) == -1)
-		return (false);
-	ab = bundle_registry_get(bi);
-	if (ab == NULL)
-		return (false);
-	asvc = appbundle_service(ab, si);
-	if (asvc == NULL)
-		return (false);
-	return (appbundle_svc_fill_manifest(asvc, m) == 0);
+	/*
+	 * Search by label, not by provides name.  bundle_registry_lookup
+	 * searches the provides hash, which only works when label ==
+	 * provides[0].  Fall back to a linear scan to find services whose
+	 * label differs from their provides names.
+	 */
+	if (bundle_registry_lookup(label, &bi, &si) == 0) {
+		ab = bundle_registry_get(bi);
+		if (ab != NULL) {
+			asvc = capbundle_service(ab, si);
+			if (asvc != NULL &&
+			    strcmp(capbundle_svc_label(asvc), label) == 0)
+				return (capbundle_svc_fill_manifest(asvc,
+				    m) == 0);
+		}
+	}
+
+	/* Linear scan: label may differ from provides names. */
+	for (bi = 0; bi < bundle_registry_count(); bi++) {
+		ab = bundle_registry_get(bi);
+		if (ab == NULL)
+			continue;
+		for (si = 0; si < capbundle_nservices(ab); si++) {
+			asvc = capbundle_service(ab, si);
+			if (asvc == NULL)
+				continue;
+			if (strcmp(capbundle_svc_label(asvc), label) == 0)
+				return (capbundle_svc_fill_manifest(asvc,
+				    m) == 0);
+		}
+	}
+	return (false);
 }
 
 static bool
@@ -137,7 +194,8 @@ desired_service_manifest(const char *label, struct svc_manifest *m)
 
 /*
  * Re-register kevent udata pointers for all running services.
- * Called after depgraph_sort moves array entries.
+ * Called after svc_remove() shifts array entries (Phase 1) or
+ * after depgraph_sort() reorders entries (Phase 3).
  */
 void
 svc_reregister_kevents(int kq)
@@ -198,6 +256,9 @@ int
 supervisor_reload(int kq, char *summary, size_t sumlen)
 {
 	unsigned i;
+	unsigned reload_nremoved, reload_nchanged, reload_nnew;
+
+	reload_nremoved = reload_nchanged = reload_nnew = 0;
 
 	syslog(LOG_INFO, "reload: rescanning bundle directories");
 
@@ -213,30 +274,27 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 	}
 
 	/*
-	 * Rescan the bundle registry and launch any new non-on-demand
-	 * services that aren't already running.
+	 * Rescan the bundle registry.  Teardown the old registry only
+	 * after confirming the new one initializes successfully, so
+	 * that a rescan failure does not break on-demand lookups that
+	 * depend on the existing registry.
 	 */
 	bundle_registry_teardown();
-
-	/*
-	 * Invalidate bundle indices in all running services.
-	 * The old bundle_idx/bundle_svc_idx pointed into the
-	 * now-freed registry.
-	 */
-	for (i = 0; i < sd.nservices; i++) {
-		sd.services[i].bundle_idx = (unsigned)-1;
-		sd.services[i].bundle_svc_idx = (unsigned)-1;
-	}
-
 	if (bundle_registry_init() == -1) {
 		syslog(LOG_ERR, "reload: bundle registry rescan failed; "
-		    "running services continue, no new launches until "
-		    "next successful reload");
+		    "running services continue, on-demand lookups "
+		    "unavailable until next successful reload");
 		if (summary != NULL && sumlen > 0)
 			snprintf(summary, sumlen,
 			    "error: bundle rescan failed, "
 			    "running services unaffected\n");
 		return (0);
+	}
+
+	/* Invalidate bundle indices — the old registry is gone. */
+	for (i = 0; i < sd.nservices; i++) {
+		sd.services[i].bundle_idx = (unsigned)-1;
+		sd.services[i].bundle_svc_idx = (unsigned)-1;
 	}
 
 	/*
@@ -265,8 +323,10 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 				svc->remove_pending = true;
 				SERVICED_PROBE_SVC_REMOVED(svc->manifest.label);
 				nstopped++;
+				reload_nremoved++;
 			} else if (svc->state == SVC_STATE_STOPPING) {
 				svc->remove_pending = true;
+				reload_nremoved++;
 			} else {
 				char removed_label[SERVICED_LABEL_MAX];
 
@@ -278,11 +338,15 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 				svc_remove(si);
 				si--;
 				SERVICED_PROBE_SVC_REMOVED(removed_label);
+				reload_nremoved++;
 			}
 		}
 		if (nstopped > 0)
 			syslog(LOG_INFO, "reload: %u services marked for removal",
 			    nstopped);
+		/* Re-register kevents after svc_remove shifted the array. */
+		if (reload_nremoved > 0)
+			svc_reregister_kevents(kq);
 	}
 
 	/*
@@ -324,100 +388,80 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 				svc->restart_count = 0;
 			}
 		}
+		reload_nchanged = nchanged;
 		if (nchanged > 0)
 			syslog(LOG_INFO, "reload: %u services changed",
 			    nchanged);
 	}
 
 	/*
-	 * Phase 3: Launch new non-on-demand services not already running.
+	 * Phase 3: Collect new non-on-demand services, dependency-sort
+	 * them, then launch in order.  This ensures correct startup
+	 * ordering and detects cycles among newly added services.
 	 */
 	{
-		unsigned bi, si, nnew_launched;
+		unsigned bi, si, nnew_collected, nnew_launched;
+		unsigned first_new;
 		size_t off;
 
-		nnew_launched = 0;
+		nnew_collected = nnew_launched = 0;
 		off = 0;
+		first_new = sd.nservices;
+
+		/* 3a: Collect new bundle services into the array. */
 		for (bi = 0; bi < bundle_registry_count(); bi++) {
-			struct appbundle *ab = bundle_registry_get(bi);
+			struct capbundle *ab = bundle_registry_get(bi);
+			struct capbundle_service *asvc;
+
 			if (ab == NULL)
 				continue;
-			for (si = 0; si < appbundle_nservices(ab); si++) {
-				struct appbundle_service *asvc =
-				    appbundle_service(ab, si);
-				if (asvc == NULL || appbundle_svc_on_demand(asvc))
+			for (si = 0; si < capbundle_nservices(ab); si++) {
+				struct svc_runtime *svc;
+
+				asvc = capbundle_service(ab, si);
+				if (asvc == NULL ||
+				    capbundle_svc_on_demand(asvc))
 					continue;
-				/* Skip if already loaded. */
-				if (svc_by_label(appbundle_svc_label(asvc))
+				if (svc_by_label(capbundle_svc_label(asvc))
 				    != NULL)
 					continue;
 				if (sd.nservices >= SERVICED_MAX_SERVICES)
 					break;
-				/* Add and launch. */
-				{
-					struct svc_runtime *svc;
 
-					svc = &sd.services[sd.nservices];
-					memset(svc, 0, sizeof(*svc));
-					svc->pd_fd = -1;
-					svc->pair_fd = -1;
-					svc->coalition_fd = -1;
-					svc->jail_fd = -1;
-					svc->state = SVC_STATE_STOPPED;
-					svc->bundle_idx = bi;
-					svc->bundle_svc_idx = si;
-					strlcpy(svc->launched_by, "reload",
-					    sizeof(svc->launched_by));
+				svc = &sd.services[sd.nservices];
+				memset(svc, 0, sizeof(*svc));
+				svc->pd_fd = -1;
+				svc->pair_fd = -1;
+				svc->coalition_fd = -1;
+				svc->jail_fd = -1;
+				svc->state = SVC_STATE_STOPPED;
+				svc->bundle_idx = bi;
+				svc->bundle_svc_idx = si;
+				strlcpy(svc->launched_by, "reload",
+				    sizeof(svc->launched_by));
 
-					if (appbundle_svc_fill_manifest(asvc,
-					    &svc->manifest) == -1) {
-						syslog(LOG_WARNING,
-						    "reload: skipping "
-						    "invalid bundle "
-						    "service '%s'",
-						    appbundle_svc_label(
-						    asvc));
-						memset(svc, 0,
-						    sizeof(*svc));
-						svc->pd_fd = -1;
-						svc->pair_fd = -1;
-						svc->coalition_fd = -1;
-						svc->jail_fd = -1;
-						continue;
-					}
-					sd.nservices++;
-
-					if (svc_exec(svc, kq) == 0) {
-						syslog(LOG_INFO,
-						    "reload: launched '%s'",
-						    svc->manifest.label);
-						SERVICED_PROBE_SVC_LOAD(
-						    svc->manifest.label);
-						nnew_launched++;
-					} else {
-						syslog(LOG_ERR,
-						    "reload: failed to start"
-						    " '%s': %m",
-						    svc->manifest.label);
-						SERVICED_PROBE_SVC_EXEC_FAIL(
-						    svc->manifest.label, errno);
-						/* Rollback: remove the slot
-						 * so future reloads can
-						 * retry this service. */
-						memset(svc, 0, sizeof(*svc));
-						sd.nservices--;
-					}
+				if (capbundle_svc_fill_manifest(asvc,
+				    &svc->manifest) == -1) {
+					syslog(LOG_WARNING,
+					    "reload: skipping invalid "
+					    "bundle service '%s'",
+					    capbundle_svc_label(asvc));
+					continue;
 				}
+				sd.nservices++;
+				nnew_collected++;
 			}
 		}
 
+		/* 3b: Collect new legacy UCL manifests. */
 		{
 			const char *manifest_dir;
 			DIR *d;
 			struct dirent *de;
 
 			manifest_dir = getenv("SERVICED_MANIFEST_DIR");
-			if (manifest_dir != NULL && manifest_dir[0] != '\0' &&
+			if (manifest_dir != NULL &&
+			    manifest_dir[0] != '\0' &&
 			    (d = opendir(manifest_dir)) != NULL) {
 				while ((de = readdir(d)) != NULL) {
 					struct svc_runtime *svc;
@@ -430,13 +474,16 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 					    strcmp(de->d_name + len - 4,
 					    ".ucl") != 0)
 						continue;
-					snprintf(path, sizeof(path), "%s/%s",
-					    manifest_dir, de->d_name);
-					if (manifest_load_file(path, &m) == -1)
+					snprintf(path, sizeof(path),
+					    "%s/%s", manifest_dir,
+					    de->d_name);
+					if (manifest_load_file(path,
+					    &m) == -1)
 						continue;
 					if (svc_by_label(m.label) != NULL)
 						continue;
-					if (sd.nservices >= SERVICED_MAX_SERVICES)
+					if (sd.nservices >=
+					    SERVICED_MAX_SERVICES)
 						break;
 
 					svc = &sd.services[sd.nservices];
@@ -452,40 +499,55 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 					strlcpy(svc->launched_by, "reload",
 					    sizeof(svc->launched_by));
 					sd.nservices++;
-
-					if (svc_exec(svc, kq) == 0) {
-						syslog(LOG_INFO,
-						    "reload: launched '%s'",
-						    svc->manifest.label);
-						SERVICED_PROBE_SVC_LOAD(
-						    svc->manifest.label);
-						nnew_launched++;
-					} else {
-						syslog(LOG_ERR,
-						    "reload: failed to start "
-						    "'%s': %m",
-						    svc->manifest.label);
-						SERVICED_PROBE_SVC_EXEC_FAIL(
-						    svc->manifest.label, errno);
-						memset(svc, 0, sizeof(*svc));
-						svc->pd_fd = -1;
-						svc->pair_fd = -1;
-						svc->coalition_fd = -1;
-						svc->jail_fd = -1;
-						sd.nservices--;
-					}
+					nnew_collected++;
 				}
 				closedir(d);
 			}
 		}
+
+		/* 3c: Sort new services by dependency order. */
+		if (nnew_collected > 1) {
+			if (depgraph_sort(&sd.services[first_new],
+			    nnew_collected) == -1) {
+				syslog(LOG_ERR,
+				    "reload: dependency sort failed "
+				    "for new services, removing them");
+				sd.nservices = first_new;
+				nnew_collected = 0;
+			}
+		}
+
+		/* 3d: Launch in sorted order. */
+		for (i = first_new; i < first_new + nnew_collected; i++) {
+			struct svc_runtime *svc = &sd.services[i];
+
+			if (svc_exec(svc, kq) == 0) {
+				syslog(LOG_INFO,
+				    "reload: launched '%s'",
+				    svc->manifest.label);
+				SERVICED_PROBE_SVC_LOAD(
+				    svc->manifest.label);
+				nnew_launched++;
+			} else {
+				syslog(LOG_ERR,
+				    "reload: failed to start '%s': %m",
+				    svc->manifest.label);
+				SERVICED_PROBE_SVC_EXEC_FAIL(
+				    svc->manifest.label, errno);
+			}
+		}
+
+		reload_nnew = nnew_launched;
 		if (summary != NULL && sumlen > 0) {
 			BUF_APPEND(summary, sumlen, &off,
-			    "reload: %u bundles", bundle_registry_count());
-			if (nnew_launched > 0)
-				BUF_APPEND(summary, sumlen, &off,
-				    ", %u new launched", nnew_launched);
-			BUF_APPEND(summary, sumlen, &off, "\n");
+			    "reload: %u bundles, %u new, "
+			    "%u changed, %u removed\n",
+			    bundle_registry_count(), nnew_launched,
+			    reload_nchanged, reload_nremoved);
 		}
 	}
+
+	syslog(LOG_INFO, "reload: %u new, %u changed, %u removed",
+	    reload_nnew, reload_nchanged, reload_nremoved);
 	return (0);
 }

@@ -26,8 +26,8 @@
 
 #include "oraclectl.h"
 
-static int
-readn(int fd, void *buf, size_t len)
+int
+oraclectl_readn(int fd, void *buf, size_t len)
 {
 	struct timeval tv;
 	ssize_t n;
@@ -52,8 +52,8 @@ readn(int fd, void *buf, size_t len)
 	return (0);
 }
 
-static int
-writen(int fd, const void *buf, size_t len)
+int
+oraclectl_writen(int fd, const void *buf, size_t len)
 {
 	ssize_t n;
 	size_t off;
@@ -89,16 +89,16 @@ do_call(int fd, uint32_t op, uint32_t flags,
 	req.flags = flags;
 	req.datalen = datalen;
 
-	error = writen(fd, &req, sizeof(req));
+	error = oraclectl_writen(fd, &req, sizeof(req));
 	if (error != 0)
 		return (error);
 	if (datalen > 0) {
-		error = writen(fd, data, datalen);
+		error = oraclectl_writen(fd, data, datalen);
 		if (error != 0)
 			return (error);
 	}
 
-	error = readn(fd, rpl, sizeof(*rpl));
+	error = oraclectl_readn(fd, rpl, sizeof(*rpl));
 	return (error);
 }
 
@@ -186,7 +186,7 @@ do_call_summary(int fd, uint32_t op, uint32_t flags,
 	if (textlen > 0 && summary != NULL && sumlen > 0) {
 		if (textlen >= sumlen)
 			textlen = (uint32_t)(sumlen - 1);
-		error = readn(fd, summary, textlen);
+		error = oraclectl_readn(fd, summary, textlen);
 		if (error != 0)
 			return (error);
 		summary[textlen] = '\0';

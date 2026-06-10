@@ -43,12 +43,12 @@ find_path_claim(const char *path)
 }
 
 static int
-find_net_claim(const struct oracled_net_claim *nc)
+find_net_claim(const struct ort_net_claim *nc)
 {
 	unsigned i;
 
 	for (i = 0; i < od.cfg.nclaim_net; i++) {
-		const struct oracled_net_claim *c = &od.cfg.claim_net[i];
+		const struct ort_net_claim *c = &od.cfg.claim_net[i];
 
 		if (c->domain == nc->domain &&
 		    c->protocol == nc->protocol &&
@@ -171,7 +171,7 @@ auto_claim_path(const char *path, int *errp)
 }
 
 int
-auto_claim_net(const struct oracled_net_claim *nc, int *errp)
+auto_claim_net(const struct ort_net_claim *nc, int *errp)
 {
 	int idx;
 
@@ -291,7 +291,7 @@ release_auto_claim_path(const char *path)
 }
 
 void
-release_auto_claim_net(const struct oracled_net_claim *nc)
+release_auto_claim_net(const struct ort_net_claim *nc)
 {
 	uint32_t new_refcount;
 	int idx;
@@ -367,7 +367,7 @@ release_auto_claim_system(uint32_t gates)
 void
 handle_claim_path(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_mint_path_req *req;
+	const struct oracle_path_req *req;
 	int err;
 
 	if (len < sizeof(*req)) {
@@ -395,8 +395,8 @@ handle_claim_path(const void *payload, uint32_t len, uint64_t reply_token)
 void
 handle_claim_net(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_mint_net_req *req;
-	struct oracled_net_claim nc;
+	const struct oracle_net_req *req;
+	struct ort_net_claim nc;
 	int err;
 
 	if (len < sizeof(*req)) {
@@ -405,7 +405,7 @@ handle_claim_net(const void *payload, uint32_t len, uint64_t reply_token)
 	}
 	req = payload;
 
-	if (req->direction == 0 || (req->direction & ~ORACLED_NET_DIR_ANY) != 0 ||
+	if (req->direction == 0 || (req->direction & ~ORT_NET_DIR_ANY) != 0 ||
 	    (req->domain != 0 && req->domain != AF_INET &&
 	    req->domain != AF_INET6) ||
 	    (req->protocol != 0 && req->protocol != IPPROTO_TCP &&
@@ -436,7 +436,7 @@ handle_claim_net(const void *payload, uint32_t len, uint64_t reply_token)
 void
 handle_claim_jail(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_mint_jail_req *req;
+	const struct oracle_jail_req *req;
 	struct oracled_jail_claim jc;
 	int err;
 
@@ -475,7 +475,7 @@ handle_claim_jail(const void *payload, uint32_t len, uint64_t reply_token)
 void
 handle_claim_system(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_mint_system_req *req;
+	const struct oracle_system_req *req;
 	int err;
 
 	if (len < sizeof(*req)) {
@@ -501,7 +501,7 @@ handle_claim_system(const void *payload, uint32_t len, uint64_t reply_token)
 void
 handle_release_path(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_mint_path_req *req;
+	const struct oracle_path_req *req;
 	int idx;
 
 	if (len < sizeof(*req)) {
@@ -535,6 +535,14 @@ handle_release_path(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 
+	if (od.cfg.claim_path_refcount[idx] == 0) {
+		syslog(LOG_WARNING,
+		    "oracle_proto: release_path %s refcount already 0",
+		    req->path);
+		ORACLED_PROBE_DYN_RELEASE_PATH(req->path, 0, EINVAL);
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
 	od.cfg.claim_path_refcount[idx]--;
 	{
 		uint32_t new_refcount = od.cfg.claim_path_refcount[idx];
@@ -559,8 +567,8 @@ handle_release_path(const void *payload, uint32_t len, uint64_t reply_token)
 void
 handle_release_net(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_mint_net_req *req;
-	struct oracled_net_claim nc;
+	const struct oracle_net_req *req;
+	struct ort_net_claim nc;
 	int idx;
 
 	if (len < sizeof(*req)) {
@@ -569,7 +577,7 @@ handle_release_net(const void *payload, uint32_t len, uint64_t reply_token)
 	}
 	req = payload;
 
-	if (req->direction == 0 || (req->direction & ~ORACLED_NET_DIR_ANY) != 0 ||
+	if (req->direction == 0 || (req->direction & ~ORT_NET_DIR_ANY) != 0 ||
 	    (req->domain != 0 && req->domain != AF_INET &&
 	    req->domain != AF_INET6) ||
 	    (req->protocol != 0 && req->protocol != IPPROTO_TCP &&
@@ -605,6 +613,14 @@ handle_release_net(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 
+	if (od.cfg.claim_net_refcount[idx] == 0) {
+		syslog(LOG_WARNING,
+		    "oracle_proto: release_net refcount already 0");
+		ORACLED_PROBE_DYN_RELEASE_NET(nc.port_min, nc.port_max,
+		    nc.protocol, 0, EINVAL);
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
 	od.cfg.claim_net_refcount[idx]--;
 	{
 		uint32_t new_refcount = od.cfg.claim_net_refcount[idx];
@@ -626,7 +642,7 @@ handle_release_net(const void *payload, uint32_t len, uint64_t reply_token)
 void
 handle_release_jail(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_mint_jail_req *req;
+	const struct oracle_jail_req *req;
 	struct oracled_jail_claim jc;
 	int idx;
 
@@ -668,6 +684,15 @@ handle_release_jail(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 
+	if (od.cfg.claim_jail_refcount[idx] == 0) {
+		syslog(LOG_WARNING,
+		    "oracle_proto: release_jail %s refcount already 0",
+		    jc.name);
+		ORACLED_PROBE_DYN_RELEASE_JAIL(jc.name, jc.actions, 0,
+		    EINVAL);
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
 	od.cfg.claim_jail_refcount[idx]--;
 	{
 		uint32_t new_refcount = od.cfg.claim_jail_refcount[idx];
@@ -689,7 +714,7 @@ handle_release_jail(const void *payload, uint32_t len, uint64_t reply_token)
 void
 handle_release_system(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_mint_system_req *req;
+	const struct oracle_system_req *req;
 	uint32_t release_bits;
 	unsigned bit;
 

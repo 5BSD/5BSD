@@ -9,8 +9,10 @@ HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
 CFLAGS+=	-I${SRCTOP}/usr.sbin/serviced
-CFLAGS+=	-I${SRCTOP}/lib/libappbundle
+CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS+=	-I${SRCTOP}/lib/liboraclectl
+CFLAGS+=	-I${SRCTOP}/lib/liboraclert
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		appbundle ucl
+LIBADD=		capbundle oraclectl ucl
 
 .include <bsd.prog.mk>

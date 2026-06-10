@@ -132,39 +132,124 @@ oracle_rpc(int pair_fd, const void *req, uint32_t reqlen,
 	return (rpl.status);
 }
 
-int
-oracle_mint_path(int pair_fd, const char *path)
+/*
+ * Fill an oracle_path_req from a path string.
+ * Returns 0 on success, -1 with errno set on failure.
+ */
+static int
+fill_path_req(struct oracle_path_req *req, uint32_t op, const char *path)
 {
-	struct oracle_mint_path_req req;
-	int token_fd;
-	int status;
 
-	if (strlen(path) >= sizeof(req.path)) {
+	if (strlen(path) >= sizeof(req->path)) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
+	memset(req, 0, sizeof(*req));
+	req->op = op;
+	strlcpy(req->path, path, sizeof(req->path));
+	return (0);
+}
 
-	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_MINT_PATH;
-	strlcpy(req.path, path, sizeof(req.path));
+/*
+ * Fill an oracle_net_req from an ort_net_claim.
+ */
+static void
+fill_net_req(struct oracle_net_req *req, uint32_t op,
+    const struct ort_net_claim *nc)
+{
 
-	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1,
-	    NULL);
+	memset(req, 0, sizeof(*req));
+	req->op = op;
+	req->domain = nc->domain;
+	req->protocol = nc->protocol;
+	req->port_min = nc->port_min;
+	req->port_max = nc->port_max;
+	req->direction = nc->direction;
+	req->prefix = nc->prefix;
+	memcpy(req->addr, nc->addr, sizeof(req->addr));
+}
+
+/*
+ * Fill an oracle_jail_req from a serviced_jail_claim.
+ */
+static void
+fill_jail_req(struct oracle_jail_req *req, uint32_t op,
+    const struct serviced_jail_claim *jc)
+{
+
+	memset(req, 0, sizeof(*req));
+	req->op = op;
+	req->jid = jc->jid;
+	req->actions = jc->actions;
+	strlcpy(req->name, jc->name, sizeof(req->name));
+}
+
+/*
+ * Fill an oracle_system_req from a gates bitmask.
+ */
+static void
+fill_system_req(struct oracle_system_req *req, uint32_t op, uint32_t gates)
+{
+
+	memset(req, 0, sizeof(*req));
+	req->op = op;
+	req->gates = gates;
+}
+
+/*
+ * Common status check for RPC calls that return no fds.
+ * Maps oracled error status to errno; returns 0 on success, -1 on error.
+ */
+static int
+check_status(int status)
+{
+
 	if (status < 0)
 		return (-1);
 	if (status != 0) {
 		errno = status;
 		return (-1);
 	}
-	return (token_fd);
+	return (0);
+}
+
+/*
+ * Common status check for RPC calls that return a single fd.
+ * Maps oracled error status to errno; returns the fd on success, -1 on error.
+ */
+static int
+check_status_fd(int status, int fd)
+{
+
+	if (status < 0)
+		return (-1);
+	if (status != 0) {
+		errno = status;
+		return (-1);
+	}
+	return (fd);
+}
+
+/* --- Mint operations (return token fds) --- */
+
+int
+oracle_mint_path(int pair_fd, const char *path)
+{
+	struct oracle_path_req req;
+	int token_fd, status;
+
+	if (fill_path_req(&req, ORACLE_OP_MINT_PATH, path) != 0)
+		return (-1);
+	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1,
+	    NULL);
+	return (check_status_fd(status, token_fd));
 }
 
 int
 oracle_mint_file(int pair_fd, const char *path, uint64_t actions)
 {
 	struct oracle_mint_file_req req;
-	int token_fd;
-	int status;
+	int token_fd, status;
 
 	if (actions == 0 || (actions & ~FI_FS_ALL) != 0) {
 		errno = EINVAL;
@@ -182,48 +267,26 @@ oracle_mint_file(int pair_fd, const char *path, uint64_t actions)
 
 	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1,
 	    NULL);
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
-	return (token_fd);
+	return (check_status_fd(status, token_fd));
 }
 
 int
-oracle_mint_net(int pair_fd, const struct serviced_net_claim *nc)
+oracle_mint_net(int pair_fd, const struct ort_net_claim *nc)
 {
-	struct oracle_mint_net_req req;
-	int token_fd;
-	int status;
+	struct oracle_net_req req;
+	int token_fd, status;
 
-	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_MINT_NET;
-	req.domain = nc->domain;
-	req.protocol = nc->protocol;
-	req.port_min = nc->port_min;
-	req.port_max = nc->port_max;
-	req.direction = nc->direction;
-	req.prefix = nc->prefix;
-	memcpy(req.addr, nc->addr, sizeof(req.addr));
-
-	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1, NULL);
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
-	return (token_fd);
+	fill_net_req(&req, ORACLE_OP_MINT_NET, nc);
+	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1,
+	    NULL);
+	return (check_status_fd(status, token_fd));
 }
 
 int
 oracle_mint_jail(int pair_fd, const struct serviced_jail_claim *jc)
 {
-	struct oracle_mint_jail_req req;
-	int token_fd;
-	int status;
+	struct oracle_jail_req req;
+	int token_fd, status;
 
 	if (jc->jid < 0 || jc->actions == 0 ||
 	    (jc->actions & ~FI_JAIL_ALL) != 0 ||
@@ -232,20 +295,10 @@ oracle_mint_jail(int pair_fd, const struct serviced_jail_claim *jc)
 		return (-1);
 	}
 
-	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_MINT_JAIL;
-	req.jid = jc->jid;
-	req.actions = jc->actions;
-	strlcpy(req.name, jc->name, sizeof(req.name));
-
-	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1, NULL);
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
-	return (token_fd);
+	fill_jail_req(&req, ORACLE_OP_MINT_JAIL, jc);
+	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1,
+	    NULL);
+	return (check_status_fd(status, token_fd));
 }
 
 int
@@ -285,35 +338,19 @@ oracle_create_jail(int pair_fd, const char *name, const char *path,
 	}
 
 	status = oracle_rpc(pair_fd, &req, sizeof(req), &jd, 1, NULL);
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
-	return (jd);
+	return (check_status_fd(status, jd));
 }
 
 int
 oracle_mint_system(int pair_fd, uint32_t gates)
 {
-	struct oracle_mint_system_req req;
-	int token_fd;
-	int status;
+	struct oracle_system_req req;
+	int token_fd, status;
 
-	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_MINT_SYSTEM;
-	req.gates = gates;
-
+	fill_system_req(&req, ORACLE_OP_MINT_SYSTEM, gates);
 	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1,
 	    NULL);
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
-	return (token_fd);
+	return (check_status_fd(status, token_fd));
 }
 
 int
@@ -327,12 +364,8 @@ oracle_create_pair(int pair_fd, int *our_end, int *child_end)
 	req.op = ORACLE_OP_CREATE_PAIR;
 
 	status = oracle_rpc(pair_fd, &req, sizeof(req), fds, 2, NULL);
-	if (status < 0)
+	if (check_status(status) != 0)
 		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
 	if (fds[0] < 0 || fds[1] < 0) {
 		if (fds[0] >= 0) close(fds[0]);
 		if (fds[1] >= 0) close(fds[1]);
@@ -356,13 +389,7 @@ oracle_create_coalition(int pair_fd)
 	req.op = ORACLE_OP_CREATE_COALITION;
 
 	status = oracle_rpc(pair_fd, &req, sizeof(req), &cfd, 1, NULL);
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
-	return (cfd);
+	return (check_status_fd(status, cfd));
 }
 
 int
@@ -380,193 +407,67 @@ oracle_send_ready(int pair_fd)
 	return (status);
 }
 
-/* --- Dynamic claim/release operations --- */
+/*
+ * --- Dynamic claim/release operations ---
+ *
+ * These are generated with macros because claim and release share
+ * identical fill-and-RPC logic — only the op code differs.
+ */
 
-int
-oracle_claim_path(int pair_fd, const char *path)
-{
-	struct oracle_mint_path_req req;
-	int status;
-
-	if (strlen(path) >= sizeof(req.path)) {
-		errno = ENAMETOOLONG;
-		return (-1);
-	}
-
-	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_CLAIM_PATH;
-	strlcpy(req.path, path, sizeof(req.path));
-
-	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
-	return (0);
+#define	ORACLE_PATH_OP(fname, op)					\
+int									\
+fname(int pair_fd, const char *path)					\
+{									\
+	struct oracle_path_req req;					\
+									\
+	if (fill_path_req(&req, (op), path) != 0)			\
+		return (-1);						\
+	return (check_status(oracle_rpc(pair_fd, &req,			\
+	    sizeof(req), NULL, 0, NULL)));				\
 }
 
-int
-oracle_claim_net(int pair_fd, const struct serviced_net_claim *nc)
-{
-	struct oracle_mint_net_req req;
-	int status;
-
-	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_CLAIM_NET;
-	req.domain = nc->domain;
-	req.protocol = nc->protocol;
-	req.port_min = nc->port_min;
-	req.port_max = nc->port_max;
-	req.direction = nc->direction;
-	req.prefix = nc->prefix;
-	memcpy(req.addr, nc->addr, sizeof(req.addr));
-
-	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
-	return (0);
+#define	ORACLE_NET_OP(fname, op)					\
+int									\
+fname(int pair_fd, const struct ort_net_claim *nc)			\
+{									\
+	struct oracle_net_req req;					\
+									\
+	fill_net_req(&req, (op), nc);					\
+	return (check_status(oracle_rpc(pair_fd, &req,			\
+	    sizeof(req), NULL, 0, NULL)));				\
 }
 
-int
-oracle_claim_jail(int pair_fd, const struct serviced_jail_claim *jc)
-{
-	struct oracle_mint_jail_req req;
-	int status;
-
-	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_CLAIM_JAIL;
-	req.jid = jc->jid;
-	req.actions = jc->actions;
-	strlcpy(req.name, jc->name, sizeof(req.name));
-
-	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
-	return (0);
+#define	ORACLE_JAIL_OP(fname, op)					\
+int									\
+fname(int pair_fd, const struct serviced_jail_claim *jc)		\
+{									\
+	struct oracle_jail_req req;					\
+									\
+	fill_jail_req(&req, (op), jc);					\
+	return (check_status(oracle_rpc(pair_fd, &req,			\
+	    sizeof(req), NULL, 0, NULL)));				\
 }
 
-int
-oracle_claim_system(int pair_fd, uint32_t gates)
-{
-	struct oracle_mint_system_req req;
-	int status;
-
-	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_CLAIM_SYSTEM;
-	req.gates = gates;
-
-	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
-	return (0);
+#define	ORACLE_SYSTEM_OP(fname, op)					\
+int									\
+fname(int pair_fd, uint32_t gates)					\
+{									\
+	struct oracle_system_req req;					\
+									\
+	fill_system_req(&req, (op), gates);				\
+	return (check_status(oracle_rpc(pair_fd, &req,			\
+	    sizeof(req), NULL, 0, NULL)));				\
 }
 
-int
-oracle_release_path(int pair_fd, const char *path)
-{
-	struct oracle_mint_path_req req;
-	int status;
+ORACLE_PATH_OP(oracle_claim_path, ORACLE_OP_CLAIM_PATH)
+ORACLE_NET_OP(oracle_claim_net, ORACLE_OP_CLAIM_NET)
+ORACLE_JAIL_OP(oracle_claim_jail, ORACLE_OP_CLAIM_JAIL)
+ORACLE_SYSTEM_OP(oracle_claim_system, ORACLE_OP_CLAIM_SYSTEM)
 
-	if (strlen(path) >= sizeof(req.path)) {
-		errno = ENAMETOOLONG;
-		return (-1);
-	}
-
-	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_RELEASE_PATH;
-	strlcpy(req.path, path, sizeof(req.path));
-
-	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
-	return (0);
-}
-
-int
-oracle_release_net(int pair_fd, const struct serviced_net_claim *nc)
-{
-	struct oracle_mint_net_req req;
-	int status;
-
-	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_RELEASE_NET;
-	req.domain = nc->domain;
-	req.protocol = nc->protocol;
-	req.port_min = nc->port_min;
-	req.port_max = nc->port_max;
-	req.direction = nc->direction;
-	req.prefix = nc->prefix;
-	memcpy(req.addr, nc->addr, sizeof(req.addr));
-
-	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
-	return (0);
-}
-
-int
-oracle_release_jail(int pair_fd, const struct serviced_jail_claim *jc)
-{
-	struct oracle_mint_jail_req req;
-	int status;
-
-	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_RELEASE_JAIL;
-	req.jid = jc->jid;
-	req.actions = jc->actions;
-	strlcpy(req.name, jc->name, sizeof(req.name));
-
-	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
-	return (0);
-}
-
-int
-oracle_release_system(int pair_fd, uint32_t gates)
-{
-	struct oracle_mint_system_req req;
-	int status;
-
-	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_RELEASE_SYSTEM;
-	req.gates = gates;
-
-	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
-		errno = status;
-		return (-1);
-	}
-	return (0);
-}
+ORACLE_PATH_OP(oracle_release_path, ORACLE_OP_RELEASE_PATH)
+ORACLE_NET_OP(oracle_release_net, ORACLE_OP_RELEASE_NET)
+ORACLE_JAIL_OP(oracle_release_jail, ORACLE_OP_RELEASE_JAIL)
+ORACLE_SYSTEM_OP(oracle_release_system, ORACLE_OP_RELEASE_SYSTEM)
 
 /* --- Batched release --- */
 
@@ -671,55 +572,41 @@ oracle_release_manifest(int pair_fd, const struct svc_manifest *m)
 	nsent = 0;
 
 	for (i = 0; i < m->ncap_paths; i++) {
-		struct oracle_mint_path_req req;
+		struct oracle_path_req req;
 
-		memset(&req, 0, sizeof(req));
-		req.op = ORACLE_OP_RELEASE_PATH;
-		strlcpy(req.path, m->cap_paths[i], sizeof(req.path));
-		if (oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
+		if (fill_path_req(&req, ORACLE_OP_RELEASE_PATH,
+		    m->cap_paths[i]) == 0 &&
+		    oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}
 	for (i = 0; i < m->ncap_files; i++) {
-		struct oracle_mint_path_req req;
+		struct oracle_path_req req;
 
-		memset(&req, 0, sizeof(req));
-		req.op = ORACLE_OP_RELEASE_PATH;
-		strlcpy(req.path, m->cap_files[i].path, sizeof(req.path));
-		if (oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
+		if (fill_path_req(&req, ORACLE_OP_RELEASE_PATH,
+		    m->cap_files[i].path) == 0 &&
+		    oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}
 	for (i = 0; i < m->ncap_net; i++) {
-		struct oracle_mint_net_req req;
+		struct oracle_net_req req;
 
-		memset(&req, 0, sizeof(req));
-		req.op = ORACLE_OP_RELEASE_NET;
-		req.domain = m->cap_net[i].domain;
-		req.protocol = m->cap_net[i].protocol;
-		req.port_min = m->cap_net[i].port_min;
-		req.port_max = m->cap_net[i].port_max;
-		req.direction = m->cap_net[i].direction;
-		req.prefix = m->cap_net[i].prefix;
-		memcpy(req.addr, m->cap_net[i].addr, sizeof(req.addr));
+		fill_net_req(&req, ORACLE_OP_RELEASE_NET, &m->cap_net[i]);
 		if (oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}
 	for (i = 0; i < m->ncap_jail; i++) {
-		struct oracle_mint_jail_req req;
+		struct oracle_jail_req req;
 
-		memset(&req, 0, sizeof(req));
-		req.op = ORACLE_OP_RELEASE_JAIL;
-		req.jid = m->cap_jail[i].jid;
-		req.actions = m->cap_jail[i].actions;
-		strlcpy(req.name, m->cap_jail[i].name, sizeof(req.name));
+		fill_jail_req(&req, ORACLE_OP_RELEASE_JAIL,
+		    &m->cap_jail[i]);
 		if (oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}
 	if (m->cap_system != 0) {
-		struct oracle_mint_system_req req;
+		struct oracle_system_req req;
 
-		memset(&req, 0, sizeof(req));
-		req.op = ORACLE_OP_RELEASE_SYSTEM;
-		req.gates = m->cap_system;
+		fill_system_req(&req, ORACLE_OP_RELEASE_SYSTEM,
+		    m->cap_system);
 		if (oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}

@@ -16,10 +16,10 @@
 .Cm stop Ar label
 .Nm
 .Op Fl s Ar socket
-.Cm install Ar path.app
+.Cm install Ar path.cap
 .Nm
 .Op Fl s Ar socket
-.Cm verify Ar path.app
+.Cm verify Ar path.cap
 .Nm
 .Op Fl s Ar socket
 .Cm bundles
@@ -64,20 +64,20 @@ Sends SIGTERM and waits for the service's configured
 before escalating to SIGKILL.
 .Pp
 Requires root privileges.
-.It Cm install Ar path.app
+.It Cm install Ar path.cap
 Install a
-.Pa .app
+.Pa .cap
 bundle to
-.Pa /Applications/ .
+.Pa /Capabilities/ .
 The bundle is verified before installation.
 After copying, run
 .Cm servicectl reload
 to register the new services.
 .Pp
 Requires root privileges.
-.It Cm verify Ar path.app
+.It Cm verify Ar path.cap
 Validate a
-.Pa .app
+.Pa .cap
 bundle's integrity.
 Checks that the bundle structure is correct, all Service.ucl files
 parse successfully, binaries exist and are executable, provides names
@@ -85,9 +85,9 @@ are unique, and no self-dependencies exist.
 Prints a summary of the bundle's services on success.
 .It Cm bundles
 List all installed bundles from
-.Pa /System/Applications/
+.Pa /Capabilities/System/
 and
-.Pa /Applications/ ,
+.Pa /Capabilities/ ,
 showing bundle ID, version, and service count for each.
 .El
 .Sh OPTIONS
@@ -126,13 +126,13 @@ Reload manifests after adding a new service:
 .Pp
 Install and activate a bundle:
 .Bd -literal -offset indent
-# servicectl install /path/to/MyApp.app
+# servicectl install /path/to/MyApp.cap
 # servicectl reload
 .Ed
 .Pp
 Verify a bundle's integrity:
 .Bd -literal -offset indent
-# servicectl verify /path/to/MyApp.app
+# servicectl verify /path/to/MyApp.cap
 .Ed
 .Pp
 Connect to an alternate control socket:

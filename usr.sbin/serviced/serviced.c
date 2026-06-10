@@ -7,7 +7,7 @@
  *
  * Started by oracled as its single child.  Inherits a cap_rt pair
  * on fd 3 for requesting tokens, pairs, and coalitions from the
- * oracle.  Scans application bundles, dependency-sorts, pdfork/execs
+ * oracle.  Scans capability bundles, dependency-sorts, pdfork/execs
  * services, and manages their lifecycle (restart, shutdown).
  *
  * Startup sequence:
@@ -36,7 +36,7 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#include <libappbundle.h>
+#include <libcapbundle.h>
 
 #include "serviced.h"
 #include "serviced_probes.h"
@@ -52,10 +52,10 @@ add_signal_event(int kq, int sig)
 {
 	struct kevent kev;
 
+	(void)signal(sig, SIG_IGN);
 	EV_SET(&kev, sig, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
 	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
-		syslog(LOG_ERR, "kevent signal %d: %m", sig);
-	(void)signal(sig, SIG_IGN);
+		syslog(LOG_CRIT, "kevent signal %d: %m", sig);
 }
 
 static void
@@ -244,7 +244,7 @@ main(int argc, char *argv[])
 	if (s != NULL && s[0] != '\0')
 		serviced_bundle_dir_user = s;
 
-	/* Initialize bundle registry (scan /System/Applications + /Applications). */
+	/* Initialize bundle registry (scan /Capabilities/System + /Capabilities). */
 	if (bundle_registry_init() == -1) {
 		syslog(LOG_CRIT, "bundle registry init failed — aborting");
 		return (1);
@@ -257,25 +257,17 @@ main(int argc, char *argv[])
 
 		memset(&cp_req, 0, sizeof(cp_req));
 		cp_req.op = CP_OP_SHIELD;
-		/*
-		 * Shield against external interference but NOT signals —
-		 * oracled sends SIGHUP (reload) and SIGTERM (shutdown)
-		 * via pdkill on our process descriptor.
-		 * CP_SF_SIGNAL would block those.
-		 */
 		cp_req.flags = CP_SF_PTRACE | CP_SF_WAIT | CP_SF_SCHED |
-		    CP_SF_KTRACE;
+		    CP_SF_VISIBLE | CP_SF_CORE | CP_SF_KTRACE;
 
 		memset(&call, 0, sizeof(call));
 		call.req = &cp_req;
 		call.req_len = sizeof(cp_req);
 
 		if (ioctl(sd.capprotect_fd, CAP_RT_CALL, &call) == -1)
-			syslog(LOG_WARNING, "capprotect shield: %m");
+			syslog(LOG_ERR, "capprotect shield: %m");
 		else
 			syslog(LOG_INFO, "capprotect shield active");
-		close(sd.capprotect_fd);
-		sd.capprotect_fd = -1;
 	}
 
 	/* Create kqueue. */
@@ -316,8 +308,10 @@ main(int argc, char *argv[])
 	    bundle_registry_count());
 
 	/* Launch system services (tier-based parallel). */
-	if (startup_launch_system(serviced_kq) != 0)
-		syslog(LOG_WARNING, "startup_launch_system failed");
+	if (startup_launch_system(serviced_kq) != 0) {
+		syslog(LOG_ERR, "startup: system service launch failed");
+		/* Continue running — on-demand and reload can still work. */
+	}
 
 	event_loop();
 

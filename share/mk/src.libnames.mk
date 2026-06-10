@@ -111,7 +111,7 @@ _LIBRARIES=	\
 		80211 \
 		9p \
 		alias \
-		appbundle \
+		capbundle \
 		archive \
 		asn1 \
 		avl \
@@ -201,6 +201,7 @@ _LIBRARIES=	\
 		nvpair \
 		opencsd \
 		oraclectl \
+		oraclert \
 		pam \
 		panel \
 		panelw \
@@ -221,6 +222,7 @@ _LIBRARIES=	\
 		sbuf \
 		sdp \
 		service \
+		capability \
 		sm \
 		smb \
 		spl \
@@ -314,8 +316,10 @@ LIBVERIEXEC?=	${LIBVERIEXECDIR}/libveriexec.a
 # 2nd+ order consumers.  Auto-generating this would be better.
 _DP_80211=	sbuf bsdxml
 _DP_9p=		sbuf
-_DP_appbundle=	ucl
+_DP_capbundle=	oraclert ucl
+_DP_oraclert=	ucl
 _DP_service=
+_DP_capability=	service
 .if ${MK_CASPER} != "no"
 _DP_9p+=	casper cap_pwd cap_grp
 .endif

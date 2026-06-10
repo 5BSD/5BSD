@@ -33,7 +33,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	geom \
 	lib9p \
 	libalias \
-	libappbundle \
+	libcapbundle \
 	libarchive \
 	libbegemot \
 	libblocksruntime \
@@ -81,6 +81,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libnvmf \
 	libopenbsd \
 	liboraclectl \
+	liboraclert \
 	libpam \
 	libpathconv \
 	libpcap \
@@ -94,6 +95,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	librtld_db \
 	libsbuf \
 	libservice \
+	libcapability \
 	libsmb \
 	libstdbuf \
 	libstdthreads \
@@ -148,6 +150,9 @@ SUBDIR_DEPEND_libpjdlog= libutil
 SUBDIR_DEPEND_libprocstat= libkvm libutil
 SUBDIR_DEPEND_libradius= libmd
 SUBDIR_DEPEND_libsmb= libkiconv
+SUBDIR_DEPEND_libcapbundle= liboraclert libucl
+SUBDIR_DEPEND_libcapability= libservice
+SUBDIR_DEPEND_liboraclert= libucl
 # See comment above about libssp_nonshared
 SUBDIR_DEPEND_libsys= libcompiler_rt libssp_nonshared
 SUBDIR_DEPEND_libtacplus= libmd

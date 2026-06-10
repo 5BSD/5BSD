@@ -20,10 +20,10 @@ and inherits a cap_rt pair channel for requesting capability tokens,
 pairs, and coalitions from the oracle.
 .Pp
 .Nm
-scans application bundles from
-.Pa /System/Applications
+scans capability bundles from
+.Pa /Capabilities/System
 and
-.Pa /Applications ,
+.Pa /Capabilities ,
 topologically sorts services by dependency, and launches each via
 .Xr pdfork 2 .
 It supervises service lifecycle through
@@ -142,17 +142,17 @@ Optional.
 .It Ev SERVICED_BUNDLE_DIR_SYSTEM
 Override the system bundle directory.
 Default:
-.Pa /System/Applications .
+.Pa /Capabilities/System .
 Primarily useful for testing.
 .It Ev SERVICED_BUNDLE_DIR_USER
 Override the user bundle directory.
 Default:
-.Pa /Applications .
+.Pa /Capabilities .
 Primarily useful for testing.
 .El
 .Sh SERVICE MANIFESTS
-Service manifests are UCL files embedded in application bundles under
-.Pa Contents/5BSD/Services/ .
+Service manifests are UCL files embedded in capability bundles under
+.Pa etc/ .
 Each
 .Pa *.ucl
 file declares one service.
@@ -713,10 +713,10 @@ Oracle pair channel closed unexpectedly.
 .El
 .Sh FILES
 .Bl -tag -width "/var/run/serviced.sock"
-.It Pa /System/Applications/
-System application bundles.
-.It Pa /Applications/
-User-installed application bundles.
+.It Pa /Capabilities/System/
+System capability bundles.
+.It Pa /Capabilities/
+User-installed capability bundles.
 .It Pa /var/run/serviced.sock
 Control socket (mode 0700).
 .El

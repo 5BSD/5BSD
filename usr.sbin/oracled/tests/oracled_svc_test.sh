@@ -122,7 +122,7 @@ manifest_empty_dir_body()
 	# Wait for serviced to process manifests.
 	sleep 1
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'no services to start' '$logfile'"
+	    "grep 'no boot services to launch' '$logfile'"
 	stop_oracled
 }
 manifest_empty_dir_cleanup()
@@ -163,7 +163,7 @@ EOF
 	sleep 1
 
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'not found' '$logfile'"
+	    "grep 'not available' '$logfile'"
 	stop_oracled
 }
 manifest_missing_dir_cleanup()
@@ -208,7 +208,7 @@ EOF
 	    "grep 'missing or empty label' '$logfile'"
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep 'loaded test-good' '$logfile'"
-	# Only 1 service should have loaded.
+	# Only 1 service should have loaded (legacy manifest path).
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep '1 services loaded' '$logfile'"
 	stop_oracled
@@ -413,7 +413,7 @@ EOF
 	sleep 1
 
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'capabilities: paths=2 network=0 system=0x9' '$logfile'"
+	    "grep 'capabilities: paths=2 files=0 network=0 system=0x9' '$logfile'"
 	stop_oracled
 }
 manifest_capabilities_cleanup()
@@ -725,7 +725,7 @@ EOF
 	# broken.ucl should produce a parse error.
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep -i 'broken.ucl' '$logfile'"
-	# valid-svc should still load.
+	# valid-svc should still load (via legacy manifest path).
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep 'loaded valid-svc' '$logfile'"
 	stop_oracled
@@ -765,9 +765,9 @@ EOF
 
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep 'unknown restart policy.*whenever' '$logfile'"
-	# Should default to never.
+	# Should default to never (logged by startup path).
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'bad-restart.*restart=never' '$logfile'"
+	    "grep 'loaded bad-restart restart=never' '$logfile'"
 	stop_oracled
 }
 manifest_bad_restart_value_cleanup()
@@ -845,7 +845,7 @@ EOF
 
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep 'must be absolute.*relative/path' '$logfile'"
-	# Service still loads, just without that cap path.
+	# Service still loads, just without that cap path (via startup log).
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep 'loaded relcap-svc' '$logfile'"
 	stop_oracled
@@ -889,7 +889,7 @@ EOF
 	    "grep 'unknown system gate.*fakegate' '$logfile'"
 	# kldload should still be parsed (0x1).
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'capabilities: paths=0 network=0 system=0x1' '$logfile'"
+	    "grep 'capabilities: paths=0 files=0 network=0 system=0x1' '$logfile'"
 	stop_oracled
 }
 manifest_bad_system_gate_cleanup()
@@ -973,7 +973,7 @@ EOF
 	sleep 1
 
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'capabilities: paths=0 network=5 system=0x0' '$logfile'"
+	    "grep 'capabilities: paths=0 files=0 network=5 system=0x0' '$logfile'"
 	stop_oracled
 }
 manifest_cap_network_cleanup()
@@ -1022,13 +1022,13 @@ EOF
 	sleep 1
 
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'full-svc.*restart=on-failure' '$logfile'"
+	    "grep 'loaded full-svc restart=on-failure' '$logfile'"
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep 'provides: fulltest' '$logfile'"
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep 'requires: ORACLED' '$logfile'"
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'capabilities: paths=1 network=1 system=0x40' '$logfile'"
+	    "grep 'capabilities: paths=1 files=0 network=1 system=0x40' '$logfile'"
 	stop_oracled
 }
 manifest_all_fields_cleanup()
@@ -1175,7 +1175,7 @@ label = "added-svc";
 program = "/usr/bin/true";
 EOF
 	kill -HUP "$daemon_pid"
-	sleep 2
+	sleep 1
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep 'reload:.*1 new' '$logfile'"
 	stop_oracled
@@ -1220,7 +1220,7 @@ EOF
 	# Remove manifest and reload.
 	rm -f "$manifestdir/doomed.ucl"
 	kill -HUP "$daemon_pid"
-	sleep 2
+	sleep 1
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep 'removing.*doomed' '$logfile'"
 	stop_oracled
@@ -1266,9 +1266,9 @@ program = "/usr/bin/true";
 restart = "always";
 EOF
 	kill -HUP "$daemon_pid"
-	sleep 2
+	sleep 1
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'restarting.*morph.*(manifest changed)' '$logfile'"
+	    "grep 'restarting changed.*morph' '$logfile'"
 	stop_oracled
 }
 reload_change_manifest_cleanup()
@@ -1302,7 +1302,7 @@ EOF
 	done
 	sleep 1
 	kill -HUP "$daemon_pid"
-	sleep 2
+	sleep 1
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep 'reload: 0 new, 0 changed, 0 removed' '$logfile'"
 	stop_oracled
@@ -1344,9 +1344,9 @@ label = "bad-svc";
 program = "/nonexistent/program";
 EOF
 	kill -HUP "$daemon_pid"
-	sleep 2
+	sleep 1
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'rejecting.*bad-svc' '$logfile'"
+	    "grep 'failed to start.*bad-svc' '$logfile'"
 	stop_oracled
 }
 reload_bad_manifest_rejected_cleanup()
@@ -1395,9 +1395,10 @@ provides = ["Y"];
 requires = ["X"];
 EOF
 	kill -HUP "$daemon_pid"
-	sleep 2
+	sleep 1
+	# Cycle should be detected and new services rejected.
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'dependency graph rejected\|depgraph_sort failed' '$logfile'"
+	    "grep 'cycle detected\|dependency sort failed' '$logfile'"
 	stop_oracled
 }
 reload_cycle_rejected_cleanup()
@@ -1439,7 +1440,7 @@ EOF
 	done
 	sleep 1
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep '3 services launched' '$logfile'"
+	    "grep '3 services in' '$logfile'"
 
 	# Remove two, add two.
 	rm -f "$manifestdir/remove1.ucl" "$manifestdir/remove2.ucl"
@@ -1452,7 +1453,7 @@ label = "add2";
 program = "/usr/bin/true";
 EOF
 	kill -HUP "$daemon_pid"
-	sleep 2
+	sleep 1
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep 'reload: 2 new, 0 changed, 2 removed' '$logfile'"
 	# keep-svc must not appear in removed or changed
@@ -1505,11 +1506,11 @@ label = "fresh";
 program = "/usr/bin/true";
 EOF
 	kill -HUP "$daemon_pid"
-	sleep 2
+	sleep 1
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep 'reload: 1 new, 1 changed, 0 removed' '$logfile'"
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'restarting.*existing.*(manifest changed)' '$logfile'"
+	    "grep 'restarting changed.*existing' '$logfile'"
 	stop_oracled
 }
 reload_change_and_add_cleanup()
@@ -1547,12 +1548,12 @@ EOF
 	done
 	sleep 1
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep '2 services launched' '$logfile'"
+	    "grep '2 services in' '$logfile'"
 
 	# Remove all manifests.
 	rm -f "$manifestdir"/*.ucl
 	kill -HUP "$daemon_pid"
-	sleep 2
+	sleep 1
 	atf_check -s exit:0 -o ignore sh -c \
 	    "grep 'reload: 0 new, 0 changed, 2 removed' '$logfile'"
 	stop_oracled
@@ -1631,7 +1632,7 @@ EOF
 	# Send 3 SIGHUPs with delays to avoid coalescing.
 	kill -HUP "$daemon_pid"; sleep 1
 	kill -HUP "$daemon_pid"; sleep 1
-	kill -HUP "$daemon_pid"; sleep 2
+	kill -HUP "$daemon_pid"; sleep 1
 
 	# All should report 0 changes.
 	count=$(grep -c 'reload: 0 new, 0 changed, 0 removed' "$logfile")
@@ -1713,8 +1714,8 @@ EOF
 	sleep 1
 
 	# base should appear before app in the log
-	base_line=$(grep -n 'service base:' "$logfile" | head -1 | cut -d: -f1)
-	app_line=$(grep -n 'service app:' "$logfile" | head -1 | cut -d: -f1)
+	base_line=$(grep -n 'service: base' "$logfile" | head -1 | cut -d: -f1)
+	app_line=$(grep -n 'service: app' "$logfile" | head -1 | cut -d: -f1)
 	if [ -z "$base_line" ] || [ -z "$app_line" ]; then
 		cat "$logfile"
 		atf_fail "expected both services in log"
@@ -1891,7 +1892,7 @@ EOF
 	sleep 1
 
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'capabilities:.*files=2' '$logfile'"
+	    "grep 'capabilities: paths=0 files=2' '$logfile'"
 	stop_oracled
 }
 manifest_cap_files_cleanup()
@@ -2015,7 +2016,7 @@ EOF
 	sleep 1
 
 	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'capabilities:.*network=2' '$logfile'"
+	    "grep 'capabilities:.*network=2.*system=0x0' '$logfile'"
 	stop_oracled
 }
 manifest_cap_network_address_cleanup()

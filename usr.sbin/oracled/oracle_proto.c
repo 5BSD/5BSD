@@ -113,7 +113,7 @@ jail_path_allowed(const char *jail_name, const char *req_path)
 static void
 handle_mint_path(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_mint_path_req *req;
+	const struct oracle_path_req *req;
 	int token_fd;
 
 	if (len < sizeof(*req)) {
@@ -206,8 +206,8 @@ handle_mint_file(const void *payload, uint32_t len, uint64_t reply_token)
 static void
 handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_mint_net_req *req;
-	struct oracled_net_claim nc;
+	const struct oracle_net_req *req;
+	struct ort_net_claim nc;
 	int token_fd;
 
 	if (len < sizeof(*req)) {
@@ -216,7 +216,7 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 	}
 	req = payload;
 
-	if (req->direction == 0 || (req->direction & ~ORACLED_NET_DIR_ANY) != 0) {
+	if (req->direction == 0 || (req->direction & ~ORT_NET_DIR_ANY) != 0) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
@@ -278,7 +278,7 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 static void
 handle_mint_jail(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_mint_jail_req *req;
+	const struct oracle_jail_req *req;
 	struct oracled_jail_claim jc;
 	int token_fd;
 
@@ -447,7 +447,7 @@ handle_create_jail(const void *payload, uint32_t len, uint64_t reply_token)
 static void
 handle_mint_system(const void *payload, uint32_t len, uint64_t reply_token)
 {
-	const struct oracle_mint_system_req *req;
+	const struct oracle_system_req *req;
 	int token_fd;
 
 	if (len < sizeof(*req)) {
@@ -544,10 +544,10 @@ proto_dispatch_one(void)
 	union {
 		struct oracle_create_jail_req create_jail;
 		struct oracle_mint_file_req file;
-		struct oracle_mint_path_req path;
-		struct oracle_mint_net_req net;
-		struct oracle_mint_jail_req jail;
-		struct oracle_mint_system_req system;
+		struct oracle_path_req path;
+		struct oracle_net_req net;
+		struct oracle_jail_req jail;
+		struct oracle_system_req system;
 		struct oracle_req_hdr hdr;
 	} buf;
 	uint32_t op;

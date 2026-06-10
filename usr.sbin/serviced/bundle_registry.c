@@ -5,7 +5,7 @@
  *
  * Bundle registry for serviced.
  *
- * Scans /System/Applications/ and /Applications/ for .app bundles,
+ * Scans /Capabilities/System/ and /Capabilities/ for .cap bundles,
  * builds a provides hash table mapping service names to bundle+service
  * indices, and validates system bundle integrity at startup.
  */
@@ -21,23 +21,34 @@
 #include <string.h>
 #include <syslog.h>
 
-#include <libappbundle.h>
+#include <libcapbundle.h>
 
 #include "serviced.h"
 #include "serviced_probes.h"
 
 #define	PROVIDES_HASH_SIZE	64
 
+static bool
+is_bundle_name(const char *name)
+{
+	size_t len;
+
+	len = strlen(name);
+	if (len < 4)
+		return (false);
+	return (strcmp(name + len - 4, ".cap") == 0);
+}
+
 struct provides_entry {
 	struct provides_entry	*next;
-	char			 name[APPBUNDLE_NAME_MAX + 1];
+	char			 name[CAPBUNDLE_NAME_MAX + 1];
 	unsigned		 bundle_idx;
 	unsigned		 service_idx;
 	bool			 system;
 };
 
 struct bundle_state {
-	struct appbundle	*bundle;
+	struct capbundle	*bundle;
 	bool			 system;
 };
 
@@ -105,25 +116,25 @@ struct scan_ctx {
 };
 
 static int
-scan_cb(struct appbundle *b, void *ctx)
+scan_cb(struct capbundle *b, void *ctx)
 {
 	struct scan_ctx *sc = ctx;
 	char errbuf[256];
 	unsigned i, j;
 
 	/* Validate bundle integrity. */
-	if (appbundle_verify(b, errbuf, sizeof(errbuf)) == -1) {
+	if (capbundle_verify(b, errbuf, sizeof(errbuf)) == -1) {
 		if (sc->system) {
 			syslog(LOG_ERR,
 			    "bundle_registry: SYSTEM bundle '%s' invalid: %s",
-			    appbundle_name(b), errbuf);
-			appbundle_close(b);
+			    capbundle_name(b), errbuf);
+			capbundle_close(b);
 			return (-1);  /* fatal for system bundles */
 		}
 		syslog(LOG_WARNING,
 		    "bundle_registry: skipping '%s': %s",
-		    appbundle_name(b), errbuf);
-		appbundle_close(b);
+		    capbundle_name(b), errbuf);
+		capbundle_close(b);
 		return (0);  /* non-fatal for user bundles */
 	}
 
@@ -136,7 +147,7 @@ scan_cb(struct appbundle *b, void *ctx)
 		newp = reallocarray(bundles, newcap, sizeof(*bundles));
 		if (newp == NULL) {
 			syslog(LOG_ERR, "bundle_registry: realloc: %m");
-			appbundle_close(b);
+			capbundle_close(b);
 			return (-1);
 		}
 		bundles = newp;
@@ -147,28 +158,28 @@ scan_cb(struct appbundle *b, void *ctx)
 	bundles[nbundles].system = sc->system;
 
 	/* Check for label collisions with already-loaded bundles. */
-	for (i = 0; i < appbundle_nservices(b); i++) {
-		struct appbundle_service *svc = appbundle_service(b, i);
-		const char *label = appbundle_svc_label(svc);
+	for (i = 0; i < capbundle_nservices(b); i++) {
+		struct capbundle_service *svc = capbundle_service(b, i);
+		const char *label = capbundle_svc_label(svc);
 		unsigned bi2, si2;
 
 		for (bi2 = 0; bi2 < nbundles; bi2++) {
-			struct appbundle *prev = bundles[bi2].bundle;
-			for (si2 = 0; si2 < appbundle_nservices(prev); si2++) {
-				struct appbundle_service *ps =
-				    appbundle_service(prev, si2);
-				if (strcmp(label, appbundle_svc_label(ps)) == 0) {
+			struct capbundle *prev = bundles[bi2].bundle;
+			for (si2 = 0; si2 < capbundle_nservices(prev); si2++) {
+				struct capbundle_service *ps =
+				    capbundle_service(prev, si2);
+				if (strcmp(label, capbundle_svc_label(ps)) == 0) {
 					syslog(LOG_WARNING,
 					    "bundle_registry: label '%s' in "
 					    "'%s' collides with '%s'",
-					    label, appbundle_name(b),
-					    appbundle_name(prev));
+					    label, capbundle_name(b),
+					    capbundle_name(prev));
 					if (sc->system) {
-						appbundle_close(b);
+						capbundle_close(b);
 						return (-1);
 					}
 					/* Skip the entire user bundle. */
-					appbundle_close(b);
+					capbundle_close(b);
 					return (0);
 				}
 			}
@@ -176,12 +187,12 @@ scan_cb(struct appbundle *b, void *ctx)
 	}
 
 	/* Register all provides names. */
-	for (i = 0; i < appbundle_nservices(b); i++) {
-		struct appbundle_service *svc = appbundle_service(b, i);
-		unsigned np = appbundle_svc_nprovides(svc);
+	for (i = 0; i < capbundle_nservices(b); i++) {
+		struct capbundle_service *svc = capbundle_service(b, i);
+		unsigned np = capbundle_svc_nprovides(svc);
 
 		for (j = 0; j < np; j++) {
-			const char *name = appbundle_svc_provides(svc, j);
+			const char *name = capbundle_svc_provides(svc, j);
 			if (provides_insert(name, nbundles, i,
 			    sc->system) == -1 && sc->system) {
 				/* Duplicate in system bundle = fatal. */
@@ -191,10 +202,10 @@ scan_cb(struct appbundle *b, void *ctx)
 	}
 
 	syslog(LOG_INFO, "bundle_registry: loaded '%s' (%u services)%s",
-	    appbundle_name(b), appbundle_nservices(b),
+	    capbundle_name(b), capbundle_nservices(b),
 	    sc->system ? " [system]" : "");
-	SERVICED_PROBE_BUNDLE_LOAD(appbundle_name(b),
-	    appbundle_nservices(b), sc->system ? 1 : 0);
+	SERVICED_PROBE_BUNDLE_LOAD(capbundle_name(b),
+	    capbundle_nservices(b), sc->system ? 1 : 0);
 	nbundles++;
 	return (0);  /* continue scanning */
 }
@@ -207,8 +218,7 @@ scan_bundle_dir(const char *dirpath, bool system)
 	struct dirent *de;
 	char path[PATH_MAX];
 	char errbuf[256];
-	struct appbundle *b;
-	size_t len;
+	struct capbundle *b;
 	int ret;
 
 	d = opendir(dirpath);
@@ -217,12 +227,11 @@ scan_bundle_dir(const char *dirpath, bool system)
 
 	ctx.system = system;
 	while ((de = readdir(d)) != NULL) {
-		len = strlen(de->d_name);
-		if (len < 5 || strcmp(de->d_name + len - 4, ".app") != 0)
+		if (!is_bundle_name(de->d_name))
 			continue;
 
 		snprintf(path, sizeof(path), "%s/%s", dirpath, de->d_name);
-		if (appbundle_open(path, &b, errbuf, sizeof(errbuf)) == -1) {
+		if (capbundle_open(path, &b, errbuf, sizeof(errbuf)) == -1) {
 			if (system) {
 				syslog(LOG_ERR,
 				    "bundle_registry: SYSTEM bundle '%s' "
@@ -257,7 +266,7 @@ bundle_registry_init(void)
 {
 	char errbuf[512];
 	struct stat sb;
-	struct appbundle *cycle_bundles[128];
+	struct capbundle *cycle_bundles[128];
 	unsigned i;
 
 	memset(provides_hash, 0, sizeof(provides_hash));
@@ -300,7 +309,7 @@ bundle_registry_init(void)
 	for (i = 0; i < nbundles && i < 128; i++)
 		cycle_bundles[i] = bundles[i].bundle;
 
-	if (appbundle_check_cycles(cycle_bundles,
+	if (capbundle_check_cycles(cycle_bundles,
 	    nbundles > 128 ? 128 : nbundles,
 	    errbuf, sizeof(errbuf)) == -1) {
 		syslog(LOG_CRIT,
@@ -340,7 +349,7 @@ bundle_registry_lookup(const char *name, unsigned *bundle_idx_out,
 /*
  * Get a bundle by index.
  */
-struct appbundle *
+struct capbundle *
 bundle_registry_get(unsigned idx)
 {
 
@@ -389,7 +398,7 @@ bundle_registry_teardown(void)
 	}
 
 	for (i = 0; i < nbundles; i++)
-		appbundle_close(bundles[i].bundle);
+		capbundle_close(bundles[i].bundle);
 
 	free(bundles);
 	bundles = NULL;

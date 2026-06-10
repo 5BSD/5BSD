@@ -39,14 +39,15 @@
 #include "serviced_probes.h"
 
 #define	SVC_PAIR_FD	3	/* well-known fd for the pair channel */
-#define	SVC_TOKEN_BASE	4	/* tokens start at fd 4 */
+#define	SVC_CAPPROTECT_FD	4	/* capprotect service instance */
+#define	SVC_TOKEN_BASE	5	/* tokens start after service plumbing */
 #define	SVC_MAX_TOKENS	(SERVICED_MAX_CAP_PATHS + SERVICED_MAX_CAP_FILES + \
-			    SERVICED_MAX_CAP_NET + SERVICED_MAX_CAP_JAIL + 1)
+				    SERVICED_MAX_CAP_NET + SERVICED_MAX_CAP_JAIL + 1)
 #define	SVC_MAX_ENV	16
 
 /*
  * Build the token fd list string for ORACLED_TOKEN_FDS env var.
- * Format: "4,5,6" (comma-separated).
+ * Format: "5,6,7" (comma-separated).
  */
 static void
 build_token_fds_str(char *buf, size_t bufsz, unsigned ntokens)
@@ -74,16 +75,17 @@ build_token_fds_str(char *buf, size_t bufsz, unsigned ntokens)
  */
 static void __dead2
 child_exec(struct svc_manifest *m, int child_pair_fd,
-    int *token_fds, unsigned ntokens, int jail_fd,
+    int capprotect_fd, int *token_fds, unsigned ntokens, int jail_fd,
     uid_t uid, gid_t gid, bool have_creds, const char *homedir,
     gid_t *groups, int ngroups)
 {
-	char pair_env[64], token_env[256], label_env[128];
+	char pair_env[64], capprotect_env[64], token_env[256], label_env[128];
 	char user_env[128], home_env[PATH_MAX + 8];
 	char fds_str[128];
 	char *env[SVC_MAX_ENV];
 	char *argv[2];
 	int nullfd, fd;
+	bool have_capprotect;
 	unsigned i, envc;
 
 	/* Redirect stdio to /dev/null. */
@@ -124,12 +126,26 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 				token_fds[i] = fd;
 			}
 		}
+		if (capprotect_fd >= 0 && capprotect_fd < safe_base) {
+			fd = fcntl(capprotect_fd, F_DUPFD, safe_base);
+			if (fd == -1)
+				_exit(126);
+			(void)close(capprotect_fd);
+			capprotect_fd = fd;
+		}
 	}
 
 	/* Now safe to map into final positions. */
 	if (dup2(child_pair_fd, SVC_PAIR_FD) == -1)
 		_exit(126);
 	(void)close(child_pair_fd);
+	have_capprotect = capprotect_fd >= 0;
+	if (capprotect_fd >= 0) {
+		if (dup2(capprotect_fd, SVC_CAPPROTECT_FD) == -1)
+			_exit(126);
+		(void)close(capprotect_fd);
+		capprotect_fd = SVC_CAPPROTECT_FD;
+	}
 
 	for (i = 0; i < ntokens; i++) {
 		fd = (int)(SVC_TOKEN_BASE + i);
@@ -152,6 +168,8 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 
 	if (fcntl(SVC_PAIR_FD, F_SETFD, 0) == -1)
 		_exit(126);
+	if (have_capprotect && fcntl(SVC_CAPPROTECT_FD, F_SETFD, 0) == -1)
+		_exit(126);
 	for (i = 0; i < ntokens; i++) {
 		if (fcntl(SVC_TOKEN_BASE + (int)i, F_SETFD, 0) == -1)
 			_exit(126);
@@ -165,6 +183,11 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 	(void)snprintf(pair_env, sizeof(pair_env),
 	    "ORACLED_PAIR_FD=%d", SVC_PAIR_FD);
 	env[envc++] = pair_env;
+	if (have_capprotect) {
+		(void)snprintf(capprotect_env, sizeof(capprotect_env),
+		    "ORACLED_CAPPROTECT_FD=%d", SVC_CAPPROTECT_FD);
+		env[envc++] = capprotect_env;
+	}
 
 	if (ntokens > 0) {
 		build_token_fds_str(fds_str, sizeof(fds_str), ntokens);
@@ -231,7 +254,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	struct timespec exec_start;
 	char homedir[PATH_MAX];
 	struct svc_manifest minted_manifest;
-	int oracle_end, child_end, coalition_fd;
+	int oracle_end, child_end, coalition_fd, capprotect_fd;
 	int token_fds[SVC_MAX_TOKENS];
 	unsigned ntokens;
 	uid_t uid;
@@ -323,6 +346,17 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 	}
 
+	capprotect_fd = -1;
+
+	/* Ensure required kernel modules are loaded before launch. */
+	if (m->nkmod_requires > 0) {
+		if (kldmgr_ensure_loaded(m, kq) != 0) {
+			syslog(LOG_ERR, "svc_exec %s: kmod_requires failed",
+			    m->label);
+			return (-1);
+		}
+	}
+
 	/* Create pair channel via oracle. */
 	if (caprt_create_pair(
 	    &oracle_end, &child_end) == -1) {
@@ -344,6 +378,12 @@ svc_exec(struct svc_runtime *svc, int kq)
 		return (-1);
 	}
 	SERVICED_PROBE_CAP_COALITION(m->label, 0);
+
+	capprotect_fd = caprt_mint_capprotect();
+	if (capprotect_fd == -1 && errno != ENOTSUP) {
+		syslog(LOG_WARNING, "svc_exec %s: capprotect mint: %m",
+		    m->label);
+	}
 
 	/*
 	 * Mint tokens via oracle.  The oracle auto-claims resources
@@ -499,8 +539,8 @@ svc_exec(struct svc_runtime *svc, int kq)
 
 	if (pid == 0) {
 		/* Child — does not return. */
-		child_exec(m, child_end, token_fds, ntokens,
-		    svc->jail_fd,
+			child_exec(m, child_end, capprotect_fd, token_fds, ntokens,
+			    svc->jail_fd,
 		    uid, gid, have_creds,
 		    homedir[0] != '\0' ? homedir : NULL,
 		    groups, ngroups);
@@ -509,6 +549,10 @@ svc_exec(struct svc_runtime *svc, int kq)
 
 	/* Parent. */
 	close(child_end);
+	if (capprotect_fd >= 0) {
+		close(capprotect_fd);
+		capprotect_fd = -1;
+	}
 	for (i = 0; i < ntokens; i++)
 		close(token_fds[i]);
 
@@ -598,6 +642,8 @@ fail_tokens:
 	close(oracle_end);
 	close(child_end);
 	close(coalition_fd);
+	if (capprotect_fd >= 0)
+		close(capprotect_fd);
 	for (i = 0; i < ntokens; i++)
 		close(token_fds[i]);
 	if (svc->jail_fd >= 0) {

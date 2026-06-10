@@ -31,12 +31,10 @@
 
 /*
  * Parse a UCL network claim object.
- * Intentionally duplicated from oracled/config.c because the struct
- * type differs (serviced_net_claim vs oracled_net_claim).  The field
- * layout is identical.
+ * Parses a UCL network claim into an ort_net_claim (from oraclert.h).
  */
 static int
-parse_ucl_net_claim(const ucl_object_t *elem, struct serviced_net_claim *nc,
+parse_ucl_net_claim(const ucl_object_t *elem, struct ort_net_claim *nc,
     const char *label)
 {
 	const ucl_object_t *v;
@@ -77,11 +75,11 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct serviced_net_claim *nc,
 	if (v != NULL && ucl_object_type(v) == UCL_STRING) {
 		s = ucl_object_tostring(v);
 		if (strcmp(s, "bind") == 0)
-			nc->direction = SERVICED_NET_DIR_BIND;
+			nc->direction = ORT_NET_DIR_BIND;
 		else if (strcmp(s, "connect") == 0)
-			nc->direction = SERVICED_NET_DIR_CONNECT;
+			nc->direction = ORT_NET_DIR_CONNECT;
 		else if (strcmp(s, "*") == 0 || strcmp(s, "any") == 0)
-			nc->direction = SERVICED_NET_DIR_ANY;
+			nc->direction = ORT_NET_DIR_ANY;
 		else {
 			syslog(LOG_ERR, "%s: unknown direction: %s",
 			    label, s);
@@ -89,7 +87,7 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct serviced_net_claim *nc,
 		}
 	}
 	if (nc->direction == 0)
-		nc->direction = SERVICED_NET_DIR_BIND;
+		nc->direction = ORT_NET_DIR_BIND;
 
 	nc->domain = AF_INET;
 	v = ucl_object_lookup(elem, "domain");
@@ -643,6 +641,40 @@ manifest_load_file(const char *path, struct svc_manifest *m)
 			}
 
 			m->has_jail = true;
+		}
+	}
+
+	/* Kernel module requirements */
+	{
+		const ucl_object_t *arr, *elem;
+		ucl_object_iter_t it;
+
+		m->nkmod_requires = 0;
+		arr = ucl_object_lookup(root, "kmod_requires");
+		if (arr != NULL && ucl_object_type(arr) == UCL_ARRAY) {
+			it = NULL;
+			while (m->nkmod_requires <
+			    SERVICED_MAX_KMOD_REQUIRES &&
+			    (elem = ucl_object_iterate(arr, &it,
+			    true)) != NULL) {
+				if (ucl_object_type(elem) != UCL_STRING)
+					continue;
+				s = ucl_object_tostring(elem);
+				if (s[0] == '\0')
+					continue;
+				strlcpy(m->kmod_requires[
+				    m->nkmod_requires], s,
+				    sizeof(m->kmod_requires[0]));
+				m->nkmod_requires++;
+			}
+		} else if (arr != NULL &&
+		    ucl_object_type(arr) == UCL_STRING) {
+			s = ucl_object_tostring(arr);
+			if (s[0] != '\0') {
+				strlcpy(m->kmod_requires[0], s,
+				    sizeof(m->kmod_requires[0]));
+				m->nkmod_requires = 1;
+			}
 		}
 	}
 

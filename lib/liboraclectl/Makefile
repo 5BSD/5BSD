@@ -6,6 +6,6 @@ INCS=	oraclectl.h
 
 SHLIB_MAJOR=	1
 
-CFLAGS+=	-I${SRCTOP}/usr.sbin/oracled
+CFLAGS+=	-I${SRCTOP}/lib/liboraclert
 
 .include <bsd.lib.mk>

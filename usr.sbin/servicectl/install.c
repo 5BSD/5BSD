@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * servicectl install — install a .app bundle to the user bundle dir.
+ * servicectl install — install a .cap bundle to the user bundle dir.
  *
  * Bundles run in-place.  Installation is simply copying the bundle
  * directory to the user bundle directory and requesting a reload from serviced.
@@ -20,12 +20,12 @@
 #include <sysexits.h>
 #include <unistd.h>
 
-#include <libappbundle.h>
+#include <libcapbundle.h>
 
 #include "serviced_ctl.h"
 #include "servicectl.h"
 
-#define	INSTALL_DIR	"/Applications"
+#define	INSTALL_DIR	"/Capabilities"
 
 static const char *
 install_dir(void)
@@ -41,7 +41,7 @@ install_dir(void)
 int
 cmd_install(const char *bundle_path)
 {
-	struct appbundle *b;
+	struct capbundle *b;
 	struct stat sb;
 	char errbuf[256];
 	char dst[PATH_MAX];
@@ -51,25 +51,25 @@ cmd_install(const char *bundle_path)
 	int status;
 
 	/* Validate bundle first. */
-	if (appbundle_open(bundle_path, &b, errbuf, sizeof(errbuf)) == -1) {
+	if (capbundle_open(bundle_path, &b, errbuf, sizeof(errbuf)) == -1) {
 		warnx("install: invalid bundle: %s", errbuf);
 		return (1);
 	}
 
-	if (appbundle_verify(b, errbuf, sizeof(errbuf)) == -1) {
+	if (capbundle_verify(b, errbuf, sizeof(errbuf)) == -1) {
 		warnx("install: verification failed: %s", errbuf);
-		appbundle_close(b);
+		capbundle_close(b);
 		return (1);
 	}
 
 	printf("install: %s (%s v%s, %u services)\n",
-	    appbundle_name(b), appbundle_id(b), appbundle_version(b),
-	    appbundle_nservices(b));
-	appbundle_close(b);
+	    capbundle_name(b), capbundle_id(b), capbundle_version(b),
+	    capbundle_nservices(b));
+	capbundle_close(b);
 
 	idir = install_dir();
 
-	/* Ensure /Applications exists. */
+	/* Ensure /Capabilities exists. */
 	if (stat(idir, &sb) == -1) {
 		if (mkdir(idir, 0755) == -1) {
 			warn("install: cannot create %s", idir);

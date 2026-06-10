@@ -81,8 +81,8 @@ claim_path_covered(const struct oracled_config *cfg, const char *path)
 }
 
 static inline bool
-claim_net_entry_covers(const struct oracled_net_claim *claim,
-    const struct oracled_net_claim *req)
+claim_net_entry_covers(const struct ort_net_claim *claim,
+    const struct ort_net_claim *req)
 {
 
 	if ((claim->direction & req->direction) != req->direction)
@@ -111,7 +111,7 @@ claim_net_entry_covers(const struct oracled_net_claim *claim,
 
 static inline bool
 claim_net_covered(const struct oracled_config *cfg,
-    const struct oracled_net_claim *req)
+    const struct ort_net_claim *req)
 {
 	unsigned i;
 

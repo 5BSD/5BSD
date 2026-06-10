@@ -345,17 +345,17 @@ servicectl_reload_nonroot_cleanup()
 atf_test_case servicectl_verify cleanup
 servicectl_verify_head()
 {
-	atf_set "descr" "servicectl verify validates a .app bundle"
+	atf_set "descr" "servicectl verify validates a .cap bundle"
 }
 servicectl_verify_body()
 {
 	find_servicectl
-	local bdir="$(pwd)/VerifyTest.app"
-	mkdir -p "${bdir}/Contents/5BSD/Services"
-	mkdir -p "${bdir}/Contents/bin"
-	printf '#!/bin/sh\nexec sleep 3600\n' > "${bdir}/Contents/bin/verifyd"
-	chmod 755 "${bdir}/Contents/bin/verifyd"
-	cat > "${bdir}/Contents/5BSD/Services/verifyd.ucl" <<EOF
+	local bdir="$(pwd)/VerifyTest.cap"
+	mkdir -p "${bdir}/etc"
+	mkdir -p "${bdir}/bin"
+	printf '#!/bin/sh\nexec sleep 3600\n' > "${bdir}/bin/verifyd"
+	chmod 755 "${bdir}/bin/verifyd"
+	cat > "${bdir}/etc/verifyd.ucl" <<EOF
 bundle_id = "org.test.verify";
 version = "1.0";
 author = "test";
@@ -368,7 +368,7 @@ EOF
 }
 servicectl_verify_cleanup()
 {
-	rm -rf VerifyTest.app
+	rm -rf VerifyTest.cap
 }
 
 # ===================================================================
@@ -383,10 +383,10 @@ servicectl_verify_invalid_head()
 servicectl_verify_invalid_body()
 {
 	find_servicectl
-	local bdir="$(pwd)/BadBundle.app"
-	mkdir -p "${bdir}/Contents/5BSD/Services"
+	local bdir="$(pwd)/BadBundle.cap"
+	mkdir -p "${bdir}/etc"
 	# No bin directory, no program binary
-	cat > "${bdir}/Contents/5BSD/Services/bad.ucl" <<EOF
+	cat > "${bdir}/etc/bad.ucl" <<EOF
 bundle_id = "org.test.bad";
 program = "nonexistent";
 provides = ["org.test.bad.svc"];
@@ -397,7 +397,7 @@ EOF
 }
 servicectl_verify_invalid_cleanup()
 {
-	rm -rf BadBundle.app
+	rm -rf BadBundle.cap
 }
 
 # ===================================================================
@@ -504,6 +504,110 @@ sctl_oversized_payload_cleanup()
 	cleanup_common
 }
 
+# ===================================================================
+# servicectl install — valid bundle
+# ===================================================================
+
+atf_test_case servicectl_install_valid cleanup
+servicectl_install_valid_head() {
+    atf_set "descr" "servicectl install copies valid bundle to install dir"
+    atf_set "require.user" "root"
+}
+servicectl_install_valid_body() {
+    find_servicectl
+    start_stack
+
+    local src="$(pwd)/InstallMe.cap"
+    local idir="$(pwd)/install_target"
+    mkdir -p "${src}/etc" "${src}/bin" "$idir"
+    printf '#!/bin/sh\nexec sleep 3600\n' > "${src}/bin/instd"
+    chmod 755 "${src}/bin/instd"
+    cat > "${src}/etc/instd.ucl" <<EOF
+bundle_id = "org.test.install";
+version = "1.0";
+author = "test";
+program = "instd";
+provides = ["org.test.install.svc"];
+EOF
+
+    export SERVICED_BUNDLE_DIR_USER="$idir"
+    atf_check -s exit:0 -o match:"copied to" \
+        "$servicectl_bin" install "$src"
+
+    # Verify bundle was copied
+    atf_check -s exit:0 test -d "${idir}/InstallMe.cap"
+    atf_check -s exit:0 test -x "${idir}/InstallMe.cap/bin/instd"
+}
+servicectl_install_valid_cleanup() {
+    rm -rf InstallMe.cap install_target
+    cleanup_common
+}
+
+# ===================================================================
+# servicectl install — path traversal rejected
+# ===================================================================
+
+atf_test_case servicectl_install_path_traversal cleanup
+servicectl_install_path_traversal_head() {
+    atf_set "descr" "servicectl install rejects path traversal in bundle name"
+}
+servicectl_install_path_traversal_body() {
+    find_servicectl
+    # Create a directory whose basename starts with ".."
+    local bad="$(pwd)/..BadName.cap"
+    mkdir -p "${bad}/etc" "${bad}/bin"
+    printf '#!/bin/sh\nsleep 3600\n' > "${bad}/bin/bad"
+    chmod 755 "${bad}/bin/bad"
+    cat > "${bad}/etc/bad.ucl" <<EOF
+bundle_id = "org.test.bad";
+program = "bad";
+provides = ["org.test.bad.svc"];
+EOF
+
+    atf_check -s not-exit:0 -e match:"invalid" \
+        "$servicectl_bin" install "$bad"
+}
+servicectl_install_path_traversal_cleanup() {
+    rm -rf "..BadName.cap"
+}
+
+# ===================================================================
+# servicectl install — overwrite rejected
+# ===================================================================
+
+atf_test_case servicectl_install_overwrite cleanup
+servicectl_install_overwrite_head() {
+    atf_set "descr" "servicectl install rejects overwrite of existing bundle"
+    atf_set "require.user" "root"
+}
+servicectl_install_overwrite_body() {
+    find_servicectl
+    start_stack
+
+    local src="$(pwd)/Overwrite.cap"
+    local idir="$(pwd)/install_target2"
+    mkdir -p "${src}/etc" "${src}/bin" "$idir"
+    printf '#!/bin/sh\nexec sleep 3600\n' > "${src}/bin/ovd"
+    chmod 755 "${src}/bin/ovd"
+    cat > "${src}/etc/ovd.ucl" <<EOF
+bundle_id = "org.test.overwrite";
+version = "1.0";
+author = "test";
+program = "ovd";
+provides = ["org.test.overwrite.svc"];
+EOF
+
+    export SERVICED_BUNDLE_DIR_USER="$idir"
+    atf_check -s exit:0 -o ignore "$servicectl_bin" install "$src"
+    # Second install should fail
+    atf_check -s not-exit:0 -e match:"already exists" \
+        "$servicectl_bin" install "$src"
+}
+servicectl_install_overwrite_cleanup() {
+    rm -rf Overwrite.cap install_target2
+    cleanup_common
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case servicectl_status
@@ -520,4 +624,9 @@ atf_init_test_cases()
 
 	# adversarial
 	atf_add_test_case sctl_oversized_payload
+
+	# install
+	atf_add_test_case servicectl_install_valid
+	atf_add_test_case servicectl_install_path_traversal
+	atf_add_test_case servicectl_install_overwrite
 }

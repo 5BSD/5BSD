@@ -40,7 +40,8 @@
 #define	SERVICED_PAIR_SVC_FD	4	/* pair service instance (mintable) */
 #define	SERVICED_COALITION_SVC_FD 5	/* coalition service instance (mintable) */
 #define	SERVICED_CAPPROTECT_FD	6	/* capprotect service instance */
-#define	SERVICED_LAST_FD	6	/* highest well-known fd */
+#define	SERVICED_IDENTITY_FD	7	/* identity service instance */
+#define	SERVICED_LAST_FD	7	/* highest well-known fd */
 
 static struct {
 	pid_t		pid;
@@ -66,6 +67,7 @@ struct bootstrap_delegate_fds {
 	int	pair_svc_fd;
 	int	coalition_svc_fd;
 	int	capprotect_fd;
+	int	identity_fd;
 };
 
 static void __dead2
@@ -73,12 +75,13 @@ bootstrap_child_exec(int child_pair_fd, const struct bootstrap_delegate_fds *d)
 {
 	char pair_env[64];
 	char pair_svc_env[64], coalition_svc_env[64], capprotect_env[64];
+	char identity_env[64];
 	char manifest_env[PATH_MAX + 32];
 	char ctlsock_env[PATH_MAX + 32];
-	char *env[9];
+	char *env[10];
 	char *argv[2];
 	int nullfd, fd, safe_base;
-	int src_fds[4], dst_fds[4];
+	int src_fds[5], dst_fds[5];
 	unsigned envc, i, nfds;
 
 	/*
@@ -120,6 +123,11 @@ bootstrap_child_exec(int child_pair_fd, const struct bootstrap_delegate_fds *d)
 	if (d->capprotect_fd >= 0) {
 		src_fds[nfds] = d->capprotect_fd;
 		dst_fds[nfds] = SERVICED_CAPPROTECT_FD;
+		nfds++;
+	}
+	if (d->identity_fd >= 0) {
+		src_fds[nfds] = d->identity_fd;
+		dst_fds[nfds] = SERVICED_IDENTITY_FD;
 		nfds++;
 	}
 
@@ -174,6 +182,11 @@ bootstrap_child_exec(int child_pair_fd, const struct bootstrap_delegate_fds *d)
 		(void)snprintf(capprotect_env, sizeof(capprotect_env),
 		    "SERVICED_CAPPROTECT_FD=%d", SERVICED_CAPPROTECT_FD);
 		env[envc++] = capprotect_env;
+	}
+	if (d->identity_fd >= 0) {
+		(void)snprintf(identity_env, sizeof(identity_env),
+		    "SERVICED_IDENTITY_FD=%d", SERVICED_IDENTITY_FD);
+		env[envc++] = identity_env;
 	}
 
 	if (od.cfg.manifest_dir[0] != '\0') {
@@ -273,6 +286,13 @@ bootstrap_start(int kq)
 		close(dfds.coalition_svc_fd);
 		return (-1);
 	}
+	dfds.identity_fd = cap_rt_connect_for_delegate("identity");
+	if (dfds.identity_fd == -1) {
+		/* Identity is optional — on-demand attribution is degraded. */
+		syslog(LOG_WARNING,
+		    "bootstrap: identity service not available, "
+		    "on-demand attribution disabled");
+	}
 
 	pid = pdfork(&pd_fd, PD_CLOEXEC);
 	if (pid == -1) {
@@ -283,6 +303,7 @@ bootstrap_start(int kq)
 		if (dfds.pair_svc_fd >= 0) close(dfds.pair_svc_fd);
 		if (dfds.coalition_svc_fd >= 0) close(dfds.coalition_svc_fd);
 		if (dfds.capprotect_fd >= 0) close(dfds.capprotect_fd);
+		if (dfds.identity_fd >= 0) close(dfds.identity_fd);
 		return (-1);
 	}
 
@@ -294,9 +315,14 @@ bootstrap_start(int kq)
 
 	/* Parent — close delegated fds (child inherited them). */
 	close(child_end);
-	if (dfds.pair_svc_fd >= 0) close(dfds.pair_svc_fd);
-	if (dfds.coalition_svc_fd >= 0) close(dfds.coalition_svc_fd);
-	if (dfds.capprotect_fd >= 0) close(dfds.capprotect_fd);
+	if (dfds.pair_svc_fd >= 0)
+		close(dfds.pair_svc_fd);
+	if (dfds.coalition_svc_fd >= 0)
+		close(dfds.coalition_svc_fd);
+	if (dfds.capprotect_fd >= 0)
+		close(dfds.capprotect_fd);
+	if (dfds.identity_fd >= 0)
+		close(dfds.identity_fd);
 
 	bs.pid = pid;
 	bs.pd_fd = pd_fd;

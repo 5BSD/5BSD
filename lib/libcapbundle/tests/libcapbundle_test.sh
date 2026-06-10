@@ -4,7 +4,7 @@
 #
 # Copyright (c) 2026 Kory Heard
 #
-# ATF tests for libappbundle — bundle parsing, validation, and cycle detection.
+# ATF tests for libcapbundle — bundle parsing, validation, and cycle detection.
 #
 
 . $(atf_get_srcdir)/../../common/subr.sh 2>/dev/null || true
@@ -12,20 +12,20 @@
 # Helper: create a minimal valid bundle
 create_bundle() {
 	local name="$1" bundle_id="$2" program="$3" provides="$4"
-	local dir="${TMPDIR}/${name}.app"
+	local dir="${TMPDIR}/${name}.cap"
 
-	mkdir -p "${dir}/Contents/5BSD/Services"
-	mkdir -p "${dir}/Contents/bin"
+	mkdir -p "${dir}/etc"
+	mkdir -p "${dir}/bin"
 
 	# Create a dummy executable
-	cat > "${dir}/Contents/bin/${program}" <<'PROG'
+	cat > "${dir}/bin/${program}" <<'PROG'
 #!/bin/sh
 exec sleep 3600
 PROG
-	chmod 755 "${dir}/Contents/bin/${program}"
+	chmod 755 "${dir}/bin/${program}"
 
 	# Create service manifest
-	cat > "${dir}/Contents/5BSD/Services/${program}.ucl" <<UCL
+	cat > "${dir}/etc/${program}.ucl" <<UCL
 bundle_id = "${bundle_id}";
 version = "1.0";
 author = "test";
@@ -44,7 +44,7 @@ create_bundle_with_requires() {
 
 	dir=$(create_bundle "$name" "$bundle_id" "$program" "$provides")
 	# Append requires to the manifest
-	cat >> "${dir}/Contents/5BSD/Services/${program}.ucl" <<UCL
+	cat >> "${dir}/etc/${program}.ucl" <<UCL
 requires = ["${requires}"];
 UCL
 	echo "${dir}"
@@ -55,13 +55,13 @@ UCL
 # ---------------------------------------------------------------
 atf_test_case open_valid_bundle cleanup
 open_valid_bundle_head() {
-	atf_set "descr" "Open and parse a valid .app bundle"
+	atf_set "descr" "Open and parse a valid .cap bundle"
 }
 open_valid_bundle_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
 	mkdir -p "${TMPDIR}"
 
-	dir=$(create_bundle "TestApp" "org.test.app" "testd" "org.test.service")
+	dir=$(create_bundle "TestApp" "org.test.cap" "testd" "org.test.service")
 
 	# Use the verify tool to test parsing
 	atf_check -s exit:0 -o match:"Verification: PASSED" \
@@ -72,7 +72,7 @@ open_valid_bundle_cleanup() {
 }
 
 # ---------------------------------------------------------------
-# Test: Missing Contents/5BSD/Services/ directory
+# Test: Missing etc/ directory
 # ---------------------------------------------------------------
 atf_test_case missing_services_dir cleanup
 missing_services_dir_head() {
@@ -80,10 +80,10 @@ missing_services_dir_head() {
 }
 missing_services_dir_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/Bad.app/Contents/bin"
+	mkdir -p "${TMPDIR}/Bad.cap/bin"
 
 	atf_check -s exit:1 -e match:"invalid bundle" \
-	    servicectl verify "${TMPDIR}/Bad.app"
+	    servicectl verify "${TMPDIR}/Bad.cap"
 }
 missing_services_dir_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -98,10 +98,10 @@ missing_binary_head() {
 }
 missing_binary_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/Bad.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/Bad.app/Contents/bin"
+	mkdir -p "${TMPDIR}/Bad.cap/etc"
+	mkdir -p "${TMPDIR}/Bad.cap/bin"
 
-	cat > "${TMPDIR}/Bad.app/Contents/5BSD/Services/ghost.ucl" <<UCL
+	cat > "${TMPDIR}/Bad.cap/etc/ghost.ucl" <<UCL
 bundle_id = "org.test.bad";
 version = "1.0";
 author = "test";
@@ -111,7 +111,7 @@ UCL
 	# No binary created — should fail verification
 
 	atf_check -s exit:1 -e match:"FAILED" \
-	    servicectl verify "${TMPDIR}/Bad.app"
+	    servicectl verify "${TMPDIR}/Bad.cap"
 }
 missing_binary_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -126,13 +126,13 @@ duplicate_provides_head() {
 }
 duplicate_provides_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/Dup.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/Dup.app/Contents/bin"
+	mkdir -p "${TMPDIR}/Dup.cap/etc"
+	mkdir -p "${TMPDIR}/Dup.cap/bin"
 
 	for prog in svc1 svc2; do
-		printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Dup.app/Contents/bin/${prog}"
-		chmod 755 "${TMPDIR}/Dup.app/Contents/bin/${prog}"
-		cat > "${TMPDIR}/Dup.app/Contents/5BSD/Services/${prog}.ucl" <<UCL
+		printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Dup.cap/bin/${prog}"
+		chmod 755 "${TMPDIR}/Dup.cap/bin/${prog}"
+		cat > "${TMPDIR}/Dup.cap/etc/${prog}.ucl" <<UCL
 bundle_id = "org.test.dup";
 version = "1.0";
 author = "test";
@@ -142,7 +142,7 @@ UCL
 	done
 
 	atf_check -s exit:1 -e match:"duplicate provides" \
-	    servicectl verify "${TMPDIR}/Dup.app"
+	    servicectl verify "${TMPDIR}/Dup.cap"
 }
 duplicate_provides_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -157,13 +157,13 @@ self_require_head() {
 }
 self_require_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/Loop.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/Loop.app/Contents/bin"
+	mkdir -p "${TMPDIR}/Loop.cap/etc"
+	mkdir -p "${TMPDIR}/Loop.cap/bin"
 
-	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Loop.app/Contents/bin/loopd"
-	chmod 755 "${TMPDIR}/Loop.app/Contents/bin/loopd"
+	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Loop.cap/bin/loopd"
+	chmod 755 "${TMPDIR}/Loop.cap/bin/loopd"
 
-	cat > "${TMPDIR}/Loop.app/Contents/5BSD/Services/loopd.ucl" <<UCL
+	cat > "${TMPDIR}/Loop.cap/etc/loopd.ucl" <<UCL
 bundle_id = "org.test.loop";
 version = "1.0";
 author = "test";
@@ -173,7 +173,7 @@ requires = ["org.test.loopsvc"];
 UCL
 
 	atf_check -s exit:1 -e match:"requires itself" \
-	    servicectl verify "${TMPDIR}/Loop.app"
+	    servicectl verify "${TMPDIR}/Loop.cap"
 }
 self_require_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -195,8 +195,8 @@ cross_bundle_cycle_body() {
 	create_bundle_with_requires "B" "org.b" "bd" "org.b.svc" "org.a.svc"
 
 	# Both bundles are valid individually
-	atf_check -s exit:0 servicectl verify "${TMPDIR}/A.app"
-	atf_check -s exit:0 servicectl verify "${TMPDIR}/B.app"
+	atf_check -s exit:0 servicectl verify "${TMPDIR}/A.cap"
+	atf_check -s exit:0 servicectl verify "${TMPDIR}/B.cap"
 
 	# But together they form a cycle — serviced should detect this
 	# at startup.  For now verify the library detects it via the
@@ -216,13 +216,13 @@ multi_service_bundle_head() {
 }
 multi_service_bundle_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/Multi.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/Multi.app/Contents/bin"
+	mkdir -p "${TMPDIR}/Multi.cap/etc"
+	mkdir -p "${TMPDIR}/Multi.cap/bin"
 
 	for prog in alpha beta gamma; do
-		printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Multi.app/Contents/bin/${prog}"
-		chmod 755 "${TMPDIR}/Multi.app/Contents/bin/${prog}"
-		cat > "${TMPDIR}/Multi.app/Contents/5BSD/Services/${prog}.ucl" <<UCL
+		printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Multi.cap/bin/${prog}"
+		chmod 755 "${TMPDIR}/Multi.cap/bin/${prog}"
+		cat > "${TMPDIR}/Multi.cap/etc/${prog}.ucl" <<UCL
 bundle_id = "org.test.multi";
 version = "2.0";
 author = "tester";
@@ -233,11 +233,11 @@ UCL
 	done
 
 	atf_check -s exit:0 -o match:"Services: 3" \
-	    servicectl verify "${TMPDIR}/Multi.app"
+	    servicectl verify "${TMPDIR}/Multi.cap"
 	atf_check -s exit:0 -o match:"org.test.multi.alpha" \
-	    servicectl verify "${TMPDIR}/Multi.app"
+	    servicectl verify "${TMPDIR}/Multi.cap"
 	atf_check -s exit:0 -o match:"on-demand" \
-	    servicectl verify "${TMPDIR}/Multi.app"
+	    servicectl verify "${TMPDIR}/Multi.cap"
 }
 multi_service_bundle_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -252,13 +252,13 @@ capabilities_parsing_head() {
 }
 capabilities_parsing_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/Cap.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/Cap.app/Contents/bin"
+	mkdir -p "${TMPDIR}/Cap.cap/etc"
+	mkdir -p "${TMPDIR}/Cap.cap/bin"
 
-	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Cap.app/Contents/bin/capd"
-	chmod 755 "${TMPDIR}/Cap.app/Contents/bin/capd"
+	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Cap.cap/bin/capd"
+	chmod 755 "${TMPDIR}/Cap.cap/bin/capd"
 
-	cat > "${TMPDIR}/Cap.app/Contents/5BSD/Services/capd.ucl" <<UCL
+	cat > "${TMPDIR}/Cap.cap/etc/capd.ucl" <<UCL
 bundle_id = "org.test.cap";
 version = "1.0";
 author = "test";
@@ -271,7 +271,7 @@ capabilities {
 UCL
 
 	atf_check -s exit:0 -o match:"Verification: PASSED" \
-	    servicectl verify "${TMPDIR}/Cap.app"
+	    servicectl verify "${TMPDIR}/Cap.cap"
 }
 capabilities_parsing_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -306,13 +306,13 @@ network_capabilities_head() {
 }
 network_capabilities_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/Net.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/Net.app/Contents/bin"
+	mkdir -p "${TMPDIR}/Net.cap/etc"
+	mkdir -p "${TMPDIR}/Net.cap/bin"
 
-	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Net.app/Contents/bin/netd"
-	chmod 755 "${TMPDIR}/Net.app/Contents/bin/netd"
+	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Net.cap/bin/netd"
+	chmod 755 "${TMPDIR}/Net.cap/bin/netd"
 
-	cat > "${TMPDIR}/Net.app/Contents/5BSD/Services/netd.ucl" <<'UCL'
+	cat > "${TMPDIR}/Net.cap/etc/netd.ucl" <<'UCL'
 bundle_id = "org.test.net";
 version = "1.0";
 author = "test";
@@ -328,7 +328,7 @@ capabilities {
 UCL
 
 	atf_check -s exit:0 -o match:"Verification: PASSED" \
-	    servicectl verify "${TMPDIR}/Net.app"
+	    servicectl verify "${TMPDIR}/Net.cap"
 }
 network_capabilities_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -343,13 +343,13 @@ file_capabilities_head() {
 }
 file_capabilities_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/File.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/File.app/Contents/bin"
+	mkdir -p "${TMPDIR}/File.cap/etc"
+	mkdir -p "${TMPDIR}/File.cap/bin"
 
-	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/File.app/Contents/bin/filed"
-	chmod 755 "${TMPDIR}/File.app/Contents/bin/filed"
+	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/File.cap/bin/filed"
+	chmod 755 "${TMPDIR}/File.cap/bin/filed"
 
-	cat > "${TMPDIR}/File.app/Contents/5BSD/Services/filed.ucl" <<'UCL'
+	cat > "${TMPDIR}/File.cap/etc/filed.ucl" <<'UCL'
 bundle_id = "org.test.file";
 version = "1.0";
 author = "test";
@@ -364,7 +364,7 @@ capabilities {
 UCL
 
 	atf_check -s exit:0 -o match:"Verification: PASSED" \
-	    servicectl verify "${TMPDIR}/File.app"
+	    servicectl verify "${TMPDIR}/File.cap"
 }
 file_capabilities_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -379,13 +379,13 @@ jail_capabilities_head() {
 }
 jail_capabilities_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/Jail.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/Jail.app/Contents/bin"
+	mkdir -p "${TMPDIR}/Jail.cap/etc"
+	mkdir -p "${TMPDIR}/Jail.cap/bin"
 
-	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Jail.app/Contents/bin/jaild"
-	chmod 755 "${TMPDIR}/Jail.app/Contents/bin/jaild"
+	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Jail.cap/bin/jaild"
+	chmod 755 "${TMPDIR}/Jail.cap/bin/jaild"
 
-	cat > "${TMPDIR}/Jail.app/Contents/5BSD/Services/jaild.ucl" <<'UCL'
+	cat > "${TMPDIR}/Jail.cap/etc/jaild.ucl" <<'UCL'
 bundle_id = "org.test.jail";
 version = "1.0";
 author = "test";
@@ -400,7 +400,7 @@ capabilities {
 UCL
 
 	atf_check -s exit:0 -o match:"Verification: PASSED" \
-	    servicectl verify "${TMPDIR}/Jail.app"
+	    servicectl verify "${TMPDIR}/Jail.cap"
 }
 jail_capabilities_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -415,14 +415,14 @@ all_system_gates_head() {
 }
 all_system_gates_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/Gate.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/Gate.app/Contents/bin"
+	mkdir -p "${TMPDIR}/Gate.cap/etc"
+	mkdir -p "${TMPDIR}/Gate.cap/bin"
 
-	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Gate.app/Contents/bin/gated"
-	chmod 755 "${TMPDIR}/Gate.app/Contents/bin/gated"
+	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Gate.cap/bin/gated"
+	chmod 755 "${TMPDIR}/Gate.cap/bin/gated"
 
 	# Every valid gate name from gates.h
-	cat > "${TMPDIR}/Gate.app/Contents/5BSD/Services/gated.ucl" <<'UCL'
+	cat > "${TMPDIR}/Gate.cap/etc/gated.ucl" <<'UCL'
 bundle_id = "org.test.gate";
 version = "1.0";
 author = "test";
@@ -436,7 +436,7 @@ capabilities {
 UCL
 
 	atf_check -s exit:0 -o match:"Verification: PASSED" \
-	    servicectl verify "${TMPDIR}/Gate.app"
+	    servicectl verify "${TMPDIR}/Gate.cap"
 }
 all_system_gates_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -451,13 +451,13 @@ invalid_port_range_head() {
 }
 invalid_port_range_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/BadPort.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/BadPort.app/Contents/bin"
+	mkdir -p "${TMPDIR}/BadPort.cap/etc"
+	mkdir -p "${TMPDIR}/BadPort.cap/bin"
 
-	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/BadPort.app/Contents/bin/bpd"
-	chmod 755 "${TMPDIR}/BadPort.app/Contents/bin/bpd"
+	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/BadPort.cap/bin/bpd"
+	chmod 755 "${TMPDIR}/BadPort.cap/bin/bpd"
 
-	cat > "${TMPDIR}/BadPort.app/Contents/5BSD/Services/bpd.ucl" <<'UCL'
+	cat > "${TMPDIR}/BadPort.cap/etc/bpd.ucl" <<'UCL'
 bundle_id = "org.test.badport";
 version = "1.0";
 author = "test";
@@ -472,7 +472,7 @@ UCL
 
 	# The invalid port should be skipped (network cap count = 0),
 	# but bundle still valid overall.  Verify it doesn't crash.
-	atf_check -s exit:0 servicectl verify "${TMPDIR}/BadPort.app"
+	atf_check -s exit:0 servicectl verify "${TMPDIR}/BadPort.cap"
 }
 invalid_port_range_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -490,7 +490,7 @@ stop_timeout_clamp_body() {
 
 	dir=$(create_bundle "Clamp" "org.test.clamp" "clampd" "org.test.clamp.svc")
 	# Add extreme stop_timeout
-	cat >> "${dir}/Contents/5BSD/Services/clampd.ucl" <<UCL
+	cat >> "${dir}/etc/clampd.ucl" <<UCL
 stop_timeout = 9999;
 max_failures = 0;
 UCL
@@ -512,10 +512,10 @@ missing_program_head() {
 }
 missing_program_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/NoProg.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/NoProg.app/Contents/bin"
+	mkdir -p "${TMPDIR}/NoProg.cap/etc"
+	mkdir -p "${TMPDIR}/NoProg.cap/bin"
 
-	cat > "${TMPDIR}/NoProg.app/Contents/5BSD/Services/bad.ucl" <<'UCL'
+	cat > "${TMPDIR}/NoProg.cap/etc/bad.ucl" <<'UCL'
 bundle_id = "org.test.noprog";
 version = "1.0";
 provides = ["org.test.noprog.svc"];
@@ -523,7 +523,7 @@ UCL
 
 	# Should fail — no valid services found (parse error on missing program)
 	atf_check -s exit:1 -e match:"no valid services" \
-	    servicectl verify "${TMPDIR}/NoProg.app"
+	    servicectl verify "${TMPDIR}/NoProg.cap"
 }
 missing_program_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -538,13 +538,13 @@ missing_provides_head() {
 }
 missing_provides_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/NoProv.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/NoProv.app/Contents/bin"
+	mkdir -p "${TMPDIR}/NoProv.cap/etc"
+	mkdir -p "${TMPDIR}/NoProv.cap/bin"
 
-	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/NoProv.app/Contents/bin/npd"
-	chmod 755 "${TMPDIR}/NoProv.app/Contents/bin/npd"
+	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/NoProv.cap/bin/npd"
+	chmod 755 "${TMPDIR}/NoProv.cap/bin/npd"
 
-	cat > "${TMPDIR}/NoProv.app/Contents/5BSD/Services/npd.ucl" <<'UCL'
+	cat > "${TMPDIR}/NoProv.cap/etc/npd.ucl" <<'UCL'
 bundle_id = "org.test.noprov";
 version = "1.0";
 author = "test";
@@ -552,7 +552,7 @@ program = "npd";
 UCL
 
 	atf_check -s exit:1 -e match:"has no provides" \
-	    servicectl verify "${TMPDIR}/NoProv.app"
+	    servicectl verify "${TMPDIR}/NoProv.cap"
 }
 missing_provides_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -567,19 +567,19 @@ missing_bundle_id_head() {
 }
 missing_bundle_id_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/NoId.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/NoId.app/Contents/bin"
+	mkdir -p "${TMPDIR}/NoId.cap/etc"
+	mkdir -p "${TMPDIR}/NoId.cap/bin"
 
-	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/NoId.app/Contents/bin/noid"
-	chmod 755 "${TMPDIR}/NoId.app/Contents/bin/noid"
+	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/NoId.cap/bin/noid"
+	chmod 755 "${TMPDIR}/NoId.cap/bin/noid"
 
-	cat > "${TMPDIR}/NoId.app/Contents/5BSD/Services/noid.ucl" <<'UCL'
+	cat > "${TMPDIR}/NoId.cap/etc/noid.ucl" <<'UCL'
 program = "noid";
 provides = ["org.test.noid.svc"];
 UCL
 
 	atf_check -s exit:1 -e match:"no bundle_id" \
-	    servicectl verify "${TMPDIR}/NoId.app"
+	    servicectl verify "${TMPDIR}/NoId.cap"
 }
 missing_bundle_id_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -594,13 +594,13 @@ relative_cap_path_head() {
 }
 relative_cap_path_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/Rel.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/Rel.app/Contents/bin"
+	mkdir -p "${TMPDIR}/Rel.cap/etc"
+	mkdir -p "${TMPDIR}/Rel.cap/bin"
 
-	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Rel.app/Contents/bin/reld"
-	chmod 755 "${TMPDIR}/Rel.app/Contents/bin/reld"
+	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Rel.cap/bin/reld"
+	chmod 755 "${TMPDIR}/Rel.cap/bin/reld"
 
-	cat > "${TMPDIR}/Rel.app/Contents/5BSD/Services/reld.ucl" <<'UCL'
+	cat > "${TMPDIR}/Rel.cap/etc/reld.ucl" <<'UCL'
 bundle_id = "org.test.rel";
 version = "1.0";
 author = "test";
@@ -614,7 +614,7 @@ UCL
 	# Should parse successfully but skip the relative path.
 	# Only /valid/path should be in the result.
 	atf_check -s exit:0 -o match:"Verification: PASSED" \
-	    servicectl verify "${TMPDIR}/Rel.app"
+	    servicectl verify "${TMPDIR}/Rel.cap"
 }
 relative_cap_path_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -629,13 +629,13 @@ unknown_gate_name_head() {
 }
 unknown_gate_name_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/UGate.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/UGate.app/Contents/bin"
+	mkdir -p "${TMPDIR}/UGate.cap/etc"
+	mkdir -p "${TMPDIR}/UGate.cap/bin"
 
-	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/UGate.app/Contents/bin/ugd"
-	chmod 755 "${TMPDIR}/UGate.app/Contents/bin/ugd"
+	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/UGate.cap/bin/ugd"
+	chmod 755 "${TMPDIR}/UGate.cap/bin/ugd"
 
-	cat > "${TMPDIR}/UGate.app/Contents/5BSD/Services/ugd.ucl" <<'UCL'
+	cat > "${TMPDIR}/UGate.cap/etc/ugd.ucl" <<'UCL'
 bundle_id = "org.test.ugate";
 version = "1.0";
 author = "test";
@@ -648,7 +648,7 @@ UCL
 
 	# Parsing succeeds; the unknown gate is simply ignored.
 	atf_check -s exit:0 -o match:"Verification: PASSED" \
-	    servicectl verify "${TMPDIR}/UGate.app"
+	    servicectl verify "${TMPDIR}/UGate.cap"
 }
 unknown_gate_name_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
@@ -663,13 +663,13 @@ empty_jail_name_head() {
 }
 empty_jail_name_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}/EJail.app/Contents/5BSD/Services"
-	mkdir -p "${TMPDIR}/EJail.app/Contents/bin"
+	mkdir -p "${TMPDIR}/EJail.cap/etc"
+	mkdir -p "${TMPDIR}/EJail.cap/bin"
 
-	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/EJail.app/Contents/bin/ejd"
-	chmod 755 "${TMPDIR}/EJail.app/Contents/bin/ejd"
+	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/EJail.cap/bin/ejd"
+	chmod 755 "${TMPDIR}/EJail.cap/bin/ejd"
 
-	cat > "${TMPDIR}/EJail.app/Contents/5BSD/Services/ejd.ucl" <<'UCL'
+	cat > "${TMPDIR}/EJail.cap/etc/ejd.ucl" <<'UCL'
 bundle_id = "org.test.ejail";
 version = "1.0";
 author = "test";
@@ -685,7 +685,7 @@ UCL
 
 	# Should succeed — empty string is skipped, validjail kept.
 	atf_check -s exit:0 -o match:"Verification: PASSED" \
-	    servicectl verify "${TMPDIR}/EJail.app"
+	    servicectl verify "${TMPDIR}/EJail.cap"
 }
 empty_jail_name_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
