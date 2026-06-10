@@ -32,6 +32,7 @@
 #include <sys/malloc.h>
 #include <sys/queue.h>
 #include <sys/sdt.h>
+#include <sys/sysctl.h>
 #include <sys/vnode.h>
 #include <sys/file.h>
 #include <sys/jail.h>
@@ -176,6 +177,18 @@ static volatile uint64_t	 fi_next_claim_id = 1;
 static LIST_HEAD(, fi_auth)	*fi_auth_hash;
 static u_long			 fi_auth_hashmask;
 static struct rwlock		 fi_auth_lock;
+static volatile u_int		 fi_auth_count;
+
+static u_int fi_max_auth = 4096;
+
+SYSCTL_NODE(_kern, OID_AUTO, cap_rt_isolation,
+    CTLFLAG_RW | CTLFLAG_MPSAFE, 0, "cap_rt isolation");
+SYSCTL_UINT(_kern_cap_rt_isolation, OID_AUTO, max_auth, CTLFLAG_RW,
+    &fi_max_auth, 0,
+    "Maximum authorization entries per nonce (0 = unlimited)");
+SYSCTL_UINT(_kern_cap_rt_isolation, OID_AUTO, auth_count, CTLFLAG_RD,
+    __DEVOLATILE(u_int *, &fi_auth_count), 0,
+    "Current number of authorization entries");
 
 static LIST_HEAD(, fi_jail_claim) fi_jail_claims;
 static struct rwlock		 fi_jail_lock;
@@ -386,7 +399,7 @@ fi_is_authorized_net_request(uint64_t accessor, uint64_t owner,
 	return (0);
 }
 
-static void
+static int
 fi_auth_add(uint64_t accessor, uint64_t owner, uint64_t claim_id,
     uint64_t fs_actions, const struct fi_net_request *net,
     const struct fi_jail_request *jail,
@@ -410,6 +423,7 @@ fi_auth_add(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 	fa->fa_inst = inst;
 
 	rw_wlock(&fi_auth_lock);
+	/* Dedup: check for existing entry with same key. */
 	LIST_FOREACH(existing, FI_AUTH_BUCKET(owner), fa_link) {
 		if (existing->fa_accessor == accessor &&
 		    existing->fa_owner == owner &&
@@ -419,11 +433,29 @@ fi_auth_add(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 		    existing->fa_is_jail == (jail != NULL)) {
 			rw_wunlock(&fi_auth_lock);
 			free(fa, M_FILE_ISOLATION);
-			return;
+			return (0);
+		}
+	}
+	/* Limit check: count entries for this accessor nonce. */
+	if (fi_max_auth != 0) {
+		u_int count = 0;
+
+		for (u_long i = 0; i <= fi_auth_hashmask; i++) {
+			LIST_FOREACH(existing, &fi_auth_hash[i], fa_link) {
+				if (existing->fa_accessor == accessor)
+					count++;
+			}
+		}
+		if (count >= fi_max_auth) {
+			rw_wunlock(&fi_auth_lock);
+			free(fa, M_FILE_ISOLATION);
+			return (ENOSPC);
 		}
 	}
 	LIST_INSERT_HEAD(FI_AUTH_BUCKET(owner), fa, fa_link);
+	atomic_add_int(&fi_auth_count, 1);
 	rw_wunlock(&fi_auth_lock);
+	return (0);
 }
 
 static void
@@ -437,6 +469,7 @@ fi_auth_remove_by_inst(struct cap_rt_instance *inst)
 		LIST_FOREACH_SAFE(fa, &fi_auth_hash[i], fa_link, fa_tmp) {
 			if (fa->fa_inst == inst) {
 				LIST_REMOVE(fa, fa_link);
+				atomic_subtract_int(&fi_auth_count, 1);
 				free(fa, M_FILE_ISOLATION);
 			}
 		}
@@ -2213,7 +2246,9 @@ fi_call(struct cap_rt_instance *s,
 			return (error);
 		}
 
-	case FI_OP_AUTHORIZE:
+	case FI_OP_AUTHORIZE: {
+		int error;
+
 		/*
 		 * Called on a token fd.  Adds the caller's nonce to
 		 * the authorized set for the token's owner nonce.
@@ -2224,12 +2259,14 @@ fi_call(struct cap_rt_instance *s,
 			if (priv->fip_token_owner == 0)
 				return (EINVAL);
 
-			fi_auth_add(caller_nonce, priv->fip_token_owner,
+			error = fi_auth_add(caller_nonce, priv->fip_token_owner,
 			    priv->fip_token_claim_id, priv->fip_token_fs_actions,
 			    priv->fip_token_is_net ? &priv->fip_token_net : NULL,
 			    priv->fip_token_is_jail ?
 			    &priv->fip_token_jail : NULL,
 			    s);
+		if (error != 0)
+			return (error);
 		SDT_PROBE6(cap_rt_isolation, , , state,
 		    (priv->fip_token_is_net ? "net-authorize" :
 		    (priv->fip_token_is_jail ? "jail-authorize" :
@@ -2238,6 +2275,7 @@ fi_call(struct cap_rt_instance *s,
 		    priv->fip_token_claim_id, FI_OP_AUTHORIZE, 0);
 		*replylenp = sizeof(struct fi_reply);
 		return (0);
+	}
 
 	default:
 		return (EOPNOTSUPP);

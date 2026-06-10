@@ -216,8 +216,8 @@ static eventhandler_tag coalition_exit_tag;
  * of racing threads.  This is acceptable for resource control;
  * hard enforcement would require a global lock on every admission.
  */
-static u_int coalition_max = 0;		/* 0 = unlimited */
-static u_int coalition_max_members = 0;
+static u_int coalition_max = 1024;
+static u_int coalition_max_members = 8192;
 
 SYSCTL_NODE(_kern, OID_AUTO, cap_rt_coalition,
     CTLFLAG_RW | CTLFLAG_MPSAFE, 0, "cap_rt coalition");

@@ -82,7 +82,19 @@ static LIST_HEAD(, sys_claim) sys_claims =
 static LIST_HEAD(, sys_auth) sys_auths =
     LIST_HEAD_INITIALIZER(sys_auths);
 static volatile int sys_active_claims;
+static volatile u_int sys_auth_count;
 static struct cap_rt_service *sys_svc;
+
+static u_int sys_max_auth = 4096;
+
+SYSCTL_NODE(_kern, OID_AUTO, cap_rt_system,
+    CTLFLAG_RW | CTLFLAG_MPSAFE, 0, "cap_rt system gates");
+SYSCTL_UINT(_kern_cap_rt_system, OID_AUTO, max_auth, CTLFLAG_RW,
+    &sys_max_auth, 0,
+    "Maximum authorization entries per nonce (0 = unlimited)");
+SYSCTL_UINT(_kern_cap_rt_system, OID_AUTO, auth_count, CTLFLAG_RD,
+    __DEVOLATILE(u_int *, &sys_auth_count), 0,
+    "Current number of authorization entries");
 
 static void
 sys_claim_ref_gates(struct sys_claim *sc, uint32_t gates)
@@ -476,7 +488,7 @@ sys_call(struct cap_rt_instance *s,
 	}
 
 	case SYS_OP_AUTHORIZE: {
-		struct sys_auth *sa;
+		struct sys_auth *sa, *existing;
 
 		sa = malloc(sizeof(*sa), M_CAP_RT_SYS, M_WAITOK | M_ZERO);
 
@@ -492,11 +504,39 @@ sys_call(struct cap_rt_instance *s,
 			return (0); /* already authorized */
 		}
 
+		/* Dedup: check for existing entry with same key. */
+		LIST_FOREACH(existing, &sys_auths, sa_link) {
+			if (existing->sa_accessor == caller_nonce &&
+			    existing->sa_owner == priv->sp_owner &&
+			    existing->sa_inst == s) {
+				existing->sa_gates |= priv->sp_gates;
+				priv->sp_active = true;
+				mtx_unlock(&sys_lock);
+				free(sa, M_CAP_RT_SYS);
+				return (0);
+			}
+		}
+		/* Limit check: count entries for this accessor nonce. */
+		if (sys_max_auth != 0) {
+			u_int count = 0;
+
+			LIST_FOREACH(existing, &sys_auths, sa_link) {
+				if (existing->sa_accessor == caller_nonce)
+					count++;
+			}
+			if (count >= sys_max_auth) {
+				mtx_unlock(&sys_lock);
+				free(sa, M_CAP_RT_SYS);
+				return (ENOSPC);
+			}
+		}
+
 		sa->sa_accessor = caller_nonce;
 		sa->sa_owner = priv->sp_owner;
 		sa->sa_gates = priv->sp_gates;
 		sa->sa_inst = s;
 		LIST_INSERT_HEAD(&sys_auths, sa, sa_link);
+		atomic_add_int(&sys_auth_count, 1);
 		priv->sp_active = true;
 		mtx_unlock(&sys_lock);
 		SDT_PROBE6(cap_rt_system, , , state, (uintptr_t)"authorize",
@@ -538,6 +578,7 @@ sys_revoke(struct cap_rt_instance *s, uint64_t badge __unused,
 		LIST_FOREACH_SAFE(sa, &sys_auths, sa_link, sa_tmp) {
 			if (sa->sa_inst == s) {
 				LIST_REMOVE(sa, sa_link);
+				atomic_subtract_int(&sys_auth_count, 1);
 				free(sa, M_CAP_RT_SYS);
 			}
 		}

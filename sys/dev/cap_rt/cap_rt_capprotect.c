@@ -51,6 +51,7 @@
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/sdt.h>
+#include <sys/sysctl.h>
 #include <sys/capsicum.h>
 #include <sys/ipc.h>
 #include <sys/msg.h>
@@ -121,6 +122,18 @@ struct auth_entry {
 };
 static LIST_HEAD(, auth_entry) *cp_auth_hash;
 static u_long cp_auth_hashmask;
+
+static volatile u_int cp_auth_count;
+static u_int cp_max_auth = 4096;
+
+SYSCTL_NODE(_kern, OID_AUTO, cap_rt_capprotect,
+    CTLFLAG_RW | CTLFLAG_MPSAFE, 0, "cap_rt capability protection");
+SYSCTL_UINT(_kern_cap_rt_capprotect, OID_AUTO, max_auth, CTLFLAG_RW,
+    &cp_max_auth, 0,
+    "Maximum authorization entries per nonce (0 = unlimited)");
+SYSCTL_UINT(_kern_cap_rt_capprotect, OID_AUTO, auth_count, CTLFLAG_RD,
+    __DEVOLATILE(u_int *, &cp_auth_count), 0,
+    "Current number of authorization entries");
 
 static struct cap_rt_service *cp_svc;
 static volatile uint64_t cp_next_badge = 1;
@@ -246,17 +259,18 @@ cp_shield_remove(uint64_t nonce, uint32_t flags)
 	LIST_FOREACH_SAFE(ae, CP_AUTH_BUCKET(nonce), ae_link, ae_tmp) {
 		if (ae->ae_target == nonce) {
 			LIST_REMOVE(ae, ae_link);
+			atomic_subtract_int(&cp_auth_count, 1);
 			free(ae, M_CAP_RT_CP);
 		}
 	}
 	mtx_unlock(&cp_lock);
 }
 
-static void
+static int
 cp_auth_add(uint64_t accessor, uint64_t target, uint32_t flags,
     struct cap_rt_instance *inst)
 {
-	struct auth_entry *ae;
+	struct auth_entry *ae, *existing;
 
 	ae = malloc(sizeof(*ae), M_CAP_RT_CP, M_WAITOK);
 	ae->ae_accessor = accessor;
@@ -265,8 +279,37 @@ cp_auth_add(uint64_t accessor, uint64_t target, uint32_t flags,
 	ae->ae_inst = inst;
 
 	mtx_lock(&cp_lock);
+	/* Dedup: if an entry with same key exists, OR the flags. */
+	LIST_FOREACH(existing, CP_AUTH_BUCKET(target), ae_link) {
+		if (existing->ae_accessor == accessor &&
+		    existing->ae_target == target &&
+		    existing->ae_inst == inst) {
+			existing->ae_flags |= flags;
+			mtx_unlock(&cp_lock);
+			free(ae, M_CAP_RT_CP);
+			return (0);
+		}
+	}
+	/* Limit check: count entries for this accessor nonce. */
+	if (cp_max_auth != 0) {
+		u_int count = 0;
+
+		for (u_long i = 0; i <= cp_auth_hashmask; i++) {
+			LIST_FOREACH(existing, &cp_auth_hash[i], ae_link) {
+				if (existing->ae_accessor == accessor)
+					count++;
+			}
+		}
+		if (count >= cp_max_auth) {
+			mtx_unlock(&cp_lock);
+			free(ae, M_CAP_RT_CP);
+			return (ENOSPC);
+		}
+	}
 	LIST_INSERT_HEAD(CP_AUTH_BUCKET(target), ae, ae_link);
+	atomic_add_int(&cp_auth_count, 1);
 	mtx_unlock(&cp_lock);
+	return (0);
 }
 
 static void
@@ -280,6 +323,7 @@ cp_auth_remove_by_inst(struct cap_rt_instance *inst)
 		LIST_FOREACH_SAFE(ae, &cp_auth_hash[i], ae_link, ae_tmp) {
 			if (ae->ae_inst == inst) {
 				LIST_REMOVE(ae, ae_link);
+				atomic_subtract_int(&cp_auth_count, 1);
 				free(ae, M_CAP_RT_CP);
 			}
 		}
@@ -417,18 +461,25 @@ cp_call(struct cap_rt_instance *s,
 		return (0);
 	}
 
-		case CP_OP_AUTHORIZE:
+		case CP_OP_AUTHORIZE: {
+			int auth_error;
+
 			if (!atomic_load_acq_int(&priv->cp_is_token))
 				return (EINVAL);
 			if (!atomic_cmpset_int(&priv->cp_active, 0, 1))
 				return (0);	/* already authorized */
-			cp_auth_add(caller_nonce, priv->cp_target,
+			auth_error = cp_auth_add(caller_nonce, priv->cp_target,
 			    priv->cp_flags, s);
+			if (auth_error != 0) {
+				atomic_cmpset_int(&priv->cp_active, 1, 0);
+				return (auth_error);
+			}
 			SDT_PROBE6(cap_rt_capprotect, , , state,
 			    "authorize", priv->cp_target, caller_nonce,
 			    priv->cp_flags, curthread->td_proc->p_pid, 0);
 			*replylenp = 0;
 			return (0);
+		}
 
 	case CP_OP_CAPMODE: {
 		struct ucred *newcred, *oldcred;
