@@ -1,5 +1,6 @@
-PACKAGE=oracled
+.include <src.opts.mk>
 
+PACKAGE=lib${LIB}
 LIB=	oraclectl
 SRCS=	oraclectl.c
 INCS=	oraclectl.h

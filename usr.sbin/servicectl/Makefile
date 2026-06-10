@@ -8,7 +8,6 @@ MAN=	servicectl.8
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
-CFLAGS+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS+=	-I${SRCTOP}/lib/liboraclectl
 CFLAGS+=	-I${SRCTOP}/lib/liboraclert
