@@ -76,7 +76,6 @@ bootstrap_child_exec(int child_pair_fd, const struct bootstrap_delegate_fds *d)
 	char pair_env[64];
 	char pair_svc_env[64], coalition_svc_env[64], capprotect_env[64];
 	char identity_env[64];
-	char manifest_env[PATH_MAX + 32];
 	char ctlsock_env[PATH_MAX + 32];
 	char *env[10];
 	char *argv[2];
@@ -187,12 +186,6 @@ bootstrap_child_exec(int child_pair_fd, const struct bootstrap_delegate_fds *d)
 		(void)snprintf(identity_env, sizeof(identity_env),
 		    "SERVICED_IDENTITY_FD=%d", SERVICED_IDENTITY_FD);
 		env[envc++] = identity_env;
-	}
-
-	if (od.cfg.manifest_dir[0] != '\0') {
-		(void)snprintf(manifest_env, sizeof(manifest_env),
-		    "SERVICED_MANIFEST_DIR=%s", od.cfg.manifest_dir);
-		env[envc++] = manifest_env;
 	}
 
 	if (od.cfg.serviced_control_socket[0] != '\0') {

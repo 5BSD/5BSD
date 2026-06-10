@@ -2,7 +2,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd June 6, 2026
+.Dd June 9, 2026
 .Dt KLDMGRD 8
 .Os
 .Sh NAME
@@ -10,72 +10,88 @@
 .Nd kernel module loading manager
 .Sh DESCRIPTION
 .Nm
-is a service managed by
+is a
 .Xr serviced 8
-that provides controlled kernel module loading and unloading.
-It receives system gate tokens for
-.Dq kldload
-and
-.Dq kldunload
-from the Oracle and exposes them to authorized clients via the
-naming registry as
-.Dq org.5bsd.system.kldmgr .
+system service that brokers controlled kernel module loading,
+unloading, and listing.
+It registers the service name
+.Dq org.5bsd.system.kldmgr
+with
+.Xr serviced 8 .
 .Pp
-On profiles where the kldload and kldunload system gates are not
-claimed (e.g., the desktop profile),
+Clients connect with
+.Xr service_lookup 3 .
+The
+.Xr serviced 8
+naming layer authenticates the provider name but does not authorize
+callers.
+Therefore
 .Nm
-starts but has no tokens.
-Processes can load modules directly via
-.Xr kldload 2
-without going through
-.Nm .
+authorizes each client by service label before serving requests.
 .Pp
-On server and embedded profiles, the gates are claimed by the
-Oracle and
-.Nm
-is the only path to load or unload kernel modules.
+Allowed client labels are read from
+.Pa /etc/kldmgrd.allow .
+The file contains one service label per line.
+Blank lines and comments beginning with
+.Ql #
+are ignored.
+The special label
+.Ql *
+allows all clients and should only be used on systems where the
+service name is otherwise protected.
+If the file is missing, all requests are denied.
 .Sh PROTOCOL
-Clients connect via
-.Fn service_lookup "org.5bsd.system.kldmgr"
-and exchange messages over the resulting pair fd.
-.Pp
-All requests use
-.Vt struct kldmgr_req
-with the following operation codes:
+Requests use
+.Vt struct kldmgr_req .
 .Bl -tag -width KLDMGR_OP_UNLOAD
 .It Dv KLDMGR_OP_LOAD Pq 1
 Load the kernel module named in
-.Fa name .
-Returns
-.Vt struct kldmgr_reply
-with the module id on success.
+.Va name .
+The name must be NUL-terminated and contain only letters, digits,
+.Ql _ ,
+.Ql - ,
+or
+.Ql \&. .
 .It Dv KLDMGR_OP_UNLOAD Pq 2
 Unload the kernel module named in
-.Fa name .
-Returns
-.Vt struct kldmgr_reply .
+.Va name .
 .It Dv KLDMGR_OP_LIST Pq 3
-List all loaded kernel modules.
-Returns
-.Vt struct kldmgr_list_reply
-with a count and array of entries.
+List loaded kernel modules.
 .El
-.Sh MANIFEST
-A typical manifest for
-.Nm :
+.Pp
+Malformed requests receive
+.Dv KLDMGR_STATUS_ERR .
+Denied requests receive
+.Dv KLDMGR_STATUS_PERM .
+.Sh BUNDLE
+.Nm
+is installed as a system
+.Pa .cap
+bundle:
 .Bd -literal -offset indent
-bundle_id = "org.5bsd.systemcontrol";
+/Capabilities/System/Kldmgr.cap/
+  bin/kldmgrd
+  etc/kldmgrd.ucl
+.Ed
+.Pp
+The bundle manifest declares:
+.Bd -literal -offset indent
+bundle_id = "org.5bsd.system.kldmgr";
 program = "kldmgrd";
 provides = ["org.5bsd.system.kldmgr"];
-restart = "on-failure";
 capabilities {
-    system = ["kldload", "kldunload"];
+    system = ["kldload", "kldunload", "kldstat"];
 }
 .Ed
+.Sh FILES
+.Bl -tag -width "/etc/kldmgrd.allow"
+.It Pa /etc/kldmgrd.allow
+Client service-label allow list.
+.El
 .Sh SEE ALSO
 .Xr kldload 2 ,
 .Xr kldunload 2 ,
 .Xr kldstat 2 ,
+.Xr libcapability 3 ,
 .Xr libservice 3 ,
-.Xr oracled 8 ,
 .Xr serviced 8

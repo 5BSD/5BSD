@@ -47,7 +47,6 @@ CONFS=	DAEMON \
 	netoptions \
 	netwait \
 	noshutdown \
-	oracled \
 	os-release \
 	pwcheck \
 	quota \
@@ -218,6 +217,10 @@ LP=		lpd
 CONFGROUPS+=			NEWSYSLOG
 NEWSYSLOGPACKAGE=		newsyslog
 NEWSYSLOG=	newsyslog
+
+CONFGROUPS+=			ORACLED
+ORACLEDPACKAGE=			oracled
+ORACLED=	oracled
 
 CONFGROUPS+=			NFS
 NFSPACKAGE=			nfs

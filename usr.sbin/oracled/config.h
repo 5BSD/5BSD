@@ -64,7 +64,7 @@ struct oracled_config {
 	uint32_t	claim_system_service;	/* service-originated bits */
 	uint32_t	claim_system_refcount[ORACLED_SYSTEM_GATE_NBITS];
 
-	/* Service manifest directory (passed to serviced) */
+	/* Service manifest directory used by oracle-side commands */
 	char		manifest_dir[PATH_MAX];
 
 	/* Service manager binary (started by bootstrap) */

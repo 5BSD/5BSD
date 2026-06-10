@@ -145,51 +145,9 @@ bundle_service_manifest(const char *label, struct svc_manifest *m)
 }
 
 static bool
-legacy_service_manifest(const char *label, struct svc_manifest *m)
-{
-	const char *manifest_dir;
-	DIR *d;
-	struct dirent *de;
-	bool found;
-
-	manifest_dir = getenv("SERVICED_MANIFEST_DIR");
-	if (manifest_dir == NULL || manifest_dir[0] == '\0')
-		return (false);
-
-	d = opendir(manifest_dir);
-	if (d == NULL)
-		return (false);
-
-	found = false;
-	while ((de = readdir(d)) != NULL) {
-		struct svc_manifest lm;
-		char path[PATH_MAX];
-		size_t len;
-
-		len = strlen(de->d_name);
-		if (len < 5 || strcmp(de->d_name + len - 4, ".ucl") != 0)
-			continue;
-		snprintf(path, sizeof(path), "%s/%s", manifest_dir,
-		    de->d_name);
-		if (manifest_load_file(path, &lm) == -1)
-			continue;
-		if (strcmp(lm.label, label) == 0) {
-			*m = lm;
-			found = true;
-			break;
-		}
-	}
-
-	closedir(d);
-	return (found);
-}
-
-static bool
 desired_service_manifest(const char *label, struct svc_manifest *m)
 {
-
-	return (bundle_service_manifest(label, m) ||
-	    legacy_service_manifest(label, m));
+	return (bundle_service_manifest(label, m));
 }
 
 /*
@@ -453,59 +411,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			}
 		}
 
-		/* 3b: Collect new legacy UCL manifests. */
-		{
-			const char *manifest_dir;
-			DIR *d;
-			struct dirent *de;
-
-			manifest_dir = getenv("SERVICED_MANIFEST_DIR");
-			if (manifest_dir != NULL &&
-			    manifest_dir[0] != '\0' &&
-			    (d = opendir(manifest_dir)) != NULL) {
-				while ((de = readdir(d)) != NULL) {
-					struct svc_runtime *svc;
-					struct svc_manifest m;
-					char path[PATH_MAX];
-					size_t len;
-
-					len = strlen(de->d_name);
-					if (len < 5 ||
-					    strcmp(de->d_name + len - 4,
-					    ".ucl") != 0)
-						continue;
-					snprintf(path, sizeof(path),
-					    "%s/%s", manifest_dir,
-					    de->d_name);
-					if (manifest_load_file(path,
-					    &m) == -1)
-						continue;
-					if (svc_by_label(m.label) != NULL)
-						continue;
-					if (sd.nservices >=
-					    SERVICED_MAX_SERVICES)
-						break;
-
-					svc = &sd.services[sd.nservices];
-					memset(svc, 0, sizeof(*svc));
-					svc->manifest = m;
-					svc->pd_fd = -1;
-					svc->pair_fd = -1;
-					svc->coalition_fd = -1;
-					svc->jail_fd = -1;
-					svc->state = SVC_STATE_STOPPED;
-					svc->bundle_idx = (unsigned)-1;
-					svc->bundle_svc_idx = (unsigned)-1;
-					strlcpy(svc->launched_by, "reload",
-					    sizeof(svc->launched_by));
-					sd.nservices++;
-					nnew_collected++;
-				}
-				closedir(d);
-			}
-		}
-
-		/* 3c: Sort new services by dependency order. */
+		/* 3b: Sort new services by dependency order. */
 		if (nnew_collected > 1) {
 			if (depgraph_sort(&sd.services[first_new],
 			    nnew_collected) == -1) {
@@ -517,7 +423,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			}
 		}
 
-		/* 3d: Launch in sorted order. */
+		/* 3c: Launch in sorted order. */
 		for (i = first_new; i < first_new + nnew_collected; i++) {
 			struct svc_runtime *svc = &sd.services[i];
 

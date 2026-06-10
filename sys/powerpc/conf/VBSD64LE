@@ -1,0 +1,9 @@
+#
+# 5BSD default kernel configuration.
+#
+# GENERIC64LE plus 5BSD identity.
+#
+
+include GENERIC64LE
+
+ident		VBSD64LE

@@ -1716,7 +1716,7 @@ KERNCONF=${KERNFAST}
 .endif
 GENERIC_KERNCONF_SUFX_powerpc64=	64
 GENERIC_KERNCONF_SUFX_powerpc64le=	64LE
-GENERIC_KERNCONF?=	${GENERIC_KERNCONF_${TARGET_ARCH}:UVBSD${GENERIC_KERNCONF_SUFX_${TARGET_ARCH}}}
+GENERIC_KERNCONF?=	VBSD${GENERIC_KERNCONF_SUFX_${TARGET_ARCH}}
 INSTKERNNAME?=	kernel
 
 KERNSRCDIR?=	${.CURDIR}/sys
@@ -3350,6 +3350,7 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		lib/libjail \
 		lib/libkiconv lib/libkldelf lib/libkvm \
 		lib/liblzma lib/libmd lib/libnv \
+		lib/libucl lib/liboraclert \
 		lib/libzstd \
 		${_lib_casper} \
 		lib/ncurses/tinfo \
@@ -3396,6 +3397,7 @@ _prebuild_libs+= lib/libregex
 lib/libgeom__L: lib/libexpat__L lib/libsbuf__L
 lib/libkldelf__L: lib/libelf__L
 lib/libkvm__L: lib/libelf__L
+lib/liboraclert__L: lib/libucl__L
 
 .if ${MK_RADIUS_SUPPORT} != "no"
 _lib_libradius=	lib/libradius

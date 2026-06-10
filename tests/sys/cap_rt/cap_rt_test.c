@@ -3486,6 +3486,387 @@ ATF_TC_BODY(xfer_none_trampoline, tc)
 }
 
 /* ================================================================
+ * CAP_XFER enforcement — cap_rt SENDMSG/RECVMSG/CALL paths
+ * ================================================================ */
+
+ATF_TC(xfer_sendmsg_none_blocks);
+ATF_TC_HEAD(xfer_sendmsg_none_blocks, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "cap_rt SENDMSG rejects attached fd with CAP_XFER_NONE");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
+}
+ATF_TC_BODY(xfer_sendmsg_none_blocks, tc)
+{
+	struct cap_rt_sendmsg_args sa;
+	struct ks_request req;
+	int fd, pipefd[2];
+
+	fd = cap_rt_connect("test_keystore");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(pipe(pipefd) == 0);
+
+	ATF_REQUIRE(cap_xfer_limit(pipefd[0], CAP_XFER_NONE) == 0);
+
+	req.op = KS_OP_FETCH;
+	req.keyid = cap_rt_missing_key();
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = &req;
+	sa.payload_len = sizeof(req);
+	sa.fds = &pipefd[0];
+	sa.nfds = 1;
+
+	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	    ioctl(fd, CAP_RT_SENDMSG, &sa) == -1);
+
+	close(pipefd[0]);
+	close(pipefd[1]);
+	close(fd);
+}
+
+ATF_TC(xfer_sendmsg_once_consumed);
+ATF_TC_HEAD(xfer_sendmsg_once_consumed, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "cap_rt SENDMSG with XFER_ONCE: first succeeds, second fails");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
+}
+ATF_TC_BODY(xfer_sendmsg_once_consumed, tc)
+{
+	struct cap_rt_sendmsg_args sa;
+	struct ks_request req;
+	char buf[64];
+	uint32_t rlen;
+	int fd, pipefd[2];
+
+	fd = cap_rt_connect("test_keystore");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(pipe(pipefd) == 0);
+
+	ATF_REQUIRE(cap_xfer_limit(pipefd[0], CAP_XFER_ONCE) == 0);
+
+	req.op = KS_OP_FETCH;
+	req.keyid = cap_rt_missing_key();
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = &req;
+	sa.payload_len = sizeof(req);
+	sa.fds = &pipefd[0];
+	sa.nfds = 1;
+
+	/* First send succeeds — ONCE consumed. */
+	ATF_REQUIRE_MSG(ioctl(fd, CAP_RT_SENDMSG, &sa) == 0,
+	    "first SENDMSG: %s", strerror(errno));
+
+	/* Drain reply. */
+	rlen = sizeof(buf);
+	ATF_REQUIRE(cap_rt_recv(fd, buf, &rlen, NULL) == 0);
+
+	/* Second send fails — state is now NONE. */
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = &req;
+	sa.payload_len = sizeof(req);
+	sa.fds = &pipefd[0];
+	sa.nfds = 1;
+	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	    ioctl(fd, CAP_RT_SENDMSG, &sa) == -1);
+
+	close(pipefd[0]);
+	close(pipefd[1]);
+	close(fd);
+}
+
+ATF_TC(xfer_sendmsg_multi_atomic);
+ATF_TC_HEAD(xfer_sendmsg_multi_atomic, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "cap_rt SENDMSG multi-fd with one NONE rejects atomically");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
+}
+ATF_TC_BODY(xfer_sendmsg_multi_atomic, tc)
+{
+	struct cap_rt_sendmsg_args sa;
+	struct ks_request req;
+	int fd, pipefd[2], devnull;
+	int fds[2];
+
+	fd = cap_rt_connect("test_keystore");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(pipe(pipefd) == 0);
+	devnull = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(devnull >= 0);
+
+	/* pipefd[0] is ONCE, devnull is NONE. */
+	ATF_REQUIRE(cap_xfer_limit(pipefd[0], CAP_XFER_ONCE) == 0);
+	ATF_REQUIRE(cap_xfer_limit(devnull, CAP_XFER_NONE) == 0);
+
+	fds[0] = pipefd[0];
+	fds[1] = devnull;
+
+	req.op = KS_OP_FETCH;
+	req.keyid = cap_rt_missing_key();
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = &req;
+	sa.payload_len = sizeof(req);
+	sa.fds = fds;
+	sa.nfds = 2;
+
+	/* Should be rejected because devnull is NONE. */
+	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	    ioctl(fd, CAP_RT_SENDMSG, &sa) == -1);
+
+	/*
+	 * pipefd[0] should still be ONCE — verify by sending it
+	 * alone (should succeed).
+	 */
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = &req;
+	sa.payload_len = sizeof(req);
+	sa.fds = &pipefd[0];
+	sa.nfds = 1;
+	ATF_CHECK_MSG(ioctl(fd, CAP_RT_SENDMSG, &sa) == 0,
+	    "ONCE fd consumed despite atomic rejection: %s",
+	    strerror(errno));
+
+	/* Drain reply. */
+	{
+		char buf[64];
+		uint32_t rlen = sizeof(buf);
+		cap_rt_recv(fd, buf, &rlen, NULL);
+	}
+
+	close(devnull);
+	close(pipefd[0]);
+	close(pipefd[1]);
+	close(fd);
+}
+
+/* ---- RECVMSG xfer state propagation ---- */
+
+ATF_TC(xfer_recvmsg_unlimited_preserved);
+ATF_TC_HEAD(xfer_recvmsg_unlimited_preserved, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "cap_rt RECVMSG: UNLIMITED fd arrives as UNLIMITED");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
+}
+ATF_TC_BODY(xfer_recvmsg_unlimited_preserved, tc)
+{
+	struct cap_rt_sendmsg_args sa;
+	struct cap_rt_recvmsg_args ra;
+	struct ks_request req;
+	char buf[64];
+	int fd, pipefd[2], recv_fd;
+
+	fd = cap_rt_connect("test_keystore");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(pipe(pipefd) == 0);
+
+	/* pipefd[0] is default UNLIMITED. */
+	req.op = KS_OP_FETCH;
+	req.keyid = cap_rt_missing_key();
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = &req;
+	sa.payload_len = sizeof(req);
+	sa.fds = &pipefd[0];
+	sa.nfds = 1;
+	ATF_REQUIRE(ioctl(fd, CAP_RT_SENDMSG, &sa) == 0);
+
+	/* Receive the reply (keystore echoes fds back). */
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
+	ra.fds = &recv_fd;
+	ra.nfds = 1;
+	ATF_REQUIRE(ioctl(fd, CAP_RT_RECVMSG, &ra) == 0);
+
+	if (ra.nfds == 1) {
+		/*
+		 * Received fd should be UNLIMITED — can tighten to ONCE,
+		 * proving it wasn't degraded.
+		 */
+		ATF_CHECK(cap_xfer_limit(recv_fd, CAP_XFER_ONCE) == 0);
+		close(recv_fd);
+	}
+
+	close(pipefd[0]);
+	close(pipefd[1]);
+	close(fd);
+}
+
+ATF_TC(xfer_recvmsg_once_arrives_none);
+ATF_TC_HEAD(xfer_recvmsg_once_arrives_none, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "cap_rt RECVMSG: XFER_ONCE fd arrives as XFER_NONE");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_keystore");
+}
+ATF_TC_BODY(xfer_recvmsg_once_arrives_none, tc)
+{
+	struct cap_rt_sendmsg_args sa;
+	struct cap_rt_recvmsg_args ra;
+	struct ks_request req;
+	char buf[64];
+	int fd, pipefd[2], recv_fd;
+
+	fd = cap_rt_connect("test_keystore");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(pipe(pipefd) == 0);
+
+	ATF_REQUIRE(cap_xfer_limit(pipefd[0], CAP_XFER_ONCE) == 0);
+
+	req.op = KS_OP_FETCH;
+	req.keyid = cap_rt_missing_key();
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = &req;
+	sa.payload_len = sizeof(req);
+	sa.fds = &pipefd[0];
+	sa.nfds = 1;
+	ATF_REQUIRE(ioctl(fd, CAP_RT_SENDMSG, &sa) == 0);
+
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
+	ra.fds = &recv_fd;
+	ra.nfds = 1;
+	ATF_REQUIRE(ioctl(fd, CAP_RT_RECVMSG, &ra) == 0);
+
+	if (ra.nfds == 1) {
+		/* ONCE was consumed on send — receiver gets NONE. */
+		ATF_CHECK_ERRNO(ENOTCAPABLE,
+		    cap_xfer_limit(recv_fd, CAP_XFER_UNLIMITED) == -1);
+		/* Cannot forward. */
+		{
+			struct msghdr msgh;
+			struct iovec iov;
+			union {
+				struct cmsghdr hdr;
+				char cbuf[CMSG_SPACE(sizeof(int))];
+			} cmsgbuf;
+			struct cmsghdr *cmsg;
+			char dummy = 'x';
+			int sv[2];
+
+			ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0,
+			    sv) == 0);
+			memset(&msgh, 0, sizeof(msgh));
+			iov.iov_base = &dummy;
+			iov.iov_len = 1;
+			msgh.msg_iov = &iov;
+			msgh.msg_iovlen = 1;
+			msgh.msg_control = cmsgbuf.cbuf;
+			msgh.msg_controllen = sizeof(cmsgbuf.cbuf);
+			cmsg = CMSG_FIRSTHDR(&msgh);
+			cmsg->cmsg_level = SOL_SOCKET;
+			cmsg->cmsg_type = SCM_RIGHTS;
+			cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+			memcpy(CMSG_DATA(cmsg), &recv_fd, sizeof(int));
+			ATF_CHECK_MSG(sendmsg(sv[0], &msgh, 0) == -1,
+			    "forwarding NONE fd should fail");
+			close(sv[0]);
+			close(sv[1]);
+		}
+		close(recv_fd);
+	}
+
+	close(pipefd[0]);
+	close(pipefd[1]);
+	close(fd);
+}
+
+/* ---- CALL xfer state propagation ---- */
+
+ATF_TC(xfer_call_none_rejected);
+ATF_TC_HEAD(xfer_call_none_rejected, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "cap_rt CALL rejects request fd with CAP_XFER_NONE");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_kernelstore");
+}
+ATF_TC_BODY(xfer_call_none_rejected, tc)
+{
+	struct cap_rt_call_args ca;
+	struct kstore_request kr;
+	struct kstore_status_reply sr;
+	int fd, pipefd[2];
+
+	fd = cap_rt_connect("test_kernelstore");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(pipe(pipefd) == 0);
+
+	ATF_REQUIRE(cap_xfer_limit(pipefd[0], CAP_XFER_NONE) == 0);
+
+	memset(&kr, 0, sizeof(kr));
+	kr.op = KSTORE_OP_GET;
+	strlcpy(kr.key, "_xfer_test", sizeof(kr.key));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &kr;
+	ca.req_len = sizeof(kr);
+	ca.req_fds = &pipefd[0];
+	ca.req_nfds = 1;
+	ca.reply = &sr;
+	ca.reply_len = sizeof(sr);
+
+	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	    ioctl(fd, CAP_RT_CALL, &ca) == -1);
+
+	close(pipefd[0]);
+	close(pipefd[1]);
+	close(fd);
+}
+
+ATF_TC(xfer_call_once_consumed);
+ATF_TC_HEAD(xfer_call_once_consumed, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "cap_rt CALL with XFER_ONCE: consumed, second call fails");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_test_kernelstore");
+}
+ATF_TC_BODY(xfer_call_once_consumed, tc)
+{
+	struct cap_rt_call_args ca;
+	struct kstore_request kr;
+	struct kstore_status_reply sr;
+	int fd, pipefd[2];
+
+	fd = cap_rt_connect("test_kernelstore");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(pipe(pipefd) == 0);
+
+	ATF_REQUIRE(cap_xfer_limit(pipefd[0], CAP_XFER_ONCE) == 0);
+
+	memset(&kr, 0, sizeof(kr));
+	kr.op = KSTORE_OP_GET;
+	strlcpy(kr.key, "_xfer_test", sizeof(kr.key));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &kr;
+	ca.req_len = sizeof(kr);
+	ca.req_fds = &pipefd[0];
+	ca.req_nfds = 1;
+	ca.reply = &sr;
+	ca.reply_len = sizeof(sr);
+
+	/* First CALL succeeds — ONCE consumed. */
+	ATF_REQUIRE_MSG(ioctl(fd, CAP_RT_CALL, &ca) == 0,
+	    "first CALL: %s", strerror(errno));
+
+	/* Second CALL fails — state is now NONE. */
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &kr;
+	ca.req_len = sizeof(kr);
+	ca.req_fds = &pipefd[0];
+	ca.req_nfds = 1;
+	ca.reply = &sr;
+	ca.reply_len = sizeof(sr);
+
+	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	    ioctl(fd, CAP_RT_CALL, &ca) == -1);
+
+	close(pipefd[0]);
+	close(pipefd[1]);
+	close(fd);
+}
+
+/* ================================================================
  * Capability Protection (capprotect)
  * ================================================================ */
 
@@ -4793,7 +5174,7 @@ ATF_TC_BODY(cap_pro_noexec_blocks_exec, tc)
 		if (fd < 0) _exit(10);
 		write(sv[1], "r", 1);
 		/* Try to exec — should fail with EPERM. */
-		execl("/bin/true", "true", NULL);
+		execl("/usr/bin/true", "true", NULL);
 		/* If we get here, exec failed as expected. */
 		_exit(errno == EPERM ? 0 : 1);
 	}
@@ -4825,7 +5206,7 @@ ATF_TC_BODY(cap_pro_noexec_unshield_allows_exec, tc)
 		fd = capprotect_shield(CP_SF_NOEXEC);
 		if (fd < 0) _exit(10);
 		close(fd);
-		execl("/bin/true", "true", NULL);
+		execl("/usr/bin/true", "true", NULL);
 		_exit(1);  /* exec failed unexpectedly */
 	}
 	waitpid(pid, &status, 0);
@@ -6420,6 +6801,15 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, xfer_none_prevents_transfer);
 	ATF_TP_ADD_TC(tp, xfer_none_still_usable);
 	ATF_TP_ADD_TC(tp, xfer_none_trampoline);
+
+	/* CAP_XFER enforcement — cap_rt paths */
+	ATF_TP_ADD_TC(tp, xfer_sendmsg_none_blocks);
+	ATF_TP_ADD_TC(tp, xfer_sendmsg_once_consumed);
+	ATF_TP_ADD_TC(tp, xfer_sendmsg_multi_atomic);
+	ATF_TP_ADD_TC(tp, xfer_recvmsg_unlimited_preserved);
+	ATF_TP_ADD_TC(tp, xfer_recvmsg_once_arrives_none);
+	ATF_TP_ADD_TC(tp, xfer_call_none_rejected);
+	ATF_TP_ADD_TC(tp, xfer_call_once_consumed);
 
 	/* Edge cases */
 	ATF_TP_ADD_TC(tp, kqueue_eof_on_terminate);

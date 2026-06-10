@@ -2,7 +2,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd June 6, 2026
+.Dd June 9, 2026
 .Dt REBOOTD 8
 .Os
 .Sh NAME
@@ -10,82 +10,88 @@
 .Nd reboot and shutdown manager
 .Sh DESCRIPTION
 .Nm
-is a service managed by
+is a
 .Xr serviced 8
-that provides controlled system reboot and shutdown.
-It receives a system gate token for
-.Dq reboot
-from the Oracle and exposes it to authorized clients via the
-naming registry as
-.Dq org.5bsd.system.reboot .
+system service that brokers controlled reboot and shutdown requests.
+It registers the service name
+.Dq org.5bsd.system.reboot
+with
+.Xr serviced 8 .
 .Pp
-On profiles where the reboot system gate is not claimed
-(e.g., desktop and server profiles),
+Clients connect with
+.Xr service_lookup 3 .
+The
+.Xr serviced 8
+naming layer authenticates the provider name but does not authorize
+callers.
+Therefore
 .Nm
-starts but has no token.
-Processes can reboot directly via
-.Xr reboot 2
-without going through
-.Nm .
+authorizes mutating requests by service label.
 .Pp
-On the embedded profile, the reboot gate is claimed by the
-Oracle and
-.Nm
-is the only path to reboot or shut down the system.
-This allows future policy enforcement such as validating boot
-environments before permitting a reboot.
+Allowed client labels are read from
+.Pa /etc/rebootd.allow .
+The file contains one service label per line.
+Blank lines and comments beginning with
+.Ql #
+are ignored.
+The special label
+.Ql *
+allows all clients and should only be used on systems where the
+service name is otherwise protected.
+If the file is missing, reboot and shutdown requests are denied.
 .Sh PROTOCOL
-Clients connect via
-.Fn service_lookup "org.5bsd.system.reboot"
-and exchange messages over the resulting pair fd.
-.Pp
-All requests use
-.Vt struct reboot_req
-with the following operation codes:
+Requests use
+.Vt struct reboot_req .
 .Bl -tag -width REBOOT_OP_SHUTDOWN
 .It Dv REBOOT_OP_REBOOT Pq 1
 Reboot the system.
 The
-.Fa flags
-field may contain
+.Va flags
+field may contain only
 .Dv RB_HALT ,
 .Dv RB_POWEROFF ,
 or
 .Dv RB_REROOT .
-Other flags are masked out for safety.
-Returns
-.Vt struct reboot_reply .
-This call does not return on success.
+Unknown flags are rejected.
 .It Dv REBOOT_OP_SHUTDOWN Pq 2
 Perform a clean shutdown
 .Pq Dv RB_HALT | RB_POWEROFF .
-Returns
-.Vt struct reboot_reply .
-This call does not return on success.
 .It Dv REBOOT_OP_STATUS Pq 3
-Query whether a shutdown is already in progress.
-Returns
-.Vt struct reboot_reply
-with status
-.Dv REBOOT_STATUS_PENDING
-if a shutdown has been initiated, or
-.Dv REBOOT_STATUS_OK
-otherwise.
+Query whether this daemon has initiated shutdown.
+This operation does not require an allow-list entry.
 .El
-.Sh MANIFEST
-A typical manifest for
-.Nm :
+.Pp
+Malformed requests receive
+.Dv REBOOT_STATUS_ERR .
+Denied reboot and shutdown requests receive
+.Dv REBOOT_STATUS_PERM .
+.Sh BUNDLE
+.Nm
+is installed as a system
+.Pa .cap
+bundle:
 .Bd -literal -offset indent
-bundle_id = "org.5bsd.systemcontrol";
+/Capabilities/System/Reboot.cap/
+  bin/rebootd
+  etc/rebootd.ucl
+.Ed
+.Pp
+The bundle manifest declares:
+.Bd -literal -offset indent
+bundle_id = "org.5bsd.system.reboot";
 program = "rebootd";
 provides = ["org.5bsd.system.reboot"];
-restart = "on-failure";
 capabilities {
     system = ["reboot"];
 }
 .Ed
+.Sh FILES
+.Bl -tag -width "/etc/rebootd.allow"
+.It Pa /etc/rebootd.allow
+Client service-label allow list for reboot and shutdown.
+.El
 .Sh SEE ALSO
 .Xr reboot 2 ,
+.Xr libcapability 3 ,
 .Xr libservice 3 ,
-.Xr oracled 8 ,
 .Xr serviced 8

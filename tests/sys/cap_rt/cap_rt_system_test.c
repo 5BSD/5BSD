@@ -259,19 +259,52 @@ ATF_TC_HEAD(token_close_revokes, tc)
 }
 ATF_TC_BODY(token_close_revokes, tc)
 {
-	int svc, token_fd;
+	char path[1024];
+	const char *dir;
+	int svc, token_fd, readyfd[2], gofd[2], status;
+	pid_t pid;
 
 	svc = sys_connect();
 	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
 
 	ATF_REQUIRE(sys_call_mint(svc, &token_fd) == 0);
-	ATF_REQUIRE(sys_call_authorize(token_fd) == 0);
-	close(token_fd);
 
-	/* Token closed — authorization should be revoked.
-	 * But we're same nonce so we can't test denial on ourselves.
-	 * Just verify the close didn't crash anything. */
-	ATF_CHECK(kldnext(0) >= 0);
+	ATF_REQUIRE(pipe(readyfd) == 0);
+	ATF_REQUIRE(pipe(gofd) == 0);
+
+	dir = atf_tc_get_config_var(tc, "srcdir");
+	snprintf(path, sizeof(path), "%s/cap_rt_exec_helper", dir);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		char tokenstr[16], readystr[16], gostr[16];
+
+		close(readyfd[0]);
+		close(gofd[1]);
+		snprintf(tokenstr, sizeof(tokenstr), "%d", token_fd);
+		snprintf(readystr, sizeof(readystr), "%d", readyfd[1]);
+		snprintf(gostr, sizeof(gostr), "%d", gofd[0]);
+		execl(path, path, "auth_kldnext", tokenstr, readystr, gostr,
+		    NULL);
+		_exit(127);
+	}
+
+	close(readyfd[1]);
+	close(gofd[0]);
+
+	/* Wait until the child has authorized and is blocked on go. */
+	ATF_REQUIRE(read(readyfd[0], &(char){0}, 1) == 1);
+	close(readyfd[0]);
+
+	/* Drop the parent's reference, then let the child test revocation. */
+	close(token_fd);
+	ATF_REQUIRE(write(gofd[1], "x", 1) == 1);
+	close(gofd[1]);
+
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK(WIFEXITED(status));
+	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
 
 	close(svc);
 }

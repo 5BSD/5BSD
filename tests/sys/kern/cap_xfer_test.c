@@ -421,6 +421,184 @@ ATF_TC_BODY(xfer_multi_fd_atomic, tc)
 	close(sv[1]);
 }
 
+/* ---- SCM_RIGHTS enforcement: send-side consumption ---- */
+
+ATF_TC_WITHOUT_HEAD(xfer_once_consumed_on_send);
+ATF_TC_BODY(xfer_once_consumed_on_send, tc)
+{
+	int sv[2], fd;
+
+	socketpair_stream(sv);
+	fd = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+
+	ATF_REQUIRE(cap_xfer_limit(fd, CAP_XFER_ONCE) == 0);
+
+	/* First send succeeds — state consumed on send side. */
+	ATF_REQUIRE_MSG(sendfd(sv[0], fd) == 0, "sendfd: %s",
+	    strerror(errno));
+
+	/*
+	 * Second send must fail BEFORE the receiver calls recvmsg.
+	 * This proves consumption happens at send time.
+	 */
+	ATF_REQUIRE_MSG(sendfd(sv[0], fd) == ENOTCAPABLE,
+	    "expected ENOTCAPABLE, got %s", strerror(errno));
+
+	close(fd);
+	close(sv[0]);
+	close(sv[1]);
+}
+
+/* ---- SCM_RIGHTS enforcement: received fd state ---- */
+
+ATF_TC_WITHOUT_HEAD(xfer_recv_unlimited_preserved);
+ATF_TC_BODY(xfer_recv_unlimited_preserved, tc)
+{
+	int sv[2], fd, recvd;
+
+	socketpair_stream(sv);
+	fd = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+
+	/* Default UNLIMITED — send and receive. */
+	ATF_REQUIRE(sendfd(sv[0], fd) == 0);
+	ATF_REQUIRE(recvfd(sv[1], &recvd) == 0);
+
+	/* Received fd should be UNLIMITED — can tighten to ONCE. */
+	ATF_REQUIRE(cap_xfer_limit(recvd, CAP_XFER_ONCE) == 0);
+	/* And that should succeed, proving it was UNLIMITED. */
+
+	close(recvd);
+	close(fd);
+	close(sv[0]);
+	close(sv[1]);
+}
+
+ATF_TC_WITHOUT_HEAD(xfer_recv_once_arrives_none);
+ATF_TC_BODY(xfer_recv_once_arrives_none, tc)
+{
+	int sv[2], fd, recvd;
+
+	socketpair_stream(sv);
+	fd = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+
+	ATF_REQUIRE(cap_xfer_limit(fd, CAP_XFER_ONCE) == 0);
+
+	/* Send consumes ONCE → receiver gets NONE. */
+	ATF_REQUIRE(sendfd(sv[0], fd) == 0);
+	ATF_REQUIRE(recvfd(sv[1], &recvd) == 0);
+
+	/* Received fd should be NONE — cannot widen. */
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    cap_xfer_limit(recvd, CAP_XFER_UNLIMITED) == -1);
+	/* Setting same NONE is ok. */
+	ATF_REQUIRE(cap_xfer_limit(recvd, CAP_XFER_NONE) == 0);
+
+	/* Cannot forward via SCM_RIGHTS. */
+	ATF_REQUIRE_MSG(sendfd(sv[0], recvd) == ENOTCAPABLE,
+	    "forwarding NONE fd should fail: %s", strerror(errno));
+
+	close(recvd);
+	close(fd);
+	close(sv[0]);
+	close(sv[1]);
+}
+
+/* ---- SCM_RIGHTS enforcement: multi-fd atomicity for ONCE ---- */
+
+ATF_TC_WITHOUT_HEAD(xfer_multi_once_not_consumed);
+ATF_TC_BODY(xfer_multi_once_not_consumed, tc)
+{
+	int sv[2], fd_once, fd_none;
+	struct msghdr msg;
+	struct iovec iov;
+	char buf[CMSG_SPACE(2 * sizeof(int))];
+	struct cmsghdr *cm;
+	int *fdp;
+	char ch = '\0';
+
+	socketpair_stream(sv);
+	fd_once = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(fd_once >= 0);
+	fd_none = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(fd_none >= 0);
+
+	ATF_REQUIRE(cap_xfer_limit(fd_once, CAP_XFER_ONCE) == 0);
+	ATF_REQUIRE(cap_xfer_limit(fd_none, CAP_XFER_NONE) == 0);
+
+	/* Multi-fd send: fd_none causes rejection. */
+	memset(&msg, 0, sizeof(msg));
+	memset(buf, 0, sizeof(buf));
+	iov.iov_base = &ch;
+	iov.iov_len = 1;
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	msg.msg_control = buf;
+	msg.msg_controllen = sizeof(buf);
+	cm = CMSG_FIRSTHDR(&msg);
+	cm->cmsg_len = CMSG_LEN(2 * sizeof(int));
+	cm->cmsg_level = SOL_SOCKET;
+	cm->cmsg_type = SCM_RIGHTS;
+	fdp = (int *)CMSG_DATA(cm);
+	fdp[0] = fd_once;
+	fdp[1] = fd_none;
+
+	ATF_REQUIRE_MSG(sendmsg(sv[0], &msg, 0) == -1 &&
+	    errno == ENOTCAPABLE,
+	    "multi-fd send should fail: %s", strerror(errno));
+
+	/*
+	 * fd_once should still be ONCE — the NONE fd caused early
+	 * rejection before any state was consumed.  Verify by
+	 * sending fd_once alone (should succeed).
+	 */
+	ATF_REQUIRE_MSG(sendfd(sv[0], fd_once) == 0,
+	    "ONCE fd should not have been consumed: %s", strerror(errno));
+
+	close(fd_once);
+	close(fd_none);
+	close(sv[0]);
+	close(sv[1]);
+}
+
+/* ---- capability mode ---- */
+
+ATF_TC_WITHOUT_HEAD(xfer_capmode);
+ATF_TC_BODY(xfer_capmode, tc)
+{
+	int fd, status;
+	pid_t pid;
+
+	fd = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		if (cap_enter() != 0)
+			_exit(10);
+		/* cap_xfer_limit must work in capability mode. */
+		if (cap_xfer_limit(fd, CAP_XFER_ONCE) != 0)
+			_exit(1);
+		if (cap_xfer_limit(fd, CAP_XFER_NONE) != 0)
+			_exit(2);
+		/* Widening must still fail. */
+		if (cap_xfer_limit(fd, CAP_XFER_ONCE) == 0)
+			_exit(3);
+		if (errno != ENOTCAPABLE)
+			_exit(4);
+		_exit(0);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "cap mode test failed: exit %d",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+
+	close(fd);
+}
+
 /* ---- test registration ---- */
 
 ATF_TP_ADD_TCS(tp)
@@ -439,6 +617,15 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, xfer_fork_inherits);
 	ATF_TP_ADD_TC(tp, xfer_close_reopen_resets);
 	ATF_TP_ADD_TC(tp, xfer_multi_fd_atomic);
+
+	/* SCM_RIGHTS enforcement */
+	ATF_TP_ADD_TC(tp, xfer_once_consumed_on_send);
+	ATF_TP_ADD_TC(tp, xfer_recv_unlimited_preserved);
+	ATF_TP_ADD_TC(tp, xfer_recv_once_arrives_none);
+	ATF_TP_ADD_TC(tp, xfer_multi_once_not_consumed);
+
+	/* capability mode */
+	ATF_TP_ADD_TC(tp, xfer_capmode);
 
 	return (atf_no_error());
 }

@@ -1,0 +1,143 @@
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd June 8, 2026
+.Dt CAP_XFER_LIMIT 2
+.Os
+.Sh NAME
+.Nm cap_xfer_limit
+.Nd limit descriptor transfer state
+.Sh LIBRARY
+.Lb libc
+.Sh SYNOPSIS
+.In sys/capsicum.h
+.Ft int
+.Fn cap_xfer_limit "int fd" "int state"
+.Sh DESCRIPTION
+The
+.Fn cap_xfer_limit
+system call restricts whether a file descriptor can be transferred to
+another process via
+.Xr sendmsg 2
+with
+.Dv SCM_RIGHTS
+control messages or via cap_rt messaging.
+.Pp
+The transfer state is orthogonal to capability rights set by
+.Xr cap_rights_limit 2 .
+Calls to
+.Xr cap_rights_limit 2 ,
+.Xr cap_rights_clear 3 ,
+and
+.Dv CAP_ALL
+do not affect the transfer state.
+.Pp
+The
+.Fa state
+argument must be one of the following values:
+.Bl -tag -width CAP_XFER_UNLIMITED
+.It Dv CAP_XFER_UNLIMITED
+No transfer restriction.
+This is the default state for newly created descriptors.
+.It Dv CAP_XFER_ONCE
+The descriptor may be transferred exactly once.
+After a successful transfer, the state automatically transitions to
+.Dv CAP_XFER_NONE .
+.It Dv CAP_XFER_NONE
+The descriptor cannot be transferred.
+.El
+.Pp
+Transfer states are monotonically decreasing: a descriptor's state can
+only be tightened, never relaxed.
+The ordering is
+.Dv CAP_XFER_UNLIMITED
+\*(Gt
+.Dv CAP_XFER_ONCE
+\*(Gt
+.Dv CAP_XFER_NONE .
+Setting the same state again is permitted and has no effect.
+.Pp
+The transfer state is inherited across
+.Xr dup 2
+and
+.Xr fork 2 .
+Closing and reopening the underlying file resets the state to
+.Dv CAP_XFER_UNLIMITED .
+.Pp
+This system call is allowed in capability mode
+.Pq see Xr cap_enter 2 .
+.Sh RETURN VALUES
+.Rv -std
+.Sh EXAMPLES
+Prevent a file descriptor from being passed to another process:
+.Bd -literal
+#include <sys/capsicum.h>
+
+int fd = open("/tmp/secret", O_RDONLY);
+if (cap_xfer_limit(fd, CAP_XFER_NONE) < 0)
+	err(1, "cap_xfer_limit");
+/* fd can still be used locally but cannot be sent via SCM_RIGHTS */
+.Ed
+.Pp
+Allow exactly one transfer:
+.Bd -literal
+cap_xfer_limit(fd, CAP_XFER_ONCE);
+/* First sendmsg with SCM_RIGHTS succeeds and exhausts the state */
+/* Second sendmsg with the same fd fails with ENOTCAPABLE */
+.Ed
+.Sh ERRORS
+.Fn cap_xfer_limit
+succeeds unless:
+.Bl -tag -width Er
+.It Bq Er EBADF
+The
+.Fa fd
+argument is not a valid active descriptor.
+.It Bq Er EINVAL
+The
+.Fa state
+argument is not a valid transfer state.
+.It Bq Er ENOTCAPABLE
+The requested
+.Fa state
+is less restrictive than the current transfer state.
+Transfer states can only be tightened, never relaxed.
+.It Bq Er ENOSYS
+The running kernel was compiled without
+.Cd "options CAPABILITY_MODE" .
+.El
+.Sh SEE ALSO
+.Xr cap_enter 2 ,
+.Xr cap_rights_limit 2 ,
+.Xr dup 2 ,
+.Xr fork 2 ,
+.Xr sendmsg 2 ,
+.Xr capsicum 4 ,
+.Xr rights 4
+.Sh HISTORY
+The
+.Fn cap_xfer_limit
+system call first appeared in
+.Fx 16.0 .

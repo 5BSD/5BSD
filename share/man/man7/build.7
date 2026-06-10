@@ -596,10 +596,10 @@ If multiple kernels are specified, the first listed kernel installs to
 and subsequent kernels install to
 .Pa /boot/${INSTKERNNAME}.NAME .
 .Pp
-If unset, it defaults to GENERIC,
+If unset, it defaults to VBSD,
 except on POWER architectures,
-where it defaults to GENERIC64 for powerpc64,
-and GENERIC64LE for powerpc64le.
+where it defaults to VBSD64 for powerpc64,
+and VBSD64LE for powerpc64le.
 .It Va KERNBUILDDIR
 Overrides the default directory to get all the opt_*.h files for
 building a kernel module.

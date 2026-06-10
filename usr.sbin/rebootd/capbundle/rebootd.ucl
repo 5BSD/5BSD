@@ -1,0 +1,12 @@
+bundle_id = "org.5bsd.system.reboot";
+version = "1.0";
+author = "5BSD";
+
+program = "rebootd";
+provides = ["org.5bsd.system.reboot"];
+on_demand = false;
+restart = "on-failure";
+
+capabilities {
+    system = ["reboot"];
+}

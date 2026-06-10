@@ -13,7 +13,7 @@ SCRIPT_DIR=${TESTSDIR:-$(CDPATH= cd "$(dirname "$0")" && pwd -P)}
 
 CORE_MODULE="cap_rt"
 BOOT_MODULES="cap_rt_capprotect cap_rt_isolation"
-SERVICE_MODULES="cap_rt_test_kernelstore cap_rt_test_keystore cap_rt_pair cap_rt_identity cap_rt_node cap_rt_accounting cap_rt_mount"
+SERVICE_MODULES="cap_rt_test_kernelstore cap_rt_test_keystore cap_rt_pair cap_rt_identity cap_rt_node cap_rt_accounting cap_rt_mount cap_rt_system cap_rt_coalition"
 
 CAP_RT_TEST_BIN="${SCRIPT_DIR}/cap_rt_test"
 die() { echo "FAIL: $1" >&2; exit 1; }
@@ -32,7 +32,7 @@ done
 
 # Unload any stale service modules (reverse order)
 info "Unloading stale modules"
-for m in cap_rt_mount cap_rt_accounting cap_rt_node cap_rt_identity cap_rt_pair cap_rt_test_keystore cap_rt_test_kernelstore; do
+for m in cap_rt_coalition cap_rt_system cap_rt_mount cap_rt_accounting cap_rt_node cap_rt_identity cap_rt_pair cap_rt_test_keystore cap_rt_test_kernelstore; do
 	kldunload "$m" 2>/dev/null || true
 done
 
@@ -89,7 +89,7 @@ if command -v kyua >/dev/null 2>&1; then
 	kyua report
 else
 	# Fallback: enumerate tests from all test binaries.
-	ATF_TEST_BINS="cap_rt_test cap_rt_coalition_test cap_rt_isolation_test cap_rt_identity_test cap_rt_node_test cap_rt_accounting_test cap_rt_procdesc_test cap_rt_mount_test"
+	ATF_TEST_BINS="cap_rt_test cap_rt_coalition_test cap_rt_isolation_test cap_rt_identity_test cap_rt_node_test cap_rt_accounting_test cap_rt_procdesc_test cap_rt_mount_test cap_rt_system_test"
 	for testbin in $ATF_TEST_BINS; do
 		testbin_path="${SCRIPT_DIR}/${testbin}"
 		[ -x "$testbin_path" ] || continue
@@ -105,7 +105,7 @@ fi
 # Verify clean service module unload
 # Core CAP_RT stays loaded (boot-time NOTLATE MAC policy)
 info "Testing service module unload"
-for m in cap_rt_mount cap_rt_accounting cap_rt_node cap_rt_identity cap_rt_pair cap_rt_test_keystore cap_rt_test_kernelstore; do
+for m in cap_rt_coalition cap_rt_system cap_rt_mount cap_rt_accounting cap_rt_node cap_rt_identity cap_rt_pair cap_rt_test_keystore cap_rt_test_kernelstore; do
 	kldunload "$m" || die "unload $m"
 done
 

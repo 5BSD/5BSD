@@ -246,49 +246,6 @@ startup_launch_system(int kq)
 		}
 	}
 
-	/* Collect legacy absolute-path manifests, if oracled provided a dir. */
-	{
-		const char *manifest_dir;
-		DIR *d;
-		struct dirent *de;
-
-		manifest_dir = getenv("SERVICED_MANIFEST_DIR");
-		if (manifest_dir != NULL && manifest_dir[0] != '\0') {
-			d = opendir(manifest_dir);
-			if (d == NULL) {
-				syslog(LOG_INFO,
-				    "startup: manifest dir %s not available: %m",
-				    manifest_dir);
-			} else {
-				while ((de = readdir(d)) != NULL) {
-					char path[PATH_MAX];
-					size_t len;
-
-					len = strlen(de->d_name);
-					if (len < 5 ||
-					    strcmp(de->d_name + len - 4,
-					    ".ucl") != 0)
-						continue;
-					if (nmanifests >= SERVICED_MAX_SERVICES) {
-						syslog(LOG_WARNING,
-						    "startup: service limit "
-						    "reached");
-						break;
-					}
-					snprintf(path, sizeof(path), "%s/%s",
-					    manifest_dir, de->d_name);
-					if (manifest_load_file(path,
-					    &manifests[nmanifests]) == 0) {
-						log_loaded_manifest(
-						    &manifests[nmanifests]);
-						nmanifests++;
-					}
-				}
-				closedir(d);
-			}
-		}
-	}
-
 	/* Allocate runtime state — always, even with no boot services,
 	 * because on-demand launches and reload append to this array. */
 	sd.services = calloc(SERVICED_MAX_SERVICES, sizeof(*sd.services));

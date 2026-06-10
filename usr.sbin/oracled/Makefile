@@ -17,9 +17,6 @@ examples= examples/desktop.conf \
 	 examples/dynamic_claims.d
 
 FILESDIR_system= ${SHAREDIR}/Capabilities/System
-FILESGROUPS+= system
-system= examples/kldmgrd.ucl \
-	 examples/rebootd.ucl
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests

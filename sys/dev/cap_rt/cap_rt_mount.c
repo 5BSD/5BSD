@@ -11,7 +11,7 @@
  * subject to normal jail mount permissions (allow.mount.*).
  *
  * Whitelisted filesystem types:
- *   tmpfs, devfs, fdescfs, nullfs, procfs
+ *   tmpfs, devfs, fdescfs, nullfs, procfs, linprocfs, linsysfs, fusefs
  *
  * This is a sync-only (co_call) service.
  */
@@ -50,6 +50,7 @@ static const char *mount_allowed_fstypes[] = {
 	"procfs",
 	"linprocfs",
 	"linsysfs",
+	"fusefs",
 	NULL
 };
 

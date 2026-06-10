@@ -1,0 +1,15 @@
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
+comment = "5BSD reboot and shutdown manager service"
+
+desc = <<EOD
+rebootd is a libservice-based privileged service that brokers controlled
+reboot and shutdown operations for capability-managed systems.  It is
+installed as a system .cap bundle under /Capabilities/System and requires
+client labels to be listed in /etc/rebootd.allow before serving mutating
+requests.
+EOD

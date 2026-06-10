@@ -1,0 +1,12 @@
+bundle_id = "org.5bsd.system.kldmgr";
+version = "1.0";
+author = "5BSD";
+
+program = "kldmgrd";
+provides = ["org.5bsd.system.kldmgr"];
+on_demand = false;
+restart = "on-failure";
+
+capabilities {
+    system = ["kldload", "kldunload", "kldstat"];
+}

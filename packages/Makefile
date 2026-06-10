@@ -19,7 +19,6 @@
 SUBDIR=	blocklist \
 	bsdconfig \
 	bzip2 \
-	cap_rt \
 	clibs \
 	cron \
 	ctl \

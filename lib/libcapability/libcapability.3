@@ -1,0 +1,254 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd June 10, 2026
+.Dt LIBCAPABILITY 3
+.Os
+.Sh NAME
+.Nm cap_daemon_run ,
+.Nm cap_daemon_recv ,
+.Nm cap_daemon_send ,
+.Nm cap_daemon_label_allowed
+.Nd helpers for writing .cap bundle service daemons
+.Sh LIBRARY
+.Lb libcapability
+.Sh SYNOPSIS
+.In capability.h
+.Bd -literal
+#define CAP_LABEL_MAX 64
+
+typedef int (*cap_client_handler)(int, const char *, void *);
+
+struct cap_daemon_config {
+    const char         *service_name;
+    cap_client_handler  handler;
+    void               *handler_arg;
+    unsigned            client_timeout;
+};
+.Ed
+.Ft int
+.Fn cap_daemon_run "const struct cap_daemon_config *cfg"
+.Ft ssize_t
+.Fn cap_daemon_recv "int fd" "void *buf" "size_t bufsz" "unsigned timeout"
+.Ft int
+.Fn cap_daemon_send "int fd" "const void *buf" "size_t len"
+.Ft bool
+.Fn cap_daemon_label_allowed "const char *path" "const char *label"
+.Sh DESCRIPTION
+The
+.Nm libcapability
+library provides a turnkey daemon lifecycle for services shipped as
+.Pa .cap
+bundles and managed by
+.Xr serviced 8 .
+It wraps
+.Xr libservice 3
+initialization, capprotect shielding, service registration, signal
+handling, and a forking accept loop into a single call, allowing
+bundle authors to focus on per-client protocol logic.
+.Ss Daemon lifecycle
+.Fn cap_daemon_run
+is the main entry point.
+The caller populates a
+.Vt "struct cap_daemon_config"
+and passes it in:
+.Bl -tag -width "client_timeout" -offset indent
+.It Va service_name
+A reverse-domain service name
+.Pq e.g., Dq org.5bsd.kldmgrd
+to register with
+.Xr serviced 8 .
+Must not be
+.Dv NULL .
+.It Va handler
+A
+.Vt cap_client_handler
+callback invoked in a forked child for each connecting client.
+The callback receives the client file descriptor, the client's label
+string, and the opaque
+.Va handler_arg .
+It must return 0 on success or non-zero on failure.
+Must not be
+.Dv NULL .
+.It Va handler_arg
+An opaque pointer forwarded to
+.Va handler .
+May be
+.Dv NULL .
+.It Va client_timeout
+Seconds before an
+.Xr alarm 3
+fires in the child process.
+A value of 0 selects the default timeout of 30 seconds.
+.El
+.Pp
+.Fn cap_daemon_run
+performs the following steps in order:
+.Bl -enum -offset indent
+.It
+Calls
+.Fn service_init
+to obtain the pair file descriptor inherited from
+.Xr serviced 8 .
+.It
+Applies capprotect shielding via
+.Fn service_protect .
+A failure with
+.Er ENOTSUP
+is silently ignored; other errors are logged but do not abort.
+.It
+Registers
+.Va service_name
+with the
+.Xr serviced 8
+naming registry.
+.It
+Sends a readiness notification via
+.Fn service_ready .
+.It
+Installs signal handlers:
+.Dv SIGTERM
+and
+.Dv SIGINT
+trigger a clean shutdown;
+.Dv SIGCHLD
+triggers reaping of child processes.
+.It
+Enters a blocking accept loop.
+For each client connection,
+.Fn fork
+is called and the child invokes
+.Va handler .
+.El
+.Pp
+The function returns when a quit signal is received or an
+initialization step fails.
+.Ss Message I/O
+.Fn cap_daemon_recv
+receives a message from the cap_rt pair file descriptor
+.Fa fd
+into
+.Fa buf ,
+reading up to
+.Fa bufsz
+bytes.
+If
+.Fa timeout
+is non-zero, an
+.Xr alarm 3
+is set before and reset after the underlying
+.Fn service_recv
+call, so the child process will be terminated if the client
+stalls.
+.Pp
+.Fn cap_daemon_send
+sends
+.Fa len
+bytes from
+.Fa buf
+on the file descriptor
+.Fa fd .
+It wraps
+.Fn service_send
+and logs a warning via
+.Xr syslog 3
+on failure.
+.Ss Allow-list checking
+.Fn cap_daemon_label_allowed
+checks whether the client label
+.Fa label
+appears in the allow-list file at
+.Fa path .
+The file is read line by line; comments beginning with
+.Ql #
+and surrounding whitespace are stripped.
+The function returns
+.Dv true
+if any non-empty line matches
+.Fa label
+exactly, or if a line consists of the single wildcard character
+.Ql * .
+If the file does not exist or
+.Fa label
+is not found, the function returns
+.Dv false .
+A missing file
+.Pq Er ENOENT
+is treated silently; other open errors are logged via
+.Xr syslog 3 .
+.Sh RETURN VALUES
+.Fn cap_daemon_run
+returns 0 when a quit signal is received after a successful
+accept loop, or \-1 if an initialization step fails, setting
+.Va errno .
+.Pp
+.Fn cap_daemon_recv
+returns the number of bytes received on success, or \-1 on
+failure, setting
+.Va errno .
+.Pp
+.Fn cap_daemon_send
+returns 0 on success, or \-1 on failure, setting
+.Va errno .
+.Pp
+.Fn cap_daemon_label_allowed
+returns
+.Dv true
+if the label is allowed, or
+.Dv false
+otherwise.
+.Sh EXAMPLES
+Minimal .cap bundle daemon:
+.Bd -literal -offset indent
+#include <capability.h>
+#include <stdio.h>
+#include <unistd.h>
+
+static int
+handle_client(int fd, const char *label, void *arg)
+{
+    char buf[256];
+    ssize_t n;
+
+    n = cap_daemon_recv(fd, buf, sizeof(buf), 0);
+    if (n <= 0)
+        return (1);
+
+    /* Echo the message back. */
+    return (cap_daemon_send(fd, buf, (size_t)n));
+}
+
+int
+main(void)
+{
+    struct cap_daemon_config cfg = {
+        .service_name = "org.example.echo",
+        .handler = handle_client,
+    };
+
+    return (cap_daemon_run(&cfg) == 0 ? 0 : 1);
+}
+.Ed
+.Sh CAVEATS
+.Fn cap_daemon_run
+calls
+.Xr fork 2
+for each client connection.
+The child inherits a copy of the parent's address space, so the
+handler must not modify shared state.
+.Pp
+.Fn cap_daemon_label_allowed
+opens and reads the allow-list file on every call.
+Services that require high-frequency checks should consider
+caching the result.
+.Sh SEE ALSO
+.Xr alarm 3 ,
+.Xr libservice 3 ,
+.Xr kldmgrd 8 ,
+.Xr rebootd 8 ,
+.Xr serviced 8
+.Sh HISTORY
+.Nm libcapability
+first appeared in 5BSD.
