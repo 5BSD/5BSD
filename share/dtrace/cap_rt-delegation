@@ -14,7 +14,7 @@
 
 #pragma D option quiet
 
-#define DTYPE_CAP_RT 17
+#define DTYPE_CAP_RT 32
 
 dtrace:::BEGIN
 {

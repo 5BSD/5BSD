@@ -1452,3 +1452,4 @@ static moduledata_t cap_rt_node_mod = {
 
 DECLARE_MODULE(cap_rt_node, cap_rt_node_mod, SI_SUB_PSEUDO, SI_ORDER_ANY);
 MODULE_DEPEND(cap_rt_node, cap_rt, 1, 1, 1);
+MODULE_VERSION(cap_rt_node, 1);

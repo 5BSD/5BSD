@@ -1,3 +1,4 @@
+PACKAGE=	tests
 .PATH: ${SRCTOP}/sys/dev/cap_rt
 
 KMOD=	cap_rt_test_kernelstore

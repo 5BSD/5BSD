@@ -19,9 +19,15 @@
 SUBDIR=	blocklist \
 	bsdconfig \
 	bzip2 \
+	cap_rt \
 	clibs \
 	cron \
 	ctl \
+	oracled \
+	kldmgrd \
+	rebootd \
+	serviced \
+	servicectl \
 	devd \
 	devmatch \
 	dhclient \
@@ -33,6 +39,9 @@ SUBDIR=	blocklist \
 	ggate \
 	lib9p \
 	libarchive \
+	libcapbundle \
+	liboraclert \
+	libservice \
 	libbegemot \
 	libblocksruntime \
 	libbsdstat \
