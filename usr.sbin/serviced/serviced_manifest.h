@@ -1,1 +1,0 @@
-../../lib/libcapbundle/serviced_manifest.h
