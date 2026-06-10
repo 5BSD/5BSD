@@ -46,7 +46,7 @@ int	cap_rt_setup(void);
 void	cap_rt_teardown(void);
 int	cap_rt_mint_path_token(const char *path);
 int	cap_rt_mint_file_token(const char *path, uint64_t actions);
-int	cap_rt_mint_net_token(const struct oracled_net_claim *nc);
+int	cap_rt_mint_net_token(const struct ort_net_claim *nc);
 int	cap_rt_mint_jail_token(const struct oracled_jail_claim *jc);
 int	cap_rt_mint_system_token(uint32_t gates);
 int	cap_rt_create_pair(int *oracle_end, int *child_end);
@@ -65,14 +65,12 @@ void	cap_rt_format_status(char *buf, size_t bufsz, size_t *offp);
 /* control.c — control socket lifecycle */
 #define	CTL_ACTION_NONE		0
 #define	CTL_ACTION_SHUTDOWN	0x01
-#define	CTL_ACTION_REBOOT	0x02
-#define	CTL_ACTION_RELOAD	0x04
 
 int	ctl_setup(void);
 void	ctl_teardown(void);
 int	ctl_fd(void);
 int	ctl_accept(void);
-int	ctl_conn_event(struct kevent *kev, int *reboot_howto);
+int	ctl_conn_event(struct kevent *kev);
 bool	ctl_is_conn_event(struct kevent *kev);
 
 /* event.c — main event loop */
@@ -102,36 +100,5 @@ int	oracle_proto_fd(void);
 void	reap_children(void);
 void	kill_subtree(void);
 int	apply_procctl_self_policy(void);
-
-/*
- * Formatting helpers for cap_rt status display.
- */
-static inline const char *
-net_direction_name(int dir)
-{
-
-	switch (dir) {
-	case ORACLED_NET_DIR_BIND:
-		return ("bind");
-	case ORACLED_NET_DIR_CONNECT:
-		return ("connect");
-	default:
-		return ("any");
-	}
-}
-
-static inline const char *
-net_protocol_name(int proto)
-{
-
-	switch (proto) {
-	case IPPROTO_TCP:
-		return ("tcp");
-	case IPPROTO_UDP:
-		return ("udp");
-	default:
-		return ("any");
-	}
-}
 
 #endif /* ORACLED_H */

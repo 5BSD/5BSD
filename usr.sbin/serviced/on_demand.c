@@ -18,10 +18,8 @@
 #include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/param.h>
-#include <sys/procdesc.h>
 
 #include <dev/cap_rt/cap_rt_ioctl.h>
-#include <dev/cap_rt/cap_rt_identity_proto.h>
 
 #include <errno.h>
 #include <stdlib.h>
@@ -30,7 +28,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <libappbundle.h>
+#include <libcapbundle.h>
 
 #include "serviced.h"
 #include "serviced_probes.h"
@@ -43,7 +41,7 @@ static uintptr_t od_timer_next = ON_DEMAND_TIMER_BIT | 1;
 
 struct pending_lookup {
 	struct pending_lookup	*next;
-	char			 name[APPBUNDLE_NAME_MAX + 1];
+	char			 name[CAPBUNDLE_NAME_MAX + 1];
 	char			 requester_label[SERVICED_LABEL_MAX];
 	int			 requester_pair_fd; /* snapshot — not owned */
 	uint64_t		 reply_token;
@@ -63,51 +61,6 @@ pending_for_name(const char *name)
 			return (true);
 	}
 	return (false);
-}
-
-/*
- * Query the identity nonce of a process via its process descriptor.
- * Returns 0 on success, -1 on failure.
- */
-static int
-query_nonce(int pd_fd, uint64_t *nonce_out)
-{
-	struct cap_rt_call_args call;
-	struct identity_request req;
-	struct identity_reply reply;
-
-	*nonce_out = 0;
-
-	if (sd.identity_fd < 0)
-		return (0);  /* no identity service — nonce stays 0 */
-
-	if (pd_fd < 0)
-		return (0);
-
-	memset(&req, 0, sizeof(req));
-	req.op = IDENTITY_OP_QUERY;
-
-	memset(&reply, 0, sizeof(reply));
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-	call.req_fds = &pd_fd;
-	call.req_nfds = 1;
-
-	if (ioctl(sd.identity_fd, CAP_RT_CALL, &call) == -1) {
-		syslog(LOG_DEBUG, "on_demand: identity query failed: %m");
-		return (-1);
-	}
-
-	if (reply.status == IDENTITY_STATUS_OK) {
-		*nonce_out = reply.nonce;
-	} else {
-		syslog(LOG_DEBUG, "on_demand: identity query status=%u",
-		    reply.status);
-	}
-	return (0);
 }
 
 /*
@@ -196,8 +149,8 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
     uint64_t reply_token, int kq)
 {
 	unsigned bundle_idx, service_idx;
-	struct appbundle *b;
-	struct appbundle_service *asvc;
+	struct capbundle *b;
+	struct capbundle_service *asvc;
 	struct svc_runtime *target;
 	struct pending_lookup *pl;
 	struct kevent kev;
@@ -219,7 +172,7 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 		b = bundle_registry_get(bundle_idx);
 		if (b == NULL)
 			return (-1);
-		asvc = appbundle_service(b, service_idx);
+		asvc = capbundle_service(b, service_idx);
 		if (asvc == NULL)
 			return (-1);
 
@@ -242,11 +195,11 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 		target->bundle_svc_idx = service_idx;
 
 		/* Fill manifest from bundle (includes all capabilities). */
-		if (appbundle_svc_fill_manifest(asvc,
+		if (capbundle_svc_fill_manifest(asvc,
 		    &target->manifest) == -1) {
 			syslog(LOG_ERR,
 			    "on_demand: invalid bundle service '%s'",
-			    appbundle_svc_label(asvc));
+			    capbundle_svc_label(asvc));
 			return (-1);
 		}
 		target->manifest.on_demand = true;
@@ -259,10 +212,6 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 			strlcpy(target->launched_by, "unknown",
 			    sizeof(target->launched_by));
 		clock_gettime(CLOCK_MONOTONIC, &target->launch_time);
-
-		/* Query requester nonce if we have a procdesc. */
-		if (requester != NULL && requester->pd_fd >= 0)
-			query_nonce(requester->pd_fd, &target->requester_nonce);
 
 		sd.nservices++;
 
@@ -433,7 +382,7 @@ void
 on_demand_timeout(uintptr_t ident, int kq)
 {
 	struct pending_lookup **pp, *pl;
-	char expired_name[APPBUNDLE_NAME_MAX + 1];
+	char expired_name[CAPBUNDLE_NAME_MAX + 1];
 
 	pp = &pending_list;
 	while (*pp != NULL) {
@@ -449,18 +398,27 @@ on_demand_timeout(uintptr_t ident, int kq)
 		SERVICED_PROBE_ON_DEMAND_TIMEOUT(pl->name);
 		strlcpy(expired_name, pl->name, sizeof(expired_name));
 
-		/* Send ETIMEDOUT reply. */
+		/* Send ETIMEDOUT reply.  Re-resolve the requester by
+		 * label — the original pair_fd may be stale if the
+		 * requester was restarted since the lookup. */
 		{
 			struct cap_rt_sendmsg_args sa;
+			struct svc_runtime *req;
+			int reply_fd;
 			int32_t status = ETIMEDOUT;
+
+			reply_fd = -1;
+			req = svc_by_label(pl->requester_label);
+			if (req != NULL && req->pair_fd >= 0)
+				reply_fd = req->pair_fd;
 
 			memset(&sa, 0, sizeof(sa));
 			sa.payload = &status;
 			sa.payload_len = sizeof(status);
 			sa.reply_token = pl->reply_token;
 
-			if (pl->requester_pair_fd >= 0)
-				(void)ioctl(pl->requester_pair_fd,
+			if (reply_fd >= 0)
+				(void)ioctl(reply_fd,
 				    CAP_RT_SENDMSG, &sa);
 		}
 

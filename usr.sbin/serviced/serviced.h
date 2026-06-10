@@ -18,7 +18,7 @@
 #include <time.h>
 
 #include "serviced_manifest.h"
-#include "../oracled/oracled_svc_proto.h"
+#include "oracled_svc_proto.h"
 
 /* Timeout for cap_rt pair RPC calls (oracle and direct). */
 #define	SERVICED_RPC_TIMEOUT_MS		100
@@ -60,7 +60,6 @@ struct svc_runtime {
 
 	/* Attribution */
 	char		launched_by[SERVICED_LABEL_MAX]; /* who triggered launch */
-	uint64_t	requester_nonce;	/* identity nonce of requester */
 	struct timespec	launch_time;
 	unsigned	connection_count;	/* active pair connections */
 
@@ -72,8 +71,8 @@ struct svc_runtime {
 /*
  * Daemon state.
  */
-#define	SERVICED_BUNDLE_DIR_SYSTEM_DEFAULT	"/System/Applications"
-#define	SERVICED_BUNDLE_DIR_USER_DEFAULT		"/Applications"
+#define	SERVICED_BUNDLE_DIR_SYSTEM_DEFAULT	"/Capabilities/System"
+#define	SERVICED_BUNDLE_DIR_USER_DEFAULT		"/Capabilities"
 
 extern const char *serviced_bundle_dir_system;
 extern const char *serviced_bundle_dir_user;
@@ -108,11 +107,14 @@ int	caprt_create_pair(int *our_end, int *child_end);
 int	caprt_create_coalition(void);
 int	caprt_coalition_enlist(int coalition_fd, int member_fd);
 int	caprt_coalition_set_leader(int coalition_fd, int leader_fd);
+int	caprt_coalition_graceful(int coalition_fd, int sig, unsigned timeout_ms);
+int	caprt_coalition_terminate(int coalition_fd);
+int	caprt_mint_capprotect(void);
 
 /* oracle_client.c — pair protocol client to oracled */
 int	oracle_mint_path(int pair_fd, const char *path);
 int	oracle_mint_file(int pair_fd, const char *path, uint64_t actions);
-int	oracle_mint_net(int pair_fd, const struct serviced_net_claim *nc);
+int	oracle_mint_net(int pair_fd, const struct ort_net_claim *nc);
 int	oracle_mint_jail(int pair_fd, const struct serviced_jail_claim *jc);
 int	oracle_mint_system(int pair_fd, uint32_t gates);
 int	oracle_create_jail(int pair_fd, const char *name, const char *path,
@@ -121,14 +123,17 @@ int	oracle_create_pair(int pair_fd, int *our_end, int *child_end);
 int	oracle_create_coalition(int pair_fd);
 int	oracle_send_ready(int pair_fd);
 int	oracle_claim_path(int pair_fd, const char *path);
-int	oracle_claim_net(int pair_fd, const struct serviced_net_claim *nc);
+int	oracle_claim_net(int pair_fd, const struct ort_net_claim *nc);
 int	oracle_claim_jail(int pair_fd, const struct serviced_jail_claim *jc);
 int	oracle_claim_system(int pair_fd, uint32_t gates);
 int	oracle_release_path(int pair_fd, const char *path);
-int	oracle_release_net(int pair_fd, const struct serviced_net_claim *nc);
+int	oracle_release_net(int pair_fd, const struct ort_net_claim *nc);
 int	oracle_release_jail(int pair_fd, const struct serviced_jail_claim *jc);
 int	oracle_release_system(int pair_fd, uint32_t gates);
 int	oracle_release_manifest(int pair_fd, const struct svc_manifest *m);
+
+/* kldmgr_client.c — kernel module loading */
+int	kldmgr_ensure_loaded(const struct svc_manifest *m, int kq);
 
 /* manifest.c — service manifest parsing */
 int	manifest_load_file(const char *path, struct svc_manifest *m);
@@ -157,12 +162,12 @@ struct svc_runtime *svc_by_label(const char *label);
 void	svc_remove(unsigned idx);
 void	svc_reregister_kevents(int kq);
 
-/* bundle_registry.c — .app bundle scanning and provides lookup */
-struct appbundle;
+/* bundle_registry.c — .cap bundle scanning and provides lookup */
+struct capbundle;
 int	bundle_registry_init(void);
 int	bundle_registry_lookup(const char *name, unsigned *bundle_idx,
 	    unsigned *service_idx);
-struct appbundle *bundle_registry_get(unsigned idx);
+struct capbundle *bundle_registry_get(unsigned idx);
 bool	bundle_registry_is_system(unsigned idx);
 unsigned bundle_registry_count(void);
 void	bundle_registry_teardown(void);
@@ -204,34 +209,5 @@ restart_policy_name(int policy)
 		return ("never");
 	}
 }
-
-static inline const char *
-net_direction_name(int dir)
-{
-
-	switch (dir) {
-	case SERVICED_NET_DIR_BIND:
-		return ("bind");
-	case SERVICED_NET_DIR_CONNECT:
-		return ("connect");
-	default:
-		return ("any");
-	}
-}
-
-static inline const char *
-net_protocol_name(int proto)
-{
-
-	switch (proto) {
-	case IPPROTO_TCP:
-		return ("tcp");
-	case IPPROTO_UDP:
-		return ("udp");
-	default:
-		return ("any");
-	}
-}
-
 
 #endif /* SERVICED_H */

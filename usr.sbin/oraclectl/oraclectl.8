@@ -16,6 +16,12 @@
 .Cm services Op Fl v
 .Nm
 .Op Fl s Ar socket
+.Cm check Ar filename
+.Nm
+.Op Fl s Ar socket
+.Cm load Ar filename
+.Nm
+.Op Fl s Ar socket
 .Cm verify
 .Nm
 .Op Fl s Ar socket
@@ -86,6 +92,22 @@ in a separate
 .Dq AVAILABLE
 section.
 This command does not require root privileges.
+.It Cm check Ar filename
+Validate a single service manifest file without loading it.
+The
+.Ar filename
+is relative to the manifest directory; path separators are
+rejected.
+Reports parsing errors and capability claim issues.
+Requires root.
+.It Cm load Ar filename
+Hot-load a single service manifest into the running daemon.
+The
+.Ar filename
+is relative to the manifest directory; path separators are
+rejected.
+The daemon merges the new service without restarting other services.
+Requires root.
 .It Cm verify
 Cross-check
 .Xr oracled.conf 5

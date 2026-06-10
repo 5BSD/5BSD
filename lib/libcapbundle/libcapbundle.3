@@ -1,81 +1,67 @@
 .Dd June 7, 2026
-.Dt LIBAPPBUNDLE 3
+.Dt LIBCAPBUNDLE 3
 .Os
 .Sh NAME
-.Nm libappbundle
-.Nd parse and validate 5BSD .app bundles
+.Nm libcapbundle
+.Nd parse and validate 5BSD .cap bundles
 .Sh LIBRARY
-.Lb libappbundle
+.Lb libcapbundle
 .Sh SYNOPSIS
-.In libappbundle.h
+.In libcapbundle.h
 .Ft int
-.Fn appbundle_open "const char *path" "struct appbundle **bp" "char *errbuf" "size_t errlen"
+.Fn capbundle_open "const char *path" "struct capbundle **bp" "char *errbuf" "size_t errlen"
 .Ft void
-.Fn appbundle_close "struct appbundle *b"
+.Fn capbundle_close "struct capbundle *b"
 .Ft const char *
-.Fn appbundle_id "const struct appbundle *b"
+.Fn capbundle_id "const struct capbundle *b"
 .Ft const char *
-.Fn appbundle_version "const struct appbundle *b"
+.Fn capbundle_version "const struct capbundle *b"
 .Ft const char *
-.Fn appbundle_author "const struct appbundle *b"
+.Fn capbundle_author "const struct capbundle *b"
 .Ft const char *
-.Fn appbundle_path "const struct appbundle *b"
+.Fn capbundle_path "const struct capbundle *b"
 .Ft const char *
-.Fn appbundle_name "const struct appbundle *b"
+.Fn capbundle_name "const struct capbundle *b"
 .Ft unsigned
-.Fn appbundle_nservices "const struct appbundle *b"
-.Ft "struct appbundle_service *"
-.Fn appbundle_service "const struct appbundle *b" "unsigned idx"
+.Fn capbundle_nservices "const struct capbundle *b"
+.Ft "struct capbundle_service *"
+.Fn capbundle_service "const struct capbundle *b" "unsigned idx"
 .Ft const char *
-.Fn appbundle_svc_program "const struct appbundle_service *s"
+.Fn capbundle_svc_program "const struct capbundle_service *s"
 .Ft const char *
-.Fn appbundle_svc_label "const struct appbundle_service *s"
+.Fn capbundle_svc_label "const struct capbundle_service *s"
 .Ft unsigned
-.Fn appbundle_svc_nprovides "const struct appbundle_service *s"
+.Fn capbundle_svc_nprovides "const struct capbundle_service *s"
 .Ft const char *
-.Fn appbundle_svc_provides "const struct appbundle_service *s" "unsigned idx"
+.Fn capbundle_svc_provides "const struct capbundle_service *s" "unsigned idx"
 .Ft unsigned
-.Fn appbundle_svc_nrequires "const struct appbundle_service *s"
+.Fn capbundle_svc_nrequires "const struct capbundle_service *s"
 .Ft const char *
-.Fn appbundle_svc_requires "const struct appbundle_service *s" "unsigned idx"
+.Fn capbundle_svc_requires "const struct capbundle_service *s" "unsigned idx"
 .Ft bool
-.Fn appbundle_svc_on_demand "const struct appbundle_service *s"
+.Fn capbundle_svc_on_demand "const struct capbundle_service *s"
 .Ft int
-.Fn appbundle_svc_restart "const struct appbundle_service *s"
-.Ft uint32_t
-.Fn appbundle_svc_cap_system "const struct appbundle_service *s"
-.Ft unsigned
-.Fn appbundle_svc_ncap_paths "const struct appbundle_service *s"
-.Ft const char *
-.Fn appbundle_svc_cap_path "const struct appbundle_service *s" "unsigned idx"
-.Ft unsigned
-.Fn appbundle_svc_ncap_net "const struct appbundle_service *s"
-.Ft unsigned
-.Fn appbundle_svc_ncap_jail "const struct appbundle_service *s"
+.Fn capbundle_svc_fill_manifest "const struct capbundle_service *s" "struct svc_manifest *m"
 .Ft int
-.Fn appbundle_svc_fill_manifest "const struct appbundle_service *s" "struct svc_manifest *m"
+.Fn capbundle_verify "const struct capbundle *b" "char *errbuf" "size_t errlen"
 .Ft int
-.Fn appbundle_verify "const struct appbundle *b" "char *errbuf" "size_t errlen"
+.Fn capbundle_check_cycles "struct capbundle **bundles" "unsigned nbundles" "char *errbuf" "size_t errlen"
 .Ft int
-.Fn appbundle_check_cycles "struct appbundle **bundles" "unsigned nbundles" "char *errbuf" "size_t errlen"
-.Ft int
-.Fn appbundle_scan_dir "const char *dirpath" "appbundle_scan_cb cb" "void *ctx"
+.Fn capbundle_scan_dir "const char *dirpath" "capbundle_scan_cb cb" "void *ctx"
 .Sh DESCRIPTION
 The
 .Nm
-library parses 5BSD application bundles (.app directories) and provides
+library parses 5BSD capability bundles (.cap directories) and provides
 access to their service declarations, metadata, and executables.
 .Pp
 A bundle has the structure:
 .Bd -literal -offset indent
-Name.app/
-  Contents/
-    5BSD/
-      Services/
-        service.ucl     (one or more UCL service files)
-    bin/
-      program           (executables referenced by service UCL)
-    Resources/          (optional application data)
+Name.cap/
+  etc/
+    service.ucl     (one or more UCL service files)
+  bin/
+    program           (executables referenced by service UCL)
+  resources/          (optional application data)
 .Ed
 .Pp
 Each Service.ucl file declares both bundle metadata
@@ -86,19 +72,19 @@ A bundle may contain up to 32 services.
 .Ss Bundle Lifecycle
 .Bl -enum -compact
 .It
-.Fn appbundle_open
+.Fn capbundle_open
 parses the bundle directory and all Service.ucl files.
 .It
-.Fn appbundle_verify
+.Fn capbundle_verify
 validates integrity: binaries exist, provides are unique, no self-cycles.
 .It
-.Fn appbundle_svc_fill_manifest
+.Fn capbundle_svc_fill_manifest
 converts a parsed service to a
 .Vt struct svc_manifest
 for use by
 .Xr serviced 8 .
 .It
-.Fn appbundle_close
+.Fn capbundle_close
 frees all resources.
 .El
 .Ss Service.ucl Format
@@ -119,7 +105,7 @@ Maximum 128 characters.
 .It Va program
 (string, required)
 Executable name relative to
-.Pa Contents/bin/ .
+.Pa bin/ .
 .It Va provides
 (string or array, required for verification)
 One or more service names this service provides for the dependency graph.
@@ -292,7 +278,7 @@ Maximum 16 entries.
 Entries with neither jid nor name are skipped.
 .El
 .Ss Verification Checks
-.Fn appbundle_verify
+.Fn capbundle_verify
 performs:
 .Bl -bullet -compact
 .It
@@ -307,7 +293,7 @@ No duplicate provides within the bundle.
 No service may require its own provides.
 .El
 .Ss Cycle Detection
-.Fn appbundle_check_cycles
+.Fn capbundle_check_cycles
 uses Kahn's algorithm across all provided bundles to detect circular
 dependencies in the provides/requires graph.
 .Sh RETURN VALUES
@@ -317,11 +303,10 @@ When
 is non-NULL, a descriptive error message is written on failure
 identifying the bundle name, the failing service, and the specific issue.
 .Pp
-.Fn appbundle_service ,
-.Fn appbundle_svc_provides ,
-.Fn appbundle_svc_requires ,
+.Fn capbundle_service ,
+.Fn capbundle_svc_provides ,
 and
-.Fn appbundle_svc_cap_path
+.Fn capbundle_svc_requires
 return NULL if the index is out of bounds.
 .Sh SEE ALSO
 .Xr serviced 8 ,

@@ -70,7 +70,6 @@ struct ctl_conn {
 	char			summary[CTL_SUMMARY_MAX];
 	uint32_t		summary_len;
 	int			action;
-	int			reboot_howto;
 
 	uintptr_t		timer_ident;
 	struct timespec		accept_ts;	/* monotonic time at accept */
@@ -493,7 +492,7 @@ ctl_accept(void)
 }
 
 int
-ctl_conn_event(struct kevent *kev, int *reboot_howto)
+ctl_conn_event(struct kevent *kev)
 {
 	struct ctl_conn *c;
 	int action;
@@ -530,8 +529,6 @@ ctl_conn_event(struct kevent *kev, int *reboot_howto)
 		ORACLED_PROBE_CTL_CMD_DONE(c->req.op, c->euid,
 		    c->reply.status, dur);
 		action = c->action;
-		if (reboot_howto != NULL)
-			*reboot_howto = c->reboot_howto;
 		conn_destroy(c);
 	}
 

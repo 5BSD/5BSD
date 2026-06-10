@@ -13,7 +13,8 @@
 .Nm service_accept ,
 .Nm service_send ,
 .Nm service_recv ,
-.Nm service_pair_fd
+.Nm service_pair_fd ,
+.Nm service_protect
 .Nd client library for services managed by serviced
 .Sh LIBRARY
 .Lb libservice
@@ -37,6 +38,8 @@
 .Fn service_recv "int fd" "void *buf" "size_t bufsz" "int *peer_fd"
 .Ft int
 .Fn service_pair_fd void
+.Ft int
+.Fn service_protect "uint32_t flags"
 .Sh DESCRIPTION
 The
 .Nm libservice
@@ -169,6 +172,22 @@ failure, setting
 .Fn service_pair_fd
 returns the pair file descriptor, or \-1 if the library has not
 been initialized.
+.Pp
+.Fn service_protect
+applies
+.Xr cap_rt_capprotect 4
+shielding to the calling service using the
+.Ev ORACLED_CAPPROTECT_FD
+descriptor inherited from
+.Xr serviced 8 .
+The
+.Fa flags
+argument is a
+.Dv CP_SF_*
+bitmask; 0 requests the capprotect default.
+It returns 0 on success, or \-1 on failure with
+.Va errno
+set.
 .Sh EXAMPLES
 Basic provider pattern:
 .Bd -literal -offset indent

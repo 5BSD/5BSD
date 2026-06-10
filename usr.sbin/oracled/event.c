@@ -16,8 +16,6 @@
  */
 
 #include <sys/event.h>
-#include <sys/procdesc.h>
-#include <sys/reboot.h>
 
 #include <errno.h>
 #include <signal.h>
@@ -33,8 +31,6 @@ int event_kq = -1;
 
 #define	SHUTDOWN_TIMER_IDENT	99999
 
-static bool pending_reboot;
-static int pending_reboot_howto;
 static struct timespec shutdown_start_ts;
 
 static void
@@ -98,12 +94,6 @@ shutdown_finish(void)
 	cap_rt_teardown();
 	pidfile_remove(od.pidfh);
 
-	if (pending_reboot) {
-		reboot(pending_reboot_howto);
-		syslog(LOG_CRIT, "reboot(2) failed: %m");
-		_exit(1);
-	}
-
 	{
 		struct timespec now;
 		uint64_t dur;
@@ -119,17 +109,11 @@ shutdown_finish(void)
 }
 
 static void
-handle_action(int action, int howto)
+handle_action(int action)
 {
 
-	if (action & CTL_ACTION_REBOOT) {
-		syslog(LOG_INFO, "rebooting via control socket");
-		pending_reboot = true;
-		pending_reboot_howto = howto;
+	if (action & CTL_ACTION_SHUTDOWN)
 		shutdown_begin(0);
-	} else if (action & CTL_ACTION_SHUTDOWN) {
-		shutdown_begin(0);
-	}
 }
 
 /*
@@ -191,8 +175,11 @@ event_loop(void)
 	}
 
 	/* Start serviced as our single child (requires cap_rt). */
-	if (!od.test_mode)
-		bootstrap_start(kq);
+	if (!od.test_mode) {
+		if (bootstrap_start(kq) == -1)
+			syslog(LOG_ERR, "bootstrap: initial start failed, "
+			    "running without service manager");
+	}
 
 	while (od.running) {
 		nev = kevent(kq, NULL, 0, &kev, 1, NULL);
@@ -217,12 +204,11 @@ event_loop(void)
 
 		/* Client connection events. */
 		if (ctl_is_conn_event(&kev)) {
-			int action, howto;
+			int action;
 
-			howto = 0;
-			action = ctl_conn_event(&kev, &howto);
+			action = ctl_conn_event(&kev);
 			if (action != CTL_ACTION_NONE)
-				handle_action(action, howto);
+				handle_action(action);
 			if (od.shutting_down && bootstrap_is_stopped())
 				shutdown_finish();
 			continue;

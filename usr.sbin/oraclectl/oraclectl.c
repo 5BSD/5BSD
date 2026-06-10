@@ -151,6 +151,44 @@ cmd_services(int verbose)
 	return (0);
 }
 
+static int
+cmd_check(const char *filename)
+{
+	char summary[ORACLECTL_SUMMARY_MAX];
+	int fd, error;
+
+	fd = open_or_die();
+	error = oraclectl_check(fd, filename, summary, sizeof(summary));
+	close(fd);
+
+	if (error != 0)
+		return (check(error, "check"));
+	if (summary[0] != '\0')
+		printf("%s", summary);
+	else
+		printf("check: ok\n");
+	return (0);
+}
+
+static int
+cmd_load(const char *filename)
+{
+	char summary[ORACLECTL_SUMMARY_MAX];
+	int fd, error;
+
+	fd = open_or_die();
+	error = oraclectl_load(fd, filename, summary, sizeof(summary));
+	close(fd);
+
+	if (error != 0)
+		return (check(error, "load"));
+	if (summary[0] != '\0')
+		printf("%s", summary);
+	else
+		printf("load: ok\n");
+	return (0);
+}
+
 /* ----------------------------------------------------------------
  * Main
  * ---------------------------------------------------------------- */
@@ -165,6 +203,8 @@ usage(void)
 	    "usage: oraclectl [-s socket] command [args]\n"
 	    "       oraclectl status\n"
 	    "       oraclectl services [-v]\n"
+	    "       oraclectl check <filename>\n"
+	    "       oraclectl load <filename>\n"
 	    "       oraclectl verify\n"
 	    "       oraclectl reload\n"
 	    "       oraclectl shutdown\n");
@@ -198,10 +238,10 @@ main(int argc, char *argv[])
 	if (strcmp(argv[0], "services") == 0 && argc == 2 &&
 	    strcmp(argv[1], "-v") == 0)
 		return (cmd_services(1));
-	if (strcmp(argv[0], "check") == 0 || strcmp(argv[0], "load") == 0) {
-		warnx("%s: use servicectl(8) instead", argv[0]);
-		return (EX_USAGE);
-	}
+	if (strcmp(argv[0], "check") == 0 && argc == 2)
+		return (cmd_check(argv[1]));
+	if (strcmp(argv[0], "load") == 0 && argc == 2)
+		return (cmd_load(argv[1]));
 	if (strcmp(argv[0], "verify") == 0 && argc == 1)
 		return (cmd_verify());
 	if (strcmp(argv[0], "shutdown") == 0 && argc == 1)
