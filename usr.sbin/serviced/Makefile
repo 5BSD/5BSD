@@ -4,7 +4,7 @@ PACKAGE=serviced
 PROG=	serviced
 MAN=	serviced.8
 SRCS=	serviced.c bundle_registry.c caprt_direct.c depgraph.c execute.c \
-	kldmgr_client.c manifest.c naming.c on_demand.c oracle_client.c \
+	kldmgr_client.c naming.c on_demand.c oracle_client.c \
 	reload.c sctl.c startup.c svc_proto.c supervisor.c
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

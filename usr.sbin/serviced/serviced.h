@@ -135,9 +135,6 @@ int	oracle_release_manifest(int pair_fd, const struct svc_manifest *m);
 /* kldmgr_client.c — kernel module loading */
 int	kldmgr_ensure_loaded(const struct svc_manifest *m, int kq);
 
-/* manifest.c — service manifest parsing */
-int	manifest_load_file(const char *path, struct svc_manifest *m);
-
 /* depgraph.c — dependency graph */
 int	depgraph_sort(struct svc_runtime *svcs, unsigned nsvc);
 

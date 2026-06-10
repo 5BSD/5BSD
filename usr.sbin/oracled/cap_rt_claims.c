@@ -172,9 +172,6 @@ cap_rt_release_path(const char *path)
 	struct fi_reply reply;
 	int fd;
 
-	if (cap_rt_isolation_fd == -1)
-		return (-1);
-
 	fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
 	if (fd == -1) {
 		syslog(LOG_WARNING, "isolation: release open %s: %m", path);
@@ -214,9 +211,6 @@ cap_rt_release_net(const struct ort_net_claim *nc)
 	struct fi_reply reply;
 	char portbuf[32];
 
-	if (cap_rt_isolation_fd == -1)
-		return (-1);
-
 	memset(&req, 0, sizeof(req));
 	req.op = FI_OP_RELEASE_NET;
 	req.domain = nc->domain;
@@ -249,9 +243,6 @@ cap_rt_release_jail(const struct oracled_jail_claim *jc)
 	struct fi_jail_request req;
 	struct fi_reply reply;
 	char jailbuf[ORACLED_JAIL_DESC_MAX];
-
-	if (cap_rt_isolation_fd == -1)
-		return (-1);
 
 	memset(&req, 0, sizeof(req));
 	req.op = FI_OP_RELEASE_JAIL;

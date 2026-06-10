@@ -62,7 +62,7 @@ oracle_rpc(int pair_fd, const void *req, uint32_t reqlen,
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = &rpl;
 	ra.payload_len = sizeof(rpl);
-	if (max_reply_fds > 0 && reply_fds != NULL) {
+	if (max_reply_fds > 0) {
 		ra.fds = reply_fds;
 		ra.nfds = (uint32_t)max_reply_fds;
 		/* Initialize to -1 so caller can detect unfilled slots. */

@@ -10,11 +10,12 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
-#include <dev/cap_rt/cap_rt_ioctl.h>
 #include <dev/cap_rt/cap_rt_capprotect_proto.h>
-#include <dev/cap_rt/cap_rt_isolation_proto.h>
-#include <dev/cap_rt/cap_rt_system_proto.h>
 #include <dev/cap_rt/cap_rt_coalition_proto.h>
+#include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/cap_rt/cap_rt_isolation_proto.h>
+#include <dev/cap_rt/cap_rt_pair_proto.h>
+#include <dev/cap_rt/cap_rt_system_proto.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -23,12 +24,10 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#include "oracled.h"
-#include "gates.h"
-#include "probes.h"
 #include "cap_rt_priv.h"
-
-#include <dev/cap_rt/cap_rt_pair_proto.h>
+#include "gates.h"
+#include "oracled.h"
+#include "probes.h"
 
 /*
  * Mint an isolation access token for a claimed path.

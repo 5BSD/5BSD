@@ -20,6 +20,8 @@
 #include <sys/procdesc.h>
 #include <sys/wait.h>
 
+#include <dev/cap_rt/cap_rt_ioctl.h>
+
 #include <errno.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -27,8 +29,6 @@
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
-
-#include <dev/cap_rt/cap_rt_ioctl.h>
 
 #include "serviced.h"
 #include "serviced_probes.h"

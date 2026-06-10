@@ -7,10 +7,12 @@
  */
 
 #include <sys/types.h>
-#include <sys/stat.h>
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
+
+#include <dev/cap_rt/cap_rt_isolation_proto.h>
 
 #include <errno.h>
 #include <stdio.h>
@@ -20,11 +22,9 @@
 
 #include <ucl.h>
 
-#include <dev/cap_rt/cap_rt_isolation_proto.h>
-
-#include "libcapbundle_internal.h"
 #include "claim_parse.h"
 #include "gates.h"
+#include "libcapbundle_internal.h"
 
 /* --- UCL parsing helpers --- */
 

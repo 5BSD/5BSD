@@ -33,9 +33,6 @@ svc_pair_reply(struct svc_runtime *svc, int status,
 	struct cap_rt_sendmsg_args sa;
 	struct svc_reply rpl;
 
-	if (svc->pair_fd < 0)
-		return;
-
 	rpl.status = status;
 
 	memset(&sa, 0, sizeof(sa));
