@@ -4,8 +4,8 @@
  * Copyright (c) 2026 Kory Heard
  *
  * Claim validation helpers.  Used by oracle_proto.c (runtime minting)
- * and commands.c (oraclectl verify) to check whether a requested
- * resource is covered by the oracle's claimed set.
+ * to check whether a requested resource is covered by the oracle's
+ * claimed set.
  *
  * These operate on the global od.cfg and are intentionally kept as
  * static functions in a header so both translation units can use

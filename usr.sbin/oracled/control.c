@@ -223,13 +223,6 @@ conn_dispatch(struct ctl_conn *c)
 		cmd_services(c->euid, req->flags, reply,
 		    c->summary, sizeof(c->summary));
 		break;
-	case CTL_OP_VERIFY:
-		if (req->datalen != 0) {
-			reply->status = EINVAL;
-			break;
-		}
-		cmd_verify(reply, c->summary, sizeof(c->summary));
-		break;
 	default:
 		reply->status = ENOTSUP;
 		break;
@@ -238,7 +231,7 @@ conn_dispatch(struct ctl_conn *c)
 write:
 	if ((req->op == CTL_OP_STATUS || req->op == CTL_OP_CHECK ||
 	    req->op == CTL_OP_LOAD || req->op == CTL_OP_SERVICES ||
-	    req->op == CTL_OP_RELOAD || req->op == CTL_OP_VERIFY) &&
+	    req->op == CTL_OP_RELOAD) &&
 	    reply->flags > 0)
 		c->summary_len = reply->flags;
 

@@ -116,22 +116,6 @@ cmd_reload(void)
 	return (0);
 }
 
-static int
-cmd_verify(void)
-{
-	char summary[ORACLECTL_SUMMARY_MAX];
-	int fd, error;
-
-	fd = open_or_die();
-	error = oraclectl_verify(fd, summary, sizeof(summary));
-	close(fd);
-
-	if (error != 0)
-		return (check(error, "verify"));
-	if (summary[0] != '\0')
-		printf("%s", summary);
-	return (0);
-}
 
 static int
 cmd_services(int verbose)
@@ -205,7 +189,6 @@ usage(void)
 	    "       oraclectl services [-v]\n"
 	    "       oraclectl check <filename>\n"
 	    "       oraclectl load <filename>\n"
-	    "       oraclectl verify\n"
 	    "       oraclectl reload\n"
 	    "       oraclectl shutdown\n");
 	exit(EX_USAGE);
@@ -242,8 +225,6 @@ main(int argc, char *argv[])
 		return (cmd_check(argv[1]));
 	if (strcmp(argv[0], "load") == 0 && argc == 2)
 		return (cmd_load(argv[1]));
-	if (strcmp(argv[0], "verify") == 0 && argc == 1)
-		return (cmd_verify());
 	if (strcmp(argv[0], "shutdown") == 0 && argc == 1)
 		return (cmd_shutdown());
 	if (strcmp(argv[0], "reload") == 0 && argc == 1)

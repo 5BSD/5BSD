@@ -219,8 +219,6 @@ config_init_defaults(struct oracled_config *cfg)
 	    sizeof(cfg->control_socket));
 	cfg->control_socket_mode = ORACLED_DEFAULT_CTLMODE;
 
-	strlcpy(cfg->manifest_dir, ORACLED_DEFAULT_MANIFEST_DIR,
-	    sizeof(cfg->manifest_dir));
 	strlcpy(cfg->service_manager, ORACLED_DEFAULT_SVC_MANAGER,
 	    sizeof(cfg->service_manager));
 
@@ -495,8 +493,6 @@ config_load(struct oracled_config *cfg, const char *path)
 	cfg_string(root, "pidfile", cfg->pidfile, sizeof(cfg->pidfile));
 	cfg_string(root, "control_socket", cfg->control_socket,
 	    sizeof(cfg->control_socket));
-	cfg_string(root, "manifest_dir", cfg->manifest_dir,
-	    sizeof(cfg->manifest_dir));
 	cfg_string(root, "service_manager", cfg->service_manager,
 	    sizeof(cfg->service_manager));
 	cfg_string(root, "serviced_control_socket",
@@ -527,7 +523,6 @@ config_log(const struct oracled_config *cfg)
 	syslog(LOG_INFO, "config: control_socket=%s mode=%04o",
 	    cfg->control_socket, cfg->control_socket_mode);
 	syslog(LOG_INFO, "config: integrity_flags=0x%x", cfg->integrity_flags);
-	syslog(LOG_INFO, "config: manifest_dir=%s", cfg->manifest_dir);
 	syslog(LOG_INFO, "config: claims paths=%d network=%d jails=%d "
 	    "system=0x%x", cfg->nclaim_paths, cfg->nclaim_net,
 	    cfg->nclaim_jail, cfg->claim_system);

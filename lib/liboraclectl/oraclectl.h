@@ -28,7 +28,6 @@
 #define	ORACLECTL_CHECK		CTL_OP_CHECK
 #define	ORACLECTL_LOAD		CTL_OP_LOAD
 #define	ORACLECTL_SERVICES	CTL_OP_SERVICES
-#define	ORACLECTL_VERIFY	CTL_OP_VERIFY
 #define	ORACLECTL_SUMMARY_MAX	CTL_SUMMARY_MAX
 
 /* Status reply from oracled. */
@@ -53,7 +52,6 @@ int	oraclectl_load(int fd, const char *filename,
 	    char *summary, size_t sumlen);
 int	oraclectl_services(int fd, uint32_t flags, char *summary,
 	    size_t sumlen);
-int	oraclectl_verify(int fd, char *summary, size_t sumlen);
 __END_DECLS
 
 #endif /* !_ORACLECTL_H_ */

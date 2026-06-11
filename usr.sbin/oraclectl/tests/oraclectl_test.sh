@@ -216,18 +216,18 @@ status_shows_services_cleanup()
 	:
 }
 
-atf_test_case status_shows_manifest_dir cleanup
-status_shows_manifest_dir_head()
+atf_test_case status_shows_service_mgr cleanup
+status_shows_service_mgr_head()
 {
-	atf_set "descr" "oraclectl status shows manifest_dir path"
+	atf_set "descr" "oraclectl status shows service_mgr path"
 	atf_set "require.user" "root"
 }
-status_shows_manifest_dir_body()
+status_shows_service_mgr_body()
 {
 	require_oracled
 	atf_check -s exit:0 -o match:"service_mgr:" oraclectl status
 }
-status_shows_manifest_dir_cleanup()
+status_shows_service_mgr_cleanup()
 {
 	:
 }
@@ -505,7 +505,7 @@ atf_init_test_cases()
 	atf_add_test_case status_shows_integrity
 	atf_add_test_case status_shows_claims
 	atf_add_test_case status_shows_services
-	atf_add_test_case status_shows_manifest_dir
+	atf_add_test_case status_shows_service_mgr
 	atf_add_test_case status_shows_cap_rt_claim
 	atf_add_test_case status_shows_integrity_flags
 	atf_add_test_case status_socket_path

@@ -175,7 +175,6 @@ write_config()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
-manifest_dir = "$(pwd)/serviced.d";
 service_manager = "$serviced_bin";
 EOF
 }
@@ -395,7 +394,6 @@ bootstrap_no_service_manager_body()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
-manifest_dir = "$(pwd)/serviced.d";
 service_manager = "";
 EOF
 

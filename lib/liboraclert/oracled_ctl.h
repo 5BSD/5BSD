@@ -35,7 +35,6 @@
 #define	CTL_OP_CHECK		7	/* validate manifest (root) */
 #define	CTL_OP_LOAD		8	/* validate + load + start (root) */
 #define	CTL_OP_SERVICES		9	/* list loaded services (any) */
-#define	CTL_OP_VERIFY		10	/* validate config + manifests (any) */
 
 /*
  * Request header.  For variable-length commands, datalen bytes of

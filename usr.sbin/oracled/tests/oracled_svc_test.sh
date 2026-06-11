@@ -22,7 +22,6 @@ find_serviced()
 	local p
 	for p in \
 	    "$(command -v serviced 2>/dev/null)" \
-	    /usr/sbin/serviced \
 	    /usr/libexec/serviced \
 	    /usr/obj/usr/src/arm64.aarch64/usr.sbin/serviced/serviced
 	do
@@ -58,7 +57,6 @@ write_config()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
-manifest_dir = "$manifestdir";
 service_manager = "$serviced_bin";
 EOF
 }
@@ -149,7 +147,6 @@ manifest_missing_dir_body()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
-manifest_dir = "$(pwd)/nonexistent.d";
 service_manager = "$serviced_bin";
 EOF
 	oracled -d -f "$conffile" >"$logfile" 2>&1 &
@@ -1649,36 +1646,6 @@ reload_idempotent_sighup_cleanup()
 
 # --- config ---
 
-atf_test_case config_manifest_dir cleanup
-config_manifest_dir_head()
-{
-	atf_set "descr" "manifest_dir config key is logged"
-	atf_set "require.user" "root"
-}
-config_manifest_dir_body()
-{
-	require_cap_rt
-	prepare_paths
-	write_config
-
-	oracled -d -f "$conffile" >"$logfile" 2>&1 &
-	daemon_pid=$!
-
-	i=0
-	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-
-	atf_check -s exit:0 -o ignore sh -c \
-	    "grep 'manifest_dir=$(pwd)/serviced.d' '$logfile'"
-	stop_oracled
-}
-config_manifest_dir_cleanup()
-{
-	cleanup_common
-}
-
 # --- service launch ---
 
 atf_test_case svc_launch_order_logged cleanup
@@ -2073,9 +2040,6 @@ atf_init_test_cases()
 	atf_add_test_case reload_empty_dir
 	atf_add_test_case reload_duplicate_label_at_startup
 	atf_add_test_case reload_idempotent_sighup
-
-	# Config
-	atf_add_test_case config_manifest_dir
 
 	# Service launch
 	atf_add_test_case svc_launch_order_logged

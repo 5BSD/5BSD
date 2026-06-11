@@ -243,12 +243,3 @@ oraclectl_services(int fd, uint32_t flags, char *summary, size_t sumlen)
 	return (do_call_summary(fd, ORACLECTL_SERVICES, flags, NULL, 0,
 	    summary, sumlen, &rpl));
 }
-
-int
-oraclectl_verify(int fd, char *summary, size_t sumlen)
-{
-	struct ctl_reply rpl;
-
-	return (do_call_summary(fd, ORACLECTL_VERIFY, 0, NULL, 0,
-	    summary, sumlen, &rpl));
-}

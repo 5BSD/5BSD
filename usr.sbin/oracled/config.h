@@ -17,7 +17,6 @@
 #define	ORACLED_DEFAULT_CONFFILE	"/etc/oracled.conf"
 #define	ORACLED_DEFAULT_PIDFILE	"/var/run/oracled.pid"
 #define	ORACLED_DEFAULT_CTLMODE	0700
-#define	ORACLED_DEFAULT_MANIFEST_DIR	"/etc/serviced.d"
 #define	ORACLED_DEFAULT_SVC_MANAGER	"/usr/libexec/serviced"
 
 #define	ORACLED_MAX_PATH_CLAIMS		64
@@ -63,9 +62,6 @@ struct oracled_config {
 	uint32_t	claim_system_policy;	/* policy-originated bits */
 	uint32_t	claim_system_service;	/* service-originated bits */
 	uint32_t	claim_system_refcount[ORACLED_SYSTEM_GATE_NBITS];
-
-	/* Service manifest directory used by oracle-side commands */
-	char		manifest_dir[PATH_MAX];
 
 	/* Service manager binary (started by bootstrap) */
 	char		service_manager[PATH_MAX];

@@ -215,7 +215,6 @@ policy_claim_immune_to_release_body()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
-manifest_dir = "$manifestdir";
 service_manager = "$serviced_bin";
 claims {
     paths = ["/var/tmp"];

@@ -39,7 +39,6 @@ find_serviced()
 	local p
 	for p in \
 	    "$(command -v serviced 2>/dev/null)" \
-	    /usr/sbin/serviced \
 	    /usr/libexec/serviced \
 	    /usr/obj/usr/src/arm64.aarch64/usr.sbin/serviced/serviced
 	do
@@ -105,7 +104,6 @@ write_config()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
-manifest_dir = "$manifestdir";
 service_manager = "$serviced_bin";
 serviced_control_socket = "${CTL_SOCK}";
 EOF

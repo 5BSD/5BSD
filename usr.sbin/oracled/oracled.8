@@ -133,12 +133,6 @@ Default:
 .It Va control_socket_mode
 File mode for the control socket.
 Default: 0700 (root only).
-.It Va manifest_dir
-Legacy service manifest directory used by the
-.Cm check
-control command.
-Default:
-.Pa /etc/serviced.d .
 .It Va service_manager
 Path to the first managed process started by
 .Nm
@@ -388,11 +382,6 @@ Delegated to
 .It Dv CTL_OP_SERVICES (9)
 List services and serviced status.
 Any user.
-.It Dv CTL_OP_VERIFY (10)
-Cross-check oracle claims against all service manifests.
-Reports capabilities requested by services that are not covered by
-any active oracle claim (policy or dynamic).
-Any user.
 .El
 .Sh SIGNALS
 .Bl -tag -width "SIGTERM, SIGINT"
@@ -587,16 +576,6 @@ dtrace -n 'oracled*:::dyn-release-* { printf("refcount=%d result=%d",
 .It Pa /etc/oracled.conf
 Configuration file (UCL format).
 Optional.
-.It Pa /etc/serviced.d/
-Legacy service manifest directory used by
-.Nm
-for policy verification.
-Service launch is handled by
-.Xr serviced 8
-using capability bundles under
-.Pa /Capabilities/System
-and
-.Pa /Capabilities .
 .It Pa /usr/libexec/serviced
 Default service manager binary.
 Started by
@@ -624,7 +603,6 @@ Minimal configuration with default claims:
 .Bd -literal -offset indent
 pidfile = "/var/run/oracled.pid";
 control_socket = "/var/run/oracled.sock";
-manifest_dir = "/etc/serviced.d";
 service_manager = "/usr/libexec/serviced";
 .Ed
 .Pp

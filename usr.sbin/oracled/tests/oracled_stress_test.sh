@@ -321,7 +321,6 @@ find_serviced_bin()
 	local p
 	for p in \
 	    "$(command -v serviced 2>/dev/null)" \
-	    /usr/sbin/serviced \
 	    /usr/libexec/serviced \
 	    /usr/obj/usr/src/arm64.aarch64/usr.sbin/serviced/serviced
 	do
@@ -340,7 +339,6 @@ write_config()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
-manifest_dir = "$manifestdir";
 service_manager = "${sbin:-}";
 EOF
 }
@@ -525,7 +523,7 @@ reload_manifest_churn_under_control_load_cleanup()
 atf_test_case control_check_rejects_symlink_escape cleanup
 control_check_rejects_symlink_escape_head()
 {
-	atf_set "descr" "oraclectl check rejects manifest symlinks escaping manifest_dir"
+	atf_set "descr" "oraclectl check rejects manifest symlinks with path traversal"
 	atf_set "require.user" "root"
 }
 control_check_rejects_symlink_escape_body()
@@ -786,7 +784,6 @@ parser_config_boundaries_body()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = 700;
-manifest_dir = "$manifestdir";
 claims {
     paths = ["relative/path", "/dev/null"];
     network = [
@@ -947,7 +944,6 @@ service_fd_inheritance_contract_body()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
-manifest_dir = "$manifestdir";
 claims {
     paths = ["/dev/null"];
 }
@@ -1585,7 +1581,6 @@ bootstrap_bad_service_manager_body()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
-manifest_dir = "$manifestdir";
 service_manager = "/nonexistent/serviced";
 EOF
 	oracled -d -f "$conffile" >"$logfile" 2>&1 &

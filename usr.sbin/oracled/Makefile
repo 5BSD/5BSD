@@ -9,10 +9,6 @@ SRCS= oracled.c bootstrap.c cap_rt_setup.c cap_rt_claims.c cap_rt_reload.c \
 	oracle_proto.c oracle_proto_claims.c proc.c
 CONFS= oracled.conf
 
-DIRS+= SERVICED_D
-SERVICED_D= /etc/serviced.d
-SERVICED_DPACKAGE= oracled
-
 FILESDIR_examples= ${SHAREDIR}/examples/oracled
 FILESGROUPS+= examples
 examples= examples/desktop.conf \
