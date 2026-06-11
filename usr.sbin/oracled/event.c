@@ -227,6 +227,9 @@ event_loop(void)
 			if (kev.flags & EV_EOF) {
 				syslog(LOG_WARNING,
 				    "serviced pair closed unexpectedly");
+				bootstrap_handle_pair_eof(kq);
+				if (od.shutting_down && bootstrap_is_stopped())
+					shutdown_finish();
 			} else {
 				oracle_proto_dispatch(&kev);
 			}

@@ -370,6 +370,29 @@ bootstrap_schedule_restart(int kq, unsigned delay_sec)
 }
 
 /*
+ * Handle pair channel EOF — serviced closed its end.
+ * Collect exit status via pdwait4 and enter the normal exit path.
+ */
+void
+bootstrap_handle_pair_eof(int kq)
+{
+	struct kevent fake;
+	int status;
+
+	if (bs.pd_fd < 0)
+		return;
+
+	status = 0;
+	pdwait(bs.pd_fd, &status, WNOHANG, NULL, NULL);
+
+	memset(&fake, 0, sizeof(fake));
+	fake.filter = EVFILT_PROCDESC;
+	fake.ident = bs.pd_fd;
+	fake.data = status;
+	bootstrap_handle_exit(&fake, kq);
+}
+
+/*
  * Handle serviced process exit.
  * Implements restart with exponential backoff and circuit breaker.
  */

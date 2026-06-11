@@ -80,6 +80,7 @@ void	event_loop(void);
 /* bootstrap.c — serviced lifecycle */
 int	bootstrap_start(int kq);
 void	bootstrap_handle_exit(struct kevent *kev, int kq);
+void	bootstrap_handle_pair_eof(int kq);
 void	bootstrap_handle_timer(struct kevent *kev, int kq);
 void	bootstrap_signal(int sig);
 void	bootstrap_stop(void);
