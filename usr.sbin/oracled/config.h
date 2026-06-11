@@ -18,7 +18,7 @@
 #define	ORACLED_DEFAULT_PIDFILE	"/var/run/oracled.pid"
 #define	ORACLED_DEFAULT_CTLMODE	0700
 #define	ORACLED_DEFAULT_MANIFEST_DIR	"/etc/serviced.d"
-#define	ORACLED_DEFAULT_SVC_MANAGER	"/usr/libexec/oracled/serviced"
+#define	ORACLED_DEFAULT_SVC_MANAGER	"/usr/libexec/serviced"
 
 #define	ORACLED_MAX_PATH_CLAIMS		64
 #define	ORACLED_MAX_NET_CLAIMS		32

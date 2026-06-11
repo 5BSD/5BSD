@@ -9,16 +9,20 @@ CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libcapability
 LIBADD=		capability service
 
-BINDIR=	/Capabilities/System/Kldmgr.cap/bin
+DIRS+=	KLDMGR_CAP KLDMGR_CAP_BIN KLDMGR_CAP_ETC
+KLDMGR_CAP=	/Capabilities/System/Kldmgr.cap
+KLDMGR_CAPPACKAGE=	kldmgrd
+KLDMGR_CAP_BIN=	/Capabilities/System/Kldmgr.cap/bin
+KLDMGR_CAP_BINPACKAGE=	kldmgrd
+KLDMGR_CAP_ETC=	/Capabilities/System/Kldmgr.cap/etc
+KLDMGR_CAP_ETCPACKAGE=	kldmgrd
+
+BINDIR=	${KLDMGR_CAP_BIN}
 
 FILESGROUPS=	SERVICES
 SERVICES=	capbundle/kldmgrd.ucl
-SERVICESDIR=	/Capabilities/System/Kldmgr.cap/etc
+SERVICESDIR=	${KLDMGR_CAP_ETC}
 SERVICESNAME_capbundle/kldmgrd.ucl=	kldmgrd.ucl
-
-beforeinstall:
-	${INSTALL} -d -m 0755 ${DESTDIR}${BINDIR}
-	${INSTALL} -d -m 0755 ${DESTDIR}${SERVICESDIR}
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

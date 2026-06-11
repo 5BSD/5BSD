@@ -40,11 +40,9 @@ EOD
 scripts {
   post-install = <<EOD
 #!/bin/sh
-# Remove obsolete /System/Applications directory tree
+# Remove obsolete pre-.cap application tree from early 5BSD installs.
 if [ -d /System/Applications ]; then
     rm -rf /System/Applications
 fi
-# Ensure capability directories exist
-mkdir -p /Capabilities/System
 EOD
 }

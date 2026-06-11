@@ -1,0 +1,13 @@
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
+comment = "Library helpers for 5BSD capability bundle service daemons"
+
+desc = <<EOD
+libcapability provides helper routines for writing daemons managed by
+serviced(8), including service loop setup, client label allow-list checks,
+and IPC handling built on libservice.
+EOD

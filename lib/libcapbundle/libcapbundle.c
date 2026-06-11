@@ -80,7 +80,7 @@ capbundle_open(const char *path, struct capbundle **bp,
 		return (-1);
 	}
 
-	/* Parse each .ucl in Services/. */
+	/* Parse each .ucl in etc/. */
 	{
 		unsigned nfailed = 0;
 		char fail_errbuf[256];

@@ -40,15 +40,20 @@ Quoted octal file mode for the control socket.
 Default:
 .Dq 0700 .
 .It Va manifest_dir
-Directory containing service manifest files passed to
-.Xr serviced 8 .
+Legacy service manifest directory used by control-command policy
+verification.
 Default:
 .Pa /etc/serviced.d .
 .It Va service_manager
-Path to the service manager binary.
+Path to the first managed process started by
+.Xr oracled 8 .
 Default:
-.Pa /usr/libexec/oracled/serviced .
+.Pa /usr/libexec/serviced .
 If set to an empty string, no service manager is started.
+May be overridden with
+.Xr oracled 8 Ns 's
+.Fl b
+option.
 .It Va serviced_control_socket
 Path to the control socket for
 .Xr serviced 8 ,
@@ -280,7 +285,7 @@ Minimal configuration relying on compiled-in defaults:
 pidfile = "/var/run/oracled.pid";
 control_socket = "/var/run/oracled.sock";
 manifest_dir = "/etc/serviced.d";
-service_manager = "/usr/libexec/oracled/serviced";
+service_manager = "/usr/libexec/serviced";
 .Ed
 .Pp
 Full integrity hardening.

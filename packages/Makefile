@@ -38,6 +38,7 @@ SUBDIR=	blocklist \
 	ggate \
 	lib9p \
 	libarchive \
+	libcapability \
 	libcapbundle \
 	liboraclectl \
 	liboraclert \

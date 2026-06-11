@@ -44,22 +44,27 @@ usage(void)
 {
 
 	fprintf(stderr,
-	    "usage: oracled [-dT] [-f conffile] [-p pidfile]\n");
+	    "usage: oracled [-dT] [-b bootstrap] [-f conffile] "
+	    "[-p pidfile]\n");
 	exit(1);
 }
 
 int
 main(int argc, char *argv[])
 {
-	const char *conffile, *pidfile_override;
+	const char *bootstrap_override, *conffile, *pidfile_override;
 	pid_t otherpid;
 	int ch;
 
+	bootstrap_override = NULL;
 	conffile = ORACLED_DEFAULT_CONFFILE;
 	pidfile_override = NULL;
 
-	while ((ch = getopt(argc, argv, "dTf:p:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:dTf:p:")) != -1) {
 		switch (ch) {
+		case 'b':
+			bootstrap_override = optarg;
+			break;
 		case 'd':
 			od.foreground = true;
 			break;
@@ -98,6 +103,9 @@ main(int argc, char *argv[])
 	if (pidfile_override != NULL)
 		strlcpy(od.cfg.pidfile, pidfile_override,
 		    sizeof(od.cfg.pidfile));
+	if (bootstrap_override != NULL)
+		strlcpy(od.cfg.service_manager, bootstrap_override,
+		    sizeof(od.cfg.service_manager));
 
 	openlog("oracled", LOG_PID | (od.foreground ? LOG_PERROR : 0),
 	    LOG_DAEMON);

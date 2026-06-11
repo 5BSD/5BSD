@@ -10,6 +10,7 @@
 .Sh SYNOPSIS
 .Nm
 .Op Fl d
+.Op Fl b Ar bootstrap
 .Op Fl f Ar conffile
 .Op Fl p Ar pidfile
 .Op Fl T
@@ -20,9 +21,9 @@ It claims system resources exclusively via the
 .Xr cap_rt 4
 capability runtime, protects its own integrity via
 .Xr cap_rt_capprotect 4 ,
-and manages a single child process,
+and manages a single bootstrap child process, typically
 .Xr serviced 8 ,
-which reads service manifests and supervises individual services.
+which reads capability bundles and supervises individual services.
 .Pp
 .Nm
 does not start or manage services directly.
@@ -82,7 +83,12 @@ and control socket connections via
 .Xr kqueue 2 .
 .El
 .Sh OPTIONS
-.Bl -tag -width "-f conffile"
+.Bl -tag -width "-b bootstrap"
+.It Fl b Ar bootstrap
+Start
+.Ar bootstrap
+as the first managed process instead of the configured
+.Va service_manager .
 .It Fl d
 Run in the foreground and log to standard error as well as syslog.
 .It Fl f Ar conffile
@@ -128,16 +134,20 @@ Default:
 File mode for the control socket.
 Default: 0700 (root only).
 .It Va manifest_dir
-Directory containing service manifest files.
+Legacy service manifest directory used by the
+.Cm check
+control command.
 Default:
 .Pa /etc/serviced.d .
 .It Va service_manager
-Path to the service manager binary started by
+Path to the first managed process started by
 .Nm
 at bootstrap.
 Default:
-.Pa /usr/libexec/oracled/serviced .
+.Pa /usr/libexec/serviced .
 If empty, no service manager is started.
+May be overridden with
+.Fl b .
 .It Va serviced_control_socket
 Path to the control socket for
 .Xr serviced 8 .
@@ -573,18 +583,21 @@ dtrace -n 'oracled*:::dyn-release-* { printf("refcount=%d result=%d",
     arg1, arg2); }'
 .Ed
 .Sh FILES
-.Bl -tag -width "/usr/libexec/oracled/serviced"
+.Bl -tag -width "/usr/libexec/serviced"
 .It Pa /etc/oracled.conf
 Configuration file (UCL format).
 Optional.
 .It Pa /etc/serviced.d/
-Service manifest directory.
-Passed to
-.Xr serviced 8 ,
-which reads
-.Pa *.ucl
-files from this directory.
-.It Pa /usr/libexec/oracled/serviced
+Legacy service manifest directory used by
+.Nm
+for policy verification.
+Service launch is handled by
+.Xr serviced 8
+using capability bundles under
+.Pa /Capabilities/System
+and
+.Pa /Capabilities .
+.It Pa /usr/libexec/serviced
 Default service manager binary.
 Started by
 .Nm
@@ -612,7 +625,7 @@ Minimal configuration with default claims:
 pidfile = "/var/run/oracled.pid";
 control_socket = "/var/run/oracled.sock";
 manifest_dir = "/etc/serviced.d";
-service_manager = "/usr/libexec/oracled/serviced";
+service_manager = "/usr/libexec/serviced";
 .Ed
 .Pp
 Full integrity hardening (note: enabling
