@@ -28,45 +28,10 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#include <sys/module.h>
-#include <cap_rt_versions.h>
-
 #include "oracled.h"
 #include "gates.h"
 #include "probes.h"
 #include "cap_rt_priv.h"
-
-/*
- * Verify that a loaded kernel module has the expected version.
- * Returns 0 on match, -1 on mismatch or if the module is not loaded.
- */
-static int
-check_module_version(const char *name, int expected)
-{
-	struct module_stat mstat;
-	int modid;
-
-	modid = modfind(name);
-	if (modid == -1) {
-		syslog(LOG_ERR, "cap_rt: module %s not found", name);
-		return (-1);
-	}
-
-	memset(&mstat, 0, sizeof(mstat));
-	mstat.version = sizeof(mstat);
-	if (modstat(modid, &mstat) == -1) {
-		syslog(LOG_ERR, "cap_rt: modstat %s: %m", name);
-		return (-1);
-	}
-
-	if (mstat.data.intval != expected) {
-		syslog(LOG_ERR, "cap_rt: %s version %d, expected %d",
-		    name, mstat.data.intval, expected);
-		return (-1);
-	}
-
-	return (0);
-}
 
 /* Service instance fds — shared across cap_rt_*.c files. */
 int cap_rt_fd = -1;
@@ -135,18 +100,6 @@ cap_rt_setup(void)
 		return (-1);
 	}
 	syslog(LOG_INFO, "opened /dev/cap_rt");
-
-	/* Verify kernel module versions match what we were built against. */
-	if (check_module_version("cap_rt", CAP_RT_VERSION_CORE) != 0 ||
-	    check_module_version("cap_rt_pair", CAP_RT_VERSION_PAIR) != 0 ||
-	    check_module_version("cap_rt_coalition", CAP_RT_VERSION_COALITION) != 0 ||
-	    check_module_version("cap_rt_isolation", CAP_RT_VERSION_ISOLATION) != 0 ||
-	    check_module_version("cap_rt_system", CAP_RT_VERSION_SYSTEM) != 0 ||
-	    check_module_version("cap_rt_capprotect", CAP_RT_VERSION_CAPPROTECT) != 0) {
-		syslog(LOG_ERR, "cap_rt module version mismatch");
-		goto fail;
-	}
-	syslog(LOG_INFO, "cap_rt module versions verified");
 
 	if (isolate_resources() == -1) {
 		syslog(LOG_ERR, "failed to connect isolation service");
