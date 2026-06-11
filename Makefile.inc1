@@ -3368,7 +3368,7 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		${_krb5_lib_kadm5srvmit} \
 		${_krb5_lib_kadm5clntmit} \
 		lib/libpam/libpam lib/libthr \
-		${_lib_libradius} lib/libsbuf lib/libtacplus \
+		${_lib_libradius} lib/libsbuf lib/libservice lib/libtacplus \
 		lib/libgeom \
 		${_lib_librt} \
 		${_cddl_lib_libumem} ${_cddl_lib_libnvpair} \
@@ -3397,6 +3397,7 @@ _prebuild_libs+= lib/libregex
 lib/libgeom__L: lib/libexpat__L lib/libsbuf__L
 lib/libkldelf__L: lib/libelf__L
 lib/libkvm__L: lib/libelf__L
+lib/libucl__L: lib/msun__L
 lib/liboraclert__L: lib/libucl__L
 
 .if ${MK_RADIUS_SUPPORT} != "no"
