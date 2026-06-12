@@ -31,5 +31,6 @@ int	hci_get_con_handle(int hci_fd, const uint8_t *remote_addr,
 	    uint16_t *handle);
 int	hci_le_scan(int hci_fd, int duration_sec,
 	    struct ble_scan_result *results, int maxresults, int *nresults);
+int	hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec);
 
 #endif /* _BTLED_HCI_UTIL_H_ */

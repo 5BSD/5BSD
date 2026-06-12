@@ -173,22 +173,33 @@ vhid_inst_write(struct cdev *dev, struct uio *uio, int ioflag)
 			mtx_unlock(&vi->mtx);
 			return (EBUSY);
 		}
-		/* Pre-attach: accumulate report descriptor */
-		if (vi->rdesc_len + uio->uio_resid > VHID_MAX_RDESC) {
+		/* Pre-attach: accumulate report descriptor under lock */
+		len = uio->uio_resid;
+		if (vi->rdesc_len + len > VHID_MAX_RDESC) {
 			mtx_unlock(&vi->mtx);
 			return (EFBIG);
 		}
-		mtx_unlock(&vi->mtx);
-
-		len = uio->uio_resid;
-		if (vi->rdesc == NULL)
+		if (vi->rdesc == NULL) {
+			/*
+			 * Drop the mutex for M_WAITOK allocation,
+			 * then re-check state.
+			 */
+			mtx_unlock(&vi->mtx);
 			vi->rdesc = malloc(VHID_MAX_RDESC, M_VHID, M_WAITOK);
+			mtx_lock(&vi->mtx);
+			if (vi->configured || vi->attaching) {
+				mtx_unlock(&vi->mtx);
+				return (EBUSY);
+			}
+		}
 
 		error = uiomove(vi->rdesc + vi->rdesc_len, len, uio);
-		if (error != 0)
+		if (error != 0) {
+			mtx_unlock(&vi->mtx);
 			return (error);
-
+		}
 		vi->rdesc_len += len;
+		mtx_unlock(&vi->mtx);
 		return (0);
 	}
 
@@ -228,12 +239,16 @@ vhid_inst_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 			mtx_unlock(&vi->mtx);
 			return (EEXIST);
 		}
+		if (vi->attaching) {
+			mtx_unlock(&vi->mtx);
+			return (EBUSY);
+		}
 		if (vi->rdesc == NULL || vi->rdesc_len == 0) {
 			mtx_unlock(&vi->mtx);
 			return (EINVAL);
 		}
 
-		/* Populate device info and block concurrent writes */
+		/* Populate device info and block concurrent writes/attaches */
 		vi->attaching = true;
 		strlcpy(vi->hdi.name, arg->name, sizeof(vi->hdi.name));
 		vi->hdi.idBus = BUS_BLUETOOTH;

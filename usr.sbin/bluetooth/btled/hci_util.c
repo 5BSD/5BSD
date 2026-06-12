@@ -337,3 +337,70 @@ hci_le_scan(int hci_fd, int duration_sec,
 	*nresults = count;
 	return (0);
 }
+
+/*
+ * Wait for HCI Encryption Change event on a given connection handle.
+ * Returns 0 on success (encryption enabled), -1 on failure/timeout.
+ *
+ * This replaces the naive usleep() approach — we actually listen for
+ * the controller's confirmation that encryption is active.
+ */
+int
+hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
+{
+	struct bt_devfilter flt, oldflt;
+	uint8_t buf[512];
+	ng_hci_event_pkt_t *evt;
+	time_t deadline;
+
+	/* Set filter to receive Encryption Change events */
+	memset(&flt, 0, sizeof(flt));
+	bt_devfilter_pkt_set(&flt, NG_HCI_EVENT_PKT);
+	bt_devfilter_evt_set(&flt, NG_HCI_EVENT_ENCRYPTION_CHANGE);
+	bt_devfilter_evt_set(&flt, NG_HCI_EVENT_COMMAND_STATUS);
+	bt_devfilter(hci_fd, &flt, &oldflt);
+
+	deadline = time(NULL) + timeout_sec;
+
+	while (time(NULL) < deadline) {
+		ssize_t n;
+
+		n = bt_devrecv(hci_fd, buf, sizeof(buf), 1);
+		if (n < 0) {
+			if (errno == EAGAIN || errno == EINTR)
+				continue;
+			break;
+		}
+
+		evt = (ng_hci_event_pkt_t *)buf;
+		if ((size_t)n < sizeof(*evt))
+			continue;
+
+		if (evt->event == NG_HCI_EVENT_ENCRYPTION_CHANGE) {
+			ng_hci_encryption_change_ep *ep;
+
+			if ((size_t)n < sizeof(*evt) + sizeof(*ep))
+				continue;
+
+			ep = (ng_hci_encryption_change_ep *)(evt + 1);
+			uint16_t h = le16toh(ep->con_handle) & 0x0FFF;
+
+			if (h == con_handle) {
+				/* Restore old filter */
+				bt_devfilter(hci_fd, &oldflt, NULL);
+
+				if (ep->status != 0 ||
+				    ep->encryption_enable == 0) {
+					errno = EACCES;
+					return (-1);
+				}
+				return (0);
+			}
+		}
+	}
+
+	/* Restore old filter */
+	bt_devfilter(hci_fd, &oldflt, NULL);
+	errno = ETIMEDOUT;
+	return (-1);
+}

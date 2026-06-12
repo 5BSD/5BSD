@@ -307,13 +307,20 @@ main(int argc, char *argv[])
 			if (smp_open(&dev.smp, dev.addr, dev.addr_type,
 			    dev.local_addr, 0, dev.hci_fd,
 			    dev.con_handle, &dev.bond_db) == 0) {
-				if (smp_encrypt_with_ltk(&dev.smp, bond) < 0)
+				if (smp_encrypt_with_ltk(&dev.smp, bond) < 0) {
 					warn("bonded encryption failed");
-				else if (dev.debug)
-					fprintf(stderr,
-					    "btled: encryption started\n");
-				/* Allow time for encryption to complete */
-				usleep(500000);
+				} else {
+					if (dev.debug)
+						fprintf(stderr,
+						    "btled: waiting for "
+						    "encryption...\n");
+					if (hci_wait_encryption(dev.hci_fd,
+					    dev.con_handle, 10) < 0)
+						warn("encryption timeout");
+					else if (dev.debug)
+						fprintf(stderr,
+						    "btled: encrypted\n");
+				}
 			}
 		}
 	}
@@ -341,13 +348,16 @@ main(int argc, char *argv[])
 			if (smp_pair(&dev.smp) < 0)
 				err(1, "SMP pairing");
 
+			/* Wait for encryption to complete */
+			if (hci_wait_encryption(dev.hci_fd,
+			    dev.con_handle, 10) < 0)
+				warn("post-pairing encryption timeout");
+
 			if (dev.debug)
 				fprintf(stderr,
 				    "btled: pairing complete, retrying "
 				    "discovery\n");
 
-			/* Retry discovery after pairing */
-			usleep(500000);
 			ret = hogp_discover(&dev);
 		}
 		if (ret != 0)
