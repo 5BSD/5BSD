@@ -1968,11 +1968,17 @@ sys_pdkill(struct thread *td, struct pdkill_args *uap)
 	if (error)
 		return (error);
 	AUDIT_ARG_PROCESS(p);
-	error = p_cansignal(td, p, uap->signum);
-	if (error == 0 && uap->signum)
+	/*
+	 * No p_cansignal check.  The process descriptor is a capability:
+	 * holding it is sufficient authority to signal the child, regardless
+	 * of MAC policy or capprotect shields.  This is consistent with
+	 * procdesc_close(), which sends SIGKILL via kern_psignal() without
+	 * any permission check.
+	 */
+	if (uap->signum)
 		kern_psignal(p, uap->signum);
 	PROC_UNLOCK(p);
-	return (error);
+	return (0);
 }
 
 #if defined(COMPAT_43)

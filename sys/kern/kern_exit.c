@@ -1547,9 +1547,12 @@ kern_pdwait(struct thread *td, int fd, int *status,
 		}
 		PROC_LOCK(p);
 
-		error = p_canwait(td, p);
-		if (error != 0)
-			break;
+		/*
+		 * No p_canwait check.  The process descriptor is a
+		 * capability: holding it is sufficient authority to wait
+		 * on the child, regardless of MAC policy or jail
+		 * boundaries.
+		 */
 		if ((options & WEXITED) == 0 && p->p_state == PRS_ZOMBIE) {
 			error = ESRCH;
 			break;

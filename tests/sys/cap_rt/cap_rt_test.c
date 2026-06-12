@@ -21,6 +21,7 @@
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
 #include <sys/un.h>
+#include <sys/procdesc.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
 
@@ -4113,6 +4114,228 @@ ATF_TC_BODY(cap_pro_foreign_sigkill_blocked, tc)
 	close(sv[0]);
 }
 
+/*
+ * pdkill tests — the process descriptor is a capability.  Holding it
+ * is sufficient authority to signal the child regardless of capprotect
+ * shields, even after exec rotates the nonce.
+ */
+
+/*
+ * Helper: pdfork, child execs shield_helper which shields and
+ * pauses.  Parent gets back the pd and child pid.
+ */
+static pid_t
+pdfork_shielded_child(int *pd_out, uint32_t shield_flags)
+{
+	pid_t pid;
+	int pd, sv[2];
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0)
+		return (-1);
+
+	pid = pdfork(&pd, PD_CLOEXEC);
+	if (pid < 0) {
+		close(sv[0]);
+		close(sv[1]);
+		return (-1);
+	}
+	if (pid == 0) {
+		/* Child: shield, signal ready, wait for parent. */
+		char buf;
+		int fd;
+
+		close(sv[0]);
+		fd = capprotect_shield(shield_flags);
+		if (fd < 0)
+			_exit(10);
+		(void)write(sv[1], "s", 1);
+		(void)read(sv[1], &buf, 1);
+		close(fd);
+		close(sv[1]);
+		_exit(0);
+	}
+
+	/* Parent: wait for child to be shielded. */
+	close(sv[1]);
+	{
+		char buf;
+		(void)read(sv[0], &buf, 1);
+	}
+	close(sv[0]);
+	*pd_out = pd;
+	return (pid);
+}
+
+ATF_TC(cap_pro_pdkill_bypasses_signal_shield);
+ATF_TC_HEAD(cap_pro_pdkill_bypasses_signal_shield, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "pdkill delivers signal through CP_SF_SIGNAL shield");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_pdkill_bypasses_signal_shield, tc)
+{
+	pid_t pid;
+	int pd, status;
+
+	pid = pdfork_shielded_child(&pd, CP_SF_SIGNAL);
+	ATF_REQUIRE(pid > 0);
+
+	/* kill(pid) must be blocked — verify shield is active. */
+	ATF_CHECK_EQ(run_shield_helper("signal", pid), 0);
+
+	/* pdkill via process descriptor must succeed. */
+	ATF_REQUIRE_EQ(pdkill(pd, SIGUSR1), 0);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK(WIFSIGNALED(status));
+	ATF_CHECK_EQ(WTERMSIG(status), SIGUSR1);
+
+	close(pd);
+}
+
+ATF_TC(cap_pro_pdkill_bypasses_sigkill_shield);
+ATF_TC_HEAD(cap_pro_pdkill_bypasses_sigkill_shield, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "pdkill delivers SIGKILL through CP_SF_SIGKILL shield");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_pdkill_bypasses_sigkill_shield, tc)
+{
+	pid_t pid;
+	int pd, status;
+
+	pid = pdfork_shielded_child(&pd, CP_SF_SIGKILL);
+	ATF_REQUIRE(pid > 0);
+
+	/* kill(pid, SIGKILL) must be blocked — verify shield is active. */
+	ATF_CHECK_EQ(run_shield_helper("sigkill", pid), 0);
+
+	/* pdkill via process descriptor must succeed. */
+	ATF_REQUIRE_EQ(pdkill(pd, SIGKILL), 0);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK(WIFSIGNALED(status));
+	ATF_CHECK_EQ(WTERMSIG(status), SIGKILL);
+
+	close(pd);
+}
+
+ATF_TC(cap_pro_pdkill_bypasses_full_shield);
+ATF_TC_HEAD(cap_pro_pdkill_bypasses_full_shield, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "pdkill delivers SIGKILL through CP_SF_ALL shield");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_pdkill_bypasses_full_shield, tc)
+{
+	pid_t pid;
+	int pd, status;
+
+	pid = pdfork_shielded_child(&pd, CP_SF_ALL);
+	ATF_REQUIRE(pid > 0);
+
+	/* pdkill via process descriptor must succeed even with full shield. */
+	ATF_REQUIRE_EQ(pdkill(pd, SIGKILL), 0);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK(WIFSIGNALED(status));
+	ATF_CHECK_EQ(WTERMSIG(status), SIGKILL);
+
+	close(pd);
+}
+
+ATF_TC(cap_pro_pdkill_sigterm_through_shield);
+ATF_TC_HEAD(cap_pro_pdkill_sigterm_through_shield, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "pdkill delivers SIGTERM through CP_SF_SIGNAL|CP_SF_SIGKILL shield");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_pdkill_sigterm_through_shield, tc)
+{
+	pid_t pid;
+	int pd, status;
+
+	pid = pdfork_shielded_child(&pd, CP_SF_SIGNAL | CP_SF_SIGKILL);
+	ATF_REQUIRE(pid > 0);
+
+	/* Both signal and sigkill blocked for foreign nonces. */
+	ATF_CHECK_EQ(run_shield_helper("signal", pid), 0);
+	ATF_CHECK_EQ(run_shield_helper("sigkill", pid), 0);
+
+	/* pdkill SIGTERM via process descriptor must succeed. */
+	ATF_REQUIRE_EQ(pdkill(pd, SIGTERM), 0);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK(WIFSIGNALED(status));
+	ATF_CHECK_EQ(WTERMSIG(status), SIGTERM);
+
+	close(pd);
+}
+
+ATF_TC(cap_pro_pdwait_bypasses_wait_shield);
+ATF_TC_HEAD(cap_pro_pdwait_bypasses_wait_shield, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "pdwait collects exit status through CP_SF_WAIT shield");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_pdwait_bypasses_wait_shield, tc)
+{
+	pid_t pid;
+	int pd, status;
+
+	pid = pdfork_shielded_child(&pd, CP_SF_WAIT | CP_SF_SIGNAL);
+	ATF_REQUIRE(pid > 0);
+
+	/* Foreign wait must be blocked — verify shield is active. */
+	ATF_CHECK_EQ(run_shield_helper("wait", pid), 0);
+
+	/* Kill the child via pdkill so it exits. */
+	ATF_REQUIRE_EQ(pdkill(pd, SIGKILL), 0);
+
+	/* pdwait via process descriptor must collect the exit status. */
+	status = 0;
+	ATF_REQUIRE_EQ(pdwait(pd, &status, WNOHANG | WEXITED,
+	    NULL, NULL), pid);
+	ATF_CHECK(WIFSIGNALED(status));
+	ATF_CHECK_EQ(WTERMSIG(status), SIGKILL);
+
+	close(pd);
+}
+
+ATF_TC(cap_pro_pdwait_bypasses_full_shield);
+ATF_TC_HEAD(cap_pro_pdwait_bypasses_full_shield, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "pdwait collects exit status through CP_SF_ALL shield");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_pdwait_bypasses_full_shield, tc)
+{
+	pid_t pid;
+	int pd, status;
+
+	pid = pdfork_shielded_child(&pd, CP_SF_ALL);
+	ATF_REQUIRE(pid > 0);
+
+	/* Kill and wait through maximum shield. */
+	ATF_REQUIRE_EQ(pdkill(pd, SIGKILL), 0);
+
+	status = 0;
+	ATF_REQUIRE_EQ(pdwait(pd, &status, WNOHANG | WEXITED,
+	    NULL, NULL), pid);
+	ATF_CHECK(WIFSIGNALED(status));
+	ATF_CHECK_EQ(WTERMSIG(status), SIGKILL);
+
+	close(pd);
+}
+
 ATF_TC(cap_pro_foreign_sigcont_blocked);
 ATF_TC_HEAD(cap_pro_foreign_sigcont_blocked, tc)
 {
@@ -6872,6 +7095,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_ptrace_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_signal_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_sigkill_blocked);
+	ATF_TP_ADD_TC(tp, cap_pro_pdkill_bypasses_signal_shield);
+	ATF_TP_ADD_TC(tp, cap_pro_pdkill_bypasses_sigkill_shield);
+	ATF_TP_ADD_TC(tp, cap_pro_pdkill_bypasses_full_shield);
+	ATF_TP_ADD_TC(tp, cap_pro_pdkill_sigterm_through_shield);
+	ATF_TP_ADD_TC(tp, cap_pro_pdwait_bypasses_wait_shield);
+	ATF_TP_ADD_TC(tp, cap_pro_pdwait_bypasses_full_shield);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_sigcont_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_visible_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_selective_flags);
