@@ -80,6 +80,21 @@ struct smp_bond_db {
 };
 
 /*
+ * Passkey callback for user interaction.
+ * Called during Passkey Entry pairing.
+ *
+ * If 'display' is true, the daemon generated the passkey and
+ * the callback should display it to the user.
+ * If 'display' is false, the callback should prompt the user
+ * to enter the passkey displayed on the peripheral and return
+ * it via *passkey_out.
+ *
+ * Returns 0 on success, -1 on cancel.
+ */
+typedef int (*smp_passkey_cb_t)(uint32_t *passkey_out, bool display,
+    void *arg);
+
+/*
  * SMP connection state.
  */
 struct smp_conn {
@@ -91,6 +106,8 @@ struct smp_conn {
 	uint8_t		remote_addr[6];
 	uint8_t		remote_addr_type;
 	struct smp_bond_db *bond_db;
+	smp_passkey_cb_t passkey_cb;	/* passkey UI callback */
+	void		*passkey_cb_arg;
 };
 
 /* smp.c */

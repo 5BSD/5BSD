@@ -30,12 +30,63 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <openssl/core_names.h>
+#include <openssl/ec.h>
 #include <openssl/evp.h>
+#include <openssl/param_build.h>
 
 #include "smp.h"
 
-/* Forward declaration for LE Secure Connections */
+/* Association model */
+#define SMP_MODEL_JUST_WORKS		0
+#define SMP_MODEL_PASSKEY_ENTRY		1
+#define SMP_MODEL_NUMERIC_COMPARISON	2
+
+/* Forward declarations */
 static int smp_pair_sc(struct smp_conn *, const uint8_t[7], const uint8_t[7]);
+static int smp_pair_sc_passkey(struct smp_conn *, const uint8_t[7],
+    const uint8_t[7]);
+static void smp_pack_addr(uint8_t[7], const uint8_t[6], uint8_t);
+static void smp_f4(const uint8_t[32], const uint8_t[32], const uint8_t[16],
+    uint8_t, uint8_t[16]);
+static void smp_f5(const uint8_t[32], const uint8_t[16], const uint8_t[16],
+    const uint8_t[7], const uint8_t[7], uint8_t[16], uint8_t[16]);
+static void smp_f6(const uint8_t[16], const uint8_t[16], const uint8_t[16],
+    const uint8_t[16], const uint8_t[3], const uint8_t[7], const uint8_t[7],
+    uint8_t[16]);
+static void swap_buf(uint8_t *, const uint8_t *, size_t);
+
+/*
+ * Determine association model from IO capabilities.
+ * Core Spec Vol 3 Part H Table 2.8
+ */
+static int
+smp_select_model(uint8_t init_io, uint8_t resp_io, bool sc)
+{
+	/* Table 2.8 mapping (initiator rows, responder columns) */
+	static const uint8_t legacy_table[5][5] = {
+		/* Resp: DispOnly  DispYN    KbdOnly   NoIO      KbdDisp */
+	/* I:DispOnly */ { 0,      0,        1,        0,        1       },
+	/* I:DispYN   */ { 0,      0,        1,        0,        1       },
+	/* I:KbdOnly  */ { 1,      1,        1,        0,        1       },
+	/* I:NoIO     */ { 0,      0,        0,        0,        0       },
+	/* I:KbdDisp  */ { 1,      1,        1,        0,        1       },
+	};
+	static const uint8_t sc_table[5][5] = {
+		/* Resp: DispOnly  DispYN    KbdOnly   NoIO      KbdDisp */
+	/* I:DispOnly */ { 0,      2,        1,        0,        1       },
+	/* I:DispYN   */ { 2,      2,        1,        0,        2       },
+	/* I:KbdOnly  */ { 1,      1,        1,        0,        1       },
+	/* I:NoIO     */ { 0,      0,        0,        0,        0       },
+	/* I:KbdDisp  */ { 1,      2,        1,        0,        2       },
+	};
+
+	if (init_io > 4 || resp_io > 4)
+		return (SMP_MODEL_JUST_WORKS);
+
+	return (sc ? sc_table[init_io][resp_io] :
+	    legacy_table[init_io][resp_io]);
+}
 
 /*
  * AES-128 encrypt: E(key, plaintext) -> ciphertext.
@@ -269,9 +320,9 @@ smp_pair(struct smp_conn *sc)
 	 *          init_key_dist, resp_key_dist]
 	 */
 	preq[0] = SMP_PAIRING_REQUEST;
-	preq[1] = SMP_IO_NO_INPUT_NO_OUTPUT;	/* IO capability */
+	preq[1] = SMP_IO_KEYBOARD_DISPLAY;	/* Can input and display */
 	preq[2] = 0x00;			/* No OOB */
-	preq[3] = SMP_AUTH_BONDING | SMP_AUTH_SC;	/* Request SC */
+	preq[3] = SMP_AUTH_BONDING | SMP_AUTH_MITM | SMP_AUTH_SC;
 	preq[4] = 16;				/* Max encryption key size */
 	preq[5] = SMP_KEY_DIST_ID_KEY;		/* We can send IRK */
 	preq[6] = SMP_KEY_DIST_ENC_KEY | SMP_KEY_DIST_ID_KEY;
@@ -299,14 +350,56 @@ smp_pair(struct smp_conn *sc)
 	}
 
 	/*
-	 * If both sides support SC, use LE Secure Connections.
-	 * Check the SC bit (0x08) in the responder's AuthReq.
+	 * Determine association model and dispatch.
 	 */
-	if ((preq[3] & SMP_AUTH_SC) && (pres[3] & SMP_AUTH_SC))
-		return (smp_pair_sc(sc, preq, pres));
+	{
+		bool use_sc = (preq[3] & SMP_AUTH_SC) &&
+		    (pres[3] & SMP_AUTH_SC);
+		bool use_mitm = (preq[3] & SMP_AUTH_MITM) ||
+		    (pres[3] & SMP_AUTH_MITM);
+		int model;
+
+		if (!use_mitm)
+			model = SMP_MODEL_JUST_WORKS;
+		else
+			model = smp_select_model(preq[1], pres[1], use_sc);
+
+		if (use_sc) {
+			if (model == SMP_MODEL_PASSKEY_ENTRY)
+				return (smp_pair_sc_passkey(sc, preq, pres));
+			return (smp_pair_sc(sc, preq, pres));
+		}
+
+		/* Legacy Passkey Entry: TK = passkey value */
+		if (model == SMP_MODEL_PASSKEY_ENTRY) {
+			uint32_t passkey = 0;
+
+			if (sc->passkey_cb == NULL) {
+				errno = ENOTSUP;
+				return (-1);
+			}
+			/* Display passkey and ask user to confirm on device */
+			passkey = arc4random_uniform(1000000);
+			if (sc->passkey_cb(&passkey, true,
+			    sc->passkey_cb_arg) < 0) {
+				uint8_t fail[2] = { SMP_PAIRING_FAILED,
+				    SMP_ERR_PASSKEY_ENTRY_FAILED };
+				send(sc->fd, fail, 2, 0);
+				errno = ECANCELED;
+				return (-1);
+			}
+			/* TK = passkey as 128-bit LE integer */
+			memset(tk, 0, sizeof(tk));
+			tk[0] = passkey & 0xFF;
+			tk[1] = (passkey >> 8) & 0xFF;
+			tk[2] = (passkey >> 16) & 0xFF;
+			/* Fall through to legacy c1/s1 with this TK */
+		}
+	}
 
 	/*
-	 * Fall through to LE Legacy Pairing.
+	 * LE Legacy Pairing (Just Works or Passkey Entry).
+	 * TK is already set: 0 for Just Works, passkey for Passkey Entry.
 	 * Step 3: Generate our random and compute confirm value
 	 */
 	smp_random(mrand, sizeof(mrand));
@@ -552,6 +645,269 @@ smp_find_bond(struct smp_bond_db *db, const uint8_t *addr, uint8_t addr_type)
 }
 
 /*
+ * LE Secure Connections pairing — Passkey Entry.
+ *
+ * The passkey is a 6-digit number (20 bits).  Authentication stage 1
+ * runs 20 rounds, one per bit.  Each round exchanges a confirm/nonce
+ * pair using f4 with Z = 0x80|bit_value.
+ *
+ * Core Spec Vol 3 Part H Section 2.3.5.6.3, Figure 2.4
+ */
+static int
+smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
+    const uint8_t pres[7])
+{
+	EVP_PKEY *our_key = NULL, *peer_key = NULL;
+	EVP_PKEY_CTX *pctx;
+	uint8_t our_pk_raw[65], peer_pk_raw[65];
+	uint8_t pka_le[64], pkb_le[64];
+	uint8_t dhkey[32];
+	uint8_t na[16], nb[16];
+	uint8_t mackey[16], ltk[16];
+	uint8_t ea[16], eb[16];
+	uint8_t a1[7], a2[7];
+	uint8_t iocap_a[3], iocap_b[3];
+	uint8_t pdu[66];
+	ssize_t n;
+	size_t dh_len;
+	uint32_t passkey;
+	uint8_t ra[16]; /* passkey as 128-bit for f6 */
+
+	if (sc->passkey_cb == NULL) {
+		errno = ENOTSUP;
+		return (-1);
+	}
+
+	/* Generate passkey and display to user */
+	passkey = arc4random_uniform(1000000);
+	if (sc->passkey_cb(&passkey, true, sc->passkey_cb_arg) < 0) {
+		uint8_t fail[2] = { SMP_PAIRING_FAILED,
+		    SMP_ERR_PASSKEY_ENTRY_FAILED };
+		send(sc->fd, fail, 2, 0);
+		errno = ECANCELED;
+		return (-1);
+	}
+
+	/* passkey as 128-bit LE integer for f6 */
+	memset(ra, 0, sizeof(ra));
+	ra[0] = passkey & 0xFF;
+	ra[1] = (passkey >> 8) & 0xFF;
+	ra[2] = (passkey >> 16) & 0xFF;
+
+	smp_pack_addr(a1, sc->local_addr, sc->local_addr_type);
+	smp_pack_addr(a2, sc->remote_addr, sc->remote_addr_type);
+
+	iocap_a[0] = preq[3];
+	iocap_a[1] = preq[2];
+	iocap_a[2] = preq[1];
+	iocap_b[0] = pres[3];
+	iocap_b[1] = pres[2];
+	iocap_b[2] = pres[1];
+
+	/* Generate P-256 key pair */
+	pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
+	if (pctx == NULL)
+		return (-1);
+	EVP_PKEY_keygen_init(pctx);
+	EVP_PKEY_CTX_set_ec_paramgen_curve_nid(pctx, NID_X9_62_prime256v1);
+	if (EVP_PKEY_keygen(pctx, &our_key) <= 0) {
+		EVP_PKEY_CTX_free(pctx);
+		return (-1);
+	}
+	EVP_PKEY_CTX_free(pctx);
+
+	{
+		size_t pklen = sizeof(our_pk_raw);
+		EVP_PKEY_get_octet_string_param(our_key,
+		    OSSL_PKEY_PARAM_PUB_KEY, our_pk_raw,
+		    sizeof(our_pk_raw), &pklen);
+	}
+
+	/* Send our PK (big-endian -> little-endian) */
+	pdu[0] = SMP_PAIRING_PUBLIC_KEY;
+	swap_buf(pdu + 1, our_pk_raw + 1, 32);
+	swap_buf(pdu + 33, our_pk_raw + 33, 32);
+	memcpy(pka_le, pdu + 1, 64);
+	if (send(sc->fd, pdu, 65, 0) < 0) {
+		EVP_PKEY_free(our_key);
+		return (-1);
+	}
+
+	/* Receive peer PK */
+	n = recv(sc->fd, pdu, 65, 0);
+	if (n < 65 || pdu[0] != SMP_PAIRING_PUBLIC_KEY) {
+		EVP_PKEY_free(our_key);
+		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
+		    EACCES : EPROTO;
+		return (-1);
+	}
+	memcpy(pkb_le, pdu + 1, 64);
+	peer_pk_raw[0] = 0x04;
+	swap_buf(peer_pk_raw + 1, pdu + 1, 32);
+	swap_buf(peer_pk_raw + 33, pdu + 33, 32);
+
+	/* Build peer EVP_PKEY and compute DHKey */
+	{
+		OSSL_PARAM params[3];
+		EVP_PKEY_CTX *fctx;
+		static char curve[] = "prime256v1";
+
+		params[0] = OSSL_PARAM_construct_utf8_string(
+		    OSSL_PKEY_PARAM_GROUP_NAME, curve, 0);
+		params[1] = OSSL_PARAM_construct_octet_string(
+		    OSSL_PKEY_PARAM_PUB_KEY, peer_pk_raw, 65);
+		params[2] = OSSL_PARAM_construct_end();
+
+		peer_key = NULL;
+		fctx = EVP_PKEY_CTX_new_from_name(NULL, "EC", NULL);
+		EVP_PKEY_fromdata_init(fctx);
+		EVP_PKEY_fromdata(fctx, &peer_key, EVP_PKEY_PUBLIC_KEY,
+		    params);
+		EVP_PKEY_CTX_free(fctx);
+		if (peer_key == NULL) {
+			EVP_PKEY_free(our_key);
+			return (-1);
+		}
+
+		EVP_PKEY_CTX *dctx = EVP_PKEY_CTX_new(our_key, NULL);
+		EVP_PKEY_derive_init(dctx);
+		EVP_PKEY_derive_set_peer(dctx, peer_key);
+		dh_len = sizeof(dhkey);
+		EVP_PKEY_derive(dctx, dhkey, &dh_len);
+		EVP_PKEY_CTX_free(dctx);
+	}
+	EVP_PKEY_free(peer_key);
+	EVP_PKEY_free(our_key);
+
+	/*
+	 * Authentication Stage 1: 20 rounds of Passkey Entry.
+	 *
+	 * For each bit i (0..19) of the passkey:
+	 *   rai = 0x80 | ((passkey >> i) & 1)
+	 *   Cai = f4(PKax, PKbx, Nai, rai) — initiator confirm
+	 *   Cbi = f4(PKbx, PKax, Nbi, rbi) — responder confirm
+	 *   Exchange: send Cai, recv Cbi, send Nai, recv Nbi, verify Cbi
+	 */
+	for (int i = 0; i < 20; i++) {
+		uint8_t nai[16], nbi[16];
+		uint8_t cai[16], cbi_recv[16], cbi_verify[16];
+		uint8_t ri;
+
+		ri = 0x80 | ((passkey >> i) & 1);
+
+		smp_random(nai, sizeof(nai));
+		smp_f4(pka_le, pkb_le, nai, ri, cai);
+
+		/* Send our confirm Cai */
+		pdu[0] = SMP_PAIRING_CONFIRM;
+		memcpy(pdu + 1, cai, 16);
+		if (send(sc->fd, pdu, 17, 0) < 0)
+			return (-1);
+
+		/* Receive responder confirm Cbi */
+		n = recv(sc->fd, pdu, 17, 0);
+		if (n < 17 || pdu[0] != SMP_PAIRING_CONFIRM) {
+			errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
+			    EACCES : EPROTO;
+			return (-1);
+		}
+		memcpy(cbi_recv, pdu + 1, 16);
+
+		/* Send our nonce Nai */
+		pdu[0] = SMP_PAIRING_RANDOM;
+		memcpy(pdu + 1, nai, 16);
+		if (send(sc->fd, pdu, 17, 0) < 0)
+			return (-1);
+
+		/* Receive responder nonce Nbi */
+		n = recv(sc->fd, pdu, 17, 0);
+		if (n < 17 || pdu[0] != SMP_PAIRING_RANDOM) {
+			errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
+			    EACCES : EPROTO;
+			return (-1);
+		}
+		memcpy(nbi, pdu + 1, 16);
+
+		/* Verify Cbi = f4(PKbx, PKax, Nbi, rbi) */
+		smp_f4(pkb_le, pka_le, nbi, ri, cbi_verify);
+		if (memcmp(cbi_recv, cbi_verify, 16) != 0) {
+			pdu[0] = SMP_PAIRING_FAILED;
+			pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
+			send(sc->fd, pdu, 2, 0);
+			errno = EACCES;
+			return (-1);
+		}
+
+		/* Keep last round's nonces for f5/f6 */
+		memcpy(na, nai, 16);
+		memcpy(nb, nbi, 16);
+	}
+
+	/*
+	 * Authentication Stage 2: same as Just Works SC.
+	 * MacKey || LTK = f5(DHKey, Na, Nb, A1, A2)
+	 * Ea = f6(MacKey, Na, Nb, ra, IOcapA, A1, A2)
+	 * Eb = f6(MacKey, Nb, Na, ra, IOcapB, A2, A1)
+	 * (ra = rb = passkey for Passkey Entry per Table 2.2)
+	 */
+	smp_f5(dhkey, na, nb, a1, a2, mackey, ltk);
+
+	smp_f6(mackey, na, nb, ra, iocap_a, a1, a2, ea);
+	smp_f6(mackey, nb, na, ra, iocap_b, a2, a1, eb);
+
+	/* Send Ea, receive and verify Eb */
+	pdu[0] = SMP_PAIRING_DHKEY_CHECK;
+	memcpy(pdu + 1, ea, 16);
+	if (send(sc->fd, pdu, 17, 0) < 0)
+		return (-1);
+
+	n = recv(sc->fd, pdu, 17, 0);
+	if (n < 17 || pdu[0] != SMP_PAIRING_DHKEY_CHECK) {
+		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
+		    EACCES : EPROTO;
+		return (-1);
+	}
+	if (memcmp(pdu + 1, eb, 16) != 0) {
+		pdu[0] = SMP_PAIRING_FAILED;
+		pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
+		send(sc->fd, pdu, 2, 0);
+		errno = EACCES;
+		return (-1);
+	}
+
+	/* Start encryption */
+	{
+		uint8_t params[28];
+		params[0] = sc->con_handle & 0xFF;
+		params[1] = (sc->con_handle >> 8) & 0xFF;
+		memset(params + 2, 0, 10);
+		memcpy(params + 12, ltk, 16);
+		if (hci_send_cmd(sc->hci_fd, 0x2019, params,
+		    sizeof(params)) < 0)
+			return (-1);
+	}
+
+	/* Store bond */
+	{
+		struct smp_bond bond;
+		memset(&bond, 0, sizeof(bond));
+		memcpy(bond.addr, sc->remote_addr, 6);
+		bond.addr_type = sc->remote_addr_type;
+		memcpy(bond.ltk, ltk, 16);
+		bond.has_ltk = true;
+		bond.is_sc = true;
+
+		if (sc->bond_db != NULL &&
+		    sc->bond_db->count < SMP_MAX_BONDS) {
+			sc->bond_db->bonds[sc->bond_db->count++] = bond;
+			smp_bond_db_save(sc->bond_db);
+		}
+	}
+
+	return (0);
+}
+
+/*
  * Load bond database from file descriptor.
  * Format: raw array of struct smp_bond.
  */
@@ -609,10 +965,6 @@ smp_bond_db_save(struct smp_bond_db *db)
  * Unlike the legacy E() function, AES-CMAC is standard RFC 4493
  * and does NOT need the double byte-reversal that smp_aes128 does.
  * ================================================================ */
-
-#include <openssl/core_names.h>
-#include <openssl/ec.h>
-#include <openssl/param_build.h>
 
 /*
  * Reverse a byte buffer in-place or into a destination.

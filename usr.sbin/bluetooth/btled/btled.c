@@ -133,6 +133,29 @@ sig_handler(int sig __unused)
 	running = 0;
 }
 
+/*
+ * Passkey callback for SMP pairing.
+ * Displays the passkey on stderr for the user to enter on the device.
+ */
+static int
+passkey_display(uint32_t *passkey, bool display, void *arg __unused)
+{
+	if (display) {
+		fprintf(stderr,
+		    "\n*** Enter this passkey on the BLE device: %06u ***\n\n",
+		    *passkey);
+		return (0);
+	}
+
+	/* Input mode — prompt user */
+	fprintf(stderr, "Enter the passkey shown on the BLE device: ");
+	if (scanf("%u", passkey) != 1) {
+		fprintf(stderr, "Passkey entry cancelled.\n");
+		return (-1);
+	}
+	return (0);
+}
+
 static void
 usage(void)
 {
@@ -315,6 +338,7 @@ main(int argc, char *argv[])
 			if (smp_open(&dev.smp, dev.addr, dev.addr_type,
 			    dev.local_addr, 0, dev.hci_fd,
 			    dev.con_handle, &dev.bond_db) == 0) {
+				dev.smp.passkey_cb = passkey_display;
 				if (smp_encrypt_with_ltk(&dev.smp, bond) < 0) {
 					warn("bonded encryption failed");
 				} else {
@@ -352,6 +376,7 @@ main(int argc, char *argv[])
 			    dev.local_addr, 0, dev.hci_fd,
 			    dev.con_handle, &dev.bond_db) < 0)
 				err(1, "SMP open");
+			dev.smp.passkey_cb = passkey_display;
 
 			if (smp_pair(&dev.smp) < 0)
 				err(1, "SMP pairing");
