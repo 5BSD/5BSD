@@ -13,15 +13,6 @@
 .Cm status
 .Nm
 .Op Fl s Ar socket
-.Cm services Op Fl v
-.Nm
-.Op Fl s Ar socket
-.Cm check Ar filename
-.Nm
-.Op Fl s Ar socket
-.Cm load Ar filename
-.Nm
-.Op Fl s Ar socket
 .Cm shutdown
 .Nm
 .Op Fl s Ar socket
@@ -45,7 +36,7 @@ Each invocation connects, sends a single command, prints the
 result, and exits.
 .Pp
 The following commands are available:
-.Bl -tag -width "services -v"
+.Bl -tag -width "shutdown"
 .It Cm status
 Query the daemon's status and uptime.
 The output includes:
@@ -76,33 +67,6 @@ Ready/not-ready status and PID of
 .El
 .Pp
 This command does not require root privileges.
-.It Cm services Op Fl v
-List all loaded services with their current state, process ID,
-uptime, and restart policy.
-If
-.Fl v
-is specified, also show each service's program path, user,
-group, capability paths, network claims, system gates,
-provides, and requires.
-Services with manifests on disk but not yet loaded are shown
-in a separate
-.Dq AVAILABLE
-section.
-This command does not require root privileges.
-.It Cm check Ar filename
-Legacy command.
-Returns
-.Er ENOSYS ;
-use
-.Xr servicectl 8
-instead.
-.It Cm load Ar filename
-Legacy command.
-Returns
-.Er ENOSYS ;
-use
-.Xr servicectl 8
-instead.
 .It Cm shutdown
 Request a graceful shutdown of
 .Xr oracled 8 .

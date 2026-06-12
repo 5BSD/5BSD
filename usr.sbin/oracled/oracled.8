@@ -356,7 +356,7 @@ The socket accepts at most 16 concurrent connections with a
 The protocol version is 1.
 .Pp
 The following operations are supported:
-.Bl -tag -width "CTL_OP_SERVICES (9)"
+.Bl -tag -width "CTL_OP_SHUTDOWN (1)"
 .It Dv CTL_OP_SHUTDOWN (1)
 Initiate graceful shutdown.
 Root only.
@@ -369,20 +369,12 @@ Reload configuration, update claims, and forward
 to
 .Xr serviced 8 .
 Root only.
-.It Dv CTL_OP_CHECK (7)
-Validate a service manifest.
-Root only.
-Delegated to
-.Xr serviced 8 .
-.It Dv CTL_OP_LOAD (8)
-Load a service at runtime.
-Root only.
-Delegated to
-.Xr serviced 8 .
-.It Dv CTL_OP_SERVICES (9)
-List services and serviced status.
-Any user.
 .El
+.Pp
+Service management commands (check, load, services) are handled by
+.Xr serviced 8
+via
+.Xr servicectl 8 .
 .Sh SIGNALS
 .Bl -tag -width "SIGTERM, SIGINT"
 .It Dv SIGHUP

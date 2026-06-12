@@ -115,64 +115,6 @@ cmd_reload(void)
 		printf("reload: no changes\n");
 	return (0);
 }
-
-
-static int
-cmd_services(int verbose)
-{
-	char summary[ORACLECTL_SUMMARY_MAX];
-	int fd, error;
-
-	fd = open_or_die();
-	error = oraclectl_services(fd, (uint32_t)verbose, summary,
-	    sizeof(summary));
-	close(fd);
-
-	if (error != 0)
-		return (check(error, "services"));
-	if (summary[0] != '\0')
-		printf("%s", summary);
-	return (0);
-}
-
-static int
-cmd_check(const char *filename)
-{
-	char summary[ORACLECTL_SUMMARY_MAX];
-	int fd, error;
-
-	fd = open_or_die();
-	error = oraclectl_check(fd, filename, summary, sizeof(summary));
-	close(fd);
-
-	if (error != 0)
-		return (check(error, "check"));
-	if (summary[0] != '\0')
-		printf("%s", summary);
-	else
-		printf("check: ok\n");
-	return (0);
-}
-
-static int
-cmd_load(const char *filename)
-{
-	char summary[ORACLECTL_SUMMARY_MAX];
-	int fd, error;
-
-	fd = open_or_die();
-	error = oraclectl_load(fd, filename, summary, sizeof(summary));
-	close(fd);
-
-	if (error != 0)
-		return (check(error, "load"));
-	if (summary[0] != '\0')
-		printf("%s", summary);
-	else
-		printf("load: ok\n");
-	return (0);
-}
-
 /* ----------------------------------------------------------------
  * Main
  * ---------------------------------------------------------------- */
@@ -184,11 +126,8 @@ usage(void)
 {
 
 	fprintf(stderr,
-	    "usage: oraclectl [-s socket] command [args]\n"
+	    "usage: oraclectl [-s socket] command\n"
 	    "       oraclectl status\n"
-	    "       oraclectl services [-v]\n"
-	    "       oraclectl check <filename>\n"
-	    "       oraclectl load <filename>\n"
 	    "       oraclectl reload\n"
 	    "       oraclectl shutdown\n");
 	exit(EX_USAGE);
@@ -216,15 +155,6 @@ main(int argc, char *argv[])
 
 	if (strcmp(argv[0], "status") == 0 && argc == 1)
 		return (cmd_status());
-	if (strcmp(argv[0], "services") == 0 && argc == 1)
-		return (cmd_services(0));
-	if (strcmp(argv[0], "services") == 0 && argc == 2 &&
-	    strcmp(argv[1], "-v") == 0)
-		return (cmd_services(1));
-	if (strcmp(argv[0], "check") == 0 && argc == 2)
-		return (cmd_check(argv[1]));
-	if (strcmp(argv[0], "load") == 0 && argc == 2)
-		return (cmd_load(argv[1]));
 	if (strcmp(argv[0], "shutdown") == 0 && argc == 1)
 		return (cmd_shutdown());
 	if (strcmp(argv[0], "reload") == 0 && argc == 1)

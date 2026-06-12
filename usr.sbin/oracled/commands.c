@@ -126,7 +126,7 @@ cmd_shutdown(uid_t euid, struct ctl_reply *reply)
 }
 
 void
-cmd_reload(uid_t euid, int kq __unused, struct ctl_reply *reply,
+cmd_reload(uid_t euid, struct ctl_reply *reply,
     char *summary, size_t sumlen)
 {
 	struct oracled_config newcfg;
@@ -174,49 +174,3 @@ cmd_reload(uid_t euid, int kq __unused, struct ctl_reply *reply,
 	reply->status = CTL_STATUS_OK;
 	reply->flags = (uint32_t)off;
 }
-
-/*
- * cmd_check and cmd_load are handled by serviced.
- * Kept as stubs so the control socket dispatch doesn't break.
- */
-void
-cmd_check(uid_t euid __unused, const char *filename __unused,
-    struct ctl_reply *reply, char *summary, size_t sumlen)
-{
-
-	reply->status = ENOSYS;
-	snprintf(summary, sumlen,
-	    "check: use servicectl(8) instead of oraclectl");
-	reply->flags = (uint32_t)strlen(summary);
-}
-
-void
-cmd_load(uid_t euid __unused, const char *filename __unused,
-    int kq __unused, struct ctl_reply *reply, char *summary, size_t sumlen)
-{
-
-	reply->status = ENOSYS;
-	snprintf(summary, sumlen,
-	    "load: use servicectl(8) instead of oraclectl");
-	reply->flags = (uint32_t)strlen(summary);
-}
-
-void
-cmd_services(uid_t euid __unused, uint32_t flags __unused,
-    struct ctl_reply *reply, char *summary, size_t sumlen)
-{
-	size_t off;
-
-	off = 0;
-	BUF_APPEND(summary, sumlen, &off,
-	    "oracled: authority init (services managed by serviced)\n");
-	BUF_APPEND(summary, sumlen, &off,
-	    "serviced: %s\n",
-	    oracle_proto_is_ready() ? "ready" : "not ready");
-	BUF_APPEND(summary, sumlen, &off,
-	    "serviced pid: %jd\n", (intmax_t)bootstrap_pid());
-
-	reply->status = CTL_STATUS_OK;
-	reply->flags = (uint32_t)off;
-}
-

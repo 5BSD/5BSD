@@ -197,36 +197,6 @@ do_call_summary(int fd, uint32_t op, uint32_t flags,
 }
 
 int
-oraclectl_check(int fd, const char *filename,
-    char *summary, size_t sumlen)
-{
-	struct ctl_reply rpl;
-	size_t len;
-
-	len = strlen(filename);
-	if (len == 0 || len > ORACLECTL_MAX_PAYLOAD)
-		return (EINVAL);
-
-	return (do_call_summary(fd, ORACLECTL_CHECK, 0, filename, len,
-	    summary, sumlen, &rpl));
-}
-
-int
-oraclectl_load(int fd, const char *filename,
-    char *summary, size_t sumlen)
-{
-	struct ctl_reply rpl;
-	size_t len;
-
-	len = strlen(filename);
-	if (len == 0 || len > ORACLECTL_MAX_PAYLOAD)
-		return (EINVAL);
-
-	return (do_call_summary(fd, ORACLECTL_LOAD, 0, filename, len,
-	    summary, sumlen, &rpl));
-}
-
-int
 oraclectl_reload(int fd, char *summary, size_t sumlen)
 {
 	struct ctl_reply rpl;
@@ -235,11 +205,3 @@ oraclectl_reload(int fd, char *summary, size_t sumlen)
 	    summary, sumlen, &rpl));
 }
 
-int
-oraclectl_services(int fd, uint32_t flags, char *summary, size_t sumlen)
-{
-	struct ctl_reply rpl;
-
-	return (do_call_summary(fd, ORACLECTL_SERVICES, flags, NULL, 0,
-	    summary, sumlen, &rpl));
-}

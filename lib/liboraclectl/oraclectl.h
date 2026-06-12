@@ -25,9 +25,6 @@
 #define	ORACLECTL_SHUTDOWN	CTL_OP_SHUTDOWN
 #define	ORACLECTL_STATUS	CTL_OP_STATUS
 #define	ORACLECTL_RELOAD	CTL_OP_RELOAD
-#define	ORACLECTL_CHECK		CTL_OP_CHECK
-#define	ORACLECTL_LOAD		CTL_OP_LOAD
-#define	ORACLECTL_SERVICES	CTL_OP_SERVICES
 #define	ORACLECTL_SUMMARY_MAX	CTL_SUMMARY_MAX
 
 /* Status reply from oracled. */
@@ -46,12 +43,6 @@ int	oraclectl_status(int fd, struct oraclectl_status *st,
 	    char *summary, size_t sumlen);
 int	oraclectl_shutdown(int fd);
 int	oraclectl_reload(int fd, char *summary, size_t sumlen);
-int	oraclectl_check(int fd, const char *filename,
-	    char *summary, size_t sumlen);
-int	oraclectl_load(int fd, const char *filename,
-	    char *summary, size_t sumlen);
-int	oraclectl_services(int fd, uint32_t flags, char *summary,
-	    size_t sumlen);
 __END_DECLS
 
 #endif /* !_ORACLECTL_H_ */
