@@ -3435,4 +3435,16 @@
 		    int state
 		);
 	}
+604	AUE_CAP_CLOEXEC_LIMIT	STD|CAPENABLED {
+		int cap_cloexec_limit(
+		    int fd,
+		    int state
+		);
+	}
+605	AUE_CAP_CLOFORK_LIMIT	STD|CAPENABLED {
+		int cap_clofork_limit(
+		    int fd,
+		    int state
+		);
+	}
 ; vim: syntax=off

@@ -1936,6 +1936,14 @@ struct cap_xfer_limit_args {
 	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
 	char state_l_[PADL_(int)]; int state; char state_r_[PADR_(int)];
 };
+struct cap_cloexec_limit_args {
+	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
+	char state_l_[PADL_(int)]; int state; char state_r_[PADR_(int)];
+};
+struct cap_clofork_limit_args {
+	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
+	char state_l_[PADL_(int)]; int state; char state_r_[PADR_(int)];
+};
 int	sys__exit(struct thread *, struct _exit_args *);
 int	sys_fork(struct thread *, struct fork_args *);
 int	sys_read(struct thread *, struct read_args *);
@@ -2347,6 +2355,8 @@ int	sys_pdrfork(struct thread *, struct pdrfork_args *);
 int	sys_pdwait(struct thread *, struct pdwait_args *);
 int	sys_renameat2(struct thread *, struct renameat2_args *);
 int	sys_cap_xfer_limit(struct thread *, struct cap_xfer_limit_args *);
+int	sys_cap_cloexec_limit(struct thread *, struct cap_cloexec_limit_args *);
+int	sys_cap_clofork_limit(struct thread *, struct cap_clofork_limit_args *);
 
 #ifdef COMPAT_43
 
@@ -3350,6 +3360,8 @@ int	freebsd14_setgroups(struct thread *, struct freebsd14_setgroups_args *);
 #define	SYS_AUE_pdwait	AUE_PDWAIT
 #define	SYS_AUE_renameat2	AUE_RENAMEAT
 #define	SYS_AUE_cap_xfer_limit	AUE_CAP_XFER_LIMIT
+#define	SYS_AUE_cap_cloexec_limit	AUE_CAP_CLOEXEC_LIMIT
+#define	SYS_AUE_cap_clofork_limit	AUE_CAP_CLOFORK_LIMIT
 
 #undef PAD_
 #undef PADL_

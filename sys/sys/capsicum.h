@@ -54,6 +54,25 @@
 #define	CAP_XFER_ONCE		1	/* one send, then exhausted */
 #define	CAP_XFER_NONE		2	/* no transfer permitted */
 
+/*
+ * Close-on-exec lock state (fde_cloexec_state).
+ * Monotonically increasing; can only tighten.  When locked, the
+ * kernel closes the descriptor on exec regardless of the FD_CLOEXEC
+ * flag.  The process can still set/clear FD_CLOEXEC freely — the
+ * lock is a separate, invisible layer.  Default is unlocked.
+ */
+#define	CAP_CLOEXEC_UNLOCKED	0	/* process can set/clear (default) */
+#define	CAP_CLOEXEC_LOCKED	1	/* CLOEXEC forced, cannot be cleared */
+
+/*
+ * Close-on-fork lock state (fde_clofork_state).
+ * Monotonically increasing; can only tighten.  When locked, the
+ * kernel skips this descriptor during fork regardless of the
+ * FD_CLOFORK flag.  Default is unlocked.
+ */
+#define	CAP_CLOFORK_UNLOCKED	0	/* process can set/clear (default) */
+#define	CAP_CLOFORK_LOCKED	1	/* close-on-fork forced */
+
 #ifndef _KERNEL
 #include <stdbool.h>
 #endif
@@ -570,6 +589,8 @@ int cap_fcntls_limit(int fd, uint32_t fcntlrights);
  * Limits descriptor transfer state for the given descriptor (CAP_XFER_*).
  */
 int cap_xfer_limit(int fd, int state);
+int cap_cloexec_limit(int fd, int state);
+int cap_clofork_limit(int fd, int state);
 /*
  * Returns bitmask of allowed fcntls for the given descriptor.
  */

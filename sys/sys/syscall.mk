@@ -445,4 +445,6 @@ MIASM =  \
 	pdrfork.o \
 	pdwait.o \
 	renameat2.o \
-	cap_xfer_limit.o
+	cap_xfer_limit.o \
+	cap_cloexec_limit.o \
+	cap_clofork_limit.o

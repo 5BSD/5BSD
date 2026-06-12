@@ -670,4 +670,6 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(pdwait_args), .sy_call = (sy_call_t *)sys_pdwait, .sy_auevent = AUE_PDWAIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 601 = pdwait */
 	{ .sy_narg = AS(renameat2_args), .sy_call = (sy_call_t *)sys_renameat2, .sy_auevent = AUE_RENAMEAT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 602 = renameat2 */
 	{ .sy_narg = AS(cap_xfer_limit_args), .sy_call = (sy_call_t *)sys_cap_xfer_limit, .sy_auevent = AUE_CAP_XFER_LIMIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 603 = cap_xfer_limit */
+	{ .sy_narg = AS(cap_cloexec_limit_args), .sy_call = (sy_call_t *)sys_cap_cloexec_limit, .sy_auevent = AUE_CAP_CLOEXEC_LIMIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 604 = cap_cloexec_limit */
+	{ .sy_narg = AS(cap_clofork_limit_args), .sy_call = (sy_call_t *)sys_cap_clofork_limit, .sy_auevent = AUE_CAP_CLOFORK_LIMIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 605 = cap_clofork_limit */
 };

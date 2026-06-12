@@ -65,6 +65,8 @@ struct cap_rt_msg {
 	struct file	*cm_fds[CAP_RT_MAX_FDS];
 	struct filecaps	cm_fcaps[CAP_RT_MAX_FDS];
 	uint8_t		cm_xfer_state[CAP_RT_MAX_FDS];
+	uint8_t		cm_cloexec_state[CAP_RT_MAX_FDS];
+	uint8_t		cm_clofork_state[CAP_RT_MAX_FDS];
 
 	/* Inline payload — user data copied directly here. */
 	char		cm_data[];  /* sized by UMA zone: CAP_RT_MSG_PAYLOAD_SIZE */

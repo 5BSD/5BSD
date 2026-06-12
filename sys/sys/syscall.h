@@ -542,4 +542,6 @@
 #define	SYS_pdwait	601
 #define	SYS_renameat2	602
 #define	SYS_cap_xfer_limit	603
-#define	SYS_MAXSYSCALL	604
+#define	SYS_cap_cloexec_limit	604
+#define	SYS_cap_clofork_limit	605
+#define	SYS_MAXSYSCALL	606

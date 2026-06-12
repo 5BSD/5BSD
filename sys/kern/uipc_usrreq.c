@@ -3590,6 +3590,10 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				    O_RESOLVE_BENEATH : 0), &fdep[i]->fde_caps);
 				fdesc->fd_ofiles[*fdp].fde_xfer_state =
 				    fdep[i]->fde_xfer_state;
+				fdesc->fd_ofiles[*fdp].fde_cloexec_state =
+				    fdep[i]->fde_cloexec_state;
+				fdesc->fd_ofiles[*fdp].fde_clofork_state =
+				    fdep[i]->fde_clofork_state;
 				unp_externalize_fp(fp);
 				SDT_PROBE6(fd, , , scm__rights__recv, fp,
 				    *fdp, td->td_proc->p_pid, td->td_ucred,
@@ -3854,6 +3858,10 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
 					fdep[i]->fde_xfer_state =
 					    fde->fde_xfer_state;
 				}
+				fdep[i]->fde_cloexec_state =
+				    fde->fde_cloexec_state;
+				fdep[i]->fde_clofork_state =
+				    fde->fde_clofork_state;
 				unp_internalize_fp(fdep[i]->fde_file);
 				SDT_PROBE6(fd, , , scm__rights__send,
 				    fdep[i]->fde_file, *fdp,

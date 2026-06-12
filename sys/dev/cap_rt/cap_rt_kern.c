@@ -764,6 +764,12 @@ cap_rt_forward(struct cap_rt_instance *s, const struct cap_rt_msg *src)
 	    src->cm_badge, src->cm_reply_token, src->cm_cred);
 	if (msg == NULL)
 		return (src->cm_nfds > 0 ? EBADF : ENOMEM);
+	if (src->cm_nfds > 0) {
+		memcpy(msg->cm_cloexec_state, src->cm_cloexec_state,
+		    src->cm_nfds * sizeof(uint8_t));
+		memcpy(msg->cm_clofork_state, src->cm_clofork_state,
+		    src->cm_nfds * sizeof(uint8_t));
+	}
 
 	mtx_lock(&s->ci_mtx);
 	error = cap_rt_instance_enqueue_tx(s, msg, false);

@@ -127,11 +127,23 @@ queries the process ID (PID) in the process descriptor
 .Fa fd .
 .Pp
 .Fn pdkill
-is functionally identical to
+sends the signal
+.Fa signum
+to the process referenced by the process descriptor
+.Fa fd .
+Unlike
 .Xr kill 2 ,
-except that it accepts a process descriptor,
-.Fa fd ,
-rather than a PID.
+.Fn pdkill
+does not perform credential, jail, or MAC permission checks.
+The process descriptor is a capability: holding it is sufficient
+authority to signal the child, regardless of shield policies
+such as
+.Xr cap_rt_capprotect 4 .
+This is consistent with the implicit
+.Dv SIGKILL
+sent by
+.Xr close 2
+when the last reference to a non-daemon process descriptor is released.
 .Pp
 The
 .Fn pdwait
@@ -139,6 +151,11 @@ system call allows the calling thread to wait and retrieve
 the status information on the process referenced by the
 .Fa fd
 process descriptor.
+Like
+.Fn pdkill ,
+.Fn pdwait
+does not perform credential, jail, or MAC permission checks;
+the process descriptor is sufficient authority to wait on the child.
 See the description of the
 .Xr wait6
 system call for the behavior specification.
@@ -234,6 +251,8 @@ for
 .Fn pdkill ) .
 .El
 .Sh SEE ALSO
+.Xr cap_cloexec_limit 2 ,
+.Xr cap_xfer_limit 2 ,
 .Xr close 2 ,
 .Xr fork 2 ,
 .Xr fstat 2 ,

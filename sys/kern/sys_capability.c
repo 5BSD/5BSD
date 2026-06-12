@@ -113,6 +113,10 @@ SDT_PROBE_DEFINE6(capsicum, , , fcntls__get,
     "int", "pid_t", "struct ucred *", "uint32_t", "int", "short");
 SDT_PROBE_DEFINE6(capsicum, , , xfer__limit,
     "int", "pid_t", "struct ucred *", "int", "int", "int");
+SDT_PROBE_DEFINE6(capsicum, , , cloexec__limit,
+    "int", "pid_t", "struct ucred *", "int", "int", "int");
+SDT_PROBE_DEFINE6(capsicum, , , clofork__limit,
+    "int", "pid_t", "struct ucred *", "int", "int", "int");
 
 #ifdef CAPABILITY_MODE
 
@@ -764,6 +768,86 @@ sys_cap_xfer_limit(struct thread *td, struct cap_xfer_limit_args *uap)
 	return (kern_cap_xfer_limit(td, uap->fd, uap->state));
 }
 
+int
+kern_cap_cloexec_limit(struct thread *td, int fd, int state)
+{
+	struct filedesc *fdp;
+	struct filedescent *fdep;
+	int error, old_state = -1;
+
+	if (state < CAP_CLOEXEC_UNLOCKED || state > CAP_CLOEXEC_LOCKED)
+		return (EINVAL);
+
+	fdp = td->td_proc->p_fd;
+	FILEDESC_XLOCK(fdp);
+	fdep = fdeget_noref(fdp, fd);
+	if (fdep == NULL) {
+		FILEDESC_XUNLOCK(fdp);
+		error = EBADF;
+		goto out_probe;
+	}
+	old_state = fdep->fde_cloexec_state;
+	if (state < old_state) {
+		FILEDESC_XUNLOCK(fdp);
+		error = ENOTCAPABLE;
+		goto out_probe;
+	}
+	fdep->fde_cloexec_state = state;
+	FILEDESC_XUNLOCK(fdp);
+	error = 0;
+out_probe:
+	SDT_PROBE6(capsicum, , , cloexec__limit, fd, td->td_proc->p_pid,
+	    td->td_ucred, state, error, old_state);
+	return (error);
+}
+
+int
+sys_cap_cloexec_limit(struct thread *td, struct cap_cloexec_limit_args *uap)
+{
+
+	return (kern_cap_cloexec_limit(td, uap->fd, uap->state));
+}
+
+int
+kern_cap_clofork_limit(struct thread *td, int fd, int state)
+{
+	struct filedesc *fdp;
+	struct filedescent *fdep;
+	int error, old_state = -1;
+
+	if (state < CAP_CLOFORK_UNLOCKED || state > CAP_CLOFORK_LOCKED)
+		return (EINVAL);
+
+	fdp = td->td_proc->p_fd;
+	FILEDESC_XLOCK(fdp);
+	fdep = fdeget_noref(fdp, fd);
+	if (fdep == NULL) {
+		FILEDESC_XUNLOCK(fdp);
+		error = EBADF;
+		goto out_probe;
+	}
+	old_state = fdep->fde_clofork_state;
+	if (state < old_state) {
+		FILEDESC_XUNLOCK(fdp);
+		error = ENOTCAPABLE;
+		goto out_probe;
+	}
+	fdep->fde_clofork_state = state;
+	FILEDESC_XUNLOCK(fdp);
+	error = 0;
+out_probe:
+	SDT_PROBE6(capsicum, , , clofork__limit, fd, td->td_proc->p_pid,
+	    td->td_ucred, state, error, old_state);
+	return (error);
+}
+
+int
+sys_cap_clofork_limit(struct thread *td, struct cap_clofork_limit_args *uap)
+{
+
+	return (kern_cap_clofork_limit(td, uap->fd, uap->state));
+}
+
 #else /* !CAPABILITIES */
 
 /*
@@ -815,6 +899,20 @@ sys_cap_fcntls_get(struct thread *td, struct cap_fcntls_get_args *uap)
 
 int
 sys_cap_xfer_limit(struct thread *td, struct cap_xfer_limit_args *uap)
+{
+
+	return (ENOSYS);
+}
+
+int
+sys_cap_cloexec_limit(struct thread *td, struct cap_cloexec_limit_args *uap)
+{
+
+	return (ENOSYS);
+}
+
+int
+sys_cap_clofork_limit(struct thread *td, struct cap_clofork_limit_args *uap)
 {
 
 	return (ENOSYS);

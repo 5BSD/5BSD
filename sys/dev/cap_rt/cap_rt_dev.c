@@ -346,6 +346,10 @@ cap_rt_instance_do_sendmsg(struct cap_rt_instance *s,
 					msg->cm_xfer_state[i] =
 					    fde->fde_xfer_state;
 				}
+				msg->cm_cloexec_state[i] =
+				    fde->fde_cloexec_state;
+				msg->cm_clofork_state[i] =
+				    fde->fde_clofork_state;
 			}
 			FILEDESC_XUNLOCK(fdesc);
 
@@ -525,6 +529,10 @@ cap_rt_instance_do_recvmsg(struct cap_rt_instance *s, struct file *fp,
 			    fdbuf[installed], 0, fc);
 			fdesc->fd_ofiles[fdbuf[installed]].fde_xfer_state =
 			    msg->cm_xfer_state[installed];
+			fdesc->fd_ofiles[fdbuf[installed]].fde_cloexec_state =
+			    msg->cm_cloexec_state[installed];
+			fdesc->fd_ofiles[fdbuf[installed]].fde_clofork_state =
+			    msg->cm_clofork_state[installed];
 		}
 		FILEDESC_XUNLOCK(fdesc);
 		if (installed < nfds_out) {
@@ -605,6 +613,8 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		struct file **files;
 		struct filecaps *call_fcaps;
 		uint8_t call_xfer_state[CAP_RT_MAX_FDS];
+		uint8_t call_cloexec_state[CAP_RT_MAX_FDS];
+		uint8_t call_clofork_state[CAP_RT_MAX_FDS];
 		struct file *out_fds[CAP_RT_MAX_FDS];
 		void *req_buf, *reply_buf;
 		int fdbuf[CAP_RT_MAX_FDS];
@@ -732,6 +742,10 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 							call_xfer_state[i] =
 							    fde->fde_xfer_state;
 						}
+						call_cloexec_state[i] =
+						    fde->fde_cloexec_state;
+						call_clofork_state[i] =
+						    fde->fde_clofork_state;
 					}
 				}
 				FILEDESC_XUNLOCK(fdesc);
@@ -827,11 +841,20 @@ cap_rt_instance_ioctl(struct file *fp, u_long cmd, void *data,
 					if (error == 0) {
 						_finstall(fdesc, out_fds[i],
 						    fdbuf[i], 0, install_fcaps);
-						if (j >= 0)
+						if (j >= 0) {
 							fdesc->fd_ofiles[
 							    fdbuf[i]].
 							    fde_xfer_state =
 							    call_xfer_state[j];
+							fdesc->fd_ofiles[
+							    fdbuf[i]].
+							    fde_cloexec_state =
+							    call_cloexec_state[j];
+							fdesc->fd_ofiles[
+							    fdbuf[i]].
+							    fde_clofork_state =
+							    call_clofork_state[j];
+						}
 					}
 					FILEDESC_XUNLOCK(fdesc);
 					if (error != 0)

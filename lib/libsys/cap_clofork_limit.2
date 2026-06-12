@@ -1,0 +1,164 @@
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd June 11, 2026
+.Dt CAP_CLOFORK_LIMIT 2
+.Os
+.Sh NAME
+.Nm cap_clofork_limit
+.Nd lock close-on-fork for a file descriptor
+.Sh LIBRARY
+.Lb libc
+.Sh SYNOPSIS
+.In sys/capsicum.h
+.Ft int
+.Fn cap_clofork_limit "int fd" "int state"
+.Sh DESCRIPTION
+The
+.Fn cap_clofork_limit
+system call provides a monotonic close-on-fork guarantee for a file
+descriptor that cannot be undone by the process holding it.
+.Pp
+This operates independently from the traditional
+.Dv FD_CLOFORK
+flag managed by
+.Xr fcntl 2 .
+The process can freely set or clear
+.Dv FD_CLOFORK
+via
+.Dv F_SETFD
+without affecting the lock.
+When
+.Xr fork 2
+is called, the kernel skips the locked descriptor in the child's
+file descriptor table if
+.Em either
+the
+.Dv FD_CLOFORK
+flag is set
+.Em or
+the clofork lock is
+.Dv CAP_CLOFORK_LOCKED .
+.Pp
+The
+.Fa state
+argument must be one of:
+.Bl -tag -width CAP_CLOFORK_UNLOCKED
+.It Dv CAP_CLOFORK_UNLOCKED
+No lock.
+Close-on-fork is governed solely by the
+.Dv FD_CLOFORK
+flag.
+This is the default state for newly created descriptors.
+.It Dv CAP_CLOFORK_LOCKED
+The descriptor will not be inherited by children of
+.Xr fork 2
+regardless of the
+.Dv FD_CLOFORK
+flag.
+.El
+.Pp
+The lock state is monotonically increasing: once locked, it cannot be
+unlocked.
+Setting
+.Dv CAP_CLOFORK_LOCKED
+on a descriptor that is already locked is permitted and has no effect.
+.Pp
+The lock state is inherited across
+.Xr dup 2
+but not across
+.Xr fork 2
+.Pq since the descriptor is not inherited at all when locked .
+.Pp
+Combined with
+.Xr cap_xfer_limit 2
+and
+.Xr cap_cloexec_limit 2 ,
+this completes the set of monotonic descriptor confinement controls:
+.Pp
+.Bl -column "cap_clofork_limit" "Cannot survive fork" -offset indent -compact
+.It Xr cap_xfer_limit 2 Ta Cannot be sent via SCM_RIGHTS
+.It Xr cap_cloexec_limit 2 Ta Cannot survive exec
+.It Fn cap_clofork_limit Ta Cannot survive fork
+.El
+.Pp
+This system call is allowed in capability mode
+.Pq see Xr cap_enter 2 .
+.Sh RETURN VALUES
+.Rv -std
+.Sh EXAMPLES
+Confine a pair channel so it cannot escape the current process:
+.Bd -literal
+#include <sys/capsicum.h>
+
+/* fd is one end of a cap_rt pair or socketpair */
+cap_xfer_limit(fd, CAP_XFER_NONE);
+cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED);
+cap_clofork_limit(fd, CAP_CLOFORK_LOCKED);
+
+/* fd now cannot:
+ *   - be sent to another process via SCM_RIGHTS
+ *   - survive execve() into a new program
+ *   - be inherited by fork() children
+ * The process can still set/clear FD_CLOEXEC and FD_CLOFORK
+ * without error, but the locks override at exec/fork time.
+ */
+.Ed
+.Sh ERRORS
+.Fn cap_clofork_limit
+succeeds unless:
+.Bl -tag -width Er
+.It Bq Er EBADF
+The
+.Fa fd
+argument is not a valid active descriptor.
+.It Bq Er EINVAL
+The
+.Fa state
+argument is not a valid lock state.
+.It Bq Er ENOTCAPABLE
+The requested
+.Fa state
+is less restrictive than the current lock state.
+The lock can only be tightened, never relaxed.
+.It Bq Er ENOSYS
+The running kernel was compiled without
+.Cd "options CAPABILITY_MODE" .
+.El
+.Sh SEE ALSO
+.Xr cap_cloexec_limit 2 ,
+.Xr cap_enter 2 ,
+.Xr cap_rights_limit 2 ,
+.Xr cap_xfer_limit 2 ,
+.Xr dup 2 ,
+.Xr fcntl 2 ,
+.Xr fork 2 ,
+.Xr pdfork 2 ,
+.Xr capsicum 4
+.Sh HISTORY
+The
+.Fn cap_clofork_limit
+system call first appeared in
+.Fx 16.0 .

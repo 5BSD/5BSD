@@ -609,4 +609,6 @@ const char *syscallnames[] = {
 	"pdwait",			/* 601 = pdwait */
 	"renameat2",			/* 602 = renameat2 */
 	"cap_xfer_limit",			/* 603 = cap_xfer_limit */
+	"cap_cloexec_limit",			/* 604 = cap_cloexec_limit */
+	"cap_clofork_limit",			/* 605 = cap_clofork_limit */
 };

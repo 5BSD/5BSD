@@ -827,4 +827,8 @@ FBSDprivate_1.0 {
 	__sys_renameat2;
 	_cap_xfer_limit;
 	__sys_cap_xfer_limit;
+	_cap_cloexec_limit;
+	__sys_cap_cloexec_limit;
+	_cap_clofork_limit;
+	__sys_cap_clofork_limit;
 };

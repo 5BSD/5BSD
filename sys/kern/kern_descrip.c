@@ -109,6 +109,10 @@ SDT_PROBE_DEFINE6(fd, , , close,
     "struct file *", "int", "pid_t", "struct ucred *", "short", "u_int");
 SDT_PROBE_DEFINE6(fd, , , fork__inherit,
     "struct file *", "int", "pid_t", "pid_t", "struct ucred *", "short");
+SDT_PROBE_DEFINE4(fd, , , cloexec__enforce,
+    "struct file *", "int", "pid_t", "short");
+SDT_PROBE_DEFINE4(fd, , , clofork__enforce,
+    "struct file *", "int", "pid_t", "short");
 
 static __read_mostly uma_zone_t file_zone;
 static __read_mostly uma_zone_t filedesc0_zone;
@@ -340,6 +344,8 @@ fdfree(struct filedesc *fdp, int fd)
 #endif
 	fde->fde_file = NULL;
 	fde->fde_xfer_state = CAP_XFER_UNLIMITED;
+	fde->fde_cloexec_state = CAP_CLOEXEC_UNLOCKED;
+	fde->fde_clofork_state = CAP_CLOFORK_UNLOCKED;
 #ifdef CAPABILITIES
 	seqc_write_end(&fde->fde_seqc);
 #endif
@@ -2331,6 +2337,8 @@ _finstall(struct filedesc *fdp, struct file *fp, int fd, int flags,
 	fde->fde_file = fp;
 	fde->fde_flags = open_to_fde_flags(flags, true);
 	fde->fde_xfer_state = CAP_XFER_UNLIMITED;
+	fde->fde_cloexec_state = CAP_CLOEXEC_UNLOCKED;
+	fde->fde_clofork_state = CAP_CLOFORK_UNLOCKED;
 	if (fcaps != NULL)
 		filecaps_move(fcaps, &fde->fde_caps);
 	else
@@ -2614,14 +2622,21 @@ fdcopy(struct filedesc *fdp, struct proc *p1)
 		ops = ofde->fde_file->f_ops;
 		fp = NULL;
 		if ((ops->fo_flags & DFLAG_FORK) != 0 &&
-		    (ofde->fde_flags & UF_FOCLOSE) == 0) {
+		    (ofde->fde_flags & UF_FOCLOSE) == 0 &&
+		    ofde->fde_clofork_state != CAP_CLOFORK_LOCKED) {
 			if (ops->fo_fork(newfdp, ofde->fde_file, &fp, p1,
 			    curthread) != 0)
 				continue;
 			fork_pass = true;
 		} else if ((ops->fo_flags & DFLAG_PASSABLE) == 0 ||
 		    (ofde->fde_flags & UF_FOCLOSE) != 0 ||
+		    ofde->fde_clofork_state == CAP_CLOFORK_LOCKED ||
 		    !fhold(ofde->fde_file)) {
+			if (ofde->fde_clofork_state == CAP_CLOFORK_LOCKED)
+				SDT_PROBE4(fd, , , clofork__enforce,
+				    ofde->fde_file, i,
+				    curthread->td_proc->p_pid,
+				    ofde->fde_file->f_type);
 			if (newfdp->fd_freefile == fdp->fd_freefile)
 				newfdp->fd_freefile = i;
 			continue;
@@ -2935,7 +2950,12 @@ fdcloseexec(struct thread *td, struct ucred *newcred)
 	FILEDESC_FOREACH_FDE(fdp, i, fde) {
 		fp = fde->fde_file;
 		if (fp->f_type == DTYPE_MQUEUE ||
-		    (fde->fde_flags & UF_EXCLOSE)) {
+		    (fde->fde_flags & UF_EXCLOSE) ||
+		    fde->fde_cloexec_state == CAP_CLOEXEC_LOCKED) {
+			if (fde->fde_cloexec_state == CAP_CLOEXEC_LOCKED)
+				SDT_PROBE4(fd, , , cloexec__enforce,
+				    fp, i, td->td_proc->p_pid,
+				    fp->f_type);
 			FILEDESC_XLOCK(fdp);
 			fdfree(fdp, i);
 			(void) closefp(fdp, i, fp, td, false, false);

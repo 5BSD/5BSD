@@ -58,6 +58,8 @@ struct filedescent {
 	struct filecaps	 fde_caps;	/* per-descriptor rights */
 	uint8_t		 fde_flags;	/* per-process open file flags */
 	uint8_t		 fde_xfer_state; /* transfer state (CAP_XFER_*) */
+	uint8_t		 fde_cloexec_state; /* cloexec lock (CAP_CLOEXEC_*) */
+	uint8_t		 fde_clofork_state; /* clofork lock (CAP_CLOFORK_*) */
 	seqc_t		 fde_seqc;	/* keep file and caps in sync */
 };
 #define	fde_rights	fde_caps.fc_rights
@@ -74,6 +76,8 @@ fde_copy(struct filedescent *from, struct filedescent *to)
 	to->fde_caps = from->fde_caps;
 	to->fde_flags = from->fde_flags;
 	to->fde_xfer_state = from->fde_xfer_state;
+	to->fde_cloexec_state = from->fde_cloexec_state;
+	to->fde_clofork_state = from->fde_clofork_state;
 }
 #endif
 
