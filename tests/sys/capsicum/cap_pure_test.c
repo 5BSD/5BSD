@@ -528,7 +528,10 @@ scm_rights_noncap_body(int *result)
 
 	/* Send the fd over SCM_RIGHTS */
 	memset(&msg, 0, sizeof(msg));
-	iov.iov_base = "A";
+	{
+		static char a_buf[] = "A";
+		iov.iov_base = a_buf;
+	}
 	iov.iov_len = 1;
 	msg.msg_iov = &iov;
 	msg.msg_iovlen = 1;
@@ -603,7 +606,10 @@ scm_rights_cap_body(int *result)
 
 	/* Send the fd */
 	memset(&msg, 0, sizeof(msg));
-	iov.iov_base = "B";
+	{
+		static char b_buf[] = "B";
+		iov.iov_base = b_buf;
+	}
 	iov.iov_len = 1;
 	msg.msg_iov = &iov;
 	msg.msg_iovlen = 1;
@@ -816,7 +822,10 @@ cap_sendrecv_body(int *result)
 
 	/* cap_sendmsg */
 	memset(&msg, 0, sizeof(msg));
-	iov.iov_base = "test";
+	{
+		static char test_buf[] = "test";
+		iov.iov_base = test_buf;
+	}
 	iov.iov_len = 4;
 	msg.msg_iov = &iov;
 	msg.msg_iovlen = 1;
