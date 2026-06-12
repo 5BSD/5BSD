@@ -95,6 +95,13 @@ typedef int (*smp_passkey_cb_t)(uint32_t *passkey_out, bool display,
     void *arg);
 
 /*
+ * Numeric Comparison callback.
+ * Displays the 6-digit value and asks the user to confirm it matches
+ * the value shown on the peer device.  Returns 0 if confirmed, -1 to reject.
+ */
+typedef int (*smp_numcmp_cb_t)(uint32_t value, void *arg);
+
+/*
  * SMP connection state.
  */
 struct smp_conn {
@@ -108,6 +115,8 @@ struct smp_conn {
 	struct smp_bond_db *bond_db;
 	smp_passkey_cb_t passkey_cb;	/* passkey UI callback */
 	void		*passkey_cb_arg;
+	smp_numcmp_cb_t	numcmp_cb;	/* numeric comparison callback */
+	void		*numcmp_cb_arg;
 };
 
 /* smp.c */

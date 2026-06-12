@@ -43,7 +43,8 @@
 #define SMP_MODEL_NUMERIC_COMPARISON	2
 
 /* Forward declarations */
-static int smp_pair_sc(struct smp_conn *, const uint8_t[7], const uint8_t[7]);
+static int smp_pair_sc(struct smp_conn *, const uint8_t[7], const uint8_t[7],
+    int model);
 static int smp_pair_sc_passkey(struct smp_conn *, const uint8_t[7],
     const uint8_t[7]);
 static void smp_pack_addr(uint8_t[7], const uint8_t[6], uint8_t);
@@ -367,7 +368,7 @@ smp_pair(struct smp_conn *sc)
 		if (use_sc) {
 			if (model == SMP_MODEL_PASSKEY_ENTRY)
 				return (smp_pair_sc_passkey(sc, preq, pres));
-			return (smp_pair_sc(sc, preq, pres));
+			return (smp_pair_sc(sc, preq, pres, model));
 		}
 
 		/* Legacy Passkey Entry: TK = passkey value */
@@ -1081,6 +1082,30 @@ smp_f6(const uint8_t w[16], const uint8_t n1[16], const uint8_t n2[16],
 }
 
 /*
+ * g2: LE SC numeric comparison value.
+ * Core Spec Vol 3 Part H Section 2.2.9
+ *
+ * g2(U, V, X, Y) = AES-CMAC_X(U || V || Y) mod 2^32
+ * Returns 32-bit value; display as 6 least significant digits.
+ */
+static uint32_t
+smp_g2(const uint8_t u[32], const uint8_t v[32],
+    const uint8_t x[16], const uint8_t y[16])
+{
+	uint8_t m[80]; /* U(32)+V(32)+Y(16) */
+	uint8_t mac[16];
+
+	memcpy(m, u, 32);
+	memcpy(m + 32, v, 32);
+	memcpy(m + 64, y, 16);
+	smp_aes_cmac(x, m, sizeof(m), mac);
+
+	/* Least significant 32 bits of the 128-bit MAC */
+	return ((uint32_t)mac[12] << 24 | (uint32_t)mac[13] << 16 |
+	    (uint32_t)mac[14] << 8 | (uint32_t)mac[15]);
+}
+
+/*
  * Build SMP 7-byte address: [type_bit, bdaddr(6)]
  */
 static void
@@ -1098,7 +1123,8 @@ smp_pack_addr(uint8_t out[7], const uint8_t addr[6], uint8_t addr_type)
  * Core Spec Vol 3 Part H Section 2.3.5.6
  */
 static int
-smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7])
+smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
+    int model)
 {
 	EVP_PKEY *our_key = NULL, *peer_key = NULL;
 	EVP_PKEY_CTX *pctx;
@@ -1282,6 +1308,29 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7])
 		uint8_t cb_verify[16];
 		smp_f4(pkb_be, pka_be, nb, 0, cb_verify);
 		if (memcmp(cb_recv, cb_verify, 16) != 0) {
+			pdu[0] = SMP_PAIRING_FAILED;
+			pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
+			send(sc->fd, pdu, 2, 0);
+			errno = EACCES;
+			return (-1);
+		}
+	}
+
+	/*
+	 * Numeric Comparison (Section 2.3.5.6.2 step 7):
+	 * Both sides compute Va/Vb = g2(PKax, PKbx, Na, Nb) mod 10^6
+	 * and display the 6-digit value for user confirmation.
+	 */
+	if (model == SMP_MODEL_NUMERIC_COMPARISON) {
+		uint32_t confirm_val;
+
+		confirm_val = smp_g2(pka_be, pkb_be, na, nb) % 1000000;
+
+		if (sc->numcmp_cb == NULL) {
+			errno = ENOTSUP;
+			return (-1);
+		}
+		if (sc->numcmp_cb(confirm_val, sc->numcmp_cb_arg) < 0) {
 			pdu[0] = SMP_PAIRING_FAILED;
 			pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
 			send(sc->fd, pdu, 2, 0);

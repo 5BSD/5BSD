@@ -106,6 +106,7 @@ struct hogp_device {
 
 	const char		*adapter;	/* e.g. "ubt0" */
 	bool			debug;
+	bool			reconnect;	/* auto-reconnect on loss */
 };
 
 static volatile sig_atomic_t running = 1;
@@ -156,13 +157,34 @@ passkey_display(uint32_t *passkey, bool display, void *arg __unused)
 	return (0);
 }
 
+/*
+ * Numeric Comparison callback.
+ * Shows the 6-digit value and asks user to confirm match.
+ */
+static int
+numcmp_confirm(uint32_t value, void *arg __unused)
+{
+	char buf[8];
+
+	fprintf(stderr,
+	    "\n*** Confirm this number matches the BLE device: %06u ***\n"
+	    "Does it match? [y/n] ", value);
+
+	if (fgets(buf, sizeof(buf), stdin) == NULL)
+		return (-1);
+	if (buf[0] == 'y' || buf[0] == 'Y')
+		return (0);
+	fprintf(stderr, "Pairing rejected by user.\n");
+	return (-1);
+}
+
 static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: btled [-d] [-a adapter] [-f bonds] -s\n"
-	    "       btled [-d] [-a adapter] [-f bonds] <bdaddr> "
-	    "[public|random]\n");
+	    "usage: btled [-dr] [-a adapter] [-f bonds] -s\n"
+	    "       btled [-dr] [-a adapter] [-f bonds] <bdaddr> "
+	    "[public|random] ...\n");
 	exit(1);
 }
 
@@ -209,7 +231,7 @@ main(int argc, char *argv[])
 
 	const char *bond_path = "/var/db/btled/bonds";
 
-	while ((ch = getopt(argc, argv, "a:df:s")) != -1) {
+	while ((ch = getopt(argc, argv, "a:df:rs")) != -1) {
 		switch (ch) {
 		case 'a':
 			dev.adapter = optarg;
@@ -219,6 +241,9 @@ main(int argc, char *argv[])
 			break;
 		case 'f':
 			bond_path = optarg;
+			break;
+		case 'r':
+			dev.reconnect = true;
 			break;
 		case 's':
 			scan_mode = true;
@@ -285,13 +310,28 @@ main(int argc, char *argv[])
 	atexit(atexit_cleanup);
 
 	/*
+	 * Connection loop.  Runs once without -r, retries on disconnect
+	 * with -r.  Capsicum is skipped in reconnect mode because we
+	 * need to open new sockets on each reconnection.
+	 */
+connect_loop:
+	dev.att.fd = -1;
+	dev.smp.fd = -1;
+
+	/*
 	 * Phase 1: Connect ATT
 	 */
 	if (dev.debug)
 		fprintf(stderr, "btled: connecting to %s...\n", argv[0]);
 
-	if (att_open(&dev.att, dev.addr, dev.addr_type) < 0)
+	if (att_open(&dev.att, dev.addr, dev.addr_type) < 0) {
+		if (dev.reconnect && running) {
+			warn("ATT connect failed, retrying in 5s");
+			sleep(5);
+			goto connect_loop;
+		}
 		err(1, "ATT connect");
+	}
 
 	if (dev.debug)
 		fprintf(stderr, "btled: connected, exchanging MTU\n");
@@ -339,6 +379,7 @@ main(int argc, char *argv[])
 			    dev.local_addr, 0, dev.hci_fd,
 			    dev.con_handle, &dev.bond_db) == 0) {
 				dev.smp.passkey_cb = passkey_display;
+				dev.smp.numcmp_cb = numcmp_confirm;
 				if (smp_encrypt_with_ltk(&dev.smp, bond) < 0) {
 					warn("bonded encryption failed");
 				} else {
@@ -377,6 +418,7 @@ main(int argc, char *argv[])
 			    dev.con_handle, &dev.bond_db) < 0)
 				err(1, "SMP open");
 			dev.smp.passkey_cb = passkey_display;
+			dev.smp.numcmp_cb = numcmp_confirm;
 
 			if (smp_pair(&dev.smp) < 0)
 				err(1, "SMP pairing");
@@ -417,10 +459,13 @@ main(int argc, char *argv[])
 	signal(SIGHUP, sig_handler);
 
 	/*
-	 * Phase 5: Enter Capsicum sandbox
+	 * Phase 5: Enter Capsicum sandbox (skipped with -r since
+	 * reconnection requires opening new sockets)
 	 */
-	if (capsicum_sandbox(&dev) != 0)
-		err(1, "capsicum sandbox");
+	if (!dev.reconnect) {
+		if (capsicum_sandbox(&dev) != 0)
+			err(1, "capsicum sandbox");
+	}
 
 	if (dev.debug)
 		fprintf(stderr,
@@ -431,14 +476,38 @@ main(int argc, char *argv[])
 	 */
 	hogp_event_loop(&dev);
 
-	hogp_cleanup(&dev);
+	/*
+	 * Clean up this connection's resources.
+	 * If -r and the loop broke due to disconnect (running still true),
+	 * close sockets and vhid, then reconnect.
+	 */
+	att_close(&dev.att);
+	smp_close(&dev.smp);
+	if (dev.vhid_fd >= 0) {
+		close(dev.vhid_fd);
+		dev.vhid_fd = -1;
+	}
+	if (dev.vhid_ctl_fd >= 0)
+		ioctl(dev.vhid_ctl_fd, VHID_DESTROY, &dev.vhid_unit);
+	free(dev.report_map);
+	dev.report_map = NULL;
+	dev.nreports = 0;
+
+	if (dev.reconnect && running) {
+		warnx("reconnecting in 3 seconds...");
+		sleep(3);
+		goto connect_loop;
+	}
+
+	/* Final cleanup */
+	if (dev.vhid_ctl_fd >= 0)
+		close(dev.vhid_ctl_fd);
+	if (dev.hci_fd >= 0)
+		close(dev.hci_fd);
+	if (dev.bond_fd >= 0)
+		close(dev.bond_fd);
 	cleanup_dev = NULL;
 
-	/*
-	 * Exit 0 for clean signal shutdown, 1 for disconnect.
-	 * A service manager (rc, oracled) can restart on exit 1
-	 * for automatic reconnection.
-	 */
 	return (running ? 1 : 0);
 }
 
@@ -811,16 +880,23 @@ hogp_cleanup(struct hogp_device *dev)
 
 	att_close(&dev->att);
 	smp_close(&dev->smp);
-	if (dev->vhid_fd >= 0)
+	if (dev->vhid_fd >= 0) {
 		close(dev->vhid_fd);
+		dev->vhid_fd = -1;
+	}
 	if (dev->vhid_ctl_fd >= 0) {
-		/* Destroy the vhid instance so /dev/vhidN doesn't leak */
 		ioctl(dev->vhid_ctl_fd, VHID_DESTROY, &dev->vhid_unit);
 		close(dev->vhid_ctl_fd);
+		dev->vhid_ctl_fd = -1;
 	}
-	if (dev->hci_fd >= 0)
+	if (dev->hci_fd >= 0) {
 		close(dev->hci_fd);
-	if (dev->bond_fd >= 0)
+		dev->hci_fd = -1;
+	}
+	if (dev->bond_fd >= 0) {
 		close(dev->bond_fd);
+		dev->bond_fd = -1;
+	}
 	free(dev->report_map);
+	dev->report_map = NULL;
 }
