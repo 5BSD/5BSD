@@ -39,46 +39,195 @@ Local copies pulled from official Bluetooth SIG sources for the Bluetooth roadma
 - Assigned Numbers: https://www.bluetooth.com/specifications/assigned-numbers/
 - Bluetooth specifications index: https://www.bluetooth.com/specifications/specs/
 
-## Why these were chosen
+---
 
-- `Core Specification` and `GATT Specification Supplement` are the minimum set for general-purpose BLE apps and modern BLE peripherals.
-- `A2DP`, `AVDTP`, and `AVRCP` cover the classic audio path.
-- `CAP` is the current LE Audio control profile that matters for modern headset and broadcast audio work.
+## Use case 1: BLE keyboards and mice (HOGP) — IMPLEMENTED
 
-## Current target
+Status: feature-complete, not yet validated on hardware.
 
-Three use cases are being tracked for the FreeBSD Bluetooth roadmap:
+### What was built
 
-- `Beats headphones on FreeBSD`
-  - Primary need: classic Bluetooth audio.
-  - Required specs: `A2DP`, `AVDTP`, `AVRCP`.
-  - If headset microphone or call audio matters: add `HFP` and/or `HSP`.
-  - Current blocker in-tree: no A2DP profile implementation, no SBC/AAC codec, no audio sink plumbing to `snd(4)`. A2DP streams over L2CAP (ACL/bulk USB), not SCO.
-  - Secondary blocker for HFP/HSP voice calls: SCO uses isochronous USB transfers which `ng_ubt` does not handle reliably.
+Kernel:
+- `ng_hci`: LE buffer management (LE_Read_Buffer_Size), Enhanced Connection
+  Complete (0x0a), LTK Request forwarding, latency field type fix (u8→u16),
+  LE-aware buffer accounting in num_compl_pkts and send_data_packets.
+- `vhid.ko`: virtual HID transport module. Exposes /dev/vhid control device
+  and /dev/vhidN instances. Implements hid_if KOBJ interface so hidbus
+  attaches hkbd/hms/hmt automatically. Race-safe write/attach lifecycle.
+  Free-slot reuse on create/destroy.
 
-- `iPhone BLE app talking to FreeBSD`
-  - Primary need: BLE peripheral behavior.
-  - Required specs: `Core Specification`, `GATT Specification Supplement`, `ATT`, `SMP`, advertising, bonding, privacy, notifications, reconnect behavior.
-  - FreeBSD should present a GATT server and stable bond/reconnect behavior for the iPhone app.
+Userspace (`usr.sbin/bluetooth/btled`):
+- ATT protocol client — all PDU types per Core Spec Vol 3 Part F.
+- GATT discovery — services, characteristics, descriptors. Handles 16-bit
+  and 128-bit UUIDs. Underflow-safe on malformed responses.
+- SMP pairing — LE Legacy (Just Works + Passkey Entry) and LE Secure
+  Connections (Just Works + Passkey Entry + Numeric Comparison).
+  Crypto: c1, s1, AES-CMAC, f4, f5, f6, g2 per spec. ECDH P-256 via OpenSSL.
+- HOGP profile — HID Service discovery, Report Map reading (with Read Blob
+  for long descriptors), Report Reference classification, Protocol Mode
+  setting, CCCD notification subscription, report ID prepending.
+- BLE scanning (`btled -s`) via HCI raw socket.
+- Bonded reconnect with RPA/IRK address resolution (ah function).
+- Auto-reconnect (`-r`) with pre-allocated Capsicum-safe socket pool.
+- Multi-device via fork-per-device (up to 16 simultaneous).
+- Capsicum sandbox — minimal fd rights, atexit cleanup, signal handling.
+- HCI utilities — adapter address, connection handle lookup with retry,
+  Encryption Change event wait (replaces usleep hacks).
 
-- `BLE keyboards and mice on FreeBSD (HOGP)`
-  - Primary need: BLE HID input devices.
-  - Required specs: `Core Specification` (ATT, GATT, SMP volumes), `HOGP v1.0` (HID over GATT Profile), `HIDS v1.0` (HID Service), `DIS v1.1` (Device Information Service).
-  - Spec pages:
-    - https://www.bluetooth.com/specifications/specs/hid-over-gatt-profile-1-0/
-    - https://www.bluetooth.com/specifications/specs/hid-service-1-0/
-  - HID is self-describing via Report Descriptors — once HOGP transport works, all BLE HID devices (keyboards, mice, gamepads) work without per-device drivers.
-  - FreeBSD already has a transport-agnostic `hidbus(4)` framework; HOGP needs a new transport backend implementing the `hid_if` KOBJ interface.
-  - Shares the ATT/GATT/SMP dependency with the iPhone use case — building HOGP first gives the BLE stack for free.
-  - Current blocker in-tree: no ATT, GATT, or SMP implementation exists. L2CAP routes ATT/SMP CIDs to sockets but nothing parses the protocols.
+### Spec compliance
 
-## Roadmap implication
+Reviewed against Core Spec v6.3 with PDF cross-references:
+- HCI: LE_Read_Buffer_Size, LE Connection Complete, LE Enhanced Connection
+  Complete, LE_Start_Encryption — all PASS.
+- ATT: all opcodes, PDU formats, error codes, MTU negotiation — all PASS.
+- SMP: c1, s1, f4, f5, f6, g2, pairing flow, method selection table,
+  IO capabilities, public key byte order, DHKey check — all PASS.
+- GATT: UUIDs, response layouts, termination, guards — all PASS.
+- HOGP: service/char UUIDs, Report Reference, Protocol Mode — all PASS.
 
-- All three targets share the HCI and L2CAP layers already in-tree.
-- Classic headphone support uses SSP (Secure Simple Pairing) for authentication; BLE targets use SMP (Security Manager Protocol). Bond/key storage can be unified but the pairing protocols are distinct.
-- They diverge after pairing:
-  - Audio work follows the classic profile stack (A2DP over L2CAP, not SCO).
-  - iPhone app support follows the BLE/GATT peripheral stack.
-  - HOGP follows the BLE/GATT client stack (same ATT/GATT/SMP as iPhone, different role).
-- **Recommended build order:** HOGP first (builds ATT/GATT/SMP as a side effect, quickest user-visible result), then iPhone BLE peripheral, then classic audio.
-- LE Audio is a later phase, not the first dependency for the three targets above.
+### How to test
+
+Prerequisites:
+- FreeBSD with these changes built (kernel + world, or just the modules + btled)
+- USB Bluetooth 4.0+ dongle or built-in BT (Intel AX201 in BOSGAME works)
+- A BLE HID device (keyboard, mouse, gamepad) in pairing mode
+
+Step 1 — Load modules:
+```
+kldload ng_ubt        # USB Bluetooth transport
+kldload iwmbtfw       # Intel firmware (if Intel adapter)
+kldload vhid          # Virtual HID transport
+```
+
+Step 2 — Verify adapter:
+```
+hccontrol -n ubt0hci read_bd_addr
+```
+If this fails, the adapter is not recognized. Check `dmesg | grep ubt`.
+
+Step 3 — Scan for BLE devices:
+```
+btled -d -s
+```
+Should list nearby BLE devices with address, type, RSSI, and name.
+If this fails, the HCI raw socket or LE scanning path is broken.
+
+Step 4 — Connect to a device:
+```
+mkdir -p /var/db/btled
+btled -d aa:bb:cc:dd:ee:ff random
+```
+Replace with the address from the scan. Use `random` for most modern devices.
+Debug output shows each phase: ATT connect, MTU exchange, bond check,
+GATT discovery, vhid setup, CCCD subscription, Capsicum entry, event loop.
+
+Step 5 — Verify HID attachment:
+```
+dmesg | grep -i hid    # should show hidbus/hkbd/hms on vhid0
+```
+
+Step 6 — Test input:
+Type on the BLE keyboard or move the BLE mouse. Input should appear normally.
+
+Step 7 — Test reconnect:
+```
+btled -dr aa:bb:cc:dd:ee:ff random
+```
+Turn the device off and on. btled should detect disconnect, wait 3s,
+reconnect using a pool socket, and resume without re-pairing.
+
+Step 8 — Multiple devices:
+```
+btled -dr aa:bb:cc:dd:ee:ff random 11:22:33:44:55:66 public
+```
+Each device gets its own forked process and vhid instance.
+
+### What will probably fail first
+
+1. `btled -s` — if the HCI raw socket bind or LE scan commands don't work,
+   nothing else will. This is the first thing to debug.
+2. ATT connect — if L2CAP LE CID 0x0004 connection fails, the kernel
+   LE path has a problem. Check `dmesg` for ng_hci/ng_l2cap errors.
+3. SMP pairing — if the device rejects pairing, check which method it
+   wants (debug output shows the negotiation). Some devices may need
+   features we haven't implemented (e.g., OOB pairing).
+4. GATT discovery — if the device requires encryption before exposing
+   services, the SMP→retry flow should handle it. If not, check whether
+   the ATT error code is 0x05 or 0x0F.
+
+---
+
+## Use case 2: iPhone BLE app talking to FreeBSD — NOT STARTED
+
+Status: no code exists. Requires a separate daemon.
+
+### What needs to be built
+
+- ATT server — host an attribute database, handle incoming read/write/notify
+- GATT server — register services and characteristics, manage CCCDs
+- BLE advertising — send connectable undirected advertisements via HCI
+  LE_Set_Advertising_Parameters + LE_Set_Advertising_Data + LE_Set_Advertise_Enable
+- SMP responder role — respond to pairing requests (currently only initiator)
+- Custom service/characteristic registration API
+
+### What can be reused from use case 1
+
+- SMP crypto (c1, s1, f4, f5, f6 — same functions, different flow direction)
+- HCI utilities (adapter address, connection handle)
+- Bond storage and RPA resolution
+- Capsicum sandbox patterns
+
+### Rough size estimate
+
+~3000-4000 lines for a new daemon (`btle_peripheral` or similar).
+
+---
+
+## Use case 3: Beats headphones on FreeBSD — NOT STARTED
+
+Status: no code exists. Completely separate protocol stack from BLE.
+
+### What needs to be built
+
+- SDP service discovery — query remote device for audio profile support
+- AVDTP stream negotiation — codec capabilities exchange, stream configuration
+- A2DP sink profile — receive audio stream, decode, play
+- SBC codec (mandatory for A2DP) — decode SBC frames to PCM
+- AAC codec (for Beats) — decode AAC frames to PCM
+- Audio plumbing — pipe decoded PCM to snd(4) via /dev/dsp or virtual OSS device
+- AVRCP media control — play/pause/skip/volume
+- HFP/HSP (optional) — voice calls, requires SCO/isochronous USB
+
+### What can be reused from use case 1
+
+- Almost nothing. Classic Bluetooth uses BR/EDR (not BLE), SSP (not SMP),
+  SDP (not GATT), L2CAP PSMs (not fixed CIDs). The only shared code is
+  the HCI raw socket and the bond storage format.
+
+### Current blockers
+
+- No A2DP, AVDTP, or SBC implementation exists anywhere in FreeBSD.
+- SCO/isochronous USB transfers in ng_ubt are unreliable (blocks HFP/HSP).
+- SBC is ~2000 lines of signal processing. AAC requires a library (libfdk-aac or similar).
+
+### Rough size estimate
+
+~8000-12000 lines across multiple daemons/libraries. Significantly larger than use case 1.
+
+---
+
+## Use case 4: LE Audio (future) — NOT STARTED
+
+- LC3 codec, ISO channels, BAP/CAP profiles
+- Modern headphone support (AirPods Pro, etc.)
+- Depends on isochronous USB transport in ng_ubt being fixed
+- Not a dependency for use cases 1-3
+
+---
+
+## Roadmap
+
+1. **BLE HID (HOGP)** — implemented, needs hardware validation
+2. **iPhone BLE peripheral** — next after BLE HID is validated. Shares SMP/crypto.
+3. **Classic audio (A2DP)** — independent of BLE work. Largest effort.
+4. **LE Audio** — future, after isochronous USB is fixed.
