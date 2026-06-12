@@ -330,33 +330,71 @@ main(int argc, char *argv[])
 	if (argc < 1)
 		usage();
 
-	/* Parse target Bluetooth address */
-	if (!bt_aton(argv[0], (bdaddr_t *)dev.addr))
-		errx(1, "invalid bdaddr: %s", argv[0]);
-
-	if (argc >= 2) {
-		if (strcmp(argv[1], "random") == 0)
-			dev.addr_type = BDADDR_LE_RANDOM;
-		else if (strcmp(argv[1], "public") == 0)
-			dev.addr_type = BDADDR_LE_PUBLIC;
-		else
-			errx(1, "invalid address type: %s", argv[1]);
-	}
-
-	/* Open bond storage */
+	/* Open shared resources before forking */
 	dev.bond_fd = open(bond_path, O_RDWR | O_CREAT, 0600);
 	if (dev.bond_fd < 0)
 		err(1, "open %s", bond_path);
 	smp_bond_db_load(&dev.bond_db, dev.bond_fd);
 
-	/* Open vhid control device */
 	dev.vhid_ctl_fd = open("/dev/vhid", O_RDWR);
 	if (dev.vhid_ctl_fd < 0)
 		err(1, "open /dev/vhid");
 
-	/* Register cleanup so err()/exit() destroys vhid instances */
 	cleanup_dev = &dev;
 	atexit(atexit_cleanup);
+
+	/*
+	 * Multi-device: parse bdaddr [type] pairs from argv.
+	 * Fork a child for each device beyond the first.
+	 */
+	{
+		int ndevs = 0;
+		struct {
+			uint8_t	addr[6];
+			uint8_t	addr_type;
+		} devs[16];
+		int ai = 0;
+
+		while (ai < argc && ndevs < 16) {
+			if (!bt_aton(argv[ai], (bdaddr_t *)devs[ndevs].addr))
+				errx(1, "invalid bdaddr: %s", argv[ai]);
+			devs[ndevs].addr_type = BDADDR_LE_PUBLIC;
+			if (ai + 1 < argc &&
+			    (strcmp(argv[ai + 1], "random") == 0 ||
+			     strcmp(argv[ai + 1], "public") == 0)) {
+				if (strcmp(argv[ai + 1], "random") == 0)
+					devs[ndevs].addr_type =
+					    BDADDR_LE_RANDOM;
+				ai += 2;
+			} else {
+				ai += 1;
+			}
+			ndevs++;
+		}
+
+		if (ndevs == 0)
+			usage();
+
+		/* Fork children for devices 1..N-1 */
+		for (int i = 1; i < ndevs; i++) {
+			pid_t pid = fork();
+			if (pid < 0)
+				err(1, "fork");
+			if (pid == 0) {
+				/* Child: set this device's address */
+				memcpy(dev.addr, devs[i].addr, 6);
+				dev.addr_type = devs[i].addr_type;
+				goto child_start;
+			}
+			/* Parent continues to fork remaining */
+		}
+
+		/* Parent handles device 0 */
+		memcpy(dev.addr, devs[0].addr, 6);
+		dev.addr_type = devs[0].addr_type;
+	}
+
+child_start:
 
 	/*
 	 * Connection loop.  Runs once without -r, retries on disconnect
