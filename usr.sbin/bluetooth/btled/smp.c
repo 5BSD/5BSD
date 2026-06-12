@@ -34,6 +34,9 @@
 
 #include "smp.h"
 
+/* Forward declaration for LE Secure Connections */
+static int smp_pair_sc(struct smp_conn *, const uint8_t[7], const uint8_t[7]);
+
 /*
  * AES-128 encrypt: E(key, plaintext) -> ciphertext.
  * Used by c1() and s1() functions.
@@ -268,9 +271,9 @@ smp_pair(struct smp_conn *sc)
 	preq[0] = SMP_PAIRING_REQUEST;
 	preq[1] = SMP_IO_NO_INPUT_NO_OUTPUT;	/* IO capability */
 	preq[2] = 0x00;			/* No OOB */
-	preq[3] = SMP_AUTH_BONDING;		/* Bonding, no MITM */
+	preq[3] = SMP_AUTH_BONDING | SMP_AUTH_SC;	/* Request SC */
 	preq[4] = 16;				/* Max encryption key size */
-	preq[5] = 0;				/* Initiator key dist: none */
+	preq[5] = SMP_KEY_DIST_ID_KEY;		/* We can send IRK */
 	preq[6] = SMP_KEY_DIST_ENC_KEY | SMP_KEY_DIST_ID_KEY;
 
 	if (send(sc->fd, preq, sizeof(preq), 0) < 0)
@@ -296,6 +299,14 @@ smp_pair(struct smp_conn *sc)
 	}
 
 	/*
+	 * If both sides support SC, use LE Secure Connections.
+	 * Check the SC bit (0x08) in the responder's AuthReq.
+	 */
+	if ((preq[3] & SMP_AUTH_SC) && (pres[3] & SMP_AUTH_SC))
+		return (smp_pair_sc(sc, preq, pres));
+
+	/*
+	 * Fall through to LE Legacy Pairing.
 	 * Step 3: Generate our random and compute confirm value
 	 */
 	smp_random(mrand, sizeof(mrand));
@@ -528,6 +539,366 @@ smp_bond_db_save(struct smp_bond_db *db)
 	n = pwrite(db->fd, db->bonds, len, 0);
 	if (n < 0 || (size_t)n != len)
 		return (-1);
+
+	return (0);
+}
+
+/* ================================================================
+ * LE Secure Connections crypto (Core Spec Vol 3 Part H Section 2.2)
+ * ================================================================ */
+
+#include <openssl/core_names.h>
+#include <openssl/ec.h>
+#include <openssl/param_build.h>
+
+/*
+ * AES-CMAC per RFC 4493.
+ * Core Spec Vol 3 Part H Section 2.2.5
+ */
+static void
+smp_aes_cmac(const uint8_t key[16], const uint8_t *msg, size_t len,
+    uint8_t mac[16])
+{
+	EVP_MAC *cmac_type;
+	EVP_MAC_CTX *ctx;
+	OSSL_PARAM params[2];
+	size_t outlen;
+
+	static char cipher_name[] = "AES-128-CBC";
+
+	cmac_type = EVP_MAC_fetch(NULL, "CMAC", NULL);
+	ctx = EVP_MAC_CTX_new(cmac_type);
+	params[0] = OSSL_PARAM_construct_utf8_string("cipher", cipher_name,
+	    0);
+	params[1] = OSSL_PARAM_construct_end();
+	EVP_MAC_init(ctx, key, 16, params);
+	EVP_MAC_update(ctx, msg, len);
+	outlen = 16;
+	EVP_MAC_final(ctx, mac, &outlen, 16);
+	EVP_MAC_CTX_free(ctx);
+	EVP_MAC_free(cmac_type);
+}
+
+/*
+ * f4: LE SC confirm value generation.
+ * Core Spec Vol 3 Part H Section 2.2.6
+ *
+ * f4(U, V, X, Z) = AES-CMAC_X(U || V || Z)
+ */
+static void
+smp_f4(const uint8_t u[32], const uint8_t v[32], const uint8_t x[16],
+    uint8_t z, uint8_t out[16])
+{
+	uint8_t m[65];
+
+	memcpy(m, u, 32);
+	memcpy(m + 32, v, 32);
+	m[64] = z;
+	smp_aes_cmac(x, m, sizeof(m), out);
+}
+
+/*
+ * f5: LE SC key generation.
+ * Core Spec Vol 3 Part H Section 2.2.7
+ *
+ * Outputs MacKey (Counter=0) and LTK (Counter=1).
+ */
+static void
+smp_f5(const uint8_t w[32], const uint8_t n1[16], const uint8_t n2[16],
+    const uint8_t a1[7], const uint8_t a2[7],
+    uint8_t mackey[16], uint8_t ltk[16])
+{
+	static const uint8_t salt[16] = {
+		0x6C, 0x88, 0x83, 0x91, 0xAA, 0xF5, 0xA5, 0x38,
+		0x60, 0x37, 0x0B, 0xDB, 0x5A, 0x60, 0x83, 0xBE
+	};
+	static const uint8_t keyid[4] = { 0x62, 0x74, 0x6C, 0x65 };
+	uint8_t t[16];
+	uint8_t m[53];
+
+	smp_aes_cmac(salt, w, 32, t);
+
+	m[0] = 0;
+	memcpy(m + 1, keyid, 4);
+	memcpy(m + 5, n1, 16);
+	memcpy(m + 21, n2, 16);
+	memcpy(m + 37, a1, 7);
+	memcpy(m + 44, a2, 7);
+	m[51] = 0x01;
+	m[52] = 0x00;
+
+	smp_aes_cmac(t, m, sizeof(m), mackey);
+	m[0] = 1;
+	smp_aes_cmac(t, m, sizeof(m), ltk);
+}
+
+/*
+ * f6: LE SC check value generation.
+ * Core Spec Vol 3 Part H Section 2.2.8
+ *
+ * f6(W, N1, N2, R, IOcap, A1, A2) = AES-CMAC_W(N1||N2||R||IOcap||A1||A2)
+ */
+static void
+smp_f6(const uint8_t w[16], const uint8_t n1[16], const uint8_t n2[16],
+    const uint8_t r[16], const uint8_t iocap[3],
+    const uint8_t a1[7], const uint8_t a2[7],
+    uint8_t out[16])
+{
+	uint8_t m[65];
+
+	memcpy(m, n1, 16);
+	memcpy(m + 16, n2, 16);
+	memcpy(m + 32, r, 16);
+	memcpy(m + 48, iocap, 3);
+	memcpy(m + 51, a1, 7);
+	memcpy(m + 58, a2, 7);
+	smp_aes_cmac(w, m, sizeof(m), out);
+}
+
+/*
+ * Build SMP 7-byte address: [type_bit, bdaddr(6)]
+ */
+static void
+smp_pack_addr(uint8_t out[7], const uint8_t addr[6], uint8_t addr_type)
+{
+	out[0] = (addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
+	memcpy(out + 1, addr, 6);
+}
+
+/*
+ * LE Secure Connections pairing — Just Works.
+ * Called after Pairing Request/Response exchange when both sides
+ * set SMP_AUTH_SC.
+ *
+ * Core Spec Vol 3 Part H Section 2.3.5.6
+ */
+static int
+smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7])
+{
+	EVP_PKEY *our_key = NULL, *peer_key = NULL;
+	EVP_PKEY_CTX *pctx;
+	uint8_t our_pk_raw[65], peer_pk_raw[65];
+	uint8_t dhkey[32];
+	uint8_t na[16], nb[16];
+	uint8_t mackey[16], ltk[16];
+	uint8_t ea[16], eb[16];
+	uint8_t a1[7], a2[7];
+	uint8_t iocap_a[3], iocap_b[3];
+	uint8_t pdu[66];
+	ssize_t n;
+	size_t dh_len;
+
+	smp_pack_addr(a1, sc->local_addr, sc->local_addr_type);
+	smp_pack_addr(a2, sc->remote_addr, sc->remote_addr_type);
+
+	/* IOcap: [AuthReq, OOB, IO_cap] per spec */
+	iocap_a[0] = preq[3];
+	iocap_a[1] = preq[2];
+	iocap_a[2] = preq[1];
+	iocap_b[0] = pres[3];
+	iocap_b[1] = pres[2];
+	iocap_b[2] = pres[1];
+
+	/* Generate P-256 key pair */
+	pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
+	if (pctx == NULL)
+		return (-1);
+	EVP_PKEY_keygen_init(pctx);
+	EVP_PKEY_CTX_set_ec_paramgen_curve_nid(pctx, NID_X9_62_prime256v1);
+	if (EVP_PKEY_keygen(pctx, &our_key) <= 0) {
+		EVP_PKEY_CTX_free(pctx);
+		return (-1);
+	}
+	EVP_PKEY_CTX_free(pctx);
+
+	/* Extract uncompressed public key */
+	{
+		size_t pklen = sizeof(our_pk_raw);
+		if (EVP_PKEY_get_octet_string_param(our_key,
+		    OSSL_PKEY_PARAM_PUB_KEY, our_pk_raw,
+		    sizeof(our_pk_raw), &pklen) <= 0) {
+			EVP_PKEY_free(our_key);
+			return (-1);
+		}
+	}
+
+	/* Send our Public Key: [0x0C, x(32), y(32)] */
+	pdu[0] = SMP_PAIRING_PUBLIC_KEY;
+	memcpy(pdu + 1, our_pk_raw + 1, 64);
+	if (send(sc->fd, pdu, 65, 0) < 0) {
+		EVP_PKEY_free(our_key);
+		return (-1);
+	}
+
+	/* Receive peer's Public Key */
+	n = recv(sc->fd, pdu, 65, 0);
+	if (n < 65 || pdu[0] != SMP_PAIRING_PUBLIC_KEY) {
+		EVP_PKEY_free(our_key);
+		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
+		    EACCES : EPROTO;
+		return (-1);
+	}
+	peer_pk_raw[0] = 0x04;
+	memcpy(peer_pk_raw + 1, pdu + 1, 64);
+
+	/* Reconstruct peer EVP_PKEY */
+	{
+		OSSL_PARAM params[3];
+		EVP_PKEY_CTX *fctx;
+
+		static char curve[] = "prime256v1";
+		params[0] = OSSL_PARAM_construct_utf8_string(
+		    OSSL_PKEY_PARAM_GROUP_NAME, curve, 0);
+		params[1] = OSSL_PARAM_construct_octet_string(
+		    OSSL_PKEY_PARAM_PUB_KEY, peer_pk_raw, 65);
+		params[2] = OSSL_PARAM_construct_end();
+
+		peer_key = NULL;
+		fctx = EVP_PKEY_CTX_new_from_name(NULL, "EC", NULL);
+		EVP_PKEY_fromdata_init(fctx);
+		EVP_PKEY_fromdata(fctx, &peer_key, EVP_PKEY_PUBLIC_KEY,
+		    params);
+		EVP_PKEY_CTX_free(fctx);
+
+		if (peer_key == NULL) {
+			EVP_PKEY_free(our_key);
+			return (-1);
+		}
+	}
+
+	/* Compute ECDH shared secret (DHKey) */
+	{
+		EVP_PKEY_CTX *dctx;
+
+		dctx = EVP_PKEY_CTX_new(our_key, NULL);
+		EVP_PKEY_derive_init(dctx);
+		EVP_PKEY_derive_set_peer(dctx, peer_key);
+		dh_len = sizeof(dhkey);
+		if (EVP_PKEY_derive(dctx, dhkey, &dh_len) <= 0) {
+			EVP_PKEY_CTX_free(dctx);
+			EVP_PKEY_free(peer_key);
+			EVP_PKEY_free(our_key);
+			return (-1);
+		}
+		EVP_PKEY_CTX_free(dctx);
+	}
+
+	EVP_PKEY_free(peer_key);
+	EVP_PKEY_free(our_key);
+
+	/*
+	 * Just Works SC: exchange nonces directly (no confirm phase).
+	 * Spec Section 2.3.5.6.2 Figure 2.3
+	 */
+	smp_random(na, sizeof(na));
+
+	pdu[0] = SMP_PAIRING_CONFIRM;
+	smp_f4(our_pk_raw + 1, peer_pk_raw + 1, na, 0, pdu + 1);
+	if (send(sc->fd, pdu, 17, 0) < 0)
+		return (-1);
+
+	/* Receive peer confirm */
+	n = recv(sc->fd, pdu, 17, 0);
+	if (n < 17 || pdu[0] != SMP_PAIRING_CONFIRM) {
+		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
+		    EACCES : EPROTO;
+		return (-1);
+	}
+
+	/* Send our nonce */
+	pdu[0] = SMP_PAIRING_RANDOM;
+	memcpy(pdu + 1, na, 16);
+	if (send(sc->fd, pdu, 17, 0) < 0)
+		return (-1);
+
+	/* Receive peer nonce */
+	n = recv(sc->fd, pdu, 17, 0);
+	if (n < 17 || pdu[0] != SMP_PAIRING_RANDOM) {
+		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
+		    EACCES : EPROTO;
+		return (-1);
+	}
+	memcpy(nb, pdu + 1, 16);
+
+	/* Compute MacKey and LTK */
+	smp_f5(dhkey, na, nb, a1, a2, mackey, ltk);
+
+	/* Compute DHKey checks */
+	{
+		uint8_t r[16];
+		memset(r, 0, sizeof(r));
+		smp_f6(mackey, na, nb, r, iocap_a, a1, a2, ea);
+		smp_f6(mackey, nb, na, r, iocap_b, a2, a1, eb);
+	}
+
+	/* Send our DHKey Check (Ea) */
+	pdu[0] = SMP_PAIRING_DHKEY_CHECK;
+	memcpy(pdu + 1, ea, 16);
+	if (send(sc->fd, pdu, 17, 0) < 0)
+		return (-1);
+
+	/* Receive peer's DHKey Check (Eb) */
+	n = recv(sc->fd, pdu, 17, 0);
+	if (n < 17 || pdu[0] != SMP_PAIRING_DHKEY_CHECK) {
+		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
+		    EACCES : EPROTO;
+		return (-1);
+	}
+
+	if (memcmp(pdu + 1, eb, 16) != 0) {
+		pdu[0] = SMP_PAIRING_FAILED;
+		pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
+		send(sc->fd, pdu, 2, 0);
+		errno = EACCES;
+		return (-1);
+	}
+
+	/* Start encryption with SC-derived LTK (rand=0, ediv=0) */
+	{
+		uint8_t params[28];
+		params[0] = sc->con_handle & 0xFF;
+		params[1] = (sc->con_handle >> 8) & 0xFF;
+		memset(params + 2, 0, 10);
+		memcpy(params + 12, ltk, 16);
+		if (hci_send_cmd(sc->hci_fd, 0x2019, params,
+		    sizeof(params)) < 0)
+			return (-1);
+	}
+
+	/* Store SC bond */
+	{
+		struct smp_bond bond;
+		memset(&bond, 0, sizeof(bond));
+		memcpy(bond.addr, sc->remote_addr, 6);
+		bond.addr_type = sc->remote_addr_type;
+		memcpy(bond.ltk, ltk, 16);
+		bond.has_ltk = true;
+		bond.is_sc = true;
+
+		/* Receive optional IRK distribution */
+		for (int i = 0; i < 2; i++) {
+			struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
+			setsockopt(sc->fd, SOL_SOCKET, SO_RCVTIMEO,
+			    &tv, sizeof(tv));
+			n = recv(sc->fd, pdu, sizeof(pdu), 0);
+			if (n < 1)
+				break;
+			if (pdu[0] == SMP_IDENTITY_INFORMATION && n >= 17) {
+				memcpy(bond.irk, pdu + 1, 16);
+				bond.has_irk = true;
+			} else if (pdu[0] == SMP_IDENTITY_ADDRESS_INFO &&
+			    n >= 8) {
+				bond.addr_type = pdu[1];
+				memcpy(bond.addr, pdu + 2, 6);
+			}
+		}
+
+		if (sc->bond_db != NULL &&
+		    sc->bond_db->count < SMP_MAX_BONDS) {
+			sc->bond_db->bonds[sc->bond_db->count++] = bond;
+			smp_bond_db_save(sc->bond_db);
+		}
+	}
 
 	return (0);
 }

@@ -22,6 +22,10 @@
 #define SMP_IDENTITY_INFORMATION	0x08
 #define SMP_IDENTITY_ADDRESS_INFO	0x09
 #define SMP_SIGNING_INFORMATION		0x0A
+#define SMP_SECURITY_REQUEST		0x0B
+#define SMP_PAIRING_PUBLIC_KEY		0x0C
+#define SMP_PAIRING_DHKEY_CHECK		0x0D
+#define SMP_PAIRING_KEYPRESS_NOTIFY	0x0E
 
 /* IO capabilities (Core Spec Vol 3 Part H Section 2.3.2) */
 #define SMP_IO_DISPLAY_ONLY		0x00
@@ -64,6 +68,7 @@ struct smp_bond {
 	uint8_t		irk[16];	/* Identity Resolving Key */
 	bool		has_ltk;
 	bool		has_irk;
+	bool		is_sc;		/* paired with LE Secure Connections */
 };
 
 #define SMP_MAX_BONDS	32
