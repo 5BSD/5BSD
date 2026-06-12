@@ -483,16 +483,71 @@ smp_encrypt_with_ltk(struct smp_conn *sc, const struct smp_bond *bond)
 }
 
 /*
+ * Resolve a Resolvable Private Address (RPA) against an IRK.
+ *
+ * An RPA is a random address where the upper 2 bits of the MSB are 01.
+ * Format: [prand(3) || hash(3)], total 6 bytes.
+ * hash = ah(IRK, prand) = E(IRK, padding(13) || prand(3))[0..2]
+ *
+ * Core Spec Vol 3 Part H Section 2.2.2
+ */
+static bool
+smp_rpa_matches(const uint8_t irk[16], const uint8_t addr[6])
+{
+	uint8_t prand[3], hash_expected[3];
+	uint8_t plaintext[16], cipher[16];
+
+	/* RPA: addr[5] has upper 2 bits = 01 */
+	if ((addr[5] & 0xC0) != 0x40)
+		return (false);
+
+	/* prand is the upper 3 bytes (addr[3..5]) */
+	prand[0] = addr[3];
+	prand[1] = addr[4];
+	prand[2] = addr[5];
+
+	/* hash is the lower 3 bytes (addr[0..2]) */
+	hash_expected[0] = addr[0];
+	hash_expected[1] = addr[1];
+	hash_expected[2] = addr[2];
+
+	/* ah(k, r) = E(k, r') mod 2^24, where r' = padding || prand */
+	memset(plaintext, 0, 13);
+	plaintext[13] = prand[0];
+	plaintext[14] = prand[1];
+	plaintext[15] = prand[2];
+
+	smp_aes128(irk, plaintext, cipher);
+
+	return (memcmp(cipher, hash_expected, 3) == 0);
+}
+
+/*
  * Find a bond by device address.
+ *
+ * First tries exact address match.  If the address is a Resolvable
+ * Private Address (RPA) and no exact match is found, resolves against
+ * each stored IRK per Core Spec Vol 3 Part H Section 2.2.2.
  */
 struct smp_bond *
 smp_find_bond(struct smp_bond_db *db, const uint8_t *addr, uint8_t addr_type)
 {
+	/* Exact match first */
 	for (int i = 0; i < db->count; i++) {
 		if (db->bonds[i].addr_type == addr_type &&
 		    memcmp(db->bonds[i].addr, addr, 6) == 0)
 			return (&db->bonds[i]);
 	}
+
+	/* Try IRK-based RPA resolution for random addresses */
+	if (addr_type == BDADDR_LE_RANDOM) {
+		for (int i = 0; i < db->count; i++) {
+			if (db->bonds[i].has_irk &&
+			    smp_rpa_matches(db->bonds[i].irk, addr))
+				return (&db->bonds[i]);
+		}
+	}
+
 	return (NULL);
 }
 

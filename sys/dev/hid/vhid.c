@@ -87,7 +87,6 @@ struct vhid_inst {
 struct vhid_softc {
 	device_t		dev;
 	struct vhid_inst	*insts[VHID_MAX_DEVICES];
-	int			next_unit;
 };
 
 static struct vhid_softc *vhid_sc;
@@ -327,7 +326,11 @@ vhid_ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 
 	switch (cmd) {
 	case VHID_CREATE:
-		unit = vhid_sc->next_unit;
+		/* Find first free slot */
+		for (unit = 0; unit < VHID_MAX_DEVICES; unit++) {
+			if (vhid_sc->insts[unit] == NULL)
+				break;
+		}
 		if (unit >= VHID_MAX_DEVICES)
 			return (ENOSPC);
 
@@ -345,7 +348,6 @@ vhid_ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		vi->cdev->si_drv1 = vi;
 
 		vhid_sc->insts[unit] = vi;
-		vhid_sc->next_unit = unit + 1;
 
 		*(int *)data = unit;
 		return (0);
@@ -523,7 +525,6 @@ vhid_attach(device_t dev)
 
 	sc = device_get_softc(dev);
 	sc->dev = dev;
-	sc->next_unit = 0;
 	vhid_sc = sc;
 
 	/* Create /dev/vhid control device */

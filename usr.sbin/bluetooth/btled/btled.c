@@ -274,12 +274,20 @@ main(int argc, char *argv[])
 		fprintf(stderr, "btled: connected, exchanging MTU\n");
 
 	/* Get connection handle (needed for SMP encryption) */
-	if (hci_get_con_handle(dev.hci_fd, dev.addr,
-	    &dev.con_handle) < 0)
-		warn("could not get connection handle (SMP may fail)");
-	else if (dev.debug)
-		fprintf(stderr, "btled: connection handle=%04x\n",
-		    dev.con_handle);
+	{
+		int retries;
+		for (retries = 0; retries < 5; retries++) {
+			if (hci_get_con_handle(dev.hci_fd, dev.addr,
+			    &dev.con_handle) == 0)
+				break;
+			usleep(200000); /* 200ms — wait for HCI con list */
+		}
+		if (retries == 5)
+			errx(1, "could not get HCI connection handle");
+		if (dev.debug)
+			fprintf(stderr, "btled: connection handle=%04x\n",
+			    dev.con_handle);
+	}
 
 	if (att_exchange_mtu(&dev.att, ATT_MAX_MTU) < 0)
 		warn("MTU exchange failed, using default %d", ATT_DEFAULT_MTU);
@@ -401,7 +409,12 @@ main(int argc, char *argv[])
 	hogp_cleanup(&dev);
 	cleanup_dev = NULL;
 
-	return (0);
+	/*
+	 * Exit 0 for clean signal shutdown, 1 for disconnect.
+	 * A service manager (rc, oracled) can restart on exit 1
+	 * for automatic reconnection.
+	 */
+	return (running ? 1 : 0);
 }
 
 /*
@@ -711,7 +724,7 @@ hogp_event_loop(struct hogp_device *dev)
 		}
 
 		if (pfd.revents & (POLLERR | POLLHUP)) {
-			warnx("connection lost");
+			warnx("BLE link disconnected, exiting for restart");
 			break;
 		}
 
