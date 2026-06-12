@@ -467,7 +467,7 @@ smp_pair(struct smp_conn *sc)
 	/*
 	 * Step 7: Derive STK
 	 */
-	smp_s1(tk, mrand, srand, stk);
+	smp_s1(tk, srand, mrand, stk);
 
 	/*
 	 * Step 8: Start encryption via HCI LE_Start_Encryption
@@ -660,7 +660,7 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 	EVP_PKEY *our_key = NULL, *peer_key = NULL;
 	EVP_PKEY_CTX *pctx;
 	uint8_t our_pk_raw[65], peer_pk_raw[65];
-	uint8_t pka_le[64], pkb_le[64];
+	uint8_t pka_be[32], pkb_be[32];
 	uint8_t dhkey[32];
 	uint8_t na[16], nb[16];
 	uint8_t mackey[16], ltk[16];
@@ -727,7 +727,7 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 	pdu[0] = SMP_PAIRING_PUBLIC_KEY;
 	swap_buf(pdu + 1, our_pk_raw + 1, 32);
 	swap_buf(pdu + 33, our_pk_raw + 33, 32);
-	memcpy(pka_le, pdu + 1, 64);
+	memcpy(pka_be, our_pk_raw + 1, 32);
 	if (send(sc->fd, pdu, 65, 0) < 0) {
 		EVP_PKEY_free(our_key);
 		return (-1);
@@ -741,10 +741,10 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		    EACCES : EPROTO;
 		return (-1);
 	}
-	memcpy(pkb_le, pdu + 1, 64);
 	peer_pk_raw[0] = 0x04;
 	swap_buf(peer_pk_raw + 1, pdu + 1, 32);
 	swap_buf(peer_pk_raw + 33, pdu + 33, 32);
+	memcpy(pkb_be, peer_pk_raw + 1, 32);
 
 	/* Build peer EVP_PKEY and compute DHKey */
 	{
@@ -796,7 +796,7 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		ri = 0x80 | ((passkey >> i) & 1);
 
 		smp_random(nai, sizeof(nai));
-		smp_f4(pka_le, pkb_le, nai, ri, cai);
+		smp_f4(pka_be, pkb_be, nai, ri, cai);
 
 		/* Send our confirm Cai */
 		pdu[0] = SMP_PAIRING_CONFIRM;
@@ -829,7 +829,7 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		memcpy(nbi, pdu + 1, 16);
 
 		/* Verify Cbi = f4(PKbx, PKax, Nbi, rbi) */
-		smp_f4(pkb_le, pka_le, nbi, ri, cbi_verify);
+		smp_f4(pkb_be, pka_be, nbi, ri, cbi_verify);
 		if (memcmp(cbi_recv, cbi_verify, 16) != 0) {
 			pdu[0] = SMP_PAIRING_FAILED;
 			pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
@@ -1155,15 +1155,16 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7])
 	 *
 	 * We keep two representations:
 	 * - our_pk_raw/peer_pk_raw: OpenSSL format (big-endian, for ECDH)
-	 * - pka_le/pkb_le: SMP wire format (little-endian, for f4/f5/f6)
+	 * - pka_be/pkb_be: big-endian x-coordinates for f4/f5/f6
+	 *   (spec crypto functions operate in big-endian per Appendix D)
 	 */
-	uint8_t pka_le[64], pkb_le[64]; /* wire-order public keys */
+	uint8_t pka_be[32], pkb_be[32]; /* BE x-coords for crypto */
 
 	/* Send our Public Key: [0x0C, x_le(32), y_le(32)] */
 	pdu[0] = SMP_PAIRING_PUBLIC_KEY;
 	swap_buf(pdu + 1, our_pk_raw + 1, 32);      /* x: BE -> LE */
 	swap_buf(pdu + 33, our_pk_raw + 33, 32);     /* y: BE -> LE */
-	memcpy(pka_le, pdu + 1, 64);                 /* save LE copy */
+	memcpy(pka_be, our_pk_raw + 1, 32);          /* save BE x-coord */
 	if (send(sc->fd, pdu, 65, 0) < 0) {
 		EVP_PKEY_free(our_key);
 		return (-1);
@@ -1177,12 +1178,11 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7])
 		    EACCES : EPROTO;
 		return (-1);
 	}
-	memcpy(pkb_le, pdu + 1, 64);                 /* save LE copy */
-
 	/* Convert peer PK to OpenSSL big-endian for ECDH */
 	peer_pk_raw[0] = 0x04;
 	swap_buf(peer_pk_raw + 1, pdu + 1, 32);      /* x: LE -> BE */
 	swap_buf(peer_pk_raw + 33, pdu + 33, 32);    /* y: LE -> BE */
+	memcpy(pkb_be, peer_pk_raw + 1, 32);         /* save BE x-coord */
 
 	/* Reconstruct peer EVP_PKEY */
 	{
@@ -1280,7 +1280,7 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7])
 	/* Verify Cb = f4(PKbx, PKax, Nb, 0) */
 	{
 		uint8_t cb_verify[16];
-		smp_f4(pkb_le, pka_le, nb, 0, cb_verify);
+		smp_f4(pkb_be, pka_be, nb, 0, cb_verify);
 		if (memcmp(cb_recv, cb_verify, 16) != 0) {
 			pdu[0] = SMP_PAIRING_FAILED;
 			pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
