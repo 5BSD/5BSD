@@ -769,7 +769,8 @@ pipe_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	 * spawned with a high -j number can find itself with over half of the
 	 * calls failing to find anything.
 	 */
-	if ((fp->f_flag & FNONBLOCK) != 0 && !mac_pipe_check_read_enabled()) {
+	if ((fp->f_flag & FNONBLOCK) != 0 &&
+	    (!mac_pipe_check_read_enabled() || (flags & FOF_NOAMBIENT))) {
 		if (__predict_false(uio->uio_resid == 0))
 			return (0);
 		if ((atomic_load_short(&rpipe->pipe_state) & PIPE_EOF) == 0 &&
@@ -785,9 +786,11 @@ pipe_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 		goto unlocked_error;
 
 #ifdef MAC
-	error = mac_pipe_check_read(active_cred, rpipe->pipe_pair);
-	if (error)
-		goto locked_error;
+	if (!(flags & FOF_NOAMBIENT)) {
+		error = mac_pipe_check_read(active_cred, rpipe->pipe_pair);
+		if (error)
+			goto locked_error;
+	}
 #endif
 	if (amountpipekva > (3 * maxpipekva) / 4) {
 		if ((rpipe->pipe_state & PIPE_DIRECTW) == 0 &&
@@ -1166,11 +1169,13 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 		return (EPIPE);
 	}
 #ifdef MAC
-	error = mac_pipe_check_write(active_cred, wpipe->pipe_pair);
-	if (error) {
-		pipeunlock(wpipe);
-		PIPE_UNLOCK(rpipe);
-		return (error);
+	if (!(flags & FOF_NOAMBIENT)) {
+		error = mac_pipe_check_write(active_cred, wpipe->pipe_pair);
+		if (error) {
+			pipeunlock(wpipe);
+			PIPE_UNLOCK(rpipe);
+			return (error);
+		}
 	}
 #endif
 	++wpipe->pipe_busy;

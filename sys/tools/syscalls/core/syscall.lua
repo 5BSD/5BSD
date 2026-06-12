@@ -27,6 +27,7 @@ syscall.known_flags = util.set {
 
 	-- flags beyond this point are modifiers
 	"CAPENABLED",
+	"CAPREQUIRED",
 	"NOLIB",
 	"NORETURN",
 	"NOTSTATIC",
@@ -47,15 +48,33 @@ function syscall:processThr()
 	end
 end
 
--- Processes and assigns the appropriate capability flag for this system call.
--- "SYF_CAPENABLED" for capability enabled; "0" for NOT capability enabled.
+-- Processes and assigns the appropriate capability flags for this system call.
+-- CAPREQUIRED implies CAPENABLED: a capability-only syscall must also be
+-- permitted in capability mode.
 function syscall:processCap()
-	self.cap = "0"
-	local stripped = util.stripAbiPrefix(self.name, self.prefix)
+	local capenabled = false
+	local caprequired = false
 	for k, _ in pairs(self.type) do
 		if k == "CAPENABLED" then
-			self.cap = "SYF_CAPENABLED"
+			capenabled = true
+		elseif k == "CAPREQUIRED" then
+			caprequired = true
 		end
+	end
+	if caprequired then
+		capenabled = true
+	end
+	local flags = {}
+	if capenabled then
+		flags[#flags + 1] = "SYF_CAPENABLED"
+	end
+	if caprequired then
+		flags[#flags + 1] = "SYF_CAPREQUIRED"
+	end
+	if #flags > 0 then
+		self.cap = table.concat(flags, " | ")
+	else
+		self.cap = "0"
 	end
 end
 

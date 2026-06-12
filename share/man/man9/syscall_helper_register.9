@@ -85,11 +85,24 @@ and the regular macros shall be used.
 For legacy syscall functions named without "sys_" prefixes, the "COMPAT"
 versions of the macros may be used.
 .Pp
-The only valid flag for the
+The valid flags for the
 .Fa flags
-argument to the "F" variants of the initializer macros is
-.Dv SYF_CAPENABLED .
-This flag indicates that the syscall is allowed in capability mode.
+argument to the "F" variants of the initializer macros are:
+.Bl -tag -width SYF_CAPREQUIRED
+.It Dv SYF_CAPENABLED
+The syscall is allowed in capability mode.
+.It Dv SYF_CAPREQUIRED
+The syscall is only allowed in capability mode.
+Callers not in capability mode receive
+.Er ENOTCAPABLE .
+This flag implies
+.Dv SYF_CAPENABLED ;
+it is not necessary to set both.
+Intended for capability-pure syscall variants that contain no ambient
+authority checks.
+.El
+.Pp
+These flags may be combined with bitwise OR.
 .Pp
 The
 .Fn syscall_helper_unregister

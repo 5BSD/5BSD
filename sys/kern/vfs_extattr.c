@@ -171,7 +171,7 @@ out:
  */
 static int
 extattr_set_vp(struct vnode *vp, int attrnamespace, const char *attrname,
-    void *data, size_t nbytes, struct thread *td)
+    void *data, size_t nbytes, struct thread *td, bool cap_noambient)
 {
 	struct mount *mp;
 	struct uio auio;
@@ -199,10 +199,12 @@ extattr_set_vp(struct vnode *vp, int attrnamespace, const char *attrname,
 	cnt = nbytes;
 
 #ifdef MAC
-	error = mac_vnode_check_setextattr(td->td_ucred, vp, attrnamespace,
-	    attrname);
-	if (error)
-		goto done;
+	if (!cap_noambient) {
+		error = mac_vnode_check_setextattr(td->td_ucred, vp,
+		    attrnamespace, attrname);
+		if (error)
+			goto done;
+	}
 #endif
 
 	error = VOP_SETEXTATTR(vp, attrnamespace, attrname, &auio,
@@ -260,7 +262,7 @@ kern_extattr_set_fd(struct thread *td, int fd, int attrnamespace,
 		return (error);
 
 	error = extattr_set_vp(fp->f_vnode, attrnamespace,
-	    attrname, data, nbytes, td);
+	    attrname, data, nbytes, td, false);
 	fdrop(fp, td);
 
 	return (error);
@@ -332,7 +334,7 @@ kern_extattr_set_path(struct thread *td, const char *path, int attrnamespace,
 	NDFREE_PNBUF(&nd);
 
 	error = extattr_set_vp(nd.ni_vp, attrnamespace, attrname, data,
-	    nbytes, td);
+	    nbytes, td, false);
 
 	vrele(nd.ni_vp);
 	return (error);
@@ -350,7 +352,7 @@ kern_extattr_set_path(struct thread *td, const char *path, int attrnamespace,
  */
 static int
 extattr_get_vp(struct vnode *vp, int attrnamespace, const char *attrname,
-    void *data, size_t nbytes, struct thread *td)
+    void *data, size_t nbytes, struct thread *td, bool cap_noambient)
 {
 	struct uio auio, *auiop;
 	struct iovec aiov;
@@ -387,10 +389,12 @@ extattr_get_vp(struct vnode *vp, int attrnamespace, const char *attrname,
 		sizep = &size;
 
 #ifdef MAC
-	error = mac_vnode_check_getextattr(td->td_ucred, vp, attrnamespace,
-	    attrname);
-	if (error)
-		goto done;
+	if (!cap_noambient) {
+		error = mac_vnode_check_getextattr(td->td_ucred, vp,
+		    attrnamespace, attrname);
+		if (error)
+			goto done;
+	}
 #endif
 
 	error = VOP_GETEXTATTR(vp, attrnamespace, attrname, auiop, sizep,
@@ -448,7 +452,7 @@ kern_extattr_get_fd(struct thread *td, int fd, int attrnamespace,
 		return (error);
 
 	error = extattr_get_vp(fp->f_vnode, attrnamespace,
-	    attrname, data, nbytes, td);
+	    attrname, data, nbytes, td, false);
 
 	fdrop(fp, td);
 	return (error);
@@ -518,7 +522,7 @@ kern_extattr_get_path(struct thread *td, const char *path, int attrnamespace,
 	NDFREE_PNBUF(&nd);
 
 	error = extattr_get_vp(nd.ni_vp, attrnamespace, attrname, data,
-	    nbytes, td);
+	    nbytes, td, false);
 
 	vrele(nd.ni_vp);
 	return (error);
@@ -536,7 +540,7 @@ kern_extattr_get_path(struct thread *td, const char *path, int attrnamespace,
  */
 static int
 extattr_delete_vp(struct vnode *vp, int attrnamespace, const char *attrname,
-    struct thread *td)
+    struct thread *td, bool cap_noambient)
 {
 	struct mount *mp;
 	int error;
@@ -547,10 +551,12 @@ extattr_delete_vp(struct vnode *vp, int attrnamespace, const char *attrname,
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 
 #ifdef MAC
-	error = mac_vnode_check_deleteextattr(td->td_ucred, vp, attrnamespace,
-	    attrname);
-	if (error)
-		goto done;
+	if (!cap_noambient) {
+		error = mac_vnode_check_deleteextattr(td->td_ucred, vp,
+		    attrnamespace, attrname);
+		if (error)
+			goto done;
+	}
 #endif
 
 	error = VOP_DELETEEXTATTR(vp, attrnamespace, attrname, td->td_ucred,
@@ -607,7 +613,7 @@ kern_extattr_delete_fd(struct thread *td, int fd, int attrnamespace,
 		return (error);
 
 	error = extattr_delete_vp(fp->f_vnode, attrnamespace,
-	    attrname, td);
+	    attrname, td, false);
 	fdrop(fp, td);
 	return (error);
 }
@@ -672,7 +678,8 @@ kern_extattr_delete_path(struct thread *td, const char *path, int attrnamespace,
 		return(error);
 	NDFREE_PNBUF(&nd);
 
-	error = extattr_delete_vp(nd.ni_vp, attrnamespace, attrname, td);
+	error = extattr_delete_vp(nd.ni_vp, attrnamespace, attrname, td,
+	    false);
 	vrele(nd.ni_vp);
 	return(error);
 }
@@ -689,7 +696,7 @@ kern_extattr_delete_path(struct thread *td, const char *path, int attrnamespace,
  */
 static int
 extattr_list_vp(struct vnode *vp, int attrnamespace, struct uio *auiop,
-    struct thread *td)
+    struct thread *td, bool cap_noambient)
 {
 	size_t size, *sizep;
 	ssize_t cnt;
@@ -707,10 +714,13 @@ extattr_list_vp(struct vnode *vp, int attrnamespace, struct uio *auiop,
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 
 #ifdef MAC
-	error = mac_vnode_check_listextattr(td->td_ucred, vp, attrnamespace);
-	if (error) {
-		VOP_UNLOCK(vp);
-		return (error);
+	if (!cap_noambient) {
+		error = mac_vnode_check_listextattr(td->td_ucred, vp,
+		    attrnamespace);
+		if (error) {
+			VOP_UNLOCK(vp);
+			return (error);
+		}
 	}
 #endif
 
@@ -773,7 +783,8 @@ kern_extattr_list_fd(struct thread *td, int fd, int attrnamespace,
 	if (error)
 		return (error);
 
-	error = extattr_list_vp(fp->f_vnode, attrnamespace, auiop, td);
+	error = extattr_list_vp(fp->f_vnode, attrnamespace, auiop, td,
+	    false);
 
 	fdrop(fp, td);
 	return (error);
@@ -850,8 +861,129 @@ kern_extattr_list_path(struct thread *td, const char *path, int attrnamespace,
 		return (error);
 	NDFREE_PNBUF(&nd);
 
-	error = extattr_list_vp(nd.ni_vp, attrnamespace, auiop, td);
+	error = extattr_list_vp(nd.ni_vp, attrnamespace, auiop, td, false);
 
 	vrele(nd.ni_vp);
+	return (error);
+}
+
+/*
+ * Capability-pure extattr syscalls (SYF_CAPREQUIRED).
+ */
+int
+sys_cap_extattr_set_fd(struct thread *td,
+    struct cap_extattr_set_fd_args *uap)
+{
+	struct file *fp;
+	char attrname[EXTATTR_MAXNAMELEN + 1];
+	cap_rights_t rights;
+	int error;
+
+	error = copyinstr(uap->attrname, attrname, sizeof(attrname), NULL);
+	if (error)
+		return (error);
+
+	AUDIT_ARG_FD(uap->fd);
+	AUDIT_ARG_VALUE(uap->attrnamespace);
+	AUDIT_ARG_TEXT(attrname);
+
+	error = getvnode_path(td, uap->fd,
+	    cap_rights_init_one(&rights, CAP_EXTATTR_SET), NULL, &fp);
+	if (error)
+		return (error);
+	error = extattr_set_vp(fp->f_vnode, uap->attrnamespace,
+	    attrname, uap->data, uap->nbytes, td, true);
+	fdrop(fp, td);
+	return (error);
+}
+
+int
+sys_cap_extattr_get_fd(struct thread *td,
+    struct cap_extattr_get_fd_args *uap)
+{
+	struct file *fp;
+	char attrname[EXTATTR_MAXNAMELEN + 1];
+	cap_rights_t rights;
+	int error;
+
+	error = copyinstr(uap->attrname, attrname, sizeof(attrname), NULL);
+	if (error)
+		return (error);
+
+	AUDIT_ARG_FD(uap->fd);
+	AUDIT_ARG_VALUE(uap->attrnamespace);
+	AUDIT_ARG_TEXT(attrname);
+
+	error = getvnode_path(td, uap->fd,
+	    cap_rights_init_one(&rights, CAP_EXTATTR_GET), NULL, &fp);
+	if (error)
+		return (error);
+	error = extattr_get_vp(fp->f_vnode, uap->attrnamespace,
+	    attrname, uap->data, uap->nbytes, td, true);
+	fdrop(fp, td);
+	return (error);
+}
+
+int
+sys_cap_extattr_delete_fd(struct thread *td,
+    struct cap_extattr_delete_fd_args *uap)
+{
+	struct file *fp;
+	char attrname[EXTATTR_MAXNAMELEN + 1];
+	cap_rights_t rights;
+	int error;
+
+	error = copyinstr(uap->attrname, attrname, sizeof(attrname), NULL);
+	if (error)
+		return (error);
+
+	AUDIT_ARG_FD(uap->fd);
+	AUDIT_ARG_VALUE(uap->attrnamespace);
+	AUDIT_ARG_TEXT(attrname);
+
+	error = getvnode_path(td, uap->fd,
+	    cap_rights_init_one(&rights, CAP_EXTATTR_DELETE), NULL, &fp);
+	if (error)
+		return (error);
+	error = extattr_delete_vp(fp->f_vnode, uap->attrnamespace,
+	    attrname, td, true);
+	fdrop(fp, td);
+	return (error);
+}
+
+int
+sys_cap_extattr_list_fd(struct thread *td,
+    struct cap_extattr_list_fd_args *uap)
+{
+	struct file *fp;
+	struct uio auio, *auiop;
+	struct iovec aiov;
+	cap_rights_t rights;
+	int error;
+
+	AUDIT_ARG_FD(uap->fd);
+	AUDIT_ARG_VALUE(uap->attrnamespace);
+
+	if (uap->data != NULL) {
+		aiov.iov_base = uap->data;
+		aiov.iov_len = uap->nbytes;
+		auio.uio_iov = &aiov;
+		auio.uio_iovcnt = 1;
+		auio.uio_offset = 0;
+		auio.uio_resid = uap->nbytes;
+		auio.uio_rw = UIO_READ;
+		auio.uio_segflg = UIO_USERSPACE;
+		auio.uio_td = td;
+		auiop = &auio;
+	} else
+		auiop = NULL;
+
+	error = getvnode_path(td, uap->fd,
+	    cap_rights_init_one(&rights, CAP_EXTATTR_LIST), NULL, &fp);
+	if (error)
+		return (error);
+	error = extattr_list_vp(fp->f_vnode, uap->attrnamespace, auiop, td,
+	    true);
+	fdrop(fp, td);
 	return (error);
 }

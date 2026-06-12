@@ -68,6 +68,12 @@
 
 static MALLOC_DEFINE(M_SENDFILE, "sendfile", "sendfile dynamic memory");
 
+/*
+ * Internal flag: skip MAC socket send check for capability-pure path.
+ * Not exposed to userspace; stripped before use in sendfile logic.
+ */
+#define	SF_CAP_NOAMBIENT	0x00008000
+
 #define	EXT_FLAG_NOCACHE	EXT_FLAG_VENDOR2
 #define	EXT_FLAG_CACHE_LAST	EXT_FLAG_VENDOR3
 
@@ -740,10 +746,13 @@ vn_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 	pr = so->so_proto;
 
 #ifdef MAC
-	error = mac_socket_check_send(td->td_ucred, so);
-	if (error != 0)
-		goto out;
+	if ((flags & SF_CAP_NOAMBIENT) == 0) {
+		error = mac_socket_check_send(td->td_ucred, so);
+		if (error != 0)
+			goto out;
+	}
 #endif
+	flags &= ~SF_CAP_NOAMBIENT;
 
 	SFSTAT_INC(sf_syscalls);
 	SFSTAT_ADD(sf_rhpages_requested, SF_READAHEAD(flags));
@@ -1281,7 +1290,24 @@ int
 sys_sendfile(struct thread *td, struct sendfile_args *uap)
 {
 
+	uap->flags &= ~SF_CAP_NOAMBIENT;
 	return (sendfile(td, uap, 0));
+}
+
+int
+sys_cap_sendfile(struct thread *td, struct cap_sendfile_args *uap)
+{
+	struct sendfile_args args;
+
+	args.fd = uap->fd;
+	args.s = uap->s;
+	args.offset = uap->offset;
+	args.nbytes = uap->nbytes;
+	args.hdtr = uap->hdtr;
+	args.sbytes = uap->sbytes;
+	args.flags = uap->flags | SF_CAP_NOAMBIENT;
+
+	return (sendfile(td, &args, 0));
 }
 
 #ifdef COMPAT_FREEBSD4
@@ -1296,7 +1322,7 @@ freebsd4_sendfile(struct thread *td, struct freebsd4_sendfile_args *uap)
 	args.nbytes = uap->nbytes;
 	args.hdtr = uap->hdtr;
 	args.sbytes = uap->sbytes;
-	args.flags = uap->flags;
+	args.flags = uap->flags & ~SF_CAP_NOAMBIENT;
 
 	return (sendfile(td, &args, 1));
 }

@@ -91,12 +91,8 @@ MALLOC_DEFINE(M_FADVISE, "fadvise", "posix_fadvise(2) information");
 
 static int kern_chflagsat(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, u_long flags, int atflag);
-static int setfflags(struct thread *td, struct vnode *, u_long);
-static int getutimes(const struct timeval *, enum uio_seg, struct timespec *);
 static int getutimens(const struct timespec *, enum uio_seg,
     struct timespec *, int *);
-static int setutimes(struct thread *td, struct vnode *,
-    const struct timespec *, int, int);
 static int vn_access(struct vnode *vp, int user_flags, struct ucred *cred,
     struct thread *td);
 static int kern_fhlinkat(struct thread *td, int fd, const char *path,
@@ -271,8 +267,9 @@ statfs_scale_blocks(struct statfs *sf, long max_size)
 	sf->f_bavail >>= shift;
 }
 
-static int
-kern_do_statfs(struct thread *td, struct mount *mp, struct statfs *buf)
+int
+kern_do_statfs(struct thread *td, struct mount *mp, struct statfs *buf,
+    bool cap_noambient)
 {
 	int error;
 
@@ -283,9 +280,11 @@ kern_do_statfs(struct thread *td, struct mount *mp, struct statfs *buf)
 	if (error != 0)
 		return (error);
 #ifdef MAC
-	error = mac_mount_check_stat(td->td_ucred, mp);
-	if (error != 0)
-		goto out;
+	if (!cap_noambient) {
+		error = mac_mount_check_stat(td->td_ucred, mp);
+		if (error != 0)
+			goto out;
+	}
 #endif
 	error = VFS_STATFS(mp, buf);
 	if (error != 0)
@@ -335,7 +334,7 @@ kern_statfs(struct thread *td, const char *path, enum uio_seg pathseg,
 	NDFREE_PNBUF(&nd);
 	mp = vfs_ref_from_vp(nd.ni_vp);
 	vrele(nd.ni_vp);
-	return (kern_do_statfs(td, mp, buf));
+	return (kern_do_statfs(td, mp, buf, false));
 }
 
 /*
@@ -383,7 +382,7 @@ kern_fstatfs(struct thread *td, int fd, struct statfs *buf)
 #endif
 	mp = vfs_ref_from_vp(vp);
 	fdrop(fp, td);
-	return (kern_do_statfs(td, mp, buf));
+	return (kern_do_statfs(td, mp, buf, false));
 }
 
 /*
@@ -2830,8 +2829,9 @@ kern_readlink_vp(struct vnode *vp, char *buf, enum uio_seg bufseg, size_t count,
 /*
  * Common implementation code for chflags() and fchflags().
  */
-static int
-setfflags(struct thread *td, struct vnode *vp, u_long flags)
+int
+setfflags(struct thread *td, struct vnode *vp, u_long flags,
+    bool cap_noambient)
 {
 	struct mount *mp;
 	struct vattr vattr;
@@ -2847,7 +2847,7 @@ setfflags(struct thread *td, struct vnode *vp, u_long flags)
 	 * if they are allowed to set flags and programs assume that
 	 * chown can't fail when done as root.
 	 */
-	if (VN_ISDEV(vp)) {
+	if (VN_ISDEV(vp) && !cap_noambient) {
 		error = priv_check(td, PRIV_VFS_CHFLAGS_DEV);
 		if (error != 0)
 			return (error);
@@ -2859,7 +2859,9 @@ setfflags(struct thread *td, struct vnode *vp, u_long flags)
 	vattr.va_flags = flags;
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 #ifdef MAC
-	error = mac_vnode_check_setflags(td->td_ucred, vp, vattr.va_flags);
+	if (!cap_noambient)
+		error = mac_vnode_check_setflags(td->td_ucred, vp,
+		    vattr.va_flags);
 	if (error == 0)
 #endif
 		error = VOP_SETATTR(vp, &vattr, td->td_ucred);
@@ -2940,7 +2942,7 @@ kern_chflagsat(struct thread *td, int fd, const char *path,
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	NDFREE_PNBUF(&nd);
-	error = setfflags(td, nd.ni_vp, flags);
+	error = setfflags(td, nd.ni_vp, flags, false);
 	vrele(nd.ni_vp);
 	return (error);
 }
@@ -2973,7 +2975,7 @@ sys_fchflags(struct thread *td, struct fchflags_args *uap)
 		VOP_UNLOCK(fp->f_vnode);
 	}
 #endif
-	error = setfflags(td, fp->f_vnode, uap->flags);
+	error = setfflags(td, fp->f_vnode, uap->flags, false);
 	fdrop(fp, td);
 	return (error);
 }
@@ -2982,7 +2984,8 @@ sys_fchflags(struct thread *td, struct fchflags_args *uap)
  * Common implementation code for chmod(), lchmod() and fchmod().
  */
 int
-setfmode(struct thread *td, struct ucred *cred, struct vnode *vp, int mode)
+setfmode(struct thread *td, struct ucred *cred, struct vnode *vp, int mode,
+    bool cap_noambient)
 {
 	struct mount *mp;
 	struct vattr vattr;
@@ -2994,7 +2997,8 @@ setfmode(struct thread *td, struct ucred *cred, struct vnode *vp, int mode)
 	VATTR_NULL(&vattr);
 	vattr.va_mode = mode & ALLPERMS;
 #ifdef MAC
-	error = mac_vnode_check_setmode(cred, vp, vattr.va_mode);
+	if (!cap_noambient)
+		error = mac_vnode_check_setmode(cred, vp, vattr.va_mode);
 	if (error == 0)
 #endif
 		error = VOP_SETATTR(vp, &vattr, cred);
@@ -3075,7 +3079,7 @@ kern_fchmodat(struct thread *td, int fd, const char *path,
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	NDFREE_PNBUF(&nd);
-	error = setfmode(td, td->td_ucred, nd.ni_vp, mode);
+	error = setfmode(td, td->td_ucred, nd.ni_vp, mode, false);
 	vrele(nd.ni_vp);
 	return (error);
 }
@@ -3111,7 +3115,7 @@ sys_fchmod(struct thread *td, struct fchmod_args *uap)
  */
 int
 setfown(struct thread *td, struct ucred *cred, struct vnode *vp, uid_t uid,
-    gid_t gid)
+    gid_t gid, bool cap_noambient)
 {
 	struct mount *mp;
 	struct vattr vattr;
@@ -3124,8 +3128,9 @@ setfown(struct thread *td, struct ucred *cred, struct vnode *vp, uid_t uid,
 	vattr.va_uid = uid;
 	vattr.va_gid = gid;
 #ifdef MAC
-	error = mac_vnode_check_setowner(cred, vp, vattr.va_uid,
-	    vattr.va_gid);
+	if (!cap_noambient)
+		error = mac_vnode_check_setowner(cred, vp, vattr.va_uid,
+		    vattr.va_gid);
 	if (error == 0)
 #endif
 		error = VOP_SETATTR(vp, &vattr, cred);
@@ -3193,7 +3198,7 @@ kern_fchownat(struct thread *td, int fd, const char *path,
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	NDFREE_PNBUF(&nd);
-	error = setfown(td, td->td_ucred, nd.ni_vp, uid, gid);
+	error = setfown(td, td->td_ucred, nd.ni_vp, uid, gid, false);
 	vrele(nd.ni_vp);
 	return (error);
 }
@@ -3245,7 +3250,7 @@ sys_fchown(struct thread *td, struct fchown_args *uap)
 /*
  * Common implementation code for utimes(), lutimes(), and futimes().
  */
-static int
+int
 getutimes(const struct timeval *usrtvp, enum uio_seg tvpseg,
     struct timespec *tsp)
 {
@@ -3323,9 +3328,9 @@ getutimens(const struct timespec *usrtsp, enum uio_seg tspseg,
  * Common implementation code for utimes(), lutimes(), futimes(), futimens(),
  * and utimensat().
  */
-static int
+int
 setutimes(struct thread *td, struct vnode *vp, const struct timespec *ts,
-    int numtimes, int nullflag)
+    int numtimes, int nullflag, bool cap_noambient)
 {
 	struct mount *mp;
 	struct vattr vattr;
@@ -3352,8 +3357,9 @@ setutimes(struct thread *td, struct vnode *vp, const struct timespec *ts,
 	if (nullflag)
 		vattr.va_vaflags |= VA_UTIMES_NULL;
 #ifdef MAC
-	error = mac_vnode_check_setutimes(td->td_ucred, vp, vattr.va_atime,
-	    vattr.va_mtime);
+	if (!cap_noambient)
+		error = mac_vnode_check_setutimes(td->td_ucred, vp,
+		    vattr.va_atime, vattr.va_mtime);
 #endif
 	if (error == 0)
 		error = VOP_SETATTR(vp, &vattr, td->td_ucred);
@@ -3414,7 +3420,7 @@ kern_utimesat(struct thread *td, int fd, const char *path,
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	NDFREE_PNBUF(&nd);
-	error = setutimes(td, nd.ni_vp, ts, 2, tptr == NULL);
+	error = setutimes(td, nd.ni_vp, ts, 2, tptr == NULL, false);
 	vrele(nd.ni_vp);
 	return (error);
 }
@@ -3450,7 +3456,7 @@ kern_lutimes(struct thread *td, const char *path, enum uio_seg pathseg,
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	NDFREE_PNBUF(&nd);
-	error = setutimes(td, nd.ni_vp, ts, 2, tptr == NULL);
+	error = setutimes(td, nd.ni_vp, ts, 2, tptr == NULL, false);
 	vrele(nd.ni_vp);
 	return (error);
 }
@@ -3493,7 +3499,7 @@ kern_futimes(struct thread *td, int fd, const struct timeval *tptr,
 		VOP_UNLOCK(fp->f_vnode);
 	}
 #endif
-	error = setutimes(td, fp->f_vnode, ts, 2, tptr == NULL);
+	error = setutimes(td, fp->f_vnode, ts, 2, tptr == NULL, false);
 	fdrop(fp, td);
 	return (error);
 }
@@ -3529,7 +3535,7 @@ kern_futimens(struct thread *td, int fd, const struct timespec *tptr,
 		VOP_UNLOCK(fp->f_vnode);
 	}
 #endif
-	error = setutimes(td, fp->f_vnode, ts, 2, flags & UTIMENS_NULL);
+	error = setutimes(td, fp->f_vnode, ts, 2, flags & UTIMENS_NULL, false);
 	fdrop(fp, td);
 	return (error);
 }
@@ -3570,7 +3576,8 @@ kern_utimensat(struct thread *td, int fd, const char *path,
 	 */
 	NDFREE_PNBUF(&nd);
 	if ((flags & UTIMENS_EXIT) == 0)
-		error = setutimes(td, nd.ni_vp, ts, 2, flags & UTIMENS_NULL);
+		error = setutimes(td, nd.ni_vp, ts, 2, flags & UTIMENS_NULL,
+		    false);
 	vrele(nd.ni_vp);
 	return (error);
 }

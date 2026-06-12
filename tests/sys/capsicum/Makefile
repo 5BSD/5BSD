@@ -3,6 +3,7 @@
 TESTSDIR=	${TESTSBASE}/sys/capsicum
 
 ATF_TESTS_C+=	bindat_connectat
+ATF_TESTS_C+=	cap_pure_test
 ATF_TESTS_C+=	ioctls_test
 
 CFLAGS+=	-I${SRCTOP}/tests

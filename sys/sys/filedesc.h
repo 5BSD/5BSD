@@ -156,6 +156,7 @@ struct filedesc_to_leader {
 #define	UF_EXCLOSE	0x01		/* auto-close on exec */
 #define	UF_RESOLVE_BENEATH 0x02		/* lookups must be beneath this dir */
 #define	UF_FOCLOSE	0x04		/* auto-close on fork */
+#define	UF_NOAMBIENT	0x08		/* skip MAC in fileops (cap mode only) */
 
 #ifdef _KERNEL
 

@@ -972,7 +972,7 @@ ktrcapfail(enum ktr_cap_violation type, const void *data)
 	if (__predict_false(td->td_pflags & TDP_INKTRACE))
 		return;
 	if (type != CAPFAIL_SYSCALL &&
-	    (td->td_sa.callp->sy_flags & SYF_CAPENABLED) == 0)
+	    (td->td_sa.callp->sy_flags & (SYF_CAPENABLED | SYF_CAPREQUIRED)) == 0)
 		return;
 
 	req = ktr_getrequest(KTR_CAPFAIL);

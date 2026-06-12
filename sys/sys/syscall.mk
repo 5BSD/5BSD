@@ -447,4 +447,28 @@ MIASM =  \
 	renameat2.o \
 	cap_xfer_limit.o \
 	cap_cloexec_limit.o \
-	cap_clofork_limit.o
+	cap_clofork_limit.o \
+	cap_fchmod.o \
+	cap_fchown.o \
+	cap_fchflags.o \
+	cap_futimes.o \
+	cap___acl_get_fd.o \
+	cap___acl_set_fd.o \
+	cap___acl_delete_fd.o \
+	cap_extattr_set_fd.o \
+	cap_extattr_get_fd.o \
+	cap_extattr_delete_fd.o \
+	cap_extattr_list_fd.o \
+	cap_fstatfs.o \
+	cap_bind.o \
+	cap_listen.o \
+	cap_accept.o \
+	cap_connect.o \
+	cap_sendmsg.o \
+	cap_recvmsg.o \
+	cap_setsockopt.o \
+	cap_ioctl.o \
+	cap_mmap.o \
+	cap_sendfile.o \
+	cap_ftruncate.o \
+	cap_ambient_limit.o

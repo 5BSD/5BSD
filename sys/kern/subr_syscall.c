@@ -121,13 +121,28 @@ syscallenter(struct thread *td)
 #ifdef CAPABILITY_MODE
 	/*
 	 * In capability mode, we only allow access to system calls
-	 * flagged with SYF_CAPENABLED.
+	 * flagged with SYF_CAPENABLED or SYF_CAPREQUIRED.
 	 */
-	if ((se->sy_flags & SYF_CAPENABLED) == 0) {
+	if ((se->sy_flags & (SYF_CAPENABLED | SYF_CAPREQUIRED)) == 0) {
 		if (CAP_TRACING(td))
 			ktrcapfail(CAPFAIL_SYSCALL, NULL);
 		if (IN_CAPABILITY_MODE(td)) {
 			td->td_errno = error = ECAPMODE;
+			goto retval;
+		}
+	}
+
+	/*
+	 * Capability-only system calls are rejected when the caller
+	 * is NOT in capability mode.  These are capability-pure
+	 * variants that contain no ambient authority checks and must
+	 * not be reachable from ambient-authority contexts.
+	 */
+	if ((se->sy_flags & SYF_CAPREQUIRED) != 0) {
+		if (!IN_CAPABILITY_MODE(td)) {
+			if (CAP_TRACING(td))
+				ktrcapfail(CAPFAIL_SYSCALL, NULL);
+			td->td_errno = error = ENOTCAPABLE;
 			goto retval;
 		}
 	}
@@ -240,7 +255,9 @@ syscallret(struct thread *td)
 	if (__predict_false(td->td_errno == ENOTCAPABLE ||
 	    td->td_errno == ECAPMODE)) {
 		if ((trap_enotcap ||
-		    (p->p_flag2 & P2_TRAPCAP) != 0) && IN_CAPABILITY_MODE(td)) {
+		    (p->p_flag2 & P2_TRAPCAP) != 0) &&
+		    (IN_CAPABILITY_MODE(td) ||
+		    (sa->callp->sy_flags & SYF_CAPREQUIRED) != 0)) {
 			ksiginfo_init_trap(&ksi);
 			ksi.ksi_signo = SIGTRAP;
 			ksi.ksi_errno = td->td_errno;

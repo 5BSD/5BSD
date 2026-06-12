@@ -85,6 +85,7 @@ struct ucred;
 
 #define	FOF_OFFSET	0x01	/* Use the offset in uio argument */
 #define	FOF_NOLOCK	0x02	/* Do not take FOFFSET_LOCK */
+#define	FOF_NOAMBIENT	0x20	/* Skip MAC checks (capability-pure fd) */
 #define	FOF_NEXTOFF_R	0x04	/* Also update f_nextoff[UIO_READ] */
 #define	FOF_NEXTOFF_W	0x08	/* Also update f_nextoff[UIO_WRITE] */
 #define	FOF_NOUPDATE	0x10	/* Do not update f_offset */
@@ -288,8 +289,12 @@ int fget_mmap(struct thread *td, int fd, const cap_rights_t *rightsp,
     vm_prot_t *maxprotp, struct file **fpp);
 int fget_read(struct thread *td, int fd, const cap_rights_t *rightsp,
     struct file **fpp);
+int fget_read_fde_flags(struct thread *td, int fd, const cap_rights_t *rightsp,
+    struct file **fpp, uint8_t *fde_flagsp);
 int fget_write(struct thread *td, int fd, const cap_rights_t *rightsp,
     struct file **fpp);
+int fget_write_fde_flags(struct thread *td, int fd, const cap_rights_t *rightsp,
+    struct file **fpp, uint8_t *fde_flagsp);
 int fget_fcntl(struct thread *td, int fd, const cap_rights_t *rightsp,
     int needfcntl, struct file **fpp);
 int _fdrop(struct file *fp, struct thread *td);

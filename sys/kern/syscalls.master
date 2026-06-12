@@ -14,7 +14,7 @@
 ;		NODEF, NOARGS, NOPROTO, NOSTD
 ;		The COMPAT* options may be combined with one or more NO*
 ;		options separated by '|' with no spaces (e.g. COMPAT|NOARGS)
-;		The CAPENABLED option may be ORed into a type.
+;		The CAPENABLED and CAPREQUIRED options may be ORed into a type.
 ;	name	pseudo-prototype of syscall routine
 ;		If one of the following alts is different, then all appear:
 ;	altname	name of system call if different
@@ -51,6 +51,7 @@
 ;	SYSMUX	syscall multiplexer.  No prototype, argument struct, or
 ;		handler is declared or used.  Handled in MD syscall code.
 ;	CAPENABLED syscall is allowed in capability mode
+;	CAPREQUIRED syscall is only allowed in capability mode
 ;	NORETURN the syscall does not return
 ;
 ; To support programmatic generation of both the default ABI and 32-bit compat
@@ -3445,6 +3446,179 @@
 		int cap_clofork_limit(
 		    int fd,
 		    int state
+		);
+	}
+606	AUE_CAP_FCHMOD	STD|CAPREQUIRED {
+		int cap_fchmod(
+		    int fd,
+		    mode_t mode
+		);
+	}
+607	AUE_CAP_FCHOWN	STD|CAPREQUIRED {
+		int cap_fchown(
+		    int fd,
+		    uid_t uid,
+		    gid_t gid
+		);
+	}
+608	AUE_CAP_FCHFLAGS	STD|CAPREQUIRED {
+		int cap_fchflags(
+		    int fd,
+		    u_long flags
+		);
+	}
+609	AUE_CAP_FUTIMES	STD|CAPREQUIRED {
+		int cap_futimes(
+		    int fd,
+		    _In_opt_ const struct timeval *times
+		);
+	}
+610	AUE_CAP_ACL_GET_FD	STD|CAPREQUIRED {
+		int cap___acl_get_fd(
+		    int filedes,
+		    __acl_type_t type,
+		    _Out_ struct acl *aclp
+		);
+	}
+611	AUE_CAP_ACL_SET_FD	STD|CAPREQUIRED {
+		int cap___acl_set_fd(
+		    int filedes,
+		    __acl_type_t type,
+		    _In_ const struct acl *aclp
+		);
+	}
+612	AUE_CAP_ACL_DELETE_FD	STD|CAPREQUIRED {
+		int cap___acl_delete_fd(
+		    int filedes,
+		    __acl_type_t type
+		);
+	}
+613	AUE_CAP_EXTATTR_SET_FD	STD|CAPREQUIRED {
+		ssize_t cap_extattr_set_fd(
+		    int fd,
+		    int attrnamespace,
+		    const char *attrname,
+		    _In_reads_bytes_(nbytes) void *data,
+		    size_t nbytes
+		);
+	}
+614	AUE_CAP_EXTATTR_GET_FD	STD|CAPREQUIRED {
+		ssize_t cap_extattr_get_fd(
+		    int fd,
+		    int attrnamespace,
+		    const char *attrname,
+		    _Out_writes_bytes_(nbytes) void *data,
+		    size_t nbytes
+		);
+	}
+615	AUE_CAP_EXTATTR_DELETE_FD	STD|CAPREQUIRED {
+		int cap_extattr_delete_fd(
+		    int fd,
+		    int attrnamespace,
+		    const char *attrname
+		);
+	}
+616	AUE_CAP_EXTATTR_LIST_FD	STD|CAPREQUIRED {
+		ssize_t cap_extattr_list_fd(
+		    int fd,
+		    int attrnamespace,
+		    _Out_writes_bytes_opt_(nbytes) void *data,
+		    size_t nbytes
+		);
+	}
+617	AUE_CAP_FSTATFS	STD|CAPREQUIRED {
+		int cap_fstatfs(
+		    int fd,
+		    _Out_ struct statfs *buf
+		);
+	}
+618	AUE_CAP_BIND	STD|CAPREQUIRED {
+		int cap_bind(
+		    int s,
+		    _In_reads_bytes_(namelen) const struct sockaddr *name,
+		    __socklen_t namelen
+		);
+	}
+619	AUE_CAP_LISTEN	STD|CAPREQUIRED {
+		int cap_listen(
+		    int s,
+		    int backlog
+		);
+	}
+620	AUE_CAP_ACCEPT	STD|CAPREQUIRED {
+		int cap_accept(
+		    int s,
+		    _Out_writes_bytes_opt_(*anamelen) struct sockaddr *name,
+		    _Inout_opt_ __socklen_t *anamelen
+		);
+	}
+621	AUE_CAP_CONNECT	STD|CAPREQUIRED {
+		int cap_connect(
+		    int s,
+		    _In_reads_bytes_(namelen) const struct sockaddr *name,
+		    __socklen_t namelen
+		);
+	}
+622	AUE_CAP_SENDMSG	STD|CAPREQUIRED {
+		ssize_t cap_sendmsg(
+		    int s,
+		    _In_ const struct msghdr *msg,
+		    int flags
+		);
+	}
+623	AUE_CAP_RECVMSG	STD|CAPREQUIRED {
+		ssize_t cap_recvmsg(
+		    int s,
+		    _Inout_ struct msghdr *msg,
+		    int flags
+		);
+	}
+624	AUE_CAP_SETSOCKOPT	STD|CAPREQUIRED {
+		int cap_setsockopt(
+		    int s,
+		    int level,
+		    int name,
+		    _In_reads_bytes_opt_(valsize) const void *val,
+		    __socklen_t valsize
+		);
+	}
+625	AUE_CAP_IOCTL	STD|CAPREQUIRED {
+		int cap_ioctl(
+		    int fd,
+		    u_long com,
+		    _Inout_opt_ _Contains_long_ptr_ char *data
+		);
+	}
+626	AUE_CAP_MMAP	STD|CAPREQUIRED {
+		void *cap_mmap(
+		    _In_ void *addr,
+		    size_t len,
+		    int prot,
+		    int flags,
+		    int fd,
+		    off_t pos
+		);
+	}
+627	AUE_CAP_SENDFILE	STD|CAPREQUIRED {
+		int cap_sendfile(
+		    int fd,
+		    int s,
+		    off_t offset,
+		    size_t nbytes,
+		    _In_opt_ _Contains_ptr_ struct sf_hdtr *hdtr,
+		    _Out_opt_ off_t *sbytes,
+		    int flags
+		);
+	}
+628	AUE_CAP_FTRUNCATE	STD|CAPREQUIRED {
+		int cap_ftruncate(
+		    int fd,
+		    off_t length
+		);
+	}
+629	AUE_CAP_AMBIENT_LIMIT	STD|CAPENABLED {
+		int cap_ambient_limit(
+		    int fd
 		);
 	}
 ; vim: syntax=off

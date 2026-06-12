@@ -69,6 +69,13 @@ cleared.
 Access to system calls in capability mode is restricted: some system calls
 requiring global namespace access are unavailable, while others are
 constrained.
+Conversely, capability mode unlocks capability-pure system call variants
+that are unavailable outside capability mode.
+These variants perform only capability rights checks on descriptors,
+with no ambient authority checks such as MAC policy, jail confinement,
+or credential re-validation.
+Outside capability mode, these system calls return
+.Er ENOTCAPABLE .
 For instance,
 .Xr sysctl 2
 can be used to query process-local information such as address space layout,

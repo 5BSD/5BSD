@@ -79,6 +79,15 @@ struct sysent {			/* system call table */
  */
 #define	SYF_CAPENABLED	0x00000001
 
+/*
+ * A system call is only permitted in capability mode.  The syscall is
+ * rejected with ENOTCAPABLE when the caller is NOT in capability mode.
+ * Used for capability-pure syscall variants that contain no ambient
+ * authority checks.  Implies SYF_CAPENABLED: the dispatcher treats
+ * SYF_CAPREQUIRED as also satisfying the SYF_CAPENABLED gate.
+ */
+#define	SYF_CAPREQUIRED	0x00000002
+
 #define	SY_THR_STATIC	0x01
 #define	SY_THR_DRAINING	0x02
 #define	SY_THR_ABSENT	0x04

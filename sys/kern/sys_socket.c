@@ -124,9 +124,11 @@ soo_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	int error;
 
 #ifdef MAC
-	error = mac_socket_check_receive(active_cred, so);
-	if (error)
-		return (error);
+	if (!(flags & FOF_NOAMBIENT)) {
+		error = mac_socket_check_receive(active_cred, so);
+		if (error)
+			return (error);
+	}
 #endif
 	error = soreceive(so, 0, uio, 0, 0, 0);
 	return (error);
@@ -140,9 +142,11 @@ soo_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	int error;
 
 #ifdef MAC
-	error = mac_socket_check_send(active_cred, so);
-	if (error)
-		return (error);
+	if (!(flags & FOF_NOAMBIENT)) {
+		error = mac_socket_check_send(active_cred, so);
+		if (error)
+			return (error);
+	}
 #endif
 	error = sousrsend(so, NULL, uio, NULL, 0, NULL);
 	return (error);

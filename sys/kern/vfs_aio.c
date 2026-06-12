@@ -226,6 +226,7 @@ typedef struct oaiocb {
 
 /* ioflags */
 #define	KAIOCB_IO_FOFFSET	0x01
+#define	KAIOCB_IO_NOAMBIENT	0x02
 
 /*
  * AIO process info
@@ -800,18 +801,25 @@ aio_process_rw(struct kaiocb *job)
 	 * aio_aqueue() acquires a reference to the file that is
 	 * released in aio_free_entry().
 	 */
-	if (opcode == LIO_READ || opcode == LIO_READV) {
-		if (job->uiop->uio_resid == 0)
-			error = 0;
-		else
-			error = fo_read(fp, job->uiop, fp->f_cred,
-			    (job->ioflags & KAIOCB_IO_FOFFSET) != 0 ? 0 :
-			    FOF_OFFSET, td);
-	} else {
-		if (fp->f_type == DTYPE_VNODE)
-			bwillwrite();
-		error = fo_write(fp, job->uiop, fp->f_cred, (job->ioflags &
-		    KAIOCB_IO_FOFFSET) != 0 ? 0 : FOF_OFFSET, td);
+	{
+		int fof_flags;
+
+		fof_flags = (job->ioflags & KAIOCB_IO_FOFFSET) != 0 ?
+		    0 : FOF_OFFSET;
+		if (job->ioflags & KAIOCB_IO_NOAMBIENT)
+			fof_flags |= FOF_NOAMBIENT;
+		if (opcode == LIO_READ || opcode == LIO_READV) {
+			if (job->uiop->uio_resid == 0)
+				error = 0;
+			else
+				error = fo_read(fp, job->uiop, fp->f_cred,
+				    fof_flags, td);
+		} else {
+			if (fp->f_type == DTYPE_VNODE)
+				bwillwrite();
+			error = fo_write(fp, job->uiop, fp->f_cred,
+			    fof_flags, td);
+		}
 	}
 	msgrcv_end = td->td_ru.ru_msgrcv;
 	msgsnd_end = td->td_ru.ru_msgsnd;
@@ -1589,14 +1597,18 @@ aio_aqueue(struct thread *td, struct aiocb *ujob, struct aioliojob *lj,
 	 * should be.
 	 */
 	fd = job->uaiocb.aio_fildes;
+	{
+	uint8_t fde_flags = 0;
 	switch (opcode) {
 	case LIO_WRITE:
 	case LIO_WRITEV:
-		error = fget_write(td, fd, &cap_pwrite_rights, &fp);
+		error = fget_write_fde_flags(td, fd, &cap_pwrite_rights, &fp,
+		    &fde_flags);
 		break;
 	case LIO_READ:
 	case LIO_READV:
-		error = fget_read(td, fd, &cap_pread_rights, &fp);
+		error = fget_read_fde_flags(td, fd, &cap_pread_rights, &fp,
+		    &fde_flags);
 		break;
 	case LIO_SYNC:
 	case LIO_DSYNC:
@@ -1609,6 +1621,11 @@ aio_aqueue(struct thread *td, struct aiocb *ujob, struct aioliojob *lj,
 		break;
 	default:
 		error = EINVAL;
+	}
+#ifdef CAPABILITY_MODE
+	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_NOAMBIENT))
+		job->ioflags |= KAIOCB_IO_NOAMBIENT;
+#endif
 	}
 	if (error)
 		goto err3;

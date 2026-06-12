@@ -3594,6 +3594,9 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				    fdep[i]->fde_cloexec_state;
 				fdesc->fd_ofiles[*fdp].fde_clofork_state =
 				    fdep[i]->fde_clofork_state;
+				if (fdep[i]->fde_flags & UF_NOAMBIENT)
+					fdesc->fd_ofiles[*fdp].fde_flags |=
+					    UF_NOAMBIENT;
 				unp_externalize_fp(fp);
 				SDT_PROBE6(fd, , , scm__rights__recv, fp,
 				    *fdp, td->td_proc->p_pid, td->td_ucred,
@@ -3862,6 +3865,8 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
 				    fde->fde_cloexec_state;
 				fdep[i]->fde_clofork_state =
 				    fde->fde_clofork_state;
+				fdep[i]->fde_flags =
+				    fde->fde_flags & UF_NOAMBIENT;
 				unp_internalize_fp(fdep[i]->fde_file);
 				SDT_PROBE6(fd, , , scm__rights__send,
 				    fdep[i]->fde_file, *fdp,

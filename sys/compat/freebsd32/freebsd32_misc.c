@@ -1562,7 +1562,8 @@ freebsd32_recvmsg(struct thread *td, struct freebsd32_recvmsg_args *uap)
 	msg.msg_iov = iov;
 
 	controlp = (msg.msg_control != NULL) ?  &control : NULL;
-	error = kern_recvit(td, uap->s, &msg, UIO_USERSPACE, controlp);
+	error = kern_recvit(td, uap->s, &msg, UIO_USERSPACE, controlp,
+	    false);
 	if (error == 0) {
 		msg.msg_iov = uiov;
 
@@ -1737,7 +1738,7 @@ freebsd32_sendmsg(struct thread *td, struct freebsd32_sendmsg_args *uap)
 	}
 
 	error = kern_sendit(td, uap->s, &msg, uap->flags, control,
-	    UIO_USERSPACE);
+	    UIO_USERSPACE, false);
 
 out:
 	free(iov, M_IOV);

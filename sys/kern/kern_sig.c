@@ -2722,7 +2722,7 @@ ptrace_syscallreq(struct thread *td, struct proc *p,
 	td->td_sa = tsr->ts_sa;
 
 #ifdef CAPABILITY_MODE
-	if ((se->sy_flags & SYF_CAPENABLED) == 0) {
+	if ((se->sy_flags & (SYF_CAPENABLED | SYF_CAPREQUIRED)) == 0) {
 		if (CAP_TRACING(td))
 			ktrcapfail(CAPFAIL_SYSCALL, NULL);
 		if (IN_CAPABILITY_MODE(td)) {
@@ -2730,6 +2730,15 @@ ptrace_syscallreq(struct thread *td, struct proc *p,
 			return;
 		}
 	}
+
+	/*
+	 * No SYF_CAPREQUIRED check here.  The debugger already has
+	 * complete control over the tracee; blocking one syscall
+	 * variant does not meaningfully restrict it.  Allow ptrace
+	 * to inject capability-only syscalls regardless of the
+	 * tracee's capability mode, so they can be tested and
+	 * debugged.
+	 */
 #endif
 
 	sy_thr_static = (se->sy_thrcnt & SY_THR_STATIC) != 0;

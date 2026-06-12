@@ -845,7 +845,7 @@ linux_sendit(struct thread *td, int s, struct msghdr *mp, int flags,
 		to = NULL;
 
 	error = kern_sendit(td, s, mp, linux_to_bsd_msg_flags(flags), control,
-	    segflg);
+	    segflg, false);
 
 	if (to)
 		free(to, M_SONAME);
@@ -987,7 +987,7 @@ linux_socket(struct thread *td, struct linux_socket_args *args)
 		hdrincl = 1;
 		/* We ignore any error returned by kern_setsockopt() */
 		kern_setsockopt(td, td->td_retval[0], IPPROTO_IP, IP_HDRINCL,
-		    &hdrincl, UIO_SYSSPACE, sizeof(hdrincl));
+		    &hdrincl, UIO_SYSSPACE, sizeof(hdrincl), false);
 	}
 #ifdef INET6
 	/*
@@ -1002,7 +1002,7 @@ linux_socket(struct thread *td, struct linux_socket_args *args)
 		v6only = 0;
 		/* We ignore any error returned by setsockopt() */
 		kern_setsockopt(td, td->td_retval[0], IPPROTO_IPV6, IPV6_V6ONLY,
-		    &v6only, UIO_SYSSPACE, sizeof(v6only));
+		    &v6only, UIO_SYSSPACE, sizeof(v6only), false);
 	}
 #endif
 
@@ -1020,7 +1020,7 @@ linux_bind(struct thread *td, struct linux_bind_args *args)
 	if (error != 0)
 		return (error);
 
-	error = kern_bindat(td, AT_FDCWD, args->s, sa);
+	error = kern_bindat(td, AT_FDCWD, args->s, sa, false);
 	free(sa, M_SONAME);
 
 	/* XXX */
@@ -1042,7 +1042,7 @@ linux_connect(struct thread *td, struct linux_connect_args *args)
 	if (error != 0)
 		return (error);
 
-	error = kern_connectat(td, AT_FDCWD, args->s, sa);
+	error = kern_connectat(td, AT_FDCWD, args->s, sa, false);
 	free(sa, M_SONAME);
 	if (error != EISCONN)
 		return (error);
@@ -1074,7 +1074,7 @@ int
 linux_listen(struct thread *td, struct linux_listen_args *args)
 {
 
-	return (kern_listen(td, args->s, args->backlog));
+	return (kern_listen(td, args->s, args->backlog, false));
 }
 
 static int
@@ -1103,7 +1103,7 @@ linux_accept_common(struct thread *td, int s, l_uintptr_t addr,
 	} else
 		len = 0;
 
-	error = kern_accept4(td, s, (struct sockaddr *)&ss, bflags, &fp);
+	error = kern_accept4(td, s, (struct sockaddr *)&ss, bflags, &fp, false);
 
 	/*
 	 * Translate errno values into ones used by Linux.
@@ -1387,7 +1387,7 @@ linux_recvfrom(struct thread *td, struct linux_recvfrom_args *args)
 	msg.msg_control = 0;
 	msg.msg_flags = linux_to_bsd_msg_flags(args->flags);
 
-	error = kern_recvit(td, args->s, &msg, UIO_SYSSPACE, NULL);
+	error = kern_recvit(td, args->s, &msg, UIO_SYSSPACE, NULL, false);
 	if (error != 0)
 		goto out;
 
@@ -1880,7 +1880,7 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 	uiov = msg->msg_iov;
 	msg->msg_iov = iov;
 	controlp = (msg->msg_control != NULL) ? &control : NULL;
-	error = kern_recvit(td, s, msg, UIO_SYSSPACE, controlp);
+	error = kern_recvit(td, s, msg, UIO_SYSSPACE, controlp, false);
 	msg->msg_iov = uiov;
 	if (error != 0)
 		goto bad;
@@ -2139,13 +2139,14 @@ linux_setsockopt(struct thread *td, struct linux_setsockopt_args *args)
 			tv.tv_sec = linux_tv.tv_sec;
 			tv.tv_usec = linux_tv.tv_usec;
 			return (kern_setsockopt(td, args->s, level,
-			    name, &tv, UIO_SYSSPACE, sizeof(tv)));
+			    name, &tv, UIO_SYSSPACE, sizeof(tv), false));
 			/* NOTREACHED */
 		case SO_TIMESTAMP:
 			/* overwrite SO_BINTIME */
 			val = 0;
 			error = kern_setsockopt(td, args->s, level,
-			    SO_BINTIME, &val, UIO_SYSSPACE, sizeof(val));
+			    SO_BINTIME, &val, UIO_SYSSPACE, sizeof(val),
+			    false);
 			if (error != 0)
 				return (error);
 			pem = pem_find(p);
@@ -2155,7 +2156,8 @@ linux_setsockopt(struct thread *td, struct linux_setsockopt_args *args)
 			/* overwrite SO_TIMESTAMP */
 			val = 0;
 			error = kern_setsockopt(td, args->s, level,
-			    SO_TIMESTAMP, &val, UIO_SYSSPACE, sizeof(val));
+			    SO_TIMESTAMP, &val, UIO_SYSSPACE, sizeof(val),
+			    false);
 			if (error != 0)
 				return (error);
 			pem = pem_find(p);
@@ -2203,7 +2205,7 @@ linux_setsockopt(struct thread *td, struct linux_setsockopt_args *args)
 			    linux_timeout);
 			return (kern_setsockopt(td, args->s, level, name,
 			    &bsd_timeout, UIO_SYSSPACE,
-			    sizeof(bsd_timeout)));
+			    sizeof(bsd_timeout), false));
 		default:
 			break;
 		}
@@ -2248,7 +2250,7 @@ linux_setsockopt(struct thread *td, struct linux_setsockopt_args *args)
 		for (i = 0; i < nitems(f.icmp6_filt); i++)
 			f.icmp6_filt[i] = ~f.icmp6_filt[i];
 		return (kern_setsockopt(td, args->s, IPPROTO_ICMPV6,
-		    ICMP6_FILTER, &f, UIO_SYSSPACE, sizeof(f)));
+		    ICMP6_FILTER, &f, UIO_SYSSPACE, sizeof(f), false));
 	}
 #endif
 	case SOL_NETLINK:
@@ -2274,7 +2276,7 @@ linux_setsockopt(struct thread *td, struct linux_setsockopt_args *args)
 			return (error);
 
 		error = kern_setsockopt(td, args->s, level,
-		    name, sa, UIO_SYSSPACE, len);
+		    name, sa, UIO_SYSSPACE, len, false);
 		free(sa, M_SONAME);
 		break;
 	}
@@ -2300,12 +2302,13 @@ linux_setsockopt(struct thread *td, struct linux_setsockopt_args *args)
 		    (struct l_sockaddr *)&req.gsr_source, NULL, &len)))
 			return (error);
 		error = kern_setsockopt(td, args->s, level, name, &req,
-		    UIO_SYSSPACE, size);
+		    UIO_SYSSPACE, size, false);
 		break;
 	}
 	default:
 		error = kern_setsockopt(td, args->s, level,
-		    name, PTRIN(args->optval), UIO_USERSPACE, args->optlen);
+		    name, PTRIN(args->optval), UIO_USERSPACE, args->optlen,
+		    false);
 	}
 
 	return (error);

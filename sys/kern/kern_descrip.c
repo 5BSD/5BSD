@@ -3863,6 +3863,63 @@ fget_write(struct thread *td, int fd, const cap_rights_t *rightsp,
 	return (_fget(td, fd, fpp, FWRITE, rightsp));
 }
 
+static int
+_fget_fde_flags(struct thread *td, int fd, struct file **fpp, int flags,
+    const cap_rights_t *needrightsp, uint8_t *fde_flagsp)
+{
+	struct file *fp;
+	uint8_t fde_flags;
+	int error;
+
+	*fpp = NULL;
+	error = fget_unlocked_flags(td, fd, needrightsp, &fde_flags, &fp);
+	if (__predict_false(error != 0))
+		return (error);
+	if (__predict_false(fp->f_ops == &badfileops)) {
+		fdrop(fp, td);
+		return (EBADF);
+	}
+
+	error = 0;
+	switch (flags) {
+	case FREAD:
+	case FWRITE:
+		if ((fp->f_flag & flags) == 0)
+			error = EBADF;
+		break;
+	case 0:
+		break;
+	default:
+		KASSERT(0, ("wrong flags"));
+	}
+
+	if (error != 0) {
+		fdrop(fp, td);
+		return (error);
+	}
+
+	*fpp = fp;
+	if (fde_flagsp != NULL)
+		*fde_flagsp = fde_flags;
+	return (0);
+}
+
+int
+fget_read_fde_flags(struct thread *td, int fd, const cap_rights_t *rightsp,
+    struct file **fpp, uint8_t *fde_flagsp)
+{
+
+	return (_fget_fde_flags(td, fd, fpp, FREAD, rightsp, fde_flagsp));
+}
+
+int
+fget_write_fde_flags(struct thread *td, int fd, const cap_rights_t *rightsp,
+    struct file **fpp, uint8_t *fde_flagsp)
+{
+
+	return (_fget_fde_flags(td, fd, fpp, FWRITE, rightsp, fde_flagsp));
+}
+
 int
 fget_fcntl(struct thread *td, int fd, const cap_rights_t *rightsp,
     int needfcntl, struct file **fpp)
