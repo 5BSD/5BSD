@@ -960,3 +960,4 @@ DRIVER_MODULE(hidbus, atopcase, hidbus_driver, 0, 0);
 DRIVER_MODULE(hidbus, hvhid, hidbus_driver, 0, 0);
 DRIVER_MODULE(hidbus, iichid, hidbus_driver, 0, 0);
 DRIVER_MODULE(hidbus, usbhid, hidbus_driver, 0, 0);
+DRIVER_MODULE(hidbus, vhid, hidbus_driver, 0, 0);

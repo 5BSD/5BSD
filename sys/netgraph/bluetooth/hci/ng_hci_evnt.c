@@ -244,6 +244,22 @@ ng_hci_send_data(ng_hci_unit_p unit)
 		NG_HCI_STAT_SCO_SENT(unit->stat, count);
 		NG_HCI_BUFF_SCO_USE(unit->buffer, count);
 	}
+
+	/* Send LE data from dedicated LE buffers if available */
+	if (unit->buffer.le_pkts > 0) {
+		NG_HCI_BUFF_LE_AVAIL(unit->buffer, count);
+
+		NG_HCI_INFO(
+"%s: %s - sending LE data packets, count=%d\n",
+			__func__, NG_NODE_NAME(unit->node), count);
+
+		if (count > 0) {
+			count = send_data_packets(unit,
+			    NG_HCI_LINK_LE_PUBLIC, count);
+			NG_HCI_STAT_ACL_SENT(unit->stat, count);
+			NG_HCI_BUFF_LE_USE(unit->buffer, count);
+		}
+	}
 } /* ng_hci_send_data */
 
 /*
@@ -268,8 +284,14 @@ send_data_packets(ng_hci_unit_p unit, int link_type, int limit)
 		 */
 
 		LIST_FOREACH(con, &unit->con_list, next) {
-			reallink_type = (con->link_type == NG_HCI_LINK_SCO)?
-				NG_HCI_LINK_SCO: NG_HCI_LINK_ACL;
+			if (con->link_type == NG_HCI_LINK_SCO)
+				reallink_type = NG_HCI_LINK_SCO;
+			else if ((con->link_type == NG_HCI_LINK_LE_PUBLIC ||
+				  con->link_type == NG_HCI_LINK_LE_RANDOM) &&
+				 unit->buffer.le_pkts > 0)
+				reallink_type = NG_HCI_LINK_LE_PUBLIC;
+			else
+				reallink_type = NG_HCI_LINK_ACL;
 			if (reallink_type != link_type){
 				continue;
 			}
@@ -468,104 +490,96 @@ le_advertizing_report(ng_hci_unit_p unit, struct mbuf *event)
 	return (error);
 } /* inquiry_result */
 
-static int le_connection_complete(ng_hci_unit_p unit, struct mbuf *event)
+/*
+ * Common handler for LE Connection Complete and LE Enhanced
+ * Connection Complete events.  Takes the extracted fields so
+ * both event formats share one code path.
+ */
+static int
+le_con_compl_common(ng_hci_unit_p unit, u_int8_t status, u_int16_t handle,
+    u_int8_t addr_type, bdaddr_t *addr)
 {
-	int			 error = 0;
+	ng_hci_unit_con_p	con = NULL;
+	int			link_type, error = 0;
+	uint8_t			uclass[3] = {0, 0, 0};
 
-	ng_hci_le_connection_complete_ep	*ep = NULL;
-	ng_hci_unit_con_p	 con = NULL;
-	int link_type;
-	uint8_t uclass[3] = {0,0,0};//dummy uclass
+	link_type = (addr_type) ? NG_HCI_LINK_LE_RANDOM :
+	    NG_HCI_LINK_LE_PUBLIC;
+
+	LIST_FOREACH(con, &unit->con_list, next)
+		if (con->link_type == link_type &&
+		    con->state == NG_HCI_CON_W4_CONN_COMPLETE &&
+		    bcmp(&con->bdaddr, addr, sizeof(bdaddr_t)) == 0)
+			break;
+
+	if (con == NULL) {
+		if (status != 0)
+			return (0);
+
+		con = ng_hci_new_con(unit, link_type);
+		if (con == NULL)
+			return (ENOMEM);
+
+		con->state = NG_HCI_CON_W4_LP_CON_RSP;
+		ng_hci_con_timeout(con);
+
+		bcopy(addr, &con->bdaddr, sizeof(con->bdaddr));
+		error = ng_hci_lp_con_ind(con, uclass);
+		if (error != 0) {
+			ng_hci_con_untimeout(con);
+			ng_hci_free_con(con);
+			return (error);
+		}
+	} else if ((error = ng_hci_con_untimeout(con)) != 0)
+		return (error);
+
+	con->con_handle = NG_HCI_CON_HANDLE(le16toh(handle));
+	con->encryption_mode = NG_HCI_ENCRYPTION_MODE_NONE;
+
+	ng_hci_lp_con_cfm(con, status);
+
+	if (status != 0)
+		ng_hci_free_con(con);
+	else
+		con->state = NG_HCI_CON_OPEN;
+
+	return (0);
+}
+
+static int
+le_connection_complete(ng_hci_unit_p unit, struct mbuf *event)
+{
+	ng_hci_le_connection_complete_ep *ep;
+	int error;
 
 	NG_HCI_M_PULLUP(event, sizeof(*ep));
 	if (event == NULL)
 		return (ENOBUFS);
 
 	ep = mtod(event, ng_hci_le_connection_complete_ep *);
-	link_type = (ep->address_type)? NG_HCI_LINK_LE_RANDOM :
-	  NG_HCI_LINK_LE_PUBLIC;
-	/*
-	 * Find the first connection descriptor that matches the following:
-	 *
-	 * 1) con->link_type == link_type
-	 * 2) con->state == NG_HCI_CON_W4_CONN_COMPLETE
-	 * 3) con->bdaddr == ep->address
-	 */
-	LIST_FOREACH(con, &unit->con_list, next)
-		if (con->link_type == link_type &&
-		    con->state == NG_HCI_CON_W4_CONN_COMPLETE &&
-		    bcmp(&con->bdaddr, &ep->address, sizeof(bdaddr_t)) == 0)
-			break;
+	error = le_con_compl_common(unit, ep->status, ep->handle,
+	    ep->address_type, &ep->address);
 
-	/*
-	 * Two possible cases:
-	 *
-	 * 1) We have found connection descriptor. That means upper layer has
-	 *    requested this connection via LP_CON_REQ message. In this case
-	 *    connection must have timeout set. If ng_hci_con_untimeout() fails
-	 *    then timeout message already went into node's queue. In this case
-	 *    ignore Connection_Complete event and let timeout deal with it.
-	 *
-	 * 2) We do not have connection descriptor. That means upper layer
-	 *    nas not requested this connection , (less likely) we gave up
-	 *    on this connection (timeout) or as node act as slave role.
-	 *    The most likely scenario is that
-	 *    we have received LE_Create_Connection command 
-	 *    from the RAW hook
-	 */
-
-	if (con == NULL) {
-		if (ep->status != 0)
-			goto out;
-
-		con = ng_hci_new_con(unit, link_type);
-		if (con == NULL) {
-			error = ENOMEM;
-			goto out;
-		}
-
-		con->state = NG_HCI_CON_W4_LP_CON_RSP;
-		ng_hci_con_timeout(con);
-
-		bcopy(&ep->address, &con->bdaddr, sizeof(con->bdaddr));
-		error = ng_hci_lp_con_ind(con, uclass);
-		if (error != 0) {
-			ng_hci_con_untimeout(con);
-			ng_hci_free_con(con);
-			goto out;
-		}
-
-	} else if ((error = ng_hci_con_untimeout(con)) != 0)
-			goto out;
-
-	/*
-	 * Update connection descriptor and send notification 
-	 * to the upper layers.
-	 */
-
-	con->con_handle = NG_HCI_CON_HANDLE(le16toh(ep->handle));
-	con->encryption_mode = NG_HCI_ENCRYPTION_MODE_NONE;
-
-	ng_hci_lp_con_cfm(con, ep->status);
-
-	/* Adjust connection state */
-	if (ep->status != 0)
-		ng_hci_free_con(con);
-	else {
-		con->state = NG_HCI_CON_OPEN;
-
-		/*	
-		 * Change link policy for the ACL connections. Enable all 
-		 * supported link modes. Enable Role switch as well if
-		 * device supports it.
-		 */
-	}
-
-out:
 	NG_FREE_M(event);
-
 	return (error);
+}
 
+static int
+le_enh_connection_complete(ng_hci_unit_p unit, struct mbuf *event)
+{
+	ng_hci_le_enh_conn_compl_ep *ep;
+	int error;
+
+	NG_HCI_M_PULLUP(event, sizeof(*ep));
+	if (event == NULL)
+		return (ENOBUFS);
+
+	ep = mtod(event, ng_hci_le_enh_conn_compl_ep *);
+	error = le_con_compl_common(unit, ep->status, ep->connection_handle,
+	    ep->peer_addr_type, &ep->peer_addr);
+
+	NG_FREE_M(event);
+	return (error);
 }
 
 static int le_connection_update(ng_hci_unit_p unit, struct mbuf *event)
@@ -600,13 +614,32 @@ le_event(ng_hci_unit_p unit, struct mbuf *event)
 		le_connection_update(unit, event);
 		break;
 	case NG_HCI_LEEV_READ_REMOTE_FEATURES_COMPL:
-		//TBD
-	  /*FALLTHROUGH*/
+		NG_HCI_INFO(
+"%s: %s - LE read remote features complete\n",
+			__func__, NG_NODE_NAME(unit->node));
+		NG_FREE_M(event);
+		break;
+
+	case NG_HCI_LEEV_ENH_CONN_COMPL:
+		le_enh_connection_complete(unit, event);
+		break;
+
 	case NG_HCI_LEEV_LONG_TERM_KEY_REQUEST:
-		//TBD
-	  /*FALLTHROUGH*/
+		/*
+		 * The controller is asking for an LTK to encrypt a
+		 * connection.  Userspace receives this event via the
+		 * raw HCI socket (ng_hci_mtap) and must respond with
+		 * LE_Long_Term_Key_Request_Reply or Negative_Reply.
+		 */
+		NG_HCI_INFO(
+"%s: %s - LE LTK request, userspace must reply via raw HCI\n",
+			__func__, NG_NODE_NAME(unit->node));
+		NG_FREE_M(event);
+		break;
+
 	default:
-	  	NG_FREE_M(event);
+		NG_FREE_M(event);
+		break;
 	}
 	return error;
 }
@@ -1161,10 +1194,14 @@ num_compl_pkts(ng_hci_unit_p unit, struct mbuf *event)
 			}
 
 			/* Update buffer descriptor */
-			if (con->link_type != NG_HCI_LINK_SCO)
-				NG_HCI_BUFF_ACL_FREE(unit->buffer, p);
-			else 
+			if (con->link_type == NG_HCI_LINK_SCO)
 				NG_HCI_BUFF_SCO_FREE(unit->buffer, p);
+			else if ((con->link_type == NG_HCI_LINK_LE_PUBLIC ||
+				  con->link_type == NG_HCI_LINK_LE_RANDOM) &&
+				 unit->buffer.le_pkts > 0)
+				NG_HCI_BUFF_LE_FREE(unit->buffer, p);
+			else
+				NG_HCI_BUFF_ACL_FREE(unit->buffer, p);
 		} else
 			NG_HCI_ALERT(
 "%s: %s - invalid connection handle=%d\n",

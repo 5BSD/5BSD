@@ -72,6 +72,10 @@ typedef struct ng_hci_unit_buff {
 	u_int16_t			acl_size; /* max. size of one packet */
 	u_int16_t			acl_pkts; /* size of buffer (packets) */
 	u_int16_t			acl_free; /* space available (packets)*/
+
+	u_int16_t			le_size;  /* max. LE ACL packet size */
+	u_int8_t			le_pkts;  /* LE buffer count */
+	u_int8_t			le_free;  /* LE space available */
 } ng_hci_unit_buff_t;
 
 /* 
@@ -115,6 +119,23 @@ typedef struct ng_hci_unit_buff {
 		(b).sco_free = (f); 			\
 		(b).sco_size = (s); 			\
 		(b).sco_pkts = (n); 			\
+	} while (0)
+
+#define NG_HCI_BUFF_LE_USE(b, v)	(b).le_free -= (v)
+#define NG_HCI_BUFF_LE_FREE(b, v) 			\
+	do { 						\
+		(b).le_free += (v);			\
+		if ((b).le_free > (b).le_pkts) 		\
+			(b).le_free = (b).le_pkts; 	\
+	} while (0)
+#define NG_HCI_BUFF_LE_AVAIL(b, v)	(v) = (b).le_free
+#define NG_HCI_BUFF_LE_TOTAL(b, v)	(v) = (b).le_pkts
+#define NG_HCI_BUFF_LE_SIZE(b, v)	(v) = (b).le_size
+#define NG_HCI_BUFF_LE_SET(b, n, s, f) 			\
+	do { 						\
+		(b).le_free = (f); 			\
+		(b).le_size = (s); 			\
+		(b).le_pkts = (n); 			\
 	} while (0)
 
 /* 

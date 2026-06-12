@@ -2117,7 +2117,7 @@ typedef struct {
 	u_int8_t 	address_type;
 	bdaddr_t	address;
 	u_int16_t 	interval;
-	u_int8_t	latency;
+	u_int16_t	latency;
 	u_int16_t	supervision_timeout;
 	u_int8_t	master_clock_accuracy;
 

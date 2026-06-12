@@ -821,7 +821,6 @@ process_le_params(ng_hci_unit_p unit, u_int16_t ocf,
 
 	switch (ocf){
 	case NG_HCI_OCF_LE_SET_EVENT_MASK:
-	case NG_HCI_OCF_LE_READ_BUFFER_SIZE:
 	case NG_HCI_OCF_LE_READ_LOCAL_SUPPORTED_FEATURES:
 	case NG_HCI_OCF_LE_SET_RANDOM_ADDRESS:
 	case NG_HCI_OCF_LE_SET_ADVERTISING_PARAMETERS:
@@ -849,6 +848,36 @@ process_le_params(ng_hci_unit_p unit, u_int16_t ocf,
 
 		/* These do not need post processing */
 		break;
+
+	case NG_HCI_OCF_LE_READ_BUFFER_SIZE: {
+		ng_hci_le_read_buffer_size_rp	*rp = NULL;
+
+		/* Do not update buffer descriptor if node was initialized */
+		if ((unit->state & NG_HCI_UNIT_READY) == NG_HCI_UNIT_READY)
+			break;
+
+		NG_HCI_M_PULLUP(mrp, sizeof(*rp));
+		if (mrp != NULL) {
+			rp = mtod(mrp, ng_hci_le_read_buffer_size_rp *);
+
+			/*
+			 * Per Core Spec Vol 4 Part E 7.8.2: if
+			 * hc_total_num_le_data_packets is 0, the controller
+			 * shares classic ACL buffers for LE data.  Otherwise
+			 * LE has its own buffer pool.
+			 */
+			if (rp->hc_total_num_le_data_packets != 0) {
+				NG_HCI_BUFF_LE_SET(
+					unit->buffer,
+					rp->hc_total_num_le_data_packets,
+					le16toh(rp->hc_le_data_packet_length),
+					rp->hc_total_num_le_data_packets
+				);
+			}
+		} else
+			error = ENOBUFS;
+		} break;
+
 	case NG_HCI_OCF_LE_CREATE_CONNECTION:
 	case NG_HCI_OCF_LE_CONNECTION_UPDATE:
 	case NG_HCI_OCF_LE_READ_REMOTE_USED_FEATURES:
