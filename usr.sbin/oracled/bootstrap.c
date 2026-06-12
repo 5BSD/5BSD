@@ -370,41 +370,16 @@ bootstrap_schedule_restart(int kq, unsigned delay_sec)
 }
 
 /*
- * Handle pair channel EOF — serviced closed its end.
- * Collect exit status via pdwait4 and enter the normal exit path.
+ * Tear down all serviced resources and restart with backoff.
+ * Called only from the EVFILT_PROCDESC path — process exit is
+ * the single source of truth for lifecycle.
  */
-void
-bootstrap_handle_pair_eof(int kq)
-{
-	struct kevent fake;
-	int status;
-
-	if (bs.pd_fd < 0)
-		return;
-
-	status = 0;
-	pdwait(bs.pd_fd, &status, WNOHANG, NULL, NULL);
-
-	memset(&fake, 0, sizeof(fake));
-	fake.filter = EVFILT_PROCDESC;
-	fake.ident = bs.pd_fd;
-	fake.data = status;
-	bootstrap_handle_exit(&fake, kq);
-}
-
-/*
- * Handle serviced process exit.
- * Implements restart with exponential backoff and circuit breaker.
- */
-void
-bootstrap_handle_exit(struct kevent *kev, int kq)
+static void
+bootstrap_teardown_and_restart(int kq, int status)
 {
 	struct timespec now;
-	int status;
 	long uptime;
 	unsigned delay;
-
-	status = (int)kev->data;
 
 	if (WIFEXITED(status))
 		syslog(LOG_WARNING, "bootstrap: serviced exited status %d",
@@ -415,9 +390,19 @@ bootstrap_handle_exit(struct kevent *kev, int kq)
 
 	ORACLED_PROBE_BOOTSTRAP_EXIT(bs.pid, status);
 
-	/* Clean up. */
-	close(bs.pd_fd);
-	bs.pd_fd = -1;
+	/*
+	 * Tear down this instance's fds.  The pair-EOF path may have
+	 * already closed pair_fd, so each fd is guarded individually.
+	 */
+	if (bs.pd_fd >= 0) {
+		struct kevent kev_del;
+
+		EV_SET(&kev_del, bs.pd_fd, EVFILT_PROCDESC,
+		    EV_DELETE, 0, 0, NULL);
+		(void)kevent(kq, &kev_del, 1, NULL, 0, NULL);
+		close(bs.pd_fd);
+		bs.pd_fd = -1;
+	}
 	if (bs.pair_fd >= 0) {
 		close(bs.pair_fd);
 		bs.pair_fd = -1;
@@ -434,16 +419,14 @@ bootstrap_handle_exit(struct kevent *kev, int kq)
 	uptime = now.tv_sec - bs.last_start.tv_sec;
 
 	if (uptime >= BOOTSTRAP_MIN_UPTIME) {
-		/* Healthy run — reset counter, restart immediately. */
 		bs.restart_count = 0;
-		if (bootstrap_start(kq) != 0)
-			syslog(LOG_ERR, "bootstrap: restart failed");
-		return;
+		if (bootstrap_start(kq) == 0)
+			return;
+		syslog(LOG_ERR, "bootstrap: restart failed");
+		/* Fall through to backoff. */
 	}
 
-	/* Fast crash — apply backoff. */
 	bs.restart_count++;
-
 	if (bs.restart_count >= BOOTSTRAP_MAX_FAILURES) {
 		syslog(LOG_CRIT,
 		    "bootstrap: serviced failed %u times, giving up",
@@ -461,15 +444,64 @@ bootstrap_handle_exit(struct kevent *kev, int kq)
 }
 
 /*
- * Handle restart timer expiry.
+ * Handle pair channel EOF.
+ *
+ * The pair is a communication channel, not a lifecycle indicator.
+ * Close it to stop the level-triggered event and let
+ * EVFILT_PROCDESC remain the single source of truth for whether
+ * serviced is alive.
  */
 void
-bootstrap_handle_timer(struct kevent *kev __unused, int kq)
+bootstrap_handle_pair_eof(void)
 {
 
+	if (bs.pair_fd >= 0) {
+		close(bs.pair_fd);
+		bs.pair_fd = -1;
+	}
+}
+
+/*
+ * Handle serviced process exit (EVFILT_PROCDESC).
+ */
+void
+bootstrap_handle_exit(struct kevent *kev, int kq)
+{
+
+	bootstrap_teardown_and_restart(kq, (int)kev->data);
+}
+
+/*
+ * Handle restart timer expiry.  If bootstrap_start still fails
+ * (e.g. binary missing, cap_rt unavailable), reschedule with
+ * backoff rather than leaving serviced permanently dead.
+ */
+void
+bootstrap_handle_timer(int kq)
+{
+	unsigned delay;
+
 	syslog(LOG_INFO, "bootstrap: restart timer fired");
-	if (bootstrap_start(kq) != 0)
-		syslog(LOG_ERR, "bootstrap: restart failed");
+	if (bootstrap_start(kq) == 0)
+		return;
+
+	syslog(LOG_ERR, "bootstrap: restart failed");
+
+	bs.restart_count++;
+	if (bs.restart_count >= BOOTSTRAP_MAX_FAILURES) {
+		syslog(LOG_CRIT,
+		    "bootstrap: serviced failed %u times, giving up",
+		    bs.restart_count);
+		ORACLED_PROBE_ERROR("bootstrap", "circuit breaker tripped");
+		return;
+	}
+
+	delay = BOOTSTRAP_BASE_DELAY << (bs.restart_count - 1);
+	if (delay > BOOTSTRAP_MAX_DELAY)
+		delay = BOOTSTRAP_MAX_DELAY;
+
+	ORACLED_PROBE_BOOTSTRAP_RESTART(bs.restart_count, delay);
+	bootstrap_schedule_restart(kq, delay);
 }
 
 /*

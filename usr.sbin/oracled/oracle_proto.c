@@ -589,7 +589,7 @@ proto_dispatch_one(void)
  * Processes one message per call; kqueue re-fires if more are queued.
  */
 int
-oracle_proto_dispatch(struct kevent *kev __unused)
+oracle_proto_dispatch(void)
 {
 
 	return (proto_dispatch_one());
@@ -615,6 +615,8 @@ void
 oracle_proto_reset(void)
 {
 
+	/* The caller already closed the fd; prevent stale ioctl use. */
+	proto_pair_fd = -1;
 	sweep_dynamic_claims();
 	serviced_ready = false;
 	nonce_set = false;

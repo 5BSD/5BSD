@@ -349,8 +349,12 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 			continue;				\
 		if (in_fn(&oldcfg->arr[i], eff->arr, n))	\
 			continue;				\
-		if (n >= (max))					\
+		if (n >= (max)) {				\
+			syslog(LOG_WARNING,			\
+			    "reload: dynamic claim table full, "	\
+			    "dropping orphaned claims");		\
 			break;					\
+		}						\
 		eff->arr[n] = oldcfg->arr[i];			\
 		eff->src[n] = CLAIM_SOURCE_SERVICE;		\
 		eff->rc[n] = oldcfg->rc[i];			\
@@ -366,8 +370,12 @@ cap_rt_reload_claims(const struct oracled_config *newcfg)
 			if (path_in(oldcfg->claim_paths[i],
 			    eff->claim_paths, n))
 				continue;
-			if (n >= ORACLED_MAX_PATH_CLAIMS)
+			if (n >= ORACLED_MAX_PATH_CLAIMS) {
+				syslog(LOG_WARNING,
+				    "reload: path claim table full, "
+				    "dropping orphaned dynamic claims");
 				break;
+			}
 			strlcpy(eff->claim_paths[n],
 			    oldcfg->claim_paths[i], PATH_MAX);
 			eff->claim_path_source[n] = CLAIM_SOURCE_SERVICE;

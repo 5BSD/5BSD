@@ -80,8 +80,8 @@ void	event_loop(void);
 /* bootstrap.c — serviced lifecycle */
 int	bootstrap_start(int kq);
 void	bootstrap_handle_exit(struct kevent *kev, int kq);
-void	bootstrap_handle_pair_eof(int kq);
-void	bootstrap_handle_timer(struct kevent *kev, int kq);
+void	bootstrap_handle_pair_eof(void);
+void	bootstrap_handle_timer(int kq);
 void	bootstrap_signal(int sig);
 void	bootstrap_stop(void);
 bool	bootstrap_is_stopped(void);
@@ -92,7 +92,7 @@ pid_t	bootstrap_pid(void);
 
 /* oracle_proto.c — pair channel protocol handler */
 void	oracle_proto_init(int pair_fd);
-int	oracle_proto_dispatch(struct kevent *kev);
+int	oracle_proto_dispatch(void);
 void	oracle_proto_reset(void);
 bool	oracle_proto_is_ready(void);
 int	oracle_proto_fd(void);

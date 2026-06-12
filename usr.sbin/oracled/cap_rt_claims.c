@@ -313,8 +313,20 @@ isolate_resources(void)
 	else
 		failed++;
 
-	/* Claim configured paths (files and directories). */
+	/*
+	 * Claim configured paths.  Skip paths that no longer exist
+	 * so that stale entries left in oracled.conf after an upgrade
+	 * do not prevent startup.  Other access errors (EACCES, EIO)
+	 * are still fatal — they indicate a real problem.
+	 */
 	for (i = 0; i < od.cfg.nclaim_paths; i++) {
+		if (access(od.cfg.claim_paths[i], F_OK) != 0 &&
+		    errno == ENOENT) {
+			syslog(LOG_WARNING,
+			    "isolation: skipping nonexistent claim path %s",
+			    od.cfg.claim_paths[i]);
+			continue;
+		}
 		if (cap_rt_claim_path(od.cfg.claim_paths[i]) == 0)
 			claimed++;
 		else
