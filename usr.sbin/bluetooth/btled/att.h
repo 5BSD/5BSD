@@ -99,6 +99,8 @@ struct att_error {
 
 /* att.c */
 int	att_open(struct att_conn *ac, const uint8_t *addr, uint8_t addr_type);
+int	att_open_fd(struct att_conn *ac, int fd, const uint8_t *addr,
+	    uint8_t addr_type);
 void	att_close(struct att_conn *ac);
 int	att_exchange_mtu(struct att_conn *ac, uint16_t client_mtu);
 int	att_read(struct att_conn *ac, uint16_t handle,

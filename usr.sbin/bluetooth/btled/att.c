@@ -83,6 +83,42 @@ att_open(struct att_conn *ac, const uint8_t *addr, uint8_t addr_type)
 	return (0);
 }
 
+/*
+ * Open ATT using a pre-created, pre-bound socket fd.
+ * For use inside Capsicum capability mode with cap_connect().
+ */
+int
+att_open_fd(struct att_conn *ac, int fd, const uint8_t *addr,
+    uint8_t addr_type)
+{
+	struct sockaddr_l2cap sa;
+
+	memset(ac, 0, sizeof(*ac));
+
+	memset(&sa, 0, sizeof(sa));
+	sa.l2cap_len = sizeof(sa);
+	sa.l2cap_family = AF_BLUETOOTH;
+	memcpy(&sa.l2cap_bdaddr, addr, sizeof(sa.l2cap_bdaddr));
+	sa.l2cap_cid = 0x0004;
+	sa.l2cap_bdaddr_type = addr_type;
+
+	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0)
+		return (-1);
+
+	{
+		struct timeval tv = { .tv_sec = 30, .tv_usec = 0 };
+		setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+	}
+
+	ac->fd = fd;
+	ac->mtu = ATT_DEFAULT_MTU;
+	ac->buf = malloc(ATT_MAX_MTU);
+	if (ac->buf == NULL)
+		return (-1);
+
+	return (0);
+}
+
 void
 att_close(struct att_conn *ac)
 {

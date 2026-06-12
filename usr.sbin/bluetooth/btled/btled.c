@@ -107,6 +107,16 @@ struct hogp_device {
 	const char		*adapter;	/* e.g. "ubt0" */
 	bool			debug;
 	bool			reconnect;	/* auto-reconnect on loss */
+
+	/*
+	 * Pre-allocated socket pool for reconnection inside Capsicum.
+	 * Created before cap_enter(), consumed on reconnect via cap_connect().
+	 */
+#define SOCK_POOL_SIZE	8
+	int			att_pool[SOCK_POOL_SIZE];
+	int			smp_pool[SOCK_POOL_SIZE];
+	int			att_pool_next;
+	int			smp_pool_next;
 };
 
 static volatile sig_atomic_t running = 1;
@@ -120,6 +130,45 @@ static int	capsicum_sandbox(struct hogp_device *dev);
 static void	hogp_cleanup(struct hogp_device *dev);
 
 static struct hogp_device *cleanup_dev;
+
+/*
+ * Pre-allocate a pool of bound L2CAP sockets for reconnection
+ * inside capability mode.  Each socket is created, bound to
+ * BDADDR_ANY, and left unconnected.  cap_connect() can then
+ * connect them inside the sandbox.
+ */
+static int
+pool_create(int *pool, int count)
+{
+	struct sockaddr_l2cap sa;
+	int i;
+
+	for (i = 0; i < count; i++) {
+		pool[i] = socket(PF_BLUETOOTH, SOCK_SEQPACKET,
+		    BLUETOOTH_PROTO_L2CAP);
+		if (pool[i] < 0)
+			return (-1);
+
+		memset(&sa, 0, sizeof(sa));
+		sa.l2cap_len = sizeof(sa);
+		sa.l2cap_family = AF_BLUETOOTH;
+
+		if (bind(pool[i], (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+			close(pool[i]);
+			pool[i] = -1;
+			return (-1);
+		}
+	}
+	return (0);
+}
+
+static int
+pool_take(int *pool, int *next, int size)
+{
+	if (*next >= size)
+		return (-1);
+	return (pool[(*next)++]);
+}
 
 static void
 atexit_cleanup(void)
@@ -320,17 +369,33 @@ connect_loop:
 
 	/*
 	 * Phase 1: Connect ATT
+	 *
+	 * On first connect, use att_open() (creates its own socket).
+	 * On reconnect inside Capsicum, use att_open_fd() with a
+	 * pre-allocated socket from the pool.
 	 */
 	if (dev.debug)
 		fprintf(stderr, "btled: connecting to %s...\n", argv[0]);
 
-	if (att_open(&dev.att, dev.addr, dev.addr_type) < 0) {
-		if (dev.reconnect && running) {
-			warn("ATT connect failed, retrying in 5s");
-			sleep(5);
-			goto connect_loop;
+	{
+		int att_fd, ret;
+
+		att_fd = pool_take(dev.att_pool, &dev.att_pool_next,
+		    SOCK_POOL_SIZE);
+		if (att_fd >= 0)
+			ret = att_open_fd(&dev.att, att_fd, dev.addr,
+			    dev.addr_type);
+		else
+			ret = att_open(&dev.att, dev.addr, dev.addr_type);
+
+		if (ret < 0) {
+			if (dev.reconnect && running) {
+				warn("ATT connect failed, retrying in 5s");
+				sleep(5);
+				goto connect_loop;
+			}
+			err(1, "ATT connect");
 		}
-		err(1, "ATT connect");
 	}
 
 	if (dev.debug)
@@ -459,13 +524,21 @@ connect_loop:
 	signal(SIGHUP, sig_handler);
 
 	/*
-	 * Phase 5: Enter Capsicum sandbox (skipped with -r since
-	 * reconnection requires opening new sockets)
+	 * Phase 5: Enter Capsicum sandbox.
+	 * When reconnect is enabled, pre-create a pool of bound sockets
+	 * before entering capability mode.  cap_connect() can then
+	 * connect them inside the sandbox without needing socket().
 	 */
-	if (!dev.reconnect) {
-		if (capsicum_sandbox(&dev) != 0)
-			err(1, "capsicum sandbox");
+	if (dev.reconnect) {
+		dev.att_pool_next = 0;
+		dev.smp_pool_next = 0;
+		if (pool_create(dev.att_pool, SOCK_POOL_SIZE) < 0)
+			warn("ATT socket pool creation failed");
+		if (pool_create(dev.smp_pool, SOCK_POOL_SIZE) < 0)
+			warn("SMP socket pool creation failed");
 	}
+	if (capsicum_sandbox(&dev) != 0)
+		err(1, "capsicum sandbox");
 
 	if (dev.debug)
 		fprintf(stderr,
@@ -781,6 +854,20 @@ capsicum_sandbox(struct hogp_device *dev)
 	cap_rights_init(&rights, CAP_SEND, CAP_RECV, CAP_EVENT);
 	if (cap_rights_limit(dev->hci_fd, &rights) < 0)
 		return (-1);
+
+	/* Pool sockets: connect + send + recv (for reconnection) */
+	if (dev->reconnect) {
+		cap_rights_init(&rights, CAP_CONNECT, CAP_SEND, CAP_RECV,
+		    CAP_EVENT, CAP_SETSOCKOPT);
+		for (int i = dev->att_pool_next; i < SOCK_POOL_SIZE; i++) {
+			if (dev->att_pool[i] >= 0)
+				cap_rights_limit(dev->att_pool[i], &rights);
+		}
+		for (int i = dev->smp_pool_next; i < SOCK_POOL_SIZE; i++) {
+			if (dev->smp_pool[i] >= 0)
+				cap_rights_limit(dev->smp_pool[i], &rights);
+		}
+	}
 
 	/* Enter capability mode */
 	if (cap_enter() < 0)
