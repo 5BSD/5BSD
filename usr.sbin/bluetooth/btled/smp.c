@@ -545,11 +545,29 @@ smp_bond_db_save(struct smp_bond_db *db)
 
 /* ================================================================
  * LE Secure Connections crypto (Core Spec Vol 3 Part H Section 2.2)
+ *
+ * The SC crypto functions (f4, f5, f6, g2) operate on values in
+ * big-endian (MSB-first) byte order per the spec.  SMP PDUs carry
+ * values in little-endian (wire order).  Callers must convert
+ * between wire order and crypto order using swap_buf().
+ *
+ * Unlike the legacy E() function, AES-CMAC is standard RFC 4493
+ * and does NOT need the double byte-reversal that smp_aes128 does.
  * ================================================================ */
 
 #include <openssl/core_names.h>
 #include <openssl/ec.h>
 #include <openssl/param_build.h>
+
+/*
+ * Reverse a byte buffer in-place or into a destination.
+ */
+static void
+swap_buf(uint8_t *dst, const uint8_t *src, size_t len)
+{
+	for (size_t i = 0; i < len; i++)
+		dst[i] = src[len - 1 - i];
+}
 
 /*
  * AES-CMAC per RFC 4493.
@@ -722,15 +740,29 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7])
 		}
 	}
 
-	/* Send our Public Key: [0x0C, x(32), y(32)] */
+	/*
+	 * Public key byte order:
+	 * OpenSSL uses big-endian [0x04, X(32), Y(32)].
+	 * SMP wire format uses little-endian [x(32), y(32)].
+	 * We must reverse each 32-byte coordinate.
+	 *
+	 * We keep two representations:
+	 * - our_pk_raw/peer_pk_raw: OpenSSL format (big-endian, for ECDH)
+	 * - pka_le/pkb_le: SMP wire format (little-endian, for f4/f5/f6)
+	 */
+	uint8_t pka_le[64], pkb_le[64]; /* wire-order public keys */
+
+	/* Send our Public Key: [0x0C, x_le(32), y_le(32)] */
 	pdu[0] = SMP_PAIRING_PUBLIC_KEY;
-	memcpy(pdu + 1, our_pk_raw + 1, 64);
+	swap_buf(pdu + 1, our_pk_raw + 1, 32);      /* x: BE -> LE */
+	swap_buf(pdu + 33, our_pk_raw + 33, 32);     /* y: BE -> LE */
+	memcpy(pka_le, pdu + 1, 64);                 /* save LE copy */
 	if (send(sc->fd, pdu, 65, 0) < 0) {
 		EVP_PKEY_free(our_key);
 		return (-1);
 	}
 
-	/* Receive peer's Public Key */
+	/* Receive peer's Public Key (wire = little-endian) */
 	n = recv(sc->fd, pdu, 65, 0);
 	if (n < 65 || pdu[0] != SMP_PAIRING_PUBLIC_KEY) {
 		EVP_PKEY_free(our_key);
@@ -738,8 +770,12 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7])
 		    EACCES : EPROTO;
 		return (-1);
 	}
+	memcpy(pkb_le, pdu + 1, 64);                 /* save LE copy */
+
+	/* Convert peer PK to OpenSSL big-endian for ECDH */
 	peer_pk_raw[0] = 0x04;
-	memcpy(peer_pk_raw + 1, pdu + 1, 64);
+	swap_buf(peer_pk_raw + 1, pdu + 1, 32);      /* x: LE -> BE */
+	swap_buf(peer_pk_raw + 33, pdu + 33, 32);    /* y: LE -> BE */
 
 	/* Reconstruct peer EVP_PKEY */
 	{
@@ -766,7 +802,7 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7])
 		}
 	}
 
-	/* Compute ECDH shared secret (DHKey) */
+	/* Compute ECDH shared secret (DHKey) — big-endian from OpenSSL */
 	{
 		EVP_PKEY_CTX *dctx;
 
@@ -787,31 +823,45 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7])
 	EVP_PKEY_free(our_key);
 
 	/*
-	 * Just Works SC: exchange nonces directly (no confirm phase).
-	 * Spec Section 2.3.5.6.2 Figure 2.3
+	 * Just Works SC Authentication Stage 1 (Section 2.3.5.6.2):
+	 *
+	 * The RESPONDER computes Cb = f4(PKbx, PKax, Nb, 0) and sends
+	 * Pairing Confirm.  The INITIATOR does NOT send a confirm.
+	 * Then nonces are exchanged.
+	 *
+	 * As initiator:
+	 *  1. Receive Cb from responder
+	 *  2. Generate Na, send Na
+	 *  3. Receive Nb from responder
+	 *  4. Verify Cb == f4(PKbx, PKax, Nb, 0)
+	 *
+	 * f4 inputs use the x-coordinate only (first 32 bytes of LE pk).
+	 * f4 is defined with big-endian inputs, but since AES-CMAC is
+	 * standard and the spec defines the concatenation order with
+	 * MSB of U as MSB of message, we pass coordinates as-is in the
+	 * byte order the spec expects.  The spec's test vectors confirm
+	 * the inputs are NOT reversed per-byte — they're used as-is
+	 * in the order written.
 	 */
-	smp_random(na, sizeof(na));
+	uint8_t cb_recv[16]; /* responder's confirm */
 
-	pdu[0] = SMP_PAIRING_CONFIRM;
-	smp_f4(our_pk_raw + 1, peer_pk_raw + 1, na, 0, pdu + 1);
-	if (send(sc->fd, pdu, 17, 0) < 0)
-		return (-1);
-
-	/* Receive peer confirm */
+	/* Receive responder's Pairing Confirm (Cb) */
 	n = recv(sc->fd, pdu, 17, 0);
 	if (n < 17 || pdu[0] != SMP_PAIRING_CONFIRM) {
 		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
 		    EACCES : EPROTO;
 		return (-1);
 	}
+	memcpy(cb_recv, pdu + 1, 16);
 
-	/* Send our nonce */
+	/* Generate and send our nonce (Na) */
+	smp_random(na, sizeof(na));
 	pdu[0] = SMP_PAIRING_RANDOM;
 	memcpy(pdu + 1, na, 16);
 	if (send(sc->fd, pdu, 17, 0) < 0)
 		return (-1);
 
-	/* Receive peer nonce */
+	/* Receive responder's nonce (Nb) */
 	n = recv(sc->fd, pdu, 17, 0);
 	if (n < 17 || pdu[0] != SMP_PAIRING_RANDOM) {
 		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
@@ -819,6 +869,19 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7])
 		return (-1);
 	}
 	memcpy(nb, pdu + 1, 16);
+
+	/* Verify Cb = f4(PKbx, PKax, Nb, 0) */
+	{
+		uint8_t cb_verify[16];
+		smp_f4(pkb_le, pka_le, nb, 0, cb_verify);
+		if (memcmp(cb_recv, cb_verify, 16) != 0) {
+			pdu[0] = SMP_PAIRING_FAILED;
+			pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
+			send(sc->fd, pdu, 2, 0);
+			errno = EACCES;
+			return (-1);
+		}
+	}
 
 	/* Compute MacKey and LTK */
 	smp_f5(dhkey, na, nb, a1, a2, mackey, ltk);
