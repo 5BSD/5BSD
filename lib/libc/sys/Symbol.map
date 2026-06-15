@@ -74,4 +74,7 @@ FBSD_1.7 {
 
 FBSD_1.9 {
 	pdwait;
+	cap_xfer_limit;
+	cap_cloexec_limit;
+	cap_clofork_limit;
 };

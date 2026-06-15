@@ -11,6 +11,7 @@
  * with exponential backoff.
  */
 
+#include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/procdesc.h>
 #include <sys/wait.h>
@@ -322,6 +323,15 @@ bootstrap_start(int kq)
 	bs.pair_fd = oracle_end;
 	bs.started = true;
 	clock_gettime(CLOCK_MONOTONIC, &bs.last_start);
+
+	/*
+	 * Lock down oracled's end of the pair.  It must not be
+	 * transferable (cap_xfer=none) — only oracled should hold
+	 * this end.  Also prevent inheritance if oracled ever forks
+	 * (it shouldn't, but defense in depth).
+	 */
+	(void)cap_xfer_limit(oracle_end, 0);
+	(void)cap_clofork_limit(oracle_end, 1);
 
 	/* Tell the protocol handler about the pair fd. */
 	oracle_proto_init(oracle_end);

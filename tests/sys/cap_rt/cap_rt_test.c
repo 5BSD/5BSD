@@ -43,24 +43,11 @@
 #include "cap_rt_test_keystore_proto.h"
 #include "cap_rt_test_kernelstore_proto.h"
 
-#ifndef SYS_cap_xfer_limit
-#define	SYS_cap_xfer_limit	603
-#endif
-
 #ifndef CAP_XFER_UNLIMITED
 #define	CAP_XFER_UNLIMITED	0
 #define	CAP_XFER_ONCE		1
 #define	CAP_XFER_NONE		2
 #endif
-
-static int
-cap_xfer_limit_syscall(int fd, int state)
-{
-
-	return (syscall(SYS_cap_xfer_limit, fd, state));
-}
-
-#define	cap_xfer_limit	cap_xfer_limit_syscall
 
 static int
 closed_fd(void)

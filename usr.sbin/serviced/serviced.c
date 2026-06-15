@@ -20,6 +20,7 @@
  *   7. Enter event loop
  */
 
+#include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
@@ -244,33 +245,40 @@ main(int argc, char *argv[])
 	if (s != NULL && s[0] != '\0')
 		serviced_bundle_dir_user = s;
 
-	/* Initialize bundle registry (scan /Capabilities/System + /Capabilities). */
-	if (bundle_registry_init() == -1) {
-		syslog(LOG_CRIT, "bundle registry init failed — aborting");
+	/*
+	 * Tell oracled we're alive IMMEDIATELY — before any slow operations
+	 * (bundle scanning, capprotect) that could cause a timeout.
+	 * This is the first thing we do after inheriting fds.
+	 */
+	if (oracle_send_ready(sd.oracle_pair_fd) != 0) {
+		syslog(LOG_ERR, "failed to send READY to oracled");
 		return (1);
 	}
 
-	/* Apply capprotect shield if available. */
-	if (sd.capprotect_fd >= 0) {
-		struct cap_rt_call_args call;
-		struct cp_request cp_req;
-
-		memset(&cp_req, 0, sizeof(cp_req));
-		cp_req.op = CP_OP_SHIELD;
-		cp_req.flags = CP_SF_PTRACE | CP_SF_WAIT | CP_SF_SCHED |
-		    CP_SF_VISIBLE | CP_SF_CORE | CP_SF_KTRACE;
-
-		memset(&call, 0, sizeof(call));
-		call.req = &cp_req;
-		call.req_len = sizeof(cp_req);
-
-		if (ioctl(sd.capprotect_fd, CAP_RT_CALL, &call) == -1)
-			syslog(LOG_ERR, "capprotect shield: %m");
-		else
-			syslog(LOG_INFO, "capprotect shield active");
+	/*
+	 * Lock down inherited descriptors.  The oracle pair and delegate
+	 * fds are for serviced only — they must not be inherited by
+	 * child services (clofork), leaked via exec (cloexec), or
+	 * transferred over a pair channel (xfer=none).
+	 */
+	{
+		int lockfds[] = {
+			sd.oracle_pair_fd,
+			sd.pair_svc_fd,
+			sd.coalition_svc_fd,
+			sd.capprotect_fd,
+			sd.identity_fd,
+		};
+		for (int i = 0; i < (int)(sizeof(lockfds)/sizeof(lockfds[0])); i++) {
+			if (lockfds[i] < 0)
+				continue;
+			(void)cap_clofork_limit(lockfds[i], 1);
+			(void)cap_cloexec_limit(lockfds[i], 1);
+			(void)cap_xfer_limit(lockfds[i], 0);
+		}
 	}
 
-	/* Create kqueue. */
+	/* Create kqueue early — needed for signal handling during setup. */
 	serviced_kq = kqueue();
 	if (serviced_kq == -1) {
 		syslog(LOG_ERR, "kqueue: %m");
@@ -297,10 +305,38 @@ main(int argc, char *argv[])
 	add_signal_event(serviced_kq, SIGHUP);
 	add_signal_event(serviced_kq, SIGCHLD);
 
-	/* Tell oracled we're ready. */
-	if (oracle_send_ready(sd.oracle_pair_fd) != 0) {
-		syslog(LOG_ERR, "failed to send READY to oracled");
+	/* Initialize bundle registry (scan /Capabilities/System + /Capabilities). */
+	if (bundle_registry_init() == -1) {
+		syslog(LOG_CRIT, "bundle registry init failed — aborting");
 		return (1);
+	}
+
+	/*
+	 * Apply capprotect shield LAST — after all setup is done.
+	 * CP_SF_VISIBLE must not be applied before syslog/kqueue/bundle
+	 * operations or it may block them.  Don't include CP_SF_SIGNAL
+	 * so oracled can still send us SIGTERM/SIGHUP via pdkill.
+	 */
+	if (sd.capprotect_fd >= 0) {
+		struct cap_rt_call_args call;
+		struct cp_request cp_req;
+
+		memset(&cp_req, 0, sizeof(cp_req));
+		cp_req.op = CP_OP_SHIELD;
+		cp_req.flags = CP_SF_PTRACE | CP_SF_WAIT | CP_SF_SCHED |
+		    CP_SF_CORE | CP_SF_KTRACE;
+		/* NOTE: CP_SF_VISIBLE intentionally omitted — syslog
+		 * delivery to /var/run/log may require process visibility.
+		 * CP_SF_SIGNAL omitted so oracled can pdkill us. */
+
+		memset(&call, 0, sizeof(call));
+		call.req = &cp_req;
+		call.req_len = sizeof(cp_req);
+
+		if (ioctl(sd.capprotect_fd, CAP_RT_CALL, &call) == -1)
+			syslog(LOG_ERR, "capprotect shield: %m");
+		else
+			syslog(LOG_INFO, "capprotect shield active");
 	}
 
 	sd.running = true;

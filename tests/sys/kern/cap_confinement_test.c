@@ -25,20 +25,7 @@
 
 #include <atf-c.h>
 
-/*
- * Use syscall() directly since libc may not have wrappers for these
- * new syscalls yet during the build.
- */
-#ifndef SYS_cap_cloexec_limit
-#define	SYS_cap_cloexec_limit	604
-#endif
-#ifndef SYS_cap_clofork_limit
-#define	SYS_cap_clofork_limit	605
-#endif
-#ifndef SYS_cap_xfer_limit
-#define	SYS_cap_xfer_limit	603
-#endif
-
+/* Constants if not yet in installed headers. */
 #ifndef CAP_CLOEXEC_UNLOCKED
 #define	CAP_CLOEXEC_UNLOCKED	0
 #define	CAP_CLOEXEC_LOCKED	1
@@ -51,31 +38,6 @@
 #define	CAP_XFER_UNLIMITED	0
 #define	CAP_XFER_NONE		2
 #endif
-
-static int
-cap_cloexec_limit_syscall(int fd, int state)
-{
-
-	return (syscall(SYS_cap_cloexec_limit, fd, state));
-}
-
-static int
-cap_clofork_limit_syscall(int fd, int state)
-{
-
-	return (syscall(SYS_cap_clofork_limit, fd, state));
-}
-
-static int
-cap_xfer_limit_syscall(int fd, int state)
-{
-
-	return (syscall(SYS_cap_xfer_limit, fd, state));
-}
-
-#define	cap_cloexec_limit	cap_cloexec_limit_syscall
-#define	cap_clofork_limit	cap_clofork_limit_syscall
-#define	cap_xfer_limit		cap_xfer_limit_syscall
 
 /* Helpers for exec test — child checks if fd is open or closed. */
 static char *exec_helper_path;
