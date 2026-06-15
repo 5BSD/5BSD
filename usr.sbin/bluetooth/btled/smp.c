@@ -148,10 +148,10 @@ smp_c1(const uint8_t k[16], const uint8_t r[16],
 	memcpy(p1 + 2, preq, 7);
 	memcpy(p1 + 9, pres, 7);
 
-	/* p2 = padding(4) || ia(6) || ra(6) */
-	memset(p2, 0, 4);
-	memcpy(p2 + 4, ia, 6);
-	memcpy(p2 + 10, ra, 6);
+	/* p2 = padding(4) || ia(6) || ra(6) (little-endian: ra at LSB) */
+	memcpy(p2, ra, 6);
+	memcpy(p2 + 6, ia, 6);
+	memset(p2 + 12, 0, 4);
 
 	/* tmp = r XOR p1 */
 	for (i = 0; i < 16; i++)
@@ -237,6 +237,7 @@ smp_open(struct smp_conn *sc, const uint8_t *addr, uint8_t addr_type,
 	struct sockaddr_l2cap sa;
 
 	memset(sc, 0, sizeof(*sc));
+	sc->fd = -1;
 	sc->hci_fd = hci_fd;
 	sc->con_handle = con_handle;
 	sc->remote_addr_type = addr_type;
@@ -296,6 +297,35 @@ smp_close(struct smp_conn *sc)
  *  8. Start encryption via HCI LE_Start_Encryption
  *  9. Receive key distribution (LTK, IRK)
  */
+/*
+ * Store or update a bond in the database.
+ * If a bond for this device already exists, update it in place.
+ * Otherwise append a new entry.
+ */
+static void
+smp_bond_db_store(struct smp_bond_db *db, const struct smp_bond *bond)
+{
+
+	if (db == NULL)
+		return;
+
+	/* Update existing bond for this device if present */
+	for (int i = 0; i < db->count; i++) {
+		if (db->bonds[i].addr_type == bond->addr_type &&
+		    memcmp(db->bonds[i].addr, bond->addr, 6) == 0) {
+			db->bonds[i] = *bond;
+			smp_bond_db_save(db);
+			return;
+		}
+	}
+
+	/* Append new bond */
+	if (db->count < SMP_MAX_BONDS) {
+		db->bonds[db->count++] = *bond;
+		smp_bond_db_save(db);
+	}
+}
+
 int
 smp_pair(struct smp_conn *sc)
 {
@@ -506,6 +536,13 @@ smp_pair(struct smp_conn *sc)
 		memcpy(bond.addr, sc->remote_addr, 6);
 		bond.addr_type = sc->remote_addr_type;
 
+		/* Set receive timeout for key distribution */
+		{
+			struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+			setsockopt(sc->fd, SOL_SOCKET, SO_RCVTIMEO,
+			    &tv, sizeof(tv));
+		}
+
 		/* Receive up to 4 PDUs for key distribution */
 		for (int i = 0; i < 4; i++) {
 			n = recv(sc->fd, pdu, sizeof(pdu), 0);
@@ -543,11 +580,8 @@ smp_pair(struct smp_conn *sc)
 		}
 
 		/* Store bond */
-		if (bond.has_ltk && sc->bond_db != NULL &&
-		    sc->bond_db->count < SMP_MAX_BONDS) {
-			sc->bond_db->bonds[sc->bond_db->count++] = bond;
-			smp_bond_db_save(sc->bond_db);
-		}
+		if (bond.has_ltk)
+			smp_bond_db_store(sc->bond_db, &bond);
 	}
 
 	return (0);
@@ -719,9 +753,12 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 
 	{
 		size_t pklen = sizeof(our_pk_raw);
-		EVP_PKEY_get_octet_string_param(our_key,
+		if (EVP_PKEY_get_octet_string_param(our_key,
 		    OSSL_PKEY_PARAM_PUB_KEY, our_pk_raw,
-		    sizeof(our_pk_raw), &pklen);
+		    sizeof(our_pk_raw), &pklen) <= 0) {
+			EVP_PKEY_free(our_key);
+			return (-1);
+		}
 	}
 
 	/* Send our PK (big-endian -> little-endian) */
@@ -774,7 +811,12 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		EVP_PKEY_derive_init(dctx);
 		EVP_PKEY_derive_set_peer(dctx, peer_key);
 		dh_len = sizeof(dhkey);
-		EVP_PKEY_derive(dctx, dhkey, &dh_len);
+		if (EVP_PKEY_derive(dctx, dhkey, &dh_len) <= 0) {
+			EVP_PKEY_CTX_free(dctx);
+			EVP_PKEY_free(peer_key);
+			EVP_PKEY_free(our_key);
+			return (-1);
+		}
 		EVP_PKEY_CTX_free(dctx);
 	}
 	EVP_PKEY_free(peer_key);
@@ -898,11 +940,7 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		bond.has_ltk = true;
 		bond.is_sc = true;
 
-		if (sc->bond_db != NULL &&
-		    sc->bond_db->count < SMP_MAX_BONDS) {
-			sc->bond_db->bonds[sc->bond_db->count++] = bond;
-			smp_bond_db_save(sc->bond_db);
-		}
+		smp_bond_db_store(sc->bond_db, &bond);
 	}
 
 	return (0);
@@ -924,9 +962,9 @@ smp_bond_db_load(struct smp_bond_db *db, int fd)
 	if (n < 0)
 		return (-1);
 
-	if (n < 0 || (n % sizeof(struct smp_bond)) != 0) {
+	if ((n % sizeof(struct smp_bond)) != 0) {
 		db->count = 0;
-		return (n < 0 ? -1 : 0);
+		return (0);
 	}
 	db->count = n / sizeof(struct smp_bond);
 	if (db->count > SMP_MAX_BONDS)
@@ -1412,11 +1450,7 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 			}
 		}
 
-		if (sc->bond_db != NULL &&
-		    sc->bond_db->count < SMP_MAX_BONDS) {
-			sc->bond_db->bonds[sc->bond_db->count++] = bond;
-			smp_bond_db_save(sc->bond_db);
-		}
+		smp_bond_db_store(sc->bond_db, &bond);
 	}
 
 	return (0);

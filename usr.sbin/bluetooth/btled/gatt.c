@@ -68,6 +68,8 @@ gatt_discover_primary_services(struct att_conn *ac,
 			} else if (entry_len == 20) {
 				s->uuid16 = 0;
 				memcpy(s->uuid128, p + 4, 16);
+			} else {
+				break;
 			}
 
 			count++;
@@ -134,6 +136,8 @@ gatt_discover_characteristics(struct att_conn *ac,
 			} else if (entry_len == 21) {
 				c->uuid16 = 0;
 				memcpy(c->uuid128, p + 5, 16);
+			} else {
+				break;
 			}
 
 			count++;

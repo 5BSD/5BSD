@@ -113,8 +113,11 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *addr,
 	ac->fd = fd;
 	ac->mtu = ATT_DEFAULT_MTU;
 	ac->buf = malloc(ATT_MAX_MTU);
-	if (ac->buf == NULL)
+	if (ac->buf == NULL) {
+		close(fd);
+		ac->fd = -1;
 		return (-1);
+	}
 
 	return (0);
 }

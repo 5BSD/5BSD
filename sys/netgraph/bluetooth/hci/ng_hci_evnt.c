@@ -605,13 +605,13 @@ le_event(ng_hci_unit_p unit, struct mbuf *event)
 	m_adj(event, sizeof(*lep));
 	switch(lep->subevent_code){
 	case NG_HCI_LEEV_CON_COMPL:
-		le_connection_complete(unit, event);
+		error = le_connection_complete(unit, event);
 		break;
 	case NG_HCI_LEEV_ADVREP:
-		le_advertizing_report(unit, event);
+		error = le_advertizing_report(unit, event);
 		break;
 	case NG_HCI_LEEV_CON_UPDATE_COMPL:
-		le_connection_update(unit, event);
+		error = le_connection_update(unit, event);
 		break;
 	case NG_HCI_LEEV_READ_REMOTE_FEATURES_COMPL:
 		NG_HCI_INFO(
@@ -621,7 +621,7 @@ le_event(ng_hci_unit_p unit, struct mbuf *event)
 		break;
 
 	case NG_HCI_LEEV_ENH_CONN_COMPL:
-		le_enh_connection_complete(unit, event);
+		error = le_enh_connection_complete(unit, event);
 		break;
 
 	case NG_HCI_LEEV_LONG_TERM_KEY_REQUEST:
@@ -1002,7 +1002,8 @@ encryption_change(ng_hci_unit_p unit, struct mbuf *event)
 			__func__, NG_NODE_NAME(unit->node), ep->status);
 
 	/*Anyway, propagete encryption status to upper layer*/
-	ng_hci_lp_enc_change(con, con->encryption_mode);
+	if (con != NULL)
+		ng_hci_lp_enc_change(con, con->encryption_mode);
 
 	NG_FREE_M(event);
 

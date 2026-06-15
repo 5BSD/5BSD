@@ -86,6 +86,7 @@ struct vhid_inst {
  */
 struct vhid_softc {
 	device_t		dev;
+	struct mtx		sc_mtx;
 	struct vhid_inst	*insts[VHID_MAX_DEVICES];
 };
 
@@ -172,33 +173,41 @@ vhid_inst_write(struct cdev *dev, struct uio *uio, int ioflag)
 			mtx_unlock(&vi->mtx);
 			return (EBUSY);
 		}
-		/* Pre-attach: accumulate report descriptor under lock */
+		/* Pre-attach: accumulate report descriptor */
 		len = uio->uio_resid;
 		if (vi->rdesc_len + len > VHID_MAX_RDESC) {
 			mtx_unlock(&vi->mtx);
 			return (EFBIG);
 		}
-		if (vi->rdesc == NULL) {
-			/*
-			 * Drop the mutex for M_WAITOK allocation,
-			 * then re-check state.
-			 */
-			mtx_unlock(&vi->mtx);
-			vi->rdesc = malloc(VHID_MAX_RDESC, M_VHID, M_WAITOK);
+		mtx_unlock(&vi->mtx);
+
+		/*
+		 * uiomove can sleep, so copy into a stack buffer first
+		 * without the mutex held.
+		 */
+		{
+			uint8_t rdbuf[VHID_MAX_RDESC];
+
+			error = uiomove(rdbuf, len, uio);
+			if (error != 0)
+				return (error);
+
 			mtx_lock(&vi->mtx);
 			if (vi->configured || vi->attaching) {
 				mtx_unlock(&vi->mtx);
 				return (EBUSY);
 			}
-		}
-
-		error = uiomove(vi->rdesc + vi->rdesc_len, len, uio);
-		if (error != 0) {
+			if (vi->rdesc_len + len > VHID_MAX_RDESC) {
+				mtx_unlock(&vi->mtx);
+				return (EFBIG);
+			}
+			if (vi->rdesc == NULL)
+				vi->rdesc = malloc(VHID_MAX_RDESC, M_VHID,
+				    M_WAITOK);
+			memcpy(vi->rdesc + vi->rdesc_len, rdbuf, len);
+			vi->rdesc_len += len;
 			mtx_unlock(&vi->mtx);
-			return (error);
 		}
-		vi->rdesc_len += len;
-		mtx_unlock(&vi->mtx);
 		return (0);
 	}
 
@@ -325,59 +334,83 @@ vhid_ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		return (error);
 
 	switch (cmd) {
-	case VHID_CREATE:
+	case VHID_CREATE: {
+		struct make_dev_args mda;
+
+		mtx_lock(&vhid_sc->sc_mtx);
 		/* Find first free slot */
 		for (unit = 0; unit < VHID_MAX_DEVICES; unit++) {
 			if (vhid_sc->insts[unit] == NULL)
 				break;
 		}
-		if (unit >= VHID_MAX_DEVICES)
+		if (unit >= VHID_MAX_DEVICES) {
+			mtx_unlock(&vhid_sc->sc_mtx);
 			return (ENOSPC);
+		}
 
 		vi = malloc(sizeof(*vi), M_VHID, M_WAITOK | M_ZERO);
 		mtx_init(&vi->mtx, "vhid", NULL, MTX_DEF);
 		vi->unit = unit;
 
-		vi->cdev = make_dev(&vhid_inst_cdevsw, unit,
-		    UID_ROOT, GID_WHEEL, 0660, "vhid%d", unit);
-		if (vi->cdev == NULL) {
+		make_dev_args_init(&mda);
+		mda.mda_devsw = &vhid_inst_cdevsw;
+		mda.mda_uid = UID_ROOT;
+		mda.mda_gid = GID_WHEEL;
+		mda.mda_mode = 0660;
+		mda.mda_unit = unit;
+		error = make_dev_s(&mda, &vi->cdev, "vhid%d", unit);
+		if (error != 0) {
 			mtx_destroy(&vi->mtx);
 			free(vi, M_VHID);
-			return (ENXIO);
+			mtx_unlock(&vhid_sc->sc_mtx);
+			return (error);
 		}
 		vi->cdev->si_drv1 = vi;
 
 		vhid_sc->insts[unit] = vi;
+		mtx_unlock(&vhid_sc->sc_mtx);
 
 		*(int *)data = unit;
 		return (0);
+	}
 
 	case VHID_DESTROY:
 		unit = *(int *)data;
 		if (unit < 0 || unit >= VHID_MAX_DEVICES)
 			return (EINVAL);
 
+		mtx_lock(&vhid_sc->sc_mtx);
 		vi = vhid_sc->insts[unit];
-		if (vi == NULL)
+		if (vi == NULL) {
+			mtx_unlock(&vhid_sc->sc_mtx);
 			return (ENOENT);
+		}
 
 		mtx_lock(&vi->mtx);
 		if (vi->open) {
 			mtx_unlock(&vi->mtx);
+			mtx_unlock(&vhid_sc->sc_mtx);
 			return (EBUSY);
 		}
 		mtx_unlock(&vi->mtx);
+
+		vhid_sc->insts[unit] = NULL;
+		mtx_unlock(&vhid_sc->sc_mtx);
 
 		/* Detach hidbus child if present */
 		if (vi->hidbus_dev != NULL) {
 			error = device_delete_child(vhid_sc->dev,
 			    vi->hidbus_dev);
-			if (error != 0)
+			if (error != 0) {
+				/* Re-insert on failure */
+				mtx_lock(&vhid_sc->sc_mtx);
+				vhid_sc->insts[unit] = vi;
+				mtx_unlock(&vhid_sc->sc_mtx);
 				return (error);
+			}
 		}
 
 		destroy_dev(vi->cdev);
-		vhid_sc->insts[unit] = NULL;
 
 		if (vi->rdesc != NULL)
 			free(vi->rdesc, M_VHID);
@@ -497,7 +530,7 @@ vhid_get_rdesc(device_t dev, device_t child, void *data, hid_size_t len)
 static int
 vhid_read_ivar(device_t dev, device_t child, int which, uintptr_t *result)
 {
-	return (BUS_READ_IVAR(device_get_parent(dev), dev, which, result));
+	return (ENOENT);
 }
 
 /* ----------------------------------------------------------------
@@ -522,17 +555,25 @@ static int
 vhid_attach(device_t dev)
 {
 	struct vhid_softc *sc;
+	struct make_dev_args mda;
+	int error;
 
 	sc = device_get_softc(dev);
 	sc->dev = dev;
+	mtx_init(&sc->sc_mtx, "vhid_sc", NULL, MTX_DEF);
 	vhid_sc = sc;
 
 	/* Create /dev/vhid control device */
-	vhid_ctl_dev = make_dev(&vhid_ctl_cdevsw, 0,
-	    UID_ROOT, GID_WHEEL, 0660, "vhid");
-	if (vhid_ctl_dev == NULL) {
-		device_printf(dev, "failed to create /dev/vhid\n");
-		return (ENXIO);
+	make_dev_args_init(&mda);
+	mda.mda_devsw = &vhid_ctl_cdevsw;
+	mda.mda_uid = UID_ROOT;
+	mda.mda_gid = GID_WHEEL;
+	mda.mda_mode = 0660;
+	error = make_dev_s(&mda, &vhid_ctl_dev, "vhid");
+	if (error != 0) {
+		device_printf(dev, "failed to create /dev/vhid: %d\n", error);
+		mtx_destroy(&sc->sc_mtx);
+		return (error);
 	}
 
 	device_printf(dev, "Virtual HID transport ready\n");
@@ -549,10 +590,13 @@ vhid_detach(device_t dev)
 
 	sc = device_get_softc(dev);
 
+	mtx_lock(&sc->sc_mtx);
 	for (i = 0; i < VHID_MAX_DEVICES; i++) {
 		vi = sc->insts[i];
 		if (vi == NULL)
 			continue;
+		sc->insts[i] = NULL;
+		mtx_unlock(&sc->sc_mtx);
 
 		if (vi->hidbus_dev != NULL)
 			device_delete_child(dev, vi->hidbus_dev);
@@ -563,13 +607,16 @@ vhid_detach(device_t dev)
 			free(vi->rdesc, M_VHID);
 		mtx_destroy(&vi->mtx);
 		free(vi, M_VHID);
-		sc->insts[i] = NULL;
+
+		mtx_lock(&sc->sc_mtx);
 	}
+	mtx_unlock(&sc->sc_mtx);
 
 	if (vhid_ctl_dev != NULL)
 		destroy_dev(vhid_ctl_dev);
 
 	vhid_sc = NULL;
+	mtx_destroy(&sc->sc_mtx);
 
 	return (0);
 }

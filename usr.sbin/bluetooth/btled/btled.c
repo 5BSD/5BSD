@@ -109,14 +109,15 @@ struct hogp_device {
 	bool			reconnect;	/* auto-reconnect on loss */
 
 	/*
-	 * Pre-allocated socket pool for reconnection inside Capsicum.
+	 * Pre-allocated socket pool for ATT reconnection inside Capsicum.
 	 * Created before cap_enter(), consumed on reconnect via cap_connect().
+	 * SMP is not pooled: re-pairing after Capsicum entry requires
+	 * restarting btled.  Reconnection with an existing bond uses HCI
+	 * LE_Start_Encryption, which does not need an SMP socket.
 	 */
 #define SOCK_POOL_SIZE	8
 	int			att_pool[SOCK_POOL_SIZE];
-	int			smp_pool[SOCK_POOL_SIZE];
 	int			att_pool_next;
-	int			smp_pool_next;
 };
 
 static volatile sig_atomic_t running = 1;
@@ -271,6 +272,9 @@ main(int argc, char *argv[])
 	bool scan_mode = false;
 
 	memset(&dev, 0, sizeof(dev));
+	for (int i = 0; i < SOCK_POOL_SIZE; i++) {
+		dev.att_pool[i] = -1;
+	}
 	dev.addr_type = BDADDR_LE_PUBLIC;
 	dev.bond_fd = -1;
 	dev.vhid_ctl_fd = -1;
@@ -543,10 +547,12 @@ connect_loop:
 	}
 
 	/*
-	 * Phase 3: Set up vhid device
+	 * Phase 3: Set up vhid device (skip on reconnect if already open)
 	 */
-	if (hogp_setup_vhid(&dev) != 0)
-		err(1, "vhid setup");
+	if (dev.vhid_fd < 0) {
+		if (hogp_setup_vhid(&dev) != 0)
+			err(1, "vhid setup");
+	}
 
 	/*
 	 * Phase 4: Subscribe to report notifications
@@ -569,11 +575,8 @@ connect_loop:
 	 */
 	if (dev.reconnect) {
 		dev.att_pool_next = 0;
-		dev.smp_pool_next = 0;
 		if (pool_create(dev.att_pool, SOCK_POOL_SIZE) < 0)
 			warn("ATT socket pool creation failed");
-		if (pool_create(dev.smp_pool, SOCK_POOL_SIZE) < 0)
-			warn("SMP socket pool creation failed");
 	}
 	if (capsicum_sandbox(&dev) != 0)
 		err(1, "capsicum sandbox");
@@ -594,12 +597,18 @@ connect_loop:
 	 */
 	att_close(&dev.att);
 	smp_close(&dev.smp);
-	if (dev.vhid_fd >= 0) {
-		close(dev.vhid_fd);
-		dev.vhid_fd = -1;
+
+	if (!dev.reconnect || !running) {
+		/* Full cleanup on final exit */
+		if (dev.vhid_fd >= 0) {
+			close(dev.vhid_fd);
+			dev.vhid_fd = -1;
+		}
+		if (dev.vhid_ctl_fd >= 0)
+			ioctl(dev.vhid_ctl_fd, VHID_DESTROY, &dev.vhid_unit);
 	}
-	if (dev.vhid_ctl_fd >= 0)
-		ioctl(dev.vhid_ctl_fd, VHID_DESTROY, &dev.vhid_unit);
+
+	/* Free report state; vhid_fd stays open for reconnect */
 	free(dev.report_map);
 	dev.report_map = NULL;
 	dev.nreports = 0;
@@ -901,10 +910,6 @@ capsicum_sandbox(struct hogp_device *dev)
 			if (dev->att_pool[i] >= 0)
 				cap_rights_limit(dev->att_pool[i], &rights);
 		}
-		for (int i = dev->smp_pool_next; i < SOCK_POOL_SIZE; i++) {
-			if (dev->smp_pool[i] >= 0)
-				cap_rights_limit(dev->smp_pool[i], &rights);
-		}
 	}
 
 	/* Enter capability mode */
@@ -984,11 +989,15 @@ hogp_event_loop(struct hogp_device *dev)
 						break;
 					memcpy(full + 1, report_data,
 					    report_len);
-					write(dev->vhid_fd, full,
-					    report_len + 1);
+					if (write(dev->vhid_fd, full,
+					    report_len + 1) < 0 &&
+					    errno != EAGAIN)
+						warn("vhid write");
 				} else {
-					write(dev->vhid_fd, report_data,
-					    report_len);
+					if (write(dev->vhid_fd, report_data,
+					    report_len) < 0 &&
+					    errno != EAGAIN)
+						warn("vhid write");
 				}
 				break;
 			}

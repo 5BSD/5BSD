@@ -654,6 +654,9 @@ process_hc_baseband_params(ng_hci_unit_p unit, u_int16_t ocf,
 		NG_HCI_BUFF_SCO_TOTAL(unit->buffer, size);
 		NG_HCI_BUFF_SCO_FREE(unit->buffer, size);
 
+		NG_HCI_BUFF_LE_TOTAL(unit->buffer, size);
+		NG_HCI_BUFF_LE_FREE(unit->buffer, size);
+
 		unit->state &= ~NG_HCI_UNIT_INITED;
 		} break;
 

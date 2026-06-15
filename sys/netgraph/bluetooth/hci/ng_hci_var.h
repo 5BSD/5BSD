@@ -121,7 +121,13 @@ typedef struct ng_hci_unit_buff {
 		(b).sco_pkts = (n); 			\
 	} while (0)
 
-#define NG_HCI_BUFF_LE_USE(b, v)	(b).le_free -= (v)
+#define NG_HCI_BUFF_LE_USE(b, v)			\
+	do {						\
+		if ((b).le_free >= (v))			\
+			(b).le_free -= (v);		\
+		else					\
+			(b).le_free = 0;		\
+	} while (0)
 #define NG_HCI_BUFF_LE_FREE(b, v) 			\
 	do { 						\
 		(b).le_free += (v);			\
