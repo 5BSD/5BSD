@@ -238,16 +238,21 @@ ubt_intel_probe(device_t dev)
 
 	case UBT_INTEL_DEVICE_8260:
 		/*
-		 * Find if the Intel Wireless 8260/8265 device is in bootloader
-		 * mode or is running operational firmware with checking of
-		 * variant byte of "Intel version" HCI command response.
-		 * The value 0x23 identifies the operational firmware.
+		 * Find if the device is running operational firmware.
+		 * Newer devices (AX201+) share the same USB PID as 8260
+		 * but use TLV versioning instead of legacy.  Try the legacy
+		 * fw_variant check first; if it doesn't indicate operational
+		 * mode (0x23), fall through to the TLV img_type check.
 		 */
 		if (ubt_intel_do_hci_request(uaa->device,
 		    NG_HCI_OPCODE(NG_HCI_OGF_VENDOR, 0x05),
 		    &version, sizeof(version)) != USB_ERR_NORMAL_COMPLETION)
 			return (ENXIO);
-		if (version.fw_variant != 0x23)
+		if (version.fw_variant == 0x23)
+			break;
+		/* Legacy check failed — try TLV img_type for newer devices */
+		img_type = ubt_intel_get_img_type(uaa->device);
+		if (img_type != 0x03)
 			return (ENXIO);
 		break;
 
