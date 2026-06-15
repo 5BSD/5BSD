@@ -719,7 +719,7 @@ cap_ftruncate_body(int *result)
 	if (cap_enter() != 0) { *result = 3; return; }
 
 	/* cap_ftruncate should work in cap mode */
-	if (syscall(SYS_cap_ftruncate, fd, 0, (off_t)5) != 0) {
+	if (syscall(SYS_cap_ftruncate, fd, (off_t)5) != 0) {
 		*result = 4; return;
 	}
 	if (fstat(fd, &sb) != 0) { *result = 5; return; }

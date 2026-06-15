@@ -4140,8 +4140,8 @@ pdfork_shielded_child(int *pd_out, uint32_t shield_flags)
 		return (-1);
 	}
 	if (pid == 0) {
-		/* Child: shield, signal ready, wait for parent. */
-		char buf;
+		/* Child: shield, signal ready, then pause forever.
+		 * pdkill or close(pd) will terminate us. */
 		int fd;
 
 		close(sv[0]);
@@ -4149,9 +4149,10 @@ pdfork_shielded_child(int *pd_out, uint32_t shield_flags)
 		if (fd < 0)
 			_exit(10);
 		(void)write(sv[1], "s", 1);
-		(void)read(sv[1], &buf, 1);
-		close(fd);
 		close(sv[1]);
+		for (;;)
+			pause();
+		/* NOTREACHED */
 		_exit(0);
 	}
 
@@ -4292,16 +4293,25 @@ ATF_TC_BODY(cap_pro_pdwait_bypasses_wait_shield, tc)
 	pid = pdfork_shielded_child(&pd, CP_SF_WAIT | CP_SF_SIGNAL);
 	ATF_REQUIRE(pid > 0);
 
-	/* Foreign wait must be blocked — verify shield is active. */
-	ATF_CHECK_EQ(run_shield_helper("wait", pid), 0);
+	/*
+	 * We cannot directly verify CP_SF_WAIT blocks foreign waitpid()
+	 * from the shield helper because waitpid() on a non-child already
+	 * fails with ECHILD before the MAC hook fires.  The shield is
+	 * verified by the cap_pro_foreign_wait_blocked test which uses
+	 * a parent-child relationship.  Here we just test that pdwait
+	 * works through the shield.
+	 */
 
 	/* Kill the child via pdkill so it exits. */
 	ATF_REQUIRE_EQ(pdkill(pd, SIGKILL), 0);
 
-	/* pdwait via process descriptor must collect the exit status. */
+	/* pdwait via process descriptor must collect the exit status.
+	 * Use blocking wait (WEXITED only, no WNOHANG) — the child
+	 * may not have finished dying yet after pdkill returns.
+	 * pdwait returns 0 on success (not pid like waitpid). */
 	status = 0;
-	ATF_REQUIRE_EQ(pdwait(pd, &status, WNOHANG | WEXITED,
-	    NULL, NULL), pid);
+	ATF_REQUIRE_EQ(pdwait(pd, &status, WEXITED,
+	    NULL, NULL), 0);
 	ATF_CHECK(WIFSIGNALED(status));
 	ATF_CHECK_EQ(WTERMSIG(status), SIGKILL);
 
@@ -4324,12 +4334,13 @@ ATF_TC_BODY(cap_pro_pdwait_bypasses_full_shield, tc)
 	pid = pdfork_shielded_child(&pd, CP_SF_ALL);
 	ATF_REQUIRE(pid > 0);
 
-	/* Kill and wait through maximum shield. */
+	/* Kill and wait through maximum shield.
+	 * pdwait returns 0 on success (not pid like waitpid). */
 	ATF_REQUIRE_EQ(pdkill(pd, SIGKILL), 0);
 
 	status = 0;
-	ATF_REQUIRE_EQ(pdwait(pd, &status, WNOHANG | WEXITED,
-	    NULL, NULL), pid);
+	ATF_REQUIRE_EQ(pdwait(pd, &status, WEXITED,
+	    NULL, NULL), 0);
 	ATF_CHECK(WIFSIGNALED(status));
 	ATF_CHECK_EQ(WTERMSIG(status), SIGKILL);
 
