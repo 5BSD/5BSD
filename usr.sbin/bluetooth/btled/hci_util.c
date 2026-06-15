@@ -147,10 +147,17 @@ hci_le_scan(int hci_fd, int duration_sec,
 	ng_hci_status_rp rp;
 	ng_hci_le_set_scan_enable_cp enable_cp;
 	struct bt_devreq r;
+	struct bt_devfilter flt, oldflt;
 	uint8_t buf[512];
 	ng_hci_event_pkt_t *evt;
 	int count = 0;
 	time_t end_time;
+
+	/* Set event filter to receive LE advertising reports */
+	memset(&flt, 0, sizeof(flt));
+	bt_devfilter_pkt_set(&flt, NG_HCI_EVENT_PKT);
+	bt_devfilter_evt_set(&flt, NG_HCI_EVENT_LE);
+	bt_devfilter(hci_fd, &flt, &oldflt);
 
 	/* Set scan parameters: active scan, 100ms interval, 50ms window */
 	memset(&scan_cp, 0, sizeof(scan_cp));
@@ -338,6 +345,9 @@ hci_le_scan(int hci_fd, int duration_sec,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 	bt_devreq(hci_fd, &r, 5);
+
+	/* Restore previous event filter */
+	bt_devfilter(hci_fd, &oldflt, NULL);
 
 	*nresults = count;
 	return (0);
