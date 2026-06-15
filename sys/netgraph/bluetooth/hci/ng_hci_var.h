@@ -85,9 +85,21 @@ typedef struct ng_hci_unit_buff {
 
 #define NG_HCI_BUFF_CMD_SET(b, v)	(b).cmd_free = (v)
 #define NG_HCI_BUFF_CMD_GET(b, v)	(v) = (b).cmd_free
-#define NG_HCI_BUFF_CMD_USE(b, v)	(b).cmd_free -= (v)
+#define NG_HCI_BUFF_CMD_USE(b, v)			\
+	do {						\
+		if ((b).cmd_free >= (v))			\
+			(b).cmd_free -= (v);		\
+		else					\
+			(b).cmd_free = 0;		\
+	} while (0)
 
-#define NG_HCI_BUFF_ACL_USE(b, v)	(b).acl_free -= (v)
+#define NG_HCI_BUFF_ACL_USE(b, v)			\
+	do {						\
+		if ((b).acl_free >= (v))			\
+			(b).acl_free -= (v);		\
+		else					\
+			(b).acl_free = 0;		\
+	} while (0)
 #define NG_HCI_BUFF_ACL_FREE(b, v) 			\
 	do { 						\
 		(b).acl_free += (v);			\
@@ -104,7 +116,13 @@ typedef struct ng_hci_unit_buff {
 		(b).acl_pkts = (n); 			\
 	} while (0)
 
-#define NG_HCI_BUFF_SCO_USE(b, v)	(b).sco_free -= (v)
+#define NG_HCI_BUFF_SCO_USE(b, v)			\
+	do {						\
+		if ((b).sco_free >= (v))			\
+			(b).sco_free -= (v);		\
+		else					\
+			(b).sco_free = 0;		\
+	} while (0)
 #define NG_HCI_BUFF_SCO_FREE(b, v) 			\
 	do { 						\
 		(b).sco_free += (v); 			\

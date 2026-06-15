@@ -49,6 +49,26 @@
 #include <netgraph/bluetooth/hci/ng_hci_ulpi.h>
 #include <netgraph/bluetooth/hci/ng_hci_misc.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(bluetooth);
+
+/* LE connection lifecycle */
+SDT_PROBE_DEFINE3(bluetooth, hci, le_connection, complete,
+    "uint16_t",		/* connection handle */
+    "uint8_t",		/* role (0=central, 1=peripheral) */
+    "uint8_t *"		/* peer address (6 bytes) */
+);
+
+SDT_PROBE_DEFINE2(bluetooth, hci, encryption, change,
+    "uint16_t",		/* connection handle */
+    "uint8_t"		/* encryption_enable */
+);
+
+SDT_PROBE_DEFINE1(bluetooth, hci, le_connection, disconnect,
+    "uint16_t"		/* connection handle */
+);
+
 /******************************************************************************
  ******************************************************************************
  **                     HCI event processing module
@@ -417,6 +437,17 @@ le_advertizing_report(ng_hci_unit_p unit, struct mbuf *event)
 	ep = NULL;
 
 	for (; num_reports > 0; num_reports --) {
+		/*
+		 * Each report: event_type(1) + addr_type(1) + bdaddr(6)
+		 *              + length_data(1) + data(N) + rssi(1)
+		 * Minimum per report (with length_data=0): 10 bytes.
+		 */
+		if (event->m_pkthdr.len < 10) {
+			NG_HCI_WARN("%s: truncated advertising report\n",
+			    __func__);
+			break;
+		}
+
 		/* event_type */
 		m_adj(event, sizeof(u_int8_t));
 
@@ -429,6 +460,11 @@ le_advertizing_report(ng_hci_unit_p unit, struct mbuf *event)
 		addr_type = *mtod(event, u_int8_t *);
 		m_adj(event, sizeof(u_int8_t));
 
+		if (event->m_pkthdr.len < (int)sizeof(bdaddr)) {
+			NG_HCI_WARN("%s: truncated bdaddr in adv report\n",
+			    __func__);
+			break;
+		}
 		m_copydata(event, 0, sizeof(bdaddr), (caddr_t) &bdaddr);
 		m_adj(event, sizeof(bdaddr));
 		
@@ -466,13 +502,25 @@ le_advertizing_report(ng_hci_unit_p unit, struct mbuf *event)
 				length_data : NG_HCI_EXTINQ_MAX;
 			
 			/*Advertizement data*/
-			event = m_pullup(event, n->extinq_size);
-			if(event == NULL){
-				NG_HCI_WARN("%s: Event data pullup Failed\n", __func__);
-				goto out;
+			if (event->m_pkthdr.len < length_data) {
+				NG_HCI_WARN("%s: truncated adv data\n",
+				    __func__);
+				break;
 			}
-			m_copydata(event, 0, n->extinq_size, n->extinq_data);
-			m_adj(event, n->extinq_size);
+			if (n->extinq_size > 0) {
+				event = m_pullup(event, n->extinq_size);
+				if(event == NULL){
+					NG_HCI_WARN(
+					    "%s: Event data pullup Failed\n",
+					    __func__);
+					goto out;
+				}
+				m_copydata(event, 0, n->extinq_size,
+				    n->extinq_data);
+			}
+			/* Skip the FULL advertised data length, not just
+			 * the clamped extinq_size, to keep parsing aligned */
+			m_adj(event, length_data);
 			event = m_pullup(event, sizeof(char ));
 			/*Get RSSI*/
 			if(event == NULL){
@@ -497,7 +545,7 @@ le_advertizing_report(ng_hci_unit_p unit, struct mbuf *event)
  */
 static int
 le_con_compl_common(ng_hci_unit_p unit, u_int8_t status, u_int16_t handle,
-    u_int8_t addr_type, bdaddr_t *addr)
+    u_int8_t role, u_int8_t addr_type, bdaddr_t *addr)
 {
 	ng_hci_unit_con_p	con = NULL;
 	int			link_type, error = 0;
@@ -540,8 +588,11 @@ le_con_compl_common(ng_hci_unit_p unit, u_int8_t status, u_int16_t handle,
 
 	if (status != 0)
 		ng_hci_free_con(con);
-	else
+	else {
 		con->state = NG_HCI_CON_OPEN;
+		SDT_PROBE3(bluetooth, hci, le_connection, complete,
+		    con->con_handle, role, &addr->b[0]);
+	}
 
 	return (0);
 }
@@ -558,7 +609,7 @@ le_connection_complete(ng_hci_unit_p unit, struct mbuf *event)
 
 	ep = mtod(event, ng_hci_le_connection_complete_ep *);
 	error = le_con_compl_common(unit, ep->status, ep->handle,
-	    ep->address_type, &ep->address);
+	    ep->role, ep->address_type, &ep->address);
 
 	NG_FREE_M(event);
 	return (error);
@@ -576,7 +627,7 @@ le_enh_connection_complete(ng_hci_unit_p unit, struct mbuf *event)
 
 	ep = mtod(event, ng_hci_le_enh_conn_compl_ep *);
 	error = le_con_compl_common(unit, ep->status, ep->connection_handle,
-	    ep->peer_addr_type, &ep->peer_addr);
+	    ep->role, ep->peer_addr_type, &ep->peer_addr);
 
 	NG_FREE_M(event);
 	return (error);
@@ -584,13 +635,42 @@ le_enh_connection_complete(ng_hci_unit_p unit, struct mbuf *event)
 
 static int le_connection_update(ng_hci_unit_p unit, struct mbuf *event)
 {
-	int error = 0;
-	/*TBD*/
+	ng_hci_connection_update_complete_ep	*ep;
+	ng_hci_unit_con_p			 con;
+	u_int16_t				 h;
+
+	NG_HCI_M_PULLUP(event, sizeof(*ep));
+	if (event == NULL)
+		return (ENOBUFS);
+
+	ep = mtod(event, ng_hci_connection_update_complete_ep *);
+
+	if (ep->status == 0) {
+		h = NG_HCI_CON_HANDLE(le16toh(ep->connection_handle));
+		con = ng_hci_con_by_handle(unit, h);
+		if (con != NULL) {
+			NG_HCI_INFO(
+"%s: %s - LE connection update complete, handle=%d, "
+"interval=%d, latency=%d, timeout=%d\n",
+				__func__, NG_NODE_NAME(unit->node), h,
+				le16toh(ep->conn_interval),
+				le16toh(ep->conn_latency),
+				le16toh(ep->supervision_timeout));
+		} else {
+			NG_HCI_ALERT(
+"%s: %s - LE connection update complete, invalid handle=%d\n",
+				__func__, NG_NODE_NAME(unit->node), h);
+		}
+	} else {
+		NG_HCI_ERR(
+"%s: %s - LE connection update failed, status=%d\n",
+			__func__, NG_NODE_NAME(unit->node), ep->status);
+	}
 
 	NG_FREE_M(event);
-	return error;
-
+	return (0);
 }
+
 static int
 le_event(ng_hci_unit_p unit, struct mbuf *event)
 {
@@ -661,6 +741,13 @@ inquiry_result(ng_hci_unit_p unit, struct mbuf *event)
 	m_adj(event, sizeof(*ep));
 
 	for (; ep->num_responses > 0; ep->num_responses --) {
+		/* Validate remaining mbuf length:
+		 * bdaddr(6) + page_scan_rep_mode(1) +
+		 * page_scan_period_mode(1) + page_scan_mode(1) +
+		 * class(3) + clock_offset(2) = 14 bytes */
+		if (event->m_pkthdr.len < 14)
+			break;
+
 		/* Get remote unit address */
 		m_copydata(event, 0, sizeof(bdaddr), (caddr_t) &bdaddr);
 		m_adj(event, sizeof(bdaddr));
@@ -680,15 +767,16 @@ inquiry_result(ng_hci_unit_p unit, struct mbuf *event)
 		bcopy(&bdaddr, &n->bdaddr, sizeof(n->bdaddr));
 		n->addrtype = NG_HCI_LINK_ACL;
 
-		/* XXX call m_pullup here? */
-
-		n->page_scan_rep_mode = *mtod(event, u_int8_t *);
+		/* Use m_copydata instead of mtod to avoid m_pullup issues */
+		m_copydata(event, 0, sizeof(u_int8_t),
+		    (caddr_t)&n->page_scan_rep_mode);
 		m_adj(event, sizeof(u_int8_t));
 
 		/* page_scan_period_mode */
 		m_adj(event, sizeof(u_int8_t));
 
-		n->page_scan_mode = *mtod(event, u_int8_t *);
+		m_copydata(event, 0, sizeof(u_int8_t),
+		    (caddr_t)&n->page_scan_mode);
 		m_adj(event, sizeof(u_int8_t));
 
 		/* class */
@@ -944,6 +1032,9 @@ discon_compl(ng_hci_unit_p unit, struct mbuf *event)
 		if (con != NULL) {
 			error = ng_hci_lp_discon_ind(con, ep->reason);
 
+			SDT_PROBE1(bluetooth, hci, le_connection, disconnect,
+			    con->con_handle);
+
 			/* Remove all timeouts (if any) */
 			if (con->flags & NG_HCI_CON_TIMEOUT_PENDING)
 				ng_hci_con_untimeout(con);
@@ -996,14 +1087,27 @@ encryption_change(ng_hci_unit_p unit, struct mbuf *event)
 			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_P2P;
 		else
 			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_NONE;
-	} else
+	} else {
 		NG_HCI_ERR(
 "%s: %s - failed to change encryption mode, status=%d\n",
 			__func__, NG_NODE_NAME(unit->node), ep->status);
 
-	/*Anyway, propagete encryption status to upper layer*/
+		/*
+		 * On failure, explicitly set encryption_mode to NONE so
+		 * the upper layer does not interpret a stale non-zero
+		 * mode from a previous successful encryption as "still
+		 * encrypted."
+		 */
+		if (con != NULL)
+			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_NONE;
+	}
+
+	/* Propagate encryption status to upper layer */
 	if (con != NULL)
 		ng_hci_lp_enc_change(con, con->encryption_mode);
+
+	SDT_PROBE2(bluetooth, hci, encryption, change,
+	    h, ep->encryption_enable);
 
 	NG_FREE_M(event);
 
@@ -1171,6 +1275,10 @@ num_compl_pkts(ng_hci_unit_p unit, struct mbuf *event)
 	m_adj(event, sizeof(*ep));
 
 	for (; ep->num_con_handles > 0; ep->num_con_handles --) {
+		/* Validate remaining mbuf length */
+		if (event->m_pkthdr.len < sizeof(h) + sizeof(p))
+			break;
+
 		/* Get connection handle */
 		m_copydata(event, 0, sizeof(h), (caddr_t) &h);
 		m_adj(event, sizeof(h));

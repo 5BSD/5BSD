@@ -130,11 +130,9 @@ ng_l2cap_l2ca_con_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 	if(ip->idtype == NG_L2CAP_L2CA_IDTYPE_ATT){
 		_ng_l2cap_con_rsp(cmd->aux, cmd->ident, NG_L2CAP_ATT_CID,
 				  NG_L2CAP_ATT_CID, 0, 0);
-		cmd->aux->m_flags |= M_PROTO2;
 	}else if(ip->idtype == NG_L2CAP_L2CA_IDTYPE_SMP){
 		_ng_l2cap_con_rsp(cmd->aux, cmd->ident, NG_L2CAP_SMP_CID,
 				  NG_L2CAP_SMP_CID, 0, 0);
-		cmd->aux->m_flags |= M_PROTO2;
 	}else{
 		_ng_l2cap_con_req(cmd->aux, cmd->ident, ch->psm, ch->scid);
 	}
@@ -144,6 +142,9 @@ ng_l2cap_l2ca_con_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 		error = ENOBUFS;
 		goto out;
 	}
+	if(ip->idtype == NG_L2CAP_L2CA_IDTYPE_ATT ||
+	   ip->idtype == NG_L2CAP_L2CA_IDTYPE_SMP)
+		cmd->aux->m_flags |= M_PROTO2;
 
 	ch->state = NG_L2CAP_W4_L2CAP_CON_RSP;
 
@@ -241,16 +242,24 @@ ng_l2cap_l2ca_con_rsp_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 
 	ip = (ng_l2cap_l2ca_con_rsp_ip *)(msg->data);
 
-	/* Check if we have this channel */
-	if((ip->lcid != NG_L2CAP_ATT_CID)&&
-	   (ip->lcid != NG_L2CAP_SMP_CID)){
-		ch = ng_l2cap_chan_by_scid(l2cap, ip->lcid
-					   ,(ip->linktype == NG_HCI_LINK_ACL)?
-					   NG_L2CAP_L2CA_IDTYPE_BREDR:
-					   NG_L2CAP_L2CA_IDTYPE_LE);
-	}else{
-		// For now not support on ATT device.
-		ch = NULL;
+	/*
+	 * Check if we have this channel.
+	 *
+	 * ATT/SMP fixed channels go directly to OPEN in the socket
+	 * layer and should never reach this path.  Reject if they do.
+	 */
+	if (ip->lcid == NG_L2CAP_ATT_CID ||
+	    ip->lcid == NG_L2CAP_SMP_CID) {
+		NG_L2CAP_ERR(
+"%s: %s - unexpected L2CA_ConnectRsp for fixed CID=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node), ip->lcid);
+		error = EINVAL;
+		goto out;
+	} else {
+		ch = ng_l2cap_chan_by_scid(l2cap, ip->lcid,
+		    (ip->linktype == NG_HCI_LINK_ACL) ?
+		    NG_L2CAP_L2CA_IDTYPE_BREDR :
+		    NG_L2CAP_L2CA_IDTYPE_LE);
 	}
 	if (ch == NULL) {
 		NG_L2CAP_ALERT(

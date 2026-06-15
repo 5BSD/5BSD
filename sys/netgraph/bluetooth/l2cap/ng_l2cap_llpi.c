@@ -187,6 +187,39 @@ ng_l2cap_lp_con_cfm(ng_l2cap_p l2cap, struct ng_mesg *msg)
 	if (ep->status == 0) {
 		con->state = NG_L2CAP_CON_OPEN;
 		con->con_handle = ep->con_handle;
+
+		/*
+		 * For incoming LE connections, auto-create ATT and SMP
+		 * fixed channels and notify the upper layer (socket layer)
+		 * so that listening sockets can accept() them.
+		 */
+		if (ep->link_type == NG_HCI_LINK_LE_PUBLIC ||
+		    ep->link_type == NG_HCI_LINK_LE_RANDOM) {
+			ng_l2cap_chan_p	ch;
+
+			ch = ng_l2cap_new_chan(l2cap, con, 0,
+			    NG_L2CAP_L2CA_IDTYPE_ATT);
+			if (ch != NULL) {
+				ch->state = NG_L2CAP_OPEN;
+				ng_l2cap_l2ca_con_ind(ch);
+			} else {
+				NG_L2CAP_ERR(
+"%s: %s - failed to create ATT channel for LE connection\n",
+				    __func__, NG_NODE_NAME(l2cap->node));
+			}
+
+			ch = ng_l2cap_new_chan(l2cap, con, 0,
+			    NG_L2CAP_L2CA_IDTYPE_SMP);
+			if (ch != NULL) {
+				ch->state = NG_L2CAP_OPEN;
+				ng_l2cap_l2ca_con_ind(ch);
+			} else {
+				NG_L2CAP_ERR(
+"%s: %s - failed to create SMP channel for LE connection\n",
+				    __func__, NG_NODE_NAME(l2cap->node));
+			}
+		}
+
 		ng_l2cap_lp_deliver(con);
 	} else /* Negative confirmation - remove connection descriptor */
 		ng_l2cap_con_fail(con, ep->status);
@@ -553,6 +586,18 @@ ng_l2cap_lp_send(ng_l2cap_con_p con, u_int16_t dcid, struct mbuf *m0)
 	KASSERT((l2cap->pkt_size > 0),
 ("%s: %s - invalid l2cap->pkt_size?!\n", __func__, NG_NODE_NAME(l2cap->node)));
 
+	/*
+	 * Select the correct HCI ACL packet size for this link type.
+	 * LE connections may have a different (usually smaller) buffer
+	 * than BR/EDR.  If le_pkt_size is 0, the controller shares
+	 * buffers and pkt_size applies to both.
+	 */
+	u_int16_t frag_size = l2cap->pkt_size;
+	if ((con->linktype == NG_HCI_LINK_LE_PUBLIC ||
+	    con->linktype == NG_HCI_LINK_LE_RANDOM) &&
+	    l2cap->le_pkt_size > 0)
+		frag_size = l2cap->le_pkt_size;
+
 	/* Prepend mbuf with L2CAP header */
 	m0 = ng_l2cap_prepend(m0, sizeof(*l2cap_hdr));
 	if (m0 == NULL) {
@@ -569,26 +614,27 @@ ng_l2cap_lp_send(ng_l2cap_con_p con, u_int16_t dcid, struct mbuf *m0)
 	l2cap_hdr->dcid = htole16(dcid);
 
 	/*
-	 * Segment single L2CAP packet according to the HCI layer MTU. Convert 
+	 * Segment single L2CAP packet according to the HCI layer MTU. Convert
 	 * each segment into ACL data packet and prepend it with ACL data packet
-	 * header. Link all segments together via m_nextpkt link. 
+	 * header. Link all segments together via m_nextpkt link.
  	 *
 	 * XXX BC (Broadcast flag) will always be 0 (zero).
+	 *
 	 */
 
 	while (m0 != NULL) {
 		/* Check length of the packet against HCI MTU */
 		len = m0->m_pkthdr.len;
-		if (len > l2cap->pkt_size) {
-			m = m_split(m0, l2cap->pkt_size, M_NOWAIT);
+		if (len > frag_size) {
+			m = m_split(m0, frag_size, M_NOWAIT);
 			if (m == NULL) {
 				NG_L2CAP_ALERT(
 "%s: %s - m_split(%d) failed\n",	__func__, NG_NODE_NAME(l2cap->node),
-					l2cap->pkt_size);
+					frag_size);
 				goto fail;
 			}
 
-			len = l2cap->pkt_size;
+			len = frag_size;
 		}
 
 		/* Convert packet fragment into ACL data packet */

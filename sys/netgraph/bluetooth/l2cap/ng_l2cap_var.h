@@ -85,6 +85,7 @@ typedef struct ng_l2cap {
 
 	u_int16_t			pkt_size;     /* max. ACL packet size */
 	u_int16_t			num_pkts;     /* out queue size */
+	u_int16_t			le_pkt_size;  /* max. LE ACL pkt size */
 	bdaddr_t			bdaddr;       /* unit BDADDR */
 
 	hook_p				hci;          /* HCI downstream hook */

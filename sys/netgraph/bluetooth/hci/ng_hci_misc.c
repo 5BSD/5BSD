@@ -107,10 +107,12 @@ ng_hci_node_is_up(node_p node, hook_p hook, void *arg1, int arg2)
 		if (hook == unit->acl) {
 			NG_HCI_BUFF_ACL_SIZE(unit->buffer, ep->pkt_size);
 			NG_HCI_BUFF_ACL_TOTAL(unit->buffer, ep->num_pkts);
+			NG_HCI_BUFF_LE_SIZE(unit->buffer, ep->le_pkt_size);
 		} else {
 			NG_HCI_BUFF_SCO_SIZE(unit->buffer, ep->pkt_size);
 			NG_HCI_BUFF_SCO_TOTAL(unit->buffer, ep->num_pkts);
-		} 
+			ep->le_pkt_size = 0;
+		}
 
 		bcopy(&unit->bdaddr, &ep->bdaddr, sizeof(ep->bdaddr));
 
@@ -163,6 +165,9 @@ ng_hci_unit_clean(ng_hci_unit_p unit, int reason)
 
 	NG_HCI_BUFF_SCO_TOTAL(unit->buffer, size);
 	NG_HCI_BUFF_SCO_FREE(unit->buffer, size);
+
+	NG_HCI_BUFF_LE_TOTAL(unit->buffer, size);
+	NG_HCI_BUFF_LE_FREE(unit->buffer, size);
 
 	/* Clean up neighbors list */
 	ng_hci_flush_neighbor_cache(unit);
@@ -286,10 +291,14 @@ ng_hci_new_con(ng_hci_unit_p unit, int link_type)
 
 		con->link_type = link_type;
 
-		if (con->link_type != NG_HCI_LINK_SCO)
-			NG_HCI_BUFF_ACL_TOTAL(unit->buffer, num_pkts);
-		else
+		if (con->link_type == NG_HCI_LINK_SCO)
 			NG_HCI_BUFF_SCO_TOTAL(unit->buffer, num_pkts);
+		else if ((con->link_type == NG_HCI_LINK_LE_PUBLIC ||
+		    con->link_type == NG_HCI_LINK_LE_RANDOM) &&
+		    unit->buffer.le_pkts > 0)
+			NG_HCI_BUFF_LE_TOTAL(unit->buffer, num_pkts);
+		else
+			NG_HCI_BUFF_ACL_TOTAL(unit->buffer, num_pkts);
 
 		NG_BT_ITEMQ_INIT(&con->conq, num_pkts);
 
@@ -315,10 +324,14 @@ ng_hci_free_con(ng_hci_unit_con_p con)
 	 * flushed these packets and we can free them too
 	 */
 
-	if (con->link_type != NG_HCI_LINK_SCO)
-		NG_HCI_BUFF_ACL_FREE(con->unit->buffer, con->pending);
-	else
+	if (con->link_type == NG_HCI_LINK_SCO)
 		NG_HCI_BUFF_SCO_FREE(con->unit->buffer, con->pending);
+	else if ((con->link_type == NG_HCI_LINK_LE_PUBLIC ||
+	    con->link_type == NG_HCI_LINK_LE_RANDOM) &&
+	    con->unit->buffer.le_pkts > 0)
+		NG_HCI_BUFF_LE_FREE(con->unit->buffer, con->pending);
+	else
+		NG_HCI_BUFF_ACL_FREE(con->unit->buffer, con->pending);
 
 	NG_BT_ITEMQ_DESTROY(&con->conq);
 

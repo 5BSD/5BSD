@@ -660,10 +660,10 @@ typedef struct {
 
 #define NGM_HCI_NODE_UP				112 /* HCI -> Upper */
 typedef struct {
-	u_int16_t	pkt_size; /* max. ACL/SCO packet size (w/out header) */
-	u_int16_t	num_pkts; /* ACL/SCO packet queue size */
-	u_int16_t	reserved; /* place holder */
-	bdaddr_t	bdaddr;	  /* bdaddr */
+	u_int16_t	pkt_size;    /* max. ACL/SCO packet size (w/out hdr) */
+	u_int16_t	num_pkts;    /* ACL/SCO packet queue size */
+	u_int16_t	le_pkt_size; /* max. LE ACL packet size (0=shared) */
+	bdaddr_t	bdaddr;	     /* bdaddr */
 } ng_hci_node_up_ep;
 
 #define NGM_HCI_SYNC_CON_QUEUE			113 /* HCI -> Upper */

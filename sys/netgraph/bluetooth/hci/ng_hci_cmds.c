@@ -196,6 +196,13 @@ ng_hci_process_command_complete(ng_hci_unit_p unit, struct mbuf *e)
 	ep->opcode = le16toh(ep->opcode);
 	m_adj(e, sizeof(*ep));
 
+	if (e->m_pkthdr.len < sizeof(u_int8_t)) {
+		NG_FREE_M(cp);
+		NG_FREE_M(e);
+		error = EMSGSIZE;
+		goto out;
+	}
+
 	if (*mtod(e, u_int8_t *) == 0) { /* XXX m_pullup here? */
 		switch (NG_HCI_OGF(ep->opcode)) {
 		case NG_HCI_OGF_LINK_CONTROL:

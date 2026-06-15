@@ -212,6 +212,7 @@ static void ng_btsocket_l2cap_process_timeout (void *);
 static ng_btsocket_l2cap_pcb_p     ng_btsocket_l2cap_pcb_by_addr(bdaddr_p, int);
 static ng_btsocket_l2cap_pcb_p     ng_btsocket_l2cap_pcb_by_token(u_int32_t);
 static ng_btsocket_l2cap_pcb_p     ng_btsocket_l2cap_pcb_by_cid (bdaddr_p, int,int);
+static ng_btsocket_l2cap_pcb_p     ng_btsocket_l2cap_pcb_by_cid_listen(bdaddr_p, uint16_t);
 static int                         ng_btsocket_l2cap_result2errno(int);
 
 static int ng_btsock_l2cap_addrtype_to_linktype(int addrtype);
@@ -612,6 +613,11 @@ ng_btsocket_l2cap_process_l2ca_con_ind(struct ng_mesg *msg,
 	mtx_lock(&ng_btsocket_l2cap_sockets_mtx);
 
 	pcb = ng_btsocket_l2cap_pcb_by_addr(&rt->src, ip->psm);
+
+	/* Fallback: try CID-based lookup for LE fixed channels */
+	if (pcb == NULL && ip->psm == 0 && ip->lcid != 0)
+		pcb = ng_btsocket_l2cap_pcb_by_cid_listen(&rt->src, ip->lcid);
+
 	if (pcb != NULL) {
 		struct socket *so1;
 
@@ -626,9 +632,9 @@ ng_btsocket_l2cap_process_l2ca_con_ind(struct ng_mesg *msg,
 		}
 
 		/*
-		 * If we got here than we have created new socket. So complete 
-		 * connection. If we we listening on specific address then copy 
-		 * source address from listening socket, otherwise copy source 
+		 * If we got here than we have created new socket. So complete
+		 * connection. If we we listening on specific address then copy
+		 * source address from listening socket, otherwise copy source
 		 * address from hook's routing information.
 		 */
 
@@ -650,6 +656,12 @@ ng_btsocket_l2cap_process_l2ca_con_ind(struct ng_mesg *msg,
 		pcb1->cid = ip->lcid;
 		pcb1->rt = rt;
 
+		/* Set idtype for LE fixed channels */
+		if (ip->lcid == NG_L2CAP_ATT_CID)
+			pcb1->idtype = NG_L2CAP_L2CA_IDTYPE_ATT;
+		else if (ip->lcid == NG_L2CAP_SMP_CID)
+			pcb1->idtype = NG_L2CAP_L2CA_IDTYPE_SMP;
+
 		/* Copy socket settings */
 		pcb1->imtu = pcb->imtu;
 		bcopy(&pcb->oflow, &pcb1->oflow, sizeof(pcb1->oflow));
@@ -670,6 +682,14 @@ respond:
 			pcb1->so->so_error = error;
 			pcb1->state = NG_BTSOCKET_L2CAP_CLOSED;
 			soisdisconnected(pcb1->so);
+		} else if (ip->lcid == NG_L2CAP_ATT_CID ||
+			   ip->lcid == NG_L2CAP_SMP_CID) {
+			/*
+			 * LE fixed channels (ATT/SMP) skip L2CAP
+			 * configuration and go directly to OPEN.
+			 */
+			pcb1->state = NG_BTSOCKET_L2CAP_OPEN;
+			soisconnected(pcb1->so);
 		} else {
 			pcb1->state = NG_BTSOCKET_L2CAP_CONNECTING;
 			soisconnecting(pcb1->so);
@@ -1421,6 +1441,8 @@ ng_btsocket_l2cap_data_input(struct mbuf *m, hook_p hook)
 	}
 
 	m = m_pullup(m, sizeof(uint16_t));
+	if (m == NULL)
+		goto drop;
 	idtype = *mtod(m, uint16_t *);
 	m_adj(m, sizeof(uint16_t));
 
@@ -2115,10 +2137,17 @@ ng_btsocket_l2cap_bind(struct socket *so, struct sockaddr *nam,
 
 	mtx_lock(&ng_btsocket_l2cap_sockets_mtx);
 
-	LIST_FOREACH(pcb, &ng_btsocket_l2cap_sockets, next)
+	LIST_FOREACH(pcb, &ng_btsocket_l2cap_sockets, next) {
 		if (psm != 0 && psm == pcb->psm &&
 		    bcmp(&pcb->src, &sa->l2cap_bdaddr, sizeof(bdaddr_t)) == 0)
 			break;
+		/* Also check for duplicate LE CID bindings */
+		if (sa->l2cap_len == sizeof(*sa) &&
+		    le16toh(sa->l2cap_cid) != 0 &&
+		    le16toh(sa->l2cap_cid) == pcb->cid &&
+		    bcmp(&pcb->src, &sa->l2cap_bdaddr, sizeof(bdaddr_t)) == 0)
+			break;
+	}
 
 	if (pcb == NULL) {
 		/* Set socket address */
@@ -2126,6 +2155,22 @@ ng_btsocket_l2cap_bind(struct socket *so, struct sockaddr *nam,
 		if (pcb != NULL) {
 			bcopy(&sa->l2cap_bdaddr, &pcb->src, sizeof(pcb->src));
 			pcb->psm = psm;
+
+			/* Store LE CID and address type for fixed channels */
+			if (sa->l2cap_len == sizeof(*sa)) {
+				uint16_t cid = le16toh(sa->l2cap_cid);
+
+				pcb->srctype = sa->l2cap_bdaddr_type;
+				if (cid == NG_L2CAP_ATT_CID) {
+					pcb->cid = cid;
+					pcb->idtype =
+					    NG_L2CAP_L2CA_IDTYPE_ATT;
+				} else if (cid == NG_L2CAP_SMP_CID) {
+					pcb->cid = cid;
+					pcb->idtype =
+					    NG_L2CAP_L2CA_IDTYPE_SMP;
+				}
+			}
 		} else
 			error = EINVAL;
 	} else
@@ -2423,12 +2468,18 @@ ng_btsocket_l2cap_detach(struct socket *so)
 	mtx_unlock(&pcb->pcb_mtx);
 	mtx_unlock(&ng_btsocket_l2cap_sockets_mtx);
 
+	/* Drain the callout to ensure it has finished before destroying
+	 * the mutex.  callout_stop is insufficient since the callout
+	 * handler could still be running on another CPU. */
+	callout_drain(&pcb->timo);
+
+	/* Notify the socket layer before freeing the pcb */
+	soisdisconnected(so);
+	so->so_pcb = NULL;
+
 	mtx_destroy(&pcb->pcb_mtx);
 	bzero(pcb, sizeof(*pcb));
 	free(pcb, M_NETGRAPH_BTSOCKET_L2CAP);
-
-	soisdisconnected(so);
-	so->so_pcb = NULL;
 } /* ng_btsocket_l2cap_detach */
 
 /*
@@ -2498,7 +2549,7 @@ ng_btsocket_l2cap_listen(struct socket *so, int backlog, struct thread *td)
 		error = EINVAL;
 		goto out;
 	}
-	if (pcb->psm == 0) {
+	if (pcb->psm == 0 && pcb->cid == 0) {
 		solisten_proto_abort(so);
 		error = EADDRNOTAVAIL;
 		goto out;
@@ -2730,6 +2781,32 @@ ng_btsocket_l2cap_pcb_by_addr(bdaddr_p bdaddr, int psm)
 
 	return ((p != NULL)? p : p1);
 } /* ng_btsocket_l2cap_pcb_by_addr */
+
+/*
+ * Look for the socket that is listening on a given LE fixed CID.
+ * Caller must hold ng_btsocket_l2cap_sockets_mtx.
+ */
+
+static ng_btsocket_l2cap_pcb_p
+ng_btsocket_l2cap_pcb_by_cid_listen(bdaddr_p bdaddr, uint16_t cid)
+{
+	ng_btsocket_l2cap_pcb_p	p = NULL, p1 = NULL;
+
+	mtx_assert(&ng_btsocket_l2cap_sockets_mtx, MA_OWNED);
+
+	LIST_FOREACH(p, &ng_btsocket_l2cap_sockets, next) {
+		if (p->so == NULL || !SOLISTENING(p->so) || p->cid != cid)
+			continue;
+
+		if (bcmp(&p->src, bdaddr, sizeof(p->src)) == 0)
+			break;
+
+		if (bcmp(&p->src, NG_HCI_BDADDR_ANY, sizeof(p->src)) == 0)
+			p1 = p;
+	}
+
+	return ((p != NULL) ? p : p1);
+} /* ng_btsocket_l2cap_pcb_by_cid_listen */
 
 /*
  * Look for the socket that has given token.

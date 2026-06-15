@@ -50,12 +50,21 @@
 #include <sys/systm.h>
 #include <sys/uio.h>
 
+#include <sys/sdt.h>
+
 #include <dev/evdev/input.h>
 #include <dev/hid/hid.h>
 #include <dev/hid/hidbus.h>
 #include <dev/hid/vhid.h>
 
 #include "hid_if.h"
+
+SDT_PROVIDER_DEFINE(bluetooth);
+
+SDT_PROBE_DEFINE2(bluetooth, vhid, report, inject,
+    "int",		/* unit number */
+    "size_t"		/* report length */
+);
 
 MALLOC_DEFINE(M_VHID, "vhid", "Virtual HID device");
 
@@ -136,6 +145,8 @@ vhid_inst_open(struct cdev *dev, int oflags, int devtype, struct thread *td)
 	vi->open = true;
 	mtx_unlock(&vi->mtx);
 
+	device_printf(vhid_sc->dev, "vhid%d: opened\n", vi->unit);
+
 	return (0);
 }
 
@@ -148,6 +159,8 @@ vhid_inst_close(struct cdev *dev, int fflag, int devtype, struct thread *td)
 	vi->open = false;
 	vi->intr_on = false;
 	mtx_unlock(&vi->mtx);
+
+	device_printf(vhid_sc->dev, "vhid%d: closed\n", vi->unit);
 
 	return (0);
 }
@@ -182,31 +195,62 @@ vhid_inst_write(struct cdev *dev, struct uio *uio, int ioflag)
 		mtx_unlock(&vi->mtx);
 
 		/*
-		 * uiomove can sleep, so copy into a stack buffer first
+		 * uiomove can sleep, so copy into a temporary buffer
 		 * without the mutex held.
 		 */
 		{
-			uint8_t rdbuf[VHID_MAX_RDESC];
+			uint8_t *rdbuf;
 
+			rdbuf = malloc(len, M_VHID, M_WAITOK);
 			error = uiomove(rdbuf, len, uio);
-			if (error != 0)
+			if (error != 0) {
+				free(rdbuf, M_VHID);
 				return (error);
+			}
+
+			/*
+			 * Allocate rdesc outside the mutex since
+			 * M_WAITOK can sleep.
+			 */
+			uint8_t *newrdesc = NULL;
 
 			mtx_lock(&vi->mtx);
 			if (vi->configured || vi->attaching) {
 				mtx_unlock(&vi->mtx);
+				free(rdbuf, M_VHID);
 				return (EBUSY);
 			}
 			if (vi->rdesc_len + len > VHID_MAX_RDESC) {
 				mtx_unlock(&vi->mtx);
+				free(rdbuf, M_VHID);
 				return (EFBIG);
 			}
-			if (vi->rdesc == NULL)
-				vi->rdesc = malloc(VHID_MAX_RDESC, M_VHID,
+			if (vi->rdesc == NULL) {
+				mtx_unlock(&vi->mtx);
+				newrdesc = malloc(VHID_MAX_RDESC, M_VHID,
 				    M_WAITOK);
+				mtx_lock(&vi->mtx);
+				if (vi->configured || vi->attaching) {
+					mtx_unlock(&vi->mtx);
+					free(newrdesc, M_VHID);
+					free(rdbuf, M_VHID);
+					return (EBUSY);
+				}
+				if (vi->rdesc == NULL)
+					vi->rdesc = newrdesc;
+				else
+					free(newrdesc, M_VHID);
+				/* Re-check bounds after reacquiring mutex */
+				if (vi->rdesc_len + len > VHID_MAX_RDESC) {
+					mtx_unlock(&vi->mtx);
+					free(rdbuf, M_VHID);
+					return (EFBIG);
+				}
+			}
 			memcpy(vi->rdesc + vi->rdesc_len, rdbuf, len);
 			vi->rdesc_len += len;
 			mtx_unlock(&vi->mtx);
+			free(rdbuf, M_VHID);
 		}
 		return (0);
 	}
@@ -223,8 +267,10 @@ vhid_inst_write(struct cdev *dev, struct uio *uio, int ioflag)
 		return (error);
 
 	mtx_lock(&vi->mtx);
-	if (vi->intr != NULL && vi->intr_on)
+	if (vi->intr != NULL && vi->intr_on) {
+		SDT_PROBE2(bluetooth, vhid, report, inject, vi->unit, len);
 		vi->intr(vi->intr_ctx, buf, len);
+	}
 	mtx_unlock(&vi->mtx);
 
 	return (0);
@@ -267,9 +313,13 @@ vhid_inst_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		mtx_unlock(&vi->mtx);
 
 		/* Create hidbus child -- must be done without mutex */
+		bus_topo_lock();
 		vi->hidbus_dev = device_add_child(vhid_sc->dev,
 		    "hidbus", DEVICE_UNIT_ANY);
+		bus_topo_unlock();
 		if (vi->hidbus_dev == NULL) {
+			device_printf(vhid_sc->dev,
+			    "vhid%d: device_add_child failed\n", vi->unit);
 			mtx_lock(&vi->mtx);
 			vi->attaching = false;
 			free(vi->rdesc, M_VHID);
@@ -280,9 +330,16 @@ vhid_inst_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		}
 
 		device_set_ivars(vi->hidbus_dev, &vi->hdi);
+		bus_topo_lock();
 		error = device_probe_and_attach(vi->hidbus_dev);
+		bus_topo_unlock();
 		if (error != 0) {
+			device_printf(vhid_sc->dev,
+			    "vhid%d: device_probe_and_attach failed\n",
+			    vi->unit);
+			bus_topo_lock();
 			device_delete_child(vhid_sc->dev, vi->hidbus_dev);
+			bus_topo_unlock();
 			vi->hidbus_dev = NULL;
 			mtx_lock(&vi->mtx);
 			vi->attaching = false;
@@ -298,6 +355,10 @@ vhid_inst_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		vi->attaching = false;
 		vi->configured = true;
 		mtx_unlock(&vi->mtx);
+
+		device_printf(vhid_sc->dev,
+		    "vhid%d: attached, rdesc_len=%d\n",
+		    vi->unit, vi->rdesc_len);
 
 		return (0);
 
@@ -345,9 +406,13 @@ vhid_ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		}
 		if (unit >= VHID_MAX_DEVICES) {
 			mtx_unlock(&vhid_sc->sc_mtx);
+			device_printf(vhid_sc->dev,
+			    "vhid: max devices reached\n");
 			return (ENOSPC);
 		}
+		mtx_unlock(&vhid_sc->sc_mtx);
 
+		/* Allocate outside mutex since M_WAITOK can sleep */
 		vi = malloc(sizeof(*vi), M_VHID, M_WAITOK | M_ZERO);
 		mtx_init(&vi->mtx, "vhid", NULL, MTX_DEF);
 		vi->unit = unit;
@@ -362,13 +427,23 @@ vhid_ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		if (error != 0) {
 			mtx_destroy(&vi->mtx);
 			free(vi, M_VHID);
-			mtx_unlock(&vhid_sc->sc_mtx);
 			return (error);
 		}
 		vi->cdev->si_drv1 = vi;
 
+		/* Re-validate slot under the lock in case of a race */
+		mtx_lock(&vhid_sc->sc_mtx);
+		if (vhid_sc->insts[unit] != NULL) {
+			mtx_unlock(&vhid_sc->sc_mtx);
+			destroy_dev(vi->cdev);
+			mtx_destroy(&vi->mtx);
+			free(vi, M_VHID);
+			return (EBUSY);
+		}
 		vhid_sc->insts[unit] = vi;
 		mtx_unlock(&vhid_sc->sc_mtx);
+
+		device_printf(vhid_sc->dev, "vhid%d: created\n", unit);
 
 		*(int *)data = unit;
 		return (0);
@@ -399,8 +474,10 @@ vhid_ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 
 		/* Detach hidbus child if present */
 		if (vi->hidbus_dev != NULL) {
+			bus_topo_lock();
 			error = device_delete_child(vhid_sc->dev,
 			    vi->hidbus_dev);
+			bus_topo_unlock();
 			if (error != 0) {
 				/* Re-insert on failure */
 				mtx_lock(&vhid_sc->sc_mtx);
@@ -416,6 +493,8 @@ vhid_ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 			free(vi->rdesc, M_VHID);
 		mtx_destroy(&vi->mtx);
 		free(vi, M_VHID);
+
+		device_printf(vhid_sc->dev, "vhid%d: destroyed\n", unit);
 
 		return (0);
 
@@ -598,8 +677,11 @@ vhid_detach(device_t dev)
 		sc->insts[i] = NULL;
 		mtx_unlock(&sc->sc_mtx);
 
-		if (vi->hidbus_dev != NULL)
+		if (vi->hidbus_dev != NULL) {
+			bus_topo_lock();
 			device_delete_child(dev, vi->hidbus_dev);
+			bus_topo_unlock();
+		}
 
 		destroy_dev(vi->cdev);
 
