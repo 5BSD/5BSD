@@ -293,7 +293,7 @@ ng_l2cap_lp_con_ind(ng_l2cap_p l2cap, struct ng_mesg *msg)
 
 	rp = (ng_hci_lp_con_rsp_ep *)(rsp->data);
 	rp->status = 0x00; /* accept connection */
-	rp->link_type = NG_HCI_LINK_ACL;
+	rp->link_type = ep->link_type;
 	bcopy(&ep->bdaddr, &rp->bdaddr, sizeof(rp->bdaddr));
 
 	con->state = NG_L2CAP_W4_LP_CON_CFM;
@@ -867,7 +867,12 @@ ng_l2cap_lp_deliver(ng_l2cap_con_p con)
 	}
 
 	/* Send ACL data packets */
-	while (con->pending < con->l2cap->num_pkts && con->tx_pkt != NULL) {
+	u_int16_t max_pkts = l2cap->num_pkts;
+	if ((con->linktype == NG_HCI_LINK_LE_PUBLIC ||
+	    con->linktype == NG_HCI_LINK_LE_RANDOM) &&
+	    l2cap->le_num_pkts > 0)
+		max_pkts = l2cap->le_num_pkts;
+	while (con->pending < max_pkts && con->tx_pkt != NULL) {
 		m = con->tx_pkt;
 		con->tx_pkt = con->tx_pkt->m_nextpkt;
 		m->m_nextpkt = NULL;

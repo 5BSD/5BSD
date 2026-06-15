@@ -663,6 +663,7 @@ typedef struct {
 	u_int16_t	pkt_size;    /* max. ACL/SCO packet size (w/out hdr) */
 	u_int16_t	num_pkts;    /* ACL/SCO packet queue size */
 	u_int16_t	le_pkt_size; /* max. LE ACL packet size (0=shared) */
+	u_int16_t	le_num_pkts; /* LE ACL packet queue size (0=shared) */
 	bdaddr_t	bdaddr;	     /* bdaddr */
 } ng_hci_node_up_ep;
 

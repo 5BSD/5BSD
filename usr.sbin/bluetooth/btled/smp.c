@@ -86,8 +86,8 @@ smp_select_model(uint8_t init_io, uint8_t resp_io, bool sc)
 	};
 	static const uint8_t sc_table[5][5] = {
 		/* Resp: DispOnly  DispYN    KbdOnly   NoIO      KbdDisp */
-	/* I:DispOnly */ { 0,      2,        1,        0,        1       },
-	/* I:DispYN   */ { 2,      2,        1,        0,        2       },
+	/* I:DispOnly */ { 0,      0,        1,        0,        1       },
+	/* I:DispYN   */ { 0,      2,        1,        0,        2       },
 	/* I:KbdOnly  */ { 1,      1,        1,        0,        1       },
 	/* I:NoIO     */ { 0,      0,        0,        0,        0       },
 	/* I:KbdDisp  */ { 1,      2,        1,        0,        2       },
@@ -124,6 +124,7 @@ smp_aes128(const uint8_t key[16], const uint8_t in[16], uint8_t out[16])
 	ctx = EVP_CIPHER_CTX_new();
 	if (ctx == NULL) {
 		warnx("EVP_CIPHER_CTX_new failed");
+		memset(out, 0, 16);
 		return;
 	}
 	EVP_EncryptInit_ex(ctx, EVP_aes_128_ecb(), NULL, k, NULL);
@@ -271,6 +272,7 @@ smp_open(struct smp_conn *sc, const uint8_t *addr, uint8_t addr_type,
 
 	if (bind(sc->fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
 		close(sc->fd);
+		sc->fd = -1;
 		return (-1);
 	}
 
@@ -283,6 +285,7 @@ smp_open(struct smp_conn *sc, const uint8_t *addr, uint8_t addr_type,
 
 	if (connect(sc->fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
 		close(sc->fd);
+		sc->fd = -1;
 		return (-1);
 	}
 
@@ -546,6 +549,9 @@ smp_pair(struct smp_conn *sc)
 			return (-1);
 	}
 
+	if (hci_wait_encryption(sc->hci_fd, sc->con_handle, 5) < 0)
+		return (-1);
+
 	/*
 	 * Step 9: Receive key distribution from responder
 	 *
@@ -621,8 +627,10 @@ smp_encrypt_with_ltk(struct smp_conn *sc, const struct smp_bond *bond)
 
 	DBG("SMP: encrypting with stored LTK");
 
-	if (!bond->has_ltk)
-		return (ENOENT);
+	if (!bond->has_ltk) {
+		errno = ENOENT;
+		return (-1);
+	}
 
 	params[0] = sc->con_handle & 0xFF;
 	params[1] = (sc->con_handle >> 8) & 0xFF;
@@ -979,6 +987,9 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 			return (-1);
 	}
 
+	if (hci_wait_encryption(sc->hci_fd, sc->con_handle, 5) < 0)
+		return (-1);
+
 	/* Store bond */
 	{
 		struct smp_bond bond;
@@ -988,6 +999,25 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		memcpy(bond.ltk, ltk, 16);
 		bond.has_ltk = true;
 		bond.is_sc = true;
+
+		/* Receive optional IRK distribution */
+		for (int i = 0; i < 2; i++) {
+			struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
+			setsockopt(sc->fd, SOL_SOCKET, SO_RCVTIMEO,
+			    &tv, sizeof(tv));
+			n = recv(sc->fd, pdu, sizeof(pdu), 0);
+			if (n < 1)
+				break;
+			if (pdu[0] == SMP_IDENTITY_INFORMATION && n >= 17) {
+				memcpy(bond.irk, pdu + 1, 16);
+				bond.has_irk = true;
+			} else if (pdu[0] == SMP_IDENTITY_ADDRESS_INFO &&
+			    n >= 8) {
+				bond.addr_type = (pdu[1] == 0x01) ?
+				    BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
+				memcpy(bond.addr, pdu + 2, 6);
+			}
+		}
 
 		smp_bond_db_store(sc->bond_db, &bond);
 	}
@@ -1039,6 +1069,7 @@ smp_bond_db_save(struct smp_bond_db *db)
 	flock(db->fd, LOCK_EX);
 	len = db->count * sizeof(struct smp_bond);
 	n = pwrite(db->fd, db->bonds, len, 0);
+	ftruncate(db->fd, len);
 	flock(db->fd, LOCK_UN);
 	if (n < 0 || (size_t)n != len)
 		return (-1);
@@ -1086,11 +1117,13 @@ smp_aes_cmac(const uint8_t key[16], const uint8_t *msg, size_t len,
 	cmac_type = EVP_MAC_fetch(NULL, "CMAC", NULL);
 	if (cmac_type == NULL) {
 		warnx("EVP_MAC_fetch failed");
+		memset(mac, 0, 16);
 		return;
 	}
 	ctx = EVP_MAC_CTX_new(cmac_type);
 	if (ctx == NULL) {
 		warnx("EVP_MAC_CTX_new failed");
+		memset(mac, 0, 16);
 		EVP_MAC_free(cmac_type);
 		return;
 	}
@@ -1526,6 +1559,9 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 		    sizeof(params)) < 0)
 			return (-1);
 	}
+
+	if (hci_wait_encryption(sc->hci_fd, sc->con_handle, 5) < 0)
+		return (-1);
 
 	/* Store SC bond */
 	{

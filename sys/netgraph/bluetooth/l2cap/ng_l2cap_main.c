@@ -284,6 +284,7 @@ ng_l2cap_lower_rcvmsg(node_p node, item_p item, hook_p lasthook)
 				l2cap->pkt_size = ep->pkt_size;
 				l2cap->num_pkts = ep->num_pkts;
 				l2cap->le_pkt_size = ep->le_pkt_size;
+				l2cap->le_num_pkts = ep->le_num_pkts;
 
 				/* Notify upper layers */
 				ng_l2cap_send_hook_info(l2cap->node,

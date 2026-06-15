@@ -427,6 +427,7 @@ main(int argc, char *argv[])
 			if (pid == 0) {
 				/* Child: reset child tracking */
 				nchildren = 0;
+				cleanup_dev = NULL;
 				/* Child: set this device's address */
 				memcpy(dev.addr, devs[i].addr, 6);
 				dev.addr_type = devs[i].addr_type;
@@ -707,6 +708,10 @@ connect_loop:
 		close(dev.hci_fd);
 	if (dev.bond_fd >= 0)
 		close(dev.bond_fd);
+	for (int i = 0; i < SOCK_POOL_SIZE; i++) {
+		if (dev.att_pool[i] >= 0)
+			close(dev.att_pool[i]);
+	}
 	cleanup_dev = NULL;
 
 	return (running ? 1 : 0);
@@ -1396,8 +1401,16 @@ peripheral_run(struct hogp_device *dev, const char *bond_path)
 		pfd.events = POLLIN;
 		pfd.revents = 0;
 
-		if (poll(&pfd, 1, 1000) <= 0)
-			continue;
+		{
+			int pr = poll(&pfd, 1, 1000);
+			if (pr < 0) {
+				if (errno == EINTR)
+					continue;
+				break;
+			}
+			if (pr == 0)
+				continue;
+		}
 
 		client_fd = accept(listen_fd, NULL, NULL);
 		if (client_fd < 0) {

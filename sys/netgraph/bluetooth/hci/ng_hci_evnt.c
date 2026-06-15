@@ -551,8 +551,8 @@ le_con_compl_common(ng_hci_unit_p unit, u_int8_t status, u_int16_t handle,
 	int			link_type, error = 0;
 	uint8_t			uclass[3] = {0, 0, 0};
 
-	link_type = (addr_type) ? NG_HCI_LINK_LE_RANDOM :
-	    NG_HCI_LINK_LE_PUBLIC;
+	link_type = (addr_type == 0x01 || addr_type == 0x03) ?
+	    NG_HCI_LINK_LE_RANDOM : NG_HCI_LINK_LE_PUBLIC;
 
 	LIST_FOREACH(con, &unit->con_list, next)
 		if (con->link_type == link_type &&
@@ -1213,9 +1213,13 @@ qos_setup_compl(ng_hci_unit_p unit, struct mbuf *event)
 static int
 hardware_error(ng_hci_unit_p unit, struct mbuf *event)
 {
-	NG_HCI_ALERT(
+	NG_HCI_M_PULLUP(event, sizeof(u_int8_t));
+	if (event != NULL) {
+		NG_HCI_ALERT(
 "%s: %s - hardware error %#x\n",
-		__func__, NG_NODE_NAME(unit->node), *mtod(event, u_int8_t *));
+			__func__, NG_NODE_NAME(unit->node),
+			*mtod(event, u_int8_t *));
+	}
 
 	NG_FREE_M(event);
 
@@ -1370,10 +1374,14 @@ mode_change(ng_hci_unit_p unit, struct mbuf *event)
 static int
 data_buffer_overflow(ng_hci_unit_p unit, struct mbuf *event)
 {
-	NG_HCI_ALERT(
+	NG_HCI_M_PULLUP(event, sizeof(u_int8_t));
+	if (event != NULL) {
+		NG_HCI_ALERT(
 "%s: %s - %s data buffer overflow\n",
-		__func__, NG_NODE_NAME(unit->node),
-		(*mtod(event, u_int8_t *) == NG_HCI_LINK_ACL)? "ACL" : "SCO");
+			__func__, NG_NODE_NAME(unit->node),
+			(*mtod(event, u_int8_t *) == NG_HCI_LINK_ACL)?
+			    "ACL" : "SCO");
+	}
 
 	NG_FREE_M(event);
 

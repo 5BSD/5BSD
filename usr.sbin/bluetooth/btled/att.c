@@ -40,6 +40,7 @@ att_open(struct att_conn *ac, const uint8_t *addr, uint8_t addr_type)
 	int fd;
 
 	memset(ac, 0, sizeof(*ac));
+	ac->fd = -1;
 
 	fd = socket(PF_BLUETOOTH, SOCK_SEQPACKET, BLUETOOTH_PROTO_L2CAP);
 	if (fd < 0)
@@ -80,6 +81,7 @@ att_open(struct att_conn *ac, const uint8_t *addr, uint8_t addr_type)
 	ac->buf = malloc(ATT_MAX_MTU);
 	if (ac->buf == NULL) {
 		close(fd);
+		ac->fd = -1;
 		return (-1);
 	}
 
@@ -100,6 +102,7 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *addr,
 	struct sockaddr_l2cap sa;
 
 	memset(ac, 0, sizeof(*ac));
+	ac->fd = -1;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.l2cap_len = sizeof(sa);
@@ -217,6 +220,8 @@ att_exchange_mtu(struct att_conn *ac, uint16_t client_mtu)
 	ac->mtu = client_mtu < server_mtu ? client_mtu : server_mtu;
 	if (ac->mtu < ATT_DEFAULT_MTU)
 		ac->mtu = ATT_DEFAULT_MTU;
+	if (ac->mtu > ATT_MAX_MTU)
+		ac->mtu = ATT_MAX_MTU;
 
 	DBG("MTU exchange: client=%d server=%d effective=%d",
 	    client_mtu, server_mtu, ac->mtu);

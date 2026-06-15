@@ -108,10 +108,12 @@ ng_hci_node_is_up(node_p node, hook_p hook, void *arg1, int arg2)
 			NG_HCI_BUFF_ACL_SIZE(unit->buffer, ep->pkt_size);
 			NG_HCI_BUFF_ACL_TOTAL(unit->buffer, ep->num_pkts);
 			NG_HCI_BUFF_LE_SIZE(unit->buffer, ep->le_pkt_size);
+			NG_HCI_BUFF_LE_TOTAL(unit->buffer, ep->le_num_pkts);
 		} else {
 			NG_HCI_BUFF_SCO_SIZE(unit->buffer, ep->pkt_size);
 			NG_HCI_BUFF_SCO_TOTAL(unit->buffer, ep->num_pkts);
 			ep->le_pkt_size = 0;
+			ep->le_num_pkts = 0;
 		}
 
 		bcopy(&unit->bdaddr, &ep->bdaddr, sizeof(ep->bdaddr));

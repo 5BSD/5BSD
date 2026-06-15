@@ -362,7 +362,7 @@ handle_read_by_group_type(struct att_conn *ac, struct att_db *db,
 			continue;
 
 		/* Find end of this service group */
-		grp_end = 0xFFFF;
+		grp_end = db->attrs[db->count - 1].handle;
 		for (int j = i + 1; j < db->count; j++) {
 			if (db->attrs[j].uuid16 == GATT_UUID_PRIMARY_SERVICE) {
 				grp_end = db->attrs[j - 1].handle;

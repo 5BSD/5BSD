@@ -2583,10 +2583,10 @@ ng_btsocket_l2cap_peeraddr(struct socket *so, struct sockaddr *sa)
 	bcopy(&pcb->dst, &l2cap->l2cap_bdaddr, sizeof(l2cap->l2cap_bdaddr));
 	switch(pcb->idtype){
 	case NG_L2CAP_L2CA_IDTYPE_ATT:
-		l2cap->l2cap_cid = NG_L2CAP_ATT_CID;
+		l2cap->l2cap_cid = htole16(NG_L2CAP_ATT_CID);
 		break;
 	case NG_L2CAP_L2CA_IDTYPE_SMP:
-		l2cap->l2cap_cid = NG_L2CAP_SMP_CID;
+		l2cap->l2cap_cid = htole16(NG_L2CAP_SMP_CID);
 		break;
 	default:
 		l2cap->l2cap_cid = 0;

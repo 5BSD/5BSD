@@ -266,12 +266,22 @@ vhid_inst_write(struct cdev *dev, struct uio *uio, int ioflag)
 	if (error != 0)
 		return (error);
 
-	mtx_lock(&vi->mtx);
-	if (vi->intr != NULL && vi->intr_on) {
-		SDT_PROBE2(bluetooth, vhid, report, inject, vi->unit, len);
-		vi->intr(vi->intr_ctx, buf, len);
+	{
+		hid_intr_t *intr;
+		void *intr_ctx;
+
+		mtx_lock(&vi->mtx);
+		if (vi->intr != NULL && vi->intr_on) {
+			intr = vi->intr;
+			intr_ctx = vi->intr_ctx;
+			mtx_unlock(&vi->mtx);
+			SDT_PROBE2(bluetooth, vhid, report, inject,
+			    vi->unit, len);
+			intr(intr_ctx, buf, len);
+		} else {
+			mtx_unlock(&vi->mtx);
+		}
 	}
-	mtx_unlock(&vi->mtx);
 
 	return (0);
 }
@@ -398,6 +408,14 @@ vhid_ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 	case VHID_CREATE: {
 		struct make_dev_args mda;
 
+		/*
+		 * Use a sentinel value to reserve the slot before dropping
+		 * sc_mtx.  This prevents two concurrent VHID_CREATE ioctls
+		 * from both finding the same free slot and both calling
+		 * make_dev_s with the same unit name (which would panic).
+		 */
+#define	VHID_SENTINEL	((struct vhid_inst *)(uintptr_t)1)
+
 		mtx_lock(&vhid_sc->sc_mtx);
 		/* Find first free slot */
 		for (unit = 0; unit < VHID_MAX_DEVICES; unit++) {
@@ -410,6 +428,8 @@ vhid_ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 			    "vhid: max devices reached\n");
 			return (ENOSPC);
 		}
+		/* Reserve the slot before dropping the lock */
+		vhid_sc->insts[unit] = VHID_SENTINEL;
 		mtx_unlock(&vhid_sc->sc_mtx);
 
 		/* Allocate outside mutex since M_WAITOK can sleep */
@@ -425,21 +445,18 @@ vhid_ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		mda.mda_unit = unit;
 		error = make_dev_s(&mda, &vi->cdev, "vhid%d", unit);
 		if (error != 0) {
+			/* Clear sentinel on failure */
+			mtx_lock(&vhid_sc->sc_mtx);
+			vhid_sc->insts[unit] = NULL;
+			mtx_unlock(&vhid_sc->sc_mtx);
 			mtx_destroy(&vi->mtx);
 			free(vi, M_VHID);
 			return (error);
 		}
 		vi->cdev->si_drv1 = vi;
 
-		/* Re-validate slot under the lock in case of a race */
+		/* Replace sentinel with real pointer */
 		mtx_lock(&vhid_sc->sc_mtx);
-		if (vhid_sc->insts[unit] != NULL) {
-			mtx_unlock(&vhid_sc->sc_mtx);
-			destroy_dev(vi->cdev);
-			mtx_destroy(&vi->mtx);
-			free(vi, M_VHID);
-			return (EBUSY);
-		}
 		vhid_sc->insts[unit] = vi;
 		mtx_unlock(&vhid_sc->sc_mtx);
 
@@ -456,7 +473,7 @@ vhid_ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 
 		mtx_lock(&vhid_sc->sc_mtx);
 		vi = vhid_sc->insts[unit];
-		if (vi == NULL) {
+		if (vi == NULL || vi == VHID_SENTINEL) {
 			mtx_unlock(&vhid_sc->sc_mtx);
 			return (ENOENT);
 		}
@@ -479,10 +496,31 @@ vhid_ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 			    vi->hidbus_dev);
 			bus_topo_unlock();
 			if (error != 0) {
-				/* Re-insert on failure */
+				/*
+				 * Try to re-insert on failure, but another
+				 * thread may have taken the slot already.
+				 */
 				mtx_lock(&vhid_sc->sc_mtx);
-				vhid_sc->insts[unit] = vi;
+				if (vhid_sc->insts[unit] == NULL) {
+					vhid_sc->insts[unit] = vi;
+					mtx_unlock(&vhid_sc->sc_mtx);
+					return (error);
+				}
 				mtx_unlock(&vhid_sc->sc_mtx);
+
+				/*
+				 * Slot was taken -- instance is orphaned.
+				 * Clean it up now.
+				 */
+				device_printf(vhid_sc->dev,
+				    "vhid%d: slot taken during "
+				    "device_delete_child failure, "
+				    "cleaning up orphan\n", unit);
+				destroy_dev(vi->cdev);
+				if (vi->rdesc != NULL)
+					free(vi->rdesc, M_VHID);
+				mtx_destroy(&vi->mtx);
+				free(vi, M_VHID);
 				return (error);
 			}
 		}
@@ -672,15 +710,24 @@ vhid_detach(device_t dev)
 	mtx_lock(&sc->sc_mtx);
 	for (i = 0; i < VHID_MAX_DEVICES; i++) {
 		vi = sc->insts[i];
-		if (vi == NULL)
+		if (vi == NULL || vi == VHID_SENTINEL)
 			continue;
 		sc->insts[i] = NULL;
 		mtx_unlock(&sc->sc_mtx);
 
 		if (vi->hidbus_dev != NULL) {
+			int error;
+
 			bus_topo_lock();
-			device_delete_child(dev, vi->hidbus_dev);
+			error = device_delete_child(dev, vi->hidbus_dev);
 			bus_topo_unlock();
+			if (error != 0) {
+				/* Re-insert and abort detach */
+				mtx_lock(&sc->sc_mtx);
+				sc->insts[i] = vi;
+				mtx_unlock(&sc->sc_mtx);
+				return (error);
+			}
 		}
 
 		destroy_dev(vi->cdev);
