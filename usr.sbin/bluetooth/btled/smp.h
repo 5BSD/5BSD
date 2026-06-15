@@ -119,7 +119,7 @@ struct smp_conn {
 	void		*numcmp_cb_arg;
 };
 
-/* smp.c */
+/* smp.c — initiator (central) */
 int	smp_open(struct smp_conn *sc, const uint8_t *addr, uint8_t addr_type,
 	    const uint8_t *local_addr, uint8_t local_addr_type,
 	    int hci_fd, uint16_t con_handle, struct smp_bond_db *db);
@@ -128,6 +128,13 @@ int	smp_pair(struct smp_conn *sc);
 int	smp_encrypt_with_ltk(struct smp_conn *sc, const struct smp_bond *bond);
 struct smp_bond *smp_find_bond(struct smp_bond_db *db,
 	    const uint8_t *addr, uint8_t addr_type);
+
+/* smp.c — responder (peripheral) */
+int	smp_open_accepted(struct smp_conn *sc, int fd,
+	    const uint8_t *local_addr, uint8_t local_addr_type,
+	    const uint8_t *remote_addr, uint8_t remote_addr_type,
+	    int hci_fd, uint16_t con_handle, struct smp_bond_db *db);
+int	smp_respond(struct smp_conn *sc);
 
 /* Bond persistence */
 int	smp_bond_db_load(struct smp_bond_db *db, int fd);

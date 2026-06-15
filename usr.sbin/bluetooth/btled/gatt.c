@@ -86,6 +86,7 @@ gatt_discover_primary_services(struct att_conn *ac,
 	}
 
 	*nsvcs = count;
+	DBG("GATT: discovered %d primary services", count);
 	return (0);
 }
 
@@ -102,6 +103,7 @@ gatt_discover_characteristics(struct att_conn *ac,
 	size_t len;
 	int count = 0;
 	int ret;
+	uint16_t orig_start = start;
 
 	while (start <= end && count < maxchars) {
 		ret = att_read_by_type(ac, start, end,
@@ -153,6 +155,8 @@ gatt_discover_characteristics(struct att_conn *ac,
 	}
 
 	*nchars = count;
+	DBG("GATT: discovered %d characteristics in %04x-%04x", count,
+	    orig_start, end);
 	return (0);
 }
 
@@ -169,6 +173,7 @@ gatt_discover_descriptors(struct att_conn *ac,
 	size_t len;
 	int count = 0;
 	int ret;
+	uint16_t orig_start = start;
 
 	while (start <= end && count < maxdescs) {
 		ret = att_find_info(ac, start, end, buf, sizeof(buf), &len);
@@ -220,96 +225,7 @@ gatt_discover_descriptors(struct att_conn *ac,
 	}
 
 	*ndescs = count;
+	DBG("GATT: discovered %d descriptors in %04x-%04x", count,
+	    orig_start, end);
 	return (0);
-}
-
-/*
- * High-level: discover a service by UUID16, including all its
- * characteristics and their descriptors.
- */
-int
-gatt_discover_service(struct att_conn *ac, uint16_t uuid16,
-    struct gatt_discovery *disc)
-{
-	struct gatt_service svcs[GATT_MAX_SERVICES];
-	int nsvcs, i, ret;
-
-	memset(disc, 0, sizeof(*disc));
-
-	/* Find the service */
-	ret = gatt_discover_primary_services(ac, svcs, GATT_MAX_SERVICES,
-	    &nsvcs);
-	if (ret != 0)
-		return (ret);
-
-	for (i = 0; i < nsvcs; i++) {
-		if (svcs[i].uuid16 == uuid16)
-			break;
-	}
-	if (i == nsvcs)
-		return (ENOENT);
-
-	disc->service = svcs[i];
-
-	/* Discover characteristics */
-	ret = gatt_discover_characteristics(ac, disc->service.start_handle,
-	    disc->service.end_handle, disc->chars, GATT_MAX_CHARS,
-	    &disc->nchars);
-	if (ret != 0)
-		return (ret);
-
-	/* Discover descriptors for each characteristic */
-	disc->ndescs = 0;
-	for (i = 0; i < disc->nchars; i++) {
-		uint16_t desc_start = disc->chars[i].value_handle + 1;
-		uint16_t desc_end;
-
-		if (i + 1 < disc->nchars)
-			desc_end = disc->chars[i + 1].decl_handle - 1;
-		else
-			desc_end = disc->service.end_handle;
-
-		if (desc_start > desc_end)
-			continue;
-
-		int ndesc;
-		ret = gatt_discover_descriptors(ac, desc_start, desc_end,
-		    disc->descs + disc->ndescs,
-		    GATT_MAX_DESCS - disc->ndescs, &ndesc);
-		if (ret != 0)
-			return (ret);
-
-		disc->ndescs += ndesc;
-	}
-
-	return (0);
-}
-
-/*
- * Enable notifications on a characteristic by writing 0x0001 to its CCCD.
- * Searches the descriptor list for CCCD (UUID 0x2902) that falls within
- * the characteristic's handle range.
- */
-int
-gatt_enable_notifications(struct att_conn *ac,
-    const struct gatt_char *ch, uint16_t end_handle,
-    const struct gatt_desc *descs, int ndescs)
-{
-	uint8_t val[2];
-
-	if (!(ch->properties & GATT_PROP_NOTIFY))
-		return (ENOTSUP);
-
-	/* Find CCCD descriptor for this characteristic */
-	for (int i = 0; i < ndescs; i++) {
-		if (descs[i].uuid16 == GATT_UUID_CCCD &&
-		    descs[i].handle > ch->value_handle &&
-		    descs[i].handle <= end_handle) {
-			put_le16(val, GATT_CCCD_NOTIFY);
-			return (att_write_req(ac, descs[i].handle,
-			    val, sizeof(val)));
-		}
-	}
-
-	return (ENOENT);
 }

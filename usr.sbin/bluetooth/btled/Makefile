@@ -1,5 +1,5 @@
 PROG=	btled
-SRCS=	btled.c att.c gatt.c hci_util.c smp.c
+SRCS=	btled.c att.c att_server.c gatt.c hci_util.c smp.c
 
 CFLAGS+=	-I${SRCTOP}/sys
 

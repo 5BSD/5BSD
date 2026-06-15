@@ -33,14 +33,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <syslog.h>
 #include <unistd.h>
 
 #include "att.h"
+#include "att_server.h"
 #include "ble_util.h"
 #include "gatt.h"
 #include "hci_util.h"
 #include "smp.h"
+
+int btled_debug = 0;
 
 #include <dev/hid/vhid.h>
 
@@ -93,6 +95,9 @@ struct hogp_device {
 	uint8_t			*report_map;
 	size_t			report_map_len;
 
+	uint16_t		hid_ctrl_handle;  /* HID Control Point */
+	uint16_t		hid_bcdHID;	  /* from HID Information */
+
 	int			vhid_ctl_fd;	/* /dev/vhid */
 	int			vhid_fd;	/* /dev/vhidN */
 	int			vhid_unit;
@@ -122,7 +127,11 @@ struct hogp_device {
 
 static volatile sig_atomic_t running = 1;
 
+static pid_t child_pids[16];
+static int nchildren = 0;
+
 static void	usage(void) __dead2;
+static void	peripheral_run(struct hogp_device *, const char *);
 static int	hogp_discover(struct hogp_device *dev);
 static int	hogp_subscribe(struct hogp_device *dev);
 static int	hogp_setup_vhid(struct hogp_device *dev);
@@ -147,8 +156,13 @@ pool_create(int *pool, int count)
 	for (i = 0; i < count; i++) {
 		pool[i] = socket(PF_BLUETOOTH, SOCK_SEQPACKET,
 		    BLUETOOTH_PROTO_L2CAP);
-		if (pool[i] < 0)
+		if (pool[i] < 0) {
+			for (int j = 0; j < i; j++) {
+				close(pool[j]);
+				pool[j] = -1;
+			}
 			return (-1);
+		}
 
 		memset(&sa, 0, sizeof(sa));
 		sa.l2cap_len = sizeof(sa);
@@ -157,6 +171,10 @@ pool_create(int *pool, int count)
 		if (bind(pool[i], (struct sockaddr *)&sa, sizeof(sa)) < 0) {
 			close(pool[i]);
 			pool[i] = -1;
+			for (int j = 0; j < i; j++) {
+				close(pool[j]);
+				pool[j] = -1;
+			}
 			return (-1);
 		}
 	}
@@ -179,9 +197,15 @@ atexit_cleanup(void)
 }
 
 static void
-sig_handler(int sig __unused)
+sig_handler(int sig)
 {
 	running = 0;
+
+	/* Propagate signal to forked children */
+	for (int i = 0; i < nchildren; i++) {
+		if (child_pids[i] > 0)
+			kill(child_pids[i], sig);
+	}
 }
 
 /*
@@ -234,7 +258,8 @@ usage(void)
 	fprintf(stderr,
 	    "usage: btled [-dr] [-a adapter] [-f bonds] -s\n"
 	    "       btled [-dr] [-a adapter] [-f bonds] <bdaddr> "
-	    "[public|random] ...\n");
+	    "[public|random] ...\n"
+	    "       btled [-d] [-a adapter] [-f bonds] -p\n");
 	exit(1);
 }
 
@@ -270,6 +295,7 @@ main(int argc, char *argv[])
 	struct hogp_device dev;
 	int ch;
 	bool scan_mode = false;
+	bool peripheral_mode = false;
 
 	memset(&dev, 0, sizeof(dev));
 	for (int i = 0; i < SOCK_POOL_SIZE; i++) {
@@ -284,16 +310,20 @@ main(int argc, char *argv[])
 
 	const char *bond_path = "/var/db/btled/bonds";
 
-	while ((ch = getopt(argc, argv, "a:df:rs")) != -1) {
+	while ((ch = getopt(argc, argv, "a:df:prs")) != -1) {
 		switch (ch) {
 		case 'a':
 			dev.adapter = optarg;
 			break;
 		case 'd':
 			dev.debug = true;
+			btled_debug = 1;
 			break;
 		case 'f':
 			bond_path = optarg;
+			break;
+		case 'p':
+			peripheral_mode = true;
 			break;
 		case 'r':
 			dev.reconnect = true;
@@ -327,6 +357,13 @@ main(int argc, char *argv[])
 	/* Scan mode: just show devices and exit */
 	if (scan_mode) {
 		do_scan(&dev);
+		close(dev.hci_fd);
+		return (0);
+	}
+
+	/* Peripheral mode: advertise and serve GATT */
+	if (peripheral_mode) {
+		peripheral_run(&dev, bond_path);
 		close(dev.hci_fd);
 		return (0);
 	}
@@ -379,18 +416,25 @@ main(int argc, char *argv[])
 		if (ndevs == 0)
 			usage();
 
+		/* Automatically reap zombie children */
+		signal(SIGCHLD, SIG_IGN);
+
 		/* Fork children for devices 1..N-1 */
 		for (int i = 1; i < ndevs; i++) {
 			pid_t pid = fork();
 			if (pid < 0)
 				err(1, "fork");
 			if (pid == 0) {
+				/* Child: reset child tracking */
+				nchildren = 0;
 				/* Child: set this device's address */
 				memcpy(dev.addr, devs[i].addr, 6);
 				dev.addr_type = devs[i].addr_type;
 				goto child_start;
 			}
-			/* Parent continues to fork remaining */
+			/* Parent: record child PID */
+			if (nchildren < (int)nitems(child_pids))
+				child_pids[nchildren++] = pid;
 		}
 
 		/* Parent handles device 0 */
@@ -482,25 +526,28 @@ connect_loop:
 				fprintf(stderr,
 				    "btled: found existing bond, "
 				    "encrypting...\n");
-			if (smp_open(&dev.smp, dev.addr, dev.addr_type,
-			    dev.local_addr, 0, dev.hci_fd,
-			    dev.con_handle, &dev.bond_db) == 0) {
-				dev.smp.passkey_cb = passkey_display;
-				dev.smp.numcmp_cb = numcmp_confirm;
-				if (smp_encrypt_with_ltk(&dev.smp, bond) < 0) {
-					warn("bonded encryption failed");
-				} else {
-					if (dev.debug)
-						fprintf(stderr,
-						    "btled: waiting for "
-						    "encryption...\n");
-					if (hci_wait_encryption(dev.hci_fd,
-					    dev.con_handle, 10) < 0)
-						warn("encryption timeout");
-					else if (dev.debug)
-						fprintf(stderr,
-						    "btled: encrypted\n");
-				}
+			/*
+			 * For bonded reconnect, smp_encrypt_with_ltk()
+			 * only needs hci_fd and con_handle — no SMP
+			 * L2CAP socket required.  Set them directly to
+			 * avoid calling smp_open() which would fail
+			 * inside Capsicum (socket() returns ECAPMODE).
+			 */
+			dev.smp.hci_fd = dev.hci_fd;
+			dev.smp.con_handle = dev.con_handle;
+			if (smp_encrypt_with_ltk(&dev.smp, bond) < 0) {
+				warn("bonded encryption failed");
+			} else {
+				if (dev.debug)
+					fprintf(stderr,
+					    "btled: waiting for "
+					    "encryption...\n");
+				if (hci_wait_encryption(dev.hci_fd,
+				    dev.con_handle, 10) < 0)
+					warn("encryption timeout");
+				else if (dev.debug)
+					fprintf(stderr,
+					    "btled: encrypted\n");
 			}
 		}
 	}
@@ -561,6 +608,16 @@ connect_loop:
 		err(1, "HOGP subscribe");
 
 	/*
+	 * Write Exit Suspend (0x01) to HID Control Point per HOGP spec.
+	 * This signals the device we are ready for reports.
+	 */
+	if (dev.hid_ctrl_handle != 0) {
+		uint8_t exit_suspend = 0x01;
+		att_write_cmd(&dev.att, dev.hid_ctrl_handle,
+		    &exit_suspend, 1);
+	}
+
+	/*
 	 * Install signal handlers before sandbox
 	 */
 	signal(SIGTERM, sig_handler);
@@ -568,18 +625,33 @@ connect_loop:
 	signal(SIGHUP, sig_handler);
 
 	/*
-	 * Phase 5: Enter Capsicum sandbox.
-	 * When reconnect is enabled, pre-create a pool of bound sockets
-	 * before entering capability mode.  cap_connect() can then
-	 * connect them inside the sandbox without needing socket().
+	 * Phase 5: Enter Capsicum sandbox (once only).
+	 *
+	 * Close the SMP socket first — it was used for initial pairing
+	 * and must not leak into the sandbox.  Bonded reconnect uses
+	 * HCI LE_Start_Encryption, not the SMP L2CAP channel.
+	 *
+	 * Pool creation and cap_enter() are one-shot; on reconnect
+	 * (goto connect_loop) we skip this block.
 	 */
-	if (dev.reconnect) {
-		dev.att_pool_next = 0;
-		if (pool_create(dev.att_pool, SOCK_POOL_SIZE) < 0)
-			warn("ATT socket pool creation failed");
+	{
+		static bool sandboxed = false;
+
+		if (!sandboxed) {
+			smp_close(&dev.smp);
+
+			if (dev.reconnect) {
+				dev.att_pool_next = 0;
+				if (pool_create(dev.att_pool,
+				    SOCK_POOL_SIZE) < 0)
+					warn("ATT socket pool creation "
+					    "failed");
+			}
+			if (capsicum_sandbox(&dev) != 0)
+				err(1, "capsicum sandbox");
+			sandboxed = true;
+		}
 	}
-	if (capsicum_sandbox(&dev) != 0)
-		err(1, "capsicum sandbox");
 
 	if (dev.debug)
 		fprintf(stderr,
@@ -589,6 +661,15 @@ connect_loop:
 	 * Phase 6: Event loop — receive notifications, inject reports
 	 */
 	hogp_event_loop(&dev);
+
+	/*
+	 * Write Suspend (0x00) to HID Control Point before disconnect
+	 * per HOGP spec.  Best-effort — may fail if link already dropped.
+	 */
+	if (dev.hid_ctrl_handle != 0) {
+		uint8_t suspend = 0x00;
+		att_write_cmd(&dev.att, dev.hid_ctrl_handle, &suspend, 1);
+	}
 
 	/*
 	 * Clean up this connection's resources.
@@ -632,46 +713,29 @@ connect_loop:
 }
 
 /*
- * Discover HID Service (0x1812), read Report Map, classify reports.
+ * Process a single HID Service instance: read its Report Map,
+ * classify Report characteristics, read HID Information,
+ * save HID Control Point handle, set Protocol Mode.
  */
 static int
-hogp_discover(struct hogp_device *dev)
+hogp_process_service(struct hogp_device *dev, struct gatt_discovery *disc)
 {
 	int ret;
 	size_t len;
 
-	/* Discover HID Service */
-	ret = gatt_discover_service(&dev->att, UUID_HID_SERVICE,
-	    &dev->hid_disc);
-	if (ret != 0) {
-		warnx("HID Service (0x1812) not found");
-		return (ret);
-	}
-
-	if (dev->debug)
-		fprintf(stderr, "btled: HID Service found, handles %04x-%04x, "
-		    "%d chars, %d descs\n",
-		    dev->hid_disc.service.start_handle,
-		    dev->hid_disc.service.end_handle,
-		    dev->hid_disc.nchars, dev->hid_disc.ndescs);
-
 	/*
 	 * Read Report Map characteristic (UUID 0x2A4B).
 	 * This contains the HID Report Descriptor.
+	 * Report Map can be longer than MTU-1, use read blob.
 	 */
-	dev->report_map = NULL;
-	dev->report_map_len = 0;
-
-	for (int i = 0; i < dev->hid_disc.nchars; i++) {
-		if (dev->hid_disc.chars[i].uuid16 != UUID_REPORT_MAP)
+	for (int i = 0; i < disc->nchars; i++) {
+		if (disc->chars[i].uuid16 != UUID_REPORT_MAP)
 			continue;
 
-		/* Report Map can be longer than MTU-1, use read blob */
 		uint8_t buf[4096];
 		size_t total = 0;
-		uint16_t handle = dev->hid_disc.chars[i].value_handle;
+		uint16_t handle = disc->chars[i].value_handle;
 
-		/* Initial read */
 		ret = att_read(&dev->att, handle, buf, sizeof(buf), &len);
 		if (ret != 0) {
 			warnx("failed to read Report Map");
@@ -679,7 +743,6 @@ hogp_discover(struct hogp_device *dev)
 		}
 		total = len;
 
-		/* Continue with read blob if needed */
 		while (len == (size_t)(dev->att.mtu - 1) &&
 		    total < sizeof(buf)) {
 			ret = att_read_blob(&dev->att, handle, total,
@@ -689,11 +752,22 @@ hogp_discover(struct hogp_device *dev)
 			total += len;
 		}
 
-		dev->report_map = malloc(total);
-		if (dev->report_map == NULL)
-			return (ENOMEM);
-		memcpy(dev->report_map, buf, total);
-		dev->report_map_len = total;
+		if (dev->report_map == NULL) {
+			dev->report_map = malloc(total);
+			if (dev->report_map == NULL)
+				return (ENOMEM);
+			memcpy(dev->report_map, buf, total);
+			dev->report_map_len = total;
+		} else {
+			/* Concatenate report maps from multiple services */
+			uint8_t *p = realloc(dev->report_map,
+			    dev->report_map_len + total);
+			if (p == NULL)
+				return (ENOMEM);
+			memcpy(p + dev->report_map_len, buf, total);
+			dev->report_map = p;
+			dev->report_map_len += total;
+		}
 
 		if (dev->debug)
 			fprintf(stderr, "btled: Report Map: %zu bytes\n",
@@ -701,46 +775,37 @@ hogp_discover(struct hogp_device *dev)
 		break;
 	}
 
-	if (dev->report_map == NULL) {
-		warnx("Report Map characteristic not found");
-		return (ENOENT);
-	}
-
 	/*
 	 * Classify Report characteristics (UUID 0x2A4D).
 	 * Each Report has a Report Reference descriptor (UUID 0x2908)
 	 * that tells us the report ID and type (input/output/feature).
 	 */
-	dev->nreports = 0;
-
-	for (int i = 0; i < dev->hid_disc.nchars; i++) {
-		if (dev->hid_disc.chars[i].uuid16 != UUID_REPORT)
+	for (int i = 0; i < disc->nchars; i++) {
+		if (disc->chars[i].uuid16 != UUID_REPORT)
 			continue;
 		if (dev->nreports >= HOGP_MAX_REPORTS)
 			break;
 
 		struct hogp_report *rpt = &dev->reports[dev->nreports];
-		rpt->value_handle = dev->hid_disc.chars[i].value_handle;
+		rpt->value_handle = disc->chars[i].value_handle;
 		rpt->cccd_handle = 0;
 		rpt->report_id = 0;
 		rpt->report_type = 0;
 
-		/* Find Report Reference and CCCD descriptors */
 		uint16_t desc_start = rpt->value_handle + 1;
 		uint16_t desc_end;
-		if (i + 1 < dev->hid_disc.nchars)
-			desc_end = dev->hid_disc.chars[i + 1].decl_handle - 1;
+		if (i + 1 < disc->nchars)
+			desc_end = disc->chars[i + 1].decl_handle - 1;
 		else
-			desc_end = dev->hid_disc.service.end_handle;
+			desc_end = disc->service.end_handle;
 
-		for (int j = 0; j < dev->hid_disc.ndescs; j++) {
-			uint16_t dh = dev->hid_disc.descs[j].handle;
+		for (int j = 0; j < disc->ndescs; j++) {
+			uint16_t dh = disc->descs[j].handle;
 			if (dh < desc_start || dh > desc_end)
 				continue;
 
-			if (dev->hid_disc.descs[j].uuid16 ==
+			if (disc->descs[j].uuid16 ==
 			    GATT_UUID_REPORT_REFERENCE) {
-				/* Read Report Reference: [report_id, type] */
 				uint8_t ref[2];
 				ret = att_read(&dev->att, dh, ref,
 				    sizeof(ref), &len);
@@ -748,7 +813,7 @@ hogp_discover(struct hogp_device *dev)
 					rpt->report_id = ref[0];
 					rpt->report_type = ref[1];
 				}
-			} else if (dev->hid_disc.descs[j].uuid16 ==
+			} else if (disc->descs[j].uuid16 ==
 			    GATT_UUID_CCCD) {
 				rpt->cccd_handle = dh;
 			}
@@ -765,13 +830,47 @@ hogp_discover(struct hogp_device *dev)
 	}
 
 	/*
+	 * Read HID Information (UUID 0x2A4A) — mandatory per HOGP §3.2.
+	 * Format: [bcdHID (2 LE), bCountryCode (1), Flags (1)]
+	 */
+	for (int i = 0; i < disc->nchars; i++) {
+		if (disc->chars[i].uuid16 != UUID_HID_INFORMATION)
+			continue;
+
+		uint8_t info[4];
+		ret = att_read(&dev->att, disc->chars[i].value_handle,
+		    info, sizeof(info), &len);
+		if (ret == 0 && len >= 4) {
+			dev->hid_bcdHID = (uint16_t)info[0] |
+			    ((uint16_t)info[1] << 8);
+			if (dev->debug)
+				fprintf(stderr,
+				    "btled: HID Information: bcdHID=%04x "
+				    "country=%d flags=%02x\n",
+				    dev->hid_bcdHID, info[2], info[3]);
+		}
+		break;
+	}
+
+	/*
+	 * Save HID Control Point handle (UUID 0x2A4C).
+	 * Used for Suspend/Exit Suspend per HOGP.
+	 */
+	for (int i = 0; i < disc->nchars; i++) {
+		if (disc->chars[i].uuid16 == UUID_HID_CONTROL_POINT) {
+			dev->hid_ctrl_handle = disc->chars[i].value_handle;
+			break;
+		}
+	}
+
+	/*
 	 * Set Protocol Mode to Report Protocol (0x01).
 	 */
-	for (int i = 0; i < dev->hid_disc.nchars; i++) {
-		if (dev->hid_disc.chars[i].uuid16 == UUID_PROTOCOL_MODE) {
+	for (int i = 0; i < disc->nchars; i++) {
+		if (disc->chars[i].uuid16 == UUID_PROTOCOL_MODE) {
 			uint8_t mode = HID_PROTOCOL_REPORT;
 			att_write_cmd(&dev->att,
-			    dev->hid_disc.chars[i].value_handle,
+			    disc->chars[i].value_handle,
 			    &mode, 1);
 			if (dev->debug)
 				fprintf(stderr,
@@ -779,6 +878,101 @@ hogp_discover(struct hogp_device *dev)
 			break;
 		}
 	}
+
+	return (0);
+}
+
+/*
+ * Discover HID Service (0x1812), read Report Map, classify reports.
+ * Handles multiple HID Service instances (e.g., combo keyboard+mouse).
+ */
+static int
+hogp_discover(struct hogp_device *dev)
+{
+	struct gatt_service svcs[GATT_MAX_SERVICES];
+	int nsvcs, ret, nsvc_found = 0;
+
+	free(dev->report_map);
+	dev->report_map = NULL;
+	dev->report_map_len = 0;
+	dev->nreports = 0;
+	dev->hid_ctrl_handle = 0;
+	dev->hid_bcdHID = 0;
+
+	/* Discover all primary services */
+	ret = gatt_discover_primary_services(&dev->att, svcs,
+	    GATT_MAX_SERVICES, &nsvcs);
+	if (ret != 0)
+		return (ret);
+
+	/* Iterate all HID Service instances */
+	for (int s = 0; s < nsvcs; s++) {
+		if (svcs[s].uuid16 != UUID_HID_SERVICE)
+			continue;
+
+		nsvc_found++;
+
+		if (dev->debug)
+			fprintf(stderr,
+			    "btled: HID Service found, handles %04x-%04x\n",
+			    svcs[s].start_handle, svcs[s].end_handle);
+
+		/* Discover characteristics and descriptors for this instance */
+		struct gatt_discovery disc;
+		memset(&disc, 0, sizeof(disc));
+		disc.service = svcs[s];
+
+		ret = gatt_discover_characteristics(&dev->att,
+		    disc.service.start_handle, disc.service.end_handle,
+		    disc.chars, GATT_MAX_CHARS, &disc.nchars);
+		if (ret != 0)
+			return (ret);
+
+		disc.ndescs = 0;
+		for (int i = 0; i < disc.nchars; i++) {
+			uint16_t desc_start = disc.chars[i].value_handle + 1;
+			uint16_t desc_end;
+			if (i + 1 < disc.nchars)
+				desc_end = disc.chars[i + 1].decl_handle - 1;
+			else
+				desc_end = disc.service.end_handle;
+			if (desc_start > desc_end)
+				continue;
+
+			int ndesc;
+			ret = gatt_discover_descriptors(&dev->att,
+			    desc_start, desc_end,
+			    disc.descs + disc.ndescs,
+			    GATT_MAX_DESCS - disc.ndescs, &ndesc);
+			if (ret != 0)
+				return (ret);
+			disc.ndescs += ndesc;
+		}
+
+		/* Keep first instance for backward compat */
+		if (svcs[s].start_handle == svcs[0].start_handle ||
+		    dev->hid_disc.service.start_handle == 0)
+			dev->hid_disc = disc;
+
+		ret = hogp_process_service(dev, &disc);
+		if (ret != 0)
+			return (ret);
+	}
+
+	if (nsvc_found == 0) {
+		warnx("HID Service (0x1812) not found");
+		return (ENOENT);
+	}
+
+	if (dev->report_map == NULL) {
+		warnx("Report Map characteristic not found");
+		return (ENOENT);
+	}
+
+	if (dev->debug)
+		fprintf(stderr, "btled: total: %d reports, %zu bytes report map"
+		    " from %d service(s)\n",
+		    dev->nreports, dev->report_map_len, nsvc_found);
 
 	return (0);
 }
@@ -810,7 +1004,7 @@ hogp_setup_vhid(struct hogp_device *dev)
 	memset(&arg, 0, sizeof(arg));
 	arg.idVendor = 0;	/* filled from DIS if available */
 	arg.idProduct = 0;
-	arg.idVersion = 0;
+	arg.idVersion = dev->hid_bcdHID;	/* from HID Information */
 	strlcpy(arg.name, "BLE HID Device", sizeof(arg.name));
 
 	if (ioctl(dev->vhid_fd, VHID_ATTACH, &arg) < 0)
@@ -892,15 +1086,28 @@ capsicum_sandbox(struct hogp_device *dev)
 	if (cap_rights_limit(dev->vhid_fd, &rights) < 0)
 		return (-1);
 
-	/* Bond storage: read + write + seek */
-	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_SEEK);
+	/* Bond storage: read + write + seek + flock */
+	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_SEEK, CAP_FLOCK);
 	if (cap_rights_limit(dev->bond_fd, &rights) < 0)
 		return (-1);
 
-	/* HCI socket: send (for encryption commands) */
-	cap_rights_init(&rights, CAP_SEND, CAP_RECV, CAP_EVENT);
+	/*
+	 * HCI socket: send/recv for raw HCI commands, read/write for
+	 * libbluetooth bt_devrecv()/bt_devsend() which use read()/writev(),
+	 * ioctl for connection list, sockopt for devfilter.
+	 */
+	cap_rights_init(&rights, CAP_SEND, CAP_RECV, CAP_READ, CAP_WRITE,
+	    CAP_EVENT, CAP_IOCTL, CAP_SETSOCKOPT, CAP_GETSOCKOPT);
 	if (cap_rights_limit(dev->hci_fd, &rights) < 0)
 		return (-1);
+	{
+		unsigned long hci_ioctls[] = {
+		    SIOC_HCI_RAW_NODE_GET_CON_LIST
+		};
+		if (cap_ioctls_limit(dev->hci_fd, hci_ioctls,
+		    nitems(hci_ioctls)) < 0)
+			return (-1);
+	}
 
 	/* Pool sockets: connect + send + recv (for reconnection) */
 	if (dev->reconnect) {
@@ -1033,4 +1240,249 @@ hogp_cleanup(struct hogp_device *dev)
 	}
 	free(dev->report_map);
 	dev->report_map = NULL;
+}
+
+/* ----------------------------------------------------------------
+ *  Peripheral mode — GATT server
+ * ---------------------------------------------------------------- */
+
+/* UUIDs for peripheral GATT services */
+#define UUID_GAP_SERVICE	0x1800
+#define UUID_GATT_SERVICE	0x1801
+#define UUID_DIS_SERVICE	0x180A
+#define UUID_CUSTOM_SERVICE	0xFFE0
+#define UUID_DEVICE_NAME	0x2A00
+#define UUID_APPEARANCE		0x2A01
+#define UUID_MANUFACTURER	0x2A29
+#define UUID_MODEL_NUMBER	0x2A24
+#define UUID_FIRMWARE_REV	0x2A26
+#define UUID_CUSTOM_CHAR	0xFFE1
+
+#define PERIPHERAL_NAME		"5BSD-btled"
+#define ADV_INTERVAL_100MS	0x00A0	/* 160 * 0.625ms = 100ms */
+
+static void
+peripheral_build_gattdb(struct att_db *db, struct att_attr *attrs,
+    uint8_t *val_buf, size_t val_size)
+{
+	static const uint8_t appearance[] = { 0x00, 0x00 }; /* Unknown */
+
+	attdb_init(db, attrs, 64, val_buf, val_size);
+
+	/* GAP Service (required) */
+	attdb_add_service(db, UUID_GAP_SERVICE);
+	attdb_add_characteristic(db, UUID_DEVICE_NAME,
+	    GATT_PROP_READ, ATT_PERM_READ,
+	    PERIPHERAL_NAME, sizeof(PERIPHERAL_NAME) - 1);
+	attdb_add_characteristic(db, UUID_APPEARANCE,
+	    GATT_PROP_READ, ATT_PERM_READ,
+	    appearance, sizeof(appearance));
+
+	/* GATT Service (required, can be empty) */
+	attdb_add_service(db, UUID_GATT_SERVICE);
+
+	/* Device Information Service */
+	attdb_add_service(db, UUID_DIS_SERVICE);
+	attdb_add_characteristic(db, UUID_MANUFACTURER,
+	    GATT_PROP_READ, ATT_PERM_READ, "FreeBSD", 7);
+	attdb_add_characteristic(db, UUID_MODEL_NUMBER,
+	    GATT_PROP_READ, ATT_PERM_READ, "btled", 5);
+	attdb_add_characteristic(db, UUID_FIRMWARE_REV,
+	    GATT_PROP_READ, ATT_PERM_READ, "1.0", 3);
+
+	/* Custom service with read/write/notify */
+	attdb_add_service(db, UUID_CUSTOM_SERVICE);
+	attdb_add_characteristic(db, UUID_CUSTOM_CHAR,
+	    GATT_PROP_READ | GATT_PROP_WRITE | GATT_PROP_NOTIFY,
+	    ATT_PERM_READ | ATT_PERM_WRITE,
+	    "\x00", 1);
+	attdb_add_cccd(db);
+}
+
+static int
+peripheral_att_listen(void)
+{
+	struct sockaddr_l2cap sa;
+	int fd;
+
+	fd = socket(PF_BLUETOOTH, SOCK_SEQPACKET, BLUETOOTH_PROTO_L2CAP);
+	if (fd < 0)
+		return (-1);
+
+	memset(&sa, 0, sizeof(sa));
+	sa.l2cap_len = sizeof(sa);
+	sa.l2cap_family = AF_BLUETOOTH;
+	sa.l2cap_cid = htole16(NG_L2CAP_ATT_CID);
+	sa.l2cap_bdaddr_type = BDADDR_LE_PUBLIC;
+	/* l2cap_bdaddr = BDADDR_ANY (all zeros) */
+
+	if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+		close(fd);
+		return (-1);
+	}
+
+	if (listen(fd, 1) < 0) {
+		close(fd);
+		return (-1);
+	}
+
+	return (fd);
+}
+
+static void
+peripheral_run(struct hogp_device *dev, const char *bond_path)
+{
+	struct att_db db;
+	struct att_attr attrs[64];
+	uint8_t val_buf[2048];
+	struct att_conn ac;
+	int listen_fd, client_fd;
+	struct pollfd pfd;
+	uint8_t buf[ATT_MAX_MTU];
+	size_t n;
+	uint8_t adv_data[31];
+	int adv_len;
+
+	/* Build the GATT database */
+	peripheral_build_gattdb(&db, attrs, val_buf, sizeof(val_buf));
+
+	/* Open bond file */
+	dev->bond_fd = open(bond_path, O_RDWR | O_CREAT, 0600);
+	if (dev->bond_fd >= 0)
+		smp_bond_db_load(&dev->bond_db, dev->bond_fd);
+
+	/* Create ATT listening socket */
+	listen_fd = peripheral_att_listen();
+	if (listen_fd < 0)
+		err(1, "ATT listen socket");
+
+	if (dev->debug)
+		fprintf(stderr, "btled: peripheral mode, ATT listening\n");
+
+	/* Set advertising parameters: connectable undirected, 100ms interval */
+	if (hci_le_set_advertising_params(dev->hci_fd,
+	    ADV_INTERVAL_100MS, ADV_INTERVAL_100MS,
+	    0x00) < 0)
+		err(1, "set advertising parameters");
+
+	/* Build and set advertising data */
+	{
+		uint16_t uuids[] = { UUID_DIS_SERVICE, UUID_CUSTOM_SERVICE };
+		adv_len = ble_build_adv_data(adv_data, sizeof(adv_data),
+		    PERIPHERAL_NAME, uuids, 2);
+		if (adv_len < 0)
+			err(1, "build advertising data");
+	}
+	if (hci_le_set_advertising_data(dev->hci_fd, adv_data,
+	    (uint8_t)adv_len) < 0)
+		err(1, "set advertising data");
+
+	/* Enable advertising */
+	if (hci_le_set_advertise_enable(dev->hci_fd, true) < 0)
+		err(1, "enable advertising");
+
+	if (dev->debug)
+		fprintf(stderr, "btled: advertising as \"%s\"\n",
+		    PERIPHERAL_NAME);
+
+	/* Signal handling */
+	signal(SIGTERM, sig_handler);
+	signal(SIGINT, sig_handler);
+	signal(SIGHUP, sig_handler);
+
+	while (running) {
+		/* Wait for incoming connection */
+		pfd.fd = listen_fd;
+		pfd.events = POLLIN;
+		pfd.revents = 0;
+
+		if (poll(&pfd, 1, 1000) <= 0)
+			continue;
+
+		client_fd = accept(listen_fd, NULL, NULL);
+		if (client_fd < 0) {
+			if (errno == EINTR)
+				continue;
+			warn("accept");
+			continue;
+		}
+
+		if (dev->debug)
+			fprintf(stderr, "btled: client connected\n");
+
+		/* Reset CCCDs to default 0x0000 for non-bonded client */
+		for (int i = 0; i < db.count; i++) {
+			if (attrs[i].uuid16 == GATT_UUID_CCCD)
+				memset(attrs[i].value, 0, attrs[i].value_len);
+		}
+
+		/* Disable advertising while connected */
+		hci_le_set_advertise_enable(dev->hci_fd, false);
+
+		/* Set up ATT connection on accepted socket */
+		memset(&ac, 0, sizeof(ac));
+		ac.fd = client_fd;
+		ac.mtu = ATT_DEFAULT_MTU;
+		ac.buf = malloc(ATT_MAX_MTU);
+		if (ac.buf == NULL) {
+			close(client_fd);
+			continue;
+		}
+
+		/* Set receive timeout */
+		{
+			struct timeval tv = { .tv_sec = 30, .tv_usec = 0 };
+			setsockopt(ac.fd, SOL_SOCKET, SO_RCVTIMEO,
+			    &tv, sizeof(tv));
+		}
+
+		/* Serve this connection */
+		pfd.fd = ac.fd;
+		pfd.events = POLLIN;
+
+		while (running) {
+			pfd.revents = 0;
+			if (poll(&pfd, 1, 1000) < 0) {
+				if (errno == EINTR)
+					continue;
+				break;
+			}
+			if (pfd.revents & (POLLERR | POLLHUP)) {
+				if (dev->debug)
+					fprintf(stderr,
+					    "btled: client disconnected\n");
+				break;
+			}
+			if (!(pfd.revents & POLLIN))
+				continue;
+
+			ssize_t nr = recv(ac.fd, buf, ac.mtu, 0);
+			if (nr <= 0)
+				break;
+			n = (size_t)nr;
+
+			att_server_handle(&ac, &db, buf, n);
+		}
+
+		/* Clean up connection */
+		free(ac.buf);
+		close(ac.fd);
+
+		/* Re-enable advertising for next connection */
+		if (running) {
+			hci_le_set_advertise_enable(dev->hci_fd, true);
+			if (dev->debug)
+				fprintf(stderr,
+				    "btled: re-advertising\n");
+		}
+	}
+
+	/* Shutdown */
+	hci_le_set_advertise_enable(dev->hci_fd, false);
+	close(listen_fd);
+
+	if (dev->bond_fd >= 0) {
+		close(dev->bond_fd);
+		dev->bond_fd = -1;
+	}
 }

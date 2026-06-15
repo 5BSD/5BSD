@@ -19,6 +19,7 @@
 #define L2CAP_SOCKET_CHECKED
 #include <bluetooth.h>
 
+#include <err.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -26,6 +27,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "ble_util.h"
 #include "hci_util.h"
 
 /* AD type codes for advertising data parsing */
@@ -100,10 +102,13 @@ hci_get_con_handle(int hci_fd, const uint8_t *remote_addr, uint16_t *handle)
 		    cons[i].link_type == NG_HCI_LINK_LE_RANDOM) &&
 		    memcmp(&cons[i].bdaddr, remote_addr, 6) == 0) {
 			*handle = cons[i].con_handle;
+			DBG("HCI: connection handle=%04x",
+			    cons[i].con_handle);
 			return (0);
 		}
 	}
 
+	warnx("HCI: connection handle lookup failed");
 	errno = ENOENT;
 	return (-1);
 }
@@ -389,6 +394,9 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 				/* Restore old filter */
 				bt_devfilter(hci_fd, &oldflt, NULL);
 
+				DBG("HCI: encryption change status=%d enable=%d",
+				    ep->status, ep->encryption_enable);
+
 				if (ep->status != 0 ||
 				    ep->encryption_enable == 0) {
 					errno = EACCES;
@@ -403,4 +411,235 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 	bt_devfilter(hci_fd, &oldflt, NULL);
 	errno = ETIMEDOUT;
 	return (-1);
+}
+
+/*
+ * LE Set Advertising Parameters.
+ * interval_min/max are in units of 0.625ms (e.g. 0x0800 = 1.28s).
+ * adv_type: 0x00 = ADV_IND (connectable undirected).
+ */
+int
+hci_le_set_advertising_params(int hci_fd, uint16_t interval_min,
+    uint16_t interval_max, uint8_t adv_type)
+{
+	struct bt_devreq r;
+	ng_hci_le_set_advertising_parameters_cp	cp;
+	ng_hci_le_set_advertising_parameters_rp	rp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.advertising_interval_min = htole16(interval_min);
+	cp.advertising_interval_max = htole16(interval_max);
+	cp.advertising_type = adv_type;
+	cp.own_address_type = 0x00;		/* public */
+	cp.advertising_channel_map = 0x07;	/* all channels */
+	cp.advertising_filter_policy = 0x00;	/* any device */
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_ADVERTISING_PARAMETERS);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (bt_devreq(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		errno = EIO;
+		return (-1);
+	}
+
+	DBG("HCI: set advertising params interval=%d-%d type=%d",
+	    interval_min, interval_max, adv_type);
+
+	return (0);
+}
+
+/*
+ * LE Set Advertising Data.
+ * data/len is the raw AD structure payload (max 31 bytes).
+ */
+int
+hci_le_set_advertising_data(int hci_fd, const uint8_t *data, uint8_t len)
+{
+	struct bt_devreq r;
+	ng_hci_le_set_advertising_data_cp	cp;
+	ng_hci_le_set_advertising_data_rp	rp;
+
+	if (len > NG_HCI_ADVERTISING_DATA_SIZE) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	memset(&cp, 0, sizeof(cp));
+	cp.advertising_data_length = len;
+	memcpy(cp.advertising_data, data, len);
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_ADVERTISING_DATA);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (bt_devreq(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		errno = EIO;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * LE Set Advertise Enable / Disable.
+ */
+int
+hci_le_set_advertise_enable(int hci_fd, bool enable)
+{
+	struct bt_devreq r;
+	ng_hci_le_set_advertise_enable_cp	cp;
+	ng_hci_le_set_advertise_enable_rp	rp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.advertising_enable = enable ? 1 : 0;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_ADVERTISE_ENABLE);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (bt_devreq(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		errno = EIO;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * LE Long Term Key Request Reply.
+ * Sent by the peripheral/responder when the controller asks for an LTK.
+ */
+int
+hci_le_ltk_request_reply(int hci_fd, uint16_t con_handle,
+    const uint8_t ltk[16])
+{
+	struct bt_devreq r;
+	ng_hci_le_long_term_key_request_reply_cp	cp;
+	ng_hci_le_long_term_key_request_reply_rp	rp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.connection_handle = htole16(con_handle);
+	memcpy(cp.long_term_key, ltk, 16);
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_LONG_TERM_KEY_REQUEST_REPLY);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (bt_devreq(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		errno = EIO;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * LE Long Term Key Request Negative Reply.
+ * Sent when no bond exists for the requesting device.
+ */
+int
+hci_le_ltk_request_neg_reply(int hci_fd, uint16_t con_handle)
+{
+	struct bt_devreq r;
+	ng_hci_le_long_term_key_request_negative_reply_cp	cp;
+	ng_hci_le_long_term_key_request_negative_reply_rp	rp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.connection_handle = htole16(con_handle);
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_LONG_TERM_KEY_REQUEST_NEGATIVE_REPLY);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (bt_devreq(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		errno = EIO;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * Build BLE advertising data with Flags, Local Name, and 16-bit UUID list.
+ * Returns the number of bytes written, or -1 on error.
+ */
+int
+ble_build_adv_data(uint8_t *buf, size_t buflen, const char *name,
+    const uint16_t *uuids, int nuuids)
+{
+	uint8_t *p = buf;
+	size_t namelen;
+
+	if (buflen < 3)
+		return (-1);
+
+	/* Flags: LE General Discoverable + BR/EDR Not Supported */
+	*p++ = 2;		/* length */
+	*p++ = AD_TYPE_FLAGS;
+	*p++ = 0x06;
+
+	/* Local Name */
+	if (name != NULL) {
+		size_t fulllen = strlen(name);
+		uint8_t name_type;
+
+		namelen = fulllen;
+		if ((size_t)(p - buf) + 2 + namelen > buflen)
+			namelen = buflen - (p - buf) - 2;
+
+		/* Use Shortened Local Name if truncated */
+		name_type = (namelen < fulllen) ?
+		    AD_TYPE_SHORT_LOCAL_NAME : AD_TYPE_COMPLETE_LOCAL_NAME;
+
+		if (namelen > 0) {
+			*p++ = (uint8_t)(1 + namelen);
+			*p++ = name_type;
+			memcpy(p, name, namelen);
+			p += namelen;
+		}
+	}
+
+	/* 16-bit UUID list */
+	if (nuuids > 0 && (size_t)(p - buf) + 2 + 2 * nuuids <= buflen) {
+		*p++ = (uint8_t)(1 + 2 * nuuids);
+		*p++ = AD_TYPE_UUID16_COMPLETE;
+		for (int i = 0; i < nuuids; i++) {
+			*p++ = (uint8_t)(uuids[i] & 0xFF);
+			*p++ = (uint8_t)(uuids[i] >> 8);
+		}
+	}
+
+	return ((int)(p - buf));
 }

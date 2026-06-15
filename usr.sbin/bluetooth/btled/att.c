@@ -17,12 +17,15 @@
 
 #define L2CAP_SOCKET_CHECKED
 #include <bluetooth.h>
+#include <err.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include <netgraph/bluetooth/include/ng_l2cap.h>
 
 #include "att.h"
 #include "ble_util.h"
@@ -58,7 +61,7 @@ att_open(struct att_conn *ac, const uint8_t *addr, uint8_t addr_type)
 	sa.l2cap_len = sizeof(sa);
 	sa.l2cap_family = AF_BLUETOOTH;
 	memcpy(&sa.l2cap_bdaddr, addr, sizeof(sa.l2cap_bdaddr));
-	sa.l2cap_cid = 0x0004;	/* NG_L2CAP_ATT_CID */
+	sa.l2cap_cid = NG_L2CAP_ATT_CID;
 	sa.l2cap_bdaddr_type = addr_type;
 
 	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
@@ -80,6 +83,9 @@ att_open(struct att_conn *ac, const uint8_t *addr, uint8_t addr_type)
 		return (-1);
 	}
 
+	DBG("ATT connect to %02x:%02x:%02x:%02x:%02x:%02x type=%d",
+	    addr[5], addr[4], addr[3], addr[2], addr[1], addr[0], addr_type);
+
 	return (0);
 }
 
@@ -99,11 +105,13 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *addr,
 	sa.l2cap_len = sizeof(sa);
 	sa.l2cap_family = AF_BLUETOOTH;
 	memcpy(&sa.l2cap_bdaddr, addr, sizeof(sa.l2cap_bdaddr));
-	sa.l2cap_cid = 0x0004;
+	sa.l2cap_cid = NG_L2CAP_ATT_CID;
 	sa.l2cap_bdaddr_type = addr_type;
 
-	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0)
+	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+		close(fd);
 		return (-1);
+	}
 
 	{
 		struct timeval tv = { .tv_sec = 30, .tv_usec = 0 };
@@ -118,6 +126,8 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *addr,
 		ac->fd = -1;
 		return (-1);
 	}
+
+	DBG("ATT connect via pool fd=%d", fd);
 
 	return (0);
 }
@@ -153,6 +163,7 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 		return (-1);
 
 	if (n == 0) {
+		warnx("ATT: connection closed by peer");
 		errno = ECONNRESET;
 		return (-1);
 	}
@@ -164,6 +175,9 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 			ae->handle = get_le16((uint8_t *)rsp + 2);
 			ae->code = ((uint8_t *)rsp)[4];
 		}
+		warnx("ATT error: req=%02x handle=%04x code=%02x",
+		    ((uint8_t *)rsp)[1], get_le16((uint8_t *)rsp + 2),
+		    ((uint8_t *)rsp)[4]);
 		errno = EPROTO;
 		return (-1);
 	}
@@ -194,6 +208,7 @@ att_exchange_mtu(struct att_conn *ac, uint16_t client_mtu)
 		return (-1);
 
 	if (n < 3 || rsp[0] != ATT_OP_MTU_RSP) {
+		warnx("ATT: bad MTU response opcode=%02x", rsp[0]);
 		errno = EPROTO;
 		return (-1);
 	}
@@ -202,6 +217,9 @@ att_exchange_mtu(struct att_conn *ac, uint16_t client_mtu)
 	ac->mtu = client_mtu < server_mtu ? client_mtu : server_mtu;
 	if (ac->mtu < ATT_DEFAULT_MTU)
 		ac->mtu = ATT_DEFAULT_MTU;
+
+	DBG("MTU exchange: client=%d server=%d effective=%d",
+	    client_mtu, server_mtu, ac->mtu);
 
 	return (0);
 }
@@ -235,6 +253,8 @@ att_read(struct att_conn *ac, uint16_t handle,
 	memcpy(buf, ac->buf + 1, datalen);
 	if (outlen != NULL)
 		*outlen = datalen;
+
+	DBG("ATT read handle=%04x len=%zu", handle, datalen);
 
 	return (0);
 }
@@ -270,6 +290,9 @@ att_read_blob(struct att_conn *ac, uint16_t handle, uint16_t offset,
 	if (outlen != NULL)
 		*outlen = datalen;
 
+	DBG("ATT read blob handle=%04x offset=%d len=%zu", handle, offset,
+	    datalen);
+
 	return (0);
 }
 
@@ -304,6 +327,8 @@ att_write_req(struct att_conn *ac, uint16_t handle,
 		return (-1);
 	}
 
+	DBG("ATT write req handle=%04x len=%zu", handle, len);
+
 	return (0);
 }
 
@@ -330,6 +355,8 @@ att_write_cmd(struct att_conn *ac, uint16_t handle,
 
 	if (send(ac->fd, pdu, pdulen, 0) < 0)
 		return (-1);
+
+	DBG("ATT write cmd handle=%04x len=%zu", handle, len);
 
 	return (0);
 }

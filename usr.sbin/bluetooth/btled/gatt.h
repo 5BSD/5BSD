@@ -9,7 +9,6 @@
 #define _BTLED_GATT_H_
 
 #include <stdint.h>
-#include <stdbool.h>
 #include "att.h"
 
 /* Maximum discovery results */
@@ -67,10 +66,5 @@ int	gatt_discover_characteristics(struct att_conn *ac,
 int	gatt_discover_descriptors(struct att_conn *ac,
 	    uint16_t start, uint16_t end,
 	    struct gatt_desc *descs, int maxdescs, int *ndescs);
-int	gatt_discover_service(struct att_conn *ac, uint16_t uuid16,
-	    struct gatt_discovery *disc);
-int	gatt_enable_notifications(struct att_conn *ac,
-	    const struct gatt_char *ch, uint16_t end_handle,
-	    const struct gatt_desc *descs, int ndescs);
 
 #endif /* _BTLED_GATT_H_ */
