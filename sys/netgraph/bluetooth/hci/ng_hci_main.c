@@ -683,6 +683,10 @@ ng_hci_upper_rcvmsg(node_p node, item_p item, hook_p lasthook)
 			error = ng_hci_lp_qos_req(unit, item, lasthook);
 			break;
 
+		case NGM_HCI_LP_CON_UPDATE:
+			error = ng_hci_lp_con_update(unit, item, lasthook);
+			break;
+
 		default:
 			error = ng_hci_default_rcvmsg(node, item, lasthook);
 			break;

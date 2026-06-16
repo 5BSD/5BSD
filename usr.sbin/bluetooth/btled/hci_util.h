@@ -85,12 +85,13 @@ int	hci_le_connection_update(int hci_fd, uint16_t handle,
 #define LE_EVTMASK_PER_ADV_SYNC_EST	(1ULL << 13)
 #define LE_EVTMASK_PER_ADV_REPORT	(1ULL << 14)
 #define LE_EVTMASK_PER_ADV_SYNC_LOST	(1ULL << 15)
-#define LE_EVTMASK_SCAN_REQ_RCVD	(1ULL << 16)
+#define LE_EVTMASK_SCAN_TIMEOUT		(1ULL << 16)  /* subevent 0x11 */
 #define LE_EVTMASK_ADV_SET_TERM		(1ULL << 17)
-#define LE_EVTMASK_CHAN_SEL_ALGO	(1ULL << 18)
-#define LE_EVTMASK_PATH_LOSS_THRESH	(1ULL << 19)
-#define LE_EVTMASK_TX_POWER_REPORT	(1ULL << 20)
-#define LE_EVTMASK_BIGINFO_ADV_REP	(1ULL << 21)
+#define LE_EVTMASK_SCAN_REQ_RCVD	(1ULL << 18)  /* subevent 0x13 */
+#define LE_EVTMASK_CHAN_SEL_ALGO	(1ULL << 19)  /* subevent 0x14 */
+#define LE_EVTMASK_PATH_LOSS_THRESH	(1ULL << 31)  /* subevent 0x20 */
+#define LE_EVTMASK_TX_POWER_REPORT	(1ULL << 32)  /* subevent 0x21 */
+#define LE_EVTMASK_BIGINFO_ADV_REP	(1ULL << 33)  /* subevent 0x22 */
 #define LE_EVTMASK_PER_ADV_SYNC_XFER	(1ULL << 23)
 #define LE_EVTMASK_CIS_ESTABLISHED	(1ULL << 24)
 #define LE_EVTMASK_CIS_REQUEST		(1ULL << 25)

@@ -861,7 +861,98 @@ ng_hci_lp_enc_change(ng_hci_unit_con_p con, int status)
 				__func__, NG_NODE_NAME(unit->node), unit->acl);
 	}
 	return (0);
-} /* ng_hci_lp_con_cfm */
+} /* ng_hci_lp_enc_change */
+
+/*
+ * Process LP_ConUpdate event from the upper layer protocol.
+ * Send HCI LE_Connection_Update command to the controller.
+ */
+
+int
+ng_hci_lp_con_update(ng_hci_unit_p unit, item_p item, hook_p hook)
+{
+	struct con_update_req {
+		ng_hci_cmd_pkt_t		 hdr;
+		ng_hci_le_connection_update_cp	 cp;
+	} __attribute__ ((packed))		*req = NULL;
+	ng_hci_lp_con_update_ep			*ep = NULL;
+	ng_hci_unit_con_p			 con = NULL;
+	struct mbuf				*m = NULL;
+	int					 error = 0;
+
+	/* Check if unit is ready */
+	if ((unit->state & NG_HCI_UNIT_READY) != NG_HCI_UNIT_READY) {
+		NG_HCI_WARN(
+"%s: %s - unit is not ready, state=%#x\n",
+			__func__, NG_NODE_NAME(unit->node), unit->state);
+
+		error = ENXIO;
+		goto out;
+	}
+
+	if (NGI_MSG(item)->header.arglen != sizeof(*ep)) {
+		NG_HCI_ALERT(
+"%s: %s - invalid LP_ConUpdate message size=%d\n",
+			__func__, NG_NODE_NAME(unit->node),
+			NGI_MSG(item)->header.arglen);
+
+		error = EMSGSIZE;
+		goto out;
+	}
+
+	ep = (ng_hci_lp_con_update_ep *)(NGI_MSG(item)->data);
+
+	con = ng_hci_con_by_handle(unit, ep->con_handle);
+	if (con == NULL) {
+		NG_HCI_ERR(
+"%s: %s - invalid connection handle=%d\n",
+			__func__, NG_NODE_NAME(unit->node), ep->con_handle);
+
+		error = ENOENT;
+		goto out;
+	}
+
+	if (con->state != NG_HCI_CON_OPEN) {
+		NG_HCI_ERR(
+"%s: %s - invalid connection state=%d, handle=%d\n",
+			__func__, NG_NODE_NAME(unit->node), con->state,
+			ep->con_handle);
+
+		error = EINVAL;
+		goto out;
+	}
+
+	/* Create HCI command */
+	MGETHDR(m, M_NOWAIT, MT_DATA);
+	if (m == NULL) {
+		error = ENOBUFS;
+		goto out;
+	}
+
+	m->m_pkthdr.len = m->m_len = sizeof(*req);
+	req = mtod(m, struct con_update_req *);
+	req->hdr.type = NG_HCI_CMD_PKT;
+	req->hdr.length = sizeof(req->cp);
+	req->hdr.opcode = htole16(NG_HCI_OPCODE(NG_HCI_OGF_LE,
+					NG_HCI_OCF_LE_CONNECTION_UPDATE));
+
+	req->cp.connection_handle = htole16(ep->con_handle);
+	req->cp.conn_interval_min = htole16(ep->conn_interval_min);
+	req->cp.conn_interval_max = htole16(ep->conn_interval_max);
+	req->cp.conn_latency = htole16(ep->conn_latency);
+	req->cp.supervision_timeout = htole16(ep->supervision_timeout);
+	req->cp.minimum_ce_length = htole16(0x0000);
+	req->cp.maximum_ce_length = htole16(0x0000);
+
+	/* Queue and send HCI command */
+	NG_BT_MBUFQ_ENQUEUE(&unit->cmdq, m);
+	if (!(unit->state & NG_HCI_UNIT_COMMAND_PENDING))
+		error = ng_hci_send_command(unit);
+out:
+	NG_FREE_ITEM(item);
+
+	return (error);
+} /* ng_hci_lp_con_update */
 
 /*
  * Send LP_ConnectInd event to the upper layer protocol

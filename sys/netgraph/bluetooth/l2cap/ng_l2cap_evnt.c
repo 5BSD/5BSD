@@ -520,6 +520,12 @@ static int ng_l2cap_process_cmd_urq(ng_l2cap_con_p con, uint8_t ident)
 
 done:
 	send_l2cap_param_urs(con, ident, result);
+
+	/* Forward accepted parameters to HCI for LE Connection Update */
+	if (result == NG_L2CAP_UPDATE_PARAM_ACCEPT)
+		ng_l2cap_lp_con_update(con, interval_min, interval_max,
+		    latency, timeout);
+
 	NG_FREE_M(con->rx_pkt);
 	return 0;
 }

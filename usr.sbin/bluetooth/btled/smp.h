@@ -62,6 +62,18 @@
 #define SMP_ERR_BUSY			0x10
 
 /*
+ * CCCD persistence entry.
+ * Core Spec Vol 3 Part G Section 2.4.5.1: the server shall
+ * persistently record the CCCD value for a bonded device.
+ */
+#define SMP_MAX_CCCDS	8
+
+struct smp_cccd_entry {
+	uint16_t	handle;		/* attribute handle of CCCD */
+	uint16_t	value;		/* CCCD value (notifications/indications) */
+};
+
+/*
  * Bond key storage.
  * One entry per bonded device.
  */
@@ -75,6 +87,8 @@ struct smp_bond {
 	bool		has_ltk;
 	bool		has_irk;
 	bool		is_sc;		/* paired with LE Secure Connections */
+	uint8_t		num_cccds;
+	struct smp_cccd_entry cccds[SMP_MAX_CCCDS];
 };
 
 #define SMP_MAX_BONDS	32
@@ -145,5 +159,10 @@ int	smp_respond(struct smp_conn *sc);
 /* Bond persistence */
 int	smp_bond_db_load(struct smp_bond_db *db, int fd);
 int	smp_bond_db_save(struct smp_bond_db *db);
+
+/* CCCD persistence for bonded devices (Core Spec Vol 3 Part G §2.4.5.1) */
+struct att_db;	/* forward declaration */
+void	smp_bond_save_cccds(struct smp_bond *bond, struct att_db *db);
+void	smp_bond_restore_cccds(struct smp_bond *bond, struct att_db *db);
 
 #endif /* _BTLED_SMP_H_ */

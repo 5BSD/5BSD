@@ -827,20 +827,26 @@ le_event(ng_hci_unit_p unit, struct mbuf *event)
 
 	case NG_HCI_LEEV_DATA_LENGTH_CHANGE: {
 		ng_hci_le_data_length_change_ep *dlep;
+		ng_hci_unit_con_p con;
+		u_int16_t h;
+
 		NG_HCI_M_PULLUP(event, sizeof(*dlep));
 		if (event != NULL) {
 			dlep = mtod(event,
 			    ng_hci_le_data_length_change_ep *);
+			h = NG_HCI_CON_HANDLE(le16toh(dlep->connection_handle));
+			con = ng_hci_con_by_handle(unit, h);
+			if (con != NULL) {
+				con->max_tx_octets = le16toh(dlep->max_tx_octets);
+				con->max_rx_octets = le16toh(dlep->max_rx_octets);
+			}
 			SDT_PROBE3(bluetooth, hci, le_data_length, change,
-			    NG_HCI_CON_HANDLE(
-			        le16toh(dlep->connection_handle)),
+			    h,
 			    le16toh(dlep->max_tx_octets),
 			    le16toh(dlep->max_rx_octets));
 			NG_HCI_INFO(
-"%s: %s - LE data length change, handle=%d, tx=%d, rx=%d\n",
-			    __func__, NG_NODE_NAME(unit->node),
-			    NG_HCI_CON_HANDLE(
-			        le16toh(dlep->connection_handle)),
+"%s: %s - LE Data Length Change, handle=%d, tx=%d, rx=%d\n",
+			    __func__, NG_NODE_NAME(unit->node), h,
 			    le16toh(dlep->max_tx_octets),
 			    le16toh(dlep->max_rx_octets));
 		}
@@ -866,12 +872,65 @@ le_event(ng_hci_unit_p unit, struct mbuf *event)
 		NG_FREE_M(event);
 		break;
 
-	case NG_HCI_LEEV_REMOTE_CONN_PARAM_REQUEST:
-		NG_HCI_INFO(
-"%s: %s - LE remote connection parameter request\n",
-		    __func__, NG_NODE_NAME(unit->node));
+	case NG_HCI_LEEV_REMOTE_CONN_PARAM_REQUEST: {
+		ng_hci_le_remote_conn_param_ep *rpep;
+		ng_hci_unit_con_p con;
+		u_int16_t h;
+
+		NG_HCI_M_PULLUP(event, sizeof(*rpep));
+		if (event != NULL) {
+			rpep = mtod(event,
+			    ng_hci_le_remote_conn_param_ep *);
+			h = NG_HCI_CON_HANDLE(
+			    le16toh(rpep->connection_handle));
+			con = ng_hci_con_by_handle(unit, h);
+			if (con != NULL) {
+				struct __conn_param_reply {
+					ng_hci_cmd_pkt_t		 hdr;
+					ng_hci_le_remote_conn_param_req_reply_cp cp;
+				} __attribute__ ((packed))	*req;
+				struct mbuf			*m;
+
+				MGETHDR(m, M_NOWAIT, MT_DATA);
+				if (m != NULL) {
+					m->m_pkthdr.len = m->m_len =
+					    sizeof(*req);
+					req = mtod(m,
+					    struct __conn_param_reply *);
+					req->hdr.type = NG_HCI_CMD_PKT;
+					req->hdr.length = sizeof(req->cp);
+					req->hdr.opcode = htole16(
+					    NG_HCI_OPCODE(NG_HCI_OGF_LE,
+					    NG_HCI_OCF_LE_REMOTE_CONN_PARAM_REQ_REPLY));
+
+					req->cp.connection_handle =
+					    rpep->connection_handle;
+					req->cp.interval_min =
+					    rpep->interval_min;
+					req->cp.interval_max =
+					    rpep->interval_max;
+					req->cp.max_latency =
+					    rpep->latency;
+					req->cp.timeout =
+					    rpep->timeout;
+					req->cp.min_ce_length =
+					    htole16(0x0000);
+					req->cp.max_ce_length =
+					    htole16(0x0000);
+
+					NG_BT_MBUFQ_ENQUEUE(&unit->cmdq, m);
+					if (!(unit->state &
+					    NG_HCI_UNIT_COMMAND_PENDING))
+						ng_hci_send_command(unit);
+				}
+			}
+			NG_HCI_INFO(
+"%s: %s - LE Remote Conn Param Request auto-accepted, handle=%d\n",
+				__func__, NG_NODE_NAME(unit->node), h);
+		}
 		NG_FREE_M(event);
 		break;
+	}
 
 	case NG_HCI_LEEV_EXT_ADVREP:
 		NG_HCI_INFO(
@@ -1611,11 +1670,15 @@ encryption_change(ng_hci_unit_p unit, struct mbuf *event)
 				__func__, NG_NODE_NAME(unit->node), 
 				con->link_type);
 			error = EINVAL;
-		} else if (ep->encryption_enable)
-			/* XXX is that true? */
-			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_P2P;
-		else
+		} else if (ep->encryption_enable == 0x00)
 			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_NONE;
+		else if (con->link_type == NG_HCI_LINK_LE_PUBLIC ||
+			 con->link_type == NG_HCI_LINK_LE_RANDOM)
+			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_AES_CCM;
+		else if (ep->encryption_enable == 0x02)
+			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_AES_CCM;
+		else
+			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_P2P;
 	} else {
 		NG_HCI_ERR(
 "%s: %s - failed to change encryption mode, status=%d\n",

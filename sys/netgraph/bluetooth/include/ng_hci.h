@@ -210,7 +210,8 @@
 #define NG_HCI_ENCRYPTION_MODE_NONE		0x00
 #define NG_HCI_ENCRYPTION_MODE_P2P		0x01
 #define NG_HCI_ENCRYPTION_MODE_ALL		0x02
-/* 0x03 - 0xFF - reserved for future use */
+#define NG_HCI_ENCRYPTION_MODE_AES_CCM		0x03  /* LE AES-CCM (also BR/EDR SC) */
+/* 0x04 - 0xFF - reserved for future use */
 
 /* Quality of service types */
 #define NG_HCI_SERVICE_TYPE_NO_TRAFFIC		0x00
@@ -560,6 +561,16 @@ typedef struct {
 	uint8_t status;
 	uint8_t link_type; 
 }ng_hci_lp_enc_change_ep;
+
+/* Connection Parameter Update Request */
+#define NGM_HCI_LP_CON_UPDATE			11 /* Upper -> HCI */
+typedef struct {
+	u_int16_t	con_handle;
+	u_int16_t	conn_interval_min;
+	u_int16_t	conn_interval_max;
+	u_int16_t	conn_latency;
+	u_int16_t	supervision_timeout;
+} ng_hci_lp_con_update_ep;
 /**************************************************************************
  **************************************************************************
  **                    HCI node command/event parameters
@@ -2070,6 +2081,14 @@ typedef struct {
 } __attribute__((packed)) ng_hci_le_generate_dhkey_cp;
 /* No return params — Command_Status + LE Generate DHKey Complete event */
 
+/* LE Generate DHKey v2 (7.8.37) — OCF 0x005E */
+#define NG_HCI_OCF_LE_GENERATE_DHKEY_V2			0x005e
+typedef struct {
+	u_int8_t	remote_p256_pk[64];
+	u_int8_t	key_type;	/* 0x00=generated, 0x01=debug */
+} __attribute__((packed)) ng_hci_le_generate_dhkey_v2_cp;
+/* No return params — Command_Status + LE Generate DHKey Complete event */
+
 /* LE Set Data Length (7.8.33) — OCF 0x0022 */
 #define NG_HCI_OCF_LE_SET_DATA_LENGTH		0x0022
 typedef struct {
@@ -2209,8 +2228,22 @@ typedef struct {
 	int8_t		max_tx_power;	/* dBm, range -127 to +20 */
 } __attribute__((packed)) ng_hci_le_read_transmit_power_rp;
 
+/* LE Read RF Path Compensation (7.8.74) -- OCF 0x004C */
 #define NG_HCI_OCF_LE_READ_RF_PATH_COMPENSATION	0x004c
+/* No command parameters */
+typedef struct {
+	u_int8_t	status;
+	int16_t		rf_tx_path_compensation_value;
+	int16_t		rf_rx_path_compensation_value;
+} __attribute__((packed)) ng_hci_le_read_rf_path_compensation_rp;
+
+/* LE Write RF Path Compensation (7.8.75) -- OCF 0x004D */
 #define NG_HCI_OCF_LE_WRITE_RF_PATH_COMPENSATION	0x004d
+typedef struct {
+	int16_t		rf_tx_path_compensation_value;
+	int16_t		rf_rx_path_compensation_value;
+} __attribute__((packed)) ng_hci_le_write_rf_path_compensation_cp;
+typedef ng_hci_status_rp	ng_hci_le_write_rf_path_compensation_rp;
 
 /* LE Set Extended Advertising Parameters v1 (7.8.53) — OCF 0x0036 */
 #define NG_HCI_OCF_LE_SET_EXT_ADV_PARAMS		0x0036
@@ -2343,6 +2376,53 @@ typedef struct{
 	u_int8_t packet_payload;
 } __attribute__((packed)) ng_le_transmitter_test_cp;
 typedef ng_hci_status_rp	ng_hci_le_transmitter_test_rp;
+
+/* LE Receiver Test v2 (7.8.28) -- OCF 0x0033 */
+#define NG_HCI_OCF_LE_RECEIVER_TEST_V2			0x0033
+typedef struct {
+	u_int8_t	rx_channel;
+	u_int8_t	phy;
+	u_int8_t	modulation_index;
+} __attribute__((packed)) ng_hci_le_receiver_test_v2_cp;
+typedef ng_hci_status_rp	ng_hci_le_receiver_test_v2_rp;
+
+/* LE Transmitter Test v2 (7.8.29) -- OCF 0x0034 */
+#define NG_HCI_OCF_LE_TRANSMITTER_TEST_V2		0x0034
+typedef struct {
+	u_int8_t	tx_channel;
+	u_int8_t	test_data_length;
+	u_int8_t	packet_payload;
+	u_int8_t	phy;
+} __attribute__((packed)) ng_hci_le_transmitter_test_v2_cp;
+typedef ng_hci_status_rp	ng_hci_le_transmitter_test_v2_rp;
+
+/* LE Receiver Test v3 (7.8.78) -- OCF 0x004F */
+#define NG_HCI_OCF_LE_RECEIVER_TEST_V3			0x004f
+typedef struct {
+	u_int8_t	rx_channel;
+	u_int8_t	phy;
+	u_int8_t	modulation_index;
+	u_int8_t	expected_cte_length;
+	u_int8_t	expected_cte_type;
+	u_int8_t	slot_durations;
+	u_int8_t	switching_pattern_length;
+	/* followed by switching_pattern_length antenna_ids[] */
+} __attribute__((packed)) ng_hci_le_receiver_test_v3_cp;
+typedef ng_hci_status_rp	ng_hci_le_receiver_test_v3_rp;
+
+/* LE Transmitter Test v3 (7.8.79) -- OCF 0x0050 */
+#define NG_HCI_OCF_LE_TRANSMITTER_TEST_V3		0x0050
+typedef struct {
+	u_int8_t	tx_channel;
+	u_int8_t	test_data_length;
+	u_int8_t	packet_payload;
+	u_int8_t	phy;
+	u_int8_t	cte_length;
+	u_int8_t	cte_type;
+	u_int8_t	switching_pattern_length;
+	/* followed by switching_pattern_length antenna_ids[] */
+} __attribute__((packed)) ng_hci_le_transmitter_test_v3_cp;
+typedef ng_hci_status_rp	ng_hci_le_transmitter_test_v3_rp;
 
 #define NG_HCI_OCF_LE_TEST_END				0x001f
 /* No command parameter. */
@@ -2604,16 +2684,110 @@ typedef struct {
 } __attribute__((packed)) ng_hci_le_set_default_past_params_cp;
 typedef ng_hci_status_rp	ng_hci_le_set_default_past_params_rp;
 
+/* LE Set Connectionless CTE Transmit Parameters (7.8.80) -- OCF 0x0051 */
 #define NG_HCI_OCF_LE_SET_CONNLESS_CTE_TX_PARAMS	0x0051
-#define NG_HCI_OCF_LE_SET_CONNLESS_CTE_TX_ENABLE	0x0052
-#define NG_HCI_OCF_LE_SET_CONNLESS_IQ_SAMPLING_ENABLE	0x0053
-#define NG_HCI_OCF_LE_SET_CONN_CTE_RX_PARAMS		0x0054
-#define NG_HCI_OCF_LE_SET_CONN_CTE_TX_PARAMS		0x0055
-#define NG_HCI_OCF_LE_CONN_CTE_REQ_ENABLE		0x0056
-#define NG_HCI_OCF_LE_CONN_CTE_RSP_ENABLE		0x0057
-#define NG_HCI_OCF_LE_READ_ANTENNA_INFORMATION		0x0058
+typedef struct {
+	u_int8_t	advertising_handle;
+	u_int8_t	cte_length;
+	u_int8_t	cte_type;
+	u_int8_t	cte_count;
+	u_int8_t	switching_pattern_length;
+	/* followed by switching_pattern_length antenna_ids[] */
+} __attribute__((packed)) ng_hci_le_set_connless_cte_tx_params_cp;
+typedef ng_hci_status_rp	ng_hci_le_set_connless_cte_tx_params_rp;
 
+/* LE Set Connectionless CTE Transmit Enable (7.8.81) -- OCF 0x0052 */
+#define NG_HCI_OCF_LE_SET_CONNLESS_CTE_TX_ENABLE	0x0052
+typedef struct {
+	u_int8_t	advertising_handle;
+	u_int8_t	cte_enable;
+} __attribute__((packed)) ng_hci_le_set_connless_cte_tx_enable_cp;
+typedef ng_hci_status_rp	ng_hci_le_set_connless_cte_tx_enable_rp;
+
+/* LE Set Connectionless IQ Sampling Enable (7.8.82) -- OCF 0x0053 */
+#define NG_HCI_OCF_LE_SET_CONNLESS_IQ_SAMPLING_ENABLE	0x0053
+typedef struct {
+	u_int16_t	sync_handle;
+	u_int8_t	sampling_enable;
+	u_int8_t	slot_durations;
+	u_int8_t	max_sampled_ctes;
+	u_int8_t	switching_pattern_length;
+	/* followed by switching_pattern_length antenna_ids[] */
+} __attribute__((packed)) ng_hci_le_set_connless_iq_sampling_enable_cp;
+typedef struct {
+	u_int8_t	status;
+	u_int16_t	sync_handle;
+} __attribute__((packed)) ng_hci_le_set_connless_iq_sampling_enable_rp;
+
+/* LE Set Connection CTE Receive Parameters (7.8.83) -- OCF 0x0054 */
+#define NG_HCI_OCF_LE_SET_CONN_CTE_RX_PARAMS		0x0054
+typedef struct {
+	u_int16_t	connection_handle;
+	u_int8_t	sampling_enable;
+	u_int8_t	slot_durations;
+	u_int8_t	switching_pattern_length;
+	/* followed by switching_pattern_length antenna_ids[] */
+} __attribute__((packed)) ng_hci_le_set_conn_cte_rx_params_cp;
+typedef struct {
+	u_int8_t	status;
+	u_int16_t	connection_handle;
+} __attribute__((packed)) ng_hci_le_set_conn_cte_rx_params_rp;
+
+/* LE Set Connection CTE Transmit Parameters (7.8.84) -- OCF 0x0055 */
+#define NG_HCI_OCF_LE_SET_CONN_CTE_TX_PARAMS		0x0055
+typedef struct {
+	u_int16_t	connection_handle;
+	u_int8_t	cte_types;
+	u_int8_t	switching_pattern_length;
+	/* followed by switching_pattern_length antenna_ids[] */
+} __attribute__((packed)) ng_hci_le_set_conn_cte_tx_params_cp;
+typedef struct {
+	u_int8_t	status;
+	u_int16_t	connection_handle;
+} __attribute__((packed)) ng_hci_le_set_conn_cte_tx_params_rp;
+
+/* LE Connection CTE Request Enable (7.8.85) -- OCF 0x0056 */
+#define NG_HCI_OCF_LE_CONN_CTE_REQ_ENABLE		0x0056
+typedef struct {
+	u_int16_t	connection_handle;
+	u_int8_t	enable;
+	u_int16_t	cte_request_interval;
+	u_int8_t	requested_cte_length;
+	u_int8_t	requested_cte_type;
+} __attribute__((packed)) ng_hci_le_conn_cte_req_enable_cp;
+typedef struct {
+	u_int8_t	status;
+	u_int16_t	connection_handle;
+} __attribute__((packed)) ng_hci_le_conn_cte_req_enable_rp;
+
+/* LE Connection CTE Response Enable (7.8.86) -- OCF 0x0057 */
+#define NG_HCI_OCF_LE_CONN_CTE_RSP_ENABLE		0x0057
+typedef struct {
+	u_int16_t	connection_handle;
+	u_int8_t	enable;
+} __attribute__((packed)) ng_hci_le_conn_cte_rsp_enable_cp;
+typedef struct {
+	u_int8_t	status;
+	u_int16_t	connection_handle;
+} __attribute__((packed)) ng_hci_le_conn_cte_rsp_enable_rp;
+
+/* LE Read Antenna Information (7.8.87) -- OCF 0x0058 */
+#define NG_HCI_OCF_LE_READ_ANTENNA_INFORMATION		0x0058
+/* No command parameters */
+typedef struct {
+	u_int8_t	status;
+	u_int8_t	supported_switching_sampling_rates;
+	u_int8_t	num_antennae;
+	u_int8_t	max_switching_pattern_length;
+	u_int8_t	max_cte_length;
+} __attribute__((packed)) ng_hci_le_read_antenna_information_rp;
+
+/* LE Modify Sleep Clock Accuracy (7.8.94) -- OCF 0x005F */
 #define NG_HCI_OCF_LE_MODIFY_SLEEP_CLOCK_ACCURACY	0x005f
+typedef struct {
+	u_int8_t	action;		/* 0x00=more accurate, 0x01=less accurate */
+} __attribute__((packed)) ng_hci_le_modify_sleep_clock_accuracy_cp;
+typedef ng_hci_status_rp	ng_hci_le_modify_sleep_clock_accuracy_rp;
 
 /**************************************************************************
  **************************************************************************

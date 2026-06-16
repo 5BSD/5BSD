@@ -41,6 +41,8 @@
 #include <netgraph/bluetooth/include/ng_hci.h>
 #include <netgraph/bluetooth/include/ng_l2cap.h>
 
+#include "att.h"
+#include "att_server.h"
 #include "ble_util.h"
 #include "hci_util.h"
 #include "smp.h"
@@ -1142,6 +1144,58 @@ smp_bond_db_save(struct smp_bond_db *db)
 		return (-1);
 
 	return (0);
+}
+
+/*
+ * Save current CCCD values from the ATT database into a bond.
+ * Core Spec Vol 3 Part G Section 2.4.5.1 requires the server to
+ * persistently record CCCD values for bonded devices.
+ */
+void
+smp_bond_save_cccds(struct smp_bond *bond, struct att_db *db)
+{
+	int n = 0;
+
+	if (bond == NULL || db == NULL)
+		return;
+
+	for (int i = 0; i < db->count && n < SMP_MAX_CCCDS; i++) {
+		struct att_attr *a = &db->attrs[i];
+
+		if (a->uuid16 == GATT_UUID_CCCD && a->value_len >= 2) {
+			bond->cccds[n].handle = a->handle;
+			bond->cccds[n].value = (uint16_t)a->value[0] |
+			    ((uint16_t)a->value[1] << 8);
+			n++;
+		}
+	}
+	bond->num_cccds = (uint8_t)n;
+}
+
+/*
+ * Restore saved CCCD values from a bond into the ATT database.
+ * Matches by attribute handle.
+ */
+void
+smp_bond_restore_cccds(struct smp_bond *bond, struct att_db *db)
+{
+
+	if (bond == NULL || db == NULL)
+		return;
+
+	for (int j = 0; j < bond->num_cccds; j++) {
+		for (int i = 0; i < db->count; i++) {
+			struct att_attr *a = &db->attrs[i];
+
+			if (a->handle == bond->cccds[j].handle &&
+			    a->uuid16 == GATT_UUID_CCCD &&
+			    a->value_len >= 2) {
+				a->value[0] = bond->cccds[j].value & 0xFF;
+				a->value[1] = (bond->cccds[j].value >> 8) & 0xFF;
+				break;
+			}
+		}
+	}
 }
 
 /* ================================================================

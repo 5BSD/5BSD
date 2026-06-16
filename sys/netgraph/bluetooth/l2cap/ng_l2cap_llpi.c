@@ -597,7 +597,47 @@ out:
 } /* ng_l2cap_enc_change */
 
 /*
- * Prepare L2CAP packet. Prepend packet with L2CAP packet header and then 
+ * Send LP_ConUpdate to HCI to request LE connection parameter update.
+ */
+
+int
+ng_l2cap_lp_con_update(ng_l2cap_con_p con, u_int16_t interval_min,
+    u_int16_t interval_max, u_int16_t latency, u_int16_t timeout)
+{
+	ng_l2cap_p		 l2cap = con->l2cap;
+	struct ng_mesg		*msg = NULL;
+	ng_hci_lp_con_update_ep	*ep = NULL;
+	int			 error = 0;
+
+	/* Check if lower layer protocol is still connected */
+	if (l2cap->hci == NULL || NG_HOOK_NOT_VALID(l2cap->hci)) {
+		NG_L2CAP_ERR(
+"%s: %s - hook \"%s\" is not connected or valid\n",
+			__func__, NG_NODE_NAME(l2cap->node), NG_L2CAP_HOOK_HCI);
+
+		return (ENOTCONN);
+	}
+
+	/* Create and send LP_ConUpdate event */
+	NG_MKMESSAGE(msg, NGM_HCI_COOKIE, NGM_HCI_LP_CON_UPDATE,
+		sizeof(*ep), M_NOWAIT);
+	if (msg == NULL)
+		return (ENOMEM);
+
+	ep = (ng_hci_lp_con_update_ep *)(msg->data);
+	ep->con_handle = con->con_handle;
+	ep->conn_interval_min = interval_min;
+	ep->conn_interval_max = interval_max;
+	ep->conn_latency = latency;
+	ep->supervision_timeout = timeout;
+
+	NG_SEND_MSG_HOOK(error, l2cap->node, msg, l2cap->hci, 0);
+
+	return (error);
+} /* ng_l2cap_lp_con_update */
+
+/*
+ * Prepare L2CAP packet. Prepend packet with L2CAP packet header and then
  * segment it according to HCI MTU.
  */
 

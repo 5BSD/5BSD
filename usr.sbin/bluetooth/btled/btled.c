@@ -1712,20 +1712,44 @@ peripheral_run(struct hogp_device *dev, const char *bond_path)
 				continue;
 		}
 
-		client_fd = accept(listen_fd, NULL, NULL);
-		if (client_fd < 0) {
-			if (errno == EINTR)
+		{
+			struct sockaddr_l2cap peer_sa;
+			socklen_t peer_len = sizeof(peer_sa);
+			client_fd = accept(listen_fd,
+			    (struct sockaddr *)&peer_sa, &peer_len);
+			if (client_fd < 0) {
+				if (errno == EINTR)
+					continue;
+				warn("accept");
 				continue;
-			warn("accept");
-			continue;
+			}
+			memcpy(dev->addr, peer_sa.l2cap_bdaddr.b, 6);
+			dev->addr_type = peer_sa.l2cap_bdaddr_type;
 		}
 
 		LOG_HOGP(1, "client connected");
 
-		/* Reset CCCDs to default 0x0000 for non-bonded client */
-		for (int i = 0; i < db.count; i++) {
-			if (attrs[i].uuid16 == GATT_UUID_CCCD)
-				memset(attrs[i].value, 0, attrs[i].value_len);
+		/*
+		 * CCCD handling per Core Spec Vol 3 Part G Section 2.4.5.1:
+		 * For bonded devices, restore persisted CCCD values.
+		 * For non-bonded devices, reset CCCDs to default 0x0000.
+		 */
+		{
+			struct smp_bond *bond;
+
+			bond = smp_find_bond(&dev->bond_db, dev->addr,
+			    dev->addr_type);
+			if (bond != NULL && bond->num_cccds > 0) {
+				smp_bond_restore_cccds(bond, &db);
+				LOG_HOGP(1, "restored %d CCCD(s) for "
+				    "bonded device", bond->num_cccds);
+			} else {
+				for (int i = 0; i < db.count; i++) {
+					if (attrs[i].uuid16 == GATT_UUID_CCCD)
+						memset(attrs[i].value, 0,
+						    attrs[i].value_len);
+				}
+			}
 		}
 
 		/* Disable advertising while connected */
@@ -1775,6 +1799,23 @@ peripheral_run(struct hogp_device *dev, const char *bond_path)
 			n = (size_t)nr;
 
 			att_server_handle(&ac, &db, buf, n);
+		}
+
+		/*
+		 * Save CCCD values for bonded device before cleanup.
+		 * Core Spec Vol 3 Part G Section 2.4.5.1.
+		 */
+		{
+			struct smp_bond *bond;
+
+			bond = smp_find_bond(&dev->bond_db, dev->addr,
+			    dev->addr_type);
+			if (bond != NULL) {
+				smp_bond_save_cccds(bond, &db);
+				smp_bond_db_save(&dev->bond_db);
+				LOG_HOGP(1, "saved %d CCCD(s) for "
+				    "bonded device", bond->num_cccds);
+			}
 		}
 
 		/* Clean up connection */

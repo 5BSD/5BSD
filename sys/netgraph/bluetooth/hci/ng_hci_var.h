@@ -258,6 +258,9 @@ typedef struct ng_hci_unit_con {
 	u_int8_t			mode;            /* ACTIVE, HOLD ... */
 	u_int8_t			role;            /* MASTER/SLAVE */
 
+	u_int16_t			max_tx_octets;   /* DLE max TX */
+	u_int16_t			max_rx_octets;   /* DLE max RX */
+
 	struct callout			con_timo;        /* con. timeout */
 
 	int				pending;         /* # of data pkts */

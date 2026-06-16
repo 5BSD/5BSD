@@ -1547,8 +1547,8 @@ parse_ext_adv_report(const uint8_t *p, size_t remain,
 	/* Skip event_type (2 bytes) */
 	addr_type = p[2];
 	memcpy(sr->addr, p + 3, 6);
-	sr->addr_type = (addr_type == 0x01) ? BDADDR_LE_RANDOM :
-	    BDADDR_LE_PUBLIC;
+	sr->addr_type = (addr_type == 0x01 || addr_type == 0x03) ?
+	    BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
 	/* p[9]: primary_phy, p[10]: secondary_phy, p[11]: advertising_sid */
 	/* p[12]: tx_power */
 	rssi = (int8_t)p[13];

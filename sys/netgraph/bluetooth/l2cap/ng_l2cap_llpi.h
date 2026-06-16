@@ -43,6 +43,7 @@ int  ng_l2cap_lp_qos_req             (ng_l2cap_p, u_int16_t, ng_l2cap_flow_p);
 int  ng_l2cap_lp_qos_cfm             (ng_l2cap_p, struct ng_mesg *);
 int  ng_l2cap_lp_qos_ind             (ng_l2cap_p, struct ng_mesg *);
 int  ng_l2cap_lp_enc_change             (ng_l2cap_p, struct ng_mesg *);
+int  ng_l2cap_lp_con_update          (ng_l2cap_con_p, u_int16_t, u_int16_t, u_int16_t, u_int16_t);
 int  ng_l2cap_lp_send                (ng_l2cap_con_p, u_int16_t,struct mbuf *);
 int  ng_l2cap_lp_receive             (ng_l2cap_p, struct mbuf *);
 void ng_l2cap_lp_deliver             (ng_l2cap_con_p);
