@@ -736,8 +736,10 @@ connect_loop:
 				if (hci_wait_encryption(dev.hci_fd,
 				    dev.con_handle, 10) < 0)
 					warn("encryption timeout");
-				else
+				else {
+					dev.att.encrypted = true;
 					LOG_HOGP(1, "encrypted");
+				}
 			}
 		}
 	}
@@ -769,6 +771,8 @@ connect_loop:
 			if (hci_wait_encryption(dev.hci_fd,
 			    dev.con_handle, 10) < 0)
 				warn("post-pairing encryption timeout");
+			else
+				dev.att.encrypted = true;
 
 			LOG_HOGP(1, "pairing complete, retrying "
 				    "discovery");

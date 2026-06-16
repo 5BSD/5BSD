@@ -104,6 +104,7 @@ struct att_conn {
 	int		fd;		/* L2CAP ATT socket (primary bearer) */
 	uint16_t	mtu;		/* negotiated MTU */
 	uint8_t		*buf;		/* receive buffer */
+	bool		encrypted;	/* link is encrypted (AES-CCM) */
 
 	/* EATT bearers (additional to primary) */
 	struct att_bearer	eatt[ATT_MAX_EATT_BEARERS];

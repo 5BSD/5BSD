@@ -545,13 +545,18 @@ handle_read_by_type(struct att_conn *ac, struct att_db *db,
 
 		/* Check read permission (spec Vol 3 Part F 3.4.4.1) */
 		if (!(a->perms & (ATT_PERM_READ | ATT_PERM_READ_ENCRYPT))) {
-			if (entry_len == 0) {
-				/* First match is unreadable: error */
+			if (entry_len == 0)
 				return att_send_error(ac,
 				    ATT_OP_READ_BY_TYPE_REQ, a->handle,
 				    ATT_ERR_READ_NOT_PERMITTED);
-			}
-			/* Had entries already: return what we have */
+			break;
+		}
+		if ((a->perms & ATT_PERM_READ_ENCRYPT) &&
+		    !(a->perms & ATT_PERM_READ) && !ac->encrypted) {
+			if (entry_len == 0)
+				return att_send_error(ac,
+				    ATT_OP_READ_BY_TYPE_REQ, a->handle,
+				    ATT_ERR_INSUFF_ENCRYPTION);
 			break;
 		}
 
@@ -604,6 +609,10 @@ handle_read(struct att_conn *ac, struct att_db *db,
 	if (!(a->perms & (ATT_PERM_READ | ATT_PERM_READ_ENCRYPT)))
 		return att_send_error(ac, ATT_OP_READ_REQ, handle,
 		    ATT_ERR_READ_NOT_PERMITTED);
+	if ((a->perms & ATT_PERM_READ_ENCRYPT) &&
+	    !(a->perms & ATT_PERM_READ) && !ac->encrypted)
+		return att_send_error(ac, ATT_OP_READ_REQ, handle,
+		    ATT_ERR_INSUFF_ENCRYPTION);
 
 	rsp[0] = ATT_OP_READ_RSP;
 	rlen = a->value_len;
@@ -635,6 +644,10 @@ handle_read_blob(struct att_conn *ac, struct att_db *db,
 	if (!(a->perms & (ATT_PERM_READ | ATT_PERM_READ_ENCRYPT)))
 		return att_send_error(ac, ATT_OP_READ_BLOB_REQ, handle,
 		    ATT_ERR_READ_NOT_PERMITTED);
+	if ((a->perms & ATT_PERM_READ_ENCRYPT) &&
+	    !(a->perms & ATT_PERM_READ) && !ac->encrypted)
+		return att_send_error(ac, ATT_OP_READ_BLOB_REQ, handle,
+		    ATT_ERR_INSUFF_ENCRYPTION);
 	if (offset > a->value_len)
 		return att_send_error(ac, ATT_OP_READ_BLOB_REQ, handle,
 		    ATT_ERR_INVALID_OFFSET);
@@ -676,6 +689,13 @@ handle_write(struct att_conn *ac, struct att_db *db,
 		if (with_response)
 			return att_send_error(ac, ATT_OP_WRITE_REQ, handle,
 			    ATT_ERR_WRITE_NOT_PERMITTED);
+		return (0);
+	}
+	if ((a->perms & ATT_PERM_WRITE_ENCRYPT) &&
+	    !(a->perms & ATT_PERM_WRITE) && !ac->encrypted) {
+		if (with_response)
+			return att_send_error(ac, ATT_OP_WRITE_REQ, handle,
+			    ATT_ERR_INSUFF_ENCRYPTION);
 		return (0);
 	}
 	if (vlen > a->value_maxlen) {
