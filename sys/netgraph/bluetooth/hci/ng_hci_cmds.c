@@ -454,6 +454,14 @@ process_link_control_params(ng_hci_unit_p unit, u_int16_t ocf,
 	case NG_HCI_OCF_LINK_KEY_NEG_REP: 
 	case NG_HCI_OCF_PIN_CODE_REP:
 	case NG_HCI_OCF_PIN_CODE_NEG_REP:
+	case NG_HCI_IO_CAPABILITY_REQUEST_REPLY:
+	case NG_HCI_USER_CONFIRMATION_REQUEST_REPLY:
+	case NG_HCI_USER_CONFIRMATION_REQUEST_NEGATIVE_REPLY:
+	case NG_HCI_IO_CAPABILITY_REQUEST_NEGATIVE_REPLY:
+	case NG_HCI_OCF_CREATE_CON_CANCEL:
+	case NG_HCI_OCF_USER_PASSKEY_REQ_REP:
+	case NG_HCI_OCF_USER_PASSKEY_REQ_NEG_REP:
+	case NG_HCI_OCF_REMOTE_NAME_REQ_CANCEL:
 		/* These do not need post processing */
 		break;
 
@@ -531,6 +539,9 @@ process_link_policy_params(ng_hci_unit_p unit, u_int16_t ocf,
 
 	case NG_HCI_OCF_READ_LINK_POLICY_SETTINGS:
 	case NG_HCI_OCF_WRITE_LINK_POLICY_SETTINGS:
+	case NG_HCI_OCF_SNIFF_SUBRATING:
+	case NG_HCI_OCF_READ_DEFAULT_LINK_POLICY_SETTINGS:
+	case NG_HCI_OCF_WRITE_DEFAULT_LINK_POLICY_SETTINGS:
 		/* These do not need post processing */
 		break;
 
@@ -625,6 +636,15 @@ process_hc_baseband_params(ng_hci_unit_p unit, u_int16_t ocf,
 	case NG_HCI_OCF_READ_LE_HOST_SUPPORTED:
 	case NG_HCI_OCF_WRITE_LE_HOST_SUPPORTED:
 	case NG_HCI_OCF_WRITE_SECURE_CONNECTIONS_HOST_SUPPORT:
+	case NG_HCI_OCF_READ_INQUIRY_SCAN_TYPE:
+	case NG_HCI_OCF_WRITE_INQUIRY_SCAN_TYPE:
+	case NG_HCI_OCF_READ_INQUIRY_MODE:
+	case NG_HCI_OCF_WRITE_INQUIRY_MODE:
+	case NG_HCI_OCF_READ_PAGE_SCAN_TYPE:
+	case NG_HCI_OCF_WRITE_PAGE_SCAN_TYPE:
+	case NG_HCI_OCF_READ_SIMPLE_PAIRING:
+	case NG_HCI_OCF_READ_SECURE_CONNECTIONS_HOST_SUPPORT:
+	case NG_HCI_OCF_SET_AFH_HOST_CHANNEL_CLASSIFICATION:
 		/* These do not need post processing */
 		break;
 
@@ -664,6 +684,9 @@ process_hc_baseband_params(ng_hci_unit_p unit, u_int16_t ocf,
 		NG_HCI_BUFF_LE_TOTAL(unit->buffer, size);
 		NG_HCI_BUFF_LE_FREE(unit->buffer, size);
 
+		NG_HCI_BUFF_ISO_TOTAL(unit->buffer, size);
+		NG_HCI_BUFF_ISO_FREE(unit->buffer, size);
+
 		unit->state &= ~NG_HCI_UNIT_INITED;
 		} break;
 
@@ -691,6 +714,8 @@ process_info_params(ng_hci_unit_p unit, u_int16_t ocf, struct mbuf *mcp,
 	switch (ocf) {
 	case NG_HCI_OCF_READ_LOCAL_VER:
 	case NG_HCI_OCF_READ_COUNTRY_CODE:
+	case NG_HCI_OCF_READ_LOCAL_COMMANDS:
+	case NG_HCI_OCF_READ_LOCAL_EXTENDED_FEATURES:
 		break;
 
 	case NG_HCI_OCF_READ_LOCAL_FEATURES:
@@ -771,6 +796,8 @@ process_status_params(ng_hci_unit_p unit, u_int16_t ocf, struct mbuf *mcp,
 	case NG_HCI_OCF_RESET_FAILED_CONTACT_CNTR:
 	case NG_HCI_OCF_GET_LINK_QUALITY:
 	case NG_HCI_OCF_READ_RSSI:
+	case NG_HCI_OCF_READ_AFH_CHANNEL_MAP:
+	case NG_HCI_OCF_READ_ENCRYPTION_KEY_SIZE:
 		/* These do not need post processing */
 		break;
 
@@ -855,9 +882,120 @@ process_le_params(ng_hci_unit_p unit, u_int16_t ocf,
 	case NG_HCI_OCF_LE_RECEIVER_TEST:
 	case NG_HCI_OCF_LE_TRANSMITTER_TEST:
 	case NG_HCI_OCF_LE_TEST_END:
+	case NG_HCI_OCF_LE_SET_DATA_LENGTH:
+	case NG_HCI_OCF_LE_READ_SUGGESTED_DATA_LENGTH:
+	case NG_HCI_OCF_LE_WRITE_SUGGESTED_DATA_LENGTH:
+	case NG_HCI_OCF_LE_READ_MAX_DATA_LENGTH:
+	case NG_HCI_OCF_LE_READ_PHY:
+	case NG_HCI_OCF_LE_SET_DEFAULT_PHY:
+	case NG_HCI_OCF_LE_ADD_DEV_RESOLVING_LIST:
+	case NG_HCI_OCF_LE_REMOVE_DEV_RESOLVING_LIST:
+	case NG_HCI_OCF_LE_CLEAR_RESOLVING_LIST:
+	case NG_HCI_OCF_LE_READ_RESOLVING_LIST_SIZE:
+	case NG_HCI_OCF_LE_READ_PEER_RESOLVABLE_ADDRESS:
+	case NG_HCI_OCF_LE_READ_LOCAL_RESOLVABLE_ADDRESS:
+	case NG_HCI_OCF_LE_SET_ADDR_RESOLUTION_ENABLE:
+	case NG_HCI_OCF_LE_SET_RPA_TIMEOUT:
+	case NG_HCI_OCF_LE_SET_PRIVACY_MODE:
+	case NG_HCI_OCF_LE_SET_EXT_ADV_PARAMS:
+	case NG_HCI_OCF_LE_SET_EXT_ADV_DATA:
+	case NG_HCI_OCF_LE_SET_EXT_SCAN_RSP_DATA:
+	case NG_HCI_OCF_LE_SET_EXT_ADV_ENABLE:
+	case NG_HCI_OCF_LE_READ_MAX_ADV_DATA_LENGTH:
+	case NG_HCI_OCF_LE_READ_NUM_SUPPORTED_ADV_SETS:
+	case NG_HCI_OCF_LE_REMOVE_ADV_SET:
+	case NG_HCI_OCF_LE_CLEAR_ADV_SETS:
+	case NG_HCI_OCF_LE_READ_TRANSMIT_POWER:
+	case NG_HCI_OCF_LE_REMOTE_CONN_PARAM_REQ_REPLY:
+	case NG_HCI_OCF_LE_REMOTE_CONN_PARAM_REQ_NEG_REPLY:
+	case NG_HCI_OCF_LE_SET_HOST_FEATURE:
+	case NG_HCI_OCF_LE_SET_ADV_SET_RANDOM_ADDR:
+	case NG_HCI_OCF_LE_SET_EXT_SCAN_PARAMS:
+	case NG_HCI_OCF_LE_SET_EXT_SCAN_ENABLE:
+	case NG_HCI_OCF_LE_ENH_READ_TX_POWER_LEVEL:
+	case NG_HCI_OCF_LE_SET_PATH_LOSS_REPORTING_PARAMS:
+	case NG_HCI_OCF_LE_SET_PATH_LOSS_REPORTING_ENABLE:
+	case NG_HCI_OCF_LE_SET_TX_POWER_REPORTING_ENABLE:
+	/* Periodic Advertising (BT 5.0) */
+	case NG_HCI_OCF_LE_SET_PERIODIC_ADV_PARAMS:
+	case NG_HCI_OCF_LE_SET_PERIODIC_ADV_DATA:
+	case NG_HCI_OCF_LE_SET_PERIODIC_ADV_ENABLE:
+	case NG_HCI_OCF_LE_PERIODIC_ADV_CREATE_SYNC_CANCEL:
+	case NG_HCI_OCF_LE_PERIODIC_ADV_TERMINATE_SYNC:
+	case NG_HCI_OCF_LE_ADD_DEV_PERIODIC_ADV_LIST:
+	case NG_HCI_OCF_LE_REMOVE_DEV_PERIODIC_ADV_LIST:
+	case NG_HCI_OCF_LE_CLEAR_PERIODIC_ADV_LIST:
+	case NG_HCI_OCF_LE_READ_PERIODIC_ADV_LIST_SIZE:
+	/* Periodic Advertising Sync Transfer (BT 5.1) */
+	case NG_HCI_OCF_LE_SET_PERIODIC_ADV_RCV_ENABLE:
+	case NG_HCI_OCF_LE_PERIODIC_ADV_SYNC_TRANSFER:
+	case NG_HCI_OCF_LE_PERIODIC_ADV_SET_INFO_TRANSFER:
+	case NG_HCI_OCF_LE_SET_PAST_PARAMS:
+	case NG_HCI_OCF_LE_SET_DEFAULT_PAST_PARAMS:
+	/* ISO Channels (BT 5.2) */
+	case NG_HCI_OCF_LE_READ_ISO_TX_SYNC:
+	case NG_HCI_OCF_LE_SET_CIG_PARAMS:
+	case NG_HCI_OCF_LE_SET_CIG_PARAMS_TEST:
+	case NG_HCI_OCF_LE_REMOVE_CIG:
+	case NG_HCI_OCF_LE_REJECT_CIS_REQUEST:
+	case NG_HCI_OCF_LE_BIG_TERMINATE_SYNC:
+	case NG_HCI_OCF_LE_SETUP_ISO_DATA_PATH:
+	case NG_HCI_OCF_LE_REMOVE_ISO_DATA_PATH:
+	case NG_HCI_OCF_LE_ISO_TRANSMIT_TEST:
+	case NG_HCI_OCF_LE_ISO_RECEIVE_TEST:
+	case NG_HCI_OCF_LE_ISO_READ_TEST_COUNTERS:
+	case NG_HCI_OCF_LE_ISO_TEST_END:
+	case NG_HCI_OCF_LE_READ_ISO_LINK_QUALITY:
+	case NG_HCI_OCF_LE_READ_RF_PATH_COMPENSATION:
+	case NG_HCI_OCF_LE_WRITE_RF_PATH_COMPENSATION:
+	case NG_HCI_OCF_LE_SET_CONNLESS_CTE_TX_PARAMS:
+	case NG_HCI_OCF_LE_SET_CONNLESS_CTE_TX_ENABLE:
+	case NG_HCI_OCF_LE_SET_CONNLESS_IQ_SAMPLING_ENABLE:
+	case NG_HCI_OCF_LE_SET_CONN_CTE_RX_PARAMS:
+	case NG_HCI_OCF_LE_SET_CONN_CTE_TX_PARAMS:
+	case NG_HCI_OCF_LE_CONN_CTE_REQ_ENABLE:
+	case NG_HCI_OCF_LE_CONN_CTE_RSP_ENABLE:
+	case NG_HCI_OCF_LE_READ_ANTENNA_INFORMATION:
+	case NG_HCI_OCF_LE_MODIFY_SLEEP_CLOCK_ACCURACY:
+	case NG_HCI_OCF_LE_SET_DATA_RELATED_ADDR_CHANGES:
+	case NG_HCI_OCF_LE_SET_DEFAULT_SUBRATE:
 
 		/* These do not need post processing */
 		break;
+
+	case NG_HCI_OCF_LE_READ_BUFFER_SIZE_V2: {
+		ng_hci_le_read_buffer_size_rp_v2	*rp = NULL;
+
+		/* Do not update buffer descriptor if node was initialized */
+		if ((unit->state & NG_HCI_UNIT_READY) == NG_HCI_UNIT_READY)
+			break;
+
+		NG_HCI_M_PULLUP(mrp, sizeof(*rp));
+		if (mrp != NULL) {
+			rp = mtod(mrp, ng_hci_le_read_buffer_size_rp_v2 *);
+
+			if (rp->hc_total_num_le_data_packets != 0) {
+				NG_HCI_BUFF_LE_SET(
+					unit->buffer,
+					rp->hc_total_num_le_data_packets,
+					le16toh(rp->hc_le_data_packet_length),
+					rp->hc_total_num_le_data_packets
+				);
+			}
+			if (rp->hc_total_num_iso_data_packets != 0) {
+				NG_HCI_BUFF_ISO_SET(
+					unit->buffer,
+					rp->hc_total_num_iso_data_packets,
+					le16toh(rp->hc_iso_data_packet_length),
+					rp->hc_total_num_iso_data_packets
+				);
+			}
+			if (unit->acl != NULL && NG_HOOK_IS_VALID(unit->acl))
+				ng_hci_node_is_up(unit->node,
+				    unit->acl, NULL, 0);
+		} else
+			error = ENOBUFS;
+		} break;
 
 	case NG_HCI_OCF_LE_READ_BUFFER_SIZE: {
 		ng_hci_le_read_buffer_size_rp	*rp = NULL;
@@ -884,6 +1022,10 @@ process_le_params(ng_hci_unit_p unit, u_int16_t ocf,
 					rp->hc_total_num_le_data_packets
 				);
 			}
+			/* Notify upper layers about LE buffer params */
+			if (unit->acl != NULL && NG_HOOK_IS_VALID(unit->acl))
+				ng_hci_node_is_up(unit->node,
+				    unit->acl, NULL, 0);
 		} else
 			error = ENOBUFS;
 		} break;
@@ -892,18 +1034,31 @@ process_le_params(ng_hci_unit_p unit, u_int16_t ocf,
 	case NG_HCI_OCF_LE_CONNECTION_UPDATE:
 	case NG_HCI_OCF_LE_READ_REMOTE_USED_FEATURES:
 	case NG_HCI_OCF_LE_START_ENCRYPTION:
+	case NG_HCI_OCF_LE_SET_PHY:
+	case NG_HCI_OCF_LE_EXT_CREATE_CONNECTION:
+	case NG_HCI_OCF_LE_READ_REMOTE_TX_POWER_LEVEL:
+	/* Periodic Advertising (BT 5.0) */
+	case NG_HCI_OCF_LE_PERIODIC_ADV_CREATE_SYNC:
+	/* ISO Channels (BT 5.2) */
+	case NG_HCI_OCF_LE_CREATE_CIS:
+	case NG_HCI_OCF_LE_ACCEPT_CIS_REQUEST:
+	case NG_HCI_OCF_LE_CREATE_BIG:
+	case NG_HCI_OCF_LE_CREATE_BIG_TEST:
+	case NG_HCI_OCF_LE_TERMINATE_BIG:
+	case NG_HCI_OCF_LE_BIG_CREATE_SYNC:
+	case NG_HCI_OCF_LE_REQUEST_PEER_SCA:
 
 	default:
 		/*
-		 * None of these command was supposed to generate 
-		 * Command_Complete event. Instead Command_Status event 
+		 * None of these command was supposed to generate
+		 * Command_Complete event. Instead Command_Status event
 		 * should have been generated and then appropriate event
 		 * should have been sent to indicate the final result.
 		 */
 
 		error = EINVAL;
 		break;
-	} 
+	}
 
 	NG_FREE_M(mcp);
 	NG_FREE_M(mrp);
@@ -923,6 +1078,22 @@ process_le_status(ng_hci_unit_p unit,ng_hci_command_status_ep *ep,
 	case NG_HCI_OCF_LE_CONNECTION_UPDATE:
 	case NG_HCI_OCF_LE_READ_REMOTE_USED_FEATURES:
 	case NG_HCI_OCF_LE_START_ENCRYPTION:
+	case NG_HCI_OCF_LE_SET_PHY:
+	case NG_HCI_OCF_LE_EXT_CREATE_CONNECTION:
+	case NG_HCI_OCF_LE_READ_REMOTE_TX_POWER_LEVEL:
+	/* Periodic Advertising (BT 5.0) */
+	case NG_HCI_OCF_LE_PERIODIC_ADV_CREATE_SYNC:
+	/* ISO Channels (BT 5.2) */
+	case NG_HCI_OCF_LE_CREATE_CIS:
+	case NG_HCI_OCF_LE_ACCEPT_CIS_REQUEST:
+	case NG_HCI_OCF_LE_CREATE_BIG:
+	case NG_HCI_OCF_LE_CREATE_BIG_TEST:
+	case NG_HCI_OCF_LE_TERMINATE_BIG:
+	case NG_HCI_OCF_LE_BIG_CREATE_SYNC:
+	case NG_HCI_OCF_LE_REQUEST_PEER_SCA:
+	case NG_HCI_OCF_LE_READ_LOCAL_P256_PK:
+	case NG_HCI_OCF_LE_GENERATE_DHKEY:
+	case NG_HCI_OCF_LE_SUBRATE_REQUEST:
 
 		/* These do not need post processing */
 		break;
@@ -953,16 +1124,74 @@ process_le_status(ng_hci_unit_p unit,ng_hci_command_status_ep *ep,
 	case NG_HCI_OCF_LE_RECEIVER_TEST:
 	case NG_HCI_OCF_LE_TRANSMITTER_TEST:
 	case NG_HCI_OCF_LE_TEST_END:
+	case NG_HCI_OCF_LE_SET_DATA_LENGTH:
+	case NG_HCI_OCF_LE_READ_SUGGESTED_DATA_LENGTH:
+	case NG_HCI_OCF_LE_WRITE_SUGGESTED_DATA_LENGTH:
+	case NG_HCI_OCF_LE_READ_MAX_DATA_LENGTH:
+	case NG_HCI_OCF_LE_READ_PHY:
+	case NG_HCI_OCF_LE_SET_DEFAULT_PHY:
+	case NG_HCI_OCF_LE_SET_EXT_ADV_PARAMS:
+	case NG_HCI_OCF_LE_SET_EXT_ADV_DATA:
+	case NG_HCI_OCF_LE_SET_EXT_SCAN_RSP_DATA:
+	case NG_HCI_OCF_LE_SET_EXT_ADV_ENABLE:
+	case NG_HCI_OCF_LE_READ_MAX_ADV_DATA_LENGTH:
+	case NG_HCI_OCF_LE_READ_NUM_SUPPORTED_ADV_SETS:
+	case NG_HCI_OCF_LE_REMOVE_ADV_SET:
+	case NG_HCI_OCF_LE_CLEAR_ADV_SETS:
+	case NG_HCI_OCF_LE_READ_TRANSMIT_POWER:
+	case NG_HCI_OCF_LE_REMOTE_CONN_PARAM_REQ_REPLY:
+	case NG_HCI_OCF_LE_REMOTE_CONN_PARAM_REQ_NEG_REPLY:
+	case NG_HCI_OCF_LE_SET_HOST_FEATURE:
+	case NG_HCI_OCF_LE_SET_ADV_SET_RANDOM_ADDR:
+	case NG_HCI_OCF_LE_SET_EXT_SCAN_PARAMS:
+	case NG_HCI_OCF_LE_SET_EXT_SCAN_ENABLE:
+	case NG_HCI_OCF_LE_ENH_READ_TX_POWER_LEVEL:
+	case NG_HCI_OCF_LE_SET_PATH_LOSS_REPORTING_PARAMS:
+	case NG_HCI_OCF_LE_SET_PATH_LOSS_REPORTING_ENABLE:
+	case NG_HCI_OCF_LE_SET_TX_POWER_REPORTING_ENABLE:
+	case NG_HCI_OCF_LE_READ_PEER_RESOLVABLE_ADDRESS:
+	case NG_HCI_OCF_LE_READ_LOCAL_RESOLVABLE_ADDRESS:
+	/* Periodic Advertising (BT 5.0) */
+	case NG_HCI_OCF_LE_SET_PERIODIC_ADV_PARAMS:
+	case NG_HCI_OCF_LE_SET_PERIODIC_ADV_DATA:
+	case NG_HCI_OCF_LE_SET_PERIODIC_ADV_ENABLE:
+	case NG_HCI_OCF_LE_PERIODIC_ADV_CREATE_SYNC_CANCEL:
+	case NG_HCI_OCF_LE_PERIODIC_ADV_TERMINATE_SYNC:
+	case NG_HCI_OCF_LE_ADD_DEV_PERIODIC_ADV_LIST:
+	case NG_HCI_OCF_LE_REMOVE_DEV_PERIODIC_ADV_LIST:
+	case NG_HCI_OCF_LE_CLEAR_PERIODIC_ADV_LIST:
+	case NG_HCI_OCF_LE_READ_PERIODIC_ADV_LIST_SIZE:
+	/* Periodic Advertising Sync Transfer (BT 5.1) */
+	case NG_HCI_OCF_LE_SET_PERIODIC_ADV_RCV_ENABLE:
+	case NG_HCI_OCF_LE_PERIODIC_ADV_SYNC_TRANSFER:
+	case NG_HCI_OCF_LE_PERIODIC_ADV_SET_INFO_TRANSFER:
+	case NG_HCI_OCF_LE_SET_PAST_PARAMS:
+	case NG_HCI_OCF_LE_SET_DEFAULT_PAST_PARAMS:
+	/* ISO Channels (BT 5.2) */
+	case NG_HCI_OCF_LE_READ_ISO_TX_SYNC:
+	case NG_HCI_OCF_LE_SET_CIG_PARAMS:
+	case NG_HCI_OCF_LE_SET_CIG_PARAMS_TEST:
+	case NG_HCI_OCF_LE_REMOVE_CIG:
+	case NG_HCI_OCF_LE_REJECT_CIS_REQUEST:
+	case NG_HCI_OCF_LE_BIG_TERMINATE_SYNC:
+	case NG_HCI_OCF_LE_SETUP_ISO_DATA_PATH:
+	case NG_HCI_OCF_LE_REMOVE_ISO_DATA_PATH:
+	case NG_HCI_OCF_LE_ISO_TRANSMIT_TEST:
+	case NG_HCI_OCF_LE_ISO_RECEIVE_TEST:
+	case NG_HCI_OCF_LE_ISO_READ_TEST_COUNTERS:
+	case NG_HCI_OCF_LE_ISO_TEST_END:
+	case NG_HCI_OCF_LE_READ_ISO_LINK_QUALITY:
+	case NG_HCI_OCF_LE_READ_BUFFER_SIZE_V2:
 
 	default:
 		/*
-		 * None of these command was supposed to generate 
-		 * Command_Stutus event. Command Complete instead.
+		 * None of these command was supposed to generate
+		 * Command_Status event. Command Complete instead.
 		 */
 
 		error = EINVAL;
 		break;
-	} 
+	}
 
 	NG_FREE_M(mcp);
 
@@ -991,8 +1220,10 @@ process_link_control_status(ng_hci_unit_p unit, ng_hci_command_status_ep *ep,
 	case NG_HCI_OCF_MASTER_LINK_KEY:
 	case NG_HCI_OCF_REMOTE_NAME_REQ:
 	case NG_HCI_OCF_READ_REMOTE_FEATURES:
+	case NG_HCI_OCF_READ_REMOTE_EXTENDED_FEATURES:
 	case NG_HCI_OCF_READ_REMOTE_VER_INFO:
 	case NG_HCI_OCF_READ_CLOCK_OFFSET:
+	case NG_HCI_OCF_REJECT_SCO_CON:
 		/* These do not need post processing */
 		break;
 
@@ -1005,11 +1236,16 @@ process_link_control_status(ng_hci_unit_p unit, ng_hci_command_status_ep *ep,
 	case NG_HCI_OCF_ACCEPT_CON:
 		break;
 
+	case NG_HCI_OCF_SETUP_SCO_CON:
+	case NG_HCI_OCF_ACCEPT_SCO_CON:
+		/* These do not need post processing */
+		break;
+
 	case NG_HCI_OCF_INQUIRY_CANCEL:
 	case NG_HCI_OCF_PERIODIC_INQUIRY:
 	case NG_HCI_OCF_EXIT_PERIODIC_INQUIRY:
 	case NG_HCI_OCF_LINK_KEY_REP:
-	case NG_HCI_OCF_LINK_KEY_NEG_REP: 
+	case NG_HCI_OCF_LINK_KEY_NEG_REP:
 	case NG_HCI_OCF_PIN_CODE_REP:
 	case NG_HCI_OCF_PIN_CODE_NEG_REP:
 	default:
@@ -1046,6 +1282,7 @@ process_link_policy_status(ng_hci_unit_p unit, ng_hci_command_status_ep *ep,
 	case NG_HCI_OCF_PARK_MODE:
 	case NG_HCI_OCF_EXIT_PARK_MODE:
 	case NG_HCI_OCF_SWITCH_ROLE:
+	case NG_HCI_OCF_FLOW_SPECIFICATION:
 		/* These do not need post processing */
 		break;
 

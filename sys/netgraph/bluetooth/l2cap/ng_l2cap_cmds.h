@@ -214,7 +214,7 @@ do {									\
 	c = mtod((_m), struct _cmd_urs *);				\
 	c->hdr.code = NG_L2CAP_CMD_PARAM_UPDATE_RESPONSE;		\
 	c->hdr.ident = (_ident);					\
-	c->hdr.length = sizeof(c->result);				\
+	c->hdr.length = htole16(sizeof(c->result));			\
 									\
 	c->result = htole16((_result));				\
 } while (0)
@@ -419,6 +419,119 @@ do {									\
 					c->hdr.length;			\
 									\
 	c->hdr.length = htole16(c->hdr.length);		 		\
+} while (0)
+
+/* LE Credit Based Connection Request */
+#define _ng_l2cap_le_credit_con_req(_m, _ident, _le_psm, _scid, _mtu, _mps, _credits) \
+do {									\
+	struct _le_credit_req {						\
+		ng_l2cap_cmd_hdr_t		hdr;			\
+		ng_l2cap_le_credit_con_req_cp	param;			\
+	} __attribute__ ((packed))	*c = NULL;			\
+									\
+	MGETHDR((_m), M_NOWAIT, MT_DATA);				\
+	if ((_m) == NULL)						\
+		break;							\
+									\
+	(_m)->m_pkthdr.len = (_m)->m_len = sizeof(*c);			\
+									\
+	c = mtod((_m), struct _le_credit_req *);			\
+	c->hdr.code = NG_L2CAP_LE_CREDIT_CON_REQ;			\
+	c->hdr.ident = (_ident);					\
+	c->hdr.length = htole16(sizeof(c->param));			\
+									\
+	c->param.le_psm = htole16((_le_psm));				\
+	c->param.scid = htole16((_scid));				\
+	c->param.mtu = htole16((_mtu));					\
+	c->param.mps = htole16((_mps));					\
+	c->param.initial_credits = htole16((_credits));			\
+} while (0)
+
+/* LE Credit Based Connection Response */
+#define _ng_l2cap_le_credit_con_rsp(_m, _ident, _dcid, _mtu, _mps, _credits, _result) \
+do {									\
+	struct _le_credit_rsp {						\
+		ng_l2cap_cmd_hdr_t		hdr;			\
+		ng_l2cap_le_credit_con_rsp_cp	param;			\
+	} __attribute__ ((packed))	*c = NULL;			\
+									\
+	MGETHDR((_m), M_NOWAIT, MT_DATA);				\
+	if ((_m) == NULL)						\
+		break;							\
+									\
+	(_m)->m_pkthdr.len = (_m)->m_len = sizeof(*c);			\
+									\
+	c = mtod((_m), struct _le_credit_rsp *);			\
+	c->hdr.code = NG_L2CAP_LE_CREDIT_CON_RSP;			\
+	c->hdr.ident = (_ident);					\
+	c->hdr.length = htole16(sizeof(c->param));			\
+									\
+	c->param.dcid = htole16((_dcid));				\
+	c->param.mtu = htole16((_mtu));					\
+	c->param.mps = htole16((_mps));					\
+	c->param.initial_credits = htole16((_credits));			\
+	c->param.result = htole16((_result));				\
+} while (0)
+
+/*
+ * Enhanced Credit Based Connection Response (0x18)
+ *
+ * Variable-length: the fixed header is followed by _ncids Destination CIDs,
+ * all set by the caller (typically 0x0000 for rejection).  _dcids points to
+ * an array of _ncids u_int16_t values already in host byte order.
+ */
+#define _ng_l2cap_credit_con_rsp(_m, _ident, _mtu, _mps, _credits, _result, _dcids, _ncids) \
+do {									\
+	struct _credit_con_rsp {					\
+		ng_l2cap_cmd_hdr_t		hdr;			\
+		ng_l2cap_credit_con_rsp_cp	param;			\
+	} __attribute__ ((packed))	*c = NULL;			\
+	int _cid_len = (_ncids) * sizeof(u_int16_t);			\
+	int _i;								\
+									\
+	MGETHDR((_m), M_NOWAIT, MT_DATA);				\
+	if ((_m) == NULL)						\
+		break;							\
+									\
+	(_m)->m_pkthdr.len = (_m)->m_len = sizeof(*c) + _cid_len;	\
+									\
+	c = mtod((_m), struct _credit_con_rsp *);			\
+	c->hdr.code = NG_L2CAP_CREDIT_CON_RSP;				\
+	c->hdr.ident = (_ident);					\
+	c->hdr.length = htole16(sizeof(c->param) + _cid_len);		\
+									\
+	c->param.mtu = htole16((_mtu));					\
+	c->param.mps = htole16((_mps));					\
+	c->param.initial_credits = htole16((_credits));			\
+	c->param.result = htole16((_result));				\
+									\
+	{								\
+		u_int16_t *_dp = (u_int16_t *)((char *)c + sizeof(*c));	\
+		for (_i = 0; _i < (_ncids); _i++)			\
+			_dp[_i] = htole16((_dcids)[_i]);		\
+	}								\
+} while (0)
+
+/* Credit Based Reconfigure Response (0x1A) */
+#define _ng_l2cap_credit_reconfig_rsp(_m, _ident, _result)		\
+do {									\
+	struct _credit_reconfig_rsp {					\
+		ng_l2cap_cmd_hdr_t		   hdr;			\
+		ng_l2cap_credit_reconfig_rsp_cp	   param;		\
+	} __attribute__ ((packed))	*c = NULL;			\
+									\
+	MGETHDR((_m), M_NOWAIT, MT_DATA);				\
+	if ((_m) == NULL)						\
+		break;							\
+									\
+	(_m)->m_pkthdr.len = (_m)->m_len = sizeof(*c);			\
+									\
+	c = mtod((_m), struct _credit_reconfig_rsp *);			\
+	c->hdr.code = NG_L2CAP_CREDIT_RECONFIG_RSP;			\
+	c->hdr.ident = (_ident);					\
+	c->hdr.length = htole16(sizeof(c->param));			\
+									\
+	c->param.result = htole16((_result));				\
 } while (0)
 
 void ng_l2cap_con_wakeup              (ng_l2cap_con_p);

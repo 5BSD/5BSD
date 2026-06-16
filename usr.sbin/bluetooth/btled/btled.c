@@ -27,8 +27,10 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <libutil.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <syslog.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,12 +39,14 @@
 
 #include "att.h"
 #include "att_server.h"
+#include "hci_log.h"
 #include "ble_util.h"
 #include "gatt.h"
 #include "hci_util.h"
 #include "smp.h"
 
-int btled_debug = 0;
+int btled_verbose = 0;
+int btled_daemonized = 0;
 
 #include <dev/hid/vhid.h>
 
@@ -60,6 +64,12 @@ int btled_debug = 0;
 #define UUID_BOOT_KB_INPUT_REPORT	0x2A22
 #define UUID_BOOT_KB_OUTPUT_REPORT	0x2A32
 #define UUID_BOOT_MOUSE_INPUT_REPORT	0x2A33
+
+/* Device Information Service Characteristic UUIDs */
+#define UUID_PNP_ID			0x2A50
+
+/* Battery Service Characteristic UUIDs */
+#define UUID_BATTERY_LEVEL		0x2A19
 
 /* Report Reference descriptor report types */
 #define HID_REPORT_TYPE_INPUT		0x01
@@ -98,6 +108,9 @@ struct hogp_device {
 	uint16_t		hid_ctrl_handle;  /* HID Control Point */
 	uint16_t		hid_bcdHID;	  /* from HID Information */
 
+	uint16_t		idVendor;	  /* from DIS PnP ID */
+	uint16_t		idProduct;	  /* from DIS PnP ID */
+
 	int			vhid_ctl_fd;	/* /dev/vhid */
 	int			vhid_fd;	/* /dev/vhidN */
 	int			vhid_unit;
@@ -108,6 +121,8 @@ struct hogp_device {
 	uint8_t			addr_type;
 	uint8_t			local_addr[6];
 	uint16_t		con_handle;
+
+	uint64_t		le_features;	/* controller feature bitmask */
 
 	const char		*adapter;	/* e.g. "ubt0" */
 	bool			debug;
@@ -256,11 +271,60 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: btled [-dr] [-a adapter] [-f bonds] -s\n"
-	    "       btled [-dr] [-a adapter] [-f bonds] <bdaddr> "
-	    "[public|random] ...\n"
-	    "       btled [-d] [-a adapter] [-f bonds] -p\n");
+	    "usage: btled [-Bdrv] [-a adapter] [-f bonds] [-L logfile] -s\n"
+	    "       btled [-Bdrv] [-a adapter] [-f bonds] [-L logfile] "
+	    "<bdaddr> [public|random] ...\n"
+	    "       btled [-Bdv] [-a adapter] [-f bonds] [-L logfile] -p\n"
+	    "\n"
+	    "  -B       run as daemon (background, syslog, pidfile)\n"
+	    "  -d       debug mode (same as -v)\n"
+	    "  -v       verbose (repeat for trace: -vv)\n"
+	    "  -L file  log HCI packets to file (BTSnoop format, "
+	    "view in Wireshark)\n"
+	    "  -r       auto-reconnect\n"
+	    "  -s       scan mode\n"
+	    "  -p       peripheral mode\n");
 	exit(1);
+}
+
+/*
+ * Load bonded device IRKs into the controller's resolving list.
+ * Enables hardware-level RPA resolution for reconnection with
+ * privacy-enabled devices.  Best-effort — silently ignored if
+ * the controller doesn't support it.
+ */
+static void
+load_resolving_list(struct hogp_device *dev)
+{
+	static const uint8_t zero_irk[16] = {0};
+	int loaded = 0;
+
+	/* Clear any stale entries */
+	hci_le_clear_resolving_list(dev->hci_fd);
+
+	for (int i = 0; i < dev->bond_db.count; i++) {
+		struct smp_bond *b = &dev->bond_db.bonds[i];
+
+		if (!b->has_irk)
+			continue;
+
+		uint8_t at = (b->addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
+
+		if (hci_le_add_dev_resolving_list(dev->hci_fd, at,
+		    b->addr, b->irk, zero_irk) == 0) {
+			/* Set device privacy mode so we can receive
+			 * both RPAs and identity addresses from this peer */
+			hci_le_set_privacy_mode(dev->hci_fd, at,
+			    b->addr, 0x01 /* device privacy */);
+			loaded++;
+		}
+	}
+
+	if (loaded > 0) {
+		hci_le_set_rpa_timeout(dev->hci_fd, 900); /* 15 min */
+		hci_le_set_addr_resolution_enable(dev->hci_fd, 1);
+		LOG_HCI(1, "resolving list: %d device(s) loaded", loaded);
+	}
 }
 
 static void
@@ -269,14 +333,35 @@ do_scan(struct hogp_device *dev)
 	struct ble_scan_result results[BLE_MAX_SCAN_RESULTS];
 	int nresults, i;
 	char addr_str[18];
+	bool used_ext = false;
 
 	fprintf(stderr, "btled: scanning for BLE devices (5 seconds)...\n");
 
-	if (hci_le_scan(dev->hci_fd, 5, results, BLE_MAX_SCAN_RESULTS,
-	    &nresults) < 0)
-		err(1, "BLE scan");
+	/*
+	 * Try extended scanning first (BT 5.0+).  Extended scan
+	 * receives both legacy and extended advertising reports,
+	 * so it is strictly a superset of legacy scanning.
+	 * Fall back to legacy scan if the controller does not
+	 * support extended advertising/scanning.
+	 */
+	if (dev->le_features & LE_FEAT_EXT_ADVERTISING) {
+		if (hci_le_ext_scan(dev->hci_fd, 5, results,
+		    BLE_MAX_SCAN_RESULTS, &nresults) == 0) {
+			used_ext = true;
+		} else {
+			LOG_HCI(1, "extended scan failed, "
+			    "falling back to legacy");
+		}
+	}
 
-	fprintf(stdout, "Found %d device(s):\n\n", nresults);
+	if (!used_ext) {
+		if (hci_le_scan(dev->hci_fd, 5, results,
+		    BLE_MAX_SCAN_RESULTS, &nresults) < 0)
+			err(1, "BLE scan");
+	}
+
+	fprintf(stdout, "Found %d device(s)%s:\n\n", nresults,
+	    used_ext ? " (extended scan)" : "");
 
 	for (i = 0; i < nresults; i++) {
 		bt_ntoa((bdaddr_t *)results[i].addr, addr_str);
@@ -293,9 +378,11 @@ int
 main(int argc, char *argv[])
 {
 	struct hogp_device dev;
+	struct pidfh *pfh = NULL;
 	int ch;
 	bool scan_mode = false;
 	bool peripheral_mode = false;
+	bool daemon_mode = false;
 
 	memset(&dev, 0, sizeof(dev));
 	for (int i = 0; i < SOCK_POOL_SIZE; i++) {
@@ -310,14 +397,21 @@ main(int argc, char *argv[])
 
 	const char *bond_path = "/var/db/btled/bonds";
 
-	while ((ch = getopt(argc, argv, "a:df:prs")) != -1) {
+	while ((ch = getopt(argc, argv, "a:BdL:f:prsv")) != -1) {
 		switch (ch) {
 		case 'a':
 			dev.adapter = optarg;
 			break;
+		case 'B':
+			daemon_mode = true;
+			break;
 		case 'd':
 			dev.debug = true;
-			btled_debug = 1;
+			if (btled_verbose < 1)
+				btled_verbose = 1;
+			break;
+		case 'L':
+			hci_log_open(optarg);
 			break;
 		case 'f':
 			bond_path = optarg;
@@ -331,6 +425,10 @@ main(int argc, char *argv[])
 		case 's':
 			scan_mode = true;
 			break;
+		case 'v':
+			btled_verbose++;
+			dev.debug = true;
+			break;
 		default:
 			usage();
 		}
@@ -338,21 +436,94 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
+	/* Daemonize if requested */
+	if (daemon_mode) {
+		pfh = pidfile_open("/var/run/btled.pid", 0600, NULL);
+		if (daemon(0, 0) < 0)
+			err(1, "daemon");
+		if (pfh != NULL)
+			pidfile_write(pfh);
+		openlog("btled", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+		btled_daemonized = 1;
+		if (btled_verbose < 1)
+			btled_verbose = 1; /* at least log to syslog */
+	}
+
 	/* Open raw HCI socket bound to the adapter */
 	dev.hci_fd = hci_open(dev.adapter);
 	if (dev.hci_fd < 0)
 		err(1, "open HCI adapter %s", dev.adapter);
 
-	/* Read local adapter address (needed for SMP) */
+	/*
+	 * HCI initialization sequence per Core Spec Vol 4 Part E:
+	 * 1. Reset controller to known state
+	 * 2. Read local address
+	 * 3. Read LE feature support bitmask
+	 * 4. Set LE event mask for features we use
+	 * 5. Configure defaults for supported features
+	 */
+	hci_reset(dev.hci_fd);
+	usleep(100000);	/* 100ms settle after reset */
+
 	if (hci_get_bdaddr(dev.hci_fd, dev.local_addr) < 0)
 		err(1, "read local BD_ADDR");
 
-	if (dev.debug) {
+	if (btled_verbose >= 1) {
 		char addr_str[18];
 		bt_ntoa((bdaddr_t *)dev.local_addr, addr_str);
-		fprintf(stderr, "btled: adapter %s, address %s\n",
+		LOG_HOGP(1, "adapter %s, address %s",
 		    dev.adapter, addr_str);
 	}
+
+	/* Read LE feature support */
+	if (hci_le_read_local_features(dev.hci_fd, &dev.le_features) < 0)
+		dev.le_features = 0; /* assume nothing supported */
+
+	/* Enable LE events we care about */
+	{
+		uint64_t evtmask =
+		    LE_EVTMASK_CONN_COMPLETE |
+		    LE_EVTMASK_ADV_REPORT |
+		    LE_EVTMASK_CONN_UPDATE |
+		    LE_EVTMASK_READ_REMOTE_FEAT |
+		    LE_EVTMASK_LTK_REQUEST |
+		    LE_EVTMASK_ENH_CONN_COMPLETE;
+
+		if (dev.le_features & LE_FEAT_DATA_LENGTH_EXT)
+			evtmask |= LE_EVTMASK_DATA_LENGTH_CHANGE;
+		if (dev.le_features & LE_FEAT_2M_PHY)
+			evtmask |= LE_EVTMASK_PHY_UPDATE_COMPL;
+		if (dev.le_features & LE_FEAT_EXT_ADVERTISING) {
+			evtmask |= LE_EVTMASK_EXT_ADV_REPORT;
+			evtmask |= LE_EVTMASK_ADV_SET_TERM;
+		}
+		hci_le_set_event_mask(dev.hci_fd, evtmask);
+	}
+
+	/* Read controller's TX power range for diagnostics */
+	if (dev.le_features & LE_FEAT_POWER_CONTROL) {
+		struct bt_devreq r;
+		ng_hci_le_read_transmit_power_rp rp;
+
+		memset(&r, 0, sizeof(r));
+		r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+		    NG_HCI_OCF_LE_READ_TRANSMIT_POWER);
+		r.rparam = &rp;
+		r.rlen = sizeof(rp);
+		r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+		if (bt_devreq(dev.hci_fd, &r, 5) == 0 && rp.status == 0)
+			LOG_HCI(1, "TX power range: %d to %d dBm",
+			    rp.min_tx_power, rp.max_tx_power);
+	}
+
+	/* Configure defaults for supported features */
+	if (dev.le_features & LE_FEAT_DATA_LENGTH_EXT)
+		hci_le_write_suggested_default_data_length(dev.hci_fd,
+		    0x00FB, 0x0848);
+	if (dev.le_features & LE_FEAT_2M_PHY)
+		hci_le_set_default_phy(dev.hci_fd, 0x00,
+		    0x03 /* 1M + 2M */, 0x03 /* 1M + 2M */);
 
 	/* Scan mode: just show devices and exit */
 	if (scan_mode) {
@@ -376,6 +547,7 @@ main(int argc, char *argv[])
 	if (dev.bond_fd < 0)
 		err(1, "open %s", bond_path);
 	smp_bond_db_load(&dev.bond_db, dev.bond_fd);
+	load_resolving_list(&dev);
 
 	dev.vhid_ctl_fd = open("/dev/vhid", O_RDWR);
 	if (dev.vhid_ctl_fd < 0)
@@ -450,7 +622,16 @@ child_start:
 	 * with -r.  Capsicum is skipped in reconnect mode because we
 	 * need to open new sockets on each reconnection.
 	 */
+	{
+		static int reconnect_delay = 0; /* exponential backoff */
 connect_loop:
+	if (reconnect_delay > 0) {
+		LOG_HOGP(1, "reconnecting in %d seconds...", reconnect_delay);
+		sleep(reconnect_delay);
+		reconnect_delay = reconnect_delay * 2;
+		if (reconnect_delay > 60)
+			reconnect_delay = 60;
+	}
 	dev.att.fd = -1;
 	dev.smp.fd = -1;
 
@@ -461,8 +642,7 @@ connect_loop:
 	 * On reconnect inside Capsicum, use att_open_fd() with a
 	 * pre-allocated socket from the pool.
 	 */
-	if (dev.debug)
-		fprintf(stderr, "btled: connecting to %s...\n", argv[0]);
+	LOG_HOGP(1, "connecting to %s...", argv[0]);
 
 	{
 		int att_fd, ret;
@@ -477,16 +657,17 @@ connect_loop:
 
 		if (ret < 0) {
 			if (dev.reconnect && running) {
-				warn("ATT connect failed, retrying in 5s");
-				sleep(5);
+				warn("ATT connect failed");
+				if (reconnect_delay == 0)
+					reconnect_delay = 3;
 				goto connect_loop;
 			}
 			err(1, "ATT connect");
 		}
 	}
 
-	if (dev.debug)
-		fprintf(stderr, "btled: connected, exchanging MTU\n");
+	reconnect_delay = 0; /* reset backoff on successful connect */
+	LOG_HOGP(1, "connected, exchanging MTU");
 
 	/* Get connection handle (needed for SMP encryption) */
 	{
@@ -499,15 +680,30 @@ connect_loop:
 		}
 		if (retries == 5)
 			errx(1, "could not get HCI connection handle");
-		if (dev.debug)
-			fprintf(stderr, "btled: connection handle=%04x\n",
+		LOG_HOGP(1, "connection handle=%04x",
 			    dev.con_handle);
 	}
 
+	/* Request optimal link parameters for this connection */
+	if (dev.le_features & LE_FEAT_DATA_LENGTH_EXT)
+		hci_le_set_data_length(dev.hci_fd, dev.con_handle,
+		    0x00FB, 0x0848);
+	if (dev.le_features & LE_FEAT_2M_PHY)
+		hci_le_set_phy(dev.hci_fd, dev.con_handle, 0x00,
+		    0x02 /* prefer 2M */, 0x02 /* prefer 2M */, 0x0000);
+
+	/* Request low-latency HID connection parameters:
+	 * 7.5-15ms interval, latency 4, timeout 5s */
+	hci_le_connection_update(dev.hci_fd, dev.con_handle,
+	    6 /* 7.5ms */, 12 /* 15ms */, 4, 500 /* 5s */);
+
 	if (att_exchange_mtu(&dev.att, ATT_MAX_MTU) < 0)
 		warn("MTU exchange failed, using default %d", ATT_DEFAULT_MTU);
-	else if (dev.debug)
-		fprintf(stderr, "btled: MTU=%d\n", dev.att.mtu);
+	else
+		LOG_HOGP(1, "MTU=%d", dev.att.mtu);
+
+	/* Try to establish EATT bearers for parallel GATT operations */
+	att_open_eatt(&dev.att, dev.addr, dev.addr_type, 2);
 
 	/*
 	 * Phase 2a: Attempt encryption with existing bond, or pair.
@@ -523,10 +719,7 @@ connect_loop:
 		bond = smp_find_bond(&dev.bond_db, dev.addr,
 		    dev.addr_type);
 		if (bond != NULL) {
-			if (dev.debug)
-				fprintf(stderr,
-				    "btled: found existing bond, "
-				    "encrypting...\n");
+			LOG_HOGP(1, "found existing bond, encrypting...");
 			/*
 			 * For bonded reconnect, smp_encrypt_with_ltk()
 			 * only needs hci_fd and con_handle — no SMP
@@ -539,16 +732,12 @@ connect_loop:
 			if (smp_encrypt_with_ltk(&dev.smp, bond) < 0) {
 				warn("bonded encryption failed");
 			} else {
-				if (dev.debug)
-					fprintf(stderr,
-					    "btled: waiting for "
-					    "encryption...\n");
+				LOG_HOGP(1, "waiting for encryption...");
 				if (hci_wait_encryption(dev.hci_fd,
 				    dev.con_handle, 10) < 0)
 					warn("encryption timeout");
-				else if (dev.debug)
-					fprintf(stderr,
-					    "btled: encrypted\n");
+				else
+					LOG_HOGP(1, "encrypted");
 			}
 		}
 	}
@@ -564,9 +753,7 @@ connect_loop:
 			/*
 			 * Device requires encryption.  Pair now.
 			 */
-			if (dev.debug)
-				fprintf(stderr,
-				    "btled: device requires pairing\n");
+			LOG_HOGP(1, "device requires pairing");
 
 			if (smp_open(&dev.smp, dev.addr, dev.addr_type,
 			    dev.local_addr, 0, dev.hci_fd,
@@ -583,10 +770,8 @@ connect_loop:
 			    dev.con_handle, 10) < 0)
 				warn("post-pairing encryption timeout");
 
-			if (dev.debug)
-				fprintf(stderr,
-				    "btled: pairing complete, retrying "
-				    "discovery\n");
+			LOG_HOGP(1, "pairing complete, retrying "
+				    "discovery");
 
 			ret = hogp_discover(&dev);
 		}
@@ -654,9 +839,7 @@ connect_loop:
 		}
 	}
 
-	if (dev.debug)
-		fprintf(stderr,
-		    "btled: sandbox active, entering event loop\n");
+	LOG_HOGP(1, "sandbox active, entering event loop");
 
 	/*
 	 * Phase 6: Event loop — receive notifications, inject reports
@@ -696,9 +879,9 @@ connect_loop:
 	dev.nreports = 0;
 
 	if (dev.reconnect && running) {
-		warnx("reconnecting in 3 seconds...");
-		sleep(3);
+		reconnect_delay = 3; /* reset backoff on clean disconnect */
 		goto connect_loop;
+	}
 	}
 
 	/* Final cleanup */
@@ -774,9 +957,7 @@ hogp_process_service(struct hogp_device *dev, struct gatt_discovery *disc)
 			dev->report_map_len += total;
 		}
 
-		if (dev->debug)
-			fprintf(stderr, "btled: Report Map: %zu bytes\n",
-			    total);
+		LOG_HOGP(1, "Report Map: %zu bytes", total);
 		break;
 	}
 
@@ -826,10 +1007,8 @@ hogp_process_service(struct hogp_device *dev, struct gatt_discovery *disc)
 
 		dev->nreports++;
 
-		if (dev->debug)
-			fprintf(stderr,
-			    "btled: Report handle=%04x id=%d type=%d "
-			    "cccd=%04x\n",
+		LOG_HOGP(1, "Report handle=%04x id=%d type=%d "
+			    "cccd=%04x",
 			    rpt->value_handle, rpt->report_id,
 			    rpt->report_type, rpt->cccd_handle);
 	}
@@ -848,10 +1027,8 @@ hogp_process_service(struct hogp_device *dev, struct gatt_discovery *disc)
 		if (ret == 0 && len >= 4) {
 			dev->hid_bcdHID = (uint16_t)info[0] |
 			    ((uint16_t)info[1] << 8);
-			if (dev->debug)
-				fprintf(stderr,
-				    "btled: HID Information: bcdHID=%04x "
-				    "country=%d flags=%02x\n",
+			LOG_HOGP(1, "HID Information: bcdHID=%04x "
+				    "country=%d flags=%02x",
 				    dev->hid_bcdHID, info[2], info[3]);
 		}
 		break;
@@ -877,14 +1054,90 @@ hogp_process_service(struct hogp_device *dev, struct gatt_discovery *disc)
 			att_write_cmd(&dev->att,
 			    disc->chars[i].value_handle,
 			    &mode, 1);
-			if (dev->debug)
-				fprintf(stderr,
-				    "btled: set Report Protocol mode\n");
+			LOG_HOGP(1, "set Report Protocol mode");
 			break;
 		}
 	}
 
 	return (0);
+}
+
+/*
+ * Read PnP ID from Device Information Service (0x180A).
+ * PnP ID (UUID 0x2A50) is 7 bytes:
+ *   vendor_id_source(1) + vendor_id(2 LE) + product_id(2 LE) + product_version(2 LE)
+ *
+ * Non-fatal: if DIS or PnP ID is absent, idVendor/idProduct stay 0.
+ */
+static void
+hogp_read_dis_pnpid(struct hogp_device *dev, struct gatt_service *dis)
+{
+	struct gatt_char chars[GATT_MAX_CHARS];
+	int nchars, ret;
+	size_t len;
+
+	ret = gatt_discover_characteristics(&dev->att,
+	    dis->start_handle, dis->end_handle,
+	    chars, GATT_MAX_CHARS, &nchars);
+	if (ret != 0)
+		return;
+
+	for (int i = 0; i < nchars; i++) {
+		if (chars[i].uuid16 != UUID_PNP_ID)
+			continue;
+
+		uint8_t pnp[7];
+		ret = att_read(&dev->att, chars[i].value_handle,
+		    pnp, sizeof(pnp), &len);
+		if (ret != 0 || len < 7)
+			break;
+
+		dev->idVendor = (uint16_t)pnp[1] |
+		    ((uint16_t)pnp[2] << 8);
+		dev->idProduct = (uint16_t)pnp[3] |
+		    ((uint16_t)pnp[4] << 8);
+
+		LOG_HOGP(1, "DIS PnP ID: source=%d vendor=%04x "
+			    "product=%04x version=%04x",
+			    pnp[0], dev->idVendor, dev->idProduct,
+			    (uint16_t)pnp[5] | ((uint16_t)pnp[6] << 8));
+		break;
+	}
+}
+
+/*
+ * Read Battery Level from Battery Service (0x180F).
+ * Battery Level (UUID 0x2A19) is a single byte (0-100 %).
+ *
+ * Non-fatal: if Battery Service or Battery Level is absent, nothing happens.
+ * Per HOGP v1.0 Section 2: the HID Host shall discover the Battery Service.
+ */
+static void
+hogp_read_battery(struct hogp_device *dev, struct gatt_service *bas)
+{
+	struct gatt_char chars[GATT_MAX_CHARS];
+	int nchars, ret;
+	size_t len;
+
+	ret = gatt_discover_characteristics(&dev->att,
+	    bas->start_handle, bas->end_handle,
+	    chars, GATT_MAX_CHARS, &nchars);
+	if (ret != 0)
+		return;
+
+	for (int i = 0; i < nchars; i++) {
+		if (chars[i].uuid16 != UUID_BATTERY_LEVEL)
+			continue;
+
+		uint8_t level;
+		ret = att_read(&dev->att, chars[i].value_handle,
+		    &level, sizeof(level), &len);
+		if (ret != 0 || len < 1)
+			break;
+
+		LOG_HOGP(1, "Battery Level: %u%%", level);
+		break;
+	}
 }
 
 /*
@@ -903,12 +1156,31 @@ hogp_discover(struct hogp_device *dev)
 	dev->nreports = 0;
 	dev->hid_ctrl_handle = 0;
 	dev->hid_bcdHID = 0;
+	dev->idVendor = 0;
+	dev->idProduct = 0;
 
 	/* Discover all primary services */
 	ret = gatt_discover_primary_services(&dev->att, svcs,
 	    GATT_MAX_SERVICES, &nsvcs);
 	if (ret != 0)
 		return (ret);
+
+	/* Read PnP ID from Device Information Service if present */
+	for (int s = 0; s < nsvcs; s++) {
+		if (svcs[s].uuid16 == UUID_DEVICE_INFO_SERVICE) {
+			hogp_read_dis_pnpid(dev, &svcs[s]);
+			break;
+		}
+	}
+
+	/* Read Battery Level from Battery Service if present
+	 * (mandatory per HOGP v1.0 Section 2) */
+	for (int s = 0; s < nsvcs; s++) {
+		if (svcs[s].uuid16 == UUID_BATTERY_SERVICE) {
+			hogp_read_battery(dev, &svcs[s]);
+			break;
+		}
+	}
 
 	/* Iterate all HID Service instances */
 	for (int s = 0; s < nsvcs; s++) {
@@ -917,9 +1189,7 @@ hogp_discover(struct hogp_device *dev)
 
 		nsvc_found++;
 
-		if (dev->debug)
-			fprintf(stderr,
-			    "btled: HID Service found, handles %04x-%04x\n",
+		LOG_HOGP(1, "HID Service found, handles %04x-%04x",
 			    svcs[s].start_handle, svcs[s].end_handle);
 
 		/* Discover characteristics and descriptors for this instance */
@@ -974,9 +1244,8 @@ hogp_discover(struct hogp_device *dev)
 		return (ENOENT);
 	}
 
-	if (dev->debug)
-		fprintf(stderr, "btled: total: %d reports, %zu bytes report map"
-		    " from %d service(s)\n",
+	LOG_HOGP(1, "total: %d reports, %zu bytes report map"
+		    " from %d service(s)",
 		    dev->nreports, dev->report_map_len, nsvc_found);
 
 	return (0);
@@ -1007,16 +1276,15 @@ hogp_setup_vhid(struct hogp_device *dev)
 		return (-1);
 
 	memset(&arg, 0, sizeof(arg));
-	arg.idVendor = 0;	/* filled from DIS if available */
-	arg.idProduct = 0;
+	arg.idVendor = dev->idVendor;
+	arg.idProduct = dev->idProduct;
 	arg.idVersion = dev->hid_bcdHID;	/* from HID Information */
 	strlcpy(arg.name, "BLE HID Device", sizeof(arg.name));
 
 	if (ioctl(dev->vhid_fd, VHID_ATTACH, &arg) < 0)
 		return (-1);
 
-	if (dev->debug)
-		fprintf(stderr, "btled: vhid%d configured\n", dev->vhid_unit);
+	LOG_HOGP(1, "vhid%d configured", dev->vhid_unit);
 
 	return (0);
 }
@@ -1027,7 +1295,7 @@ hogp_setup_vhid(struct hogp_device *dev)
 static int
 hogp_subscribe(struct hogp_device *dev)
 {
-	int ret;
+	int ret, any_success = 0, any_input = 0;
 
 	for (int i = 0; i < dev->nreports; i++) {
 		struct hogp_report *rpt = &dev->reports[i];
@@ -1037,6 +1305,8 @@ hogp_subscribe(struct hogp_device *dev)
 		if (rpt->cccd_handle == 0)
 			continue;
 
+		any_input = 1;
+
 		/* Write 0x0001 to CCCD to enable notifications */
 		uint8_t val[2] = { 0x01, 0x00 };
 		ret = att_write_req(&dev->att, rpt->cccd_handle,
@@ -1044,12 +1314,18 @@ hogp_subscribe(struct hogp_device *dev)
 		if (ret != 0)
 			warnx("failed to enable notifications for "
 			    "handle %04x", rpt->value_handle);
-		else if (dev->debug)
-			fprintf(stderr, "btled: notifications enabled for "
-			    "report id=%d handle=%04x\n",
-			    rpt->report_id, rpt->value_handle);
+		else {
+			any_success = 1;
+			LOG_HOGP(1, "notifications enabled "
+				    "for report id=%d handle=%04x",
+				    rpt->report_id, rpt->value_handle);
+		}
 	}
 
+	if (any_input && !any_success) {
+		warnx("all CCCD writes failed, no notifications will arrive");
+		return (-1);
+	}
 	return (0);
 }
 
@@ -1128,8 +1404,7 @@ capsicum_sandbox(struct hogp_device *dev)
 	if (cap_enter() < 0)
 		return (-1);
 
-	if (dev->debug)
-		fprintf(stderr, "btled: entered Capsicum sandbox\n");
+	LOG_HOGP(1, "entered Capsicum sandbox");
 
 	return (0);
 }
@@ -1224,6 +1499,7 @@ static void
 hogp_cleanup(struct hogp_device *dev)
 {
 
+	hci_log_close();
 	att_close(&dev->att);
 	smp_close(&dev->smp);
 	if (dev->vhid_fd >= 0) {
@@ -1283,8 +1559,19 @@ peripheral_build_gattdb(struct att_db *db, struct att_attr *attrs,
 	    GATT_PROP_READ, ATT_PERM_READ,
 	    appearance, sizeof(appearance));
 
-	/* GATT Service (required, can be empty) */
+	/* GATT Service (required) with Service Changed characteristic */
 	attdb_add_service(db, UUID_GATT_SERVICE);
+	attdb_add_characteristic(db, 0x2A05 /* Service Changed */,
+	    GATT_PROP_INDICATE, 0,
+	    "\x01\x00\xFF\xFF", 4); /* handle range: 0x0001-0xFFFF */
+	attdb_add_cccd(db);
+
+	/*
+	 * Database Hash characteristic (Core Spec Vol 3 Part G §7.3)
+	 * is omitted: a correct implementation requires AES-CMAC over
+	 * the serialized GATT database.  A static all-zero hash is
+	 * worse than absent because clients would cache a wrong value.
+	 */
 
 	/* Device Information Service */
 	attdb_add_service(db, UUID_DIS_SERVICE);
@@ -1353,24 +1640,19 @@ peripheral_run(struct hogp_device *dev, const char *bond_path)
 
 	/* Open bond file */
 	dev->bond_fd = open(bond_path, O_RDWR | O_CREAT, 0600);
-	if (dev->bond_fd >= 0)
+	if (dev->bond_fd >= 0) {
 		smp_bond_db_load(&dev->bond_db, dev->bond_fd);
+		load_resolving_list(dev);
+	}
 
 	/* Create ATT listening socket */
 	listen_fd = peripheral_att_listen();
 	if (listen_fd < 0)
 		err(1, "ATT listen socket");
 
-	if (dev->debug)
-		fprintf(stderr, "btled: peripheral mode, ATT listening\n");
+	LOG_HOGP(1, "peripheral mode, ATT listening");
 
-	/* Set advertising parameters: connectable undirected, 100ms interval */
-	if (hci_le_set_advertising_params(dev->hci_fd,
-	    ADV_INTERVAL_100MS, ADV_INTERVAL_100MS,
-	    0x00) < 0)
-		err(1, "set advertising parameters");
-
-	/* Build and set advertising data */
+	/* Build advertising data */
 	{
 		uint16_t uuids[] = { UUID_DIS_SERVICE, UUID_CUSTOM_SERVICE };
 		adv_len = ble_build_adv_data(adv_data, sizeof(adv_data),
@@ -1378,17 +1660,35 @@ peripheral_run(struct hogp_device *dev, const char *bond_path)
 		if (adv_len < 0)
 			err(1, "build advertising data");
 	}
-	if (hci_le_set_advertising_data(dev->hci_fd, adv_data,
-	    (uint8_t)adv_len) < 0)
-		err(1, "set advertising data");
 
-	/* Enable advertising */
-	if (hci_le_set_advertise_enable(dev->hci_fd, true) < 0)
-		err(1, "enable advertising");
+	/*
+	 * Try extended advertising first (BT 5.0+, supports >31 bytes,
+	 * multiple sets, PHY selection).  Fall back to legacy if the
+	 * controller doesn't support it.
+	 */
+	bool use_ext_adv = false;
+	if (hci_le_set_ext_adv_params(dev->hci_fd, 0x00,
+	    0x0013 /* connectable + scannable + legacy ADV_IND */,
+	    ADV_INTERVAL_100MS, ADV_INTERVAL_100MS, 0x00) == 0 &&
+	    hci_le_set_ext_adv_data(dev->hci_fd, 0x00,
+	    adv_data, (uint8_t)adv_len) == 0 &&
+	    hci_le_set_ext_adv_enable(dev->hci_fd, 1, 0x00) == 0) {
+		LOG_HOGP(1, "using extended advertising");
+		use_ext_adv = true;
+	} else {
+		/* Legacy advertising fallback */
+		LOG_HOGP(1, "ext adv not supported, using legacy");
+		if (hci_le_set_advertising_params(dev->hci_fd,
+		    ADV_INTERVAL_100MS, ADV_INTERVAL_100MS, 0x00) < 0)
+			err(1, "set advertising parameters");
+		if (hci_le_set_advertising_data(dev->hci_fd, adv_data,
+		    (uint8_t)adv_len) < 0)
+			err(1, "set advertising data");
+		if (hci_le_set_advertise_enable(dev->hci_fd, true) < 0)
+			err(1, "enable advertising");
+	}
 
-	if (dev->debug)
-		fprintf(stderr, "btled: advertising as \"%s\"\n",
-		    PERIPHERAL_NAME);
+	LOG_HOGP(1, "advertising as \"%s\"", PERIPHERAL_NAME);
 
 	/* Signal handling */
 	signal(SIGTERM, sig_handler);
@@ -1420,8 +1720,7 @@ peripheral_run(struct hogp_device *dev, const char *bond_path)
 			continue;
 		}
 
-		if (dev->debug)
-			fprintf(stderr, "btled: client connected\n");
+		LOG_HOGP(1, "client connected");
 
 		/* Reset CCCDs to default 0x0000 for non-bonded client */
 		for (int i = 0; i < db.count; i++) {
@@ -1430,7 +1729,10 @@ peripheral_run(struct hogp_device *dev, const char *bond_path)
 		}
 
 		/* Disable advertising while connected */
-		hci_le_set_advertise_enable(dev->hci_fd, false);
+		if (use_ext_adv)
+			hci_le_set_ext_adv_enable(dev->hci_fd, 0, 0x00);
+		else
+			hci_le_set_advertise_enable(dev->hci_fd, false);
 
 		/* Set up ATT connection on accepted socket */
 		memset(&ac, 0, sizeof(ac));
@@ -1461,9 +1763,7 @@ peripheral_run(struct hogp_device *dev, const char *bond_path)
 				break;
 			}
 			if (pfd.revents & (POLLERR | POLLHUP)) {
-				if (dev->debug)
-					fprintf(stderr,
-					    "btled: client disconnected\n");
+				LOG_HOGP(1, "client disconnected");
 				break;
 			}
 			if (!(pfd.revents & POLLIN))
@@ -1483,15 +1783,19 @@ peripheral_run(struct hogp_device *dev, const char *bond_path)
 
 		/* Re-enable advertising for next connection */
 		if (running) {
-			hci_le_set_advertise_enable(dev->hci_fd, true);
-			if (dev->debug)
-				fprintf(stderr,
-				    "btled: re-advertising\n");
+			if (use_ext_adv)
+				hci_le_set_ext_adv_enable(dev->hci_fd, 1, 0x00);
+			else
+				hci_le_set_advertise_enable(dev->hci_fd, true);
+			LOG_HOGP(1, "re-advertising");
 		}
 	}
 
 	/* Shutdown */
-	hci_le_set_advertise_enable(dev->hci_fd, false);
+	if (use_ext_adv)
+		hci_le_set_ext_adv_enable(dev->hci_fd, 0, 0x00);
+	else
+		hci_le_set_advertise_enable(dev->hci_fd, false);
 	close(listen_fd);
 
 	if (dev->bond_fd >= 0) {

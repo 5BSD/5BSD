@@ -132,6 +132,9 @@
 #include <netgraph/bluetooth/include/ng_ubt.h>
 #include <netgraph/bluetooth/drivers/ubt/ng_ubt_var.h>
 
+/* USB Bluetooth interface protocol values (Core Spec Vol 4 Part B §2) */
+#define	UBT_PROTO_BULK_SERIAL	0x04	/* Bulk Serialization Transport */
+
 static int		ubt_modevent(module_t, int, void *);
 static device_probe_t	ubt_probe;
 static device_attach_t	ubt_attach;
@@ -449,10 +452,15 @@ static const STRUCT_USB_HOST_ID ubt_ignore_devs[] =
 /* List of supported bluetooth devices */
 static const STRUCT_USB_HOST_ID ubt_devs[] =
 {
-	/* Generic Bluetooth class devices */
+	/* Generic Bluetooth class devices (legacy USB transport) */
 	{ USB_IFACE_CLASS(UDCLASS_WIRELESS),
 	  USB_IFACE_SUBCLASS(UDSUBCLASS_RF),
 	  USB_IFACE_PROTOCOL(UDPROTO_BLUETOOTH) },
+
+	/* Generic Bluetooth class devices (Bulk Serialization transport) */
+	{ USB_IFACE_CLASS(UDCLASS_WIRELESS),
+	  USB_IFACE_SUBCLASS(UDSUBCLASS_RF),
+	  USB_IFACE_PROTOCOL(UBT_PROTO_BULK_SERIAL) },
 
 	/* AVM USB Bluetooth-Adapter BlueFritz! v2.0 */
 	{ USB_VPI(USB_VENDOR_AVM, 0x3800, 0) },
@@ -671,6 +679,17 @@ ubt_attach(device_t dev)
 
 	sc->sc_dev = dev;
 	sc->sc_debug = NG_UBT_WARN_LEVEL;
+
+	/*
+	 * Detect Bulk Serialization mode per Core Spec Vol 4 Part B §2.
+	 * bInterfaceProtocol 0x04 indicates Bulk Serialization Transport
+	 * where ACL and ISO share the bulk endpoint with a 1-byte packet
+	 * type indicator prefix.  Protocol 0x01 is legacy transport.
+	 */
+	sc->sc_bulk_serial =
+	    (uaa->info.bInterfaceProtocol == UBT_PROTO_BULK_SERIAL);
+	if (sc->sc_bulk_serial)
+		device_printf(dev, "Bluetooth Bulk Serialization mode\n");
 
 	/*
 	 * Sanity checks.
@@ -1072,8 +1091,13 @@ submit_next:
 } /* ubt_intr_read_callback */
 
 /*
- * Called when incoming bulk transfer (ACL packet) has completed, i.e.
- * ACL packet was received from the device.
+ * Called when incoming bulk transfer has completed.
+ *
+ * In legacy USB transport mode (bInterfaceProtocol 0x01), only ACL data
+ * arrives on the bulk-in endpoint.  In Bulk Serialization mode (protocol
+ * 0x04), the first byte is a packet type indicator (0x02=ACL, 0x05=ISO)
+ * per Core Spec Vol 4 Part B §7.
+ *
  * USB context.
  */
 
@@ -1082,7 +1106,6 @@ ubt_bulk_read_callback(struct usb_xfer *xfer, usb_error_t error)
 {
 	struct ubt_softc	*sc = usbd_xfer_softc(xfer);
 	struct mbuf		*m;
-	ng_hci_acldata_pkt_t	*hdr;
 	struct usb_page_cache	*pc;
 	int len;
 	int actlen;
@@ -1105,41 +1128,98 @@ ubt_bulk_read_callback(struct usb_xfer *xfer, usb_error_t error)
 			goto submit_next;
 		}
 
-		/* Add HCI packet type */
-		*mtod(m, uint8_t *)= NG_HCI_ACL_DATA_PKT;
-		m->m_pkthdr.len = m->m_len = 1;
-
-		if (actlen > MCLBYTES - 1)
-			actlen = MCLBYTES - 1;
+		if (actlen < 1) {
+			UBT_STAT_IERROR(sc);
+			goto submit_next;
+		}
 
 		pc = usbd_xfer_get_frame(xfer, 0);
-		usbd_copy_out(pc, 0, mtod(m, uint8_t *) + 1, actlen);
-		m->m_pkthdr.len += actlen;
-		m->m_len += actlen;
+
+		if (sc->sc_bulk_serial) {
+			/*
+			 * Bulk Serialization mode: the first byte from the
+			 * controller is the HCI packet type indicator.
+			 * Copy it directly as the mbuf's type tag byte.
+			 */
+			if (actlen > MCLBYTES)
+				actlen = MCLBYTES;
+			usbd_copy_out(pc, 0, mtod(m, uint8_t *), actlen);
+			m->m_pkthdr.len = m->m_len = actlen;
+		} else {
+			/*
+			 * Legacy mode: only ACL data arrives on bulk-in.
+			 * Prepend the ACL packet type tag.
+			 */
+			*mtod(m, uint8_t *) = NG_HCI_ACL_DATA_PKT;
+			m->m_pkthdr.len = m->m_len = 1;
+
+			if (actlen > MCLBYTES - 1)
+				actlen = MCLBYTES - 1;
+
+			usbd_copy_out(pc, 0, mtod(m, uint8_t *) + 1, actlen);
+			m->m_pkthdr.len += actlen;
+			m->m_len += actlen;
+		}
 
 		UBT_INFO(sc, "got %d bytes from bulk-in pipe\n",
 			actlen);
 
-		/* Validate packet and send it up the stack */
-		if (m->m_pkthdr.len < (int)sizeof(*hdr)) {
-			UBT_INFO(sc, "HCI ACL packet is too short\n");
+		/* Validate packet based on type */
+		{
+			uint8_t pkt_type = *mtod(m, uint8_t *);
 
-			UBT_STAT_IERROR(sc);
-			goto submit_next;
+			if (pkt_type == NG_HCI_ACL_DATA_PKT) {
+				ng_hci_acldata_pkt_t *hdr;
+
+				if (m->m_pkthdr.len <
+				    (int)sizeof(ng_hci_acldata_pkt_t)) {
+					UBT_INFO(sc,
+					    "HCI ACL packet too short\n");
+					UBT_STAT_IERROR(sc);
+					goto submit_next;
+				}
+
+				hdr = mtod(m, ng_hci_acldata_pkt_t *);
+				len = le16toh(hdr->length);
+				if (len != (int)(m->m_pkthdr.len -
+				    sizeof(*hdr))) {
+					UBT_ERR(sc, "Invalid ACL packet "
+					    "size, length=%d, pktlen=%d\n",
+					    len, m->m_pkthdr.len);
+					UBT_STAT_IERROR(sc);
+					goto submit_next;
+				}
+			} else if (pkt_type == NG_HCI_ISO_DATA_PKT) {
+				ng_hci_isodata_pkt_t *isohdr;
+
+				if (m->m_pkthdr.len <
+				    (int)sizeof(ng_hci_isodata_pkt_t)) {
+					UBT_INFO(sc,
+					    "HCI ISO packet too short\n");
+					UBT_STAT_IERROR(sc);
+					goto submit_next;
+				}
+
+				isohdr = mtod(m, ng_hci_isodata_pkt_t *);
+				len = le16toh(isohdr->length) & 0x3fff;
+				if (len != (int)(m->m_pkthdr.len -
+				    sizeof(*isohdr))) {
+					UBT_ERR(sc, "Invalid ISO packet "
+					    "size, length=%d, pktlen=%d\n",
+					    len, m->m_pkthdr.len);
+					UBT_STAT_IERROR(sc);
+					goto submit_next;
+				}
+			} else {
+				UBT_ERR(sc, "Unknown bulk packet type "
+				    "0x%02x\n", pkt_type);
+				UBT_STAT_IERROR(sc);
+				goto submit_next;
+			}
 		}
 
-		hdr = mtod(m, ng_hci_acldata_pkt_t *);
-		len = le16toh(hdr->length);
-		if (len != (int)(m->m_pkthdr.len - sizeof(*hdr))) {
-			UBT_ERR(sc, "Invalid ACL packet size, length=%d, " \
-				"pktlen=%d\n", len, m->m_pkthdr.len);
-
-			UBT_STAT_IERROR(sc);
-			goto submit_next;
-		}
-
-		UBT_INFO(sc, "got complete ACL data packet, pktlen=%d, " \
-			"length=%d\n", m->m_pkthdr.len, len);
+		UBT_INFO(sc, "got complete HCI data packet, type=0x%02x, "
+			"pktlen=%d\n", *mtod(m, uint8_t *), m->m_pkthdr.len);
 
 		UBT_STAT_PCKTS_RECV(sc);
 		UBT_STAT_BYTES_RECV(sc, m->m_pkthdr.len);
@@ -1968,6 +2048,34 @@ ng_ubt_rcvdata(hook_p hook, item_p item)
 		action = 0;
 		break;
 
+	case NG_HCI_ISO_DATA_PKT:
+		/*
+		 * ISO data over USB.  Per Core Spec Vol 4 Part B §7, ISO
+		 * packets are sent over the bulk endpoint only in Bulk
+		 * Serialization mode.  In legacy mode there is no defined
+		 * mechanism for ISO data.
+		 */
+		if (!sc->sc_bulk_serial) {
+			UBT_ERR(sc, "ISO data requires Bulk Serialization "
+				"mode, dropping packet\n");
+			NG_FREE_M(m);
+			error = EOPNOTSUPP;
+			goto done;
+		}
+
+		if (m->m_pkthdr.len > UBT_BULK_WRITE_BUFFER_SIZE) {
+			UBT_ERR(sc, "ISO data frame too big, "
+				"buffer size=%d, packet len=%d\n",
+				UBT_BULK_WRITE_BUFFER_SIZE, m->m_pkthdr.len);
+			NG_FREE_M(m);
+			error = EMSGSIZE;
+			goto done;
+		}
+
+		q = &sc->sc_aclq;
+		action = UBT_FLAG_T_START_BULK;
+		break;
+
 	default:
 		UBT_ERR(sc, "Dropping unsupported HCI frame, type=0x%02x, " \
 			"pktlen=%d\n", *mtod(m, uint8_t *), m->m_pkthdr.len);
@@ -1988,8 +2096,14 @@ ng_ubt_rcvdata(hook_p hook, item_p item)
 
 		NG_FREE_M(m);
 	} else {
-		/* Loose HCI packet type, enqueue mbuf and kick off task */
-		m_adj(m, sizeof(uint8_t));
+		/*
+		 * In legacy mode, strip the HCI packet type indicator
+		 * since each endpoint type implies the packet type.
+		 * In Bulk Serialization mode, keep it — the shared bulk
+		 * endpoint needs the indicator for demuxing.
+		 */
+		if (!sc->sc_bulk_serial || q != &sc->sc_aclq)
+			m_adj(m, sizeof(uint8_t));
 		NG_BT_MBUFQ_ENQUEUE(q, m);
 		ubt_task_schedule(sc, action);
 		UBT_NG_UNLOCK(sc);

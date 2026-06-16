@@ -54,6 +54,7 @@ void           ng_l2cap_free_con      (ng_l2cap_con_p);
 
 ng_l2cap_chan_p ng_l2cap_new_chan     (ng_l2cap_p, ng_l2cap_con_p, u_int16_t, int);
 ng_l2cap_chan_p ng_l2cap_chan_by_scid (ng_l2cap_p, u_int16_t, int);
+ng_l2cap_chan_p ng_l2cap_chan_by_dcid (ng_l2cap_p, u_int16_t, int);
 ng_l2cap_chan_p ng_l2cap_chan_by_conhandle(ng_l2cap_p , uint16_t , u_int16_t);
 
 void            ng_l2cap_free_chan    (ng_l2cap_chan_p);

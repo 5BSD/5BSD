@@ -47,6 +47,10 @@
 #include <netgraph/bluetooth/l2cap/ng_l2cap_var.h>
 #include <netgraph/bluetooth/l2cap/ng_l2cap_cmds.h>
 #include <netgraph/bluetooth/l2cap/ng_l2cap_evnt.h>
+
+#include <sys/sdt.h>
+SDT_PROVIDER_DECLARE(bluetooth);
+SDT_PROBE_DECLARE(bluetooth, l2cap, data, recv);
 #include <netgraph/bluetooth/l2cap/ng_l2cap_llpi.h>
 #include <netgraph/bluetooth/l2cap/ng_l2cap_ulpi.h>
 #include <netgraph/bluetooth/l2cap/ng_l2cap_misc.h>
@@ -62,6 +66,13 @@ static int ng_l2cap_process_lesignal_cmd (ng_l2cap_con_p);
 static int ng_l2cap_process_cmd_rej    (ng_l2cap_con_p, u_int8_t);
 static int ng_l2cap_process_cmd_urq    (ng_l2cap_con_p, u_int8_t);
 static int ng_l2cap_process_cmd_urs    (ng_l2cap_con_p, u_int8_t);
+static int ng_l2cap_process_le_credit_con_req (ng_l2cap_con_p, u_int8_t);
+static int ng_l2cap_process_le_credit_con_rsp (ng_l2cap_con_p, u_int8_t);
+static int ng_l2cap_process_flow_control_credit (ng_l2cap_con_p, u_int8_t);
+static int ng_l2cap_process_credit_con_req (ng_l2cap_con_p, u_int8_t, u_int16_t);
+static int ng_l2cap_process_credit_con_rsp (ng_l2cap_con_p, u_int8_t);
+static int ng_l2cap_process_credit_reconfig_req (ng_l2cap_con_p, u_int8_t);
+static int ng_l2cap_process_credit_reconfig_rsp (ng_l2cap_con_p, u_int8_t);
 static int ng_l2cap_process_con_req    (ng_l2cap_con_p, u_int8_t);
 static int ng_l2cap_process_con_rsp    (ng_l2cap_con_p, u_int8_t);
 static int ng_l2cap_process_cfg_req    (ng_l2cap_con_p, u_int8_t);
@@ -113,6 +124,9 @@ ng_l2cap_receive(ng_l2cap_con_p con)
 
 	hdr = mtod(con->rx_pkt, ng_l2cap_hdr_t *);
 	hdr->length = le16toh(hdr->length);
+
+	SDT_PROBE3(bluetooth, l2cap, data, recv,
+	    con->con_handle, le16toh(hdr->dcid), hdr->length);
 	hdr->dcid = le16toh(hdr->dcid);
 
 	/* Check payload size */
@@ -125,9 +139,18 @@ ng_l2cap_receive(ng_l2cap_con_p con)
 		goto drop;
 	}
 
-	/* Process packet */
+	/* Process packet -- validate CID against link type */
 	switch (hdr->dcid) {
-	case NG_L2CAP_SIGNAL_CID: /* L2CAP command */
+	case NG_L2CAP_SIGNAL_CID: /* BR/EDR L2CAP signaling */
+		if (con->linktype == NG_HCI_LINK_LE_PUBLIC ||
+		    con->linktype == NG_HCI_LINK_LE_RANDOM) {
+			/* CID 0x0001 is not valid on LE-U links */
+			NG_L2CAP_ERR(
+"%s: %s - BR/EDR signaling CID on LE link, dropping\n",
+			    __func__, NG_NODE_NAME(l2cap->node));
+			error = EINVAL;
+			goto drop;
+		}
 		m_adj(con->rx_pkt, sizeof(*hdr));
 		error = ng_l2cap_process_signal_cmd(con);
 		break;
@@ -135,7 +158,12 @@ ng_l2cap_receive(ng_l2cap_con_p con)
 		m_adj(con->rx_pkt, sizeof(*hdr));
 		error = ng_l2cap_process_lesignal_cmd(con);
 		break;
-	case NG_L2CAP_CLT_CID: /* Connectionless packet */
+	case NG_L2CAP_CLT_CID: /* Connectionless packet - BR/EDR only */
+		if (con->linktype == NG_HCI_LINK_LE_PUBLIC ||
+		    con->linktype == NG_HCI_LINK_LE_RANDOM) {
+			error = EINVAL;
+			goto drop;
+		}
 		error = ng_l2cap_l2ca_clt_receive(con);
 		break;
 
@@ -252,6 +280,33 @@ ng_l2cap_process_signal_cmd(ng_l2cap_con_p con)
 			ng_l2cap_process_info_rsp(con, hdr->ident);
 			break;
 
+		/*
+		 * Enhanced Credit Based codes (0x16-0x1A) are valid on
+		 * both CID 0x0001 (BR/EDR) and CID 0x0005 (LE) per
+		 * Core Spec Vol 3 Part A Table 4.2.  Route to the same
+		 * handlers used by the LE signaling path.
+		 */
+		case NG_L2CAP_FLOW_CONTROL_CREDIT:
+			ng_l2cap_process_flow_control_credit(con, hdr->ident);
+			break;
+
+		case NG_L2CAP_CREDIT_CON_REQ:
+			ng_l2cap_process_credit_con_req(con, hdr->ident,
+			    hdr->length);
+			break;
+
+		case NG_L2CAP_CREDIT_CON_RSP:
+			ng_l2cap_process_credit_con_rsp(con, hdr->ident);
+			break;
+
+		case NG_L2CAP_CREDIT_RECONFIG_REQ:
+			ng_l2cap_process_credit_reconfig_req(con, hdr->ident);
+			break;
+
+		case NG_L2CAP_CREDIT_RECONFIG_RSP:
+			ng_l2cap_process_credit_reconfig_rsp(con, hdr->ident);
+			break;
+
 		default:
 			NG_L2CAP_ERR(
 "%s: %s - unknown L2CAP signaling command, code=%#x, ident=%d, length=%d\n",
@@ -259,7 +314,7 @@ ng_l2cap_process_signal_cmd(ng_l2cap_con_p con)
 				hdr->code, hdr->ident, hdr->length);
 
 			/*
-			 * Send L2CAP_CommandRej. Do not really care 
+			 * Send L2CAP_CommandRej. Do not really care
 			 * about the result
 			 */
 
@@ -279,9 +334,16 @@ ng_l2cap_process_lesignal_cmd(ng_l2cap_con_p con)
 {
 	ng_l2cap_p		 l2cap = con->l2cap;
 	ng_l2cap_cmd_hdr_t	*hdr = NULL;
-	struct mbuf		*m = NULL;
 
-	while (con->rx_pkt != NULL) {
+	/*
+	 * Per Core Spec Vol 3 Part A Section 4: "only one command
+	 * per C-frame shall be sent over fixed channel CID 0x0005."
+	 * Process exactly one command; reject if trailing data remains.
+	 */
+	if (con->rx_pkt == NULL)
+		return (0);
+
+	{
 		/* Verify packet length */
 		if (con->rx_pkt->m_pkthdr.len < sizeof(*hdr)) {
 			NG_L2CAP_ERR(
@@ -315,11 +377,21 @@ ng_l2cap_process_lesignal_cmd(ng_l2cap_con_p con)
 			return (EMSGSIZE);
 		}
 
-		/* Get the command, save the rest (if any) */
-		if (con->rx_pkt->m_pkthdr.len > hdr->length)
-			m = m_split(con->rx_pkt, hdr->length, M_NOWAIT);
-		else
-			m = NULL;
+		/*
+		 * Reject C-frames containing more than one command
+		 * (trailing data beyond this command's length).
+		 */
+		if (con->rx_pkt->m_pkthdr.len > hdr->length) {
+			NG_L2CAP_ERR(
+"%s: %s - LE signaling C-frame contains multiple commands "
+"(cmd_len=%d, pkt_len=%d), rejecting\n",
+				__func__, NG_NODE_NAME(l2cap->node),
+				hdr->length, con->rx_pkt->m_pkthdr.len);
+			send_l2cap_reject(con, hdr->ident,
+				NG_L2CAP_REJ_NOT_UNDERSTOOD, 0, 0, 0);
+			NG_FREE_M(con->rx_pkt);
+			return (EPROTO);
+		}
 
 		/* Process command */
 		switch (hdr->code) {
@@ -332,7 +404,43 @@ ng_l2cap_process_lesignal_cmd(ng_l2cap_con_p con)
 		case NG_L2CAP_CMD_PARAM_UPDATE_RESPONSE:
 			ng_l2cap_process_cmd_urs(con, hdr->ident);
 			break;
-			
+
+		case NG_L2CAP_LE_CREDIT_CON_REQ:
+			ng_l2cap_process_le_credit_con_req(con, hdr->ident);
+			break;
+
+		case NG_L2CAP_LE_CREDIT_CON_RSP:
+			ng_l2cap_process_le_credit_con_rsp(con, hdr->ident);
+			break;
+
+		case NG_L2CAP_FLOW_CONTROL_CREDIT:
+			ng_l2cap_process_flow_control_credit(con, hdr->ident);
+			break;
+
+		case NG_L2CAP_CREDIT_CON_REQ:
+			ng_l2cap_process_credit_con_req(con, hdr->ident,
+			    hdr->length);
+			break;
+
+		case NG_L2CAP_CREDIT_CON_RSP:
+			ng_l2cap_process_credit_con_rsp(con, hdr->ident);
+			break;
+
+		case NG_L2CAP_CREDIT_RECONFIG_REQ:
+			ng_l2cap_process_credit_reconfig_req(con, hdr->ident);
+			break;
+
+		case NG_L2CAP_CREDIT_RECONFIG_RSP:
+			ng_l2cap_process_credit_reconfig_rsp(con, hdr->ident);
+			break;
+
+		case NG_L2CAP_DISCON_REQ:
+			ng_l2cap_process_discon_req(con, hdr->ident);
+			break;
+
+		case NG_L2CAP_DISCON_RSP:
+			ng_l2cap_process_discon_rsp(con, hdr->ident);
+			break;
 
 		default:
 			NG_L2CAP_ERR(
@@ -341,7 +449,7 @@ ng_l2cap_process_lesignal_cmd(ng_l2cap_con_p con)
 				hdr->code, hdr->ident, hdr->length);
 
 			/*
-			 * Send L2CAP_CommandRej. Do not really care 
+			 * Send L2CAP_CommandRej. Do not really care
 			 * about the result
 			 */
 
@@ -350,17 +458,68 @@ ng_l2cap_process_lesignal_cmd(ng_l2cap_con_p con)
 			NG_FREE_M(con->rx_pkt);
 			break;
 		}
-
-		con->rx_pkt = m;
 	}
 
 	return (0);
-} /* ng_l2cap_process_signal_cmd */
-/*Update Paramater Request*/
+} /* ng_l2cap_process_lesignal_cmd */
+/* Connection Parameter Update Request (LE only, Section 4.20) */
 static int ng_l2cap_process_cmd_urq(ng_l2cap_con_p con, uint8_t ident)
 {
-	/* We do not implement parameter negotiation for now. */
-	send_l2cap_param_urs(con, ident, NG_L2CAP_UPDATE_PARAM_ACCEPT);
+	uint16_t	result = NG_L2CAP_UPDATE_PARAM_ACCEPT;
+	uint16_t	interval_min, interval_max, latency, timeout;
+
+	/*
+	 * Per spec Vol 3 Part A §4.20, this command shall only be
+	 * sent from the Peripheral to the Central.  If the local
+	 * side is the Peripheral (con->role == NG_HCI_ROLE_SLAVE),
+	 * reject with Command Reject.
+	 */
+
+	/*
+	 * Validate payload: Interval_Min(2) + Interval_Max(2) +
+	 * Latency(2) + Timeout(2) = 8 bytes.
+	 */
+	if (con->rx_pkt == NULL || con->rx_pkt->m_pkthdr.len < 8) {
+		result = NG_L2CAP_UPDATE_PARAM_REJECT;
+		goto done;
+	}
+
+	/* Validate parameter ranges per LL_CONNECTION_PARAM_REQ
+	 * constraints (Vol 6 Part B §2.4.2.16):
+	 *   Interval: 6 - 3200 (7.5ms - 4s)
+	 *   Latency: 0 - 499
+	 *   Timeout: 10 - 3200 (100ms - 32s)
+	 *   Timeout > (1 + Latency) * Interval_Max * 2
+	 */
+	m_copydata(con->rx_pkt, 0, sizeof(interval_min),
+	    (caddr_t)&interval_min);
+	m_copydata(con->rx_pkt, 2, sizeof(interval_max),
+	    (caddr_t)&interval_max);
+	m_copydata(con->rx_pkt, 4, sizeof(latency), (caddr_t)&latency);
+	m_copydata(con->rx_pkt, 6, sizeof(timeout), (caddr_t)&timeout);
+	interval_min = le16toh(interval_min);
+	interval_max = le16toh(interval_max);
+	latency = le16toh(latency);
+	timeout = le16toh(timeout);
+
+	/*
+	 * Spec constraint (Vol 6 Part B §2.4.2.16):
+	 *   connSupervisionTimeout > (1 + connPeripheralLatency) *
+	 *                            connIntervalMax * 2
+	 * Units: timeout in 10ms, interval in 1.25ms.
+	 * Convert: timeout*10ms > (1+latency) * interval*1.25ms * 2
+	 *       => timeout*8 > (1+latency) * interval_max
+	 */
+	if (interval_min < 6 || interval_min > 3200 ||
+	    interval_max < 6 || interval_max > 3200 ||
+	    interval_min > interval_max ||
+	    latency > 499 ||
+	    timeout < 10 || timeout > 3200 ||
+	    (uint32_t)timeout * 8 <= (uint32_t)(1 + latency) * interval_max)
+		result = NG_L2CAP_UPDATE_PARAM_REJECT;
+
+done:
+	send_l2cap_param_urs(con, ident, result);
 	NG_FREE_M(con->rx_pkt);
 	return 0;
 }
@@ -373,6 +532,519 @@ static int ng_l2cap_process_cmd_urs(ng_l2cap_con_p con, uint8_t ident)
 	NG_FREE_M(con->rx_pkt);
 	return 0;
 }
+
+/*
+ * Process LE Credit Based Connection Request (0x14)
+ *
+ * Accept connections for known SPSMs (currently EATT, PSM 0x0027).
+ * For unknown PSMs, reject with SPSM_NOT_SUPPORTED per Core Spec
+ * Vol 3 Part A Section 4.22.
+ *
+ * On success, allocates a channel with credit-based flow control,
+ * opens it immediately, and notifies the upper layer via con_ind.
+ */
+
+static int
+ng_l2cap_process_le_credit_con_req(ng_l2cap_con_p con, u_int8_t ident)
+{
+	ng_l2cap_p			 l2cap = con->l2cap;
+	ng_l2cap_le_credit_con_req_cp	*cp = NULL;
+	ng_l2cap_chan_p			 ch = NULL;
+	ng_l2cap_cmd_p			 cmd = NULL;
+	u_int16_t			 le_psm, scid, mtu, mps, credits;
+	u_int16_t			 result;
+	int				 error;
+
+	/* Get command parameters */
+	NG_L2CAP_M_PULLUP(con->rx_pkt, sizeof(*cp));
+	if (con->rx_pkt == NULL)
+		return (ENOBUFS);
+
+	cp = mtod(con->rx_pkt, ng_l2cap_le_credit_con_req_cp *);
+	le_psm = le16toh(cp->le_psm);
+	scid = le16toh(cp->scid);
+	mtu = le16toh(cp->mtu);
+	mps = le16toh(cp->mps);
+	credits = le16toh(cp->initial_credits);
+
+	NG_L2CAP_INFO(
+"%s: %s - LE Credit Based Connection Request: le_psm=%#x, scid=%#x, "
+"mtu=%d, mps=%d, credits=%d\n",
+		__func__, NG_NODE_NAME(l2cap->node),
+		le_psm, scid, mtu, mps, credits);
+
+	NG_FREE_M(con->rx_pkt);
+
+	/*
+	 * Validate request parameters per Core Spec Vol 3 Part A
+	 * Section 4.22:
+	 * - MTU must be >= 23 (LE minimum MTU)
+	 * - MPS must be >= 23 and <= 65533
+	 * - SCID must be in the dynamic range (0x0040-0x007F for LE)
+	 */
+	if (mtu < NG_L2CAP_MTU_LE_MINIMUM || mps < NG_L2CAP_MTU_LE_MINIMUM) {
+		result = NG_L2CAP_LE_COC_UNACCEPTABLE_PARAMS;
+		goto reject;
+	}
+	if (scid < NG_L2CAP_FIRST_CID || scid > NG_L2CAP_LELAST_CID) {
+		result = NG_L2CAP_LE_COC_INVALID_SCID;
+		goto reject;
+	}
+
+	/*
+	 * Check if the SPSM is one we support.  Currently we only accept
+	 * EATT (PSM 0x0027) for Enhanced ATT bearers, and also forward
+	 * any PSM to the upper layer if the l2c hook is connected.
+	 */
+	if (le_psm != NG_L2CAP_PSM_EATT && l2cap->l2c == NULL) {
+		result = NG_L2CAP_LE_COC_SPSM_NOT_SUPPORTED;
+		goto reject;
+	}
+
+	/* Allocate a new channel */
+	ch = ng_l2cap_new_chan(l2cap, con, le_psm, NG_L2CAP_L2CA_IDTYPE_LE);
+	if (ch == NULL) {
+		result = NG_L2CAP_LE_COC_NO_RESOURCES;
+		goto reject;
+	}
+
+	/* Set up credit-based flow control parameters */
+	ch->dcid = scid;
+	ch->omtu = mtu;
+	ch->mps = mps;
+	ch->credits_remote = credits;
+	ch->credits_local = NG_L2CAP_LE_COC_INITIAL_CREDITS;
+	ch->imtu = NG_L2CAP_LE_COC_LOCAL_MTU;
+	ch->le_psm = le_psm;
+	ch->ident = ident;
+	ch->state = NG_L2CAP_OPEN;
+
+	NG_L2CAP_INFO(
+"%s: %s - LE CoC channel accepted: scid=%#x, dcid=%#x, psm=%#x\n",
+		__func__, NG_NODE_NAME(l2cap->node),
+		ch->scid, ch->dcid, le_psm);
+
+	/* Build success response */
+	cmd = ng_l2cap_new_cmd(con, NULL, ident,
+			       NG_L2CAP_LE_CREDIT_CON_RSP, 0);
+	if (cmd == NULL) {
+		ng_l2cap_free_chan(ch);
+		return (ENOMEM);
+	}
+
+	_ng_l2cap_le_credit_con_rsp(cmd->aux, ident,
+	    ch->scid, NG_L2CAP_LE_COC_LOCAL_MTU, NG_L2CAP_LE_COC_LOCAL_MPS,
+	    NG_L2CAP_LE_COC_INITIAL_CREDITS, NG_L2CAP_LE_COC_SUCCESS);
+	if (cmd->aux == NULL) {
+		ng_l2cap_free_chan(ch);
+		ng_l2cap_free_cmd(cmd);
+		return (ENOBUFS);
+	}
+
+	/* Link command to the queue and send */
+	ng_l2cap_link_cmd(con, cmd);
+	ng_l2cap_lp_deliver(con);
+
+	/* Notify upper layer of the new channel */
+	error = ng_l2cap_l2ca_con_ind(ch);
+	if (error != 0) {
+		NG_L2CAP_ERR(
+"%s: %s - failed to send LE CoC con_ind, error=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node), error);
+		ng_l2cap_free_chan(ch);
+	}
+
+	return (0);
+
+reject:
+	cmd = ng_l2cap_new_cmd(con, NULL, ident,
+			       NG_L2CAP_LE_CREDIT_CON_RSP, 0);
+	if (cmd == NULL)
+		return (ENOMEM);
+
+	_ng_l2cap_le_credit_con_rsp(cmd->aux, ident,
+	    0, 0, 0, 0, result);
+	if (cmd->aux == NULL) {
+		ng_l2cap_free_cmd(cmd);
+		return (ENOBUFS);
+	}
+
+	/* Link command to the queue */
+	ng_l2cap_link_cmd(con, cmd);
+	ng_l2cap_lp_deliver(con);
+
+	return (0);
+} /* ng_l2cap_process_le_credit_con_req */
+
+/*
+ * Process LE Credit Based Connection Response (0x15)
+ *
+ * This is received when we initiated an outgoing LE CoC connection.
+ * Match the response to our pending command by ident, then complete
+ * or fail the channel accordingly.
+ */
+
+static int
+ng_l2cap_process_le_credit_con_rsp(ng_l2cap_con_p con, u_int8_t ident)
+{
+	ng_l2cap_p			 l2cap = con->l2cap;
+	ng_l2cap_le_credit_con_rsp_cp	*cp = NULL;
+	ng_l2cap_cmd_p			 cmd = NULL;
+	u_int16_t			 dcid, mtu, mps, credits, result;
+	int				 error = 0;
+
+	/* Get command parameters */
+	NG_L2CAP_M_PULLUP(con->rx_pkt, sizeof(*cp));
+	if (con->rx_pkt == NULL)
+		return (ENOBUFS);
+
+	cp = mtod(con->rx_pkt, ng_l2cap_le_credit_con_rsp_cp *);
+	dcid = le16toh(cp->dcid);
+	mtu = le16toh(cp->mtu);
+	mps = le16toh(cp->mps);
+	credits = le16toh(cp->initial_credits);
+	result = le16toh(cp->result);
+
+	NG_FREE_M(con->rx_pkt);
+
+	NG_L2CAP_INFO(
+"%s: %s - LE Credit Based Connection Response: dcid=%#x, "
+"mtu=%d, mps=%d, credits=%d, result=%#x\n",
+		__func__, NG_NODE_NAME(l2cap->node),
+		dcid, mtu, mps, credits, result);
+
+	/* Find the pending command by ident */
+	cmd = ng_l2cap_cmd_by_ident(con, ident);
+	if (cmd == NULL) {
+		NG_L2CAP_ERR(
+"%s: %s - unexpected LE Credit Based Connection Response. "
+"No pending command, ident=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node), ident);
+		return (ENOENT);
+	}
+
+	/* Verify channel state */
+	if (cmd->ch == NULL || cmd->ch->state != NG_L2CAP_W4_L2CAP_CON_RSP) {
+		NG_L2CAP_ERR(
+"%s: %s - unexpected LE Credit Based Connection Response. "
+"Invalid channel state, ident=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node), ident);
+		return (0);
+	}
+
+	/* Cancel the command timeout */
+	if ((error = ng_l2cap_command_untimeout(cmd)) != 0)
+		return (error);
+
+	ng_l2cap_unlink_cmd(cmd);
+
+	if (result == NG_L2CAP_LE_COC_SUCCESS) {
+		/* Connection successful -- populate channel */
+		cmd->ch->dcid = dcid;
+		cmd->ch->omtu = mtu;
+		cmd->ch->mps = mps;
+		cmd->ch->credits_remote = credits;
+		cmd->ch->state = NG_L2CAP_OPEN;
+
+		NG_L2CAP_INFO(
+"%s: %s - LE CoC channel open: scid=%#x, dcid=%#x, omtu=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node),
+			cmd->ch->scid, cmd->ch->dcid, cmd->ch->omtu);
+
+		/* Notify upper layer of success */
+		error = ng_l2cap_l2ca_con_rsp(cmd->ch, cmd->token,
+				NG_L2CAP_SUCCESS, 0);
+		if (error != 0)
+			ng_l2cap_free_chan(cmd->ch);
+	} else {
+		/* Connection failed */
+		NG_L2CAP_INFO(
+"%s: %s - LE CoC connection rejected, result=%#x\n",
+			__func__, NG_NODE_NAME(l2cap->node), result);
+
+		error = ng_l2cap_l2ca_con_rsp(cmd->ch, cmd->token,
+				result, 0);
+		ng_l2cap_free_chan(cmd->ch);
+	}
+
+	ng_l2cap_free_cmd(cmd);
+
+	return (error);
+} /* ng_l2cap_process_le_credit_con_rsp */
+
+/*
+ * Process Flow Control Credit (0x16)
+ *
+ * A peer sends credits for a channel we own (identified by CID in the
+ * packet, which is our local SCID).  Look up the channel and add the
+ * credits to our remote credit counter.
+ */
+
+static int
+ng_l2cap_process_flow_control_credit(ng_l2cap_con_p con, u_int8_t ident)
+{
+	ng_l2cap_p			 l2cap = con->l2cap;
+	ng_l2cap_flow_control_credit_cp	*cp = NULL;
+	ng_l2cap_chan_p			 ch = NULL;
+	u_int16_t			 cid, credits;
+
+	/* Get command parameters */
+	NG_L2CAP_M_PULLUP(con->rx_pkt, sizeof(*cp));
+	if (con->rx_pkt == NULL)
+		return (ENOBUFS);
+
+	cp = mtod(con->rx_pkt, ng_l2cap_flow_control_credit_cp *);
+	cid = le16toh(cp->cid);
+	credits = le16toh(cp->credits);
+
+	NG_FREE_M(con->rx_pkt);
+
+	NG_L2CAP_INFO(
+"%s: %s - Flow Control Credit: cid=%#x, credits=%d\n",
+		__func__, NG_NODE_NAME(l2cap->node), cid, credits);
+
+	/*
+	 * Per Core Spec Vol 3 Part A Section 10.1: "If a device
+	 * receives an L2CAP_FLOW_CONTROL_CREDIT_IND packet with
+	 * credit value set to zero, the packet shall be ignored."
+	 */
+	if (credits == 0) {
+		NG_L2CAP_WARN(
+"%s: %s - Flow Control Credit with zero credits for cid=%#x, ignoring\n",
+			__func__, NG_NODE_NAME(l2cap->node), cid);
+		return (0);
+	}
+
+	/*
+	 * Per Core Spec Vol 3 Part A Section 4.24: the CID in the
+	 * Flow Control Credit packet is the sender's Source CID,
+	 * which corresponds to our channel's DCID (Destination CID).
+	 * Look it up by DCID.
+	 */
+	ch = ng_l2cap_chan_by_dcid(l2cap, cid, NG_L2CAP_L2CA_IDTYPE_LE);
+	if (ch == NULL) {
+		NG_L2CAP_WARN(
+"%s: %s - Flow Control Credit for unknown channel cid=%#x, ignoring\n",
+			__func__, NG_NODE_NAME(l2cap->node), cid);
+		return (0);
+	}
+
+	/*
+	 * Per Core Spec Vol 3 Part A Section 10.1: "The device
+	 * receiving the credit packet shall disconnect the L2CAP
+	 * channel if the credit count exceeds 65535."
+	 */
+	if ((u_int32_t)ch->credits_remote + credits > 0xFFFF) {
+		NG_L2CAP_ERR(
+"%s: %s - credit overflow on cid=%#x (had %d, adding %d), disconnecting\n",
+			__func__, NG_NODE_NAME(l2cap->node),
+			cid, ch->credits_remote, credits);
+		ng_l2cap_free_chan(ch);
+	} else {
+		ch->credits_remote += credits;
+	}
+
+	return (0);
+} /* ng_l2cap_process_flow_control_credit */
+
+/*
+ * Process Enhanced Credit Based Connection Request (0x17)
+ *
+ * We don't support any EATT/Enhanced CoC listeners yet, so reject all
+ * incoming requests with SPSM_NOT_SUPPORTED.  The response must echo
+ * one Destination CID (set to 0x0000) per Source CID in the request.
+ *
+ * cmd_length is the L2CAP signaling command length field (already in
+ * host byte order), which includes the fixed header plus the variable
+ * CID list.
+ */
+
+static int
+ng_l2cap_process_credit_con_req(ng_l2cap_con_p con, u_int8_t ident,
+    u_int16_t cmd_length)
+{
+	ng_l2cap_p			 l2cap = con->l2cap;
+	ng_l2cap_credit_con_req_cp	*cp = NULL;
+	ng_l2cap_cmd_p			 cmd = NULL;
+	int				 ncids, i;
+	u_int16_t			 dcids[5];
+
+	/* Validate minimum size: fixed header is 8 bytes + at least 1 CID */
+	if (cmd_length < sizeof(*cp) + sizeof(u_int16_t)) {
+		NG_L2CAP_ERR(
+"%s: %s - Enhanced Credit Based Connection Request too short, len=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node), cmd_length);
+		NG_FREE_M(con->rx_pkt);
+		return (EMSGSIZE);
+	}
+
+	/* Get command parameters (fixed header only) */
+	NG_L2CAP_M_PULLUP(con->rx_pkt, sizeof(*cp));
+	if (con->rx_pkt == NULL)
+		return (ENOBUFS);
+
+	cp = mtod(con->rx_pkt, ng_l2cap_credit_con_req_cp *);
+
+	NG_L2CAP_INFO(
+"%s: %s - Enhanced Credit Based Connection Request: le_psm=%#x, "
+"mtu=%d, mps=%d, credits=%d\n",
+		__func__, NG_NODE_NAME(l2cap->node),
+		le16toh(cp->le_psm), le16toh(cp->mtu),
+		le16toh(cp->mps), le16toh(cp->initial_credits));
+
+	/* Calculate number of Source CIDs */
+	ncids = (cmd_length - sizeof(*cp)) / sizeof(u_int16_t);
+	if (ncids < 1)
+		ncids = 1;
+	if (ncids > 5)
+		ncids = 5;
+
+	NG_FREE_M(con->rx_pkt);
+
+	/* Set all Destination CIDs to 0x0000 (rejection) */
+	for (i = 0; i < ncids; i++)
+		dcids[i] = 0x0000;
+
+	/*
+	 * Reject with SPSM_NOT_SUPPORTED -- we have no EATT/Enhanced CoC
+	 * listeners.  Response: mtu=0, mps=0, credits=0,
+	 * result=SPSM_NOT_SUPPORTED, dcids all zero.
+	 */
+	cmd = ng_l2cap_new_cmd(con, NULL, ident,
+			       NG_L2CAP_CREDIT_CON_RSP, 0);
+	if (cmd == NULL)
+		return (ENOMEM);
+
+	_ng_l2cap_credit_con_rsp(cmd->aux, ident,
+	    0, 0, 0, NG_L2CAP_LE_COC_SPSM_NOT_SUPPORTED, dcids, ncids);
+	if (cmd->aux == NULL) {
+		ng_l2cap_free_cmd(cmd);
+		return (ENOBUFS);
+	}
+
+	/* Link command to the queue */
+	ng_l2cap_link_cmd(con, cmd);
+	ng_l2cap_lp_deliver(con);
+
+	return (0);
+} /* ng_l2cap_process_credit_con_req */
+
+/*
+ * Process Enhanced Credit Based Connection Response (0x18)
+ *
+ * This is received when we initiated an enhanced connection.  Since we
+ * don't initiate Enhanced Credit Based connections yet, just log and
+ * discard.
+ */
+
+static int
+ng_l2cap_process_credit_con_rsp(ng_l2cap_con_p con, u_int8_t ident)
+{
+	ng_l2cap_p			 l2cap = con->l2cap;
+	ng_l2cap_credit_con_rsp_cp	*cp = NULL;
+
+	/* Get command parameters (fixed header) */
+	NG_L2CAP_M_PULLUP(con->rx_pkt, sizeof(*cp));
+	if (con->rx_pkt == NULL)
+		return (ENOBUFS);
+
+	cp = mtod(con->rx_pkt, ng_l2cap_credit_con_rsp_cp *);
+
+	NG_L2CAP_INFO(
+"%s: %s - unexpected Enhanced Credit Based Connection Response: "
+"mtu=%d, mps=%d, credits=%d, result=%#x\n",
+		__func__, NG_NODE_NAME(l2cap->node),
+		le16toh(cp->mtu), le16toh(cp->mps),
+		le16toh(cp->initial_credits), le16toh(cp->result));
+
+	NG_FREE_M(con->rx_pkt);
+
+	return (0);
+} /* ng_l2cap_process_credit_con_rsp */
+
+/*
+ * Process Credit Based Reconfigure Request (0x19)
+ *
+ * We don't support reconfiguration yet.  Respond with result=0x0004
+ * ("Other unacceptable parameters") per Core Spec Vol 3 Part A
+ * Section 4.27.
+ */
+
+#define NG_L2CAP_RECONFIG_UNACCEPTABLE_PARAMS	0x0004
+
+static int
+ng_l2cap_process_credit_reconfig_req(ng_l2cap_con_p con, u_int8_t ident)
+{
+	ng_l2cap_p			 l2cap = con->l2cap;
+	ng_l2cap_credit_reconfig_req_cp	*cp = NULL;
+	ng_l2cap_cmd_p			 cmd = NULL;
+
+	/* Get command parameters (fixed header) */
+	NG_L2CAP_M_PULLUP(con->rx_pkt, sizeof(*cp));
+	if (con->rx_pkt == NULL)
+		return (ENOBUFS);
+
+	cp = mtod(con->rx_pkt, ng_l2cap_credit_reconfig_req_cp *);
+
+	NG_L2CAP_INFO(
+"%s: %s - Credit Based Reconfigure Request: mtu=%d, mps=%d\n",
+		__func__, NG_NODE_NAME(l2cap->node),
+		le16toh(cp->mtu), le16toh(cp->mps));
+
+	NG_FREE_M(con->rx_pkt);
+
+	/*
+	 * Reject with "other unacceptable parameters" -- we don't support
+	 * reconfiguration.
+	 */
+	cmd = ng_l2cap_new_cmd(con, NULL, ident,
+			       NG_L2CAP_CREDIT_RECONFIG_RSP, 0);
+	if (cmd == NULL)
+		return (ENOMEM);
+
+	_ng_l2cap_credit_reconfig_rsp(cmd->aux, ident,
+	    NG_L2CAP_RECONFIG_UNACCEPTABLE_PARAMS);
+	if (cmd->aux == NULL) {
+		ng_l2cap_free_cmd(cmd);
+		return (ENOBUFS);
+	}
+
+	/* Link command to the queue */
+	ng_l2cap_link_cmd(con, cmd);
+	ng_l2cap_lp_deliver(con);
+
+	return (0);
+} /* ng_l2cap_process_credit_reconfig_req */
+
+/*
+ * Process Credit Based Reconfigure Response (0x1A)
+ *
+ * This is received when we initiated a reconfigure.  Since we don't
+ * initiate reconfiguration yet, just log and discard.
+ */
+
+static int
+ng_l2cap_process_credit_reconfig_rsp(ng_l2cap_con_p con, u_int8_t ident)
+{
+	ng_l2cap_p			 l2cap = con->l2cap;
+	ng_l2cap_credit_reconfig_rsp_cp	*cp = NULL;
+
+	/* Get command parameters */
+	NG_L2CAP_M_PULLUP(con->rx_pkt, sizeof(*cp));
+	if (con->rx_pkt == NULL)
+		return (ENOBUFS);
+
+	cp = mtod(con->rx_pkt, ng_l2cap_credit_reconfig_rsp_cp *);
+
+	NG_L2CAP_INFO(
+"%s: %s - unexpected Credit Based Reconfigure Response: result=%#x\n",
+		__func__, NG_NODE_NAME(l2cap->node),
+		le16toh(cp->result));
+
+	NG_FREE_M(con->rx_pkt);
+
+	return (0);
+} /* ng_l2cap_process_credit_reconfig_rsp */
 
 /*
  * Process L2CAP_CommandRej command
@@ -406,6 +1078,7 @@ ng_l2cap_process_cmd_rej(ng_l2cap_con_p con, u_int8_t ident)
 
 		switch (cmd->code) {
 		case NG_L2CAP_CON_REQ:
+		case NG_L2CAP_LE_CREDIT_CON_REQ:
 			ng_l2cap_l2ca_con_rsp(cmd->ch,cmd->token,cp->reason,0);
 			ng_l2cap_free_chan(cmd->ch);
 			break;
@@ -946,8 +1619,13 @@ ng_l2cap_process_discon_req(ng_l2cap_con_p con, u_int8_t ident)
 
 	NG_FREE_M(con->rx_pkt);
 
-	/* Check if we have this channel and it is in valid state */
-	ch = ng_l2cap_chan_by_scid(l2cap, dcid, NG_L2CAP_L2CA_IDTYPE_BREDR);
+	/* Check if we have this channel and it is in valid state.
+	 * Use the connection's link type to determine whether to
+	 * look up a BR/EDR or LE channel — this function is called
+	 * from both CID 0x0001 (BR/EDR) and CID 0x0005 (LE). */
+	ch = ng_l2cap_chan_by_scid(l2cap, dcid,
+	    con->linktype == NG_HCI_LINK_ACL ?
+	    NG_L2CAP_L2CA_IDTYPE_BREDR : NG_L2CAP_L2CA_IDTYPE_LE);
 	if (ch == NULL) {
 		NG_L2CAP_ERR(
 "%s: %s - unexpected L2CAP_DisconnectReq message. " \
@@ -1189,6 +1867,64 @@ ng_l2cap_process_info_req(ng_l2cap_con_p con, u_int8_t ident)
 		_ng_l2cap_info_rsp(cmd->aux, ident, NG_L2CAP_CONNLESS_MTU,
 				NG_L2CAP_SUCCESS, NG_L2CAP_MTU_DEFAULT);
 		break;
+
+	case NG_L2CAP_EXTENDED_FEATURES: {
+		/*
+		 * Respond with a 4-byte Extended Features mask.
+		 * Bit 3 = Fixed Channels supported.
+		 */
+		struct _info_rsp_ext {
+			ng_l2cap_cmd_hdr_t	hdr;
+			ng_l2cap_info_rsp_cp	param;
+			u_int32_t		features;
+		} __attribute__ ((packed))	*c = NULL;
+
+		MGETHDR(cmd->aux, M_NOWAIT, MT_DATA);
+		if (cmd->aux == NULL)
+			break;
+
+		c = mtod(cmd->aux, struct _info_rsp_ext *);
+		c->hdr.code = NG_L2CAP_INFO_RSP;
+		c->hdr.ident = ident;
+		c->hdr.length = htole16(sizeof(c->param) +
+		    sizeof(c->features));
+		c->param.type = htole16(NG_L2CAP_EXTENDED_FEATURES);
+		c->param.result = htole16(NG_L2CAP_SUCCESS);
+		c->features = htole32(0x00000008);
+
+		cmd->aux->m_pkthdr.len = cmd->aux->m_len = sizeof(*c);
+		break;
+	}
+
+	case NG_L2CAP_FIXED_CHANNELS: {
+		/*
+		 * Respond with an 8-byte Fixed Channels bitmap.
+		 * Bit 1 = L2CAP Signaling (CID 0x0001),
+		 * Bit 2 = Connectionless (CID 0x0002).
+		 */
+		struct _info_rsp_fixed {
+			ng_l2cap_cmd_hdr_t	hdr;
+			ng_l2cap_info_rsp_cp	param;
+			u_int8_t		channels[8];
+		} __attribute__ ((packed))	*c = NULL;
+
+		MGETHDR(cmd->aux, M_NOWAIT, MT_DATA);
+		if (cmd->aux == NULL)
+			break;
+
+		c = mtod(cmd->aux, struct _info_rsp_fixed *);
+		c->hdr.code = NG_L2CAP_INFO_RSP;
+		c->hdr.ident = ident;
+		c->hdr.length = htole16(sizeof(c->param) +
+		    sizeof(c->channels));
+		c->param.type = htole16(NG_L2CAP_FIXED_CHANNELS);
+		c->param.result = htole16(NG_L2CAP_SUCCESS);
+		memset(c->channels, 0, sizeof(c->channels));
+		c->channels[0] = 0x06;
+
+		cmd->aux->m_pkthdr.len = cmd->aux->m_len = sizeof(*c);
+		break;
+	}
 
 	default:
 		_ng_l2cap_info_rsp(cmd->aux, ident, type,

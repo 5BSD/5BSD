@@ -349,13 +349,13 @@ bt_devfilter(int s, struct bt_devfilter const *new, struct bt_devfilter *old)
 		memcpy(old->packet_mask, &f.packet_mask,
 			MIN(sizeof(old->packet_mask), sizeof(f.packet_mask)));
 		memcpy(old->event_mask, &f.event_mask,
-			MIN(sizeof(old->event_mask), sizeof(f.packet_mask)));
+			MIN(sizeof(old->event_mask), sizeof(f.event_mask)));
 	}
 
 	if (new != NULL) {
 		memset(&f, 0, sizeof(f));
 		memcpy(&f.packet_mask, new->packet_mask,
-			MIN(sizeof(f.packet_mask), sizeof(new->event_mask)));
+			MIN(sizeof(f.packet_mask), sizeof(new->packet_mask)));
 		memcpy(&f.event_mask, new->event_mask,
 			MIN(sizeof(f.event_mask), sizeof(new->event_mask)));
 

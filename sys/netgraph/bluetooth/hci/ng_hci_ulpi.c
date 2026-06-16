@@ -587,9 +587,28 @@ ng_hci_lp_le_con_req(ng_hci_unit_p unit, item_p item, hook_p hook, int link_type
 	}
 
 	/*
-	 * If we got here then we need to create new ACL connection descriptor
-	 * and submit HCI command. First create new connection desriptor, set
-	 * bdaddr and notification flags.
+	 * The controller only allows one LE_Create_Connection to be
+	 * pending at a time.  Reject if another is already pending.
+	 */
+	{
+		ng_hci_unit_con_p tc;
+		LIST_FOREACH(tc, &unit->con_list, next)
+			if ((tc->link_type == NG_HCI_LINK_LE_PUBLIC ||
+			    tc->link_type == NG_HCI_LINK_LE_RANDOM) &&
+			    tc->state == NG_HCI_CON_W4_CONN_COMPLETE)
+				break;
+		if (tc != NULL) {
+			NG_HCI_WARN(
+"%s: %s - LE connection already pending\n",
+			    __func__, NG_NODE_NAME(unit->node));
+			error = EBUSY;
+			goto out;
+		}
+	}
+
+	/*
+	 * Create new connection descriptor, set bdaddr and
+	 * notification flags.
 	 */
 
 	con = ng_hci_new_con(unit, link_type);
@@ -971,8 +990,17 @@ ng_hci_lp_con_rsp(ng_hci_unit_p unit, item_p item, hook_p hook)
 			break;
 
 	if (con == NULL) {
-		/* Reject for non-existing connection is fine */
-		error = (ep->status == 0)? ENOENT : 0;
+		/*
+		 * For incoming LE connections, the connection is already
+		 * OPEN (set by le_con_compl_common) so the state-based
+		 * search above won't match.  This is normal -- LE does
+		 * not need Accept_Connection.  Suppress the error.
+		 */
+		if (ep->link_type == NG_HCI_LINK_LE_PUBLIC ||
+		    ep->link_type == NG_HCI_LINK_LE_RANDOM)
+			error = 0;
+		else
+			error = (ep->status == 0) ? ENOENT : 0;
 		goto out;
 	}
 
@@ -988,8 +1016,27 @@ ng_hci_lp_con_rsp(ng_hci_unit_p unit, item_p item, hook_p hook)
 	switch (con->state) {
 	case NG_HCI_CON_W4_LP_CON_RSP:
 
-		/* 
-		 * Create HCI command 
+		/*
+		 * LE connections are already established at the
+		 * controller level; do NOT send Accept/Reject
+		 * Connection commands.  Just set notify flags.
+		 */
+		if (con->link_type == NG_HCI_LINK_LE_PUBLIC ||
+		    con->link_type == NG_HCI_LINK_LE_RANDOM) {
+			if (ep->status == 0) {
+				if (hook == unit->acl)
+					con->flags |= NG_HCI_CON_NOTIFY_ACL;
+				else
+					con->flags |= NG_HCI_CON_NOTIFY_SCO;
+
+				con->state = NG_HCI_CON_W4_CONN_COMPLETE;
+			} else
+				ng_hci_free_con(con);
+			break;
+		}
+
+		/*
+		 * BR/EDR: Create HCI Accept/Reject command
 		 */
 
 		MGETHDR(m, M_NOWAIT, MT_DATA);
@@ -997,7 +1044,7 @@ ng_hci_lp_con_rsp(ng_hci_unit_p unit, item_p item, hook_p hook)
 			error = ENOBUFS;
 			goto out;
 		}
-		
+
 		req = mtod(m, struct con_rsp_req *);
 		req->hdr.type = NG_HCI_CMD_PKT;
 
@@ -1122,22 +1169,25 @@ ng_hci_lp_discon_ind(ng_hci_unit_con_p con, int reason)
 				__func__, NG_NODE_NAME(unit->node), unit->acl);
 	}
 
-	if (unit->sco != NULL && NG_HOOK_IS_VALID(unit->sco)) {
-		NG_MKMESSAGE(msg, NGM_HCI_COOKIE, NGM_HCI_LP_DISCON_IND, 
-			sizeof(*ep), M_NOWAIT);
-		if (msg == NULL)
-			return (ENOMEM);
+	/* Notify SCO hook for BR/EDR connections only (ACL disconnect
+	 * implies SCO teardown).  LE has no SCO relationship. */
+	if (con->link_type == NG_HCI_LINK_SCO ||
+	    con->link_type == NG_HCI_LINK_ACL) {
+		if (unit->sco != NULL && NG_HOOK_IS_VALID(unit->sco)) {
+			NG_MKMESSAGE(msg, NGM_HCI_COOKIE,
+			    NGM_HCI_LP_DISCON_IND, sizeof(*ep), M_NOWAIT);
+			if (msg == NULL)
+				return (ENOMEM);
 
-		ep = (ng_hci_lp_discon_ind_ep *) msg->data;
-		ep->reason = reason;
-		ep->link_type = con->link_type;
-		ep->con_handle = con->con_handle;
+			ep = (ng_hci_lp_discon_ind_ep *) msg->data;
+			ep->reason = reason;
+			ep->link_type = con->link_type;
+			ep->con_handle = con->con_handle;
 
-		NG_SEND_MSG_HOOK(error, unit->node, msg, unit->sco, 0);
-	} else
-		NG_HCI_INFO(
-"%s: %s - SCO hook is not connected or not valid, hook=%p\n",
-			__func__, NG_NODE_NAME(unit->node), unit->sco);
+			NG_SEND_MSG_HOOK(error, unit->node, msg,
+			    unit->sco, 0);
+		}
+	}
 
 	return (0);
 } /* ng_hci_lp_discon_ind */

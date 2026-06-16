@@ -29,6 +29,7 @@
 
 #include "att.h"
 #include "ble_util.h"
+#include "hci_util.h"
 
 /*
  * Open an ATT connection to a BLE device.
@@ -41,6 +42,9 @@ att_open(struct att_conn *ac, const uint8_t *addr, uint8_t addr_type)
 
 	memset(ac, 0, sizeof(*ac));
 	ac->fd = -1;
+	ac->eatt_count = 0;
+	for (int i = 0; i < ATT_MAX_EATT_BEARERS; i++)
+		ac->eatt[i].fd = -1;
 
 	fd = socket(PF_BLUETOOTH, SOCK_SEQPACKET, BLUETOOTH_PROTO_L2CAP);
 	if (fd < 0)
@@ -85,7 +89,7 @@ att_open(struct att_conn *ac, const uint8_t *addr, uint8_t addr_type)
 		return (-1);
 	}
 
-	DBG("ATT connect to %02x:%02x:%02x:%02x:%02x:%02x type=%d",
+	LOG_ATT(1, "connect to %02x:%02x:%02x:%02x:%02x:%02x type=%d",
 	    addr[5], addr[4], addr[3], addr[2], addr[1], addr[0], addr_type);
 
 	return (0);
@@ -103,6 +107,9 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *addr,
 
 	memset(ac, 0, sizeof(*ac));
 	ac->fd = -1;
+	ac->eatt_count = 0;
+	for (int i = 0; i < ATT_MAX_EATT_BEARERS; i++)
+		ac->eatt[i].fd = -1;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.l2cap_len = sizeof(sa);
@@ -130,7 +137,7 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *addr,
 		return (-1);
 	}
 
-	DBG("ATT connect via pool fd=%d", fd);
+	LOG_ATT(1, "connect via pool fd=%d", fd);
 
 	return (0);
 }
@@ -138,6 +145,7 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *addr,
 void
 att_close(struct att_conn *ac)
 {
+	att_close_eatt(ac);
 	if (ac->fd >= 0) {
 		close(ac->fd);
 		ac->fd = -1;
@@ -161,14 +169,37 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 	if (n < 0)
 		return (-1);
 
-	n = recv(ac->fd, rsp, rsplen, 0);
-	if (n < 0)
-		return (-1);
+	/*
+	 * Loop until we get the actual response.  Per Core Spec Vol 3
+	 * Part F 3.4.7, Handle Value Notifications can arrive at any
+	 * time, including between a request and its response.  Discard
+	 * notifications and send confirmations for indications.
+	 */
+	for (;;) {
+		n = recv(ac->fd, rsp, rsplen, 0);
+		if (n < 0)
+			return (-1);
 
-	if (n == 0) {
-		warnx("ATT: connection closed by peer");
-		errno = ECONNRESET;
-		return (-1);
+		if (n == 0) {
+			warnx("ATT: connection closed by peer");
+			errno = ECONNRESET;
+			return (-1);
+		}
+
+		uint8_t opcode = ((uint8_t *)rsp)[0];
+
+		/* Skip notifications -- they are unsolicited */
+		if (opcode == ATT_OP_HANDLE_NOTIFY)
+			continue;
+
+		/* Confirm and skip indications */
+		if (opcode == ATT_OP_HANDLE_IND) {
+			uint8_t cfm = ATT_OP_HANDLE_CFM;
+			(void)send(ac->fd, &cfm, 1, 0);
+			continue;
+		}
+
+		break;
 	}
 
 	/* Check for error response */
@@ -197,7 +228,8 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 int
 att_exchange_mtu(struct att_conn *ac, uint16_t client_mtu)
 {
-	uint8_t req[3], rsp[3];
+	uint8_t req[3], rsp[5]; /* 5 bytes to hold ATT_ERROR_RSP */
+	struct att_error ae;
 	ssize_t n;
 
 	if (client_mtu < ATT_DEFAULT_MTU)
@@ -206,12 +238,12 @@ att_exchange_mtu(struct att_conn *ac, uint16_t client_mtu)
 	req[0] = ATT_OP_MTU_REQ;
 	put_le16(req + 1, client_mtu);
 
-	n = att_request(ac, req, sizeof(req), rsp, sizeof(rsp), NULL);
+	n = att_request(ac, req, sizeof(req), rsp, sizeof(rsp), &ae);
 	if (n < 0)
 		return (-1);
 
 	if (n < 3 || rsp[0] != ATT_OP_MTU_RSP) {
-		warnx("ATT: bad MTU response opcode=%02x", rsp[0]);
+		warnx("ATT: bad MTU response opcode=%02x len=%zd", rsp[0], n);
 		errno = EPROTO;
 		return (-1);
 	}
@@ -223,7 +255,7 @@ att_exchange_mtu(struct att_conn *ac, uint16_t client_mtu)
 	if (ac->mtu > ATT_MAX_MTU)
 		ac->mtu = ATT_MAX_MTU;
 
-	DBG("MTU exchange: client=%d server=%d effective=%d",
+	LOG_ATT(1, "MTU exchange: client=%d server=%d effective=%d",
 	    client_mtu, server_mtu, ac->mtu);
 
 	return (0);
@@ -259,7 +291,7 @@ att_read(struct att_conn *ac, uint16_t handle,
 	if (outlen != NULL)
 		*outlen = datalen;
 
-	DBG("ATT read handle=%04x len=%zu", handle, datalen);
+	LOG_ATT(2, "read handle=%04x len=%zu", handle, datalen);
 
 	return (0);
 }
@@ -295,7 +327,7 @@ att_read_blob(struct att_conn *ac, uint16_t handle, uint16_t offset,
 	if (outlen != NULL)
 		*outlen = datalen;
 
-	DBG("ATT read blob handle=%04x offset=%d len=%zu", handle, offset,
+	LOG_ATT(2, "read blob handle=%04x offset=%d len=%zu", handle, offset,
 	    datalen);
 
 	return (0);
@@ -332,7 +364,7 @@ att_write_req(struct att_conn *ac, uint16_t handle,
 		return (-1);
 	}
 
-	DBG("ATT write req handle=%04x len=%zu", handle, len);
+	LOG_ATT(2, "write req handle=%04x len=%zu", handle, len);
 
 	return (0);
 }
@@ -361,7 +393,7 @@ att_write_cmd(struct att_conn *ac, uint16_t handle,
 	if (send(ac->fd, pdu, pdulen, 0) < 0)
 		return (-1);
 
-	DBG("ATT write cmd handle=%04x len=%zu", handle, len);
+	LOG_ATT(2, "write cmd handle=%04x len=%zu", handle, len);
 
 	return (0);
 }
@@ -530,4 +562,170 @@ att_confirm(struct att_conn *ac)
 		return (-1);
 
 	return (0);
+}
+
+/*
+ * Open EATT bearers on an existing ATT connection.
+ * Establishes LE CoC channels on PSM 0x0027 (ATT_EATT_PSM).
+ * Returns number of bearers successfully opened.
+ *
+ * Each connected CoC socket becomes an additional ATT bearer
+ * capable of carrying GATT operations in parallel with the
+ * primary bearer on CID 0x0004.
+ */
+int
+att_open_eatt(struct att_conn *ac, const uint8_t *addr, uint8_t addr_type,
+    int count)
+{
+	int i, opened;
+
+	if (count > ATT_MAX_EATT_BEARERS)
+		count = ATT_MAX_EATT_BEARERS;
+
+	opened = 0;
+	for (i = 0; i < count; i++) {
+		int fd;
+		uint16_t bearer_mtu;
+
+		fd = ble_coc_connect(addr, addr_type, ATT_EATT_PSM, 0);
+		if (fd < 0) {
+			LOG_ATT(1, "EATT: bearer %d connect failed: %s",
+			    i, strerror(errno));
+			break;
+		}
+
+		/*
+		 * EATT bearer MTU comes from L2CAP CoC connection
+		 * parameters, not ATT_EXCHANGE_MTU_REQ which is only
+		 * valid on the unenhanced ATT bearer (Core Spec Vol 3
+		 * Part G §4.2).
+		 */
+		{
+			socklen_t optlen = sizeof(bearer_mtu);
+			if (getsockopt(fd, SOL_L2CAP, SO_L2CAP_OMTU,
+			    &bearer_mtu, &optlen) < 0 ||
+			    bearer_mtu < ATT_DEFAULT_MTU)
+				bearer_mtu = ATT_DEFAULT_MTU;
+		}
+
+		ac->eatt[opened].fd = fd;
+		ac->eatt[opened].mtu = bearer_mtu;
+		ac->eatt[opened].active = true;
+		opened++;
+
+		LOG_ATT(1, "EATT: bearer %d connected, fd=%d mtu=%d",
+		    i, fd, bearer_mtu);
+	}
+
+	ac->eatt_count = opened;
+	LOG_ATT(1, "EATT: %d/%d bearers opened", opened, count);
+
+	return (opened);
+}
+
+/*
+ * Select the best available bearer for a request.
+ * EATT enables ATT multiplexing: if any EATT bearer is idle,
+ * use it; otherwise fall back to the primary bearer.
+ *
+ * Returns the fd to use for sending the next ATT PDU.
+ */
+int
+att_eatt_select_bearer(struct att_conn *ac)
+{
+	int i;
+
+	/*
+	 * Simple round-robin: return the first active EATT bearer.
+	 * A more sophisticated implementation would track in-flight
+	 * requests per bearer, but for basic multiplexing this
+	 * suffices -- the primary bearer handles serialized
+	 * request/response while EATT bearers can be used for
+	 * parallel operations.
+	 */
+	for (i = 0; i < ac->eatt_count; i++) {
+		if (ac->eatt[i].active && ac->eatt[i].fd >= 0)
+			return (ac->eatt[i].fd);
+	}
+
+	/* Fall back to primary bearer */
+	return (ac->fd);
+}
+
+/*
+ * Accept an incoming EATT connection on PSM 0x0027.
+ * Called by the ATT server when a peer initiates an EATT bearer.
+ * listen_fd should be a listening L2CAP SOCK_SEQPACKET socket
+ * bound to PSM 0x0027.
+ *
+ * Returns 0 on success (bearer added), -1 if no room or error.
+ */
+int
+att_eatt_accept(struct att_conn *ac, int listen_fd)
+{
+	struct sockaddr_l2cap sa;
+	socklen_t salen;
+	int fd, idx;
+	struct timeval tv;
+
+	if (ac->eatt_count >= ATT_MAX_EATT_BEARERS) {
+		LOG_ATT(1, "EATT: accept rejected, max bearers reached");
+		errno = ENOSPC;
+		return (-1);
+	}
+
+	salen = sizeof(sa);
+	fd = accept(listen_fd, (struct sockaddr *)&sa, &salen);
+	if (fd < 0) {
+		LOG_ATT(1, "EATT: accept() failed: %s", strerror(errno));
+		return (-1);
+	}
+
+	/* Set receive timeout */
+	tv.tv_sec = 30;
+	tv.tv_usec = 0;
+	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+	idx = ac->eatt_count;
+	ac->eatt[idx].fd = fd;
+	ac->eatt[idx].active = true;
+	ac->eatt_count++;
+
+	/*
+	 * EATT bearer MTU comes from L2CAP CoC connection parameters,
+	 * not ATT_EXCHANGE_MTU_REQ (Core Spec Vol 3 Part G §5.3.1).
+	 */
+	{
+		uint16_t bearer_mtu;
+		socklen_t optlen = sizeof(bearer_mtu);
+		if (getsockopt(fd, SOL_L2CAP, SO_L2CAP_OMTU,
+		    &bearer_mtu, &optlen) == 0 &&
+		    bearer_mtu >= ATT_DEFAULT_MTU)
+			ac->eatt[idx].mtu = bearer_mtu;
+		else
+			ac->eatt[idx].mtu = ATT_DEFAULT_MTU;
+	}
+
+	LOG_ATT(1, "EATT: accepted bearer fd=%d (total=%d)",
+	    fd, ac->eatt_count);
+
+	return (0);
+}
+
+/*
+ * Close all EATT bearers on an ATT connection.
+ */
+void
+att_close_eatt(struct att_conn *ac)
+{
+	int i;
+
+	for (i = 0; i < ac->eatt_count; i++) {
+		if (ac->eatt[i].fd >= 0) {
+			close(ac->eatt[i].fd);
+			ac->eatt[i].fd = -1;
+		}
+		ac->eatt[i].active = false;
+	}
+	ac->eatt_count = 0;
 }

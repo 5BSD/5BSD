@@ -33,6 +33,8 @@
 #ifndef _SERVER_H_
 #define _SERVER_H_
 
+struct provider;
+
 /*
  * File descriptor index entry
  */
@@ -44,7 +46,7 @@ struct fd_idx
 	unsigned	 control  : 1;	/* descriptor is a control socket */
 	unsigned	 priv     : 1;	/* descriptor is privileged */
 	unsigned	 reserved : 1;
-	unsigned	 rsp_cs   : 11; /* response continuation state */
+	unsigned	 rsp_cs   : 16; /* response continuation state */
 	uint16_t	 rsp_size;	/* response size */
 	uint16_t	 rsp_limit;	/* response limit */
 	uint16_t	 omtu;		/* outgoing MTU */
@@ -86,6 +88,8 @@ int32_t	server_prepare_service_attribute_response(server_p srv, int32_t fd);
 int32_t	server_send_service_attribute_response(server_p srv, int32_t fd);
 
 int32_t	server_prepare_service_search_attribute_response(server_p srv, int32_t fd);
+
+int	server_search_uuid(struct provider * const provider, const uint128_t *uuid);
 #define	server_send_service_search_attribute_response \
 	server_send_service_attribute_response
 

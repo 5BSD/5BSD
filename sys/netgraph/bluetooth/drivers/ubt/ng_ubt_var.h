@@ -143,6 +143,9 @@ struct ubt_softc {
 	struct ng_bt_mbufq	sc_scoq;	/* SCO data queue */
 	struct mbuf		*sc_isoc_in_buffer; /* SCO reassembly buffer */
 
+	/* USB transport mode */
+	uint8_t			sc_bulk_serial;	/* Bulk Serialization mode */
+
 	/* Netgraph specific */
 	node_p			sc_node;	/* pointer back to node */
 	hook_p			sc_hook;	/* upstream hook */

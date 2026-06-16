@@ -133,6 +133,16 @@ ng_l2cap_l2ca_con_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 	}else if(ip->idtype == NG_L2CAP_L2CA_IDTYPE_SMP){
 		_ng_l2cap_con_rsp(cmd->aux, cmd->ident, NG_L2CAP_SMP_CID,
 				  NG_L2CAP_SMP_CID, 0, 0);
+	}else if(ip->idtype == NG_L2CAP_L2CA_IDTYPE_LE){
+		/* LE Credit Based Connection (LE CoC) */
+		ch->imtu = NG_L2CAP_LE_COC_LOCAL_MTU;
+		ch->mps = NG_L2CAP_LE_COC_LOCAL_MPS;
+		ch->credits_local = NG_L2CAP_LE_COC_INITIAL_CREDITS;
+		ch->le_psm = ch->psm;
+		cmd->code = NG_L2CAP_LE_CREDIT_CON_REQ;
+		_ng_l2cap_le_credit_con_req(cmd->aux, cmd->ident,
+		    ch->psm, ch->scid, ch->imtu, ch->mps,
+		    ch->credits_local);
 	}else{
 		_ng_l2cap_con_req(cmd->aux, cmd->ident, ch->psm, ch->scid);
 	}
@@ -909,10 +919,31 @@ ng_l2cap_l2ca_write_req(ng_l2cap_p l2cap, struct mbuf *m)
 	if (ch->state != NG_L2CAP_OPEN) {
 		NG_L2CAP_ERR(
 "%s: %s - invalid L2CA Data packet. Invalid channel state, scid=%d, state=%d\n",
-			 __func__, NG_NODE_NAME(l2cap->node), ch->scid, 
+			 __func__, NG_NODE_NAME(l2cap->node), ch->scid,
 			ch->state);
 		error = EHOSTDOWN;
 		goto drop; /* XXX not always - re-configure */
+	}
+
+	/*
+	 * Enforce outgoing MTU for BR/EDR dynamic channels where
+	 * L2CAP Configuration negotiated the peer's MTU.
+	 *
+	 * LE fixed channels (ATT, SMP) do NOT get kernel-enforced
+	 * MTU here — the upper protocol (ATT) manages its own MTU
+	 * via Exchange MTU and may negotiate larger than the initial
+	 * 23-byte default.  The kernel has no visibility into that
+	 * negotiation, so we must not block it.
+	 */
+	if (ch->scid != NG_L2CAP_ATT_CID &&
+	    ch->scid != NG_L2CAP_SMP_CID &&
+	    ch->omtu > 0 && m->m_pkthdr.len > (int)ch->omtu) {
+		NG_L2CAP_ERR(
+"%s: %s - L2CA Data too large, len=%d, omtu=%d, scid=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node),
+			m->m_pkthdr.len, ch->omtu, ch->scid);
+		error = EMSGSIZE;
+		goto drop;
 	}
 
 	/* Create L2CAP command descriptor */
@@ -1058,12 +1089,221 @@ ng_l2cap_l2ca_receive(ng_l2cap_con_p con)
 		goto drop;
 	}
 
+	/*
+	 * LE Credit Based Flow Control SDU reassembly.
+	 *
+	 * Per Core Spec Vol 3 Part A Section 3.4.3: K-frames carry
+	 * segments of an SDU.  The first K-frame has a 2-byte SDU
+	 * Length field prepended; continuation K-frames do not.
+	 * We reassemble the complete SDU before delivering it to
+	 * the upper layer.
+	 */
+	if (ch->idtype == NG_L2CAP_L2CA_IDTYPE_LE && ch->mps > 0) {
+		struct mbuf	*payload;
+		u_int16_t	 payload_len;
+
+		/*
+		 * Per Core Spec Vol 3 Part A Section 10.1: "The device
+		 * shall also disconnect the L2CAP channel if it receives
+		 * a K-frame on an L2CAP channel from the peer device that
+		 * has a credit count of zero."
+		 */
+		if (ch->credits_local == 0) {
+			NG_L2CAP_ERR(
+"%s: %s - K-frame received with zero credits, cid=%d. Disconnecting.\n",
+				__func__, NG_NODE_NAME(l2cap->node), ch->scid);
+			NG_FREE_M(con->rx_pkt);
+			con->rx_pkt = NULL;
+			ng_l2cap_l2ca_discon_ind(ch);
+			ng_l2cap_free_chan(ch);
+			return (EPROTO);
+		}
+
+		/* Decrement local credit for this K-frame */
+		ch->credits_local--;
+
+		/* Strip the L2CAP header to get K-frame payload */
+		payload_len = hdr->length;
+		m_adj(con->rx_pkt, sizeof(*hdr));
+		payload = con->rx_pkt;
+		con->rx_pkt = NULL;
+
+		/* Check K-frame payload does not exceed MPS */
+		if (payload_len > ch->mps) {
+			NG_L2CAP_ERR(
+"%s: %s - K-frame exceeds MPS, len=%d, mps=%d, cid=%d. Disconnecting.\n",
+				__func__, NG_NODE_NAME(l2cap->node),
+				payload_len, ch->mps, ch->scid);
+			NG_FREE_M(payload);
+			NG_FREE_M(ch->rx_sdu);
+			ch->rx_sdu_len = 0;
+			ch->rx_sdu_got = 0;
+			/* Per spec, receiver shall disconnect the channel */
+			ng_l2cap_l2ca_discon_ind(ch);
+			ng_l2cap_free_chan(ch);
+			return (EMSGSIZE);
+		}
+
+		if (ch->rx_sdu == NULL) {
+			u_int16_t	sdu_len;
+
+			/*
+			 * First K-frame of a new SDU.  Extract the
+			 * 2-byte SDU Length field.
+			 */
+			if (payload_len < sizeof(u_int16_t)) {
+				NG_L2CAP_ERR(
+"%s: %s - first K-frame too short for SDU length, len=%d, cid=%d\n",
+					__func__, NG_NODE_NAME(l2cap->node),
+					payload_len, ch->scid);
+				NG_FREE_M(payload);
+				return (EMSGSIZE);
+			}
+
+			NG_L2CAP_M_PULLUP(payload, sizeof(u_int16_t));
+			if (payload == NULL)
+				return (ENOBUFS);
+
+			sdu_len = le16toh(*mtod(payload, u_int16_t *));
+			m_adj(payload, sizeof(u_int16_t));
+			payload_len -= sizeof(u_int16_t);
+
+			/* Validate SDU length against channel MTU */
+			if (sdu_len > ch->imtu) {
+				NG_L2CAP_ERR(
+"%s: %s - SDU length exceeds MTU, sdu_len=%d, imtu=%d, cid=%d. Disconnecting.\n",
+					__func__, NG_NODE_NAME(l2cap->node),
+					sdu_len, ch->imtu, ch->scid);
+				NG_FREE_M(payload);
+				/* Per spec, receiver shall disconnect the channel */
+				ng_l2cap_l2ca_discon_ind(ch);
+				ng_l2cap_free_chan(ch);
+				return (EMSGSIZE);
+			}
+
+			ch->rx_sdu_len = sdu_len;
+			ch->rx_sdu_got = payload_len;
+			ch->rx_sdu = payload;
+
+			/* SDU might fit entirely in one K-frame */
+			if (ch->rx_sdu_got >= ch->rx_sdu_len)
+				goto le_coc_sdu_complete;
+
+			/* More K-frames expected */
+			return (0);
+		} else {
+			/*
+			 * Continuation K-frame -- append to SDU
+			 * being reassembled.
+			 */
+			m_cat(ch->rx_sdu, payload);
+			ch->rx_sdu->m_pkthdr.len += payload_len;
+			ch->rx_sdu_got += payload_len;
+
+			if (ch->rx_sdu_got > ch->rx_sdu_len) {
+				NG_L2CAP_ERR(
+"%s: %s - SDU reassembly overflow, got=%d, expected=%d, cid=%d. Disconnecting.\n",
+					__func__, NG_NODE_NAME(l2cap->node),
+					ch->rx_sdu_got, ch->rx_sdu_len,
+					ch->scid);
+				NG_FREE_M(ch->rx_sdu);
+				ch->rx_sdu_len = 0;
+				ch->rx_sdu_got = 0;
+				/* Per spec, receiver shall disconnect the channel */
+				ng_l2cap_l2ca_discon_ind(ch);
+				ng_l2cap_free_chan(ch);
+				return (EMSGSIZE);
+			}
+
+			if (ch->rx_sdu_got < ch->rx_sdu_len)
+				return (0); /* more to come */
+		}
+
+le_coc_sdu_complete:
+		/*
+		 * Complete SDU received.  Rebuild an L2CAP-style
+		 * packet (hdr + payload) so the upper layer sees
+		 * the same format as for other channel types.
+		 */
+		con->rx_pkt = ng_l2cap_prepend(ch->rx_sdu,
+		    sizeof(ng_l2cap_hdr_t));
+		ch->rx_sdu = NULL;
+		ch->rx_sdu_len = 0;
+		ch->rx_sdu_got = 0;
+
+		/*
+		 * Replenish local credits by sending a Flow Control
+		 * Credit to the peer.  This allows the peer to send
+		 * more K-frames.  We grant back enough credits to
+		 * restore to the initial credit level.
+		 */
+		{
+			u_int16_t replenish;
+
+			replenish = NG_L2CAP_LE_COC_INITIAL_CREDITS -
+			    ch->credits_local;
+			if (replenish > 0) {
+				ng_l2cap_cmd_p	 credit_cmd;
+				struct mbuf	*credit_m;
+
+				credit_cmd = ng_l2cap_new_cmd(con, NULL,
+				    ng_l2cap_get_ident(con),
+				    NG_L2CAP_FLOW_CONTROL_CREDIT, 0);
+				if (credit_cmd != NULL) {
+					struct {
+						ng_l2cap_cmd_hdr_t hdr;
+						ng_l2cap_flow_control_credit_cp param;
+					} __attribute__((packed)) *c;
+
+					MGETHDR(credit_m, M_NOWAIT, MT_DATA);
+					if (credit_m != NULL) {
+						credit_m->m_pkthdr.len =
+						    credit_m->m_len =
+						    sizeof(*c);
+						c = mtod(credit_m,
+						    __typeof__(c));
+						c->hdr.code =
+						    NG_L2CAP_FLOW_CONTROL_CREDIT;
+						c->hdr.ident =
+						    credit_cmd->ident;
+						c->hdr.length = htole16(
+						    sizeof(c->param));
+						c->param.cid =
+						    htole16(ch->scid);
+						c->param.credits =
+						    htole16(replenish);
+
+						credit_cmd->aux = credit_m;
+						ng_l2cap_link_cmd(con,
+						    credit_cmd);
+						ng_l2cap_lp_deliver(con);
+						ch->credits_local +=
+						    replenish;
+					} else {
+						ng_l2cap_free_cmd(
+						    credit_cmd);
+					}
+				}
+			}
+		}
+
+		if (con->rx_pkt == NULL)
+			return (ENOBUFS);
+
+		hdr = mtod(con->rx_pkt, ng_l2cap_hdr_t *);
+		hdr->length = con->rx_pkt->m_pkthdr.len -
+		    sizeof(ng_l2cap_hdr_t);
+		hdr->dcid = ch->scid;
+
+		/* Fall through to deliver the complete SDU */
+	}
+
 	/* Check payload size and channel's MTU */
 	if (hdr->length > ch->imtu) {
 		NG_L2CAP_ERR(
 "%s: %s - invalid L2CAP data packet. " \
 "Packet too big, length=%d, imtu=%d, cid=%d\n",
-			__func__, NG_NODE_NAME(l2cap->node), hdr->length, 
+			__func__, NG_NODE_NAME(l2cap->node), hdr->length,
 			ch->imtu, ch->scid);
 		error = EMSGSIZE;
 		goto drop;

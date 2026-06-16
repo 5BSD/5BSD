@@ -170,7 +170,7 @@ server_prepare_service_attribute_response(server_p srv, int32_t fd)
 	/* Get ServiceRecordHandle and MaximumAttributeByteCount */
 	SDP_GET32(handle, req);
 	SDP_GET16(rsp_limit, req);
-	if (rsp_limit <= 0)
+	if (rsp_limit < 7)
 		return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
 
 	/* Get size of AttributeIDList */

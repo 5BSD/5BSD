@@ -1806,7 +1806,6 @@ ng_btsocket_rfcomm_session_by_addr(bdaddr_p src, bdaddr_p dst)
 
 /*
  * Process incoming RFCOMM frame. Caller must hold s->session_mtx.
- * XXX FIXME check frame length
  */
 
 static int
@@ -1832,6 +1831,15 @@ ng_btsocket_rfcomm_receive_frame(ng_btsocket_rfcomm_session_p s,
 		}
 	}
 
+	/* Validate minimum frame length (header + FCS byte) */
+	if (m0->m_pkthdr.len < sizeof(*hdr) + 1) {
+		NG_BTSOCKET_RFCOMM_ERR(
+"%s: Got short RFCOMM frame, len=%d, min=%d\n",
+			__func__, m0->m_pkthdr.len, (int)(sizeof(*hdr) + 1));
+		NG_FREE_M(m0);
+		return (EMSGSIZE);
+	}
+
 	hdr = mtod(m0, struct rfcomm_frame_hdr *);
 	dlci = RFCOMM_DLCI(hdr->address);
 	type = RFCOMM_TYPE(hdr->control);
@@ -1850,6 +1858,15 @@ ng_btsocket_rfcomm_receive_frame(ng_btsocket_rfcomm_session_p s,
 "%s: Got frame type=%#x, dlci=%d, length=%d, cr=%d, pf=%d, len=%d\n",
 		__func__, type, dlci, length, RFCOMM_CR(hdr->address),
 		RFCOMM_PF(hdr->control), m0->m_pkthdr.len);
+
+	/* After stripping header, we need at least 1 byte for FCS */
+	if (m0->m_pkthdr.len < 1) {
+		NG_BTSOCKET_RFCOMM_ERR(
+"%s: RFCOMM frame too short, no FCS byte, len=%d\n",
+			__func__, m0->m_pkthdr.len);
+		NG_FREE_M(m0);
+		return (EMSGSIZE);
+	}
 
 	/*
 	 * Get FCS (the last byte in the frame)
@@ -2405,7 +2422,9 @@ static int
 ng_btsocket_rfcomm_receive_mcc(ng_btsocket_rfcomm_session_p s, struct mbuf *m0)
 {
 	struct rfcomm_mcc_hdr	*hdr = NULL;
-	u_int8_t		 cr, type, length;
+	u_int8_t		 cr, type;
+	u_int16_t		 length;
+	int			 hdr_size;
 
 	mtx_assert(&s->session_mtx, MA_OWNED);
 
@@ -2418,16 +2437,51 @@ ng_btsocket_rfcomm_receive_mcc(ng_btsocket_rfcomm_session_p s, struct mbuf *m0)
 	hdr = mtod(m0, struct rfcomm_mcc_hdr *);
 	cr = RFCOMM_CR(hdr->type);
 	type = RFCOMM_MCC_TYPE(hdr->type);
-	length = RFCOMM_MCC_LENGTH(hdr->length);
+
+	/* Check EA bit for multi-byte length (TS 07.10 5.4.6.1) */
+	if (RFCOMM_EA(hdr->length)) {
+		/* Single-byte length: EA=1 */
+		length = RFCOMM_MCC_LENGTH(hdr->length);
+		hdr_size = sizeof(*hdr);
+	} else {
+		/* Two-byte length: EA=0, need next byte */
+		u_int8_t	len2;
+
+		if (m0->m_pkthdr.len < sizeof(*hdr) + 1) {
+			NG_BTSOCKET_RFCOMM_ERR(
+"%s: MCC frame too short for 2-byte length\n", __func__);
+			NG_FREE_M(m0);
+			return (EMSGSIZE);
+		}
+		m_copydata(m0, sizeof(*hdr), 1, (caddr_t) &len2);
+		length = (len2 << 7) | (hdr->length >> 1);
+		hdr_size = sizeof(*hdr) + 1;
+	}
 
 	/* Check MCC frame length */
-	if (sizeof(*hdr) + length != m0->m_pkthdr.len) {
+	if (hdr_size + length != m0->m_pkthdr.len) {
 		NG_BTSOCKET_RFCOMM_ERR(
 "%s: Invalid MCC frame length=%d, len=%d\n",
 			__func__, length, m0->m_pkthdr.len);
 		NG_FREE_M(m0);
 
 		return (EMSGSIZE);
+	}
+
+	/*
+	 * For 2-byte length encoding, remove the extra length byte so that
+	 * sub-functions can access MCC payload as (hdr + 1) consistently.
+	 * Compact the type byte forward by overwriting the extra byte, then
+	 * adjust the mbuf start.  Update hdr->length so RFCOMM_MCC_LENGTH()
+	 * returns the correct value for sub-functions that log it.
+	 */
+	if (hdr_size > (int)sizeof(*hdr)) {
+		u_int8_t saved_type = hdr->type;
+
+		m_adj(m0, 1);
+		hdr = mtod(m0, struct rfcomm_mcc_hdr *);
+		hdr->type = saved_type;
+		hdr->length = RFCOMM_MKLEN8(length);
 	}
 
 	switch (type) {
@@ -2922,7 +2976,7 @@ ng_btsocket_rfcomm_set_pn(ng_btsocket_rfcomm_pcb_p pcb, u_int8_t cr,
 	pcb->mtu = le16toh(mtu);
 
 	if (cr) {
-		if (flow_control == 0xf0) {
+		if ((flow_control & 0xf0) == 0xf0) {
 			pcb->flags |= NG_BTSOCKET_RFCOMM_DLC_CFC;
 			pcb->tx_cred = credits;
 		} else {
@@ -2930,7 +2984,7 @@ ng_btsocket_rfcomm_set_pn(ng_btsocket_rfcomm_pcb_p pcb, u_int8_t cr,
 			pcb->tx_cred = 0;
 		}
 	} else {
-		if (flow_control == 0xe0) {
+		if ((flow_control & 0xf0) == 0xe0) {
 			pcb->flags |= NG_BTSOCKET_RFCOMM_DLC_CFC;
 			pcb->tx_cred = credits;
 		} else {

@@ -94,6 +94,31 @@ server_prepare_service_search_response(server_p srv, int32_t fd)
 	if (ssplen <= 0)
 		return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
 
+	/*
+	 * Per Core Spec Vol 3 Part B Section 4.5.1: "The maximum
+	 * number of UUIDs in the ServiceSearchPattern is 12."
+	 * Count UUIDs in the sequence and reject if over the limit.
+	 */
+	{
+		uint8_t *p = (uint8_t *)req;
+		int32_t remain = ssplen, uuid_count = 0;
+
+		while (remain > 0) {
+			uint8_t t = *p++;
+			remain--;
+			uuid_count++;
+			switch (t) {
+			case SDP_DATA_UUID16:  p += 2; remain -= 2; break;
+			case SDP_DATA_UUID32:  p += 4; remain -= 4; break;
+			case SDP_DATA_UUID128: p += 16; remain -= 16; break;
+			default: /* let main loop handle bad types */ goto uuid_count_done;
+			}
+		}
+uuid_count_done:
+		if (uuid_count > 12)
+			return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
+	}
+
 	ptr = (uint8_t *) req + ssplen;
 
 	/* Get MaximumServiceRecordCount */
@@ -193,7 +218,8 @@ server_prepare_service_search_response(server_p srv, int32_t fd)
 			puuid.b[3] = provider->profile->uuid;
 
 			if (memcmp(&uuid, &puuid, sizeof(uuid)) == 0 ||
-			    memcmp(&uuid, &uuid_public_browse_group, sizeof(uuid)) == 0) {
+			    memcmp(&uuid, &uuid_public_browse_group, sizeof(uuid)) == 0 ||
+			    server_search_uuid(provider, &uuid) == 0) {
 				SDP_PUT32(provider->handle, ptr);
 				rcount ++;
 			}

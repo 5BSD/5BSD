@@ -70,7 +70,7 @@ struct sockaddr_hci {
 
 struct ng_btsocket_hci_raw_filter {
 	bitstr_t	bit_decl(packet_mask, 32);
-	bitstr_t	bit_decl(event_mask, (NG_HCI_EVENT_MASK_SIZE * 8));
+	bitstr_t	bit_decl(event_mask, 256);
 };
 
 /*

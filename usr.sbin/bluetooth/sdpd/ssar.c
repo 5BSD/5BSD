@@ -151,7 +151,7 @@ server_search_uuid_sub(uint8_t *buf, uint8_t const * const eob, const uint128_t 
 /*
  * Search a provider for matching UUID in its attributes.
  */
-static int
+int
 server_search_uuid(provider_p const provider, const uint128_t *uuid)
 {
         uint8_t buffer[256];
@@ -161,7 +161,7 @@ server_search_uuid(provider_p const provider, const uint128_t *uuid)
         for (attr = provider->profile->attrs; attr->create != NULL; attr++) {
 
                 len = attr->create(buffer, buffer + sizeof(buffer),
-                    (const uint8_t *)provider->profile, sizeof(*provider->profile));
+                    (const uint8_t *)provider, sizeof(*provider));
                 if (len < 0)
                         continue;
                 if (server_search_uuid_sub(buffer, buffer + len, uuid) == 0)
@@ -222,6 +222,31 @@ server_prepare_service_search_attribute_response(server_p srv, int32_t fd)
 	if (ssplen <= 0)
 		return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
 
+	/*
+	 * Per Core Spec Vol 3 Part B Section 4.7.1: "The maximum
+	 * number of UUIDs in the ServiceSearchPattern is 12."
+	 * Count UUIDs in the sequence and reject if over the limit.
+	 */
+	{
+		uint8_t *p = (uint8_t *)req;
+		int32_t remain = ssplen, uuid_count = 0;
+
+		while (remain > 0) {
+			uint8_t t = *p++;
+			remain--;
+			uuid_count++;
+			switch (t) {
+			case SDP_DATA_UUID16:  p += 2; remain -= 2; break;
+			case SDP_DATA_UUID32:  p += 4; remain -= 4; break;
+			case SDP_DATA_UUID128: p += 16; remain -= 16; break;
+			default: goto uuid_count_done;
+			}
+		}
+uuid_count_done:
+		if (uuid_count > 12)
+			return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
+	}
+
 	sspptr = req;
 	req += ssplen;
 
@@ -230,7 +255,7 @@ server_prepare_service_search_attribute_response(server_p srv, int32_t fd)
 		return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
 
 	SDP_GET16(rsp_limit, req);
-	if (rsp_limit <= 0)
+	if (rsp_limit < 7)
 		return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
 
 	/* Get size of AttributeIDList */

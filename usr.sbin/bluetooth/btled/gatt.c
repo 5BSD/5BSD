@@ -80,13 +80,16 @@ gatt_discover_primary_services(struct att_conn *ac,
 		/* Next iteration starts after the last service's end handle */
 		if (count == 0)
 			break;
-		start = svcs[count - 1].end_handle + 1;
-		if (start == 0)	/* wrapped */
-			break;
+		{
+			uint16_t new_start = svcs[count - 1].end_handle + 1;
+			if (new_start <= start || new_start == 0)
+				break; /* non-advancing or wrapped */
+			start = new_start;
+		}
 	}
 
 	*nsvcs = count;
-	DBG("GATT: discovered %d primary services", count);
+	LOG_GATT(1, "discovered %d primary services", count);
 	return (0);
 }
 
@@ -149,13 +152,16 @@ gatt_discover_characteristics(struct att_conn *ac,
 
 		if (count == 0)
 			break;
-		start = chars[count - 1].decl_handle + 1;
-		if (start == 0)
-			break;
+		{
+			uint16_t new_start = chars[count - 1].decl_handle + 1;
+			if (new_start <= start || new_start == 0)
+				break;
+			start = new_start;
+		}
 	}
 
 	*nchars = count;
-	DBG("GATT: discovered %d characteristics in %04x-%04x", count,
+	LOG_GATT(1, "discovered %d characteristics in %04x-%04x", count,
 	    orig_start, end);
 	return (0);
 }
@@ -219,13 +225,16 @@ gatt_discover_descriptors(struct att_conn *ac,
 
 		if (count == 0)
 			break;
-		start = descs[count - 1].handle + 1;
-		if (start == 0)
-			break;
+		{
+			uint16_t new_start = descs[count - 1].handle + 1;
+			if (new_start <= start || new_start == 0)
+				break;
+			start = new_start;
+		}
 	}
 
 	*ndescs = count;
-	DBG("GATT: discovered %d descriptors in %04x-%04x", count,
+	LOG_GATT(1, "discovered %d descriptors in %04x-%04x", count,
 	    orig_start, end);
 	return (0);
 }

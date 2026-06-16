@@ -51,6 +51,22 @@
 #include <netgraph/bluetooth/l2cap/ng_l2cap_ulpi.h>
 #include <netgraph/bluetooth/l2cap/ng_l2cap_misc.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(bluetooth);
+
+SDT_PROBE_DEFINE3(bluetooth, l2cap, data, send,
+    "uint16_t",		/* connection handle */
+    "uint16_t",		/* CID */
+    "uint16_t"		/* length */
+);
+
+SDT_PROBE_DEFINE3(bluetooth, l2cap, data, recv,
+    "uint16_t",		/* connection handle */
+    "uint16_t",		/* CID */
+    "uint16_t"		/* length */
+);
+
 /******************************************************************************
  ******************************************************************************
  **                 Lower Layer Protocol (HCI) Interface module
@@ -195,28 +211,41 @@ ng_l2cap_lp_con_cfm(ng_l2cap_p l2cap, struct ng_mesg *msg)
 		 */
 		if (ep->link_type == NG_HCI_LINK_LE_PUBLIC ||
 		    ep->link_type == NG_HCI_LINK_LE_RANDOM) {
-			ng_l2cap_chan_p	ch;
+			ng_l2cap_chan_p	ch, att_ch = NULL, smp_ch = NULL;
 
-			ch = ng_l2cap_new_chan(l2cap, con, 0,
-			    NG_L2CAP_L2CA_IDTYPE_ATT);
-			if (ch != NULL) {
-				ch->state = NG_L2CAP_OPEN;
-				ng_l2cap_l2ca_con_ind(ch);
-			} else {
-				NG_L2CAP_ERR(
-"%s: %s - failed to create ATT channel for LE connection\n",
-				    __func__, NG_NODE_NAME(l2cap->node));
+			/*
+			 * Create ATT/SMP channels only if they don't
+			 * already exist on this connection (outgoing
+			 * connections create their channel in
+			 * ng_l2cap_l2ca_con_req).  ng_l2cap_chan_by_scid
+			 * returns NULL for ATT/SMP idtypes, so search
+			 * the channel list directly.
+			 */
+			LIST_FOREACH(ch, &l2cap->chan_list, next) {
+				if (ch->con != con)
+					continue;
+				if (ch->scid == NG_L2CAP_ATT_CID)
+					att_ch = ch;
+				else if (ch->scid == NG_L2CAP_SMP_CID)
+					smp_ch = ch;
 			}
 
-			ch = ng_l2cap_new_chan(l2cap, con, 0,
-			    NG_L2CAP_L2CA_IDTYPE_SMP);
-			if (ch != NULL) {
-				ch->state = NG_L2CAP_OPEN;
-				ng_l2cap_l2ca_con_ind(ch);
-			} else {
-				NG_L2CAP_ERR(
-"%s: %s - failed to create SMP channel for LE connection\n",
-				    __func__, NG_NODE_NAME(l2cap->node));
+			if (att_ch == NULL) {
+				ch = ng_l2cap_new_chan(l2cap, con, 0,
+				    NG_L2CAP_L2CA_IDTYPE_ATT);
+				if (ch != NULL) {
+					ch->state = NG_L2CAP_OPEN;
+					ng_l2cap_l2ca_con_ind(ch);
+				}
+			}
+
+			if (smp_ch == NULL) {
+				ch = ng_l2cap_new_chan(l2cap, con, 0,
+				    NG_L2CAP_L2CA_IDTYPE_SMP);
+				if (ch != NULL) {
+					ch->state = NG_L2CAP_OPEN;
+					ng_l2cap_l2ca_con_ind(ch);
+				}
 			}
 		}
 
@@ -583,20 +612,24 @@ ng_l2cap_lp_send(ng_l2cap_con_p con, u_int16_t dcid, struct mbuf *m0)
 
 	KASSERT((con->tx_pkt == NULL),
 ("%s: %s - another packet pending?!\n", __func__, NG_NODE_NAME(l2cap->node)));
-	KASSERT((l2cap->pkt_size > 0),
-("%s: %s - invalid l2cap->pkt_size?!\n", __func__, NG_NODE_NAME(l2cap->node)));
-
 	/*
 	 * Select the correct HCI ACL packet size for this link type.
 	 * LE connections may have a different (usually smaller) buffer
 	 * than BR/EDR.  If le_pkt_size is 0, the controller shares
 	 * buffers and pkt_size applies to both.
 	 */
-	u_int16_t frag_size = l2cap->pkt_size;
+	u_int16_t frag_size;
 	if ((con->linktype == NG_HCI_LINK_LE_PUBLIC ||
 	    con->linktype == NG_HCI_LINK_LE_RANDOM) &&
 	    l2cap->le_pkt_size > 0)
 		frag_size = l2cap->le_pkt_size;
+	else
+		frag_size = l2cap->pkt_size;
+
+	KASSERT((frag_size > 0),
+("%s: %s - invalid frag_size, pkt_size=%d le_pkt_size=%d\n",
+	    __func__, NG_NODE_NAME(l2cap->node),
+	    l2cap->pkt_size, l2cap->le_pkt_size));
 
 	/* Prepend mbuf with L2CAP header */
 	m0 = ng_l2cap_prepend(m0, sizeof(*l2cap_hdr));
@@ -612,6 +645,10 @@ ng_l2cap_lp_send(ng_l2cap_con_p con, u_int16_t dcid, struct mbuf *m0)
 	l2cap_hdr = mtod(m0, ng_l2cap_hdr_t *);
 	l2cap_hdr->length = htole16(m0->m_pkthdr.len - sizeof(*l2cap_hdr));
 	l2cap_hdr->dcid = htole16(dcid);
+
+	SDT_PROBE3(bluetooth, l2cap, data, send,
+	    con->con_handle, dcid,
+	    (uint16_t)(m0->m_pkthdr.len - sizeof(*l2cap_hdr)));
 
 	/*
 	 * Segment single L2CAP packet according to the HCI layer MTU. Convert

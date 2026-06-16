@@ -441,7 +441,7 @@ ng_btsocket_hci_raw_send_sync_ngmsg(ng_btsocket_hci_raw_pcb_p pcb, char *path,
 
 	NG_FREE_MSG(pcb->msg); /* checks for != NULL */
 
-	return (0);
+	return (error);
 } /* ng_btsocket_hci_raw_send_sync_ngmsg */
 
 /*
@@ -683,7 +683,10 @@ ng_btsocket_hci_raw_filter(ng_btsocket_hci_raw_pcb_p pcb, struct mbuf *m, int d)
 	case NG_HCI_CMD_PKT:
 		if (!(pcb->flags & NG_BTSOCKET_HCI_RAW_PRIVILEGED)) {
 			opcode = le16toh(mtod(m, ng_hci_cmd_pkt_t *)->opcode);
-		
+
+			if (NG_HCI_OGF(opcode) == 0)
+				return (EPERM);
+
 			if (!bit_test(
 ng_btsocket_hci_raw_sec_filter->commands[NG_HCI_OGF(opcode) - 1],
 NG_HCI_OCF(opcode) - 1))
@@ -712,7 +715,10 @@ NG_HCI_OCF(opcode) - 1))
 			if (!bit_test(ng_btsocket_hci_raw_sec_filter->events, event))
 				return (EPERM);
 
-		if (!bit_test(pcb->filter.event_mask, event))
+		/* Per-socket event_mask covers all 256 possible HCI event
+		 * codes (0x01-0xFF mapped to indices 0-254) */
+		if (event >= 255 ||
+		    !bit_test(pcb->filter.event_mask, event))
 			return (EPERM);
 		break;
 

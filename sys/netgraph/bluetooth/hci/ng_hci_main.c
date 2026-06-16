@@ -755,6 +755,19 @@ ng_hci_drv_rcvdata(hook_p hook, item_p item)
 			NG_FWD_ITEM_HOOK(error, item, unit->sco);
 		break;
 
+	case NG_HCI_ISO_DATA_PKT:
+		if ((unit->state & NG_HCI_UNIT_READY) != NG_HCI_UNIT_READY ||
+		    unit->acl == NULL || NG_HOOK_NOT_VALID(unit->acl)) {
+			NG_HCI_INFO(
+"%s: %s - could not forward HCI ISO data packet, state=%#x, hook=%p\n",
+				__func__, NG_NODE_NAME(unit->node),
+				unit->state, unit->acl);
+
+			NG_FREE_ITEM(item);
+		} else
+			NG_FWD_ITEM_HOOK(error, item, unit->acl);
+		break;
+
 	case NG_HCI_EVENT_PKT:
 		NG_HCI_STAT_EVNT_RECV(unit->stat);
 
@@ -764,7 +777,7 @@ ng_hci_drv_rcvdata(hook_p hook, item_p item)
 
 		error = ng_hci_process_event(unit, m);
 		break;
-		
+
 	default:
 		NG_HCI_ALERT(
 "%s: %s - got unknown HCI packet type=%#x\n",

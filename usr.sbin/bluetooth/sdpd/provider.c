@@ -67,13 +67,13 @@ provider_register_sd(int32_t fd)
 	}
 
 	sd->profile = &sd_profile_descriptor;
-	bgd->handle = 0;
+	sd->handle = 0;
 	sd->fd = fd;
 	TAILQ_INSERT_HEAD(&providers, sd, provider_next);
 
 	bgd->profile = &bgd_profile_descriptor;
 	bgd->handle = 1;
-	sd->fd = fd;
+	bgd->fd = fd;
 	TAILQ_INSERT_AFTER(&providers, sd, bgd, provider_next);
 	
 	change_state ++;

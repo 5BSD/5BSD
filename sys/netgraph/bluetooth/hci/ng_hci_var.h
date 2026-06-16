@@ -76,6 +76,10 @@ typedef struct ng_hci_unit_buff {
 	u_int16_t			le_size;  /* max. LE ACL packet size */
 	u_int8_t			le_pkts;  /* LE buffer count */
 	u_int8_t			le_free;  /* LE space available */
+
+	u_int16_t			iso_size; /* max. ISO packet size */
+	u_int8_t			iso_pkts; /* ISO buffer count */
+	u_int8_t			iso_free; /* ISO space available */
 } ng_hci_unit_buff_t;
 
 /* 
@@ -160,6 +164,29 @@ typedef struct ng_hci_unit_buff {
 		(b).le_free = (f); 			\
 		(b).le_size = (s); 			\
 		(b).le_pkts = (n); 			\
+	} while (0)
+
+#define NG_HCI_BUFF_ISO_USE(b, v)			\
+	do {						\
+		if ((b).iso_free >= (v))			\
+			(b).iso_free -= (v);		\
+		else					\
+			(b).iso_free = 0;		\
+	} while (0)
+#define NG_HCI_BUFF_ISO_FREE(b, v) 			\
+	do { 						\
+		(b).iso_free += (v);			\
+		if ((b).iso_free > (b).iso_pkts) 	\
+			(b).iso_free = (b).iso_pkts; 	\
+	} while (0)
+#define NG_HCI_BUFF_ISO_AVAIL(b, v)	(v) = (b).iso_free
+#define NG_HCI_BUFF_ISO_TOTAL(b, v)	(v) = (b).iso_pkts
+#define NG_HCI_BUFF_ISO_SIZE(b, v)	(v) = (b).iso_size
+#define NG_HCI_BUFF_ISO_SET(b, n, s, f) 		\
+	do { 						\
+		(b).iso_free = (f); 			\
+		(b).iso_size = (s); 			\
+		(b).iso_pkts = (n); 			\
 	} while (0)
 
 /* 

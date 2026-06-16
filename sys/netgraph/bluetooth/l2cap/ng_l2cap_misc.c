@@ -355,11 +355,17 @@ ng_l2cap_new_chan(ng_l2cap_p l2cap, ng_l2cap_con_p con, u_int16_t psm, int idtyp
 		ch->con = con;
 		ch->state = NG_L2CAP_CLOSED;
 
-		/* Set MTU and flow control settings to defaults */
-		ch->imtu = NG_L2CAP_MTU_DEFAULT;
+		/* Set MTU to defaults -- LE fixed channels use 23,
+		 * BR/EDR uses 672 */
+		if (idtype == NG_L2CAP_L2CA_IDTYPE_ATT ||
+		    idtype == NG_L2CAP_L2CA_IDTYPE_SMP) {
+			ch->imtu = NG_L2CAP_MTU_LE_MINIMUM;
+			ch->omtu = NG_L2CAP_MTU_LE_MINIMUM;
+		} else {
+			ch->imtu = NG_L2CAP_MTU_DEFAULT;
+			ch->omtu = NG_L2CAP_MTU_DEFAULT;
+		}
 		bcopy(ng_l2cap_default_flow(), &ch->iflow, sizeof(ch->iflow));
-
-		ch->omtu = NG_L2CAP_MTU_DEFAULT;
 		bcopy(ng_l2cap_default_flow(), &ch->oflow, sizeof(ch->oflow));
 
 		ch->flush_timo = NG_L2CAP_FLUSH_TIMO_DEFAULT;
@@ -401,6 +407,29 @@ ng_l2cap_chan_by_scid(ng_l2cap_p l2cap, u_int16_t scid, int idtype)
 } /* ng_l2cap_chan_by_scid */
 
 ng_l2cap_chan_p
+ng_l2cap_chan_by_dcid(ng_l2cap_p l2cap, u_int16_t dcid, int idtype)
+{
+	ng_l2cap_chan_p	ch = NULL;
+
+	if((idtype == NG_L2CAP_L2CA_IDTYPE_ATT)||
+	   (idtype == NG_L2CAP_L2CA_IDTYPE_SMP)){
+		return NULL;
+	}
+
+	LIST_FOREACH(ch, &l2cap->chan_list, next){
+		if((idtype != NG_L2CAP_L2CA_IDTYPE_BREDR)&&
+		   (ch->con->linktype == NG_HCI_LINK_ACL ))
+			continue;
+		if((idtype != NG_L2CAP_L2CA_IDTYPE_LE)&&
+		   (ch->con->linktype != NG_HCI_LINK_ACL ))
+			continue;
+		if (ch->dcid == dcid)
+			break;
+	}
+	return (ch);
+} /* ng_l2cap_chan_by_dcid */
+
+ng_l2cap_chan_p
 ng_l2cap_chan_by_conhandle(ng_l2cap_p l2cap, uint16_t scid,
 			   u_int16_t con_handle)
 {
@@ -437,6 +466,9 @@ ng_l2cap_free_chan(ng_l2cap_chan_p ch)
 
 		f = n;
 	}
+
+	/* Free any partial SDU reassembly buffer */
+	NG_FREE_M(ch->rx_sdu);
 
 	LIST_REMOVE(ch, next);
 

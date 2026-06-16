@@ -166,6 +166,17 @@ typedef struct ng_l2cap_chan {
 	u_int16_t			flush_timo; /* flush timeout */
 	u_int16_t			link_timo;  /* link timeout */
 
+	/* Credit-based flow control (LE CoC) */
+	u_int16_t			mps;            /* max PDU payload size */
+	u_int16_t			credits_local;  /* credits we've given peer */
+	u_int16_t			credits_remote; /* credits peer gave us */
+	u_int16_t			le_psm;         /* SPSM for this channel */
+
+	/* LE CoC SDU reassembly state (receive path) */
+	struct mbuf			*rx_sdu;        /* partial SDU being assembled */
+	u_int16_t			rx_sdu_len;     /* expected total SDU length */
+	u_int16_t			rx_sdu_got;     /* bytes received so far */
+
 	LIST_ENTRY(ng_l2cap_chan)	next;       /* link */
 } ng_l2cap_chan_t;
 typedef ng_l2cap_chan_t *		ng_l2cap_chan_p;
@@ -192,5 +203,10 @@ typedef struct ng_l2cap_cmd {
 	TAILQ_ENTRY(ng_l2cap_cmd)	 next;      /* link */
 } ng_l2cap_cmd_t;
 typedef ng_l2cap_cmd_t *		ng_l2cap_cmd_p;
+
+/* LE CoC local parameters (shared between ulpi and evnt) */
+#define NG_L2CAP_LE_COC_LOCAL_MTU	512
+#define NG_L2CAP_LE_COC_LOCAL_MPS	247
+#define NG_L2CAP_LE_COC_INITIAL_CREDITS	10
 
 #endif /* ndef _NETGRAPH_L2CAP_VAR_H_ */

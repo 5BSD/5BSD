@@ -104,6 +104,7 @@
 #define NG_L2CAP_PSM_SDP		0x0001	/* Service Discovery Protocol */
 #define NG_L2CAP_PSM_RFCOMM		0x0003	/* RFCOMM protocol */
 #define NG_L2CAP_PSM_TCP		0x0005	/* Telephony Control Protocol */
+#define NG_L2CAP_PSM_EATT		0x0027	/* EATT (Enhanced ATT) */
 /* 0x0006 - 0x1000 - reserved for future use */
 
 /* L2CAP Connection response command result codes */
@@ -112,9 +113,10 @@
 #define NG_L2CAP_PSM_NOT_SUPPORTED	0x0002
 #define NG_L2CAP_SEQUIRY_BLOCK		0x0003
 #define NG_L2CAP_NO_RESOURCES		0x0004
+#define NG_L2CAP_INVALID_SOURCE_CID	0x0006
+#define NG_L2CAP_SOURCE_CID_IN_USE	0x0007
 #define NG_L2CAP_TIMEOUT		0xeeee
 #define NG_L2CAP_UNKNOWN		0xffff
-/* 0x0005 - 0xffff - reserved for future use */
 
 /* L2CAP Connection response status codes */
 #define NG_L2CAP_NO_INFO		0x0000
@@ -126,7 +128,8 @@
 #define NG_L2CAP_UNACCEPTABLE_PARAMS	0x0001
 #define NG_L2CAP_REJECT			0x0002
 #define NG_L2CAP_UNKNOWN_OPTION		0x0003
-/* 0x0003 - 0xffff - reserved for future use */
+#define NG_L2CAP_CFG_PENDING		0x0004
+#define NG_L2CAP_CFG_FLOW_SPEC_REJECT	0x0005
 
 /* L2CAP Configuration options */
 #define NG_L2CAP_OPT_CFLAG_BIT		0x0001
@@ -144,7 +147,8 @@
 
 /* L2CAP Information request type codes */
 #define NG_L2CAP_CONNLESS_MTU		0x0001
-/* 0x0002 - 0xffff - reserved for future use */
+#define NG_L2CAP_EXTENDED_FEATURES	0x0002
+#define NG_L2CAP_FIXED_CHANNELS		0x0003
 
 /* L2CAP Information response codes */
 #define NG_L2CAP_NOT_SUPPORTED		0x0001
@@ -318,7 +322,77 @@ typedef struct {
 #define NG_L2CAP_UPDATE_PARAM_ACCEPT 0
 #define NG_L2CAP_UPDATE_PARAM_REJECT 1
 
-//typedef uint16_t update_response;
+/* LE Credit Based Connection (4.2+) */
+#define NG_L2CAP_LE_CREDIT_CON_REQ	0x14
+typedef struct {
+	u_int16_t	le_psm;		/* SPSM */
+	u_int16_t	scid;
+	u_int16_t	mtu;
+	u_int16_t	mps;
+	u_int16_t	initial_credits;
+} __attribute__ ((packed)) ng_l2cap_le_credit_con_req_cp;
+
+#define NG_L2CAP_LE_CREDIT_CON_RSP	0x15
+typedef struct {
+	u_int16_t	dcid;
+	u_int16_t	mtu;
+	u_int16_t	mps;
+	u_int16_t	initial_credits;
+	u_int16_t	result;
+} __attribute__ ((packed)) ng_l2cap_le_credit_con_rsp_cp;
+
+#define NG_L2CAP_FLOW_CONTROL_CREDIT	0x16
+typedef struct {
+	u_int16_t	cid;
+	u_int16_t	credits;
+} __attribute__ ((packed)) ng_l2cap_flow_control_credit_cp;
+
+/* Enhanced Credit Based Connection (5.2+) */
+#define NG_L2CAP_CREDIT_CON_REQ		0x17
+typedef struct {
+	u_int16_t	le_psm;		/* SPSM */
+	u_int16_t	mtu;
+	u_int16_t	mps;
+	u_int16_t	initial_credits;
+	/* followed by 1-5 Source CIDs (u_int16_t each) */
+} __attribute__ ((packed)) ng_l2cap_credit_con_req_cp;
+
+#define NG_L2CAP_CREDIT_CON_RSP		0x18
+typedef struct {
+	u_int16_t	mtu;
+	u_int16_t	mps;
+	u_int16_t	initial_credits;
+	u_int16_t	result;
+	/* followed by 1-5 Destination CIDs (u_int16_t each) */
+} __attribute__ ((packed)) ng_l2cap_credit_con_rsp_cp;
+
+#define NG_L2CAP_CREDIT_RECONFIG_REQ	0x19
+typedef struct {
+	u_int16_t	mtu;
+	u_int16_t	mps;
+	/* followed by 1-5 Destination CIDs (u_int16_t each) */
+} __attribute__ ((packed)) ng_l2cap_credit_reconfig_req_cp;
+
+#define NG_L2CAP_CREDIT_RECONFIG_RSP	0x1a
+typedef struct {
+	u_int16_t	result;
+} __attribute__ ((packed)) ng_l2cap_credit_reconfig_rsp_cp;
+
+/* LE CoC result codes */
+#define NG_L2CAP_LE_COC_SUCCESS			0x0000
+#define NG_L2CAP_LE_COC_SPSM_NOT_SUPPORTED	0x0002
+#define NG_L2CAP_LE_COC_NO_RESOURCES		0x0004
+#define NG_L2CAP_LE_COC_INSUFF_AUTHEN		0x0005
+#define NG_L2CAP_LE_COC_INSUFF_AUTHOR		0x0006
+#define NG_L2CAP_LE_COC_INSUFF_ENC_KEY		0x0007
+#define NG_L2CAP_LE_COC_INSUFF_ENC		0x0008
+#define NG_L2CAP_LE_COC_INVALID_SCID		0x0009
+#define NG_L2CAP_LE_COC_SCID_IN_USE		0x000a
+#define NG_L2CAP_LE_COC_UNACCEPTABLE_PARAMS	0x000b
+#define NG_L2CAP_LE_COC_INVALID_PARAMS		0x000c
+#define NG_L2CAP_LE_COC_PENDING_NO_INFO		0x000d
+#define NG_L2CAP_LE_COC_PENDING_AUTHEN		0x000e
+#define NG_L2CAP_LE_COC_PENDING_AUTHOR		0x000f
 /**************************************************************************
  **************************************************************************
  **        Upper layer protocol interface. L2CA_xxx messages 

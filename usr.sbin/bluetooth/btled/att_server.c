@@ -97,6 +97,29 @@ attdb_add_service(struct att_db *db, uint16_t uuid16)
 }
 
 /*
+ * Add a Primary Service declaration with a 128-bit UUID.
+ */
+uint16_t
+attdb_add_service128(struct att_db *db, const uint8_t uuid128[16])
+{
+	struct att_attr *a;
+	uint8_t *v;
+
+	a = attdb_alloc(db);
+	if (a == NULL)
+		return (0);
+	a->uuid16 = GATT_UUID_PRIMARY_SERVICE;
+	a->perms = ATT_PERM_READ;
+	v = val_alloc(db, 16);
+	if (v == NULL)
+		return (0);
+	memcpy(v, uuid128, 16);
+	a->value = v;
+	a->value_len = 16;
+	return (a->handle);
+}
+
+/*
  * Add a Characteristic declaration (UUID 0x2803) + value attribute.
  * Returns the value handle.
  */
@@ -127,6 +150,52 @@ attdb_add_characteristic(struct att_db *db, uint16_t uuid16,
 	if (val_attr == NULL)
 		return (0);
 	val_attr->uuid16 = uuid16;
+	val_attr->perms = perms;
+	if (len > 0) {
+		vv = val_alloc(db, len);
+		if (vv == NULL)
+			return (0);
+		memcpy(vv, value, len);
+		val_attr->value = vv;
+		val_attr->value_len = len;
+		val_attr->value_maxlen = len;
+	}
+	return (val_attr->handle);
+}
+
+/*
+ * Add a Characteristic declaration + value attribute with a 128-bit UUID.
+ * The declaration value is [properties(1), value_handle(2), uuid128(16)] = 19.
+ * Returns the value handle.
+ */
+uint16_t
+attdb_add_characteristic128(struct att_db *db, const uint8_t uuid128[16],
+    uint8_t props, uint8_t perms, const void *value, uint16_t len)
+{
+	struct att_attr *decl, *val_attr;
+	uint8_t *dv, *vv;
+
+	/* Declaration: [properties(1), value_handle(2), uuid128(16)] = 19 */
+	decl = attdb_alloc(db);
+	if (decl == NULL)
+		return (0);
+	decl->uuid16 = GATT_UUID_CHARACTERISTIC;
+	decl->perms = ATT_PERM_READ;
+	dv = val_alloc(db, 19);
+	if (dv == NULL)
+		return (0);
+	dv[0] = props;
+	put_le16(dv + 1, db->next_handle); /* value handle = next */
+	memcpy(dv + 3, uuid128, 16);
+	decl->value = dv;
+	decl->value_len = 19;
+
+	/* Value attribute — uses 128-bit UUID */
+	val_attr = attdb_alloc(db);
+	if (val_attr == NULL)
+		return (0);
+	val_attr->uuid16 = 0;
+	memcpy(val_attr->uuid128, uuid128, 16);
 	val_attr->perms = perms;
 	if (len > 0) {
 		vv = val_alloc(db, len);
@@ -230,7 +299,7 @@ handle_mtu_req(struct att_conn *ac, const uint8_t *pdu, size_t len)
 
 	if (len < 3)
 		return att_send_error(ac, ATT_OP_MTU_REQ, 0,
-		    ATT_ERR_INVALID_PDU);
+		    ATT_ERR_REQ_NOT_SUPPORTED);
 
 	client_mtu = get_le16(pdu + 1);
 	server_mtu = ATT_MAX_MTU;
@@ -244,7 +313,7 @@ handle_mtu_req(struct att_conn *ac, const uint8_t *pdu, size_t len)
 	if (ac->mtu < ATT_DEFAULT_MTU)
 		ac->mtu = ATT_DEFAULT_MTU;
 
-	DBG("ATT srv: MTU req client=%d, negotiated=%d", client_mtu, ac->mtu);
+	LOG_ATT(1, "srv: MTU req client=%d, negotiated=%d", client_mtu, ac->mtu);
 
 	return (0);
 }
@@ -344,8 +413,10 @@ handle_read_by_group_type(struct att_conn *ac, struct att_db *db,
 		return att_send_error(ac, ATT_OP_READ_BY_GROUP_TYPE_REQ,
 		    start, ATT_ERR_INVALID_HANDLE);
 
-	/* Only Primary Service (0x2800) is a grouping type */
-	if (uuid16 != GATT_UUID_PRIMARY_SERVICE)
+	/* Primary (0x2800) and Secondary (0x2801) are valid grouping types
+	 * per Core Spec Vol 3 Part G Section 2.5.3 */
+	if (uuid16 != GATT_UUID_PRIMARY_SERVICE &&
+	    uuid16 != GATT_UUID_SECONDARY_SERVICE)
 		return att_send_error(ac, ATT_OP_READ_BY_GROUP_TYPE_REQ,
 		    start, ATT_ERR_UNSUPPORTED_GROUP_TYPE);
 
@@ -356,15 +427,26 @@ handle_read_by_group_type(struct att_conn *ac, struct att_db *db,
 		struct att_attr *a = &db->attrs[i];
 		uint16_t grp_end;
 
-		if (a->uuid16 != GATT_UUID_PRIMARY_SERVICE)
+		if (a->uuid16 != uuid16)
 			continue;
 		if (a->handle < start || a->handle > end)
 			continue;
 
-		/* Find end of this service group */
+		/* Check read permission (spec Vol 3 Part F §3.4.4.9) */
+		if (!(a->perms & (ATT_PERM_READ | ATT_PERM_READ_ENCRYPT))) {
+			if (entry_len == 0)
+				return att_send_error(ac,
+				    ATT_OP_READ_BY_GROUP_TYPE_REQ,
+				    a->handle, ATT_ERR_READ_NOT_PERMITTED);
+			break;
+		}
+
+		/* Find end of this service group — ends before the
+		 * next service declaration (Primary or Secondary) */
 		grp_end = db->attrs[db->count - 1].handle;
 		for (int j = i + 1; j < db->count; j++) {
-			if (db->attrs[j].uuid16 == GATT_UUID_PRIMARY_SERVICE) {
+			if (db->attrs[j].uuid16 == GATT_UUID_PRIMARY_SERVICE ||
+			    db->attrs[j].uuid16 == GATT_UUID_SECONDARY_SERVICE) {
 				grp_end = db->attrs[j - 1].handle;
 				break;
 			}
@@ -405,6 +487,8 @@ handle_read_by_type(struct att_conn *ac, struct att_db *db,
     const uint8_t *pdu, size_t len)
 {
 	uint16_t start, end, uuid16;
+	uint8_t uuid128[16];
+	bool use_uuid128 = false;
 	uint8_t rsp[ATT_MAX_MTU];
 	int pos, entry_len = 0;
 
@@ -416,17 +500,22 @@ handle_read_by_type(struct att_conn *ac, struct att_db *db,
 	start = get_le16(pdu + 1);
 	end = get_le16(pdu + 3);
 
-	/* Extract 16-bit UUID; accept 128-bit Bluetooth Base UUID form */
+	/* Extract UUID; accept both 16-bit and 128-bit forms */
 	if (len == 21) {
 		static const uint8_t base_le[12] = {
 			0xFB, 0x34, 0x9B, 0x5F, 0x80, 0x00,
 			0x00, 0x80, 0x00, 0x10, 0x00, 0x00
 		};
-		if (memcmp(pdu + 5, base_le, 12) != 0 ||
-		    pdu[19] != 0x00 || pdu[20] != 0x00)
-			return att_send_error(ac, ATT_OP_READ_BY_TYPE_REQ,
-			    start, ATT_ERR_ATTR_NOT_FOUND);
-		uuid16 = get_le16(pdu + 17);
+		if (memcmp(pdu + 5, base_le, 12) == 0 &&
+		    pdu[19] == 0x00 && pdu[20] == 0x00) {
+			/* Bluetooth Base UUID — extract 16-bit short form */
+			uuid16 = get_le16(pdu + 17);
+		} else {
+			/* Vendor 128-bit UUID */
+			uuid16 = 0;
+			memcpy(uuid128, pdu + 5, 16);
+			use_uuid128 = true;
+		}
 	} else {
 		uuid16 = get_le16(pdu + 5);
 	}
@@ -444,8 +533,15 @@ handle_read_by_type(struct att_conn *ac, struct att_db *db,
 
 		if (a->handle < start || a->handle > end)
 			continue;
-		if (a->uuid16 != uuid16)
-			continue;
+		/* Match by 128-bit vendor UUID or 16-bit UUID */
+		if (use_uuid128) {
+			if (a->uuid16 != 0 ||
+			    memcmp(a->uuid128, uuid128, 16) != 0)
+				continue;
+		} else {
+			if (a->uuid16 != uuid16)
+				continue;
+		}
 
 		/* Check read permission (spec Vol 3 Part F 3.4.4.1) */
 		if (!(a->perms & (ATT_PERM_READ | ATT_PERM_READ_ENCRYPT))) {
@@ -590,9 +686,18 @@ handle_write(struct att_conn *ac, struct att_db *db,
 	}
 
 	memcpy(a->value, pdu + 3, vlen);
-	a->value_len = vlen;
+	/*
+	 * Per spec Vol 3 Part F §3.4.5.1: for fixed-length attributes,
+	 * a partial write updates only the written octets; all other
+	 * octets shall be unchanged, and the stored length should not
+	 * shrink.  Only grow value_len, never shrink it — this ensures
+	 * a 1-byte write to a 2-byte CCCD preserves the second byte
+	 * and subsequent reads return the full attribute.
+	 */
+	if (vlen > a->value_len)
+		a->value_len = vlen;
 
-	DBG("ATT srv: write handle=%04x vlen=%d%s", handle, vlen,
+	LOG_ATT(2, "srv: write handle=%04x vlen=%d%s", handle, vlen,
 	    with_response ? "" : " (cmd)");
 
 	if (with_response) {
@@ -614,7 +719,7 @@ att_server_handle(struct att_conn *ac, struct att_db *db,
 	if (len == 0)
 		return (-1);
 
-	DBG("ATT srv: opcode=%02x len=%zu", pdu[0], len);
+	LOG_ATT(2, "srv: opcode=%02x len=%zu", pdu[0], len);
 
 	switch (pdu[0]) {
 	case ATT_OP_MTU_REQ:
@@ -634,6 +739,11 @@ att_server_handle(struct att_conn *ac, struct att_db *db,
 	case ATT_OP_WRITE_CMD:
 		return handle_write(ac, db, pdu, len, false);
 	default:
+		/* Commands (bit 6 set) must be silently ignored,
+		 * not answered with an error response (Core Spec
+		 * Vol 3 Part F Section 3.3.1 / 3.4.1.1) */
+		if (pdu[0] & 0x40)
+			return (0);
 		return att_send_error(ac, pdu[0], 0,
 		    ATT_ERR_REQ_NOT_SUPPORTED);
 	}

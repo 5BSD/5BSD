@@ -1,9 +1,9 @@
 PROG=	btled
-SRCS=	btled.c att.c att_server.c gatt.c hci_util.c smp.c
+SRCS=	btled.c att.c att_server.c gatt.c hci_util.c hci_log.c smp.c
 
 CFLAGS+=	-I${SRCTOP}/sys
 
-LIBADD=	bluetooth crypto
+LIBADD=	bluetooth crypto util
 
 MAN=	btled.8
 

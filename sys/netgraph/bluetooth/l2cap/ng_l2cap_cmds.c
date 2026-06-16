@@ -100,7 +100,10 @@ ng_l2cap_con_wakeup(ng_l2cap_con_p con)
 		 * there is nothing we can do anyway.
 		 */
 
-		(void) ng_l2cap_lp_send(con, NG_L2CAP_SIGNAL_CID, m);
+		(void) ng_l2cap_lp_send(con,
+				(con->linktype == NG_HCI_LINK_ACL) ?
+				NG_L2CAP_SIGNAL_CID :
+				NG_L2CAP_LESIGNAL_CID, m);
 		ng_l2cap_unlink_cmd(cmd);
 		ng_l2cap_free_cmd(cmd);
 		break;
@@ -160,7 +163,9 @@ ng_l2cap_con_wakeup(ng_l2cap_con_p con)
 		break;
 
 	case NG_L2CAP_DISCON_REQ:
-		error = ng_l2cap_lp_send(con, NG_L2CAP_SIGNAL_CID, m);
+		error = ng_l2cap_lp_send(con,
+		    (con->linktype == NG_HCI_LINK_ACL) ?
+		    NG_L2CAP_SIGNAL_CID : NG_L2CAP_LESIGNAL_CID, m);
 		ng_l2cap_l2ca_discon_rsp(cmd->ch, cmd->token,
 			(error == 0)? NG_L2CAP_SUCCESS : NG_L2CAP_NO_RESOURCES);
 		if (error != 0)
@@ -204,6 +209,166 @@ ng_l2cap_con_wakeup(ng_l2cap_con_p con)
 			else
                 		mtod(m, ng_l2cap_clt_hdr_t *)->psm =
 							htole16(cmd->ch->psm);
+		} else if (cmd->ch->idtype == NG_L2CAP_L2CA_IDTYPE_LE &&
+			   cmd->ch->mps > 0) {
+			/*
+			 * LE Credit Based Flow Control mode:
+			 * Segment the SDU into K-frames per Core Spec
+			 * Vol 3 Part A Section 3.4.3.  The first K-frame
+			 * carries a 2-byte SDU Length field; continuation
+			 * K-frames do not.  Each K-frame consumes one
+			 * credit from the remote peer's allowance.
+			 *
+			 * ng_l2cap_lp_send() asserts con->tx_pkt == NULL,
+			 * so after each call we save the resulting ACL
+			 * chain and restore it at the end.
+			 */
+			u_int16_t	sdu_len = m->m_pkthdr.len;
+			u_int16_t	mps = cmd->ch->mps;
+			u_int16_t	first_payload;
+			struct mbuf	*frag;
+			struct mbuf	*saved_tx = NULL;
+			struct mbuf	*saved_last = NULL;
+
+			/* Check we have at least one credit */
+			if (cmd->ch->credits_remote == 0) {
+				NG_FREE_M(m);
+				error = ENOBUFS;
+				goto le_coc_write_done;
+			}
+
+			/*
+			 * First K-frame: SDU Length (2 bytes) + data.
+			 * Payload (after L2CAP header) must be <= MPS.
+			 * So first frame carries at most MPS-2 bytes of
+			 * SDU data.
+			 */
+			first_payload = (sdu_len > (mps - 2)) ?
+			    (mps - 2) : sdu_len;
+
+			/* Split off the remainder after first_payload */
+			if (m->m_pkthdr.len > first_payload) {
+				frag = m_split(m, first_payload, M_NOWAIT);
+				if (frag == NULL) {
+					NG_FREE_M(m);
+					error = ENOBUFS;
+					goto le_coc_write_done;
+				}
+			} else
+				frag = NULL;
+
+			/* Prepend SDU Length to first fragment */
+			m = ng_l2cap_prepend(m, sizeof(u_int16_t));
+			if (m == NULL) {
+				NG_FREE_M(frag);
+				error = ENOBUFS;
+				goto le_coc_write_done;
+			}
+			*mtod(m, u_int16_t *) = htole16(sdu_len);
+
+			/* Send first K-frame */
+			cmd->ch->credits_remote--;
+			error = ng_l2cap_lp_send(con, cmd->ch->dcid, m);
+			m = NULL;
+			if (error != 0) {
+				NG_FREE_M(frag);
+				goto le_coc_write_done;
+			}
+
+			/*
+			 * Save the ACL chain from the first K-frame.
+			 * ng_l2cap_lp_send will assert tx_pkt == NULL
+			 * on the next call.
+			 */
+			saved_tx = con->tx_pkt;
+			con->tx_pkt = NULL;
+
+			/* Find the last fragment in saved chain */
+			for (saved_last = saved_tx;
+			     saved_last != NULL &&
+			     saved_last->m_nextpkt != NULL;
+			     saved_last = saved_last->m_nextpkt)
+				;
+
+			/* Send continuation K-frames */
+			while (frag != NULL && error == 0) {
+				struct mbuf *next_frag;
+
+				if (cmd->ch->credits_remote == 0) {
+					/*
+					 * Credit exhaustion mid-SDU: we
+					 * already sent partial K-frames
+					 * that the peer cannot reassemble.
+					 * Disconnect the channel per spec
+					 * Vol 3 Part A §10.1.
+					 *
+					 * Report the error first while ch
+					 * is still valid, then disconnect
+					 * and clean up fully before return.
+					 */
+					NG_FREE_M(frag);
+					con->tx_pkt = saved_tx;
+					ng_l2cap_l2ca_write_rsp(cmd->ch,
+					    cmd->token,
+					    NG_L2CAP_NO_RESOURCES,
+					    length);
+					ng_l2cap_l2ca_discon_ind(cmd->ch);
+					ng_l2cap_free_chan(cmd->ch);
+					ng_l2cap_unlink_cmd(cmd);
+					ng_l2cap_free_cmd(cmd);
+					return;
+				}
+
+				if (frag->m_pkthdr.len > mps) {
+					next_frag = m_split(frag, mps,
+					    M_NOWAIT);
+					if (next_frag == NULL) {
+						NG_FREE_M(frag);
+						error = ENOBUFS;
+						break;
+					}
+				} else
+					next_frag = NULL;
+
+				cmd->ch->credits_remote--;
+				error = ng_l2cap_lp_send(con,
+				    cmd->ch->dcid, frag);
+
+				if (error == 0) {
+					/*
+					 * Append this K-frame's ACL
+					 * chain to the saved chain.
+					 */
+					if (saved_last != NULL)
+						saved_last->m_nextpkt =
+						    con->tx_pkt;
+					else
+						saved_tx = con->tx_pkt;
+					con->tx_pkt = NULL;
+
+					/* Advance saved_last */
+					if (saved_last == NULL)
+						saved_last = saved_tx;
+					while (saved_last != NULL &&
+					    saved_last->m_nextpkt != NULL)
+						saved_last =
+						    saved_last->m_nextpkt;
+				}
+
+				frag = next_frag;
+			}
+
+			/* Restore the combined ACL chain */
+			con->tx_pkt = saved_tx;
+
+le_coc_write_done:
+			ng_l2cap_l2ca_write_rsp(cmd->ch, cmd->token,
+			    (error == 0) ? NG_L2CAP_SUCCESS :
+			    NG_L2CAP_NO_RESOURCES, length);
+
+			ng_l2cap_unlink_cmd(cmd);
+			ng_l2cap_free_cmd(cmd);
+			break;
 		}
 
 		if (error == 0)
@@ -221,9 +386,42 @@ ng_l2cap_con_wakeup(ng_l2cap_con_p con)
 		ng_l2cap_unlink_cmd(cmd);
 		ng_l2cap_free_cmd(cmd);
 		break;
+
+	case NG_L2CAP_LE_CREDIT_CON_REQ:
+		error = ng_l2cap_lp_send(con, NG_L2CAP_LESIGNAL_CID, m);
+		if (error != 0) {
+			ng_l2cap_l2ca_con_rsp(cmd->ch, cmd->token,
+				NG_L2CAP_NO_RESOURCES, 0);
+			ng_l2cap_free_chan(cmd->ch);
+		} else
+			ng_l2cap_command_timeout(cmd,
+				bluetooth_l2cap_rtx_timeout());
+		break;
+
+	case NG_L2CAP_LE_CREDIT_CON_RSP:
+		(void) ng_l2cap_lp_send(con, NG_L2CAP_LESIGNAL_CID, m);
+		ng_l2cap_unlink_cmd(cmd);
+		ng_l2cap_free_cmd(cmd);
+		break;
+
+	case NG_L2CAP_FLOW_CONTROL_CREDIT:
+	case NG_L2CAP_CREDIT_CON_RSP:
+	case NG_L2CAP_CREDIT_RECONFIG_REQ:
+	case NG_L2CAP_CREDIT_RECONFIG_RSP:
+		/*
+		 * Codes 0x16-0x1A are valid on both CID 0x0001 (BR/EDR)
+		 * and CID 0x0005 (LE) per spec Table 4.2.  Select the
+		 * correct signaling CID based on the link type.
+		 */
+		(void) ng_l2cap_lp_send(con,
+		    (con->linktype == NG_HCI_LINK_ACL) ?
+		    NG_L2CAP_SIGNAL_CID : NG_L2CAP_LESIGNAL_CID, m);
+		ng_l2cap_unlink_cmd(cmd);
+		ng_l2cap_free_cmd(cmd);
+		break;
+
 	case NG_L2CAP_CMD_PARAM_UPDATE_REQUEST:
 		  /*TBD.*/
-	/* XXX FIXME add other commands */
 	default:
 		panic(
 "%s: %s - unknown command code=%d\n",
@@ -270,9 +468,11 @@ ng_l2cap_con_fail(ng_l2cap_con_p con, u_int16_t result)
 		case NG_L2CAP_ECHO_RSP:
 		case NG_L2CAP_INFO_RSP:
 		case NG_L2CAP_CMD_PARAM_UPDATE_RESPONSE:
+		case NG_L2CAP_LE_CREDIT_CON_RSP:
 			break;
 
 		case NG_L2CAP_CON_REQ:
+		case NG_L2CAP_LE_CREDIT_CON_REQ:
 			ng_l2cap_l2ca_con_rsp(cmd->ch, cmd->token, result, 0);
 			break;
 
@@ -373,8 +573,9 @@ ng_l2cap_process_command_timeout(node_p node, hook_p hook, void *arg1, int arg2)
 
 	switch (cmd->code) {
  	case NG_L2CAP_CON_REQ:
+	case NG_L2CAP_LE_CREDIT_CON_REQ:
 		ng_l2cap_l2ca_con_rsp(cmd->ch, cmd->token, NG_L2CAP_TIMEOUT, 0);
-		ng_l2cap_free_chan(cmd->ch); 
+		ng_l2cap_free_chan(cmd->ch);
 		break;
 
 	case NG_L2CAP_CFG_REQ:

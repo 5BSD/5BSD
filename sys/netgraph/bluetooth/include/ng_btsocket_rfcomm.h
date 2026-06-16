@@ -43,8 +43,8 @@
 
 /* XXX FIXME this does not belong here */
 
-#define RFCOMM_DEFAULT_MTU		667
-#define RFCOMM_MAX_MTU			1024
+#define RFCOMM_DEFAULT_MTU		127
+#define RFCOMM_MAX_MTU			32767
 
 #define RFCOMM_DEFAULT_CREDITS		7
 #define RFCOMM_MAX_CREDITS		40
@@ -134,11 +134,11 @@ struct rfcomm_cmd_hdr
 	u_int8_t	fcs;
 } __attribute__ ((packed));
                 
-/* RFCOMM MCC command header */
+/* RFCOMM MCC command header (length may extend to 2 bytes if EA=0) */
 struct rfcomm_mcc_hdr
 {
 	u_int8_t	type;
-	u_int8_t	length; /* XXX FIXME Can actual size be 2 bytes?? */
+	u_int8_t	length; /* First length byte; if EA=0, second byte follows */
 } __attribute__ ((packed));
 
 /* RFCOMM MSC command */
@@ -208,9 +208,9 @@ struct rfcomm_mcc_pn
 /* RPN macros */
 #define RFCOMM_RPN_DATA_BITS(line)	((line) & 0x3)
 #define RFCOMM_RPN_STOP_BITS(line)	(((line) >> 2) & 0x1)
-#define RFCOMM_RPN_PARITY(line)		(((line) >> 3) & 0x3)
+#define RFCOMM_RPN_PARITY(line)		(((line) >> 3) & 0x7)
 #define RFCOMM_MKRPN_LINE_SETTINGS(data, stop, parity) \
-	(((data) & 0x3) | (((stop) & 0x1) << 2) | (((parity) & 0x3) << 3))
+	(((data) & 0x3) | (((stop) & 0x1) << 2) | (((parity) & 0x7) << 3))
 
 /*****************************************************************************
  *****************************************************************************

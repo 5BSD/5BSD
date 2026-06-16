@@ -8,6 +8,7 @@
 #ifndef _BTLED_ATT_H_
 #define _BTLED_ATT_H_
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -52,10 +53,16 @@
 #define ATT_ERR_INSUFF_ENCRYPTION	0x0F
 #define ATT_ERR_UNSUPPORTED_GROUP_TYPE	0x10
 #define ATT_ERR_INSUFF_RESOURCES	0x11
+#define ATT_ERR_DATABASE_OUT_OF_SYNC	0x12
+#define ATT_ERR_VALUE_NOT_ALLOWED	0x13
 
 /* Default and limits */
 #define ATT_DEFAULT_MTU			23
 #define ATT_MAX_MTU			517
+
+/* EATT (Enhanced ATT) — Core Spec Vol 3 Part G Section 5.3 */
+#define ATT_EATT_PSM			0x0027
+#define ATT_MAX_EATT_BEARERS		5
 
 /* GATT UUIDs (Core Spec Vol 3 Part G Section 3) */
 #define GATT_UUID_PRIMARY_SERVICE	0x2800
@@ -80,12 +87,27 @@
 #define GATT_CCCD_INDICATE		0x0002
 
 /*
+ * EATT bearer state.
+ * Each bearer is an independent L2CAP CoC channel on PSM 0x0027,
+ * capable of carrying ATT PDUs in parallel with the primary bearer.
+ */
+struct att_bearer {
+	int		fd;		/* L2CAP CoC socket */
+	uint16_t	mtu;		/* negotiated MTU for this bearer */
+	bool		active;		/* bearer is connected */
+};
+
+/*
  * ATT connection state.
  */
 struct att_conn {
-	int		fd;		/* L2CAP ATT socket */
+	int		fd;		/* L2CAP ATT socket (primary bearer) */
 	uint16_t	mtu;		/* negotiated MTU */
 	uint8_t		*buf;		/* receive buffer */
+
+	/* EATT bearers (additional to primary) */
+	struct att_bearer	eatt[ATT_MAX_EATT_BEARERS];
+	int			eatt_count;	/* number of active EATT bearers */
 };
 
 /*
@@ -120,5 +142,10 @@ int	att_read_by_group_type(struct att_conn *ac, uint16_t start,
 	    size_t *outlen);
 int	att_recv(struct att_conn *ac, void *buf, size_t buflen, size_t *outlen);
 int	att_confirm(struct att_conn *ac);
+int	att_open_eatt(struct att_conn *ac, const uint8_t *addr,
+	    uint8_t addr_type, int count);
+void	att_close_eatt(struct att_conn *ac);
+int	att_eatt_select_bearer(struct att_conn *ac);
+int	att_eatt_accept(struct att_conn *ac, int listen_fd);
 
 #endif /* _BTLED_ATT_H_ */

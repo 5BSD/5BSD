@@ -48,8 +48,13 @@ struct att_conn;	/* forward decl from att.h */
 void		attdb_init(struct att_db *db, struct att_attr *storage, int max,
 		    uint8_t *val_buf, size_t val_size);
 uint16_t	attdb_add_service(struct att_db *db, uint16_t uuid16);
+uint16_t	attdb_add_service128(struct att_db *db,
+		    const uint8_t uuid128[16]);
 uint16_t	attdb_add_characteristic(struct att_db *db, uint16_t uuid16,
 		    uint8_t props, uint8_t perms,
+		    const void *value, uint16_t len);
+uint16_t	attdb_add_characteristic128(struct att_db *db,
+		    const uint8_t uuid128[16], uint8_t props, uint8_t perms,
 		    const void *value, uint16_t len);
 uint16_t	attdb_add_cccd(struct att_db *db);
 

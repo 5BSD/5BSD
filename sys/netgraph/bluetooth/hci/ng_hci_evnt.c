@@ -69,6 +69,28 @@ SDT_PROBE_DEFINE1(bluetooth, hci, le_connection, disconnect,
     "uint16_t"		/* connection handle */
 );
 
+/* LE connection parameter changes */
+SDT_PROBE_DEFINE4(bluetooth, hci, le_connection, param_change,
+    "uint16_t",		/* connection handle */
+    "uint16_t",		/* connection interval */
+    "uint16_t",		/* peripheral latency */
+    "uint16_t"		/* supervision timeout */
+);
+
+/* LE data length change */
+SDT_PROBE_DEFINE3(bluetooth, hci, le_data_length, change,
+    "uint16_t",		/* connection handle */
+    "uint16_t",		/* max tx octets */
+    "uint16_t"		/* max rx octets */
+);
+
+/* LE PHY update */
+SDT_PROBE_DEFINE3(bluetooth, hci, le_phy, update,
+    "uint16_t",		/* connection handle */
+    "uint8_t",		/* tx PHY (1=1M, 2=2M, 3=Coded) */
+    "uint8_t"		/* rx PHY */
+);
+
 /******************************************************************************
  ******************************************************************************
  **                     HCI event processing module
@@ -80,6 +102,8 @@ SDT_PROBE_DEFINE1(bluetooth, hci, le_connection, disconnect,
  */
 
 static int inquiry_result             (ng_hci_unit_p, struct mbuf *);
+static int inquiry_result_with_rssi   (ng_hci_unit_p, struct mbuf *);
+static int ext_inquiry_result         (ng_hci_unit_p, struct mbuf *);
 static int con_compl                  (ng_hci_unit_p, struct mbuf *);
 static int con_req                    (ng_hci_unit_p, struct mbuf *);
 static int discon_compl               (ng_hci_unit_p, struct mbuf *);
@@ -95,6 +119,8 @@ static int read_clock_offset_compl    (ng_hci_unit_p, struct mbuf *);
 static int qos_violation              (ng_hci_unit_p, struct mbuf *);
 static int page_scan_mode_change      (ng_hci_unit_p, struct mbuf *);
 static int page_scan_rep_mode_change  (ng_hci_unit_p, struct mbuf *);
+static int encryption_change_v2        (ng_hci_unit_p, struct mbuf *);
+static int sync_con_compl             (ng_hci_unit_p, struct mbuf *);
 static int sync_con_queue             (ng_hci_unit_p, ng_hci_unit_con_p, int);
 static int send_data_packets          (ng_hci_unit_p, int, int);
 static int le_event		      (ng_hci_unit_p, struct mbuf *);
@@ -140,8 +166,24 @@ ng_hci_process_event(ng_hci_unit_p unit, struct mbuf *event)
 	case NG_HCI_EVENT_VENDOR:
 	case NG_HCI_EVENT_REMOTE_NAME_REQ_COMPL:
 	case NG_HCI_EVENT_READ_REMOTE_VER_INFO_COMPL:
+	case NG_HCI_EVENT_READ_REMOTE_EXT_FEATURES_COMPL:
 	case NG_HCI_EVENT_IO_CAPABILITY_REQUEST:
+	case NG_HCI_EVENT_IO_CAPABILITY_RESPONSE:
 	case NG_HCI_EVENT_SIMPLE_PAIRING_COMPLETE:
+	case NG_HCI_EVENT_SNIFF_SUBRATING:
+	case NG_HCI_EVENT_ENCRYPTION_KEY_REFRESH:
+	case NG_HCI_EVENT_USER_CONFIRMATION_REQUEST:
+	case NG_HCI_EVENT_USER_PASSKEY_REQUEST:
+	case NG_HCI_EVENT_AUTH_PAYLOAD_TIMEOUT:
+	case NG_HCI_EVENT_SYNC_CON_CHANGED:
+	case NG_HCI_EVENT_FLOW_SPEC_COMPL:
+	case NG_HCI_EVENT_REMOTE_OOB_DATA_REQ:
+	case NG_HCI_EVENT_LINK_SUPERV_TO_CHANGED:
+	case NG_HCI_EVENT_ENH_FLUSH_COMPL:
+	case NG_HCI_EVENT_USER_PASSKEY_NOTIFICATION:
+	case NG_HCI_EVENT_KEYPRESS_NOTIFICATION:
+	case NG_HCI_EVENT_REM_HOST_SUPP_FEAT_NOTIFI:
+	case NG_HCI_EVENT_NUM_COMPL_DATA_BLOCKS:
 		/* These do not need post processing */
 		NG_FREE_M(event);
 		break;
@@ -151,6 +193,14 @@ ng_hci_process_event(ng_hci_unit_p unit, struct mbuf *event)
 
 	case NG_HCI_EVENT_INQUIRY_RESULT:
 		error = inquiry_result(unit, event);
+		break;
+
+	case NG_HCI_EVENT_INQUIRY_RESULT_WITH_RSSI:
+		error = inquiry_result_with_rssi(unit, event);
+		break;
+
+	case NG_HCI_EVENT_EXT_INQUIRY_RESULT:
+		error = ext_inquiry_result(unit, event);
 		break;
 
 	case NG_HCI_EVENT_CON_COMPL:
@@ -167,6 +217,14 @@ ng_hci_process_event(ng_hci_unit_p unit, struct mbuf *event)
 
 	case NG_HCI_EVENT_ENCRYPTION_CHANGE:
 		error = encryption_change(unit, event);
+		break;
+
+	case NG_HCI_EVENT_ENCRYPTION_CHANGE_V2:
+		error = encryption_change_v2(unit, event);
+		break;
+
+	case NG_HCI_EVENT_SYNC_CON_COMPL:
+		error = sync_con_compl(unit, event);
 		break;
 
 	case NG_HCI_EVENT_READ_REMOTE_FEATURES_COMPL:
@@ -280,6 +338,22 @@ ng_hci_send_data(ng_hci_unit_p unit)
 			NG_HCI_BUFF_LE_USE(unit->buffer, count);
 		}
 	}
+
+	/* Send ISO data from dedicated ISO buffers if available */
+	if (unit->buffer.iso_pkts > 0) {
+		NG_HCI_BUFF_ISO_AVAIL(unit->buffer, count);
+
+		NG_HCI_INFO(
+"%s: %s - sending ISO data packets, count=%d\n",
+			__func__, NG_NODE_NAME(unit->node), count);
+
+		if (count > 0) {
+			count = send_data_packets(unit,
+			    NG_HCI_LINK_ISO_CIS, count);
+			NG_HCI_STAT_ACL_SENT(unit->stat, count);
+			NG_HCI_BUFF_ISO_USE(unit->buffer, count);
+		}
+	}
 } /* ng_hci_send_data */
 
 /*
@@ -310,6 +384,10 @@ send_data_packets(ng_hci_unit_p unit, int link_type, int limit)
 				  con->link_type == NG_HCI_LINK_LE_RANDOM) &&
 				 unit->buffer.le_pkts > 0)
 				reallink_type = NG_HCI_LINK_LE_PUBLIC;
+			else if ((con->link_type == NG_HCI_LINK_ISO_CIS ||
+				  con->link_type == NG_HCI_LINK_ISO_BIS) &&
+				 unit->buffer.iso_pkts > 0)
+				reallink_type = NG_HCI_LINK_ISO_CIS;
 			else
 				reallink_type = NG_HCI_LINK_ACL;
 			if (reallink_type != link_type){
@@ -568,16 +646,41 @@ le_con_compl_common(ng_hci_unit_p unit, u_int8_t status, u_int16_t handle,
 		if (con == NULL)
 			return (ENOMEM);
 
-		con->state = NG_HCI_CON_W4_LP_CON_RSP;
-		ng_hci_con_timeout(con);
-
 		bcopy(addr, &con->bdaddr, sizeof(con->bdaddr));
+		con->con_handle = NG_HCI_CON_HANDLE(le16toh(handle));
+		con->encryption_mode = NG_HCI_ENCRYPTION_MODE_NONE;
+
+		/*
+		 * LE connections are already established at the
+		 * controller level when we receive this event.
+		 * Send LP_CON_IND so L2CAP creates a connection
+		 * descriptor, but do NOT start a connection timeout
+		 * or wait for Accept_Connection -- neither applies
+		 * to LE.  Then transition directly to OPEN and send
+		 * LP_CON_CFM so L2CAP opens the ATT/SMP channels.
+		 *
+		 * L2CAP will reply with LP_CON_RSP (to "accept"
+		 * the connection), but ng_hci_lp_con_rsp will not
+		 * find a matching connection in W4_LP_CON_RSP state
+		 * and will silently drop it -- this is correct
+		 * because LE needs no Accept_Connection command.
+		 */
+		con->state = NG_HCI_CON_W4_LP_CON_RSP;
 		error = ng_hci_lp_con_ind(con, uclass);
 		if (error != 0) {
-			ng_hci_con_untimeout(con);
 			ng_hci_free_con(con);
 			return (error);
 		}
+
+		con->state = NG_HCI_CON_OPEN;
+		con->flags |= NG_HCI_CON_NOTIFY_ACL;
+
+		ng_hci_lp_con_cfm(con, 0);
+
+		SDT_PROBE3(bluetooth, hci, le_connection, complete,
+		    con->con_handle, role, &addr->b[0]);
+
+		return (0);
 	} else if ((error = ng_hci_con_untimeout(con)) != 0)
 		return (error);
 
@@ -649,6 +752,11 @@ static int le_connection_update(ng_hci_unit_p unit, struct mbuf *event)
 		h = NG_HCI_CON_HANDLE(le16toh(ep->connection_handle));
 		con = ng_hci_con_by_handle(unit, h);
 		if (con != NULL) {
+			SDT_PROBE4(bluetooth, hci, le_connection,
+			    param_change, h,
+			    le16toh(ep->conn_interval),
+			    le16toh(ep->conn_latency),
+			    le16toh(ep->supervision_timeout));
 			NG_HCI_INFO(
 "%s: %s - LE connection update complete, handle=%d, "
 "interval=%d, latency=%d, timeout=%d\n",
@@ -714,6 +822,312 @@ le_event(ng_hci_unit_p unit, struct mbuf *event)
 		NG_HCI_INFO(
 "%s: %s - LE LTK request, userspace must reply via raw HCI\n",
 			__func__, NG_NODE_NAME(unit->node));
+		NG_FREE_M(event);
+		break;
+
+	case NG_HCI_LEEV_DATA_LENGTH_CHANGE: {
+		ng_hci_le_data_length_change_ep *dlep;
+		NG_HCI_M_PULLUP(event, sizeof(*dlep));
+		if (event != NULL) {
+			dlep = mtod(event,
+			    ng_hci_le_data_length_change_ep *);
+			SDT_PROBE3(bluetooth, hci, le_data_length, change,
+			    NG_HCI_CON_HANDLE(
+			        le16toh(dlep->connection_handle)),
+			    le16toh(dlep->max_tx_octets),
+			    le16toh(dlep->max_rx_octets));
+			NG_HCI_INFO(
+"%s: %s - LE data length change, handle=%d, tx=%d, rx=%d\n",
+			    __func__, NG_NODE_NAME(unit->node),
+			    NG_HCI_CON_HANDLE(
+			        le16toh(dlep->connection_handle)),
+			    le16toh(dlep->max_tx_octets),
+			    le16toh(dlep->max_rx_octets));
+		}
+		NG_FREE_M(event);
+		break;
+	}
+
+	case NG_HCI_LEEV_PHY_UPDATE_COMPLETE:
+		NG_HCI_M_PULLUP(event, sizeof(ng_hci_le_phy_update_compl_ep));
+		if (event != NULL) {
+			ng_hci_le_phy_update_compl_ep *phep;
+			u_int16_t ph;
+			phep = mtod(event, ng_hci_le_phy_update_compl_ep *);
+			ph = NG_HCI_CON_HANDLE(
+			    le16toh(phep->connection_handle));
+			SDT_PROBE3(bluetooth, hci, le_phy, update,
+			    ph, phep->tx_phy, phep->rx_phy);
+			NG_HCI_INFO(
+"%s: %s - LE PHY update, handle=%d, tx_phy=%d, rx_phy=%d\n",
+			    __func__, NG_NODE_NAME(unit->node),
+			    ph, phep->tx_phy, phep->rx_phy);
+		}
+		NG_FREE_M(event);
+		break;
+
+	case NG_HCI_LEEV_REMOTE_CONN_PARAM_REQUEST:
+		NG_HCI_INFO(
+"%s: %s - LE remote connection parameter request\n",
+		    __func__, NG_NODE_NAME(unit->node));
+		NG_FREE_M(event);
+		break;
+
+	case NG_HCI_LEEV_EXT_ADVREP:
+		NG_HCI_INFO(
+"%s: %s - LE extended advertising report\n",
+		    __func__, NG_NODE_NAME(unit->node));
+		NG_FREE_M(event);
+		break;
+
+	case NG_HCI_LEEV_READ_LOCAL_P256_PK_COMPL:
+	case NG_HCI_LEEV_GEN_DHKEY_COMPL:
+		NG_HCI_INFO(
+"%s: %s - LE crypto subevent (passthrough)\n",
+		    __func__, NG_NODE_NAME(unit->node));
+		NG_FREE_M(event);
+		break;
+
+	case NG_HCI_LEEV_DIRECT_ADV_REP:
+		NG_HCI_INFO(
+"%s: %s - LE directed advertising report (passthrough)\n",
+		    __func__, NG_NODE_NAME(unit->node));
+		NG_FREE_M(event);
+		break;
+
+	case NG_HCI_LEEV_PER_ADV_SYNC_EST:
+	case NG_HCI_LEEV_PER_ADV_REPORT:
+	case NG_HCI_LEEV_PER_ADV_SYNC_LOST:
+		NG_HCI_INFO(
+"%s: %s - LE periodic advertising subevent (passthrough)\n",
+		    __func__, NG_NODE_NAME(unit->node));
+		NG_FREE_M(event);
+		break;
+
+	case NG_HCI_LEEV_SCAN_TIMEOUT:
+	case NG_HCI_LEEV_SCAN_REQ_RECEIVED:
+	case NG_HCI_LEEV_ADV_SET_TERMINATED:
+	case NG_HCI_LEEV_CHAN_SEL_ALGO:
+		NG_HCI_INFO(
+"%s: %s - LE advertising mgmt subevent (passthrough)\n",
+		    __func__, NG_NODE_NAME(unit->node));
+		NG_FREE_M(event);
+		break;
+
+	case NG_HCI_LEEV_CONNECTIONLESS_IQ_REPORT:
+	case NG_HCI_LEEV_CONNECTION_IQ_REPORT:
+	case NG_HCI_LEEV_CTE_REQUEST_FAILED:
+		NG_HCI_INFO(
+"%s: %s - LE CTE subevent (passthrough)\n",
+		    __func__, NG_NODE_NAME(unit->node));
+		NG_FREE_M(event);
+		break;
+
+	case NG_HCI_LEEV_PATH_LOSS_THRESHOLD:
+	case NG_HCI_LEEV_TX_POWER_REPORTING:
+		NG_HCI_INFO(
+"%s: %s - LE power control subevent (passthrough)\n",
+		    __func__, NG_NODE_NAME(unit->node));
+		NG_FREE_M(event);
+		break;
+
+	case NG_HCI_LEEV_BIGINFO_ADV_REPORT:
+		NG_HCI_INFO(
+"%s: %s - LE BIGInfo advertising report (passthrough)\n",
+		    __func__, NG_NODE_NAME(unit->node));
+		NG_FREE_M(event);
+		break;
+
+	case NG_HCI_LEEV_SUBRATE_CHANGE:
+		NG_HCI_INFO(
+"%s: %s - LE subrate change (passthrough)\n",
+		    __func__, NG_NODE_NAME(unit->node));
+		NG_FREE_M(event);
+		break;
+
+	case NG_HCI_LEEV_PER_ADV_SYNC_XFER_RCVD:
+		NG_HCI_INFO(
+"%s: %s - LE periodic adv sync transfer received (passthrough)\n",
+		    __func__, NG_NODE_NAME(unit->node));
+		NG_FREE_M(event);
+		break;
+
+	case NG_HCI_LEEV_CIS_ESTABLISHED: {
+		ng_hci_le_cis_established_ep	*cisep;
+		ng_hci_unit_con_p		 con;
+		u_int16_t			 h;
+
+		NG_HCI_M_PULLUP(event, sizeof(*cisep));
+		if (event == NULL)
+			break;
+
+		cisep = mtod(event, ng_hci_le_cis_established_ep *);
+		h = NG_HCI_CON_HANDLE(le16toh(cisep->connection_handle));
+
+		if (cisep->status == 0) {
+			con = ng_hci_new_con(unit, NG_HCI_LINK_ISO_CIS);
+			if (con != NULL) {
+				con->con_handle = h;
+				con->state = NG_HCI_CON_OPEN;
+				ng_hci_lp_con_cfm(con, 0);
+			}
+		}
+		NG_HCI_INFO(
+"%s: %s - CIS established, status=%d handle=%d\n",
+		    __func__, NG_NODE_NAME(unit->node),
+		    cisep->status, h);
+		NG_FREE_M(event);
+		break;
+	}
+
+	case NG_HCI_LEEV_CIS_REQUEST: {
+		ng_hci_le_cis_request_ep	*cisrep;
+
+		NG_HCI_M_PULLUP(event, sizeof(*cisrep));
+		if (event == NULL)
+			break;
+
+		cisrep = mtod(event, ng_hci_le_cis_request_ep *);
+		NG_HCI_INFO(
+"%s: %s - CIS request, acl_handle=%d cis_handle=%d cig=%d cis=%d\n",
+		    __func__, NG_NODE_NAME(unit->node),
+		    NG_HCI_CON_HANDLE(le16toh(cisrep->acl_connection_handle)),
+		    NG_HCI_CON_HANDLE(le16toh(cisrep->cis_connection_handle)),
+		    cisrep->cig_id, cisrep->cis_id);
+		NG_FREE_M(event);
+		break;
+	}
+
+	case NG_HCI_LEEV_CREATE_BIG_COMPL: {
+		ng_hci_le_create_big_compl_ep	*bigep;
+		ng_hci_unit_con_p		 con;
+		u_int8_t			 num_bis, i;
+		u_int16_t			 bis_handle;
+
+		NG_HCI_M_PULLUP(event, sizeof(*bigep));
+		if (event == NULL)
+			break;
+
+		bigep = mtod(event, ng_hci_le_create_big_compl_ep *);
+		num_bis = bigep->num_bis;
+
+		NG_HCI_INFO(
+"%s: %s - Create BIG complete, status=%d big_handle=%d num_bis=%d\n",
+		    __func__, NG_NODE_NAME(unit->node),
+		    bigep->status, bigep->big_handle, num_bis);
+
+		if (bigep->status == 0 && num_bis > 0) {
+			/* Pull up the variable-length handle array */
+			NG_HCI_M_PULLUP(event,
+			    sizeof(*bigep) + num_bis * sizeof(u_int16_t));
+			if (event == NULL)
+				break;
+
+			bigep = mtod(event,
+			    ng_hci_le_create_big_compl_ep *);
+
+			for (i = 0; i < num_bis; i++) {
+				u_int16_t *handles =
+				    (u_int16_t *)(bigep + 1);
+				bis_handle = NG_HCI_CON_HANDLE(
+				    le16toh(handles[i]));
+
+				con = ng_hci_new_con(unit,
+				    NG_HCI_LINK_ISO_BIS);
+				if (con != NULL) {
+					con->con_handle = bis_handle;
+					con->state = NG_HCI_CON_OPEN;
+					ng_hci_lp_con_cfm(con, 0);
+				}
+			}
+		}
+		NG_FREE_M(event);
+		break;
+	}
+
+	case NG_HCI_LEEV_TERMINATE_BIG_COMPL: {
+		ng_hci_le_terminate_big_compl_ep	*tbigep;
+
+		NG_HCI_M_PULLUP(event, sizeof(*tbigep));
+		if (event == NULL)
+			break;
+
+		tbigep = mtod(event,
+		    ng_hci_le_terminate_big_compl_ep *);
+		NG_HCI_INFO(
+"%s: %s - Terminate BIG complete, big_handle=%d reason=%d\n",
+		    __func__, NG_NODE_NAME(unit->node),
+		    tbigep->big_handle, tbigep->reason);
+		NG_FREE_M(event);
+		break;
+	}
+
+	case NG_HCI_LEEV_BIG_SYNC_EST: {
+		ng_hci_le_big_sync_est_ep	*bsep;
+		ng_hci_unit_con_p		 con;
+		u_int8_t			 num_bis, i;
+		u_int16_t			 bis_handle;
+
+		NG_HCI_M_PULLUP(event, sizeof(*bsep));
+		if (event == NULL)
+			break;
+
+		bsep = mtod(event, ng_hci_le_big_sync_est_ep *);
+		num_bis = bsep->num_bis;
+
+		NG_HCI_INFO(
+"%s: %s - BIG Sync established, status=%d big_handle=%d num_bis=%d\n",
+		    __func__, NG_NODE_NAME(unit->node),
+		    bsep->status, bsep->big_handle, num_bis);
+
+		if (bsep->status == 0 && num_bis > 0) {
+			NG_HCI_M_PULLUP(event,
+			    sizeof(*bsep) + num_bis * sizeof(u_int16_t));
+			if (event == NULL)
+				break;
+
+			bsep = mtod(event,
+			    ng_hci_le_big_sync_est_ep *);
+
+			for (i = 0; i < num_bis; i++) {
+				u_int16_t *handles =
+				    (u_int16_t *)(bsep + 1);
+				bis_handle = NG_HCI_CON_HANDLE(
+				    le16toh(handles[i]));
+
+				con = ng_hci_new_con(unit,
+				    NG_HCI_LINK_ISO_BIS);
+				if (con != NULL) {
+					con->con_handle = bis_handle;
+					con->state = NG_HCI_CON_OPEN;
+					ng_hci_lp_con_cfm(con, 0);
+				}
+			}
+		}
+		NG_FREE_M(event);
+		break;
+	}
+
+	case NG_HCI_LEEV_BIG_SYNC_LOST: {
+		ng_hci_le_big_sync_lost_ep	*bslep;
+
+		NG_HCI_M_PULLUP(event, sizeof(*bslep));
+		if (event == NULL)
+			break;
+
+		bslep = mtod(event, ng_hci_le_big_sync_lost_ep *);
+		NG_HCI_INFO(
+"%s: %s - BIG Sync lost, big_handle=%d reason=%d\n",
+		    __func__, NG_NODE_NAME(unit->node),
+		    bslep->big_handle, bslep->reason);
+		NG_FREE_M(event);
+		break;
+	}
+
+	case NG_HCI_LEEV_REQ_PEER_SCA_COMPL:
+		NG_HCI_INFO(
+"%s: %s - LE Request Peer SCA Complete (passthrough)\n",
+		    __func__, NG_NODE_NAME(unit->node));
 		NG_FREE_M(event);
 		break;
 
@@ -783,15 +1197,130 @@ inquiry_result(ng_hci_unit_p unit, struct mbuf *event)
 		m_adj(event, NG_HCI_CLASS_SIZE);
 
 		/* clock offset */
-		m_copydata(event, 0, sizeof(n->clock_offset), 
+		m_copydata(event, 0, sizeof(n->clock_offset),
 			(caddr_t) &n->clock_offset);
 		n->clock_offset = le16toh(n->clock_offset);
+		m_adj(event, sizeof(n->clock_offset));
 	}
 
 	NG_FREE_M(event);
 
 	return (error);
 } /* inquiry_result */
+
+/* Inquiry result with RSSI event */
+static int
+inquiry_result_with_rssi(ng_hci_unit_p unit, struct mbuf *event)
+{
+	ng_hci_inquiry_result_with_rssi_ep	*ep = NULL;
+	ng_hci_neighbor_p			 n = NULL;
+	bdaddr_t				 bdaddr;
+	int					 error = 0;
+	u_int8_t				 tmp;
+
+	NG_HCI_M_PULLUP(event, sizeof(*ep));
+	if (event == NULL)
+		return (ENOBUFS);
+
+	ep = mtod(event, ng_hci_inquiry_result_with_rssi_ep *);
+	m_adj(event, sizeof(*ep));
+
+	for (; ep->num_responses > 0; ep->num_responses --) {
+		/* Validate remaining mbuf length:
+		 * bdaddr(6) + page_scan_rep_mode(1) + reserved(1) +
+		 * class(3) + clock_offset(2) + rssi(1) = 14 bytes */
+		if (event->m_pkthdr.len < 14)
+			break;
+
+		/* Get remote unit address */
+		m_copydata(event, 0, sizeof(bdaddr), (caddr_t) &bdaddr);
+		m_adj(event, sizeof(bdaddr));
+
+		/* Lookup entry in the cache */
+		n = ng_hci_get_neighbor(unit, &bdaddr, NG_HCI_LINK_ACL);
+		if (n == NULL) {
+			/* Create new entry */
+			n = ng_hci_new_neighbor(unit);
+			if (n == NULL) {
+				error = ENOMEM;
+				break;
+			}
+		} else
+			getmicrotime(&n->updated);
+
+		bcopy(&bdaddr, &n->bdaddr, sizeof(n->bdaddr));
+		n->addrtype = NG_HCI_LINK_ACL;
+
+		/* page_scan_rep_mode */
+		m_copydata(event, 0, sizeof(u_int8_t),
+		    (caddr_t)&n->page_scan_rep_mode);
+		m_adj(event, sizeof(u_int8_t));
+
+		/* reserved (page_scan_mode is reserved/0 in RSSI variant) */
+		m_copydata(event, 0, sizeof(u_int8_t), (caddr_t)&tmp);
+		n->page_scan_mode = 0;
+		m_adj(event, sizeof(u_int8_t));
+
+		/* class */
+		m_adj(event, NG_HCI_CLASS_SIZE);
+
+		/* clock offset */
+		m_copydata(event, 0, sizeof(n->clock_offset),
+			(caddr_t) &n->clock_offset);
+		n->clock_offset = le16toh(n->clock_offset);
+		m_adj(event, sizeof(n->clock_offset));
+
+		/* rssi */
+		m_adj(event, sizeof(int8_t));
+	}
+
+	NG_FREE_M(event);
+
+	return (error);
+} /* inquiry_result_with_rssi */
+
+/* Extended inquiry result event */
+static int
+ext_inquiry_result(ng_hci_unit_p unit, struct mbuf *event)
+{
+	ng_hci_ext_inquiry_result_ep	*ep = NULL;
+	ng_hci_neighbor_p		 n = NULL;
+	int				 error = 0;
+
+	NG_HCI_M_PULLUP(event, sizeof(*ep));
+	if (event == NULL)
+		return (ENOBUFS);
+
+	ep = mtod(event, ng_hci_ext_inquiry_result_ep *);
+
+	/* Lookup entry in the cache */
+	n = ng_hci_get_neighbor(unit, &ep->bdaddr, NG_HCI_LINK_ACL);
+	if (n == NULL) {
+		/* Create new entry */
+		n = ng_hci_new_neighbor(unit);
+		if (n == NULL) {
+			error = ENOMEM;
+			goto out;
+		}
+	} else
+		getmicrotime(&n->updated);
+
+	bcopy(&ep->bdaddr, &n->bdaddr, sizeof(n->bdaddr));
+	n->addrtype = NG_HCI_LINK_ACL;
+	n->page_scan_rep_mode = ep->page_scan_rep_mode;
+	n->page_scan_mode = 0; /* reserved in extended inquiry result */
+	n->clock_offset = le16toh(ep->clock_offset);
+
+	/* Save Extended Inquiry Response data */
+	n->extinq_size = sizeof(ep->ext_inquiry_response);
+	bcopy(ep->ext_inquiry_response, n->extinq_data,
+	    sizeof(ep->ext_inquiry_response));
+
+out:
+	NG_FREE_M(event);
+
+	return (error);
+} /* ext_inquiry_result */
 
 /* Connection complete event */
 static int
@@ -1114,6 +1643,115 @@ encryption_change(ng_hci_unit_p unit, struct mbuf *event)
 	return (error);
 } /* encryption_change */
 
+/* Encryption change v2 event (BT 5.3+, adds encryption_key_size field) */
+static int
+encryption_change_v2(ng_hci_unit_p unit, struct mbuf *event)
+{
+	ng_hci_encryption_change_v2_ep	*ep = NULL;
+	ng_hci_unit_con_p		 con = NULL;
+	int				 error = 0;
+	u_int16_t	h;
+
+	NG_HCI_M_PULLUP(event, sizeof(*ep));
+	if (event == NULL)
+		return (ENOBUFS);
+
+	ep = mtod(event, ng_hci_encryption_change_v2_ep *);
+	h = NG_HCI_CON_HANDLE(le16toh(ep->con_handle));
+	con = ng_hci_con_by_handle(unit, h);
+
+	if (ep->status == 0) {
+		if (con == NULL) {
+			NG_HCI_ALERT(
+"%s: %s - invalid connection handle=%d\n",
+				__func__, NG_NODE_NAME(unit->node), h);
+			error = ENOENT;
+		} else if (con->link_type == NG_HCI_LINK_SCO) {
+			NG_HCI_ALERT(
+"%s: %s - invalid link type=%d\n",
+				__func__, NG_NODE_NAME(unit->node),
+				con->link_type);
+			error = EINVAL;
+		} else if (ep->encryption_enable)
+			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_P2P;
+		else
+			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_NONE;
+	} else {
+		NG_HCI_ERR(
+"%s: %s - failed to change encryption mode (v2), status=%d\n",
+			__func__, NG_NODE_NAME(unit->node), ep->status);
+
+		if (con != NULL)
+			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_NONE;
+	}
+
+	/* Propagate encryption status to upper layer */
+	if (con != NULL)
+		ng_hci_lp_enc_change(con, con->encryption_mode);
+
+	SDT_PROBE2(bluetooth, hci, encryption, change,
+	    h, ep->encryption_enable);
+
+	NG_FREE_M(event);
+
+	return (error);
+} /* encryption_change_v2 */
+
+/* Synchronous Connection Complete event */
+static int
+sync_con_compl(ng_hci_unit_p unit, struct mbuf *event)
+{
+	ng_hci_sync_con_compl_ep	*ep = NULL;
+	ng_hci_unit_con_p		 con = NULL;
+	int				 error = 0;
+
+	NG_HCI_M_PULLUP(event, sizeof(*ep));
+	if (event == NULL)
+		return (ENOBUFS);
+
+	ep = mtod(event, ng_hci_sync_con_compl_ep *);
+
+	/*
+	 * Look for an existing SCO connection descriptor that we are
+	 * waiting to complete (e.g. initiated via Add_SCO_Connection or
+	 * Setup_Synchronous_Connection from the upper layer).
+	 */
+	LIST_FOREACH(con, &unit->con_list, next)
+		if (con->link_type == NG_HCI_LINK_SCO &&
+		    con->state == NG_HCI_CON_W4_CONN_COMPLETE &&
+		    bcmp(&con->bdaddr, &ep->bdaddr, sizeof(bdaddr_t)) == 0)
+			break;
+
+	if (con == NULL) {
+		if (ep->status != 0)
+			goto out;
+
+		/* Incoming SCO connection or one initiated from raw HCI */
+		con = ng_hci_new_con(unit, NG_HCI_LINK_SCO);
+		if (con == NULL) {
+			error = ENOMEM;
+			goto out;
+		}
+
+		bcopy(&ep->bdaddr, &con->bdaddr, sizeof(con->bdaddr));
+	} else if ((error = ng_hci_con_untimeout(con)) != 0)
+			goto out;
+
+	con->con_handle = NG_HCI_CON_HANDLE(le16toh(ep->con_handle));
+	con->encryption_mode = NG_HCI_ENCRYPTION_MODE_NONE;
+
+	ng_hci_lp_con_cfm(con, ep->status);
+
+	if (ep->status != 0)
+		ng_hci_free_con(con);
+	else
+		con->state = NG_HCI_CON_OPEN;
+out:
+	NG_FREE_M(event);
+
+	return (error);
+} /* sync_con_compl */
+
 /* Read remote feature complete event */
 static int
 read_remote_features_compl(ng_hci_unit_p unit, struct mbuf *event)
@@ -1313,7 +1951,15 @@ num_compl_pkts(ng_hci_unit_p unit, struct mbuf *event)
 				  con->link_type == NG_HCI_LINK_LE_RANDOM) &&
 				 unit->buffer.le_pkts > 0)
 				NG_HCI_BUFF_LE_FREE(unit->buffer, p);
-			else
+			else if (con->link_type == NG_HCI_LINK_ISO_CIS ||
+				 con->link_type == NG_HCI_LINK_ISO_BIS) {
+				if (unit->buffer.iso_pkts > 0)
+					NG_HCI_BUFF_ISO_FREE(
+					    unit->buffer, p);
+				else
+					NG_HCI_BUFF_ACL_FREE(
+					    unit->buffer, p);
+			} else
 				NG_HCI_BUFF_ACL_FREE(unit->buffer, p);
 		} else
 			NG_HCI_ALERT(
@@ -1376,11 +2022,18 @@ data_buffer_overflow(ng_hci_unit_p unit, struct mbuf *event)
 {
 	NG_HCI_M_PULLUP(event, sizeof(u_int8_t));
 	if (event != NULL) {
+		u_int8_t lt = *mtod(event, u_int8_t *);
+		const char *ltname;
+
+		switch (lt) {
+		case 0x00: ltname = "Synchronous"; break;
+		case 0x01: ltname = "ACL"; break;
+		case 0x02: ltname = "ISO"; break;
+		default:   ltname = "Unknown"; break;
+		}
 		NG_HCI_ALERT(
 "%s: %s - %s data buffer overflow\n",
-			__func__, NG_NODE_NAME(unit->node),
-			(*mtod(event, u_int8_t *) == NG_HCI_LINK_ACL)?
-			    "ACL" : "SCO");
+			__func__, NG_NODE_NAME(unit->node), ltname);
 	}
 
 	NG_FREE_M(event);

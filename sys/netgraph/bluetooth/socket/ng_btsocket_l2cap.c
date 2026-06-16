@@ -211,7 +211,7 @@ static void ng_btsocket_l2cap_process_timeout (void *);
 
 static ng_btsocket_l2cap_pcb_p     ng_btsocket_l2cap_pcb_by_addr(bdaddr_p, int);
 static ng_btsocket_l2cap_pcb_p     ng_btsocket_l2cap_pcb_by_token(u_int32_t);
-static ng_btsocket_l2cap_pcb_p     ng_btsocket_l2cap_pcb_by_cid (bdaddr_p, int,int);
+static ng_btsocket_l2cap_pcb_p     ng_btsocket_l2cap_pcb_by_cid (bdaddr_p, int,int,int);
 static ng_btsocket_l2cap_pcb_p     ng_btsocket_l2cap_pcb_by_cid_listen(bdaddr_p, uint16_t);
 static int                         ng_btsocket_l2cap_result2errno(int);
 
@@ -465,7 +465,10 @@ ng_btsocket_l2cap_process_l2ca_con_req_rsp(struct ng_mesg *msg,
 	if (op->result == NG_L2CAP_SUCCESS){
 		if((pcb->idtype == NG_L2CAP_L2CA_IDTYPE_ATT)||
 		   (pcb->idtype == NG_L2CAP_L2CA_IDTYPE_SMP)){
-			pcb->encryption = op->encryption;					pcb->cid = op->lcid;	
+			pcb->encryption = op->encryption;
+			pcb->cid = op->lcid;
+			/* LE fixed channels use 23-byte default MTU */
+			pcb->imtu = pcb->omtu = NG_L2CAP_MTU_LE_MINIMUM;
 			if(pcb->need_encrypt && !(pcb->encryption)){
 				ng_btsocket_l2cap_timeout(pcb);
 				pcb->state = NG_BTSOCKET_L2CAP_W4_ENC_CHANGE;
@@ -473,6 +476,16 @@ ng_btsocket_l2cap_process_l2ca_con_req_rsp(struct ng_mesg *msg,
 				pcb->state = NG_BTSOCKET_L2CAP_OPEN;
 				soisconnected(pcb->so);
 			}
+		}else if(pcb->idtype == NG_L2CAP_L2CA_IDTYPE_LE){
+			/*
+			 * LE CoC channel is open.  The L2CAP layer has
+			 * already negotiated MTU/MPS/credits; the lcid
+			 * returned here is our local SCID.
+			 */
+			pcb->encryption = op->encryption;
+			pcb->cid = op->lcid;
+			pcb->state = NG_BTSOCKET_L2CAP_OPEN;
+			soisconnected(pcb->so);
 		}else{
 			/*
 			 * Channel is now open, so update local channel ID and 
@@ -656,14 +669,24 @@ ng_btsocket_l2cap_process_l2ca_con_ind(struct ng_mesg *msg,
 		pcb1->cid = ip->lcid;
 		pcb1->rt = rt;
 
-		/* Set idtype for LE fixed channels */
+		/* Set idtype and address types for LE fixed channels */
 		if (ip->lcid == NG_L2CAP_ATT_CID)
 			pcb1->idtype = NG_L2CAP_L2CA_IDTYPE_ATT;
 		else if (ip->lcid == NG_L2CAP_SMP_CID)
 			pcb1->idtype = NG_L2CAP_L2CA_IDTYPE_SMP;
 
-		/* Copy socket settings */
-		pcb1->imtu = pcb->imtu;
+		pcb1->srctype = pcb->srctype;
+		if (ip->linktype == NG_HCI_LINK_LE_PUBLIC)
+			pcb1->dsttype = BDADDR_LE_PUBLIC;
+		else if (ip->linktype == NG_HCI_LINK_LE_RANDOM)
+			pcb1->dsttype = BDADDR_LE_RANDOM;
+
+		/* Copy socket settings; use LE MTU for LE channels */
+		if (ip->lcid == NG_L2CAP_ATT_CID ||
+		    ip->lcid == NG_L2CAP_SMP_CID)
+			pcb1->imtu = pcb1->omtu = NG_L2CAP_MTU_LE_MINIMUM;
+		else
+			pcb1->imtu = pcb->imtu;
 		bcopy(&pcb->oflow, &pcb1->oflow, sizeof(pcb1->oflow));
 		pcb1->flush_timo = pcb->flush_timo;
 
@@ -721,7 +744,7 @@ static int ng_btsocket_l2cap_process_l2ca_enc_change(struct ng_mesg *msg, ng_bts
 	mtx_lock(&ng_btsocket_l2cap_sockets_mtx);
 
 	pcb = ng_btsocket_l2cap_pcb_by_cid(&rt->src, op->lcid,
-					   op->idtype);
+					   op->idtype, -1);
 	if (pcb == NULL) {
 		mtx_unlock(&ng_btsocket_l2cap_sockets_mtx);
 		return (ENOENT);
@@ -983,7 +1006,8 @@ ng_btsocket_l2cap_process_l2ca_cfg_ind(struct ng_mesg *msg,
 
 	/* Check for the open socket that has given channel ID */
 	pcb = ng_btsocket_l2cap_pcb_by_cid(&rt->src, ip->lcid,
-					   NG_L2CAP_L2CA_IDTYPE_BREDR);
+					   NG_L2CAP_L2CA_IDTYPE_BREDR,
+					   BDADDR_BREDR);
 	if (pcb == NULL) {
 		mtx_unlock(&ng_btsocket_l2cap_sockets_mtx);
 		return (ENOENT);
@@ -1125,7 +1149,7 @@ ng_btsocket_l2cap_process_l2ca_discon_ind(struct ng_mesg *msg,
 
 	/* Look for the socket with given channel ID */
 	pcb = ng_btsocket_l2cap_pcb_by_cid(&rt->src, ip->lcid,
-					   ip->idtype);
+					   ip->idtype, -1);
 	if (pcb == NULL) {
 		mtx_unlock(&ng_btsocket_l2cap_sockets_mtx);
 		return (0);
@@ -1496,7 +1520,8 @@ ng_btsocket_l2cap_data_input(struct mbuf *m, hook_p hook)
 		mtx_lock(&ng_btsocket_l2cap_sockets_mtx);
 
 		/* Normal packet: find connected socket */
-		pcb = ng_btsocket_l2cap_pcb_by_cid(&rt->src, hdr->dcid,idtype);
+		pcb = ng_btsocket_l2cap_pcb_by_cid(&rt->src, hdr->dcid,
+						   idtype, -1);
 		if (pcb == NULL) {
 			mtx_unlock(&ng_btsocket_l2cap_sockets_mtx);
 			goto drop;
@@ -2228,10 +2253,10 @@ ng_btsocket_l2cap_connect(struct socket *so, struct sockaddr *nam,
 		if(sa->l2cap_cid == NG_L2CAP_ATT_CID){
 			idtype = NG_L2CAP_L2CA_IDTYPE_ATT;
 		}else if (sa->l2cap_cid == NG_L2CAP_SMP_CID){
-			idtype =NG_L2CAP_L2CA_IDTYPE_SMP;
+			idtype = NG_L2CAP_L2CA_IDTYPE_SMP;
+		}else if (sa->l2cap_psm != 0){
+			idtype = NG_L2CAP_L2CA_IDTYPE_LE;
 		}else{
-			//if cid == 0 idtype = NG_L2CAP_L2CA_IDTYPE_LE;
-			// Not supported yet
 			return EINVAL;
 		}
 	}
@@ -2636,8 +2661,15 @@ ng_btsocket_l2cap_send(struct socket *so, int flags, struct mbuf *m,
 		goto drop;
 	}
 
-	/* Check packet size against outgoing (peer's incoming) MTU) */
-	if (m->m_pkthdr.len > pcb->omtu) {
+	/*
+	 * Check packet size against outgoing MTU.  Skip for LE fixed
+	 * channels (ATT/SMP) — the upper protocol manages its own MTU
+	 * via ATT Exchange MTU and may negotiate larger than the
+	 * initial 23-byte default.
+	 */
+	if (pcb->idtype != NG_L2CAP_L2CA_IDTYPE_ATT &&
+	    pcb->idtype != NG_L2CAP_L2CA_IDTYPE_SMP &&
+	    m->m_pkthdr.len > pcb->omtu) {
 		NG_BTSOCKET_L2CAP_ERR(
 "%s: Packet too big, len=%d, omtu=%d\n", __func__, m->m_pkthdr.len, pcb->omtu);
 
@@ -2746,6 +2778,14 @@ ng_btsocket_l2cap_sockaddr(struct socket *so, struct sockaddr *sa)
 		.l2cap_bdaddr_type = pcb->srctype,
 	};
 	bcopy(&pcb->src, &l2cap->l2cap_bdaddr, sizeof(l2cap->l2cap_bdaddr));
+	switch (pcb->idtype) {
+	case NG_L2CAP_L2CA_IDTYPE_ATT:
+		l2cap->l2cap_cid = htole16(NG_L2CAP_ATT_CID);
+		break;
+	case NG_L2CAP_L2CA_IDTYPE_SMP:
+		l2cap->l2cap_cid = htole16(NG_L2CAP_SMP_CID);
+		break;
+	}
 
 	return (0);
 }
@@ -2836,7 +2876,7 @@ ng_btsocket_l2cap_pcb_by_token(u_int32_t token)
  */
 
 static ng_btsocket_l2cap_pcb_p
-ng_btsocket_l2cap_pcb_by_cid(bdaddr_p src, int cid, int idtype)
+ng_btsocket_l2cap_pcb_by_cid(bdaddr_p src, int cid, int idtype, int dsttype)
 {
 	ng_btsocket_l2cap_pcb_p	p = NULL;
 
@@ -2844,8 +2884,9 @@ ng_btsocket_l2cap_pcb_by_cid(bdaddr_p src, int cid, int idtype)
 
 	LIST_FOREACH(p, &ng_btsocket_l2cap_sockets, next){
 		if (p->cid == cid &&
-		    bcmp(src, &p->src, sizeof(p->src)) == 0&&
-		    p->idtype == idtype)		    
+		    bcmp(src, &p->src, sizeof(p->src)) == 0 &&
+		    p->idtype == idtype &&
+		    (dsttype == -1 || p->dsttype == dsttype))
 			break;
 	}
 	return (p);
