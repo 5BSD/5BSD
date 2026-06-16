@@ -99,7 +99,7 @@ int	hci_le_connection_update(int hci_fd, uint16_t handle,
 #define LE_EVTMASK_TERM_BIG_COMPL	(1ULL << 27)
 #define LE_EVTMASK_BIG_SYNC_EST	(1ULL << 28)
 #define LE_EVTMASK_BIG_SYNC_LOST	(1ULL << 29)
-#define LE_EVTMASK_SUBRATE_CHANGE	(1ULL << 35)
+#define LE_EVTMASK_SUBRATE_CHANGE	(1ULL << 34)
 
 /* hci_util.c — LE Privacy / Resolving List (Phase 2A) */
 int	hci_le_clear_resolving_list(int hci_fd);

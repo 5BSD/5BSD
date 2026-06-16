@@ -1735,10 +1735,15 @@ encryption_change_v2(ng_hci_unit_p unit, struct mbuf *event)
 				__func__, NG_NODE_NAME(unit->node),
 				con->link_type);
 			error = EINVAL;
-		} else if (ep->encryption_enable)
-			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_P2P;
-		else
+		} else if (ep->encryption_enable == 0x00)
 			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_NONE;
+		else if (con->link_type == NG_HCI_LINK_LE_PUBLIC ||
+			 con->link_type == NG_HCI_LINK_LE_RANDOM)
+			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_AES_CCM;
+		else if (ep->encryption_enable == 0x02)
+			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_AES_CCM;
+		else
+			con->encryption_mode = NG_HCI_ENCRYPTION_MODE_P2P;
 	} else {
 		NG_HCI_ERR(
 "%s: %s - failed to change encryption mode (v2), status=%d\n",

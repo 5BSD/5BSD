@@ -404,6 +404,23 @@ le_coc_write_done:
 		ng_l2cap_free_cmd(cmd);
 		break;
 
+	case NG_L2CAP_CREDIT_CON_REQ:
+		/*
+		 * Enhanced Credit Based Connection Request (0x17):
+		 * needs linktype-based CID + timeout, like LE CoC.
+		 */
+		error = ng_l2cap_lp_send(con,
+		    (con->linktype == NG_HCI_LINK_ACL) ?
+		    NG_L2CAP_SIGNAL_CID : NG_L2CAP_LESIGNAL_CID, m);
+		if (error != 0) {
+			ng_l2cap_l2ca_con_rsp(cmd->ch, cmd->token,
+				NG_L2CAP_NO_RESOURCES, 0);
+			ng_l2cap_free_chan(cmd->ch);
+		} else
+			ng_l2cap_command_timeout(cmd,
+				bluetooth_l2cap_rtx_timeout());
+		break;
+
 	case NG_L2CAP_FLOW_CONTROL_CREDIT:
 	case NG_L2CAP_CREDIT_CON_RSP:
 	case NG_L2CAP_CREDIT_RECONFIG_REQ:
@@ -473,6 +490,7 @@ ng_l2cap_con_fail(ng_l2cap_con_p con, u_int16_t result)
 
 		case NG_L2CAP_CON_REQ:
 		case NG_L2CAP_LE_CREDIT_CON_REQ:
+		case NG_L2CAP_CREDIT_CON_REQ:
 			ng_l2cap_l2ca_con_rsp(cmd->ch, cmd->token, result, 0);
 			break;
 
@@ -574,6 +592,7 @@ ng_l2cap_process_command_timeout(node_p node, hook_p hook, void *arg1, int arg2)
 	switch (cmd->code) {
  	case NG_L2CAP_CON_REQ:
 	case NG_L2CAP_LE_CREDIT_CON_REQ:
+	case NG_L2CAP_CREDIT_CON_REQ:
 		ng_l2cap_l2ca_con_rsp(cmd->ch, cmd->token, NG_L2CAP_TIMEOUT, 0);
 		ng_l2cap_free_chan(cmd->ch);
 		break;
