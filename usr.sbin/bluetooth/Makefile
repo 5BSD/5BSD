@@ -4,7 +4,8 @@
 
 SUBDIR= \
 	bluetooth-config \
-	btled \
+	bluectl \
+	blued \
 	btpand \
 	hccontrol \
 	hcsecd \

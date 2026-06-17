@@ -5,10 +5,25 @@
  * All rights reserved.
  */
 
-#ifndef _BTLED_ATT_SERVER_H_
-#define _BTLED_ATT_SERVER_H_
+#ifndef _BLUED_ATT_SERVER_H_
+#define _BLUED_ATT_SERVER_H_
 
 #include <stdint.h>
+
+/* Prepare Write queue limits */
+#define ATT_PREPARE_QUEUE_MAX	16
+
+struct att_prepare_entry {
+	uint16_t	handle;
+	uint16_t	offset;
+	uint16_t	len;
+	uint8_t		value[512]; /* max value per prepare (ATT_MAX_MTU - 5) */
+};
+
+struct att_prepare_queue {
+	struct att_prepare_entry entries[ATT_PREPARE_QUEUE_MAX];
+	int		count;
+};
 
 /* Attribute permissions */
 #define ATT_PERM_READ		0x01
@@ -61,11 +76,21 @@ uint16_t	attdb_add_cccd(struct att_db *db);
 /* Request handling */
 int		att_server_handle(struct att_conn *ac, struct att_db *db,
 		    const uint8_t *pdu, size_t len);
+void		att_server_reset(struct att_conn *ac);
 
 /* Response senders */
 int		att_send_error(struct att_conn *ac, uint8_t req_op,
 		    uint16_t handle, uint8_t code);
 int		att_send_notification(struct att_conn *ac, uint16_t handle,
 		    const void *value, uint16_t len);
+int		att_send_multiple_handle_value_ntf(struct att_conn *ac,
+		    const uint16_t *handles, const uint8_t **values,
+		    const uint16_t *lengths, int count);
 
-#endif /* _BTLED_ATT_SERVER_H_ */
+/* GATT Robust Caching (BT 5.1, Core Spec Vol 3 Part G §7.3.1) */
+#define ATT_CLIENT_FEAT_ROBUST_CACHING	0x01
+
+/* GATT Caching — Database Hash (BT 5.1) */
+void		attdb_compute_db_hash(struct att_db *db, uint8_t hash[16]);
+
+#endif /* _BLUED_ATT_SERVER_H_ */

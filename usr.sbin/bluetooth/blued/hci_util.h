@@ -5,8 +5,8 @@
  * All rights reserved.
  */
 
-#ifndef _BTLED_HCI_UTIL_H_
-#define _BTLED_HCI_UTIL_H_
+#ifndef _BLUED_HCI_UTIL_H_
+#define _BLUED_HCI_UTIL_H_
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -66,10 +66,10 @@ int	hci_le_connection_update(int hci_fd, uint16_t handle,
 #define LE_FEAT_CODED_PHY		(1ULL << 11)
 #define LE_FEAT_EXT_ADVERTISING		(1ULL << 12)
 #define LE_FEAT_PERIODIC_ADV		(1ULL << 13)
-#define LE_FEAT_POWER_CONTROL		(1ULL << 33)
 #define LE_FEAT_CIS_CENTRAL		(1ULL << 28)
 #define LE_FEAT_CIS_PERIPH		(1ULL << 29)
 #define LE_FEAT_ISO_BROADCASTER		(1ULL << 30)
+#define LE_FEAT_POWER_CONTROL		(1ULL << 33)
 #define LE_FEAT_CONN_SUBRATING		(1ULL << 37)
 
 /* LE event mask bits (Core Spec Vol 4 Part E Section 7.8.1) */
@@ -113,13 +113,22 @@ int	hci_le_set_rpa_timeout(int hci_fd, uint16_t timeout_sec);
 
 /* hci_util.c — LE Extended Advertising (Phase 2B) */
 int	hci_le_set_ext_adv_params(int hci_fd, uint8_t handle,
-	    uint16_t event_props, uint16_t interval_min,
-	    uint16_t interval_max, uint8_t own_addr_type);
+	    uint16_t event_props, uint32_t interval_min,
+	    uint32_t interval_max, uint8_t own_addr_type);
 int	hci_le_set_ext_adv_data(int hci_fd, uint8_t handle,
 	    const uint8_t *data, uint8_t len);
 int	hci_le_set_ext_adv_enable(int hci_fd, uint8_t enable,
 	    uint8_t handle);
 int	hci_le_remove_adv_set(int hci_fd, uint8_t handle);
+
+/* hci_util.c — LE Extended Advertising management (BT 5.0) */
+int	hci_le_set_adv_set_random_address(int fd, uint8_t handle,
+	    const uint8_t addr[6]);
+int	hci_le_set_ext_scan_response_data(int fd, uint8_t handle,
+	    const uint8_t *data, uint8_t len);
+int	hci_le_read_max_adv_data_length(int fd, uint16_t *max_len);
+int	hci_le_read_num_supported_adv_sets(int fd, uint8_t *num_sets);
+int	hci_le_clear_adv_sets(int fd);
 
 /* hci_util.c — LE Data Length Extension (Phase 1A) */
 int	hci_le_set_data_length(int hci_fd, uint16_t con_handle,
@@ -186,6 +195,44 @@ int	hci_le_set_past_params(int hci_fd, uint16_t con_handle,
 	    uint8_t cte_type);
 int	hci_le_set_default_past_params(int hci_fd, uint8_t mode,
 	    uint16_t skip, uint16_t sync_timeout, uint8_t cte_type);
+
+/* hci_util.c — LE Direction Finding (BT 5.1) */
+int	hci_le_set_connless_cte_tx_params(int hci_fd,
+	    uint8_t adv_handle, uint8_t cte_length, uint8_t cte_type,
+	    uint8_t cte_count, uint8_t switching_pattern_len,
+	    const uint8_t *antenna_ids);
+int	hci_le_set_connless_cte_tx_enable(int hci_fd,
+	    uint8_t adv_handle, uint8_t enable);
+int	hci_le_set_connless_iq_sampling_enable(int hci_fd,
+	    uint16_t sync_handle, uint8_t enable, uint8_t slot_durations,
+	    uint8_t max_sampled_ctes, uint8_t switching_pattern_len,
+	    const uint8_t *antenna_ids);
+int	hci_le_set_conn_cte_rx_params(int hci_fd,
+	    uint16_t conn_handle, uint8_t enable, uint8_t slot_durations,
+	    uint8_t switching_pattern_len, const uint8_t *antenna_ids);
+int	hci_le_set_conn_cte_tx_params(int hci_fd,
+	    uint16_t conn_handle, uint8_t cte_types,
+	    uint8_t switching_pattern_len, const uint8_t *antenna_ids);
+int	hci_le_conn_cte_req_enable(int hci_fd,
+	    uint16_t conn_handle, uint8_t enable,
+	    uint16_t cte_req_interval, uint8_t cte_length,
+	    uint8_t cte_type);
+int	hci_le_conn_cte_rsp_enable(int hci_fd,
+	    uint16_t conn_handle, uint8_t enable);
+int	hci_le_read_antenna_info(int hci_fd,
+	    uint8_t *supported_switching_rates, uint8_t *num_antennae,
+	    uint8_t *max_switching_pattern_len, uint8_t *max_cte_length);
+
+/* LE feature bits — Direction Finding (Core Spec Vol 6 Part B §4.6 Table 4.9) */
+#define LE_FEAT_CONN_CTE_REQ		(1ULL << 17)
+#define LE_FEAT_CONN_CTE_RSP		(1ULL << 18)
+#define LE_FEAT_CONNLESS_CTE_TX		(1ULL << 19)
+#define LE_FEAT_CONNLESS_CTE_RX		(1ULL << 20)
+
+/* LE event mask bits — Direction Finding */
+#define LE_EVTMASK_CONNLESS_IQ_REPORT	(1ULL << 20)  /* subevent 0x15 */
+#define LE_EVTMASK_CONN_IQ_REPORT	(1ULL << 21)  /* subevent 0x16 */
+#define LE_EVTMASK_CTE_REQ_FAILED	(1ULL << 22)  /* subevent 0x17 */
 
 /* hci_util.c — LE Connection Subrating (BT 5.3) */
 int	hci_le_set_default_subrate(int hci_fd, uint16_t min_subrate,
@@ -259,8 +306,17 @@ int	hci_le_read_iso_link_quality(int hci_fd, uint16_t con_handle,
 	    uint32_t *crc_error, uint32_t *rx_unreceived,
 	    uint32_t *duplicate);
 
+/* hci_util.c — LE Ping / Authenticated Payload Timeout (BT 4.1) */
+int	hci_le_read_auth_payload_timeout(int fd, uint16_t con_handle,
+	    uint16_t *timeout);
+int	hci_le_write_auth_payload_timeout(int fd, uint16_t con_handle,
+	    uint16_t timeout);
+
+/* hci_util.c — Set Min Encryption Key Size (BT 5.3, HC&Baseband) */
+int	hci_set_min_enc_key_size(int fd, uint8_t key_size);
+
 /* hci_util.c — LE CoC (Connection-Oriented Channel) initiation */
 int	ble_coc_connect(const uint8_t *addr, uint8_t addr_type,
 	    uint16_t psm, uint16_t mtu);
 
-#endif /* _BTLED_HCI_UTIL_H_ */
+#endif /* _BLUED_HCI_UTIL_H_ */

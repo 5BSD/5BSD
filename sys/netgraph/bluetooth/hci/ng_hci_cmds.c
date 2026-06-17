@@ -49,14 +49,37 @@
 #include <netgraph/bluetooth/hci/ng_hci_ulpi.h>
 #include <netgraph/bluetooth/hci/ng_hci_misc.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(bluetooth);
+
+/* HCI command send/complete/status/timeout */
+SDT_PROBE_DEFINE2(bluetooth, hci, command, send,
+    "uint16_t",		/* opcode */
+    "int"		/* length */
+);
+
+SDT_PROBE_DEFINE2(bluetooth, hci, command, complete,
+    "uint16_t",		/* opcode */
+    "uint8_t"		/* status */
+);
+
+SDT_PROBE_DEFINE2(bluetooth, hci, command, status,
+    "uint16_t",		/* opcode */
+    "uint8_t"		/* status */
+);
+
+SDT_PROBE_DEFINE1(bluetooth, hci, command, timeout,
+    "uint16_t"		/* opcode */
+);
+
 /******************************************************************************
  ******************************************************************************
  **                     HCI commands processing module
  ******************************************************************************
  ******************************************************************************/
 
-#undef	min
-#define	min(a, b)	((a) < (b))? (a) : (b)
+/* min() is provided by <sys/param.h> */
 
 static int  complete_command (ng_hci_unit_p, int, struct mbuf **);
 
@@ -123,6 +146,10 @@ ng_hci_send_command(ng_hci_unit_p unit)
 
 	ng_hci_mtap(unit, m0);
 
+	SDT_PROBE2(bluetooth, hci, command, send,
+	    le16toh(mtod(m0, ng_hci_cmd_pkt_t *)->opcode),
+	    m0->m_pkthdr.len);
+
 	m = m_dup(m0, M_NOWAIT);
 	if (m != NULL)
 		NG_SEND_DATA_ONLY(error, unit->drv, m);
@@ -164,6 +191,7 @@ ng_hci_process_command_complete(ng_hci_unit_p unit, struct mbuf *e)
 {
 	ng_hci_command_compl_ep		*ep = NULL;
 	struct mbuf			*cp = NULL;
+	uint16_t			 opcode;
 	int				 error = 0;
 
 	/* Get event packet and update command buffer info */
@@ -172,7 +200,7 @@ ng_hci_process_command_complete(ng_hci_unit_p unit, struct mbuf *e)
 		return (ENOBUFS); /* XXX this is bad */
 
 	ep = mtod(e, ng_hci_command_compl_ep *);
-        NG_HCI_BUFF_CMD_SET(unit->buffer, ep->num_cmd_pkts);
+	NG_HCI_BUFF_CMD_SET(unit->buffer, ep->num_cmd_pkts);
 
 	/* Check for special NOOP command */
 	if (ep->opcode == 0x0000) {
@@ -187,14 +215,21 @@ ng_hci_process_command_complete(ng_hci_unit_p unit, struct mbuf *e)
 		goto out;
 	}
 
-	/* 
+	/*
 	 * Perform post processing on command parameters and return parameters
 	 * do it only if status is OK (status == 0). Status is the first byte
 	 * of any command return parameters.
+	 *
+	 * Save opcode before m_adj invalidates ep pointer.
 	 */
 
-	ep->opcode = le16toh(ep->opcode);
+	opcode = le16toh(ep->opcode);
 	m_adj(e, sizeof(*ep));
+
+	SDT_PROBE2(bluetooth, hci, command, complete,
+	    opcode,
+	    (e->m_pkthdr.len >= (int)sizeof(u_int8_t)) ?
+	        *mtod(e, u_int8_t *) : 0xff);
 
 	if (e->m_pkthdr.len < sizeof(u_int8_t)) {
 		NG_FREE_M(cp);
@@ -204,39 +239,39 @@ ng_hci_process_command_complete(ng_hci_unit_p unit, struct mbuf *e)
 	}
 
 	if (*mtod(e, u_int8_t *) == 0) { /* XXX m_pullup here? */
-		switch (NG_HCI_OGF(ep->opcode)) {
+		switch (NG_HCI_OGF(opcode)) {
 		case NG_HCI_OGF_LINK_CONTROL:
 			error = process_link_control_params(unit,
-					NG_HCI_OCF(ep->opcode), cp, e);
+					NG_HCI_OCF(opcode), cp, e);
 			break;
 
 		case NG_HCI_OGF_LINK_POLICY:
 			error = process_link_policy_params(unit,
-					NG_HCI_OCF(ep->opcode), cp, e);
+					NG_HCI_OCF(opcode), cp, e);
 			break;
 
 		case NG_HCI_OGF_HC_BASEBAND:
 			error = process_hc_baseband_params(unit,
-					NG_HCI_OCF(ep->opcode), cp, e);
+					NG_HCI_OCF(opcode), cp, e);
 			break;
 
 		case NG_HCI_OGF_INFO:
 			error = process_info_params(unit,
-					NG_HCI_OCF(ep->opcode), cp, e);
+					NG_HCI_OCF(opcode), cp, e);
 			break;
 
 		case NG_HCI_OGF_STATUS:
 			error = process_status_params(unit,
-					NG_HCI_OCF(ep->opcode), cp, e);
+					NG_HCI_OCF(opcode), cp, e);
 			break;
 
 		case NG_HCI_OGF_TESTING:
 			error = process_testing_params(unit,
-					NG_HCI_OCF(ep->opcode), cp, e);
+					NG_HCI_OCF(opcode), cp, e);
 			break;
 		case NG_HCI_OGF_LE:
 			error = process_le_params(unit,
-					  NG_HCI_OCF(ep->opcode), cp, e);
+					  NG_HCI_OCF(opcode), cp, e);
 			break;
 		case NG_HCI_OGF_BT_LOGO:
 		case NG_HCI_OGF_VENDOR:
@@ -254,7 +289,7 @@ ng_hci_process_command_complete(ng_hci_unit_p unit, struct mbuf *e)
 		NG_HCI_ERR(
 "%s: %s - HCI command failed, OGF=%#x, OCF=%#x, status=%#x\n",
 			__func__, NG_NODE_NAME(unit->node),
-			NG_HCI_OGF(ep->opcode), NG_HCI_OCF(ep->opcode), 
+			NG_HCI_OGF(opcode), NG_HCI_OCF(opcode),
 			*mtod(e, u_int8_t *));
 
 		NG_FREE_M(cp);
@@ -292,7 +327,7 @@ ng_hci_process_command_status(ng_hci_unit_p unit, struct mbuf *e)
 
 	/* Try to match first command item in the queue */
 	error = complete_command(unit, ep->opcode, &cp);
-        if (error != 0)
+	if (error != 0)
 		goto out;
 
 	/* 
@@ -300,6 +335,9 @@ ng_hci_process_command_status(ng_hci_unit_p unit, struct mbuf *e)
 	 */
 
 	ep->opcode = le16toh(ep->opcode);
+
+	SDT_PROBE2(bluetooth, hci, command, status,
+	    ep->opcode, ep->status);
 
 	switch (NG_HCI_OGF(ep->opcode)) {
 	case NG_HCI_OGF_LINK_CONTROL:
@@ -423,6 +461,8 @@ ng_hci_process_command_timeout(node_p node, hook_p hook, void *arg1, int arg2)
 		opcode = le16toh(mtod(m, ng_hci_cmd_pkt_t *)->opcode);
 		NG_FREE_M(m);
 
+		SDT_PROBE1(bluetooth, hci, command, timeout, opcode);
+
 		NG_HCI_ERR(
 "%s: %s - unable to complete HCI command OGF=%#x, OCF=%#x. Timeout\n",
 			__func__, NG_NODE_NAME(unit->node), NG_HCI_OGF(opcode),
@@ -462,6 +502,8 @@ process_link_control_params(ng_hci_unit_p unit, u_int16_t ocf,
 	case NG_HCI_OCF_USER_PASSKEY_REQ_REP:
 	case NG_HCI_OCF_USER_PASSKEY_REQ_NEG_REP:
 	case NG_HCI_OCF_REMOTE_NAME_REQ_CANCEL:
+	case NG_HCI_OCF_SET_CPB_RECEIVE:
+	case NG_HCI_OCF_TRUNCATED_PAGE_CANCEL:
 		/* These do not need post processing */
 		break;
 
@@ -575,8 +617,8 @@ process_link_policy_params(ng_hci_unit_p unit, u_int16_t ocf,
  * Process HC and baseband command return parameters
  */
 
-int
-process_hc_baseband_params(ng_hci_unit_p unit, u_int16_t ocf, 
+static int
+process_hc_baseband_params(ng_hci_unit_p unit, u_int16_t ocf,
 		struct mbuf *mcp, struct mbuf *mrp)
 {
 	int	error = 0;
@@ -645,6 +687,15 @@ process_hc_baseband_params(ng_hci_unit_p unit, u_int16_t ocf,
 	case NG_HCI_OCF_READ_SIMPLE_PAIRING:
 	case NG_HCI_OCF_READ_SECURE_CONNECTIONS_HOST_SUPPORT:
 	case NG_HCI_OCF_SET_AFH_HOST_CHANNEL_CLASSIFICATION:
+	case NG_HCI_OCF_SET_RESERVED_LT_ADDR:
+	case NG_HCI_OCF_DELETE_RESERVED_LT_ADDR:
+	case NG_HCI_OCF_SET_CPB:
+	case NG_HCI_OCF_SET_CPB_DATA:
+	case NG_HCI_OCF_READ_SYNC_TRAIN_PARAMS:
+	case NG_HCI_OCF_WRITE_SYNC_TRAIN_PARAMS:
+	case NG_HCI_OCF_SET_MIN_ENC_KEY_SIZE:
+	case NG_HCI_OCF_READ_AUTH_PAYLOAD_TIMEOUT:
+	case NG_HCI_OCF_WRITE_AUTH_PAYLOAD_TIMEOUT:
 		/* These do not need post processing */
 		break;
 
@@ -671,7 +722,7 @@ process_hc_baseband_params(ng_hci_unit_p unit, u_int16_t ocf,
 				ng_hci_con_untimeout(con);
 
 			/* Connection terminated by local host */
-			ng_hci_lp_discon_ind(con, 0x16);
+			ng_hci_lp_discon_ind(con, NG_HCI_ERROR_CON_TERM_LOCAL_HOST);
 			ng_hci_free_con(con);
 		}
 
@@ -816,7 +867,7 @@ process_status_params(ng_hci_unit_p unit, u_int16_t ocf, struct mbuf *mcp,
  * Process testing command return parameters
  */
 
-int
+static int
 process_testing_params(ng_hci_unit_p unit, u_int16_t ocf, struct mbuf *mcp,
 		struct mbuf *mrp)
 {
@@ -1072,7 +1123,7 @@ process_le_params(ng_hci_unit_p unit, u_int16_t ocf,
 }
 
 static int
-process_le_status(ng_hci_unit_p unit,ng_hci_command_status_ep *ep,
+process_le_status(ng_hci_unit_p unit, ng_hci_command_status_ep *ep,
 		struct mbuf *mcp)
 {
 	int	error = 0;

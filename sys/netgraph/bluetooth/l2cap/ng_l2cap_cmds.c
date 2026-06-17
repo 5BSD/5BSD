@@ -64,6 +64,7 @@
 void
 ng_l2cap_con_wakeup(ng_l2cap_con_p con)
 {
+	ng_l2cap_p	 l2cap = con->l2cap;
 	ng_l2cap_cmd_p	 cmd = NULL;
 	struct mbuf	*m = NULL;
 	int		 error = 0;
@@ -209,8 +210,9 @@ ng_l2cap_con_wakeup(ng_l2cap_con_p con)
 			else
                 		mtod(m, ng_l2cap_clt_hdr_t *)->psm =
 							htole16(cmd->ch->psm);
-		} else if (cmd->ch->idtype == NG_L2CAP_L2CA_IDTYPE_LE &&
-			   cmd->ch->mps > 0) {
+		} else if ((cmd->ch->idtype == NG_L2CAP_L2CA_IDTYPE_LE ||
+			   cmd->ch->idtype == NG_L2CAP_L2CA_IDTYPE_ECBFC) &&
+			   cmd->ch->mps_remote > 0) {
 			/*
 			 * LE Credit Based Flow Control mode:
 			 * Segment the SDU into K-frames per Core Spec
@@ -224,11 +226,18 @@ ng_l2cap_con_wakeup(ng_l2cap_con_p con)
 			 * chain and restore it at the end.
 			 */
 			u_int16_t	sdu_len = m->m_pkthdr.len;
-			u_int16_t	mps = cmd->ch->mps;
+			u_int16_t	mps = cmd->ch->mps_remote;
 			u_int16_t	first_payload;
 			struct mbuf	*frag;
 			struct mbuf	*saved_tx = NULL;
 			struct mbuf	*saved_last = NULL;
+
+			/* Sanity check MPS to avoid underflow in (mps - 2) */
+			if (mps < 2) {
+				NG_FREE_M(m);
+				error = EINVAL;
+				goto le_coc_write_done;
+			}
 
 			/* Check we have at least one credit */
 			if (cmd->ch->credits_remote == 0) {
@@ -358,6 +367,9 @@ ng_l2cap_con_wakeup(ng_l2cap_con_p con)
 				frag = next_frag;
 			}
 
+			if (error != 0 && frag != NULL)
+				NG_FREE_M(frag);
+
 			/* Restore the combined ACL chain */
 			con->tx_pkt = saved_tx;
 
@@ -438,11 +450,19 @@ le_coc_write_done:
 		break;
 
 	case NG_L2CAP_CMD_PARAM_UPDATE_REQUEST:
-		  /*TBD.*/
+		/* TBD -- for now, clean up the unsent command */
+		NG_FREE_M(m);
+		ng_l2cap_unlink_cmd(cmd);
+		ng_l2cap_free_cmd(cmd);
+		break;
+
 	default:
-		panic(
-"%s: %s - unknown command code=%d\n",
-			__func__, NG_NODE_NAME(con->l2cap->node), cmd->code);
+		NG_L2CAP_ERR(
+"%s: %s - unexpected command code=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node), cmd->code);
+		NG_FREE_M(m);
+		ng_l2cap_unlink_cmd(cmd);
+		ng_l2cap_free_cmd(cmd);
 		break;
 	}
 } /* ng_l2cap_con_wakeup */
@@ -472,7 +492,7 @@ ng_l2cap_con_fail(ng_l2cap_con_p con, u_int16_t result)
 		cmd = TAILQ_FIRST(&con->cmd_list);
 
 		ng_l2cap_unlink_cmd(cmd);
-		if(cmd->flags & NG_L2CAP_CMD_PENDING)
+		if (cmd->flags & NG_L2CAP_CMD_PENDING)
 			ng_l2cap_command_untimeout(cmd);
 
 		KASSERT((cmd->con == con),
@@ -521,10 +541,14 @@ ng_l2cap_con_fail(ng_l2cap_con_p con, u_int16_t result)
 				result, NULL);
 			break;
 
-		/* XXX FIXME add other commands */
+		case NG_L2CAP_FLOW_CONTROL_CREDIT:
+		case NG_L2CAP_CMD_PARAM_UPDATE_REQUEST:
+		case NG_L2CAP_CREDIT_CON_RSP:
+		case NG_L2CAP_CREDIT_RECONFIG_RSP:
+			break;
 
 		default:
-			panic(
+			NG_L2CAP_ERR(
 "%s: %s - unexpected command code=%d\n",
 				__func__, NG_NODE_NAME(l2cap->node), cmd->code);
 			break;
@@ -618,10 +642,13 @@ ng_l2cap_process_command_timeout(node_p node, hook_p hook, void *arg1, int arg2)
 			NG_L2CAP_TIMEOUT, NULL);
 		break;
 
-	/* XXX FIXME add other commands */
+	case NG_L2CAP_FLOW_CONTROL_CREDIT:
+	case NG_L2CAP_CMD_PARAM_UPDATE_REQUEST:
+	case NG_L2CAP_CMD_PARAM_UPDATE_RESPONSE:
+		break;
 
 	default:
-		panic(
+		NG_L2CAP_ERR(
 "%s: %s - unexpected command code=%d\n",
 			__func__, NG_NODE_NAME(l2cap->node), cmd->code);
 		break;

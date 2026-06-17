@@ -6,7 +6,9 @@
 .include <src.opts.mk>
 
 PACKAGE=	dtrace
-SCRIPTS=	blocking \
+SCRIPTS=	blued-att \
+		blued-connections \
+		blocking \
 		cap_rt-audit \
 		capsicum-changes \
 		cap_rt-calls \

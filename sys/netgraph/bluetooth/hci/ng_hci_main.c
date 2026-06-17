@@ -75,6 +75,7 @@ static	ng_rcvmsg_t		ng_hci_upper_rcvmsg;
 static	ng_rcvdata_t		ng_hci_drv_rcvdata;
 static	ng_rcvdata_t		ng_hci_acl_rcvdata;
 static	ng_rcvdata_t		ng_hci_sco_rcvdata;
+static	ng_rcvdata_t		ng_hci_iso_rcvdata;
 static	ng_rcvdata_t		ng_hci_raw_rcvdata;
 
 /* Netgraph node type descriptor */
@@ -94,11 +95,11 @@ NETGRAPH_INIT(hci, &typestruct);
 MODULE_VERSION(ng_hci, NG_BLUETOOTH_VERSION);
 MODULE_DEPEND(ng_hci, ng_bluetooth, NG_BLUETOOTH_VERSION,
 	NG_BLUETOOTH_VERSION, NG_BLUETOOTH_VERSION);
-static int ng_hci_linktype_to_addrtype(int linktype);
 
-static int ng_hci_linktype_to_addrtype(int linktype)
+static int
+ng_hci_linktype_to_addrtype(int linktype)
 {
-	switch(linktype){
+	switch (linktype) {
 	case NG_HCI_LINK_LE_PUBLIC:
 		return BDADDR_LE_PUBLIC;
 	case NG_HCI_LINK_LE_RANDOM:
@@ -108,7 +109,6 @@ static int ng_hci_linktype_to_addrtype(int linktype)
 	default:
 		return BDADDR_BREDR;
 	}
-	return BDADDR_BREDR;
 }
 /*****************************************************************************
  *****************************************************************************
@@ -129,6 +129,7 @@ ng_hci_constructor(node_p node)
 
 	unit->node = node;
 	unit->debug = NG_HCI_WARN_LEVEL;
+	unit->fake_con_handle = 0x0f00;
 
 	unit->link_policy_mask = 0xffff; /* Enable all supported modes */
 	unit->packet_mask = 0xffff; /* Enable all packet types */
@@ -174,13 +175,12 @@ ng_hci_shutdown(node_p node)
 {
 	ng_hci_unit_p	unit = (ng_hci_unit_p) NG_NODE_PRIVATE(node);
 
-	NG_NODE_SET_PRIVATE(node, NULL);
-	NG_NODE_UNREF(node);
-
-	unit->node = NULL;
-	ng_hci_unit_clean(unit, 0x16 /* Connection terminated by local host */);
+	ng_hci_unit_clean(unit, NG_HCI_ERROR_CON_TERM_LOCAL_HOST);
 
 	NG_BT_MBUFQ_DESTROY(&unit->cmdq);
+
+	NG_NODE_SET_PRIVATE(node, NULL);
+	NG_NODE_UNREF(node);
 
 	bzero(unit, sizeof(*unit));
 	free(unit, M_NETGRAPH_HCI);
@@ -206,6 +206,8 @@ ng_hci_newhook(node_p node, hook_p hook, char const *name)
 		h = &unit->acl;
 	else if (strcmp(name, NG_HCI_HOOK_SCO) == 0)
 		h = &unit->sco;
+	else if (strcmp(name, NG_HCI_HOOK_ISO) == 0)
+		h = &unit->iso;
 	else if (strcmp(name, NG_HCI_HOOK_RAW) == 0)
 		h = &unit->raw;
 	else
@@ -235,6 +237,9 @@ ng_hci_connect(hook_p hook)
 		} else if (hook == unit->sco) {
 			NG_HOOK_SET_RCVMSG(hook, ng_hci_upper_rcvmsg);
 			NG_HOOK_SET_RCVDATA(hook, ng_hci_sco_rcvdata);
+		} else if (hook == unit->iso) {
+			NG_HOOK_SET_RCVMSG(hook, ng_hci_upper_rcvmsg);
+			NG_HOOK_SET_RCVDATA(hook, ng_hci_iso_rcvdata);
 		} else
 			NG_HOOK_SET_RCVDATA(hook, ng_hci_raw_rcvdata);
 
@@ -260,13 +265,15 @@ ng_hci_disconnect(hook_p hook)
 		unit->acl = NULL;
 	else if (hook == unit->sco)
 		unit->sco = NULL;
+	else if (hook == unit->iso)
+		unit->iso = NULL;
 	else if (hook == unit->raw)
 		unit->raw = NULL;
 	else if (hook == unit->drv) {
 		unit->drv = NULL;
 
 		/* Connection terminated by local host */
-		ng_hci_unit_clean(unit, 0x16);
+		ng_hci_unit_clean(unit, NG_HCI_ERROR_CON_TERM_LOCAL_HOST);
 		unit->state &= ~(NG_HCI_UNIT_CONNECTED|NG_HCI_UNIT_INITED);
 	} else
 		return (EINVAL);
@@ -322,7 +329,7 @@ ng_hci_default_rcvmsg(node_p node, item_p item, hook_p lasthook)
 
 			snprintf(rsp->data, NG_TEXTRESPONSE,
 				"bdaddr %x:%x:%x:%x:%x:%x\n" \
-				"Hooks  %s %s %s %s\n" \
+				"Hooks  %s %s %s %s %s\n" \
 				"State  %#x\n" \
 				"Queue  cmd:%d\n" \
 				"Buffer cmd:%d,acl:%d,%d,%d,sco:%d,%d,%d",
@@ -332,11 +339,12 @@ ng_hci_default_rcvmsg(node_p node, item_p item, hook_p lasthook)
 				(unit->drv != NULL)? NG_HCI_HOOK_DRV : "",
 				(unit->acl != NULL)? NG_HCI_HOOK_ACL : "",
 				(unit->sco != NULL)? NG_HCI_HOOK_SCO : "",
+				(unit->iso != NULL)? NG_HCI_HOOK_ISO : "",
 				(unit->raw != NULL)? NG_HCI_HOOK_RAW : "",
 				unit->state,
 				NG_BT_MBUFQ_LEN(&unit->cmdq),
 				cmd_avail,
-				acl_avail, acl_total, acl_size, 
+				acl_avail, acl_total, acl_size,
 				sco_avail, sco_total, sco_size);
 			} break;
 
@@ -371,6 +379,7 @@ ng_hci_default_rcvmsg(node_p node, item_p item, hook_p lasthook)
 
 			ng_hci_node_is_up(unit->node, unit->acl, NULL, 0);
 			ng_hci_node_is_up(unit->node, unit->sco, NULL, 0);
+			ng_hci_node_is_up(unit->node, unit->iso, NULL, 0);
 			break;
 
 		/* Get node debug level */
@@ -728,6 +737,13 @@ ng_hci_drv_rcvdata(hook_p hook, item_p item)
 	 * the beginning of the chain. HCI layer WILL NOT call m_pullup() here.
 	 */
 
+	if (m->m_pkthdr.len < 1) {
+		NG_HCI_WARN("%s: %s - empty HCI packet\n",
+		    __func__, NG_NODE_NAME(unit->node));
+		NG_FREE_ITEM(item);
+		return (EMSGSIZE);
+	}
+
 	switch (*mtod(m, u_int8_t *)) {
 	case NG_HCI_ACL_DATA_PKT:
 		NG_HCI_STAT_ACL_RECV(unit->stat);
@@ -761,15 +777,15 @@ ng_hci_drv_rcvdata(hook_p hook, item_p item)
 
 	case NG_HCI_ISO_DATA_PKT:
 		if ((unit->state & NG_HCI_UNIT_READY) != NG_HCI_UNIT_READY ||
-		    unit->acl == NULL || NG_HOOK_NOT_VALID(unit->acl)) {
+		    unit->iso == NULL || NG_HOOK_NOT_VALID(unit->iso)) {
 			NG_HCI_INFO(
 "%s: %s - could not forward HCI ISO data packet, state=%#x, hook=%p\n",
 				__func__, NG_NODE_NAME(unit->node),
-				unit->state, unit->acl);
+				unit->state, unit->iso);
 
 			NG_FREE_ITEM(item);
 		} else
-			NG_FWD_ITEM_HOOK(error, item, unit->acl);
+			NG_FWD_ITEM_HOOK(error, item, unit->iso);
 		break;
 
 	case NG_HCI_EVENT_PKT:
@@ -866,7 +882,9 @@ ng_hci_acl_rcvdata(hook_p hook, item_p item)
 		goto drop;
 	}
 
-	if (con->link_type == NG_HCI_LINK_SCO) {
+	if (con->link_type != NG_HCI_LINK_ACL &&
+	    con->link_type != NG_HCI_LINK_LE_PUBLIC &&
+	    con->link_type != NG_HCI_LINK_LE_RANDOM) {
 		NG_HCI_ERR(
 "%s: %s - unexpected HCI ACL data packet. Not ACL link, con_handle=%d, " \
 "link_type=%d\n",	__func__, NG_NODE_NAME(unit->node), 
@@ -1032,6 +1050,126 @@ drop:
 
 	return (error);
 } /* ng_hci_sco_rcvdata */
+
+/*
+ * Process data packet from ISO upstream hook.
+ * We expect valid HCI ISO data packets.
+ */
+
+static int
+ng_hci_iso_rcvdata(hook_p hook, item_p item)
+{
+	ng_hci_unit_p		 unit = (ng_hci_unit_p) NG_NODE_PRIVATE(NG_HOOK_NODE(hook));
+	struct mbuf		*m = NULL;
+	ng_hci_unit_con_p	 con = NULL;
+	u_int16_t		 con_handle;
+	int			 size, error = 0;
+
+	NG_HCI_BUFF_ISO_SIZE(unit->buffer, size);
+
+	/* Check packet */
+	NGI_GET_M(item, m);
+
+	if (*mtod(m, u_int8_t *) != NG_HCI_ISO_DATA_PKT) {
+		NG_HCI_ALERT(
+"%s: %s - invalid HCI data packet type=%#x\n",
+			__func__, NG_NODE_NAME(unit->node),
+			*mtod(m, u_int8_t *));
+
+		error = EINVAL;
+		goto drop;
+	}
+
+	if (m->m_pkthdr.len < (int)sizeof(ng_hci_isodata_pkt_t)) {
+		NG_HCI_ALERT(
+"%s: %s - invalid HCI ISO data packet, len=%d\n",
+			__func__, NG_NODE_NAME(unit->node),
+			m->m_pkthdr.len);
+
+		error = EMSGSIZE;
+		goto drop;
+	}
+
+	NG_HCI_M_PULLUP(m, sizeof(ng_hci_isodata_pkt_t));
+	if (m == NULL) {
+		error = ENOBUFS;
+		goto drop;
+	}
+
+	con_handle = NG_HCI_ISO_CON_HANDLE(le16toh(
+			mtod(m, ng_hci_isodata_pkt_t *)->con_handle));
+	size = NG_HCI_ISO_DATA_LENGTH(le16toh(
+			mtod(m, ng_hci_isodata_pkt_t *)->length));
+
+	if (m->m_pkthdr.len < (int)sizeof(ng_hci_isodata_pkt_t) + size) {
+		NG_HCI_ALERT(
+"%s: %s - invalid HCI ISO data packet size, len=%d, length=%d\n",
+			__func__, NG_NODE_NAME(unit->node),
+			m->m_pkthdr.len, size);
+
+		error = EMSGSIZE;
+		goto drop;
+	}
+
+	/* Queue packet */
+	con = ng_hci_con_by_handle(unit, con_handle);
+	if (con == NULL) {
+		NG_HCI_ERR(
+"%s: %s - unexpected HCI ISO data packet. Connection does not exists, " \
+"con_handle=%d\n",	__func__, NG_NODE_NAME(unit->node), con_handle);
+
+		error = ENOENT;
+		goto drop;
+	}
+
+	if (con->link_type != NG_HCI_LINK_ISO_CIS &&
+	    con->link_type != NG_HCI_LINK_ISO_BIS) {
+		NG_HCI_ERR(
+"%s: %s - unexpected HCI ISO data packet. Not ISO link, con_handle=%d, " \
+"link_type=%d\n",	__func__, NG_NODE_NAME(unit->node),
+			con_handle, con->link_type);
+
+		error = EINVAL;
+		goto drop;
+	}
+
+	if (con->state != NG_HCI_CON_OPEN) {
+		NG_HCI_ERR(
+"%s: %s - unexpected HCI ISO data packet. Invalid connection state=%d, " \
+"con_handle=%d\n",	__func__, NG_NODE_NAME(unit->node),
+			con->state, con_handle);
+
+		error = EHOSTDOWN;
+		goto drop;
+	}
+
+	if (NG_BT_ITEMQ_FULL(&con->conq)) {
+		NG_HCI_ALERT(
+"%s: %s - dropping HCI ISO data packet, con_handle=%d, len=%d, queue_len=%d\n",
+			__func__, NG_NODE_NAME(unit->node), con_handle,
+			m->m_pkthdr.len, NG_BT_ITEMQ_LEN(&con->conq));
+
+		NG_BT_ITEMQ_DROP(&con->conq);
+
+		error = ENOBUFS;
+		goto drop;
+	}
+
+	/* Queue item and schedule data transfer */
+	NGI_M(item) = m;
+	NG_BT_ITEMQ_ENQUEUE(&con->conq, item);
+	item = NULL;
+	m = NULL;
+
+	ng_hci_send_data(unit);
+drop:
+	if (item != NULL)
+		NG_FREE_ITEM(item);
+
+	NG_FREE_M(m); /* NG_FREE_M() checks for m != NULL */
+
+	return (error);
+} /* ng_hci_iso_rcvdata */
 
 /*
  * Process data packet from uptream RAW hook.

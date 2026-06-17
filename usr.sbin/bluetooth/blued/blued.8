@@ -1,0 +1,348 @@
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd June 16, 2026
+.Dt BLUED 8
+.Os
+.Sh NAME
+.Nm blued
+.Nd general-purpose Bluetooth Low Energy daemon
+.Sh SYNOPSIS
+.Nm
+.Op Fl Bdv
+.Op Fl a Ar adapter
+.Op Fl c Ar configfile
+.Op Fl f Ar bonds_file
+.Op Fl L Ar logfile
+.Fl s
+.Nm
+.Op Fl Bdrv
+.Op Fl a Ar adapter
+.Op Fl c Ar configfile
+.Op Fl f Ar bonds_file
+.Op Fl L Ar logfile
+.Ar bdaddr
+.Op Ar public | random
+.Op Ar ...
+.Nm
+.Op Fl Bdv
+.Op Fl a Ar adapter
+.Op Fl c Ar configfile
+.Op Fl f Ar bonds_file
+.Op Fl L Ar logfile
+.Fl p
+.Sh DESCRIPTION
+The
+.Nm
+daemon is a general-purpose Bluetooth Low Energy daemon for
+.Fx .
+In its default central mode, it connects to BLE HID devices using the
+HID over GATT Profile (HOGP) and injects HID reports into the kernel
+via the vhid virtual HID transport.
+It also supports a peripheral mode that advertises a GATT server.
+.Pp
+The kernel's native HID drivers
+.Pq Xr hkbd 4 , hms 4 , hmt 4
+automatically attach to the virtual device and process reports,
+providing keyboard, mouse, and touchpad functionality.
+.Pp
+The
+.Nm
+daemon implements the BLE protocol stack from the ground up:
+ATT, GATT, SMP (both Legacy and Secure Connections pairing),
+and the HID over GATT Profile.
+Multiple devices can be connected simultaneously by specifying
+multiple
+.Ar bdaddr
+arguments.
+.Pp
+After establishing BLE connections and discovering services,
+.Nm
+enters a
+.Xr capsicum 4
+sandbox, restricting itself to only the file descriptors required
+for operation.
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl a Ar adapter
+Bluetooth adapter to use.
+Default is
+.Li ubt0 .
+.It Fl B
+Run as a daemon: fork into the background, log to
+.Xr syslogd 8 ,
+and write a PID file.
+.It Fl c Ar configfile
+Path to the configuration file.
+Default is
+.Pa /etc/blued.conf .
+See
+.Sx CONFIGURATION FILE
+below.
+.It Fl d
+Enable debug output to stderr.
+Equivalent to
+.Fl v .
+.It Fl f Ar bonds_file
+Path to the bond storage file.
+Default is
+.Pa /var/db/blued/bonds .
+.It Fl L Ar logfile
+Log HCI packets to
+.Ar logfile
+in BTSnoop format.
+The resulting file can be opened in Wireshark for analysis.
+.It Fl p
+Peripheral mode.
+Advertise a GATT server with GAP, GATT, Device Information,
+and custom services.
+Accepts incoming BLE connections instead of initiating them.
+.It Fl r
+Enable auto-reconnect.
+When the BLE link drops,
+.Nm
+will attempt to reconnect with exponential backoff
+up to 60 seconds.
+.It Fl s
+Scan mode.
+Scan for nearby BLE devices for 5 seconds and display results,
+then exit.
+Uses extended scanning on BT 5.0+ controllers.
+.It Fl v
+Increase verbosity.
+Repeat for trace-level output
+.Pq Fl vv .
+.It Ar bdaddr
+Bluetooth address of one or more remote HID devices.
+Each address may optionally be followed by a
+.Cm public
+or
+.Cm random
+address type keyword.
+The default address type is
+.Cm public .
+.El
+.Sh CONFIGURATION FILE
+When started with the
+.Fl c
+option or via the
+.Xr rc 8
+system, the
+.Nm
+daemon reads a configuration file in UCL format.
+The default path is
+.Pa /etc/blued.conf .
+A sample configuration file is installed to
+.Pa /usr/share/examples/blued/blued.conf.sample .
+.Pp
+The file has the following top-level sections:
+.Bl -tag -width "security"
+.It Cm general
+Controls logging verbosity
+.Pq Cm loglevel ,
+the bond database path
+.Pq Cm bonddb ,
+and an optional BTSnoop packet log
+.Pq Cm logfile .
+.It Cm adapters
+A list of adapter names to use, or the string
+.Dq auto
+to discover all
+.Li ubt*
+adapters automatically.
+.It Cm security
+SMP pairing parameters:
+.Cm io_capability
+.Pq none, display_only, display_yesno, keyboard_only, keyboard_display ,
+.Cm bondable
+.Pq boolean ,
+and
+.Cm sc_only
+to require Secure Connections and reject legacy pairing.
+.It Cm features
+Feature toggles:
+.Cm eatt
+.Pq Enhanced ATT bearers ,
+.Cm privacy
+.Pq RPA resolution ,
+.Cm reconnect
+.Pq auto-reconnect on link loss ,
+and
+.Cm reconnect_max_delay
+in seconds.
+.It Cm devices
+Optional per-device overrides keyed by BD_ADDR.
+Each device block may specify
+.Cm type
+.Pq public or random
+and
+.Cm reconnect
+.Pq boolean .
+.El
+.Sh CONTROL SOCKET
+When running as a daemon,
+.Nm
+creates a
+.Ux Ns -domain
+control socket at
+.Pa /var/run/blued.sock .
+Administrative tools can send newline-terminated commands and receive
+JSON-formatted responses.
+.Pp
+The following commands are supported:
+.Bl -tag -width "DISCONNECT"
+.It Cm SCAN
+Start a BLE scan and return discovered devices.
+.It Cm CONNECT Ar bdaddr Op Ar type
+Initiate a connection to the specified device.
+.It Cm DISCONNECT Ar bdaddr
+Disconnect a connected device.
+.It Cm PAIR Ar bdaddr
+Initiate SMP pairing with a connected device.
+.It Cm LIST
+List all currently connected devices and their status.
+.It Cm ADAPTERS
+List available Bluetooth adapters and their state.
+.It Cm STATUS
+Return daemon status including uptime and bond count.
+.El
+.Sh MULTI-ADAPTER
+When the
+.Cm adapters
+configuration directive is set to
+.Dq auto ,
+.Nm
+enumerates all
+.Li ubt*
+devices present at startup.
+Each adapter is managed independently, and connections
+are distributed across adapters as needed.
+Specific adapters can be selected with the
+.Fl a
+flag or by listing them explicitly in the configuration file.
+.Sh SECURITY
+The
+.Nm
+daemon employs multiple layers of security:
+.Bl -bullet
+.It
+.Xr capsicum 4
+capability mode is entered after initialization.
+All file descriptors are restricted to the minimum rights needed:
+ATT sockets receive
+.Dv CAP_SEND , CAP_RECV , CAP_EVENT ;
+the vhid device receives
+.Dv CAP_WRITE ;
+the bond file receives
+.Dv CAP_READ , CAP_WRITE , CAP_SEEK , CAP_FLOCK ;
+and the HCI socket receives
+.Dv CAP_SEND , CAP_RECV , CAP_READ , CAP_WRITE , CAP_EVENT ,
+.Dv CAP_IOCTL , CAP_SETSOCKOPT , CAP_GETSOCKOPT .
+.It
+Socket pool pre-allocation: when auto-reconnect is enabled,
+.Nm
+creates a pool of bound but unconnected L2CAP sockets before
+entering the sandbox.
+Reconnection inside capability mode uses
+.Xr cap_connect 2
+on these pre-allocated sockets.
+.It
+SMP pairing supports both LE Legacy Pairing and LE Secure Connections
+(ECDH P-256).
+The
+.Cm sc_only
+configuration option rejects legacy pairing entirely.
+.El
+.Sh PROTOCOL OVERVIEW
+.Nm
+implements the following Bluetooth LE protocol stack:
+.Bl -bullet
+.It
+ATT (Attribute Protocol) \(em PDU exchange over L2CAP CID 0x0004
+.It
+GATT (Generic Attribute Profile) \(em service and characteristic discovery
+.It
+SMP (Security Manager Protocol) \(em LE Legacy and Secure Connections pairing
+over L2CAP CID 0x0006
+.It
+HOGP (HID over GATT Profile) \(em HID Service discovery and report handling
+.It
+EATT (Enhanced ATT) \(em parallel GATT operations over L2CAP credit-based
+channels (BT 5.1+)
+.El
+.Sh FILES
+.Bl -tag -width "/usr/share/examples/blued/blued.conf.sample" -compact
+.It Pa /etc/blued.conf
+Default configuration file (UCL format).
+.It Pa /var/run/blued.pid
+PID file when running as a daemon.
+.It Pa /var/run/blued.sock
+.Ux Ns -domain
+control socket.
+.It Pa /var/db/blued/bonds
+Default bond storage database.
+.It Pa /dev/vhid
+Virtual HID control device.
+.It Pa /dev/vhidN
+Virtual HID instance devices.
+.It Pa /usr/share/examples/blued/blued.conf.sample
+Sample configuration file.
+.El
+.Sh SEE ALSO
+.Xr kqueue 2 ,
+.Xr procctl 2 ,
+.Xr bluetooth 3 ,
+.Xr capsicum 4 ,
+.Xr hkbd 4 ,
+.Xr hms 4 ,
+.Xr hmt 4 ,
+.Xr ng_hci 4 ,
+.Xr ng_l2cap 4 ,
+.Xr ng_ubt 4 ,
+.Xr ucl.conf 5 ,
+.Xr bthidd 8
+.Sh STANDARDS
+.Rs
+.%T Bluetooth Core Specification
+.%O Version 6.0
+.%Q Bluetooth SIG
+.Re
+.Rs
+.%T HID over GATT Profile (HOGP)
+.%O Version 1.0
+.%Q Bluetooth SIG
+.Re
+.Sh HISTORY
+The
+.Nm
+daemon first appeared in
+.Fx 16.0 .
+It was originally developed under the name
+.Nm btled
+and was renamed to
+.Nm blued
+to reflect its evolution into a general-purpose BLE daemon.
+.Sh AUTHORS
+.An Kory Heard

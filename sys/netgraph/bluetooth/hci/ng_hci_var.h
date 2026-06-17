@@ -35,7 +35,7 @@
 #ifndef _NETGRAPH_HCI_VAR_H_
 #define _NETGRAPH_HCI_VAR_H_
 
-/* MALLOC decalation */
+/* MALLOC declaration */
 #ifdef NG_SEPARATE_MALLOC
 MALLOC_DECLARE(M_NETGRAPH_HCI);
 #else
@@ -55,7 +55,7 @@ MALLOC_DECLARE(M_NETGRAPH_HCI);
 			(m) = m_pullup((m), (s)); 	\
 		if ((m) == NULL) 			\
 			NG_HCI_ALERT("%s: %s - m_pullup(%zd) failed\n", \
-				__func__, NG_NODE_NAME(unit->node), (s)); \
+				__func__, NG_NODE_NAME(unit->node), (size_t)(s)); \
 	} while (0)
 
 /*
@@ -152,9 +152,10 @@ typedef struct ng_hci_unit_buff {
 	} while (0)
 #define NG_HCI_BUFF_LE_FREE(b, v) 			\
 	do { 						\
-		(b).le_free += (v);			\
-		if ((b).le_free > (b).le_pkts) 		\
-			(b).le_free = (b).le_pkts; 	\
+		u_int16_t _nf = (u_int16_t)(b).le_free + (v); \
+		if (_nf > (b).le_pkts) 			\
+			_nf = (b).le_pkts; 		\
+		(b).le_free = (u_int8_t)_nf; 		\
 	} while (0)
 #define NG_HCI_BUFF_LE_AVAIL(b, v)	(v) = (b).le_free
 #define NG_HCI_BUFF_LE_TOTAL(b, v)	(v) = (b).le_pkts
@@ -175,9 +176,10 @@ typedef struct ng_hci_unit_buff {
 	} while (0)
 #define NG_HCI_BUFF_ISO_FREE(b, v) 			\
 	do { 						\
-		(b).iso_free += (v);			\
-		if ((b).iso_free > (b).iso_pkts) 	\
-			(b).iso_free = (b).iso_pkts; 	\
+		u_int16_t _nf = (u_int16_t)(b).iso_free + (v); \
+		if (_nf > (b).iso_pkts) 		\
+			_nf = (b).iso_pkts; 		\
+		(b).iso_free = (u_int8_t)_nf; 		\
 	} while (0)
 #define NG_HCI_BUFF_ISO_AVAIL(b, v)	(v) = (b).iso_free
 #define NG_HCI_BUFF_ISO_TOTAL(b, v)	(v) = (b).iso_pkts
@@ -230,10 +232,13 @@ typedef struct ng_hci_unit {
 	hook_p				drv;            /* driver hook */
 	hook_p				acl;            /* upstream hook */
 	hook_p				sco;            /* upstream hook */
+	hook_p				iso;            /* upstream hook */
 	hook_p				raw;            /* upstream hook */
 
 	LIST_HEAD(, ng_hci_unit_con)	con_list;       /* connections */
 	LIST_HEAD(, ng_hci_neighbor)	neighbors;      /* unit neighbors */
+
+	int				fake_con_handle; /* per-unit fake handle */
 } ng_hci_unit_t;
 typedef ng_hci_unit_t *			ng_hci_unit_p;
 
@@ -249,17 +254,25 @@ typedef struct ng_hci_unit_con {
 #define NG_HCI_CON_TIMEOUT_PENDING		(1 << 0)
 #define NG_HCI_CON_NOTIFY_ACL			(1 << 1)
 #define NG_HCI_CON_NOTIFY_SCO			(1 << 2)
+#define NG_HCI_CON_NOTIFY_ISO			(1 << 3)
 
 	bdaddr_t			bdaddr;          /* remote address */
 	u_int16_t			con_handle;      /* con. handle */
 
 	u_int8_t			link_type;       /* ACL or SCO */
 	u_int8_t			encryption_mode; /* none, p2p, ... */
+	u_int8_t			encryption_key_size; /* key size (bytes) */
 	u_int8_t			mode;            /* ACTIVE, HOLD ... */
 	u_int8_t			role;            /* MASTER/SLAVE */
 
 	u_int16_t			max_tx_octets;   /* DLE max TX */
 	u_int16_t			max_rx_octets;   /* DLE max RX */
+
+	u_int64_t			le_features;     /* LE remote features */
+
+	u_int8_t			tx_phy;          /* current TX PHY */
+	u_int8_t			rx_phy;          /* current RX PHY */
+	u_int8_t			big_handle;      /* BIG handle (BIS only) */
 
 	struct callout			con_timo;        /* con. timeout */
 

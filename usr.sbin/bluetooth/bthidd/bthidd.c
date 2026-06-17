@@ -246,10 +246,9 @@ elapsed(int32_t tval)
  */
 
 static void
-sighandler(int32_t s)
+sighandler(int32_t s __unused)
 {
-	syslog(LOG_NOTICE, "Got signal %d, total number of signals %d",
-		s, ++ done);
+	done++;
 }
 
 /*

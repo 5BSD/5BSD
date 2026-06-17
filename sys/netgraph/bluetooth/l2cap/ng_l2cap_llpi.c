@@ -648,7 +648,8 @@ ng_l2cap_lp_send(ng_l2cap_con_p con, u_int16_t dcid, struct mbuf *m0)
 	ng_l2cap_hdr_t		*l2cap_hdr = NULL;
         ng_hci_acldata_pkt_t	*acl_hdr = NULL;
         struct mbuf		*m_last = NULL, *m = NULL;
-        int			 len, flag = (con->linktype == NG_HCI_LINK_ACL) ? NG_HCI_PACKET_START : NG_HCI_LE_PACKET_START;
+        int			 len, error, flag = (con->linktype == NG_HCI_LINK_ACL) ? NG_HCI_PACKET_START : NG_HCI_LE_PACKET_START;
+	u_int16_t		 frag_size;
 
 	KASSERT((con->tx_pkt == NULL),
 ("%s: %s - another packet pending?!\n", __func__, NG_NODE_NAME(l2cap->node)));
@@ -658,7 +659,6 @@ ng_l2cap_lp_send(ng_l2cap_con_p con, u_int16_t dcid, struct mbuf *m0)
 	 * than BR/EDR.  If le_pkt_size is 0, the controller shares
 	 * buffers and pkt_size applies to both.
 	 */
-	u_int16_t frag_size;
 	if ((con->linktype == NG_HCI_LINK_LE_PUBLIC ||
 	    con->linktype == NG_HCI_LINK_LE_RANDOM) &&
 	    l2cap->le_pkt_size > 0)
@@ -670,6 +670,14 @@ ng_l2cap_lp_send(ng_l2cap_con_p con, u_int16_t dcid, struct mbuf *m0)
 ("%s: %s - invalid frag_size, pkt_size=%d le_pkt_size=%d\n",
 	    __func__, NG_NODE_NAME(l2cap->node),
 	    l2cap->pkt_size, l2cap->le_pkt_size));
+
+	if (frag_size == 0) {
+		NG_L2CAP_ERR(
+"%s: %s - zero fragment size, dropping\n",
+			__func__, NG_NODE_NAME(l2cap->node));
+		error = EIO;
+		goto drop;
+	}
 
 	/* Prepend mbuf with L2CAP header */
 	m0 = ng_l2cap_prepend(m0, sizeof(*l2cap_hdr));
@@ -751,6 +759,9 @@ ng_l2cap_lp_send(ng_l2cap_con_p con, u_int16_t dcid, struct mbuf *m0)
 	}
 
 	return (0);
+drop:
+	NG_FREE_M(m0);
+	return (error);
 fail:
 	NG_FREE_M(m0);
 	NG_FREE_M(m);
@@ -867,6 +878,18 @@ ng_l2cap_lp_receive(ng_l2cap_p l2cap, struct mbuf *m)
 			__func__, NG_NODE_NAME(l2cap->node), con_handle,
 			le16toh(l2cap_hdr->length));
 
+		/* Validate HCI length matches actual mbuf length */
+		if (length != m->m_pkthdr.len) {
+			NG_L2CAP_ERR(
+"%s: %s - HCI length %d != mbuf length %d, dropping\n",
+				__func__, NG_NODE_NAME(l2cap->node),
+				length, m->m_pkthdr.len);
+			NG_FREE_M(m);
+			con->rx_pkt = NULL;
+			con->rx_pkt_len = 0;
+			return (EMSGSIZE);
+		}
+
 		/* Start new L2CAP packet */
 		con->rx_pkt = m;
 		con->rx_pkt_len = le16toh(l2cap_hdr->length)+sizeof(*l2cap_hdr);
@@ -874,12 +897,26 @@ ng_l2cap_lp_receive(ng_l2cap_p l2cap, struct mbuf *m)
 		if (con->rx_pkt == NULL) {
 			NG_L2CAP_ERR(
 "%s: %s - unexpected ACL data packet fragment, con_handle=%d\n",
-				__func__, NG_NODE_NAME(l2cap->node), 
+				__func__, NG_NODE_NAME(l2cap->node),
 				con->con_handle);
 			goto drop;
 		}
 
+		/* Validate fragment does not exceed remaining expected bytes */
+		if (m->m_pkthdr.len > con->rx_pkt_len) {
+			NG_L2CAP_ERR(
+"%s: %s - continuation fragment too large, got %d, remaining %d\n",
+				__func__, NG_NODE_NAME(l2cap->node),
+				m->m_pkthdr.len, con->rx_pkt_len);
+			NG_FREE_M(m);
+			NG_FREE_M(con->rx_pkt);
+			con->rx_pkt = NULL;
+			con->rx_pkt_len = 0;
+			return (EMSGSIZE);
+		}
+
 		/* Add fragment to the L2CAP packet */
+		length = m->m_pkthdr.len;
 		m_cat(con->rx_pkt, m);
 		con->rx_pkt->m_pkthdr.len += length;
 	} else {
@@ -923,6 +960,7 @@ ng_l2cap_lp_deliver(ng_l2cap_con_p con)
 	ng_l2cap_p	 l2cap = con->l2cap;
 	struct mbuf	*m = NULL;
 	int		 error;
+	u_int16_t	 max_pkts;
 
 	/* Check connection */
 	if (con->state != NG_L2CAP_CON_OPEN)
@@ -944,7 +982,7 @@ ng_l2cap_lp_deliver(ng_l2cap_con_p con)
 	}
 
 	/* Send ACL data packets */
-	u_int16_t max_pkts = l2cap->num_pkts;
+	max_pkts = l2cap->num_pkts;
 	if ((con->linktype == NG_HCI_LINK_LE_PUBLIC ||
 	    con->linktype == NG_HCI_LINK_LE_RANDOM) &&
 	    l2cap->le_num_pkts > 0)
@@ -954,7 +992,7 @@ ng_l2cap_lp_deliver(ng_l2cap_con_p con)
 		con->tx_pkt = con->tx_pkt->m_nextpkt;
 		m->m_nextpkt = NULL;
 
-		if(m->m_flags &M_PROTO2){
+		if (m->m_flags & M_PROTO2) {
 			ng_l2cap_lp_receive(con->l2cap, m);
 			continue;
 		}
@@ -1090,7 +1128,7 @@ ng_l2cap_process_discon_timeout(node_p node, hook_p hook, void *arg1, int con_ha
 
 	ep = (ng_hci_lp_discon_req_ep *) (msg->data);
 	ep->con_handle = con->con_handle;
-	ep->reason = 0x13; /* User Ended Connection */
+	ep->reason = NG_HCI_ERROR_USER_ENDED_CON;
 
 	NG_SEND_MSG_HOOK(error, l2cap->node, msg, l2cap->hci, 0);
 } /* ng_l2cap_process_discon_timeout */

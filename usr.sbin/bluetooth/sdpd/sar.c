@@ -182,14 +182,20 @@ server_prepare_service_attribute_response(server_p srv, int32_t fd)
 		break;
 
 	case SDP_DATA_SEQ16:
+		if (req + 2 > req_end)
+			return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
 		SDP_GET16(aidlen, req);
 		break;
 
 	case SDP_DATA_SEQ32:
+		if (req + 4 > req_end)
+			return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
 		SDP_GET32(aidlen, req);
  		break;
 	}
 	if (aidlen <= 0)
+		return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
+	if (req + aidlen > req_end)
 		return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
 
 	ptr = (uint8_t *) req + aidlen;

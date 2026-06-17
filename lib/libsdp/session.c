@@ -187,7 +187,9 @@ sdp_get_lcaddr(void *xss, bdaddr_t *l)
 	struct sockaddr_l2cap	sa;
 	socklen_t		size;
 
-	if (l == NULL || ss == NULL || ss->flags & SDP_SESSION_LOCAL) {
+	if (ss == NULL)
+		return (-1);
+	if (l == NULL || (ss->flags & SDP_SESSION_LOCAL)) {
 		ss->error = EINVAL;
 		goto fail;
 	}

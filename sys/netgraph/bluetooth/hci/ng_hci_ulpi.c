@@ -89,7 +89,7 @@ ng_hci_lp_con_req(ng_hci_unit_p unit, item_p item, hook_p hook)
 		return (EMSGSIZE);
 	}
 	link_type = ((ng_hci_lp_con_req_ep *)(NGI_MSG(item)->data))->link_type;
-	switch(link_type){
+	switch (link_type) {
 	case NG_HCI_LINK_ACL:
 		return (ng_hci_lp_acl_con_req(unit, item, hook));
 	case NG_HCI_LINK_SCO:
@@ -105,13 +105,129 @@ ng_hci_lp_con_req(ng_hci_unit_p unit, item_p item, hook_p hook)
 		
 		return (ng_hci_lp_sco_con_req(unit, item, hook));
 	case NG_HCI_LINK_LE_PUBLIC:
-	case NG_HCI_LINK_LE_RANDOM:		
+	case NG_HCI_LINK_LE_RANDOM:
 		return (ng_hci_lp_le_con_req(unit, item, hook, link_type));
-	default:
-		panic("%s: link_type invalid.", __func__);
-	}
+	case NG_HCI_LINK_ISO_CIS: {
+		/*
+		 * CIS connection request from the ISO socket layer.
+		 * Look up the LE ACL connection to the peer, then send
+		 * HCI_LE_Create_CIS with a single CIS/ACL handle pair.
+		 * The CIS handle comes from the socket's iso_cis_handle
+		 * (which identifies the CIS previously configured via
+		 * HCI_LE_Set_CIG_Parameters from userspace).
+		 */
+		ng_hci_lp_con_req_ep	*ep;
+		ng_hci_unit_con_p	 acl_con, cis_con;
+		struct mbuf		*m;
+		u_int16_t		 cis_handle;
+		int			 error;
 
-	return (EINVAL);
+		ep = (ng_hci_lp_con_req_ep *)(NGI_MSG(item)->data);
+
+		/* Find the LE ACL connection to this peer */
+		acl_con = ng_hci_con_by_bdaddr(unit, &ep->bdaddr,
+		    NG_HCI_LINK_LE_PUBLIC);
+		if (acl_con == NULL)
+			acl_con = ng_hci_con_by_bdaddr(unit, &ep->bdaddr,
+			    NG_HCI_LINK_LE_RANDOM);
+		if (acl_con == NULL || acl_con->state != NG_HCI_CON_OPEN) {
+			NG_HCI_WARN(
+"%s: %s - no open LE ACL to peer for CIS\n",
+				__func__, NG_NODE_NAME(unit->node));
+			NG_FREE_ITEM(item);
+			return (ENOENT);
+		}
+
+		/*
+		 * Use the CIS handle from the LP connect request.
+		 * This must be a handle returned by LE_Set_CIG_Parameters
+		 * identifying the configured CIS within its CIG.
+		 */
+		cis_handle = ep->con_handle;
+
+		/* Create connection descriptor */
+		cis_con = ng_hci_new_con(unit, NG_HCI_LINK_ISO_CIS);
+		if (cis_con == NULL) {
+			NG_FREE_ITEM(item);
+			return (ENOMEM);
+		}
+
+		bcopy(&ep->bdaddr, &cis_con->bdaddr,
+		    sizeof(cis_con->bdaddr));
+		cis_con->con_handle = cis_handle;
+		cis_con->flags |= NG_HCI_CON_NOTIFY_ISO;
+		cis_con->state = NG_HCI_CON_W4_CONN_COMPLETE;
+
+		/*
+		 * Build HCI_LE_Create_CIS command (OCF 0x0064).
+		 * Format: CIS_Count(1) + [CIS_Handle(2) +
+		 * ACL_Handle(2)] per CIS.  We send exactly one pair.
+		 */
+		MGETHDR(m, M_NOWAIT, MT_DATA);
+		if (m == NULL) {
+			ng_hci_free_con(cis_con);
+			NG_FREE_ITEM(item);
+			return (ENOBUFS);
+		}
+
+		{
+			struct __create_cis {
+				ng_hci_cmd_pkt_t hdr;
+				u_int8_t	 cis_count;
+				u_int16_t	 cis_con_handle;
+				u_int16_t	 acl_con_handle;
+			} __attribute__((packed)) *req;
+
+			m->m_pkthdr.len = m->m_len = sizeof(*req);
+			req = mtod(m, struct __create_cis *);
+			req->hdr.type = NG_HCI_CMD_PKT;
+			req->hdr.length = sizeof(*req) -
+			    sizeof(req->hdr);
+			req->hdr.opcode = htole16(
+			    NG_HCI_OPCODE(NG_HCI_OGF_LE,
+			    NG_HCI_OCF_LE_CREATE_CIS));
+			req->cis_count = 1;
+			req->cis_con_handle =
+			    htole16(cis_handle);
+			req->acl_con_handle =
+			    htole16(acl_con->con_handle);
+		}
+
+		/* Start connection timeout */
+		ng_hci_con_timeout(cis_con);
+
+		NG_HCI_INFO(
+"%s: %s - LE_Create_CIS: cis_handle=%d acl_handle=%d\n",
+		    __func__, NG_NODE_NAME(unit->node),
+		    cis_handle, acl_con->con_handle);
+
+		NG_BT_MBUFQ_ENQUEUE(&unit->cmdq, m);
+		if (!(unit->state & NG_HCI_UNIT_COMMAND_PENDING)) {
+			error = ng_hci_send_command(unit);
+			if (error != 0) {
+				struct mbuf	*qm = NULL;
+
+				ng_hci_con_untimeout(cis_con);
+				ng_hci_free_con(cis_con);
+				NG_BT_MBUFQ_DEQUEUE(&unit->cmdq, qm);
+				NG_FREE_M(qm);
+				NG_FREE_ITEM(item);
+				return (error);
+			}
+		}
+
+		NG_FREE_ITEM(item);
+		return (0);
+	}
+	default:
+		NG_HCI_WARN(
+"%s: %s - unsupported link_type=%d in LP_ConnectReq\n",
+			__func__, NG_NODE_NAME(unit->node), link_type);
+
+		NG_FREE_ITEM(item);
+
+		return (EINVAL);
+	}
 } /* ng_hci_lp_con_req */
 
 /*
@@ -210,9 +326,10 @@ ng_hci_lp_acl_con_req(ng_hci_unit_p unit, item_p item, hook_p hook)
 			} break;
 
 		default:
-			panic(
-"%s: %s - Invalid connection state=%d\n",
+			NG_HCI_WARN(
+"%s: %s - unexpected ACL connection state=%d\n",
 				__func__, NG_NODE_NAME(unit->node), con->state);
+			error = EINVAL;
 			break;
 		}
 
@@ -403,10 +520,11 @@ ng_hci_lp_sco_con_req(ng_hci_unit_p unit, item_p item, hook_p hook)
 			break;
 
 		default:
-			panic(
-"%s: %s - Invalid connection state=%d\n",
+			NG_HCI_WARN(
+"%s: %s - unexpected SCO connection state=%d\n",
 				__func__, NG_NODE_NAME(unit->node),
 				sco_con->state);
+			error = EINVAL;
 			break;
 		}
 
@@ -495,10 +613,10 @@ ng_hci_lp_le_con_req(ng_hci_unit_p unit, item_p item, hook_p hook, int link_type
 	int				 error = 0;
 
 	ep = (ng_hci_lp_con_req_ep *)(NGI_MSG(item)->data);
-	if((link_type != NG_HCI_LINK_LE_PUBLIC)&&
-	   (link_type != NG_HCI_LINK_LE_RANDOM)){
-		printf("%s: Link type %d Cannot be here \n", __func__, 
-		       link_type);
+	if ((link_type != NG_HCI_LINK_LE_PUBLIC) &&
+	    (link_type != NG_HCI_LINK_LE_RANDOM)) {
+		NG_HCI_ALERT("%s: Link type %d Cannot be here\n", __func__,
+		    link_type);
 	}
 	/*
 	 * Only one ACL connection can exist between each pair of units.
@@ -577,9 +695,10 @@ ng_hci_lp_le_con_req(ng_hci_unit_p unit, item_p item, hook_p hook, int link_type
 			} break;
 
 		default:
-			panic(
-"%s: %s - Invalid connection state=%d\n",
+			NG_HCI_WARN(
+"%s: %s - unexpected LE connection state=%d\n",
 				__func__, NG_NODE_NAME(unit->node), con->state);
+			error = EINVAL;
 			break;
 		}
 
@@ -638,17 +757,17 @@ ng_hci_lp_le_con_req(ng_hci_unit_p unit, item_p item, hook_p hook, int link_type
 					NG_HCI_OCF_LE_CREATE_CONNECTION));
 
 	bcopy(&ep->bdaddr, &req->cp.peer_addr, sizeof(req->cp.peer_addr));
-	req->cp.own_address_type = 0;
+	req->cp.own_address_type = ep->own_address_type;
 	req->cp.peer_addr_type = (link_type == NG_HCI_LINK_LE_RANDOM)? 1:0;
-	req->cp.scan_interval = htole16(4);
-	req->cp.scan_window = htole16(4);
+	req->cp.scan_interval = htole16(NG_HCI_LE_SCAN_INTERVAL_DEFAULT);
+	req->cp.scan_window = htole16(NG_HCI_LE_SCAN_WINDOW_DEFAULT);
 	req->cp.filter_policy = 0;
-	req->cp.conn_interval_min = htole16(0xf);
-	req->cp.conn_interval_max = htole16(0xf);
-	req->cp.conn_latency = htole16(0);
-	req->cp.supervision_timeout = htole16(0xc80);
-	req->cp.min_ce_length = htole16(1);
-	req->cp.max_ce_length = htole16(1);
+	req->cp.conn_interval_min = htole16(NG_HCI_LE_CONN_INTERVAL_MIN_DEFAULT);
+	req->cp.conn_interval_max = htole16(NG_HCI_LE_CONN_INTERVAL_MAX_DEFAULT);
+	req->cp.conn_latency = htole16(NG_HCI_LE_CONN_LATENCY_DEFAULT);
+	req->cp.supervision_timeout = htole16(NG_HCI_LE_SUPERVISION_TIMEOUT_DEFAULT);
+	req->cp.min_ce_length = htole16(NG_HCI_LE_MIN_CE_LENGTH_DEFAULT);
+	req->cp.max_ce_length = htole16(NG_HCI_LE_MAX_CE_LENGTH_DEFAULT);
 	/* 
 	 * Adust connection state 
 	 */
@@ -673,7 +792,7 @@ out:
 		NG_FREE_ITEM(item);
 
 	return (error);
-} /* ng_hci_lp_acl_con_req */
+} /* ng_hci_lp_le_con_req */
 
 /*
  * Process LP_DisconnectReq event from the upper layer protocol
@@ -826,9 +945,32 @@ ng_hci_lp_con_cfm(ng_hci_unit_con_p con, int status)
 		} else
 			NG_HCI_INFO(
 "%s: %s - SCO hook not valid, hook=%p\n",
-				__func__, NG_NODE_NAME(unit->node), unit->acl);
+				__func__, NG_NODE_NAME(unit->node), unit->sco);
 
 		con->flags &= ~NG_HCI_CON_NOTIFY_SCO;
+	}
+
+	if (con->flags & NG_HCI_CON_NOTIFY_ISO) {
+		if (unit->iso != NULL && NG_HOOK_IS_VALID(unit->iso)) {
+			NG_MKMESSAGE(msg, NGM_HCI_COOKIE, NGM_HCI_LP_CON_CFM,
+				sizeof(*ep), M_NOWAIT);
+			if (msg != NULL) {
+				ep = (ng_hci_lp_con_cfm_ep *) msg->data;
+				ep->status = status;
+				ep->link_type = con->link_type;
+				ep->con_handle = con->con_handle;
+				bcopy(&con->bdaddr, &ep->bdaddr,
+					sizeof(ep->bdaddr));
+
+				NG_SEND_MSG_HOOK(error, unit->node, msg,
+					unit->iso, 0);
+			}
+		} else
+			NG_HCI_INFO(
+"%s: %s - ISO hook not valid, hook=%p\n",
+				__func__, NG_NODE_NAME(unit->node), unit->iso);
+
+		con->flags &= ~NG_HCI_CON_NOTIFY_ISO;
 	}
 
 	return (0);
@@ -1127,6 +1269,63 @@ ng_hci_lp_con_rsp(ng_hci_unit_p unit, item_p item, hook_p hook)
 		}
 
 		/*
+		 * ISO CIS: Send HCI LE Accept/Reject CIS Request.
+		 * The connection_handle was stored when the CIS
+		 * descriptor was created in the CIS Request handler.
+		 */
+		if (con->link_type == NG_HCI_LINK_ISO_CIS) {
+			struct __cis_acc {
+				ng_hci_cmd_pkt_t		hdr;
+				ng_hci_le_accept_cis_request_cp	cp;
+			} __attribute__((packed))	*acc;
+			struct __cis_rej {
+				ng_hci_cmd_pkt_t		 hdr;
+				ng_hci_le_reject_cis_request_cp	 cp;
+			} __attribute__((packed))	*rej;
+
+			MGETHDR(m, M_NOWAIT, MT_DATA);
+			if (m == NULL) {
+				error = ENOBUFS;
+				goto out;
+			}
+
+			if (ep->status == 0) {
+				m->m_pkthdr.len = m->m_len = sizeof(*acc);
+				acc = mtod(m, struct __cis_acc *);
+				acc->hdr.type = NG_HCI_CMD_PKT;
+				acc->hdr.length = sizeof(acc->cp);
+				acc->hdr.opcode = htole16(
+				    NG_HCI_OPCODE(NG_HCI_OGF_LE,
+				    NG_HCI_OCF_LE_ACCEPT_CIS_REQUEST));
+				acc->cp.connection_handle =
+				    htole16(con->con_handle);
+
+				con->flags |= NG_HCI_CON_NOTIFY_ISO;
+				con->state = NG_HCI_CON_W4_CONN_COMPLETE;
+				ng_hci_con_timeout(con);
+			} else {
+				m->m_pkthdr.len = m->m_len = sizeof(*rej);
+				rej = mtod(m, struct __cis_rej *);
+				rej->hdr.type = NG_HCI_CMD_PKT;
+				rej->hdr.length = sizeof(rej->cp);
+				rej->hdr.opcode = htole16(
+				    NG_HCI_OPCODE(NG_HCI_OGF_LE,
+				    NG_HCI_OCF_LE_REJECT_CIS_REQUEST));
+				rej->cp.connection_handle =
+				    htole16(con->con_handle);
+				rej->cp.reason = ep->status;
+
+				ng_hci_free_con(con);
+			}
+
+			/* Queue and send HCI command */
+			NG_BT_MBUFQ_ENQUEUE(&unit->cmdq, m);
+			if (!(unit->state & NG_HCI_UNIT_COMMAND_PENDING))
+				error = ng_hci_send_command(unit);
+			break;
+		}
+
+		/*
 		 * BR/EDR: Create HCI Accept/Reject command
 		 */
 
@@ -1211,9 +1410,10 @@ ng_hci_lp_con_rsp(ng_hci_unit_p unit, item_p item, hook_p hook)
 		break;
 
 	default:
-		panic(
+		NG_HCI_ERR(
 "%s: %s - Invalid connection state=%d\n",
 			__func__, NG_NODE_NAME(unit->node), con->state);
+		error = EINVAL;
 		break;
 	}
 out:
@@ -1241,9 +1441,29 @@ ng_hci_lp_discon_ind(ng_hci_unit_con_p con, int reason)
 	 * only SCO upstream hook will receive notification.
 	 */
 
-	if (con->link_type != NG_HCI_LINK_SCO) {
+	if (con->link_type == NG_HCI_LINK_ISO_CIS ||
+	    con->link_type == NG_HCI_LINK_ISO_BIS) {
+		/* ISO disconnect goes to the ISO hook */
+		if (unit->iso != NULL && NG_HOOK_IS_VALID(unit->iso)) {
+			NG_MKMESSAGE(msg, NGM_HCI_COOKIE,
+			    NGM_HCI_LP_DISCON_IND, sizeof(*ep), M_NOWAIT);
+			if (msg == NULL)
+				return (ENOMEM);
+
+			ep = (ng_hci_lp_discon_ind_ep *) msg->data;
+			ep->reason = reason;
+			ep->link_type = con->link_type;
+			ep->con_handle = con->con_handle;
+
+			NG_SEND_MSG_HOOK(error, unit->node, msg,
+			    unit->iso, 0);
+		} else
+			NG_HCI_INFO(
+"%s: %s - ISO hook is not connected or not valid, hook=%p\n",
+				__func__, NG_NODE_NAME(unit->node), unit->iso);
+	} else if (con->link_type != NG_HCI_LINK_SCO) {
 		if (unit->acl != NULL && NG_HOOK_IS_VALID(unit->acl)) {
-			NG_MKMESSAGE(msg, NGM_HCI_COOKIE, 
+			NG_MKMESSAGE(msg, NGM_HCI_COOKIE,
 				NGM_HCI_LP_DISCON_IND, sizeof(*ep), M_NOWAIT);
 			if (msg == NULL)
 				return (ENOMEM);
@@ -1558,10 +1778,10 @@ ng_hci_process_con_timeout(node_p node, hook_p hook, void *arg1, int con_handle)
 		break;
 
 	default:
-		panic(
-"%s: %s - Invalid connection state=%d\n",
-			__func__, NG_NODE_NAME(node), con->state);
-		break;
+		NG_HCI_WARN(
+"%s: %s - unexpected connection state=%d in timeout\n",
+			__func__, NG_NODE_NAME(unit->node), con->state);
+		return;
 	}
 
 	ng_hci_free_con(con);

@@ -33,14 +33,14 @@
  */
 
 #ifndef _NG_UBT_VAR_H_
-#define	_NG_UBT_VAR_H_	1
+#define	_NG_UBT_VAR_H_
 
 /* Debug printf's */
 #define	UBT_DEBUG(level, sc, fmt, ...)				\
 do {								\
 	if ((sc)->sc_debug >= (level))				\
 		device_printf((sc)->sc_dev, "%s:%d: " fmt, 	\
-			__FUNCTION__, __LINE__,## __VA_ARGS__);	\
+			__func__, __LINE__,## __VA_ARGS__);	\
 } while (0)
 
 #define	UBT_ALERT(...)		UBT_DEBUG(NG_UBT_ALERT_LEVEL, __VA_ARGS__)
@@ -48,8 +48,8 @@ do {								\
 #define	UBT_WARN(...)		UBT_DEBUG(NG_UBT_WARN_LEVEL, __VA_ARGS__)
 #define	UBT_INFO(...)		UBT_DEBUG(NG_UBT_INFO_LEVEL, __VA_ARGS__)
 
-#define UBT_NG_LOCK(sc)		mtx_lock(&(sc)->sc_ng_mtx)
-#define UBT_NG_UNLOCK(sc)	mtx_unlock(&(sc)->sc_ng_mtx)
+#define	UBT_NG_LOCK(sc)		mtx_lock(&(sc)->sc_ng_mtx)
+#define	UBT_NG_UNLOCK(sc)	mtx_unlock(&(sc)->sc_ng_mtx)
 
 /* Bluetooth USB control request type */
 #define	UBT_HCI_REQUEST		0x20
@@ -78,7 +78,7 @@ struct ubt_hci_cmd {
 	uint16_t	opcode;
 	uint8_t		length;
 	uint8_t		data[];
-} __attribute__ ((packed));
+} __packed;
 #define	UBT_HCI_CMD_SIZE(cmd) \
 	((cmd)->length + offsetof(struct ubt_hci_cmd, data))
 
@@ -86,19 +86,19 @@ struct ubt_hci_cmd {
 struct ubt_hci_evhdr {
 	uint8_t		event;
 	uint8_t		length;
-} __attribute__ ((packed));
+} __packed;
 /* USB interrupt transfer (generic HCI event) structure */
 struct ubt_hci_event {
 	struct ubt_hci_evhdr	header;
 	uint8_t			data[];
-} __attribute__ ((packed));
+} __packed;
 /* USB interrupt transfer (HCI command completion event) structure */
 struct ubt_hci_event_command_compl {
 	struct ubt_hci_evhdr	header;
 	uint8_t			numpkt;
 	uint16_t		opcode;
 	uint8_t			data[];
-} __attribute__ ((packed));
+} __packed;
 #define	UBT_HCI_EVENT_SIZE(evt) \
 	((evt)->header.length + offsetof(struct ubt_hci_event, data))
 #define	UBT_HCI_EVENT_COMPL_HEAD_SIZE \

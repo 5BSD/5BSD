@@ -969,10 +969,11 @@ ng_btsocket_l2cap_raw_control(struct socket *so, u_long cmd, void *data,
 		} /* NOTREACHED */
 
 	case SIOC_L2CAP_L2CA_PING: {
-		struct ng_btsocket_l2cap_raw_ping	*p = 
+		struct ng_btsocket_l2cap_raw_ping	*p =
 			(struct ng_btsocket_l2cap_raw_ping *) data;
 		ng_l2cap_l2ca_ping_ip			*ip = NULL;
 		ng_l2cap_l2ca_ping_op			*op = NULL;
+		u_int32_t				 max_echo;
 
 		if ((p->echo_size != 0 && p->echo_data == NULL) ||
 		     p->echo_size > NG_L2CAP_MAX_ECHO_SIZE) {
@@ -1000,9 +1001,13 @@ ng_btsocket_l2cap_raw_control(struct socket *so, u_long cmd, void *data,
 			error = copyin(p->echo_data, ip + 1, p->echo_size);
 			mtx_lock(&pcb->pcb_mtx);
 
-			if (error != 0) {
+			if (error != 0 || pcb->rt == NULL ||
+			    pcb->rt->hook == NULL ||
+			    NG_HOOK_NOT_VALID(pcb->rt->hook)) {
 				NG_FREE_MSG(msg);
 				pcb->token = 0;
+				if (error == 0)
+					error = ENETDOWN;
 				mtx_unlock(&pcb->pcb_mtx);
 				return (error);
 			}
@@ -1035,10 +1040,15 @@ ng_btsocket_l2cap_raw_control(struct socket *so, u_long cmd, void *data,
 			/* Return data back to the user space */
 			op = (ng_l2cap_l2ca_ping_op *)(msg->data);
 			p->result = op->result;
-			p->echo_size = min(p->echo_size, op->echo_size);
+
+			max_echo =
+			    (msg->header.arglen > sizeof(*op)) ?
+			    msg->header.arglen - sizeof(*op) : 0;
+			p->echo_size = min(p->echo_size,
+			    min(op->echo_size, max_echo));
 
 			if (p->echo_size > 0)
-				error = copyout(op + 1, p->echo_data, 
+				error = copyout(op + 1, p->echo_data,
 						p->echo_size);
 		} else
 			error = EINVAL;
@@ -1048,10 +1058,11 @@ ng_btsocket_l2cap_raw_control(struct socket *so, u_long cmd, void *data,
 		} /* NOTREACHED */
 
 	case SIOC_L2CAP_L2CA_GET_INFO: {
-		struct ng_btsocket_l2cap_raw_get_info	*p = 
+		struct ng_btsocket_l2cap_raw_get_info	*p =
 			(struct ng_btsocket_l2cap_raw_get_info *) data;
 		ng_l2cap_l2ca_get_info_ip		*ip = NULL;
 		ng_l2cap_l2ca_get_info_op		*op = NULL;
+		u_int32_t				 max_info;
 
 		if (!(pcb->flags & NG_BTSOCKET_L2CAP_RAW_PRIVILEGED)) {
 			mtx_unlock(&pcb->pcb_mtx);
@@ -1105,10 +1116,15 @@ ng_btsocket_l2cap_raw_control(struct socket *so, u_long cmd, void *data,
 			/* Return data back to the user space */
 			op = (ng_l2cap_l2ca_get_info_op *)(msg->data);
 			p->result = op->result;
-			p->info_size = min(p->info_size, op->info_size);
+
+			max_info =
+			    (msg->header.arglen > sizeof(*op)) ?
+			    msg->header.arglen - sizeof(*op) : 0;
+			p->info_size = min(p->info_size,
+			    min(op->info_size, max_info));
 
 			if (p->info_size > 0)
-				error = copyout(op + 1, p->info_data, 
+				error = copyout(op + 1, p->info_data,
 						p->info_size);
 		} else
 			error = EINVAL;
@@ -1157,7 +1173,7 @@ ng_btsocket_l2cap_raw_detach(struct socket *so)
 {
 	ng_btsocket_l2cap_raw_pcb_p	pcb = so2l2cap_raw_pcb(so);
 
-	KASSERT(pcb != NULL, ("nt_btsocket_l2cap_raw_detach: pcb == NULL"));
+	KASSERT(pcb != NULL, ("ng_btsocket_l2cap_raw_detach: pcb == NULL"));
 	if (ng_btsocket_l2cap_raw_node == NULL) 
 		return;
 
@@ -1343,12 +1359,13 @@ ng_btsocket_l2cap_raw_send_sync_ngmsg(ng_btsocket_l2cap_raw_pcb_p pcb,
 	if (error != 0)
 		return (error);
 
-	if (pcb->msg != NULL && pcb->msg->header.cmd == cmd)
+	if (pcb->msg != NULL && pcb->msg->header.cmd == cmd &&
+	    pcb->msg->header.arglen >= rsplen)
 		bcopy(pcb->msg->data, rsp, rsplen);
 	else
 		error = EINVAL;
 
 	NG_FREE_MSG(pcb->msg); /* checks for != NULL */
 
-	return (0);
+	return (error);
 } /* ng_btsocket_l2cap_raw_send_sync_ngmsg */

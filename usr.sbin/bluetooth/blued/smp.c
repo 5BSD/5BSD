@@ -44,6 +44,8 @@
 #include "att.h"
 #include "att_server.h"
 #include "ble_util.h"
+#include "blued_probes.h"
+#include "hci_log.h"
 #include "hci_util.h"
 #include "smp.h"
 
@@ -55,6 +57,7 @@
 #define SMP_MODEL_JUST_WORKS		0
 #define SMP_MODEL_PASSKEY_ENTRY		1
 #define SMP_MODEL_NUMERIC_COMPARISON	2
+#define SMP_MODEL_OOB			3
 
 /* Forward declarations */
 static int smp_pair_sc(struct smp_conn *, const uint8_t[7], const uint8_t[7],
@@ -62,15 +65,109 @@ static int smp_pair_sc(struct smp_conn *, const uint8_t[7], const uint8_t[7],
 static int smp_pair_sc_passkey(struct smp_conn *, const uint8_t[7],
     const uint8_t[7]);
 static void smp_pack_addr(uint8_t[7], const uint8_t[6], uint8_t);
-static void smp_f4(const uint8_t[32], const uint8_t[32], const uint8_t[16],
+void smp_f4(const uint8_t[32], const uint8_t[32], const uint8_t[16],
     uint8_t, uint8_t[16]);
-static void smp_f5(const uint8_t[32], const uint8_t[16], const uint8_t[16],
+void smp_f5(const uint8_t[32], const uint8_t[16], const uint8_t[16],
     const uint8_t[7], const uint8_t[7], uint8_t[16], uint8_t[16]);
-static void smp_f6(const uint8_t[16], const uint8_t[16], const uint8_t[16],
+void smp_f6(const uint8_t[16], const uint8_t[16], const uint8_t[16],
     const uint8_t[16], const uint8_t[3], const uint8_t[7], const uint8_t[7],
     uint8_t[16]);
-static void swap_buf(uint8_t *, const uint8_t *, size_t);
+void swap_buf(uint8_t *, const uint8_t *, size_t);
 static int smp_validate_public_key(const uint8_t *, const uint8_t *);
+
+/*
+ * Logged send/recv helpers for SMP — log PDUs as L2CAP on CID 0x0006
+ * to BTSnoop when capture is active.
+ */
+static ssize_t
+smp_log_send(struct smp_conn *sc, const void *buf, size_t len)
+{
+	ssize_t n;
+
+	n = send(sc->fd, buf, len, 0);
+	if (n > 0 && hci_log_enabled())
+		hci_log_l2cap(sc->con_handle, 0x0006,
+		    buf, (uint16_t)n, false);
+	return (n);
+}
+
+static ssize_t
+smp_log_recv(struct smp_conn *sc, void *buf, size_t len)
+{
+	ssize_t n;
+
+	n = recv(sc->fd, buf, len, 0);
+	if (n > 0 && hci_log_enabled())
+		hci_log_l2cap(sc->con_handle, 0x0006,
+		    buf, (uint16_t)n, true);
+	return (n);
+}
+
+/*
+ * Send a Keypress Notification PDU.
+ * Core Spec Vol 3 Part H Section 3.5.8
+ *
+ * Only sent when both sides indicated Keypress Notification support
+ * (SMP_AUTH_KEYPRESS bit) in their AuthReq fields.
+ */
+static int
+smp_send_keypress(struct smp_conn *sc, uint8_t type)
+{
+	uint8_t pdu[2];
+
+	pdu[0] = SMP_PAIRING_KEYPRESS_NOTIFY;
+	pdu[1] = type;
+	return (smp_log_send(sc, pdu, sizeof(pdu)) < 0 ? -1 : 0);
+}
+
+static const char *
+smp_keypress_type_str(uint8_t type)
+{
+	switch (type) {
+	case SMP_KEYPRESS_STARTED:		return ("started");
+	case SMP_KEYPRESS_DIGIT_ENTERED:	return ("digit entered");
+	case SMP_KEYPRESS_DIGIT_ERASED:		return ("digit erased");
+	case SMP_KEYPRESS_CLEARED:		return ("cleared");
+	case SMP_KEYPRESS_COMPLETED:		return ("completed");
+	default:				return ("unknown");
+	}
+}
+
+/*
+ * Receive a PDU from the SMP socket, transparently consuming and
+ * logging any Keypress Notification PDUs that arrive first.
+ *
+ * Per Core Spec Vol 3 Part H Section 3.5.8, the device performing
+ * passkey entry sends Keypress Notifications to the displaying side
+ * before or during the confirm exchange.  These are informational
+ * and do not alter protocol state.
+ *
+ * Returns the number of bytes read into buf, or -1 on error.
+ */
+static ssize_t
+smp_recv_skip_keypress(struct smp_conn *sc, uint8_t *buf, size_t len)
+{
+	ssize_t n;
+	int loops = 0;
+
+	for (;;) {
+		if (++loops > 100) {
+			warnx("too many keypress notifications");
+			return (-1);
+		}
+		n = smp_log_recv(sc, buf, len);
+		if (n < 1)
+			return (n);
+		if (buf[0] != SMP_PAIRING_KEYPRESS_NOTIFY)
+			return (n);
+		/* Log and discard keypress notification */
+		if (n >= 2)
+			LOG_SMP(1, "recv keypress notification: %s (0x%02x)",
+			    smp_keypress_type_str(buf[1]), buf[1]);
+		else
+			LOG_SMP(1, "recv keypress notification (malformed)");
+	}
+}
 
 /*
  * Determine association model from IO capabilities.
@@ -109,18 +206,18 @@ smp_select_model(uint8_t init_io, uint8_t resp_io, bool sc)
  * Used by c1() and s1() functions.
  * Core Spec Vol 3 Part H Section 2.2.1
  */
-static void
+int
 smp_aes128(const uint8_t key[16], const uint8_t in[16], uint8_t out[16])
 {
 	EVP_CIPHER_CTX *ctx;
-	uint8_t k[16], p[16];
-	int outl;
+	uint8_t k[16], p[16], tmp;
+	int outl, i;
 
 	/*
 	 * SMP uses big-endian key/data ordering internally,
 	 * but protocol PDUs are little-endian.  Reverse for AES.
 	 */
-	for (int i = 0; i < 16; i++) {
+	for (i = 0; i < 16; i++) {
 		k[i] = key[15 - i];
 		p[i] = in[15 - i];
 	}
@@ -129,19 +226,31 @@ smp_aes128(const uint8_t key[16], const uint8_t in[16], uint8_t out[16])
 	if (ctx == NULL) {
 		warnx("EVP_CIPHER_CTX_new failed");
 		memset(out, 0, 16);
-		return;
+		return (-1);
 	}
-	EVP_EncryptInit_ex(ctx, EVP_aes_128_ecb(), NULL, k, NULL);
+	if (EVP_EncryptInit_ex(ctx, EVP_aes_128_ecb(), NULL, k, NULL) <= 0) {
+		warnx("EVP_EncryptInit_ex failed");
+		EVP_CIPHER_CTX_free(ctx);
+		memset(out, 0, 16);
+		return (-1);
+	}
 	EVP_CIPHER_CTX_set_padding(ctx, 0);
-	EVP_EncryptUpdate(ctx, out, &outl, p, 16);
+	if (EVP_EncryptUpdate(ctx, out, &outl, p, 16) <= 0) {
+		warnx("EVP_EncryptUpdate failed");
+		EVP_CIPHER_CTX_free(ctx);
+		memset(out, 0, 16);
+		return (-1);
+	}
 	EVP_CIPHER_CTX_free(ctx);
 
 	/* Reverse output back to little-endian */
-	for (int i = 0; i < 8; i++) {
-		uint8_t tmp = out[i];
+	for (i = 0; i < 8; i++) {
+		tmp = out[i];
 		out[i] = out[15 - i];
 		out[15 - i] = tmp;
 	}
+
+	return (0);
 }
 
 /*
@@ -152,7 +261,7 @@ smp_aes128(const uint8_t key[16], const uint8_t in[16], uint8_t out[16])
  *   p1 = pres || preq || rat || iat
  *   p2 = padding || ia || ra
  */
-static void
+void
 smp_c1(const uint8_t k[16], const uint8_t r[16],
     const uint8_t preq[7], const uint8_t pres[7],
     uint8_t iat, const uint8_t ia[6],
@@ -196,7 +305,7 @@ smp_c1(const uint8_t k[16], const uint8_t r[16],
  *   r1' = lower 8 bytes of r1
  *   r2' = lower 8 bytes of r2
  */
-static void
+void
 smp_s1(const uint8_t k[16], const uint8_t r1[16], const uint8_t r2[16],
     uint8_t stk[16])
 {
@@ -223,7 +332,11 @@ smp_random(uint8_t *buf, size_t len)
  * Open SMP connection to a BLE device.
  */
 /*
- * Send an HCI command via the raw HCI socket.
+ * XXX: This sends a raw HCI command bypassing libbluetooth's bt_devreq().
+ * LE_Start_Encryption generates a Command Status event (not Command Complete),
+ * followed by an asynchronous Encryption Change event.  bt_devreq() blocks
+ * waiting for the completion event, which doesn't match this flow.
+ * TODO: Refactor to use bt_devreq() with event=NG_HCI_EVENT_COMMAND_STATUS.
  *
  * Raw HCI socket expects: [type(1), opcode(2), param_len(1), params...]
  * where type = 0x01 for HCI command packets.
@@ -242,6 +355,9 @@ hci_send_cmd(int hci_fd, uint16_t opcode, const void *params, uint8_t plen)
 	pkt[3] = plen;
 	if (plen > 0)
 		memcpy(pkt + 4, params, plen);
+
+	/* Log outgoing HCI command to BTSnoop capture */
+	hci_log_packet(HCI_LOG_CMD, pkt + 1, 3 + plen, false);
 
 	if (send(hci_fd, pkt, 4 + plen, 0) < 0)
 		return (-1);
@@ -266,7 +382,8 @@ smp_open(struct smp_conn *sc, const uint8_t *addr, uint8_t addr_type,
 	memcpy(sc->local_addr, local_addr, 6);
 	sc->local_addr_type = local_addr_type;
 
-	sc->fd = socket(PF_BLUETOOTH, SOCK_SEQPACKET, BLUETOOTH_PROTO_L2CAP);
+	sc->fd = socket(PF_BLUETOOTH, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_CLOFORK,
+	    BLUETOOTH_PROTO_L2CAP);
 	if (sc->fd < 0)
 		return (-1);
 
@@ -333,12 +450,13 @@ smp_close(struct smp_conn *sc)
 static void
 smp_bond_db_store(struct smp_bond_db *db, const struct smp_bond *bond)
 {
+	int i;
 
 	if (db == NULL)
 		return;
 
 	/* Update existing bond for this device if present */
-	for (int i = 0; i < db->count; i++) {
+	for (i = 0; i < db->count; i++) {
 		if (db->bonds[i].addr_type == bond->addr_type &&
 		    memcmp(db->bonds[i].addr, bond->addr, 6) == 0) {
 			db->bonds[i] = *bond;
@@ -366,6 +484,8 @@ smp_pair(struct smp_conn *sc)
 	uint8_t pdu[65];
 	ssize_t n;
 	uint8_t iat, rat;
+	int ret = -1;
+	int expected_pdus, i;
 
 	memset(tk, 0, sizeof(tk));
 
@@ -380,20 +500,23 @@ smp_pair(struct smp_conn *sc)
 	 */
 	preq[0] = SMP_PAIRING_REQUEST;
 	preq[1] = SMP_IO_KEYBOARD_DISPLAY;	/* Can input and display */
-	preq[2] = 0x00;			/* No OOB */
-	preq[3] = SMP_AUTH_BONDING | SMP_AUTH_MITM | SMP_AUTH_SC;
+	preq[2] = (sc->oob != NULL &&
+	    (sc->oob->legacy != NULL || sc->oob->sc != NULL)) ?
+	    0x01 : 0x00;
+	preq[3] = SMP_AUTH_BONDING | SMP_AUTH_MITM | SMP_AUTH_SC |
+	    SMP_AUTH_KEYPRESS | SMP_AUTH_CT2;
 	preq[4] = 16;				/* Max encryption key size */
 	preq[5] = 0;				/* We don't distribute keys */
 	preq[6] = SMP_KEY_DIST_ENC_KEY | SMP_KEY_DIST_ID_KEY;
 
-	if (send(sc->fd, preq, sizeof(preq), 0) < 0)
+	if (smp_log_send(sc, preq, sizeof(preq)) < 0)
 		return (-1);
 	LOG_SMP(1, "pairing request sent IO=%d auth=%02x", preq[1], preq[3]);
 
 	/*
 	 * Step 2: Receive Pairing Response
 	 */
-	n = recv(sc->fd, pres, sizeof(pres), 0);
+	n = smp_log_recv(sc, pres, sizeof(pres));
 	if (n < 7) {
 		errno = EPROTO;
 		return (-1);
@@ -411,6 +534,18 @@ smp_pair(struct smp_conn *sc)
 	}
 	LOG_SMP(1, "pairing response IO=%d auth=%02x", pres[1], pres[3]);
 
+	{
+		bool use_sc_log = (preq[3] & SMP_AUTH_SC) &&
+		    (pres[3] & SMP_AUTH_SC);
+		BLUED_LOG_SECURITY("pairing initiated "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+		    "type=%d sc=%d",
+		    sc->remote_addr[5], sc->remote_addr[4],
+		    sc->remote_addr[3], sc->remote_addr[2],
+		    sc->remote_addr[1], sc->remote_addr[0],
+		    sc->remote_addr_type, use_sc_log);
+	}
+
 	/*
 	 * Validate encryption key size (Core Spec Vol 3 Part H 3.6.1).
 	 * Max_Encryption_Key_Size must be in range [7,16].
@@ -423,7 +558,7 @@ smp_pair(struct smp_conn *sc)
 		if (peer_key_sz < 7 || peer_key_sz > 16) {
 			pdu[0] = SMP_PAIRING_FAILED;
 			pdu[1] = SMP_ERR_INVALID_PARAMETERS;
-			send(sc->fd, pdu, 2, 0);
+			smp_log_send(sc, pdu, 2);
 			errno = EPROTO;
 			return (-1);
 		}
@@ -431,7 +566,7 @@ smp_pair(struct smp_conn *sc)
 		if (neg_key_sz < 7) {
 			pdu[0] = SMP_PAIRING_FAILED;
 			pdu[1] = SMP_ERR_ENCRYPTION_KEY_SIZE;
-			send(sc->fd, pdu, 2, 0);
+			smp_log_send(sc, pdu, 2);
 			errno = EACCES;
 			return (-1);
 		}
@@ -445,13 +580,37 @@ smp_pair(struct smp_conn *sc)
 		    (pres[3] & SMP_AUTH_SC);
 		bool use_mitm = (preq[3] & SMP_AUTH_MITM) ||
 		    (pres[3] & SMP_AUTH_MITM);
+		/*
+		 * Core Spec Vol 3 Part H Table 2.6 (legacy): OOB used
+		 * when BOTH sides have OOB data.
+		 * Table 2.7 (SC): OOB used when EITHER side has OOB data.
+		 */
+		bool have_oob = use_sc ?
+		    (preq[2] != 0 || pres[2] != 0) :
+		    (preq[2] != 0 && pres[2] != 0);
 		int model;
 
-		if (!use_mitm)
+		/*
+		 * OOB takes priority over IO capabilities.
+		 */
+		if (have_oob)
+			model = SMP_MODEL_OOB;
+		else if (!use_mitm)
 			model = SMP_MODEL_JUST_WORKS;
 		else
 			model = smp_select_model(preq[1], pres[1], use_sc);
 		LOG_SMP(1, "model=%d sc=%d", model, use_sc);
+
+		BLUED_PROBE_SMP_PAIR_START(
+		    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL), model);
+
+		if (model == SMP_MODEL_OOB)
+			BLUED_LOG_SECURITY("OOB pairing "
+			    "addr=%02x:%02x:%02x:%02x:%02x:%02x sc=%d",
+			    sc->remote_addr[5], sc->remote_addr[4],
+			    sc->remote_addr[3], sc->remote_addr[2],
+			    sc->remote_addr[1], sc->remote_addr[0],
+			    use_sc);
 
 		if (use_sc) {
 			if (model == SMP_MODEL_PASSKEY_ENTRY)
@@ -459,24 +618,72 @@ smp_pair(struct smp_conn *sc)
 			return (smp_pair_sc(sc, preq, pres, model));
 		}
 
+		/*
+		 * Legacy OOB: use peer's TK received out-of-band.
+		 * Core Spec Vol 3 Part H Section 2.3.5.5
+		 */
+		if (model == SMP_MODEL_OOB) {
+			if (sc->oob == NULL || sc->oob->legacy == NULL) {
+				uint8_t fail[2] = { SMP_PAIRING_FAILED,
+				    SMP_ERR_OOB_NOT_AVAILABLE };
+				smp_log_send(sc, fail, 2);
+				errno = ENOTSUP;
+				return (-1);
+			}
+			memcpy(tk, sc->oob->legacy->tk, 16);
+			LOG_SMP(1, "legacy OOB: TK set from OOB data");
+			/* Fall through to legacy c1/s1 with this TK */
+		}
+
 		/* Legacy Passkey Entry: TK = passkey value */
 		if (model == SMP_MODEL_PASSKEY_ENTRY) {
 			uint32_t passkey = 0;
+			bool kp_notify;
+			bool we_display;
 
 			if (sc->passkey_cb == NULL) {
 				errno = ENOTSUP;
 				return (-1);
 			}
-			/* Display passkey and ask user to confirm on device */
-			passkey = arc4random_uniform(1000000);
-			if (sc->passkey_cb(&passkey, true,
+			/*
+			 * Keypress Notification: both sides must have set the
+			 * SMP_AUTH_KEYPRESS bit in their AuthReq fields.
+			 * Core Spec Vol 3 Part H Section 3.5.8
+			 */
+			kp_notify = (preq[3] & SMP_AUTH_KEYPRESS) &&
+			    (pres[3] & SMP_AUTH_KEYPRESS);
+
+			/*
+			 * Per Core Spec Vol 3 Part H Table 2.8, the
+			 * passkey display/input role depends on both
+			 * sides' IO capabilities.  When the responder
+			 * has DisplayOnly or DisplayYesNo and the
+			 * initiator has KeyboardOnly or KeyboardDisplay,
+			 * the responder displays and we (initiator) input.
+			 */
+			we_display = true;
+			if ((pres[1] == SMP_IO_DISPLAY_ONLY ||
+			    pres[1] == SMP_IO_DISPLAY_YESNO) &&
+			    (preq[1] == SMP_IO_KEYBOARD_ONLY ||
+			    preq[1] == SMP_IO_KEYBOARD_DISPLAY))
+				we_display = false;
+
+			if (we_display)
+				passkey = arc4random_uniform(1000000);
+			if (kp_notify && !we_display)
+				smp_send_keypress(sc,
+				    SMP_KEYPRESS_STARTED);
+			if (sc->passkey_cb(&passkey, we_display,
 			    sc->passkey_cb_arg) < 0) {
 				uint8_t fail[2] = { SMP_PAIRING_FAILED,
 				    SMP_ERR_PASSKEY_ENTRY_FAILED };
-				send(sc->fd, fail, 2, 0);
+				smp_log_send(sc, fail, 2);
 				errno = ECANCELED;
 				return (-1);
 			}
+			if (kp_notify && !we_display)
+				smp_send_keypress(sc,
+				    SMP_KEYPRESS_COMPLETED);
 			/* TK = passkey as 128-bit LE integer */
 			memset(tk, 0, sizeof(tk));
 			tk[0] = passkey & 0xFF;
@@ -500,21 +707,23 @@ smp_pair(struct smp_conn *sc)
 	 */
 	pdu[0] = SMP_PAIRING_CONFIRM;
 	memcpy(pdu + 1, mconfirm, 16);
-	if (send(sc->fd, pdu, 17, 0) < 0)
-		return (-1);
+	if (smp_log_send(sc, pdu, 17) < 0)
+		goto legacy_cleanup;
 	LOG_SMP(2, "legacy confirm sent");
 
 	/*
-	 * Receive Pairing Confirm from responder
+	 * Receive Pairing Confirm from responder.
+	 * The responder may send Keypress Notifications (opcode 0x0E) before
+	 * the confirm when the responder is performing passkey entry.
+	 * Consume and log them transparently.
 	 */
-	n = recv(sc->fd, pdu, 17, 0);
+	n = smp_recv_skip_keypress(sc, pdu, 17);
 	if (n < 17 || pdu[0] != SMP_PAIRING_CONFIRM) {
-		if (n > 0 && pdu[0] == SMP_PAIRING_FAILED) {
+		if (n > 0 && pdu[0] == SMP_PAIRING_FAILED)
 			errno = EACCES;
-			return (-1);
-		}
-		errno = EPROTO;
-		return (-1);
+		else
+			errno = EPROTO;
+		goto legacy_cleanup;
 	}
 	memcpy(sconfirm, pdu + 1, 16);
 
@@ -523,20 +732,19 @@ smp_pair(struct smp_conn *sc)
 	 */
 	pdu[0] = SMP_PAIRING_RANDOM;
 	memcpy(pdu + 1, mrand, 16);
-	if (send(sc->fd, pdu, 17, 0) < 0)
-		return (-1);
+	if (smp_log_send(sc, pdu, 17) < 0)
+		goto legacy_cleanup;
 
 	/*
 	 * Receive Pairing Random from responder
 	 */
-	n = recv(sc->fd, pdu, 17, 0);
+	n = smp_log_recv(sc, pdu, 17);
 	if (n < 17 || pdu[0] != SMP_PAIRING_RANDOM) {
-		if (n > 0 && pdu[0] == SMP_PAIRING_FAILED) {
+		if (n > 0 && pdu[0] == SMP_PAIRING_FAILED)
 			errno = EACCES;
-			return (-1);
-		}
-		errno = EPROTO;
-		return (-1);
+		else
+			errno = EPROTO;
+		goto legacy_cleanup;
 	}
 	memcpy(srand, pdu + 1, 16);
 
@@ -545,13 +753,13 @@ smp_pair(struct smp_conn *sc)
 	 */
 	smp_c1(tk, srand, preq, pres, iat, sc->local_addr,
 	    rat, sc->remote_addr, verify);
-	if (memcmp(verify, sconfirm, 16) != 0) {
+	if (timingsafe_bcmp(verify, sconfirm, 16) != 0) {
 		/* Send Pairing Failed */
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
-		send(sc->fd, pdu, 2, 0);
+		smp_log_send(sc, pdu, 2);
 		errno = EACCES;
-		return (-1);
+		goto legacy_cleanup;
 	}
 	LOG_SMP(1, "legacy confirm verified");
 
@@ -560,7 +768,7 @@ smp_pair(struct smp_conn *sc)
 	 */
 	smp_s1(tk, srand, mrand, stk);
 	LOG_SMP(1, "STK derived, starting encryption");
-	btled_hexdump("SMP", "s1 output (STK)", stk, 16);
+	blued_hexdump("SMP", "s1 output (STK)", stk, 16);
 
 	/*
 	 * Step 8: Start encryption via HCI LE_Start_Encryption
@@ -583,11 +791,18 @@ smp_pair(struct smp_conn *sc)
 
 		if (hci_send_cmd(sc->hci_fd, HCI_OP_LE_START_ENCRYPTION, params,
 		    sizeof(params)) < 0)
-			return (-1);
+			goto legacy_cleanup;
 	}
 
 	if (hci_wait_encryption(sc->hci_fd, sc->con_handle, 5) < 0)
-		return (-1);
+		goto legacy_cleanup;
+
+	BLUED_LOG_SECURITY("encryption active "
+	    "addr=%02x:%02x:%02x:%02x:%02x:%02x handle=%d",
+	    sc->remote_addr[5], sc->remote_addr[4],
+	    sc->remote_addr[3], sc->remote_addr[2],
+	    sc->remote_addr[1], sc->remote_addr[0],
+	    sc->con_handle);
 
 	/*
 	 * Step 9: Receive key distribution from responder
@@ -616,14 +831,14 @@ smp_pair(struct smp_conn *sc)
 		 * This avoids blocking for the full timeout when the
 		 * responder has no keys to distribute.
 		 */
-		int expected_pdus = 0;
+		expected_pdus = 0;
 		if (pres[6] & SMP_KEY_DIST_ENC_KEY)
 			expected_pdus += 2;
 		if (pres[6] & SMP_KEY_DIST_ID_KEY)
 			expected_pdus += 2;
 
-		for (int i = 0; i < expected_pdus; i++) {
-			n = recv(sc->fd, pdu, sizeof(pdu), 0);
+		for (i = 0; i < expected_pdus; i++) {
+			n = smp_log_recv(sc, pdu, sizeof(pdu));
 			if (n < 1)
 				break;
 
@@ -634,9 +849,9 @@ smp_pair(struct smp_conn *sc)
 					bond.has_ltk = true;
 				}
 				break;
-			case SMP_MASTER_IDENTIFICATION:
+			case SMP_CENTRAL_IDENTIFICATION:
 				if (n >= 11) {
-					memcpy(&bond.ediv, pdu + 1, 2);
+					bond.ediv = get_le16(pdu + 1);
 					memcpy(&bond.rand, pdu + 3, 8);
 				}
 				break;
@@ -652,6 +867,14 @@ smp_pair(struct smp_conn *sc)
 					memcpy(bond.addr, pdu + 2, 6);
 				}
 				break;
+			case SMP_SIGNING_INFORMATION:
+				/*
+				 * CSRK distribution — deprecated since BT 5.1.
+				 * Consume and discard; do not store.
+				 */
+				LOG_SMP(1, "ignoring deprecated "
+				    "Signing Information from peer");
+				break;
 			default:
 				break;
 			}
@@ -661,10 +884,42 @@ smp_pair(struct smp_conn *sc)
 		if (bond.has_ltk) {
 			smp_bond_db_store(sc->bond_db, &bond);
 			LOG_SMP(1, "bond stored");
+			BLUED_LOG_SECURITY("bond stored "
+			    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+			    "ltk=%d irk=%d lk=%d",
+			    bond.addr[5], bond.addr[4],
+			    bond.addr[3], bond.addr[2],
+			    bond.addr[1], bond.addr[0],
+			    bond.has_ltk, bond.has_irk,
+			    bond.has_link_key);
 		}
+
+		BLUED_LOG_SECURITY("pairing complete "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+		    "sc=%d bonded=%d",
+		    sc->remote_addr[5], sc->remote_addr[4],
+		    sc->remote_addr[3], sc->remote_addr[2],
+		    sc->remote_addr[1], sc->remote_addr[0],
+		    0, bond.has_ltk);
 	}
 
-	return (0);
+	ret = 0;
+
+legacy_cleanup:
+	BLUED_PROBE_SMP_PAIR_DONE(
+	    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL), ret);
+	if (ret != 0)
+		BLUED_LOG_SECURITY("pairing failed "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x reason=%02x",
+		    sc->remote_addr[5], sc->remote_addr[4],
+		    sc->remote_addr[3], sc->remote_addr[2],
+		    sc->remote_addr[1], sc->remote_addr[0],
+		    (unsigned)errno);
+	explicit_bzero(tk, sizeof(tk));
+	explicit_bzero(mrand, sizeof(mrand));
+	explicit_bzero(srand, sizeof(srand));
+	explicit_bzero(stk, sizeof(stk));
+	return (ret);
 }
 
 /*
@@ -682,10 +937,9 @@ smp_encrypt_with_ltk(struct smp_conn *sc, const struct smp_bond *bond)
 		return (-1);
 	}
 
-	params[0] = sc->con_handle & 0xFF;
-	params[1] = (sc->con_handle >> 8) & 0xFF;
+	put_le16(params, sc->con_handle);
 	memcpy(params + 2, &bond->rand, 8);
-	memcpy(params + 10, &bond->ediv, 2);
+	put_le16(params + 10, bond->ediv);
 	memcpy(params + 12, bond->ltk, 16);
 
 	if (hci_send_cmd(sc->hci_fd, HCI_OP_LE_START_ENCRYPTION, params, sizeof(params)) < 0)
@@ -736,7 +990,7 @@ smp_rpa_matches(const uint8_t irk[16], const uint8_t addr[6])
 
 	smp_aes128(irk, plaintext, cipher);
 
-	return (memcmp(cipher, hash_expected, 3) == 0);
+	return (timingsafe_bcmp(cipher, hash_expected, 3) == 0);
 }
 
 /*
@@ -749,8 +1003,10 @@ smp_rpa_matches(const uint8_t irk[16], const uint8_t addr[6])
 struct smp_bond *
 smp_find_bond(struct smp_bond_db *db, const uint8_t *addr, uint8_t addr_type)
 {
+	int i;
+
 	/* Exact match first */
-	for (int i = 0; i < db->count; i++) {
+	for (i = 0; i < db->count; i++) {
 		if (db->bonds[i].addr_type == addr_type &&
 		    memcmp(db->bonds[i].addr, addr, 6) == 0) {
 			LOG_SMP(1, "bond found (exact match)");
@@ -760,7 +1016,7 @@ smp_find_bond(struct smp_bond_db *db, const uint8_t *addr, uint8_t addr_type)
 
 	/* Try IRK-based RPA resolution for random addresses */
 	if (addr_type == BDADDR_LE_RANDOM) {
-		for (int i = 0; i < db->count; i++) {
+		for (i = 0; i < db->count; i++) {
 			if (db->bonds[i].has_irk &&
 			    smp_rpa_matches(db->bonds[i].irk, addr)) {
 				LOG_SMP(1, "bond found (IRK resolved)");
@@ -800,20 +1056,41 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 	size_t dh_len;
 	uint32_t passkey;
 	uint8_t ra[16]; /* passkey as 128-bit for f6 */
+	int ret = -1;
+	int i;
 
 	if (sc->passkey_cb == NULL) {
 		errno = ENOTSUP;
 		return (-1);
 	}
 
-	/* Generate passkey and display to user */
-	passkey = arc4random_uniform(1000000);
-	if (sc->passkey_cb(&passkey, true, sc->passkey_cb_arg) < 0) {
-		uint8_t fail[2] = { SMP_PAIRING_FAILED,
-		    SMP_ERR_PASSKEY_ENTRY_FAILED };
-		send(sc->fd, fail, 2, 0);
-		errno = ECANCELED;
-		return (-1);
+	/*
+	 * Determine passkey display/input role per Core Spec
+	 * Vol 3 Part H Table 2.8.  When the responder has
+	 * DisplayOnly or DisplayYesNo and we (initiator) have
+	 * KeyboardOnly or KeyboardDisplay, the responder displays
+	 * and we input.
+	 */
+	{
+		bool we_display = true;
+
+		if ((pres[1] == SMP_IO_DISPLAY_ONLY ||
+		    pres[1] == SMP_IO_DISPLAY_YESNO) &&
+		    (preq[1] == SMP_IO_KEYBOARD_ONLY ||
+		    preq[1] == SMP_IO_KEYBOARD_DISPLAY))
+			we_display = false;
+
+		passkey = 0;
+		if (we_display)
+			passkey = arc4random_uniform(1000000);
+		if (sc->passkey_cb(&passkey, we_display,
+		    sc->passkey_cb_arg) < 0) {
+			uint8_t fail[2] = { SMP_PAIRING_FAILED,
+			    SMP_ERR_PASSKEY_ENTRY_FAILED };
+			smp_log_send(sc, fail, 2);
+			errno = ECANCELED;
+			return (-1);
+		}
 	}
 
 	/* passkey as 128-bit LE integer for f6 */
@@ -861,13 +1138,13 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 	swap_buf(pdu + 33, our_pk_raw + 33, 32);
 	/* Store x-coord in LE for crypto functions */
 	memcpy(pka_le, pdu + 1, 32);
-	if (send(sc->fd, pdu, 65, 0) < 0) {
+	if (smp_log_send(sc, pdu, 65) < 0) {
 		EVP_PKEY_free(our_key);
 		return (-1);
 	}
 
 	/* Receive peer PK (wire = LE) */
-	n = recv(sc->fd, pdu, 65, 0);
+	n = smp_log_recv(sc, pdu, 65);
 	if (n < 65 || pdu[0] != SMP_PAIRING_PUBLIC_KEY) {
 		EVP_PKEY_free(our_key);
 		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
@@ -887,7 +1164,7 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		    "failing pairing");
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_DHKEY_CHECK_FAILED;
-		send(sc->fd, pdu, 2, 0);
+		smp_log_send(sc, pdu, 2);
 		EVP_PKEY_free(our_key);
 		return (-1);
 	}
@@ -945,7 +1222,7 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 	 *   Cbi = f4(PKbx, PKax, Nbi, rbi) — responder confirm
 	 *   Exchange: send Cai, recv Cbi, send Nai, recv Nbi, verify Cbi
 	 */
-	for (int i = 0; i < 20; i++) {
+	for (i = 0; i < 20; i++) {
 		uint8_t nai[16], nbi[16];
 		uint8_t cai[16], cbi_recv[16], cbi_verify[16];
 		uint8_t ri;
@@ -961,41 +1238,41 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		/* Send our confirm Cai */
 		pdu[0] = SMP_PAIRING_CONFIRM;
 		memcpy(pdu + 1, cai, 16);
-		if (send(sc->fd, pdu, 17, 0) < 0)
-			return (-1);
+		if (smp_log_send(sc, pdu, 17) < 0)
+			goto sc_passkey_cleanup;
 
 		/* Receive responder confirm Cbi */
-		n = recv(sc->fd, pdu, 17, 0);
+		n = smp_log_recv(sc, pdu, 17);
 		if (n < 17 || pdu[0] != SMP_PAIRING_CONFIRM) {
 			errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
 			    EACCES : EPROTO;
-			return (-1);
+			goto sc_passkey_cleanup;
 		}
 		memcpy(cbi_recv, pdu + 1, 16);
 
 		/* Send our nonce Nai */
 		pdu[0] = SMP_PAIRING_RANDOM;
 		memcpy(pdu + 1, nai, 16);
-		if (send(sc->fd, pdu, 17, 0) < 0)
-			return (-1);
+		if (smp_log_send(sc, pdu, 17) < 0)
+			goto sc_passkey_cleanup;
 
 		/* Receive responder nonce Nbi */
-		n = recv(sc->fd, pdu, 17, 0);
+		n = smp_log_recv(sc, pdu, 17);
 		if (n < 17 || pdu[0] != SMP_PAIRING_RANDOM) {
 			errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
 			    EACCES : EPROTO;
-			return (-1);
+			goto sc_passkey_cleanup;
 		}
 		memcpy(nbi, pdu + 1, 16);
 
 		/* Verify Cbi = f4(PKbx, PKax, Nbi, rbi) */
 		smp_f4(pkb_le, pka_le, nbi, ri, cbi_verify);
-		if (memcmp(cbi_recv, cbi_verify, 16) != 0) {
+		if (timingsafe_bcmp(cbi_recv, cbi_verify, 16) != 0) {
 			pdu[0] = SMP_PAIRING_FAILED;
 			pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
-			send(sc->fd, pdu, 2, 0);
+			smp_log_send(sc, pdu, 2);
 			errno = EACCES;
-			return (-1);
+			goto sc_passkey_cleanup;
 		}
 
 		/* Keep last round's nonces for f5/f6 */
@@ -1012,31 +1289,31 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 	 * (ra = rb = passkey for Passkey Entry per Table 2.2)
 	 */
 	smp_f5(dhkey_le, na, nb, a1, a2, mackey, ltk);
-	btled_hexdump("SMP", "f5 output (LTK)", ltk, 16);
+	blued_hexdump("SMP", "f5 output (LTK)", ltk, 16);
 
 	smp_f6(mackey, na, nb, ra, iocap_a, a1, a2, ea);
-	btled_hexdump("SMP", "f6 output (Ea)", ea, 16);
+	blued_hexdump("SMP", "f6 output (Ea)", ea, 16);
 	smp_f6(mackey, nb, na, ra, iocap_b, a2, a1, eb);
-	btled_hexdump("SMP", "f6 output (Eb)", eb, 16);
+	blued_hexdump("SMP", "f6 output (Eb)", eb, 16);
 
 	/* Send Ea, receive and verify Eb */
 	pdu[0] = SMP_PAIRING_DHKEY_CHECK;
 	memcpy(pdu + 1, ea, 16);
-	if (send(sc->fd, pdu, 17, 0) < 0)
-		return (-1);
+	if (smp_log_send(sc, pdu, 17) < 0)
+		goto sc_passkey_cleanup;
 
-	n = recv(sc->fd, pdu, 17, 0);
+	n = smp_log_recv(sc, pdu, 17);
 	if (n < 17 || pdu[0] != SMP_PAIRING_DHKEY_CHECK) {
 		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
 		    EACCES : EPROTO;
-		return (-1);
+		goto sc_passkey_cleanup;
 	}
-	if (memcmp(pdu + 1, eb, 16) != 0) {
+	if (timingsafe_bcmp(pdu + 1, eb, 16) != 0) {
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_DHKEY_CHECK_FAILED;
-		send(sc->fd, pdu, 2, 0);
+		smp_log_send(sc, pdu, 2);
 		errno = EACCES;
-		return (-1);
+		goto sc_passkey_cleanup;
 	}
 
 	/* Start encryption */
@@ -1048,11 +1325,18 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		memcpy(params + 12, ltk, 16);
 		if (hci_send_cmd(sc->hci_fd, HCI_OP_LE_START_ENCRYPTION, params,
 		    sizeof(params)) < 0)
-			return (-1);
+			goto sc_passkey_cleanup;
 	}
 
 	if (hci_wait_encryption(sc->hci_fd, sc->con_handle, 5) < 0)
-		return (-1);
+		goto sc_passkey_cleanup;
+
+	BLUED_LOG_SECURITY("encryption active "
+	    "addr=%02x:%02x:%02x:%02x:%02x:%02x handle=%d",
+	    sc->remote_addr[5], sc->remote_addr[4],
+	    sc->remote_addr[3], sc->remote_addr[2],
+	    sc->remote_addr[1], sc->remote_addr[0],
+	    sc->con_handle);
 
 	/* Store bond */
 	{
@@ -1068,12 +1352,13 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		 * SC ignores EncKey; only IdKey applies. */
 		{
 			int exp = 0;
-			if (pres[6] & SMP_KEY_DIST_ID_KEY) exp += 2;
-			for (int i = 0; i < exp; i++) {
+			if (pres[6] & SMP_KEY_DIST_ID_KEY)
+				exp += 2;
+			for (i = 0; i < exp; i++) {
 				struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
 				setsockopt(sc->fd, SOL_SOCKET, SO_RCVTIMEO,
 				    &tv, sizeof(tv));
-				n = recv(sc->fd, pdu, sizeof(pdu), 0);
+				n = smp_log_recv(sc, pdu, sizeof(pdu));
 				if (n < 1)
 					break;
 				if (pdu[0] == SMP_IDENTITY_INFORMATION && n >= 17) {
@@ -1084,14 +1369,50 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 					bond.addr_type = (pdu[1] == 0x01) ?
 					    BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
 					memcpy(bond.addr, pdu + 2, 6);
+				} else if (pdu[0] == SMP_SIGNING_INFORMATION) {
+					LOG_SMP(1, "ignoring deprecated "
+					    "Signing Information from peer");
 				}
 			}
 		}
 
+		/* Derive BR/EDR Link Key via CTKD (BT 4.2+) */
+		smp_ctkd_derive_link_key(&bond,
+		    (preq[3] & SMP_AUTH_CT2) && (pres[3] & SMP_AUTH_CT2));
+
 		smp_bond_db_store(sc->bond_db, &bond);
+		BLUED_LOG_SECURITY("bond stored "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+		    "ltk=%d irk=%d lk=%d",
+		    bond.addr[5], bond.addr[4],
+		    bond.addr[3], bond.addr[2],
+		    bond.addr[1], bond.addr[0],
+		    bond.has_ltk, bond.has_irk, bond.has_link_key);
+		BLUED_LOG_SECURITY("pairing complete "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+		    "sc=%d bonded=%d",
+		    sc->remote_addr[5], sc->remote_addr[4],
+		    sc->remote_addr[3], sc->remote_addr[2],
+		    sc->remote_addr[1], sc->remote_addr[0],
+		    1, bond.has_ltk);
 	}
 
-	return (0);
+	ret = 0;
+
+sc_passkey_cleanup:
+	BLUED_PROBE_SMP_PAIR_DONE(
+	    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL), ret);
+	if (ret != 0)
+		BLUED_LOG_SECURITY("pairing failed "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x reason=%02x",
+		    sc->remote_addr[5], sc->remote_addr[4],
+		    sc->remote_addr[3], sc->remote_addr[2],
+		    sc->remote_addr[1], sc->remote_addr[0],
+		    (unsigned)errno);
+	explicit_bzero(dhkey_le, sizeof(dhkey_le));
+	explicit_bzero(mackey, sizeof(mackey));
+	explicit_bzero(ltk, sizeof(ltk));
+	return (ret);
 }
 
 /*
@@ -1106,19 +1427,54 @@ smp_bond_db_load(struct smp_bond_db *db, int fd)
 	db->fd = fd;
 	db->count = 0;
 
-	flock(fd, LOCK_EX);
-	n = pread(fd, db->bonds, sizeof(db->bonds), 0);
-	flock(fd, LOCK_UN);
-	if (n < 0)
-		return (-1);
+	/*
+	 * Bond file format v2: 8-byte header + array of smp_bond structs.
+	 * Header: magic "BOND" (4 bytes) + record_size (4 bytes LE).
+	 * If the file lacks the magic, it's a legacy (headerless) file
+	 * and is discarded (migration not possible when struct size changed).
+	 */
+	{
+		uint8_t hdr[8];
+		uint32_t rec_size;
 
-	if ((n % sizeof(struct smp_bond)) != 0) {
-		db->count = 0;
-		return (0);
+		flock(fd, LOCK_EX);
+
+		n = pread(fd, hdr, sizeof(hdr), 0);
+		if (n < (ssize_t)sizeof(hdr) ||
+		    memcmp(hdr, "BOND", 4) != 0) {
+			/*
+			 * No valid header — either empty, legacy format,
+			 * or corrupt.  Start fresh; bonds will be re-created
+			 * on next pairing.
+			 */
+			flock(fd, LOCK_UN);
+			db->count = 0;
+			return (0);
+		}
+
+		memcpy(&rec_size, hdr + 4, 4);
+		rec_size = le32toh(rec_size);
+
+		if (rec_size != sizeof(struct smp_bond)) {
+			/* Struct size mismatch — incompatible version */
+			flock(fd, LOCK_UN);
+			db->count = 0;
+			return (0);
+		}
+
+		n = pread(fd, db->bonds, sizeof(db->bonds), sizeof(hdr));
+		flock(fd, LOCK_UN);
+
+		if (n < 0)
+			return (-1);
+		if ((n % sizeof(struct smp_bond)) != 0) {
+			db->count = 0;
+			return (0);
+		}
+		db->count = n / sizeof(struct smp_bond);
+		if (db->count > SMP_MAX_BONDS)
+			db->count = SMP_MAX_BONDS;
 	}
-	db->count = n / sizeof(struct smp_bond);
-	if (db->count > SMP_MAX_BONDS)
-		db->count = SMP_MAX_BONDS;
 
 	return (0);
 }
@@ -1135,10 +1491,26 @@ smp_bond_db_save(struct smp_bond_db *db)
 	if (db->fd < 0)
 		return (-1);
 
-	flock(db->fd, LOCK_EX);
+	if (flock(db->fd, LOCK_EX) < 0 && errno != EINTR)
+		warn("flock LOCK_EX");
+
+	/* Write versioned header */
+	{
+		uint8_t hdr[8];
+		uint32_t rec_size = htole32(sizeof(struct smp_bond));
+
+		memcpy(hdr, "BOND", 4);
+		memcpy(hdr + 4, &rec_size, 4);
+		if (pwrite(db->fd, hdr, sizeof(hdr), 0) != sizeof(hdr)) {
+			warn("pwrite bond header");
+			flock(db->fd, LOCK_UN);
+			return (-1);
+		}
+	}
+
 	len = db->count * sizeof(struct smp_bond);
-	n = pwrite(db->fd, db->bonds, len, 0);
-	ftruncate(db->fd, len);
+	n = pwrite(db->fd, db->bonds, len, sizeof(uint8_t[8]));
+	ftruncate(db->fd, sizeof(uint8_t[8]) + len);
 	flock(db->fd, LOCK_UN);
 	if (n < 0 || (size_t)n != len)
 		return (-1);
@@ -1154,12 +1526,12 @@ smp_bond_db_save(struct smp_bond_db *db)
 void
 smp_bond_save_cccds(struct smp_bond *bond, struct att_db *db)
 {
-	int n = 0;
+	int i, n = 0;
 
 	if (bond == NULL || db == NULL)
 		return;
 
-	for (int i = 0; i < db->count && n < SMP_MAX_CCCDS; i++) {
+	for (i = 0; i < db->count && n < SMP_MAX_CCCDS; i++) {
 		struct att_attr *a = &db->attrs[i];
 
 		if (a->uuid16 == GATT_UUID_CCCD && a->value_len >= 2) {
@@ -1179,12 +1551,13 @@ smp_bond_save_cccds(struct smp_bond *bond, struct att_db *db)
 void
 smp_bond_restore_cccds(struct smp_bond *bond, struct att_db *db)
 {
+	int i, j;
 
 	if (bond == NULL || db == NULL)
 		return;
 
-	for (int j = 0; j < bond->num_cccds; j++) {
-		for (int i = 0; i < db->count; i++) {
+	for (j = 0; j < bond->num_cccds; j++) {
+		for (i = 0; i < db->count; i++) {
 			struct att_attr *a = &db->attrs[i];
 
 			if (a->handle == bond->cccds[j].handle &&
@@ -1213,7 +1586,7 @@ smp_bond_restore_cccds(struct smp_bond *bond, struct att_db *db)
 /*
  * Reverse a byte buffer in-place or into a destination.
  */
-static void
+void
 swap_buf(uint8_t *dst, const uint8_t *src, size_t len)
 {
 	for (size_t i = 0; i < len; i++)
@@ -1274,7 +1647,7 @@ out:
  * AES-CMAC per RFC 4493.
  * Core Spec Vol 3 Part H Section 2.2.5
  */
-static void
+int
 smp_aes_cmac(const uint8_t key[16], const uint8_t *msg, size_t len,
     uint8_t mac[16])
 {
@@ -1289,24 +1662,40 @@ smp_aes_cmac(const uint8_t key[16], const uint8_t *msg, size_t len,
 	if (cmac_type == NULL) {
 		warnx("EVP_MAC_fetch failed");
 		memset(mac, 0, 16);
-		return;
+		return (-1);
 	}
 	ctx = EVP_MAC_CTX_new(cmac_type);
 	if (ctx == NULL) {
 		warnx("EVP_MAC_CTX_new failed");
 		memset(mac, 0, 16);
 		EVP_MAC_free(cmac_type);
-		return;
+		return (-1);
 	}
 	params[0] = OSSL_PARAM_construct_utf8_string("cipher", cipher_name,
 	    0);
 	params[1] = OSSL_PARAM_construct_end();
-	EVP_MAC_init(ctx, key, 16, params);
-	EVP_MAC_update(ctx, msg, len);
+	if (EVP_MAC_init(ctx, key, 16, params) <= 0) {
+		warnx("EVP_MAC_init failed");
+		goto cmac_fail;
+	}
+	if (EVP_MAC_update(ctx, msg, len) <= 0) {
+		warnx("EVP_MAC_update failed");
+		goto cmac_fail;
+	}
 	outlen = 16;
-	EVP_MAC_final(ctx, mac, &outlen, 16);
+	if (EVP_MAC_final(ctx, mac, &outlen, 16) <= 0) {
+		warnx("EVP_MAC_final failed");
+		goto cmac_fail;
+	}
 	EVP_MAC_CTX_free(ctx);
 	EVP_MAC_free(cmac_type);
+	return (0);
+
+cmac_fail:
+	EVP_MAC_CTX_free(ctx);
+	EVP_MAC_free(cmac_type);
+	memset(mac, 0, 16);
+	return (-1);
 }
 
 /*
@@ -1319,7 +1708,7 @@ smp_aes_cmac(const uint8_t key[16], const uint8_t *msg, size_t len,
  * Internally converted to big-endian for AES-CMAC per spec.
  * Output is returned in little-endian (wire) order.
  */
-static void
+void
 smp_f4(const uint8_t u[32], const uint8_t v[32], const uint8_t x[16],
     uint8_t z, uint8_t out[16])
 {
@@ -1343,7 +1732,7 @@ smp_f4(const uint8_t u[32], const uint8_t v[32], const uint8_t x[16],
  * Internally converted to big-endian for AES-CMAC per spec.
  * Outputs are returned in little-endian (wire) order.
  */
-static void
+void
 smp_f5(const uint8_t w[32], const uint8_t n1[16], const uint8_t n2[16],
     const uint8_t a1[7], const uint8_t a2[7],
     uint8_t mackey[16], uint8_t ltk[16])
@@ -1385,7 +1774,7 @@ smp_f5(const uint8_t w[32], const uint8_t n1[16], const uint8_t n2[16],
  * Internally converted to big-endian for AES-CMAC per spec.
  * Output is returned in little-endian (wire) order.
  */
-static void
+void
 smp_f6(const uint8_t w[16], const uint8_t n1[16], const uint8_t n2[16],
     const uint8_t r[16], const uint8_t iocap[3],
     const uint8_t a1[7], const uint8_t a2[7],
@@ -1414,7 +1803,7 @@ smp_f6(const uint8_t w[16], const uint8_t n1[16], const uint8_t n2[16],
  * All multi-byte inputs are in little-endian (wire) order.
  * Internally converted to big-endian for AES-CMAC per spec.
  */
-static uint32_t
+uint32_t
 smp_g2(const uint8_t u[32], const uint8_t v[32],
     const uint8_t x[16], const uint8_t y[16])
 {
@@ -1430,6 +1819,112 @@ smp_g2(const uint8_t u[32], const uint8_t v[32],
 	/* Least significant 32 bits of the big-endian 128-bit MAC */
 	return ((uint32_t)mac[12] << 24 | (uint32_t)mac[13] << 16 |
 	    (uint32_t)mac[14] << 8 | (uint32_t)mac[15]);
+}
+
+/*
+ * h6: Link Key conversion function.
+ * Core Spec Vol 3 Part H Section 2.2.10
+ *
+ * h6(W, keyID) = AES-CMAC_W(keyID)
+ *
+ * W is a 128-bit key in little-endian (wire) order; internally converted.
+ * keyID is a 32-bit identifier in big-endian order.
+ * Output is returned in little-endian (wire) order.
+ */
+void
+smp_h6(const uint8_t w[16], const uint8_t keyid[4], uint8_t out[16])
+{
+	uint8_t w_be[16], mac[16];
+
+	swap_buf(w_be, w, 16);
+	smp_aes_cmac(w_be, keyid, 4, mac);
+	swap_buf(out, mac, 16);
+}
+
+/*
+ * h7: Link Key conversion function (alternate).
+ * Core Spec Vol 3 Part H Section 2.2.11
+ *
+ * h7(SALT, W) = AES-CMAC_SALT(W)
+ *
+ * SALT is a 128-bit value in big-endian order.
+ * W is a 128-bit key in little-endian (wire) order.
+ * Output is returned in little-endian (wire) order.
+ */
+void
+smp_h7(const uint8_t salt[16], const uint8_t w[16], uint8_t out[16])
+{
+	uint8_t w_be[16], mac[16];
+
+	swap_buf(w_be, w, 16);
+	smp_aes_cmac(salt, w_be, 16, mac);
+	swap_buf(out, mac, 16);
+}
+
+/*
+ * Cross-Transport Key Derivation: LE LTK -> BR/EDR Link Key.
+ * Core Spec Vol 3 Part H Section 2.4.2.4
+ *
+ * Only valid for LE Secure Connections LTKs (not legacy).
+ *
+ * CT2 = 1 path (uses h7):
+ *   ILK = h7(SALT_CT2, LTK)
+ *   Link Key = h6(ILK, "lebr")
+ *
+ * Returns 0 on success, -1 if bond is not SC.
+ */
+int
+smp_ctkd_derive_link_key(struct smp_bond *bond, bool ct2)
+{
+	/* SALT for CT2 = 1 path (Core Spec Vol 3 Part H Section 2.4.2.4) */
+	static const uint8_t salt_ct2[16] = {
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x74, 0x6D, 0x70, 0x31
+	};
+	/* keyID "lebr" in big-endian: 0x6C656272 */
+	static const uint8_t keyid_lebr[4] = { 0x6C, 0x65, 0x62, 0x72 };
+	/* keyID "tmp1" in big-endian: 0x746D7031 (CT2=0 path) */
+	static const uint8_t keyid_tmp1[4] = { 0x74, 0x6D, 0x70, 0x31 };
+	uint8_t ilk[16];
+
+	if (!bond->is_sc || !bond->has_ltk)
+		return (-1);
+
+	if (ct2) {
+		/* Both sides support CT2: use h7(SALT, LTK) */
+		smp_h7(salt_ct2, bond->ltk, ilk);
+	} else {
+		/* At least one side lacks CT2: use h6(LTK, "tmp1") */
+		smp_h6(bond->ltk, keyid_tmp1, ilk);
+	}
+	smp_h6(ilk, keyid_lebr, bond->link_key);
+	bond->has_link_key = true;
+
+	LOG_SMP(1, "CTKD: ct2=%d, BR/EDR link key derived", ct2);
+
+	return (0);
+}
+
+/*
+ * Generate local SC OOB data: {confirm, random}.
+ * Core Spec Vol 3 Part H Section 2.3.5.6.4
+ *
+ * confirm = f4(PKx, PKx, random, 0)
+ *
+ * The caller should transmit these values to the peer via the OOB
+ * channel before pairing begins.
+ *
+ * local_pk_x is the 32-byte x-coordinate of the local public key
+ * in little-endian (wire) order.
+ */
+int
+smp_generate_sc_oob(uint8_t confirm[16], uint8_t random[16],
+    const uint8_t local_pk_x[32])
+{
+
+	arc4random_buf(random, 16);
+	smp_f4(local_pk_x, local_pk_x, random, 0, confirm);
+	return (0);
 }
 
 /*
@@ -1473,6 +1968,8 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 	uint8_t pdu[66];
 	ssize_t n;
 	size_t dh_len;
+	int ret = -1;
+	int i;
 
 	smp_pack_addr(a1, sc->local_addr, sc->local_addr_type);
 	smp_pack_addr(a2, sc->remote_addr, sc->remote_addr_type);
@@ -1530,13 +2027,13 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 	swap_buf(pdu + 1, our_pk_raw + 1, 32);      /* x: BE -> LE */
 	swap_buf(pdu + 33, our_pk_raw + 33, 32);     /* y: BE -> LE */
 	memcpy(pka_le, pdu + 1, 32);                /* save LE x-coord */
-	if (send(sc->fd, pdu, 65, 0) < 0) {
+	if (smp_log_send(sc, pdu, 65) < 0) {
 		EVP_PKEY_free(our_key);
 		return (-1);
 	}
 
 	/* Receive peer's Public Key (wire = little-endian) */
-	n = recv(sc->fd, pdu, 65, 0);
+	n = smp_log_recv(sc, pdu, 65);
 	if (n < 65 || pdu[0] != SMP_PAIRING_PUBLIC_KEY) {
 		EVP_PKEY_free(our_key);
 		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
@@ -1555,7 +2052,7 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 		    "failing pairing");
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_DHKEY_CHECK_FAILED;
-		send(sc->fd, pdu, 2, 0);
+		smp_log_send(sc, pdu, 2);
 		EVP_PKEY_free(our_key);
 		return (-1);
 	}
@@ -1610,126 +2107,196 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 	LOG_SMP(2, "SC: DHKey computed");
 
 	/*
-	 * Just Works SC Authentication Stage 1 (Section 2.3.5.6.2):
+	 * Authentication Stage 1 dispatch by model.
 	 *
-	 * The RESPONDER computes Cb = f4(PKbx, PKax, Nb, 0) and sends
-	 * Pairing Confirm.  The INITIATOR does NOT send a confirm.
-	 * Then nonces are exchanged.
+	 * OOB (Section 2.3.5.6.4):
+	 *   Each side already has the peer's {confirm, random} from OOB.
+	 *   Exchange nonces, then verify peer's OOB confirm.
 	 *
-	 * As initiator:
-	 *  1. Receive Cb from responder
-	 *  2. Generate Na, send Na
-	 *  3. Receive Nb from responder
-	 *  4. Verify Cb == f4(PKbx, PKax, Nb, 0)
+	 * Just Works / Numeric Comparison (Section 2.3.5.6.2):
+	 *   The RESPONDER computes Cb = f4(PKbx, PKax, Nb, 0) and sends
+	 *   Pairing Confirm.  The INITIATOR does NOT send a confirm.
+	 *   Then nonces are exchanged.
 	 *
 	 * f4 inputs use the x-coordinate only (first 32 bytes of LE pk).
-	 * f4 is defined with big-endian inputs, but since AES-CMAC is
-	 * standard and the spec defines the concatenation order with
-	 * MSB of U as MSB of message, we pass coordinates as-is in the
-	 * byte order the spec expects.  The spec's test vectors confirm
-	 * the inputs are NOT reversed per-byte — they're used as-is
-	 * in the order written.
 	 */
-	uint8_t cb_recv[16]; /* responder's confirm */
-
-	/* Receive responder's Pairing Confirm (Cb) */
-	n = recv(sc->fd, pdu, 17, 0);
-	if (n < 17 || pdu[0] != SMP_PAIRING_CONFIRM) {
-		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
-		    EACCES : EPROTO;
-		return (-1);
-	}
-	memcpy(cb_recv, pdu + 1, 16);
-
-	/* Generate and send our nonce (Na) */
-	smp_random(na, sizeof(na));
-	pdu[0] = SMP_PAIRING_RANDOM;
-	memcpy(pdu + 1, na, 16);
-	if (send(sc->fd, pdu, 17, 0) < 0)
-		return (-1);
-
-	/* Receive responder's nonce (Nb) */
-	n = recv(sc->fd, pdu, 17, 0);
-	if (n < 17 || pdu[0] != SMP_PAIRING_RANDOM) {
-		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
-		    EACCES : EPROTO;
-		return (-1);
-	}
-	memcpy(nb, pdu + 1, 16);
-
-	/* Verify Cb = f4(PKbx, PKax, Nb, 0) */
-	{
-		uint8_t cb_verify[16];
-		smp_f4(pkb_le, pka_le, nb, 0, cb_verify);
-		if (memcmp(cb_recv, cb_verify, 16) != 0) {
+	if (model == SMP_MODEL_OOB) {
+		/*
+		 * SC OOB Authentication Stage 1.
+		 * Core Spec Vol 3 Part H Section 2.3.5.6.4
+		 *
+		 * As initiator:
+		 *  1. Generate Na (our OOB random was already computed and
+		 *     sent to the peer out of band)
+		 *  2. Send Pairing Random (Na)
+		 *  3. Receive Pairing Random (Nb) from responder
+		 *  4. Verify peer's OOB confirm: Cb = f4(PKbx, PKbx, Nb, 0)
+		 *     must match sc->oob->sc->confirm
+		 */
+		if (sc->oob == NULL || sc->oob->sc == NULL) {
 			pdu[0] = SMP_PAIRING_FAILED;
-			pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
-			send(sc->fd, pdu, 2, 0);
-			errno = EACCES;
-			return (-1);
-		}
-	}
-	LOG_SMP(1, "SC: confirm verified");
-
-	/*
-	 * Numeric Comparison (Section 2.3.5.6.2 step 7):
-	 * Both sides compute Va/Vb = g2(PKax, PKbx, Na, Nb) mod 10^6
-	 * and display the 6-digit value for user confirmation.
-	 */
-	if (model == SMP_MODEL_NUMERIC_COMPARISON) {
-		uint32_t confirm_val;
-
-		confirm_val = smp_g2(pka_le, pkb_le, na, nb) % 1000000;
-		LOG_SMP(1, "SC: numeric comparison %06u", confirm_val);
-
-		if (sc->numcmp_cb == NULL) {
+			pdu[1] = SMP_ERR_OOB_NOT_AVAILABLE;
+			smp_log_send(sc, pdu, 2);
 			errno = ENOTSUP;
-			return (-1);
+			goto sc_jw_cleanup;
 		}
-		if (sc->numcmp_cb(confirm_val, sc->numcmp_cb_arg) < 0) {
-			pdu[0] = SMP_PAIRING_FAILED;
-			pdu[1] = SMP_ERR_NUMERIC_COMP_FAILED;
-			send(sc->fd, pdu, 2, 0);
-			errno = EACCES;
-			return (-1);
+
+		smp_random(na, sizeof(na));
+
+		/* Send our Pairing Random (Na) */
+		pdu[0] = SMP_PAIRING_RANDOM;
+		memcpy(pdu + 1, na, 16);
+		if (smp_log_send(sc, pdu, 17) < 0)
+			goto sc_jw_cleanup;
+
+		/* Receive peer's Pairing Random (Nb) */
+		n = smp_log_recv(sc, pdu, 17);
+		if (n < 17 || pdu[0] != SMP_PAIRING_RANDOM) {
+			errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
+			    EACCES : EPROTO;
+			goto sc_jw_cleanup;
 		}
-	}
+		memcpy(nb, pdu + 1, 16);
+
+		/* Verify peer's OOB confirm: Cb = f4(PKbx, PKbx, rb, 0) */
+		{
+			uint8_t cb_verify[16];
+			smp_f4(pkb_le, pkb_le, sc->oob->sc->random, 0,
+			    cb_verify);
+			if (timingsafe_bcmp(sc->oob->sc->confirm, cb_verify,
+			    16) != 0) {
+				pdu[0] = SMP_PAIRING_FAILED;
+				pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
+				smp_log_send(sc, pdu, 2);
+				errno = EACCES;
+				goto sc_jw_cleanup;
+			}
+		}
+		LOG_SMP(1, "SC OOB: peer confirm verified");
+	} else {
+		/*
+		 * Just Works / Numeric Comparison Stage 1.
+		 *
+		 * As initiator:
+		 *  1. Receive Cb from responder
+		 *  2. Generate Na, send Na
+		 *  3. Receive Nb from responder
+		 *  4. Verify Cb == f4(PKbx, PKax, Nb, 0)
+		 */
+		uint8_t cb_recv[16];
+
+		/* Receive responder's Pairing Confirm (Cb) */
+		n = smp_log_recv(sc, pdu, 17);
+		if (n < 17 || pdu[0] != SMP_PAIRING_CONFIRM) {
+			errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
+			    EACCES : EPROTO;
+			goto sc_jw_cleanup;
+		}
+		memcpy(cb_recv, pdu + 1, 16);
+
+		/* Generate and send our nonce (Na) */
+		smp_random(na, sizeof(na));
+		pdu[0] = SMP_PAIRING_RANDOM;
+		memcpy(pdu + 1, na, 16);
+		if (smp_log_send(sc, pdu, 17) < 0)
+			goto sc_jw_cleanup;
+
+		/* Receive responder's nonce (Nb) */
+		n = smp_log_recv(sc, pdu, 17);
+		if (n < 17 || pdu[0] != SMP_PAIRING_RANDOM) {
+			errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
+			    EACCES : EPROTO;
+			goto sc_jw_cleanup;
+		}
+		memcpy(nb, pdu + 1, 16);
+
+		/* Verify Cb = f4(PKbx, PKax, Nb, 0) */
+		{
+			uint8_t cb_verify[16];
+			smp_f4(pkb_le, pka_le, nb, 0, cb_verify);
+			if (timingsafe_bcmp(cb_recv, cb_verify, 16) != 0) {
+				pdu[0] = SMP_PAIRING_FAILED;
+				pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
+				smp_log_send(sc, pdu, 2);
+				errno = EACCES;
+				goto sc_jw_cleanup;
+			}
+		}
+		LOG_SMP(1, "SC: confirm verified");
+
+		/*
+		 * Numeric Comparison (Section 2.3.5.6.2 step 7):
+		 * Both sides compute Va/Vb = g2(PKax, PKbx, Na, Nb) mod 10^6
+		 * and display the 6-digit value for user confirmation.
+		 */
+		if (model == SMP_MODEL_NUMERIC_COMPARISON) {
+			uint32_t confirm_val;
+
+			confirm_val = smp_g2(pka_le, pkb_le, na, nb) % 1000000;
+			LOG_SMP(1, "SC: numeric comparison %06u", confirm_val);
+
+			if (sc->numcmp_cb == NULL) {
+				errno = ENOTSUP;
+				goto sc_jw_cleanup;
+			}
+			if (sc->numcmp_cb(confirm_val, sc->numcmp_cb_arg) < 0) {
+				pdu[0] = SMP_PAIRING_FAILED;
+				pdu[1] = SMP_ERR_NUMERIC_COMP_FAILED;
+				smp_log_send(sc, pdu, 2);
+				errno = EACCES;
+				goto sc_jw_cleanup;
+			}
+		}
+	} /* model dispatch */
 
 	/* Compute MacKey and LTK */
 	smp_f5(dhkey_le, na, nb, a1, a2, mackey, ltk);
 	LOG_SMP(1, "SC: MacKey+LTK derived");
-	btled_hexdump("SMP", "f5 output (LTK)", ltk, 16);
+	blued_hexdump("SMP", "f5 output (LTK)", ltk, 16);
 
 	/* Compute DHKey checks */
 	{
-		uint8_t r[16];
-		memset(r, 0, sizeof(r));
-		smp_f6(mackey, na, nb, r, iocap_a, a1, a2, ea);
-		btled_hexdump("SMP", "f6 output (Ea)", ea, 16);
-		smp_f6(mackey, nb, na, r, iocap_b, a2, a1, eb);
-		btled_hexdump("SMP", "f6 output (Eb)", eb, 16);
+		uint8_t r_ea[16], r_eb[16];
+
+		/*
+		 * Per Core Spec Vol 3 Part H Section 2.3.5.6.5:
+		 * OOB: Ea uses rb (peer's OOB random), Eb uses ra (our random).
+		 * All other models: r = 0.
+		 */
+		if (model == SMP_MODEL_OOB && sc->oob != NULL &&
+		    sc->oob->sc != NULL) {
+			memcpy(r_ea, sc->oob->sc->random, 16);
+			memcpy(r_eb, sc->oob->sc->local_random, 16);
+		} else {
+			memset(r_ea, 0, sizeof(r_ea));
+			memset(r_eb, 0, sizeof(r_eb));
+		}
+		smp_f6(mackey, na, nb, r_ea, iocap_a, a1, a2, ea);
+		blued_hexdump("SMP", "f6 output (Ea)", ea, 16);
+		smp_f6(mackey, nb, na, r_eb, iocap_b, a2, a1, eb);
+		blued_hexdump("SMP", "f6 output (Eb)", eb, 16);
 	}
 
 	/* Send our DHKey Check (Ea) */
 	pdu[0] = SMP_PAIRING_DHKEY_CHECK;
 	memcpy(pdu + 1, ea, 16);
-	if (send(sc->fd, pdu, 17, 0) < 0)
-		return (-1);
+	if (smp_log_send(sc, pdu, 17) < 0)
+		goto sc_jw_cleanup;
 
 	/* Receive peer's DHKey Check (Eb) */
-	n = recv(sc->fd, pdu, 17, 0);
+	n = smp_log_recv(sc, pdu, 17);
 	if (n < 17 || pdu[0] != SMP_PAIRING_DHKEY_CHECK) {
 		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
 		    EACCES : EPROTO;
-		return (-1);
+		goto sc_jw_cleanup;
 	}
 
-	if (memcmp(pdu + 1, eb, 16) != 0) {
+	if (timingsafe_bcmp(pdu + 1, eb, 16) != 0) {
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_DHKEY_CHECK_FAILED;
-		send(sc->fd, pdu, 2, 0);
+		smp_log_send(sc, pdu, 2);
 		errno = EACCES;
-		return (-1);
+		goto sc_jw_cleanup;
 	}
 	LOG_SMP(1, "SC: DHKey check passed");
 
@@ -1742,11 +2309,18 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 		memcpy(params + 12, ltk, 16);
 		if (hci_send_cmd(sc->hci_fd, HCI_OP_LE_START_ENCRYPTION, params,
 		    sizeof(params)) < 0)
-			return (-1);
+			goto sc_jw_cleanup;
 	}
 
 	if (hci_wait_encryption(sc->hci_fd, sc->con_handle, 5) < 0)
-		return (-1);
+		goto sc_jw_cleanup;
+
+	BLUED_LOG_SECURITY("encryption active "
+	    "addr=%02x:%02x:%02x:%02x:%02x:%02x handle=%d",
+	    sc->remote_addr[5], sc->remote_addr[4],
+	    sc->remote_addr[3], sc->remote_addr[2],
+	    sc->remote_addr[1], sc->remote_addr[0],
+	    sc->con_handle);
 
 	/* Store SC bond */
 	{
@@ -1762,12 +2336,13 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 		 * SC ignores EncKey; only IdKey applies. */
 		{
 			int exp = 0;
-			if (pres[6] & SMP_KEY_DIST_ID_KEY) exp += 2;
-			for (int i = 0; i < exp; i++) {
+			if (pres[6] & SMP_KEY_DIST_ID_KEY)
+				exp += 2;
+			for (i = 0; i < exp; i++) {
 				struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
 				setsockopt(sc->fd, SOL_SOCKET, SO_RCVTIMEO,
 				    &tv, sizeof(tv));
-				n = recv(sc->fd, pdu, sizeof(pdu), 0);
+				n = smp_log_recv(sc, pdu, sizeof(pdu));
 				if (n < 1)
 					break;
 				if (pdu[0] == SMP_IDENTITY_INFORMATION && n >= 17) {
@@ -1778,14 +2353,50 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 					bond.addr_type = (pdu[1] == 0x01) ?
 					    BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
 					memcpy(bond.addr, pdu + 2, 6);
+				} else if (pdu[0] == SMP_SIGNING_INFORMATION) {
+					LOG_SMP(1, "ignoring deprecated "
+					    "Signing Information from peer");
 				}
 			}
 		}
 
+		/* Derive BR/EDR Link Key via CTKD (BT 4.2+) */
+		smp_ctkd_derive_link_key(&bond,
+		    (preq[3] & SMP_AUTH_CT2) && (pres[3] & SMP_AUTH_CT2));
+
 		smp_bond_db_store(sc->bond_db, &bond);
+		BLUED_LOG_SECURITY("bond stored "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+		    "ltk=%d irk=%d lk=%d",
+		    bond.addr[5], bond.addr[4],
+		    bond.addr[3], bond.addr[2],
+		    bond.addr[1], bond.addr[0],
+		    bond.has_ltk, bond.has_irk, bond.has_link_key);
+		BLUED_LOG_SECURITY("pairing complete "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+		    "sc=%d bonded=%d",
+		    sc->remote_addr[5], sc->remote_addr[4],
+		    sc->remote_addr[3], sc->remote_addr[2],
+		    sc->remote_addr[1], sc->remote_addr[0],
+		    1, bond.has_ltk);
 	}
 
-	return (0);
+	ret = 0;
+
+sc_jw_cleanup:
+	BLUED_PROBE_SMP_PAIR_DONE(
+	    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL), ret);
+	if (ret != 0)
+		BLUED_LOG_SECURITY("pairing failed "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x reason=%02x",
+		    sc->remote_addr[5], sc->remote_addr[4],
+		    sc->remote_addr[3], sc->remote_addr[2],
+		    sc->remote_addr[1], sc->remote_addr[0],
+		    (unsigned)errno);
+	explicit_bzero(dhkey_le, sizeof(dhkey_le));
+	explicit_bzero(mackey, sizeof(mackey));
+	explicit_bzero(ltk, sizeof(ltk));
+	return (ret);
 } /* smp_pair_sc */
 
 /* ----------------------------------------------------------------
@@ -1835,17 +2446,19 @@ smp_respond_legacy(struct smp_conn *sc, const uint8_t preq[7],
 	uint8_t pdu[65];
 	ssize_t n;
 	uint8_t iat, rat;
+	int ret = -1;
+	int i;
 
 	/* iat = initiator (remote), rat = responder (us) */
 	iat = (sc->remote_addr_type == BDADDR_LE_RANDOM) ? 1 : 0;
 	rat = (sc->local_addr_type == BDADDR_LE_RANDOM) ? 1 : 0;
 
 	/* Receive initiator's Pairing Confirm */
-	n = recv(sc->fd, pdu, 17, 0);
+	n = smp_log_recv(sc, pdu, 17);
 	if (n < 17 || pdu[0] != SMP_PAIRING_CONFIRM) {
 		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
 		    EACCES : EPROTO;
-		return (-1);
+		goto resp_legacy_cleanup;
 	}
 	memcpy(mc, pdu + 1, 16);
 
@@ -1857,46 +2470,53 @@ smp_respond_legacy(struct smp_conn *sc, const uint8_t preq[7],
 	/* Send our Pairing Confirm */
 	pdu[0] = SMP_PAIRING_CONFIRM;
 	memcpy(pdu + 1, sc_val, 16);
-	if (send(sc->fd, pdu, 17, 0) < 0)
-		return (-1);
+	if (smp_log_send(sc, pdu, 17) < 0)
+		goto resp_legacy_cleanup;
 	LOG_SMP(2, "resp: legacy confirm exchange done");
 
 	/* Receive initiator's Pairing Random */
-	n = recv(sc->fd, pdu, 17, 0);
+	n = smp_log_recv(sc, pdu, 17);
 	if (n < 17 || pdu[0] != SMP_PAIRING_RANDOM) {
 		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
 		    EACCES : EPROTO;
-		return (-1);
+		goto resp_legacy_cleanup;
 	}
 	memcpy(mr, pdu + 1, 16);
 
 	/* Verify initiator's confirm */
 	smp_c1(tk, mr, preq, pres, iat, sc->remote_addr,
 	    rat, sc->local_addr, verify);
-	if (memcmp(verify, mc, 16) != 0) {
+	if (timingsafe_bcmp(verify, mc, 16) != 0) {
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
-		send(sc->fd, pdu, 2, 0);
+		smp_log_send(sc, pdu, 2);
 		errno = EACCES;
-		return (-1);
+		goto resp_legacy_cleanup;
 	}
 	LOG_SMP(1, "resp: confirm verified");
 
 	/* Send our Pairing Random */
 	pdu[0] = SMP_PAIRING_RANDOM;
 	memcpy(pdu + 1, sr, 16);
-	if (send(sc->fd, pdu, 17, 0) < 0)
-		return (-1);
+	if (smp_log_send(sc, pdu, 17) < 0)
+		goto resp_legacy_cleanup;
 
 	/* Derive STK */
 	smp_s1(tk, sr, mr, stk);
 
 	/* Respond to LTK Request with STK, then wait for encryption */
 	if (hci_le_ltk_request_reply(sc->hci_fd, sc->con_handle, stk) < 0)
-		return (-1);
+		goto resp_legacy_cleanup;
 	if (hci_wait_encryption(sc->hci_fd, sc->con_handle, 10) < 0)
-		return (-1);
+		goto resp_legacy_cleanup;
 	LOG_SMP(1, "resp: encrypted, distributing keys");
+
+	BLUED_LOG_SECURITY("encryption active "
+	    "addr=%02x:%02x:%02x:%02x:%02x:%02x handle=%d",
+	    sc->remote_addr[5], sc->remote_addr[4],
+	    sc->remote_addr[3], sc->remote_addr[2],
+	    sc->remote_addr[1], sc->remote_addr[0],
+	    sc->con_handle);
 
 	/* Distribute our keys (responder distributes first) */
 	{
@@ -1909,19 +2529,19 @@ smp_respond_legacy(struct smp_conn *sc, const uint8_t preq[7],
 
 		smp_random(our_ltk, sizeof(our_ltk));
 		smp_random((uint8_t *)&bond.rand, 8);
-		bond.ediv = (uint16_t)arc4random();
+		bond.ediv = arc4random() & 0xFFFF;
 		memcpy(bond.ltk, our_ltk, 16);
 		bond.has_ltk = true;
 
 		if (pres[6] & SMP_KEY_DIST_ENC_KEY) {
 			pdu[0] = SMP_ENCRYPTION_INFORMATION;
 			memcpy(pdu + 1, our_ltk, 16);
-			send(sc->fd, pdu, 17, 0);
+			smp_log_send(sc, pdu, 17);
 
-			pdu[0] = SMP_MASTER_IDENTIFICATION;
+			pdu[0] = SMP_CENTRAL_IDENTIFICATION;
 			memcpy(pdu + 1, &bond.ediv, 2);
 			memcpy(pdu + 3, &bond.rand, 8);
-			send(sc->fd, pdu, 11, 0);
+			smp_log_send(sc, pdu, 11);
 		}
 
 		/* Distribute IdKey (IRK + Identity Address) if negotiated */
@@ -1930,14 +2550,14 @@ smp_respond_legacy(struct smp_conn *sc, const uint8_t preq[7],
 			 * Use zero IRK = no privacy, public address. */
 			pdu[0] = SMP_IDENTITY_INFORMATION;
 			memset(pdu + 1, 0, 16);
-			send(sc->fd, pdu, 17, 0);
+			smp_log_send(sc, pdu, 17);
 
 			/* Send Identity Address Information */
 			pdu[0] = SMP_IDENTITY_ADDRESS_INFO;
 			pdu[1] = (sc->local_addr_type == BDADDR_LE_RANDOM) ?
 			    0x01 : 0x00;
 			memcpy(pdu + 2, sc->local_addr, 6);
-			send(sc->fd, pdu, 8, 0);
+			smp_log_send(sc, pdu, 8);
 		}
 
 		/* Receive initiator's keys based on negotiated
@@ -1948,29 +2568,69 @@ smp_respond_legacy(struct smp_conn *sc, const uint8_t preq[7],
 			    &tv, sizeof(tv));
 		}
 		{
-		int exp = 0;
-		if (pres[5] & SMP_KEY_DIST_ENC_KEY) exp += 2;
-		if (pres[5] & SMP_KEY_DIST_ID_KEY) exp += 2;
-		for (int i = 0; i < exp; i++) {
-			n = recv(sc->fd, pdu, sizeof(pdu), 0);
-			if (n < 1)
-				break;
-			if (pdu[0] == SMP_IDENTITY_INFORMATION && n >= 17) {
-				memcpy(bond.irk, pdu + 1, 16);
-				bond.has_irk = true;
-			} else if (pdu[0] == SMP_IDENTITY_ADDRESS_INFO &&
-			    n >= 8) {
-				bond.addr_type = (pdu[1] == 0x01) ?
-				    BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
-				memcpy(bond.addr, pdu + 2, 6);
+			int exp = 0;
+			if (pres[5] & SMP_KEY_DIST_ENC_KEY)
+				exp += 2;
+			if (pres[5] & SMP_KEY_DIST_ID_KEY)
+				exp += 2;
+			for (i = 0; i < exp; i++) {
+				n = smp_log_recv(sc, pdu, sizeof(pdu));
+				if (n < 1)
+					break;
+				if (pdu[0] == SMP_IDENTITY_INFORMATION &&
+				    n >= 17) {
+					memcpy(bond.irk, pdu + 1, 16);
+					bond.has_irk = true;
+				} else if (pdu[0] ==
+				    SMP_IDENTITY_ADDRESS_INFO && n >= 8) {
+					bond.addr_type = (pdu[1] == 0x01) ?
+					    BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
+					memcpy(bond.addr, pdu + 2, 6);
+				} else if (pdu[0] ==
+				    SMP_SIGNING_INFORMATION) {
+					LOG_SMP(1, "ignoring deprecated "
+					    "Signing Information from peer");
+				}
 			}
 		}
-		}
+
+		/* Derive BR/EDR Link Key via CTKD (BT 4.2+) */
+		smp_ctkd_derive_link_key(&bond,
+		    (preq[3] & SMP_AUTH_CT2) && (pres[3] & SMP_AUTH_CT2));
 
 		smp_bond_db_store(sc->bond_db, &bond);
+		BLUED_LOG_SECURITY("bond stored "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+		    "ltk=%d irk=%d lk=%d",
+		    bond.addr[5], bond.addr[4],
+		    bond.addr[3], bond.addr[2],
+		    bond.addr[1], bond.addr[0],
+		    bond.has_ltk, bond.has_irk, bond.has_link_key);
+		BLUED_LOG_SECURITY("pairing complete "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+		    "sc=%d bonded=%d",
+		    sc->remote_addr[5], sc->remote_addr[4],
+		    sc->remote_addr[3], sc->remote_addr[2],
+		    sc->remote_addr[1], sc->remote_addr[0],
+		    0, bond.has_ltk);
 	}
 
-	return (0);
+	ret = 0;
+
+resp_legacy_cleanup:
+	BLUED_PROBE_SMP_PAIR_DONE(
+	    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL), ret);
+	if (ret != 0)
+		BLUED_LOG_SECURITY("pairing failed "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x reason=%02x",
+		    sc->remote_addr[5], sc->remote_addr[4],
+		    sc->remote_addr[3], sc->remote_addr[2],
+		    sc->remote_addr[1], sc->remote_addr[0],
+		    (unsigned)errno);
+	explicit_bzero(sr, sizeof(sr));
+	explicit_bzero(mr, sizeof(mr));
+	explicit_bzero(stk, sizeof(stk));
+	return (ret);
 }
 
 /*
@@ -1994,6 +2654,8 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 	ssize_t n;
 	size_t dh_len;
 	uint8_t pka_le[32], pkb_le[32];	/* LE x-coords for crypto */
+	int ret = -1;
+	int i;
 
 	/* a1 = initiator (remote), a2 = responder (us) */
 	smp_pack_addr(a1, sc->remote_addr, sc->remote_addr_type);
@@ -2026,7 +2688,7 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 	}
 
 	/* Receive initiator's PK first (responder receives first) */
-	n = recv(sc->fd, pdu, 65, 0);
+	n = smp_log_recv(sc, pdu, 65);
 	if (n < 65 || pdu[0] != SMP_PAIRING_PUBLIC_KEY) {
 		EVP_PKEY_free(our_key);
 		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
@@ -2044,7 +2706,7 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 		    "failing pairing");
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_DHKEY_CHECK_FAILED;
-		send(sc->fd, pdu, 2, 0);
+		smp_log_send(sc, pdu, 2);
 		EVP_PKEY_free(our_key);
 		return (-1);
 	}
@@ -2054,7 +2716,7 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 	swap_buf(pdu + 1, our_pk_raw + 1, 32);
 	swap_buf(pdu + 33, our_pk_raw + 33, 32);
 	memcpy(pkb_le, pdu + 1, 32);		/* save LE x-coord */
-	if (send(sc->fd, pdu, 65, 0) < 0) {
+	if (smp_log_send(sc, pdu, 65) < 0) {
 		EVP_PKEY_free(our_key);
 		return (-1);
 	}
@@ -2104,88 +2766,167 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 	EVP_PKEY_free(our_key);
 	LOG_SMP(2, "resp SC: DHKey computed");
 
-	/* Auth Stage 1: generate Nb, compute Cb, exchange nonces */
-	smp_random(nb, sizeof(nb));
-	{
-		uint8_t cb[16];
-		smp_f4(pkb_le, pka_le, nb, 0, cb);
-		pdu[0] = SMP_PAIRING_CONFIRM;
-		memcpy(pdu + 1, cb, 16);
-		if (send(sc->fd, pdu, 17, 0) < 0)
-			return (-1);
-	}
-
-	/* Receive Na */
-	n = recv(sc->fd, pdu, 17, 0);
-	if (n < 17 || pdu[0] != SMP_PAIRING_RANDOM) {
-		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
-		    EACCES : EPROTO;
-		return (-1);
-	}
-	memcpy(na, pdu + 1, 16);
-
-	/* Send Nb */
-	pdu[0] = SMP_PAIRING_RANDOM;
-	memcpy(pdu + 1, nb, 16);
-	if (send(sc->fd, pdu, 17, 0) < 0)
-		return (-1);
-	LOG_SMP(2, "resp SC: nonce exchange done");
-
-	/* Numeric Comparison */
-	if (model == SMP_MODEL_NUMERIC_COMPARISON) {
-		uint32_t cv = smp_g2(pka_le, pkb_le, na, nb) % 1000000;
-		if (sc->numcmp_cb == NULL ||
-		    sc->numcmp_cb(cv, sc->numcmp_cb_arg) < 0) {
+	/* Auth Stage 1 dispatch by model */
+	if (model == SMP_MODEL_OOB) {
+		/*
+		 * SC OOB Authentication Stage 1 — Responder path.
+		 * Core Spec Vol 3 Part H Section 2.3.5.6.4
+		 *
+		 * As responder:
+		 *  1. Generate Nb
+		 *  2. Receive Pairing Random (Na) from initiator
+		 *  3. Verify peer's OOB confirm: Ca = f4(PKax, PKax, ra, 0)
+		 *     must match sc->oob->sc->confirm
+		 *  4. Send Pairing Random (Nb)
+		 */
+		if (sc->oob == NULL || sc->oob->sc == NULL) {
 			pdu[0] = SMP_PAIRING_FAILED;
-			pdu[1] = SMP_ERR_NUMERIC_COMP_FAILED;
-			send(sc->fd, pdu, 2, 0);
-			errno = EACCES;
-			return (-1);
+			pdu[1] = SMP_ERR_OOB_NOT_AVAILABLE;
+			smp_log_send(sc, pdu, 2);
+			errno = ENOTSUP;
+			goto resp_sc_cleanup;
 		}
-	}
+
+		smp_random(nb, sizeof(nb));
+
+		/* Receive Na from initiator */
+		n = smp_log_recv(sc, pdu, 17);
+		if (n < 17 || pdu[0] != SMP_PAIRING_RANDOM) {
+			errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
+			    EACCES : EPROTO;
+			goto resp_sc_cleanup;
+		}
+		memcpy(na, pdu + 1, 16);
+
+		/* Verify peer's OOB confirm: Ca = f4(PKax, PKax, ra, 0) */
+		{
+			uint8_t ca_verify[16];
+			smp_f4(pka_le, pka_le, sc->oob->sc->random, 0,
+			    ca_verify);
+			if (timingsafe_bcmp(sc->oob->sc->confirm, ca_verify,
+			    16) != 0) {
+				pdu[0] = SMP_PAIRING_FAILED;
+				pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
+				smp_log_send(sc, pdu, 2);
+				errno = EACCES;
+				goto resp_sc_cleanup;
+			}
+		}
+		LOG_SMP(1, "resp SC OOB: peer confirm verified");
+
+		/* Send Nb */
+		pdu[0] = SMP_PAIRING_RANDOM;
+		memcpy(pdu + 1, nb, 16);
+		if (smp_log_send(sc, pdu, 17) < 0)
+			goto resp_sc_cleanup;
+	} else {
+		/*
+		 * Just Works / Numeric Comparison Stage 1.
+		 * Generate Nb, compute Cb, exchange nonces.
+		 */
+		smp_random(nb, sizeof(nb));
+		{
+			uint8_t cb[16];
+			smp_f4(pkb_le, pka_le, nb, 0, cb);
+			pdu[0] = SMP_PAIRING_CONFIRM;
+			memcpy(pdu + 1, cb, 16);
+			if (smp_log_send(sc, pdu, 17) < 0)
+				goto resp_sc_cleanup;
+		}
+
+		/* Receive Na */
+		n = smp_log_recv(sc, pdu, 17);
+		if (n < 17 || pdu[0] != SMP_PAIRING_RANDOM) {
+			errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
+			    EACCES : EPROTO;
+			goto resp_sc_cleanup;
+		}
+		memcpy(na, pdu + 1, 16);
+
+		/* Send Nb */
+		pdu[0] = SMP_PAIRING_RANDOM;
+		memcpy(pdu + 1, nb, 16);
+		if (smp_log_send(sc, pdu, 17) < 0)
+			goto resp_sc_cleanup;
+		LOG_SMP(2, "resp SC: nonce exchange done");
+
+		/* Numeric Comparison */
+		if (model == SMP_MODEL_NUMERIC_COMPARISON) {
+			uint32_t cv = smp_g2(pka_le, pkb_le, na, nb) % 1000000;
+			if (sc->numcmp_cb == NULL ||
+			    sc->numcmp_cb(cv, sc->numcmp_cb_arg) < 0) {
+				pdu[0] = SMP_PAIRING_FAILED;
+				pdu[1] = SMP_ERR_NUMERIC_COMP_FAILED;
+				smp_log_send(sc, pdu, 2);
+				errno = EACCES;
+				goto resp_sc_cleanup;
+			}
+		}
+	} /* model dispatch */
 
 	/* MacKey + LTK */
 	smp_f5(dhkey_le, na, nb, a1, a2, mackey, ltk);
-	btled_hexdump("SMP", "f5 output (LTK)", ltk, 16);
+	blued_hexdump("SMP", "f5 output (LTK)", ltk, 16);
 
 	/* DHKey checks */
 	{
-		uint8_t r[16];
-		memset(r, 0, sizeof(r));
-		smp_f6(mackey, na, nb, r, iocap_a, a1, a2, ea);
-		btled_hexdump("SMP", "f6 output (Ea)", ea, 16);
-		smp_f6(mackey, nb, na, r, iocap_b, a2, a1, eb);
-		btled_hexdump("SMP", "f6 output (Eb)", eb, 16);
+		uint8_t r_ea[16], r_eb[16];
+
+		/*
+		 * Per Core Spec Vol 3 Part H Section 2.3.5.6.5:
+		 * OOB: Ea uses rb (responder's random = our random),
+		 *       Eb uses ra (initiator's random = peer's random).
+		 * All other models: r = 0.
+		 */
+		if (model == SMP_MODEL_OOB && sc->oob != NULL &&
+		    sc->oob->sc != NULL) {
+			memcpy(r_ea, sc->oob->sc->local_random, 16);
+			memcpy(r_eb, sc->oob->sc->random, 16);
+		} else {
+			memset(r_ea, 0, sizeof(r_ea));
+			memset(r_eb, 0, sizeof(r_eb));
+		}
+		smp_f6(mackey, na, nb, r_ea, iocap_a, a1, a2, ea);
+		blued_hexdump("SMP", "f6 output (Ea)", ea, 16);
+		smp_f6(mackey, nb, na, r_eb, iocap_b, a2, a1, eb);
+		blued_hexdump("SMP", "f6 output (Eb)", eb, 16);
 	}
 
 	/* Receive Ea, verify */
-	n = recv(sc->fd, pdu, 17, 0);
+	n = smp_log_recv(sc, pdu, 17);
 	if (n < 17 || pdu[0] != SMP_PAIRING_DHKEY_CHECK) {
 		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
 		    EACCES : EPROTO;
-		return (-1);
+		goto resp_sc_cleanup;
 	}
-	if (memcmp(pdu + 1, ea, 16) != 0) {
+	if (timingsafe_bcmp(pdu + 1, ea, 16) != 0) {
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_DHKEY_CHECK_FAILED;
-		send(sc->fd, pdu, 2, 0);
+		smp_log_send(sc, pdu, 2);
 		errno = EACCES;
-		return (-1);
+		goto resp_sc_cleanup;
 	}
 	LOG_SMP(1, "resp SC: DHKey check passed");
 
 	/* Send Eb */
 	pdu[0] = SMP_PAIRING_DHKEY_CHECK;
 	memcpy(pdu + 1, eb, 16);
-	if (send(sc->fd, pdu, 17, 0) < 0)
-		return (-1);
+	if (smp_log_send(sc, pdu, 17) < 0)
+		goto resp_sc_cleanup;
 
 	/* LTK reply + wait for encryption */
 	if (hci_le_ltk_request_reply(sc->hci_fd, sc->con_handle, ltk) < 0)
-		return (-1);
+		goto resp_sc_cleanup;
 	if (hci_wait_encryption(sc->hci_fd, sc->con_handle, 10) < 0)
-		return (-1);
+		goto resp_sc_cleanup;
 	LOG_SMP(1, "resp SC: encrypted");
+
+	BLUED_LOG_SECURITY("encryption active "
+	    "addr=%02x:%02x:%02x:%02x:%02x:%02x handle=%d",
+	    sc->remote_addr[5], sc->remote_addr[4],
+	    sc->remote_addr[3], sc->remote_addr[2],
+	    sc->remote_addr[1], sc->remote_addr[0],
+	    sc->con_handle);
 
 	/* Distribute our IdKey if negotiated (responder distributes first) */
 	if (pres[6] & SMP_KEY_DIST_ID_KEY) {
@@ -2193,14 +2934,14 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 		 * Use zero IRK = no privacy, public address. */
 		pdu[0] = SMP_IDENTITY_INFORMATION;
 		memset(pdu + 1, 0, 16);
-		send(sc->fd, pdu, 17, 0);
+		smp_log_send(sc, pdu, 17);
 
 		/* Send Identity Address Information */
 		pdu[0] = SMP_IDENTITY_ADDRESS_INFO;
 		pdu[1] = (sc->local_addr_type == BDADDR_LE_RANDOM) ?
 		    0x01 : 0x00;
 		memcpy(pdu + 2, sc->local_addr, 6);
-		send(sc->fd, pdu, 8, 0);
+		smp_log_send(sc, pdu, 8);
 	}
 
 	/* Store bond */
@@ -2218,12 +2959,13 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 		{
 			int exp = 0;
 			if (pres[5] & SMP_KEY_DIST_ID_KEY) exp += 2;
-			for (int i = 0; i < exp; i++) {
+			for (i = 0; i < exp; i++) {
 				struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
 				setsockopt(sc->fd, SOL_SOCKET, SO_RCVTIMEO,
 				    &tv, sizeof(tv));
-				n = recv(sc->fd, pdu, sizeof(pdu), 0);
-				if (n < 1) break;
+				n = smp_log_recv(sc, pdu, sizeof(pdu));
+				if (n < 1)
+					break;
 				if (pdu[0] == SMP_IDENTITY_INFORMATION && n >= 17) {
 					memcpy(bond.irk, pdu + 1, 16);
 					bond.has_irk = true;
@@ -2232,14 +2974,50 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 					bond.addr_type = (pdu[1] == 0x01) ?
 					    BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
 					memcpy(bond.addr, pdu + 2, 6);
+				} else if (pdu[0] == SMP_SIGNING_INFORMATION) {
+					LOG_SMP(1, "ignoring deprecated "
+					    "Signing Information from peer");
 				}
 			}
 		}
 
+		/* Derive BR/EDR Link Key via CTKD (BT 4.2+) */
+		smp_ctkd_derive_link_key(&bond,
+		    (preq[3] & SMP_AUTH_CT2) && (pres[3] & SMP_AUTH_CT2));
+
 		smp_bond_db_store(sc->bond_db, &bond);
+		BLUED_LOG_SECURITY("bond stored "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+		    "ltk=%d irk=%d lk=%d",
+		    bond.addr[5], bond.addr[4],
+		    bond.addr[3], bond.addr[2],
+		    bond.addr[1], bond.addr[0],
+		    bond.has_ltk, bond.has_irk, bond.has_link_key);
+		BLUED_LOG_SECURITY("pairing complete "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+		    "sc=%d bonded=%d",
+		    sc->remote_addr[5], sc->remote_addr[4],
+		    sc->remote_addr[3], sc->remote_addr[2],
+		    sc->remote_addr[1], sc->remote_addr[0],
+		    1, bond.has_ltk);
 	}
 
-	return (0);
+	ret = 0;
+
+resp_sc_cleanup:
+	BLUED_PROBE_SMP_PAIR_DONE(
+	    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL), ret);
+	if (ret != 0)
+		BLUED_LOG_SECURITY("pairing failed "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x reason=%02x",
+		    sc->remote_addr[5], sc->remote_addr[4],
+		    sc->remote_addr[3], sc->remote_addr[2],
+		    sc->remote_addr[1], sc->remote_addr[0],
+		    (unsigned)errno);
+	explicit_bzero(dhkey_le, sizeof(dhkey_le));
+	explicit_bzero(mackey, sizeof(mackey));
+	explicit_bzero(ltk, sizeof(ltk));
+	return (ret);
 }
 
 /*
@@ -2268,23 +3046,43 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 	size_t dh_len;
 	uint32_t passkey;
 	uint8_t ra[16];
+	int ret = -1;
+	int i;
 
 	if (sc->passkey_cb == NULL) {
 		uint8_t f[2] = { SMP_PAIRING_FAILED,
 		    SMP_ERR_PAIRING_NOT_SUPPORTED };
-		send(sc->fd, f, 2, 0);
+		smp_log_send(sc, f, 2);
 		errno = ENOTSUP;
 		return (-1);
 	}
 
-	/* Get passkey from user (responder receives, not displays) */
-	passkey = 0;
-	if (sc->passkey_cb(&passkey, false, sc->passkey_cb_arg) < 0) {
-		uint8_t f[2] = { SMP_PAIRING_FAILED,
-		    SMP_ERR_PASSKEY_ENTRY_FAILED };
-		send(sc->fd, f, 2, 0);
-		errno = ECANCELED;
-		return (-1);
+	/*
+	 * Determine passkey display/input role per Core Spec
+	 * Vol 3 Part H Table 2.8.  When we (responder) have
+	 * DisplayOnly or DisplayYesNo and the initiator has
+	 * KeyboardOnly or KeyboardDisplay, we display.
+	 */
+	{
+		bool we_display = false;
+
+		if ((pres[1] == SMP_IO_DISPLAY_ONLY ||
+		    pres[1] == SMP_IO_DISPLAY_YESNO) &&
+		    (preq[1] == SMP_IO_KEYBOARD_ONLY ||
+		    preq[1] == SMP_IO_KEYBOARD_DISPLAY))
+			we_display = true;
+
+		passkey = 0;
+		if (we_display)
+			passkey = arc4random_uniform(1000000);
+		if (sc->passkey_cb(&passkey, we_display,
+		    sc->passkey_cb_arg) < 0) {
+			uint8_t f[2] = { SMP_PAIRING_FAILED,
+			    SMP_ERR_PASSKEY_ENTRY_FAILED };
+			smp_log_send(sc, f, 2);
+			errno = ECANCELED;
+			return (-1);
+		}
 	}
 
 	memset(ra, 0, sizeof(ra));
@@ -2323,7 +3121,7 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 	}
 
 	/* Receive initiator's PK first (responder receives first) */
-	n = recv(sc->fd, pdu, 65, 0);
+	n = smp_log_recv(sc, pdu, 65);
 	if (n < 65 || pdu[0] != SMP_PAIRING_PUBLIC_KEY) {
 		EVP_PKEY_free(our_key);
 		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
@@ -2341,7 +3139,7 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		    "failing pairing");
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_DHKEY_CHECK_FAILED;
-		send(sc->fd, pdu, 2, 0);
+		smp_log_send(sc, pdu, 2);
 		EVP_PKEY_free(our_key);
 		return (-1);
 	}
@@ -2351,7 +3149,7 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 	swap_buf(pdu + 1, our_pk_raw + 1, 32);
 	swap_buf(pdu + 33, our_pk_raw + 33, 32);
 	memcpy(pkb_le, pdu + 1, 32);
-	if (send(sc->fd, pdu, 65, 0) < 0) {
+	if (smp_log_send(sc, pdu, 65) < 0) {
 		EVP_PKEY_free(our_key);
 		return (-1);
 	}
@@ -2403,7 +3201,7 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 	 * Responder ordering per Figure 2.4:
 	 *   recv Cai, send Cbi, recv Nai, verify Cai, send Nbi
 	 */
-	for (int i = 0; i < 20; i++) {
+	for (i = 0; i < 20; i++) {
 		uint8_t nai[16], nbi[16];
 		uint8_t cai_recv[16], cbi[16], cai_verify[16];
 		uint8_t ri;
@@ -2416,11 +3214,11 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		smp_random(nbi, sizeof(nbi));
 
 		/* Receive initiator's confirm Cai */
-		n = recv(sc->fd, pdu, 17, 0);
+		n = smp_log_recv(sc, pdu, 17);
 		if (n < 17 || pdu[0] != SMP_PAIRING_CONFIRM) {
 			errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
 			    EACCES : EPROTO;
-			return (-1);
+			goto resp_sc_pk_cleanup;
 		}
 		memcpy(cai_recv, pdu + 1, 16);
 
@@ -2428,33 +3226,33 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		smp_f4(pkb_le, pka_le, nbi, ri, cbi);
 		pdu[0] = SMP_PAIRING_CONFIRM;
 		memcpy(pdu + 1, cbi, 16);
-		if (send(sc->fd, pdu, 17, 0) < 0)
-			return (-1);
+		if (smp_log_send(sc, pdu, 17) < 0)
+			goto resp_sc_pk_cleanup;
 
 		/* Receive initiator's nonce Nai */
-		n = recv(sc->fd, pdu, 17, 0);
+		n = smp_log_recv(sc, pdu, 17);
 		if (n < 17 || pdu[0] != SMP_PAIRING_RANDOM) {
 			errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
 			    EACCES : EPROTO;
-			return (-1);
+			goto resp_sc_pk_cleanup;
 		}
 		memcpy(nai, pdu + 1, 16);
 
 		/* Verify Cai = f4(PKax, PKbx, Nai, rai) */
 		smp_f4(pka_le, pkb_le, nai, ri, cai_verify);
-		if (memcmp(cai_recv, cai_verify, 16) != 0) {
+		if (timingsafe_bcmp(cai_recv, cai_verify, 16) != 0) {
 			pdu[0] = SMP_PAIRING_FAILED;
 			pdu[1] = SMP_ERR_CONFIRM_VALUE_FAILED;
-			send(sc->fd, pdu, 2, 0);
+			smp_log_send(sc, pdu, 2);
 			errno = EACCES;
-			return (-1);
+			goto resp_sc_pk_cleanup;
 		}
 
 		/* Send our nonce Nbi */
 		pdu[0] = SMP_PAIRING_RANDOM;
 		memcpy(pdu + 1, nbi, 16);
-		if (send(sc->fd, pdu, 17, 0) < 0)
-			return (-1);
+		if (smp_log_send(sc, pdu, 17) < 0)
+			goto resp_sc_pk_cleanup;
 
 		/* Keep last round's nonces for f5/f6 */
 		memcpy(na, nai, 16);
@@ -2464,39 +3262,46 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 
 	/* Auth Stage 2: MacKey/LTK derivation and DHKey checks */
 	smp_f5(dhkey_le, na, nb, a1, a2, mackey, ltk);
-	btled_hexdump("SMP", "f5 output (LTK)", ltk, 16);
+	blued_hexdump("SMP", "f5 output (LTK)", ltk, 16);
 
 	smp_f6(mackey, na, nb, ra, iocap_a, a1, a2, ea);
-	btled_hexdump("SMP", "f6 output (Ea)", ea, 16);
+	blued_hexdump("SMP", "f6 output (Ea)", ea, 16);
 	smp_f6(mackey, nb, na, ra, iocap_b, a2, a1, eb);
-	btled_hexdump("SMP", "f6 output (Eb)", eb, 16);
+	blued_hexdump("SMP", "f6 output (Eb)", eb, 16);
 
 	/* Receive Ea from initiator, verify */
-	n = recv(sc->fd, pdu, 17, 0);
+	n = smp_log_recv(sc, pdu, 17);
 	if (n < 17 || pdu[0] != SMP_PAIRING_DHKEY_CHECK) {
 		errno = (n > 0 && pdu[0] == SMP_PAIRING_FAILED) ?
 		    EACCES : EPROTO;
-		return (-1);
+		goto resp_sc_pk_cleanup;
 	}
-	if (memcmp(pdu + 1, ea, 16) != 0) {
+	if (timingsafe_bcmp(pdu + 1, ea, 16) != 0) {
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_DHKEY_CHECK_FAILED;
-		send(sc->fd, pdu, 2, 0);
+		smp_log_send(sc, pdu, 2);
 		errno = EACCES;
-		return (-1);
+		goto resp_sc_pk_cleanup;
 	}
 
 	/* Send our DHKey Check (Eb) */
 	pdu[0] = SMP_PAIRING_DHKEY_CHECK;
 	memcpy(pdu + 1, eb, 16);
-	if (send(sc->fd, pdu, 17, 0) < 0)
-		return (-1);
+	if (smp_log_send(sc, pdu, 17) < 0)
+		goto resp_sc_pk_cleanup;
 
 	/* LTK reply + wait for encryption */
 	if (hci_le_ltk_request_reply(sc->hci_fd, sc->con_handle, ltk) < 0)
-		return (-1);
+		goto resp_sc_pk_cleanup;
 	if (hci_wait_encryption(sc->hci_fd, sc->con_handle, 10) < 0)
-		return (-1);
+		goto resp_sc_pk_cleanup;
+
+	BLUED_LOG_SECURITY("encryption active "
+	    "addr=%02x:%02x:%02x:%02x:%02x:%02x handle=%d",
+	    sc->remote_addr[5], sc->remote_addr[4],
+	    sc->remote_addr[3], sc->remote_addr[2],
+	    sc->remote_addr[1], sc->remote_addr[0],
+	    sc->con_handle);
 
 	/* Distribute our IdKey if negotiated (responder distributes first) */
 	if (pres[6] & SMP_KEY_DIST_ID_KEY) {
@@ -2504,14 +3309,14 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		 * Use zero IRK = no privacy, public address. */
 		pdu[0] = SMP_IDENTITY_INFORMATION;
 		memset(pdu + 1, 0, 16);
-		send(sc->fd, pdu, 17, 0);
+		smp_log_send(sc, pdu, 17);
 
 		/* Send Identity Address Information */
 		pdu[0] = SMP_IDENTITY_ADDRESS_INFO;
 		pdu[1] = (sc->local_addr_type == BDADDR_LE_RANDOM) ?
 		    0x01 : 0x00;
 		memcpy(pdu + 2, sc->local_addr, 6);
-		send(sc->fd, pdu, 8, 0);
+		smp_log_send(sc, pdu, 8);
 	}
 
 	/* Store bond */
@@ -2529,11 +3334,11 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		{
 			int exp = 0;
 			if (pres[5] & SMP_KEY_DIST_ID_KEY) exp += 2;
-			for (int i = 0; i < exp; i++) {
+			for (i = 0; i < exp; i++) {
 				struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
 				setsockopt(sc->fd, SOL_SOCKET, SO_RCVTIMEO,
 				    &tv, sizeof(tv));
-				n = recv(sc->fd, pdu, sizeof(pdu), 0);
+				n = smp_log_recv(sc, pdu, sizeof(pdu));
 				if (n < 1)
 					break;
 				if (pdu[0] == SMP_IDENTITY_INFORMATION && n >= 17) {
@@ -2544,14 +3349,50 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 					bond.addr_type = (pdu[1] == 0x01) ?
 					    BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
 					memcpy(bond.addr, pdu + 2, 6);
+				} else if (pdu[0] == SMP_SIGNING_INFORMATION) {
+					LOG_SMP(1, "ignoring deprecated "
+					    "Signing Information from peer");
 				}
 			}
 		}
 
+		/* Derive BR/EDR Link Key via CTKD (BT 4.2+) */
+		smp_ctkd_derive_link_key(&bond,
+		    (preq[3] & SMP_AUTH_CT2) && (pres[3] & SMP_AUTH_CT2));
+
 		smp_bond_db_store(sc->bond_db, &bond);
+		BLUED_LOG_SECURITY("bond stored "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+		    "ltk=%d irk=%d lk=%d",
+		    bond.addr[5], bond.addr[4],
+		    bond.addr[3], bond.addr[2],
+		    bond.addr[1], bond.addr[0],
+		    bond.has_ltk, bond.has_irk, bond.has_link_key);
+		BLUED_LOG_SECURITY("pairing complete "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+		    "sc=%d bonded=%d",
+		    sc->remote_addr[5], sc->remote_addr[4],
+		    sc->remote_addr[3], sc->remote_addr[2],
+		    sc->remote_addr[1], sc->remote_addr[0],
+		    1, bond.has_ltk);
 	}
 
-	return (0);
+	ret = 0;
+
+resp_sc_pk_cleanup:
+	BLUED_PROBE_SMP_PAIR_DONE(
+	    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL), ret);
+	if (ret != 0)
+		BLUED_LOG_SECURITY("pairing failed "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x reason=%02x",
+		    sc->remote_addr[5], sc->remote_addr[4],
+		    sc->remote_addr[3], sc->remote_addr[2],
+		    sc->remote_addr[1], sc->remote_addr[0],
+		    (unsigned)errno);
+	explicit_bzero(dhkey_le, sizeof(dhkey_le));
+	explicit_bzero(mackey, sizeof(mackey));
+	explicit_bzero(ltk, sizeof(ltk));
+	return (ret);
 }
 
 /*
@@ -2568,7 +3409,7 @@ smp_respond(struct smp_conn *sc)
 	memset(tk, 0, sizeof(tk));
 
 	/* Receive Pairing Request */
-	n = recv(sc->fd, preq, sizeof(preq), 0);
+	n = smp_log_recv(sc, preq, sizeof(preq));
 	if (n < 7) {
 		errno = EPROTO;
 		return (-1);
@@ -2593,8 +3434,11 @@ smp_respond(struct smp_conn *sc)
 
 		pres[0] = SMP_PAIRING_RESPONSE;
 		pres[1] = SMP_IO_DISPLAY_YESNO;
-		pres[2] = 0x00;
-		pres[3] = SMP_AUTH_BONDING | SMP_AUTH_SC;
+		pres[2] = (sc->oob != NULL &&
+		    (sc->oob->legacy != NULL || sc->oob->sc != NULL)) ?
+		    0x01 : 0x00;
+		pres[3] = SMP_AUTH_BONDING | SMP_AUTH_MITM | SMP_AUTH_SC |
+		    SMP_AUTH_KEYPRESS | SMP_AUTH_CT2;
 		pres[4] = 16;
 		pres[5] = preq[5] & SMP_KEY_DIST_ID_KEY;
 		if (peer_sc)
@@ -2604,10 +3448,22 @@ smp_respond(struct smp_conn *sc)
 			    SMP_KEY_DIST_ID_KEY);
 	}
 
-	if (send(sc->fd, pres, sizeof(pres), 0) < 0)
+	if (smp_log_send(sc, pres, sizeof(pres)) < 0)
 		return (-1);
 	LOG_SMP(1, "resp: response sent IO=%d auth=%02x sc=%d",
 	    pres[1], pres[3], (pres[3] & 0x08) != 0);
+
+	{
+		bool use_sc_log = (preq[3] & SMP_AUTH_SC) &&
+		    (pres[3] & SMP_AUTH_SC);
+		BLUED_LOG_SECURITY("pairing initiated "
+		    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+		    "type=%d sc=%d",
+		    sc->remote_addr[5], sc->remote_addr[4],
+		    sc->remote_addr[3], sc->remote_addr[2],
+		    sc->remote_addr[1], sc->remote_addr[0],
+		    sc->remote_addr_type, use_sc_log);
+	}
 
 	/*
 	 * Validate encryption key size (Core Spec Vol 3 Part H 3.6.1).
@@ -2622,7 +3478,7 @@ smp_respond(struct smp_conn *sc)
 		if (peer_key_sz < 7 || peer_key_sz > 16) {
 			fail[0] = SMP_PAIRING_FAILED;
 			fail[1] = SMP_ERR_INVALID_PARAMETERS;
-			send(sc->fd, fail, 2, 0);
+			smp_log_send(sc, fail, 2);
 			errno = EPROTO;
 			return (-1);
 		}
@@ -2630,7 +3486,7 @@ smp_respond(struct smp_conn *sc)
 		if (neg_key_sz < 7) {
 			fail[0] = SMP_PAIRING_FAILED;
 			fail[1] = SMP_ERR_ENCRYPTION_KEY_SIZE;
-			send(sc->fd, fail, 2, 0);
+			smp_log_send(sc, fail, 2);
 			errno = EACCES;
 			return (-1);
 		}
@@ -2641,12 +3497,36 @@ smp_respond(struct smp_conn *sc)
 		    (pres[3] & SMP_AUTH_SC);
 		bool use_mitm = (preq[3] & SMP_AUTH_MITM) ||
 		    (pres[3] & SMP_AUTH_MITM);
+		/*
+		 * Core Spec Vol 3 Part H Table 2.6 (legacy): OOB used
+		 * when BOTH sides have OOB data.
+		 * Table 2.7 (SC): OOB used when EITHER side has OOB data.
+		 */
+		bool have_oob = use_sc ?
+		    (preq[2] != 0 || pres[2] != 0) :
+		    (preq[2] != 0 && pres[2] != 0);
 		int model;
 
-		if (!use_mitm)
+		/*
+		 * OOB takes priority over IO capabilities.
+		 */
+		if (have_oob)
+			model = SMP_MODEL_OOB;
+		else if (!use_mitm)
 			model = SMP_MODEL_JUST_WORKS;
 		else
 			model = smp_select_model(preq[1], pres[1], use_sc);
+
+		BLUED_PROBE_SMP_PAIR_START(
+		    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL), model);
+
+		if (model == SMP_MODEL_OOB)
+			BLUED_LOG_SECURITY("OOB pairing "
+			    "addr=%02x:%02x:%02x:%02x:%02x:%02x sc=%d",
+			    sc->remote_addr[5], sc->remote_addr[4],
+			    sc->remote_addr[3], sc->remote_addr[2],
+			    sc->remote_addr[1], sc->remote_addr[0],
+			    use_sc);
 
 		if (use_sc) {
 			if (model == SMP_MODEL_PASSKEY_ENTRY)
@@ -2654,23 +3534,74 @@ smp_respond(struct smp_conn *sc)
 			return (smp_respond_sc(sc, preq, pres, model));
 		}
 
-		if (model == SMP_MODEL_PASSKEY_ENTRY) {
-			uint32_t passkey = 0;
-			if (sc->passkey_cb == NULL) {
+		/*
+		 * Legacy OOB: use peer's TK received out-of-band.
+		 * Core Spec Vol 3 Part H Section 2.3.5.5
+		 */
+		if (model == SMP_MODEL_OOB) {
+			if (sc->oob == NULL || sc->oob->legacy == NULL) {
 				uint8_t f[2] = { SMP_PAIRING_FAILED,
-				    SMP_ERR_PAIRING_NOT_SUPPORTED };
-				send(sc->fd, f, 2, 0);
+				    SMP_ERR_OOB_NOT_AVAILABLE };
+				smp_log_send(sc, f, 2);
 				errno = ENOTSUP;
 				return (-1);
 			}
-			if (sc->passkey_cb(&passkey, false,
+			memcpy(tk, sc->oob->legacy->tk, 16);
+			LOG_SMP(1, "resp: legacy OOB: TK set from OOB data");
+			/* Fall through to legacy c1/s1 with this TK */
+		}
+
+		if (model == SMP_MODEL_PASSKEY_ENTRY) {
+			uint32_t passkey = 0;
+			bool kp_notify;
+			bool we_display;
+
+			if (sc->passkey_cb == NULL) {
+				uint8_t f[2] = { SMP_PAIRING_FAILED,
+				    SMP_ERR_PAIRING_NOT_SUPPORTED };
+				smp_log_send(sc, f, 2);
+				errno = ENOTSUP;
+				return (-1);
+			}
+			/*
+			 * Keypress Notification: both sides must have set the
+			 * SMP_AUTH_KEYPRESS bit in their AuthReq fields.
+			 * Core Spec Vol 3 Part H Section 3.5.8
+			 */
+			kp_notify = (preq[3] & SMP_AUTH_KEYPRESS) &&
+			    (pres[3] & SMP_AUTH_KEYPRESS);
+
+			/*
+			 * Per Core Spec Vol 3 Part H Table 2.8, the
+			 * passkey display/input role depends on both
+			 * sides' IO capabilities.  When we (responder)
+			 * have DisplayOnly or DisplayYesNo and the
+			 * initiator has KeyboardOnly or KeyboardDisplay,
+			 * we display and the initiator inputs.
+			 */
+			we_display = false;
+			if ((pres[1] == SMP_IO_DISPLAY_ONLY ||
+			    pres[1] == SMP_IO_DISPLAY_YESNO) &&
+			    (preq[1] == SMP_IO_KEYBOARD_ONLY ||
+			    preq[1] == SMP_IO_KEYBOARD_DISPLAY))
+				we_display = true;
+
+			if (we_display)
+				passkey = arc4random_uniform(1000000);
+			if (kp_notify && !we_display)
+				smp_send_keypress(sc,
+				    SMP_KEYPRESS_STARTED);
+			if (sc->passkey_cb(&passkey, we_display,
 			    sc->passkey_cb_arg) < 0) {
 				uint8_t f[2] = { SMP_PAIRING_FAILED,
 				    SMP_ERR_PASSKEY_ENTRY_FAILED };
-				send(sc->fd, f, 2, 0);
+				smp_log_send(sc, f, 2);
 				errno = ECANCELED;
 				return (-1);
 			}
+			if (kp_notify && !we_display)
+				smp_send_keypress(sc,
+				    SMP_KEYPRESS_COMPLETED);
 			memset(tk, 0, sizeof(tk));
 			tk[0] = passkey & 0xFF;
 			tk[1] = (passkey >> 8) & 0xFF;

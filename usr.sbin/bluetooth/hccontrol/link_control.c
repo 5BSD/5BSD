@@ -117,9 +117,13 @@ wait_for_more:
 
 	switch (e->event) {
 	case NG_HCI_EVENT_INQUIRY_RESULT: {
-		ng_hci_inquiry_result_ep	*ir = 
+		ng_hci_inquiry_result_ep	*ir =
 				(ng_hci_inquiry_result_ep *)(e + 1);
 		uint8_t				*r = (uint8_t *)(ir + 1);
+
+		int max_responses = (n0 - sizeof(*e) - sizeof(*ir)) / sizeof(ng_hci_inquiry_response);
+		if (ir->num_responses > max_responses)
+			ir->num_responses = max_responses;
 
 		fprintf(stdout, "Inquiry result, num_responses=%d\n",
 			ir->num_responses);
@@ -269,8 +273,13 @@ again:
 	if (e->event == NG_HCI_EVENT_CON_COMPL) {
 		ng_hci_con_compl_ep	*ep = (ng_hci_con_compl_ep *)(e + 1);
 
+		if (n0 < (int)(sizeof(*e) + sizeof(*ep))) {
+			errno = EMSGSIZE;
+			return (ERROR);
+		}
+
 		if (ep->status != 0x00) {
-			fprintf(stdout, "Status: %s [%#02x]\n", 
+			fprintf(stdout, "Status: %s [%#02x]\n",
 				hci_status2str(ep->status), ep->status);
 			return (FAILED);
 		}
@@ -345,8 +354,13 @@ again:
 	if (e->event == NG_HCI_EVENT_DISCON_COMPL) {
 		ng_hci_discon_compl_ep	*ep = (ng_hci_discon_compl_ep *)(e + 1);
 
+		if (n < (int)(sizeof(*e) + sizeof(*ep))) {
+			errno = EMSGSIZE;
+			return (ERROR);
+		}
+
 		if (ep->status != 0x00) {
-			fprintf(stdout, "Status: %s [%#02x]\n", 
+			fprintf(stdout, "Status: %s [%#02x]\n",
 				hci_status2str(ep->status), ep->status);
 			return (FAILED);
 		}
@@ -424,8 +438,13 @@ again:
 	if (e->event == NG_HCI_EVENT_CON_COMPL) {
 		ng_hci_con_compl_ep	*ep = (ng_hci_con_compl_ep *)(e + 1);
 
+		if (n < (int)(sizeof(*e) + sizeof(*ep))) {
+			errno = EMSGSIZE;
+			return (ERROR);
+		}
+
 		if (ep->status != 0x00) {
-			fprintf(stdout, "Status: %s [%#02x]\n", 
+			fprintf(stdout, "Status: %s [%#02x]\n",
 				hci_status2str(ep->status), ep->status);
 			return (FAILED);
 		}
@@ -493,11 +512,16 @@ again:
 	}
 
 	if (e->event == NG_HCI_EVENT_CON_PKT_TYPE_CHANGED) {
-		ng_hci_con_pkt_type_changed_ep	*ep = 
+		ng_hci_con_pkt_type_changed_ep	*ep =
 				(ng_hci_con_pkt_type_changed_ep *)(e + 1);
 
+		if (n < (int)(sizeof(*e) + sizeof(*ep))) {
+			errno = EMSGSIZE;
+			return (ERROR);
+		}
+
 		if (ep->status != 0x00) {
-			fprintf(stdout, "Status: %s [%#02x]\n", 
+			fprintf(stdout, "Status: %s [%#02x]\n",
 				hci_status2str(ep->status), ep->status);
 			return (FAILED);
 		}
@@ -586,18 +610,24 @@ again:
 	}
 
 	if (e->event == NG_HCI_EVENT_REMOTE_NAME_REQ_COMPL) {
-		ng_hci_remote_name_req_compl_ep	*ep = 
+		ng_hci_remote_name_req_compl_ep	*ep =
 				(ng_hci_remote_name_req_compl_ep *)(e + 1);
 
+		if (n0 < (int)(sizeof(*e) + sizeof(*ep))) {
+			errno = EMSGSIZE;
+			return (ERROR);
+		}
+
 		if (ep->status != 0x00) {
-			fprintf(stdout, "Status: %s [%#02x]\n", 
+			fprintf(stdout, "Status: %s [%#02x]\n",
 				hci_status2str(ep->status), ep->status);
 			return (FAILED);
 		}
 
 		fprintf(stdout, "BD_ADDR: %s\n", hci_bdaddr2str(&ep->bdaddr));
+		ep->name[sizeof(ep->name) - 1] = '\0';
 		fprintf(stdout, "Name: %s\n", ep->name);
-	} else 
+	} else
 		goto again;
 
 	return (OK);
@@ -650,11 +680,16 @@ again:
 	}
 
 	if (e->event == NG_HCI_EVENT_READ_REMOTE_FEATURES_COMPL) {
-		ng_hci_read_remote_features_compl_ep	*ep = 
+		ng_hci_read_remote_features_compl_ep	*ep =
 				(ng_hci_read_remote_features_compl_ep *)(e + 1);
 
+		if (n < (int)(sizeof(*e) + sizeof(*ep))) {
+			errno = EMSGSIZE;
+			return (ERROR);
+		}
+
 		if (ep->status != 0x00) {
-			fprintf(stdout, "Status: %s [%#02x]\n", 
+			fprintf(stdout, "Status: %s [%#02x]\n",
 				hci_status2str(ep->status), ep->status);
 			return (FAILED);
 		}
@@ -718,11 +753,16 @@ again:
 	}
 
 	if (e->event == NG_HCI_EVENT_READ_REMOTE_VER_INFO_COMPL) {
-		ng_hci_read_remote_ver_info_compl_ep	*ep = 
+		ng_hci_read_remote_ver_info_compl_ep	*ep =
 				(ng_hci_read_remote_ver_info_compl_ep *)(e + 1);
 
+		if (n < (int)(sizeof(*e) + sizeof(*ep))) {
+			errno = EMSGSIZE;
+			return (ERROR);
+		}
+
 		if (ep->status != 0x00) {
-			fprintf(stdout, "Status: %s [%#02x]\n", 
+			fprintf(stdout, "Status: %s [%#02x]\n",
 				hci_status2str(ep->status), ep->status);
 			return (FAILED);
 		}
@@ -790,11 +830,16 @@ again:
 	}
 
 	if (e->event == NG_HCI_EVENT_READ_CLOCK_OFFSET_COMPL) {
-		ng_hci_read_clock_offset_compl_ep	*ep = 
+		ng_hci_read_clock_offset_compl_ep	*ep =
 				(ng_hci_read_clock_offset_compl_ep *)(e + 1);
 
+		if (n < (int)(sizeof(*e) + sizeof(*ep))) {
+			errno = EMSGSIZE;
+			return (ERROR);
+		}
+
 		if (ep->status != 0x00) {
-			fprintf(stdout, "Status: %s [%#02x]\n", 
+			fprintf(stdout, "Status: %s [%#02x]\n",
 				hci_status2str(ep->status), ep->status);
 			return (FAILED);
 		}

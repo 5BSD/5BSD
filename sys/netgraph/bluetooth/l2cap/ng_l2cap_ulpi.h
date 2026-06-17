@@ -59,13 +59,6 @@ int ng_l2cap_l2ca_discon_req  (ng_l2cap_p, struct ng_mesg *);
 int ng_l2cap_l2ca_discon_rsp  (ng_l2cap_chan_p, u_int32_t, u_int16_t);
 int ng_l2cap_l2ca_discon_ind  (ng_l2cap_chan_p);
 
-int ng_l2cap_l2ca_grp_create  (ng_l2cap_p, struct ng_mesg *);
-int ng_l2cap_l2ca_grp_close   (ng_l2cap_p, struct ng_mesg *);
-int ng_l2cap_l2ca_grp_add_member_req (ng_l2cap_p, struct ng_mesg *);
-int ng_l2cap_l2ca_grp_add_member_rsp (ng_l2cap_chan_p, u_int32_t, u_int16_t);
-int ng_l2cap_l2ca_grp_rem_member  (ng_l2cap_p, struct ng_mesg *);
-int ng_l2cap_l2ca_grp_get_members (ng_l2cap_p, struct ng_mesg *);
-
 int ng_l2cap_l2ca_ping_req     (ng_l2cap_p, struct ng_mesg *);
 int ng_l2cap_l2ca_ping_rsp     (ng_l2cap_con_p, u_int32_t, u_int16_t, 
 					struct mbuf *);

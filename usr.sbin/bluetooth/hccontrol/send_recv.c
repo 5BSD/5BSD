@@ -86,15 +86,24 @@ again:
 
 	switch (e->event) {
 	case NG_HCI_EVENT_COMMAND_COMPL: {
-		ng_hci_command_compl_ep	*cc = 
+		ng_hci_command_compl_ep	*cc =
 				(ng_hci_command_compl_ep *)(e + 1);
+
+		if (n < (int)(sizeof(*e) + sizeof(*cc))) {
+			errno = EMSGSIZE;
+			return (ERROR);
+		}
 
 		cc->opcode = le16toh(cc->opcode);
 
 		if (cc->opcode == 0x0000 || cc->opcode != opcode)
-			goto again; 
+			goto again;
 
 		n -= (sizeof(*e) + sizeof(*cc));
+		if (n < 0) {
+			errno = EMSGSIZE;
+			return (ERROR);
+		}
 		if (n < *rp_size)
 			*rp_size = n;
 
@@ -102,13 +111,18 @@ again:
 		} break;
 
 	case NG_HCI_EVENT_COMMAND_STATUS: {
-		ng_hci_command_status_ep	*cs = 
+		ng_hci_command_status_ep	*cs =
 				(ng_hci_command_status_ep *)(e + 1);
+
+		if (n < (int)(sizeof(*e) + sizeof(*cs))) {
+			errno = EMSGSIZE;
+			return (ERROR);
+		}
 
 		cs->opcode = le16toh(cs->opcode);
 
 		if (cs->opcode == 0x0000 || cs->opcode != opcode)
-			goto again; 
+			goto again;
 
 		*rp_size = 1;
 		*rp = cs->status;

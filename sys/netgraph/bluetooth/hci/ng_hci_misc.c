@@ -48,6 +48,22 @@
 #include <netgraph/bluetooth/hci/ng_hci_ulpi.h>
 #include <netgraph/bluetooth/hci/ng_hci_misc.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(bluetooth);
+
+/* HCI connection lifecycle */
+SDT_PROBE_DEFINE3(bluetooth, hci, connection, create,
+    "uint16_t",		/* handle */
+    "uint8_t",		/* link_type */
+    "bdaddr_t *"	/* bdaddr */
+);
+
+SDT_PROBE_DEFINE2(bluetooth, hci, connection, free,
+    "uint16_t",		/* handle */
+    "uint8_t"		/* link_type */
+);
+
 /******************************************************************************
  ******************************************************************************
  **                              Utility routines
@@ -97,7 +113,7 @@ ng_hci_node_is_up(node_p node, hook_p hook, void *arg1, int arg2)
 	if ((unit->state & NG_HCI_UNIT_READY) != NG_HCI_UNIT_READY)
 		return;
 
-	if (hook != unit->acl && hook != unit->sco)
+	if (hook != unit->acl && hook != unit->sco && hook != unit->iso)
 		return;
 
 	NG_MKMESSAGE(msg,NGM_HCI_COOKIE,NGM_HCI_NODE_UP,sizeof(*ep),M_NOWAIT);
@@ -109,6 +125,11 @@ ng_hci_node_is_up(node_p node, hook_p hook, void *arg1, int arg2)
 			NG_HCI_BUFF_ACL_TOTAL(unit->buffer, ep->num_pkts);
 			NG_HCI_BUFF_LE_SIZE(unit->buffer, ep->le_pkt_size);
 			NG_HCI_BUFF_LE_TOTAL(unit->buffer, ep->le_num_pkts);
+		} else if (hook == unit->iso) {
+			NG_HCI_BUFF_ISO_SIZE(unit->buffer, ep->pkt_size);
+			NG_HCI_BUFF_ISO_TOTAL(unit->buffer, ep->num_pkts);
+			ep->le_pkt_size = 0;
+			ep->le_num_pkts = 0;
 		} else {
 			NG_HCI_BUFF_SCO_SIZE(unit->buffer, ep->pkt_size);
 			NG_HCI_BUFF_SCO_TOTAL(unit->buffer, ep->num_pkts);
@@ -170,6 +191,9 @@ ng_hci_unit_clean(ng_hci_unit_p unit, int reason)
 
 	NG_HCI_BUFF_LE_TOTAL(unit->buffer, size);
 	NG_HCI_BUFF_LE_FREE(unit->buffer, size);
+
+	NG_HCI_BUFF_ISO_TOTAL(unit->buffer, size);
+	NG_HCI_BUFF_ISO_FREE(unit->buffer, size);
 
 	/* Clean up neighbors list */
 	ng_hci_flush_neighbor_cache(unit);
@@ -265,7 +289,6 @@ ng_hci_new_con(ng_hci_unit_p unit, int link_type)
 {
 	ng_hci_unit_con_p	con = NULL;
 	int			num_pkts;
-	static int		fake_con_handle = 0x0f00;
 
 	con = malloc(sizeof(*con), M_NETGRAPH_HCI,
 		M_NOWAIT | M_ZERO);
@@ -287,9 +310,9 @@ ng_hci_new_con(ng_hci_unit_p unit, int link_type)
 		 * went into node's queue
 		 */
 
-		con->con_handle = fake_con_handle ++;
-		if (fake_con_handle > 0x0fff)
-			fake_con_handle = 0x0f00;
+		con->con_handle = unit->fake_con_handle++;
+		if (unit->fake_con_handle > 0x0fff)
+			unit->fake_con_handle = 0x0f00;
 
 		con->link_type = link_type;
 
@@ -299,6 +322,10 @@ ng_hci_new_con(ng_hci_unit_p unit, int link_type)
 		    con->link_type == NG_HCI_LINK_LE_RANDOM) &&
 		    unit->buffer.le_pkts > 0)
 			NG_HCI_BUFF_LE_TOTAL(unit->buffer, num_pkts);
+		else if ((con->link_type == NG_HCI_LINK_ISO_CIS ||
+		    con->link_type == NG_HCI_LINK_ISO_BIS) &&
+		    unit->buffer.iso_pkts > 0)
+			NG_HCI_BUFF_ISO_TOTAL(unit->buffer, num_pkts);
 		else
 			NG_HCI_BUFF_ACL_TOTAL(unit->buffer, num_pkts);
 
@@ -307,6 +334,9 @@ ng_hci_new_con(ng_hci_unit_p unit, int link_type)
 		ng_callout_init(&con->con_timo);
 
 		LIST_INSERT_HEAD(&unit->con_list, con, next);
+
+		SDT_PROBE3(bluetooth, hci, connection, create,
+		    con->con_handle, con->link_type, &con->bdaddr);
 	}
 
 	return (con);
@@ -318,7 +348,10 @@ ng_hci_new_con(ng_hci_unit_p unit, int link_type)
 
 void
 ng_hci_free_con(ng_hci_unit_con_p con)
-{ 
+{
+	SDT_PROBE2(bluetooth, hci, connection, free,
+	    con->con_handle, con->link_type);
+
 	LIST_REMOVE(con, next);
 
 	/*
@@ -332,6 +365,10 @@ ng_hci_free_con(ng_hci_unit_con_p con)
 	    con->link_type == NG_HCI_LINK_LE_RANDOM) &&
 	    con->unit->buffer.le_pkts > 0)
 		NG_HCI_BUFF_LE_FREE(con->unit->buffer, con->pending);
+	else if ((con->link_type == NG_HCI_LINK_ISO_CIS ||
+	    con->link_type == NG_HCI_LINK_ISO_BIS) &&
+	    con->unit->buffer.iso_pkts > 0)
+		NG_HCI_BUFF_ISO_FREE(con->unit->buffer, con->pending);
 	else
 		NG_HCI_BUFF_ACL_FREE(con->unit->buffer, con->pending);
 
@@ -382,9 +419,11 @@ ng_hci_con_by_bdaddr(ng_hci_unit_p unit, bdaddr_p bdaddr, int link_type)
 int
 ng_hci_command_timeout(ng_hci_unit_p unit)
 {
-	if (unit->state & NG_HCI_UNIT_COMMAND_PENDING)
-		panic(
+	if (unit->state & NG_HCI_UNIT_COMMAND_PENDING) {
+		NG_HCI_WARN(
 "%s: %s - Duplicated command timeout!\n", __func__, NG_NODE_NAME(unit->node));
+		return (0);
+	}
 
 	unit->state |= NG_HCI_UNIT_COMMAND_PENDING;
 	ng_callout(&unit->cmd_timo, unit->node, NULL,
@@ -401,9 +440,11 @@ ng_hci_command_timeout(ng_hci_unit_p unit)
 int
 ng_hci_command_untimeout(ng_hci_unit_p unit)
 {
-	if (!(unit->state & NG_HCI_UNIT_COMMAND_PENDING))
-		panic(
+	if (!(unit->state & NG_HCI_UNIT_COMMAND_PENDING)) {
+		NG_HCI_WARN(
 "%s: %s - No command timeout!\n", __func__, NG_NODE_NAME(unit->node));
+		return (0);
+	}
 
 	if (ng_uncallout(&unit->cmd_timo, unit->node) < 1)
 		return (ETIMEDOUT);
@@ -421,10 +462,14 @@ ng_hci_command_untimeout(ng_hci_unit_p unit)
 int
 ng_hci_con_timeout(ng_hci_unit_con_p con)
 {
-	if (con->flags & NG_HCI_CON_TIMEOUT_PENDING)
-		panic(
+	ng_hci_unit_p	unit = con->unit;
+
+	if (con->flags & NG_HCI_CON_TIMEOUT_PENDING) {
+		NG_HCI_WARN(
 "%s: %s - Duplicated connection timeout!\n",
-			__func__, NG_NODE_NAME(con->unit->node));
+			__func__, NG_NODE_NAME(unit->node));
+		return (0);
+	}
 
 	con->flags |= NG_HCI_CON_TIMEOUT_PENDING;
 	ng_callout(&con->con_timo, con->unit->node, NULL,
@@ -442,9 +487,13 @@ ng_hci_con_timeout(ng_hci_unit_con_p con)
 int
 ng_hci_con_untimeout(ng_hci_unit_con_p con)
 {
-	if (!(con->flags & NG_HCI_CON_TIMEOUT_PENDING))
-		panic(
-"%s: %s - No connection timeout!\n", __func__, NG_NODE_NAME(con->unit->node));
+	ng_hci_unit_p	unit = con->unit;
+
+	if (!(con->flags & NG_HCI_CON_TIMEOUT_PENDING)) {
+		NG_HCI_WARN(
+"%s: %s - No connection timeout!\n", __func__, NG_NODE_NAME(unit->node));
+		return (0);
+	}
 
 	if (ng_uncallout(&con->con_timo, con->unit->node) < 1)
 		return (ETIMEDOUT);

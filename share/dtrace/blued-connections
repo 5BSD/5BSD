@@ -1,0 +1,14 @@
+#!/usr/sbin/dtrace -qs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * blued-connections -- trace BLE connection lifecycle and sandbox entry.
+ *
+ * Usage: blued-connections
+ */
+
+blued*:::conn-open  { printf("%-20Y OPEN  %s role=%d\n", walltimestamp, copyinstr(arg0), arg1); }
+blued*:::conn-close { printf("%-20Y CLOSE %s reason=%d\n", walltimestamp, copyinstr(arg0), arg1); }
+blued*:::sandbox-enter { printf("%-20Y SANDBOX entered\n", walltimestamp); }

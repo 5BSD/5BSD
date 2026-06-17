@@ -6,7 +6,7 @@
  */
 
 /*
- * HCI utility functions for btled.
+ * HCI utility functions for blued.
  *
  * Wraps libbluetooth's bt_dev* API for BLE scanning, local address
  * retrieval, and connection handle lookup.
@@ -21,6 +21,7 @@
 
 #include <err.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -39,13 +40,84 @@
 #define AD_TYPE_COMPLETE_LOCAL_NAME	0x09
 
 /*
+ * Wrapper around bt_devreq() that logs outgoing HCI commands and
+ * their responses to BTSnoop when capture is active.
+ */
+static int
+hci_devreq_logged(int fd, struct bt_devreq *r, int timeout)
+{
+	int ret;
+
+	/* Log outgoing command if BTSnoop is active */
+	if (hci_log_enabled()) {
+		uint8_t cmd[260];	/* max HCI command is 258 bytes */
+		uint16_t opcode = r->opcode;
+		int plen = r->cparam != NULL ? r->clen : 0;
+
+		cmd[0] = opcode & 0xFF;
+		cmd[1] = (opcode >> 8) & 0xFF;
+		cmd[2] = (uint8_t)plen;
+		if (plen > 0 && plen <= 255)
+			memcpy(cmd + 3, r->cparam, plen);
+		hci_log_packet(HCI_LOG_CMD, cmd, 3 + plen, false);
+	}
+
+	ret = bt_devreq(fd, r, timeout);
+
+	/* Log incoming event response if BTSnoop is active */
+	if (ret == 0 && hci_log_enabled() && r->rlen > 0 &&
+	    r->rparam != NULL) {
+		uint8_t evt[260];
+		int elen;
+		uint16_t opcode = r->opcode;
+
+		if (r->event == NG_HCI_EVENT_COMMAND_COMPL) {
+			/* Command Complete */
+			int log_rlen = r->rlen;
+
+			if (log_rlen > 252)
+				log_rlen = 252;
+			evt[0] = NG_HCI_EVENT_COMMAND_COMPL;
+			evt[1] = (uint8_t)(3 + log_rlen);
+			evt[2] = 1;		/* num_hci_cmd_packets */
+			evt[3] = opcode & 0xFF;
+			evt[4] = (opcode >> 8) & 0xFF;
+			memcpy(evt + 5, r->rparam, log_rlen);
+			elen = 5 + log_rlen;
+		} else {
+			/* Command Status */
+			evt[0] = NG_HCI_EVENT_COMMAND_STATUS;
+			evt[1] = 4;
+			evt[2] = *((uint8_t *)r->rparam);
+			evt[3] = 1;
+			evt[4] = opcode & 0xFF;
+			evt[5] = (opcode >> 8) & 0xFF;
+			elen = 6;
+		}
+		hci_log_packet(HCI_LOG_EVT, evt, elen, true);
+	}
+
+	return (ret);
+}
+
+/*
  * Open and bind a raw HCI socket to the named adapter.
  * adapter is e.g. "ubt0".  Returns fd or -1.
  */
 int
 hci_open(const char *adapter)
 {
-	return (bt_devopen(adapter));
+	int fd;
+
+	fd = bt_devopen(adapter);
+	if (fd >= 0) {
+		int flags;
+
+		flags = fcntl(fd, F_GETFD);
+		if (flags >= 0)
+			fcntl(fd, F_SETFD, flags | FD_CLOEXEC | FD_CLOFORK);
+	}
+	return (fd);
 }
 
 /*
@@ -67,7 +139,7 @@ hci_get_bdaddr(int hci_fd, uint8_t *bdaddr)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	n = bt_devreq(hci_fd, &r, 5);
+	n = hci_devreq_logged(hci_fd, &r, 5);
 	if (n < 0)
 		return (-1);
 
@@ -177,10 +249,13 @@ hci_le_scan(int hci_fd, int duration_sec,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0) {
+		bt_devfilter(hci_fd, &oldflt, NULL);
 		return (-1);
+	}
 
 	if (rp.status != 0) {
+		bt_devfilter(hci_fd, &oldflt, NULL);
 		errno = EIO;
 		return (-1);
 	}
@@ -199,10 +274,13 @@ hci_le_scan(int hci_fd, int duration_sec,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0) {
+		bt_devfilter(hci_fd, &oldflt, NULL);
 		return (-1);
+	}
 
 	if (rp.status != 0) {
+		bt_devfilter(hci_fd, &oldflt, NULL);
 		errno = EIO;
 		return (-1);
 	}
@@ -211,8 +289,9 @@ hci_le_scan(int hci_fd, int duration_sec,
 	end_time = time(NULL) + duration_sec;
 	while (time(NULL) < end_time && count < maxresults) {
 		ssize_t n;
-		int bufsize = sizeof(buf);
+		int bufsize;
 
+		bufsize = sizeof(buf);
 		/* bt_devrecv expects int* for size */
 		n = bt_devrecv(hci_fd, buf, bufsize, 1);
 		if (n < 0) {
@@ -234,110 +313,126 @@ hci_le_scan(int hci_fd, int duration_sec,
 			continue;
 
 		/* Parse LE Meta Event */
-		uint8_t *p = (uint8_t *)(evt + 1);
-		size_t remain = n - sizeof(*evt);
-		if (remain < 1)
-			continue;
+		{
+			uint8_t *p;
+			size_t remain;
+			uint8_t subevent;
+			uint8_t num_reports;
+			int i;
 
-		uint8_t subevent = p[0];
-		p++;
-		remain--;
-
-		if (subevent != NG_HCI_LEEV_ADVREP)
-			continue;
-		if (remain < 1)
-			continue;
-
-		uint8_t num_reports = p[0];
-		p++;
-		remain--;
-
-		for (int i = 0; i < num_reports && count < maxresults; i++) {
-			/* event_type(1) + addr_type(1) + addr(6) */
-			if (remain < 8)
-				break;
-
-			/* skip event_type */
-			p++;
-			remain--;
-
-			uint8_t addr_type = p[0];
-			p++;
-			remain--;
-
-			struct ble_scan_result *sr = &results[count];
-			memset(sr, 0, sizeof(*sr));
-			memcpy(sr->addr, p, 6);
-			sr->addr_type = addr_type ? BDADDR_LE_RANDOM :
-			    BDADDR_LE_PUBLIC;
-			p += 6;
-			remain -= 6;
-
-			/* data length(1) + data + rssi(1) */
+			p = (uint8_t *)(evt + 1);
+			remain = n - sizeof(*evt);
 			if (remain < 1)
-				break;
-			uint8_t data_len = p[0];
+				continue;
+
+			subevent = p[0];
 			p++;
 			remain--;
 
-			if (remain < data_len)
-				break;
+			if (subevent != NG_HCI_LEEV_ADVREP)
+				continue;
+			if (remain < 1)
+				continue;
 
-			/* Parse AD structures for device name */
-			const uint8_t *ad = p;
-			size_t ad_remain = data_len;
-			while (ad_remain > 0) {
-				uint8_t ad_type, vlen;
-				const uint8_t *val;
-				const uint8_t *next;
+			num_reports = p[0];
+			p++;
+			remain--;
 
-				next = parse_ad(ad, ad_remain, &ad_type,
-				    &val, &vlen);
-				if (next == NULL)
+			for (i = 0; i < num_reports && count < maxresults; i++) {
+				uint8_t addr_type;
+				struct ble_scan_result *sr;
+				uint8_t data_len;
+				const uint8_t *ad;
+				size_t ad_remain;
+				bool dup;
+				int j;
+
+				/* event_type(1) + addr_type(1) + addr(6) */
+				if (remain < 8)
 					break;
 
-				if ((ad_type == AD_TYPE_COMPLETE_LOCAL_NAME ||
-				    ad_type == AD_TYPE_SHORT_LOCAL_NAME) &&
-				    vlen > 0) {
-					size_t cplen = vlen;
-					if (cplen >= sizeof(sr->name))
-						cplen = sizeof(sr->name) - 1;
-					memcpy(sr->name, val, cplen);
-					sr->name[cplen] = '\0';
-					sr->has_name = true;
-				}
-
-				ad_remain -= (next - ad);
-				ad = next;
-			}
-
-			p += data_len;
-			remain -= data_len;
-
-			/* RSSI */
-			if (remain >= 1) {
-				sr->rssi = (int8_t)p[0];
+				/* skip event_type */
 				p++;
 				remain--;
-			}
 
-			/* Dedup by address */
-			bool dup = false;
-			for (int j = 0; j < count; j++) {
-				if (memcmp(results[j].addr, sr->addr, 6) == 0) {
-					/* Update name if we got one */
-					if (sr->has_name && !results[j].has_name) {
-						strlcpy(results[j].name,
-						    sr->name,
-						    sizeof(results[j].name));
-						results[j].has_name = true;
-					}
-					dup = true;
+				addr_type = p[0];
+				p++;
+				remain--;
+
+				sr = &results[count];
+				memset(sr, 0, sizeof(*sr));
+				memcpy(sr->addr, p, 6);
+				sr->addr_type = addr_type ? BDADDR_LE_RANDOM :
+				    BDADDR_LE_PUBLIC;
+				p += 6;
+				remain -= 6;
+
+				/* data length(1) + data + rssi(1) */
+				if (remain < 1)
 					break;
+				data_len = p[0];
+				p++;
+				remain--;
+
+				if (remain < data_len)
+					break;
+
+				/* Parse AD structures for device name */
+				ad = p;
+				ad_remain = data_len;
+				while (ad_remain > 0) {
+					uint8_t ad_type, vlen;
+					const uint8_t *val;
+					const uint8_t *next;
+
+					next = parse_ad(ad, ad_remain, &ad_type,
+					    &val, &vlen);
+					if (next == NULL)
+						break;
+
+					if ((ad_type == AD_TYPE_COMPLETE_LOCAL_NAME ||
+					    ad_type == AD_TYPE_SHORT_LOCAL_NAME) &&
+					    vlen > 0) {
+						size_t cplen = vlen;
+						if (cplen >= sizeof(sr->name))
+							cplen = sizeof(sr->name) - 1;
+						memcpy(sr->name, val, cplen);
+						sr->name[cplen] = '\0';
+						sr->has_name = true;
+					}
+
+					ad_remain -= (next - ad);
+					ad = next;
 				}
+
+				p += data_len;
+				remain -= data_len;
+
+				/* RSSI */
+				if (remain >= 1) {
+					sr->rssi = (int8_t)p[0];
+					p++;
+					remain--;
+				}
+
+				/* Dedup by address */
+				dup = false;
+				for (j = 0; j < count; j++) {
+					if (memcmp(results[j].addr, sr->addr, 6) == 0) {
+						/* Update name if we got one */
+						if (sr->has_name && !results[j].has_name) {
+							strlcpy(results[j].name,
+							    sr->name,
+							    sizeof(results[j].name));
+							results[j].has_name = true;
+						}
+						dup = true;
+						break;
+					}
+				}
+				if (!dup)
+					count++;
 			}
-			if (!dup)
-				count++;
 		}
 	}
 
@@ -351,7 +446,7 @@ hci_le_scan(int hci_fd, int duration_sec,
 	r.rparam = &rp;
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
-	bt_devreq(hci_fd, &r, 5);
+	hci_devreq_logged(hci_fd, &r, 5);
 
 	/* Restore previous event filter */
 	bt_devfilter(hci_fd, &oldflt, NULL);
@@ -464,7 +559,7 @@ hci_le_set_advertising_params(int hci_fd, uint16_t interval_min,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		errno = EIO;
@@ -506,7 +601,7 @@ hci_le_set_advertising_data(int hci_fd, const uint8_t *data, uint8_t len)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		errno = EIO;
@@ -537,7 +632,7 @@ hci_le_set_advertise_enable(int hci_fd, bool enable)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		errno = EIO;
@@ -571,7 +666,7 @@ hci_le_ltk_request_reply(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		errno = EIO;
@@ -603,7 +698,7 @@ hci_le_ltk_request_neg_reply(int hci_fd, uint16_t con_handle)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		errno = EIO;
@@ -633,10 +728,13 @@ hci_reset(int hci_fd)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
-	if (rp.status != 0x00)
+	if (rp.status != 0x00) {
+		warnx("hci_reset: controller status 0x%02x", rp.status);
+		errno = EIO;
 		return (-1);
+	}
 	LOG_HCI(1, "controller reset");
 	return (0);
 }
@@ -658,10 +756,14 @@ hci_le_read_local_features(int hci_fd, uint64_t *features)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
-	if (rp.status != 0x00)
+	if (rp.status != 0x00) {
+		warnx("hci_le_read_local_features: controller status 0x%02x",
+		    rp.status);
+		errno = EIO;
 		return (-1);
+	}
 
 	*features = le64toh(rp.le_features);
 
@@ -694,10 +796,14 @@ hci_le_set_event_mask(int hci_fd, uint64_t mask)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
-	if (rp.status != 0x00)
+	if (rp.status != 0x00) {
+		warnx("hci_le_set_event_mask: controller status 0x%02x",
+		    rp.status);
+		errno = EIO;
 		return (-1);
+	}
 	LOG_HCI(1, "LE event mask set: 0x%016llx",
 	    (unsigned long long)mask);
 	return (0);
@@ -734,11 +840,12 @@ hci_le_connection_update(int hci_fd, uint16_t handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_STATUS;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Connection Update failed, status=0x%02x",
 		    rp.status);
+		errno = EIO;
 		return (-1);
 	}
 	LOG_HCI(1, "connection update requested: interval=%d-%d "
@@ -765,11 +872,12 @@ hci_le_clear_resolving_list(int hci_fd)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Clear Resolving List failed, status=0x%02x",
 		    rp.status);
+		errno = EIO;
 		return (-1);
 	}
 	LOG_HCI(1, "resolving list cleared");
@@ -800,11 +908,12 @@ hci_le_add_dev_resolving_list(int hci_fd, uint8_t addr_type,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Add Dev Resolving List failed, status=0x%02x",
 		    rp.status);
+		errno = EIO;
 		return (-1);
 	}
 	LOG_HCI(1, "added device to resolving list, addr_type=%d", addr_type);
@@ -830,11 +939,12 @@ hci_le_set_addr_resolution_enable(int hci_fd, uint8_t enable)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Addr Resolution Enable failed, "
 		    "status=0x%02x", rp.status);
+		errno = EIO;
 		return (-1);
 	}
 	LOG_HCI(1, "address resolution %s", enable ? "enabled" : "disabled");
@@ -863,11 +973,12 @@ hci_le_set_privacy_mode(int hci_fd, uint8_t addr_type,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Privacy Mode failed, status=0x%02x",
 		    rp.status);
+		errno = EIO;
 		return (-1);
 	}
 	return (0);
@@ -892,11 +1003,12 @@ hci_le_set_rpa_timeout(int hci_fd, uint16_t timeout_sec)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set RPA Timeout failed, status=0x%02x",
 		    rp.status);
+		errno = EIO;
 		return (-1);
 	}
 	LOG_HCI(1, "RPA timeout set to %d seconds", timeout_sec);
@@ -915,8 +1027,8 @@ hci_le_set_rpa_timeout(int hci_fd, uint16_t timeout_sec)
  */
 int
 hci_le_set_ext_adv_params(int hci_fd, uint8_t handle,
-    uint16_t event_props, uint16_t interval_min,
-    uint16_t interval_max, uint8_t own_addr_type)
+    uint16_t event_props, uint32_t interval_min,
+    uint32_t interval_max, uint8_t own_addr_type)
 {
 	struct bt_devreq r;
 	ng_hci_le_set_ext_adv_params_cp cp;
@@ -925,13 +1037,13 @@ hci_le_set_ext_adv_params(int hci_fd, uint8_t handle,
 	memset(&cp, 0, sizeof(cp));
 	cp.advertising_handle = handle;
 	cp.advertising_event_properties = htole16(event_props);
-	/* 3-byte LE interval fields */
+	/* 3-byte LE interval fields (24-bit, Core Spec §7.8.53) */
 	cp.primary_advertising_interval_min[0] = interval_min & 0xFF;
 	cp.primary_advertising_interval_min[1] = (interval_min >> 8) & 0xFF;
-	cp.primary_advertising_interval_min[2] = 0;
+	cp.primary_advertising_interval_min[2] = (interval_min >> 16) & 0xFF;
 	cp.primary_advertising_interval_max[0] = interval_max & 0xFF;
 	cp.primary_advertising_interval_max[1] = (interval_max >> 8) & 0xFF;
-	cp.primary_advertising_interval_max[2] = 0;
+	cp.primary_advertising_interval_max[2] = (interval_max >> 16) & 0xFF;
 	cp.primary_advertising_channel_map = 0x07;	/* all channels */
 	cp.own_address_type = own_addr_type;
 	cp.advertising_tx_power = 0x7F;			/* no preference */
@@ -947,7 +1059,7 @@ hci_le_set_ext_adv_params(int hci_fd, uint8_t handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Ext Adv Params failed, status=0x%02x",
@@ -994,7 +1106,7 @@ hci_le_set_ext_adv_data(int hci_fd, uint8_t handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Ext Adv Data failed, status=0x%02x",
@@ -1017,24 +1129,20 @@ hci_le_set_ext_adv_enable(int hci_fd, uint8_t enable, uint8_t handle)
 
 	memset(cp, 0, sizeof(cp));
 	cp[0] = enable;
-	if (enable) {
-		cp[1] = 1;		/* num_sets */
-		cp[2] = handle;
-		/* duration=0 (indefinite), max_events=0 (unlimited) */
-	} else {
-		cp[1] = 0;		/* num_sets=0 disables all */
-	}
+	cp[1] = 1;		/* num_sets */
+	cp[2] = handle;		/* Advertising_Handle */
+	/* cp[3..4] = duration 0 (indefinite), cp[5] = max_events 0 (unlimited) */
 
 	memset(&r, 0, sizeof(r));
 	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
 	    NG_HCI_OCF_LE_SET_EXT_ADV_ENABLE);
 	r.cparam = cp;
-	r.clen = enable ? 6 : 2;
+	r.clen = 6;
 	r.rparam = &rp;
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Ext Adv Enable failed, status=0x%02x",
@@ -1066,10 +1174,193 @@ hci_le_remove_adv_set(int hci_fd, uint8_t handle)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
-	if (rp.status != 0x00)
+	if (rp.status != 0x00) {
+		warnx("hci_le_remove_adv_set: controller status 0x%02x",
+		    rp.status);
+		errno = EIO;
 		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * LE Set Advertising Set Random Address — assign a random address to
+ * an advertising set.
+ * Core Spec Vol 4 Part E Section 7.8.52 (OCF 0x0035).
+ */
+int
+hci_le_set_adv_set_random_address(int fd, uint8_t handle,
+    const uint8_t addr[6])
+{
+	struct bt_devreq r;
+	ng_hci_le_set_adv_set_random_addr_cp cp;
+	ng_hci_status_rp rp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.advertising_handle = handle;
+	memcpy(&cp.random_address, addr, 6);
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_ADV_SET_RANDOM_ADDR);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Set Adv Set Random Address failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	LOG_HCI(1, "adv set %d random address set", handle);
+	return (0);
+}
+
+/*
+ * LE Set Extended Scan Response Data — set scan response data for an
+ * extended advertising set.  Same struct layout as Set Extended
+ * Advertising Data.
+ * Core Spec Vol 4 Part E Section 7.8.55 (OCF 0x0038).
+ */
+int
+hci_le_set_ext_scan_response_data(int fd, uint8_t handle,
+    const uint8_t *data, uint8_t len)
+{
+	struct bt_devreq r;
+	ng_hci_le_set_ext_scan_rsp_data_cp cp;
+	ng_hci_status_rp rp;
+
+	if (len > NG_HCI_LE_EXT_ADV_DATA_MAX) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	memset(&cp, 0, sizeof(cp));
+	cp.advertising_handle = handle;
+	cp.operation = 0x03;		/* complete data */
+	cp.fragment_preference = 0x01;	/* don't fragment */
+	cp.advertising_data_length = len;
+	memcpy(cp.advertising_data, data, len);
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_EXT_SCAN_RSP_DATA);
+	r.cparam = &cp;
+	/* Only send the actual data, not the full 251-byte buffer */
+	r.clen = 4 + len;
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Set Ext Scan Response Data failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * LE Read Maximum Advertising Data Length — query the controller's
+ * maximum supported advertising data length.
+ * Core Spec Vol 4 Part E Section 7.8.57 (OCF 0x003A).
+ */
+int
+hci_le_read_max_adv_data_length(int fd, uint16_t *max_len)
+{
+	struct bt_devreq r;
+	ng_hci_le_read_max_adv_data_length_rp rp;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_READ_MAX_ADV_DATA_LENGTH);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Read Max Adv Data Length failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+
+	*max_len = le16toh(rp.max_adv_data_length);
+	LOG_HCI(1, "max advertising data length: %u", *max_len);
+	return (0);
+}
+
+/*
+ * LE Read Number of Supported Advertising Sets — query how many
+ * advertising sets the controller supports.
+ * Core Spec Vol 4 Part E Section 7.8.58 (OCF 0x003B).
+ */
+int
+hci_le_read_num_supported_adv_sets(int fd, uint8_t *num_sets)
+{
+	struct bt_devreq r;
+	ng_hci_le_read_num_supported_adv_sets_rp rp;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_READ_NUM_SUPPORTED_ADV_SETS);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Read Num Supported Adv Sets failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+
+	*num_sets = rp.num_supported_adv_sets;
+	LOG_HCI(1, "supported advertising sets: %u", *num_sets);
+	return (0);
+}
+
+/*
+ * LE Clear Advertising Sets — remove all advertising sets from the
+ * controller.
+ * Core Spec Vol 4 Part E Section 7.8.60 (OCF 0x003D).
+ */
+int
+hci_le_clear_adv_sets(int fd)
+{
+	struct bt_devreq r;
+	ng_hci_status_rp rp;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_CLEAR_ADV_SETS);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Clear Adv Sets failed, status=0x%02x",
+		    rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	LOG_HCI(1, "advertising sets cleared");
 	return (0);
 }
 
@@ -1100,7 +1391,7 @@ hci_le_set_data_length(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Data Length failed, status=0x%02x",
@@ -1138,7 +1429,7 @@ hci_le_write_suggested_default_data_length(int hci_fd,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Write Suggested Default Data Length failed, "
@@ -1177,7 +1468,7 @@ hci_le_set_default_phy(int hci_fd, uint8_t all_phys,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Default PHY failed, status=0x%02x",
@@ -1220,7 +1511,7 @@ hci_le_set_phy(int hci_fd, uint16_t con_handle, uint8_t all_phys,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_STATUS;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set PHY failed, status=0x%02x", rp.status);
@@ -1256,7 +1547,7 @@ hci_le_read_phy(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Read PHY failed, status=0x%02x", rp.status);
@@ -1296,11 +1587,12 @@ hci_le_clear_filter_accept_list(int hci_fd)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Clear Filter Accept List failed, "
 		    "status=0x%02x", rp.status);
+		errno = EIO;
 		return (-1);
 	}
 	LOG_HCI(1, "filter accept list cleared");
@@ -1333,11 +1625,12 @@ hci_le_add_device_to_filter_accept_list(int hci_fd, uint8_t addr_type,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Add Device To Filter Accept List failed, "
 		    "status=0x%02x", rp.status);
+		errno = EIO;
 		return (-1);
 	}
 	LOG_HCI(1, "added device to filter accept list, addr_type=%d",
@@ -1370,11 +1663,12 @@ hci_le_remove_device_from_filter_accept_list(int hci_fd, uint8_t addr_type,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Remove Device From Filter Accept List failed, "
 		    "status=0x%02x", rp.status);
+		errno = EIO;
 		return (-1);
 	}
 	LOG_HCI(1, "removed device from filter accept list, addr_type=%d",
@@ -1411,7 +1705,7 @@ hci_le_set_host_feature(int hci_fd, uint8_t bit_number, uint8_t bit_value)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Host Feature failed, status=0x%02x",
@@ -1441,7 +1735,7 @@ hci_le_create_connection_cancel(int hci_fd)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Create Connection Cancel failed, "
@@ -1640,7 +1934,7 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
 		r.rlen = sizeof(rp);
 		r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-		if (bt_devreq(hci_fd, &r, 5) < 0)
+		if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 			return (-1);
 		if (rp.status != 0) {
 			LOG_HCI(1, "LE Set Ext Scan Params failed, "
@@ -1676,7 +1970,7 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0) {
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0) {
 		bt_devfilter(hci_fd, &oldflt, NULL);
 		return (-1);
 	}
@@ -1715,171 +2009,193 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
 			continue;
 
 		/* Parse LE Meta Event */
-		uint8_t *p = (uint8_t *)(evt + 1);
-		size_t remain = n - sizeof(*evt);
-		if (remain < 1)
-			continue;
+		{
+			uint8_t *p;
+			size_t remain;
+			uint8_t subevent;
 
-		uint8_t subevent = p[0];
-		p++;
-		remain--;
-
-		if (subevent == NG_HCI_LEEV_ADVREP) {
-			/*
-			 * Legacy advertising report (subevent 0x02).
-			 * Same format as in hci_le_scan().
-			 */
+			p = (uint8_t *)(evt + 1);
+			remain = n - sizeof(*evt);
 			if (remain < 1)
 				continue;
 
-			uint8_t num_reports = p[0];
+			subevent = p[0];
 			p++;
 			remain--;
 
-			for (int i = 0; i < num_reports &&
-			    count < maxresults; i++) {
-				if (remain < 8)
-					break;
-
-				/* skip event_type */
-				p++;
-				remain--;
-
-				uint8_t addr_type = p[0];
-				p++;
-				remain--;
-
-				struct ble_scan_result *sr = &results[count];
-				memset(sr, 0, sizeof(*sr));
-				memcpy(sr->addr, p, 6);
-				sr->addr_type = addr_type ?
-				    BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
-				p += 6;
-				remain -= 6;
+			if (subevent == NG_HCI_LEEV_ADVREP) {
+				/*
+				 * Legacy advertising report (subevent 0x02).
+				 * Same format as in hci_le_scan().
+				 */
+				uint8_t num_reports;
+				int i;
 
 				if (remain < 1)
-					break;
-				uint8_t data_len = p[0];
+					continue;
+
+				num_reports = p[0];
 				p++;
 				remain--;
 
-				if (remain < data_len)
-					break;
+				for (i = 0; i < num_reports &&
+				    count < maxresults; i++) {
+					uint8_t addr_type;
+					struct ble_scan_result *sr;
+					uint8_t data_len;
+					const uint8_t *ad;
+					size_t ad_remain;
+					bool dup;
+					int j;
 
-				/* Parse AD structures for device name */
-				const uint8_t *ad = p;
-				size_t ad_remain = data_len;
-				while (ad_remain > 0) {
-					uint8_t ad_type, vlen;
-					const uint8_t *val;
-					const uint8_t *next;
-
-					next = parse_ad(ad, ad_remain,
-					    &ad_type, &val, &vlen);
-					if (next == NULL)
+					if (remain < 8)
 						break;
 
-					if ((ad_type ==
-					    AD_TYPE_COMPLETE_LOCAL_NAME ||
-					    ad_type ==
-					    AD_TYPE_SHORT_LOCAL_NAME) &&
-					    vlen > 0) {
-						size_t cplen = vlen;
-						if (cplen >=
-						    sizeof(sr->name))
-							cplen =
-							    sizeof(sr->name)
-							    - 1;
-						memcpy(sr->name, val,
-						    cplen);
-						sr->name[cplen] = '\0';
-						sr->has_name = true;
-					}
-
-					ad_remain -= (size_t)(next - ad);
-					ad = next;
-				}
-
-				p += data_len;
-				remain -= data_len;
-
-				if (remain >= 1) {
-					sr->rssi = (int8_t)p[0];
+					/* skip event_type */
 					p++;
 					remain--;
-				}
 
-				/* Dedup by address */
-				bool dup = false;
-				for (int j = 0; j < count; j++) {
-					if (memcmp(results[j].addr,
-					    sr->addr, 6) == 0) {
-						if (sr->has_name &&
-						    !results[j].has_name) {
-							strlcpy(
-							    results[j].name,
-							    sr->name,
-							    sizeof(
-							    results[j].name));
-							results[j].has_name
-							    = true;
-						}
-						dup = true;
+					addr_type = p[0];
+					p++;
+					remain--;
+
+					sr = &results[count];
+					memset(sr, 0, sizeof(*sr));
+					memcpy(sr->addr, p, 6);
+					sr->addr_type = addr_type ?
+					    BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
+					p += 6;
+					remain -= 6;
+
+					if (remain < 1)
 						break;
-					}
-				}
-				if (!dup)
-					count++;
-			}
-		} else if (subevent == NG_HCI_LEEV_EXT_ADVREP) {
-			/*
-			 * Extended advertising report (subevent 0x0D).
-			 * Format: num_reports(1) + report[num_reports].
-			 */
-			if (remain < 1)
-				continue;
+					data_len = p[0];
+					p++;
+					remain--;
 
-			uint8_t num_reports = p[0];
-			p++;
-			remain--;
-
-			for (int i = 0; i < num_reports &&
-			    count < maxresults; i++) {
-				struct ble_scan_result sr;
-				size_t consumed;
-
-				memset(&sr, 0, sizeof(sr));
-				consumed = parse_ext_adv_report(p, remain,
-				    &sr);
-				if (consumed == 0)
-					break;
-
-				p += consumed;
-				remain -= consumed;
-
-				/* Dedup by address */
-				bool dup = false;
-				for (int j = 0; j < count; j++) {
-					if (memcmp(results[j].addr,
-					    sr.addr, 6) == 0) {
-						if (sr.has_name &&
-						    !results[j].has_name) {
-							strlcpy(
-							    results[j].name,
-							    sr.name,
-							    sizeof(
-							    results[j].name));
-							results[j].has_name
-							    = true;
-						}
-						dup = true;
+					if (remain < data_len)
 						break;
+
+					/* Parse AD structures for device name */
+					ad = p;
+					ad_remain = data_len;
+					while (ad_remain > 0) {
+						uint8_t ad_type, vlen;
+						const uint8_t *val;
+						const uint8_t *next;
+
+						next = parse_ad(ad, ad_remain,
+						    &ad_type, &val, &vlen);
+						if (next == NULL)
+							break;
+
+						if ((ad_type ==
+						    AD_TYPE_COMPLETE_LOCAL_NAME ||
+						    ad_type ==
+						    AD_TYPE_SHORT_LOCAL_NAME) &&
+						    vlen > 0) {
+							size_t cplen = vlen;
+							if (cplen >=
+							    sizeof(sr->name))
+								cplen =
+								    sizeof(sr->name)
+								    - 1;
+							memcpy(sr->name, val,
+							    cplen);
+							sr->name[cplen] = '\0';
+							sr->has_name = true;
+						}
+
+						ad_remain -= (size_t)(next - ad);
+						ad = next;
 					}
+
+					p += data_len;
+					remain -= data_len;
+
+					if (remain >= 1) {
+						sr->rssi = (int8_t)p[0];
+						p++;
+						remain--;
+					}
+
+					/* Dedup by address */
+					dup = false;
+					for (j = 0; j < count; j++) {
+						if (memcmp(results[j].addr,
+						    sr->addr, 6) == 0) {
+							if (sr->has_name &&
+							    !results[j].has_name) {
+								strlcpy(
+								    results[j].name,
+								    sr->name,
+								    sizeof(
+								    results[j].name));
+								results[j].has_name
+								    = true;
+							}
+							dup = true;
+							break;
+						}
+					}
+					if (!dup)
+						count++;
 				}
-				if (!dup)
-					results[count++] = sr;
+			} else if (subevent == NG_HCI_LEEV_EXT_ADVREP) {
+				/*
+				 * Extended advertising report (subevent 0x0D).
+				 * Format: num_reports(1) + report[num_reports].
+				 */
+				uint8_t num_reports;
+				int i;
+
+				if (remain < 1)
+					continue;
+
+				num_reports = p[0];
+				p++;
+				remain--;
+
+				for (i = 0; i < num_reports &&
+				    count < maxresults; i++) {
+					struct ble_scan_result sr;
+					size_t consumed;
+					bool dup;
+					int j;
+
+					memset(&sr, 0, sizeof(sr));
+					consumed = parse_ext_adv_report(p, remain,
+					    &sr);
+					if (consumed == 0)
+						break;
+
+					p += consumed;
+					remain -= consumed;
+
+					/* Dedup by address */
+					dup = false;
+					for (j = 0; j < count; j++) {
+						if (memcmp(results[j].addr,
+						    sr.addr, 6) == 0) {
+							if (sr.has_name &&
+							    !results[j].has_name) {
+								strlcpy(
+								    results[j].name,
+								    sr.name,
+								    sizeof(
+								    results[j].name));
+								results[j].has_name
+								    = true;
+							}
+							dup = true;
+							break;
+						}
+					}
+					if (!dup)
+						results[count++] = sr;
 			}
 		}
+		} /* Parse LE Meta Event */
 	}
 
 	/* Disable extended scanning */
@@ -1894,7 +2210,7 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
 	r.rparam = &rp;
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
-	bt_devreq(hci_fd, &r, 5);
+	hci_devreq_logged(hci_fd, &r, 5);
 
 	/* Restore previous event filter */
 	bt_devfilter(hci_fd, &oldflt, NULL);
@@ -1928,7 +2244,7 @@ hci_le_read_buffer_size_v2(int hci_fd, uint16_t *acl_len, uint8_t *acl_num,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		errno = EIO;
@@ -1978,7 +2294,7 @@ hci_le_read_iso_tx_sync(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		errno = EIO;
@@ -2028,7 +2344,7 @@ hci_le_set_cig_params(int hci_fd, uint8_t cig_id,
 {
 	struct bt_devreq r;
 	uint8_t cmd[256];	/* 15-byte header + up to 31 CIS * 9 bytes */
-	uint8_t rpbuf[64];	/* status(1)+cig_id(1)+cis_count(1)+handles(2*n) */
+	uint8_t rpbuf[66];	/* status(1)+cig_id(1)+cis_count(1)+handles(2*31) */
 	size_t cmdlen;
 
 	/* Build the fixed 15-byte header */
@@ -2069,7 +2385,7 @@ hci_le_set_cig_params(int hci_fd, uint8_t cig_id,
 	r.rlen = sizeof(rpbuf);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rpbuf[0] != 0x00) {
 		LOG_HCI(1, "LE Set CIG Params failed, status=0x%02x",
@@ -2085,7 +2401,10 @@ hci_le_set_cig_params(int hci_fd, uint8_t cig_id,
 		*out_cis_count = rpbuf[2];
 	if (out_cis_handles != NULL) {
 		uint8_t n = rpbuf[2];
-		for (uint8_t i = 0; i < n; i++) {
+		/* Clamp to spec max (31) and rpbuf capacity */
+		if (n > 31)
+			n = 31;
+		for (uint8_t i = 0; i < n && i < cis_count; i++) {
 			memcpy(&out_cis_handles[i], rpbuf + 3 + i * 2, 2);
 			out_cis_handles[i] = le16toh(out_cis_handles[i]);
 		}
@@ -2135,7 +2454,7 @@ hci_le_create_cis(int hci_fd, uint8_t cis_count,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_STATUS;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Create CIS failed, status=0x%02x", rp.status);
@@ -2170,7 +2489,7 @@ hci_le_remove_cig(int hci_fd, uint8_t cig_id)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Remove CIG failed, status=0x%02x", rp.status);
@@ -2206,7 +2525,7 @@ hci_le_accept_cis_request(int hci_fd, uint16_t con_handle)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_STATUS;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Accept CIS Request failed, status=0x%02x",
@@ -2243,7 +2562,7 @@ hci_le_reject_cis_request(int hci_fd, uint16_t con_handle, uint8_t reason)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Reject CIS Request failed, status=0x%02x",
@@ -2305,7 +2624,7 @@ hci_le_create_big(int hci_fd, uint8_t big_handle, uint8_t adv_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_STATUS;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Create BIG failed, status=0x%02x", rp.status);
@@ -2344,7 +2663,7 @@ hci_le_terminate_big(int hci_fd, uint8_t big_handle, uint8_t reason)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_STATUS;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Terminate BIG failed, status=0x%02x",
@@ -2408,7 +2727,7 @@ hci_le_big_create_sync(int hci_fd, uint8_t big_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_STATUS;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE BIG Create Sync failed, status=0x%02x",
@@ -2445,7 +2764,7 @@ hci_le_big_terminate_sync(int hci_fd, uint8_t big_handle)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE BIG Terminate Sync failed, status=0x%02x",
@@ -2510,7 +2829,7 @@ hci_le_setup_iso_data_path(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Setup ISO Data Path failed, status=0x%02x",
@@ -2549,7 +2868,7 @@ hci_le_remove_iso_data_path(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Remove ISO Data Path failed, status=0x%02x",
@@ -2588,7 +2907,7 @@ hci_le_request_peer_sca(int hci_fd, uint16_t con_handle)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_STATUS;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Request Peer SCA failed, status=0x%02x",
@@ -2630,7 +2949,7 @@ hci_le_read_iso_link_quality(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Read ISO Link Quality failed, status=0x%02x",
@@ -2700,7 +3019,7 @@ hci_le_set_periodic_adv_params(int hci_fd, uint8_t handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Periodic Adv Params failed, status=0x%02x",
@@ -2747,7 +3066,7 @@ hci_le_set_periodic_adv_data(int hci_fd, uint8_t handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Periodic Adv Data failed, status=0x%02x",
@@ -2782,7 +3101,7 @@ hci_le_set_periodic_adv_enable(int hci_fd, uint8_t enable, uint8_t handle)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Periodic Adv Enable failed, status=0x%02x",
@@ -2828,7 +3147,7 @@ hci_le_periodic_adv_create_sync(int hci_fd, uint8_t options,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_STATUS;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Periodic Adv Create Sync failed, "
@@ -2858,7 +3177,7 @@ hci_le_periodic_adv_create_sync_cancel(int hci_fd)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Periodic Adv Create Sync Cancel failed, "
@@ -2893,7 +3212,7 @@ hci_le_periodic_adv_terminate_sync(int hci_fd, uint16_t sync_handle)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Periodic Adv Terminate Sync failed, "
@@ -2931,7 +3250,7 @@ hci_le_add_dev_to_periodic_adv_list(int hci_fd, uint8_t addr_type,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Add Dev To Periodic Adv List failed, "
@@ -2969,7 +3288,7 @@ hci_le_remove_dev_from_periodic_adv_list(int hci_fd, uint8_t addr_type,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Remove Dev From Periodic Adv List failed, "
@@ -2998,7 +3317,7 @@ hci_le_clear_periodic_adv_list(int hci_fd)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Clear Periodic Adv List failed, "
@@ -3027,7 +3346,7 @@ hci_le_read_periodic_adv_list_size(int hci_fd, uint8_t *size)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Read Periodic Adv List Size failed, "
@@ -3073,7 +3392,7 @@ hci_le_set_periodic_adv_receive_enable(int hci_fd, uint16_t sync_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Periodic Adv Receive Enable failed, "
@@ -3114,7 +3433,7 @@ hci_le_periodic_adv_sync_transfer(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Periodic Adv Sync Transfer failed, "
@@ -3155,7 +3474,7 @@ hci_le_periodic_adv_set_info_transfer(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Periodic Adv Set Info Transfer failed, "
@@ -3197,7 +3516,7 @@ hci_le_set_past_params(int hci_fd, uint16_t con_handle, uint8_t mode,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set PAST Params failed, status=0x%02x",
@@ -3238,7 +3557,7 @@ hci_le_set_default_past_params(int hci_fd, uint8_t mode, uint16_t skip,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Default PAST Params failed, "
@@ -3248,6 +3567,387 @@ hci_le_set_default_past_params(int hci_fd, uint8_t mode, uint16_t skip,
 	}
 	LOG_HCI(1, "default PAST params set: mode=%d skip=%d timeout=%d",
 	    mode, skip, sync_timeout);
+	return (0);
+}
+
+/* ----------------------------------------------------------------
+ * LE Direction Finding (BT 5.1)
+ * Core Spec Vol 4 Part E Sections 7.8.80-7.8.87
+ * ---------------------------------------------------------------- */
+
+/*
+ * LE Set Connectionless CTE Transmit Parameters.
+ * Core Spec Vol 4 Part E Section 7.8.80 (OCF 0x0051).
+ * Configures CTE parameters for connectionless advertising.
+ */
+int
+hci_le_set_connless_cte_tx_params(int hci_fd, uint8_t adv_handle,
+    uint8_t cte_length, uint8_t cte_type, uint8_t cte_count,
+    uint8_t switching_pattern_len, const uint8_t *antenna_ids)
+{
+	struct bt_devreq r;
+	uint8_t buf[sizeof(ng_hci_le_set_connless_cte_tx_params_cp) + 75];
+	ng_hci_le_set_connless_cte_tx_params_cp *cp;
+	ng_hci_le_set_connless_cte_tx_params_rp rp;
+	size_t clen;
+
+	if (switching_pattern_len > 75) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	cp = (ng_hci_le_set_connless_cte_tx_params_cp *)buf;
+	memset(buf, 0, sizeof(buf));
+	cp->advertising_handle = adv_handle;
+	cp->cte_length = cte_length;
+	cp->cte_type = cte_type;
+	cp->cte_count = cte_count;
+	cp->switching_pattern_length = switching_pattern_len;
+	if (switching_pattern_len > 0 && antenna_ids != NULL)
+		memcpy(buf + sizeof(*cp), antenna_ids, switching_pattern_len);
+	clen = sizeof(*cp) + switching_pattern_len;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_CONNLESS_CTE_TX_PARAMS);
+	r.cparam = buf;
+	r.clen = clen;
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Set Connless CTE TX Params failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	LOG_HCI(1, "connless CTE TX params set: adv_handle=%d cte_len=%d "
+	    "type=%d count=%d", adv_handle, cte_length, cte_type, cte_count);
+	return (0);
+}
+
+/*
+ * LE Set Connectionless CTE Transmit Enable.
+ * Core Spec Vol 4 Part E Section 7.8.81 (OCF 0x0052).
+ */
+int
+hci_le_set_connless_cte_tx_enable(int hci_fd, uint8_t adv_handle,
+    uint8_t enable)
+{
+	struct bt_devreq r;
+	ng_hci_le_set_connless_cte_tx_enable_cp cp;
+	ng_hci_le_set_connless_cte_tx_enable_rp rp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.advertising_handle = adv_handle;
+	cp.cte_enable = enable;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_CONNLESS_CTE_TX_ENABLE);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Set Connless CTE TX Enable failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	LOG_HCI(1, "connless CTE TX %s, adv_handle=%d",
+	    enable ? "enabled" : "disabled", adv_handle);
+	return (0);
+}
+
+/*
+ * LE Set Connectionless IQ Sampling Enable.
+ * Core Spec Vol 4 Part E Section 7.8.82 (OCF 0x0053).
+ */
+int
+hci_le_set_connless_iq_sampling_enable(int hci_fd, uint16_t sync_handle,
+    uint8_t enable, uint8_t slot_durations, uint8_t max_sampled_ctes,
+    uint8_t switching_pattern_len, const uint8_t *antenna_ids)
+{
+	struct bt_devreq r;
+	uint8_t buf[sizeof(ng_hci_le_set_connless_iq_sampling_enable_cp) + 75];
+	ng_hci_le_set_connless_iq_sampling_enable_cp *cp;
+	ng_hci_le_set_connless_iq_sampling_enable_rp rp;
+	size_t clen;
+
+	if (switching_pattern_len > 75) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	cp = (ng_hci_le_set_connless_iq_sampling_enable_cp *)buf;
+	memset(buf, 0, sizeof(buf));
+	cp->sync_handle = htole16(sync_handle);
+	cp->sampling_enable = enable;
+	cp->slot_durations = slot_durations;
+	cp->max_sampled_ctes = max_sampled_ctes;
+	cp->switching_pattern_length = switching_pattern_len;
+	if (switching_pattern_len > 0 && antenna_ids != NULL)
+		memcpy(buf + sizeof(*cp), antenna_ids, switching_pattern_len);
+	clen = sizeof(*cp) + switching_pattern_len;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_CONNLESS_IQ_SAMPLING_ENABLE);
+	r.cparam = buf;
+	r.clen = clen;
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Set Connless IQ Sampling Enable failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	LOG_HCI(1, "connless IQ sampling %s, sync_handle=%04x",
+	    enable ? "enabled" : "disabled", sync_handle);
+	return (0);
+}
+
+/*
+ * LE Set Connection CTE Receive Parameters.
+ * Core Spec Vol 4 Part E Section 7.8.83 (OCF 0x0054).
+ */
+int
+hci_le_set_conn_cte_rx_params(int hci_fd, uint16_t conn_handle,
+    uint8_t enable, uint8_t slot_durations, uint8_t switching_pattern_len,
+    const uint8_t *antenna_ids)
+{
+	struct bt_devreq r;
+	uint8_t buf[sizeof(ng_hci_le_set_conn_cte_rx_params_cp) + 75];
+	ng_hci_le_set_conn_cte_rx_params_cp *cp;
+	ng_hci_le_set_conn_cte_rx_params_rp rp;
+	size_t clen;
+
+	if (switching_pattern_len > 75) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	cp = (ng_hci_le_set_conn_cte_rx_params_cp *)buf;
+	memset(buf, 0, sizeof(buf));
+	cp->connection_handle = htole16(conn_handle);
+	cp->sampling_enable = enable;
+	cp->slot_durations = slot_durations;
+	cp->switching_pattern_length = switching_pattern_len;
+	if (switching_pattern_len > 0 && antenna_ids != NULL)
+		memcpy(buf + sizeof(*cp), antenna_ids, switching_pattern_len);
+	clen = sizeof(*cp) + switching_pattern_len;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_CONN_CTE_RX_PARAMS);
+	r.cparam = buf;
+	r.clen = clen;
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Set Conn CTE RX Params failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	LOG_HCI(1, "conn CTE RX params set: handle=%04x enable=%d",
+	    conn_handle, enable);
+	return (0);
+}
+
+/*
+ * LE Set Connection CTE Transmit Parameters.
+ * Core Spec Vol 4 Part E Section 7.8.84 (OCF 0x0055).
+ */
+int
+hci_le_set_conn_cte_tx_params(int hci_fd, uint16_t conn_handle,
+    uint8_t cte_types, uint8_t switching_pattern_len,
+    const uint8_t *antenna_ids)
+{
+	struct bt_devreq r;
+	uint8_t buf[sizeof(ng_hci_le_set_conn_cte_tx_params_cp) + 75];
+	ng_hci_le_set_conn_cte_tx_params_cp *cp;
+	ng_hci_le_set_conn_cte_tx_params_rp rp;
+	size_t clen;
+
+	if (switching_pattern_len > 75) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	cp = (ng_hci_le_set_conn_cte_tx_params_cp *)buf;
+	memset(buf, 0, sizeof(buf));
+	cp->connection_handle = htole16(conn_handle);
+	cp->cte_types = cte_types;
+	cp->switching_pattern_length = switching_pattern_len;
+	if (switching_pattern_len > 0 && antenna_ids != NULL)
+		memcpy(buf + sizeof(*cp), antenna_ids, switching_pattern_len);
+	clen = sizeof(*cp) + switching_pattern_len;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_CONN_CTE_TX_PARAMS);
+	r.cparam = buf;
+	r.clen = clen;
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Set Conn CTE TX Params failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	LOG_HCI(1, "conn CTE TX params set: handle=%04x cte_types=0x%02x",
+	    conn_handle, cte_types);
+	return (0);
+}
+
+/*
+ * LE Connection CTE Request Enable.
+ * Core Spec Vol 4 Part E Section 7.8.85 (OCF 0x0056).
+ */
+int
+hci_le_conn_cte_req_enable(int hci_fd, uint16_t conn_handle,
+    uint8_t enable, uint16_t cte_req_interval, uint8_t cte_length,
+    uint8_t cte_type)
+{
+	struct bt_devreq r;
+	ng_hci_le_conn_cte_req_enable_cp cp;
+	ng_hci_le_conn_cte_req_enable_rp rp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.connection_handle = htole16(conn_handle);
+	cp.enable = enable;
+	cp.cte_request_interval = htole16(cte_req_interval);
+	cp.requested_cte_length = cte_length;
+	cp.requested_cte_type = cte_type;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_CONN_CTE_REQ_ENABLE);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Conn CTE Request Enable failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	LOG_HCI(1, "conn CTE request %s: handle=%04x interval=%d",
+	    enable ? "enabled" : "disabled", conn_handle, cte_req_interval);
+	return (0);
+}
+
+/*
+ * LE Connection CTE Response Enable.
+ * Core Spec Vol 4 Part E Section 7.8.86 (OCF 0x0057).
+ */
+int
+hci_le_conn_cte_rsp_enable(int hci_fd, uint16_t conn_handle,
+    uint8_t enable)
+{
+	struct bt_devreq r;
+	ng_hci_le_conn_cte_rsp_enable_cp cp;
+	ng_hci_le_conn_cte_rsp_enable_rp rp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.connection_handle = htole16(conn_handle);
+	cp.enable = enable;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_CONN_CTE_RSP_ENABLE);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Conn CTE Response Enable failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	LOG_HCI(1, "conn CTE response %s: handle=%04x",
+	    enable ? "enabled" : "disabled", conn_handle);
+	return (0);
+}
+
+/*
+ * LE Read Antenna Information.
+ * Core Spec Vol 4 Part E Section 7.8.87 (OCF 0x0058).
+ * Returns the controller's antenna switching capabilities.
+ */
+int
+hci_le_read_antenna_info(int hci_fd, uint8_t *supported_switching_rates,
+    uint8_t *num_antennae, uint8_t *max_switching_pattern_len,
+    uint8_t *max_cte_length)
+{
+	struct bt_devreq r;
+	ng_hci_le_read_antenna_information_rp rp;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_READ_ANTENNA_INFORMATION);
+	r.cparam = NULL;
+	r.clen = 0;
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Read Antenna Information failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+
+	if (supported_switching_rates != NULL)
+		*supported_switching_rates =
+		    rp.supported_switching_sampling_rates;
+	if (num_antennae != NULL)
+		*num_antennae = rp.num_antennae;
+	if (max_switching_pattern_len != NULL)
+		*max_switching_pattern_len = rp.max_switching_pattern_length;
+	if (max_cte_length != NULL)
+		*max_cte_length = rp.max_cte_length;
+
+	LOG_HCI(1, "antenna info: rates=0x%02x antennae=%d max_pattern=%d "
+	    "max_cte_len=%d", rp.supported_switching_sampling_rates,
+	    rp.num_antennae, rp.max_switching_pattern_length,
+	    rp.max_cte_length);
 	return (0);
 }
 
@@ -3286,7 +3986,7 @@ hci_le_set_default_subrate(int hci_fd, uint16_t min_subrate,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Default Subrate failed, status=0x%02x",
@@ -3331,7 +4031,7 @@ hci_le_subrate_request(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_STATUS;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Subrate Request failed, status=0x%02x",
@@ -3375,7 +4075,7 @@ hci_le_enhanced_read_tx_power_level(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Enhanced Read TX Power Level failed, "
@@ -3420,7 +4120,7 @@ hci_le_read_remote_tx_power_level(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_STATUS;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Read Remote TX Power Level failed, "
@@ -3464,7 +4164,7 @@ hci_le_set_path_loss_reporting_params(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Path Loss Reporting Params failed, "
@@ -3503,7 +4203,7 @@ hci_le_set_path_loss_reporting_enable(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Path Loss Reporting Enable failed, "
@@ -3542,7 +4242,7 @@ hci_le_set_tx_power_reporting_enable(int hci_fd, uint16_t con_handle,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set TX Power Reporting Enable failed, "
@@ -3609,7 +4309,7 @@ hci_le_ext_create_connection(int hci_fd, uint8_t filter,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_STATUS;
 
-	if (bt_devreq(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Extended Create Connection failed, "
@@ -3652,9 +4352,8 @@ ble_coc_connect(const uint8_t *addr, uint8_t addr_type,
 	struct timeval tv;
 	int fd, optval;
 
-	(void)mtu; /* kernel negotiates MTU via LE CoC parameters */
-
-	fd = socket(PF_BLUETOOTH, SOCK_SEQPACKET, BLUETOOTH_PROTO_L2CAP);
+	fd = socket(PF_BLUETOOTH, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_CLOFORK,
+	    BLUETOOTH_PROTO_L2CAP);
 	if (fd < 0) {
 		LOG_L2C(1, "LE CoC: socket() failed: %s", strerror(errno));
 		return (-1);
@@ -3666,6 +4365,13 @@ ble_coc_connect(const uint8_t *addr, uint8_t addr_type,
 	bind_sa.l2cap_family = AF_BLUETOOTH;
 	bind_sa.l2cap_bdaddr_type = BDADDR_LE_PUBLIC;
 	/* l2cap_bdaddr = all zeros for any adapter */
+
+	/* Set desired incoming MTU before connect */
+	if (mtu > 0) {
+		optval = mtu;
+		setsockopt(fd, SOL_L2CAP, SO_L2CAP_IMTU, &optval,
+		    sizeof(optval));
+	}
 
 	if (bind(fd, (struct sockaddr *)&bind_sa, sizeof(bind_sa)) < 0) {
 		LOG_L2C(1, "LE CoC: bind() failed: %s", strerror(errno));
@@ -3702,4 +4408,132 @@ ble_coc_connect(const uint8_t *addr, uint8_t addr_type,
 	    fd, psm, addr_type);
 
 	return (fd);
+}
+
+/* ----------------------------------------------------------------
+ * LE Ping (Authenticated Payload Timeout) — BT 4.1
+ * Core Spec Vol 4 Part E Sections 7.3.93–7.3.94
+ * ---------------------------------------------------------------- */
+
+/*
+ * Read Authenticated Payload Timeout.
+ * HC&Baseband command, OCF 0x007B.
+ * Returns the current timeout in units of 10ms via *timeout.
+ */
+int
+hci_le_read_auth_payload_timeout(int fd, uint16_t con_handle,
+    uint16_t *timeout)
+{
+	struct bt_devreq r;
+	ng_hci_read_auth_payload_timeout_cp cp;
+	ng_hci_read_auth_payload_timeout_rp rp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.con_handle = htole16(con_handle);
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_HC_BASEBAND,
+	    NG_HCI_OCF_READ_AUTH_PAYLOAD_TIMEOUT);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "Read Authenticated Payload Timeout failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	if (timeout != NULL)
+		*timeout = le16toh(rp.timeout);
+	LOG_HCI(1, "auth payload timeout: con=%04x timeout=%u (x10ms)",
+	    con_handle, le16toh(rp.timeout));
+	return (0);
+}
+
+/*
+ * Write Authenticated Payload Timeout.
+ * HC&Baseband command, OCF 0x007C.
+ * timeout is in units of 10ms (range 0x0001–0xFFFF).
+ */
+int
+hci_le_write_auth_payload_timeout(int fd, uint16_t con_handle,
+    uint16_t timeout)
+{
+	struct bt_devreq r;
+	ng_hci_write_auth_payload_timeout_cp cp;
+	ng_hci_write_auth_payload_timeout_rp rp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.con_handle = htole16(con_handle);
+	cp.timeout = htole16(timeout);
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_HC_BASEBAND,
+	    NG_HCI_OCF_WRITE_AUTH_PAYLOAD_TIMEOUT);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "Write Authenticated Payload Timeout failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	LOG_HCI(1, "auth payload timeout set: con=%04x timeout=%u (x10ms)",
+	    con_handle, timeout);
+	return (0);
+}
+
+/*
+ * Set Min Encryption Key Size (BT 5.3).
+ * Core Spec Vol 4 Part E §7.3.102
+ *
+ * HC&Baseband command (OGF 0x03, OCF 0x0084).
+ * Sets the minimum encryption key size the Controller shall accept.
+ * key_size range: 7-16 (bytes).
+ */
+int
+hci_set_min_enc_key_size(int fd, uint8_t key_size)
+{
+	ng_hci_set_min_enc_key_size_cp	cp;
+	ng_hci_set_min_enc_key_size_rp	rp;
+	struct bt_devreq		r;
+
+	if (key_size < 7 || key_size > 16) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	memset(&cp, 0, sizeof(cp));
+	cp.min_enc_key_size = key_size;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_HC_BASEBAND,
+	    NG_HCI_OCF_SET_MIN_ENC_KEY_SIZE);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "Set Min Encryption Key Size failed, "
+		    "status=0x%02x", rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	LOG_HCI(1, "min encryption key size set to %u bytes", key_size);
+	return (0);
 }

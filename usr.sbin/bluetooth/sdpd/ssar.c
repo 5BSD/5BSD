@@ -221,6 +221,8 @@ server_prepare_service_search_attribute_response(server_p srv, int32_t fd)
 	}
 	if (ssplen <= 0)
 		return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
+	if (req + ssplen > req_end)
+		return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
 
 	/*
 	 * Per Core Spec Vol 3 Part B Section 4.7.1: "The maximum
@@ -287,6 +289,8 @@ uuid_count_done:
 		break;
 	}
 	if (aidlen <= 0)
+		return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
+	if (req + aidlen > req_end)
 		return (SDP_ERROR_CODE_INVALID_REQUEST_SYNTAX);
 
 	aidptr = req;
@@ -363,6 +367,15 @@ uuid_count_done:
 			/* NOT REACHED */
 		}
 
+		/*
+		 * XXX SPEC VIOLATION: This matches providers against each UUID
+		 * independently, returning a match if ANY UUID matches.  Per
+		 * Core Spec Vol 3 Part B Section 4.7.1, a provider should
+		 * match only if ALL UUIDs in the ServiceSearchPattern are
+		 * present in its attributes.
+		 * TODO: Collect all UUIDs first, then match providers that
+		 * satisfy all.
+		 */
 		for (provider = provider_get_first();
 		     provider != NULL;
 		     provider = provider_get_next(provider)) {

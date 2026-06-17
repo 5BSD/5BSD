@@ -190,6 +190,15 @@ drop_root(char const *user, char const *group)
 		}
 	}
 
+	{
+		gid_t	drop_gid = gid;
+		if (setgroups(1, &drop_gid) < 0) {
+			log_err("Could not setgroups(). %s (%d)",
+				strerror(errno), errno);
+			return (-1);
+		}
+	}
+
 	if (setgid(gid) < 0) {
 		log_err("Could not setgid(%s). %s (%d)",
 			group, strerror(errno), errno);
@@ -212,8 +221,7 @@ drop_root(char const *user, char const *group)
 static void
 sighandler(int32_t s)
 {
-	log_notice("Got signal %d. Total number of signals received %d",
-		s, ++ done);
+	done++;
 }
 
 /*

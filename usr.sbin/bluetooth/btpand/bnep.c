@@ -424,6 +424,10 @@ bnep_recv_filter_net_type_set(channel_t *chan, uint8_t *ptr, size_t size)
 	}
 
 	nf = len / 4;
+	if (nf > 256) {
+		rsp = BNEP_FILTER_TOO_MANY_FILTERS;
+		goto done;
+	}
 	pf = malloc(nf * sizeof(pfilter_t));
 	if (pf == NULL) {
 		rsp = BNEP_FILTER_TOO_MANY_FILTERS;
@@ -507,6 +511,10 @@ bnep_recv_filter_multi_addr_set(channel_t *chan, uint8_t *ptr, size_t size)
 	}
 
 	nf = len / (ETHER_ADDR_LEN * 2);
+	if (nf > 256) {
+		rsp = BNEP_FILTER_TOO_MANY_FILTERS;
+		goto done;
+	}
 	mf = malloc(nf * sizeof(mfilter_t));
 	if (mf == NULL) {
 		rsp = BNEP_FILTER_TOO_MANY_FILTERS;

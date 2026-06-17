@@ -30,6 +30,7 @@
  * SUCH DAMAGE.
  */
 
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/sysctl.h>
 
@@ -42,9 +43,6 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-
-#undef	MIN
-#define	MIN(a, b)	(((a) < (b))? (a) : (b))
 
 static int    bt_devany_cb(int s, struct bt_devinfo const *di, void *xdevname);
 static char * bt_dev2node (char const *devname, char *nodename, int nnlen);
@@ -146,6 +144,11 @@ bt_devrecv(int s, void *buf, size_t size, time_t to)
 	if (to >= 0) {
 		fd_set		rfd;
 		struct timeval	tv;
+
+		if (s < 0 || s >= (int)FD_SETSIZE) {
+			errno = EBADF;
+			return (-1);
+		}
 
 		FD_ZERO(&rfd);
 		FD_SET(s, &rfd);
@@ -511,10 +514,16 @@ wait_for_more:
 	case NG_HCI_EVENT_INQUIRY_COMPL:
 		break;
 
-	case NG_HCI_EVENT_INQUIRY_RESULT:
+	case NG_HCI_EVENT_INQUIRY_RESULT: {
+		int max_ir = (n - sizeof(*e) - sizeof(*ep)) /
+		    sizeof(*ir);
+		int count = ep->num_responses;
+		if (count > max_ir)
+			count = max_ir;
+
 		ir = (ng_hci_inquiry_response *)(ep + 1);
 
-		for (n = 0; n < MIN(ep->num_responses, num_rsp); n ++) {
+		for (n = 0; n < MIN(count, num_rsp); n ++) {
 			bdaddr_copy(&i->bdaddr, &ir->bdaddr);
 			i->pscan_rep_mode = ir->page_scan_rep_mode;
 			i->pscan_period_mode = ir->page_scan_period_mode;
@@ -525,7 +534,7 @@ wait_for_more:
 			i ++;
 			num_rsp --;
 		}
-		/* FALLTHROUGH */
+		} /* FALLTHROUGH */
 
 	default:
 		goto wait_for_more;

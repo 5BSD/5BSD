@@ -1,0 +1,10 @@
+label = "org.5bsd.blued";
+program = "/usr/sbin/blued";
+description = "Bluetooth Low Energy daemon";
+
+restart = "on-failure";
+stop_timeout = 10;
+max_failures = 10;
+
+provides = ["bluetooth-le"];
+requires = ["ORACLED"];

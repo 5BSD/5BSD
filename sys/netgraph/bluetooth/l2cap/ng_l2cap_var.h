@@ -35,7 +35,7 @@
 #ifndef _NETGRAPH_L2CAP_VAR_H_
 #define _NETGRAPH_L2CAP_VAR_H_
 
-/* MALLOC decalation */
+/* MALLOC declaration */
 #ifdef NG_SEPARATE_MALLOC
 MALLOC_DECLARE(M_NETGRAPH_L2CAP);
 #else
@@ -55,7 +55,7 @@ MALLOC_DECLARE(M_NETGRAPH_L2CAP);
 			(m) = m_pullup((m), (s)); \
 		if ((m) == NULL) \
 			NG_L2CAP_ALERT("%s: %s - m_pullup(%zd) failed\n", \
-				__func__, NG_NODE_NAME(l2cap->node), (s)); \
+				__func__, NG_NODE_NAME(l2cap->node), (size_t)(s)); \
 	} while (0)
 
 /*
@@ -167,7 +167,8 @@ typedef struct ng_l2cap_chan {
 	u_int16_t			link_timo;  /* link timeout */
 
 	/* Credit-based flow control (LE CoC) */
-	u_int16_t			mps;            /* max PDU payload size */
+	u_int16_t			mps;            /* local receive MPS */
+	u_int16_t			mps_remote;     /* peer's receive MPS (outgoing segmentation) */
 	u_int16_t			credits_local;  /* credits we've given peer */
 	u_int16_t			credits_remote; /* credits peer gave us */
 	u_int16_t			le_psm;         /* SPSM for this channel */
@@ -207,6 +208,6 @@ typedef ng_l2cap_cmd_t *		ng_l2cap_cmd_p;
 /* LE CoC local parameters (shared between ulpi and evnt) */
 #define NG_L2CAP_LE_COC_LOCAL_MTU	512
 #define NG_L2CAP_LE_COC_LOCAL_MPS	247
-#define NG_L2CAP_LE_COC_INITIAL_CREDITS	10
+#define NG_L2CAP_LE_COC_INITIAL_CREDITS	65
 
 #endif /* ndef _NETGRAPH_L2CAP_VAR_H_ */

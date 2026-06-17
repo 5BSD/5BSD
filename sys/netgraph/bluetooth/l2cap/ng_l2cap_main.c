@@ -411,29 +411,13 @@ ng_l2cap_upper_rcvmsg(node_p node, item_p item, hook_p lasthook)
 			error = ng_l2cap_l2ca_discon_req(l2cap, msg);
 			break;
 
-		/* L2CA_GroupCreate */
+		/* L2CA_GroupCreate (deprecated in BT 3.0) */
 		case NGM_L2CAP_L2CA_GRP_CREATE:
-			error = ng_l2cap_l2ca_grp_create(l2cap, msg);
-			break;
-
-		/* L2CA_GroupClose */
 		case NGM_L2CAP_L2CA_GRP_CLOSE:
-			error = ng_l2cap_l2ca_grp_close(l2cap, msg);
-			break;
-
-		/* L2CA_GroupAddMember */
 		case NGM_L2CAP_L2CA_GRP_ADD_MEMBER:
-			error = ng_l2cap_l2ca_grp_add_member_req(l2cap, msg);
-			break;
-
-		/* L2CA_GroupDeleteMember */
 		case NGM_L2CAP_L2CA_GRP_REM_MEMBER:
-			error = ng_l2cap_l2ca_grp_rem_member(l2cap, msg);
-			break;
-
-		/* L2CA_GroupMembership */
 		case NGM_L2CAP_L2CA_GRP_MEMBERSHIP:
-			error = ng_l2cap_l2ca_grp_get_members(l2cap, msg);
+			error = ENOTSUP;
 			break;
 
 		/* L2CA_Ping */
@@ -744,7 +728,7 @@ ng_l2cap_cleanup(ng_l2cap_p l2cap)
 			ng_l2cap_discon_untimeout(con);
 
 		/* Connection terminated by local host */
-		ng_l2cap_con_fail(con, 0x16);
+		ng_l2cap_con_fail(con, NG_HCI_ERROR_CON_TERM_LOCAL_HOST);
 	}
 } /* ng_l2cap_cleanup */
 

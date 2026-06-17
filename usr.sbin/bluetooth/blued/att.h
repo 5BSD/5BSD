@@ -5,12 +5,14 @@
  * All rights reserved.
  */
 
-#ifndef _BTLED_ATT_H_
-#define _BTLED_ATT_H_
+#ifndef _BLUED_ATT_H_
+#define _BLUED_ATT_H_
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#include "att_server.h"
 
 /* ATT opcodes (Core Spec Vol 3 Part F Section 3.4) */
 #define ATT_OP_ERROR_RSP		0x01
@@ -26,12 +28,21 @@
 #define ATT_OP_READ_RSP			0x0B
 #define ATT_OP_READ_BLOB_REQ		0x0C
 #define ATT_OP_READ_BLOB_RSP		0x0D
+#define ATT_OP_READ_MULTIPLE_REQ	0x0E
+#define ATT_OP_READ_MULTIPLE_RSP	0x0F
 #define ATT_OP_WRITE_REQ		0x12
 #define ATT_OP_WRITE_RSP		0x13
+#define ATT_OP_PREPARE_WRITE_REQ	0x16
+#define ATT_OP_PREPARE_WRITE_RSP	0x17
+#define ATT_OP_EXECUTE_WRITE_REQ	0x18
+#define ATT_OP_EXECUTE_WRITE_RSP	0x19
 #define ATT_OP_WRITE_CMD		0x52
 #define ATT_OP_HANDLE_NOTIFY		0x1B
 #define ATT_OP_HANDLE_IND		0x1D
 #define ATT_OP_HANDLE_CFM		0x1E
+#define ATT_OP_READ_MULTIPLE_VARIABLE_REQ 0x20
+#define ATT_OP_READ_MULTIPLE_VARIABLE_RSP 0x21
+#define ATT_OP_MULTIPLE_HANDLE_VALUE_NTF 0x23
 #define ATT_OP_READ_BY_GROUP_TYPE_REQ	0x10
 #define ATT_OP_READ_BY_GROUP_TYPE_RSP	0x11
 
@@ -105,6 +116,10 @@ struct att_conn {
 	uint16_t	mtu;		/* negotiated MTU */
 	uint8_t		*buf;		/* receive buffer */
 	bool		encrypted;	/* link is encrypted (AES-CCM) */
+	uint16_t	con_handle;	/* HCI connection handle (for logging) */
+
+	/* Prepare/Execute Write queue (per-connection) */
+	struct att_prepare_queue	prep_queue;
 
 	/* EATT bearers (additional to primary) */
 	struct att_bearer	eatt[ATT_MAX_EATT_BEARERS];
@@ -141,6 +156,16 @@ int	att_read_by_type(struct att_conn *ac, uint16_t start, uint16_t end,
 int	att_read_by_group_type(struct att_conn *ac, uint16_t start,
 	    uint16_t end, uint16_t uuid16, void *buf, size_t buflen,
 	    size_t *outlen);
+int	att_find_by_type_value(struct att_conn *ac, uint16_t start,
+	    uint16_t end, uint16_t uuid16, const void *value, size_t vlen,
+	    void *buf, size_t buflen, size_t *outlen);
+int	att_read_multiple(struct att_conn *ac, const uint16_t *handles,
+	    int count, void *buf, size_t buflen, size_t *outlen);
+int	att_prepare_write(struct att_conn *ac, uint16_t handle,
+	    uint16_t offset, const void *data, size_t len);
+int	att_execute_write(struct att_conn *ac, uint8_t flags);
+int	att_write_long(struct att_conn *ac, uint16_t handle,
+	    const void *data, size_t len);
 int	att_recv(struct att_conn *ac, void *buf, size_t buflen, size_t *outlen);
 int	att_confirm(struct att_conn *ac);
 int	att_open_eatt(struct att_conn *ac, const uint8_t *addr,
@@ -149,4 +174,4 @@ void	att_close_eatt(struct att_conn *ac);
 int	att_eatt_select_bearer(struct att_conn *ac);
 int	att_eatt_accept(struct att_conn *ac, int listen_fd);
 
-#endif /* _BTLED_ATT_H_ */
+#endif /* _BLUED_ATT_H_ */

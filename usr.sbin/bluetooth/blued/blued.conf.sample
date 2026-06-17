@@ -1,0 +1,41 @@
+# blued.conf - Bluetooth Low Energy daemon configuration
+# See blued(8) for details.  UCL format.
+
+general {
+    # loglevel: 0=quiet, 1=info, 2=debug/trace
+    loglevel = 1;
+
+    # Bond database path
+    bonddb = "/var/db/blued/bonds";
+
+    # BTSnoop packet log (Wireshark-compatible)
+    # logfile = "/var/log/blued.pcap";
+}
+
+# Adapter list: "auto" discovers all ubt* adapters
+# Or specify explicitly: adapters = ["ubt0", "ubt1"];
+adapters = ["auto"];
+
+security {
+    # SMP I/O capability: none, display_only, display_yesno,
+    #   keyboard_only, keyboard_display
+    io_capability = "keyboard_display";
+    bondable = true;
+    # Require Secure Connections (reject legacy pairing)
+    sc_only = false;
+}
+
+features {
+    eatt = true;
+    privacy = true;
+    reconnect = true;
+    reconnect_max_delay = 60;
+}
+
+# Per-device overrides
+# devices {
+#     "aa:bb:cc:dd:ee:ff" {
+#         type = "random";
+#         reconnect = true;
+#     }
+# }

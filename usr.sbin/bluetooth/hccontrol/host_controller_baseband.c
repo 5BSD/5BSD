@@ -266,6 +266,9 @@ again:
 			event.ep.key.num_keys);
 
 		k = (struct _key *)(event.ep.b + sizeof(event.ep.key));
+		int max_keys = (n - sizeof(event.hdr) - sizeof(event.ep.key)) / sizeof(struct _key);
+		if (event.ep.key.num_keys > max_keys)
+			event.ep.key.num_keys = max_keys;
 		for (n = 0; n < event.ep.key.num_keys; n++) {
 			fprintf(stdout, "\t%d: %s ",
 				n + 1, hci_bdaddr2str(&k->bdaddr));
@@ -374,8 +377,8 @@ hci_delete_stored_link_key(int s, int argc, char **argv)
 	}
 
 	/* send command */
-	n = sizeof(cp);
-	if (hci_request(s, NG_HCI_OPCODE(NG_HCI_OGF_HC_BASEBAND, 
+	n = sizeof(rp);
+	if (hci_request(s, NG_HCI_OPCODE(NG_HCI_OGF_HC_BASEBAND,
 			NG_HCI_OCF_DELETE_STORED_LINK_KEY),
 			(char const *) &cp, sizeof(cp),
 			(char *) &rp, &n) == ERROR)
@@ -446,6 +449,7 @@ hci_read_local_name(int s, int argc, char **argv)
 		return (FAILED);
 	}
 
+	rp.name[sizeof(rp.name) - 1] = '\0';
 	fprintf(stdout, "Local name: %s\n", rp.name);
 
 	return (OK);
@@ -749,7 +753,7 @@ hci_read_inquiry_scan_activity(int s, int argc, char **argv)
 	fprintf(stdout, "Inquiry Scan Interval: %.2f msec [%d slots]\n",
 		rp.inquiry_scan_interval * 0.625, rp.inquiry_scan_interval);
 	fprintf(stdout, "Inquiry Scan Window: %.2f msec [%d slots]\n",
-		rp.inquiry_scan_window * 0.625, rp.inquiry_scan_interval);
+		rp.inquiry_scan_window * 0.625, rp.inquiry_scan_window);
 
 	return (OK);
 } /* hci_read_inquiry_scan_activity */

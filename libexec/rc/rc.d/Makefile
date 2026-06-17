@@ -120,7 +120,8 @@ BLOCKLIST=	blacklistd \
 
 CONFGROUPS.${MK_BLUETOOTH}+=	BLUETOOTH
 BLUETOOTHPACKAGE=		bluetooth
-BLUETOOTH=	bluetooth \
+BLUETOOTH=	blued \
+		bluetooth \
 		bthidd \
 		hcsecd \
 		rfcomm_pppd_server \

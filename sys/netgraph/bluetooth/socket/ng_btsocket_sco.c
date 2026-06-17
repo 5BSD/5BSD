@@ -62,6 +62,29 @@
 #include <netgraph/bluetooth/include/ng_btsocket.h>
 #include <netgraph/bluetooth/include/ng_btsocket_sco.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(bluetooth);
+
+/* Socket layer probes for SCO */
+SDT_PROBE_DEFINE1(bluetooth, socket, connect, sco,
+    "uint16_t"		/* con_handle */
+);
+
+SDT_PROBE_DEFINE1(bluetooth, socket, disconnect, sco,
+    "uint16_t"		/* con_handle */
+);
+
+SDT_PROBE_DEFINE2(bluetooth, socket, send, sco,
+    "uint16_t",		/* con_handle */
+    "int"		/* length */
+);
+
+SDT_PROBE_DEFINE2(bluetooth, socket, recv, sco,
+    "uint16_t",		/* con_handle */
+    "int"		/* length */
+);
+
 /* MALLOC define */
 #ifdef NG_SEPARATE_MALLOC
 static MALLOC_DEFINE(M_NETGRAPH_BTSOCKET_SCO, "netgraph_btsocks_sco",
@@ -422,9 +445,11 @@ ng_btsocket_sco_process_lp_con_cfm(struct ng_mesg *msg,
 		 * socket state
 		 */
 
-		pcb->con_handle = ep->con_handle; 
+		pcb->con_handle = ep->con_handle;
 		pcb->state = NG_BTSOCKET_SCO_OPEN;
-		soisconnected(pcb->so); 
+		SDT_PROBE1(bluetooth, socket, connect, sco,
+		    pcb->con_handle);
+		soisconnected(pcb->so);
 	} else {
 		/*
 		 * We have failed to open connection, so disconnect the socket
@@ -482,7 +507,7 @@ ng_btsocket_sco_process_lp_con_ind(struct ng_mesg *msg,
 		CURVNET_RESTORE();
 
 		if (so1 == NULL) {
-			status = 0x0d; /* Rejected due to limited resources */
+			status = NG_HCI_ERROR_REJECTED_LIMITED_RESOURCES;
 			goto respond;
 		}
 
@@ -510,7 +535,7 @@ ng_btsocket_sco_process_lp_con_ind(struct ng_mesg *msg,
 		pcb1->rt = rt;
 	} else
 		/* Nobody listens on requested BDADDR */
-		status = 0x1f; /* Unspecified Error */
+		status = NG_HCI_ERROR_UNSPECIFIED;
 
 respond:
 	error = ng_btsocket_sco_send_lp_con_rsp(rt, &ep->bdaddr, status);
@@ -582,6 +607,9 @@ ng_btsocket_sco_process_lp_discon_ind(struct ng_mesg *msg,
 
 	if (pcb->flags & NG_BTSOCKET_SCO_TIMO)
 		ng_btsocket_sco_untimeout(pcb);
+
+	SDT_PROBE1(bluetooth, socket, disconnect, sco,
+	    pcb->con_handle);
 
 	pcb->state = NG_BTSOCKET_SCO_CLOSED;
 	soisdisconnected(pcb->so);
@@ -676,7 +704,7 @@ ng_btsocket_sco_send_lp_discon_req(ng_btsocket_sco_pcb_p pcb)
 
 	ep = (ng_hci_lp_discon_req_ep *)(msg->data);
 	ep->con_handle = pcb->con_handle;
-	ep->reason = 0x13; /* User Ended Connection */
+	ep->reason = NG_HCI_ERROR_USER_ENDED_CON;
 
 	NG_SEND_MSG_HOOK(error, ng_btsocket_sco_node, msg, pcb->rt->hook, 0);
 
@@ -743,6 +771,9 @@ ng_btsocket_sco_data_input(struct mbuf *m, hook_p hook)
 	 */
 
 	con_handle = NG_HCI_CON_HANDLE(le16toh(hdr->con_handle));
+
+	SDT_PROBE2(bluetooth, socket, recv, sco,
+	    con_handle, hdr->length);
 
 	NG_BTSOCKET_SCO_INFO(
 "%s: Received SCO data packet: src bdaddr=%x:%x:%x:%x:%x:%x, handle=%d, " \
@@ -1192,12 +1223,6 @@ ng_btsocket_sco_attach(struct socket *so, int proto, struct thread *td)
 	if (so->so_type != SOCK_SEQPACKET)
 		return (ESOCKTNOSUPPORT);
 
-#if 0 /* XXX sonewconn() calls pr_attach() with proto == 0 */
-	if (proto != 0) 
-		if (proto != BLUETOOTH_PROTO_SCO)
-			return (EPROTONOSUPPORT);
-#endif /* XXX */
-
 	if (pcb != NULL)
 		return (EISCONN);
 
@@ -1220,17 +1245,17 @@ ng_btsocket_sco_attach(struct socket *so, int proto, struct thread *td)
 	pcb->so = so;
 	pcb->state = NG_BTSOCKET_SCO_CLOSED;
 
-	callout_init(&pcb->timo, 1);
-
 	/*
 	 * Mark PCB mutex as DUPOK to prevent "duplicated lock of
-	 * the same type" message. When accepting new SCO connection 
-	 * ng_btsocket_sco_process_lp_con_ind() holds both PCB mutexes 
+	 * the same type" message. When accepting new SCO connection
+	 * ng_btsocket_sco_process_lp_con_ind() holds both PCB mutexes
 	 * for "old" (accepting) PCB and "new" (created) PCB.
 	 */
-		
+
 	mtx_init(&pcb->pcb_mtx, "btsocks_sco_pcb_mtx", NULL,
 		MTX_DEF|MTX_DUPOK);
+
+	callout_init_mtx(&pcb->timo, &pcb->pcb_mtx, 0);
 
 	/*
 	 * Add the PCB to the list
@@ -1463,6 +1488,11 @@ ng_btsocket_sco_ctloutput(struct socket *so, struct sockopt *sopt)
 			break;
 		}
 		
+		if (pcb->rt == NULL) {
+			mtx_unlock(&pcb->pcb_mtx);
+			return (ENETDOWN);
+		}
+
 		switch (sopt->sopt_name) {
 		case SO_SCO_MTU:
 			tmp = pcb->rt->pkt_size;
@@ -1524,12 +1554,14 @@ ng_btsocket_sco_detach(struct socket *so)
 	mtx_unlock(&pcb->pcb_mtx);
 	mtx_unlock(&ng_btsocket_sco_sockets_mtx);
 
-	mtx_destroy(&pcb->pcb_mtx);
-	bzero(pcb, sizeof(*pcb));
-	free(pcb, M_NETGRAPH_BTSOCKET_SCO);
+	callout_drain(&pcb->timo);
 
 	soisdisconnected(so);
 	so->so_pcb = NULL;
+
+	mtx_destroy(&pcb->pcb_mtx);
+	bzero(pcb, sizeof(*pcb));
+	free(pcb, M_NETGRAPH_BTSOCKET_SCO);
 } /* ng_btsocket_sco_detach */
 
 /*
@@ -1692,6 +1724,9 @@ ng_btsocket_sco_send(struct socket *so, int flags, struct mbuf *m,
 	 * NGM_HCI_SYNC_CON_QUEUE message.
 	 */
 
+	SDT_PROBE2(bluetooth, socket, send, sco,
+	    pcb->con_handle, m->m_pkthdr.len);
+
 	sbappendrecord(&pcb->so->so_snd, m);
 	m = NULL;
 
@@ -1741,6 +1776,13 @@ ng_btsocket_sco_send2(ng_btsocket_sco_pcb_p pcb)
 
 		if (m == NULL) {
 			error = ENOBUFS;
+			break;
+		}
+
+		/* Check payload fits in u_int8_t length field */
+		if (m->m_pkthdr.len - (int)sizeof(*hdr) > 255) {
+			error = EMSGSIZE;
+			NG_FREE_M(m);
 			break;
 		}
 
@@ -1847,6 +1889,7 @@ ng_btsocket_sco_pcb_by_handle(bdaddr_p src, int con_handle)
 		mtx_lock(&p->pcb_mtx);
 
 		if (p->con_handle == con_handle &&
+		    p->state != NG_BTSOCKET_SCO_CLOSED &&
 		    bcmp(src, &p->src, sizeof(p->src)) == 0)
 			return (p); /* return with locked pcb */
 
@@ -1927,7 +1970,7 @@ ng_btsocket_sco_process_timeout(void *xpcb)
 {
 	ng_btsocket_sco_pcb_p	 pcb = (ng_btsocket_sco_pcb_p) xpcb;
 
-	mtx_lock(&pcb->pcb_mtx);
+	mtx_assert(&pcb->pcb_mtx, MA_OWNED);
 
 	pcb->flags &= ~NG_BTSOCKET_SCO_TIMO;
 	pcb->so->so_error = ETIMEDOUT;
@@ -1958,5 +2001,4 @@ ng_btsocket_sco_process_timeout(void *xpcb)
 		break;
 	}
 
-	mtx_unlock(&pcb->pcb_mtx);
 } /* ng_btsocket_sco_process_timeout */

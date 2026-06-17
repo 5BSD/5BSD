@@ -62,7 +62,8 @@
 #define NG_HCI_HOOK_DRV				"drv" /* Driver <-> HCI */
 #define NG_HCI_HOOK_ACL				"acl" /* HCI <-> Upper */
 #define NG_HCI_HOOK_SCO				"sco" /* HCI <-> Upper */ 
-#define NG_HCI_HOOK_RAW				"raw" /* HCI <-> Upper */ 
+#define NG_HCI_HOOK_RAW				"raw" /* HCI <-> Upper */
+#define NG_HCI_HOOK_ISO				"iso" /* HCI <-> Upper (ISO) */
 
 /**************************************************************************
  **************************************************************************
@@ -124,6 +125,13 @@
 #define NG_HCI_LINK_LE_RANDOM			0x03 /* LE Random*/
 #define NG_HCI_LINK_ISO_CIS			0x05 /* CIS (Connected Isochronous) */
 #define NG_HCI_LINK_ISO_BIS			0x06 /* BIS (Broadcast Isochronous) */
+
+/* HCI Error Codes (Core Spec v5.4, Vol 1, Part F, Section 1.3) */
+#define NG_HCI_ERROR_REJECTED_LIMITED_RESOURCES	0x0d
+#define NG_HCI_ERROR_USER_ENDED_CON		0x13
+#define NG_HCI_ERROR_CON_TERM_LOCAL_HOST	0x16
+#define NG_HCI_ERROR_UNSUPPORTED_REMOTE_FEATURE	0x1a
+#define NG_HCI_ERROR_UNSPECIFIED		0x1f
 
 /* Packet types */
 				/* 0x0001 - 0x0004 - reserved for future use */
@@ -326,7 +334,8 @@
 #define NG_HCI_LEEVMSK_PATH_LOSS_THRESHOLD	0x0000000080000000
 #define NG_HCI_LEEVMSK_TX_PWR_REP		0x0000000100000000
 #define NG_HCI_LEEVMSK_BIGINFO_ADV_REP		0x0000000200000000
-/* 0x0000000400000000 - 0x8000000000000000 - reserved for future use */
+#define NG_HCI_LEEVMSK_SUBRATE_CHANGE		0x0000000400000000
+#define NG_HCI_LEEVMSK_ENH_CONN_COMPL_V2	0x0000010000000000
 
 /* Filter types */
 #define NG_HCI_FILTER_TYPE_NONE			0x00
@@ -449,6 +458,21 @@ typedef struct {
 #define NG_HCI_ISO_TS_FLAG(h)		(((h) & 0x4000) >> 14)
 #define NG_HCI_ISO_DATA_LENGTH(l)	((l) & 0x3fff)
 
+/*
+ * ISO Data Load sub-header (Core Spec Vol 4 Part E §5.4.5).
+ * Present when PB_Flag = 0b00 (first fragment) or 0b10 (complete SDU).
+ * Packet_Sequence_Number: 16 bits
+ * ISO_SDU_Length: 12 bits, RFU: 1 bit, Packet_Status_Flag: 2 bits (in
+ * Controller-to-Host direction; reserved in Host-to-Controller).
+ */
+typedef struct {
+	u_int16_t	seq_num;       /* Packet_Sequence_Number */
+	u_int16_t	sdu_len_flags; /* ISO_SDU_Length(12) + RFU(1) + PSF(2) + RFU(1) */
+} __attribute__ ((packed)) ng_hci_iso_data_load_hdr_t;
+
+#define NG_HCI_ISO_SDU_LENGTH(v)	((v) & 0x0fff)
+#define NG_HCI_ISO_PKT_STATUS(v)	(((v) >> 13) & 0x03)
+
 /* HCI event packet header */
 #define NG_HCI_EVENT_PKT		0x04
 #define NG_HCI_EVENT_PKT_SIZE		0xff /* without header */
@@ -483,6 +507,8 @@ typedef struct {
 typedef struct {
 	u_int16_t	link_type; /* type of connection */
 	bdaddr_t	bdaddr;    /* remote unit address */
+	u_int16_t	con_handle; /* CIS handle for ISO (0 = unused) */
+	u_int8_t	own_address_type; /* LE Own_Address_Type (0=public) */
 } ng_hci_lp_con_req_ep;
 
 /*
@@ -1013,6 +1039,44 @@ typedef struct {
 	u_int8_t	status; /* 0x00 - success */
 	bdaddr_t	bdaddr; /* remote address */
 } __attribute__ ((packed)) ng_hci_user_passkey_req_neg_rep_rp;
+
+/*
+ * Connectionless Peripheral Broadcast — Link Control (BT 4.1 CSA4)
+ * Core Spec Vol 4 Part E §7.1.49-7.1.52
+ */
+#define NG_HCI_OCF_TRUNCATED_PAGE		0x003f
+#define NG_HCI_OCF_TRUNCATED_PAGE_CANCEL	0x0040
+#define NG_HCI_OCF_SET_CPB_RECEIVE		0x0042 /* Set_CPB_Receive */
+typedef struct {
+	u_int8_t	enable;
+	bdaddr_t	bd_addr;
+	u_int8_t	lt_addr;
+	u_int16_t	interval;
+	u_int32_t	clock_offset;
+	u_int32_t	next_cpb_clock;
+	u_int16_t	supervision_timeout;
+	u_int8_t	remote_timing_accuracy;
+	u_int8_t	skip;
+	u_int16_t	packet_type;
+	u_int8_t	afh_channel_map[10];
+} __attribute__((packed)) ng_hci_set_cpb_receive_cp;
+typedef struct {
+	u_int8_t	status;
+	bdaddr_t	bd_addr;
+	u_int8_t	lt_addr;
+} __attribute__((packed)) ng_hci_set_cpb_receive_rp;
+
+#define NG_HCI_OCF_START_SYNC_TRAIN		0x0044
+/* No command parameters. Returns Command_Status. */
+
+#define NG_HCI_OCF_RECEIVE_SYNC_TRAIN		0x0045
+typedef struct {
+	bdaddr_t	bd_addr;
+	u_int16_t	sync_scan_timeout;
+	u_int16_t	sync_scan_window;
+	u_int16_t	sync_scan_interval;
+} __attribute__((packed)) ng_hci_receive_sync_train_cp;
+/* Returns Command_Status, then Synchronization_Train_Received event. */
 
 /**************************************************************************
  **************************************************************************
@@ -1648,9 +1712,113 @@ typedef struct {
 
 typedef ng_hci_status_rp ng_hci_write_secure_connections_host_support_rp;
 
+/* Read Authenticated Payload Timeout (7.3.93) -- OCF 0x007B */
+#define NG_HCI_OCF_READ_AUTH_PAYLOAD_TIMEOUT	0x007b
+typedef struct {
+	u_int16_t	con_handle; /* connection handle */
+} __attribute__ ((packed)) ng_hci_read_auth_payload_timeout_cp;
+
+typedef struct {
+	u_int8_t	status;
+	u_int16_t	con_handle;
+	u_int16_t	timeout;    /* N * 10ms, range 0x0001-0xFFFF */
+} __attribute__ ((packed)) ng_hci_read_auth_payload_timeout_rp;
+
+/* Write Authenticated Payload Timeout (7.3.94) -- OCF 0x007C */
+#define NG_HCI_OCF_WRITE_AUTH_PAYLOAD_TIMEOUT	0x007c
+typedef struct {
+	u_int16_t	con_handle;
+	u_int16_t	timeout;    /* N * 10ms */
+} __attribute__ ((packed)) ng_hci_write_auth_payload_timeout_cp;
+
+typedef struct {
+	u_int8_t	status;
+	u_int16_t	con_handle;
+} __attribute__ ((packed)) ng_hci_write_auth_payload_timeout_rp;
+
+/*
+ * Connectionless Peripheral Broadcast — HC&Baseband (BT 4.1 CSA4)
+ * Core Spec Vol 4 Part E §7.3.86-7.3.90
+ */
+#define NG_HCI_OCF_SET_CPB			0x0041 /* Set_CPB */
+typedef struct {
+	u_int8_t	enable;
+	u_int8_t	lt_addr;
+	u_int8_t	lpo_allowed;
+	u_int16_t	packet_type;
+	u_int16_t	interval_min;
+	u_int16_t	interval_max;
+	u_int16_t	supervision_timeout;
+} __attribute__((packed)) ng_hci_set_cpb_cp;
+typedef struct {
+	u_int8_t	status;
+	u_int8_t	lt_addr;
+	u_int16_t	interval;
+} __attribute__((packed)) ng_hci_set_cpb_rp;
+
+/* LT_ADDR reservation for CPB (Core Spec §7.3.86-7.3.87) */
+#define NG_HCI_OCF_SET_RESERVED_LT_ADDR		0x0074
+typedef struct {
+	u_int8_t	lt_addr; /* 0x01-0x07 */
+} __attribute__((packed)) ng_hci_set_reserved_lt_addr_cp;
+typedef struct {
+	u_int8_t	status;
+	u_int8_t	lt_addr;
+} __attribute__((packed)) ng_hci_set_reserved_lt_addr_rp;
+
+#define NG_HCI_OCF_DELETE_RESERVED_LT_ADDR	0x0075
+typedef struct {
+	u_int8_t	lt_addr;
+} __attribute__((packed)) ng_hci_delete_reserved_lt_addr_cp;
+typedef struct {
+	u_int8_t	status;
+	u_int8_t	lt_addr;
+} __attribute__((packed)) ng_hci_delete_reserved_lt_addr_rp;
+
+#define NG_HCI_OCF_SET_CPB_DATA			0x0076 /* Set_CPB_Data */
+typedef struct {
+	u_int8_t	lt_addr;
+	u_int8_t	fragment;
+	u_int8_t	data_length;
+	u_int8_t	data[252];
+} __attribute__((packed)) ng_hci_set_cpb_data_cp;
+typedef struct {
+	u_int8_t	status;
+	u_int8_t	lt_addr;
+} __attribute__((packed)) ng_hci_set_cpb_data_rp;
+
+#define NG_HCI_OCF_READ_SYNC_TRAIN_PARAMS	0x0077
+typedef struct {
+	u_int8_t	status;
+	u_int16_t	interval;
+	u_int32_t	timeout;
+	u_int8_t	service_data;
+} __attribute__((packed)) ng_hci_read_sync_train_params_rp;
+
+#define NG_HCI_OCF_WRITE_SYNC_TRAIN_PARAMS	0x0078
+typedef struct {
+	u_int16_t	interval_min;
+	u_int16_t	interval_max;
+	u_int32_t	timeout;
+	u_int8_t	service_data;
+} __attribute__((packed)) ng_hci_write_sync_train_params_cp;
+typedef struct {
+	u_int8_t	status;
+	u_int16_t	interval;
+} __attribute__((packed)) ng_hci_write_sync_train_params_rp;
+
+/* Set Min Encryption Key Size (BT 5.3, Core Spec §7.3.102) */
+#define NG_HCI_OCF_SET_MIN_ENC_KEY_SIZE			0x0084
+typedef struct {
+	u_int8_t	min_enc_key_size; /* 0x07-0x10 (7-16 bytes) */
+} __attribute__((packed)) ng_hci_set_min_enc_key_size_cp;
+typedef struct {
+	u_int8_t	status;
+} __attribute__((packed)) ng_hci_set_min_enc_key_size_rp;
+
 /**************************************************************************
  **************************************************************************
- **           Informational commands and return parameters 
+ **           Informational commands and return parameters
  **     All commands in this category do not accept any parameters
  **************************************************************************
  **************************************************************************/
@@ -1923,6 +2091,17 @@ typedef struct {
 	u_int16_t max_ce_length;
 }__attribute__((packed)) ng_hci_le_create_connection_cp;
 /* No return parameters. */
+
+/* LE Create Connection defaults */
+#define NG_HCI_LE_SCAN_INTERVAL_DEFAULT		0x0060	/* 60ms */
+#define NG_HCI_LE_SCAN_WINDOW_DEFAULT		0x0030	/* 30ms */
+#define NG_HCI_LE_CONN_INTERVAL_MIN_DEFAULT	0x0018	/* 30ms */
+#define NG_HCI_LE_CONN_INTERVAL_MAX_DEFAULT	0x0028	/* 50ms */
+#define NG_HCI_LE_CONN_LATENCY_DEFAULT		0x0000
+#define NG_HCI_LE_SUPERVISION_TIMEOUT_DEFAULT	0x00C8	/* 2s */
+#define NG_HCI_LE_MIN_CE_LENGTH_DEFAULT		0x0000
+#define NG_HCI_LE_MAX_CE_LENGTH_DEFAULT		0x0000
+
 #define NG_HCI_OCF_LE_CREATE_CONNECTION_CANCEL		0x000e
 /*No command parameter*/	
 typedef ng_hci_status_rp	ng_hci_le_create_connection_cancel_rp;	
@@ -3357,10 +3536,47 @@ typedef struct {
 #define NG_HCI_EVENT_REM_HOST_SUPP_FEAT_NOTIFI	0x3d
 #define NG_HCI_EVENT_NUM_COMPL_DATA_BLOCKS	0x48
 
+/* Connectionless Peripheral Broadcast events (BT 4.1 CSA4) */
+#define NG_HCI_EVENT_SYNC_TRAIN_COMPLETE	0x4f
+typedef struct {
+	u_int8_t	status;
+} __attribute__((packed)) ng_hci_sync_train_complete_ep;
+
+#define NG_HCI_EVENT_SYNC_TRAIN_RECEIVED	0x50
+typedef struct {
+	u_int8_t	status;
+	bdaddr_t	bd_addr;
+	u_int32_t	clock_offset;
+	u_int8_t	afh_channel_map[10];
+	u_int8_t	lt_addr;
+	u_int32_t	next_broadcast_instant;
+	u_int16_t	cpb_interval;
+	u_int8_t	service_data;
+} __attribute__((packed)) ng_hci_sync_train_received_ep;
+
+#define NG_HCI_EVENT_CPB_RECEIVE		0x51
+#define NG_HCI_EVENT_CPB_TIMEOUT		0x52
+typedef struct {
+	bdaddr_t	bd_addr;
+	u_int8_t	lt_addr;
+} __attribute__((packed)) ng_hci_cpb_timeout_ep;
+
+#define NG_HCI_EVENT_TRUNCATED_PAGE_COMPLETE	0x53
+typedef struct {
+	u_int8_t	status;
+	bdaddr_t	bd_addr;
+} __attribute__((packed)) ng_hci_truncated_page_complete_ep;
+
+#define NG_HCI_EVENT_PERIPHERAL_PAGE_RSP_TIMEOUT	0x54
+
+#define NG_HCI_EVENT_CPB_CHANNEL_MAP_CHANGE	0x55
+
 #define NG_HCI_EVENT_AUTH_PAYLOAD_TIMEOUT	0x57
+#define NG_HCI_EVENT_AUTH_PAYLOAD_TIMEOUT_EXPIRED NG_HCI_EVENT_AUTH_PAYLOAD_TIMEOUT
 typedef struct {
 	u_int16_t	con_handle;
 } __attribute__ ((packed)) ng_hci_auth_payload_timeout_ep;
+typedef ng_hci_auth_payload_timeout_ep ng_hci_auth_payload_timeout_expired_ep;
 
 #define NG_HCI_EVENT_ENCRYPTION_CHANGE_V2	0x59
 typedef struct {
@@ -3386,7 +3602,7 @@ typedef struct {
 	u_int16_t 	interval;
 	u_int16_t	latency;
 	u_int16_t	supervision_timeout;
-	u_int8_t	master_clock_accuracy;
+	u_int8_t	central_clock_accuracy;
 
 } __attribute__ ((packed)) ng_hci_le_connection_complete_ep;
 
@@ -3460,8 +3676,6 @@ typedef struct {
 }__attribute__((packed)) ng_hci_le_gen_dhkey_compl_ep;
 
 #define NG_HCI_LEEV_ENH_CONN_COMPL 0x0a
-
-#define NG_HCI_LEEV_DIRECT_ADV_REP 0x0b
 typedef struct {
 	u_int8_t 	status;
 	u_int16_t 	connection_handle;
@@ -3473,8 +3687,10 @@ typedef struct {
 	u_int16_t 	conn_interval;
 	u_int16_t 	conn_latency;
 	u_int16_t 	supervision_timeout;
-	u_int8_t	master_clock_accuracy;
+	u_int8_t	central_clock_accuracy;
 }__attribute__((packed)) ng_hci_le_enh_conn_compl_ep;
+
+#define NG_HCI_LEEV_DIRECT_ADV_REP 0x0b
 
 #define NG_HCI_LEEV_PHY_UPDATE_COMPLETE 0x0c
 typedef struct {
@@ -3485,12 +3701,28 @@ typedef struct {
 }__attribute__((packed)) ng_hci_le_phy_update_compl_ep;
 
 #define NG_HCI_LEEV_EXT_ADVREP			0x0d
-/* LE Extended Advertising Report — variable-length, one or more reports.
- * Each report: event_type(2) + addr_type(1) + addr(6) + primary_phy(1) +
- * secondary_phy(1) + advertising_sid(1) + tx_power(1) + rssi(1) +
- * periodic_adv_interval(2) + direct_addr_type(1) + direct_addr(6) +
- * data_length(1) + data[data_length].
- * Parsed manually in hci_le_ext_scan(). */
+/* LE Extended Advertising Report (7.7.65.13) — variable-length,
+ * one or more reports.  Individual reports must be parsed iteratively. */
+typedef struct {
+	u_int8_t	num_reports;
+} __attribute__((packed)) ng_hci_le_ext_adv_report_ep;
+
+/* Single extended advertising report entry (fixed fields) */
+typedef struct {
+	u_int16_t	event_type;
+	u_int8_t	addr_type;
+	bdaddr_t	addr;
+	u_int8_t	primary_phy;
+	u_int8_t	secondary_phy;
+	u_int8_t	advertising_sid;
+	u_int8_t	tx_power;
+	u_int8_t	rssi;
+	u_int16_t	periodic_adv_interval;
+	u_int8_t	direct_addr_type;
+	bdaddr_t	direct_addr;
+	u_int8_t	data_length;
+	/* data[data_length] follows */
+} __attribute__((packed)) ng_hci_le_ext_adv_report_entry;
 
 /* BT 5.0 LE subevents */
 #define NG_HCI_LEEV_PER_ADV_SYNC_EST		0x0e
@@ -3501,11 +3733,111 @@ typedef struct {
 #define NG_HCI_LEEV_SCAN_REQ_RECEIVED		0x13
 #define NG_HCI_LEEV_CHAN_SEL_ALGO		0x14
 
+/* LE Periodic Advertising Sync Established event (7.7.65.14) */
+typedef struct {
+	u_int8_t	status;
+	u_int16_t	sync_handle;
+	u_int8_t	advertising_sid;
+	u_int8_t	advertiser_addr_type;
+	bdaddr_t	advertiser_addr;
+	u_int8_t	advertiser_phy;
+	u_int16_t	periodic_adv_interval;
+	u_int8_t	advertiser_clock_accuracy;
+} __attribute__((packed)) ng_hci_le_periodic_adv_sync_est_ep;
+
+/* LE Periodic Advertising Report event (7.7.65.15) */
+typedef struct {
+	u_int16_t	sync_handle;
+	u_int8_t	tx_power;	/* -127 to +20 dBm, 0x7F = N/A */
+	u_int8_t	rssi;		/* -127 to +20 dBm, 0x7F = N/A */
+	u_int8_t	cte_type;
+	u_int8_t	data_status;	/* 0=complete, 1=more, 2=truncated */
+	u_int8_t	data_length;
+	/* data[data_length] follows (variable-length) */
+} __attribute__((packed)) ng_hci_le_periodic_adv_report_ep;
+
+/* LE Periodic Advertising Sync Lost event (7.7.65.16) */
+typedef struct {
+	u_int16_t	sync_handle;
+} __attribute__((packed)) ng_hci_le_periodic_adv_sync_lost_ep;
+
+/* LE Scan Timeout event (7.7.65.17) — no parameters */
+
+/* LE Advertising Set Terminated event (7.7.65.18) */
+typedef struct {
+	u_int8_t	status;
+	u_int8_t	advertising_handle;
+	u_int16_t	connection_handle;
+	u_int8_t	num_completed_ext_adv_events;
+} __attribute__((packed)) ng_hci_le_adv_set_terminated_ep;
+
+/* LE Scan Request Received event (7.7.65.19) */
+typedef struct {
+	u_int8_t	advertising_handle;
+	u_int8_t	scanner_addr_type;
+	bdaddr_t	scanner_addr;
+} __attribute__((packed)) ng_hci_le_scan_req_received_ep;
+
+/* LE Channel Selection Algorithm event (7.7.65.20) */
+typedef struct {
+	u_int16_t	connection_handle;
+	u_int8_t	channel_selection_algorithm;
+} __attribute__((packed)) ng_hci_le_chan_sel_algo_ep;
+
 /* BT 5.1 LE subevents */
 #define NG_HCI_LEEV_CONNECTIONLESS_IQ_REPORT	0x15
 #define NG_HCI_LEEV_CONNECTION_IQ_REPORT	0x16
 #define NG_HCI_LEEV_CTE_REQUEST_FAILED		0x17
 #define NG_HCI_LEEV_PER_ADV_SYNC_XFER_RCVD	0x18
+
+/* LE Connectionless IQ Report event (7.7.65.21) */
+typedef struct {
+	u_int16_t	sync_handle;
+	u_int8_t	channel_index;
+	u_int16_t	rssi;		/* 0.1 dBm units, signed */
+	u_int8_t	rssi_antenna_id;
+	u_int8_t	cte_type;
+	u_int8_t	slot_durations;
+	u_int8_t	packet_status;
+	u_int16_t	periodic_event_counter;
+	u_int8_t	sample_count;
+	/* IQ sample pairs follow: sample_count * {i_sample(1), q_sample(1)} */
+} __attribute__((packed)) ng_hci_le_connectionless_iq_report_ep;
+
+/* LE Connection IQ Report event (7.7.65.22) */
+typedef struct {
+	u_int16_t	connection_handle;
+	u_int8_t	rx_phy;
+	u_int8_t	data_channel_index;
+	u_int16_t	rssi;		/* 0.1 dBm units, signed */
+	u_int8_t	rssi_antenna_id;
+	u_int8_t	cte_type;
+	u_int8_t	slot_durations;
+	u_int8_t	packet_status;
+	u_int16_t	connection_event_counter;
+	u_int8_t	sample_count;
+	/* IQ sample pairs follow: sample_count * {i_sample(1), q_sample(1)} */
+} __attribute__((packed)) ng_hci_le_connection_iq_report_ep;
+
+/* LE CTE Request Failed event (7.7.65.23) */
+typedef struct {
+	u_int8_t	status;
+	u_int16_t	connection_handle;
+} __attribute__((packed)) ng_hci_le_cte_request_failed_ep;
+
+/* LE Periodic Advertising Sync Transfer Received event (7.7.65.24) */
+typedef struct {
+	u_int8_t	status;
+	u_int16_t	connection_handle;
+	u_int16_t	service_data;
+	u_int16_t	sync_handle;
+	u_int8_t	advertising_sid;
+	u_int8_t	advertiser_addr_type;
+	bdaddr_t	advertiser_addr;
+	u_int8_t	advertiser_phy;
+	u_int16_t	periodic_adv_interval;
+	u_int8_t	advertiser_clock_accuracy;
+} __attribute__((packed)) ng_hci_le_past_received_ep;
 
 /* BT 5.2 LE subevents (ISO) */
 #define NG_HCI_LEEV_CIS_ESTABLISHED		0x19
@@ -3521,6 +3853,9 @@ typedef struct {
 #define NG_HCI_LEEV_TX_POWER_REPORTING		0x21
 #define NG_HCI_LEEV_BIGINFO_ADV_REPORT		0x22
 #define NG_HCI_LEEV_SUBRATE_CHANGE		0x23
+
+/* BT 5.3 LE subevent */
+#define NG_HCI_LEEV_ENH_CONN_COMPL_V2		0x29
 
 /* LE CIS Established event (7.7.65.25) */
 typedef struct {
@@ -3593,6 +3928,61 @@ typedef struct {
 	u_int8_t	big_handle;
 	u_int8_t	reason;
 } __attribute__ ((packed)) ng_hci_le_big_sync_lost_ep;
+
+/* LE Request Peer SCA Complete event (7.7.65.31) */
+/* (subevent 0x1f - handled as passthrough, no struct needed) */
+
+/* LE Path Loss Threshold event (7.7.65.32) */
+typedef struct {
+	u_int16_t	connection_handle;
+	u_int8_t	current_path_loss;
+	u_int8_t	zone_entered;		/* 0=low, 1=mid, 2=high */
+} __attribute__ ((packed)) ng_hci_le_path_loss_threshold_ep;
+
+/* LE Transmit Power Reporting event (7.7.65.33) */
+typedef struct {
+	u_int8_t	status;
+	u_int16_t	connection_handle;
+	u_int8_t	reason;			/* 0=local, 1=remote, 2=complete */
+	u_int8_t	phy;
+	u_int8_t	tx_power_level;		/* -127 to +20 dBm */
+	u_int8_t	tx_power_level_flag;	/* 0=neither, 1=min, 2=max */
+	u_int8_t	delta;
+} __attribute__ ((packed)) ng_hci_le_tx_power_reporting_ep;
+
+/* LE BIGInfo Advertising Report event (7.7.65.34) */
+typedef struct {
+	u_int16_t	sync_handle;
+	u_int8_t	num_bis;
+	u_int8_t	nse;
+	u_int16_t	iso_interval;
+	u_int8_t	bn;
+	u_int8_t	pto;
+	u_int8_t	irc;
+	u_int16_t	max_pdu;
+	u_int8_t	sdu_interval[3];	/* 3-byte LE field */
+	u_int16_t	max_sdu;
+	u_int8_t	phy;
+	u_int8_t	framing;
+	u_int8_t	encryption;
+} __attribute__ ((packed)) ng_hci_le_biginfo_adv_report_ep;
+
+/* LE Enhanced Connection Complete v2 event (7.7.65.41, BT 5.3) */
+typedef struct {
+	u_int8_t	status;
+	u_int16_t	connection_handle;
+	u_int8_t	role;
+	u_int8_t	peer_addr_type;
+	bdaddr_t	peer_addr;
+	bdaddr_t	local_res_private_addr;
+	bdaddr_t	peer_res_private_addr;
+	u_int16_t	conn_interval;
+	u_int16_t	conn_latency;
+	u_int16_t	supervision_timeout;
+	u_int8_t	central_clock_accuracy;
+	u_int8_t	advertising_handle;
+	u_int16_t	sync_handle;
+} __attribute__ ((packed)) ng_hci_le_enh_conn_compl_v2_ep;
 
 #define NG_HCI_EVENT_BT_LOGO			0xfe
 

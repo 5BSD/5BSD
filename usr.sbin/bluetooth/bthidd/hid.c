@@ -207,6 +207,9 @@ hid_interrupt(bthid_session_p s, uint8_t *data, int32_t len)
 		    (h.kind != hid_input))
 			continue;
 
+		if ((h.pos + h.report_size + 7) / 8 > (uint32_t)len)
+			break;
+
 		page = HID_PAGE(h.usage);
 		val = hid_get_data(data, &h);
 
@@ -252,16 +255,18 @@ hid_interrupt(bthid_session_p s, uint8_t *data, int32_t len)
 			kevents ++;
 
 			if (h.flags & HIO_VARIABLE) {
-				if (val && usage < kbd_maxkey())
+				if (val && usage > 0 && usage < kbd_maxkey())
 					bit_set(s->keys1, usage);
 			} else {
-				if (val && val < kbd_maxkey())
+				if (val > 0 && val < kbd_maxkey())
 					bit_set(s->keys1, val);
 
 				for (i = 1; i < h.report_count; i++) {
 					h.pos += h.report_size;
+					if ((h.pos + h.report_size + 7) / 8 > (uint32_t)len)
+						break;
 					val = hid_get_data(data, &h);
-					if (val && val < kbd_maxkey())
+					if (val > 0 && val < kbd_maxkey())
 						bit_set(s->keys1, val);
 				}
 			}
@@ -273,8 +278,9 @@ hid_interrupt(bthid_session_p s, uint8_t *data, int32_t len)
 					usage = 3;
 				else if (usage == 3)
 					usage = 2;
-				
-				mouse_butt |= (val << (usage - 1));
+
+				if (usage >= 1 && usage <= 8)
+					mouse_butt |= (val << (usage - 1));
 				mevents ++;
 			}
 			break;

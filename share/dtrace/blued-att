@@ -1,0 +1,14 @@
+#!/usr/sbin/dtrace -qs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * blued-att -- trace ATT PDU traffic and HID report injection.
+ *
+ * Usage: blued-att
+ */
+
+blued*:::att-recv { printf("%-20Y RECV op=0x%02x len=%d\n", walltimestamp, arg0, arg1); }
+blued*:::att-send { printf("%-20Y SEND op=0x%02x len=%d\n", walltimestamp, arg0, arg1); }
+blued*:::hid-report { printf("%-20Y HID  id=%d len=%d\n", walltimestamp, arg0, arg1); }

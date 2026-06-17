@@ -46,7 +46,7 @@ hci_link2str(int link_type)
 		/* NG_HCI_LINK_ACL */ "ACL"
 	};
 
-	return (link_type >= SIZE(t)? "?" : t[link_type]);
+	return (link_type < 0 || link_type >= (int)SIZE(t)? "?" : t[link_type]);
 } /* hci_link2str */
 
 char const *
@@ -57,7 +57,7 @@ hci_pin2str(int type)
 		/* 0x01 */ "Fixed PIN"
 	};
 
-	return (type >= SIZE(t)? "?" : t[type]);
+	return (type < 0 || type >= (int)SIZE(t)? "?" : t[type]);
 } /* hci_pin2str */
 
 char const *
@@ -70,7 +70,7 @@ hci_scan2str(int scan)
 		/* 0x03 */ "Inquiry Scan enabled. Page Scan enabled"
 	};
 
-	return (scan >= SIZE(t)? "?" : t[scan]);
+	return (scan < 0 || scan >= (int)SIZE(t)? "?" : t[scan]);
 } /* hci_scan2str */
 
 char const *
@@ -89,9 +89,9 @@ hci_encrypt2str(int encrypt, int brief)
 	};
 
 	if (brief)
-		return (encrypt >= SIZE(t1)? "?" : t1[encrypt]);
+		return (encrypt < 0 || encrypt >= (int)SIZE(t1)? "?" : t1[encrypt]);
 
-	return (encrypt >= SIZE(t)? "?" : t[encrypt]);
+	return (encrypt < 0 || encrypt >= (int)SIZE(t)? "?" : t[encrypt]);
 } /* hci_encrypt2str */
 
 char const *
@@ -104,7 +104,7 @@ hci_coding2str(int coding)
 		/* 0x03 */ "Reserved"
 	};
 
-	return (coding >= SIZE(t)? "?" : t[coding]);
+	return (coding < 0 || coding >= (int)SIZE(t)? "?" : t[coding]);
 } /* hci_coding2str */
 
 char const *
@@ -117,7 +117,7 @@ hci_vdata2str(int data)
 		/* 0x03 */ "Reserved"
 	};
 
-	return (data >= SIZE(t)? "?" : t[data]);
+	return (data < 0 || data >= (int)SIZE(t)? "?" : t[data]);
 } /* hci_vdata2str */
 
 char const *
@@ -165,7 +165,7 @@ hci_ver2str(int ver)
 		/* 0x0b */ "Bluetooth HCI Specification 5.2"
 	};
 
-	return (ver >= SIZE(t)? "?" : t[ver]);
+	return (ver < 0 || ver >= (int)SIZE(t)? "?" : t[ver]);
 } /* hci_ver2str */
 
 char const *
@@ -186,7 +186,7 @@ hci_lmpver2str(int ver)
 		/* 0x0b */ "Bluetooth LMP 5.2"
 	};
 
-	return (ver >= SIZE(t)? "?" : t[ver]);
+	return (ver < 0 || ver >= (int)SIZE(t)? "?" : t[ver]);
 } /* hci_lmpver2str */
 
 char const *
@@ -2425,7 +2425,7 @@ hci_manufacturer2str(int m)
 		/* 2230 */ "Boehringer Ingelheim Vetmedica GmbH"
         };
 
-	return (m >= SIZE(t)? "?" : t[m]);
+	return (m < 0 || m >= (int)SIZE(t)? "?" : t[m]);
 } /* hci_manufacturer2str */
 
 char const *
@@ -3159,7 +3159,7 @@ hci_cc2str(int cc)
 		/* 0x01 */ "France"
 	};
 
-	return (cc >= SIZE(t)? "?" : t[cc]);
+	return (cc < 0 || cc >= (int)SIZE(t)? "?" : t[cc]);
 } /* hci_cc2str */
 
 char const *
@@ -3172,7 +3172,7 @@ hci_con_state2str(int state)
 		/* NG_HCI_CON_OPEN */             "OPEN"
         };
 
-	return (state >= SIZE(t)? "UNKNOWN" : t[state]);
+	return (state < 0 || state >= (int)SIZE(t)? "UNKNOWN" : t[state]);
 } /* hci_con_state2str */
 
 char const *
@@ -3251,7 +3251,7 @@ hci_status2str(int status)
 		/* 0x45 */ "Packet Too Long"
 	};
 
-	return (status >= SIZE(t)? "Unknown error" : t[status]);
+	return (status < 0 || status >= (int)SIZE(t)? "Unknown error" : t[status]);
 } /* hci_status2str */
 
 char const *
@@ -3291,7 +3291,7 @@ hci_addrtype2str(int type)
 		/* 0x03 */ "Random (static) Identity Address"
 	};
 
-	return (type >= SIZE(t)? "?" : t[type]);
+	return (type < 0 || type >= (int)SIZE(t)? "?" : t[type]);
 } /* hci_addrtype2str */
 
 char const *
@@ -3302,7 +3302,7 @@ hci_role2str(int role)
 		/* 0x01 */ "Slave",
 	};
 
-	return (role >= SIZE(roles)? "Unknown role" : roles[role]);
+	return (role < 0 || role >= (int)SIZE(roles)? "Unknown role" : roles[role]);
 } /* hci_role2str */
 
 char const *
@@ -3319,7 +3319,7 @@ hci_mc_accuracy2str(int accuracy)
 		/* 0x07 */ "20 ppm",
 	};
 
-	return (accuracy >= SIZE(acc)? "Unknown accuracy" : acc[accuracy]);
+	return (accuracy < 0 || accuracy >= (int)SIZE(acc)? "Unknown accuracy" : acc[accuracy]);
 } /* hci_mc_accuracy2str */
 
 char const *

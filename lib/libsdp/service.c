@@ -177,7 +177,7 @@ sdp_change_service(void *xss, uint32_t handle,
 	pdu.tid = htons(++ss->tid);
 	pdu.len = htons(sizeof(handle) + datalen);
 
-	handle = htons(handle);
+	handle = htonl(handle);
 
 	iov[0].iov_base = (void *) &pdu;
 	iov[0].iov_len = sizeof(pdu);
@@ -226,8 +226,8 @@ sdp_receive_error_pdu(sdp_session_p ss)
 		return (-1);
 	}
 
-	error  = (uint16_t) ss->rsp[sizeof(pdu)] << 8;
-	error |= (uint16_t) ss->rsp[sizeof(pdu) + 1];
+	error  = (uint16_t) ss->rsp[sizeof(*pdu)] << 8;
+	error |= (uint16_t) ss->rsp[sizeof(*pdu) + 1];
 
 	if (error != 0) {
 		ss->error = EIO;

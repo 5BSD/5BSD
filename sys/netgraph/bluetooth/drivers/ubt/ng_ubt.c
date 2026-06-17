@@ -132,6 +132,28 @@
 #include <netgraph/bluetooth/include/ng_ubt.h>
 #include <netgraph/bluetooth/drivers/ubt/ng_ubt_var.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(bluetooth);
+
+/* UBT USB transfer probes
+ * type: 1=cmd, 2=acl, 3=sco, 4=event, 5=iso */
+SDT_PROBE_DEFINE2(bluetooth, ubt, xfer, submit,
+    "int",		/* type */
+    "int"		/* length */
+);
+
+SDT_PROBE_DEFINE3(bluetooth, ubt, xfer, complete,
+    "int",		/* type */
+    "int",		/* length */
+    "int"		/* status (usb_error_t) */
+);
+
+SDT_PROBE_DEFINE2(bluetooth, ubt, xfer, error,
+    "int",		/* type */
+    "int"		/* error_code (usb_error_t) */
+);
+
 /* USB Bluetooth interface protocol values (Core Spec Vol 4 Part B §2) */
 #define	UBT_PROTO_BULK_SERIAL	0x04	/* Bulk Serialization Transport */
 
@@ -156,7 +178,7 @@ static ng_rcvdata_t	ng_ubt_rcvdata;
 
 static int ng_usb_isoc_enable = 1;
 
-SYSCTL_INT(_net_bluetooth, OID_AUTO, usb_isoc_enable, CTLFLAG_RWTUN | CTLFLAG_MPSAFE,
+SYSCTL_INT(_net_bluetooth, OID_AUTO, usb_isoc_enable, CTLFLAG_RWTUN,
     &ng_usb_isoc_enable, 0, "enable isochronous transfers");
 
 /* Queue length */
@@ -579,7 +601,7 @@ ubt_do_hci_request(struct usb_device *udev, struct ubt_hci_cmd *cmd,
 		return (USB_ERR_NORMAL_COMPLETION);
 
 	/* Save operation code if we expect completion event in response */
-	if(((struct ubt_hci_event *)evt)->header.event ==
+	if (((struct ubt_hci_event *)evt)->header.event ==
 	    NG_HCI_EVENT_COMMAND_COMPL)
 		((struct ubt_hci_event_command_compl *)evt)->opcode =
 		  cmd->opcode;
@@ -681,7 +703,7 @@ ubt_attach(device_t dev)
 	sc->sc_debug = NG_UBT_WARN_LEVEL;
 
 	/*
-	 * Detect Bulk Serialization mode per Core Spec Vol 4 Part B §2.
+	 * Detect Bulk Serialization mode per Core Spec Vol 4 Part B §3.1 and §7.
 	 * bInterfaceProtocol 0x04 indicates Bulk Serialization Transport
 	 * where ACL and ISO share the bulk endpoint with a 1-byte packet
 	 * type indicator prefix.  Protocol 0x01 is legacy transport.
@@ -714,6 +736,7 @@ ubt_attach(device_t dev)
 	if (ng_name_node(sc->sc_node, device_get_nameunit(dev)) != 0) {
 		UBT_ALERT(sc, "could not name Netgraph node\n");
 		NG_NODE_UNREF(sc->sc_node);
+		sc->sc_node = NULL;
 		return (ENXIO);
 	}
 	NG_NODE_SET_PRIVATE(sc->sc_node, sc);
@@ -824,7 +847,7 @@ detach:
  * USB context.
  */
 
-int
+static int
 ubt_detach(device_t dev)
 {
 	struct ubt_softc	*sc = device_get_softc(dev);
@@ -842,6 +865,12 @@ ubt_detach(device_t dev)
 
 	/* Free USB transfers, if any */
 	usbd_transfer_unsetup(sc->sc_xfer, UBT_N_TRANSFER);
+
+	/* Free incomplete SCO reassembly buffer, if any */
+	if (sc->sc_isoc_in_buffer != NULL) {
+		NG_FREE_M(sc->sc_isoc_in_buffer);
+		sc->sc_isoc_in_buffer = NULL;
+	}
 
 	/* Destroy queues */
 	UBT_NG_LOCK(sc);
@@ -901,7 +930,7 @@ ubt_probe_intr_callback(struct usb_xfer *xfer, usb_error_t error)
 		wakeup(evt);
 		break;
 
-        case USB_ST_SETUP:
+	case USB_ST_SETUP:
 submit_next:
 		usbd_xfer_set_frame_len(xfer, 0, usbd_xfer_max_len(xfer));
 		usbd_transfer_submit(xfer);
@@ -941,6 +970,7 @@ ubt_ctrl_write_callback(struct usb_xfer *xfer, usb_error_t error)
 		UBT_INFO(sc, "sent %d bytes to control pipe\n", actlen);
 		UBT_STAT_BYTES_SENT(sc, actlen);
 		UBT_STAT_PCKTS_SENT(sc);
+		SDT_PROBE3(bluetooth, ubt, xfer, complete, 1, actlen, 0);
 		/* FALLTHROUGH */
 
 	case USB_ST_SETUP:
@@ -964,6 +994,8 @@ send_next:
 			"bmRequestType=0x%02x, wLength=%d\n",
 			req.bmRequestType, UGETW(req.wLength));
 
+		SDT_PROBE2(bluetooth, ubt, xfer, submit, 1, m->m_pkthdr.len);
+
 		pc = usbd_xfer_get_frame(xfer, 0);
 		usbd_copy_in(pc, 0, &req, sizeof(req));
 		pc = usbd_xfer_get_frame(xfer, 1);
@@ -984,6 +1016,7 @@ send_next:
 				usbd_errstr(error));
 
 			UBT_STAT_OERROR(sc);
+			SDT_PROBE2(bluetooth, ubt, xfer, error, 1, error);
 			goto send_next;
 		}
 
@@ -1064,6 +1097,9 @@ ubt_intr_read_callback(struct usb_xfer *xfer, usb_error_t error)
 		UBT_STAT_PCKTS_RECV(sc);
 		UBT_STAT_BYTES_RECV(sc, m->m_pkthdr.len);
 
+		SDT_PROBE3(bluetooth, ubt, xfer, complete,
+		    4, m->m_pkthdr.len, 0);
+
 		ubt_fwd_mbuf_up(sc, &m);
 		/* m == NULL at this point */
 		/* FALLTHROUGH */
@@ -1080,6 +1116,8 @@ submit_next:
 		if (error != USB_ERR_CANCELLED) {
 			UBT_WARN(sc, "interrupt transfer failed: %s\n",
 				usbd_errstr(error));
+
+			SDT_PROBE2(bluetooth, ubt, xfer, error, 4, error);
 
 			/* Try to clear stall first */
 			usbd_xfer_set_stall(xfer);
@@ -1194,7 +1232,7 @@ ubt_bulk_read_callback(struct usb_xfer *xfer, usb_error_t error)
 
 				if (m->m_pkthdr.len <
 				    (int)sizeof(ng_hci_isodata_pkt_t)) {
-					UBT_INFO(sc,
+					UBT_ERR(sc,
 					    "HCI ISO packet too short\n");
 					UBT_STAT_IERROR(sc);
 					goto submit_next;
@@ -1205,6 +1243,57 @@ ubt_bulk_read_callback(struct usb_xfer *xfer, usb_error_t error)
 				if (len != (int)(m->m_pkthdr.len -
 				    sizeof(*isohdr))) {
 					UBT_ERR(sc, "Invalid ISO packet "
+					    "size, length=%d, pktlen=%d\n",
+					    len, m->m_pkthdr.len);
+					UBT_STAT_IERROR(sc);
+					goto submit_next;
+				}
+			} else if (pkt_type == NG_HCI_EVENT_PKT) {
+				/*
+				 * Bulk Serialization: events arrive over
+				 * bulk with the 0x04 indicator byte.
+				 * Validate minimum event header size.
+				 */
+				ng_hci_event_pkt_t *evhdr;
+
+				if (m->m_pkthdr.len <
+				    (int)sizeof(ng_hci_event_pkt_t)) {
+					UBT_ERR(sc,
+					    "HCI event packet too short\n");
+					UBT_STAT_IERROR(sc);
+					goto submit_next;
+				}
+
+				evhdr = mtod(m, ng_hci_event_pkt_t *);
+				len = evhdr->length;
+				if (len != (int)(m->m_pkthdr.len -
+				    sizeof(*evhdr))) {
+					UBT_ERR(sc, "Invalid event packet "
+					    "size, length=%d, pktlen=%d\n",
+					    len, m->m_pkthdr.len);
+					UBT_STAT_IERROR(sc);
+					goto submit_next;
+				}
+			} else if (pkt_type == NG_HCI_SCO_DATA_PKT) {
+				/*
+				 * Bulk Serialization: SCO data arrives
+				 * over bulk with the 0x03 indicator byte.
+				 */
+				ng_hci_scodata_pkt_t *scohdr;
+
+				if (m->m_pkthdr.len <
+				    (int)sizeof(ng_hci_scodata_pkt_t)) {
+					UBT_ERR(sc,
+					    "HCI SCO packet too short\n");
+					UBT_STAT_IERROR(sc);
+					goto submit_next;
+				}
+
+				scohdr = mtod(m, ng_hci_scodata_pkt_t *);
+				len = scohdr->length;
+				if (len != (int)(m->m_pkthdr.len -
+				    sizeof(*scohdr))) {
+					UBT_ERR(sc, "Invalid SCO packet "
 					    "size, length=%d, pktlen=%d\n",
 					    len, m->m_pkthdr.len);
 					UBT_STAT_IERROR(sc);
@@ -1224,9 +1313,12 @@ ubt_bulk_read_callback(struct usb_xfer *xfer, usb_error_t error)
 		UBT_STAT_PCKTS_RECV(sc);
 		UBT_STAT_BYTES_RECV(sc, m->m_pkthdr.len);
 
+		SDT_PROBE3(bluetooth, ubt, xfer, complete,
+		    *mtod(m, uint8_t *), m->m_pkthdr.len, 0);
+
 		ubt_fwd_mbuf_up(sc, &m);
 		/* m == NULL at this point */
-		/* FALLTHOUGH */
+		/* FALLTHROUGH */
 
 	case USB_ST_SETUP:
 submit_next:
@@ -1240,6 +1332,8 @@ submit_next:
 		if (error != USB_ERR_CANCELLED) {
 			UBT_WARN(sc, "bulk-in transfer failed: %s\n",
 				usbd_errstr(error));
+
+			SDT_PROBE2(bluetooth, ubt, xfer, error, 2, error);
 
 			/* Try to clear stall first */
 			usbd_xfer_set_stall(xfer);
@@ -1271,6 +1365,7 @@ ubt_bulk_write_callback(struct usb_xfer *xfer, usb_error_t error)
 		UBT_INFO(sc, "sent %d bytes to bulk-out pipe\n", actlen);
 		UBT_STAT_BYTES_SENT(sc, actlen);
 		UBT_STAT_PCKTS_SENT(sc);
+		SDT_PROBE3(bluetooth, ubt, xfer, complete, 2, actlen, 0);
 		/* FALLTHROUGH */
 
 	case USB_ST_SETUP:
@@ -1297,6 +1392,8 @@ send_next:
 		UBT_INFO(sc, "bulk-out transfer has been started, len=%d\n",
 			m->m_pkthdr.len);
 
+		SDT_PROBE2(bluetooth, ubt, xfer, submit, 2, m->m_pkthdr.len);
+
 		NG_FREE_M(m);
 
 		usbd_transfer_submit(xfer);
@@ -1308,6 +1405,7 @@ send_next:
 				usbd_errstr(error));
 
 			UBT_STAT_OERROR(sc);
+			SDT_PROBE2(bluetooth, ubt, xfer, error, 2, error);
 
 			/* try to clear stall first */
 			usbd_xfer_set_stall(xfer);
@@ -1335,14 +1433,14 @@ ubt_isoc_read_callback(struct usb_xfer *xfer, usb_error_t error)
 
 	switch (USB_GET_STATE(xfer)) {
 	case USB_ST_TRANSFERRED:
-		for (n = 0; n < nframes; n ++)
+		for (n = 0; n < nframes; n++)
 			if (ubt_isoc_read_one_frame(xfer, n) < 0)
 				break;
 		/* FALLTHROUGH */
 
 	case USB_ST_SETUP:
 read_next:
-		for (n = 0; n < nframes; n ++)
+		for (n = 0; n < nframes; n++)
 			usbd_xfer_set_frame_len(xfer, n,
 			    usbd_xfer_max_framelen(xfer));
 
@@ -1350,10 +1448,10 @@ read_next:
 		break;
 
 	default: /* Error */
-                if (error != USB_ERR_CANCELLED) {
-                        UBT_STAT_IERROR(sc);
-                        goto read_next;
-                }
+		if (error != USB_ERR_CANCELLED) {
+			UBT_STAT_IERROR(sc);
+			goto read_next;
+		}
 
 		/* transfer cancelled */
 		break;
@@ -1372,12 +1470,13 @@ ubt_isoc_read_one_frame(struct usb_xfer *xfer, int frame_no)
 	struct ubt_softc	*sc = usbd_xfer_softc(xfer);
 	struct usb_page_cache	*pc;
 	struct mbuf		*m;
-	int			len, want, got, total;
+	int			len, want, got, total, frame_off;
 
 	/* Get existing SCO reassembly buffer */
 	pc = usbd_xfer_get_frame(xfer, 0);
 	m = sc->sc_isoc_in_buffer;
 	total = usbd_xfer_frame_len(xfer, frame_no);
+	frame_off = frame_no * usbd_xfer_max_framelen(xfer);
 
 	/* While we have data in the frame */
 	while (total > 0) {
@@ -1386,12 +1485,14 @@ ubt_isoc_read_one_frame(struct usb_xfer *xfer, int frame_no)
 			MGETHDR(m, M_NOWAIT, MT_DATA);
 			if (m == NULL) {
 				UBT_STAT_IERROR(sc);
+				sc->sc_isoc_in_buffer = NULL;
 				return (-1);	/* XXX out of sync! */
 			}
 
 			if (!(MCLGET(m, M_NOWAIT))) {
 				UBT_STAT_IERROR(sc);
 				NG_FREE_M(m);
+				sc->sc_isoc_in_buffer = NULL;
 				return (-1);	/* XXX out of sync! */
 			}
 
@@ -1409,6 +1510,13 @@ ubt_isoc_read_one_frame(struct usb_xfer *xfer, int frame_no)
 
 			if (got >= want)
 				want += mtod(m, ng_hci_scodata_pkt_t *)->length;
+
+			if (want <= got) {
+				/* Zero-length SCO payload -- forward the complete packet */
+				ubt_fwd_mbuf_up(sc, &m);
+				sc->sc_isoc_in_buffer = NULL;
+				continue;
+			}
 		}
 
 		/* Append frame data to the SCO reassembly buffer */
@@ -1416,15 +1524,16 @@ ubt_isoc_read_one_frame(struct usb_xfer *xfer, int frame_no)
 		if (got + len > want)
 			len = want - got;
 
-		usbd_copy_out(pc, frame_no * usbd_xfer_max_framelen(xfer),
+		usbd_copy_out(pc, frame_off,
 			mtod(m, uint8_t *) + m->m_pkthdr.len, len);
+		frame_off += len;
 
 		m->m_pkthdr.len += len;
 		m->m_len += len;
 		total -= len;
 
 		/* Check if we got everything we wanted, if not - continue */
-		if (got != want)
+		if (m->m_pkthdr.len != want)
 			continue;
 
 		/* If we got here then we got complete SCO frame */
@@ -1488,7 +1597,7 @@ send_next:
 
 			n = min(space, m->m_pkthdr.len);
 			if (n > 0) {
-				usbd_m_copy_in(pc, offset, m,0, n);
+				usbd_m_copy_in(pc, offset, m, 0, n);
 				m_adj(m, n);
 
 				offset += n;
@@ -1514,7 +1623,7 @@ send_next:
 		 * would be just empty isoc. transfer.
 		 */
 
-		for (n = 0; n < nframes; n ++) {
+		for (n = 0; n < nframes; n++) {
 			usbd_xfer_set_frame_len(xfer, n,
 			    min(offset, usbd_xfer_max_framelen(xfer)));
 			offset -= usbd_xfer_frame_len(xfer, n);
@@ -1915,7 +2024,14 @@ ng_ubt_rcvmsg(node_p node, item_p item, hook_p lasthook)
 				/* NOT REACHED */
 			}
 
+			if (qlen < 1) {
+				error = EINVAL;
+				break;
+			}
+
+			UBT_NG_LOCK(sc);
 			q->maxlen = qlen;
+			UBT_NG_UNLOCK(sc);
 			break;
 
 		case NGM_UBT_NODE_GET_QLEN:
@@ -2017,45 +2133,102 @@ ng_ubt_rcvdata(hook_p hook, item_p item)
 	 * should not happen)
 	 */
 
-	if (m->m_pkthdr.len < 4)
-		panic("HCI frame size is too small! pktlen=%d\n",
+	if (m->m_pkthdr.len < 4) {
+		UBT_ERR(sc, "HCI frame size is too small! pktlen=%d\n",
 			m->m_pkthdr.len);
+		NG_FREE_M(m);
+		NG_FREE_ITEM(item);
+		return (EMSGSIZE);
+	}
+
+	/* Ensure the packet type byte is contiguous */
+	if (m->m_len < 1) {
+		m = m_pullup(m, 1);
+		if (m == NULL) {
+			UBT_ERR(sc, "m_pullup failed for HCI packet type\n");
+			NG_FREE_ITEM(item);
+			return (ENOBUFS);
+		}
+	}
 
 	/* Process HCI frame */
-	switch (*mtod(m, uint8_t *)) {	/* XXX call m_pullup ? */
+	switch (*mtod(m, uint8_t *)) {
 	case NG_HCI_CMD_PKT:
-		if (m->m_pkthdr.len - 1 > (int)UBT_CTRL_BUFFER_SIZE)
-			panic("HCI command frame size is too big! " \
-				"buffer size=%zd, packet len=%d\n",
-				UBT_CTRL_BUFFER_SIZE, m->m_pkthdr.len);
+		if (sc->sc_bulk_serial) {
+			/*
+			 * Bulk Serialization: commands go over bulk
+			 * with the 0x01 indicator byte, not the
+			 * control endpoint.  Core Spec Vol 4 Part B §1.1.
+			 */
+			if (m->m_pkthdr.len > UBT_BULK_WRITE_BUFFER_SIZE) {
+				UBT_ERR(sc, "HCI command frame size is too big! "
+					"buffer size=%d, packet len=%d\n",
+					UBT_BULK_WRITE_BUFFER_SIZE,
+					m->m_pkthdr.len);
+				NG_FREE_M(m);
+				NG_FREE_ITEM(item);
+				return (EMSGSIZE);
+			}
 
-		q = &sc->sc_cmdq;
-		action = UBT_FLAG_T_START_CTRL;
+			q = &sc->sc_aclq;
+			action = UBT_FLAG_T_START_BULK;
+		} else {
+			if (m->m_pkthdr.len - 1 > (int)(UBT_CTRL_BUFFER_SIZE - sizeof(struct usb_device_request))) {
+				UBT_ERR(sc, "HCI command frame size is too big! "
+					"buffer size=%zd, packet len=%d\n",
+					UBT_CTRL_BUFFER_SIZE,
+					m->m_pkthdr.len);
+				NG_FREE_M(m);
+				NG_FREE_ITEM(item);
+				return (EMSGSIZE);
+			}
+
+			q = &sc->sc_cmdq;
+			action = UBT_FLAG_T_START_CTRL;
+		}
 		break;
 
 	case NG_HCI_ACL_DATA_PKT:
-		if (m->m_pkthdr.len - 1 > UBT_BULK_WRITE_BUFFER_SIZE)
-			panic("ACL data frame size is too big! " \
+		if (m->m_pkthdr.len - (sc->sc_bulk_serial ? 0 : 1) > UBT_BULK_WRITE_BUFFER_SIZE) {
+			UBT_ERR(sc, "ACL data frame size is too big! "
 				"buffer size=%d, packet len=%d\n",
 				UBT_BULK_WRITE_BUFFER_SIZE, m->m_pkthdr.len);
+			NG_FREE_M(m);
+			NG_FREE_ITEM(item);
+			return (EMSGSIZE);
+		}
 
 		q = &sc->sc_aclq;
 		action = UBT_FLAG_T_START_BULK;
 		break;
 
 	case NG_HCI_SCO_DATA_PKT:
-		q = &sc->sc_scoq;
-		action = 0;
+		if (sc->sc_bulk_serial) {
+			/*
+			 * Bulk Serialization: SCO data goes over
+			 * bulk with the 0x03 indicator byte.
+			 */
+			q = &sc->sc_aclq;
+			action = UBT_FLAG_T_START_BULK;
+		} else {
+			q = &sc->sc_scoq;
+			action = 0;
+		}
 		break;
 
 	case NG_HCI_ISO_DATA_PKT:
 		/*
-		 * ISO data over USB.  Per Core Spec Vol 4 Part B §7, ISO
-		 * packets are sent over the bulk endpoint only in Bulk
-		 * Serialization mode.  In legacy mode there is no defined
-		 * mechanism for ISO data.
+		 * ISO data over USB.  In Bulk Serialization mode,
+		 * ISO goes over bulk with the 0x05 indicator.
+		 * In legacy mode, ISO uses the isochronous endpoints
+		 * (shared with SCO).
 		 */
 		if (!sc->sc_bulk_serial) {
+			/*
+			 * Legacy USB transport has no defined mechanism
+			 * for LE ISO data (Core Spec Vol 4 Part B §2).
+			 * ISO is only available in Bulk Serialization mode.
+			 */
 			UBT_ERR(sc, "ISO data requires Bulk Serialization "
 				"mode, dropping packet\n");
 			NG_FREE_M(m);

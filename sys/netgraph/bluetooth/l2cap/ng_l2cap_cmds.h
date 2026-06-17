@@ -208,6 +208,8 @@ do {									\
 	} __attribute__ ((packed))	*c = NULL;			\
 									\
 	MGETHDR((_m), M_NOWAIT, MT_DATA);				\
+	if ((_m) == NULL)						\
+		break;							\
 									\
 	(_m)->m_pkthdr.len = (_m)->m_len = sizeof(*c);			\
 									\
@@ -471,6 +473,44 @@ do {									\
 	c->param.mps = htole16((_mps));					\
 	c->param.initial_credits = htole16((_credits));			\
 	c->param.result = htole16((_result));				\
+} while (0)
+
+/*
+ * Enhanced Credit Based Connection Request (0x17)
+ *
+ * Variable-length: the fixed header is followed by _ncids Source CIDs.
+ * _scids points to an array of _ncids u_int16_t values in host byte order.
+ */
+#define _ng_l2cap_credit_con_req(_m, _ident, _le_psm, _mtu, _mps, _credits, _scids, _ncids) \
+do {									\
+	struct _credit_con_req {					\
+		ng_l2cap_cmd_hdr_t		hdr;			\
+		ng_l2cap_credit_con_req_cp	param;			\
+	} __attribute__ ((packed))	*c = NULL;			\
+	int _cid_len = (_ncids) * sizeof(u_int16_t);			\
+	int _i;								\
+									\
+	MGETHDR((_m), M_NOWAIT, MT_DATA);				\
+	if ((_m) == NULL)						\
+		break;							\
+									\
+	(_m)->m_pkthdr.len = (_m)->m_len = sizeof(*c) + _cid_len;	\
+									\
+	c = mtod((_m), struct _credit_con_req *);			\
+	c->hdr.code = NG_L2CAP_CREDIT_CON_REQ;				\
+	c->hdr.ident = (_ident);					\
+	c->hdr.length = htole16(sizeof(c->param) + _cid_len);		\
+									\
+	c->param.le_psm = htole16((_le_psm));				\
+	c->param.mtu = htole16((_mtu));					\
+	c->param.mps = htole16((_mps));					\
+	c->param.initial_credits = htole16((_credits));			\
+									\
+	{								\
+		u_int16_t *_sp = (u_int16_t *)((char *)c + sizeof(*c));	\
+		for (_i = 0; _i < (_ncids); _i++)			\
+			_sp[_i] = htole16((_scids)[_i]);		\
+	}								\
 } while (0)
 
 /*

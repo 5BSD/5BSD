@@ -195,7 +195,7 @@ ng_btsocket_hci_raw_node_shutdown(node_p node)
 	NG_NODE_UNREF(node);
 
 	error = ng_make_node_common(&typestruct, &ng_btsocket_hci_raw_node);
-	if (error  != 0) {
+	if (error != 0) {
 		NG_BTSOCKET_HCI_RAW_ALERT(
 "%s: Could not create Netgraph node, error=%d\n", __func__, error);
 
@@ -434,7 +434,8 @@ ng_btsocket_hci_raw_send_sync_ngmsg(ng_btsocket_hci_raw_pcb_p pcb, char *path,
 	if (error != 0)
 		return (error);
 
-	if (pcb->msg != NULL && pcb->msg->header.cmd == cmd)
+	if (pcb->msg != NULL && pcb->msg->header.cmd == cmd &&
+	    pcb->msg->header.arglen >= rsplen)
 		bcopy(pcb->msg->data, rsp, rsplen);
 	else
 		error = EINVAL;
@@ -653,7 +654,7 @@ ng_btsocket_hci_raw_output(node_p node, hook_p hook, void *arg1, int arg2)
 	 */
 
 	LIST_FOREACH(hook, &node->nd_hooks, hk_hooks) {
-		if (hook == NULL || NG_HOOK_NOT_VALID(hook) || 
+		if (NG_HOOK_NOT_VALID(hook) ||
 		    NG_NODE_NOT_VALID(NG_PEER_NODE(hook)))
 			continue;
 
@@ -687,6 +688,9 @@ ng_btsocket_hci_raw_filter(ng_btsocket_hci_raw_pcb_p pcb, struct mbuf *m, int d)
 			if (NG_HCI_OGF(opcode) == 0)
 				return (EPERM);
 
+			if (NG_HCI_OCF(opcode) == 0)
+				return (EPERM);
+
 			if (!bit_test(
 ng_btsocket_hci_raw_sec_filter->commands[NG_HCI_OGF(opcode) - 1],
 NG_HCI_OCF(opcode) - 1))
@@ -709,7 +713,10 @@ NG_HCI_OCF(opcode) - 1))
 		if (!d)
 			return (EINVAL);
 
-		event = mtod(m, ng_hci_event_pkt_t *)->event - 1;
+		event = mtod(m, ng_hci_event_pkt_t *)->event;
+		if (event == 0)
+			return (EINVAL);
+		event--;
 
 		if (!(pcb->flags & NG_BTSOCKET_HCI_RAW_PRIVILEGED))
 			if (!bit_test(ng_btsocket_hci_raw_sec_filter->events, event))
@@ -986,6 +993,7 @@ ng_btsocket_hci_raw_bind(struct socket *so, struct sockaddr *nam,
 
 	mtx_lock(&pcb->pcb_mtx);
 	bcopy(sa, &pcb->addr, sizeof(pcb->addr));
+	pcb->addr.hci_node[sizeof(pcb->addr.hci_node) - 1] = '\0';
 	mtx_unlock(&pcb->pcb_mtx);
 
 	return (0);
@@ -1397,6 +1405,13 @@ ng_btsocket_hci_raw_control(struct socket *so, u_long cmd, void *data,
 			/* Return data back to user space */
 			struct namelist	*nl1 = (struct namelist *) msg->data;
 			struct nodeinfo	*ni1 = &nl1->nodeinfo[0];
+			u_int32_t max_names =
+			    (msg->header.arglen >= sizeof(struct namelist)) ?
+			    (msg->header.arglen - sizeof(struct namelist)) /
+			    sizeof(struct nodeinfo) : 0;
+
+			if (nl1->numnames > max_names)
+				nl1->numnames = max_names;
 
 			while (nl->num_names > 0 && nl1->numnames > 0) {
 				if (strcmp(ni1->type, NG_HCI_NODE_TYPE) == 0) {

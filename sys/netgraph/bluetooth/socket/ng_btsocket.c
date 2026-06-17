@@ -59,6 +59,7 @@
 #include <netgraph/bluetooth/include/ng_btsocket_l2cap.h>
 #include <netgraph/bluetooth/include/ng_btsocket_rfcomm.h>
 #include <netgraph/bluetooth/include/ng_btsocket_sco.h>
+#include <netgraph/bluetooth/include/ng_btsocket_iso.h>
 
 static int			ng_btsocket_modevent (module_t, int, void *);
 
@@ -117,7 +118,7 @@ static struct protosw ng_btsocket_l2cap_protosw = {
 	.pr_control =		ng_btsocket_l2cap_control,
 	.pr_detach =		ng_btsocket_l2cap_detach,
 	.pr_disconnect =	ng_btsocket_l2cap_disconnect,
-        .pr_listen =		ng_btsocket_l2cap_listen,
+	.pr_listen =		ng_btsocket_l2cap_listen,
 	.pr_peeraddr =		ng_btsocket_l2cap_peeraddr,
 	.pr_send =		ng_btsocket_l2cap_send,
 	.pr_sockaddr =		ng_btsocket_l2cap_sockaddr,
@@ -138,7 +139,7 @@ static struct protosw ng_btsocket_rfcomm_protosw = {
 	.pr_control =		ng_btsocket_rfcomm_control,
 	.pr_detach =		ng_btsocket_rfcomm_detach,
 	.pr_disconnect =	ng_btsocket_rfcomm_disconnect,
-        .pr_listen =		ng_btsocket_rfcomm_listen,
+	.pr_listen =		ng_btsocket_rfcomm_listen,
 	.pr_peeraddr =		ng_btsocket_rfcomm_peeraddr,
 	.pr_send =		ng_btsocket_rfcomm_send,
 	.pr_sockaddr =		ng_btsocket_rfcomm_sockaddr,
@@ -166,6 +167,27 @@ static struct protosw ng_btsocket_sco_protosw = {
 	.pr_close =		ng_btsocket_sco_close,
 };
 
+/* Bluetooth SEQPACKET ISO sockets */
+static struct protosw ng_btsocket_iso_protosw = {
+	.pr_type =		SOCK_SEQPACKET,
+	.pr_protocol =		BLUETOOTH_PROTO_ISO,
+	.pr_flags =		PR_ATOMIC|PR_CONNREQUIRED,
+	.pr_ctloutput =		ng_btsocket_iso_ctloutput,
+	.pr_abort =		ng_btsocket_iso_abort,
+	.pr_accept =		ng_btsocket_iso_peeraddr,
+	.pr_attach =		ng_btsocket_iso_attach,
+	.pr_bind =		ng_btsocket_iso_bind,
+	.pr_connect =		ng_btsocket_iso_connect,
+	.pr_control =		ng_btsocket_iso_control,
+	.pr_detach =		ng_btsocket_iso_detach,
+	.pr_disconnect =	ng_btsocket_iso_disconnect,
+	.pr_listen =		ng_btsocket_iso_listen,
+	.pr_peeraddr =		ng_btsocket_iso_peeraddr,
+	.pr_send =		ng_btsocket_iso_send,
+	.pr_sockaddr =		ng_btsocket_iso_sockaddr,
+	.pr_close =		ng_btsocket_iso_close,
+};
+
 /*
  * BLUETOOTH domain
  */
@@ -173,13 +195,14 @@ static struct protosw ng_btsocket_sco_protosw = {
 static struct domain ng_btsocket_domain = {
 	.dom_family =		AF_BLUETOOTH,
 	.dom_name =		"bluetooth",
-	.dom_nprotosw =		5,
+	.dom_nprotosw =		6,
 	.dom_protosw = {
 		&ng_btsocket_hci_raw_protosw,
 		&ng_btsocket_l2cap_raw_protosw,
 		&ng_btsocket_l2cap_protosw,
 		&ng_btsocket_rfcomm_protosw,
 		&ng_btsocket_sco_protosw,
+		&ng_btsocket_iso_protosw,
 	},
 };
 
@@ -199,6 +222,9 @@ SYSCTL_NODE(_net_bluetooth_rfcomm, OID_AUTO, sockets,
 SYSCTL_NODE(_net_bluetooth_sco, OID_AUTO, sockets,
     CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "Bluetooth SCO sockets family");
+SYSCTL_NODE(_net_bluetooth_iso, OID_AUTO, sockets,
+    CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
+    "Bluetooth ISO sockets family");
 
 /* 
  * Module 

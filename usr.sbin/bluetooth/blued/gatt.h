@@ -5,8 +5,8 @@
  * All rights reserved.
  */
 
-#ifndef _BTLED_GATT_H_
-#define _BTLED_GATT_H_
+#ifndef _BLUED_GATT_H_
+#define _BLUED_GATT_H_
 
 #include <stdint.h>
 #include "att.h"
@@ -67,4 +67,4 @@ int	gatt_discover_descriptors(struct att_conn *ac,
 	    uint16_t start, uint16_t end,
 	    struct gatt_desc *descs, int maxdescs, int *ndescs);
 
-#endif /* _BTLED_GATT_H_ */
+#endif /* _BLUED_GATT_H_ */

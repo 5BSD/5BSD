@@ -81,10 +81,11 @@
 	/* 0x0007 - 0x003f Reserved */
 #define NG_L2CAP_FIRST_CID	0x0040	/* dynamically alloc. (start) */
 #define NG_L2CAP_LAST_CID	0xffff	/* dynamically alloc. (end) */
-#define NG_L2CAP_LELAST_CID	0x007f
+#define NG_L2CAP_LELAST_CID	0xffff
 
 /* L2CAP MTU */
 #define NG_L2CAP_MTU_LE_MINIMUM		23
+#define NG_L2CAP_MTU_ECBFC_MINIMUM	64	/* Enhanced Credit Based */
 #define NG_L2CAP_MTU_MINIMUM		48
 #define NG_L2CAP_MTU_DEFAULT		672
 #define NG_L2CAP_MTU_MAXIMUM		0xffff
@@ -105,7 +106,7 @@
 #define NG_L2CAP_PSM_RFCOMM		0x0003	/* RFCOMM protocol */
 #define NG_L2CAP_PSM_TCP		0x0005	/* Telephony Control Protocol */
 #define NG_L2CAP_PSM_EATT		0x0027	/* EATT (Enhanced ATT) */
-/* 0x0006 - 0x1000 - reserved for future use */
+/* 0x0001-0x007F fixed, 0x0080-0x00FF reserved, 0x0100-0xFFFF dynamic */
 
 /* L2CAP Connection response command result codes */
 #define NG_L2CAP_SUCCESS		0x0000
@@ -433,6 +434,7 @@ typedef struct {
 #define NG_L2CAP_L2CA_IDTYPE_ATT  1
 #define NG_L2CAP_L2CA_IDTYPE_LE  2
 #define NG_L2CAP_L2CA_IDTYPE_SMP  3
+#define NG_L2CAP_L2CA_IDTYPE_ECBFC 4
 /* L2CA_Connect */
 #define NGM_L2CAP_L2CA_CON		0x80
 /* Upper -> L2CAP */

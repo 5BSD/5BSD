@@ -154,8 +154,11 @@ l2cap_read_connection_list(int s, int argc, char **argv)
 		goto out;
 	}
 
+	if (r.num_connections > NG_L2CAP_MAX_CON_NUM)
+		r.num_connections = NG_L2CAP_MAX_CON_NUM;
+
 	fprintf(stdout, "L2CAP connections:\n");
-	fprintf(stdout, 
+	fprintf(stdout,
 "Remote BD_ADDR    Handle Flags Pending State\n");
 	for (n = 0; n < r.num_connections; n++) {
 		fprintf(stdout,
@@ -212,8 +215,11 @@ l2cap_read_channel_list(int s, int argc, char **argv)
 		goto out;
 	}
 
+	if (r.num_channels > NG_L2CAP_MAX_CHAN_NUM)
+		r.num_channels = NG_L2CAP_MAX_CHAN_NUM;
+
 	fprintf(stdout, "L2CAP channels:\n");
-	fprintf(stdout, 
+	fprintf(stdout,
 "Remote BD_ADDR     SCID/ DCID   PSM  IMTU/ OMTU State\n");
 	for (n = 0; n < r.num_channels; n++) {
 		fprintf(stdout,

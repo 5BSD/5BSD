@@ -62,6 +62,10 @@ void print_adv_data(int len, uint8_t* advdata)
 	{
 		char buffer[2048];
 		uint8_t datalen = advdata[n];
+		if (datalen == 0 || n + datalen > len) {
+			fprintf(stderr, "Invalid advertising data length at offset %d\n", n);
+			break;
+		}
 		uint8_t datatype = advdata[++n];
 		/* Skip type */ 
 		++n;

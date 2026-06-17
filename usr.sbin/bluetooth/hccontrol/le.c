@@ -61,15 +61,15 @@ static int le_set_advertising_enable(int s, int argc, char *argv[]);
 static int le_set_advertising_param(int s, int argc, char *argv[]);
 static int le_read_advertising_channel_tx_power(int s, int argc, char *argv[]);
 static int le_scan(int s, int argc, char *argv[]);
-static void handle_le_event(ng_hci_event_pkt_t* e, bool verbose);
+static void handle_le_event(ng_hci_event_pkt_t* e, int bufsize, bool verbose);
 static int le_read_white_list_size(int s, int argc, char *argv[]);
 static int le_clear_white_list(int s, int argc, char *argv[]);
 static int le_add_device_to_white_list(int s, int argc, char *argv[]);
 static int le_remove_device_from_white_list(int s, int argc, char *argv[]);
 static int le_connect(int s, int argc, char *argv[]);
-static void handle_le_connection_event(ng_hci_event_pkt_t* e, bool verbose);
+static void handle_le_connection_event(ng_hci_event_pkt_t* e, int bufsize, bool verbose);
 static int le_read_channel_map(int s, int argc, char *argv[]);
-static void handle_le_remote_features_event(ng_hci_event_pkt_t* e);
+static void handle_le_remote_features_event(ng_hci_event_pkt_t* e, int bufsize);
 static int le_rand(int s, int argc, char *argv[]);
 
 static int
@@ -98,7 +98,7 @@ le_set_scan_param(int s, int argc, char *argv[])
 	interval = (int)(atof(argv[1])/0.625);
 	interval = (interval < 4)? 4: interval;
 	window = (int)(atof(argv[2])/0.625);
-	window = (window < 4) ? 4 : interval;
+	window = (window < 4) ? 4 : window;
 	
 	if (strcmp(argv[3], "public") == 0)
 		adrtype = 0;
@@ -731,7 +731,7 @@ le_scan(int s, int argc, char *argv[])
 		scancount++;
 		if (e->event == NG_HCI_EVENT_LE) {
 		 	fprintf(stdout, "Scan %d\n", scancount);	
-			handle_le_event(e, verbose);
+			handle_le_event(e, bufsize, verbose);
 		}
 	}
 
@@ -756,17 +756,23 @@ le_scan(int s, int argc, char *argv[])
 	return (OK);
 }
 
-static void handle_le_event(ng_hci_event_pkt_t* e, bool verbose) 
+static void handle_le_event(ng_hci_event_pkt_t* e, int bufsize, bool verbose)
 {
 	int rc;
-	ng_hci_le_ep	*leer = 
+	ng_hci_le_ep	*leer =
 			(ng_hci_le_ep *)(e + 1);
-	ng_hci_le_advertising_report_ep *advrep = 
-		(ng_hci_le_advertising_report_ep *)(leer + 1); 
+	ng_hci_le_advertising_report_ep *advrep =
+		(ng_hci_le_advertising_report_ep *)(leer + 1);
 	ng_hci_le_advreport	*reports =
 		(ng_hci_le_advreport *)(advrep + 1);
 
+	if (bufsize < (int)(sizeof(*e) + sizeof(*leer) + sizeof(*advrep)))
+		return;
+
 	if (leer->subevent_code == NG_HCI_LEEV_ADVREP) {
+		int max_reports = (bufsize - sizeof(*e) - sizeof(*leer) - sizeof(*advrep)) / sizeof(ng_hci_le_advreport);
+		if (advrep->num_reports > max_reports)
+			advrep->num_reports = max_reports;
 		fprintf(stdout, "Scan result, num_reports: %d\n",
 			advrep->num_reports);
 		for(rc = 0; rc < advrep->num_reports; rc++) {
@@ -917,7 +923,7 @@ le_remove_device_from_white_list(int s, int argc, char *argv[])
 				cp.address_type = 0x00;
 			else if (strcmp(optarg, "random") == 0)
 				cp.address_type = 0x01;
-			else 
+			else
 				return (USAGE);
 			break;
 		case 'a':
@@ -935,11 +941,11 @@ le_remove_device_from_white_list(int s, int argc, char *argv[])
 		}
 	}
 
-	if (addr_set == false) 
+	if (addr_set == false)
 		return (USAGE);
 
 	if (hci_request(s, NG_HCI_OPCODE(NG_HCI_OGF_LE,
-		NG_HCI_OCF_LE_ADD_DEVICE_TO_WHITE_LIST), 
+		NG_HCI_OCF_LE_REMOVE_DEVICE_FROM_WHITE_LIST),
 		(void *)&cp, sizeof(cp), (void *)&rp, &n) == ERROR)
 		return (ERROR);
 			
@@ -1057,7 +1063,7 @@ le_connect(int s, int argc, char *argv[])
 		}
 		scancount++;
 		if (e->event == NG_HCI_EVENT_LE) {
-			handle_le_connection_event(e, verbose);
+			handle_le_connection_event(e, bufsize, verbose);
 			break;
 		}
 	}
@@ -1065,10 +1071,13 @@ le_connect(int s, int argc, char *argv[])
 	return (OK);
 }
 
-static void handle_le_connection_event(ng_hci_event_pkt_t* e, bool verbose) 
+static void handle_le_connection_event(ng_hci_event_pkt_t* e, int bufsize, bool verbose)
 {
 	ng_hci_le_ep	*ev_pkt;
 	ng_hci_le_connection_complete_ep *conn_event;
+
+	if (bufsize < (int)(sizeof(*e) + sizeof(*ev_pkt) + sizeof(*conn_event)))
+		return;
 
 	ev_pkt = (ng_hci_le_ep *)(e + 1);
 
@@ -1099,7 +1108,7 @@ static void handle_le_connection_event(ng_hci_event_pkt_t* e, bool verbose)
 			fprintf(stdout,
 				"Master clock accuracy: %s\n",
 				hci_mc_accuracy2str(
-					conn_event->master_clock_accuracy));
+					conn_event->central_clock_accuracy));
 		}
 	}
 }
@@ -1198,17 +1207,20 @@ le_read_remote_features(int s, int argc, char *argv[])
 		return (ERROR);
 	}
 	if (e->event == NG_HCI_EVENT_LE) {
-		handle_le_remote_features_event(e);
+		handle_le_remote_features_event(e, bufsize);
 	}
 
 	return (OK);
 } /* le_read_remote_features */
 
-static void handle_le_remote_features_event(ng_hci_event_pkt_t* e) 
+static void handle_le_remote_features_event(ng_hci_event_pkt_t* e, int bufsize)
 {
 	ng_hci_le_ep	*ev_pkt;
 	ng_hci_le_read_remote_features_ep *feat_event;
 	char	buffer[2048];
+
+	if (bufsize < (int)(sizeof(*e) + sizeof(*ev_pkt) + sizeof(*feat_event)))
+		return;
 
 	ev_pkt = (ng_hci_le_ep *)(e + 1);
 

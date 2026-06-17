@@ -127,13 +127,13 @@ ng_l2cap_l2ca_con_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 	}
 
 	/* Create L2CAP command packet */
-	if(ip->idtype == NG_L2CAP_L2CA_IDTYPE_ATT){
+	if (ip->idtype == NG_L2CAP_L2CA_IDTYPE_ATT) {
 		_ng_l2cap_con_rsp(cmd->aux, cmd->ident, NG_L2CAP_ATT_CID,
 				  NG_L2CAP_ATT_CID, 0, 0);
-	}else if(ip->idtype == NG_L2CAP_L2CA_IDTYPE_SMP){
+	} else if (ip->idtype == NG_L2CAP_L2CA_IDTYPE_SMP) {
 		_ng_l2cap_con_rsp(cmd->aux, cmd->ident, NG_L2CAP_SMP_CID,
 				  NG_L2CAP_SMP_CID, 0, 0);
-	}else if(ip->idtype == NG_L2CAP_L2CA_IDTYPE_LE){
+	} else if (ip->idtype == NG_L2CAP_L2CA_IDTYPE_LE) {
 		/* LE Credit Based Connection (LE CoC) */
 		ch->imtu = NG_L2CAP_LE_COC_LOCAL_MTU;
 		ch->mps = NG_L2CAP_LE_COC_LOCAL_MPS;
@@ -143,7 +143,21 @@ ng_l2cap_l2ca_con_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 		_ng_l2cap_le_credit_con_req(cmd->aux, cmd->ident,
 		    ch->psm, ch->scid, ch->imtu, ch->mps,
 		    ch->credits_local);
-	}else{
+	} else if (ip->idtype == NG_L2CAP_L2CA_IDTYPE_ECBFC) {
+		/* Enhanced Credit Based Connection */
+		u_int16_t	scids[1];
+
+		ch->imtu = NG_L2CAP_LE_COC_LOCAL_MTU;
+		ch->mps = NG_L2CAP_LE_COC_LOCAL_MPS;
+		ch->credits_local = NG_L2CAP_LE_COC_INITIAL_CREDITS;
+		ch->le_psm = ch->psm;
+		cmd->code = NG_L2CAP_CREDIT_CON_REQ;
+
+		scids[0] = ch->scid;
+		_ng_l2cap_credit_con_req(cmd->aux, cmd->ident,
+		    ch->psm, ch->imtu, ch->mps,
+		    ch->credits_local, scids, 1);
+	} else {
 		_ng_l2cap_con_req(cmd->aux, cmd->ident, ch->psm, ch->scid);
 	}
 	if (cmd->aux == NULL) {
@@ -152,7 +166,7 @@ ng_l2cap_l2ca_con_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 		error = ENOBUFS;
 		goto out;
 	}
-	if(ip->idtype == NG_L2CAP_L2CA_IDTYPE_ATT ||
+	if (ip->idtype == NG_L2CAP_L2CA_IDTYPE_ATT ||
 	   ip->idtype == NG_L2CAP_L2CA_IDTYPE_SMP)
 		cmd->aux->m_flags |= M_PROTO2;
 
@@ -204,17 +218,20 @@ ng_l2cap_l2ca_con_rsp(ng_l2cap_chan_p ch, u_int32_t token, u_int16_t result,
 		 * What about PENDING? What the heck, for now always populate
 		 * LCID :)
 		 */
-		if(ch->scid == NG_L2CAP_ATT_CID){
+		if (ch->scid == NG_L2CAP_ATT_CID) {
 			op->idtype = NG_L2CAP_L2CA_IDTYPE_ATT;
 			op->lcid = ch->con->con_handle;
-		}else if(ch->scid == NG_L2CAP_SMP_CID){
+		} else if (ch->scid == NG_L2CAP_SMP_CID) {
 			op->idtype = NG_L2CAP_L2CA_IDTYPE_SMP;
 			op->lcid = ch->con->con_handle;
-		}else{
+		} else if (ch->idtype == NG_L2CAP_L2CA_IDTYPE_ECBFC) {
+			op->idtype = NG_L2CAP_L2CA_IDTYPE_ECBFC;
+			op->lcid = ch->scid;
+		} else {
 			op->idtype = (ch->con->linktype == NG_HCI_LINK_ACL)?
 				NG_L2CAP_L2CA_IDTYPE_BREDR :
 				NG_L2CAP_L2CA_IDTYPE_LE;
-			op->lcid = ch->scid;				
+			op->lcid = ch->scid;
 		}
 		op->encryption = ch->con->encryption;
 		op->result = result;
@@ -381,15 +398,15 @@ int ng_l2cap_l2ca_encryption_change(ng_l2cap_chan_p ch, uint16_t result)
 
 		op = (ng_l2cap_l2ca_enc_chg_op *)(msg->data);
 		op->result = result;
-		if(ch->scid ==NG_L2CAP_ATT_CID||
-		   ch->scid ==NG_L2CAP_SMP_CID){
+		if (ch->scid == NG_L2CAP_ATT_CID ||
+		   ch->scid == NG_L2CAP_SMP_CID) {
 			op->lcid = ch->con->con_handle;
 			op->idtype = (ch->scid==NG_L2CAP_ATT_CID)?
 				NG_L2CAP_L2CA_IDTYPE_ATT:
 				NG_L2CAP_L2CA_IDTYPE_SMP;
-		}else{
-			op->idtype =(ch->con->linktype ==NG_HCI_LINK_ACL)?
-				NG_L2CAP_L2CA_IDTYPE_BREDR:
+		} else {
+			op->idtype = (ch->con->linktype == NG_HCI_LINK_ACL) ?
+				NG_L2CAP_L2CA_IDTYPE_BREDR :
 				NG_L2CAP_L2CA_IDTYPE_LE;
 		}
 			
@@ -887,13 +904,13 @@ ng_l2cap_l2ca_write_req(ng_l2cap_p l2cap, struct mbuf *m)
 	}
 
 	/* Check channel ID */
-	if (l2ca_hdr->idtype == NG_L2CAP_L2CA_IDTYPE_ATT){
+	if (l2ca_hdr->idtype == NG_L2CAP_L2CA_IDTYPE_ATT) {
 		ch = ng_l2cap_chan_by_conhandle(l2cap, NG_L2CAP_ATT_CID,
 						l2ca_hdr->lcid);
-	} else if (l2ca_hdr->idtype == NG_L2CAP_L2CA_IDTYPE_SMP){
+	} else if (l2ca_hdr->idtype == NG_L2CAP_L2CA_IDTYPE_SMP) {
 		ch = ng_l2cap_chan_by_conhandle(l2cap, NG_L2CAP_SMP_CID,
 						l2ca_hdr->lcid);
-	}else{
+	} else {
 		if (l2ca_hdr->lcid < NG_L2CAP_FIRST_CID) {
 			NG_L2CAP_ERR(
 				"%s: %s - invalid L2CA Data packet. Inavlid channel ID, cid=%d\n",
@@ -1000,18 +1017,20 @@ ng_l2cap_l2ca_write_rsp(ng_l2cap_chan_p ch, u_int32_t token, u_int16_t result,
 		op = (ng_l2cap_l2ca_write_op *)(msg->data);
 		op->result = result;
 		op->length = length;
-		if(ch->scid == NG_L2CAP_ATT_CID){
+		if (ch->scid == NG_L2CAP_ATT_CID) {
 			op->idtype = NG_L2CAP_L2CA_IDTYPE_ATT;
 			op->lcid = ch->con->con_handle;
-		}else if(ch->scid == NG_L2CAP_SMP_CID){
+		} else if (ch->scid == NG_L2CAP_SMP_CID) {
 			op->idtype = NG_L2CAP_L2CA_IDTYPE_SMP;
 			op->lcid = ch->con->con_handle;
-		}else{
+		} else if (ch->idtype == NG_L2CAP_L2CA_IDTYPE_ECBFC) {
+			op->idtype = NG_L2CAP_L2CA_IDTYPE_ECBFC;
+			op->lcid = ch->scid;
+		} else {
 			op->idtype = (ch->con->linktype == NG_HCI_LINK_ACL)?
 				NG_L2CAP_L2CA_IDTYPE_BREDR :
 				NG_L2CAP_L2CA_IDTYPE_LE;
-			op->lcid = ch->scid;				
-			
+			op->lcid = ch->scid;
 		}
 		NG_SEND_MSG_HOOK(error, l2cap->node, msg, l2cap->l2c, 0);
 	}
@@ -1043,34 +1062,34 @@ ng_l2cap_l2ca_receive(ng_l2cap_con_p con)
 
 	/* Check channel */
 
-	if(hdr->dcid == NG_L2CAP_ATT_CID){
+	if (hdr->dcid == NG_L2CAP_ATT_CID) {
 		idtype = NG_L2CAP_L2CA_IDTYPE_ATT;
 		ch = ng_l2cap_chan_by_conhandle(l2cap, NG_L2CAP_ATT_CID,
 						con->con_handle);
 		/*
-		 * Here,ATT channel is distinguished by 
+		 * Here,ATT channel is distinguished by
 		 * connection handle
 		 */
 		hdr->dcid = con->con_handle;
 		silent = 1;
-	}else if(hdr->dcid == NG_L2CAP_SMP_CID){
+	} else if (hdr->dcid == NG_L2CAP_SMP_CID) {
 		idtype = NG_L2CAP_L2CA_IDTYPE_SMP;
 		ch = ng_l2cap_chan_by_conhandle(l2cap, NG_L2CAP_SMP_CID,
 						con->con_handle);
 		/*
-		 * Here,SMP channel is distinguished by 
+		 * Here,SMP channel is distinguished by
 		 * connection handle
 		 */
 		silent = 1;
-		hdr->dcid = con->con_handle; 
-	}else{
-		idtype = (con->linktype==NG_HCI_LINK_ACL)?
-			NG_L2CAP_L2CA_IDTYPE_BREDR:
+		hdr->dcid = con->con_handle;
+	} else {
+		idtype = (con->linktype == NG_HCI_LINK_ACL) ?
+			NG_L2CAP_L2CA_IDTYPE_BREDR :
 			NG_L2CAP_L2CA_IDTYPE_LE;
 		ch = ng_l2cap_chan_by_scid(l2cap, hdr->dcid, idtype);
 	}
 	if (ch == NULL) {
-		if(!silent)
+		if (!silent)
 			NG_L2CAP_ERR(
 "%s: %s - unexpected L2CAP data packet. Channel does not exist, cid=%d, idtype=%d\n",
 	__func__, NG_NODE_NAME(l2cap->node), hdr->dcid, idtype);
@@ -1098,7 +1117,8 @@ ng_l2cap_l2ca_receive(ng_l2cap_con_p con)
 	 * We reassemble the complete SDU before delivering it to
 	 * the upper layer.
 	 */
-	if (ch->idtype == NG_L2CAP_L2CA_IDTYPE_LE && ch->mps > 0) {
+	if ((ch->idtype == NG_L2CAP_L2CA_IDTYPE_LE ||
+	    ch->idtype == NG_L2CAP_L2CA_IDTYPE_ECBFC) && ch->mps > 0) {
 		struct mbuf	*payload;
 		u_int16_t	 payload_len;
 
@@ -1128,10 +1148,10 @@ ng_l2cap_l2ca_receive(ng_l2cap_con_p con)
 		payload = con->rx_pkt;
 		con->rx_pkt = NULL;
 
-		/* Check K-frame payload does not exceed MPS */
+		/* Check K-frame payload does not exceed local MPS */
 		if (payload_len > ch->mps) {
 			NG_L2CAP_ERR(
-"%s: %s - K-frame exceeds MPS, len=%d, mps=%d, cid=%d. Disconnecting.\n",
+"%s: %s - K-frame exceeds local MPS, len=%d, mps=%d, cid=%d. Disconnecting.\n",
 				__func__, NG_NODE_NAME(l2cap->node),
 				payload_len, ch->mps, ch->scid);
 			NG_FREE_M(payload);
@@ -1324,7 +1344,7 @@ le_coc_sdu_complete:
 		goto drop;
 	}
 	M_PREPEND(con->rx_pkt, sizeof(uint16_t), M_NOWAIT);
-	if(con->rx_pkt == NULL)
+	if (con->rx_pkt == NULL)
 		goto drop;
 	idp = mtod(con->rx_pkt, uint16_t *);
 	*idp = idtype;
@@ -1481,14 +1501,14 @@ ng_l2cap_l2ca_discon_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 
 	ip = (ng_l2cap_l2ca_discon_ip *)(msg->data);
 
-	if(ip->idtype == NG_L2CAP_L2CA_IDTYPE_ATT){
+	if (ip->idtype == NG_L2CAP_L2CA_IDTYPE_ATT) {
 		/* Don't send Disconnect request on L2CAP Layer*/
 		ch = ng_l2cap_chan_by_conhandle(l2cap, NG_L2CAP_ATT_CID,
 			ip->lcid);
-		
-		if(ch != NULL){
+
+		if (ch != NULL) {
 			ng_l2cap_free_chan(ch);
-		}else{
+		} else {
 		NG_L2CAP_ERR(
 "%s: %s - unexpected L2CA_Disconnect request message. " \
 "Channel does not exist, conhandle=%d\n",
@@ -1496,14 +1516,14 @@ ng_l2cap_l2ca_discon_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 			error = EINVAL;
 		}
 		goto out;
-	}else if(ip->idtype == NG_L2CAP_L2CA_IDTYPE_SMP){
+	} else if (ip->idtype == NG_L2CAP_L2CA_IDTYPE_SMP) {
 		/* Don't send Disconnect request on L2CAP Layer*/
 		ch = ng_l2cap_chan_by_conhandle(l2cap, NG_L2CAP_SMP_CID,
 			ip->lcid);
-		
-		if(ch != NULL){
+
+		if (ch != NULL) {
 			ng_l2cap_free_chan(ch);
-		}else{
+		} else {
 		NG_L2CAP_ERR(
 "%s: %s - unexpected L2CA_Disconnect request message. " \
 "Channel does not exist, conhandle=%d\n",
@@ -1511,7 +1531,7 @@ ng_l2cap_l2ca_discon_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 			error = EINVAL;
 		}
 		goto out;
-	}else{
+	} else {
 		/* Check if we have this channel */
 		ch = ng_l2cap_chan_by_scid(l2cap, ip->lcid, ip->idtype);
 	}
@@ -1638,8 +1658,13 @@ ng_l2cap_l2ca_discon_ind(ng_l2cap_chan_p ch)
 		error = ENOMEM;
 	else {
 		ip = (ng_l2cap_l2ca_discon_ind_ip *)(msg->data);
-		ip->idtype = ch->idtype;
-		if(ch->idtype == NG_L2CAP_L2CA_IDTYPE_ATT||
+		if (ch->idtype == NG_L2CAP_L2CA_IDTYPE_ECBFC)
+			ip->idtype = (ch->con->linktype == NG_HCI_LINK_ACL) ?
+			    NG_L2CAP_L2CA_IDTYPE_BREDR :
+			    NG_L2CAP_L2CA_IDTYPE_LE;
+		else
+			ip->idtype = ch->idtype;
+		if (ch->idtype == NG_L2CAP_L2CA_IDTYPE_ATT ||
 		   ch->idtype == NG_L2CAP_L2CA_IDTYPE_SMP)
 			ip->lcid = ch->con->con_handle;
 		else
@@ -1650,73 +1675,6 @@ ng_l2cap_l2ca_discon_ind(ng_l2cap_chan_p ch)
 
 	return (error);
 } /* ng_l2cap_l2ca_discon_ind */
-
-/*
- * Process L2CA_GroupCreate request from the upper layer protocol.
- * XXX FIXME
- */
-
-int
-ng_l2cap_l2ca_grp_create(ng_l2cap_p l2cap, struct ng_mesg *msg)
-{
-	return (ENOTSUP);
-} /* ng_l2cap_l2ca_grp_create */
-
-/*
- * Process L2CA_GroupClose request from the upper layer protocol
- * XXX FIXME
- */
-
-int
-ng_l2cap_l2ca_grp_close(ng_l2cap_p l2cap, struct ng_mesg *msg)
-{
-	return (ENOTSUP);
-} /* ng_l2cap_l2ca_grp_close */
-
-/*
- * Process L2CA_GroupAddMember request from the upper layer protocol.
- * XXX FIXME
- */
-
-int
-ng_l2cap_l2ca_grp_add_member_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
-{
-	return (ENOTSUP);
-} /* ng_l2cap_l2ca_grp_add_member_req */
-
-/*
- * Send L2CA_GroupAddMember response to the upper layer protocol.
- * XXX FIXME
- */
-
-int
-ng_l2cap_l2ca_grp_add_member_rsp(ng_l2cap_chan_p ch, u_int32_t token,
-		u_int16_t result)
-{
-	return (0);
-} /* ng_l2cap_l2ca_grp_add_member_rsp */
-
-/*
- * Process L2CA_GroupDeleteMember request from the upper layer protocol
- * XXX FIXME
- */
-
-int
-ng_l2cap_l2ca_grp_rem_member(ng_l2cap_p l2cap, struct ng_mesg *msg)
-{
-	return (ENOTSUP);
-} /* ng_l2cap_l2ca_grp_rem_member */
-
-/*
- * Process L2CA_GroupGetMembers request from the upper layer protocol
- * XXX FIXME
- */
-
-int
-ng_l2cap_l2ca_grp_get_members(ng_l2cap_p l2cap, struct ng_mesg *msg)
-{
-	return (ENOTSUP);
-} /* ng_l2cap_l2ca_grp_get_members */
 
 /*
  * Process L2CA_Ping request from the upper layer protocol
@@ -1741,6 +1699,14 @@ ng_l2cap_l2ca_ping_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 	}
 
 	ip = (ng_l2cap_l2ca_ping_ip *)(msg->data);
+	if (msg->header.arglen < sizeof(*ip) + ip->echo_size) {
+		NG_L2CAP_ALERT(
+"%s: %s - L2CA_Ping request echo data overflows message, arglen=%d, echo_size=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node),
+			msg->header.arglen, ip->echo_size);
+		error = EMSGSIZE;
+		goto out;
+	}
 	if (ip->echo_size > NG_L2CAP_MAX_ECHO_SIZE) {
 		NG_L2CAP_WARN(
 "%s: %s - invalid L2CA_Ping request. Echo size is too big, echo_size=%d\n",
@@ -1977,11 +1943,6 @@ ng_l2cap_l2ca_enable_clt(ng_l2cap_p l2cap, struct ng_mesg *msg)
 {
 	ng_l2cap_l2ca_enable_clt_ip	*ip = NULL;
 	int				 error = 0;
-#if 0
- *	ng_l2cap_l2ca_enable_clt_op	*op = NULL;
- *	u_int16_t			 result; 
- * 	u_int32_t			 token;
-#endif
 
 	/* Check message */
 	if (msg->header.arglen != sizeof(*ip)) {
@@ -1995,9 +1956,6 @@ ng_l2cap_l2ca_enable_clt(ng_l2cap_p l2cap, struct ng_mesg *msg)
 
 	/* Process request */
 	ip = (ng_l2cap_l2ca_enable_clt_ip *) (msg->data);
-#if 0
- *	result = NG_L2CAP_SUCCESS;
-#endif
 
 	switch (ip->psm) 
 	{
@@ -2037,33 +1995,9 @@ ng_l2cap_l2ca_enable_clt(ng_l2cap_p l2cap, struct ng_mesg *msg)
 	default:
 		NG_L2CAP_ERR(
 "%s: %s - unsupported PSM=%d\n", __func__, NG_NODE_NAME(l2cap->node), ip->psm);
-#if 0
- *		result = NG_L2CAP_PSM_NOT_SUPPORTED;
-#endif
 		error = ENOTSUP;
 		break;
 	}
-
-#if 0
- *	/* Create and send response message */
- * 	token = msg->header.token;
- * 	NG_FREE_MSG(msg);
- * 	NG_MKMESSAGE(msg, NGM_L2CAP_COOKIE, NGM_L2CAP_L2CA_ENABLE_CLT,
- * 		sizeof(*op), M_NOWAIT);
- * 	if (msg == NULL)
- * 		error = ENOMEM;
- * 	else {
- * 		msg->header.token = token;
- * 		msg->header.flags |= NGF_RESP;
- * 
- * 		op = (ng_l2cap_l2ca_enable_clt_op *)(msg->data);
- * 		op->result = result;
- * 	}
- * 
- * 	/* Send response to control hook */
- * 	if (l2cap->ctl != NULL && NG_HOOK_IS_VALID(l2cap->ctl))
- * 		NG_SEND_MSG_HOOK(error, l2cap->node, msg, l2cap->ctl, 0);
-#endif
 
 	return (error);
 } /* ng_l2cap_l2ca_enable_clt */

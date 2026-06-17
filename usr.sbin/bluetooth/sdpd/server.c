@@ -569,8 +569,10 @@ server_close_fd(server_p srv, int32_t fd)
 	close(fd);
 
 	FD_CLR(fd, &srv->fdset);
-	if (fd == srv->maxfd)
-		srv->maxfd --;
+	if (fd == srv->maxfd) {
+		while (srv->maxfd > 0 && !FD_ISSET(srv->maxfd, &srv->fdset))
+			srv->maxfd--;
+	}
 
 	if (srv->fdidx[fd].rsp != NULL)
 		free(srv->fdidx[fd].rsp);

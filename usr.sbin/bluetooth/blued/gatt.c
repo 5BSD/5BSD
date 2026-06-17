@@ -63,9 +63,26 @@ gatt_discover_primary_services(struct att_conn *ac,
 			s->end_handle = get_le16(p + 2);
 
 			if (entry_len == 6) {
+				/* 16-bit UUID */
 				s->uuid16 = get_le16(p + 4);
 				memset(s->uuid128, 0, 16);
+			} else if (entry_len == 8) {
+				/* 32-bit UUID — collapse to 16-bit if possible */
+				uint32_t u32 = (uint32_t)p[4] |
+				    ((uint32_t)p[5] << 8) |
+				    ((uint32_t)p[6] << 16) |
+				    ((uint32_t)p[7] << 24);
+				if ((u32 & 0xFFFF0000) == 0) {
+					s->uuid16 = (uint16_t)u32;
+					memset(s->uuid128, 0, 16);
+				} else {
+					s->uuid16 = 0;
+					memcpy(s->uuid128,
+					    bt_base_uuid_le, 12);
+					memcpy(s->uuid128 + 12, p + 4, 4);
+				}
 			} else if (entry_len == 20) {
+				/* 128-bit UUID */
 				s->uuid16 = 0;
 				memcpy(s->uuid128, p + 4, 16);
 			} else {
@@ -136,9 +153,26 @@ gatt_discover_characteristics(struct att_conn *ac,
 			c->value_handle = get_le16(p + 3);
 
 			if (entry_len == 7) {
+				/* 16-bit UUID */
 				c->uuid16 = get_le16(p + 5);
 				memset(c->uuid128, 0, 16);
+			} else if (entry_len == 9) {
+				/* 32-bit UUID — collapse to 16-bit if possible */
+				uint32_t u32 = (uint32_t)p[5] |
+				    ((uint32_t)p[6] << 8) |
+				    ((uint32_t)p[7] << 16) |
+				    ((uint32_t)p[8] << 24);
+				if ((u32 & 0xFFFF0000) == 0) {
+					c->uuid16 = (uint16_t)u32;
+					memset(c->uuid128, 0, 16);
+				} else {
+					c->uuid16 = 0;
+					memcpy(c->uuid128,
+					    bt_base_uuid_le, 12);
+					memcpy(c->uuid128 + 12, p + 5, 4);
+				}
 			} else if (entry_len == 21) {
+				/* 128-bit UUID */
 				c->uuid16 = 0;
 				memcpy(c->uuid128, p + 5, 16);
 			} else {

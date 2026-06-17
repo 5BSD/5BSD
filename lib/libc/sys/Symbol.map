@@ -77,4 +77,5 @@ FBSD_1.9 {
 	cap_xfer_limit;
 	cap_cloexec_limit;
 	cap_clofork_limit;
+	cap_ambient_limit;
 };

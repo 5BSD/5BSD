@@ -1,0 +1,40 @@
+#!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+# All rights reserved.
+#
+
+# PROVIDE: blued
+# REQUIRE: DAEMON bluetooth
+# BEFORE: LOGIN
+# KEYWORD: nojail shutdown
+
+. /etc/rc.subr
+
+name="blued"
+desc="Bluetooth Low Energy daemon"
+rcvar="blued_enable"
+command="/usr/sbin/${name}"
+pidfile="/var/run/${name}.pid"
+required_modules="ng_ubt ng_btsocket"
+start_precmd="blued_prestart"
+
+blued_prestart()
+{
+	if [ ! -d /var/db/blued ]; then
+		mkdir -p /var/db/blued
+		chmod 0700 /var/db/blued
+	fi
+}
+
+load_rc_config $name
+: ${blued_enable:="NO"}
+: ${blued_config:="/etc/blued.conf"}
+command_args="-B -c ${blued_config}"
+
+# doesn't make sense to run in a svcj: nojail keyword
+blued_svcj="NO"
+
+run_rc_command "$1"

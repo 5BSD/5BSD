@@ -43,6 +43,7 @@
 #define BLUETOOTH_PROTO_L2CAP	135	/* L2CAP protocol number */
 #define BLUETOOTH_PROTO_RFCOMM	136	/* RFCOMM protocol number */
 #define BLUETOOTH_PROTO_SCO	137	/* SCO protocol number */
+#define BLUETOOTH_PROTO_ISO	138	/* ISO protocol number */
 
 /*
  * Bluetooth version of struct sockaddr for raw HCI sockets
@@ -218,6 +219,24 @@ struct sockaddr_sco {
 #define SO_SCO_CONNINFO	2		/* get HCI connection handle */
 
 /*
+ * Bluetooth version of struct sockaddr for ISO sockets (SEQPACKET)
+ */
+
+struct sockaddr_iso {
+	u_int8_t	iso_len;	/* total length */
+	u_int8_t	iso_family;	/* AF_BLUETOOTH */
+	u_int16_t	iso_cis_handle;	/* CIS/BIS connection handle */
+	bdaddr_t	iso_bdaddr;	/* remote BD_ADDR */
+	u_int8_t	iso_bdaddr_type; /* address type */
+};
+
+/* ISO socket options */
+#define SOL_ISO		0x020a		/* socket options level */
+
+#define SO_ISO_MTU	1		/* get max ISO SDU size */
+#define SO_ISO_CONNINFO	2		/* get CIS/BIS connection handle */
+
+/*
  * XXX FIXME: probably does not belong here
  * Bluetooth version of struct sockaddr for L2CAP sockets (RAW and SEQPACKET)
  */
@@ -234,8 +253,8 @@ struct sockaddr_l2cap {
 	u_char		l2cap_family;	/* address family */
 	u_int16_t	l2cap_psm;	/* PSM (Protocol/Service Multiplexor) */
 	bdaddr_t	l2cap_bdaddr;	/* address */
-	u_int16_t	l2cap_cid;      /*cid*/
-	u_int8_t	l2cap_bdaddr_type; /*address type*/
+	u_int16_t	l2cap_cid;	/* cid */
+	u_int8_t	l2cap_bdaddr_type; /* address type */
 };
 
 #if !defined(L2CAP_SOCKET_CHECKED) && !defined(_KERNEL)
@@ -250,7 +269,7 @@ struct sockaddr_l2cap {
 #define SO_L2CAP_IFLOW		3	/* get incoming flow spec. */
 #define SO_L2CAP_OFLOW		4	/* get/set outgoing flow spec. */
 #define SO_L2CAP_FLUSH		5	/* get/set flush timeout */
-#define SO_L2CAP_ENCRYPTED      6      /* get/set whether wait for encryptin on connect */
+#define SO_L2CAP_ENCRYPTED      6      /* get/set whether wait for encryption on connect */
 /*
  * Raw L2CAP sockets ioctl's
  */
@@ -361,6 +380,7 @@ struct ng_btsocket_rfcomm_fc_info {
 #define	NG_BTSOCKET_L2CAP_RAW_NODE_TYPE	"btsock_l2c_raw"
 #define	NG_BTSOCKET_L2CAP_NODE_TYPE	"btsock_l2c"
 #define	NG_BTSOCKET_SCO_NODE_TYPE	"btsock_sco"
+#define	NG_BTSOCKET_ISO_NODE_TYPE	"btsock_iso"
 
 /*
  * Debug levels 

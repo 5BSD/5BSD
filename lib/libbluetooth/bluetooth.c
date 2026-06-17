@@ -279,7 +279,9 @@ bt_ntoa(bdaddr_t const *ba, char *str)
 	if (str == NULL)
 		str = buffer;
 
-	sprintf(str, "%2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x",
+	/* Output is exactly 17 chars + NUL = 18 bytes;
+	 * static buffer is 24 bytes, callers must provide >= 18 bytes */
+	snprintf(str, 18, "%2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x",
 		ba->b[5], ba->b[4], ba->b[3], ba->b[2], ba->b[1], ba->b[0]);
 
 	return (str);

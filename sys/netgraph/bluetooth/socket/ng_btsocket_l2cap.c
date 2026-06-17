@@ -62,6 +62,31 @@
 #include <netgraph/bluetooth/include/ng_btsocket.h>
 #include <netgraph/bluetooth/include/ng_btsocket_l2cap.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(bluetooth);
+
+/* Socket layer probes for L2CAP */
+SDT_PROBE_DEFINE2(bluetooth, socket, connect, l2cap,
+    "uint16_t",		/* cid */
+    "uint16_t"		/* psm */
+);
+
+SDT_PROBE_DEFINE2(bluetooth, socket, disconnect, l2cap,
+    "uint16_t",		/* cid */
+    "uint16_t"		/* psm */
+);
+
+SDT_PROBE_DEFINE2(bluetooth, socket, send, l2cap,
+    "uint16_t",		/* cid */
+    "int"		/* length */
+);
+
+SDT_PROBE_DEFINE2(bluetooth, socket, recv, l2cap,
+    "uint16_t",		/* cid */
+    "int"		/* length */
+);
+
 /* MALLOC define */
 #ifdef NG_SEPARATE_MALLOC
 static MALLOC_DEFINE(M_NETGRAPH_BTSOCKET_L2CAP, "netgraph_btsocks_l2cap",
@@ -109,6 +134,7 @@ static struct mtx				ng_btsocket_l2cap_rt_mtx;
 static struct task				ng_btsocket_l2cap_rt_task;
 static struct timeval				ng_btsocket_l2cap_lasttime;
 static int					ng_btsocket_l2cap_curpps;
+static u_int32_t				ng_btsocket_l2cap_token;
 
 /* Sysctl tree */
 SYSCTL_DECL(_net_bluetooth_l2cap_sockets);
@@ -223,9 +249,10 @@ static int ng_btsock_l2cap_addrtype_to_linktype(int addrtype);
 #define ng_btsocket_l2cap_wakeup_route_task() \
 	taskqueue_enqueue(taskqueue_swi_giant, &ng_btsocket_l2cap_rt_task)
 
-int ng_btsock_l2cap_addrtype_to_linktype(int addrtype)
+static int
+ng_btsock_l2cap_addrtype_to_linktype(int addrtype)
 {
-	switch(addrtype){
+	switch (addrtype) {
 	case BDADDR_LE_PUBLIC:
 		return NG_HCI_LINK_LE_PUBLIC;
 	case BDADDR_LE_RANDOM:
@@ -469,14 +496,16 @@ ng_btsocket_l2cap_process_l2ca_con_req_rsp(struct ng_mesg *msg,
 			pcb->cid = op->lcid;
 			/* LE fixed channels use 23-byte default MTU */
 			pcb->imtu = pcb->omtu = NG_L2CAP_MTU_LE_MINIMUM;
-			if(pcb->need_encrypt && !(pcb->encryption)){
+			if (pcb->need_encrypt && !(pcb->encryption)) {
 				ng_btsocket_l2cap_timeout(pcb);
 				pcb->state = NG_BTSOCKET_L2CAP_W4_ENC_CHANGE;
-			}else{
+			} else {
 				pcb->state = NG_BTSOCKET_L2CAP_OPEN;
+				SDT_PROBE2(bluetooth, socket, connect, l2cap,
+				    pcb->cid, pcb->psm);
 				soisconnected(pcb->so);
 			}
-		}else if(pcb->idtype == NG_L2CAP_L2CA_IDTYPE_LE){
+		} else if (pcb->idtype == NG_L2CAP_L2CA_IDTYPE_LE) {
 			/*
 			 * LE CoC channel is open.  The L2CAP layer has
 			 * already negotiated MTU/MPS/credits; the lcid
@@ -485,10 +514,12 @@ ng_btsocket_l2cap_process_l2ca_con_req_rsp(struct ng_mesg *msg,
 			pcb->encryption = op->encryption;
 			pcb->cid = op->lcid;
 			pcb->state = NG_BTSOCKET_L2CAP_OPEN;
+			SDT_PROBE2(bluetooth, socket, connect, l2cap,
+			    pcb->cid, pcb->psm);
 			soisconnected(pcb->so);
-		}else{
+		} else {
 			/*
-			 * Channel is now open, so update local channel ID and 
+			 * Channel is now open, so update local channel ID and
 			 * start configuration process. Source and destination
 			 * addresses as well as route must be already set.
 			 */
@@ -730,7 +761,7 @@ respond:
 
 	return (error);
 } /* ng_btsocket_l2cap_process_l2ca_con_ind */
-/*Encryption Change*/
+/* Encryption Change */
 static int ng_btsocket_l2cap_process_l2ca_enc_change(struct ng_mesg *msg, ng_btsocket_l2cap_rtentry_p rt)
 {
 	ng_l2cap_l2ca_enc_chg_op	*op = NULL;
@@ -753,15 +784,15 @@ static int ng_btsocket_l2cap_process_l2ca_enc_change(struct ng_mesg *msg, ng_bts
 	mtx_lock(&pcb->pcb_mtx);
 	pcb->encryption = op->result;
 
-	if(pcb->need_encrypt){
-		ng_btsocket_l2cap_untimeout(pcb);		
-		if(pcb->state != NG_BTSOCKET_L2CAP_W4_ENC_CHANGE){
+	if (pcb->need_encrypt) {
+		ng_btsocket_l2cap_untimeout(pcb);
+		if (pcb->state != NG_BTSOCKET_L2CAP_W4_ENC_CHANGE) {
 			NG_BTSOCKET_L2CAP_WARN("%s: Invalid pcb status %d",
 					       __func__, pcb->state);
-		}else if(pcb->encryption){
+		} else if (pcb->encryption) {
 			pcb->state = NG_BTSOCKET_L2CAP_OPEN;
 			soisconnected(pcb->so);
-		}else{
+		} else {
 			pcb->so->so_error = EPERM;
 			ng_btsocket_l2cap_send_l2ca_discon_req(0, pcb);
 			pcb->state = NG_BTSOCKET_L2CAP_CLOSED;
@@ -771,7 +802,7 @@ static int ng_btsocket_l2cap_process_l2ca_enc_change(struct ng_mesg *msg, ng_bts
 	mtx_unlock(&pcb->pcb_mtx);
 	mtx_unlock(&ng_btsocket_l2cap_sockets_mtx);
 
-	return 0;
+	return (0);
 }
 /*
  * Process L2CA_Config response
@@ -1176,6 +1207,9 @@ ng_btsocket_l2cap_process_l2ca_discon_ind(struct ng_mesg *msg,
 	if (pcb->flags & NG_BTSOCKET_L2CAP_TIMO)
 		ng_btsocket_l2cap_untimeout(pcb);
 
+	SDT_PROBE2(bluetooth, socket, disconnect, l2cap,
+	    pcb->cid, pcb->psm);
+
 	pcb->state = NG_BTSOCKET_L2CAP_CLOSED;
 	soisdisconnected(pcb->so);
 
@@ -1493,6 +1527,9 @@ ng_btsocket_l2cap_data_input(struct mbuf *m, hook_p hook)
 			__func__, m->m_pkthdr.len, hdr->length);
 		goto drop;
 	}
+
+	SDT_PROBE2(bluetooth, socket, recv, l2cap,
+	    hdr->dcid, hdr->length);
 
 	/*
 	 * Now process packet. Two cases:
@@ -2021,7 +2058,6 @@ ng_btsocket_l2cap_close(struct socket *so)
 int
 ng_btsocket_l2cap_attach(struct socket *so, int proto, struct thread *td)
 {
-	static u_int32_t	token = 0;
 	ng_btsocket_l2cap_pcb_p	pcb = so2l2cap_pcb(so);
 	int			error;
 
@@ -2030,12 +2066,6 @@ ng_btsocket_l2cap_attach(struct socket *so, int proto, struct thread *td)
 		return (EPROTONOSUPPORT);
 	if (so->so_type != SOCK_SEQPACKET)
 		return (ESOCKTNOSUPPORT);
-
-#if 0 /* XXX sonewconn() calls pr_attach() with proto == 0 */
-	if (proto != 0) 
-		if (proto != BLUETOOTH_PROTO_L2CAP)
-			return (EPROTONOSUPPORT);
-#endif /* XXX */
 
 	if (pcb != NULL)
 		return (EISCONN);
@@ -2112,10 +2142,10 @@ ng_btsocket_l2cap_attach(struct socket *so, int proto, struct thread *td)
 		mtx_assert(&ng_btsocket_l2cap_sockets_mtx, MA_OWNED);
 
 	/* Set PCB token. Use ng_btsocket_l2cap_sockets_mtx for protection */
-	if (++ token == 0)
-		token ++;
+	if (++ ng_btsocket_l2cap_token == 0)
+		ng_btsocket_l2cap_token ++;
 
-	pcb->token = token;
+	pcb->token = ng_btsocket_l2cap_token;
 
 	LIST_INSERT_HEAD(&ng_btsocket_l2cap_sockets, pcb, next);
 
@@ -2246,17 +2276,19 @@ ng_btsocket_l2cap_connect(struct socket *so, struct sockaddr *nam,
 		return EINVAL;
 	if (bcmp(&sa->l2cap_bdaddr, NG_HCI_BDADDR_ANY, sizeof(bdaddr_t)) == 0)
 		return (EDESTADDRREQ);
-	if((sa->l2cap_bdaddr_type == BDADDR_BREDR)&&
+	if ((sa->l2cap_bdaddr_type == BDADDR_BREDR) &&
 	   (sa->l2cap_psm == 0))
 		return EDESTADDRREQ;
-	if(sa->l2cap_bdaddr_type != BDADDR_BREDR){
-		if(sa->l2cap_cid == NG_L2CAP_ATT_CID){
+	if (sa->l2cap_bdaddr_type != BDADDR_BREDR) {
+		u_int16_t cid = le16toh(sa->l2cap_cid);
+
+		if (cid == NG_L2CAP_ATT_CID) {
 			idtype = NG_L2CAP_L2CA_IDTYPE_ATT;
-		}else if (sa->l2cap_cid == NG_L2CAP_SMP_CID){
+		} else if (cid == NG_L2CAP_SMP_CID) {
 			idtype = NG_L2CAP_L2CA_IDTYPE_SMP;
-		}else if (sa->l2cap_psm != 0){
+		} else if (le16toh(sa->l2cap_psm) != 0) {
 			idtype = NG_L2CAP_L2CA_IDTYPE_LE;
-		}else{
+		} else {
 			return EINVAL;
 		}
 	}
@@ -2433,16 +2465,11 @@ ng_btsocket_l2cap_ctloutput(struct socket *so, struct sockopt *sopt)
 			if (error == 0)
 				pcb->flush_timo = v.flush_timo;
 			break;
-		case SO_L2CAP_ENCRYPTED: /*set connect encryption opt*/
-			if((pcb->state != NG_BTSOCKET_L2CAP_OPEN) &&
-			   (pcb->state != NG_BTSOCKET_L2CAP_W4_ENC_CHANGE)){
-				error = sooptcopyin(sopt, &v, sizeof(v),
-						    sizeof(v.encryption));
-				if(error == 0)
-					pcb->need_encrypt = (v.encryption)?1:0;
-			}else{
-				error = EINVAL;
-			}
+		case SO_L2CAP_ENCRYPTED:
+			error = sooptcopyin(sopt, &v, sizeof(v),
+					    sizeof(v.encryption));
+			if (error == 0)
+				pcb->need_encrypt = (v.encryption) ? 1 : 0;
 			break;
 		default:
 			error = ENOPROTOOPT;
@@ -2600,6 +2627,7 @@ ng_btsocket_l2cap_peeraddr(struct socket *so, struct sockaddr *sa)
 	if (ng_btsocket_l2cap_node == NULL) 
 		return (EINVAL);
 
+	mtx_lock(&pcb->pcb_mtx);
 	*l2cap = (struct sockaddr_l2cap ){
 		.l2cap_len = sizeof(struct sockaddr_l2cap),
 		.l2cap_family = AF_BLUETOOTH,
@@ -2618,6 +2646,7 @@ ng_btsocket_l2cap_peeraddr(struct socket *so, struct sockaddr *sa)
 		break;
 	}
 	l2cap->l2cap_bdaddr_type = pcb->dsttype;
+	mtx_unlock(&pcb->pcb_mtx);
 
 	return (0);
 }
@@ -2684,6 +2713,9 @@ ng_btsocket_l2cap_send(struct socket *so, int flags, struct mbuf *m,
 	 * packet and schedule timeout. Otherwise do nothing and wait for
 	 * L2CA_WRITE_RSP.
 	 */
+
+	SDT_PROBE2(bluetooth, socket, send, l2cap,
+	    pcb->cid, m->m_pkthdr.len);
 
 	sbappendrecord(&pcb->so->so_snd, m);
 	m = NULL;
@@ -2771,6 +2803,7 @@ ng_btsocket_l2cap_sockaddr(struct socket *so, struct sockaddr *sa)
 	if (ng_btsocket_l2cap_node == NULL) 
 		return (EINVAL);
 
+	mtx_lock(&pcb->pcb_mtx);
 	*l2cap = (struct sockaddr_l2cap ){
 		.l2cap_len = sizeof(struct sockaddr_l2cap),
 		.l2cap_family = AF_BLUETOOTH,
@@ -2786,6 +2819,7 @@ ng_btsocket_l2cap_sockaddr(struct socket *so, struct sockaddr *sa)
 		l2cap->l2cap_cid = htole16(NG_L2CAP_SMP_CID);
 		break;
 	}
+	mtx_unlock(&pcb->pcb_mtx);
 
 	return (0);
 }
@@ -3027,7 +3061,7 @@ ng_btsocket_l2cap_result2errno(int result)
 	case 0x0c: /* Command disallowed */
 		return (EBUSY);
 
-	case 0x0d: /* Host rejected due to limited resources */
+	case NG_HCI_ERROR_REJECTED_LIMITED_RESOURCES:
 	case 0x0e: /* Host rejected due to securiity reasons */
 	case 0x0f: /* Host rejected due to remote unit is a personal unit */
 	case 0x1b: /* SCO offset rejected */
@@ -3037,7 +3071,7 @@ ng_btsocket_l2cap_result2errno(int result)
 
 	case 0x11: /* Unsupported feature or parameter value */
 	case 0x19: /* Unknown LMP PDU */
-	case 0x1a: /* Unsupported remote feature */
+	case NG_HCI_ERROR_UNSUPPORTED_REMOTE_FEATURE:
 	case 0x20: /* Unsupported LMP parameter value */
 	case 0x27: /* QoS is not supported */
 	case 0x29: /* Paring with unit key not supported */
@@ -3047,17 +3081,17 @@ ng_btsocket_l2cap_result2errno(int result)
 	case 0x1e: /* Invalid LMP parameters */
 		return (EINVAL);
 
-	case 0x13: /* Other end terminated connection: User ended connection */
+	case NG_HCI_ERROR_USER_ENDED_CON:
 	case 0x14: /* Other end terminated connection: Low resources */
 	case 0x15: /* Other end terminated connection: About to power off */
 		return (ECONNRESET);
 
-	case 0x16: /* Connection terminated by local host */
+	case NG_HCI_ERROR_CON_TERM_LOCAL_HOST:
 		return (ECONNABORTED);
 
 #if 0 /* XXX not yet */
 	case 0x17: /* Repeated attempts */
-	case 0x1f: /* Unspecified error */
+	case NG_HCI_ERROR_UNSPECIFIED:
 	case 0x23: /* LMP error transaction collision */
 	case 0x28: /* Instant passed */
 #endif

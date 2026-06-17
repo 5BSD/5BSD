@@ -298,11 +298,16 @@ sdp_print(uint32_t level, uint8_t const *start, uint8_t const *end)
 
 	if (start == NULL || end == NULL)
 		return;
+	if (level > 32) {
+		printf("... (max nesting depth exceeded)\n");
+		return;
+	}
 
 	while (start < end) {
 		for (i = 0; i < level; i++)
 			printf("\t");
 
+		if (start + 1 > end) return;
 		SDP_GET8(type, start);
 
 		switch (type) {
@@ -311,24 +316,29 @@ sdp_print(uint32_t level, uint8_t const *start, uint8_t const *end)
 			break;
 
 		case SDP_DATA_UINT8:
+			if (start + 1 > end) return;
 			SDP_GET8(value.uint8, start);
 			printf("uint8 %u\n", value.uint8);
 			break;
 		case SDP_DATA_UINT16:
+			if (start + 2 > end) return;
 			SDP_GET16(value.uint16, start);
 			printf("uint16 %u\n", value.uint16);
 			break;
 		case SDP_DATA_UINT32:
+			if (start + 4 > end) return;
 			SDP_GET32(value.uint32, start);
 			printf("uint32 %u\n", value.uint32);
 			break;
 		case SDP_DATA_UINT64:
+			if (start + 8 > end) return;
 			SDP_GET64(value.uint64, start);
 			printf("uint64 %ju\n", value.uint64);
 			break;
 
 		case SDP_DATA_UINT128:
 		case SDP_DATA_INT128:
+			if (start + 16 > end) return;
 			SDP_GET128(&value.int128, start);
 			printf("u/int128 %#8.8x%8.8x%8.8x%8.8x\n",
 				*(uint32_t *)&value.int128.b[0],
@@ -338,6 +348,7 @@ sdp_print(uint32_t level, uint8_t const *start, uint8_t const *end)
 			break;
 
 		case SDP_DATA_UUID128:
+			if (start + 16 > end) return;
 			SDP_GET_UUID128(&value.int128, start);
 			printf("uuid128 %#8.8x-%4.4x-%4.4x-%4.4x-%4.4x%8.8x\n",
 				ntohl(*(uint32_t *)&value.int128.b[0]),
@@ -349,107 +360,138 @@ sdp_print(uint32_t level, uint8_t const *start, uint8_t const *end)
 			break;
 
 		case SDP_DATA_INT8:
+			if (start + 1 > end) return;
 			SDP_GET8(value.int8, start);
 			printf("int8 %d\n", value.int8);
 			break;
 		case SDP_DATA_INT16:
+			if (start + 2 > end) return;
 			SDP_GET16(value.int16, start);
 			printf("int16 %d\n", value.int16);
 			break;
 		case SDP_DATA_INT32:
+			if (start + 4 > end) return;
 			SDP_GET32(value.int32, start);
 			printf("int32 %d\n", value.int32);
 			break;
 		case SDP_DATA_INT64:
+			if (start + 8 > end) return;
 			SDP_GET64(value.int64, start);
 			printf("int64 %ju\n", value.int64);
 			break;
-	
+
 		case SDP_DATA_UUID16:
+			if (start + 2 > end) return;
 			SDP_GET16(value.uint16, start);
 			printf("uuid16 %#4.4x - %s\n", value.uint16,
 				sdp_uuid2desc(value.uint16));
 			break;
 		case SDP_DATA_UUID32:
+			if (start + 4 > end) return;
 			SDP_GET32(value.uint32, start);
 			printf("uuid32 %#8.8x\n", value.uint32);
 			break;
 
 		case SDP_DATA_STR8:
+			if (start + 1 > end) return;
 			SDP_GET8(value.uint8, start);
+			if (value.uint8 > (uint32_t)(end - start)) return;
 			printf("str8 %*.*s\n", value.uint8, value.uint8, start);
 			start += value.uint8;
 			break;
 		case SDP_DATA_STR16:
+			if (start + 2 > end) return;
 			SDP_GET16(value.uint16, start);
+			if (value.uint16 > (uint32_t)(end - start)) return;
 			printf("str16 %*.*s\n", value.uint16, value.uint16, start);
 			start += value.uint16;
 			break;
 		case SDP_DATA_STR32:
+			if (start + 4 > end) return;
 			SDP_GET32(value.uint32, start);
+			if (value.uint32 > (uint32_t)(end - start)) return;
 			printf("str32 %*.*s\n", value.uint32, value.uint32, start);
 			start += value.uint32;
 			break;
 
 		case SDP_DATA_BOOL:
+			if (start + 1 > end) return;
 			SDP_GET8(value.uint8, start);
 			printf("bool %d\n", value.uint8);
 			break;
 
 		case SDP_DATA_SEQ8:
+			if (start + 1 > end) return;
 			SDP_GET8(value.uint8, start);
+			if (value.uint8 > (uint32_t)(end - start)) return;
 			printf("seq8 %d\n", value.uint8);
 			sdp_print(level + 1, start, start + value.uint8);
 			start += value.uint8;
 			break;
 		case SDP_DATA_SEQ16:
+			if (start + 2 > end) return;
 			SDP_GET16(value.uint16, start);
+			if (value.uint16 > (uint32_t)(end - start)) return;
 			printf("seq16 %d\n", value.uint16);
 			sdp_print(level + 1, start, start + value.uint16);
 			start += value.uint16;
 			break;
 		case SDP_DATA_SEQ32:
+			if (start + 4 > end) return;
 			SDP_GET32(value.uint32, start);
+			if (value.uint32 > (uint32_t)(end - start)) return;
 			printf("seq32 %d\n", value.uint32);
 			sdp_print(level + 1, start, start + value.uint32);
 			start += value.uint32;
 			break;
 
 		case SDP_DATA_ALT8:
+			if (start + 1 > end) return;
 			SDP_GET8(value.uint8, start);
+			if (value.uint8 > (uint32_t)(end - start)) return;
 			printf("alt8 %d\n", value.uint8);
 			sdp_print(level + 1, start, start + value.uint8);
 			start += value.uint8;
 			break;
 		case SDP_DATA_ALT16:
+			if (start + 2 > end) return;
 			SDP_GET16(value.uint16, start);
+			if (value.uint16 > (uint32_t)(end - start)) return;
 			printf("alt16 %d\n", value.uint16);
 			sdp_print(level + 1, start, start + value.uint16);
 			start += value.uint16;
 			break;
 		case SDP_DATA_ALT32:
+			if (start + 4 > end) return;
 			SDP_GET32(value.uint32, start);
+			if (value.uint32 > (uint32_t)(end - start)) return;
 			printf("alt32 %d\n", value.uint32);
 			sdp_print(level + 1, start, start + value.uint32);
 			start += value.uint32;
 			break;
 
 		case SDP_DATA_URL8:
+			if (start + 1 > end) return;
 			SDP_GET8(value.uint8, start);
+			if (value.uint8 > (uint32_t)(end - start)) return;
 			printf("url8 %*.*s\n", value.uint8, value.uint8, start);
 			start += value.uint8;
 			break;
 		case SDP_DATA_URL16:
+			if (start + 2 > end) return;
 			SDP_GET16(value.uint16, start);
+			if (value.uint16 > (uint32_t)(end - start)) return;
 			printf("url16 %*.*s\n", value.uint16, value.uint16, start);
 			start += value.uint16;
 			break;
 		case SDP_DATA_URL32:
+			if (start + 4 > end) return;
 			SDP_GET32(value.uint32, start);
+			if (value.uint32 > (uint32_t)(end - start)) return;
 			printf("url32 %*.*s\n", value.uint32, value.uint32, start);
 			start += value.uint32;
 			break;
-	
+
 		default:
 			printf("unknown data type: %#02x\n", *start ++);
 			break;

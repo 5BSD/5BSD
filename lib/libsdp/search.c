@@ -37,6 +37,7 @@
 #include <bluetooth.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -72,6 +73,10 @@ sdp_search(void *xss,
 	req = ss->req;
 
 	/* Calculate ServiceSearchPattern length */
+	if (plen > (UINT32_MAX / (sizeof(pp[0]) + 1))) {
+		ss->error = EINVAL;
+		return (-1);
+	}
 	plen = plen * (sizeof(pp[0]) + 1);
 
 	/* Calculate AttributeIDList length */
@@ -210,6 +215,10 @@ sdp_search(void *xss,
 		ss->tid ++;
 
 		/* Save continuation state (if any) */
+		if (xpdu.len >= (uint16_t)(len - sizeof(xpdu))) {
+			ss->error = EIO;
+			return (-1);
+		}
 		ss->cslen = rsp[0];
 		if (ss->cslen > 0) {
 			if (ss->cslen > sizeof(ss->cs)) {
@@ -318,7 +327,11 @@ sdp_search(void *xss,
 
 		/* Now rsp_tmp points to list of (attr,value) pairs */
 		for (; len > 0 && vlen > 0; vp ++, vlen --) {
-			/* Attribute */
+			/* Attribute - need 1 byte type + 2 bytes value */
+			if (rsp_tmp + 3 > rsp) {
+				ss->error = ENOATTR;
+				return (-1);
+			}
 			SDP_GET8(t, rsp_tmp);
 			if (t != SDP_DATA_UINT16) {
 				ss->error = ENOATTR;
@@ -327,6 +340,8 @@ sdp_search(void *xss,
 			SDP_GET16(vp->attr, rsp_tmp);
 
 			/* Attribute value */
+			if (rsp_tmp >= rsp)
+				break;
 			switch (rsp_tmp[0]) {
 			case SDP_DATA_NIL:
 				alen = 0;
@@ -365,6 +380,8 @@ sdp_search(void *xss,
 			case SDP_DATA_URL8:
 			case SDP_DATA_SEQ8:
 			case SDP_DATA_ALT8:
+				if (rsp_tmp + 2 > rsp)
+					break;
 				alen = rsp_tmp[1] + sizeof(uint8_t);
 				break;
 
@@ -372,6 +389,8 @@ sdp_search(void *xss,
 			case SDP_DATA_URL16:
 			case SDP_DATA_SEQ16:
 			case SDP_DATA_ALT16:
+				if (rsp_tmp + 3 > rsp)
+					break;
 				alen =	  ((uint16_t)rsp_tmp[1] << 8)
 					| ((uint16_t)rsp_tmp[2]);
 				alen += sizeof(uint16_t);
@@ -381,6 +400,8 @@ sdp_search(void *xss,
 			case SDP_DATA_URL32:
 			case SDP_DATA_SEQ32:
 			case SDP_DATA_ALT32:
+				if (rsp_tmp + 5 > rsp)
+					break;
 				alen =    ((uint32_t)rsp_tmp[1] << 24)
 					| ((uint32_t)rsp_tmp[2] << 16)
 					| ((uint32_t)rsp_tmp[3] <<  8)
@@ -395,6 +416,9 @@ sdp_search(void *xss,
 			}
 
 			alen += sizeof(uint8_t);
+
+			if (rsp_tmp + alen > rsp)
+				break;
 
 			if (vp->value != NULL) {
 				if (alen <= vp->vlen) {
