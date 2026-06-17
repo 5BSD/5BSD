@@ -72,7 +72,7 @@ main(void)
 	out = fopen("token-check.out", "w");
 	if (out == NULL) return (1);
 
-	fprintf(out, "pair_fd=%d\n", service_pair_fd());
+	fprintf(out, "channel_fd=%d\n", service_channel_fd());
 
 	token_fds = getenv("ORACLED_TOKEN_FDS");
 	if (token_fds != NULL && token_fds[0] != '\0') {
@@ -112,7 +112,7 @@ EOF
 		atf_skip "service did not start"
 	fi
 
-	atf_check -s exit:0 -o match:"pair_fd=3" cat token-check.out
+	atf_check -s exit:0 -o match:"channel_fd=3" cat token-check.out
 }
 capability_tokens_delivered_cleanup()
 {

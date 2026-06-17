@@ -215,7 +215,7 @@ SUBDIR=	\
 	cap_rt_coalition \
 	cap_rt_test_kernelstore \
 	cap_rt_test_keystore \
-	cap_rt_pair \
+	cap_rt_channel \
 	cap_rt_identity \
 	cap_rt_node \
 	cap_rt_accounting \

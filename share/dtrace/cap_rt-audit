@@ -165,26 +165,26 @@ cap_rt_acct:::deny
 	@denies["accounting", copyinstr(arg0)] = count();
 }
 
-cap_rt_pair:::state
+cap_rt_channel:::state
 {
 	printf("%-6d %-6s %-6s %-18s %-14s %-16s %-10s op=%d badge=%d err=%d\n",
-	    pid, "-", "-", "-", copyinstr(arg0), "pair", "-",
+	    pid, "-", "-", "-", copyinstr(arg0), "channel", "-",
 	    arg1, arg2, arg3);
-	@subsys["pair", copyinstr(arg0)] = count();
+	@subsys["channel", copyinstr(arg0)] = count();
 }
 
-cap_rt_pair:::create
+cap_rt_channel:::create
 {
 	printf("%-6d %-6s %-6s %-18s %-14s %-16s %-10d peer=%d\n",
-	    pid, "-", "-", "-", "pair-create", "pair", arg0, arg1);
-	@events["pair-create"] = count();
+	    pid, "-", "-", "-", "channel-create", "channel", arg0, arg1);
+	@events["channel-create"] = count();
 }
 
-cap_rt_pair:::forward
+cap_rt_channel:::forward
 {
 	printf("%-6d %-6s %-6s %-18s %-14s %-16s %-10d dst=%d len=%d\n",
-	    pid, "-", "-", "-", "pair-fwd", "pair", arg0, arg1, arg2);
-	@events["pair-forward"] = count();
+	    pid, "-", "-", "-", "channel-fwd", "channel", arg0, arg1, arg2);
+	@events["channel-forward"] = count();
 }
 
 cap_rt_coalition:::deny

@@ -2,31 +2,31 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
 .Dd June 5, 2026
-.Dt CAP_RT_PAIR 4
+.Dt CAP_RT_CHANNEL 4
 .Os
 .Sh NAME
-.Nm cap_rt_pair
-.Nd CAP_RT bidirectional capability pair
+.Nm cap_rt_channel
+.Nd CAP_RT bidirectional capability channel
 .Sh SYNOPSIS
 To load at boot:
 .Bd -literal -offset indent
-echo 'cap_rt_pair_load="YES"' >> /boot/loader.conf
+echo 'cap_rt_channel_load="YES"' >> /boot/loader.conf
 .Ed
 .Pp
 Wire protocol header:
 .Bd -literal -offset indent
-#include <dev/cap_rt/cap_rt_pair_proto.h>
+#include <dev/cap_rt/cap_rt_channel_proto.h>
 .Ed
 .Sh DESCRIPTION
 The
 .Nm
-service creates connected pairs of capability descriptors for
+service creates connected channels of capability descriptors for
 peer-to-peer messaging.
-Each pair consists of two endpoints; a message sent on one endpoint
+Each channel consists of two endpoints; a message sent on one endpoint
 is delivered to the other.
 .Pp
 The service is registered under the name
-.Dq pair
+.Dq channel
 with the
 .Dv CAP_RT_SVC_MINTABLE
 flag, allowing holders to mint additional instances via
@@ -35,13 +35,13 @@ flag, allowing holders to mint additional instances via
 .Bl -enum -compact
 .It
 Connect to
-.Dq pair
+.Dq channel
 via
 .Dv CAP_RT_CONNECT
 to obtain endpoint A.
 .It
 Send
-.Dv PAIR_OP_CREATE
+.Dv CHANNEL_OP_CREATE
 via
 .Dv CAP_RT_SENDMSG
 on A.
@@ -60,22 +60,22 @@ Closing either endpoint revokes the other.
 .El
 .Ss Wire Constants
 .Bd -literal -offset indent
-#define PAIR_OP_CREATE  1
+#define CHANNEL_OP_CREATE  1
 .Ed
 .Pp
 The
-.Dv PAIR_OP_CREATE
+.Dv CHANNEL_OP_CREATE
 operation is the only operation.
 It is sent as a
 .Vt uint32_t
 payload via
 .Dv CAP_RT_SENDMSG
-on an unpaired instance.
+on an unconnected instance.
 The reply, received via
 .Dv CAP_RT_RECVMSG ,
 carries the peer fd.
 .Ss Message Forwarding
-After pairing, messages are forwarded to the peer via the kernel's
+After connecting, messages are forwarded to the peer via the kernel's
 .Fn cap_rt_forward
 path.
 The original sender's credentials (badge, token, and credential trailer)
@@ -91,11 +91,11 @@ on the surviving endpoint returns
 .Er ECONNRESET .
 .Sh DTRACE PROBES
 The following DTrace probes are provided under the
-.Nm cap_rt_pair
+.Nm cap_rt_channel
 provider:
 .Bl -tag -width "handler-done"
 .It Cm create Ns Pq Ar badge_a, badge_b, error
-Fires when a pair is successfully created.
+Fires when a channel is successfully created.
 .Ar badge_a
 and
 .Ar badge_b
@@ -116,24 +116,24 @@ and
 .Dq revoke .
 .El
 .Pp
-Example one-liner to trace pair creation:
+Example one-liner to trace channel creation:
 .Bd -literal -offset indent
-dtrace -n 'cap_rt_pair::create { printf("a=%u b=%u err=%d",
+dtrace -n 'cap_rt_channel::create { printf("a=%u b=%u err=%d",
     arg0, arg1, arg2); }'
 .Ed
 .Sh EXAMPLES
-Create a pair and exchange a message:
+Create a channel and exchange a message:
 .Bd -literal -offset indent
-#include <dev/cap_rt/cap_rt_pair_proto.h>
+#include <dev/cap_rt/cap_rt_channel_proto.h>
 
 int a_fd, b_fd;
 uint32_t op;
 
-/* Connect to the pair service */
-a_fd = cap_rt_connect("pair");
+/* Connect to the channel service */
+a_fd = cap_rt_connect("channel");
 
-/* Create the pair */
-op = PAIR_OP_CREATE;
+/* Create the channel */
+op = CHANNEL_OP_CREATE;
 cap_rt_sendmsg(a_fd, &op, sizeof(op), NULL, 0);
 
 /* Receive the peer fd */
@@ -149,8 +149,8 @@ cap_rt_recvmsg(b_fd, buf, buflen);  /* receives msg */
 The peer endpoint has been closed or revoked.
 .It Bq Er EINVAL
 The message payload is too small, or an operation other than
-.Dv PAIR_OP_CREATE
-was sent on an unpaired instance.
+.Dv CHANNEL_OP_CREATE
+was sent on an unconnected instance.
 .El
 .Sh SEE ALSO
 .Xr cap_rt 4 ,

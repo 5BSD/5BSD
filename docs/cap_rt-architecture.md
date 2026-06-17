@@ -749,10 +749,10 @@ Per-process racct and rctl operations via attached procdesc.
 | ADD_RULE / REMOVE_RULE | Add or remove rctl enforcement rules |
 | GET_RULES | Query active rctl rules |
 
-### pair (async, SENDMSG/RECVMSG)
+### channel (async, SENDMSG/RECVMSG)
 
-Bidirectional process-to-process messaging.  `PAIR_OP_CREATE` creates
-a connected pair; returns two fds.  Revoking one end delivers
+Bidirectional process-to-process messaging.  `CHANNEL_OP_CREATE` creates
+a connected channel; returns two fds.  Revoking one end delivers
 ECONNRESET to the peer.
 
 ### mount (sync, CAP_RT_CALL)
@@ -808,7 +808,7 @@ sys/dev/cap_rt/
     cap_rt_node.c         per-process inspection/control via procdesc
     cap_rt_accounting.c   per-process racct/rctl operations
     cap_rt_mount.c        capability-based filesystem mounting
-    cap_rt_pair.c         bidirectional capability pair
+    cap_rt_channel.c      bidirectional capability channel
     cap_rt_test_kernelstore.c  test fixture: sync key-value store
     cap_rt_test_keystore.c     test fixture: async key-value store
 
@@ -870,7 +870,7 @@ tests/sys/cap_rt/         ATF kernel tests via kyua
 - **cap_rt_capprotect_proto.h** -- capability protection wire protocol
 - **cap_rt_system_proto.h** -- system gate wire protocol
 - **cap_rt_coalition_proto.h** -- coalition wire protocol
-- **cap_rt_pair_proto.h** -- capability pair wire protocol
+- **cap_rt_channel_proto.h** -- capability channel wire protocol
 - **cap_rt_identity_proto.h** -- identity service wire protocol
 - **cap_rt_node_proto.h** -- node service wire protocol
 - **cap_rt_accounting_proto.h** -- accounting service wire protocol
@@ -952,7 +952,7 @@ Provider: `cap_rt_coalition` (resource groups)
 | `call-done` | op, error, time |
 | `deny` | reason, errno, pid |
 
-Provider: `cap_rt_pair` (bidirectional messaging)
+Provider: `cap_rt_channel` (bidirectional messaging)
 
 | Probe | Args |
 |---|---|

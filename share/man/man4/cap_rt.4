@@ -284,10 +284,10 @@ Per-process racct/rctl operations via
 .Xr procdesc 4 .
 See
 .Xr cap_rt_accounting 4 .
-.It Sy cap_rt_pair
-Bidirectional capability pair for peer-to-peer messaging.
+.It Sy cap_rt_channel
+Bidirectional capability channel for peer-to-peer messaging.
 See
-.Xr cap_rt_pair 4 .
+.Xr cap_rt_channel 4 .
 .It Sy cap_rt_mount
 Capability-based filesystem mounting.
 See
@@ -380,7 +380,7 @@ and subsystem providers
 .Va cap_rt_system ,
 .Va cap_rt_coalition ,
 and
-.Va cap_rt_pair
+.Va cap_rt_channel
 for claim, token, authorization, release, and denial events.
 .Pp
 Installed DTrace scripts for observing
@@ -537,7 +537,7 @@ if (kevent(kq, NULL, 0, &ev, 1, NULL) > 0) {
 .Xr cap_rt_isolation 4 ,
 .Xr cap_rt_mount 4 ,
 .Xr cap_rt_node 4 ,
-.Xr cap_rt_pair 4 ,
+.Xr cap_rt_channel 4 ,
 .Xr cap_rt_system 4 ,
 .Xr oracled 8
 .Sh HISTORY

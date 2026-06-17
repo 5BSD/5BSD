@@ -38,7 +38,7 @@ cap_rt_system:::state { @sysstate[copyinstr(arg0)] = count(); }
 cap_rt_isolation:::state { @fistate[copyinstr(arg0)] = count(); }
 cap_rt_node:::call-done { @nodeops[arg0] = count(); }
 cap_rt_node:::deny { @nodedeny[copyinstr(arg0)] = count(); }
-cap_rt_pair:::state { @pairstate[copyinstr(arg0)] = count(); }
+cap_rt_channel:::state { @channelstate[copyinstr(arg0)] = count(); }
 cap_rt_mount:::state { @mountstate[copyinstr(arg0), copyinstr(arg1)] = count(); }
 cap_rt_mount:::deny { @mountdeny[copyinstr(arg0), copyinstr(arg1)] = count(); }
 cap_rt_acct:::state { @acctstate[copyinstr(arg0), arg1] = count(); }
@@ -56,8 +56,8 @@ cap_rt_system:::allow { @sysallow[copyinstr(arg0)] = count(); }
 cap_rt_isolation:::allow-action { @fiallow[copyinstr(arg0)] = count(); }
 cap_rt_isolation:::allow-net { @fiallow["net"] = count(); }
 cap_rt_isolation:::allow-jail { @fiallow["jail"] = count(); }
-cap_rt_pair:::create { @pairstate["create"] = count(); }
-cap_rt_pair:::forward { @pairstate["forward"] = count(); }
+cap_rt_channel:::create { @channelstate["create"] = count(); }
+cap_rt_channel:::forward { @channelstate["forward"] = count(); }
 cap_rt_coalition:::signal-set { @costate["signal-set"] = count(); }
 cap_rt_coalition:::deadline-set { @costate["deadline-set"] = count(); }
 cap_rt_coalition:::watchdog-set { @costate["watchdog-set"] = count(); }
@@ -121,8 +121,8 @@ dtrace:::END
 	printf("\n--- Node denials ---\n");
 	printa("  %-16s %@d\n", @nodedeny);
 
-	printf("\n--- Pair state ---\n");
-	printa("  %-16s %@d\n", @pairstate);
+	printf("\n--- Channel state ---\n");
+	printa("  %-16s %@d\n", @channelstate);
 
 	printf("\n--- Mount service ---\n");
 	printa("  %-10s %-20s %@d\n", @mountstate);

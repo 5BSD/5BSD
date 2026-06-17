@@ -3,9 +3,9 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Oracle pair protocol client.
+ * Oracle channel protocol client.
  *
- * Sends requests to oracled over the inherited cap_rt pair channel
+ * Sends requests to oracled over the inherited cap_rt channel
  * and receives replies with attached file descriptors.  Each request
  * uses a unique reply_token for correlation.
  */
@@ -37,7 +37,7 @@ static volatile uint64_t next_reply_token = 1;
  * Returns -1 on communication error (sets errno).
  */
 static int
-oracle_rpc(int pair_fd, const void *req, uint32_t reqlen,
+oracle_rpc(int channel_fd, const void *req, uint32_t reqlen,
     int *reply_fds, int max_reply_fds, int *nfds_out)
 {
 	struct cap_rt_sendmsg_args sa;
@@ -54,7 +54,7 @@ oracle_rpc(int pair_fd, const void *req, uint32_t reqlen,
 	sa.payload_len = reqlen;
 	sa.reply_token = token;
 
-	if (ioctl(pair_fd, CAP_RT_SENDMSG, &sa) == -1) {
+	if (ioctl(channel_fd, CAP_RT_SENDMSG, &sa) == -1) {
 		syslog(LOG_WARNING, "oracle_rpc: sendmsg: %m");
 		return (-1);
 	}
@@ -71,7 +71,7 @@ oracle_rpc(int pair_fd, const void *req, uint32_t reqlen,
 	}
 
 	/*
-	 * Wait for the reply with a timeout.  The pair fd should be
+	 * Wait for the reply with a timeout.  The channel fd should be
 	 * non-blocking; poll() for readiness before attempting RECVMSG
 	 * to avoid hanging the event loop if oracled drops a reply.
 	 */
@@ -79,7 +79,7 @@ oracle_rpc(int pair_fd, const void *req, uint32_t reqlen,
 		struct pollfd pfd;
 		int rv;
 
-		pfd.fd = pair_fd;
+		pfd.fd = channel_fd;
 		pfd.events = POLLIN;
 
 		for (;;) {
@@ -99,11 +99,11 @@ oracle_rpc(int pair_fd, const void *req, uint32_t reqlen,
 			}
 			if (pfd.revents & (POLLERR | POLLHUP)) {
 				syslog(LOG_ERR,
-				    "oracle_rpc: pair closed");
+				    "oracle_rpc: channel closed");
 				errno = ECONNRESET;
 				return (-1);
 			}
-			if (ioctl(pair_fd, CAP_RT_RECVMSG, &ra) == 0)
+			if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == 0)
 				break;
 			if (errno == EAGAIN)
 				continue;
@@ -233,20 +233,20 @@ check_status_fd(int status, int fd)
 /* --- Mint operations (return token fds) --- */
 
 int
-oracle_mint_path(int pair_fd, const char *path)
+oracle_mint_path(int channel_fd, const char *path)
 {
 	struct oracle_path_req req;
 	int token_fd, status;
 
 	if (fill_path_req(&req, ORACLE_OP_MINT_PATH, path) != 0)
 		return (-1);
-	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1,
+	status = oracle_rpc(channel_fd, &req, sizeof(req), &token_fd, 1,
 	    NULL);
 	return (check_status_fd(status, token_fd));
 }
 
 int
-oracle_mint_file(int pair_fd, const char *path, uint64_t actions)
+oracle_mint_file(int channel_fd, const char *path, uint64_t actions)
 {
 	struct oracle_mint_file_req req;
 	int token_fd, status;
@@ -265,25 +265,25 @@ oracle_mint_file(int pair_fd, const char *path, uint64_t actions)
 	req.actions = actions;
 	strlcpy(req.path, path, sizeof(req.path));
 
-	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1,
+	status = oracle_rpc(channel_fd, &req, sizeof(req), &token_fd, 1,
 	    NULL);
 	return (check_status_fd(status, token_fd));
 }
 
 int
-oracle_mint_net(int pair_fd, const struct ort_net_claim *nc)
+oracle_mint_net(int channel_fd, const struct ort_net_claim *nc)
 {
 	struct oracle_net_req req;
 	int token_fd, status;
 
 	fill_net_req(&req, ORACLE_OP_MINT_NET, nc);
-	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1,
+	status = oracle_rpc(channel_fd, &req, sizeof(req), &token_fd, 1,
 	    NULL);
 	return (check_status_fd(status, token_fd));
 }
 
 int
-oracle_mint_jail(int pair_fd, const struct serviced_jail_claim *jc)
+oracle_mint_jail(int channel_fd, const struct serviced_jail_claim *jc)
 {
 	struct oracle_jail_req req;
 	int token_fd, status;
@@ -296,13 +296,13 @@ oracle_mint_jail(int pair_fd, const struct serviced_jail_claim *jc)
 	}
 
 	fill_jail_req(&req, ORACLE_OP_MINT_JAIL, jc);
-	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1,
+	status = oracle_rpc(channel_fd, &req, sizeof(req), &token_fd, 1,
 	    NULL);
 	return (check_status_fd(status, token_fd));
 }
 
 int
-oracle_create_jail(int pair_fd, const char *name, const char *path,
+oracle_create_jail(int channel_fd, const char *name, const char *path,
     const char *hostname, const char *ip4_addr)
 {
 	struct oracle_create_jail_req req;
@@ -337,33 +337,33 @@ oracle_create_jail(int pair_fd, const char *name, const char *path,
 		}
 	}
 
-	status = oracle_rpc(pair_fd, &req, sizeof(req), &jd, 1, NULL);
+	status = oracle_rpc(channel_fd, &req, sizeof(req), &jd, 1, NULL);
 	return (check_status_fd(status, jd));
 }
 
 int
-oracle_mint_system(int pair_fd, uint32_t gates)
+oracle_mint_system(int channel_fd, uint32_t gates)
 {
 	struct oracle_system_req req;
 	int token_fd, status;
 
 	fill_system_req(&req, ORACLE_OP_MINT_SYSTEM, gates);
-	status = oracle_rpc(pair_fd, &req, sizeof(req), &token_fd, 1,
+	status = oracle_rpc(channel_fd, &req, sizeof(req), &token_fd, 1,
 	    NULL);
 	return (check_status_fd(status, token_fd));
 }
 
 int
-oracle_create_pair(int pair_fd, int *our_end, int *child_end)
+oracle_create_channel(int channel_fd, int *our_end, int *child_end)
 {
 	struct oracle_req_hdr req;
 	int fds[2];
 	int status;
 
 	memset(&req, 0, sizeof(req));
-	req.op = ORACLE_OP_CREATE_PAIR;
+	req.op = ORACLE_OP_CREATE_CHANNEL;
 
-	status = oracle_rpc(pair_fd, &req, sizeof(req), fds, 2, NULL);
+	status = oracle_rpc(channel_fd, &req, sizeof(req), fds, 2, NULL);
 	if (check_status(status) != 0)
 		return (-1);
 	if (fds[0] < 0 || fds[1] < 0) {
@@ -379,7 +379,7 @@ oracle_create_pair(int pair_fd, int *our_end, int *child_end)
 }
 
 int
-oracle_create_coalition(int pair_fd)
+oracle_create_coalition(int channel_fd)
 {
 	struct oracle_req_hdr req;
 	int cfd;
@@ -388,12 +388,12 @@ oracle_create_coalition(int pair_fd)
 	memset(&req, 0, sizeof(req));
 	req.op = ORACLE_OP_CREATE_COALITION;
 
-	status = oracle_rpc(pair_fd, &req, sizeof(req), &cfd, 1, NULL);
+	status = oracle_rpc(channel_fd, &req, sizeof(req), &cfd, 1, NULL);
 	return (check_status_fd(status, cfd));
 }
 
 int
-oracle_send_ready(int pair_fd)
+oracle_send_ready(int channel_fd)
 {
 	struct oracle_req_hdr req;
 	int status;
@@ -401,7 +401,7 @@ oracle_send_ready(int pair_fd)
 	memset(&req, 0, sizeof(req));
 	req.op = ORACLE_OP_READY;
 
-	status = oracle_rpc(pair_fd, &req, sizeof(req), NULL, 0, NULL);
+	status = oracle_rpc(channel_fd, &req, sizeof(req), NULL, 0, NULL);
 	if (status < 0)
 		return (-1);
 	return (status);
@@ -416,46 +416,46 @@ oracle_send_ready(int pair_fd)
 
 #define	ORACLE_PATH_OP(fname, op)					\
 int									\
-fname(int pair_fd, const char *path)					\
+fname(int channel_fd, const char *path)					\
 {									\
 	struct oracle_path_req req;					\
 									\
 	if (fill_path_req(&req, (op), path) != 0)			\
 		return (-1);						\
-	return (check_status(oracle_rpc(pair_fd, &req,			\
+	return (check_status(oracle_rpc(channel_fd, &req,			\
 	    sizeof(req), NULL, 0, NULL)));				\
 }
 
 #define	ORACLE_NET_OP(fname, op)					\
 int									\
-fname(int pair_fd, const struct ort_net_claim *nc)			\
+fname(int channel_fd, const struct ort_net_claim *nc)			\
 {									\
 	struct oracle_net_req req;					\
 									\
 	fill_net_req(&req, (op), nc);					\
-	return (check_status(oracle_rpc(pair_fd, &req,			\
+	return (check_status(oracle_rpc(channel_fd, &req,			\
 	    sizeof(req), NULL, 0, NULL)));				\
 }
 
 #define	ORACLE_JAIL_OP(fname, op)					\
 int									\
-fname(int pair_fd, const struct serviced_jail_claim *jc)		\
+fname(int channel_fd, const struct serviced_jail_claim *jc)		\
 {									\
 	struct oracle_jail_req req;					\
 									\
 	fill_jail_req(&req, (op), jc);					\
-	return (check_status(oracle_rpc(pair_fd, &req,			\
+	return (check_status(oracle_rpc(channel_fd, &req,			\
 	    sizeof(req), NULL, 0, NULL)));				\
 }
 
 #define	ORACLE_SYSTEM_OP(fname, op)					\
 int									\
-fname(int pair_fd, uint32_t gates)					\
+fname(int channel_fd, uint32_t gates)					\
 {									\
 	struct oracle_system_req req;					\
 									\
 	fill_system_req(&req, (op), gates);				\
-	return (check_status(oracle_rpc(pair_fd, &req,			\
+	return (check_status(oracle_rpc(channel_fd, &req,			\
 	    sizeof(req), NULL, 0, NULL)));				\
 }
 
@@ -476,7 +476,7 @@ ORACLE_SYSTEM_OP(oracle_release_system, ORACLE_OP_RELEASE_SYSTEM)
  * Returns a token that can be drained later, or 0 on send failure.
  */
 static uint64_t
-oracle_release_send(int pair_fd, const void *req, uint32_t reqlen)
+oracle_release_send(int channel_fd, const void *req, uint32_t reqlen)
 {
 	struct cap_rt_sendmsg_args sa;
 	uint64_t token;
@@ -489,7 +489,7 @@ oracle_release_send(int pair_fd, const void *req, uint32_t reqlen)
 	sa.payload_len = reqlen;
 	sa.reply_token = token;
 
-	if (ioctl(pair_fd, CAP_RT_SENDMSG, &sa) == -1) {
+	if (ioctl(channel_fd, CAP_RT_SENDMSG, &sa) == -1) {
 		syslog(LOG_WARNING, "oracle_release_send: sendmsg: %m");
 		return (0);
 	}
@@ -502,7 +502,7 @@ oracle_release_send(int pair_fd, const void *req, uint32_t reqlen)
  * available.  Returns the number of replies successfully drained.
  */
 static int
-oracle_release_drain(int pair_fd, unsigned expected)
+oracle_release_drain(int channel_fd, unsigned expected)
 {
 	struct cap_rt_recvmsg_args ra;
 	struct oracle_reply rpl;
@@ -513,7 +513,7 @@ oracle_release_drain(int pair_fd, unsigned expected)
 	if (expected == 0)
 		return (0);
 
-	pfd.fd = pair_fd;
+	pfd.fd = channel_fd;
 	pfd.events = POLLIN;
 	drained = 0;
 	timeout = ORACLE_RPC_TIMEOUT_MS;
@@ -543,7 +543,7 @@ oracle_release_drain(int pair_fd, unsigned expected)
 			ra.payload = &rpl;
 			ra.payload_len = sizeof(rpl);
 
-			if (ioctl(pair_fd, CAP_RT_RECVMSG, &ra) == -1) {
+			if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == -1) {
 				if (errno == EAGAIN)
 					break;	/* back to poll */
 				syslog(LOG_WARNING,
@@ -565,7 +565,7 @@ oracle_release_drain(int pair_fd, unsigned expected)
  * blocking window.  Returns the number of releases sent.
  */
 int
-oracle_release_manifest(int pair_fd, const struct svc_manifest *m)
+oracle_release_manifest(int channel_fd, const struct svc_manifest *m)
 {
 	unsigned i, nsent;
 
@@ -576,7 +576,7 @@ oracle_release_manifest(int pair_fd, const struct svc_manifest *m)
 
 		if (fill_path_req(&req, ORACLE_OP_RELEASE_PATH,
 		    m->cap_paths[i]) == 0 &&
-		    oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
+		    oracle_release_send(channel_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}
 	for (i = 0; i < m->ncap_files; i++) {
@@ -584,14 +584,14 @@ oracle_release_manifest(int pair_fd, const struct svc_manifest *m)
 
 		if (fill_path_req(&req, ORACLE_OP_RELEASE_PATH,
 		    m->cap_files[i].path) == 0 &&
-		    oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
+		    oracle_release_send(channel_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}
 	for (i = 0; i < m->ncap_net; i++) {
 		struct oracle_net_req req;
 
 		fill_net_req(&req, ORACLE_OP_RELEASE_NET, &m->cap_net[i]);
-		if (oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
+		if (oracle_release_send(channel_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}
 	for (i = 0; i < m->ncap_jail; i++) {
@@ -599,7 +599,7 @@ oracle_release_manifest(int pair_fd, const struct svc_manifest *m)
 
 		fill_jail_req(&req, ORACLE_OP_RELEASE_JAIL,
 		    &m->cap_jail[i]);
-		if (oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
+		if (oracle_release_send(channel_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}
 	if (m->cap_system != 0) {
@@ -607,13 +607,13 @@ oracle_release_manifest(int pair_fd, const struct svc_manifest *m)
 
 		fill_system_req(&req, ORACLE_OP_RELEASE_SYSTEM,
 		    m->cap_system);
-		if (oracle_release_send(pair_fd, &req, sizeof(req)) != 0)
+		if (oracle_release_send(channel_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}
 
 	/* One blocking window to drain all replies. */
 	if (nsent > 0)
-		oracle_release_drain(pair_fd, nsent);
+		oracle_release_drain(channel_fd, nsent);
 
 	return ((int)nsent);
 }

@@ -5,15 +5,15 @@
  *
  * Service fork/exec for serviced.
  *
- * Creates a pair channel, mints capability tokens, pdfork()s a
+ * Creates a channel, mints capability tokens, pdfork()s a
  * child, scrubs its environment and fds, sets credentials, and
  * exec()s the program from the manifest.  Registers the process
- * descriptor and pair channel on the kqueue for supervision.
+ * descriptor and channel on the kqueue for supervision.
  *
  * Unlike oracled, serviced does not hold /dev/cap_rt directly.
- * Pair and coalition creation use the delegated cap_rt fd
+ * Channel and coalition creation use the delegated cap_rt fd
  * (caprt_direct.c).  Token minting goes through the oracle
- * pair channel (oracle_client.c).
+ * channel (oracle_client.c).
  */
 
 #include <sys/types.h>
@@ -38,7 +38,7 @@
 #include "serviced.h"
 #include "serviced_probes.h"
 
-#define	SVC_PAIR_FD	3	/* well-known fd for the pair channel */
+#define	SVC_CHANNEL_FD	3	/* well-known fd for the channel */
 #define	SVC_CAPPROTECT_FD	4	/* capprotect service instance */
 #define	SVC_TOKEN_BASE	5	/* tokens start after service plumbing */
 #define	SVC_MAX_TOKENS	(SERVICED_MAX_CAP_PATHS + SERVICED_MAX_CAP_FILES + \
@@ -74,12 +74,12 @@ build_token_fds_str(char *buf, size_t bufsz, unsigned ntokens)
  * in a post-fork child (no malloc, no syslog).
  */
 static void __dead2
-child_exec(struct svc_manifest *m, int child_pair_fd,
+child_exec(struct svc_manifest *m, int child_channel_fd,
     int capprotect_fd, int *token_fds, unsigned ntokens, int jail_fd,
     uid_t uid, gid_t gid, bool have_creds, const char *homedir,
     gid_t *groups, int ngroups)
 {
-	char pair_env[64], capprotect_env[64], token_env[256], label_env[128];
+	char channel_env[64], capprotect_env[64], token_env[256], label_env[128];
 	char user_env[128], home_env[PATH_MAX + 8];
 	char fds_str[128];
 	char *env[SVC_MAX_ENV];
@@ -102,20 +102,20 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 	/*
 	 * Remap fds into their well-known positions.  First move all
 	 * source fds above the reserved range to avoid clobbering a
-	 * source fd that occupies a target slot (e.g., child_pair_fd
+	 * source fd that occupies a target slot (e.g., child_channel_fd
 	 * could be 4 which is SVC_TOKEN_BASE, or token_fds[0] could
-	 * be 3 which is SVC_PAIR_FD).
+	 * be 3 which is SVC_CHANNEL_FD).
 	 */
 	{
 		int safe_base;
 
 		safe_base = SVC_TOKEN_BASE + (int)ntokens + 1;
-		if (child_pair_fd < safe_base) {
-			fd = fcntl(child_pair_fd, F_DUPFD, safe_base);
+		if (child_channel_fd < safe_base) {
+			fd = fcntl(child_channel_fd, F_DUPFD, safe_base);
 			if (fd == -1)
 				_exit(126);
-			(void)close(child_pair_fd);
-			child_pair_fd = fd;
+			(void)close(child_channel_fd);
+			child_channel_fd = fd;
 		}
 		for (i = 0; i < ntokens; i++) {
 			if (token_fds[i] < safe_base) {
@@ -136,9 +136,9 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 	}
 
 	/* Now safe to map into final positions. */
-	if (dup2(child_pair_fd, SVC_PAIR_FD) == -1)
+	if (dup2(child_channel_fd, SVC_CHANNEL_FD) == -1)
 		_exit(126);
-	(void)close(child_pair_fd);
+	(void)close(child_channel_fd);
 	have_capprotect = capprotect_fd >= 0;
 	if (capprotect_fd >= 0) {
 		if (dup2(capprotect_fd, SVC_CAPPROTECT_FD) == -1)
@@ -166,7 +166,7 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 
 	closefrom(SVC_TOKEN_BASE + (int)ntokens);
 
-	if (fcntl(SVC_PAIR_FD, F_SETFD, 0) == -1)
+	if (fcntl(SVC_CHANNEL_FD, F_SETFD, 0) == -1)
 		_exit(126);
 	if (have_capprotect && fcntl(SVC_CAPPROTECT_FD, F_SETFD, 0) == -1)
 		_exit(126);
@@ -180,9 +180,9 @@ child_exec(struct svc_manifest *m, int child_pair_fd,
 	env[envc++] = __DECONST(char *,
 	    "PATH=/sbin:/bin:/usr/sbin:/usr/bin");
 
-	(void)snprintf(pair_env, sizeof(pair_env),
-	    "ORACLED_PAIR_FD=%d", SVC_PAIR_FD);
-	env[envc++] = pair_env;
+	(void)snprintf(channel_env, sizeof(channel_env),
+	    "ORACLED_CHANNEL_FD=%d", SVC_CHANNEL_FD);
+	env[envc++] = channel_env;
 	if (have_capprotect) {
 		(void)snprintf(capprotect_env, sizeof(capprotect_env),
 		    "ORACLED_CAPPROTECT_FD=%d", SVC_CAPPROTECT_FD);
@@ -357,15 +357,15 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 	}
 
-	/* Create pair channel via oracle. */
-	if (caprt_create_pair(
+	/* Create channel via oracle. */
+	if (caprt_create_channel(
 	    &oracle_end, &child_end) == -1) {
-		syslog(LOG_ERR, "svc_exec %s: failed to create pair",
+		syslog(LOG_ERR, "svc_exec %s: failed to create channel",
 		    m->label);
-		SERVICED_PROBE_CAP_PAIR(m->label, -1);
+		SERVICED_PROBE_CAP_CHANNEL(m->label, -1);
 		return (-1);
 	}
-	SERVICED_PROBE_CAP_PAIR(m->label, 0);
+	SERVICED_PROBE_CAP_CHANNEL(m->label, 0);
 
 	/* Create coalition via oracle. */
 	coalition_fd = caprt_create_coalition();
@@ -427,7 +427,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 } while (0)
 
 	for (i = 0; i < m->ncap_paths; i++) {
-		int tfd = oracle_mint_path(sd.oracle_pair_fd,
+		int tfd = oracle_mint_path(sd.oracle_channel_fd,
 		    m->cap_paths[i]);
 
 		if (tfd == -1) {
@@ -444,7 +444,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_files; i++) {
-		int tfd = oracle_mint_file(sd.oracle_pair_fd,
+		int tfd = oracle_mint_file(sd.oracle_channel_fd,
 		    m->cap_files[i].path, m->cap_files[i].actions);
 
 		if (tfd == -1) {
@@ -461,7 +461,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_net; i++) {
-		int tfd = oracle_mint_net(sd.oracle_pair_fd, &m->cap_net[i]);
+		int tfd = oracle_mint_net(sd.oracle_channel_fd, &m->cap_net[i]);
 
 		if (tfd == -1) {
 			syslog(LOG_ERR, "svc_exec %s: failed to mint "
@@ -476,7 +476,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_jail; i++) {
-		int tfd = oracle_mint_jail(sd.oracle_pair_fd,
+		int tfd = oracle_mint_jail(sd.oracle_channel_fd,
 		    &m->cap_jail[i]);
 
 		if (tfd == -1) {
@@ -492,7 +492,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 		MINT_CHECK_DEADLINE();
 	}
 	if (m->cap_system != 0) {
-		int tfd = oracle_mint_system(sd.oracle_pair_fd,
+		int tfd = oracle_mint_system(sd.oracle_channel_fd,
 		    m->cap_system);
 
 		if (tfd == -1) {
@@ -516,7 +516,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	/* Create jail via oracle if manifest specifies one. */
 	svc->jail_fd = -1;
 	if (m->has_jail) {
-		svc->jail_fd = oracle_create_jail(sd.oracle_pair_fd,
+		svc->jail_fd = oracle_create_jail(sd.oracle_channel_fd,
 		    m->jail_name, m->jail_path,
 		    m->jail_hostname, m->jail_ip4_addr);
 		if (svc->jail_fd == -1) {
@@ -571,7 +571,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	/* Store state. */
 	svc->pid = pid;
 	svc->pd_fd = pd_fd;
-	svc->pair_fd = oracle_end;
+	svc->channel_fd = oracle_end;
 	svc->coalition_fd = coalition_fd;
 	svc->state = SVC_STATE_STARTING;
 	clock_gettime(CLOCK_MONOTONIC, &svc->last_start);
@@ -587,12 +587,12 @@ svc_exec(struct svc_runtime *svc, int kq)
 		    m->label);
 		pdkill(pd_fd, SIGKILL);
 		waitpid(pid, NULL, WNOHANG);
-		oracle_release_manifest(sd.oracle_pair_fd,
+		oracle_release_manifest(sd.oracle_channel_fd,
 		    &minted_manifest);
 		close(svc->pd_fd);
 		svc->pd_fd = -1;
-		close(svc->pair_fd);
-		svc->pair_fd = -1;
+		close(svc->channel_fd);
+		svc->channel_fd = -1;
 		close(svc->coalition_fd);
 		svc->coalition_fd = -1;
 		if (svc->jail_fd >= 0) {
@@ -626,7 +626,7 @@ fail_postfork:
 	SERVICED_PROBE_SVC_EXEC_FAIL(m->label, errno);
 	pdkill(pd_fd, SIGKILL);
 	waitpid(pid, NULL, WNOHANG);
-	oracle_release_manifest(sd.oracle_pair_fd, &minted_manifest);
+	oracle_release_manifest(sd.oracle_channel_fd, &minted_manifest);
 	close(pd_fd);
 	close(oracle_end);
 	close(coalition_fd);
@@ -638,7 +638,7 @@ fail_postfork:
 	return (-1);
 
 fail_tokens:
-	oracle_release_manifest(sd.oracle_pair_fd, &minted_manifest);
+	oracle_release_manifest(sd.oracle_channel_fd, &minted_manifest);
 	close(oracle_end);
 	close(child_end);
 	close(coalition_fd);

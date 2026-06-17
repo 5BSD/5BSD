@@ -1,9 +1,9 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Bootstrap and pair protocol tests for oracled + serviced.
+# Bootstrap and channel protocol tests for oracled + serviced.
 #
-# These verify that oracled starts serviced as its child, the pair
+# These verify that oracled starts serviced as its child, the channel
 # channel protocol works, and bootstrap restart logic is sound.
 #
 
@@ -62,7 +62,7 @@ struct oracle_reply {
 };
 
 static int
-send_op(int pair_fd, uint32_t op)
+send_op(int channel_fd, uint32_t op)
 {
 	struct cap_rt_sendmsg_args sa;
 	struct cap_rt_recvmsg_args ra;
@@ -77,14 +77,14 @@ send_op(int pair_fd, uint32_t op)
 	sa.payload_len = sizeof(req);
 	sa.reply_token = op;
 
-	if (ioctl(pair_fd, CAP_RT_SENDMSG, &sa) == -1)
+	if (ioctl(channel_fd, CAP_RT_SENDMSG, &sa) == -1)
 		return (-1);
 
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = &rpl;
 	ra.payload_len = sizeof(rpl);
 
-	if (ioctl(pair_fd, CAP_RT_RECVMSG, &ra) == -1)
+	if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == -1)
 		return (-1);
 
 	return (rpl.status);
@@ -94,17 +94,17 @@ int
 main(void)
 {
 	const char *fd_str, *mode = NULL;
-	int pair_fd;
+	int channel_fd;
 	FILE *out;
 
 	openlog("mock_serviced", LOG_PID, LOG_DAEMON);
 
-	fd_str = getenv("ORACLED_PAIR_FD");
+	fd_str = getenv("ORACLED_CHANNEL_FD");
 	if (fd_str == NULL) {
-		syslog(LOG_ERR, "ORACLED_PAIR_FD not set");
+		syslog(LOG_ERR, "ORACLED_CHANNEL_FD not set");
 		return (1);
 	}
-	pair_fd = atoi(fd_str);
+	channel_fd = atoi(fd_str);
 
 	/*
 	 * Read mode from a file (env vars don't survive the
@@ -129,13 +129,13 @@ main(void)
 	/* Write a marker file so tests can detect we started. */
 	out = fopen("serviced-started.out", "w");
 	if (out != NULL) {
-		fprintf(out, "pid=%d\npair_fd=%d\nmode=%s\n",
-		    getpid(), pair_fd, mode);
+		fprintf(out, "pid=%d\nchannel_fd=%d\nmode=%s\n",
+		    getpid(), channel_fd, mode);
 		fclose(out);
 	}
 
 	if (strcmp(mode, "ready-then-sleep") == 0) {
-		if (send_op(pair_fd, ORACLE_OP_READY) != 0)
+		if (send_op(channel_fd, ORACLE_OP_READY) != 0)
 			syslog(LOG_WARNING, "READY failed");
 
 		/* Sleep until killed. */
@@ -148,7 +148,7 @@ main(void)
 	}
 
 	if (strcmp(mode, "ping-then-sleep") == 0) {
-		if (send_op(pair_fd, ORACLE_OP_PING) != 0) {
+		if (send_op(channel_fd, ORACLE_OP_PING) != 0) {
 			syslog(LOG_ERR, "PING failed");
 			return (1);
 		}
@@ -246,11 +246,11 @@ bootstrap_starts_serviced_body()
 
 	if ! wait_for_file serviced-started.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "serviced did not start (cap_rt pair service may not be loaded)"
+		atf_skip "serviced did not start (cap_rt channel service may not be loaded)"
 	fi
 
-	# Verify the pair fd was inherited.
-	atf_check -s exit:0 -o match:"pair_fd=" grep "pair_fd=" serviced-started.out
+	# Verify the channel fd was inherited.
+	atf_check -s exit:0 -o match:"channel_fd=" grep "channel_fd=" serviced-started.out
 
 	# Verify oracled logged the start.
 	atf_check -s exit:0 -o ignore grep "bootstrap: started serviced" "$logfile"
@@ -263,13 +263,13 @@ bootstrap_starts_serviced_cleanup()
 	cleanup_common
 }
 
-atf_test_case bootstrap_pair_ping cleanup
-bootstrap_pair_ping_head()
+atf_test_case bootstrap_channel_ping cleanup
+bootstrap_channel_ping_head()
 {
-	atf_set "descr" "serviced can ping oracled over the pair channel"
+	atf_set "descr" "serviced can ping oracled over the channel"
 	atf_set "require.user" "root"
 }
-bootstrap_pair_ping_body()
+bootstrap_channel_ping_body()
 {
 	echo "ping-then-sleep" > mock-mode
 	build_mock_serviced
@@ -283,7 +283,7 @@ bootstrap_pair_ping_body()
 	atf_check -s exit:0 -o match:"ok" cat serviced-ping-ok.out
 	atf_check -s exit:0 -o match:"running" oraclectl -s "$sockpath" status
 }
-bootstrap_pair_ping_cleanup()
+bootstrap_channel_ping_cleanup()
 {
 	rm -f mock-mode
 	cleanup_common
@@ -425,7 +425,7 @@ bootstrap_no_service_manager_cleanup()
 atf_init_test_cases()
 {
 	atf_add_test_case bootstrap_starts_serviced
-	atf_add_test_case bootstrap_pair_ping
+	atf_add_test_case bootstrap_channel_ping
 	atf_add_test_case bootstrap_ready_logged
 	atf_add_test_case bootstrap_restart_on_crash
 	atf_add_test_case bootstrap_clean_shutdown

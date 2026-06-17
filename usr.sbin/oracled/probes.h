@@ -50,7 +50,7 @@
 #define	ORACLED_PROBE_CLAIM_SYSTEM_RELEASE(gates)	\
 	DTRACE_PROBE1(oracled, claim__system__release, gates)
 
-/* Dynamic claims — runtime claim/release via pair channel */
+/* Dynamic claims — runtime claim/release via channel */
 #define	ORACLED_PROBE_DYN_CLAIM_PATH(path, result)	\
 	DTRACE_PROBE2(oracled, dyn__claim__path, path, result)
 #define	ORACLED_PROBE_DYN_CLAIM_NET(port_min, port_max, proto, result)	\
@@ -101,8 +101,8 @@
 	DTRACE_PROBE2(oracled, mint__system, gates, result)
 #define	ORACLED_PROBE_CREATE_JAIL(name, result)	\
 	DTRACE_PROBE2(oracled, create__jail, name, result)
-#define	ORACLED_PROBE_PAIR_CREATE(result)	\
-	DTRACE_PROBE1(oracled, pair__create, result)
+#define	ORACLED_PROBE_CHANNEL_CREATE(result)	\
+	DTRACE_PROBE1(oracled, channel__create, result)
 #define	ORACLED_PROBE_COALITION_CREATE(result)	\
 	DTRACE_PROBE1(oracled, coalition__create, result)
 

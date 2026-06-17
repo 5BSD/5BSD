@@ -57,7 +57,7 @@ svc_remove(unsigned idx)
 	/* Clear the vacated slot. */
 	memset(&sd.services[sd.nservices], 0, sizeof(sd.services[0]));
 	sd.services[sd.nservices].pd_fd = -1;
-	sd.services[sd.nservices].pair_fd = -1;
+	sd.services[sd.nservices].channel_fd = -1;
 	sd.services[sd.nservices].coalition_fd = -1;
 	sd.services[sd.nservices].jail_fd = -1;
 }
@@ -176,12 +176,12 @@ svc_reregister_kevents(int kq)
 				    "reload: re-register pd_fd for %s: %m",
 				    svc->manifest.label);
 		}
-		if (svc->pair_fd >= 0) {
-			EV_SET(&kev, svc->pair_fd, EVFILT_READ,
+		if (svc->channel_fd >= 0) {
+			EV_SET(&kev, svc->channel_fd, EVFILT_READ,
 			    EV_ADD, 0, 0, svc);
 			if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
 				syslog(LOG_WARNING,
-				    "reload: re-register pair_fd for %s: %m",
+				    "reload: re-register channel_fd for %s: %m",
 				    svc->manifest.label);
 		}
 		if (svc->coalition_fd >= 0) {
@@ -389,7 +389,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 				svc = &sd.services[sd.nservices];
 				memset(svc, 0, sizeof(*svc));
 				svc->pd_fd = -1;
-				svc->pair_fd = -1;
+				svc->channel_fd = -1;
 				svc->coalition_fd = -1;
 				svc->jail_fd = -1;
 				svc->state = SVC_STATE_STOPPED;

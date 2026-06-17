@@ -156,7 +156,7 @@ wait_tier_ready(struct svc_runtime *svcs, unsigned n, unsigned tier,
 				supervisor_handle_procdesc(&events[i]);
 			else if (events[i].filter == EVFILT_READ &&
 			    events[i].udata != NULL)
-				supervisor_handle_pair(&events[i]);
+				supervisor_handle_channel(&events[i]);
 			else if (events[i].filter == EVFILT_TIMER)
 				supervisor_handle_timer(&events[i]);
 			else if (events[i].filter == EVFILT_SIGNAL) {
@@ -267,7 +267,7 @@ startup_launch_system(int kq)
 	for (i = 0; i < nmanifests; i++) {
 		sd.services[i].manifest = manifests[i];
 		sd.services[i].pd_fd = -1;
-		sd.services[i].pair_fd = -1;
+		sd.services[i].channel_fd = -1;
 		sd.services[i].coalition_fd = -1;
 		sd.services[i].jail_fd = -1;
 		sd.services[i].state = SVC_STATE_STOPPED;

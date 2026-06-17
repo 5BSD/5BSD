@@ -3,9 +3,9 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Service pair protocol dispatch for serviced.
+ * Service channel protocol dispatch for serviced.
  *
- * Handles messages received on a service's pair channel:
+ * Handles messages received on a service's channel:
  * ready notification, name registration, unregistration, and
  * service lookup.
  */
@@ -24,10 +24,10 @@
 #include "serviced_svc_proto.h"
 
 /*
- * Send a reply to a service on its pair channel.
+ * Send a reply to a service on its channel.
  */
 static void
-svc_pair_reply(struct svc_runtime *svc, int status,
+svc_channel_reply(struct svc_runtime *svc, int status,
     uint64_t reply_token, int *fds, int nfds)
 {
 	struct cap_rt_sendmsg_args sa;
@@ -44,10 +44,10 @@ svc_pair_reply(struct svc_runtime *svc, int status,
 		sa.nfds = (uint32_t)nfds;
 	}
 
-	if (ioctl(svc->pair_fd, CAP_RT_SENDMSG, &sa) == -1) {
-		syslog(LOG_WARNING, "service %s: pair reply: %m",
+	if (ioctl(svc->channel_fd, CAP_RT_SENDMSG, &sa) == -1) {
+		syslog(LOG_WARNING, "service %s: channel reply: %m",
 		    svc->manifest.label);
-		SERVICED_PROBE_ERROR("svc_proto", "pair reply failed");
+		SERVICED_PROBE_ERROR("svc_proto", "channel reply failed");
 	} else
 		SERVICED_PROBE_IPC_REPLY(svc->manifest.label, 0, status);
 }
@@ -64,7 +64,7 @@ handle_svc_ready(struct svc_runtime *svc, uint64_t reply_token)
 		/* Drain any on-demand waiters for this service. */
 		on_demand_check_ready(svc, serviced_kq);
 	}
-	svc_pair_reply(svc, 0, reply_token, NULL, 0);
+	svc_channel_reply(svc, 0, reply_token, NULL, 0);
 }
 
 static void
@@ -75,18 +75,18 @@ handle_svc_register(struct svc_runtime *svc, const void *payload,
 	int error;
 
 	if (len < sizeof(*req)) {
-		svc_pair_reply(svc, EINVAL, reply_token, NULL, 0);
+		svc_channel_reply(svc, EINVAL, reply_token, NULL, 0);
 		return;
 	}
 	req = payload;
 
 	if (strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
-		svc_pair_reply(svc, ENAMETOOLONG, reply_token, NULL, 0);
+		svc_channel_reply(svc, ENAMETOOLONG, reply_token, NULL, 0);
 		return;
 	}
 
 	error = naming_register(req->name, svc);
-	svc_pair_reply(svc, error, reply_token, NULL, 0);
+	svc_channel_reply(svc, error, reply_token, NULL, 0);
 }
 
 static void
@@ -97,18 +97,18 @@ handle_svc_unregister(struct svc_runtime *svc, const void *payload,
 	int error;
 
 	if (len < sizeof(*req)) {
-		svc_pair_reply(svc, EINVAL, reply_token, NULL, 0);
+		svc_channel_reply(svc, EINVAL, reply_token, NULL, 0);
 		return;
 	}
 	req = payload;
 
 	if (strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
-		svc_pair_reply(svc, ENAMETOOLONG, reply_token, NULL, 0);
+		svc_channel_reply(svc, ENAMETOOLONG, reply_token, NULL, 0);
 		return;
 	}
 
 	error = naming_unregister(req->name, svc);
-	svc_pair_reply(svc, error, reply_token, NULL, 0);
+	svc_channel_reply(svc, error, reply_token, NULL, 0);
 }
 
 static void
@@ -119,13 +119,13 @@ handle_svc_lookup(struct svc_runtime *svc, const void *payload,
 	int client_fd, error;
 
 	if (len < sizeof(*req)) {
-		svc_pair_reply(svc, EINVAL, reply_token, NULL, 0);
+		svc_channel_reply(svc, EINVAL, reply_token, NULL, 0);
 		return;
 	}
 	req = payload;
 
 	if (strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
-		svc_pair_reply(svc, ENAMETOOLONG, reply_token, NULL, 0);
+		svc_channel_reply(svc, ENAMETOOLONG, reply_token, NULL, 0);
 		return;
 	}
 
@@ -140,17 +140,17 @@ handle_svc_lookup(struct svc_runtime *svc, const void *payload,
 			if (errno == EDEADLK)
 				error = EDEADLK;
 		}
-		svc_pair_reply(svc, error, reply_token, NULL, 0);
+		svc_channel_reply(svc, error, reply_token, NULL, 0);
 		return;
 	}
 
-	svc_pair_reply(svc, 0, reply_token, &client_fd, 1);
+	svc_channel_reply(svc, 0, reply_token, &client_fd, 1);
 	close(client_fd);
 	svc->connection_count++;
 }
 
 void
-supervisor_handle_pair(struct kevent *kev)
+supervisor_handle_channel(struct kevent *kev)
 {
 	struct cap_rt_recvmsg_args ra;
 	struct svc_runtime *svc;
@@ -172,27 +172,27 @@ supervisor_handle_pair(struct kevent *kev)
 	}
 
 	if (kev->flags & EV_EOF) {
-		syslog(LOG_INFO, "service %s: pair channel closed",
+		syslog(LOG_INFO, "service %s: channel closed",
 		    svc->manifest.label);
-		close(svc->pair_fd);
-		svc->pair_fd = -1;
+		close(svc->channel_fd);
+		svc->channel_fd = -1;
 		return;
 	}
 
-	/* Read the message from the service's pair channel. */
+	/* Read the message from the service's channel. */
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = buf;
 	ra.payload_len = sizeof(buf);
 
-	if (ioctl(svc->pair_fd, CAP_RT_RECVMSG, &ra) == -1) {
+	if (ioctl(svc->channel_fd, CAP_RT_RECVMSG, &ra) == -1) {
 		if (errno != EAGAIN)
-			syslog(LOG_WARNING, "service %s: pair recvmsg: %m",
+			syslog(LOG_WARNING, "service %s: channel recvmsg: %m",
 			    svc->manifest.label);
 		return;
 	}
 
 	if (ra.payload_len < sizeof(uint32_t)) {
-		syslog(LOG_WARNING, "service %s: short pair message",
+		syslog(LOG_WARNING, "service %s: short channel message",
 		    svc->manifest.label);
 		return;
 	}
@@ -215,9 +215,9 @@ supervisor_handle_pair(struct kevent *kev)
 		handle_svc_lookup(svc, buf, ra.payload_len, ra.reply_token);
 		break;
 	default:
-		syslog(LOG_WARNING, "service %s: unknown pair op %u",
+		syslog(LOG_WARNING, "service %s: unknown channel op %u",
 		    svc->manifest.label, op);
-		svc_pair_reply(svc, ENOTSUP, ra.reply_token, NULL, 0);
+		svc_channel_reply(svc, ENOTSUP, ra.reply_token, NULL, 0);
 		break;
 	}
 }

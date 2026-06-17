@@ -3,17 +3,17 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * oracled service manager pair channel protocol.
+ * oracled service manager channel protocol.
  *
  * Shared between oracled(8) and serviced(8).  Messages are exchanged
- * over a restricted cap_rt pair channel using CAP_RT_SENDMSG/CAP_RT_RECVMSG
+ * over a restricted cap_rt channel using CAP_RT_SENDMSG/CAP_RT_RECVMSG
  * with reply_token correlation.
  *
- * serviced inherits one end of the pair as fd 3 (ORACLED_PAIR_FD).
+ * serviced inherits one end of the channel as fd 3 (ORACLED_CHANNEL_FD).
  * oracled holds the other end and dispatches requests from its event
  * loop.  All requests are initiated by serviced; oracled only replies.
  *
- * File descriptors (tokens, pairs, coalitions) are returned as
+ * File descriptors (tokens, channels, coalitions) are returned as
  * attached fds in the SENDMSG reply, not as integers in the payload.
  */
 
@@ -34,7 +34,7 @@
 #define	ORACLE_OP_MINT_PATH		1	/* mint path isolation token */
 #define	ORACLE_OP_MINT_NET		2	/* mint network isolation token */
 #define	ORACLE_OP_MINT_SYSTEM		3	/* mint system gate token */
-#define	ORACLE_OP_CREATE_PAIR		4	/* create a new pair channel */
+#define	ORACLE_OP_CREATE_CHANNEL	4	/* create a new channel */
 #define	ORACLE_OP_CREATE_COALITION	5	/* create a new coalition */
 #define	ORACLE_OP_READY			6	/* serviced initialization complete */
 #define	ORACLE_OP_PING			7	/* liveness check */
@@ -43,7 +43,7 @@
 
 /*
  * Common request header — used for operations with no extra parameters
- * (CREATE_PAIR, CREATE_COALITION, READY, PING).
+ * (CREATE_CHANNEL, CREATE_COALITION, READY, PING).
  */
 struct oracle_req_hdr {
 	uint32_t	op;
@@ -192,12 +192,12 @@ struct oracle_system_req {
 };
 
 /*
- * ORACLE_OP_CREATE_PAIR
- *   req:  oracle_req_hdr { .op = ORACLE_OP_CREATE_PAIR }
+ * ORACLE_OP_CREATE_CHANNEL
+ *   req:  oracle_req_hdr { .op = ORACLE_OP_CREATE_CHANNEL }
  *   reply: oracle_reply { .status }
  *   reply_fds[0] = endpoint A, reply_fds[1] = endpoint B
  *
- * Creates a new restricted pair channel for serviced to pass to a
+ * Creates a new restricted channel for serviced to pass to a
  * launched service.  serviced keeps one end, gives the other
  * to the child via pdfork.
  */
@@ -239,7 +239,7 @@ struct oracle_reply {
 
 /*
  * Maximum number of reply fds per operation.
- * CREATE_PAIR returns 2, everything else returns 0 or 1.
+ * CREATE_CHANNEL returns 2, everything else returns 0 or 1.
  */
 #define	ORACLE_MAX_REPLY_FDS	2
 

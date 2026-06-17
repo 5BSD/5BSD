@@ -1732,17 +1732,17 @@ ATF_TC_BODY(getinfo, tc)
 }
 
 /* ================================================================
- * Capability pair tests (requires cap_rt_pair module)
+ * Capability channel tests (requires cap_rt_channel module)
  * ================================================================ */
 
-#include "cap_rt_pair_proto.h"
+#include "cap_rt_channel_proto.h"
 
 /*
- * Helper: connect to pair service, send PAIR_OP_CREATE, receive peer fd.
+ * Helper: connect to channel service, send CHANNEL_OP_CREATE, receive peer fd.
  * Returns both fds via out parameters.
  */
 static void
-cap_rt_pair_pair(int *fd_a, int *fd_b)
+cap_rt_channel_create(int *fd_a, int *fd_b)
 {
 	struct cap_rt_sendmsg_args sa;
 	struct cap_rt_recvmsg_args ra;
@@ -1750,10 +1750,10 @@ cap_rt_pair_pair(int *fd_a, int *fd_b)
 	int fds_out[1];
 	int fd;
 
-	fd = cap_rt_connect("pair");
-	ATF_REQUIRE_MSG(fd >= 0, "connect pair: %s", strerror(errno));
+	fd = cap_rt_connect("channel");
+	ATF_REQUIRE_MSG(fd >= 0, "connect channel: %s", strerror(errno));
 
-	op = PAIR_OP_CREATE;
+	op = CHANNEL_OP_CREATE;
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = &op;
 	sa.payload_len = sizeof(op);
@@ -1770,18 +1770,18 @@ cap_rt_pair_pair(int *fd_a, int *fd_b)
 	*fd_b = fds_out[0];
 }
 
-ATF_TC(pair_create);
-ATF_TC_HEAD(pair_create, tc)
+ATF_TC(channel_create);
+ATF_TC_HEAD(channel_create, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Connect to pair, PAIR_OP_CREATE returns peer fd");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	    "Connect to channel, CHANNEL_OP_CREATE returns peer fd");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
-ATF_TC_BODY(pair_create, tc)
+ATF_TC_BODY(channel_create, tc)
 {
 	int fd_a, fd_b;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 	ATF_CHECK(fd_a >= 0);
 	ATF_CHECK(fd_b >= 0);
 	ATF_CHECK(fd_a != fd_b);
@@ -1789,20 +1789,20 @@ ATF_TC_BODY(pair_create, tc)
 	close(fd_a);
 }
 
-ATF_TC(pair_bidirectional);
-ATF_TC_HEAD(pair_bidirectional, tc)
+ATF_TC(channel_bidirectional);
+ATF_TC_HEAD(channel_bidirectional, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Send on A, recv on B; send on B, recv on A");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
-ATF_TC_BODY(pair_bidirectional, tc)
+ATF_TC_BODY(channel_bidirectional, tc)
 {
 	char buf[64];
 	uint32_t rlen;
 	int fd_a, fd_b;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 
 	/* A → B: send on A, data appears on B. */
 	ATF_REQUIRE(cap_rt_send(fd_a, "hello", 5, 0) == 0);
@@ -1826,15 +1826,15 @@ ATF_TC_BODY(pair_bidirectional, tc)
 	close(fd_a);
 }
 
-ATF_TC(pair_forwards_metadata);
-ATF_TC_HEAD(pair_forwards_metadata, tc)
+ATF_TC(channel_forwards_metadata);
+ATF_TC_HEAD(channel_forwards_metadata, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Pair forwarding preserves badge, reply token, and trailer");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair cap_rt_test_kernelstore");
+	    "Channel forwarding preserves badge, reply token, and trailer");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel cap_rt_test_kernelstore");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(pair_forwards_metadata, tc)
+ATF_TC_BODY(channel_forwards_metadata, tc)
 {
 	struct cap_rt_recvmsg_args ra;
 	struct cap_rt_info_args info;
@@ -1843,7 +1843,7 @@ ATF_TC_BODY(pair_forwards_metadata, tc)
 	char buf[64];
 	int fd_a, fd_b, ks_fd;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 
 	memset(&info, 0, sizeof(info));
 	ATF_REQUIRE(ioctl(fd_a, CAP_RT_GETINFO, &info) == 0);
@@ -1875,15 +1875,15 @@ ATF_TC_BODY(pair_forwards_metadata, tc)
 	close(fd_a);
 }
 
-ATF_TC(pair_forwards_fds_and_metadata);
-ATF_TC_HEAD(pair_forwards_fds_and_metadata, tc)
+ATF_TC(channel_forwards_fds_and_metadata);
+ATF_TC_HEAD(channel_forwards_fds_and_metadata, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Pair forwarding preserves attached fds and metadata");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair cap_rt_test_kernelstore");
+	    "Channel forwarding preserves attached fds and metadata");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel cap_rt_test_kernelstore");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(pair_forwards_fds_and_metadata, tc)
+ATF_TC_BODY(channel_forwards_fds_and_metadata, tc)
 {
 	struct cap_rt_sendmsg_args sa;
 	struct cap_rt_recvmsg_args ra;
@@ -1892,7 +1892,7 @@ ATF_TC_BODY(pair_forwards_fds_and_metadata, tc)
 	int fd_a, fd_b, ks_fd, pipefd[2], recv_fd;
 	char buf[64];
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 	ATF_REQUIRE(pipe(pipefd) == 0);
 
 	memset(&info, 0, sizeof(info));
@@ -1941,19 +1941,19 @@ ATF_TC_BODY(pair_forwards_fds_and_metadata, tc)
 	close(fd_a);
 }
 
-ATF_TC(pair_close_one_end);
-ATF_TC_HEAD(pair_close_one_end, tc)
+ATF_TC(channel_close_one_end);
+ATF_TC_HEAD(channel_close_one_end, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Closing one end of pair revokes the other");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	    "Closing one end of channel revokes the other");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
-ATF_TC_BODY(pair_close_one_end, tc)
+ATF_TC_BODY(channel_close_one_end, tc)
 {
 	char buf[64];
 	int fd_a, fd_b, flags, i;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 
 	/* Close A. */
 	close(fd_a);
@@ -1983,20 +1983,20 @@ ATF_TC_BODY(pair_close_one_end, tc)
 	close(fd_b);
 }
 
-ATF_TC(pair_multiproc);
-ATF_TC_HEAD(pair_multiproc, tc)
+ATF_TC(channel_multiproc);
+ATF_TC_HEAD(channel_multiproc, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Pair works across processes via fork");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	    "Channel works across processes via fork");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
-ATF_TC_BODY(pair_multiproc, tc)
+ATF_TC_BODY(channel_multiproc, tc)
 {
 	char buf[64];
 	int fd_a, fd_b, status;
 	pid_t pid;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
@@ -2032,15 +2032,15 @@ ATF_TC_BODY(pair_multiproc, tc)
 	close(fd_a);
 }
 
-ATF_TC(pair_crossproc_forwards_metadata);
-ATF_TC_HEAD(pair_crossproc_forwards_metadata, tc)
+ATF_TC(channel_crossproc_forwards_metadata);
+ATF_TC_HEAD(channel_crossproc_forwards_metadata, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Pair forwarding preserves child sender metadata across fork");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair cap_rt_test_kernelstore");
+	    "Channel forwarding preserves child sender metadata across fork");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel cap_rt_test_kernelstore");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(pair_crossproc_forwards_metadata, tc)
+ATF_TC_BODY(channel_crossproc_forwards_metadata, tc)
 {
 	struct cap_rt_recvmsg_args ra;
 	struct cap_rt_info_args info;
@@ -2049,7 +2049,7 @@ ATF_TC_BODY(pair_crossproc_forwards_metadata, tc)
 	int fd_a, fd_b, ks_fd, status, sv[2];
 	pid_t pid;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
 
 	memset(&info, 0, sizeof(info));
@@ -2474,27 +2474,27 @@ ATF_TC_BODY(getinfo_sync_features, tc)
 }
 
 /* ================================================================
- * Pair: fd passing through pair
+ * Channel: fd passing through channel
  * ================================================================ */
 
-ATF_TC(pair_fd_passing);
-ATF_TC_HEAD(pair_fd_passing, tc)
+ATF_TC(channel_fd_passing);
+ATF_TC_HEAD(channel_fd_passing, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "File descriptors pass through a pair");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	    "File descriptors pass through a channel");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
-ATF_TC_BODY(pair_fd_passing, tc)
+ATF_TC_BODY(channel_fd_passing, tc)
 {
 	struct cap_rt_sendmsg_args sa;
 	struct cap_rt_recvmsg_args ra;
 	int fd_a, fd_b, pipefd[2], recv_fd;
 	char buf[64];
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 	ATF_REQUIRE(pipe(pipefd) == 0);
 
-	/* Send a pipe fd through the pair A -> B. */
+	/* Send a pipe fd through the channel A -> B. */
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = "hi";
 	sa.payload_len = 2;
@@ -2527,23 +2527,23 @@ ATF_TC_BODY(pair_fd_passing, tc)
 }
 
 /* ================================================================
- * Pair: stress — many messages
+ * Channel: stress — many messages
  * ================================================================ */
 
-ATF_TC(pair_stress);
-ATF_TC_HEAD(pair_stress, tc)
+ATF_TC(channel_stress);
+ATF_TC_HEAD(channel_stress, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "100 messages through a pair");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	    "100 messages through a channel");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
-ATF_TC_BODY(pair_stress, tc)
+ATF_TC_BODY(channel_stress, tc)
 {
 	char buf[64];
 	uint32_t rlen;
 	int fd_a, fd_b, i;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 
 	for (i = 0; i < 100; i++) {
 		uint32_t val = (uint32_t)i;
@@ -2566,26 +2566,26 @@ ATF_TC_BODY(pair_stress, tc)
 }
 
 /* ================================================================
- * Pair: getinfo on pair
+ * Channel: getinfo on channel
  * ================================================================ */
 
-ATF_TC(pair_getinfo);
-ATF_TC_HEAD(pair_getinfo, tc)
+ATF_TC(channel_getinfo);
+ATF_TC_HEAD(channel_getinfo, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "GETINFO on pair returns correct metadata");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	    "GETINFO on channel returns correct metadata");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
-ATF_TC_BODY(pair_getinfo, tc)
+ATF_TC_BODY(channel_getinfo, tc)
 {
 	struct cap_rt_info_args info;
 	int fd_a, fd_b;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 
 	memset(&info, 0, sizeof(info));
 	ATF_REQUIRE(ioctl(fd_a, CAP_RT_GETINFO, &info) == 0);
-	ATF_CHECK_STREQ(info.name, "pair");
+	ATF_CHECK_STREQ(info.name, "channel");
 	ATF_CHECK(info.badge != 0);
 	ATF_CHECK((info.features & CAP_RT_INFO_F_SENDMSG) != 0);
 	ATF_CHECK((info.features & CAP_RT_INFO_F_CALL) == 0);
@@ -2595,7 +2595,7 @@ ATF_TC_BODY(pair_getinfo, tc)
 		struct cap_rt_info_args info_b;
 		memset(&info_b, 0, sizeof(info_b));
 		ATF_REQUIRE(ioctl(fd_b, CAP_RT_GETINFO, &info_b) == 0);
-		ATF_CHECK_STREQ(info_b.name, "pair");
+		ATF_CHECK_STREQ(info_b.name, "channel");
 		ATF_CHECK(info_b.badge != info.badge);
 	}
 
@@ -2854,13 +2854,13 @@ ATF_TC_HEAD(fdclose_dup_survives, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Closing one dup'd fd fires co_fdclose, instance survives");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
 ATF_TC_BODY(fdclose_dup_survives, tc)
 {
 	int fd_a, fd_b, fd_a2;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 
 	/* Dup fd_a. */
 	fd_a2 = dup(fd_a);
@@ -2888,13 +2888,13 @@ ATF_TC_HEAD(fdclose_dup_then_close_all, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Closing all dup'd fds revokes the instance");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
 ATF_TC_BODY(fdclose_dup_then_close_all, tc)
 {
 	int fd_a, fd_b, fd_a2, flags;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 
 	fd_a2 = dup(fd_a);
 	ATF_REQUIRE(fd_a2 >= 0);
@@ -5635,20 +5635,20 @@ ATF_TC_BODY(payload_over_max, tc)
 	close(fd);
 }
 
-ATF_TC(pair_kqueue_eof_on_close);
-ATF_TC_HEAD(pair_kqueue_eof_on_close, tc)
+ATF_TC(channel_kqueue_eof_on_close);
+ATF_TC_HEAD(channel_kqueue_eof_on_close, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "kqueue fires EV_EOF on pair when peer closes");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	    "kqueue fires EV_EOF on channel when peer closes");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
-ATF_TC_BODY(pair_kqueue_eof_on_close, tc)
+ATF_TC_BODY(channel_kqueue_eof_on_close, tc)
 {
 	struct kevent kev;
 	struct timespec ts;
 	int fd_a, fd_b, kq, ret;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 
 	kq = kqueue();
 	ATF_REQUIRE(kq >= 0);
@@ -5668,18 +5668,18 @@ ATF_TC_BODY(pair_kqueue_eof_on_close, tc)
 	close(fd_b);
 }
 
-ATF_TC(pair_send_after_peer_close);
-ATF_TC_HEAD(pair_send_after_peer_close, tc)
+ATF_TC(channel_send_after_peer_close);
+ATF_TC_HEAD(channel_send_after_peer_close, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "SENDMSG after peer closes returns EPIPE or ECONNRESET");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
-ATF_TC_BODY(pair_send_after_peer_close, tc)
+ATF_TC_BODY(channel_send_after_peer_close, tc)
 {
 	int fd_a, fd_b, i, flags;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 	close(fd_a);
 
 	flags = fcntl(fd_b, F_GETFL, 0);
@@ -5698,23 +5698,23 @@ ATF_TC_BODY(pair_send_after_peer_close, tc)
 	close(fd_b);
 }
 
-ATF_TC(pair_unpaired_send);
-ATF_TC_HEAD(pair_unpaired_send, tc)
+ATF_TC(channel_unconnected_send);
+ATF_TC_HEAD(channel_unconnected_send, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "SENDMSG before PAIR_OP_CREATE with wrong op fails");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	    "SENDMSG before CHANNEL_OP_CREATE with wrong op fails");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
-ATF_TC_BODY(pair_unpaired_send, tc)
+ATF_TC_BODY(channel_unconnected_send, tc)
 {
 	char buf[64];
 	uint32_t rlen;
 	int fd;
 
-	fd = cap_rt_connect("pair");
+	fd = cap_rt_connect("channel");
 	ATF_REQUIRE(fd >= 0);
 
-	/* Send a non-CREATE message to unpaired instance. */
+	/* Send a non-CREATE message to unconnected instance. */
 	uint32_t val = 99;
 	ATF_REQUIRE(cap_rt_send(fd, &val, sizeof(val), 0) == 0);
 
@@ -5821,20 +5821,20 @@ ATF_TC_BODY(capprotect_getinfo_call_feature, tc)
 	close(fd);
 }
 
-ATF_TC(pair_concurrent_writers);
-ATF_TC_HEAD(pair_concurrent_writers, tc)
+ATF_TC(channel_concurrent_writers);
+ATF_TC_HEAD(channel_concurrent_writers, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Multiple processes send on same pair end concurrently");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	    "Multiple processes send on same channel end concurrently");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
-ATF_TC_BODY(pair_concurrent_writers, tc)
+ATF_TC_BODY(channel_concurrent_writers, tc)
 {
 	int fd_a, fd_b, status;
 	pid_t pids[4];
 	int i;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 
 	/* Fork 4 children, each sends 10 messages on fd_a. */
 	for (i = 0; i < 4; i++) {
@@ -5889,20 +5889,20 @@ ATF_TC_BODY(rapid_connect_disconnect, tc)
 	}
 }
 
-ATF_TC(pair_nonblock_recv_empty);
-ATF_TC_HEAD(pair_nonblock_recv_empty, tc)
+ATF_TC(channel_nonblock_recv_empty);
+ATF_TC_HEAD(channel_nonblock_recv_empty, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "O_NONBLOCK RECVMSG on pair with no messages returns EAGAIN");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	    "O_NONBLOCK RECVMSG on channel with no messages returns EAGAIN");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
-ATF_TC_BODY(pair_nonblock_recv_empty, tc)
+ATF_TC_BODY(channel_nonblock_recv_empty, tc)
 {
 	struct cap_rt_recvmsg_args ra;
 	char buf[64];
 	int fd_a, fd_b, flags;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 
 	flags = fcntl(fd_b, F_GETFL, 0);
 	ATF_REQUIRE(fcntl(fd_b, F_SETFL, flags | O_NONBLOCK) == 0);
@@ -5916,28 +5916,28 @@ ATF_TC_BODY(pair_nonblock_recv_empty, tc)
 	close(fd_a);
 }
 
-ATF_TC(pair_double_create);
-ATF_TC_HEAD(pair_double_create, tc)
+ATF_TC(channel_double_create);
+ATF_TC_HEAD(channel_double_create, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Second PAIR_OP_CREATE after pairing gets error reply");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	    "Second CHANNEL_OP_CREATE after connecting gets error reply");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
-ATF_TC_BODY(pair_double_create, tc)
+ATF_TC_BODY(channel_double_create, tc)
 {
 	uint32_t op;
 	char buf[64];
 	uint32_t rlen;
 	int fd_a, fd_b;
 
-	cap_rt_pair_pair(&fd_a, &fd_b);
+	cap_rt_channel_create(&fd_a, &fd_b);
 
 	/*
-	 * Already paired — second CREATE is forwarded to peer
-	 * as data (pair is a pipe after pairing, not a command
+	 * Already connected — second CREATE is forwarded to peer
+	 * as data (channel is a pipe after connecting, not a command
 	 * interface).  Verify it arrives on fd_b.
 	 */
-	op = PAIR_OP_CREATE;
+	op = CHANNEL_OP_CREATE;
 	ATF_REQUIRE(cap_rt_send(fd_a, &op, sizeof(op), 0) == 0);
 	rlen = sizeof(buf);
 	ATF_REQUIRE(cap_rt_recv(fd_b, buf, &rlen, NULL) == 0);
@@ -6173,7 +6173,7 @@ ATF_TC_BODY(capsicum_gates_terminate, tc)
  * ================================================================ */
 
 static int
-pair_mint_instance(int fd)
+channel_mint_instance(int fd)
 {
 	struct cap_rt_mint_instance_args ma;
 
@@ -6188,18 +6188,18 @@ ATF_TC_HEAD(capsicum_mint_right, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Stripping CAP_CAP_RT_MINT blocks MINT_INSTANCE");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
 ATF_TC_BODY(capsicum_mint_right, tc)
 {
 	cap_rights_t rights;
 	int fd, minted;
 
-	fd = cap_rt_connect("pair");
+	fd = cap_rt_connect("channel");
 	ATF_REQUIRE(fd >= 0);
 
 	/* Mint should work before limiting. */
-	minted = pair_mint_instance(fd);
+	minted = channel_mint_instance(fd);
 	ATF_REQUIRE_MSG(minted >= 0, "mint before limit: %s", strerror(errno));
 	close(minted);
 
@@ -6219,13 +6219,13 @@ ATF_TC_HEAD(revoke_mint_blocks_minting, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "CAP_RT_REVOKE_MINT blocks MINT_INSTANCE on all fds");
-	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_pair");
+	atf_tc_set_md_var(tc, "require.kmods", "cap_rt cap_rt_channel");
 }
 ATF_TC_BODY(revoke_mint_blocks_minting, tc)
 {
 	int fd, fd2, minted;
 
-	fd = cap_rt_connect("pair");
+	fd = cap_rt_connect("channel");
 	ATF_REQUIRE(fd >= 0);
 
 	/* Dup before revoking — both fds share the instance. */
@@ -6233,7 +6233,7 @@ ATF_TC_BODY(revoke_mint_blocks_minting, tc)
 	ATF_REQUIRE(fd2 >= 0);
 
 	/* Mint works before revoke. */
-	minted = pair_mint_instance(fd);
+	minted = channel_mint_instance(fd);
 	ATF_REQUIRE(minted >= 0);
 	close(minted);
 
@@ -6241,8 +6241,8 @@ ATF_TC_BODY(revoke_mint_blocks_minting, tc)
 	ATF_REQUIRE(ioctl(fd, CAP_RT_REVOKE_MINT, NULL) == 0);
 
 	/* Both fds should be blocked. */
-	ATF_CHECK_ERRNO(EACCES, pair_mint_instance(fd) == -1);
-	ATF_CHECK_ERRNO(EACCES, pair_mint_instance(fd2) == -1);
+	ATF_CHECK_ERRNO(EACCES, channel_mint_instance(fd) == -1);
+	ATF_CHECK_ERRNO(EACCES, channel_mint_instance(fd2) == -1);
 
 	close(fd2);
 	close(fd);
@@ -6957,14 +6957,14 @@ ATF_TP_ADD_TCS(tp)
 	/* Introspection */
 	ATF_TP_ADD_TC(tp, getinfo);
 
-	/* Capability pair */
-	ATF_TP_ADD_TC(tp, pair_create);
-	ATF_TP_ADD_TC(tp, pair_bidirectional);
-	ATF_TP_ADD_TC(tp, pair_forwards_metadata);
-	ATF_TP_ADD_TC(tp, pair_forwards_fds_and_metadata);
-	ATF_TP_ADD_TC(tp, pair_close_one_end);
-	ATF_TP_ADD_TC(tp, pair_multiproc);
-	ATF_TP_ADD_TC(tp, pair_crossproc_forwards_metadata);
+	/* Capability channel */
+	ATF_TP_ADD_TC(tp, channel_create);
+	ATF_TP_ADD_TC(tp, channel_bidirectional);
+	ATF_TP_ADD_TC(tp, channel_forwards_metadata);
+	ATF_TP_ADD_TC(tp, channel_forwards_fds_and_metadata);
+	ATF_TP_ADD_TC(tp, channel_close_one_end);
+	ATF_TP_ADD_TC(tp, channel_multiproc);
+	ATF_TP_ADD_TC(tp, channel_crossproc_forwards_metadata);
 
 	/* Additional coverage */
 	ATF_TP_ADD_TC(tp, getinfo_limits);
@@ -6988,10 +6988,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, getinfo_async_features);
 	ATF_TP_ADD_TC(tp, getinfo_sync_features);
 
-	/* Pair: additional coverage */
-	ATF_TP_ADD_TC(tp, pair_fd_passing);
-	ATF_TP_ADD_TC(tp, pair_stress);
-	ATF_TP_ADD_TC(tp, pair_getinfo);
+	/* Channel: additional coverage */
+	ATF_TP_ADD_TC(tp, channel_fd_passing);
+	ATF_TP_ADD_TC(tp, channel_stress);
+	ATF_TP_ADD_TC(tp, channel_getinfo);
 
 	/* Keystore: additional coverage */
 	ATF_TP_ADD_TC(tp, keystore_max_keys);
@@ -7036,12 +7036,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, kqueue_eof_on_terminate);
 	ATF_TP_ADD_TC(tp, max_payload_size);
 	ATF_TP_ADD_TC(tp, payload_over_max);
-	ATF_TP_ADD_TC(tp, pair_kqueue_eof_on_close);
+	ATF_TP_ADD_TC(tp, channel_kqueue_eof_on_close);
 
-	/* Pair: edge cases */
-	ATF_TP_ADD_TC(tp, pair_send_after_peer_close);
-	ATF_TP_ADD_TC(tp, pair_unpaired_send);
-	ATF_TP_ADD_TC(tp, pair_double_create);
+	/* Channel: edge cases */
+	ATF_TP_ADD_TC(tp, channel_send_after_peer_close);
+	ATF_TP_ADD_TC(tp, channel_unconnected_send);
+	ATF_TP_ADD_TC(tp, channel_double_create);
 
 	/* More framework edge cases */
 	ATF_TP_ADD_TC(tp, sendmsg_flags_nonzero);
@@ -7052,12 +7052,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, close_during_blocked_recv);
 
 	/* Service-specific edge cases */
-	ATF_TP_ADD_TC(tp, pair_nonblock_recv_empty);
+	ATF_TP_ADD_TC(tp, channel_nonblock_recv_empty);
 
 	/* More coverage */
 	ATF_TP_ADD_TC(tp, call_req_oversized);
 	ATF_TP_ADD_TC(tp, capprotect_getinfo_call_feature);
-	ATF_TP_ADD_TC(tp, pair_concurrent_writers);
+	ATF_TP_ADD_TC(tp, channel_concurrent_writers);
 	ATF_TP_ADD_TC(tp, rapid_connect_disconnect);
 
 	/* Framework: additional */

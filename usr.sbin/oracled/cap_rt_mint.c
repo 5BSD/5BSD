@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * CAP_RT token minting and pair/coalition creation for oracled.
+ * CAP_RT token minting and channel/coalition creation for oracled.
  */
 
 #include <sys/ioctl.h>
@@ -14,7 +14,7 @@
 #include <dev/cap_rt/cap_rt_coalition_proto.h>
 #include <dev/cap_rt/cap_rt_ioctl.h>
 #include <dev/cap_rt/cap_rt_isolation_proto.h>
-#include <dev/cap_rt/cap_rt_pair_proto.h>
+#include <dev/cap_rt/cap_rt_channel_proto.h>
 #include <dev/cap_rt/cap_rt_system_proto.h>
 
 #include <errno.h>
@@ -207,33 +207,33 @@ cap_rt_mint_system_token(uint32_t gates)
 }
 
 /*
- * Create a cap_rt pair channel.
- * Sets *oracle_end and *child_end to the two paired fds.
+ * Create a cap_rt channel.
+ * Sets *oracle_end and *child_end to the two connected fds.
  * Returns 0 on success, -1 on failure.
  */
 int
-cap_rt_create_pair(int *oracle_end, int *child_end)
+cap_rt_create_channel(int *oracle_end, int *child_end)
 {
 	struct cap_rt_sendmsg_args sa;
 	struct cap_rt_recvmsg_args ra;
 	uint32_t op;
-	int pair_fd, peer_fd;
+	int chan_fd, peer_fd;
 
 	if (cap_rt_fd == -1)
 		return (-1);
 
-	pair_fd = cap_rt_svc_connect("pair");
-	if (pair_fd == -1)
+	chan_fd = cap_rt_svc_connect("channel");
+	if (chan_fd == -1)
 		return (-1);
 
-	op = PAIR_OP_CREATE;
+	op = CHANNEL_OP_CREATE;
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = &op;
 	sa.payload_len = sizeof(op);
 
-	if (ioctl(pair_fd, CAP_RT_SENDMSG, &sa) == -1) {
-		syslog(LOG_WARNING, "create_pair: sendmsg: %m");
-		close(pair_fd);
+	if (ioctl(chan_fd, CAP_RT_SENDMSG, &sa) == -1) {
+		syslog(LOG_WARNING, "create_channel: sendmsg: %m");
+		close(chan_fd);
 		return (-1);
 	}
 
@@ -242,32 +242,32 @@ cap_rt_create_pair(int *oracle_end, int *child_end)
 	ra.fds = &peer_fd;
 	ra.nfds = 1;
 
-	if (ioctl(pair_fd, CAP_RT_RECVMSG, &ra) == -1) {
-		syslog(LOG_WARNING, "create_pair: recvmsg: %m");
-		close(pair_fd);
+	if (ioctl(chan_fd, CAP_RT_RECVMSG, &ra) == -1) {
+		syslog(LOG_WARNING, "create_channel: recvmsg: %m");
+		close(chan_fd);
 		return (-1);
 	}
 
 	if (peer_fd < 0) {
-		syslog(LOG_WARNING, "create_pair: recvmsg returned no fd");
-		close(pair_fd);
+		syslog(LOG_WARNING, "create_channel: recvmsg returned no fd");
+		close(chan_fd);
 		return (-1);
 	}
 
-	if (fcntl(pair_fd, F_SETFD, FD_CLOEXEC) == -1) {
-		syslog(LOG_WARNING, "create_pair: fcntl CLOEXEC pair_fd: %m");
-		close(pair_fd);
+	if (fcntl(chan_fd, F_SETFD, FD_CLOEXEC) == -1) {
+		syslog(LOG_WARNING, "create_channel: fcntl CLOEXEC chan_fd: %m");
+		close(chan_fd);
 		close(peer_fd);
 		return (-1);
 	}
 	if (fcntl(peer_fd, F_SETFD, FD_CLOEXEC) == -1) {
-		syslog(LOG_WARNING, "create_pair: fcntl CLOEXEC peer_fd: %m");
-		close(pair_fd);
+		syslog(LOG_WARNING, "create_channel: fcntl CLOEXEC peer_fd: %m");
+		close(chan_fd);
 		close(peer_fd);
 		return (-1);
 	}
 
-	*oracle_end = pair_fd;
+	*oracle_end = chan_fd;
 	*child_end = peer_fd;
 	return (0);
 }

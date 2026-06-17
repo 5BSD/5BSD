@@ -9,7 +9,7 @@
  * backoff, graceful stop, and orderly shutdown.  All operations
  * integrate with the main kqueue loop.
  *
- * Hot-reload logic lives in reload.c; service pair protocol
+ * Hot-reload logic lives in reload.c; service channel protocol
  * dispatch lives in svc_proto.c.
  */
 
@@ -55,9 +55,9 @@ svc_close_fds(struct svc_runtime *svc)
 		close(svc->pd_fd);
 		svc->pd_fd = -1;
 	}
-	if (svc->pair_fd >= 0) {
-		close(svc->pair_fd);
-		svc->pair_fd = -1;
+	if (svc->channel_fd >= 0) {
+		close(svc->channel_fd);
+		svc->channel_fd = -1;
 	}
 	if (svc->coalition_fd >= 0) {
 		close(svc->coalition_fd);
@@ -81,7 +81,7 @@ static void
 svc_release_dynamic_claims(struct svc_runtime *svc)
 {
 
-	oracle_release_manifest(sd.oracle_pair_fd, &svc->manifest);
+	oracle_release_manifest(sd.oracle_channel_fd, &svc->manifest);
 }
 
 /*

@@ -284,12 +284,12 @@ main(void)
 {
 	struct stat sb;
 	FILE *out;
-	const char *label, *pairfd, *tokenfds, *leak;
+	const char *label, *channelfd, *tokenfds, *leak;
 	int openfds[32];
 	int fd;
 
 	label = getenv("ORACLED_LABEL");
-	pairfd = getenv("ORACLED_PAIR_FD");
+	channelfd = getenv("ORACLED_CHANNEL_FD");
 	tokenfds = getenv("ORACLED_TOKEN_FDS");
 	leak = getenv("ORACLED_SHOULD_NOT_LEAK");
 	for (fd = 0; fd < 32; fd++)
@@ -300,7 +300,7 @@ main(void)
 		err(1, "fd-probe.out");
 
 	fprintf(out, "label=%s\n", label != NULL ? label : "");
-	fprintf(out, "pairfd=%s\n", pairfd != NULL ? pairfd : "");
+	fprintf(out, "channelfd=%s\n", channelfd != NULL ? channelfd : "");
 	fprintf(out, "tokenfds=%s\n", tokenfds != NULL ? tokenfds : "");
 	fprintf(out, "leak=%s\n", leak != NULL ? leak : "");
 
@@ -582,7 +582,7 @@ EOF
 	start_stress_oracled
 	if ! sh -c "i=0; while ! grep -q 'service crash: started pid' '$logfile' && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service crash: started pid' '$logfile'"; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start, likely missing cap_rt pair service"
+		atf_skip "service did not start, likely missing cap_rt channel service"
 	fi
 	atf_check -s exit:0 -o ignore sh -c \
 	    "i=0; while ! grep -q 'service crash: failed .* disabling' '$logfile' && [ \$i -lt 300 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service crash: failed .* disabling' '$logfile'"
@@ -619,7 +619,7 @@ EOF
 	start_stress_oracled
 	if ! wait_for_file ignore-term.pid; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start, likely missing cap_rt pair service"
+		atf_skip "service did not start, likely missing cap_rt channel service"
 	fi
 	svc_pid=$(cat ignore-term.pid)
 
@@ -663,7 +663,7 @@ EOF
 	start_stress_oracled
 	if ! wait_for_file subtree-child.pid; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start, likely missing cap_rt pair service"
+		atf_skip "service did not start, likely missing cap_rt channel service"
 	fi
 	child_pid=$(cat subtree-child.pid)
 
@@ -708,13 +708,13 @@ EOF
 	unset ORACLED_SHOULD_NOT_LEAK
 	if ! wait_for_file env-probe.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start, likely missing cap_rt pair service"
+		atf_skip "service did not start, likely missing cap_rt channel service"
 	fi
 
 	atf_check -s exit:0 -o match:"^PATH=/sbin:/bin:/usr/sbin:/usr/bin$" \
 	    grep "^PATH=" env-probe.out
-	atf_check -s exit:0 -o match:"^ORACLED_PAIR_FD=3$" \
-	    grep "^ORACLED_PAIR_FD=" env-probe.out
+	atf_check -s exit:0 -o match:"^ORACLED_CHANNEL_FD=3$" \
+	    grep "^ORACLED_CHANNEL_FD=" env-probe.out
 	atf_check -s exit:0 -o match:"^ORACLED_LABEL=env-probe$" \
 	    grep "^ORACLED_LABEL=" env-probe.out
 	atf_check -s not-exit:0 grep "ORACLED_SHOULD_NOT_LEAK" env-probe.out
@@ -898,32 +898,32 @@ reload_dependency_order_status_cleanup()
 	cleanup_common
 }
 
-atf_test_case service_pair_fd_contract cleanup
-service_pair_fd_contract_head()
+atf_test_case service_channel_fd_contract cleanup
+service_channel_fd_contract_head()
 {
-	atf_set "descr" "service receives a launchd/Mach-like private pair fd on the documented descriptor"
+	atf_set "descr" "service receives a launchd/Mach-like private channel fd on the documented descriptor"
 	atf_set "require.user" "root"
 }
-service_pair_fd_contract_body()
+service_channel_fd_contract_body()
 {
 	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	build_fdprobe
-	cat > "$manifestdir/pair-probe.ucl" <<EOF
-label = "pair-probe";
+	cat > "$manifestdir/channel-probe.ucl" <<EOF
+label = "channel-probe";
 program = "$(pwd)/fdprobe";
 EOF
 
 	start_stress_oracled
 	if ! wait_for_file fd-probe.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start, likely missing cap_rt pair service"
+		atf_skip "service did not start, likely missing cap_rt channel service"
 	fi
-	atf_check -s exit:0 -o match:"^pairfd=3$" grep "^pairfd=" fd-probe.out
+	atf_check -s exit:0 -o match:"^channelfd=3$" grep "^channelfd=" fd-probe.out
 	atf_check -s exit:0 -o match:"^fd=3$" grep "^fd=3$" fd-probe.out
 	assert_daemon_alive
 }
-service_pair_fd_contract_cleanup()
+service_channel_fd_contract_cleanup()
 {
 	cleanup_common
 }
@@ -931,7 +931,7 @@ service_pair_fd_contract_cleanup()
 atf_test_case service_fd_inheritance_contract cleanup
 service_fd_inheritance_contract_head()
 {
-	atf_set "descr" "service inherits only stdio, pair fd, and requested token fds"
+	atf_set "descr" "service inherits only stdio, channel fd, and requested token fds"
 	atf_set "require.user" "root"
 }
 service_fd_inheritance_contract_body()
@@ -961,10 +961,10 @@ EOF
 	unset ORACLED_SHOULD_NOT_LEAK
 	if ! wait_for_file fd-probe.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start, likely missing cap_rt pair service"
+		atf_skip "service did not start, likely missing cap_rt channel service"
 	fi
 	atf_check -s exit:0 -o match:"^label=fd-contract$" grep "^label=" fd-probe.out
-	atf_check -s exit:0 -o match:"^pairfd=3$" grep "^pairfd=" fd-probe.out
+	atf_check -s exit:0 -o match:"^channelfd=3$" grep "^channelfd=" fd-probe.out
 	atf_check -s exit:0 -o match:"^tokenfds=4$" grep "^tokenfds=" fd-probe.out
 	atf_check -s exit:0 -o match:"^fd=0$" grep "^fd=0$" fd-probe.out
 	atf_check -s exit:0 -o match:"^fd=1$" grep "^fd=1$" fd-probe.out
@@ -1072,7 +1072,7 @@ EOF
 	start_stress_oracled
 	if ! sh -c "i=0; while ! grep -q 'service die-signal: started pid' '$logfile' && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service die-signal: started pid' '$logfile'"; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start, likely missing cap_rt pair service"
+		atf_skip "service did not start, likely missing cap_rt channel service"
 	fi
 	atf_check -s exit:0 -o ignore sh -c \
 	    "i=0; while ! grep -q 'service die-signal: failed .* disabling' '$logfile' && [ \$i -lt 300 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service die-signal: failed .* disabling' '$logfile'"
@@ -1719,7 +1719,7 @@ atf_init_test_cases()
 	atf_add_test_case parser_config_boundaries
 	atf_add_test_case reload_dependency_transaction_rollback
 	atf_add_test_case reload_dependency_order_status
-	atf_add_test_case service_pair_fd_contract
+	atf_add_test_case service_channel_fd_contract
 	atf_add_test_case service_fd_inheritance_contract
 	atf_add_test_case sandbox_capprotect_denies_foreign_ptrace
 	atf_add_test_case sandbox_isolation_denies_foreign_cap_rt_open

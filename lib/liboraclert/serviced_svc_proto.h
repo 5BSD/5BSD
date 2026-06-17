@@ -3,10 +3,10 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Service-side pair channel protocol.
+ * Service-side channel protocol.
  *
  * Messages exchanged between a launched service and serviced over
- * the service's inherited pair fd (fd 3).  Uses CAP_RT_SENDMSG/
+ * the service's inherited channel fd (fd 3).  Uses CAP_RT_SENDMSG/
  * CAP_RT_RECVMSG with reply_token correlation.
  *
  * Services use this protocol to:
@@ -17,9 +17,9 @@
  *
  * Serviced pushes connection notifications to registered services
  * when a client looks up their name.  The notification carries an
- * attached fd — the new client's end of a pair.
+ * attached fd — the new client's end of a channel.
  *
- * Services should NOT include cap_rt headers.  The pair fd is an
+ * Services should NOT include cap_rt headers.  The channel fd is an
  * opaque communication channel — cap_rt is an implementation detail
  * of the oracle.
  */
@@ -77,7 +77,7 @@ struct svc_req_hdr {
  *
  * After registration, when a client issues LOOKUP for this name,
  * serviced pushes a SVC_OP_NEW_CLIENT notification to this
- * service with the client's pair end attached as a fd.
+ * service with the client's channel endpoint attached as a fd.
  */
 struct svc_register_req {
 	uint32_t	op;		/* SVC_OP_REGISTER */
@@ -103,10 +103,10 @@ struct svc_unregister_req {
  * SVC_OP_LOOKUP
  *   req:  svc_lookup_req
  *   reply: svc_reply { .status }
- *   reply_fds[0] = pair endpoint to the named service (on success)
+ *   reply_fds[0] = channel endpoint to the named service (on success)
  *
  * Request a connection to a named service.  serviced creates a
- * new pair, sends one end to the requester (in the reply), and
+ * new channel, sends one end to the requester (in the reply), and
  * pushes the other end to the provider via SVC_OP_NEW_CLIENT.
  * ENOENT if the name is not registered.
  */
@@ -119,10 +119,10 @@ struct svc_lookup_req {
 /*
  * SVC_OP_NEW_CLIENT (notification, serviced → service)
  *   payload: svc_new_client_msg
- *   fds[0] = pair endpoint to the new client
+ *   fds[0] = channel endpoint to the new client
  *
  * Pushed to a registered service when a client looks up its name.
- * The service should read this from its pair fd and add the
+ * The service should read this from its channel fd and add the
  * attached fd to its event loop.
  */
 struct svc_new_client_msg {

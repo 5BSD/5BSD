@@ -3,12 +3,12 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * oracled pair channel protocol handler.
+ * oracled channel protocol handler.
  *
- * Receives requests from serviced over the restricted pair channel,
+ * Receives requests from serviced over the restricted channel,
  * validates them against the oracle's claimed resource set, and
- * dispatches to cap_rt to mint tokens or create pairs/coalitions.
- * Replies are sent back over the same pair with attached fds.
+ * dispatches to cap_rt to mint tokens or create channels/coalitions.
+ * Replies are sent back over the same channel with attached fds.
  */
 
 #include <sys/types.h>
@@ -34,7 +34,7 @@
 #include "oracle_proto_claims.h"
 #include "req_validate.h"
 
-static int	proto_pair_fd = -1;
+static int	proto_channel_fd = -1;
 static bool	serviced_ready;
 static uint64_t	serviced_nonce;		/* set on first message */
 static bool	nonce_set;
@@ -63,7 +63,7 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 		sa.nfds = (uint32_t)nfds;
 	}
 
-	if (ioctl(proto_pair_fd, CAP_RT_SENDMSG, &sa) == -1) {
+	if (ioctl(proto_channel_fd, CAP_RT_SENDMSG, &sa) == -1) {
 		syslog(LOG_WARNING, "oracle_proto: reply: %m");
 		return (-1);
 	}
@@ -401,17 +401,17 @@ handle_mint_system(const void *payload, uint32_t len, uint64_t reply_token)
 }
 
 static void
-handle_create_pair(uint64_t reply_token)
+handle_create_channel(uint64_t reply_token)
 {
 	int fds[2];
 
-	if (cap_rt_create_pair(&fds[0], &fds[1]) == -1) {
-		ORACLED_PROBE_PAIR_CREATE(EIO);
+	if (cap_rt_create_channel(&fds[0], &fds[1]) == -1) {
+		ORACLED_PROBE_CHANNEL_CREATE(EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
 		return;
 	}
 
-	ORACLED_PROBE_PAIR_CREATE(0);
+	ORACLED_PROBE_CHANNEL_CREATE(0);
 	proto_reply(0, reply_token, fds, 2);
 	close(fds[0]);
 	close(fds[1]);
@@ -455,7 +455,7 @@ handle_ping(uint64_t reply_token)
 /* Claim/release handlers and sweep are in oracle_proto_claims.c. */
 
 /*
- * Dispatch a single request from the pair channel.
+ * Dispatch a single request from the channel.
  * Returns 0 if message processed, -1 on receive error (peer closed).
  */
 static int
@@ -477,7 +477,7 @@ proto_dispatch_one(void)
 	ra.payload = &buf;
 	ra.payload_len = sizeof(buf);
 
-	if (ioctl(proto_pair_fd, CAP_RT_RECVMSG, &ra) == -1) {
+	if (ioctl(proto_channel_fd, CAP_RT_RECVMSG, &ra) == -1) {
 		if (errno == EAGAIN)
 			return (0);
 		syslog(LOG_WARNING, "oracle_proto: recvmsg: %m");
@@ -533,8 +533,8 @@ proto_dispatch_one(void)
 	case ORACLE_OP_CREATE_JAIL:
 		handle_create_jail(&buf, ra.payload_len, ra.reply_token);
 		break;
-	case ORACLE_OP_CREATE_PAIR:
-		handle_create_pair(ra.reply_token);
+	case ORACLE_OP_CREATE_CHANNEL:
+		handle_create_channel(ra.reply_token);
 		break;
 	case ORACLE_OP_CREATE_COALITION:
 		handle_create_coalition(ra.reply_token);
@@ -585,7 +585,7 @@ proto_dispatch_one(void)
 }
 
 /*
- * Called from the event loop when EVFILT_READ fires on the pair fd.
+ * Called from the event loop when EVFILT_READ fires on the channel fd.
  * Processes one message per call; kqueue re-fires if more are queued.
  */
 int
@@ -597,13 +597,13 @@ oracle_proto_dispatch(void)
 
 /*
  * Initialize the protocol handler.
- * pair_fd is oracled's end of the pair to serviced.
+ * channel_fd is oracled's end of the channel to serviced.
  */
 void
-oracle_proto_init(int pair_fd)
+oracle_proto_init(int channel_fd)
 {
 
-	proto_pair_fd = pair_fd;
+	proto_channel_fd = channel_fd;
 	serviced_ready = false;
 	nonce_set = false;
 }
@@ -616,7 +616,7 @@ oracle_proto_reset(void)
 {
 
 	/* The caller already closed the fd; prevent stale ioctl use. */
-	proto_pair_fd = -1;
+	proto_channel_fd = -1;
 	sweep_dynamic_claims();
 	serviced_ready = false;
 	nonce_set = false;
@@ -633,5 +633,5 @@ int
 oracle_proto_fd(void)
 {
 
-	return (proto_pair_fd);
+	return (proto_channel_fd);
 }

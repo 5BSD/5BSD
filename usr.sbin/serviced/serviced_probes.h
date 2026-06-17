@@ -76,8 +76,8 @@
 /* Per-service capability acquisition */
 #define	SERVICED_PROBE_CAP_MINT(label, type, result)	\
 	DTRACE_PROBE3(serviced, cap__mint, label, type, result)
-#define	SERVICED_PROBE_CAP_PAIR(label, result)	\
-	DTRACE_PROBE2(serviced, cap__pair, label, result)
+#define	SERVICED_PROBE_CAP_CHANNEL(label, result)	\
+	DTRACE_PROBE2(serviced, cap__channel, label, result)
 #define	SERVICED_PROBE_CAP_COALITION(label, result)	\
 	DTRACE_PROBE2(serviced, cap__coalition, label, result)
 
@@ -91,7 +91,7 @@
 #define	SERVICED_PROBE_NAMING_COUNT(nnames)	\
 	DTRACE_PROBE1(serviced, naming__count, nnames)
 
-/* Service IPC — pair channel messages */
+/* Service IPC — channel messages */
 #define	SERVICED_PROBE_IPC_RECV(label, op)	\
 	DTRACE_PROBE2(serviced, ipc__recv, label, op)
 #define	SERVICED_PROBE_IPC_REPLY(label, op, status)	\

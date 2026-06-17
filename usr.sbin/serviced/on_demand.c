@@ -11,7 +11,7 @@
  *
  * Multiple concurrent lookups for the same service are coalesced:
  * only one launch occurs, all waiters are drained when ready.
- * Each waiter gets its own unique pair channel (never shared).
+ * Each waiter gets its own unique channel (never shared).
  */
 
 #include <sys/types.h>
@@ -43,7 +43,7 @@ struct pending_lookup {
 	struct pending_lookup	*next;
 	char			 name[CAPBUNDLE_NAME_MAX + 1];
 	char			 requester_label[SERVICED_LABEL_MAX];
-	int			 requester_pair_fd; /* snapshot — not owned */
+	int			 requester_channel_fd; /* snapshot — not owned */
 	uint64_t		 reply_token;
 	uintptr_t		 timeout_ident;
 };
@@ -187,7 +187,7 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 		target = &sd.services[sd.nservices];
 		memset(target, 0, sizeof(*target));
 		target->pd_fd = -1;
-		target->pair_fd = -1;
+		target->channel_fd = -1;
 		target->coalition_fd = -1;
 		target->jail_fd = -1;
 		target->state = SVC_STATE_STOPPED;
@@ -222,7 +222,7 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 			sd.nservices--;
 			memset(target, 0, sizeof(*target));
 			target->pd_fd = -1;
-			target->pair_fd = -1;
+			target->channel_fd = -1;
 			target->coalition_fd = -1;
 			target->jail_fd = -1;
 			return (-1);
@@ -253,11 +253,11 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 	if (requester != NULL) {
 		strlcpy(pl->requester_label, requester->manifest.label,
 		    sizeof(pl->requester_label));
-		pl->requester_pair_fd = requester->pair_fd;
+		pl->requester_channel_fd = requester->channel_fd;
 	} else {
 		strlcpy(pl->requester_label, "unknown",
 		    sizeof(pl->requester_label));
-		pl->requester_pair_fd = -1;
+		pl->requester_channel_fd = -1;
 	}
 	pl->reply_token = reply_token;
 
@@ -315,11 +315,11 @@ on_demand_check_ready(struct svc_runtime *svc, int kq)
 		 */
 		{
 			struct svc_runtime *req_svc;
-			int client_fd, error, pair_fd;
+			int client_fd, error, channel_fd;
 
 			req_svc = svc_by_label(pl->requester_label);
-			pair_fd = (req_svc != NULL) ?
-			    req_svc->pair_fd : pl->requester_pair_fd;
+			channel_fd = (req_svc != NULL) ?
+			    req_svc->channel_fd : pl->requester_channel_fd;
 
 			client_fd = (req_svc != NULL) ?
 			    naming_lookup(pl->name, req_svc, &error) : -1;
@@ -337,8 +337,8 @@ on_demand_check_ready(struct svc_runtime *svc, int kq)
 				sa.nfds = 1;
 				sa.reply_token = pl->reply_token;
 
-				if (pair_fd >= 0)
-					(void)ioctl(pair_fd,
+				if (channel_fd >= 0)
+					(void)ioctl(channel_fd,
 					    CAP_RT_SENDMSG, &sa);
 
 				close(client_fd);
@@ -352,8 +352,8 @@ on_demand_check_ready(struct svc_runtime *svc, int kq)
 				sa.payload_len = sizeof(status);
 				sa.reply_token = pl->reply_token;
 
-				if (pair_fd >= 0)
-					(void)ioctl(pair_fd,
+				if (channel_fd >= 0)
+					(void)ioctl(channel_fd,
 					    CAP_RT_SENDMSG, &sa);
 			}
 		}
@@ -399,7 +399,7 @@ on_demand_timeout(uintptr_t ident, int kq)
 		strlcpy(expired_name, pl->name, sizeof(expired_name));
 
 		/* Send ETIMEDOUT reply.  Re-resolve the requester by
-		 * label — the original pair_fd may be stale if the
+		 * label — the original channel_fd may be stale if the
 		 * requester was restarted since the lookup. */
 		{
 			struct cap_rt_sendmsg_args sa;
@@ -409,8 +409,8 @@ on_demand_timeout(uintptr_t ident, int kq)
 
 			reply_fd = -1;
 			req = svc_by_label(pl->requester_label);
-			if (req != NULL && req->pair_fd >= 0)
-				reply_fd = req->pair_fd;
+			if (req != NULL && req->channel_fd >= 0)
+				reply_fd = req->channel_fd;
 
 			memset(&sa, 0, sizeof(sa));
 			sa.payload = &status;
@@ -467,7 +467,7 @@ on_demand_teardown(int kq)
 		next = pl->next;
 
 		/* Send error reply. */
-		if (pl->requester_pair_fd >= 0) {
+		if (pl->requester_channel_fd >= 0) {
 			struct cap_rt_sendmsg_args sa;
 			int32_t status = ESHUTDOWN;
 
@@ -475,7 +475,7 @@ on_demand_teardown(int kq)
 			sa.payload = &status;
 			sa.payload_len = sizeof(status);
 			sa.reply_token = pl->reply_token;
-			(void)ioctl(pl->requester_pair_fd,
+			(void)ioctl(pl->requester_channel_fd,
 			    CAP_RT_SENDMSG, &sa);
 		}
 

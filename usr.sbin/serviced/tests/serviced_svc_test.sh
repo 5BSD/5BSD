@@ -357,8 +357,8 @@ EOF
 
 	atf_check -s exit:0 -o match:"^PATH=/sbin:/bin:/usr/sbin:/usr/bin$" \
 	    grep "^PATH=" env-probe.out
-	atf_check -s exit:0 -o match:"^ORACLED_PAIR_FD=" \
-	    grep "^ORACLED_PAIR_FD=" env-probe.out
+	atf_check -s exit:0 -o match:"^ORACLED_CHANNEL_FD=" \
+	    grep "^ORACLED_CHANNEL_FD=" env-probe.out
 	atf_check -s exit:0 -o match:"^ORACLED_LABEL=env-probe$" \
 	    grep "^ORACLED_LABEL=" env-probe.out
 	atf_check -s not-exit:0 grep "SHOULD_NOT_LEAK" env-probe.out
@@ -598,16 +598,16 @@ int main(void)
 	struct svc_register_req unreg_req;
 	struct svc_reply rpl;
 	const char *fd_str;
-	int pair_fd;
+	int channel_fd;
 	FILE *out;
 
-	fd_str = getenv("ORACLED_PAIR_FD");
+	fd_str = getenv("ORACLED_CHANNEL_FD");
 	if (!fd_str) return (1);
-	pair_fd = atoi(fd_str);
+	channel_fd = atoi(fd_str);
 
 	/* Send READY. */
 	ready_req.op = SVC_OP_READY;
-	if (send_recv(pair_fd, &ready_req, sizeof(ready_req), 1, &rpl) == -1)
+	if (send_recv(channel_fd, &ready_req, sizeof(ready_req), 1, &rpl) == -1)
 		return (1);
 
 	/* Register the name. */
@@ -615,7 +615,7 @@ int main(void)
 	reg_req.op = SVC_OP_REGISTER;
 	strlcpy(reg_req.name, "org.test.unreg.svc",
 	    sizeof(reg_req.name));
-	if (send_recv(pair_fd, &reg_req, sizeof(reg_req), 2, &rpl) == -1)
+	if (send_recv(channel_fd, &reg_req, sizeof(reg_req), 2, &rpl) == -1)
 		return (1);
 
 	out = fopen("unreg-register.out", "w");
@@ -630,7 +630,7 @@ int main(void)
 	unreg_req.op = SVC_OP_UNREGISTER;
 	strlcpy(unreg_req.name, "org.test.unreg.svc",
 	    sizeof(unreg_req.name));
-	if (send_recv(pair_fd, &unreg_req, sizeof(unreg_req), 3, &rpl) == -1)
+	if (send_recv(channel_fd, &unreg_req, sizeof(unreg_req), 3, &rpl) == -1)
 		return (1);
 
 	out = fopen("unreg-result.out", "w");

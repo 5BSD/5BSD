@@ -20,7 +20,7 @@
 #include "serviced_manifest.h"
 #include "oracled_svc_proto.h"
 
-/* Timeout for cap_rt pair RPC calls (oracle and direct). */
+/* Timeout for cap_rt channel RPC calls (oracle and direct). */
 #define	SERVICED_RPC_TIMEOUT_MS		100
 
 /* Service runtime state */
@@ -33,7 +33,7 @@
  * Runtime state for a launched service.
  *
  * Wraps svc_manifest with process state, fds, and restart tracking.
- * The pd_fd, pair_fd, and coalition_fd are registered on the main
+ * The pd_fd, channel_fd, and coalition_fd are registered on the main
  * kqueue with 'this' as udata for event dispatch.
  */
 struct svc_runtime {
@@ -43,7 +43,7 @@ struct svc_runtime {
 	int		state;		/* SVC_STATE_* */
 	pid_t		pid;
 	int		pd_fd;		/* process descriptor (parent holds) */
-	int		pair_fd;	/* oracle's end of pair channel */
+	int		channel_fd;	/* oracle's end of channel */
 	int		coalition_fd;	/* coalition service instance */
 	int		jail_fd;	/* jail descriptor (-1 if no jail) */
 
@@ -61,7 +61,7 @@ struct svc_runtime {
 	/* Attribution */
 	char		launched_by[SERVICED_LABEL_MAX]; /* who triggered launch */
 	struct timespec	launch_time;
-	unsigned	connection_count;	/* active pair connections */
+	unsigned	connection_count;	/* active channel connections */
 
 	/* Bundle origin */
 	unsigned	bundle_idx;		/* index in bundle registry */
@@ -78,8 +78,8 @@ extern const char *serviced_bundle_dir_system;
 extern const char *serviced_bundle_dir_user;
 
 struct serviced_state {
-	int		oracle_pair_fd;		/* pair to oracled (fd 3) */
-	int		pair_svc_fd;		/* pair service instance (fd 4) */
+	int		oracle_channel_fd;	/* channel to oracled (fd 3) */
+	int		channel_svc_fd;		/* channel service instance (fd 4) */
 	int		coalition_svc_fd;	/* coalition service instance (fd 5) */
 	int		capprotect_fd;		/* capprotect service instance (fd 6) */
 	int		identity_fd;		/* cap_rt_identity service instance */
@@ -103,7 +103,7 @@ void	sctl_conn_event(struct kevent *kev);
 bool	sctl_is_conn_event(struct kevent *kev);
 
 /* caprt_direct.c — direct cap_rt operations using delegated fd */
-int	caprt_create_pair(int *our_end, int *child_end);
+int	caprt_create_channel(int *our_end, int *child_end);
 int	caprt_create_coalition(void);
 int	caprt_coalition_enlist(int coalition_fd, int member_fd);
 int	caprt_coalition_set_leader(int coalition_fd, int leader_fd);
@@ -111,26 +111,26 @@ int	caprt_coalition_graceful(int coalition_fd, int sig, unsigned timeout_ms);
 int	caprt_coalition_terminate(int coalition_fd);
 int	caprt_mint_capprotect(void);
 
-/* oracle_client.c — pair protocol client to oracled */
-int	oracle_mint_path(int pair_fd, const char *path);
-int	oracle_mint_file(int pair_fd, const char *path, uint64_t actions);
-int	oracle_mint_net(int pair_fd, const struct ort_net_claim *nc);
-int	oracle_mint_jail(int pair_fd, const struct serviced_jail_claim *jc);
-int	oracle_mint_system(int pair_fd, uint32_t gates);
-int	oracle_create_jail(int pair_fd, const char *name, const char *path,
+/* oracle_client.c — channel protocol client to oracled */
+int	oracle_mint_path(int channel_fd, const char *path);
+int	oracle_mint_file(int channel_fd, const char *path, uint64_t actions);
+int	oracle_mint_net(int channel_fd, const struct ort_net_claim *nc);
+int	oracle_mint_jail(int channel_fd, const struct serviced_jail_claim *jc);
+int	oracle_mint_system(int channel_fd, uint32_t gates);
+int	oracle_create_jail(int channel_fd, const char *name, const char *path,
 	    const char *hostname, const char *ip4_addr);
-int	oracle_create_pair(int pair_fd, int *our_end, int *child_end);
-int	oracle_create_coalition(int pair_fd);
-int	oracle_send_ready(int pair_fd);
-int	oracle_claim_path(int pair_fd, const char *path);
-int	oracle_claim_net(int pair_fd, const struct ort_net_claim *nc);
-int	oracle_claim_jail(int pair_fd, const struct serviced_jail_claim *jc);
-int	oracle_claim_system(int pair_fd, uint32_t gates);
-int	oracle_release_path(int pair_fd, const char *path);
-int	oracle_release_net(int pair_fd, const struct ort_net_claim *nc);
-int	oracle_release_jail(int pair_fd, const struct serviced_jail_claim *jc);
-int	oracle_release_system(int pair_fd, uint32_t gates);
-int	oracle_release_manifest(int pair_fd, const struct svc_manifest *m);
+int	oracle_create_channel(int channel_fd, int *our_end, int *child_end);
+int	oracle_create_coalition(int channel_fd);
+int	oracle_send_ready(int channel_fd);
+int	oracle_claim_path(int channel_fd, const char *path);
+int	oracle_claim_net(int channel_fd, const struct ort_net_claim *nc);
+int	oracle_claim_jail(int channel_fd, const struct serviced_jail_claim *jc);
+int	oracle_claim_system(int channel_fd, uint32_t gates);
+int	oracle_release_path(int channel_fd, const char *path);
+int	oracle_release_net(int channel_fd, const struct ort_net_claim *nc);
+int	oracle_release_jail(int channel_fd, const struct serviced_jail_claim *jc);
+int	oracle_release_system(int channel_fd, uint32_t gates);
+int	oracle_release_manifest(int channel_fd, const struct svc_manifest *m);
 
 /* kldmgr_client.c — kernel module loading */
 int	kldmgr_ensure_loaded(const struct svc_manifest *m, int kq);
@@ -150,8 +150,8 @@ void	supervisor_teardown_state(void);
 void	svc_graceful_stop(struct svc_runtime *svc, int kq);
 void	schedule_restart(struct svc_runtime *svc, int kq);
 
-/* svc_proto.c — service pair protocol dispatch */
-void	supervisor_handle_pair(struct kevent *kev);
+/* svc_proto.c — service channel protocol dispatch */
+void	supervisor_handle_channel(struct kevent *kev);
 
 /* reload.c — hot reload logic */
 int	supervisor_reload(int kq, char *summary, size_t sumlen);

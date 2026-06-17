@@ -3,7 +3,7 @@
 #
 # Integration tests for the full oracled → serviced → service stack.
 #
-# These test the service-side pair protocol (READY, REGISTER, LOOKUP)
+# These test the service-side channel protocol (READY, REGISTER, LOOKUP)
 # and the naming registry.  Each test builds small C programs that act
 # as services, launches them through serviced manifests, and verifies
 # the expected behavior.
@@ -41,7 +41,7 @@ stop_oracled()
 }
 
 #
-# Build a service that sends READY over its pair fd.
+# Build a service that sends READY over its channel fd.
 #
 build_ready_service()
 {
@@ -68,25 +68,25 @@ int main(void)
 	struct svc_req_hdr req;
 	struct svc_reply rpl;
 	const char *fd_str;
-	int pair_fd;
+	int channel_fd;
 	FILE *out;
 
-	fd_str = getenv("ORACLED_PAIR_FD");
+	fd_str = getenv("ORACLED_CHANNEL_FD");
 	if (!fd_str) return 1;
-	pair_fd = atoi(fd_str);
+	channel_fd = atoi(fd_str);
 
 	req.op = SVC_OP_READY;
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = &req;
 	sa.payload_len = sizeof(req);
 	sa.reply_token = 1;
-	if (ioctl(pair_fd, CAP_RT_SENDMSG, &sa) == -1)
+	if (ioctl(channel_fd, CAP_RT_SENDMSG, &sa) == -1)
 		return 1;
 
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = &rpl;
 	ra.payload_len = sizeof(rpl);
-	if (ioctl(pair_fd, CAP_RT_RECVMSG, &ra) == -1)
+	if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == -1)
 		return 1;
 
 	out = fopen("ready-ok.out", "w");
@@ -162,26 +162,26 @@ int main(void)
 	struct cap_rt_recvmsg_args ra;
 	struct svc_new_client_msg notify;
 	const char *fd_str, *name;
-	int pair_fd, client_fd;
+	int channel_fd, client_fd;
 	FILE *out;
 
-	fd_str = getenv("ORACLED_PAIR_FD");
+	fd_str = getenv("ORACLED_CHANNEL_FD");
 	if (!fd_str) return 1;
-	pair_fd = atoi(fd_str);
+	channel_fd = atoi(fd_str);
 
 	name = getenv("ORACLED_LABEL");
 	if (!name) name = "test.provider.default";
 
 	/* Send READY. */
 	ready_req.op = SVC_OP_READY;
-	if (send_recv(pair_fd, &ready_req, sizeof(ready_req), 1, &rpl) == -1)
+	if (send_recv(channel_fd, &ready_req, sizeof(ready_req), 1, &rpl) == -1)
 		return 1;
 
 	/* Register the name. */
 	memset(&reg_req, 0, sizeof(reg_req));
 	reg_req.op = SVC_OP_REGISTER;
 	strlcpy(reg_req.name, name, sizeof(reg_req.name));
-	if (send_recv(pair_fd, &reg_req, sizeof(reg_req), 2, &rpl) == -1)
+	if (send_recv(channel_fd, &reg_req, sizeof(reg_req), 2, &rpl) == -1)
 		return 1;
 
 	out = fopen("provider-registered.out", "w");
@@ -201,7 +201,7 @@ int main(void)
 	ra.fds = &client_fd;
 	ra.nfds = 1;
 
-	if (ioctl(pair_fd, CAP_RT_RECVMSG, &ra) == -1)
+	if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == -1)
 		return 1;
 
 	out = fopen("provider-client.out", "w");
@@ -266,13 +266,13 @@ int main(void)
 	struct svc_lookup_req lookup_req;
 	struct svc_reply rpl;
 	const char *fd_str, *name = NULL;
-	int pair_fd, peer_fd;
+	int channel_fd, peer_fd;
 	char msg[256];
 	FILE *out;
 
-	fd_str = getenv("ORACLED_PAIR_FD");
+	fd_str = getenv("ORACLED_CHANNEL_FD");
 	if (!fd_str) return 1;
-	pair_fd = atoi(fd_str);
+	channel_fd = atoi(fd_str);
 
 	/* Read lookup name from file (env vars are stripped by serviced). */
 	{
@@ -295,11 +295,11 @@ int main(void)
 	sa.payload = &ready_req;
 	sa.payload_len = sizeof(ready_req);
 	sa.reply_token = 1;
-	if (ioctl(pair_fd, CAP_RT_SENDMSG, &sa) == -1) return 1;
+	if (ioctl(channel_fd, CAP_RT_SENDMSG, &sa) == -1) return 1;
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = &rpl;
 	ra.payload_len = sizeof(rpl);
-	if (ioctl(pair_fd, CAP_RT_RECVMSG, &ra) == -1) return 1;
+	if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == -1) return 1;
 
 	/* Wait for provider to be registered. */
 	sleep(2);
@@ -314,14 +314,14 @@ int main(void)
 	sa.payload = &lookup_req;
 	sa.payload_len = sizeof(lookup_req);
 	sa.reply_token = 2;
-	if (ioctl(pair_fd, CAP_RT_SENDMSG, &sa) == -1) return 1;
+	if (ioctl(channel_fd, CAP_RT_SENDMSG, &sa) == -1) return 1;
 
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = &rpl;
 	ra.payload_len = sizeof(rpl);
 	ra.fds = &peer_fd;
 	ra.nfds = 1;
-	if (ioctl(pair_fd, CAP_RT_RECVMSG, &ra) == -1) return 1;
+	if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == -1) return 1;
 
 	out = fopen("client-lookup.out", "w");
 	if (out) {
@@ -393,7 +393,7 @@ service_ready_protocol_cleanup()
 atf_test_case naming_register_and_lookup cleanup
 naming_register_and_lookup_head()
 {
-	atf_set "descr" "provider registers a name, client looks it up, pair is brokered, message exchanged"
+	atf_set "descr" "provider registers a name, client looks it up, channel is brokered, message exchanged"
 	atf_set "require.user" "root"
 }
 naming_register_and_lookup_body()
@@ -609,22 +609,22 @@ int main(void)
 	struct svc_register_req reg_req;
 	struct svc_reply rpl;
 	const char *fd_str;
-	int pair_fd;
+	int channel_fd;
 	FILE *out;
 
-	fd_str = getenv("ORACLED_PAIR_FD");
+	fd_str = getenv("ORACLED_CHANNEL_FD");
 	if (!fd_str) return (1);
-	pair_fd = atoi(fd_str);
+	channel_fd = atoi(fd_str);
 
 	ready_req.op = SVC_OP_READY;
-	if (send_recv(pair_fd, &ready_req, sizeof(ready_req), 1, &rpl) == -1)
+	if (send_recv(channel_fd, &ready_req, sizeof(ready_req), 1, &rpl) == -1)
 		return (1);
 
 	/* Try to register a name NOT in our label or provides[]. */
 	memset(&reg_req, 0, sizeof(reg_req));
 	reg_req.op = SVC_OP_REGISTER;
 	strlcpy(reg_req.name, "com.evil.hijack", sizeof(reg_req.name));
-	if (send_recv(pair_fd, &reg_req, sizeof(reg_req), 2, &rpl) == -1)
+	if (send_recv(channel_fd, &reg_req, sizeof(reg_req), 2, &rpl) == -1)
 		return (1);
 
 	out = fopen("squat-result.out", "w");
@@ -730,23 +730,23 @@ int main(void)
 	struct svc_lookup_req lookup_req;
 	struct svc_reply rpl;
 	const char *fd_str;
-	int pair_fd;
+	int channel_fd;
 	FILE *out;
 
-	fd_str = getenv("ORACLED_PAIR_FD");
+	fd_str = getenv("ORACLED_CHANNEL_FD");
 	if (!fd_str) return (1);
-	pair_fd = atoi(fd_str);
+	channel_fd = atoi(fd_str);
 
 	/* Send READY. */
 	ready_req.op = SVC_OP_READY;
-	if (send_recv(pair_fd, &ready_req, sizeof(ready_req), 1, &rpl) == -1)
+	if (send_recv(channel_fd, &ready_req, sizeof(ready_req), 1, &rpl) == -1)
 		return (1);
 
 	/* Register our own name. */
 	memset(&reg_req, 0, sizeof(reg_req));
 	reg_req.op = SVC_OP_REGISTER;
 	strlcpy(reg_req.name, "selfloop.test", sizeof(reg_req.name));
-	if (send_recv(pair_fd, &reg_req, sizeof(reg_req), 2, &rpl) == -1)
+	if (send_recv(channel_fd, &reg_req, sizeof(reg_req), 2, &rpl) == -1)
 		return (1);
 	if (rpl.status != 0) return (1);
 
@@ -754,7 +754,7 @@ int main(void)
 	memset(&lookup_req, 0, sizeof(lookup_req));
 	lookup_req.op = SVC_OP_LOOKUP;
 	strlcpy(lookup_req.name, "selfloop.test", sizeof(lookup_req.name));
-	if (send_recv(pair_fd, &lookup_req, sizeof(lookup_req), 3, &rpl) == -1)
+	if (send_recv(channel_fd, &lookup_req, sizeof(lookup_req), 3, &rpl) == -1)
 		return (1);
 
 	out = fopen("selfloop-result.out", "w");

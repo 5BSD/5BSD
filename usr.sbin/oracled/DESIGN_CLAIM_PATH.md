@@ -197,6 +197,6 @@ claims {
 3. Update config.c and manifest.c to parse the object form
 4. Update oracle_proto.c mint handler to use path-based claim when
    `nocrossmount` is set
-5. Add `ORACLE_OP_MINT_PATH_STR` to the pair protocol so serviced
+5. Add `ORACLE_OP_MINT_PATH_STR` to the channel protocol so serviced
    can request path-based mints
 6. Update man pages and tests

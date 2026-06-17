@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Dynamic claim/release handlers for the oracle pair protocol.
+ * Dynamic claim/release handlers for the oracle channel protocol.
  *
  * Split from oracle_proto.c.  Contains auto-claim helpers (called
  * from mint handlers), explicit CLAIM/RELEASE handlers (dispatched

@@ -6,19 +6,19 @@
  * Direct cap_rt operations for serviced.
  *
  * Uses delegated service instance fds (inherited from oracled) to
- * create pairs and coalitions via CAP_RT_MINT_INSTANCE — no /dev/cap_rt
+ * create channels and coalitions via CAP_RT_MINT_INSTANCE — no /dev/cap_rt
  * access needed.  oracled hands serviced one instance of each
  * mintable service; serviced mints fresh instances from those.
  *
  * If a delegated fd is not available, falls back to the oracle
- * pair protocol client.
+ * channel protocol client.
  */
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
 
 #include <dev/cap_rt/cap_rt_coalition_proto.h>
-#include <dev/cap_rt/cap_rt_pair_proto.h>
+#include <dev/cap_rt/cap_rt_channel_proto.h>
 #include <dev/cap_rt/cap_rt_ioctl.h>
 
 #include <errno.h>
@@ -30,7 +30,7 @@
 
 #include "serviced.h"
 
-/* Timeout for cap_rt pair recvmsg (milliseconds). */
+/* Timeout for cap_rt channel recvmsg (milliseconds). */
 #define	CAPRT_DIRECT_TIMEOUT_MS	SERVICED_RPC_TIMEOUT_MS
 
 /*
@@ -50,37 +50,37 @@ mint_instance(int svc_fd)
 }
 
 /*
- * Create a pair channel using the delegated pair service instance.
- * Mints a fresh pair instance, sends PAIR_OP_CREATE, gets the peer.
- * Falls back to oracle protocol if pair_svc_fd unavailable.
+ * Create a channel using the delegated channel service instance.
+ * Mints a fresh channel instance, sends CHANNEL_OP_CREATE, gets the peer.
+ * Falls back to oracle protocol if channel_svc_fd unavailable.
  */
 int
-caprt_create_pair(int *our_end, int *child_end)
+caprt_create_channel(int *our_end, int *child_end)
 {
 	struct cap_rt_sendmsg_args sa;
 	struct cap_rt_recvmsg_args ra;
 	uint32_t op;
-	int pair_fd, peer_fd;
+	int channel_fd, peer_fd;
 
-	if (sd.pair_svc_fd == -1)
-		return (oracle_create_pair(sd.oracle_pair_fd,
+	if (sd.channel_svc_fd == -1)
+		return (oracle_create_channel(sd.oracle_channel_fd,
 		    our_end, child_end));
 
-	pair_fd = mint_instance(sd.pair_svc_fd);
-	if (pair_fd == -1) {
-		syslog(LOG_WARNING, "caprt_direct: pair mint: %m");
-		return (oracle_create_pair(sd.oracle_pair_fd,
+	channel_fd = mint_instance(sd.channel_svc_fd);
+	if (channel_fd == -1) {
+		syslog(LOG_WARNING, "caprt_direct: channel mint: %m");
+		return (oracle_create_channel(sd.oracle_channel_fd,
 		    our_end, child_end));
 	}
 
-	op = PAIR_OP_CREATE;
+	op = CHANNEL_OP_CREATE;
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = &op;
 	sa.payload_len = sizeof(op);
 
-	if (ioctl(pair_fd, CAP_RT_SENDMSG, &sa) == -1) {
-		syslog(LOG_WARNING, "caprt_direct: pair sendmsg: %m");
-		close(pair_fd);
+	if (ioctl(channel_fd, CAP_RT_SENDMSG, &sa) == -1) {
+		syslog(LOG_WARNING, "caprt_direct: channel sendmsg: %m");
+		close(channel_fd);
 		return (-1);
 	}
 
@@ -93,7 +93,7 @@ caprt_create_pair(int *our_end, int *child_end)
 		struct pollfd pfd;
 		int rv;
 
-		pfd.fd = pair_fd;
+		pfd.fd = channel_fd;
 		pfd.events = POLLIN;
 
 		for (;;) {
@@ -102,44 +102,44 @@ caprt_create_pair(int *our_end, int *child_end)
 				if (errno == EINTR)
 					continue;
 				syslog(LOG_WARNING,
-				    "caprt_direct: pair poll: %m");
-				close(pair_fd);
+				    "caprt_direct: channel poll: %m");
+				close(channel_fd);
 				return (-1);
 			}
 			if (rv == 0) {
 				syslog(LOG_ERR,
-				    "caprt_direct: pair recvmsg timeout");
-				close(pair_fd);
+				    "caprt_direct: channel recvmsg timeout");
+				close(channel_fd);
 				errno = ETIMEDOUT;
 				return (-1);
 			}
 			if (pfd.revents & (POLLERR | POLLHUP)) {
 				syslog(LOG_ERR,
-				    "caprt_direct: pair closed");
-				close(pair_fd);
+				    "caprt_direct: channel closed");
+				close(channel_fd);
 				errno = ECONNRESET;
 				return (-1);
 			}
-			if (ioctl(pair_fd, CAP_RT_RECVMSG, &ra) == 0)
+			if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == 0)
 				break;
 			if (errno == EAGAIN)
 				continue;
 			syslog(LOG_WARNING,
-			    "caprt_direct: pair recvmsg: %m");
-			close(pair_fd);
+			    "caprt_direct: channel recvmsg: %m");
+			close(channel_fd);
 			return (-1);
 		}
 	}
 
 	if (peer_fd < 0) {
-		close(pair_fd);
+		close(channel_fd);
 		return (-1);
 	}
 
-	(void)fcntl(pair_fd, F_SETFD, FD_CLOEXEC);
+	(void)fcntl(channel_fd, F_SETFD, FD_CLOEXEC);
 	(void)fcntl(peer_fd, F_SETFD, FD_CLOEXEC);
 
-	*our_end = pair_fd;
+	*our_end = channel_fd;
 	*child_end = peer_fd;
 	return (0);
 }
@@ -155,12 +155,12 @@ caprt_create_coalition(void)
 	int fd;
 
 	if (sd.coalition_svc_fd == -1)
-		return (oracle_create_coalition(sd.oracle_pair_fd));
+		return (oracle_create_coalition(sd.oracle_channel_fd));
 
 	fd = mint_instance(sd.coalition_svc_fd);
 	if (fd == -1) {
 		syslog(LOG_WARNING, "caprt_direct: coalition mint: %m");
-		return (oracle_create_coalition(sd.oracle_pair_fd));
+		return (oracle_create_coalition(sd.oracle_channel_fd));
 	}
 
 	(void)fcntl(fd, F_SETFL, O_NONBLOCK);

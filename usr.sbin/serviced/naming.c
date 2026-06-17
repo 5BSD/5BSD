@@ -5,10 +5,10 @@
  *
  * Reverse-domain-name service registry.
  *
- * Services register names (e.g., "org.5bsd.sshd") via their pair
- * channel to serviced.  Clients look up names and receive a pair
+ * Services register names (e.g., "org.5bsd.sshd") via their channel
+ * to serviced.  Clients look up names and receive a channel
  * endpoint to the named service.  serviced brokers the connection
- * by creating a new pair (via oracled) and pushing one end to each
+ * by creating a new channel (via oracled) and pushing one end to each
  * party.
  *
  * The registry is a simple hash table keyed by name.  Entries are
@@ -281,7 +281,7 @@ naming_rebind_owner(struct svc_runtime *old_owner,
 /*
  * Look up a name and broker a connection.
  *
- * Creates a new pair via oracled, pushes one end to the provider
+ * Creates a new channel via oracled, pushes one end to the provider
  * service (SVC_OP_NEW_CLIENT notification), and returns the other
  * end to the caller.
  *
@@ -310,20 +310,20 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 		return (-1);
 	}
 
-	/* Create a pair for the connection. */
-	if (oracle_create_pair(sd.oracle_pair_fd,
+	/* Create a channel for the connection. */
+	if (oracle_create_channel(sd.oracle_channel_fd,
 	    &provider_end, &client_end) != 0) {
 		syslog(LOG_WARNING,
-		    "naming: lookup '%s': failed to create pair", name);
-		SERVICED_PROBE_ERROR("naming", "lookup pair creation failed");
+		    "naming: lookup '%s': failed to create channel", name);
+		SERVICED_PROBE_ERROR("naming", "lookup channel creation failed");
 		*errp = EIO;
 		return (-1);
 	}
 
 	/* Check provider is still alive before sending. */
-	if (provider->pair_fd < 0) {
+	if (provider->channel_fd < 0) {
 		syslog(LOG_WARNING,
-		    "naming: lookup '%s': provider '%s' pair closed",
+		    "naming: lookup '%s': provider '%s' channel closed",
 		    name, provider->manifest.label);
 		close(provider_end);
 		close(client_end);
@@ -343,7 +343,7 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 	sa.fds = &provider_end;
 	sa.nfds = 1;
 
-	if (ioctl(provider->pair_fd, CAP_RT_SENDMSG, &sa) == -1) {
+	if (ioctl(provider->channel_fd, CAP_RT_SENDMSG, &sa) == -1) {
 		syslog(LOG_WARNING,
 		    "naming: lookup '%s': failed to notify provider '%s': %m",
 		    name, provider->manifest.label);

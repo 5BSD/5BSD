@@ -1,7 +1,7 @@
 PACKAGE=	cap_rt
 .PATH: ${SRCTOP}/sys/dev/cap_rt
 
-KMOD=	cap_rt_pair
-SRCS=	cap_rt_pair.c
+KMOD=	cap_rt_channel
+SRCS=	cap_rt_channel.c
 
 .include <bsd.kmod.mk>

@@ -111,7 +111,7 @@ MAN=	aac.4 \
 	cap_rt_isolation.4 \
 	cap_rt_mount.4 \
 	cap_rt_node.4 \
-	cap_rt_pair.4 \
+	cap_rt_channel.4 \
 	cap_rt_system.4 \
 	cc_cdg.4 \
 	cc_chd.4 \

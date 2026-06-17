@@ -225,7 +225,7 @@ write_executable()
 # Build the test client service.
 #
 # This creates a C program that is launched BY serviced as a managed
-# service.  It receives ORACLED_PAIR_FD, connects to kldmgrd via
+# service.  It receives ORACLED_CHANNEL_FD, connects to kldmgrd via
 # service_lookup(), sends a request, and writes results to a file.
 #
 # Usage: build_kldmgr_client

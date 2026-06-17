@@ -49,7 +49,7 @@ int	cap_rt_mint_file_token(const char *path, uint64_t actions);
 int	cap_rt_mint_net_token(const struct ort_net_claim *nc);
 int	cap_rt_mint_jail_token(const struct oracled_jail_claim *jc);
 int	cap_rt_mint_system_token(uint32_t gates);
-int	cap_rt_create_pair(int *oracle_end, int *child_end);
+int	cap_rt_create_channel(int *oracle_end, int *child_end);
 int	cap_rt_create_coalition(void);
 int	cap_rt_mint_instance(int instance_fd);
 int	cap_rt_connect_for_delegate(const char *name);
@@ -80,18 +80,18 @@ void	event_loop(void);
 /* bootstrap.c — serviced lifecycle */
 int	bootstrap_start(int kq);
 void	bootstrap_handle_exit(struct kevent *kev, int kq);
-void	bootstrap_handle_pair_eof(void);
+void	bootstrap_handle_channel_eof(void);
 void	bootstrap_handle_timer(int kq);
 void	bootstrap_signal(int sig);
 void	bootstrap_stop(void);
 bool	bootstrap_is_stopped(void);
 bool	bootstrap_is_procdesc(struct kevent *kev);
-bool	bootstrap_is_pair(struct kevent *kev);
+bool	bootstrap_is_channel(struct kevent *kev);
 bool	bootstrap_is_timer(struct kevent *kev);
 pid_t	bootstrap_pid(void);
 
-/* oracle_proto.c — pair channel protocol handler */
-void	oracle_proto_init(int pair_fd);
+/* oracle_proto.c — channel protocol handler */
+void	oracle_proto_init(int channel_fd);
 int	oracle_proto_dispatch(void);
 void	oracle_proto_reset(void);
 bool	oracle_proto_is_ready(void);

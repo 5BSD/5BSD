@@ -30,7 +30,7 @@ does not start or manage services directly.
 It mints capability tokens on request from
 .Xr serviced 8
 via the oracle protocol, a message-passing channel over a cap_rt
-pair descriptor.
+channel descriptor.
 .Pp
 .Nm
 is started by
@@ -251,7 +251,7 @@ entry is removed from the oracle's state.
 .Pp
 Policy claims
 .Pq from Nm oracled.conf
-are immortal and cannot be released via the pair channel.
+are immortal and cannot be released via the channel.
 Release attempts return
 .Er EPERM ,
 which
@@ -504,8 +504,8 @@ Jail isolation token minted.
 System gate token minted.
 .It Li create-jail(name, result)
 Jail created.
-.It Li pair-create(result)
-Pair channel created.
+.It Li channel-create(result)
+Channel created.
 .It Li coalition-create(result)
 Coalition created.
 .El

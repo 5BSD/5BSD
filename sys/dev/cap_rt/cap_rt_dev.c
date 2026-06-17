@@ -1195,7 +1195,7 @@ cap_rt_instance_close(struct file *fp, struct thread *td __unused)
 	 * messages in the RX queue are dispatched to their handler
 	 * before we discard them.  Without this, a close that wins
 	 * the mutex race against the taskqueue destroys messages the
-	 * handler would have forwarded (e.g., cap_rt_pair).
+	 * handler would have forwarded (e.g., cap_rt_channel).
 	 */
 	if (svc != NULL && svc->csvc_taskq != NULL)
 		taskqueue_drain(svc->csvc_taskq, &s->ci_task);

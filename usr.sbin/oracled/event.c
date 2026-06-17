@@ -7,7 +7,7 @@
  *
  * Uses kqueue(2) to multiplex signals, the control socket, and
  * bootstrap lifecycle events (serviced process descriptor and
- * pair channel protocol).  Shutdown reverses the startup lifecycle
+ * channel protocol).  Shutdown reverses the startup lifecycle
  * (see oracled.c).
  *
  * The daemon is strictly single-threaded.  Reload (SIGHUP or
@@ -222,12 +222,12 @@ event_loop(void)
 			continue;
 		}
 
-		/* Bootstrap: pair channel protocol from serviced. */
-		if (bootstrap_is_pair(&kev)) {
+		/* Bootstrap: channel protocol from serviced. */
+		if (bootstrap_is_channel(&kev)) {
 			if (kev.flags & EV_EOF) {
 				syslog(LOG_INFO,
-				    "serviced closed pair channel");
-				bootstrap_handle_pair_eof();
+				    "serviced closed channel");
+				bootstrap_handle_channel_eof();
 			} else {
 				oracle_proto_dispatch();
 			}

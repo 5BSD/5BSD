@@ -5,14 +5,14 @@
  *
  * serviced — service manager and naming registry.
  *
- * Started by oracled as its single child.  Inherits a cap_rt pair
- * on fd 3 for requesting tokens, pairs, and coalitions from the
+ * Started by oracled as its single child.  Inherits a cap_rt channel
+ * on fd 3 for requesting tokens, channels, and coalitions from the
  * oracle.  Scans capability bundles, dependency-sorts, pdfork/execs
  * services, and manages their lifecycle (restart, shutdown).
  *
  * Startup sequence:
- *   1. Inherit pair fd from ORACLED_PAIR_FD env (fd 3)
- *   2. Create kqueue, register pair + signals
+ *   1. Inherit channel fd from ORACLED_CHANNEL_FD env (fd 3)
+ *   2. Create kqueue, register channel + signals
  *   3. Send ORACLE_OP_READY to oracled
  *   4. Scan bundle directories
  *   5. Dependency sort
@@ -119,7 +119,7 @@ event_loop(void)
 			}
 
 			if (kev->filter == EVFILT_READ &&
-			    (int)kev->ident == sd.oracle_pair_fd) {
+			    (int)kev->ident == sd.oracle_channel_fd) {
 				if (kev->flags & EV_EOF) {
 					syslog(LOG_CRIT,
 					    "oracle died, stopping all services");
@@ -147,10 +147,10 @@ event_loop(void)
 				continue;
 			}
 
-			/* Service pair channel events. */
+			/* Service channel events. */
 			if (kev->filter == EVFILT_READ &&
 			    kev->udata != NULL) {
-				supervisor_handle_pair(kev);
+				supervisor_handle_channel(kev);
 				continue;
 			}
 		}
@@ -169,12 +169,12 @@ int
 main(int argc, char *argv[])
 {
 	struct kevent kev;
-	const char *pair_fd_str, *s;
+	const char *channel_fd_str, *s;
 	int ch;
 
 	memset(&sd, 0, sizeof(sd));
-	sd.oracle_pair_fd = -1;
-	sd.pair_svc_fd = -1;
+	sd.oracle_channel_fd = -1;
+	sd.channel_svc_fd = -1;
 	sd.coalition_svc_fd = -1;
 	sd.capprotect_fd = -1;
 	sd.identity_fd = -1;
@@ -189,28 +189,28 @@ main(int argc, char *argv[])
 		}
 	}
 
-	/* Inherit pair fd. */
-	pair_fd_str = getenv("ORACLED_PAIR_FD");
-	if (pair_fd_str != NULL) {
-		sd.oracle_pair_fd = (int)strtol(pair_fd_str, NULL, 10);
-		if (sd.oracle_pair_fd < 0) {
-			syslog(LOG_ERR, "invalid ORACLED_PAIR_FD: %s",
-			    pair_fd_str);
+	/* Inherit channel fd. */
+	channel_fd_str = getenv("ORACLED_CHANNEL_FD");
+	if (channel_fd_str != NULL) {
+		sd.oracle_channel_fd = (int)strtol(channel_fd_str, NULL, 10);
+		if (sd.oracle_channel_fd < 0) {
+			syslog(LOG_ERR, "invalid ORACLED_CHANNEL_FD: %s",
+			    channel_fd_str);
 			return (1);
 		}
 	} else {
-		syslog(LOG_ERR, "ORACLED_PAIR_FD not set");
+		syslog(LOG_ERR, "ORACLED_CHANNEL_FD not set");
 		return (1);
 	}
 
 	/* Non-blocking so oracle_rpc can timeout instead of hanging. */
-	(void)fcntl(sd.oracle_pair_fd, F_SETFL, O_NONBLOCK);
+	(void)fcntl(sd.oracle_channel_fd, F_SETFL, O_NONBLOCK);
 
 	/* Inherit delegated service instance fds (optional). */
-	s = getenv("SERVICED_PAIR_SVC_FD");
+	s = getenv("SERVICED_CHANNEL_SVC_FD");
 	if (s != NULL) {
-		sd.pair_svc_fd = (int)strtol(s, NULL, 10);
-		if (sd.pair_svc_fd < 0) sd.pair_svc_fd = -1;
+		sd.channel_svc_fd = (int)strtol(s, NULL, 10);
+		if (sd.channel_svc_fd < 0) sd.channel_svc_fd = -1;
 	}
 	s = getenv("SERVICED_COALITION_SVC_FD");
 	if (s != NULL) {
@@ -227,11 +227,11 @@ main(int argc, char *argv[])
 		sd.identity_fd = (int)strtol(s, NULL, 10);
 		if (sd.identity_fd < 0) sd.identity_fd = -1;
 	}
-	if (sd.pair_svc_fd >= 0) {
-		(void)fcntl(sd.pair_svc_fd, F_SETFL, O_NONBLOCK);
-		syslog(LOG_INFO, "inherited service fds: pair=%d "
+	if (sd.channel_svc_fd >= 0) {
+		(void)fcntl(sd.channel_svc_fd, F_SETFL, O_NONBLOCK);
+		syslog(LOG_INFO, "inherited service fds: channel=%d "
 		    "coalition=%d capprotect=%d identity=%d",
-		    sd.pair_svc_fd, sd.coalition_svc_fd,
+		    sd.channel_svc_fd, sd.coalition_svc_fd,
 		    sd.capprotect_fd, sd.identity_fd);
 	}
 	if (sd.coalition_svc_fd >= 0)
@@ -250,21 +250,21 @@ main(int argc, char *argv[])
 	 * (bundle scanning, capprotect) that could cause a timeout.
 	 * This is the first thing we do after inheriting fds.
 	 */
-	if (oracle_send_ready(sd.oracle_pair_fd) != 0) {
+	if (oracle_send_ready(sd.oracle_channel_fd) != 0) {
 		syslog(LOG_ERR, "failed to send READY to oracled");
 		return (1);
 	}
 
 	/*
-	 * Lock down inherited descriptors.  The oracle pair and delegate
+	 * Lock down inherited descriptors.  The oracle channel and delegate
 	 * fds are for serviced only — they must not be inherited by
 	 * child services (clofork), leaked via exec (cloexec), or
-	 * transferred over a pair channel (xfer=none).
+	 * transferred over a channel (xfer=none).
 	 */
 	{
 		int lockfds[] = {
-			sd.oracle_pair_fd,
-			sd.pair_svc_fd,
+			sd.oracle_channel_fd,
+			sd.channel_svc_fd,
 			sd.coalition_svc_fd,
 			sd.capprotect_fd,
 			sd.identity_fd,
@@ -285,10 +285,10 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
-	/* Register oracle pair for read (detect EOF = oracle died). */
-	EV_SET(&kev, sd.oracle_pair_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	/* Register oracle channel for read (detect EOF = oracle died). */
+	EV_SET(&kev, sd.oracle_channel_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
 	if (kevent(serviced_kq, &kev, 1, NULL, 0, NULL) == -1) {
-		syslog(LOG_ERR, "kevent pair: %m");
+		syslog(LOG_ERR, "kevent channel: %m");
 		return (1);
 	}
 

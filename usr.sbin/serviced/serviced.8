@@ -16,8 +16,8 @@ It is started by
 .Xr oracled 8
 as a single child process via
 .Xr pdfork 2
-and inherits a cap_rt pair channel for requesting capability tokens,
-pairs, and coalitions from the oracle.
+and inherits a cap_rt channel for requesting capability tokens,
+channels, and coalitions from the oracle.
 .Pp
 .Nm
 scans capability bundles from
@@ -41,10 +41,10 @@ over a local control socket.
 executes the following phases during startup:
 .Bl -enum
 .It
-Inherit the pair fd from the
-.Ev ORACLED_PAIR_FD
+Inherit the channel fd from the
+.Ev ORACLED_CHANNEL_FD
 environment variable and optional delegated service instance fds from
-.Ev SERVICED_PAIR_SVC_FD ,
+.Ev SERVICED_CHANNEL_SVC_FD ,
 .Ev SERVICED_COALITION_SVC_FD ,
 and
 .Ev SERVICED_CAPPROTECT_FD .
@@ -62,7 +62,7 @@ The capprotect fd is closed after use.
 .It
 Create a
 .Xr kqueue 2
-and register the oracle pair fd for EOF detection (oracle death).
+and register the oracle channel fd for EOF detection (oracle death).
 .It
 Create a control socket at
 .Pa /var/run/serviced.sock .
@@ -78,14 +78,14 @@ Send
 .Dv ORACLE_OP_READY
 to
 .Xr oracled 8
-on the pair channel.
+on the channel.
 .It
 Scan application bundles, topologically sort services
 by dependency, and fork/exec each service via
 .Xr pdfork 2 .
 .It
 Enter the event loop, monitoring services via process descriptors,
-pair channels, coalition events, control socket connections, signals,
+channels, coalition events, control socket connections, signals,
 and restart timers.
 .El
 .Sh INHERITED FILE DESCRIPTORS
@@ -93,16 +93,16 @@ and restart timers.
 inherits the following file descriptors from
 .Xr oracled 8 :
 .Bl -tag -width "capprotect (fd 6)"
-.It pair (fd 3)
-Cap_rt pair channel back to
+.It channel (fd 3)
+Cap_rt channel back to
 .Xr oracled 8 .
-Used to request capability tokens, pairs, and coalitions.
+Used to request capability tokens, channels, and coalitions.
 Always required.
-.It pair_svc (fd 4)
-Delegated cap_rt pair service instance.
+.It channel_svc (fd 4)
+Delegated cap_rt channel service instance.
 Allows
 .Nm
-to create pair channels for its children directly, without
+to create channels for its children directly, without
 round-tripping through
 .Xr oracled 8 .
 Optional.
@@ -120,13 +120,13 @@ Optional.
 .El
 .Sh ENVIRONMENT
 .Bl -tag -width "SERVICED_COALITION_SVC_FD"
-.It Ev ORACLED_PAIR_FD
-File descriptor number for the cap_rt pair channel back to
+.It Ev ORACLED_CHANNEL_FD
+File descriptor number for the cap_rt channel back to
 .Xr oracled 8 .
 Always 3.
 Required.
-.It Ev SERVICED_PAIR_SVC_FD
-File descriptor number for the delegated pair service instance.
+.It Ev SERVICED_CHANNEL_SVC_FD
+File descriptor number for the delegated channel service instance.
 Optional.
 .It Ev SERVICED_COALITION_SVC_FD
 File descriptor number for the delegated coalition service instance.
@@ -337,8 +337,8 @@ Each launched service receives a minimal environment:
 .Bl -tag -width "ORACLED_TOKEN_FDS"
 .It Ev PATH
 .Pa /sbin:/bin:/usr/sbin:/usr/bin
-.It Ev ORACLED_PAIR_FD
-File descriptor number for the cap_rt pair channel back to
+.It Ev ORACLED_CHANNEL_FD
+File descriptor number for the cap_rt channel back to
 .Nm
 (always 3).
 Services use this via
@@ -440,14 +440,14 @@ control socket command will re-evaluate the manifest.
 .Ss Dynamic Claims
 When
 .Nm
-launches a service, it mints capability tokens via the oracle pair
+launches a service, it mints capability tokens via the oracle
 channel.
 If the requested resource is not already claimed by the oracle,
 the oracle auto-claims it dynamically with a global reference count.
 .Pp
 When a service exits,
 .Nm
-releases all capabilities from the service's manifest via the pair
+releases all capabilities from the service's manifest via the
 channel.
 Release messages are sent for every path, network endpoint, jail,
 and system gate in the manifest.
@@ -502,7 +502,7 @@ Each service may register up to 32 names.
 .Pp
 Services interact with the registry via
 .Xr libservice 3
-over their pair channel to
+over their channel to
 .Nm .
 The following operations are supported:
 .Bl -tag -width "UNREGISTER"
@@ -523,7 +523,7 @@ Only the owning service may unregister a name.
 .It Dv LOOKUP
 Connect to a named service.
 .Nm
-creates a new cap_rt pair, pushes one end to the provider service
+creates a new cap_rt channel, pushes one end to the provider service
 as a
 .Dv SVC_OP_NEW_CLIENT
 notification (which includes the requesting client's label),
@@ -664,8 +664,8 @@ Control command denied (insufficient privileges).
 .Bl -tag -width "cap-coalition(label, result)" -compact
 .It cap-mint Ns ( Ns Ar label , type , result Ns )
 Capability token minted.
-.It cap-pair Ns ( Ns Ar label , result Ns )
-Pair channel created.
+.It cap-channel Ns ( Ns Ar label , result Ns )
+Channel created.
 .It cap-coalition Ns ( Ns Ar label , result Ns )
 Coalition created.
 .El
@@ -709,7 +709,7 @@ Shutdown completed.
 .It error Ns ( Ns Ar subsys , msg Ns )
 Error occurred in subsystem.
 .It oracle-disconnected Ns ( Ns )
-Oracle pair channel closed unexpectedly.
+Oracle channel closed unexpectedly.
 .El
 .Sh FILES
 .Bl -tag -width "/var/run/serviced.sock"
@@ -725,8 +725,8 @@ Control socket (mode 0700).
 .Pp
 .Nm
 exits with an error if the
-.Ev ORACLED_PAIR_FD
-environment variable is not set or the pair fd is invalid.
+.Ev ORACLED_CHANNEL_FD
+environment variable is not set or the channel fd is invalid.
 .Sh EXAMPLES
 Minimal service manifest:
 .Bd -literal -offset indent

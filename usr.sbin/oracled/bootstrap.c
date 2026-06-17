@@ -6,7 +6,7 @@
  * Bootstrap supervisor for serviced.
  *
  * The oracle starts serviced as its single child via pdfork().
- * The child inherits one end of a cap_rt pair on fd 3.  The oracle
+ * The child inherits one end of a cap_rt channel on fd 3.  The oracle
  * monitors the process descriptor and restarts serviced on crash
  * with exponential backoff.
  */
@@ -37,8 +37,8 @@
 #define	BOOTSTRAP_MAX_FAILURES	10	/* circuit breaker threshold */
 
 /* Well-known fds for serviced. */
-#define	SERVICED_PAIR_FD	3	/* pair channel to oracled */
-#define	SERVICED_PAIR_SVC_FD	4	/* pair service instance (mintable) */
+#define	SERVICED_CHANNEL_FD	3	/* channel to oracled */
+#define	SERVICED_CHANNEL_SVC_FD	4	/* channel service instance (mintable) */
 #define	SERVICED_COALITION_SVC_FD 5	/* coalition service instance (mintable) */
 #define	SERVICED_CAPPROTECT_FD	6	/* capprotect service instance */
 #define	SERVICED_IDENTITY_FD	7	/* identity service instance */
@@ -47,7 +47,7 @@
 static struct {
 	pid_t		pid;
 	int		pd_fd;		/* process descriptor */
-	int		pair_fd;	/* oracle's end of pair */
+	int		channel_fd;	/* oracle's end of channel */
 	unsigned	restart_count;
 	struct timespec	last_start;
 	bool		started;
@@ -61,21 +61,21 @@ static uintptr_t next_timer_ident = 90000;
  * Runs in the post-fork child — async-signal-safe only.
  */
 /*
- * Fds to delegate to serviced: pair_svc (pair factory), coalition_svc
+ * Fds to delegate to serviced: channel_svc (channel factory), coalition_svc
  * (coalition factory), capprotect (shield).  -1 if unavailable.
  */
 struct bootstrap_delegate_fds {
-	int	pair_svc_fd;
+	int	channel_svc_fd;
 	int	coalition_svc_fd;
 	int	capprotect_fd;
 	int	identity_fd;
 };
 
 static void __dead2
-bootstrap_child_exec(int child_pair_fd, const struct bootstrap_delegate_fds *d)
+bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *d)
 {
-	char pair_env[64];
-	char pair_svc_env[64], coalition_svc_env[64], capprotect_env[64];
+	char channel_env[64];
+	char channel_svc_env[64], coalition_svc_env[64], capprotect_env[64];
 	char identity_env[64];
 	char ctlsock_env[PATH_MAX + 32];
 	char *env[10];
@@ -107,12 +107,12 @@ bootstrap_child_exec(int child_pair_fd, const struct bootstrap_delegate_fds *d)
 	 * above the reserved range to avoid clobbering.
 	 */
 	nfds = 0;
-	src_fds[nfds] = child_pair_fd;
-	dst_fds[nfds] = SERVICED_PAIR_FD;
+	src_fds[nfds] = child_channel_fd;
+	dst_fds[nfds] = SERVICED_CHANNEL_FD;
 	nfds++;
-	if (d->pair_svc_fd >= 0) {
-		src_fds[nfds] = d->pair_svc_fd;
-		dst_fds[nfds] = SERVICED_PAIR_SVC_FD;
+	if (d->channel_svc_fd >= 0) {
+		src_fds[nfds] = d->channel_svc_fd;
+		dst_fds[nfds] = SERVICED_CHANNEL_SVC_FD;
 		nfds++;
 	}
 	if (d->coalition_svc_fd >= 0) {
@@ -163,14 +163,14 @@ bootstrap_child_exec(int child_pair_fd, const struct bootstrap_delegate_fds *d)
 	env[envc++] = __DECONST(char *,
 	    "PATH=/sbin:/bin:/usr/sbin:/usr/bin");
 
-	(void)snprintf(pair_env, sizeof(pair_env),
-	    "ORACLED_PAIR_FD=%d", SERVICED_PAIR_FD);
-	env[envc++] = pair_env;
+	(void)snprintf(channel_env, sizeof(channel_env),
+	    "ORACLED_CHANNEL_FD=%d", SERVICED_CHANNEL_FD);
+	env[envc++] = channel_env;
 
-	if (d->pair_svc_fd >= 0) {
-		(void)snprintf(pair_svc_env, sizeof(pair_svc_env),
-		    "SERVICED_PAIR_SVC_FD=%d", SERVICED_PAIR_SVC_FD);
-		env[envc++] = pair_svc_env;
+	if (d->channel_svc_fd >= 0) {
+		(void)snprintf(channel_svc_env, sizeof(channel_svc_env),
+		    "SERVICED_CHANNEL_SVC_FD=%d", SERVICED_CHANNEL_SVC_FD);
+		env[envc++] = channel_svc_env;
 	}
 	if (d->coalition_svc_fd >= 0) {
 		(void)snprintf(coalition_svc_env, sizeof(coalition_svc_env),
@@ -219,8 +219,8 @@ bootstrap_child_exec(int child_pair_fd, const struct bootstrap_delegate_fds *d)
 }
 
 /*
- * Start serviced.  Creates a pair, pdforks, and registers the
- * process descriptor and pair fd on the kqueue.
+ * Start serviced.  Creates a channel, pdforks, and registers the
+ * process descriptor and channel fd on the kqueue.
  * Returns 0 on success, -1 on failure.
  */
 int
@@ -243,22 +243,22 @@ bootstrap_start(int kq)
 		return (-1);
 	}
 
-	/* Create pair channel. */
-	if (cap_rt_create_pair(&oracle_end, &child_end) == -1) {
-		syslog(LOG_ERR, "bootstrap: failed to create pair");
+	/* Create channel. */
+	if (cap_rt_create_channel(&oracle_end, &child_end) == -1) {
+		syslog(LOG_ERR, "bootstrap: failed to create channel");
 		return (-1);
 	}
 
 	/*
-	 * Create service instance fds so serviced can create pairs,
+	 * Create service instance fds so serviced can create channels,
 	 * coalitions, and shield itself without round-tripping through
 	 * the oracle protocol.  These are mintable service instances —
 	 * serviced calls CAP_RT_MINT_INSTANCE on them to get fresh
 	 * instances for each service it launches.
 	 */
-	dfds.pair_svc_fd = cap_rt_connect_for_delegate("pair");
-	if (dfds.pair_svc_fd == -1) {
-		syslog(LOG_ERR, "bootstrap: pair service not available");
+	dfds.channel_svc_fd = cap_rt_connect_for_delegate("channel");
+	if (dfds.channel_svc_fd == -1) {
+		syslog(LOG_ERR, "bootstrap: channel service not available");
 		close(oracle_end);
 		close(child_end);
 		return (-1);
@@ -268,7 +268,7 @@ bootstrap_start(int kq)
 		syslog(LOG_ERR, "bootstrap: coalition service not available");
 		close(oracle_end);
 		close(child_end);
-		close(dfds.pair_svc_fd);
+		close(dfds.channel_svc_fd);
 		return (-1);
 	}
 	dfds.capprotect_fd = cap_rt_connect_for_delegate("capprotect");
@@ -276,7 +276,7 @@ bootstrap_start(int kq)
 		syslog(LOG_ERR, "bootstrap: capprotect service not available");
 		close(oracle_end);
 		close(child_end);
-		close(dfds.pair_svc_fd);
+		close(dfds.channel_svc_fd);
 		close(dfds.coalition_svc_fd);
 		return (-1);
 	}
@@ -294,7 +294,7 @@ bootstrap_start(int kq)
 		ORACLED_PROBE_ERROR("bootstrap", "pdfork failed");
 		close(oracle_end);
 		close(child_end);
-		if (dfds.pair_svc_fd >= 0) close(dfds.pair_svc_fd);
+		if (dfds.channel_svc_fd >= 0) close(dfds.channel_svc_fd);
 		if (dfds.coalition_svc_fd >= 0) close(dfds.coalition_svc_fd);
 		if (dfds.capprotect_fd >= 0) close(dfds.capprotect_fd);
 		if (dfds.identity_fd >= 0) close(dfds.identity_fd);
@@ -309,8 +309,8 @@ bootstrap_start(int kq)
 
 	/* Parent — close delegated fds (child inherited them). */
 	close(child_end);
-	if (dfds.pair_svc_fd >= 0)
-		close(dfds.pair_svc_fd);
+	if (dfds.channel_svc_fd >= 0)
+		close(dfds.channel_svc_fd);
 	if (dfds.coalition_svc_fd >= 0)
 		close(dfds.coalition_svc_fd);
 	if (dfds.capprotect_fd >= 0)
@@ -320,12 +320,12 @@ bootstrap_start(int kq)
 
 	bs.pid = pid;
 	bs.pd_fd = pd_fd;
-	bs.pair_fd = oracle_end;
+	bs.channel_fd = oracle_end;
 	bs.started = true;
 	clock_gettime(CLOCK_MONOTONIC, &bs.last_start);
 
 	/*
-	 * Lock down oracled's end of the pair.  It must not be
+	 * Lock down oracled's end of the channel.  It must not be
 	 * transferable (cap_xfer=none) — only oracled should hold
 	 * this end.  Also prevent inheritance if oracled ever forks
 	 * (it shouldn't, but defense in depth).
@@ -333,10 +333,10 @@ bootstrap_start(int kq)
 	(void)cap_xfer_limit(oracle_end, 0);
 	(void)cap_clofork_limit(oracle_end, 1);
 
-	/* Tell the protocol handler about the pair fd. */
+	/* Tell the protocol handler about the channel fd. */
 	oracle_proto_init(oracle_end);
 
-	/* Register procdesc and pair channel on kqueue. */
+	/* Register procdesc and channel on kqueue. */
 	EV_SET(&kev[0], pd_fd, EVFILT_PROCDESC, EV_ADD,
 	    NOTE_EXIT, 0, NULL);
 	EV_SET(&kev[1], oracle_end, EVFILT_READ, EV_ADD, 0, 0, NULL);
@@ -350,7 +350,7 @@ bootstrap_start(int kq)
 		bs.started = false;
 		bs.pid = 0;
 		bs.pd_fd = -1;
-		bs.pair_fd = -1;
+		bs.channel_fd = -1;
 		return (-1);
 	}
 
@@ -401,8 +401,8 @@ bootstrap_teardown_and_restart(int kq, int status)
 	ORACLED_PROBE_BOOTSTRAP_EXIT(bs.pid, status);
 
 	/*
-	 * Tear down this instance's fds.  The pair-EOF path may have
-	 * already closed pair_fd, so each fd is guarded individually.
+	 * Tear down this instance's fds.  The channel-EOF path may have
+	 * already closed channel_fd, so each fd is guarded individually.
 	 */
 	if (bs.pd_fd >= 0) {
 		struct kevent kev_del;
@@ -413,9 +413,9 @@ bootstrap_teardown_and_restart(int kq, int status)
 		close(bs.pd_fd);
 		bs.pd_fd = -1;
 	}
-	if (bs.pair_fd >= 0) {
-		close(bs.pair_fd);
-		bs.pair_fd = -1;
+	if (bs.channel_fd >= 0) {
+		close(bs.channel_fd);
+		bs.channel_fd = -1;
 	}
 	bs.pid = 0;
 	bs.started = false;
@@ -454,20 +454,20 @@ bootstrap_teardown_and_restart(int kq, int status)
 }
 
 /*
- * Handle pair channel EOF.
+ * Handle channel EOF.
  *
- * The pair is a communication channel, not a lifecycle indicator.
+ * The channel is a communication channel, not a lifecycle indicator.
  * Close it to stop the level-triggered event and let
  * EVFILT_PROCDESC remain the single source of truth for whether
  * serviced is alive.
  */
 void
-bootstrap_handle_pair_eof(void)
+bootstrap_handle_channel_eof(void)
 {
 
-	if (bs.pair_fd >= 0) {
-		close(bs.pair_fd);
-		bs.pair_fd = -1;
+	if (bs.channel_fd >= 0) {
+		close(bs.channel_fd);
+		bs.channel_fd = -1;
 	}
 }
 
@@ -557,11 +557,11 @@ bootstrap_is_procdesc(struct kevent *kev)
 }
 
 bool
-bootstrap_is_pair(struct kevent *kev)
+bootstrap_is_channel(struct kevent *kev)
 {
 
 	return (kev->filter == EVFILT_READ &&
-	    (int)kev->ident == bs.pair_fd);
+	    (int)kev->ident == bs.channel_fd);
 }
 
 bool

@@ -292,7 +292,7 @@ policy_claim_immune_to_release_cleanup()
 #
 # A service with multiple capabilities (paths, net) has all of
 # them released on exit.  The batched release drain must consume
-# all replies without leaving stale tokens in the pair buffer.
+# all replies without leaving stale tokens in the channel buffer.
 # ===================================================================
 
 atf_test_case multi_cap_batched_release cleanup
@@ -353,7 +353,7 @@ EOF
 		atf_fail "/tmp claim still present after exit"
 	fi
 
-	# Verify the pair channel is still healthy — next operation must
+	# Verify the channel is still healthy — next operation must
 	# succeed, proving the drain didn't leave stale replies.
 	write_executable health_svc <<'SEOF'
 #!/bin/sh
@@ -372,7 +372,7 @@ EOF
 
 	if ! wait_for_file health-svc-running.out; then
 		cat "$logfile" 2>/dev/null
-		atf_fail "health-svc did not start (pair channel corrupted?)"
+		atf_fail "health-svc did not start (channel corrupted?)"
 	fi
 }
 multi_cap_batched_release_cleanup()

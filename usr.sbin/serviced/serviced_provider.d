@@ -30,17 +30,17 @@ provider serviced {
 
 	/* Per-service capability acquisition */
 	probe cap__mint(const char *label, const char *type, int result);
-	probe cap__pair(const char *label, int result);
+	probe cap__channel(const char *label, int result);
 	probe cap__coalition(const char *label, int result);
 
-	/* Service exec setup duration (pair + tokens + fork) */
+	/* Service exec setup duration (channel + tokens + fork) */
 	probe svc__exec__done(const char *label, uint64_t duration_ns, unsigned int ntokens);
 
 	/* Resource counts */
 	probe svc__count(unsigned int nservices);
 	probe naming__count(unsigned int nnames);
 
-	/* Service IPC — pair channel messages */
+	/* Service IPC — channel messages */
 	probe ipc__recv(const char *label, uint32_t op);
 	probe ipc__reply(const char *label, uint32_t op, int status);
 

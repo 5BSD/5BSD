@@ -12,6 +12,7 @@ SUBDIR+= etc
 SUBDIR+= examples
 SUBDIR+= include
 SUBDIR+= sys
+SUBDIR+= usr.sbin
 SUBDIR+= atf_python
 .if ${MK_CDDL} != "no"
 SUBDIR+= oclo

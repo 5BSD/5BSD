@@ -9,7 +9,7 @@
  *   kldload cap_rt
  *   kldload cap_rt_coalition
  *   kldload cap_rt_test_keystore   (for cap_rt member tests)
- *   kldload cap_rt_pair            (for cap_rt member termination tests)
+ *   kldload cap_rt_channel            (for cap_rt member termination tests)
  */
 
 #include <sys/param.h>
@@ -2397,12 +2397,12 @@ ATF_TC_HEAD(cap_rt_member_multiple_services, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Multiple cap_rt members from different services are counted");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "cap_rt cap_rt_coalition cap_rt_test_keystore cap_rt_pair");
+	    "cap_rt cap_rt_coalition cap_rt_test_keystore cap_rt_channel");
 }
 ATF_TC_BODY(cap_rt_member_multiple_services, tc)
 {
 	struct coalition_stat_reply sr;
-	int cfd, ks_fd, pair_fd;
+	int cfd, ks_fd, channel_fd;
 	int32_t status;
 
 	cfd = cap_rt_connect("coalition");
@@ -2411,13 +2411,13 @@ ATF_TC_BODY(cap_rt_member_multiple_services, tc)
 	ks_fd = cap_rt_connect("test_keystore");
 	ATF_REQUIRE(ks_fd >= 0);
 
-	pair_fd = cap_rt_connect("pair");
-	ATF_REQUIRE(pair_fd >= 0);
+	channel_fd = cap_rt_connect("channel");
+	ATF_REQUIRE(channel_fd >= 0);
 
 	ATF_REQUIRE(coalition_enlist(cfd, ks_fd, &status) == 0);
 	ATF_CHECK_EQ(status, 0);
 
-	ATF_REQUIRE(coalition_enlist(cfd, pair_fd, &status) == 0);
+	ATF_REQUIRE(coalition_enlist(cfd, channel_fd, &status) == 0);
 	ATF_CHECK_EQ(status, 0);
 
 	/* Both are cap_rt members */
@@ -2427,7 +2427,7 @@ ATF_TC_BODY(cap_rt_member_multiple_services, tc)
 
 	close(cfd);
 	close(ks_fd);
-	close(pair_fd);
+	close(channel_fd);
 }
 
 ATF_TC(terminate_revokes_multiple_services);
@@ -2436,11 +2436,11 @@ ATF_TC_HEAD(terminate_revokes_multiple_services, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Termination revokes cap_rt members from different services");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "cap_rt cap_rt_coalition cap_rt_test_keystore cap_rt_pair");
+	    "cap_rt cap_rt_coalition cap_rt_test_keystore cap_rt_channel");
 }
 ATF_TC_BODY(terminate_revokes_multiple_services, tc)
 {
-	int cfd, ks_fd, pair_fd;
+	int cfd, ks_fd, channel_fd;
 	int32_t status;
 	struct cap_rt_sendmsg_args sa;
 	char payload[] = "test";
@@ -2451,11 +2451,11 @@ ATF_TC_BODY(terminate_revokes_multiple_services, tc)
 	ks_fd = cap_rt_connect("test_keystore");
 	ATF_REQUIRE(ks_fd >= 0);
 
-	pair_fd = cap_rt_connect("pair");
-	ATF_REQUIRE(pair_fd >= 0);
+	channel_fd = cap_rt_connect("channel");
+	ATF_REQUIRE(channel_fd >= 0);
 
 	ATF_REQUIRE(coalition_enlist(cfd, ks_fd, &status) == 0);
-	ATF_REQUIRE(coalition_enlist(cfd, pair_fd, &status) == 0);
+	ATF_REQUIRE(coalition_enlist(cfd, channel_fd, &status) == 0);
 
 	/* Terminate coalition */
 	ATF_REQUIRE(coalition_op(cfd, COALITION_OP_TERMINATE, &status) == 0);
@@ -2469,11 +2469,11 @@ ATF_TC_BODY(terminate_revokes_multiple_services, tc)
 	ATF_CHECK_ERRNO(EPIPE,
 	    ioctl(ks_fd, CAP_RT_SENDMSG, &sa) == -1);
 	ATF_CHECK_ERRNO(EPIPE,
-	    ioctl(pair_fd, CAP_RT_SENDMSG, &sa) == -1);
+	    ioctl(channel_fd, CAP_RT_SENDMSG, &sa) == -1);
 
 	close(cfd);
 	close(ks_fd);
-	close(pair_fd);
+	close(channel_fd);
 }
 
 ATF_TC(coalition_is_cap_rt_type);
