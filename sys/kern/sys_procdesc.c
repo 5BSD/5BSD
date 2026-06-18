@@ -55,11 +55,13 @@
  *   generate SIGCHLD on termination, or be picked up by waitpid().
  * - The pdkill(2) system call may be used to deliver a signal to the process
  *   using its process descriptor.
- *
- * Open questions:
- *
- * - Will we want to add a pidtoprocdesc(2) system call to allow process
- *   descriptors to be created for processes without pdfork(2)?
+ * - The pdself(2) system call allows a process in capability mode to create
+ *   a process descriptor for itself (PDF_SELF).  When the described process
+ *   itself holds the last reference and closes it, the close simply detaches
+ *   the descriptor without killing or reparenting.  Any other process closing
+ *   the last reference gets normal kill-on-close semantics.
+ * - The pdcmp(2) system call compares two process descriptors and reports
+ *   whether they refer to the same process.
  */
 
 #include <sys/param.h>
@@ -199,6 +201,142 @@ sys_pdgetpid(struct thread *td, struct pdgetpid_args *uap)
 	if (error == 0)
 		error = copyout(&pid, uap->pidp, sizeof(pid));
 	return (error);
+}
+
+/*
+ * pdself(2) -- create a process descriptor for the calling process.
+ *
+ * This is a capability-mode-only system call (SYF_CAPREQUIRED).  It takes
+ * no process identifier argument; it always describes the caller.  The
+ * returned file descriptor can be passed over a unix-domain socket to a
+ * supervisor that can then pdkill/pdwait/pdgetpid the caller.
+ *
+ * The PDF_SELF flag is set on the resulting procdesc.  This flag modifies
+ * procdesc_close() so that if the described process itself holds the last
+ * reference and closes it, the close is a no-op (no SIGKILL, no reparent).
+ * Any other process closing the last reference gets normal procdesc
+ * semantics: SIGKILL + reparent (unless PDF_DAEMON is also set).
+ */
+int
+sys_pdself(struct thread *td, struct pdself_args *uap)
+{
+	struct procdesc *pd;
+	struct proc *p;
+	struct file *fp;
+	int flags, fd, error;
+
+	flags = uap->flags;
+	if ((flags & ~(PD_CLOEXEC | PD_DAEMON)) != 0)
+		return (EINVAL);
+
+	p = td->td_proc;
+
+	/*
+	 * Allocate everything before acquiring proctree_lock so that
+	 * we never sleep (M_WAITOK) while holding the lock.
+	 */
+	pd = malloc(sizeof(*pd), M_PROCDESC, M_WAITOK | M_ZERO);
+
+	error = falloc(td, &fp, &fd, flags & PD_CLOEXEC ? O_CLOEXEC : 0);
+	if (error != 0) {
+		free(pd, M_PROCDESC);
+		return (error);
+	}
+
+	/*
+	 * Only one process descriptor may exist per process.
+	 */
+	sx_xlock(&proctree_lock);
+	if (p->p_procdesc != NULL) {
+		sx_xunlock(&proctree_lock);
+		fdclose(td, fp, fd);
+		fdrop(fp, td);
+		free(pd, M_PROCDESC);
+		return (EBUSY);
+	}
+
+	pd->pd_proc = p;
+	pd->pd_pid = p->p_pid;
+	pd->pd_flags = PDF_SELF;
+	if (flags & PD_DAEMON)
+		pd->pd_flags |= PDF_DAEMON;
+	PROCDESC_LOCK_INIT(pd);
+	knlist_init_mtx(&pd->pd_selinfo.si_note, &pd->pd_lock);
+	refcount_init(&pd->pd_refcount, 2);
+
+	p->p_procdesc = pd;
+	sx_xunlock(&proctree_lock);
+
+	finit(fp, FREAD | FWRITE, DTYPE_PROCDESC, pd, &procdesc_ops);
+	fdrop(fp, td);
+
+	AUDIT_ARG_FFLAGS(flags);
+	AUDIT_ARG_FD(fd);
+
+	error = copyout(&fd, uap->fdp, sizeof(fd));
+	if (error != 0) {
+		/*
+		 * If copyout fails the descriptor is still live; the caller
+		 * can't use it, but close-on-exec or process exit will
+		 * clean it up.  This matches pdfork(2) behaviour.
+		 */
+	}
+	td->td_retval[0] = fd;
+	return (error);
+}
+
+/*
+ * pdcmp(2) -- compare two process descriptors.
+ *
+ * Returns 0 in *result if both file descriptors refer to the same process,
+ * non-zero otherwise.  Both arguments must be process descriptors.
+ * This is a pure descriptor operation with no ambient authority.
+ */
+int
+sys_pdcmp(struct thread *td, struct pdcmp_args *uap)
+{
+	struct file *fp1, *fp2;
+	struct procdesc *pd1, *pd2;
+	int result, error;
+
+	AUDIT_ARG_FD(uap->fd1);
+	AUDIT_ARG_VALUE(uap->fd2);
+
+	error = fget(td, uap->fd1, &cap_pdgetpid_rights, &fp1);
+	if (error != 0)
+		return (error);
+	if (fp1->f_type != DTYPE_PROCDESC) {
+		fdrop(fp1, td);
+		return (EINVAL);
+	}
+
+	error = fget(td, uap->fd2, &cap_pdgetpid_rights, &fp2);
+	if (error != 0) {
+		fdrop(fp1, td);
+		return (error);
+	}
+	if (fp2->f_type != DTYPE_PROCDESC) {
+		fdrop(fp2, td);
+		fdrop(fp1, td);
+		return (EINVAL);
+	}
+
+	pd1 = fp1->f_data;
+	pd2 = fp2->f_data;
+
+	/*
+	 * Compare cached PIDs.  Two descriptors refer to the same process
+	 * if and only if their pd_pid values match.  pd_pid is set at
+	 * creation and only reset to -1 inside procdesc_close() after the
+	 * file's f_data pointer has already been severed, so any fget()
+	 * reference (including ours) keeps the value stable.
+	 */
+	result = (pd1->pd_pid != pd2->pd_pid);
+
+	fdrop(fp2, td);
+	fdrop(fp1, td);
+
+	return (copyout(&result, uap->result, sizeof(result)));
 }
 
 /*
@@ -414,6 +552,19 @@ procdesc_close(struct file *fp, struct thread *td)
 			 * calls back into procdesc_reap().
 			 */
 			proc_reap(curthread, p, NULL, 0);
+		} else if ((pd->pd_flags & PDF_SELF) != 0 &&
+		    p == td->td_proc) {
+			/*
+			 * The process created this descriptor via pdself()
+			 * and is now closing the last reference itself.
+			 * Just detach -- do not kill or reparent.
+			 */
+			pd->pd_proc = NULL;
+			p->p_procdesc = NULL;
+			pd->pd_pid = -1;
+			procdesc_free(pd);
+			PROC_UNLOCK(p);
+			sx_xunlock(&proctree_lock);
 		} else {
 			/*
 			 * If the process is not yet dead, we need to kill it,

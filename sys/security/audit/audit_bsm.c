@@ -1868,6 +1868,28 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		}
 		break;
 
+	case AUE_PDSELF:
+		if (ARG_IS_VALID(kar, ARG_FFLAGS)) {
+			tok = au_to_arg32(2, "flags", ar->ar_arg_fflags);
+			kau_write(rec, tok);
+		}
+		if (ARG_IS_VALID(kar, ARG_FD)) {
+			tok = au_to_arg32(1, "fd", ar->ar_arg_fd);
+			kau_write(rec, tok);
+		}
+		break;
+
+	case AUE_PDCMP:
+		if (ARG_IS_VALID(kar, ARG_FD)) {
+			tok = au_to_arg32(1, "fd1", ar->ar_arg_fd);
+			kau_write(rec, tok);
+		}
+		if (ARG_IS_VALID(kar, ARG_VALUE)) {
+			tok = au_to_arg32(2, "fd2", ar->ar_arg_value);
+			kau_write(rec, tok);
+		}
+		break;
+
 	case AUE_CAP_ENTER:
 	case AUE_CAP_GETMODE:
 		break;

@@ -471,4 +471,6 @@ MIASM =  \
 	cap_mmap.o \
 	cap_sendfile.o \
 	cap_ftruncate.o \
-	cap_ambient_limit.o
+	cap_ambient_limit.o \
+	pdself.o \
+	pdcmp.o

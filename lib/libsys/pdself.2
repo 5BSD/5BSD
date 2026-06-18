@@ -1,0 +1,145 @@
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd June 18, 2026
+.Dt PDSELF 2
+.Os
+.Sh NAME
+.Nm pdself
+.Nd create a process descriptor for the calling process
+.Sh LIBRARY
+.Lb libc
+.Sh SYNOPSIS
+.In sys/procdesc.h
+.Ft int
+.Fn pdself "int *fdp" "int flags"
+.Sh DESCRIPTION
+The
+.Fn pdself
+system call creates a process descriptor for the calling process and
+stores the resulting file descriptor in the integer pointed to by
+.Fa fdp .
+This is a capability-mode-only system call
+.Pq Dv SYF_CAPREQUIRED ;
+it returns
+.Er ENOTCAPABLE
+when called outside
+.Xr capsicum 4
+capability mode.
+.Pp
+The resulting process descriptor can be passed over a
+.Xr unix 4
+domain socket to a supervisor process, which can then use
+.Xr pdkill 2 ,
+.Xr pdwait 2 ,
+and
+.Xr pdgetpid 2
+to manage the caller without requiring PIDs or traditional UNIX
+permission checks.
+.Pp
+The
+.Fa flags
+argument may contain the following values:
+.Bl -tag -width PD_CLOEXEC
+.It Dv PD_CLOEXEC
+Set close-on-exec on the process descriptor.
+.It Dv PD_DAEMON
+Do not terminate the process when an external holder closes the last
+reference to the descriptor.
+.El
+.Pp
+At most one process descriptor may exist per process.
+If the calling process already has a process descriptor
+(either from
+.Fn pdself
+or from being created via
+.Xr pdfork 2 ) ,
+.Fn pdself
+fails with
+.Er EBUSY .
+.Ss Close semantics
+Process descriptors created by
+.Fn pdself
+have the
+.Dv PDF_SELF
+flag set, which modifies the behavior of
+.Xr close 2
+on the last reference:
+.Bl -bullet
+.It
+If the described process itself closes the last reference, the
+descriptor is silently detached.
+The process is not killed and not reparented.
+.It
+If any other process closes the last reference, normal process
+descriptor semantics apply: the described process receives
+.Dv SIGKILL
+and is reparented to its reaper (unless
+.Dv PD_DAEMON
+was also set).
+.It
+If the close is not the last reference (other file descriptors or
+in-flight SCM_RIGHTS copies exist), nothing happens regardless of
+who closes it.
+.El
+.Sh RETURN VALUES
+.Rv -std
+.Sh ERRORS
+The
+.Fn pdself
+system call fails if:
+.Bl -tag -width Er
+.It Bq Er EBUSY
+The calling process already has a process descriptor.
+.It Bq Er EINVAL
+The
+.Fa flags
+argument contains invalid flags.
+.It Bq Er ENOTCAPABLE
+The caller is not in capability mode.
+.It Bq Er EMFILE
+The per-process file descriptor limit has been reached.
+.It Bq Er ENFILE
+The system file descriptor limit has been reached.
+.It Bq Er ENOMEM
+Insufficient memory to allocate the process descriptor.
+.El
+.Sh SEE ALSO
+.Xr cap_enter 2 ,
+.Xr close 2 ,
+.Xr pdcmp 2 ,
+.Xr pdfork 2 ,
+.Xr pdgetpid 2 ,
+.Xr pdkill 2 ,
+.Xr pdwait 2 ,
+.Xr capsicum 4 ,
+.Xr procdesc 4
+.Sh HISTORY
+The
+.Fn pdself
+system call first appeared in
+.Fx 16.0 .
+.Sh AUTHORS
+.An Kory Heard

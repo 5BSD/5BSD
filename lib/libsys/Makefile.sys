@@ -293,7 +293,9 @@ MAN+=	abort2.2 \
 	ntp_adjtime.2 \
 	open.2 \
 	pathconf.2 \
+	pdcmp.2 \
 	pdfork.2 \
+	pdself.2 \
 	pipe.2 \
 	poll.2 \
 	posix_fadvise.2 \

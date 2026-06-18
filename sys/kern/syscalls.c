@@ -635,4 +635,6 @@ const char *syscallnames[] = {
 	"cap_sendfile",			/* 627 = cap_sendfile */
 	"cap_ftruncate",			/* 628 = cap_ftruncate */
 	"cap_ambient_limit",			/* 629 = cap_ambient_limit */
+	"pdself",			/* 630 = pdself */
+	"pdcmp",			/* 631 = pdcmp */
 };

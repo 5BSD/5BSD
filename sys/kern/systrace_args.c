@@ -3800,6 +3800,23 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 1;
 		break;
 	}
+	/* pdself */
+	case 630: {
+		struct pdself_args *p = params;
+		uarg[a++] = (intptr_t)p->fdp; /* int * */
+		iarg[a++] = p->flags; /* int */
+		*n_args = 2;
+		break;
+	}
+	/* pdcmp */
+	case 631: {
+		struct pdcmp_args *p = params;
+		iarg[a++] = p->fd1; /* int */
+		iarg[a++] = p->fd2; /* int */
+		uarg[a++] = (intptr_t)p->result; /* int * */
+		*n_args = 3;
+		break;
+	}
 	default:
 		*n_args = 0;
 		break;
@@ -10204,6 +10221,35 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
+	/* pdself */
+	case 630:
+		switch (ndx) {
+		case 0:
+			p = "userland int *";
+			break;
+		case 1:
+			p = "int";
+			break;
+		default:
+			break;
+		};
+		break;
+	/* pdcmp */
+	case 631:
+		switch (ndx) {
+		case 0:
+			p = "int";
+			break;
+		case 1:
+			p = "int";
+			break;
+		case 2:
+			p = "userland int *";
+			break;
+		default:
+			break;
+		};
+		break;
 	default:
 		break;
 	};
@@ -12364,6 +12410,16 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* cap_ambient_limit */
 	case 629:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* pdself */
+	case 630:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* pdcmp */
+	case 631:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

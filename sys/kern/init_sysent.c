@@ -696,4 +696,6 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(cap_sendfile_args), .sy_call = (sy_call_t *)sys_cap_sendfile, .sy_auevent = AUE_CAP_SENDFILE, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 627 = cap_sendfile */
 	{ .sy_narg = AS(cap_ftruncate_args), .sy_call = (sy_call_t *)sys_cap_ftruncate, .sy_auevent = AUE_CAP_FTRUNCATE, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 628 = cap_ftruncate */
 	{ .sy_narg = AS(cap_ambient_limit_args), .sy_call = (sy_call_t *)sys_cap_ambient_limit, .sy_auevent = AUE_CAP_AMBIENT_LIMIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 629 = cap_ambient_limit */
+	{ .sy_narg = AS(pdself_args), .sy_call = (sy_call_t *)sys_pdself, .sy_auevent = AUE_PDSELF, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 630 = pdself */
+	{ .sy_narg = AS(pdcmp_args), .sy_call = (sy_call_t *)sys_pdcmp, .sy_auevent = AUE_PDCMP, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 631 = pdcmp */
 };

@@ -88,6 +88,7 @@ struct procdesc {
 #define	PDF_CLOSED	0x00000001	/* Descriptor has closed. */
 #define	PDF_EXITED	0x00000004	/* Process exited. */
 #define	PDF_DAEMON	0x00000008	/* Don't exit when procdesc closes. */
+#define	PDF_SELF	0x00000010	/* Created by pdself(); self-close detaches. */
 
 /*
  * In-kernel interfaces to process descriptors.
@@ -131,6 +132,8 @@ int	 pdkill(int, int);
 int	 pdgetpid(int, pid_t *);
 int	 pdwait(int, int *, int, struct __wrusage *, struct __siginfo *);
 pid_t	 pdrfork_thread(int *, int, int, void *, int (*)(void *), void *);
+int	 pdself(int *, int);
+int	 pdcmp(int, int, int *);
 __END_DECLS
 
 #endif /* _KERNEL */

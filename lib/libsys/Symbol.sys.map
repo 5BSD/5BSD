@@ -391,6 +391,8 @@ FBSD_1.8 {
 };
 
 FBSD_1.9 {
+	pdself;
+	pdcmp;
 	pdrfork;
 	pdrfork_thread;
 	renameat2;

@@ -1,0 +1,100 @@
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd June 18, 2026
+.Dt PDCMP 2
+.Os
+.Sh NAME
+.Nm pdcmp
+.Nd compare two process descriptors
+.Sh LIBRARY
+.Lb libc
+.Sh SYNOPSIS
+.In sys/procdesc.h
+.Ft int
+.Fn pdcmp "int fd1" "int fd2" "int *result"
+.Sh DESCRIPTION
+The
+.Fn pdcmp
+system call compares two process descriptors and reports whether they
+refer to the same process.
+If both
+.Fa fd1
+and
+.Fa fd2
+describe the same process, zero is stored in
+.Fa result ;
+otherwise a non-zero value is stored.
+.Pp
+Both arguments must be process descriptor file descriptors.
+This is a pure descriptor operation with no ambient authority; it is
+usable both inside and outside
+.Xr capsicum 4
+capability mode.
+.Pp
+A typical use case is when a supervisor holds process descriptors
+obtained from different sources (e.g.,
+.Xr pdfork 2
+and
+.Xr pdself 2
+via SCM_RIGHTS) and needs to determine whether two descriptors refer
+to the same child.
+.Sh RETURN VALUES
+.Rv -std
+.Pp
+On success, zero is stored in
+.Fa result
+if both descriptors refer to the same process, or a non-zero value
+if they refer to different processes.
+.Sh ERRORS
+The
+.Fn pdcmp
+system call fails if:
+.Bl -tag -width Er
+.It Bq Er EBADF
+One of the file descriptor arguments is not a valid open file descriptor.
+.It Bq Er EINVAL
+One of the file descriptor arguments is not a process descriptor.
+.It Bq Er ENOTCAPABLE
+One of the file descriptors has insufficient capability rights
+.Pq Dv CAP_PDGETPID .
+.It Bq Er EFAULT
+The
+.Fa result
+pointer is invalid.
+.El
+.Sh SEE ALSO
+.Xr pdgetpid 2 ,
+.Xr pdfork 2 ,
+.Xr pdself 2 ,
+.Xr capsicum 4 ,
+.Xr procdesc 4
+.Sh HISTORY
+The
+.Fn pdcmp
+system call first appeared in
+.Fx 16.0 .
+.Sh AUTHORS
+.An Kory Heard

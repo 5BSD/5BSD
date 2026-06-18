@@ -692,6 +692,8 @@
 #define	AUE_CAP_SENDFILE	43298	/* 5BSD */
 #define	AUE_CAP_FTRUNCATE	43299	/* 5BSD */
 #define	AUE_CAP_AMBIENT_LIMIT	43300	/* 5BSD */
+#define	AUE_PDSELF		43301	/* 5BSD */
+#define	AUE_PDCMP		43302	/* 5BSD */
 
 /*
  * Darwin BSM uses a number of AUE_O_* definitions, which are aliased to the

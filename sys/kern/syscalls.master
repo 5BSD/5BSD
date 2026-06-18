@@ -3621,4 +3621,17 @@
 		    int fd
 		);
 	}
+630	AUE_PDSELF	STD|CAPREQUIRED {
+		int pdself(
+		    _Out_ int *fdp,
+		    int flags
+		);
+	}
+631	AUE_PDCMP	STD|CAPENABLED {
+		int pdcmp(
+		    int fd1,
+		    int fd2,
+		    _Out_ int *result
+		);
+	}
 ; vim: syntax=off

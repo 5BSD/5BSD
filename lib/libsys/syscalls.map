@@ -879,4 +879,8 @@ FBSDprivate_1.0 {
 	__sys_cap_ftruncate;
 	_cap_ambient_limit;
 	__sys_cap_ambient_limit;
+	_pdself;
+	__sys_pdself;
+	_pdcmp;
+	__sys_pdcmp;
 };

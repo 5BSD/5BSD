@@ -45,7 +45,7 @@ primitives with
 new system calls such as
 .Xr pdfork 2
 and
-.Xr pdkill 2 ,
+.Xr pdkill 2 .
 .Nm
 is designed for use with
 .Xr capsicum 4 ,
@@ -55,13 +55,27 @@ However, it can also be used independently of
 displacing PIDs, which may otherwise suffer from race conditions.
 Given a process descriptor, it is possible to query its conventional PID using
 .Xr pdgetpid 2 .
+.Pp
+A process in capability mode can create a process descriptor for itself
+using
+.Xr pdself 2 .
+This allows it to pass a capability reference to a supervisor
+over a
+.Xr unix 4
+domain socket, granting the supervisor the ability to signal, wait on,
+or identify the process without requiring PIDs.
+Two process descriptors can be compared using
+.Xr pdcmp 2
+to determine whether they refer to the same process.
 .Sh SEE ALSO
 .Xr fork 2 ,
 .Xr kill 2 ,
 .Xr kqueue 2 ,
+.Xr pdcmp 2 ,
 .Xr pdfork 2 ,
 .Xr pdgetpid 2 ,
 .Xr pdkill 2 ,
+.Xr pdself 2 ,
 .Xr wait4 2 ,
 .Xr capsicum 4
 .Sh HISTORY

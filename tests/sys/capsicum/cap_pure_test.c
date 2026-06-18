@@ -26,6 +26,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <sys/procdesc.h>
 #include <sys/filio.h>
 #include <sys/mman.h>
 #include <sys/un.h>
@@ -904,6 +905,451 @@ ATF_TC_BODY(aio_noambient, tc)
 	unlink("/tmp/cap_pure_aio_test");
 }
 
+/* ---- pdself outside cap mode ---- */
+
+static void
+pdself_outside_capmode_body(int *result)
+{
+	int fd;
+
+	/* pdself outside cap mode should fail with ENOTCAPABLE */
+	if (pdself(&fd, 0) == 0) { *result = 2; return; }
+	if (errno != ENOTCAPABLE) { *result = 3; return; }
+
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(pdself_outside_capmode);
+ATF_TC_BODY(pdself_outside_capmode, tc)
+{
+	int r;
+
+	r = in_child(pdself_outside_capmode_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "pdself outside cap mode: expected ENOTCAPABLE (result=%d)", r);
+}
+
+/* ---- pdself inside cap mode ---- */
+
+static void
+pdself_inside_capmode_body(int *result)
+{
+	pid_t pid;
+	int fd;
+
+	if (cap_enter() != 0) { *result = 1; return; }
+
+	/* pdself inside cap mode should succeed */
+	if (pdself(&fd, 0) != 0) { *result = 2; return; }
+	if (fd < 0) { *result = 3; return; }
+
+	/* pdgetpid on the descriptor should return our own pid */
+	if (pdgetpid(fd, &pid) != 0) { *result = 4; return; }
+	if (pid != getpid()) { *result = 5; return; }
+
+	close(fd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(pdself_inside_capmode);
+ATF_TC_BODY(pdself_inside_capmode, tc)
+{
+	int r;
+
+	r = in_child(pdself_inside_capmode_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "pdself inside cap mode: expected success (result=%d)", r);
+}
+
+/* ---- pdself EBUSY on second call ---- */
+
+static void
+pdself_ebusy_body(int *result)
+{
+	int fd, fd2;
+
+	if (cap_enter() != 0) { *result = 1; return; }
+
+	if (pdself(&fd, 0) != 0) { *result = 2; return; }
+
+	/* Second pdself should fail with EBUSY */
+	if (pdself(&fd2, 0) == 0) { *result = 3; return; }
+	if (errno != EBUSY) { *result = 4; return; }
+
+	close(fd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(pdself_ebusy);
+ATF_TC_BODY(pdself_ebusy, tc)
+{
+	int r;
+
+	r = in_child(pdself_ebusy_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "pdself second call: expected EBUSY (result=%d)", r);
+}
+
+/* ---- pdself invalid flags ---- */
+
+static void
+pdself_bad_flags_body(int *result)
+{
+	int fd;
+
+	if (cap_enter() != 0) { *result = 1; return; }
+
+	if (pdself(&fd, 0x100) == 0) { *result = 2; return; }
+	if (errno != EINVAL) { *result = 3; return; }
+
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(pdself_bad_flags);
+ATF_TC_BODY(pdself_bad_flags, tc)
+{
+	int r;
+
+	r = in_child(pdself_bad_flags_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "pdself bad flags: expected EINVAL (result=%d)", r);
+}
+
+/* ---- pdself self-close is safe ---- */
+
+static void
+pdself_selfclose_body(int *result)
+{
+	int fd;
+
+	if (cap_enter() != 0) { *result = 1; return; }
+
+	if (pdself(&fd, 0) != 0) { *result = 2; return; }
+
+	/*
+	 * Closing our own procdesc should NOT kill us.
+	 * If PDF_SELF close logic is broken, we die here and the
+	 * parent sees a signal exit instead of clean _exit(0).
+	 */
+	close(fd);
+
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(pdself_selfclose);
+ATF_TC_BODY(pdself_selfclose, tc)
+{
+	int r, status;
+
+	r = in_child(pdself_selfclose_body, &status);
+	ATF_REQUIRE_MSG(r == 0,
+	    "pdself self-close should not kill process (result=%d, status=0x%x)",
+	    r, status);
+}
+
+/* ---- pdcmp same process ---- */
+
+static void
+pdcmp_same_body(int *result)
+{
+	int fd, fd2, cmp;
+
+	if (cap_enter() != 0) { *result = 1; return; }
+
+	if (pdself(&fd, 0) != 0) { *result = 2; return; }
+
+	/* dup the descriptor */
+	fd2 = dup(fd);
+	if (fd2 < 0) { *result = 3; return; }
+
+	/* pdcmp on two fds for the same process should return 0 */
+	if (pdcmp(fd, fd2, &cmp) != 0) { *result = 4; return; }
+	if (cmp != 0) { *result = 5; return; }
+
+	close(fd2);
+	close(fd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(pdcmp_same);
+ATF_TC_BODY(pdcmp_same, tc)
+{
+	int r;
+
+	r = in_child(pdcmp_same_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "pdcmp same process: expected 0 (result=%d)", r);
+}
+
+/* ---- pdcmp different processes ---- */
+
+static void
+pdcmp_different_body(int *result)
+{
+	int fd1, fd2, cmp;
+	pid_t pid;
+
+	/* Create two children via pdfork — they are different processes */
+	pid = pdfork(&fd1, 0);
+	if (pid < 0) { *result = 1; return; }
+	if (pid == 0)
+		_exit(0);
+
+	pid = pdfork(&fd2, 0);
+	if (pid < 0) { *result = 2; return; }
+	if (pid == 0)
+		_exit(0);
+
+	/* pdcmp on two different processes should return non-zero */
+	if (pdcmp(fd1, fd2, &cmp) != 0) { *result = 3; return; }
+	if (cmp == 0) { *result = 4; return; }
+
+	close(fd2);
+	close(fd1);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(pdcmp_different);
+ATF_TC_BODY(pdcmp_different, tc)
+{
+	int r;
+
+	r = in_child(pdcmp_different_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "pdcmp two different pdfork children (result=%d)", r);
+}
+
+/* ---- pdself on pdfork child gets EBUSY ---- */
+
+static void
+pdself_pdfork_ebusy_body(int *result)
+{
+	int fd;
+	pid_t pid;
+
+	pid = pdfork(&fd, 0);
+	if (pid < 0) { *result = 1; return; }
+	if (pid == 0) {
+		int myfd;
+
+		/* pdfork child already has a procdesc; pdself must fail */
+		if (cap_enter() != 0) _exit(1);
+		if (pdself(&myfd, 0) == 0) _exit(2);
+		if (errno != EBUSY) _exit(3);
+		_exit(0);
+	}
+
+	/* Reap child via the procdesc */
+	if (pdwait(fd, NULL, 0, NULL, NULL) != 0) { *result = 2; return; }
+	close(fd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(pdself_pdfork_ebusy);
+ATF_TC_BODY(pdself_pdfork_ebusy, tc)
+{
+	int r;
+
+	r = in_child(pdself_pdfork_ebusy_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "pdself in pdfork child: expected EBUSY (result=%d)", r);
+}
+
+/* ---- pdself external close kills process ---- */
+
+static void
+pdself_external_kill_body(int *result)
+{
+	int sv[2], fd, status;
+	pid_t pid;
+
+	/*
+	 * Fork a child that enters cap mode, creates a pdself descriptor,
+	 * sends it to us over a socketpair, then closes its local copy
+	 * and sleeps.  We close the received descriptor — as the last
+	 * reference held by an external process, this should SIGKILL
+	 * the child.
+	 */
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+
+	pid = fork();
+	if (pid < 0) { *result = 2; return; }
+	if (pid == 0) {
+		struct msghdr msg;
+		struct cmsghdr *cmsg;
+		union {
+			struct cmsghdr hdr;
+			char buf[CMSG_SPACE(sizeof(int))];
+		} cmsgbuf;
+		int myfd;
+
+		close(sv[0]);
+		if (cap_enter() != 0) _exit(10);
+		if (pdself(&myfd, 0) != 0) _exit(11);
+
+		/* Send the procdesc fd to the parent */
+		memset(&msg, 0, sizeof(msg));
+		memset(&cmsgbuf, 0, sizeof(cmsgbuf));
+		msg.msg_control = cmsgbuf.buf;
+		msg.msg_controllen = sizeof(cmsgbuf.buf);
+		cmsg = CMSG_FIRSTHDR(&msg);
+		cmsg->cmsg_level = SOL_SOCKET;
+		cmsg->cmsg_type = SCM_RIGHTS;
+		cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+		memcpy(CMSG_DATA(cmsg), &myfd, sizeof(int));
+		msg.msg_controllen = cmsg->cmsg_len;
+		if (sendmsg(sv[1], &msg, 0) < 0) _exit(12);
+
+		/* Close our copy — parent still holds one */
+		close(myfd);
+
+		/* Sleep until killed */
+		for (;;)
+			sleep(60);
+		_exit(99);
+	}
+
+	/* Parent */
+	close(sv[1]);
+
+	/* Receive the procdesc fd from the child */
+	{
+		struct msghdr msg;
+		struct cmsghdr *cmsg;
+		union {
+			struct cmsghdr hdr;
+			char buf[CMSG_SPACE(sizeof(int))];
+		} cmsgbuf;
+		char dummy;
+		struct iovec iov;
+
+		memset(&msg, 0, sizeof(msg));
+		iov.iov_base = &dummy;
+		iov.iov_len = 1;
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+		msg.msg_control = cmsgbuf.buf;
+		msg.msg_controllen = sizeof(cmsgbuf.buf);
+		if (recvmsg(sv[0], &msg, 0) < 0) {
+			/* Child may not have sent yet; wait and retry */
+			waitpid(pid, &status, 0);
+			*result = 3; return;
+		}
+		cmsg = CMSG_FIRSTHDR(&msg);
+		if (cmsg == NULL ||
+		    cmsg->cmsg_level != SOL_SOCKET ||
+		    cmsg->cmsg_type != SCM_RIGHTS) {
+			waitpid(pid, &status, 0);
+			*result = 4; return;
+		}
+		memcpy(&fd, CMSG_DATA(cmsg), sizeof(int));
+	}
+	close(sv[0]);
+
+	/*
+	 * Close the received procdesc — this is the last reference
+	 * from an external process, so it should SIGKILL the child.
+	 */
+	close(fd);
+
+	if (waitpid(pid, &status, 0) != pid) {
+		*result = 5; return;
+	}
+	if (!WIFSIGNALED(status) || WTERMSIG(status) != SIGKILL) {
+		*result = 6; return;
+	}
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(pdself_external_kill);
+ATF_TC_BODY(pdself_external_kill, tc)
+{
+	int r;
+
+	r = in_child(pdself_external_kill_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "pdself external close should SIGKILL child (result=%d)", r);
+}
+
+/* ---- pdcmp after process exit ---- */
+
+ATF_TC_WITHOUT_HEAD(pdcmp_after_exit);
+ATF_TC_BODY(pdcmp_after_exit, tc)
+{
+	int fd1, fd2, cmp;
+	pid_t pid;
+
+	/*
+	 * Create two pdfork children, let them exit, then compare
+	 * their process descriptors.  pd_pid is preserved after exit
+	 * so pdcmp must still work correctly.
+	 */
+	pid = pdfork(&fd1, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0)
+		_exit(0);
+
+	pid = pdfork(&fd2, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0)
+		_exit(0);
+
+	/* Wait for both children to exit */
+	ATF_REQUIRE(pdwait(fd1, NULL, 0, NULL, NULL) == 0);
+	ATF_REQUIRE(pdwait(fd2, NULL, 0, NULL, NULL) == 0);
+
+	/* pdcmp on two dead-but-distinct children: must be non-equal */
+	ATF_REQUIRE(pdcmp(fd1, fd2, &cmp) == 0);
+	ATF_REQUIRE_MSG(cmp != 0,
+	    "pdcmp should report different after both children exited");
+
+	/* pdcmp on the same dead child via dup: must be equal */
+	{
+		int fd1dup = dup(fd1);
+		ATF_REQUIRE(fd1dup >= 0);
+		ATF_REQUIRE(pdcmp(fd1, fd1dup, &cmp) == 0);
+		ATF_REQUIRE_MSG(cmp == 0,
+		    "pdcmp on dup'd fd of dead child should be equal");
+		close(fd1dup);
+	}
+
+	close(fd2);
+	close(fd1);
+}
+
+/* ---- pdcmp non-procdesc fd ---- */
+
+static void
+pdcmp_bad_fd_body(int *result)
+{
+	int fd, cmp;
+
+	if (cap_enter() != 0) { *result = 1; return; }
+
+	if (pdself(&fd, 0) != 0) { *result = 2; return; }
+
+	/* pdcmp with a non-procdesc fd (stdin) should fail */
+	if (pdcmp(fd, STDIN_FILENO, &cmp) == 0) {
+		*result = 3; return;
+	}
+	if (errno != EINVAL) { *result = 4; return; }
+
+	close(fd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(pdcmp_bad_fd);
+ATF_TC_BODY(pdcmp_bad_fd, tc)
+{
+	int r;
+
+	r = in_child(pdcmp_bad_fd_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "pdcmp with non-procdesc fd: expected EINVAL (result=%d)", r);
+}
+
 /* ---- ATF test program ---- */
 
 ATF_TP_ADD_TCS(tp)
@@ -945,6 +1391,19 @@ ATF_TP_ADD_TCS(tp)
 
 	/* AIO */
 	ATF_TP_ADD_TC(tp, aio_noambient);
+
+	/* pdself / pdcmp */
+	ATF_TP_ADD_TC(tp, pdself_outside_capmode);
+	ATF_TP_ADD_TC(tp, pdself_inside_capmode);
+	ATF_TP_ADD_TC(tp, pdself_ebusy);
+	ATF_TP_ADD_TC(tp, pdself_bad_flags);
+	ATF_TP_ADD_TC(tp, pdself_selfclose);
+	ATF_TP_ADD_TC(tp, pdcmp_same);
+	ATF_TP_ADD_TC(tp, pdcmp_different);
+	ATF_TP_ADD_TC(tp, pdself_external_kill);
+	ATF_TP_ADD_TC(tp, pdcmp_after_exit);
+	ATF_TP_ADD_TC(tp, pdcmp_bad_fd);
+	ATF_TP_ADD_TC(tp, pdself_pdfork_ebusy);
 
 	return (atf_no_error());
 }

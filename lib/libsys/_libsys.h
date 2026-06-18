@@ -502,6 +502,8 @@ typedef void * (__sys_cap_mmap_t)(void *, size_t, int, int, int, off_t);
 typedef int (__sys_cap_sendfile_t)(int, int, off_t, size_t, struct sf_hdtr *, off_t *, int);
 typedef int (__sys_cap_ftruncate_t)(int, off_t);
 typedef int (__sys_cap_ambient_limit_t)(int);
+typedef int (__sys_pdself_t)(int *, int);
+typedef int (__sys_pdcmp_t)(int, int, int *);
 
 _Noreturn void __sys__exit(int rval);
 int __sys_fork(void);
@@ -939,6 +941,8 @@ void * __sys_cap_mmap(void * addr, size_t len, int prot, int flags, int fd, off_
 int __sys_cap_sendfile(int fd, int s, off_t offset, size_t nbytes, struct sf_hdtr * hdtr, off_t * sbytes, int flags);
 int __sys_cap_ftruncate(int fd, off_t length);
 int __sys_cap_ambient_limit(int fd);
+int __sys_pdself(int * fdp, int flags);
+int __sys_pdcmp(int fd1, int fd2, int * result);
 __END_DECLS
 
 #endif /* __LIBSYS_H_ */
