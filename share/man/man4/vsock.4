@@ -1,0 +1,307 @@
+.\" Copyright (c) 2026 5BSD Project
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd June 18, 2026
+.Dt VSOCK 4
+.Os
+.Sh NAME
+.Nm vsock
+.Nd virtio socket communication
+.Sh SYNOPSIS
+.In sys/socket.h
+.In sys/vsock.h
+.Ft int
+.Fn socket AF_VSOCK SOCK_STREAM 0
+.Ft int
+.Fn socket AF_VSOCK SOCK_SEQPACKET 0
+.Sh DESCRIPTION
+The
+.Dv AF_VSOCK
+socket domain provides host-guest communication via the virtio-vsock
+transport, as defined in the OASIS Virtual I/O Device (VIRTIO) specification
+version 1.3, section 5.10.
+It enables socket-based communication between a virtual machine guest and its
+hypervisor host without requiring a network stack.
+.Ss Addressing
+Connections are identified by (CID, port) tuples.
+The CID (Context Identifier) is a 64-bit value unique to each virtual machine:
+.Bl -tag -width "VSOCK_CID_ANY"
+.It Li 0 , 1
+Reserved; must not be used.
+.It Dv VSOCK_CID_HOST Po 2 Pc
+The hypervisor host.
+.It Li 3+
+Guest virtual machines; the CID is assigned by the hypervisor and may be
+read from the virtio device configuration.
+.It Dv VSOCK_CID_ANY Po 0xFFFFFFFFFFFFFFFF Pc
+Wildcard value; when used in a
+.Xr bind 2
+call, binds to the local guest CID.
+.El
+.Pp
+Ports are 32-bit unsigned integers.
+.Dv VSOCK_PORT_ANY
+.Pq 0xFFFFFFFF
+requests automatic ephemeral port assignment.
+.Ss sockaddr_vm Structure
+Socket addresses use the
+.Vt sockaddr_vm
+structure, defined in
+.In sys/vsock.h :
+.Bd -literal -offset indent
+struct sockaddr_vm {
+    uint8_t     svm_len;       /* total length */
+    sa_family_t svm_family;    /* AF_VSOCK */
+    uint16_t    svm_reserved1; /* must be zero */
+    uint32_t    svm_port;      /* port number */
+    uint64_t    svm_cid;       /* context identifier */
+};
+.Ed
+.Ss Socket Types
+.Bl -tag -width "SOCK_SEQPACKET"
+.It Dv SOCK_STREAM
+Provides a reliable, ordered byte-stream connection, analogous to TCP.
+.It Dv SOCK_SEQPACKET
+Provides a reliable, ordered connection that preserves message record
+boundaries.
+Support for
+.Dv SOCK_SEQPACKET
+requires the host device to negotiate the
+.Dv VIRTIO_VSOCK_F_SEQPACKET
+feature bit.
+.El
+.Ss Socket Options
+The following socket options are available at the
+.Dv SOL_VSOCK
+.Pq 287
+level via
+.Xr getsockopt 2
+and
+.Xr setsockopt 2 .
+All options use a
+.Vt uint64_t
+value:
+.Bl -tag -width "SO_VM_SOCKETS_BUFFER_MAX_SIZE"
+.It Dv SO_VM_SOCKETS_BUFFER_SIZE Po 0 Pc
+Get or set the current receive buffer size in bytes.
+.It Dv SO_VM_SOCKETS_BUFFER_MIN_SIZE Po 1 Pc
+Get or set the minimum receive buffer size in bytes.
+.It Dv SO_VM_SOCKETS_BUFFER_MAX_SIZE Po 2 Pc
+Get or set the maximum receive buffer size in bytes.
+.It Dv SO_VM_SOCKETS_CONNECT_TIMEOUT Po 6 Pc
+Get or set the connect timeout in centiseconds (100ths of a second).
+A value of 0 uses the default 30-second timeout.
+Linux compatibility: Linux uses a
+.Vt struct timeval ;
+this implementation uses a
+.Vt uint64_t
+centisecond value.
+.El
+.Pp
+The Linux
+.Dv MSG_ZEROCOPY
+send path and
+.Dv SO_ZEROCOPY
+socket option are not supported.
+Standard data copies are used for all transfers.
+.Ss Credit-Based Flow Control
+The virtio-vsock transport uses credit-based flow control.
+Each endpoint advertises its available receive buffer capacity to the peer.
+A sender may only transmit data up to the peer's available credit.
+Credit updates are exchanged automatically by the driver and are not
+visible to the application.
+.Ss Guest CID Discovery
+Applications can read the guest's CID via the
+.Va kern.vsock_guest_cid
+.Xr sysctl 8
+variable.
+This is equivalent to Linux's
+.Dv IOCTL_VM_SOCKETS_GET_LOCAL_CID
+ioctl.
+.Ss Differences from Linux
+.Bl -bullet
+.It
+.Vt svm_cid
+is
+.Vt uint64_t
+(Linux uses
+.Vt "unsigned int" ) .
+The wire protocol uses 64-bit CIDs; our layout avoids truncation.
+.It
+.Vt svm_len
+follows BSD
+.Xr socket 2
+convention (absent in Linux).
+.It
+Linux's
+.Va svm_flags
+field
+.Pq Dv VMADDR_FLAG_TO_HOST
+is not supported; the
+.Va svm_reserved1
+field occupies that space.
+.It
+.Dv MSG_ZEROCOPY
+and
+.Dv SO_ZEROCOPY
+are not supported.
+.El
+.Sh IMPLEMENTATION NOTES
+The guest-side driver is implemented as a loadable kernel module
+.Pq Pa virtio_vsock.ko .
+The module must be loaded before
+.Dv AF_VSOCK
+sockets can be created.
+To load the module at boot, add the following line to
+.Xr loader.conf 5 :
+.Bd -literal -offset indent
+virtio_vsock_load="YES"
+.Ed
+.Pp
+The host-side device is emulated by
+.Xr bhyve 8
+using the virtio-vsock PCI device.
+It is configured with the following
+.Xr bhyve 8
+.Fl s
+option:
+.Bd -literal -offset indent
+-s N,virtio-vsock,cid=<CID>,path=<directory>
+.Ed
+.Pp
+where
+.Ar CID
+is the guest's context identifier (must be >= 3) and
+.Ar directory
+is a directory on the host for Unix sockets.
+The directory must exist before
+.Xr bhyve 8
+starts.
+.Ss Guest-to-Host Connections
+When a guest application connects to
+.Dv VSOCK_CID_HOST
+on port
+.Ar N ,
+.Xr bhyve 8
+connects to a Unix socket named
+.Ar N
+inside the directory (e.g.,
+.Pa /var/run/vm1/80
+for port 80).
+The socket type matches the guest connection:
+.Dv SOCK_STREAM
+or
+.Dv SOCK_SEQPACKET .
+Message boundaries are preserved for
+.Dv SOCK_SEQPACKET .
+If no listener exists, the guest receives
+.Er ECONNREFUSED .
+.Pp
+To expose a host service on port 80:
+.Bd -literal -offset indent
+mkdir /var/run/vm1
+socat UNIX-LISTEN:/var/run/vm1/80,fork EXEC:myservice
+bhyve -s 5,virtio-vsock,cid=3,path=/var/run/vm1 ...
+.Ed
+.Ss Host-to-Guest Connections
+A host application connects to
+.Pa <directory>/sock
+and sends a 16-byte control message:
+.Bd -literal -offset indent
+struct vsock_ctl_msg {
+    uint32_t cmd;    /* 1 = connect */
+    uint32_t port;   /* guest port */
+    uint32_t type;   /* SOCK_STREAM or SOCK_SEQPACKET */
+    int32_t  status; /* unused in request */
+};
+.Ed
+.Pp
+.Xr bhyve 8
+replies with the same struct
+.Po Va status
+= 0 on success, negative errno on failure
+.Pc
+and passes a connected data socket via
+.Dv SCM_RIGHTS .
+The host application uses the received fd for data transfer.
+.Pp
+This design is compatible with
+.Xr capsicum 4
+capability mode.
+.Pp
+See
+.Xr bhyve_config 5
+for further configuration details.
+.Sh ERRORS
+In addition to the standard errors returned by
+.Xr socket 2 ,
+.Xr bind 2 ,
+.Xr connect 2 ,
+and related calls, the following errors are specific to the
+.Dv AF_VSOCK
+domain:
+.Bl -tag -width Er
+.It Bq Er EPROTOTYPE
+A socket type other than
+.Dv SOCK_STREAM
+or
+.Dv SOCK_SEQPACKET
+was requested.
+.It Bq Er EAFNOSUPPORT
+An attempt was made to bind to a CID that is neither the local guest CID
+nor
+.Dv VSOCK_CID_ANY .
+.It Bq Er ENXIO
+No virtio-vsock device is attached; the kernel module may not be loaded
+or no device has been presented by the hypervisor.
+.It Bq Er ECONNREFUSED
+No listener exists on the target CID and port.
+.It Bq Er ETIMEDOUT
+The connection attempt timed out before the peer responded.
+.El
+.Sh SEE ALSO
+.Xr accept 2 ,
+.Xr bind 2 ,
+.Xr connect 2 ,
+.Xr listen 2 ,
+.Xr socket 2 ,
+.Xr virtio 4 ,
+.Xr bhyve_config 5 ,
+.Xr bhyve 8
+.Sh STANDARDS
+.Rs
+.%A OASIS
+.%T Virtual I/O Device (VIRTIO) Version 1.3
+.%O Section 5.10: Socket Device
+.Re
+.Sh HISTORY
+The
+.Nm
+socket domain first appeared in
+.Fx 16.0 .
+.Sh AUTHORS
+The
+.Nm
+socket domain was written by the
+.An 5BSD Project .

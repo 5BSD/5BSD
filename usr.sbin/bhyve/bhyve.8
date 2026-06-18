@@ -495,6 +495,18 @@ to the guest in the form of simple char devices for simple IO
 between the guest and host userspaces.
 .It Cm virtio-input
 Virtio input interface.
+.It Cm virtio-vsock
+Virtio vsock interface for host-guest socket transport.
+The device is configured with
+.Cm cid
+(guest context identifier, must be >= 3) and
+.Cm path
+(Unix domain socket path for host-side connections).
+Host processes connect to the Unix socket and send a 12-byte header
+(uint32_t port, uint64_t flags=0) to establish a vsock session with the guest.
+See
+.Xr vsock 4
+for details.
 .It Cm ahci
 AHCI controller attached to arbitrary devices.
 .It Cm ahci-cd

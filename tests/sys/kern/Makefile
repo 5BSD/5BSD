@@ -53,7 +53,10 @@ ATF_TESTS_C+=	socket_accf
 ATF_TESTS_C+=	socket_msg_trunc
 ATF_TESTS_C+=	socket_msg_waitall
 ATF_TESTS_C+=	socket_splice
+ATF_TESTS_C+=	vsock_test
 TEST_METADATA.sigwait+=	is_exclusive="true"
+TEST_METADATA.vsock_test+=	required_user="root"
+TEST_METADATA.vsock_test+=	required_kmods="virtio_vsock"
 .if ${MACHINE_ARCH} != "i386" && ${MACHINE_ARCH:Mpowerpc*} == ""
 ATF_TESTS_C+=	subr_physmem_test
 .endif
@@ -119,6 +122,7 @@ LIBADD.procdesc+=			pthread
 LIBADD.shutdown_dgram+=			pthread
 LIBADD.socket_msg_waitall+=		pthread
 LIBADD.socket_splice+=			pthread
+LIBADD.vsock_test+=			pthread
 LIBADD.sendfile_helper+=		pthread
 LIBADD.fdgrowtable_test+=		util pthread kvm procstat
 LIBADD.sigwait+=			rt

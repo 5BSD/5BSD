@@ -307,6 +307,22 @@ VirtIO input interface.
 VirtIO network interface.
 .It Li virtio-rnd
 VirtIO RNG interface.
+.It Li virtio-vsock
+VirtIO vsock interface for host-guest socket transport.
+Requires
+.Va cid
+and
+.Va path
+configuration variables.
+The
+.Va cid
+specifies the guest context identifier (must be >= 3).
+The
+.Va path
+specifies a Unix domain socket path where host processes can
+connect to communicate with the guest via AF_VSOCK.
+See
+.Xr vsock 4 .
 .It Li virtio-scsi
 VirtIO SCSI interface.
 .It Li xhci
