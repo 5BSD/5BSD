@@ -115,7 +115,7 @@ env_setup() {
 	MAKE_FLAGS="-s"
 
 	# The name of the kernel to build, defaults to 5BSD.
-	KERNEL="5BSD"
+	KERNEL="VBSD"
 
 	# Set to non-empty value to disable checkout of doc/ and/or ports/.
 	NOPORTS=
