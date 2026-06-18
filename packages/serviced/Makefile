@@ -1,5 +1,5 @@
 WORLDPACKAGE=	serviced
-PKG_SETS=	minimal minimal-jail
+PKG_SETS=	minimal
 
 PKG_LICENSES=	BSD2CLAUSE
 

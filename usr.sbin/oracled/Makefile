@@ -9,14 +9,13 @@ SRCS= oracled.c bootstrap.c cap_rt_setup.c cap_rt_claims.c cap_rt_reload.c \
 	oracle_proto.c oracle_proto_claims.c proc.c
 CONFS= oracled.conf
 
-FILESDIR_examples= ${SHAREDIR}/examples/oracled
 FILESGROUPS+= examples
 examples= examples/desktop.conf \
 	 examples/server.conf \
 	 examples/embedded.conf \
 	 examples/dynamic_claims.d
-
-FILESDIR_system= ${SHAREDIR}/Capabilities/System
+examplesDIR= ${SHAREDIR}/examples/oracled
+examplesPACKAGE= oracled
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests

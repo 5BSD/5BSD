@@ -213,8 +213,6 @@ SUBDIR=	\
 	cap_rt \
 	cap_rt_capprotect \
 	cap_rt_coalition \
-	cap_rt_test_kernelstore \
-	cap_rt_test_keystore \
 	cap_rt_channel \
 	cap_rt_identity \
 	cap_rt_node \

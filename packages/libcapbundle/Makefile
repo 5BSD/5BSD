@@ -5,4 +5,6 @@ COMPAT_PKGS=	dbg dev lib
 
 PKG_LICENSES=	BSD2CLAUSE
 
+PKG_DEPS.libcapbundle+=	liboraclert
+
 .include <bsd.pkg.mk>
