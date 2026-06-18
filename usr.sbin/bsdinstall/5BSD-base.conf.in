@@ -1,5 +1,5 @@
 5BSD-base: {
-  url: "pkg+https://pkg.FreeBSD.org/${ABI}/%%SUBURL%%",
+  url: "pkg+https://pkg.5bsd.org/${ABI}/%%SUBURL%%",
   mirror_type: "srv",
   signature_type: "fingerprints",
   fingerprints: "/usr/share/keys/%%KEYSDIR%%",

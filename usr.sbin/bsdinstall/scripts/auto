@@ -39,7 +39,7 @@ f_include $BSDCFG_SHARE/dialog.subr
 # during the installation process. They are then restored when restarting this
 # script.
 #
-user_env_vars="BSDINSTALL_DISTSITE DISTRIBUTIONS WORKAROUND_GPTACTIVE WORKAROUND_LENOVO ZFSBOOT_PARTITION_SCHEME"
+user_env_vars="WORKAROUND_GPTACTIVE WORKAROUND_LENOVO ZFSBOOT_PARTITION_SCHEME"
 
 #
 # Strings that should be moved to an i18n file and loaded with f_include_lang()
@@ -198,75 +198,21 @@ trap error SIGINT	# Catch cntrl-C here
 if [ -z "$BSDINSTALL_SKIP_HOSTNAME" ]; then bsdinstall hostname || error "Set hostname failed"; fi
 
 if [ -f /usr/freebsd-packages/repos/5BSD-base-offline.conf ]; then
-	HAVE_BASE_PACKAGES=yes
-	PKGBASE_DEFAULT_BUTTON=--default-no
-else
-	unset HAVE_BASE_PACKAGES
-	unset PKGBASE_DEFAULT_BUTTON
-fi
-
-if [ ! -f $BSDINSTALL_DISTDIR/MANIFEST ]; then
-	PKGBASE=yes
-else
-	bsddialog --backtitle "$OSNAME Installer" --title "Select Installation Type" \
-		--yes-label "Distribution Sets" --no-label "Packages" --yesno \
-		$PKGBASE_DEFAULT_BUTTON \
-		"Would you like to install the base system using legacy distribution sets or packages?" 0 0
+	bsddialog --backtitle "$OSNAME Installer" --title "Network Configuration" \
+	    --yes-label "Configure Network" --no-label "Offline" --yesno \
+	    "The base system will be installed from the packages included in this installation media. Would you like to configure networking for firmware and other packages?" 0 0
 	if [ $? -eq 1 ]; then
-		PKGBASE=yes
-	fi
-fi
-
-if [ "$PKGBASE" == yes ]; then
-	if [ "$HAVE_BASE_PACKAGES" == yes ]; then
-		bsddialog --backtitle "$OSNAME Installer" --title "Network Configuration" \
-		    --yes-label "Configure Network" --no-label "Offline" --yesno \
-		    "The base system will be installed from the packages included in this installation media. Would you like to configure networking for firmware and other packages?" 0 0
-		if [ $? -eq 1 ]; then
-			export BSDINSTALL_PKG_REPOS_DIR=/usr/freebsd-packages/repos/
-		else
-			bsdinstall netconfig || error
-			NETCONFIG_DONE=yes
-			export BSDINSTALL_PKG_REPOS_DIR=/usr/freebsd-packages/repos/
-		fi
+		export BSDINSTALL_PKG_REPOS_DIR=/usr/freebsd-packages/repos/
 	else
-		bsddialog --backtitle "$OSNAME Installer" --title "Network Installation" \
-		    --msgbox "No base system packages are included in this installation media. The next few screens will allow you to configure networking." 0 0
 		bsdinstall netconfig || error
 		NETCONFIG_DONE=yes
+		export BSDINSTALL_PKG_REPOS_DIR=/usr/freebsd-packages/repos/
 	fi
 else
-	export DISTRIBUTIONS="${DISTRIBUTIONS:-base.txz kernel.txz}"
-	if [ -f $BSDINSTALL_DISTDIR/MANIFEST ]; then
-		DISTMENU=`awk -F'\t' '!/^(kernel\.txz|base\.txz)/{print $1,$5,$6}' $BSDINSTALL_DISTDIR/MANIFEST`
-		DISTMENU="$(echo ${DISTMENU} | sed -E 's/\.txz//g')"
-
-		if [ -n "$DISTMENU" ]; then
-			exec 5>&1
-			EXTRA_DISTS=$( eval bsddialog \
-			    --backtitle \"$OSNAME Installer\" \
-			    --title \"Distribution Select\" --nocancel --separate-output \
-			    --checklist \"Choose optional system components to install:\" \
-			    0 0 0 $DISTMENU \
-			2>&1 1>&5 )
-			for dist in $EXTRA_DISTS; do
-				export DISTRIBUTIONS="$DISTRIBUTIONS $dist.txz"
-			done
-		fi
-	fi
-
-	FETCH_DISTRIBUTIONS=""
-	for dist in $DISTRIBUTIONS; do
-		if [ ! -f $BSDINSTALL_DISTDIR/$dist ]; then
-			FETCH_DISTRIBUTIONS="$FETCH_DISTRIBUTIONS $dist"
-		fi
-	done
-
-	if [ -n "$FETCH_DISTRIBUTIONS" -a -n "$BSDINSTALL_CONFIGCURRENT" ]; then
-		bsddialog --backtitle "$OSNAME Installer" --title "Network Installation" --msgbox "Some installation files were not found on the boot volume. The next few screens will allow you to configure networking so that they can be downloaded from the Internet." 0 0
-		bsdinstall netconfig || error
-		NETCONFIG_DONE=yes
-	fi
+	bsddialog --backtitle "$OSNAME Installer" --title "Network Installation" \
+	    --msgbox "No base system packages are included in this installation media. The next few screens will allow you to configure networking." 0 0
+	bsdinstall netconfig || error
+	NETCONFIG_DONE=yes
 fi
 
 rm -f $PATH_FSTAB
@@ -389,6 +335,7 @@ exec 5>&1
 PARTMODE=`echo $PMODES | xargs -o bsddialog --backtitle "$OSNAME Installer" \
 	--title "Partitioning" \
 	--item-help \
+	--default-item "$msg_auto_zfs" \
 	--menu "How would you like to partition your disk?" \
 	0 0 0 2>&1 1>&5` || exit 1
 exec 5>&-
@@ -424,20 +371,7 @@ esac
 
 [ -f /usr/libexec/bsdinstall/local.pre-fetch ] && f_dprintf "Running local.pre-fetch" && sh /usr/libexec/bsdinstall/local.pre-fetch "$BSDINSTALL_CHROOT"
 
-if [ "$PKGBASE" == yes ]; then
-	bsdinstall pkgbase || error "Installation of base system packages failed"
-else
-	if [ -n "$FETCH_DISTRIBUTIONS" ]; then
-		exec 5>&1
-		export BSDINSTALL_DISTDIR=$(`dirname $0`/fetchmissingdists 2>&1 1>&5)
-		FETCH_RESULT=$?
-		exec 5>&-
-
-		[ $FETCH_RESULT -ne 0 ] && error "Could not fetch remote distributions"
-	fi
-	bsdinstall checksum || error "Distribution checksum failed"
-	bsdinstall distextract || error "Distribution extract failed"
-fi
+bsdinstall pkgbase || error "Installation of base system packages failed"
 
 # Set up boot loader
 bsdinstall bootconfig || error "Failed to configure bootloader"

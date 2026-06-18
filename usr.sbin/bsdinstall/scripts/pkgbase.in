@@ -298,7 +298,7 @@ local function select_packages(pkg, options)
 		-- actually exists, because some sets (src, tests) don't
 		-- have a -dbg subpackage.
 		for _, c in ipairs(pkglist) do
-			local setname = c:match("^FreeBSD%-set%-(.*)$")
+			local setname = c:match(set_pattern)
 			if debug and setname then
 				local dbgset = setname.."-dbg"
 				if components[dbgset] then
