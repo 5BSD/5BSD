@@ -305,12 +305,15 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: blued [-Bdrv] [-a adapter] [-f bonds] [-L logfile] -s\n"
-	    "       blued [-Bdrv] [-a adapter] [-f bonds] [-L logfile] "
-	    "<bdaddr> [public|random] ...\n"
-	    "       blued [-Bdv] [-a adapter] [-f bonds] [-L logfile] -p\n"
+	    "usage: blued [-Bdrv] [-a adapter] [-c config] [-f bonds] "
+	    "[-L logfile] -s\n"
+	    "       blued [-Bdrv] [-a adapter] [-c config] [-f bonds] "
+	    "[-L logfile] <bdaddr> [public|random] ...\n"
+	    "       blued [-Bdv] [-a adapter] [-c config] [-f bonds] "
+	    "[-L logfile] -p\n"
 	    "\n"
 	    "  -B       run as daemon (background, syslog, pidfile)\n"
+	    "  -c file  configuration file\n"
 	    "  -d       debug mode (same as -v)\n"
 	    "  -v       verbose (repeat for trace: -vv)\n"
 	    "  -L file  log HCI packets to file (BTSnoop format, "
@@ -1371,9 +1374,11 @@ main(int argc, char *argv[])
 	config_path = NULL;
 	optreset = 1;
 	optind = 1;
-	while ((ch = getopt(argc, argv, "a:Bc:df:L:prsv")) != -1) {
+	while ((ch = getopt(argc, argv, "a:Bc:df:hL:prsv")) != -1) {
 		if (ch == 'c')
 			config_path = optarg;
+		else if (ch == 'h')
+			usage();
 	}
 
 	/* 3. Load config file (optional, ENOENT is OK) */

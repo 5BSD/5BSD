@@ -10,12 +10,14 @@
  *
  * Config file format (UCL):
  *
- *   pidfile = "/var/run/blued.pid";
- *   bonddb = "/var/db/blued/bonds";
- *   ctlsock = "/var/run/blued.sock";
- *   logfile = "/var/log/blued.btsnoop";
- *   loglevel = 1;
- *   daemonize = true;
+ *   general {
+ *       pidfile = "/var/run/blued.pid";
+ *       bonddb = "/var/db/blued/bonds";
+ *       ctlsock = "/var/run/blued.sock";
+ *       logfile = "/var/log/blued.btsnoop";
+ *       loglevel = 1;
+ *       daemonize = true;
+ *   }
  *
  *   adapters = ["ubt0", "ubt1"];
  *
@@ -25,14 +27,19 @@
  *       sc_only = false;
  *   }
  *
- *   eatt = true;
- *   privacy = true;
- *   reconnect = true;
- *   reconnect_max_delay = 60;
+ *   features {
+ *       eatt = true;
+ *       privacy = true;
+ *       reconnect = true;
+ *       reconnect_max_delay = 60;
+ *   }
  *
- *   devices = [
- *       { addr = "aa:bb:cc:dd:ee:ff"; addr_type = "random"; reconnect = true; }
- *   ];
+ *   devices {
+ *       "aa:bb:cc:dd:ee:ff" {
+ *           type = "random";
+ *           reconnect = true;
+ *       }
+ *   }
  */
 
 #include <sys/param.h>
@@ -116,41 +123,60 @@ parse_addr_type(const char *str)
  * Parse the "devices" array from the UCL config.
  */
 static void
+config_parse_device(struct blued_config *cfg, const ucl_object_t *obj,
+    const char *key)
+{
+	const ucl_object_t *val;
+	struct blued_device_conf *d;
+	const char *addr;
+
+	if (cfg->ndevices >= BLUED_MAX_DEVICES ||
+	    ucl_object_type(obj) != UCL_OBJECT)
+		return;
+
+	d = &cfg->devices[cfg->ndevices];
+	memset(d, 0, sizeof(*d));
+	d->addr_type = BDADDR_LE_PUBLIC;
+	d->reconnect = cfg->reconnect;
+
+	val = ucl_object_lookup(obj, "addr");
+	if (val != NULL && ucl_object_type(val) == UCL_STRING)
+		addr = ucl_object_tostring(val);
+	else
+		addr = key;
+	if (addr == NULL || !bt_aton(addr, (bdaddr_t *)d->addr))
+		return;
+
+	val = ucl_object_lookup(obj, "addr_type");
+	if (val == NULL)
+		val = ucl_object_lookup(obj, "type");
+	if (val != NULL && ucl_object_type(val) == UCL_STRING)
+		d->addr_type = parse_addr_type(ucl_object_tostring(val));
+
+	val = ucl_object_lookup(obj, "reconnect");
+	if (val != NULL && ucl_object_type(val) == UCL_BOOLEAN)
+		d->reconnect = ucl_object_toboolean(val);
+
+	cfg->ndevices++;
+}
+
+/*
+ * Parse:
+ *   devices { "aa:bb:cc:dd:ee:ff" { ... } }
+ */
+static void
 config_parse_devices(struct blued_config *cfg, const ucl_object_t *obj)
 {
 	ucl_object_iter_t it;
-	const ucl_object_t *cur, *val;
+	const ucl_object_t *cur;
 
 	it = ucl_object_iterate_new(obj);
 	while ((cur = ucl_object_iterate_safe(it, true)) != NULL) {
-		struct blued_device_conf *d;
-
 		if (cfg->ndevices >= BLUED_MAX_DEVICES)
 			break;
-		d = &cfg->devices[cfg->ndevices];
-		memset(d, 0, sizeof(*d));
-		d->addr_type = BDADDR_LE_PUBLIC;
-		d->reconnect = cfg->reconnect;
-
-		val = ucl_object_lookup(cur, "addr");
-		if (val != NULL && ucl_object_type(val) == UCL_STRING) {
-			if (!bt_aton(ucl_object_tostring(val),
-			    (bdaddr_t *)d->addr))
-				continue;	/* skip invalid */
-		} else {
-			continue;		/* addr is required */
-		}
-
-		val = ucl_object_lookup(cur, "addr_type");
-		if (val != NULL && ucl_object_type(val) == UCL_STRING)
-			d->addr_type = parse_addr_type(
-			    ucl_object_tostring(val));
-
-		val = ucl_object_lookup(cur, "reconnect");
-		if (val != NULL && ucl_object_type(val) == UCL_BOOLEAN)
-			d->reconnect = ucl_object_toboolean(val);
-
-		cfg->ndevices++;
+		config_parse_device(cfg, cur,
+		    ucl_object_type(obj) == UCL_OBJECT ?
+		    ucl_object_key(cur) : NULL);
 	}
 	ucl_object_iterate_free(it);
 }
@@ -175,6 +201,63 @@ config_parse_security(struct blued_config *cfg, const ucl_object_t *obj)
 	val = ucl_object_lookup(obj, "sc_only");
 	if (val != NULL && ucl_object_type(val) == UCL_BOOLEAN)
 		cfg->sc_only = ucl_object_toboolean(val);
+}
+
+static void
+config_parse_general(struct blued_config *cfg, const ucl_object_t *root)
+{
+	const ucl_object_t *obj;
+
+	obj = ucl_object_lookup(root, "pidfile");
+	if (obj != NULL && ucl_object_type(obj) == UCL_STRING)
+		strlcpy(cfg->pidfile, ucl_object_tostring(obj),
+		    sizeof(cfg->pidfile));
+
+	obj = ucl_object_lookup(root, "bonddb");
+	if (obj != NULL && ucl_object_type(obj) == UCL_STRING)
+		strlcpy(cfg->bonddb, ucl_object_tostring(obj),
+		    sizeof(cfg->bonddb));
+
+	obj = ucl_object_lookup(root, "ctlsock");
+	if (obj != NULL && ucl_object_type(obj) == UCL_STRING)
+		strlcpy(cfg->ctlsock, ucl_object_tostring(obj),
+		    sizeof(cfg->ctlsock));
+
+	obj = ucl_object_lookup(root, "logfile");
+	if (obj != NULL && ucl_object_type(obj) == UCL_STRING)
+		strlcpy(cfg->logfile, ucl_object_tostring(obj),
+		    sizeof(cfg->logfile));
+
+	obj = ucl_object_lookup(root, "loglevel");
+	if (obj != NULL && ucl_object_type(obj) == UCL_INT)
+		cfg->loglevel = MAX(0, MIN((int)ucl_object_toint(obj), 5));
+
+	obj = ucl_object_lookup(root, "daemonize");
+	if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)
+		cfg->daemonize = ucl_object_toboolean(obj);
+}
+
+static void
+config_parse_features(struct blued_config *cfg, const ucl_object_t *root)
+{
+	const ucl_object_t *obj;
+
+	obj = ucl_object_lookup(root, "eatt");
+	if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)
+		cfg->eatt = ucl_object_toboolean(obj);
+
+	obj = ucl_object_lookup(root, "privacy");
+	if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)
+		cfg->privacy = ucl_object_toboolean(obj);
+
+	obj = ucl_object_lookup(root, "reconnect");
+	if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)
+		cfg->reconnect = ucl_object_toboolean(obj);
+
+	obj = ucl_object_lookup(root, "reconnect_max_delay");
+	if (obj != NULL && ucl_object_type(obj) == UCL_INT)
+		cfg->reconnect_max_delay = MAX(1,
+		    MIN((int)ucl_object_toint(obj), 3600));
 }
 
 int
@@ -213,60 +296,30 @@ blued_config_load(struct blued_config *cfg, const char *path)
 		return (-1);
 	}
 
-	/* Top-level string/bool/int keys */
-	obj = ucl_object_lookup(root, "pidfile");
-	if (obj != NULL && ucl_object_type(obj) == UCL_STRING)
-		strlcpy(cfg->pidfile, ucl_object_tostring(obj),
-		    sizeof(cfg->pidfile));
+	obj = ucl_object_lookup(root, "general");
+	if (obj != NULL && ucl_object_type(obj) == UCL_OBJECT)
+		config_parse_general(cfg, obj);
 
-	obj = ucl_object_lookup(root, "bonddb");
-	if (obj != NULL && ucl_object_type(obj) == UCL_STRING)
-		strlcpy(cfg->bonddb, ucl_object_tostring(obj),
-		    sizeof(cfg->bonddb));
-
-	obj = ucl_object_lookup(root, "ctlsock");
-	if (obj != NULL && ucl_object_type(obj) == UCL_STRING)
-		strlcpy(cfg->ctlsock, ucl_object_tostring(obj),
-		    sizeof(cfg->ctlsock));
-
-	obj = ucl_object_lookup(root, "logfile");
-	if (obj != NULL && ucl_object_type(obj) == UCL_STRING)
-		strlcpy(cfg->logfile, ucl_object_tostring(obj),
-		    sizeof(cfg->logfile));
-
-	obj = ucl_object_lookup(root, "loglevel");
-	if (obj != NULL && ucl_object_type(obj) == UCL_INT)
-		cfg->loglevel = MAX(0, MIN((int)ucl_object_toint(obj), 5));
-
-	obj = ucl_object_lookup(root, "daemonize");
-	if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)
-		cfg->daemonize = ucl_object_toboolean(obj);
-
-	obj = ucl_object_lookup(root, "eatt");
-	if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)
-		cfg->eatt = ucl_object_toboolean(obj);
-
-	obj = ucl_object_lookup(root, "privacy");
-	if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)
-		cfg->privacy = ucl_object_toboolean(obj);
-
-	obj = ucl_object_lookup(root, "reconnect");
-	if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)
-		cfg->reconnect = ucl_object_toboolean(obj);
-
-	obj = ucl_object_lookup(root, "reconnect_max_delay");
-	if (obj != NULL && ucl_object_type(obj) == UCL_INT)
-		cfg->reconnect_max_delay = MAX(1,
-		    MIN((int)ucl_object_toint(obj), 3600));
+	obj = ucl_object_lookup(root, "features");
+	if (obj != NULL && ucl_object_type(obj) == UCL_OBJECT)
+		config_parse_features(cfg, obj);
 
 	/* Adapters array */
 	obj = ucl_object_lookup(root, "adapters");
-	if (obj != NULL && ucl_object_type(obj) == UCL_ARRAY) {
+	if (obj != NULL && ucl_object_type(obj) == UCL_STRING) {
+		if (strcmp(ucl_object_tostring(obj), "auto") == 0)
+			cfg->nadapters = 0;
+	} else if (obj != NULL && ucl_object_type(obj) == UCL_ARRAY) {
 		cfg->nadapters = 0;
 		it = ucl_object_iterate_new(obj);
 		while ((cur = ucl_object_iterate_safe(it, true)) != NULL) {
 			if (cfg->nadapters >= (int)nitems(cfg->adapters))
 				break;
+			if (ucl_object_type(cur) == UCL_STRING &&
+			    strcmp(ucl_object_tostring(cur), "auto") == 0) {
+				cfg->nadapters = 0;
+				break;
+			}
 			if (ucl_object_type(cur) == UCL_STRING)
 				strlcpy(cfg->adapters[cfg->nadapters++],
 				    ucl_object_tostring(cur),
@@ -282,7 +335,7 @@ blued_config_load(struct blued_config *cfg, const char *path)
 
 	/* Devices array */
 	obj = ucl_object_lookup(root, "devices");
-	if (obj != NULL && ucl_object_type(obj) == UCL_ARRAY)
+	if (obj != NULL && ucl_object_type(obj) == UCL_OBJECT)
 		config_parse_devices(cfg, obj);
 
 	ucl_object_unref(root);
@@ -298,7 +351,7 @@ blued_config_apply_cli(struct blued_config *cfg, int argc, char **argv)
 	optreset = 1;
 	optind = 1;
 
-	while ((ch = getopt(argc, argv, "a:Bc:df:L:prsv")) != -1) {
+	while ((ch = getopt(argc, argv, "a:Bc:df:hL:prsv")) != -1) {
 		switch (ch) {
 		case 'a':
 			if (cfg->nadapters < (int)nitems(cfg->adapters))
@@ -317,6 +370,8 @@ blued_config_apply_cli(struct blued_config *cfg, int argc, char **argv)
 			break;
 		case 'f':
 			strlcpy(cfg->bonddb, optarg, sizeof(cfg->bonddb));
+			break;
+		case 'h':
 			break;
 		case 'L':
 			strlcpy(cfg->logfile, optarg, sizeof(cfg->logfile));

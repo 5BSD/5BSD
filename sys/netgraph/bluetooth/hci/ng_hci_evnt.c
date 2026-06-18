@@ -51,7 +51,7 @@
 
 #include <sys/sdt.h>
 
-SDT_PROVIDER_DEFINE(bluetooth);
+SDT_PROVIDER_DECLARE(bluetooth);
 
 /* LE connection lifecycle */
 SDT_PROBE_DEFINE3(bluetooth, hci, le_connection, complete,

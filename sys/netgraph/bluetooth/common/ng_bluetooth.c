@@ -38,9 +38,12 @@
 #include <sys/kernel.h>
 #include <sys/limits.h>
 #include <sys/module.h>
+#include <sys/sdt.h>
 #include <sys/sysctl.h>
 
 #include <netgraph/bluetooth/include/ng_bluetooth.h>
+
+SDT_PROVIDER_DEFINE(bluetooth);
 
 /*
  * Bluetooth stack sysctl globals
