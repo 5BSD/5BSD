@@ -28,6 +28,7 @@
 #ifndef _SYS_VSOCK_H_
 #define	_SYS_VSOCK_H_
 
+#include <sys/types.h>
 #include <sys/socket.h>
 
 #define	VSOCK_CID_ANY		UINT64_C(0xffffffffffffffff)
