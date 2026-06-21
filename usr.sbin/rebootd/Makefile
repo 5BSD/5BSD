@@ -28,3 +28,5 @@ HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
 .include <bsd.prog.mk>
+
+_proginstall: installdirs-REBOOT_CAP_BIN

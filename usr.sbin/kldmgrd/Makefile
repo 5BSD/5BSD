@@ -28,3 +28,5 @@ HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
 .include <bsd.prog.mk>
+
+_proginstall: installdirs-KLDMGR_CAP_BIN
