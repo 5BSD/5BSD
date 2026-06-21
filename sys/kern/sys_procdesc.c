@@ -243,16 +243,41 @@ sys_pdself(struct thread *td, struct pdself_args *uap)
 		return (error);
 	}
 
-	/*
-	 * Only one process descriptor may exist per process.
-	 */
 	sx_xlock(&proctree_lock);
 	if (p->p_procdesc != NULL) {
+		/*
+		 * Already has a procdesc (e.g., from pdfork).  Return a
+		 * new fd referencing the same file pointer — both holders
+		 * can pdkill, and only the last close triggers the kill.
+		 */
+		struct procdesc *existing_pd = p->p_procdesc;
+		struct file *existing_fp = existing_pd->pd_fp;
+
+		/* Hold a reference before releasing the lock. */
+		if (!fhold(existing_fp)) {
+			sx_xunlock(&proctree_lock);
+			fdclose(td, fp, fd);
+			fdrop(fp, td);
+			free(pd, M_PROCDESC);
+			return (ESRCH);
+		}
 		sx_xunlock(&proctree_lock);
+
+		/* Discard the pre-allocated fd/fp/pd we won't use. */
 		fdclose(td, fp, fd);
 		fdrop(fp, td);
 		free(pd, M_PROCDESC);
-		return (EBUSY);
+
+		error = finstall(td, existing_fp, &fd,
+		    flags & PD_CLOEXEC ? O_CLOEXEC : 0, NULL);
+		fdrop(existing_fp, td);
+		if (error != 0)
+			return (error);
+
+		AUDIT_ARG_FD(fd);
+		error = copyout(&fd, uap->fdp, sizeof(fd));
+		td->td_retval[0] = 0;
+		return (error);
 	}
 
 	pd->pd_proc = p;
@@ -265,9 +290,9 @@ sys_pdself(struct thread *td, struct pdself_args *uap)
 	refcount_init(&pd->pd_refcount, 2);
 
 	p->p_procdesc = pd;
-	sx_xunlock(&proctree_lock);
-
+	pd->pd_fp = fp;
 	finit(fp, FREAD | FWRITE, DTYPE_PROCDESC, pd, &procdesc_ops);
+	sx_xunlock(&proctree_lock);
 	fdrop(fp, td);
 
 	AUDIT_ARG_FFLAGS(flags);
@@ -281,7 +306,7 @@ sys_pdself(struct thread *td, struct pdself_args *uap)
 		 * clean it up.  This matches pdfork(2) behaviour.
 		 */
 	}
-	td->td_retval[0] = fd;
+	td->td_retval[0] = 0;
 	return (error);
 }
 
@@ -390,6 +415,7 @@ void
 procdesc_finit(struct procdesc *pdp, struct file *fp)
 {
 
+	pdp->pd_fp = fp;
 	finit(fp, FREAD | FWRITE, DTYPE_PROCDESC, pdp, &procdesc_ops);
 }
 
@@ -452,6 +478,7 @@ procdesc_exit(struct proc *p)
 		PROCDESC_UNLOCK(pd);
 		pd->pd_proc = NULL;
 		p->p_procdesc = NULL;
+		pd->pd_pid = -1;
 		procdesc_free(pd);
 		return (1);
 	}
@@ -552,12 +579,11 @@ procdesc_close(struct file *fp, struct thread *td)
 			 * calls back into procdesc_reap().
 			 */
 			proc_reap(curthread, p, NULL, 0);
-		} else if ((pd->pd_flags & PDF_SELF) != 0 &&
-		    p == td->td_proc) {
+		} else if (p == td->td_proc) {
 			/*
-			 * The process created this descriptor via pdself()
-			 * and is now closing the last reference itself.
-			 * Just detach -- do not kill or reparent.
+			 * The described process is closing the last
+			 * reference to its own procdesc.  Just detach --
+			 * do not kill or reparent.
 			 */
 			pd->pd_proc = NULL;
 			p->p_procdesc = NULL;
@@ -573,14 +599,15 @@ procdesc_close(struct file *fp, struct thread *td)
 			 * First, detach the process from its descriptor so that
 			 * its exit status will be reported normally.
 			 */
+			int pdflags = pd->pd_flags;
 			pd->pd_proc = NULL;
 			p->p_procdesc = NULL;
 			pd->pd_pid = -1;
 			procdesc_free(pd);
 
 			/*
-			 * Next, reparent it to its reaper (usually init(8)) so
-			 * that there's someone to pick up the pieces; finally,
+			 * Reparent to the reaper (usually init(8)) so that
+			 * there's someone to pick up the pieces; finally,
 			 * terminate with prejudice.
 			 */
 			p->p_sigparent = SIGCHLD;
@@ -591,7 +618,7 @@ procdesc_close(struct file *fp, struct thread *td)
 				p->p_oppid = p->p_reaper->p_pid;
 				proc_add_orphan(p, p->p_reaper);
 			}
-			if ((pd->pd_flags & PDF_DAEMON) == 0)
+			if ((pdflags & PDF_DAEMON) == 0)
 				kern_psignal(p, SIGKILL);
 			PROC_UNLOCK(p);
 			sx_xunlock(&proctree_lock);

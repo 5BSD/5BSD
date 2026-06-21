@@ -961,10 +961,10 @@ ATF_TC_BODY(pdself_inside_capmode, tc)
 	    "pdself inside cap mode: expected success (result=%d)", r);
 }
 
-/* ---- pdself EBUSY on second call ---- */
+/* ---- pdself second call returns shared fd ---- */
 
 static void
-pdself_ebusy_body(int *result)
+pdself_second_body(int *result)
 {
 	int fd, fd2;
 
@@ -972,22 +972,24 @@ pdself_ebusy_body(int *result)
 
 	if (pdself(&fd, 0) != 0) { *result = 2; return; }
 
-	/* Second pdself should fail with EBUSY */
-	if (pdself(&fd2, 0) == 0) { *result = 3; return; }
-	if (errno != EBUSY) { *result = 4; return; }
+	/* Second pdself returns another fd for the same procdesc */
+	if (pdself(&fd2, 0) != 0) { *result = 3; return; }
+	if (fd2 < 0) { *result = 4; return; }
+	if (fd2 == fd) { *result = 5; return; }
 
+	close(fd2);
 	close(fd);
 	*result = 0;
 }
 
-ATF_TC_WITHOUT_HEAD(pdself_ebusy);
-ATF_TC_BODY(pdself_ebusy, tc)
+ATF_TC_WITHOUT_HEAD(pdself_second_call);
+ATF_TC_BODY(pdself_second_call, tc)
 {
 	int r;
 
-	r = in_child(pdself_ebusy_body, NULL);
+	r = in_child(pdself_second_body, NULL);
 	ATF_REQUIRE_MSG(r == 0,
-	    "pdself second call: expected EBUSY (result=%d)", r);
+	    "pdself second call: expected shared fd (result=%d)", r);
 }
 
 /* ---- pdself invalid flags ---- */
@@ -1119,10 +1121,10 @@ ATF_TC_BODY(pdcmp_different, tc)
 	    "pdcmp two different pdfork children (result=%d)", r);
 }
 
-/* ---- pdself on pdfork child gets EBUSY ---- */
+/* ---- pdself on pdfork child returns shared fd ---- */
 
 static void
-pdself_pdfork_ebusy_body(int *result)
+pdself_pdfork_shared_body(int *result)
 {
 	int fd;
 	pid_t pid;
@@ -1132,27 +1134,33 @@ pdself_pdfork_ebusy_body(int *result)
 	if (pid == 0) {
 		int myfd;
 
-		/* pdfork child already has a procdesc; pdself must fail */
+		/*
+		 * pdfork child already has a procdesc; pdself should
+		 * succeed and return a new fd sharing the same procdesc.
+		 */
 		if (cap_enter() != 0) _exit(1);
-		if (pdself(&myfd, 0) == 0) _exit(2);
-		if (errno != EBUSY) _exit(3);
+		if (pdself(&myfd, 0) != 0) _exit(2);
+		if (myfd < 0) _exit(3);
+
+		/* Closing our reference should not kill us (not last) */
+		close(myfd);
 		_exit(0);
 	}
 
 	/* Reap child via the procdesc */
-	if (pdwait(fd, NULL, 0, NULL, NULL) != 0) { *result = 2; return; }
+	if (pdwait(fd, NULL, WEXITED, NULL, NULL) != 0) { *result = 2; return; }
 	close(fd);
 	*result = 0;
 }
 
-ATF_TC_WITHOUT_HEAD(pdself_pdfork_ebusy);
-ATF_TC_BODY(pdself_pdfork_ebusy, tc)
+ATF_TC_WITHOUT_HEAD(pdself_pdfork_shared);
+ATF_TC_BODY(pdself_pdfork_shared, tc)
 {
 	int r;
 
-	r = in_child(pdself_pdfork_ebusy_body, NULL);
+	r = in_child(pdself_pdfork_shared_body, NULL);
 	ATF_REQUIRE_MSG(r == 0,
-	    "pdself in pdfork child: expected EBUSY (result=%d)", r);
+	    "pdself in pdfork child: expected shared fd (result=%d)", r);
 }
 
 /* ---- pdself external close kills process ---- */
@@ -1160,8 +1168,8 @@ ATF_TC_BODY(pdself_pdfork_ebusy, tc)
 static void
 pdself_external_kill_body(int *result)
 {
-	int sv[2], fd, status;
-	pid_t pid;
+	int sv[2], pipefd[2], fd;
+	char buf;
 
 	/*
 	 * Fork a child that enters cap mode, creates a pdself descriptor,
@@ -1169,14 +1177,21 @@ pdself_external_kill_body(int *result)
 	 * and sleeps.  We close the received descriptor — as the last
 	 * reference held by an external process, this should SIGKILL
 	 * the child.
+	 *
+	 * Once the child has a procdesc it is managed via the descriptor
+	 * (normal procdesc semantics: reparented to init on close, not
+	 * visible to waitpid).  Use a pipe to detect death.
 	 */
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
 		*result = 1; return;
 	}
+	if (pipe(pipefd) != 0) { *result = 1; return; }
 
-	pid = fork();
-	if (pid < 0) { *result = 2; return; }
-	if (pid == 0) {
+	switch (fork()) {
+	case -1:
+		*result = 2; return;
+	case 0:
+	    {
 		struct msghdr msg;
 		struct cmsghdr *cmsg;
 		union {
@@ -1185,13 +1200,21 @@ pdself_external_kill_body(int *result)
 		} cmsgbuf;
 		int myfd;
 
+		struct iovec iov;
+		char byte = 0;
+
 		close(sv[0]);
+		close(pipefd[0]);
 		if (cap_enter() != 0) _exit(10);
 		if (pdself(&myfd, 0) != 0) _exit(11);
 
 		/* Send the procdesc fd to the parent */
 		memset(&msg, 0, sizeof(msg));
 		memset(&cmsgbuf, 0, sizeof(cmsgbuf));
+		iov.iov_base = &byte;
+		iov.iov_len = 1;
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
 		msg.msg_control = cmsgbuf.buf;
 		msg.msg_controllen = sizeof(cmsgbuf.buf);
 		cmsg = CMSG_FIRSTHDR(&msg);
@@ -1209,10 +1232,12 @@ pdself_external_kill_body(int *result)
 		for (;;)
 			sleep(60);
 		_exit(99);
+	    }
 	}
 
 	/* Parent */
 	close(sv[1]);
+	close(pipefd[1]);
 
 	/* Receive the procdesc fd from the child */
 	{
@@ -1233,15 +1258,12 @@ pdself_external_kill_body(int *result)
 		msg.msg_control = cmsgbuf.buf;
 		msg.msg_controllen = sizeof(cmsgbuf.buf);
 		if (recvmsg(sv[0], &msg, 0) < 0) {
-			/* Child may not have sent yet; wait and retry */
-			waitpid(pid, &status, 0);
 			*result = 3; return;
 		}
 		cmsg = CMSG_FIRSTHDR(&msg);
 		if (cmsg == NULL ||
 		    cmsg->cmsg_level != SOL_SOCKET ||
 		    cmsg->cmsg_type != SCM_RIGHTS) {
-			waitpid(pid, &status, 0);
 			*result = 4; return;
 		}
 		memcpy(&fd, CMSG_DATA(cmsg), sizeof(int));
@@ -1254,12 +1276,11 @@ pdself_external_kill_body(int *result)
 	 */
 	close(fd);
 
-	if (waitpid(pid, &status, 0) != pid) {
+	/* Pipe EOF confirms child died */
+	if (read(pipefd[0], &buf, 1) != 0) {
 		*result = 5; return;
 	}
-	if (!WIFSIGNALED(status) || WTERMSIG(status) != SIGKILL) {
-		*result = 6; return;
-	}
+	close(pipefd[0]);
 	*result = 0;
 }
 
@@ -1297,8 +1318,8 @@ ATF_TC_BODY(pdcmp_after_exit, tc)
 		_exit(0);
 
 	/* Wait for both children to exit */
-	ATF_REQUIRE(pdwait(fd1, NULL, 0, NULL, NULL) == 0);
-	ATF_REQUIRE(pdwait(fd2, NULL, 0, NULL, NULL) == 0);
+	ATF_REQUIRE(pdwait(fd1, NULL, WEXITED, NULL, NULL) == 0);
+	ATF_REQUIRE(pdwait(fd2, NULL, WEXITED, NULL, NULL) == 0);
 
 	/* pdcmp on two dead-but-distinct children: must be non-equal */
 	ATF_REQUIRE(pdcmp(fd1, fd2, &cmp) == 0);
@@ -1350,6 +1371,160 @@ ATF_TC_BODY(pdcmp_bad_fd, tc)
 	    "pdcmp with non-procdesc fd: expected EINVAL (result=%d)", r);
 }
 
+/* ---- pdself + pdwait: holder observes normal exit ---- */
+
+ATF_TC_WITHOUT_HEAD(pdself_pdwait);
+ATF_TC_BODY(pdself_pdwait, tc)
+{
+	int sv[2], fd, status;
+	struct msghdr msg;
+	struct cmsghdr *cmsg;
+	union {
+		struct cmsghdr hdr;
+		char buf[CMSG_SPACE(sizeof(int))];
+	} cmsgbuf;
+	char dummy;
+	struct iovec iov;
+	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int myfd;
+		char byte = 0;
+
+		close(sv[0]);
+		if (cap_enter() != 0) _exit(10);
+		if (pdself(&myfd, 0) != 0) _exit(11);
+
+		/* Send procdesc to parent */
+		memset(&msg, 0, sizeof(msg));
+		memset(&cmsgbuf, 0, sizeof(cmsgbuf));
+		iov.iov_base = &byte;
+		iov.iov_len = 1;
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+		msg.msg_control = cmsgbuf.buf;
+		msg.msg_controllen = sizeof(cmsgbuf.buf);
+		cmsg = CMSG_FIRSTHDR(&msg);
+		cmsg->cmsg_level = SOL_SOCKET;
+		cmsg->cmsg_type = SCM_RIGHTS;
+		cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+		memcpy(CMSG_DATA(cmsg), &myfd, sizeof(int));
+		msg.msg_controllen = cmsg->cmsg_len;
+		if (sendmsg(sv[1], &msg, 0) < 0) _exit(12);
+
+		close(myfd);
+		_exit(42);
+	}
+
+	/* Parent: receive the procdesc */
+	close(sv[1]);
+	memset(&msg, 0, sizeof(msg));
+	iov.iov_base = &dummy;
+	iov.iov_len = 1;
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	msg.msg_control = cmsgbuf.buf;
+	msg.msg_controllen = sizeof(cmsgbuf.buf);
+	ATF_REQUIRE(recvmsg(sv[0], &msg, 0) >= 0);
+	cmsg = CMSG_FIRSTHDR(&msg);
+	ATF_REQUIRE(cmsg != NULL);
+	ATF_REQUIRE(cmsg->cmsg_type == SCM_RIGHTS);
+	memcpy(&fd, CMSG_DATA(cmsg), sizeof(int));
+	close(sv[0]);
+
+	/* Use pdwait to observe the child's exit */
+	ATF_REQUIRE_MSG(pdwait(fd, &status, WEXITED, NULL, NULL) == 0,
+	    "pdwait failed: %s", strerror(errno));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_REQUIRE_MSG(WEXITSTATUS(status) == 42,
+	    "expected exit 42, got %d", WEXITSTATUS(status));
+	close(fd);
+}
+
+/* ---- pdself + pdkill: holder sends signal ---- */
+
+ATF_TC_WITHOUT_HEAD(pdself_pdkill);
+ATF_TC_BODY(pdself_pdkill, tc)
+{
+	int sv[2], fd, status;
+	struct msghdr msg;
+	struct cmsghdr *cmsg;
+	union {
+		struct cmsghdr hdr;
+		char buf[CMSG_SPACE(sizeof(int))];
+	} cmsgbuf;
+	char dummy;
+	struct iovec iov;
+	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int myfd;
+		char byte = 0;
+
+		close(sv[0]);
+		if (cap_enter() != 0) _exit(10);
+		if (pdself(&myfd, 0) != 0) _exit(11);
+
+		/* Send procdesc to parent */
+		memset(&msg, 0, sizeof(msg));
+		memset(&cmsgbuf, 0, sizeof(cmsgbuf));
+		iov.iov_base = &byte;
+		iov.iov_len = 1;
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+		msg.msg_control = cmsgbuf.buf;
+		msg.msg_controllen = sizeof(cmsgbuf.buf);
+		cmsg = CMSG_FIRSTHDR(&msg);
+		cmsg->cmsg_level = SOL_SOCKET;
+		cmsg->cmsg_type = SCM_RIGHTS;
+		cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+		memcpy(CMSG_DATA(cmsg), &myfd, sizeof(int));
+		msg.msg_controllen = cmsg->cmsg_len;
+		if (sendmsg(sv[1], &msg, 0) < 0) _exit(12);
+
+		close(myfd);
+		/* Sleep until killed */
+		for (;;)
+			sleep(60);
+		_exit(99);
+	}
+
+	/* Parent: receive the procdesc */
+	close(sv[1]);
+	memset(&msg, 0, sizeof(msg));
+	iov.iov_base = &dummy;
+	iov.iov_len = 1;
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	msg.msg_control = cmsgbuf.buf;
+	msg.msg_controllen = sizeof(cmsgbuf.buf);
+	ATF_REQUIRE(recvmsg(sv[0], &msg, 0) >= 0);
+	cmsg = CMSG_FIRSTHDR(&msg);
+	ATF_REQUIRE(cmsg != NULL);
+	ATF_REQUIRE(cmsg->cmsg_type == SCM_RIGHTS);
+	memcpy(&fd, CMSG_DATA(cmsg), sizeof(int));
+	close(sv[0]);
+
+	/* Kill the child via pdkill */
+	ATF_REQUIRE_MSG(pdkill(fd, SIGTERM) == 0,
+	    "pdkill failed: %s", strerror(errno));
+
+	/* Observe death via pdwait */
+	ATF_REQUIRE(pdwait(fd, &status, WEXITED, NULL, NULL) == 0);
+	ATF_REQUIRE(WIFSIGNALED(status));
+	ATF_REQUIRE_MSG(WTERMSIG(status) == SIGTERM,
+	    "expected SIGTERM, got signal %d", WTERMSIG(status));
+	close(fd);
+}
+
 /* ---- ATF test program ---- */
 
 ATF_TP_ADD_TCS(tp)
@@ -1395,7 +1570,7 @@ ATF_TP_ADD_TCS(tp)
 	/* pdself / pdcmp */
 	ATF_TP_ADD_TC(tp, pdself_outside_capmode);
 	ATF_TP_ADD_TC(tp, pdself_inside_capmode);
-	ATF_TP_ADD_TC(tp, pdself_ebusy);
+	ATF_TP_ADD_TC(tp, pdself_second_call);
 	ATF_TP_ADD_TC(tp, pdself_bad_flags);
 	ATF_TP_ADD_TC(tp, pdself_selfclose);
 	ATF_TP_ADD_TC(tp, pdcmp_same);
@@ -1403,7 +1578,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, pdself_external_kill);
 	ATF_TP_ADD_TC(tp, pdcmp_after_exit);
 	ATF_TP_ADD_TC(tp, pdcmp_bad_fd);
-	ATF_TP_ADD_TC(tp, pdself_pdfork_ebusy);
+	ATF_TP_ADD_TC(tp, pdself_pdfork_shared);
+	ATF_TP_ADD_TC(tp, pdself_pdwait);
+	ATF_TP_ADD_TC(tp, pdself_pdkill);
 
 	return (atf_no_error());
 }

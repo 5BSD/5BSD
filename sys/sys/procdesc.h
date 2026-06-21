@@ -61,6 +61,7 @@ struct procdesc {
 	 * refcount.
 	 */
 	struct proc	*pd_proc;		/* (t) Process. */
+	struct file	*pd_fp;			/* (c) Backing file pointer. */
 	pid_t		 pd_pid;		/* (c) Cached pid. */
 	u_int		 pd_refcount;		/* (r) Reference count. */
 
