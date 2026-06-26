@@ -20,7 +20,7 @@
 #include "serviced_manifest.h"
 #include "oracled_svc_proto.h"
 
-/* Timeout for cap_rt channel RPC calls (oracle and direct). */
+/* Timeout for mac_capability channel RPC calls (oracle and direct). */
 #define	SERVICED_RPC_TIMEOUT_MS		100
 
 /* Service runtime state */
@@ -82,7 +82,7 @@ struct serviced_state {
 	int		channel_svc_fd;		/* channel service instance (fd 4) */
 	int		coalition_svc_fd;	/* coalition service instance (fd 5) */
 	int		capprotect_fd;		/* capprotect service instance (fd 6) */
-	int		identity_fd;		/* cap_rt_identity service instance */
+	int		identity_fd;		/* mac_capability_identity service instance */
 	bool		running;
 	bool		shutting_down;
 
@@ -102,14 +102,14 @@ void	sctl_accept(void);
 void	sctl_conn_event(struct kevent *kev);
 bool	sctl_is_conn_event(struct kevent *kev);
 
-/* caprt_direct.c — direct cap_rt operations using delegated fd */
-int	caprt_create_channel(int *our_end, int *child_end);
-int	caprt_create_coalition(void);
-int	caprt_coalition_enlist(int coalition_fd, int member_fd);
-int	caprt_coalition_set_leader(int coalition_fd, int leader_fd);
-int	caprt_coalition_graceful(int coalition_fd, int sig, unsigned timeout_ms);
-int	caprt_coalition_terminate(int coalition_fd);
-int	caprt_mint_capprotect(void);
+/* mac_capability_direct.c — direct mac_capability operations using delegated fd */
+int	mac_cap_create_channel(int *our_end, int *child_end);
+int	mac_cap_create_coalition(void);
+int	mac_cap_coalition_enlist(int coalition_fd, int member_fd);
+int	mac_cap_coalition_set_leader(int coalition_fd, int leader_fd);
+int	mac_cap_coalition_graceful(int coalition_fd, int sig, unsigned timeout_ms);
+int	mac_cap_coalition_terminate(int coalition_fd);
+int	mac_cap_mint_capprotect(void);
 
 /* oracle_client.c — channel protocol client to oracled */
 int	oracle_mint_path(int channel_fd, const char *path);

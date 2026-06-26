@@ -101,18 +101,18 @@ status_uptime_cleanup()
 
 # --- status command: negative ---
 
-atf_test_case status_shows_cap_rt_claim cleanup
-status_shows_cap_rt_claim_head()
+atf_test_case status_shows_mac_capability_claim cleanup
+status_shows_mac_capability_claim_head()
 {
-	atf_set "descr" "oraclectl status always shows /dev/cap_rt in claims"
+	atf_set "descr" "oraclectl status always shows /dev/mac_capability in claims"
 	atf_set "require.user" "root"
 }
-status_shows_cap_rt_claim_body()
+status_shows_mac_capability_claim_body()
 {
 	require_oracled
-	atf_check -s exit:0 -o match:"/dev/cap_rt" oraclectl status
+	atf_check -s exit:0 -o match:"/dev/mac_capability" oraclectl status
 }
-status_shows_cap_rt_claim_cleanup()
+status_shows_mac_capability_claim_cleanup()
 {
 	:
 }
@@ -506,7 +506,7 @@ atf_init_test_cases()
 	atf_add_test_case status_shows_claims
 	atf_add_test_case status_shows_services
 	atf_add_test_case status_shows_service_mgr
-	atf_add_test_case status_shows_cap_rt_claim
+	atf_add_test_case status_shows_mac_capability_claim
 	atf_add_test_case status_shows_integrity_flags
 	atf_add_test_case status_socket_path
 

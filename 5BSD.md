@@ -33,7 +33,7 @@ security, except it actually runs Linux software at native speed.
 |-------|-------------|
 | **MACF** | 38+ mandatory access control hooks gate every Linux syscall -- fork, exec, mmap, open, socket, signal, mount.  Policy modules are loadable.  No Linux code can bypass or disable them. |
 | **Capsicum** | Capability mode for process sandboxing.  Enter capability mode and lose the ability to open new resources.  Works on Linux binaries. |
-| **CAP_RT** | Capability-based IPC.  Kernel message passing where the file descriptor IS the credential.  Services are loadable modules.  No new syscalls required. |
+| **MAC_CAPABILITY** | Capability-based IPC.  Kernel message passing where the file descriptor IS the credential.  Services are loadable modules.  No new syscalls required. |
 | **capprotect** | Per-process integrity shields.  Make a process invisible to ps, immune to ptrace, immune to kill -- enforced by MACF, controlled by capability. |
 | **vnode_claim** | Per-descriptor access control.  Bind a file descriptor to a process identity.  Passing it to the wrong process makes it useless.  Exec into a different program revokes access. |
 | **Coalition** | Capability-based resource groups.  Supervisor creates a coalition, enlists processes/jails/sockets/devices, and closing the fd kills everything.  Deadlines, watchdogs, leader death triggers, nested coalitions. |
@@ -64,7 +64,7 @@ LSMs that run in the same privilege domain as the code they police.
       |
  Coalition ── coordinated termination (supervisor pattern)
       |
- CAP_RT nonce ── single process identity across all layers
+ MAC_CAPABILITY nonce ── single process identity across all layers
       |
  BSD kernel (VFS, network stack, VM, scheduler)
 ```
@@ -94,10 +94,10 @@ to native FreeBSD operations before the kernel executes them.
 **Design doc:** [docs/macf-new-hooks.md](docs/macf-new-hooks.md)
 **Source:** `sys/security/mac_test_hooks/`
 
-### CAP_RT -- Capability Runtime
+### MAC_CAPABILITY -- MAC Capability
 
 Kernel message-passing framework.  One base system change
-(`DTYPE_CAP_RT`, two Capsicum rights, one device node) enables
+(`DTYPE_MAC_CAPABILITY`, two Capsicum rights, one device node) enables
 unlimited kernel services as loadable modules.
 
 - Async (taskqueue) and sync (caller-thread) models
@@ -108,8 +108,8 @@ unlimited kernel services as loadable modules.
 
 See [CAPABILITY_ARCHITECTURE.md](CAPABILITY_ARCHITECTURE.md).
 
-**Source:** `sys/dev/cap_rt/`
-**Tests:** `tests/sys/cap_rt/` (116 ATF tests)
+**Source:** `sys/dev/mac_capability/`
+**Tests:** `tests/sys/mac_capability/` (116 ATF tests)
 
 ### vnode_claim -- Capability Access Control List
 
@@ -125,28 +125,28 @@ longer sufficient to use it -- you must be in the ACL.
   where there is no path to re-open
 
 **Status:** Standalone module (2,045 lines, 20+ tests), targeting
-integration.  Will be migrated to use CAP_RT nonce as identity
+integration.  Will be migrated to use MAC_CAPABILITY nonce as identity
 (currently uses its own independent token).
 
 ### Coalition -- Capability-Based Resource Groups
 
-CAP_RT sync service for coordinated resource lifecycle.  A coalition
-groups cap_rt instances, processes, jails, sockets, shared memory,
+MAC_CAPABILITY sync service for coordinated resource lifecycle.  A coalition
+groups mac_capability instances, processes, jails, sockets, shared memory,
 and nested coalitions.  Closing the coalition fd revokes all members.
 
-- Enlist any fd: cap_rt capabilities, procdesc, jaildesc, socket, shm
-- Cap_rt members terminated via `cap_rt_instance_revoke()`
+- Enlist any fd: mac_capability capabilities, procdesc, jaildesc, socket, shm
+- Mac_capability members terminated via `mac_capability_instance_revoke()`
 - Graceful termination (SIGTERM → grace period → SIGKILL)
 - Deadline termination (auto-kill after timeout)
 - Watchdog/heartbeat (supervisor liveness check)
-- Leader death trigger (process exit, jail destroy, cap_rt instance revoke)
+- Leader death trigger (process exit, jail destroy, mac_capability instance revoke)
 - Nested coalitions (cycle detection, cascade termination)
 - Aggregate resource usage monitoring (CPU, memory, faults)
-- Service name tracking for cap_rt member types
+- Service name tracking for mac_capability member types
 - DTrace SDT probes
 
-**Source:** `sys/dev/cap_rt/cap_rt_coalition.c` (CAP_RT service)
-**Tests:** `tests/sys/cap_rt/cap_rt_coalition_test.c` (40+ ATF tests)
+**Source:** `sys/dev/mac_capability/mac_capability_coalition.c` (MAC_CAPABILITY service)
+**Tests:** `tests/sys/mac_capability/mac_capability_coalition_test.c` (40+ ATF tests)
 
 ### HWT/PT -- Hardware Trace
 
@@ -171,12 +171,12 @@ packages, disable upstream `FreeBSD-base`, and upgrade through `pkg`.
 See [docs/pkgbase-install.md](docs/pkgbase-install.md).
 
 The kernel ident is `VBSD` (config(8) does not allow leading digits).
-Cap_rt modules load automatically via `stand/defaults/loader.conf`.
+Mac_capability modules load automatically via `stand/defaults/loader.conf`.
 
 ## Testing
 
 ```sh
-cd tests/sys/cap_rt && kyua test
+cd tests/sys/mac_capability && kyua test
 cd tests/sys/mac && kyua test
 ```
 
@@ -187,10 +187,10 @@ cd tests/sys/mac && kyua test
 ### Done
 
 - MACF: 38 hooks across process, fd, vnode, mount, memory, system
-- CAP_RT: async/sync services, fd passing, kqueue, nonce identity
+- MAC_CAPABILITY: async/sync services, fd passing, kqueue, nonce identity
 - capprotect: ptrace/signal/visibility/core shields via MACF
 - KernelStore: shared capability store
-- Coalition: CAP_RT sync service with cap_rt member revocation,
+- Coalition: MAC_CAPABILITY sync service with mac_capability member revocation,
   process/jail/socket termination, nested coalitions, graceful
   shutdown, deadline/watchdog timers, leader death monitoring
 - HWT/PT: race fixes, buffer fix, timing support
@@ -201,19 +201,19 @@ cd tests/sys/mac && kyua test
 ### In Progress
 
 - vnode_claim integration
-- Migrate vnode_claim identity to CAP_RT nonce
+- Migrate vnode_claim identity to MAC_CAPABILITY nonce
 
 ### Security Stack Roadmap
 
 #### Unified nonce identity
 
-CAP_RT already assigns a cryptographic nonce per credential
+MAC_CAPABILITY already assigns a cryptographic nonce per credential
 (rotates on exec, inherits on fork).  Currently capprotect uses
 it; vnode_claim has its own independent token.
 
-1. **Migrate vnode_claim to CAP_RT nonce** -- one identity across all
+1. **Migrate vnode_claim to MAC_CAPABILITY nonce** -- one identity across all
    enforcement layers.  vnode_claim keeps its refcount tracking for lazy
-   cleanup but reads the nonce from the CAP_RT credential label
+   cleanup but reads the nonce from the MAC_CAPABILITY credential label
    instead of generating its own.
 
 2. **Coalition nonce-based enlistment** -- convenience operation
@@ -243,11 +243,11 @@ this process" across four layers:
 
 - Integrate vnode_claim into 5BSD tree from standalone repo
 - ~~Integrate Coalition into 5BSD tree from standalone repo~~
-  **Done** -- coalition is now a CAP_RT sync service
-  (`sys/dev/cap_rt/cap_rt_coalition.c`)
-- ~~Wire coalition terminate ops into CAP_RT services~~
-  **Done** -- coalition uses `cap_rt_instance_revoke()` for
-  cap_rt members, no separate terminate_ops registry needed
+  **Done** -- coalition is now a MAC_CAPABILITY sync service
+  (`sys/dev/mac_capability/mac_capability_coalition.c`)
+- ~~Wire coalition terminate ops into MAC_CAPABILITY services~~
+  **Done** -- coalition uses `mac_capability_instance_revoke()` for
+  mac_capability members, no separate terminate_ops registry needed
 
 #### Planned
 
@@ -265,7 +265,7 @@ Structured for FreeBSD contribution:
 - HWT/PT fixes are pure bug fixes applicable to upstream
 - File names chosen to avoid merge conflicts
 
-Base system touches are minimal: `DTYPE_CAP_RT` in `sys/sys/file.h`,
+Base system touches are minimal: `DTYPE_MAC_CAPABILITY` in `sys/sys/file.h`,
 two Capsicum rights in `sys/sys/capsicum.h`.
 
 ```sh

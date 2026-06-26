@@ -10,9 +10,9 @@
  * exec()s the program from the manifest.  Registers the process
  * descriptor and channel on the kqueue for supervision.
  *
- * Unlike oracled, serviced does not hold /dev/cap_rt directly.
- * Channel and coalition creation use the delegated cap_rt fd
- * (caprt_direct.c).  Token minting goes through the oracle
+ * Unlike oracled, serviced does not hold /dev/mac_capability directly.
+ * Channel and coalition creation use the delegated mac_capability fd
+ * (mac_cap_direct.c).  Token minting goes through the oracle
  * channel (oracle_client.c).
  */
 
@@ -358,7 +358,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	}
 
 	/* Create channel via oracle. */
-	if (caprt_create_channel(
+	if (mac_cap_create_channel(
 	    &oracle_end, &child_end) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: failed to create channel",
 		    m->label);
@@ -368,7 +368,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	SERVICED_PROBE_CAP_CHANNEL(m->label, 0);
 
 	/* Create coalition via oracle. */
-	coalition_fd = caprt_create_coalition();
+	coalition_fd = mac_cap_create_coalition();
 	if (coalition_fd == -1) {
 		syslog(LOG_ERR, "svc_exec %s: failed to create coalition",
 		    m->label);
@@ -379,7 +379,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	}
 	SERVICED_PROBE_CAP_COALITION(m->label, 0);
 
-	capprotect_fd = caprt_mint_capprotect();
+	capprotect_fd = mac_cap_mint_capprotect();
 	if (capprotect_fd == -1 && errno != ENOTSUP) {
 		syslog(LOG_WARNING, "svc_exec %s: capprotect mint: %m",
 		    m->label);
@@ -557,12 +557,12 @@ svc_exec(struct svc_runtime *svc, int kq)
 		close(token_fds[i]);
 
 	/* Enlist in coalition and set as leader. */
-	if (caprt_coalition_enlist(coalition_fd, pd_fd) != 0) {
+	if (mac_cap_coalition_enlist(coalition_fd, pd_fd) != 0) {
 		syslog(LOG_ERR, "svc_exec %s: coalition enlist: %m",
 		    m->label);
 		goto fail_postfork;
 	}
-	if (caprt_coalition_set_leader(coalition_fd, pd_fd) != 0) {
+	if (mac_cap_coalition_set_leader(coalition_fd, pd_fd) != 0) {
 		syslog(LOG_ERR, "svc_exec %s: coalition set_leader: %m",
 		    m->label);
 		goto fail_postfork;

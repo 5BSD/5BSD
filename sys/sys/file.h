@@ -73,7 +73,7 @@ struct nameidata;
 #define	DTYPE_TIMERFD	14	/* timerfd */
 #define	DTYPE_INOTIFY	15	/* inotify descriptor */
 #define	DTYPE_JAILDESC	16	/* jail descriptor */
-#define	DTYPE_CAP_RT	32	/* cap_rt capability descriptor */
+#define	DTYPE_MAC_CAPABILITY	32	/* mac_capability capability descriptor */
 
 #ifdef _KERNEL
 
@@ -150,7 +150,7 @@ typedef int fo_spare_t(struct file *fp);
  * Called by kern_ioctl() after cap_ioctl_check() succeeds.
  * The implementation inspects cmd and calls cap_check() against
  * the fd's rights to enforce file-type-specific rights (e.g.
- * CAP_CAP_RT_SEND for cap_rt SENDMSG).
+ * CAP_MAC_CAPABILITY_SEND for mac_capability SENDMSG).
  * Return 0 to allow, ENOTCAPABLE to deny.
  */
 typedef int fo_ioctl_check_t(struct file *fp, u_long cmd,

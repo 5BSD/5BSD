@@ -6,13 +6,13 @@
  * System gate name-to-bitmask table.
  *
  * Shared between config.c and manifest.c to avoid duplication.
- * The bitmask values match SYS_GATE_* in cap_rt_system_proto.h.
+ * The bitmask values match SYS_GATE_* in mac_capability_system_proto.h.
  */
 
 #ifndef GATES_H
 #define GATES_H
 
-#include <dev/cap_rt/cap_rt_system_proto.h>
+#include <dev/mac_capability/mac_capability_system_proto.h>
 
 struct gate_entry {
 	const char	*name;

@@ -1,0 +1,191 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd June 5, 2026
+.Dt MAC_CAPABILITY_ACCOUNTING 4
+.Os
+.Sh NAME
+.Nm mac_capability_accounting
+.Nd MAC_CAPABILITY per-process resource accounting and enforcement
+.Sh SYNOPSIS
+To load at boot:
+.Bd -literal -offset indent
+echo 'mac_capability_accounting_load="YES"' >> /boot/loader.conf
+.Ed
+.Pp
+Wire protocol header:
+.Bd -literal -offset indent
+#include <dev/mac_capability/mac_capability_accounting_proto.h>
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+service provides per-process
+.Xr racct 4
+resource accounting and
+.Xr rctl 8
+enforcement rule management via
+.Dv MAC_CAPABILITY_CALL .
+The service is registered under the name
+.Dq accounting .
+.Pp
+Connection requires
+.Dv PRIV_ACCT
+privilege.
+The target process is identified by attaching a
+.Xr procdesc 4
+file descriptor to the call.
+If no fd is attached, the operation targets the caller.
+.Ss Operations
+.Bl -tag -width "ACCT_OP_REMOVE_RULE"
+.It Dv ACCT_OP_CHARGE Pq 1
+Debit a resource amount via
+.Fn racct_add .
+.It Dv ACCT_OP_RELEASE Pq 2
+Credit a resource amount via
+.Fn racct_sub .
+.It Dv ACCT_OP_SET Pq 3
+Set a resource to an absolute value via
+.Fn racct_set .
+.It Dv ACCT_OP_ADD_RULE Pq 4
+Add an
+.Xr rctl 8
+enforcement rule.
+.It Dv ACCT_OP_REMOVE_RULE Pq 5
+Remove an
+.Xr rctl 8
+enforcement rule.
+.It Dv ACCT_OP_GET_RULES Pq 6
+Query the active enforcement rules for the target process.
+.El
+.Ss Wire Structures
+Charge, release, and set operations use:
+.Bd -literal -offset indent
+struct acct_charge_request {
+	uint32_t  op;        /* ACCT_OP_CHARGE/RELEASE/SET */
+	uint32_t  resource;  /* RACCT_* constant */
+	uint64_t  amount;
+} __packed;
+.Ed
+.Pp
+Rule operations use:
+.Bd -literal -offset indent
+struct acct_rule_request {
+	uint32_t  op;        /* ACCT_OP_ADD_RULE/REMOVE_RULE */
+	uint32_t  resource;  /* RACCT_* constant */
+	uint32_t  action;    /* ACCT_RULE_* */
+	uint32_t  signal;    /* signal number if ACCT_RULE_SIGNAL */
+	uint64_t  limit;     /* trigger threshold */
+} __packed;
+.Ed
+.Pp
+The get-rules request uses:
+.Bd -literal -offset indent
+struct acct_get_rules_request {
+	uint32_t  op;        /* ACCT_OP_GET_RULES */
+	uint32_t  _reserved;
+} __packed;
+.Ed
+.Pp
+The reply for charge, release, set, add-rule, and remove-rule:
+.Bd -literal -offset indent
+struct acct_reply {
+	uint32_t  status;
+	uint32_t  _pad;
+} __packed;
+.Ed
+.Pp
+The reply for get-rules:
+.Bd -literal -offset indent
+#define ACCT_MAX_RULES  16
+
+struct acct_rule_entry {
+	uint32_t  resource;
+	uint32_t  action;
+	uint32_t  signal;
+	uint32_t  _pad;
+	uint64_t  limit;
+} __packed;
+
+struct acct_rules_reply {
+	uint32_t               status;
+	uint32_t               nrules;
+	struct acct_rule_entry rules[ACCT_MAX_RULES];
+} __packed;
+.Ed
+.Ss Rule Actions
+.Bl -column "Dv ACCT_RULE_THROTTLE" "Value" "send signal" -offset indent
+.It Sy Constant Ta Sy Value Ta Sy Description
+.It Dv ACCT_RULE_DENY Ta 1 Ta fail allocation
+.It Dv ACCT_RULE_LOG Ta 2 Ta log violation
+.It Dv ACCT_RULE_THROTTLE Ta 3 Ta sleep process
+.It Dv ACCT_RULE_SIGNAL Ta 4 Ta send signal
+.El
+.Pp
+When
+.Fa action
+is
+.Dv ACCT_RULE_SIGNAL ,
+the
+.Fa signal
+field specifies the signal number (1 through
+.Dv _SIG_MAXSIG ) .
+.Ss Status Codes
+.Bl -column "Dv ACCT_STATUS_DENIED" "Value" -offset indent
+.It Sy Constant Ta Sy Value
+.It Dv ACCT_STATUS_OK Ta 0
+.It Dv ACCT_STATUS_ERR Ta 1
+.It Dv ACCT_STATUS_DEAD Ta 2
+.It Dv ACCT_STATUS_DENIED Ta 3
+.It Dv ACCT_STATUS_EPERM Ta 4
+.El
+.Pp
+.Dv ACCT_STATUS_DEAD
+is returned when the target process has exited.
+.Dv ACCT_STATUS_DENIED
+is returned when a charge or set operation would exceed a resource limit.
+If the kernel is compiled without
+.Dv RACCT
+or
+.Dv RCTL
+support, the corresponding operations return
+.Dv ACCT_STATUS_ERR .
+.Sh DTRACE PROBES
+The following DTrace probes are provided under the
+.Nm mac_capability_acct
+provider:
+.Bl -tag -width "state"
+.It Cm state Ns Pq Ar op, resource, amount, status, pid, error
+Fires on completion of charge, release, set, rule-add, and rule-remove
+operations.
+.It Cm deny Ns Pq Ar reason, uid, error
+Fires when an operation is denied, including connection attempts
+without
+.Dv PRIV_ACCT
+and racct limit violations.
+.El
+.Sh ERRORS
+.Bl -tag -width Er
+.It Bq Er EINVAL
+Request too small, reply buffer too small, invalid resource constant,
+invalid operation code, or invalid signal number for
+.Dv ACCT_RULE_SIGNAL .
+.It Bq Er EPERM
+The caller lacks
+.Dv PRIV_ACCT
+privilege (connection refused).
+.It Bq Er ESRCH
+The attached procdesc does not reference a valid process.
+.El
+.Pp
+Application-level errors are returned in the
+.Fa status
+field of the reply structure.
+.Sh SEE ALSO
+.Xr mac_capability 4 ,
+.Xr procdesc 4 ,
+.Xr oracled 8 ,
+.Xr rctl 8
+.Sh HISTORY
+.Nm
+first appeared in 5BSD.

@@ -1,0 +1,161 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd June 5, 2026
+.Dt MAC_CAPABILITY_CHANNEL 4
+.Os
+.Sh NAME
+.Nm mac_capability_channel
+.Nd MAC_CAPABILITY bidirectional capability channel
+.Sh SYNOPSIS
+To load at boot:
+.Bd -literal -offset indent
+echo 'mac_capability_channel_load="YES"' >> /boot/loader.conf
+.Ed
+.Pp
+Wire protocol header:
+.Bd -literal -offset indent
+#include <dev/mac_capability/mac_capability_channel_proto.h>
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+service creates connected channels of capability descriptors for
+peer-to-peer messaging.
+Each channel consists of two endpoints; a message sent on one endpoint
+is delivered to the other.
+.Pp
+The service is registered under the name
+.Dq channel
+with the
+.Dv MAC_CAPABILITY_SVC_MINTABLE
+flag, allowing holders to mint additional instances via
+.Dv MAC_CAPABILITY_MINT_INSTANCE .
+.Ss Protocol
+.Bl -enum -compact
+.It
+Connect to
+.Dq channel
+via
+.Dv MAC_CAPABILITY_CONNECT
+to obtain endpoint A.
+.It
+Send
+.Dv CHANNEL_OP_CREATE
+via
+.Dv MAC_CAPABILITY_SENDMSG
+on A.
+.It
+Receive the reply via
+.Dv MAC_CAPABILITY_RECVMSG ;
+the reply carries endpoint B as an attached fd.
+.It
+Endpoints A and B are now connected:
+.Dv MAC_CAPABILITY_SENDMSG
+on A delivers to
+.Dv MAC_CAPABILITY_RECVMSG
+on B, and vice versa.
+.It
+Closing either endpoint revokes the other.
+.El
+.Ss Wire Constants
+.Bd -literal -offset indent
+#define CHANNEL_OP_CREATE  1
+.Ed
+.Pp
+The
+.Dv CHANNEL_OP_CREATE
+operation is the only operation.
+It is sent as a
+.Vt uint32_t
+payload via
+.Dv MAC_CAPABILITY_SENDMSG
+on an unconnected instance.
+The reply, received via
+.Dv MAC_CAPABILITY_RECVMSG ,
+carries the peer fd.
+.Ss Message Forwarding
+After connecting, messages are forwarded to the peer via the kernel's
+.Fn mac_capability_forward
+path.
+The original sender's credentials (badge, token, and credential trailer)
+are preserved through the forward.
+Forwarding is fire-and-forget; the sender receives no reply.
+.Ss Revocation
+Closing or revoking one endpoint delivers
+.Er ECONNRESET
+to the peer.
+Any subsequent
+.Dv MAC_CAPABILITY_SENDMSG
+on the surviving endpoint returns
+.Er ECONNRESET .
+.Sh DTRACE PROBES
+The following DTrace probes are provided under the
+.Nm mac_capability_channel
+provider:
+.Bl -tag -width "handler-done"
+.It Cm create Ns Pq Ar badge_a, badge_b, error
+Fires when a channel is successfully created.
+.Ar badge_a
+and
+.Ar badge_b
+are the badges of the two endpoints.
+.It Cm forward Ns Pq Ar src_badge, dst_badge, datalen
+Fires when a message is forwarded from one endpoint to its peer.
+.It Cm handler-done Ns Pq Ar op, badge, error, elapsed
+Fires on completion of every handler invocation.
+.Ar elapsed
+is an
+.Vt sbintime_t
+duration.
+.It Cm state Ns Pq Ar event, op, badge, error, aux
+Fires on state changes including
+.Dq mint-error ,
+.Dq peer-dead ,
+and
+.Dq revoke .
+.El
+.Pp
+Example one-liner to trace channel creation:
+.Bd -literal -offset indent
+dtrace -n 'mac_capability_channel::create { printf("a=%u b=%u err=%d",
+    arg0, arg1, arg2); }'
+.Ed
+.Sh EXAMPLES
+Create a channel and exchange a message:
+.Bd -literal -offset indent
+#include <dev/mac_capability/mac_capability_channel_proto.h>
+
+int a_fd, b_fd;
+uint32_t op;
+
+/* Connect to the channel service */
+a_fd = mac_capability_connect("channel");
+
+/* Create the channel */
+op = CHANNEL_OP_CREATE;
+mac_capability_sendmsg(a_fd, &op, sizeof(op), NULL, 0);
+
+/* Receive the peer fd */
+b_fd = mac_capability_recvmsg(a_fd, NULL, 0);
+
+/* Now a_fd and b_fd are connected */
+mac_capability_sendmsg(a_fd, msg, msglen, NULL, 0);
+mac_capability_recvmsg(b_fd, buf, buflen);  /* receives msg */
+.Ed
+.Sh ERRORS
+.Bl -tag -width Er
+.It Bq Er ECONNRESET
+The peer endpoint has been closed or revoked.
+.It Bq Er EINVAL
+The message payload is too small, or an operation other than
+.Dv CHANNEL_OP_CREATE
+was sent on an unconnected instance.
+.El
+.Sh SEE ALSO
+.Xr mac_capability 4 ,
+.Xr mac_capability_identity 4 ,
+.Xr oracled 8
+.Sh HISTORY
+.Nm
+first appeared in 5BSD.

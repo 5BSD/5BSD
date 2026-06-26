@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <netinet/in.h>
 
-#include <dev/cap_rt/cap_rt_isolation_proto.h>
+#include <dev/mac_capability/mac_capability_isolation_proto.h>
 
 #include <errno.h>
 #include <stdio.h>

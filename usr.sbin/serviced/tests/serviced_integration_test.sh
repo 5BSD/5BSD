@@ -7,7 +7,7 @@
 # circuit breaker, graceful shutdown, dependency ordering,
 # and hot reload.
 #
-# Requires: root, cap_rt modules loaded, serviced and libservice built.
+# Requires: root, mac_capability modules loaded, serviced and libservice built.
 #
 
 . "$(dirname "$0")/test_helpers.sh"

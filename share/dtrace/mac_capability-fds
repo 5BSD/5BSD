@@ -1,0 +1,80 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * mac_capability-fds -- trace MAC_CAPABILITY fd lifecycle and control operations.
+ *
+ * Shows MAC_CAPABILITY descriptor installs, descriptor closes, received MAC_CAPABILITY
+ * descriptors, and control ioctls with pid, uid, gid, jail, and nonce.
+ *
+ * Usage: mac_capability-fds
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-6s %-6s %-18s %-10s %-16s %-8s %-10s %s\n",
+	    "PID", "UID", "GID", "NONCE", "EVENT", "SERVICE", "BADGE",
+	    "FD/CMD", "JAIL");
+}
+
+mac_capability:::fd-install
+{
+	printf("%-6d %-6d %-6d 0x%016x %-10s %-16s %-8d %-10d %d\n",
+	    arg3, ((struct ucred *)arg4)->cr_uid,
+	    ((struct ucred *)arg4)->cr_gid, arg5, "INSTALL",
+	    copyinstr(arg0), arg1, arg2,
+	    ((struct ucred *)arg4)->cr_prison->pr_id);
+}
+
+mac_capability:::fd-receive
+{
+	printf("%-6d %-6d %-6d 0x%016x %-10s %-16s %-8d %-10d %d\n",
+	    arg3, ((struct ucred *)arg4)->cr_uid,
+	    ((struct ucred *)arg4)->cr_gid, arg5, "RECEIVE",
+	    copyinstr(arg0), arg1, arg2,
+	    ((struct ucred *)arg4)->cr_prison->pr_id);
+}
+
+mac_capability:::fd-close
+{
+	printf("%-6d %-6d %-6d 0x%016x %-10s %-16s %-8d %-10d %d\n",
+	    arg3, ((struct ucred *)arg4)->cr_uid,
+	    ((struct ucred *)arg4)->cr_gid, arg5, "FDCLOSE",
+	    copyinstr(arg0), arg1, arg2,
+	    ((struct ucred *)arg4)->cr_prison->pr_id);
+}
+
+mac_capability:::control
+{
+	printf("%-6d %-6d %-6d 0x%016x %-10s %-16s %-8d %-10d %d\n",
+	    arg3, ((struct ucred *)arg4)->cr_uid,
+	    ((struct ucred *)arg4)->cr_gid, arg5, "CONTROL",
+	    copyinstr(arg0), arg1, arg2,
+	    ((struct ucred *)arg4)->cr_prison->pr_id);
+}
+
+mac_capability:::ioctl-deny
+{
+	printf("%-6d %-6d %-6d 0x%016x %-10s %-16s %-8d cmd=%-6d %d\n",
+	    arg3, ((struct ucred *)arg4)->cr_uid,
+	    ((struct ucred *)arg4)->cr_gid, arg5, "RT-DENY",
+	    copyinstr(arg0), arg1, arg2,
+	    ((struct ucred *)arg4)->cr_prison->pr_id);
+}
+
+mac_capability:::service-create
+{
+	printf("%-6s %-6s %-6s %-18s %-10s %-16s %-8s flags=0x%x q=%d tx=%d limit=%d\n",
+	    "-", "-", "-", "-", "SVC-UP", copyinstr(arg0), "-",
+	    arg1, arg2, arg3, arg4);
+}
+
+mac_capability:::service-destroy
+{
+	printf("%-6s %-6s %-6s %-18s %-10s %-16s %-8s flags=0x%x\n",
+	    "-", "-", "-", "-", "SVC-DOWN", copyinstr(arg0), "-", arg1);
+}

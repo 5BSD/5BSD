@@ -11,7 +11,7 @@
 #
 # IMPORTANT: No test case exercises actual reboot or shutdown.
 #
-# Requires: root, cap_rt device, cc(1).
+# Requires: root, mac_capability device, cc(1).
 #
 
 # ---------------------------------------------------------------
@@ -63,10 +63,10 @@ find_rebootd()
 	atf_skip "rebootd binary not found"
 }
 
-require_cap_rt()
+require_mac_capability()
 {
-	if [ ! -c /dev/cap_rt ]; then
-		atf_skip "cap_rt device not available"
+	if [ ! -c /dev/mac_capability ]; then
+		atf_skip "mac_capability device not available"
 	fi
 }
 
@@ -315,7 +315,7 @@ rebootd_status_head()
 }
 rebootd_status_body()
 {
-	require_cap_rt
+	require_mac_capability
 	require_cc
 
 	build_rebootd_client "rebootd_status_client" '
@@ -371,7 +371,7 @@ rebootd_permission_denied_head()
 }
 rebootd_permission_denied_body()
 {
-	require_cap_rt
+	require_mac_capability
 	require_cc
 
 	build_rebootd_client "rebootd_perm_client" '
@@ -432,7 +432,7 @@ rebootd_unknown_op_head()
 }
 rebootd_unknown_op_body()
 {
-	require_cap_rt
+	require_mac_capability
 	require_cc
 
 	build_rebootd_client "rebootd_unknown_client" '
@@ -487,7 +487,7 @@ rebootd_invalid_flags_head()
 }
 rebootd_invalid_flags_body()
 {
-	require_cap_rt
+	require_mac_capability
 	require_cc
 
 	build_rebootd_client "rebootd_flags_client" '

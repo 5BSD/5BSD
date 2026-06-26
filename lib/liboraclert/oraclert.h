@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * liboraclert — shared types, constants, and helpers for the oracle
- * capability runtime.  Used by oracled, serviced, libcapbundle, and
+ * MAC capability.  Used by oracled, serviced, libcapbundle, and
  * client tools.
  */
 
@@ -17,7 +17,7 @@
 
 #include <stdint.h>
 
-/* Network claim direction flags (match cap_rt_isolation_proto.h). */
+/* Network claim direction flags (match mac_capability_isolation_proto.h). */
 #define	ORT_NET_DIR_BIND	0x01
 #define	ORT_NET_DIR_CONNECT	0x02
 #define	ORT_NET_DIR_ANY		0x03
@@ -25,7 +25,7 @@
 /*
  * Canonical network claim descriptor.  Used by oracled configuration,
  * serviced manifests, and the oracle IPC protocol.  Field layout
- * matches the kernel-side cap_rt_isolation_proto.h.
+ * matches the kernel-side mac_capability_isolation_proto.h.
  */
 struct ort_net_claim {
 	int		domain;		/* AF_INET, AF_INET6, 0=any */

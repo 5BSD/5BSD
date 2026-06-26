@@ -796,7 +796,7 @@ kern_ioctl(struct thread *td, int fd, u_long com, caddr_t data,
 	/*
 	 * Per-file-type ioctl rights check.  Lets file types enforce
 	 * additional Capsicum rights for specific ioctl commands (e.g.
-	 * cap_rt requires CAP_CAP_RT_SEND for SENDMSG).
+	 * mac_capability requires CAP_MAC_CAPABILITY_SEND for SENDMSG).
 	 */
 	if (fp->f_ops->fo_ioctl_check != NULL) {
 		error = fp->f_ops->fo_ioctl_check(fp, com,

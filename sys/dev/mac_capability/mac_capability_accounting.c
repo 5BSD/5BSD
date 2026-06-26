@@ -1,0 +1,412 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * mac_capability_accounting — capability service for resource ledger operations.
+ *
+ * Charge, release, and enforce resource limits on a process via
+ * MAC_CAPABILITY_CALL with an attached procdesc fd.  If no fd is attached,
+ * operates on the caller.
+ *
+ * This is a sync-only (co_call) service.
+ */
+
+#include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/capsicum.h>
+#include <sys/file.h>
+#include <sys/filedesc.h>
+#include <sys/kernel.h>
+#include <sys/lock.h>
+#include <sys/module.h>
+#include <sys/mutex.h>
+#include <sys/priv.h>
+#include <sys/proc.h>
+#include <sys/malloc.h>
+#include <sys/racct.h>
+#include <sys/rctl.h>
+#include <sys/sdt.h>
+
+#include "mac_capability.h"
+#include "mac_capability_accounting_proto.h"
+
+SDT_PROVIDER_DEFINE(mac_capability_acct);
+SDT_PROBE_DEFINE6(mac_capability_acct, , , state,
+    "const char *", "uint32_t", "int64_t", "uint32_t", "pid_t", "int");
+SDT_PROBE_DEFINE3(mac_capability_acct, , , deny,
+    "const char *", "uid_t", "int");
+
+
+/* ----------------------------------------------------------------
+ * Operation handlers
+ * ---------------------------------------------------------------- */
+
+static int
+acct_op_charge(struct proc *p, const void *req, size_t reqlen,
+    void *reply, size_t *replylenp)
+{
+	const struct acct_charge_request *cr = req;
+	struct acct_reply *rp = reply;
+
+	if (reqlen < sizeof(*cr) || *replylenp < sizeof(*rp))
+		return (EINVAL);
+	*replylenp = sizeof(*rp);
+
+	if (cr->resource > RACCT_MAX)
+		return (EINVAL);
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	memset(rp, 0, sizeof(*rp));
+
+#ifdef RACCT
+	int error;
+
+	/*
+	 * racct_add/sub/set require PROC_LOCK to be held.
+	 * They acquire RACCT_LOCK internally.
+	 */
+	switch (cr->op) {
+	case ACCT_OP_CHARGE:
+		error = racct_add(p, cr->resource, cr->amount);
+		rp->status = (error == 0) ?
+		    ACCT_STATUS_OK : ACCT_STATUS_DENIED;
+		SDT_PROBE6(mac_capability_acct, , , state, (uintptr_t)"charge",
+		    cr->resource, cr->amount, rp->status, p->p_pid, error);
+		if (rp->status == ACCT_STATUS_DENIED)
+			SDT_PROBE3(mac_capability_acct, , , deny, (uintptr_t)"racct-limit",
+			    p->p_ucred->cr_uid, error);
+		break;
+	case ACCT_OP_RELEASE:
+		racct_sub(p, cr->resource, cr->amount);
+		rp->status = ACCT_STATUS_OK;
+		SDT_PROBE6(mac_capability_acct, , , state, (uintptr_t)"release",
+		    cr->resource, cr->amount, rp->status, p->p_pid, 0);
+		break;
+	case ACCT_OP_SET:
+		error = racct_set(p, cr->resource, cr->amount);
+		rp->status = (error == 0) ?
+		    ACCT_STATUS_OK : ACCT_STATUS_DENIED;
+		SDT_PROBE6(mac_capability_acct, , , state, (uintptr_t)"set",
+		    cr->resource, cr->amount, rp->status, p->p_pid, error);
+		if (rp->status == ACCT_STATUS_DENIED)
+			SDT_PROBE3(mac_capability_acct, , , deny, (uintptr_t)"racct-limit",
+			    p->p_ucred->cr_uid, error);
+		break;
+	default:
+		return (EINVAL);
+	}
+#else
+	rp->status = ACCT_STATUS_ERR;
+#endif
+
+	return (0);
+}
+
+#ifdef RCTL
+static int
+acct_action_to_rctl(uint32_t action, uint32_t signal)
+{
+
+	switch (action) {
+	case ACCT_RULE_DENY:
+		return (RCTL_ACTION_DENY);
+	case ACCT_RULE_LOG:
+		return (RCTL_ACTION_LOG);
+	case ACCT_RULE_THROTTLE:
+		return (RCTL_ACTION_THROTTLE);
+	case ACCT_RULE_SIGNAL:
+		if (signal < 1 || signal > _SIG_MAXSIG)
+			return (-1);
+		return ((int)signal);
+	default:
+		return (-1);
+	}
+}
+
+static uint32_t
+rctl_action_to_acct(int rctl_action, uint32_t *signalp)
+{
+
+	*signalp = 0;
+	if (rctl_action == RCTL_ACTION_DENY)
+		return (ACCT_RULE_DENY);
+	if (rctl_action == RCTL_ACTION_LOG)
+		return (ACCT_RULE_LOG);
+	if (rctl_action == RCTL_ACTION_THROTTLE)
+		return (ACCT_RULE_THROTTLE);
+	if (rctl_action >= 1 &&
+	    rctl_action <= RCTL_ACTION_SIGNAL_MAX) {
+		*signalp = (uint32_t)rctl_action;
+		return (ACCT_RULE_SIGNAL);
+	}
+	return (0);
+}
+#endif /* RCTL */
+
+#ifdef RCTL
+static uint32_t
+acct_error_status(int error)
+{
+
+	switch (error) {
+	case 0:
+		return (ACCT_STATUS_OK);
+	case EPERM:
+	case EACCES:
+		return (ACCT_STATUS_EPERM);
+	default:
+		return (ACCT_STATUS_ERR);
+	}
+}
+#endif
+
+static int
+acct_op_rctl_rule(struct proc *p, const void *req, size_t reqlen,
+    void *reply, size_t *replylenp, bool add)
+{
+	const struct acct_rule_request *rr = req;
+	struct acct_reply *rp = reply;
+
+	if (reqlen < sizeof(*rr) || *replylenp < sizeof(*rp))
+		return (EINVAL);
+	*replylenp = sizeof(*rp);
+
+	memset(rp, 0, sizeof(*rp));
+
+#ifdef RCTL
+	{
+		struct rctl_rule *rule;
+		int rctl_action;
+		int error;
+
+		if (rr->resource > RACCT_MAX) {
+			rp->status = ACCT_STATUS_ERR;
+			return (0);
+		}
+
+		rctl_action = acct_action_to_rctl(rr->action, rr->signal);
+		if (rctl_action < 0) {
+			rp->status = ACCT_STATUS_ERR;
+			return (0);
+		}
+
+		PROC_LOCK_ASSERT(p, MA_OWNED);
+
+		/*
+		 * Drop PROC_LOCK before allocating — rctl_rule_alloc
+		 * with M_WAITOK can sleep.  Hold the proc with _PHOLD
+		 * to prevent it from being freed.
+		 */
+		if (p->p_flag & P_WEXIT) {
+			rp->status = ACCT_STATUS_DEAD;
+			return (0);
+		}
+		_PHOLD(p);
+		PROC_UNLOCK(p);
+
+		rule = rctl_rule_alloc(M_WAITOK | M_ZERO);
+		rule->rr_subject_type = RCTL_SUBJECT_TYPE_PROCESS;
+		rule->rr_subject.rs_proc = p;
+		rule->rr_per = RCTL_SUBJECT_TYPE_PROCESS;
+		rule->rr_resource = rr->resource;
+		rule->rr_action = rctl_action;
+		rule->rr_amount = rr->limit;
+
+		error = add ? rctl_rule_add(rule) : rctl_rule_remove(rule);
+		rctl_rule_release(rule);
+		rp->status = acct_error_status(error);
+		SDT_PROBE6(mac_capability_acct, , , state,
+		    (uintptr_t)(add ? "rule-add" : "rule-remove"),
+		    rr->resource, rr->limit, rp->status, p->p_pid, error);
+		if (rp->status == ACCT_STATUS_EPERM)
+			SDT_PROBE3(mac_capability_acct, , , deny,
+			    (uintptr_t)(add ? "rule-add" : "rule-remove"),
+			    p->p_ucred->cr_uid, error);
+
+		PROC_LOCK(p);
+		_PRELE(p);
+	}
+#else
+	rp->status = ACCT_STATUS_ERR;
+#endif
+
+	return (0);
+}
+
+static int
+acct_op_get_rules(struct proc *p, void *reply, size_t *replylenp)
+{
+	struct acct_rules_reply *rp = reply;
+
+	if (*replylenp < sizeof(*rp))
+		return (EINVAL);
+	*replylenp = sizeof(*rp);
+
+	memset(rp, 0, sizeof(*rp));
+
+#ifdef RCTL
+	{
+		struct rctl_rule_link *link;
+		struct rctl_rule *rule;
+		int n = 0;
+
+		PROC_LOCK_ASSERT(p, MA_OWNED);
+
+		if (p->p_racct != NULL) {
+			RACCT_LOCK();
+			LIST_FOREACH(link, &p->p_racct->r_rule_links,
+			    rrl_next) {
+				if (n >= ACCT_MAX_RULES)
+					break;
+				rule = link->rrl_rule;
+				if (rule->rr_subject_type !=
+				    RCTL_SUBJECT_TYPE_PROCESS)
+					continue;
+				rp->rules[n].resource = rule->rr_resource;
+				rp->rules[n].action =
+				    rctl_action_to_acct(rule->rr_action,
+				    &rp->rules[n].signal);
+				rp->rules[n].limit = rule->rr_amount;
+				n++;
+			}
+			RACCT_UNLOCK();
+		}
+		rp->nrules = n;
+		rp->status = ACCT_STATUS_OK;
+	}
+#else
+	rp->status = ACCT_STATUS_ERR;
+#endif
+
+	return (0);
+}
+
+/* ----------------------------------------------------------------
+ * co_call handler
+ * ---------------------------------------------------------------- */
+
+static int
+accounting_call(struct mac_capability_instance *s __unused,
+    const void *req, size_t reqlen,
+    struct file **fds, struct filecaps *fcaps __unused, int nfds,
+    void *reply, size_t *replylenp,
+    struct file **reply_fds __unused, int *reply_nfdsp __unused,
+    void *arg __unused)
+{
+	const struct acct_charge_request *hdr;
+	struct proc *p;
+	int error;
+
+	if (reqlen < sizeof(uint32_t))
+		return (EINVAL);
+
+	hdr = (const struct acct_charge_request *)req;
+
+	/*
+	 * No Capsicum rights check on the attached procdesc.
+	 * Authority comes from holding the accounting service fd.
+	 * The procdesc is an opaque target identifier.
+	 */
+	error = mac_capability_resolve_proc(fds, nfds, &p);
+	if (error == ESRCH) {
+		if (*replylenp >= sizeof(uint32_t)) {
+			*(uint32_t *)reply = ACCT_STATUS_DEAD;
+			*replylenp = sizeof(uint32_t);
+			return (0);
+		}
+		return (error);
+	}
+	if (error != 0)
+		return (error);
+
+	/* p is PROC_LOCKed. */
+	switch (hdr->op) {
+	case ACCT_OP_CHARGE:
+	case ACCT_OP_RELEASE:
+	case ACCT_OP_SET:
+		error = acct_op_charge(p, req, reqlen, reply, replylenp);
+		break;
+	case ACCT_OP_ADD_RULE:
+		error = acct_op_rctl_rule(p, req, reqlen, reply, replylenp,
+		    true);
+		break;
+	case ACCT_OP_REMOVE_RULE:
+		error = acct_op_rctl_rule(p, req, reqlen, reply, replylenp,
+		    false);
+		break;
+	case ACCT_OP_GET_RULES:
+		error = acct_op_get_rules(p, reply, replylenp);
+		break;
+	default:
+		error = EINVAL;
+		break;
+	}
+
+	_PRELE(p);
+	PROC_UNLOCK(p);
+	return (error);
+}
+
+/* ----------------------------------------------------------------
+ * Service registration
+ * ---------------------------------------------------------------- */
+
+static int
+accounting_connect(struct ucred *cred, void *arg __unused,
+    uint64_t *badge_out __unused)
+{
+
+	/* Accounting operations require root. */
+	if (priv_check_cred(cred, PRIV_ACCT) != 0) {
+		SDT_PROBE3(mac_capability_acct, , , deny, (uintptr_t)"connect",
+		    cred->cr_uid, EPERM);
+		return (EPERM);
+	}
+	return (0);
+}
+
+static struct mac_capability_ops accounting_ops = {
+	.co_connect = accounting_connect,
+	.co_call = accounting_call,
+};
+
+static struct mac_capability_service *accounting_svc;
+
+static int
+mac_capability_accounting_modevent(module_t mod __unused, int type,
+    void *data __unused)
+{
+	struct mac_capability_service_params params;
+	int error;
+
+	switch (type) {
+	case MOD_LOAD:
+		memset(&params, 0, sizeof(params));
+		params.name = "accounting";
+		params.ops = &accounting_ops;
+		error = mac_capability_service_create(&params, &accounting_svc);
+		if (error != 0)
+			printf("mac_capability_accounting: create failed: %d\n",
+			    error);
+		return (error);
+	case MOD_UNLOAD:
+		if (accounting_svc != NULL)
+			mac_capability_service_destroy(accounting_svc);
+		return (0);
+	default:
+		return (EOPNOTSUPP);
+	}
+}
+
+static moduledata_t mac_capability_accounting_mod = {
+	"mac_capability_accounting",
+	mac_capability_accounting_modevent,
+	NULL,
+};
+
+DECLARE_MODULE(mac_capability_accounting, mac_capability_accounting_mod, SI_SUB_PSEUDO,
+    SI_ORDER_ANY);
+MODULE_DEPEND(mac_capability_accounting, mac_capability, 1, 1, 1);
+MODULE_VERSION(mac_capability_accounting, 1);

@@ -20,7 +20,7 @@
 #include <unistd.h>
 
 #include <libservice.h>
-#include <dev/cap_rt/cap_rt_capprotect_proto.h>
+#include <dev/mac_capability/mac_capability_capprotect_proto.h>
 #include "capability.h"
 
 #define	CAP_DAEMON_TIMEOUT	30

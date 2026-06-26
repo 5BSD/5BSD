@@ -61,7 +61,7 @@ Default: empty (serviced uses its compiled-in default).
 The
 .Va integrity
 section is an object whose keys are booleans controlling
-.Xr cap_rt_capprotect 4
+.Xr mac_capability_capprotect 4
 shield flags that protect the
 .Xr oracled 8
 process from external interference.
@@ -125,11 +125,11 @@ The
 section lists resources to be claimed exclusively by
 .Xr oracled 8
 at boot via the
-.Xr cap_rt_isolation 4
+.Xr mac_capability_isolation 4
 service.
 Once claimed, MACF hooks deny access from all other processes,
 including root.
-.Pa /dev/cap_rt
+.Pa /dev/mac_capability
 is always claimed automatically regardless of configuration.
 .Pp
 Claims declared here are
@@ -255,7 +255,7 @@ Optional.
 Default: empty.
 .It Va system
 Array of system gate names to claim via the
-.Xr cap_rt_system 4
+.Xr mac_capability_system 4
 service.
 Once claimed, the gated operation is denied to all processes
 unless they hold an authorized token from
@@ -339,10 +339,10 @@ claims {
 }
 .Ed
 .Sh SEE ALSO
-.Xr cap_rt 4 ,
-.Xr cap_rt_capprotect 4 ,
-.Xr cap_rt_isolation 4 ,
-.Xr cap_rt_system 4 ,
+.Xr mac_capability 4 ,
+.Xr mac_capability_capprotect 4 ,
+.Xr mac_capability_isolation 4 ,
+.Xr mac_capability_system 4 ,
 .Xr oracled 8 ,
 .Xr oraclectl 8 ,
 .Xr serviced 8

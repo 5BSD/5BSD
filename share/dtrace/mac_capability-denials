@@ -1,0 +1,118 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * mac_capability-denials -- denied capability operations across MAC_CAPABILITY subsystems.
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-18s %-20s %-14s %-18s %-18s %s\n",
+	    "PID", "PROVIDER", "EVENT", "OP", "OWNER", "ACCESSOR",
+	    "DETAIL");
+}
+
+mac_capability:::ioctl-deny
+{
+	printf("%-6d %-18s %-20s cmd=%-10d %-18s 0x%016x svc=%s badge=%d uid=%d gid=%d\n",
+	    arg3, "mac_capability", "ioctl-deny", arg2, "-", arg5,
+	    copyinstr(arg0), arg1, ((struct ucred *)arg4)->cr_uid,
+	    ((struct ucred *)arg4)->cr_gid);
+	@denies["mac_capability", "ioctl"] = count();
+}
+
+mac_capability:::error
+/arg5 != 0/
+{
+	printf("%-6d %-18s %-20s cmd=%-10d %-18s 0x%016x svc=%s badge=%d errno=%d\n",
+	    arg3, "mac_capability", "error", arg2, "-", arg4, copyinstr(arg0),
+	    arg1, arg5);
+	@errors[copyinstr(arg0), arg2, arg5] = count();
+}
+
+capsicum:::check-deny,
+capsicum:::ioctl-deny,
+capsicum:::fcntl-deny
+{
+	printf("%-6d %-18s %-20s %-14s %-18s %-18s errno=%d\n",
+	    pid, "capsicum", probename, "-", "-", "-", arg5);
+	@denies["capsicum", probename] = count();
+}
+
+fd:::pass-deny
+{
+	printf("%-6d %-18s %-20s fd=%-10d %-18s %-18s type=%d errno=%d uid=%d gid=%d\n",
+	    arg2, "fd", "pass-deny", arg1, "-", "-", arg4, arg5,
+	    ((struct ucred *)arg3)->cr_uid, ((struct ucred *)arg3)->cr_gid);
+	@denies["fd", "pass-deny"] = count();
+}
+
+mac_capability_capprotect:::deny,
+mac_capability_system:::deny,
+mac_capability_isolation:::deny
+{
+	printf("%-6d %-18s %-20s %-14s 0x%016x 0x%016x\n",
+	    pid, probemod, "deny", copyinstr(arg0), arg1, arg2);
+	@denies[probemod, copyinstr(arg0)] = count();
+}
+
+mac_capability_isolation:::allow-action
+{
+	printf("%-6d %-18s %-20s %-14s 0x%016x 0x%016x\n",
+	    pid, "mac_capability_isolation", "allow", copyinstr(arg0), arg1, arg2);
+	@allows["isolation", copyinstr(arg0)] = count();
+}
+
+mac_capability_capprotect:::allow,
+mac_capability_system:::allow
+{
+	printf("%-6d %-18s %-20s %-14s 0x%016x 0x%016x\n",
+	    pid, probemod, "allow", copyinstr(arg0), arg1, arg2);
+	@allows[probemod, copyinstr(arg0)] = count();
+}
+
+mac_capability_mount:::deny
+{
+	printf("%-6d %-18s %-20s %-14s %-18s %-18s fstype=%s\n",
+	    pid, "mac_capability_mount", "deny", copyinstr(arg0), "-", "-",
+	    copyinstr(arg1));
+	@denies["mac_capability_mount", copyinstr(arg0)] = count();
+}
+
+mac_capability_acct:::deny
+{
+	printf("%-6d %-18s %-20s %-14s %-18s %-18s uid=%d errno=%d\n",
+	    pid, "mac_capability_acct", "deny", copyinstr(arg0), "-", "-",
+	    arg1, arg2);
+	@denies["mac_capability_acct", copyinstr(arg0)] = count();
+}
+
+mac_capability_node:::deny
+{
+	printf("%-6d %-18s %-20s %-14s %-18s %-18s target=%d\n",
+	    pid, "mac_capability_node", "deny", copyinstr(arg0), "-", "-",
+	    arg1);
+	@denies["mac_capability_node", copyinstr(arg0)] = count();
+}
+
+mac_capability_coalition:::deny
+{
+	printf("%-6d %-18s %-20s %-14s %-18s %-18s errno=%d\n",
+	    arg2, "mac_capability_coalition", "deny", copyinstr(arg0), "-", "-",
+	    arg1);
+	@denies["mac_capability_coalition", copyinstr(arg0)] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Denials by provider/op ---\n");
+	printa("%-20s %-20s %@d\n", @denies);
+
+	printf("\n--- MAC_CAPABILITY errors by service/cmd/errno ---\n");
+	printa("%-16s cmd=%-10d errno=%-6d %@d\n", @errors);
+
+	printf("\n--- Allows by provider/op ---\n");
+	printa("%-20s %-20s %@d\n", @allows);
+}

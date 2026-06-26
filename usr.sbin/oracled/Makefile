@@ -3,9 +3,9 @@
 PACKAGE=oracled
 PROG= oracled
 MAN= oracled.8
-SRCS= oracled.c bootstrap.c cap_rt_setup.c cap_rt_claims.c cap_rt_reload.c \
-	cap_rt_status.c cap_rt_mint.c \
-	cap_rt_coal.c commands.c config.c control.c event.c \
+SRCS= oracled.c bootstrap.c mac_capability_setup.c mac_capability_claims.c mac_capability_reload.c \
+	mac_capability_status.c mac_capability_mint.c \
+	mac_capability_coal.c commands.c config.c control.c event.c \
 	oracle_proto.c oracle_proto_claims.c proc.c
 CONFS= oracled.conf
 

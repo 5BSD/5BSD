@@ -5,7 +5,7 @@
  *
  * serviced — service manager and naming registry.
  *
- * Started by oracled as its single child.  Inherits a cap_rt channel
+ * Started by oracled as its single child.  Inherits a mac_capability channel
  * on fd 3 for requesting tokens, channels, and coalitions from the
  * oracle.  Scans capability bundles, dependency-sorts, pdfork/execs
  * services, and manages their lifecycle (restart, shutdown).
@@ -25,8 +25,8 @@
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 
-#include <dev/cap_rt/cap_rt_capprotect_proto.h>
-#include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/mac_capability/mac_capability_capprotect_proto.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -318,7 +318,7 @@ main(int argc, char *argv[])
 	 * so oracled can still send us SIGTERM/SIGHUP via pdkill.
 	 */
 	if (sd.capprotect_fd >= 0) {
-		struct cap_rt_call_args call;
+		struct mac_capability_call_args call;
 		struct cp_request cp_req;
 
 		memset(&cp_req, 0, sizeof(cp_req));
@@ -333,7 +333,7 @@ main(int argc, char *argv[])
 		call.req = &cp_req;
 		call.req_len = sizeof(cp_req);
 
-		if (ioctl(sd.capprotect_fd, CAP_RT_CALL, &call) == -1)
+		if (ioctl(sd.capprotect_fd, MAC_CAPABILITY_CALL, &call) == -1)
 			syslog(LOG_ERR, "capprotect shield: %m");
 		else
 			syslog(LOG_INFO, "capprotect shield active");

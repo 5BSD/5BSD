@@ -23,7 +23,7 @@
 
 #include <ucl.h>
 
-#include <dev/cap_rt/cap_rt_isolation_proto.h>
+#include <dev/mac_capability/mac_capability_isolation_proto.h>
 
 #include "claim_parse.h"
 

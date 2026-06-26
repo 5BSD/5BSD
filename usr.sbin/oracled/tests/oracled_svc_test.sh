@@ -4,7 +4,7 @@
 # Service manifest and dependency tests for serviced (via oracled).
 #
 # These test manifest parsing, dependency sorting, and reload via
-# the full oracled + serviced stack.  Requires root and cap_rt.
+# the full oracled + serviced stack.  Requires root and mac_capability.
 #
 
 # --- helpers ---
@@ -33,10 +33,10 @@ find_serviced()
 	atf_skip "serviced binary not found"
 }
 
-require_cap_rt()
+require_mac_capability()
 {
-	if ! sh -c 'exec 3</dev/cap_rt' 2>/dev/null; then
-		atf_skip "/dev/cap_rt not available (oracled may be running)"
+	if ! sh -c 'exec 3</dev/mac_capability' 2>/dev/null; then
+		atf_skip "/dev/mac_capability not available (oracled may be running)"
 	fi
 }
 
@@ -115,7 +115,7 @@ manifest_empty_dir_head()
 }
 manifest_empty_dir_body()
 {
-	require_cap_rt
+	require_mac_capability
 	start_oracled
 	# Wait for serviced to process manifests.
 	sleep 1
@@ -136,7 +136,7 @@ manifest_missing_dir_head()
 }
 manifest_missing_dir_body()
 {
-	require_cap_rt
+	require_mac_capability
 	find_serviced
 	pidfile="$(pwd)/oracled.pid"
 	conffile="$(pwd)/oracled.conf"
@@ -176,7 +176,7 @@ manifest_invalid_skipped_head()
 }
 manifest_invalid_skipped_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	# Missing label — should be skipped.
@@ -223,7 +223,7 @@ manifest_missing_program_head()
 }
 manifest_missing_program_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/noprog.ucl" <<EOF
@@ -260,7 +260,7 @@ manifest_relative_program_head()
 }
 manifest_relative_program_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/rel.ucl" <<EOF
@@ -296,7 +296,7 @@ manifest_non_ucl_ignored_head()
 }
 manifest_non_ucl_ignored_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/readme.txt" <<EOF
@@ -335,7 +335,7 @@ manifest_restart_policies_head()
 }
 manifest_restart_policies_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/always.ucl" <<EOF
@@ -386,14 +386,14 @@ manifest_capabilities_head()
 }
 manifest_capabilities_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/caps.ucl" <<EOF
 label = "svc-caps";
 program = "/usr/bin/true";
 capabilities {
-    paths = ["/dev/cap_rt", "/etc/oracled.conf"];
+    paths = ["/dev/mac_capability", "/etc/oracled.conf"];
     system = ["kldload", "reboot"];
 }
 EOF
@@ -428,7 +428,7 @@ depgraph_order_head()
 }
 depgraph_order_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	# B requires A.  Even though b.ucl sorts before a.ucl,
@@ -483,7 +483,7 @@ depgraph_cycle_head()
 }
 depgraph_cycle_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/x.ucl" <<EOF
@@ -527,7 +527,7 @@ depgraph_unknown_provider_head()
 }
 depgraph_unknown_provider_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/lonely.ucl" <<EOF
@@ -567,7 +567,7 @@ depgraph_duplicate_label_head()
 }
 depgraph_duplicate_label_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/dup1.ucl" <<EOF
@@ -607,7 +607,7 @@ depgraph_duplicate_provides_head()
 }
 depgraph_duplicate_provides_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/p1.ucl" <<EOF
@@ -649,7 +649,7 @@ depgraph_oracled_implicit_head()
 }
 depgraph_oracled_implicit_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/needs-oracle.ucl" <<EOF
@@ -691,7 +691,7 @@ manifest_bad_ucl_syntax_head()
 }
 manifest_bad_ucl_syntax_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	# Invalid UCL — unclosed brace.
@@ -740,7 +740,7 @@ manifest_bad_restart_value_head()
 }
 manifest_bad_restart_value_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/bad-restart.ucl" <<EOF
@@ -780,7 +780,7 @@ manifest_empty_label_head()
 }
 manifest_empty_label_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/empty-label.ucl" <<EOF
@@ -818,7 +818,7 @@ manifest_bad_cap_path_head()
 }
 manifest_bad_cap_path_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/relcap.ucl" <<EOF
@@ -860,7 +860,7 @@ manifest_bad_system_gate_head()
 }
 manifest_bad_system_gate_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/badgate.ucl" <<EOF
@@ -902,7 +902,7 @@ manifest_unknown_field_ignored_head()
 }
 manifest_unknown_field_ignored_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/extra.ucl" <<EOF
@@ -941,7 +941,7 @@ manifest_cap_network_head()
 }
 manifest_cap_network_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/netcap.ucl" <<EOF
@@ -986,7 +986,7 @@ manifest_all_fields_head()
 }
 manifest_all_fields_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/full.ucl" <<EOF
@@ -1041,7 +1041,7 @@ depgraph_three_level_head()
 }
 depgraph_three_level_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	# C requires B requires A.
@@ -1100,7 +1100,7 @@ depgraph_independent_head()
 }
 depgraph_independent_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/alpha.ucl" <<EOF
@@ -1146,7 +1146,7 @@ reload_add_service_head()
 }
 reload_add_service_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/original.ucl" <<EOF
@@ -1190,7 +1190,7 @@ reload_remove_service_head()
 }
 reload_remove_service_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/keeper.ucl" <<EOF
@@ -1235,7 +1235,7 @@ reload_change_manifest_head()
 }
 reload_change_manifest_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/morph.ucl" <<EOF
@@ -1281,7 +1281,7 @@ reload_no_changes_head()
 }
 reload_no_changes_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/stable.ucl" <<EOF
@@ -1317,7 +1317,7 @@ reload_bad_manifest_rejected_head()
 }
 reload_bad_manifest_rejected_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/good.ucl" <<EOF
@@ -1359,7 +1359,7 @@ reload_cycle_rejected_head()
 }
 reload_cycle_rejected_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/alpha.ucl" <<EOF
@@ -1411,7 +1411,7 @@ reload_multiple_add_remove_head()
 }
 reload_multiple_add_remove_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/keep.ucl" <<EOF
@@ -1473,7 +1473,7 @@ reload_change_and_add_head()
 }
 reload_change_and_add_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/existing.ucl" <<EOF
@@ -1523,7 +1523,7 @@ reload_empty_dir_head()
 }
 reload_empty_dir_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/one.ucl" <<EOF
@@ -1568,7 +1568,7 @@ reload_duplicate_label_at_startup_head()
 }
 reload_duplicate_label_at_startup_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/orig.ucl" <<EOF
@@ -1608,7 +1608,7 @@ reload_idempotent_sighup_head()
 }
 reload_idempotent_sighup_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/svc.ucl" <<EOF
@@ -1656,7 +1656,7 @@ svc_launch_order_logged_head()
 }
 svc_launch_order_logged_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/aaa-base.ucl" <<EOF
@@ -1705,7 +1705,7 @@ svc_capabilities_logged_head()
 }
 svc_capabilities_logged_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/capsvc.ucl" <<EOF
@@ -1748,7 +1748,7 @@ manifest_jail_section_head()
 }
 manifest_jail_section_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/jailed.ucl" <<EOF
@@ -1790,7 +1790,7 @@ manifest_jail_missing_path_head()
 }
 manifest_jail_missing_path_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/badjail.ucl" <<EOF
@@ -1833,7 +1833,7 @@ manifest_cap_files_head()
 }
 manifest_cap_files_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/filecap.ucl" <<EOF
@@ -1875,7 +1875,7 @@ manifest_cap_files_bad_action_head()
 }
 manifest_cap_files_bad_action_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/badaction.ucl" <<EOF
@@ -1916,7 +1916,7 @@ manifest_cap_files_relative_path_head()
 }
 manifest_cap_files_relative_path_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/relfile.ucl" <<EOF
@@ -1957,7 +1957,7 @@ manifest_cap_network_address_head()
 }
 manifest_cap_network_address_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	cat > "$manifestdir/netaddr.ucl" <<EOF

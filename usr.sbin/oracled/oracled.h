@@ -26,7 +26,7 @@
  * Shutdown is coordinated through the 'running' flag and the
  * teardown functions.
  *
- * Module-private state (cap_rt fds, control socket fd) is kept
+ * Module-private state (mac_capability fds, control socket fd) is kept
  * in static variables within each module.
  */
 struct oracled_state {
@@ -41,26 +41,26 @@ struct oracled_state {
 
 extern struct oracled_state od;
 
-/* cap_rt.c — capability runtime lifecycle */
-int	cap_rt_setup(void);
-void	cap_rt_teardown(void);
-int	cap_rt_mint_path_token(const char *path);
-int	cap_rt_mint_file_token(const char *path, uint64_t actions);
-int	cap_rt_mint_net_token(const struct ort_net_claim *nc);
-int	cap_rt_mint_jail_token(const struct oracled_jail_claim *jc);
-int	cap_rt_mint_system_token(uint32_t gates);
-int	cap_rt_create_channel(int *oracle_end, int *child_end);
-int	cap_rt_create_coalition(void);
-int	cap_rt_mint_instance(int instance_fd);
-int	cap_rt_connect_for_delegate(const char *name);
-int	cap_rt_coalition_enlist(int coalition_fd, int member_fd);
-int	cap_rt_coalition_set_leader(int coalition_fd, int leader_fd);
-int	cap_rt_coalition_set_deadline(int coalition_fd, int timeout_ms,
+/* mac_capability.c — MAC capability lifecycle */
+int	mac_capability_setup(void);
+void	mac_capability_teardown(void);
+int	mac_capability_mint_path_token(const char *path);
+int	mac_capability_mint_file_token(const char *path, uint64_t actions);
+int	mac_capability_mint_net_token(const struct ort_net_claim *nc);
+int	mac_capability_mint_jail_token(const struct oracled_jail_claim *jc);
+int	mac_capability_mint_system_token(uint32_t gates);
+int	mac_capability_create_channel(int *oracle_end, int *child_end);
+int	mac_capability_create_coalition(void);
+int	mac_capability_mint_instance(int instance_fd);
+int	mac_capability_connect_for_delegate(const char *name);
+int	mac_capability_coalition_enlist(int coalition_fd, int member_fd);
+int	mac_capability_coalition_set_leader(int coalition_fd, int leader_fd);
+int	mac_capability_coalition_set_deadline(int coalition_fd, int timeout_ms,
 	    int sig, int grace_ms);
-int	cap_rt_coalition_terminate(int coalition_fd);
-int	cap_rt_coalition_recv_event(int coalition_fd, uint32_t *flagsp);
-int	cap_rt_reload_claims(const struct oracled_config *newcfg);
-void	cap_rt_format_status(char *buf, size_t bufsz, size_t *offp);
+int	mac_capability_coalition_terminate(int coalition_fd);
+int	mac_capability_coalition_recv_event(int coalition_fd, uint32_t *flagsp);
+int	mac_capability_reload_claims(const struct oracled_config *newcfg);
+void	mac_capability_format_status(char *buf, size_t bufsz, size_t *offp);
 
 /* control.c — control socket lifecycle */
 #define	CTL_ACTION_NONE		0

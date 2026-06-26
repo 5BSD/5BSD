@@ -1,0 +1,53 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * mac_capability-holders -- track MAC_CAPABILITY fd holder changes from DTrace events.
+ *
+ * This is event-derived state: start it before the workload you want to
+ * validate.  For a point-in-time snapshot, use procstat -f -C <pid>.
+ *
+ * Usage: mac_capability-holders    (Ctrl-C to print net holder changes)
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-6s %-18s %-10s %-16s %-8s %-6s\n",
+	    "PID", "FD", "NONCE", "EVENT", "SERVICE", "BADGE", "DELTA");
+}
+
+mac_capability:::fd-install
+{
+	this->svc = copyinstr(arg0);
+	printf("%-6d %-6d 0x%016x %-10s %-16s %-8d %+d\n",
+	    arg3, arg2, arg5, "INSTALL", this->svc, arg1, 1);
+	@holders[arg3, arg2, this->svc, arg1, arg5] = sum(1);
+}
+
+mac_capability:::fd-receive
+{
+	this->svc = copyinstr(arg0);
+	printf("%-6d %-6d 0x%016x %-10s %-16s %-8d %+d\n",
+	    arg3, arg2, arg5, "RECEIVE", this->svc, arg1, 1);
+	@holders[arg3, arg2, this->svc, arg1, arg5] = sum(1);
+}
+
+mac_capability:::fd-close
+{
+	this->svc = copyinstr(arg0);
+	printf("%-6d %-6d 0x%016x %-10s %-16s %-8d %+d\n",
+	    arg3, arg2, arg5, "CLOSE", this->svc, arg1, -1);
+	@holders[arg3, arg2, this->svc, arg1, arg5] = sum(-1);
+}
+
+dtrace:::END
+{
+	printf("\n--- Net MAC_CAPABILITY holder changes observed ---\n");
+	printf("Positive rows are descriptors still open within this trace window.\n");
+	printa("pid=%-6d fd=%-4d svc=%-16s badge=%-8d nonce=0x%016x delta=%@d\n",
+	    @holders);
+}

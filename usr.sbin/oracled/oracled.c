@@ -9,7 +9,7 @@
  *   1. Parse arguments, load config, open syslog, acquire pidfile
  *   2. Daemonize (unless foreground mode)
  *   3. Harden process (procctl self-policy)
- *   4. Initialize cap_rt (open device, claim resources, integrity)
+ *   4. Initialize mac_capability (open device, claim resources, integrity)
  *   5. Create control socket
  *   6. Enter event loop
  *      6a. Load manifests, sort dependencies, launch services
@@ -20,7 +20,7 @@
  *   2. Kill process subtree (backstop)
  *   3. Reap children
  *   4. Close control socket
- *   5. Release cap_rt services (integrity, claims, device)
+ *   5. Release mac_capability services (integrity, claims, device)
  *   6. Remove pidfile
  */
 
@@ -148,16 +148,16 @@ main(int argc, char *argv[])
 		syslog(LOG_INFO, "test mode: skipping procctl");
 	}
 
-	/* Phase 4: capability runtime. */
+	/* Phase 4: MAC capability. */
 	if (!od.test_mode) {
-		if (cap_rt_setup() == -1) {
+		if (mac_capability_setup() == -1) {
 			syslog(LOG_ERR,
-			    "cap_rt not available, cannot start");
+			    "mac_capability not available, cannot start");
 			pidfile_remove(od.pidfh);
 			exit(1);
 		}
 	} else {
-		syslog(LOG_INFO, "test mode: skipping cap_rt");
+		syslog(LOG_INFO, "test mode: skipping mac_capability");
 	}
 
 	/* Phase 5: control socket. */

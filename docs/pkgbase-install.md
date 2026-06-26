@@ -76,7 +76,7 @@ After reboot, verify:
 
 ```sh
 uname -i          # should show VBSD
-kldstat | grep cap_rt
+kldstat | grep mac_capability
 pkg query '%n' | head
 ```
 

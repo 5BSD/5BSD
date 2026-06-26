@@ -859,7 +859,7 @@ unlock_finish:
 
 /*
  * Like kern_setcred(), but operates on a target process instead of
- * td->td_proc.  Used by cap_rt_node to set credentials on a child
+ * td->td_proc.  Used by mac_capability_node to set credentials on a child
  * process via a procdesc fd.
  *
  * Caller must NOT hold PROC_LOCK(p); the function acquires it internally.

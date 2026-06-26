@@ -7,7 +7,7 @@
  *
  * Receives requests from serviced over the restricted channel,
  * validates them against the oracle's claimed resource set, and
- * dispatches to cap_rt to mint tokens or create channels/coalitions.
+ * dispatches to mac_capability to mint tokens or create channels/coalitions.
  * Replies are sent back over the same channel with attached fds.
  */
 
@@ -16,8 +16,8 @@
 #include <sys/event.h>
 #include <sys/jail.h>
 
-#include <dev/cap_rt/cap_rt_ioctl.h>
-#include <dev/cap_rt/cap_rt_isolation_proto.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
+#include <dev/mac_capability/mac_capability_isolation_proto.h>
 
 #include <arpa/inet.h>
 
@@ -29,7 +29,7 @@
 
 #include "oracled.h"
 #include "oracled_svc_proto.h"
-#include "cap_rt_priv.h"
+#include "mac_capability_priv.h"
 #include "probes.h"
 #include "oracle_proto_claims.h"
 #include "req_validate.h"
@@ -49,7 +49,7 @@ static int dispatch_status;
 int
 proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 {
-	struct cap_rt_sendmsg_args sa;
+	struct mac_capability_sendmsg_args sa;
 	struct oracle_reply rpl;
 
 	rpl.status = status;
@@ -63,7 +63,7 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 		sa.nfds = (uint32_t)nfds;
 	}
 
-	if (ioctl(proto_channel_fd, CAP_RT_SENDMSG, &sa) == -1) {
+	if (ioctl(proto_channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) {
 		syslog(LOG_WARNING, "oracle_proto: reply: %m");
 		return (-1);
 	}
@@ -128,7 +128,7 @@ handle_mint_path(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 
-	token_fd = cap_rt_mint_path_token(req->path);
+	token_fd = mac_capability_mint_path_token(req->path);
 	if (token_fd == -1) {
 		release_auto_claim_path(req->path);
 		ORACLED_PROBE_MINT_PATH(req->path, EIO);
@@ -175,7 +175,7 @@ handle_mint_file(const void *payload, uint32_t len, uint64_t reply_token)
 		}
 	}
 
-	token_fd = cap_rt_mint_file_token(req->path, req->actions);
+	token_fd = mac_capability_mint_file_token(req->path, req->actions);
 	if (token_fd == -1) {
 		release_auto_claim_path(req->path);
 		ORACLED_PROBE_MINT_PATH(req->path, EIO);
@@ -207,7 +207,7 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 
-	token_fd = cap_rt_mint_net_token(&nc);
+	token_fd = mac_capability_mint_net_token(&nc);
 	if (token_fd == -1) {
 		release_auto_claim_net(&nc);
 		ORACLED_PROBE_MINT_NET(nc.port_min, nc.port_max, nc.protocol,
@@ -240,7 +240,7 @@ handle_mint_jail(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 
-	token_fd = cap_rt_mint_jail_token(&jc);
+	token_fd = mac_capability_mint_jail_token(&jc);
 	if (token_fd == -1) {
 		release_auto_claim_jail(&jc);
 		ORACLED_PROBE_MINT_JAIL(jc.jid, jc.name, jc.actions, EIO);
@@ -387,7 +387,7 @@ handle_mint_system(const void *payload, uint32_t len, uint64_t reply_token)
 		}
 	}
 
-	token_fd = cap_rt_mint_system_token(req->gates);
+	token_fd = mac_capability_mint_system_token(req->gates);
 	if (token_fd == -1) {
 		release_auto_claim_system(req->gates);
 		ORACLED_PROBE_MINT_SYSTEM(req->gates, EIO);
@@ -405,7 +405,7 @@ handle_create_channel(uint64_t reply_token)
 {
 	int fds[2];
 
-	if (cap_rt_create_channel(&fds[0], &fds[1]) == -1) {
+	if (mac_capability_create_channel(&fds[0], &fds[1]) == -1) {
 		ORACLED_PROBE_CHANNEL_CREATE(EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
 		return;
@@ -422,7 +422,7 @@ handle_create_coalition(uint64_t reply_token)
 {
 	int cfd;
 
-	cfd = cap_rt_create_coalition();
+	cfd = mac_capability_create_coalition();
 	if (cfd == -1) {
 		ORACLED_PROBE_COALITION_CREATE(EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
@@ -461,7 +461,7 @@ handle_ping(uint64_t reply_token)
 static int
 proto_dispatch_one(void)
 {
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_recvmsg_args ra;
 	union {
 		struct oracle_create_jail_req create_jail;
 		struct oracle_mint_file_req file;
@@ -477,7 +477,7 @@ proto_dispatch_one(void)
 	ra.payload = &buf;
 	ra.payload_len = sizeof(buf);
 
-	if (ioctl(proto_channel_fd, CAP_RT_RECVMSG, &ra) == -1) {
+	if (ioctl(proto_channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
 		if (errno == EAGAIN)
 			return (0);
 		syslog(LOG_WARNING, "oracle_proto: recvmsg: %m");

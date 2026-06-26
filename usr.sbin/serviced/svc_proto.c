@@ -12,7 +12,7 @@
 
 #include <sys/ioctl.h>
 
-#include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
 
 #include <errno.h>
 #include <string.h>
@@ -30,7 +30,7 @@ static void
 svc_channel_reply(struct svc_runtime *svc, int status,
     uint64_t reply_token, int *fds, int nfds)
 {
-	struct cap_rt_sendmsg_args sa;
+	struct mac_capability_sendmsg_args sa;
 	struct svc_reply rpl;
 
 	rpl.status = status;
@@ -44,7 +44,7 @@ svc_channel_reply(struct svc_runtime *svc, int status,
 		sa.nfds = (uint32_t)nfds;
 	}
 
-	if (ioctl(svc->channel_fd, CAP_RT_SENDMSG, &sa) == -1) {
+	if (ioctl(svc->channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) {
 		syslog(LOG_WARNING, "service %s: channel reply: %m",
 		    svc->manifest.label);
 		SERVICED_PROBE_ERROR("svc_proto", "channel reply failed");
@@ -152,7 +152,7 @@ handle_svc_lookup(struct svc_runtime *svc, const void *payload,
 void
 supervisor_handle_channel(struct kevent *kev)
 {
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_recvmsg_args ra;
 	struct svc_runtime *svc;
 	char buf[sizeof(struct svc_register_req)];
 	uint32_t op;
@@ -161,13 +161,13 @@ supervisor_handle_channel(struct kevent *kev)
 
 	/* Coalition events — drain the message to prevent busy-loop. */
 	if ((int)kev->ident == svc->coalition_fd) {
-		struct cap_rt_recvmsg_args cra;
+		struct mac_capability_recvmsg_args cra;
 		char cbuf[64];
 
 		memset(&cra, 0, sizeof(cra));
 		cra.payload = cbuf;
 		cra.payload_len = sizeof(cbuf);
-		(void)ioctl(svc->coalition_fd, CAP_RT_RECVMSG, &cra);
+		(void)ioctl(svc->coalition_fd, MAC_CAPABILITY_RECVMSG, &cra);
 		return;
 	}
 
@@ -184,7 +184,7 @@ supervisor_handle_channel(struct kevent *kev)
 	ra.payload = buf;
 	ra.payload_len = sizeof(buf);
 
-	if (ioctl(svc->channel_fd, CAP_RT_RECVMSG, &ra) == -1) {
+	if (ioctl(svc->channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
 		if (errno != EAGAIN)
 			syslog(LOG_WARNING, "service %s: channel recvmsg: %m",
 			    svc->manifest.label);

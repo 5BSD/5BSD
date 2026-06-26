@@ -17,7 +17,7 @@
 
 #include <sys/types.h>
 
-#include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
 
 #include <errno.h>
 #include <stdlib.h>
@@ -293,7 +293,7 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 	struct naming_entry *e;
 	struct svc_runtime *provider;
 	struct svc_new_client_msg notify;
-	struct cap_rt_sendmsg_args sa;
+	struct mac_capability_sendmsg_args sa;
 	int provider_end, client_end;
 
 	e = naming_find(name);
@@ -343,7 +343,7 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 	sa.fds = &provider_end;
 	sa.nfds = 1;
 
-	if (ioctl(provider->channel_fd, CAP_RT_SENDMSG, &sa) == -1) {
+	if (ioctl(provider->channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) {
 		syslog(LOG_WARNING,
 		    "naming: lookup '%s': failed to notify provider '%s': %m",
 		    name, provider->manifest.label);

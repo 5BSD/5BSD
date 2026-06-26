@@ -425,9 +425,9 @@ procstat_files(struct procstat *procstat, struct kinfo_proc *kipp)
 			xo_emit("{eq:fd_type/inotify}");
 			break;
 
-		case PS_FST_TYPE_CAP_RT:
+		case PS_FST_TYPE_MAC_CAPABILITY:
 			str = "C";
-			xo_emit("{eq:fd_type/cap_rt}");
+			xo_emit("{eq:fd_type/mac_capability}");
 			break;
 
 		case PS_FST_TYPE_NONE:

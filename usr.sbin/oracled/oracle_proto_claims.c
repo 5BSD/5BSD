@@ -16,7 +16,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
-#include <dev/cap_rt/cap_rt_isolation_proto.h>
+#include <dev/mac_capability/mac_capability_isolation_proto.h>
 
 #include <errno.h>
 #include <string.h>
@@ -24,7 +24,7 @@
 
 #include "oracled.h"
 #include "oracled_svc_proto.h"
-#include "cap_rt_priv.h"
+#include "mac_capability_priv.h"
 #include "probes.h"
 #include "oracle_proto_claims.h"
 #include "req_validate.h"
@@ -131,7 +131,7 @@ auto_claim_path(const char *path, int *errp)
 		*errp = ENOSPC;
 		return (-1);
 	}
-	if (cap_rt_claim_path(path) != 0) {
+	if (mac_capability_claim_path(path) != 0) {
 		*errp = EIO;
 		return (-1);
 	}
@@ -163,7 +163,7 @@ auto_claim_net(const struct ort_net_claim *nc, int *errp)
 		*errp = ENOSPC;
 		return (-1);
 	}
-	if (cap_rt_claim_net(nc) != 0) {
+	if (mac_capability_claim_net(nc) != 0) {
 		*errp = EIO;
 		return (-1);
 	}
@@ -197,7 +197,7 @@ auto_claim_jail(const struct oracled_jail_claim *jc, int *errp)
 		*errp = ENOSPC;
 		return (-1);
 	}
-	if (cap_rt_claim_jail(jc) != 0) {
+	if (mac_capability_claim_jail(jc) != 0) {
 		*errp = EIO;
 		return (-1);
 	}
@@ -221,7 +221,7 @@ auto_claim_system(uint32_t gates, int *errp)
 
 	new_bits = gates & ~od.cfg.claim_system;
 	if (new_bits != 0) {
-		if (cap_rt_claim_system_gate_bits(new_bits) != 0) {
+		if (mac_capability_claim_system_gate_bits(new_bits) != 0) {
 			*errp = EIO;
 			return (-1);
 		}
@@ -261,7 +261,7 @@ release_auto_claim_path(const char *path)
 	od.cfg.claim_path_refcount[idx]--;
 	new_refcount = od.cfg.claim_path_refcount[idx];
 	if (new_refcount == 0) {
-		cap_rt_release_path(path);
+		mac_capability_release_path(path);
 		remove_path_claim((unsigned)idx);
 	}
 	ORACLED_PROBE_DYN_RELEASE_PATH(path, new_refcount, 0);
@@ -282,7 +282,7 @@ release_auto_claim_net(const struct ort_net_claim *nc)
 	od.cfg.claim_net_refcount[idx]--;
 	new_refcount = od.cfg.claim_net_refcount[idx];
 	if (new_refcount == 0) {
-		cap_rt_release_net(&od.cfg.claim_net[idx]);
+		mac_capability_release_net(&od.cfg.claim_net[idx]);
 		remove_net_claim((unsigned)idx);
 	}
 	ORACLED_PROBE_DYN_RELEASE_NET(nc->port_min, nc->port_max,
@@ -304,7 +304,7 @@ release_auto_claim_jail(const struct oracled_jail_claim *jc)
 	od.cfg.claim_jail_refcount[idx]--;
 	new_refcount = od.cfg.claim_jail_refcount[idx];
 	if (new_refcount == 0) {
-		cap_rt_release_jail(&od.cfg.claim_jail[idx]);
+		mac_capability_release_jail(&od.cfg.claim_jail[idx]);
 		remove_jail_claim((unsigned)idx);
 	}
 	ORACLED_PROBE_DYN_RELEASE_JAIL(jc->name, jc->actions, new_refcount, 0);
@@ -332,7 +332,7 @@ release_auto_claim_system(uint32_t gates)
 	}
 
 	if (release_bits != 0) {
-		cap_rt_release_system_gates(release_bits);
+		mac_capability_release_system_gates(release_bits);
 		od.cfg.claim_system &= ~release_bits;
 		od.cfg.claim_system_service &= ~release_bits;
 	}
@@ -461,7 +461,7 @@ handle_release_path(const void *payload, uint32_t len, uint64_t reply_token)
 		uint32_t new_refcount = od.cfg.claim_path_refcount[idx];
 
 		if (new_refcount == 0) {
-			cap_rt_release_path(req->path);
+			mac_capability_release_path(req->path);
 			syslog(LOG_INFO,
 			    "oracle_proto: released dynamic claim %s",
 			    req->path);
@@ -516,7 +516,7 @@ handle_release_net(const void *payload, uint32_t len, uint64_t reply_token)
 		uint32_t new_refcount = od.cfg.claim_net_refcount[idx];
 
 		if (new_refcount == 0) {
-			cap_rt_release_net(&od.cfg.claim_net[idx]);
+			mac_capability_release_net(&od.cfg.claim_net[idx]);
 			syslog(LOG_INFO,
 			    "oracle_proto: released dynamic net claim %u-%u/%d",
 			    nc.port_min, nc.port_max, nc.protocol);
@@ -567,7 +567,7 @@ handle_release_jail(const void *payload, uint32_t len, uint64_t reply_token)
 		uint32_t new_refcount = od.cfg.claim_jail_refcount[idx];
 
 		if (new_refcount == 0) {
-			cap_rt_release_jail(&od.cfg.claim_jail[idx]);
+			mac_capability_release_jail(&od.cfg.claim_jail[idx]);
 			syslog(LOG_INFO,
 			    "oracle_proto: released dynamic jail claim %s",
 			    jc.name);
@@ -625,7 +625,7 @@ handle_release_system(const void *payload, uint32_t len, uint64_t reply_token)
 	}
 
 	if (release_bits != 0) {
-		cap_rt_release_system_gates(release_bits);
+		mac_capability_release_system_gates(release_bits);
 		od.cfg.claim_system &= ~release_bits;
 		od.cfg.claim_system_service &= ~release_bits;
 		syslog(LOG_INFO,
@@ -647,7 +647,7 @@ sweep_dynamic_claims(void)
 
 	for (i = od.cfg.nclaim_paths; i > 0; i--) {
 		if (od.cfg.claim_path_source[i - 1] == CLAIM_SOURCE_SERVICE) {
-			cap_rt_release_path(od.cfg.claim_paths[i - 1]);
+			mac_capability_release_path(od.cfg.claim_paths[i - 1]);
 			syslog(LOG_INFO,
 			    "oracle_proto: sweep released path %s",
 			    od.cfg.claim_paths[i - 1]);
@@ -657,7 +657,7 @@ sweep_dynamic_claims(void)
 
 	for (i = od.cfg.nclaim_net; i > 0; i--) {
 		if (od.cfg.claim_net_source[i - 1] == CLAIM_SOURCE_SERVICE) {
-			cap_rt_release_net(&od.cfg.claim_net[i - 1]);
+			mac_capability_release_net(&od.cfg.claim_net[i - 1]);
 			syslog(LOG_INFO,
 			    "oracle_proto: sweep released net claim");
 			remove_net_claim(i - 1);
@@ -666,7 +666,7 @@ sweep_dynamic_claims(void)
 
 	for (i = od.cfg.nclaim_jail; i > 0; i--) {
 		if (od.cfg.claim_jail_source[i - 1] == CLAIM_SOURCE_SERVICE) {
-			cap_rt_release_jail(&od.cfg.claim_jail[i - 1]);
+			mac_capability_release_jail(&od.cfg.claim_jail[i - 1]);
 			syslog(LOG_INFO,
 			    "oracle_proto: sweep released jail %s",
 			    od.cfg.claim_jail[i - 1].name);
@@ -683,7 +683,7 @@ sweep_dynamic_claims(void)
 		}
 	}
 	if (release_gates != 0) {
-		cap_rt_release_system_gates(release_gates);
+		mac_capability_release_system_gates(release_gates);
 		od.cfg.claim_system &= ~release_gates;
 		od.cfg.claim_system_service &= ~release_gates;
 		syslog(LOG_INFO,

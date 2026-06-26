@@ -557,7 +557,7 @@ svc_unregister_explicit_body()
 #include <string.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
-#include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
 
 #define SVC_OP_READY      1
 #define SVC_OP_REGISTER   2
@@ -576,18 +576,18 @@ static int
 send_recv(int fd, const void *req, uint32_t reqlen, uint64_t token,
     struct svc_reply *rpl)
 {
-	struct cap_rt_sendmsg_args sa;
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_sendmsg_args sa;
+	struct mac_capability_recvmsg_args ra;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = req;
 	sa.payload_len = reqlen;
 	sa.reply_token = token;
-	if (ioctl(fd, CAP_RT_SENDMSG, &sa) == -1) return (-1);
+	if (ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) return (-1);
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = rpl;
 	ra.payload_len = sizeof(*rpl);
-	if (ioctl(fd, CAP_RT_RECVMSG, &ra) == -1) return (-1);
+	if (ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) return (-1);
 	return (0);
 }
 

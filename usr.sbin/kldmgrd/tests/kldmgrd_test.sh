@@ -13,7 +13,7 @@
 # as a system bundle, then launch a test client service that exercises
 # the protocol.
 #
-# Requires: root, cap_rt device available.
+# Requires: root, mac_capability device available.
 #
 
 # ---------------------------------------------------------------
@@ -67,10 +67,10 @@ find_kldmgrd()
 	atf_skip "kldmgrd binary not found"
 }
 
-require_cap_rt()
+require_mac_capability()
 {
-	if [ ! -c /dev/cap_rt ]; then
-		atf_skip "cap_rt device not available"
+	if [ ! -c /dev/mac_capability ]; then
+		atf_skip "mac_capability device not available"
 	fi
 }
 
@@ -506,7 +506,7 @@ kldmgrd_list_head()
 }
 kldmgrd_list_body()
 {
-	require_cap_rt
+	require_mac_capability
 	build_kldmgr_client
 
 	prepare_paths
@@ -563,7 +563,7 @@ kldmgrd_load_invalid_name_head()
 }
 kldmgrd_load_invalid_name_body()
 {
-	require_cap_rt
+	require_mac_capability
 	build_kldmgr_client
 
 	prepare_paths
@@ -608,7 +608,7 @@ kldmgrd_load_nonexistent_head()
 }
 kldmgrd_load_nonexistent_body()
 {
-	require_cap_rt
+	require_mac_capability
 	build_kldmgr_client
 
 	prepare_paths
@@ -653,7 +653,7 @@ kldmgrd_load_special_chars_head()
 }
 kldmgrd_load_special_chars_body()
 {
-	require_cap_rt
+	require_mac_capability
 	build_kldmgr_client
 
 	prepare_paths
@@ -700,7 +700,7 @@ kldmgrd_permission_denied_head()
 }
 kldmgrd_permission_denied_body()
 {
-	require_cap_rt
+	require_mac_capability
 	build_kldmgr_client
 
 	prepare_paths
@@ -746,7 +746,7 @@ kldmgrd_unknown_op_head()
 }
 kldmgrd_unknown_op_body()
 {
-	require_cap_rt
+	require_mac_capability
 	build_kldmgr_client
 
 	prepare_paths

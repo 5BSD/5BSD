@@ -113,7 +113,7 @@ Confine a pair channel so it cannot escape the current process:
 .Bd -literal
 #include <sys/capsicum.h>
 
-/* fd is one end of a cap_rt pair or socketpair */
+/* fd is one end of a mac_capability pair or socketpair */
 cap_xfer_limit(fd, CAP_XFER_NONE);
 cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED);
 cap_clofork_limit(fd, CAP_CLOFORK_LOCKED);

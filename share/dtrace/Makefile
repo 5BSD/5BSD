@@ -9,20 +9,20 @@ PACKAGE=	dtrace
 SCRIPTS=	blued-att \
 		blued-connections \
 		blocking \
-		cap_rt-audit \
+		mac_capability-audit \
 		capsicum-changes \
-		cap_rt-calls \
-		cap_rt-delegation \
-		cap_rt-denials \
-		cap_rt-errors \
-		cap_rt-fds \
-		cap_rt-holders \
-		cap_rt-messages \
-		cap_rt-nonces \
-		cap_rt-services \
-		cap_rt-shield \
-		cap_rt-summary \
-		cap_rt-who \
+		mac_capability-calls \
+		mac_capability-delegation \
+		mac_capability-denials \
+		mac_capability-errors \
+		mac_capability-fds \
+		mac_capability-holders \
+		mac_capability-messages \
+		mac_capability-nonces \
+		mac_capability-services \
+		mac_capability-shield \
+		mac_capability-summary \
+		mac_capability-who \
 		disklatency \
 		disklatencycmd \
 		hotopen \

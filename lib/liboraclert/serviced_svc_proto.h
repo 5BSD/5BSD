@@ -6,8 +6,8 @@
  * Service-side channel protocol.
  *
  * Messages exchanged between a launched service and serviced over
- * the service's inherited channel fd (fd 3).  Uses CAP_RT_SENDMSG/
- * CAP_RT_RECVMSG with reply_token correlation.
+ * the service's inherited channel fd (fd 3).  Uses MAC_CAPABILITY_SENDMSG/
+ * MAC_CAPABILITY_RECVMSG with reply_token correlation.
  *
  * Services use this protocol to:
  *   - Report readiness (READY)
@@ -19,8 +19,8 @@
  * when a client looks up their name.  The notification carries an
  * attached fd — the new client's end of a channel.
  *
- * Services should NOT include cap_rt headers.  The channel fd is an
- * opaque communication channel — cap_rt is an implementation detail
+ * Services should NOT include mac_capability headers.  The channel fd is an
+ * opaque communication channel — mac_capability is an implementation detail
  * of the oracle.
  */
 

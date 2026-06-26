@@ -1,0 +1,39 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * mac_capability-who -- trace MAC_CAPABILITY capability lifecycle in real time.
+ *
+ * Shows connect, revoke, and close events with service name,
+ * badge, and pid.
+ *
+ * Usage: mac_capability-who
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-8s %-16s %-8s %s\n",
+	    "PID", "EVENT", "SERVICE", "BADGE", "TIME");
+}
+
+mac_capability:::connect
+{
+	printf("%-6d %-8s %-16s %-8d %Y\n",
+	    pid, "CONNECT", copyinstr(arg0), arg1, walltimestamp);
+}
+
+mac_capability:::revoke
+{
+	printf("%-6d %-8s %-16s %-8d %Y\n",
+	    pid, "REVOKE", copyinstr(arg0), arg1, walltimestamp);
+}
+
+mac_capability:::close
+{
+	printf("%-6d %-8s %-16s %-8d %Y\n",
+	    pid, "CLOSE", copyinstr(arg0), arg1, walltimestamp);
+}
