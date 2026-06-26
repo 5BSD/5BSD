@@ -121,6 +121,13 @@
 #define	FI_OP_MINT_NET		12	/* mint network access token (reply fd) */
 #define	FI_OP_MINT_JAIL		13	/* mint jail access token (reply fd) */
 
+/* --- vsock operations --- */
+
+#define	FI_OP_CLAIM_VSOCK	14	/* claim vsock endpoint */
+#define	FI_OP_RELEASE_VSOCK	15	/* release vsock claim */
+#define	FI_OP_QUERY_VSOCK	16	/* query vsock claim status */
+#define	FI_OP_MINT_VSOCK	17	/* mint vsock access token (reply fd) */
+
 /* Query reply flags */
 #define	FI_QF_CLAIMED		0x01	/* resource is isolated by someone */
 #define	FI_QF_MINE		0x02	/* isolated by caller's nonce */
@@ -177,17 +184,24 @@ struct fi_reply {
  * port_min/port_max are network byte order.  A full range of
  * 0..65535 means any port.  Domain/protocol 0 and an all-zero address
  * remain wildcards.
+ *
+ * Bluetooth (AF_BLUETOOTH):  domain=AF_BLUETOOTH, protocol is one of
+ * BLUETOOTH_PROTO_L2CAP, BLUETOOTH_PROTO_RFCOMM, BLUETOOTH_PROTO_SCO,
+ * or BLUETOOTH_PROTO_ISO (0=any).  addr[0..5] holds the BD_ADDR (6
+ * bytes, all-zero=any).  port_min/port_max carry the PSM (L2CAP) or
+ * channel (RFCOMM) in network byte order.  prefix must be 0 (any
+ * address) or 48 (exact BD_ADDR match).
  */
 struct fi_net_request {
 	uint32_t	op;
 	uint32_t	flags;		/* reserved, must be 0 */
-	int32_t		domain;		/* AF_INET, AF_INET6, 0=any */
-	int32_t		protocol;	/* IPPROTO_TCP, IPPROTO_UDP, 0=any */
+	int32_t		domain;		/* AF_INET, AF_INET6, AF_BLUETOOTH, 0=any */
+	int32_t		protocol;	/* IPPROTO_TCP/UDP, BLUETOOTH_PROTO_*, 0=any */
 	uint16_t	port_min;	/* network byte order */
 	uint16_t	port_max;	/* network byte order */
 	uint8_t		direction;	/* FI_NET_* bitmask */
-	uint8_t		prefix;		/* CIDR prefix len, 0=exact/any */
-	uint8_t		addr[16];	/* IPv6 or v4-mapped, all-zero=any */
+	uint8_t		prefix;		/* CIDR/BD_ADDR prefix len, 0=exact/any */
+	uint8_t		addr[16];	/* IPv6/v4-mapped/BD_ADDR, all-zero=any */
 } __packed;
 
 /* Jail action flags for FI_OP_MINT_JAIL. */
@@ -212,6 +226,22 @@ struct fi_jail_request {
 	int32_t		jid;		/* host byte order; 0=not specified */
 	uint32_t	actions;	/* FI_JAIL_* mask */
 	char		name[64];	/* NUL-terminated jail name */
+} __packed;
+
+/*
+ * vsock request (ops 14-17): no fd needed.
+ * port_min/port_max are host byte order (32-bit vsock ports).
+ * cid is the VM context ID (VSOCK_CID_ANY=any, else specific).
+ * Reuses FI_NET_BIND/FI_NET_CONNECT direction flags.
+ */
+struct fi_vsock_request {
+	uint32_t	op;
+	uint32_t	flags;		/* reserved, must be 0 */
+	uint64_t	cid;		/* VSOCK_CID_ANY or specific CID */
+	uint32_t	port_min;	/* host byte order */
+	uint32_t	port_max;	/* host byte order */
+	uint8_t		direction;	/* FI_NET_* bitmask */
+	uint8_t		_pad[3];
 } __packed;
 
 #endif /* _DEV_MAC_CAPABILITY_MAC_CAPABILITY_ISOLATION_PROTO_H_ */

@@ -18,6 +18,10 @@
  *
  *   Network:       socket create (domain-wide), bind, connect
  *                  (per port/address/protocol/direction tuple)
+ *                  Supported: AF_INET, AF_INET6, AF_BLUETOOTH
+ *
+ *   vsock:         socket create, bind, connect
+ *                  (per CID/port/direction tuple for AF_VSOCK)
  *
  * Claims are bound to the mac_capability instance fd.  When the instance is
  * revoked or closed, all claims are released automatically.
@@ -44,6 +48,11 @@
 #include <sys/socketvar.h>
 #include <sys/protosw.h>
 #include <netinet/in.h>
+#include <sys/vsock.h>
+#include <sys/bitstring.h>
+#include <netgraph/bluetooth/include/ng_hci.h>
+#include <netgraph/bluetooth/include/ng_l2cap.h>
+#include <netgraph/bluetooth/include/ng_btsocket.h>
 
 #include <security/mac/mac_policy.h>
 
@@ -101,7 +110,7 @@ struct fi_claim {
 struct fi_net_claim {
 	LIST_ENTRY(fi_net_claim) fn_hashlink;
 	LIST_ENTRY(fi_net_claim) fn_instlink;
-	int		fn_domain;	/* AF_INET, AF_INET6, 0=any */
+	int		fn_domain;	/* AF_INET, AF_INET6, AF_BLUETOOTH, 0=any */
 	int		fn_protocol;	/* IPPROTO_TCP, etc., 0=any */
 	uint16_t	fn_port_min;	/* host byte order */
 	uint16_t	fn_port_max;	/* host byte order */
@@ -128,6 +137,24 @@ struct fi_jail_claim {
 	struct mac_capability_instance *fj_inst;
 };
 
+/* ----------------------------------------------------------------
+ * vsock isolation hash table
+ * ---------------------------------------------------------------- */
+
+#define	FI_VSOCK_HASH_SIZE	16
+
+struct fi_vsock_claim {
+	LIST_ENTRY(fi_vsock_claim) fv_hashlink;
+	LIST_ENTRY(fi_vsock_claim) fv_instlink;
+	uint64_t	fv_cid;		/* VSOCK_CID_ANY or specific */
+	uint32_t	fv_port_min;	/* host byte order */
+	uint32_t	fv_port_max;
+	uint8_t		fv_direction;	/* FI_NET_* bitmask */
+	uint64_t	fv_nonce;
+	uint64_t	fv_id;
+	struct mac_capability_instance *fv_inst;
+};
+
 /*
  * Authorization table: (accessor_nonce, owner_nonce) pairs.
  * Keyed by owner_nonce (the claim holder).  When a MACF hook
@@ -147,8 +174,10 @@ struct fi_auth {
 	uint64_t		fa_fs_actions;	/* FI_FS_* for vnode tokens */
 	bool			fa_is_net;
 	bool			fa_is_jail;
+	bool			fa_is_vsock;
 	struct fi_net_request	fa_net;
 	struct fi_jail_request	fa_jail;
+	struct fi_vsock_request	fa_vsock;
 	struct mac_capability_instance	*fa_inst;	/* token instance (lifetime) */
 };
 
@@ -163,8 +192,11 @@ struct fi_priv {
 	uint64_t		    fip_token_fs_actions;
 	bool			    fip_token_is_net;
 	bool			    fip_token_is_jail;
+	bool			    fip_token_is_vsock;
 	struct fi_net_request	    fip_token_net;
 	struct fi_jail_request	    fip_token_jail;
+	struct fi_vsock_request	    fip_token_vsock;
+	LIST_HEAD(, fi_vsock_claim) fip_vsock_claims;
 };
 
 static LIST_HEAD(, fi_claim)	*fi_hash;
@@ -194,12 +226,20 @@ static LIST_HEAD(, fi_jail_claim) fi_jail_claims;
 static struct rwlock		 fi_jail_lock;
 static volatile u_int		 fi_jail_claim_count;	/* fast-path for jail hooks */
 
+static LIST_HEAD(, fi_vsock_claim) *fi_vsock_hash;
+static u_long			    fi_vsock_hashmask;
+static struct rwlock		    fi_vsock_lock;
+static volatile u_int		    fi_vsock_claim_count;
+
 #define	FI_AUTH_BUCKET(nonce)	(&fi_auth_hash[(nonce) & fi_auth_hashmask])
 
 static bool	fi_net_addr_match(const struct fi_net_claim *nc,
 		    struct sockaddr *sa);
 static bool	fi_net_claim_covers_request(const struct fi_net_claim *nc,
 		    const struct fi_net_request *nr);
+static int	fi_vsock_check(struct ucred *cred, struct sockaddr *sa,
+		    uint8_t direction);
+static int	fi_vsock_check_create(struct ucred *cred);
 
 static uint64_t
 fi_alloc_claim_id(void)
@@ -323,6 +363,25 @@ fi_auth_net_matches(const struct fi_auth *fa, int domain, int protocol,
 			port = ntohs(((struct sockaddr_in *)sa)->sin_port);
 		else if (sa->sa_family == AF_INET6)
 			port = ntohs(((struct sockaddr_in6 *)sa)->sin6_port);
+		else if (sa->sa_family == AF_BLUETOOTH) {
+			switch (protocol) {
+			case BLUETOOTH_PROTO_L2CAP: {
+				struct sockaddr_l2cap *sl2 =
+				    (struct sockaddr_l2cap *)sa;
+				port = ntohs(sl2->l2cap_psm);
+				break;
+			}
+			case BLUETOOTH_PROTO_RFCOMM: {
+				struct sockaddr_rfcomm *srf =
+				    (struct sockaddr_rfcomm *)sa;
+				port = srf->rfcomm_channel;
+				break;
+			}
+			default:
+				port = 0;
+				break;
+			}
+		}
 	}
 	port_min = ntohs(fa->fa_net.port_min);
 	port_max = ntohs(fa->fa_net.port_max);
@@ -403,6 +462,7 @@ static int
 fi_auth_add(uint64_t accessor, uint64_t owner, uint64_t claim_id,
     uint64_t fs_actions, const struct fi_net_request *net,
     const struct fi_jail_request *jail,
+    const struct fi_vsock_request *vsock,
     struct mac_capability_instance *inst)
 {
 	struct fi_auth *fa, *existing;
@@ -420,6 +480,10 @@ fi_auth_add(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 		fa->fa_is_jail = true;
 		fa->fa_jail = *jail;
 	}
+	if (vsock != NULL) {
+		fa->fa_is_vsock = true;
+		fa->fa_vsock = *vsock;
+	}
 	fa->fa_inst = inst;
 
 	rw_wlock(&fi_auth_lock);
@@ -430,7 +494,8 @@ fi_auth_add(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 		    existing->fa_claim_id == claim_id &&
 		    existing->fa_inst == inst &&
 		    existing->fa_is_net == (net != NULL) &&
-		    existing->fa_is_jail == (jail != NULL)) {
+		    existing->fa_is_jail == (jail != NULL) &&
+		    existing->fa_is_vsock == (vsock != NULL)) {
 			rw_wunlock(&fi_auth_lock);
 			free(fa, M_FILE_ISOLATION);
 			return (0);
@@ -863,6 +928,10 @@ fi_net_effective_prefix(int domain, uint8_t user_prefix)
 		/* prefix > 32 for AF_INET is invalid; treat as exact */
 		return (128);
 	}
+	if (domain == AF_BLUETOOTH) {
+		/* BD_ADDR is 6 bytes = 48 bits; 0 means any */
+		return (user_prefix == 0 ? 48 : MIN(user_prefix, (uint8_t)48));
+	}
 	/* AF_INET6: prefix is already correct */
 	return (user_prefix == 0 ? 128 : MIN(user_prefix, (uint8_t)128));
 }
@@ -952,6 +1021,35 @@ fi_net_addr_match(const struct fi_net_claim *nc, struct sockaddr *sa)
 		struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)sa;
 
 		sa_addr = sin6->sin6_addr;
+	} else if (sa->sa_family == AF_BLUETOOTH) {
+		const uint8_t *bdaddr = NULL;
+
+		switch (nc->fn_protocol) {
+		case BLUETOOTH_PROTO_L2CAP: {
+			struct sockaddr_l2cap *sl2 =
+			    (struct sockaddr_l2cap *)sa;
+			bdaddr = sl2->l2cap_bdaddr.b;
+			break;
+		}
+		case BLUETOOTH_PROTO_RFCOMM: {
+			struct sockaddr_rfcomm *srf =
+			    (struct sockaddr_rfcomm *)sa;
+			bdaddr = srf->rfcomm_bdaddr.b;
+			break;
+		}
+		case BLUETOOTH_PROTO_SCO: {
+			struct sockaddr_sco *ssc =
+			    (struct sockaddr_sco *)sa;
+			bdaddr = ssc->sco_bdaddr.b;
+			break;
+		}
+		default:
+			return (false);
+		}
+		/* BD_ADDR stored in addr[0..5], rest zeroed */
+		memset(&sa_addr, 0, sizeof(sa_addr));
+		if (bdaddr != NULL)
+			memcpy(&sa_addr, bdaddr, 6);
 	} else {
 		return (false);
 	}
@@ -1001,6 +1099,24 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 		} else if (sa->sa_family == AF_INET6) {
 			struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)sa;
 			port = ntohs(sin6->sin6_port);
+		} else if (sa->sa_family == AF_BLUETOOTH) {
+			switch (protocol) {
+			case BLUETOOTH_PROTO_L2CAP: {
+				struct sockaddr_l2cap *sl2 =
+				    (struct sockaddr_l2cap *)sa;
+				port = ntohs(sl2->l2cap_psm);
+				break;
+			}
+			case BLUETOOTH_PROTO_RFCOMM: {
+				struct sockaddr_rfcomm *srf =
+				    (struct sockaddr_rfcomm *)sa;
+				port = srf->rfcomm_channel;
+				break;
+			}
+			default:
+				port = 0;
+				break;
+			}
 		}
 	}
 
@@ -1130,6 +1246,12 @@ fi_check_socket_create(struct ucred *cred, int domain, int type __unused,
 	struct fi_net_claim *nc;
 	uint64_t caller_nonce;
 
+	if (domain == AF_VSOCK) {
+		int error = fi_vsock_check_create(cred);
+		if (error != 0)
+			return (error);
+	}
+
 	if (atomic_load_acq_int(&fi_net_claim_count) == 0)
 		return (0);
 
@@ -1225,6 +1347,8 @@ fi_check_socket_bind(struct ucred *cred, struct socket *so,
 
 	if (sa == NULL)
 		return (0);
+	if (sa->sa_family == AF_VSOCK)
+		return (fi_vsock_check(cred, sa, FI_NET_BIND));
 	proto = so->so_proto->pr_protocol;
 	return (fi_net_check(cred, sa->sa_family, proto, sa, FI_NET_BIND));
 }
@@ -1237,11 +1361,253 @@ fi_check_socket_connect(struct ucred *cred, struct socket *so,
 
 	if (sa == NULL)
 		return (0);
+	if (sa->sa_family == AF_VSOCK)
+		return (fi_vsock_check(cred, sa, FI_NET_CONNECT));
 	proto = so->so_proto->pr_protocol;
 	return (fi_net_check(cred, sa->sa_family, proto, sa, FI_NET_CONNECT));
 }
 
 /* listen and accept not hooked — bind is the enforcement point */
+
+/* ----------------------------------------------------------------
+ * vsock isolation
+ * ---------------------------------------------------------------- */
+
+static __inline u_long
+fi_vsock_hash_fn(uint32_t port, uint64_t cid)
+{
+
+	return (((u_long)port ^ (u_long)(cid >> 4)) & fi_vsock_hashmask);
+}
+
+static __inline uint32_t
+fi_vsock_hash_port(uint32_t port_min, uint32_t port_max)
+{
+
+	return (port_min == port_max ? port_min : 0);
+}
+
+static __inline bool
+fi_vsock_port_in_range(const struct fi_vsock_claim *vc, uint32_t port)
+{
+
+	return (port >= vc->fv_port_min && port <= vc->fv_port_max);
+}
+
+static bool
+fi_vsock_cid_match(uint64_t claim_cid, uint64_t sa_cid)
+{
+
+	if (claim_cid == VSOCK_CID_ANY)
+		return (true);
+	return (claim_cid == sa_cid);
+}
+
+static bool
+fi_vsock_claim_covers_request(const struct fi_vsock_claim *vc,
+    const struct fi_vsock_request *vr)
+{
+
+	if ((vc->fv_direction & vr->direction) != vr->direction)
+		return (false);
+	if (vc->fv_cid != VSOCK_CID_ANY &&
+	    (vr->cid == VSOCK_CID_ANY || vc->fv_cid != vr->cid))
+		return (false);
+	if (vc->fv_port_min > vr->port_min || vc->fv_port_max < vr->port_max)
+		return (false);
+	return (true);
+}
+
+static bool
+fi_vsock_claims_overlap(const struct fi_vsock_claim *existing,
+    const struct fi_vsock_request *vr)
+{
+
+	if (!(existing->fv_direction & vr->direction))
+		return (false);
+	if (existing->fv_cid != VSOCK_CID_ANY &&
+	    vr->cid != VSOCK_CID_ANY &&
+	    existing->fv_cid != vr->cid)
+		return (false);
+	if (existing->fv_port_min > vr->port_max ||
+	    vr->port_min > existing->fv_port_max)
+		return (false);
+	return (true);
+}
+
+static bool
+fi_auth_vsock_matches(const struct fi_auth *fa, uint64_t cid,
+    uint32_t port, uint8_t direction)
+{
+
+	if (!fa->fa_is_vsock)
+		return (false);
+	if ((fa->fa_vsock.direction & direction) != direction)
+		return (false);
+	if (fa->fa_vsock.cid != VSOCK_CID_ANY &&
+	    fa->fa_vsock.cid != cid)
+		return (false);
+	if (port < fa->fa_vsock.port_min || port > fa->fa_vsock.port_max)
+		return (false);
+	return (true);
+}
+
+static int
+fi_is_authorized_vsock(uint64_t accessor, uint64_t owner, uint64_t claim_id,
+    uint64_t cid, uint32_t port, uint8_t direction)
+{
+	struct fi_auth *fa;
+
+	rw_assert(&fi_auth_lock, RA_RLOCKED);
+	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
+		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    fa->fa_claim_id == claim_id &&
+		    fi_auth_vsock_matches(fa, cid, port, direction))
+			return (1);
+	}
+	return (0);
+}
+
+static int
+fi_vsock_check(struct ucred *cred, struct sockaddr *sa, uint8_t direction)
+{
+	struct fi_vsock_claim *vc;
+	struct sockaddr_vm *svm;
+	uint64_t caller_nonce, cid;
+	uint32_t port;
+
+	if (atomic_load_acq_int(&fi_vsock_claim_count) == 0)
+		return (0);
+
+	if (sa == NULL || sa->sa_family != AF_VSOCK)
+		return (0);
+
+	svm = (struct sockaddr_vm *)sa;
+	cid = svm->svm_cid;
+	port = svm->svm_port;
+
+	caller_nonce = mac_capability_proc_nonce(cred);
+
+	rw_rlock(&fi_vsock_lock);
+	{
+		u_long buckets[4];
+		int nbuckets = 4, i, j;
+		bool dup;
+#define	VSOCK_DENY_MAX	8
+		struct { uint64_t nonce; uint64_t claim_id; } denied[VSOCK_DENY_MAX];
+		int ndeny = 0;
+
+		buckets[0] = fi_vsock_hash_fn(port, cid);
+		buckets[1] = fi_vsock_hash_fn(0, cid);
+		buckets[2] = fi_vsock_hash_fn(port, 0);
+		buckets[3] = fi_vsock_hash_fn(0, 0);
+
+		for (i = 0; i < nbuckets; i++) {
+			dup = false;
+			for (j = 0; j < i; j++) {
+				if (buckets[j] == buckets[i]) {
+					dup = true;
+					break;
+				}
+			}
+			if (dup)
+				continue;
+
+			LIST_FOREACH(vc, &fi_vsock_hash[buckets[i]],
+			    fv_hashlink) {
+				if (!(vc->fv_direction & direction))
+					continue;
+				if (!fi_vsock_cid_match(vc->fv_cid, cid))
+					continue;
+				if (!fi_vsock_port_in_range(vc, port))
+					continue;
+				if (caller_nonce != 0 &&
+				    caller_nonce == vc->fv_nonce) {
+					rw_runlock(&fi_vsock_lock);
+					return (0);
+				}
+				if (ndeny < VSOCK_DENY_MAX) {
+					denied[ndeny].nonce = vc->fv_nonce;
+					denied[ndeny].claim_id = vc->fv_id;
+					ndeny++;
+				}
+			}
+		}
+
+		if (ndeny > 0) {
+			rw_runlock(&fi_vsock_lock);
+			if (caller_nonce != 0) {
+				rw_rlock(&fi_auth_lock);
+				for (i = 0; i < ndeny; i++) {
+					if (fi_is_authorized_vsock(
+					    caller_nonce, denied[i].nonce,
+					    denied[i].claim_id, cid, port,
+					    direction)) {
+						rw_runlock(&fi_auth_lock);
+						return (0);
+					}
+				}
+				rw_runlock(&fi_auth_lock);
+			}
+			return (EACCES);
+		}
+#undef VSOCK_DENY_MAX
+	}
+
+	rw_runlock(&fi_vsock_lock);
+	return (0);
+}
+
+static int
+fi_vsock_check_create(struct ucred *cred)
+{
+	struct fi_vsock_claim *vc;
+	uint64_t caller_nonce;
+
+	if (atomic_load_acq_int(&fi_vsock_claim_count) == 0)
+		return (0);
+
+	caller_nonce = mac_capability_proc_nonce(cred);
+
+	rw_rlock(&fi_vsock_lock);
+	{
+		u_long bucket = fi_vsock_hash_fn(0, 0);
+
+		LIST_FOREACH(vc, &fi_vsock_hash[bucket], fv_hashlink) {
+			if (vc->fv_cid != VSOCK_CID_ANY)
+				continue;
+			if (vc->fv_port_min != 0 ||
+			    vc->fv_port_max != UINT32_MAX)
+				continue;
+			if (vc->fv_direction != FI_NET_ANY)
+				continue;
+			if (caller_nonce != 0 &&
+			    caller_nonce == vc->fv_nonce) {
+				rw_runlock(&fi_vsock_lock);
+				return (0);
+			}
+			{
+				uint64_t owner = vc->fv_nonce;
+				uint64_t claim_id = vc->fv_id;
+
+				rw_runlock(&fi_vsock_lock);
+				if (caller_nonce != 0) {
+					rw_rlock(&fi_auth_lock);
+					if (fi_is_authorized_vsock(
+					    caller_nonce, owner, claim_id,
+					    VSOCK_CID_ANY, 0, FI_NET_ANY)) {
+						rw_runlock(&fi_auth_lock);
+						return (0);
+					}
+					rw_runlock(&fi_auth_lock);
+				}
+			}
+			return (EACCES);
+		}
+	}
+	rw_runlock(&fi_vsock_lock);
+	return (0);
+}
 
 /* ----------------------------------------------------------------
  * Service operations
@@ -1265,6 +1631,7 @@ fi_init(struct mac_capability_instance *s, void *arg __unused)
 	LIST_INIT(&priv->fip_claims);
 	LIST_INIT(&priv->fip_net_claims);
 	LIST_INIT(&priv->fip_jail_claims);
+	LIST_INIT(&priv->fip_vsock_claims);
 	mac_capability_instance_set_priv(s, priv);
 	return (0);
 }
@@ -1852,6 +2219,195 @@ fi_do_query_jail(const struct fi_jail_request *jr, uint64_t nonce,
 	return (0);
 }
 
+/* ----------------------------------------------------------------
+ * vsock claim/release/query
+ * ---------------------------------------------------------------- */
+
+static int
+fi_validate_vsock_request(const void *req, size_t reqlen,
+    struct fi_vsock_request *out)
+{
+	const struct fi_vsock_request *vr;
+
+	if (reqlen < sizeof(*vr))
+		return (EINVAL);
+	vr = (const struct fi_vsock_request *)req;
+	if (vr->flags != 0)
+		return (EINVAL);
+	if (vr->direction == 0 || (vr->direction & ~FI_NET_ANY) != 0)
+		return (EINVAL);
+	if (vr->port_min > vr->port_max)
+		return (EINVAL);
+	*out = *vr;
+	return (0);
+}
+
+static int
+fi_do_claim_vsock(struct mac_capability_instance *s, struct fi_priv *priv,
+    const struct fi_vsock_request *vr, uint64_t nonce)
+{
+	struct fi_vsock_claim *vc, *existing;
+	u_long bucket;
+	uint32_t hash_port;
+
+	hash_port = fi_vsock_hash_port(vr->port_min, vr->port_max);
+	bucket = fi_vsock_hash_fn(hash_port, vr->cid);
+
+	vc = malloc(sizeof(*vc), M_FILE_ISOLATION, M_WAITOK | M_ZERO);
+
+	rw_wlock(&fi_vsock_lock);
+
+	/* Scan for conflicts from foreign nonces. */
+	{
+		u_long i;
+
+		for (i = 0; i <= fi_vsock_hashmask; i++) {
+			LIST_FOREACH(existing, &fi_vsock_hash[i],
+			    fv_hashlink) {
+				if (!fi_vsock_claims_overlap(existing, vr))
+					continue;
+				if (existing->fv_nonce != nonce) {
+					rw_wunlock(&fi_vsock_lock);
+					free(vc, M_FILE_ISOLATION);
+					return (EBUSY);
+				}
+			}
+		}
+	}
+
+	/* Check for exact same-nonce duplicate — re-claim. */
+	LIST_FOREACH(existing, &fi_vsock_hash[bucket], fv_hashlink) {
+		if (existing->fv_nonce != nonce)
+			continue;
+		if (existing->fv_port_min != vr->port_min ||
+		    existing->fv_port_max != vr->port_max ||
+		    existing->fv_cid != vr->cid ||
+		    existing->fv_direction != vr->direction)
+			continue;
+		/* Exact re-claim — transfer to this instance */
+		LIST_REMOVE(existing, fv_instlink);
+		LIST_INSERT_HEAD(&priv->fip_vsock_claims, existing,
+		    fv_instlink);
+		existing->fv_inst = s;
+		rw_wunlock(&fi_vsock_lock);
+		free(vc, M_FILE_ISOLATION);
+		return (0);
+	}
+
+	/* New claim */
+	vc->fv_cid = vr->cid;
+	vc->fv_port_min = vr->port_min;
+	vc->fv_port_max = vr->port_max;
+	vc->fv_direction = vr->direction;
+	vc->fv_nonce = nonce;
+	vc->fv_inst = s;
+	vc->fv_id = fi_alloc_claim_id();
+
+	LIST_INSERT_HEAD(&fi_vsock_hash[bucket], vc, fv_hashlink);
+	LIST_INSERT_HEAD(&priv->fip_vsock_claims, vc, fv_instlink);
+	atomic_add_int(&fi_vsock_claim_count, 1);
+	rw_wunlock(&fi_vsock_lock);
+	return (0);
+}
+
+static int
+fi_do_release_vsock(const struct fi_vsock_request *vr, uint64_t nonce)
+{
+	struct fi_vsock_claim *vc;
+	u_long bucket;
+	uint32_t hash_port;
+
+	hash_port = fi_vsock_hash_port(vr->port_min, vr->port_max);
+	bucket = fi_vsock_hash_fn(hash_port, vr->cid);
+
+	rw_wlock(&fi_vsock_lock);
+	LIST_FOREACH(vc, &fi_vsock_hash[bucket], fv_hashlink) {
+		if (vc->fv_nonce != nonce)
+			continue;
+		if (vc->fv_port_min != vr->port_min ||
+		    vc->fv_port_max != vr->port_max)
+			continue;
+		if (vc->fv_cid != vr->cid)
+			continue;
+		if (vc->fv_direction != vr->direction)
+			continue;
+		LIST_REMOVE(vc, fv_hashlink);
+		LIST_REMOVE(vc, fv_instlink);
+		atomic_subtract_int(&fi_vsock_claim_count, 1);
+		rw_wunlock(&fi_vsock_lock);
+		free(vc, M_FILE_ISOLATION);
+		return (0);
+	}
+	rw_wunlock(&fi_vsock_lock);
+	return (ENOENT);
+}
+
+static int
+fi_do_query_vsock(const struct fi_vsock_request *vr, uint64_t nonce,
+    struct fi_reply *rpl)
+{
+	struct fi_vsock_claim *vc;
+	u_long buckets[4];
+	uint32_t hash_port;
+	int i, j;
+	bool dup;
+#define	VSOCK_QUERY_MAX	8
+	struct { uint64_t nonce; uint64_t claim_id; } matches[VSOCK_QUERY_MAX];
+	int nmatches = 0;
+
+	hash_port = fi_vsock_hash_port(vr->port_min, vr->port_max);
+
+	buckets[0] = fi_vsock_hash_fn(hash_port, vr->cid);
+	buckets[1] = fi_vsock_hash_fn(0, vr->cid);
+	buckets[2] = fi_vsock_hash_fn(hash_port, 0);
+	buckets[3] = fi_vsock_hash_fn(0, 0);
+
+	rpl->flags = 0;
+	rw_rlock(&fi_vsock_lock);
+	for (i = 0; i < nitems(buckets); i++) {
+		dup = false;
+		for (j = 0; j < i; j++) {
+			if (buckets[j] == buckets[i]) {
+				dup = true;
+				break;
+			}
+		}
+		if (dup)
+			continue;
+		LIST_FOREACH(vc, &fi_vsock_hash[buckets[i]], fv_hashlink) {
+			if (!fi_vsock_claim_covers_request(vc, vr))
+				continue;
+			rpl->flags |= FI_QF_CLAIMED;
+			if (nonce != 0 && vc->fv_nonce == nonce) {
+				rpl->flags |= FI_QF_MINE;
+				rw_runlock(&fi_vsock_lock);
+				return (0);
+			}
+			if (nmatches < VSOCK_QUERY_MAX) {
+				matches[nmatches].nonce = vc->fv_nonce;
+				matches[nmatches].claim_id = vc->fv_id;
+				nmatches++;
+			}
+		}
+	}
+	rw_runlock(&fi_vsock_lock);
+
+	if (nmatches > 0 && nonce != 0) {
+		rw_rlock(&fi_auth_lock);
+		for (i = 0; i < nmatches; i++) {
+			if (fi_is_authorized_vsock(nonce,
+			    matches[i].nonce, matches[i].claim_id,
+			    vr->cid, vr->port_min, vr->direction)) {
+				rpl->flags |= FI_QF_AUTHORIZED;
+				break;
+			}
+		}
+		rw_runlock(&fi_auth_lock);
+	}
+	return (0);
+#undef VSOCK_QUERY_MAX
+}
+
 /*
  * Validate a network claim/release request.  Returns 0 on success
  * and sets *nrp to the validated request pointer.
@@ -1869,19 +2425,32 @@ fi_validate_net_request(const void *req, size_t reqlen,
 	if (nr->flags != 0 || nr->direction == 0 ||
 	    (nr->direction & ~FI_NET_ANY) != 0)
 		return (EINVAL);
-	/* Validate domain: AF_INET, AF_INET6, or 0 (wildcard) */
+	/* Validate domain: AF_INET, AF_INET6, AF_BLUETOOTH, or 0 (wildcard) */
 	if (nr->domain != 0 && nr->domain != AF_INET &&
-	    nr->domain != AF_INET6)
+	    nr->domain != AF_INET6 && nr->domain != AF_BLUETOOTH)
 		return (EINVAL);
-	/* Validate protocol: IPPROTO_TCP, IPPROTO_UDP, or 0 */
-	if (nr->protocol != 0 && nr->protocol != IPPROTO_TCP &&
-	    nr->protocol != IPPROTO_UDP)
-		return (EINVAL);
-	/* Validate prefix: IPv4 max /32, IPv6 max /128 */
-	if (nr->domain == AF_INET && nr->prefix > 32)
-		return (EINVAL);
-	if (nr->prefix > 128)
-		return (EINVAL);
+	/* Validate protocol and prefix per domain */
+	if (nr->domain == AF_BLUETOOTH) {
+		if (nr->protocol != 0 &&
+		    nr->protocol != BLUETOOTH_PROTO_L2CAP &&
+		    nr->protocol != BLUETOOTH_PROTO_RFCOMM &&
+		    nr->protocol != BLUETOOTH_PROTO_SCO &&
+		    nr->protocol != BLUETOOTH_PROTO_ISO)
+			return (EINVAL);
+		/* BD_ADDR prefix: only 0 (any) or 48 (exact) */
+		if (nr->prefix != 0 && nr->prefix != 48)
+			return (EINVAL);
+	} else {
+		/* Validate protocol: IPPROTO_TCP, IPPROTO_UDP, or 0 */
+		if (nr->protocol != 0 && nr->protocol != IPPROTO_TCP &&
+		    nr->protocol != IPPROTO_UDP)
+			return (EINVAL);
+		/* Validate prefix: IPv4 max /32, IPv6 max /128 */
+		if (nr->domain == AF_INET && nr->prefix > 32)
+			return (EINVAL);
+		if (nr->prefix > 128)
+			return (EINVAL);
+	}
 	port_min = ntohs(nr->port_min);
 	port_max = ntohs(nr->port_max);
 	if (port_min > port_max)
@@ -1892,11 +2461,13 @@ fi_validate_net_request(const void *req, size_t reqlen,
 
 /*
  * Mint a token fd, set it as a token with the given owner nonce,
- * and fill the reply fd slot.  Shared by FI_OP_MINT and FI_OP_MINT_NET.
+ * and fill the reply fd slot.  Shared by FI_OP_MINT, FI_OP_MINT_NET,
+ * FI_OP_MINT_JAIL, and FI_OP_MINT_VSOCK.
  */
 static int
 fi_mint_token(uint64_t caller_nonce, uint64_t claim_id, uint64_t fs_actions,
     const struct fi_net_request *net, const struct fi_jail_request *jail,
+    const struct fi_vsock_request *vsock,
     struct file **reply_fds,
     int *reply_nfdsp, size_t *replylenp)
 {
@@ -1932,26 +2503,34 @@ fi_mint_token(uint64_t caller_nonce, uint64_t claim_id, uint64_t fs_actions,
 		tp->fip_token_is_jail = true;
 		tp->fip_token_jail = *jail;
 	}
+	if (vsock != NULL) {
+		tp->fip_token_is_vsock = true;
+		tp->fip_token_vsock = *vsock;
+	}
 
 	reply_fds[0] = token_fp;
 	*reply_nfdsp = 1;
 	*replylenp = sizeof(struct fi_reply);
 
-	if ((net == NULL && jail == NULL && fs_actions != FI_FS_ALL) ||
-	    net != NULL ||
+	if ((net == NULL && jail == NULL && vsock == NULL &&
+	    fs_actions != FI_FS_ALL) ||
+	    net != NULL || vsock != NULL ||
 	    (jail != NULL && jail->actions != FI_JAIL_ALL)) {
 		SDT_PROBE5(mac_capability_isolation, , , token__narrow,
 		    (net != NULL ? "net" :
-		    (jail != NULL ? "jail" : "file")),
+		    (jail != NULL ? "jail" :
+		    (vsock != NULL ? "vsock" : "file"))),
 		    caller_nonce, claim_id, fs_actions, (uint64_t)0);
 	}
 
 	SDT_PROBE6(mac_capability_isolation, , , state,
 	    (net != NULL ? "net-token-mint" :
-	    (jail != NULL ? "jail-token-mint" : "token-mint")),
+	    (jail != NULL ? "jail-token-mint" :
+	    (vsock != NULL ? "vsock-token-mint" : "token-mint"))),
 	    caller_nonce, caller_nonce, claim_id,
 	    (net != NULL ? FI_OP_MINT_NET :
-	    (jail != NULL ? FI_OP_MINT_JAIL : FI_OP_MINT)), 0);
+	    (jail != NULL ? FI_OP_MINT_JAIL :
+	    (vsock != NULL ? FI_OP_MINT_VSOCK : FI_OP_MINT))), 0);
 	return (0);
 }
 
@@ -2125,7 +2704,7 @@ fi_call(struct mac_capability_instance *s,
 		rw_runlock(&fi_lock);
 
 		error = fi_mint_token(caller_nonce, claim_id, actions,
-		    NULL, NULL, reply_fds, reply_nfdsp, replylenp);
+		    NULL, NULL, NULL, reply_fds, reply_nfdsp, replylenp);
 		return (error);
 	}
 
@@ -2197,7 +2776,7 @@ fi_call(struct mac_capability_instance *s,
 			}
 
 			error = fi_mint_token(caller_nonce, claim_id, 0, &nr,
-			    NULL, reply_fds, reply_nfdsp, replylenp);
+			    NULL, NULL, reply_fds, reply_nfdsp, replylenp);
 			return (error);
 		}
 
@@ -2242,7 +2821,106 @@ fi_call(struct mac_capability_instance *s,
 			}
 
 			error = fi_mint_token(caller_nonce, claim_id, 0, NULL,
-			    &jr, reply_fds, reply_nfdsp, replylenp);
+			    &jr, NULL, reply_fds, reply_nfdsp, replylenp);
+			return (error);
+		}
+
+	case FI_OP_CLAIM_VSOCK:
+	{
+		struct fi_vsock_request vr;
+		int error;
+
+		error = fi_validate_vsock_request(req, reqlen, &vr);
+		if (error != 0)
+			return (error);
+		return (fi_do_claim_vsock(s, priv, &vr, caller_nonce));
+	}
+	case FI_OP_RELEASE_VSOCK:
+	{
+		struct fi_vsock_request vr;
+		int error;
+
+		error = fi_validate_vsock_request(req, reqlen, &vr);
+		if (error != 0)
+			return (error);
+		return (fi_do_release_vsock(&vr, caller_nonce));
+	}
+	case FI_OP_QUERY_VSOCK:
+	{
+		struct fi_vsock_request vr;
+		int error;
+
+		error = fi_validate_vsock_request(req, reqlen, &vr);
+		if (error != 0)
+			return (error);
+		return (fi_do_query_vsock(&vr, caller_nonce, rpl));
+	}
+
+		case FI_OP_MINT_VSOCK: {
+			struct fi_vsock_request vr;
+			struct fi_vsock_claim *vc;
+			uint64_t claim_id;
+			bool found;
+			int error;
+
+			error = fi_validate_vsock_request(req, reqlen, &vr);
+			if (error != 0)
+				return (error);
+			if (priv->fip_is_token)
+				return (EINVAL);
+			if (*reply_nfdsp < 1)
+				return (EINVAL);
+
+			found = false;
+			claim_id = 0;
+			rw_rlock(&fi_vsock_lock);
+			{
+				u_long buckets[4];
+				uint32_t hash_port;
+				int i, j;
+
+				hash_port = fi_vsock_hash_port(vr.port_min,
+				    vr.port_max);
+				buckets[0] = fi_vsock_hash_fn(hash_port,
+				    vr.cid);
+				buckets[1] = fi_vsock_hash_fn(0, vr.cid);
+				buckets[2] = fi_vsock_hash_fn(hash_port, 0);
+				buckets[3] = fi_vsock_hash_fn(0, 0);
+
+				for (i = 0; i < nitems(buckets) && !found;
+				    i++) {
+					bool dup = false;
+
+					for (j = 0; j < i; j++) {
+						if (buckets[j] == buckets[i]) {
+							dup = true;
+							break;
+						}
+					}
+					if (dup)
+						continue;
+					LIST_FOREACH(vc,
+					    &fi_vsock_hash[buckets[i]],
+					    fv_hashlink) {
+						if (vc->fv_nonce !=
+						    caller_nonce)
+							continue;
+						if (!fi_vsock_claim_covers_request(
+						    vc, &vr))
+							continue;
+						claim_id = vc->fv_id;
+						found = true;
+						break;
+					}
+				}
+			}
+			rw_runlock(&fi_vsock_lock);
+			if (!found)
+				return (ENOENT);
+
+			error = fi_mint_token(caller_nonce, claim_id, 0,
+			    NULL, NULL, &vr, reply_fds, reply_nfdsp,
+			    replylenp);
 			return (error);
 		}
 
@@ -2264,13 +2942,16 @@ fi_call(struct mac_capability_instance *s,
 			    priv->fip_token_is_net ? &priv->fip_token_net : NULL,
 			    priv->fip_token_is_jail ?
 			    &priv->fip_token_jail : NULL,
+			    priv->fip_token_is_vsock ?
+			    &priv->fip_token_vsock : NULL,
 			    s);
 		if (error != 0)
 			return (error);
 		SDT_PROBE6(mac_capability_isolation, , , state,
 		    (priv->fip_token_is_net ? "net-authorize" :
 		    (priv->fip_token_is_jail ? "jail-authorize" :
-		    "authorize")),
+		    (priv->fip_token_is_vsock ? "vsock-authorize" :
+		    "authorize"))),
 		    priv->fip_token_owner, caller_nonce,
 		    priv->fip_token_claim_id, FI_OP_AUTHORIZE, 0);
 		*replylenp = sizeof(struct fi_reply);
@@ -2351,6 +3032,20 @@ fi_revoke(struct mac_capability_instance *s, uint64_t badge __unused,
 			free(jc, M_FILE_ISOLATION);
 		}
 		rw_wunlock(&fi_jail_lock);
+	}
+
+	/* Release all vsock claims */
+	{
+		struct fi_vsock_claim *vc;
+
+		rw_wlock(&fi_vsock_lock);
+		while ((vc = LIST_FIRST(&priv->fip_vsock_claims)) != NULL) {
+			LIST_REMOVE(vc, fv_hashlink);
+			LIST_REMOVE(vc, fv_instlink);
+			atomic_subtract_int(&fi_vsock_claim_count, 1);
+			free(vc, M_FILE_ISOLATION);
+		}
+		rw_wunlock(&fi_vsock_lock);
 	}
 
 	/* Remove any auth entries created by this instance (token). */
@@ -2576,6 +3271,10 @@ mac_capability_isolation_modevent(module_t mod __unused, int type,
 		LIST_INIT(&fi_jail_claims);
 		rw_init(&fi_jail_lock, "mac_capability_fi_jail");
 
+		fi_vsock_hash = hashinit(FI_VSOCK_HASH_SIZE, M_FILE_ISOLATION,
+		    &fi_vsock_hashmask);
+		rw_init(&fi_vsock_lock, "mac_capability_fi_vsock");
+
 		fi_auth_hash = hashinit(FI_AUTH_HASH_SIZE, M_FILE_ISOLATION,
 		    &fi_auth_hashmask);
 		rw_init(&fi_auth_lock, "mac_capability_fi_auth");
@@ -2586,6 +3285,9 @@ mac_capability_isolation_modevent(module_t mod __unused, int type,
 
 		error = mac_capability_service_create(&p, &fi_svc);
 		if (error != 0) {
+			rw_destroy(&fi_vsock_lock);
+			hashdestroy(fi_vsock_hash, M_FILE_ISOLATION,
+			    fi_vsock_hashmask);
 			rw_destroy(&fi_jail_lock);
 			rw_destroy(&fi_net_lock);
 			hashdestroy(fi_net_hash, M_FILE_ISOLATION,
