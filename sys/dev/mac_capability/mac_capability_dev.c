@@ -46,8 +46,6 @@
 MALLOC_DECLARE(M_MAC_CAPABILITY);
 
 SDT_PROVIDER_DECLARE(mac_capability);
-SDT_PROVIDER_DECLARE(capsicum);
-SDT_PROBE_DECLARE(capsicum, , , xfer__capmode__deny);
 SDT_PROBE_DECLARE(mac_capability, , , send);
 SDT_PROBE_DECLARE(mac_capability, , , send__done);
 SDT_PROBE_DECLARE(mac_capability, , , recv);
@@ -356,7 +354,7 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 				    fde->fde_clofork_state;
 				msg->cm_fde_flags[i] =
 				    fde->fde_flags &
-				    (UF_CAP_SUFFICIENT | UF_CAP_ONLY |
+				    (UF_CAP_SUFFICIENT |
 				    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 			}
 			FILEDESC_XUNLOCK(fdesc);
@@ -512,24 +510,6 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 		struct filedesc *fdesc = td->td_proc->p_fd;
 		int installed;
 
-#ifdef CAPABILITY_MODE
-		for (i = 0; i < nfds_out; i++) {
-			if ((msg->cm_fde_flags[i] & UF_CAP_ONLY) &&
-			    !IN_CAPABILITY_MODE(td)) {
-				SDT_PROBE6(capsicum, , ,
-				    xfer__capmode__deny,
-				    i, td->td_proc->p_pid,
-				    td->td_ucred,
-				    msg->cm_fds[i]->f_type,
-				    msg->cm_fde_flags[i],
-				    ENOTCAPABLE);
-				error = ENOTCAPABLE;
-				mac_capability_msg_free(msg);
-				args->nfds = 0;
-				goto out;
-			}
-		}
-#endif
 		for (i = 0; i < nfds_out; i++) {
 			if (!fhold(msg->cm_fds[i])) {
 				/* Drop refs already taken. */
@@ -561,7 +541,7 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 			    msg->cm_clofork_state[installed];
 			fdesc->fd_ofiles[fdbuf[installed]].fde_flags |=
 			    msg->cm_fde_flags[installed] &
-			    (UF_CAP_SUFFICIENT | UF_CAP_ONLY |
+			    (UF_CAP_SUFFICIENT |
 			    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 		}
 		FILEDESC_XUNLOCK(fdesc);

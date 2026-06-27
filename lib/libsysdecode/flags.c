@@ -207,7 +207,7 @@ static struct name_table sockoptvsock[] = {
 };
 
 static struct name_table sockflags[] = {
-	X(SOCK_CLOEXEC) X(SOCK_CLOFORK) X(SOCK_NONBLOCK) X(SOCK_CAPMODE) XEND
+	X(SOCK_CLOEXEC) X(SOCK_CLOFORK) X(SOCK_NONBLOCK) XEND
 };
 
 bool
@@ -218,16 +218,16 @@ sysdecode_socket_type(FILE *fp, int type, int *rem)
 	bool printed;
 
 	str = lookup_value(socktype,
-	    type & ~(SOCK_CLOEXEC | SOCK_CLOFORK | SOCK_NONBLOCK | SOCK_CAPMODE));
+	    type & ~(SOCK_CLOEXEC | SOCK_CLOFORK | SOCK_NONBLOCK));
 	if (str != NULL) {
 		fputs(str, fp);
 		*rem = 0;
 		printed = true;
 	} else {
-		*rem = type & ~(SOCK_CLOEXEC | SOCK_CLOFORK | SOCK_NONBLOCK | SOCK_CAPMODE);
+		*rem = type & ~(SOCK_CLOEXEC | SOCK_CLOFORK | SOCK_NONBLOCK);
 		printed = false;
 	}
-	val = type & (SOCK_CLOEXEC | SOCK_CLOFORK | SOCK_NONBLOCK | SOCK_CAPMODE);
+	val = type & (SOCK_CLOEXEC | SOCK_CLOFORK | SOCK_NONBLOCK);
 	print_mask_part(fp, sockflags, &val, &printed);
 	return (printed);
 }

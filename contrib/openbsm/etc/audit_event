@@ -620,7 +620,6 @@
 43300:AUE_CAP_AMBIENT_LIMIT:cap_ambient_limit(2):fm
 43301:AUE_PDSELF:pdself(2):pc
 43302:AUE_PDCMP:pdcmp(2):pc
-43303:AUE_CAP_XFER_CAPMODE:cap_xfer_capmode(2):ot
 43304:AUE_PDINCAPMODE:pdincapmode(2):ot
 43305:AUE_CAP_MMAP_CAPMODE:cap_mmap_capmode(2):ot
 43306:AUE_CAP_LOOKUP_CAPMODE:cap_lookup_capmode(2):ot

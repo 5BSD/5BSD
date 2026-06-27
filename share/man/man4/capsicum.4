@@ -83,12 +83,8 @@ When a capability-mode process operates on a descriptor that has
 set, MAC policy, DAC credential re-validation, and jail confinement
 checks are skipped \(em the descriptor's capability rights are treated
 as sufficient authority.
-The flag is set automatically by
-.Xr socketpair 2
-when the
-.Dv SOCK_CAPMODE
-type flag is used, and may also be set directly on individual
-descriptors.
+The flag may be set directly on individual descriptors via
+.Xr cap_ambient_limit 2 .
 .Pp
 For instance,
 .Xr sysctl 2
@@ -142,23 +138,6 @@ or fully locked
 .Pq Dv CAP_XFER_NONE .
 Transfer state is orthogonal to capability rights.
 .Pp
-.Xr cap_xfer_capmode 2
-provides an additional monotonic per-descriptor restriction: once set,
-the descriptor may only be sent over a
-.Ux Ns -domain
-socket whose underlying connection has the
-.Dv LOCAL_CAP_SOCKET
-attribute
-.Pq i.e., both endpoints were created in capability mode .
-The check is performed at send time in
-.Xr sendmsg 2 ;
-if the sending socket lacks
-.Dv LOCAL_CAP_SOCKET ,
-the send fails with
-.Er ENOTCAPABLE .
-The flag propagates to the new descriptor in the receiver's table,
-so all subsequent transfers are likewise restricted.
-.Pp
 .Xr cap_mmap_capmode 2
 sets a monotonic per-descriptor flag that requires the calling process
 to be in capability mode before the descriptor may be mapped with
@@ -174,28 +153,20 @@ descriptor may be used as the
 argument to any
 .Xr \&*at 2
 system call.
-.It Dv SOCK_CAPMODE
+.It Dv LOCAL_CAP_REQ
 The
-.Dv SOCK_CAPMODE
-flag may be passed to
-.Xr socketpair 2
-to create a
-.Ux Ns -domain
-socket pair in which both endpoints are marked with
-.Dv UF_CAP_SUFFICIENT .
-This means that capability-mode processes can operate on these
-descriptors without MAC or DAC re-checks.
-.Pp
-.Dv SOCK_CAPMODE
-does not set transfer or close-on-exec/fork restrictions;
-those are controlled independently via
-.Xr cap_xfer_limit 2 ,
-.Xr cap_cloexec_limit 2 ,
-and
-.Xr cap_clofork_limit 2 .
+.Dv LOCAL_CAP_REQ
+socket option
+.Pq set via Xr setsockopt 2 on Dv SOL_LOCAL
+requires the calling process to be in capability mode to send or receive
+on that socket end.
+It is monotonic and cannot be cleared.
+This allows per-end control on socketpairs: the supervisor sets
+.Dv LOCAL_CAP_REQ
+on the child's end before delegating it.
 .It connection-level capability enforcement
 The
-.Dv LOCAL_CAP_SOCKET
+.Dv LOCAL_CAP_CONNECT
 .Ux Ns -domain
 socket option
 .Pq see Xr unix 4
@@ -269,7 +240,6 @@ on files specified on a command line or establishing network connections.
 .Xr cap_lookup_capmode 2 ,
 .Xr cap_mmap_capmode 2 ,
 .Xr cap_rights_limit 2 ,
-.Xr cap_xfer_capmode 2 ,
 .Xr cap_xfer_limit 2 ,
 .Xr fchmod 2 ,
 .Xr open 2 ,

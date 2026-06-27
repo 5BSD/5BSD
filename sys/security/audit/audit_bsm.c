@@ -1842,7 +1842,6 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 	case AUE_CAP_CLOEXEC_LIMIT:
 	case AUE_CAP_CLOFORK_LIMIT:
 	case AUE_CAP_AMBIENT_LIMIT:
-	case AUE_CAP_XFER_CAPMODE:
 	case AUE_CAP_MMAP_CAPMODE:
 	case AUE_CAP_LOOKUP_CAPMODE:
 		if (ARG_IS_VALID(kar, ARG_FD)) {

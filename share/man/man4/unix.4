@@ -351,7 +351,7 @@ The
 and
 .Dv LOCAL_CREDS_PERSISTENT
 options are mutually exclusive.
-.It Dv LOCAL_CAP_SOCKET
+.It Dv LOCAL_CAP_CONNECT
 This option may be set on a
 .Dv SOCK_STREAM ,
 .Dv SOCK_SEQPACKET ,
@@ -377,27 +377,6 @@ This prevents a compromised server from disabling the protection.
 This option is intended for use by privilege-separated daemons
 .Pq such as Xr bhyve 8
 that accept connections only from their own sandboxed workers.
-.It Dv LOCAL_PEERCAPMODE
-This read-only option may be queried via
-.Xr getsockopt 2
-on a connected
-.Dv SOCK_STREAM
-or
-.Dv SOCK_SEQPACKET
-socket.
-It returns a non-zero integer if the connected peer was in capability mode
-.Pq see Xr cap_enter 2
-at the time the connection was established, or zero otherwise.
-.Pp
-If the socket is not connected,
-.Xr getsockopt 2
-returns
-.Er ENOTCONN .
-.Pp
-The capability-mode status is captured at connect time along with
-the peer credentials and does not change afterwards.
-This allows a server to distinguish between sandboxed and
-non-sandboxed clients.
 .It Dv LOCAL_CAPMODE_SERVER
 This option may be set on a
 .Dv SOCK_STREAM ,
@@ -426,7 +405,7 @@ Attempting to set the option to zero when it is already enabled returns
 .Er ENOTCAPABLE .
 .Pp
 This option is the client-side counterpart to
-.Dv LOCAL_CAP_SOCKET ,
+.Dv LOCAL_CAP_CONNECT ,
 which is set on the server side.
 Together they allow mutual attestation:
 the server can require sandboxed clients, and the client can require

@@ -118,9 +118,9 @@ struct unpcb {
 #define	UNP_CONNECTING			0x010	/* Currently connecting. */
 #define	UNP_BINDING			0x020	/* Currently binding. */
 #define	UNP_WAITING			0x040	/* Peer state is changing. */
-#define	UNP_CAP_SOCKET			0x080	/* require cap mode for connect and fd send */
-#define	UNP_PEERCAPMODE			0x100	/* peer was in cap mode at connect */
+#define	UNP_CAP_CONNECT			0x080	/* require cap mode for connect and fd send */
 #define	UNP_CAPMODE_SERVER		0x200	/* require server in cap mode */
+#define	UNP_CAP_REQ			0x400	/* require cap mode to send/recv */
 
 /*
  * Flags in unp_gcflag.

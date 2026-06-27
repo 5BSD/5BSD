@@ -3603,13 +3603,6 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 3;
 		break;
 	}
-	/* cap_xfer_capmode */
-	case 632: {
-		struct cap_xfer_capmode_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		*n_args = 1;
-		break;
-	}
 	/* pdincapmode */
 	case 633: {
 		struct pdincapmode_args *p = params;
@@ -9675,16 +9668,6 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
-	/* cap_xfer_capmode */
-	case 632:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		default:
-			break;
-		};
-		break;
 	/* pdincapmode */
 	case 633:
 		switch (ndx) {
@@ -11770,11 +11753,6 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* pdcmp */
 	case 631:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_xfer_capmode */
-	case 632:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

@@ -64,24 +64,14 @@ flags in the
 .Fa type
 argument apply to both descriptors.
 .Pp
-The
-.Dv SOCK_CAPMODE
-flag in the
-.Fa type
-argument marks both
-.Fa sv Ns [0]
-and
-.Fa sv Ns [1]
-with the
-.Dv UF_CAP_SUFFICIENT
-flag, indicating that the descriptors carry sufficient authority for use
-by capability-mode processes without ambient authority checks.
-Transfer and lifecycle restrictions
-.Pq such as Xr cap_xfer_limit 2 , Xr cap_cloexec_limit 2 , or Xr cap_xfer_capmode 2
-are not applied automatically and must be set separately by the caller.
-.Pp
-This is intended for creating a channel between sandboxed peers, where
-each side holds a capability-sufficient descriptor.
+Per-end capability restrictions on a socket pair are set after creation
+via
+.Xr setsockopt 2
+with
+.Dv LOCAL_CAP_REQ
+.Pq Dv SOL_LOCAL .
+This requires the calling process to be in capability mode to send or
+receive on the marked end.
 .Sh RETURN VALUES
 .Rv -std socketpair
 .Sh ERRORS
@@ -102,7 +92,6 @@ does not specify a valid part of the
 process address space.
 .El
 .Sh SEE ALSO
-.Xr cap_xfer_capmode 2 ,
 .Xr cap_xfer_limit 2 ,
 .Xr pipe 2 ,
 .Xr read 2 ,

@@ -100,7 +100,6 @@
 
 SDT_PROVIDER_DECLARE(fd);
 SDT_PROVIDER_DECLARE(capsicum);
-SDT_PROBE_DECLARE(capsicum, , , xfer__capmode__deny);
 SDT_PROBE_DECLARE(capsicum, , , connect__capmode__deny);
 SDT_PROBE_DECLARE(capsicum, , , connect__capmode__server__deny);
 SDT_PROBE_DEFINE6(fd, , , scm__rights__send,
@@ -1143,6 +1142,13 @@ uipc_sosend_stream_or_seqpacket(struct socket *so, struct sockaddr *addr,
 	if (__predict_false(flags & MSG_OOB))
 		return (EOPNOTSUPP);
 
+#ifdef CAPABILITY_MODE
+	if ((sotounpcb(so)->unp_flags & UNP_CAP_REQ) &&
+	    !IN_CAPABILITY_MODE(td))
+		return (EXTERROR(ENOTCAPABLE,
+		    "socket requires capability mode (LOCAL_CAP_REQ)"));
+#endif
+
 	nonblock = (so->so_state & SS_NBIO) ||
 	    (flags & (MSG_DONTWAIT | MSG_NBIO));
 	eor = flags & MSG_EOR;
@@ -1422,6 +1428,13 @@ uipc_soreceive_stream_or_seqpacket(struct socket *so, struct sockaddr **psa,
 		*psa = NULL;
 	if (controlp != NULL)
 		*controlp = NULL;
+
+#ifdef CAPABILITY_MODE
+	if ((sotounpcb(so)->unp_flags & UNP_CAP_REQ) &&
+	    !IN_CAPABILITY_MODE(curthread))
+		return (EXTERROR(ENOTCAPABLE,
+		    "socket requires capability mode (LOCAL_CAP_REQ)"));
+#endif
 
 	flags = flagsp != NULL ? *flagsp : 0;
 	nonblock = (so->so_state & SS_NBIO) ||
@@ -1993,6 +2006,15 @@ uipc_sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		error = EOPNOTSUPP;
 		goto out;
 	}
+
+#ifdef CAPABILITY_MODE
+	if ((sotounpcb(so)->unp_flags & UNP_CAP_REQ) &&
+	    !IN_CAPABILITY_MODE(td)) {
+		error = EXTERROR(ENOTCAPABLE,
+		    "socket requires capability mode (LOCAL_CAP_REQ)");
+		goto out;
+	}
+#endif
 	if (m == NULL) {
 		if (__predict_false(uio->uio_resid > unpdg_maxdgram)) {
 			error = EMSGSIZE;
@@ -2272,6 +2294,13 @@ uipc_soreceive_dgram(struct socket *so, struct sockaddr **psa, struct uio *uio,
 		*psa = NULL;
 	if (controlp != NULL)
 		*controlp = NULL;
+
+#ifdef CAPABILITY_MODE
+	if ((sotounpcb(so)->unp_flags & UNP_CAP_REQ) &&
+	    !IN_CAPABILITY_MODE(curthread))
+		return (EXTERROR(ENOTCAPABLE,
+		    "socket requires capability mode (LOCAL_CAP_REQ)"));
+#endif
 
 	flags = flagsp != NULL ? *flagsp : 0;
 	nonblock = (so->so_state & SS_NBIO) ||
@@ -2810,33 +2839,23 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			error = sooptcopyout(sopt, &optval, sizeof(optval));
 			break;
 
-		case LOCAL_CAP_SOCKET:
+		case LOCAL_CAP_CONNECT:
 			UNP_PCB_LOCK(unp);
-			optval = (unp->unp_flags & UNP_CAP_SOCKET) ? 1 : 0;
+			optval = (unp->unp_flags & UNP_CAP_CONNECT) ? 1 : 0;
 			UNP_PCB_UNLOCK(unp);
-			error = sooptcopyout(sopt, &optval, sizeof(optval));
-			break;
-
-		case LOCAL_PEERCAPMODE:
-			UNP_PCB_LOCK(unp);
-			if (unp->unp_flags & UNP_HAVEPC)
-				optval = (unp->unp_flags &
-				    UNP_PEERCAPMODE) ? 1 : 0;
-			else {
-				if (so->so_proto->pr_flags & PR_CONNREQUIRED)
-					error = ENOTCONN;
-				else
-					error = EINVAL;
-			}
-			UNP_PCB_UNLOCK(unp);
-			if (error != 0)
-				break;
 			error = sooptcopyout(sopt, &optval, sizeof(optval));
 			break;
 
 		case LOCAL_CAPMODE_SERVER:
 			UNP_PCB_LOCK(unp);
 			optval = (unp->unp_flags & UNP_CAPMODE_SERVER) ? 1 : 0;
+			UNP_PCB_UNLOCK(unp);
+			error = sooptcopyout(sopt, &optval, sizeof(optval));
+			break;
+
+		case LOCAL_CAP_REQ:
+			UNP_PCB_LOCK(unp);
+			optval = (unp->unp_flags & UNP_CAP_REQ) ? 1 : 0;
 			UNP_PCB_UNLOCK(unp);
 			error = sooptcopyout(sopt, &optval, sizeof(optval));
 			break;
@@ -2884,15 +2903,15 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			}
 			break;
 #undef	OPTSET
-		case LOCAL_CAP_SOCKET:
+		case LOCAL_CAP_CONNECT:
 			error = sooptcopyin(sopt, &optval, sizeof(optval),
 					    sizeof(optval));
 			if (error)
 				break;
 			UNP_PCB_LOCK(unp);
 			if (optval)
-				unp->unp_flags |= UNP_CAP_SOCKET;
-			else if (unp->unp_flags & UNP_CAP_SOCKET)
+				unp->unp_flags |= UNP_CAP_CONNECT;
+			else if (unp->unp_flags & UNP_CAP_CONNECT)
 				error = ENOTCAPABLE;  /* monotonic: cannot clear */
 			UNP_PCB_UNLOCK(unp);
 			break;
@@ -2906,6 +2925,19 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			if (optval)
 				unp->unp_flags |= UNP_CAPMODE_SERVER;
 			else if (unp->unp_flags & UNP_CAPMODE_SERVER)
+				error = ENOTCAPABLE;  /* monotonic: cannot clear */
+			UNP_PCB_UNLOCK(unp);
+			break;
+
+		case LOCAL_CAP_REQ:
+			error = sooptcopyin(sopt, &optval, sizeof(optval),
+					    sizeof(optval));
+			if (error)
+				break;
+			UNP_PCB_LOCK(unp);
+			if (optval)
+				unp->unp_flags |= UNP_CAP_REQ;
+			else if (unp->unp_flags & UNP_CAP_REQ)
 				error = ENOTCAPABLE;  /* monotonic: cannot clear */
 			UNP_PCB_UNLOCK(unp);
 			break;
@@ -3041,7 +3073,7 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 	}
 	so2 = unp2->unp_socket;
 #ifdef CAPABILITY_MODE
-	if ((unp2->unp_flags & UNP_CAP_SOCKET) &&
+	if ((unp2->unp_flags & UNP_CAP_CONNECT) &&
 	    !IN_CAPABILITY_MODE(td)) {
 		SDT_PROBE6(capsicum, , , connect__capmode__deny,
 		    td->td_proc->p_pid, td->td_ucred,
@@ -3049,7 +3081,7 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 		    ENOTCAPABLE);
 		error = EXTERROR(ENOTCAPABLE,
 		    "socket requires capability mode to connect "
-		    "(LOCAL_CAP_SOCKET)");
+		    "(LOCAL_CAP_CONNECT)");
 		goto bad2;
 	}
 
@@ -3157,13 +3189,10 @@ unp_copy_peercred(struct thread *td, struct unpcb *client_unp,
 {
 	cru2xt(td, &client_unp->unp_peercred);
 	client_unp->unp_flags |= UNP_HAVEPC;
-	if (td->td_ucred->cr_flags & CRED_FLAG_CAPMODE)
-		client_unp->unp_flags |= UNP_PEERCAPMODE;
 
 	memcpy(&server_unp->unp_peercred, &listen_unp->unp_peercred,
 	    sizeof(server_unp->unp_peercred));
 	server_unp->unp_flags |= UNP_HAVEPC;
-	server_unp->unp_flags |= (listen_unp->unp_flags & UNP_PEERCAPMODE);
 	client_unp->unp_flags |= (listen_unp->unp_flags & UNP_WANTCRED_MASK);
 }
 
@@ -3690,7 +3719,7 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				    fdep[i]->fde_clofork_state;
 				fdesc->fd_ofiles[*fdp].fde_flags |=
 				    fdep[i]->fde_flags &
-				    (UF_CAP_SUFFICIENT | UF_CAP_ONLY |
+				    (UF_CAP_SUFFICIENT |
 				    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 				unp_externalize_fp(fp);
 				SDT_PROBE6(fd, , , scm__rights__recv, fp,
@@ -3913,31 +3942,6 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
 					error = ENOTCAPABLE;
 					goto out;
 				}
-#ifdef CAPABILITY_MODE
-				/*
-				 * If the fd requires the receiver to be
-				 * in capability mode, the socket must
-				 * enforce capmode on its peer.  Reject
-				 * at send time so CAP_XFER_ONCE is not
-				 * consumed on a doomed transfer.
-				 */
-				if (fdesc->fd_ofiles[*fdp].fde_flags &
-				    UF_CAP_ONLY) {
-					struct unpcb *unp;
-
-					unp = sotounpcb(so);
-					if (unp == NULL ||
-					    !(unp->unp_flags &
-					    UNP_CAP_SOCKET)) {
-						FILEDESC_XUNLOCK(fdesc);
-						error = EXTERROR(ENOTCAPABLE,
-						    "receiver not on a "
-						    "capability-mode socket "
-						    "(LOCAL_CAP_SOCKET required)");
-						goto out;
-					}
-				}
-#endif
 			}
 
 			/*
@@ -3988,7 +3992,7 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
 				    fde->fde_clofork_state;
 				fdep[i]->fde_flags =
 				    fde->fde_flags &
-				    (UF_CAP_SUFFICIENT | UF_CAP_ONLY |
+				    (UF_CAP_SUFFICIENT |
 				    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 				unp_internalize_fp(fdep[i]->fde_file);
 				SDT_PROBE6(fd, , , scm__rights__send,

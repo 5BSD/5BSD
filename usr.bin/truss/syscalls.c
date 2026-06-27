@@ -176,8 +176,6 @@ static const struct syscall_decode decoded_syscalls[] = {
 	  .args = { { Int, 0 } } },
 	{ .name = "cap_rights_limit", .ret_type = 1, .nargs = 2,
 	  .args = { { Int, 0 }, { CapRights, 1 } } },
-	{ .name = "cap_xfer_capmode", .ret_type = 1, .nargs = 1,
-	  .args = { { Int, 0 } } },
 	{ .name = "cap_xfer_limit", .ret_type = 1, .nargs = 2,
 	  .args = { { Int, 0 }, { Int, 1 } } },
 	{ .name = "chdir", .ret_type = 1, .nargs = 1,

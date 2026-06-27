@@ -598,14 +598,6 @@ int cap_clofork_limit(int fd, int state);
  */
 int cap_ambient_limit(int fd);
 /*
- * Requires that any process receiving this descriptor via SCM_RIGHTS
- * must be in capability mode.  The recvmsg(2) fails with ENOTCAPABLE
- * if the receiver is not sandboxed.  Monotonic: once set, cannot be
- * cleared.  Orthogonal to cap_xfer_limit(2) which controls how many
- * times the descriptor can be transferred.
- */
-int cap_xfer_capmode(int fd);
-/*
  * Requires capability mode before the descriptor may be mmap(2)'d.
  * Monotonic: once set, cannot be cleared.
  */

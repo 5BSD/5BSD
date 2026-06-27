@@ -7,8 +7,8 @@
  * capsicum-denials -- trace Capsicum capability-mode enforcement denials.
  *
  * Shows when capability-mode restrictions block an operation, including
- * SCM_RIGHTS transfer denials, connect capmode denials, mmap capmode
- * denials, and lookup capmode denials.
+ * connect capmode denials, mmap capmode denials, and lookup capmode
+ * denials.
  *
  * Usage: capsicum-denials
  */
@@ -26,14 +26,6 @@ dtrace:::BEGIN
  * xfer/mmap/lookup probes: arg0=fd, arg1=pid, arg2=ucred, arg3=type,
  * arg4=flags, arg5=errno
  */
-
-capsicum:::xfer__capmode__deny
-{
-	printf("%-6d %-6d %-6d %-8d %-28s %-8d type=%d flags=0x%x\n",
-	    arg1, ((struct ucred *)arg2)->cr_uid,
-	    ((struct ucred *)arg2)->cr_gid, arg0,
-	    "XFER-CAPMODE-DENY", arg5, arg3, arg4);
-}
 
 capsicum:::mmap__capmode__deny
 {

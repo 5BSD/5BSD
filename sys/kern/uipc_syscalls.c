@@ -159,8 +159,6 @@ kern_socket(struct thread *td, int domain, int type, int protocol)
 		type &= ~SOCK_NONBLOCK;
 		fflag |= FNONBLOCK;
 	}
-	type &= ~SOCK_CAPMODE;	/* Only meaningful for socketpair(). */
-
 #ifdef MAC
 	error = mac_socket_check_create(td->td_ucred, domain, type, protocol);
 	if (error != 0)
@@ -595,13 +593,11 @@ kern_socketpair(struct thread *td, int domain, int type, int protocol,
 	struct file *fp1, *fp2;
 	struct socket *so1, *so2;
 	int fd, error, oflag, fflag;
-	bool capmode_lockdown;
 
 	AUDIT_ARG_SOCKET(domain, type, protocol);
 
 	oflag = 0;
 	fflag = 0;
-	capmode_lockdown = false;
 	if ((type & SOCK_CLOEXEC) != 0) {
 		type &= ~SOCK_CLOEXEC;
 		oflag |= O_CLOEXEC;
@@ -613,10 +609,6 @@ kern_socketpair(struct thread *td, int domain, int type, int protocol,
 	if ((type & SOCK_NONBLOCK) != 0) {
 		type &= ~SOCK_NONBLOCK;
 		fflag |= FNONBLOCK;
-	}
-	if ((type & SOCK_CAPMODE) != 0) {
-		type &= ~SOCK_CAPMODE;
-		capmode_lockdown = true;
 	}
 #ifdef MAC
 	/* We might want to have a separate check for socket pairs. */
@@ -669,50 +661,6 @@ kern_socketpair(struct thread *td, int domain, int type, int protocol,
 	if ((fflag & FNONBLOCK) != 0) {
 		(void) fo_ioctl(fp1, FIONBIO, &fflag, td->td_ucred, td);
 		(void) fo_ioctl(fp2, FIONBIO, &fflag, td->td_ucred, td);
-	}
-	/*
-	 * Apply SOCK_CAPMODE:
-	 *  - UF_CAP_ONLY on both fds: these descriptors can only
-	 *    be transferred to capability-mode processes.
-	 *  - UNP_CAP_SOCKET on both unpcbs: only capmode-restricted
-	 *    descriptors (UF_CAP_ONLY) can be sent through this pair,
-	 *    and the send-side check in unp_internalize uses this flag
-	 *    to verify the peer is capmode.
-	 *
-	 * Transfer restrictions (XFER_ONCE, CLOEXEC, CLOFORK) and
-	 * CAP_SUFFICIENT are orthogonal -- the caller sets those
-	 * separately.
-	 */
-	if (capmode_lockdown) {
-		struct filedesc *fdp = td->td_proc->p_fd;
-		struct filedescent *fde;
-		struct unpcb *unp_a, *unp_b;
-
-		/* Mark both unpcbs as capmode-connect (sockets are new,
-		 * no lock needed -- same as unp_copy_peercred above). */
-		unp_a = sotounpcb(so1);
-		unp_b = sotounpcb(so2);
-		unp_a->unp_flags |= UNP_CAP_SOCKET;
-		unp_b->unp_flags |= UNP_CAP_SOCKET;
-
-		FILEDESC_XLOCK(fdp);
-		fde = &fdp->fd_ofiles[rsv[0]];
-#ifdef CAPABILITIES
-		seqc_write_begin(&fde->fde_seqc);
-#endif
-		fde->fde_flags |= UF_CAP_ONLY;
-#ifdef CAPABILITIES
-		seqc_write_end(&fde->fde_seqc);
-#endif
-		fde = &fdp->fd_ofiles[rsv[1]];
-#ifdef CAPABILITIES
-		seqc_write_begin(&fde->fde_seqc);
-#endif
-		fde->fde_flags |= UF_CAP_ONLY;
-#ifdef CAPABILITIES
-		seqc_write_end(&fde->fde_seqc);
-#endif
-		FILEDESC_XUNLOCK(fdp);
 	}
 	fdrop(fp1, td);
 	fdrop(fp2, td);

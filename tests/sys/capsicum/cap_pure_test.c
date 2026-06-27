@@ -51,9 +51,6 @@
 #ifndef SYS_cap_ambient_limit
 #define	SYS_cap_ambient_limit	629
 #endif
-#ifndef SYS_cap_xfer_capmode
-#define	SYS_cap_xfer_capmode	632
-#endif
 #ifndef SYS_pdincapmode
 #define	SYS_pdincapmode		633
 #endif
@@ -1176,8 +1173,6 @@ ATF_TC_BODY(pdself_pdkill, tc)
 	close(fd);
 }
 
-/* ---- cap_xfer_capmode tests ---- */
-
 /*
  * Helper: build and send one fd over a socketpair.
  * sv[0] is the sender socket, sv[1] is the receiver socket.
@@ -1236,239 +1231,6 @@ recv_fd_from_sock(int receiver)
 		return (-1);
 	memcpy(&rfd, CMSG_DATA(cmsg), sizeof(int));
 	return (rfd);
-}
-
-/*
- * cap_xfer_capmode_send_plain_denied:
- * Set cap_xfer_capmode on a pipe write end, try to send it via
- * SCM_RIGHTS over a plain socket (no LOCAL_CAP_SOCKET).
- * The send must fail with ENOTCAPABLE at send time.
- */
-static void
-xfer_capmode_send_plain_denied_body(int *result)
-{
-	int sv[2], pv[2];
-
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
-		*result = 1; return;
-	}
-	if (pipe(pv) != 0) { *result = 2; return; }
-
-	/* Mark the write end — only cap-mode sockets allowed */
-	if (syscall(SYS_cap_xfer_capmode, pv[1]) != 0) { *result = 3; return; }
-
-	/* Send pv[1] over a plain socket — must fail at send time */
-	if (send_fd_over_sock(sv[0], pv[1]) == 0) { *result = 4; return; }
-	if (errno != ENOTCAPABLE) { *result = 5; return; }
-
-	close(pv[0]); close(pv[1]);
-	close(sv[0]); close(sv[1]);
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(cap_xfer_capmode_send_plain_denied);
-ATF_TC_BODY(cap_xfer_capmode_send_plain_denied, tc)
-{
-	int r;
-
-	r = in_child(xfer_capmode_send_plain_denied_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "sendmsg over plain socket must fail with ENOTCAPABLE (result=%d)", r);
-}
-
-/*
- * cap_xfer_capmode_send_capsock_allowed:
- * Send a cap_xfer_capmode fd over a LOCAL_CAP_SOCKET socket.
- * The send succeeds.  Receiver enters cap mode, recvmsg succeeds,
- * and the fd is usable.
- */
-static void
-xfer_capmode_send_capsock_allowed_body(int *result)
-{
-	int sv[2], pv[2], rfd, one = 1;
-	char buf[4];
-
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
-		*result = 1; return;
-	}
-	/* Mark socket as LOCAL_CAP_SOCKET so send-side check passes */
-	if (setsockopt(sv[0], 0, LOCAL_CAP_SOCKET, &one, sizeof(one)) != 0) {
-		*result = 2; return;
-	}
-	if (pipe(pv) != 0) { *result = 3; return; }
-
-	/* Write something readable through the pipe */
-	if (write(pv[1], "cap!", 4) != 4) { *result = 4; return; }
-
-	/* Mark the write end */
-	if (syscall(SYS_cap_xfer_capmode, pv[1]) != 0) { *result = 5; return; }
-
-	if (send_fd_over_sock(sv[0], pv[1]) != 0) { *result = 6; return; }
-
-	/* Enter cap mode before receiving */
-	if (cap_enter() != 0) { *result = 7; return; }
-
-	rfd = recv_fd_from_sock(sv[1]);
-	if (rfd < 0) { *result = 8; return; }
-
-	/* The received fd should be the write end — write through it */
-	if (write(rfd, "ok\n", 3) != 3) { *result = 9; return; }
-
-	/* Read the data we pre-wrote via the read end */
-	if (read(pv[0], buf, 4) != 4) { *result = 10; return; }
-	if (memcmp(buf, "cap!", 4) != 0) { *result = 11; return; }
-
-	close(rfd);
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(cap_xfer_capmode_send_capsock_allowed);
-ATF_TC_BODY(cap_xfer_capmode_send_capsock_allowed, tc)
-{
-	int r;
-
-	r = in_child(xfer_capmode_send_capsock_allowed_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "sendmsg over cap-socket must succeed (result=%d)", r);
-}
-
-/*
- * cap_xfer_capmode_bad_fd:
- * Verify EBADF for invalid descriptors.
- */
-ATF_TC_WITHOUT_HEAD(cap_xfer_capmode_bad_fd);
-ATF_TC_BODY(cap_xfer_capmode_bad_fd, tc)
-{
-	ATF_REQUIRE(syscall(SYS_cap_xfer_capmode, -1) == -1);
-	ATF_REQUIRE(errno == EBADF);
-
-	ATF_REQUIRE(syscall(SYS_cap_xfer_capmode, 99999) == -1);
-	ATF_REQUIRE(errno == EBADF);
-}
-
-/*
- * cap_xfer_capmode_idempotent:
- * Setting the flag twice on the same fd must both succeed.
- */
-static void
-xfer_capmode_idempotent_body(int *result)
-{
-	int pv[2];
-
-	if (pipe(pv) != 0) { *result = 1; return; }
-
-	if (syscall(SYS_cap_xfer_capmode, pv[1]) != 0) { *result = 2; return; }
-	if (syscall(SYS_cap_xfer_capmode, pv[1]) != 0) { *result = 3; return; }
-
-	close(pv[0]); close(pv[1]);
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(cap_xfer_capmode_idempotent);
-ATF_TC_BODY(cap_xfer_capmode_idempotent, tc)
-{
-	int r;
-
-	r = in_child(xfer_capmode_idempotent_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "cap_xfer_capmode must be idempotent (result=%d)", r);
-}
-
-/*
- * cap_xfer_capmode_combined_lockdown:
- * Apply cap_xfer_limit(CAP_XFER_ONCE) + cap_cloexec_limit(CAP_CLOEXEC_LOCKED)
- * + cap_clofork_limit(CAP_CLOFORK_LOCKED) + cap_ambient_limit +
- * cap_xfer_capmode on a pipe fd.
- *
- * Send it via SCM_RIGHTS.  A cap-mode child must receive it successfully.
- * A non-cap-mode child must fail with ENOTCAPABLE (either because of
- * cap_xfer_capmode restriction or because cap_xfer_limit(ONCE) was already
- * consumed by the first successful transfer).
- *
- * We fork two receiver children sequentially using a socketpair each.
- * Child 1: enters cap mode, receives — must succeed.
- * Child 2: stays outside cap mode, tries to receive — must fail.
- *
- * Because cap_xfer_limit(ONCE) means the state transitions to NONE after
- * the first transfer, child 2's failure is guaranteed regardless of whether
- * cap_xfer_capmode or cap_xfer_limit fires first.
- */
-/* CAP_XFER_ONCE = 1, CAP_CLOEXEC_LOCKED = 1, CAP_CLOFORK_LOCKED = 1 */
-#ifndef CAP_XFER_ONCE
-#define	CAP_XFER_ONCE		1
-#endif
-#ifndef CAP_CLOEXEC_LOCKED
-#define	CAP_CLOEXEC_LOCKED	1
-#endif
-
-static void
-xfer_capmode_combined_lockdown_body(int *result)
-{
-	int sv1[2], pv[2], one = 1;
-	int child_ok;
-	pid_t pid;
-	int status;
-
-	/* Use a LOCAL_CAP_SOCKET pair so send-side check passes */
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv1) != 0) {
-		*result = 1; return;
-	}
-	if (setsockopt(sv1[0], 0, LOCAL_CAP_SOCKET, &one, sizeof(one)) != 0) {
-		*result = 2; return;
-	}
-	if (pipe(pv) != 0) { *result = 3; return; }
-
-	/*
-	 * Apply lockdown to the write end.
-	 * cap_cloexec_limit(LOCKED): cannot survive exec in receiver.
-	 * cap_clofork_limit(LOCKED): cannot survive fork in receiver.
-	 * cap_ambient_limit: CAP_SUFFICIENT in cap-mode receiver.
-	 * cap_xfer_capmode: only cap-mode sockets allowed for transfer.
-	 */
-	if (syscall(SYS_cap_cloexec_limit, pv[1], CAP_CLOEXEC_LOCKED) != 0) {
-		*result = 4; return;
-	}
-	if (syscall(SYS_cap_clofork_limit, pv[1], CAP_CLOFORK_LOCKED) != 0) {
-		*result = 5; return;
-	}
-	if (syscall(SYS_cap_ambient_limit, pv[1]) != 0) { *result = 6; return; }
-	if (syscall(SYS_cap_xfer_capmode, pv[1]) != 0) { *result = 7; return; }
-
-	/* Send pv[1] to child via cap-socket pair */
-	if (send_fd_over_sock(sv1[0], pv[1]) != 0) { *result = 8; return; }
-
-	/* Child: enters cap mode, receives — must succeed */
-	pid = fork();
-	if (pid < 0) { *result = 10; return; }
-	if (pid == 0) {
-		int rfd;
-		if (cap_enter() != 0) _exit(1);
-		rfd = recv_fd_from_sock(sv1[1]);
-		if (rfd < 0) _exit(2);
-		close(rfd);
-		_exit(0);
-	}
-	close(sv1[1]);
-	if (waitpid(pid, &status, 0) != pid) { *result = 11; return; }
-	child_ok = (WIFEXITED(status) && WEXITSTATUS(status) == 0);
-
-	close(sv1[0]);
-	close(pv[0]); close(pv[1]);
-
-	if (!child_ok) { *result = 20; return; }
-
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(cap_xfer_capmode_combined_lockdown);
-ATF_TC_BODY(cap_xfer_capmode_combined_lockdown, tc)
-{
-	int r;
-
-	r = in_child(xfer_capmode_combined_lockdown_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "combined lockdown: cap recv ok, non-cap recv denied (result=%d)",
-	    r);
 }
 
 /* ---- pdincapmode tests ---- */
@@ -1653,15 +1415,15 @@ ATF_TC_BODY(note_capmode_kevent, tc)
 	    r);
 }
 
-/* ---- LOCAL_CAP_SOCKET tests ---- */
+/* ---- LOCAL_CAP_CONNECT tests ---- */
 
-#ifndef LOCAL_CAP_SOCKET
-#define	LOCAL_CAP_SOCKET	4
+#ifndef LOCAL_CAP_CONNECT
+#define	LOCAL_CAP_CONNECT	4
 #endif
 
 /*
  * capmode_connect_denied:
- * Set LOCAL_CAP_SOCKET on a listening socket. A non-cap-mode child
+ * Set LOCAL_CAP_CONNECT on a listening socket. A non-cap-mode child
  * attempts to connect; verify ENOTCAPABLE.
  */
 static void
@@ -1686,7 +1448,7 @@ capmode_connect_denied_body(int *result)
 	if (bind(ls, (struct sockaddr *)&sun, sizeof(sun)) != 0) {
 		*result = 3; return;
 	}
-	if (setsockopt(ls, 0, LOCAL_CAP_SOCKET, &one, sizeof(one)) != 0) {
+	if (setsockopt(ls, 0, LOCAL_CAP_CONNECT, &one, sizeof(one)) != 0) {
 		*result = 4; return;
 	}
 	if (listen(ls, 1) != 0) { *result = 5; return; }
@@ -1718,7 +1480,7 @@ ATF_TC_BODY(capmode_connect_denied, tc)
 
 /*
  * capmode_connect_allowed:
- * Set LOCAL_CAP_SOCKET on a listening socket. A child that enters
+ * Set LOCAL_CAP_CONNECT on a listening socket. A child that enters
  * cap mode uses connectat() with a pre-opened dirfd to connect
  * successfully.
  */
@@ -1744,7 +1506,7 @@ capmode_connect_allowed_body(int *result)
 	if (bind(ls, (struct sockaddr *)&sun, sizeof(sun)) != 0) {
 		*result = 3; return;
 	}
-	if (setsockopt(ls, 0, LOCAL_CAP_SOCKET, &one, sizeof(one)) != 0) {
+	if (setsockopt(ls, 0, LOCAL_CAP_CONNECT, &one, sizeof(one)) != 0) {
 		*result = 4; return;
 	}
 	if (listen(ls, 1) != 0) { *result = 5; return; }
@@ -1808,7 +1570,7 @@ ATF_TC_BODY(capmode_connect_allowed, tc)
 
 /*
  * capmode_connect_monotonic:
- * Set LOCAL_CAP_SOCKET, then try to clear it. Verify ENOTCAPABLE.
+ * Set LOCAL_CAP_CONNECT, then try to clear it. Verify ENOTCAPABLE.
  */
 static void
 capmode_connect_monotonic_body(int *result)
@@ -1818,18 +1580,18 @@ capmode_connect_monotonic_body(int *result)
 	s = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (s < 0) { *result = 1; return; }
 
-	if (setsockopt(s, 0, LOCAL_CAP_SOCKET, &one, sizeof(one)) != 0) {
+	if (setsockopt(s, 0, LOCAL_CAP_CONNECT, &one, sizeof(one)) != 0) {
 		*result = 2; return;
 	}
 
 	/* Attempt to clear — must fail with ENOTCAPABLE */
-	if (setsockopt(s, 0, LOCAL_CAP_SOCKET, &zero, sizeof(zero)) == 0) {
+	if (setsockopt(s, 0, LOCAL_CAP_CONNECT, &zero, sizeof(zero)) == 0) {
 		*result = 3; return;
 	}
 	if (errno != ENOTCAPABLE) { *result = 4; return; }
 
 	/* Setting it again (idempotent) must succeed */
-	if (setsockopt(s, 0, LOCAL_CAP_SOCKET, &one, sizeof(one)) != 0) {
+	if (setsockopt(s, 0, LOCAL_CAP_CONNECT, &one, sizeof(one)) != 0) {
 		*result = 5; return;
 	}
 
@@ -1844,14 +1606,14 @@ ATF_TC_BODY(capmode_connect_monotonic, tc)
 
 	r = in_child(capmode_connect_monotonic_body, NULL);
 	ATF_REQUIRE_MSG(r == 0,
-	    "LOCAL_CAP_SOCKET must be monotonic (result=%d)", r);
+	    "LOCAL_CAP_CONNECT must be monotonic (result=%d)", r);
 }
 
-/* ---- LOCAL_CAP_SOCKET DGRAM test ---- */
+/* ---- LOCAL_CAP_CONNECT DGRAM test ---- */
 
 /*
  * capmode_connect_dgram:
- * Verify LOCAL_CAP_SOCKET also works on SOCK_DGRAM sockets.
+ * Verify LOCAL_CAP_CONNECT also works on SOCK_DGRAM sockets.
  * A non-cap-mode sendto() to a capmode-only DGRAM socket must fail.
  */
 static void
@@ -1876,7 +1638,7 @@ capmode_connect_dgram_body(int *result)
 	if (bind(ls, (struct sockaddr *)&sun, sizeof(sun)) != 0) {
 		*result = 3; return;
 	}
-	if (setsockopt(ls, 0, LOCAL_CAP_SOCKET, &one, sizeof(one)) != 0) {
+	if (setsockopt(ls, 0, LOCAL_CAP_CONNECT, &one, sizeof(one)) != 0) {
 		*result = 4; return;
 	}
 
@@ -1931,256 +1693,6 @@ ATF_TC_BODY(pdincapmode_exited, tc)
 	ATF_REQUIRE(errno == ESRCH);
 
 	close(pdfd);
-}
-
-/* ---- cap_xfer_capmode propagation test ---- */
-
-/*
- * cap_xfer_capmode_propagates:
- * Verify that UF_CAP_ONLY propagates to the received fd.
- * Send a flagged fd to a cap-mode child. The child receives it,
- * then tries to re-send it to a non-cap-mode grandchild via a
- * second socketpair. The flag propagates to the re-sent fd,
- * proving the UF_CAP_ONLY flag is inherited on receive.
- */
-static void
-xfer_capmode_propagates_body(int *result)
-{
-	int sv[2], pv[2], sv2[2], one = 1;
-	pid_t pid;
-	int status;
-
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
-		*result = 1; return;
-	}
-	/* Mark socket as LOCAL_CAP_SOCKET so send-side check passes */
-	if (setsockopt(sv[0], 0, LOCAL_CAP_SOCKET, &one, sizeof(one)) != 0) {
-		*result = 2; return;
-	}
-	if (pipe(pv) != 0) { *result = 3; return; }
-
-	/* Set cap_xfer_capmode on the pipe write end */
-	if (syscall(SYS_cap_xfer_capmode, pv[1]) != 0) {
-		*result = 4; return;
-	}
-
-	/* Send pv[1] to a cap-mode child via cap-socket */
-	if (send_fd_over_sock(sv[0], pv[1]) != 0) { *result = 5; return; }
-
-	/* Cap-mode child: receive the fd, then re-send to a non-cap-mode grandchild */
-	pid = fork();
-	if (pid < 0) { *result = 5; return; }
-	if (pid == 0) {
-		int rfd;
-
-		close(sv[0]);
-		close(pv[0]);
-		close(pv[1]);
-
-		if (cap_enter() != 0) _exit(1);
-
-		rfd = recv_fd_from_sock(sv[1]);
-		if (rfd < 0) _exit(2);
-
-		/* Create a second cap-socket pair for the grandchild */
-		if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CAPMODE, 0, sv2) != 0)
-			_exit(3);
-
-		/* Re-send the received fd — succeeds (cap-socket pair) */
-		if (send_fd_over_sock(sv2[0], rfd) != 0) _exit(4);
-
-		/* Fork grandchild that is NOT in cap mode.
-		 * Note: fork() works in cap mode, child inherits cap mode.
-		 * We need the grandchild to NOT be in cap mode.
-		 * But cap_enter is irreversible and inherited.
-		 * So the grandchild IS in cap mode too — receive will succeed.
-		 *
-		 * This test verifies the flag PROPAGATES, not that it blocks.
-		 * The flag being on the re-sent fd is the important part.
-		 * We verify by checking that the received fd also requires
-		 * cap mode: write to it should work (we ARE in cap mode).
-		 */
-		{
-			int rfd2 = recv_fd_from_sock(sv2[1]);
-			if (rfd2 < 0) _exit(5);
-			/* If the flag propagated, this fd also has UF_CAP_ONLY.
-			 * We can't easily test the flag directly, but we can verify
-			 * the fd is usable (write to the pipe). */
-			if (write(rfd2, "x", 1) != 1) _exit(6);
-			close(rfd2);
-		}
-
-		close(rfd);
-		close(sv2[0]);
-		close(sv2[1]);
-		close(sv[1]);
-		_exit(0);
-	}
-
-	close(sv[1]);
-	if (waitpid(pid, &status, 0) != pid) { *result = 6; return; }
-	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-		*result = 10 + WEXITSTATUS(status); return;
-	}
-
-	/* Verify data arrived through the pipe */
-	{
-		char buf;
-		if (read(pv[0], &buf, 1) != 1 || buf != 'x') {
-			*result = 20; return;
-		}
-	}
-
-	close(sv[0]);
-	close(pv[0]);
-	close(pv[1]);
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(cap_xfer_capmode_propagates);
-ATF_TC_BODY(cap_xfer_capmode_propagates, tc)
-{
-	int r;
-
-	r = in_child(xfer_capmode_propagates_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "cap_xfer_capmode must propagate through receive (result=%d)", r);
-}
-
-/* ---- LOCAL_PEERCAPMODE tests ---- */
-
-#ifndef LOCAL_PEERCAPMODE
-#define	LOCAL_PEERCAPMODE	5
-#endif
-
-/*
- * peercapmode_not_sandboxed:
- * socketpair, check LOCAL_PEERCAPMODE on one end. Should return 0.
- */
-static void
-peercapmode_not_sandboxed_body(int *result)
-{
-	int sv[2], optval;
-	socklen_t optlen;
-
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
-		*result = 1; return;
-	}
-
-	optval = -1;
-	optlen = sizeof(optval);
-	if (getsockopt(sv[0], SOL_LOCAL, LOCAL_PEERCAPMODE,
-	    &optval, &optlen) != 0) {
-		*result = 2; return;
-	}
-	if (optval != 0) { *result = 3; return; }
-
-	close(sv[0]);
-	close(sv[1]);
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(peercapmode_not_sandboxed);
-ATF_TC_BODY(peercapmode_not_sandboxed, tc)
-{
-	int r;
-
-	r = in_child(peercapmode_not_sandboxed_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "LOCAL_PEERCAPMODE should be 0 when neither side in cap mode (result=%d)",
-	    r);
-}
-
-/*
- * peercapmode_sandboxed:
- * fork child, child enters cap_enter, connects to parent's listening
- * socket via connectat with pre-opened dirfd.
- * Parent accepts, checks LOCAL_PEERCAPMODE. Should return 1.
- */
-static void
-peercapmode_sandboxed_body(int *result)
-{
-	struct sockaddr_un sun, csun;
-	char dir[] = "/tmp/cap_peercapmode.XXXXXX";
-	int ls, as, dfd, status;
-	pid_t pid;
-
-	if (mkdtemp(dir) == NULL) { *result = 1; return; }
-
-	dfd = open(dir, O_DIRECTORY | O_RDONLY);
-	if (dfd < 0) { *result = 2; return; }
-
-	ls = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (ls < 0) { *result = 3; return; }
-
-	memset(&sun, 0, sizeof(sun));
-	sun.sun_family = AF_UNIX;
-	sun.sun_len = sizeof(sun);
-	snprintf(sun.sun_path, sizeof(sun.sun_path), "%s/sock", dir);
-	if (bind(ls, (struct sockaddr *)&sun, sizeof(sun)) != 0) {
-		*result = 4; return;
-	}
-	if (listen(ls, 1) != 0) { *result = 5; return; }
-
-	pid = fork();
-	if (pid < 0) { *result = 6; return; }
-	if (pid == 0) {
-		int cs;
-
-		close(ls);
-		cs = socket(AF_UNIX, SOCK_STREAM, 0);
-		if (cs < 0) _exit(10);
-
-		if (cap_enter() != 0) _exit(11);
-
-		memset(&csun, 0, sizeof(csun));
-		csun.sun_family = AF_UNIX;
-		csun.sun_len = sizeof(csun);
-		strlcpy(csun.sun_path, "sock", sizeof(csun.sun_path));
-
-		if (connectat(dfd, cs, (struct sockaddr *)&csun,
-		    sizeof(csun)) != 0)
-			_exit(12);
-
-		close(cs);
-		close(dfd);
-		_exit(0);
-	}
-
-	as = accept(ls, NULL, NULL);
-	if (as < 0) { *result = 7; return; }
-
-	if (waitpid(pid, &status, 0) != pid) { *result = 8; return; }
-	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-		*result = 20 + WEXITSTATUS(status); return;
-	}
-
-	{
-		int optval = -1;
-		socklen_t optlen = sizeof(optval);
-		if (getsockopt(as, SOL_LOCAL, LOCAL_PEERCAPMODE,
-		    &optval, &optlen) != 0) {
-			*result = 9; return;
-		}
-		if (optval != 1) { *result = 10; return; }
-	}
-
-	close(as);
-	close(ls);
-	close(dfd);
-	(void)unlink(sun.sun_path);
-	(void)rmdir(dir);
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(peercapmode_sandboxed);
-ATF_TC_BODY(peercapmode_sandboxed, tc)
-{
-	int r;
-
-	r = in_child(peercapmode_sandboxed_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "LOCAL_PEERCAPMODE should be 1 when peer in cap mode (result=%d)", r);
 }
 
 /* ---- cap_mmap_capmode tests ---- */
@@ -2290,53 +1802,193 @@ ATF_TC_BODY(mmap_capmode_bad_fd, tc)
 	    "cap_mmap_capmode bad fd: expected EBADF (result=%d)", r);
 }
 
-/* ---- SOCK_CAPMODE tests ---- */
+/* ---- LOCAL_CAP_REQ tests ---- */
 
-#ifndef SOCK_CAPMODE
-#define	SOCK_CAPMODE	0x80000000
+#ifndef LOCAL_CAP_REQ
+#define	LOCAL_CAP_REQ		7
 #endif
 
 /*
- * sock_capmode_flag:
- * socketpair(SOCK_CAPMODE), verify BOTH pair[0] and pair[1] get
- * UF_CAP_SUFFICIENT.  Enter cap mode and verify read/write works
- * on both ends (CAP_SUFFICIENT allows MAC-skipping in cap mode).
+ * cap_req_send_denied:
+ * Set LOCAL_CAP_REQ on a socketpair. A non-cap-mode process tries to
+ * send; verify ENOTCAPABLE.
  */
 static void
-sock_capmode_flag_body(int *result)
+cap_req_send_denied_body(int *result)
 {
-	int sv[2];
-	char buf[4];
+	int sv[2], one = 1;
 
-	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CAPMODE, 0, sv) != 0) {
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
 		*result = 1; return;
 	}
+	if (setsockopt(sv[0], 0, LOCAL_CAP_REQ, &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+	/* Not in cap mode — send must fail */
+	if (send(sv[0], "x", 1, 0) != -1) { *result = 3; return; }
+	if (errno != ENOTCAPABLE) { *result = 4; return; }
 
-	if (cap_enter() != 0) { *result = 2; return; }
-
-	/* Both ends should be usable in cap mode (CAP_SUFFICIENT set) */
-	if (write(sv[0], "AB", 2) != 2) { *result = 3; return; }
-	if (read(sv[1], buf, 2) != 2) { *result = 4; return; }
-	if (buf[0] != 'A' || buf[1] != 'B') { *result = 5; return; }
-
-	/* Reverse direction */
-	if (write(sv[1], "CD", 2) != 2) { *result = 6; return; }
-	if (read(sv[0], buf, 2) != 2) { *result = 7; return; }
-	if (buf[0] != 'C' || buf[1] != 'D') { *result = 8; return; }
-
-	close(sv[0]);
-	close(sv[1]);
+	close(sv[0]); close(sv[1]);
 	*result = 0;
 }
 
-ATF_TC_WITHOUT_HEAD(sock_capmode_flag);
-ATF_TC_BODY(sock_capmode_flag, tc)
+ATF_TC_WITHOUT_HEAD(cap_req_send_denied);
+ATF_TC_BODY(cap_req_send_denied, tc)
 {
 	int r;
 
-	r = in_child(sock_capmode_flag_body, NULL);
+	r = in_child(cap_req_send_denied_body, NULL);
 	ATF_REQUIRE_MSG(r == 0,
-	    "SOCK_CAPMODE sets CAP_SUFFICIENT on both ends (result=%d)", r);
+	    "LOCAL_CAP_REQ send outside capmode must fail (result=%d)", r);
+}
+
+/*
+ * cap_req_recv_denied:
+ * Set LOCAL_CAP_REQ on a socketpair. A non-cap-mode process tries to
+ * recv; verify ENOTCAPABLE.
+ */
+static void
+cap_req_recv_denied_body(int *result)
+{
+	int sv[2], one = 1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+	if (setsockopt(sv[0], 0, LOCAL_CAP_REQ, &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+	/* Send data from sv[1] so there's something to receive */
+	if (send(sv[1], "x", 1, 0) != 1) { *result = 3; return; }
+
+	/* Not in cap mode — recv on sv[0] must fail */
+	{
+		char buf[1];
+		if (recv(sv[0], buf, 1, 0) != -1) { *result = 4; return; }
+		if (errno != ENOTCAPABLE) { *result = 5; return; }
+	}
+
+	close(sv[0]); close(sv[1]);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_req_recv_denied);
+ATF_TC_BODY(cap_req_recv_denied, tc)
+{
+	int r;
+
+	r = in_child(cap_req_recv_denied_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "LOCAL_CAP_REQ recv outside capmode must fail (result=%d)", r);
+}
+
+/*
+ * cap_req_allowed:
+ * Set LOCAL_CAP_REQ on a socketpair, enter cap mode, verify send/recv
+ * succeed.
+ */
+static void
+cap_req_allowed_body(int *result)
+{
+	int sv[2], one = 1;
+	char buf[4];
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+	if (setsockopt(sv[0], 0, LOCAL_CAP_REQ, &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+	if (setsockopt(sv[1], 0, LOCAL_CAP_REQ, &one, sizeof(one)) != 0) {
+		*result = 3; return;
+	}
+	if (cap_enter() != 0) { *result = 4; return; }
+
+	/* In cap mode — send and recv must succeed */
+	if (send(sv[0], "test", 4, 0) != 4) { *result = 5; return; }
+	if (recv(sv[1], buf, 4, 0) != 4) { *result = 6; return; }
+	if (memcmp(buf, "test", 4) != 0) { *result = 7; return; }
+
+	close(sv[0]); close(sv[1]);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_req_allowed);
+ATF_TC_BODY(cap_req_allowed, tc)
+{
+	int r;
+
+	r = in_child(cap_req_allowed_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "LOCAL_CAP_REQ send/recv in capmode must succeed (result=%d)", r);
+}
+
+/*
+ * cap_req_monotonic:
+ * Once LOCAL_CAP_REQ is set, attempting to clear it must fail.
+ */
+static void
+cap_req_monotonic_body(int *result)
+{
+	int sv[2], one = 1, zero = 0;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+	if (setsockopt(sv[0], 0, LOCAL_CAP_REQ, &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+	/* Attempt to clear — must fail */
+	if (setsockopt(sv[0], 0, LOCAL_CAP_REQ, &zero, sizeof(zero)) == 0) {
+		*result = 3; return;
+	}
+	if (errno != ENOTCAPABLE) { *result = 4; return; }
+
+	close(sv[0]); close(sv[1]);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_req_monotonic);
+ATF_TC_BODY(cap_req_monotonic, tc)
+{
+	int r;
+
+	r = in_child(cap_req_monotonic_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "LOCAL_CAP_REQ must be monotonic (result=%d)", r);
+}
+
+/*
+ * cap_req_dgram:
+ * Verify LOCAL_CAP_REQ also works for SOCK_DGRAM sockets.
+ */
+static void
+cap_req_dgram_body(int *result)
+{
+	int sv[2], one = 1;
+
+	if (socketpair(AF_UNIX, SOCK_DGRAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+	if (setsockopt(sv[0], 0, LOCAL_CAP_REQ, &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+	/* Not in cap mode — send must fail */
+	if (send(sv[0], "x", 1, 0) != -1) { *result = 3; return; }
+	if (errno != ENOTCAPABLE) { *result = 4; return; }
+
+	close(sv[0]); close(sv[1]);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_req_dgram);
+ATF_TC_BODY(cap_req_dgram, tc)
+{
+	int r;
+
+	r = in_child(cap_req_dgram_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "LOCAL_CAP_REQ dgram send outside capmode must fail (result=%d)", r);
 }
 
 /* ---- cap_lookup_capmode tests ---- */
@@ -2759,78 +2411,6 @@ ATF_TC_BODY(sockcred2_no_capmode, tc)
 	    "sc_capmode must be 0 for non-cap-mode sender (result=%d)", r);
 }
 
-/* ---- sock_capmode_cap_only_verify ---- */
-
-/*
- * sock_capmode_cap_only_verify:
- * Create socketpair(SOCK_CAPMODE).  Both ends get UF_CAP_ONLY.
- * Sending either end through a plain socket must fail (send-side
- * enforcement).  Sending through a LOCAL_CAP_SOCKET socket must
- * succeed.  A cap-mode child can use the received fd.
- */
-static void
-sock_capmode_cap_only_verify_body(int *result)
-{
-	int sv[2], capsock[2], one = 1;
-	pid_t pid;
-	int status;
-
-	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CAPMODE, 0, sv) != 0) {
-		*result = 1; return;
-	}
-
-	/* Send sv[1] through a LOCAL_CAP_SOCKET pair */
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, capsock) != 0) {
-		*result = 2; return;
-	}
-	if (setsockopt(capsock[0], 0, LOCAL_CAP_SOCKET, &one,
-	    sizeof(one)) != 0) {
-		*result = 3; return;
-	}
-	if (send_fd_over_sock(capsock[0], sv[1]) != 0) {
-		*result = 4; return;
-	}
-
-	/* Cap-mode child receives and uses the socket */
-	pid = fork();
-	if (pid < 0) { *result = 5; return; }
-	if (pid == 0) {
-		int rfd;
-
-		close(sv[0]); close(sv[1]);
-		close(capsock[0]);
-
-		if (cap_enter() != 0) _exit(1);
-
-		rfd = recv_fd_from_sock(capsock[1]);
-		if (rfd < 0) _exit(2);
-		/* Write through the received cap-socket end */
-		if (write(rfd, "ok", 2) != 2) _exit(3);
-		close(rfd);
-		_exit(0);
-	}
-
-	close(capsock[0]); close(capsock[1]);
-	if (waitpid(pid, &status, 0) != pid) { *result = 6; return; }
-	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-		*result = 10 + WEXITSTATUS(status); return;
-	}
-
-	close(sv[0]); close(sv[1]);
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(sock_capmode_cap_only_verify);
-ATF_TC_BODY(sock_capmode_cap_only_verify, tc)
-{
-	int r;
-
-	r = in_child(sock_capmode_cap_only_verify_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "SOCK_CAPMODE sets CAP_ONLY, transfer via cap-socket works "
-	    "(result=%d)", r);
-}
-
 /* ---- M2: capmode_server_allowed ---- */
 
 /*
@@ -2948,48 +2528,6 @@ ATF_TC_BODY(capmode_server_allowed, tc)
 	ATF_REQUIRE_MSG(r == 0,
 	    "connect to cap-mode server with LOCAL_CAPMODE_SERVER "
 	    "must succeed (result=%d)", r);
-}
-
-/* ---- M3: peercapmode_unconnected ---- */
-
-/*
- * peercapmode_unconnected:
- * Create an unconnected SOCK_STREAM socket, call
- * getsockopt(LOCAL_PEERCAPMODE).  Must fail with ENOTCONN.
- */
-static void
-peercapmode_unconnected_body(int *result)
-{
-	int s, optval;
-	socklen_t optlen;
-
-	s = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (s < 0) { *result = 1; return; }
-
-	optval = -1;
-	optlen = sizeof(optval);
-	if (getsockopt(s, SOL_LOCAL, LOCAL_PEERCAPMODE,
-	    &optval, &optlen) == 0) {
-		/* Should have failed */
-		*result = 2;
-		close(s);
-		return;
-	}
-	if (errno != ENOTCONN) { *result = 3; close(s); return; }
-
-	close(s);
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(peercapmode_unconnected);
-ATF_TC_BODY(peercapmode_unconnected, tc)
-{
-	int r;
-
-	r = in_child(peercapmode_unconnected_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "LOCAL_PEERCAPMODE on unconnected socket must fail with "
-	    "ENOTCONN (result=%d)", r);
 }
 
 /* ---- M4: note_capmode_no_double_fire ---- */
@@ -3425,7 +2963,7 @@ ATF_TC_BODY(note_chroot_kevent, tc)
 /*
  * capmode_connect_seqpacket:
  * Same as capmode_connect_denied but with SOCK_SEQPACKET.
- * Set LOCAL_CAP_SOCKET on a listening SEQPACKET socket.
+ * Set LOCAL_CAP_CONNECT on a listening SEQPACKET socket.
  * A non-cap-mode connect must fail with ENOTCAPABLE.
  */
 static void
@@ -3450,7 +2988,7 @@ capmode_connect_seqpacket_body(int *result)
 	if (bind(ls, (struct sockaddr *)&sun, sizeof(sun)) != 0) {
 		*result = 3; return;
 	}
-	if (setsockopt(ls, 0, LOCAL_CAP_SOCKET, &one, sizeof(one)) != 0) {
+	if (setsockopt(ls, 0, LOCAL_CAP_CONNECT, &one, sizeof(one)) != 0) {
 		*result = 4; return;
 	}
 	if (listen(ls, 1) != 0) { *result = 5; return; }
@@ -3653,7 +3191,7 @@ ATF_TC_BODY(cap_sufficient_write, tc)
 
 /*
  * cap_sufficient_socket_ops:
- * socketpair(SOCK_CAPMODE), cap_enter(), send/recv should succeed.
+ * cap_ambient_limit() on socketpair fds, cap_enter(), send/recv should succeed.
  */
 static void
 cap_sufficient_socket_ops_body(int *result)
@@ -3661,15 +3199,17 @@ cap_sufficient_socket_ops_body(int *result)
 	int sv[2];
 	char buf[4];
 
-	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CAPMODE, 0, sv) != 0) {
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
 		*result = 1; return;
 	}
 
-	if (cap_enter() != 0) { *result = 2; return; }
+	if (syscall(SYS_cap_ambient_limit, sv[0]) != 0) { *result = 2; return; }
+	if (syscall(SYS_cap_ambient_limit, sv[1]) != 0) { *result = 3; return; }
+	if (cap_enter() != 0) { *result = 4; return; }
 
-	if (send(sv[0], "test", 4, 0) != 4) { *result = 3; return; }
-	if (recv(sv[1], buf, 4, 0) != 4) { *result = 4; return; }
-	if (memcmp(buf, "test", 4) != 0) { *result = 5; return; }
+	if (send(sv[0], "test", 4, 0) != 4) { *result = 5; return; }
+	if (recv(sv[1], buf, 4, 0) != 4) { *result = 6; return; }
+	if (memcmp(buf, "test", 4) != 0) { *result = 7; return; }
 
 	close(sv[0]);
 	close(sv[1]);
@@ -3756,195 +3296,6 @@ ATF_TC_BODY(cap_sufficient_ioctl, tc)
 	    "CAP_SUFFICIENT ioctl in cap mode (result=%d)", r);
 }
 
-/*
- * xfer_capmode_send_denied:
- * Mark a fd with cap_xfer_capmode.  Try to send it over a plain
- * socket (no LOCAL_CAP_SOCKET).  The send must fail at send time
- * with ENOTCAPABLE, and CAP_XFER_ONCE must NOT be consumed.
- */
-static void
-xfer_capmode_send_denied_body(int *result)
-{
-	int sv[2], pv[2];
-
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
-		*result = 1; return;
-	}
-	if (pipe(pv) != 0) { *result = 2; return; }
-
-	/* Mark fd as cap-only AND xfer-once */
-	if (syscall(SYS_cap_xfer_capmode, pv[1]) != 0) { *result = 3; return; }
-	if (cap_xfer_limit(pv[1], CAP_XFER_ONCE) != 0) { *result = 4; return; }
-
-	/* Send over a plain socket -- must fail */
-	if (send_fd_over_sock(sv[0], pv[1]) == 0) { *result = 5; return; }
-	if (errno != ENOTCAPABLE) { *result = 6; return; }
-
-	/* XFER_ONCE should NOT be consumed -- try sending over a
-	 * LOCAL_CAP_SOCKET pair to prove it's still available. */
-	{
-		int cv[2], one = 1;
-		if (socketpair(AF_UNIX, SOCK_STREAM, 0, cv) != 0) {
-			*result = 7; return;
-		}
-		if (setsockopt(cv[0], 0, LOCAL_CAP_SOCKET, &one,
-		    sizeof(one)) != 0) {
-			*result = 8; return;
-		}
-		/* This send should succeed -- XFER_ONCE wasn't consumed */
-		if (send_fd_over_sock(cv[0], pv[1]) != 0) {
-			*result = 9; return;
-		}
-		close(cv[0]); close(cv[1]);
-	}
-
-	/* Now try to send again -- XFER_ONCE was consumed by the
-	 * successful send above, so this must fail with ENOTCAPABLE. */
-	{
-		int cv2[2], one = 1;
-		if (socketpair(AF_UNIX, SOCK_STREAM, 0, cv2) != 0) {
-			*result = 10; return;
-		}
-		if (setsockopt(cv2[0], 0, LOCAL_CAP_SOCKET, &one,
-		    sizeof(one)) != 0) {
-			*result = 11; return;
-		}
-		if (send_fd_over_sock(cv2[0], pv[1]) == 0) {
-			*result = 12; return; /* should have been exhausted */
-		}
-		close(cv2[0]); close(cv2[1]);
-	}
-
-	close(pv[0]); close(pv[1]);
-	close(sv[0]); close(sv[1]);
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(xfer_capmode_send_denied);
-ATF_TC_BODY(xfer_capmode_send_denied, tc)
-{
-	int r;
-
-	r = in_child(xfer_capmode_send_denied_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "send-side XFER_CAPMODE denial and XFER_ONCE preservation "
-	    "(result=%d)", r);
-}
-
-/*
- * sock_capmode_no_forced_lockdown:
- * Verify SOCK_CAPMODE does NOT set XFER_ONCE, CLOEXEC_LOCKED,
- * or CLOFORK_LOCKED.  It only sets UF_CAP_ONLY + UNP_CAP_SOCKET.
- */
-static void
-sock_capmode_no_forced_lockdown_body(int *result)
-{
-	int sv[2], pv[2], one = 1;
-
-	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CAPMODE, 0, sv) != 0) {
-		*result = 1; return;
-	}
-	if (pipe(pv) != 0) { *result = 2; return; }
-
-	/* sv[0] should be transferable (no XFER_ONCE forced).
-	 * Use a cap-socket to send sv[0] -- should succeed.
-	 * Then send again -- should also succeed (XFER_ONCE not set). */
-	{
-		int cv[2];
-		if (socketpair(AF_UNIX, SOCK_STREAM, 0, cv) != 0) {
-			*result = 3; return;
-		}
-		if (setsockopt(cv[0], 0, LOCAL_CAP_SOCKET, &one,
-		    sizeof(one)) != 0) {
-			*result = 4; return;
-		}
-		/* First send */
-		if (send_fd_over_sock(cv[0], sv[0]) != 0) {
-			*result = 5; return;
-		}
-		/* Second send -- proves XFER_ONCE was NOT set */
-		if (send_fd_over_sock(cv[0], sv[0]) != 0) {
-			*result = 6; return;
-		}
-		close(cv[0]); close(cv[1]);
-	}
-
-	/* Verify sv[1] also works the same way */
-	{
-		int cv[2];
-		if (socketpair(AF_UNIX, SOCK_STREAM, 0, cv) != 0) {
-			*result = 7; return;
-		}
-		if (setsockopt(cv[0], 0, LOCAL_CAP_SOCKET, &one,
-		    sizeof(one)) != 0) {
-			*result = 8; return;
-		}
-		if (send_fd_over_sock(cv[0], sv[1]) != 0) {
-			*result = 9; return;
-		}
-		if (send_fd_over_sock(cv[0], sv[1]) != 0) {
-			*result = 10; return;
-		}
-		close(cv[0]); close(cv[1]);
-	}
-
-	close(sv[0]); close(sv[1]);
-	close(pv[0]); close(pv[1]);
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(sock_capmode_no_forced_lockdown);
-ATF_TC_BODY(sock_capmode_no_forced_lockdown, tc)
-{
-	int r;
-
-	r = in_child(sock_capmode_no_forced_lockdown_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "SOCK_CAPMODE must not force XFER_ONCE/CLOEXEC/CLOFORK "
-	    "(result=%d)", r);
-}
-
-/*
- * sock_capmode_both_ends_cap_only:
- * Verify SOCK_CAPMODE sets UF_CAP_ONLY on both sv[0] and sv[1]
- * by trying to send each through a plain (non-cap) socket -- both
- * must fail.
- */
-static void
-sock_capmode_both_ends_cap_only_body(int *result)
-{
-	int sv[2], plain[2];
-
-	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CAPMODE, 0, sv) != 0) {
-		*result = 1; return;
-	}
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, plain) != 0) {
-		*result = 2; return;
-	}
-
-	/* sv[0] through plain socket -- must fail */
-	if (send_fd_over_sock(plain[0], sv[0]) == 0) { *result = 3; return; }
-	if (errno != ENOTCAPABLE) { *result = 4; return; }
-
-	/* sv[1] through plain socket -- must also fail */
-	if (send_fd_over_sock(plain[0], sv[1]) == 0) { *result = 5; return; }
-	if (errno != ENOTCAPABLE) { *result = 6; return; }
-
-	close(sv[0]); close(sv[1]);
-	close(plain[0]); close(plain[1]);
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(sock_capmode_both_ends_cap_only);
-ATF_TC_BODY(sock_capmode_both_ends_cap_only, tc)
-{
-	int r;
-
-	r = in_child(sock_capmode_both_ends_cap_only_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "SOCK_CAPMODE must set UF_CAP_ONLY on both ends (result=%d)", r);
-}
-
 /* ---- ATF test program ---- */
 
 ATF_TP_ADD_TCS(tp)
@@ -3984,13 +3335,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, pdself_pdwait);
 	ATF_TP_ADD_TC(tp, pdself_pdkill);
 
-	/* cap_xfer_capmode */
-	ATF_TP_ADD_TC(tp, cap_xfer_capmode_send_plain_denied);
-	ATF_TP_ADD_TC(tp, cap_xfer_capmode_send_capsock_allowed);
-	ATF_TP_ADD_TC(tp, cap_xfer_capmode_bad_fd);
-	ATF_TP_ADD_TC(tp, cap_xfer_capmode_idempotent);
-	ATF_TP_ADD_TC(tp, cap_xfer_capmode_combined_lockdown);
-
 	/* pdincapmode */
 	ATF_TP_ADD_TC(tp, pdincapmode_before_capenter);
 	ATF_TP_ADD_TC(tp, pdincapmode_after_capenter);
@@ -3999,30 +3343,19 @@ ATF_TP_ADD_TCS(tp)
 	/* NOTE_CAPMODE kqueue event */
 	ATF_TP_ADD_TC(tp, note_capmode_kevent);
 
-	/* LOCAL_CAP_SOCKET */
+	/* LOCAL_CAP_CONNECT */
 	ATF_TP_ADD_TC(tp, capmode_connect_denied);
 	ATF_TP_ADD_TC(tp, capmode_connect_allowed);
 	ATF_TP_ADD_TC(tp, capmode_connect_monotonic);
 	ATF_TP_ADD_TC(tp, capmode_connect_dgram);
 
-	/* cap_xfer_capmode propagation */
-	ATF_TP_ADD_TC(tp, cap_xfer_capmode_propagates);
-
 	/* pdincapmode exited process */
 	ATF_TP_ADD_TC(tp, pdincapmode_exited);
-
-	/* LOCAL_PEERCAPMODE */
-	ATF_TP_ADD_TC(tp, peercapmode_not_sandboxed);
-	ATF_TP_ADD_TC(tp, peercapmode_sandboxed);
 
 	/* cap_mmap_capmode */
 	ATF_TP_ADD_TC(tp, mmap_capmode_denied);
 	ATF_TP_ADD_TC(tp, mmap_capmode_allowed);
 	ATF_TP_ADD_TC(tp, mmap_capmode_bad_fd);
-
-	/* SOCK_CAPMODE */
-	ATF_TP_ADD_TC(tp, sock_capmode_flag);
-	ATF_TP_ADD_TC(tp, sock_capmode_cap_only_verify);
 
 	/* cap_lookup_capmode */
 	ATF_TP_ADD_TC(tp, lookup_capmode_denied);
@@ -4030,7 +3363,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, lookup_capmode_bad_fd);
 	ATF_TP_ADD_TC(tp, lookup_capmode_idempotent);
 
-	/* LOCAL_CAP_SOCKET SEQPACKET */
+	/* LOCAL_CAP_CONNECT SEQPACKET */
 	ATF_TP_ADD_TC(tp, capmode_connect_seqpacket);
 
 	/* LOCAL_CAPMODE_SERVER */
@@ -4038,8 +3371,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, capmode_server_allowed);
 	ATF_TP_ADD_TC(tp, capmode_server_monotonic);
 
-	/* LOCAL_PEERCAPMODE unconnected */
-	ATF_TP_ADD_TC(tp, peercapmode_unconnected);
+	/* LOCAL_CAP_REQ */
+	ATF_TP_ADD_TC(tp, cap_req_send_denied);
+	ATF_TP_ADD_TC(tp, cap_req_recv_denied);
+	ATF_TP_ADD_TC(tp, cap_req_allowed);
+	ATF_TP_ADD_TC(tp, cap_req_monotonic);
+	ATF_TP_ADD_TC(tp, cap_req_dgram);
 
 	/* NOTE_CAPMODE no double fire */
 	ATF_TP_ADD_TC(tp, note_capmode_no_double_fire);
@@ -4070,13 +3407,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cap_sufficient_socket_ops);
 	ATF_TP_ADD_TC(tp, cap_sufficient_not_in_capmode);
 	ATF_TP_ADD_TC(tp, cap_sufficient_ioctl);
-
-	/* Send-side XFER_CAPMODE enforcement */
-	ATF_TP_ADD_TC(tp, xfer_capmode_send_denied);
-
-	/* SOCK_CAPMODE behavioral tests */
-	ATF_TP_ADD_TC(tp, sock_capmode_no_forced_lockdown);
-	ATF_TP_ADD_TC(tp, sock_capmode_both_ends_cap_only);
 
 	return (atf_no_error());
 }

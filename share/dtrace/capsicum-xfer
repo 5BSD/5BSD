@@ -7,10 +7,8 @@
  * capsicum-xfer -- trace Capsicum capability transfer and capmode flag
  * operations.
  *
- * Shows when cap_xfer_capmode sets the SCM_RIGHTS capmode requirement on
- * a file descriptor, when cap_mmap_capmode and cap_lookup_capmode set
- * their respective flags, and when SCM_RIGHTS transfer is denied because
- * the receiver is not in capability mode.
+ * Shows when cap_mmap_capmode and cap_lookup_capmode set
+ * their respective flags, and traces SCM_RIGHTS send/recv operations.
  *
  * Usage: capsicum-xfer
  */
@@ -27,14 +25,6 @@ dtrace:::BEGIN
  * arg0=fd, arg1=pid, arg2=ucred, arg3=type, arg4=errno, arg5=old_state
  */
 
-capsicum:::xfer__capmode
-{
-	printf("%-6d %-6d %-6d %-8d %-24s errno=%d old_state=%d\n",
-	    arg1, ((struct ucred *)arg2)->cr_uid,
-	    ((struct ucred *)arg2)->cr_gid, arg0,
-	    "XFER-CAPMODE-SET", arg4, arg5);
-}
-
 capsicum:::mmap__capmode
 {
 	printf("%-6d %-6d %-6d %-8d %-24s errno=%d old_state=%d\n",
@@ -49,14 +39,6 @@ capsicum:::lookup__capmode
 	    arg1, ((struct ucred *)arg2)->cr_uid,
 	    ((struct ucred *)arg2)->cr_gid, arg0,
 	    "LOOKUP-CAPMODE-SET", arg4, arg5);
-}
-
-capsicum:::xfer__capmode__deny
-{
-	printf("%-6d %-6d %-6d %-8d %-24s type=%d flags=0x%x\n",
-	    arg1, ((struct ucred *)arg2)->cr_uid,
-	    ((struct ucred *)arg2)->cr_gid, arg0,
-	    "XFER-CAPMODE-DENY", arg3, arg4);
 }
 
 /*

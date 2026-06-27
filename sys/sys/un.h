@@ -65,10 +65,10 @@ struct sockaddr_un {
 #define	LOCAL_PEERCRED		1	/* retrieve peer credentials */
 #define	LOCAL_CREDS		2	/* pass credentials to receiver */
 #define	LOCAL_CREDS_PERSISTENT	3	/* pass credentials to receiver */
-#define	LOCAL_CAP_SOCKET	4	/* require cap mode for connect and fd send */
-#define	LOCAL_CAPMODE_CONNECT	LOCAL_CAP_SOCKET	/* compat alias */
-#define	LOCAL_PEERCAPMODE	5	/* peer is in cap mode */
+#define	LOCAL_CAP_CONNECT	4	/* require cap mode for connect and fd send */
+#define	LOCAL_CAPMODE_CONNECT	LOCAL_CAP_CONNECT	/* compat alias */
 #define	LOCAL_CAPMODE_SERVER	6	/* require server in cap mode */
+#define	LOCAL_CAP_REQ		7	/* require cap mode to use this end */
 
 /* Start of reserved space for third-party socket options. */
 #define	LOCAL_VENDOR		SO_VENDOR

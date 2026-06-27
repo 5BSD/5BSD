@@ -112,7 +112,7 @@ typedef	__uintptr_t	uintptr_t;
 #define	SOCK_CLOEXEC	0x10000000
 #define	SOCK_NONBLOCK	0x20000000
 #define	SOCK_CLOFORK	0x40000000
-#define	SOCK_CAPMODE	0x80000000	/* apply capmode lockdown to pair[1] */
+/* SOCK_CAPMODE (0x80000000) removed; use LOCAL_CAP_REQ per-end instead. */
 #ifdef _KERNEL
 /*
  * Flags for accept1(), kern_accept4() and solisten_dequeue, in addition
