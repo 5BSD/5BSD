@@ -1311,8 +1311,7 @@ vsock_soreceive(struct socket *so, struct sockaddr **psa, struct uio *uio,
 			 * low-water mark.
 			 */
 			unreported = pcb->fwd_cnt - pcb->last_fwd_cnt;
-			if (so->so_type == SOCK_SEQPACKET ||
-			    unreported >= pcb->buf_alloc -
+			if (unreported >= pcb->buf_alloc -
 			    VTVSOCK_MAX_PKT_BUF ||
 			    pcb->rx_bytes < (uint32_t)so->so_rcv.sb_lowat)
 				vtvsock_send_credit_update_locked(pcb);
@@ -1586,6 +1585,7 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 	bool seqpacket;
 	int error;
 
+	(void)flags;	/* PRUS_*; MSG_EOR arrives via M_EOR on the mbuf */
 	(void)addr;
 	(void)td;
 
@@ -1659,10 +1659,17 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 		hdr->buf_alloc = htole32(pcb->buf_alloc);
 		hdr->fwd_cnt   = htole32(pcb->fwd_cnt);
 
-		/* EOM/EOR on the final fragment of a SEQPACKET message. */
+		/*
+		 * EOM on the final fragment of a SEQPACKET message.
+		 * EOR only when the application passed MSG_EOR
+		 * (propagated as M_EOR on the mbuf by sosend_generic).
+		 */
 		pkt_flags = 0;
-		if (seqpacket && (offset + chunk >= total))
-			pkt_flags = VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR;
+		if (seqpacket && (offset + chunk >= total)) {
+			pkt_flags = VIRTIO_VSOCK_SEQ_EOM;
+			if (m->m_flags & M_EOR)
+				pkt_flags |= VIRTIO_VSOCK_SEQ_EOR;
+		}
 		hdr->flags = htole32(pkt_flags);
 
 		m_copydata(m, (int)offset, (int)chunk, buf + sizeof(*hdr));
@@ -1714,7 +1721,6 @@ out:
 	mtx_unlock(&vtvsock_mtx);
 	m_freem(m);
 
-	(void)flags;
 	return (offset > 0 ? 0 : error);
 }
 

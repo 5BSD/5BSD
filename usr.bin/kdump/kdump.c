@@ -55,6 +55,7 @@
 #include <sys/thr.h>
 #include <sys/umtx.h>
 #include <sys/un.h>
+#include <sys/vsock.h>
 #include <sys/queue.h>
 #include <sys/wait.h>
 #ifdef WITH_CASPER
@@ -1949,6 +1950,15 @@ ktrsockaddr(struct sockaddr *sa)
 		memcpy(&sa_nl, sa, sa->sa_len);
 		printf("netlink[pid=%u, groups=0x%x]",
 		    sa_nl.nl_pid, sa_nl.nl_groups);
+		break;
+	}
+	case AF_VSOCK: {
+		struct sockaddr_vm sa_vm;
+
+		memset(&sa_vm, 0, sizeof(sa_vm));
+		memcpy(&sa_vm, sa, MIN(sa->sa_len, sizeof(sa_vm)));
+		printf("cid=%llu port=%u",
+		    (unsigned long long)sa_vm.svm_cid, sa_vm.svm_port);
 		break;
 	}
 	default:

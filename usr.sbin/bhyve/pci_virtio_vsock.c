@@ -751,6 +751,28 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 				return;
 			}
 			conn->peer_fwd_cnt = new_fwd_cnt;
+		} else if (op != VIRTIO_VSOCK_OP_RST) {
+			/*
+			 * §5.10.6.4: packet for an unknown connection
+			 * that is not itself a RST — reply with RST.
+			 */
+			struct vtvsock_conn tmp;
+
+			memset(&tmp, 0, sizeof(tmp));
+			tmp.local_port = dst_port;
+			tmp.guest_port = src_port;
+			tmp.type       = type;
+			tmp.fd         = -1;
+			tmp.ctl_fd     = -1;
+			tmp.reply_fd   = -1;
+			DPRINTF(("vtvsock: no conn for op %u %u:%u, "
+			    "sending RST", op, src_port, dst_port));
+			(void)vtvsock_send_ctrl(sc, &tmp,
+			    VIRTIO_VSOCK_OP_RST, 0);
+			return;
+		} else {
+			/* RST for unknown connection — silently ignore. */
+			return;
 		}
 	}
 
@@ -913,8 +935,7 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 			    src_port, dst_port));
 			break;
 		}
-		conn->peer_buf_alloc = le32toh(hdr->buf_alloc);
-		conn->peer_fwd_cnt   = le32toh(hdr->fwd_cnt);
+		/* peer_buf_alloc/peer_fwd_cnt already set in pre-switch. */
 		conn->state          = CONN_ESTABLISHED;
 
 		/*

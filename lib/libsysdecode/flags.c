@@ -52,6 +52,7 @@
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
 #include <netinet/udplite.h>
+#include <sys/vsock.h>
 #include <nfsserver/nfs.h>
 #include <ufs/ufs/quota.h>
 #include <vm/vm.h>
@@ -168,6 +169,8 @@ sysdecode_sockopt_level(int level)
 
 	if (level == SOL_SOCKET)
 		return ("SOL_SOCKET");
+	if (level == SOL_VSOCK)
+		return ("SOL_VSOCK");
 
 	/* SOL_* constants for Bluetooth sockets. */
 	str = lookup_value(ngbtsolevel, level);
@@ -194,6 +197,14 @@ sysdecode_vmprot(FILE *fp, int type, int *rem)
 
 	return (print_mask_int(fp, vmprot, type, rem));
 }
+
+static struct name_table sockoptvsock[] = {
+	X(SO_VM_SOCKETS_BUFFER_SIZE)
+	X(SO_VM_SOCKETS_BUFFER_MIN_SIZE)
+	X(SO_VM_SOCKETS_BUFFER_MAX_SIZE)
+	X(SO_VM_SOCKETS_CONNECT_TIMEOUT)
+	XEND
+};
 
 static struct name_table sockflags[] = {
 	X(SOCK_CLOEXEC) X(SOCK_CLOFORK) X(SOCK_NONBLOCK) X(SOCK_CAPMODE) XEND
@@ -789,6 +800,8 @@ sysdecode_sockopt_name(int level, int optname)
 		return (lookup_value(sockoptudp, optname));
 	if (level == IPPROTO_UDPLITE)
 		return (lookup_value(sockoptudplite, optname));
+	if (level == SOL_VSOCK)
+		return (lookup_value(sockoptvsock, optname));
 	return (NULL);
 }
 

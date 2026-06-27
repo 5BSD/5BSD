@@ -38,6 +38,7 @@
 #include <sys/sysctl.h>
 #include <sys/queue.h>
 #include <sys/un.h>
+#include <sys/vsock.h>
 
 #include <netinet/in.h>
 
@@ -371,6 +372,13 @@ addr_to_string(struct sockaddr_storage *ss, char *buffer, int buflen)
 			strlcpy(buffer, "-", buflen);
 		break;
 
+	case AF_VSOCK: {
+		struct sockaddr_vm *svm = (struct sockaddr_vm *)ss;
+		snprintf(buffer, buflen, "%llu:%u",
+		    (unsigned long long)svm->svm_cid, svm->svm_port);
+		break;
+	}
+
 	default:
 		strlcpy(buffer, "", buflen);
 		break;
@@ -428,6 +436,16 @@ print_socket_info(struct procstat *procstat, struct filestat *fst)
 			printf(" %s", pe->p_name);
 		else
 			printf(" %d", sock.proto);
+		if (sock.so_pcb != 0)
+			printf(" %lx", (u_long)sock.so_pcb);
+		if (!sflg)
+			break;
+		printf(" %s <-> %s",
+		    addr_to_string(&sock.sa_local, src_addr, sizeof(src_addr)),
+		    addr_to_string(&sock.sa_peer, dst_addr, sizeof(dst_addr)));
+		break;
+	case AF_VSOCK:
+		printf(" vsock");
 		if (sock.so_pcb != 0)
 			printf(" %lx", (u_long)sock.so_pcb);
 		if (!sflg)

@@ -55,6 +55,7 @@
 #include <sys/sysctl.h>
 #include <sys/time.h>
 #include <sys/un.h>
+#include <sys/vsock.h>
 #include <sys/wait.h>
 #include <netinet/in.h>
 #include <netinet/sctp.h>
@@ -1161,6 +1162,17 @@ print_sockaddr(FILE *fp, struct trussinfo *trussinfo, uintptr_t arg,
 		fprintf(fp, "{ AF_UNIX \"%.*s\" }",
 		    (int)(len - offsetof(struct sockaddr_un, sun_path)),
 		    sun->sun_path);
+		break;
+	case AF_VSOCK:
+		if (len < sizeof(struct sockaddr_vm))
+			goto sockaddr_short;
+		{
+			struct sockaddr_vm svm;
+			memcpy(&svm, sa, sizeof(svm));
+			fprintf(fp, "{ AF_VSOCK cid=%llu port=%u }",
+			    (unsigned long long)svm.svm_cid,
+			    svm.svm_port);
+		}
 		break;
 	default:
 	sockaddr_short:
