@@ -132,7 +132,7 @@ procdesc_find(struct thread *td, int fd, const cap_rights_t *rightsp,
 	if (error)
 		return (error);
 	if (fp->f_type != DTYPE_PROCDESC) {
-		error = EINVAL;
+		error = EBADF;
 		goto out;
 	}
 	pd = fp->f_data;
@@ -332,7 +332,7 @@ sys_pdcmp(struct thread *td, struct pdcmp_args *uap)
 		return (error);
 	if (fp1->f_type != DTYPE_PROCDESC) {
 		fdrop(fp1, td);
-		return (EINVAL);
+		return (EBADF);
 	}
 
 	error = fget(td, uap->fd2, &cap_pdgetpid_rights, &fp2);
@@ -343,7 +343,7 @@ sys_pdcmp(struct thread *td, struct pdcmp_args *uap)
 	if (fp2->f_type != DTYPE_PROCDESC) {
 		fdrop(fp2, td);
 		fdrop(fp1, td);
-		return (EINVAL);
+		return (EBADF);
 	}
 
 	pd1 = fp1->f_data;

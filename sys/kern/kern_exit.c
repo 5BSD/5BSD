@@ -1528,13 +1528,14 @@ kern_pdwait(struct thread *td, int fd, int *status,
 	if (error != 0)
 		return (error);
 	if (fp->f_type != DTYPE_PROCDESC) {
-		error = EINVAL;
+		error = EBADF;
 		goto exit_unlocked;
 	}
 	pd = fp->f_data;
 
 	for (;;) {
 		/* We own a reference on the procdesc file. */
+		p = pd->pd_proc;
 		KASSERT((pd->pd_flags & PDF_CLOSED) == 0,
 		    ("PDF_CLOSED proc %p procdesc %p pd flags %#x",
 		    p, pd, pd->pd_flags));
