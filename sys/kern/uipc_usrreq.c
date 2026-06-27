@@ -100,6 +100,7 @@ SDT_PROVIDER_DECLARE(fd);
 SDT_PROVIDER_DECLARE(capsicum);
 SDT_PROBE_DECLARE(capsicum, , , xfer__capmode__deny);
 SDT_PROBE_DECLARE(capsicum, , , connect__capmode__deny);
+SDT_PROBE_DECLARE(capsicum, , , connect__capmode__server__deny);
 SDT_PROBE_DEFINE6(fd, , , scm__rights__send,
     "struct file *", "int", "pid_t", "struct ucred *", "short", "int");
 SDT_PROBE_DEFINE6(fd, , , scm__rights__recv,
@@ -2831,6 +2832,13 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			error = sooptcopyout(sopt, &optval, sizeof(optval));
 			break;
 
+		case LOCAL_CAPMODE_SERVER:
+			UNP_PCB_LOCK(unp);
+			optval = (unp->unp_flags & UNP_CAPMODE_SERVER) ? 1 : 0;
+			UNP_PCB_UNLOCK(unp);
+			error = sooptcopyout(sopt, &optval, sizeof(optval));
+			break;
+
 		default:
 			error = EOPNOTSUPP;
 			break;
@@ -2883,6 +2891,19 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			if (optval)
 				unp->unp_flags |= UNP_CAPMODE_CONNECT;
 			else if (unp->unp_flags & UNP_CAPMODE_CONNECT)
+				error = ENOTCAPABLE;  /* monotonic: cannot clear */
+			UNP_PCB_UNLOCK(unp);
+			break;
+
+		case LOCAL_CAPMODE_SERVER:
+			error = sooptcopyin(sopt, &optval, sizeof(optval),
+					    sizeof(optval));
+			if (error)
+				break;
+			UNP_PCB_LOCK(unp);
+			if (optval)
+				unp->unp_flags |= UNP_CAPMODE_SERVER;
+			else if (unp->unp_flags & UNP_CAPMODE_SERVER)
 				error = ENOTCAPABLE;  /* monotonic: cannot clear */
 			UNP_PCB_UNLOCK(unp);
 			break;
@@ -3023,6 +3044,18 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 		SDT_PROBE6(capsicum, , , connect__capmode__deny,
 		    td->td_proc->p_pid, td->td_ucred,
 		    unp2->unp_flags, so->so_type, so2->so_type,
+		    ENOTCAPABLE);
+		error = ENOTCAPABLE;
+		goto bad2;
+	}
+
+	/* Client requires server to be in cap mode. */
+	if ((unp->unp_flags & UNP_CAPMODE_SERVER) &&
+	    (so2->so_cred == NULL ||
+	     (so2->so_cred->cr_flags & CRED_FLAG_CAPMODE) == 0)) {
+		SDT_PROBE6(capsicum, , , connect__capmode__server__deny,
+		    td->td_proc->p_pid, td->td_ucred,
+		    unp->unp_flags, so->so_type, so2->so_type,
 		    ENOTCAPABLE);
 		error = ENOTCAPABLE;
 		goto bad2;
@@ -4031,6 +4064,8 @@ unp_addsockcred(struct thread *td, struct mchain *mc, int mode)
 		sc->sc_euid = td->td_ucred->cr_uid;
 		sc->sc_gid = td->td_ucred->cr_rgid;
 		sc->sc_egid = td->td_ucred->cr_gid;
+		sc->sc_capmode =
+		    (td->td_ucred->cr_flags & CRED_FLAG_CAPMODE) ? 1 : 0;
 		sc->sc_ngroups = ngroups;
 		for (i = 0; i < sc->sc_ngroups; i++)
 			sc->sc_groups[i] = td->td_ucred->cr_groups[i];

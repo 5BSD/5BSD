@@ -125,6 +125,8 @@ SDT_PROBE_DEFINE6(capsicum, , , xfer__capmode__deny,
     "int", "pid_t", "struct ucred *", "int", "int", "int");
 SDT_PROBE_DEFINE6(capsicum, , , connect__capmode__deny,
     "pid_t", "struct ucred *", "int", "int", "int", "int");
+SDT_PROBE_DEFINE6(capsicum, , , connect__capmode__server__deny,
+    "pid_t", "struct ucred *", "int", "int", "int", "int");
 SDT_PROBE_DEFINE6(capsicum, , , mmap__capmode,
     "int", "pid_t", "struct ucred *", "int", "int", "int");
 SDT_PROBE_DEFINE6(capsicum, , , mmap__capmode__deny,

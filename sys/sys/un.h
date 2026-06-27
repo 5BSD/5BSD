@@ -67,6 +67,7 @@ struct sockaddr_un {
 #define	LOCAL_CREDS_PERSISTENT	3	/* pass credentials to receiver */
 #define	LOCAL_CAPMODE_CONNECT	4	/* require cap mode for connect */
 #define	LOCAL_PEERCAPMODE	5	/* peer is in cap mode */
+#define	LOCAL_CAPMODE_SERVER	6	/* require server in cap mode */
 
 /* Start of reserved space for third-party socket options. */
 #define	LOCAL_VENDOR		SO_VENDOR

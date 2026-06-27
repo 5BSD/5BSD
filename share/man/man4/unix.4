@@ -320,12 +320,22 @@ struct sockcred2 {
   uid_t	sc_euid;	/* effective user id */
   gid_t	sc_gid;		/* real group id */
   gid_t	sc_egid;	/* effective group id */
+  uint8_t sc_capmode;	/* sender in cap mode */
+  uint8_t sc_pad0[3];	/* padding */
   int	sc_ngroups;	/* number of supplemental groups */
   gid_t	sc_groups[1];	/* variable length */
 };
 .Ed
 .Pp
 The current version is zero.
+.Pp
+The
+.Va sc_capmode
+field is set to 1 if the sending process was in capability mode
+.Pq see Xr cap_enter 2
+at the time the message was sent, or 0 otherwise.
+This allows the receiver to verify per-message that the sender was
+sandboxed.
 .Pp
 The
 .Vt cmsghdr
@@ -388,6 +398,33 @@ The capability-mode status is captured at connect time along with
 the peer credentials and does not change afterwards.
 This allows a server to distinguish between sandboxed and
 non-sandboxed clients.
+.It Dv LOCAL_CAPMODE_SERVER
+This option may be set on a
+.Dv SOCK_STREAM ,
+.Dv SOCK_SEQPACKET ,
+or
+.Dv SOCK_DGRAM
+socket before calling
+.Xr connect 2
+or
+.Xr connectat 2 .
+When enabled, the kernel requires that the listening socket was created
+by a process in capability mode
+.Pq see Xr cap_enter 2 .
+A connection attempt to a server that is not in capability mode will
+fail with
+.Er ENOTCAPABLE .
+.Pp
+The option is monotonic: once set, it cannot be cleared.
+Attempting to set the option to zero when it is already enabled returns
+.Er ENOTCAPABLE .
+.Pp
+This option is the client-side counterpart to
+.Dv LOCAL_CAPMODE_CONNECT ,
+which is set on the server side.
+Together they allow mutual attestation:
+the server can require sandboxed clients, and the client can require
+a sandboxed server.
 .It Dv LOCAL_PEERCRED
 Requested via
 .Xr getsockopt 2

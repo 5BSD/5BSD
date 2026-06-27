@@ -168,6 +168,18 @@ Attempts to
 from a process not in capability mode fail with
 .Er ENOTCAPABLE .
 The option is monotonic and cannot be cleared once set.
+.Pp
+The complementary
+.Dv LOCAL_CAPMODE_SERVER
+option is set on the client socket before connecting.
+It requires that the listening socket was created by a process in
+capability mode.
+If the server is not in capability mode,
+.Xr connect 2
+fails with
+.Er ENOTCAPABLE .
+Together these options provide mutual attestation between sandboxed
+peers.
 .El
 .Pp
 In some cases,

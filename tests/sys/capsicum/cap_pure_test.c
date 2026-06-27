@@ -2871,6 +2871,302 @@ ATF_TC_BODY(lookup_capmode_bad_fd, tc)
 	    "cap_lookup_capmode bad fd: expected EBADF (result=%d)", r);
 }
 
+/* ---- LOCAL_CAPMODE_SERVER tests ---- */
+
+#ifndef LOCAL_CAPMODE_SERVER
+#define	LOCAL_CAPMODE_SERVER	6
+#endif
+
+/*
+ * capmode_server_denied:
+ * Client sets LOCAL_CAPMODE_SERVER on its socket, then tries to connect
+ * to a server that is NOT in cap mode.  Connect must fail with ENOTCAPABLE.
+ */
+static void
+capmode_server_denied_body(int *result)
+{
+	struct sockaddr_un sun;
+	char dir[] = "/tmp/cap_pure_test.XXXXXX";
+	char path[128];
+	int ls, cs, one = 1;
+
+	if (mkdtemp(dir) == NULL) { *result = 1; return; }
+	snprintf(path, sizeof(path), "%s/sock", dir);
+
+	ls = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (ls < 0) { *result = 2; return; }
+
+	memset(&sun, 0, sizeof(sun));
+	sun.sun_family = AF_UNIX;
+	sun.sun_len = sizeof(sun);
+	strlcpy(sun.sun_path, path, sizeof(sun.sun_path));
+
+	if (bind(ls, (struct sockaddr *)&sun, sizeof(sun)) != 0) {
+		*result = 3; return;
+	}
+	if (listen(ls, 1) != 0) { *result = 4; return; }
+
+	/* Client sets LOCAL_CAPMODE_SERVER before connecting */
+	cs = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (cs < 0) { *result = 5; return; }
+	if (setsockopt(cs, 0, LOCAL_CAPMODE_SERVER, &one, sizeof(one)) != 0) {
+		*result = 6; return;
+	}
+
+	/* Server is NOT in cap mode — connect must fail */
+	if (connect(cs, (struct sockaddr *)&sun, sizeof(sun)) == 0) {
+		*result = 7; return;
+	}
+	if (errno != ENOTCAPABLE) { *result = 8; return; }
+
+	close(cs);
+	close(ls);
+	(void)unlink(path);
+	(void)rmdir(dir);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(capmode_server_denied);
+ATF_TC_BODY(capmode_server_denied, tc)
+{
+	int r;
+
+	r = in_child(capmode_server_denied_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "connect to non-cap-mode server must fail (result=%d)", r);
+}
+
+/*
+ * capmode_server_monotonic:
+ * Set LOCAL_CAPMODE_SERVER, then try to clear it.  Verify ENOTCAPABLE.
+ */
+static void
+capmode_server_monotonic_body(int *result)
+{
+	int s, one = 1, zero = 0;
+
+	s = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (s < 0) { *result = 1; return; }
+
+	if (setsockopt(s, 0, LOCAL_CAPMODE_SERVER, &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+
+	/* Attempt to clear — must fail with ENOTCAPABLE */
+	if (setsockopt(s, 0, LOCAL_CAPMODE_SERVER, &zero, sizeof(zero)) == 0) {
+		*result = 3; return;
+	}
+	if (errno != ENOTCAPABLE) { *result = 4; return; }
+
+	/* Setting it again (idempotent) must succeed */
+	if (setsockopt(s, 0, LOCAL_CAPMODE_SERVER, &one, sizeof(one)) != 0) {
+		*result = 5; return;
+	}
+
+	close(s);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(capmode_server_monotonic);
+ATF_TC_BODY(capmode_server_monotonic, tc)
+{
+	int r;
+
+	r = in_child(capmode_server_monotonic_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "LOCAL_CAPMODE_SERVER must be monotonic (result=%d)", r);
+}
+
+/* ---- sockcred2 sc_capmode tests ---- */
+
+/*
+ * Extended sockcred2 with sc_capmode field.  Defined locally so the
+ * test compiles against older system headers that lack the field.
+ */
+struct sockcred2_ext {
+	int	sc_version;
+	pid_t	sc_pid;
+	uid_t	sc_uid;
+	uid_t	sc_euid;
+	gid_t	sc_gid;
+	gid_t	sc_egid;
+	uint8_t	sc_capmode;
+	uint8_t	sc_pad0[3];
+	int	sc_ngroups;
+	gid_t	sc_groups[1];
+};
+
+/*
+ * sockcred2_capmode:
+ * A child in cap mode sends a message on a socketpair with
+ * LOCAL_CREDS_PERSISTENT enabled.  Parent receives SCM_CREDS2 and
+ * verifies sc_capmode == 1.
+ */
+static void
+sockcred2_capmode_body(int *result)
+{
+	int sv[2], one = 1;
+	pid_t pid;
+	int status;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+
+	/* Enable LOCAL_CREDS_PERSISTENT on the receiving end */
+	if (setsockopt(sv[0], 0, LOCAL_CREDS_PERSISTENT,
+	    &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+
+	pid = fork();
+	if (pid < 0) { *result = 3; return; }
+	if (pid == 0) {
+		/* Child: enter cap mode, send a message */
+		close(sv[0]);
+		if (cap_enter() != 0) _exit(10);
+		if (write(sv[1], "x", 1) != 1) _exit(11);
+		close(sv[1]);
+		_exit(0);
+	}
+
+	/* Parent: receive and check SCM_CREDS2 */
+	close(sv[1]);
+
+	if (waitpid(pid, &status, 0) != pid) { *result = 4; return; }
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		*result = 20 + WEXITSTATUS(status); return;
+	}
+
+	{
+		struct msghdr msg;
+		struct iovec iov;
+		char buf[1];
+		union {
+			struct cmsghdr hdr;
+			char control[CMSG_SPACE(SOCKCRED2SIZE(CMGROUP_MAX))];
+		} cmsgbuf;
+		struct cmsghdr *cmsg;
+		struct sockcred2_ext *sc;
+
+		memset(&msg, 0, sizeof(msg));
+		iov.iov_base = buf;
+		iov.iov_len = sizeof(buf);
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+		msg.msg_control = cmsgbuf.control;
+		msg.msg_controllen = sizeof(cmsgbuf.control);
+
+		if (recvmsg(sv[0], &msg, 0) < 0) { *result = 5; return; }
+
+		cmsg = CMSG_FIRSTHDR(&msg);
+		if (cmsg == NULL) { *result = 6; return; }
+		if (cmsg->cmsg_level != SOL_SOCKET ||
+		    cmsg->cmsg_type != SCM_CREDS2) {
+			*result = 7; return;
+		}
+
+		sc = (struct sockcred2_ext *)(void *)CMSG_DATA(cmsg);
+		if (sc->sc_capmode != 1) { *result = 8; return; }
+	}
+
+	close(sv[0]);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(sockcred2_capmode);
+ATF_TC_BODY(sockcred2_capmode, tc)
+{
+	int r;
+
+	r = in_child(sockcred2_capmode_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "sc_capmode must be 1 for cap-mode sender (result=%d)", r);
+}
+
+/*
+ * sockcred2_no_capmode:
+ * A child NOT in cap mode sends a message.  Verify sc_capmode == 0.
+ */
+static void
+sockcred2_no_capmode_body(int *result)
+{
+	int sv[2], one = 1;
+	pid_t pid;
+	int status;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+
+	if (setsockopt(sv[0], 0, LOCAL_CREDS_PERSISTENT,
+	    &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+
+	pid = fork();
+	if (pid < 0) { *result = 3; return; }
+	if (pid == 0) {
+		/* Child: do NOT enter cap mode, just send */
+		close(sv[0]);
+		if (write(sv[1], "x", 1) != 1) _exit(11);
+		close(sv[1]);
+		_exit(0);
+	}
+
+	close(sv[1]);
+
+	if (waitpid(pid, &status, 0) != pid) { *result = 4; return; }
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		*result = 20 + WEXITSTATUS(status); return;
+	}
+
+	{
+		struct msghdr msg;
+		struct iovec iov;
+		char buf[1];
+		union {
+			struct cmsghdr hdr;
+			char control[CMSG_SPACE(SOCKCRED2SIZE(CMGROUP_MAX))];
+		} cmsgbuf;
+		struct cmsghdr *cmsg;
+		struct sockcred2_ext *sc;
+
+		memset(&msg, 0, sizeof(msg));
+		iov.iov_base = buf;
+		iov.iov_len = sizeof(buf);
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+		msg.msg_control = cmsgbuf.control;
+		msg.msg_controllen = sizeof(cmsgbuf.control);
+
+		if (recvmsg(sv[0], &msg, 0) < 0) { *result = 5; return; }
+
+		cmsg = CMSG_FIRSTHDR(&msg);
+		if (cmsg == NULL) { *result = 6; return; }
+		if (cmsg->cmsg_level != SOL_SOCKET ||
+		    cmsg->cmsg_type != SCM_CREDS2) {
+			*result = 7; return;
+		}
+
+		sc = (struct sockcred2_ext *)(void *)CMSG_DATA(cmsg);
+		if (sc->sc_capmode != 0) { *result = 8; return; }
+	}
+
+	close(sv[0]);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(sockcred2_no_capmode);
+ATF_TC_BODY(sockcred2_no_capmode, tc)
+{
+	int r;
+
+	r = in_child(sockcred2_no_capmode_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "sc_capmode must be 0 for non-cap-mode sender (result=%d)", r);
+}
+
 /* ---- ATF test program ---- */
 
 ATF_TP_ADD_TCS(tp)
@@ -2971,6 +3267,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, lookup_capmode_denied);
 	ATF_TP_ADD_TC(tp, lookup_capmode_allowed);
 	ATF_TP_ADD_TC(tp, lookup_capmode_bad_fd);
+
+	/* LOCAL_CAPMODE_SERVER */
+	ATF_TP_ADD_TC(tp, capmode_server_denied);
+	ATF_TP_ADD_TC(tp, capmode_server_monotonic);
+
+	/* sockcred2 sc_capmode */
+	ATF_TP_ADD_TC(tp, sockcred2_capmode);
+	ATF_TP_ADD_TC(tp, sockcred2_no_capmode);
 
 	return (atf_no_error());
 }
