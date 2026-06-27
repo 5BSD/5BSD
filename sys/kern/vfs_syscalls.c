@@ -47,6 +47,7 @@
 #include <sys/capsicum.h>
 #include <sys/disk.h>
 #include <sys/dirent.h>
+#include <sys/event.h>
 #include <sys/exterrvar.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
@@ -65,6 +66,7 @@
 #include <sys/namei.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
+#include <sys/procdesc.h>
 #include <sys/rwlock.h>
 #include <sys/sdt.h>
 #include <sys/stat.h>
@@ -1002,6 +1004,12 @@ kern_chroot(struct thread *td, struct vnode *vp)
 #endif
 	VOP_UNLOCK(vp);
 	error = pwd_chroot(td, vp);
+	if (error == 0) {
+		p = td->td_proc;
+		PROC_LOCK(p);
+		procdesc_knote(p, NOTE_CHROOT);
+		PROC_UNLOCK(p);
+	}
 	vrele(vp);
 	return (error);
 e_vunlock:

@@ -68,6 +68,15 @@
 #ifndef NOTE_JAILED
 #define	NOTE_JAILED		0x08000000
 #endif
+#ifndef NOTE_SETUID
+#define	NOTE_SETUID		0x04000000
+#endif
+#ifndef NOTE_SIGNAL
+#define	NOTE_SIGNAL		0x02000000
+#endif
+#ifndef NOTE_CHROOT
+#define	NOTE_CHROOT		0x01000000
+#endif
 
 /*
  * Helper: run test body in a forked child so cap_enter() doesn't
@@ -3594,6 +3603,235 @@ ATF_TC_BODY(note_jailed_kevent, tc)
 	    "NOTE_JAILED kevent must fire on jail attach (result=%d)", r);
 }
 
+/* ---- NOTE_SETUID kevent test ---- */
+
+/*
+ * note_setuid_kevent:
+ * pdfork a child, register EVFILT_PROCDESC with NOTE_SETUID on the
+ * procdesc fd.  Child calls setgid(getgid()) which always succeeds
+ * and fires NOTE_SETUID (proc_set_cred is called regardless of
+ * whether the value actually changed).
+ * Parent verifies the event fires with NOTE_SETUID in fflags.
+ */
+static void
+note_setuid_kevent_body(int *result)
+{
+	int pdfd, kq, pv[2];
+	struct kevent kev;
+	struct timespec ts;
+	pid_t pid;
+	char byte;
+
+	if (pipe(pv) != 0) { *result = 1; return; }
+
+	pid = pdfork(&pdfd, 0);
+	if (pid < 0) { *result = 2; return; }
+	if (pid == 0) {
+		close(pv[1]);
+		/* Wait for parent to register kevent */
+		if (read(pv[0], &byte, 1) != 1) _exit(1);
+		close(pv[0]);
+
+		/* setgid to own gid -- always succeeds, fires NOTE_SETUID */
+		if (setgid(getgid()) != 0) _exit(2);
+
+		sleep(60);
+		_exit(0);
+	}
+
+	close(pv[0]);
+
+	kq = kqueue();
+	if (kq < 0) { *result = 3; return; }
+
+	EV_SET(&kev, pdfd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+	    NOTE_SETUID, 0, NULL);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) { *result = 4; return; }
+
+	/* Signal child */
+	write(pv[1], "x", 1);
+	close(pv[1]);
+
+	/* Wait for NOTE_SETUID */
+	ts.tv_sec = 5;
+	ts.tv_nsec = 0;
+	if (kevent(kq, NULL, 0, &kev, 1, &ts) != 1) { *result = 5; return; }
+
+	if (kev.filter != EVFILT_PROCDESC) { *result = 6; return; }
+	if ((kev.fflags & NOTE_SETUID) == 0) { *result = 7; return; }
+
+	close(kq);
+	pdkill(pdfd, SIGKILL);
+	close(pdfd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(note_setuid_kevent);
+ATF_TC_BODY(note_setuid_kevent, tc)
+{
+	int r;
+
+	r = in_child(note_setuid_kevent_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "NOTE_SETUID kevent must fire on credential change (result=%d)", r);
+}
+
+/* ---- NOTE_SIGNAL kevent test ---- */
+
+/*
+ * note_signal_kevent:
+ * pdfork a child, register EVFILT_PROCDESC with NOTE_SIGNAL on the
+ * procdesc fd.  Parent sends SIGUSR1 to the child via pdkill.
+ * Parent verifies the event fires with NOTE_SIGNAL in fflags.
+ */
+static void
+note_signal_kevent_body(int *result)
+{
+	int pdfd, kq, pv[2];
+	struct kevent kev;
+	struct timespec ts;
+	pid_t pid;
+	char byte;
+
+	if (pipe(pv) != 0) { *result = 1; return; }
+
+	pid = pdfork(&pdfd, 0);
+	if (pid < 0) { *result = 2; return; }
+	if (pid == 0) {
+		close(pv[1]);
+		/* Ignore SIGUSR1 so we don't die */
+		signal(SIGUSR1, SIG_IGN);
+		/* Tell parent we're ready */
+		if (read(pv[0], &byte, 1) != 1) _exit(1);
+		close(pv[0]);
+		sleep(60);
+		_exit(0);
+	}
+
+	close(pv[0]);
+
+	kq = kqueue();
+	if (kq < 0) { *result = 3; return; }
+
+	EV_SET(&kev, pdfd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+	    NOTE_SIGNAL, 0, NULL);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) { *result = 4; return; }
+
+	/* Signal child to enter its wait loop, then send SIGUSR1 */
+	write(pv[1], "x", 1);
+	close(pv[1]);
+
+	/* Small delay to let child set up signal handler */
+	usleep(100000);
+
+	if (pdkill(pdfd, SIGUSR1) != 0) { *result = 8; return; }
+
+	/* Wait for NOTE_SIGNAL */
+	ts.tv_sec = 5;
+	ts.tv_nsec = 0;
+	if (kevent(kq, NULL, 0, &kev, 1, &ts) != 1) { *result = 5; return; }
+
+	if (kev.filter != EVFILT_PROCDESC) { *result = 6; return; }
+	if ((kev.fflags & NOTE_SIGNAL) == 0) { *result = 7; return; }
+	/* Verify the signal number is in kev.data */
+	if (kev.data != SIGUSR1) { *result = 9; return; }
+
+	close(kq);
+	pdkill(pdfd, SIGKILL);
+	close(pdfd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(note_signal_kevent);
+ATF_TC_BODY(note_signal_kevent, tc)
+{
+	int r;
+
+	r = in_child(note_signal_kevent_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "NOTE_SIGNAL kevent must fire on signal delivery (result=%d)", r);
+}
+
+/* ---- NOTE_CHROOT kevent test ---- */
+
+/*
+ * note_chroot_kevent:
+ * pdfork a child, register EVFILT_PROCDESC with NOTE_CHROOT on the
+ * procdesc fd.  Child calls chroot("/") (always succeeds for root).
+ * Parent verifies the event fires with NOTE_CHROOT in fflags.
+ * Requires root -- chroot needs privilege.
+ */
+static void
+note_chroot_kevent_body(int *result)
+{
+	int pdfd, kq, pv[2];
+	struct kevent kev;
+	struct timespec ts;
+	pid_t pid;
+	char byte;
+
+	if (getuid() != 0) {
+		/* chroot needs root */
+		*result = 77;	/* sentinel: skip */
+		return;
+	}
+
+	if (pipe(pv) != 0) { *result = 1; return; }
+
+	pid = pdfork(&pdfd, 0);
+	if (pid < 0) { *result = 2; return; }
+	if (pid == 0) {
+		close(pv[1]);
+		/* Wait for parent to register kevent */
+		if (read(pv[0], &byte, 1) != 1) _exit(1);
+		close(pv[0]);
+
+		/* chroot to / -- always succeeds for root */
+		if (chroot("/") != 0) _exit(2);
+
+		sleep(60);
+		_exit(0);
+	}
+
+	close(pv[0]);
+
+	kq = kqueue();
+	if (kq < 0) { *result = 3; return; }
+
+	EV_SET(&kev, pdfd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+	    NOTE_CHROOT, 0, NULL);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) { *result = 4; return; }
+
+	/* Signal child */
+	write(pv[1], "x", 1);
+	close(pv[1]);
+
+	/* Wait for NOTE_CHROOT */
+	ts.tv_sec = 5;
+	ts.tv_nsec = 0;
+	if (kevent(kq, NULL, 0, &kev, 1, &ts) != 1) { *result = 5; return; }
+
+	if (kev.filter != EVFILT_PROCDESC) { *result = 6; return; }
+	if ((kev.fflags & NOTE_CHROOT) == 0) { *result = 7; return; }
+
+	close(kq);
+	pdkill(pdfd, SIGKILL);
+	close(pdfd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(note_chroot_kevent);
+ATF_TC_BODY(note_chroot_kevent, tc)
+{
+	int r;
+
+	r = in_child(note_chroot_kevent_body, NULL);
+	if (r == 77)
+		atf_tc_skip("requires root for chroot");
+	ATF_REQUIRE_MSG(r == 0,
+	    "NOTE_CHROOT kevent must fire on chroot (result=%d)", r);
+}
+
 /* ---- M5: capmode_connect_seqpacket ---- */
 
 /*
@@ -3841,6 +4079,15 @@ ATF_TP_ADD_TCS(tp)
 
 	/* NOTE_JAILED */
 	ATF_TP_ADD_TC(tp, note_jailed_kevent);
+
+	/* NOTE_SETUID */
+	ATF_TP_ADD_TC(tp, note_setuid_kevent);
+
+	/* NOTE_SIGNAL */
+	ATF_TP_ADD_TC(tp, note_signal_kevent);
+
+	/* NOTE_CHROOT */
+	ATF_TP_ADD_TC(tp, note_chroot_kevent);
 
 	/* cap_mmap_capmode idempotent */
 	ATF_TP_ADD_TC(tp, mmap_capmode_idempotent);

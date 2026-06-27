@@ -203,16 +203,30 @@ the supported events are
 .Dv NOTE_EXIT ,
 .Dv NOTE_FORK ,
 .Dv NOTE_EXEC ,
-and
 .Dv NOTE_CAPMODE
 (fired when the process enters capability mode via
 .Xr cap_enter 2 ) ,
-and
 .Dv NOTE_JAILED
 (fired when the process enters a jail via
 .Xr jail 2
 or
-.Xr jail_attach 2 ) .
+.Xr jail_attach 2 ) ,
+.Dv NOTE_SETUID
+(fired when the process changes credentials via
+.Xr setuid 2 ,
+.Xr setgid 2 ,
+.Xr setcred 2 ,
+or related calls),
+.Dv NOTE_SIGNAL
+(fired when the process receives a signal; the signal number
+is returned in
+.Va data ) ,
+and
+.Dv NOTE_CHROOT
+(fired when the process changes its root directory via
+.Xr chroot 2
+or
+.Xr fchroot 2 ) .
 .Pp
 .Xr close 2
 will close the process descriptor unless
