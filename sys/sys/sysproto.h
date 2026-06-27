@@ -2078,6 +2078,12 @@ struct pdcmp_args {
 	char fd2_l_[PADL_(int)]; int fd2; char fd2_r_[PADR_(int)];
 	char result_l_[PADL_(int *)]; int * result; char result_r_[PADR_(int *)];
 };
+struct cap_xfer_capmode_args {
+	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
+};
+struct pdincapmode_args {
+	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
+};
 int	sys__exit(struct thread *, struct _exit_args *);
 int	sys_fork(struct thread *, struct fork_args *);
 int	sys_read(struct thread *, struct read_args *);
@@ -2517,6 +2523,8 @@ int	sys_cap_ftruncate(struct thread *, struct cap_ftruncate_args *);
 int	sys_cap_ambient_limit(struct thread *, struct cap_ambient_limit_args *);
 int	sys_pdself(struct thread *, struct pdself_args *);
 int	sys_pdcmp(struct thread *, struct pdcmp_args *);
+int	sys_cap_xfer_capmode(struct thread *, struct cap_xfer_capmode_args *);
+int	sys_pdincapmode(struct thread *, struct pdincapmode_args *);
 
 #ifdef COMPAT_43
 
@@ -3548,6 +3556,8 @@ int	freebsd14_setgroups(struct thread *, struct freebsd14_setgroups_args *);
 #define	SYS_AUE_cap_ambient_limit	AUE_CAP_AMBIENT_LIMIT
 #define	SYS_AUE_pdself	AUE_PDSELF
 #define	SYS_AUE_pdcmp	AUE_PDCMP
+#define	SYS_AUE_cap_xfer_capmode	AUE_CAP_XFER_CAPMODE
+#define	SYS_AUE_pdincapmode	AUE_PDINCAPMODE
 
 #undef PAD_
 #undef PADL_

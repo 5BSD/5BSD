@@ -164,8 +164,9 @@ vtvsock_cap_lockdown(int fd)
 /*
  * Prepare an fd that will be passed to a host application via
  * SCM_RIGHTS.  The fd can be transferred exactly once (to the app),
- * then it is pinned.  Close-on-exec, close-on-fork, and no-ambient
- * are set so the receiving app cannot further propagate it.
+ * then it is pinned.  Close-on-exec, close-on-fork, no-ambient,
+ * and capmode-required are set so the receiving app must be sandboxed
+ * and cannot further propagate the descriptor.
  */
 static void
 vtvsock_cap_lockdown_xfer_once(int fd)
@@ -175,6 +176,7 @@ vtvsock_cap_lockdown_xfer_once(int fd)
 	(void)cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED);
 	(void)cap_clofork_limit(fd, CAP_CLOFORK_LOCKED);
 	(void)cap_ambient_limit(fd);
+	(void)cap_xfer_capmode(fd);
 }
 #endif
 
@@ -1918,6 +1920,13 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 		WPRINTF(("vtvsock: fcntl failed: %s", strerror(errno)));
 		goto failed;
 	}
+	/* Require capability mode for connecting clients. */
+#ifndef WITHOUT_CAPSICUM
+	{
+		int one = 1;
+		(void)setsockopt(s, 0, LOCAL_CAPMODE_CONNECT, &one, sizeof(one));
+	}
+#endif
 	/* Backlog of 16 allows a burst of incoming host connections */
 	if (listen(s, 16) < 0) {
 		WPRINTF(("vtvsock: listen failed: %s", strerror(errno)));

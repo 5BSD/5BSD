@@ -341,6 +341,32 @@ The
 and
 .Dv LOCAL_CREDS_PERSISTENT
 options are mutually exclusive.
+.It Dv LOCAL_CAPMODE_CONNECT
+This option may be set on a
+.Dv SOCK_STREAM ,
+.Dv SOCK_SEQPACKET ,
+or
+.Dv SOCK_DGRAM
+socket.
+For connection-oriented sockets it is typically set before calling
+.Xr listen 2 .
+When enabled, the kernel requires that any process calling
+.Xr connect 2
+or
+.Xr connectat 2
+to this socket be in capability mode
+.Pq see Xr cap_enter 2 .
+A connection attempt from a process not in capability mode will fail with
+.Er ENOTCAPABLE .
+.Pp
+The option is monotonic: once set, it cannot be cleared.
+Attempting to set the option to zero when it is already enabled returns
+.Er ENOTCAPABLE .
+This prevents a compromised server from disabling the protection.
+.Pp
+This option is intended for use by privilege-separated daemons
+.Pq such as Xr bhyve 8
+that accept connections only from their own sandboxed workers.
 .It Dv LOCAL_PEERCRED
 Requested via
 .Xr getsockopt 2
@@ -448,6 +474,7 @@ that writes from different senders will arrive at the receiver in the same
 chronological order they were sent.
 The order is preserved for writes coming through a particular connection.
 .Sh SEE ALSO
+.Xr cap_enter 2 ,
 .Xr connect 2 ,
 .Xr dup 2 ,
 .Xr fchmod 2 ,
@@ -459,6 +486,7 @@ The order is preserved for writes coming through a particular connection.
 .Xr setsockopt 2 ,
 .Xr socket 2 ,
 .Xr CMSG_DATA 3 ,
+.Xr capsicum 4 ,
 .Xr intro 4 ,
 .Xr sysctl 8
 .Rs

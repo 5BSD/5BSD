@@ -1,0 +1,107 @@
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd June 26, 2026
+.Dt PDINCAPMODE 2
+.Os
+.Sh NAME
+.Nm pdincapmode
+.Nd query whether a process descriptor's process is in capability mode
+.Sh LIBRARY
+.Lb libc
+.Sh SYNOPSIS
+.In sys/procdesc.h
+.Ft int
+.Fn pdincapmode "int fd"
+.Sh DESCRIPTION
+The
+.Fn pdincapmode
+system call queries whether the process referenced by the process
+descriptor
+.Fa fd
+is currently in
+.Xr capsicum 4
+capability mode.
+.Pp
+On success, the return value is 1 if the described process is in
+capability mode and 0 if it is not.
+.Pp
+This is a capability-safe system call
+.Pq Dv SYF_CAPENABLED ;
+it works both inside and outside capability mode.
+The process descriptor itself is sufficient authority to perform the query.
+.Pp
+A supervisor holding a process descriptor can use
+.Fn pdincapmode
+to verify that a child has entered its sandbox before delegating
+resources to it.
+The
+.Dv NOTE_CAPMODE
+event for
+.Dv EVFILT_PROCDESC
+.Xr kqueue 2
+filters provides an asynchronous notification when the child enters
+capability mode.
+.Sh RETURN VALUES
+If successful,
+.Fn pdincapmode
+returns 1 if the process is in capability mode and 0 if it is not.
+On failure, \-1 is returned and
+.Va errno
+is set to indicate the error.
+.Sh ERRORS
+The
+.Fn pdincapmode
+system call fails if:
+.Bl -tag -width Er
+.It Bq Er EBADF
+The
+.Fa fd
+argument is not a valid open file descriptor or is not a process
+descriptor.
+.It Bq Er ESRCH
+The process referenced by the process descriptor has already exited.
+.It Bq Er ENOTCAPABLE
+The file descriptor has insufficient capability rights
+.Pq Dv CAP_PDGETPID .
+.El
+.Sh SEE ALSO
+.Xr cap_enter 2 ,
+.Xr kqueue 2 ,
+.Xr pdfork 2 ,
+.Xr pdgetpid 2 ,
+.Xr pdself 2 ,
+.Xr capsicum 4 ,
+.Xr procdesc 4
+.Sh HISTORY
+The
+.Fn pdincapmode
+system call and the
+.Dv NOTE_CAPMODE
+.Xr kqueue 2
+event first appeared in
+.Fx 16.0 .
+.Sh AUTHORS
+.An Kory Heard

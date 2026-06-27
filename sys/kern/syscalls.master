@@ -3634,4 +3634,14 @@
 		    _Out_ int *result
 		);
 	}
+632	AUE_CAP_XFER_CAPMODE	STD|CAPENABLED {
+		int cap_xfer_capmode(
+		    int fd
+		);
+	}
+633	AUE_PDINCAPMODE	STD|CAPENABLED {
+		int pdincapmode(
+		    int fd
+		);
+	}
 ; vim: syntax=off

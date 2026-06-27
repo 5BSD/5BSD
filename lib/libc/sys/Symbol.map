@@ -76,8 +76,10 @@ FBSD_1.9 {
 	pdwait;
 	pdself;
 	pdcmp;
+	pdincapmode;
 	cap_xfer_limit;
 	cap_cloexec_limit;
 	cap_clofork_limit;
 	cap_ambient_limit;
+	cap_xfer_capmode;
 };

@@ -570,4 +570,6 @@
 #define	SYS_cap_ambient_limit	629
 #define	SYS_pdself	630
 #define	SYS_pdcmp	631
-#define	SYS_MAXSYSCALL	632
+#define	SYS_cap_xfer_capmode	632
+#define	SYS_pdincapmode	633
+#define	SYS_MAXSYSCALL	634

@@ -194,6 +194,16 @@ caph_fcntls_limit(int fd, uint32_t fcntlrights)
 }
 
 static __inline int
+caph_xfer_capmode(int fd)
+{
+
+	if (cap_xfer_capmode(fd) < 0 && errno != ENOSYS)
+		return (-1);
+
+	return (0);
+}
+
+static __inline int
 caph_enter_casper(void)
 {
 

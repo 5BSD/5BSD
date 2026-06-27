@@ -127,6 +127,31 @@ a descriptor's transfer state can be set to single-use
 or fully locked
 .Pq Dv CAP_XFER_NONE .
 Transfer state is orthogonal to capability rights.
+.Pp
+.Xr cap_xfer_capmode 2
+provides an additional monotonic per-descriptor restriction: once set,
+the descriptor may only be received by a process that is already in
+capability mode.
+If the receiver is not in capability mode,
+.Xr recvmsg 2
+fails with
+.Er ENOTCAPABLE
+and the descriptor is not delivered.
+The flag propagates to the new descriptor in the receiver's table,
+so all subsequent transfers are likewise restricted.
+.It connection-level capability enforcement
+The
+.Dv LOCAL_CAPMODE_CONNECT
+.Ux Ns -domain
+socket option
+.Pq see Xr unix 4
+restricts connections to a listening socket so that only processes in
+capability mode may connect.
+Attempts to
+.Xr connect 2
+from a process not in capability mode fail with
+.Er ENOTCAPABLE .
+The option is monotonic and cannot be cleared once set.
 .El
 .Pp
 In some cases,
@@ -174,11 +199,13 @@ on files specified on a command line or establishing network connections.
 .Xr cap_getmode 2 ,
 .Xr cap_ioctls_limit 2 ,
 .Xr cap_rights_limit 2 ,
+.Xr cap_xfer_capmode 2 ,
 .Xr cap_xfer_limit 2 ,
 .Xr fchmod 2 ,
 .Xr open 2 ,
 .Xr pdfork 2 ,
 .Xr pdgetpid 2 ,
+.Xr pdincapmode 2 ,
 .Xr pdkill 2 ,
 .Xr pdwait4 2 ,
 .Xr read 2 ,
@@ -187,7 +214,8 @@ on files specified on a command line or establishing network connections.
 .Xr cap_rights_get 3 ,
 .Xr capsicum_helpers 3 ,
 .Xr libcasper 3 ,
-.Xr procdesc 4
+.Xr procdesc 4 ,
+.Xr unix 4
 .Sh HISTORY
 .Nm
 first appeared in

@@ -473,4 +473,6 @@ MIASM =  \
 	cap_ftruncate.o \
 	cap_ambient_limit.o \
 	pdself.o \
-	pdcmp.o
+	pdcmp.o \
+	cap_xfer_capmode.o \
+	pdincapmode.o

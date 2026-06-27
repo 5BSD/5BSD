@@ -67,6 +67,7 @@ struct mac_capability_msg {
 	uint8_t		cm_xfer_state[MAC_CAPABILITY_MAX_FDS];
 	uint8_t		cm_cloexec_state[MAC_CAPABILITY_MAX_FDS];
 	uint8_t		cm_clofork_state[MAC_CAPABILITY_MAX_FDS];
+	uint8_t		cm_fde_flags[MAC_CAPABILITY_MAX_FDS];
 
 	/* Inline payload — user data copied directly here. */
 	char		cm_data[];  /* sized by UMA zone: MAC_CAPABILITY_MSG_PAYLOAD_SIZE */

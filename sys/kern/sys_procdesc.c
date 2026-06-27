@@ -365,6 +365,42 @@ sys_pdcmp(struct thread *td, struct pdcmp_args *uap)
 }
 
 /*
+ * System call to query whether the described process is in capability mode.
+ * Returns td_retval[0] = 1 if in capability mode, 0 otherwise.
+ */
+int
+sys_pdincapmode(struct thread *td, struct pdincapmode_args *uap)
+{
+	struct file *fp;
+	struct procdesc *pd;
+	struct proc *p;
+	int error;
+
+	AUDIT_ARG_FD(uap->fd);
+	error = fget(td, uap->fd, &cap_pdgetpid_rights, &fp);
+	if (error != 0)
+		return (error);
+	if (fp->f_type != DTYPE_PROCDESC) {
+		fdrop(fp, td);
+		return (EBADF);
+	}
+	pd = fp->f_data;
+	sx_slock(&proctree_lock);
+	p = pd->pd_proc;
+	if (p != NULL) {
+		PROC_LOCK(p);
+		td->td_retval[0] =
+		    (p->p_ucred->cr_flags & CRED_FLAG_CAPMODE) != 0;
+		PROC_UNLOCK(p);
+	} else {
+		error = ESRCH;
+	}
+	sx_sunlock(&proctree_lock);
+	fdrop(fp, td);
+	return (error);
+}
+
+/*
  * When a new process is forked by pdfork(), a file descriptor is allocated
  * by the fork code first, then the process is forked, and then we get a
  * chance to set up the process descriptor.  Failure is not permitted at this
@@ -493,7 +529,8 @@ procdesc_exit(struct proc *p)
 
 /*
  * procdesc_knote() - deliver a kqueue event to procdesc listeners.
- * Used by fork and exec paths to notify NOTE_FORK and NOTE_EXEC.
+ * Used by fork, exec, and cap_enter paths to notify NOTE_FORK,
+ * NOTE_EXEC, and NOTE_CAPMODE.
  *
  * Caller must hold PROC_LOCK(p).  p_procdesc is an (e) field
  * (protected by proctree_lock).  To respect the lock annotation

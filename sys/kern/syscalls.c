@@ -637,4 +637,6 @@ const char *syscallnames[] = {
 	"cap_ambient_limit",			/* 629 = cap_ambient_limit */
 	"pdself",			/* 630 = pdself */
 	"pdcmp",			/* 631 = pdcmp */
+	"cap_xfer_capmode",			/* 632 = cap_xfer_capmode */
+	"pdincapmode",			/* 633 = pdincapmode */
 };

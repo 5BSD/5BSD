@@ -37,6 +37,7 @@
 .Nm pdfork ,
 .Nm pdrfork ,
 .Nm pdgetpid ,
+.Nm pdincapmode ,
 .Nm pdkill ,
 .Nm pdwait
 .Nd System calls to manage process descriptors
@@ -50,6 +51,8 @@
 .Fn pdrfork "int *fdp" "int pdflags" "int rfflags"
 .Ft int
 .Fn pdgetpid "int fd" "pid_t *pidp"
+.Ft int
+.Fn pdincapmode "int fd"
 .Ft int
 .Fn pdkill "int fd" "int signum"
 .Ft int
@@ -126,6 +129,18 @@ flag are specified.
 queries the process ID (PID) in the process descriptor
 .Fa fd .
 .Pp
+.Fn pdincapmode
+queries whether the process referenced by the process descriptor
+.Fa fd
+is in capability mode.
+On success, the system call return value (accessible via the
+.Va td_retval
+mechanism, or the C library return value convention) is 1 if the
+process is in capability mode and 0 if it is not.
+This is a capability-safe system call
+.Pq Dv SYF_CAPENABLED ;
+the process descriptor itself is sufficient authority.
+.Pp
 .Fn pdkill
 sends the signal
 .Fa signum
@@ -184,9 +199,14 @@ Process state transitions can also be monitored using
 .Xr kqueue 2
 filter
 .Dv EVFILT_PROCDESC ;
-currently only
-.Dv NOTE_EXIT
-is implemented.
+the supported events are
+.Dv NOTE_EXIT ,
+.Dv NOTE_FORK ,
+.Dv NOTE_EXEC ,
+and
+.Dv NOTE_CAPMODE
+(fired when the process enters capability mode via
+.Xr cap_enter 2 ) .
 .Pp
 .Xr close 2
 will close the process descriptor unless
@@ -210,10 +230,14 @@ return a PID, 0 or -1, as
 does.
 .Pp
 .Fn pdgetpid ,
+.Fn pdincapmode ,
 .Fn pdkill ,
 and
 .Fn pdwait
 return 0 on success and -1 on failure.
+For
+.Fn pdincapmode ,
+the return value is 1 if the process is in capability mode and 0 if not.
 .Sh ERRORS
 These functions may return the same error numbers as their PID-based equivalents
 (e.g.

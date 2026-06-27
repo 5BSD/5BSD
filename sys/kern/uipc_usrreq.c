@@ -56,6 +56,7 @@
  *	need a proper out-of-band
  */
 
+#include "opt_capsicum.h"
 #include "opt_ddb.h"
 
 #include <sys/param.h>
@@ -96,6 +97,9 @@
 #include <net/vnet.h>
 
 SDT_PROVIDER_DECLARE(fd);
+SDT_PROVIDER_DECLARE(capsicum);
+SDT_PROBE_DECLARE(capsicum, , , xfer__capmode__deny);
+SDT_PROBE_DECLARE(capsicum, , , connect__capmode__deny);
 SDT_PROBE_DEFINE6(fd, , , scm__rights__send,
     "struct file *", "int", "pid_t", "struct ucred *", "short", "int");
 SDT_PROBE_DEFINE6(fd, , , scm__rights__recv,
@@ -2803,6 +2807,13 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			error = sooptcopyout(sopt, &optval, sizeof(optval));
 			break;
 
+		case LOCAL_CAPMODE_CONNECT:
+			UNP_PCB_LOCK(unp);
+			optval = (unp->unp_flags & UNP_CAPMODE_CONNECT) ? 1 : 0;
+			UNP_PCB_UNLOCK(unp);
+			error = sooptcopyout(sopt, &optval, sizeof(optval));
+			break;
+
 		default:
 			error = EOPNOTSUPP;
 			break;
@@ -2846,6 +2857,19 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			}
 			break;
 #undef	OPTSET
+		case LOCAL_CAPMODE_CONNECT:
+			error = sooptcopyin(sopt, &optval, sizeof(optval),
+					    sizeof(optval));
+			if (error)
+				break;
+			UNP_PCB_LOCK(unp);
+			if (optval)
+				unp->unp_flags |= UNP_CAPMODE_CONNECT;
+			else if (unp->unp_flags & UNP_CAPMODE_CONNECT)
+				error = ENOTCAPABLE;  /* monotonic: cannot clear */
+			UNP_PCB_UNLOCK(unp);
+			break;
+
 		default:
 			error = ENOPROTOOPT;
 			break;
@@ -2976,6 +3000,17 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 		goto bad2;
 	}
 	so2 = unp2->unp_socket;
+#ifdef CAPABILITY_MODE
+	if ((unp2->unp_flags & UNP_CAPMODE_CONNECT) &&
+	    !IN_CAPABILITY_MODE(td)) {
+		SDT_PROBE6(capsicum, , , connect__capmode__deny,
+		    td->td_proc->p_pid, td->td_ucred,
+		    unp2->unp_flags, so->so_type, so2->so_type,
+		    ENOTCAPABLE);
+		error = ENOTCAPABLE;
+		goto bad2;
+	}
+#endif
 	if (so->so_type != so2->so_type) {
 		error = EPROTOTYPE;
 		goto bad2;
@@ -3560,6 +3595,23 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				}
 			}
 #endif
+#ifdef CAPABILITY_MODE
+			for (int i = 0; i < newfds; i++) {
+				if ((fdep[i]->fde_flags & UF_XFER_CAPMODE) &&
+				    !IN_CAPABILITY_MODE(td)) {
+					SDT_PROBE6(capsicum, , ,
+					    xfer__capmode__deny,
+					    i, td->td_proc->p_pid,
+					    td->td_ucred,
+					    fdep[i]->fde_file->f_type,
+					    fdep[i]->fde_flags,
+					    ENOTCAPABLE);
+					error = ENOTCAPABLE;
+					unp_freerights(fdep, newfds);
+					goto next;
+				}
+			}
+#endif
 			FILEDESC_XLOCK(fdesc);
 
 			/*
@@ -3594,9 +3646,9 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				    fdep[i]->fde_cloexec_state;
 				fdesc->fd_ofiles[*fdp].fde_clofork_state =
 				    fdep[i]->fde_clofork_state;
-				if (fdep[i]->fde_flags & UF_NOAMBIENT)
-					fdesc->fd_ofiles[*fdp].fde_flags |=
-					    UF_NOAMBIENT;
+				fdesc->fd_ofiles[*fdp].fde_flags |=
+				    fdep[i]->fde_flags &
+				    (UF_NOAMBIENT | UF_XFER_CAPMODE);
 				unp_externalize_fp(fp);
 				SDT_PROBE6(fd, , , scm__rights__recv, fp,
 				    *fdp, td->td_proc->p_pid, td->td_ucred,
@@ -3866,7 +3918,8 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
 				fdep[i]->fde_clofork_state =
 				    fde->fde_clofork_state;
 				fdep[i]->fde_flags =
-				    fde->fde_flags & UF_NOAMBIENT;
+				    fde->fde_flags &
+				    (UF_NOAMBIENT | UF_XFER_CAPMODE);
 				unp_internalize_fp(fdep[i]->fde_file);
 				SDT_PROBE6(fd, , , scm__rights__send,
 				    fdep[i]->fde_file, *fdp,

@@ -698,4 +698,6 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(cap_ambient_limit_args), .sy_call = (sy_call_t *)sys_cap_ambient_limit, .sy_auevent = AUE_CAP_AMBIENT_LIMIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 629 = cap_ambient_limit */
 	{ .sy_narg = AS(pdself_args), .sy_call = (sy_call_t *)sys_pdself, .sy_auevent = AUE_PDSELF, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 630 = pdself */
 	{ .sy_narg = AS(pdcmp_args), .sy_call = (sy_call_t *)sys_pdcmp, .sy_auevent = AUE_PDCMP, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 631 = pdcmp */
+	{ .sy_narg = AS(cap_xfer_capmode_args), .sy_call = (sy_call_t *)sys_cap_xfer_capmode, .sy_auevent = AUE_CAP_XFER_CAPMODE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 632 = cap_xfer_capmode */
+	{ .sy_narg = AS(pdincapmode_args), .sy_call = (sy_call_t *)sys_pdincapmode, .sy_auevent = AUE_PDINCAPMODE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 633 = pdincapmode */
 };
