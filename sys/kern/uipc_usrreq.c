@@ -3701,7 +3701,8 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				    fdep[i]->fde_clofork_state;
 				fdesc->fd_ofiles[*fdp].fde_flags |=
 				    fdep[i]->fde_flags &
-				    (UF_NOAMBIENT | UF_XFER_CAPMODE);
+				    (UF_NOAMBIENT | UF_XFER_CAPMODE |
+				    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 				unp_externalize_fp(fp);
 				SDT_PROBE6(fd, , , scm__rights__recv, fp,
 				    *fdp, td->td_proc->p_pid, td->td_ucred,
@@ -3972,7 +3973,8 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
 				    fde->fde_clofork_state;
 				fdep[i]->fde_flags =
 				    fde->fde_flags &
-				    (UF_NOAMBIENT | UF_XFER_CAPMODE);
+				    (UF_NOAMBIENT | UF_XFER_CAPMODE |
+				    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 				unp_internalize_fp(fdep[i]->fde_file);
 				SDT_PROBE6(fd, , , scm__rights__send,
 				    fdep[i]->fde_file, *fdp,
@@ -4058,7 +4060,7 @@ unp_addsockcred(struct thread *td, struct mchain *mc, int mode)
 		struct sockcred2 *sc;
 
 		sc = (void *)CMSG_DATA(mtod(m, struct cmsghdr *));
-		sc->sc_version = 0;
+		sc->sc_version = SOCKCRED2_VERSION;
 		sc->sc_pid = td->td_proc->p_pid;
 		sc->sc_uid = td->td_ucred->cr_ruid;
 		sc->sc_euid = td->td_ucred->cr_uid;

@@ -356,7 +356,8 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 				    fde->fde_clofork_state;
 				msg->cm_fde_flags[i] =
 				    fde->fde_flags &
-				    (UF_NOAMBIENT | UF_XFER_CAPMODE);
+				    (UF_NOAMBIENT | UF_XFER_CAPMODE |
+				    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 			}
 			FILEDESC_XUNLOCK(fdesc);
 
@@ -560,7 +561,8 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 			    msg->cm_clofork_state[installed];
 			fdesc->fd_ofiles[fdbuf[installed]].fde_flags |=
 			    msg->cm_fde_flags[installed] &
-			    (UF_NOAMBIENT | UF_XFER_CAPMODE);
+			    (UF_NOAMBIENT | UF_XFER_CAPMODE |
+			    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 		}
 		FILEDESC_XUNLOCK(fdesc);
 		if (installed < nfds_out) {

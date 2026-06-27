@@ -557,6 +557,7 @@ struct sockcred2 {
 	int	sc_ngroups;		/* number of supplemental groups */
 	gid_t	sc_groups[1];		/* variable length */
 };
+#define	SOCKCRED2_VERSION	1	/* current version */
 #define	SOCKCRED2SIZE(ngrps) \
 	(sizeof(struct sockcred2) + (sizeof(gid_t) * ((ngrps) - 1)))
 
