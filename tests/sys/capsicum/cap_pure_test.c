@@ -29,6 +29,7 @@
 #include <unistd.h>
 
 #include <sys/procdesc.h>
+#include <sys/jail.h>
 #include <sys/filio.h>
 #include <sys/mman.h>
 #include <sys/un.h>
@@ -63,6 +64,9 @@
 #endif
 #ifndef NOTE_CAPMODE
 #define	NOTE_CAPMODE		0x10000000
+#endif
+#ifndef NOTE_JAILED
+#define	NOTE_JAILED		0x08000000
 #endif
 
 /*
@@ -3503,6 +3507,93 @@ ATF_TC_BODY(note_capmode_no_double_fire, tc)
 	    "NOTE_CAPMODE must not fire twice (result=%d)", r);
 }
 
+/* ---- NOTE_JAILED kevent test ---- */
+
+/*
+ * note_jailed_kevent:
+ * pdfork a child, register EVFILT_PROCDESC with NOTE_JAILED on the
+ * procdesc fd.  Child creates a jail and attaches to it.
+ * Parent verifies the event fires with NOTE_JAILED in fflags.
+ * Requires root (jail_set needs privilege).
+ */
+static void
+note_jailed_kevent_body(int *result)
+{
+	int pdfd, kq, pv[2];
+	struct kevent kev;
+	struct timespec ts;
+	pid_t pid;
+	char byte;
+
+	if (getuid() != 0) {
+		/* Can't create jails without root */
+		*result = 77;	/* sentinel: skip */
+		return;
+	}
+
+	if (pipe(pv) != 0) { *result = 1; return; }
+
+	pid = pdfork(&pdfd, 0);
+	if (pid < 0) { *result = 2; return; }
+	if (pid == 0) {
+		struct jail j;
+
+		close(pv[1]);
+		/* Wait for parent to register kevent */
+		if (read(pv[0], &byte, 1) != 1) _exit(1);
+		close(pv[0]);
+
+		/* Create and attach to a jail */
+		memset(&j, 0, sizeof(j));
+		j.version = JAIL_API_VERSION;
+		j.path = "/";
+		j.hostname = "captest";
+		j.jailname = "captest_note_jailed";
+		if (jail(&j) < 0) _exit(2);
+
+		sleep(60);
+		_exit(0);
+	}
+
+	close(pv[0]);
+
+	kq = kqueue();
+	if (kq < 0) { *result = 3; return; }
+
+	EV_SET(&kev, pdfd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+	    NOTE_JAILED, 0, NULL);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) { *result = 4; return; }
+
+	/* Signal child */
+	write(pv[1], "x", 1);
+	close(pv[1]);
+
+	/* Wait for NOTE_JAILED */
+	ts.tv_sec = 5;
+	ts.tv_nsec = 0;
+	if (kevent(kq, NULL, 0, &kev, 1, &ts) != 1) { *result = 5; return; }
+
+	if (kev.filter != EVFILT_PROCDESC) { *result = 6; return; }
+	if ((kev.fflags & NOTE_JAILED) == 0) { *result = 7; return; }
+
+	close(kq);
+	pdkill(pdfd, SIGKILL);
+	close(pdfd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(note_jailed_kevent);
+ATF_TC_BODY(note_jailed_kevent, tc)
+{
+	int r;
+
+	r = in_child(note_jailed_kevent_body, NULL);
+	if (r == 77)
+		atf_tc_skip("requires root for jail creation");
+	ATF_REQUIRE_MSG(r == 0,
+	    "NOTE_JAILED kevent must fire on jail attach (result=%d)", r);
+}
+
 /* ---- M5: capmode_connect_seqpacket ---- */
 
 /*
@@ -3747,6 +3838,9 @@ ATF_TP_ADD_TCS(tp)
 
 	/* NOTE_CAPMODE no double fire */
 	ATF_TP_ADD_TC(tp, note_capmode_no_double_fire);
+
+	/* NOTE_JAILED */
+	ATF_TP_ADD_TC(tp, note_jailed_kevent);
 
 	/* cap_mmap_capmode idempotent */
 	ATF_TP_ADD_TC(tp, mmap_capmode_idempotent);

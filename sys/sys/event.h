@@ -206,7 +206,8 @@ struct freebsd11_kevent32 {
 #define	NOTE_FORK	0x40000000		/* process forked */
 #define	NOTE_EXEC	0x20000000		/* process exec'd */
 #define	NOTE_CAPMODE	0x10000000		/* process entered cap mode */
-#define	NOTE_PCTRLMASK	0xf0000000		/* mask for hint bits */
+#define	NOTE_JAILED	0x08000000		/* process entered a jail */
+#define	NOTE_PCTRLMASK	0xff000000		/* mask for hint bits */
 #define	NOTE_PDATAMASK	0x000fffff		/* mask for pid */
 
 /* additional flags for EVFILT_PROC */

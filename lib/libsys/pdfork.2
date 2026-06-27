@@ -206,7 +206,13 @@ the supported events are
 and
 .Dv NOTE_CAPMODE
 (fired when the process enters capability mode via
-.Xr cap_enter 2 ) .
+.Xr cap_enter 2 ) ,
+and
+.Dv NOTE_JAILED
+(fired when the process enters a jail via
+.Xr jail 2
+or
+.Xr jail_attach 2 ) .
 .Pp
 .Xr close 2
 will close the process descriptor unless
