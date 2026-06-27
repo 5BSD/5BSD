@@ -887,4 +887,8 @@ FBSDprivate_1.0 {
 	__sys_cap_xfer_capmode;
 	_pdincapmode;
 	__sys_pdincapmode;
+	_cap_mmap_capmode;
+	__sys_cap_mmap_capmode;
+	_cap_lookup_capmode;
+	__sys_cap_lookup_capmode;
 };

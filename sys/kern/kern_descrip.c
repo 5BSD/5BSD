@@ -90,6 +90,9 @@
 
 #include <ddb/ddb.h>
 
+SDT_PROVIDER_DECLARE(capsicum);
+SDT_PROBE_DECLARE(capsicum, , , lookup__capmode__deny);
+
 static MALLOC_DEFINE(M_FILEDESC, "filedesc", "Open file descriptor table");
 static MALLOC_DEFINE(M_PWD, "pwd", "Descriptor table vnodes");
 static MALLOC_DEFINE(M_PWDDESC, "pwddesc", "Pwd descriptors");
@@ -3333,6 +3336,11 @@ fgetvp_lookup_smr(struct nameidata *ndp, struct vnode **vpp, int *flagsp)
 	flags = fp->f_flag & FSEARCH;
 	flags |= (fde->fde_flags & UF_RESOLVE_BENEATH) != 0 ?
 	    O_RESOLVE_BENEATH : 0;
+#ifdef CAPABILITY_MODE
+	if (__predict_false((fde->fde_flags & UF_LOOKUP_CAPMODE) != 0 &&
+	    !IN_CAPABILITY_MODE(curthread)))
+		return (EAGAIN);
+#endif
 	vp = fp->f_vnode;
 	if (__predict_false(vp == NULL)) {
 		return (EAGAIN);
@@ -3394,6 +3402,11 @@ fgetvp_lookup_smr(struct nameidata *ndp, struct vnode **vpp, int *flagsp)
 	flags = fp->f_flag & FSEARCH;
 	flags |= (fde->fde_flags & UF_RESOLVE_BENEATH) != 0 ?
 	    O_RESOLVE_BENEATH : 0;
+#ifdef CAPABILITY_MODE
+	if (__predict_false((fde->fde_flags & UF_LOOKUP_CAPMODE) != 0 &&
+	    !IN_CAPABILITY_MODE(curthread)))
+		return (EAGAIN);
+#endif
 	vp = fp->f_vnode;
 	if (__predict_false(vp == NULL || vp->v_type != VDIR)) {
 		return (EAGAIN);
@@ -3437,6 +3450,16 @@ fgetvp_lookup(struct nameidata *ndp, struct vnode **vpp)
 		error = EBADF;
 		goto out_free;
 	}
+#ifdef CAPABILITY_MODE
+	if (__predict_false((flags & UF_LOOKUP_CAPMODE) != 0 &&
+	    !IN_CAPABILITY_MODE(td))) {
+		SDT_PROBE6(capsicum, , , lookup__capmode__deny,
+		    ndp->ni_dirfd, td->td_proc->p_pid, td->td_ucred,
+		    0, 0, ENOTCAPABLE);
+		error = ENOTCAPABLE;
+		goto out_free;
+	}
+#endif
 	vp = fp->f_vnode;
 	if (__predict_false(vp == NULL)) {
 		error = ENOTDIR;
@@ -3805,25 +3828,29 @@ fget(struct thread *td, int fd, const cap_rights_t *rightsp, struct file **fpp)
 
 int
 fget_mmap(struct thread *td, int fd, const cap_rights_t *rightsp,
-    vm_prot_t *maxprotp, struct file **fpp)
+    vm_prot_t *maxprotp, uint8_t *fde_flagsp, struct file **fpp)
 {
 	int error;
 #ifndef CAPABILITIES
 	error = _fget(td, fd, fpp, 0, rightsp);
 	if (maxprotp != NULL)
 		*maxprotp = VM_PROT_ALL;
+	if (fde_flagsp != NULL)
+		*fde_flagsp = 0;
 	return (error);
 #else
 	cap_rights_t fdrights;
 	struct filedesc *fdp;
 	struct file *fp;
+	uint8_t fde_flags;
 	seqc_t seq;
 
 	*fpp = NULL;
 	fdp = td->td_proc->p_fd;
 	MPASS(cap_rights_is_set(rightsp, CAP_MMAP));
 	for (;;) {
-		error = fget_unlocked_seq(td, fd, rightsp, NULL, &fp, &seq);
+		error = fget_unlocked_seq(td, fd, rightsp, &fde_flags,
+		    &fp, &seq);
 		if (__predict_false(error != 0))
 			return (error);
 		if (__predict_false(fp->f_ops == &badfileops)) {
@@ -3842,6 +3869,8 @@ fget_mmap(struct thread *td, int fd, const cap_rights_t *rightsp,
 	 */
 	if (maxprotp != NULL)
 		*maxprotp = cap_rights_to_vmprot(&fdrights);
+	if (fde_flagsp != NULL)
+		*fde_flagsp = fde_flags;
 	*fpp = fp;
 	return (0);
 #endif

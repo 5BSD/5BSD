@@ -391,6 +391,8 @@ FBSD_1.8 {
 };
 
 FBSD_1.9 {
+	cap_lookup_capmode;
+	cap_mmap_capmode;
 	cap_xfer_capmode;
 	pdincapmode;
 	pdself;

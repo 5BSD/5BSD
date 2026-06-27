@@ -696,6 +696,8 @@
 #define	AUE_PDCMP		43302	/* 5BSD */
 #define	AUE_CAP_XFER_CAPMODE	43303	/* 5BSD */
 #define	AUE_PDINCAPMODE		43304	/* 5BSD */
+#define	AUE_CAP_MMAP_CAPMODE	43305	/* 5BSD */
+#define	AUE_CAP_LOOKUP_CAPMODE	43306	/* 5BSD */
 
 /*
  * Darwin BSM uses a number of AUE_O_* definitions, which are aliased to the

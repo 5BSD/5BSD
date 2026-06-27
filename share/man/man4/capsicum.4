@@ -139,6 +139,22 @@ fails with
 and the descriptor is not delivered.
 The flag propagates to the new descriptor in the receiver's table,
 so all subsequent transfers are likewise restricted.
+.Pp
+.Xr cap_mmap_capmode 2
+sets a monotonic per-descriptor flag that requires the calling process
+to be in capability mode before the descriptor may be mapped with
+.Xr mmap 2 .
+This is useful for shared memory descriptors that should only be
+accessible to sandboxed processes.
+.Pp
+.Xr cap_lookup_capmode 2
+sets a monotonic per-descriptor flag on a directory descriptor that
+requires the calling process to be in capability mode before the
+descriptor may be used as the
+.Fa dirfd
+argument to any
+.Xr \&*at 2
+system call.
 .It connection-level capability enforcement
 The
 .Dv LOCAL_CAPMODE_CONNECT
@@ -198,6 +214,8 @@ on files specified on a command line or establishing network connections.
 .Xr cap_fcntls_limit 2 ,
 .Xr cap_getmode 2 ,
 .Xr cap_ioctls_limit 2 ,
+.Xr cap_lookup_capmode 2 ,
+.Xr cap_mmap_capmode 2 ,
 .Xr cap_rights_limit 2 ,
 .Xr cap_xfer_capmode 2 ,
 .Xr cap_xfer_limit 2 ,

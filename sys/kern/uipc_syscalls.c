@@ -159,6 +159,7 @@ kern_socket(struct thread *td, int domain, int type, int protocol)
 		type &= ~SOCK_NONBLOCK;
 		fflag |= FNONBLOCK;
 	}
+	type &= ~SOCK_CAPMODE;	/* Only meaningful for socketpair(). */
 
 #ifdef MAC
 	error = mac_socket_check_create(td->td_ucred, domain, type, protocol);
@@ -564,11 +565,13 @@ kern_socketpair(struct thread *td, int domain, int type, int protocol,
 	struct file *fp1, *fp2;
 	struct socket *so1, *so2;
 	int fd, error, oflag, fflag;
+	bool capmode_lockdown;
 
 	AUDIT_ARG_SOCKET(domain, type, protocol);
 
 	oflag = 0;
 	fflag = 0;
+	capmode_lockdown = false;
 	if ((type & SOCK_CLOEXEC) != 0) {
 		type &= ~SOCK_CLOEXEC;
 		oflag |= O_CLOEXEC;
@@ -580,6 +583,10 @@ kern_socketpair(struct thread *td, int domain, int type, int protocol,
 	if ((type & SOCK_NONBLOCK) != 0) {
 		type &= ~SOCK_NONBLOCK;
 		fflag |= FNONBLOCK;
+	}
+	if ((type & SOCK_CAPMODE) != 0) {
+		type &= ~SOCK_CAPMODE;
+		capmode_lockdown = true;
 	}
 #ifdef MAC
 	/* We might want to have a separate check for socket pairs. */
@@ -635,6 +642,18 @@ kern_socketpair(struct thread *td, int domain, int type, int protocol,
 	}
 	fdrop(fp1, td);
 	fdrop(fp2, td);
+	if (capmode_lockdown) {
+		struct filedesc *fdp = td->td_proc->p_fd;
+		struct filedescent *fde;
+
+		FILEDESC_XLOCK(fdp);
+		fde = &fdp->fd_ofiles[rsv[1]];
+		fde->fde_xfer_state = CAP_XFER_ONCE;
+		fde->fde_cloexec_state = CAP_CLOEXEC_LOCKED;
+		fde->fde_clofork_state = CAP_CLOFORK_LOCKED;
+		fde->fde_flags |= UF_NOAMBIENT | UF_XFER_CAPMODE;
+		FILEDESC_XUNLOCK(fdp);
+	}
 	return (0);
 free4:
 	fdclose(td, fp2, rsv[1]);

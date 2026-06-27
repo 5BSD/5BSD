@@ -3831,6 +3831,20 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 1;
 		break;
 	}
+	/* cap_mmap_capmode */
+	case 634: {
+		struct cap_mmap_capmode_args *p = params;
+		iarg[a++] = p->fd; /* int */
+		*n_args = 1;
+		break;
+	}
+	/* cap_lookup_capmode */
+	case 635: {
+		struct cap_lookup_capmode_args *p = params;
+		iarg[a++] = p->fd; /* int */
+		*n_args = 1;
+		break;
+	}
 	default:
 		*n_args = 0;
 		break;
@@ -10284,6 +10298,26 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
+	/* cap_mmap_capmode */
+	case 634:
+		switch (ndx) {
+		case 0:
+			p = "int";
+			break;
+		default:
+			break;
+		};
+		break;
+	/* cap_lookup_capmode */
+	case 635:
+		switch (ndx) {
+		case 0:
+			p = "int";
+			break;
+		default:
+			break;
+		};
+		break;
 	default:
 		break;
 	};
@@ -12464,6 +12498,16 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* pdincapmode */
 	case 633:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* cap_mmap_capmode */
+	case 634:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* cap_lookup_capmode */
+	case 635:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

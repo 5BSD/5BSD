@@ -2814,6 +2814,23 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			error = sooptcopyout(sopt, &optval, sizeof(optval));
 			break;
 
+		case LOCAL_PEERCAPMODE:
+			UNP_PCB_LOCK(unp);
+			if (unp->unp_flags & UNP_HAVEPC)
+				optval = (unp->unp_flags &
+				    UNP_PEERCAPMODE) ? 1 : 0;
+			else {
+				if (so->so_proto->pr_flags & PR_CONNREQUIRED)
+					error = ENOTCONN;
+				else
+					error = EINVAL;
+			}
+			UNP_PCB_UNLOCK(unp);
+			if (error != 0)
+				break;
+			error = sooptcopyout(sopt, &optval, sizeof(optval));
+			break;
+
 		default:
 			error = EOPNOTSUPP;
 			break;
@@ -3101,10 +3118,13 @@ unp_copy_peercred(struct thread *td, struct unpcb *client_unp,
 {
 	cru2xt(td, &client_unp->unp_peercred);
 	client_unp->unp_flags |= UNP_HAVEPC;
+	if (td->td_ucred->cr_flags & CRED_FLAG_CAPMODE)
+		client_unp->unp_flags |= UNP_PEERCAPMODE;
 
 	memcpy(&server_unp->unp_peercred, &listen_unp->unp_peercred,
 	    sizeof(server_unp->unp_peercred));
 	server_unp->unp_flags |= UNP_HAVEPC;
+	server_unp->unp_flags |= (listen_unp->unp_flags & UNP_PEERCAPMODE);
 	client_unp->unp_flags |= (listen_unp->unp_flags & UNP_WANTCRED_MASK);
 }
 

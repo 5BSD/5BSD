@@ -1,0 +1,97 @@
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd June 26, 2026
+.Dt CAP_LOOKUP_CAPMODE 2
+.Os
+.Sh NAME
+.Nm cap_lookup_capmode
+.Nd require capability mode for directory fd lookups
+.Sh LIBRARY
+.Lb libc
+.Sh SYNOPSIS
+.In sys/capsicum.h
+.Ft int
+.Fn cap_lookup_capmode "int fd"
+.Sh DESCRIPTION
+The
+.Fn cap_lookup_capmode
+system call sets a monotonic per-descriptor flag that requires the
+calling process to be in capability mode
+.Pq see Xr cap_enter 2
+before the directory descriptor may be used as the
+.Fa dirfd
+argument to any
+.Xr \&*at 2
+system call (such as
+.Xr openat 2 ,
+.Xr connectat 2 ,
+.Xr fstatat 2 ,
+etc.).
+.Pp
+Once set, any attempt to use the descriptor for path lookups from a
+process not in capability mode will fail with
+.Er ENOTCAPABLE .
+.Pp
+The flag is monotonic: once set it cannot be cleared.
+Calling
+.Fn cap_lookup_capmode
+on a descriptor that already has the flag set is permitted and has no
+effect.
+.Pp
+This is typically used to restrict access to a directory that has been
+pre-opened for use by a sandboxed worker.
+The directory can be passed to the worker via
+.Xr recvmsg 2
+with
+.Dv SCM_RIGHTS ,
+and the flag ensures only capability-mode processes can traverse it.
+.Pp
+This system call is allowed in capability mode
+.Pq see Xr cap_enter 2 .
+.Sh RETURN VALUES
+.Rv -std
+.Sh ERRORS
+.Fn cap_lookup_capmode
+succeeds unless:
+.Bl -tag -width Er
+.It Bq Er EBADF
+The
+.Fa fd
+argument is not a valid active descriptor.
+.It Bq Er ENOSYS
+The running kernel was compiled without
+.Cd "options CAPABILITIES" .
+.El
+.Sh SEE ALSO
+.Xr cap_enter 2 ,
+.Xr cap_xfer_capmode 2 ,
+.Xr openat 2 ,
+.Xr capsicum 4
+.Sh HISTORY
+The
+.Fn cap_lookup_capmode
+system call first appeared in
+.Fx 16.0 .

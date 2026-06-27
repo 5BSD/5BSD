@@ -125,6 +125,14 @@ SDT_PROBE_DEFINE6(capsicum, , , xfer__capmode__deny,
     "int", "pid_t", "struct ucred *", "int", "int", "int");
 SDT_PROBE_DEFINE6(capsicum, , , connect__capmode__deny,
     "pid_t", "struct ucred *", "int", "int", "int", "int");
+SDT_PROBE_DEFINE6(capsicum, , , mmap__capmode,
+    "int", "pid_t", "struct ucred *", "int", "int", "int");
+SDT_PROBE_DEFINE6(capsicum, , , mmap__capmode__deny,
+    "int", "pid_t", "struct ucred *", "int", "int", "int");
+SDT_PROBE_DEFINE6(capsicum, , , lookup__capmode,
+    "int", "pid_t", "struct ucred *", "int", "int", "int");
+SDT_PROBE_DEFINE6(capsicum, , , lookup__capmode__deny,
+    "int", "pid_t", "struct ucred *", "int", "int", "int");
 
 #ifdef CAPABILITY_MODE
 
@@ -907,6 +915,60 @@ out_probe:
 	return (error);
 }
 
+int
+sys_cap_mmap_capmode(struct thread *td, struct cap_mmap_capmode_args *uap)
+{
+	struct filedesc *fdp = td->td_proc->p_fd;
+	struct filedescent *fde;
+	int fd = uap->fd;
+	int error, old_state = -1;
+
+	AUDIT_ARG_FD(fd);
+	FILEDESC_XLOCK(fdp);
+	if ((u_int)fd >= fdp->fd_nfiles ||
+	    fdp->fd_ofiles[fd].fde_file == NULL) {
+		FILEDESC_XUNLOCK(fdp);
+		error = EBADF;
+		goto out_probe;
+	}
+	fde = &fdp->fd_ofiles[fd];
+	old_state = (fde->fde_flags & UF_MMAP_CAPMODE) ? 1 : 0;
+	fde->fde_flags |= UF_MMAP_CAPMODE;
+	FILEDESC_XUNLOCK(fdp);
+	error = 0;
+out_probe:
+	SDT_PROBE6(capsicum, , , mmap__capmode, fd, td->td_proc->p_pid,
+	    td->td_ucred, 1, error, old_state);
+	return (error);
+}
+
+int
+sys_cap_lookup_capmode(struct thread *td, struct cap_lookup_capmode_args *uap)
+{
+	struct filedesc *fdp = td->td_proc->p_fd;
+	struct filedescent *fde;
+	int fd = uap->fd;
+	int error, old_state = -1;
+
+	AUDIT_ARG_FD(fd);
+	FILEDESC_XLOCK(fdp);
+	if ((u_int)fd >= fdp->fd_nfiles ||
+	    fdp->fd_ofiles[fd].fde_file == NULL) {
+		FILEDESC_XUNLOCK(fdp);
+		error = EBADF;
+		goto out_probe;
+	}
+	fde = &fdp->fd_ofiles[fd];
+	old_state = (fde->fde_flags & UF_LOOKUP_CAPMODE) ? 1 : 0;
+	fde->fde_flags |= UF_LOOKUP_CAPMODE;
+	FILEDESC_XUNLOCK(fdp);
+	error = 0;
+out_probe:
+	SDT_PROBE6(capsicum, , , lookup__capmode, fd, td->td_proc->p_pid,
+	    td->td_ucred, 1, error, old_state);
+	return (error);
+}
+
 #else /* !CAPABILITIES */
 
 /*
@@ -986,6 +1048,20 @@ sys_cap_ambient_limit(struct thread *td, struct cap_ambient_limit_args *uap)
 
 int
 sys_cap_xfer_capmode(struct thread *td, struct cap_xfer_capmode_args *uap)
+{
+
+	return (ENOSYS);
+}
+
+int
+sys_cap_mmap_capmode(struct thread *td, struct cap_mmap_capmode_args *uap)
+{
+
+	return (ENOSYS);
+}
+
+int
+sys_cap_lookup_capmode(struct thread *td, struct cap_lookup_capmode_args *uap)
 {
 
 	return (ENOSYS);

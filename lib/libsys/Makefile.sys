@@ -186,6 +186,8 @@ MAN+=	abort2.2 \
 	cap_fcntls_limit.2 \
 	cap_ioctls_limit.2 \
 	cap_rights_limit.2 \
+	cap_lookup_capmode.2 \
+	cap_mmap_capmode.2 \
 	cap_xfer_capmode.2 \
 	chdir.2 \
 	chflags.2 \

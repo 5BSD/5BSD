@@ -286,7 +286,7 @@ extern int maxfilesperproc;	/* per process limit on number of open files */
 int fget(struct thread *td, int fd, const cap_rights_t *rightsp,
     struct file **fpp);
 int fget_mmap(struct thread *td, int fd, const cap_rights_t *rightsp,
-    vm_prot_t *maxprotp, struct file **fpp);
+    vm_prot_t *maxprotp, uint8_t *fde_flagsp, struct file **fpp);
 int fget_read(struct thread *td, int fd, const cap_rights_t *rightsp,
     struct file **fpp);
 int fget_read_fde_flags(struct thread *td, int fd, const cap_rights_t *rightsp,

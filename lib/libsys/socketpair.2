@@ -63,6 +63,24 @@ and
 flags in the
 .Fa type
 argument apply to both descriptors.
+.Pp
+The
+.Dv SOCK_CAPMODE
+flag in the
+.Fa type
+argument applies a full Capsicum lockdown to
+.Fa sv Ns [1] :
+its transfer state is set to single-use
+.Pq Dv CAP_XFER_ONCE ,
+close-on-exec and close-on-fork are locked, the ambient authority limiter
+is set, and the
+.Dv cap_xfer_capmode
+flag is applied.
+The first descriptor
+.Fa sv Ns [0]
+is left unrestricted.
+This is intended for creating a pre-locked channel to hand to a
+sandboxed worker process.
 .Sh RETURN VALUES
 .Rv -std socketpair
 .Sh ERRORS

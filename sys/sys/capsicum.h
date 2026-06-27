@@ -606,6 +606,17 @@ int cap_ambient_limit(int fd);
  */
 int cap_xfer_capmode(int fd);
 /*
+ * Requires capability mode before the descriptor may be mmap(2)'d.
+ * Monotonic: once set, cannot be cleared.
+ */
+int cap_mmap_capmode(int fd);
+/*
+ * Requires capability mode before a directory descriptor may be used
+ * as the dirfd argument to *at() system calls.
+ * Monotonic: once set, cannot be cleared.
+ */
+int cap_lookup_capmode(int fd);
+/*
  * Returns bitmask of allowed fcntls for the given descriptor.
  */
 int cap_fcntls_get(int fd, uint32_t *fcntlrightsp);

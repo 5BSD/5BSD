@@ -3644,4 +3644,14 @@
 		    int fd
 		);
 	}
+634	AUE_CAP_MMAP_CAPMODE	STD|CAPENABLED {
+		int cap_mmap_capmode(
+		    int fd
+		);
+	}
+635	AUE_CAP_LOOKUP_CAPMODE	STD|CAPENABLED {
+		int cap_lookup_capmode(
+		    int fd
+		);
+	}
 ; vim: syntax=off

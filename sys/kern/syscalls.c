@@ -639,4 +639,6 @@ const char *syscallnames[] = {
 	"pdcmp",			/* 631 = pdcmp */
 	"cap_xfer_capmode",			/* 632 = cap_xfer_capmode */
 	"pdincapmode",			/* 633 = pdincapmode */
+	"cap_mmap_capmode",			/* 634 = cap_mmap_capmode */
+	"cap_lookup_capmode",			/* 635 = cap_lookup_capmode */
 };

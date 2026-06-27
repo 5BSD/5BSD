@@ -40,6 +40,7 @@
  * Mapped file (mmap) interface to VM
  */
 
+#include "opt_capsicum.h"
 #include "opt_hwpmc_hooks.h"
 #include "opt_hwt_hooks.h"
 #include "opt_vm.h"
@@ -70,6 +71,7 @@
 #include <sys/mount.h>
 #include <sys/conf.h>
 #include <sys/stat.h>
+#include <sys/sdt.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysent.h>
 #include <sys/vmmeter.h>
@@ -79,6 +81,9 @@
 
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
+
+SDT_PROVIDER_DECLARE(capsicum);
+SDT_PROBE_DECLARE(capsicum, , , mmap__capmode__deny);
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -202,6 +207,7 @@ kern_mmap(struct thread *td, const struct mmap_req *mrp)
 	int align, error, fd, flags, max_prot, prot;
 	cap_rights_t rights;
 	mmap_check_fp_fn check_fp_fn;
+	uint8_t fde_flags;
 
 	orig_addr = addr = mrp->mr_hint;
 	len = mrp->mr_len;
@@ -419,9 +425,20 @@ kern_mmap(struct thread *td, const struct mmap_req *mrp)
 		}
 		if (prot & PROT_EXEC)
 			cap_rights_set_one(&rights, CAP_MMAP_X);
-		error = fget_mmap(td, fd, &rights, &cap_maxprot, &fp);
+		error = fget_mmap(td, fd, &rights, &cap_maxprot, &fde_flags,
+		    &fp);
 		if (error != 0)
 			goto done;
+#ifdef CAPABILITY_MODE
+		if ((fde_flags & UF_MMAP_CAPMODE) != 0 &&
+		    !IN_CAPABILITY_MODE(td)) {
+			SDT_PROBE6(capsicum, , , mmap__capmode__deny,
+			    fd, td->td_proc->p_pid, td->td_ucred,
+			    0, 0, ENOTCAPABLE);
+			error = ENOTCAPABLE;
+			goto done;
+		}
+#endif
 		if ((flags & (MAP_SHARED | MAP_PRIVATE)) == 0 &&
 		    p->p_osrel >= P_OSREL_MAP_FSTRICT) {
 			EXTERROR(EINVAL, "neither SHARED nor PRIVATE req");

@@ -475,4 +475,6 @@ MIASM =  \
 	pdself.o \
 	pdcmp.o \
 	cap_xfer_capmode.o \
-	pdincapmode.o
+	pdincapmode.o \
+	cap_mmap_capmode.o \
+	cap_lookup_capmode.o
