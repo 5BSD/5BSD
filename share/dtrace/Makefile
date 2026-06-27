@@ -11,6 +11,8 @@ SCRIPTS=	blued-att \
 		blocking \
 		mac_capability-audit \
 		capsicum-changes \
+		capsicum-denials \
+		capsicum-xfer \
 		mac_capability-calls \
 		mac_capability-delegation \
 		mac_capability-denials \
@@ -23,6 +25,7 @@ SCRIPTS=	blued-att \
 		mac_capability-shield \
 		mac_capability-summary \
 		mac_capability-who \
+		procdesc-lifecycle \
 		disklatency \
 		disklatencycmd \
 		hotopen \

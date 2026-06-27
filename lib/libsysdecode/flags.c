@@ -196,7 +196,7 @@ sysdecode_vmprot(FILE *fp, int type, int *rem)
 }
 
 static struct name_table sockflags[] = {
-	X(SOCK_CLOEXEC) X(SOCK_CLOFORK) X(SOCK_NONBLOCK) XEND
+	X(SOCK_CLOEXEC) X(SOCK_CLOFORK) X(SOCK_NONBLOCK) X(SOCK_CAPMODE) XEND
 };
 
 bool
@@ -207,16 +207,16 @@ sysdecode_socket_type(FILE *fp, int type, int *rem)
 	bool printed;
 
 	str = lookup_value(socktype,
-	    type & ~(SOCK_CLOEXEC | SOCK_CLOFORK | SOCK_NONBLOCK));
+	    type & ~(SOCK_CLOEXEC | SOCK_CLOFORK | SOCK_NONBLOCK | SOCK_CAPMODE));
 	if (str != NULL) {
 		fputs(str, fp);
 		*rem = 0;
 		printed = true;
 	} else {
-		*rem = type & ~(SOCK_CLOEXEC | SOCK_CLOFORK | SOCK_NONBLOCK);
+		*rem = type & ~(SOCK_CLOEXEC | SOCK_CLOFORK | SOCK_NONBLOCK | SOCK_CAPMODE);
 		printed = false;
 	}
-	val = type & (SOCK_CLOEXEC | SOCK_CLOFORK | SOCK_NONBLOCK);
+	val = type & (SOCK_CLOEXEC | SOCK_CLOFORK | SOCK_NONBLOCK | SOCK_CAPMODE);
 	print_mask_part(fp, sockflags, &val, &printed);
 	return (printed);
 }
@@ -376,7 +376,8 @@ static struct name_table kevent_vnode_fflags[] = {
 
 static struct name_table kevent_proc_fflags[] = {
 	X(NOTE_EXIT) X(NOTE_FORK) X(NOTE_EXEC) X(NOTE_TRACK) X(NOTE_TRACKERR)
-	X(NOTE_CHILD) XEND
+	X(NOTE_CHILD) X(NOTE_CAPMODE) X(NOTE_JAILED) X(NOTE_SETUID)
+	X(NOTE_SIGNAL) X(NOTE_CHROOT) XEND
 };
 
 static struct name_table kevent_timer_fflags[] = {

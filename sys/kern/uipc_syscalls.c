@@ -640,8 +640,10 @@ kern_socketpair(struct thread *td, int domain, int type, int protocol,
 		(void) fo_ioctl(fp1, FIONBIO, &fflag, td->td_ucred, td);
 		(void) fo_ioctl(fp2, FIONBIO, &fflag, td->td_ucred, td);
 	}
-	fdrop(fp1, td);
-	fdrop(fp2, td);
+	/*
+	 * Apply SOCK_CAPMODE lockdown BEFORE fdrop so that rsv[1]
+	 * is never visible to other threads without the lockdown.
+	 */
 	if (capmode_lockdown) {
 		struct filedesc *fdp = td->td_proc->p_fd;
 		struct filedescent *fde;
@@ -660,6 +662,8 @@ kern_socketpair(struct thread *td, int domain, int type, int protocol,
 #endif
 		FILEDESC_XUNLOCK(fdp);
 	}
+	fdrop(fp1, td);
+	fdrop(fp2, td);
 	return (0);
 free4:
 	fdclose(td, fp2, rsv[1]);

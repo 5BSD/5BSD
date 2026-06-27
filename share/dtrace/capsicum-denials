@@ -1,0 +1,73 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * capsicum-denials -- trace Capsicum capability-mode enforcement denials.
+ *
+ * Shows when capability-mode restrictions block an operation, including
+ * SCM_RIGHTS transfer denials, connect capmode denials, mmap capmode
+ * denials, and lookup capmode denials.
+ *
+ * Usage: capsicum-denials
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-6s %-6s %-8s %-28s %-8s %s\n",
+	    "PID", "UID", "GID", "FD", "DENIAL", "ERRNO",
+	    "DETAIL");
+}
+
+/*
+ * xfer/mmap/lookup probes: arg0=fd, arg1=pid, arg2=ucred, arg3=type,
+ * arg4=flags, arg5=errno
+ */
+
+capsicum:::xfer__capmode__deny
+{
+	printf("%-6d %-6d %-6d %-8d %-28s %-8d type=%d flags=0x%x\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0,
+	    "XFER-CAPMODE-DENY", arg5, arg3, arg4);
+}
+
+capsicum:::mmap__capmode__deny
+{
+	printf("%-6d %-6d %-6d %-8d %-28s %-8d type=%d flags=0x%x\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0,
+	    "MMAP-CAPMODE-DENY", arg5, arg3, arg4);
+}
+
+capsicum:::lookup__capmode__deny
+{
+	printf("%-6d %-6d %-6d %-8d %-28s %-8d type=%d flags=0x%x\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0,
+	    "LOOKUP-CAPMODE-DENY", arg5, arg3, arg4);
+}
+
+/*
+ * connect probes: arg0=pid, arg1=ucred, arg2=flags, arg3=so_type,
+ * arg4=so2_type, arg5=errno
+ */
+
+capsicum:::connect__capmode__deny
+{
+	printf("%-6d %-6d %-6d %-8s %-28s %-8d so_type=%d flags=0x%x\n",
+	    arg0, ((struct ucred *)arg1)->cr_uid,
+	    ((struct ucred *)arg1)->cr_gid, "-",
+	    "CONNECT-CAPMODE-DENY", arg5, arg3, arg2);
+}
+
+capsicum:::connect__capmode__server__deny
+{
+	printf("%-6d %-6d %-6d %-8s %-28s %-8d so_type=%d flags=0x%x\n",
+	    arg0, ((struct ucred *)arg1)->cr_uid,
+	    ((struct ucred *)arg1)->cr_gid, "-",
+	    "CONNECT-CAPMODE-SERVER-DENY", arg5, arg3, arg2);
+}
