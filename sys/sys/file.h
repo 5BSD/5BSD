@@ -85,7 +85,7 @@ struct ucred;
 
 #define	FOF_OFFSET	0x01	/* Use the offset in uio argument */
 #define	FOF_NOLOCK	0x02	/* Do not take FOFFSET_LOCK */
-#define	FOF_NOAMBIENT	0x20	/* Skip MAC checks (capability-pure fd) */
+#define	FOF_CAP_SUFFICIENT 0x20	/* Skip MAC checks (capability-sufficient fd) */
 #define	FOF_NEXTOFF_R	0x04	/* Also update f_nextoff[UIO_READ] */
 #define	FOF_NEXTOFF_W	0x08	/* Also update f_nextoff[UIO_WRITE] */
 #define	FOF_NOUPDATE	0x10	/* Do not update f_offset */

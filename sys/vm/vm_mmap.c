@@ -167,21 +167,6 @@ sys_mmap(struct thread *td, struct mmap_args *uap)
 }
 
 int
-sys_cap_mmap(struct thread *td, struct cap_mmap_args *uap)
-{
-
-	return (kern_mmap(td, &(struct mmap_req){
-		.mr_hint = (uintptr_t)uap->addr,
-		.mr_len = uap->len,
-		.mr_prot = uap->prot,
-		.mr_flags = uap->flags,
-		.mr_fd = uap->fd,
-		.mr_pos = uap->pos,
-		.mr_cap_noambient = true,
-	    }));
-}
-
-int
 kern_mmap_maxprot(struct proc *p, int prot)
 {
 
@@ -400,12 +385,10 @@ kern_mmap(struct thread *td, const struct mmap_req *mrp)
 		 * This relies on VM_PROT_* matching PROT_*.
 		 */
 #ifdef MAC
-		if (!mrp->mr_cap_noambient) {
-			error = mac_proc_check_mmap_anon(td->td_ucred, addr,
-			    size, prot, flags);
-			if (error)
-				goto done;
-		}
+		error = mac_proc_check_mmap_anon(td->td_ucred, addr,
+		    size, prot, flags);
+		if (error)
+			goto done;
 #endif
 		error = vm_mmap_object(&vms->vm_map, &addr, size, prot,
 		    max_prot, flags, NULL, pos, FALSE, td);
@@ -452,11 +435,18 @@ kern_mmap(struct thread *td, const struct mmap_req *mrp)
 				goto done;
 		}
 #ifdef MAC
-		if (!mrp->mr_cap_noambient) {
-			error = mac_file_check_mmap(td->td_ucred, fp, fd, prot,
-			    flags, addr, size);
-			if (error != 0)
-				goto done;
+		{
+			bool cap_sufficient = false;
+#ifdef CAPABILITY_MODE
+			cap_sufficient = IN_CAPABILITY_MODE(td) &&
+			    (fde_flags & UF_CAP_SUFFICIENT);
+#endif
+			if (!cap_sufficient) {
+				error = mac_file_check_mmap(td->td_ucred, fp,
+				    fd, prot, flags, addr, size);
+				if (error != 0)
+					goto done;
+			}
 		}
 #endif
 		if (fp->f_ops == &shm_ops && shm_largepage(fp->f_data))

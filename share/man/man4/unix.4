@@ -351,7 +351,7 @@ The
 and
 .Dv LOCAL_CREDS_PERSISTENT
 options are mutually exclusive.
-.It Dv LOCAL_CAPMODE_CONNECT
+.It Dv LOCAL_CAP_SOCKET
 This option may be set on a
 .Dv SOCK_STREAM ,
 .Dv SOCK_SEQPACKET ,
@@ -426,7 +426,7 @@ Attempting to set the option to zero when it is already enabled returns
 .Er ENOTCAPABLE .
 .Pp
 This option is the client-side counterpart to
-.Dv LOCAL_CAPMODE_CONNECT ,
+.Dv LOCAL_CAP_SOCKET ,
 which is set on the server side.
 Together they allow mutual attestation:
 the server can require sandboxed clients, and the client can require

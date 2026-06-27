@@ -1944,128 +1944,6 @@ struct cap_clofork_limit_args {
 	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
 	char state_l_[PADL_(int)]; int state; char state_r_[PADR_(int)];
 };
-struct cap_fchmod_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char mode_l_[PADL_(mode_t)]; mode_t mode; char mode_r_[PADR_(mode_t)];
-};
-struct cap_fchown_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char uid_l_[PADL_(uid_t)]; uid_t uid; char uid_r_[PADR_(uid_t)];
-	char gid_l_[PADL_(gid_t)]; gid_t gid; char gid_r_[PADR_(gid_t)];
-};
-struct cap_fchflags_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char flags_l_[PADL_(u_long)]; u_long flags; char flags_r_[PADR_(u_long)];
-};
-struct cap_futimes_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char times_l_[PADL_(const struct timeval *)]; const struct timeval * times; char times_r_[PADR_(const struct timeval *)];
-};
-struct cap___acl_get_fd_args {
-	char filedes_l_[PADL_(int)]; int filedes; char filedes_r_[PADR_(int)];
-	char type_l_[PADL_(__acl_type_t)]; __acl_type_t type; char type_r_[PADR_(__acl_type_t)];
-	char aclp_l_[PADL_(struct acl *)]; struct acl * aclp; char aclp_r_[PADR_(struct acl *)];
-};
-struct cap___acl_set_fd_args {
-	char filedes_l_[PADL_(int)]; int filedes; char filedes_r_[PADR_(int)];
-	char type_l_[PADL_(__acl_type_t)]; __acl_type_t type; char type_r_[PADR_(__acl_type_t)];
-	char aclp_l_[PADL_(const struct acl *)]; const struct acl * aclp; char aclp_r_[PADR_(const struct acl *)];
-};
-struct cap___acl_delete_fd_args {
-	char filedes_l_[PADL_(int)]; int filedes; char filedes_r_[PADR_(int)];
-	char type_l_[PADL_(__acl_type_t)]; __acl_type_t type; char type_r_[PADR_(__acl_type_t)];
-};
-struct cap_extattr_set_fd_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char attrnamespace_l_[PADL_(int)]; int attrnamespace; char attrnamespace_r_[PADR_(int)];
-	char attrname_l_[PADL_(const char *)]; const char * attrname; char attrname_r_[PADR_(const char *)];
-	char data_l_[PADL_(void *)]; void * data; char data_r_[PADR_(void *)];
-	char nbytes_l_[PADL_(size_t)]; size_t nbytes; char nbytes_r_[PADR_(size_t)];
-};
-struct cap_extattr_get_fd_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char attrnamespace_l_[PADL_(int)]; int attrnamespace; char attrnamespace_r_[PADR_(int)];
-	char attrname_l_[PADL_(const char *)]; const char * attrname; char attrname_r_[PADR_(const char *)];
-	char data_l_[PADL_(void *)]; void * data; char data_r_[PADR_(void *)];
-	char nbytes_l_[PADL_(size_t)]; size_t nbytes; char nbytes_r_[PADR_(size_t)];
-};
-struct cap_extattr_delete_fd_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char attrnamespace_l_[PADL_(int)]; int attrnamespace; char attrnamespace_r_[PADR_(int)];
-	char attrname_l_[PADL_(const char *)]; const char * attrname; char attrname_r_[PADR_(const char *)];
-};
-struct cap_extattr_list_fd_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char attrnamespace_l_[PADL_(int)]; int attrnamespace; char attrnamespace_r_[PADR_(int)];
-	char data_l_[PADL_(void *)]; void * data; char data_r_[PADR_(void *)];
-	char nbytes_l_[PADL_(size_t)]; size_t nbytes; char nbytes_r_[PADR_(size_t)];
-};
-struct cap_fstatfs_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char buf_l_[PADL_(struct statfs *)]; struct statfs * buf; char buf_r_[PADR_(struct statfs *)];
-};
-struct cap_bind_args {
-	char s_l_[PADL_(int)]; int s; char s_r_[PADR_(int)];
-	char name_l_[PADL_(const struct sockaddr *)]; const struct sockaddr * name; char name_r_[PADR_(const struct sockaddr *)];
-	char namelen_l_[PADL_(__socklen_t)]; __socklen_t namelen; char namelen_r_[PADR_(__socklen_t)];
-};
-struct cap_listen_args {
-	char s_l_[PADL_(int)]; int s; char s_r_[PADR_(int)];
-	char backlog_l_[PADL_(int)]; int backlog; char backlog_r_[PADR_(int)];
-};
-struct cap_accept_args {
-	char s_l_[PADL_(int)]; int s; char s_r_[PADR_(int)];
-	char name_l_[PADL_(struct sockaddr *)]; struct sockaddr * name; char name_r_[PADR_(struct sockaddr *)];
-	char anamelen_l_[PADL_(__socklen_t *)]; __socklen_t * anamelen; char anamelen_r_[PADR_(__socklen_t *)];
-};
-struct cap_connect_args {
-	char s_l_[PADL_(int)]; int s; char s_r_[PADR_(int)];
-	char name_l_[PADL_(const struct sockaddr *)]; const struct sockaddr * name; char name_r_[PADR_(const struct sockaddr *)];
-	char namelen_l_[PADL_(__socklen_t)]; __socklen_t namelen; char namelen_r_[PADR_(__socklen_t)];
-};
-struct cap_sendmsg_args {
-	char s_l_[PADL_(int)]; int s; char s_r_[PADR_(int)];
-	char msg_l_[PADL_(const struct msghdr *)]; const struct msghdr * msg; char msg_r_[PADR_(const struct msghdr *)];
-	char flags_l_[PADL_(int)]; int flags; char flags_r_[PADR_(int)];
-};
-struct cap_recvmsg_args {
-	char s_l_[PADL_(int)]; int s; char s_r_[PADR_(int)];
-	char msg_l_[PADL_(struct msghdr *)]; struct msghdr * msg; char msg_r_[PADR_(struct msghdr *)];
-	char flags_l_[PADL_(int)]; int flags; char flags_r_[PADR_(int)];
-};
-struct cap_setsockopt_args {
-	char s_l_[PADL_(int)]; int s; char s_r_[PADR_(int)];
-	char level_l_[PADL_(int)]; int level; char level_r_[PADR_(int)];
-	char name_l_[PADL_(int)]; int name; char name_r_[PADR_(int)];
-	char val_l_[PADL_(const void *)]; const void * val; char val_r_[PADR_(const void *)];
-	char valsize_l_[PADL_(__socklen_t)]; __socklen_t valsize; char valsize_r_[PADR_(__socklen_t)];
-};
-struct cap_ioctl_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char com_l_[PADL_(u_long)]; u_long com; char com_r_[PADR_(u_long)];
-	char data_l_[PADL_(char *)]; char * data; char data_r_[PADR_(char *)];
-};
-struct cap_mmap_args {
-	char addr_l_[PADL_(void *)]; void * addr; char addr_r_[PADR_(void *)];
-	char len_l_[PADL_(size_t)]; size_t len; char len_r_[PADR_(size_t)];
-	char prot_l_[PADL_(int)]; int prot; char prot_r_[PADR_(int)];
-	char flags_l_[PADL_(int)]; int flags; char flags_r_[PADR_(int)];
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char pos_l_[PADL_(off_t)]; off_t pos; char pos_r_[PADR_(off_t)];
-};
-struct cap_sendfile_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char s_l_[PADL_(int)]; int s; char s_r_[PADR_(int)];
-	char offset_l_[PADL_(off_t)]; off_t offset; char offset_r_[PADR_(off_t)];
-	char nbytes_l_[PADL_(size_t)]; size_t nbytes; char nbytes_r_[PADR_(size_t)];
-	char hdtr_l_[PADL_(struct sf_hdtr *)]; struct sf_hdtr * hdtr; char hdtr_r_[PADR_(struct sf_hdtr *)];
-	char sbytes_l_[PADL_(off_t *)]; off_t * sbytes; char sbytes_r_[PADR_(off_t *)];
-	char flags_l_[PADL_(int)]; int flags; char flags_r_[PADR_(int)];
-};
-struct cap_ftruncate_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char length_l_[PADL_(off_t)]; off_t length; char length_r_[PADR_(off_t)];
-};
 struct cap_ambient_limit_args {
 	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
 };
@@ -2503,29 +2381,6 @@ int	sys_renameat2(struct thread *, struct renameat2_args *);
 int	sys_cap_xfer_limit(struct thread *, struct cap_xfer_limit_args *);
 int	sys_cap_cloexec_limit(struct thread *, struct cap_cloexec_limit_args *);
 int	sys_cap_clofork_limit(struct thread *, struct cap_clofork_limit_args *);
-int	sys_cap_fchmod(struct thread *, struct cap_fchmod_args *);
-int	sys_cap_fchown(struct thread *, struct cap_fchown_args *);
-int	sys_cap_fchflags(struct thread *, struct cap_fchflags_args *);
-int	sys_cap_futimes(struct thread *, struct cap_futimes_args *);
-int	sys_cap___acl_get_fd(struct thread *, struct cap___acl_get_fd_args *);
-int	sys_cap___acl_set_fd(struct thread *, struct cap___acl_set_fd_args *);
-int	sys_cap___acl_delete_fd(struct thread *, struct cap___acl_delete_fd_args *);
-int	sys_cap_extattr_set_fd(struct thread *, struct cap_extattr_set_fd_args *);
-int	sys_cap_extattr_get_fd(struct thread *, struct cap_extattr_get_fd_args *);
-int	sys_cap_extattr_delete_fd(struct thread *, struct cap_extattr_delete_fd_args *);
-int	sys_cap_extattr_list_fd(struct thread *, struct cap_extattr_list_fd_args *);
-int	sys_cap_fstatfs(struct thread *, struct cap_fstatfs_args *);
-int	sys_cap_bind(struct thread *, struct cap_bind_args *);
-int	sys_cap_listen(struct thread *, struct cap_listen_args *);
-int	sys_cap_accept(struct thread *, struct cap_accept_args *);
-int	sys_cap_connect(struct thread *, struct cap_connect_args *);
-int	sys_cap_sendmsg(struct thread *, struct cap_sendmsg_args *);
-int	sys_cap_recvmsg(struct thread *, struct cap_recvmsg_args *);
-int	sys_cap_setsockopt(struct thread *, struct cap_setsockopt_args *);
-int	sys_cap_ioctl(struct thread *, struct cap_ioctl_args *);
-int	sys_cap_mmap(struct thread *, struct cap_mmap_args *);
-int	sys_cap_sendfile(struct thread *, struct cap_sendfile_args *);
-int	sys_cap_ftruncate(struct thread *, struct cap_ftruncate_args *);
 int	sys_cap_ambient_limit(struct thread *, struct cap_ambient_limit_args *);
 int	sys_pdself(struct thread *, struct pdself_args *);
 int	sys_pdcmp(struct thread *, struct pdcmp_args *);
@@ -3538,29 +3393,6 @@ int	freebsd14_setgroups(struct thread *, struct freebsd14_setgroups_args *);
 #define	SYS_AUE_cap_xfer_limit	AUE_CAP_XFER_LIMIT
 #define	SYS_AUE_cap_cloexec_limit	AUE_CAP_CLOEXEC_LIMIT
 #define	SYS_AUE_cap_clofork_limit	AUE_CAP_CLOFORK_LIMIT
-#define	SYS_AUE_cap_fchmod	AUE_CAP_FCHMOD
-#define	SYS_AUE_cap_fchown	AUE_CAP_FCHOWN
-#define	SYS_AUE_cap_fchflags	AUE_CAP_FCHFLAGS
-#define	SYS_AUE_cap_futimes	AUE_CAP_FUTIMES
-#define	SYS_AUE_cap___acl_get_fd	AUE_CAP_ACL_GET_FD
-#define	SYS_AUE_cap___acl_set_fd	AUE_CAP_ACL_SET_FD
-#define	SYS_AUE_cap___acl_delete_fd	AUE_CAP_ACL_DELETE_FD
-#define	SYS_AUE_cap_extattr_set_fd	AUE_CAP_EXTATTR_SET_FD
-#define	SYS_AUE_cap_extattr_get_fd	AUE_CAP_EXTATTR_GET_FD
-#define	SYS_AUE_cap_extattr_delete_fd	AUE_CAP_EXTATTR_DELETE_FD
-#define	SYS_AUE_cap_extattr_list_fd	AUE_CAP_EXTATTR_LIST_FD
-#define	SYS_AUE_cap_fstatfs	AUE_CAP_FSTATFS
-#define	SYS_AUE_cap_bind	AUE_CAP_BIND
-#define	SYS_AUE_cap_listen	AUE_CAP_LISTEN
-#define	SYS_AUE_cap_accept	AUE_CAP_ACCEPT
-#define	SYS_AUE_cap_connect	AUE_CAP_CONNECT
-#define	SYS_AUE_cap_sendmsg	AUE_CAP_SENDMSG
-#define	SYS_AUE_cap_recvmsg	AUE_CAP_RECVMSG
-#define	SYS_AUE_cap_setsockopt	AUE_CAP_SETSOCKOPT
-#define	SYS_AUE_cap_ioctl	AUE_CAP_IOCTL
-#define	SYS_AUE_cap_mmap	AUE_CAP_MMAP
-#define	SYS_AUE_cap_sendfile	AUE_CAP_SENDFILE
-#define	SYS_AUE_cap_ftruncate	AUE_CAP_FTRUNCATE
 #define	SYS_AUE_cap_ambient_limit	AUE_CAP_AMBIENT_LIMIT
 #define	SYS_AUE_pdself	AUE_PDSELF
 #define	SYS_AUE_pdcmp	AUE_PDCMP

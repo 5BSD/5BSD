@@ -4957,10 +4957,10 @@ export_file_to_kinfo(struct file *fp, int fd, cap_rights_t *rightsp,
 	kif->kf_flags = xlate_fflags(fp->f_flag);
 	if (fd >= 0 && fdp != NULL) {
 		uint8_t fde_flags = fdp->fd_ofiles[fd].fde_flags;
-		if (fde_flags & UF_NOAMBIENT)
-			kif->kf_flags |= KF_FLAG_NOAMBIENT;
-		if (fde_flags & UF_XFER_CAPMODE)
-			kif->kf_flags |= KF_FLAG_XFER_CAPMODE;
+		if (fde_flags & UF_CAP_SUFFICIENT)
+			kif->kf_flags |= KF_FLAG_CAP_SUFFICIENT;
+		if (fde_flags & UF_CAP_ONLY)
+			kif->kf_flags |= KF_FLAG_CAP_ONLY;
 		if (fde_flags & UF_MMAP_CAPMODE)
 			kif->kf_flags |= KF_FLAG_MMAP_CAPMODE;
 		if (fde_flags & UF_LOOKUP_CAPMODE)

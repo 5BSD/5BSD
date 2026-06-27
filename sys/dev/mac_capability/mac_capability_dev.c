@@ -356,7 +356,7 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 				    fde->fde_clofork_state;
 				msg->cm_fde_flags[i] =
 				    fde->fde_flags &
-				    (UF_NOAMBIENT | UF_XFER_CAPMODE |
+				    (UF_CAP_SUFFICIENT | UF_CAP_ONLY |
 				    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 			}
 			FILEDESC_XUNLOCK(fdesc);
@@ -514,7 +514,7 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 
 #ifdef CAPABILITY_MODE
 		for (i = 0; i < nfds_out; i++) {
-			if ((msg->cm_fde_flags[i] & UF_XFER_CAPMODE) &&
+			if ((msg->cm_fde_flags[i] & UF_CAP_ONLY) &&
 			    !IN_CAPABILITY_MODE(td)) {
 				SDT_PROBE6(capsicum, , ,
 				    xfer__capmode__deny,
@@ -561,7 +561,7 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 			    msg->cm_clofork_state[installed];
 			fdesc->fd_ofiles[fdbuf[installed]].fde_flags |=
 			    msg->cm_fde_flags[installed] &
-			    (UF_NOAMBIENT | UF_XFER_CAPMODE |
+			    (UF_CAP_SUFFICIENT | UF_CAP_ONLY |
 			    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 		}
 		FILEDESC_XUNLOCK(fdesc);

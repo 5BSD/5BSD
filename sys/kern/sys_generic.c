@@ -294,8 +294,8 @@ kern_readv(struct thread *td, int fd, struct uio *auio)
 		return (error);
 	fof_flags = 0;
 #ifdef CAPABILITY_MODE
-	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_NOAMBIENT))
-		fof_flags |= FOF_NOAMBIENT;
+	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_CAP_SUFFICIENT))
+		fof_flags |= FOF_CAP_SUFFICIENT;
 #endif
 	error = dofileread(td, fd, fp, auio, (off_t)-1, fof_flags);
 	fdrop(fp, td);
@@ -340,8 +340,8 @@ kern_preadv(struct thread *td, int fd, struct uio *auio, off_t offset)
 		return (error);
 	fof_flags = FOF_OFFSET;
 #ifdef CAPABILITY_MODE
-	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_NOAMBIENT))
-		fof_flags |= FOF_NOAMBIENT;
+	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_CAP_SUFFICIENT))
+		fof_flags |= FOF_CAP_SUFFICIENT;
 #endif
 	if (!(fp->f_ops->fo_flags & DFLAG_SEEKABLE))
 		error = ESPIPE;
@@ -510,8 +510,8 @@ kern_writev(struct thread *td, int fd, struct uio *auio)
 		return (error);
 	fof_flags = 0;
 #ifdef CAPABILITY_MODE
-	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_NOAMBIENT))
-		fof_flags |= FOF_NOAMBIENT;
+	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_CAP_SUFFICIENT))
+		fof_flags |= FOF_CAP_SUFFICIENT;
 #endif
 	error = dofilewrite(td, fd, fp, auio, (off_t)-1, fof_flags);
 	fdrop(fp, td);
@@ -556,8 +556,8 @@ kern_pwritev(struct thread *td, int fd, struct uio *auio, off_t offset)
 		return (error);
 	fof_flags = FOF_OFFSET;
 #ifdef CAPABILITY_MODE
-	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_NOAMBIENT))
-		fof_flags |= FOF_NOAMBIENT;
+	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_CAP_SUFFICIENT))
+		fof_flags |= FOF_CAP_SUFFICIENT;
 #endif
 	if (!(fp->f_ops->fo_flags & DFLAG_SEEKABLE))
 		error = ESPIPE;
@@ -744,7 +744,7 @@ sys_ioctl(struct thread *td, struct ioctl_args *uap)
 		bzero(data, size);
 	}
 
-	error = kern_ioctl(td, uap->fd, com, data, false);
+	error = kern_ioctl(td, uap->fd, com, data);
 
 	if (error == 0 && (com & IOC_OUT))
 		error = copyout(data, uap->data, (u_int)size);
@@ -756,12 +756,12 @@ out:
 }
 
 int
-kern_ioctl(struct thread *td, int fd, u_long com, caddr_t data,
-    bool cap_noambient)
+kern_ioctl(struct thread *td, int fd, u_long com, caddr_t data)
 {
 	struct file *fp;
 	struct filedesc *fdp;
 	int error, f_flag, tmp, locked;
+	bool cap_sufficient = false;
 
 	AUDIT_ARG_FD(fd);
 	AUDIT_ARG_CMD(com);
@@ -826,6 +826,10 @@ kern_ioctl(struct thread *td, int fd, u_long com, caddr_t data,
 		error = EBADF;
 		goto out;
 	}
+#ifdef CAPABILITY_MODE
+	cap_sufficient = IN_CAPABILITY_MODE(td) &&
+	    (fdp->fd_ofiles[fd].fde_flags & UF_CAP_SUFFICIENT);
+#endif
 
 	f_flag = 0;
 	switch (com) {
@@ -838,7 +842,7 @@ kern_ioctl(struct thread *td, int fd, u_long com, caddr_t data,
 	case FIONBIO:
 	case FIOASYNC:
 #ifdef MAC
-		if (!cap_noambient) {
+		if (!cap_sufficient) {
 			error = mac_file_check_ioctl(td->td_ucred, fp, fd, com);
 			if (error != 0)
 				break;
@@ -861,7 +865,7 @@ kern_ioctl(struct thread *td, int fd, u_long com, caddr_t data,
 		break;
 	default:
 #ifdef MAC
-		if (!cap_noambient) {
+		if (!cap_sufficient) {
 			error = mac_file_check_ioctl(td->td_ucred, fp, fd, com);
 			if (error != 0)
 				break;
@@ -887,71 +891,6 @@ out:
 	}
 	if (fp != NULL)
 		fdrop(fp, td);
-	return (error);
-}
-
-/*
- * Capability-pure ioctl (SYF_CAPREQUIRED).
- */
-int
-sys_cap_ioctl(struct thread *td, struct cap_ioctl_args *uap)
-{
-	u_char smalldata[SYS_IOCTL_SMALL_SIZE] __aligned(SYS_IOCTL_SMALL_ALIGN);
-	uint32_t com;
-	int arg, error;
-	u_int size;
-	caddr_t data;
-
-#ifdef INVARIANTS
-	if (uap->com > 0xffffffff) {
-		printf(
-		    "WARNING pid %d (%s): ioctl sign-extension ioctl %lx\n",
-		    td->td_proc->p_pid, td->td_name, uap->com);
-	}
-#endif
-	com = (uint32_t)uap->com;
-
-	size = IOCPARM_LEN(com);
-	if ((size > IOCPARM_MAX) ||
-	    ((com & (IOC_VOID  | IOC_IN | IOC_OUT)) == 0) ||
-#if defined(COMPAT_FREEBSD5) || defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
-	    ((com & IOC_OUT) && size == 0) ||
-#else
-	    ((com & (IOC_IN | IOC_OUT)) && size == 0) ||
-#endif
-	    ((com & IOC_VOID) && size > 0 && size != sizeof(int)))
-		return (ENOTTY);
-
-	if (size > 0) {
-		if (com & IOC_VOID) {
-			/* Integer argument. */
-			arg = (intptr_t)uap->data;
-			data = (void *)&arg;
-			size = 0;
-		} else {
-			if (size > SYS_IOCTL_SMALL_SIZE)
-				data = malloc((u_long)size, M_IOCTLOPS, M_WAITOK);
-			else
-				data = smalldata;
-		}
-	} else
-		data = (void *)&uap->data;
-	if (com & IOC_IN) {
-		error = copyin(uap->data, data, (u_int)size);
-		if (error != 0)
-			goto out;
-	} else if (com & IOC_OUT) {
-		bzero(data, size);
-	}
-
-	error = kern_ioctl(td, uap->fd, com, data, true);
-
-	if (error == 0 && (com & IOC_OUT))
-		error = copyout(data, uap->data, (u_int)size);
-
-out:
-	if (size > SYS_IOCTL_SMALL_SIZE)
-		free(data, M_IOCTLOPS);
 	return (error);
 }
 

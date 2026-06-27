@@ -23,12 +23,12 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd June 26, 2026
+.Dd June 27, 2026
 .Dt CAP_XFER_CAPMODE 2
 .Os
 .Sh NAME
 .Nm cap_xfer_capmode
-.Nd restrict descriptor transfer to capability-mode receivers
+.Nd restrict descriptor transfer to capability-mode connections
 .Sh LIBRARY
 .Lb libc
 .Sh SYNOPSIS
@@ -38,17 +38,22 @@
 .Sh DESCRIPTION
 The
 .Fn cap_xfer_capmode
-system call sets a monotonic per-descriptor flag that restricts who may
-receive the descriptor when it is passed via
-.Xr recvmsg 2
+system call sets a monotonic per-descriptor flag that restricts how the
+descriptor may be transferred via
+.Xr sendmsg 2
 with an
 .Dv SCM_RIGHTS
-control message or via mac_capability message passing.
-Once set, the flag requires that the receiving process already be in
-capability mode
-.Pq see Xr cap_enter 2 .
-If the receiver is not in capability mode,
-.Xr recvmsg 2
+control message.
+Once set, the descriptor may only be sent over a
+.Ux Ns -domain
+socket that has the
+.Dv LOCAL_CAP_SOCKET
+attribute
+.Pq see Xr unix 4 ,
+meaning both endpoints were created in capability mode.
+If the sending socket lacks
+.Dv LOCAL_CAP_SOCKET ,
+.Xr sendmsg 2
 fails with
 .Er ENOTCAPABLE
 and the descriptor is not delivered.
@@ -60,8 +65,8 @@ on a descriptor that already has the flag set is permitted and has no
 effect.
 .Pp
 This system call controls
-.Em who
-may receive the descriptor.
+.Em which connections
+may be used to transfer the descriptor.
 It is orthogonal to
 .Xr cap_xfer_limit 2 ,
 which controls
@@ -69,11 +74,11 @@ which controls
 the descriptor may be transferred, and may be combined with it freely.
 .Pp
 .Sy Flag propagation:
-when a capability-mode process successfully receives the descriptor, the
-new descriptor installed in the receiver's file descriptor table inherits
-the flag.
+when a process successfully receives the descriptor, the new descriptor
+installed in the receiver's file descriptor table inherits the flag.
 Subsequent transfers of the received descriptor are therefore also
-restricted to capability-mode receivers.
+restricted to sockets with
+.Dv LOCAL_CAP_SOCKET .
 The flag cannot be cleared by the receiving process.
 .Pp
 This system call is allowed in capability mode
@@ -84,26 +89,24 @@ Combined with
 .Pq Dv CAP_XFER_ONCE ,
 .Xr cap_cloexec_limit 2
 .Pq Dv CAP_CLOEXEC_LOCKED ,
+and
 .Xr cap_clofork_limit 2
 .Pq Dv CAP_CLOFORK_LOCKED ,
-and
-.Xr cap_ambient_limit 2 ,
 .Fn cap_xfer_capmode
-creates a closed security boundary: the descriptor can be received
-exactly once, only by a sandboxed process already in capability mode,
-will be closed on exec or fork in that sandboxed process, and cannot
-escape through ambient authority checks.
+creates a closed security boundary: the descriptor can be transferred
+exactly once, only over a connection where both endpoints are in
+capability mode, and will be closed on exec or fork in the receiving
+process.
 This pattern is appropriate when delegating a sensitive resource to a
 sandboxed worker that must not be able to exfiltrate it further.
 .Pp
-A complementary mechanism,
-.Dv LOCAL_CAPMODE_CONNECT
-.Pq see Xr unix 4 ,
-enforces capability-mode requirements at connection time rather than
-at descriptor transfer time.
-When set on a listening
-.Ux Ns -domain
-socket, only processes in capability mode may connect to it.
+Descriptors marked with the
+.Dv UF_CAP_SUFFICIENT
+flag
+.Pq set via Xr socketpair 2 with Dv SOCK_CAPMODE or directly
+bypass ambient authority checks when used by a capability-mode process,
+providing capability-sufficient access without requiring additional
+ambient authority.
 .Sh RETURN VALUES
 .Rv -std
 .Sh ERRORS
@@ -119,13 +122,13 @@ The running kernel was compiled without
 .Cd "options CAPABILITIES" .
 .El
 .Sh SEE ALSO
-.Xr cap_ambient_limit 2 ,
 .Xr cap_clofork_limit 2 ,
 .Xr cap_cloexec_limit 2 ,
 .Xr cap_enter 2 ,
 .Xr cap_rights_limit 2 ,
 .Xr cap_xfer_limit 2 ,
-.Xr recvmsg 2 ,
+.Xr sendmsg 2 ,
+.Xr socketpair 2 ,
 .Xr capsicum 4 ,
 .Xr unix 4
 .Sh HISTORY

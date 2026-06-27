@@ -2421,7 +2421,7 @@ linux_ioctl_socket_ifreq(struct thread *td, int fd, u_int cmd,
 		break;
 	}
 
-	error = kern_ioctl(td, fd, cmd, (caddr_t)&bifr, false);
+	error = kern_ioctl(td, fd, cmd, (caddr_t)&bifr);
 	if (error != 0)
 		return (error);
 	bzero(&lifr.ifr_ifru, sizeof(lifr.ifr_ifru));

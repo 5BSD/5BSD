@@ -606,7 +606,7 @@ parse_dir_md(char **conf)
 
 	if (root_mount_mddev != -1) {
 		mdio->md_unit = root_mount_mddev;
-		(void)kern_ioctl(td, fd, MDIOCDETACH, (void *)mdio, false);
+		(void)kern_ioctl(td, fd, MDIOCDETACH, (void *)mdio);
 		/* Ignore errors. We don't care. */
 		root_mount_mddev = -1;
 	}
@@ -615,7 +615,7 @@ parse_dir_md(char **conf)
 	mdio->md_options = MD_AUTOUNIT | MD_READONLY;
 	mdio->md_mediasize = sb.st_size;
 	mdio->md_unit = 0;
-	error = kern_ioctl(td, fd, MDIOCATTACH, (void *)mdio, false);
+	error = kern_ioctl(td, fd, MDIOCATTACH, (void *)mdio);
 	if (error)
 		goto out;
 
@@ -624,7 +624,7 @@ parse_dir_md(char **conf)
 		mdio->md_file = NULL;
 		mdio->md_options = 0;
 		mdio->md_mediasize = 0;
-		error = kern_ioctl(td, fd, MDIOCDETACH, (void *)mdio, false);
+		error = kern_ioctl(td, fd, MDIOCDETACH, (void *)mdio);
 		/* Ignore errors. We don't care. */
 		error = ERANGE;
 		goto out;

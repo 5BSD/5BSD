@@ -888,7 +888,7 @@ sys_cap_ambient_limit(struct thread *td, struct cap_ambient_limit_args *uap)
 #ifdef CAPABILITIES
 	seqc_write_begin(&fde->fde_seqc);
 #endif
-	fde->fde_flags |= UF_NOAMBIENT;
+	fde->fde_flags |= UF_CAP_SUFFICIENT;
 #ifdef CAPABILITIES
 	seqc_write_end(&fde->fde_seqc);
 #endif
@@ -913,11 +913,11 @@ sys_cap_xfer_capmode(struct thread *td, struct cap_xfer_capmode_args *uap)
 		goto out_probe;
 	}
 	fde = &fdp->fd_ofiles[fd];
-	old_state = (fde->fde_flags & UF_XFER_CAPMODE) ? 1 : 0;
+	old_state = (fde->fde_flags & UF_CAP_ONLY) ? 1 : 0;
 #ifdef CAPABILITIES
 	seqc_write_begin(&fde->fde_seqc);
 #endif
-	fde->fde_flags |= UF_XFER_CAPMODE;
+	fde->fde_flags |= UF_CAP_ONLY;
 #ifdef CAPABILITIES
 	seqc_write_end(&fde->fde_seqc);
 #endif

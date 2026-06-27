@@ -59,6 +59,7 @@
 #include "opt_capsicum.h"
 #include "opt_ddb.h"
 
+#define	EXTERR_CATEGORY	EXTERR_CAT_CAPSICUM
 #include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/domain.h>
@@ -89,6 +90,7 @@
 #include <sys/sx.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
+#include <sys/exterrvar.h>
 #include <sys/taskqueue.h>
 #include <sys/un.h>
 #include <sys/unpcb.h>
@@ -321,7 +323,7 @@ static void	unp_scan(struct mbuf *, void (*)(struct filedescent **, int));
 static void	unp_discard(struct file *);
 static void	unp_freerights(struct filedescent **, int);
 static int	unp_internalize(struct mbuf *, struct mchain *,
-		    struct thread *);
+		    struct thread *, struct socket *);
 static void	unp_internalize_fp(struct file *);
 static int	unp_externalize(struct mbuf *, struct mbuf **, int);
 static int	unp_externalize_fp(struct file *);
@@ -1151,7 +1153,7 @@ uipc_sosend_stream_or_seqpacket(struct socket *so, struct sockaddr *addr,
 	aio = false;
 
 	if (m == NULL) {
-		if (c != NULL && (error = unp_internalize(c, &cmc, td)))
+		if (c != NULL && (error = unp_internalize(c, &cmc, td, so)))
 			goto out;
 		/*
 		 * This function may read more data from the uio than it would
@@ -2004,7 +2006,7 @@ uipc_sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		f = m_gethdr(M_WAITOK, MT_SONAME);
 		cc = m->m_pkthdr.len;
 		mbcnt = MSIZE + m->m_pkthdr.memlen;
-		if (c != NULL && (error = unp_internalize(c, &cmc, td)))
+		if (c != NULL && (error = unp_internalize(c, &cmc, td, so)))
 			goto out;
 	} else {
 		struct mchain mc;
@@ -2808,9 +2810,9 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			error = sooptcopyout(sopt, &optval, sizeof(optval));
 			break;
 
-		case LOCAL_CAPMODE_CONNECT:
+		case LOCAL_CAP_SOCKET:
 			UNP_PCB_LOCK(unp);
-			optval = (unp->unp_flags & UNP_CAPMODE_CONNECT) ? 1 : 0;
+			optval = (unp->unp_flags & UNP_CAP_SOCKET) ? 1 : 0;
 			UNP_PCB_UNLOCK(unp);
 			error = sooptcopyout(sopt, &optval, sizeof(optval));
 			break;
@@ -2882,15 +2884,15 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			}
 			break;
 #undef	OPTSET
-		case LOCAL_CAPMODE_CONNECT:
+		case LOCAL_CAP_SOCKET:
 			error = sooptcopyin(sopt, &optval, sizeof(optval),
 					    sizeof(optval));
 			if (error)
 				break;
 			UNP_PCB_LOCK(unp);
 			if (optval)
-				unp->unp_flags |= UNP_CAPMODE_CONNECT;
-			else if (unp->unp_flags & UNP_CAPMODE_CONNECT)
+				unp->unp_flags |= UNP_CAP_SOCKET;
+			else if (unp->unp_flags & UNP_CAP_SOCKET)
 				error = ENOTCAPABLE;  /* monotonic: cannot clear */
 			UNP_PCB_UNLOCK(unp);
 			break;
@@ -3039,13 +3041,15 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 	}
 	so2 = unp2->unp_socket;
 #ifdef CAPABILITY_MODE
-	if ((unp2->unp_flags & UNP_CAPMODE_CONNECT) &&
+	if ((unp2->unp_flags & UNP_CAP_SOCKET) &&
 	    !IN_CAPABILITY_MODE(td)) {
 		SDT_PROBE6(capsicum, , , connect__capmode__deny,
 		    td->td_proc->p_pid, td->td_ucred,
 		    unp2->unp_flags, so->so_type, so2->so_type,
 		    ENOTCAPABLE);
-		error = ENOTCAPABLE;
+		error = EXTERROR(ENOTCAPABLE,
+		    "socket requires capability mode to connect "
+		    "(LOCAL_CAP_SOCKET)");
 		goto bad2;
 	}
 
@@ -3057,7 +3061,9 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 		    td->td_proc->p_pid, td->td_ucred,
 		    unp->unp_flags, so->so_type, so2->so_type,
 		    ENOTCAPABLE);
-		error = ENOTCAPABLE;
+		error = EXTERROR(ENOTCAPABLE,
+		    "server not in capability mode "
+		    "(LOCAL_CAPMODE_SERVER)");
 		goto bad2;
 	}
 #endif
@@ -3648,23 +3654,6 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				}
 			}
 #endif
-#ifdef CAPABILITY_MODE
-			for (int i = 0; i < newfds; i++) {
-				if ((fdep[i]->fde_flags & UF_XFER_CAPMODE) &&
-				    !IN_CAPABILITY_MODE(td)) {
-					SDT_PROBE6(capsicum, , ,
-					    xfer__capmode__deny,
-					    i, td->td_proc->p_pid,
-					    td->td_ucred,
-					    fdep[i]->fde_file->f_type,
-					    fdep[i]->fde_flags,
-					    ENOTCAPABLE);
-					error = ENOTCAPABLE;
-					unp_freerights(fdep, newfds);
-					goto next;
-				}
-			}
-#endif
 			FILEDESC_XLOCK(fdesc);
 
 			/*
@@ -3701,7 +3690,7 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				    fdep[i]->fde_clofork_state;
 				fdesc->fd_ofiles[*fdp].fde_flags |=
 				    fdep[i]->fde_flags &
-				    (UF_NOAMBIENT | UF_XFER_CAPMODE |
+				    (UF_CAP_SUFFICIENT | UF_CAP_ONLY |
 				    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 				unp_externalize_fp(fp);
 				SDT_PROBE6(fd, , , scm__rights__recv, fp,
@@ -3819,7 +3808,8 @@ unp_internalize_cleanup_rights(struct mbuf *control)
 }
 
 static int
-unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
+unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
+    struct socket *so)
 {
 	struct proc *p;
 	struct filedesc *fdesc;
@@ -3923,6 +3913,31 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
 					error = ENOTCAPABLE;
 					goto out;
 				}
+#ifdef CAPABILITY_MODE
+				/*
+				 * If the fd requires the receiver to be
+				 * in capability mode, the socket must
+				 * enforce capmode on its peer.  Reject
+				 * at send time so CAP_XFER_ONCE is not
+				 * consumed on a doomed transfer.
+				 */
+				if (fdesc->fd_ofiles[*fdp].fde_flags &
+				    UF_CAP_ONLY) {
+					struct unpcb *unp;
+
+					unp = sotounpcb(so);
+					if (unp == NULL ||
+					    !(unp->unp_flags &
+					    UNP_CAP_SOCKET)) {
+						FILEDESC_XUNLOCK(fdesc);
+						error = EXTERROR(ENOTCAPABLE,
+						    "receiver not on a "
+						    "capability-mode socket "
+						    "(LOCAL_CAP_SOCKET required)");
+						goto out;
+					}
+				}
+#endif
 			}
 
 			/*
@@ -3973,7 +3988,7 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
 				    fde->fde_clofork_state;
 				fdep[i]->fde_flags =
 				    fde->fde_flags &
-				    (UF_NOAMBIENT | UF_XFER_CAPMODE |
+				    (UF_CAP_SUFFICIENT | UF_CAP_ONLY |
 				    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 				unp_internalize_fp(fdep[i]->fde_file);
 				SDT_PROBE6(fd, , , scm__rights__send,

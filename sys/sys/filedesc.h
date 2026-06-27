@@ -156,8 +156,8 @@ struct filedesc_to_leader {
 #define	UF_EXCLOSE	0x01		/* auto-close on exec */
 #define	UF_RESOLVE_BENEATH 0x02		/* lookups must be beneath this dir */
 #define	UF_FOCLOSE	0x04		/* auto-close on fork */
-#define	UF_NOAMBIENT	0x08		/* skip MAC in fileops (cap mode only) */
-#define	UF_XFER_CAPMODE	0x10		/* SCM_RIGHTS requires cap mode receiver */
+#define	UF_CAP_SUFFICIENT 0x08		/* skip MAC in fileops (cap mode only) */
+#define	UF_CAP_ONLY	0x10		/* descriptor can only be held by cap-mode process */
 #define	UF_MMAP_CAPMODE	0x20		/* mmap requires cap mode */
 #define	UF_LOOKUP_CAPMODE 0x40		/* *at() lookup requires cap mode */
 

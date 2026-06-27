@@ -1945,7 +1945,7 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 #ifndef WITHOUT_CAPSICUM
 	{
 		int one = 1;
-		(void)setsockopt(s, 0, LOCAL_CAPMODE_CONNECT, &one, sizeof(one));
+		(void)setsockopt(s, 0, LOCAL_CAP_SOCKET, &one, sizeof(one));
 	}
 #endif
 	/* Backlog of 16 allows a burst of incoming host connections */

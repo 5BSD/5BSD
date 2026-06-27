@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd May 17, 2025
+.Dd June 27, 2026
 .Dt SOCKETPAIR 2
 .Os
 .Sh NAME
@@ -68,19 +68,20 @@ The
 .Dv SOCK_CAPMODE
 flag in the
 .Fa type
-argument applies a full Capsicum lockdown to
-.Fa sv Ns [1] :
-its transfer state is set to single-use
-.Pq Dv CAP_XFER_ONCE ,
-close-on-exec and close-on-fork are locked, the ambient authority limiter
-is set, and the
-.Dv cap_xfer_capmode
-flag is applied.
-The first descriptor
+argument marks both
 .Fa sv Ns [0]
-is left unrestricted.
-This is intended for creating a pre-locked channel to hand to a
-sandboxed worker process.
+and
+.Fa sv Ns [1]
+with the
+.Dv UF_CAP_SUFFICIENT
+flag, indicating that the descriptors carry sufficient authority for use
+by capability-mode processes without ambient authority checks.
+Transfer and lifecycle restrictions
+.Pq such as Xr cap_xfer_limit 2 , Xr cap_cloexec_limit 2 , or Xr cap_xfer_capmode 2
+are not applied automatically and must be set separately by the caller.
+.Pp
+This is intended for creating a channel between sandboxed peers, where
+each side holds a capability-sufficient descriptor.
 .Sh RETURN VALUES
 .Rv -std socketpair
 .Sh ERRORS
@@ -101,10 +102,13 @@ does not specify a valid part of the
 process address space.
 .El
 .Sh SEE ALSO
+.Xr cap_xfer_capmode 2 ,
+.Xr cap_xfer_limit 2 ,
 .Xr pipe 2 ,
 .Xr read 2 ,
 .Xr socket 2 ,
-.Xr write 2
+.Xr write 2 ,
+.Xr capsicum 4
 .Sh STANDARDS
 The
 .Fn socketpair
