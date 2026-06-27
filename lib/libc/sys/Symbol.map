@@ -82,4 +82,6 @@ FBSD_1.9 {
 	cap_clofork_limit;
 	cap_ambient_limit;
 	cap_xfer_capmode;
+	cap_mmap_capmode;
+	cap_lookup_capmode;
 };

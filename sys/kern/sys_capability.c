@@ -885,7 +885,13 @@ sys_cap_ambient_limit(struct thread *td, struct cap_ambient_limit_args *uap)
 		return (EBADF);
 	}
 	fde = &fdp->fd_ofiles[fd];
+#ifdef CAPABILITIES
+	seqc_write_begin(&fde->fde_seqc);
+#endif
 	fde->fde_flags |= UF_NOAMBIENT;
+#ifdef CAPABILITIES
+	seqc_write_end(&fde->fde_seqc);
+#endif
 	FILEDESC_XUNLOCK(fdp);
 	return (0);
 }
@@ -908,7 +914,13 @@ sys_cap_xfer_capmode(struct thread *td, struct cap_xfer_capmode_args *uap)
 	}
 	fde = &fdp->fd_ofiles[fd];
 	old_state = (fde->fde_flags & UF_XFER_CAPMODE) ? 1 : 0;
+#ifdef CAPABILITIES
+	seqc_write_begin(&fde->fde_seqc);
+#endif
 	fde->fde_flags |= UF_XFER_CAPMODE;
+#ifdef CAPABILITIES
+	seqc_write_end(&fde->fde_seqc);
+#endif
 	FILEDESC_XUNLOCK(fdp);
 	error = 0;
 out_probe:
@@ -935,7 +947,13 @@ sys_cap_mmap_capmode(struct thread *td, struct cap_mmap_capmode_args *uap)
 	}
 	fde = &fdp->fd_ofiles[fd];
 	old_state = (fde->fde_flags & UF_MMAP_CAPMODE) ? 1 : 0;
+#ifdef CAPABILITIES
+	seqc_write_begin(&fde->fde_seqc);
+#endif
 	fde->fde_flags |= UF_MMAP_CAPMODE;
+#ifdef CAPABILITIES
+	seqc_write_end(&fde->fde_seqc);
+#endif
 	FILEDESC_XUNLOCK(fdp);
 	error = 0;
 out_probe:
@@ -962,7 +980,13 @@ sys_cap_lookup_capmode(struct thread *td, struct cap_lookup_capmode_args *uap)
 	}
 	fde = &fdp->fd_ofiles[fd];
 	old_state = (fde->fde_flags & UF_LOOKUP_CAPMODE) ? 1 : 0;
+#ifdef CAPABILITIES
+	seqc_write_begin(&fde->fde_seqc);
+#endif
 	fde->fde_flags |= UF_LOOKUP_CAPMODE;
+#ifdef CAPABILITIES
+	seqc_write_end(&fde->fde_seqc);
+#endif
 	FILEDESC_XUNLOCK(fdp);
 	error = 0;
 out_probe:

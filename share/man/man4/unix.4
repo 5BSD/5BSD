@@ -409,11 +409,17 @@ socket before calling
 or
 .Xr connectat 2 .
 When enabled, the kernel requires that the listening socket was created
-by a process in capability mode
-.Pq see Xr cap_enter 2 .
-A connection attempt to a server that is not in capability mode will
-fail with
+by a process that was already in capability mode
+.Pq see Xr cap_enter 2
+at the time of the
+.Xr socket 2
+call.
+A connection attempt to a server whose listening socket was created
+before entering capability mode will fail with
 .Er ENOTCAPABLE .
+Servers that wish to be reachable by
+.Dv LOCAL_CAPMODE_SERVER
+clients must enter capability mode before creating the listening socket.
 .Pp
 The option is monotonic: once set, it cannot be cleared.
 Attempting to set the option to zero when it is already enabled returns

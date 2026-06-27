@@ -648,10 +648,16 @@ kern_socketpair(struct thread *td, int domain, int type, int protocol,
 
 		FILEDESC_XLOCK(fdp);
 		fde = &fdp->fd_ofiles[rsv[1]];
+#ifdef CAPABILITIES
+		seqc_write_begin(&fde->fde_seqc);
+#endif
 		fde->fde_xfer_state = CAP_XFER_ONCE;
 		fde->fde_cloexec_state = CAP_CLOEXEC_LOCKED;
 		fde->fde_clofork_state = CAP_CLOFORK_LOCKED;
 		fde->fde_flags |= UF_NOAMBIENT | UF_XFER_CAPMODE;
+#ifdef CAPABILITIES
+		seqc_write_end(&fde->fde_seqc);
+#endif
 		FILEDESC_XUNLOCK(fdp);
 	}
 	return (0);

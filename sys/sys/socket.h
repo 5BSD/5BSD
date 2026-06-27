@@ -552,8 +552,8 @@ struct sockcred2 {
 	uid_t	sc_euid;		/* effective user id */
 	gid_t	sc_gid;			/* real group id */
 	gid_t	sc_egid;		/* effective group id */
-	uint8_t	sc_capmode;		/* sender in cap mode */
-	uint8_t	sc_pad0[3];		/* padding */
+	__uint8_t sc_capmode;		/* sender in cap mode */
+	__uint8_t sc_pad0[3];		/* padding */
 	int	sc_ngroups;		/* number of supplemental groups */
 	gid_t	sc_groups[1];		/* variable length */
 };
