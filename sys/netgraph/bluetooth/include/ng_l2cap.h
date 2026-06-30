@@ -56,7 +56,7 @@
 
 /* Node type name and type cookie */
 #define NG_L2CAP_NODE_TYPE		"l2cap"
-#define NGM_L2CAP_COOKIE		1000774185
+#define NGM_L2CAP_COOKIE		1000774186
 
 /**************************************************************************
  **************************************************************************
@@ -394,6 +394,13 @@ typedef struct {
 #define NG_L2CAP_LE_COC_PENDING_NO_INFO		0x000d
 #define NG_L2CAP_LE_COC_PENDING_AUTHEN		0x000e
 #define NG_L2CAP_LE_COC_PENDING_AUTHOR		0x000f
+
+/* Credit Based Reconfigure result codes (Core Spec Vol 3 Part A §4.27) */
+#define NG_L2CAP_RECONFIG_SUCCESS		0x0000
+#define NG_L2CAP_RECONFIG_MTU_REDUCTION		0x0001
+#define NG_L2CAP_RECONFIG_MPS_REDUCTION_MULTI	0x0002
+#define NG_L2CAP_RECONFIG_INVALID_DCID		0x0003
+#define NG_L2CAP_RECONFIG_UNACCEPTABLE_PARAMS	0x0004
 /**************************************************************************
  **************************************************************************
  **        Upper layer protocol interface. L2CA_xxx messages 
@@ -452,6 +459,8 @@ typedef struct {
 	u_int16_t	result; /* 0x00 - success */
 	u_int16_t	status; /* if result != 0x00 */
 	uint8_t 	encryption;
+	u_int16_t	imtu;   /* incoming MTU (LE CoC) */
+	u_int16_t	omtu;   /* outgoing MTU (LE CoC) */
 } ng_l2cap_l2ca_con_op;
 
 /* L2CA_ConnectInd */
@@ -463,6 +472,8 @@ typedef struct {
 	u_int16_t	psm;    /* Procotol/Service Multiplexor */
 	u_int8_t	ident;  /* identifier */
 	u_int8_t	linktype; /* link type*/
+	u_int16_t	imtu;   /* incoming MTU (LE CoC) */
+	u_int16_t	omtu;   /* outgoing MTU (LE CoC) */
 } ng_l2cap_l2ca_con_ind_ip;
 /* No output parameters */
 
@@ -677,6 +688,20 @@ typedef struct {
  * 	u_int16_t	result; /* 0x00 - success */
  * } ng_l2cap_l2ca_enable_clt_op;
 #endif
+/* L2CA_Reconfig — ECBFC reconfigure request (userspace -> L2CAP) */
+#define NGM_L2CAP_L2CA_RECONFIG		0x93
+/* Upper -> L2CAP */
+typedef struct {
+	u_int16_t	lcid;		/* local channel ID */
+	u_int16_t	mtu;		/* new MTU */
+	u_int16_t	mps;		/* new MPS */
+} ng_l2cap_l2ca_reconfig_ip;
+
+/* L2CAP -> Upper (response via NGF_RESP) */
+typedef struct {
+	u_int16_t	result;		/* 0x00 = success */
+} ng_l2cap_l2ca_reconfig_op;
+
 #define NGM_L2CAP_L2CA_ENC_CHANGE 0x92
 typedef struct {
 	uint16_t 	lcid;

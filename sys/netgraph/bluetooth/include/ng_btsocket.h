@@ -270,6 +270,17 @@ struct sockaddr_l2cap {
 #define SO_L2CAP_OFLOW		4	/* get/set outgoing flow spec. */
 #define SO_L2CAP_FLUSH		5	/* get/set flush timeout */
 #define SO_L2CAP_ENCRYPTED      6      /* get/set whether wait for encryption on connect */
+#define SO_L2CAP_ECBFC		7	/* get/set ECBFC mode (before connect) */
+#define SO_L2CAP_RECONFIG	8	/* set new MTU/MPS (ECBFC reconfigure) */
+
+/*
+ * SO_L2CAP_RECONFIG parameter: pass via setsockopt on an ECBFC socket
+ * in OPEN state to initiate L2CAP_CREDIT_BASED_RECONFIGURE_REQ.
+ */
+struct l2cap_reconfig_param {
+	u_int16_t	mtu;		/* new MTU (must be >= current) */
+	u_int16_t	mps;		/* new MPS */
+};
 /*
  * Raw L2CAP sockets ioctl's
  */

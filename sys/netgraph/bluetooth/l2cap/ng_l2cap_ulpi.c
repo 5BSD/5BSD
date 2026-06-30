@@ -218,6 +218,13 @@ ng_l2cap_l2ca_con_rsp(ng_l2cap_chan_p ch, u_int32_t token, u_int16_t result,
 		 * What about PENDING? What the heck, for now always populate
 		 * LCID :)
 		 */
+		/*
+		 * ATT/SMP fixed channels use con_handle as lcid so
+		 * that the socket layer can disambiguate multiple
+		 * connections sharing the same CID (0x0004/0x0006).
+		 * The receive path in ng_l2cap_l2ca_receive() also
+		 * rewrites hdr->dcid to con_handle for these channels.
+		 */
 		if (ch->scid == NG_L2CAP_ATT_CID) {
 			op->idtype = NG_L2CAP_L2CA_IDTYPE_ATT;
 			op->lcid = ch->con->con_handle;
@@ -234,6 +241,8 @@ ng_l2cap_l2ca_con_rsp(ng_l2cap_chan_p ch, u_int32_t token, u_int16_t result,
 			op->lcid = ch->scid;
 		}
 		op->encryption = ch->con->encryption;
+		op->imtu = ch->imtu;
+		op->omtu = ch->omtu;
 		op->result = result;
 		op->status = status;
 
@@ -370,6 +379,123 @@ out:
 	return (error);
 } /* ng_l2cap_l2ca_con_rsp_req */
 
+/*
+ * Process L2CA_Reconfig request from the upper layer protocol.
+ * Sends NG_L2CAP_CREDIT_RECONFIG_REQ (0x19) for an ECBFC channel.
+ */
+
+int
+ng_l2cap_l2ca_reconfig_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
+{
+	ng_l2cap_l2ca_reconfig_ip	*ip = NULL;
+	ng_l2cap_chan_p			 ch = NULL;
+	ng_l2cap_cmd_p			 cmd = NULL;
+	u_int16_t			 dcids[1];
+	int				 error = 0;
+
+	/* Check message */
+	if (msg->header.arglen != sizeof(*ip)) {
+		NG_L2CAP_ALERT(
+"%s: %s - invalid L2CA_Reconfig request message size, size=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node),
+			msg->header.arglen);
+		error = EMSGSIZE;
+		goto out;
+	}
+
+	ip = (ng_l2cap_l2ca_reconfig_ip *)(msg->data);
+
+	/* Find the channel by local CID */
+	ch = ng_l2cap_chan_by_scid(l2cap, ip->lcid,
+	    NG_L2CAP_L2CA_IDTYPE_ECBFC);
+	if (ch == NULL) {
+		NG_L2CAP_ERR(
+"%s: %s - channel not found, lcid=%#x\n",
+			__func__, NG_NODE_NAME(l2cap->node), ip->lcid);
+		error = ENOENT;
+		goto out;
+	}
+
+	/* Channel must be OPEN */
+	if (ch->state != NG_L2CAP_OPEN) {
+		NG_L2CAP_ERR(
+"%s: %s - channel not open, lcid=%#x state=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node),
+			ip->lcid, ch->state);
+		error = EINVAL;
+		goto out;
+	}
+
+	/* Reject concurrent reconfig requests */
+	if (ch->reconfig_pending) {
+		NG_L2CAP_ERR(
+"%s: %s - reconfig already pending, lcid=%#x\n",
+			__func__, NG_NODE_NAME(l2cap->node), ip->lcid);
+		error = EBUSY;
+		goto out;
+	}
+
+	/* MTU cannot decrease (Core Spec Vol 3 Part A Section 4.27) */
+	if (ip->mtu < ch->imtu) {
+		NG_L2CAP_ERR(
+"%s: %s - MTU reduction not allowed, lcid=%#x current=%d requested=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node),
+			ip->lcid, ch->imtu, ip->mtu);
+		error = EINVAL;
+		goto out;
+	}
+
+	/* Minimum values per spec */
+	if (ip->mtu < NG_L2CAP_MTU_ECBFC_MINIMUM ||
+	    ip->mps < NG_L2CAP_MTU_ECBFC_MINIMUM) {
+		NG_L2CAP_ERR(
+"%s: %s - reconfig params below minimum, mtu=%d mps=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node),
+			ip->mtu, ip->mps);
+		error = EINVAL;
+		goto out;
+	}
+
+	/* Create L2CAP command descriptor */
+	cmd = ng_l2cap_new_cmd(ch->con, ch,
+	    ng_l2cap_get_ident(ch->con),
+	    NG_L2CAP_CREDIT_RECONFIG_REQ, msg->header.token);
+	if (cmd == NULL) {
+		error = ENOMEM;
+		goto out;
+	}
+
+	/* The DCID in the reconfig request is our local SCID */
+	dcids[0] = ch->scid;
+
+	_ng_l2cap_credit_reconfig_req(cmd->aux, cmd->ident,
+	    ip->mtu, ip->mps, dcids, 1);
+	if (cmd->aux == NULL) {
+		ng_l2cap_free_cmd(cmd);
+		error = ENOBUFS;
+		goto out;
+	}
+
+	/*
+	 * Save the requested values; apply them only when the peer
+	 * confirms success in the Reconfigure Response handler.
+	 */
+	ch->pending_imtu = ip->mtu;
+	ch->pending_mps = ip->mps;
+	ch->reconfig_pending = 1;
+
+	/* Link command to the queue */
+	ng_l2cap_link_cmd(ch->con, cmd);
+	ng_l2cap_lp_deliver(ch->con);
+
+	NG_L2CAP_INFO(
+"%s: %s - sent ECBFC reconfig request: lcid=%#x mtu=%d mps=%d\n",
+		__func__, NG_NODE_NAME(l2cap->node),
+		ip->lcid, ip->mtu, ip->mps);
+out:
+	return (error);
+} /* ng_l2cap_l2ca_reconfig_req */
+
 int ng_l2cap_l2ca_encryption_change(ng_l2cap_chan_p ch, uint16_t result)
 {
 	ng_l2cap_p			 l2cap = ch->con->l2cap;
@@ -405,11 +531,11 @@ int ng_l2cap_l2ca_encryption_change(ng_l2cap_chan_p ch, uint16_t result)
 				NG_L2CAP_L2CA_IDTYPE_ATT:
 				NG_L2CAP_L2CA_IDTYPE_SMP;
 		} else {
+			op->lcid = ch->scid;
 			op->idtype = (ch->con->linktype == NG_HCI_LINK_ACL) ?
 				NG_L2CAP_L2CA_IDTYPE_BREDR :
 				NG_L2CAP_L2CA_IDTYPE_LE;
 		}
-			
 
 		NG_SEND_MSG_HOOK(error, l2cap->node, msg, l2cap->l2c, 0);
 	}
@@ -492,6 +618,8 @@ ng_l2cap_l2ca_con_ind(ng_l2cap_chan_p ch)
 		ip->psm = ch->psm;
 		ip->ident = ch->ident;
 		ip->linktype = ch->con->linktype;
+		ip->imtu = ch->imtu;
+		ip->omtu = ch->omtu;
 
 		NG_SEND_MSG_HOOK(error, l2cap->node, msg, l2cap->l2c, 0);
 	}
@@ -1173,16 +1301,21 @@ ng_l2cap_l2ca_receive(ng_l2cap_con_p con)
 			 */
 			if (payload_len < sizeof(u_int16_t)) {
 				NG_L2CAP_ERR(
-"%s: %s - first K-frame too short for SDU length, len=%d, cid=%d\n",
+"%s: %s - first K-frame too short for SDU length, len=%d, cid=%d. Disconnecting.\n",
 					__func__, NG_NODE_NAME(l2cap->node),
 					payload_len, ch->scid);
 				NG_FREE_M(payload);
+				ng_l2cap_l2ca_discon_ind(ch);
+				ng_l2cap_free_chan(ch);
 				return (EMSGSIZE);
 			}
 
 			NG_L2CAP_M_PULLUP(payload, sizeof(u_int16_t));
-			if (payload == NULL)
+			if (payload == NULL) {
+				ng_l2cap_l2ca_discon_ind(ch);
+				ng_l2cap_free_chan(ch);
 				return (ENOBUFS);
+			}
 
 			sdu_len = le16toh(*mtod(payload, u_int16_t *));
 			m_adj(payload, sizeof(u_int16_t));
@@ -1302,7 +1435,32 @@ le_coc_sdu_complete:
 					} else {
 						ng_l2cap_free_cmd(
 						    credit_cmd);
+						NG_L2CAP_ERR(
+"%s: %s - MGETHDR failed for credit replenishment, scid=%d, "
+"credits_local=%d — disconnecting channel\n",
+						    __func__,
+						    NG_NODE_NAME(l2cap->node),
+						    ch->scid,
+						    ch->credits_local);
+						NG_FREE_M(con->rx_pkt);
+						con->rx_pkt = NULL;
+						ng_l2cap_l2ca_discon_ind(ch);
+						ng_l2cap_free_chan(ch);
+						return (ENOMEM);
 					}
+				} else {
+					NG_L2CAP_ERR(
+"%s: %s - ng_l2cap_new_cmd failed for credit replenishment, scid=%d, "
+"credits_local=%d — disconnecting channel\n",
+					    __func__,
+					    NG_NODE_NAME(l2cap->node),
+					    ch->scid,
+					    ch->credits_local);
+					NG_FREE_M(con->rx_pkt);
+					con->rx_pkt = NULL;
+					ng_l2cap_l2ca_discon_ind(ch);
+					ng_l2cap_free_chan(ch);
+					return (ENOMEM);
 				}
 			}
 		}

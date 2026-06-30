@@ -51,6 +51,7 @@
 /* Key distribution flags */
 #define SMP_KEY_DIST_ENC_KEY		0x01	/* LTK + EDIV + Rand */
 #define SMP_KEY_DIST_ID_KEY		0x02	/* IRK + Address */
+#define SMP_KEY_DIST_SIGN_KEY		0x04	/* CSRK */
 
 /* SMP pairing failure reasons */
 #define SMP_ERR_PASSKEY_ENTRY_FAILED	0x01
@@ -104,7 +105,7 @@ struct smp_oob_data {
  * Core Spec Vol 3 Part G Section 2.4.5.1: the server shall
  * persistently record the CCCD value for a bonded device.
  */
-#define SMP_MAX_CCCDS	8
+#define SMP_MAX_CCCDS	16
 
 struct smp_cccd_entry {
 	uint16_t	handle;		/* attribute handle of CCCD */
@@ -127,12 +128,33 @@ struct smp_bond {
 	uint8_t		db_hash[16];	/* last known GATT Database Hash */
 	bool		has_ltk;
 	bool		has_irk;
+	uint8_t		csrk[16];	/* Connection Signature Resolving Key */
+	bool		has_csrk;	/* csrk is valid */
+	uint32_t	peer_sign_counter; /* last verified sign counter */
 	bool		has_link_key;	/* link_key derived via CTKD */
 	bool		is_sc;		/* paired with LE Secure Connections */
+	bool		is_mitm;	/* pairing used MITM-protected association model */
 	bool		has_name;
 	bool		has_db_hash;	/* db_hash is valid for GATT caching */
 	uint8_t		num_cccds;
 	struct smp_cccd_entry cccds[SMP_MAX_CCCDS];
+
+	/* GATT handle cache (avoids rediscovery when db_hash matches) */
+	bool		has_handle_cache;
+	uint16_t	hid_svc_start;		/* HID Service start handle */
+	uint16_t	hid_svc_end;		/* HID Service end handle */
+	uint16_t	bat_svc_start;		/* Battery Service start handle */
+	uint16_t	bat_svc_end;		/* Battery Service end handle */
+	uint16_t	report_map_handle;
+	uint16_t	hid_info_handle;
+	uint16_t	protocol_mode_handle;
+	uint16_t	report_handles[16];	/* Input/Output/Feature report value handles */
+	uint16_t	report_cccd_handles[16]; /* Corresponding CCCD handles */
+	uint8_t		report_types[16];	/* Report type (Input=1, Output=2, Feature=3) */
+	uint8_t		report_ids[16];
+	int		num_reports;
+	uint16_t	battery_level_handle;
+	uint16_t	battery_cccd_handle;
 };
 
 #define SMP_MAX_BONDS	32
@@ -141,6 +163,10 @@ struct smp_bond_db {
 	struct smp_bond	bonds[SMP_MAX_BONDS];
 	int		count;
 	int		fd;		/* bond storage file fd */
+	uint8_t		local_irk[16];	/* persisted local IRK for RPA resolution */
+	bool		has_local_irk;	/* local_irk has been loaded or generated */
+	uint8_t		local_csrk[16];	/* persisted local CSRK for Signed Writes */
+	bool		has_local_csrk;	/* local_csrk has been loaded or generated */
 };
 
 /*
@@ -182,20 +208,23 @@ struct smp_conn {
 	smp_numcmp_cb_t	numcmp_cb;	/* numeric comparison callback */
 	void		*numcmp_cb_arg;
 	struct smp_oob_data *oob;	/* OOB data, or NULL if none */
+	uint8_t		io_capability;	/* IO capability to use in pairing */
+	uint8_t		min_key_size;	/* minimum encryption key size (7-16) */
+	bool		sc_only;	/* reject legacy pairing if true */
 };
 
 /* smp.c — crypto primitives (Core Spec Vol 3 Part H Section 2.2) */
-void	swap_buf(uint8_t *dst, const uint8_t *src, size_t len);
+void	smp_swap_buf(uint8_t *dst, const uint8_t *src, size_t len);
 int	smp_aes128(const uint8_t key[16], const uint8_t in[16],
-	    uint8_t out[16]);
+	    uint8_t out[16]) __attribute__((warn_unused_result));
 int	smp_aes_cmac(const uint8_t key[16], const uint8_t *msg, size_t len,
 	    uint8_t mac[16]);
-void	smp_c1(const uint8_t k[16], const uint8_t r[16],
+int	smp_c1(const uint8_t k[16], const uint8_t r[16],
 	    const uint8_t preq[7], const uint8_t pres[7],
 	    uint8_t iat, const uint8_t ia[6],
 	    uint8_t rat, const uint8_t ra[6],
 	    uint8_t confirm[16]);
-void	smp_s1(const uint8_t k[16], const uint8_t r1[16],
+int	smp_s1(const uint8_t k[16], const uint8_t r1[16],
 	    const uint8_t r2[16], uint8_t stk[16]);
 void	smp_f4(const uint8_t u[32], const uint8_t v[32],
 	    const uint8_t x[16], uint8_t z, uint8_t out[16]);
@@ -234,16 +263,28 @@ int	smp_respond(struct smp_conn *sc);
 int	smp_generate_sc_oob(uint8_t local_confirm[16],
 	    uint8_t local_random[16], const uint8_t local_pk_x[32]);
 
+/* IO capability pairing method selection (Core Spec Vol 3 Part H §2.3.5.1) */
+int	smp_select_model(uint8_t init_io, uint8_t resp_io, bool sc);
+
+/* RPA resolution and generation (Core Spec Vol 3 Part H §2.2.2) */
+bool	smp_rpa_matches(const uint8_t irk[16], const uint8_t addr[6]);
+void	smp_generate_rpa(const uint8_t irk[16], uint8_t rpa[6]);
+
 /* Bond persistence */
 int	smp_bond_db_load(struct smp_bond_db *db, int fd);
 int	smp_bond_db_save(struct smp_bond_db *db);
+void	smp_bond_db_store(struct smp_bond_db *db, const struct smp_bond *bond);
+
+/* Signed Write verification (Core Spec Vol 3 Part H §2.4.5) */
+bool	smp_verify_signature(const uint8_t csrk[16], const uint8_t *msg,
+	    size_t msg_len, const uint8_t mac[8], uint32_t counter);
 
 /* Cross-Transport Key Derivation (Core Spec Vol 3 Part H §2.4.2.4) */
 int	smp_ctkd_derive_link_key(struct smp_bond *bond, bool ct2);
 
 /* CCCD persistence for bonded devices (Core Spec Vol 3 Part G §2.4.5.1) */
-struct att_db;	/* forward declaration */
-void	smp_bond_save_cccds(struct smp_bond *bond, struct att_db *db);
-void	smp_bond_restore_cccds(struct smp_bond *bond, struct att_db *db);
+struct att_conn;	/* forward declaration */
+void	smp_bond_save_cccds(struct smp_bond *bond, const struct att_conn *ac);
+void	smp_bond_restore_cccds(const struct smp_bond *bond, struct att_conn *ac);
 
 #endif /* _BLUED_SMP_H_ */

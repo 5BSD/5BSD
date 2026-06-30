@@ -435,6 +435,11 @@ ng_l2cap_upper_rcvmsg(node_p node, item_p item, hook_p lasthook)
 			error = ng_l2cap_l2ca_enable_clt(l2cap, msg);
 			break;
 
+		/* L2CA_Reconfig (ECBFC reconfigure) */
+		case NGM_L2CAP_L2CA_RECONFIG:
+			error = ng_l2cap_l2ca_reconfig_req(l2cap, msg);
+			break;
+
 		default:
 			return (ng_l2cap_default_rcvmsg(node, item, lasthook));
 			/* NOT REACHED */

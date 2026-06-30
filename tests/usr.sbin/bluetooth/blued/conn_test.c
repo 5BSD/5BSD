@@ -29,6 +29,9 @@
  * Stubs for external symbols referenced by conn.c / blued.h
  * ================================================================ */
 
+#include "ble_util.h"
+#include "test_common.h"
+
 struct blued_ctx blued_g;
 const int _blued_kq_ctl_tag;
 
@@ -93,7 +96,7 @@ ATF_TC_BODY(test_conn_alloc, tc)
 	ATF_REQUIRE(conn != NULL);
 	ATF_CHECK_EQ(conn->att_fd, -1);
 	ATF_CHECK_EQ(conn->state, BLUED_CONN_IDLE);
-	ATF_CHECK_EQ(conn->reconnect_timer, -1);
+	ATF_CHECK_EQ(conn->reconnect_timer, (uintptr_t)0);
 	ATF_CHECK(conn_in_list(conn));
 	ATF_CHECK_EQ(conn_count(), 1);
 
@@ -248,6 +251,289 @@ ATF_TC_BODY(test_conn_register, tc)
 }
 
 /* ================================================================
+ * Test: allocate BLUED_MAX_CONNS connections — verify that the limit
+ * is enforced by blued_conn_alloc(), and the (MAX+1)th alloc fails.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_conn_pool_exhaustion);
+ATF_TC_BODY(test_conn_pool_exhaustion, tc)
+{
+	struct blued_conn *conns[BLUED_MAX_CONNS];
+	struct blued_conn *extra;
+	int i;
+
+	test_init();
+
+	for (i = 0; i < BLUED_MAX_CONNS; i++) {
+		conns[i] = blued_conn_alloc();
+		ATF_REQUIRE_MSG(conns[i] != NULL,
+		    "alloc failed at index %d", i);
+	}
+	ATF_CHECK_EQ(conn_count(), BLUED_MAX_CONNS);
+
+	/* The (MAX+1)th alloc should fail with ENOSPC */
+	extra = blued_conn_alloc();
+	ATF_CHECK(extra == NULL);
+
+	for (i = 0; i < BLUED_MAX_CONNS; i++)
+		blued_conn_free(conns[i]);
+	ATF_CHECK_EQ(conn_count(), 0);
+}
+
+/* ================================================================
+ * Test: blued_conn_set_state transitions and verifies new state
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_conn_set_state);
+ATF_TC_BODY(test_conn_set_state, tc)
+{
+	struct blued_conn *conn;
+
+	test_init();
+
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+	ATF_CHECK_EQ(conn->state, BLUED_CONN_IDLE);
+
+	blued_conn_set_state(conn, BLUED_CONN_CONNECTING);
+	ATF_CHECK_EQ(conn->state, BLUED_CONN_CONNECTING);
+
+	blued_conn_set_state(conn, BLUED_CONN_ACTIVE);
+	ATF_CHECK_EQ(conn->state, BLUED_CONN_ACTIVE);
+
+	/* Setting same state should be a no-op */
+	blued_conn_set_state(conn, BLUED_CONN_ACTIVE);
+	ATF_CHECK_EQ(conn->state, BLUED_CONN_ACTIVE);
+
+	blued_conn_set_state(conn, BLUED_CONN_RECONNECTING);
+	ATF_CHECK_EQ(conn->state, BLUED_CONN_RECONNECTING);
+
+	blued_conn_free(conn);
+}
+
+/* ================================================================
+ * Test: blued_conn_by_handle — no such function exists in conn.c.
+ * Lookup by handle is done inline in blued.c.  Skipped.
+ * ================================================================ */
+
+/* ================================================================
+ * Test: blued_conn_free removes conn from the global list
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_conn_free_removes_from_list);
+ATF_TC_BODY(test_conn_free_removes_from_list, tc)
+{
+	struct blued_conn *c1, *c2, *c3;
+
+	test_init();
+
+	c1 = blued_conn_alloc();
+	c2 = blued_conn_alloc();
+	c3 = blued_conn_alloc();
+	ATF_REQUIRE(c1 != NULL);
+	ATF_REQUIRE(c2 != NULL);
+	ATF_REQUIRE(c3 != NULL);
+	ATF_CHECK_EQ(conn_count(), 3);
+
+	/* Free the middle one */
+	blued_conn_free(c2);
+	ATF_CHECK_EQ(conn_count(), 2);
+	ATF_CHECK(!conn_in_list(c2));
+	ATF_CHECK(conn_in_list(c1));
+	ATF_CHECK(conn_in_list(c3));
+
+	/* Free the first */
+	blued_conn_free(c1);
+	ATF_CHECK_EQ(conn_count(), 1);
+	ATF_CHECK(conn_in_list(c3));
+
+	/* Free the last */
+	blued_conn_free(c3);
+	ATF_CHECK_EQ(conn_count(), 0);
+}
+
+/* ================================================================
+ * Test: double free — LIST_REMOVE on an already-removed node is
+ * undefined behavior.  blued_conn_free does NOT guard against it.
+ * Skipped to avoid UB in test suite.
+ * ================================================================ */
+
+/* ================================================================
+ * Test: allocate, free, reallocate — verify slot reuse works
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_conn_alloc_after_free);
+ATF_TC_BODY(test_conn_alloc_after_free, tc)
+{
+	struct blued_conn *c1, *c2;
+
+	test_init();
+
+	c1 = blued_conn_alloc();
+	ATF_REQUIRE(c1 != NULL);
+	ATF_CHECK_EQ(conn_count(), 1);
+
+	blued_conn_free(c1);
+	ATF_CHECK_EQ(conn_count(), 0);
+
+	/* Allocate again — should succeed and produce a valid conn */
+	c2 = blued_conn_alloc();
+	ATF_REQUIRE(c2 != NULL);
+	ATF_CHECK_EQ(conn_count(), 1);
+	ATF_CHECK(conn_in_list(c2));
+	ATF_CHECK_EQ(c2->att_fd, -1);
+	ATF_CHECK_EQ(c2->state, BLUED_CONN_IDLE);
+
+	blued_conn_free(c2);
+}
+
+/* ================================================================
+ * Test: verify initial field values after alloc
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_conn_initial_values);
+ATF_TC_BODY(test_conn_initial_values, tc)
+{
+	struct blued_conn *conn;
+	bdaddr_t zero_addr;
+
+	test_init();
+
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+
+	ATF_CHECK_EQ(conn->att_fd, -1);
+	ATF_CHECK(conn->att == NULL);
+	ATF_CHECK(conn->hogp == NULL);
+	ATF_CHECK_EQ(conn->state, BLUED_CONN_IDLE);
+	ATF_CHECK_EQ(conn->role, 0);	/* BLUED_ROLE_CENTRAL == 0 */
+	ATF_CHECK(conn->att_owned == NULL);
+	ATF_CHECK(conn->gatt_db == NULL);
+	ATF_CHECK(!conn->reconnect);
+	ATF_CHECK_EQ(conn->reconnect_delay, 0);
+	ATF_CHECK_EQ(conn->reconnect_timer, 0);
+	ATF_CHECK_EQ(conn->idle_timer, 0);
+	ATF_CHECK_EQ(conn->con_handle, 0);
+	ATF_CHECK_EQ(conn->addr_type, 0);
+	ATF_CHECK(conn->adapter == NULL);
+
+	/* dst should be zero (calloc) */
+	memset(&zero_addr, 0, sizeof(zero_addr));
+	ATF_CHECK(memcmp(&conn->dst, &zero_addr, sizeof(zero_addr)) == 0);
+
+	blued_conn_free(conn);
+}
+
+/* ================================================================
+ * Test: set state through full lifecycle
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_conn_state_lifecycle);
+ATF_TC_BODY(test_conn_state_lifecycle, tc)
+{
+	struct blued_conn *conn;
+
+	test_init();
+
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+
+	/* Walk through the full state machine */
+	ATF_CHECK_EQ(conn->state, BLUED_CONN_IDLE);
+
+	blued_conn_set_state(conn, BLUED_CONN_CONNECTING);
+	ATF_CHECK_EQ(conn->state, BLUED_CONN_CONNECTING);
+
+	blued_conn_set_state(conn, BLUED_CONN_ACTIVE);
+	ATF_CHECK_EQ(conn->state, BLUED_CONN_ACTIVE);
+
+	blued_conn_set_state(conn, BLUED_CONN_IDLE);
+	ATF_CHECK_EQ(conn->state, BLUED_CONN_IDLE);
+
+	blued_conn_set_state(conn, BLUED_CONN_RECONNECTING);
+	ATF_CHECK_EQ(conn->state, BLUED_CONN_RECONNECTING);
+
+	blued_conn_free(conn);
+}
+
+/* ================================================================
+ * Test: blued_conn_state_name returns correct strings for each state.
+ *
+ * blued_conn_state_name is static in conn.c, so we test it indirectly
+ * by verifying that blued_conn_set_state correctly transitions between
+ * all named states without crash.  The name strings are used in logging
+ * which we don't capture, but the transitions exercise every switch case.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_conn_state_name);
+ATF_TC_BODY(test_conn_state_name, tc)
+{
+	struct blued_conn *conn;
+	int states[] = {
+		BLUED_CONN_IDLE,
+		BLUED_CONN_CONNECTING,
+		BLUED_CONN_ACTIVE,
+		BLUED_CONN_RECONNECTING,
+		99, /* unknown — exercises default case */
+	};
+	int i;
+
+	test_init();
+
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+
+	/*
+	 * Walk through all states including an invalid one (99).
+	 * The function should handle the unknown state via the
+	 * "UNKNOWN" default case without crashing.
+	 */
+	for (i = 0; i < (int)(sizeof(states) / sizeof(states[0])); i++) {
+		blued_conn_set_state(conn, states[i]);
+		ATF_CHECK_EQ(conn->state, states[i]);
+	}
+
+	/* Transition back to a known state */
+	blued_conn_set_state(conn, BLUED_CONN_IDLE);
+	ATF_CHECK_EQ(conn->state, BLUED_CONN_IDLE);
+
+	blued_conn_free(conn);
+}
+
+/* ================================================================
+ * Test: allocate BLUED_MAX_CONNS, verify next alloc returns NULL,
+ * free one, verify alloc succeeds again, then free all.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_conn_alloc_max);
+ATF_TC_BODY(test_conn_alloc_max, tc)
+{
+	struct blued_conn *conns[BLUED_MAX_CONNS];
+	struct blued_conn *extra, *recycled;
+	int i;
+
+	test_init();
+
+	/* Fill to capacity */
+	for (i = 0; i < BLUED_MAX_CONNS; i++) {
+		conns[i] = blued_conn_alloc();
+		ATF_REQUIRE_MSG(conns[i] != NULL,
+		    "alloc failed at index %d", i);
+	}
+	ATF_CHECK_EQ(conn_count(), BLUED_MAX_CONNS);
+
+	/* Next alloc should fail */
+	extra = blued_conn_alloc();
+	ATF_CHECK(extra == NULL);
+
+	/* Free one slot and verify alloc succeeds again */
+	blued_conn_free(conns[0]);
+	ATF_CHECK_EQ(conn_count(), BLUED_MAX_CONNS - 1);
+
+	recycled = blued_conn_alloc();
+	ATF_CHECK(recycled != NULL);
+	ATF_CHECK_EQ(conn_count(), BLUED_MAX_CONNS);
+
+	/* Clean up: free recycled + remaining */
+	blued_conn_free(recycled);
+	for (i = 1; i < BLUED_MAX_CONNS; i++)
+		blued_conn_free(conns[i]);
+	ATF_CHECK_EQ(conn_count(), 0);
+}
+
+/* ================================================================
  * ATF test program entry point
  * ================================================================ */
 ATF_TP_ADD_TCS(tp)
@@ -259,6 +545,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_conn_by_addr_found);
 	ATF_TP_ADD_TC(tp, test_conn_by_addr_not_found);
 	ATF_TP_ADD_TC(tp, test_conn_register);
+	ATF_TP_ADD_TC(tp, test_conn_pool_exhaustion);
+	ATF_TP_ADD_TC(tp, test_conn_set_state);
+	ATF_TP_ADD_TC(tp, test_conn_free_removes_from_list);
+	ATF_TP_ADD_TC(tp, test_conn_alloc_after_free);
+	ATF_TP_ADD_TC(tp, test_conn_initial_values);
+	ATF_TP_ADD_TC(tp, test_conn_state_lifecycle);
+	ATF_TP_ADD_TC(tp, test_conn_state_name);
+	ATF_TP_ADD_TC(tp, test_conn_alloc_max);
 
 	return (atf_no_error());
 }

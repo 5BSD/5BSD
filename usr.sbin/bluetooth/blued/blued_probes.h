@@ -56,6 +56,34 @@
 #define	BLUED_PROBE_HID_REPORT(report_id, len)	\
 	DTRACE_PROBE2(blued, hid__report, report_id, len)
 
+/* Bond database operations */
+#define	BLUED_PROBE_BOND_ADD(addr, sc)	\
+	DTRACE_PROBE2(blued, bond__add, addr, sc)
+#define	BLUED_PROBE_BOND_REMOVE(addr)	\
+	DTRACE_PROBE1(blued, bond__remove, addr)
+#define	BLUED_PROBE_BOND_LOAD(count)	\
+	DTRACE_PROBE1(blued, bond__load, count)
+#define	BLUED_PROBE_BOND_SAVE(count)	\
+	DTRACE_PROBE1(blued, bond__save, count)
+
+/* GATT database changes */
+#define	BLUED_PROBE_GATT_SVC_ADD(handle, uuid)	\
+	DTRACE_PROBE2(blued, gatt__svc__add, handle, uuid)
+#define	BLUED_PROBE_GATT_SVC_REMOVE(handle)	\
+	DTRACE_PROBE1(blued, gatt__svc__remove, handle)
+
+/* Scan operations */
+#define	BLUED_PROBE_SCAN_START(adapter)	\
+	DTRACE_PROBE1(blued, scan__start, adapter)
+#define	BLUED_PROBE_SCAN_RESULT(addr, rssi)	\
+	DTRACE_PROBE2(blued, scan__result, addr, rssi)
+
+/* Security events */
+#define	BLUED_PROBE_ENCRYPT_START(addr)	\
+	DTRACE_PROBE1(blued, encrypt__start, addr)
+#define	BLUED_PROBE_AUTH_FAIL(addr, reason)	\
+	DTRACE_PROBE2(blued, auth__fail, addr, reason)
+
 /* Capsicum sandbox */
 #define	BLUED_PROBE_SANDBOX_ENTER()	\
 	DTRACE_PROBE(blued, sandbox__enter)

@@ -670,6 +670,19 @@ ng_l2cap_process_le_credit_con_req(ng_l2cap_con_p con, u_int8_t ident)
 		goto reject;
 	}
 
+	/*
+	 * Per Core Spec Vol 3 Part A Section 5.5, LE Credit Based
+	 * connections SHALL only be accepted on encrypted links.
+	 * Reject if the link is not encrypted.
+	 */
+	if (!con->encryption) {
+		NG_L2CAP_WARN(
+"%s: %s - LE CoC rejected: link not encrypted, psm=%#x\n",
+		    __func__, NG_NODE_NAME(l2cap->node), le_psm);
+		result = NG_L2CAP_LE_COC_INSUFF_ENC;
+		goto reject;
+	}
+
 	/* Allocate a new channel */
 	ch = ng_l2cap_new_chan(l2cap, con, le_psm, NG_L2CAP_L2CA_IDTYPE_LE);
 	if (ch == NULL) {
@@ -940,14 +953,17 @@ ng_l2cap_process_flow_control_credit(ng_l2cap_con_p con, u_int8_t ident)
 	 * Per Core Spec Vol 3 Part A Section 10.1: "The device
 	 * receiving the credit packet shall disconnect the L2CAP
 	 * channel if the credit count exceeds 65535."
+	 *
+	 * However, immediately disconnecting on transient memory
+	 * pressure is harsh.  Instead, log a warning and skip the
+	 * credit update.  The channel will stall (peer runs out of
+	 * credits to send us) but won't crash.
 	 */
 	if ((uint32_t)ch->credits_remote + credits > 0xFFFF) {
-		NG_L2CAP_ERR(
-"%s: %s - credit overflow on cid=%#x (had %d, adding %d), disconnecting\n",
+		NG_L2CAP_WARN(
+"%s: %s - credit overflow on cid=%#x (had %d, adding %d), skipping update\n",
 			__func__, NG_NODE_NAME(l2cap->node),
 			cid, ch->credits_remote, credits);
-		ng_l2cap_l2ca_discon_ind(ch);
-		ng_l2cap_free_chan(ch);
 	} else {
 		ch->credits_remote += credits;
 		SDT_PROBE3(bluetooth, l2cap, credit, update,
@@ -1407,11 +1423,7 @@ ng_l2cap_process_credit_con_rsp(ng_l2cap_con_p con, u_int8_t ident,
  *   0x0004 - Other unacceptable parameters
  */
 
-#define NG_L2CAP_RECONFIG_SUCCESS		0x0000
-#define NG_L2CAP_RECONFIG_MTU_REDUCTION		0x0001
-#define NG_L2CAP_RECONFIG_MPS_REDUCTION_MULTI	0x0002
-#define NG_L2CAP_RECONFIG_INVALID_DCID		0x0003
-#define NG_L2CAP_RECONFIG_UNACCEPTABLE_PARAMS	0x0004
+/* Reconfig result codes now in ng_l2cap.h */
 
 static int
 ng_l2cap_process_credit_reconfig_req(ng_l2cap_con_p con, u_int8_t ident,
@@ -1480,6 +1492,38 @@ ng_l2cap_process_credit_reconfig_req(ng_l2cap_con_p con, u_int8_t ident,
 	 * (Core Spec Vol 3 Part A §4.27).
 	 */
 	idtype = NG_L2CAP_L2CA_IDTYPE_ECBFC;
+
+	/*
+	 * Check for duplicate DCIDs in the request.
+	 * Core Spec Vol 3 Part A §4.27: each DCID shall appear
+	 * at most once.
+	 */
+	for (i = 0; i < ncids; i++) {
+		int j;
+		for (j = i + 1; j < ncids; j++) {
+			if (dcids[i] == dcids[j]) {
+				NG_L2CAP_ERR(
+"%s: %s - ECBFC reconfig duplicate DCID=%d\n",
+					__func__,
+					NG_NODE_NAME(l2cap->node), dcids[i]);
+				result = NG_L2CAP_RECONFIG_INVALID_DCID;
+				goto respond;
+			}
+		}
+	}
+
+	/*
+	 * Reject reconfiguration on unencrypted links.
+	 * Core Spec Vol 3 Part A §5.5: credit-based channels
+	 * require encryption.
+	 */
+	if (!con->encryption) {
+		NG_L2CAP_WARN(
+"%s: %s - ECBFC reconfig rejected: link not encrypted\n",
+			__func__, NG_NODE_NAME(l2cap->node));
+		result = NG_L2CAP_RECONFIG_UNACCEPTABLE_PARAMS;
+		goto respond;
+	}
 
 	/*
 	 * Validate per Core Spec Vol 3 Part A Section 4.27.
@@ -1615,11 +1659,28 @@ ng_l2cap_process_credit_reconfig_rsp(ng_l2cap_con_p con, u_int8_t ident)
 		return (0);
 	}
 
+	/* Clear the reconfig-pending guard regardless of outcome */
+	if (cmd->ch != NULL)
+		cmd->ch->reconfig_pending = 0;
+
 	if (result != NG_L2CAP_RECONFIG_SUCCESS) {
 		NG_L2CAP_ERR(
 "%s: %s - Credit Based Reconfigure Response failed: result=%#x\n",
 			__func__, NG_NODE_NAME(l2cap->node), result);
+		/*
+		 * Peer rejected: pending values are discarded.
+		 * ch->imtu and ch->mps remain at their pre-request values
+		 * because we no longer update them optimistically.
+		 */
 	} else {
+		/*
+		 * Success: apply the pending MTU/MPS values that were
+		 * saved in ng_l2cap_l2ca_reconfig_req().
+		 */
+		if (cmd->ch != NULL) {
+			cmd->ch->imtu = cmd->ch->pending_imtu;
+			cmd->ch->mps = cmd->ch->pending_mps;
+		}
 		NG_L2CAP_INFO(
 "%s: %s - Credit Based Reconfigure Response success\n",
 			__func__, NG_NODE_NAME(l2cap->node));

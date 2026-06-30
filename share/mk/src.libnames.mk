@@ -118,6 +118,7 @@ _LIBRARIES=	\
 		BlocksRuntime \
 		be \
 		begemot \
+		ble \
 		bluetooth \
 		bsdxml \
 		bsm \
@@ -367,6 +368,9 @@ _DP_crypto=	pthread
 _DP_cuse=	pthread
 .if ${MK_BLACKLIST} != "no"
 _DP_blacklist+=	pthread
+.endif
+.if ${MK_BLUETOOTH} != "no"
+_DP_ble+=	bluetooth
 .endif
 .if ${MK_BLOCKLIST} != "no"
 _DP_blocklist+=	pthread
@@ -904,6 +908,7 @@ LIBGTESTDIR=	${_LIB_OBJTOP}/lib/googletest/gtest
 LIBGTEST_MAINDIR=	${_LIB_OBJTOP}/lib/googletest/gtest_main
 LIBALIASDIR=	${_LIB_OBJTOP}/lib/libalias/libalias
 LIBBLACKLISTDIR=	${_LIB_OBJTOP}/lib/libblacklist
+LIBBLEDIR=		${_LIB_OBJTOP}/lib/libble
 LIBBLOCKLISTDIR=	${_LIB_OBJTOP}/lib/libblocklist
 LIBBLOCKSRUNTIMEDIR=	${_LIB_OBJTOP}/lib/libblocksruntime
 LIBBSNMPDIR=	${_LIB_OBJTOP}/lib/libbsnmp/libbsnmp

@@ -36,6 +36,7 @@
 #define ATT_OP_PREPARE_WRITE_RSP	0x17
 #define ATT_OP_EXECUTE_WRITE_REQ	0x18
 #define ATT_OP_EXECUTE_WRITE_RSP	0x19
+#define ATT_OP_SIGNED_WRITE_CMD		0xD2
 #define ATT_OP_WRITE_CMD		0x52
 #define ATT_OP_HANDLE_NOTIFY		0x1B
 #define ATT_OP_HANDLE_IND		0x1D
@@ -69,7 +70,19 @@
 
 /* Default and limits */
 #define ATT_DEFAULT_MTU			23
-#define ATT_MAX_MTU			517
+/*
+ * Maximum ATT MTU.  EATT bearers may negotiate up to 65535 per
+ * Core Spec Vol 3 Part F Section 3.2.9.  The heap-allocated
+ * receive buffer (ac->buf) is sized to ATT_MAX_MTU.
+ */
+#define ATT_MAX_MTU			65535
+/*
+ * Maximum PDU size for stack-allocated buffers.  Kept at 517
+ * (the BT 5.0 unenhanced ATT bearer maximum) to avoid blowing
+ * the stack.  Server-side PDUs are clamped to ac->mtu which
+ * will not exceed this for the primary bearer.
+ */
+#define ATT_PDU_BUF_SIZE		517
 
 /* EATT (Enhanced ATT) — Core Spec Vol 3 Part G Section 5.3 */
 #define ATT_EATT_PSM			0x0027
@@ -106,6 +119,7 @@ struct att_bearer {
 	int		fd;		/* L2CAP CoC socket */
 	uint16_t	mtu;		/* negotiated MTU for this bearer */
 	bool		active;		/* bearer is connected */
+	int		pending;	/* outstanding requests on this bearer */
 };
 
 /*
@@ -114,16 +128,48 @@ struct att_bearer {
 struct att_conn {
 	int		fd;		/* L2CAP ATT socket (primary bearer) */
 	uint16_t	mtu;		/* negotiated MTU */
+	bool		mtu_exchanged;	/* MTU exchange already done */
 	uint8_t		*buf;		/* receive buffer */
 	bool		encrypted;	/* link is encrypted (AES-CCM) */
+	bool		authenticated;	/* encryption uses authenticated key (MITM) */
+	uint8_t		enc_key_size;	/* negotiated encryption key size (0 = not set) */
+	uint8_t		min_key_size;	/* minimum acceptable key size (from config) */
 	uint16_t	con_handle;	/* HCI connection handle (for logging) */
+
+	/* GATT Robust Caching (Core Spec Vol 3 Part G §2.5.2.1) */
+	bool		robust_caching;	/* client set Robust Caching bit in 0x2B29 */
+	bool		change_aware;	/* client has read current DB hash */
+
+	/* Indication flow control (Core Spec Vol 3 Part F §3.3.2) */
+	bool		ind_pending;	/* indication sent, awaiting confirmation */
+	uintptr_t	ind_timer;	/* kqueue EVFILT_TIMER ident, 0 if none */
 
 	/* Prepare/Execute Write queue (per-connection) */
 	struct att_prepare_queue	prep_queue;
 
+	/* Per-connection CCCD values (Core Spec Vol 3 Part G §3.3.3.3) */
+	struct att_cccd_entry	cccds[ATT_MAX_CCCDS_PER_CONN];
+	int			cccd_count;
+
 	/* EATT bearers (additional to primary) */
 	struct att_bearer	eatt[ATT_MAX_EATT_BEARERS];
 	int			eatt_count;	/* number of active EATT bearers */
+
+	/* Peer CSRK for ATT Signed Write verification */
+	uint8_t			peer_csrk[16];
+	bool			has_peer_csrk;
+
+	/* Sign counter for replay protection (Core Spec Vol 3 Part H §2.4.5) */
+	uint32_t		peer_sign_counter;
+	bool			has_peer_sign_counter;
+
+	/*
+	 * Transient bearer context for att_server_handle().
+	 * Set during request dispatch so response helpers send on the
+	 * correct bearer.  -1 / 0 means use the primary bearer (fd/mtu).
+	 */
+	int			bearer_fd;	/* -1 = use primary */
+	uint16_t		bearer_mtu;	/* 0 = use primary mtu */
 };
 
 /*
@@ -153,6 +199,9 @@ int	att_find_info(struct att_conn *ac, uint16_t start, uint16_t end,
 	    void *buf, size_t buflen, size_t *outlen);
 int	att_read_by_type(struct att_conn *ac, uint16_t start, uint16_t end,
 	    uint16_t uuid16, void *buf, size_t buflen, size_t *outlen);
+int	att_read_by_type_uuid128(struct att_conn *ac, uint16_t start,
+	    uint16_t end, const uint8_t uuid[16], void *buf, size_t buflen,
+	    size_t *outlen);
 int	att_read_by_group_type(struct att_conn *ac, uint16_t start,
 	    uint16_t end, uint16_t uuid16, void *buf, size_t buflen,
 	    size_t *outlen);
@@ -161,6 +210,9 @@ int	att_find_by_type_value(struct att_conn *ac, uint16_t start,
 	    void *buf, size_t buflen, size_t *outlen);
 int	att_read_multiple(struct att_conn *ac, const uint16_t *handles,
 	    int count, void *buf, size_t buflen, size_t *outlen);
+int	att_read_multiple_variable(struct att_conn *ac,
+	    const uint16_t *handles, int count,
+	    void *buf, size_t buflen, size_t *outlen);
 int	att_prepare_write(struct att_conn *ac, uint16_t handle,
 	    uint16_t offset, const void *data, size_t len);
 int	att_execute_write(struct att_conn *ac, uint8_t flags);

@@ -1,0 +1,18 @@
+#!/usr/sbin/dtrace -qs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * blued-pairing -- trace SMP pairing, encryption, and bond events.
+ *
+ * Usage: blued-pairing
+ */
+
+blued*:::smp-pair-start  { self->t = timestamp; printf("%-20Y PAIR_START %s method=%d\n", walltimestamp, copyinstr(arg0), arg1); }
+blued*:::smp-pair-done   { printf("%-20Y PAIR_DONE  %s status=%d %dms\n", walltimestamp, copyinstr(arg0), arg1, self->t ? (timestamp - self->t) / 1000000 : 0); self->t = 0; }
+blued*:::encrypt-start   { printf("%-20Y ENCRYPTED  %s\n", walltimestamp, copyinstr(arg0)); }
+blued*:::bond-add        { printf("%-20Y BOND_ADD   %s sc=%d\n", walltimestamp, copyinstr(arg0), arg1); }
+blued*:::bond-remove     { printf("%-20Y BOND_DEL   %s\n", walltimestamp, copyinstr(arg0)); }
+blued*:::bond-load       { printf("%-20Y BOND_LOAD  count=%d\n", walltimestamp, arg0); }
+blued*:::bond-save       { printf("%-20Y BOND_SAVE  count=%d\n", walltimestamp, arg0); }

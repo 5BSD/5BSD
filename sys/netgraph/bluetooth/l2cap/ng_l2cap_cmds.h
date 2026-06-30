@@ -552,6 +552,43 @@ do {									\
 	}								\
 } while (0)
 
+/*
+ * Credit Based Reconfigure Request (0x19)
+ *
+ * Variable-length: the fixed header (MTU + MPS) is followed by _ncids
+ * Destination CIDs.  _dcids points to an array of _ncids u_int16_t
+ * values already in host byte order.
+ */
+#define _ng_l2cap_credit_reconfig_req(_m, _ident, _mtu, _mps, _dcids, _ncids) \
+do {									\
+	struct _credit_reconfig_req {					\
+		ng_l2cap_cmd_hdr_t		   hdr;			\
+		ng_l2cap_credit_reconfig_req_cp	   param;		\
+	} __attribute__ ((packed))	*c = NULL;			\
+	int _cid_len = (_ncids) * sizeof(u_int16_t);			\
+	int _i;								\
+									\
+	MGETHDR((_m), M_NOWAIT, MT_DATA);				\
+	if ((_m) == NULL)						\
+		break;							\
+									\
+	(_m)->m_pkthdr.len = (_m)->m_len = sizeof(*c) + _cid_len;	\
+									\
+	c = mtod((_m), struct _credit_reconfig_req *);			\
+	c->hdr.code = NG_L2CAP_CREDIT_RECONFIG_REQ;			\
+	c->hdr.ident = (_ident);					\
+	c->hdr.length = htole16(sizeof(c->param) + _cid_len);		\
+									\
+	c->param.mtu = htole16((_mtu));					\
+	c->param.mps = htole16((_mps));					\
+									\
+	{								\
+		u_int16_t *_dp = (u_int16_t *)((char *)c + sizeof(*c));	\
+		for (_i = 0; _i < (_ncids); _i++)			\
+			_dp[_i] = htole16((_dcids)[_i]);		\
+	}								\
+} while (0)
+
 /* Credit Based Reconfigure Response (0x1A) */
 #define _ng_l2cap_credit_reconfig_rsp(_m, _ident, _result)		\
 do {									\

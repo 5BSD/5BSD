@@ -8,6 +8,7 @@
 #ifndef _BLUED_BLE_UTIL_H_
 #define _BLUED_BLE_UTIL_H_
 
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <syslog.h>
@@ -23,6 +24,22 @@ static inline uint16_t
 get_le16(const uint8_t *p)
 {
 	return ((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+}
+
+static inline void
+put_le32(uint8_t *p, uint32_t v)
+{
+	p[0] = v & 0xFF;
+	p[1] = (v >> 8) & 0xFF;
+	p[2] = (v >> 16) & 0xFF;
+	p[3] = (v >> 24) & 0xFF;
+}
+
+static inline uint32_t
+get_le32(const uint8_t *p)
+{
+	return ((uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+	    ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24));
 }
 
 /*
@@ -45,7 +62,7 @@ static const uint8_t bt_base_uuid_le[12] = {
  * The old blued_debug / DBG() interface is preserved for backward
  * compatibility: -d sets blued_verbose = 1.
  */
-extern int blued_verbose;	/* 0, 1, or 2 */
+extern atomic_int blued_verbose;	/* 0-5, atomic for thread safety */
 extern int blued_daemonized;	/* 1 if running as daemon (use syslog) */
 
 /* Backward compat */

@@ -20,6 +20,9 @@ struct ble_scan_result {
 	int8_t		rssi;
 	char		name[32];	/* from AD Complete/Short Local Name */
 	bool		has_name;
+	uint16_t	mfr_id;		/* manufacturer company ID, 0xFFFF = none */
+	uint16_t	svc_uuids[8];	/* 16-bit service UUIDs */
+	int		num_svc_uuids;
 };
 
 #define BLE_MAX_SCAN_RESULTS	64
@@ -35,8 +38,11 @@ int	hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec);
 
 /* hci_util.c — peripheral mode (advertising + LTK) */
 int	hci_le_set_advertising_params(int hci_fd, uint16_t interval_min,
-	    uint16_t interval_max, uint8_t adv_type);
+	    uint16_t interval_max, uint8_t adv_type,
+	    uint8_t own_addr_type, uint8_t filter_policy);
 int	hci_le_set_advertising_data(int hci_fd, const uint8_t *data,
+	    uint8_t len);
+int	hci_le_set_scan_response_data(int hci_fd, const uint8_t *data,
 	    uint8_t len);
 int	hci_le_set_advertise_enable(int hci_fd, bool enable);
 int	hci_le_ltk_request_reply(int hci_fd, uint16_t con_handle,
@@ -47,9 +53,18 @@ int	ble_build_adv_data(uint8_t *buf, size_t buflen, const char *name,
 
 /* hci_util.c — HCI init and feature detection (Phase 2.5) */
 int	hci_reset(int hci_fd);
+int	hci_node_init(int hci_fd);
+int	hci_write_le_host_support(int hci_fd, uint8_t le_host,
+	    uint8_t simultaneous);
 int	hci_le_read_local_features(int hci_fd, uint64_t *features);
+int	hci_set_event_mask(int hci_fd, uint64_t mask);
+uint64_t	hci_le_default_event_mask(uint64_t features);
 int	hci_le_set_event_mask(int hci_fd, uint64_t mask);
 int	hci_le_connection_update(int hci_fd, uint16_t handle,
+	    uint16_t interval_min, uint16_t interval_max,
+	    uint16_t latency, uint16_t timeout);
+int	l2cap_conn_param_update_req(const uint8_t *local_addr,
+	    const uint8_t *peer_addr, uint8_t peer_addr_type,
 	    uint16_t interval_min, uint16_t interval_max,
 	    uint16_t latency, uint16_t timeout);
 
@@ -114,7 +129,13 @@ int	hci_le_set_rpa_timeout(int hci_fd, uint16_t timeout_sec);
 /* hci_util.c — LE Extended Advertising (Phase 2B) */
 int	hci_le_set_ext_adv_params(int hci_fd, uint8_t handle,
 	    uint16_t event_props, uint32_t interval_min,
-	    uint32_t interval_max, uint8_t own_addr_type);
+	    uint32_t interval_max, uint8_t own_addr_type,
+	    uint8_t filter_policy);
+int	hci_le_set_ext_adv_params_phy(int hci_fd, uint8_t handle,
+	    uint16_t event_props, uint32_t interval_min,
+	    uint32_t interval_max, uint8_t own_addr_type,
+	    uint8_t filter_policy, uint8_t primary_phy,
+	    uint8_t secondary_phy);
 int	hci_le_set_ext_adv_data(int hci_fd, uint8_t handle,
 	    const uint8_t *data, uint8_t len);
 int	hci_le_set_ext_adv_enable(int hci_fd, uint8_t enable,
@@ -315,8 +336,20 @@ int	hci_le_write_auth_payload_timeout(int fd, uint16_t con_handle,
 /* hci_util.c — Set Min Encryption Key Size (BT 5.3, HC&Baseband) */
 int	hci_set_min_enc_key_size(int fd, uint8_t key_size);
 
+/* hci_util.c — HCI Disconnect */
+int	hci_disconnect(int hci_fd, uint16_t con_handle, uint8_t reason);
+
+/* hci_util.c — raw HCI command (bypasses bt_devreq) */
+int	hci_send_raw_cmd(int hci_fd, uint16_t opcode, const void *params,
+	    uint8_t plen);
+
 /* hci_util.c — LE CoC (Connection-Oriented Channel) initiation */
 int	ble_coc_connect(const uint8_t *addr, uint8_t addr_type,
 	    uint16_t psm, uint16_t mtu);
+
+/* hci_util.c — ECBFC (Enhanced Credit Based Flow Control, BT 5.2) */
+int	ble_ecbfc_connect(const uint8_t *addr, uint8_t addr_type,
+	    uint16_t psm, uint16_t mtu, int count, int *fds);
+int	ble_ecbfc_reconfig(int fd, uint16_t new_mtu, uint16_t new_mps);
 
 #endif /* _BLUED_HCI_UTIL_H_ */

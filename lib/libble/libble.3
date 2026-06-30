@@ -1,0 +1,169 @@
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd June 27, 2026
+.Dt LIBBLE 3
+.Os
+.Sh NAME
+.Nm libble ,
+.Nm ble_open ,
+.Nm ble_close ,
+.Nm ble_scan ,
+.Nm ble_connect ,
+.Nm ble_discover ,
+.Nm ble_read ,
+.Nm ble_write ,
+.Nm ble_subscribe
+.Nd BLE client library for the blued daemon
+.Sh LIBRARY
+.Lb libble
+.Sh SYNOPSIS
+.In ble.h
+.Ft ble_ctx_t *
+.Fn ble_open "const char *sock_path"
+.Ft void
+.Fn ble_close "ble_ctx_t *ctx"
+.Ft int
+.Fn ble_fd "ble_ctx_t *ctx"
+.Ft int
+.Fn ble_process "ble_ctx_t *ctx"
+.Ft int
+.Fn ble_scan "ble_ctx_t *ctx" "ble_scan_cb cb" "void *arg"
+.Ft int
+.Fn ble_connect "ble_ctx_t *ctx" "const ble_addr_t *addr" "ble_connect_cb cb" "void *arg"
+.Ft int
+.Fn ble_disconnect "ble_ctx_t *ctx" "const ble_addr_t *addr"
+.Ft int
+.Fn ble_discover "ble_ctx_t *ctx" "const ble_addr_t *addr" "ble_discover_cb cb" "void *arg"
+.Ft int
+.Fn ble_read "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t handle" "ble_read_cb cb" "void *arg"
+.Ft int
+.Fn ble_write "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t handle" "const uint8_t *value" "uint16_t len"
+.Ft int
+.Fn ble_subscribe "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t handle" "ble_notify_cb cb" "void *arg"
+.Ft int
+.Fn ble_add_service "ble_ctx_t *ctx" "const ble_uuid_t *uuid" "uint16_t *out_handle"
+.Ft int
+.Fn ble_read_battery "ble_ctx_t *ctx" "const ble_addr_t *addr" "ble_read_cb cb" "void *arg"
+.Sh DESCRIPTION
+The
+.Nm libble
+library provides a callback-driven C API for Bluetooth Low Energy
+operations.
+It communicates with the
+.Xr blued 8
+daemon over its Unix domain control socket, abstracting the text
+protocol into typed function calls with asynchronous event delivery.
+.Pp
+The design is similar in spirit to Apple's CoreBluetooth framework:
+applications open a context, register callbacks for events of interest,
+and drive event dispatch by calling
+.Fn ble_process
+when the socket is readable.
+.Pp
+.Fn ble_open
+connects to the blued control socket.
+If
+.Fa sock_path
+is
+.Dv NULL ,
+the default path
+.Pa /var/run/blued.sock
+is used.
+Returns an opaque context, or
+.Dv NULL
+on failure.
+.Pp
+.Fn ble_fd
+returns the socket file descriptor for integration with
+.Xr poll 2 ,
+.Xr kqueue 2 ,
+or
+.Xr select 2 .
+.Pp
+.Fn ble_process
+reads available data from the daemon and dispatches any pending
+callbacks.
+Returns 0 on success, or \-1 if the connection was lost.
+.Pp
+.Fn ble_scan
+initiates a BLE scan.
+Discovered devices are reported via the
+.Fa cb
+callback, one invocation per device.
+.Pp
+.Fn ble_connect
+initiates a connection to the specified device.
+The
+.Fa cb
+callback is invoked when the connection succeeds or fails.
+.Pp
+.Fn ble_discover
+runs GATT service and characteristic discovery on a connected device.
+Results are delivered to the
+.Fa cb
+callback.
+.Pp
+.Fn ble_read
+and
+.Fn ble_write
+perform GATT characteristic read and write operations.
+.Pp
+.Fn ble_subscribe
+registers for characteristic value change notifications.
+The
+.Fa cb
+callback fires for each notification received.
+.Pp
+.Fn ble_add_service
+and related peripheral-mode functions allow building a local GATT
+server.
+.Pp
+.Fn ble_read_battery
+is a convenience function that auto-discovers the Battery Service
+(UUID 0x180F) and reads the Battery Level characteristic.
+.Sh EXAMPLES
+Scan for nearby BLE devices:
+.Bd -literal -offset indent
+#include <ble.h>
+#include <poll.h>
+#include <stdio.h>
+
+static void
+on_device(const ble_scan_result_t *r, void *arg)
+{
+    char buf[18];
+    printf("Found: %s rssi=%d name=%s\\n",
+        ble_addr_str(&r->addr, buf), r->rssi, r->name);
+}
+
+int
+main(void)
+{
+    ble_ctx_t *ctx = ble_open(NULL);
+    struct pollfd pfd;
+
+    ble_scan(ctx, on_device, NULL);
+
+    pfd.fd = ble_fd(ctx);
+    pfd.events = POLLIN;
+    while (poll(&pfd, 1, 10000) > 0)
+        ble_process(ctx);
+
+    ble_close(ctx);
+    return (0);
+}
+.Ed
+.Sh SEE ALSO
+.Xr bluetooth 3 ,
+.Xr blued 8 ,
+.Xr bluedctl 8
+.Sh HISTORY
+The
+.Nm libble
+library first appeared in
+.Fx 16.0 .
+.Sh AUTHORS
+.An Kory Heard

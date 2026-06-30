@@ -8,8 +8,14 @@
 
 # PROVIDE: blued
 # REQUIRE: DAEMON bluetooth
-# BEFORE: LOGIN
-# KEYWORD: nojail shutdown
+# KEYWORD: shutdown nojail
+#
+# Add the following lines to /etc/rc.conf to enable blued:
+#
+# blued_enable="YES"
+# blued_config="/usr/local/etc/blued.conf"  # optional
+# blued_flags=""                             # additional flags
+#
 
 . /etc/rc.subr
 
@@ -19,20 +25,46 @@ rcvar="blued_enable"
 command="/usr/sbin/${name}"
 pidfile="/var/run/${name}.pid"
 required_modules="ng_ubt ng_btsocket"
-start_precmd="blued_prestart"
+start_precmd="blued_precmd"
 
-blued_prestart()
+blued_precmd()
 {
-	if [ ! -d /var/db/blued ]; then
-		mkdir -p /var/db/blued
-		chmod 0700 /var/db/blued
+	# Create bond db directory if needed
+	mkdir -p /var/db/blued
+	chmod 700 /var/db/blued
+
+	# Check if bluetooth adapter is available
+	if ! ngctl list 2>/dev/null | grep -q ubt; then
+		warn "No Bluetooth adapter found (ubt)"
+		return 1
 	fi
 }
 
 load_rc_config $name
+
 : ${blued_enable:="NO"}
 : ${blued_config:="/etc/blued.conf"}
-command_args="-B -c ${blued_config}"
+: ${blued_flags:=""}
+: ${blued_mode:="peripheral"}
+
+# Build the command line
+command_args="-B"
+if [ -f "${blued_config}" ]; then
+	command_args="${command_args} -c ${blued_config}"
+fi
+
+case "${blued_mode}" in
+scan)
+	command_args="${command_args} -s"
+	;;
+peripheral)
+	command_args="${command_args} -p"
+	;;
+*)
+	# Assume device addresses
+	command_args="${command_args} ${blued_mode}"
+	;;
+esac
 
 # doesn't make sense to run in a svcj: nojail keyword
 blued_svcj="NO"

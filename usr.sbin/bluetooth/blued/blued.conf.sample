@@ -10,6 +10,9 @@ general {
 
     # BTSnoop packet log (Wireshark-compatible)
     # logfile = "/var/log/blued.pcap";
+
+    # BLE peripheral advertised name (default: FreeBSD-BLE)
+    # peripheral_name = "MyDevice";
 }
 
 # Adapter list: "auto" discovers all ubt* adapters
@@ -23,6 +26,10 @@ security {
     bondable = true;
     # Require Secure Connections (reject legacy pairing)
     sc_only = false;
+    # Minimum encryption key size for legacy pairing (7-16, default 16).
+    # SC always requires 16 regardless.  Lower values improve compat
+    # with older peripherals.
+    # min_key_size = 16;
 }
 
 features {
@@ -30,6 +37,21 @@ features {
     privacy = true;
     reconnect = true;
     reconnect_max_delay = 60;
+
+    # RPA (Resolvable Private Address) rotation timeout in seconds.
+    # Valid range: 1-3600.  Default: 900 (15 minutes).
+    # rpa_timeout = 900;
+
+    # Enable peripheral (advertiser) mode (default: no)
+    # peripheral_mode = false;
+
+    # Enable scan (observer) mode on startup (default: no)
+    # scan_mode = false;
+
+    # Number of pre-allocated L2CAP sockets for Capsicum sandbox.
+    # Must be set before cap_enter(); determines max concurrent
+    # reconnections.  Valid range: 1-64.  Default: 8.
+    # socket_pool_size = 8;
 }
 
 # Per-device overrides
@@ -37,5 +59,47 @@ features {
 #     "aa:bb:cc:dd:ee:ff" {
 #         type = "random";
 #         reconnect = true;
+#     }
+# }
+
+# Custom GATT services (peripheral mode).
+# Each "service" block adds a service to the GATT database.
+#
+# UUID format:
+#   "0xNNNN"                                — 16-bit Bluetooth SIG UUID
+#   "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"  — 128-bit vendor UUID
+#
+# Characteristic properties (comma-separated):
+#   read, write, write_no_rsp, notify, indicate, auth_signed_write
+#
+# Characteristic permissions (comma-separated):
+#   read, write, read_encrypt, write_encrypt, read_authen, write_authen
+#
+# Value: hex string (e.g., "0100" = 2 bytes {0x01, 0x00}), or "" for empty.
+# If properties include notify or indicate, a CCCD descriptor is auto-added.
+
+# service "Custom Sensor" {
+#     uuid = "0xFFE0"
+#     characteristic "Sensor Data" {
+#         uuid = "0xFFE1"
+#         properties = "read,notify"
+#         permissions = "read"
+#         value = "00"
+#     }
+#     characteristic "Control Point" {
+#         uuid = "0xFFE2"
+#         properties = "write"
+#         permissions = "write_encrypt"
+#         value = ""
+#     }
+# }
+
+# service "Custom 128-bit" {
+#     uuid = "12345678-1234-1234-1234-123456789abc"
+#     characteristic "Data" {
+#         uuid = "12345678-1234-1234-1234-123456789abd"
+#         properties = "read,write"
+#         permissions = "read,write"
+#         value = "0000"
 #     }
 # }

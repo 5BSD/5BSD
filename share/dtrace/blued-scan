@@ -1,0 +1,13 @@
+#!/usr/sbin/dtrace -qs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * blued-scan -- trace BLE scan operations and results.
+ *
+ * Usage: blued-scan
+ */
+
+blued*:::scan-start  { printf("%-20Y SCAN %s\n", walltimestamp, copyinstr(arg0)); }
+blued*:::scan-result { printf("%-20Y FOUND %s rssi=%d\n", walltimestamp, copyinstr(arg0), arg1); }

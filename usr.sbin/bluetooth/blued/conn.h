@@ -25,7 +25,8 @@ struct blued_conn	*blued_conn_alloc(void);
 
 /*
  * Remove conn from blued_g.conns and free it.
- * Does NOT close the ATT fd — caller must do that.
+ * For peripheral connections (att_owned != NULL), closes the ATT fd.
+ * For central connections, does NOT close the ATT fd — caller must do that.
  */
 void			 blued_conn_free(struct blued_conn *conn);
 
@@ -34,6 +35,12 @@ void			 blued_conn_free(struct blued_conn *conn);
  * Uses conn as the udata tag.  Returns 0 on success, -1 on failure.
  */
 int			 blued_conn_register(struct blued_conn *conn);
+
+/*
+ * Change connection state with logging.
+ */
+void			 blued_conn_set_state(struct blued_conn *conn,
+			    int new_state);
 
 /*
  * Find a connection by destination address.

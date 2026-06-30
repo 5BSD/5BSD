@@ -8,6 +8,9 @@
 PACKAGE=	dtrace
 SCRIPTS=	blued-att \
 		blued-connections \
+		blued-overview \
+		blued-pairing \
+		blued-scan \
 		blocking \
 		cap_rt-audit \
 		capsicum-changes \

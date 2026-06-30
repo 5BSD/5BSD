@@ -397,6 +397,11 @@ ng_l2cap_new_chan(ng_l2cap_p l2cap, ng_l2cap_con_p con, u_int16_t psm, int idtyp
 		ch->flush_timo = NG_L2CAP_FLUSH_TIMO_DEFAULT;
 		ch->link_timo = NG_L2CAP_LINK_TIMO_DEFAULT;
 
+		/* Initialize pending reconfig values to current defaults
+		 * so spurious reconfig responses don't apply garbage */
+		ch->pending_imtu = ch->imtu;
+		ch->pending_mps = ch->mps;
+
 		LIST_INSERT_HEAD(&l2cap->chan_list, ch, next);
 
 		ng_l2cap_con_ref(con);

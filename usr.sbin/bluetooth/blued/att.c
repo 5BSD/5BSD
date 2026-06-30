@@ -44,6 +44,7 @@ att_open(struct att_conn *ac, const uint8_t *addr, uint8_t addr_type)
 
 	memset(ac, 0, sizeof(*ac));
 	ac->fd = -1;
+	ac->bearer_fd = -1;
 	ac->eatt_count = 0;
 	for (int i = 0; i < ATT_MAX_EATT_BEARERS; i++)
 		ac->eatt[i].fd = -1;
@@ -69,7 +70,7 @@ att_open(struct att_conn *ac, const uint8_t *addr, uint8_t addr_type)
 	sa.l2cap_len = sizeof(sa);
 	sa.l2cap_family = AF_BLUETOOTH;
 	memcpy(&sa.l2cap_bdaddr, addr, sizeof(sa.l2cap_bdaddr));
-	sa.l2cap_cid = NG_L2CAP_ATT_CID;
+	sa.l2cap_cid = htole16(NG_L2CAP_ATT_CID);
 	sa.l2cap_bdaddr_type = addr_type;
 
 	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
@@ -112,6 +113,7 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *addr,
 
 	memset(ac, 0, sizeof(*ac));
 	ac->fd = -1;
+	ac->bearer_fd = -1;
 	ac->eatt_count = 0;
 	for (int i = 0; i < ATT_MAX_EATT_BEARERS; i++)
 		ac->eatt[i].fd = -1;
@@ -120,7 +122,7 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *addr,
 	sa.l2cap_len = sizeof(sa);
 	sa.l2cap_family = AF_BLUETOOTH;
 	memcpy(&sa.l2cap_bdaddr, addr, sizeof(sa.l2cap_bdaddr));
-	sa.l2cap_cid = NG_L2CAP_ATT_CID;
+	sa.l2cap_cid = htole16(NG_L2CAP_ATT_CID);
 	sa.l2cap_bdaddr_type = addr_type;
 
 	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
@@ -172,10 +174,24 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
     void *rsp, size_t rsplen, struct att_error *ae)
 {
 	ssize_t n;
-	int max_skip = 100;
+	int max_skip = 16;
+	int fd;
 	uint8_t opcode;
 
-	n = send(ac->fd, req, reqlen, 0);
+	/*
+	 * Select the best available bearer.  Prefer EATT bearers when
+	 * available — they allow ATT multiplexing (Core Spec Vol 3
+	 * Part G §5.3).  Fall back to the primary bearer on CID 0x0004.
+	 */
+	if (ac->eatt_count > 0) {
+		fd = att_eatt_select_bearer(ac);
+		if (fd < 0)
+			fd = ac->fd;
+	} else {
+		fd = ac->fd;
+	}
+
+	n = send(fd, req, reqlen, MSG_EOR);
 	if (n < 0)
 		return (-1);
 
@@ -197,7 +213,9 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 	 * SO_RCVTIMEO resets on each recv).
 	 */
 	for (;;) {
-		n = recv(ac->fd, rsp, rsplen, 0);
+		do {
+			n = recv(fd, rsp, rsplen, 0);
+		} while (n < 0 && errno == EINTR);
 		if (n < 0)
 			return (-1);
 
@@ -223,7 +241,7 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 		/* Confirm and skip indications */
 		if (opcode == ATT_OP_HANDLE_IND) {
 			uint8_t cfm = ATT_OP_HANDLE_CFM;
-			(void)send(ac->fd, &cfm, 1, 0);
+			(void)send(fd, &cfm, 1, MSG_EOR);
 			if (--max_skip <= 0) {
 				warnx("ATT: too many unsolicited PDUs while waiting for response");
 				errno = EPROTO;
@@ -233,6 +251,17 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 		}
 
 		break;
+	}
+
+	/* Decrement EATT bearer pending count after response */
+	if (fd != ac->fd) {
+		int bi;
+		for (bi = 0; bi < ac->eatt_count; bi++) {
+			if (ac->eatt[bi].fd == fd && ac->eatt[bi].pending > 0) {
+				ac->eatt[bi].pending--;
+				break;
+			}
+		}
 	}
 
 	/* Log incoming ATT PDU */
@@ -380,22 +409,25 @@ int
 att_write_req(struct att_conn *ac, uint16_t handle,
     const void *data, size_t len)
 {
-	uint8_t *req;
+	uint8_t reqbuf[ATT_PDU_BUF_SIZE];
 	struct att_error ae;
 	ssize_t n;
 	size_t reqlen = 3 + len;
 
-	if (reqlen > ac->mtu) {
+	if (reqlen > ac->mtu || reqlen > sizeof(reqbuf)) {
 		errno = EMSGSIZE;
 		return (-1);
 	}
 
-	req = ac->buf;
-	req[0] = ATT_OP_WRITE_REQ;
-	put_le16(req + 1, handle);
-	memcpy(req + 3, data, len);
+	/*
+	 * Build request in a separate buffer so att_request's recv()
+	 * into ac->buf doesn't alias the request data.
+	 */
+	reqbuf[0] = ATT_OP_WRITE_REQ;
+	put_le16(reqbuf + 1, handle);
+	memcpy(reqbuf + 3, data, len);
 
-	n = att_request(ac, req, reqlen, ac->buf, ac->mtu, &ae);
+	n = att_request(ac, reqbuf, reqlen, ac->buf, ac->mtu, &ae);
 	if (n < 0)
 		return (errno == EPROTO ? ae.code : -1);
 
@@ -430,7 +462,7 @@ att_write_cmd(struct att_conn *ac, uint16_t handle,
 	put_le16(pdu + 1, handle);
 	memcpy(pdu + 3, data, len);
 
-	if (send(ac->fd, pdu, pdulen, 0) < 0)
+	if (send(ac->fd, pdu, pdulen, MSG_EOR) < 0)
 		return (-1);
 
 	BLUED_PROBE_ATT_SEND(pdu[0], (int)pdulen);
@@ -456,7 +488,7 @@ att_find_by_type_value(struct att_conn *ac, uint16_t start, uint16_t end,
     uint16_t uuid16, const void *value, size_t vlen,
     void *buf, size_t buflen, size_t *outlen)
 {
-	uint8_t req[ATT_MAX_MTU];
+	uint8_t req[ATT_PDU_BUF_SIZE];
 	struct att_error ae;
 	ssize_t n;
 	size_t reqlen = 7 + vlen;
@@ -506,12 +538,19 @@ int
 att_read_multiple(struct att_conn *ac, const uint16_t *handles, int count,
     void *buf, size_t buflen, size_t *outlen)
 {
-	uint8_t req[ATT_MAX_MTU];
+	uint8_t req[ATT_PDU_BUF_SIZE];
 	struct att_error ae;
 	ssize_t n;
-	size_t reqlen = 1 + count * 2;
+	size_t reqlen;
 
-	if (count < 2 || reqlen > ac->mtu || reqlen > sizeof(req)) {
+	/* Guard against integer overflow in count * 2 */
+	if (count < 2 || count > (int)((sizeof(req) - 1) / 2)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	reqlen = 1 + (size_t)count * 2;
+
+	if (reqlen > ac->mtu || reqlen > sizeof(req)) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -542,6 +581,58 @@ att_read_multiple(struct att_conn *ac, const uint16_t *handles, int count,
 }
 
 /*
+ * ATT Read Multiple Variable Length Request (Core Spec Vol 3 Part F 3.4.4.8)
+ * Reads multiple attribute values with per-value length prefixes.
+ * Response format: opcode(1) || {length(2) || value(length)}*
+ *
+ * BT 5.2+. Requires EATT or the unenhanced bearer.
+ */
+int
+att_read_multiple_variable(struct att_conn *ac, const uint16_t *handles,
+    int count, void *buf, size_t buflen, size_t *outlen)
+{
+	uint8_t req[ATT_PDU_BUF_SIZE];
+	struct att_error ae;
+	ssize_t n;
+	size_t reqlen;
+
+	if (count < 2 || count > (int)((sizeof(req) - 1) / 2)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	reqlen = 1 + (size_t)count * 2;
+
+	if (reqlen > ac->mtu || reqlen > sizeof(req)) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	req[0] = ATT_OP_READ_MULTIPLE_VARIABLE_REQ;
+	for (int i = 0; i < count; i++)
+		put_le16(req + 1 + i * 2, handles[i]);
+
+	n = att_request(ac, req, reqlen, ac->buf, ac->mtu, &ae);
+	if (n < 0)
+		return (errno == EPROTO ? ae.code : -1);
+
+	if (ac->buf[0] != ATT_OP_READ_MULTIPLE_VARIABLE_RSP) {
+		errno = EPROTO;
+		return (-1);
+	}
+
+	size_t datalen = n - 1;
+	if (datalen > buflen)
+		datalen = buflen;
+	memcpy(buf, ac->buf + 1, datalen);
+	if (outlen != NULL)
+		*outlen = datalen;
+
+	LOG_ATT(2, "read multiple variable count=%d len=%zu", count, datalen);
+
+	return (0);
+}
+
+/*
  * ATT Prepare Write Request (Core Spec Vol 3 Part F 3.4.6.1)
  * Queues a partial write on the server.
  */
@@ -549,7 +640,7 @@ int
 att_prepare_write(struct att_conn *ac, uint16_t handle, uint16_t offset,
     const void *data, size_t len)
 {
-	uint8_t req[ATT_MAX_MTU];
+	uint8_t req[ATT_PDU_BUF_SIZE];
 	struct att_error ae;
 	ssize_t n;
 	size_t reqlen = 5 + len;
@@ -751,6 +842,49 @@ att_read_by_type(struct att_conn *ac, uint16_t start, uint16_t end,
 }
 
 /*
+ * ATT Read By Type Request with 128-bit UUID (Core Spec Vol 3 Part F 3.4.4.1)
+ * Builds a 23-byte PDU: opcode(1) + start(2) + end(2) + uuid128(16).
+ * Used for discovering characteristics with vendor-specific UUIDs.
+ */
+int
+att_read_by_type_uuid128(struct att_conn *ac, uint16_t start, uint16_t end,
+    const uint8_t uuid[16], void *buf, size_t buflen, size_t *outlen)
+{
+	uint8_t req[21];
+	struct att_error ae;
+	ssize_t n;
+
+	req[0] = ATT_OP_READ_BY_TYPE_REQ;
+	put_le16(req + 1, start);
+	put_le16(req + 3, end);
+	memcpy(req + 5, uuid, 16);
+
+	n = att_request(ac, req, sizeof(req), ac->buf, ac->mtu, &ae);
+	if (n < 0) {
+		if (errno == EPROTO && ae.code == ATT_ERR_ATTR_NOT_FOUND) {
+			if (outlen != NULL)
+				*outlen = 0;
+			return (0);
+		}
+		return (errno == EPROTO ? ae.code : -1);
+	}
+
+	if (ac->buf[0] != ATT_OP_READ_BY_TYPE_RSP || n < 2) {
+		errno = EPROTO;
+		return (-1);
+	}
+
+	size_t datalen = n - 1;
+	if (datalen > buflen)
+		datalen = buflen;
+	memcpy(buf, ac->buf + 1, datalen);
+	if (outlen != NULL)
+		*outlen = datalen;
+
+	return (0);
+}
+
+/*
  * ATT Read By Group Type Request (Core Spec Vol 3 Part F 3.4.4.9)
  * Used for primary service discovery.
  * Returns raw response payload (after opcode).
@@ -802,7 +936,9 @@ att_recv(struct att_conn *ac, void *buf, size_t buflen, size_t *outlen)
 {
 	ssize_t n;
 
-	n = recv(ac->fd, buf, buflen, 0);
+	do {
+		n = recv(ac->fd, buf, buflen, 0);
+	} while (n < 0 && errno == EINTR);
 	if (n < 0)
 		return (-1);
 	if (n == 0) {
@@ -832,7 +968,7 @@ att_confirm(struct att_conn *ac)
 {
 	uint8_t pdu = ATT_OP_HANDLE_CFM;
 
-	if (send(ac->fd, &pdu, 1, 0) < 0)
+	if (send(ac->fd, &pdu, 1, MSG_EOR) < 0)
 		return (-1);
 
 	/* Log outgoing Handle Value Confirmation */
@@ -914,16 +1050,26 @@ att_eatt_select_bearer(struct att_conn *ac)
 	int i;
 
 	/*
-	 * Simple round-robin: return the first active EATT bearer.
-	 * A more sophisticated implementation would track in-flight
-	 * requests per bearer, but for basic multiplexing this
-	 * suffices -- the primary bearer handles serialized
-	 * request/response while EATT bearers can be used for
-	 * parallel operations.
+	 * Least-loaded selection: pick the active EATT bearer with
+	 * the fewest outstanding requests.  This distributes parallel
+	 * GATT operations across bearers, matching BlueZ's per-channel
+	 * queue approach.
 	 */
-	for (i = 0; i < ac->eatt_count; i++) {
-		if (ac->eatt[i].active && ac->eatt[i].fd >= 0)
-			return (ac->eatt[i].fd);
+	{
+		int best = -1, best_pending = 0x7FFFFFFF;
+
+		for (i = 0; i < ac->eatt_count; i++) {
+			if (!ac->eatt[i].active || ac->eatt[i].fd < 0)
+				continue;
+			if (ac->eatt[i].pending < best_pending) {
+				best_pending = ac->eatt[i].pending;
+				best = i;
+			}
+		}
+		if (best >= 0) {
+			ac->eatt[best].pending++;
+			return (ac->eatt[best].fd);
+		}
 	}
 
 	/* Fall back to primary bearer */

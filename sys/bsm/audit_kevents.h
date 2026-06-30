@@ -694,6 +694,11 @@
 #define	AUE_CAP_AMBIENT_LIMIT	43300	/* 5BSD */
 #define	AUE_PDSELF		43301	/* 5BSD */
 #define	AUE_PDCMP		43302	/* 5BSD */
+#define	AUE_BLUED_CONNECT	43303	/* 5BSD: BLE connection */
+#define	AUE_BLUED_PAIR		43304	/* 5BSD: BLE SMP pairing */
+#define	AUE_BLUED_BOND_ADD	43305	/* 5BSD: BLE bond stored */
+#define	AUE_BLUED_BOND_REMOVE	43306	/* 5BSD: BLE bond removed */
+#define	AUE_BLUED_START		43307	/* 5BSD: blued daemon start */
 
 /*
  * Darwin BSM uses a number of AUE_O_* definitions, which are aliased to the

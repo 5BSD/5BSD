@@ -236,6 +236,7 @@ parse_param(int argc, char *argv[], char *buf, int *len)
 				curbuf[0] = value & 0xff;
 				curbuf++;
 			}
+			break;
 		}
 	}
 done:
@@ -644,7 +645,7 @@ le_read_buffer_size(int s, int argc, char *argv[])
 static int
 le_scan(int s, int argc, char *argv[])
 {
-	int n, bufsize, scancount, numscans;
+	int n, bufsize, scancount, numscans, error;
 	bool verbose;
 	uint8_t active = 0;
 	char ch;
@@ -716,17 +717,20 @@ le_scan(int s, int argc, char *argv[])
 		return (FAILED);
 	}
 
+	error = OK;
 	scancount = 0;
 	while (scancount < numscans) {
 		/* wait for scan events */
 		bufsize = sizeof(b);
 		if (hci_recv(s, b, &bufsize) == ERROR) {
-			return (ERROR);
+			error = ERROR;
+			goto disable;
 		}
 
 		if (bufsize < sizeof(*e)) {
 			errno = EIO;
-			return (ERROR);
+			error = ERROR;
+			goto disable;
 		}
 		scancount++;
 		if (e->event == NG_HCI_EVENT_LE) {
@@ -737,6 +741,7 @@ le_scan(int s, int argc, char *argv[])
 
 	fprintf(stdout, "Scan complete\n");
 
+disable:
 	/* Disable scanning */
 	n = sizeof(scan_enable_rp);
 	scan_enable_cp.le_scan_enable = 0;
@@ -753,43 +758,63 @@ le_scan(int s, int argc, char *argv[])
 		return (FAILED);
 	}
 
-	return (OK);
+	return (error);
 }
 
 static void handle_le_event(ng_hci_event_pkt_t* e, int bufsize, bool verbose)
 {
-	int rc;
-	ng_hci_le_ep	*leer =
-			(ng_hci_le_ep *)(e + 1);
-	ng_hci_le_advertising_report_ep *advrep =
-		(ng_hci_le_advertising_report_ep *)(leer + 1);
-	ng_hci_le_advreport	*reports =
-		(ng_hci_le_advreport *)(advrep + 1);
+	int rc, remain;
+	uint8_t *p, num_reports, subevent;
+	ng_hci_le_ep *leer = (ng_hci_le_ep *)(e + 1);
 
-	if (bufsize < (int)(sizeof(*e) + sizeof(*leer) + sizeof(*advrep)))
+	if (bufsize < (int)(sizeof(*e) + sizeof(*leer) + 1))
 		return;
 
-	if (leer->subevent_code == NG_HCI_LEEV_ADVREP) {
-		int max_reports = (bufsize - sizeof(*e) - sizeof(*leer) - sizeof(*advrep)) / sizeof(ng_hci_le_advreport);
-		if (advrep->num_reports > max_reports)
-			advrep->num_reports = max_reports;
-		fprintf(stdout, "Scan result, num_reports: %d\n",
-			advrep->num_reports);
-		for(rc = 0; rc < advrep->num_reports; rc++) {
-			uint8_t length = (uint8_t)reports[rc].length_data;	
-			fprintf(stdout, "\tBD_ADDR %s \n",
-				hci_bdaddr2str(&reports[rc].bdaddr));
-			fprintf(stdout, "\tAddress type: %s\n",
-				hci_addrtype2str(reports[rc].addr_type));
-			if (length > 0 && verbose) {
-				dump_adv_data(length, reports[rc].data);
-				print_adv_data(length, reports[rc].data);
-				fprintf(stdout,
-					"\tRSSI: %d dBm\n",
-					(int8_t)reports[rc].data[length]);
-				fprintf(stdout, "\n");
-			}
+	subevent = leer->subevent_code;
+	if (subevent != NG_HCI_LEEV_ADVREP) {
+		if (verbose)
+			fprintf(stdout, "LE subevent: %#02x\n", subevent);
+		return;
+	}
+
+	p = (uint8_t *)(leer + 1);
+	remain = bufsize - sizeof(*e) - sizeof(*leer);
+	num_reports = p[0];
+	p++;
+	remain--;
+
+	fprintf(stdout, "Scan result, num_reports: %d\n", num_reports);
+	for (rc = 0; rc < num_reports; rc++) {
+		bdaddr_t bdaddr;
+		uint8_t event_type, addr_type, length;
+
+		if (remain < 9)
+			break;
+
+		event_type = p[0];
+		addr_type = p[1];
+		memcpy(&bdaddr, p + 2, sizeof(bdaddr));
+		length = p[8];
+		p += 9;
+		remain -= 9;
+
+		if (length > NG_HCI_SCAN_RESPONSE_DATA_MAX ||
+		    remain < (int)length + 1)
+			break;
+
+		fprintf(stdout, "\tEvent type: %#02x\n", event_type);
+		fprintf(stdout, "\tBD_ADDR %s \n", hci_bdaddr2str(&bdaddr));
+		fprintf(stdout, "\tAddress type: %s\n",
+			hci_addrtype2str(addr_type));
+		fprintf(stdout, "\tRSSI: %d dBm\n",
+			(int8_t)p[length]);
+		if (length > 0 && verbose) {
+			dump_adv_data(length, p);
+			print_adv_data(length, p);
 		}
+		fprintf(stdout, "\n");
+		p += length + 1;
+		remain -= length + 1;
 	}
 }
 

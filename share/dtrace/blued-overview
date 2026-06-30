@@ -1,0 +1,24 @@
+#!/usr/sbin/dtrace -qs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * blued-overview -- trace all major blued events on one screen.
+ *
+ * Usage: blued-overview
+ */
+
+blued*:::conn-open       { printf("%-20Y %-14s %s role=%d\n",  walltimestamp, "CONN_OPEN",    copyinstr(arg0), arg1); }
+blued*:::conn-close      { printf("%-20Y %-14s %s reason=%d\n",walltimestamp, "CONN_CLOSE",   copyinstr(arg0), arg1); }
+blued*:::smp-pair-start  { printf("%-20Y %-14s %s method=%d\n",walltimestamp, "PAIR_START",   copyinstr(arg0), arg1); }
+blued*:::smp-pair-done   { printf("%-20Y %-14s %s status=%d\n",walltimestamp, "PAIR_DONE",    copyinstr(arg0), arg1); }
+blued*:::encrypt-start   { printf("%-20Y %-14s %s\n",          walltimestamp, "ENCRYPTED",    copyinstr(arg0)); }
+blued*:::ctl-cmd         { printf("%-20Y %-14s %s\n",          walltimestamp, "CTL_CMD",      copyinstr(arg0)); }
+blued*:::hid-report      { printf("%-20Y %-14s id=%d len=%d\n",walltimestamp, "HID_REPORT",   arg0, arg1); }
+blued*:::bond-add        { printf("%-20Y %-14s %s sc=%d\n",    walltimestamp, "BOND_ADD",     copyinstr(arg0), arg1); }
+blued*:::bond-remove     { printf("%-20Y %-14s %s\n",          walltimestamp, "BOND_REMOVE",  copyinstr(arg0)); }
+blued*:::scan-start      { printf("%-20Y %-14s %s\n",          walltimestamp, "SCAN_START",   copyinstr(arg0)); }
+blued*:::gatt-svc-add    { printf("%-20Y %-14s h=0x%04x u=0x%04x\n", walltimestamp, "GATT_SVC_ADD", arg0, arg1); }
+blued*:::gatt-svc-remove { printf("%-20Y %-14s h=0x%04x\n",   walltimestamp, "GATT_SVC_DEL", arg0); }
+blued*:::sandbox-enter   { printf("%-20Y %-14s\n",             walltimestamp, "SANDBOX"); }

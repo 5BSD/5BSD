@@ -49,7 +49,7 @@ void dump_adv_data(int len, uint8_t* advdata)
 {
 	int n=0;
 	fprintf(stdout, "\tADV Data: ");
-	for (n = 0; n < len+1; n++) {
+	for (n = 0; n < len; n++) {
 		fprintf(stdout, "%02x ", advdata[n]);
 	}
 	fprintf(stdout, "\n");
@@ -161,6 +161,15 @@ void print_adv_data(int len, uint8_t* advdata)
 						sizeof(buffer)));
 				break;
 			case 0xff:
+				if (datalen < 2) {
+					fprintf(stdout,
+					    "\tManufacturer specific data "
+					    "(too short): %s\n",
+					    adv_data2str(datalen,
+					    &advdata[n], buffer,
+					    sizeof(buffer)));
+					break;
+				}
 				fprintf(stdout,
 					"\tManufacturer: %s\n",
 			       		hci_manufacturer2str(
@@ -216,7 +225,8 @@ static char* const adv_name2str(int datalen, uint8_t* data, char* buffer,
 
 	memset(buffer, 0, size);
 
-	(void)strlcpy(buffer, (char*)data, datalen+1);
+	(void)strlcpy(buffer, (char*)data,
+	    (size_t)datalen + 1 < (size_t)size ? (size_t)datalen + 1 : (size_t)size);
 	return buffer;
 }
 

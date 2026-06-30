@@ -178,6 +178,11 @@ typedef struct ng_l2cap_chan {
 	u_int16_t			rx_sdu_len;     /* expected total SDU length */
 	u_int16_t			rx_sdu_got;     /* bytes received so far */
 
+	/* Pending reconfig values (set before sending reconfig req) */
+	u_int16_t			pending_imtu;
+	u_int16_t			pending_mps;
+	u_int8_t			reconfig_pending; /* guard against concurrent reconfig */
+
 	LIST_ENTRY(ng_l2cap_chan)	next;       /* link */
 } ng_l2cap_chan_t;
 typedef ng_l2cap_chan_t *		ng_l2cap_chan_p;

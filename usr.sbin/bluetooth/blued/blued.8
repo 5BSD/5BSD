@@ -22,7 +22,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd June 16, 2026
+.Dd June 18, 2026
 .Dt BLUED 8
 .Os
 .Sh NAME
@@ -164,8 +164,10 @@ Controls logging verbosity
 .Pq Cm loglevel ,
 the bond database path
 .Pq Cm bonddb ,
-and an optional BTSnoop packet log
-.Pq Cm logfile .
+an optional BTSnoop packet log
+.Pq Cm logfile ,
+and the BLE peripheral advertised name
+.Pq Cm peripheral_name , default Dq FreeBSD-BLE .
 .It Cm adapters
 A list of adapter names to use, or the string
 .Dq auto
@@ -178,20 +180,29 @@ SMP pairing parameters:
 .Pq none, display_only, display_yesno, keyboard_only, keyboard_display ,
 .Cm bondable
 .Pq boolean ,
-and
 .Cm sc_only
-to require Secure Connections and reject legacy pairing.
+to require Secure Connections and reject legacy pairing, and
+.Cm min_key_size
+minimum encryption key size for legacy SMP pairing (7\(en16, default 16).
+Secure Connections always requires 16 regardless of this setting.
 .It Cm features
 Feature toggles:
 .Cm eatt
-.Pq Enhanced ATT bearers ,
+.Pq Enhanced ATT bearers, default true ,
 .Cm privacy
 .Pq RPA resolution ,
 .Cm reconnect
 .Pq auto-reconnect on link loss ,
-and
 .Cm reconnect_max_delay
-in seconds.
+in seconds,
+.Cm rpa_timeout
+RPA rotation timeout in seconds (1\(en3600, default 900),
+.Cm socket_pool_size
+pre-allocated L2CAP sockets for Capsicum sandbox (1\(en64, default 8),
+.Cm peripheral_mode
+and
+.Cm scan_mode
+.Pq booleans, require restart .
 .It Cm devices
 Optional per-device overrides keyed by BD_ADDR.
 Each device block may specify
@@ -200,6 +211,36 @@ Each device block may specify
 and
 .Cm reconnect
 .Pq boolean .
+.It Cm service
+Custom GATT service definitions for peripheral mode.
+Each
+.Cm service
+block has a
+.Cm uuid
+(either
+.Dq 0xNNNN
+for 16-bit or a full 128-bit UUID string) and one or more
+.Cm characteristic
+sub-blocks.
+Each characteristic specifies
+.Cm uuid ,
+.Cm properties
+(comma-separated:
+.Cm read , write , write_no_rsp , notify , indicate , auth_signed_write ) ,
+.Cm permissions
+(comma-separated:
+.Cm read , write , read_encrypt , write_encrypt , read_authen , write_authen ) ,
+and an optional
+.Cm value
+(hex string, e.g.,
+.Dq 0100
+for two bytes).
+If properties include
+.Cm notify
+or
+.Cm indicate ,
+a Client Characteristic Configuration Descriptor (CCCD) is automatically added.
+Up to 8 services with 8 characteristics each may be defined.
 .El
 .Sh CONTROL SOCKET
 When running as a daemon,
@@ -209,24 +250,201 @@ creates a
 control socket at
 .Pa /var/run/blued.sock .
 Administrative tools can send newline-terminated commands and receive
-JSON-formatted responses.
+newline-terminated text responses.
 .Pp
 The following commands are supported:
-.Bl -tag -width "DISCONNECT"
-.It Cm SCAN
-Start a BLE scan and return discovered devices.
-.It Cm CONNECT Ar bdaddr Op Ar type
-Initiate a connection to the specified device.
-.It Cm DISCONNECT Ar bdaddr
-Disconnect a connected device.
-.It Cm PAIR Ar bdaddr
-Initiate SMP pairing with a connected device.
-.It Cm LIST
-List all currently connected devices and their status.
+.Bl -tag -width "REMOVE_SERVICE"
 .It Cm ADAPTERS
 List available Bluetooth adapters and their state.
+.It Cm ADD_CHAR Ar svc_handle Ar uuid Ar properties Ar permissions Op Ar value_hex
+Add a characteristic to an existing service in the live GATT database.
+The
+.Ar svc_handle
+is the handle returned by
+.Cm ADD_SERVICE .
+The
+.Ar uuid
+is either a 16-bit UUID
+.Pq e.g., Li 0xFFE1
+or a 128-bit UUID string.
+.Ar properties
+and
+.Ar permissions
+are comma-separated strings
+.Pq e.g., Li read,notify .
+If properties include
+.Cm notify
+or
+.Cm indicate ,
+a CCCD descriptor is automatically added.
+Returns the characteristic value handle on success.
+.It Cm ADD_SERVICE Ar uuid
+Create a new GATT service in the live database.
+The
+.Ar uuid
+is either a 16-bit UUID
+.Pq e.g., Li 0xFFE0
+or a 128-bit UUID string
+.Pq e.g., Li 12345678-1234-1234-1234-123456789abc .
+Returns the service declaration handle on success.
+After adding, the database hash is recomputed and a Service Changed
+indication is sent to bonded clients that have enabled indications.
+.It Cm BONDS
+List all bonded devices with key information (LTK, IRK, Secure
+Connections status, and device name).
+.It Cm BOND_EXPORT
+Export the bond database as text.
+Each bonded device is listed with its address, type, key flags
+(LTK, IRK, CSRK, Secure Connections, MITM), and device name.
+.It Cm CONNECT Ar bdaddr Op Ar type
+Initiate a connection to the specified device.
+Currently only devices defined in the configuration file or on the
+command line are fully supported for HOGP setup.
+.It Cm CONNPARAMS Op Ar bdaddr
+Display connection parameters (interval, latency, supervision timeout)
+for all active connections, or for a specific device if
+.Ar bdaddr
+is provided.
+The interval is shown in milliseconds (units of 1.25ms), latency
+is the number of allowed skipped events, and timeout is in
+milliseconds (units of 10ms).
+.It Cm DISCONNECT Ar bdaddr
+Disconnect a connected device.
+.It Cm ECBFC_CONNECT Ar bdaddr Ar psm Ar count
+Open Enhanced Credit Based Flow Control (ECBFC) channels to the
+specified device.
+The
+.Ar psm
+is the Protocol/Service Multiplexer and
+.Ar count
+is the number of channels to open (1\(en5).
+.It Cm ECBFC_RECONFIG Ar bdaddr Ar mtu Ar mps
+Reconfigure the MTU and MPS of existing EATT bearers to the
+specified device.
+The new
+.Ar mtu
+and
+.Ar mps
+must not be less than the current values (MTU can only increase).
+.It Cm DISCOVER Ar bdaddr
+Run GATT service, characteristic, and descriptor discovery on a
+connected remote device.
+Returns the full GATT hierarchy with UUIDs, handles, and characteristic
+properties.
+This command blocks while performing BLE I/O.
+.It Cm HOGP_READ Ar bdaddr Ar report_id
+Read a HID Feature Report from a connected HOGP device.
+The
+.Ar report_id
+identifies which Feature Report to read.
+Returns the report value as a hexadecimal byte string.
+This command blocks while performing a single ATT Read transaction.
+.It Cm HOGP_WRITE Ar bdaddr Ar report_id Ar hex
+Write a HID Feature Report to a connected HOGP device.
+The
+.Ar report_id
+identifies which Feature Report to write.
+The
+.Ar hex
+argument is a hexadecimal byte string containing the report data.
+This command blocks while performing a single ATT Write transaction.
+.It Cm LIST
+List all currently connected devices and their status.
+.It Cm NUMCMP_REPLY Ar bdaddr Cm yes | no
+Confirm or reject a Secure Connections numeric comparison during
+SMP pairing.
+The
+.Ar bdaddr
+identifies the device being paired.
+.It Cm LOGLEVEL Op Ar level
+Without an argument, returns the current log level.
+With a
+.Ar level
+argument (0\(en5), sets the daemon log level at runtime.
+Level 0 is errors only, 1 is informational, and 2+ enables trace output.
+.Bd -literal -offset indent
+$ echo LOGLEVEL | nc -U /var/run/blued.sock
+OK LOGLEVEL 1
+
+$ echo "LOGLEVEL 3" | nc -U /var/run/blued.sock
+OK LOGLEVEL 3
+.Ed
+.It Cm PAIR Ar bdaddr
+Check SMP bond status for a connected device.
+.It Cm PASSKEY_REPLY Ar bdaddr Ar passkey
+Provide a passkey for SMP pairing with the specified device.
+The
+.Ar passkey
+is a 6-digit decimal number (000000\(en999999).
+Pairing is performed automatically during connection setup: central mode
+pairs on GATT authentication errors, and peripheral mode responds to
+incoming pairing requests.
+To re-pair a device, use
+.Cm UNBOND
+and reconnect.
+.It Cm PHY
+Show the current PHY (1M, 2M, or Coded) for all active connections.
+.It Cm READ Ar bdaddr Ar handle
+Read a characteristic value from a connected remote device.
+The
+.Ar handle
+may be specified in hexadecimal with a
+.Li 0x
+prefix or in decimal.
+Returns the value as a hexadecimal byte string.
+This command blocks while performing a single ATT Read transaction.
+.It Cm REMOVE_SERVICE Ar handle
+Remove a service and all its attributes (characteristics, descriptors)
+from the live GATT database.
+The
+.Ar handle
+is the service declaration handle (as returned by
+.Cm ADD_SERVICE
+or shown by
+.Cm SERVICES ) .
+After removal, the database hash is recomputed and a Service Changed
+indication is sent to bonded clients.
+.It Cm SCAN
+Start a BLE scan and return discovered devices.
+.It Cm SERVICES
+List all attributes in the local GATT database (peripheral mode).
+.It Cm SET_VALUE Ar handle Ar hex
+Set the value of a GATT attribute in the local database.
+The
+.Ar handle
+may be specified in hexadecimal with a
+.Li 0x
+prefix or in decimal.
+The
+.Ar hex
+argument is a hexadecimal byte string.
+.It Cm SUBSCRIBE Ar bdaddr Ar handle
+Subscribe to characteristic value change notifications from a
+connected remote device by writing 0x0001 to the CCCD at
+.Ar handle .
+.It Cm UNSUBSCRIBE Ar bdaddr Ar handle
+Unsubscribe from characteristic value change notifications by
+writing 0x0000 to the CCCD at
+.Ar handle .
 .It Cm STATUS
-Return daemon status including uptime and bond count.
+Return daemon status including adapter and connection counts.
+.It Cm UNBOND Ar bdaddr
+Remove the bond for the specified device.
+The device is also removed from the controller's filter accept list.
+.It Cm WRITE Ar bdaddr Ar handle Ar hex
+Write a value to a characteristic on a connected remote device.
+The
+.Ar handle
+may be specified in hexadecimal with a
+.Li 0x
+prefix or in decimal.
+The
+.Ar hex
+argument is a hexadecimal byte string (e.g.,
+.Li 0100
+for two bytes).
+Uses the ATT Write Request procedure (expects a response).
+This command blocks while performing a single ATT Write transaction.
 .El
 .Sh MULTI-ADAPTER
 When the
@@ -249,17 +467,13 @@ daemon employs multiple layers of security:
 .Bl -bullet
 .It
 .Xr capsicum 4
-capability mode is entered after initialization.
-All file descriptors are restricted to the minimum rights needed:
-ATT sockets receive
-.Dv CAP_SEND , CAP_RECV , CAP_EVENT ;
-the vhid device receives
-.Dv CAP_WRITE ;
-the bond file receives
-.Dv CAP_READ , CAP_WRITE , CAP_SEEK , CAP_FLOCK ;
-and the HCI socket receives
-.Dv CAP_SEND , CAP_RECV , CAP_READ , CAP_WRITE , CAP_EVENT ,
-.Dv CAP_IOCTL , CAP_SETSOCKOPT , CAP_GETSOCKOPT .
+capability mode is entered after initialization,
+preventing the daemon from opening new file descriptors or
+accessing the global namespace.
+File descriptors passed to control socket clients are restricted with
+.Xr cap_rights_limit 2
+to
+.Dv CAP_SEND , CAP_RECV , CAP_EVENT .
 .It
 Socket pool pre-allocation: when auto-reconnect is enabled,
 .Nm
@@ -292,6 +506,56 @@ HOGP (HID over GATT Profile) \(em HID Service discovery and report handling
 EATT (Enhanced ATT) \(em parallel GATT operations over L2CAP credit-based
 channels (BT 5.1+)
 .El
+.Sh SIGNALS
+.Bl -tag -width "SIGTERM"
+.It Dv SIGHUP
+Reload the configuration file.
+The daemon re-reads the file specified by the
+.Fl c
+flag (or the default
+.Pa /etc/blued.conf )
+and applies runtime-changeable settings without restarting.
+.Pp
+The following settings are reloaded at runtime:
+.Bl -bullet -compact
+.It
+.Cm loglevel
+.It
+.Cm reconnect
+and
+.Cm reconnect_max_delay
+.It
+.Cm rpa_timeout
+.It
+.Cm bondable , sc_only , io_capability , min_key_size
+.It
+.Cm privacy
+.It
+.Cm peripheral_name
+.El
+.Pp
+The following settings require a full restart of
+.Nm
+to take effect:
+.Bl -bullet -compact
+.It
+.Cm adapters
+.It
+.Cm peripheral_mode , scan_mode
+.It
+.Cm service
+definitions (GATT database is built once at startup)
+.It
+.Cm pidfile , ctlsock , bonddb
+paths
+.El
+.Pp
+When a non-reloadable setting has changed, a warning is logged
+indicating that a restart is required.
+Active connections are not disrupted by a configuration reload.
+.It Dv SIGTERM , SIGINT
+Shut down the daemon gracefully.
+.El
 .Sh FILES
 .Bl -tag -width "/usr/share/examples/blued/blued.conf.sample" -compact
 .It Pa /etc/blued.conf
@@ -322,11 +586,12 @@ Sample configuration file.
 .Xr ng_l2cap 4 ,
 .Xr ng_ubt 4 ,
 .Xr ucl.conf 5 ,
+.Xr bluedctl 8 ,
 .Xr bthidd 8
 .Sh STANDARDS
 .Rs
 .%T Bluetooth Core Specification
-.%O Version 6.0
+.%O Version 6.3
 .%Q Bluetooth SIG
 .Re
 .Rs

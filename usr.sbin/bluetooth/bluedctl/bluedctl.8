@@ -1,0 +1,278 @@
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd June 26, 2026
+.Dt BLUEDCTL 8
+.Os
+.Sh NAME
+.Nm bluedctl
+.Nd control utility for the blued Bluetooth Low Energy daemon
+.Sh SYNOPSIS
+.Nm
+.Op Fl i
+.Op Fl s Ar socket
+.Ar command
+.Op Ar args ...
+.Nm
+.Fl i
+.Op Fl s Ar socket
+.Sh DESCRIPTION
+The
+.Nm
+utility is a command-line client for the
+.Xr blued 8
+Bluetooth Low Energy daemon.
+It connects to the daemon's Unix domain control socket and sends
+text protocol commands.
+.Pp
+In one-shot mode,
+.Nm
+sends a single command, prints the response, and exits with status 0
+on success or 1 on error.
+.Pp
+In interactive mode
+.Pq Fl i ,
+.Nm
+presents a prompt and accepts commands continuously.
+Asynchronous events from the daemon (such as notification data and
+passkey requests) are displayed as they arrive.
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl i
+Enter interactive mode.
+Commands are read from standard input with a
+.Dq Li bluedctl>
+prompt.
+Type
+.Cm quit ,
+.Cm exit ,
+or press Ctrl-D to exit.
+.It Fl s Ar socket
+Connect to the specified Unix domain socket path instead of the default
+.Pa /var/run/blued.sock .
+.El
+.Sh COMMANDS
+.Bl -tag -width "unsubscribe"
+.It Cm scan
+Scan for nearby BLE devices.
+The daemon performs a 5-second LE scan on all active adapters and
+returns discovered devices.
+.It Cm list
+List currently connected BLE devices with their connection state and
+HCI handle.
+.It Cm status
+Display daemon status including the number of active adapters and
+connections.
+.It Cm adapters
+List active Bluetooth adapters with their names and addresses.
+.It Cm connect Ar addr Op Cm public | Cm random
+Initiate a BLE connection to the device with the specified Bluetooth
+address.
+The optional address type defaults to
+.Cm public .
+.It Cm disconnect Ar addr
+Disconnect the device with the specified address.
+.It Cm pair Ar addr
+Check bond status for the specified device.
+.It Cm bonds
+List all bonded devices from the bond database.
+.It Cm unbond Ar addr
+Remove the bond for the specified device.
+.It Cm services
+List the local GATT database, showing all services and characteristics.
+.It Cm discover Ar addr
+Run GATT service discovery on a connected remote device.
+.It Cm read Ar addr handle
+Read a GATT characteristic value from a connected remote device.
+The
+.Ar handle
+is specified in hexadecimal (e.g.,
+.Li 0x0003 ) .
+.It Cm write Ar addr handle hex
+Write a value to a GATT characteristic on a connected remote device.
+The
+.Ar handle
+is specified in hexadecimal, and
+.Ar hex
+is the value as a hexadecimal string.
+.It Cm subscribe Ar addr handle
+Subscribe to notifications for a characteristic on a connected remote
+device.
+In one-shot mode,
+.Nm
+stays connected and streams notification events until interrupted
+with Ctrl-C.
+.It Cm unsubscribe Ar addr handle
+Unsubscribe from notifications for a characteristic.
+.It Cm set-value Ar handle hex
+Update the value of a local GATT attribute.
+.It Cm add-service Ar uuid
+Add a new service to the live local GATT database.
+.It Cm add-char Ar svc_handle uuid props perms Op Ar value_hex
+Add a characteristic to an existing local GATT service.
+The
+.Ar svc_handle
+is the handle of the parent service,
+.Ar props
+are the characteristic properties,
+.Ar perms
+are the attribute permissions, and the optional
+.Ar value_hex
+sets the initial value.
+.It Cm remove-service Ar handle
+Remove a service and all its attributes from the local GATT database.
+.It Cm loglevel Op Ar level
+Get or set the daemon log level (0\(en5).
+Without an argument, returns the current level.
+.It Cm phy
+Display PHY information (1M, 2M, or Coded) for all active connections.
+.It Cm hogp-read Ar addr report_id
+Read a Feature report from a connected HOGP (HID over GATT) device.
+.It Cm hogp-write Ar addr report_id hex
+Write a Feature report to a connected HOGP device.
+.It Cm passkey Ar addr passkey
+Reply to a passkey input request from the SMP pairing process.
+This command is only useful in interactive mode
+.Pq Fl i ,
+where the
+.Dq Li EVENT PASSKEY_INPUT
+line is received asynchronously before the reply can be sent.
+.It Cm confirm Ar addr Cm yes | Cm no
+Reply to a numeric comparison request during SMP pairing.
+This command is only useful in interactive mode
+.Pq Fl i ,
+where the
+.Dq Li EVENT NUMCMP_REQUEST
+line is received asynchronously before the reply can be sent.
+.It Cm ecbfc-connect Ar addr psm count
+Open Enhanced Credit Based Flow Control channels to a connected device.
+.It Cm ecbfc-reconfig Ar addr mtu mps
+Reconfigure ECBFC channel parameters.
+.It Cm battery Ar addr
+Read the battery level from a connected device by auto-discovering the
+Battery Service (UUID 0x180F) and reading the Battery Level
+characteristic (UUID 0x2A19).
+Returns the battery percentage.
+.It Cm devinfo Ar addr
+Read device information from a connected device by auto-discovering the
+Device Information Service (UUID 0x180A) and reading all available
+characteristics (manufacturer name, model number, serial number,
+hardware/firmware/software revision, system ID, PnP ID).
+.It Cm bond-export
+Export the bond database in a text format suitable for diagnostics
+and backup.
+Each bonded device is listed with its address, address type, and
+key flags (LTK, IRK, CSRK, Secure Connections, MITM protection).
+.It Cm connparams Op Ar addr
+Display connection parameters (interval, latency, supervision timeout)
+for all active connections, or for a specific device if
+.Ar addr
+is provided.
+.El
+.Sh EXAMPLES
+Scan for nearby BLE devices:
+.Bd -literal -offset indent
+# bluedctl scan
+.Ed
+.Pp
+Connect to a device using a random address type:
+.Bd -literal -offset indent
+# bluedctl connect aa:bb:cc:dd:ee:ff random
+.Ed
+.Pp
+Discover services on a connected device:
+.Bd -literal -offset indent
+# bluedctl discover aa:bb:cc:dd:ee:ff
+.Ed
+.Pp
+Read a characteristic value:
+.Bd -literal -offset indent
+# bluedctl read aa:bb:cc:dd:ee:ff 0x0003
+.Ed
+.Pp
+Subscribe to notifications and stream them:
+.Bd -literal -offset indent
+# bluedctl subscribe aa:bb:cc:dd:ee:ff 0x0025
+.Ed
+.Pp
+Set the log level to 3 (debug):
+.Bd -literal -offset indent
+# bluedctl loglevel 3
+.Ed
+.Pp
+Use interactive mode:
+.Bd -literal -offset indent
+# bluedctl -i
+bluedctl> status
+STATUS adapters=1 connections=0
+bluedctl> scan
+SCANNING
+DEVICE [ubt0] aa:bb:cc:dd:ee:ff random rssi=-45 name=MyDevice mfr=0x004C
+END
+bluedctl> quit
+.Ed
+.Pp
+Use a custom socket path:
+.Bd -literal -offset indent
+# bluedctl -s /tmp/blued-test.sock status
+.Ed
+.Sh PROTOCOL
+.Nm
+communicates with
+.Xr blued 8
+using a simple newline-terminated text protocol over a Unix domain
+stream socket.
+Commands are sent as uppercase strings with space-separated arguments.
+Responses consist of one or more lines, terminated by
+.Dq Li OK ,
+.Dq Li END ,
+or
+.Dq Li ERROR .
+.Pp
+Asynchronous events are prefixed with
+.Dq Li EVENT
+and may arrive at any time on the socket.
+In interactive mode, these are displayed immediately.
+.Sh EXIT STATUS
+.Nm
+exits 0 on success, or 1 if the command failed, the daemon returned an
+error, or the connection could not be established.
+.Sh FILES
+.Bl -tag -width "/var/run/blued.sock" -compact
+.It Pa /var/run/blued.sock
+Default control socket for communication with
+.Xr blued 8 .
+.El
+.Sh SEE ALSO
+.Xr bluetooth 3 ,
+.Xr libble 3 ,
+.Xr blued 8
+.Sh HISTORY
+The
+.Nm
+utility first appeared in
+.Fx 16.0 .
+.Sh AUTHORS
+.An Kory Heard

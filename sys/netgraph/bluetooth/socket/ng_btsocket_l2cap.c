@@ -219,6 +219,8 @@ static int  ng_btsocket_l2cap_send_l2ca_cfg_rsp
 	(ng_btsocket_l2cap_pcb_p);
 static int  ng_btsocket_l2cap_send_l2ca_discon_req
 	(u_int32_t, ng_btsocket_l2cap_pcb_p);
+static int  ng_btsocket_l2cap_send_l2ca_reconfig_req
+	(ng_btsocket_l2cap_pcb_p, u_int16_t, u_int16_t);
 
 static int ng_btsocket_l2cap_send2
 	(ng_btsocket_l2cap_pcb_p);
@@ -236,6 +238,7 @@ static void ng_btsocket_l2cap_process_timeout (void *);
  */
 
 static ng_btsocket_l2cap_pcb_p     ng_btsocket_l2cap_pcb_by_addr(bdaddr_p, int);
+static ng_btsocket_l2cap_pcb_p     ng_btsocket_l2cap_pcb_by_addr_le(bdaddr_p, int);
 static ng_btsocket_l2cap_pcb_p     ng_btsocket_l2cap_pcb_by_token(u_int32_t);
 static ng_btsocket_l2cap_pcb_p     ng_btsocket_l2cap_pcb_by_cid (bdaddr_p, int,int,int);
 static ng_btsocket_l2cap_pcb_p     ng_btsocket_l2cap_pcb_by_cid_listen(bdaddr_p, uint16_t);
@@ -513,6 +516,8 @@ ng_btsocket_l2cap_process_l2ca_con_req_rsp(struct ng_mesg *msg,
 			 */
 			pcb->encryption = op->encryption;
 			pcb->cid = op->lcid;
+			pcb->imtu = op->imtu;
+			pcb->omtu = op->omtu;
 			pcb->state = NG_BTSOCKET_L2CAP_OPEN;
 			SDT_PROBE2(bluetooth, socket, connect, l2cap,
 			    pcb->cid, pcb->psm);
@@ -656,11 +661,25 @@ ng_btsocket_l2cap_process_l2ca_con_ind(struct ng_mesg *msg,
 
 	mtx_lock(&ng_btsocket_l2cap_sockets_mtx);
 
-	pcb = ng_btsocket_l2cap_pcb_by_addr(&rt->src, ip->psm);
-
-	/* Fallback: try CID-based lookup for LE fixed channels */
-	if (pcb == NULL && ip->psm == 0 && ip->lcid != 0)
+	/*
+	 * LE fixed channels (ATT, SMP) use CID-based listen sockets,
+	 * not PSM.  Route them directly to the CID listener to avoid
+	 * false matches on PSM 0 (which all LE fixed channels share).
+	 *
+	 * LE CoC (Connection-Oriented Channels) have a non-zero PSM
+	 * on an LE link and use dynamically assigned CIDs (>= 0x0040).
+	 * Route these to a listening socket that has an LE address type
+	 * to avoid matching BR/EDR listeners on the same PSM.
+	 */
+	if (ip->psm == 0 && (ip->lcid == NG_L2CAP_ATT_CID ||
+	    ip->lcid == NG_L2CAP_SMP_CID))
 		pcb = ng_btsocket_l2cap_pcb_by_cid_listen(&rt->src, ip->lcid);
+	else if (ip->psm != 0 &&
+	    (ip->linktype == NG_HCI_LINK_LE_PUBLIC ||
+	     ip->linktype == NG_HCI_LINK_LE_RANDOM))
+		pcb = ng_btsocket_l2cap_pcb_by_addr_le(&rt->src, ip->psm);
+	else
+		pcb = ng_btsocket_l2cap_pcb_by_addr(&rt->src, ip->psm);
 
 	if (pcb != NULL) {
 		struct socket *so1;
@@ -700,11 +719,14 @@ ng_btsocket_l2cap_process_l2ca_con_ind(struct ng_mesg *msg,
 		pcb1->cid = ip->lcid;
 		pcb1->rt = rt;
 
-		/* Set idtype and address types for LE fixed channels */
+		/* Set idtype and address types for LE channels */
 		if (ip->lcid == NG_L2CAP_ATT_CID)
 			pcb1->idtype = NG_L2CAP_L2CA_IDTYPE_ATT;
 		else if (ip->lcid == NG_L2CAP_SMP_CID)
 			pcb1->idtype = NG_L2CAP_L2CA_IDTYPE_SMP;
+		else if (ip->linktype == NG_HCI_LINK_LE_PUBLIC ||
+			 ip->linktype == NG_HCI_LINK_LE_RANDOM)
+			pcb1->idtype = NG_L2CAP_L2CA_IDTYPE_LE;
 
 		pcb1->srctype = pcb->srctype;
 		if (ip->linktype == NG_HCI_LINK_LE_PUBLIC)
@@ -712,11 +734,15 @@ ng_btsocket_l2cap_process_l2ca_con_ind(struct ng_mesg *msg,
 		else if (ip->linktype == NG_HCI_LINK_LE_RANDOM)
 			pcb1->dsttype = BDADDR_LE_RANDOM;
 
-		/* Copy socket settings; use LE MTU for LE channels */
+		/* Copy socket settings; use LE MTU for LE fixed channels */
 		if (ip->lcid == NG_L2CAP_ATT_CID ||
 		    ip->lcid == NG_L2CAP_SMP_CID)
 			pcb1->imtu = pcb1->omtu = NG_L2CAP_MTU_LE_MINIMUM;
-		else
+		else if (ip->imtu != 0 || ip->omtu != 0) {
+			/* LE CoC: use negotiated MTU from L2CAP layer */
+			pcb1->imtu = ip->imtu;
+			pcb1->omtu = ip->omtu;
+		} else
 			pcb1->imtu = pcb->imtu;
 		bcopy(&pcb->oflow, &pcb1->oflow, sizeof(pcb1->oflow));
 		pcb1->flush_timo = pcb->flush_timo;
@@ -727,7 +753,25 @@ ng_btsocket_l2cap_process_l2ca_con_ind(struct ng_mesg *msg,
 		result = NG_L2CAP_PSM_NOT_SUPPORTED;
 
 respond:
-	error = ng_btsocket_l2cap_send_l2ca_con_rsp_req(token, rt,
+	/*
+	 * LE fixed channels (ATT/SMP) do not use L2CAP signalling-based
+	 * connect/config — skip ConnectRsp unconditionally.
+	 *
+	 * LE CoC channels also skip ConnectRsp when the connection
+	 * succeeded (result == 0), since the L2CAP layer already sent
+	 * the LE Credit Based Connection Response.  However, when no
+	 * socket is listening (result != 0), we must NOT suppress the
+	 * error — the L2CAP layer needs to send a rejection so the
+	 * remote peer knows the connection failed.
+	 */
+	if (ip->lcid == NG_L2CAP_ATT_CID || ip->lcid == NG_L2CAP_SMP_CID)
+		error = 0;
+	else if ((ip->linktype == NG_HCI_LINK_LE_PUBLIC ||
+		  ip->linktype == NG_HCI_LINK_LE_RANDOM) &&
+		 result == 0)
+		error = 0;
+	else
+		error = ng_btsocket_l2cap_send_l2ca_con_rsp_req(token, rt,
 							&ip->bdaddr,
 							ip->ident, ip->lcid,
 							result,ip->linktype);
@@ -737,10 +781,13 @@ respond:
 			pcb1->state = NG_BTSOCKET_L2CAP_CLOSED;
 			soisdisconnected(pcb1->so);
 		} else if (ip->lcid == NG_L2CAP_ATT_CID ||
-			   ip->lcid == NG_L2CAP_SMP_CID) {
+			   ip->lcid == NG_L2CAP_SMP_CID ||
+			   ip->linktype == NG_HCI_LINK_LE_PUBLIC ||
+			   ip->linktype == NG_HCI_LINK_LE_RANDOM) {
 			/*
-			 * LE fixed channels (ATT/SMP) skip L2CAP
+			 * LE channels (fixed and CoC) skip L2CAP
 			 * configuration and go directly to OPEN.
+			 * The L2CAP layer already completed negotiation.
 			 */
 			pcb1->state = NG_BTSOCKET_L2CAP_OPEN;
 			soisconnected(pcb1->so);
@@ -1325,6 +1372,41 @@ ng_btsocket_l2cap_send_l2ca_con_req(ng_btsocket_l2cap_pcb_p pcb)
 
 	return (error);
 } /* ng_btsocket_l2cap_send_l2ca_con_req */
+
+/*
+ * Send L2CA_Reconfig request — initiate ECBFC reconfiguration.
+ */
+
+static int
+ng_btsocket_l2cap_send_l2ca_reconfig_req(ng_btsocket_l2cap_pcb_p pcb,
+	u_int16_t mtu, u_int16_t mps)
+{
+	struct ng_mesg			*msg = NULL;
+	ng_l2cap_l2ca_reconfig_ip	*ip = NULL;
+	int				 error = 0;
+
+	mtx_assert(&pcb->pcb_mtx, MA_OWNED);
+
+	if (pcb->rt == NULL ||
+	    pcb->rt->hook == NULL || NG_HOOK_NOT_VALID(pcb->rt->hook))
+		return (ENETDOWN);
+
+	NG_MKMESSAGE(msg, NGM_L2CAP_COOKIE, NGM_L2CAP_L2CA_RECONFIG,
+		sizeof(*ip), M_NOWAIT);
+	if (msg == NULL)
+		return (ENOMEM);
+
+	msg->header.token = pcb->token;
+
+	ip = (ng_l2cap_l2ca_reconfig_ip *)(msg->data);
+	ip->lcid = pcb->cid;
+	ip->mtu = mtu;
+	ip->mps = mps;
+
+	NG_SEND_MSG_HOOK(error, ng_btsocket_l2cap_node, msg, pcb->rt->hook, 0);
+
+	return (error);
+} /* ng_btsocket_l2cap_send_l2ca_reconfig_req */
 
 /*
  * Send L2CA_Connect response
@@ -2287,7 +2369,14 @@ ng_btsocket_l2cap_connect(struct socket *so, struct sockaddr *nam,
 		} else if (cid == NG_L2CAP_SMP_CID) {
 			idtype = NG_L2CAP_L2CA_IDTYPE_SMP;
 		} else if (le16toh(sa->l2cap_psm) != 0) {
-			idtype = NG_L2CAP_L2CA_IDTYPE_LE;
+			/*
+			 * Preserve ECBFC idtype if set via
+			 * SO_L2CAP_ECBFC before connect.
+			 */
+			if (pcb->idtype == NG_L2CAP_L2CA_IDTYPE_ECBFC)
+				idtype = NG_L2CAP_L2CA_IDTYPE_ECBFC;
+			else
+				idtype = NG_L2CAP_L2CA_IDTYPE_LE;
 		} else {
 			return EINVAL;
 		}
@@ -2426,6 +2515,15 @@ ng_btsocket_l2cap_ctloutput(struct socket *so, struct sockopt *sopt)
 						sizeof(pcb->need_encrypt));
 			break;
 
+		case SO_L2CAP_ECBFC: /* get ECBFC mode */
+			{
+				int ecbfc = (pcb->idtype ==
+				    NG_L2CAP_L2CA_IDTYPE_ECBFC) ? 1 : 0;
+				error = sooptcopyout(sopt, &ecbfc,
+				    sizeof(ecbfc));
+			}
+			break;
+
 		default:
 			error = ENOPROTOOPT;
 			break;
@@ -2434,45 +2532,89 @@ ng_btsocket_l2cap_ctloutput(struct socket *so, struct sockopt *sopt)
 
 	case SOPT_SET:
 		/*
-		 * XXX
-		 * We do not allow to change these parameters while socket is 
-		 * connected or we are in the process of creating a connection.
-		 * May be this should indicate re-configuration of the open 
-		 * channel?
+		 * SO_L2CAP_ECBFC must be set before connect (CLOSED state).
+		 * SO_L2CAP_RECONFIG operates on an OPEN ECBFC channel.
+		 * All other options require CLOSED state.
 		 */
 
-		if (pcb->state != NG_BTSOCKET_L2CAP_CLOSED) {
-			error = EACCES;
-			break;
-		}
-
 		switch (sopt->sopt_name) {
-		case SO_L2CAP_IMTU: /* set incoming MTU */
-			error = sooptcopyin(sopt, &v, sizeof(v), sizeof(v.mtu));
-			if (error == 0)
-				pcb->imtu = v.mtu;
+		case SO_L2CAP_ECBFC: /* set ECBFC mode before connect */
+			if (pcb->state != NG_BTSOCKET_L2CAP_CLOSED) {
+				error = EACCES;
+				break;
+			}
+			{
+				int ecbfc;
+				error = sooptcopyin(sopt, &ecbfc,
+				    sizeof(ecbfc), sizeof(ecbfc));
+				if (error == 0)
+					pcb->idtype = ecbfc ?
+					    NG_L2CAP_L2CA_IDTYPE_ECBFC :
+					    NG_L2CAP_L2CA_IDTYPE_LE;
+			}
 			break;
 
-		case SO_L2CAP_OFLOW: /* set outgoing flow spec. */
-			error = sooptcopyin(sopt, &v, sizeof(v),sizeof(v.flow));
-			if (error == 0)
-				bcopy(&v.flow, &pcb->oflow, sizeof(pcb->oflow));
+		case SO_L2CAP_RECONFIG: /* ECBFC reconfigure */
+			if (pcb->state != NG_BTSOCKET_L2CAP_OPEN) {
+				error = EACCES;
+				break;
+			}
+			if (pcb->idtype != NG_L2CAP_L2CA_IDTYPE_ECBFC) {
+				error = EOPNOTSUPP;
+				break;
+			}
+			{
+				struct l2cap_reconfig_param rp;
+				error = sooptcopyin(sopt, &rp,
+				    sizeof(rp), sizeof(rp));
+				if (error == 0)
+					error =
+					    ng_btsocket_l2cap_send_l2ca_reconfig_req(
+					    pcb, rp.mtu, rp.mps);
+			}
 			break;
 
-		case SO_L2CAP_FLUSH: /* set flush timeout */
-			error = sooptcopyin(sopt, &v, sizeof(v),
-						sizeof(v.flush_timo));
-			if (error == 0)
-				pcb->flush_timo = v.flush_timo;
-			break;
-		case SO_L2CAP_ENCRYPTED:
-			error = sooptcopyin(sopt, &v, sizeof(v),
-					    sizeof(v.encryption));
-			if (error == 0)
-				pcb->need_encrypt = (v.encryption) ? 1 : 0;
-			break;
 		default:
-			error = ENOPROTOOPT;
+			if (pcb->state != NG_BTSOCKET_L2CAP_CLOSED) {
+				error = EACCES;
+				break;
+			}
+
+			switch (sopt->sopt_name) {
+			case SO_L2CAP_IMTU: /* set incoming MTU */
+				error = sooptcopyin(sopt, &v, sizeof(v),
+				    sizeof(v.mtu));
+				if (error == 0)
+					pcb->imtu = v.mtu;
+				break;
+
+			case SO_L2CAP_OFLOW: /* set outgoing flow spec. */
+				error = sooptcopyin(sopt, &v, sizeof(v),
+				    sizeof(v.flow));
+				if (error == 0)
+					bcopy(&v.flow, &pcb->oflow,
+					    sizeof(pcb->oflow));
+				break;
+
+			case SO_L2CAP_FLUSH: /* set flush timeout */
+				error = sooptcopyin(sopt, &v, sizeof(v),
+				    sizeof(v.flush_timo));
+				if (error == 0)
+					pcb->flush_timo = v.flush_timo;
+				break;
+
+			case SO_L2CAP_ENCRYPTED:
+				error = sooptcopyin(sopt, &v, sizeof(v),
+				    sizeof(v.encryption));
+				if (error == 0)
+					pcb->need_encrypt =
+					    (v.encryption) ? 1 : 0;
+				break;
+
+			default:
+				error = ENOPROTOOPT;
+				break;
+			}
 			break;
 		}
 		break;
@@ -2855,6 +2997,40 @@ ng_btsocket_l2cap_pcb_by_addr(bdaddr_p bdaddr, int psm)
 
 	return ((p != NULL)? p : p1);
 } /* ng_btsocket_l2cap_pcb_by_addr */
+
+/*
+ * Look for the socket that is listening on a given PSM with an LE
+ * address type (BDADDR_LE_PUBLIC or BDADDR_LE_RANDOM).  Used for
+ * incoming LE CoC (Connection-Oriented Channel) connections where
+ * the PSM is non-zero and the link type is LE.
+ * Caller must hold ng_btsocket_l2cap_sockets_mtx.
+ */
+
+static ng_btsocket_l2cap_pcb_p
+ng_btsocket_l2cap_pcb_by_addr_le(bdaddr_p bdaddr, int psm)
+{
+	ng_btsocket_l2cap_pcb_p	p = NULL, p1 = NULL;
+
+	mtx_assert(&ng_btsocket_l2cap_sockets_mtx, MA_OWNED);
+
+	LIST_FOREACH(p, &ng_btsocket_l2cap_sockets, next) {
+		if (p->so == NULL || !SOLISTENING(p->so) || p->psm != psm)
+			continue;
+
+		/* Only match sockets with LE address types */
+		if (p->srctype != BDADDR_LE_PUBLIC &&
+		    p->srctype != BDADDR_LE_RANDOM)
+			continue;
+
+		if (bcmp(&p->src, bdaddr, sizeof(p->src)) == 0)
+			break;
+
+		if (bcmp(&p->src, NG_HCI_BDADDR_ANY, sizeof(p->src)) == 0)
+			p1 = p;
+	}
+
+	return ((p != NULL)? p : p1);
+} /* ng_btsocket_l2cap_pcb_by_addr_le */
 
 /*
  * Look for the socket that is listening on a given LE fixed CID.

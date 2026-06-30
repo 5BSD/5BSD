@@ -28,6 +28,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <netgraph/bluetooth/include/ng_btsocket.h>
+
 #include "ble_util.h"
 #include "hci_log.h"
 #include "hci_util.h"
@@ -38,6 +40,9 @@
 #define AD_TYPE_UUID16_COMPLETE		0x03
 #define AD_TYPE_SHORT_LOCAL_NAME		0x08
 #define AD_TYPE_COMPLETE_LOCAL_NAME	0x09
+#define AD_TYPE_MANUFACTURER_DATA	0xFF
+
+#define BLUED_SCAN_SETTLE_USEC		100000
 
 /*
  * Wrapper around bt_devreq() that logs outgoing HCI commands and
@@ -139,7 +144,7 @@ hci_get_bdaddr(int hci_fd, uint8_t *bdaddr)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	n = hci_devreq_logged(hci_fd, &r, 5);
+	n = hci_devreq_logged(hci_fd, &r, 1);
 	if (n < 0)
 		return (-1);
 
@@ -209,6 +214,82 @@ parse_ad(const uint8_t *data, size_t len, uint8_t *type,
 }
 
 /*
+ * Extract name, manufacturer ID, and service UUIDs from AD structures.
+ * Called on both ADV_IND and SCAN_RSP data.  Merges into an existing
+ * scan result (does not overwrite fields already set).
+ */
+static void
+parse_ad_fields(const uint8_t *ad, size_t ad_len, struct ble_scan_result *sr)
+{
+	while (ad_len > 0) {
+		uint8_t ad_type, vlen;
+		const uint8_t *val;
+		const uint8_t *next;
+
+		next = parse_ad(ad, ad_len, &ad_type, &val, &vlen);
+		if (next == NULL)
+			break;
+
+		if ((ad_type == AD_TYPE_COMPLETE_LOCAL_NAME ||
+		    ad_type == AD_TYPE_SHORT_LOCAL_NAME) && vlen > 0 &&
+		    !sr->has_name) {
+			size_t cplen = vlen;
+			size_t j;
+			if (cplen >= sizeof(sr->name))
+				cplen = sizeof(sr->name) - 1;
+			memcpy(sr->name, val, cplen);
+			sr->name[cplen] = '\0';
+			/*
+			 * Sanitize: replace control characters with '?'
+			 * to prevent protocol injection via the control
+			 * socket (attacker-controlled advertising data
+			 * could inject newlines to fake responses).
+			 */
+			for (j = 0; j < cplen; j++) {
+				unsigned char c = (unsigned char)sr->name[j];
+				if (c < 0x20 || c == 0x7F)
+					sr->name[j] = '?';
+			}
+			sr->has_name = true;
+		} else if (ad_type == AD_TYPE_MANUFACTURER_DATA &&
+		    vlen >= 2 && sr->mfr_id == 0xFFFF) {
+			sr->mfr_id = val[0] | ((uint16_t)val[1] << 8);
+		} else if ((ad_type == AD_TYPE_UUID16_COMPLETE ||
+		    ad_type == AD_TYPE_UUID16_INCOMPLETE) && vlen >= 2) {
+			for (int i = 0; i + 1 < vlen &&
+			    sr->num_svc_uuids < 8; i += 2) {
+				sr->num_svc_uuids++;
+				sr->svc_uuids[sr->num_svc_uuids - 1] =
+				    val[i] | ((uint16_t)val[i + 1] << 8);
+			}
+		}
+
+		ad_len -= (size_t)(next - ad);
+		ad = next;
+	}
+}
+
+/*
+ * Merge fields from a new scan result into an existing one (dedup).
+ * Copies name, manufacturer ID, and service UUIDs if the existing
+ * entry doesn't already have them.
+ */
+static void
+scan_result_merge(struct ble_scan_result *dst, const struct ble_scan_result *src)
+{
+	if (src->has_name && !dst->has_name) {
+		strlcpy(dst->name, src->name, sizeof(dst->name));
+		dst->has_name = true;
+	}
+	if (src->mfr_id != 0xFFFF && dst->mfr_id == 0xFFFF)
+		dst->mfr_id = src->mfr_id;
+	for (int i = 0; i < src->num_svc_uuids &&
+	    dst->num_svc_uuids < 8; i++) {
+		dst->svc_uuids[dst->num_svc_uuids++] = src->svc_uuids[i];
+	}
+}
+
+/*
  * Perform a BLE active scan for the specified duration.
  * Populates results array with discovered devices.
  */
@@ -225,6 +306,28 @@ hci_le_scan(int hci_fd, int duration_sec,
 	ng_hci_event_pkt_t *evt;
 	int count = 0;
 	time_t end_time;
+
+	/*
+	 * LE Set Scan Parameters is command-disallowed while scanning is
+	 * enabled.  Disable first so a previous aborted/manual scan does not
+	 * leave the controller in a state that rejects parameter updates.
+	 */
+	memset(&enable_cp, 0, sizeof(enable_cp));
+	enable_cp.le_scan_enable = 0;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_SCAN_ENABLE);
+	r.cparam = &enable_cp;
+	r.clen = sizeof(enable_cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+	if (hci_devreq_logged(hci_fd, &r, 5) == 0 && rp.status != 0 &&
+	    blued_verbose >= 2)
+		LOG_HCI(2, "pre-scan disable status=0x%02x", rp.status);
+
+	usleep(BLUED_SCAN_SETTLE_USEC);
 
 	/* Set event filter to receive LE advertising reports */
 	memset(&flt, 0, sizeof(flt));
@@ -255,6 +358,9 @@ hci_le_scan(int hci_fd, int duration_sec,
 	}
 
 	if (rp.status != 0) {
+		if (rp.status == 0x0c)
+			LOG_HCI(1, "LE scan parameters rejected while "
+			    "controller is in a conflicting scan state");
 		bt_devfilter(hci_fd, &oldflt, NULL);
 		errno = EIO;
 		return (-1);
@@ -342,8 +448,6 @@ hci_le_scan(int hci_fd, int duration_sec,
 				uint8_t addr_type;
 				struct ble_scan_result *sr;
 				uint8_t data_len;
-				const uint8_t *ad;
-				size_t ad_remain;
 				bool dup;
 				int j;
 
@@ -361,6 +465,7 @@ hci_le_scan(int hci_fd, int duration_sec,
 
 				sr = &results[count];
 				memset(sr, 0, sizeof(*sr));
+				sr->mfr_id = 0xFFFF;
 				memcpy(sr->addr, p, 6);
 				sr->addr_type = addr_type ? BDADDR_LE_RANDOM :
 				    BDADDR_LE_PUBLIC;
@@ -377,33 +482,7 @@ hci_le_scan(int hci_fd, int duration_sec,
 				if (remain < data_len)
 					break;
 
-				/* Parse AD structures for device name */
-				ad = p;
-				ad_remain = data_len;
-				while (ad_remain > 0) {
-					uint8_t ad_type, vlen;
-					const uint8_t *val;
-					const uint8_t *next;
-
-					next = parse_ad(ad, ad_remain, &ad_type,
-					    &val, &vlen);
-					if (next == NULL)
-						break;
-
-					if ((ad_type == AD_TYPE_COMPLETE_LOCAL_NAME ||
-					    ad_type == AD_TYPE_SHORT_LOCAL_NAME) &&
-					    vlen > 0) {
-						size_t cplen = vlen;
-						if (cplen >= sizeof(sr->name))
-							cplen = sizeof(sr->name) - 1;
-						memcpy(sr->name, val, cplen);
-						sr->name[cplen] = '\0';
-						sr->has_name = true;
-					}
-
-					ad_remain -= (next - ad);
-					ad = next;
-				}
+				parse_ad_fields(p, data_len, sr);
 
 				p += data_len;
 				remain -= data_len;
@@ -419,13 +498,7 @@ hci_le_scan(int hci_fd, int duration_sec,
 				dup = false;
 				for (j = 0; j < count; j++) {
 					if (memcmp(results[j].addr, sr->addr, 6) == 0) {
-						/* Update name if we got one */
-						if (sr->has_name && !results[j].has_name) {
-							strlcpy(results[j].name,
-							    sr->name,
-							    sizeof(results[j].name));
-							results[j].has_name = true;
-						}
+						scan_result_merge(&results[j], sr);
 						dup = true;
 						break;
 					}
@@ -536,7 +609,8 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
  */
 int
 hci_le_set_advertising_params(int hci_fd, uint16_t interval_min,
-    uint16_t interval_max, uint8_t adv_type)
+    uint16_t interval_max, uint8_t adv_type,
+    uint8_t own_addr_type, uint8_t filter_policy)
 {
 	struct bt_devreq r;
 	ng_hci_le_set_advertising_parameters_cp	cp;
@@ -546,9 +620,9 @@ hci_le_set_advertising_params(int hci_fd, uint16_t interval_min,
 	cp.advertising_interval_min = htole16(interval_min);
 	cp.advertising_interval_max = htole16(interval_max);
 	cp.advertising_type = adv_type;
-	cp.own_address_type = 0x00;		/* public */
+	cp.own_address_type = own_addr_type;
 	cp.advertising_channel_map = 0x07;	/* all channels */
-	cp.advertising_filter_policy = 0x00;	/* any device */
+	cp.advertising_filter_policy = filter_policy;
 
 	memset(&r, 0, sizeof(r));
 	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
@@ -595,6 +669,44 @@ hci_le_set_advertising_data(int hci_fd, const uint8_t *data, uint8_t len)
 	memset(&r, 0, sizeof(r));
 	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
 	    NG_HCI_OCF_LE_SET_ADVERTISING_DATA);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		errno = EIO;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * LE Set Scan Response Data (Core Spec Vol 4 Part E §7.8.8).
+ * Used with legacy advertising (ADV_IND, ADV_SCAN_IND).
+ */
+int
+hci_le_set_scan_response_data(int hci_fd, const uint8_t *data, uint8_t len)
+{
+	struct bt_devreq r;
+	ng_hci_le_set_scan_response_data_cp	cp;
+	ng_hci_le_set_scan_response_data_rp	rp;
+
+	if (len > NG_HCI_ADVERTISING_DATA_SIZE) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	memset(&cp, 0, sizeof(cp));
+	cp.scan_response_data_length = len;
+	memcpy(cp.scan_response_data, data, len);
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_SCAN_RESPONSE_DATA);
 	r.cparam = &cp;
 	r.clen = sizeof(cp);
 	r.rparam = &rp;
@@ -728,7 +840,7 @@ hci_reset(int hci_fd)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+	if (hci_devreq_logged(hci_fd, &r, 2) < 0)
 		return (-1);
 	if (rp.status != 0x00) {
 		warnx("hci_reset: controller status 0x%02x", rp.status);
@@ -736,6 +848,81 @@ hci_reset(int hci_fd)
 		return (-1);
 	}
 	LOG_HCI(1, "controller reset");
+	return (0);
+}
+
+int
+hci_node_init(int hci_fd)
+{
+	if (ioctl(hci_fd, SIOC_HCI_RAW_NODE_INIT) < 0)
+		return (-1);
+
+	LOG_HCI(1, "HCI node initialized");
+	return (0);
+}
+
+int
+hci_write_le_host_support(int hci_fd, uint8_t le_host, uint8_t simultaneous)
+{
+	struct bt_devreq r;
+	ng_hci_write_le_host_supported_cp cp;
+	ng_hci_status_rp rp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.le_supported_host = le_host ? 1 : 0;
+	cp.simultaneous_le_host = simultaneous ? 1 : 0;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_HC_BASEBAND,
+	    NG_HCI_OCF_WRITE_LE_HOST_SUPPORTED);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		warnx("hci_write_le_host_support: controller status 0x%02x",
+		    rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	LOG_HCI(1, "LE host support enabled");
+	return (0);
+}
+
+int
+hci_set_event_mask(int hci_fd, uint64_t mask)
+{
+	struct bt_devreq r;
+	ng_hci_set_event_mask_cp cp;
+	ng_hci_status_rp rp;
+
+	memset(&cp, 0, sizeof(cp));
+	for (int i = 0; i < 8; i++)
+		cp.event_mask[i] = (mask >> (i * 8)) & 0xFF;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_HC_BASEBAND,
+	    NG_HCI_OCF_SET_EVENT_MASK);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		warnx("hci_set_event_mask: controller status 0x%02x",
+		    rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	LOG_HCI(1, "event mask set: 0x%016llx",
+	    (unsigned long long)mask);
 	return (0);
 }
 
@@ -809,6 +996,40 @@ hci_le_set_event_mask(int hci_fd, uint64_t mask)
 	return (0);
 }
 
+uint64_t
+hci_le_default_event_mask(uint64_t features)
+{
+	uint64_t mask;
+
+	mask = LE_EVTMASK_CONN_COMPLETE |
+	    LE_EVTMASK_ADV_REPORT |
+	    LE_EVTMASK_CONN_UPDATE |
+	    LE_EVTMASK_READ_REMOTE_FEAT |
+	    LE_EVTMASK_LTK_REQUEST |
+	    LE_EVTMASK_DATA_LENGTH_CHANGE |
+	    LE_EVTMASK_ENH_CONN_COMPLETE |
+	    LE_EVTMASK_PHY_UPDATE_COMPL |
+	    LE_EVTMASK_SCAN_TIMEOUT;
+
+	if ((features & LE_FEAT_EXT_ADVERTISING) != 0) {
+		mask |= LE_EVTMASK_EXT_ADV_REPORT |
+		    LE_EVTMASK_ADV_SET_TERM |
+		    LE_EVTMASK_SCAN_REQ_RCVD;
+	}
+	if ((features & LE_FEAT_PERIODIC_ADV) != 0) {
+		mask |= LE_EVTMASK_PER_ADV_SYNC_EST |
+		    LE_EVTMASK_PER_ADV_REPORT |
+		    LE_EVTMASK_PER_ADV_SYNC_LOST |
+		    LE_EVTMASK_PER_ADV_SYNC_XFER;
+	}
+	if ((features & LE_FEAT_CIS_CENTRAL) != 0)
+		mask |= LE_EVTMASK_CIS_ESTABLISHED;
+	if ((features & LE_FEAT_CIS_PERIPH) != 0)
+		mask |= LE_EVTMASK_CIS_REQUEST;
+
+	return (mask);
+}
+
 /*
  * LE Connection Update — request new connection parameters.
  * Core Spec Vol 4 Part E Section 7.8.18 (OCF 0x0013).
@@ -851,6 +1072,83 @@ hci_le_connection_update(int hci_fd, uint16_t handle,
 	LOG_HCI(1, "connection update requested: interval=%d-%d "
 	    "latency=%d timeout=%d",
 	    interval_min, interval_max, latency, timeout);
+	return (0);
+}
+
+/*
+ * Send L2CAP Connection Parameter Update Request as peripheral.
+ * Core Spec Vol 3 Part A §4.20.
+ *
+ * The peripheral cannot use HCI_LE_Connection_Update (that's central-only).
+ * The proper mechanism is L2CAP signaling on CID 0x0005, but FreeBSD's
+ * ng_l2cap does not expose LE signaling CID to user-space sockets.
+ * The SOCK_SEQPACKET socket layer only supports CID 0x0004 (ATT) and
+ * CID 0x0006 (SMP) for LE fixed channels.
+ *
+ * BLE 4.1+ controllers handle connection parameter negotiation at
+ * the Link Layer via LE Remote Connection Parameter Request
+ * (LL_CONNECTION_PARAM_REQ).  We use hci_le_connection_update()
+ * which works for both central and peripheral roles on controllers
+ * that support this LL feature.  The controller translates the HCI
+ * command into the appropriate LL procedure.
+ */
+int
+l2cap_conn_param_update_req(const uint8_t *local_addr,
+    const uint8_t *peer_addr, uint8_t peer_addr_type __unused,
+    uint16_t interval_min, uint16_t interval_max,
+    uint16_t latency, uint16_t timeout)
+{
+	uint16_t con_handle;
+	int hci_fd;
+	char adapter[16];
+
+	/*
+	 * Find the adapter for this local address.  Try each ubt
+	 * device until one matches, falling back to ubt0.
+	 */
+	{
+		int i;
+		bool found = false;
+
+		for (i = 0; i < 8; i++) {
+			uint8_t bdaddr[6];
+
+			snprintf(adapter, sizeof(adapter), "ubt%d", i);
+			hci_fd = hci_open(adapter);
+			if (hci_fd < 0)
+				continue;
+			if (hci_get_bdaddr(hci_fd, bdaddr) == 0 &&
+			    memcmp(bdaddr, local_addr, 6) == 0) {
+				found = true;
+				break;
+			}
+			close(hci_fd);
+		}
+		if (!found) {
+			/* Fallback to ubt0 */
+			hci_fd = hci_open("ubt0");
+		}
+	}
+
+	if (hci_fd < 0)
+		return (-1);
+
+	if (hci_get_con_handle(hci_fd, peer_addr, &con_handle) < 0) {
+		close(hci_fd);
+		return (-1);
+	}
+
+	LOG_HCI(1, "conn param update: handle=%04x interval=%d-%d "
+	    "latency=%d timeout=%d",
+	    con_handle, interval_min, interval_max, latency, timeout);
+
+	if (hci_le_connection_update(hci_fd, con_handle,
+	    interval_min, interval_max, latency, timeout) < 0) {
+		close(hci_fd);
+		return (-1);
+	}
+
+	close(hci_fd);
 	return (0);
 }
 
@@ -1022,13 +1320,15 @@ hci_le_set_rpa_timeout(int hci_fd, uint16_t timeout_sec)
 
 /*
  * Set Extended Advertising Parameters (v1).
- * Simplified wrapper — sets connectable undirected on all channels,
- * 1M primary PHY, 1M secondary PHY.
+ * Full wrapper with explicit PHY selection.
+ * primary_phy: 1=1M, 3=Coded.  secondary_phy: 1=1M, 2=2M, 3=Coded.
  */
 int
-hci_le_set_ext_adv_params(int hci_fd, uint8_t handle,
+hci_le_set_ext_adv_params_phy(int hci_fd, uint8_t handle,
     uint16_t event_props, uint32_t interval_min,
-    uint32_t interval_max, uint8_t own_addr_type)
+    uint32_t interval_max, uint8_t own_addr_type,
+    uint8_t filter_policy, uint8_t primary_phy,
+    uint8_t secondary_phy)
 {
 	struct bt_devreq r;
 	ng_hci_le_set_ext_adv_params_cp cp;
@@ -1037,18 +1337,18 @@ hci_le_set_ext_adv_params(int hci_fd, uint8_t handle,
 	memset(&cp, 0, sizeof(cp));
 	cp.advertising_handle = handle;
 	cp.advertising_event_properties = htole16(event_props);
-	/* 3-byte LE interval fields (24-bit, Core Spec §7.8.53) */
 	cp.primary_advertising_interval_min[0] = interval_min & 0xFF;
 	cp.primary_advertising_interval_min[1] = (interval_min >> 8) & 0xFF;
 	cp.primary_advertising_interval_min[2] = (interval_min >> 16) & 0xFF;
 	cp.primary_advertising_interval_max[0] = interval_max & 0xFF;
 	cp.primary_advertising_interval_max[1] = (interval_max >> 8) & 0xFF;
 	cp.primary_advertising_interval_max[2] = (interval_max >> 16) & 0xFF;
-	cp.primary_advertising_channel_map = 0x07;	/* all channels */
+	cp.primary_advertising_channel_map = 0x07;
 	cp.own_address_type = own_addr_type;
-	cp.advertising_tx_power = 0x7F;			/* no preference */
-	cp.primary_advertising_phy = 0x01;		/* 1M */
-	cp.secondary_advertising_phy = 0x01;		/* 1M */
+	cp.advertising_filter_policy = filter_policy;
+	cp.advertising_tx_power = 0x7F;
+	cp.primary_advertising_phy = primary_phy;
+	cp.secondary_advertising_phy = secondary_phy;
 
 	memset(&r, 0, sizeof(r));
 	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
@@ -1067,9 +1367,24 @@ hci_le_set_ext_adv_params(int hci_fd, uint8_t handle,
 		errno = EIO;
 		return (-1);
 	}
-	LOG_HCI(1, "ext adv params set: handle=%d tx_power=%d",
-	    handle, rp.selected_tx_power);
+	LOG_HCI(1, "ext adv params set: handle=%d tx_power=%d phy=%d/%d",
+	    handle, rp.selected_tx_power, primary_phy, secondary_phy);
 	return (0);
+}
+
+/*
+ * Convenience wrapper — defaults to 1M/1M PHY.
+ */
+int
+hci_le_set_ext_adv_params(int hci_fd, uint8_t handle,
+    uint16_t event_props, uint32_t interval_min,
+    uint32_t interval_max, uint8_t own_addr_type,
+    uint8_t filter_policy)
+{
+
+	return (hci_le_set_ext_adv_params_phy(hci_fd, handle,
+	    event_props, interval_min, interval_max,
+	    own_addr_type, filter_policy, 0x01, 0x01));
 }
 
 /*
@@ -1832,19 +2147,20 @@ static size_t
 parse_ext_adv_report(const uint8_t *p, size_t remain,
     struct ble_scan_result *sr)
 {
+	uint16_t event_type;
 	uint8_t addr_type, data_len;
-	int8_t rssi;
+	int8_t rssi, tx_power;
 
 	if (remain < EXT_ADV_REPORT_HDR_LEN)
 		return (0);
 
-	/* Skip event_type (2 bytes) */
+	event_type = p[0] | ((uint16_t)p[1] << 8);
 	addr_type = p[2];
 	memcpy(sr->addr, p + 3, 6);
 	sr->addr_type = (addr_type == 0x01 || addr_type == 0x03) ?
 	    BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
 	/* p[9]: primary_phy, p[10]: secondary_phy, p[11]: advertising_sid */
-	/* p[12]: tx_power */
+	tx_power = (int8_t)p[12];
 	rssi = (int8_t)p[13];
 	sr->rssi = rssi;
 	/* p[14..15]: periodic_adv_interval */
@@ -1854,35 +2170,17 @@ parse_ext_adv_report(const uint8_t *p, size_t remain,
 	if (remain < (size_t)(EXT_ADV_REPORT_HDR_LEN + data_len))
 		return (0);
 
-	/* Parse AD structures for device name */
+	LOG_HCI(2, "ext_adv: event_type=0x%04x addr_type=%d "
+	    "data_len=%d rssi=%d tx_power=%d",
+	    event_type, addr_type, data_len, rssi, tx_power);
+
+	/* Parse AD structures for name, manufacturer, service UUIDs */
 	sr->has_name = false;
 	sr->name[0] = '\0';
+	sr->mfr_id = 0xFFFF;
+	sr->num_svc_uuids = 0;
 
-	const uint8_t *ad = p + EXT_ADV_REPORT_HDR_LEN;
-	size_t ad_remain = data_len;
-	while (ad_remain > 0) {
-		uint8_t ad_type, vlen;
-		const uint8_t *val;
-		const uint8_t *next;
-
-		next = parse_ad(ad, ad_remain, &ad_type, &val, &vlen);
-		if (next == NULL)
-			break;
-
-		if ((ad_type == AD_TYPE_COMPLETE_LOCAL_NAME ||
-		    ad_type == AD_TYPE_SHORT_LOCAL_NAME) &&
-		    vlen > 0) {
-			size_t cplen = vlen;
-			if (cplen >= sizeof(sr->name))
-				cplen = sizeof(sr->name) - 1;
-			memcpy(sr->name, val, cplen);
-			sr->name[cplen] = '\0';
-			sr->has_name = true;
-		}
-
-		ad_remain -= (size_t)(next - ad);
-		ad = next;
-	}
+	parse_ad_fields(p + EXT_ADV_REPORT_HDR_LEN, data_len, sr);
 
 	return ((size_t)(EXT_ADV_REPORT_HDR_LEN + data_len));
 }
@@ -1902,6 +2200,7 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
     struct ble_scan_result *results, int maxresults, int *nresults)
 {
 	struct bt_devreq r;
+	ng_hci_le_set_ext_scan_params_cp scan_cp;
 	ng_hci_status_rp rp;
 	ng_hci_le_set_ext_scan_enable_cp enable_cp;
 	struct bt_devfilter flt, oldflt;
@@ -1911,38 +2210,79 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
 	time_t end_time;
 
 	/*
+	 * The controller rejects Set Extended Scan Parameters while scanning is
+	 * enabled.  Do not send a legacy LE scan-disable here: some controllers
+	 * reject the legacy scan command once the extended scan command set is
+	 * in use, and the raw extended-scan path succeeds without it after init.
+	 */
+	usleep(BLUED_SCAN_SETTLE_USEC);
+
+	/*
 	 * Set Extended Scan Parameters (OCF 0x0041).
 	 * Uses the 1-PHY struct (scanning_phys = 0x01 for 1M only).
 	 */
-	{
-		ng_hci_le_set_ext_scan_params_cp scan_cp;
+	memset(&scan_cp, 0, sizeof(scan_cp));
+	scan_cp.own_address_type = 0x00;	/* public */
+	scan_cp.scanning_filter_policy = 0x00;	/* accept all */
+	scan_cp.scanning_phys = 0x01;		/* 1M only */
+	scan_cp.scan_type = 0x01;		/* active */
+	scan_cp.scan_interval = htole16(160);	/* 100ms / 0.625 */
+	scan_cp.scan_window = htole16(80);	/* 50ms / 0.625 */
 
-		memset(&scan_cp, 0, sizeof(scan_cp));
-		scan_cp.own_address_type = 0x00;	/* public */
-		scan_cp.scanning_filter_policy = 0x00;	/* accept all */
-		scan_cp.scanning_phys = 0x01;		/* 1M only */
-		scan_cp.scan_type = 0x01;		/* active */
-		scan_cp.scan_interval = htole16(160);	/* 100ms / 0.625 */
-		scan_cp.scan_window = htole16(80);	/* 50ms / 0.625 */
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_EXT_SCAN_PARAMS);
+	r.cparam = &scan_cp;
+	r.clen = sizeof(scan_cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-		memset(&r, 0, sizeof(r));
-		r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
-		    NG_HCI_OCF_LE_SET_EXT_SCAN_PARAMS);
-		r.cparam = &scan_cp;
-		r.clen = sizeof(scan_cp);
-		r.rparam = &rp;
-		r.rlen = sizeof(rp);
-		r.event = NG_HCI_EVENT_COMMAND_COMPL;
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0) {
+		LOG_HCI(1, "LE Set Ext Scan Params failed, "
+		    "status=0x%02x", rp.status);
+		if (rp.status == 0x0c) {
+			LOG_HCI(1, "extended scan parameters rejected while "
+			    "controller is in a conflicting state");
+			memset(&enable_cp, 0, sizeof(enable_cp));
+			enable_cp.enable = 0;
 
-		if (hci_devreq_logged(hci_fd, &r, 5) < 0)
-			return (-1);
-		if (rp.status != 0) {
-			LOG_HCI(1, "LE Set Ext Scan Params failed, "
+			memset(&r, 0, sizeof(r));
+			r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+			    NG_HCI_OCF_LE_SET_EXT_SCAN_ENABLE);
+			r.cparam = &enable_cp;
+			r.clen = sizeof(enable_cp);
+			r.rparam = &rp;
+			r.rlen = sizeof(rp);
+			r.event = NG_HCI_EVENT_COMMAND_COMPL;
+			if (hci_devreq_logged(hci_fd, &r, 5) == 0 &&
+			    rp.status != 0 && blued_verbose >= 2)
+				LOG_HCI(2, "extended scan disable status=0x%02x",
+				    rp.status);
+
+			usleep(BLUED_SCAN_SETTLE_USEC);
+
+			memset(&r, 0, sizeof(r));
+			r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+			    NG_HCI_OCF_LE_SET_EXT_SCAN_PARAMS);
+			r.cparam = &scan_cp;
+			r.clen = sizeof(scan_cp);
+			r.rparam = &rp;
+			r.rlen = sizeof(rp);
+			r.event = NG_HCI_EVENT_COMMAND_COMPL;
+			if (hci_devreq_logged(hci_fd, &r, 5) == 0 &&
+			    rp.status == 0)
+				goto ext_scan_params_ok;
+			LOG_HCI(1, "LE Set Ext Scan Params retry failed, "
 			    "status=0x%02x", rp.status);
-			errno = EIO;
-			return (-1);
 		}
+		errno = EIO;
+		return (-1);
 	}
+
+ext_scan_params_ok:
 
 	/* Set event filter to receive LE events */
 	memset(&flt, 0, sizeof(flt));
@@ -1958,7 +2298,7 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
 	memset(&enable_cp, 0, sizeof(enable_cp));
 	enable_cp.enable = 1;
 	enable_cp.filter_duplicates = 1;
-	enable_cp.duration = 0;		/* we manage duration */
+	enable_cp.duration = htole16((uint16_t)(duration_sec * 100));
 	enable_cp.period = 0;		/* scan continuously */
 
 	memset(&r, 0, sizeof(r));
@@ -1985,7 +2325,7 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
 	LOG_HCI(1, "extended scan started (%d seconds)", duration_sec);
 
 	/* Receive advertising reports (both legacy and extended) */
-	end_time = time(NULL) + duration_sec;
+	end_time = time(NULL) + duration_sec + 1;
 	while (time(NULL) < end_time && count < maxresults) {
 		ssize_t n;
 
@@ -2043,8 +2383,6 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
 					uint8_t addr_type;
 					struct ble_scan_result *sr;
 					uint8_t data_len;
-					const uint8_t *ad;
-					size_t ad_remain;
 					bool dup;
 					int j;
 
@@ -2061,6 +2399,7 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
 
 					sr = &results[count];
 					memset(sr, 0, sizeof(*sr));
+					sr->mfr_id = 0xFFFF;
 					memcpy(sr->addr, p, 6);
 					sr->addr_type = addr_type ?
 					    BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
@@ -2076,39 +2415,7 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
 					if (remain < data_len)
 						break;
 
-					/* Parse AD structures for device name */
-					ad = p;
-					ad_remain = data_len;
-					while (ad_remain > 0) {
-						uint8_t ad_type, vlen;
-						const uint8_t *val;
-						const uint8_t *next;
-
-						next = parse_ad(ad, ad_remain,
-						    &ad_type, &val, &vlen);
-						if (next == NULL)
-							break;
-
-						if ((ad_type ==
-						    AD_TYPE_COMPLETE_LOCAL_NAME ||
-						    ad_type ==
-						    AD_TYPE_SHORT_LOCAL_NAME) &&
-						    vlen > 0) {
-							size_t cplen = vlen;
-							if (cplen >=
-							    sizeof(sr->name))
-								cplen =
-								    sizeof(sr->name)
-								    - 1;
-							memcpy(sr->name, val,
-							    cplen);
-							sr->name[cplen] = '\0';
-							sr->has_name = true;
-						}
-
-						ad_remain -= (size_t)(next - ad);
-						ad = next;
-					}
+					parse_ad_fields(p, data_len, sr);
 
 					p += data_len;
 					remain -= data_len;
@@ -2124,16 +2431,8 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
 					for (j = 0; j < count; j++) {
 						if (memcmp(results[j].addr,
 						    sr->addr, 6) == 0) {
-							if (sr->has_name &&
-							    !results[j].has_name) {
-								strlcpy(
-								    results[j].name,
-								    sr->name,
-								    sizeof(
-								    results[j].name));
-								results[j].has_name
-								    = true;
-							}
+							scan_result_merge(
+							    &results[j], sr);
 							dup = true;
 							break;
 						}
@@ -2177,16 +2476,8 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
 					for (j = 0; j < count; j++) {
 						if (memcmp(results[j].addr,
 						    sr.addr, 6) == 0) {
-							if (sr.has_name &&
-							    !results[j].has_name) {
-								strlcpy(
-								    results[j].name,
-								    sr.name,
-								    sizeof(
-								    results[j].name));
-								results[j].has_name
-								    = true;
-							}
+							scan_result_merge(
+							    &results[j], &sr);
 							dup = true;
 							break;
 						}
@@ -2194,7 +2485,13 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
 					if (!dup)
 						results[count++] = sr;
 			}
-		}
+			} else if (subevent == NG_HCI_LEEV_SCAN_TIMEOUT) {
+				LOG_HCI(2, "extended scan timeout event");
+				break;
+			} else if (blued_verbose >= 2) {
+				LOG_HCI(2, "ignored LE subevent 0x%02x",
+				    subevent);
+			}
 		} /* Parse LE Meta Event */
 	}
 
@@ -2210,7 +2507,11 @@ hci_le_ext_scan(int hci_fd, int duration_sec,
 	r.rparam = &rp;
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
-	hci_devreq_logged(hci_fd, &r, 5);
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		warn("LE Set Ext Scan Disable");
+	else if (rp.status != 0)
+		LOG_HCI(1, "LE Set Ext Scan Disable status=0x%02x",
+		    rp.status);
 
 	/* Restore previous event filter */
 	bt_devfilter(hci_fd, &oldflt, NULL);
@@ -4410,6 +4711,147 @@ ble_coc_connect(const uint8_t *addr, uint8_t addr_type,
 	return (fd);
 }
 
+/*
+ * ble_ecbfc_connect — Open multiple L2CAP CoC channels using Enhanced
+ * Credit Based Flow Control (BT 5.2, Core Spec Vol 3 Part A §4.25).
+ *
+ * Opens 'count' independent ECBFC channels on the given PSM to the
+ * remote device.  Each channel gets its own socket fd.  Returns the
+ * number of channels successfully opened; fds[0..n-1] are populated
+ * with the connected socket file descriptors.
+ *
+ * The key difference from ble_coc_connect() is the use of
+ * SO_L2CAP_ECBFC which causes the kernel to send
+ * L2CAP_CREDIT_BASED_CONNECTION_REQ (opcode 0x17) instead of the
+ * legacy LE Credit Based Connection Request (0x14).
+ */
+int
+ble_ecbfc_connect(const uint8_t *addr, uint8_t addr_type,
+    uint16_t psm, uint16_t mtu, int count, int *fds)
+{
+	int i, opened;
+
+	if (count < 1 || count > 5 || fds == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (mtu == 0)
+		mtu = 512;	/* NG_L2CAP_LE_COC_LOCAL_MTU default */
+
+	opened = 0;
+	for (i = 0; i < count; i++) {
+		struct sockaddr_l2cap bind_sa, con_sa;
+		struct timeval tv;
+		int fd, optval, ecbfc;
+
+		fd = socket(PF_BLUETOOTH,
+		    SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_CLOFORK,
+		    BLUETOOTH_PROTO_L2CAP);
+		if (fd < 0) {
+			LOG_L2C(1, "ECBFC: socket() failed: %s",
+			    strerror(errno));
+			break;
+		}
+
+		/* Set ECBFC mode before connect */
+		ecbfc = 1;
+		if (setsockopt(fd, SOL_L2CAP, SO_L2CAP_ECBFC,
+		    &ecbfc, sizeof(ecbfc)) < 0) {
+			LOG_L2C(1, "ECBFC: setsockopt SO_L2CAP_ECBFC: %s",
+			    strerror(errno));
+			close(fd);
+			break;
+		}
+
+		/* Set desired incoming MTU */
+		optval = mtu;
+		setsockopt(fd, SOL_L2CAP, SO_L2CAP_IMTU, &optval,
+		    sizeof(optval));
+
+		/* Bind to BDADDR_ANY with LE address type */
+		memset(&bind_sa, 0, sizeof(bind_sa));
+		bind_sa.l2cap_len = sizeof(bind_sa);
+		bind_sa.l2cap_family = AF_BLUETOOTH;
+		bind_sa.l2cap_bdaddr_type = BDADDR_LE_PUBLIC;
+
+		if (bind(fd, (struct sockaddr *)&bind_sa,
+		    sizeof(bind_sa)) < 0) {
+			LOG_L2C(1, "ECBFC: bind() failed: %s",
+			    strerror(errno));
+			close(fd);
+			break;
+		}
+
+		/* Connect to remote device with LE PSM */
+		memset(&con_sa, 0, sizeof(con_sa));
+		con_sa.l2cap_len = sizeof(con_sa);
+		con_sa.l2cap_family = AF_BLUETOOTH;
+		memcpy(&con_sa.l2cap_bdaddr, addr,
+		    sizeof(con_sa.l2cap_bdaddr));
+		con_sa.l2cap_psm = htole16(psm);
+		con_sa.l2cap_cid = 0;		/* dynamic allocation */
+		con_sa.l2cap_bdaddr_type = addr_type;
+
+		if (connect(fd, (struct sockaddr *)&con_sa,
+		    sizeof(con_sa)) < 0) {
+			LOG_L2C(1, "ECBFC: connect() failed: psm=%d %s",
+			    psm, strerror(errno));
+			close(fd);
+			break;
+		}
+
+		/* Set receive timeout */
+		tv.tv_sec = 30;
+		tv.tv_usec = 0;
+		setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+		/* Enable SO_NOSIGPIPE */
+		optval = 1;
+		setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &optval,
+		    sizeof(optval));
+
+		fds[opened] = fd;
+		opened++;
+
+		LOG_L2C(1, "ECBFC: channel %d connected, fd=%d psm=%d "
+		    "mtu=%d addr_type=%d", i, fd, psm, mtu, addr_type);
+	}
+
+	LOG_L2C(1, "ECBFC: %d/%d channels opened", opened, count);
+
+	return (opened);
+}
+
+/*
+ * ble_ecbfc_reconfig — Reconfigure MTU/MPS on an existing ECBFC channel.
+ *
+ * Sends L2CAP_CREDIT_BASED_RECONFIGURE_REQ (opcode 0x19) via the
+ * SO_L2CAP_RECONFIG socket option.  The kernel validates the request
+ * per Core Spec Vol 3 Part A Section 4.27 (MTU cannot decrease, etc.).
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int
+ble_ecbfc_reconfig(int fd, uint16_t new_mtu, uint16_t new_mps)
+{
+	struct l2cap_reconfig_param rp;
+
+	rp.mtu = new_mtu;
+	rp.mps = new_mps;
+
+	if (setsockopt(fd, SOL_L2CAP, SO_L2CAP_RECONFIG,
+	    &rp, sizeof(rp)) < 0) {
+		LOG_L2C(1, "ECBFC reconfig failed: mtu=%d mps=%d: %s",
+		    new_mtu, new_mps, strerror(errno));
+		return (-1);
+	}
+
+	LOG_L2C(1, "ECBFC reconfig sent: fd=%d mtu=%d mps=%d",
+	    fd, new_mtu, new_mps);
+
+	return (0);
+}
+
 /* ----------------------------------------------------------------
  * LE Ping (Authenticated Payload Timeout) — BT 4.1
  * Core Spec Vol 4 Part E Sections 7.3.93–7.3.94
@@ -4536,4 +4978,69 @@ hci_set_min_enc_key_size(int fd, uint8_t key_size)
 	}
 	LOG_HCI(1, "min encryption key size set to %u bytes", key_size);
 	return (0);
+}
+
+/*
+ * Send a raw HCI command, bypassing libbluetooth's bt_devreq().
+ *
+ * This is needed for commands like LE_Start_Encryption that generate a
+ * Command Status event (not Command Complete), followed by an asynchronous
+ * Encryption Change event.  bt_devreq() blocks waiting for the completion
+ * event, which doesn't match this flow.
+ *
+ * Raw HCI socket expects: [type(1), opcode(2), param_len(1), params...]
+ * where type = 0x01 for HCI command packets.
+ */
+int
+hci_send_raw_cmd(int hci_fd, uint16_t opcode, const void *params,
+    uint8_t plen)
+{
+	uint8_t pkt[260];	/* max HCI command: 4 + 255 */
+
+	if (plen > 255)
+		return (-1);
+
+	pkt[0] = 0x01;			/* HCI command packet type */
+	pkt[1] = opcode & 0xFF;
+	pkt[2] = (opcode >> 8) & 0xFF;
+	pkt[3] = plen;
+	if (plen > 0)
+		memcpy(pkt + 4, params, plen);
+
+	/* Log outgoing HCI command to BTSnoop capture */
+	hci_log_packet(HCI_LOG_CMD, pkt + 1, 3 + plen, false);
+
+	if (send(hci_fd, pkt, 4 + plen, 0) < 0)
+		return (-1);
+
+	return (0);
+}
+
+/*
+ * Send HCI Disconnect command to tear down an ACL link.
+ *
+ * reason is an HCI error code — 0x13 is "Remote User Terminated Connection".
+ * This uses bt_devreq with a short timeout; the actual disconnection
+ * completes asynchronously via the Disconnection Complete event.
+ */
+int
+hci_disconnect(int hci_fd, uint16_t con_handle, uint8_t reason)
+{
+	struct bt_devreq r;
+	ng_hci_discon_cp cp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.con_handle = htole16(con_handle);
+	cp.reason = reason;
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LINK_CONTROL,
+	    NG_HCI_OCF_DISCON);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = NULL;
+	r.rlen = 0;
+	r.event = 0;	/* command status, not command complete */
+
+	return (hci_devreq_logged(hci_fd, &r, 1));
 }
