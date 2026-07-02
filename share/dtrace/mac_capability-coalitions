@@ -1,0 +1,178 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * mac_capability-coalitions -- trace coalition lifecycle and timer operations.
+ *
+ * Shows creation, membership changes, timer arming/firing, and
+ * termination of capability coalitions.
+ *
+ * Usage: mac_capability-coalitions
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-16s %-18s %s\n",
+	    "PID", "COMM", "EVENT", "DETAIL");
+}
+
+/* ---- Lifecycle ---- */
+
+mac_capability_coalition:::create
+{
+	printf("%-6d %-16s %-18s badge=%llu\n",
+	    pid, execname, "create", (unsigned long long)arg0);
+	@events["create"] = count();
+}
+
+mac_capability_coalition:::enlist
+{
+	printf("%-6d %-16s %-18s dtype=%d error=%d\n",
+	    pid, execname, "enlist", arg0, arg1);
+	@events["enlist"] = count();
+}
+
+mac_capability_coalition:::join
+{
+	printf("%-6d %-16s %-18s joined_pid=%d error=%d\n",
+	    pid, execname, "join", arg0, arg1);
+	@events["join"] = count();
+}
+
+mac_capability_coalition:::terminate
+{
+	printf("%-6d %-16s %-18s members=%u error=%d\n",
+	    pid, execname, "terminate", arg0, arg1);
+	@events["terminate"] = count();
+}
+
+mac_capability_coalition:::close
+{
+	printf("%-6d %-16s %-18s members=%u\n",
+	    pid, execname, "close", arg0);
+	@events["close"] = count();
+}
+
+/* ---- Membership changes ---- */
+
+mac_capability_coalition:::member-exit
+{
+	printf("%-6d %-16s %-18s exiting_pid=%d\n",
+	    pid, execname, "member-exit", arg0);
+	@events["member-exit"] = count();
+}
+
+mac_capability_coalition:::leader-exit
+{
+	printf("%-6d %-16s %-18s leader_pid=%d\n",
+	    pid, execname, "leader-exit", arg0);
+	@events["leader-exit"] = count();
+}
+
+mac_capability_coalition:::fork-inherit
+{
+	printf("%-6d %-16s %-18s parent=%d child=%d\n",
+	    pid, execname, "fork-inherit", arg0, arg1);
+	@events["fork-inherit"] = count();
+}
+
+/* ---- Call completion ---- */
+
+mac_capability_coalition:::call-done
+{
+	printf("%-6d %-16s %-18s op=%u error=%d time=%lld\n",
+	    pid, execname, "call-done", arg0, arg1,
+	    (long long)arg2);
+	@events["call-done"] = count();
+}
+
+/* ---- Denial ---- */
+
+mac_capability_coalition:::deny
+{
+	printf("%-6d %-16s %-18s reason=%s errno=%d target=%d\n",
+	    arg2, execname, "deny", copyinstr(arg0), arg1, arg2);
+	@events["deny"] = count();
+}
+
+/* ---- Signal / timer arming ---- */
+
+mac_capability_coalition:::signal-set
+{
+	printf("%-6d %-16s %-18s signal=%d\n",
+	    pid, execname, "signal-set", arg0);
+	@events["signal-set"] = count();
+}
+
+mac_capability_coalition:::deadline-set
+{
+	self->deadline_ts = timestamp;
+	printf("%-6d %-16s %-18s timeout=%ums signal=%d grace=%ums\n",
+	    pid, execname, "deadline-set", arg0, arg1, arg2);
+	@events["deadline-set"] = count();
+	@timers["deadline"] = count();
+}
+
+mac_capability_coalition:::watchdog-set
+{
+	self->watchdog_ts = timestamp;
+	printf("%-6d %-16s %-18s timeout=%ums\n",
+	    pid, execname, "watchdog-set", arg0);
+	@events["watchdog-set"] = count();
+	@timers["watchdog"] = count();
+}
+
+mac_capability_coalition:::heartbeat
+{
+	printf("%-6d %-16s %-18s timeout=%ums\n",
+	    pid, execname, "heartbeat", arg0);
+	@events["heartbeat"] = count();
+}
+
+/* ---- Timer expiry ---- */
+
+mac_capability_coalition:::deadline-expire
+{
+	this->elapsed = self->deadline_ts ?
+	    (timestamp - self->deadline_ts) / 1000000 : 0;
+	printf("%-6d %-16s %-18s phase=%s signal=%d elapsed=%dms\n",
+	    pid, execname, "deadline-expire",
+	    copyinstr(arg0), arg1, this->elapsed);
+	@events["deadline-expire"] = count();
+	@expire_lat["deadline"] = quantize(this->elapsed);
+	self->deadline_ts = 0;
+}
+
+mac_capability_coalition:::watchdog-expire
+{
+	this->elapsed = self->watchdog_ts ?
+	    (timestamp - self->watchdog_ts) / 1000000 : 0;
+	printf("%-6d %-16s %-18s signal=%d elapsed=%dms\n",
+	    pid, execname, "watchdog-expire", arg0, this->elapsed);
+	@events["watchdog-expire"] = count();
+	@expire_lat["watchdog"] = quantize(this->elapsed);
+	self->watchdog_ts = 0;
+}
+
+mac_capability_coalition:::graceful
+{
+	printf("%-6d %-16s %-18s signal=%d timeout=%ums\n",
+	    pid, execname, "graceful", arg0, arg1);
+	@events["graceful"] = count();
+}
+
+/* ---- Summary ---- */
+
+dtrace:::END
+{
+	printf("\n--- Coalition events ---\n");
+	printa("%-20s %@d\n", @events);
+
+	printf("\n--- Timers armed ---\n");
+	printa("%-20s %@d\n", @timers);
+
+	printf("\n--- Timer expiry latency (ms) ---\n");
+	printa(@expire_lat);
+}

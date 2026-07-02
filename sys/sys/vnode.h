@@ -1173,14 +1173,12 @@ int vfs_unixify_accmode(accmode_t *accmode);
 
 void vfs_unp_reclaim(struct vnode *vp);
 
-int setfmode(struct thread *td, struct ucred *cred, struct vnode *vp, int mode,
-    bool cap_noambient);
+int setfmode(struct thread *td, struct ucred *cred, struct vnode *vp, int mode);
 int setfown(struct thread *td, struct ucred *cred, struct vnode *vp, uid_t uid,
-    gid_t gid, bool cap_noambient);
-int setfflags(struct thread *td, struct vnode *vp, u_long flags,
-    bool cap_noambient);
+    gid_t gid);
+int setfflags(struct thread *td, struct vnode *vp, u_long flags);
 int setutimes(struct thread *td, struct vnode *vp, const struct timespec *ts,
-    int numtimes, int nullflag, bool cap_noambient);
+    int numtimes, int nullflag);
 int getutimes(const struct timeval *, enum uio_seg, struct timespec *);
 int vn_chmod(struct file *fp, mode_t mode, struct ucred *active_cred,
     struct thread *td);

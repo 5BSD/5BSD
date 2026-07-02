@@ -1,0 +1,101 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd June 5, 2026
+.Dt MAC_CAPABILITY_IDENTITY 4
+.Os
+.Sh NAME
+.Nm mac_capability_identity
+.Nd MAC_CAPABILITY program identity queries
+.Sh SYNOPSIS
+To load at boot:
+.Bd -literal -offset indent
+echo 'mac_capability_identity_load="YES"' >> /boot/loader.conf
+.Ed
+.Pp
+Wire protocol header:
+.Bd -literal -offset indent
+#include <dev/mac_capability/mac_capability_identity_proto.h>
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+service provides program nonce queries via
+.Dv MAC_CAPABILITY_CALL .
+The service is registered under the name
+.Dq identity .
+.Pp
+A program nonce is an 8-byte cryptographic random value that identifies
+a program image.
+The nonce is inherited across
+.Xr fork 2
+and rotated on
+.Xr execve 2 .
+Zero is never a valid nonce.
+.Pp
+The identity fd can be freely passed to sandboxed children so they can
+discover their own identity.
+No privilege is required to connect.
+.Ss Operations
+.Bl -tag -width "IDENTITY_OP_QUERY"
+.It Dv IDENTITY_OP_SELF Pq 1
+Returns the caller's own program nonce.
+No fd attachment is needed.
+.It Dv IDENTITY_OP_QUERY Pq 2
+Returns the program nonce of the process referenced by an attached
+.Xr procdesc 4
+file descriptor.
+The procdesc fd must be attached to the
+.Dv MAC_CAPABILITY_CALL .
+.El
+.Ss Wire Structures
+.Bd -literal -offset indent
+struct identity_request {
+	uint32_t  op;         /* IDENTITY_OP_SELF or IDENTITY_OP_QUERY */
+	uint32_t  _reserved;
+} __packed;
+
+struct identity_reply {
+	uint32_t  status;
+	uint32_t  _pad;
+	uint64_t  nonce;
+} __packed;
+.Ed
+.Ss Status Codes
+.Bl -column "Dv IDENTITY_STATUS_DEAD" "Value" -offset indent
+.It Sy Constant Ta Sy Value
+.It Dv IDENTITY_STATUS_OK Ta 0
+.It Dv IDENTITY_STATUS_ERR Ta 1
+.It Dv IDENTITY_STATUS_DEAD Ta 2
+.El
+.Pp
+.Dv IDENTITY_STATUS_OK
+indicates success; the
+.Fa nonce
+field contains the result.
+.Dv IDENTITY_STATUS_ERR
+indicates the nonce could not be retrieved (e.g., no nonce assigned).
+.Dv IDENTITY_STATUS_DEAD
+indicates the process referenced by the attached procdesc has exited.
+.Sh ERRORS
+.Bl -tag -width Er
+.It Bq Er EINVAL
+Request too small, reply buffer too small, invalid operation code,
+no fd attached for
+.Dv IDENTITY_OP_QUERY ,
+or the attached fd is not a procdesc.
+.El
+.Pp
+Application-level errors are returned in the
+.Fa status
+field of
+.Vt struct identity_reply .
+.Sh SEE ALSO
+.Xr execve 2 ,
+.Xr fork 2 ,
+.Xr mac_capability 4 ,
+.Xr procdesc 4 ,
+.Xr oracled 8
+.Sh HISTORY
+.Nm
+first appeared in 5BSD.

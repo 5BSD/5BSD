@@ -332,13 +332,13 @@
 /* Allows for posix_fadvise(2). */
 #define	CAP_POSIX_FADVISE	CAPRIGHT(1, 0x0000000020000000ULL)
 
-/* cap_rt capability message interface operations. */
-/* Allows sending requests on a cap_rt instance fd. */
-#define	CAP_CAP_RT_SEND		CAPRIGHT(1, 0x0000000080000000ULL)
-/* Allows receiving replies on a cap_rt instance fd. */
-#define	CAP_CAP_RT_RECV		CAPRIGHT(1, 0x0000000100000000ULL)
-/* Allows minting a fresh instance from a mintable cap_rt instance fd. */
-#define	CAP_CAP_RT_MINT		CAPRIGHT(1, 0x0000000200000000ULL)
+/* mac_capability capability message interface operations. */
+/* Allows sending requests on a mac_capability instance fd. */
+#define	CAP_MAC_CAPABILITY_SEND		CAPRIGHT(1, 0x0000000080000000ULL)
+/* Allows receiving replies on a mac_capability instance fd. */
+#define	CAP_MAC_CAPABILITY_RECV		CAPRIGHT(1, 0x0000000100000000ULL)
+/* Allows minting a fresh instance from a mintable mac_capability instance fd. */
+#define	CAP_MAC_CAPABILITY_MINT		CAPRIGHT(1, 0x0000000200000000ULL)
 
 /* All used bits for index 1. */
 #define	CAP_ALL1		CAPRIGHT(1, 0x00000003EFFFFFFFULL)
@@ -597,6 +597,17 @@ int cap_clofork_limit(int fd, int state);
  * operations on this descriptor.  Monotonic: once set, cannot be cleared.
  */
 int cap_ambient_limit(int fd);
+/*
+ * Requires capability mode before the descriptor may be mmap(2)'d.
+ * Monotonic: once set, cannot be cleared.
+ */
+int cap_mmap_capmode(int fd);
+/*
+ * Requires capability mode before a directory descriptor may be used
+ * as the dirfd argument to *at() system calls.
+ * Monotonic: once set, cannot be cleared.
+ */
+int cap_lookup_capmode(int fd);
 /*
  * Returns bitmask of allowed fcntls for the given descriptor.
  */

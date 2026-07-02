@@ -22,10 +22,10 @@ require_cc()
 	fi
 }
 
-require_cap_rt()
+require_mac_capability()
 {
-	if ! sh -c 'exec 3</dev/cap_rt' 2>/dev/null; then
-		atf_skip "/dev/cap_rt not available (oracled may be running)"
+	if ! sh -c 'exec 3</dev/mac_capability' 2>/dev/null; then
+		atf_skip "/dev/mac_capability not available (oracled may be running)"
 	fi
 }
 
@@ -188,7 +188,7 @@ EOF
 
 start_stress_oracled()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 	write_config
 
@@ -582,7 +582,7 @@ EOF
 	start_stress_oracled
 	if ! sh -c "i=0; while ! grep -q 'service crash: started pid' '$logfile' && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service crash: started pid' '$logfile'"; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start, likely missing cap_rt channel service"
+		atf_skip "service did not start, likely missing mac_capability channel service"
 	fi
 	atf_check -s exit:0 -o ignore sh -c \
 	    "i=0; while ! grep -q 'service crash: failed .* disabling' '$logfile' && [ \$i -lt 300 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service crash: failed .* disabling' '$logfile'"
@@ -619,7 +619,7 @@ EOF
 	start_stress_oracled
 	if ! wait_for_file ignore-term.pid; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start, likely missing cap_rt channel service"
+		atf_skip "service did not start, likely missing mac_capability channel service"
 	fi
 	svc_pid=$(cat ignore-term.pid)
 
@@ -663,7 +663,7 @@ EOF
 	start_stress_oracled
 	if ! wait_for_file subtree-child.pid; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start, likely missing cap_rt channel service"
+		atf_skip "service did not start, likely missing mac_capability channel service"
 	fi
 	child_pid=$(cat subtree-child.pid)
 
@@ -708,7 +708,7 @@ EOF
 	unset ORACLED_SHOULD_NOT_LEAK
 	if ! wait_for_file env-probe.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start, likely missing cap_rt channel service"
+		atf_skip "service did not start, likely missing mac_capability channel service"
 	fi
 
 	atf_check -s exit:0 -o match:"^PATH=/sbin:/bin:/usr/sbin:/usr/bin$" \
@@ -773,10 +773,10 @@ parser_config_boundaries_head()
 }
 parser_config_boundaries_body()
 {
-	require_cap_rt
-	# Previous tests with cap_rt isolation may leave /dev/null blocked.
+	require_mac_capability
+	# Previous tests with mac_capability isolation may leave /dev/null blocked.
 	if ! sh -c ': >/dev/null' 2>/dev/null; then
-		atf_skip "cap_rt isolation contamination from prior test"
+		atf_skip "mac_capability isolation contamination from prior test"
 	fi
 	prepare_paths
 	mkdir -p "$manifestdir"
@@ -917,7 +917,7 @@ EOF
 	start_stress_oracled
 	if ! wait_for_file fd-probe.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start, likely missing cap_rt channel service"
+		atf_skip "service did not start, likely missing mac_capability channel service"
 	fi
 	atf_check -s exit:0 -o match:"^channelfd=3$" grep "^channelfd=" fd-probe.out
 	atf_check -s exit:0 -o match:"^fd=3$" grep "^fd=3$" fd-probe.out
@@ -936,7 +936,7 @@ service_fd_inheritance_contract_head()
 }
 service_fd_inheritance_contract_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 	mkdir -p "$manifestdir"
 	build_fdprobe
@@ -961,7 +961,7 @@ EOF
 	unset ORACLED_SHOULD_NOT_LEAK
 	if ! wait_for_file fd-probe.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start, likely missing cap_rt channel service"
+		atf_skip "service did not start, likely missing mac_capability channel service"
 	fi
 	atf_check -s exit:0 -o match:"^label=fd-contract$" grep "^label=" fd-probe.out
 	atf_check -s exit:0 -o match:"^channelfd=3$" grep "^channelfd=" fd-probe.out
@@ -1002,21 +1002,21 @@ sandbox_capprotect_denies_foreign_ptrace_cleanup()
 	cleanup_common
 }
 
-atf_test_case sandbox_isolation_denies_foreign_cap_rt_open cleanup
-sandbox_isolation_denies_foreign_cap_rt_open_head()
+atf_test_case sandbox_isolation_denies_foreign_mac_capability_open cleanup
+sandbox_isolation_denies_foreign_mac_capability_open_head()
 {
-	atf_set "descr" "cap_rt isolation denies a foreign process opening /dev/cap_rt while oracled owns it"
+	atf_set "descr" "mac_capability isolation denies a foreign process opening /dev/mac_capability while oracled owns it"
 	atf_set "require.user" "root"
 }
-sandbox_isolation_denies_foreign_cap_rt_open_body()
+sandbox_isolation_denies_foreign_mac_capability_open_body()
 {
 	manifestdir="$(pwd)/serviced.d"
 	mkdir -p "$manifestdir"
 	start_stress_oracled
-	atf_check -s not-exit:0 -e ignore sh -c 'cat /dev/cap_rt >/dev/null'
+	atf_check -s not-exit:0 -e ignore sh -c 'cat /dev/mac_capability >/dev/null'
 	assert_daemon_alive
 }
-sandbox_isolation_denies_foreign_cap_rt_open_cleanup()
+sandbox_isolation_denies_foreign_mac_capability_open_cleanup()
 {
 	cleanup_common
 }
@@ -1072,7 +1072,7 @@ EOF
 	start_stress_oracled
 	if ! sh -c "i=0; while ! grep -q 'service die-signal: started pid' '$logfile' && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service die-signal: started pid' '$logfile'"; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start, likely missing cap_rt channel service"
+		atf_skip "service did not start, likely missing mac_capability channel service"
 	fi
 	atf_check -s exit:0 -o ignore sh -c \
 	    "i=0; while ! grep -q 'service die-signal: failed .* disabling' '$logfile' && [ \$i -lt 300 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service die-signal: failed .* disabling' '$logfile'"
@@ -1575,7 +1575,7 @@ bootstrap_bad_service_manager_head()
 }
 bootstrap_bad_service_manager_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 	cat > "$conffile" <<EOF
 pidfile = "$pidfile";
@@ -1624,7 +1624,7 @@ startup_cycle_fatal_but_healthy_head()
 }
 startup_cycle_fatal_but_healthy_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	# Create two manifests with a cycle
@@ -1722,7 +1722,7 @@ atf_init_test_cases()
 	atf_add_test_case service_channel_fd_contract
 	atf_add_test_case service_fd_inheritance_contract
 	atf_add_test_case sandbox_capprotect_denies_foreign_ptrace
-	atf_add_test_case sandbox_isolation_denies_foreign_cap_rt_open
+	atf_add_test_case sandbox_isolation_denies_foreign_mac_capability_open
 	atf_add_test_case control_payload_and_fragment_abuse
 	atf_add_test_case crash_throttle_mixed_exit_modes
 

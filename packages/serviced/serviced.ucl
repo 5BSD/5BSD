@@ -30,7 +30,7 @@ comment = "5BSD capability-aware service manager daemon"
 desc = <<EOD
 serviced is the 5BSD capability-aware service manager daemon.  It scans
 /Capabilities/System and /Capabilities for .cap bundles, manages service
-lifecycles, enforces Capsicum capability delegation via cap_rt(4), and
+lifecycles, enforces Capsicum capability delegation via mac_capability(4), and
 supports hot-reload.
 
 This package provides the serviced(8) daemon for managing capability-based

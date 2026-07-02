@@ -3579,220 +3579,6 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 2;
 		break;
 	}
-	/* cap_fchmod */
-	case 606: {
-		struct cap_fchmod_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		iarg[a++] = p->mode; /* mode_t */
-		*n_args = 2;
-		break;
-	}
-	/* cap_fchown */
-	case 607: {
-		struct cap_fchown_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		uarg[a++] = p->uid; /* uid_t */
-		iarg[a++] = p->gid; /* gid_t */
-		*n_args = 3;
-		break;
-	}
-	/* cap_fchflags */
-	case 608: {
-		struct cap_fchflags_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		uarg[a++] = p->flags; /* u_long */
-		*n_args = 2;
-		break;
-	}
-	/* cap_futimes */
-	case 609: {
-		struct cap_futimes_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		uarg[a++] = (intptr_t)p->times; /* const struct timeval * */
-		*n_args = 2;
-		break;
-	}
-	/* cap___acl_get_fd */
-	case 610: {
-		struct cap___acl_get_fd_args *p = params;
-		iarg[a++] = p->filedes; /* int */
-		iarg[a++] = p->type; /* __acl_type_t */
-		uarg[a++] = (intptr_t)p->aclp; /* struct acl * */
-		*n_args = 3;
-		break;
-	}
-	/* cap___acl_set_fd */
-	case 611: {
-		struct cap___acl_set_fd_args *p = params;
-		iarg[a++] = p->filedes; /* int */
-		iarg[a++] = p->type; /* __acl_type_t */
-		uarg[a++] = (intptr_t)p->aclp; /* const struct acl * */
-		*n_args = 3;
-		break;
-	}
-	/* cap___acl_delete_fd */
-	case 612: {
-		struct cap___acl_delete_fd_args *p = params;
-		iarg[a++] = p->filedes; /* int */
-		iarg[a++] = p->type; /* __acl_type_t */
-		*n_args = 2;
-		break;
-	}
-	/* cap_extattr_set_fd */
-	case 613: {
-		struct cap_extattr_set_fd_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		iarg[a++] = p->attrnamespace; /* int */
-		uarg[a++] = (intptr_t)p->attrname; /* const char * */
-		uarg[a++] = (intptr_t)p->data; /* void * */
-		uarg[a++] = p->nbytes; /* size_t */
-		*n_args = 5;
-		break;
-	}
-	/* cap_extattr_get_fd */
-	case 614: {
-		struct cap_extattr_get_fd_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		iarg[a++] = p->attrnamespace; /* int */
-		uarg[a++] = (intptr_t)p->attrname; /* const char * */
-		uarg[a++] = (intptr_t)p->data; /* void * */
-		uarg[a++] = p->nbytes; /* size_t */
-		*n_args = 5;
-		break;
-	}
-	/* cap_extattr_delete_fd */
-	case 615: {
-		struct cap_extattr_delete_fd_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		iarg[a++] = p->attrnamespace; /* int */
-		uarg[a++] = (intptr_t)p->attrname; /* const char * */
-		*n_args = 3;
-		break;
-	}
-	/* cap_extattr_list_fd */
-	case 616: {
-		struct cap_extattr_list_fd_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		iarg[a++] = p->attrnamespace; /* int */
-		uarg[a++] = (intptr_t)p->data; /* void * */
-		uarg[a++] = p->nbytes; /* size_t */
-		*n_args = 4;
-		break;
-	}
-	/* cap_fstatfs */
-	case 617: {
-		struct cap_fstatfs_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		uarg[a++] = (intptr_t)p->buf; /* struct statfs * */
-		*n_args = 2;
-		break;
-	}
-	/* cap_bind */
-	case 618: {
-		struct cap_bind_args *p = params;
-		iarg[a++] = p->s; /* int */
-		uarg[a++] = (intptr_t)p->name; /* const struct sockaddr * */
-		iarg[a++] = p->namelen; /* __socklen_t */
-		*n_args = 3;
-		break;
-	}
-	/* cap_listen */
-	case 619: {
-		struct cap_listen_args *p = params;
-		iarg[a++] = p->s; /* int */
-		iarg[a++] = p->backlog; /* int */
-		*n_args = 2;
-		break;
-	}
-	/* cap_accept */
-	case 620: {
-		struct cap_accept_args *p = params;
-		iarg[a++] = p->s; /* int */
-		uarg[a++] = (intptr_t)p->name; /* struct sockaddr * */
-		uarg[a++] = (intptr_t)p->anamelen; /* __socklen_t * */
-		*n_args = 3;
-		break;
-	}
-	/* cap_connect */
-	case 621: {
-		struct cap_connect_args *p = params;
-		iarg[a++] = p->s; /* int */
-		uarg[a++] = (intptr_t)p->name; /* const struct sockaddr * */
-		iarg[a++] = p->namelen; /* __socklen_t */
-		*n_args = 3;
-		break;
-	}
-	/* cap_sendmsg */
-	case 622: {
-		struct cap_sendmsg_args *p = params;
-		iarg[a++] = p->s; /* int */
-		uarg[a++] = (intptr_t)p->msg; /* const struct msghdr * */
-		iarg[a++] = p->flags; /* int */
-		*n_args = 3;
-		break;
-	}
-	/* cap_recvmsg */
-	case 623: {
-		struct cap_recvmsg_args *p = params;
-		iarg[a++] = p->s; /* int */
-		uarg[a++] = (intptr_t)p->msg; /* struct msghdr * */
-		iarg[a++] = p->flags; /* int */
-		*n_args = 3;
-		break;
-	}
-	/* cap_setsockopt */
-	case 624: {
-		struct cap_setsockopt_args *p = params;
-		iarg[a++] = p->s; /* int */
-		iarg[a++] = p->level; /* int */
-		iarg[a++] = p->name; /* int */
-		uarg[a++] = (intptr_t)p->val; /* const void * */
-		iarg[a++] = p->valsize; /* __socklen_t */
-		*n_args = 5;
-		break;
-	}
-	/* cap_ioctl */
-	case 625: {
-		struct cap_ioctl_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		uarg[a++] = p->com; /* u_long */
-		uarg[a++] = (intptr_t)p->data; /* char * */
-		*n_args = 3;
-		break;
-	}
-	/* cap_mmap */
-	case 626: {
-		struct cap_mmap_args *p = params;
-		uarg[a++] = (intptr_t)p->addr; /* void * */
-		uarg[a++] = p->len; /* size_t */
-		iarg[a++] = p->prot; /* int */
-		iarg[a++] = p->flags; /* int */
-		iarg[a++] = p->fd; /* int */
-		iarg[a++] = p->pos; /* off_t */
-		*n_args = 6;
-		break;
-	}
-	/* cap_sendfile */
-	case 627: {
-		struct cap_sendfile_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		iarg[a++] = p->s; /* int */
-		iarg[a++] = p->offset; /* off_t */
-		uarg[a++] = p->nbytes; /* size_t */
-		uarg[a++] = (intptr_t)p->hdtr; /* struct sf_hdtr * */
-		uarg[a++] = (intptr_t)p->sbytes; /* off_t * */
-		iarg[a++] = p->flags; /* int */
-		*n_args = 7;
-		break;
-	}
-	/* cap_ftruncate */
-	case 628: {
-		struct cap_ftruncate_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		iarg[a++] = p->length; /* off_t */
-		*n_args = 2;
-		break;
-	}
 	/* cap_ambient_limit */
 	case 629: {
 		struct cap_ambient_limit_args *p = params;
@@ -3815,6 +3601,27 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		iarg[a++] = p->fd2; /* int */
 		uarg[a++] = (intptr_t)p->result; /* int * */
 		*n_args = 3;
+		break;
+	}
+	/* pdincapmode */
+	case 633: {
+		struct pdincapmode_args *p = params;
+		iarg[a++] = p->fd; /* int */
+		*n_args = 1;
+		break;
+	}
+	/* cap_mmap_capmode */
+	case 634: {
+		struct cap_mmap_capmode_args *p = params;
+		iarg[a++] = p->fd; /* int */
+		*n_args = 1;
+		break;
+	}
+	/* cap_lookup_capmode */
+	case 635: {
+		struct cap_lookup_capmode_args *p = params;
+		iarg[a++] = p->fd; /* int */
+		*n_args = 1;
 		break;
 	}
 	default:
@@ -9822,395 +9629,6 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
-	/* cap_fchmod */
-	case 606:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "mode_t";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_fchown */
-	case 607:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "uid_t";
-			break;
-		case 2:
-			p = "gid_t";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_fchflags */
-	case 608:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "u_long";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_futimes */
-	case 609:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "userland const struct timeval *";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap___acl_get_fd */
-	case 610:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "__acl_type_t";
-			break;
-		case 2:
-			p = "userland struct acl *";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap___acl_set_fd */
-	case 611:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "__acl_type_t";
-			break;
-		case 2:
-			p = "userland const struct acl *";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap___acl_delete_fd */
-	case 612:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "__acl_type_t";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_extattr_set_fd */
-	case 613:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "int";
-			break;
-		case 2:
-			p = "userland const char *";
-			break;
-		case 3:
-			p = "userland void *";
-			break;
-		case 4:
-			p = "size_t";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_extattr_get_fd */
-	case 614:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "int";
-			break;
-		case 2:
-			p = "userland const char *";
-			break;
-		case 3:
-			p = "userland void *";
-			break;
-		case 4:
-			p = "size_t";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_extattr_delete_fd */
-	case 615:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "int";
-			break;
-		case 2:
-			p = "userland const char *";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_extattr_list_fd */
-	case 616:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "int";
-			break;
-		case 2:
-			p = "userland void *";
-			break;
-		case 3:
-			p = "size_t";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_fstatfs */
-	case 617:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "userland struct statfs *";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_bind */
-	case 618:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "userland const struct sockaddr *";
-			break;
-		case 2:
-			p = "__socklen_t";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_listen */
-	case 619:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "int";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_accept */
-	case 620:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "userland struct sockaddr *";
-			break;
-		case 2:
-			p = "userland __socklen_t *";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_connect */
-	case 621:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "userland const struct sockaddr *";
-			break;
-		case 2:
-			p = "__socklen_t";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_sendmsg */
-	case 622:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "userland const struct msghdr *";
-			break;
-		case 2:
-			p = "int";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_recvmsg */
-	case 623:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "userland struct msghdr *";
-			break;
-		case 2:
-			p = "int";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_setsockopt */
-	case 624:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "int";
-			break;
-		case 2:
-			p = "int";
-			break;
-		case 3:
-			p = "userland const void *";
-			break;
-		case 4:
-			p = "__socklen_t";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_ioctl */
-	case 625:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "u_long";
-			break;
-		case 2:
-			p = "userland char *";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_mmap */
-	case 626:
-		switch (ndx) {
-		case 0:
-			p = "userland void *";
-			break;
-		case 1:
-			p = "size_t";
-			break;
-		case 2:
-			p = "int";
-			break;
-		case 3:
-			p = "int";
-			break;
-		case 4:
-			p = "int";
-			break;
-		case 5:
-			p = "off_t";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_sendfile */
-	case 627:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "int";
-			break;
-		case 2:
-			p = "off_t";
-			break;
-		case 3:
-			p = "size_t";
-			break;
-		case 4:
-			p = "userland struct sf_hdtr *";
-			break;
-		case 5:
-			p = "userland off_t *";
-			break;
-		case 6:
-			p = "int";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* cap_ftruncate */
-	case 628:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "off_t";
-			break;
-		default:
-			break;
-		};
-		break;
 	/* cap_ambient_limit */
 	case 629:
 		switch (ndx) {
@@ -10245,6 +9663,36 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		case 2:
 			p = "userland int *";
+			break;
+		default:
+			break;
+		};
+		break;
+	/* pdincapmode */
+	case 633:
+		switch (ndx) {
+		case 0:
+			p = "int";
+			break;
+		default:
+			break;
+		};
+		break;
+	/* cap_mmap_capmode */
+	case 634:
+		switch (ndx) {
+		case 0:
+			p = "int";
+			break;
+		default:
+			break;
+		};
+		break;
+	/* cap_lookup_capmode */
+	case 635:
+		switch (ndx) {
+		case 0:
+			p = "int";
 			break;
 		default:
 			break;
@@ -12293,121 +11741,6 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
-	/* cap_fchmod */
-	case 606:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_fchown */
-	case 607:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_fchflags */
-	case 608:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_futimes */
-	case 609:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap___acl_get_fd */
-	case 610:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap___acl_set_fd */
-	case 611:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap___acl_delete_fd */
-	case 612:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_extattr_set_fd */
-	case 613:
-		if (ndx == 0 || ndx == 1)
-			p = "ssize_t";
-		break;
-	/* cap_extattr_get_fd */
-	case 614:
-		if (ndx == 0 || ndx == 1)
-			p = "ssize_t";
-		break;
-	/* cap_extattr_delete_fd */
-	case 615:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_extattr_list_fd */
-	case 616:
-		if (ndx == 0 || ndx == 1)
-			p = "ssize_t";
-		break;
-	/* cap_fstatfs */
-	case 617:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_bind */
-	case 618:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_listen */
-	case 619:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_accept */
-	case 620:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_connect */
-	case 621:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_sendmsg */
-	case 622:
-		if (ndx == 0 || ndx == 1)
-			p = "ssize_t";
-		break;
-	/* cap_recvmsg */
-	case 623:
-		if (ndx == 0 || ndx == 1)
-			p = "ssize_t";
-		break;
-	/* cap_setsockopt */
-	case 624:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_ioctl */
-	case 625:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_mmap */
-	case 626:
-		if (ndx == 0 || ndx == 1)
-			p = "void *";
-		break;
-	/* cap_sendfile */
-	case 627:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_ftruncate */
-	case 628:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
 	/* cap_ambient_limit */
 	case 629:
 		if (ndx == 0 || ndx == 1)
@@ -12420,6 +11753,21 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* pdcmp */
 	case 631:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* pdincapmode */
+	case 633:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* cap_mmap_capmode */
+	case 634:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* cap_lookup_capmode */
+	case 635:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

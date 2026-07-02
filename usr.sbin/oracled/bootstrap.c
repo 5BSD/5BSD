@@ -6,7 +6,7 @@
  * Bootstrap supervisor for serviced.
  *
  * The oracle starts serviced as its single child via pdfork().
- * The child inherits one end of a cap_rt channel on fd 3.  The oracle
+ * The child inherits one end of a mac_capability channel on fd 3.  The oracle
  * monitors the process descriptor and restarts serviced on crash
  * with exponential backoff.
  */
@@ -244,7 +244,7 @@ bootstrap_start(int kq)
 	}
 
 	/* Create channel. */
-	if (cap_rt_create_channel(&oracle_end, &child_end) == -1) {
+	if (mac_capability_create_channel(&oracle_end, &child_end) == -1) {
 		syslog(LOG_ERR, "bootstrap: failed to create channel");
 		return (-1);
 	}
@@ -253,17 +253,17 @@ bootstrap_start(int kq)
 	 * Create service instance fds so serviced can create channels,
 	 * coalitions, and shield itself without round-tripping through
 	 * the oracle protocol.  These are mintable service instances —
-	 * serviced calls CAP_RT_MINT_INSTANCE on them to get fresh
+	 * serviced calls MAC_CAPABILITY_MINT_INSTANCE on them to get fresh
 	 * instances for each service it launches.
 	 */
-	dfds.channel_svc_fd = cap_rt_connect_for_delegate("channel");
+	dfds.channel_svc_fd = mac_capability_connect_for_delegate("channel");
 	if (dfds.channel_svc_fd == -1) {
 		syslog(LOG_ERR, "bootstrap: channel service not available");
 		close(oracle_end);
 		close(child_end);
 		return (-1);
 	}
-	dfds.coalition_svc_fd = cap_rt_connect_for_delegate("coalition");
+	dfds.coalition_svc_fd = mac_capability_connect_for_delegate("coalition");
 	if (dfds.coalition_svc_fd == -1) {
 		syslog(LOG_ERR, "bootstrap: coalition service not available");
 		close(oracle_end);
@@ -271,7 +271,7 @@ bootstrap_start(int kq)
 		close(dfds.channel_svc_fd);
 		return (-1);
 	}
-	dfds.capprotect_fd = cap_rt_connect_for_delegate("capprotect");
+	dfds.capprotect_fd = mac_capability_connect_for_delegate("capprotect");
 	if (dfds.capprotect_fd == -1) {
 		syslog(LOG_ERR, "bootstrap: capprotect service not available");
 		close(oracle_end);
@@ -280,7 +280,7 @@ bootstrap_start(int kq)
 		close(dfds.coalition_svc_fd);
 		return (-1);
 	}
-	dfds.identity_fd = cap_rt_connect_for_delegate("identity");
+	dfds.identity_fd = mac_capability_connect_for_delegate("identity");
 	if (dfds.identity_fd == -1) {
 		/* Identity is optional — on-demand attribution is degraded. */
 		syslog(LOG_WARNING,
@@ -483,7 +483,7 @@ bootstrap_handle_exit(struct kevent *kev, int kq)
 
 /*
  * Handle restart timer expiry.  If bootstrap_start still fails
- * (e.g. binary missing, cap_rt unavailable), reschedule with
+ * (e.g. binary missing, mac_capability unavailable), reschedule with
  * backoff rather than leaving serviced permanently dead.
  */
 void

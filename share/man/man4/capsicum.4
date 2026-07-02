@@ -24,7 +24,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd January 23, 2026
+.Dd June 27, 2026
 .Dt CAPSICUM 4
 .Os
 .Sh NAME
@@ -69,13 +69,23 @@ cleared.
 Access to system calls in capability mode is restricted: some system calls
 requiring global namespace access are unavailable, while others are
 constrained.
-Conversely, capability mode unlocks capability-pure system call variants
-that are unavailable outside capability mode.
-These variants perform only capability rights checks on descriptors,
-with no ambient authority checks such as MAC policy, jail confinement,
-or credential re-validation.
-Outside capability mode, these system calls return
-.Er ENOTCAPABLE .
+The only system call that requires capability mode to invoke is
+.Xr pdself 2 ,
+which returns a process descriptor for the calling process.
+.Pp
+Instead of separate capability-mode system call variants,
+.Nm
+uses the per-descriptor
+.Dv UF_CAP_SUFFICIENT
+flag to bypass ambient authority checks.
+When a capability-mode process operates on a descriptor that has
+.Dv UF_CAP_SUFFICIENT
+set, MAC policy, DAC credential re-validation, and jail confinement
+checks are skipped \(em the descriptor's capability rights are treated
+as sufficient authority.
+The flag may be set directly on individual descriptors via
+.Xr cap_ambient_limit 2 .
+.Pp
 For instance,
 .Xr sysctl 2
 can be used to query process-local information such as address space layout,
@@ -127,6 +137,58 @@ a descriptor's transfer state can be set to single-use
 or fully locked
 .Pq Dv CAP_XFER_NONE .
 Transfer state is orthogonal to capability rights.
+.Pp
+.Xr cap_mmap_capmode 2
+sets a monotonic per-descriptor flag that requires the calling process
+to be in capability mode before the descriptor may be mapped with
+.Xr mmap 2 .
+This is useful for shared memory descriptors that should only be
+accessible to sandboxed processes.
+.Pp
+.Xr cap_lookup_capmode 2
+sets a monotonic per-descriptor flag on a directory descriptor that
+requires the calling process to be in capability mode before the
+descriptor may be used as the
+.Fa dirfd
+argument to any
+.Xr \&*at 2
+system call.
+.It Dv LOCAL_CAP_REQ
+The
+.Dv LOCAL_CAP_REQ
+socket option
+.Pq set via Xr setsockopt 2 on Dv SOL_LOCAL
+requires the calling process to be in capability mode to send or receive
+on that socket end.
+It is monotonic and cannot be cleared.
+This allows per-end control on socketpairs: the supervisor sets
+.Dv LOCAL_CAP_REQ
+on the child's end before delegating it.
+.It connection-level capability enforcement
+The
+.Dv LOCAL_CAP_CONNECT
+.Ux Ns -domain
+socket option
+.Pq see Xr unix 4
+restricts connections to a listening socket so that only processes in
+capability mode may connect.
+Attempts to
+.Xr connect 2
+from a process not in capability mode fail with
+.Er ENOTCAPABLE .
+The option is monotonic and cannot be cleared once set.
+.Pp
+The complementary
+.Dv LOCAL_CAPMODE_SERVER
+option is set on the client socket before connecting.
+It requires that the listening socket was created by a process in
+capability mode.
+If the server is not in capability mode,
+.Xr connect 2
+fails with
+.Er ENOTCAPABLE .
+Together these options provide mutual attestation between sandboxed
+peers.
 .El
 .Pp
 In some cases,
@@ -169,25 +231,33 @@ A library that provides services for sandboxed applications, such as operating
 on files specified on a command line or establishing network connections.
 .El
 .Sh SEE ALSO
+.Xr cap_cloexec_limit 2 ,
+.Xr cap_clofork_limit 2 ,
 .Xr cap_enter 2 ,
 .Xr cap_fcntls_limit 2 ,
 .Xr cap_getmode 2 ,
 .Xr cap_ioctls_limit 2 ,
+.Xr cap_lookup_capmode 2 ,
+.Xr cap_mmap_capmode 2 ,
 .Xr cap_rights_limit 2 ,
 .Xr cap_xfer_limit 2 ,
 .Xr fchmod 2 ,
 .Xr open 2 ,
 .Xr pdfork 2 ,
 .Xr pdgetpid 2 ,
+.Xr pdincapmode 2 ,
 .Xr pdkill 2 ,
+.Xr pdself 2 ,
 .Xr pdwait4 2 ,
 .Xr read 2 ,
 .Xr shm_open 2 ,
+.Xr socketpair 2 ,
 .Xr write 2 ,
 .Xr cap_rights_get 3 ,
 .Xr capsicum_helpers 3 ,
 .Xr libcasper 3 ,
-.Xr procdesc 4
+.Xr procdesc 4 ,
+.Xr unix 4
 .Sh HISTORY
 .Nm
 first appeared in

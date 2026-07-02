@@ -615,8 +615,14 @@
 43265:AUE_CLOSERANGE:close_range(2):cl
 43273:AUE_PDRFORK:pdrfork(2):pc
 43274:AUE_CAP_XFER_LIMIT:cap_xfer_limit(2):fm
+43275:AUE_CAP_CLOEXEC_LIMIT:cap_cloexec_limit(2):fm
+43276:AUE_CAP_CLOFORK_LIMIT:cap_clofork_limit(2):fm
+43300:AUE_CAP_AMBIENT_LIMIT:cap_ambient_limit(2):fm
 43301:AUE_PDSELF:pdself(2):pc
 43302:AUE_PDCMP:pdcmp(2):pc
+43304:AUE_PDINCAPMODE:pdincapmode(2):ot
+43305:AUE_CAP_MMAP_CAPMODE:cap_mmap_capmode(2):ot
+43306:AUE_CAP_LOOKUP_CAPMODE:cap_lookup_capmode(2):ot
 #
 # Solaris userspace events.
 #

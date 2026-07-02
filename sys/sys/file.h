@@ -73,7 +73,7 @@ struct nameidata;
 #define	DTYPE_TIMERFD	14	/* timerfd */
 #define	DTYPE_INOTIFY	15	/* inotify descriptor */
 #define	DTYPE_JAILDESC	16	/* jail descriptor */
-#define	DTYPE_CAP_RT	32	/* cap_rt capability descriptor */
+#define	DTYPE_MAC_CAPABILITY	32	/* mac_capability capability descriptor */
 
 #ifdef _KERNEL
 
@@ -85,7 +85,7 @@ struct ucred;
 
 #define	FOF_OFFSET	0x01	/* Use the offset in uio argument */
 #define	FOF_NOLOCK	0x02	/* Do not take FOFFSET_LOCK */
-#define	FOF_NOAMBIENT	0x20	/* Skip MAC checks (capability-pure fd) */
+#define	FOF_CAP_SUFFICIENT 0x20	/* Skip MAC checks (capability-sufficient fd) */
 #define	FOF_NEXTOFF_R	0x04	/* Also update f_nextoff[UIO_READ] */
 #define	FOF_NEXTOFF_W	0x08	/* Also update f_nextoff[UIO_WRITE] */
 #define	FOF_NOUPDATE	0x10	/* Do not update f_offset */
@@ -150,7 +150,7 @@ typedef int fo_spare_t(struct file *fp);
  * Called by kern_ioctl() after cap_ioctl_check() succeeds.
  * The implementation inspects cmd and calls cap_check() against
  * the fd's rights to enforce file-type-specific rights (e.g.
- * CAP_CAP_RT_SEND for cap_rt SENDMSG).
+ * CAP_MAC_CAPABILITY_SEND for mac_capability SENDMSG).
  * Return 0 to allow, ENOTCAPABLE to deny.
  */
 typedef int fo_ioctl_check_t(struct file *fp, u_long cmd,
@@ -286,7 +286,7 @@ extern int maxfilesperproc;	/* per process limit on number of open files */
 int fget(struct thread *td, int fd, const cap_rights_t *rightsp,
     struct file **fpp);
 int fget_mmap(struct thread *td, int fd, const cap_rights_t *rightsp,
-    vm_prot_t *maxprotp, struct file **fpp);
+    vm_prot_t *maxprotp, uint8_t *fde_flagsp, struct file **fpp);
 int fget_read(struct thread *td, int fd, const cap_rights_t *rightsp,
     struct file **fpp);
 int fget_read_fde_flags(struct thread *td, int fd, const cap_rights_t *rightsp,

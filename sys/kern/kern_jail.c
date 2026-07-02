@@ -48,6 +48,7 @@
 #include <sys/proc.h>
 #include <sys/epoch.h>
 #include <sys/event.h>
+#include <sys/procdesc.h>
 #include <sys/taskqueue.h>
 #include <sys/fcntl.h>
 #include <sys/jail.h>
@@ -3209,6 +3210,10 @@ do_jail_attach(struct thread *td, struct prison *pr, int drflags)
 	prison_deref(oldcred->cr_prison, drflags);
 	crfree(oldcred);
 	prison_knote(pr, NOTE_JAIL_ATTACH | td->td_proc->p_pid);
+	/* Notify procdesc listeners that this process entered a jail. */
+	PROC_LOCK(p);
+	procdesc_knote(p, NOTE_JAILED);	/* drops+reacquires PROC_LOCK */
+	PROC_UNLOCK(p);
 #ifdef MAC
 	/*
 	 * Note that mac_prison_attached() assumes that it's called in a

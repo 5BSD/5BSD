@@ -410,8 +410,8 @@ forked children from inheriting a parent's active pairing session.
 
 **oracled/serviced integration:**
 btled can be managed as a serviced bundle — oracled provides supervised
-restart, capability-mediated HCI device access via CAP_RT claims, and
-automatic cleanup on crash. The bond database fd can be a CAP_RT-claimed
+restart, capability-mediated HCI device access via MAC_CAPABILITY claims, and
+automatic cleanup on crash. The bond database fd can be a MAC_CAPABILITY-claimed
 vnode so access is revocable.
 
 These are hardening steps to apply after hardware validation, not
@@ -469,7 +469,7 @@ a multi-client service integrated with serviced and oracled.
   │  └─────────┘  └──────┘  └────────┘  │
   └──────────────────┬───────────────────┘
                      │ raw HCI socket
-                     │ (CAP_RT claimed via oracled)
+                     │ (MAC_CAPABILITY claimed via oracled)
                      v
   ┌──────────────────────────────────────┐
   │           kernel (ng_hci +           │   netgraph stack
@@ -575,9 +575,9 @@ shields: [ptrace, signal, visible, ktrace]
 coalition: btd-workers
 ```
 
-oracled grants btd access to `/dev/ubt0` via a CAP_RT claim.  If btd
+oracled grants btd access to `/dev/ubt0` via a MAC_CAPABILITY claim.  If btd
 crashes, serviced restarts it.  The coalition tears down any worker
-children.  The bond database fd is a CAP_RT-claimed vnode — access
+children.  The bond database fd is a MAC_CAPABILITY-claimed vnode — access
 is revocable if btd is compromised.
 
 ### Inspiration: Darwin/macOS Bluetooth architecture
@@ -668,7 +668,7 @@ This architecture requires serviced to support:
 
 1. **Service name registration** — btd registers as "com.5bsd.bluetooth",
    clients look it up by name to get the Unix socket path.
-2. **CAP_RT claims for devices** — btd claims /dev/ubt0 via oracled.
+2. **MAC_CAPABILITY claims for devices** — btd claims /dev/ubt0 via oracled.
    If the adapter is unplugged/replugged, oracled re-grants access.
 3. **Supervised restart** — if btd crashes, serviced restarts it.
    Clients detect disconnection (Unix socket EOF) and reconnect.
@@ -684,7 +684,7 @@ blocker is the service framework, not the Bluetooth implementation.
 ### Migration path
 
 Phase 1 (current): btled works standalone.  Validate on hardware.
-Phase 2: Verify serviced supports name lookup, CAP_RT, cap_xfer.
+Phase 2: Verify serviced supports name lookup, MAC_CAPABILITY, cap_xfer.
 Phase 3: Extract libble.so from btled's att/gatt/smp/hci code.
 Phase 4: Build btd as a serviced bundle using libble.
 Phase 5: Build btctl on libble.

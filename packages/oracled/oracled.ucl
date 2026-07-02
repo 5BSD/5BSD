@@ -28,7 +28,7 @@
 comment = "5BSD capability oracle daemon and control utility"
 
 desc = <<EOD
-oracled is the 5BSD capability oracle daemon.  It mediates dynamic cap_rt
+oracled is the 5BSD capability oracle daemon.  It mediates dynamic mac_capability
 claim/release between services with reference counting, allowing services to
 negotiate capability access at runtime.
 

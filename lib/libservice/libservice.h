@@ -7,7 +7,7 @@
  *
  * Provides a clean API for services to communicate with serviced
  * over their inherited pair fd.  Services link against libservice
- * and never need to know about cap_rt ioctls.
+ * and never need to know about mac_capability ioctls.
  *
  * Typical usage:
  *
@@ -50,7 +50,7 @@ int	service_init(void);
 int	service_pair_fd(void);
 
 /*
- * Apply cap_rt_capprotect shielding to this service process.
+ * Apply mac_capability_capprotect shielding to this service process.
  * The service must have inherited ORACLED_CAPPROTECT_FD from serviced.
  * A flags value of 0 uses capprotect's default.
  */

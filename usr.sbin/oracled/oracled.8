@@ -18,9 +18,9 @@
 .Nm
 is the system authority daemon for the Oracle capability world.
 It claims system resources exclusively via the
-.Xr cap_rt 4
-capability runtime, protects its own integrity via
-.Xr cap_rt_capprotect 4 ,
+.Xr mac_capability 4
+MAC capability, protects its own integrity via
+.Xr mac_capability_capprotect 4 ,
 and manages a single bootstrap child process, typically
 .Xr serviced 8 ,
 which reads capability bundles and supervises individual services.
@@ -29,7 +29,7 @@ which reads capability bundles and supervises individual services.
 does not start or manage services directly.
 It mints capability tokens on request from
 .Xr serviced 8
-via the oracle protocol, a message-passing channel over a cap_rt
+via the oracle protocol, a message-passing channel over a mac_capability
 channel descriptor.
 .Pp
 .Nm
@@ -58,17 +58,17 @@ Harden the process via
 (subtree reaper, OOM protection, trace disable, signal-exit logging).
 .It
 Open
-.Pa /dev/cap_rt
+.Pa /dev/mac_capability
 and claim configured resources via the
-.Xr cap_rt_isolation 4
+.Xr mac_capability_isolation 4
 service.
 .It
 Claim system gates via the
-.Xr cap_rt_system 4
+.Xr mac_capability_system 4
 service.
 .It
 Activate the
-.Xr cap_rt_capprotect 4
+.Xr mac_capability_capprotect 4
 shield with the flags specified in the configuration file.
 .It
 Create a control socket for administrative commands.
@@ -106,7 +106,7 @@ setting in the configuration file.
 .It Fl T
 Test mode.
 Run in the foreground without daemonizing, without
-.Xr cap_rt 4
+.Xr mac_capability 4
 or control socket hardening.
 Manifests are parsed but services are not launched.
 Intended for automated tests.
@@ -154,7 +154,7 @@ Default: empty.
 The
 .Va integrity
 section controls
-.Xr cap_rt_capprotect 4
+.Xr mac_capability_capprotect 4
 flags that protect
 .Nm
 from external interference.
@@ -204,11 +204,11 @@ Resources listed here are
 claimed exclusively by
 .Nm
 at boot via the
-.Xr cap_rt_isolation 4
+.Xr mac_capability_isolation 4
 service.
 Once claimed, MACF hooks deny access from all other processes,
 including root.
-.Pa /dev/cap_rt
+.Pa /dev/mac_capability
 is always claimed automatically.
 .Pp
 Claim limits: at most 64 paths, 32 network claims, and 32 jail claims.
@@ -327,7 +327,7 @@ and optionally
 Default: empty.
 .It Va system
 Array of system operation names to gate via the
-.Xr cap_rt_system 4
+.Xr mac_capability_system 4
 service.
 Once claimed, even root is denied unless holding an authorized
 token from
@@ -577,8 +577,8 @@ as its single child process.
 Default pidfile.
 .It Pa /var/run/oracled.sock
 Default control socket (mode 0700).
-.It Pa /dev/cap_rt
-CAP_RT control device, claimed exclusively by
+.It Pa /dev/mac_capability
+MAC_CAPABILITY control device, claimed exclusively by
 .Nm
 at startup.
 .El
@@ -588,7 +588,7 @@ at startup.
 .Nm
 exits with an error if the configuration file contains syntax errors,
 if the pidfile cannot be acquired, or if required
-.Xr cap_rt 4
+.Xr mac_capability 4
 operations fail.
 .Sh EXAMPLES
 Minimal configuration with default claims:
@@ -649,10 +649,10 @@ claims {
 .Xr kqueue 2 ,
 .Xr pdfork 2 ,
 .Xr procctl 2 ,
-.Xr cap_rt 4 ,
-.Xr cap_rt_capprotect 4 ,
-.Xr cap_rt_isolation 4 ,
-.Xr cap_rt_system 4 ,
+.Xr mac_capability 4 ,
+.Xr mac_capability_capprotect 4 ,
+.Xr mac_capability_isolation 4 ,
+.Xr mac_capability_system 4 ,
 .Xr serviced 8
 .Sh HISTORY
 .Nm

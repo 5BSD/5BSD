@@ -226,7 +226,7 @@ typedef struct oaiocb {
 
 /* ioflags */
 #define	KAIOCB_IO_FOFFSET	0x01
-#define	KAIOCB_IO_NOAMBIENT	0x02
+#define	KAIOCB_IO_CAP_SUFFICIENT	0x02
 
 /*
  * AIO process info
@@ -806,8 +806,8 @@ aio_process_rw(struct kaiocb *job)
 
 		fof_flags = (job->ioflags & KAIOCB_IO_FOFFSET) != 0 ?
 		    0 : FOF_OFFSET;
-		if (job->ioflags & KAIOCB_IO_NOAMBIENT)
-			fof_flags |= FOF_NOAMBIENT;
+		if (job->ioflags & KAIOCB_IO_CAP_SUFFICIENT)
+			fof_flags |= FOF_CAP_SUFFICIENT;
 		if (opcode == LIO_READ || opcode == LIO_READV) {
 			if (job->uiop->uio_resid == 0)
 				error = 0;
@@ -1623,8 +1623,8 @@ aio_aqueue(struct thread *td, struct aiocb *ujob, struct aioliojob *lj,
 		error = EINVAL;
 	}
 #ifdef CAPABILITY_MODE
-	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_NOAMBIENT))
-		job->ioflags |= KAIOCB_IO_NOAMBIENT;
+	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_CAP_SUFFICIENT))
+		job->ioflags |= KAIOCB_IO_CAP_SUFFICIENT;
 #endif
 	}
 	if (error)

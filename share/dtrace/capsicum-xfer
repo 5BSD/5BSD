@@ -1,0 +1,63 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * capsicum-xfer -- trace Capsicum capability transfer and capmode flag
+ * operations.
+ *
+ * Shows when cap_mmap_capmode and cap_lookup_capmode set
+ * their respective flags, and traces SCM_RIGHTS send/recv operations.
+ *
+ * Usage: capsicum-xfer
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-6s %-6s %-8s %-24s %s\n",
+	    "PID", "UID", "GID", "FD", "EVENT", "DETAIL");
+}
+
+/*
+ * arg0=fd, arg1=pid, arg2=ucred, arg3=type, arg4=errno, arg5=old_state
+ */
+
+capsicum:::mmap__capmode
+{
+	printf("%-6d %-6d %-6d %-8d %-24s errno=%d old_state=%d\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0,
+	    "MMAP-CAPMODE-SET", arg4, arg5);
+}
+
+capsicum:::lookup__capmode
+{
+	printf("%-6d %-6d %-6d %-8d %-24s errno=%d old_state=%d\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0,
+	    "LOOKUP-CAPMODE-SET", arg4, arg5);
+}
+
+/*
+ * SCM_RIGHTS probes: arg0=file*, arg1=fd, arg2=pid, arg3=ucred,
+ * arg4=f_type, arg5=count
+ */
+
+fd:::scm__rights__send
+{
+	printf("%-6d %-6d %-6d %-8d %-24s type=%d count=%d\n",
+	    arg2, ((struct ucred *)arg3)->cr_uid,
+	    ((struct ucred *)arg3)->cr_gid, arg1,
+	    "SCM-RIGHTS-SEND", arg4, arg5);
+}
+
+fd:::scm__rights__recv
+{
+	printf("%-6d %-6d %-6d %-8d %-24s type=%d count=%d\n",
+	    arg2, ((struct ucred *)arg3)->cr_uid,
+	    ((struct ucred *)arg3)->cr_gid, arg1,
+	    "SCM-RIGHTS-RECV", arg4, arg5);
+}

@@ -91,7 +91,7 @@ shutdown_finish(void)
 		kill_subtree();
 	reap_children();
 	ctl_teardown();
-	cap_rt_teardown();
+	mac_capability_teardown();
 	pidfile_remove(od.pidfh);
 
 	{
@@ -130,7 +130,7 @@ sighup_reload(void)
 	config_init_defaults(&newcfg);
 	if (config_load(&newcfg, od.conffile) == 0) {
 		if (!od.test_mode)
-			cap_rt_reload_claims(&newcfg);
+			mac_capability_reload_claims(&newcfg);
 		config_apply_claims(&newcfg);
 	} else {
 		syslog(LOG_WARNING,
@@ -174,7 +174,7 @@ event_loop(void)
 		}
 	}
 
-	/* Start serviced as our single child (requires cap_rt). */
+	/* Start serviced as our single child (requires mac_capability). */
 	if (!od.test_mode) {
 		if (bootstrap_start(kq) == -1)
 			syslog(LOG_ERR, "bootstrap: initial start failed, "

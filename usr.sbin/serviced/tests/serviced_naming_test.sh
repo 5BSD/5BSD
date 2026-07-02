@@ -54,7 +54,7 @@ build_ready_service()
 #include <string.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
-#include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
 
 #define SVC_OP_READY 1
 
@@ -63,8 +63,8 @@ struct svc_reply { int32_t status; };
 
 int main(void)
 {
-	struct cap_rt_sendmsg_args sa;
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_sendmsg_args sa;
+	struct mac_capability_recvmsg_args ra;
 	struct svc_req_hdr req;
 	struct svc_reply rpl;
 	const char *fd_str;
@@ -80,13 +80,13 @@ int main(void)
 	sa.payload = &req;
 	sa.payload_len = sizeof(req);
 	sa.reply_token = 1;
-	if (ioctl(channel_fd, CAP_RT_SENDMSG, &sa) == -1)
+	if (ioctl(channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1)
 		return 1;
 
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = &rpl;
 	ra.payload_len = sizeof(rpl);
-	if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == -1)
+	if (ioctl(channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1)
 		return 1;
 
 	out = fopen("ready-ok.out", "w");
@@ -114,7 +114,7 @@ build_provider_service()
 #include <string.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
-#include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
 
 #define SVC_OP_READY      1
 #define SVC_OP_REGISTER   2
@@ -138,19 +138,19 @@ static int
 send_recv(int fd, const void *req, uint32_t reqlen, uint64_t token,
     struct svc_reply *rpl)
 {
-	struct cap_rt_sendmsg_args sa;
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_sendmsg_args sa;
+	struct mac_capability_recvmsg_args ra;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = req;
 	sa.payload_len = reqlen;
 	sa.reply_token = token;
-	if (ioctl(fd, CAP_RT_SENDMSG, &sa) == -1) return -1;
+	if (ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) return -1;
 
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = rpl;
 	ra.payload_len = sizeof(*rpl);
-	if (ioctl(fd, CAP_RT_RECVMSG, &ra) == -1) return -1;
+	if (ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) return -1;
 	return 0;
 }
 
@@ -159,7 +159,7 @@ int main(void)
 	struct svc_req_hdr ready_req;
 	struct svc_register_req reg_req;
 	struct svc_reply rpl;
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_recvmsg_args ra;
 	struct svc_new_client_msg notify;
 	const char *fd_str, *name;
 	int channel_fd, client_fd;
@@ -201,7 +201,7 @@ int main(void)
 	ra.fds = &client_fd;
 	ra.nfds = 1;
 
-	if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == -1)
+	if (ioctl(channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1)
 		return 1;
 
 	out = fopen("provider-client.out", "w");
@@ -213,13 +213,13 @@ int main(void)
 
 	/* Send a greeting over the new client fd. */
 	if (client_fd >= 0) {
-		struct cap_rt_sendmsg_args csa;
+		struct mac_capability_sendmsg_args csa;
 		const char *greeting = "hello from provider";
 
 		memset(&csa, 0, sizeof(csa));
 		csa.payload = greeting;
 		csa.payload_len = strlen(greeting) + 1;
-		(void)ioctl(client_fd, CAP_RT_SENDMSG, &csa);
+		(void)ioctl(client_fd, MAC_CAPABILITY_SENDMSG, &csa);
 		close(client_fd);
 	}
 
@@ -244,7 +244,7 @@ build_client_service()
 #include <string.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
-#include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
 
 #define SVC_OP_READY  1
 #define SVC_OP_LOOKUP 4
@@ -260,8 +260,8 @@ struct svc_reply { int32_t status; };
 
 int main(void)
 {
-	struct cap_rt_sendmsg_args sa;
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_sendmsg_args sa;
+	struct mac_capability_recvmsg_args ra;
 	struct svc_req_hdr ready_req;
 	struct svc_lookup_req lookup_req;
 	struct svc_reply rpl;
@@ -295,11 +295,11 @@ int main(void)
 	sa.payload = &ready_req;
 	sa.payload_len = sizeof(ready_req);
 	sa.reply_token = 1;
-	if (ioctl(channel_fd, CAP_RT_SENDMSG, &sa) == -1) return 1;
+	if (ioctl(channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) return 1;
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = &rpl;
 	ra.payload_len = sizeof(rpl);
-	if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == -1) return 1;
+	if (ioctl(channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) return 1;
 
 	/* Wait for provider to be registered. */
 	sleep(2);
@@ -314,14 +314,14 @@ int main(void)
 	sa.payload = &lookup_req;
 	sa.payload_len = sizeof(lookup_req);
 	sa.reply_token = 2;
-	if (ioctl(channel_fd, CAP_RT_SENDMSG, &sa) == -1) return 1;
+	if (ioctl(channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) return 1;
 
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = &rpl;
 	ra.payload_len = sizeof(rpl);
 	ra.fds = &peer_fd;
 	ra.nfds = 1;
-	if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == -1) return 1;
+	if (ioctl(channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) return 1;
 
 	out = fopen("client-lookup.out", "w");
 	if (out) {
@@ -336,7 +336,7 @@ int main(void)
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = msg;
 	ra.payload_len = sizeof(msg) - 1;
-	if (ioctl(peer_fd, CAP_RT_RECVMSG, &ra) == -1) return 1;
+	if (ioctl(peer_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) return 1;
 
 	out = fopen("client-message.out", "w");
 	if (out) { fprintf(out, "%s\n", msg); fclose(out); }
@@ -374,7 +374,7 @@ EOF
 
 	if ! wait_for_file ready-ok.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start (cap_rt may not be loaded)"
+		atf_skip "service did not start (mac_capability may not be loaded)"
 	fi
 
 	atf_check -s exit:0 -o match:"status=0" cat ready-ok.out
@@ -570,7 +570,7 @@ naming_unauthorized_name_rejected_body()
 #include <string.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
-#include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
 
 #define SVC_OP_READY    1
 #define SVC_OP_REGISTER 2
@@ -588,18 +588,18 @@ static int
 send_recv(int fd, const void *req, uint32_t reqlen, uint64_t token,
     struct svc_reply *rpl)
 {
-	struct cap_rt_sendmsg_args sa;
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_sendmsg_args sa;
+	struct mac_capability_recvmsg_args ra;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = req;
 	sa.payload_len = reqlen;
 	sa.reply_token = token;
-	if (ioctl(fd, CAP_RT_SENDMSG, &sa) == -1) return (-1);
+	if (ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) return (-1);
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = rpl;
 	ra.payload_len = sizeof(*rpl);
-	if (ioctl(fd, CAP_RT_RECVMSG, &ra) == -1) return (-1);
+	if (ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) return (-1);
 	return (0);
 }
 
@@ -684,7 +684,7 @@ naming_self_lookup_eloop_body()
 #include <string.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
-#include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
 
 #define SVC_OP_READY    1
 #define SVC_OP_REGISTER 2
@@ -708,18 +708,18 @@ static int
 send_recv(int fd, const void *req, uint32_t reqlen, uint64_t token,
     struct svc_reply *rpl)
 {
-	struct cap_rt_sendmsg_args sa;
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_sendmsg_args sa;
+	struct mac_capability_recvmsg_args ra;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = req;
 	sa.payload_len = reqlen;
 	sa.reply_token = token;
-	if (ioctl(fd, CAP_RT_SENDMSG, &sa) == -1) return (-1);
+	if (ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) return (-1);
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = rpl;
 	ra.payload_len = sizeof(*rpl);
-	if (ioctl(fd, CAP_RT_RECVMSG, &ra) == -1) return (-1);
+	if (ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) return (-1);
 	return (0);
 }
 

@@ -524,8 +524,13 @@ filt_proc(struct knote *kn, long hint)
 	if (p == NULL) /* already activated, from attach filter */
 		return (0);
 
-	/* Mask off extra data. */
-	event = (u_int)hint & NOTE_PCTRLMASK;
+	/*
+	 * Mask off extra data.  Strip NOTE_KNOTE_SIGNAL which is a
+	 * kernel-internal hint from EVFILT_SIGNAL delivery, not a
+	 * user-visible EVFILT_PROC event.  Its value (0x08000000)
+	 * would collide with NOTE_JAILED under NOTE_PCTRLMASK.
+	 */
+	event = (u_int)hint & NOTE_PCTRLMASK & ~NOTE_KNOTE_SIGNAL;
 
 	/* If the user is interested in this event, record it. */
 	if (kn->kn_sfflags & event)

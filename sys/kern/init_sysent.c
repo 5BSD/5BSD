@@ -672,30 +672,34 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(cap_xfer_limit_args), .sy_call = (sy_call_t *)sys_cap_xfer_limit, .sy_auevent = AUE_CAP_XFER_LIMIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 603 = cap_xfer_limit */
 	{ .sy_narg = AS(cap_cloexec_limit_args), .sy_call = (sy_call_t *)sys_cap_cloexec_limit, .sy_auevent = AUE_CAP_CLOEXEC_LIMIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 604 = cap_cloexec_limit */
 	{ .sy_narg = AS(cap_clofork_limit_args), .sy_call = (sy_call_t *)sys_cap_clofork_limit, .sy_auevent = AUE_CAP_CLOFORK_LIMIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 605 = cap_clofork_limit */
-	{ .sy_narg = AS(cap_fchmod_args), .sy_call = (sy_call_t *)sys_cap_fchmod, .sy_auevent = AUE_CAP_FCHMOD, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 606 = cap_fchmod */
-	{ .sy_narg = AS(cap_fchown_args), .sy_call = (sy_call_t *)sys_cap_fchown, .sy_auevent = AUE_CAP_FCHOWN, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 607 = cap_fchown */
-	{ .sy_narg = AS(cap_fchflags_args), .sy_call = (sy_call_t *)sys_cap_fchflags, .sy_auevent = AUE_CAP_FCHFLAGS, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 608 = cap_fchflags */
-	{ .sy_narg = AS(cap_futimes_args), .sy_call = (sy_call_t *)sys_cap_futimes, .sy_auevent = AUE_CAP_FUTIMES, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 609 = cap_futimes */
-	{ .sy_narg = AS(cap___acl_get_fd_args), .sy_call = (sy_call_t *)sys_cap___acl_get_fd, .sy_auevent = AUE_CAP_ACL_GET_FD, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 610 = cap___acl_get_fd */
-	{ .sy_narg = AS(cap___acl_set_fd_args), .sy_call = (sy_call_t *)sys_cap___acl_set_fd, .sy_auevent = AUE_CAP_ACL_SET_FD, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 611 = cap___acl_set_fd */
-	{ .sy_narg = AS(cap___acl_delete_fd_args), .sy_call = (sy_call_t *)sys_cap___acl_delete_fd, .sy_auevent = AUE_CAP_ACL_DELETE_FD, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 612 = cap___acl_delete_fd */
-	{ .sy_narg = AS(cap_extattr_set_fd_args), .sy_call = (sy_call_t *)sys_cap_extattr_set_fd, .sy_auevent = AUE_CAP_EXTATTR_SET_FD, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 613 = cap_extattr_set_fd */
-	{ .sy_narg = AS(cap_extattr_get_fd_args), .sy_call = (sy_call_t *)sys_cap_extattr_get_fd, .sy_auevent = AUE_CAP_EXTATTR_GET_FD, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 614 = cap_extattr_get_fd */
-	{ .sy_narg = AS(cap_extattr_delete_fd_args), .sy_call = (sy_call_t *)sys_cap_extattr_delete_fd, .sy_auevent = AUE_CAP_EXTATTR_DELETE_FD, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 615 = cap_extattr_delete_fd */
-	{ .sy_narg = AS(cap_extattr_list_fd_args), .sy_call = (sy_call_t *)sys_cap_extattr_list_fd, .sy_auevent = AUE_CAP_EXTATTR_LIST_FD, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 616 = cap_extattr_list_fd */
-	{ .sy_narg = AS(cap_fstatfs_args), .sy_call = (sy_call_t *)sys_cap_fstatfs, .sy_auevent = AUE_CAP_FSTATFS, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 617 = cap_fstatfs */
-	{ .sy_narg = AS(cap_bind_args), .sy_call = (sy_call_t *)sys_cap_bind, .sy_auevent = AUE_CAP_BIND, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 618 = cap_bind */
-	{ .sy_narg = AS(cap_listen_args), .sy_call = (sy_call_t *)sys_cap_listen, .sy_auevent = AUE_CAP_LISTEN, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 619 = cap_listen */
-	{ .sy_narg = AS(cap_accept_args), .sy_call = (sy_call_t *)sys_cap_accept, .sy_auevent = AUE_CAP_ACCEPT, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 620 = cap_accept */
-	{ .sy_narg = AS(cap_connect_args), .sy_call = (sy_call_t *)sys_cap_connect, .sy_auevent = AUE_CAP_CONNECT, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 621 = cap_connect */
-	{ .sy_narg = AS(cap_sendmsg_args), .sy_call = (sy_call_t *)sys_cap_sendmsg, .sy_auevent = AUE_CAP_SENDMSG, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 622 = cap_sendmsg */
-	{ .sy_narg = AS(cap_recvmsg_args), .sy_call = (sy_call_t *)sys_cap_recvmsg, .sy_auevent = AUE_CAP_RECVMSG, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 623 = cap_recvmsg */
-	{ .sy_narg = AS(cap_setsockopt_args), .sy_call = (sy_call_t *)sys_cap_setsockopt, .sy_auevent = AUE_CAP_SETSOCKOPT, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 624 = cap_setsockopt */
-	{ .sy_narg = AS(cap_ioctl_args), .sy_call = (sy_call_t *)sys_cap_ioctl, .sy_auevent = AUE_CAP_IOCTL, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 625 = cap_ioctl */
-	{ .sy_narg = AS(cap_mmap_args), .sy_call = (sy_call_t *)sys_cap_mmap, .sy_auevent = AUE_CAP_MMAP, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 626 = cap_mmap */
-	{ .sy_narg = AS(cap_sendfile_args), .sy_call = (sy_call_t *)sys_cap_sendfile, .sy_auevent = AUE_CAP_SENDFILE, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 627 = cap_sendfile */
-	{ .sy_narg = AS(cap_ftruncate_args), .sy_call = (sy_call_t *)sys_cap_ftruncate, .sy_auevent = AUE_CAP_FTRUNCATE, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 628 = cap_ftruncate */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 606 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 607 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 608 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 609 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 610 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 611 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 612 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 613 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 614 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 615 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 616 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 617 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 618 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 619 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 620 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 621 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 622 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 623 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 624 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 625 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 626 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 627 = */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 628 = */
 	{ .sy_narg = AS(cap_ambient_limit_args), .sy_call = (sy_call_t *)sys_cap_ambient_limit, .sy_auevent = AUE_CAP_AMBIENT_LIMIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 629 = cap_ambient_limit */
 	{ .sy_narg = AS(pdself_args), .sy_call = (sy_call_t *)sys_pdself, .sy_auevent = AUE_PDSELF, .sy_flags = SYF_CAPENABLED | SYF_CAPREQUIRED, .sy_thrcnt = SY_THR_STATIC },	/* 630 = pdself */
 	{ .sy_narg = AS(pdcmp_args), .sy_call = (sy_call_t *)sys_pdcmp, .sy_auevent = AUE_PDCMP, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 631 = pdcmp */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 632 =  */
+	{ .sy_narg = AS(pdincapmode_args), .sy_call = (sy_call_t *)sys_pdincapmode, .sy_auevent = AUE_PDINCAPMODE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 633 = pdincapmode */
+	{ .sy_narg = AS(cap_mmap_capmode_args), .sy_call = (sy_call_t *)sys_cap_mmap_capmode, .sy_auevent = AUE_CAP_MMAP_CAPMODE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 634 = cap_mmap_capmode */
+	{ .sy_narg = AS(cap_lookup_capmode_args), .sy_call = (sy_call_t *)sys_cap_lookup_capmode, .sy_auevent = AUE_CAP_LOOKUP_CAPMODE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 635 = cap_lookup_capmode */
 };

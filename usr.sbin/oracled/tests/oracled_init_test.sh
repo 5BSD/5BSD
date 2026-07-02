@@ -22,53 +22,53 @@ require_pidfile()
 
 # --- isolation ---
 
-atf_test_case isolation_cap_rt_module_loaded cleanup
-isolation_cap_rt_module_loaded_head()
+atf_test_case isolation_mac_capability_module_loaded cleanup
+isolation_mac_capability_module_loaded_head()
 {
-	atf_set "descr" "cap_rt kernel module is loaded"
+	atf_set "descr" "mac_capability kernel module is loaded"
 	atf_set "require.user" "root"
 }
-isolation_cap_rt_module_loaded_body()
+isolation_mac_capability_module_loaded_body()
 {
-	atf_check -s exit:0 kldstat -qm cap_rt
+	atf_check -s exit:0 kldstat -qm mac_capability
 }
-isolation_cap_rt_module_loaded_cleanup()
+isolation_mac_capability_module_loaded_cleanup()
 {
 	:
 }
 
-atf_test_case isolation_cap_rt_open_denied cleanup
-isolation_cap_rt_open_denied_head()
+atf_test_case isolation_mac_capability_open_denied cleanup
+isolation_mac_capability_open_denied_head()
 {
-	atf_set "descr" "/dev/cap_rt cannot be opened by foreign nonce"
+	atf_set "descr" "/dev/mac_capability cannot be opened by foreign nonce"
 	atf_set "require.user" "root"
 }
-isolation_cap_rt_open_denied_body()
+isolation_mac_capability_open_denied_body()
 {
 	require_pidfile
 	# A new process has a different nonce from oracled.
 	# The isolation MACF hook must deny the open.
 	atf_check -s not-exit:0 -e match:"Permission denied" \
-	    sh -c 'cat /dev/cap_rt'
+	    sh -c 'cat /dev/mac_capability'
 }
-isolation_cap_rt_open_denied_cleanup()
+isolation_mac_capability_open_denied_cleanup()
 {
 	:
 }
 
-atf_test_case isolation_cap_rt_stat_denied cleanup
-isolation_cap_rt_stat_denied_head()
+atf_test_case isolation_mac_capability_stat_denied cleanup
+isolation_mac_capability_stat_denied_head()
 {
-	atf_set "descr" "/dev/cap_rt cannot be stat'd by foreign nonce"
+	atf_set "descr" "/dev/mac_capability cannot be stat'd by foreign nonce"
 	atf_set "require.user" "root"
 }
-isolation_cap_rt_stat_denied_body()
+isolation_mac_capability_stat_denied_body()
 {
 	require_pidfile
 	# Even stat/test is blocked by the isolation MACF hook.
-	atf_check -s not-exit:0 sh -c 'test -c /dev/cap_rt'
+	atf_check -s not-exit:0 sh -c 'test -c /dev/mac_capability'
 }
-isolation_cap_rt_stat_denied_cleanup()
+isolation_mac_capability_stat_denied_cleanup()
 {
 	:
 }
@@ -830,7 +830,7 @@ syslog_init_complete_body()
 	atf_check -s exit:0 -o not-empty \
 	    grep "oracled\[$pid\].*enabled OOM protection" "$logfile"
 	atf_check -s exit:0 -o not-empty \
-	    grep "oracled\[$pid\].*isolation.*claimed.*/dev/cap_rt" "$logfile"
+	    grep "oracled\[$pid\].*isolation.*claimed.*/dev/mac_capability" "$logfile"
 	atf_check -s exit:0 -o not-empty \
 	    grep "oracled\[$pid\].*integrity active" "$logfile"
 	atf_check -s exit:0 -o not-empty \
@@ -977,14 +977,14 @@ control_socket_empty_connect_cleanup()
 atf_test_case control_socket_status_shows_claims cleanup
 control_socket_status_shows_claims_head()
 {
-	atf_set "descr" "oraclectl status shows cap_rt claims on live daemon"
+	atf_set "descr" "oraclectl status shows mac_capability claims on live daemon"
 	atf_set "require.user" "root"
 }
 control_socket_status_shows_claims_body()
 {
 	require_pidfile
-	# Live daemon should show /dev/cap_rt in claims.
-	atf_check -s exit:0 -o match:"/dev/cap_rt" oraclectl status
+	# Live daemon should show /dev/mac_capability in claims.
+	atf_check -s exit:0 -o match:"/dev/mac_capability" oraclectl status
 	# Should show path count.
 	atf_check -s exit:0 -o match:"paths:" oraclectl status
 	# Should show network count.
@@ -1259,7 +1259,7 @@ config_claims_files_alias_body()
 	local pidfile="$(pwd)/files_alias_test.pid"
 	cat > "$conffile" <<'ENDCONF'
 claims {
-    files = ["/dev/cap_rt", "/etc/oracled.conf"];
+    files = ["/dev/mac_capability", "/etc/oracled.conf"];
 }
 ENDCONF
 	oracled -T -f "$conffile" -p "$pidfile" &
@@ -1310,9 +1310,9 @@ config_claims_network_address_cleanup()
 atf_init_test_cases()
 {
 	# Isolation
-	atf_add_test_case isolation_cap_rt_module_loaded
-	atf_add_test_case isolation_cap_rt_open_denied
-	atf_add_test_case isolation_cap_rt_stat_denied
+	atf_add_test_case isolation_mac_capability_module_loaded
+	atf_add_test_case isolation_mac_capability_open_denied
+	atf_add_test_case isolation_mac_capability_stat_denied
 
 	# Capprotect
 	atf_add_test_case capprotect_visible_config

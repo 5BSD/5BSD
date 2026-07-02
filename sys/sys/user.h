@@ -269,7 +269,7 @@ struct user {
 #define	KF_TYPE_TIMERFD	14
 #define	KF_TYPE_INOTIFY	15
 #define	KF_TYPE_JAILDESC	16
-#define	KF_TYPE_CAP_RT	32
+#define	KF_TYPE_MAC_CAPABILITY	32
 #define	KF_TYPE_UNKNOWN	255
 
 #define	KF_VTYPE_VNON	0
@@ -305,6 +305,9 @@ struct user {
 #define	KF_FLAG_TRUNC		0x00001000
 #define	KF_FLAG_EXCL		0x00002000
 #define	KF_FLAG_EXEC		0x00004000
+#define	KF_FLAG_MMAP_CAPMODE	0x00010000
+#define	KF_FLAG_LOOKUP_CAPMODE	0x00020000
+#define	KF_FLAG_CAP_SUFFICIENT	0x00040000
 
 /*
  * Old format.  Has variable hidden padding due to alignment.

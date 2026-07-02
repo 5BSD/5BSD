@@ -194,6 +194,26 @@ caph_fcntls_limit(int fd, uint32_t fcntlrights)
 }
 
 static __inline int
+caph_mmap_capmode(int fd)
+{
+
+	if (cap_mmap_capmode(fd) < 0 && errno != ENOSYS)
+		return (-1);
+
+	return (0);
+}
+
+static __inline int
+caph_lookup_capmode(int fd)
+{
+
+	if (cap_lookup_capmode(fd) < 0 && errno != ENOSYS)
+		return (-1);
+
+	return (0);
+}
+
+static __inline int
 caph_enter_casper(void)
 {
 

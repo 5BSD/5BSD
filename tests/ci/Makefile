@@ -25,7 +25,7 @@ SRCCONF?=	/dev/null
 _MEMORY!=sysctl -n hw.physmem 2>/dev/null
 PARALLEL_JOBS!=sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null
 TOTAL_MEMORY!=expr ${_MEMORY} / 1073741824
-KERNCONF?=	5BSD
+KERNCONF?=	VBSD
 LOCALBASE?=	/usr/local
 EXTRA_MAKE_FLAGS?=
 

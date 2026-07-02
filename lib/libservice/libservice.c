@@ -5,15 +5,15 @@
  *
  * libservice — client library for services managed by serviced(8).
  *
- * Wraps cap_rt ioctls into a clean API.  Services link against this
- * library and never include cap_rt headers.
+ * Wraps mac_capability ioctls into a clean API.  Services link against this
+ * library and never include mac_capability headers.
  */
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
 
-#include <dev/cap_rt/cap_rt_ioctl.h>
-#include <dev/cap_rt/cap_rt_capprotect_proto.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
+#include <dev/mac_capability/mac_capability_capprotect_proto.h>
 
 #include <errno.h>
 #include <stdint.h>
@@ -65,8 +65,8 @@ queue_notification(const struct svc_new_client_msg *msg, int fd)
 static int
 rpc(const void *req, uint32_t reqlen, int *reply_fd)
 {
-	struct cap_rt_sendmsg_args sa;
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_sendmsg_args sa;
+	struct mac_capability_recvmsg_args ra;
 	union {
 		struct svc_reply rpl;
 		struct svc_new_client_msg notify;
@@ -86,7 +86,7 @@ rpc(const void *req, uint32_t reqlen, int *reply_fd)
 	sa.payload_len = reqlen;
 	sa.reply_token = token;
 
-	if (ioctl(pair_fd, CAP_RT_SENDMSG, &sa) == -1)
+	if (ioctl(pair_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1)
 		return (-1);
 
 	for (;;) {
@@ -99,7 +99,7 @@ rpc(const void *req, uint32_t reqlen, int *reply_fd)
 		ra.fds = &fd;
 		ra.nfds = 1;
 
-		if (ioctl(pair_fd, CAP_RT_RECVMSG, &ra) == -1) {
+		if (ioctl(pair_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
 			if (errno == EINTR)
 				continue;
 			return (-1);
@@ -172,7 +172,7 @@ service_pair_fd(void)
 int
 service_protect(uint32_t flags)
 {
-	struct cap_rt_call_args call;
+	struct mac_capability_call_args call;
 	struct cp_request req;
 
 	if (capprotect_fd < 0) {
@@ -188,7 +188,7 @@ service_protect(uint32_t flags)
 	call.req = &req;
 	call.req_len = sizeof(req);
 
-	if (ioctl(capprotect_fd, CAP_RT_CALL, &call) == -1)
+	if (ioctl(capprotect_fd, MAC_CAPABILITY_CALL, &call) == -1)
 		return (-1);
 	return (0);
 }
@@ -262,7 +262,7 @@ service_lookup(const char *name)
 int
 service_accept(char *client_label, size_t labelsz)
 {
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_recvmsg_args ra;
 	struct svc_new_client_msg msg;
 	int client_fd;
 
@@ -299,7 +299,7 @@ service_accept(char *client_label, size_t labelsz)
 		ra.fds = &client_fd;
 		ra.nfds = 1;
 
-		if (ioctl(pair_fd, CAP_RT_RECVMSG, &ra) == -1) {
+		if (ioctl(pair_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
 			if (errno == EINTR)
 				continue;
 			return (-1);
@@ -325,13 +325,13 @@ service_accept(char *client_label, size_t labelsz)
 int
 service_send(int fd, const void *data, size_t len)
 {
-	struct cap_rt_sendmsg_args sa;
+	struct mac_capability_sendmsg_args sa;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = data;
 	sa.payload_len = (uint32_t)len;
 
-	if (ioctl(fd, CAP_RT_SENDMSG, &sa) == -1)
+	if (ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == -1)
 		return (-1);
 	return (0);
 }
@@ -339,7 +339,7 @@ service_send(int fd, const void *data, size_t len)
 ssize_t
 service_recv(int fd, void *buf, size_t bufsz, int *peer_fd)
 {
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_recvmsg_args ra;
 	int pfd;
 
 	pfd = -1;
@@ -352,7 +352,7 @@ service_recv(int fd, void *buf, size_t bufsz, int *peer_fd)
 	}
 
 	for (;;) {
-		if (ioctl(fd, CAP_RT_RECVMSG, &ra) == 0)
+		if (ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0)
 			break;
 		if (errno == EINTR)
 			continue;

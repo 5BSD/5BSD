@@ -112,6 +112,7 @@ typedef	__uintptr_t	uintptr_t;
 #define	SOCK_CLOEXEC	0x10000000
 #define	SOCK_NONBLOCK	0x20000000
 #define	SOCK_CLOFORK	0x40000000
+/* SOCK_CAPMODE (0x80000000) removed; use LOCAL_CAP_REQ per-end instead. */
 #ifdef _KERNEL
 /*
  * Flags for accept1(), kern_accept4() and solisten_dequeue, in addition
@@ -551,9 +552,12 @@ struct sockcred2 {
 	uid_t	sc_euid;		/* effective user id */
 	gid_t	sc_gid;			/* real group id */
 	gid_t	sc_egid;		/* effective group id */
+	__uint8_t sc_capmode;		/* sender in cap mode */
+	__uint8_t sc_pad0[3];		/* padding */
 	int	sc_ngroups;		/* number of supplemental groups */
 	gid_t	sc_groups[1];		/* variable length */
 };
+#define	SOCKCRED2_VERSION	1	/* current version */
 #define	SOCKCRED2SIZE(ngrps) \
 	(sizeof(struct sockcred2) + (sizeof(gid_t) * ((ngrps) - 1)))
 

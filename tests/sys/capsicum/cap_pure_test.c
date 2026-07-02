@@ -5,16 +5,18 @@
  */
 
 /*
- * Tests for capability-pure syscalls (SYF_CAPREQUIRED) and the
- * per-descriptor noambient limiter (cap_ambient_limit).
+ * Tests for CAP_SUFFICIENT descriptor flag (cap_ambient_limit) and
+ * capability-mode enforcement.
  */
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/procctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 
 #include <atf-c.h>
@@ -27,31 +29,45 @@
 #include <unistd.h>
 
 #include <sys/procdesc.h>
+#include <sys/jail.h>
 #include <sys/filio.h>
 #include <sys/mman.h>
 #include <sys/un.h>
 #include <aio.h>
 
-#ifndef SYS_cap_fchmod
-#define	SYS_cap_fchmod		606
+#ifndef SYS_pdself
+#define	SYS_pdself		630
 #endif
-#ifndef SYS_cap_ftruncate
-#define	SYS_cap_ftruncate	628
+#ifndef SYS_pdcmp
+#define	SYS_pdcmp		631
 #endif
-#ifndef SYS_cap_ioctl
-#define	SYS_cap_ioctl		625
-#endif
-#ifndef SYS_cap_mmap
-#define	SYS_cap_mmap		626
-#endif
-#ifndef SYS_cap_sendmsg
-#define	SYS_cap_sendmsg		622
-#endif
-#ifndef SYS_cap_recvmsg
-#define	SYS_cap_recvmsg		623
-#endif
+
+/*
+ * Shims for syscalls not yet in the installed libsys (pkgbase lag).
+ * The header declares them but the library may lack the symbols.
+ */
+#define	pdself(fdp, flags)	syscall(SYS_pdself, (fdp), (flags))
+#define	pdcmp(a, b, res)	syscall(SYS_pdcmp, (a), (b), (res))
 #ifndef SYS_cap_ambient_limit
 #define	SYS_cap_ambient_limit	629
+#endif
+#ifndef SYS_pdincapmode
+#define	SYS_pdincapmode		633
+#endif
+#ifndef NOTE_CAPMODE
+#define	NOTE_CAPMODE		0x10000000
+#endif
+#ifndef NOTE_JAILED
+#define	NOTE_JAILED		0x08000000
+#endif
+#ifndef NOTE_SETUID
+#define	NOTE_SETUID		0x04000000
+#endif
+#ifndef NOTE_SIGNAL
+#define	NOTE_SIGNAL		0x02000000
+#endif
+#ifndef NOTE_CHROOT
+#define	NOTE_CHROOT		0x01000000
 #endif
 
 /*
@@ -77,170 +93,6 @@ in_child(void (*fn)(int *), int *statusp)
 	return (WIFEXITED(status) ? WEXITSTATUS(status) : -1);
 }
 
-/* ---- CAPREQUIRED gate tests ---- */
-
-static void
-cap_fchmod_outside_capmode_body(int *result)
-{
-	int fd;
-
-	fd = open("/tmp/cap_pure_test_file", O_RDWR | O_CREAT, 0644);
-	if (fd < 0) { *result = 1; return; }
-
-	/* cap_fchmod outside cap mode should fail with ENOTCAPABLE */
-	if (syscall(SYS_cap_fchmod, fd, 0600) == 0) { *result = 2; return; }
-	if (errno != ENOTCAPABLE) { *result = 3; return; }
-
-	close(fd);
-	unlink("/tmp/cap_pure_test_file");
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(cap_fchmod_outside_capmode);
-ATF_TC_BODY(cap_fchmod_outside_capmode, tc)
-{
-	int r;
-
-	r = in_child(cap_fchmod_outside_capmode_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "cap_fchmod outside cap mode: expected ENOTCAPABLE (result=%d)", r);
-}
-
-static void
-cap_fchmod_inside_capmode_body(int *result)
-{
-	struct stat sb;
-	int fd;
-
-	fd = open("/tmp/cap_pure_test_file2", O_RDWR | O_CREAT, 0644);
-	if (fd < 0) { *result = 1; return; }
-
-	if (cap_enter() != 0) { *result = 2; return; }
-
-	/* cap_fchmod inside cap mode should succeed */
-	if (syscall(SYS_cap_fchmod, fd, 0600) != 0) { *result = 3; return; }
-
-	/* Verify the mode actually changed */
-	if (fstat(fd, &sb) != 0) { *result = 4; return; }
-	if ((sb.st_mode & 0777) != 0600) { *result = 5; return; }
-
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(cap_fchmod_inside_capmode);
-ATF_TC_BODY(cap_fchmod_inside_capmode, tc)
-{
-	int r;
-
-	r = in_child(cap_fchmod_inside_capmode_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "cap_fchmod inside cap mode: expected success (result=%d)", r);
-	unlink("/tmp/cap_pure_test_file2");
-}
-
-/* ---- Ambient fchmod unchanged ---- */
-
-static void
-ambient_fchmod_unchanged_body(int *result)
-{
-	struct stat sb;
-	int fd;
-
-	fd = open("/tmp/cap_pure_test_file3", O_RDWR | O_CREAT, 0644);
-	if (fd < 0) { *result = 1; return; }
-
-	/* Ambient fchmod should still work outside cap mode */
-	if (fchmod(fd, 0600) != 0) { *result = 2; return; }
-	if (fstat(fd, &sb) != 0) { *result = 3; return; }
-	if ((sb.st_mode & 0777) != 0600) { *result = 4; return; }
-
-	/* Ambient fchmod should still work inside cap mode */
-	if (cap_enter() != 0) { *result = 5; return; }
-	if (fchmod(fd, 0644) != 0) { *result = 6; return; }
-	if (fstat(fd, &sb) != 0) { *result = 7; return; }
-	if ((sb.st_mode & 0777) != 0644) { *result = 8; return; }
-
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(ambient_fchmod_unchanged);
-ATF_TC_BODY(ambient_fchmod_unchanged, tc)
-{
-	int r;
-
-	r = in_child(ambient_fchmod_unchanged_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "ambient fchmod behavior changed (result=%d)", r);
-	unlink("/tmp/cap_pure_test_file3");
-}
-
-/* ---- cap_fchmod on non-vnode fd ---- */
-
-static void
-cap_fchmod_nonvnode_body(int *result)
-{
-	int sv[2];
-
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
-		*result = 1; return;
-	}
-
-	if (cap_enter() != 0) { *result = 2; return; }
-
-	/* cap_fchmod on socket should fail (vnode-only) */
-	if (syscall(SYS_cap_fchmod, sv[0], 0600) == 0) { *result = 3; return; }
-	/* getvnode returns EINVAL for non-vnodes */
-	if (errno != EINVAL) { *result = 4; return; }
-
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(cap_fchmod_nonvnode);
-ATF_TC_BODY(cap_fchmod_nonvnode, tc)
-{
-	int r;
-
-	r = in_child(cap_fchmod_nonvnode_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "cap_fchmod on socket: expected EINVAL (result=%d)", r);
-}
-
-/* ---- Capsicum rights still enforced on cap_* ---- */
-
-static void
-cap_fchmod_rights_body(int *result)
-{
-	cap_rights_t rights;
-	int fd;
-
-	fd = open("/tmp/cap_pure_test_file4", O_RDWR | O_CREAT, 0644);
-	if (fd < 0) { *result = 1; return; }
-
-	/* Remove CAP_FCHMOD right */
-	cap_rights_init(&rights, CAP_READ, CAP_WRITE);
-	if (cap_rights_limit(fd, &rights) != 0) { *result = 2; return; }
-
-	if (cap_enter() != 0) { *result = 3; return; }
-
-	/* cap_fchmod without CAP_FCHMOD right should fail */
-	if (syscall(SYS_cap_fchmod, fd, 0600) == 0) { *result = 4; return; }
-	if (errno != ENOTCAPABLE) { *result = 5; return; }
-
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(cap_fchmod_rights);
-ATF_TC_BODY(cap_fchmod_rights, tc)
-{
-	int r;
-
-	r = in_child(cap_fchmod_rights_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "cap_fchmod without CAP_FCHMOD: expected ENOTCAPABLE (result=%d)",
-	    r);
-	unlink("/tmp/cap_pure_test_file4");
-}
-
 /* ---- cap_ambient_limit tests ---- */
 
 static void
@@ -254,10 +106,10 @@ ambient_limit_outside_capmode_body(int *result)
 	if (write(fd, "hello", 5) != 5) { *result = 2; return; }
 	if (lseek(fd, 0, SEEK_SET) != 0) { *result = 3; return; }
 
-	/* Set noambient outside cap mode */
+	/* Set CAP_SUFFICIENT outside cap mode */
 	if (syscall(SYS_cap_ambient_limit, fd) != 0) { *result = 4; return; }
 
-	/* Outside cap mode, read should still work (marker is inert) */
+	/* Outside cap mode, read should still work (flag is inert) */
 	if (read(fd, buf, 5) != 5) { *result = 5; return; }
 
 	*result = 0;
@@ -270,7 +122,7 @@ ATF_TC_BODY(ambient_limit_outside_capmode, tc)
 
 	r = in_child(ambient_limit_outside_capmode_body, NULL);
 	ATF_REQUIRE_MSG(r == 0,
-	    "noambient marker should be inert outside cap mode (result=%d)", r);
+	    "CAP_SUFFICIENT flag should be inert outside cap mode (result=%d)", r);
 	unlink("/tmp/cap_pure_test_file5");
 }
 
@@ -285,11 +137,11 @@ ambient_limit_inside_capmode_body(int *result)
 	if (write(fd, "hello", 5) != 5) { *result = 2; return; }
 	if (lseek(fd, 0, SEEK_SET) != 0) { *result = 3; return; }
 
-	/* Set noambient then enter cap mode */
+	/* Set CAP_SUFFICIENT then enter cap mode */
 	if (syscall(SYS_cap_ambient_limit, fd) != 0) { *result = 4; return; }
 	if (cap_enter() != 0) { *result = 5; return; }
 
-	/* read should succeed (MAC skipped in cap mode with noambient) */
+	/* read should succeed (MAC skipped in cap mode with CAP_SUFFICIENT) */
 	if (read(fd, buf, 5) != 5) { *result = 6; return; }
 	if (memcmp(buf, "hello", 5) != 0) { *result = 7; return; }
 
@@ -307,7 +159,7 @@ ATF_TC_BODY(ambient_limit_inside_capmode, tc)
 
 	r = in_child(ambient_limit_inside_capmode_body, NULL);
 	ATF_REQUIRE_MSG(r == 0,
-	    "noambient read/write in cap mode (result=%d)", r);
+	    "CAP_SUFFICIENT read/write in cap mode (result=%d)", r);
 	unlink("/tmp/cap_pure_test_file6");
 }
 
@@ -349,7 +201,7 @@ ATF_TC_BODY(ambient_limit_monotonic, tc)
 	    "cap_ambient_limit should be idempotent (result=%d)", r);
 }
 
-/* ---- dup inherits noambient ---- */
+/* ---- dup inherits CAP_SUFFICIENT ---- */
 
 static void
 ambient_limit_dup_body(int *result)
@@ -368,7 +220,7 @@ ambient_limit_dup_body(int *result)
 
 	if (cap_enter() != 0) { *result = 5; return; }
 
-	/* dup'd fd should also have noambient — read should work */
+	/* dup'd fd should also have CAP_SUFFICIENT -- read should work */
 	if (lseek(fd2, 0, SEEK_SET) != 0) { *result = 6; return; }
 	if (read(fd2, buf, 5) != 5) { *result = 7; return; }
 	if (memcmp(buf, "hello", 5) != 0) { *result = 8; return; }
@@ -383,11 +235,11 @@ ATF_TC_BODY(ambient_limit_dup, tc)
 
 	r = in_child(ambient_limit_dup_body, NULL);
 	ATF_REQUIRE_MSG(r == 0,
-	    "dup should inherit noambient (result=%d)", r);
+	    "dup should inherit CAP_SUFFICIENT (result=%d)", r);
 	unlink("/tmp/cap_pure_test_file7");
 }
 
-/* ---- Socket noambient ---- */
+/* ---- Socket CAP_SUFFICIENT ---- */
 
 static void
 ambient_limit_socket_body(int *result)
@@ -404,7 +256,7 @@ ambient_limit_socket_body(int *result)
 
 	if (cap_enter() != 0) { *result = 4; return; }
 
-	/* write then read on noambient sockets in cap mode */
+	/* write then read on CAP_SUFFICIENT sockets in cap mode */
 	if (write(sv[0], "test", 4) != 4) { *result = 5; return; }
 	if (read(sv[1], buf, 4) != 4) { *result = 6; return; }
 	if (memcmp(buf, "test", 4) != 0) { *result = 7; return; }
@@ -419,10 +271,10 @@ ATF_TC_BODY(ambient_limit_socket, tc)
 
 	r = in_child(ambient_limit_socket_body, NULL);
 	ATF_REQUIRE_MSG(r == 0,
-	    "socket read/write with noambient in cap mode (result=%d)", r);
+	    "socket read/write with CAP_SUFFICIENT in cap mode (result=%d)", r);
 }
 
-/* ---- Pipe noambient ---- */
+/* ---- Pipe CAP_SUFFICIENT ---- */
 
 static void
 ambient_limit_pipe_body(int *result)
@@ -451,61 +303,10 @@ ATF_TC_BODY(ambient_limit_pipe, tc)
 
 	r = in_child(ambient_limit_pipe_body, NULL);
 	ATF_REQUIRE_MSG(r == 0,
-	    "pipe read/write with noambient in cap mode (result=%d)", r);
+	    "pipe read/write with CAP_SUFFICIENT in cap mode (result=%d)", r);
 }
 
-/* ---- SIGTRAP for CAPREQUIRED outside cap mode ---- */
-
-static volatile sig_atomic_t got_sigtrap = 0;
-
-static void
-sigtrap_handler(int sig __unused)
-{
-	got_sigtrap = 1;
-}
-
-static void
-caprequired_sigtrap_body(int *result)
-{
-	struct sigaction sa;
-	int fd;
-
-	fd = open("/dev/null", O_RDWR);
-	if (fd < 0) { *result = 1; return; }
-
-	/* Enable P2_TRAPCAP */
-	memset(&sa, 0, sizeof(sa));
-	sa.sa_handler = sigtrap_handler;
-	if (sigaction(SIGTRAP, &sa, NULL) != 0) { *result = 2; return; }
-
-	/* Use procctl to set P2_TRAPCAP */
-	int flag = PROC_TRAPCAP_CTL_ENABLE;
-	if (procctl(P_PID, getpid(), PROC_TRAPCAP_CTL, &flag) != 0) {
-		*result = 3; return;
-	}
-
-	got_sigtrap = 0;
-
-	/* cap_fchmod outside cap mode should fail and deliver SIGTRAP */
-	syscall(SYS_cap_fchmod, fd, 0600);
-
-	if (!got_sigtrap) { *result = 4; return; }
-
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(caprequired_sigtrap);
-ATF_TC_BODY(caprequired_sigtrap, tc)
-{
-	int r;
-
-	r = in_child(caprequired_sigtrap_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "CAPREQUIRED outside cap mode should deliver SIGTRAP (result=%d)",
-	    r);
-}
-
-/* ---- SCM_RIGHTS: non-cap receiver, marker inert ---- */
+/* ---- SCM_RIGHTS: non-cap receiver, flag inert ---- */
 
 static void
 scm_rights_noncap_body(int *result)
@@ -524,7 +325,7 @@ scm_rights_noncap_body(int *result)
 	if (fd < 0) { *result = 2; return; }
 	if (write(fd, "x", 1) != 1) { *result = 3; return; }
 
-	/* Mark fd as noambient */
+	/* Mark fd as CAP_SUFFICIENT */
 	if (syscall(SYS_cap_ambient_limit, fd) != 0) { *result = 4; return; }
 
 	/* Send the fd over SCM_RIGHTS */
@@ -560,8 +361,8 @@ scm_rights_noncap_body(int *result)
 	if (cmsg == NULL) { *result = 7; return; }
 	memcpy(&rfd, CMSG_DATA(cmsg), sizeof(int));
 
-	/* Read should work (not in cap mode, marker is inert,
-	 * MAC fires normally — but no MAC policy loaded so it passes) */
+	/* Read should work (not in cap mode, flag is inert,
+	 * MAC fires normally -- but no MAC policy loaded so it passes) */
 	if (lseek(rfd, 0, SEEK_SET) != 0) { *result = 8; return; }
 	if (read(rfd, buf, 1) != 1) { *result = 9; return; }
 
@@ -583,7 +384,7 @@ ATF_TC_BODY(scm_rights_noncap, tc)
 	    "SCM_RIGHTS to non-cap process (result=%d)", r);
 }
 
-/* ---- SCM_RIGHTS: cap-mode receiver, marker honored ---- */
+/* ---- SCM_RIGHTS: cap-mode receiver, flag honored ---- */
 
 static void
 scm_rights_cap_body(int *result)
@@ -602,7 +403,7 @@ scm_rights_cap_body(int *result)
 	if (fd < 0) { *result = 2; return; }
 	if (write(fd, "y", 1) != 1) { *result = 3; return; }
 
-	/* Mark fd as noambient */
+	/* Mark fd as CAP_SUFFICIENT */
 	if (syscall(SYS_cap_ambient_limit, fd) != 0) { *result = 4; return; }
 
 	/* Send the fd */
@@ -641,7 +442,7 @@ scm_rights_cap_body(int *result)
 	if (cmsg == NULL) { *result = 8; return; }
 	memcpy(&rfd, CMSG_DATA(cmsg), sizeof(int));
 
-	/* Read should succeed — in cap mode with noambient marker */
+	/* Read should succeed -- in cap mode with CAP_SUFFICIENT flag */
 	if (lseek(rfd, 0, SEEK_SET) != 0) { *result = 9; return; }
 	if (read(rfd, buf, 1) != 1) { *result = 10; return; }
 	if (buf[0] != 'y') { *result = 11; return; }
@@ -660,7 +461,7 @@ ATF_TC_BODY(scm_rights_cap, tc)
 	unlink("/tmp/cap_pure_scm_test2");
 }
 
-/* ---- fork inherits noambient ---- */
+/* ---- fork inherits CAP_SUFFICIENT ---- */
 
 static void
 fork_inherit_body(int *result)
@@ -701,164 +502,11 @@ ATF_TC_BODY(fork_inherit, tc)
 
 	r = in_child(fork_inherit_body, NULL);
 	ATF_REQUIRE_MSG(r == 0,
-	    "fork should inherit noambient (result=%d)", r);
+	    "fork should inherit CAP_SUFFICIENT (result=%d)", r);
 	unlink("/tmp/cap_pure_fork_test");
 }
 
-/* ---- cap_ftruncate ---- */
-
-static void
-cap_ftruncate_body(int *result)
-{
-	struct stat sb;
-	int fd;
-
-	fd = open("/tmp/cap_pure_trunc_test", O_RDWR | O_CREAT, 0644);
-	if (fd < 0) { *result = 1; return; }
-	if (write(fd, "truncate_me", 11) != 11) { *result = 2; return; }
-
-	if (cap_enter() != 0) { *result = 3; return; }
-
-	/* cap_ftruncate should work in cap mode */
-	if (syscall(SYS_cap_ftruncate, fd, (off_t)5) != 0) {
-		*result = 4; return;
-	}
-	if (fstat(fd, &sb) != 0) { *result = 5; return; }
-	if (sb.st_size != 5) { *result = 6; return; }
-
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(cap_ftruncate_test);
-ATF_TC_BODY(cap_ftruncate_test, tc)
-{
-	int r;
-
-	r = in_child(cap_ftruncate_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "cap_ftruncate in cap mode (result=%d)", r);
-	unlink("/tmp/cap_pure_trunc_test");
-}
-
-/* ---- cap_ioctl ---- */
-
-static void
-cap_ioctl_body(int *result)
-{
-	int fd, nb;
-
-	fd = open("/dev/null", O_RDWR);
-	if (fd < 0) { *result = 1; return; }
-
-	if (cap_enter() != 0) { *result = 2; return; }
-
-	/* cap_ioctl FIONBIO should work */
-	nb = 1;
-	if (syscall(SYS_cap_ioctl, fd, FIONBIO, &nb) != 0) {
-		*result = 3; return;
-	}
-
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(cap_ioctl_test);
-ATF_TC_BODY(cap_ioctl_test, tc)
-{
-	int r;
-
-	r = in_child(cap_ioctl_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "cap_ioctl in cap mode (result=%d)", r);
-}
-
-/* ---- cap_mmap ---- */
-
-static void
-cap_mmap_body(int *result)
-{
-	void *addr;
-	int fd;
-
-	fd = open("/tmp/cap_pure_mmap_test", O_RDWR | O_CREAT, 0644);
-	if (fd < 0) { *result = 1; return; }
-	if (ftruncate(fd, 4096) != 0) { *result = 2; return; }
-
-	if (cap_enter() != 0) { *result = 3; return; }
-
-	/* cap_mmap should work in cap mode */
-	addr = (void *)(uintptr_t)syscall(SYS_cap_mmap, (void *)NULL,
-	    (size_t)4096, PROT_READ, MAP_PRIVATE, fd, (off_t)0);
-	if (addr == MAP_FAILED) { *result = 4; return; }
-
-	munmap(addr, 4096);
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(cap_mmap_test);
-ATF_TC_BODY(cap_mmap_test, tc)
-{
-	int r;
-
-	r = in_child(cap_mmap_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "cap_mmap in cap mode (result=%d)", r);
-	unlink("/tmp/cap_pure_mmap_test");
-}
-
-/* ---- cap_sendmsg / cap_recvmsg ---- */
-
-static void
-cap_sendrecv_body(int *result)
-{
-	int sv[2];
-	struct msghdr msg;
-	struct iovec iov;
-	char buf[4];
-
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
-		*result = 1; return;
-	}
-
-	if (cap_enter() != 0) { *result = 2; return; }
-
-	/* cap_sendmsg */
-	memset(&msg, 0, sizeof(msg));
-	{
-		static char test_buf[] = "test";
-		iov.iov_base = test_buf;
-	}
-	iov.iov_len = 4;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	if (syscall(SYS_cap_sendmsg, sv[0], &msg, 0) != 4) {
-		*result = 3; return;
-	}
-
-	/* cap_recvmsg */
-	memset(&msg, 0, sizeof(msg));
-	iov.iov_base = buf;
-	iov.iov_len = 4;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	if (syscall(SYS_cap_recvmsg, sv[1], &msg, 0) != 4) {
-		*result = 4; return;
-	}
-	if (memcmp(buf, "test", 4) != 0) { *result = 5; return; }
-
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(cap_sendrecv_test);
-ATF_TC_BODY(cap_sendrecv_test, tc)
-{
-	int r;
-
-	r = in_child(cap_sendrecv_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "cap_sendmsg/cap_recvmsg in cap mode (result=%d)", r);
-}
-
-/* ---- AIO noambient ---- */
+/* ---- AIO CAP_SUFFICIENT ---- */
 
 static void
 aio_noambient_body(int *result)
@@ -874,7 +522,7 @@ aio_noambient_body(int *result)
 	if (syscall(SYS_cap_ambient_limit, fd) != 0) { *result = 3; return; }
 	if (cap_enter() != 0) { *result = 4; return; }
 
-	/* aio_read on noambient fd in cap mode */
+	/* aio_read on CAP_SUFFICIENT fd in cap mode */
 	memset(&cb, 0, sizeof(cb));
 	cb.aio_fildes = fd;
 	cb.aio_buf = buf;
@@ -901,7 +549,7 @@ ATF_TC_BODY(aio_noambient, tc)
 
 	r = in_child(aio_noambient_body, NULL);
 	ATF_REQUIRE_MSG(r == 0,
-	    "AIO read with noambient in cap mode (result=%d)", r);
+	    "AIO read with CAP_SUFFICIENT in cap mode (result=%d)", r);
 	unlink("/tmp/cap_pure_aio_test");
 }
 
@@ -1525,19 +1173,2133 @@ ATF_TC_BODY(pdself_pdkill, tc)
 	close(fd);
 }
 
+/*
+ * Helper: build and send one fd over a socketpair.
+ * sv[0] is the sender socket, sv[1] is the receiver socket.
+ * Returns 0 on success, non-zero on failure.
+ */
+static int
+send_fd_over_sock(int sender, int fd_to_send)
+{
+	struct msghdr msg;
+	struct cmsghdr *cmsg;
+	struct iovec iov;
+	char cbuf[CMSG_SPACE(sizeof(int))];
+	static char byte = 'X';
+
+	memset(&msg, 0, sizeof(msg));
+	iov.iov_base = &byte;
+	iov.iov_len = 1;
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	msg.msg_control = cbuf;
+	msg.msg_controllen = sizeof(cbuf);
+	cmsg = CMSG_FIRSTHDR(&msg);
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+	memcpy(CMSG_DATA(cmsg), &fd_to_send, sizeof(int));
+	return (sendmsg(sender, &msg, 0) < 0 ? -1 : 0);
+}
+
+/*
+ * Helper: receive one fd from a socket.
+ * Returns the received fd on success, -1 on failure.
+ */
+static int
+recv_fd_from_sock(int receiver)
+{
+	struct msghdr msg;
+	struct cmsghdr *cmsg;
+	struct iovec iov;
+	char cbuf[CMSG_SPACE(sizeof(int))];
+	char byte;
+	int rfd;
+
+	memset(&msg, 0, sizeof(msg));
+	iov.iov_base = &byte;
+	iov.iov_len = 1;
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	msg.msg_control = cbuf;
+	msg.msg_controllen = sizeof(cbuf);
+
+	if (recvmsg(receiver, &msg, 0) < 0)
+		return (-1);
+	cmsg = CMSG_FIRSTHDR(&msg);
+	if (cmsg == NULL || cmsg->cmsg_type != SCM_RIGHTS)
+		return (-1);
+	memcpy(&rfd, CMSG_DATA(cmsg), sizeof(int));
+	return (rfd);
+}
+
+/* ---- pdincapmode tests ---- */
+
+/*
+ * pdincapmode_before_capenter:
+ * pdfork a child that does NOT enter cap mode.  Verify pdincapmode
+ * returns 0.
+ */
+static void
+pdincapmode_before_capenter_body(int *result)
+{
+	int pdfd;
+	pid_t pid;
+
+	pid = pdfork(&pdfd, 0);
+	if (pid < 0) { *result = 1; return; }
+	if (pid == 0) {
+		/* Child: just sleep */
+		sleep(60);
+		_exit(0);
+	}
+
+	/* Parent: query cap mode — should be 0 */
+	if (syscall(SYS_pdincapmode, pdfd) != 0) { *result = 2; return; }
+
+	pdkill(pdfd, SIGKILL);
+	close(pdfd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(pdincapmode_before_capenter);
+ATF_TC_BODY(pdincapmode_before_capenter, tc)
+{
+	int r;
+
+	r = in_child(pdincapmode_before_capenter_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "pdincapmode before cap_enter: expected 0 (result=%d)", r);
+}
+
+/*
+ * pdincapmode_after_capenter:
+ * pdfork a child that enters cap mode immediately.  Use a pipe for
+ * synchronization.  Verify pdincapmode returns 1.
+ */
+static void
+pdincapmode_after_capenter_body(int *result)
+{
+	int pdfd, pv[2];
+	pid_t pid;
+	char byte;
+
+	if (pipe(pv) != 0) { *result = 1; return; }
+
+	pid = pdfork(&pdfd, 0);
+	if (pid < 0) { *result = 2; return; }
+	if (pid == 0) {
+		close(pv[0]);
+		/* Enter cap mode, then signal parent */
+		if (cap_enter() != 0) _exit(1);
+		write(pv[1], "x", 1);
+		close(pv[1]);
+		sleep(60);
+		_exit(0);
+	}
+
+	close(pv[1]);
+	/* Wait for child to enter cap mode */
+	if (read(pv[0], &byte, 1) != 1) { *result = 3; return; }
+	close(pv[0]);
+
+	/* Parent: query cap mode — should be 1 */
+	if (syscall(SYS_pdincapmode, pdfd) != 1) { *result = 4; return; }
+
+	pdkill(pdfd, SIGKILL);
+	close(pdfd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(pdincapmode_after_capenter);
+ATF_TC_BODY(pdincapmode_after_capenter, tc)
+{
+	int r;
+
+	r = in_child(pdincapmode_after_capenter_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "pdincapmode after cap_enter: expected 1 (result=%d)", r);
+}
+
+/*
+ * pdincapmode_bad_fd:
+ * Verify EBADF for invalid descriptors and non-procdesc descriptors.
+ */
+ATF_TC_WITHOUT_HEAD(pdincapmode_bad_fd);
+ATF_TC_BODY(pdincapmode_bad_fd, tc)
+{
+	int pv[2];
+
+	/* Bad fd */
+	ATF_REQUIRE(syscall(SYS_pdincapmode, -1) == -1);
+	ATF_REQUIRE(errno == EBADF);
+
+	/* Non-procdesc fd (pipe) */
+	ATF_REQUIRE(pipe(pv) == 0);
+	ATF_REQUIRE(syscall(SYS_pdincapmode, pv[0]) == -1);
+	ATF_REQUIRE(errno == EBADF);
+	close(pv[0]);
+	close(pv[1]);
+}
+
+/* ---- NOTE_CAPMODE kqueue event test ---- */
+
+/*
+ * note_capmode_kevent:
+ * pdfork a child, register EVFILT_PROCDESC with NOTE_CAPMODE on the
+ * procdesc fd.  Child enters cap_enter() then sleeps.  Parent calls
+ * kevent with a timeout.  Verify the event fires with NOTE_CAPMODE
+ * in fflags.
+ */
+static void
+note_capmode_kevent_body(int *result)
+{
+	int pdfd, kq, pv[2];
+	struct kevent kev;
+	struct timespec ts;
+	pid_t pid;
+	char byte;
+
+	if (pipe(pv) != 0) { *result = 1; return; }
+
+	pid = pdfork(&pdfd, 0);
+	if (pid < 0) { *result = 2; return; }
+	if (pid == 0) {
+		/*
+		 * Child: wait for parent to register the kevent, then
+		 * enter cap mode and sleep.
+		 */
+		close(pv[1]);
+		if (read(pv[0], &byte, 1) != 1) _exit(1);
+		close(pv[0]);
+		if (cap_enter() != 0) _exit(2);
+		sleep(60);
+		_exit(0);
+	}
+
+	close(pv[0]);
+
+	kq = kqueue();
+	if (kq < 0) { *result = 3; return; }
+
+	EV_SET(&kev, pdfd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+	    NOTE_CAPMODE, 0, NULL);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) { *result = 4; return; }
+
+	/* Signal child that the kevent is registered */
+	write(pv[1], "x", 1);
+	close(pv[1]);
+
+	/* Wait up to 5 seconds for the event */
+	ts.tv_sec = 5;
+	ts.tv_nsec = 0;
+	if (kevent(kq, NULL, 0, &kev, 1, &ts) != 1) { *result = 5; return; }
+
+	if (kev.filter != EVFILT_PROCDESC) { *result = 6; return; }
+	if ((kev.fflags & NOTE_CAPMODE) == 0) { *result = 7; return; }
+
+	close(kq);
+	pdkill(pdfd, SIGKILL);
+	close(pdfd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(note_capmode_kevent);
+ATF_TC_BODY(note_capmode_kevent, tc)
+{
+	int r;
+
+	r = in_child(note_capmode_kevent_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "NOTE_CAPMODE kevent: expected event with NOTE_CAPMODE (result=%d)",
+	    r);
+}
+
+/* ---- LOCAL_CAP_CONNECT tests ---- */
+
+#ifndef LOCAL_CAP_CONNECT
+#define	LOCAL_CAP_CONNECT	4
+#endif
+
+/*
+ * capmode_connect_denied:
+ * Set LOCAL_CAP_CONNECT on a listening socket. A non-cap-mode child
+ * attempts to connect; verify ENOTCAPABLE.
+ */
+static void
+capmode_connect_denied_body(int *result)
+{
+	struct sockaddr_un sun;
+	char dir[] = "/tmp/cap_pure_test.XXXXXX";
+	char path[128];
+	int ls, cs, one = 1;
+
+	if (mkdtemp(dir) == NULL) { *result = 1; return; }
+	snprintf(path, sizeof(path), "%s/sock", dir);
+
+	ls = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (ls < 0) { *result = 2; return; }
+
+	memset(&sun, 0, sizeof(sun));
+	sun.sun_family = AF_UNIX;
+	sun.sun_len = sizeof(sun);
+	strlcpy(sun.sun_path, path, sizeof(sun.sun_path));
+
+	if (bind(ls, (struct sockaddr *)&sun, sizeof(sun)) != 0) {
+		*result = 3; return;
+	}
+	if (setsockopt(ls, 0, LOCAL_CAP_CONNECT, &one, sizeof(one)) != 0) {
+		*result = 4; return;
+	}
+	if (listen(ls, 1) != 0) { *result = 5; return; }
+
+	/* We are NOT in cap mode — connect must fail with ENOTCAPABLE */
+	cs = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (cs < 0) { *result = 6; return; }
+	if (connect(cs, (struct sockaddr *)&sun, sizeof(sun)) == 0) {
+		*result = 7; return;
+	}
+	if (errno != ENOTCAPABLE) { *result = 8; return; }
+
+	close(cs);
+	close(ls);
+	(void)unlink(path);
+	(void)rmdir(dir);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(capmode_connect_denied);
+ATF_TC_BODY(capmode_connect_denied, tc)
+{
+	int r;
+
+	r = in_child(capmode_connect_denied_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "non-cap-mode connect must fail with ENOTCAPABLE (result=%d)", r);
+}
+
+/*
+ * capmode_connect_allowed:
+ * Set LOCAL_CAP_CONNECT on a listening socket. A child that enters
+ * cap mode uses connectat() with a pre-opened dirfd to connect
+ * successfully.
+ */
+static void
+capmode_connect_allowed_body(int *result)
+{
+	struct sockaddr_un sun;
+	char dir[] = "/tmp/cap_pure_test.XXXXXX";
+	int ls, cs, dfd, as, one = 1;
+	pid_t pid;
+	int status;
+
+	if (mkdtemp(dir) == NULL) { *result = 1; return; }
+
+	ls = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (ls < 0) { *result = 2; return; }
+
+	memset(&sun, 0, sizeof(sun));
+	sun.sun_family = AF_UNIX;
+	sun.sun_len = sizeof(sun);
+	snprintf(sun.sun_path, sizeof(sun.sun_path), "%s/sock", dir);
+
+	if (bind(ls, (struct sockaddr *)&sun, sizeof(sun)) != 0) {
+		*result = 3; return;
+	}
+	if (setsockopt(ls, 0, LOCAL_CAP_CONNECT, &one, sizeof(one)) != 0) {
+		*result = 4; return;
+	}
+	if (listen(ls, 1) != 0) { *result = 5; return; }
+
+	/* Open dirfd BEFORE forking */
+	dfd = open(dir, O_RDONLY | O_DIRECTORY);
+	if (dfd < 0) { *result = 6; return; }
+
+	pid = fork();
+	if (pid < 0) { *result = 7; return; }
+	if (pid == 0) {
+		/* Child: enter cap mode, connectat with relative path */
+		struct sockaddr_un csun;
+
+		close(ls);
+		cs = socket(AF_UNIX, SOCK_STREAM, 0);
+		if (cs < 0) _exit(10);
+
+		if (cap_enter() != 0) _exit(11);
+
+		memset(&csun, 0, sizeof(csun));
+		csun.sun_family = AF_UNIX;
+		csun.sun_len = sizeof(csun);
+		strlcpy(csun.sun_path, "sock", sizeof(csun.sun_path));
+
+		if (connectat(dfd, cs, (struct sockaddr *)&csun,
+		    sizeof(csun)) != 0)
+			_exit(12);
+
+		close(cs);
+		close(dfd);
+		_exit(0);
+	}
+
+	/* Parent: accept the connection */
+	as = accept(ls, NULL, NULL);
+	if (as < 0) { *result = 8; return; }
+
+	if (waitpid(pid, &status, 0) != pid) { *result = 9; return; }
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		*result = 20 + WEXITSTATUS(status); return;
+	}
+
+	close(as);
+	close(ls);
+	close(dfd);
+	(void)unlink(sun.sun_path);
+	(void)rmdir(dir);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(capmode_connect_allowed);
+ATF_TC_BODY(capmode_connect_allowed, tc)
+{
+	int r;
+
+	r = in_child(capmode_connect_allowed_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "cap-mode connectat must succeed (result=%d)", r);
+}
+
+/*
+ * capmode_connect_monotonic:
+ * Set LOCAL_CAP_CONNECT, then try to clear it. Verify ENOTCAPABLE.
+ */
+static void
+capmode_connect_monotonic_body(int *result)
+{
+	int s, one = 1, zero = 0;
+
+	s = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (s < 0) { *result = 1; return; }
+
+	if (setsockopt(s, 0, LOCAL_CAP_CONNECT, &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+
+	/* Attempt to clear — must fail with ENOTCAPABLE */
+	if (setsockopt(s, 0, LOCAL_CAP_CONNECT, &zero, sizeof(zero)) == 0) {
+		*result = 3; return;
+	}
+	if (errno != ENOTCAPABLE) { *result = 4; return; }
+
+	/* Setting it again (idempotent) must succeed */
+	if (setsockopt(s, 0, LOCAL_CAP_CONNECT, &one, sizeof(one)) != 0) {
+		*result = 5; return;
+	}
+
+	close(s);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(capmode_connect_monotonic);
+ATF_TC_BODY(capmode_connect_monotonic, tc)
+{
+	int r;
+
+	r = in_child(capmode_connect_monotonic_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "LOCAL_CAP_CONNECT must be monotonic (result=%d)", r);
+}
+
+/* ---- LOCAL_CAP_CONNECT DGRAM test ---- */
+
+/*
+ * capmode_connect_dgram:
+ * Verify LOCAL_CAP_CONNECT also works on SOCK_DGRAM sockets.
+ * A non-cap-mode sendto() to a capmode-only DGRAM socket must fail.
+ */
+static void
+capmode_connect_dgram_body(int *result)
+{
+	struct sockaddr_un sun;
+	char dir[] = "/tmp/cap_pure_test.XXXXXX";
+	char path[128];
+	int ls, cs, one = 1;
+
+	if (mkdtemp(dir) == NULL) { *result = 1; return; }
+	snprintf(path, sizeof(path), "%s/dg", dir);
+
+	ls = socket(AF_UNIX, SOCK_DGRAM, 0);
+	if (ls < 0) { *result = 2; return; }
+
+	memset(&sun, 0, sizeof(sun));
+	sun.sun_family = AF_UNIX;
+	sun.sun_len = sizeof(sun);
+	strlcpy(sun.sun_path, path, sizeof(sun.sun_path));
+
+	if (bind(ls, (struct sockaddr *)&sun, sizeof(sun)) != 0) {
+		*result = 3; return;
+	}
+	if (setsockopt(ls, 0, LOCAL_CAP_CONNECT, &one, sizeof(one)) != 0) {
+		*result = 4; return;
+	}
+
+	/* DGRAM: sendto goes through unp_connectat — must be denied */
+	cs = socket(AF_UNIX, SOCK_DGRAM, 0);
+	if (cs < 0) { *result = 5; return; }
+	if (sendto(cs, "x", 1, 0, (struct sockaddr *)&sun, sizeof(sun)) != -1) {
+		*result = 6; return;
+	}
+	if (errno != ENOTCAPABLE) { *result = 7; return; }
+
+	close(cs);
+	close(ls);
+	(void)unlink(path);
+	(void)rmdir(dir);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(capmode_connect_dgram);
+ATF_TC_BODY(capmode_connect_dgram, tc)
+{
+	int r;
+
+	r = in_child(capmode_connect_dgram_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "DGRAM sendto to capmode-only socket must fail (result=%d)", r);
+}
+
+/* ---- pdincapmode ESRCH test ---- */
+
+/*
+ * pdincapmode_exited:
+ * Verify pdincapmode returns ESRCH when the described process has exited.
+ */
+ATF_TC_WITHOUT_HEAD(pdincapmode_exited);
+ATF_TC_BODY(pdincapmode_exited, tc)
+{
+	int pdfd, status;
+	pid_t pid;
+
+	pid = pdfork(&pdfd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0)
+		_exit(0);	/* child exits immediately */
+
+	/* Wait for child to exit */
+	ATF_REQUIRE(pdwait(pdfd, &status, 0, NULL, NULL) == pid);
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+
+	/* Process has exited — pdincapmode should return ESRCH */
+	ATF_REQUIRE(syscall(SYS_pdincapmode, pdfd) == -1);
+	ATF_REQUIRE(errno == ESRCH);
+
+	close(pdfd);
+}
+
+/* ---- cap_mmap_capmode tests ---- */
+
+#ifndef SYS_cap_mmap_capmode
+#define	SYS_cap_mmap_capmode	634
+#endif
+#ifndef SYS_cap_lookup_capmode
+#define	SYS_cap_lookup_capmode	635
+#endif
+
+/*
+ * mmap_capmode_denied:
+ * shm_open, cap_mmap_capmode(fd), mmap outside cap mode -> ENOTCAPABLE
+ */
+static void
+mmap_capmode_denied_body(int *result)
+{
+	int fd;
+	void *addr;
+
+	fd = shm_open(SHM_ANON, O_RDWR, 0600);
+	if (fd < 0) { *result = 1; return; }
+	if (ftruncate(fd, 4096) != 0) { *result = 2; return; }
+
+	if (syscall(SYS_cap_mmap_capmode, fd) != 0) { *result = 3; return; }
+
+	/* mmap outside cap mode should fail */
+	addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (addr != MAP_FAILED) {
+		munmap(addr, 4096);
+		*result = 4; return;
+	}
+	if (errno != ENOTCAPABLE) { *result = 5; return; }
+
+	close(fd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(mmap_capmode_denied);
+ATF_TC_BODY(mmap_capmode_denied, tc)
+{
+	int r;
+
+	r = in_child(mmap_capmode_denied_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "mmap outside cap mode on capmode fd: expected ENOTCAPABLE (result=%d)",
+	    r);
+}
+
+/*
+ * mmap_capmode_allowed:
+ * shm_open, cap_mmap_capmode(fd), enter cap mode, mmap -> succeeds
+ */
+static void
+mmap_capmode_allowed_body(int *result)
+{
+	int fd;
+	void *addr;
+
+	fd = shm_open(SHM_ANON, O_RDWR, 0600);
+	if (fd < 0) { *result = 1; return; }
+	if (ftruncate(fd, 4096) != 0) { *result = 2; return; }
+
+	if (syscall(SYS_cap_mmap_capmode, fd) != 0) { *result = 3; return; }
+
+	if (cap_enter() != 0) { *result = 4; return; }
+
+	/* mmap in cap mode should succeed */
+	addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (addr == MAP_FAILED) { *result = 5; return; }
+
+	munmap(addr, 4096);
+	close(fd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(mmap_capmode_allowed);
+ATF_TC_BODY(mmap_capmode_allowed, tc)
+{
+	int r;
+
+	r = in_child(mmap_capmode_allowed_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "mmap in cap mode on capmode fd: expected success (result=%d)", r);
+}
+
+/*
+ * mmap_capmode_bad_fd:
+ * cap_mmap_capmode on invalid fd -> EBADF
+ */
+static void
+mmap_capmode_bad_fd_body(int *result)
+{
+	if (syscall(SYS_cap_mmap_capmode, 999) == 0) { *result = 1; return; }
+	if (errno != EBADF) { *result = 2; return; }
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(mmap_capmode_bad_fd);
+ATF_TC_BODY(mmap_capmode_bad_fd, tc)
+{
+	int r;
+
+	r = in_child(mmap_capmode_bad_fd_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "cap_mmap_capmode bad fd: expected EBADF (result=%d)", r);
+}
+
+/* ---- LOCAL_CAP_REQ tests ---- */
+
+#ifndef LOCAL_CAP_REQ
+#define	LOCAL_CAP_REQ		7
+#endif
+
+/*
+ * cap_req_send_denied:
+ * Set LOCAL_CAP_REQ on a socketpair. A non-cap-mode process tries to
+ * send; verify ENOTCAPABLE.
+ */
+static void
+cap_req_send_denied_body(int *result)
+{
+	int sv[2], one = 1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+	if (setsockopt(sv[0], 0, LOCAL_CAP_REQ, &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+	/* Not in cap mode — send must fail */
+	if (send(sv[0], "x", 1, 0) != -1) { *result = 3; return; }
+	if (errno != ENOTCAPABLE) { *result = 4; return; }
+
+	close(sv[0]); close(sv[1]);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_req_send_denied);
+ATF_TC_BODY(cap_req_send_denied, tc)
+{
+	int r;
+
+	r = in_child(cap_req_send_denied_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "LOCAL_CAP_REQ send outside capmode must fail (result=%d)", r);
+}
+
+/*
+ * cap_req_recv_denied:
+ * Set LOCAL_CAP_REQ on a socketpair. A non-cap-mode process tries to
+ * recv; verify ENOTCAPABLE.
+ */
+static void
+cap_req_recv_denied_body(int *result)
+{
+	int sv[2], one = 1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+	if (setsockopt(sv[0], 0, LOCAL_CAP_REQ, &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+	/* Send data from sv[1] so there's something to receive */
+	if (send(sv[1], "x", 1, 0) != 1) { *result = 3; return; }
+
+	/* Not in cap mode — recv on sv[0] must fail */
+	{
+		char buf[1];
+		if (recv(sv[0], buf, 1, 0) != -1) { *result = 4; return; }
+		if (errno != ENOTCAPABLE) { *result = 5; return; }
+	}
+
+	close(sv[0]); close(sv[1]);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_req_recv_denied);
+ATF_TC_BODY(cap_req_recv_denied, tc)
+{
+	int r;
+
+	r = in_child(cap_req_recv_denied_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "LOCAL_CAP_REQ recv outside capmode must fail (result=%d)", r);
+}
+
+/*
+ * cap_req_allowed:
+ * Set LOCAL_CAP_REQ on a socketpair, enter cap mode, verify send/recv
+ * succeed.
+ */
+static void
+cap_req_allowed_body(int *result)
+{
+	int sv[2], one = 1;
+	char buf[4];
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+	if (setsockopt(sv[0], 0, LOCAL_CAP_REQ, &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+	if (setsockopt(sv[1], 0, LOCAL_CAP_REQ, &one, sizeof(one)) != 0) {
+		*result = 3; return;
+	}
+	if (cap_enter() != 0) { *result = 4; return; }
+
+	/* In cap mode — send and recv must succeed */
+	if (send(sv[0], "test", 4, 0) != 4) { *result = 5; return; }
+	if (recv(sv[1], buf, 4, 0) != 4) { *result = 6; return; }
+	if (memcmp(buf, "test", 4) != 0) { *result = 7; return; }
+
+	close(sv[0]); close(sv[1]);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_req_allowed);
+ATF_TC_BODY(cap_req_allowed, tc)
+{
+	int r;
+
+	r = in_child(cap_req_allowed_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "LOCAL_CAP_REQ send/recv in capmode must succeed (result=%d)", r);
+}
+
+/*
+ * cap_req_monotonic:
+ * Once LOCAL_CAP_REQ is set, attempting to clear it must fail.
+ */
+static void
+cap_req_monotonic_body(int *result)
+{
+	int sv[2], one = 1, zero = 0;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+	if (setsockopt(sv[0], 0, LOCAL_CAP_REQ, &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+	/* Attempt to clear — must fail */
+	if (setsockopt(sv[0], 0, LOCAL_CAP_REQ, &zero, sizeof(zero)) == 0) {
+		*result = 3; return;
+	}
+	if (errno != ENOTCAPABLE) { *result = 4; return; }
+
+	close(sv[0]); close(sv[1]);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_req_monotonic);
+ATF_TC_BODY(cap_req_monotonic, tc)
+{
+	int r;
+
+	r = in_child(cap_req_monotonic_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "LOCAL_CAP_REQ must be monotonic (result=%d)", r);
+}
+
+/*
+ * cap_req_dgram:
+ * Verify LOCAL_CAP_REQ also works for SOCK_DGRAM sockets.
+ */
+static void
+cap_req_dgram_body(int *result)
+{
+	int sv[2], one = 1;
+
+	if (socketpair(AF_UNIX, SOCK_DGRAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+	if (setsockopt(sv[0], 0, LOCAL_CAP_REQ, &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+	/* Not in cap mode — send must fail */
+	if (send(sv[0], "x", 1, 0) != -1) { *result = 3; return; }
+	if (errno != ENOTCAPABLE) { *result = 4; return; }
+
+	close(sv[0]); close(sv[1]);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_req_dgram);
+ATF_TC_BODY(cap_req_dgram, tc)
+{
+	int r;
+
+	r = in_child(cap_req_dgram_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "LOCAL_CAP_REQ dgram send outside capmode must fail (result=%d)", r);
+}
+
+/* ---- cap_lookup_capmode tests ---- */
+
+/*
+ * lookup_capmode_denied:
+ * open(".", O_DIRECTORY), cap_lookup_capmode(dirfd),
+ * openat(dirfd, ...) outside cap mode -> ENOTCAPABLE
+ */
+static void
+lookup_capmode_denied_body(int *result)
+{
+	int dirfd, fd;
+	char dir[] = "/tmp/cap_lookup_test.XXXXXX";
+
+	if (mkdtemp(dir) == NULL) { *result = 1; return; }
+
+	dirfd = open(dir, O_DIRECTORY | O_RDONLY);
+	if (dirfd < 0) { *result = 2; return; }
+
+	/* Create a test file in the directory */
+	fd = openat(dirfd, "testfile", O_RDWR | O_CREAT, 0644);
+	if (fd < 0) { *result = 3; return; }
+	close(fd);
+
+	if (syscall(SYS_cap_lookup_capmode, dirfd) != 0) {
+		*result = 4; return;
+	}
+
+	/* openat outside cap mode should fail */
+	fd = openat(dirfd, "testfile", O_RDONLY);
+	if (fd >= 0) {
+		close(fd);
+		*result = 5; return;
+	}
+	if (errno != ENOTCAPABLE) { *result = 6; return; }
+
+	close(dirfd);
+	{
+		char path[256];
+		snprintf(path, sizeof(path), "%s/testfile", dir);
+		(void)unlink(path);
+	}
+	(void)rmdir(dir);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(lookup_capmode_denied);
+ATF_TC_BODY(lookup_capmode_denied, tc)
+{
+	int r;
+
+	r = in_child(lookup_capmode_denied_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "openat outside cap mode on capmode dirfd: expected ENOTCAPABLE (result=%d)",
+	    r);
+}
+
+/*
+ * lookup_capmode_allowed:
+ * open dir, cap_lookup_capmode(dirfd), enter cap mode,
+ * openat(dirfd, ...) -> succeeds
+ */
+static void
+lookup_capmode_allowed_body(int *result)
+{
+	int dirfd, fd;
+	char dir[] = "/tmp/cap_lookup_ok.XXXXXX";
+
+	if (mkdtemp(dir) == NULL) { *result = 1; return; }
+
+	dirfd = open(dir, O_DIRECTORY | O_RDONLY);
+	if (dirfd < 0) { *result = 2; return; }
+
+	/* Create a test file in the directory */
+	fd = openat(dirfd, "testfile", O_RDWR | O_CREAT, 0644);
+	if (fd < 0) { *result = 3; return; }
+	close(fd);
+
+	if (syscall(SYS_cap_lookup_capmode, dirfd) != 0) {
+		*result = 4; return;
+	}
+
+	if (cap_enter() != 0) { *result = 5; return; }
+
+	/* openat in cap mode should succeed */
+	fd = openat(dirfd, "testfile", O_RDONLY);
+	if (fd < 0) { *result = 6; return; }
+	close(fd);
+
+	close(dirfd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(lookup_capmode_allowed);
+ATF_TC_BODY(lookup_capmode_allowed, tc)
+{
+	int r;
+
+	r = in_child(lookup_capmode_allowed_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "openat in cap mode on capmode dirfd: expected success (result=%d)", r);
+}
+
+/*
+ * lookup_capmode_bad_fd:
+ * cap_lookup_capmode on invalid fd -> EBADF
+ */
+static void
+lookup_capmode_bad_fd_body(int *result)
+{
+	if (syscall(SYS_cap_lookup_capmode, 999) == 0) { *result = 1; return; }
+	if (errno != EBADF) { *result = 2; return; }
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(lookup_capmode_bad_fd);
+ATF_TC_BODY(lookup_capmode_bad_fd, tc)
+{
+	int r;
+
+	r = in_child(lookup_capmode_bad_fd_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "cap_lookup_capmode bad fd: expected EBADF (result=%d)", r);
+}
+
+/* ---- LOCAL_CAPMODE_SERVER tests ---- */
+
+#ifndef LOCAL_CAPMODE_SERVER
+#define	LOCAL_CAPMODE_SERVER	6
+#endif
+
+/*
+ * capmode_server_denied:
+ * Client sets LOCAL_CAPMODE_SERVER on its socket, then tries to connect
+ * to a server that is NOT in cap mode.  Connect must fail with ENOTCAPABLE.
+ */
+static void
+capmode_server_denied_body(int *result)
+{
+	struct sockaddr_un sun;
+	char dir[] = "/tmp/cap_pure_test.XXXXXX";
+	char path[128];
+	int ls, cs, one = 1;
+
+	if (mkdtemp(dir) == NULL) { *result = 1; return; }
+	snprintf(path, sizeof(path), "%s/sock", dir);
+
+	ls = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (ls < 0) { *result = 2; return; }
+
+	memset(&sun, 0, sizeof(sun));
+	sun.sun_family = AF_UNIX;
+	sun.sun_len = sizeof(sun);
+	strlcpy(sun.sun_path, path, sizeof(sun.sun_path));
+
+	if (bind(ls, (struct sockaddr *)&sun, sizeof(sun)) != 0) {
+		*result = 3; return;
+	}
+	if (listen(ls, 1) != 0) { *result = 4; return; }
+
+	/* Client sets LOCAL_CAPMODE_SERVER before connecting */
+	cs = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (cs < 0) { *result = 5; return; }
+	if (setsockopt(cs, 0, LOCAL_CAPMODE_SERVER, &one, sizeof(one)) != 0) {
+		*result = 6; return;
+	}
+
+	/* Server is NOT in cap mode — connect must fail */
+	if (connect(cs, (struct sockaddr *)&sun, sizeof(sun)) == 0) {
+		*result = 7; return;
+	}
+	if (errno != ENOTCAPABLE) { *result = 8; return; }
+
+	close(cs);
+	close(ls);
+	(void)unlink(path);
+	(void)rmdir(dir);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(capmode_server_denied);
+ATF_TC_BODY(capmode_server_denied, tc)
+{
+	int r;
+
+	r = in_child(capmode_server_denied_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "connect to non-cap-mode server must fail (result=%d)", r);
+}
+
+/*
+ * capmode_server_monotonic:
+ * Set LOCAL_CAPMODE_SERVER, then try to clear it.  Verify ENOTCAPABLE.
+ */
+static void
+capmode_server_monotonic_body(int *result)
+{
+	int s, one = 1, zero = 0;
+
+	s = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (s < 0) { *result = 1; return; }
+
+	if (setsockopt(s, 0, LOCAL_CAPMODE_SERVER, &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+
+	/* Attempt to clear — must fail with ENOTCAPABLE */
+	if (setsockopt(s, 0, LOCAL_CAPMODE_SERVER, &zero, sizeof(zero)) == 0) {
+		*result = 3; return;
+	}
+	if (errno != ENOTCAPABLE) { *result = 4; return; }
+
+	/* Setting it again (idempotent) must succeed */
+	if (setsockopt(s, 0, LOCAL_CAPMODE_SERVER, &one, sizeof(one)) != 0) {
+		*result = 5; return;
+	}
+
+	close(s);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(capmode_server_monotonic);
+ATF_TC_BODY(capmode_server_monotonic, tc)
+{
+	int r;
+
+	r = in_child(capmode_server_monotonic_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "LOCAL_CAPMODE_SERVER must be monotonic (result=%d)", r);
+}
+
+/* ---- sockcred2 sc_capmode tests ---- */
+
+/*
+ * Extended sockcred2 with sc_capmode field.  Defined locally so the
+ * test compiles against older system headers that lack the field.
+ */
+struct sockcred2_ext {
+	int	sc_version;
+	pid_t	sc_pid;
+	uid_t	sc_uid;
+	uid_t	sc_euid;
+	gid_t	sc_gid;
+	gid_t	sc_egid;
+	uint8_t	sc_capmode;
+	uint8_t	sc_pad0[3];
+	int	sc_ngroups;
+	gid_t	sc_groups[1];
+};
+
+/*
+ * sockcred2_capmode:
+ * A child in cap mode sends a message on a socketpair with
+ * LOCAL_CREDS_PERSISTENT enabled.  Parent receives SCM_CREDS2 and
+ * verifies sc_capmode == 1.
+ */
+static void
+sockcred2_capmode_body(int *result)
+{
+	int sv[2], one = 1;
+	pid_t pid;
+	int status;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+
+	/* Enable LOCAL_CREDS_PERSISTENT on the receiving end */
+	if (setsockopt(sv[0], 0, LOCAL_CREDS_PERSISTENT,
+	    &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+
+	pid = fork();
+	if (pid < 0) { *result = 3; return; }
+	if (pid == 0) {
+		/* Child: enter cap mode, send a message */
+		close(sv[0]);
+		if (cap_enter() != 0) _exit(10);
+		if (write(sv[1], "x", 1) != 1) _exit(11);
+		close(sv[1]);
+		_exit(0);
+	}
+
+	/* Parent: receive and check SCM_CREDS2 */
+	close(sv[1]);
+
+	if (waitpid(pid, &status, 0) != pid) { *result = 4; return; }
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		*result = 20 + WEXITSTATUS(status); return;
+	}
+
+	{
+		struct msghdr msg;
+		struct iovec iov;
+		char buf[1];
+		union {
+			struct cmsghdr hdr;
+			char control[CMSG_SPACE(SOCKCRED2SIZE(CMGROUP_MAX))];
+		} cmsgbuf;
+		struct cmsghdr *cmsg;
+		struct sockcred2_ext *sc;
+
+		memset(&msg, 0, sizeof(msg));
+		iov.iov_base = buf;
+		iov.iov_len = sizeof(buf);
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+		msg.msg_control = cmsgbuf.control;
+		msg.msg_controllen = sizeof(cmsgbuf.control);
+
+		if (recvmsg(sv[0], &msg, 0) < 0) { *result = 5; return; }
+
+		cmsg = CMSG_FIRSTHDR(&msg);
+		if (cmsg == NULL) { *result = 6; return; }
+		if (cmsg->cmsg_level != SOL_SOCKET ||
+		    cmsg->cmsg_type != SCM_CREDS2) {
+			*result = 7; return;
+		}
+
+		sc = (struct sockcred2_ext *)(void *)CMSG_DATA(cmsg);
+		if (sc->sc_capmode != 1) { *result = 8; return; }
+	}
+
+	close(sv[0]);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(sockcred2_capmode);
+ATF_TC_BODY(sockcred2_capmode, tc)
+{
+	int r;
+
+	r = in_child(sockcred2_capmode_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "sc_capmode must be 1 for cap-mode sender (result=%d)", r);
+}
+
+/*
+ * sockcred2_no_capmode:
+ * A child NOT in cap mode sends a message.  Verify sc_capmode == 0.
+ */
+static void
+sockcred2_no_capmode_body(int *result)
+{
+	int sv[2], one = 1;
+	pid_t pid;
+	int status;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+
+	if (setsockopt(sv[0], 0, LOCAL_CREDS_PERSISTENT,
+	    &one, sizeof(one)) != 0) {
+		*result = 2; return;
+	}
+
+	pid = fork();
+	if (pid < 0) { *result = 3; return; }
+	if (pid == 0) {
+		/* Child: do NOT enter cap mode, just send */
+		close(sv[0]);
+		if (write(sv[1], "x", 1) != 1) _exit(11);
+		close(sv[1]);
+		_exit(0);
+	}
+
+	close(sv[1]);
+
+	if (waitpid(pid, &status, 0) != pid) { *result = 4; return; }
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		*result = 20 + WEXITSTATUS(status); return;
+	}
+
+	{
+		struct msghdr msg;
+		struct iovec iov;
+		char buf[1];
+		union {
+			struct cmsghdr hdr;
+			char control[CMSG_SPACE(SOCKCRED2SIZE(CMGROUP_MAX))];
+		} cmsgbuf;
+		struct cmsghdr *cmsg;
+		struct sockcred2_ext *sc;
+
+		memset(&msg, 0, sizeof(msg));
+		iov.iov_base = buf;
+		iov.iov_len = sizeof(buf);
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+		msg.msg_control = cmsgbuf.control;
+		msg.msg_controllen = sizeof(cmsgbuf.control);
+
+		if (recvmsg(sv[0], &msg, 0) < 0) { *result = 5; return; }
+
+		cmsg = CMSG_FIRSTHDR(&msg);
+		if (cmsg == NULL) { *result = 6; return; }
+		if (cmsg->cmsg_level != SOL_SOCKET ||
+		    cmsg->cmsg_type != SCM_CREDS2) {
+			*result = 7; return;
+		}
+
+		sc = (struct sockcred2_ext *)(void *)CMSG_DATA(cmsg);
+		if (sc->sc_capmode != 0) { *result = 8; return; }
+	}
+
+	close(sv[0]);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(sockcred2_no_capmode);
+ATF_TC_BODY(sockcred2_no_capmode, tc)
+{
+	int r;
+
+	r = in_child(sockcred2_no_capmode_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "sc_capmode must be 0 for non-cap-mode sender (result=%d)", r);
+}
+
+/* ---- M2: capmode_server_allowed ---- */
+
+/*
+ * capmode_server_allowed:
+ * Fork a child that opens a temp directory, enters cap mode, creates
+ * a socket, binds via bindat(dirfd, ..., "sock"), listens, and writes
+ * a sync byte.  Parent sets LOCAL_CAPMODE_SERVER on a client socket
+ * and connects to the full path.  Verify connection succeeds (server
+ * is in cap mode so LOCAL_CAPMODE_SERVER is satisfied).
+ */
+static void
+capmode_server_allowed_body(int *result)
+{
+	struct sockaddr_un sun;
+	char dir[] = "/tmp/cap_pure_test.XXXXXX";
+	int cs, pv[2], one = 1;
+	pid_t pid;
+	int status;
+
+	if (mkdtemp(dir) == NULL) { *result = 1; return; }
+	if (pipe(pv) != 0) { *result = 2; return; }
+
+	pid = fork();
+	if (pid < 0) { *result = 3; return; }
+	if (pid == 0) {
+		/* Child: open dirfd, enter cap mode, bind+listen */
+		struct sockaddr_un csun;
+		int dfd, ls;
+
+		close(pv[0]);
+
+		dfd = open(dir, O_DIRECTORY | O_RDONLY);
+		if (dfd < 0) _exit(10);
+
+		if (cap_enter() != 0) _exit(11);
+
+		ls = socket(AF_UNIX, SOCK_STREAM, 0);
+		if (ls < 0) _exit(12);
+
+		memset(&csun, 0, sizeof(csun));
+		csun.sun_family = AF_UNIX;
+		csun.sun_len = sizeof(csun);
+		strlcpy(csun.sun_path, "sock", sizeof(csun.sun_path));
+
+		if (bindat(dfd, ls, (struct sockaddr *)&csun,
+		    sizeof(csun)) != 0)
+			_exit(13);
+		if (listen(ls, 1) != 0) _exit(14);
+
+		/* Signal parent that we are ready */
+		if (write(pv[1], "R", 1) != 1) _exit(15);
+
+		/* Accept and immediately close */
+		{
+			int as = accept(ls, NULL, NULL);
+			if (as < 0) _exit(16);
+			close(as);
+		}
+
+		close(ls);
+		close(dfd);
+		close(pv[1]);
+		_exit(0);
+	}
+
+	/* Parent: wait for child to be ready, then connect */
+	close(pv[1]);
+	{
+		char byte;
+		if (read(pv[0], &byte, 1) != 1 || byte != 'R') {
+			*result = 4;
+			(void)kill(pid, SIGKILL);
+			(void)waitpid(pid, NULL, 0);
+			close(pv[0]);
+			return;
+		}
+	}
+	close(pv[0]);
+
+	memset(&sun, 0, sizeof(sun));
+	sun.sun_family = AF_UNIX;
+	sun.sun_len = sizeof(sun);
+	snprintf(sun.sun_path, sizeof(sun.sun_path), "%s/sock", dir);
+
+	cs = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (cs < 0) { *result = 5; goto wait; }
+
+	if (setsockopt(cs, 0, LOCAL_CAPMODE_SERVER, &one, sizeof(one)) != 0) {
+		*result = 6; goto wait;
+	}
+
+	if (connect(cs, (struct sockaddr *)&sun, sizeof(sun)) != 0) {
+		*result = 7; goto wait;
+	}
+
+	close(cs);
+	*result = 0;
+
+wait:
+	if (waitpid(pid, &status, 0) != pid) { *result = 8; return; }
+	if (*result == 0 &&
+	    (!WIFEXITED(status) || WEXITSTATUS(status) != 0)) {
+		*result = 20 + WEXITSTATUS(status);
+	}
+	(void)unlink(sun.sun_path);
+	(void)rmdir(dir);
+}
+
+ATF_TC_WITHOUT_HEAD(capmode_server_allowed);
+ATF_TC_BODY(capmode_server_allowed, tc)
+{
+	int r;
+
+	r = in_child(capmode_server_allowed_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "connect to cap-mode server with LOCAL_CAPMODE_SERVER "
+	    "must succeed (result=%d)", r);
+}
+
+/* ---- M4: note_capmode_no_double_fire ---- */
+
+/*
+ * note_capmode_no_double_fire:
+ * pdfork a child.  Child enters cap mode (fires NOTE_CAPMODE), parent
+ * consumes the event, then child calls cap_enter() again (should be
+ * a no-op).  Parent waits with a short timeout — should get 0 events
+ * (no double fire).
+ */
+static void
+note_capmode_no_double_fire_body(int *result)
+{
+	int pdfd, kq, pv[2], pv2[2];
+	struct kevent kev;
+	struct timespec ts;
+	pid_t pid;
+	char byte;
+	int nev;
+
+	if (pipe(pv) != 0) { *result = 1; return; }
+	if (pipe(pv2) != 0) { *result = 2; return; }
+
+	pid = pdfork(&pdfd, 0);
+	if (pid < 0) { *result = 3; return; }
+	if (pid == 0) {
+		close(pv[1]);
+		close(pv2[0]);
+
+		/* Wait for parent to register kevent */
+		if (read(pv[0], &byte, 1) != 1) _exit(1);
+		close(pv[0]);
+
+		/* First cap_enter — fires NOTE_CAPMODE */
+		if (cap_enter() != 0) _exit(2);
+
+		/* Signal parent that first cap_enter is done */
+		if (write(pv2[1], "1", 1) != 1) _exit(3);
+
+		/* Wait for parent to consume first event */
+		/* Use a small delay to give parent time */
+		usleep(200000);
+
+		/* Second cap_enter — should be a no-op */
+		(void)cap_enter();
+
+		/* Signal parent that second cap_enter is done */
+		if (write(pv2[1], "2", 1) != 1) _exit(4);
+
+		sleep(5);
+		_exit(0);
+	}
+
+	close(pv[0]);
+	close(pv2[1]);
+
+	kq = kqueue();
+	if (kq < 0) { *result = 4; goto kill; }
+
+	EV_SET(&kev, pdfd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+	    NOTE_CAPMODE, 0, NULL);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) { *result = 5; goto kill; }
+
+	/* Signal child to proceed */
+	write(pv[1], "x", 1);
+	close(pv[1]);
+
+	/* Wait for child to have done first cap_enter */
+	if (read(pv2[0], &byte, 1) != 1 || byte != '1') {
+		*result = 6; goto kill;
+	}
+
+	/* Consume the first NOTE_CAPMODE event */
+	ts.tv_sec = 5;
+	ts.tv_nsec = 0;
+	nev = kevent(kq, NULL, 0, &kev, 1, &ts);
+	if (nev != 1) { *result = 7; goto kill; }
+	if ((kev.fflags & NOTE_CAPMODE) == 0) { *result = 8; goto kill; }
+
+	/* Wait for child to have done second cap_enter */
+	if (read(pv2[0], &byte, 1) != 1 || byte != '2') {
+		*result = 9; goto kill;
+	}
+
+	/* Now wait with a short timeout — should get 0 events (no double fire) */
+	ts.tv_sec = 0;
+	ts.tv_nsec = 200000000;	/* 200ms */
+	nev = kevent(kq, NULL, 0, &kev, 1, &ts);
+	if (nev != 0) { *result = 10; goto kill; }
+
+	close(kq);
+	close(pv2[0]);
+	pdkill(pdfd, SIGKILL);
+	close(pdfd);
+	*result = 0;
+	return;
+
+kill:
+	close(pv2[0]);
+	pdkill(pdfd, SIGKILL);
+	close(pdfd);
+}
+
+ATF_TC_WITHOUT_HEAD(note_capmode_no_double_fire);
+ATF_TC_BODY(note_capmode_no_double_fire, tc)
+{
+	int r;
+
+	r = in_child(note_capmode_no_double_fire_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "NOTE_CAPMODE must not fire twice (result=%d)", r);
+}
+
+/* ---- NOTE_JAILED kevent test ---- */
+
+/*
+ * note_jailed_kevent:
+ * pdfork a child, register EVFILT_PROCDESC with NOTE_JAILED on the
+ * procdesc fd.  Child creates a jail and attaches to it.
+ * Parent verifies the event fires with NOTE_JAILED in fflags.
+ * Requires root (jail_set needs privilege).
+ */
+static void
+note_jailed_kevent_body(int *result)
+{
+	int pdfd, kq, pv[2];
+	struct kevent kev;
+	struct timespec ts;
+	pid_t pid;
+	char byte;
+
+	if (getuid() != 0) {
+		/* Can't create jails without root */
+		*result = 77;	/* sentinel: skip */
+		return;
+	}
+
+	if (pipe(pv) != 0) { *result = 1; return; }
+
+	pid = pdfork(&pdfd, 0);
+	if (pid < 0) { *result = 2; return; }
+	if (pid == 0) {
+		struct jail j;
+
+		close(pv[1]);
+		/* Wait for parent to register kevent */
+		if (read(pv[0], &byte, 1) != 1) _exit(1);
+		close(pv[0]);
+
+		/* Create and attach to a jail */
+		memset(&j, 0, sizeof(j));
+		j.version = JAIL_API_VERSION;
+		j.path = __DECONST(char *, "/");
+		j.hostname = __DECONST(char *, "captest");
+		j.jailname = __DECONST(char *, "captest_note_jailed");
+		if (jail(&j) < 0) _exit(2);
+
+		sleep(60);
+		_exit(0);
+	}
+
+	close(pv[0]);
+
+	kq = kqueue();
+	if (kq < 0) { *result = 3; return; }
+
+	EV_SET(&kev, pdfd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+	    NOTE_JAILED, 0, NULL);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) { *result = 4; return; }
+
+	/* Signal child */
+	write(pv[1], "x", 1);
+	close(pv[1]);
+
+	/* Wait for NOTE_JAILED */
+	ts.tv_sec = 5;
+	ts.tv_nsec = 0;
+	if (kevent(kq, NULL, 0, &kev, 1, &ts) != 1) { *result = 5; return; }
+
+	if (kev.filter != EVFILT_PROCDESC) { *result = 6; return; }
+	if ((kev.fflags & NOTE_JAILED) == 0) { *result = 7; return; }
+
+	close(kq);
+	pdkill(pdfd, SIGKILL);
+	close(pdfd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(note_jailed_kevent);
+ATF_TC_BODY(note_jailed_kevent, tc)
+{
+	int r;
+
+	r = in_child(note_jailed_kevent_body, NULL);
+	if (r == 77)
+		atf_tc_skip("requires root for jail creation");
+	ATF_REQUIRE_MSG(r == 0,
+	    "NOTE_JAILED kevent must fire on jail attach (result=%d)", r);
+}
+
+/* ---- NOTE_SETUID kevent test ---- */
+
+/*
+ * note_setuid_kevent:
+ * pdfork a child, register EVFILT_PROCDESC with NOTE_SETUID on the
+ * procdesc fd.  Child calls setgid(getgid()) which always succeeds
+ * and fires NOTE_SETUID (proc_set_cred is called regardless of
+ * whether the value actually changed).
+ * Parent verifies the event fires with NOTE_SETUID in fflags.
+ */
+static void
+note_setuid_kevent_body(int *result)
+{
+	int pdfd, kq, pv[2];
+	struct kevent kev;
+	struct timespec ts;
+	pid_t pid;
+	char byte;
+
+	if (pipe(pv) != 0) { *result = 1; return; }
+
+	pid = pdfork(&pdfd, 0);
+	if (pid < 0) { *result = 2; return; }
+	if (pid == 0) {
+		close(pv[1]);
+		/* Wait for parent to register kevent */
+		if (read(pv[0], &byte, 1) != 1) _exit(1);
+		close(pv[0]);
+
+		/* setgid to own gid -- always succeeds, fires NOTE_SETUID */
+		if (setgid(getgid()) != 0) _exit(2);
+
+		sleep(60);
+		_exit(0);
+	}
+
+	close(pv[0]);
+
+	kq = kqueue();
+	if (kq < 0) { *result = 3; return; }
+
+	EV_SET(&kev, pdfd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+	    NOTE_SETUID, 0, NULL);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) { *result = 4; return; }
+
+	/* Signal child */
+	write(pv[1], "x", 1);
+	close(pv[1]);
+
+	/* Wait for NOTE_SETUID */
+	ts.tv_sec = 5;
+	ts.tv_nsec = 0;
+	if (kevent(kq, NULL, 0, &kev, 1, &ts) != 1) { *result = 5; return; }
+
+	if (kev.filter != EVFILT_PROCDESC) { *result = 6; return; }
+	if ((kev.fflags & NOTE_SETUID) == 0) { *result = 7; return; }
+
+	close(kq);
+	pdkill(pdfd, SIGKILL);
+	close(pdfd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(note_setuid_kevent);
+ATF_TC_BODY(note_setuid_kevent, tc)
+{
+	int r;
+
+	r = in_child(note_setuid_kevent_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "NOTE_SETUID kevent must fire on credential change (result=%d)", r);
+}
+
+/* ---- NOTE_SIGNAL kevent test ---- */
+
+/*
+ * note_signal_kevent:
+ * pdfork a child, register EVFILT_PROCDESC with NOTE_SIGNAL on the
+ * procdesc fd.  Parent sends SIGUSR1 to the child via pdkill.
+ * Parent verifies the event fires with NOTE_SIGNAL in fflags.
+ */
+static void
+note_signal_kevent_body(int *result)
+{
+	int pdfd, kq, pv[2];
+	struct kevent kev;
+	struct timespec ts;
+	pid_t pid;
+	char byte;
+
+	if (pipe(pv) != 0) { *result = 1; return; }
+
+	pid = pdfork(&pdfd, 0);
+	if (pid < 0) { *result = 2; return; }
+	if (pid == 0) {
+		close(pv[1]);
+		/* Ignore SIGUSR1 so we don't die */
+		signal(SIGUSR1, SIG_IGN);
+		/* Tell parent we're ready */
+		if (read(pv[0], &byte, 1) != 1) _exit(1);
+		close(pv[0]);
+		sleep(60);
+		_exit(0);
+	}
+
+	close(pv[0]);
+
+	kq = kqueue();
+	if (kq < 0) { *result = 3; return; }
+
+	EV_SET(&kev, pdfd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+	    NOTE_SIGNAL, 0, NULL);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) { *result = 4; return; }
+
+	/* Signal child to enter its wait loop, then send SIGUSR1 */
+	write(pv[1], "x", 1);
+	close(pv[1]);
+
+	/* Small delay to let child set up signal handler */
+	usleep(100000);
+
+	if (pdkill(pdfd, SIGUSR1) != 0) { *result = 8; return; }
+
+	/* Wait for NOTE_SIGNAL */
+	ts.tv_sec = 5;
+	ts.tv_nsec = 0;
+	if (kevent(kq, NULL, 0, &kev, 1, &ts) != 1) { *result = 5; return; }
+
+	if (kev.filter != EVFILT_PROCDESC) { *result = 6; return; }
+	if ((kev.fflags & NOTE_SIGNAL) == 0) { *result = 7; return; }
+	/* Verify the signal number is in kev.data */
+	if (kev.data != SIGUSR1) { *result = 9; return; }
+
+	close(kq);
+	pdkill(pdfd, SIGKILL);
+	close(pdfd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(note_signal_kevent);
+ATF_TC_BODY(note_signal_kevent, tc)
+{
+	int r;
+
+	r = in_child(note_signal_kevent_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "NOTE_SIGNAL kevent must fire on signal delivery (result=%d)", r);
+}
+
+/* ---- NOTE_CHROOT kevent test ---- */
+
+/*
+ * note_chroot_kevent:
+ * pdfork a child, register EVFILT_PROCDESC with NOTE_CHROOT on the
+ * procdesc fd.  Child calls chroot("/") (always succeeds for root).
+ * Parent verifies the event fires with NOTE_CHROOT in fflags.
+ * Requires root -- chroot needs privilege.
+ */
+static void
+note_chroot_kevent_body(int *result)
+{
+	int pdfd, kq, pv[2];
+	struct kevent kev;
+	struct timespec ts;
+	pid_t pid;
+	char byte;
+
+	if (getuid() != 0) {
+		/* chroot needs root */
+		*result = 77;	/* sentinel: skip */
+		return;
+	}
+
+	if (pipe(pv) != 0) { *result = 1; return; }
+
+	pid = pdfork(&pdfd, 0);
+	if (pid < 0) { *result = 2; return; }
+	if (pid == 0) {
+		close(pv[1]);
+		/* Wait for parent to register kevent */
+		if (read(pv[0], &byte, 1) != 1) _exit(1);
+		close(pv[0]);
+
+		/* chroot to / -- always succeeds for root */
+		if (chroot("/") != 0) _exit(2);
+
+		sleep(60);
+		_exit(0);
+	}
+
+	close(pv[0]);
+
+	kq = kqueue();
+	if (kq < 0) { *result = 3; return; }
+
+	EV_SET(&kev, pdfd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+	    NOTE_CHROOT, 0, NULL);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) { *result = 4; return; }
+
+	/* Signal child */
+	write(pv[1], "x", 1);
+	close(pv[1]);
+
+	/* Wait for NOTE_CHROOT */
+	ts.tv_sec = 5;
+	ts.tv_nsec = 0;
+	if (kevent(kq, NULL, 0, &kev, 1, &ts) != 1) { *result = 5; return; }
+
+	if (kev.filter != EVFILT_PROCDESC) { *result = 6; return; }
+	if ((kev.fflags & NOTE_CHROOT) == 0) { *result = 7; return; }
+
+	close(kq);
+	pdkill(pdfd, SIGKILL);
+	close(pdfd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(note_chroot_kevent);
+ATF_TC_BODY(note_chroot_kevent, tc)
+{
+	int r;
+
+	r = in_child(note_chroot_kevent_body, NULL);
+	if (r == 77)
+		atf_tc_skip("requires root for chroot");
+	ATF_REQUIRE_MSG(r == 0,
+	    "NOTE_CHROOT kevent must fire on chroot (result=%d)", r);
+}
+
+/* ---- M5: capmode_connect_seqpacket ---- */
+
+/*
+ * capmode_connect_seqpacket:
+ * Same as capmode_connect_denied but with SOCK_SEQPACKET.
+ * Set LOCAL_CAP_CONNECT on a listening SEQPACKET socket.
+ * A non-cap-mode connect must fail with ENOTCAPABLE.
+ */
+static void
+capmode_connect_seqpacket_body(int *result)
+{
+	struct sockaddr_un sun;
+	char dir[] = "/tmp/cap_pure_test.XXXXXX";
+	char path[128];
+	int ls, cs, one = 1;
+
+	if (mkdtemp(dir) == NULL) { *result = 1; return; }
+	snprintf(path, sizeof(path), "%s/sock", dir);
+
+	ls = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+	if (ls < 0) { *result = 2; return; }
+
+	memset(&sun, 0, sizeof(sun));
+	sun.sun_family = AF_UNIX;
+	sun.sun_len = sizeof(sun);
+	strlcpy(sun.sun_path, path, sizeof(sun.sun_path));
+
+	if (bind(ls, (struct sockaddr *)&sun, sizeof(sun)) != 0) {
+		*result = 3; return;
+	}
+	if (setsockopt(ls, 0, LOCAL_CAP_CONNECT, &one, sizeof(one)) != 0) {
+		*result = 4; return;
+	}
+	if (listen(ls, 1) != 0) { *result = 5; return; }
+
+	/* We are NOT in cap mode — connect must fail with ENOTCAPABLE */
+	cs = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+	if (cs < 0) { *result = 6; return; }
+	if (connect(cs, (struct sockaddr *)&sun, sizeof(sun)) == 0) {
+		*result = 7; return;
+	}
+	if (errno != ENOTCAPABLE) { *result = 8; return; }
+
+	close(cs);
+	close(ls);
+	(void)unlink(path);
+	(void)rmdir(dir);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(capmode_connect_seqpacket);
+ATF_TC_BODY(capmode_connect_seqpacket, tc)
+{
+	int r;
+
+	r = in_child(capmode_connect_seqpacket_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "SEQPACKET non-cap-mode connect must fail with "
+	    "ENOTCAPABLE (result=%d)", r);
+}
+
+/* ---- M6: mmap_capmode_idempotent ---- */
+
+/*
+ * mmap_capmode_idempotent:
+ * shm_open, call cap_mmap_capmode twice. Both must succeed.
+ */
+static void
+mmap_capmode_idempotent_body(int *result)
+{
+	int fd;
+
+	fd = shm_open(SHM_ANON, O_RDWR, 0600);
+	if (fd < 0) { *result = 1; return; }
+	if (ftruncate(fd, 4096) != 0) { *result = 2; return; }
+
+	if (syscall(SYS_cap_mmap_capmode, fd) != 0) { *result = 3; return; }
+	if (syscall(SYS_cap_mmap_capmode, fd) != 0) { *result = 4; return; }
+
+	close(fd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(mmap_capmode_idempotent);
+ATF_TC_BODY(mmap_capmode_idempotent, tc)
+{
+	int r;
+
+	r = in_child(mmap_capmode_idempotent_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "cap_mmap_capmode must be idempotent (result=%d)", r);
+}
+
+/* ---- M7: lookup_capmode_idempotent ---- */
+
+/*
+ * lookup_capmode_idempotent:
+ * open("."), call cap_lookup_capmode twice. Both must succeed.
+ */
+static void
+lookup_capmode_idempotent_body(int *result)
+{
+	int dirfd;
+
+	dirfd = open(".", O_DIRECTORY | O_RDONLY);
+	if (dirfd < 0) { *result = 1; return; }
+
+	if (syscall(SYS_cap_lookup_capmode, dirfd) != 0) {
+		*result = 2; return;
+	}
+	if (syscall(SYS_cap_lookup_capmode, dirfd) != 0) {
+		*result = 3; return;
+	}
+
+	close(dirfd);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(lookup_capmode_idempotent);
+ATF_TC_BODY(lookup_capmode_idempotent, tc)
+{
+	int r;
+
+	r = in_child(lookup_capmode_idempotent_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "cap_lookup_capmode must be idempotent (result=%d)", r);
+}
+
+/* ---- CAP_SUFFICIENT tests ---- */
+
+/*
+ * cap_sufficient_fchmod:
+ * Open a temp file, cap_ambient_limit(fd), cap_enter(), fchmod()
+ * should succeed.  Verify mode changed.
+ */
+static void
+cap_sufficient_fchmod_body(int *result)
+{
+	struct stat sb;
+	int fd;
+
+	fd = open("/tmp/cap_suf_fchmod", O_RDWR | O_CREAT, 0644);
+	if (fd < 0) { *result = 1; return; }
+
+	if (syscall(SYS_cap_ambient_limit, fd) != 0) { *result = 2; return; }
+	if (cap_enter() != 0) { *result = 3; return; }
+
+	if (fchmod(fd, 0600) != 0) { *result = 4; return; }
+
+	if (fstat(fd, &sb) != 0) { *result = 5; return; }
+	if ((sb.st_mode & 0777) != 0600) { *result = 6; return; }
+
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_sufficient_fchmod);
+ATF_TC_BODY(cap_sufficient_fchmod, tc)
+{
+	int r;
+
+	r = in_child(cap_sufficient_fchmod_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "CAP_SUFFICIENT fchmod in cap mode (result=%d)", r);
+	unlink("/tmp/cap_suf_fchmod");
+}
+
+/*
+ * cap_sufficient_fchown:
+ * Open a temp file, cap_ambient_limit(fd), cap_enter(), fchown()
+ * should succeed.
+ */
+static void
+cap_sufficient_fchown_body(int *result)
+{
+	int fd;
+
+	fd = open("/tmp/cap_suf_fchown", O_RDWR | O_CREAT, 0644);
+	if (fd < 0) { *result = 1; return; }
+
+	if (syscall(SYS_cap_ambient_limit, fd) != 0) { *result = 2; return; }
+	if (cap_enter() != 0) { *result = 3; return; }
+
+	/* fchown to own uid/gid -- always succeeds */
+	if (fchown(fd, getuid(), getgid()) != 0) { *result = 4; return; }
+
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_sufficient_fchown);
+ATF_TC_BODY(cap_sufficient_fchown, tc)
+{
+	int r;
+
+	r = in_child(cap_sufficient_fchown_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "CAP_SUFFICIENT fchown in cap mode (result=%d)", r);
+	unlink("/tmp/cap_suf_fchown");
+}
+
+/*
+ * cap_sufficient_write:
+ * Open a file, cap_ambient_limit(fd), cap_enter(), write()
+ * should succeed.
+ */
+static void
+cap_sufficient_write_body(int *result)
+{
+	int fd;
+
+	fd = open("/tmp/cap_suf_write", O_RDWR | O_CREAT, 0644);
+	if (fd < 0) { *result = 1; return; }
+
+	if (syscall(SYS_cap_ambient_limit, fd) != 0) { *result = 2; return; }
+	if (cap_enter() != 0) { *result = 3; return; }
+
+	if (write(fd, "hello", 5) != 5) { *result = 4; return; }
+
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_sufficient_write);
+ATF_TC_BODY(cap_sufficient_write, tc)
+{
+	int r;
+
+	r = in_child(cap_sufficient_write_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "CAP_SUFFICIENT write in cap mode (result=%d)", r);
+	unlink("/tmp/cap_suf_write");
+}
+
+/*
+ * cap_sufficient_socket_ops:
+ * cap_ambient_limit() on socketpair fds, cap_enter(), send/recv should succeed.
+ */
+static void
+cap_sufficient_socket_ops_body(int *result)
+{
+	int sv[2];
+	char buf[4];
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		*result = 1; return;
+	}
+
+	if (syscall(SYS_cap_ambient_limit, sv[0]) != 0) { *result = 2; return; }
+	if (syscall(SYS_cap_ambient_limit, sv[1]) != 0) { *result = 3; return; }
+	if (cap_enter() != 0) { *result = 4; return; }
+
+	if (send(sv[0], "test", 4, 0) != 4) { *result = 5; return; }
+	if (recv(sv[1], buf, 4, 0) != 4) { *result = 6; return; }
+	if (memcmp(buf, "test", 4) != 0) { *result = 7; return; }
+
+	close(sv[0]);
+	close(sv[1]);
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_sufficient_socket_ops);
+ATF_TC_BODY(cap_sufficient_socket_ops, tc)
+{
+	int r;
+
+	r = in_child(cap_sufficient_socket_ops_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "CAP_SUFFICIENT socket send/recv in cap mode (result=%d)", r);
+}
+
+/*
+ * cap_sufficient_not_in_capmode:
+ * cap_ambient_limit(fd) but do NOT cap_enter().  fchmod() should
+ * still work normally (CAP_SUFFICIENT only skips checks in capmode,
+ * and normal fchmod works outside capmode anyway -- verifies no
+ * regression).
+ */
+static void
+cap_sufficient_not_in_capmode_body(int *result)
+{
+	struct stat sb;
+	int fd;
+
+	fd = open("/tmp/cap_suf_nocap", O_RDWR | O_CREAT, 0644);
+	if (fd < 0) { *result = 1; return; }
+
+	if (syscall(SYS_cap_ambient_limit, fd) != 0) { *result = 2; return; }
+
+	/* NOT entering cap mode -- fchmod should still work */
+	if (fchmod(fd, 0600) != 0) { *result = 3; return; }
+
+	if (fstat(fd, &sb) != 0) { *result = 4; return; }
+	if ((sb.st_mode & 0777) != 0600) { *result = 5; return; }
+
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_sufficient_not_in_capmode);
+ATF_TC_BODY(cap_sufficient_not_in_capmode, tc)
+{
+	int r;
+
+	r = in_child(cap_sufficient_not_in_capmode_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "CAP_SUFFICIENT outside cap mode: no regression (result=%d)", r);
+	unlink("/tmp/cap_suf_nocap");
+}
+
+/*
+ * cap_sufficient_ioctl:
+ * Open /dev/null, cap_ambient_limit(fd), cap_enter(),
+ * ioctl(FIONREAD) should succeed.
+ */
+static void
+cap_sufficient_ioctl_body(int *result)
+{
+	int fd, nb;
+
+	fd = open("/dev/null", O_RDWR);
+	if (fd < 0) { *result = 1; return; }
+
+	if (syscall(SYS_cap_ambient_limit, fd) != 0) { *result = 2; return; }
+	if (cap_enter() != 0) { *result = 3; return; }
+
+	nb = -1;
+	if (ioctl(fd, FIONREAD, &nb) != 0) { *result = 4; return; }
+
+	*result = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(cap_sufficient_ioctl);
+ATF_TC_BODY(cap_sufficient_ioctl, tc)
+{
+	int r;
+
+	r = in_child(cap_sufficient_ioctl_body, NULL);
+	ATF_REQUIRE_MSG(r == 0,
+	    "CAP_SUFFICIENT ioctl in cap mode (result=%d)", r);
+}
+
 /* ---- ATF test program ---- */
 
 ATF_TP_ADD_TCS(tp)
 {
-
-	/* CAPREQUIRED gate */
-	ATF_TP_ADD_TC(tp, cap_fchmod_outside_capmode);
-	ATF_TP_ADD_TC(tp, cap_fchmod_inside_capmode);
-	ATF_TP_ADD_TC(tp, cap_fchmod_nonvnode);
-	ATF_TP_ADD_TC(tp, cap_fchmod_rights);
-
-	/* Existing behavior unchanged */
-	ATF_TP_ADD_TC(tp, ambient_fchmod_unchanged);
 
 	/* cap_ambient_limit */
 	ATF_TP_ADD_TC(tp, ambient_limit_outside_capmode);
@@ -1548,21 +3310,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, ambient_limit_socket);
 	ATF_TP_ADD_TC(tp, ambient_limit_pipe);
 
-	/* SIGTRAP */
-	ATF_TP_ADD_TC(tp, caprequired_sigtrap);
-
 	/* SCM_RIGHTS */
 	ATF_TP_ADD_TC(tp, scm_rights_noncap);
 	ATF_TP_ADD_TC(tp, scm_rights_cap);
 
 	/* Fork */
 	ATF_TP_ADD_TC(tp, fork_inherit);
-
-	/* Tier 2+3 cap_* syscalls */
-	ATF_TP_ADD_TC(tp, cap_ftruncate_test);
-	ATF_TP_ADD_TC(tp, cap_ioctl_test);
-	ATF_TP_ADD_TC(tp, cap_mmap_test);
-	ATF_TP_ADD_TC(tp, cap_sendrecv_test);
 
 	/* AIO */
 	ATF_TP_ADD_TC(tp, aio_noambient);
@@ -1581,6 +3334,79 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, pdself_pdfork_shared);
 	ATF_TP_ADD_TC(tp, pdself_pdwait);
 	ATF_TP_ADD_TC(tp, pdself_pdkill);
+
+	/* pdincapmode */
+	ATF_TP_ADD_TC(tp, pdincapmode_before_capenter);
+	ATF_TP_ADD_TC(tp, pdincapmode_after_capenter);
+	ATF_TP_ADD_TC(tp, pdincapmode_bad_fd);
+
+	/* NOTE_CAPMODE kqueue event */
+	ATF_TP_ADD_TC(tp, note_capmode_kevent);
+
+	/* LOCAL_CAP_CONNECT */
+	ATF_TP_ADD_TC(tp, capmode_connect_denied);
+	ATF_TP_ADD_TC(tp, capmode_connect_allowed);
+	ATF_TP_ADD_TC(tp, capmode_connect_monotonic);
+	ATF_TP_ADD_TC(tp, capmode_connect_dgram);
+
+	/* pdincapmode exited process */
+	ATF_TP_ADD_TC(tp, pdincapmode_exited);
+
+	/* cap_mmap_capmode */
+	ATF_TP_ADD_TC(tp, mmap_capmode_denied);
+	ATF_TP_ADD_TC(tp, mmap_capmode_allowed);
+	ATF_TP_ADD_TC(tp, mmap_capmode_bad_fd);
+
+	/* cap_lookup_capmode */
+	ATF_TP_ADD_TC(tp, lookup_capmode_denied);
+	ATF_TP_ADD_TC(tp, lookup_capmode_allowed);
+	ATF_TP_ADD_TC(tp, lookup_capmode_bad_fd);
+	ATF_TP_ADD_TC(tp, lookup_capmode_idempotent);
+
+	/* LOCAL_CAP_CONNECT SEQPACKET */
+	ATF_TP_ADD_TC(tp, capmode_connect_seqpacket);
+
+	/* LOCAL_CAPMODE_SERVER */
+	ATF_TP_ADD_TC(tp, capmode_server_denied);
+	ATF_TP_ADD_TC(tp, capmode_server_allowed);
+	ATF_TP_ADD_TC(tp, capmode_server_monotonic);
+
+	/* LOCAL_CAP_REQ */
+	ATF_TP_ADD_TC(tp, cap_req_send_denied);
+	ATF_TP_ADD_TC(tp, cap_req_recv_denied);
+	ATF_TP_ADD_TC(tp, cap_req_allowed);
+	ATF_TP_ADD_TC(tp, cap_req_monotonic);
+	ATF_TP_ADD_TC(tp, cap_req_dgram);
+
+	/* NOTE_CAPMODE no double fire */
+	ATF_TP_ADD_TC(tp, note_capmode_no_double_fire);
+
+	/* NOTE_JAILED */
+	ATF_TP_ADD_TC(tp, note_jailed_kevent);
+
+	/* NOTE_SETUID */
+	ATF_TP_ADD_TC(tp, note_setuid_kevent);
+
+	/* NOTE_SIGNAL */
+	ATF_TP_ADD_TC(tp, note_signal_kevent);
+
+	/* NOTE_CHROOT */
+	ATF_TP_ADD_TC(tp, note_chroot_kevent);
+
+	/* cap_mmap_capmode idempotent */
+	ATF_TP_ADD_TC(tp, mmap_capmode_idempotent);
+
+	/* sockcred2 sc_capmode */
+	ATF_TP_ADD_TC(tp, sockcred2_capmode);
+	ATF_TP_ADD_TC(tp, sockcred2_no_capmode);
+
+	/* CAP_SUFFICIENT */
+	ATF_TP_ADD_TC(tp, cap_sufficient_fchmod);
+	ATF_TP_ADD_TC(tp, cap_sufficient_fchown);
+	ATF_TP_ADD_TC(tp, cap_sufficient_write);
+	ATF_TP_ADD_TC(tp, cap_sufficient_socket_ops);
+	ATF_TP_ADD_TC(tp, cap_sufficient_not_in_capmode);
+	ATF_TP_ADD_TC(tp, cap_sufficient_ioctl);
 
 	return (atf_no_error());
 }

@@ -7,7 +7,7 @@
 ## Problem
 
 The isolation service claims vnodes by fd.  Userspace opens the path,
-gets an fd, passes it via `CAP_RT_CALL` ioctl.  This breaks for
+gets an fd, passes it via `MAC_CAPABILITY_CALL` ioctl.  This breaks for
 several kernel object types where `open()` either blocks, fails, or
 returns the wrong vnode.
 
@@ -112,7 +112,7 @@ struct fi_path_request {
 
 ### Kernel implementation
 
-The `FI_OP_CLAIM_PATH` handler in `cap_rt_isolation.c`:
+The `FI_OP_CLAIM_PATH` handler in `mac_capability_isolation.c`:
 
 1. Copy path from the request payload
 2. Set up a `struct nameidata` with:
@@ -191,8 +191,8 @@ claims {
 ## Implementation order
 
 1. Add `FI_OP_CLAIM_PATH` / `FI_OP_RELEASE_PATH` / `FI_OP_MINT_PATH`
-   to `cap_rt_isolation_proto.h` and implement in `cap_rt_isolation.c`
-2. Add `cap_rt_claim_path_str()` to oracled's `cap_rt_claims.c` that
+   to `mac_capability_isolation_proto.h` and implement in `mac_capability_isolation.c`
+2. Add `mac_capability_claim_path_str()` to oracled's `mac_capability_claims.c` that
    uses the new op instead of open+ioctl
 3. Update config.c and manifest.c to parse the object form
 4. Update oracle_proto.c mint handler to use path-based claim when

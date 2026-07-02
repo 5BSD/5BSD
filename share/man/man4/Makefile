@@ -103,16 +103,16 @@ MAN=	aac.4 \
 	cardbus.4 \
 	carp.4 \
 	cas.4 \
-	cap_rt.4 \
-	cap_rt_accounting.4 \
-	cap_rt_capprotect.4 \
-	cap_rt_coalition.4 \
-	cap_rt_identity.4 \
-	cap_rt_isolation.4 \
-	cap_rt_mount.4 \
-	cap_rt_node.4 \
-	cap_rt_channel.4 \
-	cap_rt_system.4 \
+	mac_capability.4 \
+	mac_capability_accounting.4 \
+	mac_capability_capprotect.4 \
+	mac_capability_coalition.4 \
+	mac_capability_identity.4 \
+	mac_capability_isolation.4 \
+	mac_capability_mount.4 \
+	mac_capability_node.4 \
+	mac_capability_channel.4 \
+	mac_capability_system.4 \
 	cc_cdg.4 \
 	cc_chd.4 \
 	cc_cubic.4 \

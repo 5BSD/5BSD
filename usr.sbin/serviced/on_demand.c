@@ -19,7 +19,7 @@
 #include <sys/ioctl.h>
 #include <sys/param.h>
 
-#include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
 
 #include <errno.h>
 #include <stdlib.h>
@@ -327,7 +327,7 @@ on_demand_check_ready(struct svc_runtime *svc, int kq)
 				error = ECONNRESET;
 
 			if (client_fd >= 0) {
-				struct cap_rt_sendmsg_args sa;
+				struct mac_capability_sendmsg_args sa;
 				int32_t status = 0;
 
 				memset(&sa, 0, sizeof(sa));
@@ -339,12 +339,12 @@ on_demand_check_ready(struct svc_runtime *svc, int kq)
 
 				if (channel_fd >= 0)
 					(void)ioctl(channel_fd,
-					    CAP_RT_SENDMSG, &sa);
+					    MAC_CAPABILITY_SENDMSG, &sa);
 
 				close(client_fd);
 				svc->connection_count++;
 			} else {
-				struct cap_rt_sendmsg_args sa;
+				struct mac_capability_sendmsg_args sa;
 				int32_t status = error;
 
 				memset(&sa, 0, sizeof(sa));
@@ -354,7 +354,7 @@ on_demand_check_ready(struct svc_runtime *svc, int kq)
 
 				if (channel_fd >= 0)
 					(void)ioctl(channel_fd,
-					    CAP_RT_SENDMSG, &sa);
+					    MAC_CAPABILITY_SENDMSG, &sa);
 			}
 		}
 
@@ -402,7 +402,7 @@ on_demand_timeout(uintptr_t ident, int kq)
 		 * label — the original channel_fd may be stale if the
 		 * requester was restarted since the lookup. */
 		{
-			struct cap_rt_sendmsg_args sa;
+			struct mac_capability_sendmsg_args sa;
 			struct svc_runtime *req;
 			int reply_fd;
 			int32_t status = ETIMEDOUT;
@@ -419,7 +419,7 @@ on_demand_timeout(uintptr_t ident, int kq)
 
 			if (reply_fd >= 0)
 				(void)ioctl(reply_fd,
-				    CAP_RT_SENDMSG, &sa);
+				    MAC_CAPABILITY_SENDMSG, &sa);
 		}
 
 		/* Remove from list. */
@@ -468,7 +468,7 @@ on_demand_teardown(int kq)
 
 		/* Send error reply. */
 		if (pl->requester_channel_fd >= 0) {
-			struct cap_rt_sendmsg_args sa;
+			struct mac_capability_sendmsg_args sa;
 			int32_t status = ESHUTDOWN;
 
 			memset(&sa, 0, sizeof(sa));
@@ -476,7 +476,7 @@ on_demand_teardown(int kq)
 			sa.payload_len = sizeof(status);
 			sa.reply_token = pl->reply_token;
 			(void)ioctl(pl->requester_channel_fd,
-			    CAP_RT_SENDMSG, &sa);
+			    MAC_CAPABILITY_SENDMSG, &sa);
 		}
 
 		/* Cancel timeout timer. */

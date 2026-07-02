@@ -161,7 +161,7 @@ object may contain the following sub-keys:
 .It Va system
 Array of system gate name strings.
 These correspond to kernel-level operation gates defined in
-.In dev/cap_rt/cap_rt_system_proto.h .
+.In dev/mac_capability/mac_capability_system_proto.h .
 Valid gate names:
 .Dq kldload ,
 .Dq kldunload ,
@@ -312,4 +312,4 @@ return NULL if the index is out of bounds.
 .Xr serviced 8 ,
 .Xr servicectl 8 ,
 .Xr libservice 3 ,
-.Xr cap_rt_system 4
+.Xr mac_capability_system 4

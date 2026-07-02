@@ -210,16 +210,16 @@ SUBDIR=	\
 	${_ixl} \
 	jme \
 	kbdmux \
-	cap_rt \
-	cap_rt_capprotect \
-	cap_rt_coalition \
-	cap_rt_channel \
-	cap_rt_identity \
-	cap_rt_node \
-	cap_rt_accounting \
-	cap_rt_isolation \
-	cap_rt_mount \
-	cap_rt_system \
+	mac_capability \
+	mac_capability_capprotect \
+	mac_capability_coalition \
+	mac_capability_channel \
+	mac_capability_identity \
+	mac_capability_node \
+	mac_capability_accounting \
+	mac_capability_isolation \
+	mac_capability_mount \
+	mac_capability_system \
 	kgssapi \
 	kgssapi_krb5 \
 	khelp \

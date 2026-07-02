@@ -89,9 +89,9 @@ cmd_status(uint64_t uptime, struct ctl_reply *reply,
 
 	BUF_APPEND(summary, sumlen, &off, "\n");
 
-	/* Capability claims and integrity from cap_rt. */
+	/* Capability claims and integrity from mac_capability. */
 	if (!od.test_mode)
-		cap_rt_format_status(summary, sumlen, &off);
+		mac_capability_format_status(summary, sumlen, &off);
 	else {
 		BUF_APPEND(summary, sumlen, &off,
 		    "INTEGRITY:\n  (test mode)\n");
@@ -159,7 +159,7 @@ cmd_reload(uid_t euid, struct ctl_reply *reply,
 		    "warning: config parse error, claims unchanged\n");
 	} else {
 		if (!od.test_mode) {
-			claims_failed = cap_rt_reload_claims(&newcfg);
+			claims_failed = mac_capability_reload_claims(&newcfg);
 			if (claims_failed == -1)
 				BUF_APPEND(summary, sumlen, &off,
 				    "warning: some claim changes failed\n");

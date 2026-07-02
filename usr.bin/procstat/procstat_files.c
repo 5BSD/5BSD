@@ -32,6 +32,7 @@
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/un.h>
+#include <sys/vsock.h>
 #include <sys/user.h>
 
 #include <netinet/in.h>
@@ -125,6 +126,13 @@ addr_to_string(struct sockaddr_storage *ss, char *buffer, int buflen)
 		else
 			strlcpy(buffer, "-", buflen);
 		break;
+
+	case AF_VSOCK: {
+		struct sockaddr_vm *svm = (struct sockaddr_vm *)ss;
+		snprintf(buffer, buflen, "%llu:%u",
+		    (unsigned long long)svm->svm_cid, svm->svm_port);
+		break;
+	}
 
 	default:
 		strlcpy(buffer, "", buflen);
@@ -425,9 +433,9 @@ procstat_files(struct procstat *procstat, struct kinfo_proc *kipp)
 			xo_emit("{eq:fd_type/inotify}");
 			break;
 
-		case PS_FST_TYPE_CAP_RT:
+		case PS_FST_TYPE_MAC_CAPABILITY:
 			str = "C";
-			xo_emit("{eq:fd_type/cap_rt}");
+			xo_emit("{eq:fd_type/mac_capability}");
 			break;
 
 		case PS_FST_TYPE_NONE:

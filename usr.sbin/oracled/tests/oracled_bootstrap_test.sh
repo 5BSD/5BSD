@@ -47,7 +47,7 @@ build_mock_serviced()
 #include <syslog.h>
 #include <unistd.h>
 
-#include <dev/cap_rt/cap_rt_ioctl.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
 
 /* Inline protocol definitions to avoid build dependency. */
 #define ORACLE_OP_READY  6
@@ -64,8 +64,8 @@ struct oracle_reply {
 static int
 send_op(int channel_fd, uint32_t op)
 {
-	struct cap_rt_sendmsg_args sa;
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_sendmsg_args sa;
+	struct mac_capability_recvmsg_args ra;
 	struct oracle_req_hdr req;
 	struct oracle_reply rpl;
 
@@ -77,14 +77,14 @@ send_op(int channel_fd, uint32_t op)
 	sa.payload_len = sizeof(req);
 	sa.reply_token = op;
 
-	if (ioctl(channel_fd, CAP_RT_SENDMSG, &sa) == -1)
+	if (ioctl(channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1)
 		return (-1);
 
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = &rpl;
 	ra.payload_len = sizeof(rpl);
 
-	if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == -1)
+	if (ioctl(channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1)
 		return (-1);
 
 	return (rpl.status);
@@ -246,7 +246,7 @@ bootstrap_starts_serviced_body()
 
 	if ! wait_for_file serviced-started.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "serviced did not start (cap_rt channel service may not be loaded)"
+		atf_skip "serviced did not start (mac_capability channel service may not be loaded)"
 	fi
 
 	# Verify the channel fd was inherited.
@@ -331,7 +331,7 @@ bootstrap_restart_on_crash_body()
 	# Wait for the restart log entry.
 	if ! sh -c "i=0; while ! grep -q 'scheduling restart' '$logfile' && [ \$i -lt 100 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'scheduling restart' '$logfile'"; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "restart not observed (cap_rt may not be loaded)"
+		atf_skip "restart not observed (mac_capability may not be loaded)"
 	fi
 
 	# Verify oracled logged the exit.
@@ -383,8 +383,8 @@ bootstrap_no_service_manager_head()
 }
 bootstrap_no_service_manager_body()
 {
-	if ! sh -c 'exec 3</dev/cap_rt' 2>/dev/null; then
-		atf_skip "/dev/cap_rt not available"
+	if ! sh -c 'exec 3</dev/mac_capability' 2>/dev/null; then
+		atf_skip "/dev/mac_capability not available"
 	fi
 	prepare_paths
 	mkdir -p "$(pwd)/serviced.d"

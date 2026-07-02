@@ -1,9 +1,0 @@
-#
-# 5BSD64LE -- Kernel configuration for 5BSD (powerpc64le)
-#
-# Based on GENERIC64LE with capability runtime support.
-#
-
-include GENERIC64LE
-
-ident		VBSD

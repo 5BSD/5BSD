@@ -73,6 +73,8 @@
 #include <sys/socketvar.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
+#include <sys/event.h>
+#include <sys/procdesc.h>
 
 #ifdef MAC
 #include <security/mac/mac_syscalls.h>
@@ -811,6 +813,7 @@ kern_setcred(struct thread *const td, const u_int flags,
 	cred_set = proc_set_cred_enforce_proc_lim(p, new_cred);
 	if (cred_set) {
 		setsugid(p);
+		procdesc_knote(p, NOTE_SETUID);
 #ifdef RACCT
 		/* Adjust RACCT counters. */
 		racct_proc_ucred_changed(p, old_cred, new_cred);
@@ -859,7 +862,7 @@ unlock_finish:
 
 /*
  * Like kern_setcred(), but operates on a target process instead of
- * td->td_proc.  Used by cap_rt_node to set credentials on a child
+ * td->td_proc.  Used by mac_capability_node to set credentials on a child
  * process via a procdesc fd.
  *
  * Caller must NOT hold PROC_LOCK(p); the function acquires it internally.
@@ -942,6 +945,7 @@ kern_setcred_proc(struct thread *td, struct proc *p, u_int flags,
 	cred_set = proc_set_cred_enforce_proc_lim(p, new_cred);
 	if (cred_set) {
 		setsugid(p);
+		procdesc_knote(p, NOTE_SETUID);
 #ifdef RACCT
 		racct_proc_ucred_changed(p, old_cred, new_cred);
 #endif
@@ -1100,6 +1104,7 @@ sys_setuid(struct thread *td, struct setuid_args *uap)
 	 * reference above.
 	 */
 	proc_set_cred(p, newcred);
+	procdesc_knote(p, NOTE_SETUID);
 	PROC_UNLOCK(p);
 #ifdef RCTL
 	rctl_proc_ucred_changed(p, newcred);
@@ -1160,6 +1165,7 @@ sys_seteuid(struct thread *td, struct seteuid_args *uap)
 		setsugid(p);
 	}
 	proc_set_cred(p, newcred);
+	procdesc_knote(p, NOTE_SETUID);
 	PROC_UNLOCK(p);
 	uifree(euip);
 	crfree(oldcred);
@@ -1260,6 +1266,7 @@ sys_setgid(struct thread *td, struct setgid_args *uap)
 		setsugid(p);
 	}
 	proc_set_cred(p, newcred);
+	procdesc_knote(p, NOTE_SETUID);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
 	return (0);
@@ -1306,6 +1313,7 @@ sys_setegid(struct thread *td, struct setegid_args *uap)
 		setsugid(p);
 	}
 	proc_set_cred(p, newcred);
+	procdesc_knote(p, NOTE_SETUID);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
 	return (0);
@@ -1441,6 +1449,7 @@ kern_setgroups(struct thread *td, int *ngrpp, gid_t *groups)
 	crsetgroups_internal(newcred, ngrp, groups);
 	setsugid(p);
 	proc_set_cred(p, newcred);
+	procdesc_knote(p, NOTE_SETUID);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
 	return (0);
@@ -1515,6 +1524,7 @@ sys_setreuid(struct thread *td, struct setreuid_args *uap)
 	 * reference above.
 	 */
 	proc_set_cred(p, newcred);
+	procdesc_knote(p, NOTE_SETUID);
 	PROC_UNLOCK(p);
 #ifdef RCTL
 	rctl_proc_ucred_changed(p, newcred);
@@ -1583,6 +1593,7 @@ sys_setregid(struct thread *td, struct setregid_args *uap)
 		setsugid(p);
 	}
 	proc_set_cred(p, newcred);
+	procdesc_knote(p, NOTE_SETUID);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
 	return (0);
@@ -1668,6 +1679,7 @@ sys_setresuid(struct thread *td, struct setresuid_args *uap)
 	 * reference above.
 	 */
 	proc_set_cred(p, newcred);
+	procdesc_knote(p, NOTE_SETUID);
 	PROC_UNLOCK(p);
 #ifdef RCTL
 	rctl_proc_ucred_changed(p, newcred);
@@ -1748,6 +1760,7 @@ sys_setresgid(struct thread *td, struct setresgid_args *uap)
 		setsugid(p);
 	}
 	proc_set_cred(p, newcred);
+	procdesc_knote(p, NOTE_SETUID);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
 	return (0);

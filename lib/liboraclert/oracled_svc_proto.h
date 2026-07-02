@@ -6,7 +6,7 @@
  * oracled service manager channel protocol.
  *
  * Shared between oracled(8) and serviced(8).  Messages are exchanged
- * over a restricted cap_rt channel using CAP_RT_SENDMSG/CAP_RT_RECVMSG
+ * over a restricted mac_capability channel using MAC_CAPABILITY_SENDMSG/MAC_CAPABILITY_RECVMSG
  * with reply_token correlation.
  *
  * serviced inherits one end of the channel as fd 3 (ORACLED_CHANNEL_FD).
@@ -72,7 +72,7 @@ struct oracle_path_req {
  *
  * Requests a narrowed file isolation token.  oracled validates that
  * path is within its claimed set before minting and asks
- * cap_rt_isolation to constrain authorization to the given FI_FS_*
+ * mac_capability_isolation to constrain authorization to the given FI_FS_*
  * action mask.
  */
 struct oracle_mint_file_req {
@@ -132,7 +132,7 @@ struct oracle_jail_req {
  * Creates a persist jail with the given name and path, returning a
  * jail descriptor fd.  oracled validates that the jail name is within
  * its claimed set before creating.  The jail is created by oracled
- * (which holds the cap_rt claim) and the descriptor is passed to
+ * (which holds the mac_capability claim) and the descriptor is passed to
  * serviced for jail_attach_jd / jail_remove_jd.
  */
 #define	ORACLE_OP_CREATE_JAIL		10

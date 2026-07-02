@@ -668,37 +668,17 @@
 #define	AUE_CAP_XFER_LIMIT	43274	/* FreeBSD-specific. */
 #define	AUE_CAP_CLOEXEC_LIMIT	43275	/* FreeBSD-specific. */
 #define	AUE_CAP_CLOFORK_LIMIT	43276	/* FreeBSD-specific. */
-#define	AUE_CAP_FCHMOD		43277	/* 5BSD */
-#define	AUE_CAP_FCHOWN		43278	/* 5BSD */
-#define	AUE_CAP_FCHFLAGS	43279	/* 5BSD */
-#define	AUE_CAP_FUTIMES		43280	/* 5BSD */
-#define	AUE_CAP_ACL_GET_FD	43281	/* 5BSD */
-#define	AUE_CAP_ACL_SET_FD	43282	/* 5BSD */
-#define	AUE_CAP_ACL_DELETE_FD	43283	/* 5BSD */
-#define	AUE_CAP_EXTATTR_SET_FD	43284	/* 5BSD */
-#define	AUE_CAP_EXTATTR_GET_FD	43285	/* 5BSD */
-#define	AUE_CAP_EXTATTR_DELETE_FD 43286	/* 5BSD */
-#define	AUE_CAP_EXTATTR_LIST_FD	43287	/* 5BSD */
-#define	AUE_CAP_FSTATFS		43288	/* 5BSD */
-#define	AUE_CAP_BIND		43289	/* 5BSD */
-#define	AUE_CAP_LISTEN		43290	/* 5BSD */
-#define	AUE_CAP_ACCEPT		43291	/* 5BSD */
-#define	AUE_CAP_CONNECT		43292	/* 5BSD */
-#define	AUE_CAP_SENDMSG		43293	/* 5BSD */
-#define	AUE_CAP_RECVMSG		43294	/* 5BSD */
-#define	AUE_CAP_SETSOCKOPT	43295	/* 5BSD */
-#define	AUE_CAP_IOCTL		43296	/* 5BSD */
-#define	AUE_CAP_MMAP		43297	/* 5BSD */
-#define	AUE_CAP_SENDFILE	43298	/* 5BSD */
-#define	AUE_CAP_FTRUNCATE	43299	/* 5BSD */
 #define	AUE_CAP_AMBIENT_LIMIT	43300	/* 5BSD */
 #define	AUE_PDSELF		43301	/* 5BSD */
 #define	AUE_PDCMP		43302	/* 5BSD */
-#define	AUE_BLUED_CONNECT	43303	/* 5BSD: BLE connection */
-#define	AUE_BLUED_PAIR		43304	/* 5BSD: BLE SMP pairing */
-#define	AUE_BLUED_BOND_ADD	43305	/* 5BSD: BLE bond stored */
-#define	AUE_BLUED_BOND_REMOVE	43306	/* 5BSD: BLE bond removed */
-#define	AUE_BLUED_START		43307	/* 5BSD: blued daemon start */
+#define	AUE_PDINCAPMODE		43304	/* 5BSD */
+#define	AUE_CAP_MMAP_CAPMODE	43305	/* 5BSD */
+#define	AUE_CAP_LOOKUP_CAPMODE	43306	/* 5BSD */
+#define	AUE_BLUED_CONNECT	43310	/* 5BSD: BLE connection */
+#define	AUE_BLUED_PAIR		43311	/* 5BSD: BLE SMP pairing */
+#define	AUE_BLUED_BOND_ADD	43312	/* 5BSD: BLE bond stored */
+#define	AUE_BLUED_BOND_REMOVE	43313	/* 5BSD: BLE bond removed */
+#define	AUE_BLUED_START		43314	/* 5BSD: blued daemon start */
 
 /*
  * Darwin BSM uses a number of AUE_O_* definitions, which are aliased to the

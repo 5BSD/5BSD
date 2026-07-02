@@ -1,0 +1,548 @@
+.\"
+.\" Copyright (c) 2026 The FreeBSD Foundation
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd June 5, 2026
+.Dt MAC_CAPABILITY 4
+.Os
+.Sh NAME
+.Nm mac_capability
+.Nd Capability Message Interface
+.Sh SYNOPSIS
+To load at boot (required for program nonce):
+.Bd -literal -offset indent
+echo 'mac_capability_load="YES"' >> /boot/loader.conf
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+driver provides a message-passing capability framework for kernel modules.
+Capabilities are represented as file descriptors of type
+.Dv DTYPE_MAC_CAPABILITY .
+Each capability is an instance of a kernel service, accessed through
+structured ioctls.
+.Pp
+The
+.Pa /dev/mac_capability
+device is normally claimed exclusively by
+.Xr oracled 8
+at boot via the isolation service.
+Once claimed, only
+.Xr oracled 8
+can open the device; all other processes receive
+.Er EACCES .
+Administrative access to capability services is provided through
+.Xr oraclectl 8 .
+.Pp
+The framework supports two messaging models:
+.Bl -tag -width "Synchronous"
+.It Sy Asynchronous
+Messages are enqueued via
+.Dv MAC_CAPABILITY_SENDMSG
+and async replies or notifications are dequeued via
+.Dv MAC_CAPABILITY_RECVMSG .
+The service processes messages on a kernel taskqueue.
+.It Sy Synchronous
+Requests are made via
+.Dv MAC_CAPABILITY_CALL .
+The service handler runs in the caller's thread context.
+.El
+.Pp
+A service may expose asynchronous messaging, synchronous calls, or both.
+Services that do not accept
+.Dv MAC_CAPABILITY_SENDMSG
+may still emit asynchronous notifications on
+.Dv MAC_CAPABILITY_RECVMSG .
+.Xr kqueue 2
+readiness maps to the async queues:
+.Dv EVFILT_READ
+means
+.Dv MAC_CAPABILITY_RECVMSG
+can make progress, and
+.Dv EVFILT_WRITE
+means space is available for
+.Dv MAC_CAPABILITY_SENDMSG .
+Service-defined events are delivered as
+.Dv MAC_CAPABILITY_RECVMSG
+payloads; kqueue notes provide readiness, not the event payload itself.
+.Pp
+The device node
+.Pa /dev/mac_capability
+is created at module load with mode 0600 (root only).
+.Ss Creating a capability
+Open
+.Pa /dev/mac_capability
+and issue
+.Dv MAC_CAPABILITY_CONNECT
+with the name of the desired service.
+On success, a new capability file descriptor is returned in the
+.Va fd
+field.
+The
+.Pa /dev/mac_capability
+descriptor can then be closed.
+.Ss Credential trailer
+Every message carries a kernel-stamped credential trailer containing
+the sender's uid, gid, jail ID, and program nonce.
+The nonce is an 8-byte cryptographic random value that identifies the
+program image: it is inherited across
+.Xr fork 2
+and rotated on
+.Xr execve 2 .
+Zero is never a valid nonce.
+.Ss Capability control
+.Bl -tag -width MAC_CAPABILITY_REVOKE_MINT
+.It Dv MAC_CAPABILITY_REVOKE_SEND
+Strip the ability to send async messages.
+.It Dv MAC_CAPABILITY_REVOKE_RECV
+Strip the ability to receive async messages.
+.It Dv MAC_CAPABILITY_REVOKE_CALL
+Strip the ability to make synchronous calls.
+.It Dv MAC_CAPABILITY_REVOKE_MINT
+Strip the ability to mint new instances.
+One-way latch.
+.It Dv MAC_CAPABILITY_TERMINATE
+Kill the instance for all holders.
+Subsequent operations return
+.Er ECONNRESET .
+.El
+.Ss Minting
+Services created with the
+.Dv MAC_CAPABILITY_SVC_MINTABLE
+flag allow holders to create new instances via
+.Dv MAC_CAPABILITY_MINT_INSTANCE .
+The mint ability can be removed with
+.Dv MAC_CAPABILITY_REVOKE_MINT .
+.Ss Introspection
+.Dv MAC_CAPABILITY_GETINFO
+returns the service name, badge, queue limits, and feature flags
+.Pq Dv MAC_CAPABILITY_INFO_F_SENDMSG , MAC_CAPABILITY_INFO_F_RECVMSG , MAC_CAPABILITY_INFO_F_CALL , MAC_CAPABILITY_INFO_F_KQUEUE .
+Standard file-descriptor tools such as
+.Xr procstat 1
+show
+.Nm
+descriptors as
+.Dq mac_capability:service[badge] .
+The path may include compact state suffixes such as
+.Dq :no-send ,
+.Dq :no-recv ,
+.Dq :no-call ,
+.Dq :no-mint ,
+.Dq :revoked ,
+and
+.Dq :closed .
+.Ss File descriptor passing
+Capabilities can carry up to 32 file descriptors per message.
+Attached fds preserve their Capsicum rights through the transfer.
+.Ss Capsicum integration
+.Nm
+descriptors participate in
+.Xr capsicum 4
+rights enforcement.
+The following Capsicum rights govern ioctl access:
+.Bl -tag -width CAP_MAC_CAPABILITY_SEND
+.It Dv CAP_MAC_CAPABILITY_SEND
+Required for
+.Dv MAC_CAPABILITY_SENDMSG .
+.It Dv CAP_MAC_CAPABILITY_RECV
+Required for
+.Dv MAC_CAPABILITY_RECVMSG .
+.It Dv CAP_MAC_CAPABILITY_SEND , CAP_MAC_CAPABILITY_RECV , CAP_IOCTL
+All three required for
+.Dv MAC_CAPABILITY_CALL .
+.It Dv CAP_MAC_CAPABILITY_MINT
+Required for
+.Dv MAC_CAPABILITY_MINT_INSTANCE .
+.El
+.Pp
+The following ioctls are always allowed without a rights check:
+.Dv MAC_CAPABILITY_GETINFO ,
+.Dv MAC_CAPABILITY_REVOKE_SEND ,
+.Dv MAC_CAPABILITY_REVOKE_RECV ,
+.Dv MAC_CAPABILITY_REVOKE_CALL ,
+.Dv MAC_CAPABILITY_REVOKE_MINT ,
+and
+.Dv MAC_CAPABILITY_TERMINATE .
+.Ss Service creation flags
+Kernel modules register services with the following optional flags:
+.Bl -tag -width MAC_CAPABILITY_SVC_MINTABLE
+.It Dv MAC_CAPABILITY_SVC_NOTIFY Pq 0x0002
+Service emits async notifications.
+.It Dv MAC_CAPABILITY_SVC_MINTABLE Pq 0x0004
+Instances can mint new instances via
+.Dv MAC_CAPABILITY_MINT_INSTANCE .
+.El
+.Sh IOCTLS
+.Bl -tag -width MAC_CAPABILITY_MINT_INSTANCE
+.It Dv MAC_CAPABILITY_CONNECT
+Connect to a named service.
+Returns a capability fd.
+.It Dv MAC_CAPABILITY_SENDMSG
+Send an async message with optional fd attachment.
+Returns
+.Er EAGAIN
+if the RX queue is full; wait for
+.Dv EVFILT_WRITE
+and retry.
+.It Dv MAC_CAPABILITY_RECVMSG
+Receive an async message.
+Blocks unless
+.Dv O_NONBLOCK
+is set.
+.It Dv MAC_CAPABILITY_CALL
+Synchronous request/reply in the caller's thread.
+Returns
+.Er EMSGSIZE
+with the required size if the reply buffer is too small.
+.It Dv MAC_CAPABILITY_GETINFO
+Query capability metadata: service name, badge, queue limits, and
+feature flags.
+.It Dv MAC_CAPABILITY_REVOKE_SEND
+Strip send ability.
+One-way latch.
+.It Dv MAC_CAPABILITY_REVOKE_RECV
+Strip receive ability.
+One-way latch.
+.It Dv MAC_CAPABILITY_REVOKE_CALL
+Strip call ability.
+One-way latch.
+.It Dv MAC_CAPABILITY_REVOKE_MINT
+Strip mint ability.
+One-way latch.
+.It Dv MAC_CAPABILITY_TERMINATE
+Kill the instance for all holders.
+.It Dv MAC_CAPABILITY_MINT_INSTANCE
+Create a new instance from an existing mintable instance.
+Requires the
+.Dv CAP_MAC_CAPABILITY_MINT
+Capsicum right.
+Only available on services registered with the
+.Dv MAC_CAPABILITY_SVC_MINTABLE
+flag.
+.El
+.Sh SERVICES
+The following services are provided as loadable kernel modules:
+.Bl -tag -width mac_capability_capprotect
+.It Sy mac_capability_identity
+Program nonce queries.
+Provides SELF and QUERY operations via
+.Xr procdesc 4 .
+See
+.Xr mac_capability_identity 4 .
+.It Sy mac_capability_capprotect
+Capability protection via MACF.
+Selectively shield a program from ptrace, signals, visibility,
+and wait.
+Same-nonce (fork family) processes interact freely;
+foreign programs are blocked.
+Provides shield, mint, authorize, capmode, and chroot operations.
+See
+.Xr mac_capability_capprotect 4 .
+.It Sy mac_capability_isolation
+File, network, and jail isolation by nonce.
+Supports claims, tokens, and MACF enforcement.
+See
+.Xr mac_capability_isolation 4 .
+.It Sy mac_capability_system
+System operation gating via MACF.
+Controls kldload, reboot, sysctl, and other privileged operations.
+See
+.Xr mac_capability_system 4 .
+.It Sy mac_capability_coalition
+Resource group management.
+Provides enlist, terminate, deadline, watchdog, and related operations.
+See
+.Xr mac_capability_coalition 4 .
+.It Sy mac_capability_node
+Per-process inspection and control via
+.Xr procdesc 4 .
+See
+.Xr mac_capability_node 4 .
+.It Sy mac_capability_accounting
+Per-process racct/rctl operations via
+.Xr procdesc 4 .
+See
+.Xr mac_capability_accounting 4 .
+.It Sy mac_capability_channel
+Bidirectional capability channel for peer-to-peer messaging.
+See
+.Xr mac_capability_channel 4 .
+.It Sy mac_capability_mount
+Capability-based filesystem mounting.
+See
+.Xr mac_capability_mount 4 .
+.El
+.Ss Test fixtures
+The following services exist for testing the MAC_CAPABILITY framework.
+They are not intended for production use.
+.Bl -tag -width mac_capability_test_kernelstore
+.It Sy mac_capability_test_kernelstore
+Sync-only shared key-value store (256 keys, 4096 bytes per value).
+.It Sy mac_capability_test_keystore
+Async key-value store.
+.El
+.Sh LIMITS
+.Bl -tag -width MAC_CAPABILITY_MSG_PAYLOAD_SIZE
+.It Dv MAC_CAPABILITY_MSG_PAYLOAD_SIZE
+14336 bytes (14 KB) maximum usable payload per message.
+.It Dv MAC_CAPABILITY_MAX_FDS
+32 file descriptors per message.
+.It Dv MAC_CAPABILITY_MAXNAME
+64 bytes maximum service name length.
+.It Dv MAC_CAPABILITY_DEFAULT_QUEUE_DEPTH
+256 messages per async queue (configurable by service).
+.It Dv MAC_CAPABILITY_MAX_QUEUE_DEPTH
+4096 messages maximum async queue depth.
+.El
+.Pp
+Messages are fixed at 16384 bytes (4 pages) including a 2048-byte
+header reserved for framework use.
+Sync-only services do not allocate message queues.
+.Sh SYSCTL VARIABLES
+.Bl -tag -width kern.mac_capability.service_details
+.It Va kern.mac_capability.services
+Number of registered services.
+.It Va kern.mac_capability.instances
+Number of active capability instances.
+.It Va kern.mac_capability.service_names
+Newline-separated list of registered service names.
+.It Va kern.mac_capability.service_details
+Newline-separated list of registered services with flags, queue depth,
+TX limit, instance limit, active instance count, and destroying state.
+.El
+.Sh DTRACE PROBES
+The
+.Nm
+provider defines the following probes.
+.Ss Core messaging
+connect, connect-done, send, send-done, recv, recv-done, dispatch,
+dispatch-done, reply, reply-done, notify, notify-done, call, call-done,
+forward, forward-done, revoke, revoke-done, close.
+.Ss FD lifecycle
+fd-install, fd-close, fd-receive, fd-mint.
+.Ss Control
+control, ioctl-deny, rights-change, state, error.
+.Ss Instance lifecycle
+instance-create, instance-finalize, instance-lastclose.
+.Ss Service lifecycle
+service-create, service-destroy.
+.Ss Queue
+queue-pressure.
+.Pp
+The descriptor probes include the service name, badge, fd, pid,
+credential pointer, and nonce.
+The control probe includes the service name, badge, ioctl command, pid,
+credential pointer, and nonce.
+The state probe passes service name, badge, instance flags, restriction
+bits, pid, and nonce so scripts do not have to infer descriptor state
+from prior events.
+These probes cover descriptor events visible to
+.Nm
+itself; generic
+.Xr dup 2 ,
+fork inheritance, and
+.Dv SCM_RIGHTS
+transfer through Unix sockets require fd-layer instrumentation.
+.Pp
+Related providers include
+.Va fd
+for descriptor install, dup, close, fork inheritance,
+.Dv SCM_RIGHTS
+send/receive, and pass-deny events;
+.Va capsicum
+for rights/ioctl/fcntl limit, get, check, and denial events;
+.Va mac_capability_nonce
+for nonce assign, copy, backfill, and exec-rotate events;
+and subsystem providers
+.Va mac_capability_capprotect ,
+.Va mac_capability_isolation ,
+.Va mac_capability_system ,
+.Va mac_capability_coalition ,
+and
+.Va mac_capability_channel
+for claim, token, authorization, release, and denial events.
+.Pp
+Installed DTrace scripts for observing
+.Nm
+and related descriptor authority include:
+.Pp
+.Bl -tag -width mac_capability-coalitions -compact
+.It Pa mac_capability-audit
+Comprehensive audit trail of all
+.Nm
+operations.
+.It Pa mac_capability-calls
+Synchronous call latency and frequency.
+.It Pa mac_capability-coalitions
+Coalition membership and lifecycle events.
+.It Pa mac_capability-delegation
+Capability delegation through fd passing.
+.It Pa mac_capability-denials
+Denied operations from MACF and Capsicum.
+.It Pa mac_capability-errors
+Error frequency by service and error code.
+.It Pa mac_capability-fds
+File descriptor lifecycle for
+.Nm
+descriptors.
+.It Pa mac_capability-holders
+Active capability holders by service.
+.It Pa mac_capability-messages
+Async message throughput and queue depth.
+.It Pa mac_capability-nonces
+Program nonce assignment and rotation.
+.It Pa mac_capability-services
+Service registration and instance counts.
+.It Pa mac_capability-shield
+capprotect shield and authorization events.
+.It Pa mac_capability-summary
+Aggregate statistics across all services.
+.It Pa mac_capability-who
+Per-process capability usage summary.
+.It Pa capsicum-changes
+Capsicum rights changes across all descriptor types.
+.El
+.Sh FILES
+.Bl -tag -width /dev/mac_capability
+.It Pa /dev/mac_capability
+Control device for creating capabilities.
+.El
+.Sh ERRORS
+.Bl -tag -width Er
+.It Bq Er EAGAIN
+RX queue full
+.Pq Dv MAC_CAPABILITY_SENDMSG ,
+no message available with
+.Dv O_NONBLOCK
+.Pq Dv MAC_CAPABILITY_RECVMSG ,
+or TX soft limit reached for notifications.
+.It Bq Er EACCES
+Operation revoked via
+.Dv MAC_CAPABILITY_REVOKE_* ,
+Capsicum rights check failed, or restriction flag triggered.
+.It Bq Er EBADF
+File descriptor hold failed during message construction.
+.It Bq Er ECONNABORTED
+Service being destroyed during
+.Dv MAC_CAPABILITY_CONNECT .
+.It Bq Er ECONNRESET
+Instance terminated or peer closed.
+.It Bq Er EINVAL
+Invalid arguments, reserved fields nonzero, payload too large, or
+too many file descriptors attached.
+.It Bq Er EMSGSIZE
+Payload too large
+.Pq Dv MAC_CAPABILITY_SENDMSG ,
+or reply buffer too small
+.Pq Dv MAC_CAPABILITY_RECVMSG , MAC_CAPABILITY_CALL .
+The required size is returned in the length field.
+.It Bq Er ENOBUFS
+TX hard limit reached
+.Pq queue_depth * 4 .
+.It Bq Er ENOENT
+Service not found
+.Pq Dv MAC_CAPABILITY_CONNECT .
+.It Bq Er EOPNOTSUPP
+Wrong messaging model for this service:
+.Dv MAC_CAPABILITY_SENDMSG
+on a sync-only service,
+.Dv MAC_CAPABILITY_CALL
+on an async-only service, or
+.Dv MAC_CAPABILITY_MINT_INSTANCE
+on a non-mintable service.
+.It Bq Er EPIPE
+Instance dead on
+.Dv MAC_CAPABILITY_SENDMSG .
+.El
+.Sh EXAMPLES
+Connect to a service and make a synchronous call:
+.Bd -literal -offset indent
+int devfd, capfd;
+struct mac_capability_connect_args conn;
+struct mac_capability_call_args call;
+char req[128], reply[1024];
+
+devfd = open("/dev/mac_capability", O_RDWR);
+
+memset(&conn, 0, sizeof(conn));
+strlcpy(conn.name, "mac_capability_identity", sizeof(conn.name));
+if (ioctl(devfd, MAC_CAPABILITY_CONNECT, &conn) == -1)
+	err(1, "connect");
+capfd = conn.fd;
+close(devfd);
+
+memset(&call, 0, sizeof(call));
+call.tx_data = req;
+call.tx_len = sizeof(req);
+call.rx_data = reply;
+call.rx_len = sizeof(reply);
+if (ioctl(capfd, MAC_CAPABILITY_CALL, &call) == -1)
+	err(1, "call");
+
+/* call.rx_len now contains the actual reply size */
+.Ed
+.Pp
+Narrow a capability for delegation to an untrusted child:
+.Bd -literal -offset indent
+/* Strip send and mint, keep only recv and call */
+ioctl(capfd, MAC_CAPABILITY_REVOKE_SEND, NULL);
+ioctl(capfd, MAC_CAPABILITY_REVOKE_MINT, NULL);
+cap_xfer_limit(capfd, CAP_XFER_NONE);  /* prevent further delegation */
+.Ed
+.Pp
+Poll for async messages with
+.Xr kqueue 2 :
+.Bd -literal -offset indent
+struct kevent ev;
+EV_SET(&ev, capfd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+kevent(kq, &ev, 1, NULL, 0, NULL);
+
+/* In event loop */
+if (kevent(kq, NULL, 0, &ev, 1, NULL) > 0) {
+	struct mac_capability_recvmsg_args rmsg;
+	memset(&rmsg, 0, sizeof(rmsg));
+	rmsg.rx_data = buf;
+	rmsg.rx_len = sizeof(buf);
+	ioctl(capfd, MAC_CAPABILITY_RECVMSG, &rmsg);
+}
+.Ed
+.Sh SEE ALSO
+.Xr capsicum 4 ,
+.Xr mac 4 ,
+.Xr mac_capability_accounting 4 ,
+.Xr mac_capability_capprotect 4 ,
+.Xr mac_capability_coalition 4 ,
+.Xr mac_capability_identity 4 ,
+.Xr mac_capability_isolation 4 ,
+.Xr mac_capability_mount 4 ,
+.Xr mac_capability_node 4 ,
+.Xr mac_capability_channel 4 ,
+.Xr mac_capability_system 4 ,
+.Xr oracled 8
+.Sh HISTORY
+The
+.Nm
+framework first appeared in
+.Fx 15.0
+as part of 5BSD.

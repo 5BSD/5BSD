@@ -40,6 +40,7 @@
  * Mapped file (mmap) interface to VM
  */
 
+#include "opt_capsicum.h"
 #include "opt_hwpmc_hooks.h"
 #include "opt_hwt_hooks.h"
 #include "opt_vm.h"
@@ -70,6 +71,7 @@
 #include <sys/mount.h>
 #include <sys/conf.h>
 #include <sys/stat.h>
+#include <sys/sdt.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysent.h>
 #include <sys/vmmeter.h>
@@ -79,6 +81,9 @@
 
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
+
+SDT_PROVIDER_DECLARE(capsicum);
+SDT_PROBE_DECLARE(capsicum, , , mmap__capmode__deny);
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -162,21 +167,6 @@ sys_mmap(struct thread *td, struct mmap_args *uap)
 }
 
 int
-sys_cap_mmap(struct thread *td, struct cap_mmap_args *uap)
-{
-
-	return (kern_mmap(td, &(struct mmap_req){
-		.mr_hint = (uintptr_t)uap->addr,
-		.mr_len = uap->len,
-		.mr_prot = uap->prot,
-		.mr_flags = uap->flags,
-		.mr_fd = uap->fd,
-		.mr_pos = uap->pos,
-		.mr_cap_noambient = true,
-	    }));
-}
-
-int
 kern_mmap_maxprot(struct proc *p, int prot)
 {
 
@@ -202,6 +192,7 @@ kern_mmap(struct thread *td, const struct mmap_req *mrp)
 	int align, error, fd, flags, max_prot, prot;
 	cap_rights_t rights;
 	mmap_check_fp_fn check_fp_fn;
+	uint8_t fde_flags;
 
 	orig_addr = addr = mrp->mr_hint;
 	len = mrp->mr_len;
@@ -394,12 +385,10 @@ kern_mmap(struct thread *td, const struct mmap_req *mrp)
 		 * This relies on VM_PROT_* matching PROT_*.
 		 */
 #ifdef MAC
-		if (!mrp->mr_cap_noambient) {
-			error = mac_proc_check_mmap_anon(td->td_ucred, addr,
-			    size, prot, flags);
-			if (error)
-				goto done;
-		}
+		error = mac_proc_check_mmap_anon(td->td_ucred, addr,
+		    size, prot, flags);
+		if (error)
+			goto done;
 #endif
 		error = vm_mmap_object(&vms->vm_map, &addr, size, prot,
 		    max_prot, flags, NULL, pos, FALSE, td);
@@ -419,9 +408,20 @@ kern_mmap(struct thread *td, const struct mmap_req *mrp)
 		}
 		if (prot & PROT_EXEC)
 			cap_rights_set_one(&rights, CAP_MMAP_X);
-		error = fget_mmap(td, fd, &rights, &cap_maxprot, &fp);
+		error = fget_mmap(td, fd, &rights, &cap_maxprot, &fde_flags,
+		    &fp);
 		if (error != 0)
 			goto done;
+#ifdef CAPABILITY_MODE
+		if ((fde_flags & UF_MMAP_CAPMODE) != 0 &&
+		    !IN_CAPABILITY_MODE(td)) {
+			SDT_PROBE6(capsicum, , , mmap__capmode__deny,
+			    fd, td->td_proc->p_pid, td->td_ucred,
+			    0, 0, ENOTCAPABLE);
+			error = ENOTCAPABLE;
+			goto done;
+		}
+#endif
 		if ((flags & (MAP_SHARED | MAP_PRIVATE)) == 0 &&
 		    p->p_osrel >= P_OSREL_MAP_FSTRICT) {
 			EXTERROR(EINVAL, "neither SHARED nor PRIVATE req");
@@ -435,11 +435,18 @@ kern_mmap(struct thread *td, const struct mmap_req *mrp)
 				goto done;
 		}
 #ifdef MAC
-		if (!mrp->mr_cap_noambient) {
-			error = mac_file_check_mmap(td->td_ucred, fp, fd, prot,
-			    flags, addr, size);
-			if (error != 0)
-				goto done;
+		{
+			bool cap_sufficient = false;
+#ifdef CAPABILITY_MODE
+			cap_sufficient = IN_CAPABILITY_MODE(td) &&
+			    (fde_flags & UF_CAP_SUFFICIENT);
+#endif
+			if (!cap_sufficient) {
+				error = mac_file_check_mmap(td->td_ucred, fp,
+				    fd, prot, flags, addr, size);
+				if (error != 0)
+					goto done;
+			}
 		}
 #endif
 		if (fp->f_ops == &shm_ops && shm_largepage(fp->f_data))

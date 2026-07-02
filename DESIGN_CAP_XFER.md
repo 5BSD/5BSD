@@ -82,15 +82,15 @@ NONE      → send → ENOTCAPABLE
 - accept() / pipe() / socketpair() / kqueue / eventfd / pdfork — all create
   new descriptors via `_finstall()`, get UNLIMITED, correct
 
-## cap_rt Integration
+## mac_capability Integration
 
-cap_rt has its own fd transfer mechanism.  Changes:
+mac_capability has its own fd transfer mechanism.  Changes:
 
 | File | What |
 |------|------|
-| `sys/dev/cap_rt/cap_rt_internal.h` | `cm_xfer_state[]` array on `struct cap_rt_msg` |
-| `sys/dev/cap_rt/cap_rt_dev.c` | SENDMSG: check + consume under XLOCK after fget_cap |
-| `sys/dev/cap_rt/cap_rt_dev.c` | RECVMSG: fhold + fdalloc + _finstall + state write under one XLOCK |
-| `sys/dev/cap_rt/cap_rt_kern.c` | `cap_rt_msg_alloc_full`: xfer_state param, forward copies it |
+| `sys/dev/mac_capability/mac_capability_internal.h` | `cm_xfer_state[]` array on `struct mac_capability_msg` |
+| `sys/dev/mac_capability/mac_capability_dev.c` | SENDMSG: check + consume under XLOCK after fget_cap |
+| `sys/dev/mac_capability/mac_capability_dev.c` | RECVMSG: fhold + fdalloc + _finstall + state write under one XLOCK |
+| `sys/dev/mac_capability/mac_capability_kern.c` | `mac_capability_msg_alloc_full`: xfer_state param, forward copies it |
 
 CALL reply fds are kernel-created — get UNLIMITED via _finstall, correct.

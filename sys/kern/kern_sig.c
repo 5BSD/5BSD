@@ -2311,7 +2311,8 @@ tdsendsignal(struct proc *p, struct thread *td, int sig, ksiginfo_t *ksi)
 	}
 
 	ps = p->p_sigacts;
-	KNOTE_LOCKED(p->p_klist, NOTE_SIGNAL | sig);
+	KNOTE_LOCKED(p->p_klist, NOTE_KNOTE_SIGNAL | sig);
+	procdesc_knote(p, NOTE_SIGNAL | (sig & 0xff));
 	prop = sigprop(sig);
 
 	if (td == NULL) {
@@ -3856,8 +3857,8 @@ static int
 filt_signal(struct knote *kn, long hint)
 {
 
-	if (hint & NOTE_SIGNAL) {
-		hint &= ~NOTE_SIGNAL;
+	if (hint & NOTE_KNOTE_SIGNAL) {
+		hint &= ~NOTE_KNOTE_SIGNAL;
 
 		if (kn->kn_id == hint)
 			kn->kn_data++;

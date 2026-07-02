@@ -56,8 +56,10 @@
  *	need a proper out-of-band
  */
 
+#include "opt_capsicum.h"
 #include "opt_ddb.h"
 
+#define	EXTERR_CATEGORY	EXTERR_CAT_CAPSICUM
 #include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/domain.h>
@@ -88,6 +90,7 @@
 #include <sys/sx.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
+#include <sys/exterrvar.h>
 #include <sys/taskqueue.h>
 #include <sys/un.h>
 #include <sys/unpcb.h>
@@ -96,6 +99,9 @@
 #include <net/vnet.h>
 
 SDT_PROVIDER_DECLARE(fd);
+SDT_PROVIDER_DECLARE(capsicum);
+SDT_PROBE_DECLARE(capsicum, , , connect__capmode__deny);
+SDT_PROBE_DECLARE(capsicum, , , connect__capmode__server__deny);
 SDT_PROBE_DEFINE6(fd, , , scm__rights__send,
     "struct file *", "int", "pid_t", "struct ucred *", "short", "int");
 SDT_PROBE_DEFINE6(fd, , , scm__rights__recv,
@@ -316,7 +322,7 @@ static void	unp_scan(struct mbuf *, void (*)(struct filedescent **, int));
 static void	unp_discard(struct file *);
 static void	unp_freerights(struct filedescent **, int);
 static int	unp_internalize(struct mbuf *, struct mchain *,
-		    struct thread *);
+		    struct thread *, struct socket *);
 static void	unp_internalize_fp(struct file *);
 static int	unp_externalize(struct mbuf *, struct mbuf **, int);
 static int	unp_externalize_fp(struct file *);
@@ -1136,6 +1142,13 @@ uipc_sosend_stream_or_seqpacket(struct socket *so, struct sockaddr *addr,
 	if (__predict_false(flags & MSG_OOB))
 		return (EOPNOTSUPP);
 
+#ifdef CAPABILITY_MODE
+	if ((sotounpcb(so)->unp_flags & UNP_CAP_REQ) &&
+	    !IN_CAPABILITY_MODE(td))
+		return (EXTERROR(ENOTCAPABLE,
+		    "socket requires capability mode (LOCAL_CAP_REQ)"));
+#endif
+
 	nonblock = (so->so_state & SS_NBIO) ||
 	    (flags & (MSG_DONTWAIT | MSG_NBIO));
 	eor = flags & MSG_EOR;
@@ -1146,7 +1159,7 @@ uipc_sosend_stream_or_seqpacket(struct socket *so, struct sockaddr *addr,
 	aio = false;
 
 	if (m == NULL) {
-		if (c != NULL && (error = unp_internalize(c, &cmc, td)))
+		if (c != NULL && (error = unp_internalize(c, &cmc, td, so)))
 			goto out;
 		/*
 		 * This function may read more data from the uio than it would
@@ -1415,6 +1428,13 @@ uipc_soreceive_stream_or_seqpacket(struct socket *so, struct sockaddr **psa,
 		*psa = NULL;
 	if (controlp != NULL)
 		*controlp = NULL;
+
+#ifdef CAPABILITY_MODE
+	if ((sotounpcb(so)->unp_flags & UNP_CAP_REQ) &&
+	    !IN_CAPABILITY_MODE(curthread))
+		return (EXTERROR(ENOTCAPABLE,
+		    "socket requires capability mode (LOCAL_CAP_REQ)"));
+#endif
 
 	flags = flagsp != NULL ? *flagsp : 0;
 	nonblock = (so->so_state & SS_NBIO) ||
@@ -1986,6 +2006,15 @@ uipc_sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		error = EOPNOTSUPP;
 		goto out;
 	}
+
+#ifdef CAPABILITY_MODE
+	if ((sotounpcb(so)->unp_flags & UNP_CAP_REQ) &&
+	    !IN_CAPABILITY_MODE(td)) {
+		error = EXTERROR(ENOTCAPABLE,
+		    "socket requires capability mode (LOCAL_CAP_REQ)");
+		goto out;
+	}
+#endif
 	if (m == NULL) {
 		if (__predict_false(uio->uio_resid > unpdg_maxdgram)) {
 			error = EMSGSIZE;
@@ -1999,7 +2028,7 @@ uipc_sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		f = m_gethdr(M_WAITOK, MT_SONAME);
 		cc = m->m_pkthdr.len;
 		mbcnt = MSIZE + m->m_pkthdr.memlen;
-		if (c != NULL && (error = unp_internalize(c, &cmc, td)))
+		if (c != NULL && (error = unp_internalize(c, &cmc, td, so)))
 			goto out;
 	} else {
 		struct mchain mc;
@@ -2265,6 +2294,13 @@ uipc_soreceive_dgram(struct socket *so, struct sockaddr **psa, struct uio *uio,
 		*psa = NULL;
 	if (controlp != NULL)
 		*controlp = NULL;
+
+#ifdef CAPABILITY_MODE
+	if ((sotounpcb(so)->unp_flags & UNP_CAP_REQ) &&
+	    !IN_CAPABILITY_MODE(curthread))
+		return (EXTERROR(ENOTCAPABLE,
+		    "socket requires capability mode (LOCAL_CAP_REQ)"));
+#endif
 
 	flags = flagsp != NULL ? *flagsp : 0;
 	nonblock = (so->so_state & SS_NBIO) ||
@@ -2803,6 +2839,27 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			error = sooptcopyout(sopt, &optval, sizeof(optval));
 			break;
 
+		case LOCAL_CAP_CONNECT:
+			UNP_PCB_LOCK(unp);
+			optval = (unp->unp_flags & UNP_CAP_CONNECT) ? 1 : 0;
+			UNP_PCB_UNLOCK(unp);
+			error = sooptcopyout(sopt, &optval, sizeof(optval));
+			break;
+
+		case LOCAL_CAPMODE_SERVER:
+			UNP_PCB_LOCK(unp);
+			optval = (unp->unp_flags & UNP_CAPMODE_SERVER) ? 1 : 0;
+			UNP_PCB_UNLOCK(unp);
+			error = sooptcopyout(sopt, &optval, sizeof(optval));
+			break;
+
+		case LOCAL_CAP_REQ:
+			UNP_PCB_LOCK(unp);
+			optval = (unp->unp_flags & UNP_CAP_REQ) ? 1 : 0;
+			UNP_PCB_UNLOCK(unp);
+			error = sooptcopyout(sopt, &optval, sizeof(optval));
+			break;
+
 		default:
 			error = EOPNOTSUPP;
 			break;
@@ -2846,6 +2903,45 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			}
 			break;
 #undef	OPTSET
+		case LOCAL_CAP_CONNECT:
+			error = sooptcopyin(sopt, &optval, sizeof(optval),
+					    sizeof(optval));
+			if (error)
+				break;
+			UNP_PCB_LOCK(unp);
+			if (optval)
+				unp->unp_flags |= UNP_CAP_CONNECT;
+			else if (unp->unp_flags & UNP_CAP_CONNECT)
+				error = ENOTCAPABLE;  /* monotonic: cannot clear */
+			UNP_PCB_UNLOCK(unp);
+			break;
+
+		case LOCAL_CAPMODE_SERVER:
+			error = sooptcopyin(sopt, &optval, sizeof(optval),
+					    sizeof(optval));
+			if (error)
+				break;
+			UNP_PCB_LOCK(unp);
+			if (optval)
+				unp->unp_flags |= UNP_CAPMODE_SERVER;
+			else if (unp->unp_flags & UNP_CAPMODE_SERVER)
+				error = ENOTCAPABLE;  /* monotonic: cannot clear */
+			UNP_PCB_UNLOCK(unp);
+			break;
+
+		case LOCAL_CAP_REQ:
+			error = sooptcopyin(sopt, &optval, sizeof(optval),
+					    sizeof(optval));
+			if (error)
+				break;
+			UNP_PCB_LOCK(unp);
+			if (optval)
+				unp->unp_flags |= UNP_CAP_REQ;
+			else if (unp->unp_flags & UNP_CAP_REQ)
+				error = ENOTCAPABLE;  /* monotonic: cannot clear */
+			UNP_PCB_UNLOCK(unp);
+			break;
+
 		default:
 			error = ENOPROTOOPT;
 			break;
@@ -2976,6 +3072,33 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 		goto bad2;
 	}
 	so2 = unp2->unp_socket;
+#ifdef CAPABILITY_MODE
+	if ((unp2->unp_flags & UNP_CAP_CONNECT) &&
+	    !IN_CAPABILITY_MODE(td)) {
+		SDT_PROBE6(capsicum, , , connect__capmode__deny,
+		    td->td_proc->p_pid, td->td_ucred,
+		    unp2->unp_flags, so->so_type, so2->so_type,
+		    ENOTCAPABLE);
+		error = EXTERROR(ENOTCAPABLE,
+		    "socket requires capability mode to connect "
+		    "(LOCAL_CAP_CONNECT)");
+		goto bad2;
+	}
+
+	/* Client requires server to be in cap mode. */
+	if ((unp->unp_flags & UNP_CAPMODE_SERVER) &&
+	    (so2->so_cred == NULL ||
+	     (so2->so_cred->cr_flags & CRED_FLAG_CAPMODE) == 0)) {
+		SDT_PROBE6(capsicum, , , connect__capmode__server__deny,
+		    td->td_proc->p_pid, td->td_ucred,
+		    unp->unp_flags, so->so_type, so2->so_type,
+		    ENOTCAPABLE);
+		error = EXTERROR(ENOTCAPABLE,
+		    "server not in capability mode "
+		    "(LOCAL_CAPMODE_SERVER)");
+		goto bad2;
+	}
+#endif
 	if (so->so_type != so2->so_type) {
 		error = EPROTOTYPE;
 		goto bad2;
@@ -3594,9 +3717,10 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				    fdep[i]->fde_cloexec_state;
 				fdesc->fd_ofiles[*fdp].fde_clofork_state =
 				    fdep[i]->fde_clofork_state;
-				if (fdep[i]->fde_flags & UF_NOAMBIENT)
-					fdesc->fd_ofiles[*fdp].fde_flags |=
-					    UF_NOAMBIENT;
+				fdesc->fd_ofiles[*fdp].fde_flags |=
+				    fdep[i]->fde_flags &
+				    (UF_CAP_SUFFICIENT |
+				    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 				unp_externalize_fp(fp);
 				SDT_PROBE6(fd, , , scm__rights__recv, fp,
 				    *fdp, td->td_proc->p_pid, td->td_ucred,
@@ -3713,7 +3837,8 @@ unp_internalize_cleanup_rights(struct mbuf *control)
 }
 
 static int
-unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
+unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
+    struct socket *so)
 {
 	struct proc *p;
 	struct filedesc *fdesc;
@@ -3866,7 +3991,9 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td)
 				fdep[i]->fde_clofork_state =
 				    fde->fde_clofork_state;
 				fdep[i]->fde_flags =
-				    fde->fde_flags & UF_NOAMBIENT;
+				    fde->fde_flags &
+				    (UF_CAP_SUFFICIENT |
+				    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 				unp_internalize_fp(fdep[i]->fde_file);
 				SDT_PROBE6(fd, , , scm__rights__send,
 				    fdep[i]->fde_file, *fdp,
@@ -3952,12 +4079,14 @@ unp_addsockcred(struct thread *td, struct mchain *mc, int mode)
 		struct sockcred2 *sc;
 
 		sc = (void *)CMSG_DATA(mtod(m, struct cmsghdr *));
-		sc->sc_version = 0;
+		sc->sc_version = SOCKCRED2_VERSION;
 		sc->sc_pid = td->td_proc->p_pid;
 		sc->sc_uid = td->td_ucred->cr_ruid;
 		sc->sc_euid = td->td_ucred->cr_uid;
 		sc->sc_gid = td->td_ucred->cr_rgid;
 		sc->sc_egid = td->td_ucred->cr_gid;
+		sc->sc_capmode =
+		    (td->td_ucred->cr_flags & CRED_FLAG_CAPMODE) ? 1 : 0;
 		sc->sc_ngroups = ngroups;
 		for (i = 0; i < sc->sc_ngroups; i++)
 			sc->sc_groups[i] = td->td_ucred->cr_groups[i];

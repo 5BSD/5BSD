@@ -132,7 +132,7 @@ procdesc_find(struct thread *td, int fd, const cap_rights_t *rightsp,
 	if (error)
 		return (error);
 	if (fp->f_type != DTYPE_PROCDESC) {
-		error = EINVAL;
+		error = EBADF;
 		goto out;
 	}
 	pd = fp->f_data;
@@ -332,7 +332,7 @@ sys_pdcmp(struct thread *td, struct pdcmp_args *uap)
 		return (error);
 	if (fp1->f_type != DTYPE_PROCDESC) {
 		fdrop(fp1, td);
-		return (EINVAL);
+		return (EBADF);
 	}
 
 	error = fget(td, uap->fd2, &cap_pdgetpid_rights, &fp2);
@@ -343,7 +343,7 @@ sys_pdcmp(struct thread *td, struct pdcmp_args *uap)
 	if (fp2->f_type != DTYPE_PROCDESC) {
 		fdrop(fp2, td);
 		fdrop(fp1, td);
-		return (EINVAL);
+		return (EBADF);
 	}
 
 	pd1 = fp1->f_data;
@@ -362,6 +362,42 @@ sys_pdcmp(struct thread *td, struct pdcmp_args *uap)
 	fdrop(fp1, td);
 
 	return (copyout(&result, uap->result, sizeof(result)));
+}
+
+/*
+ * System call to query whether the described process is in capability mode.
+ * Returns td_retval[0] = 1 if in capability mode, 0 otherwise.
+ */
+int
+sys_pdincapmode(struct thread *td, struct pdincapmode_args *uap)
+{
+	struct file *fp;
+	struct procdesc *pd;
+	struct proc *p;
+	int error;
+
+	AUDIT_ARG_FD(uap->fd);
+	error = fget(td, uap->fd, &cap_pdgetpid_rights, &fp);
+	if (error != 0)
+		return (error);
+	if (fp->f_type != DTYPE_PROCDESC) {
+		fdrop(fp, td);
+		return (EBADF);
+	}
+	pd = fp->f_data;
+	sx_slock(&proctree_lock);
+	p = pd->pd_proc;
+	if (p != NULL) {
+		PROC_LOCK(p);
+		td->td_retval[0] =
+		    (p->p_ucred->cr_flags & CRED_FLAG_CAPMODE) != 0;
+		PROC_UNLOCK(p);
+	} else {
+		error = ESRCH;
+	}
+	sx_sunlock(&proctree_lock);
+	fdrop(fp, td);
+	return (error);
 }
 
 /*
@@ -493,7 +529,9 @@ procdesc_exit(struct proc *p)
 
 /*
  * procdesc_knote() - deliver a kqueue event to procdesc listeners.
- * Used by fork and exec paths to notify NOTE_FORK and NOTE_EXEC.
+ * Used by fork, exec, cap_enter, jail_attach, credential change, signal
+ * delivery, and chroot paths to notify NOTE_FORK, NOTE_EXEC,
+ * NOTE_CAPMODE, NOTE_JAILED, NOTE_SETUID, NOTE_SIGNAL, and NOTE_CHROOT.
  *
  * Caller must hold PROC_LOCK(p).  p_procdesc is an (e) field
  * (protected by proctree_lock).  To respect the lock annotation
@@ -690,6 +728,14 @@ procdesc_kqops_event(struct knote *kn, long hint)
 			kn->kn_flags |= EV_DROP;
 		return (1);
 	}
+
+	/*
+	 * For NOTE_SIGNAL, pack the signal number into kn_data
+	 * so the supervisor knows which signal was delivered.
+	 * The signal number is carried in the low 8 bits of hint.
+	 */
+	if ((event & NOTE_SIGNAL) && (kn->kn_sfflags & NOTE_SIGNAL))
+		kn->kn_data = (u_int)hint & 0xff;
 
 	return (kn->kn_fflags != 0);
 }

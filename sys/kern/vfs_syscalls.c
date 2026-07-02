@@ -47,6 +47,7 @@
 #include <sys/capsicum.h>
 #include <sys/disk.h>
 #include <sys/dirent.h>
+#include <sys/event.h>
 #include <sys/exterrvar.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
@@ -65,6 +66,7 @@
 #include <sys/namei.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
+#include <sys/procdesc.h>
 #include <sys/rwlock.h>
 #include <sys/sdt.h>
 #include <sys/stat.h>
@@ -268,8 +270,7 @@ statfs_scale_blocks(struct statfs *sf, long max_size)
 }
 
 int
-kern_do_statfs(struct thread *td, struct mount *mp, struct statfs *buf,
-    bool cap_noambient)
+kern_do_statfs(struct thread *td, struct mount *mp, struct statfs *buf)
 {
 	int error;
 
@@ -279,13 +280,6 @@ kern_do_statfs(struct thread *td, struct mount *mp, struct statfs *buf,
 	vfs_rel(mp);
 	if (error != 0)
 		return (error);
-#ifdef MAC
-	if (!cap_noambient) {
-		error = mac_mount_check_stat(td->td_ucred, mp);
-		if (error != 0)
-			goto out;
-	}
-#endif
 	error = VFS_STATFS(mp, buf);
 	if (error != 0)
 		goto out;
@@ -334,7 +328,16 @@ kern_statfs(struct thread *td, const char *path, enum uio_seg pathseg,
 	NDFREE_PNBUF(&nd);
 	mp = vfs_ref_from_vp(nd.ni_vp);
 	vrele(nd.ni_vp);
-	return (kern_do_statfs(td, mp, buf, false));
+#ifdef MAC
+	if (mp != NULL) {
+		error = mac_mount_check_stat(td->td_ucred, mp);
+		if (error != 0) {
+			vfs_rel(mp);
+			return (error);
+		}
+	}
+#endif
+	return (kern_do_statfs(td, mp, buf));
 }
 
 /*
@@ -382,7 +385,27 @@ kern_fstatfs(struct thread *td, int fd, struct statfs *buf)
 #endif
 	mp = vfs_ref_from_vp(vp);
 	fdrop(fp, td);
-	return (kern_do_statfs(td, mp, buf, false));
+#ifdef MAC
+	if (mp != NULL) {
+		bool cap_sufficient = false;
+#ifdef CAPABILITY_MODE
+		{
+			struct filedesc *fdp = td->td_proc->p_fd;
+			cap_sufficient = IN_CAPABILITY_MODE(td) &&
+			    (fdp->fd_ofiles[fd].fde_flags &
+			    UF_CAP_SUFFICIENT);
+		}
+#endif
+		if (!cap_sufficient) {
+			error = mac_mount_check_stat(td->td_ucred, mp);
+			if (error != 0) {
+				vfs_rel(mp);
+				return (error);
+			}
+		}
+	}
+#endif
+	return (kern_do_statfs(td, mp, buf));
 }
 
 /*
@@ -1002,6 +1025,12 @@ kern_chroot(struct thread *td, struct vnode *vp)
 #endif
 	VOP_UNLOCK(vp);
 	error = pwd_chroot(td, vp);
+	if (error == 0) {
+		p = td->td_proc;
+		PROC_LOCK(p);
+		procdesc_knote(p, NOTE_CHROOT);
+		PROC_UNLOCK(p);
+	}
 	vrele(vp);
 	return (error);
 e_vunlock:
@@ -2830,8 +2859,7 @@ kern_readlink_vp(struct vnode *vp, char *buf, enum uio_seg bufseg, size_t count,
  * Common implementation code for chflags() and fchflags().
  */
 int
-setfflags(struct thread *td, struct vnode *vp, u_long flags,
-    bool cap_noambient)
+setfflags(struct thread *td, struct vnode *vp, u_long flags)
 {
 	struct mount *mp;
 	struct vattr vattr;
@@ -2841,30 +2869,12 @@ setfflags(struct thread *td, struct vnode *vp, u_long flags,
 	if (flags == VNOVAL)
 		return (EOPNOTSUPP);
 
-	/*
-	 * Prevent non-root users from setting flags on devices.  When
-	 * a device is reused, users can retain ownership of the device
-	 * if they are allowed to set flags and programs assume that
-	 * chown can't fail when done as root.
-	 */
-	if (VN_ISDEV(vp) && !cap_noambient) {
-		error = priv_check(td, PRIV_VFS_CHFLAGS_DEV);
-		if (error != 0)
-			return (error);
-	}
-
 	if ((error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH)) != 0)
 		return (error);
 	VATTR_NULL(&vattr);
 	vattr.va_flags = flags;
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-#ifdef MAC
-	if (!cap_noambient)
-		error = mac_vnode_check_setflags(td->td_ucred, vp,
-		    vattr.va_flags);
-	if (error == 0)
-#endif
-		error = VOP_SETATTR(vp, &vattr, td->td_ucred);
+	error = VOP_SETATTR(vp, &vattr, td->td_ucred);
 #ifdef MAC
 	if (error == 0)
 		mac_vnode_notify_setflags(td->td_ucred, vp, vattr.va_flags);
@@ -2929,6 +2939,7 @@ kern_chflagsat(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, u_long flags, int atflag)
 {
 	struct nameidata nd;
+	struct vnode *vp;
 	int error;
 
 	if ((atflag & ~(AT_SYMLINK_NOFOLLOW | AT_RESOLVE_BENEATH |
@@ -2942,8 +2953,29 @@ kern_chflagsat(struct thread *td, int fd, const char *path,
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	NDFREE_PNBUF(&nd);
-	error = setfflags(td, nd.ni_vp, flags, false);
-	vrele(nd.ni_vp);
+	vp = nd.ni_vp;
+
+	/*
+	 * Prevent non-root users from setting flags on devices.  When
+	 * a device is reused, users can retain ownership of the device
+	 * if they are allowed to set flags and programs assume that
+	 * chown can't fail when done as root.
+	 */
+	if (VN_ISDEV(vp)) {
+		error = priv_check(td, PRIV_VFS_CHFLAGS_DEV);
+		if (error != 0)
+			goto out;
+	}
+#ifdef MAC
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = mac_vnode_check_setflags(td->td_ucred, vp, flags);
+	VOP_UNLOCK(vp);
+	if (error != 0)
+		goto out;
+#endif
+	error = setfflags(td, vp, flags);
+out:
+	vrele(vp);
 	return (error);
 }
 
@@ -2960,6 +2992,7 @@ int
 sys_fchflags(struct thread *td, struct fchflags_args *uap)
 {
 	struct file *fp;
+	struct vnode *vp;
 	int error;
 
 	AUDIT_ARG_FD(uap->fd);
@@ -2968,14 +3001,48 @@ sys_fchflags(struct thread *td, struct fchflags_args *uap)
 	    &fp);
 	if (error != 0)
 		return (error);
+	vp = fp->f_vnode;
 #ifdef AUDIT
 	if (AUDITING_TD(td)) {
-		vn_lock(fp->f_vnode, LK_SHARED | LK_RETRY);
-		AUDIT_ARG_VNODE1(fp->f_vnode);
-		VOP_UNLOCK(fp->f_vnode);
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		AUDIT_ARG_VNODE1(vp);
+		VOP_UNLOCK(vp);
 	}
 #endif
-	error = setfflags(td, fp->f_vnode, uap->flags, false);
+	/*
+	 * Prevent non-root users from setting flags on devices.  When
+	 * a device is reused, users can retain ownership of the device
+	 * if they are allowed to set flags and programs assume that
+	 * chown can't fail when done as root.
+	 */
+	if (VN_ISDEV(vp)) {
+		error = priv_check(td, PRIV_VFS_CHFLAGS_DEV);
+		if (error != 0)
+			goto out;
+	}
+	{
+		bool cap_sufficient = false;
+#ifdef CAPABILITY_MODE
+		{
+			struct filedesc *fdp = td->td_proc->p_fd;
+			cap_sufficient = IN_CAPABILITY_MODE(td) &&
+			    (fdp->fd_ofiles[uap->fd].fde_flags &
+			    UF_CAP_SUFFICIENT);
+		}
+#endif
+#ifdef MAC
+		if (!cap_sufficient) {
+			vn_lock(vp, LK_SHARED | LK_RETRY);
+			error = mac_vnode_check_setflags(td->td_ucred, vp,
+			    uap->flags);
+			VOP_UNLOCK(vp);
+			if (error != 0)
+				goto out;
+		}
+#endif
+	}
+	error = setfflags(td, vp, uap->flags);
+out:
 	fdrop(fp, td);
 	return (error);
 }
@@ -2984,8 +3051,7 @@ sys_fchflags(struct thread *td, struct fchflags_args *uap)
  * Common implementation code for chmod(), lchmod() and fchmod().
  */
 int
-setfmode(struct thread *td, struct ucred *cred, struct vnode *vp, int mode,
-    bool cap_noambient)
+setfmode(struct thread *td, struct ucred *cred, struct vnode *vp, int mode)
 {
 	struct mount *mp;
 	struct vattr vattr;
@@ -2996,12 +3062,7 @@ setfmode(struct thread *td, struct ucred *cred, struct vnode *vp, int mode,
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 	VATTR_NULL(&vattr);
 	vattr.va_mode = mode & ALLPERMS;
-#ifdef MAC
-	if (!cap_noambient)
-		error = mac_vnode_check_setmode(cred, vp, vattr.va_mode);
-	if (error == 0)
-#endif
-		error = VOP_SETATTR(vp, &vattr, cred);
+	error = VOP_SETATTR(vp, &vattr, cred);
 #ifdef MAC
 	if (error == 0)
 		mac_vnode_notify_setmode(cred, vp, vattr.va_mode);
@@ -3066,6 +3127,7 @@ kern_fchmodat(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, mode_t mode, int flag)
 {
 	struct nameidata nd;
+	struct vnode *vp;
 	int error;
 
 	if ((flag & ~(AT_SYMLINK_NOFOLLOW | AT_RESOLVE_BENEATH |
@@ -3079,8 +3141,19 @@ kern_fchmodat(struct thread *td, int fd, const char *path,
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	NDFREE_PNBUF(&nd);
-	error = setfmode(td, td->td_ucred, nd.ni_vp, mode, false);
-	vrele(nd.ni_vp);
+	vp = nd.ni_vp;
+#ifdef MAC
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = mac_vnode_check_setmode(td->td_ucred, vp, mode & ALLPERMS);
+	VOP_UNLOCK(vp);
+	if (error != 0)
+		goto out;
+#endif
+	error = setfmode(td, td->td_ucred, vp, mode);
+#ifdef MAC
+out:
+#endif
+	vrele(vp);
 	return (error);
 }
 
@@ -3105,7 +3178,34 @@ sys_fchmod(struct thread *td, struct fchmod_args *uap)
 	error = fget(td, uap->fd, &cap_fchmod_rights, &fp);
 	if (error != 0)
 		return (error);
+	{
+		bool cap_sufficient = false;
+#ifdef CAPABILITY_MODE
+		{
+			struct filedesc *fdp = td->td_proc->p_fd;
+			cap_sufficient = IN_CAPABILITY_MODE(td) &&
+			    (fdp->fd_ofiles[uap->fd].fde_flags &
+			    UF_CAP_SUFFICIENT);
+		}
+#endif
+#ifdef MAC
+		if (!cap_sufficient) {
+			struct vnode *vp = fp->f_vnode;
+			if (vp != NULL) {
+				vn_lock(vp, LK_SHARED | LK_RETRY);
+				error = mac_vnode_check_setmode(td->td_ucred,
+				    vp, uap->mode & ALLPERMS);
+				VOP_UNLOCK(vp);
+				if (error != 0)
+					goto out;
+			}
+		}
+#endif
+	}
 	error = fo_chmod(fp, uap->mode, td->td_ucred, td);
+#ifdef MAC
+out:
+#endif
 	fdrop(fp, td);
 	return (error);
 }
@@ -3115,7 +3215,7 @@ sys_fchmod(struct thread *td, struct fchmod_args *uap)
  */
 int
 setfown(struct thread *td, struct ucred *cred, struct vnode *vp, uid_t uid,
-    gid_t gid, bool cap_noambient)
+    gid_t gid)
 {
 	struct mount *mp;
 	struct vattr vattr;
@@ -3127,13 +3227,7 @@ setfown(struct thread *td, struct ucred *cred, struct vnode *vp, uid_t uid,
 	VATTR_NULL(&vattr);
 	vattr.va_uid = uid;
 	vattr.va_gid = gid;
-#ifdef MAC
-	if (!cap_noambient)
-		error = mac_vnode_check_setowner(cred, vp, vattr.va_uid,
-		    vattr.va_gid);
-	if (error == 0)
-#endif
-		error = VOP_SETATTR(vp, &vattr, cred);
+	error = VOP_SETATTR(vp, &vattr, cred);
 #ifdef MAC
 	if (error == 0)
 		mac_vnode_notify_setowner(cred, vp, vattr.va_uid,
@@ -3184,6 +3278,7 @@ kern_fchownat(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, int uid, int gid, int flag)
 {
 	struct nameidata nd;
+	struct vnode *vp;
 	int error;
 
 	if ((flag & ~(AT_SYMLINK_NOFOLLOW | AT_RESOLVE_BENEATH |
@@ -3198,8 +3293,19 @@ kern_fchownat(struct thread *td, int fd, const char *path,
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	NDFREE_PNBUF(&nd);
-	error = setfown(td, td->td_ucred, nd.ni_vp, uid, gid, false);
-	vrele(nd.ni_vp);
+	vp = nd.ni_vp;
+#ifdef MAC
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = mac_vnode_check_setowner(td->td_ucred, vp, uid, gid);
+	VOP_UNLOCK(vp);
+	if (error != 0)
+		goto out;
+#endif
+	error = setfown(td, td->td_ucred, vp, uid, gid);
+#ifdef MAC
+out:
+#endif
+	vrele(vp);
 	return (error);
 }
 
@@ -3242,7 +3348,34 @@ sys_fchown(struct thread *td, struct fchown_args *uap)
 	error = fget(td, uap->fd, &cap_fchown_rights, &fp);
 	if (error != 0)
 		return (error);
+	{
+		bool cap_sufficient = false;
+#ifdef CAPABILITY_MODE
+		{
+			struct filedesc *fdp = td->td_proc->p_fd;
+			cap_sufficient = IN_CAPABILITY_MODE(td) &&
+			    (fdp->fd_ofiles[uap->fd].fde_flags &
+			    UF_CAP_SUFFICIENT);
+		}
+#endif
+#ifdef MAC
+		if (!cap_sufficient) {
+			struct vnode *vp = fp->f_vnode;
+			if (vp != NULL) {
+				vn_lock(vp, LK_SHARED | LK_RETRY);
+				error = mac_vnode_check_setowner(td->td_ucred,
+				    vp, uap->uid, uap->gid);
+				VOP_UNLOCK(vp);
+				if (error != 0)
+					goto out;
+			}
+		}
+#endif
+	}
 	error = fo_chown(fp, uap->uid, uap->gid, td->td_ucred, td);
+#ifdef MAC
+out:
+#endif
 	fdrop(fp, td);
 	return (error);
 }
@@ -3330,7 +3463,7 @@ getutimens(const struct timespec *usrtsp, enum uio_seg tspseg,
  */
 int
 setutimes(struct thread *td, struct vnode *vp, const struct timespec *ts,
-    int numtimes, int nullflag, bool cap_noambient)
+    int numtimes, int nullflag)
 {
 	struct mount *mp;
 	struct vattr vattr;
@@ -3356,13 +3489,7 @@ setutimes(struct thread *td, struct vnode *vp, const struct timespec *ts,
 		vattr.va_birthtime = ts[2];
 	if (nullflag)
 		vattr.va_vaflags |= VA_UTIMES_NULL;
-#ifdef MAC
-	if (!cap_noambient)
-		error = mac_vnode_check_setutimes(td->td_ucred, vp,
-		    vattr.va_atime, vattr.va_mtime);
-#endif
-	if (error == 0)
-		error = VOP_SETATTR(vp, &vattr, td->td_ucred);
+	error = VOP_SETATTR(vp, &vattr, td->td_ucred);
 #ifdef MAC
 	if (error == 0)
 		mac_vnode_notify_setutimes(td->td_ucred, vp);
@@ -3409,6 +3536,7 @@ kern_utimesat(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, const struct timeval *tptr, enum uio_seg tptrseg)
 {
 	struct nameidata nd;
+	struct vnode *vp;
 	struct timespec ts[2];
 	int error;
 
@@ -3420,8 +3548,19 @@ kern_utimesat(struct thread *td, int fd, const char *path,
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	NDFREE_PNBUF(&nd);
-	error = setutimes(td, nd.ni_vp, ts, 2, tptr == NULL, false);
-	vrele(nd.ni_vp);
+	vp = nd.ni_vp;
+#ifdef MAC
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = mac_vnode_check_setutimes(td->td_ucred, vp, ts[0], ts[1]);
+	VOP_UNLOCK(vp);
+	if (error != 0)
+		goto out;
+#endif
+	error = setutimes(td, vp, ts, 2, tptr == NULL);
+#ifdef MAC
+out:
+#endif
+	vrele(vp);
 	return (error);
 }
 
@@ -3448,6 +3587,7 @@ kern_lutimes(struct thread *td, const char *path, enum uio_seg pathseg,
 {
 	struct timespec ts[2];
 	struct nameidata nd;
+	struct vnode *vp;
 	int error;
 
 	if ((error = getutimes(tptr, tptrseg, ts)) != 0)
@@ -3456,8 +3596,19 @@ kern_lutimes(struct thread *td, const char *path, enum uio_seg pathseg,
 	if ((error = namei(&nd)) != 0)
 		return (error);
 	NDFREE_PNBUF(&nd);
-	error = setutimes(td, nd.ni_vp, ts, 2, tptr == NULL, false);
-	vrele(nd.ni_vp);
+	vp = nd.ni_vp;
+#ifdef MAC
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = mac_vnode_check_setutimes(td->td_ucred, vp, ts[0], ts[1]);
+	VOP_UNLOCK(vp);
+	if (error != 0)
+		goto out;
+#endif
+	error = setutimes(td, vp, ts, 2, tptr == NULL);
+#ifdef MAC
+out:
+#endif
+	vrele(vp);
 	return (error);
 }
 
@@ -3483,6 +3634,7 @@ kern_futimes(struct thread *td, int fd, const struct timeval *tptr,
 {
 	struct timespec ts[2];
 	struct file *fp;
+	struct vnode *vp;
 	int error;
 
 	AUDIT_ARG_FD(fd);
@@ -3492,14 +3644,39 @@ kern_futimes(struct thread *td, int fd, const struct timeval *tptr,
 	error = getvnode(td, fd, &cap_futimes_rights, &fp);
 	if (error != 0)
 		return (error);
+	vp = fp->f_vnode;
 #ifdef AUDIT
 	if (AUDITING_TD(td)) {
-		vn_lock(fp->f_vnode, LK_SHARED | LK_RETRY);
-		AUDIT_ARG_VNODE1(fp->f_vnode);
-		VOP_UNLOCK(fp->f_vnode);
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		AUDIT_ARG_VNODE1(vp);
+		VOP_UNLOCK(vp);
 	}
 #endif
-	error = setutimes(td, fp->f_vnode, ts, 2, tptr == NULL, false);
+	{
+		bool cap_sufficient = false;
+#ifdef CAPABILITY_MODE
+		{
+			struct filedesc *fdp = td->td_proc->p_fd;
+			cap_sufficient = IN_CAPABILITY_MODE(td) &&
+			    (fdp->fd_ofiles[fd].fde_flags &
+			    UF_CAP_SUFFICIENT);
+		}
+#endif
+#ifdef MAC
+		if (!cap_sufficient) {
+			vn_lock(vp, LK_SHARED | LK_RETRY);
+			error = mac_vnode_check_setutimes(td->td_ucred, vp,
+			    ts[0], ts[1]);
+			VOP_UNLOCK(vp);
+			if (error != 0)
+				goto out;
+		}
+#endif
+	}
+	error = setutimes(td, vp, ts, 2, tptr == NULL);
+#ifdef MAC
+out:
+#endif
 	fdrop(fp, td);
 	return (error);
 }
@@ -3517,6 +3694,7 @@ kern_futimens(struct thread *td, int fd, const struct timespec *tptr,
 {
 	struct timespec ts[2];
 	struct file *fp;
+	struct vnode *vp;
 	int error, flags;
 
 	AUDIT_ARG_FD(fd);
@@ -3528,14 +3706,39 @@ kern_futimens(struct thread *td, int fd, const struct timespec *tptr,
 	error = getvnode(td, fd, &cap_futimes_rights, &fp);
 	if (error != 0)
 		return (error);
+	vp = fp->f_vnode;
 #ifdef AUDIT
 	if (AUDITING_TD(td)) {
-		vn_lock(fp->f_vnode, LK_SHARED | LK_RETRY);
-		AUDIT_ARG_VNODE1(fp->f_vnode);
-		VOP_UNLOCK(fp->f_vnode);
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		AUDIT_ARG_VNODE1(vp);
+		VOP_UNLOCK(vp);
 	}
 #endif
-	error = setutimes(td, fp->f_vnode, ts, 2, flags & UTIMENS_NULL, false);
+	{
+		bool cap_sufficient = false;
+#ifdef CAPABILITY_MODE
+		{
+			struct filedesc *fdp = td->td_proc->p_fd;
+			cap_sufficient = IN_CAPABILITY_MODE(td) &&
+			    (fdp->fd_ofiles[fd].fde_flags &
+			    UF_CAP_SUFFICIENT);
+		}
+#endif
+#ifdef MAC
+		if (!cap_sufficient) {
+			vn_lock(vp, LK_SHARED | LK_RETRY);
+			error = mac_vnode_check_setutimes(td->td_ucred, vp,
+			    ts[0], ts[1]);
+			VOP_UNLOCK(vp);
+			if (error != 0)
+				goto out;
+		}
+#endif
+	}
+	error = setutimes(td, vp, ts, 2, flags & UTIMENS_NULL);
+#ifdef MAC
+out:
+#endif
 	fdrop(fp, td);
 	return (error);
 }
@@ -3554,6 +3757,7 @@ kern_utimensat(struct thread *td, int fd, const char *path,
     int flag)
 {
 	struct nameidata nd;
+	struct vnode *vp;
 	struct timespec ts[2];
 	int error, flags;
 
@@ -3575,10 +3779,19 @@ kern_utimensat(struct thread *td, int fd, const char *path,
 	 * "Search permission is denied by a component of the path prefix."
 	 */
 	NDFREE_PNBUF(&nd);
-	if ((flags & UTIMENS_EXIT) == 0)
-		error = setutimes(td, nd.ni_vp, ts, 2, flags & UTIMENS_NULL,
-		    false);
-	vrele(nd.ni_vp);
+	vp = nd.ni_vp;
+	if ((flags & UTIMENS_EXIT) == 0) {
+#ifdef MAC
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		error = mac_vnode_check_setutimes(td->td_ucred, vp,
+		    ts[0], ts[1]);
+		VOP_UNLOCK(vp);
+		if (error == 0)
+#endif
+			error = setutimes(td, vp, ts, 2,
+			    flags & UTIMENS_NULL);
+	}
+	vrele(vp);
 	return (error);
 }
 

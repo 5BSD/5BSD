@@ -4,7 +4,7 @@ PACKAGE=serviced
 PROG=	serviced
 BINDIR=	/usr/libexec
 MAN=	serviced.8
-SRCS=	serviced.c bundle_registry.c caprt_direct.c depgraph.c execute.c \
+SRCS=	serviced.c bundle_registry.c mac_capability_direct.c depgraph.c execute.c \
 	kldmgr_client.c naming.c on_demand.c oracle_client.c \
 	reload.c sctl.c startup.c svc_proto.c supervisor.c
 HAS_TESTS=

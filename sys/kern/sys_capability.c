@@ -64,6 +64,7 @@
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
 #include <sys/kernel.h>
@@ -74,6 +75,7 @@
 #include <sys/syscallsubr.h>
 #include <sys/sysproto.h>
 #include <sys/sysctl.h>
+#include <sys/procdesc.h>
 #include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/ucred.h>
@@ -117,6 +119,18 @@ SDT_PROBE_DEFINE6(capsicum, , , cloexec__limit,
     "int", "pid_t", "struct ucred *", "int", "int", "int");
 SDT_PROBE_DEFINE6(capsicum, , , clofork__limit,
     "int", "pid_t", "struct ucred *", "int", "int", "int");
+SDT_PROBE_DEFINE6(capsicum, , , connect__capmode__deny,
+    "pid_t", "struct ucred *", "int", "int", "int", "int");
+SDT_PROBE_DEFINE6(capsicum, , , connect__capmode__server__deny,
+    "pid_t", "struct ucred *", "int", "int", "int", "int");
+SDT_PROBE_DEFINE6(capsicum, , , mmap__capmode,
+    "int", "pid_t", "struct ucred *", "int", "int", "int");
+SDT_PROBE_DEFINE6(capsicum, , , mmap__capmode__deny,
+    "int", "pid_t", "struct ucred *", "int", "int", "int");
+SDT_PROBE_DEFINE6(capsicum, , , lookup__capmode,
+    "int", "pid_t", "struct ucred *", "int", "int", "int");
+SDT_PROBE_DEFINE6(capsicum, , , lookup__capmode__deny,
+    "int", "pid_t", "struct ucred *", "int", "int", "int");
 
 #ifdef CAPABILITY_MODE
 
@@ -142,7 +156,11 @@ sys_cap_enter(struct thread *td, struct cap_enter_args *uap)
 	oldcred = crcopysafe(p, newcred);
 	newcred->cr_flags |= CRED_FLAG_CAPMODE;
 	proc_set_cred(p, newcred);
+
+	/* Notify procdesc listeners that we entered capability mode. */
+	procdesc_knote(p, NOTE_CAPMODE);	/* drops+reacquires */
 	PROC_UNLOCK(p);
+
 	crfree(oldcred);
 	SDT_PROBE3(capsicum, , , mode__enter, p->p_pid,
 	    td->td_ucred, 0);
@@ -863,9 +881,81 @@ sys_cap_ambient_limit(struct thread *td, struct cap_ambient_limit_args *uap)
 		return (EBADF);
 	}
 	fde = &fdp->fd_ofiles[fd];
-	fde->fde_flags |= UF_NOAMBIENT;
+#ifdef CAPABILITIES
+	seqc_write_begin(&fde->fde_seqc);
+#endif
+	fde->fde_flags |= UF_CAP_SUFFICIENT;
+#ifdef CAPABILITIES
+	seqc_write_end(&fde->fde_seqc);
+#endif
 	FILEDESC_XUNLOCK(fdp);
 	return (0);
+}
+
+int
+sys_cap_mmap_capmode(struct thread *td, struct cap_mmap_capmode_args *uap)
+{
+	struct filedesc *fdp = td->td_proc->p_fd;
+	struct filedescent *fde;
+	int fd = uap->fd;
+	int error, old_state = -1;
+
+	AUDIT_ARG_FD(fd);
+	FILEDESC_XLOCK(fdp);
+	if ((u_int)fd >= fdp->fd_nfiles ||
+	    fdp->fd_ofiles[fd].fde_file == NULL) {
+		FILEDESC_XUNLOCK(fdp);
+		error = EBADF;
+		goto out_probe;
+	}
+	fde = &fdp->fd_ofiles[fd];
+	old_state = (fde->fde_flags & UF_MMAP_CAPMODE) ? 1 : 0;
+#ifdef CAPABILITIES
+	seqc_write_begin(&fde->fde_seqc);
+#endif
+	fde->fde_flags |= UF_MMAP_CAPMODE;
+#ifdef CAPABILITIES
+	seqc_write_end(&fde->fde_seqc);
+#endif
+	FILEDESC_XUNLOCK(fdp);
+	error = 0;
+out_probe:
+	SDT_PROBE6(capsicum, , , mmap__capmode, fd, td->td_proc->p_pid,
+	    td->td_ucred, 1, error, old_state);
+	return (error);
+}
+
+int
+sys_cap_lookup_capmode(struct thread *td, struct cap_lookup_capmode_args *uap)
+{
+	struct filedesc *fdp = td->td_proc->p_fd;
+	struct filedescent *fde;
+	int fd = uap->fd;
+	int error, old_state = -1;
+
+	AUDIT_ARG_FD(fd);
+	FILEDESC_XLOCK(fdp);
+	if ((u_int)fd >= fdp->fd_nfiles ||
+	    fdp->fd_ofiles[fd].fde_file == NULL) {
+		FILEDESC_XUNLOCK(fdp);
+		error = EBADF;
+		goto out_probe;
+	}
+	fde = &fdp->fd_ofiles[fd];
+	old_state = (fde->fde_flags & UF_LOOKUP_CAPMODE) ? 1 : 0;
+#ifdef CAPABILITIES
+	seqc_write_begin(&fde->fde_seqc);
+#endif
+	fde->fde_flags |= UF_LOOKUP_CAPMODE;
+#ifdef CAPABILITIES
+	seqc_write_end(&fde->fde_seqc);
+#endif
+	FILEDESC_XUNLOCK(fdp);
+	error = 0;
+out_probe:
+	SDT_PROBE6(capsicum, , , lookup__capmode, fd, td->td_proc->p_pid,
+	    td->td_ucred, 1, error, old_state);
+	return (error);
 }
 
 #else /* !CAPABILITIES */
@@ -940,6 +1030,20 @@ sys_cap_clofork_limit(struct thread *td, struct cap_clofork_limit_args *uap)
 
 int
 sys_cap_ambient_limit(struct thread *td, struct cap_ambient_limit_args *uap)
+{
+
+	return (ENOSYS);
+}
+
+int
+sys_cap_mmap_capmode(struct thread *td, struct cap_mmap_capmode_args *uap)
+{
+
+	return (ENOSYS);
+}
+
+int
+sys_cap_lookup_capmode(struct thread *td, struct cap_lookup_capmode_args *uap)
 {
 
 	return (ENOSYS);

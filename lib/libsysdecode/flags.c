@@ -52,6 +52,7 @@
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
 #include <netinet/udplite.h>
+#include <sys/vsock.h>
 #include <nfsserver/nfs.h>
 #include <ufs/ufs/quota.h>
 #include <vm/vm.h>
@@ -168,6 +169,8 @@ sysdecode_sockopt_level(int level)
 
 	if (level == SOL_SOCKET)
 		return ("SOL_SOCKET");
+	if (level == SOL_VSOCK)
+		return ("SOL_VSOCK");
 
 	/* SOL_* constants for Bluetooth sockets. */
 	str = lookup_value(ngbtsolevel, level);
@@ -194,6 +197,14 @@ sysdecode_vmprot(FILE *fp, int type, int *rem)
 
 	return (print_mask_int(fp, vmprot, type, rem));
 }
+
+static struct name_table sockoptvsock[] = {
+	X(SO_VM_SOCKETS_BUFFER_SIZE)
+	X(SO_VM_SOCKETS_BUFFER_MIN_SIZE)
+	X(SO_VM_SOCKETS_BUFFER_MAX_SIZE)
+	X(SO_VM_SOCKETS_CONNECT_TIMEOUT)
+	XEND
+};
 
 static struct name_table sockflags[] = {
 	X(SOCK_CLOEXEC) X(SOCK_CLOFORK) X(SOCK_NONBLOCK) XEND
@@ -376,7 +387,8 @@ static struct name_table kevent_vnode_fflags[] = {
 
 static struct name_table kevent_proc_fflags[] = {
 	X(NOTE_EXIT) X(NOTE_FORK) X(NOTE_EXEC) X(NOTE_TRACK) X(NOTE_TRACKERR)
-	X(NOTE_CHILD) XEND
+	X(NOTE_CHILD) X(NOTE_CAPMODE) X(NOTE_JAILED) X(NOTE_SETUID)
+	X(NOTE_SIGNAL) X(NOTE_CHROOT) XEND
 };
 
 static struct name_table kevent_timer_fflags[] = {
@@ -788,6 +800,8 @@ sysdecode_sockopt_name(int level, int optname)
 		return (lookup_value(sockoptudp, optname));
 	if (level == IPPROTO_UDPLITE)
 		return (lookup_value(sockoptudplite, optname));
+	if (level == SOL_VSOCK)
+		return (lookup_value(sockoptvsock, optname));
 	return (NULL);
 }
 

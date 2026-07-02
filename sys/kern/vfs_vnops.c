@@ -1238,7 +1238,7 @@ vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 	 * allows us to avoid unneeded work outright.
 	 */
 	if (vn_io_pgcache_read_enable &&
-	    (!mac_vnode_check_read_enabled() || (flags & FOF_NOAMBIENT)) &&
+	    (!mac_vnode_check_read_enabled() || (flags & FOF_CAP_SUFFICIENT)) &&
 	    (vn_irflag_read(vp) & (VIRF_DOOMED | VIRF_PGREAD)) == VIRF_PGREAD) {
 		error = VOP_READ_PGCACHE(vp, uio, ioflag, fp->f_cred);
 		if (error == 0) {
@@ -1266,7 +1266,7 @@ vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 
 	error = 0;
 #ifdef MAC
-	if (!(flags & FOF_NOAMBIENT))
+	if (!(flags & FOF_CAP_SUFFICIENT))
 		error = mac_vnode_check_read(active_cred, fp->f_cred, vp);
 	if (error == 0)
 #endif
@@ -1338,7 +1338,7 @@ vn_write(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 
 	error = 0;
 #ifdef MAC
-	if (!(flags & FOF_NOAMBIENT))
+	if (!(flags & FOF_CAP_SUFFICIENT))
 		error = mac_vnode_check_write(active_cred, fp->f_cred, vp);
 	if (error == 0)
 #endif
@@ -2753,7 +2753,7 @@ vn_chmod(struct file *fp, mode_t mode, struct ucred *active_cred,
 	AUDIT_ARG_VNODE1(vp);
 	VOP_UNLOCK(vp);
 #endif
-	return (setfmode(td, active_cred, vp, mode, false));
+	return (setfmode(td, active_cred, vp, mode));
 }
 
 int
@@ -2768,7 +2768,7 @@ vn_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *active_cred,
 	AUDIT_ARG_VNODE1(vp);
 	VOP_UNLOCK(vp);
 #endif
-	return (setfown(td, active_cred, vp, uid, gid, false));
+	return (setfown(td, active_cred, vp, uid, gid));
 }
 
 /*

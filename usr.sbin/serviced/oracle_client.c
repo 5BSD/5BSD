@@ -5,15 +5,15 @@
  *
  * Oracle channel protocol client.
  *
- * Sends requests to oracled over the inherited cap_rt channel
+ * Sends requests to oracled over the inherited mac_capability channel
  * and receives replies with attached file descriptors.  Each request
  * uses a unique reply_token for correlation.
  */
 
 #include <sys/types.h>
 
-#include <dev/cap_rt/cap_rt_ioctl.h>
-#include <dev/cap_rt/cap_rt_isolation_proto.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
+#include <dev/mac_capability/mac_capability_isolation_proto.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -40,8 +40,8 @@ static int
 oracle_rpc(int channel_fd, const void *req, uint32_t reqlen,
     int *reply_fds, int max_reply_fds, int *nfds_out)
 {
-	struct cap_rt_sendmsg_args sa;
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_sendmsg_args sa;
+	struct mac_capability_recvmsg_args ra;
 	struct oracle_reply rpl;
 	uint64_t token;
 	int i;
@@ -54,7 +54,7 @@ oracle_rpc(int channel_fd, const void *req, uint32_t reqlen,
 	sa.payload_len = reqlen;
 	sa.reply_token = token;
 
-	if (ioctl(channel_fd, CAP_RT_SENDMSG, &sa) == -1) {
+	if (ioctl(channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) {
 		syslog(LOG_WARNING, "oracle_rpc: sendmsg: %m");
 		return (-1);
 	}
@@ -103,7 +103,7 @@ oracle_rpc(int channel_fd, const void *req, uint32_t reqlen,
 				errno = ECONNRESET;
 				return (-1);
 			}
-			if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == 0)
+			if (ioctl(channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == 0)
 				break;
 			if (errno == EAGAIN)
 				continue;
@@ -478,7 +478,7 @@ ORACLE_SYSTEM_OP(oracle_release_system, ORACLE_OP_RELEASE_SYSTEM)
 static uint64_t
 oracle_release_send(int channel_fd, const void *req, uint32_t reqlen)
 {
-	struct cap_rt_sendmsg_args sa;
+	struct mac_capability_sendmsg_args sa;
 	uint64_t token;
 
 	token = __atomic_fetch_add(&next_reply_token, 1,
@@ -489,7 +489,7 @@ oracle_release_send(int channel_fd, const void *req, uint32_t reqlen)
 	sa.payload_len = reqlen;
 	sa.reply_token = token;
 
-	if (ioctl(channel_fd, CAP_RT_SENDMSG, &sa) == -1) {
+	if (ioctl(channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) {
 		syslog(LOG_WARNING, "oracle_release_send: sendmsg: %m");
 		return (0);
 	}
@@ -504,7 +504,7 @@ oracle_release_send(int channel_fd, const void *req, uint32_t reqlen)
 static int
 oracle_release_drain(int channel_fd, unsigned expected)
 {
-	struct cap_rt_recvmsg_args ra;
+	struct mac_capability_recvmsg_args ra;
 	struct oracle_reply rpl;
 	struct pollfd pfd;
 	unsigned drained;
@@ -543,7 +543,7 @@ oracle_release_drain(int channel_fd, unsigned expected)
 			ra.payload = &rpl;
 			ra.payload_len = sizeof(rpl);
 
-			if (ioctl(channel_fd, CAP_RT_RECVMSG, &ra) == -1) {
+			if (ioctl(channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
 				if (errno == EAGAIN)
 					break;	/* back to poll */
 				syslog(LOG_WARNING,

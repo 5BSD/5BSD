@@ -10,15 +10,15 @@
 # - policy claims are immune to release (EPERM, harmless)
 # - batched release of multiple capabilities completes
 #
-# Requires: root, cap_rt device available.
+# Requires: root, mac_capability device available.
 #
 
 . "$(dirname "$0")/test_helpers.sh"
 
-require_cap_rt()
+require_mac_capability()
 {
-	if [ ! -c /dev/cap_rt ]; then
-		atf_skip "cap_rt device not available"
+	if [ ! -c /dev/mac_capability ]; then
+		atf_skip "mac_capability device not available"
 	fi
 }
 
@@ -52,7 +52,7 @@ shared_path_survives_exit_head()
 }
 shared_path_survives_exit_body()
 {
-	require_cap_rt
+	require_mac_capability
 	start_stack
 
 	write_executable svc_a <<'SEOF'
@@ -140,7 +140,7 @@ dynamic_claim_fully_released_head()
 }
 dynamic_claim_fully_released_body()
 {
-	require_cap_rt
+	require_mac_capability
 	start_stack
 
 	write_executable sole_user <<'SEOF'
@@ -206,7 +206,7 @@ policy_claim_immune_to_release_head()
 }
 policy_claim_immune_to_release_body()
 {
-	require_cap_rt
+	require_mac_capability
 	prepare_paths
 
 	# Config with /var/tmp as a POLICY claim
@@ -304,7 +304,7 @@ multi_cap_batched_release_head()
 }
 multi_cap_batched_release_body()
 {
-	require_cap_rt
+	require_mac_capability
 	start_stack
 
 	write_executable multi_svc <<'SEOF'
@@ -400,7 +400,7 @@ duplicate_release_no_underflow_head()
 }
 duplicate_release_no_underflow_body()
 {
-	require_cap_rt
+	require_mac_capability
 	start_stack
 
 	write_executable dup_svc <<'SEOF'
@@ -482,7 +482,7 @@ sweep_all_claim_types_head()
 }
 sweep_all_claim_types_body()
 {
-	require_cap_rt
+	require_mac_capability
 	start_stack
 
 	write_executable sweep_svc <<'SEOF'

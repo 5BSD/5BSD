@@ -46,10 +46,10 @@ The
 library provides a clean API for services managed by
 .Xr serviced 8
 to communicate with the service manager over their inherited
-cap_rt pair channel.
+mac_capability pair channel.
 Services link against
 .Nm libservice
-and never need to include cap_rt headers or issue ioctls directly.
+and never need to include mac_capability headers or issue ioctls directly.
 .Pp
 .Fn service_init
 initializes the library by reading the
@@ -88,7 +88,7 @@ Only the service that registered the name may remove it.
 connects to a named service by requesting a brokered connection
 from
 .Xr serviced 8 .
-The service manager creates a new cap_rt pair, pushes one end
+The service manager creates a new mac_capability pair, pushes one end
 to the provider and returns the other end to the caller.
 On success, a file descriptor for the bidirectional pair endpoint
 is returned.
@@ -111,14 +111,14 @@ internally and delivered from subsequent calls to
 .Fn service_accept .
 .Pp
 .Fn service_send
-sends a message on an arbitrary cap_rt pair file descriptor
+sends a message on an arbitrary mac_capability pair file descriptor
 .Fa fd .
 This is a convenience wrapper around the
-.Dv CAP_RT_SENDMSG
+.Dv MAC_CAPABILITY_SENDMSG
 ioctl.
 .Pp
 .Fn service_recv
-receives a message from a cap_rt pair file descriptor
+receives a message from a mac_capability pair file descriptor
 .Fa fd .
 Up to
 .Fa bufsz
@@ -135,7 +135,7 @@ otherwise
 .Fa *peer_fd
 is set to \-1.
 This is a convenience wrapper around the
-.Dv CAP_RT_RECVMSG
+.Dv MAC_CAPABILITY_RECVMSG
 ioctl.
 .Pp
 .Fn service_pair_fd
@@ -175,7 +175,7 @@ been initialized.
 .Pp
 .Fn service_protect
 applies
-.Xr cap_rt_capprotect 4
+.Xr mac_capability_capprotect 4
 shielding to the calling service using the
 .Ev ORACLED_CAPPROTECT_FD
 descriptor inherited from

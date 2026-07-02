@@ -23,7 +23,7 @@
 #include <string.h>
 
 #include <oraclert.h>			/* ORT_NET_DIR_ANY */
-#include <dev/cap_rt/cap_rt_isolation_proto.h>	/* FI_JAIL_ALL */
+#include <dev/mac_capability/mac_capability_isolation_proto.h>	/* FI_JAIL_ALL */
 
 #include "oracled_svc_proto.h"
 

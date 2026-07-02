@@ -770,7 +770,7 @@ pipe_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	 * calls failing to find anything.
 	 */
 	if ((fp->f_flag & FNONBLOCK) != 0 &&
-	    (!mac_pipe_check_read_enabled() || (flags & FOF_NOAMBIENT))) {
+	    (!mac_pipe_check_read_enabled() || (flags & FOF_CAP_SUFFICIENT))) {
 		if (__predict_false(uio->uio_resid == 0))
 			return (0);
 		if ((atomic_load_short(&rpipe->pipe_state) & PIPE_EOF) == 0 &&
@@ -786,7 +786,7 @@ pipe_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 		goto unlocked_error;
 
 #ifdef MAC
-	if (!(flags & FOF_NOAMBIENT)) {
+	if (!(flags & FOF_CAP_SUFFICIENT)) {
 		error = mac_pipe_check_read(active_cred, rpipe->pipe_pair);
 		if (error)
 			goto locked_error;
@@ -1169,7 +1169,7 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 		return (EPIPE);
 	}
 #ifdef MAC
-	if (!(flags & FOF_NOAMBIENT)) {
+	if (!(flags & FOF_CAP_SUFFICIENT)) {
 		error = mac_pipe_check_write(active_cred, wpipe->pipe_pair);
 		if (error) {
 			pipeunlock(wpipe);

@@ -527,7 +527,6 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 	 */
 	switch(ar->ar_event) {
 	case AUE_ACCEPT:
-	case AUE_CAP_ACCEPT:
 		if (ARG_IS_VALID(kar, ARG_FD)) {
 			tok = au_to_arg32(1, "fd", ar->ar_arg_fd);
 			kau_write(rec, tok);
@@ -551,18 +550,13 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		break;
 
 	case AUE_BIND:
-	case AUE_CAP_BIND:
 	case AUE_LISTEN:
-	case AUE_CAP_LISTEN:
 	case AUE_CONNECT:
-	case AUE_CAP_CONNECT:
 	case AUE_RECV:
 	case AUE_RECVFROM:
 	case AUE_RECVMSG:
-	case AUE_CAP_RECVMSG:
 	case AUE_SEND:
 	case AUE_SENDMSG:
-	case AUE_CAP_SENDMSG:
 	case AUE_SENDTO:
 		/*
 		 * Socket-related events.
@@ -605,7 +599,6 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		break;
 
 	case AUE_SENDFILE:
-	case AUE_CAP_SENDFILE:
 		FD_VNODE1_TOKENS;
 		if (ARG_IS_VALID(kar, ARG_SADDRINET)) {
 			tok = au_to_sock_inet((struct sockaddr_in *)
@@ -641,7 +634,6 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		break;
 
 	case AUE_SETSOCKOPT:
-	case AUE_CAP_SETSOCKOPT:
 	case AUE_SHUTDOWN:
 		if (ARG_IS_VALID(kar, ARG_FD)) {
 			tok = au_to_arg32(1, "fd", ar->ar_arg_fd);
@@ -801,18 +793,15 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		break;
 
 	case AUE_ACL_DELETE_FD:
-	case AUE_CAP_ACL_DELETE_FD:
 	case AUE_ACL_DELETE_FILE:
 	case AUE_ACL_CHECK_FD:
 	case AUE_ACL_CHECK_FILE:
 	case AUE_ACL_CHECK_LINK:
 	case AUE_ACL_DELETE_LINK:
 	case AUE_ACL_GET_FD:
-	case AUE_CAP_ACL_GET_FD:
 	case AUE_ACL_GET_FILE:
 	case AUE_ACL_GET_LINK:
 	case AUE_ACL_SET_FD:
-	case AUE_CAP_ACL_SET_FD:
 	case AUE_ACL_SET_FILE:
 	case AUE_ACL_SET_LINK:
 		if (ARG_IS_VALID(kar, ARG_VALUE)) {
@@ -1010,13 +999,9 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		break;
 
 	case AUE_EXTATTR_GET_FD:
-	case AUE_CAP_EXTATTR_GET_FD:
 	case AUE_EXTATTR_SET_FD:
-	case AUE_CAP_EXTATTR_SET_FD:
 	case AUE_EXTATTR_LIST_FD:
-	case AUE_CAP_EXTATTR_LIST_FD:
 	case AUE_EXTATTR_DELETE_FD:
-	case AUE_CAP_EXTATTR_DELETE_FD:
 		if (ARG_IS_VALID(kar, ARG_FD)) {
 			tok = au_to_arg32(2, "fd", ar->ar_arg_fd);
 			kau_write(rec, tok);
@@ -1047,7 +1032,6 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		break;
 
 	case AUE_FCHMOD:
-	case AUE_CAP_FCHMOD:
 		if (ARG_IS_VALID(kar, ARG_MODE)) {
 			tok = au_to_arg32(2, "new file mode",
 			    ar->ar_arg_mode);
@@ -1063,12 +1047,9 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 	case AUE_FPATHCONF:
 	case AUE_FSTAT:
 	case AUE_FSTATFS:
-	case AUE_CAP_FSTATFS:
 	case AUE_FSYNC:
 	case AUE_FTRUNCATE:
-	case AUE_CAP_FTRUNCATE:
 	case AUE_FUTIMES:
-	case AUE_CAP_FUTIMES:
 	case AUE_GETDIRENTRIES:
 	case AUE_GETDIRENTRIESATTR:
 	case AUE_LSEEK:
@@ -1084,7 +1065,6 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		break;
 
 	case AUE_FCHOWN:
-	case AUE_CAP_FCHOWN:
 		if (ARG_IS_VALID(kar, ARG_UID)) {
 			tok = au_to_arg32(2, "new file uid", ar->ar_arg_uid);
 			kau_write(rec, tok);
@@ -1106,7 +1086,6 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		break;
 
 	case AUE_FCHFLAGS:
-	case AUE_CAP_FCHFLAGS:
 		if (ARG_IS_VALID(kar, ARG_FFLAGS)) {
 			tok = au_to_arg32(2, "flags", ar->ar_arg_fflags);
 			kau_write(rec, tok);
@@ -1160,7 +1139,6 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		}
 
 	case AUE_IOCTL:
-	case AUE_CAP_IOCTL:
 		if (ARG_IS_VALID(kar, ARG_CMD)) {
 			tok = au_to_arg32(2, "cmd", ar->ar_arg_cmd);
 			kau_write(rec, tok);
@@ -1245,7 +1223,6 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		break;
 
 	case AUE_MMAP:
-	case AUE_CAP_MMAP:
 	case AUE_MUNMAP:
 	case AUE_MPROTECT:
 	case AUE_MLOCK:
@@ -1256,7 +1233,7 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 			tok = au_to_arg32(2, "len", ar->ar_arg_len);
 			kau_write(rec, tok);
 		}
-		if (ar->ar_event == AUE_MMAP || ar->ar_event == AUE_CAP_MMAP)
+		if (ar->ar_event == AUE_MMAP)
 			FD_VNODE1_TOKENS;
 		if (ar->ar_event == AUE_MPROTECT) {
 			if (ARG_IS_VALID(kar, ARG_VALUE)) {
@@ -1861,7 +1838,19 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		}
 		break;
 
+	case AUE_CAP_XFER_LIMIT:
+	case AUE_CAP_CLOEXEC_LIMIT:
+	case AUE_CAP_CLOFORK_LIMIT:
 	case AUE_CAP_AMBIENT_LIMIT:
+	case AUE_CAP_MMAP_CAPMODE:
+	case AUE_CAP_LOOKUP_CAPMODE:
+		if (ARG_IS_VALID(kar, ARG_FD)) {
+			tok = au_to_arg32(1, "fd", ar->ar_arg_fd);
+			kau_write(rec, tok);
+		}
+		break;
+
+	case AUE_PDINCAPMODE:
 		if (ARG_IS_VALID(kar, ARG_FD)) {
 			tok = au_to_arg32(1, "fd", ar->ar_arg_fd);
 			kau_write(rec, tok);

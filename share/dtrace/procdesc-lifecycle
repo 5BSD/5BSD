@@ -1,0 +1,60 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * procdesc-lifecycle -- trace process descriptor lifecycle events.
+ *
+ * Watches procdesc_knote calls to show when process descriptors fire
+ * kevent notifications (exit, fork, exec, capmode transitions).
+ *
+ * Usage: procdesc-lifecycle
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-16s %-12s %s\n",
+	    "PID", "COMMAND", "EVENT", "DETAIL");
+}
+
+fbt::procdesc_knote:entry
+{
+	this->hint = arg1;
+
+	printf("%-6d %-16s %-12s hint=0x%x\n",
+	    pid, execname,
+	    this->hint == 0x00000001 ? "EXIT" :
+	    this->hint == 0x00000002 ? "FORK" :
+	    this->hint == 0x00000004 ? "EXEC" :
+	    this->hint == 0x10000000 ? "CAPMODE" :
+	    "OTHER",
+	    this->hint);
+}
+
+syscall::pdself:entry
+{
+	printf("%-6d %-16s %-12s flags=0x%x\n",
+	    pid, execname, "PDSELF", arg1);
+}
+
+syscall::pdself:return
+/arg1 == 0/
+{
+	printf("%-6d %-16s %-12s fd=%d\n",
+	    pid, execname, "PDSELF-OK", arg0);
+}
+
+syscall::pdcmp:entry
+{
+	printf("%-6d %-16s %-12s fd1=%d fd2=%d\n",
+	    pid, execname, "PDCMP", arg0, arg1);
+}
+
+syscall::pdincapmode:entry
+{
+	printf("%-6d %-16s %-12s fd=%d\n",
+	    pid, execname, "PDINCAPMODE", arg0);
+}

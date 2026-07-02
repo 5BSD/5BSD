@@ -205,7 +205,12 @@ struct freebsd11_kevent32 {
 #define	NOTE_EXIT	0x80000000		/* process exited */
 #define	NOTE_FORK	0x40000000		/* process forked */
 #define	NOTE_EXEC	0x20000000		/* process exec'd */
-#define	NOTE_PCTRLMASK	0xf0000000		/* mask for hint bits */
+#define	NOTE_CAPMODE	0x10000000		/* process entered cap mode */
+#define	NOTE_JAILED	0x08000000		/* process entered a jail */
+#define	NOTE_SETUID	0x04000000		/* process changed credentials */
+#define	NOTE_SIGNAL	0x02000000		/* process received signal */
+#define	NOTE_CHROOT	0x01000000		/* process changed root dir */
+#define	NOTE_PCTRLMASK	0xff000000		/* mask for hint bits */
 #define	NOTE_PDATAMASK	0x000fffff		/* mask for pid */
 
 /* additional flags for EVFILT_PROC */
@@ -262,8 +267,10 @@ struct knlist {
 /*
  * Flag indicating hint is a signal.  Used by EVFILT_SIGNAL, and also
  * shared by EVFILT_PROC  (all knotes attached to p->p_klist)
+ *
+ * Renamed to avoid conflict with the EVFILT_PROCDESC NOTE_SIGNAL above.
  */
-#define NOTE_SIGNAL	0x08000000
+#define NOTE_KNOTE_SIGNAL	0x08000000
 
 /*
  * Hint values for the optional f_touch event filter.  If f_touch is not set 

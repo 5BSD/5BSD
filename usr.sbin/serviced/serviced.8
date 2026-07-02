@@ -16,7 +16,7 @@ It is started by
 .Xr oracled 8
 as a single child process via
 .Xr pdfork 2
-and inherits a cap_rt channel for requesting capability tokens,
+and inherits a mac_capability channel for requesting capability tokens,
 channels, and coalitions from the oracle.
 .Pp
 .Nm
@@ -94,12 +94,12 @@ inherits the following file descriptors from
 .Xr oracled 8 :
 .Bl -tag -width "capprotect (fd 6)"
 .It channel (fd 3)
-Cap_rt channel back to
+Mac_capability channel back to
 .Xr oracled 8 .
 Used to request capability tokens, channels, and coalitions.
 Always required.
 .It channel_svc (fd 4)
-Delegated cap_rt channel service instance.
+Delegated mac_capability channel service instance.
 Allows
 .Nm
 to create channels for its children directly, without
@@ -107,7 +107,7 @@ round-tripping through
 .Xr oracled 8 .
 Optional.
 .It coalition_svc (fd 5)
-Delegated cap_rt coalition service instance.
+Delegated mac_capability coalition service instance.
 Allows
 .Nm
 to create coalitions for process grouping.
@@ -121,7 +121,7 @@ Optional.
 .Sh ENVIRONMENT
 .Bl -tag -width "SERVICED_COALITION_SVC_FD"
 .It Ev ORACLED_CHANNEL_FD
-File descriptor number for the cap_rt channel back to
+File descriptor number for the mac_capability channel back to
 .Xr oracled 8 .
 Always 3.
 Required.
@@ -338,7 +338,7 @@ Each launched service receives a minimal environment:
 .It Ev PATH
 .Pa /sbin:/bin:/usr/sbin:/usr/bin
 .It Ev ORACLED_CHANNEL_FD
-File descriptor number for the cap_rt channel back to
+File descriptor number for the mac_capability channel back to
 .Nm
 (always 3).
 Services use this via
@@ -523,7 +523,7 @@ Only the owning service may unregister a name.
 .It Dv LOOKUP
 Connect to a named service.
 .Nm
-creates a new cap_rt channel, pushes one end to the provider service
+creates a new mac_capability channel, pushes one end to the provider service
 as a
 .Dv SVC_OP_NEW_CLIENT
 notification (which includes the requesting client's label),
@@ -783,7 +783,7 @@ jail {
 .Xr kqueue 2 ,
 .Xr pdfork 2 ,
 .Xr libservice 3 ,
-.Xr cap_rt 4 ,
+.Xr mac_capability 4 ,
 .Xr oracled 8 ,
 .Xr servicectl 8
 .Sh HISTORY

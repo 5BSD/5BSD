@@ -55,6 +55,7 @@
 #include <sys/sysctl.h>
 #include <sys/time.h>
 #include <sys/un.h>
+#include <sys/vsock.h>
 #include <sys/wait.h>
 #include <netinet/in.h>
 #include <netinet/sctp.h>
@@ -154,14 +155,29 @@ static const struct syscall_decode decoded_syscalls[] = {
 		    { Int, 3 } } },
 	{ .name = "break", .ret_type = 1, .nargs = 1,
 	  .args = { { Ptr, 0 } } },
+	{ .name = "cap_ambient_limit", .ret_type = 1, .nargs = 1,
+	  .args = { { Int, 0 } } },
+	{ .name = "cap_cloexec_limit", .ret_type = 1, .nargs = 2,
+	  .args = { { Int, 0 }, { Int, 1 } } },
+	{ .name = "cap_clofork_limit", .ret_type = 1, .nargs = 2,
+	  .args = { { Int, 0 }, { Int, 1 } } },
 	{ .name = "cap_fcntls_get", .ret_type = 1, .nargs = 2,
 	  .args = { { Int, 0 }, { CapFcntlRights | OUT, 1 } } },
 	{ .name = "cap_fcntls_limit", .ret_type = 1, .nargs = 2,
 	  .args = { { Int, 0 }, { CapFcntlRights, 1 } } },
 	{ .name = "cap_getmode", .ret_type = 1, .nargs = 1,
 	  .args = { { PUInt | OUT, 0 } } },
+	{ .name = "cap_lookup_capmode", .ret_type = 1, .nargs = 1,
+	  .args = { { Int, 0 } } },
+	{ .name = "cap_mmap", .ret_type = 1, .nargs = 6,
+	  .args = { { Ptr, 0 }, { Sizet, 1 }, { Mprot, 2 }, { Mmapflags, 3 },
+		    { Int, 4 }, { QuadHex, 5 } } },
+	{ .name = "cap_mmap_capmode", .ret_type = 1, .nargs = 1,
+	  .args = { { Int, 0 } } },
 	{ .name = "cap_rights_limit", .ret_type = 1, .nargs = 2,
 	  .args = { { Int, 0 }, { CapRights, 1 } } },
+	{ .name = "cap_xfer_limit", .ret_type = 1, .nargs = 2,
+	  .args = { { Int, 0 }, { Int, 1 } } },
 	{ .name = "chdir", .ret_type = 1, .nargs = 1,
 	  .args = { { Name, 0 } } },
 	{ .name = "chflags", .ret_type = 1, .nargs = 2,
@@ -412,6 +428,12 @@ static const struct syscall_decode decoded_syscalls[] = {
 		    { Octal, 3 } } },
 	{ .name = "pathconf", .ret_type = 1, .nargs = 2,
 	  .args = { { Name | IN, 0 }, { Pathconf, 1 } } },
+	{ .name = "pdcmp", .ret_type = 1, .nargs = 3,
+	  .args = { { Int, 0 }, { Int, 1 }, { PUInt | OUT, 2 } } },
+	{ .name = "pdincapmode", .ret_type = 1, .nargs = 1,
+	  .args = { { Int, 0 } } },
+	{ .name = "pdself", .ret_type = 1, .nargs = 2,
+	  .args = { { PUInt | OUT, 0 }, { Hex, 1 } } },
 	{ .name = "pipe", .ret_type = 1, .nargs = 1,
 	  .args = { { PipeFds | OUT, 0 } } },
 	{ .name = "pipe2", .ret_type = 1, .nargs = 2,
@@ -1138,6 +1160,17 @@ print_sockaddr(FILE *fp, struct trussinfo *trussinfo, uintptr_t arg,
 		fprintf(fp, "{ AF_UNIX \"%.*s\" }",
 		    (int)(len - offsetof(struct sockaddr_un, sun_path)),
 		    sun->sun_path);
+		break;
+	case AF_VSOCK:
+		if (len < sizeof(struct sockaddr_vm))
+			goto sockaddr_short;
+		{
+			struct sockaddr_vm svm;
+			memcpy(&svm, sa, sizeof(svm));
+			fprintf(fp, "{ AF_VSOCK cid=%llu port=%u }",
+			    (unsigned long long)svm.svm_cid,
+			    svm.svm_port);
+		}
 		break;
 	default:
 	sockaddr_short:

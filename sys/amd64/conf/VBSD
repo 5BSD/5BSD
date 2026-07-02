@@ -1,7 +1,7 @@
 #
 # 5BSD default kernel configuration.
 #
-# GENERIC plus 5BSD identity.  The cap_rt capability runtime and
+# GENERIC plus 5BSD identity.  The mac_capability MAC capability and
 # Linux compatibility modules are loaded at boot via loader.conf.
 #
 
