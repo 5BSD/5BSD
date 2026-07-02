@@ -529,9 +529,9 @@ procdesc_exit(struct proc *p)
 
 /*
  * procdesc_knote() - deliver a kqueue event to procdesc listeners.
- * Used by fork, exec, cap_enter, jail_attach, credential change, signal
- * delivery, and chroot paths to notify NOTE_FORK, NOTE_EXEC,
- * NOTE_CAPMODE, NOTE_JAILED, NOTE_SETUID, NOTE_SIGNAL, and NOTE_CHROOT.
+ * Used by fork, exec, cap_enter, jail_attach, credential change, and
+ * chroot paths to notify NOTE_FORK, NOTE_EXEC, NOTE_CAPMODE,
+ * NOTE_JAILED, NOTE_SETUID, and NOTE_CHROOT.
  *
  * Caller must hold PROC_LOCK(p).  p_procdesc is an (e) field
  * (protected by proctree_lock).  To respect the lock annotation
@@ -728,14 +728,6 @@ procdesc_kqops_event(struct knote *kn, long hint)
 			kn->kn_flags |= EV_DROP;
 		return (1);
 	}
-
-	/*
-	 * For NOTE_SIGNAL, pack the signal number into kn_data
-	 * so the supervisor knows which signal was delivered.
-	 * The signal number is carried in the low 8 bits of hint.
-	 */
-	if ((event & NOTE_SIGNAL) && (kn->kn_sfflags & NOTE_SIGNAL))
-		kn->kn_data = (u_int)hint & 0xff;
 
 	return (kn->kn_fflags != 0);
 }

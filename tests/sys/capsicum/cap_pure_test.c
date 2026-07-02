@@ -63,11 +63,8 @@
 #ifndef NOTE_SETUID
 #define	NOTE_SETUID		0x04000000
 #endif
-#ifndef NOTE_SIGNAL
-#define	NOTE_SIGNAL		0x02000000
-#endif
 #ifndef NOTE_CHROOT
-#define	NOTE_CHROOT		0x01000000
+#define	NOTE_CHROOT		0x02000000
 #endif
 
 /*
@@ -1178,7 +1175,7 @@ ATF_TC_BODY(pdself_pdkill, tc)
  * sv[0] is the sender socket, sv[1] is the receiver socket.
  * Returns 0 on success, non-zero on failure.
  */
-static int
+static int __unused
 send_fd_over_sock(int sender, int fd_to_send)
 {
 	struct msghdr msg;
@@ -1206,7 +1203,7 @@ send_fd_over_sock(int sender, int fd_to_send)
  * Helper: receive one fd from a socket.
  * Returns the received fd on success, -1 on failure.
  */
-static int
+static int __unused
 recv_fd_from_sock(int receiver)
 {
 	struct msghdr msg;
@@ -2802,82 +2799,6 @@ ATF_TC_BODY(note_setuid_kevent, tc)
 	    "NOTE_SETUID kevent must fire on credential change (result=%d)", r);
 }
 
-/* ---- NOTE_SIGNAL kevent test ---- */
-
-/*
- * note_signal_kevent:
- * pdfork a child, register EVFILT_PROCDESC with NOTE_SIGNAL on the
- * procdesc fd.  Parent sends SIGUSR1 to the child via pdkill.
- * Parent verifies the event fires with NOTE_SIGNAL in fflags.
- */
-static void
-note_signal_kevent_body(int *result)
-{
-	int pdfd, kq, pv[2];
-	struct kevent kev;
-	struct timespec ts;
-	pid_t pid;
-	char byte;
-
-	if (pipe(pv) != 0) { *result = 1; return; }
-
-	pid = pdfork(&pdfd, 0);
-	if (pid < 0) { *result = 2; return; }
-	if (pid == 0) {
-		close(pv[1]);
-		/* Ignore SIGUSR1 so we don't die */
-		signal(SIGUSR1, SIG_IGN);
-		/* Tell parent we're ready */
-		if (read(pv[0], &byte, 1) != 1) _exit(1);
-		close(pv[0]);
-		sleep(60);
-		_exit(0);
-	}
-
-	close(pv[0]);
-
-	kq = kqueue();
-	if (kq < 0) { *result = 3; return; }
-
-	EV_SET(&kev, pdfd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
-	    NOTE_SIGNAL, 0, NULL);
-	if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) { *result = 4; return; }
-
-	/* Signal child to enter its wait loop, then send SIGUSR1 */
-	write(pv[1], "x", 1);
-	close(pv[1]);
-
-	/* Small delay to let child set up signal handler */
-	usleep(100000);
-
-	if (pdkill(pdfd, SIGUSR1) != 0) { *result = 8; return; }
-
-	/* Wait for NOTE_SIGNAL */
-	ts.tv_sec = 5;
-	ts.tv_nsec = 0;
-	if (kevent(kq, NULL, 0, &kev, 1, &ts) != 1) { *result = 5; return; }
-
-	if (kev.filter != EVFILT_PROCDESC) { *result = 6; return; }
-	if ((kev.fflags & NOTE_SIGNAL) == 0) { *result = 7; return; }
-	/* Verify the signal number is in kev.data */
-	if (kev.data != SIGUSR1) { *result = 9; return; }
-
-	close(kq);
-	pdkill(pdfd, SIGKILL);
-	close(pdfd);
-	*result = 0;
-}
-
-ATF_TC_WITHOUT_HEAD(note_signal_kevent);
-ATF_TC_BODY(note_signal_kevent, tc)
-{
-	int r;
-
-	r = in_child(note_signal_kevent_body, NULL);
-	ATF_REQUIRE_MSG(r == 0,
-	    "NOTE_SIGNAL kevent must fire on signal delivery (result=%d)", r);
-}
-
 /* ---- NOTE_CHROOT kevent test ---- */
 
 /*
@@ -3386,9 +3307,6 @@ ATF_TP_ADD_TCS(tp)
 
 	/* NOTE_SETUID */
 	ATF_TP_ADD_TC(tp, note_setuid_kevent);
-
-	/* NOTE_SIGNAL */
-	ATF_TP_ADD_TC(tp, note_signal_kevent);
 
 	/* NOTE_CHROOT */
 	ATF_TP_ADD_TC(tp, note_chroot_kevent);
