@@ -121,16 +121,23 @@ sys_pdfork(struct thread *td, struct pdfork_args *uap)
 	int error, fd, pid;
 
 	bzero(&fr, sizeof(fr));
-	fr.fr_flags = RFFDG | RFPROC | RFPROCDESC;
-	fr.fr_pidp = &pid;
-	fr.fr_pd_fd = &fd;
-	fr.fr_pd_flags = uap->flags;
+	fd = -1;
 	AUDIT_ARG_FFLAGS(uap->flags);
 	/*
 	 * It is necessary to return fd by reference because 0 is a valid file
 	 * descriptor number, and the child needs to be able to distinguish
 	 * itself from the parent using the return value.
+	 *
+	 * Pre-validate fdp to avoid creating an orphan on bad pointer.
 	 */
+	error = copyout(&fd, uap->fdp, sizeof(fd));
+	if (error != 0)
+		return (error);
+
+	fr.fr_flags = RFFDG | RFPROC | RFPROCDESC;
+	fr.fr_pidp = &pid;
+	fr.fr_pd_fd = &fd;
+	fr.fr_pd_flags = uap->flags;
 	error = fork1(td, &fr);
 	if (error == 0) {
 		td->td_retval[0] = pid;
@@ -221,6 +228,11 @@ sys_pdrfork(struct thread *td, struct pdrfork_args *uap)
 		}
 		fr.fr_flags = uap->rfflags;
 	}
+
+	/* Pre-validate fdp to avoid creating an orphan on bad pointer. */
+	error = copyout(&fd, uap->fdp, sizeof(fd));
+	if (error != 0)
+		return (error);
 
 	fr.fr_pidp = &pid;
 	fr.fr_pd_fd = &fd;

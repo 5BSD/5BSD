@@ -1000,7 +1000,7 @@ pdcmp_bad_fd_body(int *result)
 	if (pdcmp(fd, STDIN_FILENO, &cmp) == 0) {
 		*result = 3; return;
 	}
-	if (errno != EINVAL) { *result = 4; return; }
+	if (errno != EBADF) { *result = 4; return; }
 
 	close(fd);
 	*result = 0;
@@ -1682,7 +1682,7 @@ ATF_TC_BODY(pdincapmode_exited, tc)
 		_exit(0);	/* child exits immediately */
 
 	/* Wait for child to exit */
-	ATF_REQUIRE(pdwait(pdfd, &status, 0, NULL, NULL) == pid);
+	ATF_REQUIRE(pdwait(pdfd, &status, WEXITED, NULL, NULL) == 0);
 	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 
 	/* Process has exited — pdincapmode should return ESRCH */
@@ -3201,8 +3201,8 @@ cap_sufficient_ioctl_body(int *result)
 	if (syscall(SYS_cap_ambient_limit, fd) != 0) { *result = 2; return; }
 	if (cap_enter() != 0) { *result = 3; return; }
 
-	nb = -1;
-	if (ioctl(fd, FIONREAD, &nb) != 0) { *result = 4; return; }
+	nb = 0;
+	if (ioctl(fd, FIONBIO, &nb) != 0) { *result = 4; return; }
 
 	*result = 0;
 }

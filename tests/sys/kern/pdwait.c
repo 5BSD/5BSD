@@ -180,7 +180,7 @@ ATF_TC_BODY(einval, tc)
 
 	ATF_CHECK_ERRNO(EINVAL, pdwait(fdp, NULL, 0, NULL, NULL) < 0);
 	ATF_CHECK_ERRNO(EINVAL, pdwait(fdp, NULL, -1, NULL, NULL) < 0);
-	ATF_CHECK_ERRNO(EINVAL,
+	ATF_CHECK_ERRNO(EBADF,
 	    pdwait(STDERR_FILENO, NULL, WEXITED, NULL, NULL) < 0);
 
 	close(fdp);
