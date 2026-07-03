@@ -1,4 +1,7 @@
+.include <src.opts.mk>
+
 PACKAGE=	tests
+TESTSDIR=	${TESTSBASE}/usr.sbin/serviced
 
 ATF_TESTS_SH+=	serviced_naming_test
 ATF_TESTS_SH+=	serviced_svc_test

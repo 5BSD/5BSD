@@ -33,7 +33,6 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	geom \
 	lib9p \
 	libalias \
-	libcapbundle \
 	libarchive \
 	libbegemot \
 	libblocksruntime \
@@ -43,6 +42,8 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libbz2 \
 	libcalendar \
 	libcam \
+	libcapability \
+	libcapbundle \
 	libcapsicum \
 	libcasper \
 	libcompat \
@@ -95,7 +96,6 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	librtld_db \
 	libsbuf \
 	libservice \
-	libcapability \
 	libsmb \
 	libstdbuf \
 	libstdthreads \
@@ -128,6 +128,7 @@ SUBDIR_DEPEND_googletest= libregex
 SUBDIR_DEPEND_libarchive= libz libbz2 libexpat liblzma libmd libzstd
 SUBDIR_DEPEND_libauditdm= libbsm
 SUBDIR_DEPEND_libbsddialog= ncurses
+SUBDIR_DEPEND_libble= libbluetooth
 SUBDIR_DEPEND_libbsnmp= ${_libnetgraph}
 SUBDIR_DEPEND_libc++:= libcxxrt
 # libssp_nonshared doesn't need to be linked into libc on every arch, but it is

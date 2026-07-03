@@ -411,6 +411,10 @@
         ..
         libcam
         ..
+        libcapability
+        ..
+        libcapbundle
+        ..
         libcasper
             services
                 cap_dns
@@ -1279,6 +1283,10 @@
         ..
     ..
     usr.sbin
+        bluetooth
+            blued
+            ..
+        ..
         certctl
         ..
         chown
@@ -1314,6 +1322,10 @@
         rpcbind
         ..
         sa
+        ..
+        serviced
+        ..
+        servicectl
         ..
         syslogd
         ..
