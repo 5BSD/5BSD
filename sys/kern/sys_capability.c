@@ -875,12 +875,11 @@ sys_cap_ambient_limit(struct thread *td, struct cap_ambient_limit_args *uap)
 
 	AUDIT_ARG_FD(fd);
 	FILEDESC_XLOCK(fdp);
-	if ((u_int)fd >= fdp->fd_nfiles ||
-	    fdp->fd_ofiles[fd].fde_file == NULL) {
+	fde = fdeget_noref(fdp, fd);
+	if (fde == NULL) {
 		FILEDESC_XUNLOCK(fdp);
 		return (EBADF);
 	}
-	fde = &fdp->fd_ofiles[fd];
 #ifdef CAPABILITIES
 	seqc_write_begin(&fde->fde_seqc);
 #endif
@@ -902,13 +901,12 @@ sys_cap_mmap_capmode(struct thread *td, struct cap_mmap_capmode_args *uap)
 
 	AUDIT_ARG_FD(fd);
 	FILEDESC_XLOCK(fdp);
-	if ((u_int)fd >= fdp->fd_nfiles ||
-	    fdp->fd_ofiles[fd].fde_file == NULL) {
+	fde = fdeget_noref(fdp, fd);
+	if (fde == NULL) {
 		FILEDESC_XUNLOCK(fdp);
 		error = EBADF;
 		goto out_probe;
 	}
-	fde = &fdp->fd_ofiles[fd];
 	old_state = (fde->fde_flags & UF_MMAP_CAPMODE) ? 1 : 0;
 #ifdef CAPABILITIES
 	seqc_write_begin(&fde->fde_seqc);
@@ -935,13 +933,12 @@ sys_cap_lookup_capmode(struct thread *td, struct cap_lookup_capmode_args *uap)
 
 	AUDIT_ARG_FD(fd);
 	FILEDESC_XLOCK(fdp);
-	if ((u_int)fd >= fdp->fd_nfiles ||
-	    fdp->fd_ofiles[fd].fde_file == NULL) {
+	fde = fdeget_noref(fdp, fd);
+	if (fde == NULL) {
 		FILEDESC_XUNLOCK(fdp);
 		error = EBADF;
 		goto out_probe;
 	}
-	fde = &fdp->fd_ofiles[fd];
 	old_state = (fde->fde_flags & UF_LOOKUP_CAPMODE) ? 1 : 0;
 #ifdef CAPABILITIES
 	seqc_write_begin(&fde->fde_seqc);

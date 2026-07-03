@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <sys/param.h>
 
+#include <err.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -211,6 +212,18 @@ found:
 						nodes[provider_idx].deps[
 						    nodes[provider_idx].ndeps++] =
 						    nnodes;
+					} else {
+						/*
+						 * Truncating edges: cycle
+						 * detection may miss cycles
+						 * involving this provider.
+						 */
+						warnx("capbundle: provider "
+						    "'%s' has too many "
+						    "dependents for cycle "
+						    "detection (max %d)",
+						    nodes[provider_idx].name,
+						    CAPBUNDLE_MAX_REQUIRES);
 					}
 					nodes[nnodes].in_degree++;
 				}

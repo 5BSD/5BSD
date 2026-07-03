@@ -40,8 +40,8 @@ parse_string_field(const ucl_object_t *obj, const char *key,
 }
 
 static void
-parse_string_array(const ucl_object_t *obj, const char *key,
-    char (*dst)[CAPBUNDLE_NAME_MAX + 1], unsigned max, unsigned *count)
+parse_string_array_n(const ucl_object_t *obj, const char *key,
+    void *dst, size_t elemsz, unsigned max, unsigned *count)
 {
 	const ucl_object_t *arr, *elem;
 	ucl_object_iter_t it;
@@ -55,7 +55,7 @@ parse_string_array(const ucl_object_t *obj, const char *key,
 		/* Single string, not an array. */
 		const char *s = ucl_object_tostring(arr);
 		if (s[0] != '\0') {
-			strlcpy(dst[0], s, CAPBUNDLE_NAME_MAX + 1);
+			strlcpy((char *)dst, s, elemsz);
 			*count = 1;
 		}
 		return;
@@ -71,10 +71,19 @@ parse_string_array(const ucl_object_t *obj, const char *key,
 			const char *s = ucl_object_tostring(elem);
 			if (s[0] == '\0')
 				continue;
-			strlcpy(dst[*count], s, CAPBUNDLE_NAME_MAX + 1);
+			strlcpy((char *)dst + (*count) * elemsz, s, elemsz);
 			(*count)++;
 		}
 	}
+}
+
+static void
+parse_string_array(const ucl_object_t *obj, const char *key,
+    char (*dst)[CAPBUNDLE_NAME_MAX + 1], unsigned max, unsigned *count)
+{
+
+	parse_string_array_n(obj, key, dst, CAPBUNDLE_NAME_MAX + 1, max,
+	    count);
 }
 
 static int
@@ -249,38 +258,9 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 	    CAPBUNDLE_MAX_REQUIRES, &svc->nrequires);
 
 	/* Kernel module requirements */
-	{
-		const ucl_object_t *arr, *elem;
-		ucl_object_iter_t it;
-
-		svc->nkmod_requires = 0;
-		arr = ucl_object_lookup(root, "kmod_requires");
-		if (arr != NULL && ucl_object_type(arr) == UCL_ARRAY) {
-			it = NULL;
-			while (svc->nkmod_requires <
-			    CAPBUNDLE_MAX_KMOD_REQUIRES &&
-			    (elem = ucl_object_iterate(arr, &it,
-			    true)) != NULL) {
-				if (ucl_object_type(elem) != UCL_STRING)
-					continue;
-				const char *s = ucl_object_tostring(elem);
-				if (s[0] == '\0')
-					continue;
-				strlcpy(svc->kmod_requires[
-				    svc->nkmod_requires], s,
-				    sizeof(svc->kmod_requires[0]));
-				svc->nkmod_requires++;
-			}
-		} else if (arr != NULL &&
-		    ucl_object_type(arr) == UCL_STRING) {
-			const char *s = ucl_object_tostring(arr);
-			if (s[0] != '\0') {
-				strlcpy(svc->kmod_requires[0], s,
-				    sizeof(svc->kmod_requires[0]));
-				svc->nkmod_requires = 1;
-			}
-		}
-	}
+	parse_string_array_n(root, "kmod_requires", svc->kmod_requires,
+	    sizeof(svc->kmod_requires[0]), CAPBUNDLE_MAX_KMOD_REQUIRES,
+	    &svc->nkmod_requires);
 
 	/* On-demand */
 	v = ucl_object_lookup(root, "on_demand");

@@ -23,7 +23,6 @@
 #include <dev/mac_capability/mac_capability_capprotect_proto.h>
 #include "capability.h"
 
-#define	CAP_DAEMON_TIMEOUT	30
 
 static volatile sig_atomic_t quit;
 static volatile sig_atomic_t reap_requested;
@@ -98,7 +97,6 @@ int
 cap_daemon_run(const struct cap_daemon_config *cfg)
 {
 	char label[CAP_LABEL_MAX];
-	unsigned timeout;
 	int client_fd;
 	pid_t pid;
 
@@ -106,9 +104,6 @@ cap_daemon_run(const struct cap_daemon_config *cfg)
 		errno = EINVAL;
 		return (-1);
 	}
-
-	timeout = cfg->client_timeout != 0 ?
-	    cfg->client_timeout : CAP_DAEMON_TIMEOUT;
 
 	if (service_init() == -1)
 		return (-1);
@@ -147,8 +142,14 @@ cap_daemon_run(const struct cap_daemon_config *cfg)
 		if (pid == 0)
 			serve_child(cfg, client_fd, label);
 		close(client_fd);
-		syslog(LOG_INFO, "client connected: %s pid %jd timeout %us",
-		    label, (intmax_t)pid, timeout);
+		if (cfg->client_timeout != 0)
+			syslog(LOG_INFO,
+			    "client connected: %s pid %jd timeout %us",
+			    label, (intmax_t)pid, cfg->client_timeout);
+		else
+			syslog(LOG_INFO,
+			    "client connected: %s pid %jd no timeout",
+			    label, (intmax_t)pid);
 	}
 
 	reap_children();
@@ -164,7 +165,7 @@ cap_daemon_recv(int fd, void *buf, size_t bufsz, unsigned timeout)
 		alarm(timeout);
 	n = service_recv(fd, buf, bufsz, NULL);
 	if (timeout != 0)
-		alarm(timeout);
+		alarm(0);	/* cancel pending alarm */
 	return (n);
 }
 

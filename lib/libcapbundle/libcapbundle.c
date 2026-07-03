@@ -287,16 +287,16 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	m->max_failures = s->max_failures > 0 ? s->max_failures : 10;
 
 	/* Path capabilities */
-	m->ncap_paths = s->ncap_paths;
-	for (i = 0; i < s->ncap_paths; i++) {
+	m->ncap_paths = MIN(s->ncap_paths, SERVICED_MAX_CAP_PATHS);
+	for (i = 0; i < m->ncap_paths; i++) {
 		if (manifest_copy(s->cap_paths[i], m->cap_paths[i],
 		    sizeof(m->cap_paths[i])) == -1)
 			return (-1);
 	}
 
 	/* File capabilities */
-	m->ncap_files = s->ncap_files;
-	for (i = 0; i < s->ncap_files; i++) {
+	m->ncap_files = MIN(s->ncap_files, SERVICED_MAX_CAP_FILES);
+	for (i = 0; i < m->ncap_files; i++) {
 		if (manifest_copy(s->cap_files[i].path,
 		    m->cap_files[i].path,
 		    sizeof(m->cap_files[i].path)) == -1)
@@ -305,18 +305,18 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	}
 
 	/* Network capabilities */
-	m->ncap_net = s->ncap_net;
-	for (i = 0; i < s->ncap_net; i++)
+	m->ncap_net = MIN(s->ncap_net, SERVICED_MAX_CAP_NET);
+	for (i = 0; i < m->ncap_net; i++)
 		m->cap_net[i] = s->cap_net[i];
 
 	/* Jail capabilities */
-	m->ncap_jail = s->ncap_jail;
-	for (i = 0; i < s->ncap_jail; i++)
+	m->ncap_jail = MIN(s->ncap_jail, SERVICED_MAX_CAP_JAIL);
+	for (i = 0; i < m->ncap_jail; i++)
 		m->cap_jail[i] = s->cap_jail[i];
 
 	/* Kernel module requirements */
-	m->nkmod_requires = s->nkmod_requires;
-	for (i = 0; i < s->nkmod_requires; i++)
+	m->nkmod_requires = MIN(s->nkmod_requires, SERVICED_MAX_KMOD_REQUIRES);
+	for (i = 0; i < m->nkmod_requires; i++)
 		strlcpy(m->kmod_requires[i], s->kmod_requires[i],
 		    sizeof(m->kmod_requires[i]));
 
@@ -361,10 +361,11 @@ capbundle_scan_dir(const char *dirpath, capbundle_scan_cb cb, void *ctx)
 
 		ret = cb(b, ctx);
 		if (ret != 0) {
+			capbundle_close(b);
 			closedir(d);
 			return (ret);
 		}
-		/* Callback is responsible for closing b. */
+		/* Callback is responsible for closing b on success. */
 	}
 
 	closedir(d);
