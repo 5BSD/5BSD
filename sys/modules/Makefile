@@ -428,6 +428,7 @@ SUBDIR=	\
 	${_vf_i2c} \
 	virtio \
 	vge \
+	vsock \
 	${_viawd} \
 	videomode \
 	vkbd \

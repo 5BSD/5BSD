@@ -321,6 +321,13 @@ static const struct bsm_domain bsm_domains[] = {
 	PF_NO_LOCAL_MAPPING
 #endif
 	},
+	{ BSM_PF_VSOCK,
+#ifdef PF_VSOCK
+	PF_VSOCK
+#else
+	PF_NO_LOCAL_MAPPING
+#endif
+	},
 	{ BSM_PF_AX25,
 #ifdef PF_AX25
 	PF_AX25

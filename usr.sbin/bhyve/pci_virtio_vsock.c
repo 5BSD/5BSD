@@ -104,11 +104,10 @@
 #define	VTVSOCK_MAX_PKT		(64 * 1024)
 
 /*
- * Host-side receive buffer advertised to the guest.  128 KiB gives enough
- * headroom to keep the pipe full without consuming excessive memory per
- * connection.
+ * Host-side receive buffer advertised to the guest.  256 KiB matches the
+ * kernel default (kern.vsock.buf_default) and Linux's default.
  */
-#define	VTVSOCK_BUF_ALLOC	(128 * 1024)
+#define	VTVSOCK_BUF_ALLOC	(256 * 1024)
 
 /*
  * Send a CREDIT_UPDATE when we have freed at least this many bytes since the
@@ -121,6 +120,9 @@
 
 /* Maximum simultaneous connections (prevents resource exhaustion) */
 #define	VTVSOCK_MAX_CONNS	256
+
+/* Maximum pending control connections */
+#define	VTVSOCK_MAX_CTL_CONNS	16
 
 /* Control protocol command */
 #define	VSOCK_CTL_CONNECT	1
@@ -164,9 +166,11 @@ vtvsock_cap_lockdown(int fd)
 /*
  * Prepare an fd that will be passed to a host application via
  * SCM_RIGHTS.  The fd can be transferred exactly once (to the app),
- * then it is pinned.  Close-on-exec, close-on-fork, and no-ambient
- * are set so the receiving app must be sandboxed and cannot further
- * propagate the descriptor.
+ * then it is pinned.  Close-on-exec and no-ambient are set so the
+ * receiving app cannot further propagate the descriptor.
+ *
+ * Close-on-fork is intentionally NOT set: a host application may
+ * legitimately fork workers that use the vsock connection.
  */
 static void
 vtvsock_cap_lockdown_xfer_once(int fd)
@@ -174,7 +178,6 @@ vtvsock_cap_lockdown_xfer_once(int fd)
 
 	(void)cap_xfer_limit(fd, CAP_XFER_ONCE);
 	(void)cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED);
-	(void)cap_clofork_limit(fd, CAP_CLOFORK_LOCKED);
 	(void)cap_ambient_limit(fd);
 }
 #endif
@@ -252,6 +255,7 @@ struct pci_vtvsock_softc {
 
 	/* Pending control connections */
 	struct vtvsock_ctl_conn_list vsc_ctl_conns;
+	uint32_t		vsc_ctl_conn_count;
 };
 
 /* Forward declarations */
@@ -544,6 +548,7 @@ vtvsock_conn_close(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn)
 		TAILQ_FOREACH_SAFE(cc, &sc->vsc_ctl_conns, link, cctmp) {
 			if (cc->fd == conn->ctl_fd) {
 				TAILQ_REMOVE(&sc->vsc_ctl_conns, cc, link);
+				sc->vsc_ctl_conn_count--;
 				if (cc->evp != NULL)
 					mevent_delete_close(cc->evp);
 				else
@@ -970,6 +975,7 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 					if (cc->fd == conn->ctl_fd) {
 						TAILQ_REMOVE(&sc->vsc_ctl_conns,
 						    cc, link);
+						sc->vsc_ctl_conn_count--;
 						if (cc->evp != NULL)
 							mevent_delete_close(cc->evp);
 						else
@@ -1123,7 +1129,7 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 						 * concurrent callback while the
 						 * mutex was released.
 						 */
-						if (++retries > 50) {
+						if (++retries > 5) {
 							WPRINTF(("vtvsock: "
 							    "send retries "
 							    "exhausted, "
@@ -1303,13 +1309,33 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 		time_t now = monotonic_seconds();
 
 		TAILQ_FOREACH_SAFE(conn, &sc->vsc_conns, link, tmp) {
+			if (conn->close_time == 0)
+				continue;
 			if (conn->state == CONN_CLOSING &&
-			    conn->close_time != 0 &&
 			    now - conn->close_time >= 8) {
 				DPRINTF(("vtvsock: reaping stale CLOSING conn "
 				    "local_port=%u", conn->local_port));
 				(void)vtvsock_send_ctrl(sc, conn,
 				    VIRTIO_VSOCK_OP_RST, 0);
+				vtvsock_conn_close(sc, conn);
+			} else if (conn->state == CONN_CONNECTING &&
+			    now - conn->close_time >= 30) {
+				DPRINTF(("vtvsock: reaping stale CONNECTING "
+				    "conn local_port=%u", conn->local_port));
+				/*
+				 * Guest never responded; send error to the
+				 * host app if this was a host-initiated conn.
+				 */
+				if (conn->ctl_fd >= 0) {
+					struct vsock_ctl_msg reply;
+
+					memset(&reply, 0, sizeof(reply));
+					reply.cmd    = VSOCK_CTL_CONNECT;
+					reply.port   = conn->guest_port;
+					reply.status = -ETIMEDOUT;
+					(void)send(conn->ctl_fd, &reply,
+					    sizeof(reply), 0);
+				}
 				vtvsock_conn_close(sc, conn);
 			}
 		}
@@ -1380,28 +1406,83 @@ vtvsock_conn_data_cb(int fd __unused, enum ev_type t __unused, void *arg)
 		uint32_t maxread;
 		ssize_t readlen;
 		int avail;
+		bool is_seqpacket;
 
-		/*
-		 * Use FIONREAD to discover available bytes.  If 0
-		 * (spurious wakeup or imminent EOF), use a small buffer
-		 * so recv() can distinguish EOF (returns 0) from no-data
-		 * (returns EAGAIN).
-		 */
-		avail = 0;
-		(void)ioctl(conn->fd, FIONREAD, &avail);
-		if (avail > 0)
-			readlen = MIN(avail, VTVSOCK_MAX_PKT);
-		else
-			readlen = 4096;
+		is_seqpacket = (conn->type == VIRTIO_VSOCK_TYPE_SEQPACKET);
 
-		/* Cap by peer credit */
+		/* Check peer credit — how many bytes the guest can accept. */
 		maxread = vtvsock_peer_credit(conn);
 		if (maxread == 0) {
-			DPRINTF(("vtvsock: no peer credit, deferring send"));
+			DPRINTF(("vtvsock: no peer credit, deferring"));
+			/*
+			 * Disable mevent to prevent level-triggered
+			 * busy-loop.  Re-enabled on CREDIT_UPDATE.
+			 */
+			if (conn->evp != NULL)
+				mevent_disable(conn->evp);
 			break;
 		}
-		if ((uint32_t)readlen > maxread)
-			readlen = (ssize_t)maxread;
+
+		if (is_seqpacket) {
+			/*
+			 * SEQPACKET: peek to get the full message size.
+			 * recv() on a SEQPACKET socket discards bytes
+			 * beyond the buffer size — we must not consume
+			 * a message unless credit covers it entirely.
+			 */
+			uint8_t dummy;
+			ssize_t msgsize;
+
+			msgsize = recv(conn->fd, &dummy, sizeof(dummy),
+			    MSG_PEEK | MSG_TRUNC | MSG_DONTWAIT);
+			if (msgsize < 0) {
+				if (errno == EAGAIN || errno == EWOULDBLOCK)
+					break;
+				goto conn_error;
+			}
+			if (msgsize == 0) {
+				DPRINTF(("vtvsock: host fd closed, sending "
+				    "SHUTDOWN to guest"));
+				conn->state = CONN_CLOSING;
+				conn->close_time = monotonic_seconds();
+				if (conn->evp != NULL)
+					mevent_disable(conn->evp);
+				(void)vtvsock_send_ctrl(sc, conn,
+				    VIRTIO_VSOCK_OP_SHUTDOWN,
+				    VIRTIO_VSOCK_SHUTDOWN_RCV |
+				    VIRTIO_VSOCK_SHUTDOWN_SEND);
+				break;
+			}
+			if ((uint32_t)msgsize > maxread) {
+				/*
+				 * Insufficient credit for the full
+				 * message.  Defer until CREDIT_UPDATE.
+				 */
+				DPRINTF(("vtvsock: SEQPACKET msg %zd > "
+				    "credit %u, deferring",
+				    msgsize, maxread));
+				if (conn->evp != NULL)
+					mevent_disable(conn->evp);
+				break;
+			}
+			readlen = msgsize;
+		} else {
+			/*
+			 * STREAM: read whatever is available, capped
+			 * by credit and max packet size.  Use FIONREAD
+			 * to discover available bytes.  If 0 (spurious
+			 * wakeup or imminent EOF), use a small buffer
+			 * so recv() can distinguish EOF from no-data.
+			 */
+			avail = 0;
+			(void)ioctl(conn->fd, FIONREAD, &avail);
+			if (avail > 0)
+				readlen = MIN(avail, VTVSOCK_MAX_PKT);
+			else
+				readlen = 4096;
+			if ((uint32_t)readlen > maxread)
+				readlen = (ssize_t)maxread;
+		}
 
 		/*
 		 * Verify RX ring has descriptors BEFORE consuming data
@@ -1441,26 +1522,49 @@ vtvsock_conn_data_cb(int fd __unused, enum ev_type t __unused, void *arg)
 		}
 
 		/*
-		 * For SEQPACKET connections, each injected OP_RW is one
-		 * complete message — set EOM|EOR so the guest sees proper
-		 * message boundaries.  For STREAM, flags stay 0.
+		 * Inject into the RX (host->guest) virtqueue.
+		 *
+		 * SEQPACKET messages that exceed VTVSOCK_MAX_PKT are
+		 * fragmented into multiple OP_RW packets; EOM|EOR is
+		 * set only on the final fragment so the guest reassembles
+		 * the complete record.  For STREAM, readlen is already
+		 * capped at VTVSOCK_MAX_PKT so the loop runs once.
 		 */
 		{
-			uint32_t rw_flags = 0;
-			if (conn->type == VIRTIO_VSOCK_TYPE_SEQPACKET)
-				rw_flags = VIRTIO_VSOCK_SEQ_EOM |
-				    VIRTIO_VSOCK_SEQ_EOR;
+			size_t off = 0;
 
-			if (vtvsock_inject_rx(sc, conn, VIRTIO_VSOCK_OP_RW,
-			    rw_flags, buf, (uint32_t)n) != 0) {
-				WPRINTF(("vtvsock: RX injection failed, "
-				    "closing"));
-				free(buf);
-				buf = NULL;
-				goto conn_error;
+			while (off < (size_t)n) {
+				size_t frag = MIN((size_t)n - off,
+				    (size_t)VTVSOCK_MAX_PKT);
+				uint32_t rw_flags = 0;
+
+				if (is_seqpacket &&
+				    off + frag >= (size_t)n)
+					rw_flags = VIRTIO_VSOCK_SEQ_EOM |
+					    VIRTIO_VSOCK_SEQ_EOR;
+
+				if (!vq_has_descs(
+				    &sc->vsc_queues[VTVSOCK_RXQ])) {
+					WPRINTF(("vtvsock: RX ring full "
+					    "mid-send, closing"));
+					free(buf);
+					buf = NULL;
+					goto conn_error;
+				}
+
+				if (vtvsock_inject_rx(sc, conn,
+				    VIRTIO_VSOCK_OP_RW, rw_flags,
+				    buf + off, (uint32_t)frag) != 0) {
+					WPRINTF(("vtvsock: RX injection "
+					    "failed, closing"));
+					free(buf);
+					buf = NULL;
+					goto conn_error;
+				}
+				conn->tx_cnt += (uint32_t)frag;
+				off += frag;
 			}
 		}
-		conn->tx_cnt += (uint32_t)n;
 
 		free(buf);
 		buf = NULL;
@@ -1520,6 +1624,7 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 		/* Incomplete read or error — close the control connection */
 		if (nr == 0 || (nr < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
 			TAILQ_REMOVE(&sc->vsc_ctl_conns, cc, link);
+			sc->vsc_ctl_conn_count--;
 			if (cc->evp != NULL)
 				mevent_delete_close(cc->evp);
 			else
@@ -1592,10 +1697,11 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 			goto ctl_connect_fail;
 		}
 
-		conn->type     = vtype;
-		conn->ctl_fd   = fd;
-		conn->reply_fd = pair[1];
-		conn->state    = CONN_CONNECTING;
+		conn->type       = vtype;
+		conn->ctl_fd     = fd;
+		conn->reply_fd   = pair[1];
+		conn->state      = CONN_CONNECTING;
+		conn->close_time = monotonic_seconds();
 		/* Don't arm mevent on pair[0] yet — wait for ESTABLISHED.
 		 * Disable the ctl_conn mevent so a second message can't
 		 * arrive while we're waiting for OP_RESPONSE. */
@@ -1698,7 +1804,16 @@ pci_vtvsock_ctl_accept(int fd __unused, enum ev_type t __unused, void *arg)
 	cc->fd = s;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
+	if (sc->vsc_ctl_conn_count >= VTVSOCK_MAX_CTL_CONNS) {
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		WPRINTF(("vtvsock: ctl connection limit reached (%u)",
+		    VTVSOCK_MAX_CTL_CONNS));
+		close(s);
+		free(cc);
+		return;
+	}
 	TAILQ_INSERT_TAIL(&sc->vsc_ctl_conns, cc, link);
+	sc->vsc_ctl_conn_count++;
 	pthread_mutex_unlock(&sc->vsc_mtx);
 
 	cc->evp = mevent_add(s, EVF_READ, pci_vtvsock_ctl_conn_cb, sc);
@@ -1706,6 +1821,7 @@ pci_vtvsock_ctl_accept(int fd __unused, enum ev_type t __unused, void *arg)
 		WPRINTF(("vtvsock: mevent_add failed for ctl conn"));
 		pthread_mutex_lock(&sc->vsc_mtx);
 		TAILQ_REMOVE(&sc->vsc_ctl_conns, cc, link);
+		sc->vsc_ctl_conn_count--;
 		pthread_mutex_unlock(&sc->vsc_mtx);
 		close(s);
 		free(cc);
@@ -1733,6 +1849,7 @@ pci_vtvsock_reset(void *vsc)
 	/* Close all pending control connections */
 	TAILQ_FOREACH_SAFE(cc, &sc->vsc_ctl_conns, link, cctmp) {
 		TAILQ_REMOVE(&sc->vsc_ctl_conns, cc, link);
+		sc->vsc_ctl_conn_count--;
 		if (cc->evp != NULL)
 			mevent_delete_close(cc->evp);
 		else
@@ -1984,6 +2101,7 @@ failed:
 			vtvsock_conn_close(sc, conn);
 		TAILQ_FOREACH_SAFE(cc, &sc->vsc_ctl_conns, link, cctmp) {
 			TAILQ_REMOVE(&sc->vsc_ctl_conns, cc, link);
+			sc->vsc_ctl_conn_count--;
 			if (cc->evp != NULL)
 				mevent_delete_close(cc->evp);
 			else

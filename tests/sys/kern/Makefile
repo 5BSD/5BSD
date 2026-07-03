@@ -56,7 +56,8 @@ ATF_TESTS_C+=	socket_splice
 ATF_TESTS_C+=	vsock_test
 TEST_METADATA.sigwait+=	is_exclusive="true"
 TEST_METADATA.vsock_test+=	required_user="root"
-TEST_METADATA.vsock_test+=	required_kmods="virtio_vsock"
+TEST_METADATA.vsock_test+=	required_kmods="vsock"
+TEST_METADATA.vsock_test+=	timeout="60"
 .if ${MACHINE_ARCH} != "i386" && ${MACHINE_ARCH:Mpowerpc*} == ""
 ATF_TESTS_C+=	subr_physmem_test
 .endif

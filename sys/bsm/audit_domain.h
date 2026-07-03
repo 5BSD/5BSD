@@ -87,7 +87,7 @@
 #define	BSM_PF_SCLUSTER		514	/* FreeBSD-specific. */
 #define	BSM_PF_ARP		515	/* FreeBSD-specific. */
 #define	BSM_PF_BLUETOOTH	516	/* FreeBSD-specific. */
-					/* 517: unallocated. */
+#define	BSM_PF_VSOCK		517	/* FreeBSD-specific. */
 #define	BSM_PF_AX25		518	/* Linux-specific. */
 #define	BSM_PF_ROSE		519	/* Linux-specific. */
 #define	BSM_PF_NETBEUI		520	/* Linux-specific. */

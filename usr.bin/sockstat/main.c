@@ -40,6 +40,7 @@
 
 #include <sys/un.h>
 #include <sys/unpcb.h>
+#include <sys/vsock.h>
 
 #include <net/route.h>
 
@@ -101,6 +102,7 @@ static bool	 opt_S;		/* Show protocol stack if applicable */
 static bool	 opt_s;		/* Show protocol state if applicable */
 static bool	 opt_U;		/* Show remote UDP encapsulation port number */
 static bool	 opt_u;		/* Show Unix domain sockets */
+static bool	 opt_V;		/* Show VSOCK sockets */
 static u_int	 opt_v;		/* Verbose mode */
 static bool	 opt_w;		/* Automatically size the columns */
 static bool	 is_xo_style_encoding;
@@ -877,6 +879,98 @@ out:
 }
 
 static void
+gather_vsock(void)
+{
+	struct xvsock_pcb *xvp;
+	struct sock *sock;
+	struct addr *laddr, *faddr;
+	struct sockaddr_vm *svm;
+	const char *protoname;
+	char *buf;
+	size_t len;
+
+	buf = NULL;
+	len = 4096;
+	for (;;) {
+		if ((buf = realloc(buf, len)) == NULL)
+			xo_err(1, "realloc()");
+		if (cap_sysctlbyname(capsysctl, "kern.vsock.pcblist",
+		    buf, &len, NULL, 0) == 0)
+			break;
+		if (errno == ENOENT) {
+			/* vsock module not loaded */
+			free(buf);
+			return;
+		}
+		if (errno != ENOMEM)
+			xo_err(1, "cap_sysctlbyname()");
+		len *= 2;
+	}
+	if (len == 0) {
+		free(buf);
+		return;
+	}
+
+	for (size_t off = 0; off + sizeof(*xvp) <= len; off += sizeof(*xvp)) {
+		xvp = (struct xvsock_pcb *)(buf + off);
+		if (xvp->xvp_len != sizeof(*xvp))
+			break;
+
+		/* Filter: connected vs listening. */
+		if (xvp->xvp_state == VSOCK_ST_LISTEN && !opt_l)
+			continue;
+		if (xvp->xvp_state != VSOCK_ST_LISTEN && !opt_c)
+			continue;
+
+		if ((sock = calloc(1, sizeof(*sock))) == NULL)
+			xo_err(1, "malloc()");
+		if ((laddr = calloc(1, sizeof(*laddr))) == NULL)
+			xo_err(1, "malloc()");
+		if ((faddr = calloc(1, sizeof(*faddr))) == NULL)
+			xo_err(1, "malloc()");
+
+		sock->socket = xvp->xvp_so_gencnt;
+		sock->pcb = xvp->xvp_so_gencnt;
+		sock->family = AF_VSOCK;
+		sock->proto = xvp->xvp_type;
+
+		switch (xvp->xvp_type) {
+		case SOCK_STREAM:
+			protoname = "vsock-stream";
+			break;
+		case SOCK_SEQPACKET:
+			protoname = is_xo_style_encoding ?
+			    "vsock-seqpacket" : "vsock-seqpkt";
+			break;
+		default:
+			protoname = "vsock";
+			break;
+		}
+		sock->protoname = protoname;
+
+		svm = (struct sockaddr_vm *)&laddr->address;
+		svm->svm_len = sizeof(*svm);
+		svm->svm_family = AF_VSOCK;
+		svm->svm_cid = xvp->xvp_local_cid;
+		svm->svm_port = xvp->xvp_local_port;
+
+		svm = (struct sockaddr_vm *)&faddr->address;
+		svm->svm_len = sizeof(*svm);
+		svm->svm_family = AF_VSOCK;
+		svm->svm_cid = xvp->xvp_remote_cid;
+		svm->svm_port = xvp->xvp_remote_port;
+
+		laddr->next = NULL;
+		faddr->next = NULL;
+		sock->laddr = laddr;
+		sock->faddr = faddr;
+		RB_INSERT(socks_t, &socks, sock);
+		RB_INSERT(pcbs_t, &pcbs, sock);
+	}
+	free(buf);
+}
+
+static void
 getfiles(void)
 {
 	struct xfile *xfiles;
@@ -953,6 +1047,19 @@ formataddr(struct sockaddr_storage *ss, char *buf, size_t bufsize)
 		}
 		return snprintf(buf, bufsize, "%.*s",
 				sun->sun_len - off, sun->sun_path);
+	case AF_VSOCK: {
+		struct sockaddr_vm *svm = (struct sockaddr_vm *)ss;
+		if (is_xo_style_encoding) {
+			xo_emit("{:address/%llu}", (unsigned long long)svm->svm_cid);
+			xo_emit("{:port/%u}", svm->svm_port);
+			return (0);
+		}
+		if (svm->svm_port == 0 || svm->svm_port == VSOCK_PORT_ANY)
+			return (snprintf(buf, bufsize, "%llu:*",
+				(unsigned long long)svm->svm_cid));
+		return (snprintf(buf, bufsize, "%llu:%u",
+			(unsigned long long)svm->svm_cid, svm->svm_port));
+	}
 	}
 	if (addrstr[0] == '\0') {
 		error = cap_getnameinfo(capnet, sstosa(ss), ss->ss_len,
@@ -1893,7 +2000,7 @@ main(int argc, char *argv[])
 			is_xo_style_encoding = true;
 	}
 	opt_j = -1;
-	while ((o = getopt(argc, argv, "46AbCcF:fIij:Llnp:P:qSsUuvw")) != -1)
+	while ((o = getopt(argc, argv, "46AbCcF:fIij:Llnp:P:qSsUuVvw")) != -1)
 		switch (o) {
 		case '4':
 			opt_4 = true;
@@ -1970,6 +2077,9 @@ main(int argc, char *argv[])
 		case 'u':
 			opt_u = true;
 			break;
+		case 'V':
+			opt_V = true;
+			break;
 		case 'v':
 			++opt_v;
 			break;
@@ -2034,8 +2144,8 @@ main(int argc, char *argv[])
 
 	if ((!opt_4 && !opt_6) && protos_defined != -1)
 		opt_4 = opt_6 = true;
-	if (!opt_4 && !opt_6 && !opt_u)
-		opt_4 = opt_6 = opt_u = true;
+	if (!opt_4 && !opt_6 && !opt_u && !opt_V)
+		opt_4 = opt_6 = opt_u = opt_V = true;
 	if ((opt_4 || opt_6) && protos_defined == -1)
 		protos_defined = set_default_protos();
 	if (!opt_c && !opt_l)
@@ -2054,6 +2164,8 @@ main(int argc, char *argv[])
 		gather_unix(SOCK_DGRAM);
 		gather_unix(SOCK_SEQPACKET);
 	}
+	if (opt_V || (protos_defined == -1 && !opt_4 && !opt_6))
+		gather_vsock();
 	getfiles();
 	display();
 	exit(0);

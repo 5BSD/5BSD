@@ -31,12 +31,19 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
-#define	VSOCK_CID_ANY		UINT64_C(0xffffffffffffffff)
+#define	VSOCK_CID_HYPERVISOR	UINT64_C(0)
 #define	VSOCK_CID_LOCAL		UINT64_C(1)
 #define	VSOCK_CID_HOST		UINT64_C(2)
+#define	VSOCK_CID_ANY		UINT64_C(0xffffffffffffffff)
 
-#define	VSOCK_PORT_ANY		UINT32_C(0xffffffff)
-#define	VSOCK_PORT_HOST		UINT32_C(2)
+#define	VSOCK_PORT_ANY		UINT32_C(0xffffffff)	/* auto-assign */
+
+/* Linux-compatible aliases for source portability. */
+#define	VMADDR_CID_HYPERVISOR	VSOCK_CID_HYPERVISOR
+#define	VMADDR_CID_LOCAL	VSOCK_CID_LOCAL
+#define	VMADDR_CID_HOST		VSOCK_CID_HOST
+#define	VMADDR_CID_ANY		VSOCK_CID_ANY
+#define	VMADDR_PORT_ANY		VSOCK_PORT_ANY
 
 #define	SOL_VSOCK		287
 
@@ -44,6 +51,7 @@
 #define	SO_VM_SOCKETS_BUFFER_MIN_SIZE	1
 #define	SO_VM_SOCKETS_BUFFER_MAX_SIZE	2
 #define	SO_VM_SOCKETS_CONNECT_TIMEOUT	6
+#define	SO_VM_SOCKETS_PEER_HOST_VM_ID	7	/* read-only: peer CID */
 
 #define	VIRTIO_VSOCK_F_STREAM		(1ULL << 0)
 #define	VIRTIO_VSOCK_F_SEQPACKET	(1ULL << 1)
@@ -115,6 +123,37 @@ struct sockaddr_vm {
 	uint16_t	svm_reserved1;
 	uint32_t	svm_port;
 	uint64_t	svm_cid;
+};
+
+/*
+ * Connection state values exported in xvsock_pcb.xvp_state.
+ * Must match the kernel-internal enum vtvsock_state.
+ */
+#define	VSOCK_ST_CLOSED		0
+#define	VSOCK_ST_BOUND		1
+#define	VSOCK_ST_LISTEN		2
+#define	VSOCK_ST_CONNECTING	3
+#define	VSOCK_ST_ESTABLISHED	4
+#define	VSOCK_ST_CLOSING	5
+
+/*
+ * Exported PCB info for userspace tools (sockstat, netstat).
+ * Returned by the kern.vsock.pcblist sysctl.
+ */
+struct xvsock_pcb {
+	uint32_t	xvp_len;	/* sizeof(struct xvsock_pcb) */
+	int32_t		xvp_state;	/* enum vtvsock_state */
+	uint64_t	xvp_local_cid;
+	uint64_t	xvp_remote_cid;
+	uint32_t	xvp_local_port;
+	uint32_t	xvp_remote_port;
+	int32_t		xvp_type;	/* SOCK_STREAM or SOCK_SEQPACKET */
+	uint32_t	xvp_buf_alloc;
+	uint32_t	xvp_rx_bytes;
+	uint32_t	xvp_tx_cnt;
+	uint32_t	xvp_peer_buf_alloc;
+	uint32_t	xvp_peer_fwd_cnt;
+	uint64_t	xvp_so_gencnt;	/* socket generation counter */
 };
 
 #endif /* _SYS_VSOCK_H_ */

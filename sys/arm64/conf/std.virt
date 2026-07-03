@@ -22,7 +22,8 @@ device		virtio_blk		# VirtIO Block device
 device		virtio_gpu		# VirtIO GPU device
 device		virtio_scmi 		# VirtIO SCMI device
 device		virtio_scsi		# VirtIO SCSI device
-device		virtio_vsock		# VirtIO Socket device
+device		vsock			# AF_VSOCK socket domain
+device		virtio_vsock		# VirtIO Socket transport
 device		vtnet			# VirtIO Ethernet device
 
 options 	FDT

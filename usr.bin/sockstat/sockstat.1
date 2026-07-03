@@ -34,7 +34,7 @@
 .Sh SYNOPSIS
 .Nm
 .Op Fl -libxo
-.Op Fl 46AbCcfIiLlnqSsUuvw
+.Op Fl 46AbCcfIiLlnqSsUuVvw
 .Op Fl F Ar user
 .Op Fl j Ar jail
 .Op Fl p Ar ports
@@ -133,19 +133,26 @@ Show
 .Dv AF_LOCAL
 .Pq Ux
 sockets.
+.It Fl V
+Show
+.Dv AF_VSOCK
+sockets.
+Addresses are displayed as
+.Ar CID Ns : Ns Ar port .
 .It Fl v
 Verbose mode.
 .It Fl w
 Automatically size the columns.
 .El
 .Pp
-If neither
-.Fl 4 , 6
+If none of
+.Fl 4 , 6 ,
+.Fl u ,
 or
-.Fl u
+.Fl V
 is specified,
 .Nm
-will list sockets in all three domains.
+will list sockets in all domains.
 .Pp
 If neither
 .Fl c
@@ -264,6 +271,7 @@ $ sockstat --libxo json,pretty
 .Xr libxo 3 ,
 .Xr inet 4 ,
 .Xr inet6 4 ,
+.Xr vsock 4 ,
 .Xr protocols 5 ,
 .Xr xo_options 7
 .Sh HISTORY

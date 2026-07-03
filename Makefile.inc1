@@ -3429,6 +3429,11 @@ _lib_casper=	lib/libcasper
 
 lib/libpjdlog__L: lib/libutil__L
 lib/libcasper__L: lib/libnv__L
+
+.if ${MK_BLUETOOTH} != "no"
+_prebuild_libs+=	lib/libbluetooth
+lib/libble__L: lib/libbluetooth__L
+.endif
 lib/liblzma__L: lib/libmd__L lib/libthr__L
 lib/libzstd__L: lib/libthr__L
 lib/librt__L: lib/libthr__L

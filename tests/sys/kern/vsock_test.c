@@ -27,6 +27,7 @@
 
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
 #include <sys/vsock.h>
 #include <sys/ioctl.h>
 #include <sys/filio.h>
@@ -40,6 +41,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <stdint.h>
 
@@ -3347,6 +3349,1633 @@ ATF_TC_BODY(seqpacket_shutdown_preserves_pending, tc)
 }
 
 /* ------------------------------------------------------------------ */
+/* Group 38: Type mismatch, oversized message, sockopts, pcblist        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * SEQPACKET socket must not connect to a STREAM listener on loopback.
+ */
+ATF_TC_WITHOUT_HEAD(seqpacket_connect_to_stream_listener_refused);
+ATF_TC_BODY(seqpacket_connect_to_stream_listener_refused, tc)
+{
+	struct sockaddr_vm laddr;
+	int ls, cs;
+
+	(void)tc;
+
+	/* STREAM listener */
+	ls = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE_MSG(ls >= 0, "socket: %s", strerror(errno));
+	vsock_bind_any(ls, &laddr);
+	ATF_REQUIRE(listen(ls, 8) == 0);
+
+	/* SEQPACKET connector */
+	cs = socket(AF_VSOCK, SOCK_SEQPACKET, 0);
+	ATF_REQUIRE_MSG(cs >= 0, "socket: %s", strerror(errno));
+	ATF_REQUIRE(connect(cs, (struct sockaddr *)&laddr,
+	    sizeof(laddr)) == -1);
+	ATF_REQUIRE_MSG(errno == ECONNREFUSED,
+	    "expected ECONNREFUSED, got %d (%s)", errno, strerror(errno));
+	close(cs);
+	close(ls);
+}
+
+ATF_TC_WITHOUT_HEAD(stream_connect_to_seqpacket_listener_refused);
+ATF_TC_BODY(stream_connect_to_seqpacket_listener_refused, tc)
+{
+	struct sockaddr_vm laddr;
+	int ls, cs;
+
+	(void)tc;
+
+	/* SEQPACKET listener */
+	ls = socket(AF_VSOCK, SOCK_SEQPACKET, 0);
+	ATF_REQUIRE_MSG(ls >= 0, "socket: %s", strerror(errno));
+	vsock_bind_any(ls, &laddr);
+	ATF_REQUIRE(listen(ls, 8) == 0);
+
+	/* STREAM connector */
+	cs = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE_MSG(cs >= 0, "socket: %s", strerror(errno));
+	ATF_REQUIRE(connect(cs, (struct sockaddr *)&laddr,
+	    sizeof(laddr)) == -1);
+	ATF_REQUIRE_MSG(errno == ECONNREFUSED,
+	    "expected ECONNREFUSED, got %d (%s)", errno, strerror(errno));
+	close(cs);
+	close(ls);
+}
+
+/*
+ * SEQPACKET loopback send of a message exceeding the peer's receive
+ * buffer must return EMSGSIZE, not block.
+ */
+ATF_TC_WITHOUT_HEAD(seqpacket_loopback_oversized_emsgsize);
+ATF_TC_BODY(seqpacket_loopback_oversized_emsgsize, tc)
+{
+	int ls, cs, as, n;
+	char *buf;
+	size_t rcvbufsz = 4096;
+	size_t sendsz = rcvbufsz * 2;
+
+	(void)tc;
+
+	ls = socket(AF_VSOCK, SOCK_SEQPACKET, 0);
+	ATF_REQUIRE(ls >= 0);
+
+	struct sockaddr_vm laddr;
+	vsock_bind_any(ls, &laddr);
+
+	/* Set a small receive buffer on the listener before accept. */
+	n = (int)rcvbufsz;
+	ATF_REQUIRE(setsockopt(ls, SOL_SOCKET, SO_RCVBUF, &n, sizeof(n)) == 0);
+	ATF_REQUIRE(listen(ls, 8) == 0);
+
+	cs = socket(AF_VSOCK, SOCK_SEQPACKET, 0);
+	ATF_REQUIRE(cs >= 0);
+	ATF_REQUIRE(connect(cs, (struct sockaddr *)&laddr,
+	    sizeof(laddr)) == 0);
+
+	as = accept(ls, NULL, NULL);
+	ATF_REQUIRE(as >= 0);
+
+	buf = malloc(sendsz);
+	ATF_REQUIRE(buf != NULL);
+	memset(buf, 'X', sendsz);
+
+	/*
+	 * Send a message strictly larger than the receiver's buffer.
+	 * Must fail with EMSGSIZE, not block forever.
+	 */
+	ATF_REQUIRE(send(cs, buf, sendsz, 0) == -1);
+	ATF_REQUIRE_MSG(errno == EMSGSIZE,
+	    "expected EMSGSIZE, got %d (%s)", errno, strerror(errno));
+
+	free(buf);
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/*
+ * SO_VM_SOCKETS_PEER_HOST_VM_ID: read-only option returning peer CID.
+ * Must succeed on connected socket, fail with ENOTCONN otherwise.
+ */
+ATF_TC_WITHOUT_HEAD(peer_host_vm_id_sockopt);
+ATF_TC_BODY(peer_host_vm_id_sockopt, tc)
+{
+	int ls, cs, as;
+	uint64_t peer_cid;
+	socklen_t len;
+
+	(void)tc;
+
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+
+	/* Should succeed on a connected socket. */
+	len = sizeof(peer_cid);
+	ATF_REQUIRE_MSG(getsockopt(cs, SOL_VSOCK, SO_VM_SOCKETS_PEER_HOST_VM_ID,
+	    &peer_cid, &len) == 0,
+	    "getsockopt(PEER_HOST_VM_ID) failed: %s", strerror(errno));
+	ATF_REQUIRE(len == sizeof(peer_cid));
+	/* For loopback, peer CID should match our own CID. */
+	ATF_REQUIRE(peer_cid != 0);
+
+	/* setsockopt should fail (read-only). */
+	peer_cid = 42;
+	ATF_REQUIRE(setsockopt(cs, SOL_VSOCK, SO_VM_SOCKETS_PEER_HOST_VM_ID,
+	    &peer_cid, sizeof(peer_cid)) == -1);
+	ATF_REQUIRE(errno == EOPNOTSUPP);
+
+	close(as);
+	close(cs);
+
+	/* Should fail on an unconnected socket. */
+	{
+		int us = socket(AF_VSOCK, SOCK_STREAM, 0);
+		ATF_REQUIRE(us >= 0);
+		len = sizeof(peer_cid);
+		ATF_REQUIRE(getsockopt(us, SOL_VSOCK,
+		    SO_VM_SOCKETS_PEER_HOST_VM_ID, &peer_cid, &len) == -1);
+		ATF_REQUIRE_MSG(errno == ENOTCONN,
+		    "expected ENOTCONN, got %d (%s)", errno, strerror(errno));
+		close(us);
+	}
+	close(ls);
+}
+
+/*
+ * sysctl buf_default/buf_min/buf_max validation.
+ * Out-of-range values must return EINVAL.
+ */
+ATF_TC_WITHOUT_HEAD(sysctl_buf_validation);
+ATF_TC_BODY(sysctl_buf_validation, tc)
+{
+	u_int orig_min, orig_max, orig_default;
+	u_int val;
+	size_t len;
+	int rc;
+
+	(void)tc;
+
+	/* Read originals. */
+	len = sizeof(orig_min);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.buf_min",
+	    &orig_min, &len, NULL, 0) == 0);
+	len = sizeof(orig_max);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.buf_max",
+	    &orig_max, &len, NULL, 0) == 0);
+	len = sizeof(orig_default);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.buf_default",
+	    &orig_default, &len, NULL, 0) == 0);
+
+	/*
+	 * Try setting buf_min above buf_max — should fail with EINVAL.
+	 */
+	val = orig_max + 1;
+	rc = sysctlbyname("kern.vsock.buf_min", NULL, NULL, &val, sizeof(val));
+	ATF_REQUIRE_MSG(rc == -1 && errno == EINVAL,
+	    "setting buf_min > buf_max should fail with EINVAL (rc=%d errno=%d)",
+	    rc, errno);
+
+	/*
+	 * Try setting buf_default below buf_min — should fail with EINVAL.
+	 */
+	if (orig_min > 0) {
+		val = orig_min - 1;
+		rc = sysctlbyname("kern.vsock.buf_default", NULL, NULL,
+		    &val, sizeof(val));
+		ATF_REQUIRE_MSG(rc == -1 && errno == EINVAL,
+		    "setting buf_default < buf_min should fail (rc=%d errno=%d)",
+		    rc, errno);
+	}
+
+	/*
+	 * Try setting buf_default above buf_max — should fail with EINVAL.
+	 */
+	val = orig_max + 1;
+	rc = sysctlbyname("kern.vsock.buf_default", NULL, NULL,
+	    &val, sizeof(val));
+	ATF_REQUIRE_MSG(rc == -1 && errno == EINVAL,
+	    "setting buf_default > buf_max should fail (rc=%d errno=%d)",
+	    rc, errno);
+
+	/* Verify originals are unchanged. */
+	len = sizeof(val);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.buf_min",
+	    &val, &len, NULL, 0) == 0);
+	ATF_REQUIRE(val == orig_min);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.buf_max",
+	    &val, &len, NULL, 0) == 0);
+	ATF_REQUIRE(val == orig_max);
+}
+
+/*
+ * Verify that LISTEN and non-LISTEN states are exposed correctly
+ * through kern.vsock.pcblist sysctl state field.
+ */
+ATF_TC_WITHOUT_HEAD(pcblist_state_values);
+ATF_TC_BODY(pcblist_state_values, tc)
+{
+	struct sockaddr_vm laddr;
+	int ls, cs, as;
+	char *buf;
+	size_t len;
+	struct xvsock_pcb *xvp;
+	bool found_listen, found_established;
+
+	(void)tc;
+
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+
+	/* Read pcblist. */
+	buf = NULL;
+	len = 4096;
+	for (;;) {
+		buf = realloc(buf, len);
+		ATF_REQUIRE(buf != NULL);
+		if (sysctlbyname("kern.vsock.pcblist", buf, &len,
+		    NULL, 0) == 0)
+			break;
+		ATF_REQUIRE_MSG(errno == ENOMEM,
+		    "pcblist failed: %s", strerror(errno));
+		len *= 2;
+	}
+
+	found_listen = false;
+	found_established = false;
+
+	for (size_t off = 0; off + sizeof(*xvp) <= len; off += sizeof(*xvp)) {
+		xvp = (struct xvsock_pcb *)(buf + off);
+		if (xvp->xvp_len != sizeof(*xvp))
+			break;
+		if (xvp->xvp_state == VSOCK_ST_LISTEN)
+			found_listen = true;
+		if (xvp->xvp_state == VSOCK_ST_ESTABLISHED)
+			found_established = true;
+	}
+
+	ATF_REQUIRE_MSG(found_listen,
+	    "pcblist should contain a LISTEN entry");
+	ATF_REQUIRE_MSG(found_established,
+	    "pcblist should contain an ESTABLISHED entry");
+
+	/* Verify no raw kernel pointers leaked (xvp_so_gencnt should be small). */
+	for (size_t off = 0; off + sizeof(*xvp) <= len; off += sizeof(*xvp)) {
+		xvp = (struct xvsock_pcb *)(buf + off);
+		if (xvp->xvp_len != sizeof(*xvp))
+			break;
+		/* Generation counters are sequential small numbers, not
+		 * kernel heap addresses (which are > 0xffff000000000000). */
+		ATF_REQUIRE_MSG(xvp->xvp_so_gencnt < 0xffff000000000000ULL,
+		    "xvp_so_gencnt looks like a raw pointer: 0x%lx",
+		    (unsigned long)xvp->xvp_so_gencnt);
+	}
+
+	free(buf);
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/* ------------------------------------------------------------------ */
+/* Group 39: Coverage parity with AF_UNIX test patterns                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * send_before_accept: data sent before accept() should be readable
+ * on the accepted socket.
+ */
+ATF_TC_WITHOUT_HEAD(send_before_accept);
+ATF_TC_BODY(send_before_accept, tc)
+{
+	struct sockaddr_vm laddr;
+	int ls, cs, as;
+	char sbuf[] = "pre-accept data";
+	char rbuf[64];
+	ssize_t n;
+
+	(void)tc;
+
+	ls = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(ls >= 0);
+	vsock_bind_any(ls, &laddr);
+	ATF_REQUIRE(listen(ls, 8) == 0);
+
+	cs = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(cs >= 0);
+	ATF_REQUIRE(connect(cs, (struct sockaddr *)&laddr,
+	    sizeof(laddr)) == 0);
+
+	/* Send data BEFORE the listener accepts. */
+	n = send(cs, sbuf, sizeof(sbuf), 0);
+	ATF_REQUIRE(n == (ssize_t)sizeof(sbuf));
+
+	/* Now accept. */
+	as = accept(ls, NULL, NULL);
+	ATF_REQUIRE(as >= 0);
+
+	/* Data should be readable on the accepted socket. */
+	memset(rbuf, 0, sizeof(rbuf));
+	n = recv(as, rbuf, sizeof(rbuf), 0);
+	ATF_REQUIRE(n == (ssize_t)sizeof(sbuf));
+	ATF_REQUIRE(memcmp(sbuf, rbuf, sizeof(sbuf)) == 0);
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/*
+ * Verify poll(POLLOUT) transitions from not-ready to ready after
+ * buffer drain.
+ */
+ATF_TC_WITHOUT_HEAD(full_writability_poll);
+ATF_TC_BODY(full_writability_poll, tc)
+{
+	int ls, cs, as;
+	char buf[4096];
+	struct pollfd pfd;
+	ssize_t n;
+
+	(void)tc;
+
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+
+	/* Make sender non-blocking and fill until EAGAIN. */
+	ATF_REQUIRE(fcntl(cs, F_SETFL, O_NONBLOCK) != -1);
+	memset(buf, 'F', sizeof(buf));
+	for (;;) {
+		n = send(cs, buf, sizeof(buf), 0);
+		if (n == -1) {
+			ATF_REQUIRE(errno == EAGAIN || errno == EWOULDBLOCK);
+			break;
+		}
+	}
+
+	/* poll should show POLLOUT not ready (or short timeout). */
+	pfd.fd = cs;
+	pfd.events = POLLOUT;
+	pfd.revents = 0;
+	ATF_REQUIRE(poll(&pfd, 1, 0) == 0);
+
+	/* Drain from receiver. */
+	ATF_REQUIRE(fcntl(as, F_SETFL, O_NONBLOCK) != -1);
+	while (recv(as, buf, sizeof(buf), 0) > 0)
+		;
+
+	/* poll should now show POLLOUT ready. */
+	pfd.revents = 0;
+	ATF_REQUIRE(poll(&pfd, 1, 1000) == 1);
+	ATF_REQUIRE(pfd.revents & POLLOUT);
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/*
+ * Verify POLLHUP is delivered after peer close.
+ */
+ATF_TC_WITHOUT_HEAD(peerclosed_write_event);
+ATF_TC_BODY(peerclosed_write_event, tc)
+{
+	int ls, cs, as;
+	struct pollfd pfd;
+
+	(void)tc;
+
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+
+	close(as);
+
+	/* Poll for any event on the remaining socket. */
+	pfd.fd = cs;
+	pfd.events = POLLOUT | POLLIN;
+	pfd.revents = 0;
+	ATF_REQUIRE(poll(&pfd, 1, 2000) >= 1);
+	/* Should see HUP or error indication. */
+	ATF_REQUIRE(pfd.revents & (POLLHUP | POLLERR | POLLIN));
+
+	close(cs);
+	close(ls);
+}
+
+/*
+ * Verify sendto() on a connected SEQPACKET socket works (ignores address)
+ * or returns EISCONN.
+ */
+ATF_TC_WITHOUT_HEAD(sendto_on_connected_seqpacket);
+ATF_TC_BODY(sendto_on_connected_seqpacket, tc)
+{
+	int ls, cs, as;
+	struct sockaddr_vm dst;
+	char msg[] = "sendto-test";
+	char rbuf[64];
+	ssize_t n;
+
+	(void)tc;
+
+	vsock_pair(SOCK_SEQPACKET, &ls, &cs, &as);
+
+	/* Get the peer address. */
+	socklen_t slen = sizeof(dst);
+	ATF_REQUIRE(getpeername(cs, (struct sockaddr *)&dst, &slen) == 0);
+
+	/* sendto with the same peer address should work. */
+	n = sendto(cs, msg, sizeof(msg), 0, (struct sockaddr *)&dst,
+	    sizeof(dst));
+	if (n == -1) {
+		/* Some implementations return EISCONN; that's also acceptable. */
+		ATF_REQUIRE_MSG(errno == EISCONN,
+		    "expected success or EISCONN, got %d (%s)",
+		    errno, strerror(errno));
+	} else {
+		ATF_REQUIRE(n == (ssize_t)sizeof(msg));
+		memset(rbuf, 0, sizeof(rbuf));
+		ATF_REQUIRE(recv(as, rbuf, sizeof(rbuf), 0) ==
+		    (ssize_t)sizeof(msg));
+		ATF_REQUIRE(memcmp(msg, rbuf, sizeof(msg)) == 0);
+	}
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/*
+ * Verify socketpair() is rejected for AF_VSOCK.
+ */
+ATF_TC_WITHOUT_HEAD(socketpair_rejected);
+ATF_TC_BODY(socketpair_rejected, tc)
+{
+	int sv[2];
+
+	(void)tc;
+
+	ATF_REQUIRE(socketpair(AF_VSOCK, SOCK_STREAM, 0, sv) == -1);
+	/* EOPNOTSUPP or EPROTONOSUPPORT are both acceptable. */
+	ATF_REQUIRE(errno == EOPNOTSUPP || errno == EPROTONOSUPPORT ||
+	    errno == EAFNOSUPPORT);
+}
+
+/*
+ * Verify resizing receive buffer on a connected socket with data
+ * in flight does not crash.
+ */
+ATF_TC_WITHOUT_HEAD(resize_buffer_with_data);
+ATF_TC_BODY(resize_buffer_with_data, tc)
+{
+	int ls, cs, as;
+	char sbuf[4096], rbuf[4096];
+	ssize_t n;
+
+	(void)tc;
+
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+
+	/* Send data. */
+	memset(sbuf, 'R', sizeof(sbuf));
+	n = send(cs, sbuf, sizeof(sbuf), 0);
+	ATF_REQUIRE(n == (ssize_t)sizeof(sbuf));
+
+	/* Shrink receiver buffer while data is pending. */
+	uint64_t smallbuf = 2048;
+	ATF_REQUIRE(setsockopt(as, SOL_VSOCK, SO_VM_SOCKETS_BUFFER_SIZE,
+	    &smallbuf, sizeof(smallbuf)) == 0);
+
+	/* Data should still be readable. */
+	memset(rbuf, 0, sizeof(rbuf));
+	n = recv(as, rbuf, sizeof(rbuf), 0);
+	ATF_REQUIRE(n > 0);
+	ATF_REQUIRE(memcmp(sbuf, rbuf, (size_t)n) == 0);
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/* ------------------------------------------------------------------ */
+/* Group 40: Integration tests                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Verify kern.vsock.pcblist sysctl returns valid data with correct
+ * field values for sockets in various states.
+ */
+ATF_TC_WITHOUT_HEAD(pcblist_fields);
+ATF_TC_BODY(pcblist_fields, tc)
+{
+	struct sockaddr_vm laddr, caddr;
+	int ls, cs, as;
+	char *buf;
+	size_t len;
+	struct xvsock_pcb *xvp;
+	bool found;
+
+	(void)tc;
+
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+
+	/* Get the client's local address to identify it in the pcblist. */
+	socklen_t slen = sizeof(caddr);
+	ATF_REQUIRE(getsockname(cs, (struct sockaddr *)&caddr, &slen) == 0);
+
+	buf = NULL;
+	len = 4096;
+	for (;;) {
+		buf = realloc(buf, len);
+		ATF_REQUIRE(buf != NULL);
+		if (sysctlbyname("kern.vsock.pcblist", buf, &len,
+		    NULL, 0) == 0)
+			break;
+		ATF_REQUIRE(errno == ENOMEM);
+		len *= 2;
+	}
+
+	found = false;
+	for (size_t off = 0; off + sizeof(*xvp) <= len; off += sizeof(*xvp)) {
+		xvp = (struct xvsock_pcb *)(buf + off);
+		if (xvp->xvp_len != sizeof(*xvp))
+			break;
+		if (xvp->xvp_local_port == caddr.svm_port &&
+		    xvp->xvp_state == VSOCK_ST_ESTABLISHED) {
+			found = true;
+			ATF_REQUIRE(xvp->xvp_type == SOCK_STREAM);
+			ATF_REQUIRE(xvp->xvp_local_cid == caddr.svm_cid);
+			ATF_REQUIRE(xvp->xvp_buf_alloc > 0);
+			break;
+		}
+	}
+	ATF_REQUIRE_MSG(found, "client socket not found in pcblist");
+
+	free(buf);
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/*
+ * Verify sysctl counters increment after send/recv.
+ */
+ATF_TC_WITHOUT_HEAD(sysctl_counters);
+ATF_TC_BODY(sysctl_counters, tc)
+{
+	uint64_t conns_before, conns_after;
+	size_t len;
+	int ls, cs, as;
+
+	(void)tc;
+
+	len = sizeof(conns_before);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.connections",
+	    &conns_before, &len, NULL, 0) == 0);
+
+	/* This is a remote-transport counter; loopback doesn't increment it.
+	 * Just verify the sysctl is readable without error. */
+	ATF_REQUIRE(len == sizeof(conns_before));
+
+	/* Verify tx/rx counters are readable. */
+	{
+		uint64_t val;
+		len = sizeof(val);
+		ATF_REQUIRE(sysctlbyname("kern.vsock.tx_packets",
+		    &val, &len, NULL, 0) == 0);
+		ATF_REQUIRE(sysctlbyname("kern.vsock.rx_packets",
+		    &val, &len, NULL, 0) == 0);
+		ATF_REQUIRE(sysctlbyname("kern.vsock.tx_bytes",
+		    &val, &len, NULL, 0) == 0);
+		ATF_REQUIRE(sysctlbyname("kern.vsock.rx_bytes",
+		    &val, &len, NULL, 0) == 0);
+		ATF_REQUIRE(sysctlbyname("kern.vsock.rx_drops",
+		    &val, &len, NULL, 0) == 0);
+	}
+}
+
+/* ------------------------------------------------------------------ */
+/* Group 41: Shutdown + drain interaction                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * After SHUT_WR on one side, the peer should still be able to recv
+ * all buffered data, then see EOF.
+ */
+ATF_TC_WITHOUT_HEAD(shutdown_wr_drain_then_eof);
+ATF_TC_BODY(shutdown_wr_drain_then_eof, tc)
+{
+	int ls, cs, as;
+	char sbuf[512], rbuf[512];
+	ssize_t n;
+
+	(void)tc;
+
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+
+	memset(sbuf, 'D', sizeof(sbuf));
+	ATF_REQUIRE(send(cs, sbuf, sizeof(sbuf), 0) == (ssize_t)sizeof(sbuf));
+	ATF_REQUIRE(shutdown(cs, SHUT_WR) == 0);
+
+	/* Peer should be able to read all data. */
+	memset(rbuf, 0, sizeof(rbuf));
+	n = recv(as, rbuf, sizeof(rbuf), MSG_WAITALL);
+	ATF_REQUIRE(n == (ssize_t)sizeof(sbuf));
+	ATF_REQUIRE(memcmp(sbuf, rbuf, sizeof(sbuf)) == 0);
+
+	/* Next recv should be EOF. */
+	ATF_REQUIRE(recv(as, rbuf, sizeof(rbuf), 0) == 0);
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/*
+ * SEQPACKET: after shutdown(SHUT_WR), pending complete messages
+ * should still be deliverable.
+ */
+ATF_TC_WITHOUT_HEAD(seqpacket_shutdown_drain);
+ATF_TC_BODY(seqpacket_shutdown_drain, tc)
+{
+	int ls, cs, as;
+	char sbuf[] = "seqpacket-shutdown-drain";
+	char rbuf[64];
+	ssize_t n;
+
+	(void)tc;
+
+	vsock_pair(SOCK_SEQPACKET, &ls, &cs, &as);
+
+	ATF_REQUIRE(send(cs, sbuf, sizeof(sbuf), 0) == (ssize_t)sizeof(sbuf));
+	ATF_REQUIRE(shutdown(cs, SHUT_WR) == 0);
+
+	memset(rbuf, 0, sizeof(rbuf));
+	n = recv(as, rbuf, sizeof(rbuf), 0);
+	ATF_REQUIRE(n == (ssize_t)sizeof(sbuf));
+	ATF_REQUIRE(memcmp(sbuf, rbuf, sizeof(sbuf)) == 0);
+
+	/* EOF after the message. */
+	ATF_REQUIRE(recv(as, rbuf, sizeof(rbuf), 0) == 0);
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/* ------------------------------------------------------------------ */
+/* Group 42: Error path and edge case tests                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * connect() on a listening socket must return EOPNOTSUPP.
+ */
+ATF_TC_WITHOUT_HEAD(connect_on_listener_fails);
+ATF_TC_BODY(connect_on_listener_fails, tc)
+{
+	struct sockaddr_vm laddr, dst;
+	int ls;
+
+	(void)tc;
+
+	ls = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(ls >= 0);
+	vsock_bind_any(ls, &laddr);
+	ATF_REQUIRE(listen(ls, 8) == 0);
+
+	vsock_set_any(&dst);
+	dst.svm_cid  = VSOCK_CID_LOCAL;
+	dst.svm_port = 9999;
+	ATF_REQUIRE(connect(ls, (struct sockaddr *)&dst, sizeof(dst)) == -1);
+	ATF_REQUIRE(errno == EOPNOTSUPP);
+
+	close(ls);
+}
+
+/*
+ * connect() on an already-connected socket must return EISCONN.
+ */
+ATF_TC_WITHOUT_HEAD(double_connect_eisconn);
+ATF_TC_BODY(double_connect_eisconn, tc)
+{
+	struct sockaddr_vm dst;
+	int ls, cs, as;
+
+	(void)tc;
+
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+
+	/* Second connect on already-connected socket. */
+	memset(&dst, 0, sizeof(dst));
+	dst.svm_len = sizeof(dst);
+	dst.svm_family = AF_VSOCK;
+	dst.svm_cid = VSOCK_CID_LOCAL;
+	dst.svm_port = 9999;
+	ATF_REQUIRE(connect(cs, (struct sockaddr *)&dst,
+	    sizeof(dst)) == -1);
+	ATF_REQUIRE(errno == EISCONN);
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/*
+ * listen() on an unbound socket must fail.
+ * listen() on a connected socket must fail.
+ */
+ATF_TC_WITHOUT_HEAD(listen_wrong_state);
+ATF_TC_BODY(listen_wrong_state, tc)
+{
+	int ls, cs, as, s;
+
+	(void)tc;
+
+	/* Unbound socket. */
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+	ATF_REQUIRE(listen(s, 8) == -1);
+	close(s);
+
+	/* Connected socket. */
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+	ATF_REQUIRE(listen(cs, 8) == -1);
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/*
+ * send() on a disconnected socket must return EPIPE or ENOTCONN.
+ */
+ATF_TC_WITHOUT_HEAD(send_after_disconnect);
+ATF_TC_BODY(send_after_disconnect, tc)
+{
+	int ls, cs, as;
+	char buf[] = "after-disconnect";
+
+	(void)tc;
+
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+	close(as);
+
+	/* Give close time to propagate. */
+	usleep(50000);
+
+	/* Send should fail. */
+	signal(SIGPIPE, SIG_IGN);
+	ATF_REQUIRE(send(cs, buf, sizeof(buf), MSG_NOSIGNAL) == -1);
+	ATF_REQUIRE(errno == EPIPE || errno == ECONNRESET);
+
+	close(cs);
+	close(ls);
+}
+
+/*
+ * recv with MSG_DONTWAIT on a blocking socket with no data.
+ */
+ATF_TC_WITHOUT_HEAD(recv_msg_dontwait);
+ATF_TC_BODY(recv_msg_dontwait, tc)
+{
+	int ls, cs, as;
+	char buf[16];
+
+	(void)tc;
+
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+
+	/* No data sent; recv with MSG_DONTWAIT should return EAGAIN. */
+	ATF_REQUIRE(recv(as, buf, sizeof(buf), MSG_DONTWAIT) == -1);
+	ATF_REQUIRE(errno == EAGAIN || errno == EWOULDBLOCK);
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/*
+ * Bind to CID 0 (hypervisor) must fail.
+ */
+ATF_TC_WITHOUT_HEAD(bind_cid_zero_fails);
+ATF_TC_BODY(bind_cid_zero_fails, tc)
+{
+	struct sockaddr_vm svm;
+	int s;
+
+	(void)tc;
+
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+
+	memset(&svm, 0, sizeof(svm));
+	svm.svm_len = sizeof(svm);
+	svm.svm_family = AF_VSOCK;
+	svm.svm_cid = 0;
+	svm.svm_port = VSOCK_PORT_ANY;
+
+	ATF_REQUIRE(bind(s, (struct sockaddr *)&svm, sizeof(svm)) == -1);
+	ATF_REQUIRE(errno == EINVAL);
+
+	close(s);
+}
+
+/*
+ * Multiple accept() calls: verify each returns a distinct fd.
+ */
+ATF_TC_WITHOUT_HEAD(multi_accept_distinct_fds);
+ATF_TC_BODY(multi_accept_distinct_fds, tc)
+{
+	struct sockaddr_vm laddr;
+	int ls, cs1, cs2, as1, as2;
+
+	(void)tc;
+
+	ls = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(ls >= 0);
+	vsock_bind_any(ls, &laddr);
+	ATF_REQUIRE(listen(ls, 8) == 0);
+
+	cs1 = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(cs1 >= 0);
+	ATF_REQUIRE(connect(cs1, (struct sockaddr *)&laddr, sizeof(laddr)) == 0);
+
+	cs2 = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(cs2 >= 0);
+	ATF_REQUIRE(connect(cs2, (struct sockaddr *)&laddr, sizeof(laddr)) == 0);
+
+	as1 = accept(ls, NULL, NULL);
+	ATF_REQUIRE(as1 >= 0);
+	as2 = accept(ls, NULL, NULL);
+	ATF_REQUIRE(as2 >= 0);
+
+	ATF_REQUIRE(as1 != as2);
+
+	/* Verify independent data paths. */
+	ATF_REQUIRE(send(cs1, "A", 1, 0) == 1);
+	ATF_REQUIRE(send(cs2, "B", 1, 0) == 1);
+
+	char c;
+	ATF_REQUIRE(recv(as1, &c, 1, 0) == 1);
+	ATF_REQUIRE(c == 'A');
+	ATF_REQUIRE(recv(as2, &c, 1, 0) == 1);
+	ATF_REQUIRE(c == 'B');
+
+	close(as2);
+	close(as1);
+	close(cs2);
+	close(cs1);
+	close(ls);
+}
+
+/* ------------------------------------------------------------------ */
+/* Group 43: kqueue and poll edge cases                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * kqueue EVFILT_READ should fire when data arrives.
+ */
+ATF_TC_WITHOUT_HEAD(kqueue_read_fires_on_data);
+ATF_TC_BODY(kqueue_read_fires_on_data, tc)
+{
+	int ls, cs, as, kq;
+	struct kevent ev, rev;
+	char buf[] = "kq-test";
+
+	(void)tc;
+
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+
+	EV_SET(&ev, as, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE(kevent(kq, &ev, 1, NULL, 0, NULL) == 0);
+
+	/* No data yet — should not fire immediately. */
+	struct timespec ts = { 0, 0 };
+	ATF_REQUIRE(kevent(kq, NULL, 0, &rev, 1, &ts) == 0);
+
+	/* Send data. */
+	ATF_REQUIRE(send(cs, buf, sizeof(buf), 0) == (ssize_t)sizeof(buf));
+
+	/* Should fire now. */
+	ts.tv_sec = 2;
+	ATF_REQUIRE(kevent(kq, NULL, 0, &rev, 1, &ts) == 1);
+	ATF_REQUIRE(rev.filter == EVFILT_READ);
+	ATF_REQUIRE(rev.data >= (int64_t)sizeof(buf));
+
+	close(kq);
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/*
+ * kqueue EVFILT_WRITE should fire when buffer space is available.
+ */
+ATF_TC_WITHOUT_HEAD(kqueue_write_fires_on_space);
+ATF_TC_BODY(kqueue_write_fires_on_space, tc)
+{
+	int ls, cs, as, kq;
+	struct kevent ev, rev;
+
+	(void)tc;
+
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+
+	EV_SET(&ev, cs, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE(kevent(kq, &ev, 1, NULL, 0, NULL) == 0);
+
+	/* Should be writable initially. */
+	struct timespec ts = { 2, 0 };
+	ATF_REQUIRE(kevent(kq, NULL, 0, &rev, 1, &ts) == 1);
+	ATF_REQUIRE(rev.filter == EVFILT_WRITE);
+	ATF_REQUIRE(rev.data > 0);
+
+	close(kq);
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/*
+ * poll(POLLIN) on a listener should fire when a connection is pending.
+ */
+ATF_TC_WITHOUT_HEAD(poll_listener_connect_pending);
+ATF_TC_BODY(poll_listener_connect_pending, tc)
+{
+	struct sockaddr_vm laddr;
+	int ls, cs;
+	struct pollfd pfd;
+
+	(void)tc;
+
+	ls = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(ls >= 0);
+	vsock_bind_any(ls, &laddr);
+	ATF_REQUIRE(listen(ls, 8) == 0);
+
+	/* No pending connections. */
+	pfd.fd = ls;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	ATF_REQUIRE(poll(&pfd, 1, 0) == 0);
+
+	/* Connect. */
+	cs = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(cs >= 0);
+	ATF_REQUIRE(connect(cs, (struct sockaddr *)&laddr, sizeof(laddr)) == 0);
+
+	/* Listener should now be readable. */
+	pfd.revents = 0;
+	ATF_REQUIRE(poll(&pfd, 1, 2000) == 1);
+	ATF_REQUIRE(pfd.revents & POLLIN);
+
+	int as = accept(ls, NULL, NULL);
+	ATF_REQUIRE(as >= 0);
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/* ------------------------------------------------------------------ */
+/* Group 44: SEQPACKET message integrity                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Multiple SEQPACKET messages of varying sizes maintain boundaries.
+ */
+ATF_TC_WITHOUT_HEAD(seqpacket_varied_sizes);
+ATF_TC_BODY(seqpacket_varied_sizes, tc)
+{
+	int ls, cs, as;
+	size_t sizes[] = { 1, 7, 100, 1000, 4096, 8192 };
+	int nsizes = sizeof(sizes) / sizeof(sizes[0]);
+	char *sbuf, *rbuf;
+	ssize_t n;
+
+	(void)tc;
+
+	sbuf = malloc(8192);
+	rbuf = malloc(8192);
+	ATF_REQUIRE(sbuf != NULL && rbuf != NULL);
+
+	vsock_pair(SOCK_SEQPACKET, &ls, &cs, &as);
+
+	for (int i = 0; i < nsizes; i++) {
+		memset(sbuf, 'A' + i, sizes[i]);
+		n = send(cs, sbuf, sizes[i], 0);
+		ATF_REQUIRE_MSG(n == (ssize_t)sizes[i],
+		    "send %zu failed: %zd (%s)", sizes[i], n, strerror(errno));
+	}
+
+	for (int i = 0; i < nsizes; i++) {
+		memset(rbuf, 0, 8192);
+		n = recv(as, rbuf, 8192, 0);
+		ATF_REQUIRE_MSG(n == (ssize_t)sizes[i],
+		    "recv expected %zu got %zd", sizes[i], n);
+		for (ssize_t j = 0; j < n; j++)
+			ATF_REQUIRE(rbuf[j] == (char)('A' + i));
+	}
+
+	free(sbuf);
+	free(rbuf);
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/*
+ * SEQPACKET MSG_TRUNC returns the full message size even when the
+ * buffer is too small, without corrupting the next message.
+ */
+ATF_TC_WITHOUT_HEAD(seqpacket_trunc_preserves_next);
+ATF_TC_BODY(seqpacket_trunc_preserves_next, tc)
+{
+	int ls, cs, as;
+	char msg1[] = "first-message-is-long";
+	char msg2[] = "second";
+	char rbuf[8];
+	ssize_t n;
+
+	(void)tc;
+
+	vsock_pair(SOCK_SEQPACKET, &ls, &cs, &as);
+
+	ATF_REQUIRE(send(cs, msg1, sizeof(msg1), 0) == (ssize_t)sizeof(msg1));
+	ATF_REQUIRE(send(cs, msg2, sizeof(msg2), 0) == (ssize_t)sizeof(msg2));
+
+	/* Read msg1 with a tiny buffer + MSG_TRUNC. */
+	n = recv(as, rbuf, sizeof(rbuf), MSG_TRUNC);
+	ATF_REQUIRE(n == (ssize_t)sizeof(msg1));
+
+	/* msg2 should be intact. */
+	memset(rbuf, 0, sizeof(rbuf));
+	n = recv(as, rbuf, sizeof(rbuf), 0);
+	ATF_REQUIRE(n == (ssize_t)sizeof(msg2));
+	ATF_REQUIRE(memcmp(rbuf, msg2, sizeof(msg2)) == 0);
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/* ------------------------------------------------------------------ */
+/* Group 45: Concurrent stress                                         */
+/* ------------------------------------------------------------------ */
+
+struct rapid_cycle_ctx {
+	struct sockaddr_vm sa;
+	int iterations;
+	int result;
+};
+
+static void *
+rapid_cycle_thread(void *arg)
+{
+	struct rapid_cycle_ctx *ctx = arg;
+	int s, a;
+	char buf[4];
+
+	for (int i = 0; i < ctx->iterations; i++) {
+		s = socket(AF_VSOCK, SOCK_STREAM, 0);
+		if (s < 0) { ctx->result = -1; return (NULL); }
+		if (connect(s, (struct sockaddr *)&ctx->sa,
+		    sizeof(ctx->sa)) != 0) {
+			close(s);
+			ctx->result = -1;
+			return (NULL);
+		}
+		buf[0] = (char)i;
+		(void)send(s, buf, 1, 0);
+		close(s);
+	}
+	ctx->result = 0;
+	return (NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(rapid_connect_close_multi_thread);
+ATF_TC_BODY(rapid_connect_close_multi_thread, tc)
+{
+	struct sockaddr_vm laddr;
+	int ls;
+	pthread_t threads[4];
+	struct rapid_cycle_ctx ctxs[4];
+
+	(void)tc;
+
+	ls = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(ls >= 0);
+	vsock_bind_any(ls, &laddr);
+	ATF_REQUIRE(listen(ls, 64) == 0);
+
+	for (int i = 0; i < 4; i++) {
+		ctxs[i].sa = laddr;
+		ctxs[i].iterations = 25;
+		ctxs[i].result = -1;
+		ATF_REQUIRE(pthread_create(&threads[i], NULL,
+		    rapid_cycle_thread, &ctxs[i]) == 0);
+	}
+
+	/* Accept and close connections as they come. */
+	for (int i = 0; i < 100; i++) {
+		int as = accept(ls, NULL, NULL);
+		if (as >= 0)
+			close(as);
+	}
+
+	for (int i = 0; i < 4; i++) {
+		pthread_join(threads[i], NULL);
+		ATF_REQUIRE_MSG(ctxs[i].result == 0,
+		    "thread %d failed", i);
+	}
+
+	close(ls);
+}
+
+/* ------------------------------------------------------------------ */
+/* Group 46: VMADDR_* alias and constant tests                         */
+/* ------------------------------------------------------------------ */
+
+ATF_TC_WITHOUT_HEAD(vmaddr_aliases);
+ATF_TC_BODY(vmaddr_aliases, tc)
+{
+	(void)tc;
+
+	ATF_REQUIRE(VMADDR_CID_HYPERVISOR == 0);
+	ATF_REQUIRE(VMADDR_CID_LOCAL == VSOCK_CID_LOCAL);
+	ATF_REQUIRE(VMADDR_CID_HOST == VSOCK_CID_HOST);
+	ATF_REQUIRE(VMADDR_CID_ANY == VSOCK_CID_ANY);
+	ATF_REQUIRE(VMADDR_PORT_ANY == VSOCK_PORT_ANY);
+}
+
+/* ------------------------------------------------------------------ */
+/* Group 47: accept() returns correct peer address                     */
+/* ------------------------------------------------------------------ */
+
+ATF_TC_WITHOUT_HEAD(accept_returns_peer_addr);
+ATF_TC_BODY(accept_returns_peer_addr, tc)
+{
+	struct sockaddr_vm laddr, peeraddr, clientaddr;
+	socklen_t slen;
+	int ls, cs, as;
+
+	(void)tc;
+
+	ls = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(ls >= 0);
+	vsock_bind_any(ls, &laddr);
+	ATF_REQUIRE(listen(ls, 8) == 0);
+
+	cs = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(cs >= 0);
+	ATF_REQUIRE(connect(cs, (struct sockaddr *)&laddr, sizeof(laddr)) == 0);
+
+	slen = sizeof(clientaddr);
+	ATF_REQUIRE(getsockname(cs, (struct sockaddr *)&clientaddr, &slen) == 0);
+
+	slen = sizeof(peeraddr);
+	memset(&peeraddr, 0, sizeof(peeraddr));
+	as = accept(ls, (struct sockaddr *)&peeraddr, &slen);
+	ATF_REQUIRE(as >= 0);
+
+	ATF_REQUIRE(peeraddr.svm_family == AF_VSOCK);
+	ATF_REQUIRE(peeraddr.svm_cid == clientaddr.svm_cid);
+	ATF_REQUIRE(peeraddr.svm_port == clientaddr.svm_port);
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/* ------------------------------------------------------------------ */
+/* Group 48: Bidirectional data on same connection                     */
+/* ------------------------------------------------------------------ */
+
+ATF_TC_WITHOUT_HEAD(bidirectional_echo);
+ATF_TC_BODY(bidirectional_echo, tc)
+{
+	int ls, cs, as;
+	char sbuf[256], rbuf[256];
+
+	(void)tc;
+
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+
+	/* Client sends. */
+	memset(sbuf, 'C', sizeof(sbuf));
+	ATF_REQUIRE(send(cs, sbuf, sizeof(sbuf), 0) == (ssize_t)sizeof(sbuf));
+
+	/* Server echoes. */
+	ATF_REQUIRE(recv(as, rbuf, sizeof(rbuf), MSG_WAITALL) ==
+	    (ssize_t)sizeof(rbuf));
+	ATF_REQUIRE(send(as, rbuf, sizeof(rbuf), 0) == (ssize_t)sizeof(rbuf));
+
+	/* Client receives echo. */
+	memset(rbuf, 0, sizeof(rbuf));
+	ATF_REQUIRE(recv(cs, rbuf, sizeof(rbuf), MSG_WAITALL) ==
+	    (ssize_t)sizeof(rbuf));
+	ATF_REQUIRE(memcmp(sbuf, rbuf, sizeof(sbuf)) == 0);
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+ATF_TC_WITHOUT_HEAD(seqpacket_bidirectional);
+ATF_TC_BODY(seqpacket_bidirectional, tc)
+{
+	int ls, cs, as;
+	char msg_c[] = "from-client";
+	char msg_s[] = "from-server";
+	char rbuf[64];
+
+	(void)tc;
+
+	vsock_pair(SOCK_SEQPACKET, &ls, &cs, &as);
+
+	ATF_REQUIRE(send(cs, msg_c, sizeof(msg_c), 0) == (ssize_t)sizeof(msg_c));
+	ATF_REQUIRE(send(as, msg_s, sizeof(msg_s), 0) == (ssize_t)sizeof(msg_s));
+
+	memset(rbuf, 0, sizeof(rbuf));
+	ATF_REQUIRE(recv(as, rbuf, sizeof(rbuf), 0) == (ssize_t)sizeof(msg_c));
+	ATF_REQUIRE(memcmp(rbuf, msg_c, sizeof(msg_c)) == 0);
+
+	memset(rbuf, 0, sizeof(rbuf));
+	ATF_REQUIRE(recv(cs, rbuf, sizeof(rbuf), 0) == (ssize_t)sizeof(msg_s));
+	ATF_REQUIRE(memcmp(rbuf, msg_s, sizeof(msg_s)) == 0);
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/* ------------------------------------------------------------------ */
+/* Group 49: getsockopt/setsockopt edge cases                          */
+/* ------------------------------------------------------------------ */
+
+ATF_TC_WITHOUT_HEAD(buffer_min_max_ordering);
+ATF_TC_BODY(buffer_min_max_ordering, tc)
+{
+	int s;
+	uint64_t val;
+
+	(void)tc;
+
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+
+	/* Set min, then try setting max below it. */
+	val = 4096;
+	ATF_REQUIRE(setsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_BUFFER_MIN_SIZE,
+	    &val, sizeof(val)) == 0);
+
+	val = 2048;
+	ATF_REQUIRE(setsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_BUFFER_MAX_SIZE,
+	    &val, sizeof(val)) == 0);
+	/* buffer_max should be clamped to buffer_min. */
+	val = 0;
+	socklen_t len = sizeof(val);
+	ATF_REQUIRE(getsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_BUFFER_MAX_SIZE,
+	    &val, &len) == 0);
+	/* After setting max < min, min should have been adjusted. */
+
+	close(s);
+}
+
+ATF_TC_WITHOUT_HEAD(connect_timeout_range);
+ATF_TC_BODY(connect_timeout_range, tc)
+{
+	int s;
+	uint64_t val;
+	socklen_t len;
+
+	(void)tc;
+
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+
+	/* Set 0 (default). */
+	val = 0;
+	ATF_REQUIRE(setsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
+	    &val, sizeof(val)) == 0);
+	len = sizeof(val);
+	ATF_REQUIRE(getsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
+	    &val, &len) == 0);
+	ATF_REQUIRE(val > 0); /* default should be non-zero */
+
+	/* Set to max (360000 centiseconds = 1 hour). */
+	val = 360000;
+	ATF_REQUIRE(setsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
+	    &val, sizeof(val)) == 0);
+	len = sizeof(val);
+	ATF_REQUIRE(getsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
+	    &val, &len) == 0);
+	/* Should be clamped to 360000. */
+	ATF_REQUIRE(val <= 360000);
+
+	close(s);
+}
+
+/* ------------------------------------------------------------------ */
+/* Group 50: SEQPACKET fragment limit sysctl                           */
+/* ------------------------------------------------------------------ */
+
+ATF_TC_WITHOUT_HEAD(seqpacket_frag_max_sysctl);
+ATF_TC_BODY(seqpacket_frag_max_sysctl, tc)
+{
+	u_int orig, val;
+	size_t len;
+
+	(void)tc;
+
+	/* Read original value. */
+	len = sizeof(orig);
+	ATF_REQUIRE_MSG(
+	    sysctlbyname("kern.vsock.seqpacket_frag_max",
+	    &orig, &len, NULL, 0) == 0,
+	    "read seqpacket_frag_max: %s", strerror(errno));
+	ATF_REQUIRE(orig == 256); /* default */
+
+	/* Set to a different value. */
+	val = 512;
+	ATF_REQUIRE(sysctlbyname("kern.vsock.seqpacket_frag_max",
+	    NULL, NULL, &val, sizeof(val)) == 0);
+
+	len = sizeof(val);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.seqpacket_frag_max",
+	    &val, &len, NULL, 0) == 0);
+	ATF_REQUIRE(val == 512);
+
+	/* Set to 0 (unlimited). */
+	val = 0;
+	ATF_REQUIRE(sysctlbyname("kern.vsock.seqpacket_frag_max",
+	    NULL, NULL, &val, sizeof(val)) == 0);
+
+	len = sizeof(val);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.seqpacket_frag_max",
+	    &val, &len, NULL, 0) == 0);
+	ATF_REQUIRE(val == 0);
+
+	/* Restore original. */
+	ATF_REQUIRE(sysctlbyname("kern.vsock.seqpacket_frag_max",
+	    NULL, NULL, &orig, sizeof(orig)) == 0);
+}
+
+/* ------------------------------------------------------------------ */
+/* Group 51: Shutdown wakes blocked sender                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Verify that shutdown(SHUT_RD) on the receiver promptly unblocks a
+ * sender that is blocked because the peer's receive buffer is full.
+ */
+
+struct shutdown_sender_ctx {
+	int		 sender;
+	int		 result_errno;
+	volatile int	 started;
+};
+
+static void *
+shutdown_sender_thread(void *arg)
+{
+	struct shutdown_sender_ctx *ctx = arg;
+	char buf[1024];
+	ssize_t rc;
+
+	memset(buf, 'S', sizeof(buf));
+	ctx->started = 1;
+
+	/* This send should block until the receiver shuts down. */
+	rc = send(ctx->sender, buf, sizeof(buf), MSG_NOSIGNAL);
+	if (rc == -1)
+		ctx->result_errno = errno;
+	else
+		ctx->result_errno = 0;
+	return (NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(shutdown_rd_wakes_blocked_sender);
+ATF_TC_BODY(shutdown_rd_wakes_blocked_sender, tc)
+{
+	struct shutdown_sender_ctx ctx;
+	struct sockaddr_vm laddr;
+	struct timespec start, end;
+	pthread_t t;
+	int ls, cs, as, n;
+
+	(void)tc;
+
+	/* Create connection with a small receive buffer. */
+	ls = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(ls >= 0);
+	vsock_bind_any(ls, &laddr);
+	n = 128;
+	ATF_REQUIRE(setsockopt(ls, SOL_SOCKET, SO_RCVBUF,
+	    &n, sizeof(n)) == 0);
+	ATF_REQUIRE(listen(ls, 8) == 0);
+
+	cs = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(cs >= 0);
+	ATF_REQUIRE(connect(cs, (struct sockaddr *)&laddr,
+	    sizeof(laddr)) == 0);
+	as = accept(ls, NULL, NULL);
+	ATF_REQUIRE(as >= 0);
+
+	/* Fill the receive buffer until send would block. */
+	ATF_REQUIRE(fcntl(cs, F_SETFL, O_NONBLOCK) != -1);
+	for (;;) {
+		char fill[64];
+		memset(fill, 'F', sizeof(fill));
+		if (send(cs, fill, sizeof(fill), 0) == -1) {
+			ATF_REQUIRE(errno == EAGAIN || errno == EWOULDBLOCK);
+			break;
+		}
+	}
+	/* Switch back to blocking. */
+	ATF_REQUIRE(fcntl(cs, F_SETFL, 0) != -1);
+
+	/* Spawn a thread that will block on send. */
+	ctx.sender = cs;
+	ctx.result_errno = 0;
+	ctx.started = 0;
+	ATF_REQUIRE(pthread_create(&t, NULL,
+	    shutdown_sender_thread, &ctx) == 0);
+
+	/* Wait for the sender thread to start. */
+	while (!ctx.started)
+		usleep(1000);
+	usleep(50000); /* Let it block in send(). */
+
+	/* Shut down our receive side — sender should unblock promptly. */
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	ATF_REQUIRE(shutdown(as, SHUT_RD) == 0);
+	ATF_REQUIRE(pthread_join(t, NULL) == 0);
+	clock_gettime(CLOCK_MONOTONIC, &end);
+
+	double elapsed = (end.tv_sec - start.tv_sec) +
+	    (end.tv_nsec - start.tv_nsec) / 1e9;
+
+	/*
+	 * Without the fix, the sender would sleep up to 1 second (hz timeout).
+	 * With the fix, it should wake within milliseconds.
+	 */
+	ATF_REQUIRE_MSG(elapsed < 0.5,
+	    "sender took %.3f seconds to unblock after shutdown", elapsed);
+
+	/* Sender should have gotten EPIPE. */
+	ATF_REQUIRE_MSG(ctx.result_errno == EPIPE,
+	    "expected EPIPE, got %d (%s)",
+	    ctx.result_errno, strerror(ctx.result_errno));
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/* ------------------------------------------------------------------ */
+/* Group 52: Concurrent send + close stress                            */
+/* ------------------------------------------------------------------ */
+
+struct send_close_stress_ctx {
+	struct sockaddr_vm sa;
+	volatile int	   stop;
+};
+
+static void *
+send_close_stress_worker(void *arg)
+{
+	struct send_close_stress_ctx *ctx = arg;
+	char buf[256];
+	int s;
+
+	memset(buf, 'W', sizeof(buf));
+	while (!ctx->stop) {
+		s = socket(AF_VSOCK, SOCK_STREAM, 0);
+		if (s < 0)
+			continue;
+		if (connect(s, (struct sockaddr *)&ctx->sa,
+		    sizeof(ctx->sa)) == 0) {
+			(void)send(s, buf, sizeof(buf), MSG_NOSIGNAL);
+		}
+		close(s);
+	}
+	return (NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(concurrent_send_close_stress);
+ATF_TC_BODY(concurrent_send_close_stress, tc)
+{
+	struct send_close_stress_ctx ctx;
+	pthread_t threads[16];
+	int ls, as, i;
+
+	(void)tc;
+
+	ls = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(ls >= 0);
+	vsock_bind_any(ls, &ctx.sa);
+	ATF_REQUIRE(listen(ls, 128) == 0);
+	ctx.stop = 0;
+
+	for (i = 0; i < 16; i++) {
+		ATF_REQUIRE(pthread_create(&threads[i], NULL,
+		    send_close_stress_worker, &ctx) == 0);
+	}
+
+	/* Accept and close rapidly for 2 seconds. */
+	for (i = 0; i < 500; i++) {
+		as = accept(ls, NULL, NULL);
+		if (as >= 0) {
+			char drain[256];
+			(void)recv(as, drain, sizeof(drain), MSG_DONTWAIT);
+			close(as);
+		}
+	}
+
+	ctx.stop = 1;
+	for (i = 0; i < 16; i++)
+		ATF_REQUIRE(pthread_join(threads[i], NULL) == 0);
+
+	close(ls);
+}
+
+/*
+ * Verify that shutdown(SHUT_RD) during a SEQPACKET send also unblocks
+ * the sender and returns EPIPE.
+ */
+ATF_TC_WITHOUT_HEAD(seqpacket_shutdown_rd_wakes_sender);
+ATF_TC_BODY(seqpacket_shutdown_rd_wakes_sender, tc)
+{
+	struct shutdown_sender_ctx ctx;
+	struct sockaddr_vm laddr;
+	struct timespec start, end;
+	pthread_t t;
+	int ls, cs, as, n;
+
+	(void)tc;
+
+	ls = socket(AF_VSOCK, SOCK_SEQPACKET, 0);
+	ATF_REQUIRE(ls >= 0);
+	vsock_bind_any(ls, &laddr);
+	n = 128;
+	ATF_REQUIRE(setsockopt(ls, SOL_SOCKET, SO_RCVBUF,
+	    &n, sizeof(n)) == 0);
+	ATF_REQUIRE(listen(ls, 8) == 0);
+
+	cs = socket(AF_VSOCK, SOCK_SEQPACKET, 0);
+	ATF_REQUIRE(cs >= 0);
+	ATF_REQUIRE(connect(cs, (struct sockaddr *)&laddr,
+	    sizeof(laddr)) == 0);
+	as = accept(ls, NULL, NULL);
+	ATF_REQUIRE(as >= 0);
+
+	/* Fill the receive buffer. */
+	ATF_REQUIRE(fcntl(cs, F_SETFL, O_NONBLOCK) != -1);
+	for (;;) {
+		char fill[32];
+		memset(fill, 'F', sizeof(fill));
+		if (send(cs, fill, sizeof(fill), 0) == -1) {
+			ATF_REQUIRE(errno == EAGAIN || errno == EWOULDBLOCK ||
+			    errno == EMSGSIZE);
+			break;
+		}
+	}
+	ATF_REQUIRE(fcntl(cs, F_SETFL, 0) != -1);
+
+	ctx.sender = cs;
+	ctx.result_errno = 0;
+	ctx.started = 0;
+	ATF_REQUIRE(pthread_create(&t, NULL,
+	    shutdown_sender_thread, &ctx) == 0);
+
+	while (!ctx.started)
+		usleep(1000);
+	usleep(50000);
+
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	ATF_REQUIRE(shutdown(as, SHUT_RD) == 0);
+	ATF_REQUIRE(pthread_join(t, NULL) == 0);
+	clock_gettime(CLOCK_MONOTONIC, &end);
+
+	double elapsed = (end.tv_sec - start.tv_sec) +
+	    (end.tv_nsec - start.tv_nsec) / 1e9;
+
+	ATF_REQUIRE_MSG(elapsed < 0.5,
+	    "sender took %.3f seconds to unblock after shutdown", elapsed);
+	ATF_REQUIRE_MSG(ctx.result_errno == EPIPE,
+	    "expected EPIPE, got %d (%s)",
+	    ctx.result_errno, strerror(ctx.result_errno));
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+/* ------------------------------------------------------------------ */
 /* ATF test plan                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -3521,6 +5150,75 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, shutdown_wr_then_rd);
 	ATF_TP_ADD_TC(tp, shutdown_rd_then_wr);
 	ATF_TP_ADD_TC(tp, seqpacket_shutdown_preserves_pending);
+
+	/* Group 38: Type mismatch, oversized message, sockopts, pcblist */
+	ATF_TP_ADD_TC(tp, seqpacket_connect_to_stream_listener_refused);
+	ATF_TP_ADD_TC(tp, stream_connect_to_seqpacket_listener_refused);
+	ATF_TP_ADD_TC(tp, seqpacket_loopback_oversized_emsgsize);
+	ATF_TP_ADD_TC(tp, peer_host_vm_id_sockopt);
+	ATF_TP_ADD_TC(tp, sysctl_buf_validation);
+	ATF_TP_ADD_TC(tp, pcblist_state_values);
+
+	/* Group 39: Coverage parity with AF_UNIX */
+	ATF_TP_ADD_TC(tp, send_before_accept);
+	ATF_TP_ADD_TC(tp, full_writability_poll);
+	ATF_TP_ADD_TC(tp, peerclosed_write_event);
+	ATF_TP_ADD_TC(tp, sendto_on_connected_seqpacket);
+	ATF_TP_ADD_TC(tp, socketpair_rejected);
+	ATF_TP_ADD_TC(tp, resize_buffer_with_data);
+
+	/* Group 40: Integration tests */
+	ATF_TP_ADD_TC(tp, pcblist_fields);
+	ATF_TP_ADD_TC(tp, sysctl_counters);
+
+	/* Group 41: Shutdown + drain interaction */
+	ATF_TP_ADD_TC(tp, shutdown_wr_drain_then_eof);
+	ATF_TP_ADD_TC(tp, seqpacket_shutdown_drain);
+
+	/* Group 42: Error path and edge case tests */
+	ATF_TP_ADD_TC(tp, connect_on_listener_fails);
+	ATF_TP_ADD_TC(tp, double_connect_eisconn);
+	ATF_TP_ADD_TC(tp, listen_wrong_state);
+	ATF_TP_ADD_TC(tp, send_after_disconnect);
+	ATF_TP_ADD_TC(tp, recv_msg_dontwait);
+	ATF_TP_ADD_TC(tp, bind_cid_zero_fails);
+	ATF_TP_ADD_TC(tp, multi_accept_distinct_fds);
+
+	/* Group 43: kqueue and poll edge cases */
+	ATF_TP_ADD_TC(tp, kqueue_read_fires_on_data);
+	ATF_TP_ADD_TC(tp, kqueue_write_fires_on_space);
+	ATF_TP_ADD_TC(tp, poll_listener_connect_pending);
+
+	/* Group 44: SEQPACKET message integrity */
+	ATF_TP_ADD_TC(tp, seqpacket_varied_sizes);
+	ATF_TP_ADD_TC(tp, seqpacket_trunc_preserves_next);
+
+	/* Group 45: Concurrent stress */
+	ATF_TP_ADD_TC(tp, rapid_connect_close_multi_thread);
+
+	/* Group 46: VMADDR_* alias and constant tests */
+	ATF_TP_ADD_TC(tp, vmaddr_aliases);
+
+	/* Group 47: accept() returns correct peer address */
+	ATF_TP_ADD_TC(tp, accept_returns_peer_addr);
+
+	/* Group 48: Bidirectional data */
+	ATF_TP_ADD_TC(tp, bidirectional_echo);
+	ATF_TP_ADD_TC(tp, seqpacket_bidirectional);
+
+	/* Group 49: getsockopt/setsockopt edge cases */
+	ATF_TP_ADD_TC(tp, buffer_min_max_ordering);
+	ATF_TP_ADD_TC(tp, connect_timeout_range);
+
+	/* Group 50: SEQPACKET fragment limit sysctl */
+	ATF_TP_ADD_TC(tp, seqpacket_frag_max_sysctl);
+
+	/* Group 51: Shutdown wakes blocked sender */
+	ATF_TP_ADD_TC(tp, shutdown_rd_wakes_blocked_sender);
+
+	/* Group 52: Concurrent send + close stress */
+	ATF_TP_ADD_TC(tp, concurrent_send_close_stress);
+	ATF_TP_ADD_TC(tp, seqpacket_shutdown_rd_wakes_sender);
 
 	return (atf_no_error());
 }

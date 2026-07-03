@@ -1,4 +1,4 @@
-.\" Copyright (c) 2026 5BSD Project
+.\" Copyright (c) 2026 The FreeBSD Project
 .\" All rights reserved.
 .\"
 .\" Redistribution and use in source and binary forms, with or without
@@ -22,7 +22,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd June 18, 2026
+.Dd July 2, 2026
 .Dt VSOCK 4
 .Os
 .Sh NAME
@@ -131,6 +131,53 @@ Each endpoint advertises its available receive buffer capacity to the peer.
 A sender may only transmit data up to the peer's available credit.
 Credit updates are exchanged automatically by the driver and are not
 visible to the application.
+.Ss Tunable Parameters
+The following
+.Xr sysctl 8
+variables control default parameters for the
+.Dv AF_VSOCK
+domain:
+.Bl -tag -width "kern.vsock.seqpacket_frag_max"
+.It Va kern.vsock.buf_default
+Default buffer size in bytes for new sockets.
+This is the initial value advertised to the peer for credit-based flow control.
+Default: 262144 (256 KiB).
+.It Va kern.vsock.buf_min
+Minimum buffer size in bytes.
+The
+.Dv SO_VM_SOCKETS_BUFFER_SIZE
+socket option will not set the buffer below this value.
+Default: 128.
+.It Va kern.vsock.buf_max
+Maximum buffer size in bytes.
+The
+.Dv SO_VM_SOCKETS_BUFFER_SIZE
+socket option will not set the buffer above this value.
+Default: 262144 (256 KiB).
+.It Va kern.vsock.seqpacket_frag_max
+Maximum number of
+.Dv SOCK_SEQPACKET
+fragments that may be accumulated during reassembly of a single message.
+If a peer sends more fragments than this limit without completing the message
+.Pq setting the EOM flag ,
+the connection is reset with
+.Er EMSGSIZE .
+A value of 0 disables the fragment count limit; reassembly is still bounded
+by the per-connection buffer capacity
+.Pq Va buf_alloc .
+Default: 256.
+.El
+.Pp
+Buffer size values affect new sockets only; existing sockets are not modified.
+Per-socket tuning is available via the
+.Dv SOL_VSOCK
+socket options described above.
+.Pp
+The
+.Va kern.vsock.pcblist
+.Xr sysctl 8
+variable exports the list of active vsock connections for use by
+.Xr sockstat 1 .
 .Ss Guest CID Discovery
 Applications can read the guest's CID via the
 .Va kern.vsock_guest_cid
@@ -139,6 +186,29 @@ variable.
 This is equivalent to Linux's
 .Dv IOCTL_VM_SOCKETS_GET_LOCAL_CID
 ioctl.
+.Ss DTrace Probes
+The
+.Nm
+driver defines the following DTrace SDT probes under the
+.Li vsock
+provider:
+.Bl -tag -width "credit-update-send" -compact
+.It Li connect-established
+Connection established (args: CID, port, is_local).
+.It Li connect-refused
+Connection refused (args: CID, port).
+.It Li send
+Data sent by application (args: bytes, is_seqpacket).
+.It Li receive
+Data consumed by application (args: bytes, is_seqpacket).
+.It Li credit-stall
+Sender blocked waiting for peer credit (args: peer_buf_alloc, tx_cnt,
+peer_fwd_cnt).
+.It Li credit-update-send
+Credit update sent to peer (args: buf_alloc, fwd_cnt, rx_bytes).
+.It Li disconnect
+Connection torn down (args: CID, port).
+.El
 .Ss Differences from Linux
 .Bl -bullet
 .It
@@ -168,16 +238,47 @@ and
 are not supported.
 .El
 .Sh IMPLEMENTATION NOTES
-The guest-side driver is implemented as a loadable kernel module
-.Pq Pa virtio_vsock.ko .
-The module must be loaded before
+The
 .Dv AF_VSOCK
-sockets can be created.
-To load the module at boot, add the following line to
+socket domain is split into two kernel modules:
+.Bl -tag -width "virtio_vsock.ko"
+.It Pa vsock.ko
+The socket domain, protocol operations, and loopback transport.
+This module provides
+.Dv AF_VSOCK
+sockets and local (same-host) communication.
+It can be loaded on any machine, including bare metal.
+.It Pa virtio_vsock.ko
+The VirtIO PCI transport driver.
+This module attaches to the virtio-vsock device presented by a hypervisor
+and enables guest-to-host communication.
+It depends on
+.Pa vsock.ko .
+.El
+.Pp
+When only
+.Pa vsock.ko
+is loaded (no virtio device), the guest CID defaults to
+.Dv VSOCK_CID_LOCAL
+.Pq 1
+and only loopback connections are possible.
+When
+.Pa virtio_vsock.ko
+attaches to a device, the CID is read from the hypervisor's device
+configuration and remote connections become available.
+.Pp
+To load both modules at boot, add to
 .Xr loader.conf 5 :
 .Bd -literal -offset indent
+vsock_load="YES"
 virtio_vsock_load="YES"
 .Ed
+.Pp
+Both modules are compiled into the
+.Li GENERIC
+kernel on amd64 and into
+.Pa std.virt
+on arm64 by default.
 .Pp
 The host-side device is emulated by
 .Xr bhyve 8
@@ -273,20 +374,27 @@ An attempt was made to bind to a CID that is neither the local guest CID
 nor
 .Dv VSOCK_CID_ANY .
 .It Bq Er ENXIO
-No virtio-vsock device is attached; the kernel module may not be loaded
-or no device has been presented by the hypervisor.
+A remote connection was attempted but no virtio-vsock transport is
+registered.
+Load
+.Pa virtio_vsock.ko
+inside a virtual machine with a vsock device attached.
 .It Bq Er ECONNREFUSED
 No listener exists on the target CID and port.
 .It Bq Er ETIMEDOUT
 The connection attempt timed out before the peer responded.
 .El
 .Sh SEE ALSO
+.Xr dtrace 1 ,
+.Xr sockstat 1 ,
 .Xr accept 2 ,
 .Xr bind 2 ,
 .Xr connect 2 ,
 .Xr listen 2 ,
 .Xr socket 2 ,
+.Xr capsicum 4 ,
 .Xr virtio 4 ,
+.Xr vsock 4 ,
 .Xr bhyve_config 5 ,
 .Xr bhyve 8
 .Sh STANDARDS
@@ -304,4 +412,4 @@ socket domain first appeared in
 The
 .Nm
 socket domain was written by the
-.An 5BSD Project .
+.An FreeBSD Project .
