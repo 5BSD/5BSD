@@ -28,6 +28,11 @@
 
 #define	PROVIDES_HASH_SIZE	64
 
+/*
+ * NOTE: Duplicates bundle_name_has_suffix() in libcapbundle.c.
+ * That function is static and not exported via the public API.
+ * If libcapbundle exports it in the future, replace this copy.
+ */
 static bool
 is_bundle_name(const char *name)
 {
@@ -57,18 +62,11 @@ static unsigned nbundles;
 static unsigned bundles_cap;
 static struct provides_entry *provides_hash[PROVIDES_HASH_SIZE];
 
-/*
- * DJB2 hash (matches naming.c).
- */
 static unsigned
 provides_hashfn(const char *s)
 {
-	unsigned long h;
 
-	h = 5381;
-	while (*s != '\0')
-		h = h * 33 + (unsigned char)*s++;
-	return ((unsigned)(h % PROVIDES_HASH_SIZE));
+	return (serviced_hash_djb2(s) % PROVIDES_HASH_SIZE);
 }
 
 /*

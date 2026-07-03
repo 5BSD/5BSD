@@ -74,14 +74,20 @@ oracle_rpc(int channel_fd, const void *req, uint32_t reqlen,
 	 * Wait for the reply with a timeout.  The channel fd should be
 	 * non-blocking; poll() for readiness before attempting RECVMSG
 	 * to avoid hanging the event loop if oracled drops a reply.
+	 *
+	 * On token mismatch, drain the stale reply and retry up to 8
+	 * times.  This prevents a single stale reply from corrupting
+	 * all subsequent RPCs on this channel.
 	 */
 	{
 		struct pollfd pfd;
-		int rv;
+		int rv, retries;
 
 		pfd.fd = channel_fd;
 		pfd.events = POLLIN;
+		retries = 0;
 
+retry:
 		for (;;) {
 			rv = poll(&pfd, 1, ORACLE_RPC_TIMEOUT_MS);
 			if (rv == -1) {
@@ -111,19 +117,35 @@ oracle_rpc(int channel_fd, const void *req, uint32_t reqlen,
 			    "oracle_rpc: recvmsg: %m");
 			return (-1);
 		}
-	}
 
-	if (ra.reply_token != token) {
-		syslog(LOG_WARNING,
-		    "oracle_rpc: token mismatch (got %ju, expected %ju)",
-		    (uintmax_t)ra.reply_token, (uintmax_t)token);
-		/* Close any fds we received. */
-		for (i = 0; i < max_reply_fds; i++) {
-			if (reply_fds[i] >= 0)
-				close(reply_fds[i]);
+		if (ra.reply_token != token) {
+			syslog(LOG_WARNING,
+			    "oracle_rpc: draining stale reply "
+			    "(got %ju, expected %ju)",
+			    (uintmax_t)ra.reply_token, (uintmax_t)token);
+			/* Close any fds from the stale reply. */
+			for (i = 0; i < max_reply_fds; i++) {
+				if (reply_fds[i] >= 0) {
+					close(reply_fds[i]);
+					reply_fds[i] = -1;
+				}
+			}
+			if (++retries < 8) {
+				/* Re-initialize ra for the next recv. */
+				memset(&ra, 0, sizeof(ra));
+				ra.payload = &rpl;
+				ra.payload_len = sizeof(rpl);
+				if (max_reply_fds > 0) {
+					ra.fds = reply_fds;
+					ra.nfds = (uint32_t)max_reply_fds;
+				}
+				goto retry;
+			}
+			syslog(LOG_ERR,
+			    "oracle_rpc: too many stale replies, giving up");
+			errno = EPROTO;
+			return (-1);
 		}
-		errno = EPROTO;
-		return (-1);
 	}
 
 	if (nfds_out != NULL)

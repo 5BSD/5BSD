@@ -15,11 +15,12 @@ serviced_bin=
 
 find_serviced()
 {
-	local p
+	local p _arch
+	_arch=$(uname -p)
 	for p in \
 	    "$(command -v serviced 2>/dev/null)" \
 	    /usr/libexec/serviced \
-	    /usr/obj/usr/src/arm64.aarch64/usr.sbin/serviced/serviced
+	    /usr/obj/usr/src/${_arch}.${_arch}/usr.sbin/serviced/serviced
 	do
 		if [ -n "$p" ] && [ -x "$p" ]; then
 			serviced_bin="$p"
@@ -38,11 +39,12 @@ require_cc()
 
 find_servicectl()
 {
-	local p
+	local p _arch
+	_arch=$(uname -p)
 	for p in \
 	    "$(command -v servicectl 2>/dev/null)" \
 	    /usr/sbin/servicectl \
-	    /usr/obj/usr/src/arm64.aarch64/usr.sbin/servicectl/servicectl
+	    /usr/obj/usr/src/${_arch}.${_arch}/usr.sbin/servicectl/servicectl
 	do
 		if [ -n "$p" ] && [ -x "$p" ]; then
 			servicectl_bin="$p"

@@ -78,6 +78,16 @@ static uintptr_t conn_timer_next = 50000;
 #define	SCTL_CONN_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 3))
 
 /*
+ * Connection udata tagging.  Heap-allocated sctl_conn pointers are tagged
+ * with a high bit so sctl_is_conn_event() can distinguish them from
+ * svc_runtime udata in O(1) instead of scanning the connection list.
+ */
+#define	SCTL_CONN_TAG		((uintptr_t)1 << 63)
+#define	SCTL_CONN_PTR(c)	((void *)((uintptr_t)(c) | SCTL_CONN_TAG))
+#define	SCTL_IS_CONN(u)		(((uintptr_t)(u) & SCTL_CONN_TAG) != 0)
+#define	SCTL_GET_CONN(u)	((struct sctl_conn *)((uintptr_t)(u) & ~SCTL_CONN_TAG))
+
+/*
  * Format status summary.
  */
 static void
@@ -193,7 +203,8 @@ conn_arm_timeout(struct sctl_conn *c)
 
 	c->timer_ident = SCTL_CONN_TIMER_BIT | conn_timer_next++;
 	EV_SET(&kev, c->timer_ident, EVFILT_TIMER,
-	    EV_ADD | EV_ONESHOT, NOTE_SECONDS, SCTL_CONN_TIMEOUT_SEC, c);
+	    EV_ADD | EV_ONESHOT, NOTE_SECONDS, SCTL_CONN_TIMEOUT_SEC,
+	    SCTL_CONN_PTR(c));
 	if (kevent(serviced_kq, &kev, 1, NULL, 0, NULL) == -1)
 		syslog(LOG_WARNING, "sctl: conn timeout: %m");
 }
@@ -333,7 +344,7 @@ write:
 	c->offset = 0;
 
 	EV_SET(&kev[0], c->fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
-	EV_SET(&kev[1], c->fd, EVFILT_WRITE, EV_ADD, 0, 0, c);
+	EV_SET(&kev[1], c->fd, EVFILT_WRITE, EV_ADD, 0, 0, SCTL_CONN_PTR(c));
 	(void)kevent(serviced_kq, kev, 2, NULL, 0, NULL);
 }
 
@@ -390,7 +401,8 @@ conn_handle_read(struct sctl_conn *c)
 				EV_SET(&kev[0], c->fd, EVFILT_READ,
 				    EV_DELETE, 0, 0, NULL);
 				EV_SET(&kev[1], c->fd, EVFILT_WRITE,
-				    EV_ADD | EV_CLEAR, 0, 0, c);
+				    EV_ADD | EV_CLEAR, 0, 0,
+				    SCTL_CONN_PTR(c));
 				kevent(serviced_kq, kev, 2, NULL, 0, NULL);
 			}
 			return;
@@ -499,7 +511,7 @@ sctl_setup(void)
 		return (-1);
 	}
 
-	(void)chmod(sctl_path, 0700);
+	(void)chmod(sctl_path, 0770);
 
 	if (listen(fd, 5) == -1) {
 		syslog(LOG_ERR, "sctl: listen: %m");
@@ -587,7 +599,7 @@ sctl_accept(void)
 	nconns++;
 	SERVICED_PROBE_CONN_ACCEPT(euid, nconns);
 
-	EV_SET(&kev, cfd, EVFILT_READ, EV_ADD, 0, 0, c);
+	EV_SET(&kev, cfd, EVFILT_READ, EV_ADD, 0, 0, SCTL_CONN_PTR(c));
 	if (kevent(serviced_kq, &kev, 1, NULL, 0, NULL) == -1) {
 		syslog(LOG_WARNING, "sctl: kevent register: %m");
 		conn_destroy(c);
@@ -602,7 +614,7 @@ sctl_conn_event(struct kevent *kev)
 {
 	struct sctl_conn *c;
 
-	c = kev->udata;
+	c = SCTL_GET_CONN(kev->udata);
 
 	if (kev->filter == EVFILT_TIMER) {
 		syslog(LOG_WARNING, "sctl: client timeout");
@@ -639,18 +651,19 @@ sctl_conn_event(struct kevent *kev)
 bool
 sctl_is_conn_event(struct kevent *kev)
 {
-	struct sctl_conn *c;
 
-	if (kev->filter == EVFILT_TIMER && kev->udata != NULL &&
+	if (kev->udata == NULL)
+		return (false);
+
+	/*
+	 * Connection udata is tagged with SCTL_CONN_TAG, allowing O(1)
+	 * discrimination from svc_runtime pointers.  Timer events also
+	 * use tagged udata, but we check ident-based SCTL_CONN_TIMER_BIT
+	 * for backward compatibility with any untagged timer idents.
+	 */
+	if (kev->filter == EVFILT_TIMER &&
 	    ((uintptr_t)kev->ident & SCTL_CONN_TIMER_BIT) != 0)
 		return (true);
 
-	if ((kev->filter == EVFILT_READ || kev->filter == EVFILT_WRITE) &&
-	    kev->udata != NULL) {
-		TAILQ_FOREACH(c, &conn_list, entry) {
-			if (c == kev->udata)
-				return (true);
-		}
-	}
-	return (false);
+	return (SCTL_IS_CONN(kev->udata));
 }

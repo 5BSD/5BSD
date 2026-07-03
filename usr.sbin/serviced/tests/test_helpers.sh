@@ -15,10 +15,12 @@ serviced_bin=
 find_serviced()
 {
 	local p
+	local _arch
+	_arch=$(uname -p)
 	for p in \
 	    "$(command -v serviced 2>/dev/null)" \
 	    /usr/libexec/serviced \
-	    /usr/obj/usr/src/arm64.aarch64/usr.sbin/serviced/serviced
+	    /usr/obj/usr/src/${_arch}.${_arch}/usr.sbin/serviced/serviced
 	do
 		if [ -n "$p" ] && [ -x "$p" ]; then
 			serviced_bin="$p"
@@ -105,7 +107,7 @@ stop_stack()
 cleanup_common()
 {
 	stop_stack
-	pkill -9 -f "serviced.d" 2>/dev/null || true
+	pkill -9 -f "${serviced_bin:-/usr/libexec/serviced}" 2>/dev/null || true
 	sleep 0.2
 	rm -rf oracled.pid oracled.conf serviced.d oracled.sock \
 	    serviced.sock oracled.log lookup-name *.out *.pid *.sh *.c \

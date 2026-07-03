@@ -90,6 +90,9 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 	/*
 	 * adj[i][j] = 1 means service i depends on service j
 	 * (j must start before i).
+	 *
+	 * Stack usage: 4096 + 768 = 4864 bytes with SERVICED_MAX_SERVICES=64.
+	 * If SERVICED_MAX_SERVICES is increased significantly, move adj[] to heap.
 	 */
 	uint8_t adj[SERVICED_MAX_SERVICES][SERVICED_MAX_SERVICES];
 	unsigned indeg[SERVICED_MAX_SERVICES];

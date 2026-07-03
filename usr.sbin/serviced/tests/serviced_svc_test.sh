@@ -558,19 +558,7 @@ svc_unregister_explicit_body()
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <dev/mac_capability/mac_capability_ioctl.h>
-
-#define SVC_OP_READY      1
-#define SVC_OP_REGISTER   2
-#define SVC_OP_UNREGISTER 3
-#define SERVICED_NAME_MAX 255
-
-struct svc_req_hdr { uint32_t op; };
-struct svc_register_req {
-	uint32_t op;
-	uint32_t flags;
-	char name[SERVICED_NAME_MAX + 1];
-};
-struct svc_reply { int32_t status; };
+#include <serviced_svc_proto.h>
 
 static int
 send_recv(int fd, const void *req, uint32_t reqlen, uint64_t token,
@@ -643,7 +631,7 @@ int main(void)
 	return (0);
 }
 CEOF
-	atf_check -s exit:0 -e ignore cc -Wall -I/usr/src/sys -o unreg_svc unreg_svc.c
+	atf_check -s exit:0 -e ignore cc -Wall -I/usr/src/sys -I/usr/src/lib/liboraclert -o unreg_svc unreg_svc.c
 
 	find_serviced
 	prepare_paths

@@ -44,13 +44,8 @@ static unsigned naming_total;
 static unsigned
 name_hash(const char *name)
 {
-	unsigned h;
-	const unsigned char *p;
 
-	h = 5381;
-	for (p = (const unsigned char *)name; *p != '\0'; p++)
-		h = h * 33 + *p;
-	return (h % NAMING_HASH_SIZE);
+	return (serviced_hash_djb2(name) % NAMING_HASH_SIZE);
 }
 
 /*

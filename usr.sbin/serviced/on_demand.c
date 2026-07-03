@@ -186,10 +186,7 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 
 		target = &sd.services[sd.nservices];
 		memset(target, 0, sizeof(*target));
-		target->pd_fd = -1;
-		target->channel_fd = -1;
-		target->coalition_fd = -1;
-		target->jail_fd = -1;
+		svc_runtime_init_fds(target);
 		target->state = SVC_STATE_STOPPED;
 		target->bundle_idx = bundle_idx;
 		target->bundle_svc_idx = service_idx;
@@ -221,10 +218,7 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 			    "on_demand: failed to launch '%s'", name);
 			sd.nservices--;
 			memset(target, 0, sizeof(*target));
-			target->pd_fd = -1;
-			target->channel_fd = -1;
-			target->coalition_fd = -1;
-			target->jail_fd = -1;
+			svc_runtime_init_fds(target);
 			return (-1);
 		}
 
@@ -466,17 +460,27 @@ on_demand_teardown(int kq)
 	for (pl = pending_list; pl != NULL; pl = next) {
 		next = pl->next;
 
-		/* Send error reply. */
-		if (pl->requester_channel_fd >= 0) {
-			struct mac_capability_sendmsg_args sa;
-			int32_t status = ESHUTDOWN;
+		/* Send error reply.  Re-resolve the requester by label
+		 * to avoid using a stale channel fd. */
+		{
+			struct svc_runtime *req;
+			int channel_fd;
 
-			memset(&sa, 0, sizeof(sa));
-			sa.payload = &status;
-			sa.payload_len = sizeof(status);
-			sa.reply_token = pl->reply_token;
-			(void)ioctl(pl->requester_channel_fd,
-			    MAC_CAPABILITY_SENDMSG, &sa);
+			req = svc_by_label(pl->requester_label);
+			channel_fd = (req != NULL) ?
+			    req->channel_fd : pl->requester_channel_fd;
+
+			if (channel_fd >= 0) {
+				struct mac_capability_sendmsg_args sa;
+				int32_t status = ESHUTDOWN;
+
+				memset(&sa, 0, sizeof(sa));
+				sa.payload = &status;
+				sa.payload_len = sizeof(status);
+				sa.reply_token = pl->reply_token;
+				(void)ioctl(channel_fd,
+				    MAC_CAPABILITY_SENDMSG, &sa);
+			}
 		}
 
 		/* Cancel timeout timer. */

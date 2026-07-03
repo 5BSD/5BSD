@@ -350,7 +350,8 @@ svc_exec(struct svc_runtime *svc, int kq)
 
 	/* Ensure required kernel modules are loaded before launch. */
 	if (m->nkmod_requires > 0) {
-		if (kldmgr_ensure_loaded(m, kq) != 0) {
+		if (kldmgr_ensure_loaded(m,
+		    bundle_registry_is_system(svc->bundle_idx), kq) != 0) {
 			syslog(LOG_ERR, "svc_exec %s: kmod_requires failed",
 			    m->label);
 			return (-1);

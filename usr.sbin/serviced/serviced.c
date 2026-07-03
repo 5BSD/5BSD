@@ -30,6 +30,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -192,12 +193,18 @@ main(int argc, char *argv[])
 	/* Inherit channel fd. */
 	channel_fd_str = getenv("ORACLED_CHANNEL_FD");
 	if (channel_fd_str != NULL) {
-		sd.oracle_channel_fd = (int)strtol(channel_fd_str, NULL, 10);
-		if (sd.oracle_channel_fd < 0) {
+		char *endp;
+		long val;
+
+		errno = 0;
+		val = strtol(channel_fd_str, &endp, 10);
+		if (errno != 0 || *endp != '\0' ||
+		    val < 0 || val > INT_MAX) {
 			syslog(LOG_ERR, "invalid ORACLED_CHANNEL_FD: %s",
 			    channel_fd_str);
 			return (1);
 		}
+		sd.oracle_channel_fd = (int)val;
 	} else {
 		syslog(LOG_ERR, "ORACLED_CHANNEL_FD not set");
 		return (1);
@@ -207,25 +214,50 @@ main(int argc, char *argv[])
 	(void)fcntl(sd.oracle_channel_fd, F_SETFL, O_NONBLOCK);
 
 	/* Inherit delegated service instance fds (optional). */
-	s = getenv("SERVICED_CHANNEL_SVC_FD");
-	if (s != NULL) {
-		sd.channel_svc_fd = (int)strtol(s, NULL, 10);
-		if (sd.channel_svc_fd < 0) sd.channel_svc_fd = -1;
-	}
-	s = getenv("SERVICED_COALITION_SVC_FD");
-	if (s != NULL) {
-		sd.coalition_svc_fd = (int)strtol(s, NULL, 10);
-		if (sd.coalition_svc_fd < 0) sd.coalition_svc_fd = -1;
-	}
-	s = getenv("SERVICED_CAPPROTECT_FD");
-	if (s != NULL) {
-		sd.capprotect_fd = (int)strtol(s, NULL, 10);
-		if (sd.capprotect_fd < 0) sd.capprotect_fd = -1;
-	}
-	s = getenv("SERVICED_IDENTITY_FD");
-	if (s != NULL) {
-		sd.identity_fd = (int)strtol(s, NULL, 10);
-		if (sd.identity_fd < 0) sd.identity_fd = -1;
+	{
+		char *endp;
+		long val;
+
+		s = getenv("SERVICED_CHANNEL_SVC_FD");
+		if (s != NULL) {
+			errno = 0;
+			val = strtol(s, &endp, 10);
+			if (errno != 0 || *endp != '\0' ||
+			    val < 0 || val > INT_MAX)
+				sd.channel_svc_fd = -1;
+			else
+				sd.channel_svc_fd = (int)val;
+		}
+		s = getenv("SERVICED_COALITION_SVC_FD");
+		if (s != NULL) {
+			errno = 0;
+			val = strtol(s, &endp, 10);
+			if (errno != 0 || *endp != '\0' ||
+			    val < 0 || val > INT_MAX)
+				sd.coalition_svc_fd = -1;
+			else
+				sd.coalition_svc_fd = (int)val;
+		}
+		s = getenv("SERVICED_CAPPROTECT_FD");
+		if (s != NULL) {
+			errno = 0;
+			val = strtol(s, &endp, 10);
+			if (errno != 0 || *endp != '\0' ||
+			    val < 0 || val > INT_MAX)
+				sd.capprotect_fd = -1;
+			else
+				sd.capprotect_fd = (int)val;
+		}
+		s = getenv("SERVICED_IDENTITY_FD");
+		if (s != NULL) {
+			errno = 0;
+			val = strtol(s, &endp, 10);
+			if (errno != 0 || *endp != '\0' ||
+			    val < 0 || val > INT_MAX)
+				sd.identity_fd = -1;
+			else
+				sd.identity_fd = (int)val;
+		}
 	}
 	if (sd.channel_svc_fd >= 0) {
 		(void)fcntl(sd.channel_svc_fd, F_SETFL, O_NONBLOCK);

@@ -30,9 +30,22 @@
  * Returns 0 if all modules are loaded, -1 on failure.
  */
 int
-kldmgr_ensure_loaded(const struct svc_manifest *m, int kq __unused)
+kldmgr_ensure_loaded(const struct svc_manifest *m, bool system_bundle,
+    int kq __unused)
 {
 	unsigned i;
+
+	/*
+	 * Only system bundles may load kernel modules.  User bundles
+	 * with kmod_requires are rejected here to prevent untrusted
+	 * manifests from loading arbitrary kernel code.
+	 */
+	if (!system_bundle) {
+		syslog(LOG_ERR,
+		    "kldmgr: refusing kmod_requires for non-system "
+		    "bundle service '%s'", m->label);
+		return (-1);
+	}
 
 	for (i = 0; i < m->nkmod_requires; i++) {
 		const char *name = m->kmod_requires[i];

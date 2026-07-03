@@ -56,10 +56,7 @@ svc_remove(unsigned idx)
 
 	/* Clear the vacated slot. */
 	memset(&sd.services[sd.nservices], 0, sizeof(sd.services[0]));
-	sd.services[sd.nservices].pd_fd = -1;
-	sd.services[sd.nservices].channel_fd = -1;
-	sd.services[sd.nservices].coalition_fd = -1;
-	sd.services[sd.nservices].jail_fd = -1;
+	svc_runtime_init_fds(&sd.services[sd.nservices]);
 }
 
 static bool
@@ -236,6 +233,10 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 	 * after confirming the new one initializes successfully, so
 	 * that a rescan failure does not break on-demand lookups that
 	 * depend on the existing registry.
+	 *
+	 * bundle_registry_init() clears and rebuilds global state, so
+	 * we must teardown first.  On init failure, the registry is
+	 * empty but running services continue unaffected.
 	 */
 	bundle_registry_teardown();
 	if (bundle_registry_init() == -1) {
@@ -246,7 +247,12 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			snprintf(summary, sumlen,
 			    "error: bundle rescan failed, "
 			    "running services unaffected\n");
-		return (0);
+		/*
+		 * Return -1 so the caller knows the reload was not
+		 * fully successful.  Running services are unaffected
+		 * but the registry is now empty.
+		 */
+		return (-1);
 	}
 
 	/* Invalidate bundle indices — the old registry is gone. */
@@ -388,10 +394,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 
 				svc = &sd.services[sd.nservices];
 				memset(svc, 0, sizeof(*svc));
-				svc->pd_fd = -1;
-				svc->channel_fd = -1;
-				svc->coalition_fd = -1;
-				svc->jail_fd = -1;
+				svc_runtime_init_fds(svc);
 				svc->state = SVC_STATE_STOPPED;
 				svc->bundle_idx = bi;
 				svc->bundle_svc_idx = si;

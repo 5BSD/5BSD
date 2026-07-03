@@ -133,7 +133,8 @@ int	oracle_release_system(int channel_fd, uint32_t gates);
 int	oracle_release_manifest(int channel_fd, const struct svc_manifest *m);
 
 /* kldmgr_client.c — kernel module loading */
-int	kldmgr_ensure_loaded(const struct svc_manifest *m, int kq);
+int	kldmgr_ensure_loaded(const struct svc_manifest *m, bool system_bundle,
+	    int kq);
 
 /* depgraph.c — dependency graph */
 int	depgraph_sort(struct svc_runtime *svcs, unsigned nsvc);
@@ -188,6 +189,35 @@ void	naming_rebind_owner(struct svc_runtime *old_owner,
 	    struct svc_runtime *new_owner);
 int	naming_lookup(const char *name, struct svc_runtime *requester,
 	    int *errp);
+
+/*
+ * DJB2 hash function, shared between naming.c and bundle_registry.c.
+ */
+static inline unsigned
+serviced_hash_djb2(const char *s)
+{
+	unsigned long h;
+
+	h = 5381;
+	while (*s != '\0')
+		h = h * 33 + (unsigned char)*s++;
+	return ((unsigned)h);
+}
+
+/*
+ * Initialize the fd fields of an svc_runtime to -1.
+ * Used in startup.c, on_demand.c, and reload.c to avoid
+ * repeating the same 4-line pattern.
+ */
+static inline void
+svc_runtime_init_fds(struct svc_runtime *svc)
+{
+
+	svc->pd_fd = -1;
+	svc->channel_fd = -1;
+	svc->coalition_fd = -1;
+	svc->jail_fd = -1;
+}
 
 /*
  * Formatting helpers for human-readable names.

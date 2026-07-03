@@ -266,10 +266,7 @@ startup_launch_system(int kq)
 	/* Copy manifests into runtime slots. */
 	for (i = 0; i < nmanifests; i++) {
 		sd.services[i].manifest = manifests[i];
-		sd.services[i].pd_fd = -1;
-		sd.services[i].channel_fd = -1;
-		sd.services[i].coalition_fd = -1;
-		sd.services[i].jail_fd = -1;
+		svc_runtime_init_fds(&sd.services[i]);
 		sd.services[i].state = SVC_STATE_STOPPED;
 		strlcpy(sd.services[i].launched_by, "system",
 		    sizeof(sd.services[i].launched_by));
