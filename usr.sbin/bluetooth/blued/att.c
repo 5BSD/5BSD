@@ -125,10 +125,8 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *addr,
 	sa.l2cap_cid = htole16(NG_L2CAP_ATT_CID);
 	sa.l2cap_bdaddr_type = addr_type;
 
-	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
-		close(fd);
+	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0)
 		return (-1);
-	}
 
 	{
 		struct timeval tv = { .tv_sec = 30, .tv_usec = 0 };
@@ -141,7 +139,6 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *addr,
 	ac->mtu = ATT_DEFAULT_MTU;
 	ac->buf = malloc(ATT_MAX_MTU);
 	if (ac->buf == NULL) {
-		close(fd);
 		ac->fd = -1;
 		return (-1);
 	}

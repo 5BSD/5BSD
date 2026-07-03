@@ -139,8 +139,6 @@ smp_log_recv(struct smp_conn *sc, void *buf, size_t len)
 	 * link to be disconnected when the SMP timeout expires.
 	 */
 	if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-		ng_hci_discon_cp dp;
-
 		LOG_SMP(1, "SMP timeout, disconnecting handle=%u",
 		    sc->con_handle);
 		BLUED_LOG_SECURITY("SMP timeout "
@@ -149,12 +147,16 @@ smp_log_recv(struct smp_conn *sc, void *buf, size_t len)
 		    sc->remote_addr[3], sc->remote_addr[2],
 		    sc->remote_addr[1], sc->remote_addr[0],
 		    sc->con_handle);
-		memset(&dp, 0, sizeof(dp));
-		dp.con_handle = htole16(sc->con_handle);
-		dp.reason = 0x13;	/* Remote User Terminated Connection */
-		hci_send_raw_cmd(sc->hci_fd,
-		    NG_HCI_OPCODE(NG_HCI_OGF_LINK_CONTROL,
-		    NG_HCI_OCF_DISCON), &dp, sizeof(dp));
+		if (sc->hci_fd >= 0 && sc->con_handle != 0) {
+			ng_hci_discon_cp dp;
+
+			memset(&dp, 0, sizeof(dp));
+			dp.con_handle = htole16(sc->con_handle);
+			dp.reason = 0x13; /* Remote User Terminated */
+			hci_send_raw_cmd(sc->hci_fd,
+			    NG_HCI_OPCODE(NG_HCI_OGF_LINK_CONTROL,
+			    NG_HCI_OCF_DISCON), &dp, sizeof(dp));
+		}
 	}
 	return (n);
 }

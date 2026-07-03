@@ -39,6 +39,7 @@ struct ble_ctx {
 	int		fd;
 	char		linebuf[MAX_LINE];
 	size_t		linelen;
+	int		line_overflow;
 
 	/* Persistent callbacks */
 	ble_notify_cb		notify_cb;
@@ -133,6 +134,18 @@ parse_addr(const char *str, ble_addr_t *addr)
 	memset(addr, 0, sizeof(*addr));
 	if (bt_aton(str, &ba))
 		memcpy(addr->addr, &ba, 6);
+}
+
+static void
+bytes_to_hex(const uint8_t *data, uint16_t len, char *hexbuf, size_t bufsz)
+{
+	uint16_t i;
+
+	if (bufsz == 0)
+		return;
+	for (i = 0; i < len && (size_t)(i * 2 + 2) < bufsz; i++)
+		snprintf(hexbuf + i * 2, 3, "%02X", data[i]);
+	hexbuf[i * 2] = '\0';
 }
 
 const char *
@@ -588,12 +601,19 @@ ble_process(ble_ctx_t *ctx)
 
 	for (ssize_t i = 0; i < n; i++) {
 		if (buf[i] == '\n') {
+			if (ctx->line_overflow) {
+				ctx->line_overflow = 0;
+				ctx->linelen = 0;
+				continue;
+			}
 			ctx->linebuf[ctx->linelen] = '\0';
 			ble_dispatch_line(ctx, ctx->linebuf);
 			ctx->linelen = 0;
 		} else {
 			if (ctx->linelen < sizeof(ctx->linebuf) - 1)
 				ctx->linebuf[ctx->linelen++] = buf[i];
+			else
+				ctx->line_overflow = 1;
 		}
 	}
 
@@ -667,6 +687,14 @@ int
 ble_connect_name(ble_ctx_t *ctx, const char *name,
     ble_connect_cb cb, void *arg)
 {
+	const char *p;
+
+	if (name == NULL || *name == '\0')
+		return (-1);
+	for (p = name; *p != '\0'; p++) {
+		if (*p == '\n' || *p == '\r' || (unsigned char)*p < 0x20)
+			return (-1);
+	}
 
 	if (ctx->connect_cb != NULL)
 		return (-1);
@@ -719,15 +747,12 @@ ble_write(ble_ctx_t *ctx, const ble_addr_t *addr,
 {
 	char astr[18];
 	char hexbuf[1024];
-	uint16_t i;
 
 	if (len * 2 >= sizeof(hexbuf))
 		return (-1);
 
 	ble_addr_str(addr, astr);
-	for (i = 0; i < len; i++)
-		snprintf(hexbuf + i * 2, 3, "%02X", value[i]);
-	hexbuf[len * 2] = '\0';
+	bytes_to_hex(value, len, hexbuf, sizeof(hexbuf));
 
 	return (ctl_send(ctx->fd, "WRITE %s 0x%04X %s", astr, handle, hexbuf));
 }
@@ -789,15 +814,12 @@ ble_add_characteristic(ble_ctx_t *ctx, uint16_t svc_handle,
 
 	if (value != NULL && len > 0) {
 		char hexbuf[512];
-		uint16_t i;
 
 		if (len * 2 >= sizeof(hexbuf)) {
 			ctx->pending_handle = NULL;
 			return (-1);
 		}
-		for (i = 0; i < len; i++)
-			snprintf(hexbuf + i * 2, 3, "%02X", value[i]);
-		hexbuf[len * 2] = '\0';
+		bytes_to_hex(value, len, hexbuf, sizeof(hexbuf));
 		return (ctl_send(ctx->fd,
 		    "ADD_CHAR 0x%04X 0x%04X %d %d %s",
 		    svc_handle, uuid->uuid16, props, perms, hexbuf));
@@ -813,13 +835,10 @@ ble_set_value(ble_ctx_t *ctx, uint16_t handle,
     const uint8_t *value, uint16_t len)
 {
 	char hexbuf[1024];
-	uint16_t i;
 
 	if (len * 2 >= sizeof(hexbuf))
 		return (-1);
-	for (i = 0; i < len; i++)
-		snprintf(hexbuf + i * 2, 3, "%02X", value[i]);
-	hexbuf[len * 2] = '\0';
+	bytes_to_hex(value, len, hexbuf, sizeof(hexbuf));
 
 	return (ctl_send(ctx->fd, "SET_VALUE 0x%04X %s", handle, hexbuf));
 }

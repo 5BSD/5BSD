@@ -1186,6 +1186,8 @@ blued_conn_setup_central(void *arg)
 
 		if (ret < 0) {
 			warn("ATT connect failed");
+			if (att_fd >= 0)
+				close(att_fd);
 			blued_central_setup_fail(conn);
 			return (NULL);
 		}
