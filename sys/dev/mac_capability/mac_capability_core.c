@@ -564,7 +564,7 @@ mac_capability_modevent(module_t mod __unused, int type, void *unused __unused)
 		mda.mda_devsw = &mac_capability_cdevsw;
 		mda.mda_uid = UID_ROOT;
 		mda.mda_gid = GID_WHEEL;
-		mda.mda_mode = 0666;
+		mda.mda_mode = 0600;
 		error = make_dev_s(&mda, &mac_capability_cdev, "mac_capability");
 		if (error != 0) {
 			printf("mac_capability: failed to create /dev/mac_capability: %d\n",

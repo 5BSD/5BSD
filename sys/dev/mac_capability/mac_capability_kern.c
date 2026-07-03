@@ -333,6 +333,8 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 		s->ci_inflight--;
 		if (s->ci_inflight == 0 && (s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {
 			wakeup(&s->ci_inflight);
+			/* Wake service destroy loop waiting on svc. */
+			wakeup(svc);
 			/*
 			 * If self-revoke set REVOKED during this handler,
 			 * fire co_revoke now that the handler is done.

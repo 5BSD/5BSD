@@ -14,7 +14,7 @@
 
 #pragma D option quiet
 
-#define DTYPE_MAC_CAPABILITY 32
+#define DTYPE_MAC_CAPABILITY 17
 
 dtrace:::BEGIN
 {

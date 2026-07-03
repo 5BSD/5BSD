@@ -73,7 +73,7 @@ struct nameidata;
 #define	DTYPE_TIMERFD	14	/* timerfd */
 #define	DTYPE_INOTIFY	15	/* inotify descriptor */
 #define	DTYPE_JAILDESC	16	/* jail descriptor */
-#define	DTYPE_MAC_CAPABILITY	32	/* mac_capability capability descriptor */
+#define	DTYPE_MAC_CAPABILITY	17	/* mac_capability capability descriptor */
 
 #ifdef _KERNEL
 

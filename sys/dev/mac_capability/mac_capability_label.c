@@ -94,10 +94,16 @@ mac_capability_cred_copy_label(struct label *src, struct label *dest)
 
 	scl = SLOT(src);
 	dcl = SLOT(dest);
-	if (scl != NULL && dcl != NULL) {
+	if (dcl == NULL)
+		return;
+	if (scl != NULL) {
 		*dcl = *scl;
 		SDT_PROBE2(mac_capability_nonce, , , copy, scl->cl_nonce,
 		    dcl->cl_nonce);
+	} else {
+		mac_capability_label_gen_nonce(dcl);
+		SDT_PROBE3(mac_capability_nonce, , , backfill, NULL,
+		    dcl->cl_nonce, curthread->td_proc->p_pid);
 	}
 }
 
@@ -119,7 +125,7 @@ mac_capability_execve_will_transition(struct ucred *old, struct vnode *vp,
     struct image_params *imgp, struct label *execlabel)
 {
 
-	return (1);
+	return (SLOT(old->cr_label) != NULL);
 }
 
 static void

@@ -921,8 +921,11 @@ call_out:
 
 		mtx_lock(&s->ci_mtx);
 		s->ci_inflight--;
-		if (s->ci_inflight == 0 && (s->ci_flags & MAC_CAPABILITY_SF_DEAD))
+		if (s->ci_inflight == 0 && (s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {
 			wakeup(&s->ci_inflight);
+			/* Wake service destroy loop waiting on svc. */
+			wakeup(s->ci_service);
+		}
 		mtx_unlock(&s->ci_mtx);
 
 		if (held)

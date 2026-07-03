@@ -128,7 +128,7 @@ static u_int cp_max_auth = 4096;
 
 SYSCTL_NODE(_kern, OID_AUTO, mac_capability_capprotect,
     CTLFLAG_RW | CTLFLAG_MPSAFE, 0, "mac_capability capability protection");
-SYSCTL_UINT(_kern_mac_capability_capprotect, OID_AUTO, max_auth, CTLFLAG_RW,
+SYSCTL_UINT(_kern_mac_capability_capprotect, OID_AUTO, max_auth, CTLFLAG_RDTUN,
     &cp_max_auth, 0,
     "Maximum authorization entries per nonce (0 = unlimited)");
 SYSCTL_UINT(_kern_mac_capability_capprotect, OID_AUTO, auth_count, CTLFLAG_RD,
@@ -290,21 +290,11 @@ cp_auth_add(uint64_t accessor, uint64_t target, uint32_t flags,
 			return (0);
 		}
 	}
-	/* Limit check: count entries for this accessor nonce. */
-	if (cp_max_auth != 0) {
-		u_int count = 0;
-
-		for (u_long i = 0; i <= cp_auth_hashmask; i++) {
-			LIST_FOREACH(existing, &cp_auth_hash[i], ae_link) {
-				if (existing->ae_accessor == accessor)
-					count++;
-			}
-		}
-		if (count >= cp_max_auth) {
-			mtx_unlock(&cp_lock);
-			free(ae, M_MAC_CAPABILITY_CP);
-			return (ENOSPC);
-		}
+	/* Limit check: use global counter as a fast early-out. */
+	if (cp_max_auth != 0 && cp_auth_count >= cp_max_auth) {
+		mtx_unlock(&cp_lock);
+		free(ae, M_MAC_CAPABILITY_CP);
+		return (ENOSPC);
 	}
 	LIST_INSERT_HEAD(CP_AUTH_BUCKET(target), ae, ae_link);
 	atomic_add_int(&cp_auth_count, 1);

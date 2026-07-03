@@ -215,7 +215,7 @@ static u_int fi_max_auth = 4096;
 
 SYSCTL_NODE(_kern, OID_AUTO, mac_capability_isolation,
     CTLFLAG_RW | CTLFLAG_MPSAFE, 0, "mac_capability isolation");
-SYSCTL_UINT(_kern_mac_capability_isolation, OID_AUTO, max_auth, CTLFLAG_RW,
+SYSCTL_UINT(_kern_mac_capability_isolation, OID_AUTO, max_auth, CTLFLAG_RDTUN,
     &fi_max_auth, 0,
     "Maximum authorization entries per nonce (0 = unlimited)");
 SYSCTL_UINT(_kern_mac_capability_isolation, OID_AUTO, auth_count, CTLFLAG_RD,
@@ -501,21 +501,11 @@ fi_auth_add(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 			return (0);
 		}
 	}
-	/* Limit check: count entries for this accessor nonce. */
-	if (fi_max_auth != 0) {
-		u_int count = 0;
-
-		for (u_long i = 0; i <= fi_auth_hashmask; i++) {
-			LIST_FOREACH(existing, &fi_auth_hash[i], fa_link) {
-				if (existing->fa_accessor == accessor)
-					count++;
-			}
-		}
-		if (count >= fi_max_auth) {
-			rw_wunlock(&fi_auth_lock);
-			free(fa, M_FILE_ISOLATION);
-			return (ENOSPC);
-		}
+	/* Limit check: use global counter as a fast early-out. */
+	if (fi_max_auth != 0 && fi_auth_count >= fi_max_auth) {
+		rw_wunlock(&fi_auth_lock);
+		free(fa, M_FILE_ISOLATION);
+		return (ENOSPC);
 	}
 	LIST_INSERT_HEAD(FI_AUTH_BUCKET(owner), fa, fa_link);
 	atomic_add_int(&fi_auth_count, 1);
@@ -3248,6 +3238,12 @@ static struct mac_policy_ops fi_mac_ops = {
 	.mpo_prison_check_attach	= fi_check_prison_attach,
 };
 
+/*
+ * Isolation is enforced at open(2) time only.  File descriptors obtained
+ * before a claim is established, or received via SCM_RIGHTS, remain
+ * usable.  This is intentional: once a process holds a valid fd, the
+ * capability model (Capsicum) governs further access, not isolation.
+ */
 MAC_POLICY_SET(&fi_mac_ops, mac_mac_capability_isolation,
     "MAC_CAPABILITY isolation enforcement",
     MPC_LOADTIME_FLAG_NOTLATE, NULL);
