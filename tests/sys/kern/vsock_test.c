@@ -3576,7 +3576,6 @@ ATF_TC_BODY(sysctl_buf_validation, tc)
 ATF_TC_WITHOUT_HEAD(pcblist_state_values);
 ATF_TC_BODY(pcblist_state_values, tc)
 {
-	struct sockaddr_vm laddr;
 	int ls, cs, as;
 	char *buf;
 	size_t len;
@@ -3865,7 +3864,7 @@ ATF_TC_BODY(resize_buffer_with_data, tc)
 ATF_TC_WITHOUT_HEAD(pcblist_fields);
 ATF_TC_BODY(pcblist_fields, tc)
 {
-	struct sockaddr_vm laddr, caddr;
+	struct sockaddr_vm caddr;
 	int ls, cs, as;
 	char *buf;
 	size_t len;
@@ -3920,9 +3919,8 @@ ATF_TC_BODY(pcblist_fields, tc)
 ATF_TC_WITHOUT_HEAD(sysctl_counters);
 ATF_TC_BODY(sysctl_counters, tc)
 {
-	uint64_t conns_before, conns_after;
+	uint64_t conns_before;
 	size_t len;
-	int ls, cs, as;
 
 	(void)tc;
 
@@ -4436,7 +4434,7 @@ static void *
 rapid_cycle_thread(void *arg)
 {
 	struct rapid_cycle_ctx *ctx = arg;
-	int s, a;
+	int s;
 	char buf[4];
 
 	for (int i = 0; i < ctx->iterations; i++) {

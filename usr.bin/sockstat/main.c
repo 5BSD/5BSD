@@ -886,7 +886,7 @@ gather_vsock(void)
 	struct addr *laddr, *faddr;
 	struct sockaddr_vm *svm;
 	const char *protoname;
-	char *buf;
+	struct xvsock_pcb *buf;
 	size_t len;
 
 	buf = NULL;
@@ -911,8 +911,8 @@ gather_vsock(void)
 		return;
 	}
 
-	for (size_t off = 0; off + sizeof(*xvp) <= len; off += sizeof(*xvp)) {
-		xvp = (struct xvsock_pcb *)(buf + off);
+	for (size_t i = 0; (i + 1) * sizeof(*xvp) <= len; i++) {
+		xvp = &buf[i];
 		if (xvp->xvp_len != sizeof(*xvp))
 			break;
 
