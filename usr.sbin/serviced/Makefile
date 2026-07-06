@@ -6,7 +6,7 @@ BINDIR=	/usr/libexec
 MAN=	serviced.8
 SRCS=	serviced.c bundle_registry.c mac_capability_direct.c depgraph.c execute.c \
 	kldmgr_client.c naming.c on_demand.c oracle_client.c \
-	reload.c sctl.c startup.c svc_proto.c supervisor.c
+	reload.c sctl.c serviced_audit.c startup.c svc_proto.c supervisor.c
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
@@ -20,7 +20,12 @@ CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/lib/liboraclert
 CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		capbundle oraclert jail ucl util
+LIBADD=		capbundle oraclert jail ucl util bsm
+
+# Emit OpenBSM audit records for security-relevant events (control-socket
+# privileged commands, service exec under changed credentials, capability
+# minting, configuration reload).  See serviced_audit.c.
+CFLAGS+=	-DUSE_BSM_AUDIT
 
 .if ${MK_DTRACE} != "no"
 SRCS+=		serviced_provider.d

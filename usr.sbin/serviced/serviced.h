@@ -61,7 +61,7 @@ struct svc_runtime {
 	/* Attribution */
 	char		launched_by[SERVICED_LABEL_MAX]; /* who triggered launch */
 	struct timespec	launch_time;
-	unsigned	connection_count;	/* active channel connections */
+	unsigned	connection_count;	/* client connections brokered via lookup (cumulative) */
 
 	/* Bundle origin */
 	unsigned	bundle_idx;		/* index in bundle registry */

@@ -59,6 +59,7 @@ oracle_rpc(int channel_fd, const void *req, uint32_t reqlen,
 		return (-1);
 	}
 
+	memset(&rpl, 0, sizeof(rpl));
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = &rpl;
 	ra.payload_len = sizeof(rpl);
@@ -146,6 +147,24 @@ retry:
 			errno = EPROTO;
 			return (-1);
 		}
+	}
+
+	/*
+	 * Reject a reply too short to contain a full status word — otherwise
+	 * we would return uninitialized stack as the oracled status (a bogus
+	 * success or errno).  Close any fds that arrived with it.
+	 */
+	if (ra.payload_len < sizeof(rpl)) {
+		syslog(LOG_ERR, "oracle_rpc: short reply (%u bytes)",
+		    (unsigned)ra.payload_len);
+		for (i = 0; i < max_reply_fds; i++) {
+			if (reply_fds[i] >= 0) {
+				close(reply_fds[i]);
+				reply_fds[i] = -1;
+			}
+		}
+		errno = EPROTO;
+		return (-1);
 	}
 
 	if (nfds_out != NULL)
@@ -243,13 +262,19 @@ static int
 check_status_fd(int status, int fd)
 {
 
-	if (status < 0)
-		return (-1);
-	if (status != 0) {
+	if (status == 0)
+		return (fd);
+	/*
+	 * Error path.  oracled should not attach an fd alongside a non-zero
+	 * status, but close one defensively rather than leak it.  status < 0
+	 * is a communication error (errno already set by oracle_rpc); status
+	 * > 0 is an oracled errno.
+	 */
+	if (fd >= 0)
+		close(fd);
+	if (status > 0)
 		errno = status;
-		return (-1);
-	}
-	return (fd);
+	return (-1);
 }
 
 /* --- Mint operations (return token fds) --- */
@@ -386,8 +411,12 @@ oracle_create_channel(int channel_fd, int *our_end, int *child_end)
 	req.op = ORACLE_OP_CREATE_CHANNEL;
 
 	status = oracle_rpc(channel_fd, &req, sizeof(req), fds, 2, NULL);
-	if (check_status(status) != 0)
+	if (check_status(status) != 0) {
+		/* Close any fds attached to an error reply rather than leak. */
+		if (fds[0] >= 0) close(fds[0]);
+		if (fds[1] >= 0) close(fds[1]);
 		return (-1);
+	}
 	if (fds[0] < 0 || fds[1] < 0) {
 		if (fds[0] >= 0) close(fds[0]);
 		if (fds[1] >= 0) close(fds[1]);

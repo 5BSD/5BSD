@@ -31,6 +31,7 @@
 #include <libcapbundle.h>
 
 #include "serviced.h"
+#include "serviced_audit.h"
 #include "serviced_probes.h"
 
 #define	ON_DEMAND_TIMEOUT_SEC	10
@@ -136,6 +137,50 @@ would_deadlock(const char *name, struct svc_runtime *requester)
 }
 
 /*
+ * Broker a resolved lookup to a waiting requester.
+ *
+ * Resolves 'name' on behalf of req_svc and sends the reply on the
+ * requester's *current* channel — never a cached fd, which may have been
+ * recycled once the requester exited.  If the requester is gone (req_svc
+ * NULL) or has no channel, there is nobody to answer, so nothing is sent.
+ *
+ * Returns true if a client fd was delivered.
+ */
+static bool
+on_demand_broker(struct svc_runtime *provider, const char *name,
+    struct svc_runtime *req_svc, uint64_t reply_token)
+{
+	struct mac_capability_sendmsg_args sa;
+	int client_fd, error;
+	int32_t status;
+
+	if (req_svc == NULL || req_svc->channel_fd < 0)
+		return (false);
+
+	client_fd = naming_lookup(name, req_svc, &error);
+
+	memset(&sa, 0, sizeof(sa));
+	sa.reply_token = reply_token;
+	if (client_fd >= 0) {
+		status = 0;
+		sa.payload = &status;
+		sa.payload_len = sizeof(status);
+		sa.fds = &client_fd;
+		sa.nfds = 1;
+		(void)ioctl(req_svc->channel_fd, MAC_CAPABILITY_SENDMSG, &sa);
+		close(client_fd);
+		if (provider != NULL)
+			provider->connection_count++;
+		return (true);
+	}
+	status = error;
+	sa.payload = &status;
+	sa.payload_len = sizeof(status);
+	(void)ioctl(req_svc->channel_fd, MAC_CAPABILITY_SENDMSG, &sa);
+	return (false);
+}
+
+/*
  * Launch a service on demand.
  *
  * Called from svc_proto.c when naming_lookup() returns ENOENT but the
@@ -177,6 +222,10 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 			return (-1);
 
 		/* Find a free slot in sd.services[]. */
+		if (sd.services == NULL) {
+			/* Service array was never allocated (startup OOM). */
+			return (-1);
+		}
 		if (sd.nservices >= SERVICED_MAX_SERVICES) {
 			syslog(LOG_ERR,
 			    "on_demand: service limit reached, cannot launch '%s'",
@@ -226,8 +275,24 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 		    "on_demand: launching '%s' (requested by '%s')",
 		    target->manifest.label, target->launched_by);
 		SERVICED_PROBE_ON_DEMAND_LAUNCH(name, target->launched_by);
+		serviced_audit(AUE_SERVICED_ONDEMAND, getuid(), 0,
+		    "on-demand launch svc=%s requested_by=%s",
+		    target->manifest.label, target->launched_by);
 	} else {
 		SERVICED_PROBE_ON_DEMAND_COALESCE(name);
+		/*
+		 * If the provider is already RUNNING it has already sent its
+		 * READY notification and will not send another, so a queued
+		 * waiter would never be drained by on_demand_check_ready() and
+		 * would hang until the on-demand timeout.  Broker the
+		 * connection immediately (replying with success or the lookup
+		 * error) instead of queuing a doomed waiter.
+		 */
+		if (target->state == SVC_STATE_RUNNING) {
+			(void)on_demand_broker(target, name, requester,
+			    reply_token);
+			return (0);
+		}
 	}
 
 	/* Queue the waiter. */
@@ -303,54 +368,13 @@ on_demand_check_ready(struct svc_runtime *svc, int kq)
 		}
 
 		/*
-		 * Service is ready — broker the connection.
-		 * Resolve the requester from sd.services[] by label
-		 * to avoid stale pointers after svc_remove().
+		 * Service is ready — broker the connection.  Resolve the
+		 * requester from sd.services[] by label (its slot may have
+		 * moved after an svc_remove()) so the reply always goes to the
+		 * requester's current channel, never a cached/recycled fd.
 		 */
-		{
-			struct svc_runtime *req_svc;
-			int client_fd, error, channel_fd;
-
-			req_svc = svc_by_label(pl->requester_label);
-			channel_fd = (req_svc != NULL) ?
-			    req_svc->channel_fd : pl->requester_channel_fd;
-
-			client_fd = (req_svc != NULL) ?
-			    naming_lookup(pl->name, req_svc, &error) : -1;
-			if (req_svc == NULL)
-				error = ECONNRESET;
-
-			if (client_fd >= 0) {
-				struct mac_capability_sendmsg_args sa;
-				int32_t status = 0;
-
-				memset(&sa, 0, sizeof(sa));
-				sa.payload = &status;
-				sa.payload_len = sizeof(status);
-				sa.fds = &client_fd;
-				sa.nfds = 1;
-				sa.reply_token = pl->reply_token;
-
-				if (channel_fd >= 0)
-					(void)ioctl(channel_fd,
-					    MAC_CAPABILITY_SENDMSG, &sa);
-
-				close(client_fd);
-				svc->connection_count++;
-			} else {
-				struct mac_capability_sendmsg_args sa;
-				int32_t status = error;
-
-				memset(&sa, 0, sizeof(sa));
-				sa.payload = &status;
-				sa.payload_len = sizeof(status);
-				sa.reply_token = pl->reply_token;
-
-				if (channel_fd >= 0)
-					(void)ioctl(channel_fd,
-					    MAC_CAPABILITY_SENDMSG, &sa);
-			}
-		}
+		(void)on_demand_broker(svc, pl->name,
+		    svc_by_label(pl->requester_label), pl->reply_token);
 
 		/* Cancel timeout timer. */
 		EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
@@ -460,17 +484,14 @@ on_demand_teardown(int kq)
 	for (pl = pending_list; pl != NULL; pl = next) {
 		next = pl->next;
 
-		/* Send error reply.  Re-resolve the requester by label
-		 * to avoid using a stale channel fd. */
+		/* Send error reply.  Re-resolve the requester by label and use
+		 * only its current channel fd; if it is gone there is nobody to
+		 * answer, so do not write to a possibly-recycled fd. */
 		{
 			struct svc_runtime *req;
-			int channel_fd;
 
 			req = svc_by_label(pl->requester_label);
-			channel_fd = (req != NULL) ?
-			    req->channel_fd : pl->requester_channel_fd;
-
-			if (channel_fd >= 0) {
+			if (req != NULL && req->channel_fd >= 0) {
 				struct mac_capability_sendmsg_args sa;
 				int32_t status = ESHUTDOWN;
 
@@ -478,7 +499,7 @@ on_demand_teardown(int kq)
 				sa.payload = &status;
 				sa.payload_len = sizeof(status);
 				sa.reply_token = pl->reply_token;
-				(void)ioctl(channel_fd,
+				(void)ioctl(req->channel_fd,
 				    MAC_CAPABILITY_SENDMSG, &sa);
 			}
 		}

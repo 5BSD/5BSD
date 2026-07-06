@@ -16,6 +16,7 @@
 #include <dev/mac_capability/mac_capability_capprotect_proto.h>
 
 #include <errno.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -93,6 +94,7 @@ rpc(const void *req, uint32_t reqlen, int *reply_fd)
 		uint32_t op;
 
 		fd = -1;
+		memset(&buf, 0, sizeof(buf));
 		memset(&ra, 0, sizeof(ra));
 		ra.payload = &buf;
 		ra.payload_len = sizeof(buf);
@@ -107,6 +109,14 @@ rpc(const void *req, uint32_t reqlen, int *reply_fd)
 
 		/* Check if this is our reply (matching token). */
 		if (ra.reply_token == token) {
+			/* Reject a reply too short to hold a status word,
+			 * rather than reading uninitialized memory. */
+			if (ra.payload_len < sizeof(buf.rpl)) {
+				if (fd >= 0)
+					close(fd);
+				errno = EPROTO;
+				return (-1);
+			}
 			if (reply_fd != NULL)
 				*reply_fd = fd;
 			else if (fd >= 0)
@@ -141,29 +151,35 @@ int
 service_init(void)
 {
 	const char *s;
+	const char *errstr;
 
-	s = getenv("ORACLED_PAIR_FD");
+	s = getenv("ORACLED_CHANNEL_FD");
 	if (s == NULL) {
 		errno = ENOENT;
 		return (-1);
 	}
-	pair_fd = (int)strtol(s, NULL, 10);
-	if (pair_fd < 0) {
+	/*
+	 * Validate strictly: a malformed value must not silently resolve to
+	 * fd 0 (stdin) and have every RPC target the wrong descriptor.
+	 * strtonum() rejects non-numeric, empty, and out-of-range input.
+	 */
+	pair_fd = (int)strtonum(s, 0, INT_MAX, &errstr);
+	if (errstr != NULL) {
 		pair_fd = -1;
 		errno = EINVAL;
 		return (-1);
 	}
 	s = getenv("ORACLED_CAPPROTECT_FD");
 	if (s != NULL && s[0] != '\0') {
-		capprotect_fd = (int)strtol(s, NULL, 10);
-		if (capprotect_fd < 0)
+		capprotect_fd = (int)strtonum(s, 0, INT_MAX, &errstr);
+		if (errstr != NULL)
 			capprotect_fd = -1;
 	}
 	return (0);
 }
 
 int
-service_pair_fd(void)
+service_channel_fd(void)
 {
 
 	return (pair_fd);

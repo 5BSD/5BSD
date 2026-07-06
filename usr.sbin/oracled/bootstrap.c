@@ -69,6 +69,17 @@ struct bootstrap_delegate_fds {
 	int	coalition_svc_fd;
 	int	capprotect_fd;
 	int	identity_fd;
+	/*
+	 * Bundle-directory overrides forwarded to serviced.  Captured from
+	 * oracled's environment in the parent (getenv is not async-signal-safe,
+	 * so it must not run in the post-fork child).  NULL when unset, which
+	 * is the normal production case — serviced then uses its compiled
+	 * /Capabilities defaults.  These are a live override in any environment,
+	 * not test-only: whoever controls oracled's environment (root) can point
+	 * serviced's bundle scan elsewhere.  In practice only test harnesses do.
+	 */
+	const char	*bundle_dir_system;
+	const char	*bundle_dir_user;
 };
 
 static void __dead2
@@ -78,7 +89,8 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	char channel_svc_env[64], coalition_svc_env[64], capprotect_env[64];
 	char identity_env[64];
 	char ctlsock_env[PATH_MAX + 32];
-	char *env[10];
+	char bundle_sys_env[PATH_MAX + 32], bundle_usr_env[PATH_MAX + 32];
+	char *env[12];
 	char *argv[2];
 	int nullfd, fd, safe_base;
 	int src_fds[5], dst_fds[5];
@@ -196,6 +208,18 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		env[envc++] = ctlsock_env;
 	}
 
+	/* Forward bundle-directory overrides when present (see struct comment). */
+	if (d->bundle_dir_system != NULL) {
+		(void)snprintf(bundle_sys_env, sizeof(bundle_sys_env),
+		    "SERVICED_BUNDLE_DIR_SYSTEM=%s", d->bundle_dir_system);
+		env[envc++] = bundle_sys_env;
+	}
+	if (d->bundle_dir_user != NULL) {
+		(void)snprintf(bundle_usr_env, sizeof(bundle_usr_env),
+		    "SERVICED_BUNDLE_DIR_USER=%s", d->bundle_dir_user);
+		env[envc++] = bundle_usr_env;
+	}
+
 	env[envc] = NULL;
 
 	/* Reset signal dispositions. */
@@ -287,6 +311,10 @@ bootstrap_start(int kq)
 		    "bootstrap: identity service not available, "
 		    "on-demand attribution disabled");
 	}
+
+	/* Capture bundle-dir overrides here — getenv is not safe post-fork. */
+	dfds.bundle_dir_system = getenv("SERVICED_BUNDLE_DIR_SYSTEM");
+	dfds.bundle_dir_user = getenv("SERVICED_BUNDLE_DIR_USER");
 
 	pid = pdfork(&pd_fd, PD_CLOEXEC);
 	if (pid == -1) {

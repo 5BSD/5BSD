@@ -264,8 +264,9 @@ bundle_registry_init(void)
 {
 	char errbuf[512];
 	struct stat sb;
-	struct capbundle *cycle_bundles[128];
+	struct capbundle **cycle_bundles;
 	unsigned i;
+	int cycle_ret;
 
 	memset(provides_hash, 0, sizeof(provides_hash));
 	nbundles = 0;
@@ -303,13 +304,26 @@ bundle_registry_init(void)
 		return (0);
 	}
 
-	/* Cross-bundle circular dependency check. */
-	for (i = 0; i < nbundles && i < 128; i++)
+	/*
+	 * Cross-bundle circular dependency check.  Size the working array
+	 * from the actual bundle count — a previous fixed 128-entry cap
+	 * silently skipped cycles involving any bundle past index 128 while
+	 * still reporting the graph acyclic.
+	 */
+	cycle_bundles = reallocarray(NULL, nbundles, sizeof(*cycle_bundles));
+	if (cycle_bundles == NULL) {
+		syslog(LOG_CRIT,
+		    "bundle_registry: out of memory for cycle check — "
+		    "cannot start");
+		return (-1);
+	}
+	for (i = 0; i < nbundles; i++)
 		cycle_bundles[i] = bundles[i].bundle;
 
-	if (capbundle_check_cycles(cycle_bundles,
-	    nbundles > 128 ? 128 : nbundles,
-	    errbuf, sizeof(errbuf)) == -1) {
+	cycle_ret = capbundle_check_cycles(cycle_bundles, nbundles,
+	    errbuf, sizeof(errbuf));
+	free(cycle_bundles);
+	if (cycle_ret == -1) {
 		syslog(LOG_CRIT,
 		    "bundle_registry: %s — cannot start", errbuf);
 		return (-1);

@@ -26,8 +26,9 @@ system_bundle_startup_body() {
 	start_stack
 	wait_for_file "${WORK}/bootd.ready" 5
 
-	# Service should be running
-	atf_check -s exit:0 -o match:"bootd.*running" \
+	# Service should be running.  serviced identifies services by label,
+	# which is provides[0] (libcapbundle_parse.c), not the program name.
+	atf_check -s exit:0 -o match:"org.test.boot.svc.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 
 	# Attribution should show "system"
@@ -48,13 +49,14 @@ on_demand_launch_head() {
 }
 on_demand_launch_body() {
 	prepare_paths
+	build_lookup_client
 	create_user_bundle "LazyApp" "org.test.lazy" "lazyd" \
 	    "org.test.lazy.svc" 'on_demand = true;'
 
 	start_stack
 
-	# Service should NOT be running yet
-	atf_check -s exit:0 -o not-match:"lazyd.*running" \
+	# Service should NOT be running yet (labelled by provides[0]).
+	atf_check -s exit:0 -o not-match:"org.test.lazy.svc.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 
 	# Trigger lookup from a client
@@ -62,7 +64,7 @@ on_demand_launch_body() {
 
 	# Now it should be running
 	wait_for_file "${WORK}/lazyd.ready" 10
-	atf_check -s exit:0 -o match:"lazyd.*running" \
+	atf_check -s exit:0 -o match:"org.test.lazy.svc.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 }
 on_demand_launch_cleanup() {
@@ -79,6 +81,7 @@ on_demand_timeout_head() {
 }
 on_demand_timeout_body() {
 	prepare_paths
+	build_lookup_client
 	# Create a service that never calls service_ready()
 	create_user_bundle_custom "Hang" "hangd" \
 	    'bundle_id = "org.test.hang";
@@ -90,9 +93,12 @@ on_demand = true;'
 
 	start_stack
 
-	# Lookup should fail with timeout
-	atf_check -s exit:1 \
-	    run_lookup_client "org.test.hang.svc" 15
+	# Lookup should fail with timeout.  run_lookup_client is a shell
+	# function, so it must be called directly (atf_check execs a binary,
+	# not the shell, and would just get ENOENT).
+	if run_lookup_client "org.test.hang.svc" 15; then
+		atf_fail "on-demand lookup unexpectedly succeeded (no ready timeout)"
+	fi
 }
 on_demand_timeout_cleanup() {
 	cleanup_common
@@ -119,10 +125,10 @@ tiered_startup_body() {
 	wait_for_file "${WORK}/based.ready" 5
 	wait_for_file "${WORK}/depd.ready" 10
 
-	# Both should be running
-	atf_check -s exit:0 -o match:"based.*running" \
+	# Both should be running (labelled by provides[0]).
+	atf_check -s exit:0 -o match:"org.test.base.svc.*running" \
 	    servicectl -s "${CTL_SOCK}" status
-	atf_check -s exit:0 -o match:"depd.*running" \
+	atf_check -s exit:0 -o match:"org.test.dep.svc.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 
 	# Base should have started before dep (check timestamps in log)
@@ -155,7 +161,7 @@ stop_service_body() {
 
 	# Wait for it to actually stop
 	sleep 1
-	atf_check -s exit:0 -o match:"stopd.*stopped" \
+	atf_check -s exit:0 -o match:"org.test.stop.svc.*stopped" \
 	    servicectl -s "${CTL_SOCK}" status
 }
 stop_service_cleanup() {
@@ -201,12 +207,13 @@ reload_new_service_body() {
 	create_user_bundle "NewApp" "org.test.new" "newbie" \
 	    "org.test.new.svc"
 
-	# Reload
-	atf_check -s exit:0 -o match:"new launched" \
+	# Reload.  The reply summary is "reload: N bundles, M new, ..."
+	# (supervisor_reload); one new service means "1 new".
+	atf_check -s exit:0 -o match:"1 new" \
 	    servicectl -s "${CTL_SOCK}" reload
 
 	wait_for_file "${WORK}/newbie.ready" 5
-	atf_check -s exit:0 -o match:"newbie.*running" \
+	atf_check -s exit:0 -o match:"org.test.new.svc.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 }
 reload_new_service_cleanup() {
@@ -232,13 +239,14 @@ reload_remove_service_body() {
 	# Remove the bundle (user bundle lives in USER_APPS_DIR)
 	rm -rf "${USER_APPS_DIR}/Removable.cap"
 
-	# Reload
-	atf_check -s exit:0 \
+	# Reload.  servicectl prints a summary to stdout, so -o ignore is
+	# required (atf_check defaults to -o empty).
+	atf_check -s exit:0 -o ignore \
 	    servicectl -s "${CTL_SOCK}" reload
 
-	# Service should be stopping/stopped
+	# Service should be stopping/stopped (labelled by provides[0]).
 	sleep 1
-	atf_check -s exit:0 -o not-match:"rmd.*running" \
+	atf_check -s exit:0 -o not-match:"org.test.rm.svc.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 }
 reload_remove_service_cleanup() {
@@ -256,10 +264,11 @@ circular_dep_fatal_head() {
 circular_dep_fatal_body() {
 	prepare_paths
 
-	# Create circular: A requires B, B requires A
-	create_system_bundle_with_requires "CycA" "org.test.cyc" "cyca" \
+	# Create circular: A requires B, B requires A.  Distinct bundle_ids so
+	# the registry keeps both bundles (and the cycle actually forms).
+	create_system_bundle_with_requires "CycA" "org.test.cyc.a" "cyca" \
 	    "org.test.cyc.a" "org.test.cyc.b"
-	create_system_bundle_with_requires "CycB" "org.test.cyc" "cycb" \
+	create_system_bundle_with_requires "CycB" "org.test.cyc.b" "cycb" \
 	    "org.test.cyc.b" "org.test.cyc.a"
 
 	# serviced should refuse to start (depgraph detects cycle)
@@ -376,7 +385,7 @@ program = "cycd_y";
 provides = ["org.test.cyc.y"];
 requires = ["org.test.cyc.x"];'
 
-	atf_check -s exit:0 \
+	atf_check -s exit:0 -o ignore \
 	    servicectl -s "${CTL_SOCK}" reload
 
 	# Cycle should be detected — check log
@@ -405,16 +414,17 @@ reload_dependency_order_body() {
 	create_system_bundle_with_requires "Consumer" "org.test.cons" "consd" \
 	    "org.test.cons.svc" "org.test.prov.svc"
 
-	atf_check -s exit:0 \
+	atf_check -s exit:0 -o ignore \
 	    servicectl -s "${CTL_SOCK}" reload
 
 	sleep 1
 
-	# Both should have been launched
+	# Both should have been launched (reload logs "reload: launched '<label>'"
+	# where label is provides[0]).
 	atf_check -s exit:0 -o ignore \
-	    grep "launched.*provd\|launched.*org.test.prov" "${logfile}"
+	    grep "launched.*org.test.prov" "${logfile}"
 	atf_check -s exit:0 -o ignore \
-	    grep "launched.*consd\|launched.*org.test.cons" "${logfile}"
+	    grep "launched.*org.test.cons" "${logfile}"
 }
 reload_dependency_order_cleanup() {
 	cleanup_common
@@ -446,14 +456,15 @@ provides = ["org.test.morph.svc"];
 restart = "always";
 UCL
 
-	atf_check -s exit:0 \
+	atf_check -s exit:0 -o ignore \
 	    servicectl -s "${CTL_SOCK}" reload
 
 	sleep 1
 
-	# Should see the change detection
+	# Should see the change detection.  reload.c logs "restarting changed
+	# service '<label>'" and "reload: N services changed".
 	atf_check -s exit:0 -o ignore \
-	    grep "restarting changed.*morphd\|1 changed" "${logfile}"
+	    grep "restarting changed service\|1 services changed" "${logfile}"
 }
 reload_changed_bundle_cleanup() {
 	cleanup_common
@@ -475,14 +486,14 @@ stop_already_stopped_body() {
 	start_stack
 	wait_for_file "${WORK}/briefd.ready" 5
 
-	# Stop it once
-	atf_check -s exit:0 \
+	# Stop it once (servicectl prints "stop: ... stopping" -> -o ignore).
+	atf_check -s exit:0 -o ignore \
 	    servicectl -s "${CTL_SOCK}" stop "org.test.brief.svc"
 
 	sleep 1
 
 	# Stop it again — should fail
-	atf_check -s not-exit:0 \
+	atf_check -s not-exit:0 -o ignore -e ignore \
 	    servicectl -s "${CTL_SOCK}" stop "org.test.brief.svc"
 }
 stop_already_stopped_cleanup() {
@@ -505,10 +516,13 @@ coalition_kill_on_timeout_body() {
 	mkdir -p "${stubdir}/etc"
 	mkdir -p "${stubdir}/bin"
 
-	cat > "${stubdir}/bin/stubbornd" <<'SVCEOF'
+	# UNQUOTED heredoc: ${WORK} is expanded at write time so the absolute
+	# path bakes into the script (services run with a minimal env and do not
+	# inherit WORK).  \$\$ stays a runtime shell variable.
+	cat > "${stubdir}/bin/stubbornd" <<SVCEOF
 #!/bin/sh
 trap "" TERM
-echo $$ > "${WORK:-/tmp}/stubbornd.pid"
+echo \$\$ > "${WORK}/stubbornd.pid"
 while :; do sleep 1; done
 SVCEOF
 	chmod 755 "${stubdir}/bin/stubbornd"
@@ -537,9 +551,13 @@ UCL
 		    kill -0 "$(cat ${WORK}/stubbornd.pid)"
 	fi
 
-	# Log should show the escalation
+	# Log should show the escalation.  With a coalition the kernel escalates
+	# SIGTERM->SIGKILL after stop_timeout and serviced logs the exit as
+	# "killed by signal 9"; without one, serviced's own stop-kill timer logs
+	# "stop timeout, sending SIGKILL" (svc_graceful_stop only arms that timer
+	# in the non-coalition fallback path).
 	atf_check -s exit:0 -o ignore \
-	    grep "stop timeout.*SIGKILL" "${logfile}"
+	    grep "stop timeout.*SIGKILL\|killed by signal 9" "${logfile}"
 }
 coalition_kill_on_timeout_cleanup() {
 	if [ -f "${WORK}/stubbornd.pid" ]; then
@@ -558,6 +576,8 @@ on_demand_crash_relaunch_head() {
 }
 on_demand_crash_relaunch_body() {
 	prepare_paths
+	build_lookup_client
+	build_ready_svc
 
 	# Create a custom on-demand bundle whose service crashes on
 	# first invocation and runs normally on subsequent ones.
@@ -565,24 +585,27 @@ on_demand_crash_relaunch_body() {
 	mkdir -p "${dir}/etc"
 	mkdir -p "${dir}/bin"
 
-	cat > "${dir}/bin/crashd" <<-'SVCEOF'
-	#!/bin/sh
-	statefile="${WORK:-/tmp}/crashd.invocations"
-	count=0
-	if [ -f "$statefile" ]; then
-		count=$(cat "$statefile")
-	fi
-	count=$((count + 1))
-	echo "$count" > "$statefile"
+	# UNQUOTED heredoc: ${WORK} bakes in at write time; the service's own
+	# runtime shell variables ($statefile, $count, command substitutions)
+	# are escaped so they stay literal in the written script.
+	cat > "${dir}/bin/crashd" <<SVCEOF
+#!/bin/sh
+statefile="${WORK}/crashd.invocations"
+count=0
+if [ -f "\$statefile" ]; then
+	count=\$(cat "\$statefile")
+fi
+count=\$((count + 1))
+echo "\$count" > "\$statefile"
 
-	if [ "$count" -eq 1 ]; then
-		# First invocation: crash immediately.
-		exit 1
-	fi
-	# Subsequent invocations: run normally.
-	touch "${WORK:-/tmp}/crashd.ready"
-	exec sleep 3600
-	SVCEOF
+if [ "\$count" -eq 1 ]; then
+	# First invocation: crash immediately.
+	exit 1
+fi
+# Subsequent invocations: hand off to the libservice ready helper so the
+# relaunched instance reports ready (reaches RUNNING) and writes crashd.ready.
+exec "${WORK}/ready_svc" crashd
+SVCEOF
 	chmod 755 "${dir}/bin/crashd"
 
 	cat > "${dir}/etc/crashd.ucl" <<-UCL
@@ -597,8 +620,8 @@ on_demand_crash_relaunch_body() {
 
 	start_stack
 
-	# Service should NOT be running yet (on-demand).
-	atf_check -s exit:0 -o not-match:"crashd.*running" \
+	# Service should NOT be running yet (on-demand; labelled by provides[0]).
+	atf_check -s exit:0 -o not-match:"org.test.crash.svc.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 
 	# First lookup triggers launch -> service crashes -> restart.
@@ -607,15 +630,15 @@ on_demand_crash_relaunch_body() {
 	# Wait for the restarted instance to come up.
 	if ! wait_for_file "${WORK}/crashd.ready" 15; then
 		cat "${logfile}" 2>/dev/null
-		atf_skip "service did not relaunch after crash"
+		atf_fail "service did not relaunch after crash"
 	fi
 
 	# Verify the service crashed and was relaunched.
 	atf_check -s exit:0 -o ignore \
 	    grep "exited status 1\|crashed.*crashd" "${logfile}"
 
-	# Service should now be running.
-	atf_check -s exit:0 -o match:"crashd.*running" \
+	# Service should now be running (labelled by provides[0]).
+	atf_check -s exit:0 -o match:"org.test.crash.svc.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 
 	# State file should show at least 2 invocations.
@@ -648,6 +671,8 @@ atf_init_test_cases() {
 	atf_add_test_case dtrace_probes
 	atf_add_test_case on_demand_concurrent_lookup
 	atf_add_test_case on_demand_crash_relaunch
+	atf_add_test_case reload_noop
+	atf_add_test_case reload_attribution
 }
 
 # ---------------------------------------------------------------
@@ -660,6 +685,7 @@ on_demand_concurrent_lookup_head() {
 }
 on_demand_concurrent_lookup_body() {
 	prepare_paths
+	build_lookup_client
 	create_user_bundle "Shared" "org.test.shared" "sharedd" \
 	    "org.test.shared.svc" 'on_demand = true;'
 
@@ -686,5 +712,63 @@ on_demand_concurrent_lookup_body() {
 	fi
 }
 on_demand_concurrent_lookup_cleanup() {
+	cleanup_common
+}
+
+# ---------------------------------------------------------------
+# Test: Reload with no on-disk changes is a no-op
+# ---------------------------------------------------------------
+atf_test_case reload_noop cleanup
+reload_noop_head() {
+	atf_set "descr" "Reload with no bundle changes reports zero deltas and leaves services running"
+	atf_set "require.user" "root"
+}
+reload_noop_body() {
+	prepare_paths
+	create_system_bundle "Steady" "org.test.steady" "steadyd" \
+	    "org.test.steady.svc"
+
+	start_stack
+	wait_for_file "${WORK}/steadyd.ready" 5
+
+	# Nothing changed on disk — reload's summary should report all zeros
+	# (supervisor_reload: "reload: N bundles, 0 new, 0 changed, 0 removed").
+	atf_check -s exit:0 -o match:"0 new, 0 changed, 0 removed" \
+	    servicectl -s "${CTL_SOCK}" reload
+
+	# The already-running service is untouched by the no-op reload.
+	atf_check -s exit:0 -o match:"org.test.steady.svc.*running" \
+	    servicectl -s "${CTL_SOCK}" status
+}
+reload_noop_cleanup() {
+	cleanup_common
+}
+
+# ---------------------------------------------------------------
+# Test: Reload-added service is attributed by=reload
+# ---------------------------------------------------------------
+atf_test_case reload_attribution cleanup
+reload_attribution_head() {
+	atf_set "descr" "A service launched by reload is attributed by=reload in status"
+	atf_set "require.user" "root"
+}
+reload_attribution_body() {
+	prepare_paths
+	start_stack
+
+	# Add a user bundle after startup, then reload to launch it.
+	create_user_bundle "Late" "org.test.late" "lated" \
+	    "org.test.late.svc"
+
+	atf_check -s exit:0 -o match:"1 new" \
+	    servicectl -s "${CTL_SOCK}" reload
+
+	wait_for_file "${WORK}/lated.ready" 5
+
+	# reload.c stamps launched_by="reload"; status shows it as by=reload.
+	atf_check -s exit:0 -o match:"org.test.late.svc.*by=reload" \
+	    servicectl -s "${CTL_SOCK}" status
+}
+reload_attribution_cleanup() {
 	cleanup_common
 }

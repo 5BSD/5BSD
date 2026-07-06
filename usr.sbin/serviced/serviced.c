@@ -41,6 +41,7 @@
 #include <libcapbundle.h>
 
 #include "serviced.h"
+#include "serviced_audit.h"
 #include "serviced_probes.h"
 
 struct serviced_state sd;
@@ -125,6 +126,12 @@ event_loop(void)
 					syslog(LOG_CRIT,
 					    "oracle died, stopping all services");
 					SERVICED_PROBE_ORACLE_DISCONNECTED();
+					/* Loss of the capability-minting authority
+					 * is a security-relevant integrity event. */
+					serviced_audit(AUE_SERVICED_ORACLE,
+					    getuid(), EIO,
+					    "oracle channel disconnected; "
+					    "stopping all services");
 					sd.shutting_down = true;
 					sd.running = false;
 					supervisor_stop(serviced_kq);
@@ -302,11 +309,22 @@ main(int argc, char *argv[])
 			sd.identity_fd,
 		};
 		for (int i = 0; i < (int)(sizeof(lockfds)/sizeof(lockfds[0])); i++) {
+			int rc;
+
 			if (lockfds[i] < 0)
 				continue;
-			(void)cap_clofork_limit(lockfds[i], 1);
-			(void)cap_cloexec_limit(lockfds[i], 1);
-			(void)cap_xfer_limit(lockfds[i], 0);
+			/* Apply all three limits, then report if any failed;
+			 * a silent failure here would let child services
+			 * inherit privileged descriptors. */
+			rc = 0;
+			rc |= cap_clofork_limit(lockfds[i], 1);
+			rc |= cap_cloexec_limit(lockfds[i], 1);
+			rc |= cap_xfer_limit(lockfds[i], 0);
+			if (rc != 0)
+				syslog(LOG_ERR,
+				    "failed to lock down inherited fd %d: %m; "
+				    "child services may inherit privileged "
+				    "descriptors", lockfds[i]);
 		}
 	}
 
@@ -373,6 +391,9 @@ main(int argc, char *argv[])
 
 	sd.running = true;
 	syslog(LOG_INFO, "serviced started, %u bundles registered",
+	    bundle_registry_count());
+	serviced_audit(AUE_SERVICED_START, getuid(), 0,
+	    "serviced started, %u bundles registered",
 	    bundle_registry_count());
 
 	/* Launch system services (tier-based parallel). */

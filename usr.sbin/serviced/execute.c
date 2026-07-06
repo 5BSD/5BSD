@@ -36,6 +36,7 @@
 #include <unistd.h>
 
 #include "serviced.h"
+#include "serviced_audit.h"
 #include "serviced_probes.h"
 
 #define	SVC_CHANNEL_FD	3	/* well-known fd for the channel */
@@ -44,6 +45,15 @@
 #define	SVC_MAX_TOKENS	(SERVICED_MAX_CAP_PATHS + SERVICED_MAX_CAP_FILES + \
 				    SERVICED_MAX_CAP_NET + SERVICED_MAX_CAP_JAIL + 1)
 #define	SVC_MAX_ENV	16
+
+/*
+ * Worst-case size of the comma-separated ORACLED_TOKEN_FDS list: every
+ * token contributes a decimal fd number (up to 10 digits for INT_MAX) plus
+ * a separator, and one trailing NUL.  Sizing from SVC_MAX_TOKENS ensures a
+ * fully-populated manifest never truncates the list (which would silently
+ * strip capabilities from, or mis-number a token for, the child).
+ */
+#define	SVC_TOKEN_FDS_STRLEN	(SVC_MAX_TOKENS * 12 + 1)
 
 /*
  * Build the token fd list string for ORACLED_TOKEN_FDS env var.
@@ -79,9 +89,10 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
     uid_t uid, gid_t gid, bool have_creds, const char *homedir,
     gid_t *groups, int ngroups)
 {
-	char channel_env[64], capprotect_env[64], token_env[256], label_env[128];
+	char channel_env[64], capprotect_env[64], label_env[128];
+	char token_env[SVC_TOKEN_FDS_STRLEN + sizeof("ORACLED_TOKEN_FDS=")];
 	char user_env[128], home_env[PATH_MAX + 8];
-	char fds_str[128];
+	char fds_str[SVC_TOKEN_FDS_STRLEN];
 	char *env[SVC_MAX_ENV];
 	char *argv[2];
 	int nullfd, fd;
@@ -145,6 +156,14 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 			_exit(126);
 		(void)close(capprotect_fd);
 		capprotect_fd = SVC_CAPPROTECT_FD;
+	} else {
+		/*
+		 * No capprotect instance for this service.  closefrom() below
+		 * starts at the first token slot, so nothing else scrubs the
+		 * reserved capprotect slot — close it explicitly so no fd the
+		 * child happened to inherit at fd 4 survives into execve().
+		 */
+		(void)close(SVC_CAPPROTECT_FD);
 	}
 
 	for (i = 0; i < ntokens; i++) {
@@ -264,6 +283,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	bool have_creds;
 	pid_t pid;
 	int pd_fd;
+	int saved_errno __unused = 0;	/* consumed only by the DTrace probe */
 	unsigned i;
 
 	m = &svc->manifest;
@@ -559,11 +579,13 @@ svc_exec(struct svc_runtime *svc, int kq)
 
 	/* Enlist in coalition and set as leader. */
 	if (mac_cap_coalition_enlist(coalition_fd, pd_fd) != 0) {
+		saved_errno = errno;
 		syslog(LOG_ERR, "svc_exec %s: coalition enlist: %m",
 		    m->label);
 		goto fail_postfork;
 	}
 	if (mac_cap_coalition_set_leader(coalition_fd, pd_fd) != 0) {
+		saved_errno = errno;
 		syslog(LOG_ERR, "svc_exec %s: coalition set_leader: %m",
 		    m->label);
 		goto fail_postfork;
@@ -610,6 +632,16 @@ svc_exec(struct svc_runtime *svc, int kq)
 	    m->label, (intmax_t)pid);
 	SERVICED_PROBE_SVC_START(m->label, pid);
 
+	/*
+	 * Audit the launch.  Executing a service under changed credentials is
+	 * a security-relevant transition, so record the resulting principal
+	 * (uid/gid) and pid in the trusted audit trail, not just via DTrace.
+	 */
+	serviced_audit(AUE_SERVICED_SVC_EXEC, getuid(), 0,
+	    "svc=%s pid=%jd uid=%u gid=%u creds_changed=%d",
+	    m->label, (intmax_t)pid, (unsigned)uid, (unsigned)gid,
+	    have_creds ? 1 : 0);
+
 	{
 		struct timespec exec_end;
 		uint64_t dur __unused;
@@ -623,8 +655,10 @@ svc_exec(struct svc_runtime *svc, int kq)
 	return (0);
 
 fail_postfork:
-	/* child_end and token_fds already closed by parent path above. */
-	SERVICED_PROBE_SVC_EXEC_FAIL(m->label, errno);
+	/* child_end and token_fds already closed by parent path above.
+	 * Report the errno captured at the failure site: the intervening
+	 * syslog() and the cleanup syscalls below can clobber errno. */
+	SERVICED_PROBE_SVC_EXEC_FAIL(m->label, saved_errno);
 	pdkill(pd_fd, SIGKILL);
 	waitpid(pid, NULL, WNOHANG);
 	oracle_release_manifest(sd.oracle_channel_fd, &minted_manifest);
@@ -639,6 +673,14 @@ fail_postfork:
 	return (-1);
 
 fail_tokens:
+	/*
+	 * Capability minting is the core privilege primitive; record mint
+	 * failures in the audit trail.  errno is unreliable here (the mint
+	 * call sites log via syslog before jumping), so report the failure
+	 * generically and rely on the text token for detail.
+	 */
+	serviced_audit(AUE_SERVICED_CAP_MINT, getuid(), EIO,
+	    "svc=%s capability mint failed after %u tokens", m->label, ntokens);
 	oracle_release_manifest(sd.oracle_channel_fd, &minted_manifest);
 	close(oracle_end);
 	close(child_end);

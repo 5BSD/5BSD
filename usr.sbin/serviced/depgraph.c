@@ -122,9 +122,21 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 			if (provider == -2)
 				continue;	/* ORACLED — always satisfied */
 			if (provider == -1) {
+				/*
+				 * Provider is not part of this sort batch.
+				 * depgraph_sort() only orders the services it is
+				 * given (a startup tier, or the new services in
+				 * a reload), so an "unknown" provider is normally
+				 * an already-running or system-bundle service
+				 * that lives outside this batch.  Ordering within
+				 * the batch cannot (and need not) constrain it,
+				 * so treat it as satisfied — but log it, since a
+				 * genuinely missing dependency also lands here.
+				 */
 				syslog(LOG_WARNING, "depgraph: %s requires "
-				    "unknown provider '%s', treating as "
-				    "satisfied", svcs[i].manifest.label,
+				    "provider '%s' not in this batch, treating "
+				    "as externally satisfied",
+				    svcs[i].manifest.label,
 				    svcs[i].manifest.requires[k]);
 				continue;
 			}

@@ -18,6 +18,7 @@ fi
 # naming tests use start_oracled which does not wait for serviced ready
 start_oracled()
 {
+	require_mac_capability
 	prepare_paths
 	write_config
 
@@ -333,16 +334,13 @@ service_ready_protocol_body()
 	find_serviced
 
 	prepare_paths
-	cat > "$manifestdir/ready.ucl" <<EOF
-label = "ready-test";
-program = "$(pwd)/ready_svc";
-EOF
+	make_svc_bin system ready-test '' "$(pwd)/ready_svc"
 	write_config
 	start_oracled
 
 	if ! wait_for_file ready-ok.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start (mac_capability may not be loaded)"
+		atf_fail "service did not start"
 	fi
 
 	atf_check -s exit:0 -o match:"status=0" cat ready-ok.out
@@ -372,16 +370,10 @@ naming_register_and_lookup_body()
 
 	prepare_paths
 
-	cat > "$manifestdir/aaa-provider.ucl" <<EOF
-label = "test.provider";
-program = "$(pwd)/provider_svc";
-provides = ["test-api"];
-EOF
-	cat > "$manifestdir/zzz-client.ucl" <<EOF
-label = "client";
-program = "$(pwd)/client_svc";
-requires = ["test-api"];
-EOF
+	make_svc_bin system test.provider '' \
+	    "$(pwd)/provider_svc"
+	make_svc_bin system client 'requires = ["test.provider"];' \
+	    "$(pwd)/client_svc"
 	# Client reads lookup target from file.
 	echo "test.provider" > lookup-name
 	write_config
@@ -390,7 +382,7 @@ EOF
 	# Wait for provider to register.
 	if ! wait_for_file provider-registered.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "provider did not start"
+		atf_fail "provider did not start"
 	fi
 	atf_check -s exit:0 -o match:"status=0" \
 	    grep "status=" provider-registered.out
@@ -398,7 +390,7 @@ EOF
 	# Wait for client to complete lookup.
 	if ! wait_for_file client-lookup.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "client did not complete lookup"
+		atf_fail "client did not complete lookup"
 	fi
 	atf_check -s exit:0 -o match:"status=0" \
 	    grep "status=" client-lookup.out
@@ -406,7 +398,7 @@ EOF
 	# Wait for the provider to see the client connection.
 	if ! wait_for_file provider-client.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "provider did not see client connection"
+		atf_fail "provider did not see client connection"
 	fi
 	atf_check -s exit:0 -o match:"op=128" \
 	    grep "op=" provider-client.out
@@ -416,7 +408,7 @@ EOF
 	# Wait for the client to read the provider's greeting.
 	if ! wait_for_file client-message.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "client did not receive message"
+		atf_fail "client did not receive message"
 	fi
 	atf_check -s exit:0 -o match:"hello from provider" \
 	    cat client-message.out
@@ -445,16 +437,13 @@ naming_lookup_nonexistent_body()
 	prepare_paths
 	echo "no.such.service" > lookup-name
 
-	cat > "$manifestdir/client.ucl" <<EOF
-label = "client";
-program = "$(pwd)/client_svc";
-EOF
+	make_svc_bin system client '' "$(pwd)/client_svc"
 	write_config
 	start_oracled
 
 	if ! wait_for_file client-lookup.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "client did not start"
+		atf_fail "client did not start"
 	fi
 
 	# status=2 is ENOENT on FreeBSD
@@ -484,18 +473,14 @@ naming_auto_unregister_on_exit_body()
 
 	prepare_paths
 
-	cat > "$manifestdir/provider.ucl" <<EOF
-label = "test.unreg";
-program = "$(pwd)/provider_svc";
-restart = "never";
-provides = ["test.unreg"];
-EOF
+	make_svc_bin system test.unreg 'restart = "never";
+provides = ["test.unreg"];' "$(pwd)/provider_svc"
 	write_config
 	start_oracled
 
 	if ! wait_for_file provider-registered.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "provider did not start"
+		atf_fail "provider did not start"
 	fi
 
 	# Kill the provider.
@@ -597,17 +582,14 @@ CEOF
 
 	start_oracled
 	prepare_paths
-	cat > "$manifestdir/squat.ucl" <<EOF
-label = "squat-test";
-program = "$(pwd)/squat_svc";
-provides = ["squat-api"];
-EOF
+	make_svc_bin system squat-test 'provides = ["squat-api"];' \
+	    "$(pwd)/squat_svc"
 	kill -HUP "$daemon_pid" 2>/dev/null
 	sleep 2
 
 	if ! wait_for_file squat-result.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 
 	# status=13 is EACCES on FreeBSD
@@ -710,17 +692,14 @@ CEOF
 
 	find_serviced
 	prepare_paths
-	cat > "$manifestdir/selfloop.ucl" <<EOF
-label = "selfloop.test";
-program = "$(pwd)/selfloop_svc";
-provides = ["selfloop.test"];
-EOF
+	make_svc_bin system selfloop.test 'provides = ["selfloop.test"];' \
+	    "$(pwd)/selfloop_svc"
 	write_config
 	start_oracled
 
 	if ! wait_for_file selfloop-result.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 
 	# status=62 is ELOOP on FreeBSD

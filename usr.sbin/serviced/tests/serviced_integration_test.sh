@@ -97,22 +97,23 @@ CEOF
 
 	start_stack
 
-	cat > "$manifestdir/token-test.ucl" <<EOF
-label = "token-test";
-program = "$(pwd)/token_svc";
-capabilities {
+	make_svc_bin system token-test 'capabilities {
     paths = ["/tmp"];
-}
-EOF
-	# Reload to pick up the manifest
+}' "$(pwd)/token_svc"
+	# Reload to pick up the bundle
 	kill -HUP "$daemon_pid"
 
 	if ! wait_for_file token-check.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 
 	atf_check -s exit:0 -o match:"channel_fd=3" cat token-check.out
+	# Not just that the channel was set up — a capability token for the
+	# service's declared path (/tmp) must actually have been delivered and
+	# be a valid, fstat-able fd.  valid_tokens is computed by the service.
+	atf_check -s exit:0 -o match:"token_fds=" cat token-check.out
+	atf_check -s exit:0 -o match:"valid_tokens=[1-9]" cat token-check.out
 }
 capability_tokens_delivered_cleanup()
 {
@@ -135,21 +136,14 @@ crash_recovery_restarts_body()
 	start_stack
 
 	# Service that crashes first time, succeeds second time
-	write_executable crasher <<'SEOF'
-#!/bin/sh
-if [ -f crash-count.out ]; then
-    echo "restarted" > crash-restarted.out
-    exec sleep 30
-fi
-echo "first" > crash-count.out
-exit 1
-SEOF
-
-	cat > "$manifestdir/crasher.ucl" <<EOF
-label = "crasher";
-program = "$(pwd)/crasher";
-restart = "on-failure";
-EOF
+	make_svc system crasher 'restart = "on-failure";' \
+	    '#!/bin/sh' \
+	    "if [ -f ${WORK}/crash-count.out ]; then" \
+	    "    echo \"restarted\" > ${WORK}/crash-restarted.out" \
+	    '    exec sleep 30' \
+	    'fi' \
+	    "echo \"first\" > ${WORK}/crash-count.out" \
+	    'exit 1'
 	kill -HUP "$daemon_pid"
 
 	if ! wait_for_file crash-restarted.out; then
@@ -179,17 +173,9 @@ circuit_breaker_stops_restarts_body()
 {
 	start_stack
 
-	write_executable fastcrash <<'SEOF'
-#!/bin/sh
-exit 1
-SEOF
-
-	cat > "$manifestdir/fastcrash.ucl" <<EOF
-label = "fastcrash";
-program = "$(pwd)/fastcrash";
-restart = "on-failure";
-max_failures = 3;
-EOF
+	make_svc system fastcrash 'restart = "on-failure"; max_failures = 3;' \
+	    '#!/bin/sh' \
+	    'exit 1'
 	kill -HUP "$daemon_pid"
 
 	# Wait for circuit breaker message in log
@@ -223,22 +209,16 @@ graceful_shutdown_sigterm_body()
 {
 	start_stack
 
-	write_executable trapper <<'SEOF'
-#!/bin/sh
-trap 'echo "got-sigterm" > sigterm-marker.out; exit 0' TERM
-echo "ready" > trapper-ready.out
-while true; do sleep 1; done
-SEOF
-
-	cat > "$manifestdir/trapper.ucl" <<EOF
-label = "trapper";
-program = "$(pwd)/trapper";
-EOF
+	make_svc system trapper '' \
+	    '#!/bin/sh' \
+	    "trap 'echo \"got-sigterm\" > ${WORK}/sigterm-marker.out; exit 0' TERM" \
+	    "echo \"ready\" > ${WORK}/trapper-ready.out" \
+	    'while true; do sleep 1; done'
 	kill -HUP "$daemon_pid"
 
 	if ! wait_for_file trapper-ready.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 
 	# Shut down the stack — this sends SIGTERM to services
@@ -246,13 +226,14 @@ EOF
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
 
-	# Give a moment for the marker to be written
-	sleep 0.5
-
-	if [ -f sigterm-marker.out ]; then
-		atf_check -s exit:0 -o match:"got-sigterm" \
-		    cat sigterm-marker.out
+	# The marker must actually be written — otherwise SIGTERM was never
+	# delivered and the old "if [ -f ... ]" guard passed vacuously.
+	if ! wait_for_file "${WORK}/sigterm-marker.out" 3; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "service did not receive SIGTERM (marker not written)"
 	fi
+	atf_check -s exit:0 -o match:"got-sigterm" \
+	    cat "${WORK}/sigterm-marker.out"
 }
 graceful_shutdown_sigterm_cleanup()
 {
@@ -274,44 +255,35 @@ dependency_order_with_caps_body()
 {
 	start_stack
 
-	write_executable provider_svc <<'SEOF'
-#!/bin/sh
-date +%s%N > provider-time.out
-exec sleep 30
-SEOF
-
-	write_executable consumer_svc <<'SEOF'
-#!/bin/sh
-date +%s%N > consumer-time.out
-exec sleep 30
-SEOF
-
-	# Filenames sorted so provider loads first lexicographically too,
-	# but dependency ordering is what we're testing.
-	cat > "$manifestdir/aaa-provider.ucl" <<EOF
-label = "dep-provider";
-program = "$(pwd)/provider_svc";
-provides = ["dep-api"];
-EOF
-	cat > "$manifestdir/zzz-consumer.ucl" <<EOF
-label = "dep-consumer";
-program = "$(pwd)/consumer_svc";
-requires = ["dep-api"];
-EOF
+	# Dependency ordering (consumer requires the provider's label, which
+	# is its provides[0]) is what forces provider-before-consumer,
+	# independent of bundle directory name ordering.
+	make_svc system dep-provider '' \
+	    '#!/bin/sh' \
+	    "date +%s%N > ${WORK}/provider-time.out" \
+	    'exec sleep 30'
+	make_svc system dep-consumer 'requires = ["dep-provider"];' \
+	    '#!/bin/sh' \
+	    "date +%s%N > ${WORK}/consumer-time.out" \
+	    'exec sleep 30'
 	kill -HUP "$daemon_pid"
 
 	if ! wait_for_file provider-time.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "provider did not start"
+		atf_fail "provider did not start"
 	fi
 	if ! wait_for_file consumer-time.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "consumer did not start"
+		atf_fail "consumer did not start"
 	fi
 
-	# Verify log order — provider should appear before consumer
-	provider_line=$(grep -n "dep-provider" "$logfile" | head -1 | cut -d: -f1)
-	consumer_line=$(grep -n "dep-consumer" "$logfile" | head -1 | cut -d: -f1)
+	# Verify log order — provider should be *launched* before consumer.
+	# Match the launch line specifically ("service <label>: started pid"):
+	# grepping any mention is wrong because bundle_registry logs a
+	# "loaded '<path>'" line per bundle in readdir order, which can mention
+	# the consumer before the provider independent of launch order.
+	provider_line=$(grep -n "service dep-provider: started" "$logfile" | head -1 | cut -d: -f1)
+	consumer_line=$(grep -n "service dep-consumer: started" "$logfile" | head -1 | cut -d: -f1)
 
 	if [ -n "$provider_line" ] && [ -n "$consumer_line" ]; then
 		if [ "$consumer_line" -le "$provider_line" ]; then
@@ -340,16 +312,10 @@ reload_adds_service_body()
 	start_stack
 
 	# Start with no services, then add one
-	write_executable hello_svc <<'SEOF'
-#!/bin/sh
-echo "hello" > hello-started.out
-exec sleep 30
-SEOF
-
-	cat > "$manifestdir/hello.ucl" <<EOF
-label = "hello";
-program = "$(pwd)/hello_svc";
-EOF
+	make_svc system hello '' \
+	    '#!/bin/sh' \
+	    "echo \"hello\" > ${WORK}/hello-started.out" \
+	    'exec sleep 30'
 	kill -HUP "$daemon_pid"
 
 	if ! wait_for_file hello-started.out; then
@@ -377,27 +343,21 @@ reload_removes_service_head()
 }
 reload_removes_service_body()
 {
-	write_executable removeme <<'SEOF'
-#!/bin/sh
-echo "running" > removeme-running.out
-exec sleep 30
-SEOF
-
 	prepare_paths
-	cat > "$manifestdir/removeme.ucl" <<EOF
-label = "removeme";
-program = "$(pwd)/removeme";
-EOF
+	make_svc system removeme '' \
+	    '#!/bin/sh' \
+	    "echo \"running\" > ${WORK}/removeme-running.out" \
+	    'exec sleep 30'
 	write_config
 	start_stack
 
 	if ! wait_for_file removeme-running.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 
-	# Remove the manifest and reload
-	rm -f "$manifestdir/removeme.ucl"
+	# Remove the bundle and reload
+	rm -rf "${APPS_DIR}/removeme.cap"
 	kill -HUP "$daemon_pid"
 
 	# Wait for removal to be logged
@@ -418,6 +378,68 @@ reload_removes_service_cleanup()
 }
 
 # ===================================================================
+# audit_records_best_effort
+#
+# The daemon emits OpenBSM audit records (AUE_SERVICED_*) via audit_submit
+# when built with -DUSE_BSM_AUDIT.  A full audit test needs a configured
+# auditd + praudit and an active trail, which is often unavailable in CI.
+# This is a BEST-EFFORT check: if the audit tooling or an active trail is
+# missing, or the daemon was not built with audit support, it skips rather
+# than fails.  It never requires auditing to be configured.
+# ===================================================================
+
+atf_test_case audit_records_best_effort cleanup
+audit_records_best_effort_head()
+{
+	atf_set "descr" "serviced emits BSM audit records (best effort; skips if audit unavailable)"
+	atf_set "require.user" "root"
+}
+audit_records_best_effort_body()
+{
+	command -v praudit >/dev/null 2>&1 || \
+	    atf_skip "praudit not available"
+	command -v auditreduce >/dev/null 2>&1 || \
+	    atf_skip "auditreduce not available"
+	if [ ! -f /var/audit/current ]; then
+		atf_skip "no active audit trail (/var/audit/current absent)"
+	fi
+	if ! auditreduce /var/audit/current >/dev/null 2>&1; then
+		atf_skip "audit trail not readable"
+	fi
+
+	start_stack
+
+	# A control command (reload) emits AUE_SERVICED_CTL; starting a
+	# service emits AUE_SERVICED_SVC_EXEC.
+	make_svc system audsvc '' \
+	    '#!/bin/sh' \
+	    "echo run > ${WORK}/audsvc.out" \
+	    'sleep 30'
+	kill -HUP "$daemon_pid"
+	if ! wait_for_file "${WORK}/audsvc.out" 5; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "service did not start"
+	fi
+
+	# Flush the audit queue to disk (best effort) and look for any
+	# serviced-attributed record.
+	audit -n >/dev/null 2>&1 || true
+	sleep 1
+
+	if auditreduce /var/audit/current 2>/dev/null | \
+	    praudit 2>/dev/null | grep -qi "serviced"; then
+		# Found a serviced audit record — the audit path works.
+		return 0
+	fi
+	atf_skip "no serviced audit records found (daemon may lack -DUSE_BSM_AUDIT or auditing not configured)"
+}
+audit_records_best_effort_cleanup()
+{
+	cleanup_common
+	rm -f audsvc audsvc.out
+}
+
+# ===================================================================
 
 atf_init_test_cases()
 {
@@ -428,4 +450,5 @@ atf_init_test_cases()
 	atf_add_test_case dependency_order_with_caps
 	atf_add_test_case reload_adds_service
 	atf_add_test_case reload_removes_service
+	atf_add_test_case audit_records_best_effort
 }

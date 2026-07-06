@@ -37,17 +37,17 @@
 __BEGIN_DECLS
 
 /*
- * Initialize the library.  Reads ORACLED_PAIR_FD from environment.
+ * Initialize the library.  Reads ORACLED_CHANNEL_FD from environment.
  * Must be called before any other function.
  * Returns 0 on success, -1 on failure (pair fd not set).
  */
 int	service_init(void);
 
 /*
- * Return the pair fd to serviced.  Useful for kqueue registration.
+ * Return the channel fd to serviced.  Useful for kqueue registration.
  * Returns -1 if not initialized.
  */
-int	service_pair_fd(void);
+int	service_channel_fd(void);
 
 /*
  * Apply mac_capability_capprotect shielding to this service process.

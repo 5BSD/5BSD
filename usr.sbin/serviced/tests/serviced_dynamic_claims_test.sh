@@ -55,34 +55,21 @@ shared_path_survives_exit_body()
 	require_mac_capability
 	start_stack
 
-	write_executable svc_a <<'SEOF'
-#!/bin/sh
-echo $$ > svc-a.pid
-echo "running" > svc-a-running.out
-while true; do sleep 1; done
-SEOF
-
-	write_executable svc_b <<'SEOF'
-#!/bin/sh
-echo $$ > svc-b.pid
-echo "running" > svc-b-running.out
-while true; do sleep 1; done
-SEOF
-
-	cat > "$manifestdir/svc-a.ucl" <<EOF
-label = "svc-a";
-program = "$(pwd)/svc_a";
-capabilities {
+	make_svc system svc-a 'capabilities {
     paths = ["/var/tmp"];
-}
-EOF
-	cat > "$manifestdir/svc-b.ucl" <<EOF
-label = "svc-b";
-program = "$(pwd)/svc_b";
-capabilities {
+}' \
+	    '#!/bin/sh' \
+	    "echo \$\$ > ${WORK}/svc-a.pid" \
+	    "echo running > ${WORK}/svc-a-running.out" \
+	    'while true; do sleep 1; done'
+
+	make_svc system svc-b 'capabilities {
     paths = ["/var/tmp"];
-}
-EOF
+}' \
+	    '#!/bin/sh' \
+	    "echo \$\$ > ${WORK}/svc-b.pid" \
+	    "echo running > ${WORK}/svc-b-running.out" \
+	    'while true; do sleep 1; done'
 	kill -HUP "$daemon_pid"
 
 	if ! wait_for_file svc-a-running.out; then
@@ -143,20 +130,13 @@ dynamic_claim_fully_released_body()
 	require_mac_capability
 	start_stack
 
-	write_executable sole_user <<'SEOF'
-#!/bin/sh
-echo $$ > sole-user.pid
-echo "running" > sole-user-running.out
-while true; do sleep 1; done
-SEOF
-
-	cat > "$manifestdir/sole.ucl" <<EOF
-label = "sole-user";
-program = "$(pwd)/sole_user";
-capabilities {
+	make_svc system sole-user 'capabilities {
     paths = ["/var/tmp"];
-}
-EOF
+}' \
+	    '#!/bin/sh' \
+	    "echo \$\$ > ${WORK}/sole-user.pid" \
+	    "echo running > ${WORK}/sole-user-running.out" \
+	    'while true; do sleep 1; done'
 	kill -HUP "$daemon_pid"
 
 	if ! wait_for_file sole-user-running.out; then
@@ -220,20 +200,19 @@ claims {
     paths = ["/var/tmp"];
 }
 EOF
-	write_executable policy_svc <<'SEOF'
-#!/bin/sh
-echo $$ > policy-svc.pid
-echo "running" > policy-svc-running.out
-while true; do sleep 1; done
-SEOF
+	# This test builds its config inline instead of calling write_config,
+	# so the .cap bundle-dir overrides must be exported here for serviced
+	# to scan the test-local trees.
+	export SERVICED_BUNDLE_DIR_SYSTEM="${APPS_DIR}"
+	export SERVICED_BUNDLE_DIR_USER="${USER_APPS_DIR}"
 
-	cat > "$manifestdir/policy-svc.ucl" <<EOF
-label = "policy-svc";
-program = "$(pwd)/policy_svc";
-capabilities {
+	make_svc system policy-svc 'capabilities {
     paths = ["/var/tmp"];
-}
-EOF
+}' \
+	    '#!/bin/sh' \
+	    "echo \$\$ > ${WORK}/policy-svc.pid" \
+	    "echo running > ${WORK}/policy-svc-running.out" \
+	    'while true; do sleep 1; done'
 
 	oracled -d -f "$conffile" >"$logfile" 2>&1 &
 	daemon_pid=$!
@@ -262,7 +241,7 @@ EOF
 
 	if ! wait_for_file policy-svc-running.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 
 	# Verify claim is policy
@@ -307,20 +286,13 @@ multi_cap_batched_release_body()
 	require_mac_capability
 	start_stack
 
-	write_executable multi_svc <<'SEOF'
-#!/bin/sh
-echo $$ > multi-svc.pid
-echo "running" > multi-svc-running.out
-while true; do sleep 1; done
-SEOF
-
-	cat > "$manifestdir/multi.ucl" <<EOF
-label = "multi-svc";
-program = "$(pwd)/multi_svc";
-capabilities {
+	make_svc system multi-svc 'capabilities {
     paths = ["/var/tmp", "/tmp"];
-}
-EOF
+}' \
+	    '#!/bin/sh' \
+	    "echo \$\$ > ${WORK}/multi-svc.pid" \
+	    "echo running > ${WORK}/multi-svc-running.out" \
+	    'while true; do sleep 1; done'
 	kill -HUP "$daemon_pid"
 
 	if ! wait_for_file multi-svc-running.out; then
@@ -355,19 +327,12 @@ EOF
 
 	# Verify the channel is still healthy — next operation must
 	# succeed, proving the drain didn't leave stale replies.
-	write_executable health_svc <<'SEOF'
-#!/bin/sh
-echo "running" > health-svc-running.out
-while true; do sleep 1; done
-SEOF
-
-	cat > "$manifestdir/health.ucl" <<EOF
-label = "health-svc";
-program = "$(pwd)/health_svc";
-capabilities {
+	make_svc system health-svc 'capabilities {
     paths = ["/var/tmp"];
-}
-EOF
+}' \
+	    '#!/bin/sh' \
+	    "echo running > ${WORK}/health-svc-running.out" \
+	    'while true; do sleep 1; done'
 	kill -HUP "$daemon_pid"
 
 	if ! wait_for_file health-svc-running.out; then
@@ -403,20 +368,13 @@ duplicate_release_no_underflow_body()
 	require_mac_capability
 	start_stack
 
-	write_executable dup_svc <<'SEOF'
-#!/bin/sh
-echo $$ > dup-svc.pid
-echo "running" > dup-svc-running.out
-while true; do sleep 1; done
-SEOF
-
-	cat > "$manifestdir/dup.ucl" <<EOF
-label = "dup-svc";
-program = "$(pwd)/dup_svc";
-capabilities {
+	make_svc system dup-svc 'capabilities {
     paths = ["/var/tmp"];
-}
-EOF
+}' \
+	    '#!/bin/sh' \
+	    "echo \$\$ > ${WORK}/dup-svc.pid" \
+	    "echo running > ${WORK}/dup-svc-running.out" \
+	    'while true; do sleep 1; done'
 	kill -HUP "$daemon_pid"
 
 	if ! wait_for_file dup-svc-running.out; then
@@ -432,20 +390,13 @@ EOF
 	# Now start a new service claiming the same path — if refcount
 	# underflowed to UINT32_MAX, the auto-claim would see it as
 	# already claimed with a huge refcount instead of claiming fresh.
-	write_executable dup2_svc <<'SEOF'
-#!/bin/sh
-echo $$ > dup2-svc.pid
-echo "running" > dup2-svc-running.out
-while true; do sleep 1; done
-SEOF
-
-	cat > "$manifestdir/dup2.ucl" <<EOF
-label = "dup2-svc";
-program = "$(pwd)/dup2_svc";
-capabilities {
+	make_svc system dup2-svc 'capabilities {
     paths = ["/var/tmp"];
-}
-EOF
+}' \
+	    '#!/bin/sh' \
+	    "echo \$\$ > ${WORK}/dup2-svc.pid" \
+	    "echo running > ${WORK}/dup2-svc-running.out" \
+	    'while true; do sleep 1; done'
 	kill -HUP "$daemon_pid"
 
 	if ! wait_for_file dup2-svc-running.out; then
@@ -485,23 +436,16 @@ sweep_all_claim_types_body()
 	require_mac_capability
 	start_stack
 
-	write_executable sweep_svc <<'SEOF'
-#!/bin/sh
-echo $$ > sweep-svc.pid
-echo "running" > sweep-svc-running.out
-while true; do sleep 1; done
-SEOF
-
-	cat > "$manifestdir/sweep.ucl" <<EOF
-label = "sweep-svc";
-program = "$(pwd)/sweep_svc";
-capabilities {
+	make_svc system sweep-svc 'capabilities {
     paths = ["/var/tmp"];
     network = [
         { port = 9999; protocol = "tcp"; direction = "bind"; },
     ];
-}
-EOF
+}' \
+	    '#!/bin/sh' \
+	    "echo \$\$ > ${WORK}/sweep-svc.pid" \
+	    "echo running > ${WORK}/sweep-svc-running.out" \
+	    'while true; do sleep 1; done'
 	kill -HUP "$daemon_pid"
 
 	if ! wait_for_file sweep-svc-running.out; then

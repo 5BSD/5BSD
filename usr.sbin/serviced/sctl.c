@@ -30,6 +30,7 @@
 #include <unistd.h>
 
 #include "serviced.h"
+#include "serviced_audit.h"
 #include "serviced_ctl.h"
 #include "serviced_probes.h"
 
@@ -205,8 +206,13 @@ conn_arm_timeout(struct sctl_conn *c)
 	EV_SET(&kev, c->timer_ident, EVFILT_TIMER,
 	    EV_ADD | EV_ONESHOT, NOTE_SECONDS, SCTL_CONN_TIMEOUT_SEC,
 	    SCTL_CONN_PTR(c));
-	if (kevent(serviced_kq, &kev, 1, NULL, 0, NULL) == -1)
+	if (kevent(serviced_kq, &kev, 1, NULL, 0, NULL) == -1) {
 		syslog(LOG_WARNING, "sctl: conn timeout: %m");
+		/* Timer was not armed; clear the ident so conn_destroy does
+		 * not try to delete a nonexistent timer and the connection
+		 * state honestly reflects that it has no timeout. */
+		c->timer_ident = 0;
+	}
 }
 
 /*
@@ -259,12 +265,19 @@ conn_dispatch(struct sctl_conn *c)
 			syslog(LOG_WARNING,
 			    "sctl: reload denied uid %u", c->euid);
 			SERVICED_PROBE_SCTL_DENY(req->op, c->euid);
+			serviced_audit(AUE_SERVICED_CTL, c->euid, EPERM,
+			    "reload denied");
 		} else {
 			if (supervisor_reload(serviced_kq,
-			    c->summary, sizeof(c->summary)) == -1)
-				reply->status = (uint32_t)-1;
-			else
+			    c->summary, sizeof(c->summary)) == -1) {
+				reply->status = EIO;
+				serviced_audit(AUE_SERVICED_CTL, c->euid, EIO,
+				    "reload failed");
+			} else {
 				reply->status = 0;
+				serviced_audit(AUE_SERVICED_CTL, c->euid, 0,
+				    "reload: %s", c->summary);
+			}
 			reply->flags = (uint32_t)strlen(c->summary);
 		}
 		break;
@@ -287,6 +300,8 @@ conn_dispatch(struct sctl_conn *c)
 			    "stop: permission denied");
 			reply->flags = (uint32_t)strlen(c->summary);
 			SERVICED_PROBE_SCTL_DENY(req->op, c->euid);
+			serviced_audit(AUE_SERVICED_CTL, c->euid, EPERM,
+			    "stop denied");
 		} else if (req->datalen == 0) {
 			reply->status = EINVAL;
 			snprintf(c->summary, sizeof(c->summary),
@@ -324,6 +339,8 @@ conn_dispatch(struct sctl_conn *c)
 				reply->status = 0;
 				snprintf(c->summary, sizeof(c->summary),
 				    "stop: \"%s\" stopping", c->payload);
+				serviced_audit(AUE_SERVICED_CTL, c->euid, 0,
+				    "stop svc=%s", c->payload);
 			}
 			reply->flags = (uint32_t)strlen(c->summary);
 		}
@@ -400,8 +417,11 @@ conn_handle_read(struct sctl_conn *c)
 
 				EV_SET(&kev[0], c->fd, EVFILT_READ,
 				    EV_DELETE, 0, 0, NULL);
+				/* Level-triggered, matching the normal reply
+				 * path above; the edge-triggered EV_CLEAR could
+				 * stall a short reply that hits EAGAIN. */
 				EV_SET(&kev[1], c->fd, EVFILT_WRITE,
-				    EV_ADD | EV_CLEAR, 0, 0,
+				    EV_ADD, 0, 0,
 				    SCTL_CONN_PTR(c));
 				kevent(serviced_kq, kev, 2, NULL, 0, NULL);
 			}
@@ -625,7 +645,40 @@ sctl_conn_event(struct kevent *kev)
 
 	if (kev->flags & EV_EOF &&
 	    c->state <= SCTL_CONN_READING_PAYLOAD) {
-		conn_destroy(c);
+		/*
+		 * The peer half-closed while we are still reading its request.
+		 * kqueue can deliver EV_EOF in the same event as buffered
+		 * readable data (kev->data > 0) — a well-behaved one-shot
+		 * client may write() its request and immediately
+		 * shutdown(SHUT_WR)/close().  Drain the buffered bytes so a
+		 * fully-arrived request is dispatched rather than silently
+		 * dropped with no reply.  conn_handle_read() consumes one
+		 * segment (header, then payload) per call, so loop until it
+		 * stops making progress.
+		 */
+		if (kev->filter == EVFILT_READ && kev->data > 0) {
+			enum sctl_conn_state prev_state;
+			size_t prev_off;
+
+			do {
+				prev_state = c->state;
+				prev_off = c->offset;
+				conn_handle_read(c);
+			} while (c->state <= SCTL_CONN_READING_PAYLOAD &&
+			    (c->state != prev_state || c->offset != prev_off));
+		}
+		if (c->state <= SCTL_CONN_READING_PAYLOAD ||
+		    c->state == SCTL_CONN_DONE) {
+			/* No complete request arrived (or it errored). */
+			conn_destroy(c);
+			return;
+		}
+		/*
+		 * A complete request was assembled and dispatched;
+		 * conn_dispatch() armed the write filter.  The reply is sent
+		 * when the socket is writable (the peer's SHUT_WR closed only
+		 * its write side), and CMD_DONE + destroy fire then.
+		 */
 		return;
 	}
 

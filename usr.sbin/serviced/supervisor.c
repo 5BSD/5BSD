@@ -225,7 +225,10 @@ supervisor_handle_procdesc(struct kevent *kev)
 			    sizeof(svc->pending_manifest));
 			svc->reload_pending = false;
 			svc->restart_count = 0;
-			svc_exec(svc, serviced_kq);
+			if (svc_exec(svc, serviced_kq) == -1)
+				syslog(LOG_ERR,
+				    "service %s: reload re-exec failed; "
+				    "left stopped", svc->manifest.label);
 			return;
 		}
 

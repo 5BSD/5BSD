@@ -679,6 +679,13 @@
 #define	AUE_BLUED_BOND_ADD	43312	/* 5BSD: BLE bond stored */
 #define	AUE_BLUED_BOND_REMOVE	43313	/* 5BSD: BLE bond removed */
 #define	AUE_BLUED_START		43314	/* 5BSD: blued daemon start */
+#define	AUE_SERVICED_START	43320	/* 5BSD: serviced daemon start */
+#define	AUE_SERVICED_CTL	43321	/* 5BSD: serviced control command */
+#define	AUE_SERVICED_SVC_EXEC	43322	/* 5BSD: serviced service exec */
+#define	AUE_SERVICED_CAP_MINT	43323	/* 5BSD: serviced capability mint */
+#define	AUE_SERVICED_RELOAD	43324	/* 5BSD: serviced config reload */
+#define	AUE_SERVICED_ONDEMAND	43325	/* 5BSD: serviced on-demand activation */
+#define	AUE_SERVICED_ORACLE	43326	/* 5BSD: serviced oracle disconnect */
 
 /*
  * Darwin BSM uses a number of AUE_O_* definitions, which are aliased to the

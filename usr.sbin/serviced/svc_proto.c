@@ -27,7 +27,7 @@
  * Send a reply to a service on its channel.
  */
 static void
-svc_channel_reply(struct svc_runtime *svc, int status,
+svc_channel_reply(struct svc_runtime *svc, uint32_t op, int status,
     uint64_t reply_token, int *fds, int nfds)
 {
 	struct mac_capability_sendmsg_args sa;
@@ -49,7 +49,7 @@ svc_channel_reply(struct svc_runtime *svc, int status,
 		    svc->manifest.label);
 		SERVICED_PROBE_ERROR("svc_proto", "channel reply failed");
 	} else
-		SERVICED_PROBE_IPC_REPLY(svc->manifest.label, 0, status);
+		SERVICED_PROBE_IPC_REPLY(svc->manifest.label, op, status);
 }
 
 static void
@@ -64,7 +64,7 @@ handle_svc_ready(struct svc_runtime *svc, uint64_t reply_token)
 		/* Drain any on-demand waiters for this service. */
 		on_demand_check_ready(svc, serviced_kq);
 	}
-	svc_channel_reply(svc, 0, reply_token, NULL, 0);
+	svc_channel_reply(svc, SVC_OP_READY, 0, reply_token, NULL, 0);
 }
 
 static void
@@ -75,18 +75,20 @@ handle_svc_register(struct svc_runtime *svc, const void *payload,
 	int error;
 
 	if (len < sizeof(*req)) {
-		svc_channel_reply(svc, EINVAL, reply_token, NULL, 0);
+		svc_channel_reply(svc, SVC_OP_REGISTER, EINVAL, reply_token,
+		    NULL, 0);
 		return;
 	}
 	req = payload;
 
 	if (strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
-		svc_channel_reply(svc, ENAMETOOLONG, reply_token, NULL, 0);
+		svc_channel_reply(svc, SVC_OP_REGISTER, ENAMETOOLONG,
+		    reply_token, NULL, 0);
 		return;
 	}
 
 	error = naming_register(req->name, svc);
-	svc_channel_reply(svc, error, reply_token, NULL, 0);
+	svc_channel_reply(svc, SVC_OP_REGISTER, error, reply_token, NULL, 0);
 }
 
 static void
@@ -97,18 +99,20 @@ handle_svc_unregister(struct svc_runtime *svc, const void *payload,
 	int error;
 
 	if (len < sizeof(*req)) {
-		svc_channel_reply(svc, EINVAL, reply_token, NULL, 0);
+		svc_channel_reply(svc, SVC_OP_UNREGISTER, EINVAL, reply_token,
+		    NULL, 0);
 		return;
 	}
 	req = payload;
 
 	if (strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
-		svc_channel_reply(svc, ENAMETOOLONG, reply_token, NULL, 0);
+		svc_channel_reply(svc, SVC_OP_UNREGISTER, ENAMETOOLONG,
+		    reply_token, NULL, 0);
 		return;
 	}
 
 	error = naming_unregister(req->name, svc);
-	svc_channel_reply(svc, error, reply_token, NULL, 0);
+	svc_channel_reply(svc, SVC_OP_UNREGISTER, error, reply_token, NULL, 0);
 }
 
 static void
@@ -119,13 +123,15 @@ handle_svc_lookup(struct svc_runtime *svc, const void *payload,
 	int client_fd, error;
 
 	if (len < sizeof(*req)) {
-		svc_channel_reply(svc, EINVAL, reply_token, NULL, 0);
+		svc_channel_reply(svc, SVC_OP_LOOKUP, EINVAL, reply_token,
+		    NULL, 0);
 		return;
 	}
 	req = payload;
 
 	if (strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
-		svc_channel_reply(svc, ENAMETOOLONG, reply_token, NULL, 0);
+		svc_channel_reply(svc, SVC_OP_LOOKUP, ENAMETOOLONG, reply_token,
+		    NULL, 0);
 		return;
 	}
 
@@ -140,11 +146,12 @@ handle_svc_lookup(struct svc_runtime *svc, const void *payload,
 			if (errno == EDEADLK)
 				error = EDEADLK;
 		}
-		svc_channel_reply(svc, error, reply_token, NULL, 0);
+		svc_channel_reply(svc, SVC_OP_LOOKUP, error, reply_token,
+		    NULL, 0);
 		return;
 	}
 
-	svc_channel_reply(svc, 0, reply_token, &client_fd, 1);
+	svc_channel_reply(svc, SVC_OP_LOOKUP, 0, reply_token, &client_fd, 1);
 	close(client_fd);
 	svc->connection_count++;
 }
@@ -174,6 +181,13 @@ supervisor_handle_channel(struct kevent *kev)
 	if (kev->flags & EV_EOF) {
 		syslog(LOG_INFO, "service %s: channel closed",
 		    svc->manifest.label);
+		/*
+		 * The service can no longer answer lookups once its channel is
+		 * gone.  Purge its naming entries now so a later svc_remove()
+		 * array compaction cannot leave a stale owner pointer that an
+		 * unrelated service would inherit.
+		 */
+		naming_remove_owner(svc);
 		close(svc->channel_fd);
 		svc->channel_fd = -1;
 		return;
@@ -217,7 +231,7 @@ supervisor_handle_channel(struct kevent *kev)
 	default:
 		syslog(LOG_WARNING, "service %s: unknown channel op %u",
 		    svc->manifest.label, op);
-		svc_channel_reply(svc, ENOTSUP, ra.reply_token, NULL, 0);
+		svc_channel_reply(svc, op, ENOTSUP, ra.reply_token, NULL, 0);
 		break;
 	}
 }

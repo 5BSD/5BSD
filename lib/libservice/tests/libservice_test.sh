@@ -3,17 +3,29 @@
 #
 # Integration tests for libservice(3).
 #
-# Tests build small C programs that link against libservice and
-# exercise the API through the full oracled + serviced stack.
+# Tests build small C programs that link against libservice and exercise
+# the API through the full oracled + serviced stack.
+#
+# serviced loads services only from .cap bundles under the
+# SERVICED_BUNDLE_DIR_SYSTEM / SERVICED_BUNDLE_DIR_USER trees (the old flat
+# serviced.d + label=/program= UCL manifest model was removed).  Each helper
+# program below is cc-compiled and installed as the program of a single .cap
+# bundle whose provides[0] is the runtime service label.
 #
 
 daemon_pid=
 pidfile=
 conffile=
-manifestdir=
 sockpath=
 logfile=
 serviced_bin=
+libservice_path=
+
+# Fake bundle trees and control socket, rooted at the test work dir.
+export WORK="$(pwd)"
+APPS_DIR="${WORK}/Capabilities/System"
+USER_APPS_DIR="${WORK}/Capabilities"
+CTL_SOCK="${WORK}/serviced.sock"
 
 require_cc()
 {
@@ -22,13 +34,23 @@ require_cc()
 	fi
 }
 
+require_mac_capability()
+{
+	if [ ! -c /dev/mac_capability ]; then
+		atf_skip "mac_capability device not available"
+	fi
+}
+
 find_serviced()
 {
-	local p
+	local p _m _p
+	# obj dir is ${MACHINE}.${MACHINE_ARCH} (uname -m / uname -p).
+	_m=$(uname -m)
+	_p=$(uname -p)
 	for p in \
 	    "$(command -v serviced 2>/dev/null)" \
 	    /usr/libexec/serviced \
-	    /usr/obj/usr/src/arm64.aarch64/usr.sbin/serviced/serviced
+	    /usr/obj/usr/src/${_m}.${_p}/usr.sbin/serviced/serviced
 	do
 		if [ -n "$p" ] && [ -x "$p" ]; then
 			serviced_bin="$p"
@@ -40,10 +62,12 @@ find_serviced()
 
 find_libservice()
 {
-	local p
+	local p _m _p
+	_m=$(uname -m)
+	_p=$(uname -p)
 	for p in \
 	    /usr/lib/libservice.so \
-	    /usr/obj/usr/src/arm64.aarch64/lib/libservice/libservice.so.1
+	    /usr/obj/usr/src/${_m}.${_p}/lib/libservice/libservice.so.1
 	do
 		if [ -n "$p" ] && [ -f "$p" ]; then
 			libservice_path="$(dirname "$p")"
@@ -53,14 +77,23 @@ find_libservice()
 	atf_skip "libservice not found"
 }
 
+cc_with_libservice()
+{
+	require_cc
+	find_libservice
+	cc -Wall -Wextra \
+	    -I/usr/src/lib/libservice \
+	    -L"$libservice_path" -lservice \
+	    "$@"
+}
+
 prepare_paths()
 {
-	pidfile="$(pwd)/oracled.pid"
-	conffile="$(pwd)/oracled.conf"
-	manifestdir="$(pwd)/serviced.d"
-	sockpath="$(pwd)/oracled.sock"
-	logfile="$(pwd)/oracled.log"
-	mkdir -p "$manifestdir"
+	pidfile="${WORK}/oracled.pid"
+	conffile="${WORK}/oracled.conf"
+	sockpath="${WORK}/oracled.sock"
+	logfile="${WORK}/oracled.log"
+	mkdir -p "${APPS_DIR}" "${USER_APPS_DIR}"
 }
 
 write_config()
@@ -71,17 +104,49 @@ pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
 service_manager = "$serviced_bin";
+serviced_control_socket = "${CTL_SOCK}";
 EOF
+	# serviced scans these bundle trees instead of the system defaults.
+	export SERVICED_BUNDLE_DIR_SYSTEM="${APPS_DIR}"
+	export SERVICED_BUNDLE_DIR_USER="${USER_APPS_DIR}"
+}
+
+# Install a pre-built binary as the program of a single .cap bundle.
+# Usage: install_svc_bin <system|user> <label> <ucl_extra> <binary-path>
+install_svc_bin()
+{
+	local scope="$1" label="$2" extra="$3" bin="$4"
+	local base dir
+	if [ "$scope" = system ]; then
+		base="${APPS_DIR}"
+	else
+		base="${USER_APPS_DIR}"
+	fi
+	dir="${base}/${label}.cap"
+	mkdir -p "${dir}/etc" "${dir}/bin"
+	cp "$bin" "${dir}/bin/${label}"
+	chmod 755 "${dir}/bin/${label}"
+	cat > "${dir}/etc/${label}.ucl" <<-UCL
+	bundle_id = "org.test.${label}";
+	version = "1.0";
+	author = "test";
+	program = "${label}";
+	provides = ["${label}"];
+	${extra}
+	UCL
+	echo "${dir}"
 }
 
 start_stack()
 {
+	require_mac_capability
 	prepare_paths
 	write_config
 
 	oracled -d -f "$conffile" >"$logfile" 2>&1 &
 	daemon_pid=$!
 
+	# Wait for oracled control socket.
 	i=0
 	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
 		i=$((i + 1))
@@ -92,8 +157,10 @@ start_stack()
 		atf_fail "oracled did not create control socket"
 	fi
 
+	# Wait for serviced to report ready.
 	i=0
-	while ! grep -q "serviced ready" "$logfile" 2>/dev/null && [ "$i" -lt 150 ]; do
+	while ! grep -q "serviced ready" "$logfile" 2>/dev/null && \
+	    [ "$i" -lt 150 ]; do
 		i=$((i + 1))
 		sleep 0.1
 	done
@@ -101,10 +168,11 @@ start_stack()
 
 wait_for_file()
 {
-	local path i
+	local path max i
 	path="$1"
+	max=$(( ${2:-15} * 10 ))
 	i=0
-	while [ ! -s "$path" ] && [ "$i" -lt 150 ]; do
+	while [ ! -s "$path" ] && [ "$i" -lt "$max" ]; do
 		i=$((i + 1))
 		sleep 0.1
 	done
@@ -122,20 +190,12 @@ stop_stack()
 cleanup_common()
 {
 	stop_stack
-	pkill -9 -f "ls_provider\|ls_client\|ls_ready" 2>/dev/null || true
+	pkill -9 -f "ls_provider\|ls_client\|ls_ready\|ls_protect" \
+	    2>/dev/null || true
 	sleep 0.2
-	rm -rf oracled.pid oracled.conf serviced.d oracled.sock \
-	    oracled.log *.out *.c ls_provider ls_client ls_ready
-}
-
-cc_with_libservice()
-{
-	require_cc
-	find_libservice
-	cc -Wall -Wextra \
-	    -I/usr/src/lib/libservice \
-	    -L"$libservice_path" -lservice \
-	    "$@"
+	rm -rf oracled.pid oracled.conf oracled.sock serviced.sock \
+	    oracled.log Capabilities *.out *.c \
+	    ls_provider ls_client ls_ready ls_protect
 }
 
 # ===================================================================
@@ -168,7 +228,7 @@ main(void)
 
 	out = fopen("ls-ready.out", "w");
 	if (out != NULL) {
-		fprintf(out, "pair_fd=%d\n", service_pair_fd());
+		fprintf(out, "channel_fd=%d\n", service_channel_fd());
 		fclose(out);
 	}
 	sleep(30);
@@ -176,19 +236,17 @@ main(void)
 }
 CEOF
 	cc_with_libservice -o ls_ready ls_ready.c
+
 	prepare_paths
-	cat > "$manifestdir/ls-ready.ucl" <<EOF
-label = "ls-ready";
-program = "$(pwd)/ls_ready";
-EOF
+	install_svc_bin system ls-ready '' "$(pwd)/ls_ready" >/dev/null
 
 	start_stack
 	if ! wait_for_file ls-ready.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 
-	atf_check -s exit:0 -o match:"pair_fd=3" cat ls-ready.out
+	atf_check -s exit:0 -o match:"channel_fd=3" cat ls-ready.out
 	atf_check -s exit:0 -o ignore \
 	    grep "service ls-ready: reported ready" "$logfile"
 }
@@ -306,34 +364,30 @@ CEOF
 	cc_with_libservice -o ls_client ls_client.c
 
 	prepare_paths
-	cat > "$manifestdir/aaa-provider.ucl" <<EOF
-label = "ls-provider";
-program = "$(pwd)/ls_provider";
-provides = ["ls-api"];
-EOF
-	cat > "$manifestdir/zzz-client.ucl" <<EOF
-label = "ls-client";
-program = "$(pwd)/ls_client";
-requires = ["ls-api"];
-EOF
+	# Runtime label == provides[0].  The provider provides (and registers)
+	# "ls-provider"; the client requires it so it starts afterwards, and
+	# the provider observes the connecting label "ls-client".
+	install_svc_bin system ls-provider '' "$(pwd)/ls_provider" >/dev/null
+	install_svc_bin system ls-client 'requires = ["ls-provider"];' \
+	    "$(pwd)/ls_client" >/dev/null
 
 	start_stack
 
 	if ! wait_for_file ls-provider-reg.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "provider did not register"
+		atf_fail "provider did not register"
 	fi
 
 	if ! wait_for_file ls-client.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "client did not complete lookup"
+		atf_fail "client did not complete lookup"
 	fi
 
 	atf_check -s exit:0 -o match:"greeting=hello" cat ls-client.out
 
 	if ! wait_for_file ls-provider-done.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "provider did not receive client message"
+		atf_fail "provider did not receive client message"
 	fi
 
 	atf_check -s exit:0 -o match:"client_label=ls-client" \
@@ -387,15 +441,12 @@ CEOF
 	cc_with_libservice -o ls_client ls_client.c
 
 	prepare_paths
-	cat > "$manifestdir/lookup-fail.ucl" <<EOF
-label = "lookup-fail";
-program = "$(pwd)/ls_client";
-EOF
+	install_svc_bin system ls-lookupfail '' "$(pwd)/ls_client" >/dev/null
 
 	start_stack
 	if ! wait_for_file ls-lookup-fail.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 
 	atf_check -s exit:0 -o match:"fd=-1" cat ls-lookup-fail.out
@@ -459,15 +510,12 @@ CEOF
 	cc_with_libservice -o ls_protect ls_protect.c
 
 	prepare_paths
-	cat > "$manifestdir/ls-protect.ucl" <<EOF
-label = "ls-protect";
-program = "$(pwd)/ls_protect";
-EOF
+	install_svc_bin system ls-protect '' "$(pwd)/ls_protect" >/dev/null
 
 	start_stack
 	if ! wait_for_file ls-protect.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 
 	# Verify service_protect succeeded.

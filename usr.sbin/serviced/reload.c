@@ -17,10 +17,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <unistd.h>
 
 #include <libcapbundle.h>
 
 #include "serviced.h"
+#include "serviced_audit.h"
 #include "serviced_probes.h"
 
 struct svc_runtime *
@@ -62,6 +64,7 @@ svc_remove(unsigned idx)
 static bool
 manifest_equal(const struct svc_manifest *a, const struct svc_manifest *b)
 {
+	unsigned i;
 
 	if (strcmp(a->label, b->label) != 0 ||
 	    strcmp(a->program, b->program) != 0 ||
@@ -86,18 +89,35 @@ manifest_equal(const struct svc_manifest *a, const struct svc_manifest *b)
 	    strcmp(a->jail_hostname, b->jail_hostname) != 0 ||
 	    strcmp(a->jail_ip4_addr, b->jail_ip4_addr) != 0))
 		return (false);
-	return (memcmp(a->provides, b->provides,
-	    sizeof(a->provides)) == 0 &&
-	    memcmp(a->requires, b->requires,
-	    sizeof(a->requires)) == 0 &&
-	    memcmp(a->cap_paths, b->cap_paths,
-	    sizeof(a->cap_paths)) == 0 &&
-	    memcmp(a->cap_net, b->cap_net,
-	    sizeof(a->cap_net)) == 0 &&
-	    memcmp(a->cap_files, b->cap_files,
-	    sizeof(a->cap_files)) == 0 &&
-	    memcmp(a->cap_jail, b->cap_jail,
-	    sizeof(a->cap_jail)) == 0);
+	/*
+	 * Compare only the populated entries.  The counts above are already
+	 * known equal; comparing the full fixed-size arrays would let stale
+	 * bytes in unused trailing slots (strlcpy does not zero-fill) trigger
+	 * spurious inequality and needless service restarts on reload.  Use
+	 * strcmp for the string arrays so bytes past the NUL never matter.
+	 */
+	for (i = 0; i < a->nprovides; i++)
+		if (strcmp(a->provides[i], b->provides[i]) != 0)
+			return (false);
+	for (i = 0; i < a->nrequires; i++)
+		if (strcmp(a->requires[i], b->requires[i]) != 0)
+			return (false);
+	for (i = 0; i < a->ncap_paths; i++)
+		if (strcmp(a->cap_paths[i], b->cap_paths[i]) != 0)
+			return (false);
+	for (i = 0; i < a->ncap_files; i++)
+		if (memcmp(&a->cap_files[i], &b->cap_files[i],
+		    sizeof(a->cap_files[i])) != 0)
+			return (false);
+	for (i = 0; i < a->ncap_net; i++)
+		if (memcmp(&a->cap_net[i], &b->cap_net[i],
+		    sizeof(a->cap_net[i])) != 0)
+			return (false);
+	for (i = 0; i < a->ncap_jail; i++)
+		if (memcmp(&a->cap_jail[i], &b->cap_jail[i],
+		    sizeof(a->cap_jail[i])) != 0)
+			return (false);
+	return (true);
 }
 
 static bool
@@ -333,6 +353,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 				continue;
 
 			nchanged++;
+			SERVICED_PROBE_SVC_CHANGED(svc->manifest.label);
 			if (svc->state == SVC_STATE_RUNNING ||
 			    svc->state == SVC_STATE_STARTING) {
 				syslog(LOG_INFO,
@@ -438,11 +459,16 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 				    svc->manifest.label);
 				nnew_launched++;
 			} else {
+				/* Consumed only by the DTrace probe below. */
+				int exec_errno __unused = errno;
+
 				syslog(LOG_ERR,
 				    "reload: failed to start '%s': %m",
 				    svc->manifest.label);
+				/* Report the errno from svc_exec, not the one
+				 * the intervening syslog() may have set. */
 				SERVICED_PROBE_SVC_EXEC_FAIL(
-				    svc->manifest.label, errno);
+				    svc->manifest.label, exec_errno);
 			}
 		}
 
@@ -457,6 +483,16 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 	}
 
 	syslog(LOG_INFO, "reload: %u new, %u changed, %u removed",
+	    reload_nnew, reload_nchanged, reload_nremoved);
+	SERVICED_PROBE_RELOAD(reload_nnew, reload_nchanged, reload_nremoved);
+	SERVICED_PROBE_SVC_COUNT(sd.nservices);
+
+	/*
+	 * Record the configuration change in the audit trail; a reload alters
+	 * which services run and with what privileges.
+	 */
+	serviced_audit(AUE_SERVICED_RELOAD, getuid(), 0,
+	    "reload: %u new, %u changed, %u removed",
 	    reload_nnew, reload_nchanged, reload_nremoved);
 	return (0);
 }

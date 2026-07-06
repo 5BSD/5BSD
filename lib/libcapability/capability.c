@@ -79,11 +79,11 @@ static void
 serve_child(const struct cap_daemon_config *cfg, int client_fd,
     const char *label)
 {
-	int pair_fd, error;
+	int channel_fd, error;
 
-	pair_fd = service_pair_fd();
-	if (pair_fd >= 0)
-		close(pair_fd);
+	channel_fd = service_channel_fd();
+	if (channel_fd >= 0)
+		close(channel_fd);
 
 	if (cfg->client_timeout != 0)
 		alarm(cfg->client_timeout);
@@ -118,7 +118,7 @@ cap_daemon_run(const struct cap_daemon_config *cfg)
 		return (-1);
 	if (service_ready() == -1)
 		return (-1);
-	service_fd = service_pair_fd();
+	service_fd = service_channel_fd();
 	if (install_signals() == -1)
 		return (-1);
 

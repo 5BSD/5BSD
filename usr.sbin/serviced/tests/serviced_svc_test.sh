@@ -38,20 +38,15 @@ restart_never_no_restart_head()
 restart_never_no_restart_body()
 {
 	prepare_paths
-	write_executable "$(pwd)/exit0.sh" \
+	make_svc system exit0 'restart = "never";' \
 	    '#!/bin/sh' \
-	    'echo $$ > exit0.pid' \
+	    "echo \$\$ > ${WORK}/exit0.pid" \
 	    'exit 0'
-	cat > "$manifestdir/exit0.ucl" <<EOF
-label = "exit0";
-program = "$(pwd)/exit0.sh";
-restart = "never";
-EOF
 
 	start_stack
 	if ! wait_for_file exit0.pid; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 	sleep 1
 	atf_check -s exit:0 -o ignore \
@@ -78,20 +73,15 @@ restart_on_failure_ignores_clean_head()
 restart_on_failure_ignores_clean_body()
 {
 	prepare_paths
-	write_executable "$(pwd)/clean.sh" \
+	make_svc system clean-exit 'restart = "on-failure";' \
 	    '#!/bin/sh' \
-	    'echo $$ > clean.pid' \
+	    "echo \$\$ > ${WORK}/clean.pid" \
 	    'exit 0'
-	cat > "$manifestdir/clean.ucl" <<EOF
-label = "clean-exit";
-program = "$(pwd)/clean.sh";
-restart = "on-failure";
-EOF
 
 	start_stack
 	if ! wait_for_file clean.pid; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 	sleep 1
 	atf_check -s exit:0 -o ignore \
@@ -118,24 +108,19 @@ restart_on_failure_restarts_on_error_head()
 restart_on_failure_restarts_on_error_body()
 {
 	prepare_paths
-	write_executable "$(pwd)/fail-once.sh" \
+	make_svc system fail-once 'restart = "on-failure";' \
 	    '#!/bin/sh' \
-	    'if [ ! -f fail-once.ran ]; then' \
-	    '    touch fail-once.ran' \
+	    "if [ ! -f ${WORK}/fail-once.ran ]; then" \
+	    "    touch ${WORK}/fail-once.ran" \
 	    '    exit 1' \
 	    'fi' \
-	    'echo $$ > fail-once-restarted.pid' \
+	    "echo \$\$ > ${WORK}/fail-once-restarted.pid" \
 	    'sleep 60'
-	cat > "$manifestdir/fail-once.ucl" <<EOF
-label = "fail-once";
-program = "$(pwd)/fail-once.sh";
-restart = "on-failure";
-EOF
 
 	start_stack
 	if ! sh -c "i=0; while [ ! -s fail-once-restarted.pid ] && [ \$i -lt 200 ]; do i=\$((i + 1)); sleep 0.1; done; test -s fail-once-restarted.pid"; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not restart"
+		atf_fail "service did not restart"
 	fi
 	atf_check -s exit:0 -o ignore \
 	    grep 'service fail-once: exited status 1' "$logfile"
@@ -162,24 +147,19 @@ restart_always_restarts_clean_head()
 restart_always_restarts_clean_body()
 {
 	prepare_paths
-	write_executable "$(pwd)/exit0-always.sh" \
+	make_svc system exit0-always 'restart = "always";' \
 	    '#!/bin/sh' \
-	    'if [ ! -f exit0-always.ran ]; then' \
-	    '    touch exit0-always.ran' \
+	    "if [ ! -f ${WORK}/exit0-always.ran ]; then" \
+	    "    touch ${WORK}/exit0-always.ran" \
 	    '    exit 0' \
 	    'fi' \
-	    'echo $$ > exit0-always-restarted.pid' \
+	    "echo \$\$ > ${WORK}/exit0-always-restarted.pid" \
 	    'sleep 60'
-	cat > "$manifestdir/exit0-always.ucl" <<EOF
-label = "exit0-always";
-program = "$(pwd)/exit0-always.sh";
-restart = "always";
-EOF
 
 	start_stack
 	if ! sh -c "i=0; while [ ! -s exit0-always-restarted.pid ] && [ \$i -lt 200 ]; do i=\$((i + 1)); sleep 0.1; done; test -s exit0-always-restarted.pid"; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not restart"
+		atf_fail "service did not restart"
 	fi
 	assert_stack_alive
 }
@@ -204,20 +184,14 @@ circuit_breaker_disables_head()
 circuit_breaker_disables_body()
 {
 	prepare_paths
-	write_executable "$(pwd)/crash.sh" \
+	make_svc system crash 'restart = "always"; max_failures = 3;' \
 	    '#!/bin/sh' \
 	    'exit 1'
-	cat > "$manifestdir/crash.ucl" <<EOF
-label = "crash";
-program = "$(pwd)/crash.sh";
-restart = "always";
-max_failures = 3;
-EOF
 
 	start_stack
 	if ! sh -c "i=0; while ! grep -q 'service crash: started pid' '$logfile' && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service crash: started pid' '$logfile'"; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 	atf_check -s exit:0 -o ignore sh -c \
 	    "i=0; while ! grep -q 'service crash: failed .* disabling' '$logfile' && [ \$i -lt 1800 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service crash: failed .* disabling' '$logfile'"
@@ -243,21 +217,16 @@ shutdown_kills_sigterm_ignorer_body()
 	local svc_pid
 
 	prepare_paths
-	write_executable "$(pwd)/ignore-term.sh" \
+	make_svc system ignore-term 'stop_timeout = 1;' \
 	    '#!/bin/sh' \
-	    'echo $$ > ignore-term.pid' \
+	    "echo \$\$ > ${WORK}/ignore-term.pid" \
 	    'trap "" TERM' \
 	    'while :; do sleep 1; done'
-	cat > "$manifestdir/ignore-term.ucl" <<EOF
-label = "ignore-term";
-program = "$(pwd)/ignore-term.sh";
-stop_timeout = 1;
-EOF
 
 	start_stack
 	if ! wait_for_file ignore-term.pid; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 	svc_pid=$(cat ignore-term.pid)
 
@@ -289,22 +258,17 @@ shutdown_kills_subtree_body()
 	local child_pid
 
 	prepare_paths
-	write_executable "$(pwd)/subtree.sh" \
+	make_svc system subtree 'stop_timeout = 1;' \
 	    '#!/bin/sh' \
 	    'sleep 60 &' \
-	    'echo $! > subtree-child.pid' \
-	    'echo $$ > subtree-parent.pid' \
+	    "echo \$! > ${WORK}/subtree-child.pid" \
+	    "echo \$\$ > ${WORK}/subtree-parent.pid" \
 	    'wait'
-	cat > "$manifestdir/subtree.ucl" <<EOF
-label = "subtree";
-program = "$(pwd)/subtree.sh";
-stop_timeout = 1;
-EOF
 
 	start_stack
 	if ! wait_for_file subtree-child.pid; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 	child_pid=$(cat subtree-child.pid)
 
@@ -338,21 +302,17 @@ service_environment_minimal_head()
 service_environment_minimal_body()
 {
 	prepare_paths
-	write_executable "$(pwd)/env-probe.sh" \
+	make_svc system env-probe '' \
 	    '#!/bin/sh' \
-	    'env | sort > env-probe.out' \
+	    "env | sort > ${WORK}/env-probe.out" \
 	    'sleep 20'
-	cat > "$manifestdir/env-probe.ucl" <<EOF
-label = "env-probe";
-program = "$(pwd)/env-probe.sh";
-EOF
 
 	export SHOULD_NOT_LEAK=secret
 	start_stack
 	unset SHOULD_NOT_LEAK
 	if ! wait_for_file env-probe.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 
 	atf_check -s exit:0 -o match:"^PATH=/sbin:/bin:/usr/sbin:/usr/bin$" \
@@ -382,24 +342,18 @@ service_runs_as_user_head()
 service_runs_as_user_body()
 {
 	prepare_paths
-	write_executable "$(pwd)/whoami-svc.sh" \
+	make_svc system whoami 'user = "nobody"; group = "nogroup";' \
 	    '#!/bin/sh' \
-	    'id -un > whoami-svc.out' \
-	    'id -gn >> whoami-svc.out' \
+	    "id -un > ${WORK}/whoami-svc.out" \
+	    "id -gn >> ${WORK}/whoami-svc.out" \
 	    'sleep 60'
 	touch whoami-svc.out
 	chmod 666 whoami-svc.out
-	cat > "$manifestdir/whoami.ucl" <<EOF
-label = "whoami";
-program = "$(pwd)/whoami-svc.sh";
-user = "nobody";
-group = "nogroup";
-EOF
 
 	start_stack
 	if ! sh -c "i=0; while [ ! -s whoami-svc.out ] && [ \$i -lt 100 ]; do i=\$((i + 1)); sleep 0.1; done; test -s whoami-svc.out"; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not write output"
+		atf_fail "service did not write output"
 	fi
 	atf_check -s exit:0 -o match:"nobody" head -1 whoami-svc.out
 	atf_check -s exit:0 -o match:"nogroup" tail -1 whoami-svc.out
@@ -423,23 +377,26 @@ dependency_order_head()
 dependency_order_body()
 {
 	prepare_paths
-	cat > "$manifestdir/provider.ucl" <<EOF
-label = "provider";
-program = "/usr/bin/true";
-provides = ["provider-api"];
-EOF
-	cat > "$manifestdir/consumer.ucl" <<EOF
-label = "consumer";
-program = "/usr/bin/true";
-requires = ["provider-api"];
-EOF
+	# NOTE: in the .cap model the runtime label == provides[0], so the
+	# provider's provided name and its log label are the same token.  The
+	# original manifest used label="provider" (for the log assertion) plus a
+	# distinct provides=["provider-api"] (for the dependency edge); those two
+	# namespaces are now collapsed.  We keep the label "provider"/"consumer"
+	# so the existing 'service provider:'/'service consumer:' greps match, and
+	# point the requires at "provider" so the dependency actually resolves.
+	make_svc system provider '' \
+	    '#!/bin/sh' \
+	    'exit 0'
+	make_svc system consumer 'requires = ["provider"];' \
+	    '#!/bin/sh' \
+	    'exit 0'
 
 	start_stack
 
 	# Wait for both to appear in log.
 	if ! sh -c "i=0; while ! grep -q 'service consumer' '$logfile' && [ \$i -lt 100 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service consumer' '$logfile'"; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "services did not start"
+		atf_fail "services did not start"
 	fi
 
 	provider_line=$(grep -n "service provider: started" "$logfile" | head -1 | cut -d: -f1)
@@ -473,22 +430,18 @@ sighup_reload_body()
 {
 	start_stack
 
-	# Add a new manifest after startup.
-	write_executable "$(pwd)/new-svc.sh" \
+	# Add a new bundle after startup.
+	make_svc system new-svc '' \
 	    '#!/bin/sh' \
-	    'echo $$ > new-svc.pid' \
+	    "echo \$\$ > ${WORK}/new-svc.pid" \
 	    'sleep 60'
-	cat > "$manifestdir/new-svc.ucl" <<EOF
-label = "new-svc";
-program = "$(pwd)/new-svc.sh";
-EOF
 
 	# Send SIGHUP to oracled (forwarded to serviced).
 	kill -HUP "$daemon_pid"
 
 	if ! wait_for_file new-svc.pid; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "new service did not start after reload"
+		atf_fail "new service did not start after reload"
 	fi
 	assert_stack_alive
 }
@@ -513,19 +466,14 @@ restart_backoff_head()
 restart_backoff_body()
 {
 	prepare_paths
-	write_executable "$(pwd)/fastcrash.sh" \
+	make_svc system fastcrash 'restart = "always";' \
 	    '#!/bin/sh' \
 	    'exit 1'
-	cat > "$manifestdir/fastcrash.ucl" <<EOF
-label = "fastcrash";
-program = "$(pwd)/fastcrash.sh";
-restart = "always";
-EOF
 
 	start_stack
 	if ! sh -c "i=0; while ! grep -q 'service fastcrash: started pid' '$logfile' && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service fastcrash: started pid' '$logfile'"; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not start"
+		atf_fail "service did not start"
 	fi
 	atf_check -s exit:0 -o ignore sh -c \
 	    "i=0; while ! grep -q 'scheduling restart' '$logfile' && [ \$i -lt 100 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'scheduling restart' '$logfile'"
@@ -606,7 +554,7 @@ int main(void)
 	if (send_recv(channel_fd, &reg_req, sizeof(reg_req), 2, &rpl) == -1)
 		return (1);
 
-	out = fopen("unreg-register.out", "w");
+	out = fopen(OUTDIR "/unreg-register.out", "w");
 	if (out != NULL) {
 		fprintf(out, "register_status=%d\n", rpl.status);
 		fclose(out);
@@ -621,7 +569,7 @@ int main(void)
 	if (send_recv(channel_fd, &unreg_req, sizeof(unreg_req), 3, &rpl) == -1)
 		return (1);
 
-	out = fopen("unreg-result.out", "w");
+	out = fopen(OUTDIR "/unreg-result.out", "w");
 	if (out != NULL) {
 		fprintf(out, "unregister_status=%d\n", rpl.status);
 		fclose(out);
@@ -631,35 +579,34 @@ int main(void)
 	return (0);
 }
 CEOF
-	atf_check -s exit:0 -e ignore cc -Wall -I/usr/src/sys -I/usr/src/lib/liboraclert -o unreg_svc unreg_svc.c
+	# OUTDIR bakes the absolute work dir into the binary so the service's
+	# fopen() calls land in $WORK even though the service runs with a minimal
+	# environment and its CWD is not guaranteed to be $WORK.
+	atf_check -s exit:0 -e ignore cc -Wall -DOUTDIR="\"$(pwd)\"" -I/usr/src/sys -I/usr/src/lib/liboraclert -o unreg_svc unreg_svc.c
 
 	find_serviced
 	prepare_paths
-	cat > "$manifestdir/unreg.ucl" <<EOF
-label = "org.test.unreg.svc";
-program = "$(pwd)/unreg_svc";
-provides = ["org.test.unreg.svc"];
-EOF
+	make_svc_bin system org.test.unreg.svc '' "$(pwd)/unreg_svc"
 	write_config
 
 	start_stack
 	if ! wait_for_file unreg-register.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not register"
+		atf_fail "service did not register"
 	fi
 	atf_check -s exit:0 -o match:"register_status=0" \
 	    cat unreg-register.out
 
 	if ! wait_for_file unreg-result.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "service did not unregister"
+		atf_fail "service did not unregister"
 	fi
 	atf_check -s exit:0 -o match:"unregister_status=0" \
 	    cat unreg-result.out
 
 	# Verify serviced logged the unregistration.
 	atf_check -s exit:0 -o ignore \
-	    grep "naming-unregister\|unregistered.*org.test.unreg.svc" "$logfile"
+	    grep "org.test.unreg.svc.*unregistered\|unregistered.*org.test.unreg.svc" "$logfile"
 	assert_stack_alive
 }
 svc_unregister_explicit_cleanup()
@@ -667,6 +614,146 @@ svc_unregister_explicit_cleanup()
 	pkill -9 -f unreg_svc 2>/dev/null || true
 	cleanup_common
 	rm -f unreg_svc unreg_svc.c unreg-register.out unreg-result.out
+}
+
+# ===================================================================
+# Control-socket authorization: unprivileged peer denied privileged op
+# ===================================================================
+
+atf_test_case sctl_privilege_denied cleanup
+sctl_privilege_denied_head()
+{
+	atf_set "descr" "unprivileged peer cannot run a privileged control op (reload); control socket is root-owned and not world-accessible"
+	atf_set "require.user" "root"
+}
+sctl_privilege_denied_body()
+{
+	require_cc
+
+	# Helper: drop to an unprivileged user, connect to the control
+	# socket, send a privileged op (RELOAD) and record the outcome.
+	# The result file is written with a RELATIVE path so that, after
+	# dropping to nobody, only the (chmod'd) CWD needs to be writable —
+	# not every parent of an absolute path.  A refused connect and an
+	# app-level EPERM are both recorded; both mean "denied".
+	cat > sctl_deny.c <<'CEOF'
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <errno.h>
+#include <pwd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <serviced_ctl.h>
+
+int
+main(int argc, char **argv)
+{
+	struct sockaddr_un un;
+	struct sctl_request req;
+	struct sctl_reply rpl;
+	struct passwd *pw;
+	FILE *out;
+	ssize_t n;
+	size_t off;
+	int fd, connerr;
+
+	if (argc < 2)
+		return (2);
+	pw = getpwnam("nobody");
+	if (pw == NULL)
+		return (2);
+	if (setgid(pw->pw_gid) == -1 || setuid(pw->pw_uid) == -1)
+		return (2);
+	if (setuid(0) != -1)		/* must NOT be able to regain root */
+		return (2);
+
+	fd = socket(PF_LOCAL, SOCK_STREAM, 0);
+	if (fd == -1)
+		return (2);
+	memset(&un, 0, sizeof(un));
+	un.sun_family = AF_LOCAL;
+	strlcpy(un.sun_path, argv[1], sizeof(un.sun_path));
+
+	connerr = 0;
+	if (connect(fd, (struct sockaddr *)&un, sizeof(un)) == -1)
+		connerr = errno;
+
+	out = fopen("sctl-deny.out", "w");
+	if (out == NULL)
+		return (2);
+
+	if (connerr != 0) {
+		fprintf(out, "connect_errno=%d\nstatus=-1\n", connerr);
+		fclose(out);
+		return (0);
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.version = SERVICED_CTL_VERSION;
+	req.op = SCTL_OP_RELOAD;
+	if (write(fd, &req, sizeof(req)) != (ssize_t)sizeof(req)) {
+		fprintf(out, "connect_errno=0\nstatus=-2\n");
+		fclose(out);
+		return (0);
+	}
+	off = 0;
+	while (off < sizeof(rpl)) {
+		n = read(fd, (char *)&rpl + off, sizeof(rpl) - off);
+		if (n <= 0)
+			break;
+		off += (size_t)n;
+	}
+	if (off < sizeof(rpl))
+		fprintf(out, "connect_errno=0\nstatus=-3\n");
+	else
+		fprintf(out, "connect_errno=0\nstatus=%u\n", rpl.status);
+	fclose(out);
+	return (0);
+}
+CEOF
+	atf_check -s exit:0 -e ignore cc -Wall \
+	    -I/usr/src/lib/liboraclert -o sctl_deny sctl_deny.c
+
+	prepare_paths
+	start_stack
+
+	# Wait for serviced to create its control socket.
+	i=0
+	while [ ! -S "${CTL_SOCK}" ] && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if [ ! -S "${CTL_SOCK}" ]; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "serviced did not create control socket"
+	fi
+
+	# Reliable core assertions: the control socket is owned by root and
+	# grants no access to "other" (world).  serviced binds it 0770.
+	atf_check -s exit:0 -o match:"^root$" \
+	    stat -f "%Su" "${CTL_SOCK}"
+	atf_check -s exit:0 -o match:"^770$" \
+	    stat -f "%Lp" "${CTL_SOCK}"
+
+	# Best-effort live denial: allow nobody to reach the socket, then
+	# attempt a privileged op as nobody.  It must be denied — either the
+	# kernel refuses the connect or serviced returns EPERM.  It must never
+	# report success (status=0).
+	chmod 0777 "${WORK}" 2>/dev/null || true
+	chmod 0777 "${CTL_SOCK}" 2>/dev/null || true
+
+	atf_check -s exit:0 ./sctl_deny "${CTL_SOCK}"
+	atf_check -s exit:0 -o match:"status=" cat sctl-deny.out
+	atf_check -s exit:0 -o not-match:"status=0$" cat sctl-deny.out
+	assert_stack_alive
+}
+sctl_privilege_denied_cleanup()
+{
+	cleanup_common
+	rm -f sctl_deny sctl_deny.c sctl-deny.out
 }
 
 atf_init_test_cases()
@@ -695,4 +782,7 @@ atf_init_test_cases()
 
 	# Naming protocol
 	atf_add_test_case svc_unregister_explicit
+
+	# Control-socket authorization
+	atf_add_test_case sctl_privilege_denied
 }

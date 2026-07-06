@@ -13,7 +13,7 @@
 .Nm service_accept ,
 .Nm service_send ,
 .Nm service_recv ,
-.Nm service_pair_fd ,
+.Nm service_channel_fd ,
 .Nm service_protect
 .Nd client library for services managed by serviced
 .Sh LIBRARY
@@ -37,7 +37,7 @@
 .Ft ssize_t
 .Fn service_recv "int fd" "void *buf" "size_t bufsz" "int *peer_fd"
 .Ft int
-.Fn service_pair_fd void
+.Fn service_channel_fd void
 .Ft int
 .Fn service_protect "uint32_t flags"
 .Sh DESCRIPTION
@@ -53,7 +53,7 @@ and never need to include mac_capability headers or issue ioctls directly.
 .Pp
 .Fn service_init
 initializes the library by reading the
-.Ev ORACLED_PAIR_FD
+.Ev ORACLED_CHANNEL_FD
 environment variable to obtain the pair file descriptor
 inherited from
 .Xr serviced 8 .
@@ -138,7 +138,7 @@ This is a convenience wrapper around the
 .Dv MAC_CAPABILITY_RECVMSG
 ioctl.
 .Pp
-.Fn service_pair_fd
+.Fn service_channel_fd
 returns the pair file descriptor to
 .Xr serviced 8
 that was established during
@@ -169,7 +169,7 @@ returns the number of bytes received on success and \-1 on
 failure, setting
 .Va errno .
 .Pp
-.Fn service_pair_fd
+.Fn service_channel_fd
 returns the pair file descriptor, or \-1 if the library has not
 been initialized.
 .Pp
@@ -264,11 +264,11 @@ may fail with:
 .Bl -tag -width Er
 .It Bq Er ENOENT
 The
-.Ev ORACLED_PAIR_FD
+.Ev ORACLED_CHANNEL_FD
 environment variable is not set.
 .It Bq Er EINVAL
 The value of
-.Ev ORACLED_PAIR_FD
+.Ev ORACLED_CHANNEL_FD
 is not a valid file descriptor number.
 .El
 .Pp
@@ -333,7 +333,7 @@ interleaved messages will corrupt protocol state.
 blocks on the pair fd.
 If the service needs to multiplex the pair fd with other event
 sources, use
-.Fn service_pair_fd
+.Fn service_channel_fd
 to obtain the fd and register it with
 .Xr kqueue 2
 or
