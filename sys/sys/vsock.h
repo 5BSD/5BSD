@@ -30,11 +30,12 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/ioccom.h>
 
-#define	VSOCK_CID_HYPERVISOR	UINT64_C(0)
-#define	VSOCK_CID_LOCAL		UINT64_C(1)
-#define	VSOCK_CID_HOST		UINT64_C(2)
-#define	VSOCK_CID_ANY		UINT64_C(0xffffffffffffffff)
+#define	VSOCK_CID_HYPERVISOR	UINT32_C(0)
+#define	VSOCK_CID_LOCAL		UINT32_C(1)
+#define	VSOCK_CID_HOST		UINT32_C(2)
+#define	VSOCK_CID_ANY		UINT32_C(0xffffffff)	/* wildcard local CID */
 
 #define	VSOCK_PORT_ANY		UINT32_C(0xffffffff)	/* auto-assign */
 
@@ -43,19 +44,42 @@
 #define	VMADDR_CID_LOCAL	VSOCK_CID_LOCAL
 #define	VMADDR_CID_HOST		VSOCK_CID_HOST
 #define	VMADDR_CID_ANY		VSOCK_CID_ANY
+
+/* svm_flags bits (Linux-compatible). */
+#define	VMADDR_FLAG_TO_HOST	0x01
+/* Mask of all svm_flags bits this implementation understands. */
+#define	VMADDR_FLAG_ALL		(VMADDR_FLAG_TO_HOST)
 #define	VMADDR_PORT_ANY		VSOCK_PORT_ANY
 
 #define	SOL_VSOCK		287
 
+/*
+ * SIOCOUTQ (Linux SIOCOUTQ parity): number of bytes sent to the peer but not
+ * yet consumed by it (in flight), handled by the vsock protocol's pr_control.
+ * The read-side counterpart, Linux SIOCINQ, is provided by the generic
+ * FIONREAD ioctl (bytes available to read).  Note: this uses the FreeBSD
+ * ioctl encoding, not the Linux numeric value.
+ */
+#define	SIOCOUTQ	_IOR('v', 128, int)
+
 #define	SO_VM_SOCKETS_BUFFER_SIZE	0
 #define	SO_VM_SOCKETS_BUFFER_MIN_SIZE	1
 #define	SO_VM_SOCKETS_BUFFER_MAX_SIZE	2
-#define	SO_VM_SOCKETS_CONNECT_TIMEOUT	6
-#define	SO_VM_SOCKETS_PEER_HOST_VM_ID	7	/* read-only: peer CID */
+#define	SO_VM_SOCKETS_PEER_HOST_VM_ID	3	/* read-only: peer CID */
+#define	SO_VM_SOCKETS_TRUSTED		5	/* VMCI-only; unsupported */
+#define	SO_VM_SOCKETS_CONNECT_TIMEOUT	6	/* struct timeval */
+#define	SO_VM_SOCKETS_NONBLOCK_TXRX	7	/* VMCI-only; unsupported */
+#define	SO_VM_SOCKETS_CONNECT_TIMEOUT_NEW 8	/* struct timeval */
 
 #define	VIRTIO_VSOCK_F_STREAM		(1ULL << 0)
 #define	VIRTIO_VSOCK_F_SEQPACKET	(1ULL << 1)
-#define	VIRTIO_VSOCK_F_NO_IMPLIED_STREAM (1ULL << 2)
+/*
+ * Bit 2 is intentionally NOT offered.  The ratified virtio-vsock spec
+ * (virtio 1.2/1.3 §5.10.3) defines only F_STREAM (0) and F_SEQPACKET (1).
+ * Bit 2 is contested between two unratified proposals -- NO_IMPLIED_STREAM
+ * (OASIS issue #142) and F_DGRAM (LKML) -- so negotiating it risks being
+ * misread as DGRAM by a real QEMU/vhost peer.  Do not add a bit-2 feature.
+ */
 
 struct virtio_vsock_config {
 	uint64_t	guest_cid;
@@ -107,23 +131,40 @@ enum virtio_vsock_rw {
 #define	VIRTIO_VSOCK_EVENT_TRANSPORT_RESET	0
 
 /*
- * ABI note: differs from Linux's sockaddr_vm in two ways:
- *  1. svm_cid is uint64_t (Linux uses unsigned int / 32-bit).  The wire
- *     protocol (virtio_vsock_hdr) uses 64-bit CIDs, so our layout avoids
- *     truncation at the socket layer.
- *  2. svm_len follows BSD convention (absent in Linux).  Linux has an
- *     svm_flags field (for VMADDR_FLAG_TO_HOST) which we omit;
- *     svm_reserved1 occupies that space.
- *
- * Userspace code ported from Linux must be adjusted for these differences.
+ * ABI note: matches Linux's sockaddr_vm field types -- 32-bit svm_cid and an
+ * svm_flags byte (VMADDR_FLAG_TO_HOST) -- so Linux-ported userspace needs no
+ * field changes.  The structural difference is the leading BSD svm_len byte
+ * (Linux has none): here {svm_len:1, svm_family:1} occupy the same first two
+ * bytes as Linux's 2-byte svm_family, so svm_reserved1, svm_port, svm_cid, and
+ * svm_flags land at identical offsets (2/4/8/12) and widths.  (svm_family
+ * itself is 1 byte here vs Linux's 2 -- only the combined len+family region
+ * matches; sockaddr_vm never travels on the wire, so this is inconsequential.)
+ * Real CIDs are always 32-bit (the wire virtio_vsock_hdr carries them
+ * zero-extended to 64 bits).
  */
 struct sockaddr_vm {
 	uint8_t		svm_len;
 	sa_family_t	svm_family;
 	uint16_t	svm_reserved1;
 	uint32_t	svm_port;
-	uint64_t	svm_cid;
+	uint32_t	svm_cid;
+	uint8_t		svm_flags;
+	uint8_t		svm_zero[3];	/* pad to 16 bytes; must be zero */
 };
+
+/*
+ * Lock the on-wire and ABI layouts at compile time: a stray field edit here
+ * would silently break interoperability with real Linux/qemu virtio-vsock
+ * peers -- the exact class of bug -Werror cannot catch.
+ */
+_Static_assert(sizeof(struct virtio_vsock_hdr) == 44,
+    "virtio_vsock_hdr must be 44 bytes on the wire");
+_Static_assert(sizeof(struct virtio_vsock_config) == 8,
+    "virtio_vsock_config must be 8 bytes");
+_Static_assert(sizeof(struct virtio_vsock_event) == 4,
+    "virtio_vsock_event must be 4 bytes");
+_Static_assert(sizeof(struct sockaddr_vm) == 16,
+    "sockaddr_vm ABI layout must be 16 bytes");
 
 /*
  * Connection state values exported in xvsock_pcb.xvp_state.

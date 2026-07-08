@@ -52,8 +52,20 @@
 #define	VTVSOCK_DEFAULT_BUF_MAX		(256 * 1024)
 #define	VTVSOCK_MAX_PKT_BUF		(64  * 1024)
 #define	VTVSOCK_DEFAULT_SEQPACKET_FRAG_MAX	256
+/*
+ * Backstop on the number of simultaneously connected PCBs.  A malicious peer
+ * cannot grow the connected table without bound (per-listener so_qlimit and
+ * system socket/fd limits already apply), but this is a hard fleet-safe ceiling
+ * independent of those; tunable via kern.vsock.max_connections.
+ */
+#define	VTVSOCK_DEFAULT_MAX_CONN		16384
 #define	VTVSOCK_CLOSE_TIMEOUT		(hz * 8)
-#define	VTVSOCK_CONNECT_TIMEOUT		(hz * 30)
+/*
+ * Default blocking-connect timeout.  Matches Linux's
+ * VSOCK_DEFAULT_CONNECT_TIMEOUT (2*HZ); applications can override it per
+ * socket with SO_VM_SOCKETS_CONNECT_TIMEOUT.
+ */
+#define	VTVSOCK_CONNECT_TIMEOUT		(hz * 2)
 
 /* -----------------------------------------------------------------------
  * Connection state machine
@@ -167,16 +179,20 @@ void	vsock_transport_unregister(void);
 /* RX callback (called by virtio_vsock interrupt handler) */
 void	vsock_rx_packet(void *buf, uint32_t len);
 
-/* Transport reset (called on TRANSPORT_RESET event) */
-void	vsock_transport_reset(void);
+/*
+ * Lock-held variants, so the driver's event handler can process a
+ * TRANSPORT_RESET atomically against detach (no window in which it
+ * re-registers a transport that detach has already unregistered).  The
+ * caller holds the domain's internal lock across both; see vsock_rx_packet.
+ */
+void	vsock_transport_register_locked(const struct vtvsock_transport *ops,
+	    uint64_t guest_cid, uint64_t features);
+void	vsock_transport_reset_locked(void);
 
-/* PCB helpers (needed by virtio transport ops in virtio_vsock.c) */
-void	vtvsock_pcb_set_addr(struct sockaddr_vm *, uint64_t, uint32_t);
+/* PCB helper needed by the virtio transport ops in virtio_vsock.c */
 void	vtvsock_pcb_remove_lists_locked(struct vtvsock_pcb *);
-void	vtvsock_pcb_insert_connected_locked(struct vtvsock_pcb *);
 
-/* Credit helpers */
-int32_t		vtvsock_credit_available(struct vtvsock_pcb *);
+/* Credit helper needed by the virtio transport send path in virtio_vsock.c */
 uint32_t	vtvsock_get_credit(struct vtvsock_pcb *, uint32_t);
 
 /* Timeout callbacks (used by transport disconnect to arm close callout) */

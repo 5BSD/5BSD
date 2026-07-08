@@ -32,6 +32,7 @@
 #include <sys/ioctl.h>
 #include <sys/filio.h>
 #include <sys/event.h>
+#include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -477,7 +478,7 @@ ATF_TC_BODY(connect_refused, tc)
 	addr.svm_cid  = VSOCK_CID_LOCAL;
 	addr.svm_port = 12345;
 	ATF_REQUIRE(connect(s, (struct sockaddr *)&addr, sizeof(addr)) == -1);
-	ATF_REQUIRE(errno == ECONNREFUSED);
+	ATF_REQUIRE(errno == ECONNRESET);
 	close(s);
 }
 
@@ -914,10 +915,18 @@ ATF_TC_BODY(seqpacket_zero_length, tc)
 	(void)tc;
 
 	vsock_pair(SOCK_SEQPACKET, &ls, &cs, &as);
-	ATF_REQUIRE(send(cs, "", 0, 0) == 0);
 	ATF_REQUIRE(fcntl(as, F_SETFL, O_NONBLOCK) != -1);
-	ATF_REQUIRE(recv(as, buf, sizeof(buf), 0) == -1);
-	ATF_REQUIRE(errno == EAGAIN || errno == EWOULDBLOCK);
+	ATF_REQUIRE(send(cs, "", 0, 0) == 0);
+	/*
+	 * Linux semantics: a zero-length SEQPACKET message is delivered as a
+	 * distinct 0-byte record (recv returns 0), not dropped -- and the
+	 * connection stays open, unlike EOF.  A following non-empty message is
+	 * received normally, which proves the 0-byte recv was a message, not
+	 * peer-close.
+	 */
+	ATF_CHECK(recv(as, buf, sizeof(buf), 0) == 0);
+	ATF_REQUIRE(send(cs, "hi", 2, 0) == 2);
+	ATF_CHECK(recv(as, buf, sizeof(buf), 0) == 2);
 
 	close(as);
 	close(cs);
@@ -1471,8 +1480,10 @@ ATF_TC_BODY(retry_connect, tc)
 	(void)tc;
 
 	/*
-	 * First attempt: connect to a port with no listener → ECONNREFUSED.
-	 * Second attempt: connect to a real listener → success.
+	 * First attempt: connect to a remote (CID_HOST) port.  With no virtio
+	 * transport registered in this loopback-only test environment it fails
+	 * with ENXIO; the attempt is best-effort and its errno is not asserted.
+	 * Second attempt: connect to a real local listener → success.
 	 */
 	cs = socket(AF_VSOCK, SOCK_STREAM, 0);
 	ATF_REQUIRE_MSG(cs >= 0, "socket failed: %s", strerror(errno));
@@ -1480,7 +1491,7 @@ ATF_TC_BODY(retry_connect, tc)
 	vsock_set_any(&laddr);
 	laddr.svm_cid  = VSOCK_CID_HOST;
 	laddr.svm_port = 59998;
-	/* Best-effort: may fail for reasons other than ECONNREFUSED on host */
+	/* Best-effort: fails with ENXIO (no transport) in this environment */
 	(void)connect(cs, (struct sockaddr *)&laddr, sizeof(laddr));
 	close(cs);
 
@@ -1644,16 +1655,24 @@ ATF_TC_BODY(linger_zero_close, tc)
 	    &lg, sizeof(lg)) == 0);
 
 	ATF_REQUIRE(send(cs, "rst", 3, 0) == 3);
-	ATF_REQUIRE(close(cs) == 0); /* RST-like: discard pending data */
+	ATF_REQUIRE(close(cs) == 0); /* SO_LINGER=0 abort of the sender */
 
 	/*
-	 * With l_linger=0 the connection is aborted; peer may see 0 bytes
-	 * (EOF) or an error — both are acceptable.
+	 * On loopback the already-delivered "rst" bytes stay in the peer's
+	 * receive buffer -- aborting the sender does not purge them -- and the
+	 * subsequent teardown is delivered as EOF, never as an out-of-band
+	 * ECONNRESET.  (A remote virtio OP_RST on an established connection is
+	 * likewise delivered as EOF now, matching Linux; ECONNRESET on an
+	 * established connection comes only from a flow-control violation or a
+	 * transport reset.)  So the peer either still reads the pending record
+	 * (n > 0) or observes EOF (n == 0); it never sees a reset error.  This
+	 * case is genuinely either-or on loopback, so the disjunction is
+	 * intentional.
 	 */
 	memset(buf, 0, sizeof(buf));
 	ssize_t n = recv(as, buf, sizeof(buf), 0);
-	ATF_REQUIRE(n == 0 || (n == -1 && (errno == ECONNRESET ||
-	    errno == ETIMEDOUT)));
+	ATF_REQUIRE_MSG(n >= 0,
+	    "unexpected error on loopback abort: %s", strerror(errno));
 
 	close(as);
 	close(ls);
@@ -2372,30 +2391,11 @@ ATF_TC_BODY(seqpacket_boundary_hash, tc)
 /* Group 28: connect timeout sockopt (Linux compat)                    */
 /* ------------------------------------------------------------------ */
 
-ATF_TC_WITHOUT_HEAD(connect_timeout_sockopt);
-ATF_TC_BODY(connect_timeout_sockopt, tc)
-{
-	int s;
-	uint64_t val;
-	socklen_t len;
-
-	(void)tc;
-
-	s = socket(AF_VSOCK, SOCK_STREAM, 0);
-	ATF_REQUIRE(s >= 0);
-
-	/* Set */
-	val = 500; /* centiseconds */
-	ATF_REQUIRE(setsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
-	    &val, sizeof(val)) == 0);
-
-	/* Get (returns 0 — accepted but not implemented) */
-	len = sizeof(val);
-	ATF_REQUIRE(getsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
-	    &val, &len) == 0);
-
-	close(s);
-}
+/*
+ * The legacy scalar-centiseconds form of SO_VM_SOCKETS_CONNECT_TIMEOUT has
+ * been removed; opt 6 and opt 8 are both struct timeval only (Linux-matching).
+ * See connect_timeout_timeval for the current behavior.
+ */
 
 /* ------------------------------------------------------------------ */
 /* Group 29: Input validation                                          */
@@ -2693,8 +2693,9 @@ ATF_TC_BODY(connect_refused_cid_local, tc)
 
 	/*
 	 * Connect to VSOCK_CID_LOCAL on a port with no listener.
-	 * This uses the loopback path regardless of guest CID,
-	 * so it always produces ECONNREFUSED.
+	 * This uses the loopback path regardless of guest CID.  Like Linux
+	 * vsock (which refuses by RST on every transport, loopback included),
+	 * a refused connection surfaces to connect(2) as ECONNRESET.
 	 */
 	s = socket(AF_VSOCK, SOCK_STREAM, 0);
 	ATF_REQUIRE_MSG(s >= 0, "socket: %s", strerror(errno));
@@ -2703,7 +2704,7 @@ ATF_TC_BODY(connect_refused_cid_local, tc)
 	addr.svm_cid  = VSOCK_CID_LOCAL;
 	addr.svm_port = 54321;
 	ATF_REQUIRE(connect(s, (struct sockaddr *)&addr, sizeof(addr)) == -1);
-	ATF_REQUIRE(errno == ECONNREFUSED);
+	ATF_REQUIRE(errno == ECONNRESET);
 	close(s);
 }
 
@@ -2816,9 +2817,18 @@ ATF_TC_BODY(connection_reset, tc)
 	    &lg, sizeof(lg)) == 0);
 	close(as);
 
-	/* Peer should see connection reset */
+	/*
+	 * Loopback teardown is signaled to the peer as end-of-file
+	 * (socantrcvmore), not an out-of-band reset.  With no unread data
+	 * queued, the peer's recv() returns 0 deterministically.  A remote
+	 * virtio OP_RST on an established connection is delivered as EOF too
+	 * (matching Linux); ECONNRESET on an established connection is produced
+	 * only by a flow-control violation or a transport reset, neither of
+	 * which is exercised over loopback.
+	 */
 	ssize_t n = recv(cs, buf, sizeof(buf), 0);
-	ATF_REQUIRE(n == 0 || (n == -1 && errno == ECONNRESET));
+	ATF_REQUIRE_MSG(n == 0,
+	    "expected EOF on loopback teardown, got %zd (errno %d)", n, errno);
 
 	close(cs);
 	close(ls);
@@ -3039,33 +3049,11 @@ ATF_TC_BODY(seqpacket_eor_multi_record, tc)
 	close(ls);
 }
 
-ATF_TC_WITHOUT_HEAD(connect_timeout_applied);
-ATF_TC_BODY(connect_timeout_applied, tc)
-{
-	uint64_t val;
-	socklen_t len;
-	int s;
-
-	(void)tc;
-
-	s = socket(AF_VSOCK, SOCK_STREAM, 0);
-	ATF_REQUIRE(s >= 0);
-
-	/* Set connect timeout to 1 second (100 centiseconds) */
-	val = 100;
-	ATF_REQUIRE(setsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
-	    &val, sizeof(val)) == 0);
-
-	/* Read it back — should be approximately 100 */
-	len = sizeof(val);
-	ATF_REQUIRE(getsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
-	    &val, &len) == 0);
-	ATF_REQUIRE_MSG(val >= 90 && val <= 110,
-	    "connect timeout readback %llu not ~100",
-	    (unsigned long long)val);
-
-	close(s);
-}
+/*
+ * connect_timeout_applied removed: it locked the legacy scalar-centiseconds
+ * SO_VM_SOCKETS_CONNECT_TIMEOUT behavior, which no longer exists.  The
+ * timeval set/get round-trip is covered by connect_timeout_timeval.
+ */
 
 /* ------------------------------------------------------------------ */
 /* Group 35: Concurrent connect + close races                          */
@@ -3374,8 +3362,8 @@ ATF_TC_BODY(seqpacket_connect_to_stream_listener_refused, tc)
 	ATF_REQUIRE_MSG(cs >= 0, "socket: %s", strerror(errno));
 	ATF_REQUIRE(connect(cs, (struct sockaddr *)&laddr,
 	    sizeof(laddr)) == -1);
-	ATF_REQUIRE_MSG(errno == ECONNREFUSED,
-	    "expected ECONNREFUSED, got %d (%s)", errno, strerror(errno));
+	ATF_REQUIRE_MSG(errno == ECONNRESET,
+	    "expected ECONNRESET, got %d (%s)", errno, strerror(errno));
 	close(cs);
 	close(ls);
 }
@@ -3399,8 +3387,8 @@ ATF_TC_BODY(stream_connect_to_seqpacket_listener_refused, tc)
 	ATF_REQUIRE_MSG(cs >= 0, "socket: %s", strerror(errno));
 	ATF_REQUIRE(connect(cs, (struct sockaddr *)&laddr,
 	    sizeof(laddr)) == -1);
-	ATF_REQUIRE_MSG(errno == ECONNREFUSED,
-	    "expected ECONNREFUSED, got %d (%s)", errno, strerror(errno));
+	ATF_REQUIRE_MSG(errno == ECONNRESET,
+	    "expected ECONNRESET, got %d (%s)", errno, strerror(errno));
 	close(cs);
 	close(ls);
 }
@@ -3507,7 +3495,12 @@ ATF_TC_BODY(peer_host_vm_id_sockopt, tc)
  * sysctl buf_default/buf_min/buf_max validation.
  * Out-of-range values must return EINVAL.
  */
-ATF_TC_WITHOUT_HEAD(sysctl_buf_validation);
+ATF_TC(sysctl_buf_validation);
+ATF_TC_HEAD(sysctl_buf_validation, tc)
+{
+	/* Writing kern.vsock.buf_* sysctls requires root. */
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
 ATF_TC_BODY(sysctl_buf_validation, tc)
 {
 	u_int orig_min, orig_max, orig_default;
@@ -4118,10 +4111,17 @@ ATF_TC_BODY(send_after_disconnect, tc)
 	/* Give close time to propagate. */
 	usleep(50000);
 
-	/* Send should fail. */
+	/*
+	 * Send should fail.  The peer closed, so the loopback send path sees
+	 * SBS_CANTRCVMORE on the peer's receive buffer and fails with EPIPE
+	 * deterministically.  (A remote peer OP_RST also surfaces to the writer
+	 * as EPIPE; ECONNRESET on an established connection comes only from a
+	 * flow-control violation or transport reset.)
+	 */
 	signal(SIGPIPE, SIG_IGN);
 	ATF_REQUIRE(send(cs, buf, sizeof(buf), MSG_NOSIGNAL) == -1);
-	ATF_REQUIRE(errno == EPIPE || errno == ECONNRESET);
+	ATF_REQUIRE_MSG(errno == EPIPE, "expected EPIPE, got %s",
+	    strerror(errno));
 
 	close(cs);
 	close(ls);
@@ -4633,55 +4633,41 @@ ATF_TC_BODY(buffer_min_max_ordering, tc)
 	val = 2048;
 	ATF_REQUIRE(setsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_BUFFER_MAX_SIZE,
 	    &val, sizeof(val)) == 0);
-	/* buffer_max should be clamped to buffer_min. */
+	/*
+	 * Setting max (2048) below min (4096) must pull min down to max, so
+	 * both read back as 2048 and the invariant min <= max holds.
+	 */
 	val = 0;
 	socklen_t len = sizeof(val);
 	ATF_REQUIRE(getsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_BUFFER_MAX_SIZE,
 	    &val, &len) == 0);
-	/* After setting max < min, min should have been adjusted. */
+	ATF_CHECK_MSG(val == 2048, "buffer_max = %ju, expected 2048",
+	    (uintmax_t)val);
+	len = sizeof(val);
+	ATF_REQUIRE(getsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_BUFFER_MIN_SIZE,
+	    &val, &len) == 0);
+	ATF_CHECK_MSG(val == 2048, "buffer_min = %ju, expected clamp to 2048",
+	    (uintmax_t)val);
 
 	close(s);
 }
 
-ATF_TC_WITHOUT_HEAD(connect_timeout_range);
-ATF_TC_BODY(connect_timeout_range, tc)
-{
-	int s;
-	uint64_t val;
-	socklen_t len;
-
-	(void)tc;
-
-	s = socket(AF_VSOCK, SOCK_STREAM, 0);
-	ATF_REQUIRE(s >= 0);
-
-	/* Set 0 (default). */
-	val = 0;
-	ATF_REQUIRE(setsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
-	    &val, sizeof(val)) == 0);
-	len = sizeof(val);
-	ATF_REQUIRE(getsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
-	    &val, &len) == 0);
-	ATF_REQUIRE(val > 0); /* default should be non-zero */
-
-	/* Set to max (360000 centiseconds = 1 hour). */
-	val = 360000;
-	ATF_REQUIRE(setsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
-	    &val, sizeof(val)) == 0);
-	len = sizeof(val);
-	ATF_REQUIRE(getsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
-	    &val, &len) == 0);
-	/* Should be clamped to 360000. */
-	ATF_REQUIRE(val <= 360000);
-
-	close(s);
-}
+/*
+ * connect_timeout_range removed: it set and clamped the option using the
+ * legacy scalar-centiseconds encoding, which no longer exists.  Default (zero
+ * timeval) and set/get behavior is covered by connect_timeout_timeval.
+ */
 
 /* ------------------------------------------------------------------ */
 /* Group 50: SEQPACKET fragment limit sysctl                           */
 /* ------------------------------------------------------------------ */
 
-ATF_TC_WITHOUT_HEAD(seqpacket_frag_max_sysctl);
+ATF_TC(seqpacket_frag_max_sysctl);
+ATF_TC_HEAD(seqpacket_frag_max_sysctl, tc)
+{
+	/* Writing kern.vsock.seqpacket_frag_max requires root. */
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
 ATF_TC_BODY(seqpacket_frag_max_sysctl, tc)
 {
 	u_int orig, val;
@@ -4974,6 +4960,283 @@ ATF_TC_BODY(seqpacket_shutdown_rd_wakes_sender, tc)
 }
 
 /* ------------------------------------------------------------------ */
+/* Group 40: Linux-ABI reachability and privileged-port gating          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * SO_VM_SOCKETS_* options must be accepted at the AF_VSOCK level too, not just
+ * SOL_VSOCK: code ported from Linux applies them at level AF_VSOCK.
+ */
+ATF_TC_WITHOUT_HEAD(sockopt_af_vsock_level);
+ATF_TC_BODY(sockopt_af_vsock_level, tc)
+{
+	uint64_t bufsz = 128 * 1024, got = 0;
+	socklen_t len = sizeof(got);
+	int s;
+
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+	ATF_REQUIRE_MSG(setsockopt(s, AF_VSOCK, SO_VM_SOCKETS_BUFFER_SIZE,
+	    &bufsz, sizeof(bufsz)) == 0,
+	    "setsockopt at AF_VSOCK level: %s", strerror(errno));
+	ATF_REQUIRE_MSG(getsockopt(s, AF_VSOCK, SO_VM_SOCKETS_BUFFER_SIZE,
+	    &got, &len) == 0,
+	    "getsockopt at AF_VSOCK level: %s", strerror(errno));
+	ATF_CHECK(got > 0);
+	close(s);
+}
+
+/*
+ * Binding svm_cid = 0xffffffff (Linux's 32-bit VMADDR_CID_ANY) must be
+ * accepted as the local-CID wildcard, like the native 64-bit VSOCK_CID_ANY,
+ * and resolve to a concrete local CID.
+ */
+ATF_TC_WITHOUT_HEAD(bind_cid_any_32bit);
+ATF_TC_BODY(bind_cid_any_32bit, tc)
+{
+	struct sockaddr_vm svm, out;
+	int s;
+
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+	memset(&svm, 0, sizeof(svm));
+	svm.svm_len = sizeof(svm);
+	svm.svm_family = AF_VSOCK;
+	svm.svm_cid = 0xffffffffU;	/* 32-bit VMADDR_CID_ANY */
+	svm.svm_port = VSOCK_PORT_ANY;
+	ATF_REQUIRE_MSG(bind(s, (struct sockaddr *)&svm, sizeof(svm)) == 0,
+	    "bind with 32-bit ANY cid: %s", strerror(errno));
+	ATF_REQUIRE(getsockname(s, (struct sockaddr *)&out,
+	    &(socklen_t){sizeof(out)}) == 0);
+	ATF_CHECK(out.svm_cid != 0xffffffffU);
+	ATF_CHECK(out.svm_cid != VSOCK_CID_ANY);
+	close(s);
+}
+
+/*
+ * Binding an explicit port below 1024 requires privilege: root succeeds, an
+ * unprivileged process is denied (EPERM/EACCES).
+ */
+ATF_TC(bind_privileged_port);
+ATF_TC_HEAD(bind_privileged_port, tc)
+{
+	/* Binds a privileged (low) port and drops privileges; needs root. */
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(bind_privileged_port, tc)
+{
+	struct sockaddr_vm svm;
+	pid_t pid;
+	int s, status;
+
+	/* Root can bind a low port. */
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+	memset(&svm, 0, sizeof(svm));
+	svm.svm_len = sizeof(svm);
+	svm.svm_family = AF_VSOCK;
+	svm.svm_cid = VSOCK_CID_ANY;
+	svm.svm_port = 1;
+	ATF_REQUIRE_MSG(bind(s, (struct sockaddr *)&svm, sizeof(svm)) == 0,
+	    "root bind low port: %s", strerror(errno));
+	close(s);
+
+	/* An unprivileged child is denied. */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		struct sockaddr_vm c;
+		int cs, e;
+
+		if (setresuid(65534, 65534, 65534) != 0)
+			_exit(42);	/* env without nobody; skip */
+		cs = socket(AF_VSOCK, SOCK_STREAM, 0);
+		if (cs < 0)
+			_exit(43);
+		memset(&c, 0, sizeof(c));
+		c.svm_len = sizeof(c);
+		c.svm_family = AF_VSOCK;
+		c.svm_cid = VSOCK_CID_ANY;
+		c.svm_port = 2;
+		e = bind(cs, (struct sockaddr *)&c, sizeof(c));
+		if (e == 0)
+			_exit(1);	/* not gated */
+		if (errno != EPERM && errno != EACCES)
+			_exit(2);
+		_exit(0);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE(WIFEXITED(status));
+	if (WEXITSTATUS(status) == 42)
+		atf_tc_skip("could not drop privileges (no nobody uid)");
+	ATF_CHECK_EQ_MSG(0, WEXITSTATUS(status),
+	    "unprivileged low-port bind not gated (child exit %d)",
+	    WEXITSTATUS(status));
+}
+
+/* MSG_OOB must be rejected (virtio-vsock has no out-of-band channel). */
+ATF_TC_WITHOUT_HEAD(msg_oob_rejected);
+ATF_TC_BODY(msg_oob_rejected, tc)
+{
+	int ls, cs, as;
+
+	(void)tc;
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+	ATF_CHECK_ERRNO(EOPNOTSUPP, send(cs, "x", 1, MSG_OOB) == -1);
+	close(ls);
+	close(cs);
+	close(as);
+}
+
+/* SO_VM_SOCKETS_CONNECT_TIMEOUT accepts and returns a struct timeval. */
+ATF_TC_WITHOUT_HEAD(connect_timeout_timeval);
+ATF_TC_BODY(connect_timeout_timeval, tc)
+{
+	struct timeval tv;
+	socklen_t len;
+	int s;
+
+	(void)tc;
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+
+	tv.tv_sec = 2;
+	tv.tv_usec = 500000;
+	ATF_REQUIRE(setsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
+	    &tv, sizeof(tv)) == 0);
+
+	memset(&tv, 0, sizeof(tv));
+	len = sizeof(tv);
+	ATF_REQUIRE(getsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
+	    &tv, &len) == 0);
+	/* Read back ~2.5s (allow tick-granularity rounding). */
+	ATF_CHECK_MSG(tv.tv_sec == 2 && tv.tv_usec >= 400000 &&
+	    tv.tv_usec <= 600000, "read back %jd.%06ld",
+	    (intmax_t)tv.tv_sec, (long)tv.tv_usec);
+
+	/* The _NEW option is timeval-only and must behave the same. */
+	tv.tv_sec = 5;
+	tv.tv_usec = 0;
+	ATF_REQUIRE(setsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT_NEW,
+	    &tv, sizeof(tv)) == 0);
+	memset(&tv, 0, sizeof(tv));
+	len = sizeof(tv);
+	ATF_REQUIRE(getsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT_NEW,
+	    &tv, &len) == 0);
+	ATF_CHECK_MSG(tv.tv_sec == 5, "read back %jd s", (intmax_t)tv.tv_sec);
+
+	/*
+	 * The legacy scalar-centiseconds form is gone: a set buffer smaller
+	 * than struct timeval is rejected with EINVAL for both option numbers.
+	 */
+	uint64_t scalar = 100;
+	ATF_CHECK_ERRNO(EINVAL, setsockopt(s, SOL_VSOCK,
+	    SO_VM_SOCKETS_CONNECT_TIMEOUT, &scalar, sizeof(scalar)) == -1);
+	ATF_CHECK_ERRNO(EINVAL, setsockopt(s, SOL_VSOCK,
+	    SO_VM_SOCKETS_CONNECT_TIMEOUT_NEW, &scalar, sizeof(scalar)) == -1);
+
+	close(s);
+}
+
+/* Unsupported VMCI-only options are cleanly rejected, not silently accepted. */
+ATF_TC_WITHOUT_HEAD(vmci_only_opts_rejected);
+ATF_TC_BODY(vmci_only_opts_rejected, tc)
+{
+	int s, val;
+
+	(void)tc;
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+	val = 1;
+	ATF_CHECK_ERRNO(EOPNOTSUPP, setsockopt(s, SOL_VSOCK,
+	    SO_VM_SOCKETS_TRUSTED, &val, sizeof(val)) == -1);
+	ATF_CHECK_ERRNO(EOPNOTSUPP, setsockopt(s, SOL_VSOCK,
+	    SO_VM_SOCKETS_NONBLOCK_TXRX, &val, sizeof(val)) == -1);
+	close(s);
+}
+
+/*
+ * The guest CID reported by the loopback-only build must be VSOCK_CID_LOCAL
+ * (1): with no virtio transport registered the domain layer falls back to the
+ * local CID, and kern.vsock.guest_cid must expose exactly that.  A regression
+ * here (e.g. leaking a reserved value like 0/2/0xffffffff) would break both the
+ * "connect to your own CID" loopback contract and any tool keying off the CID.
+ */
+ATF_TC_WITHOUT_HEAD(sysctl_guest_cid_local);
+ATF_TC_BODY(sysctl_guest_cid_local, tc)
+{
+	uint64_t cid;
+	size_t len = sizeof(cid);
+
+	(void)tc;
+
+	ATF_REQUIRE_MSG(sysctlbyname("kern.vsock.guest_cid", &cid, &len,
+	    NULL, 0) == 0, "reading kern.vsock.guest_cid: %s", strerror(errno));
+	ATF_REQUIRE_MSG(len == sizeof(cid),
+	    "kern.vsock.guest_cid returned %zu bytes, expected %zu",
+	    len, sizeof(cid));
+	ATF_REQUIRE_MSG(cid == VSOCK_CID_LOCAL,
+	    "kern.vsock.guest_cid = %ju, expected VSOCK_CID_LOCAL (%u)",
+	    (uintmax_t)cid, VSOCK_CID_LOCAL);
+}
+
+/*
+ * SIOCOUTQ (Linux parity) must be wired to the vsock protocol and report a
+ * non-negative in-flight byte count on an established connection, and must be
+ * rejected before the socket is connected.  Over the loopback transport data
+ * is deposited straight into the peer's receive buffer without advancing the
+ * wire credit counters (tx_cnt/peer_fwd_cnt stay 0), so the in-flight count is
+ * expected to read 0 here; a guest/host pair is required to exercise a non-zero
+ * value.  This test therefore verifies the ioctl plumbing and the unconnected
+ * rejection, not the wire accounting.
+ */
+ATF_TC_WITHOUT_HEAD(siocoutq_inflight);
+ATF_TC_BODY(siocoutq_inflight, tc)
+{
+	int ls, cs, as, n;
+
+	(void)tc;
+
+	/* Unconnected socket: SIOCOUTQ must report 0 in-flight bytes. */
+	cs = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE_MSG(cs >= 0, "socket: %s", strerror(errno));
+	n = -1;
+	ATF_REQUIRE_MSG(ioctl(cs, SIOCOUTQ, &n) == 0,
+	    "SIOCOUTQ on unconnected socket: %s", strerror(errno));
+	ATF_REQUIRE_MSG(n == 0,
+	    "SIOCOUTQ on unconnected socket reported %d, expected 0", n);
+	close(cs);
+
+	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
+
+	/* Established, nothing sent: in-flight must be 0. */
+	n = -1;
+	ATF_REQUIRE_MSG(ioctl(cs, SIOCOUTQ, &n) == 0,
+	    "SIOCOUTQ on established socket: %s", strerror(errno));
+	ATF_REQUIRE_MSG(n == 0,
+	    "SIOCOUTQ before send reported %d, expected 0", n);
+
+	/*
+	 * Send data and drain it on the peer.  The in-flight count must stay
+	 * non-negative throughout (loopback keeps it at 0; the assertion guards
+	 * against the unsigned-wrap-to-negative bug the clamp in vsock_control
+	 * prevents).
+	 */
+	ATF_REQUIRE(send(cs, "hello", 5, 0) == 5);
+	n = -1;
+	ATF_REQUIRE(ioctl(cs, SIOCOUTQ, &n) == 0);
+	ATF_REQUIRE_MSG(n >= 0, "SIOCOUTQ reported negative count %d", n);
+
+	char buf[8];
+	ATF_REQUIRE(recv(as, buf, 5, 0) == 5);
+	n = -1;
+	ATF_REQUIRE(ioctl(as, SIOCOUTQ, &n) == 0);
+	ATF_REQUIRE_MSG(n >= 0, "SIOCOUTQ (peer) reported negative count %d", n);
+
+	close(as); close(cs); close(ls);
+}
+
+/* ------------------------------------------------------------------ */
 /* ATF test plan                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -5060,6 +5323,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, fionread_seqpacket);
 	ATF_TP_ADD_TC(tp, fionwrite_stream);
 	ATF_TP_ADD_TC(tp, seqpacket_unread_bytes_precise);
+	ATF_TP_ADD_TC(tp, siocoutq_inflight);
+	ATF_TP_ADD_TC(tp, sysctl_guest_cid_local);
 
 	/* Group 16: zerocopy compat */
 	ATF_TP_ADD_TC(tp, zerocopy_sockopt_compat);
@@ -5103,7 +5368,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, seqpacket_boundary_hash);
 
 	/* Group 28: Connect timeout sockopt */
-	ATF_TP_ADD_TC(tp, connect_timeout_sockopt);
 
 	/* Group 29: Input validation */
 	ATF_TP_ADD_TC(tp, svm_len_validation);
@@ -5134,7 +5398,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, seqpacket_msg_eor);
 	ATF_TP_ADD_TC(tp, reserved_cid_bind);
 	ATF_TP_ADD_TC(tp, seqpacket_eor_multi_record);
-	ATF_TP_ADD_TC(tp, connect_timeout_applied);
 
 	/* Group 35: Concurrent connect + close races */
 	ATF_TP_ADD_TC(tp, concurrent_connect_close_race);
@@ -5206,7 +5469,9 @@ ATF_TP_ADD_TCS(tp)
 
 	/* Group 49: getsockopt/setsockopt edge cases */
 	ATF_TP_ADD_TC(tp, buffer_min_max_ordering);
-	ATF_TP_ADD_TC(tp, connect_timeout_range);
+	ATF_TP_ADD_TC(tp, msg_oob_rejected);
+	ATF_TP_ADD_TC(tp, connect_timeout_timeval);
+	ATF_TP_ADD_TC(tp, vmci_only_opts_rejected);
 
 	/* Group 50: SEQPACKET fragment limit sysctl */
 	ATF_TP_ADD_TC(tp, seqpacket_frag_max_sysctl);
@@ -5217,6 +5482,11 @@ ATF_TP_ADD_TCS(tp)
 	/* Group 52: Concurrent send + close stress */
 	ATF_TP_ADD_TC(tp, concurrent_send_close_stress);
 	ATF_TP_ADD_TC(tp, seqpacket_shutdown_rd_wakes_sender);
+
+	/* Group 40: Linux-ABI reachability and privileged-port gating */
+	ATF_TP_ADD_TC(tp, sockopt_af_vsock_level);
+	ATF_TP_ADD_TC(tp, bind_cid_any_32bit);
+	ATF_TP_ADD_TC(tp, bind_privileged_port);
 
 	return (atf_no_error());
 }

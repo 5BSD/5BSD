@@ -40,21 +40,29 @@ The
 .Dv AF_VSOCK
 socket domain provides host-guest communication via the virtio-vsock
 transport, as defined in the OASIS Virtual I/O Device (VIRTIO) specification
-version 1.3, section 5.10.
+version 1.4, section 5.10.
 It enables socket-based communication between a virtual machine guest and its
 hypervisor host without requiring a network stack.
 .Ss Addressing
 Connections are identified by (CID, port) tuples.
-The CID (Context Identifier) is a 64-bit value unique to each virtual machine:
-.Bl -tag -width "VSOCK_CID_ANY"
-.It Li 0 , 1
-Reserved; must not be used.
+The CID (Context Identifier) is a 32-bit value unique to each virtual machine
+(carried zero-extended to 64 bits in the on-wire
+.Vt virtio_vsock_hdr ) :
+.Bl -tag -width "VSOCK_CID_HYPERVISOR"
+.It Dv VSOCK_CID_HYPERVISOR Po 0 Pc
+Reserved for the hypervisor; not used for addressing.
+.It Dv VSOCK_CID_LOCAL Po 1 Pc
+Local
+.Pq loopback
+communication within the same host.
+On a machine with no hypervisor transport this is also the default guest CID,
+so loopback connections are always available.
 .It Dv VSOCK_CID_HOST Po 2 Pc
 The hypervisor host.
 .It Li 3+
 Guest virtual machines; the CID is assigned by the hypervisor and may be
 read from the virtio device configuration.
-.It Dv VSOCK_CID_ANY Po 0xFFFFFFFFFFFFFFFF Pc
+.It Dv VSOCK_CID_ANY Po 0xFFFFFFFF Pc
 Wildcard value; when used in a
 .Xr bind 2
 call, binds to the local guest CID.
@@ -64,6 +72,14 @@ Ports are 32-bit unsigned integers.
 .Dv VSOCK_PORT_ANY
 .Pq 0xFFFFFFFF
 requests automatic ephemeral port assignment.
+As an implementation detail that differs from Linux, a
+.Xr bind 2
+to port 0 is also treated as a request for automatic assignment rather than as
+a literal port number.
+Ports below 1024 are privileged and require the
+.Dv PRIV_NETINET_RESERVEDPORT
+privilege to bind, mirroring Linux
+.Dv CAP_NET_BIND_SERVICE .
 .Ss sockaddr_vm Structure
 Socket addresses use the
 .Vt sockaddr_vm
@@ -75,9 +91,29 @@ struct sockaddr_vm {
     sa_family_t svm_family;    /* AF_VSOCK */
     uint16_t    svm_reserved1; /* must be zero */
     uint32_t    svm_port;      /* port number */
-    uint64_t    svm_cid;       /* context identifier */
+    uint32_t    svm_cid;       /* context identifier */
+    uint8_t     svm_flags;     /* VMADDR_FLAG_TO_HOST */
+    uint8_t     svm_zero[3];   /* pad to 16 bytes; must be zero */
 };
 .Ed
+.Pp
+.Va svm_flags
+must contain only known flag bits
+.Pq currently Dv VMADDR_FLAG_TO_HOST ,
+which is accepted but has no effect on this single-transport implementation ,
+and
+.Va svm_zero
+must be zero.
+A
+.Xr bind 2
+or
+.Xr connect 2
+with an unknown
+.Va svm_flags
+bit or non-zero
+.Va svm_zero
+fails with
+.Er EINVAL .
 .Ss Socket Types
 .Bl -tag -width "SOCK_SEQPACKET"
 .It Dv SOCK_STREAM
@@ -95,13 +131,20 @@ feature bit.
 The following socket options are available at the
 .Dv SOL_VSOCK
 .Pq 287
+or
+.Dv AF_VSOCK
 level via
 .Xr getsockopt 2
 and
 .Xr setsockopt 2 .
-All options use a
+The
+.Dv AF_VSOCK
+level is accepted for compatibility with code ported from Linux, which
+applies these options at that level.
+The buffer-size options take a
 .Vt uint64_t
-value:
+value; the connect-timeout options take a
+.Vt struct timeval :
 .Bl -tag -width "SO_VM_SOCKETS_BUFFER_MAX_SIZE"
 .It Dv SO_VM_SOCKETS_BUFFER_SIZE Po 0 Pc
 Get or set the current receive buffer size in bytes.
@@ -110,14 +153,59 @@ Get or set the minimum receive buffer size in bytes.
 .It Dv SO_VM_SOCKETS_BUFFER_MAX_SIZE Po 2 Pc
 Get or set the maximum receive buffer size in bytes.
 .It Dv SO_VM_SOCKETS_CONNECT_TIMEOUT Po 6 Pc
-Get or set the connect timeout in centiseconds (100ths of a second).
-A value of 0 uses the default 30-second timeout.
-Linux compatibility: Linux uses a
-.Vt struct timeval ;
-this implementation uses a
-.Vt uint64_t
-centisecond value.
+Get or set the connect timeout.
+The value is a
+.Vt struct timeval ,
+matching Linux.
+A value of zero uses the default 2-second timeout, matching Linux's
+.Dv VSOCK_DEFAULT_CONNECT_TIMEOUT .
+An option buffer smaller than
+.Fn sizeof "struct timeval"
+fails with
+.Er EINVAL .
+A structurally valid buffer holding an out-of-range
+.Vt struct timeval
+.Pq negative seconds or microseconds, or microseconds not less than 1000000
+fails with
+.Er ERANGE ,
+matching Linux.
+.It Dv SO_VM_SOCKETS_CONNECT_TIMEOUT_NEW Po 8 Pc
+Identical to
+.Dv SO_VM_SOCKETS_CONNECT_TIMEOUT ;
+the value is a
+.Vt struct timeval .
+The separate option number exists only for source compatibility with Linux,
+where it is the 64-bit-time variant.
+.It Dv SO_VM_SOCKETS_PEER_HOST_VM_ID Po 3 Pc
+Get the CID of the connected peer.
+This option is read-only; a
+.Xr setsockopt 2
+attempt fails with
+.Er EOPNOTSUPP ,
+and a
+.Xr getsockopt 2
+on an unconnected socket fails with
+.Er ENOTCONN .
+.It Dv SO_VM_SOCKETS_TRUSTED Po 5 Pc , Dv SO_VM_SOCKETS_NONBLOCK_TXRX Po 7 Pc
+Recognized for source compatibility with Linux but unsupported: these are
+specific to the Linux VMCI transport and have no
+.Nm
+equivalent.
+Both fail with
+.Er EOPNOTSUPP .
 .El
+.Pp
+The
+.Dv MSG_OOB
+flag is not supported;
+.Nm
+has no out-of-band data channel, so
+.Xr send 2
+with
+.Dv MSG_OOB
+fails with
+.Er EOPNOTSUPP
+rather than sending the data in band.
 .Pp
 The Linux
 .Dv MSG_ZEROCOPY
@@ -131,6 +219,31 @@ Each endpoint advertises its available receive buffer capacity to the peer.
 A sender may only transmit data up to the peer's available credit.
 Credit updates are exchanged automatically by the driver and are not
 visible to the application.
+.Ss Ioctls
+The following
+.Xr ioctl 2
+requests are supported:
+.Bl -tag -width ".Dv SIOCOUTQ"
+.It Dv FIONREAD
+Returns, as an
+.Vt int ,
+the number of bytes available to read from the socket
+.Pq the Linux Dv SIOCINQ No equivalent .
+.It Dv SIOCOUTQ
+Returns, as an
+.Vt int ,
+the number of bytes sent to the peer but not yet acknowledged as consumed
+.Pq in flight .
+This mirrors Linux
+.Dv SIOCOUTQ ,
+but uses the native
+.Fx
+.Xr ioctl 2
+encoding rather than the Linux numeric value, so ported code must use the
+.Dv SIOCOUTQ
+constant from
+.In sys/vsock.h .
+.El
 .Ss Tunable Parameters
 The following
 .Xr sysctl 8
@@ -166,6 +279,12 @@ A value of 0 disables the fragment count limit; reassembly is still bounded
 by the per-connection buffer capacity
 .Pq Va buf_alloc .
 Default: 256.
+.It Va kern.vsock.max_connections
+Maximum number of simultaneously connected PCBs.
+Inbound connection requests that would exceed this ceiling are refused with a
+reset, providing a fleet-safe backstop against connection-table growth driven
+by a malicious peer, independent of per-listener backlog limits.
+Default: 16384.
 .El
 .Pp
 Buffer size values affect new sockets only; existing sockets are not modified.
@@ -178,9 +297,35 @@ The
 .Xr sysctl 8
 variable exports the list of active vsock connections for use by
 .Xr sockstat 1 .
+.Pp
+The following read-only
+.Xr sysctl 8
+counters report cumulative
+.Nm
+activity since the module was loaded:
+.Bl -tag -width "kern.vsock.connections"
+.It Va kern.vsock.tx_packets
+Total packets sent.
+.It Va kern.vsock.tx_bytes
+Total payload bytes sent.
+.It Va kern.vsock.rx_packets
+Total packets received.
+.It Va kern.vsock.rx_bytes
+Total payload bytes received.
+.It Va kern.vsock.rx_drops
+Total received packets dropped.
+.It Va kern.vsock.connections
+Total connections established.
+.El
+.Pp
+The read-only
+.Va kern.vsock.cur_connections
+.Xr sysctl 8
+variable reports the current number of connected PCBs
+.Pq a gauge, not a cumulative counter .
 .Ss Guest CID Discovery
 Applications can read the guest's CID via the
-.Va kern.vsock_guest_cid
+.Va kern.vsock.guest_cid
 .Xr sysctl 8
 variable.
 This is equivalent to Linux's
@@ -193,10 +338,30 @@ driver defines the following DTrace SDT probes under the
 .Li vsock
 provider:
 .Bl -tag -width "credit-update-send" -compact
+.It Li connect-request
+Outbound connection request sent (args: CID, port, is_local).
 .It Li connect-established
 Connection established (args: CID, port, is_local).
 .It Li connect-refused
 Connection refused (args: CID, port).
+.It Li connect-timeout
+Connect attempt timed out (args: CID, port).
+.It Li pkt-rx
+Inbound packet received; metadata only, no payload
+(args: op, src CID, src port, dst port, length, flags).
+.It Li pkt-tx
+Outbound packet sent; metadata only, no payload
+(args: op, src CID, src port, dst port, length, flags).
+Provided by
+.Pa virtio_vsock.ko .
+.It Li rst-received
+Reset received from peer (args: CID, port, previous state, errno).
+.It Li shutdown
+Half-close observed
+(args: CID, port, direction flags, is_send).
+.It Li credit-update-recv
+Credit update received from peer
+(args: CID, port, peer_buf_alloc, peer_fwd_cnt).
 .It Li send
 Data sent by application (args: bytes, is_seqpacket).
 .It Li receive
@@ -204,8 +369,14 @@ Data consumed by application (args: bytes, is_seqpacket).
 .It Li credit-stall
 Sender blocked waiting for peer credit (args: peer_buf_alloc, tx_cnt,
 peer_fwd_cnt).
+Provided by
+.Pa virtio_vsock.ko ;
+only present on a guest with the VirtIO transport loaded.
 .It Li credit-update-send
 Credit update sent to peer (args: buf_alloc, fwd_cnt, rx_bytes).
+Provided by
+.Pa virtio_vsock.ko ;
+only present on a guest with the VirtIO transport loaded.
 .It Li disconnect
 Connection torn down (args: CID, port).
 .El
@@ -213,29 +384,43 @@ Connection torn down (args: CID, port).
 .Bl -bullet
 .It
 .Vt svm_cid
-is
-.Vt uint64_t
-(Linux uses
-.Vt "unsigned int" ) .
-The wire protocol uses 64-bit CIDs; our layout avoids truncation.
-.It
+is a 32-bit field and is followed by an
+.Vt svm_flags
+byte
+.Pq Dv VMADDR_FLAG_TO_HOST ,
+matching Linux's field layout.
+The only structural difference is the leading BSD
 .Vt svm_len
-follows BSD
-.Xr socket 2
-convention (absent in Linux).
+byte (absent in Linux).
 .It
-Linux's
-.Va svm_flags
-field
-.Pq Dv VMADDR_FLAG_TO_HOST
-is not supported; the
-.Va svm_reserved1
-field occupies that space.
+.Dv AF_VSOCK
+is
+.Pq 46
+here, versus 40 on Linux.
+Code that uses the
+.Dv AF_VSOCK
+symbolic constant needs no change; code that hard-codes the numeric value
+must be adjusted.
+.It
+The
+.Dv SO_VM_SOCKETS_*
+socket options are accepted at both the
+.Dv SOL_VSOCK
+and
+.Dv AF_VSOCK
+levels; Linux uses only
+.Dv AF_VSOCK .
 .It
 .Dv MSG_ZEROCOPY
 and
 .Dv SO_ZEROCOPY
 are not supported.
+.It
+.Dv SOCK_DGRAM
+is not supported
+.Pq Xr socket 2 returns Er EPROTOTYPE .
+Datagram vsock is not part of the ratified virtio-vsock specification; Linux
+implements it only on the VMCI transport, not over virtio.
 .El
 .Sh IMPLEMENTATION NOTES
 The
@@ -317,7 +502,12 @@ or
 Message boundaries are preserved for
 .Dv SOCK_SEQPACKET .
 If no listener exists, the guest receives
-.Er ECONNREFUSED .
+.Er ECONNRESET
+(the device replies with
+.Dv VIRTIO_VSOCK_OP_RST ,
+which the guest reports as
+.Er ECONNRESET ,
+matching Linux).
 .Pp
 To expose a host service on port 80:
 .Bd -literal -offset indent
@@ -368,21 +558,71 @@ A socket type other than
 .Dv SOCK_STREAM
 or
 .Dv SOCK_SEQPACKET
-was requested.
+.Pq for example Dv SOCK_DGRAM
+was requested; this matches the
+.Sx Differences from Linux
+note above.
+.Pq Er EPROTONOSUPPORT No or Er ESOCKTNOSUPPORT No may also be returned .
+.It Bq Er EINVAL
+An attempt was made to
+.Xr bind 2
+to the reserved hypervisor CID
+.Pq Dv VMADDR_CID_HYPERVISOR , No 0 ,
+or a
+.Vt sockaddr_vm
+was supplied with a non-zero reserved field, an unknown
+.Va svm_flags
+bit, or non-zero
+.Va svm_zero
+padding.
+.It Bq Er EADDRNOTAVAIL
+An attempt was made to
+.Xr bind 2
+to the host CID
+.Pq Dv VMADDR_CID_HOST , No 2 ,
+which names the host side and can never be a local guest endpoint.
 .It Bq Er EAFNOSUPPORT
-An attempt was made to bind to a CID that is neither the local guest CID
-nor
+An attempt was made to bind to some other CID that is neither the local guest
+CID nor
 .Dv VSOCK_CID_ANY .
+.It Bq Er EACCES
+A privileged process restriction was violated when binding to a port below
+1024; see
+.Xr bind 2 .
+Binding to a reserved port requires the
+.Dv PRIV_NETINET_RESERVEDPORT
+privilege, matching the Linux
+.Dv CAP_NET_BIND_SERVICE
+requirement.
+.Er EPERM
+may also be returned.
 .It Bq Er ENXIO
 A remote connection was attempted but no virtio-vsock transport is
 registered.
 Load
 .Pa virtio_vsock.ko
 inside a virtual machine with a vsock device attached.
-.It Bq Er ECONNREFUSED
-No listener exists on the target CID and port.
 .It Bq Er ETIMEDOUT
 The connection attempt timed out before the peer responded.
+.It Bq Er ECONNRESET
+Returned by
+.Xr connect 2
+when a connection is refused, whether no listener exists on the target CID and
+port or the listener's backlog is full.
+This matches Linux vsock, which refuses connections by reset on every transport
+\(em loopback and remote alike \(em and therefore reports refusal as
+.Er ECONNRESET ,
+not the POSIX
+.Er ECONNREFUSED .
+.Er ECONNRESET
+is also returned on an established connection when the peer violates flow
+control or the transport is reset.
+Note that a plain
+.Dv VIRTIO_VSOCK_OP_RST
+on an established connection is instead delivered as end-of-file to the reader
+and
+.Er EPIPE
+to the writer, again matching Linux.
 .El
 .Sh SEE ALSO
 .Xr dtrace 1 ,
@@ -394,13 +634,12 @@ The connection attempt timed out before the peer responded.
 .Xr socket 2 ,
 .Xr capsicum 4 ,
 .Xr virtio 4 ,
-.Xr vsock 4 ,
 .Xr bhyve_config 5 ,
 .Xr bhyve 8
 .Sh STANDARDS
 .Rs
 .%A OASIS
-.%T Virtual I/O Device (VIRTIO) Version 1.3
+.%T Virtual I/O Device (VIRTIO) Version 1.4
 .%O Section 5.10: Socket Device
 .Re
 .Sh HISTORY

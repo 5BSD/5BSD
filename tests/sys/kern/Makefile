@@ -54,6 +54,33 @@ ATF_TESTS_C+=	socket_msg_trunc
 ATF_TESTS_C+=	socket_msg_waitall
 ATF_TESTS_C+=	socket_splice
 ATF_TESTS_C+=	vsock_test
+ATF_TESTS_C+=	vsock_wire_test
+ATF_TESTS_C+=	vsock_iov_test
+CFLAGS.vsock_iov_test+=	-I${SRCTOP}/usr.sbin/bhyve
+
+# Device-level ATF harness for the bhyve virtio-vsock host device (see
+# vsock_device_harness/README.md).  It #includes the real pci_virtio_vsock.c and
+# shadows its bhyve headers with the mocks in vsock_device_harness/.  The DUT and
+# its bounded-copy header are copied into ${.OBJDIR} so their quote-includes
+# resolve to those mocks (via -I) instead of the real headers next to the
+# original; deliberately no -I to usr.sbin/bhyve is added, so the real
+# virtio.h/mevent.h/... are never on the search path.  Host-socket syscalls are
+# intercepted with ld --wrap.
+ATF_TESTS_C+=	vsock_device_test
+.PATH:		${SRCTOP}/tests/sys/kern/vsock_device_harness
+CFLAGS.vsock_device_test+=	-DWITHOUT_CAPSICUM \
+	-I${SRCTOP}/tests/sys/kern/vsock_device_harness -I${.OBJDIR} -Wno-error
+LDFLAGS.vsock_device_test+=	-Wl,--wrap=socket -Wl,--wrap=connectat \
+	-Wl,--wrap=send -Wl,--wrap=recv -Wl,--wrap=sendmsg -Wl,--wrap=shutdown \
+	-Wl,--wrap=poll -Wl,--wrap=close
+LIBADD.vsock_device_test+=	pthread
+CLEANFILES+=	pci_virtio_vsock.c pci_virtio_vsock_iov.h
+vsock_device_test.o:	pci_virtio_vsock.c pci_virtio_vsock_iov.h
+pci_virtio_vsock.c:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_vsock.c
+	cp ${.ALLSRC} ${.TARGET}
+pci_virtio_vsock_iov.h:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_vsock_iov.h
+	cp ${.ALLSRC} ${.TARGET}
+
 TEST_METADATA.sigwait+=	is_exclusive="true"
 TEST_METADATA.vsock_test+=	required_user="root"
 TEST_METADATA.vsock_test+=	required_kmods="vsock"
