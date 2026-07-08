@@ -64,6 +64,8 @@
 
 #include <kern/uipc_vsock.h>
 
+#include "virtio_if.h"
+
 SDT_PROVIDER_DECLARE(vsock);
 SDT_PROBE_DEFINE3(vsock, , , credit__stall,
     "uint32_t",	/* peer_buf_alloc */
@@ -187,7 +189,7 @@ static int	vtvsock_virtio_send(struct vtvsock_pcb *, int, struct mbuf *,
 static int	vtvsock_virtio_disconnect(struct vtvsock_pcb *);
 static int	vtvsock_virtio_shutdown(struct vtvsock_pcb *, enum shutdown_how);
 
-static int	vtvsock_queue_rx_buffers(struct vtvsock_softc *);
+static int	vtvsock_queue_rx_buffers(struct vtvsock_softc *, bool);
 static int	vtvsock_ctrl_submit(struct vtvsock_softc *, void *,
 		    struct sglist *);
 static void	vtvsock_txq_drain(struct vtvsock_softc *);
@@ -941,7 +943,7 @@ vtvsock_virtio_shutdown(struct vtvsock_pcb *pcb, enum shutdown_how how)
  * Each buffer is large enough for the header plus max payload.
  */
 static int
-vtvsock_queue_rx_buffers(struct vtvsock_softc *sc)
+vtvsock_queue_rx_buffers(struct vtvsock_softc *sc, bool notify)
 {
 	struct sglist_seg segs[VTVSOCK_RX_SEGS];
 	struct sglist sg;
@@ -979,7 +981,13 @@ vtvsock_queue_rx_buffers(struct vtvsock_softc *sc)
 			break;
 		}
 	}
-	virtqueue_notify(sc->sc_rxvq);
+	/*
+	 * Kick the device unless the caller is the attach-time preload:
+	 * notifying before DRIVER_OK violates virtio 1.2 §3.1.1, so attach
+	 * defers the notify to vtvsock_attach_completed().
+	 */
+	if (notify)
+		virtqueue_notify(sc->sc_rxvq);
 	return (error);
 }
 
@@ -1080,7 +1088,7 @@ again:
 	 * Linux's virtio_vsock_rx_fill) keeps a run of failures from
 	 * monotonically starving the receive path.  Notifies the device.
 	 */
-	(void)vtvsock_queue_rx_buffers(sc);
+	(void)vtvsock_queue_rx_buffers(sc, true);
 	/* Re-arm; if the device raced in more buffers, drain them too. */
 	if (virtqueue_enable_intr(sc->sc_rxvq) != 0) {
 		virtqueue_disable_intr(sc->sc_rxvq);
@@ -1327,7 +1335,6 @@ vtvsock_attach(device_t dev)
 			break;
 		}
 	}
-	virtqueue_notify(sc->sc_eventvq);
 	/*
 	 * If not even one event buffer could be posted (e.g. the host
 	 * negotiated an event ring too small, or the very first enqueue
@@ -1342,8 +1349,13 @@ vtvsock_attach(device_t dev)
 		goto fail;
 	}
 
-	/* Pre-populate RX virtqueue. */
-	error = vtvsock_queue_rx_buffers(sc);
+	/*
+	 * Pre-populate the RX virtqueue.  Post the buffers but do NOT notify
+	 * the device yet: notifying before DRIVER_OK violates virtio 1.2
+	 * §3.1.1.  The notify happens in vtvsock_attach_completed(), which the
+	 * bus calls after it sets DRIVER_OK.
+	 */
+	error = vtvsock_queue_rx_buffers(sc, false);
 	if (error != 0)
 		goto fail;
 	/*
@@ -1359,33 +1371,13 @@ vtvsock_attach(device_t dev)
 		goto fail;
 	}
 
-	/* Publish the softc globally so the transport ops can find it. */
-	atomic_store_ptr(&vtvsock_sc, sc);
-
-	/* Register with the AF_VSOCK domain layer. */
-	vsock_transport_register(&vtvsock_virtio_transport,
-	    sc->sc_guest_cid, sc->sc_features);
-
 	/*
-	 * Enable virtqueue interrupts now that buffers are posted and the
-	 * transport is registered.  virtqueue_alloc() leaves interrupts
-	 * masked (VRING_AVAIL_F_NO_INTERRUPT), so without this the device
-	 * never delivers rx packets, tx completions, or reset events.
-	 *
-	 * virtqueue_enable_intr() returns non-zero when the used ring already
-	 * has entries the device completed while interrupts were masked (the
-	 * host can post an rx packet or a TRANSPORT_RESET event between our
-	 * buffer preload and this point).  Interrupt enable is not retroactive,
-	 * so run the corresponding handler once to drain what is already there;
-	 * the handler re-arms via its own disable/enable loop.
+	 * Everything the device can observe -- publishing the softc, going live
+	 * with the AF_VSOCK domain, notifying the queues, and enabling
+	 * interrupts -- is deferred to vtvsock_attach_completed(), which the
+	 * virtio bus calls after it sets DRIVER_OK (virtio 1.2 §3.1.1).  Until
+	 * then the rings are merely populated, which the spec permits.
 	 */
-	if (virtqueue_enable_intr(sc->sc_rxvq) != 0)
-		vtvsock_rx_intr(sc);
-	if (virtqueue_enable_intr(sc->sc_txvq) != 0)
-		vtvsock_tx_intr(sc);
-	if (virtqueue_enable_intr(sc->sc_eventvq) != 0)
-		vtvsock_event_intr(sc);
-
 	return (0);
 
 fail:
@@ -1408,6 +1400,50 @@ fail:
 		}
 	}
 	return (error);
+}
+
+/*
+ * Called by the virtio bus after it sets DRIVER_OK, i.e. once the device is
+ * permitted to be used (virtio 1.2 §3.1.1).  Only here do we make the device
+ * live: publish the softc, register the transport with the AF_VSOCK domain,
+ * notify the queues whose buffers were posted during attach, and enable
+ * interrupts.  This runs synchronously right after vtvsock_attach() returns.
+ */
+static int
+vtvsock_attach_completed(device_t dev)
+{
+	struct vtvsock_softc *sc = device_get_softc(dev);
+
+	/* Publish the softc so the transport ops and interrupt guards see it. */
+	atomic_store_ptr(&vtvsock_sc, sc);
+
+	/* Register with the AF_VSOCK domain layer. */
+	vsock_transport_register(&vtvsock_virtio_transport,
+	    sc->sc_guest_cid, sc->sc_features);
+
+	/*
+	 * DRIVER_OK is set: it is now legal to notify the device about the rx
+	 * and event buffers posted during attach.
+	 */
+	virtqueue_notify(sc->sc_rxvq);
+	virtqueue_notify(sc->sc_eventvq);
+
+	/*
+	 * Enable virtqueue interrupts.  virtqueue_alloc() leaves them masked
+	 * (VRING_AVAIL_F_NO_INTERRUPT).  virtqueue_enable_intr() returns
+	 * non-zero when the used ring already holds entries the device
+	 * completed while interrupts were masked; enable is not retroactive, so
+	 * run the handler once to drain what is already there (it re-arms via
+	 * its own disable/enable loop).
+	 */
+	if (virtqueue_enable_intr(sc->sc_rxvq) != 0)
+		vtvsock_rx_intr(sc);
+	if (virtqueue_enable_intr(sc->sc_txvq) != 0)
+		vtvsock_tx_intr(sc);
+	if (virtqueue_enable_intr(sc->sc_eventvq) != 0)
+		vtvsock_event_intr(sc);
+
+	return (0);
 }
 
 static int
@@ -1504,6 +1540,10 @@ static device_method_t vtvsock_methods[] = {
 	DEVMETHOD(device_probe,		vtvsock_probe),
 	DEVMETHOD(device_attach,	vtvsock_attach),
 	DEVMETHOD(device_detach,	vtvsock_detach),
+
+	/* virtio bus interface */
+	DEVMETHOD(virtio_attach_completed, vtvsock_attach_completed),
+
 	DEVMETHOD_END
 };
 
