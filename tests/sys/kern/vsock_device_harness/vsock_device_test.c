@@ -1044,6 +1044,126 @@ ATF_TC_BODY(host_data_then_eof_same_dispatch, tc)
 	free(sc);
 }
 
+/*
+ * --- connection cap: the (MAX_CONNS+1)th guest OP_REQUEST is refused with
+ * RST, and closing a connection frees a slot so a later REQUEST succeeds.
+ * The DoS backstop for a guest that opens connections without bound. ---
+ */
+ATF_TC_WITHOUT_HEAD(conn_cap_refuses_and_reclaims);
+ATF_TC_BODY(conn_cap_refuses_and_reclaims, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr h;
+	struct vtvsock_conn *victim;
+	int i;
+	reset_caps();
+	g_connectat_result = 0;			/* host listener always present */
+
+	/*
+	 * Fill exactly to the cap: MAX_CONNS successful REQUESTs.  Reset the
+	 * injected-packet capture each iteration so the 256 RESPONSEs don't
+	 * overflow the harness's fixed g_inject[128] array (we only care about
+	 * the cap behavior, checked below).
+	 */
+	for (i = 0; i < VTVSOCK_MAX_CONNS; i++) {
+		g_ninject = 0;
+		g_rx_descs = 256;	/* replenish RX ring for the RESPONSE */
+		mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST, STREAM, 3, VSOCK_CID_HOST,
+		    1000 + i, 80, 0, 0, 256 * 1024, 0);
+		vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	}
+	ATF_CHECK(nconns(sc) == VTVSOCK_MAX_CONNS);
+
+	/* One more must be refused with RST, not crash or over-allocate. */
+	g_ninject = 0;
+	g_rx_descs = 256;
+	mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST, STREAM, 3, VSOCK_CID_HOST,
+	    9999, 80, 0, 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(nconns(sc) == VTVSOCK_MAX_CONNS);	/* not exceeded */
+	ATF_CHECK(g_ninject == 1 && g_inject[0].op == VIRTIO_VSOCK_OP_RST);
+
+	/* Close one, freeing a slot; a fresh REQUEST now succeeds. */
+	victim = TAILQ_FIRST(&sc->vsc_conns);
+	vtvsock_conn_close(sc, victim);
+	ATF_CHECK(nconns(sc) == VTVSOCK_MAX_CONNS - 1);
+	g_ninject = 0;
+	g_rx_descs = 256;
+	mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST, STREAM, 3, VSOCK_CID_HOST,
+	    8888, 80, 0, 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(nconns(sc) == VTVSOCK_MAX_CONNS);	/* slot reclaimed */
+	ATF_CHECK(g_ninject == 1 &&
+	    g_inject[0].op == VIRTIO_VSOCK_OP_RESPONSE);
+	free(sc);
+}
+
+/*
+ * --- reaper: a connection stuck in CONN_CLOSING past the timeout is
+ * force-RST and freed, so an unacknowledged close cannot leak a slot even
+ * if the guest goes silent.  close_time is set ancient so the real-clock
+ * delta exceeds the 8 s threshold. ---
+ */
+ATF_TC_WITHOUT_HEAD(reaper_closes_stuck_closing);
+ATF_TC_BODY(reaper_closes_stuck_closing, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->state = CONN_CLOSING;
+	c->close_time = 1;		/* ancient: now - 1 >> 8 s */
+
+	vtvsock_reap_stale(sc);
+	ATF_CHECK(nconns(sc) == 0);			/* reaped */
+	ATF_CHECK(g_ninject == 1 && g_inject[0].op == VIRTIO_VSOCK_OP_RST);
+	free(sc);
+}
+
+/*
+ * --- reaper: a host-initiated connect stuck in CONN_CONNECTING past its
+ * timeout is torn down (the guest never sent OP_RESPONSE). ---
+ */
+ATF_TC_WITHOUT_HEAD(reaper_times_out_connecting);
+ATF_TC_BODY(reaper_times_out_connecting, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->state = CONN_CONNECTING;
+	c->close_time = 1;		/* ancient: now - 1 >> 30 s */
+
+	vtvsock_reap_stale(sc);
+	ATF_CHECK(nconns(sc) == 0);			/* reaped */
+	free(sc);
+}
+
+/*
+ * --- malformed guest TX: an OP_RW whose declared len exceeds VTVSOCK_MAX_PKT
+ * is dropped without creating/touching a connection (a guest cannot make the
+ * device read an over-large packet). ---
+ */
+ATF_TC_WITHOUT_HEAD(tx_oversized_paylen_dropped);
+ATF_TC_BODY(tx_oversized_paylen_dropped, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr *h = (void *)g_rxbuf;
+	reset_caps();
+	(void)mk_established(sc, 1234, 80, STREAM);
+
+	/* Declared payload 70000 > VTVSOCK_MAX_PKT (65536): must be dropped. */
+	mkhdr(h, VIRTIO_VSOCK_OP_RW, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    70000, 0, 256 * 1024, 0);
+	g_chain_readable = 1;
+	g_chain_writable = 0;
+	g_getchain_consumes = 1;
+	g_rx_descs = 1;
+	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
+	ATF_CHECK(g_send_calls == 0);	/* payload never forwarded to host */
+	free(sc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, spoofed_src_cid);
@@ -1076,6 +1196,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, shutdown_rcv_half_close_not_escalated);
 	ATF_TP_ADD_TC(tp, half_close_send_then_host_eof);
 	ATF_TP_ADD_TC(tp, host_data_then_eof_same_dispatch);
+	ATF_TP_ADD_TC(tp, conn_cap_refuses_and_reclaims);
+	ATF_TP_ADD_TC(tp, reaper_closes_stuck_closing);
+	ATF_TP_ADD_TC(tp, reaper_times_out_connecting);
+	ATF_TP_ADD_TC(tp, tx_oversized_paylen_dropped);
 
 	return (atf_no_error());
 }
