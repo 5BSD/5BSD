@@ -213,6 +213,44 @@ ATF_TC_BODY(rx_peer_fwd_cnt_spoof_rst, tc)
 	ATF_CHECK(cap_count(VIRTIO_VSOCK_OP_RST) == 1);	/* teardown with RST */
 }
 
+/* --- guest RX: an established connection whose peer sends more than our
+ * advertised receive buffer allows is a flow-control violation -> RST with
+ * ECONNRESET (the ONLY established-conn ECONNRESET path; loopback can't reach
+ * it, so nothing else covers it). --- */
+ATF_TC_WITHOUT_HEAD(rx_flow_control_violation_rst);
+ATF_TC_BODY(rx_flow_control_violation_rst, tc)
+{
+	struct socket *lso;
+	struct virtio_vsock_hdr *h;
+	uint8_t pkt[sizeof(struct virtio_vsock_hdr) + 200];
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	lso = mk_socket(SOCK_STREAM);
+	ATF_REQUIRE(lso != NULL);
+	/* Small receive buffer so a modest record overflows it; the child
+	 * inherits this as its advertised buf_alloc. */
+	lso->so_rcv.sb_hiwat = 100;
+	lso->sol_sbrcv_hiwat = 100;
+	ATF_REQUIRE(bind_listen(lso, 81) == 0);	/* distinct port: tests share
+						 * global pcb lists */
+
+	/* Establish a child via OP_REQUEST. */
+	h = (struct virtio_vsock_hdr *)pkt;
+	mkhdr(h, VIRTIO_VSOCK_OP_REQUEST, VIRTIO_VSOCK_TYPE_STREAM,
+	    2, 1235, 81, 0, 0, 65536, 0);
+	vsock_rx_packet(pkt, sizeof(*h));
+	ATF_CHECK(cap_count(VIRTIO_VSOCK_OP_RESPONSE) == 1);
+
+	/* OP_RW carrying 200 bytes into a 100-byte window: flow-control
+	 * violation -> RST.  Payload present so payload_len == 200. */
+	g_ncap = 0;
+	memset(pkt + sizeof(*h), 'D', 200);
+	mkhdr(h, VIRTIO_VSOCK_OP_RW, VIRTIO_VSOCK_TYPE_STREAM,
+	    2, 1235, 81, 200, 0, 65536, 0);
+	vsock_rx_packet(pkt, sizeof(pkt));
+	ATF_CHECK(cap_count(VIRTIO_VSOCK_OP_RST) == 1);	/* violation -> RST */
+}
+
 /* sonewconn in the DUT's TU so it can reach static vsock_attach + protosw. */
 struct socket *
 vsock_kmock_sonewconn(struct socket *head, int connstatus)
@@ -235,5 +273,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, feature_negotiation_gates);
 	ATF_TP_ADD_TC(tp, credit_arithmetic_and_clamp);
 	ATF_TP_ADD_TC(tp, rx_peer_fwd_cnt_spoof_rst);
+	ATF_TP_ADD_TC(tp, rx_flow_control_violation_rst);
 	return (atf_no_error());
 }
