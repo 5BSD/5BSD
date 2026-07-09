@@ -10,6 +10,18 @@ lock race), device nits, and the big coverage lever (guest unit harness).
 
 ## Confirmed real bugs
 
+### D1 REACHABILITY (measured 2026-07-09, live guest)
+Our 5BSD guest CANNOT trigger D1: `vsock_sosend` (uipc_vsock.c:2166) rejects
+any SEQPACKET record > peer `buf_alloc` (256KB) with EMSGSIZE *before* sending
+(confirmed: a 1 MiB guest→host record returns -1/EMSGSIZE instantly, no hang).
+D1's deadlock is reachable ONLY by a sender that fragments a large record and
+streams fragments against credit without the up-front whole-record check --
+i.e. a potential LINUX-interop case, unknown until §4 runs. The D1 fix is
+correct-and-defensive regardless (the device must credit incrementally), and
+is validated by the unit harness (seqpacket_large_record_credits_incrementally,
+which drives the device reassembly as a fragmenting sender would). END-TO-END
+proof of D1 requires a Linux guest (GAP 3), not our own.
+
 ### D1 — SEQPACKET record >256KB deadlocks (HANG, main data path)
 `usr.sbin/bhyve/pci_virtio_vsock.c` `vtvsock_seqpkt_rx`. Host buffers guest
 seqpacket fragments into `rx_reasm` but only advances `fwd_cnt` at EOM
