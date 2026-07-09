@@ -17,8 +17,11 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 cp "$here"/*.h "$here/vsock_device_test.c" "$work/"
-ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock.c"     "$work/pci_virtio_vsock.c"
-ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock_iov.h" "$work/pci_virtio_vsock_iov.h"
+ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock.c"        "$work/pci_virtio_vsock.c"
+ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock_iov.h"    "$work/pci_virtio_vsock_iov.h"
+# DTrace USDT probe wrappers: harness builds WITHOUT -DWITH_DTRACE, so the header
+# resolves every VSOCK_PROBE_* to a no-op (no <sys/sdt.h>, no DOF needed).
+ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock_probes.h" "$work/pci_virtio_vsock_probes.h"
 
 mkdir -p "$work/inc/sys"
 cp "$srctop/sys/sys/vsock.h" "$work/inc/sys/vsock.h"

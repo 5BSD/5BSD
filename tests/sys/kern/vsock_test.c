@@ -2995,12 +2995,17 @@ ATF_TC_BODY(reserved_cid_bind, tc)
 	ATF_REQUIRE(bind(s, (struct sockaddr *)&svm, sizeof(svm)) == -1);
 	ATF_REQUIRE(errno == EAFNOSUPPORT || errno == EINVAL);
 
-	/* CID 2 (host) — not our CID, must fail */
+	/*
+	 * CID 2 (host) is the host's own CID, never a local guest endpoint:
+	 * bind rejects it with EADDRNOTAVAIL (the address exists but is not
+	 * ours), distinct from the EAFNOSUPPORT returned for an arbitrary
+	 * foreign guest CID.
+	 */
 	vsock_set_any(&svm);
 	svm.svm_cid = VSOCK_CID_HOST;
 	svm.svm_port = 5001;
 	ATF_REQUIRE(bind(s, (struct sockaddr *)&svm, sizeof(svm)) == -1);
-	ATF_REQUIRE(errno == EAFNOSUPPORT);
+	ATF_REQUIRE(errno == EADDRNOTAVAIL);
 
 	close(s);
 }
@@ -5181,6 +5186,112 @@ ATF_TC_BODY(sysctl_guest_cid_local, tc)
 }
 
 /*
+ * An explicit bind to VSOCK_CID_LOCAL (1) must succeed and create a
+ * loopback-only listener: reachable via a connect to CID 1, with
+ * getsockname reporting CID 1 (never rewritten to the guest CID).
+ * Matches Linux, where VMADDR_CID_LOCAL is always a bindable address.
+ */
+ATF_TC_WITHOUT_HEAD(bind_cid_local_explicit);
+ATF_TC_BODY(bind_cid_local_explicit, tc)
+{
+	struct sockaddr_vm svm, got, dst;
+	socklen_t glen;
+	int ls, cs, as;
+
+	(void)tc;
+
+	ls = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(ls >= 0);
+	vsock_set_any(&svm);
+	svm.svm_cid = VSOCK_CID_LOCAL;
+	ATF_REQUIRE_MSG(bind(ls, (struct sockaddr *)&svm, sizeof(svm)) == 0,
+	    "bind to CID_LOCAL: %s", strerror(errno));
+	glen = sizeof(got);
+	ATF_REQUIRE(getsockname(ls, (struct sockaddr *)&got, &glen) == 0);
+	ATF_REQUIRE_MSG(got.svm_cid == VSOCK_CID_LOCAL,
+	    "bound CID %u, expected CID_LOCAL", got.svm_cid);
+	ATF_REQUIRE(listen(ls, 8) == 0);
+
+	cs = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(cs >= 0);
+	vsock_set_any(&dst);
+	dst.svm_cid = VSOCK_CID_LOCAL;
+	dst.svm_port = got.svm_port;
+	ATF_REQUIRE_MSG(connect(cs, (struct sockaddr *)&dst, sizeof(dst)) == 0,
+	    "connect to CID_LOCAL listener: %s", strerror(errno));
+	as = accept(ls, NULL, NULL);
+	ATF_REQUIRE_MSG(as >= 0, "accept: %s", strerror(errno));
+
+	close(as);
+	close(cs);
+	close(ls);
+}
+
+ATF_TC(bind_port_zero_literal);
+ATF_TC_HEAD(bind_port_zero_literal, tc)
+{
+	/* Port 0 is a privileged literal port (Linux semantics); needs root. */
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(bind_port_zero_literal, tc)
+{
+	struct sockaddr_vm svm, got;
+	socklen_t glen;
+	int s;
+
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+	vsock_set_any(&svm);
+	svm.svm_port = 0;
+	ATF_REQUIRE_MSG(bind(s, (struct sockaddr *)&svm, sizeof(svm)) == 0,
+	    "bind to literal port 0: %s", strerror(errno));
+	glen = sizeof(got);
+	ATF_REQUIRE(getsockname(s, (struct sockaddr *)&got, &glen) == 0);
+	ATF_REQUIRE_MSG(got.svm_port == 0,
+	    "port 0 was auto-assigned to %u; expected literal 0 "
+	    "(Linux semantics)", got.svm_port);
+	close(s);
+}
+
+/*
+ * IOCTL_VM_SOCKETS_GET_LOCAL_CID (Linux parity) must report the same CID as
+ * kern.vsock.guest_cid, both on a vsock socket and on the /dev/vsock
+ * character device (where Linux serves it).
+ */
+ATF_TC_WITHOUT_HEAD(get_local_cid_ioctl);
+ATF_TC_BODY(get_local_cid_ioctl, tc)
+{
+	uint64_t syscid;
+	uint32_t cid;
+	size_t len = sizeof(syscid);
+	int fd, s;
+
+	(void)tc;
+
+	ATF_REQUIRE(sysctlbyname("kern.vsock.guest_cid", &syscid, &len,
+	    NULL, 0) == 0);
+
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+	cid = 0xdeadbeef;
+	ATF_REQUIRE_MSG(ioctl(s, IOCTL_VM_SOCKETS_GET_LOCAL_CID, &cid) == 0,
+	    "GET_LOCAL_CID on socket: %s", strerror(errno));
+	ATF_REQUIRE_MSG(cid == (uint32_t)syscid,
+	    "socket ioctl CID %u != sysctl CID %ju", cid, (uintmax_t)syscid);
+	close(s);
+
+	fd = open("/dev/vsock", O_RDONLY);
+	ATF_REQUIRE_MSG(fd >= 0, "open /dev/vsock: %s", strerror(errno));
+	cid = 0xdeadbeef;
+	ATF_REQUIRE_MSG(ioctl(fd, IOCTL_VM_SOCKETS_GET_LOCAL_CID, &cid) == 0,
+	    "GET_LOCAL_CID on /dev/vsock: %s", strerror(errno));
+	ATF_REQUIRE_MSG(cid == (uint32_t)syscid,
+	    "/dev/vsock ioctl CID %u != sysctl CID %ju",
+	    cid, (uintmax_t)syscid);
+	close(fd);
+}
+
+/*
  * SIOCOUTQ (Linux parity) must be wired to the vsock protocol and report a
  * non-negative in-flight byte count on an established connection, and must be
  * rejected before the socket is connected.  Over the loopback transport data
@@ -5487,6 +5598,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, sockopt_af_vsock_level);
 	ATF_TP_ADD_TC(tp, bind_cid_any_32bit);
 	ATF_TP_ADD_TC(tp, bind_privileged_port);
+	ATF_TP_ADD_TC(tp, bind_cid_local_explicit);
+	ATF_TP_ADD_TC(tp, bind_port_zero_literal);
+	ATF_TP_ADD_TC(tp, get_local_cid_ioctl);
 
 	return (atf_no_error());
 }

@@ -18,5 +18,7 @@ void pci_set_cfgdata16(struct pci_devinst *, int, uint16_t);
 #define PCIR_VENDOR   0x00
 #define PCIR_CLASS    0x0b
 #define PCIR_SUBCLASS 0x0a
+#define PCIR_SUBVEND_0 0x2c
+#define PCIR_SUBDEV_0  0x2e
 #define PCIC_SIMPLECOMM 0x07
 #endif

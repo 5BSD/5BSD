@@ -176,19 +176,15 @@ ATF_TC_BODY(protocol_constants, tc)
 	ATF_CHECK_EQ(2, VIRTIO_VSOCK_SEQ_EOR);
 	/* Event id (5.10.6.7). */
 	ATF_CHECK_EQ(0, VIRTIO_VSOCK_EVENT_TRANSPORT_RESET);
-	/* Feature bits (5.10.3): only F_STREAM(0) and F_SEQPACKET(1) exist. */
+	/*
+	 * Feature bits (virtio 1.4 §5.10.3): F_STREAM(0), F_SEQPACKET(1),
+	 * F_NO_IMPLIED_STREAM(2).  Bit 2 was contested while unratified;
+	 * virtio 1.4 ratified it as NO_IMPLIED_STREAM, so it is now defined
+	 * and must stay pinned to bit 2.
+	 */
 	ATF_CHECK_EQ(1ULL << 0, VIRTIO_VSOCK_F_STREAM);
 	ATF_CHECK_EQ(1ULL << 1, VIRTIO_VSOCK_F_SEQPACKET);
-	/*
-	 * Bit 2 is intentionally NOT defined in the ABI header: it is
-	 * contested between two unratified proposals (NO_IMPLIED_STREAM and
-	 * F_DGRAM), so offering it risks being misread as DGRAM by a real
-	 * QEMU/vhost peer.  Assert at compile time that no bit-2 feature macro
-	 * leaked back into <sys/vsock.h>.
-	 */
-#ifdef VIRTIO_VSOCK_F_NO_IMPLIED_STREAM
-#error "bit-2 virtio-vsock feature must remain unoffered/undefined"
-#endif
+	ATF_CHECK_EQ(1ULL << 2, VIRTIO_VSOCK_F_NO_IMPLIED_STREAM);
 }
 
 /* Reserved CIDs (5.10.4) and the Linux-compatible ABI aliases. */
@@ -215,7 +211,20 @@ ATF_TC_BODY(cid_and_abi_constants, tc)
 	ATF_CHECK_EQ(1, SO_VM_SOCKETS_BUFFER_MIN_SIZE);
 	ATF_CHECK_EQ(2, SO_VM_SOCKETS_BUFFER_MAX_SIZE);
 	ATF_CHECK_EQ(3, SO_VM_SOCKETS_PEER_HOST_VM_ID);	/* == Linux */
+	ATF_CHECK_EQ(5, SO_VM_SOCKETS_TRUSTED);		/* == Linux (VMCI-only) */
 	ATF_CHECK_EQ(6, SO_VM_SOCKETS_CONNECT_TIMEOUT);
+	ATF_CHECK_EQ(7, SO_VM_SOCKETS_NONBLOCK_TXRX);	/* == Linux (VMCI-only) */
+	ATF_CHECK_EQ(8, SO_VM_SOCKETS_CONNECT_TIMEOUT_NEW);
+
+	/*
+	 * svm_flags bit and the ioctl command encodings are host-local ABI
+	 * that Linux-ported code depends on; pin them so a stray edit to the
+	 * literal in <sys/vsock.h> fails here rather than silently breaking a
+	 * recompiled ported program (which would pick up the new value too).
+	 */
+	ATF_CHECK_EQ(0x01, VMADDR_FLAG_TO_HOST);
+	ATF_CHECK_EQ(_IOR('v', 0xb9, uint32_t), IOCTL_VM_SOCKETS_GET_LOCAL_CID);
+	ATF_CHECK_EQ(_IOR('v', 128, int), SIOCOUTQ);
 }
 
 /* sockaddr_vm field offsets: svm_family must alias struct sockaddr's family. */

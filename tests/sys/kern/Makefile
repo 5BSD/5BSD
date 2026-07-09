@@ -69,16 +69,32 @@ CFLAGS.vsock_iov_test+=	-I${SRCTOP}/usr.sbin/bhyve
 ATF_TESTS_C+=	vsock_device_test
 .PATH:		${SRCTOP}/tests/sys/kern/vsock_device_harness
 CFLAGS.vsock_device_test+=	-DWITHOUT_CAPSICUM \
-	-I${SRCTOP}/tests/sys/kern/vsock_device_harness -I${.OBJDIR} -Wno-error
+	-I${SRCTOP}/tests/sys/kern/vsock_device_harness -I${.OBJDIR}
+# The mock-included device source and the ld --wrap interceptor functions (which
+# must be non-static for the linker to bind them, so they trip
+# -Wmissing-prototypes) produce warnings we do not want fatal.  This must live in
+# CWARNFLAGS.<src> -- appended after the base -Werror in share/mk/bsd.sys.mk --
+# because -Wno-error in CFLAGS.<prog> is emitted before -Werror and has no effect.
+CWARNFLAGS.vsock_device_test.c+=	-Wno-error
 LDFLAGS.vsock_device_test+=	-Wl,--wrap=socket -Wl,--wrap=connectat \
 	-Wl,--wrap=send -Wl,--wrap=recv -Wl,--wrap=sendmsg -Wl,--wrap=shutdown \
 	-Wl,--wrap=poll -Wl,--wrap=close
 LIBADD.vsock_device_test+=	pthread
-CLEANFILES+=	pci_virtio_vsock.c pci_virtio_vsock_iov.h
-vsock_device_test.o:	pci_virtio_vsock.c pci_virtio_vsock_iov.h
+CLEANFILES+=	pci_virtio_vsock.c pci_virtio_vsock_iov.h pci_virtio_vsock_probes.h
+# The DUT sources are copied into ${.OBJDIR} and #included by the test.  Wire the
+# copies to beforedepend, NOT vsock_device_test.o: ATF builds a PIE object
+# (vsock_device_test.pieo), so an .o-only prerequisite never fires and a stale or
+# missing copy gets compiled.  beforedepend runs regardless of the object suffix
+# and re-copies whenever the bhyve sources change.
+beforedepend:	pci_virtio_vsock.c pci_virtio_vsock_iov.h \
+		pci_virtio_vsock_probes.h
 pci_virtio_vsock.c:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_vsock.c
 	cp ${.ALLSRC} ${.TARGET}
 pci_virtio_vsock_iov.h:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_vsock_iov.h
+	cp ${.ALLSRC} ${.TARGET}
+# DTrace USDT probe wrappers; no -DWITH_DTRACE here so every VSOCK_PROBE_* is a
+# no-op (the header pulls in <sys/sdt.h> only under WITH_DTRACE).
+pci_virtio_vsock_probes.h:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_vsock_probes.h
 	cp ${.ALLSRC} ${.TARGET}
 
 TEST_METADATA.sigwait+=	is_exclusive="true"

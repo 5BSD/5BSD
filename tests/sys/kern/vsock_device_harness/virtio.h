@@ -21,7 +21,8 @@ struct virtio_consts {
 	void (*vc_apply_features)(void *, uint64_t);
 	uint64_t vc_hv_caps;
 };
-#define VIRTIO_DEV_VSOCK 0x1053
+#define VIRTIO_DEV_VSOCK 0x1013
+#define VIRTIO_ID_VSOCK  19
 #define VIRTIO_VENDOR    0x1af4
 int  vq_has_descs(struct vqueue_info *);
 int  vq_getchain(struct vqueue_info *, struct iovec *, int, struct vi_req *);

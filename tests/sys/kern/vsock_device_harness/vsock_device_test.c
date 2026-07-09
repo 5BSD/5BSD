@@ -6,7 +6,9 @@
  * (via ld --wrap).  See README.md and the Makefile knobs in
  * tests/sys/kern/Makefile.
  */
+#ifndef WITHOUT_CAPSICUM		/* the in-tree Makefile also passes -D */
 #define WITHOUT_CAPSICUM
+#endif
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <poll.h>
@@ -167,6 +169,7 @@ static size_t g_recv_len;	/* total staged bytes (one host message) */
 static size_t g_recv_off;	/* bytes already consumed by recv() */
 static int g_recv_eof;		/* when set, recv() returns 0 (EOF) once drained */
 static int g_recv_zero_dgram;	/* a real 0-length SEQPACKET record is queued */
+static int g_recv_no_eor;	/* SEQPACKET record delivered WITHOUT MSG_EOR */
 ssize_t
 __wrap_recv(int fd, void *b, size_t n, int f)
 {
@@ -222,7 +225,7 @@ recvmsg(int fd, struct msghdr *m, int flags)
 		return (-1);
 	}
 	if (m != NULL)
-		m->msg_flags = MSG_EOR;		/* a full record boundary */
+		m->msg_flags = g_recv_no_eor ? 0 : MSG_EOR; /* record boundary */
 	if ((flags & MSG_PEEK) == 0)
 		g_recv_off += avail;		/* consuming read drains it */
 	return ((ssize_t)avail);		/* MSG_TRUNC probe: full size */
@@ -258,7 +261,7 @@ reset_caps(void)
 	g_ninject = 0; g_send_calls = 0; g_send_len = 0;
 	g_rx_descs = 256; g_connectat_result = 0;
 	g_recv_len = 0; g_recv_off = 0; g_recv_eof = 0;
-	g_recv_zero_dgram = 0;
+	g_recv_zero_dgram = 0; g_recv_no_eor = 0;
 	g_chain_readable = 0; g_chain_writable = 1; g_getchain_consumes = 0;
 }
 /* Stage a host->guest message that recv() will return to conn_data_cb. */
@@ -433,11 +436,15 @@ ATF_TC_BODY(peer_fwd_cnt_overflow_rst, tc)
 	free(sc);
 }
 
-ATF_TC_WITHOUT_HEAD(credit_update_drop_keeps_last_fwd);
-ATF_TC_BODY(credit_update_drop_keeps_last_fwd, tc)
+ATF_TC_WITHOUT_HEAD(credit_update_full_ring_parked);
+ATF_TC_BODY(credit_update_full_ring_parked, tc)
 {
-	/* Regression test for the last_fwd_cnt fix: a dropped CREDIT_UPDATE
-	 * must NOT advance last_fwd_cnt (else no future update ever fires). */
+	/* A CREDIT_UPDATE built while the RX ring is full must not be lost
+	 * (§5.10.6.1.2): it is parked on the pending-reply ring and flushed
+	 * once the guest posts descriptors.  Parking counts as sent, so
+	 * last_fwd_cnt advances (delivery is guaranteed while the device
+	 * lives); only a pending-ring overflow drops, and that path does NOT
+	 * advance last_fwd_cnt. */
 	struct pci_vtvsock_softc *sc = mk_sc();
 	struct vtvsock_conn *c;
 	struct virtio_vsock_hdr h;
@@ -447,16 +454,20 @@ ATF_TC_BODY(credit_update_drop_keeps_last_fwd, tc)
 	c->fwd_cnt = 1000;
 	c->last_fwd_cnt = 0;
 
-	g_rx_descs = 0;			/* RX ring full -> inject fails */
+	g_rx_descs = 0;			/* RX ring full -> update is parked */
 	mkhdr(&h, VIRTIO_VSOCK_OP_CREDIT_REQUEST, STREAM, 3, VSOCK_CID_HOST, 1234,
 	    80, 0, 0, 256 * 1024, 0);
 	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
-	ATF_CHECK(c->last_fwd_cnt == 0);	/* NOT advanced on drop */
+	ATF_CHECK(sc->vsc_pend_count == 1);	/* parked, not dropped */
+	ATF_CHECK(g_ninject == 0);		/* nothing on the wire yet */
+	ATF_CHECK(c->last_fwd_cnt == 1000);	/* parked counts as sent */
 
-	g_rx_descs = 256;		/* ring has room now */
-	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
-	ATF_CHECK(c->last_fwd_cnt == 1000);	/* advanced on success */
-	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_CREDIT_UPDATE);
+	g_rx_descs = 256;		/* guest posted descriptors */
+	vtvsock_pend_flush(sc);
+	ATF_CHECK(sc->vsc_pend_count == 0);
+	ATF_CHECK(g_ninject == 1 &&
+	    g_inject[0].op == VIRTIO_VSOCK_OP_CREDIT_UPDATE);
+	ATF_CHECK(g_inject[0].fwd_cnt == 1000);	/* real credit on the wire */
 	free(sc);
 }
 
@@ -683,8 +694,9 @@ ATF_TC_BODY(rx_chain_not_writable_dropped, tc)
 	g_chain_readable = 1;
 	g_chain_writable = 0;
 	r = vtvsock_send_ctrl(sc, c, VIRTIO_VSOCK_OP_CREDIT_UPDATE, 0);
-	ATF_CHECK(r == -1);		/* injection refused */
+	ATF_CHECK(r == 0);		/* parked for retry, not lost */
 	ATF_CHECK(g_ninject == 0);	/* nothing delivered to the guest */
+	ATF_CHECK(sc->vsc_pend_count == 1);	/* held on the pending ring */
 	free(sc);
 }
 
@@ -756,6 +768,45 @@ ATF_TC_BODY(seqpacket_host_zero_len_to_guest, tc)
 #endif /* !VSOCK_HARNESS_NO_RECVMSG_MOCK */
 }
 
+/* --- host->guest SEQPACKET EOR must reflect the host peer's MSG_EOR --- */
+ATF_TC_WITHOUT_HEAD(seqpacket_host_eor_propagated);
+ATF_TC_BODY(seqpacket_host_eor_propagated, tc)
+{
+#ifndef VSOCK_HARNESS_NO_RECVMSG_MOCK
+	struct pci_vtvsock_softc *sc;
+	struct vtvsock_conn *c;
+
+	/* Record WITH MSG_EOR: final fragment carries EOM and EOR. */
+	sc = mk_sc();
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	stage_recv("rec", 3);
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(g_ninject == 1);
+	ATF_CHECK(g_inject[0].op == VIRTIO_VSOCK_OP_RW);
+	ATF_CHECK((g_inject[0].flags & VIRTIO_VSOCK_SEQ_EOM) != 0);
+	ATF_CHECK((g_inject[0].flags & VIRTIO_VSOCK_SEQ_EOR) != 0);
+	free(sc);
+
+	/*
+	 * Record WITHOUT MSG_EOR: the guest must still see the message
+	 * boundary (EOM) but NOT a record boundary (EOR).  Regression guard
+	 * for the fix that stopped hardcoding EOR on every host->guest record.
+	 */
+	sc = mk_sc();
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	stage_recv("rec", 3);
+	g_recv_no_eor = 1;
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(g_ninject == 1);
+	ATF_CHECK(g_inject[0].op == VIRTIO_VSOCK_OP_RW);
+	ATF_CHECK((g_inject[0].flags & VIRTIO_VSOCK_SEQ_EOM) != 0);
+	ATF_CHECK((g_inject[0].flags & VIRTIO_VSOCK_SEQ_EOR) == 0);
+	free(sc);
+#endif /* !VSOCK_HARNESS_NO_RECVMSG_MOCK */
+}
+
 /* --- #4: a genuine host SEQPACKET EOF still drives a SHUTDOWN toward the guest --- */
 ATF_TC_WITHOUT_HEAD(seqpacket_host_eof_sends_shutdown);
 ATF_TC_BODY(seqpacket_host_eof_sends_shutdown, tc)
@@ -777,6 +828,87 @@ ATF_TC_BODY(seqpacket_host_eof_sends_shutdown, tc)
 #endif /* !VSOCK_HARNESS_NO_RECVMSG_MOCK */
 }
 
+/*
+ * --- guest->host SEQPACKET: the reassembly buffer is FREED after a record is
+ * delivered, not retained for the life of the connection.  Regression for the
+ * retained-capacity DoS: the device-global reasm budget tracks only live
+ * bytes, so retaining peak capacity would let a guest deliver one large record
+ * on each of VTVSOCK_MAX_CONNS connections in turn and pin ~1 GiB of unfreed
+ * memory while the live aggregate never exceeds a single record. ---
+ */
+ATF_TC_WITHOUT_HEAD(seqpacket_reasm_freed_after_delivery);
+ATF_TC_BODY(seqpacket_reasm_freed_after_delivery, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+
+	/* A non-EOM fragment allocates the reassembly buffer. */
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST, 1234, 80, 4,
+	    0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, (const uint8_t *)"ABCD", 4);
+	ATF_CHECK(c->rx_reasm_cap >= 4);		/* capacity allocated */
+	ATF_CHECK(sc->vsc_reasm_total == 4);
+
+	/*
+	 * EOM delivers the whole record; the reassembly buffer must be freed
+	 * (rx_reasm == NULL, cap == 0) so an idle connection retains no
+	 * capacity, and the global budget must return to zero.
+	 */
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST, 1234, 80, 3,
+	    VIRTIO_VSOCK_SEQ_EOM, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, (const uint8_t *)"EFG", 3);
+	ATF_CHECK(g_send_len == 7);			/* record delivered */
+	ATF_CHECK(c->rx_reasm == NULL);			/* buffer freed */
+	ATF_CHECK(c->rx_reasm_cap == 0);		/* no retained capacity */
+	ATF_CHECK(sc->vsc_reasm_total == 0);		/* budget fully released */
+	free(sc);
+}
+
+/*
+ * --- guest half-close of the receive direction (SHUTDOWN_RCV) must NOT be
+ * escalated to a full close by a later read wakeup (§5.10.6.5, matches Linux).
+ * Regression: a stray conn_data_cb on the SHUT_RD host fd returns recv()==0,
+ * which must not be misread as a peer EOF that tears down the still-open
+ * guest->host direction. ---
+ */
+ATF_TC_WITHOUT_HEAD(shutdown_rcv_half_close_not_escalated);
+ATF_TC_BODY(shutdown_rcv_half_close_not_escalated, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+
+	/* Guest half-closes only the receive direction (legal half-close). */
+	mkhdr(&h, VIRTIO_VSOCK_OP_SHUTDOWN, STREAM, 3, VSOCK_CID_HOST, 1234, 80, 0,
+	    VIRTIO_VSOCK_SHUTDOWN_RCV, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(nconns(sc) == 1);			/* connection survives */
+	ATF_CHECK(c->peer_shutdown == VIRTIO_VSOCK_SHUTDOWN_RCV);
+
+	/*
+	 * A stray read wakeup returns recv()==0 on the SHUT_RD fd.  It must be
+	 * ignored: the connection stays ESTABLISHED and NO SHUTDOWN(RCV|SEND)
+	 * is emitted to the guest.
+	 */
+	g_recv_eof = 1;
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(nconns(sc) == 1);
+	ATF_CHECK(c->state == CONN_ESTABLISHED);
+	ATF_CHECK(g_ninject == 0);			/* no spurious SHUTDOWN */
+
+	/* The still-open guest->host direction continues to deliver data. */
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, STREAM, 3, VSOCK_CID_HOST, 1234, 80, 5,
+	    0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, (const uint8_t *)"hello", 5);
+	ATF_CHECK(g_send_len == 5 && memcmp(g_send_buf, "hello", 5) == 0);
+	free(sc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, spoofed_src_cid);
@@ -787,7 +919,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, request_no_listener_rst);
 	ATF_TP_ADD_TC(tp, rw_forwards_to_host);
 	ATF_TP_ADD_TC(tp, peer_fwd_cnt_overflow_rst);
-	ATF_TP_ADD_TC(tp, credit_update_drop_keeps_last_fwd);
+	ATF_TP_ADD_TC(tp, credit_update_full_ring_parked);
 	ATF_TP_ADD_TC(tp, shutdown_both_closes);
 	ATF_TP_ADD_TC(tp, seqpacket_request_response);
 	ATF_TP_ADD_TC(tp, wrong_dst_cid_dropped);
@@ -802,7 +934,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, tx_chain_not_readable_dropped);
 	ATF_TP_ADD_TC(tp, global_reasm_budget_rst);
 	ATF_TP_ADD_TC(tp, seqpacket_host_zero_len_to_guest);
+	ATF_TP_ADD_TC(tp, seqpacket_host_eor_propagated);
 	ATF_TP_ADD_TC(tp, seqpacket_host_eof_sends_shutdown);
+	ATF_TP_ADD_TC(tp, seqpacket_reasm_freed_after_delivery);
+	ATF_TP_ADD_TC(tp, shutdown_rcv_half_close_not_escalated);
 
 	return (atf_no_error());
 }
