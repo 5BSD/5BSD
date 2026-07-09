@@ -671,6 +671,51 @@ ATF_TC_BODY(seqpacket_reassembles_to_eom, tc)
 	free(sc);
 }
 
+/*
+ * --- guest->host SEQPACKET: a record LARGER than the advertised buf_alloc
+ * must credit the guest incrementally as fragments are accepted, not only at
+ * EOM.  Otherwise a conformant guest exhausts its send window mid-record and
+ * deadlocks (it blocks for credit the host won't grant until EOM, which the
+ * guest can't reach).  Regression for that hang. ---
+ */
+ATF_TC_WITHOUT_HEAD(seqpacket_large_record_credits_incrementally);
+ATF_TC_BODY(seqpacket_large_record_credits_incrementally, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+	static uint8_t frag[200 * 1024];
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	memset(frag, 'Z', sizeof(frag));
+
+	/*
+	 * One 200 KiB fragment, NO EOM: the record is not complete and nothing
+	 * is delivered to the host yet, but the 200 KiB already accepted into
+	 * reassembly must be credited so the guest's window (buf_alloc = 256
+	 * KiB) does not close before it can send the rest of the record.
+	 */
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST, 1234, 80,
+	    sizeof(frag), 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, frag, sizeof(frag));
+	ATF_CHECK(g_send_calls == 0);			/* not delivered (no EOM) */
+	ATF_CHECK(c->fwd_cnt == sizeof(frag));		/* but credited now */
+
+	/*
+	 * Second 200 KiB fragment with EOM: total record is 400 KiB, well over
+	 * buf_alloc, which is only deliverable because the guest kept getting
+	 * credit for the first fragment.  Delivered as one datagram; fwd_cnt
+	 * reflects the whole record exactly once (no double-count at delivery).
+	 */
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST, 1234, 80,
+	    sizeof(frag), VIRTIO_VSOCK_SEQ_EOM, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, frag, sizeof(frag));
+	ATF_CHECK(g_send_calls == 1);			/* one host datagram */
+	ATF_CHECK(g_send_len == 2 * sizeof(frag));	/* full 400 KiB record */
+	ATF_CHECK(c->fwd_cnt == 2 * sizeof(frag));	/* credited exactly once */
+	free(sc);
+}
+
 /* --- guest->host: a zero-length SEQPACKET record is delivered as an empty datagram --- */
 ATF_TC_WITHOUT_HEAD(seqpacket_zero_len_record);
 ATF_TC_BODY(seqpacket_zero_len_record, tc)
@@ -1019,6 +1064,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, host_rx_respects_credit);
 	ATF_TP_ADD_TC(tp, host_eof_sends_shutdown);
 	ATF_TP_ADD_TC(tp, seqpacket_reassembles_to_eom);
+	ATF_TP_ADD_TC(tp, seqpacket_large_record_credits_incrementally);
 	ATF_TP_ADD_TC(tp, seqpacket_zero_len_record);
 	ATF_TP_ADD_TC(tp, rx_chain_not_writable_dropped);
 	ATF_TP_ADD_TC(tp, tx_chain_not_readable_dropped);

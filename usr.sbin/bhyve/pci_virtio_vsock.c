@@ -232,6 +232,20 @@ vtvsock_cap_lockdown(int fd)
 }
 
 /*
+ * A connection fd carries CAP_IOCTL (in its rights) so the STREAM RX path can
+ * FIONREAD it to size reads; restrict the allowed ioctls to exactly FIONREAD.
+ * Without this the ioctl fails ENOTCAPABLE in capability mode and every
+ * host->guest STREAM read silently falls back to a 4 KiB chunk.
+ */
+static void
+vtvsock_cap_limit_fionread(int fd)
+{
+	const cap_ioctl_t cmds[] = { FIONREAD };
+
+	(void)caph_ioctls_limit(fd, cmds, nitems(cmds));
+}
+
+/*
  * Prepare an fd that will be passed to a host application via
  * SCM_RIGHTS.  The fd can be transferred exactly once (to the app),
  * then it is pinned.  Close-on-exec and no-ambient are set so the
@@ -1163,6 +1177,20 @@ vtvsock_seqpkt_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 		memcpy(conn->rx_reasm + conn->rx_reasm_len, payload, paylen);
 		conn->rx_reasm_len = need;
 		sc->vsc_reasm_total += paylen;
+		/*
+		 * Credit SEQPACKET bytes to the guest as they are accepted into
+		 * the reassembly buffer -- the host has taken responsibility for
+		 * them (bounded by VTVSOCK_MAX_PEER_BUF_ALLOC), so the guest may
+		 * free them and keep sending.  A record LARGER than the host's
+		 * advertised buf_alloc otherwise deadlocks: the guest exhausts
+		 * its send window mid-record while the host, crediting only at
+		 * EOM, never reopens it.  The caller's maybe_credit_update()
+		 * pushes the incremental window out.  Delivery to the host
+		 * socket (inline send, EMSGSIZE drop, or tx_buf drain) must NOT
+		 * re-credit these bytes.  STREAM keeps delivery-time crediting
+		 * (its intentional slow-reader throttle); this is SEQPACKET-only.
+		 */
+		conn->fwd_cnt += paylen;
 	}
 
 	if ((rwflags & VIRTIO_VSOCK_SEQ_EOM) == 0)
@@ -1183,8 +1211,7 @@ vtvsock_seqpkt_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 		sent = send(conn->fd, conn->rx_reasm, conn->rx_reasm_len,
 		    msgflags);
 		if (sent >= 0) {		/* SEQPACKET send is all-or-nothing */
-			/* Record consumed by the host socket. */
-			conn->fwd_cnt += conn->rx_reasm_len;
+			/* Bytes were credited at reassembly-accept time. */
 			vtvsock_reasm_release(sc, conn);	/* ready for next */
 			return (0);
 		}
@@ -1200,7 +1227,7 @@ vtvsock_seqpkt_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 			WPRINTF(("vtvsock: SEQPACKET record %u bytes exceeds "
 			    "host socket limit, dropping record",
 			    conn->rx_reasm_len));
-			conn->fwd_cnt += conn->rx_reasm_len;
+			/* Bytes were credited at reassembly-accept time. */
 			vtvsock_reasm_release(sc, conn);
 			return (0);
 		}
@@ -1412,10 +1439,11 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 			/*
 			 * CAP_SHUTDOWN: the OP_SHUTDOWN handler half-closes
 			 * this fd with shutdown(2) to propagate the guest's
-			 * half-close to the host application.
+			 * half-close to the host application.  CAP_IOCTL: the
+			 * STREAM RX path FIONREADs it to size reads.
 			 */
 			cap_rights_init(&crights, CAP_EVENT, CAP_RECV,
-			    CAP_SEND, CAP_SHUTDOWN);
+			    CAP_SEND, CAP_SHUTDOWN, CAP_IOCTL);
 			if (caph_rights_limit(cfd, &crights) == -1) {
 				close(cfd);
 				/* Send RST so guest doesn't hang. */
@@ -1423,6 +1451,7 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 				    type);
 				break;
 			}
+			vtvsock_cap_limit_fionread(cfd);
 			vtvsock_cap_lockdown(cfd);
 #endif
 
@@ -1805,17 +1834,29 @@ vtvsock_reap_stale(struct pci_vtvsock_softc *sc)
 		    !conn->host_eof && conn->stall_time != 0 &&
 		    now - conn->stall_time >= 5) {
 			char pb;
+			struct iovec piov = { &pb, sizeof(pb) };
+			struct msghdr pmsg = { .msg_iov = &piov,
+			    .msg_iovlen = 1 };
 			ssize_t pn;
 
-			pn = recv(conn->fd, &pb, sizeof(pb),
+			/*
+			 * recvmsg (not recv): on a SEQPACKET fd recv()==0 is
+			 * ambiguous -- it is returned both for a real EOF and
+			 * for a legitimate 0-length record at the head of the
+			 * buffer.  Only a 0-length read WITHOUT MSG_EOR is a
+			 * peer EOF; a 0-length record carries MSG_EOR.  (STREAM
+			 * never sets MSG_EOR, so recv()==0 stays EOF there.)
+			 */
+			pn = recvmsg(conn->fd, &pmsg,
 			    MSG_PEEK | MSG_DONTWAIT);
-			if (pn == 0) {
+			if (pn == 0 && (pmsg.msg_flags & MSG_EOR) == 0) {
 				DPRINTF(("vtvsock: reaper: host peer of "
 				    "stalled local_port=%u is gone",
 				    conn->local_port));
 				vtvsock_host_eof(sc, conn);
-			} else if (pn > 0) {
-				/* Data is buffered: healthy stall, not dead. */
+			} else if (pn > 0 ||
+			    (pn == 0 && (pmsg.msg_flags & MSG_EOR) != 0)) {
+				/* Data (or an empty record) buffered: alive. */
 				conn->stall_time = 0;
 			}
 		}
@@ -2596,8 +2637,11 @@ vtvsock_conn_write_cb(int fd, enum ev_type t __unused, void *arg)
 			}
 			goto write_error;
 		}
-		/* Record consumed whole: report it and release its buffer. */
-		conn->fwd_cnt += conn->tx_buf_len;
+		/*
+		 * Record consumed whole: release its buffer.  The bytes were
+		 * credited to the guest at reassembly-accept time (see
+		 * vtvsock_seqpkt_rx), so do NOT advance fwd_cnt again here.
+		 */
 		vtvsock_txbuf_release(sc, conn);
 	} else {
 		/* STREAM: push as much as the socket will take. */
@@ -2751,13 +2795,14 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 
 #ifndef WITHOUT_CAPSICUM
 		cap_rights_init(&crights, CAP_EVENT, CAP_RECV, CAP_SEND,
-		    CAP_SHUTDOWN);
+		    CAP_SHUTDOWN, CAP_IOCTL);
 		if (caph_rights_limit(pair[0], &crights) == -1) {
 			WPRINTF(("vtvsock: rights on pair[0] failed"));
 			close(pair[0]);
 			close(pair[1]);
 			goto ctl_connect_fail;
 		}
+		vtvsock_cap_limit_fionread(pair[0]);
 		vtvsock_cap_lockdown(pair[0]);
 		vtvsock_cap_lockdown_xfer_once(pair[1]);
 #endif
