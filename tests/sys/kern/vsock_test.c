@@ -5380,6 +5380,126 @@ ATF_TC_BODY(siocoutq_inflight, tc)
 	close(as); close(cs); close(ls);
 }
 
+/*
+ * SEQPACKET record-size boundary: a record of exactly the peer's receive
+ * buffer must be delivered whole; one byte larger must fail EMSGSIZE with the
+ * connection surviving.  Existing coverage only tests the far-over case (8K
+ * into 4K), never the off-by-one edge in the len > sb_hiwat check.
+ */
+ATF_TC_WITHOUT_HEAD(seqpacket_exact_max_boundary);
+ATF_TC_BODY(seqpacket_exact_max_boundary, tc)
+{
+	struct sockaddr_vm laddr;
+	char *buf;
+	uint64_t cap;
+	int ls, cs, as;
+
+	(void)tc;
+	ls = socket(AF_VSOCK, SOCK_SEQPACKET, 0);
+	ATF_REQUIRE(ls >= 0);
+	vsock_set_bufsz(ls, 8 * 1024);
+	vsock_bind_any(ls, &laddr);
+	ATF_REQUIRE(listen(ls, 8) == 0);
+
+	cs = socket(AF_VSOCK, SOCK_SEQPACKET, 0);
+	ATF_REQUIRE(cs >= 0);
+	ATF_REQUIRE(connect(cs, (struct sockaddr *)&laddr, sizeof(laddr)) == 0);
+	as = accept(ls, NULL, NULL);
+	ATF_REQUIRE(as >= 0);
+
+	/* Effective receive cap the sender's records are checked against. */
+	cap = vsock_get_bufsz(as);
+	ATF_REQUIRE(cap > 0 && cap <= 1024 * 1024);
+	buf = malloc(cap + 1);
+	ATF_REQUIRE(buf != NULL);
+	memset(buf, 'S', cap + 1);
+
+	/* Exactly cap bytes: must succeed and arrive whole. */
+	ATF_REQUIRE_MSG(send(cs, buf, cap, 0) == (ssize_t)cap,
+	    "exact-cap send failed: %s", strerror(errno));
+	ATF_CHECK(recv(as, buf, cap, 0) == (ssize_t)cap);
+
+	/* cap + 1 bytes: must fail EMSGSIZE, connection stays usable. */
+	ATF_REQUIRE(send(cs, buf, cap + 1, 0) == -1);
+	ATF_REQUIRE(errno == EMSGSIZE);
+	ATF_REQUIRE(send(cs, "ok", 2, 0) == 2);		/* conn survived */
+	ATF_CHECK(recv(as, buf, cap, 0) == 2);
+
+	free(buf);
+	close(as); close(cs); close(ls);
+}
+
+/*
+ * SEQPACKET SHUT_RDWR: send after it must EPIPE and the peer must see EOF.
+ * The teardown matrix covers this for STREAM but had a hole for SEQPACKET.
+ */
+ATF_TC_WITHOUT_HEAD(seqpacket_shutdown_rdwr);
+ATF_TC_BODY(seqpacket_shutdown_rdwr, tc)
+{
+	char buf[8];
+	int ls, cs, as;
+
+	(void)tc;
+	(void)signal(SIGPIPE, SIG_IGN);
+	vsock_pair(SOCK_SEQPACKET, &ls, &cs, &as);
+	ATF_REQUIRE(shutdown(cs, SHUT_RDWR) == 0);
+	ATF_REQUIRE(send(cs, "x", 1, 0) == -1);
+	ATF_REQUIRE(errno == EPIPE);
+	memset(buf, 0, sizeof(buf));
+	ATF_REQUIRE(recv(as, buf, sizeof(buf), 0) == 0);	/* peer EOF */
+	close(as); close(cs); close(ls);
+}
+
+/*
+ * SEQPACKET peer close -> EOF for the reader and EPIPE+SIGPIPE for a
+ * subsequent sender (the STREAM equivalents are peer_close_sigpipe /
+ * close_eof_and_epipe; SEQPACKET had none).
+ */
+ATF_TC_WITHOUT_HEAD(seqpacket_peer_close_eof_epipe);
+ATF_TC_BODY(seqpacket_peer_close_eof_epipe, tc)
+{
+	char buf[8];
+	int ls, cs, as;
+
+	(void)tc;
+	(void)signal(SIGPIPE, SIG_IGN);
+	vsock_pair(SOCK_SEQPACKET, &ls, &cs, &as);
+	ATF_REQUIRE(close(as) == 0);
+	ATF_REQUIRE(recv(cs, buf, sizeof(buf), 0) == 0);	/* EOF */
+	ATF_REQUIRE(send(cs, "x", 1, 0) == -1);
+	ATF_REQUIRE(errno == EPIPE);
+	close(cs); close(ls);
+}
+
+/*
+ * connect_timeout malformed timeval -> ERANGE (tv_usec out of range).  The
+ * timeval round-trip and the too-small-buffer EINVAL are covered; the
+ * ERANGE validation path in vsock_ctloutput was not.
+ */
+ATF_TC_WITHOUT_HEAD(connect_timeout_erange);
+ATF_TC_BODY(connect_timeout_erange, tc)
+{
+	struct timeval tv;
+	int s;
+
+	(void)tc;
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+
+	tv.tv_sec = 1;
+	tv.tv_usec = 2000000;		/* >= 1e6: out of range */
+	ATF_REQUIRE(setsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
+	    &tv, sizeof(tv)) == -1);
+	ATF_REQUIRE(errno == ERANGE);
+
+	tv.tv_sec = -1;			/* negative also rejected */
+	tv.tv_usec = 0;
+	ATF_REQUIRE(setsockopt(s, SOL_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
+	    &tv, sizeof(tv)) == -1);
+	ATF_REQUIRE(errno == ERANGE);
+	close(s);
+}
+
 /* ------------------------------------------------------------------ */
 /* ATF test plan                                                       */
 /* ------------------------------------------------------------------ */
@@ -5615,6 +5735,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, buffer_min_max_ordering);
 	ATF_TP_ADD_TC(tp, msg_oob_rejected);
 	ATF_TP_ADD_TC(tp, connect_timeout_timeval);
+	ATF_TP_ADD_TC(tp, seqpacket_exact_max_boundary);
+	ATF_TP_ADD_TC(tp, seqpacket_shutdown_rdwr);
+	ATF_TP_ADD_TC(tp, seqpacket_peer_close_eof_epipe);
+	ATF_TP_ADD_TC(tp, connect_timeout_erange);
 	ATF_TP_ADD_TC(tp, vmci_only_opts_rejected);
 
 	/* Group 50: SEQPACKET fragment limit sysctl */
