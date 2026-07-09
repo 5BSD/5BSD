@@ -4,6 +4,10 @@ Three parallel reviews (device edge cases, guest-kernel correctness, test
 coverage) over the AF_VSOCK stack. Each finding below was verified against
 the source. Severity: HANG/LOSS/CRASH > throughput/spec > cosmetic.
 
+STATUS: D1, D2, D3 FIXED (commit be4d3921bc7, device harness 86 checks).
+G1, G4, G5 FIXED (commit 65e6d29b5a8, guest kernel). Remaining: G3 (minor
+lock race), device nits, and the big coverage lever (guest unit harness).
+
 ## Confirmed real bugs
 
 ### D1 — SEQPACKET record >256KB deadlocks (HANG, main data path)
