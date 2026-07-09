@@ -31,6 +31,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ioccom.h>
+#include <sys/stdint.h>		/* UINT32_C for userland consumers */
 
 #define	VSOCK_CID_HYPERVISOR	UINT32_C(0)
 #define	VSOCK_CID_LOCAL		UINT32_C(1)
@@ -62,6 +63,15 @@
  */
 #define	SIOCOUTQ	_IOR('v', 128, int)
 
+/*
+ * Linux-compat: report the local CID as a uint32_t.  Linux exposes this on
+ * the /dev/vsock misc device (vm_sockets.h defines it as _IO(7, 0xb9), nr
+ * 0xb9); here it is served both by the /dev/vsock cdev and as a socket ioctl,
+ * using the FreeBSD ioctl encoding with the same command number.  Ported
+ * code recompiled against this header works unchanged.
+ */
+#define	IOCTL_VM_SOCKETS_GET_LOCAL_CID	_IOR('v', 0xb9, uint32_t)
+
 #define	SO_VM_SOCKETS_BUFFER_SIZE	0
 #define	SO_VM_SOCKETS_BUFFER_MIN_SIZE	1
 #define	SO_VM_SOCKETS_BUFFER_MAX_SIZE	2
@@ -74,12 +84,14 @@
 #define	VIRTIO_VSOCK_F_STREAM		(1ULL << 0)
 #define	VIRTIO_VSOCK_F_SEQPACKET	(1ULL << 1)
 /*
- * Bit 2 is intentionally NOT offered.  The ratified virtio-vsock spec
- * (virtio 1.2/1.3 §5.10.3) defines only F_STREAM (0) and F_SEQPACKET (1).
- * Bit 2 is contested between two unratified proposals -- NO_IMPLIED_STREAM
- * (OASIS issue #142) and F_DGRAM (LKML) -- so negotiating it risks being
- * misread as DGRAM by a real QEMU/vhost peer.  Do not add a bit-2 feature.
+ * Ratified in virtio 1.4 §5.10.3: when NO_IMPLIED_STREAM is negotiated,
+ * stream support is no longer implied and exists only if F_STREAM was also
+ * negotiated.  The guest driver accepts it when offered (spec SHOULD,
+ * §5.10.3.1) and the bhyve device offers it alongside F_STREAM (§5.10.3.2).
+ * A device offering NO_IMPLIED_STREAM without F_STREAM is seqpacket-only;
+ * the socket layer then refuses SOCK_STREAM creation.
  */
+#define	VIRTIO_VSOCK_F_NO_IMPLIED_STREAM	(1ULL << 2)
 
 struct virtio_vsock_config {
 	uint64_t	guest_cid;

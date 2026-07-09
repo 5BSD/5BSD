@@ -44,11 +44,13 @@
 
 #include <sys/param.h>
 #include <sys/callout.h>
+#include <sys/conf.h>
 #include <sys/counter.h>
 #include <sys/domain.h>
 #include <sys/errno.h>
 #include <sys/kernel.h>
 #include <sys/libkern.h>
+#include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
 #include <sys/module.h>
@@ -64,6 +66,8 @@
 #include <sys/sdt.h>
 #include <sys/uio.h>
 #include <sys/vsock.h>
+
+#include <net/vnet.h>
 
 #include <kern/uipc_vsock.h>
 
@@ -738,11 +742,13 @@ vtvsock_close_timeout(void *arg)
 	     (pcb->state == VTVSOCK_ESTABLISHED &&
 	      pcb->peer_shutdown == (VIRTIO_VSOCK_SHUTDOWN_RCV |
 	      VIRTIO_VSOCK_SHUTDOWN_SEND)))) {
-		(void)vtvsock_remote_transport->send_rst(
-		    pcb->local.svm_cid, pcb->local.svm_port,
-		    pcb->remote.svm_cid, pcb->remote.svm_port,
-		    (so->so_type == SOCK_SEQPACKET) ?
-		    VIRTIO_VSOCK_TYPE_SEQPACKET : VIRTIO_VSOCK_TYPE_STREAM);
+		/*
+		 * send_pkt, not send_rst: the PCB is live here, so the RST
+		 * can carry our real buf_alloc/fwd_cnt as §5.10.6.3.1
+		 * requires of every packet on a stream flow.
+		 */
+		(void)vtvsock_remote_transport->send_pkt(pcb,
+		    VIRTIO_VSOCK_OP_RST, 0, NULL, 0);
 	}
 	pcb->state = VTVSOCK_CLOSED;
 	vtvsock_pcb_remove_lists_locked(pcb);
@@ -836,19 +842,32 @@ vsock_attach(struct socket *so, int proto, struct thread *td)
 	/*
 	 * SEQPACKET requires VIRTIO_VSOCK_F_SEQPACKET to have been
 	 * negotiated with the host.  Loopback-only SEQPACKET is still
-	 * permitted when no remote transport is registered (features == 0).
+	 * permitted when no remote transport is registered.  Key the gate on
+	 * transport presence, not features != 0: a legacy host that
+	 * negotiates zero feature bits still registers a transport (STREAM
+	 * implied) and must not admit SEQPACKET sockets that can only fail
+	 * later at connect.
+	 *
+	 * STREAM is supported unless the device negotiated
+	 * F_NO_IMPLIED_STREAM without F_STREAM (virtio 1.4 §5.10.3: with no
+	 * bits negotiated, or SEQPACKET alone, stream is implied).
+	 *
+	 * These fields are read without vtvsock_mtx: attach also runs via
+	 * sonewconn() on the RX path with the mutex already held, so it must
+	 * not lock.  The unlocked read only races module load/unload of the
+	 * transport, and either ordering is acceptable.
 	 */
 	if (so->so_type == SOCK_SEQPACKET) {
-		if (vtvsock_remote_features != 0 &&
+		if (vtvsock_remote_transport != NULL &&
 		    !(vtvsock_remote_features & VIRTIO_VSOCK_F_SEQPACKET))
 			return (EPROTONOSUPPORT);
+	} else {
+		if (vtvsock_remote_transport != NULL &&
+		    (vtvsock_remote_features &
+		    VIRTIO_VSOCK_F_NO_IMPLIED_STREAM) != 0 &&
+		    (vtvsock_remote_features & VIRTIO_VSOCK_F_STREAM) == 0)
+			return (EPROTONOSUPPORT);
 	}
-
-	/*
-	 * STREAM is always supported: the ratified spec offers F_STREAM
-	 * unconditionally and defines no bit that withdraws it (the draft
-	 * F_NO_IMPLIED_STREAM at bit 2 is not negotiated -- see vsock.h).
-	 */
 
 	pcb = vtvsock_pcb_alloc(so);
 	if (pcb == NULL)
@@ -938,12 +957,13 @@ vsock_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 	 * Reserved CIDs (virtio §5.10.4) can never name a local guest endpoint:
 	 * HYPERVISOR (0) is rejected outright, and HOST (2) belongs to the host
 	 * side.  ANY (0xffffffff) is the "any local CID" wildcard, remapped to
-	 * our guest CID below.  LOCAL (1) is only a valid bind target when it is
-	 * itself our guest CID -- i.e. loopback-only mode, where
-	 * vtvsock_guest_cid == VSOCK_CID_LOCAL -- and that case is admitted by
-	 * the "== vtvsock_guest_cid" gate further down.  vtvsock_guest_cid is
-	 * itself sanitized against reserved values at transport registration,
-	 * so that gate can never be tricked into accepting HYPERVISOR or HOST.
+	 * our guest CID below.  LOCAL (1) is always bindable and denotes a
+	 * loopback-only endpoint, matching Linux (a listener bound to
+	 * VMADDR_CID_LOCAL is reachable only via loopback connects to CID 1,
+	 * never from the remote transport).  vtvsock_guest_cid is itself
+	 * sanitized against reserved values at transport registration, so the
+	 * "== vtvsock_guest_cid" gate below can never be tricked into
+	 * accepting HYPERVISOR or HOST.
 	 */
 	if (svm->svm_cid == VSOCK_CID_HYPERVISOR)
 		return (EINVAL);
@@ -951,11 +971,12 @@ vsock_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 		return (EADDRNOTAVAIL);
 
 	/*
-	 * Binding an explicit port below 1024 requires privilege, matching the
-	 * reserved-port convention and Linux's CAP_NET_BIND_SERVICE gate for
-	 * vsock.  Auto-bind (port 0 / VSOCK_PORT_ANY) always uses >= 1024.
+	 * Binding an explicit port below 1024 (including literal port 0)
+	 * requires privilege, matching the reserved-port convention and
+	 * Linux's CAP_NET_BIND_SERVICE gate for vsock.  Auto-bind
+	 * (VSOCK_PORT_ANY) always uses >= 1024.
 	 */
-	if (svm->svm_port != 0 && svm->svm_port != VSOCK_PORT_ANY &&
+	if (svm->svm_port != VSOCK_PORT_ANY &&
 	    svm->svm_port < 1024 && td != NULL) {
 		int error = priv_check(td, PRIV_NETINET_RESERVEDPORT);
 		if (error != 0)
@@ -966,10 +987,16 @@ vsock_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 	 * VSOCK_CID_ANY (== Linux VMADDR_CID_ANY, 0xffffffff) means "any local
 	 * CID": bind it to our actual guest CID.  0xffffffff is a reserved CID
 	 * that can never be a real address, so the overload is unambiguous.
+	 * Note bound_local is keyed on the caller's explicit CID before the
+	 * remap: in loopback-only mode (guest_cid == LOCAL) an ANY bind also
+	 * lands on CID 1 but is NOT loopback-pinned -- it migrates to the
+	 * real guest CID when a transport registers.
 	 */
+	bool bound_local = (svm->svm_cid == VSOCK_CID_LOCAL);
 	if (svm->svm_cid == VSOCK_CID_ANY)
 		svm->svm_cid = (uint32_t)vtvsock_guest_cid;
-	if (svm->svm_cid != vtvsock_guest_cid)
+	if (svm->svm_cid != vtvsock_guest_cid &&
+	    svm->svm_cid != VSOCK_CID_LOCAL)
 		return (EAFNOSUPPORT);
 
 	mtx_lock(&vtvsock_mtx);
@@ -982,7 +1009,11 @@ vsock_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 		LIST_REMOVE(pcb, link);
 		pcb->on_boundlist = false;
 	}
-	if (svm->svm_port == 0 || svm->svm_port == VSOCK_PORT_ANY) {
+	/*
+	 * Only VSOCK_PORT_ANY requests auto-assignment; literal port 0 is a
+	 * valid (privileged) port, as on Linux.
+	 */
+	if (svm->svm_port == VSOCK_PORT_ANY) {
 		int tries;
 		for (tries = 0; tries < 65536; tries++) {
 			svm->svm_port = 1024 +
@@ -1002,6 +1033,7 @@ vsock_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 	}
 	pcb->local = *svm;
 	pcb->local.svm_len = sizeof(struct sockaddr_vm);
+	pcb->bound_local = bound_local;
 	pcb->state = VTVSOCK_BOUND;
 	vtvsock_pcb_insert_bound_locked(pcb);
 	mtx_unlock(&vtvsock_mtx);
@@ -1094,10 +1126,20 @@ vsock_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 		return (EOPNOTSUPP);
 	}
 
-	if (pcb->state == VTVSOCK_ESTABLISHED ||
-	    pcb->state == VTVSOCK_CONNECTING) {
+	if (pcb->state == VTVSOCK_ESTABLISHED) {
 		mtx_unlock(&vtvsock_mtx);
 		return (EISCONN);
+	}
+	if (pcb->state == VTVSOCK_CONNECTING) {
+		/*
+		 * A connect already in flight: EALREADY, not EISCONN, matching
+		 * Linux vsock_connect (SS_CONNECTING -> -EALREADY).  On the
+		 * normal syscall path kern_connectat() already intercepts
+		 * SS_ISCONNECTING with EALREADY before reaching here; this
+		 * keeps direct pr_connect callers consistent too.
+		 */
+		mtx_unlock(&vtvsock_mtx);
+		return (EALREADY);
 	}
 	if (pcb->state == VTVSOCK_CLOSING) {
 		mtx_unlock(&vtvsock_mtx);
@@ -1107,8 +1149,7 @@ vsock_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 	/* Assign a local port if not already bound. */
 	auto_bound = false;
 	did_connecting = false;
-	if (pcb->local.svm_port == VSOCK_PORT_ANY ||
-	    pcb->local.svm_port == 0) {
+	if (pcb->local.svm_port == VSOCK_PORT_ANY) {
 		uint32_t port;
 		int tries;
 		for (tries = 0; tries < 65536; tries++) {
@@ -1133,12 +1174,22 @@ vsock_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 	if (vtvsock_is_local(dst->svm_cid)) {
 		/* ---- Local loopback path ---- */
 		/*
-		 * Normalize the lookup CID: listeners bind with
-		 * vtvsock_guest_cid, so VSOCK_CID_LOCAL (1) must be
-		 * mapped to the actual guest CID for the lookup to match.
+		 * Lookup CID matching (mirrors Linux vsock_find_bound_socket
+		 * as closely as the CID_ANY->guest_cid bind remap allows):
+		 * a connect to VSOCK_CID_LOCAL (1) prefers a loopback-pinned
+		 * listener bound explicitly to CID 1, then falls back to the
+		 * guest CID (which is where CID_ANY binds are stored).  A
+		 * connect to the guest's own CID matches only guest-CID
+		 * listeners -- loopback-pinned listeners are not reachable
+		 * through it, nor from the remote transport.
 		 */
-		listener = vtvsock_pcb_lookup_bound_locked(vtvsock_guest_cid,
-		    dst->svm_port);
+		listener = NULL;
+		if (dst->svm_cid == VSOCK_CID_LOCAL)
+			listener = vtvsock_pcb_lookup_bound_locked(
+			    VSOCK_CID_LOCAL, dst->svm_port);
+		if (listener == NULL)
+			listener = vtvsock_pcb_lookup_bound_locked(
+			    vtvsock_guest_cid, dst->svm_port);
 		if (listener == NULL || listener->state != VTVSOCK_LISTEN ||
 		    listener->so->so_type != so->so_type) {
 			SDT_PROBE2(vsock, , , connect__refused,
@@ -1155,7 +1206,15 @@ vsock_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 			goto fail;
 		}
 
+		/*
+		 * sonewconn() -> soattach() asserts curvnet == the child's
+		 * so_vnet (inherited from the listener).  The caller's vnet
+		 * context is not guaranteed to match the listener's (and the
+		 * transport RX path has none at all), so establish it here.
+		 */
+		CURVNET_SET(listener->so->so_vnet);
 		child_so = sonewconn(listener->so, 0);
+		CURVNET_RESTORE();
 		if (child_so == NULL) {
 			/* Backlog full / insufficient resources: RST on Linux
 			 * (§5.10.6.5) -> ECONNRESET, as above. */
@@ -1190,6 +1249,16 @@ vsock_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 	/* ---- Remote transport path ---- */
 	if (vtvsock_remote_transport == NULL) {
 		error = ENXIO;
+		goto fail;
+	}
+
+	/*
+	 * A socket explicitly bound to VSOCK_CID_LOCAL is loopback-only: its
+	 * bound CID cannot go on the wire as the source (§5.10.6.4.1 requires
+	 * guest_cid there).
+	 */
+	if (pcb->bound_local && pcb->local.svm_cid != vtvsock_guest_cid) {
+		error = EADDRNOTAVAIL;
 		goto fail;
 	}
 
@@ -1677,15 +1746,15 @@ vsock_soreceive(struct socket *so, struct sockaddr **psa, struct uio *uio,
 				/* App drained in time; cancel the close timer. */
 				callout_stop(&pcb->close_callout);
 				vtvsock_pcb_remove_lists_locked(pcb);
+				/*
+				 * send_pkt, not send_rst: the PCB is live, so
+				 * the RST carries real credit fields per
+				 * §5.10.6.3.1.
+				 */
 				if (vtvsock_remote_transport != NULL)
-					(void)vtvsock_remote_transport->send_rst(
-					    pcb->local.svm_cid,
-					    pcb->local.svm_port,
-					    pcb->remote.svm_cid,
-					    pcb->remote.svm_port,
-					    (so->so_type == SOCK_SEQPACKET) ?
-					    VIRTIO_VSOCK_TYPE_SEQPACKET :
-					    VIRTIO_VSOCK_TYPE_STREAM);
+					(void)vtvsock_remote_transport->
+					    send_pkt(pcb,
+					    VIRTIO_VSOCK_OP_RST, 0, NULL, 0);
 				mtx_unlock(&vtvsock_mtx);
 				soisdisconnected(so);
 				return (error);
@@ -1823,6 +1892,14 @@ vsock_control(struct socket *so, unsigned long cmd, void *data,
 	int inflight;
 
 	switch (cmd) {
+	case IOCTL_VM_SOCKETS_GET_LOCAL_CID:
+		/*
+		 * Linux serves this from /dev/vsock (also provided here, see
+		 * vsock_dev_ioctl); accepting it on the socket as well costs
+		 * nothing and helps ported code that has an fd handy.
+		 */
+		*(uint32_t *)data = (uint32_t)vtvsock_guest_cid;
+		return (0);
 	case SIOCOUTQ:
 		inflight = 0;
 		mtx_lock(&vtvsock_mtx);
@@ -2135,6 +2212,31 @@ vsock_rx_packet(void *buf, uint32_t len)
 	 * the bound list.  For all other ops, look in the connected list.
 	 */
 	if (hdr_op == VIRTIO_VSOCK_OP_REQUEST) {
+		/*
+		 * A REQUEST whose 4-tuple already names a connection is a
+		 * duplicate (peer retransmission or a simultaneous connect)
+		 * and must never reach the listener: sonewconn() would create
+		 * a second PCB with an identical tuple, shadowing the first
+		 * in the connected hash and orphaning it in the accept queue.
+		 * Match Linux: while CONNECTING the connect is aborted with
+		 * RST + EPROTO (virtio_transport_recv_connecting's default
+		 * arm); on an established connection the packet is ignored
+		 * (virtio_transport_recv_connected returns -EINVAL, no
+		 * action).
+		 */
+		pcb = vtvsock_pcb_lookup_connected_locked(hdr_src_cid,
+		    hdr_src_port, hdr_dst_cid, hdr_dst_port);
+		if (pcb != NULL) {
+			if (pcb->state == VTVSOCK_CONNECTING) {
+				so = pcb->so;
+				MPASS(so != NULL);
+				teardown_rst = true;
+				teardown_errno = EPROTO;
+				goto teardown_close;
+			}
+			mtx_unlock(&vtvsock_mtx);
+			return;
+		}
 		pcb = vtvsock_pcb_lookup_bound_locked(hdr_dst_cid, hdr_dst_port);
 		if (pcb == NULL || pcb->state != VTVSOCK_LISTEN) {
 			/* No listener; send RST (under lock for VQ safety). */
@@ -2168,6 +2270,27 @@ vsock_rx_packet(void *buf, uint32_t len)
 
 	so = pcb->so;
 	MPASS(so != NULL);
+
+	/*
+	 * CLOSING: we have sent OP_SHUTDOWN(both) and are waiting for the
+	 * peer's RST to complete the clean disconnect (§5.10.6.5).  Mirror
+	 * Linux virtio_transport_recv_disconnecting: act only on OP_RST, which
+	 * finishes teardown; silently drop every other op without replying or
+	 * mutating this dying PCB's credit/shutdown state.  Without this gate a
+	 * straggler OP_RW drew a spurious RST (state != ESTABLISHED) and
+	 * control ops needlessly churned credit on a connection already going
+	 * away.
+	 */
+	if (pcb->state == VTVSOCK_CLOSING) {
+		if (hdr_op == VIRTIO_VSOCK_OP_RST) {
+			SDT_PROBE4(vsock, , , rst__received,
+			    pcb->remote.svm_cid, pcb->remote.svm_port,
+			    pcb->state, 0);
+			goto teardown_close;	/* teardown_errno stays 0 */
+		}
+		mtx_unlock(&vtvsock_mtx);
+		return;
+	}
 
 	/*
 	 * Validate packet type matches the socket type for non-REQUEST ops,
@@ -2278,7 +2401,14 @@ vsock_rx_packet(void *buf, uint32_t len)
 				return;
 			}
 
+			/*
+			 * The transport RX path runs in an interrupt thread
+			 * with no vnet context; sonewconn() -> soattach()
+			 * asserts curvnet matches the listener's vnet.
+			 */
+			CURVNET_SET(so->so_vnet);
 			child_so = sonewconn(so, 0);
+			CURVNET_RESTORE();
 			if (child_so == NULL) {
 				/* Backlog full; reject. */
 				if (vtvsock_remote_transport != NULL)
@@ -2427,10 +2557,30 @@ vsock_rx_packet(void *buf, uint32_t len)
 				if (pcb->peer_shutdown ==
 				    (VIRTIO_VSOCK_SHUTDOWN_RCV |
 				     VIRTIO_VSOCK_SHUTDOWN_SEND) &&
-				    pcb->state == VTVSOCK_ESTABLISHED)
+				    pcb->state == VTVSOCK_ESTABLISHED) {
+					/*
+					 * Drop the (local,remote) 4-tuple from
+					 * the connected hash now, while keeping
+					 * the socket alive for the app to drain.
+					 * Matches Linux virtio_transport_recv_
+					 * connected, which vsock_remove_sock()s
+					 * as soon as peer_shutdown == SHUTDOWN_MASK
+					 * so a peer that immediately reconnects on
+					 * the same source port succeeds instead of
+					 * being rejected as a duplicate until we
+					 * drain or the close timer fires.  The peer
+					 * has said it will not send (SEND bit), so
+					 * no further RW is expected; a late RST just
+					 * hits the no-PCB drop path.  Drain and the
+					 * close callout both key off the PCB itself
+					 * and tolerate it already being off the
+					 * connected list.
+					 */
+					vtvsock_pcb_remove_connected_locked(pcb);
 					callout_reset(&pcb->close_callout,
 					    VTVSOCK_CLOSE_TIMEOUT,
 					    vtvsock_close_timeout, pcb);
+				}
 				mtx_unlock(&vtvsock_mtx);
 			}
 		}
@@ -2610,16 +2760,36 @@ vsock_rx_packet(void *buf, uint32_t len)
 		mtx_unlock(&vtvsock_mtx);
 		break;
 
+	case VIRTIO_VSOCK_OP_INVALID:
+		/*
+		 * Op 0 is the "invalid" sentinel, not an unknown/future op.
+		 * Ignore it in every state -- in particular do NOT let it fall
+		 * to the default arm below, which aborts a CONNECTING socket
+		 * with RST + EPROTO.  Matches Linux virtio_transport_recv_
+		 * connecting, which has an explicit `case OP_INVALID: break;`.
+		 */
+		mtx_unlock(&vtvsock_mtx);
+		break;
+
 	default: {
 		static struct timeval vtvsock_warn_lasttime;
 		static int vtvsock_warn_curpps;
 
 		/*
-		 * Unknown opcode: silently ignore.  The spec mandates RST
-		 * for unknown *types* (handled above), not unknown ops.
-		 * Sending RST here would break forward compatibility with
-		 * future spec extensions.
+		 * Unknown opcode.  While CONNECTING, treat it as a protocol
+		 * error and abort the connect with RST + EPROTO, as Linux
+		 * virtio_transport_recv_connecting does.  Once established,
+		 * silently ignore: the spec mandates RST only for unknown
+		 * *types* (§5.10.6.4.1, handled above), not unknown ops, and
+		 * resetting here would break forward compatibility with
+		 * future spec extensions (Linux likewise leaves an
+		 * established connection up).
 		 */
+		if (pcb->state == VTVSOCK_CONNECTING) {
+			teardown_rst = true;
+			teardown_errno = EPROTO;
+			goto teardown_close;
+		}
 		if (ppsratecheck(&vtvsock_warn_lasttime, &vtvsock_warn_curpps, 1))
 			printf("vtvsock: unknown op %u from host, ignoring\n",
 			    hdr_op);
@@ -2644,10 +2814,15 @@ teardown_close:
 	pcb->state = VTVSOCK_CLOSED;
 	wakeup(&pcb->state);
 	wakeup(&pcb->tx_cnt);
+	/*
+	 * send_pkt, not send_rst: the PCB is live here, so the RST carries
+	 * our real buf_alloc/fwd_cnt as §5.10.6.3.1 requires of every packet
+	 * on a stream flow (send_rst is for flows with no PCB and stamps
+	 * zeros, like Linux's virtio_transport_reset_no_sock).
+	 */
 	if (teardown_rst && vtvsock_remote_transport != NULL)
-		(void)vtvsock_remote_transport->send_rst(
-		    vtvsock_guest_cid, hdr_dst_port,
-		    hdr_src_cid, hdr_src_port, hdr_type);
+		(void)vtvsock_remote_transport->send_pkt(pcb,
+		    VIRTIO_VSOCK_OP_RST, 0, NULL, 0);
 	/*
 	 * Hold vtvsock_mtx across the socket-state updates below so a
 	 * concurrent vsock_detach() (which takes vtvsock_mtx before freeing
@@ -2689,6 +2864,7 @@ vsock_transport_reset_locked(void)
 			vtvsock_pcb_remove_lists_locked(pcb);
 			pcb->state = VTVSOCK_CLOSED;
 			wakeup(&pcb->state);
+			wakeup(&pcb->tx_cnt);
 			SOCK_LOCK(so);
 			so->so_error = ECONNRESET;
 			SOCK_UNLOCK(so);
@@ -2725,10 +2901,15 @@ vsock_transport_register_locked(const struct vtvsock_transport *ops,
 		guest_cid = VSOCK_CID_LOCAL;
 	vtvsock_guest_cid = guest_cid;
 	vtvsock_remote_features = features;
-	/* Update listener CIDs to the new guest CID. */
+	/*
+	 * Update listener CIDs to the new guest CID.  Loopback-pinned
+	 * sockets (explicitly bound to VSOCK_CID_LOCAL) keep CID 1: they
+	 * were never reachable through the transport and must stay
+	 * loopback-only across a registration or TRANSPORT_RESET.
+	 */
 	LIST_FOREACH(lpcb, &vtvsock_bound, link) {
-		if (lpcb->state == VTVSOCK_LISTEN ||
-		    lpcb->state == VTVSOCK_BOUND)
+		if ((lpcb->state == VTVSOCK_LISTEN ||
+		    lpcb->state == VTVSOCK_BOUND) && !lpcb->bound_local)
 			lpcb->local.svm_cid = guest_cid;
 	}
 }
@@ -2755,6 +2936,40 @@ vsock_transport_unregister(void)
 }
 
 /* -----------------------------------------------------------------------
+ * /dev/vsock character device
+ *
+ * Linux compatibility: ported code discovers the local CID by opening
+ * /dev/vsock and issuing IOCTL_VM_SOCKETS_GET_LOCAL_CID (see af_vsock.c's
+ * vsock_dev_do_ioctl).  The same ioctl is also accepted on any vsock socket
+ * (vsock_control) and the CID is exported as kern.vsock.guest_cid.
+ * ---------------------------------------------------------------------- */
+
+static struct cdev *vtvsock_cdev;
+
+static int
+vsock_dev_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
+    struct thread *td)
+{
+	(void)dev;
+	(void)fflag;
+	(void)td;
+
+	switch (cmd) {
+	case IOCTL_VM_SOCKETS_GET_LOCAL_CID:
+		*(uint32_t *)data = (uint32_t)vtvsock_guest_cid;
+		return (0);
+	default:
+		return (ENOTTY);
+	}
+}
+
+static struct cdevsw vsock_cdevsw = {
+	.d_version =	D_VERSION,
+	.d_name =	"vsock",
+	.d_ioctl =	vsock_dev_ioctl,
+};
+
+/* -----------------------------------------------------------------------
  * Module glue
  * ---------------------------------------------------------------------- */
 
@@ -2766,6 +2981,10 @@ vsock_modevent(module_t mod, int type, void *data)
 
 	switch (type) {
 	case MOD_LOAD:
+		/* Mode 0666 like Linux's /dev/vsock: the only operation is
+		 * reading the (public) local CID. */
+		vtvsock_cdev = make_dev(&vsock_cdevsw, 0, UID_ROOT,
+		    GID_WHEEL, 0666, "vsock");
 		vtvsock_cnt_tx_packets = counter_u64_alloc(M_WAITOK);
 		vtvsock_cnt_tx_bytes = counter_u64_alloc(M_WAITOK);
 		vtvsock_cnt_rx_packets = counter_u64_alloc(M_WAITOK);
@@ -2773,14 +2992,22 @@ vsock_modevent(module_t mod, int type, void *data)
 		vtvsock_cnt_rx_drops = counter_u64_alloc(M_WAITOK);
 		vtvsock_cnt_conns = counter_u64_alloc(M_WAITOK);
 		return (0);
+	case MOD_QUIESCE:
 	case MOD_UNLOAD:
-		counter_u64_free(vtvsock_cnt_tx_packets);
-		counter_u64_free(vtvsock_cnt_tx_bytes);
-		counter_u64_free(vtvsock_cnt_rx_packets);
-		counter_u64_free(vtvsock_cnt_rx_bytes);
-		counter_u64_free(vtvsock_cnt_rx_drops);
-		counter_u64_free(vtvsock_cnt_conns);
-		return (0);
+		/*
+		 * Refuse to unload.  The AF_VSOCK domain is installed via
+		 * DOMAIN_SET, which FreeBSD cannot retract: vsockdomain has no
+		 * DOMF_UNLOADABLE, so domain_remove() is a no-op and the
+		 * protosw dispatch table stays registered forever.  Freeing
+		 * the counters and /dev/vsock here (and letting the module
+		 * text be unmapped) would leave the live domain's pr_* entry
+		 * points and the kern.vsock.* sysctls pointing into freed
+		 * memory -- a guaranteed panic on the next AF_VSOCK socket op
+		 * or counter update.  Reject the unload instead, as ng_socket
+		 * (another DOMAIN_SET module) does.  MOD_QUIESCE returning
+		 * EBUSY also makes `kldunload -f` report the module as busy.
+		 */
+		return (EBUSY);
 	default:
 		return (EOPNOTSUPP);
 	}

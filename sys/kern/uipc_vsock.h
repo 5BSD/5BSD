@@ -122,6 +122,15 @@ struct vtvsock_pcb {
 	bool				 on_boundlist;
 	bool				 on_connlist;
 
+	/*
+	 * Explicitly bound to VSOCK_CID_LOCAL (1): a loopback-only endpoint.
+	 * Reachable only via loopback connects to CID 1, never rewritten to
+	 * the transport's guest CID at registration, and refused as the
+	 * source of a remote connect (the wire source MUST be guest_cid,
+	 * §5.10.6.4.1).
+	 */
+	bool				 bound_local;
+
 	/* Buffer limits (SOL_VSOCK opts) */
 	uint64_t			 buffer_min;
 	uint64_t			 buffer_max;

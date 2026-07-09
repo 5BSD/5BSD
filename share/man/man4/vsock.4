@@ -57,6 +57,10 @@ Local
 communication within the same host.
 On a machine with no hypervisor transport this is also the default guest CID,
 so loopback connections are always available.
+A socket explicitly bound to this CID is loopback-only: it is reachable via
+.Xr connect 2
+to CID 1 but never from the hypervisor transport, and it keeps CID 1 across
+transport attach and detach.
 .It Dv VSOCK_CID_HOST Po 2 Pc
 The hypervisor host.
 .It Li 3+
@@ -72,11 +76,12 @@ Ports are 32-bit unsigned integers.
 .Dv VSOCK_PORT_ANY
 .Pq 0xFFFFFFFF
 requests automatic ephemeral port assignment.
-As an implementation detail that differs from Linux, a
-.Xr bind 2
-to port 0 is also treated as a request for automatic assignment rather than as
-a literal port number.
-Ports below 1024 are privileged and require the
+As on Linux, port 0 is a literal
+.Pq privileged
+port number, not a request for automatic assignment.
+Ports below 1024
+.Pq including 0
+are privileged and require the
 .Dv PRIV_NETINET_RESERVEDPORT
 privilege to bind, mirroring Linux
 .Dv CAP_NET_BIND_SERVICE .
@@ -243,6 +248,24 @@ encoding rather than the Linux numeric value, so ported code must use the
 .Dv SIOCOUTQ
 constant from
 .In sys/vsock.h .
+.It Dv IOCTL_VM_SOCKETS_GET_LOCAL_CID
+Returns, as a
+.Vt uint32_t ,
+the local
+.Pq guest
+CID.
+Accepted both on any
+.Nm
+socket and on the
+.Pa /dev/vsock
+character device, where Linux serves it.
+As with
+.Dv SIOCOUTQ ,
+the native
+.Fx
+.Xr ioctl 2
+encoding is used, so ported code must be recompiled against
+.In sys/vsock.h .
 .El
 .Ss Tunable Parameters
 The following
@@ -327,10 +350,13 @@ variable reports the current number of connected PCBs
 Applications can read the guest's CID via the
 .Va kern.vsock.guest_cid
 .Xr sysctl 8
-variable.
-This is equivalent to Linux's
+variable, or via Linux's
 .Dv IOCTL_VM_SOCKETS_GET_LOCAL_CID
-ioctl.
+ioctl on the
+.Pa /dev/vsock
+character device or on any
+.Nm
+socket.
 .Ss DTrace Probes
 The
 .Nm

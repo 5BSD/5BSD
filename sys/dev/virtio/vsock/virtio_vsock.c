@@ -44,6 +44,7 @@
 #include <sys/endian.h>
 #include <sys/errno.h>
 #include <sys/kernel.h>
+#include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
 #include <sys/module.h>
@@ -225,6 +226,7 @@ static const struct vtvsock_transport vtvsock_virtio_transport = {
 static struct virtio_feature_desc vtvsock_feature_desc[] = {
 	{ VIRTIO_VSOCK_F_STREAM, "Stream" },
 	{ VIRTIO_VSOCK_F_SEQPACKET, "SeqPacket" },
+	{ VIRTIO_VSOCK_F_NO_IMPLIED_STREAM, "NoImpliedStream" },
 	{ 0, NULL }
 };
 
@@ -666,17 +668,23 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 
 		/* Check send credit; sleep if exhausted and blocking. */
 		for (;;) {
+			/*
+			 * Validate the connection BEFORE consuming credit, so
+			 * the check also runs after a wakeup with credit
+			 * available and between chunks of a large write.
+			 * Otherwise a teardown (peer RST, transport reset)
+			 * racing the credit sleep would let the remaining
+			 * chunks be "sent" into a closed connection and
+			 * reported as success.
+			 */
+			if (pcb->state != VTVSOCK_ESTABLISHED ||
+			    (pcb->peer_shutdown & VIRTIO_VSOCK_SHUTDOWN_RCV)) {
+				error = EPIPE;
+				goto out;
+			}
 			credit = vtvsock_get_credit(pcb, (uint32_t)chunk);
 			if (credit != 0)
 				break;
-			if (pcb->state != VTVSOCK_ESTABLISHED) {
-				error = EPIPE;
-				goto out;
-			}
-			if (pcb->peer_shutdown & VIRTIO_VSOCK_SHUTDOWN_RCV) {
-				error = EPIPE;
-				goto out;
-			}
 			if (pcb->so->so_state & SS_NBIO) {
 				error = EWOULDBLOCK;
 				goto out;
@@ -700,9 +708,19 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 			/* Sleep until CREDIT_UPDATE wakes us. */
 			error = msleep(&pcb->tx_cnt, &vtvsock_mtx,
 			    PSOCK | PCATCH, "vsocktx", hz);
-			if (error != 0) {
-				if (error == EWOULDBLOCK)
-					continue; /* timeout: retry */
+			if (error != 0 && error != EWOULDBLOCK)
+				goto out;
+			error = 0;
+			/*
+			 * Re-fetch the softc after any sleep, mirroring the
+			 * TX-ring-full sleep below: a concurrent detach
+			 * clears the global softc (under vtvsock_mtx) before
+			 * tearing the virtqueues down, so continuing with the
+			 * stale pointer would touch a dying device.
+			 */
+			sc = vtvsock_global_softc();
+			if (sc == NULL) {
+				error = ENXIO;
 				goto out;
 			}
 		}
@@ -864,8 +882,7 @@ vtvsock_virtio_disconnect(struct vtvsock_pcb *pcb)
 
 	mtx_lock(&vtvsock_mtx);
 
-	if (pcb->state == VTVSOCK_ESTABLISHED ||
-	    pcb->state == VTVSOCK_CONNECTING) {
+	if (pcb->state == VTVSOCK_ESTABLISHED) {
 		shut_flags = VIRTIO_VSOCK_SHUTDOWN_RCV |
 		    VIRTIO_VSOCK_SHUTDOWN_SEND;
 		(void)vtvsock_send_pkt_locked(pcb, VIRTIO_VSOCK_OP_SHUTDOWN,
@@ -874,6 +891,27 @@ vtvsock_virtio_disconnect(struct vtvsock_pcb *pcb)
 		callout_reset(&pcb->close_callout, VTVSOCK_CLOSE_TIMEOUT,
 		    vtvsock_close_timeout, pcb);
 		soisdisconnecting(so);
+	} else if (pcb->state == VTVSOCK_CONNECTING) {
+		/*
+		 * The connection never reached ESTABLISHED, so there is no
+		 * graceful half-close to perform.  Abort it with OP_RST (as
+		 * Linux does for a not-yet-connected flow) and go straight to
+		 * CLOSED rather than sending a bidirectional OP_SHUTDOWN for a
+		 * 4-tuple the peer never accepted.  Stop the connect timeout so
+		 * it cannot fire on a PCB that has already left CONNECTING, but
+		 * because that callout is what would otherwise wake a blocking
+		 * connect() still in msleep(&pcb->state), issue the wakeup here
+		 * ourselves -- mirroring vtvsock_connect_timeout().  The waking
+		 * connect() observes the cleared SS_ISCONNECTING and returns
+		 * ECONNRESET.
+		 */
+		callout_stop(&pcb->connect_callout);
+		(void)vtvsock_send_pkt_locked(pcb, VIRTIO_VSOCK_OP_RST,
+		    0, NULL, 0);
+		vtvsock_pcb_remove_lists_locked(pcb);
+		pcb->state = VTVSOCK_CLOSED;
+		soisdisconnected(so);
+		wakeup(&pcb->state);
 	} else if (pcb->state != VTVSOCK_CLOSED) {
 		vtvsock_pcb_remove_lists_locked(pcb);
 		pcb->state = VTVSOCK_CLOSED;
@@ -911,8 +949,21 @@ vtvsock_virtio_shutdown(struct vtvsock_pcb *pcb, enum shutdown_how how)
 	}
 
 	mtx_lock(&vtvsock_mtx);
-	(void)vtvsock_send_pkt_locked(pcb, VIRTIO_VSOCK_OP_SHUTDOWN,
-	    shut_flags, NULL, 0);
+	/*
+	 * Only inform the peer over the wire when the connection is actually
+	 * established.  On a BOUND-only, CONNECTING, CLOSING, or CLOSED socket
+	 * there is no valid live 4-tuple to shut down: an OP_SHUTDOWN here
+	 * would emit a spurious control packet -- to dst_cid/dst_port 0 for a
+	 * never-connected socket, or a duplicate for one already tearing down
+	 * -- which the peer may answer with RST.  Linux vsock_shutdown()
+	 * likewise only acts on an established connection.  The local
+	 * socket-buffer shutdown below still applies in every state (matching
+	 * vtvsock_local_shutdown, which always closes the local buffers and
+	 * only notifies a peer when one exists).
+	 */
+	if (pcb->state == VTVSOCK_ESTABLISHED)
+		(void)vtvsock_send_pkt_locked(pcb, VIRTIO_VSOCK_OP_SHUTDOWN,
+		    shut_flags, NULL, 0);
 	mtx_unlock(&vtvsock_mtx);
 
 	switch (how) {
@@ -1267,9 +1318,15 @@ vtvsock_attach(device_t dev)
 	sc->sc_dev = dev;
 
 	virtio_set_feature_desc(dev, vtvsock_feature_desc);
+	/*
+	 * Accept F_NO_IMPLIED_STREAM when offered (virtio 1.4 §5.10.3.1
+	 * SHOULD).  The socket layer uses it to refuse SOCK_STREAM against a
+	 * seqpacket-only device (NO_IMPLIED_STREAM without F_STREAM).
+	 */
 	sc->sc_features = virtio_negotiate_features(dev,
 	    VIRTIO_VSOCK_F_STREAM |
-	    VIRTIO_VSOCK_F_SEQPACKET);
+	    VIRTIO_VSOCK_F_SEQPACKET |
+	    VIRTIO_VSOCK_F_NO_IMPLIED_STREAM);
 	error = virtio_finalize_features(dev);
 	if (error != 0)
 		goto fail;
