@@ -88,6 +88,7 @@
 #include "debug.h"
 #include "mevent.h"
 #include "pci_emul.h"
+#include "pci_virtio_vsock_probes.h"
 #include "sockstream.h"
 #include "virtio.h"
 #include <sys/vsock.h>
@@ -156,6 +157,20 @@
 
 /* Maximum pending control connections */
 #define	VTVSOCK_MAX_CTL_CONNS	16
+
+/*
+ * Capacity of the pending-reply ring: control packets (RESPONSE, RST,
+ * SHUTDOWN, CREDIT_UPDATE) that could not be injected because the guest RX
+ * ring had no descriptors.  §5.10.6.1.2 requires the device to keep
+ * processing the tx virtqueue using resources outside the rings; without
+ * this, a full RX ring silently dropped replies -- a lost RESPONSE turned a
+ * successful connect into a guest-side timeout, a lost RST leaked a stale
+ * guest connection.  Control packets are header-only, so the ring stores
+ * bare headers (44 bytes each) and is flushed from pci_vtvsock_notify_rx as
+ * the guest posts descriptors.  Bounded so a guest that never replenishes
+ * its RX ring cannot grow host memory.
+ */
+#define	VTVSOCK_PEND_MAX	128
 
 /*
  * Idle timeout (seconds) for a control connection that has connected but not
@@ -310,7 +325,8 @@ struct vtvsock_conn {
 	uint8_t			*rx_resid;	/* un-injected bytes (or NULL) */
 	uint32_t		rx_resid_len;	/* total valid bytes */
 	uint32_t		rx_resid_off;	/* bytes already injected */
-	bool			rx_resid_seq;	/* set EOM|EOR on final fragment */
+	bool			rx_resid_seq;	/* SEQPACKET: set EOM on final frag */
+	bool			rx_resid_eor;	/* SEQPACKET: also set EOR (host MSG_EOR) */
 };
 
 TAILQ_HEAD(vtvsock_conn_list, vtvsock_conn);
@@ -365,6 +381,16 @@ struct pci_vtvsock_softc {
 	 * enforced against VTVSOCK_MAX_TOTAL_TXBUF in vtvsock_tx_buf_append.
 	 */
 	uint32_t		vsc_txbuf_total;
+
+	/*
+	 * Pending-reply ring (see VTVSOCK_PEND_MAX): fully-built headers of
+	 * control packets awaiting guest RX descriptors, FIFO.  Guarded by
+	 * vsc_mtx.
+	 */
+	struct virtio_vsock_hdr	vsc_pend[VTVSOCK_PEND_MAX];
+	uint32_t		vsc_pend_head;
+	uint32_t		vsc_pend_count;
+	uint64_t		vsc_pend_drops;
 };
 
 /* Forward declarations */
@@ -389,8 +415,14 @@ static struct virtio_consts vtvsock_vi_consts = {
 	.vc_cfgread =		pci_vtvsock_cfgread,
 	.vc_cfgwrite =		pci_vtvsock_cfgwrite,
 	.vc_apply_features =	pci_vtvsock_neg_features,
+	/*
+	 * NO_IMPLIED_STREAM is offered per virtio 1.4 §5.10.3.2 (SHOULD),
+	 * always together with F_STREAM: this device supports stream, the
+	 * bit only makes that support explicit for 1.4-aware drivers.
+	 */
 	.vc_hv_caps =		VIRTIO_VSOCK_F_STREAM |
-				VIRTIO_VSOCK_F_SEQPACKET,
+				VIRTIO_VSOCK_F_SEQPACKET |
+				VIRTIO_VSOCK_F_NO_IMPLIED_STREAM,
 };
 
 /* -------------------------------------------------------------------------
@@ -434,7 +466,7 @@ vtvsock_send_fd(int sock, int fd, const void *data, size_t datalen)
 	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
 	memcpy(CMSG_DATA(cmsg), &fd, sizeof(int));
 
-	return (sendmsg(sock, &msg, 0) >= 0 ? 0 : -1);
+	return (sendmsg(sock, &msg, MSG_NOSIGNAL) >= 0 ? 0 : -1);
 }
 
 /* -------------------------------------------------------------------------
@@ -516,6 +548,8 @@ vtvsock_conn_alloc(struct pci_vtvsock_softc *sc, int fd, uint32_t guest_port)
 
 	TAILQ_INSERT_TAIL(&sc->vsc_conns, conn, link);
 	sc->vsc_conn_count++;
+	VSOCK_PROBE_CONN_REQUEST((uint32_t)sc->vsc_guest_cid, guest_port);
+	VSOCK_PROBE_CONN_COUNT(sc->vsc_conn_count);
 	return (conn);
 }
 
@@ -539,22 +573,67 @@ vtvsock_conn_find(struct pci_vtvsock_softc *sc, uint32_t src_port,
 }
 
 /*
+ * Release a connection's SEQPACKET reassembly buffer once its current record
+ * has been fully consumed (delivered to the host socket, dropped, or moved to
+ * the TX backlog).  The device-global reassembly budget (vsc_reasm_total)
+ * tracks only live bytes and is released here, so the backing allocation must
+ * be freed too -- retaining peak capacity for the life of the connection would
+ * let a guest deliver one ~VTVSOCK_MAX_PEER_BUF_ALLOC record on each of
+ * VTVSOCK_MAX_CONNS connections in turn and pin ~1 GiB of never-freed memory
+ * while the live aggregate never exceeds a single record.  Safe to call with
+ * rx_reasm == NULL / rx_reasm_len == 0.  Must be called with vsc_mtx held.
+ */
+static void
+vtvsock_reasm_release(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn)
+{
+	sc->vsc_reasm_total -= conn->rx_reasm_len;
+	conn->rx_reasm_len = 0;
+	free(conn->rx_reasm);
+	conn->rx_reasm = NULL;
+	conn->rx_reasm_cap = 0;
+}
+
+/*
+ * Release a connection's guest->host TX backlog buffer once it has fully
+ * drained.  As with the reassembly buffer above, vsc_txbuf_total tracks only
+ * live bytes, so the backing allocation is freed rather than retained for the
+ * life of the connection; otherwise a guest could balloon each connection's
+ * tx_buf in turn and pin memory far beyond the intended aggregate budget.  The
+ * buffer is reallocated on demand by vtvsock_tx_buf_append, and in steady
+ * state (host keeping up) no tx_buf is allocated at all, so this frees only
+ * after a backpressure episode clears.  Safe to call with tx_buf == NULL /
+ * tx_buf_len == 0.  Must be called with vsc_mtx held.
+ */
+static void
+vtvsock_txbuf_release(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn)
+{
+	sc->vsc_txbuf_total -= conn->tx_buf_len;
+	conn->tx_buf_len = 0;
+	free(conn->tx_buf);
+	conn->tx_buf = NULL;
+	conn->tx_buf_cap = 0;
+	conn->tx_buf_eor = false;
+}
+
+/*
  * Tear down a connection: remove its mevent, close the fd (if any), and free
  * the structure.  Must be called with vsc_mtx held.
  */
 static void
 vtvsock_conn_close(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn)
 {
+	VSOCK_PROBE_CONN_RESET((uint32_t)sc->vsc_guest_cid, conn->guest_port,
+	    (uint32_t)conn->state);
 	TAILQ_REMOVE(&sc->vsc_conns, conn, link);
 	sc->vsc_conn_count--;
+	VSOCK_PROBE_CONN_COUNT(sc->vsc_conn_count);
 
-	/* Drop this connection's share of the global reassembly budget. */
-	sc->vsc_reasm_total -= conn->rx_reasm_len;
-	conn->rx_reasm_len = 0;
-
-	/* Drop this connection's share of the global TX backlog budget. */
-	sc->vsc_txbuf_total -= conn->tx_buf_len;
-	conn->tx_buf_len = 0;
+	/*
+	 * Drop this connection's share of the global reassembly / TX backlog
+	 * budgets and free the backing buffers.
+	 */
+	vtvsock_reasm_release(sc, conn);
+	vtvsock_txbuf_release(sc, conn);
 
 	/*
 	 * The async TX drainer shares conn->fd with conn->evp; delete it first
@@ -603,8 +682,7 @@ vtvsock_conn_close(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn)
 		conn->ctl_fd = -1;
 	}
 
-	free(conn->rx_reasm);
-	free(conn->tx_buf);
+	/* rx_reasm / tx_buf were already freed by the *_release() helpers. */
 	free(conn->rx_resid);
 	free(conn);
 }
@@ -614,17 +692,37 @@ vtvsock_conn_close(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn)
  * ---------------------------------------------------------------------- */
 
 /*
- * Build a virtio_vsock_hdr + optional payload and inject it into the RX
- * virtqueue.  Must be called with vsc_mtx held.
+ * Build the wire header for a host->guest packet on 'conn'.
+ */
+static void
+vtvsock_build_hdr(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
+    uint16_t op, uint32_t flags, uint32_t paylen, struct virtio_vsock_hdr *hdr)
+{
+	memset(hdr, 0, sizeof(*hdr));
+	hdr->src_cid    = htole64(VSOCK_CID_HOST);
+	hdr->dst_cid    = htole64(sc->vsc_guest_cid);
+	hdr->src_port   = htole32(conn->local_port);
+	hdr->dst_port   = htole32(conn->guest_port);
+	hdr->len        = htole32(paylen);
+	hdr->type       = htole16(conn->type);
+	hdr->op         = htole16(op);
+	hdr->flags      = htole32(flags);
+	hdr->buf_alloc  = htole32(conn->buf_alloc);
+	hdr->fwd_cnt    = htole32(conn->fwd_cnt);
+}
+
+/*
+ * Inject a prebuilt header + optional payload into the RX virtqueue.
+ * Must be called with vsc_mtx held.
  *
- * Returns 0 on success, -1 if no descriptors were available.
+ * Returns 0 on success, -1 if no descriptors were available or the chain
+ * was malformed (a malformed chain is consumed and released).
  */
 static int
-vtvsock_inject_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
-    uint16_t op, uint32_t flags, const void *payload, uint32_t paylen)
+vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
+    const struct virtio_vsock_hdr *hdrp, const void *payload, uint32_t paylen)
 {
 	struct vqueue_info *vq = &sc->vsc_queues[VTVSOCK_RXQ];
-	struct virtio_vsock_hdr hdr;
 	struct vi_req req;
 	struct iovec iov[VTVSOCK_MAX_IOV];
 	int n;
@@ -632,18 +730,6 @@ vtvsock_inject_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
 
 	if (!vq_has_descs(vq))
 		return (-1);
-
-	memset(&hdr, 0, sizeof(hdr));
-	hdr.src_cid    = htole64(VSOCK_CID_HOST);
-	hdr.dst_cid    = htole64(sc->vsc_guest_cid);
-	hdr.src_port   = htole32(conn->local_port);
-	hdr.dst_port   = htole32(conn->guest_port);
-	hdr.len        = htole32(paylen);
-	hdr.type       = htole16(conn->type);
-	hdr.op         = htole16(op);
-	hdr.flags      = htole32(flags);
-	hdr.buf_alloc  = htole32(conn->buf_alloc);
-	hdr.fwd_cnt    = htole32(conn->fwd_cnt);
 
 	n = vq_getchain(vq, iov, VTVSOCK_MAX_IOV, &req);
 	if (n <= 0)
@@ -656,6 +742,7 @@ vtvsock_inject_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
 		 * would walk past iov[] into uninitialized stack -- a
 		 * guest-triggerable OOB.  Drop the over-long chain.
 		 */
+		VSOCK_PROBE_DESC_DROP("rx-chain-too-long");
 		DPRINTF(("vtvsock: rx descriptor chain too long (%d), dropping",
 		    n));
 		vq_relchain(vq, req.idx, 0);
@@ -664,6 +751,7 @@ vtvsock_inject_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
 	}
 	if (iov_has_null_base(iov, n)) {
 		/* Descriptor addr outside guest RAM; copying would crash us. */
+		VSOCK_PROBE_DESC_DROP("rx-bad-descriptor-addr");
 		DPRINTF(("vtvsock: rx descriptor with bad address, dropping"));
 		vq_relchain(vq, req.idx, 0);
 		vq_endchains(vq, 0);
@@ -684,6 +772,7 @@ vtvsock_inject_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
 		 * all-writable chain; drop anything else rather than trust the
 		 * guest-controlled descriptor ordering.
 		 */
+		VSOCK_PROBE_DESC_DROP("rx-not-writable");
 		DPRINTF(("vtvsock: rx descriptor chain not wholly writable, "
 		    "dropping"));
 		vq_relchain(vq, req.idx, 0);
@@ -692,16 +781,17 @@ vtvsock_inject_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
 	}
 
 	avail = iov_total(iov, n);
-	if (avail < sizeof(hdr) + paylen) {
+	if (avail < sizeof(*hdrp) + paylen) {
+		VSOCK_PROBE_DESC_DROP("rx-descriptor-too-small");
 		DPRINTF(("vtvsock: rx descriptor too small (%zu < %zu)",
-		    avail, sizeof(hdr) + paylen));
+		    avail, sizeof(*hdrp) + paylen));
 		vq_relchain(vq, req.idx, 0);
 		vq_endchains(vq, 0);
 		return (-1);
 	}
 
 	off = 0;
-	iov_copyout(&hdr, sizeof(hdr), iov, n, &off);
+	iov_copyout(hdrp, sizeof(*hdrp), iov, n, &off);
 	if (paylen > 0 && payload != NULL)
 		iov_copyout(payload, paylen, iov, n, &off);
 
@@ -711,13 +801,85 @@ vtvsock_inject_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
 }
 
 /*
- * Send a control packet with no payload.
+ * Push parked control replies onto the RX virtqueue, FIFO, until the ring
+ * runs out of descriptors again.  Must be called with vsc_mtx held.
+ */
+static void
+vtvsock_pend_flush(struct pci_vtvsock_softc *sc)
+{
+	while (sc->vsc_pend_count != 0) {
+		if (vtvsock_inject_raw(sc, &sc->vsc_pend[sc->vsc_pend_head],
+		    NULL, 0) != 0)
+			break;
+		sc->vsc_pend_head = (sc->vsc_pend_head + 1) % VTVSOCK_PEND_MAX;
+		sc->vsc_pend_count--;
+	}
+}
+
+/*
+ * True when the RX virtqueue can accept a new injection: every parked
+ * control reply has been flushed (they were built first and must keep FIFO
+ * order on the wire) and a descriptor is available.  Must be called with
+ * vsc_mtx held.
+ */
+static bool
+vtvsock_rx_ready(struct pci_vtvsock_softc *sc)
+{
+	vtvsock_pend_flush(sc);
+	return (sc->vsc_pend_count == 0 &&
+	    vq_has_descs(&sc->vsc_queues[VTVSOCK_RXQ]));
+}
+
+/*
+ * Build a virtio_vsock_hdr + optional payload and inject it into the RX
+ * virtqueue.  Must be called with vsc_mtx held.
+ *
+ * Returns 0 on success, -1 if the ring cannot take the packet right now
+ * (no descriptors, or older control replies are still pending) or the
+ * descriptor chain was malformed.
+ */
+static int
+vtvsock_inject_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
+    uint16_t op, uint32_t flags, const void *payload, uint32_t paylen)
+{
+	struct virtio_vsock_hdr hdr;
+
+	vtvsock_build_hdr(sc, conn, op, flags, paylen, &hdr);
+	if (!vtvsock_rx_ready(sc))
+		return (-1);
+	return (vtvsock_inject_raw(sc, &hdr, payload, paylen));
+}
+
+/*
+ * Send a control packet with no payload.  Never silently lost to a full RX
+ * ring: if the packet cannot be injected now it is parked on the bounded
+ * pending-reply ring and flushed as the guest posts descriptors
+ * (§5.10.6.1.2 -- resources outside the virtqueues; mirrors the guest
+ * driver's TX holding queue).  Returns 0 when the packet was injected or
+ * parked (delivery is then guaranteed while the device lives), -1 only if
+ * the pending ring itself overflowed and the packet was dropped.
  */
 static int
 vtvsock_send_ctrl(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
     uint16_t op, uint32_t flags)
 {
-	return (vtvsock_inject_rx(sc, conn, op, flags, NULL, 0));
+	struct virtio_vsock_hdr hdr;
+
+	vtvsock_build_hdr(sc, conn, op, flags, 0, &hdr);
+	if (vtvsock_rx_ready(sc) &&
+	    vtvsock_inject_raw(sc, &hdr, NULL, 0) == 0)
+		return (0);
+	if (sc->vsc_pend_count >= VTVSOCK_PEND_MAX) {
+		sc->vsc_pend_drops++;
+		VSOCK_PROBE_PEND_DROP(sc->vsc_pend_count);
+		DPRINTF(("vtvsock: pending-reply ring full, dropping op %u",
+		    op));
+		return (-1);
+	}
+	sc->vsc_pend[(sc->vsc_pend_head + sc->vsc_pend_count) %
+	    VTVSOCK_PEND_MAX] = hdr;
+	sc->vsc_pend_count++;
+	return (0);
 }
 
 /*
@@ -780,6 +942,24 @@ vtvsock_need_credit_update(const struct vtvsock_conn *conn)
 {
 	return ((conn->fwd_cnt - conn->last_fwd_cnt) >=
 	    VTVSOCK_CREDIT_UPDATE_THRESHOLD);
+}
+
+/*
+ * Send a CREDIT_UPDATE if enough consumption is unreported.  Advance
+ * last_fwd_cnt only when the update was injected or parked (send_ctrl == 0);
+ * advancing on a drop would suppress every future update and stall the
+ * guest's view of our free space.  Must be called with vsc_mtx held.
+ */
+static void
+vtvsock_maybe_credit_update(struct pci_vtvsock_softc *sc,
+    struct vtvsock_conn *conn)
+{
+	if (vtvsock_need_credit_update(conn) &&
+	    vtvsock_send_ctrl(sc, conn, VIRTIO_VSOCK_OP_CREDIT_UPDATE, 0) == 0) {
+		conn->last_fwd_cnt = conn->fwd_cnt;
+		VSOCK_PROBE_CREDIT_UPDATE((uint32_t)sc->vsc_guest_cid,
+		    conn->guest_port, conn->fwd_cnt);
+	}
 }
 
 /* -------------------------------------------------------------------------
@@ -877,6 +1057,8 @@ vtvsock_stream_tx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 			}
 			/* Not writable now; buffer everything below. */
 		} else {
+			/* Consumed by the host socket: report to the guest. */
+			conn->fwd_cnt += (uint32_t)sent;
 			p += sent;
 			remain -= (uint32_t)sent;
 		}
@@ -885,6 +1067,8 @@ vtvsock_stream_tx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 	}
 
 	if (vtvsock_tx_buf_append(sc, conn, p, remain) != 0) {
+		VSOCK_PROBE_TX_OVERFLOW((uint32_t)sc->vsc_guest_cid,
+		    conn->guest_port, remain);
 		WPRINTF(("vtvsock: STREAM TX backlog exceeds %u bytes, "
 		    "resetting", conn->buf_alloc));
 		goto reset;
@@ -926,14 +1110,19 @@ vtvsock_seqpkt_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 	int msgflags;
 	ssize_t sent;
 
-	if (conn->fd < 0)
-		return (0);	/* no host consumer */
+	if (conn->fd < 0) {
+		/* No host consumer: discard as consumed. */
+		conn->fwd_cnt += paylen;
+		return (0);
+	}
 
 	if (paylen > 0) {
 		uint32_t need = conn->rx_reasm_len + paylen;
 
 		if (need < conn->rx_reasm_len ||	/* overflow */
 		    need > VTVSOCK_MAX_PEER_BUF_ALLOC) {
+			VSOCK_PROBE_REASM_OVERFLOW((uint32_t)sc->vsc_guest_cid,
+			    conn->guest_port, need);
 			WPRINTF(("vtvsock: SEQPACKET record exceeds %u bytes, "
 			    "resetting", VTVSOCK_MAX_PEER_BUF_ALLOC));
 			goto reset;
@@ -947,6 +1136,8 @@ vtvsock_seqpkt_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 		 */
 		if (sc->vsc_reasm_total + paylen < sc->vsc_reasm_total ||
 		    sc->vsc_reasm_total + paylen > VTVSOCK_MAX_TOTAL_REASM) {
+			VSOCK_PROBE_REASM_OVERFLOW((uint32_t)sc->vsc_guest_cid,
+			    conn->guest_port, sc->vsc_reasm_total);
 			WPRINTF(("vtvsock: aggregate SEQPACKET reassembly budget "
 			    "(%u) exceeded, resetting", VTVSOCK_MAX_TOTAL_REASM));
 			goto reset;
@@ -985,8 +1176,9 @@ vtvsock_seqpkt_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 		sent = send(conn->fd, conn->rx_reasm, conn->rx_reasm_len,
 		    msgflags);
 		if (sent >= 0) {		/* SEQPACKET send is all-or-nothing */
-			sc->vsc_reasm_total -= conn->rx_reasm_len;
-			conn->rx_reasm_len = 0;	/* ready for the next record */
+			/* Record consumed by the host socket. */
+			conn->fwd_cnt += conn->rx_reasm_len;
+			vtvsock_reasm_release(sc, conn);	/* ready for next */
 			return (0);
 		}
 		if (errno == EMSGSIZE) {
@@ -994,15 +1186,15 @@ vtvsock_seqpkt_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 			 * The record is larger than the host SOCK_SEQPACKET
 			 * socket can ever accept (SO_SNDBUF).  A SEQPACKET
 			 * record is indivisible, so it can never be delivered;
-			 * drop just this record and keep the connection up
-			 * rather than letting a guest reset its own connection
-			 * by emitting an over-large record.
+			 * drop just this record (counted as consumed) and keep
+			 * the connection up rather than letting a guest reset
+			 * its own connection by emitting an over-large record.
 			 */
 			WPRINTF(("vtvsock: SEQPACKET record %u bytes exceeds "
 			    "host socket limit, dropping record",
 			    conn->rx_reasm_len));
-			sc->vsc_reasm_total -= conn->rx_reasm_len;
-			conn->rx_reasm_len = 0;
+			conn->fwd_cnt += conn->rx_reasm_len;
+			vtvsock_reasm_release(sc, conn);
 			return (0);
 		}
 		if (errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -1020,6 +1212,8 @@ vtvsock_seqpkt_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 	}
 	if (vtvsock_tx_buf_append(sc, conn, conn->rx_reasm, conn->rx_reasm_len)
 	    != 0) {
+		VSOCK_PROBE_TX_OVERFLOW((uint32_t)sc->vsc_guest_cid,
+		    conn->guest_port, conn->rx_reasm_len);
 		WPRINTF(("vtvsock: SEQPACKET TX backlog exceeds %u bytes, "
 		    "resetting", VTVSOCK_MAX_PEER_BUF_ALLOC));
 		goto reset;
@@ -1029,9 +1223,8 @@ vtvsock_seqpkt_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 		WPRINTF(("vtvsock: cannot arm TX drainer, resetting"));
 		goto reset;
 	}
-	/* Record moved to tx_buf; release its reassembly budget. */
-	sc->vsc_reasm_total -= conn->rx_reasm_len;
-	conn->rx_reasm_len = 0;
+	/* Record moved to tx_buf; release its reassembly buffer + budget. */
+	vtvsock_reasm_release(sc, conn);
 	return (0);
 
 reset:
@@ -1064,6 +1257,7 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 
 	/* Validate destination */
 	if (dst_cid != VSOCK_CID_HOST) {
+		VSOCK_PROBE_DESC_DROP("unknown-dst-cid");
 		DPRINTF(("vtvsock: dropping pkt for unknown cid %llu",
 		    (unsigned long long)dst_cid));
 		return;
@@ -1071,6 +1265,7 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 
 	/* Validate source CID: reject packets claiming to be from a different guest */
 	if (src_cid != sc->vsc_guest_cid) {
+		VSOCK_PROBE_DESC_DROP("spoofed-src-cid");
 		DPRINTF(("vtvsock: dropping spoofed pkt: src_cid %llu != guest_cid %llu",
 		    (unsigned long long)src_cid,
 		    (unsigned long long)sc->vsc_guest_cid));
@@ -1090,9 +1285,13 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 	 * Extract peer credit state from every incoming packet (not just
 	 * OP_CREDIT_UPDATE).  The guest piggybacks buf_alloc/fwd_cnt on
 	 * all packet types.  Skip OP_REQUEST since the connection doesn't
-	 * exist yet (credit is extracted in the handler below).
+	 * exist yet (credit is extracted in the handler below), and skip
+	 * OP_RST: an RST only tears the connection down, so validating its
+	 * (guest-controlled) fwd_cnt could make us answer an RST with an RST
+	 * for an already-dying connection -- the guest driver excludes RST
+	 * from the same check for exactly this reason (see uipc_vsock.c).
 	 */
-	if (op != VIRTIO_VSOCK_OP_REQUEST) {
+	if (op != VIRTIO_VSOCK_OP_REQUEST && op != VIRTIO_VSOCK_OP_RST) {
 		conn = vtvsock_conn_find(sc, src_port, dst_port);
 		if (conn != NULL) {
 			uint32_t new_fwd_cnt;
@@ -1116,17 +1315,18 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 				return;
 			}
 			conn->peer_fwd_cnt = new_fwd_cnt;
-		} else if (op != VIRTIO_VSOCK_OP_RST) {
+		} else {
 			/*
 			 * §5.10.6.4: packet for an unknown connection
-			 * that is not itself a RST — reply with RST.
+			 * that is not itself a RST — reply with RST.  (OP_RST
+			 * is excluded by the outer guard, so an RST for an
+			 * unknown connection falls through to the switch,
+			 * where the OP_RST case finds no conn and drops it
+			 * silently -- no RST-for-RST.)
 			 */
 			DPRINTF(("vtvsock: no conn for op %u %u:%u, "
 			    "sending RST", op, src_port, dst_port));
 			vtvsock_send_rst_noconn(sc, dst_port, src_port, type);
-			return;
-		} else {
-			/* RST for unknown connection — silently ignore. */
 			return;
 		}
 	}
@@ -1234,6 +1434,8 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 				conn->peer_buf_alloc = VTVSOCK_MAX_PEER_BUF_ALLOC;
 			conn->peer_fwd_cnt   = le32toh(hdr->fwd_cnt);
 			conn->state          = CONN_ESTABLISHED;
+			VSOCK_PROBE_CONN_ESTABLISHED((uint32_t)sc->vsc_guest_cid,
+			    conn->guest_port);
 
 			conn->evp = mevent_add(cfd, EVF_READ,
 			    vtvsock_conn_data_cb, sc);
@@ -1349,7 +1551,7 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 			reply.port   = conn->guest_port;
 			reply.status = -ECONNREFUSED;
 
-			(void)send(conn->ctl_fd, &reply, sizeof(reply), 0);
+			(void)send(conn->ctl_fd, &reply, sizeof(reply), MSG_NOSIGNAL);
 		}
 
 		vtvsock_conn_close(sc, conn);
@@ -1359,6 +1561,8 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 		conn = vtvsock_conn_find(sc, src_port, dst_port);
 		if (conn == NULL)
 			break;
+		VSOCK_PROBE_CONN_SHUTDOWN((uint32_t)sc->vsc_guest_cid,
+		    conn->guest_port, flags);
 		DPRINTF(("vtvsock: SHUTDOWN flags=0x%x local_port=%u "
 		    "guest_port=%u", flags, conn->local_port, conn->guest_port));
 
@@ -1425,20 +1629,34 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 			break;
 		}
 
-		conn->fwd_cnt += paylen;
+		/*
+		 * fwd_cnt is NOT advanced here.  It advances when the bytes
+		 * actually leave our buffer -- delivered to the host fd
+		 * (inline in vtvsock_stream_tx/vtvsock_seqpkt_rx, or on drain
+		 * in vtvsock_conn_write_cb) or deliberately discarded.
+		 * Advancing on acceptance (as this used to) told the guest
+		 * its data was consumed while it was really parked in
+		 * tx_buf, so a merely-slow host reader never throttled the
+		 * guest and instead tripped the backlog cap and reset the
+		 * connection -- data loss §5.10.6.3 exists to prevent.  With
+		 * consumption-time accounting the guest's credit window
+		 * (buf_alloc - in flight) reflects reality and a conformant
+		 * guest blocks; only a credit-violating guest can now
+		 * overflow the backlog caps.
+		 */
 
 		/*
 		 * The connection's type is fixed at OP_REQUEST time; a data
 		 * packet whose header type disagrees is a guest protocol
 		 * violation (e.g. SEQPACKET framing on a STREAM connection).
-		 * fwd_cnt was already advanced above, so drop the payload and
-		 * keep credit accounting consistent rather than feeding it to
-		 * the wrong delivery path.
+		 * Drop the payload; count it consumed so credit stays
+		 * consistent.
 		 */
 		if (type != conn->type) {
 			DPRINTF(("vtvsock: RW type %u mismatches conn type %u "
 			    "on %u:%u, dropping", type, conn->type,
 			    src_port, dst_port));
+			conn->fwd_cnt += paylen;
 			break;
 		}
 
@@ -1464,20 +1682,15 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 			 */
 			if (vtvsock_stream_tx(sc, &conn, payload, paylen) != 0)
 				break;		/* conn was reset/closed */
+		} else {
+			/* No host consumer for these bytes: discard as
+			 * consumed. */
+			conn->fwd_cnt += paylen;
 		}
 
-		/*
-		 * Possibly send CREDIT_UPDATE.  Advance last_fwd_cnt only on a
-		 * successful inject: if the RX ring is full the update is
-		 * dropped, and advancing anyway would suppress every future
-		 * update (need_credit_update compares against last_fwd_cnt),
-		 * stalling the guest's view of our free space.
-		 */
-		if (conn != NULL && vtvsock_need_credit_update(conn)) {
-			if (vtvsock_send_ctrl(sc, conn,
-			    VIRTIO_VSOCK_OP_CREDIT_UPDATE, 0) == 0)
-				conn->last_fwd_cnt = conn->fwd_cnt;
-		}
+		/* Report any inline consumption (see vtvsock_maybe_credit_update). */
+		if (conn != NULL)
+			vtvsock_maybe_credit_update(sc, conn);
 		break;
 
 	case VIRTIO_VSOCK_OP_CREDIT_UPDATE:
@@ -1500,6 +1713,7 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 		 * calls which risk use-after-free during TAILQ iteration.
 		 */
 		if (conn->state == CONN_ESTABLISHED &&
+		    !(conn->peer_shutdown & VIRTIO_VSOCK_SHUTDOWN_RCV) &&
 		    vtvsock_peer_credit(conn) > 0 &&
 		    conn->fd >= 0 && conn->evp != NULL) {
 			mevent_enable(conn->evp);
@@ -1568,7 +1782,7 @@ vtvsock_reap_stale(struct pci_vtvsock_softc *sc)
 				reply.port   = conn->guest_port;
 				reply.status = -ETIMEDOUT;
 				(void)send(conn->ctl_fd, &reply,
-				    sizeof(reply), 0);
+				    sizeof(reply), MSG_NOSIGNAL);
 			}
 			vtvsock_conn_close(sc, conn);
 		}
@@ -1656,6 +1870,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 			 * the iov_* helpers is a guest-triggerable OOB
 			 * read/host-memory infoleak.  Drop over-long chains.
 			 */
+			VSOCK_PROBE_DESC_DROP("tx-chain-too-long");
 			DPRINTF(("vtvsock: tx descriptor chain too long (%d), "
 			    "dropping", n));
 			vq_relchain(vq, req.idx, 0);
@@ -1663,6 +1878,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 		}
 		if (iov_has_null_base(iov, n)) {
 			/* Descriptor addr outside guest RAM; copy would crash. */
+			VSOCK_PROBE_DESC_DROP("tx-bad-descriptor-addr");
 			DPRINTF(("vtvsock: tx descriptor with bad address, "
 			    "dropping"));
 			vq_relchain(vq, req.idx, 0);
@@ -1781,8 +1997,21 @@ pci_vtvsock_notify_rx(void *vsc, struct vqueue_info *vq __unused)
 	struct vtvsock_conn *conn;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
+	/*
+	 * Parked control replies go out first, in the descriptors the guest
+	 * just posted, before any connection data is re-enabled behind them.
+	 */
+	vtvsock_pend_flush(sc);
 	TAILQ_FOREACH(conn, &sc->vsc_conns, link) {
+		/*
+		 * Do not re-enable the host-read mevent for a connection whose
+		 * guest half-closed the receive direction (SHUTDOWN_RCV, §5.10.6.5):
+		 * the guest will not accept more host->guest data, and a read on the
+		 * SHUT_RD host fd would return 0 and be misread as a peer EOF that
+		 * tears down the still-open guest->host direction.
+		 */
 		if (conn->state == CONN_ESTABLISHED &&
+		    !(conn->peer_shutdown & VIRTIO_VSOCK_SHUTDOWN_RCV) &&
 		    conn->fd >= 0 && conn->evp != NULL)
 			mevent_enable(conn->evp);
 	}
@@ -1801,9 +2030,11 @@ pci_vtvsock_notify_event(void *vsc __unused, struct vqueue_info *vq __unused)
 
 /*
  * Inject buf[*offp .. len) into the guest RX virtqueue as OP_RW fragments, each
- * at most VTVSOCK_MAX_PKT bytes.  For a SEQPACKET record, EOM|EOR is set on the
- * final fragment so the guest reassembles the whole record.  *offp and
- * conn->tx_cnt are advanced per injected fragment.  Returns:
+ * at most VTVSOCK_MAX_PKT bytes.  For a SEQPACKET record the final fragment
+ * carries EOM (message boundary, always) and, when the host peer set POSIX
+ * MSG_EOR on the record (eor), also SEQ_EOR -- so the guest's recv() reports
+ * MSG_EOR exactly where the host set it (§5.10.6.6.1), not on every message.
+ * *offp and conn->tx_cnt are advanced per injected fragment.  Returns:
  *    0  fully injected (*offp == len)
  *    1  the RX ring ran out of descriptors mid-record (*offp < len; the caller
  *       parks the tail and retries when the guest posts more descriptors)
@@ -1811,7 +2042,8 @@ pci_vtvsock_notify_event(void *vsc __unused, struct vqueue_info *vq __unused)
  */
 static int
 vtvsock_rx_inject_frags(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
-    const uint8_t *buf, uint32_t len, uint32_t *offp, bool is_seqpacket)
+    const uint8_t *buf, uint32_t len, uint32_t *offp, bool is_seqpacket,
+    bool eor)
 {
 	uint32_t off = *offp;
 
@@ -1819,10 +2051,18 @@ vtvsock_rx_inject_frags(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
 		uint32_t frag = MIN(len - off, (uint32_t)VTVSOCK_MAX_PKT);
 		uint32_t rw_flags = 0;
 
-		if (is_seqpacket && off + frag >= len)
-			rw_flags = VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR;
+		if (is_seqpacket && off + frag >= len) {
+			rw_flags = VIRTIO_VSOCK_SEQ_EOM;
+			if (eor)
+				rw_flags |= VIRTIO_VSOCK_SEQ_EOR;
+		}
 
-		if (!vq_has_descs(&sc->vsc_queues[VTVSOCK_RXQ])) {
+		/*
+		 * rx_ready, not just vq_has_descs: parked control replies
+		 * must reach the wire before new data, so data defers (parks
+		 * in rx_resid) while the pending ring drains.
+		 */
+		if (!vtvsock_rx_ready(sc)) {
 			*offp = off;
 			return (1);
 		}
@@ -1886,8 +2126,25 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 		ssize_t readlen;
 		int avail;
 		bool is_seqpacket;
+		bool record_eor = false;	/* host set MSG_EOR on this record */
 
 		is_seqpacket = (conn->type == VIRTIO_VSOCK_TYPE_SEQPACKET);
+
+		/*
+		 * The guest half-closed the receive direction (SHUTDOWN_RCV,
+		 * §5.10.6.5): it will not accept more host->guest data.  The read
+		 * mevent should already be disabled, but guard here too so a stray
+		 * wakeup neither injects unwanted data nor misreads the SHUT_RD
+		 * host-fd recv()==0 as a peer EOF -- which would escalate the
+		 * legitimate half-close into a full teardown of the still-open
+		 * guest->host direction.  The guest->host path (writes to conn->fd)
+		 * stays open until the guest also sends SHUTDOWN_SEND.
+		 */
+		if (conn->peer_shutdown & VIRTIO_VSOCK_SHUTDOWN_RCV) {
+			if (conn->evp != NULL)
+				mevent_disable(conn->evp);
+			break;
+		}
 
 		/*
 		 * Re-inject any record tail parked when the guest RX ring
@@ -1900,7 +2157,7 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 
 			r = vtvsock_rx_inject_frags(sc, conn, conn->rx_resid,
 			    conn->rx_resid_len, &conn->rx_resid_off,
-			    conn->rx_resid_seq);
+			    conn->rx_resid_seq, conn->rx_resid_eor);
 			if (r < 0)
 				goto conn_error;
 			if (r > 0) {
@@ -1917,6 +2174,8 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 		/* Check peer credit — how many bytes the guest can accept. */
 		maxread = vtvsock_peer_credit(conn);
 		if (maxread == 0) {
+			VSOCK_PROBE_CREDIT_STALL((uint32_t)sc->vsc_guest_cid,
+			    conn->guest_port);
 			DPRINTF(("vtvsock: no peer credit, requesting update"));
 			/*
 			 * Solicit a fresh CREDIT_UPDATE from the guest (spec
@@ -2004,21 +2263,30 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 				 * the guest delivers an empty datagram.
 				 */
 				struct msghdr dmsg;
+				uint32_t eflags = VIRTIO_VSOCK_SEQ_EOM;
 
-				if (!vq_has_descs(
-				    &sc->vsc_queues[VTVSOCK_RXQ])) {
+				if (!vtvsock_rx_ready(sc)) {
 					DPRINTF(("vtvsock: RX ring full, "
 					    "deferring"));
 					if (conn->evp != NULL)
 						mevent_disable(conn->evp);
 					break;
 				}
+				/*
+				 * EOM always (message boundary); EOR only if the
+				 * host peer set MSG_EOR on this empty record --
+				 * the peek above already captured pmsg.msg_flags
+				 * (this branch is reached only when MSG_EOR was
+				 * set, so this is normally EOM|EOR, but gate it
+				 * rather than hardcode so the record boundary
+				 * always reflects the sender).
+				 */
+				if (pmsg.msg_flags & MSG_EOR)
+					eflags |= VIRTIO_VSOCK_SEQ_EOR;
 				memset(&dmsg, 0, sizeof(dmsg));
 				(void)recvmsg(conn->fd, &dmsg, MSG_DONTWAIT);
 				(void)vtvsock_inject_rx(sc, conn,
-				    VIRTIO_VSOCK_OP_RW,
-				    VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR,
-				    NULL, 0);
+				    VIRTIO_VSOCK_OP_RW, eflags, NULL, 0);
 				break;
 			}
 			readlen = msgsize;
@@ -2041,10 +2309,13 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 		}
 
 		/*
-		 * Verify RX ring has descriptors BEFORE consuming data
-		 * from the Unix socket.
+		 * Verify the RX ring can take an injection BEFORE consuming
+		 * data from the Unix socket (descriptors available and no
+		 * parked control replies ahead of us).
 		 */
-		if (!vq_has_descs(&sc->vsc_queues[VTVSOCK_RXQ])) {
+		if (!vtvsock_rx_ready(sc)) {
+			VSOCK_PROBE_RX_RINGFULL((uint32_t)sc->vsc_guest_cid,
+			    conn->guest_port);
 			DPRINTF(("vtvsock: RX ring full, deferring"));
 			/*
 			 * Disable mevent to prevent a level-triggered
@@ -2065,7 +2336,29 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 			WPRINTF(("vtvsock: malloc failed for rx payload"));
 			break;
 		}
-		n = recv(conn->fd, buf, (size_t)readlen, MSG_DONTWAIT);
+		if (is_seqpacket) {
+			/*
+			 * SEQPACKET: recvmsg (not plain recv) so msg_flags is
+			 * available -- the host peer's MSG_EOR must be
+			 * propagated to the guest as SEQ_EOR on the final
+			 * fragment (§5.10.6.6.1) rather than assumed set on
+			 * every record.
+			 */
+			struct msghdr rmsg;
+			struct iovec riov;
+
+			memset(&rmsg, 0, sizeof(rmsg));
+			riov.iov_base = buf;
+			riov.iov_len = (size_t)readlen;
+			rmsg.msg_iov = &riov;
+			rmsg.msg_iovlen = 1;
+			n = recvmsg(conn->fd, &rmsg, MSG_DONTWAIT);
+			record_eor = (n >= 0) &&
+			    (rmsg.msg_flags & MSG_EOR) != 0;
+		} else {
+			/* STREAM has no record boundary; plain recv. */
+			n = recv(conn->fd, buf, (size_t)readlen, MSG_DONTWAIT);
+		}
 		if (n <= 0) {
 			free(buf);
 			buf = NULL;
@@ -2102,7 +2395,7 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 			int r;
 
 			r = vtvsock_rx_inject_frags(sc, conn, buf,
-			    (uint32_t)n, &off, is_seqpacket);
+			    (uint32_t)n, &off, is_seqpacket, record_eor);
 			if (r < 0) {
 				WPRINTF(("vtvsock: RX injection failed, "
 				    "closing"));
@@ -2122,6 +2415,7 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 				conn->rx_resid_len = (uint32_t)n;
 				conn->rx_resid_off = off;
 				conn->rx_resid_seq = is_seqpacket;
+				conn->rx_resid_eor = record_eor;
 				buf = NULL;
 				if (conn->evp != NULL)
 					mevent_disable(conn->evp);
@@ -2159,8 +2453,11 @@ conn_error:
  * backlog is fully drained the drainer is disabled (it is level-triggered, so
  * leaving it enabled would spin while the socket stays writable).
  *
- * Credit accounting is unchanged here: fwd_cnt was already advanced when the
- * guest packet was accepted, so a successful drain only frees host memory.
+ * Draining is consumption: fwd_cnt advances here as bytes reach the host
+ * socket (see the OP_RW handler), so each drain widens the guest's credit
+ * window -- announce it with a CREDIT_UPDATE when enough has accumulated,
+ * or a guest blocked on credit would only learn via its 1s CREDIT_REQUEST
+ * poll.
  */
 static void
 vtvsock_conn_write_cb(int fd, enum ev_type t __unused, void *arg)
@@ -2200,9 +2497,9 @@ vtvsock_conn_write_cb(int fd, enum ev_type t __unused, void *arg)
 			}
 			goto write_error;
 		}
-		/* record delivered whole; release its global budget share */
-		sc->vsc_txbuf_total -= conn->tx_buf_len;
-		conn->tx_buf_len = 0;
+		/* Record consumed whole: report it and release its buffer. */
+		conn->fwd_cnt += conn->tx_buf_len;
+		vtvsock_txbuf_release(sc, conn);
 	} else {
 		/* STREAM: push as much as the socket will take. */
 		while (conn->tx_buf_len > 0) {
@@ -2211,6 +2508,8 @@ vtvsock_conn_write_cb(int fd, enum ev_type t __unused, void *arg)
 
 			if (sent < 0) {
 				if (errno == EAGAIN || errno == EWOULDBLOCK) {
+					/* Partial drain still freed credit. */
+					vtvsock_maybe_credit_update(sc, conn);
 					pthread_mutex_unlock(&sc->vsc_mtx);
 					return;	/* stay armed; retry later */
 				}
@@ -2223,9 +2522,11 @@ vtvsock_conn_write_cb(int fd, enum ev_type t __unused, void *arg)
 				 * spinning forever under vsc_mtx.  Stay armed and
 				 * retry on the next writable event.
 				 */
+				vtvsock_maybe_credit_update(sc, conn);
 				pthread_mutex_unlock(&sc->vsc_mtx);
 				return;
 			}
+			conn->fwd_cnt += (uint32_t)sent;
 			conn->tx_buf_len -= (uint32_t)sent;
 			sc->vsc_txbuf_total -= (uint32_t)sent;
 			if (conn->tx_buf_len > 0)
@@ -2234,7 +2535,13 @@ vtvsock_conn_write_cb(int fd, enum ev_type t __unused, void *arg)
 		}
 	}
 
-	/* Fully drained: disable the drainer until there is backlog again. */
+	/*
+	 * Fully drained: free the backing buffer (no-op if the SEQPACKET branch
+	 * above already released it) so an idle connection retains no capacity,
+	 * and disable the drainer until there is backlog again.
+	 */
+	vtvsock_txbuf_release(sc, conn);
+	vtvsock_maybe_credit_update(sc, conn);
 	if (conn->tx_evp != NULL)
 		mevent_disable(conn->tx_evp);
 	pthread_mutex_unlock(&sc->vsc_mtx);
@@ -2329,7 +2636,7 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 			reply.cmd    = VSOCK_CTL_CONNECT;
 			reply.port   = msg.port;
 			reply.status = -err;
-			(void)send(fd, &reply, sizeof(reply), 0);
+			(void)send(fd, &reply, sizeof(reply), MSG_NOSIGNAL);
 			pthread_mutex_unlock(&sc->vsc_mtx);
 			return;
 		}
@@ -2392,7 +2699,7 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 			reply.cmd    = VSOCK_CTL_CONNECT;
 			reply.port   = msg.port;
 			reply.status = -ENOMEM;
-			(void)send(fd, &reply, sizeof(reply), 0);
+			(void)send(fd, &reply, sizeof(reply), MSG_NOSIGNAL);
 			vtvsock_conn_close(sc, conn);
 			break;
 		}
@@ -2408,7 +2715,7 @@ ctl_connect_fail:
 			reply.cmd    = VSOCK_CTL_CONNECT;
 			reply.port   = msg.port;
 			reply.status = -ENOMEM;
-			(void)send(fd, &reply, sizeof(reply), 0);
+			(void)send(fd, &reply, sizeof(reply), MSG_NOSIGNAL);
 		}
 		break;
 	}
@@ -2514,6 +2821,9 @@ pci_vtvsock_reset(void *vsc)
 	DPRINTF(("vtvsock: device reset requested"));
 
 	pthread_mutex_lock(&sc->vsc_mtx);
+	/* Discard parked control replies; the rings are being reset. */
+	sc->vsc_pend_head = 0;
+	sc->vsc_pend_count = 0;
 	/* Close all active connections */
 	TAILQ_FOREACH_SAFE(conn, &sc->vsc_conns, link, tmp)
 		vtvsock_conn_close(sc, conn);
@@ -2697,7 +3007,10 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_VSOCK);
 	pci_set_cfgdata16(pi, PCIR_VENDOR,  VIRTIO_VENDOR);
 	pci_set_cfgdata8(pi,  PCIR_CLASS,   PCIC_SIMPLECOMM);
-	pci_set_cfgdata8(pi,  PCIR_SUBCLASS, 0);
+	/* "other" subclass: subclass 0 (UART) invites serial-driver probes */
+	pci_set_cfgdata8(pi,  PCIR_SUBCLASS, 0x80);
+	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_VSOCK);
+	pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
 
 	/* --- Open directory fd --- */
 	sc->vsc_dfd = open(path, O_RDONLY | O_DIRECTORY);
@@ -2706,13 +3019,6 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 		    strerror(errno)));
 		goto failed;
 	}
-
-#ifndef WITHOUT_CAPSICUM
-	cap_rights_init(&rights, CAP_CONNECTAT, CAP_LOOKUP);
-	if (caph_rights_limit(sc->vsc_dfd, &rights) == -1)
-		errx(EX_OSERR, "Unable to apply rights for sandbox on dfd");
-	vtvsock_cap_lockdown(sc->vsc_dfd);
-#endif
 
 	/* --- Create control socket at <dir>/sock --- */
 	s = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -2733,6 +3039,18 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 		WPRINTF(("vtvsock: bindat sock failed: %s", strerror(errno)));
 		goto failed;
 	}
+
+#ifndef WITHOUT_CAPSICUM
+	/*
+	 * The control socket is bound; from here on the directory fd is
+	 * only used for connectat() of guest-initiated connections, so
+	 * drop bind/unlink authority.
+	 */
+	cap_rights_init(&rights, CAP_CONNECTAT, CAP_LOOKUP);
+	if (caph_rights_limit(sc->vsc_dfd, &rights) == -1)
+		errx(EX_OSERR, "Unable to apply rights for sandbox on dfd");
+	vtvsock_cap_lockdown(sc->vsc_dfd);
+#endif
 	if (fcntl(s, F_SETFL, O_NONBLOCK) < 0) {
 		WPRINTF(("vtvsock: fcntl failed: %s", strerror(errno)));
 		goto failed;
@@ -2751,7 +3069,13 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 
 #ifndef WITHOUT_CAPSICUM
-	cap_rights_init(&rights, CAP_ACCEPT, CAP_EVENT, CAP_RECV, CAP_SEND);
+	/*
+	 * CAP_FCNTL is needed because accepted connections inherit this
+	 * limit and the accept path sets O_NONBLOCK on them; each accepted
+	 * fd is then re-limited without CAP_FCNTL.
+	 */
+	cap_rights_init(&rights, CAP_ACCEPT, CAP_EVENT, CAP_RECV, CAP_SEND,
+	    CAP_FCNTL);
 	if (caph_rights_limit(s, &rights) == -1)
 		errx(EX_OSERR, "Unable to apply rights for sandbox on ctl");
 	vtvsock_cap_lockdown(s);

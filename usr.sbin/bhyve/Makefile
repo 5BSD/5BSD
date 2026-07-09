@@ -135,4 +135,14 @@ NO_WTHREAD_SAFETY=
 
 NO_WCAST_ALIGN=
 
+# DTrace USDT provider for the virtio-vsock host device (pci_virtio_vsock.c).
+# Adding the .d to SRCS makes the build run dtrace -h (generate the probe
+# header) and dtrace -G (emit the DOF linked into bhyve).  -I${.OBJDIR} lets the
+# source find the generated header; -DWITH_DTRACE arms the probe macros.
+.if ${MK_DTRACE} != "no"
+SRCS+=		vsock_provider.d
+CFLAGS+=	-I${.OBJDIR}
+CFLAGS+=	-DWITH_DTRACE
+.endif
+
 .include <bsd.prog.mk>

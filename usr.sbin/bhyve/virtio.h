@@ -170,7 +170,14 @@
 #define	VIRTIO_DEV_RANDOM	0x1005
 #define	VIRTIO_DEV_9P		0x1009
 #define	VIRTIO_DEV_INPUT	0x1052
-#define	VIRTIO_DEV_VSOCK	0x1053
+/*
+ * bhyve's virtio is the legacy (0.9) transport, so the vsock device must
+ * use a device ID in the transitional range [0x1000, 0x103f] — guest
+ * drivers bind modern IDs (0x1040+) to the virtio-modern transport and
+ * fail on the missing capability structures.  The device type is carried
+ * in the PCI subdevice ID (VIRTIO_ID_VSOCK).
+ */
+#define	VIRTIO_DEV_VSOCK	0x1013
 
 /*
  * PCI revision IDs
