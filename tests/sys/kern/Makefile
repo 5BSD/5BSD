@@ -78,7 +78,8 @@ CFLAGS.vsock_device_test+=	-DWITHOUT_CAPSICUM \
 CWARNFLAGS.vsock_device_test.c+=	-Wno-error
 LDFLAGS.vsock_device_test+=	-Wl,--wrap=socket -Wl,--wrap=connectat \
 	-Wl,--wrap=send -Wl,--wrap=recv -Wl,--wrap=sendmsg -Wl,--wrap=shutdown \
-	-Wl,--wrap=poll -Wl,--wrap=close
+	-Wl,--wrap=poll -Wl,--wrap=close -Wl,--wrap=accept \
+	-Wl,--wrap=socketpair -Wl,--wrap=fcntl
 LIBADD.vsock_device_test+=	pthread
 CLEANFILES+=	pci_virtio_vsock.c pci_virtio_vsock_iov.h pci_virtio_vsock_probes.h
 # The DUT sources are copied into ${.OBJDIR} and #included by the test.  Wire the

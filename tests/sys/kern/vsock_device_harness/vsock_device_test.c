@@ -243,6 +243,36 @@ __wrap_poll(struct pollfd *p, nfds_t n, int t)
 }
 int __wrap_close(int fd) { (void)fd; return (0); }
 
+/* ---- control-socket path mocks ---- */
+static int g_socketpair_fail;		/* make socketpair() return -1/ENOMEM */
+int
+__wrap_accept(int fd, struct sockaddr *a, socklen_t *l)
+{
+	(void)fd; (void)a;
+	if (l != NULL) *l = 0;
+	return (g_next_fd++);		/* each ctl accept gets a fresh fake fd */
+}
+int
+__wrap_socketpair(int d, int t, int p, int sv[2])
+{
+	(void)d; (void)t; (void)p;
+	if (g_socketpair_fail) { errno = ENOMEM; return (-1); }
+	sv[0] = g_next_fd++;
+	sv[1] = g_next_fd++;
+	return (0);
+}
+int __wrap_fcntl(int fd, int cmd, ...) { (void)fd; (void)cmd; return (0); }
+
+/* Stage a control message that the next ctl-conn recv() will return. */
+static void
+stage_ctl_msg(uint32_t cmd, uint32_t port, uint32_t type)
+{
+	struct vsock_ctl_msg m = { cmd, port, type, 0 };
+	memcpy(g_recv_data, &m, sizeof(m));
+	g_recv_len = sizeof(m);
+	g_recv_off = 0;
+}
+
 /* ================= test scaffolding ================= */
 static struct pci_vtvsock_softc *
 mk_sc(void)
@@ -1109,6 +1139,98 @@ ATF_TC_BODY(reaper_keeps_referenced_ctl_conn, tc)
 }
 
 /*
+ * --- control-socket cap: only VTVSOCK_MAX_CTL_CONNS host control
+ * connections are accepted; the next accept is dropped, so a host process
+ * cannot exhaust ctl slots.  Drives the real pci_vtvsock_ctl_accept. ---
+ */
+ATF_TC_WITHOUT_HEAD(ctl_accept_cap);
+ATF_TC_BODY(ctl_accept_cap, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	int i;
+	reset_caps();
+
+	/* Accept exactly the cap: each call takes one ctl slot. */
+	for (i = 0; i < VTVSOCK_MAX_CTL_CONNS; i++)
+		pci_vtvsock_ctl_accept(0, EVF_READ, sc);
+	ATF_CHECK(sc->vsc_ctl_conn_count == VTVSOCK_MAX_CTL_CONNS);
+
+	/* One more must be refused: count does not grow. */
+	pci_vtvsock_ctl_accept(0, EVF_READ, sc);
+	ATF_CHECK(sc->vsc_ctl_conn_count == VTVSOCK_MAX_CTL_CONNS);
+	free(sc);
+}
+
+/*
+ * --- control-socket CONNECT: a host VSOCK_CTL_CONNECT drives an outbound
+ * host->guest connection -- a CONN_CONNECTING conn is created and an
+ * OP_REQUEST is emitted to the guest, referencing the ctl fd for the reply. ---
+ */
+ATF_TC_WITHOUT_HEAD(ctl_connect_emits_request);
+ATF_TC_BODY(ctl_connect_emits_request, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_ctl_conn *cc;
+	struct vtvsock_conn *conn;
+	reset_caps();
+	cc = mk_ctl_conn(sc, g_next_fd++, 100 /* not idle */);
+
+	stage_ctl_msg(VSOCK_CTL_CONNECT, 1234, SOCK_STREAM);
+	pci_vtvsock_ctl_conn_cb(cc->fd, EVF_READ, sc);
+
+	ATF_CHECK(nconns(sc) == 1);			/* a conn was created */
+	conn = TAILQ_FIRST(&sc->vsc_conns);
+	ATF_CHECK(conn != NULL && conn->state == CONN_CONNECTING);
+	ATF_CHECK(conn != NULL && conn->ctl_fd == cc->fd);  /* reply path set */
+	ATF_CHECK(g_ninject == 1 &&
+	    g_inject[0].op == VIRTIO_VSOCK_OP_REQUEST);	/* guest asked to connect */
+	ATF_CHECK(g_inject[0].dst_port == 1234);
+	free(sc);
+}
+
+/*
+ * --- control-socket unknown command: an unrecognized ctl cmd is ignored
+ * cleanly -- no connection created, no packet emitted, no crash. ---
+ */
+ATF_TC_WITHOUT_HEAD(ctl_unknown_cmd_ignored);
+ATF_TC_BODY(ctl_unknown_cmd_ignored, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_ctl_conn *cc;
+	reset_caps();
+	cc = mk_ctl_conn(sc, g_next_fd++, 100);
+
+	stage_ctl_msg(0xdead /* unknown */, 1234, SOCK_STREAM);
+	pci_vtvsock_ctl_conn_cb(cc->fd, EVF_READ, sc);
+
+	ATF_CHECK(nconns(sc) == 0);		/* nothing created */
+	ATF_CHECK(g_ninject == 0);		/* nothing emitted */
+	free(sc);
+}
+
+/*
+ * --- control-socket CONNECT under socketpair() failure returns an -ENOMEM
+ * status reply to the host and creates no connection. ---
+ */
+ATF_TC_WITHOUT_HEAD(ctl_connect_socketpair_fail);
+ATF_TC_BODY(ctl_connect_socketpair_fail, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_ctl_conn *cc;
+	reset_caps();
+	cc = mk_ctl_conn(sc, g_next_fd++, 100);
+	g_socketpair_fail = 1;
+
+	stage_ctl_msg(VSOCK_CTL_CONNECT, 1234, SOCK_STREAM);
+	pci_vtvsock_ctl_conn_cb(cc->fd, EVF_READ, sc);
+
+	ATF_CHECK(nconns(sc) == 0);		/* no conn on failure */
+	ATF_CHECK(g_ninject == 0);		/* no OP_REQUEST to guest */
+	g_socketpair_fail = 0;
+	free(sc);
+}
+
+/*
  * --- connection cap: the (MAX_CONNS+1)th guest OP_REQUEST is refused with
  * RST, and closing a connection frees a slot so a later REQUEST succeeds.
  * The DoS backstop for a guest that opens connections without bound. ---
@@ -1261,6 +1383,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, half_close_send_then_host_eof);
 	ATF_TP_ADD_TC(tp, host_data_then_eof_same_dispatch);
 	ATF_TP_ADD_TC(tp, reaper_reaps_idle_ctl_conn);
+	ATF_TP_ADD_TC(tp, ctl_accept_cap);
+	ATF_TP_ADD_TC(tp, ctl_connect_emits_request);
+	ATF_TP_ADD_TC(tp, ctl_unknown_cmd_ignored);
+	ATF_TP_ADD_TC(tp, ctl_connect_socketpair_fail);
 	ATF_TP_ADD_TC(tp, reaper_keeps_referenced_ctl_conn);
 	ATF_TP_ADD_TC(tp, conn_cap_refuses_and_reclaims);
 	ATF_TP_ADD_TC(tp, reaper_closes_stuck_closing);
