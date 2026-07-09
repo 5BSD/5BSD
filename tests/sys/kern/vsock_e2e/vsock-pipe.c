@@ -69,6 +69,19 @@ relay(int sfd)
 	return (0);
 }
 
+static int
+drain(int c)
+{
+	char buf[65536];
+	ssize_t n;
+
+	while ((n = read(c, buf, sizeof(buf))) > 0)
+		if (write(1, buf, n) != n)
+			return (1);
+	close(c);
+	return (n < 0 ? 1 : 0);
+}
+
 static void
 echo_conn(int c)
 {
@@ -85,18 +98,19 @@ int
 main(int argc, char **argv)
 {
 	int type = SOCK_STREAM;
-	bool listen_mode = false, echo_mode = false;
+	bool listen_mode = false, echo_mode = false, drain_mode = false;
 	int ch, s;
 	struct sockaddr_vm sa;
 
 	signal(SIGPIPE, SIG_IGN);
 	signal(SIGCHLD, SIG_IGN);
 
-	while ((ch = getopt(argc, argv, "lse")) != -1) {
+	while ((ch = getopt(argc, argv, "lsed")) != -1) {
 		switch (ch) {
 		case 'l': listen_mode = true; break;
 		case 's': type = SOCK_SEQPACKET; break;
 		case 'e': echo_mode = true; break;
+		case 'd': drain_mode = true; break;
 		default:
 			fprintf(stderr, "usage: %s [-s] <cid> <port> | "
 			    "%s -l [-s] [-e] <port>\n", argv[0], argv[0]);
@@ -121,6 +135,11 @@ main(int argc, char **argv)
 			perror("bind"); return (1);
 		}
 		if (listen(s, 128) < 0) { perror("listen"); return (1); }
+		if (drain_mode) {
+			int c = accept(s, NULL, NULL);
+			if (c < 0) { perror("accept"); return (1); }
+			return (drain(c));
+		}
 		if (!echo_mode) {
 			int c = accept(s, NULL, NULL);
 			if (c < 0) { perror("accept"); return (1); }

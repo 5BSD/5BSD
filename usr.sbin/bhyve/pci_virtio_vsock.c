@@ -201,6 +201,9 @@ struct vsock_ctl_msg {
 
 static int pci_vtvsock_debug;
 #define	DPRINTF(params)	if (pci_vtvsock_debug) PRINTLN params
+/* Per-packet tracing: BHYVE_VTVSOCK_DEBUG=2+ only -- the volume swamps
+ * stdio buffering and makes event-level debugging impossible. */
+#define	DPRINTF2(params)	if (pci_vtvsock_debug >= 2) PRINTLN params
 #define	WPRINTF(params)	PRINTLN params
 
 static time_t
@@ -272,6 +275,7 @@ struct vtvsock_conn {
 	/* Peer shutdown tracking (accumulated, never cleared per §5.10.6.5) */
 	uint32_t		peer_shutdown;
 	bool			host_eof;	/* host app closed/shut its write side */
+	time_t			stall_time;	/* when RX evp was disabled on credit stall (0=not) */
 
 	/* Monotonic seconds when the CONNECTING/CLOSING timer started; 0 else */
 	time_t			close_time;
@@ -406,6 +410,8 @@ static int  pci_vtvsock_legacy_config(nvlist_t *, const char *);
 static void vtvsock_conn_data_cb(int, enum ev_type, void *);
 static void vtvsock_conn_write_cb(int, enum ev_type, void *);
 static void vtvsock_conn_close(struct pci_vtvsock_softc *,
+    struct vtvsock_conn *);
+static void vtvsock_host_eof(struct pci_vtvsock_softc *,
     struct vtvsock_conn *);
 
 static struct virtio_consts vtvsock_vi_consts = {
@@ -1252,7 +1258,7 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 	uint32_t flags    = le32toh(hdr->flags);
 	struct vtvsock_conn *conn;
 
-	DPRINTF(("vtvsock: tx pkt op=%u src=%llu:%u dst=%llu:%u len=%u",
+	DPRINTF2(("vtvsock: tx pkt op=%u src=%llu:%u dst=%llu:%u len=%u",
 	    op, (unsigned long long)src_cid, src_port,
 	    (unsigned long long)dst_cid, dst_port, paylen));
 
@@ -1728,7 +1734,7 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 		conn = vtvsock_conn_find(sc, src_port, dst_port);
 		if (conn == NULL)
 			break;
-		DPRINTF(("vtvsock: CREDIT_UPDATE local_port=%u peer_buf=%u "
+		DPRINTF2(("vtvsock: CREDIT_UPDATE local_port=%u peer_buf=%u "
 		    "peer_fwd=%u", conn->local_port,
 		    conn->peer_buf_alloc, conn->peer_fwd_cnt));
 		/*
@@ -1783,6 +1789,36 @@ vtvsock_reap_stale(struct pci_vtvsock_softc *sc)
 	time_t now = monotonic_seconds();
 
 	TAILQ_FOREACH_SAFE(conn, &sc->vsc_conns, link, tmp) {
+		/*
+		 * A connection whose RX event has stayed disabled on a credit
+		 * stall for several seconds is making no progress: if the host
+		 * peer died while stalled, the EOF is invisible (we are not
+		 * reading) and the connection would ping-pong
+		 * CREDIT_REQUEST/UPDATE forever.  ONLY such long-stalled
+		 * connections are probed -- an actively flowing transfer
+		 * re-enables its event as credit arrives, which clears
+		 * stall_time, so a healthy connection is never probed and
+		 * never mistaken for a dead one.  MSG_PEEK distinguishes a
+		 * real EOF (0) from merely-no-data (EAGAIN).
+		 */
+		if (conn->state == CONN_ESTABLISHED && conn->fd >= 0 &&
+		    !conn->host_eof && conn->stall_time != 0 &&
+		    now - conn->stall_time >= 5) {
+			char pb;
+			ssize_t pn;
+
+			pn = recv(conn->fd, &pb, sizeof(pb),
+			    MSG_PEEK | MSG_DONTWAIT);
+			if (pn == 0) {
+				DPRINTF(("vtvsock: reaper: host peer of "
+				    "stalled local_port=%u is gone",
+				    conn->local_port));
+				vtvsock_host_eof(sc, conn);
+			} else if (pn > 0) {
+				/* Data is buffered: healthy stall, not dead. */
+				conn->stall_time = 0;
+			}
+		}
 		if (conn->close_time == 0)
 			continue;
 		if (conn->state == CONN_CLOSING &&
@@ -2039,8 +2075,24 @@ pci_vtvsock_notify_rx(void *vsc, struct vqueue_info *vq __unused)
 		if (conn->state == CONN_ESTABLISHED &&
 		    !(conn->peer_shutdown & VIRTIO_VSOCK_SHUTDOWN_RCV) &&
 		    !conn->host_eof &&
-		    conn->fd >= 0 && conn->evp != NULL)
+		    conn->fd >= 0 && conn->evp != NULL &&
+		    (conn->rx_resid != NULL ||
+		    vtvsock_peer_credit(conn) > 0)) {
+			/*
+			 * Only re-arm the host-read event when the connection
+			 * can actually make progress: it has a parked record
+			 * tail to finish injecting (already credit-accounted),
+			 * or the guest has advertised receive credit.  Without
+			 * this credit gate a connection stalled on a full guest
+			 * window is re-enabled on every RX refill, immediately
+			 * re-stalls, and busy-loops at the guest's notify rate.
+			 * A genuinely credit-stalled connection stays disabled
+			 * (and stall_time intact for the reaper) until its
+			 * CREDIT_UPDATE arrives.
+			 */
 			mevent_enable(conn->evp);
+			conn->stall_time = 0;
+		}
 	}
 	pthread_mutex_unlock(&sc->vsc_mtx);
 }
@@ -2248,10 +2300,15 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 			    VIRTIO_VSOCK_OP_CREDIT_REQUEST, 0);
 			/*
 			 * Disable mevent to prevent level-triggered
-			 * busy-loop.  Re-enabled on CREDIT_UPDATE.
+			 * busy-loop.  Re-enabled on CREDIT_UPDATE.  Record the
+			 * stall start so the reaper can distinguish a
+			 * genuinely wedged connection from a briefly-throttled
+			 * healthy one.
 			 */
 			if (conn->evp != NULL)
 				mevent_disable(conn->evp);
+			if (conn->stall_time == 0)
+				conn->stall_time = monotonic_seconds();
 			break;
 		}
 
@@ -2966,8 +3023,11 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	 * triggerable parse/drop diagnostics are logged at this level (not
 	 * WPRINTF) so a hostile guest cannot flood the host log by default.
 	 */
-	if (getenv("BHYVE_VTVSOCK_DEBUG") != NULL)
-		pci_vtvsock_debug = 1;
+	if (getenv("BHYVE_VTVSOCK_DEBUG") != NULL) {
+		pci_vtvsock_debug = atoi(getenv("BHYVE_VTVSOCK_DEBUG"));
+		if (pci_vtvsock_debug < 1)
+			pci_vtvsock_debug = 1;
+	}
 
 	sc = calloc(1, sizeof(*sc));
 	if (sc == NULL)

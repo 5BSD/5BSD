@@ -33,6 +33,25 @@ result() { # <name> <0=pass>
 
 gcmd() { $VCMD "$1" "${2:-30}"; }
 
+# Kill stray guest-side test processes so a leaked listener from a prior
+# test cannot accept a later test's connection or clog the console.
+gclean() { gcmd 'pkill -9 vsock-pipe 2>/dev/null; rm -f /tmp/conc.* 2>/dev/null; echo ok' 15 >/dev/null; }
+
+# Host->guest connect with retry: the guest listener may not have bound
+# when we first connect (ECONNREFUSED -> vsh-connect exit 4).  Retry a few
+# times before giving up.  Args after the port are extra vsh-connect args.
+vshc() {
+	_dir=$1; _port=$2; shift 2
+	_try=0
+	while [ $_try -lt 10 ]; do
+		timeout 250 "$TOOLS/vsh-connect" "$@" "$_dir" "$_port"
+		_rc=$?
+		[ $_rc -ne 4 ] && return $_rc
+		sleep 1; _try=$((_try + 1))
+	done
+	return 4
+}
+
 # --- T1: STREAM echo guest->host -----------------------------------
 t_echo_g2h() {
 	(printf '' | timeout 20 "$TOOLS/unix-pipe" -l -e -n 1 "$DIR/5001" &)
@@ -43,8 +62,9 @@ t_echo_g2h() {
 
 # --- T2: STREAM echo host->guest (control socket) ------------------
 t_echo_h2g() {
+	gclean
 	gcmd 'pkill vsock-pipe; nohup /root/vsock-pipe -l -e 5002 >/dev/null 2>&1 & sleep 1; echo up' >/dev/null
-	out=$(printf 'E2E-H2G\n' | timeout 20 "$TOOLS/vsh-connect" "$DIR" 5002)
+	out=$(printf 'E2E-H2G\n' | vshc "$DIR" 5002)
 	[ "$out" = "E2E-H2G" ]; result stream_echo_h2g $?
 }
 
@@ -58,37 +78,41 @@ t_seq_g2h() {
 
 # --- T4: SEQPACKET echo host->guest --------------------------------
 t_seq_h2g() {
+	gclean
 	gcmd 'nohup /root/vsock-pipe -l -s -e 5004 >/dev/null 2>&1 & sleep 1; echo up' >/dev/null
-	out=$(printf 'E2E-SEQ-H2G\n' | timeout 20 "$TOOLS/vsh-connect" -s "$DIR" 5004)
+	out=$(printf 'E2E-SEQ-H2G\n' | vshc "$DIR" 5004 -s)
 	[ "$out" = "E2E-SEQ-H2G" ]; result seqpacket_echo_h2g $?
 }
 
 # --- T5: bulk transfer guest->host, sha256 compare -----------------
 t_bulk_g2h() {
-	timeout 300 "$TOOLS/unix-pipe" -l "$DIR/5005" > "$WORK/bulk-g2h" &
+	timeout 300 "$TOOLS/unix-pipe" -l -d "$DIR/5005" > "$WORK/bulk-g2h" &
 	lpid=$!
 	sleep 1
 	gsum=$(gcmd "dd if=/dev/random of=/tmp/bulk bs=1m count=$BULK_MB 2>/dev/null; sha256 -q /tmp/bulk" 240)
 	gcmd "timeout 220 /root/vsock-pipe 2 5005 < /tmp/bulk" 240 >/dev/null
 	wait $lpid
 	hsum=$(sha256sum "$WORK/bulk-g2h" 2>/dev/null | awk '{print $1}')
+	gcmd 'rm -f /tmp/bulk' 15 >/dev/null
 	[ -n "$gsum" ] && [ "$gsum" = "$hsum" ]; result "bulk_g2h_${BULK_MB}MiB" $?
 }
 
 # --- T6: bulk transfer host->guest, sha256 compare -----------------
 t_bulk_h2g() {
-	gcmd 'nohup sh -c "/root/vsock-pipe -l 5006 > /tmp/rx" >/dev/null 2>&1 & sleep 1; echo up' >/dev/null
+	gclean
+	gcmd 'nohup sh -c "/root/vsock-pipe -l -d 5006 > /tmp/rx" >/dev/null 2>&1 & sleep 1; echo up' >/dev/null
 	dd if=/dev/urandom of="$WORK/bulk-h2g" bs=1048576 count="$BULK_MB" 2>/dev/null
 	hsum=$(sha256sum "$WORK/bulk-h2g" | awk '{print $1}')
-	timeout 300 "$TOOLS/vsh-connect" "$DIR" 5006 < "$WORK/bulk-h2g" >/dev/null
+	vshc "$DIR" 5006 < "$WORK/bulk-h2g" >/dev/null
 	sleep 2
 	gsum=$(gcmd 'sha256 -q /tmp/rx' 120)
+	gcmd 'rm -f /tmp/rx' 15 >/dev/null
 	[ -n "$gsum" ] && [ "$gsum" = "$hsum" ]; result "bulk_h2g_${BULK_MB}MiB" $?
 }
 
 # --- T7: credit churn: many tiny writes guest->host ----------------
 t_credit_churn() {
-	timeout 120 "$TOOLS/unix-pipe" -l "$DIR/5007" > "$WORK/churn" &
+	timeout 120 "$TOOLS/unix-pipe" -l -d "$DIR/5007" > "$WORK/churn" &
 	lpid=$!
 	sleep 1
 	gcmd 'timeout 100 sh -c "dd if=/dev/zero bs=16 count=20000 2>/dev/null | /root/vsock-pipe 2 5007"' 120 >/dev/null
@@ -111,23 +135,20 @@ t_dead_guest_port() {
 
 # --- T10: concurrent connections guest->host -----------------------
 t_concurrency() {
-	timeout 60 "$TOOLS/unix-pipe" -l -e -n "$NCONN" "$DIR/5010" &
+	gclean
+	timeout 90 "$TOOLS/unix-pipe" -l -e -n "$NCONN" "$DIR/5010" &
 	lpid=$!
 	sleep 1
-	out=$(gcmd 'i=0; ok=0; while [ $i -lt '"$NCONN"' ]; do
-	    ( timeout 30 sh -c "echo tok-$i | /root/vsock-pipe 2 5010" > /tmp/conc.$i ) &
-	    i=$((i+1)); done; wait
-	    i=0; while [ $i -lt '"$NCONN"' ]; do
-	    [ "$(cat /tmp/conc.$i)" = "tok-$i" ] && ok=$((ok+1));
-	    i=$((i+1)); done; rm -f /tmp/conc.*; echo ok=$ok' 60)
+	out=$(gcmd "/root/vsock-conntest 2 5010 $NCONN" 90)
 	wait $lpid 2>/dev/null
 	[ "$out" = "ok=$NCONN" ]; result "concurrency_${NCONN}_conns" $?
 }
 
 # --- T11: EOF propagation guest->host ------------------------------
 t_eof() {
+	gclean
 	start=$(date +%s)
-	timeout 15 "$TOOLS/unix-pipe" -l "$DIR/5011" > /dev/null &
+	timeout 15 "$TOOLS/unix-pipe" -l -d "$DIR/5011" > /dev/null &
 	lpid=$!
 	sleep 1
 	gcmd 'timeout 10 /root/vsock-pipe 2 5011 </dev/null >/dev/null 2>&1; echo done' >/dev/null
@@ -139,7 +160,8 @@ t_eof() {
 
 # --- T12: SIGKILL sender mid-transfer; device survives -------------
 t_kill_midsend() {
-	timeout 60 "$TOOLS/unix-pipe" -l "$DIR/5012" > /dev/null &
+	gclean
+	timeout 60 "$TOOLS/unix-pipe" -l -d "$DIR/5012" > /dev/null &
 	lpid=$!
 	sleep 1
 	gcmd 'dd if=/dev/zero bs=1m count=1024 2>/dev/null | /root/vsock-pipe 2 5012 & sleep 1; pkill -9 -f "vsock-pipe 2 5012"; echo killed' >/dev/null
@@ -156,9 +178,36 @@ t_kill_midsend() {
 	result kill_midsend_teardown $surv
 }
 
+# --- T13: SEQPACKET multi-record delivery over the wire ------------
+t_seq_records() {
+	gclean
+	timeout 30 "$TOOLS/unix-pipe" -l -s -d "$DIR/5014" > "$WORK/seqsz" &
+	lpid=$!
+	sleep 1
+	# Two distinct records (separate writes) must arrive as two
+	# records; payload concatenation checked here, boundary
+	# semantics are covered by the in-guest ATF suite.
+	gcmd 'timeout 20 sh -c "{ printf A; sleep 1; printf BB; } | /root/vsock-pipe -s 2 5014"' 30 >/dev/null
+	wait $lpid 2>/dev/null
+	got=$(cat "$WORK/seqsz" 2>/dev/null)
+	[ "$got" = "ABB" ]; result seqpacket_records_wire $?
+}
+
+# --- T14: connection-count leak check (must return to baseline) ----
+t_leak_check() {
+	gclean
+	base=$(gcmd 'sysctl -n kern.vsock.cur_connections' 15)
+	(printf '' | timeout 20 "$TOOLS/unix-pipe" -l -e -n 1 "$DIR/5015" &)
+	sleep 1
+	gcmd 'timeout 15 sh -c "echo LEAK | /root/vsock-pipe 2 5015"' >/dev/null
+	sleep 2
+	after=$(gcmd 'sysctl -n kern.vsock.cur_connections' 15)
+	[ -n "$base" ] && [ "$after" = "$base" ]; result leak_check_conn_count $?
+}
+
 ALL="t_echo_g2h t_echo_h2g t_seq_g2h t_seq_h2g t_bulk_g2h t_bulk_h2g
      t_credit_churn t_dead_host_port t_dead_guest_port t_concurrency
-     t_eof t_kill_midsend"
+     t_eof t_kill_midsend t_seq_records t_leak_check"
 
 echo "vsock e2e: DIR=$DIR BULK=${BULK_MB}MiB NCONN=$NCONN"
 gcmd 'test -x /root/vsock-pipe && echo tool-ok' | grep -q tool-ok || {
