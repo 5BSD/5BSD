@@ -441,6 +441,10 @@ uart_tcp_backend(struct uart_softc *sc, const char *path,
 	if (bind_fd < 0)
 		goto clean;
 
+	/* Don't let TIME_WAIT remnants of a previous run block the bind. */
+	(void)setsockopt(bind_fd, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 },
+	    sizeof(int));
+
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = domain;
 	hints.ai_socktype = SOCK_STREAM;
