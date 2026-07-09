@@ -51,6 +51,43 @@
  *      bidirectionally.  If not, bhyve sends OP_RST to the guest.
  *
  * Credit flow control per virtio-vsock spec is implemented on the host side.
+ *
+ * ---------------------------------------------------------------------------
+ * Host application contract (what a host-side consumer needs to know)
+ * ---------------------------------------------------------------------------
+ * A host app talks to the guest over an ordinary Unix-domain socket (one end
+ * of a socketpair for host-to-guest, or an accept()ed connection under <dir>
+ * for guest-to-host).  The socket TYPE mirrors the vsock connection: a
+ * SOCK_SEQPACKET vsock connection is relayed over a Unix SOCK_SEQPACKET
+ * socket, SOCK_STREAM over SOCK_STREAM.  Bytes flow transparently; the device
+ * handles all credit/flow-control.  A few SEQPACKET record semantics are
+ * NOT obvious and follow from FreeBSD's Unix-socket behavior:
+ *
+ *   1. RECORD = ONE send.  To have the guest receive a datum as a single
+ *      record, write it with a single send()/write() (or sendmsg()).  On
+ *      FreeBSD a SOCK_SEQPACKET record boundary is marked by MSG_EOR; two
+ *      plain write()s WITHOUT MSG_EOR coalesce into one record.  So a host
+ *      app that dribbles one logical record across several write()s (no
+ *      MSG_EOR) can have it split or merged.  Best practice: one send per
+ *      record, and set MSG_EOR to make the boundary explicit.
+ *
+ *   2. MAX RECORD SIZE = 64 KiB.  A record is delivered whole only if it fits
+ *      the relay socketpair send buffer (SO_SNDBUF, default 64 KiB).  A larger
+ *      single record cannot be sent atomically -- send() blocks/fragments and
+ *      the guest sees multiple records.  Keep host->guest records <= 64 KiB.
+ *      (The guest's own window is larger -- Linux advertises 256 KiB -- but
+ *      the internal relay socketpair is the binding limit; raising it is a
+ *      one-line setsockopt if a use case ever needs bigger host->guest
+ *      records.)  Guest->host records are reassembled up to 4 MiB, so the
+ *      guest may send larger records to the host.
+ *
+ *   3. NO EMPTY RECORDS host->guest.  FreeBSD silently drops a zero-length
+ *      SOCK_SEQPACKET send, so a host app cannot deliver an empty record to
+ *      the guest (a zero-length send is a no-op, not a zero-length datagram).
+ *
+ *   4. HALF-CLOSE.  shutdown(fd, SHUT_WR) propagates to the guest as a vsock
+ *      SHUTDOWN (the reverse direction stays open); a full close() tears the
+ *      connection down.
  */
 
 #include <sys/param.h>
@@ -2355,54 +2392,74 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 
 		if (is_seqpacket) {
 			/*
-			 * SEQPACKET: peek to get the full message size.
-			 * recv() on a SEQPACKET socket discards bytes
-			 * beyond the buffer size — we must not consume
-			 * a message unless credit covers it entirely.
+			 * SEQPACKET sizing.  A record must be injected
+			 * atomically (peer credit must cover it entirely) and
+			 * with EOM set only on its true final fragment, so we
+			 * need the exact length of the next record BEFORE
+			 * consuming it.
 			 *
-			 * Use recvmsg (not recv) for the probe so we can inspect
-			 * msg_flags: a 0-length return with MSG_EOR set is a
-			 * legitimate empty datagram (a zero-length SEQPACKET
-			 * record the host app sent), whereas a 0-length return
-			 * WITHOUT MSG_EOR is a real EOF (the peer closed).  A
-			 * plain recv() cannot tell them apart and would tear the
-			 * connection down on every empty record.
+			 * Portability trap: FreeBSD's recvmsg(MSG_PEEK|
+			 * MSG_TRUNC) reports only the number of bytes COPIED
+			 * into the probe iov (== min(iov_len, record)), NOT the
+			 * full datagram length the way Linux does.  A 1-byte
+			 * probe therefore reports 1 for every record; and
+			 * because a short SEQPACKET read on FreeBSD leaves the
+			 * unread tail queued (rather than discarding it), a
+			 * record sized that way is not merely truncated but
+			 * shredded into a stream of 1-byte records -- invisible
+			 * to byte-stream test tools, but a true record-oriented
+			 * receiver (e.g. Linux) sees only the first byte.
+			 *
+			 * Instead use FIONREAD (bytes queued) for the size.  If
+			 * every queued byte already fits peer credit the next
+			 * record does too (recv returns exactly one record), so
+			 * we can read straight away.  Only when the queue
+			 * exceeds credit do we MSG_PEEK the next record in full
+			 * to learn its exact length for the gate.
 			 */
 			struct msghdr pmsg;
 			struct iovec piov;
 			uint8_t dummy;
 			ssize_t msgsize;
 
-			memset(&pmsg, 0, sizeof(pmsg));
-			piov.iov_base = &dummy;
-			piov.iov_len = sizeof(dummy);
-			pmsg.msg_iov = &piov;
-			pmsg.msg_iovlen = 1;
-			msgsize = recvmsg(conn->fd, &pmsg,
-			    MSG_PEEK | MSG_TRUNC | MSG_DONTWAIT);
-			if (msgsize < 0) {
-				if (errno == EAGAIN || errno == EWOULDBLOCK)
-					break;
-				goto conn_error;
-			}
-			if (msgsize == 0 && (pmsg.msg_flags & MSG_EOR) == 0) {
-				/* Real EOF: the host peer has closed. */
-				vtvsock_host_eof(sc, conn);
-				break;
-			}
-			if ((uint32_t)msgsize > maxread) {
+			avail = 0;
+			(void)ioctl(conn->fd, FIONREAD, &avail);
+			if (avail <= 0) {
 				/*
-				 * Insufficient credit for the full
-				 * message.  Defer until CREDIT_UPDATE.
+				 * No bytes queued: a zero-length record
+				 * (MSG_EOR, 0 bytes), a real EOF (peer closed),
+				 * or a spurious wakeup.  recvmsg peek to
+				 * disambiguate via msg_flags -- a plain recv()
+				 * cannot tell a 0-length record from EOF and
+				 * would tear the connection down on every empty
+				 * record.
 				 */
-				DPRINTF(("vtvsock: SEQPACKET msg %zd > "
-				    "credit %u, deferring",
-				    msgsize, maxread));
-				if (conn->evp != NULL)
-					mevent_disable(conn->evp);
-				break;
-			}
-			if (msgsize == 0) {
+				memset(&pmsg, 0, sizeof(pmsg));
+				piov.iov_base = &dummy;
+				piov.iov_len = sizeof(dummy);
+				pmsg.msg_iov = &piov;
+				pmsg.msg_iovlen = 1;
+				msgsize = recvmsg(conn->fd, &pmsg,
+				    MSG_PEEK | MSG_DONTWAIT);
+				if (msgsize < 0) {
+					if (errno == EAGAIN ||
+					    errno == EWOULDBLOCK)
+						break;
+					goto conn_error;
+				}
+				if (msgsize > 0) {
+					/*
+					 * Raced: bytes arrived between FIONREAD
+					 * and the peek.  Retry on the next
+					 * level-triggered wakeup.
+					 */
+					break;
+				}
+				if ((pmsg.msg_flags & MSG_EOR) == 0) {
+					/* Real EOF: the host peer has closed. */
+					vtvsock_host_eof(sc, conn);
+					break;
+				}
 				/*
 				 * Legitimate empty SEQPACKET record (MSG_EOR
 				 * set, zero bytes).  recv() with a zero-length
@@ -2411,32 +2468,88 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 				 * empty OP_RW carrying the record boundary so
 				 * the guest delivers an empty datagram.
 				 */
-				struct msghdr dmsg;
-				uint32_t eflags = VIRTIO_VSOCK_SEQ_EOM;
+				{
+					struct msghdr dmsg;
+					uint32_t eflags = VIRTIO_VSOCK_SEQ_EOM |
+					    VIRTIO_VSOCK_SEQ_EOR;
 
-				if (!vtvsock_rx_ready(sc)) {
-					DPRINTF(("vtvsock: RX ring full, "
-					    "deferring"));
+					if (!vtvsock_rx_ready(sc)) {
+						DPRINTF(("vtvsock: RX ring "
+						    "full, deferring"));
+						if (conn->evp != NULL)
+							mevent_disable(
+							    conn->evp);
+						break;
+					}
+					memset(&dmsg, 0, sizeof(dmsg));
+					(void)recvmsg(conn->fd, &dmsg,
+					    MSG_DONTWAIT);
+					(void)vtvsock_inject_rx(sc, conn,
+					    VIRTIO_VSOCK_OP_RW, eflags, NULL, 0);
+				}
+				break;
+			}
+
+			if ((uint32_t)avail <= maxread) {
+				/*
+				 * Everything queued fits peer credit, so the
+				 * next record (<= avail) certainly does.  Read
+				 * the whole queue in one shot; recv returns
+				 * exactly one complete record, so the buffer
+				 * holds a full record and EOM lands correctly.
+				 */
+				msgsize = avail;
+			} else {
+				/*
+				 * The queue exceeds credit, but the next record
+				 * alone may still fit.  Peek it in full to get
+				 * its exact length (recv returns one record; a
+				 * buffer >= the record captures it whole).
+				 */
+				uint8_t *pbuf = malloc((size_t)avail);
+
+				if (pbuf == NULL) {
+					WPRINTF(("vtvsock: malloc failed for "
+					    "rx size probe"));
+					break;
+				}
+				msgsize = recv(conn->fd, pbuf, (size_t)avail,
+				    MSG_PEEK | MSG_DONTWAIT);
+				free(pbuf);
+				if (msgsize < 0) {
+					if (errno == EAGAIN ||
+					    errno == EWOULDBLOCK)
+						break;
+					goto conn_error;
+				}
+				if (msgsize == 0)
+					break;	/* raced to empty */
+				if ((uint32_t)msgsize > conn->peer_buf_alloc) {
+					/*
+					 * The record is larger than the guest's
+					 * entire advertised receive window: it
+					 * can never be reassembled there, so no
+					 * amount of credit recovery will let it
+					 * through.  Deferring would deadlock;
+					 * reset the connection instead.
+					 */
+					WPRINTF(("vtvsock: SEQPACKET record %zd "
+					    "> peer window %u, resetting",
+					    msgsize, conn->peer_buf_alloc));
+					goto conn_error;
+				}
+				if ((uint32_t)msgsize > maxread) {
+					/*
+					 * Fits the window but not current
+					 * credit; defer until CREDIT_UPDATE.
+					 */
+					DPRINTF(("vtvsock: SEQPACKET record %zd "
+					    "> credit %u, deferring",
+					    msgsize, maxread));
 					if (conn->evp != NULL)
 						mevent_disable(conn->evp);
 					break;
 				}
-				/*
-				 * EOM always (message boundary); EOR only if the
-				 * host peer set MSG_EOR on this empty record --
-				 * the peek above already captured pmsg.msg_flags
-				 * (this branch is reached only when MSG_EOR was
-				 * set, so this is normally EOM|EOR, but gate it
-				 * rather than hardcode so the record boundary
-				 * always reflects the sender).
-				 */
-				if (pmsg.msg_flags & MSG_EOR)
-					eflags |= VIRTIO_VSOCK_SEQ_EOR;
-				memset(&dmsg, 0, sizeof(dmsg));
-				(void)recvmsg(conn->fd, &dmsg, MSG_DONTWAIT);
-				(void)vtvsock_inject_rx(sc, conn,
-				    VIRTIO_VSOCK_OP_RW, eflags, NULL, 0);
-				break;
 			}
 			readlen = msgsize;
 		} else {

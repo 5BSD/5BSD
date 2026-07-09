@@ -338,6 +338,50 @@ bhyve transport is therefore immediately testable against our own guest.**
 
 ---
 
+## 6.2 FreeBSD Unix-socket SEQPACKET relay traps (host side)
+
+The host device relays vsock SEQPACKET over a Unix `SOCK_SEQPACKET`
+socketpair. FreeBSD's Unix-socket SEQPACKET semantics differ from Linux's
+in four ways that each produced (or hid) a real bug — verified empirically
+2026-07-09 with direct syscall tests and a Linux (Alpine) guest. Anyone
+touching `vtvsock_conn_data_cb` / `vtvsock_rx_inject_frags` must respect
+these:
+
+1. **`recvmsg(MSG_PEEK|MSG_TRUNC)` returns bytes COPIED, not datagram
+   length.** With a 1-byte probe iov it returns `1` for *every* record
+   (Linux returns the full record length). Sizing a read from that probe
+   truncates to 1 byte. **Use `FIONREAD` to size SEQPACKET reads** (the
+   STREAM path already did). This was the host→guest "1-byte shred" bug.
+
+2. **A short SEQPACKET read does NOT discard the tail.** Reading 1 byte of a
+   17-byte record leaves 16 bytes queued (Linux/POSIX discard the remainder
+   and set `MSG_TRUNC`). Combined with (1), a record was not merely
+   truncated but shredded into N one-byte records — invisible to
+   byte-stream test tools (which concatenate) and to the device harness
+   (which mocks `recv` with Linux semantics). Only a record-oriented
+   receiver (Linux `recv`, one record per call) exposes it.
+
+3. **Record boundary = `MSG_EOR`, not the write() call.** Two plain
+   `write()`s without `MSG_EOR` COALESCE into one record; a record can also
+   span multiple reads if it exceeds `SO_SNDBUF` (default 64 KiB). The
+   device treats each read as a record (EOM on read end), which is correct
+   only when a record is sent as one `send()` that fits the 64 KiB
+   socketpair buffer. Larger/dribbled records split. See the "Host
+   application contract" block in `pci_virtio_vsock.c`.
+
+4. **Zero-length SEQPACKET sends are dropped.** `sendmsg("",0,MSG_EOR)`
+   returns 0 but queues nothing (`FIONREAD`=0, peek=EAGAIN). The
+   empty-record inject path is therefore unreachable dead code on FreeBSD;
+   kept for portability to systems that do queue empty records.
+
+**Sizing/window numbers (measured):** Linux guest advertises `buf_alloc` =
+256 KiB (default AND max via `SO_VM_SOCKETS_BUFFER_SIZE`); our device
+advertises 256 KiB to match; the relay socketpair `SO_SNDBUF`/`SO_RCVBUF`
+is the FreeBSD default 64 KiB and is the binding host→guest single-record
+ceiling. Guest→host reassembles to 4 MiB (`VTVSOCK_MAX_PEER_BUF_ALLOC`).
+
+---
+
 ## 7. Gap list: legacy-only → conformant virtio 1.4 vsock
 
 The spec offers no middle ground (clause 7.4), and vsock cannot be
