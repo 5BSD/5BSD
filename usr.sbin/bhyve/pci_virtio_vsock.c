@@ -271,6 +271,7 @@ struct vtvsock_conn {
 
 	/* Peer shutdown tracking (accumulated, never cleared per §5.10.6.5) */
 	uint32_t		peer_shutdown;
+	bool			host_eof;	/* host app closed/shut its write side */
 
 	/* Monotonic seconds when the CONNECTING/CLOSING timer started; 0 else */
 	time_t			close_time;
@@ -1402,8 +1403,13 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 			}
 
 #ifndef WITHOUT_CAPSICUM
+			/*
+			 * CAP_SHUTDOWN: the OP_SHUTDOWN handler half-closes
+			 * this fd with shutdown(2) to propagate the guest's
+			 * half-close to the host application.
+			 */
 			cap_rights_init(&crights, CAP_EVENT, CAP_RECV,
-			    CAP_SEND);
+			    CAP_SEND, CAP_SHUTDOWN);
 			if (caph_rights_limit(cfd, &crights) == -1) {
 				close(cfd);
 				/* Send RST so guest doesn't hang. */
@@ -1587,10 +1593,15 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 		    (VIRTIO_VSOCK_SHUTDOWN_RCV | VIRTIO_VSOCK_SHUTDOWN_SEND));
 
 		if (conn->fd >= 0) {
-			if (flags & VIRTIO_VSOCK_SHUTDOWN_SEND)
-				shutdown(conn->fd, SHUT_WR);
+			if ((flags & VIRTIO_VSOCK_SHUTDOWN_SEND) &&
+			    shutdown(conn->fd, SHUT_WR) != 0)
+				WPRINTF(("vtvsock: SHUT_WR on host fd "
+				    "failed: %s", strerror(errno)));
 			if (flags & VIRTIO_VSOCK_SHUTDOWN_RCV) {
-				shutdown(conn->fd, SHUT_RD);
+				if (shutdown(conn->fd, SHUT_RD) != 0)
+					WPRINTF(("vtvsock: SHUT_RD on host "
+					    "fd failed: %s",
+					    strerror(errno)));
 				if (conn->evp != NULL)
 					mevent_disable(conn->evp);
 			}
@@ -1603,6 +1614,20 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 			(void)vtvsock_send_ctrl(sc, conn,
 			    VIRTIO_VSOCK_OP_RST, 0);
 			vtvsock_conn_close(sc, conn);
+		} else if ((conn->peer_shutdown &
+		    VIRTIO_VSOCK_SHUTDOWN_SEND) != 0 && conn->host_eof &&
+		    conn->state == CONN_ESTABLISHED) {
+			/*
+			 * The host application already closed its side and the
+			 * guest has now finished sending: nothing can flow in
+			 * either direction anymore.
+			 */
+			conn->state = CONN_CLOSING;
+			conn->close_time = monotonic_seconds();
+			(void)vtvsock_send_ctrl(sc, conn,
+			    VIRTIO_VSOCK_OP_SHUTDOWN,
+			    VIRTIO_VSOCK_SHUTDOWN_RCV |
+			    VIRTIO_VSOCK_SHUTDOWN_SEND);
 		}
 		break;
 
@@ -1714,6 +1739,7 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 		 */
 		if (conn->state == CONN_ESTABLISHED &&
 		    !(conn->peer_shutdown & VIRTIO_VSOCK_SHUTDOWN_RCV) &&
+		    !conn->host_eof &&
 		    vtvsock_peer_credit(conn) > 0 &&
 		    conn->fd >= 0 && conn->evp != NULL) {
 			mevent_enable(conn->evp);
@@ -2012,6 +2038,7 @@ pci_vtvsock_notify_rx(void *vsc, struct vqueue_info *vq __unused)
 		 */
 		if (conn->state == CONN_ESTABLISHED &&
 		    !(conn->peer_shutdown & VIRTIO_VSOCK_SHUTDOWN_RCV) &&
+		    !conn->host_eof &&
 		    conn->fd >= 0 && conn->evp != NULL)
 			mevent_enable(conn->evp);
 	}
@@ -2076,6 +2103,39 @@ vtvsock_rx_inject_frags(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
 	}
 	*offp = off;
 	return (0);
+}
+
+/*
+ * recv() on the host fd returned 0: the host application closed or shut
+ * down its write side.  That alone is only a HALF-close -- the app may
+ * still be reading the guest->host stream (a client that sent its
+ * request and shut down writes while awaiting the reply).  Relay it as
+ * SHUTDOWN(SEND) ("the host will not send more") and keep the
+ * connection relaying guest->host.  Only when the guest has also shut
+ * its send direction is the connection truly finished; then tear down.
+ */
+static void
+vtvsock_host_eof(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn)
+{
+
+	if (conn->host_eof)
+		return;		/* stray re-delivery; already relayed */
+	conn->host_eof = true;
+	if (conn->evp != NULL)
+		mevent_disable(conn->evp);
+	if (conn->peer_shutdown & VIRTIO_VSOCK_SHUTDOWN_SEND) {
+		DPRINTF(("vtvsock: host fd closed, both directions done, "
+		    "closing local_port=%u", conn->local_port));
+		conn->state = CONN_CLOSING;
+		conn->close_time = monotonic_seconds();
+		(void)vtvsock_send_ctrl(sc, conn, VIRTIO_VSOCK_OP_SHUTDOWN,
+		    VIRTIO_VSOCK_SHUTDOWN_RCV | VIRTIO_VSOCK_SHUTDOWN_SEND);
+	} else {
+		DPRINTF(("vtvsock: host fd EOF, half-close relay "
+		    "local_port=%u", conn->local_port));
+		(void)vtvsock_send_ctrl(sc, conn, VIRTIO_VSOCK_OP_SHUTDOWN,
+		    VIRTIO_VSOCK_SHUTDOWN_SEND);
+	}
 }
 
 /*
@@ -2229,16 +2289,7 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 			}
 			if (msgsize == 0 && (pmsg.msg_flags & MSG_EOR) == 0) {
 				/* Real EOF: the host peer has closed. */
-				DPRINTF(("vtvsock: host fd closed, sending "
-				    "SHUTDOWN to guest"));
-				conn->state = CONN_CLOSING;
-				conn->close_time = monotonic_seconds();
-				if (conn->evp != NULL)
-					mevent_disable(conn->evp);
-				(void)vtvsock_send_ctrl(sc, conn,
-				    VIRTIO_VSOCK_OP_SHUTDOWN,
-				    VIRTIO_VSOCK_SHUTDOWN_RCV |
-				    VIRTIO_VSOCK_SHUTDOWN_SEND);
+				vtvsock_host_eof(sc, conn);
 				break;
 			}
 			if ((uint32_t)msgsize > maxread) {
@@ -2366,16 +2417,7 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 				break;
 			if (n == 0) {
 				/* EOF — host peer closed */
-				DPRINTF(("vtvsock: host fd closed, sending "
-				    "SHUTDOWN to guest"));
-				conn->state = CONN_CLOSING;
-				conn->close_time = monotonic_seconds();
-				if (conn->evp != NULL)
-					mevent_disable(conn->evp);
-				(void)vtvsock_send_ctrl(sc, conn,
-				    VIRTIO_VSOCK_OP_SHUTDOWN,
-				    VIRTIO_VSOCK_SHUTDOWN_RCV |
-				    VIRTIO_VSOCK_SHUTDOWN_SEND);
+				vtvsock_host_eof(sc, conn);
 				break;
 			}
 			goto conn_error;
@@ -2651,7 +2693,8 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 		}
 
 #ifndef WITHOUT_CAPSICUM
-		cap_rights_init(&crights, CAP_EVENT, CAP_RECV, CAP_SEND);
+		cap_rights_init(&crights, CAP_EVENT, CAP_RECV, CAP_SEND,
+		    CAP_SHUTDOWN);
 		if (caph_rights_limit(pair[0], &crights) == -1) {
 			WPRINTF(("vtvsock: rights on pair[0] failed"));
 			close(pair[0]);

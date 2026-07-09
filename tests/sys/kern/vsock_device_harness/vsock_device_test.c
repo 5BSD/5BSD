@@ -634,8 +634,14 @@ ATF_TC_BODY(host_eof_sends_shutdown, tc)
 	for (i = 0; i < g_ninject; i++)
 		if (g_inject[i].op == VIRTIO_VSOCK_OP_SHUTDOWN)
 			saw_shutdown = 1;
-	ATF_CHECK(saw_shutdown);	/* guest told both directions shut */
-	ATF_CHECK(c->state == CONN_CLOSING);
+	ATF_CHECK(saw_shutdown);
+	/*
+	 * A bare host EOF with the guest still sending is only a half-close:
+	 * the connection must stay ESTABLISHED so the guest->host direction
+	 * keeps relaying (teardown happens once the guest also shuts SEND).
+	 */
+	ATF_CHECK(c->state == CONN_ESTABLISHED);
+	ATF_CHECK(c->host_eof);
 	free(sc);
 }
 
@@ -822,8 +828,14 @@ ATF_TC_BODY(seqpacket_host_eof_sends_shutdown, tc)
 	for (i = 0; i < g_ninject; i++)
 		if (g_inject[i].op == VIRTIO_VSOCK_OP_SHUTDOWN)
 			saw_shutdown = 1;
-	ATF_CHECK(saw_shutdown);	/* guest told both directions shut */
-	ATF_CHECK(c->state == CONN_CLOSING);
+	ATF_CHECK(saw_shutdown);
+	/*
+	 * A bare host EOF with the guest still sending is only a half-close:
+	 * the connection must stay ESTABLISHED so the guest->host direction
+	 * keeps relaying (teardown happens once the guest also shuts SEND).
+	 */
+	ATF_CHECK(c->state == CONN_ESTABLISHED);
+	ATF_CHECK(c->host_eof);
 	free(sc);
 #endif /* !VSOCK_HARNESS_NO_RECVMSG_MOCK */
 }
@@ -909,6 +921,84 @@ ATF_TC_BODY(shutdown_rcv_half_close_not_escalated, tc)
 	free(sc);
 }
 
+/*
+ * Live-repro regression (e2e t_echo hang): the guest half-closes its SEND
+ * direction, the host application reacts by closing its end.  The device
+ * must notify the guest with a SHUTDOWN -- otherwise the guest, whose
+ * receive direction is still open, waits for EOF forever.
+ */
+ATF_TC_WITHOUT_HEAD(half_close_send_then_host_eof);
+ATF_TC_BODY(half_close_send_then_host_eof, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+	int i, saw_shutdown = 0;
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+
+	/* Guest: shutdown(SHUT_WR) -> OP_SHUTDOWN with only the SEND flag. */
+	mkhdr(&h, VIRTIO_VSOCK_OP_SHUTDOWN, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    0, VIRTIO_VSOCK_SHUTDOWN_SEND, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(nconns(sc) == 1);	/* half-close must not tear down */
+
+	/* Host application saw EOF and closed its end. */
+	g_recv_eof = 1;
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	for (i = 0; i < g_ninject; i++)
+		if (g_inject[i].op == VIRTIO_VSOCK_OP_SHUTDOWN)
+			saw_shutdown = 1;
+	/* no SHUTDOWN to guest here = guest receive direction hangs forever */
+	ATF_CHECK(saw_shutdown);
+	free(sc);
+}
+
+/*
+ * Live-repro regression (e2e instant reply+close): host data and EOF are
+ * both pending when the read callback runs.  The data must be forwarded
+ * to the guest before the EOF-driven SHUTDOWN -- not dropped.
+ */
+ATF_TC_WITHOUT_HEAD(host_data_then_eof_same_dispatch);
+ATF_TC_BODY(host_data_then_eof_same_dispatch, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	int i, rw_at = -1, shut_at = -1;
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+
+	stage_recv("REPLY", 5);
+	g_recv_eof = 1;		/* peer closed right after writing */
+	/*
+	 * The callback forwards one chunk per dispatch and relies on the
+	 * level-triggered kqueue read event re-firing for the pending EOF;
+	 * model that by dispatching twice.  The event must still be enabled
+	 * after the first dispatch or the second one never happens live.
+	 */
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+
+	for (i = 0; i < g_ninject; i++) {
+		if (g_inject[i].op == VIRTIO_VSOCK_OP_RW && rw_at < 0)
+			rw_at = i;
+		if (g_inject[i].op == VIRTIO_VSOCK_OP_SHUTDOWN && shut_at < 0)
+			shut_at = i;
+	}
+	ATF_CHECK(rw_at >= 0 && g_inject[rw_at].len == 5); /* data not dropped */
+	ATF_CHECK(shut_at >= 0);		/* SHUTDOWN follows the final data */
+	ATF_CHECK(rw_at < shut_at);	/* and is ordered after it */
+	/* Re-delivered EOF must not duplicate the SHUTDOWN (event storm). */
+	{
+		int j, nshut = 0;
+		for (j = 0; j < g_ninject; j++)
+			if (g_inject[j].op == VIRTIO_VSOCK_OP_SHUTDOWN)
+				nshut++;
+		ATF_CHECK(nshut == 1);
+	}
+	free(sc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, spoofed_src_cid);
@@ -938,6 +1028,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, seqpacket_host_eof_sends_shutdown);
 	ATF_TP_ADD_TC(tp, seqpacket_reasm_freed_after_delivery);
 	ATF_TP_ADD_TC(tp, shutdown_rcv_half_close_not_escalated);
+	ATF_TP_ADD_TC(tp, half_close_send_then_host_eof);
+	ATF_TP_ADD_TC(tp, host_data_then_eof_same_dispatch);
 
 	return (atf_no_error());
 }
