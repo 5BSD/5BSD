@@ -7,13 +7,21 @@ test cases to close them, and a phased roadmap.
 
 ## Progress log
 
-**2026-07-09 (this session):** closed GAP 4, GAP 5, and part of GAP 2.
-Device harness 86 → 100 checks (connection cap refuse+reclaim, reaper
-CLOSING/CONNECTING timeouts, oversized-paylen drop, ctl idle-reap +
-referenced-protection). ATF +4 (seqpacket exact-max boundary, SHUT_RDWR,
-peer-close EOF/EPIPE, connect ERANGE) — all pass in-guest. Remaining:
-GAP 1 (guest RX unit harness — the big one, scoped below), GAP 2 deep
-(ctl CONNECT handshake), GAP 3 (Linux interop).
+**2026-07-09 (this session):** closed GAP 1, GAP 2, GAP 4, GAP 5. The only
+remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
+- GAP 4 + GAP 2: device harness 86 → 111 checks (conn cap, reaper timers,
+  oversized-paylen, ctl idle-reap + referenced-protection, ctl accept cap,
+  ctl CONNECT→OP_REQUEST handshake, unknown-cmd, socketpair-fail ENOMEM).
+- GAP 5: ATF +4 (seqpacket exact-max boundary, SHUT_RDWR, peer-close
+  EOF/EPIPE, connect ERANGE) — all pass in-guest.
+- GAP 1: **guest RX unit harness BUILT** (tests/sys/kern/vsock_rx_harness).
+  Compiles the kernel uipc_vsock.c in userspace via kmock.h; drives the real
+  vsock_rx_packet state machine. 5 tests / 20 checks, negative-control
+  verified. Covers reserved-CID sanitization, feature-negotiation gating,
+  credit arithmetic incl. wrap, peer_fwd_cnt spoof → RST, flow-control
+  violation → ECONNRESET. Cheap follow-ups remain (CID_LOCAL isolation,
+  frag-limit RST, deferred-teardown callout, TRANSPORT_RESET) — the
+  infrastructure now exists, each is ~20 lines.
 
 ## Where coverage stands today (baseline)
 
