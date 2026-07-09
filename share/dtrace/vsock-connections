@@ -1,0 +1,54 @@
+#!/usr/sbin/dtrace -qs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * vsock-connections -- virtio-vsock host-device connection lifecycle and churn.
+ * Logs each connection transition and reports the live connection count as the
+ * device sees it, then prints totals on exit.  conn-reset state: 0=CONNECTING,
+ * 1=ESTABLISHED, 2=CLOSING (i.e. what state the connection was torn down from).
+ *
+ * Probes: "vsock" USDT provider in bhyve (usr.sbin/bhyve/pci_virtio_vsock.c).
+ *
+ * Usage: vsock-connections         (all bhyve on the host)
+ *        dtrace -qs vsock-connections -p `pgrep -n bhyve`
+ */
+
+vsock*:::conn-request
+{
+	@req = count();
+	printf("%-20Y REQUEST     cid=%d port=%d\n", walltimestamp, arg0, arg1);
+}
+
+vsock*:::conn-established
+{
+	@est = count();
+	printf("%-20Y ESTABLISHED cid=%d port=%d\n", walltimestamp, arg0, arg1);
+}
+
+vsock*:::conn-shutdown
+{
+	printf("%-20Y SHUTDOWN    cid=%d port=%d flags=0x%x\n",
+	    walltimestamp, arg0, arg1, arg2);
+}
+
+vsock*:::conn-reset
+{
+	@rst = count();
+	printf("%-20Y RESET       cid=%d port=%d state=%d\n",
+	    walltimestamp, arg0, arg1, arg2);
+}
+
+vsock*:::conn-count
+{
+	printf("%-20Y   live connections: %d\n", walltimestamp, arg0);
+}
+
+END
+{
+	printf("\ntotals: ");
+	printa("requests=%@d ", @req);
+	printa("established=%@d ", @est);
+	printa("resets=%@d\n", @rst);
+}

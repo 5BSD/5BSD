@@ -1,0 +1,27 @@
+#!/usr/sbin/dtrace -qs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * vsock-overview -- trace all major virtio-vsock host-device events on one
+ * screen.  Probes come from the "vsock" USDT provider in bhyve
+ * (usr.sbin/bhyve/pci_virtio_vsock.c).  conn-reset state: 0=CONNECTING,
+ * 1=ESTABLISHED, 2=CLOSING.
+ *
+ * Usage: vsock-overview            (trace every bhyve on the host)
+ *        dtrace -qs vsock-overview -p `pgrep -n bhyve`
+ */
+
+vsock*:::conn-request    { printf("%-20Y %-14s cid=%d port=%d\n",            walltimestamp, "REQUEST",     arg0, arg1); }
+vsock*:::conn-established { printf("%-20Y %-14s cid=%d port=%d\n",            walltimestamp, "ESTABLISHED", arg0, arg1); }
+vsock*:::conn-shutdown   { printf("%-20Y %-14s cid=%d port=%d flags=0x%x\n", walltimestamp, "SHUTDOWN",    arg0, arg1, arg2); }
+vsock*:::conn-reset      { printf("%-20Y %-14s cid=%d port=%d state=%d\n",   walltimestamp, "RESET",       arg0, arg1, arg2); }
+vsock*:::credit-stall    { printf("%-20Y %-14s cid=%d port=%d\n",            walltimestamp, "CREDIT_STALL",arg0, arg1); }
+vsock*:::credit-update   { printf("%-20Y %-14s cid=%d port=%d fwd=%d\n",     walltimestamp, "CREDIT_UPD",  arg0, arg1, arg2); }
+vsock*:::rx-ringfull     { printf("%-20Y %-14s cid=%d port=%d\n",            walltimestamp, "RX_RING_FULL",arg0, arg1); }
+vsock*:::tx-overflow     { printf("%-20Y %-14s cid=%d port=%d bytes=%d\n",   walltimestamp, "TX_OVERFLOW", arg0, arg1, arg2); }
+vsock*:::reasm-overflow  { printf("%-20Y %-14s cid=%d port=%d bytes=%d\n",   walltimestamp, "REASM_OVFL",  arg0, arg1, arg2); }
+vsock*:::pend-drop       { printf("%-20Y %-14s pend=%d\n",                   walltimestamp, "PEND_DROP",   arg0); }
+vsock*:::desc-drop       { printf("%-20Y %-14s why=%s\n",                    walltimestamp, "DESC_DROP",   copyinstr(arg0)); }
+vsock*:::conn-count      { printf("%-20Y %-14s live=%d\n",                   walltimestamp, "CONN_COUNT",  arg0); }

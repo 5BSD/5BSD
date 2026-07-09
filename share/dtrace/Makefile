@@ -57,7 +57,11 @@ SCRIPTS=	blued-att \
 		tcpdebug \
 		tcpstate \
 		tcptrack \
-		udptrack
+		udptrack \
+		vsock-connections \
+		vsock-overview \
+		vsock-perf \
+		vsock-security
 
 SCRIPTSDIR= ${SHAREDIR}/dtrace
 

@@ -1,0 +1,38 @@
+#!/usr/sbin/dtrace -qs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * vsock-security -- hostile-guest-input signals for the virtio-vsock host
+ * device.  bhyve treats every guest-supplied virtqueue descriptor as hostile
+ * and rejects malformed / spoofed input; this script aggregates those
+ * rejections.  A sustained spike in desc-drop or spoofed/unknown-CID rejects
+ * from a running guest is an attack probe or a badly broken guest driver --
+ * either way, worth an alert.  desc-drop reasons include: rx/tx-chain-too-long,
+ * rx/tx-bad-descriptor-addr, rx-not-writable, rx-descriptor-too-small,
+ * unknown-dst-cid, spoofed-src-cid.
+ *
+ * Probes: "vsock" USDT provider in bhyve (usr.sbin/bhyve/pci_virtio_vsock.c).
+ *
+ * Usage: vsock-security            (all bhyve on the host)
+ *        dtrace -qs vsock-security -p `pgrep -n bhyve`
+ */
+
+vsock*:::desc-drop	{ @drops[copyinstr(arg0)] = count(); total++; }
+vsock*:::conn-reset	{ @resets[arg0, arg1] = count(); }
+vsock*:::pend-drop	{ penddrop++; }
+
+tick-5sec
+{
+	printf("\n==== vsock host-device security @ %Y ====\n", walltimestamp);
+	printf("rejected/malformed descriptors (5s): %d\n", total);
+	printf("pending-reply ring drops (5s):       %d\n", penddrop);
+	printf("by reason:\n");
+	printa("  %-26s %@d\n", @drops);
+	printf("connection resets by cid:port:\n");
+	printa("  cid=%d port=%d  %@d\n", @resets);
+
+	total = 0; penddrop = 0;
+	trunc(@drops); trunc(@resets);
+}

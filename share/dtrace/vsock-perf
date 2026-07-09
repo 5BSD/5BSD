@@ -1,0 +1,56 @@
+#!/usr/sbin/dtrace -qs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * vsock-perf -- virtio-vsock host-device flow-control, backpressure, and
+ * connect-latency health.  Prints a summary every 5 seconds:
+ *   - credit stalls (sender blocked with no peer window: the #1 throughput
+ *     killer) and the top-offending cid:port pairs,
+ *   - credit updates issued,
+ *   - RX-ring-full deferrals (guest not posting receive descriptors),
+ *   - TX-/reassembly-overflow resets (host backlog hit its cap),
+ *   - a quantized histogram of TX backlog size at overflow, and
+ *   - a quantized histogram of connection setup latency (REQUEST->ESTABLISHED,
+ *     microseconds).
+ *
+ * Probes: "vsock" USDT provider in bhyve (usr.sbin/bhyve/pci_virtio_vsock.c).
+ *
+ * Usage: vsock-perf                (all bhyve on the host)
+ *        dtrace -qs vsock-perf -p `pgrep -n bhyve`
+ */
+
+vsock*:::conn-request		{ start[arg0, arg1] = timestamp; }
+vsock*:::conn-established
+/start[arg0, arg1] != 0/
+{
+	@setup_us = quantize((timestamp - start[arg0, arg1]) / 1000);
+	start[arg0, arg1] = 0;
+}
+
+vsock*:::credit-stall		{ stalls++; @stall_by[arg0, arg1] = count(); }
+vsock*:::credit-update		{ credupd++; }
+vsock*:::rx-ringfull		{ ringfull++; }
+vsock*:::tx-overflow		{ tx_reset++; @tx_backlog = quantize(arg2); }
+vsock*:::reasm-overflow		{ reasm_reset++; }
+
+tick-5sec
+{
+	printf("\n==== vsock host-device health @ %Y ====\n", walltimestamp);
+	printf("credit stalls (5s):    %d\n", stalls);
+	printf("credit updates (5s):   %d\n", credupd);
+	printf("rx-ring-full defers:   %d\n", ringfull);
+	printf("tx-overflow resets:    %d\n", tx_reset);
+	printf("reasm-overflow resets: %d\n", reasm_reset);
+
+	printf("\ntop credit stalls by cid:port:\n");
+	printa("  cid=%d port=%d  %@d\n", @stall_by);
+	printf("\nconnection setup latency (us):");
+	printa(@setup_us);
+	printf("tx backlog size at overflow (bytes):");
+	printa(@tx_backlog);
+
+	stalls = 0; credupd = 0; ringfull = 0; tx_reset = 0; reasm_reset = 0;
+	trunc(@stall_by); trunc(@setup_us); trunc(@tx_backlog);
+}
