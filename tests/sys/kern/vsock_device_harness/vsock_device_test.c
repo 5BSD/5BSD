@@ -1044,6 +1044,70 @@ ATF_TC_BODY(host_data_then_eof_same_dispatch, tc)
 	free(sc);
 }
 
+/* Insert a bare control connection (as ctl_accept would) for reaper tests. */
+static struct vtvsock_ctl_conn *
+mk_ctl_conn(struct pci_vtvsock_softc *sc, int fd, time_t created)
+{
+	struct vtvsock_ctl_conn *cc = calloc(1, sizeof(*cc));
+	assert(cc != NULL);
+	cc->fd = fd;
+	cc->evp = NULL;
+	cc->created = created;
+	TAILQ_INSERT_TAIL(&sc->vsc_ctl_conns, cc, link);
+	sc->vsc_ctl_conn_count++;
+	return (cc);
+}
+
+static int
+nctlconns(struct pci_vtvsock_softc *sc)
+{
+	struct vtvsock_ctl_conn *cc; int k = 0;
+	TAILQ_FOREACH(cc, &sc->vsc_ctl_conns, link) k++;
+	return (k);
+}
+
+/*
+ * --- reaper: a control connection that connected but never sent a
+ * VSOCK_CTL_CONNECT is reaped after the idle timeout, so a host process
+ * cannot hold ctl slots open indefinitely (a slot-exhaustion DoS). ---
+ */
+ATF_TC_WITHOUT_HEAD(reaper_reaps_idle_ctl_conn);
+ATF_TC_BODY(reaper_reaps_idle_ctl_conn, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	reset_caps();
+	(void)mk_ctl_conn(sc, g_next_fd++, 1 /* ancient */);
+	ATF_CHECK(nctlconns(sc) == 1 && sc->vsc_ctl_conn_count == 1);
+
+	vtvsock_reap_stale(sc);
+	ATF_CHECK(nctlconns(sc) == 0);			/* idle ctl reaped */
+	ATF_CHECK(sc->vsc_ctl_conn_count == 0);		/* slot accounted */
+	free(sc);
+}
+
+/*
+ * --- reaper: an idle control connection whose request IS in flight (a
+ * vtvsock_conn references its fd) must NOT be reaped -- that conn owns its
+ * own connect timeout; reaping the ctl_conn under it would drop the reply
+ * path. ---
+ */
+ATF_TC_WITHOUT_HEAD(reaper_keeps_referenced_ctl_conn);
+ATF_TC_BODY(reaper_keeps_referenced_ctl_conn, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_ctl_conn *cc;
+	struct vtvsock_conn *c;
+	reset_caps();
+	cc = mk_ctl_conn(sc, g_next_fd++, 1 /* ancient */);
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->state = CONN_CONNECTING;
+	c->ctl_fd = cc->fd;			/* request in flight via this ctl */
+
+	vtvsock_reap_stale(sc);
+	ATF_CHECK(nctlconns(sc) == 1);		/* protected while referenced */
+	free(sc);
+}
+
 /*
  * --- connection cap: the (MAX_CONNS+1)th guest OP_REQUEST is refused with
  * RST, and closing a connection frees a slot so a later REQUEST succeeds.
@@ -1196,6 +1260,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, shutdown_rcv_half_close_not_escalated);
 	ATF_TP_ADD_TC(tp, half_close_send_then_host_eof);
 	ATF_TP_ADD_TC(tp, host_data_then_eof_same_dispatch);
+	ATF_TP_ADD_TC(tp, reaper_reaps_idle_ctl_conn);
+	ATF_TP_ADD_TC(tp, reaper_keeps_referenced_ctl_conn);
 	ATF_TP_ADD_TC(tp, conn_cap_refuses_and_reclaims);
 	ATF_TP_ADD_TC(tp, reaper_closes_stuck_closing);
 	ATF_TP_ADD_TC(tp, reaper_times_out_connecting);
