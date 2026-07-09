@@ -190,7 +190,7 @@ sendclose_sender(void *arg)
 	for (;;) {
 		ssize_t rc;
 
-		rc = send(ctx->sender, buf, sizeof(buf), 0);
+		rc = send(ctx->sender, buf, sizeof(buf), MSG_NOSIGNAL);
 		if (rc == (ssize_t)sizeof(buf))
 			continue;
 		if (rc == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -493,6 +493,8 @@ ATF_TC_BODY(shutdown_send, tc)
 
 	(void)tc;
 
+	/* send() after SHUT_WR raises SIGPIPE by design; we assert errno. */
+	(void)signal(SIGPIPE, SIG_IGN);
 	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
 	ATF_REQUIRE(shutdown(cs, SHUT_WR) == 0);
 	ATF_REQUIRE(send(cs, "x", 1, 0) == -1);
@@ -547,6 +549,8 @@ ATF_TC_BODY(shutdown_rdwr_semantics, tc)
 
 	(void)tc;
 
+	/* send() after SHUT_RDWR raises SIGPIPE by design. */
+	(void)signal(SIGPIPE, SIG_IGN);
 	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
 	ATF_REQUIRE(shutdown(cs, SHUT_RDWR) == 0);
 	ATF_REQUIRE(send(cs, "x", 1, 0) == -1);
@@ -571,6 +575,8 @@ ATF_TC_BODY(close_eof_and_epipe, tc)
 
 	(void)tc;
 
+	/* send() to a closed peer raises SIGPIPE by design. */
+	(void)signal(SIGPIPE, SIG_IGN);
 	vsock_pair(SOCK_STREAM, &ls, &cs, &as);
 	ATF_REQUIRE(close(as) == 0);
 	memset(buf, 0, sizeof(buf));
@@ -2412,17 +2418,21 @@ ATF_TC_BODY(svm_len_validation, tc)
 	s = socket(AF_VSOCK, SOCK_STREAM, 0);
 	ATF_REQUIRE(s >= 0);
 
-	/* svm_len = 0 should fail */
+	/*
+	 * getsockaddr() overwrites sa_len with the syscall's namelen, so the
+	 * user-set svm_len field is never kernel-visible; length validation
+	 * must be exercised through the namelen argument instead.
+	 */
+
+	/* Short namelen should fail */
 	vsock_set_any(&svm);
-	svm.svm_len = 0;
-	ATF_REQUIRE(bind(s, (struct sockaddr *)&svm, sizeof(svm)) == -1);
+	ATF_REQUIRE(bind(s, (struct sockaddr *)&svm, 8) == -1);
 	ATF_REQUIRE(errno == EINVAL);
 
-	/* svm_len = wrong size should fail */
+	/* A stale/zero svm_len field is ignored (namelen wins) */
 	vsock_set_any(&svm);
-	svm.svm_len = 8; /* wrong */
-	ATF_REQUIRE(bind(s, (struct sockaddr *)&svm, sizeof(svm)) == -1);
-	ATF_REQUIRE(errno == EINVAL);
+	svm.svm_len = 0;
+	ATF_REQUIRE(bind(s, (struct sockaddr *)&svm, sizeof(svm)) == 0);
 
 	/* Correct svm_len should succeed */
 	vsock_set_any(&svm);
@@ -2739,7 +2749,9 @@ ATF_TC_BODY(accept_backlog_full, tc)
 		    sizeof(laddr));
 	}
 
-	/* Accept what we can */
+	/* Accept what we can; the queue may hold fewer than 8, so the
+	 * drain must be nonblocking or the test hangs on the empty queue. */
+	ATF_REQUIRE(fcntl(ls, F_SETFL, O_NONBLOCK) != -1);
 	for (i = 0; i < 8; i++) {
 		int as = accept(ls, NULL, NULL);
 		if (as < 0)
@@ -4448,11 +4460,17 @@ rapid_cycle_thread(void *arg)
 		if (connect(s, (struct sockaddr *)&ctx->sa,
 		    sizeof(ctx->sa)) != 0) {
 			close(s);
+			/* Backlog overflow refusals are expected under
+			 * this storm; retry rather than fail. */
+			if (errno == ECONNRESET || errno == ECONNREFUSED) {
+				i--;
+				continue;
+			}
 			ctx->result = -1;
 			return (NULL);
 		}
 		buf[0] = (char)i;
-		(void)send(s, buf, 1, 0);
+		(void)send(s, buf, 1, MSG_NOSIGNAL);
 		close(s);
 	}
 	ctx->result = 0;
@@ -4482,11 +4500,15 @@ ATF_TC_BODY(rapid_connect_close_multi_thread, tc)
 		    rapid_cycle_thread, &ctxs[i]) == 0);
 	}
 
-	/* Accept and close connections as they come. */
-	for (int i = 0; i < 100; i++) {
+	/* Drain accepts opportunistically; loopback connects complete
+	 * without accept(2), so this must never block the test. */
+	ATF_REQUIRE(fcntl(ls, F_SETFL, O_NONBLOCK) != -1);
+	for (int i = 0; i < 500; i++) {
 		int as = accept(ls, NULL, NULL);
 		if (as >= 0)
 			close(as);
+		else
+			usleep(2000);
 	}
 
 	for (int i = 0; i < 4; i++) {
@@ -4725,6 +4747,7 @@ ATF_TC_BODY(seqpacket_frag_max_sysctl, tc)
 struct shutdown_sender_ctx {
 	int		 sender;
 	int		 result_errno;
+	size_t		 len;		/* record size; must fit peer buf */
 	volatile int	 started;
 };
 
@@ -4735,11 +4758,13 @@ shutdown_sender_thread(void *arg)
 	char buf[1024];
 	ssize_t rc;
 
+	if (ctx->len == 0 || ctx->len > sizeof(buf))
+		ctx->len = sizeof(buf);
 	memset(buf, 'S', sizeof(buf));
 	ctx->started = 1;
 
 	/* This send should block until the receiver shuts down. */
-	rc = send(ctx->sender, buf, sizeof(buf), MSG_NOSIGNAL);
+	rc = send(ctx->sender, buf, ctx->len, MSG_NOSIGNAL);
 	if (rc == -1)
 		ctx->result_errno = errno;
 	else
@@ -4789,6 +4814,7 @@ ATF_TC_BODY(shutdown_rd_wakes_blocked_sender, tc)
 
 	/* Spawn a thread that will block on send. */
 	ctx.sender = cs;
+	ctx.len = 1024;
 	ctx.result_errno = 0;
 	ctx.started = 0;
 	ATF_REQUIRE(pthread_create(&t, NULL,
@@ -4936,6 +4962,7 @@ ATF_TC_BODY(seqpacket_shutdown_rd_wakes_sender, tc)
 	ATF_REQUIRE(fcntl(cs, F_SETFL, 0) != -1);
 
 	ctx.sender = cs;
+	ctx.len = 32;	/* must fit the 128-byte window */
 	ctx.result_errno = 0;
 	ctx.started = 0;
 	ATF_REQUIRE(pthread_create(&t, NULL,
@@ -5180,9 +5207,15 @@ ATF_TC_BODY(sysctl_guest_cid_local, tc)
 	ATF_REQUIRE_MSG(len == sizeof(cid),
 	    "kern.vsock.guest_cid returned %zu bytes, expected %zu",
 	    len, sizeof(cid));
-	ATF_REQUIRE_MSG(cid == VSOCK_CID_LOCAL,
-	    "kern.vsock.guest_cid = %ju, expected VSOCK_CID_LOCAL (%u)",
-	    (uintmax_t)cid, VSOCK_CID_LOCAL);
+	/*
+	 * Without a transport the CID is VSOCK_CID_LOCAL; with one it is the
+	 * hypervisor-assigned guest CID, which must be >= 3 and below the
+	 * wildcard.  Both are valid environments for this suite.
+	 */
+	ATF_REQUIRE_MSG(cid == VSOCK_CID_LOCAL ||
+	    (cid >= 3 && cid < VSOCK_CID_ANY),
+	    "kern.vsock.guest_cid = %ju: neither VSOCK_CID_LOCAL nor a valid "
+	    "guest CID", (uintmax_t)cid);
 }
 
 /*
