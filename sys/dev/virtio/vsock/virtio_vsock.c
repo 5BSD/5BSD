@@ -203,6 +203,7 @@ static void	vtvsock_send_credit_update_locked(struct vtvsock_pcb *);
 static void	vtvsock_rx_intr(void *);
 static void	vtvsock_tx_intr(void *);
 static void	vtvsock_event_intr(void *);
+static bool	vtvsock_virtio_tx_ready(struct vtvsock_pcb *);
 
 static struct vtvsock_softc *vtvsock_global_softc(void);
 
@@ -214,6 +215,7 @@ static const struct vtvsock_transport vtvsock_virtio_transport = {
 	.send =			vtvsock_virtio_send,
 	.disconnect =		vtvsock_virtio_disconnect,
 	.shutdown =		vtvsock_virtio_shutdown,
+	.tx_ready =		vtvsock_virtio_tx_ready,
 	.send_pkt =		vtvsock_send_pkt_locked,
 	.send_rst =		vtvsock_send_rst_locked,
 	.send_credit_update =	vtvsock_send_credit_update_locked,
@@ -285,6 +287,29 @@ vtvsock_txvq_reclaim(struct vtvsock_softc *sc)
  * once, then give up with EWOULDBLOCK.  Notifies the device on success.
  * Caller holds vtvsock_mtx and retains ownership of 'cookie' on error.
  */
+/*
+ * Transport tx_ready: can the TX virtqueue accept at least one full packet
+ * right now?  A packet uses up to VTVSOCK_TX_SEGS direct descriptors, so it
+ * fits only if that many are free.  Used by the socket layer to fail a
+ * non-blocking send before it copies user data (see vsock_sosend), so a full
+ * ring cannot silently drop bytes.  Caller holds vtvsock_mtx.
+ */
+static bool
+vtvsock_virtio_tx_ready(struct vtvsock_pcb *pcb __unused)
+{
+	struct vtvsock_softc *sc = vtvsock_global_softc();
+
+	if (sc == NULL || sc->sc_txvq == NULL)
+		return (false);
+	/*
+	 * A software holding queue in front of the ring means the ring is
+	 * already (or was just) full; not ready either way.
+	 */
+	if (sc->sc_txq_count != 0)
+		return (false);
+	return (virtqueue_nfree(sc->sc_txvq) >= VTVSOCK_TX_SEGS);
+}
+
 static int
 vtvsock_txvq_enqueue(struct vtvsock_softc *sc, void *cookie, struct sglist *sg)
 {
@@ -1267,6 +1292,14 @@ again:
 			vsock_transport_register_locked(&vtvsock_virtio_transport,
 			    new_cid, sc->sc_features);
 			vsock_transport_reset_locked();
+			/*
+			 * reset_locked woke per-pcb credit sleepers, but a
+			 * sender parked on a full TX ring sleeps on &sc_txvq
+			 * (not reachable from the socket layer); wake it here
+			 * so it observes its now-CLOSED connection immediately
+			 * instead of waiting out its 1 s poll.
+			 */
+			wakeup(&sc->sc_txvq);
 		}
 
 		/* Recycle the event buffer back into the event virtqueue. */

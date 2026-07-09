@@ -96,6 +96,15 @@ struct vtvsock_transport {
 		    struct sockaddr *, struct mbuf *, struct thread *);
 	int	(*disconnect)(struct vtvsock_pcb *);
 	int	(*shutdown)(struct vtvsock_pcb *, enum shutdown_how);
+	/*
+	 * Optional: can the transport accept at least one more packet right
+	 * now (independent of credit)?  Used only to fail a NON-blocking send
+	 * with EWOULDBLOCK before the caller copies the user data, so a full
+	 * TX ring cannot silently drop bytes the socket layer already reported
+	 * as written.  NULL means "always ready" (e.g. the loopback transport,
+	 * which has no ring).  Called with vtvsock_mtx held.
+	 */
+	bool	(*tx_ready)(struct vtvsock_pcb *);
 	/* Control path: protocol state machine → transport */
 	int	(*send_pkt)(struct vtvsock_pcb *, uint16_t op, uint32_t flags,
 		    const void *payload, size_t len);

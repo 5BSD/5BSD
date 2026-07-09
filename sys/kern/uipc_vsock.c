@@ -2232,6 +2232,23 @@ vsock_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 				goto release;
 			}
 		}
+		/*
+		 * Credit is available.  For a NON-blocking send, also require
+		 * the transport to be able to accept a packet right now: the
+		 * m_uiotombuf() below consumes the uio, and a transport that
+		 * then failed EWOULDBLOCK on a full TX ring would silently
+		 * drop those bytes while sousrsend() reports them as written
+		 * (progress clears the transient error).  Returning
+		 * EWOULDBLOCK here -- before the copy -- keeps short-write
+		 * semantics honest.  Blocking sends don't need this: the
+		 * transport waits for ring space internally and retries.
+		 */
+		if (nbio && pcb->transport->tx_ready != NULL &&
+		    !pcb->transport->tx_ready(pcb)) {
+			mtx_unlock(&vtvsock_mtx);
+			error = EWOULDBLOCK;
+			goto release;
+		}
 		mtx_unlock(&vtvsock_mtx);
 
 		chunk = seqpacket ? (size_t)resid :
@@ -2561,7 +2578,15 @@ vsock_rx_packet(void *buf, uint32_t len)
 			teardown_drop = true;
 			goto teardown_close;
 		}
-		pcb->peer_fwd_cnt = hdr_fwd_cnt;
+		/*
+		 * fwd_cnt is monotonic non-decreasing (it counts bytes the peer
+		 * has consumed).  A peer that rewinds it -- broken or hostile --
+		 * would inflate our in-flight estimate (tx_cnt - peer_fwd_cnt)
+		 * in vtvsock_credit_available() and wrongly stall the sender.
+		 * Never move it backward.
+		 */
+		if ((int32_t)(hdr_fwd_cnt - pcb->peer_fwd_cnt) > 0)
+			pcb->peer_fwd_cnt = hdr_fwd_cnt;
 		wakeup(&pcb->tx_cnt);
 	}
 
