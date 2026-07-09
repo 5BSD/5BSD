@@ -1,0 +1,5 @@
+*.o
+*.o.tmp
+rxtest
+rxprobe
+uipc_vsock.c
