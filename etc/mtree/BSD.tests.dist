@@ -892,6 +892,8 @@
             ..
             tty
             ..
+            vsock_e2e
+            ..
         ..
         kqueue
             libkqueue

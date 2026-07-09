@@ -212,6 +212,7 @@ TESTS_SUBDIRS+=	acct
 TESTS_SUBDIRS+=	execve
 TESTS_SUBDIRS+=	pipe
 TESTS_SUBDIRS+=	tty
+TESTS_SUBDIRS+=	vsock_e2e
 
 .include <netbsd-tests.test.mk>
 
