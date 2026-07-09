@@ -622,7 +622,7 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 		if (seqpacket) {
 			uint32_t zflags = VIRTIO_VSOCK_SEQ_EOM;
 
-			if (m->m_flags & M_EOR)
+			if (m->m_flags & M_PROTO1)
 				zflags |= VIRTIO_VSOCK_SEQ_EOR;
 			mtx_lock(&vtvsock_mtx);
 			if (pcb->state != VTVSOCK_ESTABLISHED)
@@ -748,13 +748,14 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 
 		/*
 		 * EOM on the final fragment of a SEQPACKET message.
-		 * EOR only when the application passed MSG_EOR
-		 * (propagated as M_EOR on the mbuf by sosend_generic).
+		 * EOR only when the application passed MSG_EOR, which
+		 * vsock_sosend() propagates as M_PROTO1 (M_EOR marks the
+		 * local record boundary and is set on every record).
 		 */
 		pkt_flags = 0;
 		if (seqpacket && (offset + chunk >= total)) {
 			pkt_flags = VIRTIO_VSOCK_SEQ_EOM;
-			if (m->m_flags & M_EOR)
+			if (m->m_flags & M_PROTO1)
 				pkt_flags |= VIRTIO_VSOCK_SEQ_EOR;
 		}
 		hdr->flags = htole32(pkt_flags);

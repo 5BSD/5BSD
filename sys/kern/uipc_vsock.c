@@ -360,6 +360,8 @@ static int	vsock_soreceive(struct socket *, struct sockaddr **, struct uio *,
 		    struct mbuf **, struct mbuf **, int *);
 static int	vsock_send(struct socket *, int, struct mbuf *, struct sockaddr *,
 		    struct mbuf *, struct thread *);
+static int	vsock_sosend(struct socket *, struct sockaddr *, struct uio *,
+		    struct mbuf *, struct mbuf *, int, struct thread *);
 static int	vsock_disconnect(struct socket *);
 static int	vsock_shutdown(struct socket *, enum shutdown_how);
 static void	vsock_abort(struct socket *);
@@ -419,7 +421,7 @@ static struct protosw vsock_stream_protosw = {
 	.pr_setsbopt =	vsock_setsbopt,
 	.pr_soreceive =	vsock_soreceive,
 	.pr_send =	vsock_send,
-	.pr_sosend =	sosend_generic,
+	.pr_sosend =	vsock_sosend,
 	.pr_disconnect =	vsock_disconnect,
 	.pr_close =	vsock_close,
 	.pr_detach =	vsock_detach,
@@ -444,7 +446,7 @@ static struct protosw vsock_seqpacket_protosw = {
 	.pr_setsbopt =	vsock_setsbopt,
 	.pr_soreceive =	vsock_soreceive,
 	.pr_send =	vsock_send,
-	.pr_sosend =	sosend_generic,
+	.pr_sosend =	vsock_sosend,
 	.pr_disconnect =	vsock_disconnect,
 	.pr_close =	vsock_close,
 	.pr_detach =	vsock_detach,
@@ -688,6 +690,29 @@ vtvsock_credit_available(struct vtvsock_pcb *pcb)
 	if (used >= pcb->peer_buf_alloc)
 		return (0);
 	return (pcb->peer_buf_alloc - used);
+}
+
+/*
+ * Bytes the transport can accept for this connection right now, i.e. how
+ * much a sender may copy in without risking a transient failure after the
+ * data has left the caller's uio.  Loopback: free space in the peer's
+ * receive buffer.  Remote: available send credit.  vtvsock_mtx held.
+ */
+static size_t
+vtvsock_tx_space(struct vtvsock_pcb *pcb)
+{
+	struct socket *peer_so;
+	long space;
+
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
+
+	if (pcb->transport == &vtvsock_local_transport) {
+		if (pcb->peer == NULL || (peer_so = pcb->peer->so) == NULL)
+			return (0);
+		space = sbspace(&peer_so->so_rcv);
+		return (space > 0 ? (size_t)space : 0);
+	}
+	return (vtvsock_credit_available(pcb));
 }
 
 /*
@@ -1435,7 +1460,13 @@ vsock_ctloutput(struct socket *so, struct sockopt *sopt)
 			 */
 			return (0);
 		}
-		val64 = so->so_rcv.sb_hiwat;
+		/*
+		 * On a listening socket the sockbufs are overlaid by the
+		 * listen-queue union; the buffer sizes live in sol_sbrcv_hiwat
+		 * (same rule as sogetopt's SO_RCVBUF).
+		 */
+		val64 = SOLISTENING(so) ? so->sol_sbrcv_hiwat :
+		    so->so_rcv.sb_hiwat;
 		return (sooptcopyout(sopt, &val64, sizeof(val64)));
 
 	case SO_VM_SOCKETS_BUFFER_MIN_SIZE:
@@ -1781,8 +1812,12 @@ vsock_soreceive(struct socket *so, struct sockaddr **psa, struct uio *uio,
 		if (before > after) {
 			mtx_lock(&vtvsock_mtx);
 			pcb = so->so_pcb;
-			if (pcb != NULL && pcb->peer != NULL)
+			if (pcb != NULL && pcb->peer != NULL) {
 				wakeup(&pcb->peer->tx_cnt);
+				/* Re-arm poll/select POLLOUT on the sender. */
+				if (pcb->peer->so != NULL)
+					sowwakeup(pcb->peer->so);
+			}
 			mtx_unlock(&vtvsock_mtx);
 		}
 	}
@@ -1869,9 +1904,8 @@ vsock_sopoll(struct socket *so, int events, struct thread *td)
 		mtx_lock(&vtvsock_mtx);
 		pcb = so->so_pcb;
 		if (pcb != NULL &&
-		    pcb->transport != &vtvsock_local_transport &&
 		    pcb->state == VTVSOCK_ESTABLISHED &&
-		    vtvsock_credit_available(pcb) == 0)
+		    vtvsock_tx_space(pcb) == 0)
 			revents &= ~(POLLOUT | POLLWRNORM);
 		mtx_unlock(&vtvsock_mtx);
 	}
@@ -2043,6 +2077,200 @@ vtvsock_local_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 	sorwakeup_locked(peer_so);
 	mtx_unlock(&vtvsock_mtx);
 	return (0);
+}
+
+/*
+ * pr_sosend: copy user data only after transport capacity for it exists.
+ *
+ * sosend_generic() drains the uio into mbufs BEFORE calling pr_send, and
+ * sousrsend() clears transient errors (EWOULDBLOCK/EINTR/ERESTART) for
+ * stream sockets whenever the uio shows progress.  A pr_send that fails
+ * transiently after the copy therefore reports a successful write while the
+ * data has been freed -- silent loss.  Gate on vtvsock_tx_space() first, so
+ * a transient failure can only happen before the affected bytes leave the
+ * uio, and "progress" seen by sousrsend() is always data the transport
+ * really accepted (proper short-write semantics).
+ *
+ * The socket IO send lock serializes writers, so space observed here cannot
+ * be consumed by a competing sender before the transport takes the copy
+ * (space only grows in between: reader drains / CREDIT_UPDATE arrives).
+ */
+static int
+vsock_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
+    struct mbuf *top, struct mbuf *control, int flags, struct thread *td)
+{
+	struct vtvsock_pcb *pcb;
+	struct mbuf *m;
+	ssize_t resid;
+	size_t space, chunk, cap;
+	sbintime_t timo;
+	bool nbio, seqpacket;
+	int error;
+
+	/*
+	 * sendfile(2) and friends pass a prebuilt chain instead of a uio;
+	 * there is no post-copy loss hazard to prevent in that case (the
+	 * caller owns retry semantics), so keep the generic path.
+	 */
+	if (top != NULL || uio == NULL)
+		return (sosend_generic(so, addr, uio, top, control, flags,
+		    td));
+
+	if (control != NULL) {
+		m_freem(control);
+		control = NULL;
+	}
+	if (flags & MSG_OOB)
+		return (EOPNOTSUPP);
+
+	seqpacket = (so->so_type == SOCK_SEQPACKET);
+	nbio = (so->so_state & SS_NBIO) || (flags & MSG_DONTWAIT);
+	resid = uio->uio_resid;
+
+	/* A zero-length STREAM write is a no-op (no bytes, no record). */
+	if (!seqpacket && resid == 0)
+		return (0);
+
+	error = SOCK_IO_SEND_LOCK(so, SBLOCKWAIT(flags));
+	if (error != 0)
+		return (error);
+
+	do {
+		if (so->so_snd.sb_state & SBS_CANTSENDMORE) {
+			error = EPIPE;
+			break;
+		}
+		if (so->so_error != 0) {
+			error = so->so_error;
+			so->so_error = 0;
+			break;
+		}
+
+		mtx_lock(&vtvsock_mtx);
+		pcb = so->so_pcb;
+		if (pcb == NULL || pcb->state != VTVSOCK_ESTABLISHED) {
+			mtx_unlock(&vtvsock_mtx);
+			error = ENOTCONN;
+			break;
+		}
+
+		if (seqpacket) {
+			/*
+			 * Atomic record: reject one that can never fit
+			 * (mirrors the transports' own EMSGSIZE checks).
+			 */
+			cap = (pcb->transport == &vtvsock_local_transport) ?
+			    (pcb->peer != NULL && pcb->peer->so != NULL ?
+			    pcb->peer->so->so_rcv.sb_hiwat : 0) :
+			    pcb->peer_buf_alloc;
+			if (cap != 0 && (size_t)resid > cap) {
+				mtx_unlock(&vtvsock_mtx);
+				error = EMSGSIZE;
+				break;
+			}
+		}
+
+		/* Wait until the transport can take (part of) the data. */
+		while ((space = vtvsock_tx_space(pcb)) <
+		    (seqpacket ? (size_t)resid : 1) &&
+		    !(seqpacket && resid == 0)) {
+			/*
+			 * Peer cannot receive anymore: EPIPE, not a stall.
+			 * For loopback that is a peer that shut down its
+			 * receive side OR one that disconnected/detached
+			 * entirely (peer/so pointer already cleared) --
+			 * space can never appear again in either case.
+			 */
+			if ((pcb->peer_shutdown &
+			    VIRTIO_VSOCK_SHUTDOWN_RCV) != 0 ||
+			    (pcb->transport == &vtvsock_local_transport &&
+			    (pcb->peer == NULL || pcb->peer->so == NULL ||
+			    (pcb->peer->so->so_rcv.sb_state &
+			    SBS_CANTRCVMORE) != 0))) {
+				mtx_unlock(&vtvsock_mtx);
+				error = EPIPE;
+				goto release;
+			}
+			if (nbio) {
+				mtx_unlock(&vtvsock_mtx);
+				error = EWOULDBLOCK;
+				goto release;
+			}
+			/*
+			 * Solicit a CREDIT_UPDATE on a remote stall
+			 * (spec 5.10.6.3); loopback relies on the reader's
+			 * periodic wakeup below.
+			 */
+			if (pcb->transport != &vtvsock_local_transport)
+				(void)pcb->transport->send_pkt(pcb,
+				    VIRTIO_VSOCK_OP_CREDIT_REQUEST, 0,
+				    NULL, 0);
+			/*
+			 * SO_SNDTIMEO bounds the whole wait; without one,
+			 * poll at 1s so a loopback reader draining without
+			 * an explicit wakeup still unblocks us promptly.
+			 */
+			timo = so->so_snd.sb_timeo;
+			error = msleep_sbt(&pcb->tx_cnt, &vtvsock_mtx,
+			    PSOCK | PCATCH, "vsosnd",
+			    timo != 0 ? timo : SBT_1S, 0, 0);
+			if (error == EWOULDBLOCK) {
+				if (timo != 0) {
+					mtx_unlock(&vtvsock_mtx);
+					goto release;
+				}
+				error = 0;	/* poll tick; re-check */
+			} else if (error != 0) {
+				mtx_unlock(&vtvsock_mtx);
+				goto release;
+			}
+			pcb = so->so_pcb;
+			if (pcb == NULL ||
+			    pcb->state != VTVSOCK_ESTABLISHED) {
+				mtx_unlock(&vtvsock_mtx);
+				error = ENOTCONN;
+				goto release;
+			}
+		}
+		mtx_unlock(&vtvsock_mtx);
+
+		chunk = seqpacket ? (size_t)resid :
+		    MIN(space, (size_t)resid);
+		if (chunk > 0) {
+			m = m_uiotombuf(uio, M_WAITOK, chunk, 0, 0);
+			if (m == NULL) {
+				error = ENOBUFS;
+				break;
+			}
+		} else {
+			/* Zero-length SEQPACKET record (Linux semantics). */
+			m = m_get(M_WAITOK, MT_DATA);
+			m->m_len = 0;
+		}
+		if (seqpacket) {
+			/*
+			 * Every complete SEQPACKET record is delivered with
+			 * MSG_EOR (POSIX; matches AF_UNIX SOCK_SEQPACKET and
+			 * this suite's conformance tests), so mark the record
+			 * boundary unconditionally.  The sender's explicit
+			 * MSG_EOR travels separately as M_PROTO1: the virtio
+			 * transport maps it to VIRTIO_VSOCK_SEQ_EOR so a
+			 * Linux peer sees exactly the flag the sender set.
+			 */
+			m->m_flags |= M_EOR;
+			if (flags & MSG_EOR)
+				m->m_flags |= M_PROTO1;
+		}
+
+		error = pcb->transport->send(pcb, 0, m, NULL, NULL, td);
+		if (error != 0)
+			break;
+		resid = uio->uio_resid;
+	} while (resid > 0);
+
+release:
+	SOCK_IO_SEND_UNLOCK(so);
+	return (error);
 }
 
 static int
@@ -2630,12 +2858,21 @@ vsock_rx_packet(void *buf, uint32_t len)
 					mtx_unlock(&vtvsock_mtx);
 					break;
 				}
-				if (hdr_flags & VIRTIO_VSOCK_SEQ_EOR) {
+				{
 					struct mbuf *last;
 					for (last = m; last->m_next != NULL;
 					    last = last->m_next)
 						;
+					/*
+					 * Complete record: always a local
+					 * record boundary (recv reports
+					 * MSG_EOR).  The peer's explicit
+					 * MSG_EOR (wire SEQ_EOR) is kept as
+					 * M_PROTO1.
+					 */
 					last->m_flags |= M_EOR;
+					if (hdr_flags & VIRTIO_VSOCK_SEQ_EOR)
+						last->m_flags |= M_PROTO1;
 				}
 				sowwakeup(so);
 				SOCK_RECVBUF_LOCK(so);
@@ -2712,12 +2949,21 @@ vsock_rx_packet(void *buf, uint32_t len)
 				m = pcb->seqpacket_partial;
 				pcb->seqpacket_partial = NULL;
 				pcb->seqpacket_frag_count = 0;
-				if (hdr_flags & VIRTIO_VSOCK_SEQ_EOR) {
+				{
 					struct mbuf *last;
 					for (last = m; last->m_next != NULL;
 					    last = last->m_next)
 						;
+					/*
+					 * Complete record: always a local
+					 * record boundary (recv reports
+					 * MSG_EOR).  The peer's explicit
+					 * MSG_EOR (wire SEQ_EOR) is kept as
+					 * M_PROTO1.
+					 */
 					last->m_flags |= M_EOR;
+					if (hdr_flags & VIRTIO_VSOCK_SEQ_EOR)
+						last->m_flags |= M_PROTO1;
 				}
 				sowwakeup(so);
 				SOCK_RECVBUF_LOCK(so);
