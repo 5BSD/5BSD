@@ -5,6 +5,16 @@ Companion to `vsock_bhyve_testplan.md` (the §6 host↔guest matrix) and
 plan: what is covered today, the biggest gaps ranked by risk, the concrete
 test cases to close them, and a phased roadmap.
 
+## Progress log
+
+**2026-07-09 (this session):** closed GAP 4, GAP 5, and part of GAP 2.
+Device harness 86 → 100 checks (connection cap refuse+reclaim, reaper
+CLOSING/CONNECTING timeouts, oversized-paylen drop, ctl idle-reap +
+referenced-protection). ATF +4 (seqpacket exact-max boundary, SHUT_RDWR,
+peer-close EOF/EPIPE, connect ERANGE) — all pass in-guest. Remaining:
+GAP 1 (guest RX unit harness — the big one, scoped below), GAP 2 deep
+(ctl CONNECT handshake), GAP 3 (Linux interop).
+
 ## Where coverage stands today (baseline)
 
 | Artifact | Scope | Status |
@@ -73,8 +83,50 @@ Concrete cases (each is one ATF check-group):
     non-blocking send returns EWOULDBLOCK *before* consuming the uio (regression
     for the silent-loss fix).
 
-**Effort:** ~1 focused session (the device harness is the template; ~900 lines).
-**Payoff:** converts 11 Tier-1/2 behaviors from live-e2e-only to CI-automated.
+**Effort:** ~1 focused session, and it is the HARDEST item — see the scoping
+below. **Payoff:** converts 11 Tier-1/2 behaviors from live-e2e-only to CI.
+
+### GAP 1 scoping (dependency analysis, done 2026-07-09)
+
+Unlike the device harness (which #includes *userspace* bhyve code with a
+narrow syscall surface), `uipc_vsock.c` is *kernel* code deeply entangled
+with the socket subsystem. A userspace `#include` harness must provide a
+functional-enough shim for:
+
+- **socket/sockbuf** — ~16 fields touched (`so_rcv/so_snd/so_state/so_error/
+  so_pcb/so_type/so_options/so_qlimit/so_vnet`, `sb_hiwat/sb_lowat/sb_state/
+  sb_timeo`, `sol_sbrcv_hiwat`). The sockbuf accounting must ACTUALLY WORK
+  (`sbappendstream/record`, `sbspace`, `sb_hiwat`) — credit tests are
+  meaningless otherwise, and a subtly-wrong mock yields false-confidence
+  passes (worse than no test).
+- **socket ops** — `sonewconn` (×12, must return a working child with a
+  pcb), `soreserve`, `soisconnected`, `socantrcvmore/sendmore`,
+  `soisdisconnected`, `so_setsockopt`.
+- **sync** — `mtx_*` (×19; pthread mutex or no-op), `msleep`/`wakeup` (×6/×31;
+  need real condvar semantics for the credit-stall tests), `callout_*` (×19;
+  a manual-fire timer for the deferred-teardown test).
+- **mbuf** — `m_get`, `m_freem` (×20), `m_uiotombuf`, `m_length`, `M_EOR`/
+  `M_PROTO1`.
+- **infra** — `malloc`/`free` (M_ tags), `counter_u64_*` (×17), `SYSCTL_*`
+  (×19, stub), `SDT_PROBE*` (×24, stub via the harness pattern), `CURVNET_*`/
+  VNET (×4, stub).
+
+The load-bearing 20% is the **sockbuf + msleep/wakeup + sonewconn** shim; the
+rest stubs cleanly. Budget the session around getting sockbuf accounting and
+the credit-stall wakeup semantics provably correct (e.g. cross-check against
+the live e2e credit behavior) before writing the 11 test cases.
+
+Alternative if the userspace shim proves too costly: a small in-guest **test
+kernel module** that calls the static-exposed entry points, or a crafted-peer
+injector — but note the e2e path canNOT reach the malicious-peer cases
+(spoofed fwd_cnt, flow-control-violation RST): the host side is AF_UNIX and
+bhyve only emits well-formed wire frames, so those RST/teardown paths are
+reachable ONLY by a unit harness or a raw-wire injector.
+
+**Empirical note (2026-07-09):** a guest connect to reserved CID 0 *times
+out* rather than fast-failing (ETIMEDOUT via the connect callout); CID 2 with
+no listener correctly gives ECONNRESET. The CID-0 timeout matches Linux
+(unreachable CID), so likely not a bug, but worth an explicit assertion.
 
 ---
 
