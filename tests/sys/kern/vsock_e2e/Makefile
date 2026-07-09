@@ -38,4 +38,4 @@ SCRIPTSNAME_run.sh=	run.sh
 FILES+=		vsock-pipe.c
 FILES+=		vsock-conntest.c
 
-.include <bsd.prog.mk>
+.include <bsd.test.mk>
