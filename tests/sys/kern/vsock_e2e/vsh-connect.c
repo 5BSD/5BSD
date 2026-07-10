@@ -32,6 +32,50 @@
 struct vsock_ctl_msg { uint32_t cmd, port, type; int32_t status; };
 #define VSOCK_CTL_CONNECT 1
 
+/*
+ * One-record mode (-1): slurp all of stdin and send it as a SINGLE record
+ * with MSG_EOR, then drain the reply to stdout.  This lets us exercise a
+ * host->guest SEQPACKET record larger than one read() chunk without the
+ * default streaming relay chopping it at 64 KiB -- the record boundary is the
+ * sender's MSG_EOR, exactly as the contract requires.  Cap the slurp at 4 MiB
+ * (the device's max reassembled record).
+ */
+static int
+relay_oneshot(int sfd, bool seqpacket)
+{
+	size_t cap = 4u * 1024 * 1024, len = 0;
+	char *buf = malloc(cap);
+	ssize_t n;
+
+	if (buf == NULL) { perror("malloc"); return (1); }
+	while (len < cap) {
+		n = read(0, buf + len, cap - len);
+		if (n < 0) { if (errno == EINTR) continue; perror("read"); free(buf); return (1); }
+		if (n == 0) break;	/* EOF: whole record collected */
+		len += (size_t)n;
+	}
+	if (seqpacket) {
+		struct iovec io = { buf, len };
+		struct msghdr mh;
+		memset(&mh, 0, sizeof(mh));
+		mh.msg_iov = &io; mh.msg_iovlen = 1;
+		if (sendmsg(sfd, &mh, MSG_EOR) != (ssize_t)len) {
+			perror("sendmsg"); free(buf); return (1);
+		}
+	} else if (write(sfd, buf, len) != (ssize_t)len) {
+		perror("write"); free(buf); return (1);
+	}
+	(void)shutdown(sfd, SHUT_WR);
+	for (;;) {
+		n = read(sfd, buf, cap);
+		if (n < 0) { if (errno == EINTR) continue; break; }
+		if (n == 0) break;
+		if (write(1, buf, (size_t)n) != n) break;
+	}
+	free(buf);
+	return (0);
+}
+
 static int
 relay(int sfd)
 {
@@ -79,6 +123,7 @@ int
 main(int argc, char **argv)
 {
 	int type = SOCK_STREAM;
+	int oneshot = 0;
 	int ch, dfd, cs, datafd = -1;
 	cap_rights_t rights;
 	struct sockaddr_un sun;
@@ -90,11 +135,12 @@ main(int argc, char **argv)
 
 	signal(SIGPIPE, SIG_IGN);
 
-	while ((ch = getopt(argc, argv, "s")) != -1) {
+	while ((ch = getopt(argc, argv, "s1")) != -1) {
 		switch (ch) {
 		case 's': type = SOCK_SEQPACKET; break;
+		case '1': oneshot = 1; break;	/* send all stdin as ONE record */
 		default:
-			fprintf(stderr, "usage: %s [-s] <dir> <port>\n",
+			fprintf(stderr, "usage: %s [-s] [-1] <dir> <port>\n",
 			    argv[0]);
 			return (2);
 		}
@@ -164,5 +210,7 @@ main(int argc, char **argv)
 		return (1);
 	}
 	close(cs);
+	if (oneshot)
+		return (relay_oneshot(datafd, type == SOCK_SEQPACKET));
 	return (relay(datafd));
 }

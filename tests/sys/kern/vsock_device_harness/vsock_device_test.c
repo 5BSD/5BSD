@@ -263,6 +263,39 @@ __wrap_socketpair(int d, int t, int p, int sv[2])
 }
 int __wrap_fcntl(int fd, int cmd, ...) { (void)fd; (void)cmd; return (0); }
 
+/*
+ * Capture relay-socket buffer sizing (vtvsock_set_relay_bufsize).  Fds here are
+ * fake integers, so the real setsockopt/getsockopt would fail; wrap them to
+ * record what the device requests and echo it back as if the kernel honored it.
+ */
+static int g_sndbuf_last;	/* last SO_SNDBUF value requested */
+static int g_rcvbuf_last;	/* last SO_RCVBUF value requested */
+static int g_sndbuf_calls;	/* count of SO_SNDBUF requests */
+static int g_rcvbuf_calls;	/* count of SO_RCVBUF requests */
+int
+__wrap_setsockopt(int fd, int level, int opt, const void *val, socklen_t len)
+{
+	(void)fd; (void)len;
+	if (level == SOL_SOCKET && val != NULL) {
+		if (opt == SO_SNDBUF) { g_sndbuf_last = *(const int *)val;
+			g_sndbuf_calls++; }
+		else if (opt == SO_RCVBUF) { g_rcvbuf_last = *(const int *)val;
+			g_rcvbuf_calls++; }
+	}
+	return (0);
+}
+int
+__wrap_getsockopt(int fd, int level, int opt, void *val, socklen_t *len)
+{
+	(void)fd; (void)len;
+	if (level == SOL_SOCKET && val != NULL) {
+		if (opt == SO_RCVBUF) *(int *)val = g_rcvbuf_last;
+		else if (opt == SO_SNDBUF) *(int *)val = g_sndbuf_last;
+		else *(int *)val = 0;
+	}
+	return (0);
+}
+
 /* Stage a control message that the next ctl-conn recv() will return. */
 static void
 stage_ctl_msg(uint32_t cmd, uint32_t port, uint32_t type)
@@ -1189,6 +1222,35 @@ ATF_TC_BODY(ctl_connect_emits_request, tc)
 }
 
 /*
+ * --- relay socket buffers are enlarged to one advertised window
+ * (VTVSOCK_BUF_ALLOC) on connect, so a full-window SEQPACKET record traverses
+ * the host<->app Unix socket whole rather than being chopped at the 64 KiB
+ * kernel default.  Both socketpair ends must be sized (SND and RCV each), so
+ * the sender's outstanding limit and the receiver's capacity line up. ---
+ */
+ATF_TC_WITHOUT_HEAD(relay_bufsize_enlarged_on_connect);
+ATF_TC_BODY(relay_bufsize_enlarged_on_connect, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_ctl_conn *cc;
+	reset_caps();
+	g_sndbuf_last = g_rcvbuf_last = 0;
+	g_sndbuf_calls = g_rcvbuf_calls = 0;
+	cc = mk_ctl_conn(sc, g_next_fd++, 100 /* not idle */);
+
+	stage_ctl_msg(VSOCK_CTL_CONNECT, 1234, SOCK_SEQPACKET);
+	pci_vtvsock_ctl_conn_cb(cc->fd, EVF_READ, sc);
+
+	/* Both socketpair ends sized: SND and RCV each requested >= twice. */
+	ATF_CHECK(g_sndbuf_calls >= 2);
+	ATF_CHECK(g_rcvbuf_calls >= 2);
+	/* Requested exactly one advertised window on both. */
+	ATF_CHECK(g_sndbuf_last == 256 * 1024);	/* VTVSOCK_BUF_ALLOC */
+	ATF_CHECK(g_rcvbuf_last == 256 * 1024);
+	free(sc);
+}
+
+/*
  * --- control-socket unknown command: an unrecognized ctl cmd is ignored
  * cleanly -- no connection created, no packet emitted, no crash. ---
  */
@@ -1385,6 +1447,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reaper_reaps_idle_ctl_conn);
 	ATF_TP_ADD_TC(tp, ctl_accept_cap);
 	ATF_TP_ADD_TC(tp, ctl_connect_emits_request);
+	ATF_TP_ADD_TC(tp, relay_bufsize_enlarged_on_connect);
 	ATF_TP_ADD_TC(tp, ctl_unknown_cmd_ignored);
 	ATF_TP_ADD_TC(tp, ctl_connect_socketpair_fail);
 	ATF_TP_ADD_TC(tp, reaper_keeps_referenced_ctl_conn);

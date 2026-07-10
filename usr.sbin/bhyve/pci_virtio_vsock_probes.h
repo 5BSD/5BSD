@@ -61,4 +61,8 @@
 #define	VSOCK_PROBE_CONN_COUNT(nconns)			\
 	DTRACE_PROBE1(vsock, conn__count, nconns)
 
+/* Relay socket buffer sizing (host<->app Unix socket) */
+#define	VSOCK_PROBE_RELAY_BUFSIZE(port, want, got)	\
+	DTRACE_PROBE3(vsock, relay__bufsize, port, want, got)
+
 #endif /* _PCI_VIRTIO_VSOCK_PROBES_H_ */

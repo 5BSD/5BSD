@@ -37,5 +37,6 @@ SCRIPTSNAME_run.sh=	run.sh
 # Guest-side tool sources (shipped for in-guest compilation).
 FILES+=		vsock-pipe.c
 FILES+=		vsock-conntest.c
+FILES+=		vsock-recrx.c
 
 .include <bsd.test.mk>

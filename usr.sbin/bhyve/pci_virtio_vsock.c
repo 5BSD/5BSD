@@ -302,6 +302,45 @@ vtvsock_cap_lockdown_xfer_once(int fd)
 #endif
 
 /*
+ * Enlarge a relay socket's buffers to one full advertised window
+ * (VTVSOCK_BUF_ALLOC) so a host<->guest SEQPACKET record up to the credit
+ * window is carried through the Unix socket whole, rather than being chopped
+ * at the kernel default (net.local.seqpacket.recvspace, 64 KiB).  Both
+ * SO_SNDBUF and SO_RCVBUF are set on each end so the sender's outstanding-data
+ * limit and the receiver's holding capacity line up at the same value by
+ * construction (rather than depending on two independent sysctl defaults
+ * agreeing).  Buffers are on-demand ceilings (sb_hiwat), so this costs no
+ * memory until data actually queues.
+ *
+ * Best-effort and non-fatal: a host whose kern.ipc.maxsockbuf is below the
+ * request refuses it (ENOBUFS) and the socket keeps its default -- the
+ * connection still works, just with the smaller single-record ceiling.  Must
+ * be called BEFORE the fd's rights are limited: setsockopt(SO_*BUF) needs an
+ * unrestricted descriptor.  Not capsicum-guarded (setsockopt is not a cap
+ * helper), so the WITHOUT_CAPSICUM harness build links it too.
+ */
+static void
+vtvsock_set_relay_bufsize(int fd, uint32_t guest_port)
+{
+	int want = VTVSOCK_BUF_ALLOC;
+	int got = 0;
+	socklen_t len = sizeof(got);
+
+	if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &want, sizeof(want)) < 0)
+		DPRINTF(("vtvsock: SO_SNDBUF %d failed: %s (keeping default)",
+		    want, strerror(errno)));
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &want, sizeof(want)) < 0)
+		DPRINTF(("vtvsock: SO_RCVBUF %d failed: %s (keeping default)",
+		    want, strerror(errno)));
+	if (getsockopt(fd, SOL_SOCKET, SO_RCVBUF, &got, &len) < 0)
+		got = 0;
+	VSOCK_PROBE_RELAY_BUFSIZE(guest_port, (uint32_t)want, (uint32_t)got);
+	if ((uint32_t)got < (uint32_t)want)
+		WPRINTF(("vtvsock: relay socket buffer %d < requested %d "
+		    "(records above %d bytes will fragment)", got, want, got));
+}
+
+/*
  * Per-connection state.  Each host-side Unix socket connection (or
  * guest-initiated connection accepted by the host) is represented by one of
  * these, linked into vsc_conns.
@@ -839,23 +878,55 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 	}
 
 	avail = iov_total(iov, n);
-	if (avail < sizeof(*hdrp) + paylen) {
+	if (avail <= sizeof(*hdrp)) {
+		/*
+		 * The chain cannot hold even the header.  A conformant guest
+		 * posts RX buffers large enough for a header plus payload;
+		 * drop a malformed one.
+		 */
 		VSOCK_PROBE_DESC_DROP("rx-descriptor-too-small");
-		DPRINTF(("vtvsock: rx descriptor too small (%zu < %zu)",
-		    avail, sizeof(*hdrp) + paylen));
+		DPRINTF(("vtvsock: rx descriptor too small for header (%zu)",
+		    avail));
 		vq_relchain(vq, req.idx, 0);
 		vq_endchains(vq, 0);
 		return (-1);
 	}
 
-	off = 0;
-	iov_copyout(hdrp, sizeof(*hdrp), iov, n, &off);
-	if (paylen > 0 && payload != NULL)
-		iov_copyout(payload, paylen, iov, n, &off);
+	/*
+	 * Write as much payload as fits THIS guest RX buffer: header plus
+	 * min(paylen, avail - header).  The guest posts fixed-size RX buffers
+	 * -- a virtio transport detail, distinct from the vsock credit window
+	 * (Linux posts 4 KiB, 5BSD larger) -- and a single packet must fit one
+	 * buffer.  A payload larger than the buffer is fragmented across
+	 * successive buffers by the caller (vtvsock_rx_inject_frags), NOT
+	 * dropped; the guest driver reassembles the packets back into the
+	 * socket transparently to the application.  Because a short write is
+	 * not the end of a SEQPACKET record, strip EOM/EOR from it -- only the
+	 * packet carrying the record's final bytes keeps them.  Returns the
+	 * number of PAYLOAD bytes written (0 for a header-only control packet),
+	 * or -1 if no usable descriptor was available.
+	 */
+	{
+		uint32_t cap = (uint32_t)(avail - sizeof(*hdrp));
+		uint32_t w = (paylen < cap) ? paylen : cap;
+		struct virtio_vsock_hdr h = *hdrp;
 
-	vq_relchain(vq, req.idx, (uint32_t)off);
-	vq_endchains(vq, 1);
-	return (0);
+		h.len = htole32(w);
+		if (w < paylen) {
+			uint32_t f = le32toh(h.flags);
+
+			f &= ~(uint32_t)(VIRTIO_VSOCK_SEQ_EOM |
+			    VIRTIO_VSOCK_SEQ_EOR);
+			h.flags = htole32(f);
+		}
+		off = 0;
+		iov_copyout(&h, sizeof(h), iov, n, &off);
+		if (w > 0 && payload != NULL)
+			iov_copyout(payload, w, iov, n, &off);
+		vq_relchain(vq, req.idx, (uint32_t)off);
+		vq_endchains(vq, 1);
+		return ((int)w);
+	}
 }
 
 /*
@@ -1461,6 +1532,10 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 				    type);
 				break;
 			}
+			/* Size buffers before rights lockdown (needs an
+			 * unrestricted fd); the accepted host end is sized by
+			 * the host listener itself. */
+			vtvsock_set_relay_bufsize(cfd, src_port);
 			if (connectat(sc->vsc_dfd, cfd,
 			    (struct sockaddr *)&csun, csun.sun_len) < 0) {
 				DPRINTF(("vtvsock: no host listener at %s/%s: %s",
@@ -2207,6 +2282,7 @@ vtvsock_rx_inject_frags(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
 	while (off < len) {
 		uint32_t frag = MIN(len - off, (uint32_t)VTVSOCK_MAX_PKT);
 		uint32_t rw_flags = 0;
+		int w;
 
 		if (is_seqpacket && off + frag >= len) {
 			rw_flags = VIRTIO_VSOCK_SEQ_EOM;
@@ -2223,13 +2299,28 @@ vtvsock_rx_inject_frags(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
 			*offp = off;
 			return (1);
 		}
-		if (vtvsock_inject_rx(sc, conn, VIRTIO_VSOCK_OP_RW, rw_flags,
-		    buf + off, frag) != 0) {
+		/*
+		 * inject_rx writes only what fits the guest RX buffer it pulls
+		 * and returns the payload bytes actually written (it strips
+		 * EOM/EOR when it writes a partial, so the record boundary
+		 * lands on the packet with the last bytes).  Advance by that
+		 * amount; a payload larger than one buffer therefore spans
+		 * several packets across successive buffers.
+		 */
+		w = vtvsock_inject_rx(sc, conn, VIRTIO_VSOCK_OP_RW, rw_flags,
+		    buf + off, frag);
+		if (w < 0) {
 			*offp = off;
 			return (-1);
 		}
-		conn->tx_cnt += frag;
-		off += frag;
+		if (w == 0) {
+			/* No descriptor progress; park and retry when the
+			 * guest posts more (as for a full ring). */
+			*offp = off;
+			return (1);
+		}
+		conn->tx_cnt += (uint32_t)w;
+		off += (uint32_t)w;
 	}
 	*offp = off;
 	return (0);
@@ -2896,6 +2987,15 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 			pthread_mutex_unlock(&sc->vsc_mtx);
 			return;
 		}
+
+		/*
+		 * Size both ends to one advertised window before either is
+		 * rights-limited or handed to the app, so a full-window record
+		 * traverses the relay whole.  pair[1] is passed to the host app
+		 * via SCM_RIGHTS, which inherits the larger buffer for free.
+		 */
+		vtvsock_set_relay_bufsize(pair[0], msg.port);
+		vtvsock_set_relay_bufsize(pair[1], msg.port);
 
 		/* pair[0] is bhyve's end; pair[1] goes to the host app */
 		if (fcntl(pair[0], F_SETFL, O_NONBLOCK) < 0) {

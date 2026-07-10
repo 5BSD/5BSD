@@ -52,7 +52,7 @@ EOF
 
 "$cc" -g -O1 -fsanitize=address -I"$work/atfshim" -I"$work/inc" \
     -o "$work/devtest" "$work/vsock_device_test.c" \
-    -Wl,--wrap=socket,--wrap=connectat,--wrap=send,--wrap=recv,--wrap=sendmsg,--wrap=shutdown,--wrap=poll,--wrap=close,--wrap=accept,--wrap=socketpair,--wrap=fcntl \
+    -Wl,--wrap=socket,--wrap=connectat,--wrap=send,--wrap=recv,--wrap=sendmsg,--wrap=shutdown,--wrap=poll,--wrap=close,--wrap=accept,--wrap=socketpair,--wrap=fcntl,--wrap=setsockopt,--wrap=getsockopt \
     -lpthread
 
 "$work/devtest"

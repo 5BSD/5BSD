@@ -33,4 +33,12 @@ provider vsock {
 
 	/* Resource watermark */
 	probe conn__count(uint32_t nconns);
+
+	/*
+	 * Relay socket buffer sizing.  Fires when the device sizes a
+	 * host<->app Unix relay socket's buffers to one advertised window.
+	 * got < want means the host's kern.ipc.maxsockbuf refused the full
+	 * request and the single-record ceiling is lower than intended.
+	 */
+	probe relay__bufsize(uint32_t port, uint32_t want, uint32_t got);
 };

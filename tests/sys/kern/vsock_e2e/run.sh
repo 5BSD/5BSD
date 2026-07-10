@@ -193,6 +193,25 @@ t_seq_records() {
 	[ "$got" = "ABB" ]; result seqpacket_records_wire $?
 }
 
+# --- T14b: a large host->guest SEQPACKET record (> old 64 KiB relay buffer)
+# arrives as ONE record, not shredded/split.  Uses vsock-recrx (one recv per
+# record) so record FRAMING is visible -- byte-stream tools cannot see this.
+# Exercises the relay socket-buffer sizing (VTVSOCK_BUF_ALLOC) end to end. ---
+t_seq_bigrecord() {
+	gclean
+	gcmd 'pkill -9 vsock-recrx 2>/dev/null; rm -f /tmp/recrx.out;
+	      nohup /root/vsock-recrx 5016 >/tmp/recrx.out 2>&1 &
+	      sleep 1; echo up' >/dev/null
+	# One 200 KiB record via a single sendmsg(MSG_EOR) (vsh-connect -1).
+	head -c 204800 /dev/zero | tr '\0' A | vshc "$DIR" 5016 -s -1 >/dev/null
+	sleep 1
+	out=$(gcmd 'cat /tmp/recrx.out; pkill -9 vsock-recrx 2>/dev/null' 15)
+	# Exactly one RECORD line, of the full length -- not several short ones.
+	nrec=$(printf '%s\n' "$out" | grep -c '^RECORD ')
+	printf '%s\n' "$out" | grep -q '^RECORD len=204800$' && [ "$nrec" = 1 ]
+	result seqpacket_bigrecord_whole $?
+}
+
 # --- T14: connection-count leak check (must return to baseline) ----
 t_leak_check() {
 	gclean
@@ -207,7 +226,7 @@ t_leak_check() {
 
 ALL="t_echo_g2h t_echo_h2g t_seq_g2h t_seq_h2g t_bulk_g2h t_bulk_h2g
      t_credit_churn t_dead_host_port t_dead_guest_port t_concurrency
-     t_eof t_kill_midsend t_seq_records t_leak_check"
+     t_eof t_kill_midsend t_seq_records t_seq_bigrecord t_leak_check"
 
 echo "vsock e2e: DIR=$DIR BULK=${BULK_MB}MiB NCONN=$NCONN"
 gcmd 'test -x /root/vsock-pipe && echo tool-ok' | grep -q tool-ok || {
