@@ -30,13 +30,17 @@ MAN=
 PROGS+=		unix-pipe
 PROGS+=		vsh-connect
 
-# Driver script (keep the .sh suffix; SCRIPTS strips it by default).
+# Driver scripts (keep the .sh suffix; SCRIPTS strips it by default).
+# run.sh drives a 5BSD guest; run-linux.sh drives a Linux guest via gvsock.py.
 SCRIPTS+=	run.sh
 SCRIPTSNAME_run.sh=	run.sh
+SCRIPTS+=	run-linux.sh
+SCRIPTSNAME_run-linux.sh=	run-linux.sh
 
-# Guest-side tool sources (shipped for in-guest compilation).
+# Guest-side tool sources (shipped for in-guest compilation / use).
 FILES+=		vsock-pipe.c
 FILES+=		vsock-conntest.c
 FILES+=		vsock-recrx.c
+FILES+=		gvsock.py
 
 .include <bsd.test.mk>
