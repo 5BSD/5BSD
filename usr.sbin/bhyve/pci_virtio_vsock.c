@@ -904,7 +904,9 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 	 * not the end of a SEQPACKET record, strip EOM/EOR from it -- only the
 	 * packet carrying the record's final bytes keeps them.  Returns the
 	 * number of PAYLOAD bytes written (0 for a header-only control packet),
-	 * or -1 if no usable descriptor was available.
+	 * or -1 if no usable descriptor was available.  w is bounded by paylen,
+	 * and every caller caps paylen at VTVSOCK_MAX_PKT (64 KiB), so the (int)
+	 * return is always non-negative.
 	 */
 	{
 		uint32_t cap = (uint32_t)(avail - sizeof(*hdrp));

@@ -11,8 +11,10 @@
 #endif
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/filio.h>		/* FIONREAD (mocked below) */
 #include <poll.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,18 +23,13 @@
 #include <atf-c.h>
 
 /*
- * The device's SEQPACKET RX probe uses recvmsg(), which is NOT in the tests
- * Makefile's ld --wrap set, so we shadow it with a plain definition below (the
- * program's definition overrides libc's).  AddressSanitizer, however, provides
- * its own recvmsg interceptor as a strong symbol in a static archive, which
- * collides with ours.  When built under ASan (the local run.sh helper), omit
- * the mock and the two recvmsg-dependent cases; the real ATF build (no ASan)
- * exercises them fully.
+ * The device's SEQPACKET RX path recvmsg()s and ioctl(FIONREAD)s the conn fd.
+ * Both are ld --wrap'd (__wrap_recvmsg / __wrap_ioctl below) rather than shadowed
+ * by plain definitions, so they coexist with AddressSanitizer's own interceptors
+ * (a plain recvmsg shadow collides with ASan's strong symbol).  The recvmsg-
+ * dependent SEQPACKET host->guest cases therefore run under BOTH the local
+ * run.sh (ASan) build and the in-tree ATF build.
  */
-#if (defined(__has_feature) && __has_feature(address_sanitizer)) || \
-    defined(__SANITIZE_ADDRESS__)
-#define	VSOCK_HARNESS_NO_RECVMSG_MOCK	1
-#endif
 
 /* Device under test (its quote-includes resolve to the mock headers here). */
 #include "pci_virtio_vsock.c"
@@ -44,6 +41,10 @@ static struct cap_pkt g_inject[128];
 static int g_ninject;
 static int g_rx_descs = 256;
 static uint8_t g_rxbuf[64 * 1024 + 128];
+/* Size the guest RX buffer vq_getchain() hands back; tests shrink it to
+ * exercise host->guest packet fragmentation to a small (e.g. 4 KiB Linux) RX
+ * buffer. */
+static size_t g_rxbuf_len = sizeof(g_rxbuf);
 /*
  * Descriptor direction reported by the mocked vq_getchain(): defaults to a
  * write-only RX chain (readable=0, writable=1), the shape a well-behaved guest
@@ -72,7 +73,7 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 	if (niov < 1 || g_rx_descs <= 0)
 		return (0);
 	iov[0].iov_base = g_rxbuf;
-	iov[0].iov_len = sizeof(g_rxbuf);
+	iov[0].iov_len = g_rxbuf_len;
 	req->idx = 0;
 	req->readable = g_chain_readable;
 	req->writable = g_chain_writable;
@@ -200,11 +201,10 @@ ssize_t __wrap_sendmsg(int fd, const struct msghdr *m, int f)
  * datagram; model both here.  Consuming reads (no MSG_PEEK) dequeue the staged
  * record, mirroring __wrap_recv's staging so the two stay consistent.
  */
-#ifndef VSOCK_HARNESS_NO_RECVMSG_MOCK
 ssize_t
-recvmsg(int fd, struct msghdr *m, int flags)
+__wrap_recvmsg(int fd, struct msghdr *m, int flags)
 {
-	size_t avail;
+	size_t avail, cap, take;
 
 	(void)fd;
 	avail = g_recv_len - g_recv_off;
@@ -224,13 +224,45 @@ recvmsg(int fd, struct msghdr *m, int flags)
 		errno = EAGAIN;
 		return (-1);
 	}
-	if (m != NULL)
+	if (m != NULL) {
 		m->msg_flags = g_recv_no_eor ? 0 : MSG_EOR; /* record boundary */
+		/* Consuming reads copy the record into the caller's buffer so
+		 * the injected payload is the staged data. */
+		if (m->msg_iov != NULL && m->msg_iovlen > 0 &&
+		    m->msg_iov[0].iov_base != NULL) {
+			cap = m->msg_iov[0].iov_len;
+			take = MIN(cap, avail);
+			memcpy(m->msg_iov[0].iov_base,
+			    g_recv_data + g_recv_off, take);
+		}
+	}
 	if ((flags & MSG_PEEK) == 0)
 		g_recv_off += avail;		/* consuming read drains it */
-	return ((ssize_t)avail);		/* MSG_TRUNC probe: full size */
+	return ((ssize_t)avail);
 }
-#endif /* !VSOCK_HARNESS_NO_RECVMSG_MOCK */
+
+/*
+ * FIONREAD: the SEQPACKET (and STREAM) RX sizing path ioctl()s the conn fd for
+ * the queued byte count.  Report the staged record's remaining bytes so the
+ * size-then-read path is exercised faithfully (0 -> the recvmsg peek that
+ * disambiguates an empty datagram from EOF from no-data).
+ */
+int
+__wrap_ioctl(int fd, unsigned long request, ...)
+{
+	va_list ap;
+	int *argp;
+
+	(void)fd;
+	if (request == (unsigned long)FIONREAD) {
+		va_start(ap, request);
+		argp = va_arg(ap, int *);
+		va_end(ap);
+		if (argp != NULL)
+			*argp = (int)(g_recv_len - g_recv_off);
+	}
+	return (0);
+}
 int __wrap_shutdown(int fd, int how) { (void)fd; (void)how; return (0); }
 int
 __wrap_poll(struct pollfd *p, nfds_t n, int t)
@@ -323,6 +355,7 @@ reset_caps(void)
 {
 	g_ninject = 0; g_send_calls = 0; g_send_len = 0;
 	g_rx_descs = 256; g_connectat_result = 0;
+	g_rxbuf_len = sizeof(g_rxbuf);
 	g_recv_len = 0; g_recv_off = 0; g_recv_eof = 0;
 	g_recv_zero_dgram = 0; g_recv_no_eor = 0;
 	g_chain_readable = 0; g_chain_writable = 1; g_getchain_consumes = 0;
@@ -683,6 +716,77 @@ ATF_TC_BODY(host_rx_respects_credit, tc)
 	free(sc);
 }
 
+/*
+ * --- a host->guest record larger than one guest RX buffer is FRAGMENTED to
+ * fit, not dropped.  The guest posts fixed-size RX buffers (Linux: 4 KiB); a
+ * payload bigger than one buffer must be split across successive buffers with
+ * EOM/EOR only on the packet carrying the record's final bytes.  Regression
+ * guard for the "rx-descriptor-too-small" drop that silently lost every
+ * host->guest packet above the buffer size on Linux. ---
+ */
+ATF_TC_WITHOUT_HEAD(host_rx_fragments_to_small_rx_buffer);
+ATF_TC_BODY(host_rx_fragments_to_small_rx_buffer, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t rec[200];
+	uint32_t total = 0, cap;
+	int i, last;
+	reset_caps();
+	g_rxbuf_len = 100;		/* header(44) + 56 payload per buffer */
+	cap = 100 - sizeof(struct virtio_vsock_hdr);	/* == 56 */
+	c = mk_established(sc, 1234, 80, SEQPACKET);	/* ample credit */
+	memset(rec, 'X', sizeof(rec));
+	stage_recv(rec, sizeof(rec));			/* one 200-byte record */
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+
+	ATF_CHECK(g_ninject >= 4);	/* 200 / 56 -> 4 packets, none dropped */
+	last = g_ninject - 1;
+	for (i = 0; i < g_ninject; i++) {
+		ATF_CHECK(g_inject[i].op == VIRTIO_VSOCK_OP_RW);
+		ATF_CHECK(g_inject[i].len <= cap);	/* fits the RX buffer */
+		total += g_inject[i].len;
+		if (i < last)			/* middle packets: no boundary */
+			ATF_CHECK((g_inject[i].flags &
+			    (VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR)) == 0);
+	}
+	ATF_CHECK(total == sizeof(rec));	/* every byte delivered */
+	ATF_CHECK((g_inject[last].flags &		/* only the last packet */
+	    (VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR)) ==
+	    (uint32_t)(VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR));
+	free(sc);
+}
+
+/*
+ * --- latent path: a SEQPACKET record larger than the guest's ENTIRE
+ * advertised window can never be reassembled there, so it is reset rather than
+ * deferred forever.  Reachable only for a guest advertising a small window
+ * (Linux/5BSD default 256 KiB never hits it), so it is otherwise untested. ---
+ */
+ATF_TC_WITHOUT_HEAD(host_rx_oversized_seqpacket_record_resets);
+ATF_TC_BODY(host_rx_oversized_seqpacket_record_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t rec[500];
+	int i, saw_rst = 0;
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	c->peer_buf_alloc = 100;	/* tiny guest window */
+	c->peer_fwd_cnt = 0;
+	c->tx_cnt = 0;			/* credit = 100 < record */
+	memset(rec, 'Y', sizeof(rec));
+	stage_recv(rec, sizeof(rec));	/* 500-byte record > 100 window */
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+
+	for (i = 0; i < g_ninject; i++)
+		if (g_inject[i].op == VIRTIO_VSOCK_OP_RST)
+			saw_rst = 1;
+	ATF_CHECK(saw_rst);		/* undeliverable record -> RST */
+	ATF_CHECK(nconns(sc) == 0);	/* connection torn down, not wedged */
+	free(sc);
+}
+
 /* --- host fd EOF (recv==0) drives a SHUTDOWN toward the guest --- */
 ATF_TC_WITHOUT_HEAD(host_eof_sends_shutdown);
 ATF_TC_BODY(host_eof_sends_shutdown, tc)
@@ -861,7 +965,6 @@ ATF_TC_BODY(global_reasm_budget_rst, tc)
 ATF_TC_WITHOUT_HEAD(seqpacket_host_zero_len_to_guest);
 ATF_TC_BODY(seqpacket_host_zero_len_to_guest, tc)
 {
-#ifndef VSOCK_HARNESS_NO_RECVMSG_MOCK
 	struct pci_vtvsock_softc *sc = mk_sc();
 	struct vtvsock_conn *c;
 	reset_caps();
@@ -879,14 +982,12 @@ ATF_TC_BODY(seqpacket_host_zero_len_to_guest, tc)
 	ATF_CHECK(nconns(sc) == 1);
 	ATF_CHECK(c->state == CONN_ESTABLISHED);
 	free(sc);
-#endif /* !VSOCK_HARNESS_NO_RECVMSG_MOCK */
 }
 
 /* --- host->guest SEQPACKET EOR must reflect the host peer's MSG_EOR --- */
 ATF_TC_WITHOUT_HEAD(seqpacket_host_eor_propagated);
 ATF_TC_BODY(seqpacket_host_eor_propagated, tc)
 {
-#ifndef VSOCK_HARNESS_NO_RECVMSG_MOCK
 	struct pci_vtvsock_softc *sc;
 	struct vtvsock_conn *c;
 
@@ -918,14 +1019,12 @@ ATF_TC_BODY(seqpacket_host_eor_propagated, tc)
 	ATF_CHECK((g_inject[0].flags & VIRTIO_VSOCK_SEQ_EOM) != 0);
 	ATF_CHECK((g_inject[0].flags & VIRTIO_VSOCK_SEQ_EOR) == 0);
 	free(sc);
-#endif /* !VSOCK_HARNESS_NO_RECVMSG_MOCK */
 }
 
 /* --- #4: a genuine host SEQPACKET EOF still drives a SHUTDOWN toward the guest --- */
 ATF_TC_WITHOUT_HEAD(seqpacket_host_eof_sends_shutdown);
 ATF_TC_BODY(seqpacket_host_eof_sends_shutdown, tc)
 {
-#ifndef VSOCK_HARNESS_NO_RECVMSG_MOCK
 	struct pci_vtvsock_softc *sc = mk_sc();
 	struct vtvsock_conn *c;
 	int i, saw_shutdown = 0;
@@ -945,7 +1044,6 @@ ATF_TC_BODY(seqpacket_host_eof_sends_shutdown, tc)
 	ATF_CHECK(c->state == CONN_ESTABLISHED);
 	ATF_CHECK(c->host_eof);
 	free(sc);
-#endif /* !VSOCK_HARNESS_NO_RECVMSG_MOCK */
 }
 
 /*
@@ -1430,6 +1528,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, request_collision_keeps_host_connect);
 	ATF_TP_ADD_TC(tp, host_rx_forwards_to_guest);
 	ATF_TP_ADD_TC(tp, host_rx_respects_credit);
+	ATF_TP_ADD_TC(tp, host_rx_fragments_to_small_rx_buffer);
+	ATF_TP_ADD_TC(tp, host_rx_oversized_seqpacket_record_resets);
 	ATF_TP_ADD_TC(tp, host_eof_sends_shutdown);
 	ATF_TP_ADD_TC(tp, seqpacket_reassembles_to_eom);
 	ATF_TP_ADD_TC(tp, seqpacket_large_record_credits_incrementally);
