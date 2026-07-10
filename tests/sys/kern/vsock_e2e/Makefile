@@ -21,7 +21,6 @@ PACKAGE=	vsock-tests
 TESTSDIR=	${TESTSBASE}/sys/kern/vsock_e2e
 BINDIR=		${TESTSDIR}
 SCRIPTSDIR=	${TESTSDIR}
-FILESDIR=	${TESTSDIR}
 
 WARNS?=		3
 MAN=
@@ -37,10 +36,13 @@ SCRIPTSNAME_run.sh=	run.sh
 SCRIPTS+=	run-linux.sh
 SCRIPTSNAME_run-linux.sh=	run-linux.sh
 
-# Guest-side tool sources (shipped for in-guest compilation / use).
-FILES+=		vsock-pipe.c
-FILES+=		vsock-conntest.c
-FILES+=		vsock-recrx.c
-FILES+=		gvsock.py
+# Guest-side tool sources (shipped for in-guest compilation / use).  Use the
+# ${PACKAGE}FILES filegroup that bsd.test.mk wires into the test package
+# (FILESDIR=${TESTSDIR}, FILESPACKAGE=${PACKAGE}); a plain FILES+= is not
+# packaged with the test.
+${PACKAGE}FILES+=	vsock-pipe.c
+${PACKAGE}FILES+=	vsock-conntest.c
+${PACKAGE}FILES+=	vsock-recrx.c
+${PACKAGE}FILES+=	gvsock.py
 
 .include <bsd.test.mk>
