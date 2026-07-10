@@ -17,7 +17,7 @@
 # which only the guest kernel provides at runtime, so they are shipped as
 # source, not built here.
 
-PACKAGE=	tests
+PACKAGE=	vsock-tests
 TESTSDIR=	${TESTSBASE}/sys/kern/vsock_e2e
 BINDIR=		${TESTSDIR}
 SCRIPTSDIR=	${TESTSDIR}

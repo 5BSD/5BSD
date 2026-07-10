@@ -1,0 +1,41 @@
+# Device-level ATF harness for the bhyve virtio-vsock host device.  It #includes
+# the real pci_virtio_vsock.c and shadows its bhyve headers with the mocks in
+# this directory; host-socket syscalls are intercepted with ld --wrap.  See
+# README.md.  The DUT sources are copied into ${.OBJDIR} so their quote-includes
+# resolve to the mocks here (via -I) rather than the real bhyve headers.
+#
+# Packaged in vsock-tests (not the base tests package) so it can be installed on
+# its own.  run.sh builds and runs the same test locally under ASan without ATF.
+
+PACKAGE=	vsock-tests
+TESTSDIR=	${TESTSBASE}/sys/kern/vsock_device_harness
+
+ATF_TESTS_C+=	vsock_device_test
+CFLAGS.vsock_device_test+=	-DWITHOUT_CAPSICUM -I${.CURDIR} -I${.OBJDIR}
+# The mock-included device source and the ld --wrap interceptors (non-static so
+# the linker binds them, tripping -Wmissing-prototypes) warn; keep non-fatal.
+# Must be CWARNFLAGS.<src> (appended after -Werror) -- CFLAGS.<prog> is emitted
+# before -Werror and would have no effect.
+CWARNFLAGS.vsock_device_test.c+=	-Wno-error
+LDFLAGS.vsock_device_test+=	-Wl,--wrap=socket -Wl,--wrap=connectat \
+	-Wl,--wrap=send -Wl,--wrap=recv -Wl,--wrap=sendmsg -Wl,--wrap=shutdown \
+	-Wl,--wrap=poll -Wl,--wrap=close -Wl,--wrap=accept \
+	-Wl,--wrap=socketpair -Wl,--wrap=fcntl -Wl,--wrap=setsockopt \
+	-Wl,--wrap=getsockopt -Wl,--wrap=recvmsg -Wl,--wrap=ioctl
+LIBADD.vsock_device_test+=	pthread
+CLEANFILES+=	pci_virtio_vsock.c pci_virtio_vsock_iov.h pci_virtio_vsock_probes.h
+
+# Copy the DUT sources into ${.OBJDIR} at beforedepend (not as an .o prerequisite:
+# ATF builds a PIE object, so an .o-only prerequisite never fires and a stale
+# copy would be compiled).  Re-copies whenever the bhyve sources change.
+beforedepend:	pci_virtio_vsock.c pci_virtio_vsock_iov.h \
+		pci_virtio_vsock_probes.h
+pci_virtio_vsock.c:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_vsock.c
+	cp ${.ALLSRC} ${.TARGET}
+pci_virtio_vsock_iov.h:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_vsock_iov.h
+	cp ${.ALLSRC} ${.TARGET}
+# No -DWITH_DTRACE here, so every VSOCK_PROBE_* resolves to a no-op.
+pci_virtio_vsock_probes.h:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_vsock_probes.h
+	cp ${.ALLSRC} ${.TARGET}
+
+.include <bsd.test.mk>

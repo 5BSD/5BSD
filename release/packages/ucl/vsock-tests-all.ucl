@@ -1,0 +1,12 @@
+comment = "bhyve virtio-vsock and AF_VSOCK test suite"
+
+desc = <<EOD
+Device-level ATF/Kyua tests for the bhyve virtio-vsock host device and
+end-to-end (host<->guest) test tooling and driver scripts for the AF_VSOCK
+socket domain.  Packaged separately from the full base test suite so it can be
+installed on its own.
+EOD
+
+annotations {
+	set = tests
+}

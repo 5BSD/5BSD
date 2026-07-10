@@ -58,46 +58,9 @@ ATF_TESTS_C+=	vsock_wire_test
 ATF_TESTS_C+=	vsock_iov_test
 CFLAGS.vsock_iov_test+=	-I${SRCTOP}/usr.sbin/bhyve
 
-# Device-level ATF harness for the bhyve virtio-vsock host device (see
-# vsock_device_harness/README.md).  It #includes the real pci_virtio_vsock.c and
-# shadows its bhyve headers with the mocks in vsock_device_harness/.  The DUT and
-# its bounded-copy header are copied into ${.OBJDIR} so their quote-includes
-# resolve to those mocks (via -I) instead of the real headers next to the
-# original; deliberately no -I to usr.sbin/bhyve is added, so the real
-# virtio.h/mevent.h/... are never on the search path.  Host-socket syscalls are
-# intercepted with ld --wrap.
-ATF_TESTS_C+=	vsock_device_test
-.PATH:		${SRCTOP}/tests/sys/kern/vsock_device_harness
-CFLAGS.vsock_device_test+=	-DWITHOUT_CAPSICUM \
-	-I${SRCTOP}/tests/sys/kern/vsock_device_harness -I${.OBJDIR}
-# The mock-included device source and the ld --wrap interceptor functions (which
-# must be non-static for the linker to bind them, so they trip
-# -Wmissing-prototypes) produce warnings we do not want fatal.  This must live in
-# CWARNFLAGS.<src> -- appended after the base -Werror in share/mk/bsd.sys.mk --
-# because -Wno-error in CFLAGS.<prog> is emitted before -Werror and has no effect.
-CWARNFLAGS.vsock_device_test.c+=	-Wno-error
-LDFLAGS.vsock_device_test+=	-Wl,--wrap=socket -Wl,--wrap=connectat \
-	-Wl,--wrap=send -Wl,--wrap=recv -Wl,--wrap=sendmsg -Wl,--wrap=shutdown \
-	-Wl,--wrap=poll -Wl,--wrap=close -Wl,--wrap=accept \
-	-Wl,--wrap=socketpair -Wl,--wrap=fcntl -Wl,--wrap=setsockopt \
-	-Wl,--wrap=getsockopt -Wl,--wrap=recvmsg -Wl,--wrap=ioctl
-LIBADD.vsock_device_test+=	pthread
-CLEANFILES+=	pci_virtio_vsock.c pci_virtio_vsock_iov.h pci_virtio_vsock_probes.h
-# The DUT sources are copied into ${.OBJDIR} and #included by the test.  Wire the
-# copies to beforedepend, NOT vsock_device_test.o: ATF builds a PIE object
-# (vsock_device_test.pieo), so an .o-only prerequisite never fires and a stale or
-# missing copy gets compiled.  beforedepend runs regardless of the object suffix
-# and re-copies whenever the bhyve sources change.
-beforedepend:	pci_virtio_vsock.c pci_virtio_vsock_iov.h \
-		pci_virtio_vsock_probes.h
-pci_virtio_vsock.c:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_vsock.c
-	cp ${.ALLSRC} ${.TARGET}
-pci_virtio_vsock_iov.h:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_vsock_iov.h
-	cp ${.ALLSRC} ${.TARGET}
-# DTrace USDT probe wrappers; no -DWITH_DTRACE here so every VSOCK_PROBE_* is a
-# no-op (the header pulls in <sys/sdt.h> only under WITH_DTRACE).
-pci_virtio_vsock_probes.h:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_vsock_probes.h
-	cp ${.ALLSRC} ${.TARGET}
+# The device-level ATF harness (vsock_device_test) now lives in its own
+# subdirectory Makefile (vsock_device_harness/) so it can be packaged in
+# vsock-tests; see TESTS_SUBDIRS below.
 
 TEST_METADATA.sigwait+=	is_exclusive="true"
 TEST_METADATA.vsock_test+=	required_user="root"
@@ -214,6 +177,7 @@ TESTS_SUBDIRS+=	acct
 TESTS_SUBDIRS+=	execve
 TESTS_SUBDIRS+=	pipe
 TESTS_SUBDIRS+=	tty
+TESTS_SUBDIRS+=	vsock_device_harness
 TESTS_SUBDIRS+=	vsock_e2e
 
 .include <netbsd-tests.test.mk>
