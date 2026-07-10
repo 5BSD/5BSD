@@ -25,12 +25,29 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+/*
+ * Enlarge a data socket's buffers so a large guest->host (or host->guest)
+ * SEQPACKET record is not truncated to net.local.seqpacket.maxseqpacket (64
+ * KiB).  MUST be set on the ACCEPTED/connected socket, not the listener --
+ * FreeBSD does not propagate the listener's SO_RCVBUF to accepted sockets.
+ */
+static void
+bump_bufs(int fd)
+{
+	int big = 4 * 1024 * 1024;
+
+	(void)setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &big, sizeof(big));
+	(void)setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &big, sizeof(big));
+}
+
 static int
 relay(int sfd)
 {
 	char buf[65536];
 	struct pollfd pfd[2];
 	bool in_open = true, sock_open = true;
+
+	bump_bufs(sfd);
 	ssize_t n;
 
 	while (sock_open || in_open) {
@@ -74,6 +91,8 @@ drain(int c)
 	char buf[65536];
 	ssize_t n;
 
+	bump_bufs(c);
+
 	while ((n = read(c, buf, sizeof(buf))) > 0)
 		if (write(1, buf, n) != n)
 			return (1);
@@ -86,6 +105,8 @@ echo_conn(int c)
 {
 	char buf[65536];
 	ssize_t n;
+
+	bump_bufs(c);
 
 	while ((n = read(c, buf, sizeof(buf))) > 0)
 		if (write(c, buf, n) != n)

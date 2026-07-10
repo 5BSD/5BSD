@@ -25,6 +25,49 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+/*
+ * -1: slurp all of stdin and send it as a SINGLE record with MSG_EOR (SEQPACKET)
+ * so a guest->host record larger than one stdin read() chunk is delivered as one
+ * record, then drain the reply.  Cap the slurp at the device's max reassembled
+ * record (4 MiB).
+ */
+static int
+relay_oneshot(int sfd, bool seqpacket)
+{
+	size_t cap = 4u * 1024 * 1024, len = 0;
+	char *buf = malloc(cap);
+	ssize_t n;
+
+	if (buf == NULL) { perror("malloc"); return (1); }
+	while (len < cap) {
+		n = read(0, buf + len, cap - len);
+		if (n < 0) { if (errno == EINTR) continue; perror("read");
+			free(buf); return (1); }
+		if (n == 0) break;
+		len += (size_t)n;
+	}
+	if (seqpacket) {
+		struct iovec io = { buf, len };
+		struct msghdr mh;
+		memset(&mh, 0, sizeof(mh));
+		mh.msg_iov = &io; mh.msg_iovlen = 1;
+		if (sendmsg(sfd, &mh, MSG_EOR) != (ssize_t)len) {
+			perror("sendmsg"); free(buf); return (1);
+		}
+	} else if (write(sfd, buf, len) != (ssize_t)len) {
+		perror("write"); free(buf); return (1);
+	}
+	(void)shutdown(sfd, SHUT_WR);
+	for (;;) {
+		n = read(sfd, buf, cap);
+		if (n < 0) { if (errno == EINTR) continue; break; }
+		if (n == 0) break;
+		if (write(1, buf, (size_t)n) != n) break;
+	}
+	free(buf);
+	return (0);
+}
+
 static int
 relay(int sfd)
 {
@@ -99,18 +142,20 @@ main(int argc, char **argv)
 {
 	int type = SOCK_STREAM;
 	bool listen_mode = false, echo_mode = false, drain_mode = false;
+	bool oneshot = false;
 	int ch, s;
 	struct sockaddr_vm sa;
 
 	signal(SIGPIPE, SIG_IGN);
 	signal(SIGCHLD, SIG_IGN);
 
-	while ((ch = getopt(argc, argv, "lsed")) != -1) {
+	while ((ch = getopt(argc, argv, "lsed1")) != -1) {
 		switch (ch) {
 		case 'l': listen_mode = true; break;
 		case 's': type = SOCK_SEQPACKET; break;
 		case 'e': echo_mode = true; break;
 		case 'd': drain_mode = true; break;
+		case '1': oneshot = true; break;  /* send all stdin as ONE record */
 		default:
 			fprintf(stderr, "usage: %s [-s] <cid> <port> | "
 			    "%s -l [-s] [-e] <port>\n", argv[0], argv[0]);
@@ -176,5 +221,7 @@ main(int argc, char **argv)
 		fprintf(stderr, "connect: %s\n", strerror(errno));
 		return (errno == ECONNRESET ? 3 : 1);
 	}
+	if (oneshot)
+		return (relay_oneshot(s, type == SOCK_SEQPACKET));
 	return (relay(s));
 }

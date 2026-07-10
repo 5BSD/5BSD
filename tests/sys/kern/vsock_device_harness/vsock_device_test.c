@@ -758,6 +758,39 @@ ATF_TC_BODY(host_rx_fragments_to_small_rx_buffer, tc)
 }
 
 /*
+ * --- the same fragment-to-RX-buffer behavior for STREAM: a host->guest byte
+ * run larger than one guest RX buffer is split across successive buffers, none
+ * dropped, and (STREAM has no records) NO packet carries EOM/EOR. ---
+ */
+ATF_TC_WITHOUT_HEAD(host_rx_stream_fragments_to_small_rx_buffer);
+ATF_TC_BODY(host_rx_stream_fragments_to_small_rx_buffer, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t data[200];
+	uint32_t total = 0, cap;
+	int i;
+	reset_caps();
+	g_rxbuf_len = 100;		/* header(44) + 56 payload per buffer */
+	cap = 100 - sizeof(struct virtio_vsock_hdr);
+	c = mk_established(sc, 1234, 80, STREAM);	/* ample credit */
+	memset(data, 'S', sizeof(data));
+	stage_recv(data, sizeof(data));
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+
+	ATF_CHECK(g_ninject >= 4);	/* 200 / 56 -> 4 packets, none dropped */
+	for (i = 0; i < g_ninject; i++) {
+		ATF_CHECK(g_inject[i].op == VIRTIO_VSOCK_OP_RW);
+		ATF_CHECK(g_inject[i].len <= cap);
+		ATF_CHECK((g_inject[i].flags &		/* STREAM: never a record */
+		    (VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR)) == 0);
+		total += g_inject[i].len;
+	}
+	ATF_CHECK(total == sizeof(data));	/* every byte delivered */
+	free(sc);
+}
+
+/*
  * --- latent path: a SEQPACKET record larger than the guest's ENTIRE
  * advertised window can never be reassembled there, so it is reset rather than
  * deferred forever.  Reachable only for a guest advertising a small window
@@ -1529,6 +1562,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, host_rx_forwards_to_guest);
 	ATF_TP_ADD_TC(tp, host_rx_respects_credit);
 	ATF_TP_ADD_TC(tp, host_rx_fragments_to_small_rx_buffer);
+	ATF_TP_ADD_TC(tp, host_rx_stream_fragments_to_small_rx_buffer);
 	ATF_TP_ADD_TC(tp, host_rx_oversized_seqpacket_record_resets);
 	ATF_TP_ADD_TC(tp, host_eof_sends_shutdown);
 	ATF_TP_ADD_TC(tp, seqpacket_reassembles_to_eom);

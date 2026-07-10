@@ -212,6 +212,22 @@ t_seq_bigrecord() {
 	result seqpacket_bigrecord_whole $?
 }
 
+# --- T14c: a large GUEST->HOST SEQPACKET record arrives whole.  Exercises the
+# device reassembly AND the fold-in: unix-pipe raises SO_RCVBUF on the accepted
+# socket so a record > net.local.seqpacket.maxseqpacket (64 KiB) is not
+# truncated on receipt.  (Guest->host STREAM at size is covered by t_bulk_g2h.) ---
+t_seq_bigrecord_g2h() {
+	gclean
+	timeout 30 "$TOOLS/unix-pipe" -l -s -d "$DIR/5017" > "$WORK/g2hrec" 2>/dev/null &
+	lpid=$!
+	sleep 1
+	# guest sends ONE 200 KiB record via a single sendmsg(MSG_EOR) (-1).
+	gcmd 'timeout 20 sh -c "head -c 204800 /dev/zero | tr \"\\0\" G | /root/vsock-pipe -s -1 2 5017"' 30 >/dev/null
+	wait $lpid 2>/dev/null
+	got=$(wc -c < "$WORK/g2hrec" 2>/dev/null | tr -d ' ')
+	[ "$got" = "204800" ]; result seqpacket_bigrecord_g2h $?
+}
+
 # --- T14: connection-count leak check (must return to baseline) ----
 t_leak_check() {
 	gclean
@@ -226,7 +242,8 @@ t_leak_check() {
 
 ALL="t_echo_g2h t_echo_h2g t_seq_g2h t_seq_h2g t_bulk_g2h t_bulk_h2g
      t_credit_churn t_dead_host_port t_dead_guest_port t_concurrency
-     t_eof t_kill_midsend t_seq_records t_seq_bigrecord t_leak_check"
+     t_eof t_kill_midsend t_seq_records t_seq_bigrecord t_seq_bigrecord_g2h
+     t_leak_check"
 
 echo "vsock e2e: DIR=$DIR BULK=${BULK_MB}MiB NCONN=$NCONN"
 gcmd 'test -x /root/vsock-pipe && echo tool-ok' | grep -q tool-ok || {
