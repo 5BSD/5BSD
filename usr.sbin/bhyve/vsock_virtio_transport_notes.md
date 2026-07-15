@@ -10,6 +10,14 @@ Researched and written 2026-07-09. Companion docs:
 `tests/sys/kern/vsock_bhyve_testplan.md` (e2e test plan),
 `share/man/man4/vsock.4`.
 
+Implementation update (2026-07-14): bhyve now has a generic modern PCI
+transport backend in `virtio_pci_modern.c`, with vsock as its first consumer.
+For upgrade compatibility, vsock continues to default to its existing legacy
+identity and transport.  `transport=modern` explicitly selects the conformant
+non-transitional identity and capability-based transport.  Historical audit
+sections below describe the code before that implementation unless marked as
+updated.
+
 ---
 
 ## 1. Executive summary
@@ -23,20 +31,22 @@ Researched and written 2026-07-09. Companion docs:
   spec repo is empty). Our vsock **device logic is already 1.4-complete**:
   we offer exactly the full 1.4 feature set (STREAM/SEQPACKET/
   NO_IMPLIED_STREAM, bits 0–2).
-- bhyve however implements **only the pre-OASIS legacy (virtio 0.9.5) PCI
-  transport** — BAR0 I/O ports, 32-bit features, 32-bit 4K-aligned queue
-  PFN. There is no modern (virtio 1.0+) transport code anywhere in bhyve:
-  no virtio vendor PCI capabilities, no VIRTIO_F_VERSION_1, no
-  queue_enable, no packed rings, not even a TODO stub.
+- Before the 2026-07-14 implementation, bhyve provided **only the pre-OASIS
+  legacy (virtio 0.9.5) PCI transport** — BAR0 I/O ports, 32-bit features,
+  and a 32-bit 4K-aligned queue PFN. The new generic backend adds modern
+  vendor capabilities, VIRTIO_F_VERSION_1, 64-bit feature windows,
+  queue_enable, and separately addressed split rings. Packed rings and later
+  optional transport features remain future work.
 - A "legacy-only" device is **not conformant to any 1.x spec** (clause 7.4:
   a device must be transitional or non-transitional), and vsock
   specifically has **no legal transitional identity at all** — our
   transitional-range device ID 0x1013 is invented. It works against Linux
   purely because Linux's probing is more permissive than the spec
   (section 6 below).
-- Target state: **non-transitional, modern-only vsock** at device ID
+- Implemented opt-in state: **non-transitional modern vsock** at device ID
   0x1053, revision ≥ 1, with the capability-based modern transport —
-  matching QEMU, which treats vsock as modern-only. Gap list in section 7.
+  matching QEMU's modern device. The old interface remains the default solely
+  as a compatibility contract. Gap list and implementation details follow.
 
 ---
 
@@ -516,7 +526,8 @@ driver).
 
 ```
 struct virtio_softc:
-  uint32_t vs_negotiated_caps  ->  uint64_t        [snapshot format break, see 8.8]
+  uint32_t vs_negotiated_caps remains unchanged; modern high feature bits
+  live in the transport's uint64_t driver_features field
 + uint32_t vs_device_feature_select
 + uint32_t vs_driver_feature_select
 + uint8_t  vs_config_generation                    [static 0 for vsock]
@@ -632,43 +643,11 @@ unchanged: split-ring layout is identical under VERSION_1.
   driver, keep the current 0x1013 identity available behind a
   device config option (bhyve config nvlist, like the existing vsock
   options): `-s N,virtio-vsock,cid=C,transport=modern|legacy`,
-  default `modern`. The legacy path is the existing code, unchanged and
-  still out-of-spec — documented as deprecated compat, candidate for
-  removal once nothing uses it. This turns the "release-notes-worthy
-  breakage" into an opt-out.
+  default `legacy`. The legacy path is the existing code and PCI identity,
+  unchanged and still out-of-spec. Modern behavior is opt-in, so existing
+  launchers and guests do not change behavior during an upgrade.
 
-### 8.9 Snapshot / migration compatibility — resolved
-
-Facts established from `sys/amd64/include/vmm_snapshot.h`: the snapshot
-format is a raw, `sizeof`-ordered byte buffer per device
-(`SNAPSHOT_VAR_OR_LEAVE` = `vm_snapshot_buf(&var, sizeof(var))`), with
-**no version field anywhere**. Restore-side integrity comes only from
-`SNAPSHOT_VAR_CMP_OR_LEAVE` fields, which compare the stored value
-against the live one and error out on mismatch. `BHYVE_SNAPSHOT` is a
-non-default build option (experimental), so the format is not a stable
-ABI — but we still fail *cleanly*, not silently:
-
-1. Widening `vs_negotiated_caps` to `uint64_t` shifts every subsequent
-   field in the buffer. An old snapshot restored into a new bhyve would
-   misparse — however `vi_pci_snapshot_consts` CMPs `vc_hv_caps`
-   (virtio.c:874), and adding VERSION_1 to `vc_hv_caps` changes that
-   value, so restore of an old vsock snapshot **deterministically fails
-   the CMP with a clear error** instead of restoring garbage. This is
-   the accidental-but-real guard; make it deliberate:
-2. Add `uint32_t vs_transport_version` (= 2 for the 64-bit/modern
-   layout) as the **first** `SNAPSHOT_VAR_CMP` in
-   `vi_pci_snapshot_softc`, so all future virtio transport layout
-   changes fail fast at a named field rather than downstream.
-3. New state to persist for modern devices: `vs_device_feature_select`,
-   `vs_driver_feature_select`, `vs_config_generation`, and per queue:
-   `vq_desc_gpa`/`vq_driver_gpa`/`vq_device_gpa`, `vq_enabled`,
-   `vq_qsize` (now driver-writable, so it's state, not a constant —
-   move it from `SNAPSHOT_VAR_CMP` at virtio.c:897 to a plain
-   `SNAPSHOT_VAR`, CMP `vq_qsize_max` instead). On restore of an
-   enabled queue, remap rings via the modern path (`vi_vq_init_modern`)
-   rather than the PFN path.
-
-### 8.10 Device-normative conformance checklist
+### 8.9 Device-normative conformance checklist
 
 Every device MUST from 1.4 §4.1 that applies to this design, with its
 discharge point:
@@ -848,7 +827,6 @@ identical results are the pass criterion.
 | Linux guest, modern device | `vp_modern_probe` path; socat/iperf-vsock data; `lspci -vv` shows caps |
 | Linux guest, MSI-X disabled (pci=nomsi) | INTx + ISR path works |
 | legacy-only driver vs modern device | must NOT attach; no crash, clean probe failure |
-| snapshot/restore mid-traffic (BHYVE_SNAPSHOT build) | connections resume or reset cleanly; restore of pre-change snapshot fails with the §8.9 version error |
 
 Plus soak: connection churn + credit-stall traffic overnight with the
 DTrace overview script attached (below) watching for leaks
@@ -856,30 +834,30 @@ DTrace overview script attached (below) watching for leaks
 
 ## 11. Observability: DTrace and logging
 
-### 11.1 USDT probes (extend `vsock_provider.d`)
+### 11.1 USDT probes
 
-The provider deliberately matches the guest kernel SDT provider name so
-the whole stack traces under `vsock*::` (vsock_provider.d header). Add a
-transport group; probes fire in the new `virtio.c` modern paths (via
-`pci_virtio_vsock_probes.h`-style generated macros — same mechanism as
-today):
+The device protocol remains under the `vsock` provider.  Generic PCI
+transport events use a separate `virtio` provider declared in the same
+`vsock_provider.d` build input, so future virtio devices can reuse it without
+depending on vsock-specific code:
 
 ```
 /* Modern transport lifecycle (§8) */
-probe transport__feature__negotiated(uint64_t features);
+probe transport__features(uint64_t features);
 probe transport__status(uint8_t oldval, uint8_t newval);
 probe transport__queue__enable(uint16_t idx, uint64_t desc,
     uint64_t driver, uint64_t device, uint16_t qsize);
 probe transport__queue__notify(uint16_t idx);
 probe transport__cfg__window(uint8_t bar, uint32_t off,
-    uint8_t len, uint8_t iswrite);
+    uint32_t len, uint8_t iswrite);
+probe transport__config__changed(uint8_t generation);
 probe transport__reset();
 probe transport__error(const char *why);        /* + DEVICE_NEEDS_RESET */
 ```
 
 `transport__error` is the probe twin of every "driver confused?"
-`EPRINTLN` in vq_getchain/common-cfg validation — one probe, `why`
-string discriminates, same pattern as the existing `desc__drop`.
+one probe whose `why` string discriminates the condition, following the
+existing `desc__drop` pattern.
 
 ### 11.2 share/dtrace script
 
@@ -891,16 +869,13 @@ e2e matrix and the first thing to attach when a guest won't probe.
 
 ### 11.3 Logging conventions
 
-Follow the tree's existing split (debug.h + vsock device precedent):
-- `DPRINTF`: negotiation trace (feature words, per-queue GPAs at
-  enable) — debug builds/verbose only.
-- `WPRINTF`: driver protocol violations we tolerate (invalid
-  queue_size write, PCI_CFG misuse, write to RO field) — rate-limited
-  the way the vsock hostile-input paths are, so a malicious guest
-  can't flood the log; always paired with a probe so the unthrottled
-  stream is still observable via DTrace.
-- `EPRINTLN`: fatal transport states (ring validation failure →
-  DEVICE_NEEDS_RESET).
+Host configuration failures (invalid transport, BAR, queue maximum, memory,
+BAR allocation, or capability allocation) use `EPRINTLN`.  Guest-controlled
+invalid accesses are deliberately not printed, because an untrusted guest
+could flood stderr; fatal queue validation is exposed through
+`virtio:::transport-error` and `DEVICE_NEEDS_RESET`.  Negotiation, status,
+queue, reset, config-window, and config-change activity is observable through
+the other `virtio` probes without enabling verbose logging.
 
 ## 12. Audit integration
 
@@ -921,7 +896,7 @@ Two distinct planes:
 - **Host device model (bhyve)**: bhyve has no BSM producer, and the
   device model shouldn't grow one; the security-event surface is the
   existing `desc__drop`/overflow probes plus the new
-  `transport__error`, all rate-limit-logged via WPRINTF to syslog. If
+  `transport__error` probe. If
   host-side audit records for guest vsock connections are ever
   required, the right place is the host kernel vsock backend (it sees
   every connect), not the PCI emulation.

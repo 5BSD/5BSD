@@ -202,8 +202,21 @@ vring_size_aligned(u_int qsz)
 }
 
 struct pci_devinst;
+struct nvlist;
 struct vqueue_info;
 struct vm_snapshot_meta;
+struct virtio_pci_modern;
+
+enum virtio_pci_transport {
+	VIRTIO_PCI_TRANSPORT_LEGACY,
+	VIRTIO_PCI_TRANSPORT_MODERN,
+};
+
+enum virtio_pci_transport_policy {
+	VIRTIO_PCI_LEGACY_DEFAULT,
+	VIRTIO_PCI_MODERN_DEFAULT,
+	VIRTIO_PCI_MODERN_ONLY,
+};
 
 /*
  * A virtual device, with some number (possibly 0) of virtual
@@ -250,6 +263,8 @@ struct virtio_softc {
 	uint8_t	vs_status;		/* value from last status write */
 	uint8_t	vs_isr;			/* ISR flags, if not MSI-X */
 	uint16_t vs_msix_cfg_idx;	/* MSI-X vector for config event */
+	enum virtio_pci_transport vs_transport;
+	struct virtio_pci_modern *vs_modern;
 };
 
 #define	VS_LOCK(vs)							\
@@ -283,6 +298,8 @@ struct virtio_consts {
 	int	(*vc_snapshot)(void *, struct vm_snapshot_meta *);
 				/* called to save / restore device state */
 };
+
+bool	vi_pci_is_modern(const struct virtio_softc *);
 
 /*
  * Data structure allocated (statically) per virtual queue.
@@ -318,6 +335,11 @@ struct vqueue_info {
 	uint16_t vq_msix_idx;	/* MSI-X index, or VIRTIO_MSI_NO_VECTOR */
 
 	uint32_t vq_pfn;	/* PFN of virt queue (not shifted!) */
+	uint16_t vq_qsize_max;	/* modern: maximum queue size */
+	uint16_t vq_enabled;	/* modern: queue_enable */
+	uint64_t vq_desc_gpa;	/* modern descriptor table address */
+	uint64_t vq_driver_gpa;	/* modern available ring address */
+	uint64_t vq_device_gpa;	/* modern used ring address */
 
 	struct vring_desc *vq_desc;	/* descriptor array */
 	struct vring_avail *vq_avail;	/* the "avail" ring */
@@ -337,7 +359,9 @@ static inline int
 vq_ring_ready(struct vqueue_info *vq)
 {
 
-	return (vq->vq_flags & VQ_ALLOC);
+	return ((vq->vq_flags & VQ_ALLOC) != 0 &&
+	    (vq->vq_vs->vs_transport != VIRTIO_PCI_TRANSPORT_MODERN ||
+	    (vq->vq_vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0));
 }
 
 /*
@@ -360,9 +384,10 @@ static inline void
 vi_interrupt(struct virtio_softc *vs, uint8_t isr, uint16_t msix_idx)
 {
 
-	if (pci_msix_enabled(vs->vs_pi))
-		pci_generate_msix(vs->vs_pi, msix_idx);
-	else {
+	if (pci_msix_enabled(vs->vs_pi)) {
+		if (!vi_pci_is_modern(vs) || msix_idx != VIRTIO_MSI_NO_VECTOR)
+			pci_generate_msix(vs->vs_pi, msix_idx);
+	} else {
 		VS_LOCK(vs);
 		vs->vs_isr |= isr;
 		pci_generate_msi(vs->vs_pi, 0);
@@ -418,6 +443,19 @@ struct vi_req {
 void	vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc,
 			void *dev_softc, struct pci_devinst *pi,
 			struct vqueue_info *queues);
+int	vi_pci_select_transport(struct virtio_softc *, const struct nvlist *,
+	    enum virtio_pci_transport_policy);
+int	vi_pci_modern_init(struct virtio_softc *, int);
+void	vi_pci_modern_set_identity(struct virtio_softc *, uint16_t);
+void	vi_pci_modern_reset(struct virtio_softc *);
+/* Increment config_generation and notify; caller holds vs_mtx, if present. */
+void	vi_pci_modern_config_changed(struct virtio_softc *);
+uint64_t vi_pci_modern_read(struct pci_devinst *, int, uint64_t, int);
+void	vi_pci_modern_write(struct pci_devinst *, int, uint64_t, int,
+	    uint64_t);
+int	vi_pci_modern_cfgread(struct pci_devinst *, int, int, uint32_t *);
+int	vi_pci_modern_cfgwrite(struct pci_devinst *, int, int, uint32_t);
+void	vi_pci_notify_queue(struct virtio_softc *, uint64_t);
 int	vi_intr_init(struct virtio_softc *vs, int barnum, int use_msix);
 void	vi_reset_dev(struct virtio_softc *);
 void	vi_set_io_bar(struct virtio_softc *, int);

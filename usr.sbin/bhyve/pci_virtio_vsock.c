@@ -585,14 +585,20 @@ vtvsock_send_fd(int sock, int fd, const void *data, size_t datalen)
 static uint32_t
 vtvsock_alloc_port(struct pci_vtvsock_softc *sc)
 {
-	uint32_t start = sc->vsc_next_port;
+	uint32_t start;
 	struct vtvsock_conn *c;
+
+	/* UINT32_MAX is VSOCK_PORT_ANY and ports below 1024 are reserved. */
+	if (sc->vsc_next_port < VTVSOCK_PORT_MIN ||
+	    sc->vsc_next_port == UINT32_MAX)
+		sc->vsc_next_port = VTVSOCK_PORT_MIN;
+	start = sc->vsc_next_port;
 
 	for (;;) {
 		uint32_t port = sc->vsc_next_port;
 
 		/* Wrap around, skipping the reserved range */
-		if (sc->vsc_next_port == UINT32_MAX)
+		if (sc->vsc_next_port == UINT32_MAX - 1)
 			sc->vsc_next_port = VTVSOCK_PORT_MIN;
 		else
 			sc->vsc_next_port++;
@@ -3388,15 +3394,22 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vsc_queues[VTVSOCK_RXQ].vq_notify   = pci_vtvsock_notify_rx;
 	sc->vsc_queues[VTVSOCK_TXQ].vq_notify   = pci_vtvsock_notify_tx;
 	sc->vsc_queues[VTVSOCK_EVENTQ].vq_notify = pci_vtvsock_notify_event;
+	if (vi_pci_select_transport(&sc->vsc_vs, nvl,
+	    VIRTIO_PCI_LEGACY_DEFAULT) != 0)
+		goto failed;
 
 	/* --- PCI identity --- */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_VSOCK);
-	pci_set_cfgdata16(pi, PCIR_VENDOR,  VIRTIO_VENDOR);
+	if (vi_pci_is_modern(&sc->vsc_vs))
+		vi_pci_modern_set_identity(&sc->vsc_vs, VIRTIO_ID_VSOCK);
+	else {
+		pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_VSOCK);
+		pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
+		pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_VSOCK);
+		pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
+	}
 	pci_set_cfgdata8(pi,  PCIR_CLASS,   PCIC_SIMPLECOMM);
 	/* "other" subclass: subclass 0 (UART) invites serial-driver probes */
 	pci_set_cfgdata8(pi,  PCIR_SUBCLASS, 0x80);
-	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_VSOCK);
-	pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
 
 	/* --- Open directory fd --- */
 	sc->vsc_dfd = open(path, O_RDONLY | O_DIRECTORY);
@@ -3489,7 +3502,11 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	/* --- Virtio interrupt and BAR --- */
 	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
 		goto failed;
-	vi_set_io_bar(&sc->vsc_vs, 0);
+	if (vi_pci_is_modern(&sc->vsc_vs)) {
+		if (vi_pci_modern_init(&sc->vsc_vs, 2) != 0)
+			goto failed;
+	} else
+		vi_set_io_bar(&sc->vsc_vs, 0);
 
 	return (0);
 
@@ -3531,6 +3548,8 @@ failed:
 static const struct pci_devemu pci_de_vtvsock = {
 	.pe_emu =		"virtio-vsock",
 	.pe_init =		pci_vtvsock_init,
+	.pe_cfgwrite =		vi_pci_modern_cfgwrite,
+	.pe_cfgread =		vi_pci_modern_cfgread,
 	.pe_barwrite =		vi_pci_write,
 	.pe_barread =		vi_pci_read,
 	.pe_legacy_config =	pci_vtvsock_legacy_config,

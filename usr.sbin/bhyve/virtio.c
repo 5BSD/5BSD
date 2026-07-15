@@ -78,6 +78,7 @@ vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc,
 	pi->pi_arg = vs;
 
 	vs->vs_queues = queues;
+	vs->vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
 	for (i = 0; i < vc->vc_nvq; i++) {
 		queues[i].vq_vs = vs;
 		queues[i].vq_num = i;
@@ -118,6 +119,33 @@ vi_reset_dev(struct virtio_softc *vs)
 		pci_lintr_deassert(vs->vs_pi);
 	vs->vs_isr = 0;
 	vs->vs_msix_cfg_idx = VIRTIO_MSI_NO_VECTOR;
+	vi_pci_modern_reset(vs);
+}
+
+void
+vi_pci_notify_queue(struct virtio_softc *vs, uint64_t qidx)
+{
+	struct vqueue_info *vq;
+	struct virtio_consts *vc;
+
+	vc = vs->vs_vc;
+	if (qidx >= (unsigned int)vc->vc_nvq) {
+		EPRINTLN("%s: queue %ju notify out of range", vc->vc_name,
+		    (uintmax_t)qidx);
+		return;
+	}
+	vq = &vs->vs_queues[qidx];
+	if (vs->vs_transport == VIRTIO_PCI_TRANSPORT_MODERN &&
+	    (!vq->vq_enabled ||
+	    (vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0))
+		return;
+	if (vq->vq_notify != NULL)
+		(*vq->vq_notify)(DEV_SOFTC(vs), vq);
+	else if (vc->vc_qnotify != NULL)
+		(*vc->vc_qnotify)(DEV_SOFTC(vs), vq);
+	else
+		EPRINTLN("%s: qnotify queue %ju: missing vq/vc notify",
+		    vc->vc_name, (uintmax_t)qidx);
 }
 
 /*
@@ -579,6 +607,8 @@ vi_pci_read(struct pci_devinst *pi, int baridx, uint64_t offset, int size)
 			return (pci_emul_msix_tread(pi, offset, size));
 		}
 	}
+	if (vi_pci_is_modern(vs))
+		return (vi_pci_modern_read(pi, baridx, offset, size));
 
 	/* XXX probably should do something better than just assert() */
 	assert(baridx == 0);
@@ -700,6 +730,10 @@ vi_pci_write(struct pci_devinst *pi, int baridx, uint64_t offset, int size,
 			return;
 		}
 	}
+	if (vi_pci_is_modern(vs)) {
+		vi_pci_modern_write(pi, baridx, offset, size, value);
+		return;
+	}
 
 	/* XXX probably should do something better than just assert() */
 	assert(baridx == 0);
@@ -774,20 +808,7 @@ bad:
 		vs->vs_curq = value;
 		break;
 	case VIRTIO_PCI_QUEUE_NOTIFY:
-		if (value >= (unsigned int)vc->vc_nvq) {
-			EPRINTLN("%s: queue %d notify out of range",
-				name, (int)value);
-			goto done;
-		}
-		vq = &vs->vs_queues[value];
-		if (vq->vq_notify)
-			(*vq->vq_notify)(DEV_SOFTC(vs), vq);
-		else if (vc->vc_qnotify)
-			(*vc->vc_qnotify)(DEV_SOFTC(vs), vq);
-		else
-			EPRINTLN(
-			    "%s: qnotify queue %d: missing vq/vc notify",
-				name, (int)value);
+		vi_pci_notify_queue(vs, value);
 		break;
 	case VIRTIO_PCI_STATUS:
 		vs->vs_status = value;
@@ -939,6 +960,9 @@ vi_pci_snapshot(struct vm_snapshot_meta *meta)
 	pi = meta->dev_data;
 	vs = pi->pi_arg;
 	vc = vs->vs_vc;
+	/* The existing serializer describes only bhyve's legacy transport. */
+	if (vi_pci_is_modern(vs))
+		return (EOPNOTSUPP);
 
 	/* Save virtio softc */
 	ret = vi_pci_snapshot_softc(vs, meta);

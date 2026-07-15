@@ -489,6 +489,16 @@ Virtio SCSI interface.
 Virtio 9p (VirtFS) interface.
 .It Cm virtio-rnd
 Virtio RNG interface.
+The optional
+.Cm transport
+setting accepts
+.Cm legacy
+or
+.Cm modern .
+If omitted, the legacy PCI transport and its existing device identity are used
+for compatibility with existing guests and launch scripts.
+The modern setting selects the non-transitional VirtIO PCI transport and
+device ID 0x1044.
 .It Cm virtio-console
 Virtio console interface, which exposes multiple ports
 to the guest in the form of simple char devices for simple IO
@@ -502,6 +512,16 @@ The device is configured with
 (guest context identifier, from 3 through 4294967294) and
 .Cm path
 (existing host directory for Unix domain sockets).
+The optional
+.Cm transport
+setting accepts
+.Cm legacy
+or
+.Cm modern .
+If omitted, the legacy PCI transport is used for compatibility with existing
+guests and launch scripts.
+The modern setting selects the non-transitional VirtIO PCI transport and
+device ID 0x1053.
 Guest connections to a host port use a socket named for the port inside this
 directory.
 For host-to-guest connections, host processes connect to

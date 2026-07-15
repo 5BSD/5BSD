@@ -55,6 +55,8 @@ static size_t g_rxbuf_len = sizeof(g_rxbuf);
 static int g_chain_readable = 0;
 static int g_chain_writable = 1;
 static int g_getchain_consumes;
+static uint32_t g_rel_len;
+static int g_endchains;
 
 /* ---- host-socket syscall effects ---- */
 static int g_next_fd = 500;
@@ -88,6 +90,7 @@ vq_relchain(struct vqueue_info *vq, uint16_t idx, uint32_t len)
 	struct cap_pkt *p;
 
 	(void)vq; (void)idx;
+	g_rel_len = len;
 	if (len < sizeof(*h))
 		return;			/* a drop (relchain with len 0) */
 	p = &g_inject[g_ninject++];
@@ -101,7 +104,8 @@ vq_relchain(struct vqueue_info *vq, uint16_t idx, uint32_t len)
 	p->fwd_cnt = le32toh(h->fwd_cnt);
 	g_rx_descs--;
 }
-void vq_endchains(struct vqueue_info *vq, int i) { (void)vq; (void)i; }
+void vq_endchains(struct vqueue_info *vq, int i)
+{ (void)vq; (void)i; g_endchains++; }
 
 /* ================= mock mevent / virtio glue ================= */
 static struct mevent { int fd; } g_mev[128];
@@ -124,6 +128,18 @@ int mevent_delete_close(struct mevent *m) { if (m) (void)close(m->fd); return (0
 void vi_softc_linkup(struct virtio_softc *a, struct virtio_consts *b, void *c,
     struct pci_devinst *d, struct vqueue_info *e)
 { (void)a; (void)b; (void)c; (void)d; (void)e; }
+int vi_pci_select_transport(struct virtio_softc *a, const nvlist_t *b,
+    enum virtio_pci_transport_policy c)
+{ (void)a; (void)b; (void)c; return (0); }
+bool vi_pci_is_modern(const struct virtio_softc *a) { (void)a; return (false); }
+int vi_pci_modern_init(struct virtio_softc *a, int b)
+{ (void)a; (void)b; return (0); }
+void vi_pci_modern_set_identity(struct virtio_softc *a, uint16_t b)
+{ (void)a; (void)b; }
+int vi_pci_modern_cfgread(struct pci_devinst *a, int b, int c, uint32_t *d)
+{ (void)a; (void)b; (void)c; (void)d; return (1); }
+int vi_pci_modern_cfgwrite(struct pci_devinst *a, int b, int c, uint32_t d)
+{ (void)a; (void)b; (void)c; (void)d; return (1); }
 int vi_intr_init(struct virtio_softc *a, int b, int c)
 { (void)a; (void)b; (void)c; return (0); }
 void vi_set_io_bar(struct virtio_softc *a, int b) { (void)a; (void)b; }
@@ -362,6 +378,25 @@ reset_caps(void)
 	g_recv_len = 0; g_recv_off = 0; g_recv_chunk_max = 0; g_recv_eof = 0;
 	g_recv_zero_dgram = 0; g_recv_no_eor = 0;
 	g_chain_readable = 0; g_chain_writable = 1; g_getchain_consumes = 0;
+	g_rel_len = 0; g_endchains = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(port_allocator_skips_reserved);
+ATF_TC_BODY(port_allocator_skips_reserved, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+
+	pthread_mutex_lock(&sc->vsc_mtx);
+	sc->vsc_next_port = 0;
+	ATF_CHECK(vtvsock_alloc_port(sc) == VTVSOCK_PORT_MIN);
+	ATF_CHECK(sc->vsc_next_port == VTVSOCK_PORT_MIN + 1);
+	sc->vsc_next_port = UINT32_MAX;
+	ATF_CHECK(vtvsock_alloc_port(sc) == VTVSOCK_PORT_MIN);
+	sc->vsc_next_port = UINT32_MAX - 1;
+	ATF_CHECK(vtvsock_alloc_port(sc) == UINT32_MAX - 1);
+	ATF_CHECK(sc->vsc_next_port == VTVSOCK_PORT_MIN);
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	free(sc);
 }
 /* Stage a host->guest message that recv() will return to conn_data_cb. */
 static void
@@ -1609,6 +1644,7 @@ ATF_TC_BODY(tx_oversized_paylen_dropped, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, spoofed_src_cid);
+	ATF_TP_ADD_TC(tp, port_allocator_skips_reserved);
 	ATF_TP_ADD_TC(tp, unknown_type_rst);
 	ATF_TP_ADD_TC(tp, unknown_conn_rst);
 	ATF_TP_ADD_TC(tp, rst_unknown_conn_ignored);

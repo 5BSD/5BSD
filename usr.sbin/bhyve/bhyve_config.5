@@ -307,6 +307,18 @@ VirtIO input interface.
 VirtIO network interface.
 .It Li virtio-rnd
 VirtIO RNG interface.
+The optional
+.Va transport
+variable is either
+.Li legacy
+or
+.Li modern .
+It defaults to
+.Li legacy
+to preserve the existing PCI identity and interface.
+The
+.Li modern
+value selects the non-transitional VirtIO PCI transport and device ID 0x1044.
 .It Li virtio-vsock
 VirtIO vsock interface for host-guest socket transport.
 Requires
@@ -320,6 +332,18 @@ specifies the guest context identifier, from 3 through 4294967294.
 The
 .Va path
 specifies an existing host directory for Unix domain sockets.
+The optional
+.Va transport
+variable is either
+.Li legacy
+or
+.Li modern .
+It defaults to
+.Li legacy
+to preserve the existing PCI identity and interface.
+The
+.Li modern
+value selects the non-transitional VirtIO PCI transport and device ID 0x1053.
 For a guest connection to host port
 .Ar N ,
 .Xr bhyve 8

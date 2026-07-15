@@ -69,6 +69,7 @@ SRCS=	\
 	usb_emul.c		\
 	usb_mouse.c		\
 	virtio.c		\
+	virtio_pci_modern.c	\
 	vmexit.c		\
 	vmgenc.c
 

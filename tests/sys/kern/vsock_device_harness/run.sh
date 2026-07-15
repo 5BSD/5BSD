@@ -13,15 +13,19 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 srctop=${SRCTOP:-/usr/src}
 cc=${CC:-cc}
+sanitizers=${SANITIZERS:-address,undefined}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-cp "$here"/*.h "$here/vsock_device_test.c" "$work/"
+cp "$here"/*.h "$here/vsock_device_test.c" \
+    "$here/virtio_modern_test.c" "$work/"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock.c"        "$work/pci_virtio_vsock.c"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock_iov.h"    "$work/pci_virtio_vsock_iov.h"
 # DTrace USDT probe wrappers: harness builds WITHOUT -DWITH_DTRACE, so the header
 # resolves every VSOCK_PROBE_* to a no-op (no <sys/sdt.h>, no DOF needed).
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock_probes.h" "$work/pci_virtio_vsock_probes.h"
+ln -s "$srctop/usr.sbin/bhyve/virtio_pci_modern.c" "$work/virtio_pci_modern.c"
+ln -s "$srctop/usr.sbin/bhyve/virtio_pci_modern_probes.h" "$work/virtio_pci_modern_probes.h"
 
 mkdir -p "$work/inc/sys"
 cp "$srctop/sys/sys/vsock.h" "$work/inc/sys/vsock.h"
@@ -50,9 +54,18 @@ static int atf_checks, atf_failed;
 #endif
 EOF
 
-"$cc" -g -O1 -fsanitize=address -I"$work/atfshim" -I"$work/inc" \
+"$cc" -g -O1 -fsanitize="$sanitizers" \
+	-I"$work/atfshim" -I"$work/inc" \
+    -I"$srctop/sys" \
     -o "$work/devtest" "$work/vsock_device_test.c" \
     -Wl,--wrap=socket,--wrap=connectat,--wrap=send,--wrap=recv,--wrap=sendmsg,--wrap=shutdown,--wrap=poll,--wrap=close,--wrap=accept,--wrap=socketpair,--wrap=fcntl,--wrap=setsockopt,--wrap=getsockopt,--wrap=recvmsg,--wrap=ioctl \
     -lpthread
 
 "$work/devtest"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" \
+	-I"$work/atfshim" -I"$work/inc" \
+    -I"$work" -I"$srctop/sys" -o "$work/modern-test" \
+    "$work/virtio_modern_test.c" -lpthread
+
+"$work/modern-test"

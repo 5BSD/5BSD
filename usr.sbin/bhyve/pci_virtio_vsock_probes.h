@@ -22,6 +22,7 @@
 #include <sys/sdt.h>
 #else
 /* No-op stubs when DTrace is disabled (MK_DTRACE=no). */
+#define	DTRACE_PROBE(...)
 #define	DTRACE_PROBE1(...)
 #define	DTRACE_PROBE2(...)
 #define	DTRACE_PROBE3(...)
@@ -56,7 +57,6 @@
 /* Security: malformed / spoofed guest input rejected */
 #define	VSOCK_PROBE_DESC_DROP(why)			\
 	DTRACE_PROBE1(vsock, desc__drop, why)
-
 /* Resource watermark */
 #define	VSOCK_PROBE_CONN_COUNT(nconns)			\
 	DTRACE_PROBE1(vsock, conn__count, nconns)

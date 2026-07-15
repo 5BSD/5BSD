@@ -510,6 +510,25 @@ is a directory on the host for Unix sockets.
 The directory must exist before
 .Xr bhyve 8
 starts.
+The PCI transport defaults to the legacy-compatible interface used by earlier
+.Xr bhyve 8
+versions.
+Modern VirtIO PCI transport is an explicit opt-in:
+.Bd -literal -offset indent
+-s 5,virtio-vsock,cid=3,path=/var/run/vm1,transport=modern
+.Ed
+.Pp
+The accepted values are
+.Cm transport=legacy
+and
+.Cm transport=modern .
+The modern form presents a non-transitional VirtIO device with PCI device ID
+0x1053, revision 1, 64-bit feature negotiation, capability-based memory BARs,
+and separately addressed virtqueues.
+Omitting
+.Cm transport
+retains the legacy device identity and I/O BAR, so existing command lines and
+guests continue to behave as before.
 .Ss Guest-to-Host Connections
 When a guest application connects to
 .Dv VSOCK_CID_HOST

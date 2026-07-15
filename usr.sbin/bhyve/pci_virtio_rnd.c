@@ -137,7 +137,7 @@ pci_vtrnd_notify(void *vsc, struct vqueue_info *vq)
 
 
 static int
-pci_vtrnd_init(struct pci_devinst *pi, nvlist_t *nvl __unused)
+pci_vtrnd_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtrnd_softc *sc;
 	int fd;
@@ -171,35 +171,62 @@ pci_vtrnd_init(struct pci_devinst *pi, nvlist_t *nvl __unused)
 	}
 
 	sc = calloc(1, sizeof(struct pci_vtrnd_softc));
+	if (sc == NULL) {
+		close(fd);
+		return (1);
+	}
 
-	pthread_mutex_init(&sc->vrsc_mtx, NULL);
+	if (pthread_mutex_init(&sc->vrsc_mtx, NULL) != 0) {
+		close(fd);
+		free(sc);
+		return (1);
+	}
 
 	vi_softc_linkup(&sc->vrsc_vs, &vtrnd_vi_consts, sc, pi, &sc->vrsc_vq);
 	sc->vrsc_vs.vs_mtx = &sc->vrsc_mtx;
 
 	sc->vrsc_vq.vq_qsize = VTRND_RINGSZ;
+	if (vi_pci_select_transport(&sc->vrsc_vs, nvl,
+	    VIRTIO_PCI_LEGACY_DEFAULT) != 0)
+		goto failed;
 
 	/* keep /dev/random opened while emulating */
 	sc->vrsc_fd = fd;
 
 	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_RANDOM);
-	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
+	if (vi_pci_is_modern(&sc->vrsc_vs))
+		vi_pci_modern_set_identity(&sc->vrsc_vs, VIRTIO_ID_ENTROPY);
+	else {
+		pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_RANDOM);
+		pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
+		pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_ENTROPY);
+		pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
+	}
 	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_CRYPTO);
-	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_ENTROPY);
-	pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
 
 	if (vi_intr_init(&sc->vrsc_vs, 1, fbsdrun_virtio_msix()))
-		return (1);
-	vi_set_io_bar(&sc->vrsc_vs, 0);
+		goto failed;
+	if (vi_pci_is_modern(&sc->vrsc_vs)) {
+		if (vi_pci_modern_init(&sc->vrsc_vs, 2) != 0)
+			goto failed;
+	} else
+		vi_set_io_bar(&sc->vrsc_vs, 0);
 
 	return (0);
+
+failed:
+	close(fd);
+	pthread_mutex_destroy(&sc->vrsc_mtx);
+	free(sc);
+	return (1);
 }
 
 
 static const struct pci_devemu pci_de_vrnd = {
 	.pe_emu =	"virtio-rnd",
 	.pe_init =	pci_vtrnd_init,
+	.pe_cfgwrite =	vi_pci_modern_cfgwrite,
+	.pe_cfgread =	vi_pci_modern_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read,
 #ifdef BHYVE_SNAPSHOT
