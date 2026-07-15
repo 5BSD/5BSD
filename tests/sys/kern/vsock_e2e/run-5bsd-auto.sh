@@ -23,9 +23,28 @@ KEEP_VM=${KEEP_VM:-no}
 [ -x "$BHYVE" ] || { echo "bhyve not found: $BHYVE" >&2; exit 1; }
 [ -x "$BHYVELOAD" ] || { echo "bhyveload not found: $BHYVELOAD" >&2; exit 1; }
 [ -x "$BHYVECTL" ] || { echo "bhyvectl not found: $BHYVECTL" >&2; exit 1; }
-[ ! -L "$WORKDIR" ] || {
-	echo "WORKDIR must not be a symbolic link: $WORKDIR" >&2
-	exit 1
+prepare_workdir()
+{
+	path=$1
+	[ ! -L "$path" ] || {
+		echo "WORKDIR must not be a symbolic link: $path" >&2
+		return 1
+	}
+	mkdir -p -m 0700 "$path"
+	[ -d "$path" ] || {
+		echo "WORKDIR is not a directory: $path" >&2
+		return 1
+	}
+	owner=$(stat -f %u "$path")
+	[ "$owner" -eq 0 ] || {
+		echo "WORKDIR must be owned by root: $path (uid $owner)" >&2
+		return 1
+	}
+	mode=$(stat -f %Lp "$path")
+	[ "$mode" = 700 ] || {
+		echo "WORKDIR must have mode 0700: $path (mode $mode)" >&2
+		return 1
+	}
 }
 
 # A raw image must never be attached writable to two guests at once.  Refuse
@@ -36,9 +55,20 @@ if pgrep -f "bhyve.*virtio-blk,$IMAGE" >/dev/null 2>&1; then
 	exit 1
 fi
 
-mkdir -p -m 0700 "$WORKDIR"
-chmod 0700 "$WORKDIR"
-make -C "$here"
+prepare_workdir "$WORKDIR"
+if [ -f "$here/Makefile" ]; then
+	make -C "$here"
+	tools=${TOOLS:-$(make -C "$here" -V .OBJDIR)}
+else
+	tools=${TOOLS:-$here}
+fi
+for tool in unix-pipe vsh-connect vsh-connect-test-server uinput-inject; do
+	[ -x "$tools/$tool" ] || {
+		echo "built helper not found: $tools/$tool" >&2
+		exit 1
+	}
+done
+TOOLS="$tools" sh "$here/host-tools-selftest.sh"
 kldload -n vmm
 
 if [ -z "$CONSOLE_PORT" ]; then
@@ -206,6 +236,7 @@ for transport in $TRANSPORTS; do
 
 	mkdir -p -m 0700 "$rundir/data"
 	DIR=$sockdir BULK_MB=$BULK_MB \
+	    TOOLS="$tools" \
 	    WORK="$rundir/data" \
 	    VCMD="env CONSOLE_LOG=$console_log CONSOLE_INPUT=$console_input sh $here/acmd-console.sh" \
 	    sh "$here/run.sh"

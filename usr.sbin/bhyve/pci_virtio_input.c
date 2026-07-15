@@ -77,9 +77,20 @@
 #define VTINPUT_MAXQ 2
 
 static int pci_vtinput_debug;
-#define DPRINTF(params)        \
-	if (pci_vtinput_debug) \
-	PRINTLN params
+#define DPRINTF(params)						\
+	do {							\
+		if (pci_vtinput_debug) {				\
+			EPRINTLN params;				\
+			fflush(stderr);				\
+		}						\
+	} while (0)
+#define DPRINTF2(params)					\
+	do {							\
+		if (pci_vtinput_debug >= 2) {			\
+			EPRINTLN params;				\
+			fflush(stderr);				\
+		}						\
+	} while (0)
 #define WPRINTF(params) PRINTLN params
 
 enum vtinput_config_select {
@@ -188,6 +199,10 @@ static void
 pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 {
 	struct pci_vtinput_softc *sc = vsc;
+	uint32_t completed;
+
+	completed = 0;
+	DPRINTF(("vtinput: status queue notify"));
 
 	while (vq_has_descs(vq)) {
 		/* get descriptor chain */
@@ -209,6 +224,8 @@ pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 		/* get event */
 		struct vtinput_event event;
 		memcpy(&event, iov.iov_base, sizeof(event));
+		DPRINTF2(("vtinput: status event type=%u code=%u value=%d",
+		    event.type, event.code, (int32_t)event.value));
 
 		/*
 		 * on multi touch devices:
@@ -234,13 +251,26 @@ pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 		if (gettimeofday(&host_event.time, NULL) != 0) {
 			WPRINTF(("%s: failed gettimeofday", __func__));
 		}
-		if (write(sc->vsc_fd, &host_event, sizeof(host_event)) == -1) {
-			WPRINTF(("%s: failed to write host_event", __func__));
+		ssize_t nwritten = write(sc->vsc_fd, &host_event,
+		    sizeof(host_event));
+		if (nwritten != sizeof(host_event)) {
+			if (nwritten < 0)
+				WPRINTF(("%s: failed to write host_event: %s",
+				    __func__, strerror(errno)));
+			else
+				WPRINTF(("%s: short host_event write: %zd",
+				    __func__, nwritten));
+		} else {
+			DPRINTF2(("vtinput: wrote host status event type=%u "
+			    "code=%u value=%d", host_event.type,
+			    host_event.code, host_event.value));
 		}
 
 		vq_relchain(vq, req.idx, sizeof(event));
+		completed++;
 	}
 	vq_endchains(vq, 1);
+	DPRINTF(("vtinput: status queue completed=%u", completed));
 }
 
 static int
@@ -684,6 +714,14 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtinput_softc *sc;
 	bool mtx_attr_initialized;
+	const char *debug;
+
+	debug = getenv("BHYVE_VTINPUT_DEBUG");
+	if (debug != NULL) {
+		pci_vtinput_debug = atoi(debug);
+		if (pci_vtinput_debug < 1)
+			pci_vtinput_debug = 1;
+	}
 
 	/*
 	 * Keep it here.
@@ -712,6 +750,7 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 		WPRINTF(("%s: failed to open %s", __func__, sc->vsc_evdev));
 		goto failed;
 	}
+	DPRINTF(("vtinput: opened host device %s", sc->vsc_evdev));
 
 	/* check if evdev is really a evdev */
 	int evversion;

@@ -15,6 +15,7 @@
 #include <sys/un.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -24,6 +25,64 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#define RELAY_BUFSIZE (4U * 1024 * 1024)
+
+static int
+write_all(int fd, const void *buffer, size_t length)
+{
+	const char *p = buffer;
+	ssize_t n;
+
+	while (length != 0) {
+		n = write(fd, p, length);
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			return (-1);
+		}
+		if (n == 0) {
+			errno = EIO;
+			return (-1);
+		}
+		p += n;
+		length -= (size_t)n;
+	}
+	return (0);
+}
+
+static int
+write_socket(int fd, const void *buffer, size_t length, bool seqpacket)
+{
+	ssize_t n;
+
+	if (!seqpacket)
+		return (write_all(fd, buffer, length));
+	do {
+		n = send(fd, buffer, length, MSG_EOR);
+	} while (n < 0 && errno == EINTR);
+	if (n < 0)
+		return (-1);
+	if ((size_t)n != length) {
+		errno = EMSGSIZE;
+		return (-1);
+	}
+	return (0);
+}
+
+static int
+parse_count(const char *text, long *count)
+{
+	char *end;
+	long value;
+
+	errno = 0;
+	value = strtol(text, &end, 0);
+	if (errno != 0 || end == text || *end != '\0' || value <= 0)
+		return (-1);
+	*count = value;
+	return (0);
+}
 
 /*
  * Enlarge a data socket's buffers so a large guest->host (or host->guest)
@@ -41,14 +100,18 @@ bump_bufs(int fd)
 }
 
 static int
-relay(int sfd)
+relay(int sfd, bool seqpacket)
 {
-	char buf[65536];
+	char *buf;
 	struct pollfd pfd[2];
 	bool in_open = true, sock_open = true;
+	int error = 0;
 
 	bump_bufs(sfd);
 	ssize_t n;
+	buf = malloc(RELAY_BUFSIZE);
+	if (buf == NULL)
+		return (1);
 
 	while (sock_open || in_open) {
 		pfd[0].fd = in_open ? 0 : -1;
@@ -58,59 +121,91 @@ relay(int sfd)
 		if (poll(pfd, 2, -1) < 0) {
 			if (errno == EINTR)
 				continue;
-			return (1);
+			error = 1;
+			break;
 		}
 		if (pfd[0].revents & (POLLIN | POLLHUP)) {
-			n = read(0, buf, sizeof(buf));
+			do {
+				n = read(0, buf, RELAY_BUFSIZE);
+			} while (n < 0 && errno == EINTR);
 			if (n > 0) {
-				if (write(sfd, buf, n) != n)
-					return (1);
-			} else {
+				if (write_socket(sfd, buf, (size_t)n,
+				    seqpacket) < 0) {
+					error = 1;
+					break;
+				}
+			} else if (n == 0) {
 				(void)shutdown(sfd, SHUT_WR);
 				in_open = false;
+			} else {
+				error = 1;
+				break;
 			}
 		}
 		if (pfd[1].revents & (POLLIN | POLLHUP)) {
-			n = read(sfd, buf, sizeof(buf));
+			do {
+				n = read(sfd, buf, RELAY_BUFSIZE);
+			} while (n < 0 && errno == EINTR);
 			if (n > 0) {
-				if (write(1, buf, n) != n)
-					return (1);
-			} else {
+				if (write_all(1, buf, (size_t)n) < 0) {
+					error = 1;
+					break;
+				}
+			} else if (n == 0) {
 				sock_open = false;
 				if (!in_open)
 					break;
+			} else {
+				error = 1;
+				break;
 			}
 		}
 	}
-	return (0);
+	free(buf);
+	return (error);
 }
 
 static int
 drain(int c)
 {
-	char buf[65536];
+	char *buf;
 	ssize_t n;
+	int error = 0;
 
 	bump_bufs(c);
+	buf = malloc(RELAY_BUFSIZE);
+	if (buf == NULL)
+		return (1);
 
-	while ((n = read(c, buf, sizeof(buf))) > 0)
-		if (write(1, buf, n) != n)
-			return (1);
+	while ((n = read(c, buf, RELAY_BUFSIZE)) > 0)
+		if (write_all(1, buf, (size_t)n) < 0) {
+			error = 1;
+			break;
+		}
+	if (n < 0)
+		error = 1;
+	free(buf);
 	close(c);
-	return (n < 0 ? 1 : 0);
+	return (error);
 }
 
 static void
-echo_conn(int c)
+echo_conn(int c, bool seqpacket)
 {
-	char buf[65536];
+	char *buf;
 	ssize_t n;
 
 	bump_bufs(c);
+	buf = malloc(RELAY_BUFSIZE);
+	if (buf == NULL) {
+		close(c);
+		return;
+	}
 
-	while ((n = read(c, buf, sizeof(buf))) > 0)
-		if (write(c, buf, n) != n)
+	while ((n = read(c, buf, RELAY_BUFSIZE)) > 0)
+		if (write_socket(c, buf, (size_t)n, seqpacket) < 0)
 			break;
+	free(buf);
 	close(c);
 }
 
@@ -119,6 +214,7 @@ main(int argc, char **argv)
 {
 	int type = SOCK_STREAM;
 	bool listen_mode = false, echo_mode = false, drain_mode = false;
+	bool count_set = false;
 	long maxconns = -1;
 	int ch, s;
 	struct sockaddr_un sun;
@@ -132,7 +228,13 @@ main(int argc, char **argv)
 		case 's': type = SOCK_SEQPACKET; break;
 		case 'e': echo_mode = true; break;
 		case 'd': drain_mode = true; break;
-		case 'n': maxconns = strtol(optarg, NULL, 0); break;
+		case 'n':
+			if (parse_count(optarg, &maxconns) < 0) {
+				fprintf(stderr, "invalid connection count: %s\n", optarg);
+				return (2);
+			}
+			count_set = true;
+			break;
 		default:
 			fprintf(stderr, "usage: %s [-s] <path> | "
 			    "%s -l [-s] [-e] [-n max] <path>\n",
@@ -142,12 +244,21 @@ main(int argc, char **argv)
 	}
 	argc -= optind;
 	argv += optind;
-	if (argc < 1) { fprintf(stderr, "path?\n"); return (2); }
+	if (argc != 1) { fprintf(stderr, "path?\n"); return (2); }
+	if ((!listen_mode && (echo_mode || drain_mode || count_set)) ||
+	    (echo_mode && drain_mode) || (count_set && !echo_mode)) {
+		fprintf(stderr, "invalid listener option combination\n");
+		return (2);
+	}
 
 	memset(&sun, 0, sizeof(sun));
 	sun.sun_family = AF_UNIX;
 	sun.sun_len = sizeof(sun);
-	strlcpy(sun.sun_path, argv[0], sizeof(sun.sun_path));
+	if (strlcpy(sun.sun_path, argv[0], sizeof(sun.sun_path)) >=
+	    sizeof(sun.sun_path)) {
+		fprintf(stderr, "socket path is too long\n");
+		return (2);
+	}
 
 	s = socket(AF_UNIX, type, 0);
 	if (s < 0) { perror("socket"); return (1); }
@@ -166,7 +277,7 @@ main(int argc, char **argv)
 		if (!echo_mode) {
 			int c = accept(s, NULL, NULL);
 			if (c < 0) { perror("accept"); return (1); }
-			return (relay(c));
+			return (relay(c, type == SOCK_SEQPACKET));
 		}
 		for (long i = 0; maxconns < 0 || i < maxconns; i++) {
 			int c = accept(s, NULL, NULL);
@@ -177,10 +288,10 @@ main(int argc, char **argv)
 			switch (fork()) {
 			case 0:
 				close(s);
-				echo_conn(c);
+				echo_conn(c, type == SOCK_SEQPACKET);
 				_exit(0);
 			case -1:
-				echo_conn(c);
+				echo_conn(c, type == SOCK_SEQPACKET);
 				break;
 			default:
 				close(c);
@@ -194,5 +305,5 @@ main(int argc, char **argv)
 		fprintf(stderr, "connect: %s\n", strerror(errno));
 		return (1);
 	}
-	return (relay(s));
+	return (relay(s, type == SOCK_SEQPACKET));
 }

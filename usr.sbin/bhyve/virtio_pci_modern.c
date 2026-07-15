@@ -35,8 +35,10 @@
 
 /*
  * Virtio 1.4 reserves bits 24--49 for device-independent features.  This
- * backend implements split-ring INDIRECT_DESC, EVENT_IDX, and VERSION_1.
- * Preserve device-specific bits 0--23 and 50--63 for future device models.
+ * backend implements split-ring INDIRECT_DESC and EVENT_IDX, but a device
+ * model must opt in to each through vc_hv_caps.  VERSION_1 is mandatory for
+ * every modern device.  Preserve device-specific bits 0--23 and 50--63 for
+ * future device models.
  */
 #define	VIRTIO_MODERN_DEVICE_FEATURES_LOW	((1ULL << 24) - 1)
 #define	VIRTIO_MODERN_DEVICE_FEATURES_HIGH	(~((1ULL << 50) - 1))
@@ -61,8 +63,7 @@ vi_modern_device_features(const struct virtio_softc *vs)
 
 	features = vs->vs_vc->vc_hv_caps;
 	features &= VIRTIO_MODERN_SUPPORTED_FEATURES;
-	features |= VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_RING_F_EVENT_IDX |
-	    VIRTIO_F_VERSION_1;
+	features |= VIRTIO_F_VERSION_1;
 	return (features);
 }
 

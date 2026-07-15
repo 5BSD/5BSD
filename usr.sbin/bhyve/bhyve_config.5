@@ -303,6 +303,18 @@ VirtIO block storage interface.
 VirtIO console interface.
 .It Li virtio-input
 VirtIO input interface.
+The required
+.Va path
+variable names a host evdev device, such as
+.Pa /dev/input/event0 .
+.Nm bhyve
+opens the device for reading and writing and obtains an exclusive evdev grab.
+The path may refer to physical hardware or to a virtual device created by a
+long-running host service through
+.Pa /dev/uinput .
+The provider must create the evdev device before
+.Nm bhyve
+starts and keep it alive while the virtual machine is running.
 The optional
 .Va transport
 variable is either
@@ -797,7 +809,14 @@ The path of a UNIX domain socket providing the host connection for the port.
 .El
 .Ss VirtIO Input Interface Settings
 Each VirtIO Input device contains one input event device.
-All input events of the input event device are send to the guest by VirtIO Input interface.
+All input events from that device are sent to the guest through the VirtIO
+Input interface.
+The input event device can be physical hardware or a virtual device created by
+a long-running host service through
+.Pa /dev/uinput .
+The service must create the event device before
+.Nm bhyve
+starts and keep it alive while the virtual machine is running.
 VirtIO Input Interfaces support the following variables:
 .Bl -column "Name" "Format" "Default"
 .It Sy Name Ta Sy Format Ta Sy Default Ta Sy Description

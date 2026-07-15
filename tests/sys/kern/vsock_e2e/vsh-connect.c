@@ -32,6 +32,115 @@
 struct vsock_ctl_msg { uint32_t cmd, port, type; int32_t status; };
 #define VSOCK_CTL_CONNECT 1
 
+static int
+write_all(int fd, const void *buffer, size_t length)
+{
+	const char *p = buffer;
+	ssize_t n;
+
+	while (length != 0) {
+		n = write(fd, p, length);
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			return (-1);
+		}
+		if (n == 0) {
+			errno = EIO;
+			return (-1);
+		}
+		p += n;
+		length -= (size_t)n;
+	}
+	return (0);
+}
+
+static int
+write_socket(int fd, const void *buffer, size_t length, bool seqpacket)
+{
+	ssize_t n;
+
+	if (!seqpacket)
+		return (write_all(fd, buffer, length));
+	do {
+		n = send(fd, buffer, length, MSG_EOR);
+	} while (n < 0 && errno == EINTR);
+	if (n < 0)
+		return (-1);
+	if ((size_t)n != length) {
+		errno = EMSGSIZE;
+		return (-1);
+	}
+	return (0);
+}
+
+static int
+recv_control_reply(int fd, struct vsock_ctl_msg *reply, int *datafd)
+{
+	struct cmsghdr *cmsg;
+	struct iovec iov;
+	struct msghdr msg;
+	char control[CMSG_SPACE(sizeof(int))];
+	size_t offset = 0;
+	ssize_t n;
+
+	while (offset < sizeof(*reply)) {
+		memset(&msg, 0, sizeof(msg));
+		memset(control, 0, sizeof(control));
+		iov.iov_base = (char *)reply + offset;
+		iov.iov_len = sizeof(*reply) - offset;
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+		msg.msg_control = control;
+		msg.msg_controllen = sizeof(control);
+		do {
+			n = recvmsg(fd, &msg, 0);
+		} while (n < 0 && errno == EINTR);
+		if (n < 0)
+			return (-1);
+		if (n == 0) {
+			errno = ECONNRESET;
+			return (-1);
+		}
+		if ((msg.msg_flags & (MSG_CTRUNC | MSG_TRUNC)) != 0) {
+			errno = EMSGSIZE;
+			return (-1);
+		}
+		for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
+		    cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+			if (cmsg->cmsg_level != SOL_SOCKET ||
+			    cmsg->cmsg_type != SCM_RIGHTS)
+				continue;
+			if (cmsg->cmsg_len != CMSG_LEN(sizeof(int))) {
+				errno = EPROTO;
+				return (-1);
+			}
+			if (*datafd >= 0) {
+				errno = EPROTO;
+				return (-1);
+			}
+			memcpy(datafd, CMSG_DATA(cmsg), sizeof(*datafd));
+		}
+		offset += (size_t)n;
+	}
+	return (0);
+}
+
+static int
+parse_port(const char *text, uint32_t *port)
+{
+	char *end;
+	unsigned long value;
+
+	errno = 0;
+	value = strtoul(text, &end, 0);
+	if (errno != 0 || end == text || *end != '\0' || value == 0 ||
+	    value > UINT32_MAX)
+		return (-1);
+	*port = (uint32_t)value;
+	return (0);
+}
+
 /*
  * One-record mode (-1): slurp all of stdin and send it as a SINGLE record
  * with MSG_EOR, then drain the reply to stdout.  This lets us exercise a
@@ -45,6 +154,7 @@ relay_oneshot(int sfd, bool seqpacket)
 {
 	size_t cap = 4u * 1024 * 1024, len = 0;
 	char *buf = malloc(cap);
+	char extra;
 	ssize_t n;
 
 	if (buf == NULL) { perror("malloc"); return (1); }
@@ -54,30 +164,45 @@ relay_oneshot(int sfd, bool seqpacket)
 		if (n == 0) break;	/* EOF: whole record collected */
 		len += (size_t)n;
 	}
-	if (seqpacket) {
-		struct iovec io = { buf, len };
-		struct msghdr mh;
-		memset(&mh, 0, sizeof(mh));
-		mh.msg_iov = &io; mh.msg_iovlen = 1;
-		if (sendmsg(sfd, &mh, MSG_EOR) != (ssize_t)len) {
-			perror("sendmsg"); free(buf); return (1);
+	if (len == cap) {
+		do {
+			n = read(0, &extra, 1);
+		} while (n < 0 && errno == EINTR);
+		if (n != 0) {
+			if (n < 0)
+				perror("read");
+			else
+				fprintf(stderr, "input exceeds 4 MiB record limit\n");
+			free(buf);
+			return (1);
 		}
-	} else if (write(sfd, buf, len) != (ssize_t)len) {
+	}
+	if (write_socket(sfd, buf, len, seqpacket) < 0) {
 		perror("write"); free(buf); return (1);
 	}
 	(void)shutdown(sfd, SHUT_WR);
 	for (;;) {
 		n = read(sfd, buf, cap);
-		if (n < 0) { if (errno == EINTR) continue; break; }
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			perror("read socket");
+			free(buf);
+			return (1);
+		}
 		if (n == 0) break;
-		if (write(1, buf, (size_t)n) != n) break;
+		if (write_all(1, buf, (size_t)n) < 0) {
+			perror("write stdout");
+			free(buf);
+			return (1);
+		}
 	}
 	free(buf);
 	return (0);
 }
 
 static int
-relay(int sfd)
+relay(int sfd, bool seqpacket)
 {
 	char buf[65536];
 	struct pollfd pfd[2];
@@ -95,25 +220,32 @@ relay(int sfd)
 			return (1);
 		}
 		if (pfd[0].revents & (POLLIN | POLLHUP)) {
-			n = read(0, buf, sizeof(buf));
+			do {
+				n = read(0, buf, sizeof(buf));
+			} while (n < 0 && errno == EINTR);
 			if (n > 0) {
-				if (write(sfd, buf, n) != n)
+				if (write_socket(sfd, buf, (size_t)n,
+				    seqpacket) < 0)
 					return (1);
-			} else {
+			} else if (n == 0) {
 				(void)shutdown(sfd, SHUT_WR);
 				in_open = false;
-			}
+			} else
+				return (1);
 		}
 		if (pfd[1].revents & (POLLIN | POLLHUP)) {
-			n = read(sfd, buf, sizeof(buf));
+			do {
+				n = read(sfd, buf, sizeof(buf));
+			} while (n < 0 && errno == EINTR);
 			if (n > 0) {
-				if (write(1, buf, n) != n)
+				if (write_all(1, buf, (size_t)n) < 0)
 					return (1);
-			} else {
+			} else if (n == 0) {
 				sock_open = false;
 				if (!in_open)
 					break;
-			}
+			} else
+				return (1);
 		}
 	}
 	return (0);
@@ -125,13 +257,10 @@ main(int argc, char **argv)
 	int type = SOCK_STREAM;
 	int oneshot = 0;
 	int ch, dfd, cs, datafd = -1;
+	uint32_t port;
 	cap_rights_t rights;
 	struct sockaddr_un sun;
 	struct vsock_ctl_msg m, r;
-	struct iovec io;
-	struct msghdr mh;
-	char cbuf[CMSG_SPACE(sizeof(int))];
-	ssize_t rn;
 
 	signal(SIGPIPE, SIG_IGN);
 
@@ -147,8 +276,12 @@ main(int argc, char **argv)
 	}
 	argc -= optind;
 	argv += optind;
-	if (argc < 2) {
+	if (argc != 2) {
 		fprintf(stderr, "usage: vsh-connect [-s] <dir> <port>\n");
+		return (2);
+	}
+	if (parse_port(argv[1], &port) < 0) {
+		fprintf(stderr, "invalid port: %s\n", argv[1]);
 		return (2);
 	}
 
@@ -175,25 +308,20 @@ main(int argc, char **argv)
 
 	memset(&m, 0, sizeof(m));
 	m.cmd = VSOCK_CTL_CONNECT;
-	m.port = (uint32_t)strtoul(argv[1], NULL, 0);
+	m.port = port;
 	m.type = (uint32_t)type;
-	if (write(cs, &m, sizeof(m)) != sizeof(m)) {
+	if (write_all(cs, &m, sizeof(m)) < 0) {
 		perror("write ctl");
 		return (1);
 	}
 
-	memset(cbuf, 0, sizeof(cbuf));
-	io.iov_base = &r;
-	io.iov_len = sizeof(r);
-	memset(&mh, 0, sizeof(mh));
-	mh.msg_iov = &io;
-	mh.msg_iovlen = 1;
-	mh.msg_control = cbuf;
-	mh.msg_controllen = sizeof(cbuf);
-	rn = recvmsg(cs, &mh, 0);
-	if (rn < 0) { perror("recvmsg"); return (1); }
-	if (rn != (ssize_t)sizeof(r)) {
-		fprintf(stderr, "short/closed ctl reply (%zd bytes)\n", rn);
+	if (recv_control_reply(cs, &r, &datafd) < 0) {
+		perror("receive control reply");
+		return (1);
+	}
+	if (r.cmd != VSOCK_CTL_CONNECT || r.port != m.port) {
+		fprintf(stderr, "invalid control reply: cmd=%u port=%u\n",
+		    r.cmd, r.port);
 		return (1);
 	}
 	if (r.status != 0) {
@@ -201,10 +329,6 @@ main(int argc, char **argv)
 		    r.status, strerror(-r.status));
 		return (4);
 	}
-	for (struct cmsghdr *c = CMSG_FIRSTHDR(&mh); c != NULL;
-	    c = CMSG_NXTHDR(&mh, c))
-		if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_RIGHTS)
-			memcpy(&datafd, CMSG_DATA(c), sizeof(datafd));
 	if (datafd < 0) {
 		fprintf(stderr, "no data fd returned\n");
 		return (1);
@@ -212,5 +336,5 @@ main(int argc, char **argv)
 	close(cs);
 	if (oneshot)
 		return (relay_oneshot(datafd, type == SOCK_SEQPACKET));
-	return (relay(datafd));
+	return (relay(datafd, type == SOCK_SEQPACKET));
 }

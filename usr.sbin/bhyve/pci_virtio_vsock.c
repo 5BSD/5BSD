@@ -243,10 +243,22 @@ _Static_assert(sizeof(struct vsock_ctl_msg) == 16,
     "vsock control message ABI changed");
 
 static int pci_vtvsock_debug;
-#define	DPRINTF(params)	if (pci_vtvsock_debug) PRINTLN params
+#define	DPRINTF(params)						\
+	do {							\
+		if (pci_vtvsock_debug) {				\
+			EPRINTLN params;				\
+			fflush(stderr);				\
+		}						\
+	} while (0)
 /* Per-packet tracing: BHYVE_VTVSOCK_DEBUG=2+ only -- the volume swamps
- * stdio buffering and makes event-level debugging impossible. */
-#define	DPRINTF2(params)	if (pci_vtvsock_debug >= 2) PRINTLN params
+ * normal logs.  Debug output is flushed so failure cleanup cannot lose it. */
+#define	DPRINTF2(params)					\
+	do {							\
+		if (pci_vtvsock_debug >= 2) {			\
+			EPRINTLN params;				\
+			fflush(stderr);				\
+		}						\
+	} while (0)
 #define	WPRINTF(params)	PRINTLN params
 
 static time_t
@@ -839,12 +851,31 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 	int n;
 	size_t off, avail;
 
-	if (!vq_has_descs(vq))
+	if (!vq_has_descs(vq)) {
+		DPRINTF2(("vtvsock: RX inject unavailable op=%u ring=%d "
+		    "enabled=%u status=%#x caps=%#x last_avail=%u "
+		    "avail_idx=%u used_idx=%u pending=%u",
+		    le16toh(hdrp->op), vq_ring_ready(vq), vq->vq_enabled,
+		    sc->vsc_vs.vs_status, sc->vsc_vs.vs_negotiated_caps,
+		    vq->vq_last_avail,
+		    vq->vq_avail == NULL ? 0 : vq->vq_avail->idx,
+		    vq->vq_used == NULL ? 0 : vq->vq_used->idx,
+		    sc->vsc_pend_count));
 		return (-1);
+	}
 
 	n = vq_getchain(vq, iov, VTVSOCK_MAX_IOV, &req);
-	if (n <= 0)
+	if (n <= 0) {
+		DPRINTF2(("vtvsock: RX getchain failed op=%u result=%d "
+		    "last_avail=%u avail_idx=%u",
+		    le16toh(hdrp->op), n, vq->vq_last_avail,
+		    vq->vq_avail->idx));
 		return (-1);
+	}
+	DPRINTF2(("vtvsock: RX chain op=%u head=%u n=%d readable=%d "
+	    "writable=%d last_avail=%u avail_idx=%u",
+	    le16toh(hdrp->op), req.idx, n, req.readable, req.writable,
+	    vq->vq_last_avail, vq->vq_avail->idx));
 	if (n > VTVSOCK_MAX_IOV) {
 		/*
 		 * vq_getchain() can return more descriptors than it stored in
@@ -939,8 +970,27 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 		iov_copyout(&h, sizeof(h), iov, n, &off);
 		if (w > 0 && payload != NULL)
 			iov_copyout(payload, w, iov, n, &off);
-		vq_relchain(vq, req.idx, (uint32_t)off);
-		vq_endchains(vq, 1);
+		{
+			uint16_t avail_flags, event_idx, old_used;
+
+			avail_flags = vq->vq_avail == NULL ? 0 :
+			    vq->vq_avail->flags;
+			event_idx = vq->vq_avail == NULL ? 0 :
+			    VQ_USED_EVENT_IDX(vq);
+			old_used = vq->vq_save_used;
+			vq_relchain(vq, req.idx, (uint32_t)off);
+			vq_endchains(vq, 1);
+			DPRINTF2(("vtvsock: RX published op=%u bytes=%zu "
+			    "used=%u->%u event=%u avail_flags=%#x "
+			    "event_idx=%d msix=%d vector=%u",
+			    le16toh(hdrp->op), off, old_used,
+			    vq->vq_used == NULL ? 0 : vq->vq_used->idx,
+			    event_idx, avail_flags,
+			    (sc->vsc_vs.vs_negotiated_caps &
+			    VIRTIO_RING_F_EVENT_IDX) != 0,
+			    pci_msix_enabled(sc->vsc_vs.vs_pi),
+			    vq->vq_msix_idx));
+		}
 		return ((int)w);
 	}
 }
@@ -1009,9 +1059,14 @@ vtvsock_send_ctrl(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
     uint16_t op, uint32_t flags)
 {
 	struct virtio_vsock_hdr hdr;
+	bool ready;
 
 	vtvsock_build_hdr(sc, conn, op, flags, 0, &hdr);
-	if (vtvsock_rx_ready(sc) &&
+	ready = vtvsock_rx_ready(sc);
+	DPRINTF2(("vtvsock: send ctrl op=%u host_port=%u guest_port=%u "
+	    "ready=%d pending=%u", op, conn->local_port, conn->guest_port,
+	    ready, sc->vsc_pend_count));
+	if (ready &&
 	    vtvsock_inject_raw(sc, &hdr, NULL, 0) == 0)
 		return (0);
 	if (sc->vsc_pend_count >= VTVSOCK_PEND_MAX) {
@@ -1024,6 +1079,8 @@ vtvsock_send_ctrl(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
 	sc->vsc_pend[(sc->vsc_pend_head + sc->vsc_pend_count) %
 	    VTVSOCK_PEND_MAX] = hdr;
 	sc->vsc_pend_count++;
+	DPRINTF2(("vtvsock: parked ctrl op=%u pending=%u", op,
+	    sc->vsc_pend_count));
 	return (0);
 }
 
@@ -2950,6 +3007,8 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 
 	nr = recv(fd, (uint8_t *)&cc->msg + cc->msg_off,
 	    sizeof(cc->msg) - cc->msg_off, MSG_DONTWAIT);
+	DPRINTF2(("vtvsock: ctl fd=%d recv=%zd offset=%zu", fd, nr,
+	    cc->msg_off));
 	if (nr <= 0) {
 		/*
 		 * EOF and hard errors terminate the request.  A would-block leaves
@@ -2976,6 +3035,8 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 
 	msg = cc->msg;
 	cc->msg_off = 0;
+	DPRINTF2(("vtvsock: ctl request fd=%d cmd=%u port=%u type=%u",
+	    fd, msg.cmd, msg.port, msg.type));
 
 	switch (msg.cmd) {
 	case VSOCK_CTL_CONNECT: {
@@ -3140,6 +3201,7 @@ pci_vtvsock_ctl_accept(int fd __unused, enum ev_type t __unused, void *arg)
 			    strerror(errno)));
 		return;
 	}
+	DPRINTF2(("vtvsock: accepted control fd=%d", s));
 
 	if (fcntl(s, F_SETFL, O_NONBLOCK) < 0) {
 		WPRINTF(("vtvsock: fcntl O_NONBLOCK failed: %s",
@@ -3193,6 +3255,8 @@ pci_vtvsock_ctl_accept(int fd __unused, enum ev_type t __unused, void *arg)
 	}
 	TAILQ_INSERT_TAIL(&sc->vsc_ctl_conns, cc, link);
 	sc->vsc_ctl_conn_count++;
+	DPRINTF2(("vtvsock: armed control fd=%d count=%u", s,
+	    sc->vsc_ctl_conn_count));
 	pthread_mutex_unlock(&sc->vsc_mtx);
 }
 
@@ -3237,6 +3301,9 @@ pci_vtvsock_neg_features(void *vsc, uint64_t negotiated_features)
 	struct pci_vtvsock_softc *sc = vsc;
 
 	sc->vsc_features = negotiated_features;
+	DPRINTF(("vtvsock: negotiated features=%#jx device_caps=%#jx",
+	    (uintmax_t)negotiated_features,
+	    (uintmax_t)vtvsock_vi_consts.vc_hv_caps));
 }
 
 static int

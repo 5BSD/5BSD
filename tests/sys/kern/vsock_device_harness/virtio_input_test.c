@@ -73,6 +73,9 @@ static struct input_event g_host_write_event;
 static struct input_event g_read_events[64];
 static int g_read_event_count;
 static int g_read_event_index;
+static char g_config_path[128];
+static char g_legacy_opts[128];
+static int g_legacy_parse_calls;
 
 static void
 reset_mocks(void)
@@ -104,6 +107,9 @@ reset_mocks(void)
 	memset(&g_host_write_event, 0, sizeof(g_host_write_event));
 	g_read_event_count = 0;
 	g_read_event_index = 0;
+	g_config_path[0] = '\0';
+	g_legacy_opts[0] = '\0';
+	g_legacy_parse_calls = 0;
 }
 
 const char *
@@ -117,14 +123,20 @@ get_config_value_node(const nvlist_t *nvl __unused, const char *name)
 }
 
 void
-set_config_value_node(nvlist_t *nvl __unused, const char *name __unused,
-    const char *value __unused)
+set_config_value_node(nvlist_t *nvl __unused, const char *name,
+    const char *value)
 {
+	if (strcmp(name, "path") == 0)
+		ATF_REQUIRE(strlcpy(g_config_path, value,
+		    sizeof(g_config_path)) < sizeof(g_config_path));
 }
 
 int
-pci_parse_legacy_config(nvlist_t *nvl __unused, const char *opts __unused)
+pci_parse_legacy_config(nvlist_t *nvl __unused, const char *opts)
 {
+	g_legacy_parse_calls++;
+	ATF_REQUIRE(strlcpy(g_legacy_opts, opts,
+	    sizeof(g_legacy_opts)) < sizeof(g_legacy_opts));
 	return (0);
 }
 
@@ -433,6 +445,29 @@ ATF_TC_BODY(transport_compatibility, tc)
 	free_input_softc(&pi);
 }
 
+ATF_TC_WITHOUT_HEAD(command_line_config);
+ATF_TC_BODY(command_line_config, tc)
+{
+	struct nvlist nvl;
+
+	reset_mocks();
+	ATF_CHECK(pci_vtinput_legacy_config(&nvl, NULL) == -1);
+	ATF_CHECK(g_config_path[0] == '\0');
+	ATF_CHECK(g_legacy_parse_calls == 0);
+
+	ATF_CHECK(pci_vtinput_legacy_config(&nvl,
+	    "/dev/input/event11") == 0);
+	ATF_CHECK(strcmp(g_config_path, "/dev/input/event11") == 0);
+	ATF_CHECK(g_legacy_parse_calls == 0);
+
+	reset_mocks();
+	ATF_CHECK(pci_vtinput_legacy_config(&nvl,
+	    "/dev/input/event12,transport=modern") == 0);
+	ATF_CHECK(strcmp(g_config_path, "/dev/input/event12") == 0);
+	ATF_CHECK(g_legacy_parse_calls == 1);
+	ATF_CHECK(strcmp(g_legacy_opts, "transport=modern") == 0);
+}
+
 ATF_TC_WITHOUT_HEAD(eventqueue_growth);
 ATF_TC_BODY(eventqueue_growth, tc)
 {
@@ -652,6 +687,7 @@ ATF_TC_BODY(config_bounds, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, transport_compatibility);
+	ATF_TP_ADD_TC(tp, command_line_config);
 	ATF_TP_ADD_TC(tp, eventqueue_growth);
 	ATF_TP_ADD_TC(tp, syn_report_flushes_frame);
 	ATF_TP_ADD_TC(tp, hostile_status_descriptors);

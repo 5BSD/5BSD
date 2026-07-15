@@ -505,16 +505,28 @@ to the guest in the form of simple char devices for simple IO
 between the guest and host userspaces.
 .It Cm virtio-input
 Virtio input interface.
+The required
+.Cm path
+setting names a host evdev device, such as
+.Pa /dev/input/event0 .
+.Nm
+opens the device for reading and writing and obtains an exclusive evdev grab.
+The path may refer to physical hardware or to a virtual device created by a
+long-running host service through
+.Pa /dev/uinput .
+The provider must create the evdev device before
+.Nm
+starts and keep it alive while the virtual machine is running.
 The optional
 .Cm transport
 setting accepts
 .Cm legacy
 or
 .Cm modern .
-If omitted, the historical legacy register interface is retained for
-compatibility with existing guests and launch scripts.
-The modern setting selects the non-transitional VirtIO PCI transport and
-device ID 0x1052.
+If omitted, the historical legacy register interface and PCI identity are
+retained for compatibility with existing guests and launch scripts.
+The modern setting selects the standards-compliant non-transitional VirtIO PCI
+transport and device ID 0x1052.
 .It Cm virtio-vsock
 Virtio vsock interface for host-guest socket transport.
 The device is configured with
@@ -950,6 +962,14 @@ Emergency write is advertised, but no-op at present.
 Send input events of
 .Ar /dev/input/eventX
 to guest by VirtIO Input Interface.
+The event device can be physical hardware or a virtual device created by a
+host service through
+.Pa /dev/uinput .
+Such a service must create the event device before
+.Nm
+starts and keep it alive until
+.Nm
+exits.
 .Ss Framebuffer device backends
 .Bl -bullet
 .Sm off

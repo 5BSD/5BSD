@@ -1,4 +1,5 @@
-# vsock end-to-end (host <-> bhyve guest) test harness.
+# VirtIO end-to-end (host <-> bhyve guest) test harness.  The historical
+# directory name predates the RNG and input coverage.
 #
 # Installed into the base "tests" package (pkgbase: FreeBSD-tests) under
 # ${TESTSBASE}/sys/kern/vsock_e2e.  Unlike the ATF suites in the parent
@@ -28,6 +29,8 @@ MAN=
 # Host-side helper programs.
 PROGS+=		unix-pipe
 PROGS+=		vsh-connect
+PROGS+=		vsh-connect-test-server
+PROGS+=		uinput-inject
 
 # Driver scripts (keep the .sh suffix; SCRIPTS strips it by default).
 # run.sh drives a 5BSD guest; run-linux.sh drives a Linux guest via gvsock.py.
@@ -39,6 +42,8 @@ SCRIPTS+=	run-alpine-bhyve.sh
 SCRIPTSNAME_run-alpine-bhyve.sh=	run-alpine-bhyve.sh
 SCRIPTS+=	run-alpine-auto.sh
 SCRIPTSNAME_run-alpine-auto.sh=	run-alpine-auto.sh
+SCRIPTS+=	run-alpine-matrix.sh
+SCRIPTSNAME_run-alpine-matrix.sh=	run-alpine-matrix.sh
 SCRIPTS+=	run-5bsd-auto.sh
 SCRIPTSNAME_run-5bsd-auto.sh=	run-5bsd-auto.sh
 SCRIPTS+=	acmd-console.sh
@@ -47,6 +52,8 @@ SCRIPTS+=	acmd-ssh.sh
 SCRIPTSNAME_acmd-ssh.sh=	acmd-ssh.sh
 SCRIPTS+=	alpine-guest-setup.sh
 SCRIPTSNAME_alpine-guest-setup.sh=	alpine-guest-setup.sh
+SCRIPTS+=	host-tools-selftest.sh
+SCRIPTSNAME_host-tools-selftest.sh=	host-tools-selftest.sh
 
 # Guest-side tool sources (shipped for in-guest compilation / use).  Use the
 # ${PACKAGE}FILES filegroup that bsd.test.mk wires into the test package
@@ -56,7 +63,10 @@ ${PACKAGE}FILES+=	vsock-pipe.c
 ${PACKAGE}FILES+=	vsock-conntest.c
 ${PACKAGE}FILES+=	vsock-recrx.c
 ${PACKAGE}FILES+=	gvsock.py
+${PACKAGE}FILES+=	ginput.py
+${PACKAGE}FILES+=	grng.py
 ${PACKAGE}FILES+=	ALPINE.md
 ${PACKAGE}FILES+=	FIVEBSD.md
+${PACKAGE}FILES+=	FRAMEWORK.md
 
 .include <bsd.test.mk>

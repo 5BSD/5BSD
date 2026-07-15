@@ -218,7 +218,9 @@ static struct virtio_consts test_consts = {
 	.vc_cfgread = test_cfgread,
 	.vc_cfgwrite = test_cfgwrite,
 	.vc_apply_features = test_apply_features,
-	.vc_hv_caps = 0x7 | VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_F_ANY_LAYOUT |
+	.vc_hv_caps = 0x7 | VIRTIO_RING_F_INDIRECT_DESC |
+	    VIRTIO_RING_F_EVENT_IDX | VIRTIO_F_NOTIFY_ON_EMPTY |
+	    VIRTIO_F_ANY_LAYOUT |
 	    VIRTIO_F_IOMMU_PLATFORM | (1ULL << 34) | (1ULL << 38) |
 	    (1ULL << 40) | (1ULL << 41) | (1ULL << 43) | (1ULL << 50),
 };
@@ -367,6 +369,39 @@ ATF_TC_BODY(features_and_status, tc)
 	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_STATUS, 1, 0);
 	ATF_CHECK(vs.vs_status == 0);
 	ATF_CHECK(vs.vs_modern->driver_features == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(ring_features_require_device_opt_in);
+ATF_TC_BODY(ring_features_require_device_opt_in, tc)
+{
+	struct virtio_consts vc;
+	struct virtio_softc vs;
+	uint64_t features;
+
+	memset(&vs, 0, sizeof(vs));
+	vc = test_consts;
+	vs.vs_vc = &vc;
+
+	/* A modern device gets VERSION_1, but no optional ring features. */
+	vc.vc_hv_caps = 0;
+	features = vi_modern_device_features(&vs);
+	ATF_CHECK(features == VIRTIO_F_VERSION_1);
+
+	/* Each optional ring feature is exposed only when the device asks. */
+	vc.vc_hv_caps = VIRTIO_RING_F_INDIRECT_DESC;
+	features = vi_modern_device_features(&vs);
+	ATF_CHECK(features == (VIRTIO_F_VERSION_1 |
+	    VIRTIO_RING_F_INDIRECT_DESC));
+	vc.vc_hv_caps = VIRTIO_RING_F_EVENT_IDX;
+	features = vi_modern_device_features(&vs);
+	ATF_CHECK(features == (VIRTIO_F_VERSION_1 | VIRTIO_RING_F_EVENT_IDX));
+
+	/* Unsupported device-independent bits remain filtered. */
+	vc.vc_hv_caps = VIRTIO_RING_F_INDIRECT_DESC |
+	    VIRTIO_RING_F_EVENT_IDX | (1ULL << 34);
+	features = vi_modern_device_features(&vs);
+	ATF_CHECK(features == (VIRTIO_F_VERSION_1 |
+	    VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_RING_F_EVENT_IDX));
 }
 
 ATF_TC_WITHOUT_HEAD(queue_and_interrupts);
@@ -565,6 +600,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, transport_policy);
 	ATF_TP_ADD_TC(tp, capability_chain);
 	ATF_TP_ADD_TC(tp, features_and_status);
+	ATF_TP_ADD_TC(tp, ring_features_require_device_opt_in);
 	ATF_TP_ADD_TC(tp, queue_and_interrupts);
 	ATF_TP_ADD_TC(tp, config_change_msix);
 	ATF_TP_ADD_TC(tp, queue_size_validation);

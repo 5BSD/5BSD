@@ -1,6 +1,9 @@
 # compiled host-side tools (built by cc from the .c sources)
 unix-pipe
 vsh-connect
+vsh-connect-test-server
+uinput-inject
 vsock-conntest
 vsock-pipe
 ctl-debug
+__pycache__/
