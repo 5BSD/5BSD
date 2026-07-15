@@ -1,0 +1,235 @@
+/* Fault-injection tests for bhyve's VirtIO entropy device. */
+#include <sys/types.h>
+#include <sys/uio.h>
+
+#include <errno.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <atf-c.h>
+
+static int test_open(const char *, int, ...);
+static int test_close(int);
+static ssize_t test_read(int, void *, size_t);
+
+#define open test_open
+#define close test_close
+#define read test_read
+#include "pci_virtio_rnd.c"
+#undef open
+#undef close
+#undef read
+
+struct nvlist { int unused; };
+
+static int g_open_result, g_read_calls, g_close_calls;
+static ssize_t g_read_result;
+static int g_descs, g_chain_n, g_readable, g_writable;
+static bool g_null_iov;
+static size_t g_iov_len;
+static uint8_t g_iov[64];
+static int g_rel_calls, g_end_calls;
+static uint32_t g_rel_len;
+
+static void
+reset_mocks(void)
+{
+	g_open_result = 10;
+	g_read_result = 1;
+	g_read_calls = g_close_calls = 0;
+	g_descs = g_chain_n = g_writable = 1;
+	g_readable = 0;
+	g_null_iov = false;
+	g_iov_len = sizeof(g_iov);
+	g_rel_calls = g_end_calls = 0;
+	g_rel_len = UINT32_MAX;
+}
+
+static int
+test_open(const char *path __unused, int flags __unused, ...)
+{
+	if (g_open_result < 0)
+		errno = EIO;
+	return (g_open_result);
+}
+
+static int
+test_close(int fd __unused)
+{
+	g_close_calls++;
+	return (0);
+}
+
+static ssize_t
+test_read(int fd __unused, void *buf, size_t len)
+{
+	g_read_calls++;
+	if (g_read_result < 0) {
+		errno = EIO;
+		return (-1);
+	}
+	if (g_read_result > 0 && len > 0)
+		memset(buf, 0xa5, MIN((size_t)g_read_result, len));
+	return (g_read_result);
+}
+
+int
+vq_has_descs(struct vqueue_info *vq __unused)
+{
+	return (g_descs > 0);
+}
+
+int
+vq_getchain(struct vqueue_info *vq __unused, struct iovec *iov, int niov,
+    struct vi_req *req)
+{
+	if (g_chain_n <= 0)
+		return (g_chain_n);
+	ATF_REQUIRE(niov == 1);
+	iov->iov_base = g_null_iov ? NULL : g_iov;
+	iov->iov_len = g_iov_len;
+	req->idx = 7;
+	req->readable = g_readable;
+	req->writable = g_writable;
+	g_descs--;
+	return (g_chain_n);
+}
+
+void
+vq_relchain(struct vqueue_info *vq __unused, uint16_t idx, uint32_t len)
+{
+	ATF_CHECK(idx == 7);
+	g_rel_calls++;
+	g_rel_len = len;
+}
+
+void vq_retchains(struct vqueue_info *vq __unused, uint16_t count __unused) {}
+
+void
+vq_endchains(struct vqueue_info *vq __unused, int all_avail __unused)
+{
+	g_end_calls++;
+}
+
+void
+vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc,
+    void *softc __unused, struct pci_devinst *pi, struct vqueue_info *queues)
+{
+	memset(vs, 0, sizeof(*vs));
+	vs->vs_vc = vc;
+	vs->vs_pi = pi;
+	vs->vs_queues = queues;
+	pi->pi_arg = vs;
+	queues->vq_vs = vs;
+}
+
+int
+vi_pci_select_transport(struct virtio_softc *vs, const nvlist_t *nvl __unused,
+    enum virtio_pci_transport_policy policy)
+{
+	ATF_CHECK(policy == VIRTIO_PCI_LEGACY_DEFAULT);
+	vs->vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	return (0);
+}
+
+bool vi_pci_is_modern(const struct virtio_softc *vs)
+{ return (vs->vs_transport == VIRTIO_PCI_TRANSPORT_MODERN); }
+void vi_pci_modern_set_identity(struct virtio_softc *vs __unused,
+    uint16_t id __unused) {}
+int vi_pci_modern_init(struct virtio_softc *vs __unused, int bar __unused)
+{ return (0); }
+int vi_intr_init(struct virtio_softc *vs __unused, int bar __unused,
+    int msix __unused) { return (0); }
+void vi_set_io_bar(struct virtio_softc *vs __unused, int bar __unused) {}
+void vi_reset_dev(struct virtio_softc *vs __unused) {}
+int fbsdrun_virtio_msix(void) { return (1); }
+int vi_pci_modern_cfgread(struct pci_devinst *pi __unused,
+    int off __unused, int size __unused, uint32_t *val __unused) { return (0); }
+int vi_pci_modern_cfgwrite(struct pci_devinst *pi __unused,
+    int off __unused, int size __unused, uint32_t val __unused) { return (0); }
+uint64_t vi_pci_read(struct pci_devinst *pi __unused, int bar __unused,
+    uint64_t off __unused, int size __unused) { return (0); }
+void vi_pci_write(struct pci_devinst *pi __unused, int bar __unused,
+    uint64_t off __unused, int size __unused, uint64_t val __unused) {}
+void pci_set_cfgdata8(struct pci_devinst *pi, int off, uint8_t val)
+{ pi->pi_cfgdata[off] = val; }
+void pci_set_cfgdata16(struct pci_devinst *pi, int off, uint16_t val)
+{ memcpy(&pi->pi_cfgdata[off], &val, sizeof(val)); }
+
+ATF_TC_WITHOUT_HEAD(hostile_descriptors);
+ATF_TC_BODY(hostile_descriptors, tc)
+{
+	struct pci_vtrnd_softc sc;
+	struct vqueue_info vq;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&vq, 0, sizeof(vq));
+	sc.vrsc_fd = 10;
+	for (int kind = 0; kind < 6; kind++) {
+		reset_mocks();
+		switch (kind) {
+		case 0: g_chain_n = 2; break;
+		case 1: g_readable = 1; g_writable = 0; break;
+		case 2: g_null_iov = true; break;
+		case 3: g_iov_len = 0; break;
+		case 4: g_chain_n = -1; break;
+		case 5: g_chain_n = 0; break;
+		}
+		pci_vtrnd_notify(&sc, &vq);
+		ATF_CHECK(g_read_calls == 0);
+		ATF_CHECK(g_rel_calls == (kind >= 4 ? 0 : 1));
+		if (g_rel_calls != 0)
+			ATF_CHECK(g_rel_len == 0);
+		ATF_CHECK(g_end_calls == 1);
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(random_read_failures);
+ATF_TC_BODY(random_read_failures, tc)
+{
+	struct pci_vtrnd_softc sc;
+	struct vqueue_info vq;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&vq, 0, sizeof(vq));
+	sc.vrsc_fd = 10;
+	for (int result = -1; result <= 0; result++) {
+		reset_mocks();
+		g_read_result = result;
+		pci_vtrnd_notify(&sc, &vq);
+		ATF_CHECK(g_read_calls == 1);
+		ATF_CHECK(g_rel_calls == 1 && g_rel_len == 0);
+	}
+	reset_mocks();
+	g_read_result = 17;
+	pci_vtrnd_notify(&sc, &vq);
+	ATF_CHECK(g_rel_calls == 1 && g_rel_len == 17);
+}
+
+ATF_TC_WITHOUT_HEAD(init_failures);
+ATF_TC_BODY(init_failures, tc)
+{
+	struct pci_devinst pi;
+	struct nvlist nvl;
+
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_open_result = -1;
+	ATF_CHECK(pci_vtrnd_init(&pi, &nvl) == 1);
+	ATF_CHECK(g_read_calls == 0 && g_close_calls == 0);
+
+	reset_mocks();
+	g_read_result = -1;
+	ATF_CHECK(pci_vtrnd_init(&pi, &nvl) == 1);
+	ATF_CHECK(g_read_calls == 1 && g_close_calls == 1);
+}
+
+ATF_TP_ADD_TCS(tp)
+{
+	ATF_TP_ADD_TC(tp, hostile_descriptors);
+	ATF_TP_ADD_TC(tp, random_read_failures);
+	ATF_TP_ADD_TC(tp, init_failures);
+	return (atf_no_error());
+}

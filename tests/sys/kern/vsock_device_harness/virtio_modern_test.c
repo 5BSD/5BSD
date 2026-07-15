@@ -338,7 +338,8 @@ ATF_TC_BODY(features_and_status, tc)
 
 	setup_transport(&vs, &pi, queues);
 	value = vi_pci_modern_read(&pi, 2, VIRTIO_PCI_COMMON_DF, 4);
-	ATF_CHECK(value == 0x7);
+	ATF_CHECK(value == (0x7 | VIRTIO_RING_F_INDIRECT_DESC |
+	    VIRTIO_RING_F_EVENT_IDX));
 	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_DFSELECT, 4, 1);
 	value = vi_pci_modern_read(&pi, 2, VIRTIO_PCI_COMMON_DF, 4);
 	ATF_CHECK(value == (1U | (1U << (50 - 32))));
@@ -349,7 +350,8 @@ ATF_TC_BODY(features_and_status, tc)
 	ATF_CHECK(vi_pci_modern_read(&pi, 2, VIRTIO_PCI_COMMON_DF, 4) == 0);
 
 	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GFSELECT, 4, 0);
-	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GF, 4, 3);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GF, 4,
+	    3 | VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_RING_F_EVENT_IDX);
 	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_STATUS, 1,
 	    VIRTIO_CONFIG_S_FEATURES_OK);
 	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_FEATURES_OK) == 0);
@@ -358,8 +360,10 @@ ATF_TC_BODY(features_and_status, tc)
 	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_STATUS, 1,
 	    VIRTIO_CONFIG_S_FEATURES_OK);
 	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_FEATURES_OK) != 0);
-	ATF_CHECK(g_applied_features == (VIRTIO_F_VERSION_1 | 3));
-	ATF_CHECK(vs.vs_negotiated_caps == 3);
+	ATF_CHECK(g_applied_features == (VIRTIO_F_VERSION_1 | 3 |
+	    VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_RING_F_EVENT_IDX));
+	ATF_CHECK(vs.vs_negotiated_caps == (3 | VIRTIO_RING_F_INDIRECT_DESC |
+	    VIRTIO_RING_F_EVENT_IDX));
 	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_STATUS, 1, 0);
 	ATF_CHECK(vs.vs_status == 0);
 	ATF_CHECK(vs.vs_modern->driver_features == 0);

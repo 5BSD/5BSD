@@ -505,6 +505,16 @@ to the guest in the form of simple char devices for simple IO
 between the guest and host userspaces.
 .It Cm virtio-input
 Virtio input interface.
+The optional
+.Cm transport
+setting accepts
+.Cm legacy
+or
+.Cm modern .
+If omitted, the historical legacy register interface is retained for
+compatibility with existing guests and launch scripts.
+The modern setting selects the non-transitional VirtIO PCI transport and
+device ID 0x1052.
 .It Cm virtio-vsock
 Virtio vsock interface for host-guest socket transport.
 The device is configured with

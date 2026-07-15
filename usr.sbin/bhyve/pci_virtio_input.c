@@ -48,6 +48,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,6 +66,7 @@
 #define VTINPUT_RINGSZ 64
 
 #define VTINPUT_MAX_PKT_LEN 10
+#define VTINPUT_MAX_FRAME_EVENTS 4096
 
 /*
  * Queue definitions.
@@ -143,12 +145,14 @@ struct pci_vtinput_softc {
 	struct virtio_softc vsc_vs;
 	struct vqueue_info vsc_queues[VTINPUT_MAXQ];
 	pthread_mutex_t vsc_mtx;
+	bool vsc_mtx_initialized;
 	const char *vsc_evdev;
 	int vsc_fd;
 	struct vtinput_config vsc_config;
 	int vsc_config_valid;
 	struct mevent *vsc_evp;
 	struct vtinput_eventqueue vsc_eventqueue;
+	bool vsc_drop_frame;
 };
 
 static void pci_vtinput_reset(void *);
@@ -192,7 +196,14 @@ pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 		const int n = vq_getchain(vq, &iov, 1, &req);
 		if (n <= 0) {
 			WPRINTF(("%s: invalid descriptor: %d", __func__, n));
-			return;
+			break;
+		}
+		if (n != 1 || req.readable != 1 || req.writable != 0 ||
+		    iov.iov_base == NULL ||
+		    iov.iov_len < sizeof(struct vtinput_event)) {
+			WPRINTF(("%s: invalid status descriptor", __func__));
+			vq_relchain(vq, req.idx, 0);
+			continue;
 		}
 
 		/* get event */
@@ -417,11 +428,13 @@ pci_vtinput_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 {
 	struct pci_vtinput_softc *sc = vsc;
 
+	*retval = 0;
+
 	/* check for valid offset and size */
-	if (offset + size > (int)sizeof(struct vtinput_config)) {
+	if (offset < 0 || (size != 1 && size != 2 && size != 4) ||
+	    (size_t)offset > sizeof(struct vtinput_config) - (size_t)size) {
 		WPRINTF(("%s: read to invalid offset/size %d/%d", __func__,
 		    offset, size));
-		memset(retval, 0, size);
 		return (0);
 	}
 
@@ -430,7 +443,6 @@ pci_vtinput_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 		if (pci_vtinput_read_config(sc) != 0) {
 			DPRINTF(("%s: could not read config %d/%d", __func__,
 			    sc->vsc_config.select, sc->vsc_config.subsel));
-			memset(retval, 0, size);
 			return (0);
 		}
 		sc->vsc_config_valid = 1;
@@ -448,7 +460,8 @@ pci_vtinput_cfgwrite(void *vsc, int offset, int size, uint32_t value)
 	struct pci_vtinput_softc *sc = vsc;
 
 	/* guest can only write to select and subsel fields */
-	if (offset + size > 2) {
+	if (offset < 0 || (size != 1 && size != 2) ||
+	    (size_t)offset > 2 - (size_t)size) {
 		WPRINTF(("%s: write to readonly reg %d", __func__, offset));
 		return (1);
 	}
@@ -470,9 +483,16 @@ vtinput_eventqueue_add_event(
 	/* check if queue is full */
 	if (queue->idx >= queue->size) {
 		/* alloc new elements for queue */
-		const uint32_t newSize = queue->idx;
+		if (queue->size >= VTINPUT_MAX_FRAME_EVENTS) {
+			WPRINTF(("%s: input frame exceeds %u events", __func__,
+			    VTINPUT_MAX_FRAME_EVENTS));
+			return (1);
+		}
+		const uint32_t newSize = queue->size == 0 ?
+		    VTINPUT_MAX_PKT_LEN :
+		    MIN(queue->size * 2, VTINPUT_MAX_FRAME_EVENTS);
 		void *newPtr = realloc(queue->events,
-		    queue->size * sizeof(struct vtinput_event_elem));
+		    newSize * sizeof(struct vtinput_event_elem));
 		if (newPtr == NULL) {
 			WPRINTF(("%s: realloc memory for eventqueue failed!",
 			    __func__));
@@ -497,6 +517,15 @@ vtinput_eventqueue_clear(struct vtinput_eventqueue *queue)
 {
 	/* just reset index to clear queue */
 	queue->idx = 0;
+}
+
+static void
+vtinput_eventqueue_drop_events(struct vtinput_eventqueue *queue,
+    struct vqueue_info *vq, uint32_t count)
+{
+
+	for (uint32_t i = 0; i < count; i++)
+		vq_relchain(vq, queue->events[i].idx, 0);
 }
 
 static void
@@ -527,22 +556,27 @@ vtinput_eventqueue_send_events(
 		const int n = vq_getchain(vq, &iov, 1, &req);
 		if (n <= 0) {
 			WPRINTF(("%s: invalid descriptor: %d", __func__, n));
-			return;
+			vtinput_eventqueue_drop_events(queue, vq, i);
+			goto done;
 		}
 		if (n != 1) {
 			WPRINTF(
 			    ("%s: invalid number of descriptors in chain: %d",
 				__func__, n));
-			/* release invalid chain */
+			/* Drop the frame in available-ring order. */
+			vtinput_eventqueue_drop_events(queue, vq, i);
 			vq_relchain(vq, req.idx, 0);
-			return;
+			goto done;
 		}
-		if (iov.iov_len < sizeof(struct vtinput_event)) {
+		if (req.readable != 0 || req.writable != 1 ||
+		    iov.iov_base == NULL ||
+		    iov.iov_len < sizeof(struct vtinput_event)) {
 			WPRINTF(("%s: invalid descriptor length: %lu", __func__,
 			    iov.iov_len));
-			/* release invalid chain */
+			/* Drop the frame in available-ring order. */
+			vtinput_eventqueue_drop_events(queue, vq, i);
 			vq_relchain(vq, req.idx, 0);
-			return;
+			goto done;
 		}
 
 		/* save descriptor */
@@ -588,19 +622,30 @@ vtinput_read_event(int fd __attribute((unused)),
     enum ev_type t __attribute__((unused)), void *arg __attribute__((unused)))
 {
 	struct pci_vtinput_softc *sc = arg;
+	struct virtio_softc *vs = &sc->vsc_vs;
+
+	VS_LOCK(vs);
 
 	/* skip if driver isn't ready */
-	if (!(sc->vsc_vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK))
+	if (!(sc->vsc_vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK)) {
+		VS_UNLOCK(vs);
 		return;
+	}
 
 	/* read all events from host */
 	struct input_event event;
 	while (vtinput_read_event_from_host(sc->vsc_fd, &event) == 0) {
 		/* add events to our queue */
-		vtinput_eventqueue_add_event(&sc->vsc_eventqueue, &event);
+		if (vtinput_eventqueue_add_event(&sc->vsc_eventqueue, &event) != 0)
+			sc->vsc_drop_frame = true;
 
 		/* only send events to guest on EV_SYN or SYN_REPORT */
-		if (event.type != EV_SYN || event.type != SYN_REPORT) {
+		if (event.type != EV_SYN || event.code != SYN_REPORT) {
+			continue;
+		}
+		if (sc->vsc_drop_frame) {
+			vtinput_eventqueue_clear(&sc->vsc_eventqueue);
+			sc->vsc_drop_frame = false;
 			continue;
 		}
 
@@ -608,6 +653,8 @@ vtinput_read_event(int fd __attribute((unused)),
 		vtinput_eventqueue_send_events(
 		    &sc->vsc_eventqueue, &sc->vsc_queues[VTINPUT_EVENTQ]);
 	}
+
+	VS_UNLOCK(vs);
 }
 
 static int
@@ -636,14 +683,19 @@ static int
 pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtinput_softc *sc;
+	bool mtx_attr_initialized;
 
 	/*
 	 * Keep it here.
 	 * Else it's possible to access it uninitialized by jumping to failed.
 	 */
-	pthread_mutexattr_t mtx_attr = NULL;
+	pthread_mutexattr_t mtx_attr;
 
 	sc = calloc(1, sizeof(struct pci_vtinput_softc));
+	if (sc == NULL)
+		return (-1);
+	sc->vsc_fd = -1;
+	mtx_attr_initialized = false;
 
 	sc->vsc_evdev = get_config_value_node(nvl, "path");
 	if (sc->vsc_evdev == NULL) {
@@ -680,6 +732,7 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 		WPRINTF(("%s: init mutexattr failed", __func__));
 		goto failed;
 	}
+	mtx_attr_initialized = true;
 	if (pthread_mutexattr_settype(&mtx_attr, PTHREAD_MUTEX_RECURSIVE)) {
 		WPRINTF(("%s: settype mutexattr failed", __func__));
 		goto failed;
@@ -688,6 +741,9 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 		WPRINTF(("%s: init mutex failed", __func__));
 		goto failed;
 	}
+	sc->vsc_mtx_initialized = true;
+	pthread_mutexattr_destroy(&mtx_attr);
+	mtx_attr_initialized = false;
 
 	/* init softc */
 	sc->vsc_eventqueue.idx = 0;
@@ -725,38 +781,45 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vsc_queues[VTINPUT_EVENTQ].vq_notify = pci_vtinput_notify_eventq;
 	sc->vsc_queues[VTINPUT_STATUSQ].vq_qsize = VTINPUT_RINGSZ;
 	sc->vsc_queues[VTINPUT_STATUSQ].vq_notify = pci_vtinput_notify_statusq;
+	if (vi_pci_select_transport(&sc->vsc_vs, nvl,
+	    VIRTIO_PCI_LEGACY_DEFAULT) != 0)
+		goto failed;
 
 	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_INPUT);
-	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
+	if (vi_pci_is_modern(&sc->vsc_vs))
+		vi_pci_modern_set_identity(&sc->vsc_vs, VIRTIO_ID_INPUT);
+	else {
+		/* Preserve the historical identity for compatibility. */
+		pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_INPUT);
+		pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
+		pci_set_cfgdata8(pi, PCIR_REVID, VIRTIO_REV_INPUT);
+		pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_SUBDEV_INPUT);
+		pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_SUBVEN_INPUT);
+	}
 	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_INPUTDEV);
 	pci_set_cfgdata8(pi, PCIR_SUBCLASS, PCIS_INPUTDEV_OTHER);
-	pci_set_cfgdata8(pi, PCIR_REVID, VIRTIO_REV_INPUT);
-	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_SUBDEV_INPUT);
-	pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_SUBVEN_INPUT);
 
 	/* add MSI-X table BAR */
 	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
 		goto failed;
-	/* add virtio register */
-	vi_set_io_bar(&sc->vsc_vs, 0);
+	if (vi_pci_is_modern(&sc->vsc_vs)) {
+		if (vi_pci_modern_init(&sc->vsc_vs, 2) != 0)
+			goto failed;
+	} else
+		vi_set_io_bar(&sc->vsc_vs, 0);
 
 	return (0);
 
 failed:
-	if (sc == NULL) {
-		return (-1);
-	}
-
 	if (sc->vsc_evp)
 		mevent_delete(sc->vsc_evp);
 	if (sc->vsc_eventqueue.events)
 		free(sc->vsc_eventqueue.events);
-	if (sc->vsc_mtx)
+	if (sc->vsc_mtx_initialized)
 		pthread_mutex_destroy(&sc->vsc_mtx);
-	if (mtx_attr)
+	if (mtx_attr_initialized)
 		pthread_mutexattr_destroy(&mtx_attr);
-	if (sc->vsc_fd)
+	if (sc->vsc_fd >= 0)
 		close(sc->vsc_fd);
 
 	free(sc);
@@ -768,6 +831,8 @@ static const struct pci_devemu pci_de_vinput = {
 	.pe_emu = "virtio-input",
 	.pe_init = pci_vtinput_init,
 	.pe_legacy_config = pci_vtinput_legacy_config,
+	.pe_cfgwrite = vi_pci_modern_cfgwrite,
+	.pe_cfgread = vi_pci_modern_cfgread,
 	.pe_barwrite = vi_pci_write,
 	.pe_barread = vi_pci_read,
 };

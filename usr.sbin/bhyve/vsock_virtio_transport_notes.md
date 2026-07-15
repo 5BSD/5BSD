@@ -485,6 +485,9 @@ device models can later become genuinely transitional.
    NOTIFY_ON_EMPTY (24) or ANY_LAYOUT (27) on the modern path — both are
    legacy-interface bits (§6.3). Ring code (vq_getchain / vq_endchains)
    already handles 28/29 and is ring-layout-identical under VERSION_1.
+   The transport adds these three transport features independently of each
+   device model's `vc_hv_caps`; device models only list their device-specific
+   features.
 5. Not offered initially (all optional): RING_PACKED (34),
    NOTIFICATION_DATA (38), NOTIF_CONFIG_DATA (39), RING_RESET (40),
    ACCESS_PLATFORM (33), SUSPEND (43), ADMIN_VQ (41).

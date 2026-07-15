@@ -3,6 +3,7 @@
 #ifndef MOCK_VIRTIO_H
 #define MOCK_VIRTIO_H
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <sys/uio.h>
 #include <dev/virtio/virtio_config.h>
@@ -60,6 +61,7 @@ struct virtio_consts {
 	int vc_nvq;
 	size_t vc_cfgsize;
 	void (*vc_reset)(void *);
+	void (*vc_qnotify)(void *, struct vqueue_info *);
 	int (*vc_cfgread)(void *, int, int, uint32_t *);
 	int (*vc_cfgwrite)(void *, int, int, uint32_t);
 	void (*vc_apply_features)(void *, uint64_t);
@@ -73,6 +75,9 @@ struct virtio_consts {
 #define VIRTIO_USE_MSIX 0x01
 #define VIRTIO_EVENT_IDX 0x02
 #define VIRTIO_BROKED 0x08
+#define VRING_PFN 12
+#define VRING_ALIGN 4096
+#define vring_size_aligned(n) vring_size((n), VRING_ALIGN)
 #ifndef VIRTIO_MSI_NO_VECTOR
 #define VIRTIO_MSI_NO_VECTOR 0xffff
 #endif
@@ -82,6 +87,13 @@ struct virtio_consts {
 	pthread_mutex_unlock((vs)->vs_mtx); } while (0)
 #define VIRTIO_DEV_VSOCK 0x1013
 #define VIRTIO_ID_VSOCK  19
+#define VIRTIO_DEV_INPUT 0x1052
+#define VIRTIO_ID_INPUT  18
+#define VIRTIO_DEV_RANDOM 0x1005
+#define VIRTIO_ID_ENTROPY 4
+#define VIRTIO_REV_INPUT 1
+#define VIRTIO_SUBVEN_INPUT 0x108e
+#define VIRTIO_SUBDEV_INPUT 0x1100
 #define VIRTIO_VENDOR    0x1af4
 static inline int
 vq_ring_ready(struct vqueue_info *vq)
@@ -90,8 +102,16 @@ vq_ring_ready(struct vqueue_info *vq)
 	    (vq->vq_vs->vs_transport != VIRTIO_PCI_TRANSPORT_MODERN ||
 	    (vq->vq_vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0));
 }
+#define VQ_USED_EVENT_IDX(vq) ((vq)->vq_avail->ring[(vq)->vq_qsize])
+void mock_vq_interrupt(struct virtio_softc *, struct vqueue_info *);
+static inline void
+vq_interrupt(struct virtio_softc *vs, struct vqueue_info *vq)
+{
+	mock_vq_interrupt(vs, vq);
+}
 int  vq_has_descs(struct vqueue_info *);
 int  vq_getchain(struct vqueue_info *, struct iovec *, int, struct vi_req *);
+void vq_retchains(struct vqueue_info *, uint16_t);
 void vq_relchain(struct vqueue_info *, uint16_t, uint32_t);
 void vq_endchains(struct vqueue_info *, int);
 void vi_softc_linkup(struct virtio_softc *, struct virtio_consts *, void *,

@@ -61,7 +61,8 @@ vi_modern_device_features(const struct virtio_softc *vs)
 
 	features = vs->vs_vc->vc_hv_caps;
 	features &= VIRTIO_MODERN_SUPPORTED_FEATURES;
-	features |= VIRTIO_F_VERSION_1;
+	features |= VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_RING_F_EVENT_IDX |
+	    VIRTIO_F_VERSION_1;
 	return (features);
 }
 

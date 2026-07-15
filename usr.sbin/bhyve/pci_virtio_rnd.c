@@ -107,7 +107,8 @@ pci_vtrnd_notify(void *vsc, struct vqueue_info *vq)
 	struct iovec iov;
 	struct pci_vtrnd_softc *sc;
 	struct vi_req req;
-	int len, n;
+	ssize_t len;
+	int n;
 
 	sc = vsc;
 
@@ -118,14 +119,27 @@ pci_vtrnd_notify(void *vsc, struct vqueue_info *vq)
 
 	while (vq_has_descs(vq)) {
 		n = vq_getchain(vq, &iov, 1, &req);
-		assert(n == 1);
+		if (n <= 0) {
+			WPRINTF(("vtrnd: invalid descriptor chain"));
+			break;
+		}
+		if (n != 1 || req.readable != 0 || req.writable != 1 ||
+		    iov.iov_base == NULL || iov.iov_len == 0) {
+			WPRINTF(("vtrnd: invalid writable descriptor"));
+			vq_relchain(vq, req.idx, 0);
+			continue;
+		}
 
 		len = read(sc->vrsc_fd, iov.iov_base, iov.iov_len);
 
-		DPRINTF(("vtrnd: vtrnd_notify(): %d", len));
+		DPRINTF(("vtrnd: vtrnd_notify(): %zd", len));
 
-		/* Catastrophe if unable to read from /dev/random */
-		assert(len > 0);
+		if (len <= 0) {
+			WPRINTF(("vtrnd: read from /dev/random failed: %s",
+			    len == 0 ? "unexpected EOF" : strerror(errno)));
+			vq_relchain(vq, req.idx, 0);
+			break;
+		}
 
 		/*
 		 * Release this chain and handle more
@@ -152,7 +166,10 @@ pci_vtrnd_init(struct pci_devinst *pi, nvlist_t *nvl)
 	 */
 	fd = open("/dev/random", O_RDONLY | O_NONBLOCK);
 
-	assert(fd >= 0);
+	if (fd < 0) {
+		WPRINTF(("vtrnd: cannot open /dev/random: %s", strerror(errno)));
+		return (1);
+	}
 
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_init(&rights, CAP_READ);

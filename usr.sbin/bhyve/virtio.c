@@ -240,23 +240,28 @@ vi_vq_init(struct virtio_softc *vs, uint32_t pfn)
  * Helper inline for vq_getchain(): record the i'th "real"
  * descriptor.
  */
-static inline void
+static inline bool
 _vq_record(int i, struct vring_desc *vd, struct vmctx *ctx, struct iovec *iov,
     int n_iov, struct vi_req *reqp)
 {
+	void *base;
 	uint32_t len;
 	uint64_t addr;
 
-	if (i >= n_iov)
-		return;
 	len = atomic_load_32(&vd->len);
 	addr = atomic_load_64(&vd->addr);
-	iov[i].iov_len = len;
-	iov[i].iov_base = paddr_guest2host(ctx, addr, len);
+	base = paddr_guest2host(ctx, addr, len);
+	if (base == NULL)
+		return (false);
+	if (i < n_iov) {
+		iov[i].iov_len = len;
+		iov[i].iov_base = base;
+	}
 	if ((vd->flags & VRING_DESC_F_WRITE) == 0)
 		reqp->readable++;
 	else
 		reqp->writable++;
+	return (true);
 }
 #define	VQ_MAX_DESCRIPTORS	512	/* see below */
 
@@ -357,7 +362,11 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 		}
 		vdir = &vq->vq_desc[next];
 		if ((vdir->flags & VRING_DESC_F_INDIRECT) == 0) {
-			_vq_record(i, vdir, ctx, iov, niov, &req);
+			if (!_vq_record(i, vdir, ctx, iov, niov, &req)) {
+				EPRINTLN("%s: descriptor maps outside guest memory",
+				    name);
+				return (-1);
+			}
 			i++;
 		} else if ((vs->vs_negotiated_caps &
 		    VIRTIO_RING_F_INDIRECT_DESC) == 0) {
@@ -377,6 +386,11 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 			}
 			vindir = paddr_guest2host(ctx,
 			    vdir->addr, vdir->len);
+			if (vindir == NULL) {
+				EPRINTLN("%s: indirect descriptor table maps outside "
+				    "guest memory", name);
+				return (-1);
+			}
 			/*
 			 * Indirects start at the 0th, then follow
 			 * their own embedded "next"s until those run
@@ -394,7 +408,11 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 					    name);
 					return (-1);
 				}
-				_vq_record(i, vp, ctx, iov, niov, &req);
+				if (!_vq_record(i, vp, ctx, iov, niov, &req)) {
+					EPRINTLN("%s: indirect descriptor maps "
+					    "outside guest memory", name);
+					return (-1);
+				}
 				if (++i > VQ_MAX_DESCRIPTORS)
 					goto loopy;
 				if ((vp->flags & VRING_DESC_F_NEXT) == 0)

@@ -18,7 +18,8 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 cp "$here"/*.h "$here/vsock_device_test.c" \
-    "$here/virtio_modern_test.c" "$work/"
+    "$here/virtio_modern_test.c" "$here/virtio_input_test.c" \
+    "$here/virtio_rnd_test.c" "$here/virtio_core_test.c" "$work/"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock.c"        "$work/pci_virtio_vsock.c"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock_iov.h"    "$work/pci_virtio_vsock_iov.h"
 # DTrace USDT probe wrappers: harness builds WITHOUT -DWITH_DTRACE, so the header
@@ -26,6 +27,9 @@ ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock_iov.h"    "$work/pci_virtio_vsock
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock_probes.h" "$work/pci_virtio_vsock_probes.h"
 ln -s "$srctop/usr.sbin/bhyve/virtio_pci_modern.c" "$work/virtio_pci_modern.c"
 ln -s "$srctop/usr.sbin/bhyve/virtio_pci_modern_probes.h" "$work/virtio_pci_modern_probes.h"
+ln -s "$srctop/usr.sbin/bhyve/pci_virtio_input.c" "$work/pci_virtio_input.c"
+ln -s "$srctop/usr.sbin/bhyve/pci_virtio_rnd.c" "$work/pci_virtio_rnd.c"
+ln -s "$srctop/usr.sbin/bhyve/virtio.c" "$work/virtio.c"
 
 mkdir -p "$work/inc/sys"
 cp "$srctop/sys/sys/vsock.h" "$work/inc/sys/vsock.h"
@@ -69,3 +73,24 @@ EOF
     "$work/virtio_modern_test.c" -lpthread
 
 "$work/modern-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" -DWITHOUT_CAPSICUM \
+	-I"$work/atfshim" -I"$work/inc" \
+    -I"$work" -I"$srctop/sys" -o "$work/input-test" \
+    "$work/virtio_input_test.c" -lpthread
+
+"$work/input-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" -DWITHOUT_CAPSICUM \
+	-I"$work/atfshim" -I"$work/inc" \
+    -I"$work" -I"$srctop/sys" -o "$work/rnd-test" \
+    "$work/virtio_rnd_test.c" -lpthread
+
+"$work/rnd-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" -ffunction-sections \
+	-DWITHOUT_CAPSICUM -I"$work/atfshim" -I"$work/inc" \
+    -I"$work" -I"$srctop/sys" -Wl,--gc-sections -o "$work/core-test" \
+    "$work/virtio_core_test.c"
+
+"$work/core-test"

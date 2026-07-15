@@ -303,6 +303,18 @@ VirtIO block storage interface.
 VirtIO console interface.
 .It Li virtio-input
 VirtIO input interface.
+The optional
+.Va transport
+variable is either
+.Li legacy
+or
+.Li modern .
+It defaults to
+.Li legacy
+to preserve the existing PCI identity and interface.
+The
+.Li modern
+value selects the non-transitional VirtIO PCI transport and device ID 0x1052.
 .It Li virtio-net
 VirtIO network interface.
 .It Li virtio-rnd
@@ -791,6 +803,11 @@ VirtIO Input Interfaces support the following variables:
 .It Sy Name Ta Sy Format Ta Sy Default Ta Sy Description
 .It Va path Ta path Ta Ta
 The path of the input event device exposed to the guest
+.It Va transport Ta string Ta legacy Ta
+VirtIO PCI transport to expose, either
+.Dq legacy
+or
+.Dq modern .
 .El
 .Ss VirtIO Network Interface Settings
 In addition to the network backend settings,

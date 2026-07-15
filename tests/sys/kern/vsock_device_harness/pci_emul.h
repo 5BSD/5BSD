@@ -44,7 +44,14 @@ uint8_t pci_get_cfgdata8(struct pci_devinst *, int);
 uint32_t pci_get_cfgdata32(struct pci_devinst *, int);
 int pci_emul_alloc_bar(struct pci_devinst *, int, enum pcibar_type, uint64_t);
 int pci_emul_add_capability(struct pci_devinst *, const u_char *, int);
+int pci_emul_add_msixcap(struct pci_devinst *, int, int);
+void pci_emul_add_msicap(struct pci_devinst *, int);
+void pci_lintr_request(struct pci_devinst *);
 int pci_msix_enabled(struct pci_devinst *);
+int pci_msix_table_bar(struct pci_devinst *);
+int pci_msix_pba_bar(struct pci_devinst *);
+uint64_t pci_emul_msix_tread(struct pci_devinst *, uint64_t, int);
+void pci_emul_msix_twrite(struct pci_devinst *, uint64_t, int, uint64_t);
 void pci_generate_msix(struct pci_devinst *, int);
 void pci_generate_msi(struct pci_devinst *, int);
 void pci_lintr_assert(struct pci_devinst *);
@@ -57,4 +64,7 @@ void pci_lintr_deassert(struct pci_devinst *);
 #define PCIR_SUBDEV_0  0x2e
 #define PCIR_REVID     0x08
 #define PCIC_SIMPLECOMM 0x07
+#define PCIC_INPUTDEV 0x09
+#define PCIS_INPUTDEV_OTHER 0x80
+#define PCIC_CRYPTO 0x10
 #endif
