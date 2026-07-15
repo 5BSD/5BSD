@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd May 15, 2026
+.Dd July 14, 2026
 .Dt BHYVE 8
 .Os
 .Sh NAME
@@ -499,11 +499,15 @@ Virtio input interface.
 Virtio vsock interface for host-guest socket transport.
 The device is configured with
 .Cm cid
-(guest context identifier, must be >= 3) and
+(guest context identifier, from 3 through 4294967294) and
 .Cm path
-(Unix domain socket path for host-side connections).
-Host processes connect to the Unix socket and send a 12-byte header
-(uint32_t port, uint64_t flags=0) to establish a vsock session with the guest.
+(existing host directory for Unix domain sockets).
+Guest connections to a host port use a socket named for the port inside this
+directory.
+For host-to-guest connections, host processes connect to
+.Pa <path>/sock
+and send a 16-byte control message containing the command, guest port, socket
+type, and status fields.
 See
 .Xr vsock 4
 for details.

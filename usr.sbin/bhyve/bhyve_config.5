@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd December 26, 2025
+.Dd July 14, 2026
 .Dt BHYVE_CONFIG 5
 .Os
 .Sh NAME
@@ -316,12 +316,18 @@ and
 configuration variables.
 The
 .Va cid
-specifies the guest context identifier (must be >= 3).
+specifies the guest context identifier, from 3 through 4294967294.
 The
 .Va path
-specifies a Unix domain socket path where host processes can
-connect to communicate with the guest via AF_VSOCK.
-See
+specifies an existing host directory for Unix domain sockets.
+For a guest connection to host port
+.Ar N ,
+.Xr bhyve 8
+connects to
+.Pa <path>/N .
+For a host-to-guest connection, a host process connects to
+.Pa <path>/sock
+and sends the 16-byte control message documented in
 .Xr vsock 4 .
 .It Li virtio-scsi
 VirtIO SCSI interface.

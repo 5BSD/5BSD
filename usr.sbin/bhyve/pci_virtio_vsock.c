@@ -239,6 +239,9 @@ struct vsock_ctl_msg {
 	int32_t		status;		/* reply: 0 on success, -errno on failure */
 };
 
+_Static_assert(sizeof(struct vsock_ctl_msg) == 16,
+    "vsock control message ABI changed");
+
 static int pci_vtvsock_debug;
 #define	DPRINTF(params)	if (pci_vtvsock_debug) PRINTLN params
 /* Per-packet tracing: BHYVE_VTVSOCK_DEBUG=2+ only -- the volume swamps
@@ -437,6 +440,8 @@ struct vtvsock_ctl_conn {
 	int			fd;
 	struct mevent		*evp;
 	time_t			created;	/* monotonic secs; for idle reaping */
+	struct vsock_ctl_msg	msg;		/* request accumulated from stream */
+	size_t			msg_off;	/* bytes received into msg */
 	TAILQ_ENTRY(vtvsock_ctl_conn) link;
 };
 
@@ -2937,17 +2942,14 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 		return;
 	}
 
-	nr = recv(fd, &msg, sizeof(msg), MSG_DONTWAIT);
-	if (nr != (ssize_t)sizeof(msg)) {
+	nr = recv(fd, (uint8_t *)&cc->msg + cc->msg_off,
+	    sizeof(cc->msg) - cc->msg_off, MSG_DONTWAIT);
+	if (nr <= 0) {
 		/*
-		 * Anything other than a full fixed-size message is terminal for
-		 * this control connection: EOF (nr == 0), a hard error, or a
-		 * short read (0 < nr < sizeof).  The tiny ctl message is written
-		 * in one shot, so a partial read means a broken or hostile
-		 * client; closing avoids desyncing the stream and leaking the
-		 * ctl_conn slot.  Only a real would-block leaves it open to retry.
+		 * EOF and hard errors terminate the request.  A would-block leaves
+		 * the partially accumulated SOCK_STREAM frame intact.
 		 */
-		if (!(nr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))) {
+		if (nr == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
 			TAILQ_REMOVE(&sc->vsc_ctl_conns, cc, link);
 			sc->vsc_ctl_conn_count--;
 			if (cc->evp != NULL)
@@ -2959,6 +2961,15 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 		pthread_mutex_unlock(&sc->vsc_mtx);
 		return;
 	}
+
+	cc->msg_off += nr;
+	if (cc->msg_off < sizeof(cc->msg)) {
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
+
+	msg = cc->msg;
+	cc->msg_off = 0;
 
 	switch (msg.cmd) {
 	case VSOCK_CTL_CONNECT: {
@@ -2973,9 +2984,18 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 		if (msg.type == SOCK_SEQPACKET) {
 			stype = SOCK_SEQPACKET;
 			vtype = VIRTIO_VSOCK_TYPE_SEQPACKET;
-		} else {
+		} else if (msg.type == SOCK_STREAM) {
 			stype = SOCK_STREAM;
 			vtype = VIRTIO_VSOCK_TYPE_STREAM;
+		} else {
+			struct vsock_ctl_msg reply;
+
+			WPRINTF(("vtvsock: unsupported ctl socket type %u",
+			    msg.type));
+			reply = msg;
+			reply.status = -ESOCKTNOSUPPORT;
+			(void)send(fd, &reply, sizeof(reply), MSG_NOSIGNAL);
+			break;
 		}
 
 		if (socketpair(AF_UNIX, stype, 0, pair) < 0) {

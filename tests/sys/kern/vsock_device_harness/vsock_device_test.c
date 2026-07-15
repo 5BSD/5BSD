@@ -168,6 +168,7 @@ __wrap_send(int fd, const void *b, size_t n, int f)
 static uint8_t g_recv_data[256 * 1024];
 static size_t g_recv_len;	/* total staged bytes (one host message) */
 static size_t g_recv_off;	/* bytes already consumed by recv() */
+static size_t g_recv_chunk_max;	/* limit one recv(), 0 means unlimited */
 static int g_recv_eof;		/* when set, recv() returns 0 (EOF) once drained */
 static int g_recv_zero_dgram;	/* a real 0-length SEQPACKET record is queued */
 static int g_recv_no_eor;	/* SEQPACKET record delivered WITHOUT MSG_EOR */
@@ -185,6 +186,8 @@ __wrap_recv(int fd, void *b, size_t n, int f)
 		return (-1);
 	}
 	take = MIN(n, avail);
+	if (g_recv_chunk_max != 0)
+		take = MIN(take, g_recv_chunk_max);
 	if (b != NULL && (f & MSG_TRUNC) == 0)
 		memcpy(b, g_recv_data + g_recv_off, take);
 	if (f & MSG_PEEK)			/* SEQPACKET size probe */
@@ -356,7 +359,7 @@ reset_caps(void)
 	g_ninject = 0; g_send_calls = 0; g_send_len = 0;
 	g_rx_descs = 256; g_connectat_result = 0;
 	g_rxbuf_len = sizeof(g_rxbuf);
-	g_recv_len = 0; g_recv_off = 0; g_recv_eof = 0;
+	g_recv_len = 0; g_recv_off = 0; g_recv_chunk_max = 0; g_recv_eof = 0;
 	g_recv_zero_dgram = 0; g_recv_no_eor = 0;
 	g_chain_readable = 0; g_chain_writable = 1; g_getchain_consumes = 0;
 }
@@ -1353,6 +1356,66 @@ ATF_TC_BODY(ctl_connect_emits_request, tc)
 }
 
 /*
+ * --- control messages arrive over SOCK_STREAM, so a valid 16-byte request
+ * can be split across reads.  The first callback must retain the partial frame
+ * and the second must complete exactly one connection request. ---
+ */
+ATF_TC_WITHOUT_HEAD(ctl_connect_accepts_short_reads);
+ATF_TC_BODY(ctl_connect_accepts_short_reads, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_ctl_conn *cc;
+	reset_caps();
+	cc = mk_ctl_conn(sc, g_next_fd++, 100);
+
+	stage_ctl_msg(VSOCK_CTL_CONNECT, 1234, SOCK_STREAM);
+	g_recv_chunk_max = 1;
+	pci_vtvsock_ctl_conn_cb(cc->fd, EVF_READ, sc);
+
+	ATF_CHECK(nconns(sc) == 0);
+	ATF_CHECK(g_ninject == 0);
+	ATF_CHECK(cc->msg_off == 1);
+
+	g_recv_chunk_max = 0;
+	pci_vtvsock_ctl_conn_cb(cc->fd, EVF_READ, sc);
+
+	ATF_CHECK(nconns(sc) == 1);
+	ATF_CHECK(g_ninject == 1);
+	ATF_CHECK(g_inject[0].op == VIRTIO_VSOCK_OP_REQUEST);
+	ATF_CHECK(g_inject[0].dst_port == 1234);
+	free(sc);
+}
+
+/*
+ * --- only the two socket types represented by virtio-vsock are accepted.
+ * An invalid native socket type gets a deterministic error reply and must not
+ * create a relay socket or emit a request to the guest. ---
+ */
+ATF_TC_WITHOUT_HEAD(ctl_connect_rejects_invalid_type);
+ATF_TC_BODY(ctl_connect_rejects_invalid_type, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_ctl_conn *cc;
+	struct vsock_ctl_msg reply;
+	reset_caps();
+	cc = mk_ctl_conn(sc, g_next_fd++, 100);
+
+	stage_ctl_msg(VSOCK_CTL_CONNECT, 1234, SOCK_DGRAM);
+	pci_vtvsock_ctl_conn_cb(cc->fd, EVF_READ, sc);
+
+	ATF_CHECK(nconns(sc) == 0);
+	ATF_CHECK(g_ninject == 0);
+	ATF_REQUIRE(g_send_len == sizeof(reply));
+	memcpy(&reply, g_send_buf, sizeof(reply));
+	ATF_CHECK(g_send_calls == 1);
+	ATF_CHECK(reply.cmd == VSOCK_CTL_CONNECT);
+	ATF_CHECK(reply.port == 1234);
+	ATF_CHECK(reply.type == SOCK_DGRAM);
+	ATF_CHECK(reply.status == -ESOCKTNOSUPPORT);
+	free(sc);
+}
+
+/*
  * --- relay socket buffers are enlarged to one advertised window
  * (VTVSOCK_BUF_ALLOC) on connect, so a full-window SEQPACKET record traverses
  * the host<->app Unix socket whole rather than being chopped at the 64 KiB
@@ -1581,6 +1644,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reaper_reaps_idle_ctl_conn);
 	ATF_TP_ADD_TC(tp, ctl_accept_cap);
 	ATF_TP_ADD_TC(tp, ctl_connect_emits_request);
+	ATF_TP_ADD_TC(tp, ctl_connect_accepts_short_reads);
+	ATF_TP_ADD_TC(tp, ctl_connect_rejects_invalid_type);
 	ATF_TP_ADD_TC(tp, relay_bufsize_enlarged_on_connect);
 	ATF_TP_ADD_TC(tp, ctl_unknown_cmd_ignored);
 	ATF_TP_ADD_TC(tp, ctl_connect_socketpair_fail);
