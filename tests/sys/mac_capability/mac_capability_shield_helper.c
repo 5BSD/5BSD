@@ -30,6 +30,48 @@
 
 #include "mac_capability_ioctl.h"
 #include "mac_capability_capprotect_proto.h"
+#include "mac_capability_identity_proto.h"
+
+static int
+report_self_nonce(int outfd)
+{
+	struct mac_capability_call_args call;
+	struct mac_capability_connect_args connect_args;
+	struct identity_request req;
+	struct identity_reply reply;
+	int ctl, fd, saved;
+
+	ctl = open("/dev/mac_capability", O_RDWR);
+	if (ctl < 0)
+		return (2);
+	memset(&connect_args, 0, sizeof(connect_args));
+	strlcpy(connect_args.name, "identity", sizeof(connect_args.name));
+	if (ioctl(ctl, MAC_CAPABILITY_CONNECT, &connect_args) != 0) {
+		saved = errno;
+		close(ctl);
+		errno = saved;
+		return (2);
+	}
+	close(ctl);
+	fd = connect_args.fd;
+
+	memset(&req, 0, sizeof(req));
+	req.op = IDENTITY_OP_SELF;
+	memset(&reply, 0, sizeof(reply));
+	memset(&call, 0, sizeof(call));
+	call.req = &req;
+	call.req_len = sizeof(req);
+	call.reply = &reply;
+	call.reply_len = sizeof(reply);
+	if (ioctl(fd, MAC_CAPABILITY_CALL, &call) != 0 ||
+	    reply.status != IDENTITY_STATUS_OK || reply.nonce == 0) {
+		close(fd);
+		return (2);
+	}
+	close(fd);
+	return (write(outfd, &reply.nonce, sizeof(reply.nonce)) ==
+	    (ssize_t)sizeof(reply.nonce) ? 0 : 2);
+}
 
 static int
 try_ptrace(pid_t pid)
@@ -259,6 +301,14 @@ int
 main(int argc, char **argv)
 {
 	pid_t pid;
+	int outfd;
+
+	if (argc == 3 && strcmp(argv[1], "self_nonce") == 0) {
+		outfd = (int)strtol(argv[2], NULL, 10);
+		if (outfd < 0)
+			return (2);
+		return (report_self_nonce(outfd));
+	}
 
 	if (argc == 4 && strcmp(argv[1], "authorize_ptrace") == 0) {
 		int token_fd = (int)strtol(argv[2], NULL, 10);

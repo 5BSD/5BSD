@@ -15,6 +15,7 @@
  * is handled by serviced.
  */
 
+#include <sys/capsicum.h>
 #include <sys/event.h>
 
 #include <errno.h>
@@ -152,6 +153,13 @@ event_loop(void)
 		syslog(LOG_CRIT, "kqueue: %m");
 		exit(1);
 	}
+	if (cap_xfer_limit(kq, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(kq, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(kq, CAP_CLOEXEC_LOCKED) == -1) {
+		syslog(LOG_CRIT, "kqueue confinement: %m");
+		close(kq);
+		exit(1);
+	}
 	event_kq = kq;
 
 	/*
@@ -244,8 +252,14 @@ event_loop(void)
 		if (kev.filter == EVFILT_TIMER && kev.udata == NULL &&
 		    kev.ident == SHUTDOWN_TIMER_IDENT) {
 			syslog(LOG_WARNING,
-			    "shutdown timed out after 30 seconds");
-			shutdown_finish();
+			    "shutdown timed out after 30 seconds; "
+			    "forcing serviced exit");
+			/*
+			 * Do not finish Oracle teardown while serviced is alive.
+			 * The procdesc is explicit authority through its signal
+			 * shield; wait for NOTE_EXIT to call shutdown_finish().
+			 */
+			bootstrap_signal(SIGKILL);
 			continue;
 		}
 

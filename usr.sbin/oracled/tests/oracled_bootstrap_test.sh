@@ -161,6 +161,12 @@ main(void)
 			sleep(60);
 	}
 
+	if (strcmp(mode, "close-channel-then-sleep") == 0) {
+		close(channel_fd);
+		while (1)
+			sleep(60);
+	}
+
 	syslog(LOG_ERR, "unknown mode: %s", mode);
 	return (1);
 }
@@ -213,16 +219,53 @@ wait_for_file()
 
 stop_oracled()
 {
-	if [ -n "$daemon_pid" ]; then
-		kill -TERM "$daemon_pid" 2>/dev/null || true
-		wait "$daemon_pid" 2>/dev/null || true
+	local ctlpath i pidpath target
+
+	target=$daemon_pid
+	pidpath=${pidfile:-"$(pwd)/oracled.pid"}
+	ctlpath=${sockpath:-"$(pwd)/oracled.sock"}
+	if [ -z "$target" ] && [ -r "$pidpath" ]; then
+		read -r target < "$pidpath" || target=
 	fi
+	if [ -S "$ctlpath" ] && command -v oraclectl >/dev/null 2>&1; then
+		oraclectl -s "$ctlpath" shutdown >/dev/null 2>&1 || true
+	fi
+	case "$target" in
+	''|*[!0-9]*)
+		return
+		;;
+	esac
+
+	# This pidfile lives in ATF's private work directory.  Avoid ps(1)
+	# validation because capability isolation may hide process metadata.
+	if [ ! -S "$ctlpath" ]; then
+		kill -TERM "$target" 2>/dev/null || true
+	fi
+	i=0
+	while kill -0 "$target" 2>/dev/null && [ "$i" -lt 350 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if kill -0 "$target" 2>/dev/null; then
+		kill -KILL "$target" 2>/dev/null || true
+		i=0
+		while kill -0 "$target" 2>/dev/null && [ "$i" -lt 50 ]; do
+			i=$((i + 1))
+			sleep 0.1
+		done
+	fi
+	wait "$target" 2>/dev/null || true
+	daemon_pid=
+	if kill -0 "$target" 2>/dev/null; then
+		echo "test cleanup: Oracle $target did not exit" >&2
+		return 1
+	fi
+	return 0
 }
 
 cleanup_common()
 {
 	stop_oracled
-	pkill -9 -f "mock_serviced" 2>/dev/null || true
 	sleep 0.2
 	rm -rf oracled.pid oracled.conf serviced.d oracled.sock \
 	    oracled.log mock_serviced mock_serviced.c mock-mode \
@@ -284,6 +327,42 @@ bootstrap_channel_ping_body()
 	atf_check -s exit:0 -o match:"running" oraclectl -s "$sockpath" status
 }
 bootstrap_channel_ping_cleanup()
+{
+	rm -f mock-mode
+	cleanup_common
+}
+
+atf_test_case bootstrap_channel_loss_kills_serviced cleanup
+bootstrap_channel_loss_kills_serviced_head()
+{
+	atf_set "descr" "loss of the exclusive Oracle channel kills the serviced instance"
+	atf_set "require.user" "root"
+	atf_set "timeout" "60"
+}
+bootstrap_channel_loss_kills_serviced_body()
+{
+	echo "close-channel-then-sleep" > mock-mode
+	build_mock_serviced
+	start_oracled
+
+	if ! wait_for_file serviced-started.out; then
+		cat "$logfile" 2>/dev/null
+		atf_skip "serviced did not start"
+	fi
+
+	i=0
+	while ! grep -q "serviced killed by signal" "$logfile" 2>/dev/null &&
+	    [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	atf_check -s exit:0 -o ignore \
+	    grep "serviced closed channel" "$logfile"
+	atf_check -s exit:0 -o ignore \
+	    grep "serviced killed by signal" "$logfile"
+	stop_oracled
+}
+bootstrap_channel_loss_kills_serviced_cleanup()
 {
 	rm -f mock-mode
 	cleanup_common
@@ -426,6 +505,7 @@ atf_init_test_cases()
 {
 	atf_add_test_case bootstrap_starts_serviced
 	atf_add_test_case bootstrap_channel_ping
+	atf_add_test_case bootstrap_channel_loss_kills_serviced
 	atf_add_test_case bootstrap_ready_logged
 	atf_add_test_case bootstrap_restart_on_crash
 	atf_add_test_case bootstrap_clean_shutdown

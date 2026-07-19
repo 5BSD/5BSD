@@ -1,0 +1,12 @@
+-- SPDX-License-Identifier: BSD-2-Clause
+--
+-- Focused cross-daemon capability suite staged by
+-- run_oracle_serviced_capability_tests.sh.
+
+syntax(2)
+
+test_suite("OracleServicedCapability")
+
+atf_test_program{name="serviced_integration_test", is_exclusive=true}
+atf_test_program{name="oracled_bootstrap_test", is_exclusive=true}
+atf_test_program{name="mac_capability_test", is_exclusive=true}

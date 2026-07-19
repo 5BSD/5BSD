@@ -77,6 +77,11 @@ Start
 .Xr serviced 8
 as a single child process via
 .Xr pdfork 2 .
+The resulting process descriptor is restricted to supervision rights and
+irreversibly confined against descriptor transfer, fork inheritance, and exec
+inheritance.
+Possession of this descriptor is the sole explicit signal authority over the
+protected service manager.
 .It
 Enter the event loop, monitoring the serviced process descriptor
 and control socket connections via
@@ -385,11 +390,29 @@ to
 .Xr serviced 8 .
 .It Dv SIGTERM , SIGINT
 Initiate graceful shutdown.
+The oracle first signals
+.Xr serviced 8
+through its process descriptor and waits for it to drain managed services.
+If
+.Nm
+exits unexpectedly, the kernel closes the last reference to the non-daemon
+process descriptor and terminates the exact serviced instance.
+As that process exits, its confined coalition descriptors close and terminate
+the corresponding service processes and resources.
 .It Dv SIGCHLD
 Reap children and restart
 .Xr serviced 8
 according to the restart policy.
 .El
+.Pp
+Descriptors delegated in protocol replies are restricted to
+.Dv CAP_XFER_ONCE
+before transmission.
+Successful transmission consumes that state and installs the descriptor in
+the receiver as
+.Dv CAP_XFER_NONE .
+Oracle-owned capability descriptors are irreversibly restricted against
+transfer, fork inheritance, and exec inheritance.
 .Pp
 The serviced restart policy uses exponential backoff.
 If

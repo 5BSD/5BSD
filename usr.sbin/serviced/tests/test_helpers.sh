@@ -99,16 +99,60 @@ wait_for_file()
 
 stop_stack()
 {
-	if [ -n "$daemon_pid" ]; then
-		kill -TERM "$daemon_pid" 2>/dev/null || true
-		wait "$daemon_pid" 2>/dev/null || true
+	local ctlpath i pidpath target
+
+	target=$daemon_pid
+	pidpath=${pidfile:-"$(pwd)/oracled.pid"}
+	ctlpath=${sockpath:-"$(pwd)/oracled.sock"}
+	if [ -z "$target" ] && [ -r "$pidpath" ]; then
+		read -r target < "$pidpath" || target=
 	fi
+
+	# The control socket is the supported graceful-shutdown authority and
+	# exercises the same path an administrator uses.  PID signaling is only
+	# a bounded failure-path fallback for a wedged test daemon.
+	if [ -S "$ctlpath" ] && command -v oraclectl >/dev/null 2>&1; then
+		oraclectl -s "$ctlpath" shutdown >/dev/null 2>&1 || true
+	fi
+	case "$target" in
+	''|*[!0-9]*)
+		return
+		;;
+	esac
+
+	# This pidfile lives in ATF's private work directory and belongs to the
+	# Oracle launched by this case.  Process metadata may be hidden after a
+	# service activates an isolation token, so do not depend on ps(1).
+	if [ ! -S "$ctlpath" ]; then
+		kill -TERM "$target" 2>/dev/null || true
+	fi
+	i=0
+	while kill -0 "$target" 2>/dev/null && [ "$i" -lt 350 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if kill -0 "$target" 2>/dev/null; then
+		# Abrupt Oracle death closes the procdesc and must also terminate
+		# this test's protected serviced child.
+		kill -KILL "$target" 2>/dev/null || true
+		i=0
+		while kill -0 "$target" 2>/dev/null && [ "$i" -lt 50 ]; do
+			i=$((i + 1))
+			sleep 0.1
+		done
+	fi
+	wait "$target" 2>/dev/null || true
+	daemon_pid=
+	if kill -0 "$target" 2>/dev/null; then
+		echo "test cleanup: Oracle $target did not exit" >&2
+		return 1
+	fi
+	return 0
 }
 
 cleanup_common()
 {
 	stop_stack
-	pkill -9 -f "${serviced_bin:-/usr/libexec/serviced}" 2>/dev/null || true
 	sleep 0.2
 	rm -rf oracled.pid oracled.conf oracled.sock \
 	    serviced.sock oracled.log lookup-name *.out *.pid *.sh *.c \
@@ -153,8 +197,8 @@ find_libservice()
 	_m=$(uname -m)
 	_p=$(uname -p)
 	for p in \
-	    /usr/lib/libservice.so \
-	    /usr/obj/usr/src/${_m}.${_p}/lib/libservice/libservice.so.1
+	    /usr/obj/usr/src/${_m}.${_p}/lib/libservice/libservice.so.1 \
+	    /usr/lib/libservice.so
 	do
 		if [ -n "$p" ] && [ -f "$p" ]; then
 			libservice_path="$(dirname "$p")"
@@ -170,7 +214,7 @@ cc_with_libservice()
 	find_libservice
 	cc -Wall -Wextra \
 	    -I/usr/src/lib/libservice \
-	    -L"$libservice_path" -lservice \
+	    -L"$libservice_path" -Wl,-rpath,"$libservice_path" -lservice \
 	    "$@"
 }
 

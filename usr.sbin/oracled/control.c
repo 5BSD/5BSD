@@ -16,6 +16,7 @@
  * event loop.
  */
 
+#include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
@@ -33,6 +34,15 @@
 #include "oracled.h"
 #include "oracled_ctl.h"
 #include "commands.h"
+
+static int
+confine_control_fd(int fd)
+{
+
+	return (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+}
 #include "probes.h"
 
 /* Module-private state. */
@@ -355,6 +365,12 @@ ctl_setup(void)
 		(void)unlink(od.cfg.control_socket);
 		return (-1);
 	}
+	if (confine_control_fd(fd) == -1) {
+		syslog(LOG_ERR, "control socket confinement: %m");
+		close(fd);
+		(void)unlink(od.cfg.control_socket);
+		return (-1);
+	}
 
 	control_sock = fd;
 	syslog(LOG_INFO, "control socket %s", od.cfg.control_socket);
@@ -397,6 +413,11 @@ ctl_accept(void)
 	if (cfd == -1) {
 		if (errno != EAGAIN && errno != EWOULDBLOCK)
 			syslog(LOG_WARNING, "control accept: %m");
+		return (CTL_ACTION_NONE);
+	}
+	if (confine_control_fd(cfd) == -1) {
+		syslog(LOG_WARNING, "control client confinement: %m");
+		close(cfd);
 		return (CTL_ACTION_NONE);
 	}
 

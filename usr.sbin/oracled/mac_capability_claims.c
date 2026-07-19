@@ -440,6 +440,12 @@ mac_capability_claim_system_gate_bits(uint32_t gates)
 		mac_capability_system_fd = mac_capability_svc_connect("system");
 		if (mac_capability_system_fd == -1)
 			return (-1);
+		if (mac_capability_confine_oracle_fd(mac_capability_system_fd,
+		    "system") == -1) {
+			close(mac_capability_system_fd);
+			mac_capability_system_fd = -1;
+			return (-1);
+		}
 	}
 
 	memset(&req, 0, sizeof(req));

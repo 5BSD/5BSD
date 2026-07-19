@@ -27,6 +27,7 @@ extern int	mac_capability_capprotect_fd;
 
 /* Internal helpers used by multiple mac_capability_*.c files. */
 int	mac_capability_svc_connect(const char *name);
+int	mac_capability_confine_oracle_fd(int fd, const char *name);
 int	mac_capability_do_call(int fd, const void *req, size_t reqlen,
 	    void *reply, size_t replylen);
 

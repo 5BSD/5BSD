@@ -24,6 +24,8 @@
  *   6. Remove pidfile
  */
 
+#include <sys/capsicum.h>
+
 #include <err.h>
 #include <errno.h>
 #include <stdio.h>
@@ -130,6 +132,15 @@ main(int argc, char *argv[])
 	if (pidfile_write(od.pidfh) == -1) {
 		pidfile_remove(od.pidfh);
 		syslog(LOG_CRIT, "pidfile_write: %m");
+		exit(1);
+	}
+	if (cap_xfer_limit(pidfile_fileno(od.pidfh), CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(pidfile_fileno(od.pidfh),
+	    CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(pidfile_fileno(od.pidfh),
+	    CAP_CLOEXEC_LOCKED) == -1) {
+		pidfile_remove(od.pidfh);
+		syslog(LOG_CRIT, "pidfile confinement: %m");
 		exit(1);
 	}
 

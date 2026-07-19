@@ -11,6 +11,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -38,6 +39,22 @@ int mac_capability_fd = -1;
 int mac_capability_isolation_fd = -1;
 int mac_capability_capprotect_fd = -1;
 int mac_capability_system_fd = -1;
+
+/* Freeze an oracled-only authority into this process. */
+int
+mac_capability_confine_oracle_fd(int fd, const char *name)
+{
+
+	if (fd < 0)
+		return (0);
+	if (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1) {
+		syslog(LOG_ERR, "confine %s fd: %m", name);
+		return (-1);
+	}
+	return (0);
+}
 
 /* --- Shared helpers --- */
 
@@ -115,6 +132,22 @@ mac_capability_setup(void)
 		syslog(LOG_ERR, "failed to activate integrity protection");
 		goto fail;
 	}
+
+	/*
+	 * None of oracled's root authority, claims, or self-protection may be
+	 * delegated or inherited by the service-manager child.  Ordinary
+	 * FD_CLOEXEC is insufficient because it is mutable and acts only at
+	 * exec, after the child has already inherited the descriptor.
+	 */
+	if (mac_capability_confine_oracle_fd(mac_capability_fd,
+	    "mac_capability control") == -1 ||
+	    mac_capability_confine_oracle_fd(mac_capability_isolation_fd,
+	    "isolation") == -1 ||
+	    mac_capability_confine_oracle_fd(mac_capability_system_fd,
+	    "system") == -1 ||
+	    mac_capability_confine_oracle_fd(mac_capability_capprotect_fd,
+	    "capprotect") == -1)
+		goto fail;
 
 	return (0);
 

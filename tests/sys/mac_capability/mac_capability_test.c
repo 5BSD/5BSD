@@ -40,6 +40,7 @@
 #include "mac_capability_ioctl.h"
 #include "mac_capability_test_helpers.h"
 #include "mac_capability_capprotect_proto.h"
+#include "mac_capability_identity_proto.h"
 #include "mac_capability_test_keystore_proto.h"
 #include "mac_capability_test_kernelstore_proto.h"
 
@@ -3917,12 +3918,98 @@ run_shield_helper(const char *op, pid_t target)
 		return (-1);
 	if (helper == 0) {
 		execl(path, "mac_capability_shield_helper", op, pidstr, NULL);
+		dprintf(STDERR_FILENO, "exec %s: %s\n", path,
+		    strerror(errno));
 		_exit(2);
 	}
-	waitpid(helper, &status, 0);
+	if (waitpid(helper, &status, 0) != helper)
+		return (-1);
 	if (!WIFEXITED(status))
 		return (-1);
 	return (WEXITSTATUS(status));
+}
+
+static void
+require_shield_blocks(const char *op, pid_t target)
+{
+	int result;
+
+	result = run_shield_helper(op, target);
+	if (result == 1) {
+		ATF_REQUIRE_MSG(false,
+		    "ambient %s unexpectedly allowed for pid %d",
+		    op, (int)target);
+	}
+	ATF_REQUIRE_MSG(result == 0,
+	    "shield helper %s failed with status %d for pid %d",
+	    op, result, (int)target);
+}
+
+static int
+identity_self_nonce(uint64_t *noncep)
+{
+	struct mac_capability_call_args call;
+	struct identity_request req;
+	struct identity_reply reply;
+	int fd;
+
+	fd = mac_capability_connect("identity");
+	if (fd < 0)
+		return (-1);
+	memset(&req, 0, sizeof(req));
+	req.op = IDENTITY_OP_SELF;
+	memset(&reply, 0, sizeof(reply));
+	memset(&call, 0, sizeof(call));
+	call.req = &req;
+	call.req_len = sizeof(req);
+	call.reply = &reply;
+	call.reply_len = sizeof(reply);
+	if (ioctl(fd, MAC_CAPABILITY_CALL, &call) != 0 ||
+	    reply.status != IDENTITY_STATUS_OK || reply.nonce == 0) {
+		close(fd);
+		return (-1);
+	}
+	close(fd);
+	*noncep = reply.nonce;
+	return (0);
+}
+
+static int
+exec_helper_nonce(uint64_t *noncep)
+{
+	char fdstr[16];
+	const char *path;
+	pid_t child;
+	ssize_t nread;
+	int pipefd[2], status;
+
+	if (pipe(pipefd) != 0)
+		return (-1);
+	path = shield_helper_path();
+	child = fork();
+	if (child < 0) {
+		close(pipefd[0]);
+		close(pipefd[1]);
+		return (-1);
+	}
+	if (child == 0) {
+		close(pipefd[0]);
+		snprintf(fdstr, sizeof(fdstr), "%d", pipefd[1]);
+		execl(path, "mac_capability_shield_helper", "self_nonce",
+		    fdstr, NULL);
+		dprintf(STDERR_FILENO, "exec %s: %s\n", path,
+		    strerror(errno));
+		_exit(2);
+	}
+	close(pipefd[1]);
+	do {
+		nread = read(pipefd[0], noncep, sizeof(*noncep));
+	} while (nread == -1 && errno == EINTR);
+	close(pipefd[0]);
+	if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+	    WEXITSTATUS(status) != 0 || nread != sizeof(*noncep))
+		return (-1);
+	return (0);
 }
 
 static int
@@ -4117,15 +4204,41 @@ ATF_TC_BODY(cap_pro_foreign_sigkill_blocked, tc)
  * shields, even after exec rotates the nonce.
  */
 
+ATF_TC(cap_pro_exec_rotates_nonce);
+ATF_TC_HEAD(cap_pro_exec_rotates_nonce, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Exec helper has a different program nonce before shield tests");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_identity");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "15");
+}
+ATF_TC_BODY(cap_pro_exec_rotates_nonce, tc)
+{
+	uint64_t exec_nonce, parent_nonce;
+
+	ATF_REQUIRE_MSG(identity_self_nonce(&parent_nonce) == 0,
+	    "could not query parent program nonce: %s", strerror(errno));
+	ATF_REQUIRE_MSG(exec_helper_nonce(&exec_nonce) == 0,
+	    "could not query exec helper program nonce");
+	ATF_CHECK_MSG(exec_nonce != parent_nonce,
+	    "exec did not rotate program nonce (0x%jx); check MNT_NOSUID",
+	    (uintmax_t)parent_nonce);
+}
+
 /*
- * Helper: pdfork, child execs shield_helper which shields and
- * pauses.  Parent gets back the pd and child pid.
+ * Helper: pdfork a same-program child which shields itself and pauses.
+ * Parent gets back the pd and child pid.  Foreign ambient probes are
+ * performed by the separately exec'd shield helper.
  */
 static pid_t
 pdfork_shielded_child(int *pd_out, uint32_t shield_flags)
 {
 	pid_t pid;
-	int pd, sv[2];
+	ssize_t nread;
+	int pd, status, sv[2];
+	char ready;
 
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0)
 		return (-1);
@@ -4155,11 +4268,16 @@ pdfork_shielded_child(int *pd_out, uint32_t shield_flags)
 
 	/* Parent: wait for child to be shielded. */
 	close(sv[1]);
-	{
-		char buf;
-		(void)read(sv[0], &buf, 1);
-	}
+	do {
+		nread = read(sv[0], &ready, sizeof(ready));
+	} while (nread == -1 && errno == EINTR);
 	close(sv[0]);
+	if (nread != sizeof(ready) || ready != 's') {
+		(void)waitpid(pid, &status, 0);
+		close(pd);
+		errno = EIO;
+		return (-1);
+	}
 	*pd_out = pd;
 	return (pid);
 }
@@ -4171,6 +4289,7 @@ ATF_TC_HEAD(cap_pro_pdkill_bypasses_signal_shield, tc)
 	    "pdkill delivers signal through CP_SF_SIGNAL shield");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "15");
 }
 ATF_TC_BODY(cap_pro_pdkill_bypasses_signal_shield, tc)
 {
@@ -4180,8 +4299,8 @@ ATF_TC_BODY(cap_pro_pdkill_bypasses_signal_shield, tc)
 	pid = pdfork_shielded_child(&pd, CP_SF_SIGNAL);
 	ATF_REQUIRE(pid > 0);
 
-	/* kill(pid) must be blocked — verify shield is active. */
-	ATF_CHECK_EQ(run_shield_helper("signal", pid), 0);
+	/* Exercise p_cansignal without delivering or consuming the target. */
+	require_shield_blocks("signal0", pid);
 
 	/* pdkill via process descriptor must succeed. */
 	ATF_REQUIRE_EQ(pdkill(pd, SIGUSR1), 0);
@@ -4199,6 +4318,7 @@ ATF_TC_HEAD(cap_pro_pdkill_bypasses_sigkill_shield, tc)
 	    "pdkill delivers SIGKILL through CP_SF_SIGKILL shield");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "15");
 }
 ATF_TC_BODY(cap_pro_pdkill_bypasses_sigkill_shield, tc)
 {
@@ -4209,7 +4329,7 @@ ATF_TC_BODY(cap_pro_pdkill_bypasses_sigkill_shield, tc)
 	ATF_REQUIRE(pid > 0);
 
 	/* kill(pid, SIGKILL) must be blocked — verify shield is active. */
-	ATF_CHECK_EQ(run_shield_helper("sigkill", pid), 0);
+	require_shield_blocks("sigkill", pid);
 
 	/* pdkill via process descriptor must succeed. */
 	ATF_REQUIRE_EQ(pdkill(pd, SIGKILL), 0);
@@ -4227,6 +4347,7 @@ ATF_TC_HEAD(cap_pro_pdkill_bypasses_full_shield, tc)
 	    "pdkill delivers SIGKILL through CP_SF_ALL shield");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "15");
 }
 ATF_TC_BODY(cap_pro_pdkill_bypasses_full_shield, tc)
 {
@@ -4252,6 +4373,7 @@ ATF_TC_HEAD(cap_pro_pdkill_sigterm_through_shield, tc)
 	    "pdkill delivers SIGTERM through CP_SF_SIGNAL|CP_SF_SIGKILL shield");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "15");
 }
 ATF_TC_BODY(cap_pro_pdkill_sigterm_through_shield, tc)
 {
@@ -4262,8 +4384,8 @@ ATF_TC_BODY(cap_pro_pdkill_sigterm_through_shield, tc)
 	ATF_REQUIRE(pid > 0);
 
 	/* Both signal and sigkill blocked for foreign nonces. */
-	ATF_CHECK_EQ(run_shield_helper("signal", pid), 0);
-	ATF_CHECK_EQ(run_shield_helper("sigkill", pid), 0);
+	require_shield_blocks("signal0", pid);
+	require_shield_blocks("sigkill", pid);
 
 	/* pdkill SIGTERM via process descriptor must succeed. */
 	ATF_REQUIRE_EQ(pdkill(pd, SIGTERM), 0);
@@ -7103,6 +7225,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_ptrace_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_signal_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_sigkill_blocked);
+	ATF_TP_ADD_TC(tp, cap_pro_exec_rotates_nonce);
 	ATF_TP_ADD_TC(tp, cap_pro_pdkill_bypasses_signal_shield);
 	ATF_TP_ADD_TC(tp, cap_pro_pdkill_bypasses_sigkill_shield);
 	ATF_TP_ADD_TC(tp, cap_pro_pdkill_bypasses_full_shield);

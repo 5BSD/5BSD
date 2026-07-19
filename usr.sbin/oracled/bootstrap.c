@@ -161,6 +161,25 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		(void)close(src_fds[i]);
 	}
 
+	/*
+	 * Close unused slots in the reserved range.  In particular, identity
+	 * is optional; without this pass an unrelated oracled descriptor that
+	 * happened to occupy fd 7 could survive the exec.
+	 */
+	for (fd = SERVICED_CHANNEL_FD; fd <= SERVICED_LAST_FD; fd++) {
+		bool delegated;
+
+		delegated = false;
+		for (i = 0; i < nfds; i++) {
+			if (dst_fds[i] == fd) {
+				delegated = true;
+				break;
+			}
+		}
+		if (!delegated)
+			(void)close(fd);
+	}
+
 	/* Close everything above the reserved range. */
 	closefrom(SERVICED_LAST_FD + 1);
 
@@ -252,6 +271,7 @@ bootstrap_start(int kq)
 {
 	struct bootstrap_delegate_fds dfds;
 	struct kevent kev[2];
+	cap_rights_t rights;
 	int oracle_end, child_end;
 	int pd_fd;
 	pid_t pid;
@@ -316,6 +336,30 @@ bootstrap_start(int kq)
 	dfds.bundle_dir_system = getenv("SERVICED_BUNDLE_DIR_SYSTEM");
 	dfds.bundle_dir_user = getenv("SERVICED_BUNDLE_DIR_USER");
 
+	/*
+	 * These descriptors cross exactly one fork edge into serviced.  They
+	 * must never be transferable by either side.  CLOFORK/CLOEXEC cannot be
+	 * locked yet because the descriptors intentionally cross this fork and
+	 * the subsequent exec; serviced locks both dimensions immediately after
+	 * exec.
+	 */
+	if (cap_xfer_limit(child_end, CAP_XFER_NONE) == -1 ||
+	    cap_xfer_limit(dfds.channel_svc_fd, CAP_XFER_NONE) == -1 ||
+	    cap_xfer_limit(dfds.coalition_svc_fd, CAP_XFER_NONE) == -1 ||
+	    cap_xfer_limit(dfds.capprotect_fd, CAP_XFER_NONE) == -1 ||
+	    (dfds.identity_fd >= 0 &&
+	    cap_xfer_limit(dfds.identity_fd, CAP_XFER_NONE) == -1)) {
+		syslog(LOG_ERR, "bootstrap: confine delegated fd: %m");
+		close(oracle_end);
+		close(child_end);
+		close(dfds.channel_svc_fd);
+		close(dfds.coalition_svc_fd);
+		close(dfds.capprotect_fd);
+		if (dfds.identity_fd >= 0)
+			close(dfds.identity_fd);
+		return (-1);
+	}
+
 	pid = pdfork(&pd_fd, PD_CLOEXEC);
 	if (pid == -1) {
 		syslog(LOG_ERR, "bootstrap: pdfork: %m");
@@ -346,20 +390,41 @@ bootstrap_start(int kq)
 	if (dfds.identity_fd >= 0)
 		close(dfds.identity_fd);
 
+	/*
+	 * The process descriptor is oracled's explicit and exclusive authority
+	 * over this serviced instance.  pdkill(2) intentionally bypasses ambient
+	 * credential and MAC signal checks, so this descriptor must not escape
+	 * through transfer, fork, or exec.  Failure to freeze that topology is a
+	 * bootstrap failure, not a condition in which supervision may continue.
+	 */
+	cap_rights_init(&rights, CAP_PDKILL, CAP_EVENT);
+	if (cap_rights_limit(pd_fd, &rights) == -1 ||
+	    cap_xfer_limit(pd_fd, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(pd_fd, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(pd_fd, CAP_CLOEXEC_LOCKED) == -1) {
+		syslog(LOG_ERR, "bootstrap: confine serviced procdesc: %m");
+		(void)pdkill(pd_fd, SIGKILL);
+		close(pd_fd);
+		close(oracle_end);
+		return (-1);
+	}
+
+	/* Oracle's channel endpoint is equally exclusive and fail-closed. */
+	if (cap_xfer_limit(oracle_end, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(oracle_end, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(oracle_end, CAP_CLOEXEC_LOCKED) == -1) {
+		syslog(LOG_ERR, "bootstrap: confine oracle channel: %m");
+		(void)pdkill(pd_fd, SIGKILL);
+		close(pd_fd);
+		close(oracle_end);
+		return (-1);
+	}
+
 	bs.pid = pid;
 	bs.pd_fd = pd_fd;
 	bs.channel_fd = oracle_end;
 	bs.started = true;
 	clock_gettime(CLOCK_MONOTONIC, &bs.last_start);
-
-	/*
-	 * Lock down oracled's end of the channel.  It must not be
-	 * transferable (cap_xfer=none) — only oracled should hold
-	 * this end.  Also prevent inheritance if oracled ever forks
-	 * (it shouldn't, but defense in depth).
-	 */
-	(void)cap_xfer_limit(oracle_end, 0);
-	(void)cap_clofork_limit(oracle_end, 1);
 
 	/* Tell the protocol handler about the channel fd. */
 	oracle_proto_init(oracle_end);
@@ -484,10 +549,10 @@ bootstrap_teardown_and_restart(int kq, int status)
 /*
  * Handle channel EOF.
  *
- * The channel is a communication channel, not a lifecycle indicator.
- * Close it to stop the level-triggered event and let
- * EVFILT_PROCDESC remain the single source of truth for whether
- * serviced is alive.
+ * The procdesc remains the lifecycle source of truth, but loss of the
+ * exclusive authority channel is an integrity failure: a live serviced can
+ * no longer obtain or release capabilities.  Force that instance to exit and
+ * let EVFILT_PROCDESC drive teardown/restart.
  */
 void
 bootstrap_handle_channel_eof(void)
@@ -497,6 +562,8 @@ bootstrap_handle_channel_eof(void)
 		close(bs.channel_fd);
 		bs.channel_fd = -1;
 	}
+	if (bs.started && bs.pd_fd >= 0)
+		(void)pdkill(bs.pd_fd, SIGKILL);
 }
 
 /*

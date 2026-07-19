@@ -15,6 +15,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
@@ -40,6 +41,15 @@ static char sctl_path[PATH_MAX];
 
 #define	SCTL_CONN_TIMEOUT_SEC	2
 #define	SCTL_CONN_MAX		16
+
+static int
+sctl_confine_fd(int fd)
+{
+
+	return (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+}
 
 /*
  * Per-connection nonblocking state machine.
@@ -546,6 +556,12 @@ sctl_setup(void)
 		(void)unlink(sctl_path);
 		return (-1);
 	}
+	if (sctl_confine_fd(fd) == -1) {
+		syslog(LOG_ERR, "sctl: socket confinement: %m");
+		close(fd);
+		(void)unlink(sctl_path);
+		return (-1);
+	}
 
 	sctl_sock = fd;
 	syslog(LOG_INFO, "control socket: %s", sctl_path);
@@ -587,6 +603,11 @@ sctl_accept(void)
 	if (cfd == -1) {
 		if (errno != EAGAIN && errno != EWOULDBLOCK)
 			syslog(LOG_WARNING, "sctl: accept: %m");
+		return;
+	}
+	if (sctl_confine_fd(cfd) == -1) {
+		syslog(LOG_WARNING, "sctl: client confinement: %m");
+		close(cfd);
 		return;
 	}
 

@@ -12,31 +12,6 @@
 
 . "$(dirname "$0")/test_helpers.sh"
 
-find_libservice()
-{
-	local p
-	for p in \
-	    /usr/lib/libservice.so \
-	    /usr/obj/usr/src/arm64.aarch64/lib/libservice/libservice.so.1
-	do
-		if [ -n "$p" ] && [ -f "$p" ]; then
-			libservice_path="$(dirname "$p")"
-			return
-		fi
-	done
-	atf_skip "libservice not found"
-}
-
-cc_with_libservice()
-{
-	require_cc
-	find_libservice
-	cc -Wall -Wextra \
-	    -I/usr/src/lib/libservice \
-	    -L"$libservice_path" -lservice \
-	    "$@"
-}
-
 # ===================================================================
 # capability_tokens_delivered
 # ===================================================================
@@ -46,13 +21,21 @@ capability_tokens_delivered_head()
 {
 	atf_set "descr" "Service receives capability token fds from oracle"
 	atf_set "require.user" "root"
+	atf_set "timeout" "60"
 }
 capability_tokens_delivered_body()
 {
+	token_path_target="${WORK}/token-path-target"
+	token_file_target="${WORK}/token-file-target"
+	printf 'path target\n' > "$token_path_target"
+	printf 'file target\n' > "$token_file_target"
+
 	cat > token_svc.c <<'CEOF'
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <sys/capsicum.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <libservice.h>
@@ -63,7 +46,7 @@ main(void)
 	FILE *out;
 	const char *token_fds;
 	char *tok, *copy;
-	int fd, valid_count = 0;
+	int confined_count = 0, fd, valid_count = 0;
 	struct stat sb;
 
 	if (service_init() == -1) return (1);
@@ -81,13 +64,19 @@ main(void)
 		tok = strtok(copy, ",");
 		while (tok != NULL) {
 			fd = atoi(tok);
-			if (fstat(fd, &sb) == 0)
+			if (fstat(fd, &sb) == 0) {
 				valid_count++;
+				errno = 0;
+				if (cap_xfer_limit(fd, CAP_XFER_ONCE) == -1 &&
+				    errno == ENOTCAPABLE)
+					confined_count++;
+			}
 			tok = strtok(NULL, ",");
 		}
 		free(copy);
 	}
 	fprintf(out, "valid_tokens=%d\n", valid_count);
+	fprintf(out, "confined_tokens=%d\n", confined_count);
 	fclose(out);
 	sleep(30);
 	return (0);
@@ -97,9 +86,17 @@ CEOF
 
 	start_stack
 
-	make_svc_bin system token-test 'capabilities {
-    paths = ["/tmp"];
-}' "$(pwd)/token_svc"
+	make_svc_bin system token-test "capabilities {
+    paths = [\"${token_path_target}\"];
+    files = [{ path = \"${token_file_target}\"; actions = \"read\"; }];
+    network = [{
+        domain = \"inet\";
+        protocol = \"tcp\";
+        port = 49152;
+        direction = \"bind\";
+        address = \"127.0.0.1\";
+    }];
+}" "$(pwd)/token_svc"
 	# Reload to pick up the bundle
 	kill -HUP "$daemon_pid"
 
@@ -109,16 +106,192 @@ CEOF
 	fi
 
 	atf_check -s exit:0 -o match:"channel_fd=3" cat token-check.out
-	# Not just that the channel was set up — a capability token for the
-	# service's declared path (/tmp) must actually have been delivered and
-	# be a valid, fstat-able fd.  valid_tokens is computed by the service.
-	atf_check -s exit:0 -o match:"token_fds=" cat token-check.out
-	atf_check -s exit:0 -o match:"valid_tokens=[1-9]" cat token-check.out
+	# Every requested capability must be present before exec.  Tokens occupy
+	# a contiguous, deterministic range after the channel and capprotect fds.
+	atf_check -s exit:0 -o match:"token_fds=5,6,7" cat token-check.out
+	atf_check -s exit:0 -o match:"valid_tokens=3" cat token-check.out
+	atf_check -s exit:0 -o match:"confined_tokens=3" cat token-check.out
+	stop_stack
 }
 capability_tokens_delivered_cleanup()
 {
 	cleanup_common
-	rm -f token_svc token_svc.c token-check.out
+	rm -f token_svc token_svc.c token-check.out token-path-target \
+	    token-file-target
+}
+
+# ===================================================================
+# capability_tokens_require_program_activation
+# ===================================================================
+
+atf_test_case capability_tokens_require_program_activation cleanup
+capability_tokens_require_program_activation_head()
+{
+	atf_set "descr" "serviced delivers inactive tokens for the program to activate after exec"
+	atf_set "require.user" "root"
+	atf_set "timeout" "60"
+}
+capability_tokens_require_program_activation_body()
+{
+	activation_target="${WORK}/activation-target"
+	printf 'capability payload\n' > "$activation_target"
+
+	cat > token_activate_svc.c <<'CEOF'
+#include <sys/ioctl.h>
+
+#include <dev/mac_capability/mac_capability_ioctl.h>
+#include <dev/mac_capability/mac_capability_isolation_proto.h>
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#include <libservice.h>
+
+#ifndef TARGET_PATH
+#error TARGET_PATH must name the claimed test file
+#endif
+
+int
+main(void)
+{
+	struct mac_capability_call_args call;
+	struct fi_request req;
+	struct fi_reply reply;
+	const char *token_fds;
+	FILE *out;
+	int before_errno, fd, token_fd;
+
+	if (service_init() == -1)
+		return (1);
+	token_fds = getenv("ORACLED_TOKEN_FDS");
+	if (token_fds == NULL || strchr(token_fds, ',') != NULL)
+		return (2);
+	token_fd = atoi(token_fds);
+
+	fd = open(TARGET_PATH, O_RDONLY);
+	before_errno = fd == -1 ? errno : 0;
+	if (fd >= 0)
+		close(fd);
+
+	memset(&req, 0, sizeof(req));
+	req.op = FI_OP_AUTHORIZE;
+	memset(&reply, 0, sizeof(reply));
+	memset(&call, 0, sizeof(call));
+	call.req = &req;
+	call.req_len = sizeof(req);
+	call.reply = &reply;
+	call.reply_len = sizeof(reply);
+	if (ioctl(token_fd, MAC_CAPABILITY_CALL, &call) == -1)
+		return (3);
+
+	fd = open(TARGET_PATH, O_RDONLY);
+	out = fopen("token-activation.out", "w");
+	if (out == NULL)
+		return (4);
+	fprintf(out, "before_denied=%d\n",
+	    before_errno == EACCES || before_errno == EPERM);
+	fprintf(out, "authorize=ok\n");
+	fprintf(out, "after_open=%s\n", fd >= 0 ? "ok" : "failed");
+	fclose(out);
+	if (fd >= 0)
+		close(fd);
+	if (before_errno != EACCES && before_errno != EPERM)
+		return (5);
+	if (fd < 0)
+		return (6);
+	if (service_ready() == -1)
+		return (7);
+	sleep(30);
+	return (0);
+}
+CEOF
+	cc_with_libservice -I/usr/src/sys \
+	    -DTARGET_PATH="\"${activation_target}\"" \
+	    -o token_activate_svc token_activate_svc.c
+
+	start_stack
+	make_svc_bin system token-activate "capabilities {
+    paths = [\"${activation_target}\"];
+}" "$(pwd)/token_activate_svc"
+	kill -HUP "$daemon_pid"
+
+	if ! wait_for_file token-activation.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "token activation service did not complete"
+	fi
+	atf_check -s exit:0 -o match:"before_denied=1" cat token-activation.out
+	atf_check -s exit:0 -o match:"authorize=ok" cat token-activation.out
+	atf_check -s exit:0 -o match:"after_open=ok" cat token-activation.out
+	stop_stack
+}
+capability_tokens_require_program_activation_cleanup()
+{
+	cleanup_common
+	rm -f token_activate_svc token_activate_svc.c token-activation.out \
+	    activation-target
+}
+
+# ===================================================================
+# incomplete_capability_set_prevents_exec
+# ===================================================================
+
+atf_test_case incomplete_capability_set_prevents_exec cleanup
+incomplete_capability_set_prevents_exec_head()
+{
+	atf_set "descr" "A failed mint cleans partial claims and prevents service exec"
+	atf_set "require.user" "root"
+	atf_set "timeout" "60"
+}
+incomplete_capability_set_prevents_exec_body()
+{
+	valid_target="${WORK}/mint-valid-target"
+	missing_target="${WORK}/mint-missing-target"
+	printf 'valid\n' > "$valid_target"
+	rm -f "$missing_target" mint-fail-executed.out
+
+	start_stack
+	make_svc system mint-fail "capabilities {
+    paths = [\"${valid_target}\", \"${missing_target}\"];
+}" \
+	    '#!/bin/sh' \
+	    "echo executed > ${WORK}/mint-fail-executed.out" \
+	    'sleep 30'
+	kill -HUP "$daemon_pid"
+
+	i=0
+	while ! grep -q "svc_exec mint-fail: failed to mint token" \
+	    "$logfile" 2>/dev/null && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	atf_check -s exit:0 -o ignore \
+	    grep "svc_exec mint-fail: failed to mint token" "$logfile"
+
+	if [ -e mint-fail-executed.out ]; then
+		atf_fail "service executed with an incomplete capability set"
+	fi
+	if grep -q "service mint-fail: started" "$logfile"; then
+		atf_fail "serviced reported a start after capability mint failure"
+	fi
+
+	# The first token was minted before the second failed.  Its dynamic
+	# claim must be rolled back along with the token fd.
+	oraclectl -s "$sockpath" status > mint-fail-status.out 2>&1
+	if grep -Fq "$valid_target" mint-fail-status.out; then
+		cat mint-fail-status.out
+		atf_fail "partial capability claim was not released"
+	fi
+	stop_stack
+}
+incomplete_capability_set_prevents_exec_cleanup()
+{
+	cleanup_common
+	rm -f mint-valid-target mint-missing-target mint-fail-executed.out \
+	    mint-fail-status.out mint-fail
 }
 
 # ===================================================================
@@ -239,6 +412,58 @@ graceful_shutdown_sigterm_cleanup()
 {
 	cleanup_common
 	rm -f trapper trapper-ready.out sigterm-marker.out
+}
+
+# ===================================================================
+# procdesc_is_only_signal_authority
+# ===================================================================
+
+atf_test_case procdesc_is_only_signal_authority cleanup
+procdesc_is_only_signal_authority_head()
+{
+	atf_set "descr" "ambient SIGKILL is denied but Oracle death kills serviced through procdesc"
+	atf_set "require.user" "root"
+	atf_set "timeout" "60"
+}
+procdesc_is_only_signal_authority_body()
+{
+	local serviced_pid i
+
+	start_stack
+	serviced_pid=$(pgrep -P "$daemon_pid" serviced | head -n 1)
+	if [ -z "$serviced_pid" ]; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "could not find serviced child"
+	fi
+
+	# This is an ambient PID-based signal from a foreign program nonce.
+	# CP_SF_SIGKILL must reject it even for root.
+	if kill -KILL "$serviced_pid" 2>ambient-kill.err; then
+		atf_fail "ambient SIGKILL unexpectedly reached protected serviced"
+	fi
+	if ! ps -p "$serviced_pid" >/dev/null 2>&1; then
+		atf_fail "serviced died after denied ambient SIGKILL"
+	fi
+
+	# Abrupt Oracle death closes its exclusive non-daemon procdesc.  The
+	# kernel must kill that exact serviced instance without consulting the
+	# capprotect signal hook.
+	kill -KILL "$daemon_pid"
+	wait "$daemon_pid" 2>/dev/null || true
+	daemon_pid=
+	i=0
+	while ps -p "$serviced_pid" >/dev/null 2>&1 && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if ps -p "$serviced_pid" >/dev/null 2>&1; then
+		atf_fail "serviced survived the last close of Oracle's procdesc"
+	fi
+}
+procdesc_is_only_signal_authority_cleanup()
+{
+	cleanup_common
+	rm -f ambient-kill.err
 }
 
 # ===================================================================
@@ -444,9 +669,12 @@ audit_records_best_effort_cleanup()
 atf_init_test_cases()
 {
 	atf_add_test_case capability_tokens_delivered
+	atf_add_test_case capability_tokens_require_program_activation
+	atf_add_test_case incomplete_capability_set_prevents_exec
 	atf_add_test_case crash_recovery_restarts
 	atf_add_test_case circuit_breaker_stops_restarts
 	atf_add_test_case graceful_shutdown_sigterm
+	atf_add_test_case procdesc_is_only_signal_authority
 	atf_add_test_case dependency_order_with_caps
 	atf_add_test_case reload_adds_service
 	atf_add_test_case reload_removes_service

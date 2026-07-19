@@ -216,7 +216,9 @@ struct oracle_system_req {
  *   req:  oracle_req_hdr { .op = ORACLE_OP_READY }
  *   reply: oracle_reply { .status = 0 }
  *
- * Sent by serviced after initialization is complete.
+ * Sent by serviced only after inherited descriptors are irreversibly
+ * confined and its capprotect shield is active.  Receipt therefore means
+ * "protected and operational", not merely that exec succeeded.
  * oracled logs the transition and may gate status reporting.
  */
 

@@ -285,16 +285,6 @@ main(int argc, char *argv[])
 		serviced_bundle_dir_user = s;
 
 	/*
-	 * Tell oracled we're alive IMMEDIATELY — before any slow operations
-	 * (bundle scanning, capprotect) that could cause a timeout.
-	 * This is the first thing we do after inheriting fds.
-	 */
-	if (oracle_send_ready(sd.oracle_channel_fd) != 0) {
-		syslog(LOG_ERR, "failed to send READY to oracled");
-		return (1);
-	}
-
-	/*
 	 * Lock down inherited descriptors.  The oracle channel and delegate
 	 * fds are for serviced only — they must not be inherited by
 	 * child services (clofork), leaked via exec (cloexec), or
@@ -309,22 +299,18 @@ main(int argc, char *argv[])
 			sd.identity_fd,
 		};
 		for (int i = 0; i < (int)(sizeof(lockfds)/sizeof(lockfds[0])); i++) {
-			int rc;
-
 			if (lockfds[i] < 0)
 				continue;
-			/* Apply all three limits, then report if any failed;
-			 * a silent failure here would let child services
-			 * inherit privileged descriptors. */
-			rc = 0;
-			rc |= cap_clofork_limit(lockfds[i], 1);
-			rc |= cap_cloexec_limit(lockfds[i], 1);
-			rc |= cap_xfer_limit(lockfds[i], 0);
-			if (rc != 0)
+			if (cap_xfer_limit(lockfds[i], CAP_XFER_NONE) == -1 ||
+			    cap_clofork_limit(lockfds[i],
+			    CAP_CLOFORK_LOCKED) == -1 ||
+			    cap_cloexec_limit(lockfds[i],
+			    CAP_CLOEXEC_LOCKED) == -1) {
 				syslog(LOG_ERR,
-				    "failed to lock down inherited fd %d: %m; "
-				    "child services may inherit privileged "
-				    "descriptors", lockfds[i]);
+				    "failed to confine inherited fd %d: %m",
+				    lockfds[i]);
+				return (1);
+			}
 		}
 	}
 
@@ -332,6 +318,12 @@ main(int argc, char *argv[])
 	serviced_kq = kqueue();
 	if (serviced_kq == -1) {
 		syslog(LOG_ERR, "kqueue: %m");
+		return (1);
+	}
+	if (cap_xfer_limit(serviced_kq, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(serviced_kq, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(serviced_kq, CAP_CLOEXEC_LOCKED) == -1) {
+		syslog(LOG_ERR, "kqueue confinement: %m");
 		return (1);
 	}
 
@@ -350,6 +342,8 @@ main(int argc, char *argv[])
 	}
 
 	/* Register signals. */
+	/* A client that closes early must produce EPIPE, not kill the manager. */
+	(void)signal(SIGPIPE, SIG_IGN);
 	add_signal_event(serviced_kq, SIGTERM);
 	add_signal_event(serviced_kq, SIGINT);
 	add_signal_event(serviced_kq, SIGHUP);
@@ -362,31 +356,43 @@ main(int argc, char *argv[])
 	}
 
 	/*
-	 * Apply capprotect shield LAST — after all setup is done.
-	 * CP_SF_VISIBLE must not be applied before syslog/kqueue/bundle
-	 * operations or it may block them.  Don't include CP_SF_SIGNAL
-	 * so oracled can still send us SIGTERM/SIGHUP via pdkill.
+	 * Apply the shield only after setup, but before READY or launching any
+	 * service.  Ambient signal paths are blocked, including SIGKILL and
+	 * SIGCONT.  Oracled retains control through the procdesc returned by
+	 * pdfork(2); pdkill(2) is explicit capability authority and deliberately
+	 * bypasses the ambient credential/MAC signal path.
+	 *
+	 * CP_SF_VISIBLE remains omitted because syslog delivery may require
+	 * process visibility.  Visibility is not authority to modify serviced.
 	 */
-	if (sd.capprotect_fd >= 0) {
+	if (sd.capprotect_fd < 0) {
+		syslog(LOG_CRIT, "capprotect descriptor not delegated");
+		return (1);
+	} else {
 		struct mac_capability_call_args call;
 		struct cp_request cp_req;
 
 		memset(&cp_req, 0, sizeof(cp_req));
 		cp_req.op = CP_OP_SHIELD;
-		cp_req.flags = CP_SF_PTRACE | CP_SF_WAIT | CP_SF_SCHED |
+		cp_req.flags = CP_SF_PTRACE | CP_SF_SIGNAL | CP_SF_WAIT |
+		    CP_SF_SIGKILL | CP_SF_SIGCONT | CP_SF_SCHED |
 		    CP_SF_CORE | CP_SF_KTRACE;
-		/* NOTE: CP_SF_VISIBLE intentionally omitted — syslog
-		 * delivery to /var/run/log may require process visibility.
-		 * CP_SF_SIGNAL omitted so oracled can pdkill us. */
 
 		memset(&call, 0, sizeof(call));
 		call.req = &cp_req;
 		call.req_len = sizeof(cp_req);
 
-		if (ioctl(sd.capprotect_fd, MAC_CAPABILITY_CALL, &call) == -1)
-			syslog(LOG_ERR, "capprotect shield: %m");
-		else
-			syslog(LOG_INFO, "capprotect shield active");
+		if (ioctl(sd.capprotect_fd, MAC_CAPABILITY_CALL, &call) == -1) {
+			syslog(LOG_CRIT, "capprotect shield: %m");
+			return (1);
+		}
+		syslog(LOG_INFO, "capprotect shield active");
+	}
+
+	/* READY means protected and operational, not merely post-exec alive. */
+	if (oracle_send_ready(sd.oracle_channel_fd) != 0) {
+		syslog(LOG_ERR, "failed to send protected READY to oracled");
+		return (1);
 	}
 
 	sd.running = true;

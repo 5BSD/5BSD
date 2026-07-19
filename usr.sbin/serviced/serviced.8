@@ -49,17 +49,6 @@ environment variable and optional delegated service instance fds from
 and
 .Ev SERVICED_CAPPROTECT_FD .
 .It
-Apply a capprotect shield if a capprotect service instance fd was
-inherited, hardening the process against ptrace, wait, scheduler
-manipulation, and ktrace.
-The shield does not block signals, allowing
-.Dv SIGHUP
-and
-.Dv SIGTERM
-from
-.Xr oracled 8 .
-The capprotect fd is closed after use.
-.It
 Create a
 .Xr kqueue 2
 and register the oracle channel fd for EOF detection (oracle death).
@@ -74,11 +63,27 @@ Register signal handlers for
 and
 .Dv SIGCHLD .
 .It
+Apply an inherited capprotect shield, hardening the process against
+ptrace, ambient signals (including
+.Dv SIGKILL
+and
+.Dv SIGCONT ) ,
+wait, scheduler manipulation, core dumps, and ktrace.
+The shield fd is retained for the lifetime of
+.Nm ;
+failure to activate it is fatal.
+.Xr oracled 8
+retains explicit signal authority through the process descriptor returned by
+.Xr pdfork 2 ,
+so
+.Xr pdkill 2
+does not require a capprotect authorization token.
+.It
 Send
 .Dv ORACLE_OP_READY
 to
 .Xr oracled 8
-on the channel.
+on the channel only after descriptor confinement and protection are active.
 .It
 Scan application bundles, topologically sort services
 by dependency, and fork/exec each service via
@@ -115,9 +120,15 @@ Optional.
 .It capprotect (fd 6)
 Delegated capprotect service instance.
 .Nm
-uses this to apply an integrity shield at startup, then closes the fd.
-Optional.
+uses this to apply an integrity shield at startup and retains it because
+closing the descriptor would revoke the shield.
+Required.
 .El
+.Pp
+After exec, all manager-owned descriptors are irreversibly restricted against
+transfer, fork inheritance, and exec inheritance.
+Descriptors intentionally delegated to a service cross only that service's
+fork/exec boundary and are non-transferable.
 .Sh ENVIRONMENT
 .Bl -tag -width "SERVICED_COALITION_SVC_FD"
 .It Ev ORACLED_CHANNEL_FD
@@ -133,7 +144,7 @@ File descriptor number for the delegated coalition service instance.
 Optional.
 .It Ev SERVICED_CAPPROTECT_FD
 File descriptor number for the delegated capprotect service instance.
-Optional.
+Required.
 .It Ev SERVICED_CONTROL_SOCKET
 Path for the control socket.
 Default:
@@ -346,8 +357,15 @@ Services use this via
 to report readiness, register names, and look up other services.
 .It Ev ORACLED_TOKEN_FDS
 Comma-separated list of file descriptor numbers for capability
-tokens (starting at 4).
+tokens (starting at 5).
 Only set if the manifest declares capabilities.
+The descriptors appear in manifest-category order: paths, files,
+network endpoints, jail operations, and finally one combined system-gate
+token when system gates were requested.
+All requested descriptors are installed before
+.Xr execve 2 ;
+the executed program is responsible for activating them under its new
+post-exec nonce.
 .It Ev ORACLED_LABEL
 The service label from the manifest.
 .It Ev USER
@@ -591,6 +609,11 @@ The payload is the service label.
 Requires root.
 .El
 .Sh SIGNALS
+PID-based signals from foreign program nonces are denied by capprotect.
+The signals below remain available to
+.Xr oracled 8
+through its exclusive process descriptor and
+.Xr pdkill 2 .
 .Bl -tag -width "SIGTERM"
 .It Dv SIGHUP
 Reload service manifests.

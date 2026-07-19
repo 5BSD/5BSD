@@ -13,6 +13,7 @@
 
 #include <sys/types.h>
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/jail.h>
 
@@ -51,6 +52,25 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 {
 	struct mac_capability_sendmsg_args sa;
 	struct oracle_reply rpl;
+	int i;
+
+	/*
+	 * Every delegated descriptor crosses exactly this one message edge.
+	 * CAP_XFER_ONCE is consumed atomically by SENDMSG and the receiving
+	 * descriptor is installed as CAP_XFER_NONE.
+	 */
+	if (status == 0 && nfds > 0) {
+		for (i = 0; i < nfds; i++) {
+			if (cap_xfer_limit(fds[i], CAP_XFER_ONCE) == -1) {
+				syslog(LOG_ERR,
+				    "oracle_proto: confine reply fd: %m");
+				status = EIO;
+				fds = NULL;
+				nfds = 0;
+				break;
+			}
+		}
+	}
 
 	rpl.status = status;
 

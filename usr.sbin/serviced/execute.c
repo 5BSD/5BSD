@@ -18,6 +18,7 @@
 
 #include <sys/types.h>
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/jail.h>
 #include <sys/procdesc.h>
@@ -114,7 +115,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	 * Remap fds into their well-known positions.  First move all
 	 * source fds above the reserved range to avoid clobbering a
 	 * source fd that occupies a target slot (e.g., child_channel_fd
-	 * could be 4 which is SVC_TOKEN_BASE, or token_fds[0] could
+	 * could be 5 which is SVC_TOKEN_BASE, or token_fds[0] could
 	 * be 3 which is SVC_CHANNEL_FD).
 	 */
 	{
@@ -284,7 +285,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	pid_t pid;
 	int pd_fd;
 	int saved_errno __unused = 0;	/* consumed only by the DTrace probe */
-	unsigned i;
+	unsigned expected_tokens, i;
 
 	m = &svc->manifest;
 	memset(&minted_manifest, 0, sizeof(minted_manifest));
@@ -311,6 +312,29 @@ svc_exec(struct svc_runtime *svc, int kq)
 	if (access(m->program, X_OK) != 0) {
 		syslog(LOG_ERR, "svc_exec %s: %s not executable: %m",
 		    m->label, m->program);
+		return (-1);
+	}
+
+	/*
+	 * One token is delivered for every path, file, network, and jail
+	 * capability.  System gates are deliberately combined into one token.
+	 * Check the total before acquiring any launch resources so a malformed
+	 * manifest can never overrun token_fds[] or reach pdfork() partially
+	 * provisioned.
+	 */
+	if (m->ncap_paths > SERVICED_MAX_CAP_PATHS ||
+	    m->ncap_files > SERVICED_MAX_CAP_FILES ||
+	    m->ncap_net > SERVICED_MAX_CAP_NET ||
+	    m->ncap_jail > SERVICED_MAX_CAP_JAIL) {
+		syslog(LOG_ERR, "svc_exec %s: invalid capability counts",
+		    m->label);
+		return (-1);
+	}
+	expected_tokens = m->ncap_paths + m->ncap_files + m->ncap_net +
+	    m->ncap_jail + (m->cap_system != 0 ? 1u : 0u);
+	if (expected_tokens > SVC_MAX_TOKENS) {
+		syslog(LOG_ERR, "svc_exec %s: too many capability tokens: %u",
+		    m->label, expected_tokens);
 		return (-1);
 	}
 
@@ -367,6 +391,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	}
 
 	capprotect_fd = -1;
+	svc->jail_fd = -1;
 
 	/* Ensure required kernel modules are loaded before launch. */
 	if (m->nkmod_requires > 0) {
@@ -386,6 +411,14 @@ svc_exec(struct svc_runtime *svc, int kq)
 		SERVICED_PROBE_CAP_CHANNEL(m->label, -1);
 		return (-1);
 	}
+	if (cap_xfer_limit(oracle_end, CAP_XFER_NONE) == -1 ||
+	    cap_xfer_limit(child_end, CAP_XFER_NONE) == -1) {
+		syslog(LOG_ERR, "svc_exec %s: channel confinement: %m",
+		    m->label);
+		close(oracle_end);
+		close(child_end);
+		return (-1);
+	}
 	SERVICED_PROBE_CAP_CHANNEL(m->label, 0);
 
 	/* Create coalition via oracle. */
@@ -398,12 +431,30 @@ svc_exec(struct svc_runtime *svc, int kq)
 		close(child_end);
 		return (-1);
 	}
+	if (cap_xfer_limit(coalition_fd, CAP_XFER_NONE) == -1) {
+		syslog(LOG_ERR, "svc_exec %s: coalition confinement: %m",
+		    m->label);
+		close(oracle_end);
+		close(child_end);
+		close(coalition_fd);
+		return (-1);
+	}
 	SERVICED_PROBE_CAP_COALITION(m->label, 0);
 
 	capprotect_fd = mac_cap_mint_capprotect();
 	if (capprotect_fd == -1 && errno != ENOTSUP) {
 		syslog(LOG_WARNING, "svc_exec %s: capprotect mint: %m",
 		    m->label);
+	}
+	if (capprotect_fd >= 0 &&
+	    cap_xfer_limit(capprotect_fd, CAP_XFER_NONE) == -1) {
+		syslog(LOG_ERR, "svc_exec %s: capprotect confinement: %m",
+		    m->label);
+		close(oracle_end);
+		close(child_end);
+		close(coalition_fd);
+		close(capprotect_fd);
+		return (-1);
 	}
 
 	/*
@@ -440,9 +491,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	if (elapsed_ms > SVC_MINT_DEADLINE_MS) {			\
 		syslog(LOG_ERR, "svc_exec %s: mint deadline exceeded "	\
 		    "(%ju ms, %u/%u tokens)", m->label,			\
-		    (uintmax_t)elapsed_ms, ntokens,			\
-		    m->ncap_paths + m->ncap_files + m->ncap_net +	\
-		    m->ncap_jail + (m->cap_system != 0 ? 1u : 0u));	\
+		    (uintmax_t)elapsed_ms, ntokens, expected_tokens);	\
 		goto fail_tokens;					\
 	}								\
 } while (0)
@@ -530,12 +579,22 @@ svc_exec(struct svc_runtime *svc, int kq)
 #undef MINT_CHECK_DEADLINE
 	}
 
+	/*
+	 * This is the final all-or-nothing barrier before jail creation and
+	 * pdfork().  The child receives only the complete manifest token set;
+	 * any missing token takes the fail_tokens cleanup path instead.
+	 */
+	if (ntokens != expected_tokens) {
+		syslog(LOG_ERR, "svc_exec %s: incomplete capability set "
+		    "(%u/%u tokens)", m->label, ntokens, expected_tokens);
+		goto fail_tokens;
+	}
+
 	if (ntokens > 0)
 		syslog(LOG_DEBUG, "svc_exec %s: minted %u tokens",
 		    m->label, ntokens);
 
 	/* Create jail via oracle if manifest specifies one. */
-	svc->jail_fd = -1;
 	if (m->has_jail) {
 		svc->jail_fd = oracle_create_jail(sd.oracle_channel_fd,
 		    m->jail_name, m->jail_path,
@@ -576,6 +635,15 @@ svc_exec(struct svc_runtime *svc, int kq)
 	}
 	for (i = 0; i < ntokens; i++)
 		close(token_fds[i]);
+	if (svc->jail_fd >= 0 &&
+	    (cap_xfer_limit(svc->jail_fd, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(svc->jail_fd, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(svc->jail_fd, CAP_CLOEXEC_LOCKED) == -1)) {
+		saved_errno = errno;
+		syslog(LOG_ERR, "svc_exec %s: jail fd confinement: %m",
+		    m->label);
+		goto fail_postfork;
+	}
 
 	/* Enlist in coalition and set as leader. */
 	if (mac_cap_coalition_enlist(coalition_fd, pd_fd) != 0) {
@@ -589,6 +657,27 @@ svc_exec(struct svc_runtime *svc, int kq)
 		syslog(LOG_ERR, "svc_exec %s: coalition set_leader: %m",
 		    m->label);
 		goto fail_postfork;
+	}
+
+	/* Freeze all supervisor-owned authority before another service fork. */
+	{
+		cap_rights_t rights;
+
+		cap_rights_init(&rights, CAP_PDKILL, CAP_EVENT);
+		if (cap_rights_limit(pd_fd, &rights) == -1 ||
+		    cap_xfer_limit(pd_fd, CAP_XFER_NONE) == -1 ||
+		    cap_clofork_limit(pd_fd, CAP_CLOFORK_LOCKED) == -1 ||
+		    cap_cloexec_limit(pd_fd, CAP_CLOEXEC_LOCKED) == -1 ||
+		    cap_clofork_limit(oracle_end, CAP_CLOFORK_LOCKED) == -1 ||
+		    cap_cloexec_limit(oracle_end, CAP_CLOEXEC_LOCKED) == -1 ||
+		    cap_clofork_limit(coalition_fd, CAP_CLOFORK_LOCKED) == -1 ||
+		    cap_cloexec_limit(coalition_fd, CAP_CLOEXEC_LOCKED) == -1) {
+			saved_errno = errno;
+			syslog(LOG_ERR,
+			    "svc_exec %s: supervisor fd confinement: %m",
+			    m->label);
+			goto fail_postfork;
+		}
 	}
 
 	/* Store state. */
