@@ -464,6 +464,43 @@ ng_l2cap_chan_by_dcid(ng_l2cap_p l2cap, u_int16_t dcid, int idtype)
 	return (ch);
 } /* ng_l2cap_chan_by_dcid */
 
+/*
+ * Connection-scoped channel lookups for peer-controlled CIDs.
+ *
+ * Dynamic CIDs are scoped to one logical link, not to the controller.  The
+ * historical helpers above intentionally retain their controller-wide ABI for
+ * upper-layer lookups of locally allocated CIDs, but signaling received from a
+ * peer must include the connection in the lookup key.  Otherwise two peers
+ * using the same (perfectly legal) CID can affect each other's channels.
+ */
+ng_l2cap_chan_p
+ng_l2cap_chan_by_scid_con(ng_l2cap_con_p con, u_int16_t scid, int idtype)
+{
+	ng_l2cap_chan_p ch;
+
+	if (con == NULL)
+		return (NULL);
+	LIST_FOREACH(ch, &con->l2cap->chan_list, next) {
+		if (ch->con == con && ch->idtype == idtype && ch->scid == scid)
+			return (ch);
+	}
+	return (NULL);
+}
+
+ng_l2cap_chan_p
+ng_l2cap_chan_by_dcid_con(ng_l2cap_con_p con, u_int16_t dcid, int idtype)
+{
+	ng_l2cap_chan_p ch;
+
+	if (con == NULL)
+		return (NULL);
+	LIST_FOREACH(ch, &con->l2cap->chan_list, next) {
+		if (ch->con == con && ch->idtype == idtype && ch->dcid == dcid)
+			return (ch);
+	}
+	return (NULL);
+}
+
 ng_l2cap_chan_p
 ng_l2cap_chan_by_conhandle(ng_l2cap_p l2cap, uint16_t scid,
 			   u_int16_t con_handle)
@@ -507,6 +544,9 @@ ng_l2cap_free_chan(ng_l2cap_chan_p ch)
 
 	/* Free any partial SDU reassembly buffer */
 	NG_FREE_M(ch->rx_sdu);
+
+	/* Free any stalled (unsent) LE CoC SDU remainder */
+	NG_FREE_M(ch->tx_sdu_pending);
 
 	LIST_REMOVE(ch, next);
 

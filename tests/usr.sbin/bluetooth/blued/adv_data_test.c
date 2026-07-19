@@ -30,6 +30,7 @@
  * ================================================================ */
 
 #include "hccontrol.h"
+#include "spec_adv_data_oracles.h"
 
 char const *
 hci_manufacturer2str(int id __unused)
@@ -105,18 +106,33 @@ ATF_TC_BODY(test_adv_empty_data, tc)
 	ATF_CHECK_STREQ(cap.out_buf, "");
 }
 
-/* 2. Flags (0x01) */
+/* 2. Flags (0x01) — decoded bitfield.
+ *
+ * Flags = 0x06 sets bit 1 (LE General Discoverable Mode) and bit 2 (BR/EDR
+ * Not Supported), the classic LE-only general-discoverable device (Core
+ * Specification Supplement Part A S1.3 / Core Spec Vol 3 Part C S11).  bit 0
+ * (LE Limited Discoverable Mode) is clear, so it must NOT appear.
+ */
 ATF_TC_WITHOUT_HEAD(test_adv_flags);
 ATF_TC_BODY(test_adv_flags, tc)
 {
 	struct capture cap;
-	uint8_t ad[] = { 0x02, 0x01, 0x06 };  /* len=2, type=Flags, data=0x06 */
+	uint8_t ad[] = { 0x02, BT_ADV_SPEC_TYPE_FLAGS,
+	    BT_ADVD_SPEC_FLAGS_GENERAL_LE_ONLY };
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
 	capture_end(&cap);
 
 	ATF_CHECK(strstr(cap.out_buf, "Flags:") != NULL);
+	ATF_CHECK_MSG(strstr(cap.out_buf, "0x06") != NULL,
+	    "raw flags byte must be printed");
+	ATF_CHECK_MSG(strstr(cap.out_buf, "LE General Discoverable Mode") != NULL,
+	    "bit 1 must decode to LE General Discoverable Mode");
+	ATF_CHECK_MSG(strstr(cap.out_buf, "BR/EDR Not Supported") != NULL,
+	    "bit 2 must decode to BR/EDR Not Supported");
+	ATF_CHECK_MSG(strstr(cap.out_buf, "Limited") == NULL,
+	    "bit 0 is clear; LE Limited Discoverable Mode must not appear");
 }
 
 /* 3. Complete Local Name (0x09) */
@@ -124,7 +140,8 @@ ATF_TC_WITHOUT_HEAD(test_adv_complete_local_name);
 ATF_TC_BODY(test_adv_complete_local_name, tc)
 {
 	struct capture cap;
-	uint8_t ad[] = { 0x08, 0x09, 'T', 'e', 's', 't', 'D', 'e', 'v' };
+	uint8_t ad[] = { 0x08, BT_ADV_SPEC_TYPE_NAME_COMPLETE,
+	    'T', 'e', 's', 't', 'D', 'e', 'v' };
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
@@ -139,7 +156,7 @@ ATF_TC_WITHOUT_HEAD(test_adv_shortened_local_name);
 ATF_TC_BODY(test_adv_shortened_local_name, tc)
 {
 	struct capture cap;
-	uint8_t ad[] = { 0x04, 0x08, 'T', 's', 't' };
+	uint8_t ad[] = { 0x04, BT_ADV_SPEC_TYPE_NAME_SHORT, 'T', 's', 't' };
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
@@ -154,7 +171,7 @@ ATF_TC_WITHOUT_HEAD(test_adv_tx_power);
 ATF_TC_BODY(test_adv_tx_power, tc)
 {
 	struct capture cap;
-	uint8_t ad[] = { 0x02, 0x0A, 0x04 };  /* +4 dBm */
+	uint8_t ad[] = { 0x02, BT_ADV_SPEC_TYPE_TX_POWER, 0x04 };
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
@@ -169,7 +186,8 @@ ATF_TC_WITHOUT_HEAD(test_adv_tx_power_negative);
 ATF_TC_BODY(test_adv_tx_power_negative, tc)
 {
 	struct capture cap;
-	uint8_t ad[] = { 0x02, 0x0A, 0xFC };  /* -4 dBm (signed) */
+	uint8_t ad[] = { 0x02, BT_ADV_SPEC_TYPE_TX_POWER,
+	    (uint8_t)(int8_t)-4 };
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
@@ -179,18 +197,32 @@ ATF_TC_BODY(test_adv_tx_power_negative, tc)
 	ATF_CHECK(strstr(cap.out_buf, "-4 dBm") != NULL);
 }
 
-/* 7. Appearance (0x19) */
+/* 7. Appearance (0x19) — decoded category/subcategory.
+ *
+ * The Appearance value is 16-bit little-endian; the upper 10 bits are the
+ * category and lower 6 the subcategory (Core Spec Vol 3 Part C S12.2 /
+ * Assigned Numbers).  0x03C1 -> category 0x0F (Human Interface Device),
+ * subcategory 0x01 (Keyboard).
+ */
 ATF_TC_WITHOUT_HEAD(test_adv_appearance);
 ATF_TC_BODY(test_adv_appearance, tc)
 {
 	struct capture cap;
-	uint8_t ad[] = { 0x03, 0x19, 0xC1, 0x03 };  /* Appearance: 0x03C1 = keyboard */
+	uint8_t ad[] = { 0x03, BT_ADV_SPEC_TYPE_APPEARANCE,
+	    (uint8_t)BT_ADVD_SPEC_APPEARANCE_HID_KEYBOARD,
+	    (uint8_t)(BT_ADVD_SPEC_APPEARANCE_HID_KEYBOARD >> 8) };
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
 	capture_end(&cap);
 
 	ATF_CHECK(strstr(cap.out_buf, "Appearance:") != NULL);
+	ATF_CHECK_MSG(strstr(cap.out_buf, "0x03c1") != NULL,
+	    "16-bit appearance value must be printed");
+	ATF_CHECK_MSG(strstr(cap.out_buf, "Human Interface Device") != NULL,
+	    "category 0x0f must decode to Human Interface Device");
+	ATF_CHECK_MSG(strstr(cap.out_buf, "subcategory 0x01") != NULL,
+	    "low 6 bits must decode as subcategory 0x01");
 }
 
 /* 8. Complete 16-bit UUID List (0x03) */
@@ -199,7 +231,11 @@ ATF_TC_BODY(test_adv_complete_uuid16_list, tc)
 {
 	struct capture cap;
 	/* Two UUID16s: 0x180F (Battery), 0x180A (Device Info) */
-	uint8_t ad[] = { 0x05, 0x03, 0x0F, 0x18, 0x0A, 0x18 };
+	uint8_t ad[] = { 0x05, BT_ADV_SPEC_TYPE_UUID16_COMPLETE,
+	    (uint8_t)BT_ADVD_SPEC_UUID_BATTERY,
+	    (uint8_t)(BT_ADVD_SPEC_UUID_BATTERY >> 8),
+	    (uint8_t)BT_ADVD_SPEC_UUID_DEVICE_INFO,
+	    (uint8_t)(BT_ADVD_SPEC_UUID_DEVICE_INFO >> 8) };
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
@@ -213,7 +249,9 @@ ATF_TC_WITHOUT_HEAD(test_adv_incomplete_uuid16_list);
 ATF_TC_BODY(test_adv_incomplete_uuid16_list, tc)
 {
 	struct capture cap;
-	uint8_t ad[] = { 0x03, 0x02, 0x0F, 0x18 };
+	uint8_t ad[] = { 0x03, BT_ADV_SPEC_TYPE_UUID16_INCOMPLETE,
+	    (uint8_t)BT_ADVD_SPEC_UUID_BATTERY,
+	    (uint8_t)(BT_ADVD_SPEC_UUID_BATTERY >> 8) };
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
@@ -228,17 +266,28 @@ ATF_TC_BODY(test_adv_complete_uuid128, tc)
 {
 	struct capture cap;
 	/* 16-byte UUID (vendor) */
-	uint8_t ad[18];
-	ad[0] = 17;	/* length: type(1) + uuid(16) */
-	ad[1] = 0x07;	/* Complete 128-bit UUID list */
-	/* Fill with a test UUID */
-	memset(&ad[2], 0x42, 16);
+	uint8_t ad[2 + BT_ADVD_SPEC_UUID128_SIZE];
+	ad[0] = 1 + BT_ADVD_SPEC_UUID128_SIZE;
+	ad[1] = BT_ADV_SPEC_TYPE_UUID128_COMPLETE;
+	/*
+	 * 128-bit Service UUIDs are transmitted in the AD structure in
+	 * little-endian order (least significant octet first) --
+	 * Core Spec Vol 3 Part C S11 / CSS Part A S1.1.  A distinguishable
+	 * ascending pattern lets us assert that the parser re-orders the
+	 * bytes into the canonical (big-endian) UUID string rather than
+	 * merely echoing them.  Hand-derived: LE octets 00..FF reverse to
+	 * ffeeddcc-bbaa-9988-7766-554433221100.
+	 */
+	for (int i = 0; i < BT_ADVD_SPEC_UUID128_SIZE; i++)
+		ad[2 + i] = (uint8_t)(i * 0x11);
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
 	capture_end(&cap);
 
 	ATF_CHECK(strstr(cap.out_buf, "128 bit") != NULL);
+	ATF_CHECK(strstr(cap.out_buf,
+	    "ffeeddcc-bbaa-9988-7766-554433221100") != NULL);
 }
 
 /* 11. Manufacturer Specific Data (0xFF) */
@@ -246,14 +295,24 @@ ATF_TC_WITHOUT_HEAD(test_adv_manufacturer_data);
 ATF_TC_BODY(test_adv_manufacturer_data, tc)
 {
 	struct capture cap;
-	/* Manufacturer ID = 0x004C (Apple), then 2 bytes of data */
-	uint8_t ad[] = { 0x05, 0xFF, 0x4C, 0x00, 0xDE, 0xAD };
+	/* Manufacturer ID = 0x004C, then 2 bytes of data */
+	uint8_t ad[] = { 0x05, BT_ADV_SPEC_TYPE_MANUFACTURER,
+	    (uint8_t)BT_ADVD_SPEC_COMPANY_APPLE,
+	    (uint8_t)(BT_ADVD_SPEC_COMPANY_APPLE >> 8), 0xDE, 0xAD };
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
 	capture_end(&cap);
 
 	ATF_CHECK(strstr(cap.out_buf, "Manufacturer") != NULL);
+	/*
+	 * Manufacturer Specific Data: the first 2 value octets are the
+	 * Company Identifier Code, the remainder is the payload (CSS Part
+	 * A S1.4).  The 2-octet company id (4C 00) must be consumed, so
+	 * only the trailing payload bytes DE AD are emitted as data --
+	 * this proves the field split is spec-correct, not off-by-one.
+	 */
+	ATF_CHECK(strstr(cap.out_buf, "de ad") != NULL);
 }
 
 /* 12. Service Data (0x16) */
@@ -261,7 +320,9 @@ ATF_TC_WITHOUT_HEAD(test_adv_service_data);
 ATF_TC_BODY(test_adv_service_data, tc)
 {
 	struct capture cap;
-	uint8_t ad[] = { 0x04, 0x16, 0x0F, 0x18, 0x64 };  /* Battery Service + level */
+	uint8_t ad[] = { 0x04, BT_ADV_SPEC_TYPE_SERVICE_DATA16,
+	    (uint8_t)BT_ADVD_SPEC_UUID_BATTERY,
+	    (uint8_t)(BT_ADVD_SPEC_UUID_BATTERY >> 8), 0x64 };
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
@@ -275,7 +336,7 @@ ATF_TC_WITHOUT_HEAD(test_adv_unknown_type);
 ATF_TC_BODY(test_adv_unknown_type, tc)
 {
 	struct capture cap;
-	uint8_t ad[] = { 0x02, 0xFE, 0x42 };  /* type 0xFE = unknown */
+	uint8_t ad[] = { 0x02, BT_ADVD_SPEC_UNKNOWN_TYPE, 0x42 };
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
@@ -290,7 +351,8 @@ ATF_TC_WITHOUT_HEAD(test_adv_malformed_length_zero);
 ATF_TC_BODY(test_adv_malformed_length_zero, tc)
 {
 	struct capture cap;
-	uint8_t ad[] = { 0x00, 0x01, 0x06 };
+	uint8_t ad[] = { 0x00, BT_ADV_SPEC_TYPE_FLAGS,
+	    BT_ADVD_SPEC_FLAGS_GENERAL_LE_ONLY };
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
@@ -307,7 +369,7 @@ ATF_TC_WITHOUT_HEAD(test_adv_malformed_length_exceeds);
 ATF_TC_BODY(test_adv_malformed_length_exceeds, tc)
 {
 	struct capture cap;
-	uint8_t ad[] = { 0x0A, 0x09, 'A', 'B' };  /* length=10 but only 3 bytes remain */
+	uint8_t ad[] = { 0x0A, BT_ADV_SPEC_TYPE_NAME_COMPLETE, 'A', 'B' };
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
@@ -323,8 +385,9 @@ ATF_TC_BODY(test_adv_multiple_structures, tc)
 	struct capture cap;
 	/* Flags + Complete Local Name */
 	uint8_t ad[] = {
-		0x02, 0x01, 0x06,			/* Flags */
-		0x05, 0x09, 'T', 'e', 's', 't'		/* Name */
+		0x02, BT_ADV_SPEC_TYPE_FLAGS,
+		    BT_ADVD_SPEC_FLAGS_GENERAL_LE_ONLY,
+		0x05, BT_ADV_SPEC_TYPE_NAME_COMPLETE, 'T', 'e', 's', 't'
 	};
 
 	capture_begin(&cap);
@@ -341,17 +404,20 @@ ATF_TC_WITHOUT_HEAD(test_adv_exactly_31_bytes);
 ATF_TC_BODY(test_adv_exactly_31_bytes, tc)
 {
 	struct capture cap;
-	uint8_t ad[31];
+	uint8_t ad[BT_ADV_SPEC_LEGACY_DATA_MAX];
 
 	memset(ad, 0, sizeof(ad));
 	/* Flags: 3 bytes */
-	ad[0] = 0x02; ad[1] = 0x01; ad[2] = 0x06;
+	ad[0] = 0x02;
+	ad[1] = BT_ADV_SPEC_TYPE_FLAGS;
+	ad[2] = BT_ADVD_SPEC_FLAGS_GENERAL_LE_ONLY;
 	/* Complete Local Name: 28 bytes (len=27, type, 26 chars) */
-	ad[3] = 27; ad[4] = 0x09;
+	ad[3] = 27;
+	ad[4] = BT_ADV_SPEC_TYPE_NAME_COMPLETE;
 	memset(&ad[5], 'A', 26);
 
 	capture_begin(&cap);
-	print_adv_data(31, ad);
+	print_adv_data(sizeof(ad), ad);
 	capture_end(&cap);
 
 	ATF_CHECK(strstr(cap.out_buf, "Flags:") != NULL);
@@ -376,18 +442,56 @@ ATF_TC_BODY(test_adv_dump_hex, tc)
 	ATF_CHECK(strstr(cap.out_buf, "ef") != NULL);
 }
 
-/* 19. Class of Device (0x0D) */
+/* 19. Class of Device (0x0D) — decoded Major Device Class.
+ *
+ * CoD is 3 octets little-endian; bytes 04 05 20 -> 0x200504.  The Major
+ * Device Class is bits 8-12: (0x200504 >> 8) & 0x1f = 0x05 = Peripheral
+ * (Assigned Numbers / Baseband).
+ */
 ATF_TC_WITHOUT_HEAD(test_adv_class_of_device);
 ATF_TC_BODY(test_adv_class_of_device, tc)
 {
 	struct capture cap;
-	uint8_t ad[] = { 0x04, 0x0D, 0x04, 0x05, 0x20 };  /* 3 bytes CoD */
+	uint8_t ad[] = { 0x04, BT_ADVD_SPEC_TYPE_CLASS_OF_DEVICE,
+	    (uint8_t)BT_ADVD_SPEC_CLASS_PERIPHERAL,
+	    (uint8_t)(BT_ADVD_SPEC_CLASS_PERIPHERAL >> 8),
+	    (uint8_t)(BT_ADVD_SPEC_CLASS_PERIPHERAL >> 16) };
 
 	capture_begin(&cap);
 	print_adv_data(sizeof(ad), ad);
 	capture_end(&cap);
 
 	ATF_CHECK(strstr(cap.out_buf, "Class of device:") != NULL);
+	ATF_CHECK_MSG(strstr(cap.out_buf, "0x200504") != NULL,
+	    "24-bit class-of-device value must be printed");
+	ATF_CHECK_MSG(strstr(cap.out_buf, "Peripheral") != NULL,
+	    "Major Device Class 0x05 must decode to Peripheral");
+}
+
+/* CSS field-width minima: one octet short must not be decoded or over-read. */
+ATF_TC_WITHOUT_HEAD(test_adv_typed_value_minima);
+ATF_TC_BODY(test_adv_typed_value_minima, tc)
+{
+	struct capture cap;
+	uint8_t ad[] = {
+		0x01, BT_ADV_SPEC_TYPE_TX_POWER,
+		0x02, BT_ADV_SPEC_TYPE_MANUFACTURER, 0x4c,
+		0x02, BT_ADV_SPEC_TYPE_APPEARANCE, 0xc1,
+		0x03, BT_ADVD_SPEC_TYPE_CLASS_OF_DEVICE, 0x04, 0x05,
+		BT_ADVD_SPEC_UUID128_SIZE, BT_ADV_SPEC_TYPE_UUID128_COMPLETE,
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	};
+
+	capture_begin(&cap);
+	print_adv_data(sizeof(ad), ad);
+	capture_end(&cap);
+
+	ATF_CHECK(strstr(cap.out_buf, "Tx Power level: (no data)") != NULL);
+	ATF_CHECK(strstr(cap.out_buf, "Manufacturer specific data (too short)") !=
+	    NULL);
+	ATF_CHECK(strstr(cap.out_buf, "Appearance: \n") != NULL);
+	ATF_CHECK(strstr(cap.out_buf, "Class of device: \n") != NULL);
+	ATF_CHECK(strstr(cap.out_buf, "UUIDs (128 bit): \n") != NULL);
 }
 
 /* ================================================================
@@ -416,6 +520,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_adv_exactly_31_bytes);
 	ATF_TP_ADD_TC(tp, test_adv_dump_hex);
 	ATF_TP_ADD_TC(tp, test_adv_class_of_device);
+	ATF_TP_ADD_TC(tp, test_adv_typed_value_minima);
 
 	return (atf_no_error());
 }

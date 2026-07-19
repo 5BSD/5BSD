@@ -1,0 +1,36 @@
+libblemesh example: provision and configure a mesh node
+=======================================================
+
+mesh_provision_configure.c is a worked, radio-free example of the libblemesh
+network-manager (Configuration Client) API used by meshd(8) and meshctl(8).
+
+It demonstrates, in one process:
+
+  1. Creating a mesh network (primary NetKey/AppKey, IV Index) with this node
+     as the Provisioner.
+  2. Allocating a unicast address block and recording a provisioned node with
+     its device key (DevKey) in the roster.
+  3. Building the Configuration messages that commission the node -- Config
+     AppKey Add and Config Model App Bind -- sealing each under the node's
+     DevKey (AKF=0), and recovering them to prove the round-trip.
+  4. Persisting the manager database (network keys, unicast allocator, roster
+     and DevKeys) and reloading it.
+
+This mirrors the meshctl(8) operator workflow:
+
+    meshctl create-network
+    meshctl provision <uuid> 1
+    meshctl cfg appkey-add <addr>
+    meshctl cfg model-bind <addr> <elem> <model>
+
+Building
+--------
+
+The mesh_*.h headers are not installed system-wide yet, so build inside the
+FreeBSD source tree:
+
+    cd share/examples/libblemesh
+    make
+    ./mesh_provision_configure
+
+See meshd(8) and meshctl(8) for the daemon and its command-line client.

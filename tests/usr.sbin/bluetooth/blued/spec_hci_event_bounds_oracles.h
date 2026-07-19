@@ -1,0 +1,60 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Independent Core 6.3 HCI encoder boundary oracles.
+ * No production HCI header is included.
+ */
+
+#ifndef TESTS_BLUETOOTH_SPEC_HCI_EVENT_BOUNDS_ORACLES_H
+#define TESTS_BLUETOOTH_SPEC_HCI_EVENT_BOUNDS_ORACLES_H
+
+/* Vol 4 Part E §7.8.5. */
+#define BT_HE_SPEC_ADV_INTERVAL_MIN		0x0020
+#define BT_HE_SPEC_ADV_INTERVAL_MAX		0x4000
+#define BT_HE_SPEC_ADV_TYPE_CONNECTABLE		0x00
+#define BT_HE_SPEC_ADV_TYPE_SCANNABLE		0x02
+#define BT_HE_SPEC_ADV_TYPE_NONCONNECTABLE	0x03
+
+/* Vol 4 Part E §7.8.53 and §7.8.61. */
+#define BT_HE_SPEC_EXT_ADV_INTERVAL_MIN		0x000020
+#define BT_HE_SPEC_EXT_ADV_INTERVAL_MAX		0xffffff
+#define BT_HE_SPEC_PERIODIC_INTERVAL_MIN	0x0006
+#define BT_HE_SPEC_PERIODIC_INTERVAL_MAX	0xffff
+
+/* Vol 4 Part E §7.8.18. */
+#define BT_HE_SPEC_CONN_INTERVAL_MIN		0x0006
+#define BT_HE_SPEC_CONN_INTERVAL_MAX		0x0c80
+#define BT_HE_SPEC_CONN_LATENCY_MAX		0x01f3
+#define BT_HE_SPEC_SUPERVISION_TIMEOUT_MIN	0x000a
+#define BT_HE_SPEC_SUPERVISION_TIMEOUT_MAX	0x0c80
+
+/* Vol 4 Part E §§7.8.33 and 7.8.35. */
+#define BT_HE_SPEC_DATA_OCTETS_MIN		0x001b
+#define BT_HE_SPEC_DATA_OCTETS_MAX		0x00fb
+#define BT_HE_SPEC_DATA_TIME_MIN		0x0148
+#define BT_HE_SPEC_DATA_TIME_MAX		0x4290
+
+/* Vol 4 Part E §7.8.45 and Vol 3 Part H §2.3.4. */
+#define BT_HE_SPEC_RPA_TIMEOUT_MIN		1
+#define BT_HE_SPEC_RPA_TIMEOUT_MAX		0x0e10
+#define BT_HE_SPEC_KEY_SIZE_MIN			7
+#define BT_HE_SPEC_KEY_SIZE_MAX			16
+
+/* Vol 4 Part E §7.8.66 Initiating_PHYs and per-PHY record layout. */
+#define BT_HE_SPEC_PHY_1M_BIT			0x01
+#define BT_HE_SPEC_PHY_2M_BIT			0x02
+#define BT_HE_SPEC_PHY_CODED_BIT		0x04
+#define BT_HE_SPEC_PHY_ALL_BITS			0x07
+#define BT_HE_SPEC_PHY_FIRST_RFU_BIT		0x08
+#define BT_HE_SPEC_EXT_CONN_PHY_RECORD_LEN	16
+
+/* Vol 4 Part E §7.8.99 and §7.8.80. */
+#define BT_HE_SPEC_CIS_COUNT_MIN		1
+#define BT_HE_SPEC_CIS_COUNT_MAX		31
+#define BT_HE_SPEC_CTE_SWITCH_PATTERN_MAX	75
+
+/* Vol 3 Part A §4.25: Enhanced Credit Based channel-count field. */
+#define BT_HE_SPEC_ECBFC_CHANNELS_MIN		1
+#define BT_HE_SPEC_ECBFC_CHANNELS_MAX		5
+
+#endif /* TESTS_BLUETOOTH_SPEC_HCI_EVENT_BOUNDS_ORACLES_H */

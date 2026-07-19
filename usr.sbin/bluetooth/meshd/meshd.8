@@ -1,0 +1,389 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.Dd July 11, 2026
+.Dt MESHD 8
+.Os
+.Sh NAME
+.Nm meshd
+.Nd Bluetooth Mesh node daemon
+.Sh SYNOPSIS
+.Nm
+.Op Fl d
+.Op Fl f Ar config
+.Op Fl s Ar socket
+.Sh DESCRIPTION
+The
+.Nm
+daemon is a Bluetooth Mesh node.
+It holds the node's security material
+.Pq NetKey, AppKey, IV Index, sequence number and Replay Protection List ,
+registers the Generic OnOff and Generic Level application models and the
+Configuration and Health foundation models, and processes access-layer
+messages.
+It is built on
+.Xr libblemesh 3
+and uses that library's
+.Vt mesh_sim
+network engine, driven as a single-node network, for the
+receive, relay, reassembly and access-dispatch pipeline.
+.Pp
+The options are:
+.Bl -tag -width indent
+.It Fl d
+Do not detach from the controlling terminal; run in the foreground.
+.It Fl f Ar config
+Read configuration from
+.Ar config
+instead of the default
+.Pa /etc/bluetooth/meshd.conf .
+.It Fl s Ar socket
+Listen for control connections on
+.Ar socket
+instead of the default
+.Pa /var/run/meshd.sock .
+.El
+.Sh CONTROL PROTOCOL
+.Nm
+serves a line-oriented control protocol on a
+.Ux Ns -domain
+stream socket.
+The socket is created mode 0600, independent of the process umask.
+On each accepted connection the daemon also verifies the peer credentials and
+permits only root or a process running as the daemon's effective user.
+Each request is one whitespace-separated command line; the reply is a single
+line beginning with
+.Ql OK
+or
+.Ql ERR .
+The daemon services the listening socket, connected application sockets and
+the skyblued bearer fd from one
+.Xr kqueue 2
+loop, so a long-lived application connection does not block other control
+clients or inbound bearer traffic.
+.Pp
+Application model registrations made on a connected socket are scoped to that
+connection.
+When an inbound Access message matches a model registered by a
+connection,
+.Nm
+queues the event on that connection and also writes an asynchronous
+.Ql EVENT
+line to the same socket.
+The
+.Cm app-events
+command remains available for clients that prefer explicit queue draining.
+The commands are:
+.Bl -tag -width ".Cm provision-local Ar addr Ar iv"
+.It Cm status
+Report the node address, provisioning state, sequence number, IV Index,
+current OnOff and Level state, default TTL and the receive/transmit counters.
+.It Cm models
+Report the local model inventory from the same Configuration Database used by
+the Configuration Server.  Each entry lists the SIG model identifier, AppKey
+binding count, subscription count and whether publication is configured.
+Keys and publication labels are never included in this diagnostic view.
+.It Cm app-register Ar element Ar model Op Ar vendor
+Register an application-owned model on the specified local element.
+The registration extends the local Configuration Database when necessary so
+the model can receive AppKey bindings, subscriptions and publication state.
+Registrations are per connected client; another application must register its
+own models on its own socket.
+.It Cm app-register-opcode Ar element Ar model Ar opcode Op Ar vendor
+Register an opcode implemented by an application-owned model.
+Unlike a model-only registration, this installs an explicit runtime dispatch
+claim, allowing custom model messages to reach the owning client without
+also delivering unrelated opcodes accepted by other models on the element.
+.It Cm app-unregister Ar element Ar model Op Ar vendor
+Remove a previously registered application-owned model.
+.It Cm app-events Op Ar max
+Drain queued inbound Access messages for registered application models.
+Each event includes source, destination, opcode and parameter bytes.
+Live application sockets also receive matching events as asynchronous
+.Ql EVENT
+lines.
+.It Cm features
+Report local node properties: Relay, Proxy, Friend and Low Power feature state, Secure
+Network Beacon state, IV Index, local element addresses and sequence number.
+.It Cm send Ar dst Ar appidx Ar access-hex
+Originate a raw Access PDU to
+.Ar dst
+using the configured AppKey index.
+The
+.Ar access-hex
+argument is the complete Access payload, including opcode and parameters.
+.It Cm devkey-send Ar dst Ar remote Ns | Ns Ar local Ar netidx Ar access-hex
+Originate a raw DevKey Access PDU to
+.Ar dst .
+Use
+.Ar remote
+to encrypt with the roster node's Device Key, or
+.Ar local
+to encrypt with this node's Device Key.
+.It Cm publish Ar element Ar model Op Ar vendor Ar access-hex
+Originate a raw Access PDU through the publication state configured for the
+SIG model
+.Ar model ,
+or the vendor model identified by
+.Ar vendor
+and
+.Ar model .
+The source address is the specified local
+.Ar element .
+.It Cm onoff Ar dst Ar 0 Ns | Ns Ar 1
+Originate an acknowledged Generic OnOff Set to
+.Ar dst .
+.It Cm level Ar dst Ar n
+Originate an acknowledged Generic Level Set of
+.Ar n
+to
+.Ar dst .
+.It Cm power-onoff Ar dst Ar 0 Ns | Ns Ar 1 Ns | Ns Ar 2
+Set the Generic OnPowerUp behavior of
+.Ar dst
+to Off, Default, or Restore.
+.It Cm transition Ar dst Ar encoded-time
+Set the Generic Default Transition Time.  The encoded octet uses the standard
+two-bit resolution and six-bit step count; a step count of 63 is prohibited.
+.It Cm power-level Ar dst Ar power
+Set the Generic Power Actual state.
+.It Cm power-default Ar dst Ar power
+Set the Generic Power Default state.
+.It Cm power-range Ar dst Ar min Ar max
+Set the nonzero inclusive Generic Power Range.
+.It Cm battery-state Ar level Ar discharge Ar charge Ar flags
+Update the local Generic Battery state.  Times are 24-bit minute counts;
+unknown values use the Mesh-defined all-ones encodings.
+.It Cm location-global Ar latitude Ar longitude Ar altitude
+Update the local Generic Location Global state using its signed wire units.
+.It Cm location-local Ar north Ar east Ar altitude Ar floor Ar uncertainty
+Update the local Generic Location Local state.
+.It Cm sensor-set Ar property rawhex Op Ar pos neg sampling period interval
+Register or update a Sensor property, descriptor, and current raw value.
+.It Cm sensor-cadence Ar property divisor trigger down up min low high
+Configure cadence; each raw threshold must match the registered value width.
+.It Cm sensor-setting Ar property setting 1|3 rawhex
+Register a read-only or read/write Sensor setting.
+.It Cm sensor-column Ar property keyhex rawhex
+Register a bounded Sensor Series column.
+.It Cm time-set Ar tai subsecond uncertainty authority delta zone
+Set the local Mesh Time state using the standard 40-bit TAI Seconds and
+15-bit encoded TAI-UTC Delta fields.
+.It Cm time-role Ar 0..3
+Set the local Time Role.
+.It Cm time-zone Ar offset change-tai
+Schedule the new Time Zone Offset at the specified TAI instant.
+.It Cm time-delta Ar delta change-tai
+Schedule the new encoded TAI-UTC Delta at the specified TAI instant.
+.It Cm scene-store Ar scene-number
+Store the bound Generic OnOff, Generic Level, and Generic Power Actual states
+as a local Scene.
+.It Cm scene-recall Ar scene-number
+Recall a stored local Scene.
+.It Cm scene-delete Ar scene-number
+Delete a local Scene; deleting a non-existent scene succeeds as specified.
+.It Cm scheduler-set Ar index year months day hour minute second dow action transition scene
+Set a local Scheduler register entry using the Mesh field encodings.  Action
+15 clears the entry.
+.It Cm lightness-state Ar actual
+Set the local Light Lightness Actual state and its required Generic OnOff and
+Generic Level bindings.
+.It Cm lightness-default Ar value
+Set the local Light Lightness Default state.
+.It Cm lightness-range Ar min max
+Set the nonzero inclusive local Light Lightness Range.
+.It Cm ctl-state Ar lightness temperature delta-uv
+Set the local Light CTL state, including its Light Lightness binding.
+.It Cm ctl-range Ar min-temperature max-temperature
+Set the local Light CTL Temperature Range; values must be within 800 to 20000 K.
+.It Cm hsl-state Ar lightness hue saturation
+Set the local Light HSL state and its Light Lightness binding.
+.It Cm hsl-range Ar hue-min hue-max sat-min sat-max
+Set the inclusive Hue and Saturation ranges for the local HSL server.
+.It Cm xyl-state Ar lightness x y
+Set the local Light xyL state and its Light Lightness binding.
+.It Cm xyl-range Ar x-min x-max y-min y-max
+Set the inclusive x and y ranges for the local xyL server.
+.It Cm lc-mode Ar 0|1
+Set the local Light LC Mode state.
+.It Cm lc-om Ar 0|1
+Set the local Light LC Occupancy Mode state.
+.It Cm lc-light-onoff Ar 0|1
+Set the local Light LC Light OnOff state and apply the bound Light Lightness
+state when LC Mode is enabled.
+.It Cm lc-property Ar property rawhex
+Set a local Light LC property value.
+.It Cm ttl Ar n
+Set the default Time To Live
+.Pq 0..127, not 1 .
+.It Cm attention Ar secs
+Set the Health server attention timer.
+.It Cm provision-local Ar addr Ar iv
+Self-provision the node at unicast address
+.Ar addr
+with IV Index
+.Ar iv ,
+using the configured NetKey.
+.It Cm create-network
+Mint a new mesh network, making this node the Provisioner and Configuration
+Client.
+.It Cm list-nodes
+List the provisioned-node roster managed by the local Provisioner.
+.It Cm import-remote-node Ar primary Ar count Ar devkey-hex32
+Import a remote node that was provisioned outside
+.Nm
+into the local Provisioner roster.
+.Ar primary
+is the node's primary unicast address,
+.Ar count
+is the number of elements, and
+.Ar devkey-hex32
+is the 16-octet Device Key.
+.It Cm delete-remote-node Ar primary Ar count
+Delete a remote node record from the local Provisioner roster.
+.It Cm provision-scan
+Scan for unprovisioned device beacons.
+.It Cm provision Ar uuid-hex32 Op Ar elements
+Provision an unprovisioned peer over PB-ADV.
+.It Cm provision-status
+Poll and commit an in-flight PB-ADV or PB-GATT provisioning session.
+.It Cm provision-gatt Ar addr Oo Cm public | Cm random Oc Op Cm adapter= Ns Ar index
+.Ar uuid-hex32 Op Ar elements
+Provision a connected peer over PB-GATT.
+The peer must expose the Mesh
+Provisioning Service (0x1827); characteristic discovery, Data Out subscription,
+Data In writes and Proxy-PDU segmentation are handled through
+.Xr blued 8 .
+The address type defaults to
+.Cm public
+when omitted.
+When the same peer identity is connected through more than one controller,
+.Cm adapter= Ns Ar index
+selects the controller explicitly; otherwise the sole matching connection is
+selected automatically.
+.It Cm proxy-gatt Ar addr Oo Cm public | Cm random Oc Op Cm adapter= Ns Ar index
+Open a Mesh Proxy GATT connection.
+.It Cm proxy-gatt-close Ar addr Oo Cm public | Cm random Oc Op Cm adapter= Ns Ar index
+Close the selected Mesh Proxy GATT connection.
+.It Cm proxy-filter-set Ar addr Oo Cm public | Cm random Oc
+.Op Cm adapter= Ns Ar index
+.Ar net-idx Cm accept | Cm reject
+Set the Proxy filter type.
+.It Cm proxy-filter-add Ar addr Oo Cm public | Cm random Oc
+.Op Cm adapter= Ns Ar index
+.Ar net-idx Ar mesh-addr ...
+Add addresses to the Proxy filter.
+.It Cm proxy-filter-remove Ar addr Oo Cm public | Cm random Oc
+.Op Cm adapter= Ns Ar index
+.Ar net-idx Ar mesh-addr ...
+Remove addresses from the Proxy filter.
+.Pp
+The optional adapter selector has the same meaning as for
+.Cm provision-gatt .
+.It Cm reset
+Return the node to the unprovisioned state.
+.El
+.Sh BEARER INTEGRATION
+.Nm
+uses
+.Xr blued 8
+as its privileged radio broker.
+The bearer remains an explicit integration seam
+.Pq Vt struct meshd_bearer :
+outbound secured Network PDUs are handed to a transmit callback and inbound
+frames are delivered with
+.Fn meshd_bearer_rx .
+The current brokered bearer carries:
+.Bl -bullet
+.It
+The
+.Em advertising bearer :
+LE non-connectable advertising and passive scanning for the Mesh Message
+.Pq AD type 0x2A ,
+Mesh Beacon
+.Pq 0x2B
+and PB-ADV
+.Pq 0x29
+AD structures, via the HCI socket already used by
+.Xr blued 8 .
+.It
+PB-GATT provisioning through the Mesh Provisioning Service
+.Pq 0x1827 ,
+using Data In UUID 0x2ADB and Data Out UUID 0x2ADC over
+.Xr blued 8
+ATT operations.
+.El
+.Pp
+One bearer remains future work:
+.Bl -bullet
+.It
+The
+.Em GATT Proxy bearer :
+the Mesh Proxy Service
+.Pq 0x1828
+with its Data In / Data Out characteristics, exposed through the
+.Xr blued 8
+ATT server, with proxy-PDU SAR handled by the
+.Vt mesh_proxy
+module of
+.Xr libblemesh 3 .
+.El
+.Sh FILES
+.Bl -tag -width ".Pa /usr/share/examples/meshd/meshd.conf.sample" -compact
+.It Pa /etc/bluetooth/meshd.conf
+Default configuration file.
+When it contains a
+.Cm netkey
+or
+.Cm appkey
+directive, the file must be owned by the daemon's effective user and must not
+grant any group or other permissions (normally mode 0600).
+.It Pa /var/run/meshd.sock
+Default control socket.
+.It Pa /usr/share/examples/meshd/meshd.conf.sample
+Annotated sample configuration.
+.El
+.Sh DTRACE
+When built with
+.Va MESHD_DTRACE_PROBES
+and DTrace enabled,
+.Nm
+exposes the
+.Ql meshd
+USDT provider with probes for application socket connect, disconnect,
+registration, event queue, event drop and event send paths.
+The probes carry file descriptors, model identifiers, opcodes and queue
+counters only; key material and Access payload bytes are not traced.
+.Sh SEE ALSO
+.Xr libblemesh 3 ,
+.Xr blued 8
+.Sh STANDARDS
+.Rs
+.%T Bluetooth Mesh Protocol
+.%N MshPRT_v1.1
+.%Q Bluetooth SIG
+.Re
+.Rs
+.%T Bluetooth Mesh Model
+.%N MshMDL_v1.1
+.%Q Bluetooth SIG
+.Re
+.Sh AUTHORS
+.An Kory Heard
+.Sh IMPLEMENTATION LIMITS
+The node stores up to four NetKeys, eight AppKeys, four AppKey bindings and
+eight subscriptions per model.
+Its fixed lighting composition has four elements: the primary element, CTL
+Temperature, HSL Hue, and HSL Saturation.
+It accepts up to 16 local application clients and four concurrent Mesh Proxy
+GATT connections.
+The Friend feature is reported as unsupported because its state machine is not
+connected to the production radio bearer.
+.Sh CAVEATS
+The node runs the
+.Vt mesh_sim
+engine, whose virtual clock advances model transitions and delayed scene
+recalls.

@@ -15,9 +15,12 @@ ATF_TESTS_C+=	basic		\
 		hub		\
 		ksocket		\
 		socket		\
-		vlan_rotate	\
+		vlan_rotate
 
 ATF_TESTS_SH+=	eiface_test
+ATF_TESTS_SH+=	vhci_test
+
+TEST_METADATA.vhci_test+=	required_programs="hccontrol ngctl vhcitool"
 
 SRCS.basic=	basic.c util.c
 SRCS.bridge=	bridge.c util.c

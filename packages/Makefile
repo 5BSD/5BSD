@@ -160,6 +160,7 @@ SUBDIR.${MK_SYSCONS}+=		syscons-data
 SUBDIR.${MK_TCSH}+=		csh
 SUBDIR.${MK_TELNET}+=		telnet
 SUBDIR.${MK_TESTS}+=		tests
+SUBDIR.${MK_TESTS}+=		bluetooth-tests
 SUBDIR.${MK_TESTS}+=		vsock-tests
 SUBDIR.${MK_TESTS_SUPPORT}+=	atf kyua
 SUBDIR.${MK_UNBOUND}+=		local-unbound

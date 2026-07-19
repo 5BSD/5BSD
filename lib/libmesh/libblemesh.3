@@ -1,0 +1,140 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.Dd July 10, 2026
+.Dt LIBBLEMESH 3
+.Os
+.Sh NAME
+.Nm libblemesh
+.Nd Bluetooth BLE-mesh protocol library
+.Sh LIBRARY
+.Lb libblemesh
+.Sh SYNOPSIS
+.In mesh_crypto.h
+.In mesh_net.h
+.In mesh_transport.h
+.In mesh_access.h
+.In mesh_cfg_model.h
+.In mesh_health_model.h
+.In mesh_generic.h
+.In mesh_sensor.h
+.In mesh_time_scene.h
+.In mesh_provision.h
+.In mesh_beacon.h
+.In mesh_iv.h
+.In mesh_rpl.h
+.In mesh_key_refresh.h
+.In mesh_proxy.h
+.In mesh_friend.h
+.In mesh_relay.h
+.In mesh_sim.h
+.Sh DESCRIPTION
+The
+.Nm
+library implements the Bluetooth Mesh Protocol
+.Pq Vt MshPRT_v1.1
+and Bluetooth Mesh Model
+.Pq Vt MshMDL_v1.1
+specifications as a set of pure, hardware-free modules.
+Every codec and security function performs no I/O, keeps no global state,
+and returns
+.Va 0
+on success or
+.Va -1
+on failure with its output zeroed; secrets are cleared with
+.Xr explicit_bzero 3 .
+The stack layers, bottom to top, are:
+.Bl -tag -width "mesh_health_model" -offset indent
+.It Fn mesh_crypto
+Salt/key-derivation
+.Pq Vt s1 , Vt k1 , Vt k2 , Vt k3 , Vt k4 ,
+network/application nonces and the AES-CCM primitives.
+.It Fn mesh_net
+Network-layer obfuscation, encryption and NID matching.
+.It Fn mesh_transport
+Lower/upper transport, SAR segmentation and reassembly.
+.It Fn mesh_access
+The cleartext opcode/parameter codec and the model-dispatch registry.
+.It Fn mesh_cfg_model , Fn mesh_health_model
+The mandatory Configuration and Health foundation models.
+.It Fn mesh_generic
+The Generic OnOff, Generic Level, Generic Default Transition Time, Generic
+Power OnOff, and Generic Power Level application models, including their
+required state bindings and setup-server procedures.
+.It Fn mesh_sensor
+The Sensor Server, Sensor Setup Server, and Sensor Client models, including
+Descriptor, Sensor, Column, Series, Cadence, Settings, and Setting procedures.
+.It Fn mesh_time_scene
+The Time, Scene, and Scheduler Server, Setup Server, and Client models,
+including Mesh Time encodings, Scene snapshot callbacks, and Scheduler
+register codecs.
+.It Fn mesh_provision
+The provisioning protocol: PDU codec, ECDH P-256, the security functions and
+the PB-ADV / PB-GATT bearers.
+.It Fn mesh_beacon , Fn mesh_iv , Fn mesh_key_refresh
+The Secure Network beacon and the IV-Update and Key-Refresh state machines.
+.It Fn mesh_rpl , Fn mesh_relay , Fn mesh_proxy , Fn mesh_friend
+Replay protection and the Relay, Proxy and Friend features.
+.El
+.Pp
+The
+.In mesh_sim.h
+module wires the layers into an in-process, multi-node mesh network over a
+shared virtual advertising medium: it is the spec-oracle harness that drives
+the full receive pipeline
+.Pq deobfuscate, decrypt, cache, relay, reassemble, dispatch
+without any radio hardware.
+.Ss Node lifecycle
+A typical embedding provisions a node, installs its keys, registers its
+models and pumps received Access PDUs through the access-layer dispatcher:
+.Bd -literal -offset indent
+struct mesh_sim sim;
+struct mesh_node *node;
+struct mesh_gen_onoff_srv onoff;
+
+mesh_sim_init(&sim, netkey, appkey, iv_index);
+node = mesh_sim_add_node(&sim, 0x0001, 1);
+
+mesh_gen_onoff_srv_init(&onoff, MESH_GEN_OFF);
+mesh_sim_add_model(node, 0, mesh_gen_onoff_srv_model(&onoff));
+
+/* Originate, then run the medium to quiescence. */
+mesh_sim_send_access(&sim, node, 0xFFFF,
+    MESH_OP_GEN_ONOFF_STATUS, params, plen, 0x04);
+mesh_sim_run(&sim, 16);
+.Ed
+.Sh IMPLEMENTATION NOTES
+Multi-octet fields are big-endian on the network layer and little-endian at
+the access layer, matching the specifications.
+The
+.Nm
+provisioning and crypto modules link against
+.Xr crypto 3
+for ECDH P-256 and the AES primitives.
+When the kernel is built
+.Cm WITH_DTRACE
+the library also publishes the
+.Va mesh
+USDT provider
+.Pq 34 probes across the network, transport, access, replay, IV, key-refresh,
+beacon, friend, provisioning and proxy layers .
+.Sh SEE ALSO
+.Xr crypto 3 ,
+.Xr libble 3 ,
+.Xr meshd 8
+.Sh STANDARDS
+.Rs
+.%T Bluetooth Mesh Protocol
+.%N MshPRT_v1.1
+.%Q Bluetooth SIG
+.Re
+.Rs
+.%T Bluetooth Mesh Model
+.%N MshMDL_v1.1
+.%Q Bluetooth SIG
+.Re
+.Sh AUTHORS
+.An Kory Heard

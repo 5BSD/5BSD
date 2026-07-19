@@ -1,0 +1,17 @@
+/*
+ * Symbol version map for libblemesh (Bluetooth BLE-mesh library).
+ *
+ * Every public entry point uses the mesh_* prefix; the whole surface is
+ * exported under a single node from day one so SHLIB_MAJOR=1 ships with a
+ * stable, versioned ABI.  Everything else (internal helpers) is hidden.
+ *
+ * When the coordinated rename pass changes the symbol prefix (mesh_* ->
+ * blemesh_*), add a new node (e.g. FBSD_BLEMESH_1.1) rather than editing this
+ * one, so already-linked consumers keep resolving the original symbols.
+ */
+FBSD_BLEMESH_1.0 {
+global:
+	mesh_*;
+local:
+	*;
+};

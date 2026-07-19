@@ -1,0 +1,133 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.Dd July 12, 2026
+.Dt VHCITOOL 8
+.Os
+.Sh NAME
+.Nm vhcitool
+.Nd userspace virtual Bluetooth HCI controller
+.Sh SYNOPSIS
+.Nm
+.Op Fl n Ar count
+.Op Fl l
+.Op Fl L
+.Op Fl W
+.Sh DESCRIPTION
+The
+.Nm
+utility creates one or more virtual Bluetooth controllers that require no
+USB or other hardware.
+Each controller is a
+.Pa /dev/vhci Ns Ar N
+endpoint of the
+.Xr ng_hci_virt 4
+kernel netgraph node, driven by an in-process HCI controller emulator.
+The emulator is the same specification-oracle state machine used by the
+.Xr blued 8
+test suite: it consumes HCI command packets and emits specification-correct
+HCI event packets, and models LE advertising, scanning, connection,
+encryption, and ISO streams.
+.Pp
+Because
+.Xr ng_hci_virt 4
+presents the identical upstream contract as the
+.Xr ng_ubt 4
+USB controller driver, the rest of the stack
+.Pq Xr ng_hci 4 , Xr ng_l2cap 4 , Xr blued 8
+attaches to a virtual controller exactly as it would to a real adapter.
+This makes
+.Nm
+suitable for continuous-integration and developer testing of the Bluetooth
+daemons with zero hardware.
+.Pp
+By default
+.Nm
+also wires the standard
+.Xr ng_hci 4
+node on top of each endpoint and names it
+.Dq vhci Ns Ar N Ns hci ,
+so the daemons can open the adapter by name, for example:
+.Pp
+.Dl "blued -a vhci0"
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl n Ar count
+Create
+.Ar count
+virtual controllers
+.Pq default 1 ,
+numbered from the first free unit.
+.It Fl l
+Link controllers pairwise into a shared simulated
+.Dq air :
+while one advertises and its partner scans, advertising reports and, after
+a connection, ACL data are delivered between the two emulators.
+.It Fl L
+In addition to the
+.Xr ng_hci 4
+node, create an
+.Xr ng_l2cap 4
+node on top of each adapter and name it
+.Dq vhci Ns Ar N Ns l2cap .
+.It Fl W
+Do not wire any netgraph nodes; expose only the raw
+.Pa /dev/vhci Ns Ar N
+packet pipe.
+In this mode the caller is responsible for the netgraph topology, for
+example with
+.Xr ngctl 8 .
+.El
+.Pp
+.Nm
+runs in the foreground until interrupted with
+.Dv SIGINT
+or
+.Dv SIGTERM ,
+at which point it tears down every controller it created.
+.Sh FILES
+.Bl -tag -width ".Pa /dev/vhci Ns Ar N" -compact
+.It Pa /dev/vhci
+control device used to create and destroy virtual controllers
+.It Pa /dev/vhci Ns Ar N
+per-controller HCI packet endpoint
+.El
+.Sh EXAMPLES
+Bring up a single virtual adapter and run the daemon against it:
+.Bd -literal -offset indent
+kldload ng_hci_virt
+vhcitool &
+blued -a vhci0
+.Ed
+.Pp
+Bring up two linked controllers so a central and a peripheral can be
+exercised end-to-end:
+.Bd -literal -offset indent
+vhcitool -n 2 -l &
+.Ed
+.Sh SEE ALSO
+.Xr ng_hci 4 ,
+.Xr ng_hci_virt 4 ,
+.Xr ng_l2cap 4 ,
+.Xr ng_ubt 4 ,
+.Xr blued 8 ,
+.Xr ngctl 8
+.Sh AUTHORS
+.An Kory Heard
+.Sh BUGS
+The
+.Xr ng_hci_virt 4
+module must be loaded before
+.Nm
+is started.
+.Sh SECURITY CONSIDERATIONS
+The
+.Pa /dev/vhci
+control device is restricted to the super-user
+.Pq Dv PRIV_DRIVER .
+A virtual controller injects HCI events straight into the kernel Bluetooth
+stack and should be treated with the same trust as a physical adapter.

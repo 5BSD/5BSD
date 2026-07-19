@@ -1,0 +1,3905 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ * All rights reserved.
+ */
+
+/*
+ * meshd node core: the provisionable node, its key material, model
+ * registration, the bearer receive/transmit seam and the foundation-model
+ * (Configuration / Health) message processing.  Pure logic, no I/O; the
+ * mesh_sim(3) engine from libblemesh does the network/transport/access work.
+ */
+
+#include <sys/types.h>
+#include <sys/param.h>
+
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+
+#include <openssl/rand.h>
+
+#include "meshd.h"
+#include "meshd_probes.h"
+#include "mesh_transport.h"
+#include "mesh_beacon.h"
+
+static uint16_t meshd_features(const struct meshd_node *nd);
+static int meshd_model_id_eq(const struct mesh_cfg_model_id *a,
+    const struct mesh_cfg_model_id *b);
+static const struct meshd_app_reg *meshd_app_match_rx(
+    const struct meshd_node *nd, const struct meshd_app_surface *apps);
+static void meshd_app_queue_rx(struct meshd_node *nd);
+static int meshd_app_surface_register(struct meshd_app_surface *apps,
+    uint16_t elem_addr, const struct mesh_cfg_model_id *id, int has_opcode,
+    uint32_t opcode);
+static int meshd_app_surface_unregister(struct meshd_app_surface *apps,
+    uint16_t elem_addr, const struct mesh_cfg_model_id *id);
+static size_t meshd_app_surface_event_count(const struct meshd_app_surface *apps);
+static uint32_t meshd_app_surface_event_dropped(
+    const struct meshd_app_surface *apps);
+static int meshd_app_surface_event_pop(struct meshd_app_surface *apps,
+    struct meshd_app_event *ev);
+static void meshd_app_surface_queue_rx(struct meshd_app_surface *apps,
+    const struct mesh_sim_rx *rx, const struct meshd_app_reg *reg, int fd);
+static struct meshd_model_entry *meshd_find_or_add_model(struct meshd_node *nd,
+    uint16_t elem_addr, const struct mesh_cfg_model_id *id);
+static int meshd_devkey_rx(void *, uint16_t, uint16_t, const uint8_t *,
+    size_t, uint8_t *, size_t *);
+static int meshd_remote_devkey(void *, uint16_t, uint8_t[16]);
+static int meshd_remote_devkey_rx(void *, uint32_t, uint16_t, uint16_t,
+    const uint8_t *, size_t);
+static struct meshd_appkey_entry *meshd_find_appkey(struct meshd_node *,
+    uint16_t);
+
+static uint64_t
+meshd_pub_period_ms(uint8_t period)
+{
+	static const uint32_t unit_ms[] = { 100, 1000, 10000, 600000 };
+
+	return ((uint64_t)(period & 0x3f) * unit_ms[period >> 6]);
+}
+
+static uint32_t
+meshd_model_pub_get(uint16_t model_id)
+{
+
+	switch (model_id) {
+	case MESH_MODEL_GEN_ONOFF_SRV:
+		return (MESH_OP_GEN_ONOFF_GET);
+	case MESH_MODEL_GEN_LEVEL_SRV:
+		return (MESH_OP_GEN_LEVEL_GET);
+	case MESH_MODEL_GEN_DTT_SRV:
+		return (MESH_OP_GEN_DTT_GET);
+	case MESH_MODEL_GEN_POWER_ONOFF_SRV:
+		return (MESH_OP_GEN_ONPOWERUP_GET);
+	case MESH_MODEL_GEN_POWER_LEVEL_SRV:
+		return (MESH_OP_GEN_POWER_LEVEL_GET);
+	case MESH_MODEL_GEN_BATTERY_SRV:
+		return (MESH_OP_GEN_BATTERY_GET);
+	case MESH_MODEL_GEN_LOCATION_SRV:
+		return (MESH_OP_GEN_LOCATION_GLOBAL_GET);
+	case MESH_MODEL_LIGHT_LIGHTNESS_SRV:
+		return (MESH_OP_LIGHT_LIGHTNESS_GET);
+	case MESH_MODEL_LIGHT_CTL_SRV:
+		return (MESH_OP_LIGHT_CTL_GET);
+	case MESH_MODEL_LIGHT_CTL_TEMP_SRV:
+		return (MESH_OP_LIGHT_CTL_TEMPERATURE_GET);
+	case MESH_MODEL_LIGHT_HSL_SRV:
+		return (MESH_OP_LIGHT_HSL_GET);
+	case MESH_MODEL_LIGHT_HSL_HUE_SRV:
+		return (MESH_OP_LIGHT_HSL_HUE_GET);
+	case MESH_MODEL_LIGHT_HSL_SAT_SRV:
+		return (MESH_OP_LIGHT_HSL_SATURATION_GET);
+	case MESH_MODEL_LIGHT_XYL_SRV:
+		return (MESH_OP_LIGHT_XYL_GET);
+	case MESH_MODEL_LIGHT_LC_SRV:
+		return (MESH_OP_LIGHT_LC_LIGHT_ONOFF_GET);
+	case MESH_MODEL_SENSOR_SRV:
+		return (MESH_OP_SENSOR_GET);
+	case MESH_MODEL_TIME_SRV:
+		return (MESH_OP_TIME_GET);
+	case MESH_MODEL_SCENE_SRV:
+		return (MESH_OP_SCENE_GET);
+	case MESH_MODEL_SCHEDULER_SRV:
+		return (MESH_OP_SCHEDULER_GET);
+	default:
+		return (0);
+	}
+}
+
+static int
+meshd_model_refresh_publication(struct meshd_node *nd,
+    struct meshd_model_entry *m)
+{
+	struct mesh_model_reply reply;
+	uint8_t get[MESH_ACCESS_OPCODE_MAX_LEN];
+	size_t getlen;
+
+	if (m->pub_get_opcode == 0)
+		return (m->pub_access_len != 0 ? 0 : -1);
+	if (mesh_access_pdu_build(m->pub_get_opcode, NULL, 0, get, &getlen) != 0)
+		return (-1);
+	memset(&reply, 0, sizeof(reply));
+	if (mesh_access_dispatch_at(nd->self->elems, nd->self->n_elements,
+	    nd->addr, m->elem_addr, get, getlen, &reply, nd->sim.now_ms) != 0 ||
+	    !reply.have_reply || mesh_access_pdu_build(reply.opcode, reply.params,
+	    reply.params_len, m->pub_access, &m->pub_access_len) != 0)
+		return (-1);
+	return (0);
+}
+
+static int
+meshd_model_publication_digest(struct meshd_node *nd,
+    struct meshd_model_entry *m, uint64_t *digest)
+{
+	uint64_t h = UINT64_C(1469598103934665603);
+	size_t i;
+
+	if (!m->valid || !m->has_pub || m->pub_get_opcode == 0 ||
+	    meshd_model_refresh_publication(nd, m) != 0)
+		return (-1);
+	for (i = 0; i < m->pub_access_len; i++) {
+		h ^= m->pub_access[i];
+		h *= UINT64_C(1099511628211);
+	}
+	h ^= m->pub_access_len;
+	*digest = h;
+	return (0);
+}
+
+static int
+meshd_model_publish(struct meshd_node *nd, struct meshd_model_entry *m,
+    int arm_retransmit)
+{
+	struct meshd_appkey_entry *appkey;
+	struct mesh_access_pdu ap;
+	uint8_t ttl;
+
+	if (meshd_model_refresh_publication(nd, m) != 0 ||
+	    m->pub.pub_addr == MESH_ADDR_UNASSIGNED ||
+	    mesh_access_pdu_parse(m->pub_access, m->pub_access_len, &ap) != 0)
+		return (-1);
+	appkey = meshd_find_appkey(nd, m->pub.app_idx);
+	if (appkey == NULL)
+		return (-1);
+	ttl = mesh_cfg_default_ttl_valid(m->pub.ttl) ? m->pub.ttl :
+	    nd->cfg.default_ttl;
+	if (m->pub_is_va) {
+		if (mesh_sim_send_access_key_from_virtual(&nd->sim, nd->self,
+		    m->elem_addr, appkey->net_idx, appkey->app_idx, m->pub_label,
+		    ap.opcode, ap.params, ap.params_len, ttl) != 0)
+			return (-1);
+	} else if (mesh_sim_send_access_key_from(&nd->sim, nd->self,
+	    m->elem_addr, appkey->net_idx, appkey->app_idx, m->pub.pub_addr,
+	    ap.opcode, ap.params, ap.params_len, ttl) != 0)
+		return (-1);
+	meshd_drain_tx(nd);
+	if (arm_retransmit) {
+		m->retransmit_left = m->pub.retransmit & 0x07;
+		m->next_retransmit_ms = nd->sim.now_ms +
+		    (uint64_t)(((m->pub.retransmit >> 3) & 0x1f) + 1) * 50;
+	}
+	return (0);
+}
+
+static void
+meshd_publication_tick(struct meshd_node *nd, uint64_t now_ms)
+{
+	size_t i;
+
+	for (i = 0; i < nd->db.n_models; i++) {
+		struct meshd_model_entry *m = &nd->db.models[i];
+		uint64_t period_ms;
+
+		if (!m->valid || !m->has_pub ||
+		    (m->pub_get_opcode == 0 && m->pub_access_len == 0))
+			continue;
+		while (m->retransmit_left != 0 &&
+		    now_ms >= m->next_retransmit_ms) {
+			if (meshd_model_publish(nd, m, 0) != 0) {
+				m->retransmit_left = 0;
+				break;
+			}
+			m->retransmit_left--;
+			m->next_retransmit_ms +=
+			    (uint64_t)(((m->pub.retransmit >> 3) & 0x1f) + 1) * 50;
+		}
+		period_ms = meshd_pub_period_ms(m->pub.period);
+		if (period_ms == 0)
+			continue;
+		if (m->next_pub_ms == 0)
+			m->next_pub_ms = now_ms + period_ms;
+		if (now_ms >= m->next_pub_ms) {
+			(void)meshd_model_publish(nd, m, 1);
+			do {
+				m->next_pub_ms += period_ms;
+			} while (m->next_pub_ms <= now_ms);
+		}
+	}
+}
+
+/* Primary-element SIG model inventory. */
+static const uint16_t meshd_primary_sig_models[] = {
+	0x0000,				/* Configuration Server */
+	0x0002,				/* Health Server */
+	MESH_MODEL_GEN_ONOFF_SRV,
+	MESH_MODEL_GEN_LEVEL_SRV,
+	MESH_MODEL_LIGHT_LIGHTNESS_SRV,
+	MESH_MODEL_LIGHT_LIGHTNESS_SETUP_SRV,
+	MESH_MODEL_LIGHT_CTL_SRV,
+	MESH_MODEL_LIGHT_CTL_SETUP_SRV,
+	MESH_MODEL_LIGHT_HSL_SRV,
+	MESH_MODEL_LIGHT_HSL_SETUP_SRV,
+	MESH_MODEL_LIGHT_XYL_SRV,
+	MESH_MODEL_LIGHT_XYL_SETUP_SRV,
+	MESH_MODEL_LIGHT_LC_SRV,
+	MESH_MODEL_LIGHT_LC_SETUP_SRV,
+	MESH_MODEL_GEN_DTT_SRV,
+	MESH_MODEL_GEN_POWER_ONOFF_SRV,
+	MESH_MODEL_GEN_POWER_ONOFF_SETUP_SRV,
+	MESH_MODEL_GEN_POWER_LEVEL_SRV,
+	MESH_MODEL_GEN_POWER_LEVEL_SETUP_SRV,
+	MESH_MODEL_GEN_BATTERY_SRV,
+	MESH_MODEL_GEN_LOCATION_SRV,
+	MESH_MODEL_GEN_LOCATION_SETUP_SRV,
+	MESH_MODEL_SENSOR_SRV,
+	MESH_MODEL_SENSOR_SETUP_SRV,
+	MESH_MODEL_TIME_SRV,
+	MESH_MODEL_TIME_SETUP_SRV,
+	MESH_MODEL_SCENE_SRV,
+	MESH_MODEL_SCENE_SETUP_SRV,
+	MESH_MODEL_SCHEDULER_SRV,
+	MESH_MODEL_SCHEDULER_SETUP_SRV,
+};
+
+static const uint16_t meshd_ctl_temp_sig_models[] = {
+	MESH_MODEL_GEN_LEVEL_SRV,
+	MESH_MODEL_LIGHT_CTL_TEMP_SRV,
+};
+
+static const uint16_t meshd_hsl_hue_sig_models[] = {
+	MESH_MODEL_GEN_LEVEL_SRV,
+	MESH_MODEL_LIGHT_HSL_HUE_SRV,
+};
+
+static const uint16_t meshd_hsl_sat_sig_models[] = {
+	MESH_MODEL_GEN_LEVEL_SRV,
+	MESH_MODEL_LIGHT_HSL_SAT_SRV,
+};
+
+struct meshd_element_models {
+	const uint16_t *models;
+	size_t n_models;
+};
+
+static const struct meshd_element_models meshd_elements[] = {
+	{ meshd_primary_sig_models, nitems(meshd_primary_sig_models) },
+	{ meshd_ctl_temp_sig_models, nitems(meshd_ctl_temp_sig_models) },
+	{ meshd_hsl_hue_sig_models, nitems(meshd_hsl_hue_sig_models) },
+	{ meshd_hsl_sat_sig_models, nitems(meshd_hsl_sat_sig_models) },
+};
+
+static void
+meshd_comp_fill(struct mesh_cfg_comp_page0 *page,
+    const struct meshd_node *nd)
+{
+	struct mesh_cfg_comp_element *el;
+	size_t ei, n;
+
+	memset(page, 0, sizeof(*page));
+	page->cid = nd->cid;
+	page->pid = nd->pid;
+	page->vid = nd->vid;
+	page->crpl = MESH_SIM_RPL_SIZE;
+	page->features = meshd_features(nd);
+	page->n_elements = nitems(meshd_elements);
+	for (ei = 0; ei < nitems(meshd_elements); ei++) {
+		el = &page->elements[ei];
+		el->loc = 0x0000;
+		n = meshd_elements[ei].n_models;
+		if (n > nitems(el->sig_models))
+			n = nitems(el->sig_models);
+		memcpy(el->sig_models, meshd_elements[ei].models,
+		    n * sizeof(el->sig_models[0]));
+		el->n_sig = n;
+	}
+}
+
+/*
+ * Register the advertised model inventory on every element.  Composition Data
+ * and the Configuration Server database are generated from meshd_elements so
+ * they cannot disagree about a model's element address.
+ */
+static void
+meshd_db_register_models(struct meshd_node *nd)
+{
+	struct meshd_cfg_db *db = &nd->db;
+	size_t ei, i;
+
+	db->n_models = 0;
+	for (ei = 0; ei < nitems(meshd_elements); ei++) {
+		for (i = 0; i < meshd_elements[ei].n_models &&
+		    db->n_models < MESHD_MAX_MODELS; i++) {
+			struct meshd_model_entry *m =
+			    &db->models[db->n_models++];
+
+			memset(m, 0, sizeof(*m));
+			m->valid = 1;
+			m->elem_addr = nd->addr + (uint16_t)ei;
+			m->id.model_id = meshd_elements[ei].models[i];
+			m->pub_get_opcode = meshd_model_pub_get(m->id.model_id);
+		}
+	}
+}
+
+/*
+ * Initialise the config database from provisioning data: register the models
+ * and seed the primary subnet (the provisioning NetKey) so the AppKey Add /
+ * Model Bind commissioning sequence has a NetKey to bind against.
+ */
+static void
+meshd_db_init(struct meshd_node *nd, const uint8_t netkey[16], uint16_t net_idx)
+{
+
+	memset(&nd->db, 0, sizeof(nd->db));
+	meshd_db_register_models(nd);
+	nd->db.netkeys[0].valid = 1;
+	nd->db.netkeys[0].net_idx = net_idx;
+	memcpy(nd->db.netkeys[0].key, netkey, 16);
+	nd->db.netkeys[0].kr_phase = MESH_CFG_KR_PHASE_0;
+	nd->db.netkeys[0].node_identity = MESH_CFG_NODE_IDENTITY_STOPPED;
+	nd->db.netkeys[0].priv_node_identity = MESH_CFG_PRIV_IDENTITY_STOPPED;
+}
+
+int
+meshd_addr_is_unicast(uint16_t addr)
+{
+
+	return (addr >= MESHD_UNICAST_MIN && addr <= MESHD_UNICAST_MAX);
+}
+
+/*
+ * (Re)build the sim, the local node and its models from a key set.  Shared by
+ * initialisation and (re)provisioning.  Returns 0 on success, -1 on failure.
+ */
+static int
+meshd_setup_node(struct meshd_node *nd, const uint8_t netkey[16],
+    const uint8_t appkey[16], uint32_t iv_index, uint16_t addr)
+{
+	struct mesh_node *node;
+
+	if (mesh_sim_init(&nd->sim, netkey, appkey, iv_index) != 0)
+		return (-1);
+	node = mesh_sim_add_node(&nd->sim, addr, nitems(meshd_elements));
+	if (node == NULL)
+		return (-1);
+	node->primary_net_idx = nd->netkey_index;
+	node->appkeys[0].net_idx = nd->netkey_index;
+	node->appkeys[0].app_idx = nd->appkey_index;
+
+	/* Initialise and register every application model on its element. */
+	if (meshd_models_register_all(nd, node) != 0)
+		return (-1);
+
+	nd->addr = addr;
+	nd->self = node;
+	if (nd->have_local_devkey && mesh_sim_set_devkey(node,
+	    nd->local_devkey, meshd_devkey_rx, nd) != 0)
+		return (-1);
+	if (mesh_sim_set_devkey_client(node, meshd_remote_devkey,
+	    meshd_remote_devkey_rx, nd) != 0)
+		return (-1);
+
+	/* Seed the config database: models + the provisioning (primary) subnet. */
+	meshd_db_init(nd, netkey, nd->netkey_index);
+	return (0);
+}
+
+int
+meshd_node_init(struct meshd_node *nd, const struct meshd_config *cfg)
+{
+
+	if (nd == NULL || cfg == NULL)
+		return (-1);
+	if (!meshd_addr_is_unicast(cfg->unicast_addr))
+		return (-1);
+
+	memset(nd, 0, sizeof(*nd));
+	nd->cid = cfg->company_id;
+	nd->pid = cfg->product_id;
+	nd->vid = cfg->version_id;
+	nd->netkey_index = cfg->netkey_index;
+	nd->appkey_index = cfg->appkey_index;
+	if (cfg->have_device_key)
+		memcpy(nd->local_devkey, cfg->device_key,
+		    sizeof(nd->local_devkey));
+	else if (RAND_bytes(nd->local_devkey, sizeof(nd->local_devkey)) != 1)
+		return (-1);
+	nd->have_local_devkey = 1;
+
+	mesh_cfg_server_init(&nd->cfg);
+	mesh_hlt_server_init(&nd->health, nd->cid);
+
+	nd->cfg.default_ttl = cfg->default_ttl;
+	if (cfg->features & MESH_CFG_FEATURE_RELAY)
+		nd->cfg.relay = 1;
+	if (cfg->features & MESH_CFG_FEATURE_PROXY)
+		nd->cfg.gatt_proxy = 1;
+	/*
+	 * Friend control messages are not connected to the authenticated
+	 * production bearer yet.  Report the feature as unsupported instead of
+	 * advertising a capability that cannot interoperate with an LPN.
+	 */
+	nd->cfg.friend = 2;
+
+	if (meshd_setup_node(nd, cfg->netkey, cfg->appkey, cfg->iv_index,
+	    cfg->unicast_addr) != 0)
+		return (-1);
+	mesh_sim_set_relay(nd->self, nd->cfg.relay == 1);
+
+	/* A node whose provisioning data was supplied comes up provisioned. */
+	nd->provisioned = cfg->have_netkey ? 1 : 0;
+	return (0);
+}
+
+static int
+meshd_devkey_rx(void *arg, uint16_t src, uint16_t dst,
+    const uint8_t *access, size_t access_len, uint8_t *reply,
+    size_t *reply_len)
+{
+	struct meshd_node *nd = arg;
+
+	if (nd == NULL || dst != nd->addr)
+		return (-1);
+	(void)src;
+	return (meshd_foundation_recv(nd, access, access_len, reply,
+	    MESH_ACCESS_PAYLOAD_MAX, reply_len));
+}
+
+static int
+meshd_remote_devkey(void *arg, uint16_t src, uint8_t key[16])
+{
+	struct meshd_node *nd = arg;
+	struct mesh_mgr_node *node;
+
+	if (nd == NULL || key == NULL || !nd->mgr_active || nd->mgr == NULL)
+		return (-1);
+	node = mesh_mgr_find_by_addr(nd->mgr, src);
+	if (node == NULL)
+		return (-1);
+	memcpy(key, node->devkey, 16);
+	return (0);
+}
+
+static int
+meshd_remote_devkey_rx(void *arg, uint32_t seq, uint16_t src, uint16_t dst,
+    const uint8_t *upper, size_t upper_len)
+{
+
+	return (meshd_cfg_client_rx(arg, seq, src, dst, upper, upper_len));
+}
+
+void
+meshd_node_fini(struct meshd_node *nd)
+{
+
+	if (nd == NULL)
+		return;
+	free(nd->mgr);
+	nd->mgr = NULL;
+	nd->mgr_active = 0;
+	meshd_models_fini(nd);
+}
+
+void
+meshd_set_bearer(struct meshd_node *nd, const struct meshd_bearer *b)
+{
+
+	if (nd != NULL)
+		nd->bearer = b;
+}
+
+/*
+ * Hand every queued outbound Network PDU to the bearer, then clear the sim
+ * transmit queue.  Counts frames and transmit errors.
+ */
+void
+meshd_drain_tx(struct meshd_node *nd)
+{
+	size_t i, keep;
+
+	keep = 0;
+	for (i = 0; i < nd->sim.n_tx; i++) {
+		if (!nd->sim.tx[i].valid)
+			continue;
+		if (nd->bearer == NULL || nd->bearer->tx == NULL ||
+		    nd->bearer->tx(nd->bearer->arg, MESHD_PDU_NET,
+		    nd->sim.tx[i].bytes, nd->sim.tx[i].len) != 0) {
+			if (nd->bearer != NULL && nd->bearer->tx != NULL) {
+				nd->tx_frames++;
+				nd->tx_errors++;
+			}
+			for (; i < nd->sim.n_tx; i++)
+				if (nd->sim.tx[i].valid)
+					nd->sim.tx[keep++] = nd->sim.tx[i];
+			break;
+		}
+		nd->tx_frames++;
+	}
+	nd->sim.n_tx = keep;
+}
+
+int
+meshd_provision_local(struct meshd_node *nd, const struct mesh_prov_data *pd)
+{
+	uint8_t appkey[16];
+
+	if (nd == NULL || pd == NULL)
+		return (-1);
+	if (!meshd_addr_is_unicast(pd->unicast_addr))
+		return (-1);
+
+	/* Preserve the configured AppKey across the re-seed. */
+	memcpy(appkey, nd->sim.appkey, sizeof(appkey));
+
+	/* meshd_setup_node() re-initialises model state via register_all(). */
+	if (meshd_setup_node(nd, pd->netkey, appkey, pd->iv_index,
+	    pd->unicast_addr) != 0)
+		return (-1);
+	nd->provisioned = 1;
+	return (0);
+}
+
+int
+meshd_provision_recv_data(struct meshd_node *nd,
+    const uint8_t session_key[16], const uint8_t session_nonce[13],
+    const uint8_t enc[25], const uint8_t mic[8])
+{
+	struct mesh_prov_data pd;
+	uint8_t data[25];
+
+	if (nd == NULL || session_key == NULL || session_nonce == NULL ||
+	    enc == NULL || mic == NULL)
+		return (-1);
+
+	/* Decrypt + MIC-verify the Provisioning Data PDU (real libblemesh). */
+	if (mesh_prov_data_decrypt(session_key, session_nonce, enc, mic,
+	    data) != 0)
+		return (-1);
+	if (mesh_prov_data_unpack(data, &pd) != 0)
+		return (-1);
+	return (meshd_provision_local(nd, &pd));
+}
+
+int
+meshd_bearer_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
+{
+	uint64_t pub_before[MESHD_MAX_MODELS], pub_after;
+	uint8_t pub_valid[MESHD_MAX_MODELS];
+	uint32_t before;
+	size_t i;
+
+	if (nd == NULL || pdu == NULL || len == 0)
+		return (-1);
+	if (!nd->provisioned)
+		return (-1);
+
+	before = nd->self->rx.count;
+	memset(pub_valid, 0, sizeof(pub_valid));
+	for (i = 0; i < nd->db.n_models; i++)
+		if (meshd_model_publication_digest(nd, &nd->db.models[i],
+		    &pub_before[i]) == 0)
+			pub_valid[i] = 1;
+
+	/* Inject onto the medium and run the receive pipeline once. */
+	if (mesh_sim_reinject(&nd->sim, MESHD_BEARER_TX_NODE, pdu, len) != 0)
+		return (-1);
+	(void)mesh_sim_step(&nd->sim);
+
+	/* Any Status reply / relay the node produced is now queued: send it. */
+	meshd_drain_tx(nd);
+
+	if (nd->self->rx.count > before) {
+		meshd_app_queue_rx(nd);
+		for (i = 0; i < nd->db.n_models; i++)
+			if (pub_valid[i] && meshd_model_publication_digest(nd,
+			    &nd->db.models[i], &pub_after) == 0 &&
+			    pub_after != pub_before[i])
+				(void)meshd_model_publish(nd, &nd->db.models[i], 1);
+		nd->rx_delivered++;
+		return (1);
+	}
+	return (0);
+}
+
+/* Originate an access message from the node and drain it to the bearer. */
+static int
+meshd_originate(struct meshd_node *nd, uint16_t dst, uint32_t opcode,
+    const uint8_t *params, size_t plen)
+{
+
+	if (mesh_sim_send_access(&nd->sim, nd->self, dst, opcode, params, plen,
+	    nd->cfg.default_ttl) != 0)
+		return (-1);
+	meshd_drain_tx(nd);
+	return (0);
+}
+
+int
+meshd_send_onoff(struct meshd_node *nd, uint16_t dst, uint8_t onoff, int ack)
+{
+	struct mesh_gen_onoff_set set;
+	uint8_t params[MESH_GEN_PARAMS_MAX];
+	size_t plen;
+	uint32_t opcode;
+
+	if (nd == NULL || !nd->provisioned)
+		return (-1);
+	if (dst == 0x0000)
+		return (-1);
+
+	memset(&set, 0, sizeof(set));
+	set.onoff = onoff ? MESH_GEN_ON : MESH_GEN_OFF;
+	set.tid = 0;
+	if (mesh_gen_onoff_set_encode(&set, params, &plen) != 0)
+		return (-1);
+	opcode = ack ? MESH_OP_GEN_ONOFF_SET : MESH_OP_GEN_ONOFF_SET_UNACK;
+	return (meshd_originate(nd, dst, opcode, params, plen));
+}
+
+int
+meshd_send_level(struct meshd_node *nd, uint16_t dst, int16_t level, int ack)
+{
+	struct mesh_gen_level_set set;
+	uint8_t params[MESH_GEN_PARAMS_MAX];
+	size_t plen;
+	uint32_t opcode;
+
+	if (nd == NULL || !nd->provisioned)
+		return (-1);
+	if (dst == 0x0000)
+		return (-1);
+
+	memset(&set, 0, sizeof(set));
+	set.level = level;
+	set.tid = 0;
+	if (mesh_gen_level_set_encode(&set, params, &plen) != 0)
+		return (-1);
+	opcode = ack ? MESH_OP_GEN_LEVEL_SET : MESH_OP_GEN_LEVEL_SET_UNACK;
+	return (meshd_originate(nd, dst, opcode, params, plen));
+}
+
+int
+meshd_send_power_onoff(struct meshd_node *nd, uint16_t dst,
+    uint8_t on_power_up, int ack)
+{
+	uint32_t opcode;
+
+	if (nd == NULL || !nd->provisioned || dst == 0x0000 ||
+	    on_power_up > MESH_GEN_ONPOWERUP_RESTORE)
+		return (-1);
+	opcode = ack ? MESH_OP_GEN_ONPOWERUP_SET :
+	    MESH_OP_GEN_ONPOWERUP_SET_UNACK;
+	return (meshd_originate(nd, dst, opcode, &on_power_up, 1));
+}
+
+int
+meshd_send_dtt(struct meshd_node *nd, uint16_t dst, uint8_t transition_time,
+    int ack)
+{
+	uint32_t opcode;
+
+	if (nd == NULL || !nd->provisioned || dst == 0x0000 ||
+	    !mesh_gen_transition_time_valid(transition_time))
+		return (-1);
+	opcode = ack ? MESH_OP_GEN_DTT_SET : MESH_OP_GEN_DTT_SET_UNACK;
+	return (meshd_originate(nd, dst, opcode, &transition_time, 1));
+}
+
+int
+meshd_send_power_level(struct meshd_node *nd, uint16_t dst, uint16_t power,
+    int ack)
+{
+	uint8_t p[3] = { (uint8_t)power, (uint8_t)(power >> 8), 0 };
+
+	if (nd == NULL || !nd->provisioned || dst == 0)
+		return (-1);
+	return (meshd_originate(nd, dst, ack ? MESH_OP_GEN_POWER_LEVEL_SET :
+	    MESH_OP_GEN_POWER_LEVEL_SET_UNACK, p, sizeof(p)));
+}
+
+int
+meshd_send_power_default(struct meshd_node *nd, uint16_t dst, uint16_t power,
+    int ack)
+{
+	uint8_t p[2] = { (uint8_t)power, (uint8_t)(power >> 8) };
+
+	if (nd == NULL || !nd->provisioned || dst == 0)
+		return (-1);
+	return (meshd_originate(nd, dst, ack ? MESH_OP_GEN_POWER_DEFAULT_SET :
+	    MESH_OP_GEN_POWER_DEFAULT_SET_UNACK, p, sizeof(p)));
+}
+
+int
+meshd_send_power_range(struct meshd_node *nd, uint16_t dst, uint16_t min,
+    uint16_t max, int ack)
+{
+	uint8_t p[4];
+
+	if (nd == NULL || !nd->provisioned || dst == 0 || min == 0 || max == 0 ||
+	    max < min)
+		return (-1);
+	p[0] = (uint8_t)min; p[1] = (uint8_t)(min >> 8);
+	p[2] = (uint8_t)max; p[3] = (uint8_t)(max >> 8);
+	return (meshd_originate(nd, dst, ack ? MESH_OP_GEN_POWER_RANGE_SET :
+	    MESH_OP_GEN_POWER_RANGE_SET_UNACK, p, sizeof(p)));
+}
+
+int
+meshd_send_access_raw(struct meshd_node *nd, uint16_t dst,
+    const uint8_t *access, size_t access_len)
+{
+	struct mesh_access_pdu ap;
+
+	if (nd == NULL || !nd->provisioned || dst == 0x0000 ||
+	    access == NULL || access_len == 0)
+		return (-1);
+	if (mesh_access_pdu_parse(access, access_len, &ap) != 0)
+		return (-1);
+	return (meshd_originate(nd, dst, ap.opcode, ap.params, ap.params_len));
+}
+
+int
+meshd_send_devkey_raw(struct meshd_node *nd, uint16_t dst, int remote,
+    uint16_t net_idx, const uint8_t *access, size_t access_len)
+{
+	struct mesh_mgr_node *node;
+	uint8_t upper[MESH_ACCESS_PAYLOAD_MAX + 8];
+	size_t upper_len;
+	uint32_t seq0;
+	int n;
+
+	if (nd == NULL || !nd->provisioned || !nd->mgr_active ||
+	    nd->mgr == NULL || nd->self == NULL || dst == 0x0000 ||
+	    access == NULL || access_len == 0 ||
+	    access_len > MESH_ACCESS_PAYLOAD_MAX)
+		return (-1);
+	if (net_idx != nd->mgr->netkey_index)
+		return (-1);
+
+	seq0 = mesh_sim_node_seq(nd->self);
+	nd->mgr->seq = seq0;
+	if (remote) {
+		node = mesh_mgr_find_by_addr(nd->mgr, dst);
+		if (node == NULL)
+			return (-1);
+		if (mesh_mgr_devkey_seal(nd->mgr, node, access, access_len,
+		    &seq0, upper, &upper_len) != 0)
+			return (-1);
+	} else {
+		if (mesh_upper_encrypt(nd->mgr->self_devkey, 0, 0, seq0,
+		    nd->mgr->self_addr, dst, nd->mgr->iv_index, NULL, access,
+		    access_len, upper, &upper_len) != 0)
+			return (-1);
+	}
+
+	n = mesh_sim_send_upper(&nd->sim, nd->self, dst, seq0, upper, upper_len,
+	    0, 0, nd->cfg.default_ttl);
+	if (n < 0)
+		return (-1);
+	nd->self->seq = seq0 + (uint32_t)n;
+	nd->mgr->seq = nd->self->seq;
+	meshd_drain_tx(nd);
+	return (0);
+}
+
+int
+meshd_publish_raw(struct meshd_node *nd, uint16_t elem_addr,
+    uint16_t model_id, uint16_t vendor, const uint8_t *access,
+    size_t access_len)
+{
+	struct mesh_cfg_model_id id;
+	struct mesh_access_pdu ap;
+	size_t i;
+
+	if (nd == NULL || !nd->provisioned || access == NULL || access_len == 0)
+		return (-1);
+	memset(&id, 0, sizeof(id));
+	id.model_id = model_id;
+	if (vendor != 0) {
+		id.vendor = 1;
+		id.company_id = vendor;
+	}
+	if (mesh_access_pdu_parse(access, access_len, &ap) != 0)
+		return (-1);
+	for (i = 0; i < nd->db.n_models; i++) {
+		struct meshd_model_entry *m = &nd->db.models[i];
+
+		if (!m->valid || !m->has_pub || m->elem_addr != elem_addr)
+			continue;
+		if (m->id.vendor != id.vendor ||
+		    m->id.model_id != id.model_id ||
+		    (id.vendor && m->id.company_id != id.company_id))
+			continue;
+		if (m->pub.pub_addr == 0x0000 || access_len > sizeof(m->pub_access))
+			return (-1);
+		memcpy(m->pub_access, access, access_len);
+		m->pub_access_len = access_len;
+		if (m->next_pub_ms == 0 && meshd_pub_period_ms(m->pub.period) != 0)
+			m->next_pub_ms = nd->sim.now_ms +
+			    meshd_pub_period_ms(m->pub.period);
+		return (meshd_model_publish(nd, m, 1));
+	}
+	return (-1);
+}
+
+static int
+meshd_app_registered(const struct meshd_app_surface *apps)
+{
+
+	return (apps != NULL && apps->n_regs > 0);
+}
+
+static const struct meshd_app_reg *
+meshd_app_match_rx(const struct meshd_node *nd,
+    const struct meshd_app_surface *apps)
+{
+	const struct mesh_sim_rx *rx;
+	size_t ri, ei, mi;
+
+	if (nd == NULL || !meshd_app_registered(apps) || nd->self == NULL ||
+	    !nd->self->rx.valid)
+		return (NULL);
+	rx = &nd->self->rx;
+	for (ri = 0; ri < MESHD_MAX_APP_REGS; ri++) {
+		const struct meshd_app_reg *r = &apps->regs[ri];
+
+		if (!r->valid)
+			continue;
+		for (ei = 0; ei < nd->self->n_elements; ei++) {
+			const struct mesh_element *el = &nd->self->elems[ei];
+
+			if (el->addr != r->elem_addr)
+				continue;
+			for (mi = 0; mi < el->n_models; mi++) {
+				const struct mesh_model *m = &el->models[mi];
+				struct mesh_cfg_model_id mid;
+				size_t ai, oi, si;
+				int addressed, opcode_match;
+
+				memset(&mid, 0, sizeof(mid));
+				mid.model_id = m->model_id;
+				if (m->company_id != MESH_COMPANY_SIG) {
+					mid.vendor = 1;
+					mid.company_id = m->company_id;
+				}
+				if (!meshd_model_id_eq(&r->id, &mid))
+					continue;
+				opcode_match = !r->has_opcode ?
+				    mesh_model_find_op(m, rx->opcode) != NULL : 0;
+				if (r->has_opcode && r->opcode == rx->opcode)
+					for (oi = 0; oi < m->n_app_opcodes; oi++)
+						if (m->app_opcodes[oi] == rx->opcode) {
+							opcode_match = 1;
+							break;
+						}
+				if (!opcode_match)
+					continue;
+				if (rx->app_idx != UINT16_MAX && m->bindings_configured) {
+					for (ai = 0; ai < m->n_app; ai++)
+						if (m->app_idx[ai] == rx->app_idx)
+							break;
+					if (ai == m->n_app)
+						continue;
+				}
+				addressed = mesh_addr_is_unicast(rx->dst) ||
+				    !m->subscriptions_configured ||
+				    rx->dst == MESH_ADDR_ALL_NODES;
+				for (si = 0; !addressed && si < m->n_subs; si++) {
+					uint16_t va;
+
+					if (mesh_addr_is_group(rx->dst) &&
+					    !m->sub_is_va[si] && m->subs[si] == rx->dst)
+						addressed = 1;
+					else if (mesh_addr_is_virtual(rx->dst) &&
+					    m->sub_is_va[si] &&
+					    mesh_virtual_addr(m->labels[si], &va) == 0 &&
+					    va == rx->dst)
+						addressed = 1;
+				}
+				if (addressed)
+					return (r);
+			}
+		}
+	}
+	return (NULL);
+}
+
+static void
+meshd_app_surface_queue_rx(struct meshd_app_surface *apps,
+    const struct mesh_sim_rx *rx, const struct meshd_app_reg *reg, int fd)
+{
+	struct meshd_app_event *ev;
+	size_t pos;
+
+	if (apps == NULL || rx == NULL || reg == NULL)
+		return;
+
+	if (apps->ev_count == MESHD_APP_EVENT_MAX) {
+		apps->ev_head = (apps->ev_head + 1) % MESHD_APP_EVENT_MAX;
+		apps->ev_count--;
+		apps->ev_dropped++;
+		MESHD_PROBE_APP_EVENT_DROP(fd, apps->ev_dropped);
+	}
+	pos = (apps->ev_head + apps->ev_count) % MESHD_APP_EVENT_MAX;
+	ev = &apps->events[pos];
+	ev->elem_addr = reg->elem_addr;
+	ev->id = reg->id;
+	ev->src = rx->src;
+	ev->dst = rx->dst;
+	ev->opcode = rx->opcode;
+	ev->params_len = rx->params_len;
+	if (ev->params_len > sizeof(ev->params))
+		ev->params_len = sizeof(ev->params);
+	memcpy(ev->params, rx->params, ev->params_len);
+	apps->ev_count++;
+	MESHD_PROBE_APP_EVENT_QUEUE(fd, rx->opcode, apps->ev_count);
+}
+
+static void
+meshd_app_queue_rx(struct meshd_node *nd)
+{
+	const struct meshd_app_reg *reg;
+	size_t i;
+
+	if (nd == NULL || nd->self == NULL || !nd->self->rx.valid)
+		return;
+
+	for (i = 0; i < MESHD_MAX_APP_CLIENTS; i++) {
+		struct meshd_app_client *cl = &nd->app_clients[i];
+
+		if (!cl->active)
+			continue;
+		reg = meshd_app_match_rx(nd, &cl->apps);
+		if (reg != NULL)
+			meshd_app_surface_queue_rx(&cl->apps, &nd->self->rx,
+			    reg, cl->fd);
+	}
+}
+
+static int
+meshd_app_surface_register(struct meshd_app_surface *apps, uint16_t elem_addr,
+    const struct mesh_cfg_model_id *id, int has_opcode, uint32_t opcode)
+{
+	struct meshd_app_reg *r;
+	size_t i;
+
+	if (apps == NULL || id == NULL)
+		return (-1);
+	for (i = 0; i < MESHD_MAX_APP_REGS; i++) {
+		r = &apps->regs[i];
+		if (r->valid && r->elem_addr == elem_addr &&
+		    meshd_model_id_eq(&r->id, id) &&
+		    r->has_opcode == has_opcode &&
+		    (!has_opcode || r->opcode == opcode))
+			return (0);
+	}
+	if (apps->n_regs >= MESHD_MAX_APP_REGS)
+		return (-1);
+	for (i = 0; i < MESHD_MAX_APP_REGS; i++) {
+		r = &apps->regs[i];
+		if (!r->valid) {
+			memset(r, 0, sizeof(*r));
+			r->valid = 1;
+			r->elem_addr = elem_addr;
+			r->id = *id;
+			r->has_opcode = has_opcode;
+			r->opcode = opcode;
+			apps->n_regs++;
+			return (0);
+		}
+	}
+	return (-1);
+}
+
+static int
+meshd_app_surface_unregister(struct meshd_app_surface *apps, uint16_t elem_addr,
+    const struct mesh_cfg_model_id *id)
+{
+	struct meshd_app_reg *r;
+	size_t i;
+	int removed = 0;
+
+	if (apps == NULL || id == NULL)
+		return (-1);
+	for (i = 0; i < MESHD_MAX_APP_REGS; i++) {
+		r = &apps->regs[i];
+		if (r->valid && r->elem_addr == elem_addr &&
+		    meshd_model_id_eq(&r->id, id)) {
+			memset(r, 0, sizeof(*r));
+			apps->n_regs--;
+			removed = 1;
+		}
+	}
+	return (removed ? 0 : -1);
+}
+
+static size_t
+meshd_app_surface_event_count(const struct meshd_app_surface *apps)
+{
+
+	return (apps != NULL ? apps->ev_count : 0);
+}
+
+static uint32_t
+meshd_app_surface_event_dropped(const struct meshd_app_surface *apps)
+{
+
+	return (apps != NULL ? apps->ev_dropped : 0);
+}
+
+static int
+meshd_app_surface_event_pop(struct meshd_app_surface *apps,
+    struct meshd_app_event *ev)
+{
+
+	if (apps == NULL || ev == NULL || apps->ev_count == 0)
+		return (0);
+	*ev = apps->events[apps->ev_head];
+	apps->ev_head = (apps->ev_head + 1) % MESHD_APP_EVENT_MAX;
+	apps->ev_count--;
+	return (1);
+}
+
+void
+meshd_app_client_init(struct meshd_app_client *cl, int fd)
+{
+
+	if (cl == NULL)
+		return;
+	memset(cl, 0, sizeof(*cl));
+	cl->active = 1;
+	cl->fd = fd;
+	MESHD_PROBE_APP_CONNECT(fd);
+}
+
+void
+meshd_app_client_fini(struct meshd_app_client *cl)
+{
+	int fd;
+
+	if (cl == NULL)
+		return;
+	fd = cl->fd;
+	memset(cl, 0, sizeof(*cl));
+	cl->fd = -1;
+	MESHD_PROBE_APP_DISCONNECT(fd);
+}
+
+static int
+meshd_app_client_register(struct meshd_node *nd,
+    struct meshd_app_client *cl, uint16_t elem_addr,
+    const struct mesh_cfg_model_id *id, int has_opcode, uint32_t opcode)
+{
+	struct mesh_model runtime;
+	size_t ei, mi;
+
+	if (nd == NULL || cl == NULL || !cl->active || id == NULL ||
+	    nd->self == NULL || elem_addr < nd->addr ||
+	    (uint32_t)elem_addr >= (uint32_t)nd->addr + nd->self->n_elements)
+		return (-1);
+	if (meshd_find_or_add_model(nd, elem_addr, id) == NULL)
+		return (-1);
+	ei = (size_t)(elem_addr - nd->addr);
+	for (mi = 0; mi < nd->self->elems[ei].n_models; mi++) {
+		const struct mesh_model *m = &nd->self->models[ei][mi];
+		int vendor = m->company_id != MESH_COMPANY_SIG;
+
+		if (m->model_id == id->model_id && vendor == id->vendor &&
+		    (!vendor || m->company_id == id->company_id))
+			break;
+	}
+	if (mi == nd->self->elems[ei].n_models) {
+		memset(&runtime, 0, sizeof(runtime));
+		runtime.model_id = id->model_id;
+		runtime.company_id = id->vendor ? id->company_id : MESH_COMPANY_SIG;
+		if (mesh_sim_add_model(nd->self, (uint8_t)ei, runtime) != 0)
+			return (-1);
+		mi = nd->self->elems[ei].n_models - 1;
+	}
+	if (has_opcode) {
+		struct mesh_model *m = &nd->self->models[ei][mi];
+
+		for (size_t oi = 0; oi < m->n_app_opcodes; oi++)
+			if (m->app_opcodes[oi] == opcode)
+				goto opcode_present;
+		if (m->n_app_opcodes >= MESH_MODEL_MAX_APP_OPCODES)
+			return (-1);
+		m->app_opcodes[m->n_app_opcodes++] = opcode;
+	}
+opcode_present:
+	meshd_sync_subscriptions(nd);
+	if (meshd_app_surface_register(&cl->apps, elem_addr, id, has_opcode,
+	    opcode) != 0)
+		return (-1);
+	MESHD_PROBE_APP_REGISTER(cl->fd, id->model_id,
+	    id->vendor ? id->company_id : 0);
+	return (0);
+}
+
+int
+meshd_app_client_register_model(struct meshd_node *nd,
+    struct meshd_app_client *cl, uint16_t elem_addr,
+    const struct mesh_cfg_model_id *id)
+{
+
+	return (meshd_app_client_register(nd, cl, elem_addr, id, 0, 0));
+}
+
+int
+meshd_app_client_register_opcode(struct meshd_node *nd,
+    struct meshd_app_client *cl, uint16_t elem_addr,
+    const struct mesh_cfg_model_id *id, uint32_t opcode)
+{
+	uint8_t access[3];
+	struct mesh_access_pdu parsed;
+	size_t access_len;
+
+	if (id == NULL ||
+	    mesh_access_pdu_build(opcode, NULL, 0, access, &access_len) != 0)
+		return (-1);
+	if (mesh_access_pdu_parse(access, access_len, &parsed) != 0 ||
+	    parsed.vendor != id->vendor ||
+	    (id->vendor && parsed.company_id != id->company_id))
+		return (-1);
+	return (meshd_app_client_register(nd, cl, elem_addr, id, 1, opcode));
+}
+
+int
+meshd_app_client_unregister_model(struct meshd_app_client *cl,
+    uint16_t elem_addr, const struct mesh_cfg_model_id *id)
+{
+
+	if (cl == NULL || !cl->active || id == NULL)
+		return (-1);
+	return (meshd_app_surface_unregister(&cl->apps, elem_addr, id));
+}
+
+size_t
+meshd_app_client_event_count(const struct meshd_app_client *cl)
+{
+
+	return (cl != NULL && cl->active ?
+	    meshd_app_surface_event_count(&cl->apps) : 0);
+}
+
+uint32_t
+meshd_app_client_event_dropped(const struct meshd_app_client *cl)
+{
+
+	return (cl != NULL && cl->active ?
+	    meshd_app_surface_event_dropped(&cl->apps) : 0);
+}
+
+int
+meshd_app_client_event_pop(struct meshd_app_client *cl,
+    struct meshd_app_event *ev)
+{
+
+	return (cl != NULL && cl->active ?
+	    meshd_app_surface_event_pop(&cl->apps, ev) : 0);
+}
+
+int
+meshd_set_battery(struct meshd_node *nd,
+    const struct mesh_gen_battery_status *state)
+{
+	uint8_t wire[8];
+
+	if (nd == NULL || nd->app == NULL || state == NULL ||
+	    mesh_gen_battery_status_encode(state, wire) != 0)
+		return (-1);
+	nd->app->battery.state = *state;
+	return (0);
+}
+
+int
+meshd_set_location_global(struct meshd_node *nd,
+    const struct mesh_gen_location_global *state)
+{
+	if (nd == NULL || nd->app == NULL || state == NULL) return (-1);
+	nd->app->location.global = *state;
+	return (0);
+}
+
+int
+meshd_set_location_local(struct meshd_node *nd,
+    const struct mesh_gen_location_local *state)
+{
+	if (nd == NULL || nd->app == NULL || state == NULL) return (-1);
+	nd->app->location.local = *state;
+	return (0);
+}
+
+/* Derive the Composition Data Page 0 features word from server state. */
+static uint16_t
+meshd_features(const struct meshd_node *nd)
+{
+	uint16_t f = 0;
+
+	if (nd->cfg.relay == 1)
+		f |= MESH_CFG_FEATURE_RELAY;
+	if (nd->cfg.gatt_proxy == 1)
+		f |= MESH_CFG_FEATURE_PROXY;
+	if (nd->cfg.friend == 1)
+		f |= MESH_CFG_FEATURE_FRIEND;
+	return (f);
+}
+
+/* Build this node's Composition Data Page 0 into a Config status reply. */
+static int
+meshd_build_comp_status(struct meshd_node *nd, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_comp_page0 page;
+	struct mesh_cfg_comp_status st;
+	uint8_t buf[MESH_ACCESS_PAYLOAD_MAX];
+	size_t blen;
+
+	meshd_comp_fill(&page, nd);
+
+	memset(&st, 0, sizeof(st));
+	st.page = 0;
+	if (mesh_cfg_comp_page0_encode(&page, st.data, &st.data_len) != 0)
+		return (-1);
+	if (mesh_cfg_comp_status_build(&st, buf, &blen) != 0)
+		return (-1);
+	if (blen > reply_max)
+		return (-1);
+	memcpy(reply, buf, blen);
+	*reply_len = blen;
+	return (1);
+}
+
+/* ================================================================
+ * Configuration Server dispatch runtime (MshMDL_v1.1 Section 4.4.1;
+ * access dispatch MshPRT_v1.1 Section 3.4.2 / 3.7).  A DevKey-encrypted
+ * Configuration message is parsed (codecs in mesh_cfg_model.c), the node
+ * config database (struct meshd_cfg_db) is mutated, and the mandatory
+ * auto-Status is emitted.  Each handler builds its reply into a local buffer
+ * and copies it out only when it fits, so a short reply buffer is rejected
+ * without an overrun.
+ * ================================================================ */
+
+/* Copy a built reply out when it fits; -1 (no overrun) when it does not. */
+static int
+meshd_emit(const uint8_t *buf, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+
+	if (len > reply_max)
+		return (-1);
+	memcpy(reply, buf, len);
+	*reply_len = len;
+	return (1);
+}
+
+/* Model identifier equality (SIG: model id; vendor: company id + model id). */
+static int
+meshd_model_id_eq(const struct mesh_cfg_model_id *a,
+    const struct mesh_cfg_model_id *b)
+{
+
+	if (a->vendor != b->vendor || a->model_id != b->model_id)
+		return (0);
+	if (a->vendor && a->company_id != b->company_id)
+		return (0);
+	return (1);
+}
+
+static struct meshd_netkey_entry *
+meshd_find_netkey(struct meshd_node *nd, uint16_t net_idx)
+{
+	size_t i;
+
+	for (i = 0; i < MESHD_MAX_NETKEYS; i++) {
+		if (nd->db.netkeys[i].valid &&
+		    nd->db.netkeys[i].net_idx == net_idx)
+			return (&nd->db.netkeys[i]);
+	}
+	return (NULL);
+}
+
+static struct meshd_netkey_entry *
+meshd_alloc_netkey(struct meshd_node *nd)
+{
+	size_t i;
+
+	for (i = 0; i < MESHD_MAX_NETKEYS; i++) {
+		if (!nd->db.netkeys[i].valid)
+			return (&nd->db.netkeys[i]);
+	}
+	return (NULL);
+}
+
+static struct meshd_appkey_entry *
+meshd_find_appkey(struct meshd_node *nd, uint16_t app_idx)
+{
+	size_t i;
+
+	for (i = 0; i < MESHD_MAX_APPKEYS; i++) {
+		if (nd->db.appkeys[i].valid &&
+		    nd->db.appkeys[i].app_idx == app_idx)
+			return (&nd->db.appkeys[i]);
+	}
+	return (NULL);
+}
+
+static struct meshd_appkey_entry *
+meshd_alloc_appkey(struct meshd_node *nd)
+{
+	size_t i;
+
+	for (i = 0; i < MESHD_MAX_APPKEYS; i++) {
+		if (!nd->db.appkeys[i].valid)
+			return (&nd->db.appkeys[i]);
+	}
+	return (NULL);
+}
+
+static struct meshd_model_entry *
+meshd_find_model(struct meshd_node *nd, uint16_t elem_addr,
+    const struct mesh_cfg_model_id *id)
+{
+	size_t i;
+
+	for (i = 0; i < nd->db.n_models; i++) {
+		if (nd->db.models[i].valid &&
+		    nd->db.models[i].elem_addr == elem_addr &&
+		    meshd_model_id_eq(&nd->db.models[i].id, id))
+			return (&nd->db.models[i]);
+	}
+	return (NULL);
+}
+
+static struct meshd_model_entry *
+meshd_find_or_add_model(struct meshd_node *nd, uint16_t elem_addr,
+    const struct mesh_cfg_model_id *id)
+{
+	struct meshd_model_entry *m;
+	size_t i;
+
+	for (i = 0; i < nd->db.n_models; i++) {
+		m = &nd->db.models[i];
+		if (m->valid && m->elem_addr == elem_addr &&
+		    meshd_model_id_eq(&m->id, id))
+			return (m);
+	}
+	if (nd->db.n_models >= MESHD_MAX_MODELS)
+		return (NULL);
+	m = &nd->db.models[nd->db.n_models++];
+	memset(m, 0, sizeof(*m));
+	m->valid = 1;
+	m->elem_addr = elem_addr;
+	m->id = *id;
+	return (m);
+}
+
+static int
+meshd_element_valid(const struct meshd_node *nd, uint16_t elem_addr)
+{
+
+	return (nd != NULL && nd->self != NULL && elem_addr >= nd->addr &&
+	    (uint32_t)elem_addr < (uint32_t)nd->addr + nd->self->n_elements);
+}
+
+void
+meshd_sync_subscriptions(struct meshd_node *nd)
+{
+	size_t ei, i, j, mi;
+
+	if (nd == NULL || nd->self == NULL)
+		return;
+	for (ei = 0; ei < nd->self->n_elements; ei++)
+		mesh_sim_clear_subscriptions(nd->self, (uint8_t)ei);
+	for (ei = 0; ei < nd->self->n_elements; ei++) {
+		for (mi = 0; mi < nd->self->elems[ei].n_models; mi++) {
+			struct mesh_model *rm = &nd->self->models[ei][mi];
+
+			rm->subs = NULL;
+			rm->labels = NULL;
+			rm->sub_is_va = NULL;
+			rm->n_subs = 0;
+			rm->subscriptions_configured = 0;
+			rm->app_idx = NULL;
+			rm->n_app = 0;
+			rm->bindings_configured = 0;
+		}
+	}
+	for (i = 0; i < nd->db.n_models; i++) {
+		const struct meshd_model_entry *m = &nd->db.models[i];
+
+		if (!m->valid || !meshd_element_valid(nd, m->elem_addr))
+			continue;
+		ei = (size_t)(m->elem_addr - nd->addr);
+		for (mi = 0; mi < nd->self->elems[ei].n_models; mi++) {
+			struct mesh_model *rm = &nd->self->models[ei][mi];
+			int vendor = rm->company_id != MESH_COMPANY_SIG;
+
+			if (rm->model_id != m->id.model_id || vendor != m->id.vendor ||
+			    (vendor && rm->company_id != m->id.company_id))
+				continue;
+			rm->subs = m->subs;
+			rm->labels = m->sub_label;
+			rm->sub_is_va = m->sub_is_va;
+			rm->n_subs = m->n_subs;
+			rm->subscriptions_configured = 1;
+			rm->app_idx = m->app_idx;
+			rm->n_app = m->n_app;
+			rm->bindings_configured = 1;
+		}
+		for (j = 0; j < m->n_subs; j++) {
+			if (m->sub_is_va[j])
+				(void)mesh_sim_subscribe_virtual_element(nd->self,
+				    (uint8_t)ei, m->sub_label[j]);
+			else
+				(void)mesh_sim_subscribe_element(nd->self, (uint8_t)ei,
+				    m->subs[j]);
+		}
+	}
+}
+
+/* ---------------- Node-wide state: TTL / Beacon / Proxy / Friend --------- */
+
+static int
+h_default_ttl_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap; (void)pdu; (void)len;
+	if (mesh_cfg_u8_state_build(MESH_CFG_OP_DEFAULT_TTL_STATUS,
+	    nd->cfg.default_ttl, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_default_ttl_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint32_t op;
+	uint8_t v, buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_u8_state_parse(pdu, len, &op, &v) != 0)
+		return (-1);
+	if (!mesh_cfg_default_ttl_valid(v))
+		return (-1);
+	nd->cfg.default_ttl = v;
+	if (mesh_cfg_u8_state_build(MESH_CFG_OP_DEFAULT_TTL_STATUS, v, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* Beacon / GATT Proxy / Friend share the single-octet state shape. */
+static int
+meshd_u8_get(uint32_t status_op, uint8_t value, uint8_t *reply,
+    size_t reply_max, size_t *reply_len)
+{
+	uint8_t buf[8];
+	size_t blen;
+
+	if (mesh_cfg_u8_state_build(status_op, value, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+meshd_u8_set(uint32_t status_op, uint8_t *state, const uint8_t *pdu, size_t len,
+    uint8_t *reply, size_t reply_max, size_t *reply_len)
+{
+	uint32_t op;
+	uint8_t v;
+
+	if (mesh_cfg_u8_state_parse(pdu, len, &op, &v) != 0)
+		return (-1);
+	if (v > 1)			/* only Off (0) / On (1) are settable */
+		return (-1);
+	*state = v;
+	return (meshd_u8_get(status_op, v, reply, reply_max, reply_len));
+}
+
+static int
+h_beacon_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+
+	(void)ap; (void)pdu; (void)len;
+	return (meshd_u8_get(MESH_CFG_OP_BEACON_STATUS, nd->cfg.beacon, reply,
+	    reply_max, reply_len));
+}
+
+static int
+h_beacon_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+
+	(void)ap;
+	return (meshd_u8_set(MESH_CFG_OP_BEACON_STATUS, &nd->cfg.beacon, pdu,
+	    len, reply, reply_max, reply_len));
+}
+
+static int
+h_gatt_proxy_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+
+	(void)ap; (void)pdu; (void)len;
+	return (meshd_u8_get(MESH_CFG_OP_GATT_PROXY_STATUS, nd->cfg.gatt_proxy,
+	    reply, reply_max, reply_len));
+}
+
+static int
+h_gatt_proxy_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+
+	(void)ap;
+	return (meshd_u8_set(MESH_CFG_OP_GATT_PROXY_STATUS, &nd->cfg.gatt_proxy,
+	    pdu, len, reply, reply_max, reply_len));
+}
+
+static int
+h_friend_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+
+	(void)ap; (void)pdu; (void)len;
+	return (meshd_u8_get(MESH_CFG_OP_FRIEND_STATUS, nd->cfg.friend, reply,
+	    reply_max, reply_len));
+}
+
+static int
+h_friend_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+
+	uint32_t op;
+	uint8_t v;
+
+	(void)nd; (void)ap;
+	if (mesh_cfg_u8_state_parse(pdu, len, &op, &v) != 0 || v > 1)
+		return (-1);
+	return (meshd_u8_get(MESH_CFG_OP_FRIEND_STATUS, 2, reply, reply_max,
+	    reply_len));
+}
+
+/* ---------------- Relay + Network Transmit ------------------------------- */
+
+static int
+h_relay_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_relay r;
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap; (void)pdu; (void)len;
+	r.relay = nd->cfg.relay;
+	r.retransmit = nd->cfg.relay_retransmit;
+	if (mesh_cfg_relay_set_build(MESH_CFG_OP_RELAY_STATUS, &r, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_relay_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_relay r;
+	uint32_t op;
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_relay_set_parse(pdu, len, &op, &r) != 0)
+		return (-1);
+	nd->cfg.relay = r.relay ? 1 : 0;
+	nd->cfg.relay_retransmit = r.retransmit;
+	mesh_sim_set_relay(nd->self, nd->cfg.relay);
+	mesh_relay_unpack(r.retransmit, &nd->self->relay.relay_rx_count,
+	    &nd->self->relay.relay_rx_steps);
+	r.relay = nd->cfg.relay;
+	if (mesh_cfg_relay_set_build(MESH_CFG_OP_RELAY_STATUS, &r, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_net_transmit_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_net_transmit nt;
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap; (void)pdu; (void)len;
+	nt.count = (uint8_t)(nd->db.net_transmit & 0x07);
+	nt.interval_steps = (uint8_t)((nd->db.net_transmit >> 3) & 0x1f);
+	if (mesh_cfg_net_transmit_set_build(MESH_CFG_OP_NET_TRANSMIT_STATUS, &nt,
+	    buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_net_transmit_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_net_transmit nt;
+	uint32_t op;
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_net_transmit_set_parse(pdu, len, &op, &nt) != 0)
+		return (-1);
+	nd->db.net_transmit = (uint8_t)(((nt.interval_steps & 0x1f) << 3) |
+	    (nt.count & 0x07));
+	nd->self->relay.net_tx_count = nt.count & 0x07;
+	nd->self->relay.net_tx_steps = nt.interval_steps & 0x1f;
+	if (mesh_cfg_net_transmit_set_build(MESH_CFG_OP_NET_TRANSMIT_STATUS, &nt,
+	    buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* ---------------- Composition Data + Node Reset -------------------------- */
+
+static int
+h_comp_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t page;
+
+	(void)ap;
+	if (mesh_cfg_comp_get_parse(pdu, len, &page) != 0)
+		return (-1);
+	return (meshd_build_comp_status(nd, reply, reply_max, reply_len));
+}
+
+static int
+h_node_reset(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap; (void)pdu; (void)len;
+	nd->provisioned = 0;
+	memset(&nd->db, 0, sizeof(nd->db));
+	meshd_db_register_models(nd);
+	if (mesh_cfg_node_reset_status_build(buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* Key Refresh operations, indexed by subnet (MshPRT_v1.1 Section 3.11.4). */
+
+static int
+meshd_kr_begin_idx(struct meshd_node *nd, uint16_t net_idx,
+    const uint8_t new_key[16])
+{
+	struct meshd_netkey_entry *e;
+
+	if (nd == NULL || new_key == NULL)
+		return (-1);
+	e = meshd_find_netkey(nd, net_idx);
+	if (e == NULL || e->has_new_key)
+		return (-1);
+	if (mesh_sim_subnet_key_refresh_begin(nd->self, net_idx, new_key) != 0)
+		return (-1);
+	memcpy(e->new_key, new_key, 16);
+	e->has_new_key = 1;
+	e->kr_phase = (uint8_t)mesh_sim_subnet_kr_phase(nd->self, net_idx);
+	return (0);
+}
+
+static int
+meshd_kr_advance_idx(struct meshd_node *nd, uint16_t net_idx)
+{
+	struct meshd_netkey_entry *e;
+
+	if (nd == NULL)
+		return (-1);
+	e = meshd_find_netkey(nd, net_idx);
+	if (e == NULL || !e->has_new_key ||
+	    mesh_sim_subnet_kr_phase(nd->self, net_idx) != MESH_KR_PHASE_1)
+		return (-1);
+	if (mesh_sim_subnet_key_refresh_advance(nd->self, net_idx) != 0)
+		return (-1);
+	e->kr_phase = (uint8_t)mesh_sim_subnet_kr_phase(nd->self, net_idx);
+	return (0);
+}
+
+static int
+meshd_kr_finish_idx(struct meshd_node *nd, uint16_t net_idx)
+{
+	struct meshd_netkey_entry *e;
+
+	if (nd == NULL)
+		return (-1);
+	e = meshd_find_netkey(nd, net_idx);
+	if (e == NULL || !e->has_new_key)
+		return (-1);
+	if (mesh_sim_subnet_key_refresh_finalize(nd->self, net_idx) != 0)
+		return (-1);
+	memcpy(e->key, e->new_key, 16);
+	e->has_new_key = 0;
+	explicit_bzero(e->new_key, sizeof(e->new_key));
+	e->kr_phase = (uint8_t)mesh_sim_subnet_kr_phase(nd->self, net_idx);
+	return (0);
+}
+
+int
+meshd_kr_phase(const struct meshd_node *nd)
+{
+
+	if (nd == NULL || nd->self == NULL)
+		return (-1);
+	return (mesh_sim_node_kr_phase(nd->self));
+}
+
+/* NetKey Update: distribute new_key and enter Phase 1 (hold BOTH keys). */
+int
+meshd_kr_begin(struct meshd_node *nd, const uint8_t new_key[16])
+{
+	return (nd == NULL ? -1 :
+	    meshd_kr_begin_idx(nd, nd->netkey_index, new_key));
+}
+
+/* KR Phase Transition 2: Phase 1 -> 2 (start transmitting with the new key). */
+int
+meshd_kr_advance(struct meshd_node *nd)
+{
+	return (nd == NULL ? -1 :
+	    meshd_kr_advance_idx(nd, nd->netkey_index));
+}
+
+/* KR Phase Transition 3: revoke the old key, promote the new one, settle. */
+int
+meshd_kr_finish(struct meshd_node *nd)
+{
+	return (nd == NULL ? -1 :
+	    meshd_kr_finish_idx(nd, nd->netkey_index));
+}
+
+/* ---------------- NetKey list ------------------------------------------- */
+
+static int
+h_netkey_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_netkey in;
+	struct meshd_netkey_entry *e;
+	uint32_t op;
+	uint8_t status, buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_netkey_add_parse(pdu, len, &op, &in) != 0)
+		return (-1);
+	e = meshd_find_netkey(nd, in.net_idx);
+	if (op == MESH_CFG_OP_NETKEY_ADD) {
+		if (e != NULL)
+			status = (timingsafe_bcmp(e->key, in.key, 16) == 0) ?
+			    MESH_CFG_SUCCESS : MESH_CFG_KEY_INDEX_ALREADY_STORED;
+		else if ((e = meshd_alloc_netkey(nd)) == NULL)
+			status = MESH_CFG_INSUFFICIENT_RESOURCES;
+		else {
+			e->valid = 1;
+			e->net_idx = in.net_idx;
+			memcpy(e->key, in.key, 16);
+			e->kr_phase = MESH_CFG_KR_PHASE_0;
+			e->node_identity = MESH_CFG_NODE_IDENTITY_STOPPED;
+			e->priv_node_identity = MESH_CFG_PRIV_IDENTITY_STOPPED;
+			if (mesh_sim_add_subnet(nd->self, in.net_idx, in.key) != 0) {
+				memset(e, 0, sizeof(*e));
+				status = MESH_CFG_INSUFFICIENT_RESOURCES;
+			} else
+				status = MESH_CFG_SUCCESS;
+		}
+	} else {			/* NetKey Update (0x8045) */
+		/*
+		 * MshPRT_v1.1 Section 3.11.4: a NetKey Update distributes the new
+		 * key and drives the subnet into Key Refresh Phase 1, holding BOTH
+		 * keys.  The old key is NOT overwritten - it stays live for TX until
+		 * Phase 2 and for RX until the Phase 3 settle.
+		 */
+		if (e == NULL)
+			status = MESH_CFG_INVALID_NETKEY_INDEX;
+		else if (timingsafe_bcmp(e->key, in.key, 16) == 0)
+			status = MESH_CFG_SUCCESS;	/* equals current key: no-op */
+		else if (e->has_new_key)
+			/* Mid-refresh: re-sending the same new key is idempotent,
+			 * a different key cannot change the in-flight refresh. */
+			status = (timingsafe_bcmp(e->new_key, in.key, 16) == 0) ?
+			    MESH_CFG_SUCCESS : MESH_CFG_CANNOT_UPDATE;
+		else if (meshd_kr_begin_idx(nd, in.net_idx, in.key) != 0)
+			status = MESH_CFG_UNSPECIFIED_ERROR;
+		else
+			status = MESH_CFG_SUCCESS;
+	}
+	if (mesh_cfg_netkey_status_build(status, in.net_idx, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_netkey_delete(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct meshd_netkey_entry *e;
+	uint16_t net_idx;
+	size_t i;
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_netkey_delete_parse(pdu, len, &net_idx) != 0)
+		return (-1);
+	e = meshd_find_netkey(nd, net_idx);
+	if (e != NULL) {
+		/* Remove the subnet and every AppKey bound to it. */
+		for (i = 0; i < MESHD_MAX_APPKEYS; i++) {
+			if (nd->db.appkeys[i].valid &&
+			    nd->db.appkeys[i].net_idx == net_idx)
+				memset(&nd->db.appkeys[i], 0,
+				    sizeof(nd->db.appkeys[i]));
+		}
+		/*
+		 * Deleting the primary subnet mid-refresh abandons the refresh:
+		 * drop the new key from the sim and reset the phase machine so the
+		 * node keeps operating on its (still current) old key.
+		 */
+		if (net_idx == nd->netkey_index && e->has_new_key) {
+			nd->self->have_new_key = 0;
+			mesh_kr_init(&nd->self->kr);
+		}
+		if (net_idx != nd->netkey_index)
+			(void)mesh_sim_remove_subnet(nd->self, net_idx);
+		memset(e, 0, sizeof(*e));
+	}
+	if (mesh_cfg_netkey_status_build(MESH_CFG_SUCCESS, net_idx, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_netkey_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint16_t idx[MESHD_MAX_NETKEYS];
+	size_t i, n = 0;
+	uint8_t buf[MESH_ACCESS_PAYLOAD_MAX];
+	size_t blen;
+
+	(void)ap; (void)pdu; (void)len;
+	for (i = 0; i < MESHD_MAX_NETKEYS; i++) {
+		if (nd->db.netkeys[i].valid)
+			idx[n++] = nd->db.netkeys[i].net_idx;
+	}
+	if (mesh_cfg_netkey_list_build(idx, n, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* ---------------- AppKey list ------------------------------------------- */
+
+static int
+h_appkey_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_appkey in;
+	struct meshd_appkey_entry *e;
+	uint32_t op;
+	uint8_t status, buf[8];
+	size_t blen, i;
+	int had_configured_appkey = 0;
+
+	(void)ap;
+	if (mesh_cfg_appkey_add_parse(pdu, len, &op, &in) != 0)
+		return (-1);
+	for (i = 0; i < MESHD_MAX_APPKEYS; i++)
+		if (nd->db.appkeys[i].valid)
+			had_configured_appkey = 1;
+	if (meshd_find_netkey(nd, in.net_idx) == NULL)
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+	else {
+		e = meshd_find_appkey(nd, in.app_idx);
+		if (op == MESH_CFG_OP_APPKEY_ADD) {
+			if (e != NULL && e->net_idx != in.net_idx)
+				status = MESH_CFG_INVALID_BINDING;
+			else if (e != NULL)
+				status = (timingsafe_bcmp(e->key, in.key, 16) == 0) ?
+				    MESH_CFG_SUCCESS :
+				    MESH_CFG_KEY_INDEX_ALREADY_STORED;
+			else if ((e = meshd_alloc_appkey(nd)) == NULL)
+				status = MESH_CFG_INSUFFICIENT_RESOURCES;
+			else {
+				e->valid = 1;
+				e->app_idx = in.app_idx;
+				e->net_idx = in.net_idx;
+				memcpy(e->key, in.key, 16);
+				status = MESH_CFG_SUCCESS;
+			}
+		} else {		/* AppKey Update */
+			if (e == NULL)
+				status = MESH_CFG_INVALID_APPKEY_INDEX;
+			else if (e->net_idx != in.net_idx)
+				status = MESH_CFG_INVALID_BINDING;
+			else {
+				memcpy(e->key, in.key, 16);
+				status = MESH_CFG_SUCCESS;
+			}
+		}
+	}
+	if (status == MESH_CFG_SUCCESS && !had_configured_appkey &&
+	    nd->self->n_appkeys != 0)
+		(void)mesh_sim_remove_appkey(nd->self,
+		    nd->self->appkeys[0].app_idx);
+	if (status == MESH_CFG_SUCCESS &&
+	    mesh_sim_add_appkey(nd->self, in.net_idx, in.app_idx, in.key) != 0)
+		status = MESH_CFG_INSUFFICIENT_RESOURCES;
+	if (mesh_cfg_appkey_status_build(status, in.net_idx, in.app_idx, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_appkey_delete(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct meshd_appkey_entry *e;
+	uint16_t net_idx, app_idx;
+	size_t i, j;
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_appkey_delete_parse(pdu, len, &net_idx, &app_idx) != 0)
+		return (-1);
+	e = meshd_find_appkey(nd, app_idx);
+	if (e != NULL && e->net_idx == net_idx) {
+		/* Drop the key and any per-model binding that referenced it. */
+		for (i = 0; i < nd->db.n_models; i++) {
+			struct meshd_model_entry *m = &nd->db.models[i];
+
+			for (j = 0; j < m->n_app; j++) {
+				if (m->app_idx[j] != app_idx)
+					continue;
+				m->app_idx[j] = m->app_idx[m->n_app - 1];
+				m->n_app--;
+				break;
+			}
+		}
+		(void)mesh_sim_remove_appkey(nd->self, app_idx);
+		memset(e, 0, sizeof(*e));
+		meshd_sync_subscriptions(nd);
+	}
+	if (mesh_cfg_appkey_status_build(MESH_CFG_SUCCESS, net_idx, app_idx, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_appkey_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint16_t net_idx, idx[MESHD_MAX_APPKEYS];
+	size_t i, n = 0;
+	uint8_t status, buf[MESH_ACCESS_PAYLOAD_MAX];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_appkey_get_parse(pdu, len, &net_idx) != 0)
+		return (-1);
+	if (meshd_find_netkey(nd, net_idx) == NULL)
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+	else {
+		status = MESH_CFG_SUCCESS;
+		for (i = 0; i < MESHD_MAX_APPKEYS; i++) {
+			if (nd->db.appkeys[i].valid &&
+			    nd->db.appkeys[i].net_idx == net_idx)
+				idx[n++] = nd->db.appkeys[i].app_idx;
+		}
+	}
+	if (mesh_cfg_appkey_list_build(status, net_idx, idx, n, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* ---------------- Model AppKey binding ---------------------------------- */
+
+static uint8_t
+meshd_do_bind(struct meshd_node *nd, uint32_t op,
+    const struct mesh_cfg_model_app *in)
+{
+	struct meshd_model_entry *m;
+	size_t j;
+
+	if (!meshd_element_valid(nd, in->elem_addr))
+		return (MESH_CFG_INVALID_ADDRESS);
+	if (meshd_find_appkey(nd, in->app_idx) == NULL)
+		return (MESH_CFG_INVALID_APPKEY_INDEX);
+	m = meshd_find_model(nd, in->elem_addr, &in->model);
+	if (m == NULL)
+		return (MESH_CFG_INVALID_MODEL);
+	/* The Configuration Server model uses the DevKey, not an AppKey. */
+	if (!m->id.vendor && m->id.model_id == 0x0000)
+		return (MESH_CFG_INVALID_MODEL);
+	for (j = 0; j < m->n_app; j++) {
+		if (m->app_idx[j] == in->app_idx) {
+			if (op == MESH_CFG_OP_MODEL_APP_UNBIND) {
+				m->app_idx[j] = m->app_idx[m->n_app - 1];
+				m->n_app--;
+			}
+			return (MESH_CFG_SUCCESS);
+		}
+	}
+	if (op == MESH_CFG_OP_MODEL_APP_UNBIND)
+		return (MESH_CFG_SUCCESS);	/* not bound: nothing to remove */
+	if (m->n_app >= MESHD_MAX_BINDINGS)
+		return (MESH_CFG_INSUFFICIENT_RESOURCES);
+	m->app_idx[m->n_app++] = in->app_idx;
+	return (MESH_CFG_SUCCESS);
+}
+
+static int
+h_model_app_bind(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_model_app in;
+	uint32_t op;
+	uint8_t status, buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_model_app_parse(pdu, len, &op, &in) != 0)
+		return (-1);
+	status = meshd_do_bind(nd, op, &in);
+	if (status == MESH_CFG_SUCCESS)
+		meshd_sync_subscriptions(nd);
+	if (mesh_cfg_model_app_status_build(status, &in, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_model_app_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_model_id model;
+	struct meshd_model_entry *m;
+	uint32_t op, list_op;
+	uint16_t elem_addr;
+	uint8_t status, buf[MESH_ACCESS_PAYLOAD_MAX];
+	const uint16_t *idx = NULL;
+	size_t n = 0, blen;
+
+	(void)ap;
+	if (mesh_cfg_model_app_get_parse(pdu, len, &op, &elem_addr, &model) != 0)
+		return (-1);
+	list_op = (op == MESH_CFG_OP_VND_MODEL_APP_GET) ?
+	    MESH_CFG_OP_VND_MODEL_APP_LIST : MESH_CFG_OP_SIG_MODEL_APP_LIST;
+	if (!meshd_element_valid(nd, elem_addr))
+		status = MESH_CFG_INVALID_ADDRESS;
+	else if ((m = meshd_find_model(nd, elem_addr, &model)) == NULL)
+		status = MESH_CFG_INVALID_MODEL;
+	else {
+		status = MESH_CFG_SUCCESS;
+		idx = m->app_idx;
+		n = m->n_app;
+	}
+	if (mesh_cfg_model_app_list_build(list_op, status, elem_addr, &model,
+	    idx, n, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* ---------------- Model subscription ------------------------------------ */
+
+/* Add/replace a group address in a model's subscription list. */
+static uint8_t
+meshd_sub_mutate(struct meshd_model_entry *m, uint32_t op, uint16_t addr,
+    const uint8_t *label)
+{
+	size_t j;
+
+	if (op == MESH_CFG_OP_MODEL_SUB_OVERWRITE ||
+	    op == MESH_CFG_OP_MODEL_SUB_VA_OVERWRITE) {
+		m->n_subs = 0;			/* replace the whole list */
+	}
+	if (op == MESH_CFG_OP_MODEL_SUB_DELETE ||
+	    op == MESH_CFG_OP_MODEL_SUB_VA_DELETE) {
+		for (j = 0; j < m->n_subs; j++) {
+			if (m->subs[j] != addr ||
+			    ((label != NULL) != (m->sub_is_va[j] != 0)) ||
+			    (label != NULL && memcmp(m->sub_label[j], label,
+			    MESH_LABEL_UUID_LEN) != 0))
+				continue;
+			m->subs[j] = m->subs[m->n_subs - 1];
+			m->sub_is_va[j] = m->sub_is_va[m->n_subs - 1];
+			memcpy(m->sub_label[j], m->sub_label[m->n_subs - 1],
+			    MESH_LABEL_UUID_LEN);
+			m->n_subs--;
+			break;
+		}
+		return (MESH_CFG_SUCCESS);
+	}
+	for (j = 0; j < m->n_subs; j++) {
+		if (m->subs[j] == addr &&
+		    ((label == NULL && !m->sub_is_va[j]) ||
+		    (label != NULL && m->sub_is_va[j] &&
+		    memcmp(m->sub_label[j], label, MESH_LABEL_UUID_LEN) == 0)))
+			return (MESH_CFG_SUCCESS);	/* already present */
+	}
+	if (m->n_subs >= MESHD_MAX_SUBS)
+		return (MESH_CFG_INSUFFICIENT_RESOURCES);
+	m->subs[m->n_subs] = addr;
+	m->sub_is_va[m->n_subs] = (label != NULL);
+	if (label != NULL)
+		memcpy(m->sub_label[m->n_subs], label, MESH_LABEL_UUID_LEN);
+	else
+		memset(m->sub_label[m->n_subs], 0, MESH_LABEL_UUID_LEN);
+	m->n_subs++;
+	return (MESH_CFG_SUCCESS);
+}
+
+static int
+h_model_sub(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_model_sub in;
+	struct meshd_model_entry *m;
+	uint32_t op;
+	uint8_t status, buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_model_sub_parse(pdu, len, &op, &in) != 0)
+		return (-1);
+	if (!meshd_element_valid(nd, in.elem_addr))
+		status = MESH_CFG_INVALID_ADDRESS;
+	else if (!mesh_addr_is_group(in.address) ||
+	    in.address == MESH_ADDR_ALL_NODES)
+		status = MESH_CFG_INVALID_ADDRESS;
+	else if ((m = meshd_find_model(nd, in.elem_addr, &in.model)) == NULL)
+		status = MESH_CFG_INVALID_MODEL;
+	else
+		status = meshd_sub_mutate(m, op, in.address, NULL);
+	if (status == MESH_CFG_SUCCESS)
+		meshd_sync_subscriptions(nd);
+	if (mesh_cfg_model_sub_status_build(status, &in, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_model_sub_del_all(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_model_sub st;
+	struct mesh_cfg_model_id model;
+	struct meshd_model_entry *m;
+	uint16_t elem_addr;
+	uint8_t status, buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_model_sub_del_all_parse(pdu, len, &elem_addr, &model) != 0)
+		return (-1);
+	if (!meshd_element_valid(nd, elem_addr))
+		status = MESH_CFG_INVALID_ADDRESS;
+	else if ((m = meshd_find_model(nd, elem_addr, &model)) == NULL)
+		status = MESH_CFG_INVALID_MODEL;
+	else {
+		m->n_subs = 0;
+		meshd_sync_subscriptions(nd);
+		status = MESH_CFG_SUCCESS;
+	}
+	memset(&st, 0, sizeof(st));
+	st.elem_addr = elem_addr;
+	st.address = MESH_ADDR_UNASSIGNED;	/* Delete All reports 0x0000 */
+	st.model = model;
+	if (mesh_cfg_model_sub_status_build(status, &st, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_model_sub_va(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_model_sub_va in;
+	struct mesh_cfg_model_sub st;
+	struct meshd_model_entry *m;
+	uint32_t op;
+	uint16_t va;
+	uint8_t status, buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_model_sub_va_parse(pdu, len, &op, &in) != 0)
+		return (-1);
+	if (mesh_virtual_addr(in.label, &va) != 0)
+		return (-1);
+	if (!meshd_element_valid(nd, in.elem_addr))
+		status = MESH_CFG_INVALID_ADDRESS;
+	else if ((m = meshd_find_model(nd, in.elem_addr, &in.model)) == NULL)
+		status = MESH_CFG_INVALID_MODEL;
+	else
+		status = meshd_sub_mutate(m, op, va, in.label);
+	if (status == MESH_CFG_SUCCESS)
+		meshd_sync_subscriptions(nd);
+	memset(&st, 0, sizeof(st));
+	st.elem_addr = in.elem_addr;
+	st.address = va;			/* derived virtual address */
+	st.model = in.model;
+	if (mesh_cfg_model_sub_status_build(status, &st, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_model_sub_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_model_id model;
+	struct meshd_model_entry *m;
+	uint32_t op, list_op;
+	uint16_t elem_addr;
+	uint8_t status, buf[MESH_ACCESS_PAYLOAD_MAX];
+	const uint16_t *addrs = NULL;
+	size_t n = 0, blen;
+
+	(void)ap;
+	if (mesh_cfg_model_sub_get_parse(pdu, len, &op, &elem_addr, &model) != 0)
+		return (-1);
+	list_op = (op == MESH_CFG_OP_VND_MODEL_SUB_GET) ?
+	    MESH_CFG_OP_VND_MODEL_SUB_LIST : MESH_CFG_OP_SIG_MODEL_SUB_LIST;
+	if (!meshd_element_valid(nd, elem_addr))
+		status = MESH_CFG_INVALID_ADDRESS;
+	else if ((m = meshd_find_model(nd, elem_addr, &model)) == NULL)
+		status = MESH_CFG_INVALID_MODEL;
+	else {
+		status = MESH_CFG_SUCCESS;
+		addrs = m->subs;
+		n = m->n_subs;
+	}
+	if (mesh_cfg_model_sub_list_build(list_op, status, elem_addr, &model,
+	    addrs, n, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* ---------------- Model publication ------------------------------------- */
+
+static int
+h_model_pub_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_model_id model;
+	struct mesh_cfg_model_pub pub;
+	struct meshd_model_entry *m;
+	uint16_t elem_addr;
+	uint8_t status, buf[24];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_model_pub_get_parse(pdu, len, &elem_addr, &model) != 0)
+		return (-1);
+	memset(&pub, 0, sizeof(pub));
+	pub.elem_addr = elem_addr;
+	pub.model = model;
+	if (!meshd_element_valid(nd, elem_addr))
+		status = MESH_CFG_INVALID_ADDRESS;
+	else if ((m = meshd_find_model(nd, elem_addr, &model)) == NULL)
+		status = MESH_CFG_INVALID_MODEL;
+	else {
+		status = MESH_CFG_SUCCESS;
+		if (m->has_pub)
+			pub = m->pub;
+	}
+	if (mesh_cfg_model_pub_status_build(status, &pub, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_model_pub_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_model_pub in;
+	struct meshd_model_entry *m;
+	uint8_t status, buf[24];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_model_pub_set_parse(pdu, len, &in) != 0)
+		return (-1);
+	if (!meshd_element_valid(nd, in.elem_addr))
+		status = MESH_CFG_INVALID_ADDRESS;
+	else if ((m = meshd_find_model(nd, in.elem_addr, &in.model)) == NULL)
+		status = MESH_CFG_INVALID_MODEL;
+	else {
+		m->pub = in;
+		m->has_pub = 1;
+		m->pub_is_va = 0;
+		memset(m->pub_label, 0, sizeof(m->pub_label));
+		m->next_pub_ms = 0;
+		m->retransmit_left = 0;
+		status = MESH_CFG_SUCCESS;
+	}
+	if (mesh_cfg_model_pub_status_build(status, &in, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_model_pub_va_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_model_pub_va in;
+	struct mesh_cfg_model_pub pub;
+	struct meshd_model_entry *m;
+	uint16_t va;
+	uint8_t status, buf[24];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_model_pub_va_set_parse(pdu, len, &in) != 0)
+		return (-1);
+	if (mesh_virtual_addr(in.label, &va) != 0)
+		return (-1);
+	memset(&pub, 0, sizeof(pub));
+	pub.elem_addr = in.elem_addr;
+	pub.pub_addr = va;
+	pub.app_idx = in.app_idx;
+	pub.cred_flag = in.cred_flag;
+	pub.ttl = in.ttl;
+	pub.period = in.period;
+	pub.retransmit = in.retransmit;
+	pub.model = in.model;
+	if (!meshd_element_valid(nd, in.elem_addr))
+		status = MESH_CFG_INVALID_ADDRESS;
+	else if ((m = meshd_find_model(nd, in.elem_addr, &in.model)) == NULL)
+		status = MESH_CFG_INVALID_MODEL;
+	else {
+		m->pub = pub;
+		m->has_pub = 1;
+		m->pub_is_va = 1;
+		memcpy(m->pub_label, in.label, sizeof(m->pub_label));
+		m->next_pub_ms = 0;
+		m->retransmit_left = 0;
+		status = MESH_CFG_SUCCESS;
+	}
+	if (mesh_cfg_model_pub_status_build(status, &pub, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* ---------------- Key Refresh Phase / Node Identity --------------------- */
+
+static int
+h_kr_phase_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct meshd_netkey_entry *e;
+	uint16_t net_idx;
+	uint8_t status, phase, buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_kr_phase_get_parse(pdu, len, &net_idx) != 0)
+		return (-1);
+	e = meshd_find_netkey(nd, net_idx);
+	if (e == NULL) {
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+		phase = MESH_CFG_KR_PHASE_0;
+	} else {
+		status = MESH_CFG_SUCCESS;
+		phase = (uint8_t)mesh_sim_subnet_kr_phase(nd->self, net_idx);
+	}
+	if (mesh_cfg_kr_phase_status_build(status, net_idx, phase, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_kr_phase_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct meshd_netkey_entry *e;
+	uint16_t net_idx;
+	uint8_t transition, status, phase, buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_kr_phase_set_parse(pdu, len, &net_idx, &transition) != 0)
+		return (-1);
+	e = meshd_find_netkey(nd, net_idx);
+	if (e == NULL) {
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+		phase = MESH_CFG_KR_PHASE_0;
+	} else {
+		/*
+		 * Drive the real phase machine on the sim node (Section 3.11.4):
+		 * Transition 2 moves Phase 1 -> 2 (start transmitting with the new
+		 * key); Transition 3 finishes by revoking the old key and promoting
+		 * the new one to the sole current key (finalize).
+		 */
+		status = MESH_CFG_SUCCESS;
+		if (transition == MESH_CFG_KR_TRANSITION_2)
+			(void)meshd_kr_advance_idx(nd, net_idx);
+		else if (transition == MESH_CFG_KR_TRANSITION_3)
+			(void)meshd_kr_finish_idx(nd, net_idx);
+		phase = (uint8_t)mesh_sim_subnet_kr_phase(nd->self, net_idx);
+	}
+	if (mesh_cfg_kr_phase_status_build(status, net_idx, phase, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_node_identity_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct meshd_netkey_entry *e;
+	uint16_t net_idx;
+	uint8_t status, identity, buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_node_identity_get_parse(pdu, len, &net_idx) != 0)
+		return (-1);
+	e = meshd_find_netkey(nd, net_idx);
+	status = (e != NULL) ? MESH_CFG_SUCCESS : MESH_CFG_INVALID_NETKEY_INDEX;
+	identity = (e != NULL) ? e->node_identity :
+	    MESH_CFG_NODE_IDENTITY_STOPPED;
+	if (mesh_cfg_node_identity_status_build(status, net_idx, identity, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_node_identity_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct meshd_netkey_entry *e;
+	uint16_t net_idx;
+	uint8_t identity, status, buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_node_identity_set_parse(pdu, len, &net_idx, &identity) != 0)
+		return (-1);
+	e = meshd_find_netkey(nd, net_idx);
+	if (e == NULL)
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+	else {
+		if (identity == MESH_CFG_NODE_IDENTITY_STOPPED ||
+		    identity == MESH_CFG_NODE_IDENTITY_RUNNING)
+			e->node_identity = identity;
+		status = MESH_CFG_SUCCESS;
+		identity = e->node_identity;
+	}
+	if (mesh_cfg_node_identity_status_build(status, net_idx, identity, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_lpn_polltimeout_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint16_t lpn_addr;
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_lpn_polltimeout_get_parse(pdu, len, &lpn_addr) != 0)
+		return (-1);
+	/* No Friend feature / no LPN: PollTimeout is 0 (MshMDL 4.4.1). */
+	if (mesh_cfg_lpn_polltimeout_status_build(lpn_addr,
+	    nd->db.lpn_poll_timeout, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* ---------------- Heartbeat Publication / Subscription ------------------ */
+
+static int
+h_hb_pub_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap; (void)pdu; (void)len;
+	if (mesh_hb_pub_status_build(MESH_CFG_SUCCESS, &nd->db.hb_pub, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_hb_pub_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_hb_pub in;
+	uint8_t status, buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_hb_pub_set_parse(pdu, len, &in) != 0)
+		return (-1);
+	if (in.dst != MESH_ADDR_UNASSIGNED &&
+	    meshd_find_netkey(nd, in.net_idx) == NULL)
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+	else {
+		nd->db.hb_pub = in;
+		status = MESH_CFG_SUCCESS;
+	}
+	if (mesh_hb_pub_status_build(status, &nd->db.hb_pub, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_hb_sub_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_hb_sub_status st;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap; (void)pdu; (void)len;
+	mesh_hb_sub_snapshot(&nd->db.hb_sub, MESH_CFG_SUCCESS, &st);
+	if (mesh_hb_sub_status_build(&st, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_hb_sub_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_hb_sub_set in;
+	struct mesh_hb_sub_status st;
+	uint8_t status, buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_hb_sub_set_parse(pdu, len, &in) != 0)
+		return (-1);
+	status = (mesh_hb_sub_apply(&nd->db.hb_sub, &in) == 0) ?
+	    MESH_CFG_SUCCESS : MESH_CFG_INVALID_ADDRESS;
+	mesh_hb_sub_snapshot(&nd->db.hb_sub, status, &st);
+	if (mesh_hb_sub_status_build(&st, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* ---------------- Health Server ----------------------------------------- */
+
+static int
+h_hlt_attention_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap; (void)pdu; (void)len;
+	if (mesh_hlt_attention_build(MESH_HLT_OP_ATTENTION_STATUS,
+	    nd->health.attention, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_hlt_attention_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint32_t op;
+	uint8_t v, buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_hlt_attention_parse(pdu, len, &op, &v) != 0)
+		return (-1);
+	nd->health.attention = v;
+	if (mesh_hlt_attention_build(MESH_HLT_OP_ATTENTION_STATUS, v, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_hlt_period_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap; (void)pdu; (void)len;
+	if (mesh_hlt_period_build(MESH_HLT_OP_PERIOD_STATUS,
+	    nd->health.fast_period_divisor, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_hlt_period_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint32_t op;
+	uint8_t div, buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_hlt_period_parse(pdu, len, &op, &div) != 0)
+		return (-1);
+	if (div > 15)
+		return (-1);
+	nd->health.fast_period_divisor = div;
+	if (mesh_hlt_period_build(MESH_HLT_OP_PERIOD_STATUS, div, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* Snapshot the registered fault array into a Fault Status structure. */
+static int
+meshd_fault_snapshot(struct meshd_node *nd, struct mesh_hlt_fault_status *fs)
+{
+
+	memset(fs, 0, sizeof(*fs));
+	fs->test_id = nd->health.test_id;
+	fs->company_id = nd->health.company_id;
+	if (nd->health.n_faults > MESH_HLT_MAX_FAULTS)
+		return (-1);
+	memcpy(fs->faults, nd->health.faults, nd->health.n_faults);
+	fs->n_faults = nd->health.n_faults;
+	return (0);
+}
+
+static int
+h_hlt_fault_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_hlt_fault_status fs;
+	uint16_t company;
+	uint8_t buf[MESH_ACCESS_PAYLOAD_MAX];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_hlt_fault_get_parse(pdu, len, &company) != 0)
+		return (-1);
+	if (meshd_fault_snapshot(nd, &fs) != 0)
+		return (-1);
+	if (mesh_hlt_fault_status_build(&fs, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_hlt_fault_clear(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_hlt_fault_status fs;
+	uint32_t op;
+	uint16_t company;
+	uint8_t buf[MESH_ACCESS_PAYLOAD_MAX];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_hlt_fault_clear_parse(pdu, len, &op, &company) != 0)
+		return (-1);
+	mesh_hlt_server_clear_faults(&nd->health);
+	if (op == MESH_HLT_OP_FAULT_CLEAR_UNREL)
+		return (0);		/* unacknowledged: no Status */
+	if (meshd_fault_snapshot(nd, &fs) != 0)
+		return (-1);
+	if (mesh_hlt_fault_status_build(&fs, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_hlt_fault_test(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_hlt_fault_status fs;
+	uint32_t op;
+	uint16_t company;
+	uint8_t test_id, buf[MESH_ACCESS_PAYLOAD_MAX];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_hlt_fault_test_parse(pdu, len, &op, &test_id, &company) != 0)
+		return (-1);
+	nd->health.test_id = test_id;
+	if (op == MESH_HLT_OP_FAULT_TEST_UNREL)
+		return (0);		/* unacknowledged: no Status */
+	if (meshd_fault_snapshot(nd, &fs) != 0)
+		return (-1);
+	if (mesh_hlt_fault_status_build(&fs, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* ---------------- Mesh 1.1 Configuration models (MshMDL Section 4) ------- */
+
+static int
+h_sar_tx_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap; (void)pdu; (void)len;
+	if (mesh_cfg_sar_tx_build(MESH_CFG_OP_SAR_TRANSMITTER_STATUS, &nd->db.sar_tx,
+	    buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_sar_tx_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_sar_transmitter tx;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_sar_tx_parse(pdu, len, NULL, &tx) != 0)
+		return (-1);
+	nd->db.sar_tx = tx;
+	if (mesh_cfg_sar_tx_build(MESH_CFG_OP_SAR_TRANSMITTER_STATUS, &nd->db.sar_tx,
+	    buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_sar_rx_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap; (void)pdu; (void)len;
+	if (mesh_cfg_sar_rx_build(MESH_CFG_OP_SAR_RECEIVER_STATUS, &nd->db.sar_rx,
+	    buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_sar_rx_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_sar_receiver rx;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_sar_rx_parse(pdu, len, NULL, &rx) != 0)
+		return (-1);
+	nd->db.sar_rx = rx;
+	if (mesh_cfg_sar_rx_build(MESH_CFG_OP_SAR_RECEIVER_STATUS, &nd->db.sar_rx,
+	    buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_od_priv_proxy_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap; (void)pdu; (void)len;
+	if (mesh_cfg_od_priv_proxy_build(MESH_CFG_OP_OD_PRIV_PROXY_STATUS,
+	    nd->db.od_priv_proxy, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_od_priv_proxy_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t v, buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_od_priv_proxy_parse(pdu, len, NULL, &v) != 0)
+		return (-1);
+	nd->db.od_priv_proxy = v;
+	if (mesh_cfg_od_priv_proxy_build(MESH_CFG_OP_OD_PRIV_PROXY_STATUS,
+	    nd->db.od_priv_proxy, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_priv_beacon_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_priv_beacon pb;
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap; (void)pdu; (void)len;
+	memset(&pb, 0, sizeof(pb));
+	pb.private_beacon = nd->db.priv_beacon;
+	pb.random_update_interval_steps = nd->db.priv_beacon_random_steps;
+	if (mesh_cfg_priv_beacon_status_build(&pb, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_priv_beacon_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_priv_beacon pb;
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_priv_beacon_set_parse(pdu, len, &pb) != 0)
+		return (-1);
+	nd->db.priv_beacon = pb.private_beacon ? 1 : 0;
+	if (pb.has_random_update)
+		nd->db.priv_beacon_random_steps = pb.random_update_interval_steps;
+	pb.private_beacon = nd->db.priv_beacon;
+	pb.random_update_interval_steps = nd->db.priv_beacon_random_steps;
+	if (mesh_cfg_priv_beacon_status_build(&pb, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_priv_gatt_proxy_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap; (void)pdu; (void)len;
+	if (mesh_cfg_priv_gatt_proxy_build(MESH_CFG_OP_PRIV_GATT_PROXY_STATUS,
+	    nd->db.priv_gatt_proxy, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_priv_gatt_proxy_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t v, buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_priv_gatt_proxy_parse(pdu, len, NULL, &v) != 0)
+		return (-1);
+	if (v > 1)
+		return (-1);
+	nd->db.priv_gatt_proxy = v;
+	if (mesh_cfg_priv_gatt_proxy_build(MESH_CFG_OP_PRIV_GATT_PROXY_STATUS,
+	    nd->db.priv_gatt_proxy, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_priv_node_identity_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_priv_node_identity id;
+	struct meshd_netkey_entry *e;
+	uint16_t net_idx;
+	uint8_t status, buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_priv_node_identity_get_parse(pdu, len, &net_idx) != 0)
+		return (-1);
+	e = meshd_find_netkey(nd, net_idx);
+	status = (e != NULL) ? MESH_CFG_SUCCESS : MESH_CFG_INVALID_NETKEY_INDEX;
+	memset(&id, 0, sizeof(id));
+	id.net_idx = net_idx;
+	id.identity = (e != NULL) ? e->priv_node_identity :
+	    MESH_CFG_PRIV_IDENTITY_STOPPED;
+	if (mesh_cfg_priv_node_identity_status_build(status, &id, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_priv_node_identity_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_priv_node_identity id;
+	struct meshd_netkey_entry *e;
+	uint8_t status, buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_priv_node_identity_set_parse(pdu, len, &id) != 0)
+		return (-1);
+	e = meshd_find_netkey(nd, id.net_idx);
+	if (e == NULL)
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+	else {
+		if (id.identity == MESH_CFG_PRIV_IDENTITY_STOPPED ||
+		    id.identity == MESH_CFG_PRIV_IDENTITY_RUNNING)
+			e->priv_node_identity = id.identity;
+		id.identity = e->priv_node_identity;
+		status = MESH_CFG_SUCCESS;
+	}
+	if (mesh_cfg_priv_node_identity_status_build(status, &id, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_sol_pdu_rpl_clear(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_addr_range r;
+	uint32_t op;
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_sol_pdu_rpl_clear_parse(pdu, len, &op, &r) != 0)
+		return (-1);
+	/* Clear the solicitation RPL entries in the range and record it. */
+	nd->db.sol_pdu_rpl_last = r;
+	if (op == MESH_CFG_OP_SOL_PDU_RPL_ITEMS_CLEAR_UNACK)
+		return (0);		/* unacknowledged: no Status */
+	if (mesh_cfg_sol_pdu_rpl_status_build(&r, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* Fill buf with the node's Large Composition Data page blob; -1 on error. */
+static int
+meshd_lcd_blob(struct meshd_node *nd, uint8_t page, uint8_t *buf, size_t cap,
+    size_t *blen)
+{
+	struct mesh_cfg_comp_page0 comp;
+
+	if (page != 0)
+		return (-1);
+	meshd_comp_fill(&comp, nd);
+	if (mesh_cfg_comp_page0_encode(&comp, buf, blen) != 0)
+		return (-1);
+	if (*blen > cap)
+		return (-1);
+	return (0);
+}
+
+/* Large Composition Data Get / Models Metadata Get: offset-addressed page. */
+static int
+h_lcd_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_lcd_get get;
+	struct mesh_cfg_lcd_status st;
+	uint8_t blob[MESH_CFG_LCD_DATA_MAX];
+	uint8_t buf[MESH_ACCESS_PAYLOAD_MAX];
+	size_t bloblen, chunk, blen;
+	uint32_t op, status_op;
+
+	(void)ap;
+	if (mesh_cfg_lcd_get_parse(pdu, len, &op, &get) != 0)
+		return (-1);
+	memset(&st, 0, sizeof(st));
+	st.page = get.page;
+	st.offset = get.offset;
+
+	if (op == MESH_CFG_OP_MODELS_METADATA_GET) {
+		/* This node advertises no models metadata: an empty page. */
+		status_op = MESH_CFG_OP_MODELS_METADATA_STATUS;
+		st.total_size = 0;
+		st.data_len = 0;
+	} else {
+		status_op = MESH_CFG_OP_LARGE_COMP_DATA_STATUS;
+		if (meshd_lcd_blob(nd, get.page, blob, sizeof(blob),
+		    &bloblen) != 0)
+			return (-1);
+		st.total_size = (uint16_t)bloblen;
+		if (get.offset >= bloblen)
+			st.data_len = 0;	/* offset past the end: no data */
+		else {
+			chunk = bloblen - get.offset;
+			if (chunk > MESH_CFG_LCD_DATA_MAX)
+				chunk = MESH_CFG_LCD_DATA_MAX;
+			memcpy(st.data, blob + get.offset, chunk);
+			st.data_len = chunk;
+		}
+	}
+	if (mesh_cfg_lcd_status_build(status_op, &st, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/*
+ * Opcodes Aggregator Sequence: dispatch each aggregated Access PDU through the
+ * foundation-model handler and pack each response as an Aggregator Status item
+ * (an empty item for a message handled without a reply).
+ */
+static int
+h_aggregator_seq(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_agg_item items[MESH_CFG_AGG_MAX_ITEMS];
+	struct mesh_cfg_agg_item resp[MESH_CFG_AGG_MAX_ITEMS];
+	uint8_t respbuf[MESH_CFG_AGG_MAX_ITEMS][160];
+	uint8_t buf[MESH_ACCESS_PAYLOAD_MAX];
+	uint16_t elem;
+	uint8_t status = MESH_CFG_SUCCESS;
+	size_t nitems, i, blen;
+
+	(void)ap;
+	if (mesh_cfg_agg_seq_parse(pdu, len, &elem, items, MESH_CFG_AGG_MAX_ITEMS,
+	    &nitems) != 0)
+		return (-1);
+	if (elem != nd->addr)
+		status = MESH_CFG_INVALID_ADDRESS;
+
+	for (i = 0; i < nitems; i++) {
+		size_t rl = 0;
+
+		resp[i].data = NULL;
+		resp[i].len = 0;
+		if (status != MESH_CFG_SUCCESS || items[i].len == 0)
+			continue;
+		if (meshd_foundation_recv(nd, items[i].data, items[i].len,
+		    respbuf[i], sizeof(respbuf[i]), &rl) == 1) {
+			resp[i].data = respbuf[i];
+			resp[i].len = rl;
+		}
+	}
+	if (mesh_cfg_agg_status_build(status, elem, resp, nitems, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* ================================================================
+ * Opcode -> handler dispatch table (MshMDL Section 4.3.4 / 7.2).
+ * ================================================================ */
+typedef int (*meshd_cfg_fn)(struct meshd_node *nd,
+    const struct mesh_access_pdu *ap, const uint8_t *pdu, size_t len,
+    uint8_t *reply, size_t reply_max, size_t *reply_len);
+
+struct meshd_cfg_handler {
+	uint32_t	opcode;
+	meshd_cfg_fn	fn;
+};
+
+static const struct meshd_cfg_handler meshd_cfg_table[] = {
+	{ MESH_CFG_OP_COMP_DATA_GET,		h_comp_get },
+	{ MESH_CFG_OP_DEFAULT_TTL_GET,		h_default_ttl_get },
+	{ MESH_CFG_OP_DEFAULT_TTL_SET,		h_default_ttl_set },
+	{ MESH_CFG_OP_BEACON_GET,		h_beacon_get },
+	{ MESH_CFG_OP_BEACON_SET,		h_beacon_set },
+	{ MESH_CFG_OP_GATT_PROXY_GET,		h_gatt_proxy_get },
+	{ MESH_CFG_OP_GATT_PROXY_SET,		h_gatt_proxy_set },
+	{ MESH_CFG_OP_FRIEND_GET,		h_friend_get },
+	{ MESH_CFG_OP_FRIEND_SET,		h_friend_set },
+	{ MESH_CFG_OP_RELAY_GET,		h_relay_get },
+	{ MESH_CFG_OP_RELAY_SET,		h_relay_set },
+	{ MESH_CFG_OP_NET_TRANSMIT_GET,		h_net_transmit_get },
+	{ MESH_CFG_OP_NET_TRANSMIT_SET,		h_net_transmit_set },
+	{ MESH_CFG_OP_NODE_RESET,		h_node_reset },
+	{ MESH_CFG_OP_NETKEY_ADD,		h_netkey_add },
+	{ MESH_CFG_OP_NETKEY_UPDATE,		h_netkey_add },
+	{ MESH_CFG_OP_NETKEY_DELETE,		h_netkey_delete },
+	{ MESH_CFG_OP_NETKEY_GET,		h_netkey_get },
+	{ MESH_CFG_OP_APPKEY_ADD,		h_appkey_add },
+	{ MESH_CFG_OP_APPKEY_UPDATE,		h_appkey_add },
+	{ MESH_CFG_OP_APPKEY_DELETE,		h_appkey_delete },
+	{ MESH_CFG_OP_APPKEY_GET,		h_appkey_get },
+	{ MESH_CFG_OP_MODEL_APP_BIND,		h_model_app_bind },
+	{ MESH_CFG_OP_MODEL_APP_UNBIND,		h_model_app_bind },
+	{ MESH_CFG_OP_SIG_MODEL_APP_GET,	h_model_app_get },
+	{ MESH_CFG_OP_VND_MODEL_APP_GET,	h_model_app_get },
+	{ MESH_CFG_OP_MODEL_SUB_ADD,		h_model_sub },
+	{ MESH_CFG_OP_MODEL_SUB_DELETE,		h_model_sub },
+	{ MESH_CFG_OP_MODEL_SUB_OVERWRITE,	h_model_sub },
+	{ MESH_CFG_OP_MODEL_SUB_DELETE_ALL,	h_model_sub_del_all },
+	{ MESH_CFG_OP_MODEL_SUB_VA_ADD,		h_model_sub_va },
+	{ MESH_CFG_OP_MODEL_SUB_VA_DELETE,	h_model_sub_va },
+	{ MESH_CFG_OP_MODEL_SUB_VA_OVERWRITE,	h_model_sub_va },
+	{ MESH_CFG_OP_SIG_MODEL_SUB_GET,	h_model_sub_get },
+	{ MESH_CFG_OP_VND_MODEL_SUB_GET,	h_model_sub_get },
+	{ MESH_CFG_OP_MODEL_PUB_GET,		h_model_pub_get },
+	{ MESH_CFG_OP_MODEL_PUB_SET,		h_model_pub_set },
+	{ MESH_CFG_OP_MODEL_PUB_VA_SET,		h_model_pub_va_set },
+	{ MESH_CFG_OP_KEY_REFRESH_PHASE_GET,	h_kr_phase_get },
+	{ MESH_CFG_OP_KEY_REFRESH_PHASE_SET,	h_kr_phase_set },
+	{ MESH_CFG_OP_NODE_IDENTITY_GET,	h_node_identity_get },
+	{ MESH_CFG_OP_NODE_IDENTITY_SET,	h_node_identity_set },
+	{ MESH_CFG_OP_LPN_POLLTIMEOUT_GET,	h_lpn_polltimeout_get },
+	{ MESH_CFG_OP_HB_PUB_GET,		h_hb_pub_get },
+	{ MESH_CFG_OP_HB_PUB_SET,		h_hb_pub_set },
+	{ MESH_CFG_OP_HB_SUB_GET,		h_hb_sub_get },
+	{ MESH_CFG_OP_HB_SUB_SET,		h_hb_sub_set },
+	{ MESH_HLT_OP_ATTENTION_GET,		h_hlt_attention_get },
+	{ MESH_HLT_OP_ATTENTION_SET,		h_hlt_attention_set },
+	{ MESH_HLT_OP_PERIOD_GET,		h_hlt_period_get },
+	{ MESH_HLT_OP_PERIOD_SET,		h_hlt_period_set },
+	{ MESH_HLT_OP_FAULT_GET,		h_hlt_fault_get },
+	{ MESH_HLT_OP_FAULT_CLEAR,		h_hlt_fault_clear },
+	{ MESH_HLT_OP_FAULT_CLEAR_UNREL,	h_hlt_fault_clear },
+	{ MESH_HLT_OP_FAULT_TEST,		h_hlt_fault_test },
+	{ MESH_HLT_OP_FAULT_TEST_UNREL,		h_hlt_fault_test },
+	{ MESH_CFG_OP_SAR_TRANSMITTER_GET,	h_sar_tx_get },
+	{ MESH_CFG_OP_SAR_TRANSMITTER_SET,	h_sar_tx_set },
+	{ MESH_CFG_OP_SAR_RECEIVER_GET,		h_sar_rx_get },
+	{ MESH_CFG_OP_SAR_RECEIVER_SET,		h_sar_rx_set },
+	{ MESH_CFG_OP_OD_PRIV_PROXY_GET,	h_od_priv_proxy_get },
+	{ MESH_CFG_OP_OD_PRIV_PROXY_SET,	h_od_priv_proxy_set },
+	{ MESH_CFG_OP_PRIV_BEACON_GET,		h_priv_beacon_get },
+	{ MESH_CFG_OP_PRIV_BEACON_SET,		h_priv_beacon_set },
+	{ MESH_CFG_OP_PRIV_GATT_PROXY_GET,	h_priv_gatt_proxy_get },
+	{ MESH_CFG_OP_PRIV_GATT_PROXY_SET,	h_priv_gatt_proxy_set },
+	{ MESH_CFG_OP_PRIV_NODE_IDENTITY_GET,	h_priv_node_identity_get },
+	{ MESH_CFG_OP_PRIV_NODE_IDENTITY_SET,	h_priv_node_identity_set },
+	{ MESH_CFG_OP_SOL_PDU_RPL_ITEMS_CLEAR,		h_sol_pdu_rpl_clear },
+	{ MESH_CFG_OP_SOL_PDU_RPL_ITEMS_CLEAR_UNACK,	h_sol_pdu_rpl_clear },
+	{ MESH_CFG_OP_LARGE_COMP_DATA_GET,	h_lcd_get },
+	{ MESH_CFG_OP_MODELS_METADATA_GET,	h_lcd_get },
+	{ MESH_CFG_OP_AGGREGATOR_SEQUENCE,	h_aggregator_seq },
+};
+
+int
+meshd_foundation_recv(struct meshd_node *nd, const uint8_t *pdu, size_t len,
+    uint8_t *reply, size_t reply_max, size_t *reply_len)
+{
+	struct mesh_access_pdu ap;
+	size_t i;
+
+	if (nd == NULL || pdu == NULL || len == 0 || reply == NULL ||
+	    reply_len == NULL)
+		return (-1);
+	if (mesh_access_pdu_parse(pdu, len, &ap) != 0)
+		return (-1);
+	*reply_len = 0;
+
+	for (i = 0; i < nitems(meshd_cfg_table); i++) {
+		if (meshd_cfg_table[i].opcode == ap.opcode)
+			return (meshd_cfg_table[i].fn(nd, &ap, pdu, len, reply,
+			    reply_max, reply_len));
+	}
+	return (-1);		/* not a handled foundation opcode */
+}
+
+uint16_t
+meshd_node_addr(const struct meshd_node *nd)
+{
+
+	return (nd->addr);
+}
+
+uint32_t
+meshd_node_seq(const struct meshd_node *nd)
+{
+
+	return (mesh_sim_node_seq(nd->self));
+}
+
+uint32_t
+meshd_node_iv(const struct meshd_node *nd)
+{
+
+	return (mesh_sim_node_iv(nd->self));
+}
+
+uint8_t
+meshd_node_onoff(const struct meshd_node *nd)
+{
+
+	return (nd->app != NULL ? nd->app->onoff.present : MESH_GEN_OFF);
+}
+
+int16_t
+meshd_node_level(const struct meshd_node *nd)
+{
+
+	return (nd->app != NULL ? nd->app->level.present : 0);
+}
+
+int
+meshd_node_restore(struct meshd_node *nd, const uint8_t netkey[16],
+    const uint8_t appkey[16], uint32_t iv_index, uint16_t addr)
+{
+
+	if (nd == NULL || netkey == NULL || appkey == NULL)
+		return (-1);
+	if (!meshd_addr_is_unicast(addr))
+		return (-1);
+	if (meshd_setup_node(nd, netkey, appkey, iv_index, addr) != 0)
+		return (-1);
+	nd->provisioned = 1;
+	return (0);
+}
+
+static struct mesh_sim_subnet_key *
+meshd_sim_subnet(struct meshd_node *nd, uint16_t net_idx)
+{
+	size_t i;
+
+	for (i = 0; i < nd->self->n_subnets; i++)
+		if (nd->self->subnets[i].valid &&
+		    nd->self->subnets[i].net_idx == net_idx)
+			return (&nd->self->subnets[i]);
+	return (NULL);
+}
+
+static int
+meshd_beacon_emit_one(struct meshd_node *nd, uint16_t net_idx)
+{
+	uint8_t beacon[MESH_SECURE_BEACON_LEN];
+	const uint8_t *bkey;
+	const struct mesh_node *self;
+	struct mesh_sim_subnet_key *subnet;
+	size_t blen;
+	uint8_t kr_flag, iv_update;
+
+	self = nd->self;
+	/*
+	 * Select the key and Key Refresh Flag for the current phase
+	 * (Sections 3.11.4.1-3.11.4.3): once the new key is held (Phase >= 1) the beacon
+	 * is secured with it and carries the phase's flag; otherwise the current
+	 * key with a clear flag.
+	 */
+	if (net_idx == self->primary_net_idx) {
+		if (self->have_new_key &&
+		    mesh_kr_phase(&self->kr) >= MESH_KR_PHASE_1) {
+			bkey = self->new_netkey;
+			kr_flag = (uint8_t)mesh_kr_beacon_flag(&self->kr);
+		} else {
+			bkey = self->netkey;
+			kr_flag = 0;
+		}
+	} else {
+		subnet = meshd_sim_subnet(nd, net_idx);
+		if (subnet == NULL)
+			return (-1);
+		if (subnet->have_new_key &&
+		    mesh_kr_phase(&subnet->kr) >= MESH_KR_PHASE_1) {
+			bkey = subnet->new_netkey;
+			kr_flag = (uint8_t)mesh_kr_beacon_flag(&subnet->kr);
+		} else {
+			bkey = subnet->netkey;
+			kr_flag = 0;
+		}
+	}
+	iv_update = (self->iv.state == MESH_IV_UPDATE_IN_PROGRESS) ? 1 : 0;
+	if (mesh_secure_beacon_build(bkey, kr_flag, iv_update,
+	    self->iv.iv_index, beacon, &blen) != 0)
+		return (0);
+	if (nd->bearer == NULL || nd->bearer->tx == NULL)
+		return (0);
+	nd->tx_frames++;
+	if (nd->bearer->tx(nd->bearer->arg, MESHD_PDU_BEACON, beacon, blen) != 0) {
+		nd->tx_errors++;
+		return (0);
+	}
+	return (1);
+}
+
+int
+meshd_beacon_emit(struct meshd_node *nd)
+{
+	size_t i;
+	int emitted, rc;
+
+	if (nd == NULL || nd->self == NULL)
+		return (-1);
+	emitted = 0;
+	for (i = 0; i < MESHD_MAX_NETKEYS; i++) {
+		if (!nd->db.netkeys[i].valid)
+			continue;
+		rc = meshd_beacon_emit_one(nd, nd->db.netkeys[i].net_idx);
+		if (rc < 0)
+			return (-1);
+		emitted += rc;
+	}
+	nd->beacon_last = nd->sim.now_ms;
+	return (emitted);
+}
+
+int
+meshd_beacon_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
+{
+	struct meshd_netkey_entry *e;
+	struct mesh_sim_subnet_key *subnet;
+	uint16_t net_idx;
+
+	if (nd == NULL || pdu == NULL || nd->self == NULL)
+		return (-1);
+	if (mesh_sim_node_recv_beacon(nd->self, pdu, len, nd->sim.now,
+	    &net_idx) != 0)
+		return (0);
+	/* Mirror the authenticated subnet's phase and any settled key. */
+	e = meshd_find_netkey(nd, net_idx);
+	if (e != NULL) {
+		e->kr_phase = (uint8_t)mesh_sim_subnet_kr_phase(nd->self,
+		    net_idx);
+		/* A beacon-driven settle promotes and clears the new key. */
+		subnet = net_idx == nd->self->primary_net_idx ? NULL :
+		    meshd_sim_subnet(nd, net_idx);
+		if (((subnet == NULL && !nd->self->have_new_key) ||
+		    (subnet != NULL && !subnet->have_new_key)) && e->has_new_key) {
+			memcpy(e->key, subnet == NULL ? nd->self->netkey :
+			    subnet->netkey, 16);
+			e->has_new_key = 0;
+			explicit_bzero(e->new_key, sizeof(e->new_key));
+		}
+	}
+	return (1);
+}
+
+/*
+ * Advance the time-driven state machines (MshMDL_v1.1 Section 4.2.18 periodic
+ * Heartbeat, MshPRT_v1.1 Section 3.10.5 IV Update).  The clock is injected by
+ * publishing `now` to the sim's virtual clock, which the IV Update dwell timers
+ * read; the Heartbeat timer is advanced by the elapsed delta since the previous
+ * tick.  While the Beacon state is enabled a Secure Network beacon is emitted at
+ * the Section 3.9.3 cadence, carrying the current Key Refresh phase flag.
+ */
+int
+meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
+{
+	uint32_t old_iv;
+	int old_state, hb = 0;
+	uint64_t dt_ms;
+
+	if (iv_changed != NULL)
+		*iv_changed = 0;
+	if (nd == NULL || nd->self == NULL)
+		return (-1);
+
+	/* Elapsed milliseconds since the previous tick (0 on the first tick). */
+	dt_ms = (nd->tick_last == 0 || now_ms < nd->tick_last) ? 0 :
+	    now_ms - nd->tick_last;
+	nd->tick_last = now_ms;
+	if (now_ms >= nd->sim.now_ms)
+		mesh_sim_advance_ms(&nd->sim, now_ms - nd->sim.now_ms);
+	else {
+		nd->sim.now_ms = now_ms;
+		nd->sim.now = now_ms / 1000;
+	}
+	meshd_gatt_tick(nd, now_ms);
+	meshd_publication_tick(nd, now_ms);
+	if (nd->sim.n_tx != 0)
+		meshd_drain_tx(nd);
+
+	/* Periodic Heartbeat publication onto the bearer (Section 4.2.18). */
+	if (dt_ms >= 1000) {
+		int n = mesh_sim_hb_publish_periodic(&nd->sim, nd->self,
+		    (uint32_t)(dt_ms / 1000));
+
+		if (n > 0) {
+			hb = n;
+			meshd_drain_tx(nd);
+		}
+	}
+
+	/*
+	 * IV Update procedure (Section 3.10.5).  Begin an update when the SEQ
+	 * space nears exhaustion; complete an in-progress update.  Both are
+	 * gated by the 96-hour minimum dwell inside the state machine, so an
+	 * out-of-turn call is a harmless no-op.  When an update COMPLETES the
+	 * node adopts the new IV Index for transmit and the SEQ resets to 0 for
+	 * the fresh epoch.
+	 */
+	old_iv = nd->self->iv.iv_index;
+	old_state = nd->self->iv.state;
+	if (mesh_iv_seq_exhausted(nd->self->seq))
+		(void)mesh_sim_begin_iv_update(nd->self);
+	if (nd->self->iv.state == MESH_IV_UPDATE_IN_PROGRESS)
+		(void)mesh_sim_complete_iv_update(nd->self);
+	if (old_state == MESH_IV_UPDATE_IN_PROGRESS &&
+	    nd->self->iv.state == MESH_IV_NORMAL) {
+		/* Update completed: new epoch, SEQ starts over (Section 3.10.5). */
+		nd->self->seq = 0;
+		if (iv_changed != NULL)
+			*iv_changed = 1;
+	} else if (old_iv != nd->self->iv.iv_index && iv_changed != NULL) {
+		*iv_changed = 1;
+	}
+
+	/*
+	 * Secure Network beacon pump (Section 3.9.3): while the Beacon state is
+	 * enabled, emit one beacon per cadence interval.  It carries the Key
+	 * Refresh Flag for the current phase, which drives receiving nodes
+	 * through the refresh (Section 3.11.4).
+	 */
+	if (nd->cfg.beacon == 1 &&
+	    (nd->beacon_last == 0 || now_ms >= nd->beacon_last +
+	    MESHD_BEACON_INTERVAL * 1000ULL))
+		(void)meshd_beacon_emit(nd);
+
+	return (hb);
+}
+
+/* ================================================================
+ * Friendship roles (MshPRT_v1.1 Section 3.6.5).
+ * ================================================================ */
+
+int
+meshd_friend_enable(struct meshd_node *nd, uint8_t recv_window,
+    uint8_t queue_size, uint8_t sub_list_size, int8_t min_rssi,
+    uint8_t max_queue_size_log)
+{
+
+	if (nd == NULL)
+		return (-1);
+	mesh_friend_fsm_init(&nd->friend_fsm, nd->addr, recv_window, queue_size,
+	    sub_list_size, min_rssi, max_queue_size_log);
+	nd->friend_enabled = 1;
+	return (0);
+}
+
+int
+meshd_friend_input(struct meshd_node *nd, uint16_t src, const uint8_t *pdu,
+    size_t len, int8_t rssi, uint8_t key_refresh, uint8_t iv_update,
+    uint32_t iv_index, uint64_t now, struct mesh_friend_out *out)
+{
+	uint8_t op;
+
+	if (nd == NULL || pdu == NULL || out == NULL || len == 0)
+		return (-1);
+	if (!nd->friend_enabled)
+		return (-1);
+
+	op = pdu[0] & 0x7f;
+	switch (op) {
+	case MESH_FRIEND_OP_REQUEST:
+		/* The LPN's primary element unicast is the message SRC. */
+		if (mesh_friend_fsm_recv_request(&nd->friend_fsm, pdu, len, src,
+		    rssi, now, out) != 0)
+			return (-1);
+		return (0);
+	case MESH_FRIEND_OP_POLL:
+		return (mesh_friend_fsm_recv_poll(&nd->friend_fsm, pdu, len,
+		    key_refresh, iv_update, iv_index, now, out));
+	case MESH_FRIEND_OP_SUBLIST_ADD:
+	case MESH_FRIEND_OP_SUBLIST_REMOVE:
+		return (mesh_friend_fsm_recv_sublist(&nd->friend_fsm, pdu, len,
+		    now, out));
+	case MESH_FRIEND_OP_CLEAR:
+		return (mesh_friend_fsm_recv_clear(&nd->friend_fsm, pdu, len,
+		    out));
+	default:
+		return (-1);
+	}
+}
+
+int
+meshd_friend_tick(struct meshd_node *nd, uint64_t now, struct mesh_friend_out *out)
+{
+
+	if (nd == NULL || out == NULL || !nd->friend_enabled)
+		return (-1);
+	return (mesh_friend_fsm_tick(&nd->friend_fsm, now, out));
+}
+
+int
+meshd_friend_enqueue(struct meshd_node *nd, const struct mesh_fq_entry *in)
+{
+
+	if (nd == NULL || in == NULL || !nd->friend_enabled)
+		return (-1);
+	return (mesh_friend_fsm_enqueue(&nd->friend_fsm, in));
+}
+
+int
+meshd_lpn_enable(struct meshd_node *nd, uint8_t rssi_factor,
+    uint8_t rx_window_factor, uint8_t min_queue_size_log, uint8_t recv_delay,
+    uint32_t poll_timeout, uint32_t offer_window_ms, uint32_t poll_interval_ms,
+    uint64_t now, struct mesh_lpn_out *out)
+{
+
+	if (nd == NULL || out == NULL)
+		return (-1);
+	mesh_lpn_fsm_init(&nd->lpn_fsm, nd->addr, 1, rssi_factor, rx_window_factor,
+	    min_queue_size_log, recv_delay, poll_timeout, offer_window_ms,
+	    poll_interval_ms);
+	nd->lpn_enabled = 1;
+	return (mesh_lpn_fsm_start(&nd->lpn_fsm, now, out));
+}
+
+int
+meshd_lpn_recv_offer(struct meshd_node *nd, const uint8_t *pdu, size_t len,
+    uint16_t friend_addr, uint64_t now)
+{
+
+	if (nd == NULL || pdu == NULL || !nd->lpn_enabled)
+		return (-1);
+	return (mesh_lpn_fsm_recv_offer(&nd->lpn_fsm, pdu, len, friend_addr, now));
+}
+
+int
+meshd_lpn_recv_update(struct meshd_node *nd, const uint8_t *pdu, size_t len,
+    uint64_t now, struct mesh_lpn_out *out)
+{
+
+	if (nd == NULL || pdu == NULL || out == NULL || !nd->lpn_enabled)
+		return (-1);
+	return (mesh_lpn_fsm_recv_update(&nd->lpn_fsm, pdu, len, now, out));
+}
+
+int
+meshd_lpn_tick(struct meshd_node *nd, uint64_t now, struct mesh_lpn_out *out)
+{
+
+	if (nd == NULL || out == NULL || !nd->lpn_enabled)
+		return (-1);
+	return (mesh_lpn_fsm_tick(&nd->lpn_fsm, now, out));
+}
+
+/* ================================================================
+ * Provisioner role (MshPRT_v1.1 Section 5).
+ * ================================================================ */
+
+int
+meshd_provisioner_begin(struct meshd_node *nd, const uint8_t device_uuid[16],
+    uint32_t link_id, const uint8_t priv[32], const uint8_t random[32],
+    uint8_t attention, const struct mesh_prov_data *data,
+    uint32_t retry_interval_ms, unsigned max_retries, uint64_t now,
+    uint8_t *out, size_t *outlen)
+{
+
+	if (nd == NULL || device_uuid == NULL || data == NULL || out == NULL ||
+	    outlen == NULL)
+		return (-1);
+	if (mesh_prov_provisioner_init(&nd->prov_sess, priv, random, attention,
+	    data) != 0)
+		return (-1);
+	if (mesh_prov_session_start(&nd->prov_sess) != 0) {
+		mesh_prov_session_free(&nd->prov_sess);
+		return (-1);
+	}
+	mesh_prov_link_init_provisioner(&nd->prov_link, link_id, device_uuid,
+	    retry_interval_ms, max_retries);
+	nd->provisioner_active = 1;
+	nd->prov_ack_pending = 0;
+	return (mesh_prov_link_open(&nd->prov_link, now, out, outlen));
+}
+
+int
+meshd_provisioner_recv(struct meshd_node *nd, const uint8_t *pkt, size_t len,
+    uint64_t now)
+{
+	uint8_t rpdu[MESH_PROV_PDU_MAX];
+	size_t rlen;
+	int have_pdu, have_ack;
+
+	if (nd == NULL || pkt == NULL || !nd->provisioner_active)
+		return (-1);
+
+	have_pdu = 0;
+	have_ack = 0;
+	if (mesh_prov_link_recv(&nd->prov_link, pkt, len, now, rpdu, &rlen,
+	    &have_pdu, nd->prov_ack, &nd->prov_ack_len, &have_ack) != 0)
+		return (-1);
+	if (have_ack)
+		nd->prov_ack_pending = 1;
+	if (have_pdu) {
+		/* Feed the reassembled Provisioning PDU to the session. */
+		(void)mesh_prov_session_recv(&nd->prov_sess, rpdu, rlen);
+	}
+	return (0);
+}
+
+int
+meshd_provisioner_poll(struct meshd_node *nd, uint64_t now, uint8_t *out,
+    size_t *outlen)
+{
+	uint8_t ppdu[MESH_PROV_PDU_MAX];
+	size_t plen;
+	int rc;
+
+	if (nd == NULL || out == NULL || outlen == NULL || !nd->provisioner_active)
+		return (-1);
+
+	/* Transaction Acks take priority so the peer can advance promptly. */
+	if (nd->prov_ack_pending) {
+		memcpy(out, nd->prov_ack, nd->prov_ack_len);
+		*outlen = nd->prov_ack_len;
+		nd->prov_ack_pending = 0;
+		return (1);
+	}
+
+	/* Drain any in-flight link output (Link Open, segments, retransmit). */
+	rc = mesh_prov_link_poll(&nd->prov_link, now, out, outlen);
+	if (rc != 0)
+		return (rc);
+
+	/* Link idle and open: start the next queued Provisioning PDU. */
+	if (mesh_prov_link_idle(&nd->prov_link)) {
+		rc = mesh_prov_session_poll(&nd->prov_sess, ppdu, &plen);
+		if (rc == 1) {
+			if (mesh_prov_link_send(&nd->prov_link, ppdu, plen,
+			    now) != 0)
+				return (-1);
+			return (mesh_prov_link_poll(&nd->prov_link, now, out,
+			    outlen));
+		}
+	}
+	return (0);
+}
+
+int
+meshd_provisioner_drain(struct meshd_node *nd, uint64_t now)
+{
+	uint8_t pkt[MESH_PBADV_PKT_MAX];
+	size_t len;
+	int n = 0;
+
+	if (nd == NULL || !nd->provisioner_active)
+		return (0);
+
+	/*
+	 * Hand every ready PB-ADV bearer packet (Link Open, transaction
+	 * segments, Acks, retransmits) to the bearer tagged as PB-ADV.  poll()
+	 * is timing-gated, so at a fixed `now` it returns 0 once the burst is
+	 * drained; the iteration cap is a belt-and-suspenders busy-loop guard.
+	 */
+	while (n < 64) {
+		int rc = meshd_provisioner_poll(nd, now, pkt, &len);
+
+		if (rc != 1)
+			break;
+		n++;
+		nd->tx_frames++;
+		if (nd->bearer != NULL && nd->bearer->tx != NULL) {
+			if (nd->bearer->tx(nd->bearer->arg, MESHD_PDU_PROV, pkt,
+			    len) != 0)
+				nd->tx_errors++;
+		}
+	}
+	return (n);
+}
+
+int
+meshd_provisioner_done(const struct meshd_node *nd)
+{
+
+	return (nd != NULL && (nd->provisioner_active || nd->pbgatt.active) &&
+	    mesh_prov_session_done(&nd->prov_sess));
+}
+
+int
+meshd_provisioner_begin_mgr(struct meshd_node *nd, struct mesh_mgr *mgr,
+    const uint8_t device_uuid[16], uint8_t num_elements, uint32_t link_id,
+    const uint8_t priv[32], const uint8_t random[32], uint8_t attention,
+    uint32_t retry_interval_ms, unsigned max_retries, uint64_t now,
+    uint8_t *out, size_t *outlen)
+{
+	struct mesh_prov_data pd;
+
+	if (nd == NULL || mgr == NULL || device_uuid == NULL)
+		return (-1);
+	/* The manager allocates the address and fills the provisioning data. */
+	if (mesh_mgr_provision_prepare(mgr, device_uuid, num_elements, &pd) != 0)
+		return (-1);
+	if (meshd_provisioner_begin(nd, device_uuid, link_id, priv, random,
+	    attention, &pd, retry_interval_ms, max_retries, now, out,
+	    outlen) != 0) {
+		mesh_mgr_provision_abort(mgr);
+		return (-1);
+	}
+	return (0);
+}
+
+struct mesh_mgr_node *
+meshd_provisioner_commit_mgr(struct meshd_node *nd, struct mesh_mgr *mgr,
+    uint64_t prov_time)
+{
+	const uint8_t *devkey;
+
+	if (nd == NULL || mgr == NULL || !meshd_provisioner_done(nd))
+		return (NULL);
+	devkey = mesh_prov_session_devkey(&nd->prov_sess);
+	if (devkey == NULL)
+		return (NULL);
+	return (mesh_mgr_provision_commit(mgr, devkey, prov_time));
+}
+
+/*
+ * OTA provisioning driver (the operator-facing wrapper of the manager-driven
+ * Provisioner seam).  begin reserves an address, opens the PB-ADV link toward an
+ * unprovisioned device and emits the initial Link Open to the bearer; the tick
+ * loop then pumps the handshake via meshd_provisioner_recv / _drain until
+ * meshd_provisioner_done, at which point commit records the node + DevKey.
+ */
+#define	MESHD_OTA_RETRY_MS	500u
+#define	MESHD_OTA_MAX_RETRIES	5u
+
+int
+meshd_provision_ota_begin(struct meshd_node *nd, const uint8_t device_uuid[16],
+    uint8_t num_elements, uint64_t now)
+{
+	uint8_t out[MESH_PBADV_PKT_MAX];
+	size_t outlen;
+	uint32_t link_id;
+
+	if (nd == NULL || device_uuid == NULL || num_elements < 1)
+		return (-1);
+	if (!nd->mgr_active || nd->mgr == NULL)
+		return (-1);
+	if (nd->provisioner_active || nd->prov_target_active)
+		return (-1);			/* one provisioning at a time */
+
+	/* A per-session Link ID (MshPRT_v1.1 Section 5.3.1): distinct per attempt. */
+	link_id = 0x4D455348u ^ (uint32_t)now ^
+	    (mesh_sim_node_seq(nd->self) << 1) ^ device_uuid[0];
+
+	if (meshd_provisioner_begin_mgr(nd, nd->mgr, device_uuid, num_elements,
+	    link_id, NULL, NULL, 0, MESHD_OTA_RETRY_MS, MESHD_OTA_MAX_RETRIES,
+	    now, out, &outlen) != 0)
+		return (-1);
+	if (nd->bearer != NULL && nd->bearer->tx != NULL)
+		(void)nd->bearer->tx(nd->bearer->arg, MESHD_PDU_PROV, out, outlen);
+
+	memcpy(nd->prov_target_uuid, device_uuid, sizeof(nd->prov_target_uuid));
+	nd->prov_target_elements = num_elements;
+	nd->prov_target_active = 1;
+	return (0);
+}
+
+int
+meshd_provision_gatt_begin(struct meshd_node *nd, const char *addr,
+    uint8_t addr_type, uint8_t adapter_index,
+    const uint8_t device_uuid[16], uint8_t num_elements)
+{
+	struct mesh_prov_data pd;
+
+	if (nd == NULL || addr == NULL || strlen(addr) != 17 ||
+	    addr_type > MESHD_ADDR_RANDOM || device_uuid == NULL ||
+	    num_elements < 1 ||
+	    !nd->mgr_active ||
+	    nd->mgr == NULL || nd->prov_target_active || nd->provisioner_active ||
+	    nd->pbgatt.active || nd->bearer == NULL ||
+	    nd->bearer->pbgatt_open == NULL)
+		return (-1);
+	if (mesh_mgr_provision_prepare(nd->mgr, device_uuid, num_elements,
+	    &pd) != 0)
+		return (-1);
+	/* MTU 23 is always available; discovery may later grow the transport. */
+	if (meshd_pbgatt_begin(nd, MESHD_PBGATT_MIN_MTU, NULL, NULL, 0,
+	    &pd) != 0) {
+		mesh_mgr_provision_abort(nd->mgr);
+		return (-1);
+	}
+	nd->pbgatt.adapter_index = adapter_index;
+	if (nd->bearer->pbgatt_open(nd->bearer->arg, addr, addr_type,
+	    adapter_index) != 0) {
+		if (nd->pbgatt.active) {
+			mesh_prov_session_free(&nd->prov_sess);
+			memset(&nd->pbgatt, 0, sizeof(nd->pbgatt));
+		}
+		mesh_mgr_provision_abort(nd->mgr);
+		return (-1);
+	}
+	memcpy(nd->prov_target_uuid, device_uuid, sizeof(nd->prov_target_uuid));
+	nd->prov_target_elements = num_elements;
+	nd->prov_target_active = 1;
+	return (0);
+}
+
+struct mesh_mgr_node *
+meshd_provision_ota_commit(struct meshd_node *nd, uint64_t prov_time)
+{
+	struct mesh_mgr_node *n;
+
+	if (nd == NULL || !nd->prov_target_active)
+		return (NULL);
+	n = meshd_provisioner_commit_mgr(nd, nd->mgr, prov_time);
+	if (n != NULL) {
+		nd->prov_target_active = 0;
+		/* PB-GATT completes by closing its GATT provisioning link. */
+		if (nd->pbgatt.active)
+			meshd_pbgatt_close(nd);
+	}
+	return (n);
+}

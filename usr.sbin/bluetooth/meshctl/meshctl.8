@@ -1,0 +1,183 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.Dd July 12, 2026
+.Dt MESHCTL 8
+.Os
+.Sh NAME
+.Nm meshctl
+.Nd control the meshd Bluetooth Mesh daemon
+.Sh SYNOPSIS
+.Nm
+.Op Fl s Ar socket
+.Ar command Op Ar args ...
+.Nm
+.Op Fl s Ar socket
+.Fl i
+.Nm
+.Cm help
+.Sh DESCRIPTION
+The
+.Nm
+utility is the command-line client for
+.Xr meshd 8 ,
+the Bluetooth Mesh node and network-manager daemon.
+It connects to the daemon's line-oriented control socket, sends a single
+command (one-shot mode) or a stream of commands (interactive mode), prints each
+reply and exits non-zero when the daemon answers
+.Ql ERR .
+.Pp
+.Nm
+carries no mesh logic of its own: the daemon owns the node, the created
+network, the roster and DevKey store, and the Configuration Client.
+.Pp
+The options are:
+.Bl -tag -width indent
+.It Fl s Ar socket
+Connect to
+.Ar socket
+instead of the default
+.Pa /var/run/meshd.sock .
+.It Fl i
+Interactive mode: read commands from standard input, one per line, until
+.Ql quit ,
+.Ql exit
+or end-of-file.
+.El
+.Sh COMMANDS
+.Ss Node and network
+.Bl -tag -width indent -compact
+.It Cm status
+Show the node address, provisioning state, sequence number, IV Index and
+counters.
+.It Cm models
+Show every SIG model registered in the local Composition Data together with
+the number of AppKey bindings and subscriptions and whether it has a
+publication.  This view never exposes NetKeys, AppKeys or Device Keys.
+.It Cm create-network
+Mint a fresh network (primary NetKey and AppKey, IV Index 0) with this node as
+the Provisioner, and begin the manager roster.
+.It Cm list-nodes
+List the network roster (each node's primary address and element count).
+.It Cm provision-scan
+Scan for unprovisioned device beacons.
+.It Cm provision Ar uuid-hex32 Op Ar elements
+Provision a remote device (identified by its 16-octet device UUID) over the air
+into the created network, allocating it a unicast address block.
+.It Cm provision-gatt Ar addr uuid-hex32 Op Ar elements
+Provision an already-connected unprovisioned device through its Mesh
+Provisioning Service.  The daemon discovers service UUID 0x1827, writes Data In
+UUID 0x2ADB, subscribes to Data Out UUID 0x2ADC, and applies Proxy-PDU SAR at
+the negotiated ATT value limit.
+.It Cm provision-status
+Poll and, when the handshake completes, commit an in-flight over-the-air
+provisioning, recording the node and its DevKey.
+.It Cm provision-local Ar addr Ar iv
+Self-provision this node without an over-the-air exchange.
+.It Cm key-refresh Ar sub-verb
+Operate Key Refresh on the primary subnet.
+.It Cm reset
+Clear this node's provisioning.
+.El
+.Ss Configuration Client
+Each
+.Cm cfg
+sub-verb builds the matching Configuration message, seals it under the target
+node's DevKey, sends it to the node's primary element and surfaces the returned
+Configuration Status.
+.Ar dst
+is the target node's unicast address.
+.Bl -tag -width indent -compact
+.It Cm cfg comp-get Ar dst Op Ar page
+Composition Data Get.
+.It Cm cfg appkey-add Ar dst
+Bind the manager's primary AppKey to the node.
+.It Cm cfg model-bind Ar dst Ar elem Ar model Op Ar company
+Bind the primary AppKey to a model.
+.It Cm cfg sub-add Ar dst Ar elem Ar group Ar model Op Ar company
+Subscribe a model to a group address.
+.It Cm cfg pub-set Ar dst Ar elem Ar pubaddr Ar ttl Ar period Ar rtx Ar model Op Ar company
+Set a model's publication.
+.It Cm cfg netkey-add Ar dst Ar netidx Ar key-hex32
+Add a subnet NetKey to the node;
+.Cm cfg netkey-delete Ar dst Ar netidx
+removes it.
+.It Cm cfg relay Ar dst Op Ar relay retransmit
+Get or set the node's Relay state.
+.It Cm cfg beacon | gatt-proxy | friend | ttl Ar dst Op Ar state
+Get or set a node-wide state.
+.It Cm cfg nettransmit Ar dst Op Ar count intervalsteps
+Get or set the Network Transmit state.
+.It Cm cfg node-identity-get | node-identity-set Ar dst Ar netidx Op Ar identity
+Get or set per-subnet Node Identity.
+.It Cm cfg lpn-polltimeout-get Ar dst Ar lpn-addr
+Query a Friend's PollTimeout for a Low Power Node.
+.It Cm cfg hb-pub-set | hb-sub-set Ar dst Ar ...
+Configure Heartbeat publication / subscription.
+.It Cm cfg node-reset Ar dst
+Remove the node from the network.
+.El
+.Pp
+Local Lighting operators include
+.Cm lightness-state ,
+.Cm lightness-default ,
+.Cm lightness-range ,
+.Cm ctl-state ,
+.Cm ctl-range ,
+.Cm hsl-state ,
+.Cm hsl-range ,
+.Cm xyl-state ,
+.Cm xyl-range ,
+.Cm lc-mode ,
+.Cm lc-om ,
+.Cm lc-light-onoff ,
+and
+.Cm lc-property .
+.Cm lc-property
+takes a 16-bit property ID and a one- to four-octet hex value.
+.Ss Application sockets
+.Bl -tag -width indent -compact
+.It Cm app-register Ar model Op Ar vendor
+Register an application-owned model on this socket.
+.It Cm app-events Op Ar max
+Drain this socket's queued inbound Access events.
+.It Cm app-watch Ar model Op Ar vendor
+Register an application-owned model and keep the connection open, printing the
+initial daemon reply and subsequent asynchronous
+.Ql EVENT
+lines for matching inbound Access messages.
+.El
+.Pp
+Run
+.Nm Cm help
+for the full sub-verb list with argument sketches.
+.Sh EXIT STATUS
+.Nm
+exits 0 when the daemon answered
+.Ql OK ,
+1 when it answered
+.Ql ERR ,
+and 2 on a connection or I/O error.
+.Sh FILES
+.Bl -tag -width indent
+.It Pa /var/run/meshd.sock
+Default
+.Xr meshd 8
+control socket.
+.El
+.Sh EXAMPLES
+Mint a network, provision a device and configure it:
+.Bd -literal -offset indent
+meshctl create-network
+meshctl provision 0102030405060708090a0b0c0d0e0f10 1
+meshctl provision-status
+meshctl cfg appkey-add 0x0005
+meshctl cfg model-bind 0x0005 0x0005 0x1000
+.Ed
+.Sh SEE ALSO
+.Xr meshd 8
+.Sh AUTHORS
+.An Kory Heard

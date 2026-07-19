@@ -272,6 +272,7 @@ struct sockaddr_l2cap {
 #define SO_L2CAP_ENCRYPTED      6      /* get/set whether wait for encryption on connect */
 #define SO_L2CAP_ECBFC		7	/* get/set ECBFC mode (before connect) */
 #define SO_L2CAP_RECONFIG	8	/* set new MTU/MPS (ECBFC reconfigure) */
+#define SO_L2CAP_OWN_ADDR_TYPE	9	/* get/set LE HCI Own_Address_Type */
 
 /*
  * SO_L2CAP_RECONFIG parameter: pass via setsockopt on an ECBFC socket

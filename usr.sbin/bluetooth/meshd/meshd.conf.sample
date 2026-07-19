@@ -1,0 +1,45 @@
+#
+# meshd.conf - Bluetooth Mesh node configuration for meshd(8).
+#
+# Format: one "key value" pair per line.  Blank lines and lines beginning
+# with '#' are ignored.  Keys (16-octet values are lower/upper-case hex,
+# exactly 32 hex digits; integers are decimal or 0x-prefixed hex):
+#
+#   device_uuid    <32 hex>   Device UUID advertised when unprovisioned.
+#   device_key     <32 hex>   Local DeviceKey (generated and persisted if omitted).
+#   netkey         <32 hex>   Primary subnet NetKey (provisioning data).
+#   netkey_index   <0..4095>  NetKey Index for the primary subnet.
+#   company_id     <0..65535> Assigned Bluetooth Company Identifier.
+#   product_id     <0..65535> Vendor-defined product identifier.
+#   version_id     <0..65535> Vendor-defined product version identifier.
+#   appkey         <32 hex>   Application key bound to the models.
+#   appkey_index   <0..4095>  AppKey Index.
+#   iv_index       <u32>      Current IV Index.
+#   unicast_addr   <0x0001..0x7fff>  Primary element unicast address.
+#   default_ttl    <0..127, not 1>   Default Time To Live for sent messages.
+#   relay          <0|1>      Advertise/enable the Relay feature.
+#   proxy          <0|1>      Advertise/enable the GATT Proxy feature.
+#   friend         0          Reserved; the Friend feature is unsupported.
+#   blued_socket   <path>     skyblued control socket for the radio bearer
+#                             (default /var/run/blued.sock).  meshd reaches the
+#                             radio only through skyblued's mesh-bearer API.
+#
+# A node whose netkey is supplied here comes up already provisioned (useful
+# for a static test network).  Omit netkey to bring the node up
+# unprovisioned and provision it later over the control socket.
+
+device_uuid    00112233445566778899aabbccddeeff
+# device_key   00112233445566778899aabbccddeeff
+netkey         7dd7364cd842ad18c17c2b820c84c3d6
+netkey_index   0
+company_id     0x05f1
+product_id     1
+version_id     1
+appkey         63964771734fbd76e3b40519d1d94a48
+appkey_index   0
+iv_index       0
+unicast_addr   0x0001
+default_ttl    7
+relay          1
+proxy          0
+friend         0

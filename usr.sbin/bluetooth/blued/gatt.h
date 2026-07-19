@@ -77,9 +77,33 @@ struct gatt_discovery {
 /* Database Hash characteristic UUID (Core Spec Vol 3 Part G §7.3.1) */
 #define GATT_UUID_DATABASE_HASH		0x2B2A
 
+/* Service Changed characteristic UUID (Core Spec Vol 3 Part G §7.1) */
+#define GATT_UUID_SERVICE_CHANGED	0x2A05
+
+/*
+ * A received Handle Value Indication is a Service Changed indication only if
+ * it targets the Service Changed characteristic's value handle (recorded at
+ * discovery) AND carries the 4-octet {affected start, affected end} range.
+ * Core Spec Vol 3 Part G §2.5.2 identifies Service Changed by the
+ * characteristic — i.e. its value handle — not by PDU length; matching on the
+ * 4-byte length alone lets ANY 4-byte indication on ANY handle thrash the
+ * cached GATT handle set.  A zero recorded handle (characteristic absent or
+ * not yet discovered) never matches.
+ */
+static inline bool
+gatt_indication_is_service_changed(uint16_t svc_changed_value_handle,
+    uint16_t ind_handle, size_t ind_len)
+{
+	return (svc_changed_value_handle != 0 &&
+	    ind_handle == svc_changed_value_handle && ind_len == 4);
+}
+
 /* gatt.c */
 int	gatt_read_database_hash(struct att_conn *ac, uint8_t hash[16]);
 int	gatt_discover_primary_services(struct att_conn *ac,
+	    struct gatt_service *svcs, int maxsvcs, int *nsvcs);
+int	gatt_discover_primary_services_range(struct att_conn *ac,
+	    uint16_t start_handle, uint16_t end_handle,
 	    struct gatt_service *svcs, int maxsvcs, int *nsvcs);
 int	gatt_discover_primary_service_by_uuid(struct att_conn *ac,
 	    uint16_t uuid16, struct gatt_service *services,

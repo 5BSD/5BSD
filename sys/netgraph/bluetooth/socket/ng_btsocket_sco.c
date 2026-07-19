@@ -674,6 +674,7 @@ ng_btsocket_sco_send_lp_con_rsp(ng_btsocket_sco_rtentry_p rt, bdaddr_p dst, int 
 	ep->status = status;
 	ep->link_type = NG_HCI_LINK_SCO;
 	bcopy(dst, &ep->bdaddr, sizeof(ep->bdaddr));
+	ep->con_handle = 0;
 
 	NG_SEND_MSG_HOOK(error, ng_btsocket_sco_node, msg, rt->hook, 0);
 

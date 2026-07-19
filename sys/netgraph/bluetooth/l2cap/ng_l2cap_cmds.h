@@ -72,8 +72,17 @@ do {									\
 		c->data.mtu.mtu = htole16((_mtu));			\
 		c->hdr.length += sizeof(c->data.mtu);			\
 	} else if ((_reason) == NG_L2CAP_REJ_INVALID_CID) {		\
-		c->data.cid.scid = htole16((_scid));			\
-		c->data.cid.dcid = htole16((_dcid));			\
+		/*							\
+		 * Core Spec Vol 3 Part A Sec 4.1 (Table 4.4): the	\
+		 * Reason Data is local (first) then remote (second),	\
+		 * where local = destination CID and remote = source	\
+		 * CID from the rejected command.  Callers pass the	\
+		 * command's source as _scid and destination as _dcid,	\
+		 * so the destination (_dcid) goes in the first (local)	\
+		 * slot and the source (_scid) in the second (remote).	\
+		 */							\
+		c->data.cid.scid = htole16((_dcid));			\
+		c->data.cid.dcid = htole16((_scid));			\
 		c->hdr.length += sizeof(c->data.cid);			\
 	}								\
 									\
@@ -612,6 +621,9 @@ do {									\
 } while (0)
 
 void ng_l2cap_con_wakeup              (ng_l2cap_con_p);
+int  ng_l2cap_le_coc_tx_frags         (ng_l2cap_con_p, ng_l2cap_chan_p,
+					struct mbuf *, u_int16_t,
+					u_int32_t, u_int16_t);
 void ng_l2cap_con_fail                (ng_l2cap_con_p, u_int16_t);
 void ng_l2cap_process_command_timeout (node_p, hook_p, void *, int);
 

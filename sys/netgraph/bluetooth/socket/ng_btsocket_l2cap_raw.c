@@ -1074,9 +1074,13 @@ ng_btsocket_l2cap_raw_control(struct socket *so, u_long cmd, void *data,
 			return (EINVAL);
 		}
 
+		/*
+		 * L2CA_GetInfo request carries only the fixed info_type.
+		 * p->info_size is the caller's response buffer capacity and
+		 * must not inflate the kernel request allocation.
+		 */
 		NG_MKMESSAGE(msg, NGM_L2CAP_COOKIE,
-			NGM_L2CAP_L2CA_GET_INFO, sizeof(*ip) + p->info_size,
-			M_NOWAIT);
+			NGM_L2CAP_L2CA_GET_INFO, sizeof(*ip), M_NOWAIT);
 		if (msg == NULL) {
 			mtx_unlock(&pcb->pcb_mtx);
 			return (ENOMEM);
@@ -1088,6 +1092,7 @@ ng_btsocket_l2cap_raw_control(struct socket *so, u_long cmd, void *data,
 		ip = (ng_l2cap_l2ca_get_info_ip *)(msg->data);
 		bcopy(&pcb->dst, &ip->bdaddr, sizeof(ip->bdaddr));
 		ip->info_type = p->info_type;
+		ip->linktype = NG_HCI_LINK_ACL;
 
 		NG_SEND_MSG_HOOK(error, ng_btsocket_l2cap_raw_node, msg,
 			pcb->rt->hook, 0);

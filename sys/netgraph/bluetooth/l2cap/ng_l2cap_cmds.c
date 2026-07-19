@@ -58,6 +58,134 @@
  ******************************************************************************/
 
 /*
+ * LE Credit-Based Flow Control: send continuation K-frames for an SDU.
+ *
+ * `frag` is the unsent remainder of an SDU as a bare data fragment chain
+ * (no L2CAP headers yet).  Segment it into K-frames of at most `mps`
+ * bytes of payload, consume one remote credit per frame, and append the
+ * resulting ACL packet chains onto con->tx_pkt.  Shared by the initial
+ * L2CA_WRITE path and the credit-resume path so both segment identically.
+ *
+ * ng_l2cap_lp_send() asserts con->tx_pkt == NULL, so we detach the ACL
+ * chain the caller already built for this SDU (the earlier K-frames, or
+ * anything else queued), let each lp_send build a fresh chain, splice
+ * them together, and restore the combined chain into con->tx_pkt before
+ * returning on EVERY path.  The caller is responsible for flushing
+ * con->tx_pkt to the link afterwards.
+ *
+ * Ownership: this helper takes ownership of `frag`.
+ *   - SDU complete: `frag` fully consumed, returns 0.
+ *   - Stall (peer out of credits mid-SDU): remainder parked in
+ *     ch->tx_sdu_pending, token/len recorded, returns EINPROGRESS.
+ *     This is a WAIT condition per Core Spec Vol 3 Part A Section 10.1,
+ *     NOT a disconnect: the K-frames already appended stay queued and
+ *     the peer resumes us with an LE Flow Control Credit.
+ *   - Fatal error (mbuf alloc / lp_send failure): unsent remainder
+ *     freed, returns the errno.
+ *
+ * lp_send() frees the mbuf it is handed on failure, so on a send error
+ * we free only `next_frag` (the still-unsent remainder), never the mbuf
+ * we just passed in -- no double free.
+ */
+int
+ng_l2cap_le_coc_tx_frags(ng_l2cap_con_p con, ng_l2cap_chan_p ch,
+    struct mbuf *frag, u_int16_t mps, u_int32_t token, u_int16_t sdu_len)
+{
+	struct mbuf	*saved_tx = NULL;
+	struct mbuf	*saved_last = NULL;
+	int		 error = 0;
+
+	/*
+	 * Detach any ACL chain the caller already built for this SDU so
+	 * lp_send's con->tx_pkt == NULL assertion holds.  Reattached
+	 * (with the new K-frames spliced on) before every return.
+	 */
+	saved_tx = con->tx_pkt;
+	con->tx_pkt = NULL;
+	for (saved_last = saved_tx;
+	     saved_last != NULL && saved_last->m_nextpkt != NULL;
+	     saved_last = saved_last->m_nextpkt)
+		;
+
+	while (frag != NULL) {
+		struct mbuf	*next_frag;
+
+		if (ch->credits_remote == 0) {
+			/*
+			 * Credit exhaustion mid-SDU: STALL, do not
+			 * disconnect (Core Spec Vol 3 Part A Section 10.1
+			 * -- running out of peer credits is a WAIT
+			 * condition).  Park the unsent remainder; the
+			 * already-appended K-frames remain queued in
+			 * saved_tx for the caller to flush.  We resume
+			 * from ng_l2cap_process_flow_control_credit() when
+			 * the peer grants more credits.
+			 */
+			/*
+			 * A channel may have only one partially emitted SDU.  Queue
+			 * selection normally prevents a second write from reaching
+			 * this helper while that SDU is stalled, but keep the helper
+			 * safe if a future caller violates that contract: never
+			 * overwrite (and leak/reorder) the older remainder.
+			 */
+			if (ch->tx_sdu_pending != NULL) {
+				NG_FREE_M(frag);
+				con->tx_pkt = saved_tx;
+				return (EBUSY);
+			}
+			ch->tx_sdu_pending = frag;
+			ch->tx_pending_token = token;
+			ch->tx_pending_len = sdu_len;
+			con->tx_pkt = saved_tx;
+			return (EINPROGRESS);
+		}
+
+		if (frag->m_pkthdr.len > mps) {
+			next_frag = m_split(frag, mps, M_NOWAIT);
+			if (next_frag == NULL) {
+				/* frag not yet handed to lp_send: free it */
+				NG_FREE_M(frag);
+				error = ENOBUFS;
+				break;
+			}
+		} else
+			next_frag = NULL;
+
+		ch->credits_remote--;
+		error = ng_l2cap_lp_send(con, ch->dcid, frag);
+		/*
+		 * lp_send() consumed `frag` (freeing it on error).  The
+		 * still-unsent remainder is next_frag from here on.
+		 */
+		frag = next_frag;
+
+		if (error != 0) {
+			/* No K-frame reached the peer; its credit is unspent. */
+			ch->credits_remote++;
+			NG_FREE_M(frag);	/* free unsent remainder */
+			frag = NULL;
+			break;
+		}
+
+		/* Splice this K-frame's ACL chain onto the saved chain */
+		if (saved_last != NULL)
+			saved_last->m_nextpkt = con->tx_pkt;
+		else
+			saved_tx = con->tx_pkt;
+		con->tx_pkt = NULL;
+
+		if (saved_last == NULL)
+			saved_last = saved_tx;
+		while (saved_last != NULL && saved_last->m_nextpkt != NULL)
+			saved_last = saved_last->m_nextpkt;
+	}
+
+	/* Restore the combined ACL chain for the caller to flush */
+	con->tx_pkt = saved_tx;
+	return (error);
+} /* ng_l2cap_le_coc_tx_frags */
+
+/*
  * Process L2CAP command queue on connection
  */
 
@@ -69,14 +197,24 @@ ng_l2cap_con_wakeup(ng_l2cap_con_p con)
 	struct mbuf	*m = NULL;
 	int		 error = 0;
 
-	/* Find first non-pending command in the queue */
+	/*
+	 * Find the first runnable command in the queue.  Credit-based writes
+	 * are ordered per channel: once an SDU stalls part-way through, later
+	 * socket records for that channel must remain queued until its parked
+	 * remainder is completely emitted.  Commands for other channels may
+	 * still make progress while this channel waits for credits.
+	 */
 	TAILQ_FOREACH(cmd, &con->cmd_list, next) {
 		KASSERT((cmd->con == con),
 ("%s: %s - invalid connection pointer!\n",
 			__func__, NG_NODE_NAME(con->l2cap->node)));
 
-		if (!(cmd->flags & NG_L2CAP_CMD_PENDING))
-			break;
+		if (cmd->flags & NG_L2CAP_CMD_PENDING)
+			continue;
+		if (cmd->code == NGM_L2CAP_L2CA_WRITE && cmd->ch != NULL &&
+		    cmd->ch->tx_sdu_pending != NULL)
+			continue;
+		break;
 	}
 
 	if (cmd == NULL)
@@ -229,8 +367,6 @@ ng_l2cap_con_wakeup(ng_l2cap_con_p con)
 			u_int16_t	mps = cmd->ch->mps_remote;
 			u_int16_t	first_payload;
 			struct mbuf	*frag;
-			struct mbuf	*saved_tx = NULL;
-			struct mbuf	*saved_last = NULL;
 
 			/* Sanity check MPS to avoid underflow in (mps - 2) */
 			if (mps < 2) {
@@ -280,98 +416,44 @@ ng_l2cap_con_wakeup(ng_l2cap_con_p con)
 			error = ng_l2cap_lp_send(con, cmd->ch->dcid, m);
 			m = NULL;
 			if (error != 0) {
+				/* lp_send rejected the K-frame, so retain its credit. */
+				cmd->ch->credits_remote++;
 				NG_FREE_M(frag);
 				goto le_coc_write_done;
 			}
 
 			/*
-			 * Save the ACL chain from the first K-frame.
-			 * ng_l2cap_lp_send will assert tx_pkt == NULL
-			 * on the next call.
+			 * Send the continuation K-frames.  con->tx_pkt
+			 * currently holds the first K-frame's ACL chain;
+			 * the helper saves/restores it around each send,
+			 * splices the continuation frames on, and either
+			 * completes the SDU, stalls on credit exhaustion,
+			 * or fails.  On every outcome con->tx_pkt is left
+			 * holding the frames we did emit, for our caller
+			 * (ng_l2cap_lp_deliver) to flush.
 			 */
-			saved_tx = con->tx_pkt;
-			con->tx_pkt = NULL;
+			error = ng_l2cap_le_coc_tx_frags(con, cmd->ch, frag,
+			    mps, cmd->token, length);
 
-			/* Find the last fragment in saved chain */
-			for (saved_last = saved_tx;
-			     saved_last != NULL &&
-			     saved_last->m_nextpkt != NULL;
-			     saved_last = saved_last->m_nextpkt)
-				;
-
-			/* Send continuation K-frames */
-			while (frag != NULL && error == 0) {
-				struct mbuf *next_frag;
-
-				if (cmd->ch->credits_remote == 0) {
-					/*
-					 * Credit exhaustion mid-SDU: we
-					 * already sent partial K-frames
-					 * that the peer cannot reassemble.
-					 * Disconnect the channel per spec
-					 * Vol 3 Part A §10.1.
-					 *
-					 * Report the error first while ch
-					 * is still valid, then disconnect
-					 * and clean up fully before return.
-					 */
-					NG_FREE_M(frag);
-					con->tx_pkt = saved_tx;
-					ng_l2cap_l2ca_write_rsp(cmd->ch,
-					    cmd->token,
-					    NG_L2CAP_NO_RESOURCES,
-					    length);
-					ng_l2cap_l2ca_discon_ind(cmd->ch);
-					ng_l2cap_free_chan(cmd->ch);
-					ng_l2cap_unlink_cmd(cmd);
-					ng_l2cap_free_cmd(cmd);
-					return;
-				}
-
-				if (frag->m_pkthdr.len > mps) {
-					next_frag = m_split(frag, mps,
-					    M_NOWAIT);
-					if (next_frag == NULL) {
-						NG_FREE_M(frag);
-						error = ENOBUFS;
-						break;
-					}
-				} else
-					next_frag = NULL;
-
-				cmd->ch->credits_remote--;
-				error = ng_l2cap_lp_send(con,
-				    cmd->ch->dcid, frag);
-
-				if (error == 0) {
-					/*
-					 * Append this K-frame's ACL
-					 * chain to the saved chain.
-					 */
-					if (saved_last != NULL)
-						saved_last->m_nextpkt =
-						    con->tx_pkt;
-					else
-						saved_tx = con->tx_pkt;
-					con->tx_pkt = NULL;
-
-					/* Advance saved_last */
-					if (saved_last == NULL)
-						saved_last = saved_tx;
-					while (saved_last != NULL &&
-					    saved_last->m_nextpkt != NULL)
-						saved_last =
-						    saved_last->m_nextpkt;
-				}
-
-				frag = next_frag;
+			if (error == EINPROGRESS) {
+				/*
+				 * Stalled mid-SDU: the peer ran out of TX
+				 * credits.  Per Core Spec Vol 3 Part A
+				 * §10.1 this is a WAIT condition, NOT a
+				 * disconnect.  The K-frames within credit
+				 * are queued in con->tx_pkt; the remainder
+				 * is parked in cmd->ch->tx_sdu_pending and
+				 * will be sent when the peer grants credits
+				 * (ng_l2cap_process_flow_control_credit).
+				 * Defer the L2CA_WRITE response until the
+				 * SDU completes.  token and length are now
+				 * captured in the channel, so reclaim the
+				 * command.
+				 */
+				ng_l2cap_unlink_cmd(cmd);
+				ng_l2cap_free_cmd(cmd);
+				break;
 			}
-
-			if (error != 0 && frag != NULL)
-				NG_FREE_M(frag);
-
-			/* Restore the combined ACL chain */
-			con->tx_pkt = saved_tx;
 
 le_coc_write_done:
 			ng_l2cap_l2ca_write_rsp(cmd->ch, cmd->token,
@@ -411,8 +493,16 @@ le_coc_write_done:
 		break;
 
 	case NG_L2CAP_LE_CREDIT_CON_RSP:
-		(void) ng_l2cap_lp_send(con, NG_L2CAP_LESIGNAL_CID, m);
+		error = ng_l2cap_lp_send(con, NG_L2CAP_LESIGNAL_CID, m);
 		ng_l2cap_unlink_cmd(cmd);
+		if (cmd->ch != NULL) {
+			(void)ng_l2cap_l2ca_con_rsp_rsp(cmd->ch, cmd->token,
+			    error == 0 ? NG_L2CAP_SUCCESS : NG_L2CAP_NO_RESOURCES);
+			if (error != 0) {
+				ng_l2cap_l2ca_discon_ind(cmd->ch);
+				ng_l2cap_free_chan(cmd->ch);
+			}
+		}
 		ng_l2cap_free_cmd(cmd);
 		break;
 
@@ -433,14 +523,89 @@ le_coc_write_done:
 				bluetooth_l2cap_rtx_timeout());
 		break;
 
-	case NG_L2CAP_FLOW_CONTROL_CREDIT:
-	case NG_L2CAP_CREDIT_CON_RSP:
 	case NG_L2CAP_CREDIT_RECONFIG_REQ:
+		/*
+		 * Enhanced Credit Based Reconfigure Request (0x19) is a
+		 * *request*: it expects a matching Reconfigure Response
+		 * (0x1A) from the peer.  Like CFG_REQ/CREDIT_CON_REQ it must
+		 * stay PENDING with an RTX timer so the response can be paired
+		 * via ng_l2cap_cmd_by_ident() -- which only matches PENDING
+		 * commands.  Freeing it here (as a fire-and-forget response
+		 * would) drops the response and wedges the channel at
+		 * reconfig_pending forever (spec Vol 3 Part A Section 4.27).
+		 * Valid on both CID 0x0001 (BR/EDR) and 0x0005 (LE) per
+		 * Table 4.2, so select the signaling CID by link type.
+		 */
+		error = ng_l2cap_lp_send(con,
+		    (con->linktype == NG_HCI_LINK_ACL) ?
+		    NG_L2CAP_SIGNAL_CID : NG_L2CAP_LESIGNAL_CID, m);
+		if (error != 0) {
+			/*
+			 * Never reached the peer: clear the guard so a later
+			 * reconfigure is not rejected with EBUSY, then drop
+			 * the command.
+			 */
+			if (cmd->ch != NULL)
+				cmd->ch->reconfig_pending = 0;
+			ng_l2cap_unlink_cmd(cmd);
+			ng_l2cap_free_cmd(cmd);
+		} else
+			ng_l2cap_command_timeout(cmd,
+				bluetooth_l2cap_rtx_timeout());
+		break;
+
+	case NG_L2CAP_FLOW_CONTROL_CREDIT:
+		error = ng_l2cap_lp_send(con,
+		    (con->linktype == NG_HCI_LINK_ACL) ?
+		    NG_L2CAP_SIGNAL_CID : NG_L2CAP_LESIGNAL_CID, m);
+		ng_l2cap_unlink_cmd(cmd);
+		if (error != 0 && cmd->ch != NULL) {
+			/* The grant never reached the peer: restore wire accounting. */
+			if (cmd->ch->credits_local >= cmd->token)
+				cmd->ch->credits_local -= cmd->token;
+			ng_l2cap_l2ca_discon_ind(cmd->ch);
+			ng_l2cap_free_chan(cmd->ch);
+		}
+		ng_l2cap_free_cmd(cmd);
+		break;
+
+	case NG_L2CAP_CREDIT_CON_RSP:
+		error = ng_l2cap_lp_send(con,
+		    (con->linktype == NG_HCI_LINK_ACL) ?
+		    NG_L2CAP_SIGNAL_CID : NG_L2CAP_LESIGNAL_CID, m);
+		ng_l2cap_unlink_cmd(cmd);
+		if (cmd->ecbfc_group_id != 0) {
+			ng_l2cap_chan_p ch, ch_next;
+
+			LIST_FOREACH_SAFE(ch, &l2cap->chan_list, next, ch_next) {
+				if (ch->con == con &&
+				    ch->idtype == NG_L2CAP_L2CA_IDTYPE_ECBFC &&
+				    ch->ecbfc_group_id == cmd->ecbfc_group_id) {
+					if (error != 0) {
+						ng_l2cap_l2ca_discon_ind(ch);
+						ng_l2cap_free_chan(ch);
+					} else {
+						/* The signaling transaction is complete. */
+						ch->ident = 0;
+						ch->ecbfc_group_id = 0;
+						ch->ecbfc_group_count = 0;
+						ch->ecbfc_group_index = 0;
+						ch->ecbfc_response_seen = 0;
+						ch->ecbfc_response_result = 0;
+					}
+				}
+			}
+		}
+		ng_l2cap_free_cmd(cmd);
+		break;
+
 	case NG_L2CAP_CREDIT_RECONFIG_RSP:
 		/*
 		 * Codes 0x16-0x1A are valid on both CID 0x0001 (BR/EDR)
 		 * and CID 0x0005 (LE) per spec Table 4.2.  Select the
-		 * correct signaling CID based on the link type.
+		 * correct signaling CID based on the link type.  These are
+		 * terminal (a credit grant, or a response we are sending);
+		 * no reply is expected, so free after send.
 		 */
 		(void) ng_l2cap_lp_send(con,
 		    (con->linktype == NG_HCI_LINK_ACL) ?
@@ -640,6 +805,18 @@ ng_l2cap_process_command_timeout(node_p node, hook_p hook, void *arg1, int arg2)
 		/* Info request timed out. Let the upper layer know */
 		ng_l2cap_l2ca_get_info_rsp(cmd->con, cmd->token,
 			NG_L2CAP_TIMEOUT, NULL);
+		break;
+
+	case NG_L2CAP_CREDIT_RECONFIG_REQ:
+		/*
+		 * Reconfigure Response never arrived: clear the guard so a
+		 * subsequent reconfigure is not rejected with EBUSY.  The
+		 * pending MTU/MPS are discarded (never applied), so the
+		 * channel keeps its pre-request values (spec Vol 3 Part A
+		 * Section 4.27).
+		 */
+		if (cmd->ch != NULL)
+			cmd->ch->reconfig_pending = 0;
 		break;
 
 	case NG_L2CAP_FLOW_CONTROL_CREDIT:

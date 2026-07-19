@@ -19,10 +19,13 @@
  */
 
 #include <sys/endian.h>
+#include <sys/stat.h>
 #include <sys/uio.h>
 
 #include <err.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
@@ -31,6 +34,7 @@
 #include "hci_log.h"
 
 static int log_fd = -1;
+static pthread_mutex_t log_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 /* BTSnoop epoch: Jan 1, 0000 AD.  Offset from Unix epoch in microseconds. */
 #define BTSNOOP_EPOCH_DELTA	0x00dcddb30f2f8000ULL
@@ -64,12 +68,27 @@ btsnoop_timestamp(void)
 void
 hci_log_open(const char *path)
 {
+	struct stat sb;
 	uint8_t hdr[16];
+	ssize_t n;
+	size_t off;
+	int fd;
 
-	log_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_CLOFORK,
-	    0600);
-	if (log_fd < 0) {
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_CLOFORK |
+	    O_NOFOLLOW, 0600);
+	if (fd < 0) {
 		warn("cannot open HCI log file %s", path);
+		return;
+	}
+	if (fstat(fd, &sb) != 0 || !S_ISREG(sb.st_mode) ||
+	    sb.st_uid != geteuid()) {
+		warnx("refusing unsafe HCI log file %s", path);
+		(void)close(fd);
+		return;
+	}
+	if (fchmod(fd, 0600) != 0) {
+		warn("cannot secure HCI log file %s", path);
+		(void)close(fd);
 		return;
 	}
 
@@ -77,25 +96,43 @@ hci_log_open(const char *path)
 	memcpy(hdr, "btsnoop\0", 8);
 	put_be32(hdr + 8, 1);		/* version */
 	put_be32(hdr + 12, 1002);	/* H4 datalink */
-	if (write(log_fd, hdr, sizeof(hdr)) != sizeof(hdr)) {
-		close(log_fd);
-		log_fd = -1;
+	for (off = 0; off < sizeof(hdr); off += (size_t)n) {
+		n = write(fd, hdr + off, sizeof(hdr) - off);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0) {
+			warn("cannot write HCI log header %s", path);
+			(void)close(fd);
+			return;
+		}
 	}
+	pthread_mutex_lock(&log_mtx);
+	if (log_fd >= 0)
+		(void)close(log_fd);
+	log_fd = fd;
+	pthread_mutex_unlock(&log_mtx);
 }
 
 void
 hci_log_close(void)
 {
+	pthread_mutex_lock(&log_mtx);
 	if (log_fd >= 0) {
-		close(log_fd);
+		(void)close(log_fd);
 		log_fd = -1;
 	}
+	pthread_mutex_unlock(&log_mtx);
 }
 
 bool
 hci_log_enabled(void)
 {
-	return (log_fd >= 0);
+	bool enabled;
+
+	pthread_mutex_lock(&log_mtx);
+	enabled = log_fd >= 0;
+	pthread_mutex_unlock(&log_mtx);
+	return (enabled);
 }
 
 void
@@ -107,9 +144,6 @@ hci_log_packet(uint8_t type, const uint8_t *data, uint16_t len,
 	uint32_t total;
 	struct iovec iov[3];
 	ssize_t expected, ret;
-
-	if (log_fd < 0)
-		return;
 
 	/*
 	 * BTSnoop flags:
@@ -137,12 +171,24 @@ hci_log_packet(uint8_t type, const uint8_t *data, uint16_t len,
 	iov[2].iov_base = __DECONST(void *, data);
 	iov[2].iov_len = len;
 	expected = (ssize_t)(sizeof(rec) + 1 + len);
+
+	pthread_mutex_lock(&log_mtx);
+	if (log_fd < 0) {
+		pthread_mutex_unlock(&log_mtx);
+		return;
+	}
 	ret = writev(log_fd, iov, 3);
-	if (ret < expected) {
+	if (ret < 0) {
 		warn("BTSnoop log write failed, closing");
 		close(log_fd);
 		log_fd = -1;
+	} else if (ret < expected) {
+		warnx("BTSnoop log short write (%zd/%zd), closing",
+		    ret, expected);
+		close(log_fd);
+		log_fd = -1;
 	}
+	pthread_mutex_unlock(&log_mtx);
 }
 
 /*
@@ -154,7 +200,7 @@ hci_log_packet(uint8_t type, const uint8_t *data, uint16_t len,
  */
 void
 hci_log_l2cap(uint16_t con_handle, uint16_t cid,
-    const uint8_t *data, uint16_t len, bool incoming)
+    const uint8_t *data, size_t len, bool incoming)
 {
 	uint8_t rec[24];
 	uint8_t hdr[8];		/* ACL header(4) + L2CAP header(4) */
@@ -165,8 +211,11 @@ hci_log_l2cap(uint16_t con_handle, uint16_t cid,
 	struct iovec iov[4];
 	ssize_t expected, ret;
 
-	if (log_fd < 0)
-		return;
+	if (len > UINT16_MAX) {
+		warnx("BTSnoop: L2CAP PDU length %zu exceeds uint16_t, "
+		    "truncating", len);
+		len = UINT16_MAX;
+	}
 
 	if (len > UINT16_MAX - 4)
 		return;
@@ -208,10 +257,22 @@ hci_log_l2cap(uint16_t con_handle, uint16_t cid,
 	iov[3].iov_base = __DECONST(void *, data);
 	iov[3].iov_len = len;
 	expected = (ssize_t)(sizeof(rec) + 1 + sizeof(hdr) + len);
+
+	pthread_mutex_lock(&log_mtx);
+	if (log_fd < 0) {
+		pthread_mutex_unlock(&log_mtx);
+		return;
+	}
 	ret = writev(log_fd, iov, 4);
-	if (ret < expected) {
+	if (ret < 0) {
 		warn("BTSnoop log write failed, closing");
 		close(log_fd);
 		log_fd = -1;
+	} else if (ret < expected) {
+		warnx("BTSnoop log short write (%zd/%zd), closing",
+		    ret, expected);
+		close(log_fd);
+		log_fd = -1;
 	}
+	pthread_mutex_unlock(&log_mtx);
 }

@@ -18,7 +18,7 @@
  * opened in Wireshark for analysis.  Enabled via blued -L <file>.
  *
  * BTSnoop format reference: RFC-like format used by Android and
- * Linux BlueZ.  Header: "btsnoop\0" + version(4) + datalink(4).
+ * other Bluetooth stacks.  Header: "btsnoop\0" + version(4) + datalink(4).
  * Each record: original_length(4) + included_length(4) + flags(4)
  * + drops(4) + timestamp_us(8) + data.
  */
@@ -29,7 +29,7 @@ bool	hci_log_enabled(void);
 void	hci_log_packet(uint8_t type, const uint8_t *data, uint16_t len,
 	    bool incoming);
 void	hci_log_l2cap(uint16_t con_handle, uint16_t cid,
-	    const uint8_t *data, uint16_t len, bool incoming);
+	    const uint8_t *data, size_t len, bool incoming);
 
 /* HCI packet type indicators for BTSnoop flags */
 #define HCI_LOG_CMD	0x01

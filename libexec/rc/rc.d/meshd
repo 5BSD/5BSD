@@ -1,0 +1,63 @@
+#!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Kory Heard
+# All rights reserved.
+#
+
+# PROVIDE: meshd
+# REQUIRE: DAEMON blued
+# KEYWORD: shutdown nojail
+#
+# Add the following lines to /etc/rc.conf to enable meshd:
+#
+# meshd_enable="YES"
+# meshd_config="/etc/bluetooth/meshd.conf"   # optional
+# meshd_socket="/var/run/meshd.sock"         # optional
+# meshd_state="/var/db/meshd.state"          # optional (node state)
+# meshd_mgr="/var/db/meshd.mgr"              # optional (network / roster)
+# meshd_blued_socket=""                      # optional skyblued ctl socket
+# meshd_flags=""                             # additional flags
+#
+
+. /etc/rc.subr
+
+name="meshd"
+desc="Bluetooth Mesh node daemon"
+rcvar="meshd_enable"
+command="/usr/sbin/${name}"
+pidfile="/var/run/${name}.pid"
+start_precmd="meshd_precmd"
+
+meshd_precmd()
+{
+	# The node and manager state stores hold secret key material.
+	mkdir -p /var/db
+	chmod 755 /var/db
+}
+
+load_rc_config $name
+
+: ${meshd_enable:="NO"}
+: ${meshd_config:="/etc/bluetooth/meshd.conf"}
+: ${meshd_socket:="/var/run/meshd.sock"}
+: ${meshd_state:="/var/db/meshd.state"}
+: ${meshd_mgr:="/var/db/meshd.mgr"}
+: ${meshd_blued_socket:=""}
+: ${meshd_flags:=""}
+
+# Build the command line.  meshd daemonises itself, so it is not run under a
+# supervising svcj wrapper.
+command_args="-s ${meshd_socket} -S ${meshd_state} -M ${meshd_mgr}"
+if [ -f "${meshd_config}" ]; then
+	command_args="${command_args} -f ${meshd_config}"
+fi
+if [ -n "${meshd_blued_socket}" ]; then
+	command_args="${command_args} -B ${meshd_blued_socket}"
+fi
+
+# doesn't make sense to run in a svcj: nojail keyword
+meshd_svcj="NO"
+
+run_rc_command "$1"

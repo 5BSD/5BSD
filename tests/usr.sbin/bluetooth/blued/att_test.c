@@ -20,6 +20,7 @@
 
 #include <atf-c.h>
 #include <errno.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -29,12 +30,17 @@
 
 #include "att.h"
 #include "att_server.h"
+#include "att_server_internal.h"
 #include "ble_util.h"
 #include "hci_log.h"
 #include "hci_util.h"
 
 #define TEST_CUSTOM_BLE_COC_CONNECT
+#define TEST_CUSTOM_BLE_ECBFC_CONNECT
+#define TEST_LINKS_SMP
 #include "test_common.h"
+#include "spec_oracles.h"
+#include "spec_att_client_oracles.h"
 
 /* ================================================================
  * att.c references ble_coc_connect via att_open_eatt.
@@ -43,14 +49,52 @@
  * ================================================================ */
 static int ble_coc_connect_retval = -1;
 static int ble_coc_connect_fd = -1;
+static uint16_t ble_ecbfc_last_psm;
+static int ble_ecbfc_last_count;
+static bool test_signature_valid;
+
+/*
+ * Dispatcher-only verifier control.  Cryptographic correctness is covered by
+ * smp_crypto_test against independent RFC 4493 CMAC oracles; these ATT tests
+ * use this switch solely to reach accept, reject, and replay state branches.
+ */
+bool
+smp_verify_signature(const uint8_t csrk[16] __unused,
+    const uint8_t *msg __unused, size_t msg_len __unused,
+    const uint8_t mac[8] __unused, uint32_t counter __unused)
+{
+
+	return (test_signature_valid);
+}
+int att_test_eatt_mtu(int, uint16_t *, uint16_t *);
 int
-ble_coc_connect(const uint8_t *addr __unused, uint8_t addr_type __unused,
+att_test_eatt_mtu(int fd __unused, uint16_t *imtu, uint16_t *omtu)
+{
+
+	*imtu = *omtu = BT_CORE63_EATT_MIN_MTU;
+	return (0);
+}
+
+int
+ble_coc_connect(const uint8_t *local_addr __unused,
+    const uint8_t *addr __unused, uint8_t addr_type __unused,
     uint16_t psm __unused, uint16_t mtu __unused)
 {
 
 	if (ble_coc_connect_fd >= 0)
 		return (ble_coc_connect_fd);
 	return (ble_coc_connect_retval);
+}
+
+int
+ble_ecbfc_connect(const uint8_t *local_addr __unused,
+    const uint8_t *addr __unused, uint8_t addr_type __unused,
+    uint16_t psm, uint16_t mtu __unused, int count, int *fds __unused)
+{
+
+	ble_ecbfc_last_psm = psm;
+	ble_ecbfc_last_count = count;
+	return (ble_coc_connect_fd >= 0 ? 1 : 0);
 }
 
 /* ================================================================
@@ -102,6 +146,24 @@ att_mock_cleanup(struct att_conn *ac, int peer_fd)
 #define TEST_DB_MAX_ATTRS	32
 #define TEST_DB_VAL_SIZE	512
 
+/* Local build_test_db() fixture handles; these are not SIG assignments. */
+#define TEST_GAP_NAME_HANDLE		0x0003
+#define TEST_SINGLE_CHAR_VALUE_HANDLE	0x0003
+#define TEST_CUSTOM_VALUE_HANDLE	0x0006
+#define TEST_CUSTOM_CCCD_HANDLE		0x0007
+
+/*
+ * Independent expectations for the local att_server.h queue contract.
+ * Core 6.3 Vol 3 Part F §3.4.6.1 permits a server/higher layer to choose
+ * these limits; Bluetooth does not require 16 entries or 4096 value octets.
+ */
+#define TEST_IMPL_PREPARE_QUEUE_ENTRY_LIMIT	16
+#define TEST_IMPL_PREPARE_QUEUE_BYTE_LIMIT	4096
+#define TEST_PREPARE_BYTE_CHUNK			512
+
+/* Local att.h bounded-bearer contract; not a SIG-assigned limit. */
+#define TEST_IMPL_ATT_MAX_EATT_BEARERS	5
+
 static void
 build_test_db(struct att_db *db, struct att_attr *attrs, uint8_t *val_buf)
 {
@@ -109,17 +171,30 @@ build_test_db(struct att_db *db, struct att_attr *attrs, uint8_t *val_buf)
 	attdb_init(db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
 
 	/* GAP Service */
-	attdb_add_service(db, 0x1800);
-	attdb_add_characteristic(db, 0x2A00,
-	    GATT_PROP_READ, ATT_PERM_READ, "Test", 4);
+	attdb_add_service(db, BT_ASSIGNED_UUID_GAP_SERVICE);
+	attdb_add_characteristic(db, BT_ASSIGNED_UUID_DEVICE_NAME,
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ, "Test", 4);
 
 	/* Custom Service */
 	attdb_add_service(db, 0xFFE0);
 	attdb_add_characteristic(db, 0xFFE1,
-	    GATT_PROP_READ | GATT_PROP_WRITE | GATT_PROP_NOTIFY,
+	    BT_CORE63_GATT_PROP_READ | BT_CORE63_GATT_PROP_WRITE |
+	    BT_CORE63_GATT_PROP_NOTIFY,
 	    ATT_PERM_READ | ATT_PERM_WRITE,
 	    "\xAA\xBB\xCC\xDD", 4);
 	attdb_add_cccd(db);
+}
+
+static void
+set_hash_fixture_attr(struct att_attr *a, uint16_t handle, uint16_t type,
+    const uint8_t *value, uint16_t value_len)
+{
+
+	memset(a, 0, sizeof(*a));
+	a->handle = handle;
+	a->uuid16 = type;
+	a->value = __DECONST(uint8_t *, value);
+	a->value_len = value_len;
 }
 
 /* ================================================================
@@ -136,6 +211,7 @@ ATF_TC_BODY(test_att_mtu_exchange, tc)
 	ssize_t n;
 
 	att_mock_pair(&ac, &peer);
+	ac.encrypted = true;
 
 	/*
 	 * att_exchange_mtu sends MTU req in a thread-blocking way,
@@ -148,14 +224,15 @@ ATF_TC_BODY(test_att_mtu_exchange, tc)
 		/* Child: mock peer — read MTU req, send MTU rsp */
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		/* Expect 3 bytes: opcode(0x02) + mtu(2) */
-		if (n != 3 || buf[0] != ATT_OP_MTU_REQ) {
+		/* Core 6.3 Vol 3 Part F §3.4.2.1, Table 3.5. */
+		if (n != BT_CORE63_ATT_MTU_PDU_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_MTU_REQ) {
 			close(peer);
 			_exit(1);
 		}
 		/* Reply with server MTU = 185 */
 		uint8_t rsp[3];
-		rsp[0] = ATT_OP_MTU_RSP;
+		rsp[0] = BT_CORE63_ATT_OP_MTU_RSP;
 		put_le16(rsp + 1, 185);
 		send(peer, rsp, 3, 0);
 		close(peer);
@@ -172,6 +249,61 @@ ATF_TC_BODY(test_att_mtu_exchange, tc)
 	waitpid(pid, &status, 0);
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
+
+	close(ac.fd);
+	free(ac.buf);
+}
+
+/*
+ * Preferred-MTU: att_exchange_mtu() must request exactly the value it is given
+ * (the daemon feeds blued_g.att_preferred_mtu here, SET_MTU verb).  Assert the
+ * requested MTU bytes on the wire, not just the negotiated result.
+ */
+ATF_TC_WITHOUT_HEAD(test_att_mtu_preferred);
+ATF_TC_BODY(test_att_mtu_preferred, tc)
+{
+	struct att_conn ac;
+	int peer;
+	uint8_t buf[8];
+	ssize_t n;
+	pid_t pid;
+	int status;
+	const uint16_t pref = 247;
+
+	att_mock_pair(&ac, &peer);
+	ac.encrypted = true;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		/* Child: verify the request carries the preferred MTU exactly. */
+		uint8_t rsp[3];
+
+		close(ac.fd);
+		n = recv(peer, buf, sizeof(buf), 0);
+		/* Core 6.3 Vol 3 Part F §§3.4.2.1-3.4.2.2. */
+		if (n != BT_CORE63_ATT_MTU_PDU_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_MTU_REQ ||
+		    get_le16(buf + 1) != pref) {
+			close(peer);
+			_exit(1);
+		}
+		rsp[0] = BT_CORE63_ATT_OP_MTU_RSP;
+		put_le16(rsp + 1, 185);
+		send(peer, rsp, 3, 0);
+		close(peer);
+		_exit(0);
+	}
+
+	close(peer);
+	ATF_CHECK_EQ(0, att_exchange_mtu(&ac, pref));
+	/* Negotiated = min(preferred, server) = 185. */
+	ATF_CHECK_EQ(ac.mtu, 185);
+
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status));
+	ATF_CHECK_EQ_MSG(WEXITSTATUS(status), 0,
+	    "request must carry the preferred MTU %u", pref);
 
 	close(ac.fd);
 	free(ac.buf);
@@ -194,7 +326,9 @@ ATF_TC_BODY(test_att_read, tc)
 	if (pid == 0) {
 		close(ac.fd);
 		n = recv(peer, req_buf, sizeof(req_buf), 0);
-		if (n != 3 || req_buf[0] != ATT_OP_READ_REQ) {
+		/* Core 6.3 Vol 3 Part F §3.4.4.3, Table 3.18. */
+		if (n != BT_CORE63_ATT_READ_REQ_SIZE ||
+		    req_buf[0] != BT_CORE63_ATT_OP_READ_REQ) {
 			close(peer);
 			_exit(1);
 		}
@@ -206,7 +340,7 @@ ATF_TC_BODY(test_att_read, tc)
 		}
 		/* Reply with 4-byte value */
 		uint8_t rsp[5];
-		rsp[0] = ATT_OP_READ_RSP;
+		rsp[0] = BT_CORE63_ATT_OP_READ_RSP;
 		rsp[1] = 0xDE;
 		rsp[2] = 0xAD;
 		rsp[3] = 0xBE;
@@ -252,8 +386,8 @@ ATF_TC_BODY(test_att_write_req, tc)
 		uint8_t buf[32];
 		close(ac.fd);
 		ssize_t n = recv(peer, buf, sizeof(buf), 0);
-		/* opcode(0x12) + handle(2) + value */
-		if (n < 3 || buf[0] != ATT_OP_WRITE_REQ) {
+		/* Core 6.3 Vol 3 Part F §3.4.5.1, Table 3.30. */
+		if (n < 3 || buf[0] != BT_CORE63_ATT_OP_WRITE_REQ) {
 			close(peer);
 			_exit(1);
 		}
@@ -265,7 +399,7 @@ ATF_TC_BODY(test_att_write_req, tc)
 			_exit(2);
 		}
 		/* Send Write Response */
-		uint8_t rsp = ATT_OP_WRITE_RSP;
+		uint8_t rsp = BT_CORE63_ATT_OP_WRITE_RSP;
 		send(peer, &rsp, 1, 0);
 		close(peer);
 		_exit(0);
@@ -302,7 +436,8 @@ ATF_TC_BODY(test_att_write_cmd, tc)
 	uint8_t buf[32];
 	ssize_t n = recv(peer, buf, sizeof(buf), 0);
 	ATF_CHECK_EQ(n, 6); /* opcode(1) + handle(2) + value(3) */
-	ATF_CHECK_EQ(buf[0], ATT_OP_WRITE_CMD);
+	/* Core 6.3 Vol 3 Part F §3.4.5.3, Table 3.32. */
+	ATF_CHECK_EQ(buf[0], BT_CORE63_ATT_OP_WRITE_CMD);
 	ATF_CHECK_EQ(get_le16(buf + 1), 0x0007);
 	ATF_CHECK_EQ(buf[3], 0xAA);
 	ATF_CHECK_EQ(buf[4], 0xBB);
@@ -327,8 +462,9 @@ ATF_TC_BODY(test_att_read_blob, tc)
 		uint8_t buf[32];
 		close(ac.fd);
 		ssize_t n = recv(peer, buf, sizeof(buf), 0);
-		/* Read Blob: opcode(0x0C) + handle(2) + offset(2) = 5 */
-		if (n != 5 || buf[0] != ATT_OP_READ_BLOB_REQ) {
+		/* Core 6.3 Vol 3 Part F §3.4.4.5, Table 3.20. */
+		if (n != BT_CORE63_ATT_READ_BLOB_REQ_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_READ_BLOB_REQ) {
 			close(peer);
 			_exit(1);
 		}
@@ -340,7 +476,7 @@ ATF_TC_BODY(test_att_read_blob, tc)
 		}
 		/* Reply with 3 bytes of data */
 		uint8_t rsp[4];
-		rsp[0] = ATT_OP_READ_BLOB_RSP;
+		rsp[0] = BT_CORE63_ATT_OP_READ_BLOB_RSP;
 		rsp[1] = 0x01;
 		rsp[2] = 0x02;
 		rsp[3] = 0x03;
@@ -384,17 +520,18 @@ ATF_TC_BODY(test_att_error_response, tc)
 		uint8_t buf[32];
 		close(ac.fd);
 		ssize_t n = recv(peer, buf, sizeof(buf), 0);
-		if (n < 1 || buf[0] != ATT_OP_READ_REQ) {
+		if (n < 1 || buf[0] != BT_CORE63_ATT_OP_READ_REQ) {
 			close(peer);
 			_exit(1);
 		}
 		/* Reply with Error Response: attr not found */
 		uint8_t rsp[5];
-		rsp[0] = ATT_OP_ERROR_RSP;
-		rsp[1] = ATT_OP_READ_REQ;	/* req opcode */
+		/* Core 6.3 Vol 3 Part F §3.4.1.1, Table 3.3. */
+		rsp[0] = BT_CORE63_ATT_OP_ERROR_RSP;
+		rsp[1] = BT_CORE63_ATT_OP_READ_REQ;	/* request in error */
 		put_le16(rsp + 2, 0x00FF);	/* handle */
-		rsp[4] = ATT_ERR_ATTR_NOT_FOUND;
-		send(peer, rsp, 5, 0);
+		rsp[4] = BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_FOUND;
+		send(peer, rsp, BT_CORE63_ATT_ERROR_RSP_SIZE, 0);
 		close(peer);
 		_exit(0);
 	}
@@ -404,7 +541,7 @@ ATF_TC_BODY(test_att_error_response, tc)
 	size_t outlen = 0;
 	int ret = att_read(&ac, 0x00FF, val, sizeof(val), &outlen);
 	/* att_read returns the ATT error code on EPROTO */
-	ATF_CHECK_EQ(ret, ATT_ERR_ATTR_NOT_FOUND);
+	ATF_CHECK_EQ(ret, BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_FOUND);
 
 	int status;
 	waitpid(pid, &status, 0);
@@ -435,7 +572,7 @@ ATF_TC_BODY(test_att_server_mtu, tc)
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
 
 	/* Build MTU request from client: MTU = 200 */
-	pdu[0] = ATT_OP_MTU_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_MTU_REQ;
 	put_le16(pdu + 1, 200);
 
 	int ret = att_server_handle(&ac, &db, pdu, 3, -1, 0);
@@ -444,9 +581,9 @@ ATF_TC_BODY(test_att_server_mtu, tc)
 	/* Read the response from client_fd */
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 3);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_MTU_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_MTU_RSP);
 	uint16_t server_mtu = get_le16(rsp + 1);
-	ATF_CHECK_EQ(server_mtu, ATT_PDU_BUF_SIZE);
+	ATF_CHECK_EQ(server_mtu, BT_CORE63_ATT_MAX_MTU);
 
 	/* Effective MTU = min(200, 517) = 200 */
 	ATF_CHECK_EQ(ac.mtu, 200);
@@ -471,17 +608,17 @@ ATF_TC_BODY(test_att_server_read_by_group, tc)
 
 	/* Read By Group Type: start=0x0001, end=0xFFFF, uuid=0x2800 */
 	uint8_t pdu[7];
-	pdu[0] = ATT_OP_READ_BY_GROUP_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
 	put_le16(pdu + 3, 0xFFFF);
-	put_le16(pdu + 5, GATT_UUID_PRIMARY_SERVICE);
+	put_le16(pdu + 5, BT_ASSIGNED_UUID_PRIMARY_SERVICE);
 
 	int ret = att_server_handle(&ac, &db, pdu, 7, -1, 0);
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n > 2);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BY_GROUP_TYPE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_RSP);
 
 	/* entry_len = 4 (handle + end_group) + 2 (16-bit service UUID) = 6 */
 	uint8_t entry_len = rsp[1];
@@ -519,17 +656,17 @@ ATF_TC_BODY(test_att_server_read_by_type, tc)
 
 	/* Read By Type: start=0x0001, end=0xFFFF, uuid=0x2803 (Characteristic) */
 	uint8_t pdu[7];
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
 	put_le16(pdu + 3, 0xFFFF);
-	put_le16(pdu + 5, GATT_UUID_CHARACTERISTIC);
+	put_le16(pdu + 5, BT_ASSIGNED_UUID_CHARACTERISTIC);
 
 	int ret = att_server_handle(&ac, &db, pdu, 7, -1, 0);
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n > 2);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BY_TYPE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_TYPE_RSP);
 
 	/* Char decl value: props(1) + value_handle(2) + uuid(2) = 5 bytes
 	 * entry: handle(2) + value(5) = 7 */
@@ -565,7 +702,7 @@ ATF_TC_BODY(test_att_server_find_info, tc)
 
 	/* Find Information: start=0x0005, end=0x0007 */
 	uint8_t pdu[5];
-	pdu[0] = ATT_OP_FIND_INFO_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_FIND_INFO_REQ;
 	put_le16(pdu + 1, 0x0005);
 	put_le16(pdu + 3, 0x0007);
 
@@ -574,17 +711,17 @@ ATF_TC_BODY(test_att_server_find_info, tc)
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n > 2);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_FIND_INFO_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_FIND_INFO_RSP);
 
 	/* Format 1 = 16-bit UUIDs, each entry = handle(2) + uuid(2) = 4 */
-	ATF_CHECK_EQ(rsp[1], 0x01);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_FIND_INFO_FORMAT_UUID16);
 
 	int num_entries = (n - 2) / 4;
 	ATF_REQUIRE(num_entries >= 3);
 
 	/* handle 5 = Char Decl (0x2803) */
 	ATF_CHECK_EQ(get_le16(rsp + 2), 0x0005);
-	ATF_CHECK_EQ(get_le16(rsp + 4), GATT_UUID_CHARACTERISTIC);
+	ATF_CHECK_EQ(get_le16(rsp + 4), BT_ASSIGNED_UUID_CHARACTERISTIC);
 
 	/* handle 6 = Custom Char value (0xFFE1) */
 	ATF_CHECK_EQ(get_le16(rsp + 6), 0x0006);
@@ -592,7 +729,7 @@ ATF_TC_BODY(test_att_server_find_info, tc)
 
 	/* handle 7 = CCCD (0x2902) */
 	ATF_CHECK_EQ(get_le16(rsp + 10), 0x0007);
-	ATF_CHECK_EQ(get_le16(rsp + 12), GATT_UUID_CCCD);
+	ATF_CHECK_EQ(get_le16(rsp + 12), BT_ASSIGNED_UUID_CCCD);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -614,7 +751,7 @@ ATF_TC_BODY(test_att_server_read, tc)
 
 	/* Read Request: handle=0x0003 (Device Name = "Test") */
 	uint8_t pdu[3];
-	pdu[0] = ATT_OP_READ_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_REQ;
 	put_le16(pdu + 1, 0x0003);
 
 	int ret = att_server_handle(&ac, &db, pdu, 3, -1, 0);
@@ -622,7 +759,7 @@ ATF_TC_BODY(test_att_server_read, tc)
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 	ATF_CHECK_EQ(memcmp(rsp + 1, "Test", 4), 0);
 
 	att_mock_cleanup(&ac, client_fd);
@@ -645,7 +782,7 @@ ATF_TC_BODY(test_att_server_write, tc)
 
 	/* Write Request: handle=0x0006 (Custom Char), value=0x11 0x22 0x33 0x44 */
 	uint8_t pdu[7];
-	pdu[0] = ATT_OP_WRITE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_WRITE_REQ;
 	put_le16(pdu + 1, 0x0006);
 	pdu[3] = 0x11;
 	pdu[4] = 0x22;
@@ -658,7 +795,7 @@ ATF_TC_BODY(test_att_server_write, tc)
 	/* Check Write Response was sent */
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 1);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 
 	/* Verify the value was actually stored — find by handle */
 	struct att_attr *found = NULL;
@@ -693,7 +830,7 @@ ATF_TC_BODY(test_att_server_write_cmd, tc)
 
 	/* Write Command: handle=0x0006, value=0x55 0x66 */
 	uint8_t pdu[5];
-	pdu[0] = ATT_OP_WRITE_CMD;
+	pdu[0] = BT_CORE63_ATT_OP_WRITE_CMD;
 	put_le16(pdu + 1, 0x0006);
 	pdu[3] = 0x55;
 	pdu[4] = 0x66;
@@ -741,7 +878,7 @@ ATF_TC_BODY(test_att_server_prepare_execute, tc)
 
 	/* Prepare Write: handle=0x0006, offset=0, value=0xAA 0xBB */
 	uint8_t prep[7];
-	prep[0] = ATT_OP_PREPARE_WRITE_REQ;
+	prep[0] = BT_CORE63_ATT_OP_PREPARE_WRITE_REQ;
 	put_le16(prep + 1, 0x0006);
 	put_le16(prep + 3, 0x0000); /* offset */
 	prep[5] = 0xAA;
@@ -753,14 +890,14 @@ ATF_TC_BODY(test_att_server_prepare_execute, tc)
 	/* Read Prepare Write Response */
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_PREPARE_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
 	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0006);
 	ATF_CHECK_EQ(get_le16(rsp + 3), 0x0000);
 
 	/* Execute Write: flags=0x01 (write all) */
 	uint8_t exec[2];
-	exec[0] = ATT_OP_EXECUTE_WRITE_REQ;
-	exec[1] = 0x01;
+	exec[0] = BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ;
+	exec[1] = BT_CORE63_ATT_EXECUTE_WRITE_COMMIT;
 
 	ret = att_server_handle(&ac, &db, exec, 2, -1, 0);
 	ATF_CHECK_EQ(ret, 0);
@@ -768,7 +905,7 @@ ATF_TC_BODY(test_att_server_prepare_execute, tc)
 	/* Read Execute Write Response */
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 1);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_EXECUTE_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP);
 
 	/* Verify value was applied */
 	struct att_attr *found = NULL;
@@ -802,21 +939,22 @@ ATF_TC_BODY(test_att_server_cccd_enable, tc)
 
 	/* Write 0x0001 (notifications) to CCCD at handle 7 */
 	uint8_t pdu[5];
-	pdu[0] = ATT_OP_WRITE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_WRITE_REQ;
 	put_le16(pdu + 1, 0x0007);
-	put_le16(pdu + 3, GATT_CCCD_NOTIFY);
+	put_le16(pdu + 3, BT_CORE63_GATT_CCCD_NOTIFICATIONS_ENABLED);
 
 	int ret = att_server_handle(&ac, &db, pdu, 5, -1, 0);
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 1);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 
 	/* Verify CCCD value is stored per-connection */
 	ATF_REQUIRE(ac.cccd_count >= 1);
 	ATF_CHECK_EQ(ac.cccds[0].handle, 0x0007);
-	ATF_CHECK_EQ(ac.cccds[0].value, GATT_CCCD_NOTIFY);
+	ATF_CHECK_EQ(ac.cccds[0].value,
+	    BT_CORE63_GATT_CCCD_NOTIFICATIONS_ENABLED);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -838,7 +976,7 @@ ATF_TC_BODY(test_att_server_notification, tc)
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 7);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_HANDLE_NOTIFY);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
 	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0006);
 	ATF_CHECK_EQ(rsp[3], 0x11);
 	ATF_CHECK_EQ(rsp[4], 0x22);
@@ -865,7 +1003,7 @@ ATF_TC_BODY(test_att_server_invalid_handle, tc)
 
 	/* Read Request for invalid handle 0xFFFF */
 	uint8_t pdu[3];
-	pdu[0] = ATT_OP_READ_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_REQ;
 	put_le16(pdu + 1, 0xFFFF);
 
 	int ret = att_server_handle(&ac, &db, pdu, 3, -1, 0);
@@ -873,10 +1011,10 @@ ATF_TC_BODY(test_att_server_invalid_handle, tc)
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[1], ATT_OP_READ_REQ);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_REQ);
 	ATF_CHECK_EQ(get_le16(rsp + 2), 0xFFFF);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_HANDLE);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_HANDLE);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -896,19 +1034,21 @@ ATF_TC_BODY(test_attdb_build, tc)
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
 
 	/* GAP Service 0x1800 */
-	uint16_t h1 = attdb_add_service(&db, 0x1800);
+	uint16_t h1 = attdb_add_service(&db, BT_ASSIGNED_UUID_GAP_SERVICE);
 	ATF_CHECK_EQ(h1, 0x0001);
 
-	uint16_t h2 = attdb_add_characteristic(&db, 0x2A00,
-	    GATT_PROP_READ, ATT_PERM_READ, "Dev", 3);
+	uint16_t h2 = attdb_add_characteristic(&db,
+	    BT_ASSIGNED_UUID_DEVICE_NAME, BT_CORE63_GATT_PROP_READ,
+	    ATT_PERM_READ, "Dev", 3);
 	ATF_CHECK_EQ(h2, 0x0003); /* decl=2, value=3 */
 
 	/* DIS Service 0x180A */
-	uint16_t h3 = attdb_add_service(&db, 0x180A);
+	uint16_t h3 = attdb_add_service(&db,
+	    BT_ASSIGNED_UUID_DEVICE_INFORMATION);
 	ATF_CHECK_EQ(h3, 0x0004);
 
-	uint16_t h4 = attdb_add_characteristic(&db, 0x2A29,
-	    GATT_PROP_READ, ATT_PERM_READ, "ACME", 4);
+	uint16_t h4 = attdb_add_characteristic(&db, 0x2a29,
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ, "ACME", 4);
 	ATF_CHECK_EQ(h4, 0x0006); /* decl=5, value=6 */
 
 	/* Custom Service 0xFFE0 */
@@ -916,7 +1056,7 @@ ATF_TC_BODY(test_attdb_build, tc)
 	ATF_CHECK_EQ(h5, 0x0007);
 
 	uint16_t h6 = attdb_add_characteristic(&db, 0xFFE1,
-	    GATT_PROP_READ | GATT_PROP_NOTIFY,
+	    BT_CORE63_GATT_PROP_READ | BT_CORE63_GATT_PROP_NOTIFY,
 	    ATT_PERM_READ, "\x01\x02", 2);
 	ATF_CHECK_EQ(h6, 0x0009); /* decl=8, value=9 */
 
@@ -929,12 +1069,23 @@ ATF_TC_BODY(test_attdb_build, tc)
 		ATF_CHECK_EQ(db.attrs[i].handle, (uint16_t)(i + 1));
 
 	/* Verify service UUIDs */
-	ATF_CHECK_EQ(db.attrs[0].uuid16, GATT_UUID_PRIMARY_SERVICE);
-	ATF_CHECK_EQ(get_le16(db.attrs[0].value), 0x1800);
-	ATF_CHECK_EQ(db.attrs[3].uuid16, GATT_UUID_PRIMARY_SERVICE);
-	ATF_CHECK_EQ(get_le16(db.attrs[3].value), 0x180A);
-	ATF_CHECK_EQ(db.attrs[6].uuid16, GATT_UUID_PRIMARY_SERVICE);
+	ATF_CHECK_EQ(db.attrs[0].uuid16, BT_ASSIGNED_UUID_PRIMARY_SERVICE);
+	ATF_CHECK_EQ(get_le16(db.attrs[0].value), BT_ASSIGNED_UUID_GAP_SERVICE);
+	ATF_CHECK_EQ(db.attrs[3].uuid16, BT_ASSIGNED_UUID_PRIMARY_SERVICE);
+	ATF_CHECK_EQ(get_le16(db.attrs[3].value),
+	    BT_ASSIGNED_UUID_DEVICE_INFORMATION);
+	ATF_CHECK_EQ(db.attrs[6].uuid16, BT_ASSIGNED_UUID_PRIMARY_SERVICE);
 	ATF_CHECK_EQ(get_le16(db.attrs[6].value), 0xFFE0);
+	/* Core 6.3 Vol 3 Part G §3.3.1, Table 3.4 declaration layout. */
+	ATF_CHECK_EQ(db.attrs[1].uuid16, BT_ASSIGNED_UUID_CHARACTERISTIC);
+	ATF_CHECK_EQ(db.attrs[1].value_len, 5);
+	ATF_CHECK_EQ(db.attrs[1].value[0], BT_CORE63_GATT_PROP_READ);
+	ATF_CHECK_EQ(get_le16(db.attrs[1].value + 1), h2);
+	ATF_CHECK_EQ(get_le16(db.attrs[1].value + 3),
+	    BT_ASSIGNED_UUID_DEVICE_NAME);
+	ATF_CHECK_EQ(db.attrs[9].uuid16, BT_ASSIGNED_UUID_CCCD);
+	ATF_CHECK_EQ(db.attrs[9].value_len, BT_CORE63_ATT_UUID16_SIZE);
+	ATF_CHECK_EQ(get_le16(db.attrs[9].value), 0);
 }
 
 /* 19. test_attdb_hash */
@@ -942,23 +1093,65 @@ ATF_TC_WITHOUT_HEAD(test_attdb_hash);
 ATF_TC_BODY(test_attdb_hash, tc)
 {
 	struct att_db db;
-	struct att_attr attrs[TEST_DB_MAX_ATTRS];
-	uint8_t val_buf[TEST_DB_VAL_SIZE];
-	uint8_t hash1[16], hash2[16];
+	struct att_attr attrs[15];
+	uint8_t hash[BT_CORE63_ATT_DB_HASH_SIZE];
+	/* Core 6.3 Vol 3 Part G Appendix B, Table B.1 attribute values. */
+	static const uint8_t v01[] = { 0x00, 0x18 };
+	static const uint8_t v02[] = { 0x0a, 0x03, 0x00, 0x00, 0x2a };
+	static const uint8_t v04[] = { 0x02, 0x05, 0x00, 0x01, 0x2a };
+	static const uint8_t v06[] = { 0x01, 0x18 };
+	static const uint8_t v07[] = { 0x20, 0x08, 0x00, 0x05, 0x2a };
+	static const uint8_t v0a[] = { 0x0a, 0x0b, 0x00, 0x29, 0x2b };
+	static const uint8_t v0c[] = { 0x02, 0x0d, 0x00, 0x2a, 0x2b };
+	static const uint8_t v0e[] = { 0x08, 0x18 };
+	static const uint8_t v0f[] = { 0x14, 0x00, 0x16, 0x00, 0x0f, 0x18 };
+	static const uint8_t v10[] = { 0xa2, 0x11, 0x00, 0x18, 0x2a };
+	static const uint8_t v13[] = { 0x00, 0x00 };
+	static const uint8_t v14[] = { 0x0f, 0x18 };
+	static const uint8_t v15[] = { 0x02, 0x16, 0x00, 0x19, 0x2a };
+	/* Core 6.3 Vol 3 Part G Appendix B result, MSB first. */
+	static const uint8_t expected[] = {
+		0xf1, 0xca, 0x2d, 0x48, 0xec, 0xf5, 0x8b, 0xac,
+		0x8a, 0x88, 0x30, 0xbb, 0xb9, 0xfb, 0xa9, 0x90
+	};
 
-	build_test_db(&db, attrs, val_buf);
+	memset(&db, 0, sizeof(db));
+	db.attrs = attrs;
+	db.count = (int)(sizeof(attrs) / sizeof(attrs[0]));
+	set_hash_fixture_attr(&attrs[0], 0x0001,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE, v01, sizeof(v01));
+	set_hash_fixture_attr(&attrs[1], 0x0002,
+	    BT_ASSIGNED_UUID_CHARACTERISTIC, v02, sizeof(v02));
+	set_hash_fixture_attr(&attrs[2], 0x0004,
+	    BT_ASSIGNED_UUID_CHARACTERISTIC, v04, sizeof(v04));
+	set_hash_fixture_attr(&attrs[3], 0x0006,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE, v06, sizeof(v06));
+	set_hash_fixture_attr(&attrs[4], 0x0007,
+	    BT_ASSIGNED_UUID_CHARACTERISTIC, v07, sizeof(v07));
+	set_hash_fixture_attr(&attrs[5], 0x0009,
+	    BT_ASSIGNED_UUID_CCCD, NULL, 0);
+	set_hash_fixture_attr(&attrs[6], 0x000a,
+	    BT_ASSIGNED_UUID_CHARACTERISTIC, v0a, sizeof(v0a));
+	set_hash_fixture_attr(&attrs[7], 0x000c,
+	    BT_ASSIGNED_UUID_CHARACTERISTIC, v0c, sizeof(v0c));
+	set_hash_fixture_attr(&attrs[8], 0x000e,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE, v0e, sizeof(v0e));
+	set_hash_fixture_attr(&attrs[9], 0x000f,
+	    BT_ASSIGNED_UUID_INCLUDE, v0f, sizeof(v0f));
+	set_hash_fixture_attr(&attrs[10], 0x0010,
+	    BT_ASSIGNED_UUID_CHARACTERISTIC, v10, sizeof(v10));
+	set_hash_fixture_attr(&attrs[11], 0x0012,
+	    BT_ASSIGNED_UUID_CCCD, NULL, 0);
+	set_hash_fixture_attr(&attrs[12], 0x0013,
+	    BT_ASSIGNED_UUID_CHARACTERISTIC_EXT_PROPS, v13, sizeof(v13));
+	set_hash_fixture_attr(&attrs[13], 0x0014,
+	    BT_ASSIGNED_UUID_SECONDARY_SERVICE, v14, sizeof(v14));
+	set_hash_fixture_attr(&attrs[14], 0x0015,
+	    BT_ASSIGNED_UUID_CHARACTERISTIC, v15, sizeof(v15));
 
-	attdb_compute_db_hash(&db, hash1);
-	attdb_compute_db_hash(&db, hash2);
-
-	ATF_CHECK_EQ_MSG(memcmp(hash1, hash2, 16), 0,
-	    "database hash is not deterministic");
-
-	/* Verify hash is not all zeros (that would indicate a failure) */
-	uint8_t zeros[16];
-	memset(zeros, 0, 16);
-	ATF_CHECK_MSG(memcmp(hash1, zeros, 16) != 0,
-	    "database hash is all zeros");
+	attdb_compute_db_hash(&db, hash);
+	ATF_CHECK_EQ_MSG(memcmp(hash, expected, sizeof(expected)), 0,
+	    "Database Hash differs from Core 6.3 Vol 3 Part G Appendix B");
 }
 
 /* 20. test_attdb_add_service128 */
@@ -982,7 +1175,7 @@ ATF_TC_BODY(test_attdb_add_service128, tc)
 	ATF_CHECK_EQ(db.count, 1);
 
 	/* Verify the stored value is the 128-bit UUID */
-	ATF_CHECK_EQ(db.attrs[0].uuid16, GATT_UUID_PRIMARY_SERVICE);
+	ATF_CHECK_EQ(db.attrs[0].uuid16, BT_ASSIGNED_UUID_PRIMARY_SERVICE);
 	ATF_CHECK_EQ(db.attrs[0].value_len, 16);
 	ATF_CHECK_EQ(memcmp(db.attrs[0].value, uuid128, 16), 0);
 }
@@ -994,10 +1187,11 @@ ATF_TC_BODY(test_attdb_add_service128, tc)
  * NEW TESTS: Coverage gaps from audit sessions
  * ================================================================ */
 
-/* ATT_PERM_READ_AUTHEN: read must fail when not authenticated.
- * Core Spec Vol 3 Part F §3.2.5: authenticated access implies encryption.
- * Unencrypted → INSUFF_ENCRYPTION; encrypted but unauthenticated →
- * INSUFF_AUTHEN; encrypted + authenticated → success. */
+/*
+ * Core 6.3 Vol 3 Part F §3.2.5: authentication-required access without
+ * sufficient authentication returns Insufficient Authentication (0x05),
+ * including when the link is also unencrypted.
+ */
 ATF_TC_WITHOUT_HEAD(test_att_server_perm_read_authen);
 ATF_TC_BODY(test_att_server_perm_read_authen, tc)
 {
@@ -1011,44 +1205,109 @@ ATF_TC_BODY(test_att_server_perm_read_authen, tc)
 
 	att_mock_pair(&ac, &client_fd);
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
-	attdb_add_service(&db, 0x1800);
-	attdb_add_characteristic(&db, 0x2A00,
-	    GATT_PROP_READ, ATT_PERM_READ_AUTHEN, "Secret", 6);
+	attdb_add_service(&db, BT_ASSIGNED_UUID_GAP_SERVICE);
+	attdb_add_characteristic(&db, BT_ASSIGNED_UUID_DEVICE_NAME,
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ_AUTHEN, "Secret", 6);
 
-	uint8_t pdu[3] = { ATT_OP_READ_REQ };
-	put_le16(pdu + 1, 0x0003);
+	uint8_t pdu[BT_CORE63_ATT_READ_REQ_SIZE] = {
+	    BT_CORE63_ATT_OP_READ_REQ };
+	put_le16(pdu + 1, TEST_GAP_NAME_HANDLE);
 
-	/* Read with encrypted=false → INSUFF_ENCRYPTION (authen implies encr) */
+	/* Authentication is absent and controls the error code. */
 	ac.encrypted = false;
 	ac.authenticated = false;
-	att_server_handle(&ac, &db, pdu, 3, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INSUFF_ENCRYPTION);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INSUFFICIENT_AUTHENTICATION);
 
 	/* Read with encrypted=true, authenticated=false → INSUFF_AUTHEN */
 	ac.encrypted = true;
 	ac.authenticated = false;
-	att_server_handle(&ac, &db, pdu, 3, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INSUFF_AUTHEN);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INSUFFICIENT_AUTHENTICATION);
 
 	/* Read with encrypted=true, authenticated=true → success */
 	ac.encrypted = true;
 	ac.authenticated = true;
-	att_server_handle(&ac, &db, pdu, 3, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 2);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 
 	att_mock_cleanup(&ac, client_fd);
 }
 
-/* ATT_PERM_WRITE_AUTHEN: write must fail when not authenticated.
- * Authenticated access implies encryption per Core Spec Vol 3 Part F §3.2.5. */
+/*
+ * SR2: att_conn_apply_encryption opens the ATT gate only when the link is
+ * backed by real key material.  An encryption event with no key does NOT open
+ * the gate (protected reads stay denied); a bonded/paired state does.
+ */
+ATF_TC_WITHOUT_HEAD(test_att_conn_apply_encryption_gate);
+ATF_TC_BODY(test_att_conn_apply_encryption_gate, tc)
+{
+	struct att_conn ac;
+	int client_fd;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t val_buf[TEST_DB_VAL_SIZE];
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+
+	att_mock_pair(&ac, &client_fd);
+	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
+	attdb_add_service(&db, BT_ASSIGNED_UUID_GAP_SERVICE);
+	/* value handle 0x0003: encryption-required; 0x0005: authentication. */
+	attdb_add_characteristic(&db, BT_ASSIGNED_UUID_DEVICE_NAME,
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ_ENCRYPT, "Enc", 3);
+	attdb_add_characteristic(&db, 0x2A01, /* local auth fixture UUID */
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ_AUTHEN, "Auth", 4);
+
+	/* Spurious encryption with no key material -> gate stays closed. */
+	ac.encrypted = false;
+	ac.authenticated = false;
+	ATF_CHECK(!att_conn_apply_encryption(&ac, false, false, 0,
+	    BT_CORE63_SMP_MAX_KEY_SIZE));
+	ATF_CHECK(!ac.encrypted);
+	ATF_CHECK(!ac.authenticated);
+
+	uint8_t rd_enc[BT_CORE63_ATT_READ_REQ_SIZE] = {
+	    BT_CORE63_ATT_OP_READ_REQ };
+	put_le16(rd_enc + 1, TEST_GAP_NAME_HANDLE);
+	att_server_handle(&ac, &db, rd_enc, sizeof(rd_enc), -1, 0);
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INSUFFICIENT_ENCRYPTION);
+
+	/* Legitimate bonded, MITM-authenticated key material -> gate opens. */
+	ATF_CHECK(att_conn_apply_encryption(&ac, true, true,
+	    BT_CORE63_SMP_MAX_KEY_SIZE, BT_CORE63_SMP_MAX_KEY_SIZE));
+	ATF_CHECK(ac.encrypted);
+	ATF_CHECK(ac.authenticated);
+	ATF_CHECK_EQ(ac.enc_key_size, BT_CORE63_SMP_MAX_KEY_SIZE);
+
+	att_server_handle(&ac, &db, rd_enc, sizeof(rd_enc), -1, 0);
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE(n >= 2);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
+
+	uint8_t rd_auth[BT_CORE63_ATT_READ_REQ_SIZE] = {
+	    BT_CORE63_ATT_OP_READ_REQ };
+	put_le16(rd_auth + 1, 0x0005);
+	att_server_handle(&ac, &db, rd_auth, sizeof(rd_auth), -1, 0);
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE(n >= 2);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
+
+	att_mock_cleanup(&ac, client_fd);
+}
+
+/* Core 6.3 Vol 3 Part F §3.2.5: authentication failure is error 0x05. */
 ATF_TC_WITHOUT_HEAD(test_att_server_perm_write_authen);
 ATF_TC_BODY(test_att_server_perm_write_authen, tc)
 {
@@ -1062,46 +1321,51 @@ ATF_TC_BODY(test_att_server_perm_write_authen, tc)
 
 	att_mock_pair(&ac, &client_fd);
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
-	attdb_add_service(&db, 0x1800);
-	attdb_add_characteristic(&db, 0x2A00,
-	    GATT_PROP_READ | GATT_PROP_WRITE,
+	attdb_add_service(&db, BT_ASSIGNED_UUID_GAP_SERVICE);
+	attdb_add_characteristic(&db, BT_ASSIGNED_UUID_DEVICE_NAME,
+	    BT_CORE63_GATT_PROP_READ | BT_CORE63_GATT_PROP_WRITE,
 	    ATT_PERM_READ | ATT_PERM_WRITE_AUTHEN, "X", 1);
 
-	uint8_t pdu[4] = { ATT_OP_WRITE_REQ };
-	put_le16(pdu + 1, 0x0003);
-	pdu[3] = 0x42;
+	uint8_t pdu[BT_CORE63_ATT_WRITE_HEADER_SIZE + 1] = {
+	    BT_CORE63_ATT_OP_WRITE_REQ };
+	put_le16(pdu + 1, TEST_GAP_NAME_HANDLE);
+	pdu[BT_CORE63_ATT_WRITE_HEADER_SIZE] = 0x42; /* fixture payload */
 
-	/* Write with encrypted=false → INSUFF_ENCRYPTION */
+	/* Authentication is absent and controls the error code. */
 	ac.encrypted = false;
 	ac.authenticated = false;
-	att_server_handle(&ac, &db, pdu, 4, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INSUFF_ENCRYPTION);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INSUFFICIENT_AUTHENTICATION);
 
 	/* Write with encrypted=true, authenticated=false → INSUFF_AUTHEN */
 	ac.encrypted = true;
 	ac.authenticated = false;
-	att_server_handle(&ac, &db, pdu, 4, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INSUFF_AUTHEN);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INSUFFICIENT_AUTHENTICATION);
 
 	/* Write with encrypted=true, authenticated=true → success */
 	ac.encrypted = true;
 	ac.authenticated = true;
-	att_server_handle(&ac, &db, pdu, 4, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 1);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_OPCODE_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 
 	att_mock_cleanup(&ac, client_fd);
 }
 
-/* Prepare Write byte limit: total_bytes > ATT_PREPARE_QUEUE_MAX_BYTES
- * Core Spec Vol 3 Part F §3.4.6 */
+/*
+ * Local Prepare Write byte limit.  Core 6.3 Vol 3 Part F §3.4.6.1
+ * defines Prepare Queue Full (0x09), but explicitly leaves the queue limit
+ * to a higher layer.  The 4096-octet boundary is therefore tested as an
+ * independent local implementation contract, not as a Bluetooth limit.
+ */
 ATF_TC_WITHOUT_HEAD(test_att_server_prepare_queue_bytes);
 ATF_TC_BODY(test_att_server_prepare_queue_bytes, tc)
 {
@@ -1115,47 +1379,49 @@ ATF_TC_BODY(test_att_server_prepare_queue_bytes, tc)
 	int i;
 
 	att_mock_pair(&ac, &client_fd);
-	ac.mtu = ATT_PDU_BUF_SIZE; /* allow large prepare writes */
+	ac.mtu = BT_CORE63_ATT_MAX_MTU; /* Core 6.3 Vol 3 Part F §3.2.9. */
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
-	attdb_add_service(&db, 0xFFE0);
-	attdb_add_characteristic(&db, 0xFFE1,
-	    GATT_PROP_WRITE, ATT_PERM_WRITE,
+	attdb_add_service(&db, 0xFFE0); /* local test UUID */
+	attdb_add_characteristic(&db, 0xFFE1, /* local test UUID */
+	    BT_CORE63_GATT_PROP_WRITE, ATT_PERM_WRITE,
 	    "\x00", 1);
-	/* Set maxlen large enough */
-	attrs[2].value_maxlen = 512;
+	attrs[2].value_maxlen = TEST_PREPARE_BYTE_CHUNK;
 
-	/* Send prepare writes until byte limit is hit.
-	 * ATT_PREPARE_QUEUE_MAX_BYTES = 4096, send 512-byte chunks */
-	for (i = 0; i < 10; i++) {
-		uint8_t pdu[5 + 512];
-		pdu[0] = ATT_OP_PREPARE_WRITE_REQ;
-		put_le16(pdu + 1, 0x0003); /* value handle */
-		put_le16(pdu + 3, 0x0000); /* offset */
-		memset(pdu + 5, 0xAA, 512);
+	/* Fill the independent 4096-octet local budget, then exceed it once. */
+	for (i = 0; i <= TEST_IMPL_PREPARE_QUEUE_BYTE_LIMIT /
+	    TEST_PREPARE_BYTE_CHUNK; i++) {
+		uint8_t pdu[BT_CORE63_ATT_PREPARE_WRITE_HEADER_SIZE +
+		    TEST_PREPARE_BYTE_CHUNK];
+		pdu[0] = BT_CORE63_ATT_OP_PREPARE_WRITE_REQ;
+		put_le16(pdu + 1, TEST_SINGLE_CHAR_VALUE_HANDLE);
+		put_le16(pdu + 3, 0); /* zero-based offset, §3.4.6.1 */
+		memset(pdu + BT_CORE63_ATT_PREPARE_WRITE_HEADER_SIZE, 0xAA,
+		    TEST_PREPARE_BYTE_CHUNK); /* arbitrary fixture payload */
 
 		att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 		n = recv(client_fd, rsp, sizeof(rsp), 0);
 		ATF_REQUIRE(n >= 1);
-		if (rsp[0] == ATT_OP_ERROR_RSP) {
-			ATF_CHECK_EQ(rsp[4], ATT_ERR_PREPARE_QUEUE_FULL);
+		if (rsp[0] == BT_CORE63_ATT_OP_ERROR_RSP) {
+			ATF_CHECK_EQ(rsp[4],
+			    BT_CORE63_ATT_ERR_PREPARE_QUEUE_FULL);
 			break;
 		}
-		ATF_CHECK_EQ(rsp[0], ATT_OP_PREPARE_WRITE_RSP);
+		ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
 	}
-	/* Should have hit the limit before 10 iterations
-	 * (4096/512 = 8 max, plus entry count limit of 16) */
-	ATF_CHECK(i < 10);
+	ATF_CHECK_EQ(i, TEST_IMPL_PREPARE_QUEUE_BYTE_LIMIT /
+	    TEST_PREPARE_BYTE_CHUNK);
 
 	/* Cancel to clean up */
-	uint8_t exec[2] = { ATT_OP_EXECUTE_WRITE_REQ, 0x00 };
-	att_server_handle(&ac, &db, exec, 2, -1, 0);
+	uint8_t exec[BT_CORE63_ATT_EXECUTE_WRITE_REQ_SIZE] = {
+	    BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_CANCEL };
+	att_server_handle(&ac, &db, exec, sizeof(exec), -1, 0);
 	(void)recv(client_fd, rsp, sizeof(rsp), 0);
 
 	att_mock_cleanup(&ac, client_fd);
 }
 
-/* Read Multiple Variable Length (BT 5.1, opcode 0x20)
- * Core Spec Vol 3 Part F §3.4.4.8 */
+/* Read Multiple Variable Length, Core 6.3 Vol 3 Part F §§3.4.4.11-.12. */
 ATF_TC_WITHOUT_HEAD(test_att_server_read_multi_variable);
 ATF_TC_BODY(test_att_server_read_multi_variable, tc)
 {
@@ -1171,27 +1437,27 @@ ATF_TC_BODY(test_att_server_read_multi_variable, tc)
 	build_test_db(&db, attrs, val_buf);
 
 	/* Read Multiple Variable: handles 0x0003 (4 bytes) and 0x0006 (4 bytes) */
-	uint8_t pdu[5];
-	pdu[0] = ATT_OP_READ_MULTIPLE_VARIABLE_REQ;
-	put_le16(pdu + 1, 0x0003);
-	put_le16(pdu + 3, 0x0006);
+	uint8_t pdu[BT_CORE63_ATT_READ_MULTIPLE_MIN_REQ_SIZE];
+	pdu[0] = BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_REQ;
+	put_le16(pdu + 1, TEST_GAP_NAME_HANDLE);
+	put_le16(pdu + 3, TEST_CUSTOM_VALUE_HANDLE);
 
-	int ret = att_server_handle(&ac, &db, pdu, 5, -1, 0);
+	int ret = att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n >= 1);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_MULTIPLE_VARIABLE_RSP);
+	ATF_REQUIRE_EQ(n, 1 + 2 *
+	    (BT_CORE63_ATT_LENGTH_VALUE_HEADER_SIZE + 4));
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_RSP);
 
 	/* First entry: length(2) = 4, value = "Test" */
-	ATF_REQUIRE(n >= 7);
 	ATF_CHECK_EQ(get_le16(rsp + 1), 4);
 	ATF_CHECK(memcmp(rsp + 3, "Test", 4) == 0);
 
 	/* Second entry: length(2) = 4, value = 0xAABBCCDD */
-	ATF_REQUIRE(n >= 13);
 	ATF_CHECK_EQ(get_le16(rsp + 7), 4);
-	ATF_CHECK_EQ(rsp[9], 0xAA);
+	static const uint8_t custom[] = { 0xaa, 0xbb, 0xcc, 0xdd };
+	ATF_CHECK_EQ(memcmp(rsp + 9, custom, sizeof(custom)), 0);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -1204,6 +1470,8 @@ ATF_TC_BODY(test_att_server_indication_flow, tc)
 	struct att_conn ac;
 	int client_fd;
 	uint8_t val = 0x42;
+	uint8_t pdu[8];
+	ssize_t n;
 	int ret;
 
 	att_mock_pair(&ac, &client_fd);
@@ -1213,6 +1481,17 @@ ATF_TC_BODY(test_att_server_indication_flow, tc)
 	ret = att_send_indication(&ac, 0x0006, &val, 1);
 	ATF_CHECK_EQ(ret, 0);
 	ATF_CHECK(ac.ind_pending == true);
+
+	/*
+	 * Verify the wire PDU is a spec-conformant ATT_HANDLE_VALUE_IND:
+	 * opcode 0x1D, Attribute Handle (2 octets LE), Attribute Value.
+	 * Vol 3 Part F Sec 3.4.7.2.
+	 */
+	n = recv(client_fd, pdu, sizeof(pdu), 0);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_HANDLE_VALUE_HEADER_SIZE + 1);
+	ATF_CHECK_EQ(pdu[0], BT_CORE63_ATT_OP_HANDLE_INDICATE);
+	ATF_CHECK_EQ(get_le16(pdu + 1), 0x0006);
+	ATF_CHECK_EQ(pdu[3], 0x42);
 
 	/* Second indication fails with EBUSY */
 	ret = att_send_indication(&ac, 0x0006, &val, 1);
@@ -1245,12 +1524,15 @@ ATF_TC_BODY(test_att_server_exec_write_bad_flags, tc)
 	att_mock_pair(&ac, &client_fd);
 	build_test_db(&db, attrs, val_buf);
 
-	uint8_t pdu[2] = { ATT_OP_EXECUTE_WRITE_REQ, 0x02 };
-	att_server_handle(&ac, &db, pdu, 2, -1, 0);
+	uint8_t pdu[BT_CORE63_ATT_EXECUTE_WRITE_REQ_SIZE] = {
+	    BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_FIRST_RFU };
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_PDU);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_PDU);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -1272,22 +1554,25 @@ ATF_TC_BODY(test_att_server_find_by_type_value, tc)
 	build_test_db(&db, attrs, val_buf);
 
 	/* Find By Type Value: type=0x2800 (Primary Service), value=0xFFE0 */
-	uint8_t pdu[9];
-	pdu[0] = ATT_OP_FIND_BY_TYPE_VALUE_REQ;
+	uint8_t pdu[BT_CORE63_ATT_FIND_BY_TYPE_VALUE_PREFIX_SIZE +
+	    BT_CORE63_ATT_UUID16_SIZE];
+	pdu[0] = BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_REQ;
 	put_le16(pdu + 1, 0x0001); /* start */
-	put_le16(pdu + 3, 0xFFFF); /* end */
-	put_le16(pdu + 5, 0x2800); /* attr type: Primary Service */
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
+	put_le16(pdu + 5, BT_ASSIGNED_UUID_PRIMARY_SERVICE);
 	put_le16(pdu + 7, 0xFFE0); /* value: Custom Service UUID */
 
-	int ret = att_server_handle(&ac, &db, pdu, 9, -1, 0);
+	int ret = att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n >= 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_FIND_BY_TYPE_VALUE_RSP);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_OPCODE_SIZE +
+	    BT_CORE63_ATT_FIND_BY_TYPE_VALUE_ENTRY_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_RSP);
 
 	/* Found handle should be 0x0004 (Custom Service decl) */
 	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0004);
+	ATF_CHECK_EQ(get_le16(rsp + 3), TEST_CUSTOM_CCCD_HANDLE);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -1313,17 +1598,17 @@ ATF_TC_BODY(test_group_type_unsupported, tc)
 	build_test_db(&db, attrs, val_buf);
 
 	/* Read By Group Type with UUID=0x2803 (Characteristic, not a group) */
-	uint8_t pdu[7];
-	pdu[0] = ATT_OP_READ_BY_GROUP_TYPE_REQ;
+	uint8_t pdu[BT_CORE63_ATT_RANGE_UUID16_REQ_SIZE];
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
-	put_le16(pdu + 5, 0x2803); /* Characteristic — not a grouping type */
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
+	put_le16(pdu + 5, BT_ASSIGNED_UUID_CHARACTERISTIC);
 
-	att_server_handle(&ac, &db, pdu, 7, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_UNSUPPORTED_GROUP_TYPE);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_UNSUPPORTED_GROUP_TYPE);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -1344,16 +1629,18 @@ ATF_TC_BODY(test_write_readonly, tc)
 	build_test_db(&db, attrs, val_buf);
 
 	/* Write to Device Name (handle 3) which is read-only */
-	uint8_t pdu[4];
-	pdu[0] = ATT_OP_WRITE_REQ;
-	put_le16(pdu + 1, 0x0003);
-	pdu[3] = 0x42;
+	uint8_t pdu[BT_CORE63_ATT_WRITE_HEADER_SIZE + 1];
+	pdu[0] = BT_CORE63_ATT_OP_WRITE_REQ;
+	put_le16(pdu + 1, TEST_GAP_NAME_HANDLE);
+	pdu[BT_CORE63_ATT_WRITE_HEADER_SIZE] = 0x42; /* fixture payload */
 
-	att_server_handle(&ac, &db, pdu, 4, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_WRITE_NOT_PERMITTED);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_WRITE_REQ);
+	ATF_CHECK_EQ(get_le16(rsp + 2), TEST_GAP_NAME_HANDLE);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_WRITE_NOT_PERMITTED);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -1374,14 +1661,14 @@ ATF_TC_BODY(test_write_zero_length, tc)
 	build_test_db(&db, attrs, val_buf);
 
 	/* Write zero bytes to custom char (handle 6, maxlen=4) */
-	uint8_t pdu[3];
-	pdu[0] = ATT_OP_WRITE_REQ;
-	put_le16(pdu + 1, 0x0006);
+	uint8_t pdu[BT_CORE63_ATT_WRITE_HEADER_SIZE];
+	pdu[0] = BT_CORE63_ATT_OP_WRITE_REQ;
+	put_le16(pdu + 1, TEST_CUSTOM_VALUE_HANDLE);
 
-	att_server_handle(&ac, &db, pdu, 3, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 1);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_OPCODE_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -1401,15 +1688,16 @@ ATF_TC_BODY(test_mtu_clamp_minimum, tc)
 	att_mock_pair(&ac, &client_fd);
 	build_test_db(&db, attrs, val_buf);
 
-	/* Client MTU = 10 (below minimum 23) */
-	uint8_t pdu[3] = { ATT_OP_MTU_REQ };
+	/* 10 is deliberately below the Table 5.1 default/minimum of 23. */
+	uint8_t pdu[BT_CORE63_ATT_MTU_PDU_SIZE] = {
+		BT_CORE63_ATT_MTU_REQ_OPCODE
+	};
 	put_le16(pdu + 1, 10);
-	att_server_handle(&ac, &db, pdu, 3, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 3);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_MTU_RSP);
-	/* Negotiated should be clamped to ATT_DEFAULT_MTU (23) */
-	ATF_CHECK_EQ(ac.mtu, ATT_DEFAULT_MTU);
+	ATF_REQUIRE(n == BT_CORE63_ATT_MTU_PDU_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_MTU_RSP_OPCODE);
+	ATF_CHECK_EQ(ac.mtu, BT_CORE63_ATT_DEFAULT_MTU);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -1431,21 +1719,21 @@ ATF_TC_BODY(test_read_by_type_not_found, tc)
 
 	/* Read By Type: UUID=0xBEEF (doesn't exist) */
 	uint8_t pdu[7];
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
 	put_le16(pdu + 5, 0xBEEF);
 
-	att_server_handle(&ac, &db, pdu, 7, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_FOUND);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_FOUND);
 
 	att_mock_cleanup(&ac, client_fd);
 }
 
-/* Prepare Write then Cancel (Execute flags=0x00) */
+/* Core 6.3 Vol 3 Part F §3.4.6.3: cancel discards all prepared values. */
 ATF_TC_WITHOUT_HEAD(test_prepare_then_cancel);
 ATF_TC_BODY(test_prepare_then_cancel, tc)
 {
@@ -1461,31 +1749,34 @@ ATF_TC_BODY(test_prepare_then_cancel, tc)
 	build_test_db(&db, attrs, val_buf);
 
 	/* Prepare a write to custom char */
-	uint8_t prep[6];
-	prep[0] = ATT_OP_PREPARE_WRITE_REQ;
-	put_le16(prep + 1, 0x0006); /* custom char */
-	put_le16(prep + 3, 0x0000); /* offset 0 */
-	prep[5] = 0x99;
+	uint8_t prep[BT_CORE63_ATT_PREPARE_WRITE_HEADER_SIZE + 1];
+	prep[0] = BT_CORE63_ATT_OP_PREPARE_WRITE_REQ;
+	put_le16(prep + 1, TEST_CUSTOM_VALUE_HANDLE);
+	put_le16(prep + 3, 0); /* zero-based offset, §3.4.6.1 */
+	prep[BT_CORE63_ATT_PREPARE_WRITE_HEADER_SIZE] = 0x99;
 
 	att_server_handle(&ac, &db, prep, 6, -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 1);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_PREPARE_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
 
-	/* Cancel with flags=0x00 */
-	uint8_t exec[2] = { ATT_OP_EXECUTE_WRITE_REQ, 0x00 };
-	att_server_handle(&ac, &db, exec, 2, -1, 0);
+	uint8_t exec[BT_CORE63_ATT_EXECUTE_WRITE_REQ_SIZE] = {
+	    BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_CANCEL };
+	att_server_handle(&ac, &db, exec, sizeof(exec), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_EXECUTE_WRITE_RSP);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_OPCODE_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP);
 
 	/* Value should NOT have changed (still original) */
-	uint8_t read_pdu[3] = { ATT_OP_READ_REQ };
-	put_le16(read_pdu + 1, 0x0006);
-	att_server_handle(&ac, &db, read_pdu, 3, -1, 0);
+	uint8_t read_pdu[BT_CORE63_ATT_READ_REQ_SIZE] = {
+	    BT_CORE63_ATT_OP_READ_REQ };
+	put_le16(read_pdu + 1, TEST_CUSTOM_VALUE_HANDLE);
+	att_server_handle(&ac, &db, read_pdu, sizeof(read_pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 2);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_RSP);
-	ATF_CHECK_EQ(rsp[1], 0xAA); /* original value, not 0x99 */
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
+	ATF_CHECK_EQ(rsp[1], 0xAA); /* build_test_db() fixture, not 0x99 */
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -1585,16 +1876,18 @@ ATF_TC_BODY(test_read_multi_var_invalid_handle, tc)
 	att_mock_pair(&ac, &client_fd);
 	build_test_db(&db, attrs, val_buf);
 
-	uint8_t pdu[5];
-	pdu[0] = ATT_OP_READ_MULTIPLE_VARIABLE_REQ;
-	put_le16(pdu + 1, 0x0003); /* valid */
-	put_le16(pdu + 3, 0xFFFF); /* invalid */
+	uint8_t pdu[BT_CORE63_ATT_READ_MULTIPLE_MIN_REQ_SIZE];
+	pdu[0] = BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_REQ;
+	put_le16(pdu + 1, TEST_GAP_NAME_HANDLE);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX); /* fixture-absent */
 
-	att_server_handle(&ac, &db, pdu, 5, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_HANDLE);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_REQ);
+	ATF_CHECK_EQ(get_le16(rsp + 2), BT_CORE63_ATT_HANDLE_MAX);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_HANDLE);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -1613,7 +1906,7 @@ ATF_TC_BODY(test_multi_handle_ntf_format, tc)
 	ssize_t n;
 
 	att_mock_pair(&ac, &client_fd);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 
 	uint16_t handles[2] = { 0x0003, 0x0006 };
 	uint8_t v1[] = { 0x11, 0x22 };
@@ -1627,7 +1920,7 @@ ATF_TC_BODY(test_multi_handle_ntf_format, tc)
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 1);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_MULTIPLE_HANDLE_VALUE_NTF);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_MULTIPLE_HANDLE_NOTIFY);
 
 	/* Entry 1: handle(2) + length(2) + value(2) = 6 bytes at offset 1 */
 	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0003);
@@ -1649,7 +1942,7 @@ ATF_TC_BODY(test_multi_handle_ntf_format, tc)
  * RAW PDU BYTE-LEVEL TESTS
  *
  * These verify exact byte sequences for ATT request/response PDUs,
- * modeled after BlueZ test-gatt.c raw_pdu pattern.
+ * using a raw-PDU byte-level test pattern.
  * ================================================================ */
 
 /* Raw PDU: Read Request → Read Response, exact bytes
@@ -1670,12 +1963,13 @@ ATF_TC_BODY(test_raw_pdu_read, tc)
 	build_test_db(&db, attrs, val_buf);
 
 	/* Exact request bytes */
-	uint8_t req[] = { 0x0A, 0x03, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x03, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
 	/* Exact response bytes */
-	uint8_t expected[] = { 0x0B, 0x54, 0x65, 0x73, 0x74 }; /* "Test" */
+	uint8_t expected[] = { BT_CORE63_ATT_OP_READ_RSP,
+	    0x54, 0x65, 0x73, 0x74 }; /* local fixture value "Test" */
 	ATF_CHECK_EQ(n, (ssize_t)sizeof(expected));
 	ATF_CHECK(memcmp(rsp, expected, sizeof(expected)) == 0);
 
@@ -1699,11 +1993,13 @@ ATF_TC_BODY(test_raw_pdu_error, tc)
 	att_mock_pair(&ac, &client_fd);
 	build_test_db(&db, attrs, val_buf);
 
-	uint8_t req[] = { 0x0A, 0xFF, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0xFF, 0xFF };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
-	uint8_t expected[] = { 0x01, 0x0A, 0xFF, 0xFF, 0x01 };
+	uint8_t expected[] = { BT_CORE63_ATT_OP_ERROR_RSP,
+	    BT_CORE63_ATT_OP_READ_REQ, 0xFF, 0xFF,
+	    BT_CORE63_ATT_ERR_INVALID_HANDLE };
 	ATF_CHECK_EQ(n, 5);
 	ATF_CHECK(memcmp(rsp, expected, 5) == 0);
 
@@ -1727,16 +2023,45 @@ ATF_TC_BODY(test_raw_pdu_mtu, tc)
 	att_mock_pair(&ac, &client_fd);
 	build_test_db(&db, attrs, val_buf);
 
-	uint8_t req[] = { 0x02, 0x17, 0x00 }; /* client MTU=23 */
+	uint8_t req[] = { BT_CORE63_ATT_OP_MTU_REQ,
+	    BT_CORE63_ATT_DEFAULT_MTU, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK_EQ(n, 3);
-	ATF_CHECK_EQ(rsp[0], 0x03); /* MTU_RSP */
-	/* Server MTU = ATT_PDU_BUF_SIZE = 517 = 0x0205 */
-	ATF_CHECK_EQ(rsp[1], 0x05);
-	ATF_CHECK_EQ(rsp[2], 0x02);
-	ATF_CHECK_EQ(ac.mtu, 23); /* min(23,517) = 23 */
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_MTU_RSP);
+	/* Core 6.3 Vol 3 Part F §3.4.2.2: Server Rx MTU is uint16 LE. */
+	ATF_CHECK_EQ(get_le16(rsp + 1), BT_CORE63_ATT_MAX_MTU);
+	ATF_CHECK_EQ(ac.mtu, BT_CORE63_ATT_DEFAULT_MTU);
+
+	att_mock_cleanup(&ac, client_fd);
+}
+
+/* Fixed-format ATT requests with trailing octets are malformed. */
+ATF_TC_WITHOUT_HEAD(test_att_server_fixed_pdu_lengths);
+ATF_TC_BODY(test_att_server_fixed_pdu_lengths, tc)
+{
+	struct att_conn ac;
+	int client_fd;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t val_buf[TEST_DB_VAL_SIZE];
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+	uint8_t req[] = { BT_CORE63_ATT_OP_MTU_REQ, 0x05, 0x02, 0x00 };
+	uint8_t expected[] = { BT_CORE63_ATT_OP_ERROR_RSP,
+		BT_CORE63_ATT_OP_MTU_REQ, 0x00, 0x00,
+		BT_CORE63_ATT_ERR_INVALID_PDU };
+
+	att_mock_pair(&ac, &client_fd);
+	build_test_db(&db, attrs, val_buf);
+
+	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	ATF_CHECK_EQ(n, (ssize_t)sizeof(expected));
+	ATF_CHECK(memcmp(rsp, expected, sizeof(expected)) == 0);
+	ATF_CHECK_EQ(ac.mtu, BT_CORE63_ATT_DEFAULT_MTU);
+	ATF_CHECK(!ac.mtu_exchanged);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -1758,12 +2083,12 @@ ATF_TC_BODY(test_raw_pdu_write, tc)
 	att_mock_pair(&ac, &client_fd);
 	build_test_db(&db, attrs, val_buf);
 
-	uint8_t req[] = { 0x12, 0x06, 0x00, 0x42 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ, 0x06, 0x00, 0x42 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(rsp[0], 0x13); /* WRITE_RSP */
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -1785,25 +2110,26 @@ ATF_TC_BODY(test_raw_pdu_find_info, tc)
 	att_mock_pair(&ac, &client_fd);
 	build_test_db(&db, attrs, val_buf);
 
-	uint8_t req[] = { 0x04, 0x01, 0x00, 0x03, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_FIND_INFO_REQ,
+	    0x01, 0x00, 0x03, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
 	ATF_REQUIRE(n >= 6);
-	ATF_CHECK_EQ(rsp[0], 0x05); /* FIND_INFO_RSP */
-	ATF_CHECK_EQ(rsp[1], 0x01); /* format = 16-bit UUID */
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_FIND_INFO_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_FIND_INFO_FORMAT_UUID16);
 
 	/* First entry: handle=0x0001, uuid=0x2800 (Primary Service) */
-	ATF_CHECK_EQ(rsp[2], 0x01); ATF_CHECK_EQ(rsp[3], 0x00); /* handle LE */
-	ATF_CHECK_EQ(rsp[4], 0x00); ATF_CHECK_EQ(rsp[5], 0x28); /* uuid LE */
+	ATF_CHECK_EQ(get_le16(rsp + 2), 0x0001);
+	ATF_CHECK_EQ(get_le16(rsp + 4), BT_ASSIGNED_UUID_PRIMARY_SERVICE);
 
 	/* Second entry: handle=0x0002, uuid=0x2803 (Characteristic) */
-	ATF_CHECK_EQ(rsp[6], 0x02); ATF_CHECK_EQ(rsp[7], 0x00);
-	ATF_CHECK_EQ(rsp[8], 0x03); ATF_CHECK_EQ(rsp[9], 0x28);
+	ATF_CHECK_EQ(get_le16(rsp + 6), 0x0002);
+	ATF_CHECK_EQ(get_le16(rsp + 8), BT_ASSIGNED_UUID_CHARACTERISTIC);
 
 	/* Third entry: handle=0x0003, uuid=0x2A00 (Device Name) */
-	ATF_CHECK_EQ(rsp[10], 0x03); ATF_CHECK_EQ(rsp[11], 0x00);
-	ATF_CHECK_EQ(rsp[12], 0x00); ATF_CHECK_EQ(rsp[13], 0x2A);
+	ATF_CHECK_EQ(get_le16(rsp + 10), 0x0003);
+	ATF_CHECK_EQ(get_le16(rsp + 12), BT_ASSIGNED_UUID_DEVICE_NAME);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -1825,12 +2151,15 @@ ATF_TC_BODY(test_raw_pdu_read_by_group, tc)
 	att_mock_pair(&ac, &client_fd);
 	build_test_db(&db, attrs, val_buf);
 
-	uint8_t req[] = { 0x10, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x28 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ,
+	    0x01, 0x00, 0xFF, 0xFF,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE & 0xff,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE >> 8 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
 	ATF_REQUIRE(n >= 8);
-	ATF_CHECK_EQ(rsp[0], 0x11); /* READ_BY_GROUP_TYPE_RSP */
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_RSP);
 	ATF_CHECK_EQ(rsp[1], 6);    /* length per entry: 2+2+2 */
 
 	/* First service: handle=0x0001, end=0x0003, value=0x1800 */
@@ -1863,18 +2192,22 @@ ATF_TC_BODY(test_mtu30_read_by_group, tc)
 	uint8_t val_buf[TEST_DB_VAL_SIZE];
 	uint8_t rsp[ATT_PDU_BUF_SIZE];
 	ssize_t n;
+	const uint16_t test_mtu = 30; /* local intermediate-MTU sample */
 
 	att_mock_pair(&ac, &client_fd);
-	ac.mtu = 30;
+	ac.mtu = test_mtu;
 	build_test_db(&db, attrs, val_buf);
 
-	uint8_t req[] = { 0x10, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x28 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ,
+	    0x01, 0x00, 0xFF, 0xFF,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE & 0xff,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE >> 8 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
 	ATF_REQUIRE(n > 0);
-	ATF_CHECK(n <= 30); /* response must not exceed MTU */
-	ATF_CHECK_EQ(rsp[0], 0x11);
+	ATF_CHECK(n <= test_mtu);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_RSP);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -1892,7 +2225,7 @@ ATF_TC_BODY(test_mtu23_read_clamp, tc)
 	ssize_t n;
 
 	att_mock_pair(&ac, &client_fd);
-	ac.mtu = ATT_DEFAULT_MTU; /* 23 */
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 
 	/* Build DB with a large value */
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
@@ -1905,14 +2238,15 @@ ATF_TC_BODY(test_mtu23_read_clamp, tc)
 	}
 
 	/* Read → response clamped to MTU(23) = opcode(1) + 22 bytes */
-	uint8_t req[] = { 0x0A, 0x03, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x03, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
-	ATF_CHECK_EQ(n, 23); /* exactly MTU */
-	ATF_CHECK_EQ(rsp[0], 0x0B); /* READ_RSP */
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_DEFAULT_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 	/* 22 bytes of value, all 0x42 */
-	for (int i = 1; i < 23; i++)
+	for (int i = BT_CORE63_ATT_OPCODE_SIZE;
+	    i < BT_CORE63_ATT_DEFAULT_MTU; i++)
 		ATF_CHECK_EQ(rsp[i], 0x42);
 
 	att_mock_cleanup(&ac, client_fd);
@@ -1931,7 +2265,7 @@ ATF_TC_BODY(test_mtu517_read_full, tc)
 	ssize_t n;
 
 	att_mock_pair(&ac, &client_fd);
-	ac.mtu = ATT_PDU_BUF_SIZE; /* 517 */
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
 	attdb_add_service(&db, 0x1800);
@@ -1942,12 +2276,12 @@ ATF_TC_BODY(test_mtu517_read_full, tc)
 		    GATT_PROP_READ, ATT_PERM_READ, val, 100);
 	}
 
-	uint8_t req[] = { 0x0A, 0x03, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x03, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK_EQ(n, 101); /* opcode(1) + full 100 bytes */
-	ATF_CHECK_EQ(rsp[0], 0x0B);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 	ATF_CHECK_EQ(rsp[1], 0x99);
 	ATF_CHECK_EQ(rsp[100], 0x99);
 
@@ -1979,13 +2313,13 @@ ATF_TC_BODY(test_client_read_pdu, tc)
 		/* Child: mock server — receive request, verify, send response */
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		if (n != 3) _exit(1);
-		/* Verify exact request: 0A 06 00 */
-		if (buf[0] != 0x0A) _exit(2);
+		if (n != BT_CORE63_ATT_READ_REQ_SIZE) _exit(1);
+		/* Core 6.3 Vol 3 Part F §3.4.4.3: Read Request. */
+		if (buf[0] != BT_CORE63_ATT_OP_READ_REQ) _exit(2);
 		if (buf[1] != 0x06 || buf[2] != 0x00) _exit(3);
 
 		/* Send Read Response: 0B AA BB */
-		uint8_t rsp[] = { 0x0B, 0xAA, 0xBB };
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_READ_RSP, 0xAA, 0xBB };
 		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
 		_exit(0);
@@ -2025,14 +2359,14 @@ ATF_TC_BODY(test_client_write_pdu, tc)
 	if (pid == 0) {
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		if (n != 5) _exit(1);
-		/* Verify: 12 06 00 DE AD */
-		if (buf[0] != 0x12) _exit(2);
+		if (n != BT_CORE63_ATT_WRITE_HEADER_SIZE + 2) _exit(1);
+		/* Core 6.3 Vol 3 Part F §3.4.5.1: Write Request. */
+		if (buf[0] != BT_CORE63_ATT_OP_WRITE_REQ) _exit(2);
 		if (buf[1] != 0x06 || buf[2] != 0x00) _exit(3);
 		if (buf[3] != 0xDE || buf[4] != 0xAD) _exit(4);
 
 		/* Send Write Response */
-		uint8_t rsp[] = { 0x13 };
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_WRITE_RSP };
 		(void)send(peer, rsp, 1, 0);
 		close(peer);
 		_exit(0);
@@ -2067,14 +2401,15 @@ ATF_TC_BODY(test_client_find_info_pdu, tc)
 	if (pid == 0) {
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		if (n != 5) _exit(1);
-		/* Verify: 04 01 00 07 00 */
-		if (buf[0] != 0x04) _exit(2);
+		if (n != BT_CORE63_ATT_FIND_INFO_REQ_SIZE) _exit(1);
+		/* Core 6.3 Vol 3 Part F §3.4.3.1: Find Information Request. */
+		if (buf[0] != BT_CORE63_ATT_OP_FIND_INFO_REQ) _exit(2);
 		if (buf[1] != 0x01 || buf[2] != 0x00) _exit(3);
 		if (buf[3] != 0x07 || buf[4] != 0x00) _exit(4);
 
 		/* Send response: format=1, handle=0x0001, uuid=0x2800 */
-		uint8_t rsp[] = { 0x05, 0x01,
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_FIND_INFO_RSP,
+		    BT_CORE63_ATT_FIND_INFO_FORMAT_UUID16,
 		    0x01, 0x00, 0x00, 0x28 };
 		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
@@ -2087,7 +2422,8 @@ ATF_TC_BODY(test_client_find_info_pdu, tc)
 	int ret = att_find_info(&ac, 0x0001, 0x0007,
 	    out, sizeof(out), &outlen);
 	ATF_CHECK_EQ(ret, 0);
-	ATF_CHECK(outlen > 0);
+	ATF_CHECK_EQ(outlen, BT_CORE63_ATT_RESPONSE_PARAM_HEADER_SIZE +
+	    BT_CORE63_ATT_FIND_INFO_UUID16_ENTRY_SIZE);
 
 	int status;
 	waitpid(pid, &status, 0);
@@ -2113,13 +2449,16 @@ ATF_TC_BODY(test_client_read_by_group_pdu, tc)
 	if (pid == 0) {
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		if (n != 7) _exit(1);
-		/* Verify: 10 01 00 FF FF 00 28 */
-		if (buf[0] != 0x10) _exit(2);
-		if (buf[5] != 0x00 || buf[6] != 0x28) _exit(3);
+		if (n != BT_CORE63_ATT_RANGE_UUID16_REQ_SIZE) _exit(1);
+		/* Core 6.3 Vol 3 Part F §3.4.4.9: Read By Group Type Request. */
+		if (buf[0] != BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ) _exit(2);
+		if (get_le16(buf + 1) != 0x0001 ||
+		    get_le16(buf + 3) != BT_CORE63_ATT_HANDLE_MAX) _exit(3);
+		if (get_le16(buf + 5) != BT_ASSIGNED_UUID_PRIMARY_SERVICE) _exit(4);
 
 		/* Send response: length=6, one service */
-		uint8_t rsp[] = { 0x11, 0x06,
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_RSP,
+		    BT_CORE63_ATT_GROUP16_ENTRY_SIZE,
 		    0x01, 0x00, 0x03, 0x00, 0x00, 0x18 };
 		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
@@ -2132,7 +2471,8 @@ ATF_TC_BODY(test_client_read_by_group_pdu, tc)
 	int ret = att_read_by_group_type(&ac, 0x0001, 0xFFFF,
 	    0x2800, out, sizeof(out), &outlen);
 	ATF_CHECK_EQ(ret, 0);
-	ATF_CHECK(outlen > 0);
+	ATF_CHECK_EQ(outlen, BT_CORE63_ATT_RESPONSE_PARAM_HEADER_SIZE +
+	    BT_CORE63_ATT_GROUP16_ENTRY_SIZE);
 
 	int status;
 	waitpid(pid, &status, 0);
@@ -2162,12 +2502,15 @@ ATF_TC_BODY(test_raw_pdu_read_by_type, tc)
 	att_mock_pair(&ac, &client_fd);
 	build_test_db(&db, attrs, val_buf);
 
-	uint8_t req[] = { 0x08, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x2A };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_TYPE_REQ,
+	    0x01, 0x00, 0xFF, 0xFF,
+	    BT_ASSIGNED_UUID_DEVICE_NAME & 0xff,
+	    BT_ASSIGNED_UUID_DEVICE_NAME >> 8 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
 	ATF_REQUIRE(n >= 4);
-	ATF_CHECK_EQ(rsp[0], 0x09); /* READ_BY_TYPE_RSP */
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_TYPE_RSP);
 	/* entry length = 2 + value_len */
 	int elen = rsp[1];
 	ATF_CHECK(elen >= 6); /* handle(2) + "Test"(4) = 6 */
@@ -2202,13 +2545,14 @@ ATF_TC_BODY(test_raw_pdu_read_blob, tc)
 	 * Since value_len (4) <= mtu-1 (22), the attribute is NOT long
 	 * and Read Blob must return ATT_ERR_ATTR_NOT_LONG.
 	 */
-	uint8_t req[] = { 0x0C, 0x03, 0x00, 0x02, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
+	    0x03, 0x00, 0x02, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK_EQ(n, 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_LONG);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_LONG);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -2228,7 +2572,7 @@ ATF_TC_BODY(test_raw_pdu_write_cmd, tc)
 	att_mock_pair(&ac, &client_fd);
 	build_test_db(&db, attrs, val_buf);
 
-	uint8_t req[] = { 0x52, 0x06, 0x00, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_CMD, 0x06, 0x00, 0xFF };
 	int ret = att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	ATF_CHECK_EQ(ret, 0);
 
@@ -2261,21 +2605,23 @@ ATF_TC_BODY(test_raw_pdu_prepare_execute, tc)
 	build_test_db(&db, attrs, val_buf);
 
 	/* Prepare Write */
-	uint8_t prep[] = { 0x16, 0x06, 0x00, 0x00, 0x00, 0xDE };
+	uint8_t prep[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0x06, 0x00, 0x00, 0x00, 0xDE };
 	att_server_handle(&ac, &db, prep, sizeof(prep), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x17); /* PREPARE_WRITE_RSP */
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
 	/* Response echoes: handle + offset + value */
 	ATF_CHECK_EQ(rsp[1], 0x06); ATF_CHECK_EQ(rsp[2], 0x00);
 	ATF_CHECK_EQ(rsp[3], 0x00); ATF_CHECK_EQ(rsp[4], 0x00);
 	ATF_CHECK_EQ(rsp[5], 0xDE);
 
 	/* Execute Write (commit) */
-	uint8_t exec[] = { 0x18, 0x01 };
+	uint8_t exec[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_COMMIT };
 	att_server_handle(&ac, &db, exec, sizeof(exec), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(rsp[0], 0x19); /* EXECUTE_WRITE_RSP */
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP);
 
 	/* Verify value was written */
 	ATF_CHECK_EQ(attrs[5].value[0], 0xDE);
@@ -2299,13 +2645,15 @@ ATF_TC_BODY(test_raw_pdu_find_by_type, tc)
 	att_mock_pair(&ac, &client_fd);
 	build_test_db(&db, attrs, val_buf);
 
-	uint8_t req[] = { 0x06, 0x01, 0x00, 0xFF, 0xFF,
-	    0x00, 0x28, 0xE0, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_REQ,
+	    0x01, 0x00, 0xFF, 0xFF,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE & 0xff,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE >> 8, 0xE0, 0xFF };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
 	ATF_REQUIRE(n >= 5);
-	ATF_CHECK_EQ(rsp[0], 0x07); /* FIND_BY_TYPE_VALUE_RSP */
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_RSP);
 	/* Found handle = 0x0004, group end = 0x0007 */
 	ATF_CHECK_EQ(rsp[1], 0x04); ATF_CHECK_EQ(rsp[2], 0x00);
 	ATF_CHECK_EQ(rsp[3], 0x07); ATF_CHECK_EQ(rsp[4], 0x00);
@@ -2330,12 +2678,13 @@ ATF_TC_BODY(test_raw_pdu_read_multiple, tc)
 	att_mock_pair(&ac, &client_fd);
 	build_test_db(&db, attrs, val_buf);
 
-	uint8_t req[] = { 0x0E, 0x03, 0x00, 0x06, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_REQ,
+	    0x03, 0x00, 0x06, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
 	ATF_REQUIRE(n >= 2);
-	ATF_CHECK_EQ(rsp[0], 0x0F); /* READ_MULTIPLE_RSP */
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_MULTIPLE_RSP);
 	/* "Test" (4 bytes) + 0xAA 0xBB 0xCC 0xDD (4 bytes) = 8 + opcode */
 	ATF_CHECK_EQ(n, 9);
 	ATF_CHECK_EQ(rsp[1], 'T');
@@ -2360,7 +2709,8 @@ ATF_TC_BODY(test_raw_pdu_notification, tc)
 	att_send_notification(&ac, 0x0006, &val, 1);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
-	uint8_t expected[] = { 0x1B, 0x06, 0x00, 0x42 };
+	uint8_t expected[] = { BT_CORE63_ATT_OP_HANDLE_NOTIFY,
+	    0x06, 0x00, 0x42 };
 	ATF_CHECK_EQ(n, 4);
 	ATF_CHECK(memcmp(rsp, expected, 4) == 0);
 
@@ -2384,7 +2734,7 @@ ATF_TC_BODY(test_mtu23_read_by_type_clamp, tc)
 	ssize_t n;
 
 	att_mock_pair(&ac, &client_fd);
-	ac.mtu = ATT_DEFAULT_MTU;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
 	attdb_add_service(&db, 0x1800);
@@ -2395,14 +2745,18 @@ ATF_TC_BODY(test_mtu23_read_by_type_clamp, tc)
 		    GATT_PROP_READ, ATT_PERM_READ, big, 50);
 	}
 
-	uint8_t req[] = { 0x08, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x2A };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_TYPE_REQ,
+	    0x01, 0x00, 0xFF, 0xFF,
+	    BT_ASSIGNED_UUID_DEVICE_NAME & 0xff,
+	    BT_ASSIGNED_UUID_DEVICE_NAME >> 8 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
-	ATF_CHECK(n <= 23); /* must fit in MTU */
-	ATF_CHECK_EQ(rsp[0], 0x09);
+	ATF_CHECK(n <= BT_CORE63_ATT_DEFAULT_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_TYPE_RSP);
 	/* entry_len = min(2+50, MTU-2) = min(52, 21) = 21 */
-	ATF_CHECK_EQ(rsp[1], 21);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_DEFAULT_MTU -
+	    BT_CORE63_ATT_RBT_HEADER_SIZE);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -2418,17 +2772,18 @@ ATF_TC_BODY(test_mtu23_notification_clamp, tc)
 	uint8_t big_val[50];
 
 	att_mock_pair(&ac, &client_fd);
-	ac.mtu = ATT_DEFAULT_MTU;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	memset(big_val, 0x55, sizeof(big_val));
 
 	att_send_notification(&ac, 0x0006, big_val, 50);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
-	ATF_CHECK_EQ(n, 23); /* clamped to MTU */
-	ATF_CHECK_EQ(rsp[0], 0x1B); /* NOTIFY */
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_DEFAULT_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
 	ATF_CHECK_EQ(rsp[1], 0x06); ATF_CHECK_EQ(rsp[2], 0x00);
 	/* 20 bytes of value */
-	for (int i = 3; i < 23; i++)
+	for (int i = BT_CORE63_ATT_HANDLE_VALUE_HEADER_SIZE;
+	    i < BT_CORE63_ATT_DEFAULT_MTU; i++)
 		ATF_CHECK_EQ(rsp[i], 0x55);
 
 	att_mock_cleanup(&ac, client_fd);
@@ -2447,19 +2802,23 @@ ATF_TC_BODY(test_mtu23_find_info_limited, tc)
 	ssize_t n;
 
 	att_mock_pair(&ac, &client_fd);
-	ac.mtu = ATT_DEFAULT_MTU; /* 23 */
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	build_test_db(&db, attrs, val_buf);
 
-	uint8_t req[] = { 0x04, 0x01, 0x00, 0xFF, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_FIND_INFO_REQ,
+	    0x01, 0x00, 0xFF, 0xFF };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
-	ATF_CHECK(n <= 23);
-	ATF_CHECK_EQ(rsp[0], 0x05);
-	ATF_CHECK_EQ(rsp[1], 0x01); /* 16-bit format */
+	ATF_CHECK(n <= BT_CORE63_ATT_DEFAULT_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_FIND_INFO_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_FIND_INFO_FORMAT_UUID16);
 	/* Max entries at MTU=23: (23-2)/4 = 5 entries */
-	int num_entries = (n - 2) / 4;
-	ATF_CHECK_EQ(num_entries, 5);
+	int num_entries = (n - BT_CORE63_ATT_RBT_HEADER_SIZE) /
+	    BT_CORE63_ATT_FIND_INFO_UUID16_ENTRY_SIZE;
+	ATF_CHECK_EQ(num_entries, (BT_CORE63_ATT_DEFAULT_MTU -
+	    BT_CORE63_ATT_RBT_HEADER_SIZE) /
+	    BT_CORE63_ATT_FIND_INFO_UUID16_ENTRY_SIZE);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -2476,6 +2835,8 @@ ATF_TC_BODY(test_client_mtu_pdu, tc)
 	int peer;
 	uint8_t buf[ATT_PDU_BUF_SIZE];
 	ssize_t n;
+	const uint16_t client_mtu = 200;
+	const uint16_t server_mtu = 100;
 
 	att_mock_pair(&ac, &peer);
 
@@ -2485,19 +2846,22 @@ ATF_TC_BODY(test_client_mtu_pdu, tc)
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
 		/* Verify: 02 XX XX (MTU_REQ + client_mtu LE) */
-		if (n != 3 || buf[0] != 0x02) _exit(1);
+		if (n != BT_CORE63_ATT_MTU_PDU_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_MTU_REQ) _exit(1);
 		uint16_t cmtu = buf[1] | ((uint16_t)buf[2] << 8);
-		if (cmtu != 200) _exit(2);
+		if (cmtu != client_mtu) _exit(2);
 		/* Reply: server MTU = 100 */
-		uint8_t rsp[] = { 0x03, 0x64, 0x00 };
+		uint8_t rsp[BT_CORE63_ATT_MTU_PDU_SIZE] = {
+		    BT_CORE63_ATT_OP_MTU_RSP };
+		put_le16(rsp + 1, server_mtu);
 		(void)send(peer, rsp, 3, 0);
 		close(peer);
 		_exit(0);
 	}
 	close(peer);
-	int ret = att_exchange_mtu(&ac, 200);
+	int ret = att_exchange_mtu(&ac, client_mtu);
 	ATF_CHECK_EQ(ret, 0);
-	ATF_CHECK_EQ(ac.mtu, 100); /* min(200, 100) */
+	ATF_CHECK_EQ(ac.mtu, server_mtu);
 
 	int status;
 	waitpid(pid, &status, 0);
@@ -2522,9 +2886,10 @@ ATF_TC_BODY(test_client_write_cmd_pdu, tc)
 
 	/* Read what was sent */
 	n = recv(peer, buf, sizeof(buf), 0);
-	ATF_CHECK_EQ(n, 5);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_WRITE_HEADER_SIZE + 2);
 	/* 52 06 00 BE EF */
-	ATF_CHECK_EQ(buf[0], 0x52);
+	/* Core 6.3 Vol 3 Part F §3.4.5.3: Write Command. */
+	ATF_CHECK_EQ(buf[0], BT_CORE63_ATT_OP_WRITE_CMD);
 	ATF_CHECK_EQ(buf[1], 0x06); ATF_CHECK_EQ(buf[2], 0x00);
 	ATF_CHECK_EQ(buf[3], 0xBE); ATF_CHECK_EQ(buf[4], 0xEF);
 
@@ -2548,10 +2913,12 @@ ATF_TC_BODY(test_client_read_blob_pdu, tc)
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
 		/* Verify: 0C 03 00 0A 00 (handle=3, offset=10) */
-		if (n != 5 || buf[0] != 0x0C) _exit(1);
+		if (n != BT_CORE63_ATT_READ_BLOB_REQ_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_READ_BLOB_REQ) _exit(1);
 		if (buf[1] != 0x03 || buf[2] != 0x00) _exit(2);
 		if (buf[3] != 0x0A || buf[4] != 0x00) _exit(3);
-		uint8_t rsp[] = { 0x0D, 0x61, 0x62 }; /* "ab" */
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_READ_BLOB_RSP,
+		    0x61, 0x62 }; /* local fixture value "ab" */
 		(void)send(peer, rsp, 3, 0);
 		close(peer);
 		_exit(0);
@@ -2590,12 +2957,17 @@ ATF_TC_BODY(test_gad_restricted_range, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Read By Group Type: start=0x0004, end=0xFFFF → only Custom Service */
-	uint8_t req[] = { 0x10, 0x04, 0x00, 0xFF, 0xFF, 0x00, 0x28 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ,
+	    0x04, 0x00, 0xff, 0xff, 0x00, 0x28 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n >= 8);
-	ATF_CHECK_EQ(rsp[0], 0x11);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_RESPONSE_PARAM_HEADER_SIZE + 1 +
+	    BT_CORE63_ATT_GROUP16_ENTRY_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_GROUP16_ENTRY_SIZE);
 	ATF_CHECK_EQ(get_le16(rsp + 2), 0x0004); /* only custom service */
+	ATF_CHECK_EQ(get_le16(rsp + 4), TEST_CUSTOM_CCCD_HANDLE);
+	ATF_CHECK_EQ(get_le16(rsp + 6), 0xffe0); /* local service UUID */
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -2615,12 +2987,15 @@ ATF_TC_BODY(test_gad_empty_range, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x10, 0x20, 0x00, 0xFF, 0xFF, 0x00, 0x28 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ,
+	    0x20, 0x00, 0xff, 0xff, 0x00, 0x28 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 5);
-	ATF_CHECK_EQ(rsp[0], 0x01);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_FOUND);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ);
+	ATF_CHECK_EQ(get_le16(rsp + 2), 0x0020);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_FOUND);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -2641,13 +3016,15 @@ ATF_TC_BODY(test_gad_find_info_single, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* start=end=0x0007 (CCCD) */
-	uint8_t req[] = { 0x04, 0x07, 0x00, 0x07, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_FIND_INFO_REQ,
+	    0x07, 0x00, 0x07, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x05);
-	ATF_CHECK_EQ(rsp[1], 0x01); /* 16-bit */
+	ATF_REQUIRE_EQ(n, 2 + BT_CORE63_ATT_FIND_INFO_UUID16_ENTRY_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_FIND_INFO_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_FIND_INFO_FORMAT_UUID16);
 	ATF_CHECK_EQ(get_le16(rsp + 2), 0x0007);
-	ATF_CHECK_EQ(get_le16(rsp + 4), GATT_UUID_CCCD);
+	ATF_CHECK_EQ(get_le16(rsp + 4), BT_ASSIGNED_UUID_CCCD);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -2670,22 +3047,22 @@ ATF_TC_BODY(test_gar_read_encrypt_required, tc)
 
 	att_mock_pair(&ac, &cf);
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
-	attdb_add_service(&db, 0x1800);
-	attdb_add_characteristic(&db, 0x2A00,
-	    GATT_PROP_READ, ATT_PERM_READ_ENCRYPT, "Secret", 6);
+	attdb_add_service(&db, BT_ASSIGNED_UUID_GAP_SERVICE);
+	attdb_add_characteristic(&db, BT_ASSIGNED_UUID_DEVICE_NAME,
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ_ENCRYPT, "Secret", 6);
 
 	ac.encrypted = false;
-	uint8_t req[] = { 0x0A, 0x03, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x03, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x01);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INSUFF_ENCRYPTION);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INSUFFICIENT_ENCRYPTION);
 
 	/* Now with encryption → success */
 	ac.encrypted = true;
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x0B);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 	ATF_CHECK(n > 1);
 
 	att_mock_cleanup(&ac, cf);
@@ -2705,22 +3082,25 @@ ATF_TC_BODY(test_gar_read_empty_value, tc)
 
 	att_mock_pair(&ac, &cf);
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
-	attdb_add_service(&db, 0x1800);
-	attdb_add_characteristic(&db, 0x2A00,
-	    GATT_PROP_READ | GATT_PROP_WRITE,
+	attdb_add_service(&db, BT_ASSIGNED_UUID_GAP_SERVICE);
+	attdb_add_characteristic(&db, BT_ASSIGNED_UUID_DEVICE_NAME,
+	    BT_CORE63_GATT_PROP_READ | BT_CORE63_GATT_PROP_WRITE,
 	    ATT_PERM_READ | ATT_PERM_WRITE, NULL, 0);
 	/* value_len=0, value=NULL */
 
-	uint8_t req[] = { 0x0A, 0x03, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x03, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 1); /* just opcode, no value */
-	ATF_CHECK_EQ(rsp[0], 0x0B);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_OPCODE_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
 
-/* Read Blob at exact end of value → empty response body */
+/*
+ * Core 6.3 Vol 3 Part F §3.4.4.5 permits Attribute Not Long for a
+ * fixed short value.  This case records the server's permitted choice.
+ */
 ATF_TC_WITHOUT_HEAD(test_gar_read_blob_at_end);
 ATF_TC_BODY(test_gar_read_blob_at_end, tc)
 {
@@ -2738,14 +3118,15 @@ ATF_TC_BODY(test_gar_read_blob_at_end, tc)
 	/*
 	 * Read Blob at offset=4 on a 4-byte attribute at MTU=23.
 	 * Since value_len (4) <= mtu-1 (22), the attribute is NOT long
-	 * and Read Blob must return ATT_ERR_ATTR_NOT_LONG.
+	 * and the server may return Attribute Not Long (0x0B).
 	 */
-	uint8_t req[] = { 0x0C, 0x03, 0x00, 0x04, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
+	    0x03, 0x00, 0x04, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_LONG);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_LONG);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -2767,14 +3148,19 @@ ATF_TC_BODY(test_gar_read_blob_past_end, tc)
 
 	/*
 	 * Read Blob at offset=16 on a 4-byte attribute at MTU=23.
-	 * Since value_len (4) <= mtu-1 (22), the "not long" check
-	 * fires before the offset check.
+	 * Core Spec Vol 3 Part F §3.4.4.5: an offset greater than the
+	 * attribute length "shall" yield Invalid Offset (0x07).  This
+	 * mandatory check takes precedence over the optional ("may")
+	 * Attribute Not Long (0x0B) response for a short attribute, so a
+	 * past-the-end offset must return 0x07 even though value_len (4)
+	 * <= mtu-1 (22).
 	 */
-	uint8_t req[] = { 0x0C, 0x03, 0x00, 0x10, 0x00 }; /* offset=16 > 4 */
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
+	    0x03, 0x00, 0x10, 0x00 }; /* fixture offset 16 > length 4 */
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x01);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_LONG);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_OFFSET);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -2795,12 +3181,16 @@ ATF_TC_BODY(test_gar_read_by_type_uuid128, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* 21-byte Read By Type with random 128-bit UUID */
-	uint8_t req[21] = { 0x08, 0x01, 0x00, 0xFF, 0xFF };
-	memset(req + 5, 0xAA, 16); /* 128-bit UUID */
+	uint8_t req[BT_CORE63_ATT_RANGE_UUID128_REQ_SIZE] = {
+	    BT_CORE63_ATT_OP_READ_BY_TYPE_REQ, 0x01, 0x00, 0xff, 0xff };
+	memset(req + BT_CORE63_ATT_RANGE_PREFIX_SIZE, 0xaa,
+	    BT_CORE63_ATT_UUID128_SIZE); /* external absent UUID */
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x01); /* Error */
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_FOUND);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_BY_TYPE_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_FOUND);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -2823,12 +3213,15 @@ ATF_TC_BODY(test_gaw_write_cmd_bad_handle, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x52, 0xFF, 0xFF, 0x42 }; /* bad handle */
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_CMD,
+	    0xff, 0xff, 0x42 }; /* maximum handle absent from fixture */
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 
 	pfd.fd = cf;
 	pfd.events = POLLIN;
 	ATF_CHECK_EQ(poll(&pfd, 1, 50), 0); /* no response for commands */
+	ATF_CHECK_EQ(attrs[5].value_len, 4);
+	ATF_CHECK_EQ(attrs[5].value[0], 0xaa); /* unchanged fixture value */
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -2849,11 +3242,12 @@ ATF_TC_BODY(test_gaw_write_exact_maxlen, tc)
 	build_test_db(&db, attrs, vb);
 	/* Custom char (handle 6) has maxlen=4 */
 
-	uint8_t req[] = { 0x12, 0x06, 0x00, 0x11, 0x22, 0x33, 0x44 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ,
+	    0x06, 0x00, 0x11, 0x22, 0x33, 0x44 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(rsp[0], 0x13); /* success */
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_OPCODE_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -2873,16 +3267,17 @@ ATF_TC_BODY(test_gaw_write_over_maxlen, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x12, 0x06, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ,
+	    0x06, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x01);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_ATTR_LEN);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_ATTRIBUTE_LENGTH);
 
 	att_mock_cleanup(&ac, cf);
 }
 
-/* Signed Write Command (0xD2) → silently ignored (bit 6 set) */
+/* Current Core 6.3 marks legacy opcode 0xD2 previously used; no CSRK drops it. */
 ATF_TC_WITHOUT_HEAD(test_gaw_signed_write_ignored);
 ATF_TC_BODY(test_gaw_signed_write_ignored, tc)
 {
@@ -2896,20 +3291,22 @@ ATF_TC_BODY(test_gaw_signed_write_ignored, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	/* 0xD2 has bit 6 set → command, silently ignored */
-	uint8_t req[] = { 0xD2, 0x06, 0x00, 0x42,
-	    0,0,0,0,0,0,0,0,0,0,0,0 }; /* + 12-byte signature */
+	uint8_t req[BT_CORE63_LEGACY_ATT_SIGNED_WRITE_MIN_SIZE + 1] = {
+	    BT_CORE63_LEGACY_ATT_OP_SIGNED_WRITE_CMD, 0x06, 0x00, 0x42 };
+	test_signature_valid = false;
 	int ret = att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	ATF_CHECK_EQ(ret, 0);
 
 	pfd.fd = cf;
 	pfd.events = POLLIN;
 	ATF_CHECK_EQ(poll(&pfd, 1, 50), 0);
+	ATF_CHECK_EQ(attrs[5].value_len, 4);
+	ATF_CHECK_EQ(attrs[5].value[0], 0xaa);
 
 	att_mock_cleanup(&ac, cf);
 }
 
-/* Prepare Write: multiple fragments then commit */
+/* Core 6.3 Vol 3 Part F §§3.4.6.1-.4: fragments execute in FIFO order. */
 ATF_TC_WITHOUT_HEAD(test_gaw_prepare_multi_fragment);
 ATF_TC_BODY(test_gaw_prepare_multi_fragment, tc)
 {
@@ -2925,28 +3322,34 @@ ATF_TC_BODY(test_gaw_prepare_multi_fragment, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Fragment 1: offset=0, value=0xAA 0xBB */
-	uint8_t p1[] = { 0x16, 0x06, 0x00, 0x00, 0x00, 0xAA, 0xBB };
+	uint8_t p1[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0x06, 0x00, 0x00, 0x00, 0xAA, 0xBB };
 	att_server_handle(&ac, &db, p1, sizeof(p1), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x17);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
+	ATF_CHECK_EQ(memcmp(rsp + 1, p1 + 1, sizeof(p1) - 1), 0);
 
 	/* Fragment 2: offset=2, value=0xCC 0xDD */
-	uint8_t p2[] = { 0x16, 0x06, 0x00, 0x02, 0x00, 0xCC, 0xDD };
+	uint8_t p2[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0x06, 0x00, 0x02, 0x00, 0xCC, 0xDD };
 	att_server_handle(&ac, &db, p2, sizeof(p2), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x17);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
+	ATF_CHECK_EQ(memcmp(rsp + 1, p2 + 1, sizeof(p2) - 1), 0);
 
 	/* Execute commit */
-	uint8_t ex[] = { 0x18, 0x01 };
+	uint8_t ex[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_COMMIT };
 	att_server_handle(&ac, &db, ex, sizeof(ex), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x19);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_OPCODE_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP);
 
 	/* Read back: should be AA BB CC DD */
-	uint8_t rd[] = { 0x0A, 0x06, 0x00 };
+	uint8_t rd[] = { BT_CORE63_ATT_OP_READ_REQ, 0x06, 0x00 };
 	att_server_handle(&ac, &db, rd, sizeof(rd), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x0B);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 	ATF_CHECK_EQ(rsp[1], 0xAA);
 	ATF_CHECK_EQ(rsp[2], 0xBB);
 	ATF_CHECK_EQ(rsp[3], 0xCC);
@@ -2970,10 +3373,10 @@ ATF_TC_BODY(test_gan_notify_empty, tc)
 
 	att_mock_pair(&ac, &cf);
 
-	att_send_notification(&ac, 0x0006, NULL, 0);
+	ATF_CHECK_EQ(att_send_notification(&ac, 0x0006, NULL, 0), 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 3); /* opcode + handle only */
-	ATF_CHECK_EQ(rsp[0], 0x1B);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_HANDLE_VALUE_HEADER_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
 	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0006);
 
 	att_mock_cleanup(&ac, cf);
@@ -2994,8 +3397,8 @@ ATF_TC_BODY(test_gan_notify_sequence, tc)
 		uint8_t val = (uint8_t)i;
 		ATF_CHECK_EQ(att_send_notification(&ac, 0x0006, &val, 1), 0);
 		n = recv(cf, rsp, sizeof(rsp), 0);
-		ATF_CHECK_EQ(n, 4);
-		ATF_CHECK_EQ(rsp[0], 0x1B);
+		ATF_CHECK_EQ(n, BT_CORE63_ATT_HANDLE_VALUE_HEADER_SIZE + 1);
+		ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
 		ATF_CHECK_EQ(rsp[3], (uint8_t)i);
 	}
 
@@ -3016,8 +3419,8 @@ ATF_TC_BODY(test_gai_indicate_empty, tc)
 
 	ATF_CHECK_EQ(att_send_indication(&ac, 0x0006, NULL, 0), 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 3);
-	ATF_CHECK_EQ(rsp[0], 0x1D); /* INDICATE */
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_HANDLE_VALUE_HEADER_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_INDICATE);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -3042,10 +3445,14 @@ ATF_TC_BODY(test_client_read_by_type_pdu, tc)
 	if (pid == 0) {
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		/* 08 01 00 FF FF 00 2A */
-		if (n != 7 || buf[0] != 0x08) _exit(1);
-		if (buf[5] != 0x00 || buf[6] != 0x2A) _exit(2);
-		uint8_t rsp[] = { 0x09, 0x06,
+		/* Core Vol 3, Part F, Table 3.1: Read By Type Request = 0x08. */
+		if (n != BT_CORE63_ATT_RANGE_UUID16_REQ_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_READ_BY_TYPE_REQ) _exit(1);
+		if (get_le16(buf + 1) != 0x0001 ||
+		    get_le16(buf + 3) != BT_CORE63_ATT_HANDLE_MAX) _exit(2);
+		if (get_le16(buf + 5) != BT_ASSIGNED_UUID_DEVICE_NAME) _exit(3);
+		/* Table 3.1: Read By Type Response = 0x09. */
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_READ_BY_TYPE_RSP, 0x06,
 		    0x03, 0x00, 'T', 'e', 's', 't' };
 		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
@@ -3057,7 +3464,7 @@ ATF_TC_BODY(test_client_read_by_type_pdu, tc)
 	int ret = att_read_by_type(&ac, 0x0001, 0xFFFF, 0x2A00,
 	    out, sizeof(out), &olen);
 	ATF_CHECK_EQ(ret, 0);
-	ATF_CHECK(olen > 0);
+	ATF_CHECK_EQ(olen, BT_CORE63_ATT_RESPONSE_PARAM_HEADER_SIZE + 6);
 
 	int status;
 	waitpid(pid, &status, 0);
@@ -3081,9 +3488,17 @@ ATF_TC_BODY(test_client_read_multiple_pdu, tc)
 	if (pid == 0) {
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		/* 0E 03 00 06 00 */
-		if (n != 5 || buf[0] != 0x0E) _exit(1);
-		uint8_t rsp[] = { 0x0F, 0xAA, 0xBB };
+		/*
+		 * ATT_READ_MULTIPLE_REQ: opcode 0x0E followed by the Set Of
+		 * Handles in the requested order, each a 16-bit LE handle
+		 * (Vol 3 Part F Sec 3.4.4.7). Expect 0E 03 00 06 00.
+		 */
+		if (n != BT_CORE63_ATT_OPCODE_SIZE + 2 * sizeof(uint16_t) ||
+		    buf[0] != BT_CORE63_ATT_OP_READ_MULTIPLE_REQ ||
+		    get_le16(buf + 1) != 0x0003 ||
+		    get_le16(buf + 3) != 0x0006) _exit(1);
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_RSP,
+		    0xAA, 0xBB };
 		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
 		_exit(0);
@@ -3094,6 +3509,7 @@ ATF_TC_BODY(test_client_read_multiple_pdu, tc)
 	size_t olen = 0;
 	int ret = att_read_multiple(&ac, handles, 2, out, sizeof(out), &olen);
 	ATF_CHECK_EQ(ret, 0);
+	ATF_CHECK_EQ(olen, 2);
 
 	int status;
 	waitpid(pid, &status, 0);
@@ -3119,7 +3535,9 @@ ATF_TC_BODY(test_client_error_errno, tc)
 		n = recv(peer, buf, sizeof(buf), 0);
 		(void)n;
 		/* Send Error Response: Invalid Handle */
-		uint8_t rsp[] = { 0x01, 0x0A, 0xFF, 0xFF, 0x01 };
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_ERROR_RSP,
+		    BT_CORE63_ATT_OP_READ_REQ, 0xFF, 0xFF,
+		    BT_CORE63_ATT_ERR_INVALID_HANDLE };
 		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
 		_exit(0);
@@ -3129,7 +3547,7 @@ ATF_TC_BODY(test_client_error_errno, tc)
 	size_t vlen = 0;
 	int ret = att_read(&ac, 0xFFFF, val, sizeof(val), &vlen);
 	/* att_read returns the ATT error code on protocol error */
-	ATF_CHECK_EQ(ret, ATT_ERR_INVALID_HANDLE);
+	ATF_CHECK_EQ(ret, BT_CORE63_ATT_ERR_INVALID_HANDLE);
 
 	int status;
 	waitpid(pid, &status, 0);
@@ -3153,7 +3571,8 @@ ATF_TC_BODY(test_client_confirm_pdu, tc)
 
 	n = recv(peer, buf, sizeof(buf), 0);
 	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(buf[0], 0x1E); /* HANDLE_VALUE_CFM */
+	/* Core 6.3 Vol 3 Part F §3.4.7.3: Handle Value Confirmation. */
+	ATF_CHECK_EQ(buf[0], BT_CORE63_ATT_OP_HANDLE_CONFIRM);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -3191,7 +3610,7 @@ ATF_TC_BODY(name, tc)
 
 /* --- Read Blob at different MTUs --- */
 
-MTU_TEST(test_mtu23_read_blob, 23)
+MTU_TEST(test_mtu23_read_blob, BT_CORE63_ATT_DEFAULT_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3202,21 +3621,22 @@ MTU_TEST(test_mtu23_read_blob, 23)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 23;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	build_large_test_db(&db, attrs, vb);
 
 	/* Read Blob: handle=3 (200-byte value), offset=10 */
-	uint8_t req[] = { 0x0C, 0x03, 0x00, 0x0A, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
+	    0x03, 0x00, 0x0A, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 23); /* clamped to MTU */
-	ATF_CHECK_EQ(rsp[0], 0x0D);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_DEFAULT_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BLOB_RSP);
 	ATF_CHECK_EQ(rsp[1], 0x42); /* value byte */
 
 	att_mock_cleanup(&ac, cf);
 }
 
-MTU_TEST(test_mtu64_read_blob, 64)
+MTU_TEST(test_mtu64_read_blob, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3227,19 +3647,20 @@ MTU_TEST(test_mtu64_read_blob, 64)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	build_large_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x0C, 0x03, 0x00, 0x0A, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
+	    0x03, 0x00, 0x0A, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 64); /* 1 + 63 bytes of value */
-	ATF_CHECK_EQ(rsp[0], 0x0D);
+	ATF_CHECK_EQ(n, BT_CORE63_EATT_MIN_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BLOB_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
 
-MTU_TEST(test_mtu517_read_blob, 517)
+MTU_TEST(test_mtu517_read_blob, BT_CORE63_ATT_MAX_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3250,7 +3671,7 @@ MTU_TEST(test_mtu517_read_blob, 517)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 	build_large_test_db(&db, attrs, vb);
 
 	/*
@@ -3258,19 +3679,20 @@ MTU_TEST(test_mtu517_read_blob, 517)
 	 * Since value_len (200) <= mtu-1 (516), the attribute is NOT long
 	 * and Read Blob must return ATT_ERR_ATTR_NOT_LONG.
 	 */
-	uint8_t req[] = { 0x0C, 0x03, 0x00, 0x0A, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
+	    0x03, 0x00, 0x0A, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 	ATF_CHECK_EQ(n, 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_LONG);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_LONG);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* --- Read Multiple at different MTUs --- */
 
-MTU_TEST(test_mtu23_read_multiple, 23)
+MTU_TEST(test_mtu23_read_multiple, BT_CORE63_ATT_DEFAULT_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3281,19 +3703,20 @@ MTU_TEST(test_mtu23_read_multiple, 23)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 23;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	build_large_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x0E, 0x03, 0x00, 0x06, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_REQ,
+	    0x03, 0x00, 0x06, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 23); /* clamped to MTU */
-	ATF_CHECK_EQ(rsp[0], 0x0F);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_DEFAULT_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_MULTIPLE_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
 
-MTU_TEST(test_mtu64_read_multiple, 64)
+MTU_TEST(test_mtu64_read_multiple, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3304,21 +3727,22 @@ MTU_TEST(test_mtu64_read_multiple, 64)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	build_large_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x0E, 0x03, 0x00, 0x06, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_REQ,
+	    0x03, 0x00, 0x06, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 64);
-	ATF_CHECK_EQ(rsp[0], 0x0F);
+	ATF_CHECK_EQ(n, BT_CORE63_EATT_MIN_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_MULTIPLE_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* --- Read Multiple Variable at different MTUs --- */
 
-MTU_TEST(test_mtu23_read_multi_var, 23)
+MTU_TEST(test_mtu23_read_multi_var, BT_CORE63_ATT_DEFAULT_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3329,22 +3753,33 @@ MTU_TEST(test_mtu23_read_multi_var, 23)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 23;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	build_large_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x20, 0x03, 0x00, 0x06, 0x00 };
+	/*
+	 * Handle 3 has a 200-octet value. Vol 3 Part F Sec 3.4.4.12
+	 * (Table 3.29 + Note): "The Value Length field ... shall be set to
+	 * the length of the Attribute Value field" (the FULL length), and
+	 * "If a Length Value Tuple is truncated, then the amount of
+	 * Attribute Value will be less than the value of the Value Length
+	 * field." Only the Attribute Value octets may be clamped to the
+	 * MTU; the Value Length field must still report 200.
+	 */
+	/* Regression guard for bug #17: the Length field must stay 200. */
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_REQ,
+	    0x03, 0x00, 0x06, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK(n <= 23);
-	ATF_CHECK_EQ(rsp[0], 0x21); /* READ_MULTI_VAR_RSP */
-	/* First entry: length(2) + truncated value */
+	ATF_CHECK(n <= BT_CORE63_ATT_DEFAULT_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_RSP);
+	/* First entry: Value Length must be the full attribute length. */
 	uint16_t vlen = get_le16(rsp + 1);
-	ATF_CHECK(vlen <= 20); /* limited by MTU - 3 */
+	ATF_CHECK_EQ(vlen, 200); /* Vol 3 Part F Sec 3.4.4.12 */
 
 	att_mock_cleanup(&ac, cf);
 }
 
-MTU_TEST(test_mtu64_read_multi_var, 64)
+MTU_TEST(test_mtu64_read_multi_var, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3355,21 +3790,22 @@ MTU_TEST(test_mtu64_read_multi_var, 64)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	build_large_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x20, 0x03, 0x00, 0x06, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_REQ,
+	    0x03, 0x00, 0x06, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK(n <= 64);
-	ATF_CHECK_EQ(rsp[0], 0x21);
+	ATF_CHECK(n <= BT_CORE63_EATT_MIN_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* --- Indication at different MTUs --- */
 
-MTU_TEST(test_mtu23_indication, 23)
+MTU_TEST(test_mtu23_indication, BT_CORE63_ATT_DEFAULT_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3378,20 +3814,20 @@ MTU_TEST(test_mtu23_indication, 23)
 	uint8_t big[200];
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 23;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	ac.ind_timer = 0;
 	memset(big, 0x77, sizeof(big));
 
 	att_send_indication(&ac, 0x0006, big, 200);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 23);
-	ATF_CHECK_EQ(rsp[0], 0x1D);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_DEFAULT_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_INDICATE);
 	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0006);
 
 	att_mock_cleanup(&ac, cf);
 }
 
-MTU_TEST(test_mtu64_indication, 64)
+MTU_TEST(test_mtu64_indication, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3400,19 +3836,19 @@ MTU_TEST(test_mtu64_indication, 64)
 	uint8_t big[200];
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	ac.ind_timer = 0;
 	memset(big, 0x77, sizeof(big));
 
 	att_send_indication(&ac, 0x0006, big, 200);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 64);
-	ATF_CHECK_EQ(rsp[0], 0x1D);
+	ATF_CHECK_EQ(n, BT_CORE63_EATT_MIN_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_INDICATE);
 
 	att_mock_cleanup(&ac, cf);
 }
 
-MTU_TEST(test_mtu517_indication, 517)
+MTU_TEST(test_mtu517_indication, BT_CORE63_ATT_MAX_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3421,21 +3857,21 @@ MTU_TEST(test_mtu517_indication, 517)
 	uint8_t big[200];
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 	ac.ind_timer = 0;
 	memset(big, 0x77, sizeof(big));
 
 	att_send_indication(&ac, 0x0006, big, 200);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 203); /* 3 + 200 */
-	ATF_CHECK_EQ(rsp[0], 0x1D);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_HANDLE_VALUE_HEADER_SIZE + sizeof(big));
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_INDICATE);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* --- Read By Group Type at MTU=64 --- */
 
-MTU_TEST(test_mtu64_read_by_group, 64)
+MTU_TEST(test_mtu64_read_by_group, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3446,22 +3882,25 @@ MTU_TEST(test_mtu64_read_by_group, 64)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x10, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x28 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ,
+	    0x01, 0x00, 0xFF, 0xFF,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE & 0xff,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE >> 8 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK(n <= 64);
+	ATF_CHECK(n <= BT_CORE63_EATT_MIN_MTU);
 	ATF_CHECK(n >= 14); /* 2 services * 6 bytes + 2 header */
-	ATF_CHECK_EQ(rsp[0], 0x11);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* --- Read at MTU=64 --- */
 
-MTU_TEST(test_mtu64_read, 64)
+MTU_TEST(test_mtu64_read, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3472,21 +3911,21 @@ MTU_TEST(test_mtu64_read, 64)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	build_large_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x0A, 0x03, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x03, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 64); /* 200-byte value truncated to MTU-1=63 */
-	ATF_CHECK_EQ(rsp[0], 0x0B);
+	ATF_CHECK_EQ(n, BT_CORE63_EATT_MIN_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* --- Read By Type at MTU=64 --- */
 
-MTU_TEST(test_mtu64_read_by_type, 64)
+MTU_TEST(test_mtu64_read_by_type, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3497,14 +3936,17 @@ MTU_TEST(test_mtu64_read_by_type, 64)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	build_large_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x08, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x2A };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_TYPE_REQ,
+	    0x01, 0x00, 0xFF, 0xFF,
+	    BT_ASSIGNED_UUID_DEVICE_NAME & 0xff,
+	    BT_ASSIGNED_UUID_DEVICE_NAME >> 8 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK(n <= 64);
-	ATF_CHECK_EQ(rsp[0], 0x09);
+	ATF_CHECK(n <= BT_CORE63_EATT_MIN_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_TYPE_RSP);
 	/* entry_len limited by MTU-2 */
 	ATF_CHECK(rsp[1] <= 62);
 
@@ -3513,7 +3955,7 @@ MTU_TEST(test_mtu64_read_by_type, 64)
 
 /* --- Notification at MTU=64 --- */
 
-MTU_TEST(test_mtu64_notification, 64)
+MTU_TEST(test_mtu64_notification, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3522,20 +3964,20 @@ MTU_TEST(test_mtu64_notification, 64)
 	uint8_t big[200];
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	memset(big, 0x55, sizeof(big));
 
 	att_send_notification(&ac, 0x0006, big, 200);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 64);
-	ATF_CHECK_EQ(rsp[0], 0x1B);
+	ATF_CHECK_EQ(n, BT_CORE63_EATT_MIN_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* --- Find Info at MTU=64 --- */
 
-MTU_TEST(test_mtu64_find_info, 64)
+MTU_TEST(test_mtu64_find_info, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -3546,14 +3988,15 @@ MTU_TEST(test_mtu64_find_info, 64)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x04, 0x01, 0x00, 0xFF, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_FIND_INFO_REQ,
+	    0x01, 0x00, 0xFF, 0xFF };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK(n <= 64);
-	ATF_CHECK_EQ(rsp[0], 0x05);
+	ATF_CHECK(n <= BT_CORE63_EATT_MIN_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_FIND_INFO_RSP);
 	/* All 7 attrs fit at MTU=64: 2 + 7*4 = 30 < 64 */
 	ATF_CHECK_EQ((n - 2) / 4, 7);
 
@@ -3579,11 +4022,13 @@ ATF_TC_BODY(test_gaw_write_invalid_handle_zero, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x12, 0x00, 0x00, 0x42 }; /* handle=0 */
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ,
+	    0x00, 0x00, 0x42 }; /* reserved handle zero */
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_HANDLE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_WRITE_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_HANDLE);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -3602,18 +4047,19 @@ ATF_TC_BODY(test_gaw_write_encrypt_required, tc)
 
 	att_mock_pair(&ac, &cf);
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
-	attdb_add_service(&db, 0xFFE0);
-	attdb_add_characteristic(&db, 0xFFE1,
-	    GATT_PROP_READ | GATT_PROP_WRITE,
+	attdb_add_service(&db, 0xFFE0); /* local test UUID */
+	attdb_add_characteristic(&db, 0xFFE1, /* local test UUID */
+	    BT_CORE63_GATT_PROP_READ | BT_CORE63_GATT_PROP_WRITE,
 	    ATT_PERM_READ | ATT_PERM_WRITE_ENCRYPT,
 	    "\x00", 1);
 
 	ac.encrypted = false;
-	uint8_t req[] = { 0x12, 0x03, 0x00, 0x42 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ,
+	    0x03, 0x00, 0x42 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INSUFF_ENCRYPTION);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INSUFFICIENT_ENCRYPTION);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -3632,17 +4078,18 @@ ATF_TC_BODY(test_gaw_write_encrypt_success, tc)
 
 	att_mock_pair(&ac, &cf);
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
-	attdb_add_service(&db, 0xFFE0);
-	attdb_add_characteristic(&db, 0xFFE1,
-	    GATT_PROP_READ | GATT_PROP_WRITE,
+	attdb_add_service(&db, 0xFFE0); /* local test UUID */
+	attdb_add_characteristic(&db, 0xFFE1, /* local test UUID */
+	    BT_CORE63_GATT_PROP_READ | BT_CORE63_GATT_PROP_WRITE,
 	    ATT_PERM_READ | ATT_PERM_WRITE_ENCRYPT,
 	    "\x00", 1);
 
 	ac.encrypted = true;
-	uint8_t req[] = { 0x12, 0x03, 0x00, 0x42 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ,
+	    0x03, 0x00, 0x42 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -3661,17 +4108,20 @@ ATF_TC_BODY(test_gaw_write_cmd_zero_handle, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x52, 0x00, 0x00, 0x42 }; /* handle=0 */
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_CMD,
+	    0x00, 0x00, 0x42 }; /* reserved handle zero */
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 
 	pfd.fd = cf;
 	pfd.events = POLLIN;
 	ATF_CHECK_EQ(poll(&pfd, 1, 50), 0); /* no response for commands */
+	ATF_CHECK_EQ(attrs[5].value_len, 4);
+	ATF_CHECK_EQ(attrs[5].value[0], 0xaa); /* invalid command ignored */
 
 	att_mock_cleanup(&ac, cf);
 }
 
-/* Prepare Write to read-only attr → Write Not Permitted */
+/* Core 6.3 Vol 3 Part F §3.4.6.1: a non-writable attribute errors. */
 ATF_TC_WITHOUT_HEAD(test_gaw_prepare_write_readonly);
 ATF_TC_BODY(test_gaw_prepare_write_readonly, tc)
 {
@@ -3687,16 +4137,18 @@ ATF_TC_BODY(test_gaw_prepare_write_readonly, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Prepare Write to Device Name (handle 3, read-only) */
-	uint8_t req[] = { 0x16, 0x03, 0x00, 0x00, 0x00, 0x42 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0x03, 0x00, 0x00, 0x00, 0x42 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_WRITE_NOT_PERMITTED);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_PREPARE_WRITE_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_WRITE_NOT_PERMITTED);
 
 	att_mock_cleanup(&ac, cf);
 }
 
-/* Prepare Write to invalid handle → Invalid Handle */
+/* Core 6.3 Vol 3 Part F §3.4.6.1: an invalid handle errors. */
 ATF_TC_WITHOUT_HEAD(test_gaw_prepare_write_invalid_handle);
 ATF_TC_BODY(test_gaw_prepare_write_invalid_handle, tc)
 {
@@ -3711,16 +4163,22 @@ ATF_TC_BODY(test_gaw_prepare_write_invalid_handle, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x16, 0xFF, 0xFF, 0x00, 0x00, 0x42 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0xff, 0xff, 0x00, 0x00, 0x42 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_HANDLE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_PREPARE_WRITE_REQ);
+	ATF_CHECK_EQ(get_le16(rsp + 2), BT_CORE63_ATT_HANDLE_MAX);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_HANDLE);
 
 	att_mock_cleanup(&ac, cf);
 }
 
-/* Prepare Write queue full (16 entries) → Prepare Queue Full */
+/*
+ * Local 16-entry queue contract; Core 6.3 Vol 3 Part F §3.4.6.1 only
+ * defines the Prepare Queue Full response and leaves the limit unspecified.
+ */
 ATF_TC_WITHOUT_HEAD(test_gaw_prepare_queue_full);
 ATF_TC_BODY(test_gaw_prepare_queue_full, tc)
 {
@@ -3737,29 +4195,32 @@ ATF_TC_BODY(test_gaw_prepare_queue_full, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Fill the queue with 16 small entries */
-	for (i = 0; i < ATT_PREPARE_QUEUE_MAX; i++) {
-		uint8_t req[] = { 0x16, 0x06, 0x00, 0x00, 0x00, 0x42 };
+	for (i = 0; i < TEST_IMPL_PREPARE_QUEUE_ENTRY_LIMIT; i++) {
+		uint8_t req[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+		    0x06, 0x00, 0x00, 0x00, 0x42 };
 		att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 		n = recv(cf, rsp, sizeof(rsp), 0);
-		ATF_CHECK_EQ(rsp[0], ATT_OP_PREPARE_WRITE_RSP);
+		ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
 	}
 
 	/* 17th should fail */
-	uint8_t req17[] = { 0x16, 0x06, 0x00, 0x00, 0x00, 0x42 };
+	uint8_t req17[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0x06, 0x00, 0x00, 0x00, 0x42 };
 	att_server_handle(&ac, &db, req17, sizeof(req17), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_PREPARE_QUEUE_FULL);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_PREPARE_QUEUE_FULL);
 
 	/* Cancel to clean up */
-	uint8_t exec[] = { 0x18, 0x00 };
+	uint8_t exec[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_CANCEL };
 	att_server_handle(&ac, &db, exec, sizeof(exec), -1, 0);
 	(void)recv(cf, rsp, sizeof(rsp), 0);
 
 	att_mock_cleanup(&ac, cf);
 }
 
-/* Execute Write with empty queue → success (no-op) */
+/* Core 6.3 Vol 3 Part F §3.4.6.3: commit on an empty queue responds. */
 ATF_TC_WITHOUT_HEAD(test_gaw_execute_empty_queue);
 ATF_TC_BODY(test_gaw_execute_empty_queue, tc)
 {
@@ -3774,16 +4235,17 @@ ATF_TC_BODY(test_gaw_execute_empty_queue, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t exec[] = { 0x18, 0x01 };
+	uint8_t exec[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_COMMIT };
 	att_server_handle(&ac, &db, exec, sizeof(exec), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_EXECUTE_WRITE_RSP);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_OPCODE_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
 
-/* Execute Write cancel with empty queue → success (no-op) */
+/* Core 6.3 Vol 3 Part F §3.4.6.3: cancel on an empty queue responds. */
 ATF_TC_WITHOUT_HEAD(test_gaw_execute_cancel_empty);
 ATF_TC_BODY(test_gaw_execute_cancel_empty, tc)
 {
@@ -3798,11 +4260,12 @@ ATF_TC_BODY(test_gaw_execute_cancel_empty, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t exec[] = { 0x18, 0x00 };
+	uint8_t exec[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_CANCEL };
 	att_server_handle(&ac, &db, exec, sizeof(exec), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_EXECUTE_WRITE_RSP);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_OPCODE_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -3820,22 +4283,25 @@ ATF_TC_BODY(test_gaw_write_at_mtu_boundary, tc)
 	ssize_t n __unused;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_DEFAULT_MTU;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
 	attdb_add_service(&db, 0xFFE0);
 	attdb_add_characteristic(&db, 0xFFE1,
 	    GATT_PROP_WRITE, ATT_PERM_WRITE, "\x00", 1);
-	attrs[2].value_maxlen = 20;
+	attrs[2].value_maxlen = BT_CORE63_ATT_DEFAULT_MTU -
+	    BT_CORE63_ATT_WRITE_HEADER_SIZE;
 
 	/* 20 bytes of value + 3 bytes header = 23 = MTU */
-	uint8_t req[23];
-	req[0] = ATT_OP_WRITE_REQ;
+	uint8_t req[BT_CORE63_ATT_DEFAULT_MTU];
+	req[0] = BT_CORE63_ATT_OP_WRITE_REQ;
 	put_le16(req + 1, 0x0003);
-	memset(req + 3, 0x55, 20);
+	memset(req + BT_CORE63_ATT_WRITE_HEADER_SIZE, 0x55,
+	    sizeof(req) - BT_CORE63_ATT_WRITE_HEADER_SIZE);
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
-	ATF_CHECK_EQ(attrs[2].value_len, 20);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
+	ATF_CHECK_EQ(attrs[2].value_len,
+	    BT_CORE63_ATT_DEFAULT_MTU - BT_CORE63_ATT_WRITE_HEADER_SIZE);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -3852,28 +4318,31 @@ ATF_TC_BODY(test_gaw_write_cmd_at_mtu_boundary, tc)
 	struct pollfd pfd;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_DEFAULT_MTU;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
 	attdb_add_service(&db, 0xFFE0);
 	attdb_add_characteristic(&db, 0xFFE1,
 	    GATT_PROP_WRITE_NO_RSP, ATT_PERM_WRITE, "\x00", 1);
-	attrs[2].value_maxlen = 20;
+	attrs[2].value_maxlen = BT_CORE63_ATT_DEFAULT_MTU -
+	    BT_CORE63_ATT_WRITE_HEADER_SIZE;
 
-	uint8_t req[23];
-	req[0] = ATT_OP_WRITE_CMD;
+	uint8_t req[BT_CORE63_ATT_DEFAULT_MTU];
+	req[0] = BT_CORE63_ATT_OP_WRITE_CMD;
 	put_le16(req + 1, 0x0003);
-	memset(req + 3, 0x66, 20);
+	memset(req + BT_CORE63_ATT_WRITE_HEADER_SIZE, 0x66,
+	    sizeof(req) - BT_CORE63_ATT_WRITE_HEADER_SIZE);
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 
 	pfd.fd = cf;
 	pfd.events = POLLIN;
 	ATF_CHECK_EQ(poll(&pfd, 1, 50), 0);
-	ATF_CHECK_EQ(attrs[2].value_len, 20);
+	ATF_CHECK_EQ(attrs[2].value_len,
+	    BT_CORE63_ATT_DEFAULT_MTU - BT_CORE63_ATT_WRITE_HEADER_SIZE);
 
 	att_mock_cleanup(&ac, cf);
 }
 
-/* Prepare writes to different handles, then commit */
+/* Core 6.3 Vol 3 Part F §3.4.6: one queue may contain multiple attrs. */
 ATF_TC_WITHOUT_HEAD(test_gaw_prepare_different_handles);
 ATF_TC_BODY(test_gaw_prepare_different_handles, tc)
 {
@@ -3889,22 +4358,27 @@ ATF_TC_BODY(test_gaw_prepare_different_handles, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Prepare to handle 6 (custom char) */
-	uint8_t p1[] = { 0x16, 0x06, 0x00, 0x00, 0x00, 0x11, 0x22 };
+	uint8_t p1[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0x06, 0x00, 0x00, 0x00, 0x11, 0x22 };
 	att_server_handle(&ac, &db, p1, sizeof(p1), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x17);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
+	ATF_CHECK_EQ(memcmp(rsp + 1, p1 + 1, sizeof(p1) - 1), 0);
 
 	/* Prepare to handle 7 (CCCD) */
-	uint8_t p2[] = { 0x16, 0x07, 0x00, 0x00, 0x00, 0x01, 0x00 };
+	uint8_t p2[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0x07, 0x00, 0x00, 0x00, BT_CORE63_GATT_CCCD_NOTIFY, 0x00 };
 	att_server_handle(&ac, &db, p2, sizeof(p2), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x17);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
+	ATF_CHECK_EQ(memcmp(rsp + 1, p2 + 1, sizeof(p2) - 1), 0);
 
 	/* Execute commit */
-	uint8_t ex[] = { 0x18, 0x01 };
+	uint8_t ex[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_COMMIT };
 	att_server_handle(&ac, &db, ex, sizeof(ex), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x19);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP);
 
 	/* Verify custom char was written to shared attribute value */
 	ATF_CHECK_EQ(attrs[5].value[0], 0x11);
@@ -3916,8 +4390,8 @@ ATF_TC_BODY(test_gaw_prepare_different_handles, tc)
 	 * Verify the connection's CCCD state instead.
 	 */
 	ATF_CHECK_EQ(ac.cccd_count, 1);
-	ATF_CHECK_EQ(ac.cccds[0].handle, 0x0007);
-	ATF_CHECK_EQ(ac.cccds[0].value, GATT_CCCD_NOTIFY);
+	ATF_CHECK_EQ(ac.cccds[0].handle, TEST_CUSTOM_CCCD_HANDLE);
+	ATF_CHECK_EQ(ac.cccds[0].value, BT_CORE63_GATT_CCCD_NOTIFY);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -3938,7 +4412,8 @@ ATF_TC_BODY(test_raw_pdu_indication, tc)
 	att_send_indication(&ac, 0x0006, val, 2);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 
-	uint8_t expected[] = { 0x1D, 0x06, 0x00, 0xDE, 0xAD };
+	uint8_t expected[] = { BT_CORE63_ATT_OP_HANDLE_INDICATE,
+	    0x06, 0x00, 0xDE, 0xAD };
 	ATF_CHECK_EQ(n, 5);
 	ATF_CHECK(memcmp(rsp, expected, 5) == 0);
 
@@ -3960,11 +4435,12 @@ ATF_TC_BODY(test_raw_pdu_read_multi_var, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x20, 0x03, 0x00, 0x06, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_REQ,
+	    0x03, 0x00, 0x06, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 
-	ATF_CHECK_EQ(rsp[0], 0x21);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_RSP);
 	/* First entry: len=4, "Test" */
 	ATF_CHECK_EQ(get_le16(rsp + 1), 4);
 	ATF_CHECK_EQ(rsp[3], 'T');
@@ -3986,7 +4462,7 @@ ATF_TC_BODY(test_raw_pdu_multi_handle_ntf, tc)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 
 	uint16_t handles[3] = { 0x0003, 0x0006, 0x0007 };
 	uint8_t v1[] = { 0x11 };
@@ -4000,7 +4476,7 @@ ATF_TC_BODY(test_raw_pdu_multi_handle_ntf, tc)
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_MULTIPLE_HANDLE_VALUE_NTF);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_MULTIPLE_HANDLE_NOTIFY);
 	/* Entry 1: 2+2+1=5, Entry 2: 2+2+2=6, Entry 3: 2+2+3=7 → total 1+5+6+7=19 */
 	ATF_CHECK_EQ(n, 19);
 
@@ -4008,7 +4484,7 @@ ATF_TC_BODY(test_raw_pdu_multi_handle_ntf, tc)
 }
 
 /* Multi-MTU: Find By Type Value at MTU 23 */
-MTU_TEST(test_mtu23_find_by_type, 23)
+MTU_TEST(test_mtu23_find_by_type, BT_CORE63_ATT_DEFAULT_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -4019,22 +4495,24 @@ MTU_TEST(test_mtu23_find_by_type, 23)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 23;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x06, 0x01, 0x00, 0xFF, 0xFF,
-	    0x00, 0x28, 0xE0, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_REQ,
+	    0x01, 0x00, 0xFF, 0xFF,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE & 0xff,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE >> 8, 0xE0, 0xFF };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK(n <= 23);
-	ATF_CHECK_EQ(rsp[0], 0x07);
+	ATF_CHECK(n <= BT_CORE63_ATT_DEFAULT_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_RSP);
 	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0004);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* Multi-MTU: Find By Type Value at MTU 64 */
-MTU_TEST(test_mtu64_find_by_type, 64)
+MTU_TEST(test_mtu64_find_by_type, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -4045,21 +4523,23 @@ MTU_TEST(test_mtu64_find_by_type, 64)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x06, 0x01, 0x00, 0xFF, 0xFF,
-	    0x00, 0x28, 0xE0, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_REQ,
+	    0x01, 0x00, 0xFF, 0xFF,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE & 0xff,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE >> 8, 0xE0, 0xFF };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK(n <= 64);
-	ATF_CHECK_EQ(rsp[0], 0x07);
+	ATF_CHECK(n <= BT_CORE63_EATT_MIN_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* Multi-MTU: Write at MTU=64 */
-MTU_TEST(test_mtu64_write, 64)
+MTU_TEST(test_mtu64_write, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -4070,20 +4550,21 @@ MTU_TEST(test_mtu64_write, 64)
 	ssize_t n __unused;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	build_test_db(&db, attrs, vb);
 
 	/* Write 4 bytes (within maxlen=4) */
-	uint8_t req[] = { 0x12, 0x06, 0x00, 0x11, 0x22, 0x33, 0x44 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ,
+	    0x06, 0x00, 0x11, 0x22, 0x33, 0x44 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* Multi-MTU: Write at MTU=517 */
-MTU_TEST(test_mtu517_write, 517)
+MTU_TEST(test_mtu517_write, BT_CORE63_ATT_MAX_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -4094,21 +4575,22 @@ MTU_TEST(test_mtu517_write, 517)
 	ssize_t n __unused;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 	build_test_db(&db, attrs, vb);
 
 	/* Write 4 bytes at max MTU — still limited by maxlen=4 */
-	uint8_t req[] = { 0x12, 0x06, 0x00, 0xAA, 0xBB, 0xCC, 0xDD };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ,
+	    0x06, 0x00, 0xAA, 0xBB, 0xCC, 0xDD };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 	ATF_CHECK_EQ(attrs[5].value[0], 0xAA);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* Multi-MTU: Prepare Write at MTU=23 */
-MTU_TEST(test_mtu23_prepare_write, 23)
+MTU_TEST(test_mtu23_prepare_write, BT_CORE63_ATT_DEFAULT_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -4119,17 +4601,19 @@ MTU_TEST(test_mtu23_prepare_write, 23)
 	ssize_t n __unused;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 23;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x16, 0x06, 0x00, 0x00, 0x00, 0xAA };
+	uint8_t req[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0x06, 0x00, 0x00, 0x00, 0xAA };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x17);
-	ATF_CHECK(n <= 23);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
+	ATF_CHECK(n <= BT_CORE63_ATT_DEFAULT_MTU);
 
 	/* Cancel */
-	uint8_t ex[] = { 0x18, 0x00 };
+	uint8_t ex[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_CANCEL };
 	att_server_handle(&ac, &db, ex, sizeof(ex), -1, 0);
 	(void)recv(cf, rsp, sizeof(rsp), 0);
 
@@ -4137,7 +4621,7 @@ MTU_TEST(test_mtu23_prepare_write, 23)
 }
 
 /* Multi-MTU: Prepare Write at MTU=64 */
-MTU_TEST(test_mtu64_prepare_write, 64)
+MTU_TEST(test_mtu64_prepare_write, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -4148,16 +4632,18 @@ MTU_TEST(test_mtu64_prepare_write, 64)
 	ssize_t n __unused;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x16, 0x06, 0x00, 0x00, 0x00, 0xBB, 0xCC };
+	uint8_t req[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0x06, 0x00, 0x00, 0x00, 0xBB, 0xCC };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x17);
-	ATF_CHECK(n <= 64);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
+	ATF_CHECK(n <= BT_CORE63_EATT_MIN_MTU);
 
-	uint8_t ex[] = { 0x18, 0x00 };
+	uint8_t ex[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_CANCEL };
 	att_server_handle(&ac, &db, ex, sizeof(ex), -1, 0);
 	(void)recv(cf, rsp, sizeof(rsp), 0);
 
@@ -4165,7 +4651,7 @@ MTU_TEST(test_mtu64_prepare_write, 64)
 }
 
 /* Multi-MTU: Prepare Write at MTU=517 */
-MTU_TEST(test_mtu517_prepare_write, 517)
+MTU_TEST(test_mtu517_prepare_write, BT_CORE63_ATT_MAX_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -4176,15 +4662,17 @@ MTU_TEST(test_mtu517_prepare_write, 517)
 	ssize_t n __unused;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x16, 0x06, 0x00, 0x00, 0x00, 0xDD };
+	uint8_t req[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0x06, 0x00, 0x00, 0x00, 0xDD };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x17);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
 
-	uint8_t ex[] = { 0x18, 0x00 };
+	uint8_t ex[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_CANCEL };
 	att_server_handle(&ac, &db, ex, sizeof(ex), -1, 0);
 	(void)recv(cf, rsp, sizeof(rsp), 0);
 
@@ -4213,15 +4701,15 @@ ATF_TC_BODY(test_gaw_cccd_indicate, tc)
 
 	/* Write indicate flag to CCCD (handle 7) */
 	uint8_t req[5];
-	req[0] = ATT_OP_WRITE_REQ;
+	req[0] = BT_CORE63_ATT_OP_WRITE_REQ;
 	put_le16(req + 1, 0x0007);
-	put_le16(req + 3, GATT_CCCD_INDICATE);
+	put_le16(req + 3, BT_CORE63_GATT_CCCD_INDICATE);
 
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 	/* Characteristic only has Notify — Indicate must be rejected */
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_VALUE_NOT_ALLOWED);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_VALUE_NOT_ALLOWED);
 	ATF_CHECK_EQ(ac.cccd_count, 0);
 
 	att_mock_cleanup(&ac, cf);
@@ -4246,15 +4734,16 @@ ATF_TC_BODY(test_gaw_cccd_both_flags, tc)
 	build_test_db(&db, attrs, vb);
 
 	uint8_t req[5];
-	req[0] = ATT_OP_WRITE_REQ;
+	req[0] = BT_CORE63_ATT_OP_WRITE_REQ;
 	put_le16(req + 1, 0x0007);
-	put_le16(req + 3, GATT_CCCD_NOTIFY | GATT_CCCD_INDICATE);
+	put_le16(req + 3, BT_CORE63_GATT_CCCD_NOTIFY |
+	    BT_CORE63_GATT_CCCD_INDICATE);
 
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 	/* Indicate bit not supported — must be rejected */
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_VALUE_NOT_ALLOWED);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_VALUE_NOT_ALLOWED);
 	ATF_CHECK_EQ(ac.cccd_count, 0);
 
 	att_mock_cleanup(&ac, cf);
@@ -4279,11 +4768,11 @@ ATF_TC_BODY(test_gar_read_handle_zero, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x0A, 0x00, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x00, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_HANDLE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_HANDLE);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -4303,11 +4792,12 @@ ATF_TC_BODY(test_gar_read_handle_past_end, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x0A, 0x20, 0x00 }; /* handle 0x0020, past end */
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ,
+	    0x20, 0x00 }; /* local fixture handle past DB end */
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_HANDLE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_HANDLE);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -4328,13 +4818,13 @@ ATF_TC_BODY(test_gar_read_not_permitted, tc)
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
 	attdb_add_service(&db, 0xFFE0);
 	attdb_add_characteristic(&db, 0xFFE1,
-	    GATT_PROP_WRITE, ATT_PERM_WRITE, "\x00", 1);
+	    BT_CORE63_GATT_PROP_WRITE, ATT_PERM_WRITE, "\x00", 1);
 
-	uint8_t req[] = { 0x0A, 0x03, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x03, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_READ_NOT_PERMITTED);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_READ_NOT_PERMITTED);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -4358,11 +4848,12 @@ ATF_TC_BODY(test_gar_read_blob_offset_zero, tc)
 	 * Read Blob at offset=0 on a 4-byte attribute at MTU=23.
 	 * Offset=0 is allowed as a probing strategy — returns the value.
 	 */
-	uint8_t req[] = { 0x0C, 0x03, 0x00, 0x00, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
+	    0x03, 0x00, 0x00, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BLOB_RSP);
-	ATF_CHECK_EQ(n, 5);  /* opcode(1) + "Test"(4) */
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BLOB_RSP);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_RESPONSE_PARAM_HEADER_SIZE + 4);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -4382,11 +4873,15 @@ ATF_TC_BODY(test_gar_read_multi_invalid_handle, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x0E, 0x03, 0x00, 0xFF, 0xFF }; /* valid + invalid */
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_REQ,
+	    0x03, 0x00, 0xff, 0xff };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_HANDLE);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_MULTIPLE_REQ);
+	ATF_CHECK_EQ(get_le16(rsp + 2), BT_CORE63_ATT_HANDLE_MAX);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_HANDLE);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -4407,13 +4902,14 @@ ATF_TC_BODY(test_gar_read_multi_all_valid, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Read handles 3 and 6 */
-	uint8_t req[] = { 0x0E, 0x03, 0x00, 0x06, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_REQ,
+	    0x03, 0x00, 0x06, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x0F);
-	ATF_CHECK_EQ(n, 9); /* 1 + 4("Test") + 4(AA BB CC DD) */
-	ATF_CHECK_EQ(rsp[1], 'T');
-	ATF_CHECK_EQ(rsp[5], 0xAA);
+	static const uint8_t expected[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_RSP,
+	    'T', 'e', 's', 't', 0xaa, 0xbb, 0xcc, 0xdd };
+	ATF_REQUIRE_EQ(n, (ssize_t)sizeof(expected));
+	ATF_CHECK_EQ(memcmp(rsp, expected, sizeof(expected)), 0);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -4432,28 +4928,29 @@ ATF_TC_BODY(test_gar_read_multi_var_empty_value, tc)
 
 	att_mock_pair(&ac, &cf);
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
-	attdb_add_service(&db, 0x1800);
-	attdb_add_characteristic(&db, 0x2A00,
-	    GATT_PROP_READ, ATT_PERM_READ, NULL, 0); /* empty value, handle=3 */
+	attdb_add_service(&db, BT_ASSIGNED_UUID_GAP_SERVICE);
+	attdb_add_characteristic(&db, BT_ASSIGNED_UUID_DEVICE_NAME,
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ, NULL, 0);
 	attdb_add_service(&db, 0xFFE0);
 	attdb_add_characteristic(&db, 0xFFE1,
-	    GATT_PROP_READ, ATT_PERM_READ, "\x42", 1); /* handle=6, 1 byte */
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ, "\x42", 1);
 
 	/* Read Multiple Variable: handle 3 (empty) + handle 6 (1 byte) */
 	uint8_t req[5];
-	req[0] = ATT_OP_READ_MULTIPLE_VARIABLE_REQ;
-	put_le16(req + 1, 0x0003);
-	put_le16(req + 3, 0x0006);
+	req[0] = BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_REQ;
+	put_le16(req + 1, TEST_GAP_NAME_HANDLE);
+	put_le16(req + 3, TEST_CUSTOM_VALUE_HANDLE);
 
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x21);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_RSP);
 	/* First entry: length=0 (empty) */
 	ATF_CHECK_EQ(get_le16(rsp + 1), 0);
 	/* Second entry at offset 3: length=1, value=0x42 */
 	ATF_CHECK_EQ(get_le16(rsp + 3), 1);
 	ATF_CHECK_EQ(rsp[5], 0x42);
-	ATF_CHECK_EQ(n, 6); /* 1 + (2+0) + (2+1) */
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_OPCODE_SIZE +
+	    2 * BT_CORE63_ATT_LENGTH_VALUE_HEADER_SIZE + 1);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -4471,17 +4968,21 @@ ATF_TC_BODY(test_gar_read_by_type_truncated, tc)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_DEFAULT_MTU;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	build_large_test_db(&db, attrs, vb);
 
 	/* Read By Type for Device Name (0x2A00) with 200-byte value */
-	uint8_t req[] = { 0x08, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x2A };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_TYPE_REQ,
+	    0x01, 0x00, 0xff, 0xff, 0x00, 0x2a };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK(n <= 23);
-	ATF_CHECK_EQ(rsp[0], 0x09);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_DEFAULT_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_TYPE_RSP);
 	/* entry_len = min(2+200, MTU-2=21) = 21 */
-	ATF_CHECK_EQ(rsp[1], 21);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_DEFAULT_MTU - 2);
+	ATF_CHECK_EQ(get_le16(rsp + 2), TEST_GAP_NAME_HANDLE);
+	for (size_t i = 4; i < (size_t)n; i++)
+		ATF_CHECK_EQ(rsp[i], 0x42); /* build_large_test_db fixture */
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -4502,12 +5003,12 @@ ATF_TC_BODY(test_gar_read_service_decl, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Read handle 1 (Primary Service 0x1800) */
-	uint8_t req[] = { 0x0A, 0x01, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x01, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x0B);
-	ATF_CHECK_EQ(n, 3); /* 1 + 2 bytes (UUID16) */
-	ATF_CHECK_EQ(get_le16(rsp + 1), 0x1800);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_OPCODE_SIZE + BT_CORE63_ATT_UUID16_SIZE);
+	ATF_CHECK_EQ(get_le16(rsp + 1), BT_ASSIGNED_UUID_GAP_SERVICE);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -4528,15 +5029,15 @@ ATF_TC_BODY(test_gar_read_char_decl, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Read handle 2 (Char Decl for Device Name) */
-	uint8_t req[] = { 0x0A, 0x02, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x02, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x0B);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 	/* Value: props(1) + value_handle(2) + uuid(2) = 5 bytes */
 	ATF_CHECK_EQ(n, 6);
-	ATF_CHECK_EQ(rsp[1], GATT_PROP_READ); /* properties */
-	ATF_CHECK_EQ(get_le16(rsp + 2), 0x0003); /* value handle */
-	ATF_CHECK_EQ(get_le16(rsp + 4), 0x2A00); /* char UUID */
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_GATT_PROP_READ);
+	ATF_CHECK_EQ(get_le16(rsp + 2), TEST_GAP_NAME_HANDLE);
+	ATF_CHECK_EQ(get_le16(rsp + 4), BT_ASSIGNED_UUID_DEVICE_NAME);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -4556,11 +5057,13 @@ ATF_TC_BODY(test_gad_read_by_group_secondary, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x10, 0x01, 0x00, 0xFF, 0xFF, 0x01, 0x28 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ,
+	    0x01, 0x00, 0xff, 0xff, 0x01, 0x28 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_FOUND);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_FOUND);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -4580,11 +5083,12 @@ ATF_TC_BODY(test_raw_pdu_read_custom_char, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x0A, 0x06, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x06, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 
-	uint8_t expected[] = { 0x0B, 0xAA, 0xBB, 0xCC, 0xDD };
+	uint8_t expected[] = { BT_CORE63_ATT_OP_READ_RSP,
+	    0xAA, 0xBB, 0xCC, 0xDD };
 	ATF_CHECK_EQ(n, 5);
 	ATF_CHECK(memcmp(rsp, expected, 5) == 0);
 
@@ -4602,17 +5106,35 @@ ATF_TC_BODY(test_gad_find_info_full_range, tc)
 	uint8_t vb[TEST_DB_VAL_SIZE];
 	uint8_t rsp[ATT_PDU_BUF_SIZE];
 	ssize_t n;
+	static const uint16_t expected_uuid[] = {
+		BT_ASSIGNED_UUID_PRIMARY_SERVICE,
+		BT_ASSIGNED_UUID_CHARACTERISTIC,
+		BT_ASSIGNED_UUID_DEVICE_NAME,
+		BT_ASSIGNED_UUID_PRIMARY_SERVICE,
+		BT_ASSIGNED_UUID_CHARACTERISTIC,
+		0xffe1, /* local custom characteristic UUID */
+		BT_ASSIGNED_UUID_CCCD
+	};
+	const size_t expected_count = sizeof(expected_uuid) /
+	    sizeof(expected_uuid[0]);
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE; /* large MTU to fit all */
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x04, 0x01, 0x00, 0xFF, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_FIND_INFO_REQ,
+	    0x01, 0x00, 0xff, 0xff };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x05);
-	ATF_CHECK_EQ(rsp[1], 0x01); /* 16-bit format */
-	ATF_CHECK_EQ((n - 2) / 4, 7); /* all 7 attrs */
+	ATF_REQUIRE_EQ(n, 2 + (ssize_t)expected_count *
+	    BT_CORE63_ATT_FIND_INFO_UUID16_ENTRY_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_FIND_INFO_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_FIND_INFO_FORMAT_UUID16);
+	for (size_t i = 0; i < expected_count; i++) {
+		size_t pos = 2 + i * BT_CORE63_ATT_FIND_INFO_UUID16_ENTRY_SIZE;
+		ATF_CHECK_EQ(get_le16(rsp + pos), i + 1);
+		ATF_CHECK_EQ(get_le16(rsp + pos + 2), expected_uuid[i]);
+	}
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -4633,12 +5155,13 @@ ATF_TC_BODY(test_gad_find_by_type_not_found, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Search for service UUID 0xBEEF (doesn't exist) */
-	uint8_t req[] = { 0x06, 0x01, 0x00, 0xFF, 0xFF,
-	    0x00, 0x28, 0xEF, 0xBE };
+	uint8_t req[] = { BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_REQ,
+	    0x01, 0x00, 0xff, 0xff, 0x00, 0x28, 0xef, 0xbe };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_FOUND);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_FOUND);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -4656,27 +5179,30 @@ ATF_TC_BODY(test_gad_find_by_type_multi_match, tc)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 
 	/* Build DB with two services that have the same UUID */
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
 	attdb_add_service(&db, 0xFFE0);
 	attdb_add_characteristic(&db, 0xFFE1,
-	    GATT_PROP_READ, ATT_PERM_READ, "\x01", 1);
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ, "\x01", 1);
 	attdb_add_service(&db, 0xFFE0); /* second service with same UUID */
 	attdb_add_characteristic(&db, 0xFFE1,
-	    GATT_PROP_READ, ATT_PERM_READ, "\x02", 1);
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ, "\x02", 1);
 
 	/* Find By Type Value: type=0x2800, value=0xFFE0 */
-	uint8_t req[] = { 0x06, 0x01, 0x00, 0xFF, 0xFF,
-	    0x00, 0x28, 0xE0, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_REQ,
+	    0x01, 0x00, 0xff, 0xff, 0x00, 0x28, 0xe0, 0xff };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x07);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_RSP);
 	/* Should have 2 entries × 4 bytes each = 8 + opcode = 9 */
-	ATF_CHECK_EQ(n, 9);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_OPCODE_SIZE +
+	    2 * BT_CORE63_ATT_FIND_BY_TYPE_VALUE_ENTRY_SIZE);
 	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0001); /* first service */
+	ATF_CHECK_EQ(get_le16(rsp + 3), 0x0003); /* first group end */
 	ATF_CHECK_EQ(get_le16(rsp + 5), 0x0004); /* second service */
+	ATF_CHECK_EQ(get_le16(rsp + 7), 0x0006); /* second group end */
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -4701,13 +5227,17 @@ ATF_TC_BODY(test_client_find_by_type_pdu, tc)
 	if (pid == 0) {
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		/* 06 01 00 FF FF 00 28 E0 FF */
-		if (n != 9 || buf[0] != 0x06) _exit(1);
-		if (buf[5] != 0x00 || buf[6] != 0x28) _exit(2);
-		if (buf[7] != 0xE0 || buf[8] != 0xFF) _exit(3);
+		/* Core 6.3 Vol 3 Part F §3.4.3.3: Find By Type Value. */
+		if (n != BT_CORE63_ATT_RANGE_UUID16_REQ_SIZE + 2 ||
+		    buf[0] != BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_REQ) _exit(1);
+		if (get_le16(buf + 1) != 0x0001 ||
+		    get_le16(buf + 3) != BT_CORE63_ATT_HANDLE_MAX) _exit(2);
+		if (get_le16(buf + 5) != BT_ASSIGNED_UUID_PRIMARY_SERVICE) _exit(3);
+		if (buf[7] != 0xE0 || buf[8] != 0xFF) _exit(4);
 
 		/* Send response: found handle=0x0004, end=0x0007 */
-		uint8_t rsp[] = { 0x07, 0x04, 0x00, 0x07, 0x00 };
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_RSP,
+		    0x04, 0x00, 0x07, 0x00 };
 		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
 		_exit(0);
@@ -4719,7 +5249,7 @@ ATF_TC_BODY(test_client_find_by_type_pdu, tc)
 	int ret = att_find_by_type_value(&ac, 0x0001, 0xFFFF, 0x2800,
 	    &val16, 2, out, sizeof(out), &olen);
 	ATF_CHECK_EQ(ret, 0);
-	ATF_CHECK(olen > 0);
+	ATF_CHECK_EQ(olen, 4);
 
 	int status;
 	waitpid(pid, &status, 0);
@@ -4743,14 +5273,15 @@ ATF_TC_BODY(test_client_prepare_write_pdu, tc)
 	if (pid == 0) {
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		/* 16 06 00 0A 00 DE AD */
-		if (n != 7 || buf[0] != 0x16) _exit(1);
+		/* Core 6.3 Vol 3 Part F §3.4.6.1: Prepare Write Request. */
+		if (n != BT_CORE63_ATT_PREPARE_WRITE_HEADER_SIZE + 2 ||
+		    buf[0] != BT_CORE63_ATT_OP_PREPARE_WRITE_REQ) _exit(1);
 		if (buf[1] != 0x06 || buf[2] != 0x00) _exit(2);
 		if (buf[3] != 0x0A || buf[4] != 0x00) _exit(3);
 		if (buf[5] != 0xDE || buf[6] != 0xAD) _exit(4);
 
 		/* Echo back as Prepare Write Response */
-		buf[0] = 0x17;
+		buf[0] = BT_CORE63_ATT_OP_PREPARE_WRITE_RSP;
 		(void)send(peer, buf, (size_t)n, 0);
 		close(peer);
 		_exit(0);
@@ -4782,16 +5313,18 @@ ATF_TC_BODY(test_client_execute_write_pdu, tc)
 	if (pid == 0) {
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		/* 18 01 */
-		if (n != 2 || buf[0] != 0x18 || buf[1] != 0x01) _exit(1);
+		/* Core 6.3 Vol 3 Part F §3.4.6.3: Execute Write, commit. */
+		if (n != BT_CORE63_ATT_EXECUTE_WRITE_REQ_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ ||
+		    buf[1] != BT_CORE63_ATT_EXECUTE_WRITE_COMMIT) _exit(1);
 
-		uint8_t rsp[] = { 0x19 };
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP };
 		(void)send(peer, rsp, 1, 0);
 		close(peer);
 		_exit(0);
 	}
 	close(peer);
-	int ret = att_execute_write(&ac, 0x01);
+	int ret = att_execute_write(&ac, BT_CORE63_ATT_EXECUTE_WRITE_COMMIT);
 	ATF_CHECK_EQ(ret, 0);
 
 	int status;
@@ -4817,15 +5350,18 @@ ATF_TC_BODY(test_client_write_long_small, tc)
 		close(ac.fd);
 		/* Receive Prepare Write */
 		n = recv(peer, buf, sizeof(buf), 0);
-		if (n < 6 || buf[0] != 0x16) _exit(1);
+		if (n < BT_CORE63_ATT_PREPARE_WRITE_HEADER_SIZE + 1 ||
+		    buf[0] != BT_CORE63_ATT_OP_PREPARE_WRITE_REQ) _exit(1);
 		/* Echo back */
-		buf[0] = 0x17;
+		buf[0] = BT_CORE63_ATT_OP_PREPARE_WRITE_RSP;
 		(void)send(peer, buf, (size_t)n, 0);
 
 		/* Receive Execute Write */
 		n = recv(peer, buf, sizeof(buf), 0);
-		if (n != 2 || buf[0] != 0x18 || buf[1] != 0x01) _exit(2);
-		uint8_t rsp[] = { 0x19 };
+		if (n != BT_CORE63_ATT_EXECUTE_WRITE_REQ_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ ||
+		    buf[1] != BT_CORE63_ATT_EXECUTE_WRITE_COMMIT) _exit(2);
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP };
 		(void)send(peer, rsp, 1, 0);
 		close(peer);
 		_exit(0);
@@ -4851,7 +5387,7 @@ ATF_TC_BODY(test_client_write_long_multi, tc)
 	ssize_t n;
 
 	att_mock_pair(&ac, &peer);
-	/* MTU=23 → max prepare data = MTU-5 = 18 bytes per prepare */
+	/* Part F §3.4.6.1: default MTU minus opcode/handle/offset = 18. */
 
 	pid_t pid = fork();
 	ATF_REQUIRE(pid >= 0);
@@ -4862,12 +5398,14 @@ ATF_TC_BODY(test_client_write_long_multi, tc)
 		for (;;) {
 			n = recv(peer, buf, sizeof(buf), 0);
 			if (n <= 0) _exit(10);
-			if (buf[0] == 0x16) { /* Prepare */
+			if (buf[0] == BT_CORE63_ATT_OP_PREPARE_WRITE_REQ) {
 				prep_count++;
-				buf[0] = 0x17;
+				buf[0] = BT_CORE63_ATT_OP_PREPARE_WRITE_RSP;
 				(void)send(peer, buf, (size_t)n, 0);
-			} else if (buf[0] == 0x18) { /* Execute */
-				uint8_t rsp[] = { 0x19 };
+			} else if (buf[0] == BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ) {
+				if (buf[1] != BT_CORE63_ATT_EXECUTE_WRITE_COMMIT)
+					_exit(13);
+				uint8_t rsp[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP };
 				(void)send(peer, rsp, 1, 0);
 				break;
 			} else {
@@ -4909,8 +5447,9 @@ ATF_TC_BODY(test_client_write_error, tc)
 		n = recv(peer, buf, sizeof(buf), 0);
 		(void)n;
 		/* Send Error Response: Write Not Permitted */
-		uint8_t rsp[] = { 0x01, 0x12, 0x06, 0x00,
-		    ATT_ERR_WRITE_NOT_PERMITTED };
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_ERROR_RSP,
+		    BT_CORE63_ATT_OP_WRITE_REQ, 0x06, 0x00,
+		    BT_CORE63_ATT_ERR_WRITE_NOT_PERMITTED };
 		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
 		_exit(0);
@@ -4918,7 +5457,7 @@ ATF_TC_BODY(test_client_write_error, tc)
 	close(peer);
 	uint8_t data[] = { 0x42 };
 	int ret = att_write_req(&ac, 0x0006, data, 1);
-	ATF_CHECK_EQ(ret, ATT_ERR_WRITE_NOT_PERMITTED);
+	ATF_CHECK_EQ(ret, BT_CORE63_ATT_ERR_WRITE_NOT_PERMITTED);
 
 	int status;
 	waitpid(pid, &status, 0);
@@ -4944,8 +5483,9 @@ ATF_TC_BODY(test_client_find_by_type_not_found, tc)
 		n = recv(peer, buf, sizeof(buf), 0);
 		(void)n;
 		/* Send Error Response: Attr Not Found */
-		uint8_t rsp[] = { 0x01, 0x06, 0x01, 0x00,
-		    ATT_ERR_ATTR_NOT_FOUND };
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_ERROR_RSP,
+		    BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_REQ, 0x01, 0x00,
+		    BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_FOUND };
 		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
 		_exit(0);
@@ -4983,11 +5523,13 @@ ATF_TC_BODY(test_client_read_multi_three, tc)
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
 		/* 0E 01 00 03 00 06 00 = 7 bytes */
-		if (n != 7 || buf[0] != 0x0E) _exit(1);
+		if (n != BT_CORE63_ATT_OPCODE_SIZE + 3 * sizeof(uint16_t) ||
+		    buf[0] != BT_CORE63_ATT_OP_READ_MULTIPLE_REQ) _exit(1);
 		if (buf[1] != 0x01 || buf[2] != 0x00) _exit(2);
 		if (buf[3] != 0x03 || buf[4] != 0x00) _exit(3);
 		if (buf[5] != 0x06 || buf[6] != 0x00) _exit(4);
-		uint8_t rsp[] = { 0x0F, 0x11, 0x22, 0x33 };
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_RSP,
+		    0x11, 0x22, 0x33 };
 		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
 		_exit(0);
@@ -5024,8 +5566,9 @@ ATF_TC_BODY(test_client_read_specific_error, tc)
 		n = recv(peer, buf, sizeof(buf), 0);
 		(void)n;
 		/* Send Error Response: Insufficient Encryption */
-		uint8_t rsp[] = { 0x01, 0x0A, 0x03, 0x00,
-		    ATT_ERR_INSUFF_ENCRYPTION };
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_ERROR_RSP,
+		    BT_CORE63_ATT_OP_READ_REQ, 0x03, 0x00,
+		    BT_CORE63_ATT_ERR_INSUFFICIENT_ENCRYPTION };
 		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
 		_exit(0);
@@ -5034,7 +5577,7 @@ ATF_TC_BODY(test_client_read_specific_error, tc)
 	uint8_t val[32];
 	size_t vlen = 0;
 	int ret = att_read(&ac, 0x0003, val, sizeof(val), &vlen);
-	ATF_CHECK_EQ(ret, ATT_ERR_INSUFF_ENCRYPTION);
+	ATF_CHECK_EQ(ret, BT_CORE63_ATT_ERR_INSUFFICIENT_ENCRYPTION);
 
 	int status;
 	waitpid(pid, &status, 0);
@@ -5058,8 +5601,8 @@ ATF_TC_BODY(test_client_write_cmd_verify, tc)
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(peer, buf, sizeof(buf), 0);
-	ATF_CHECK_EQ(n, 7); /* 1 + 2 + 4 */
-	ATF_CHECK_EQ(buf[0], 0x52);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_WRITE_HEADER_SIZE + 4);
+	ATF_CHECK_EQ(buf[0], BT_CORE63_ATT_OP_WRITE_CMD);
 	ATF_CHECK_EQ(get_le16(buf + 1), 0x0003);
 	ATF_CHECK_EQ(buf[3], 0x11);
 	ATF_CHECK_EQ(buf[6], 0x44);
@@ -5085,8 +5628,9 @@ ATF_TC_BODY(test_client_read_by_group_error, tc)
 		n = recv(peer, buf, sizeof(buf), 0);
 		(void)n;
 		/* Send Error Response: Attr Not Found */
-		uint8_t rsp[] = { 0x01, 0x10, 0x01, 0x00,
-		    ATT_ERR_ATTR_NOT_FOUND };
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_ERROR_RSP,
+		    BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ, 0x01, 0x00,
+		    BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_FOUND };
 		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
 		_exit(0);
@@ -5111,7 +5655,7 @@ ATF_TC_BODY(test_client_read_by_group_error, tc)
  * ================================================================ */
 
 /* MTU=517: Read Multiple */
-MTU_TEST(test_mtu517_read_multiple, 517)
+MTU_TEST(test_mtu517_read_multiple, BT_CORE63_ATT_MAX_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -5122,21 +5666,22 @@ MTU_TEST(test_mtu517_read_multiple, 517)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 	build_large_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x0E, 0x03, 0x00, 0x06, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_REQ,
+	    0x03, 0x00, 0x06, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 	/* 1 + 200 + 200 = 401, fits in MTU=517 */
 	ATF_CHECK_EQ(n, 401);
-	ATF_CHECK_EQ(rsp[0], 0x0F);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_MULTIPLE_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* MTU=517: Read Multiple Variable */
-MTU_TEST(test_mtu517_read_multi_var, 517)
+MTU_TEST(test_mtu517_read_multi_var, BT_CORE63_ATT_MAX_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -5147,13 +5692,14 @@ MTU_TEST(test_mtu517_read_multi_var, 517)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 	build_large_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x20, 0x03, 0x00, 0x06, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_REQ,
+	    0x03, 0x00, 0x06, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x21);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_RSP);
 	/* First entry: len=200, second: len=200 → 1 + (2+200) + (2+200) = 405 */
 	ATF_CHECK_EQ(n, 405);
 
@@ -5161,7 +5707,7 @@ MTU_TEST(test_mtu517_read_multi_var, 517)
 }
 
 /* MTU=517: Read By Type */
-MTU_TEST(test_mtu517_read_by_type, 517)
+MTU_TEST(test_mtu517_read_by_type, BT_CORE63_ATT_MAX_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -5172,13 +5718,16 @@ MTU_TEST(test_mtu517_read_by_type, 517)
 	ssize_t n __unused;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 	build_large_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x08, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x2A };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_TYPE_REQ,
+	    0x01, 0x00, 0xFF, 0xFF,
+	    BT_ASSIGNED_UUID_DEVICE_NAME & 0xff,
+	    BT_ASSIGNED_UUID_DEVICE_NAME >> 8 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x09);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_TYPE_RSP);
 	/* entry_len = 2 + 200 = 202, fits in MTU */
 	ATF_CHECK_EQ(rsp[1], 202);
 
@@ -5186,7 +5735,7 @@ MTU_TEST(test_mtu517_read_by_type, 517)
 }
 
 /* MTU=517: Find Info */
-MTU_TEST(test_mtu517_find_info, 517)
+MTU_TEST(test_mtu517_find_info, BT_CORE63_ATT_MAX_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -5197,21 +5746,22 @@ MTU_TEST(test_mtu517_find_info, 517)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x04, 0x01, 0x00, 0xFF, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_FIND_INFO_REQ,
+	    0x01, 0x00, 0xFF, 0xFF };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x05);
-	ATF_CHECK_EQ(rsp[1], 0x01); /* 16-bit */
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_FIND_INFO_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_FIND_INFO_FORMAT_UUID16);
 	ATF_CHECK_EQ((n - 2) / 4, 7); /* all 7 attrs */
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* MTU=517: Read By Group */
-MTU_TEST(test_mtu517_read_by_group, 517)
+MTU_TEST(test_mtu517_read_by_group, BT_CORE63_ATT_MAX_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -5222,13 +5772,16 @@ MTU_TEST(test_mtu517_read_by_group, 517)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x10, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x28 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ,
+	    0x01, 0x00, 0xFF, 0xFF,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE & 0xff,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE >> 8 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x11);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_RSP);
 	/* 2 services × 6 bytes each + 2 header = 14 */
 	ATF_CHECK_EQ(n, 14);
 
@@ -5236,7 +5789,7 @@ MTU_TEST(test_mtu517_read_by_group, 517)
 }
 
 /* MTU=517: Notification */
-MTU_TEST(test_mtu517_notification, 517)
+MTU_TEST(test_mtu517_notification, BT_CORE63_ATT_MAX_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -5245,19 +5798,19 @@ MTU_TEST(test_mtu517_notification, 517)
 	uint8_t big[200];
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 	memset(big, 0x55, sizeof(big));
 
 	att_send_notification(&ac, 0x0006, big, 200);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 203); /* 3 + 200, fits in MTU */
-	ATF_CHECK_EQ(rsp[0], 0x1B);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_HANDLE_VALUE_HEADER_SIZE + sizeof(big));
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* MTU=517: Find By Type Value */
-MTU_TEST(test_mtu517_find_by_type, 517)
+MTU_TEST(test_mtu517_find_by_type, BT_CORE63_ATT_MAX_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -5268,21 +5821,23 @@ MTU_TEST(test_mtu517_find_by_type, 517)
 	ssize_t n __unused;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x06, 0x01, 0x00, 0xFF, 0xFF,
-	    0x00, 0x28, 0xE0, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_REQ,
+	    0x01, 0x00, 0xFF, 0xFF,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE & 0xff,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE >> 8, 0xE0, 0xFF };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x07);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_RSP);
 	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0004);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* MTU=23: Read (server-side, standard test DB) */
-MTU_TEST(test_mtu23_read, 23)
+MTU_TEST(test_mtu23_read, BT_CORE63_ATT_DEFAULT_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -5293,14 +5848,14 @@ MTU_TEST(test_mtu23_read, 23)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 23;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	build_test_db(&db, attrs, vb);
 
 	/* Read handle 3 ("Test", 4 bytes) → fits in MTU */
-	uint8_t req[] = { 0x0A, 0x03, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x03, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x0B);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 	ATF_CHECK_EQ(n, 5); /* 1 + 4 */
 	ATF_CHECK_EQ(rsp[1], 'T');
 
@@ -5308,7 +5863,7 @@ MTU_TEST(test_mtu23_read, 23)
 }
 
 /* MTU=23: Write (server-side) */
-MTU_TEST(test_mtu23_write, 23)
+MTU_TEST(test_mtu23_write, BT_CORE63_ATT_DEFAULT_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -5319,20 +5874,21 @@ MTU_TEST(test_mtu23_write, 23)
 	ssize_t n __unused;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 23;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x12, 0x06, 0x00, 0x11, 0x22, 0x33, 0x44 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ,
+	    0x06, 0x00, 0x11, 0x22, 0x33, 0x44 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 	ATF_CHECK_EQ(attrs[5].value[0], 0x11);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* MTU=23: Read By Group (single entry because MTU is small) */
-MTU_TEST(test_mtu23_read_by_group_single_entry, 23)
+MTU_TEST(test_mtu23_read_by_group_single_entry, BT_CORE63_ATT_DEFAULT_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -5343,14 +5899,17 @@ MTU_TEST(test_mtu23_read_by_group_single_entry, 23)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 23;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x10, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x28 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ,
+	    0x01, 0x00, 0xFF, 0xFF,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE & 0xff,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE >> 8 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK(n <= 23);
-	ATF_CHECK_EQ(rsp[0], 0x11);
+	ATF_CHECK(n <= BT_CORE63_ATT_DEFAULT_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_RSP);
 	/* At MTU=23: header=2, entry=6 → max 3 entries fit, but we only have 2 */
 	ATF_CHECK(n >= 8); /* at least 1 entry */
 
@@ -5399,8 +5958,8 @@ ATF_TC_BODY(test_attdb_add_char128, tc)
 	};
 
 	uint16_t h = attdb_add_characteristic128(&db, uuid128,
-	    GATT_PROP_READ, ATT_PERM_READ, "\x42", 1);
-	ATF_CHECK(h > 0);
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ, "\x42", 1);
+	ATF_REQUIRE_EQ(h, 0x0003);
 	/* Char decl + value = 2 attrs added, plus service = 3 total */
 	ATF_CHECK_EQ(db.count, 3);
 
@@ -5408,6 +5967,12 @@ ATF_TC_BODY(test_attdb_add_char128, tc)
 	ATF_CHECK_EQ(attrs[2].uuid16, 0); /* 128-bit, not 16-bit */
 	ATF_CHECK(memcmp(attrs[2].uuid128, uuid128, 16) == 0);
 	ATF_CHECK_EQ(attrs[2].value[0], 0x42);
+	/* Core 6.3 Vol 3 Part G §3.3.1, Table 3.4: 1+2+16 octets. */
+	ATF_CHECK_EQ(attrs[1].uuid16, BT_ASSIGNED_UUID_CHARACTERISTIC);
+	ATF_REQUIRE_EQ(attrs[1].value_len, 19);
+	ATF_CHECK_EQ(attrs[1].value[0], BT_CORE63_GATT_PROP_READ);
+	ATF_CHECK_EQ(get_le16(attrs[1].value + 1), h);
+	ATF_CHECK_EQ(memcmp(attrs[1].value + 3, uuid128, sizeof(uuid128)), 0);
 }
 
 /* attdb_add_cccd without preceding char → still adds attr */
@@ -5424,7 +5989,7 @@ ATF_TC_BODY(test_attdb_cccd_standalone, tc)
 	uint16_t h = attdb_add_cccd(&db);
 	ATF_CHECK(h > 0);
 	ATF_CHECK_EQ(db.count, 2); /* service + cccd */
-	ATF_CHECK_EQ(attrs[1].uuid16, GATT_UUID_CCCD);
+	ATF_CHECK_EQ(attrs[1].uuid16, BT_ASSIGNED_UUID_CCCD);
 }
 
 /* Value store exhaustion → attdb_add_characteristic returns 0 */
@@ -5442,14 +6007,18 @@ ATF_TC_BODY(test_attdb_val_store_full, tc)
 	uint8_t big[20];
 	memset(big, 0x42, sizeof(big));
 	uint16_t h1 = attdb_add_characteristic(&db, 0xFFE1,
-	    GATT_PROP_READ, ATT_PERM_READ, big, 20);
-	/* May or may not succeed depending on space */
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ, big, 20);
+	ATF_REQUIRE_EQ(h1, 0x0003);
+	ATF_CHECK_EQ(db.count, 3);
+	ATF_CHECK_EQ(db.val_used, 27);
 
 	/* Keep adding until we exhaust */
 	uint16_t h2 = attdb_add_characteristic(&db, 0xFFE2,
-	    GATT_PROP_READ, ATT_PERM_READ, big, 20);
-	/* At least one of these should fail (return 0) */
-	ATF_CHECK(h1 == 0 || h2 == 0);
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ, big, 20);
+	ATF_CHECK_EQ(h2, 0);
+	ATF_CHECK_EQ(db.count, 3);
+	ATF_CHECK_EQ_MSG(db.val_used, 27,
+	    "failed registration must roll back the value arena");
 }
 
 /* Empty DB → Read By Group Type returns error */
@@ -5468,11 +6037,18 @@ ATF_TC_BODY(test_attdb_empty_read_by_group, tc)
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
 	/* Empty DB — no services added */
 
-	uint8_t req[] = { 0x10, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x28 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ,
+	    0x01, 0x00, 0xff, 0xff,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE & 0xff,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE >> 8 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_FOUND);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ);
+	/* Core 6.3 Vol 3 Part F §3.4.4.9: use Starting Handle in error. */
+	ATF_CHECK_EQ(get_le16(rsp + 2), 0x0001);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_FOUND);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -5496,11 +6072,13 @@ ATF_TC_BODY(test_gaw_write_to_service_decl, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x12, 0x01, 0x00, 0x42 }; /* write to handle 1 */
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ,
+	    0x01, 0x00, 0x42 }; /* Primary Service declaration fixture */
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_WRITE_NOT_PERMITTED);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_WRITE_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_WRITE_NOT_PERMITTED);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -5520,16 +6098,21 @@ ATF_TC_BODY(test_gaw_write_to_char_decl, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x12, 0x02, 0x00, 0x42 }; /* write to handle 2 */
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ,
+	    0x02, 0x00, 0x42 }; /* Characteristic declaration fixture */
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_WRITE_NOT_PERMITTED);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_WRITE_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_WRITE_NOT_PERMITTED);
 
 	att_mock_cleanup(&ac, cf);
 }
 
-/* A3. Prepare Write with offset past maxlen → succeeds in queue */
+/*
+ * Core 6.3 Vol 3 Part F §3.4.6.1: value/offset validation is deferred
+ * until Execute Write, so even this invalid offset is prepared and echoed.
+ */
 ATF_TC_WITHOUT_HEAD(test_gaw_prepare_write_offset_past_maxlen);
 ATF_TC_BODY(test_gaw_prepare_write_offset_past_maxlen, tc)
 {
@@ -5545,21 +6128,24 @@ ATF_TC_BODY(test_gaw_prepare_write_offset_past_maxlen, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Prepare Write to handle 6, offset=10 (maxlen=4), value=0x42 */
-	uint8_t req[] = { 0x16, 0x06, 0x00, 0x0A, 0x00, 0x42 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0x06, 0x00, 0x0A, 0x00, 0x42 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 	/* Queue accepts it; validation deferred to execute */
-	ATF_CHECK_EQ(rsp[0], ATT_OP_PREPARE_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
+	ATF_CHECK_EQ(memcmp(rsp + 1, req + 1, sizeof(req) - 1), 0);
 
 	/* Cancel to clean up */
-	uint8_t exec[] = { 0x18, 0x00 };
+	uint8_t exec[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_CANCEL };
 	att_server_handle(&ac, &db, exec, sizeof(exec), -1, 0);
 	(void)recv(cf, rsp, sizeof(rsp), 0);
 
 	att_mock_cleanup(&ac, cf);
 }
 
-/* A4. Execute with queued write where offset+len > maxlen → Invalid Attr Length */
+/* Core 6.3 Vol 3 Part F §3.4.6.3: overlong value fails at Execute. */
 ATF_TC_WITHOUT_HEAD(test_gaw_execute_offset_past_maxlen);
 ATF_TC_BODY(test_gaw_execute_offset_past_maxlen, tc)
 {
@@ -5575,17 +6161,65 @@ ATF_TC_BODY(test_gaw_execute_offset_past_maxlen, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Prepare Write to handle 6, offset=3, value=0xAA 0xBB (3+2=5 > maxlen=4) */
-	uint8_t req[] = { 0x16, 0x06, 0x00, 0x03, 0x00, 0xAA, 0xBB };
+	uint8_t req[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0x06, 0x00, 0x03, 0x00, 0xAA, 0xBB };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_PREPARE_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
 
 	/* Execute commit → should fail */
-	uint8_t exec[] = { 0x18, 0x01 };
+	uint8_t exec[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_COMMIT };
 	att_server_handle(&ac, &db, exec, sizeof(exec), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_ATTR_LEN);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_ATTRIBUTE_LENGTH);
+
+	att_mock_cleanup(&ac, cf);
+}
+
+/*
+ * Core 6.3 Vol 3 Part F §3.4.6.3: a prepared offset greater than the
+ * current value length yields Invalid Offset at Execute and clears the queue.
+ */
+ATF_TC_WITHOUT_HEAD(test_gaw_execute_invalid_offset);
+ATF_TC_BODY(test_gaw_execute_invalid_offset, tc)
+{
+	struct att_conn ac;
+	int cf;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t vb[TEST_DB_VAL_SIZE];
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+	uint8_t req[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0x06, 0x00, 0x05, 0x00, 0x42 };
+	uint8_t exec[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_COMMIT };
+
+	att_mock_pair(&ac, &cf);
+	build_test_db(&db, attrs, vb); /* handle 6 has current length four. */
+
+	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+	n = recv(cf, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE_EQ(n, (ssize_t)sizeof(req));
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
+	ATF_CHECK_EQ(memcmp(rsp + 1, req + 1, sizeof(req) - 1), 0);
+
+	att_server_handle(&ac, &db, exec, sizeof(exec), -1, 0);
+	n = recv(cf, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ);
+	ATF_CHECK_EQ(get_le16(rsp + 2), TEST_CUSTOM_VALUE_HANDLE);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_OFFSET);
+
+	/* The required queue clear makes a second Execute an empty success. */
+	att_server_handle(&ac, &db, exec, sizeof(exec), -1, 0);
+	n = recv(cf, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_OPCODE_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -5606,11 +6240,11 @@ ATF_TC_BODY(test_gaw_write_req_empty_value, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Write 0 bytes to handle 6 (writable, maxlen=4) */
-	uint8_t req[] = { 0x12, 0x06, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ, 0x06, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_OPCODE_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 	ATF_CHECK_EQ(attrs[5].value_len, 0);
 
 	att_mock_cleanup(&ac, cf);
@@ -5632,11 +6266,12 @@ ATF_TC_BODY(test_gaw_write_req_to_cccd_invalid, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Write 3 bytes to CCCD (handle 7, maxlen=2) */
-	uint8_t req[] = { 0x12, 0x07, 0x00, 0x01, 0x00, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ,
+	    0x07, 0x00, BT_CORE63_GATT_CCCD_NOTIFY, 0x00, 0xff };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_ATTR_LEN);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_ATTRIBUTE_LENGTH);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -5654,15 +6289,16 @@ ATF_TC_BODY(test_gaw_write_cmd_encrypt_required, tc)
 
 	att_mock_pair(&ac, &cf);
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
-	attdb_add_service(&db, 0xFFE0);
-	attdb_add_characteristic(&db, 0xFFE1,
-	    GATT_PROP_WRITE_NO_RSP,
+	attdb_add_service(&db, 0xFFE0); /* local test UUID */
+	attdb_add_characteristic(&db, 0xFFE1, /* local test UUID */
+	    BT_CORE63_GATT_PROP_WRITE_NO_RSP,
 	    ATT_PERM_WRITE_ENCRYPT,
 	    "\x00", 1);
 	attrs[2].value_maxlen = 4;
 
 	ac.encrypted = false;
-	uint8_t req[] = { 0x52, 0x03, 0x00, 0x42 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_CMD,
+	    0x03, 0x00, 0x42 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 
 	/* Write Command: no response sent even on error */
@@ -5675,7 +6311,7 @@ ATF_TC_BODY(test_gaw_write_cmd_encrypt_required, tc)
 	att_mock_cleanup(&ac, cf);
 }
 
-/* A8. Prepare Write to encrypt-required attr → error */
+/* Core 6.3 Vol 3 Part F §3.4.6.1: required encryption yields 0x0F. */
 ATF_TC_WITHOUT_HEAD(test_gaw_prepare_write_encrypt_required);
 ATF_TC_BODY(test_gaw_prepare_write_encrypt_required, tc)
 {
@@ -5689,19 +6325,21 @@ ATF_TC_BODY(test_gaw_prepare_write_encrypt_required, tc)
 
 	att_mock_pair(&ac, &cf);
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
-	attdb_add_service(&db, 0xFFE0);
-	attdb_add_characteristic(&db, 0xFFE1,
-	    GATT_PROP_WRITE,
+	attdb_add_service(&db, 0xFFE0); /* local test UUID */
+	attdb_add_characteristic(&db, 0xFFE1, /* local test UUID */
+	    BT_CORE63_GATT_PROP_WRITE,
 	    ATT_PERM_WRITE_ENCRYPT,
 	    "\x00", 1);
 	attrs[2].value_maxlen = 4;
 
 	ac.encrypted = false;
-	uint8_t req[] = { 0x16, 0x03, 0x00, 0x00, 0x00, 0x42 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
+	    0x03, 0x00, 0x00, 0x00, 0x42 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INSUFF_ENCRYPTION);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_PREPARE_WRITE_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INSUFFICIENT_ENCRYPTION);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -5725,10 +6363,11 @@ ATF_TC_BODY(test_gaw_write_replaces_value, tc)
 	ATF_CHECK_EQ(attrs[5].value_len, 4);
 
 	/* Write 2 bytes */
-	uint8_t req[] = { 0x12, 0x06, 0x00, 0x11, 0x22 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ,
+	    0x06, 0x00, 0x11, 0x22 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 
 	/* value_len should be 2, not 4 */
 	ATF_CHECK_EQ(attrs[5].value_len, 2);
@@ -5736,11 +6375,11 @@ ATF_TC_BODY(test_gaw_write_replaces_value, tc)
 	ATF_CHECK_EQ(attrs[5].value[1], 0x22);
 
 	/* Read back to verify only 2 bytes returned */
-	uint8_t rd[] = { 0x0A, 0x06, 0x00 };
+	uint8_t rd[] = { BT_CORE63_ATT_OP_READ_REQ, 0x06, 0x00 };
 	att_server_handle(&ac, &db, rd, sizeof(rd), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 3); /* 1 opcode + 2 value bytes */
-	ATF_CHECK_EQ(rsp[0], 0x0B);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_OPCODE_SIZE + 2);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -5759,7 +6398,8 @@ ATF_TC_BODY(test_gaw_write_cmd_valid, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x52, 0x06, 0x00, 0xDE, 0xAD };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_CMD,
+	    0x06, 0x00, 0xde, 0xad }; /* external fixture payload */
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 
 	/* No response */
@@ -5796,15 +6436,16 @@ ATF_TC_BODY(test_gar_read_blob_offset_one, tc)
 
 	/*
 	 * Read Blob at offset=1 on a 4-byte attribute at MTU=23.
-	 * Since value_len (4) <= mtu-1 (22), the attribute is NOT long
-	 * and Read Blob must return ATT_ERR_ATTR_NOT_LONG.
+ * Since this fixture is fixed and short, §3.4.4.5 permits the server
+ * to return Attribute Not Long; it does not mandate that choice.
 	 */
-	uint8_t req[] = { 0x0C, 0x03, 0x00, 0x01, 0x00 }; /* offset=1 */
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
+	    0x03, 0x00, 0x01, 0x00 }; /* fixture offset one */
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(n, 5);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_LONG);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_LONG);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -5825,14 +6466,17 @@ ATF_TC_BODY(test_gar_read_by_type_perm_denied, tc)
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
 	attdb_add_service(&db, 0xFFE0);
 	attdb_add_characteristic(&db, 0xFFE1,
-	    GATT_PROP_WRITE, ATT_PERM_WRITE, "\x42", 1); /* no read perm */
+	    BT_CORE63_GATT_PROP_WRITE, ATT_PERM_WRITE, "\x42", 1);
 
 	/* Read By Type for 0xFFE1 */
-	uint8_t req[] = { 0x08, 0x01, 0x00, 0xFF, 0xFF, 0xE1, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_TYPE_REQ,
+	    0x01, 0x00, 0xff, 0xff, 0xe1, 0xff };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_READ_NOT_PERMITTED);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_BY_TYPE_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_READ_NOT_PERMITTED);
 	/* Error handle should be the matching attribute's handle */
 	ATF_CHECK_EQ(get_le16(rsp + 2), 0x0003);
 
@@ -5856,18 +6500,18 @@ ATF_TC_BODY(test_gar_read_multi_three_handles, tc)
 
 	/* Read Multiple: handles 3, 6, 7 */
 	uint8_t req[7];
-	req[0] = ATT_OP_READ_MULTIPLE_REQ;
-	put_le16(req + 1, 0x0003);
-	put_le16(req + 3, 0x0006);
-	put_le16(req + 5, 0x0007);
+	req[0] = BT_CORE63_ATT_OP_READ_MULTIPLE_REQ;
+	put_le16(req + 1, TEST_GAP_NAME_HANDLE);
+	put_le16(req + 3, TEST_CUSTOM_VALUE_HANDLE);
+	put_le16(req + 5, TEST_CUSTOM_CCCD_HANDLE);
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x0F);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_MULTIPLE_RSP);
 	/* "Test"(4) + AA BB CC DD(4) + 00 00(2) = 10 + opcode = 11 */
-	ATF_CHECK_EQ(n, 11);
-	ATF_CHECK_EQ(rsp[1], 'T');
-	ATF_CHECK_EQ(rsp[5], 0xAA);
-	ATF_CHECK_EQ(rsp[9], 0x00); /* CCCD */
+	static const uint8_t expected[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_RSP,
+	    'T', 'e', 's', 't', 0xaa, 0xbb, 0xcc, 0xdd, 0x00, 0x00 };
+	ATF_REQUIRE_EQ(n, (ssize_t)sizeof(expected));
+	ATF_CHECK_EQ(memcmp(rsp, expected, sizeof(expected)), 0);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -5888,18 +6532,67 @@ ATF_TC_BODY(test_gar_read_multi_var_three, tc)
 	build_test_db(&db, attrs, vb);
 
 	uint8_t req[7];
-	req[0] = ATT_OP_READ_MULTIPLE_VARIABLE_REQ;
-	put_le16(req + 1, 0x0003);
-	put_le16(req + 3, 0x0006);
-	put_le16(req + 5, 0x0007);
+	req[0] = BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_REQ;
+	put_le16(req + 1, TEST_GAP_NAME_HANDLE);
+	put_le16(req + 3, TEST_CUSTOM_VALUE_HANDLE);
+	put_le16(req + 5, TEST_CUSTOM_CCCD_HANDLE);
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x21);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_RSP);
 	/* 1 + (2+4) + (2+4) + (2+2) = 17 */
 	ATF_CHECK_EQ(n, 17);
 	ATF_CHECK_EQ(get_le16(rsp + 1), 4); /* "Test" len */
 	ATF_CHECK_EQ(get_le16(rsp + 7), 4); /* custom char len */
 	ATF_CHECK_EQ(get_le16(rsp + 13), 2); /* CCCD len */
+	ATF_CHECK_EQ(memcmp(rsp + 3, "Test", 4), 0);
+	static const uint8_t custom[] = { 0xaa, 0xbb, 0xcc, 0xdd };
+	ATF_CHECK_EQ(memcmp(rsp + 9, custom, sizeof(custom)), 0);
+	ATF_CHECK_EQ(rsp[15], 0x00);
+	ATF_CHECK_EQ(rsp[16], 0x00);
+
+	att_mock_cleanup(&ac, cf);
+}
+
+/*
+ * Core 6.3 Vol 3 Part F §§3.4.4.7 and 3.4.4.11: handles need not be
+ * sorted; both response forms shall preserve the order in the request.
+ */
+ATF_TC_WITHOUT_HEAD(test_gar_read_multiple_request_order);
+ATF_TC_BODY(test_gar_read_multiple_request_order, tc)
+{
+	struct att_conn ac;
+	int cf;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t vb[TEST_DB_VAL_SIZE];
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_REQ,
+	    0x06, 0x00, 0x03, 0x00 };
+	static const uint8_t expected_fixed[] = {
+		BT_CORE63_ATT_OP_READ_MULTIPLE_RSP,
+		0xaa, 0xbb, 0xcc, 0xdd, 'T', 'e', 's', 't'
+	};
+	static const uint8_t expected_variable[] = {
+		BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_RSP,
+		0x04, 0x00, 0xaa, 0xbb, 0xcc, 0xdd,
+		0x04, 0x00, 'T', 'e', 's', 't'
+	};
+
+	att_mock_pair(&ac, &cf);
+	build_test_db(&db, attrs, vb);
+
+	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+	n = recv(cf, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE_EQ(n, (ssize_t)sizeof(expected_fixed));
+	ATF_CHECK_EQ(memcmp(rsp, expected_fixed, sizeof(expected_fixed)), 0);
+
+	req[0] = BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_REQ;
+	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+	n = recv(cf, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE_EQ(n, (ssize_t)sizeof(expected_variable));
+	ATF_CHECK_EQ(memcmp(rsp, expected_variable,
+	    sizeof(expected_variable)), 0);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -5920,23 +6613,20 @@ ATF_TC_BODY(test_gar_read_by_group_full_range, tc)
 	ac.mtu = ATT_PDU_BUF_SIZE;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x10, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x28 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ,
+	    0x01, 0x00, 0xff, 0xff,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE & 0xff,
+	    BT_ASSIGNED_UUID_PRIMARY_SERVICE >> 8 };
+	static const uint8_t expected[] = {
+		BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_RSP,
+		BT_CORE63_ATT_GROUP16_ENTRY_SIZE,
+		0x01, 0x00, 0x03, 0x00, 0x00, 0x18,
+		0x04, 0x00, 0x07, 0x00, 0xe0, 0xff
+	};
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x11);
-	ATF_CHECK_EQ(rsp[1], 6); /* entry length */
-
-	/* First service: start=1, end=3, uuid=0x1800 */
-	ATF_CHECK_EQ(get_le16(rsp + 2), 0x0001);
-	ATF_CHECK_EQ(get_le16(rsp + 4), 0x0003);
-	ATF_CHECK_EQ(get_le16(rsp + 6), 0x1800);
-
-	/* Second service: start=4, end=7, uuid=0xFFE0 */
-	ATF_CHECK_EQ(get_le16(rsp + 8), 0x0004);
-	ATF_CHECK_EQ(get_le16(rsp + 10), 0x0007);
-	ATF_CHECK_EQ(get_le16(rsp + 12), 0xFFE0);
-
-	ATF_CHECK_EQ(n, 14); /* 2 + 2*6 */
+	ATF_REQUIRE_EQ(n, (ssize_t)sizeof(expected));
+	ATF_CHECK_EQ(memcmp(rsp, expected, sizeof(expected)), 0);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -5955,16 +6645,19 @@ ATF_TC_BODY(test_gar_read_blob_encrypt_required, tc)
 
 	att_mock_pair(&ac, &cf);
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
-	attdb_add_service(&db, 0x1800);
-	attdb_add_characteristic(&db, 0x2A00,
-	    GATT_PROP_READ, ATT_PERM_READ_ENCRYPT, "SecretData", 10);
+	attdb_add_service(&db, BT_ASSIGNED_UUID_GAP_SERVICE);
+	attdb_add_characteristic(&db, BT_ASSIGNED_UUID_DEVICE_NAME,
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ_ENCRYPT,
+	    "SecretData", 10);
 
 	ac.encrypted = false;
-	uint8_t req[] = { 0x0C, 0x03, 0x00, 0x02, 0x00 }; /* offset=2 */
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
+	    0x03, 0x00, 0x02, 0x00 }; /* fixture offset two */
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INSUFF_ENCRYPTION);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_BLOB_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INSUFFICIENT_ENCRYPTION);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -5985,10 +6678,11 @@ ATF_TC_BODY(test_gar_read_by_type_char_value, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Read By Type: uuid=0xFFE1 */
-	uint8_t req[] = { 0x08, 0x01, 0x00, 0xFF, 0xFF, 0xE1, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_TYPE_REQ,
+	    0x01, 0x00, 0xff, 0xff, 0xe1, 0xff };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x09); /* READ_BY_TYPE_RSP */
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_TYPE_RSP);
 	/* entry_len = 2 + 4 = 6 */
 	ATF_CHECK_EQ(rsp[1], 6);
 	/* handle = 0x0006 */
@@ -5996,7 +6690,10 @@ ATF_TC_BODY(test_gar_read_by_type_char_value, tc)
 	/* value = AA BB CC DD */
 	ATF_CHECK_EQ(rsp[4], 0xAA);
 	ATF_CHECK_EQ(rsp[7], 0xDD);
-	ATF_CHECK_EQ(n, 8); /* 2 header + 6 entry */
+	ATF_CHECK_EQ(n, 8); /* two-octet response header plus six-octet entry */
+	static const uint8_t expected_value[] = { 0xaa, 0xbb, 0xcc, 0xdd };
+	ATF_CHECK_EQ(memcmp(rsp + 4, expected_value,
+	    sizeof(expected_value)), 0);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -6016,12 +6713,13 @@ ATF_TC_BODY(test_gar_read_multi_concat_verify, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x0E, 0x03, 0x00, 0x06, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_REQ,
+	    0x03, 0x00, 0x06, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 
 	/* Exact expected: 0F "Test" AA BB CC DD */
-	uint8_t expected[] = { 0x0F,
+	uint8_t expected[] = { BT_CORE63_ATT_OP_READ_MULTIPLE_RSP,
 	    'T', 'e', 's', 't',
 	    0xAA, 0xBB, 0xCC, 0xDD };
 	ATF_CHECK_EQ(n, (ssize_t)sizeof(expected));
@@ -6045,11 +6743,11 @@ ATF_TC_BODY(test_gar_read_cccd_value, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x0A, 0x07, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x07, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x0B);
-	ATF_CHECK_EQ(n, 3); /* 1 + 2 */
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_OPCODE_SIZE + 2);
 	ATF_CHECK_EQ(rsp[1], 0x00);
 	ATF_CHECK_EQ(rsp[2], 0x00);
 
@@ -6072,15 +6770,19 @@ ATF_TC_BODY(test_gar_read_by_type_handle_range, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Read By Type for Characteristic (0x2803), start=0x0004 → only second service */
-	uint8_t req[] = { 0x08, 0x04, 0x00, 0xFF, 0xFF, 0x03, 0x28 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_TYPE_REQ,
+	    0x04, 0x00, 0xff, 0xff, 0x03, 0x28 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x09);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_TYPE_RSP);
 	/* Should only find handle 5 (char decl in custom service) */
 	ATF_CHECK_EQ(get_le16(rsp + 2), 0x0005);
-	/* Only 1 entry */
-	int num_entries = (n - 2) / rsp[1];
-	ATF_CHECK_EQ(num_entries, 1);
+	ATF_CHECK_EQ(rsp[1], 7); /* handle(2) + declaration value(5) */
+	ATF_REQUIRE_EQ(n, 2 + rsp[1]);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_GATT_PROP_READ |
+	    BT_CORE63_GATT_PROP_WRITE | BT_CORE63_GATT_PROP_NOTIFY);
+	ATF_CHECK_EQ(get_le16(rsp + 5), TEST_CUSTOM_VALUE_HANDLE);
+	ATF_CHECK_EQ(get_le16(rsp + 7), 0xffe1); /* local custom UUID */
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -6105,15 +6807,16 @@ ATF_TC_BODY(test_client_find_info_128bit, tc)
 	if (pid == 0) {
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		if (n != 5 || buf[0] != 0x04) _exit(1);
+		if (n != BT_CORE63_ATT_FIND_INFO_REQ_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_FIND_INFO_REQ) _exit(1);
 		/* Send response with 128-bit UUID format (format=2) */
 		uint8_t rsp[20];
-		rsp[0] = 0x05; /* FIND_INFO_RSP */
-		rsp[1] = 0x02; /* format = 128-bit */
+		rsp[0] = BT_CORE63_ATT_OP_FIND_INFO_RSP;
+		rsp[1] = BT_CORE63_ATT_FIND_INFO_FORMAT_UUID128;
 		put_le16(rsp + 2, 0x0001); /* handle */
 		/* 128-bit UUID */
-		memset(rsp + 4, 0xAA, 16);
-		(void)send(peer, rsp, 20, 0);
+		memset(rsp + 4, 0xAA, BT_CORE63_ATT_UUID128_SIZE);
+		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
 		_exit(0);
 	}
@@ -6122,7 +6825,8 @@ ATF_TC_BODY(test_client_find_info_128bit, tc)
 	size_t outlen = 0;
 	int ret = att_find_info(&ac, 0x0001, 0x0007, out, sizeof(out), &outlen);
 	ATF_CHECK_EQ(ret, 0);
-	ATF_CHECK(outlen > 0);
+	ATF_CHECK_EQ(outlen, BT_CORE63_ATT_RESPONSE_PARAM_HEADER_SIZE +
+	    BT_CORE63_ATT_FIND_INFO_UUID128_ENTRY_SIZE);
 
 	int status;
 	waitpid(pid, &status, 0);
@@ -6147,8 +6851,9 @@ ATF_TC_BODY(test_client_read_by_type_error, tc)
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
 		(void)n;
-		uint8_t rsp[] = { 0x01, 0x08, 0x01, 0x00,
-		    ATT_ERR_ATTR_NOT_FOUND };
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_ERROR_RSP,
+		    BT_CORE63_ATT_OP_READ_BY_TYPE_REQ, 0x01, 0x00,
+		    BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_FOUND };
 		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
 		_exit(0);
@@ -6184,11 +6889,11 @@ ATF_TC_BODY(test_client_write_req_verify_bytes, tc)
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
 		/* Verify exact bytes: 12 0A 00 DE AD */
-		if (n != 5) _exit(1);
-		if (buf[0] != 0x12) _exit(2);
+		if (n != BT_CORE63_ATT_WRITE_HEADER_SIZE + 2) _exit(1);
+		if (buf[0] != BT_CORE63_ATT_OP_WRITE_REQ) _exit(2);
 		if (buf[1] != 0x0A || buf[2] != 0x00) _exit(3);
 		if (buf[3] != 0xDE || buf[4] != 0xAD) _exit(4);
-		uint8_t rsp[] = { 0x13 };
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_WRITE_RSP };
 		(void)send(peer, rsp, 1, 0);
 		close(peer);
 		_exit(0);
@@ -6221,8 +6926,9 @@ ATF_TC_BODY(test_client_read_blob_error, tc)
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
 		(void)n;
-		uint8_t rsp[] = { 0x01, 0x0C, 0x03, 0x00,
-		    ATT_ERR_INVALID_OFFSET };
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_ERROR_RSP,
+		    BT_CORE63_ATT_OP_READ_BLOB_REQ, 0x03, 0x00,
+		    BT_CORE63_ATT_ERR_INVALID_OFFSET };
 		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
 		_exit(0);
@@ -6231,7 +6937,7 @@ ATF_TC_BODY(test_client_read_blob_error, tc)
 	uint8_t val[32];
 	size_t vlen = 0;
 	int ret = att_read_blob(&ac, 0x0003, 100, val, sizeof(val), &vlen);
-	ATF_CHECK_EQ(ret, ATT_ERR_INVALID_OFFSET);
+	ATF_CHECK_EQ(ret, BT_CORE63_ATT_ERR_INVALID_OFFSET);
 
 	int status;
 	waitpid(pid, &status, 0);
@@ -6255,10 +6961,11 @@ ATF_TC_BODY(test_client_find_by_type_multi_result, tc)
 	if (pid == 0) {
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		if (n < 1 || buf[0] != 0x06) _exit(1);
+		if (n < 1 ||
+		    buf[0] != BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_REQ) _exit(1);
 		/* Send 2 handle pairs */
 		uint8_t rsp[9];
-		rsp[0] = 0x07;
+		rsp[0] = BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_RSP;
 		put_le16(rsp + 1, 0x0001); /* found 1 */
 		put_le16(rsp + 3, 0x0003); /* end 1 */
 		put_le16(rsp + 5, 0x0004); /* found 2 */
@@ -6274,7 +6981,7 @@ ATF_TC_BODY(test_client_find_by_type_multi_result, tc)
 	int ret = att_find_by_type_value(&ac, 0x0001, 0xFFFF, 0x2800,
 	    &val16, 2, out, sizeof(out), &olen);
 	ATF_CHECK_EQ(ret, 0);
-	ATF_CHECK_EQ(olen, 8); /* 2 pairs × 4 bytes */
+	ATF_CHECK_EQ(olen, 2 * 2 * sizeof(uint16_t));
 
 	int status;
 	waitpid(pid, &status, 0);
@@ -6299,12 +7006,12 @@ ATF_TC_BODY(test_client_prepare_write_verify, tc)
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
 		/* Verify: 16 06 00 05 00 AA BB */
-		if (n != 7) _exit(1);
-		if (buf[0] != 0x16) _exit(2);
+		if (n != BT_CORE63_ATT_PREPARE_WRITE_HEADER_SIZE + 2) _exit(1);
+		if (buf[0] != BT_CORE63_ATT_OP_PREPARE_WRITE_REQ) _exit(2);
 		if (buf[1] != 0x06 || buf[2] != 0x00) _exit(3);
 		if (buf[3] != 0x05 || buf[4] != 0x00) _exit(4);
 		if (buf[5] != 0xAA || buf[6] != 0xBB) _exit(5);
-		buf[0] = 0x17;
+		buf[0] = BT_CORE63_ATT_OP_PREPARE_WRITE_RSP;
 		(void)send(peer, buf, (size_t)n, 0);
 		close(peer);
 		_exit(0);
@@ -6336,14 +7043,16 @@ ATF_TC_BODY(test_client_execute_cancel_pdu, tc)
 	if (pid == 0) {
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		if (n != 2 || buf[0] != 0x18 || buf[1] != 0x00) _exit(1);
-		uint8_t rsp[] = { 0x19 };
+		if (n != BT_CORE63_ATT_EXECUTE_WRITE_REQ_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ ||
+		    buf[1] != BT_CORE63_ATT_EXECUTE_WRITE_CANCEL) _exit(1);
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP };
 		(void)send(peer, rsp, 1, 0);
 		close(peer);
 		_exit(0);
 	}
 	close(peer);
-	int ret = att_execute_write(&ac, 0x00);
+	int ret = att_execute_write(&ac, BT_CORE63_ATT_EXECUTE_WRITE_CANCEL);
 	ATF_CHECK_EQ(ret, 0);
 
 	int status;
@@ -6368,14 +7077,16 @@ ATF_TC_BODY(test_client_execute_commit_pdu, tc)
 	if (pid == 0) {
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		if (n != 2 || buf[0] != 0x18 || buf[1] != 0x01) _exit(1);
-		uint8_t rsp[] = { 0x19 };
+		if (n != BT_CORE63_ATT_EXECUTE_WRITE_REQ_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ ||
+		    buf[1] != BT_CORE63_ATT_EXECUTE_WRITE_COMMIT) _exit(1);
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP };
 		(void)send(peer, rsp, 1, 0);
 		close(peer);
 		_exit(0);
 	}
 	close(peer);
-	int ret = att_execute_write(&ac, 0x01);
+	int ret = att_execute_write(&ac, BT_CORE63_ATT_EXECUTE_WRITE_COMMIT);
 	ATF_CHECK_EQ(ret, 0);
 
 	int status;
@@ -6401,21 +7112,22 @@ ATF_TC_BODY(test_client_write_long_error_cancels, tc)
 		close(ac.fd);
 		/* First prepare → error */
 		n = recv(peer, buf, sizeof(buf), 0);
-		if (n < 1 || buf[0] != 0x16) _exit(1);
-		uint8_t err[] = { 0x01, 0x16, 0x06, 0x00,
-		    ATT_ERR_WRITE_NOT_PERMITTED };
+		if (n < 1 || buf[0] != BT_CORE63_ATT_OP_PREPARE_WRITE_REQ)
+			_exit(1);
+		uint8_t err[] = { BT_CORE63_ATT_OP_ERROR_RSP,
+		    BT_CORE63_ATT_OP_PREPARE_WRITE_REQ, 0x06, 0x00,
+		    BT_CORE63_ATT_ERR_WRITE_NOT_PERMITTED };
 		(void)send(peer, err, sizeof(err), 0);
 
 		/* Client should send execute cancel (18 00) */
 		n = recv(peer, buf, sizeof(buf), 0);
-		if (n == 2 && buf[0] == 0x18 && buf[1] == 0x00) {
-			uint8_t rsp[] = { 0x19 };
-			(void)send(peer, rsp, 1, 0);
-			close(peer);
-			_exit(0);
-		}
+		if (n != BT_CORE63_ATT_EXECUTE_WRITE_REQ_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ ||
+		    buf[1] != BT_CORE63_ATT_EXECUTE_WRITE_CANCEL)
+			_exit(2);
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP };
+		(void)send(peer, rsp, sizeof(rsp), 0);
 		close(peer);
-		/* If no cancel was sent, that's also acceptable */
 		_exit(0);
 	}
 	close(peer);
@@ -6445,9 +7157,10 @@ ATF_TC_BODY(test_client_read_empty_response, tc)
 	if (pid == 0) {
 		close(ac.fd);
 		n = recv(peer, buf, sizeof(buf), 0);
-		if (n != 3 || buf[0] != 0x0A) _exit(1);
+		if (n != BT_CORE63_ATT_READ_REQ_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_READ_REQ) _exit(1);
 		/* Send Read Response with just opcode (empty value) */
-		uint8_t rsp[] = { 0x0B };
+		uint8_t rsp[] = { BT_CORE63_ATT_OP_READ_RSP };
 		(void)send(peer, rsp, 1, 0);
 		close(peer);
 		_exit(0);
@@ -6488,7 +7201,7 @@ ATF_TC_BODY(test_raw_pdu_write_req_response, tc)
 	uint8_t req[] = { 0x12, 0x06, 0x00, 0x11, 0x22 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	uint8_t expected[] = { 0x13 };
+	uint8_t expected[] = { BT_CORE63_ATT_OP_WRITE_RSP };
 	ATF_CHECK_EQ(n, 1);
 	ATF_CHECK(memcmp(rsp, expected, 1) == 0);
 
@@ -6519,13 +7232,14 @@ ATF_TC_BODY(test_raw_pdu_read_blob_offset, tc)
 	 * Since value_len (4) <= mtu-1 (22), the attribute is NOT long
 	 * and Read Blob must return ATT_ERR_ATTR_NOT_LONG.
 	 */
-	uint8_t req[] = { 0x0C, 0x03, 0x00, 0x01, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
+	    0x03, 0x00, 0x01, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK_EQ(n, 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_LONG);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_LONG);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -6546,13 +7260,15 @@ ATF_TC_BODY(test_raw_pdu_cccd_write, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Write 01 00 to CCCD (handle 7) */
-	uint8_t req[] = { 0x12, 0x07, 0x00, 0x01, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ, 0x07, 0x00,
+	    BT_CORE63_GATT_CCCD_NOTIFICATIONS_ENABLED, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(rsp[0], 0x13);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 	ATF_REQUIRE(ac.cccd_count >= 1);
-	ATF_CHECK_EQ(ac.cccds[0].value, GATT_CCCD_NOTIFY);
+	ATF_CHECK_EQ(ac.cccds[0].value,
+	    BT_CORE63_GATT_CCCD_NOTIFICATIONS_ENABLED);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -6573,12 +7289,13 @@ ATF_TC_BODY(test_raw_pdu_read_by_type_char, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Read By Type: uuid=0xFFE1 (custom char) */
-	uint8_t req[] = { 0x08, 0x01, 0x00, 0xFF, 0xFF, 0xE1, 0xFF };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BY_TYPE_REQ,
+	    0x01, 0x00, 0xFF, 0xFF, 0xE1, 0xFF };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 
 	/* Expected: 09 06 06 00 AA BB CC DD */
-	uint8_t expected[] = { 0x09, 0x06,
+	uint8_t expected[] = { BT_CORE63_ATT_OP_READ_BY_TYPE_RSP, 0x06,
 	    0x06, 0x00, 0xAA, 0xBB, 0xCC, 0xDD };
 	ATF_CHECK_EQ(n, (ssize_t)sizeof(expected));
 	ATF_CHECK(memcmp(rsp, expected, sizeof(expected)) == 0);
@@ -6601,11 +7318,12 @@ ATF_TC_BODY(test_raw_pdu_execute_cancel, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x18, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_CANCEL };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(rsp[0], 0x19);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -6625,11 +7343,12 @@ ATF_TC_BODY(test_raw_pdu_execute_commit, tc)
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x18, 0x01 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_ATT_EXECUTE_WRITE_COMMIT };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(rsp[0], 0x19);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -6650,14 +7369,13 @@ ATF_TC_BODY(test_raw_pdu_mtu_large, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Client MTU = 512 = 0x0200 */
-	uint8_t req[] = { 0x02, 0x00, 0x02 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_MTU_REQ, 0x00, 0x02 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 	ATF_CHECK_EQ(n, 3);
-	ATF_CHECK_EQ(rsp[0], 0x03);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_MTU_RSP);
 	/* Server MTU = 517 = 0x0205 */
-	ATF_CHECK_EQ(rsp[1], 0x05);
-	ATF_CHECK_EQ(rsp[2], 0x02);
+	ATF_CHECK_EQ(get_le16(rsp + 1), BT_CORE63_ATT_MAX_MTU);
 	/* Effective = min(512, 517) = 512 */
 	ATF_CHECK_EQ(ac.mtu, 512);
 
@@ -6680,11 +7398,14 @@ ATF_TC_BODY(test_raw_pdu_error_write_not_permitted, tc)
 	build_test_db(&db, attrs, vb);
 
 	/* Write to handle 3 (read-only Device Name) */
-	uint8_t req[] = { 0x12, 0x03, 0x00, 0x42 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ,
+	    0x03, 0x00, 0x42 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 
-	uint8_t expected[] = { 0x01, 0x12, 0x03, 0x00, 0x03 };
+	uint8_t expected[] = { BT_CORE63_ATT_OP_ERROR_RSP,
+	    BT_CORE63_ATT_OP_WRITE_REQ, 0x03, 0x00,
+	    BT_CORE63_ATT_ERR_WRITE_NOT_PERMITTED };
 	ATF_CHECK_EQ(n, 5);
 	ATF_CHECK(memcmp(rsp, expected, 5) == 0);
 
@@ -6710,12 +7431,14 @@ ATF_TC_BODY(test_raw_pdu_error_insuff_encrypt, tc)
 	    GATT_PROP_READ, ATT_PERM_READ_ENCRYPT, "Secret", 6);
 
 	ac.encrypted = false;
-	uint8_t req[] = { 0x0A, 0x03, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x03, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 
 	/* Expected: 01 0A 03 00 0F */
-	uint8_t expected[] = { 0x01, 0x0A, 0x03, 0x00, 0x0F };
+	uint8_t expected[] = { BT_CORE63_ATT_OP_ERROR_RSP,
+	    BT_CORE63_ATT_OP_READ_REQ, 0x03, 0x00,
+	    BT_CORE63_ATT_ERR_INSUFFICIENT_ENCRYPTION };
 	ATF_CHECK_EQ(n, 5);
 	ATF_CHECK(memcmp(rsp, expected, 5) == 0);
 
@@ -6727,7 +7450,7 @@ ATF_TC_BODY(test_raw_pdu_error_insuff_encrypt, tc)
  * ================================================================ */
 
 /* E1. Write Command at MTU=23 */
-MTU_TEST(test_mtu23_write_cmd, 23)
+MTU_TEST(test_mtu23_write_cmd, BT_CORE63_ATT_DEFAULT_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -6737,10 +7460,11 @@ MTU_TEST(test_mtu23_write_cmd, 23)
 	struct pollfd pfd;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 23;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x52, 0x06, 0x00, 0x11, 0x22 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_CMD,
+	    0x06, 0x00, 0x11, 0x22 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 
 	pfd.fd = cf;
@@ -6753,7 +7477,7 @@ MTU_TEST(test_mtu23_write_cmd, 23)
 }
 
 /* E2. Write Command at MTU=64 */
-MTU_TEST(test_mtu64_write_cmd, 64)
+MTU_TEST(test_mtu64_write_cmd, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -6763,10 +7487,11 @@ MTU_TEST(test_mtu64_write_cmd, 64)
 	struct pollfd pfd;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x52, 0x06, 0x00, 0x33, 0x44 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_CMD,
+	    0x06, 0x00, 0x33, 0x44 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 
 	pfd.fd = cf;
@@ -6778,7 +7503,7 @@ MTU_TEST(test_mtu64_write_cmd, 64)
 }
 
 /* E3. Write Command at MTU=517 */
-MTU_TEST(test_mtu517_write_cmd, 517)
+MTU_TEST(test_mtu517_write_cmd, BT_CORE63_ATT_MAX_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -6788,10 +7513,11 @@ MTU_TEST(test_mtu517_write_cmd, 517)
 	struct pollfd pfd;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x52, 0x06, 0x00, 0x55, 0x66 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_CMD,
+	    0x06, 0x00, 0x55, 0x66 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 
 	pfd.fd = cf;
@@ -6803,7 +7529,7 @@ MTU_TEST(test_mtu517_write_cmd, 517)
 }
 
 /* E4. CCCD write at MTU=23 */
-MTU_TEST(test_mtu23_cccd_write, 23)
+MTU_TEST(test_mtu23_cccd_write, BT_CORE63_ATT_DEFAULT_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -6814,21 +7540,23 @@ MTU_TEST(test_mtu23_cccd_write, 23)
 	ssize_t n __unused;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 23;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x12, 0x07, 0x00, 0x01, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ, 0x07, 0x00,
+	    BT_CORE63_GATT_CCCD_NOTIFICATIONS_ENABLED, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 	ATF_REQUIRE(ac.cccd_count >= 1);
-	ATF_CHECK_EQ(ac.cccds[0].value, GATT_CCCD_NOTIFY);
+	ATF_CHECK_EQ(ac.cccds[0].value,
+	    BT_CORE63_GATT_CCCD_NOTIFICATIONS_ENABLED);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* E5. CCCD write at MTU=64 — write notify (supported) not indicate */
-MTU_TEST(test_mtu64_cccd_write, 64)
+MTU_TEST(test_mtu64_cccd_write, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -6839,21 +7567,23 @@ MTU_TEST(test_mtu64_cccd_write, 64)
 	ssize_t n __unused;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x12, 0x07, 0x00, 0x01, 0x00 }; /* notify */
+	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ, 0x07, 0x00,
+	    BT_CORE63_GATT_CCCD_NOTIFICATIONS_ENABLED, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 	ATF_REQUIRE(ac.cccd_count >= 1);
-	ATF_CHECK_EQ(ac.cccds[0].value, GATT_CCCD_NOTIFY);
+	ATF_CHECK_EQ(ac.cccds[0].value,
+	    BT_CORE63_GATT_CCCD_NOTIFICATIONS_ENABLED);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* E6. Read service decl at minimum MTU */
-MTU_TEST(test_mtu23_read_service_decl, 23)
+MTU_TEST(test_mtu23_read_service_decl, BT_CORE63_ATT_DEFAULT_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -6864,21 +7594,21 @@ MTU_TEST(test_mtu23_read_service_decl, 23)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 23;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x0A, 0x01, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x01, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x0B);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 	ATF_CHECK_EQ(n, 3); /* 1 + 2 bytes UUID */
-	ATF_CHECK_EQ(get_le16(rsp + 1), 0x1800);
+	ATF_CHECK_EQ(get_le16(rsp + 1), BT_ASSIGNED_UUID_GAP_SERVICE);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* E7. Read char decl at minimum MTU */
-MTU_TEST(test_mtu23_read_char_decl, 23)
+MTU_TEST(test_mtu23_read_char_decl, BT_CORE63_ATT_DEFAULT_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -6889,23 +7619,23 @@ MTU_TEST(test_mtu23_read_char_decl, 23)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 23;
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	build_test_db(&db, attrs, vb);
 
-	uint8_t req[] = { 0x0A, 0x02, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x02, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], 0x0B);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 	ATF_CHECK_EQ(n, 6); /* 1 + props(1) + handle(2) + uuid(2) */
-	ATF_CHECK_EQ(rsp[1], GATT_PROP_READ);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_GATT_PROP_READ);
 	ATF_CHECK_EQ(get_le16(rsp + 2), 0x0003);
-	ATF_CHECK_EQ(get_le16(rsp + 4), 0x2A00);
+	ATF_CHECK_EQ(get_le16(rsp + 4), BT_ASSIGNED_UUID_DEVICE_NAME);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* E8. Read Blob with 200-byte value at MTU=64, verify 63 bytes returned */
-MTU_TEST(test_mtu64_read_blob_partial, 64)
+MTU_TEST(test_mtu64_read_blob_partial, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -6916,24 +7646,26 @@ MTU_TEST(test_mtu64_read_blob_partial, 64)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 	build_large_test_db(&db, attrs, vb);
 
 	/* Read Blob handle=3, offset=0 */
-	uint8_t req[] = { 0x0C, 0x03, 0x00, 0x00, 0x00 };
+	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
+	    0x03, 0x00, 0x00, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 64); /* MTU */
-	ATF_CHECK_EQ(rsp[0], 0x0D);
+	ATF_CHECK_EQ(n, BT_CORE63_EATT_MIN_MTU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BLOB_RSP);
 	/* 63 bytes of value (all 0x42) */
-	for (int i = 1; i < 64; i++)
+	for (int i = BT_CORE63_ATT_OPCODE_SIZE;
+	    i < BT_CORE63_EATT_MIN_MTU; i++)
 		ATF_CHECK_EQ(rsp[i], 0x42);
 
 	att_mock_cleanup(&ac, cf);
 }
 
 /* E9. Notification with 200-byte value at MTU=517, verify full 203-byte PDU */
-MTU_TEST(test_mtu517_notification_full, 517)
+MTU_TEST(test_mtu517_notification_full, BT_CORE63_ATT_MAX_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -6942,13 +7674,13 @@ MTU_TEST(test_mtu517_notification_full, 517)
 	uint8_t big[200];
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
 	memset(big, 0x99, sizeof(big));
 
 	att_send_notification(&ac, 0x0006, big, 200);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 203); /* 3 + 200 */
-	ATF_CHECK_EQ(rsp[0], 0x1B);
+	ATF_CHECK_EQ(n, BT_CORE63_ATT_HANDLE_VALUE_HEADER_SIZE + sizeof(big));
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
 	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0006);
 	ATF_CHECK_EQ(rsp[3], 0x99);
 	ATF_CHECK_EQ(rsp[202], 0x99);
@@ -6956,8 +7688,8 @@ MTU_TEST(test_mtu517_notification_full, 517)
 	att_mock_cleanup(&ac, cf);
 }
 
-/* E10. Multi Handle NTF at MTU=64 → truncated */
-MTU_TEST(test_mtu64_multi_handle_ntf, 64)
+/* E10. Multi Handle NTF at MTU=64 → whole over-MTU tuple dropped */
+MTU_TEST(test_mtu64_multi_handle_ntf, BT_CORE63_EATT_MIN_MTU)
 {
 	struct att_conn ac;
 	int cf;
@@ -6965,7 +7697,7 @@ MTU_TEST(test_mtu64_multi_handle_ntf, 64)
 	ssize_t n;
 
 	att_mock_pair(&ac, &cf);
-	ac.mtu = 64;
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
 
 	uint16_t handles[2] = { 0x0003, 0x0006 };
 	uint8_t v1[30], v2[30];
@@ -6979,8 +7711,19 @@ MTU_TEST(test_mtu64_multi_handle_ntf, 64)
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK(n <= 64); /* must not exceed MTU */
-	ATF_CHECK_EQ(rsp[0], ATT_OP_MULTIPLE_HANDLE_VALUE_NTF);
+	/*
+	 * Each Handle Length Value Tuple = Handle(2) + Value Length(2) +
+	 * Value(len). Both tuples are 34 octets; with opcode that is
+	 * 1 + 34 + 34 = 69 > MTU(64). Vol 3 Part F Sec 3.4.7.4: "The
+	 * server shall not truncate a Handle Length Value Tuple." So the
+	 * second tuple is dropped whole and only the first is sent:
+	 * 1 + (2 + 2 + 30) = 35 octets.
+	 */
+	ATF_CHECK_EQ(n, 35);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_MULTIPLE_HANDLE_NOTIFY);
+	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0003);	/* first handle */
+	ATF_CHECK_EQ(get_le16(rsp + 3), 30);		/* first value len */
+	ATF_CHECK_EQ(rsp[5], 0x11);			/* first value byte */
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -7016,7 +7759,7 @@ ATF_TC_BODY(test_eatt_select_active, tc)
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, eatt_fds) == 0);
 
 	ac.eatt[0].fd = eatt_fds[0];
-	ac.eatt[0].mtu = ATT_DEFAULT_MTU;
+	ac.eatt[0].mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	ac.eatt[0].active = true;
 	ac.eatt_count = 1;
 
@@ -7041,10 +7784,10 @@ ATF_TC_BODY(test_eatt_select_skip_inactive, tc)
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, eatt2) == 0);
 
 	ac.eatt[0].fd = eatt1[0];
-	ac.eatt[0].mtu = ATT_DEFAULT_MTU;
+	ac.eatt[0].mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	ac.eatt[0].active = false;  /* inactive */
 	ac.eatt[1].fd = eatt2[0];
-	ac.eatt[1].mtu = ATT_DEFAULT_MTU;
+	ac.eatt[1].mtu = BT_CORE63_ATT_DEFAULT_MTU;
 	ac.eatt[1].active = true;
 	ac.eatt_count = 2;
 
@@ -7133,13 +7876,16 @@ ATF_TC_BODY(test_eatt_open_connect_fails, tc)
 	int ret;
 
 	att_mock_pair(&ac, &peer);
+	ac.encrypted = true;
 
 	ble_coc_connect_retval = -1;
 	ble_coc_connect_fd = -1;
 
-	ret = att_open_eatt(&ac, addr, 0x00, 3);
+	ret = att_open_eatt(&ac, NULL, addr, 0x00, 3);
 	ATF_CHECK_EQ(ret, 0);
 	ATF_CHECK_EQ(ac.eatt_count, 0);
+	ATF_CHECK_EQ(ble_ecbfc_last_psm, BT_ASSIGNED_EATT_PSM);
+	ATF_CHECK_EQ(ble_ecbfc_last_count, 3);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7154,14 +7900,17 @@ ATF_TC_BODY(test_eatt_open_clamp_count, tc)
 	int ret;
 
 	att_mock_pair(&ac, &peer);
+	ac.encrypted = true;
 
 	ble_coc_connect_retval = -1;
 	ble_coc_connect_fd = -1;
 
 	/* Request more than max — should be clamped, and since connect fails, 0 opened */
-	ret = att_open_eatt(&ac, addr, 0x00, 100);
+	ret = att_open_eatt(&ac, NULL, addr, 0x00, 100);
 	ATF_CHECK_EQ(ret, 0);
 	ATF_CHECK_EQ(ac.eatt_count, 0);
+	ATF_CHECK_EQ(ble_ecbfc_last_count,
+	    TEST_IMPL_ATT_MAX_EATT_BEARERS);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7179,7 +7928,7 @@ ATF_TC_BODY(test_eatt_lifecycle, tc)
 
 	/* Manually add a bearer (simulating successful open) */
 	ac.eatt[0].fd = eatt_pair[0];
-	ac.eatt[0].mtu = 64;
+	ac.eatt[0].mtu = BT_CORE63_EATT_MIN_MTU;
 	ac.eatt[0].active = true;
 	ac.eatt_count = 1;
 
@@ -7203,18 +7952,18 @@ ATF_TC_BODY(test_eatt_multi_bearer_select, tc)
 {
 	struct att_conn ac;
 	int peer;
-	int pairs[ATT_MAX_EATT_BEARERS][2];
+	int pairs[TEST_IMPL_ATT_MAX_EATT_BEARERS][2];
 	int i;
 
 	att_mock_pair(&ac, &peer);
 
-	for (i = 0; i < ATT_MAX_EATT_BEARERS; i++) {
+	for (i = 0; i < TEST_IMPL_ATT_MAX_EATT_BEARERS; i++) {
 		ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, pairs[i]) == 0);
 		ac.eatt[i].fd = pairs[i][0];
-		ac.eatt[i].mtu = ATT_DEFAULT_MTU;
+		ac.eatt[i].mtu = BT_CORE63_ATT_DEFAULT_MTU;
 		ac.eatt[i].active = true;
 	}
-	ac.eatt_count = ATT_MAX_EATT_BEARERS;
+	ac.eatt_count = TEST_IMPL_ATT_MAX_EATT_BEARERS;
 
 	/* Should return first bearer */
 	ATF_CHECK_EQ(att_eatt_select_bearer(&ac), pairs[0][0]);
@@ -7224,7 +7973,7 @@ ATF_TC_BODY(test_eatt_multi_bearer_select, tc)
 	ATF_CHECK_EQ(att_eatt_select_bearer(&ac), pairs[1][0]);
 
 	att_close_eatt(&ac);
-	for (i = 0; i < ATT_MAX_EATT_BEARERS; i++)
+	for (i = 0; i < TEST_IMPL_ATT_MAX_EATT_BEARERS; i++)
 		close(pairs[i][1]);
 
 	att_mock_cleanup(&ac, peer);
@@ -7248,17 +7997,17 @@ ATF_TC_BODY(test_hog_notification_recv, tc)
 	att_mock_pair(&ac, &peer);
 
 	/* Send notification: handle=0x0010, value=0x01 (HID report) */
-	ntf[0] = ATT_OP_HANDLE_NOTIFY;
+	ntf[0] = BT_CORE63_ATT_OP_HANDLE_NOTIFY;
 	put_le16(ntf + 1, 0x0010);
 	ntf[3] = 0x01; /* report data */
 	n = send(peer, ntf, 4, MSG_EOR);
-	ATF_REQUIRE(n == 4);
+	ATF_REQUIRE(n == BT_CORE63_ATT_HANDLE_VALUE_HEADER_SIZE + 1);
 
 	/* att_recv should return the notification */
 	int ret = att_recv(&ac, buf, sizeof(buf), &outlen);
 	ATF_CHECK_EQ(ret, 0);
-	ATF_CHECK(outlen >= 4);
-	ATF_CHECK_EQ(buf[0], ATT_OP_HANDLE_NOTIFY);
+	ATF_CHECK_EQ(outlen, BT_CORE63_ATT_HANDLE_VALUE_HEADER_SIZE + 1);
+	ATF_CHECK_EQ(buf[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
 	ATF_CHECK_EQ(get_le16(buf + 1), 0x0010);
 	ATF_CHECK_EQ(buf[3], 0x01);
 
@@ -7277,7 +8026,7 @@ ATF_TC_BODY(test_hog_notification_report, tc)
 	att_mock_pair(&ac, &peer);
 
 	/* HID keyboard report: 8 bytes */
-	ntf[0] = ATT_OP_HANDLE_NOTIFY;
+	ntf[0] = BT_CORE63_ATT_OP_HANDLE_NOTIFY;
 	put_le16(ntf + 1, 0x0020);
 	/* modifier=0, reserved=0, keys[6]={0x04,0,0,0,0,0} = 'a' */
 	ntf[3] = 0x00; ntf[4] = 0x00;
@@ -7288,7 +8037,7 @@ ATF_TC_BODY(test_hog_notification_report, tc)
 	int ret = att_recv(&ac, buf, sizeof(buf), &outlen);
 	ATF_CHECK_EQ(ret, 0);
 	ATF_CHECK_EQ(outlen, 11);
-	ATF_CHECK_EQ(buf[0], ATT_OP_HANDLE_NOTIFY);
+	ATF_CHECK_EQ(buf[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
 	ATF_CHECK_EQ(buf[5], 0x04); /* key 'a' */
 
 	att_mock_cleanup(&ac, peer);
@@ -7307,7 +8056,7 @@ ATF_TC_BODY(test_hog_notification_sequence, tc)
 
 	/* Send 3 notifications in sequence */
 	for (int i = 0; i < 3; i++) {
-		ntf[0] = ATT_OP_HANDLE_NOTIFY;
+		ntf[0] = BT_CORE63_ATT_OP_HANDLE_NOTIFY;
 		put_le16(ntf + 1, 0x0010);
 		ntf[3] = (uint8_t)i;
 		send(peer, ntf, 4, MSG_EOR);
@@ -7317,6 +8066,8 @@ ATF_TC_BODY(test_hog_notification_sequence, tc)
 	for (int i = 0; i < 3; i++) {
 		int ret = att_recv(&ac, buf, sizeof(buf), &outlen);
 		ATF_CHECK_EQ(ret, 0);
+		ATF_CHECK_EQ(outlen, BT_CORE63_ATT_HANDLE_VALUE_HEADER_SIZE + 1);
+		ATF_CHECK_EQ(buf[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
 		ATF_CHECK_EQ(buf[3], (uint8_t)i);
 	}
 
@@ -7336,7 +8087,7 @@ ATF_TC_BODY(test_hog_indication_confirm, tc)
 	att_mock_pair(&ac, &peer);
 
 	/* Send indication */
-	ind[0] = ATT_OP_HANDLE_IND;
+	ind[0] = BT_CORE63_ATT_OP_HANDLE_INDICATE;
 	put_le16(ind + 1, 0x0010);
 	ind[3] = 0xAA;
 	send(peer, ind, 4, MSG_EOR);
@@ -7344,7 +8095,8 @@ ATF_TC_BODY(test_hog_indication_confirm, tc)
 	/* att_recv should return the indication */
 	int ret = att_recv(&ac, buf, sizeof(buf), &outlen);
 	ATF_CHECK_EQ(ret, 0);
-	ATF_CHECK_EQ(buf[0], ATT_OP_HANDLE_IND);
+	ATF_CHECK_EQ(outlen, BT_CORE63_ATT_HANDLE_VALUE_HEADER_SIZE + 1);
+	ATF_CHECK_EQ(buf[0], BT_CORE63_ATT_OP_HANDLE_INDICATE);
 
 	/* Send confirmation back */
 	ret = att_confirm(&ac);
@@ -7353,7 +8105,7 @@ ATF_TC_BODY(test_hog_indication_confirm, tc)
 	/* Peer should receive confirmation */
 	n = recv(peer, cfm, sizeof(cfm), 0);
 	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(cfm[0], ATT_OP_HANDLE_CFM);
+	ATF_CHECK_EQ(cfm[0], BT_CORE63_ATT_OP_HANDLE_CONFIRM);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7372,23 +8124,23 @@ ATF_TC_BODY(test_uuid_read_by_type_uuid16, tc)
 	struct att_db db;
 	struct att_attr attrs[TEST_DB_MAX_ATTRS];
 	uint8_t val_buf[TEST_DB_VAL_SIZE];
-	uint8_t pdu[7], rsp[64];
+	uint8_t pdu[BT_CORE63_ATT_RANGE_UUID16_REQ_SIZE], rsp[64];
 	ssize_t n;
 
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
 	/* Read By Type: start=0x0001, end=0xFFFF, UUID16=0x2A00 */
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
-	put_le16(pdu + 5, 0x2A00);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
+	put_le16(pdu + 5, BT_ASSIGNED_UUID_DEVICE_NAME);
 
-	att_server_handle(&ac, &db, pdu, 7, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BY_TYPE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_TYPE_RSP);
 	/* Value should contain "Test" */
 	ATF_CHECK(n >= 2 + rsp[1]);  /* at least one entry */
 
@@ -7404,27 +8156,29 @@ ATF_TC_BODY(test_uuid_read_by_type_uuid128_base, tc)
 	struct att_db db;
 	struct att_attr attrs[TEST_DB_MAX_ATTRS];
 	uint8_t val_buf[TEST_DB_VAL_SIZE];
-	uint8_t pdu[21], rsp[64];
+	uint8_t pdu[BT_CORE63_ATT_RANGE_UUID128_REQ_SIZE], rsp[64];
+	static const uint8_t base_uuid_le12[] =
+	    BT_CORE63_BLUETOOTH_BASE_UUID_LE12;
 	ssize_t n;
 
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
 	/* Read By Type: start=0x0001, end=0xFFFF, UUID128 = Base(0x2A00) */
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
 	/* Bluetooth Base UUID LE with 0x2A00 embedded */
-	memcpy(pdu + 5, bt_base_uuid_le, 12);
-	put_le16(pdu + 17, 0x2A00);
+	memcpy(pdu + 5, base_uuid_le12, sizeof(base_uuid_le12));
+	put_le16(pdu + 17, BT_ASSIGNED_UUID_DEVICE_NAME);
 	pdu[19] = 0x00;
 	pdu[20] = 0x00;
 
-	att_server_handle(&ac, &db, pdu, 21, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BY_TYPE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_TYPE_RSP);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7438,24 +8192,24 @@ ATF_TC_BODY(test_uuid_read_by_type_uuid128_vendor, tc)
 	struct att_db db;
 	struct att_attr attrs[TEST_DB_MAX_ATTRS];
 	uint8_t val_buf[TEST_DB_VAL_SIZE];
-	uint8_t pdu[21], rsp[64];
+	uint8_t pdu[BT_CORE63_ATT_RANGE_UUID128_REQ_SIZE], rsp[64];
 	ssize_t n;
 
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
 	/* A vendor 128-bit UUID (not Bluetooth Base) */
-	memset(pdu + 5, 0xAA, 16);
+	memset(pdu + 5, 0xAA, BT_CORE63_ATT_UUID128_SIZE);
 
-	att_server_handle(&ac, &db, pdu, 21, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_FOUND);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_FOUND);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7475,17 +8229,17 @@ ATF_TC_BODY(test_uuid_read_by_type_invalid_len_1, tc)
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
 	pdu[5] = 0x00;  /* 1-byte "UUID" */
 
 	att_server_handle(&ac, &db, pdu, 6, -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_PDU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_PDU);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7505,17 +8259,17 @@ ATF_TC_BODY(test_uuid_read_by_type_invalid_len_3, tc)
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
 	memset(pdu + 5, 0x00, 3);
 
 	att_server_handle(&ac, &db, pdu, 8, -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_PDU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_PDU);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7535,17 +8289,17 @@ ATF_TC_BODY(test_uuid_read_by_type_invalid_len_5, tc)
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
 	memset(pdu + 5, 0x00, 5);
 
 	att_server_handle(&ac, &db, pdu, 10, -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_PDU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_PDU);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7565,17 +8319,17 @@ ATF_TC_BODY(test_uuid_read_by_type_invalid_len_15, tc)
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
 	memset(pdu + 5, 0x00, 15);
 
 	att_server_handle(&ac, &db, pdu, 20, -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_PDU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_PDU);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7595,9 +8349,9 @@ ATF_TC_BODY(test_uuid_read_by_type_invalid_len_17, tc)
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
 	memset(pdu + 5, 0x00, 17);
 
 	/* 5 + 17 = 22, still fits in MTU 23 PDU */
@@ -7605,8 +8359,8 @@ ATF_TC_BODY(test_uuid_read_by_type_invalid_len_17, tc)
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_PDU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_PDU);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7620,22 +8374,22 @@ ATF_TC_BODY(test_uuid_read_by_group_uuid16, tc)
 	struct att_db db;
 	struct att_attr attrs[TEST_DB_MAX_ATTRS];
 	uint8_t val_buf[TEST_DB_VAL_SIZE];
-	uint8_t pdu[7], rsp[64];
+	uint8_t pdu[BT_CORE63_ATT_RANGE_UUID16_REQ_SIZE], rsp[64];
 	ssize_t n;
 
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	pdu[0] = ATT_OP_READ_BY_GROUP_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
-	put_le16(pdu + 5, 0x2800);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
+	put_le16(pdu + 5, BT_ASSIGNED_UUID_PRIMARY_SERVICE);
 
-	att_server_handle(&ac, &db, pdu, 7, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BY_GROUP_TYPE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_RSP);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7649,25 +8403,27 @@ ATF_TC_BODY(test_uuid_read_by_group_uuid128_base, tc)
 	struct att_db db;
 	struct att_attr attrs[TEST_DB_MAX_ATTRS];
 	uint8_t val_buf[TEST_DB_VAL_SIZE];
-	uint8_t pdu[21], rsp[64];
+	uint8_t pdu[BT_CORE63_ATT_RANGE_UUID128_REQ_SIZE], rsp[64];
+	static const uint8_t base_uuid_le12[] =
+	    BT_CORE63_BLUETOOTH_BASE_UUID_LE12;
 	ssize_t n;
 
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	pdu[0] = ATT_OP_READ_BY_GROUP_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
-	memcpy(pdu + 5, bt_base_uuid_le, 12);
-	put_le16(pdu + 17, 0x2800);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
+	memcpy(pdu + 5, base_uuid_le12, sizeof(base_uuid_le12));
+	put_le16(pdu + 17, BT_ASSIGNED_UUID_PRIMARY_SERVICE);
 	pdu[19] = 0x00;
 	pdu[20] = 0x00;
 
-	att_server_handle(&ac, &db, pdu, 21, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BY_GROUP_TYPE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_RSP);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7687,17 +8443,17 @@ ATF_TC_BODY(test_uuid_read_by_group_invalid_len, tc)
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	pdu[0] = ATT_OP_READ_BY_GROUP_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
 	memset(pdu + 5, 0x00, 3);
 
 	att_server_handle(&ac, &db, pdu, 8, -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_PDU);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_PDU);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7717,16 +8473,16 @@ ATF_TC_BODY(test_uuid_well_known_primary, tc)
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
-	put_le16(pdu + 5, 0x2800);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
+	put_le16(pdu + 5, BT_ASSIGNED_UUID_PRIMARY_SERVICE);
 
 	att_server_handle(&ac, &db, pdu, 7, -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BY_TYPE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_TYPE_RSP);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7746,16 +8502,16 @@ ATF_TC_BODY(test_uuid_well_known_characteristic, tc)
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
-	put_le16(pdu + 5, 0x2803);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
+	put_le16(pdu + 5, BT_ASSIGNED_UUID_CHARACTERISTIC);
 
 	att_server_handle(&ac, &db, pdu, 7, -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BY_TYPE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_TYPE_RSP);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7775,16 +8531,16 @@ ATF_TC_BODY(test_uuid_well_known_cccd, tc)
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
-	put_le16(pdu + 5, 0x2902);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
+	put_le16(pdu + 5, BT_ASSIGNED_UUID_CCCD);
 
 	att_server_handle(&ac, &db, pdu, 7, -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BY_TYPE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_TYPE_RSP);
 	/* CCCD value should be 2 bytes (0x0000) */
 
 	att_mock_cleanup(&ac, peer);
@@ -7805,16 +8561,16 @@ ATF_TC_BODY(test_uuid_well_known_device_name, tc)
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
-	put_le16(pdu + 5, 0x2A00);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
+	put_le16(pdu + 5, BT_ASSIGNED_UUID_DEVICE_NAME);
 
 	att_server_handle(&ac, &db, pdu, 7, -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BY_TYPE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BY_TYPE_RSP);
 	/* Entry: handle(2) + "Test"(4) = 6 bytes per pair */
 	ATF_CHECK_EQ(rsp[1], 6);
 	/* Value should be "Test" */
@@ -7832,15 +8588,15 @@ ATF_TC_BODY(test_uuid_byte_order_le, tc)
 {
 	uint8_t buf[2];
 
-	put_le16(buf, 0x2800);
+	put_le16(buf, BT_ASSIGNED_UUID_PRIMARY_SERVICE);
 	ATF_CHECK_EQ(buf[0], 0x00);
 	ATF_CHECK_EQ(buf[1], 0x28);
 
 	/* Verify round-trip */
-	ATF_CHECK_EQ(get_le16(buf), 0x2800);
+	ATF_CHECK_EQ(get_le16(buf), BT_ASSIGNED_UUID_PRIMARY_SERVICE);
 
 	/* Another UUID: 0x2A00 -> 00 2A */
-	put_le16(buf, 0x2A00);
+	put_le16(buf, BT_ASSIGNED_UUID_DEVICE_NAME);
 	ATF_CHECK_EQ(buf[0], 0x00);
 	ATF_CHECK_EQ(buf[1], 0x2A);
 }
@@ -7860,10 +8616,16 @@ ATF_TC_BODY(test_uuid_uuid32_collapses, tc)
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	/* Read By Type with 4-byte UUID: 0x00002A00 LE = 00 2A 00 00 */
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	/*
+	 * Read By Type with a 4-byte (UUID32) Attribute Type: 0x00002A00.
+	 * Core Spec Vol 3 Part F §3.4.4.1 Table 3.15 permits only a 2- or
+	 * 16-octet type field, so this 9-octet request is malformed and must
+	 * be rejected with Invalid PDU (0x04) -- the server must not collapse
+	 * the UUID32 to the 16-bit Device Name (0x2A00).
+	 */
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
 	pdu[5] = 0x00;  /* UUID32 LE byte 0 */
 	pdu[6] = 0x2A;  /* UUID32 LE byte 1 */
 	pdu[7] = 0x00;  /* UUID32 LE byte 2 (upper) */
@@ -7873,8 +8635,8 @@ ATF_TC_BODY(test_uuid_uuid32_collapses, tc)
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	/* Should find Device Name (0x2A00) same as UUID16 */
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BY_TYPE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_PDU);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7894,10 +8656,15 @@ ATF_TC_BODY(test_uuid_uuid32_non_collapsible, tc)
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	/* UUID32 with upper bits set: 0x00012A00 LE = 00 2A 01 00 */
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	/*
+	 * UUID32 with upper bits set: 0x00012A00.  Still a 4-octet type field,
+	 * so still a malformed Read By Type PDU -> Invalid PDU (0x04) per
+	 * Core Spec Vol 3 Part F §3.4.4.1 Table 3.15 (no UUID32->UUID128
+	 * Base-UUID promotion of the request type is performed).
+	 */
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
 	pdu[5] = 0x00;
 	pdu[6] = 0x2A;
 	pdu[7] = 0x01;  /* upper 16 bits non-zero */
@@ -7907,9 +8674,8 @@ ATF_TC_BODY(test_uuid_uuid32_non_collapsible, tc)
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
-	/* Should NOT match UUID16 0x2A00, so either not found or 128-bit search */
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_FOUND);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_PDU);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7923,28 +8689,28 @@ ATF_TC_BODY(test_uuid_128bit_not_base, tc)
 	struct att_db db;
 	struct att_attr attrs[TEST_DB_MAX_ATTRS];
 	uint8_t val_buf[TEST_DB_VAL_SIZE];
-	uint8_t pdu[21], rsp[64];
+	uint8_t pdu[BT_CORE63_ATT_RANGE_UUID128_REQ_SIZE], rsp[64];
 	ssize_t n;
 
 	att_mock_pair(&ac, &peer);
 	build_test_db(&db, attrs, val_buf);
 
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
 	/* UUID128 with first 12 bytes different from Base UUID */
 	memset(pdu + 5, 0x11, 12);
-	put_le16(pdu + 17, 0x2A00);
+	put_le16(pdu + 17, BT_ASSIGNED_UUID_DEVICE_NAME);
 	pdu[19] = 0x00;
 	pdu[20] = 0x00;
 
-	att_server_handle(&ac, &db, pdu, 21, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(peer, rsp, sizeof(rsp), 0);
 
 	ATF_CHECK(n > 0);
 	/* uuid16 == 0, so 128-bit UUID search; won't match our UUID16 attrs */
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_FOUND);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_FOUND);
 
 	att_mock_cleanup(&ac, peer);
 }
@@ -7972,31 +8738,33 @@ ATF_TC_BODY(test_att_server_reset, tc)
 	att_mock_pair(&ac, &client_fd);
 	build_test_db(&db, attrs, val_buf);
 
-	/* Enable notifications on CCCD (handle 7) */
-	uint8_t pdu[5];
-	pdu[0] = ATT_OP_WRITE_REQ;
-	put_le16(pdu + 1, 0x0007);
-	put_le16(pdu + 3, GATT_CCCD_NOTIFY);
-	att_server_handle(&ac, &db, pdu, 5, -1, 0);
+	/* Enable notifications on the fixture CCCD. */
+	uint8_t pdu[BT_CORE63_ATT_WRITE_HEADER_SIZE +
+	    BT_CORE63_ATT_UUID16_SIZE];
+	pdu[0] = BT_CORE63_ATT_OP_WRITE_REQ;
+	put_le16(pdu + 1, TEST_CUSTOM_CCCD_HANDLE);
+	put_le16(pdu + 3, BT_CORE63_GATT_CCCD_NOTIFY);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n >= 1);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_OPCODE_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 
 	/* Verify CCCD is stored */
 	ATF_CHECK(ac.cccd_count > 0);
 
 	/* Add a prepare write entry to the queue */
-	uint8_t prep[8];
-	prep[0] = ATT_OP_PREPARE_WRITE_REQ;
-	put_le16(prep + 1, 0x0006);
+	uint8_t prep[BT_CORE63_ATT_PREPARE_WRITE_HEADER_SIZE + 3];
+	prep[0] = BT_CORE63_ATT_OP_PREPARE_WRITE_REQ;
+	put_le16(prep + 1, TEST_CUSTOM_VALUE_HANDLE);
 	put_le16(prep + 3, 0x0000);
 	prep[5] = 0x11;
 	prep[6] = 0x22;
 	prep[7] = 0x33;
-	att_server_handle(&ac, &db, prep, 8, -1, 0);
+	att_server_handle(&ac, &db, prep, sizeof(prep), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n >= 1);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_PREPARE_WRITE_RSP);
+	ATF_REQUIRE_EQ(n, (ssize_t)sizeof(prep));
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
+	ATF_CHECK_EQ(memcmp(rsp + 1, prep + 1, sizeof(prep) - 1), 0);
 	ATF_CHECK(ac.prep_queue.count > 0);
 
 	/* Reset the server state */
@@ -8094,29 +8862,30 @@ ATF_TC_BODY(test_att_server_permission_encrypt_required, tc)
 
 	att_mock_pair(&ac, &client_fd);
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
-	attdb_add_service(&db, 0x1800);
-	attdb_add_characteristic(&db, 0x2A00,
-	    GATT_PROP_READ, ATT_PERM_READ | ATT_PERM_READ_ENCRYPT,
+	attdb_add_service(&db, BT_ASSIGNED_UUID_GAP_SERVICE);
+	attdb_add_characteristic(&db, BT_ASSIGNED_UUID_DEVICE_NAME,
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ | ATT_PERM_READ_ENCRYPT,
 	    "Encrypted", 9);
 
 	/* Read with encrypted=false -> INSUFF_ENCRYPTION */
 	ac.encrypted = false;
-	uint8_t pdu[3] = { ATT_OP_READ_REQ };
-	put_le16(pdu + 1, 0x0003);
-	att_server_handle(&ac, &db, pdu, 3, -1, 0);
+	uint8_t pdu[BT_CORE63_ATT_READ_REQ_SIZE] = {
+	    BT_CORE63_ATT_OP_READ_REQ };
+	put_le16(pdu + 1, TEST_GAP_NAME_HANDLE);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[1], ATT_OP_READ_REQ);
-	ATF_CHECK_EQ(get_le16(rsp + 2), 0x0003);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INSUFF_ENCRYPTION);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_REQ);
+	ATF_CHECK_EQ(get_le16(rsp + 2), TEST_GAP_NAME_HANDLE);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INSUFFICIENT_ENCRYPTION);
 
 	/* Read with encrypted=true -> success */
 	ac.encrypted = true;
-	att_server_handle(&ac, &db, pdu, 3, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 2);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 	ATF_CHECK_EQ(memcmp(rsp + 1, "Encrypted", 9), 0);
 
 	att_mock_cleanup(&ac, client_fd);
@@ -8125,10 +8894,9 @@ ATF_TC_BODY(test_att_server_permission_encrypt_required, tc)
 /*
  * test_att_server_read_blob_not_long
  *
- * Verify Read Blob on a short attribute (value_len <= mtu-1)
- * with offset=0 returns the value successfully (Read Blob is
- * permitted on any readable attribute, short or not).
- * Verify that offset > value_len returns ATT_ERR_INVALID_OFFSET.
+ * Record both permitted server choices for a fixed short attribute:
+ * a response at offset zero and Attribute Not Long at offset one.
+ * Core 6.3 Vol 3 Part F §3.4.4.5 uses "may" for the latter error.
  */
 ATF_TC_WITHOUT_HEAD(test_att_server_read_blob_not_long);
 ATF_TC_BODY(test_att_server_read_blob_not_long, tc)
@@ -8143,41 +8911,41 @@ ATF_TC_BODY(test_att_server_read_blob_not_long, tc)
 
 	att_mock_pair(&ac, &client_fd);
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
-	attdb_add_service(&db, 0x1800);
+	attdb_add_service(&db, BT_ASSIGNED_UUID_GAP_SERVICE);
 	/* Short attribute: 4 bytes, well within default MTU of 23 */
-	attdb_add_characteristic(&db, 0x2A00,
-	    GATT_PROP_READ, ATT_PERM_READ, "Test", 4);
+	attdb_add_characteristic(&db, BT_ASSIGNED_UUID_DEVICE_NAME,
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ, "Test", 4);
 
 	/*
 	 * Read Blob with offset=0 on a short attribute (4 bytes, MTU=23).
 	 * Since value_len (4) <= mtu-1 (22), the attribute is NOT long
-	 * and Read Blob must return ATT_ERR_ATTR_NOT_LONG.
+	 * and the server is allowed, but not required, to return 0x0B.
 	 */
-	uint8_t pdu[5];
-	pdu[0] = ATT_OP_READ_BLOB_REQ;
-	put_le16(pdu + 1, 0x0003);  /* char value handle */
-	put_le16(pdu + 3, 0x0000);  /* offset=0 */
+	uint8_t pdu[BT_CORE63_ATT_READ_BLOB_REQ_SIZE];
+	pdu[0] = BT_CORE63_ATT_OP_READ_BLOB_REQ;
+	put_le16(pdu + 1, TEST_GAP_NAME_HANDLE);
+	put_le16(pdu + 3, 0); /* zero-based offset, §3.4.4.5 */
 
-	att_server_handle(&ac, &db, pdu, 5, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	/*
 	 * Offset=0 on a short attribute succeeds (returns the value).
 	 * Some stacks use Read Blob at offset=0 as a probing strategy.
 	 */
 	ATF_REQUIRE(n > 0);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BLOB_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BLOB_RSP);
 
 	/*
 	 * Read Blob with non-zero offset on a short attribute returns
 	 * ATT_ERR_ATTR_NOT_LONG.
 	 */
 	put_le16(pdu + 3, 0x0001);  /* offset=1, non-zero on short attr */
-	att_server_handle(&ac, &db, pdu, 5, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[1], ATT_OP_READ_BLOB_REQ);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_LONG);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_BLOB_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_LONG);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -8185,9 +8953,8 @@ ATF_TC_BODY(test_att_server_read_blob_not_long, tc)
 /*
  * test_att_server_read_blob_offset_eq_len
  *
- * Verify Read Blob with offset == value_len on a short attribute
- * returns ATT_ERR_ATTR_NOT_LONG, since the attribute fits in a
- * single Read Response and is therefore not "long".
+ * Verify the implementation chooses the optional Attribute Not Long response
+ * for offset == length on a fixed short attribute (§3.4.4.5).
  */
 ATF_TC_WITHOUT_HEAD(test_att_server_read_blob_offset_eq_len);
 ATF_TC_BODY(test_att_server_read_blob_offset_eq_len, tc)
@@ -8202,25 +8969,25 @@ ATF_TC_BODY(test_att_server_read_blob_offset_eq_len, tc)
 
 	att_mock_pair(&ac, &client_fd);
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
-	attdb_add_service(&db, 0x1800);
-	attdb_add_characteristic(&db, 0x2A00,
-	    GATT_PROP_READ, ATT_PERM_READ, "Test", 4);
+	attdb_add_service(&db, BT_ASSIGNED_UUID_GAP_SERVICE);
+	attdb_add_characteristic(&db, BT_ASSIGNED_UUID_DEVICE_NAME,
+	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ, "Test", 4);
 
 	/* Read Blob with offset == value_len (4), MTU=23 */
-	uint8_t pdu[5];
-	pdu[0] = ATT_OP_READ_BLOB_REQ;
-	put_le16(pdu + 1, 0x0003);
-	put_le16(pdu + 3, 0x0004);  /* offset=4 == value_len */
+	uint8_t pdu[BT_CORE63_ATT_READ_BLOB_REQ_SIZE];
+	pdu[0] = BT_CORE63_ATT_OP_READ_BLOB_REQ;
+	put_le16(pdu + 1, TEST_GAP_NAME_HANDLE);
+	put_le16(pdu + 3, 4); /* fixture offset equals value length */
 
-	att_server_handle(&ac, &db, pdu, 5, -1, 0);
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
 	/*
 	 * value_len (4) <= mtu-1 (22), so the attribute is not "long".
 	 * ATT_ERR_ATTR_NOT_LONG is returned before the offset check.
 	 */
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_LONG);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_LONG);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -8254,7 +9021,7 @@ ATF_TC_BODY(test_srv_truncated_read_by_type, tc)
 	 * minimum 7 (opcode + start_handle(2) + end_handle(2) + uuid(2)).
 	 */
 	uint8_t pdu[4];
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
 	pdu[3] = 0xFF;	/* partial end_handle byte */
 
@@ -8262,10 +9029,10 @@ ATF_TC_BODY(test_srv_truncated_read_by_type, tc)
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[1], ATT_OP_READ_BY_TYPE_REQ);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_PDU);
+	ATF_REQUIRE(n == BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_BY_TYPE_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_PDU);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -8290,17 +9057,17 @@ ATF_TC_BODY(test_srv_truncated_find_info, tc)
 	 * the minimum 5 (opcode + start_handle(2) + end_handle(2)).
 	 */
 	uint8_t pdu[2];
-	pdu[0] = ATT_OP_FIND_INFO_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_FIND_INFO_REQ;
 	pdu[1] = 0x01;	/* partial start_handle byte */
 
 	int ret = att_server_handle(&ac, &db, pdu, 2, -1, 0);
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[1], ATT_OP_FIND_INFO_REQ);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_PDU);
+	ATF_REQUIRE(n == BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_FIND_INFO_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_PDU);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -8325,16 +9092,16 @@ ATF_TC_BODY(test_srv_truncated_write, tc)
 	 * value.  Minimum is opcode + handle(2) = 3 bytes.
 	 */
 	uint8_t pdu[1];
-	pdu[0] = ATT_OP_WRITE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_WRITE_REQ;
 
 	int ret = att_server_handle(&ac, &db, pdu, 1, -1, 0);
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[1], ATT_OP_WRITE_REQ);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_PDU);
+	ATF_REQUIRE(n == BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_WRITE_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_PDU);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -8369,17 +9136,17 @@ ATF_TC_BODY(test_srv_zero_length_pdu, tc)
 	 * Verify the server is still functional by sending a valid Read
 	 * Request and confirming we get a proper response.
 	 */
-	uint8_t pdu[3];
-	pdu[0] = ATT_OP_READ_REQ;
+	uint8_t pdu[BT_CORE63_ATT_READ_REQ_SIZE];
+	pdu[0] = BT_CORE63_ATT_OP_READ_REQ;
 	put_le16(pdu + 1, 0x0003);	/* Device Name */
 
-	ret = att_server_handle(&ac, &db, pdu, 3, -1, 0);
+	ret = att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	ATF_CHECK_EQ(ret, 0);
 
 	uint8_t rsp[ATT_PDU_BUF_SIZE];
 	ssize_t n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 	ATF_CHECK_EQ(memcmp(rsp + 1, "Test", 4), 0);
 
 	att_mock_cleanup(&ac, client_fd);
@@ -8388,12 +9155,12 @@ ATF_TC_BODY(test_srv_zero_length_pdu, tc)
 /*
  * test_srv_unknown_opcode — send a PDU with an unrecognised request opcode.
  *
- * Opcode 0x3F has bit 6 clear (not a command), so the server must
+ * Method 0x3F with the Command Flag clear is not a command, so the server must
  * respond with ATT_ERR_REQ_NOT_SUPPORTED per Core Spec Vol 3 Part F
  * Section 3.4.1.1.
  *
- * Note: 0x7F has bit 6 SET (0100 0000), making it a command that
- * must be silently ignored.  Use 0x3F (0011 1111) instead.
+ * Setting ATT_OPCODE_COMMAND_FLAG would instead make the same unknown Method
+ * a command that must be silently ignored (Table 3.2 and Section 3.3.1).
  */
 ATF_TC_WITHOUT_HEAD(test_srv_unknown_opcode);
 ATF_TC_BODY(test_srv_unknown_opcode, tc)
@@ -8410,20 +9177,20 @@ ATF_TC_BODY(test_srv_unknown_opcode, tc)
 	build_test_db(&db, attrs, val_buf);
 
 	/*
-	 * Unknown opcode 0x3F — not a defined ATT opcode, and bit 6 is
-	 * clear so it is treated as a request (not a command).
+	 * Table 3.2 assigns all six low bits to Method.  The all-ones Method
+	 * is undefined and the Command Flag is deliberately clear.
 	 */
 	uint8_t pdu[1];
-	pdu[0] = 0x3F;
+	pdu[0] = BT_CORE63_ATT_OPCODE_METHOD_MASK;
 
 	int ret = att_server_handle(&ac, &db, pdu, 1, -1, 0);
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[1], 0x3F);	/* echoes back the unknown opcode */
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_REQ_NOT_SUPPORTED);
+	ATF_REQUIRE(n == BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OPCODE_METHOD_MASK);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_REQUEST_NOT_SUPPORTED);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -8451,7 +9218,7 @@ ATF_TC_BODY(test_srv_oversized_pdu, tc)
 	build_test_db(&db, attrs, val_buf);
 
 	/* MTU is the default 23 */
-	ATF_REQUIRE(ac.mtu == ATT_DEFAULT_MTU);
+	ATF_REQUIRE(ac.mtu == BT_CORE63_ATT_DEFAULT_MTU);
 
 	/*
 	 * Build a 100-byte PDU: valid Read By Type header in the
@@ -8460,24 +9227,24 @@ ATF_TC_BODY(test_srv_oversized_pdu, tc)
 	 */
 	uint8_t pdu[100];
 	memset(pdu, 0, sizeof(pdu));
-	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
-	put_le16(pdu + 3, 0xFFFF);
-	put_le16(pdu + 5, GATT_UUID_CHARACTERISTIC);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
+	put_le16(pdu + 5, BT_ASSIGNED_UUID_CHARACTERISTIC);
 
 	/*
 	 * The server uses strict length checks (len must be exactly
-	 * 7, 9, or 21 for Read By Type), so a 100-byte PDU is
+	 * 7 or 21 for Read By Type), so a 100-byte PDU is
 	 * rejected as an invalid PDU.
 	 */
 	int ret = att_server_handle(&ac, &db, pdu, 100, -1, 0);
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE(n == 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[1], ATT_OP_READ_BY_TYPE_REQ);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_INVALID_PDU);
+	ATF_REQUIRE(n == BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_BY_TYPE_REQ);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_PDU);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -8510,7 +9277,7 @@ ATF_TC_BODY(test_srv_write_cmd_truncated, tc)
 	 * (return 0) without crashing.
 	 */
 	uint8_t pdu_cmd[1];
-	pdu_cmd[0] = ATT_OP_WRITE_CMD;
+	pdu_cmd[0] = BT_CORE63_ATT_OP_WRITE_CMD;
 
 	int ret = att_server_handle(&ac, &db, pdu_cmd, 1, -1, 0);
 	ATF_CHECK_EQ(ret, 0);
@@ -8519,16 +9286,16 @@ ATF_TC_BODY(test_srv_write_cmd_truncated, tc)
 	 * Verify the server is still functional by sending a valid
 	 * Read Request and confirming we get a proper response.
 	 */
-	uint8_t pdu_read[3];
-	pdu_read[0] = ATT_OP_READ_REQ;
+	uint8_t pdu_read[BT_CORE63_ATT_READ_REQ_SIZE];
+	pdu_read[0] = BT_CORE63_ATT_OP_READ_REQ;
 	put_le16(pdu_read + 1, 0x0003);	/* Device Name */
 
-	ret = att_server_handle(&ac, &db, pdu_read, 3, -1, 0);
+	ret = att_server_handle(&ac, &db, pdu_read, sizeof(pdu_read), -1, 0);
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 	ATF_CHECK_EQ(memcmp(rsp + 1, "Test", 4), 0);
 
 	att_mock_cleanup(&ac, client_fd);
@@ -8555,17 +9322,18 @@ ATF_TC_BODY(test_signed_write_cmd, tc)
 	build_test_db(&db, attrs, vb);
 
 	ac.has_peer_csrk = true;
-	memset(ac.peer_csrk, 0x42, 16);
+	memset(ac.peer_csrk, 0x42, sizeof(ac.peer_csrk));
+	test_signature_valid = false;
 
 	/*
 	 * ATT Signed Write Command: opcode(0xD2) + handle(2) + value(1) + signature(12)
 	 * = 16 bytes total.
 	 */
-	uint8_t req[16];
-	req[0] = ATT_OP_SIGNED_WRITE_CMD;
-	put_le16(req + 1, 0x0006);
+	uint8_t req[BT_CORE63_LEGACY_ATT_SIGNED_WRITE_MIN_SIZE + 1];
+	req[0] = BT_CORE63_LEGACY_ATT_OP_SIGNED_WRITE_CMD;
+	put_le16(req + 1, TEST_CUSTOM_VALUE_HANDLE);
 	req[3] = 0x42;
-	memset(req + 4, 0, 12);
+	memset(req + 4, 0, BT_CORE63_LEGACY_ATT_SIGNATURE_SIZE);
 
 	int ret = att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	ATF_CHECK_EQ(ret, 0);
@@ -8574,6 +9342,7 @@ ATF_TC_BODY(test_signed_write_cmd, tc)
 	pfd.fd = cf;
 	pfd.events = POLLIN;
 	ATF_CHECK_EQ(poll(&pfd, 1, 50), 0);
+	ATF_CHECK_EQ(attrs[5].value[0], 0xaa);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -8594,17 +9363,18 @@ ATF_TC_BODY(test_signed_write_cmd_invalid_sig, tc)
 	build_test_db(&db, attrs, vb);
 
 	ac.has_peer_csrk = true;
-	memset(ac.peer_csrk, 0x42, 16);
+	memset(ac.peer_csrk, 0x42, sizeof(ac.peer_csrk));
+	test_signature_valid = false;
 
-	a = attdb_find_by_handle(&db, 0x0006);
+	a = attdb_find_by_handle(&db, TEST_CUSTOM_VALUE_HANDLE);
 	ATF_REQUIRE(a != NULL);
 	uint8_t orig_val = a->value[0];
 
-	uint8_t req[16];
-	req[0] = ATT_OP_SIGNED_WRITE_CMD;
-	put_le16(req + 1, 0x0006);
+	uint8_t req[BT_CORE63_LEGACY_ATT_SIGNED_WRITE_MIN_SIZE + 1];
+	req[0] = BT_CORE63_LEGACY_ATT_OP_SIGNED_WRITE_CMD;
+	put_le16(req + 1, TEST_CUSTOM_VALUE_HANDLE);
 	req[3] = 0xFF;
-	memset(req + 4, 0xDE, 12);
+	memset(req + 4, 0xde, BT_CORE63_LEGACY_ATT_SIGNATURE_SIZE);
 
 	int ret = att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	ATF_CHECK_EQ(ret, 0);
@@ -8635,12 +9405,13 @@ ATF_TC_BODY(test_signed_write_cmd_no_csrk, tc)
 	build_test_db(&db, attrs, vb);
 
 	ac.has_peer_csrk = false;
+	test_signature_valid = true; /* must not be consulted without a CSRK */
 
-	uint8_t req[16];
-	req[0] = ATT_OP_SIGNED_WRITE_CMD;
-	put_le16(req + 1, 0x0006);
+	uint8_t req[BT_CORE63_LEGACY_ATT_SIGNED_WRITE_MIN_SIZE + 1];
+	req[0] = BT_CORE63_LEGACY_ATT_OP_SIGNED_WRITE_CMD;
+	put_le16(req + 1, TEST_CUSTOM_VALUE_HANDLE);
 	req[3] = 0x42;
-	memset(req + 4, 0, 12);
+	memset(req + 4, 0, BT_CORE63_LEGACY_ATT_SIGNATURE_SIZE);
 
 	int ret = att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	ATF_CHECK_EQ(ret, 0);
@@ -8648,6 +9419,7 @@ ATF_TC_BODY(test_signed_write_cmd_no_csrk, tc)
 	pfd.fd = cf;
 	pfd.events = POLLIN;
 	ATF_CHECK_EQ(poll(&pfd, 1, 50), 0);
+	ATF_CHECK_EQ(attrs[5].value[0], 0xaa);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -8663,19 +9435,20 @@ ATF_TC_BODY(test_eatt_large_mtu_response, tc)
 	uint8_t vb[TEST_DB_VAL_SIZE];
 	uint8_t rsp[ATT_PDU_BUF_SIZE];
 	ssize_t n;
+	const uint16_t eatt_mtu = 1024; /* local dynamic-L2CAP MTU sample */
 
 	att_mock_pair(&ac, &cf);
 	build_test_db(&db, attrs, vb);
 
 	uint8_t req[3];
-	req[0] = ATT_OP_READ_REQ;
+	req[0] = BT_CORE63_ATT_OP_READ_REQ;
 	put_le16(req + 1, 0x0003);
 
-	att_server_handle(&ac, &db, req, sizeof(req), ac.fd, 1024);
+	att_server_handle(&ac, &db, req, sizeof(req), ac.fd, eatt_mtu);
 
 	n = recv(cf, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
 	ATF_CHECK(memcmp(rsp + 1, "Test", 4) == 0);
 
 	att_mock_cleanup(&ac, cf);
@@ -8689,9 +9462,11 @@ ATF_TC_BODY(test_attdb_remove_service, tc)
 	struct att_attr attrs[TEST_DB_MAX_ATTRS];
 	uint8_t vb[TEST_DB_VAL_SIZE];
 	int count_before;
-	uint16_t svc_handle;
+	size_t val_before;
+	uint16_t svc_handle, desc_handle;
 
 	build_test_db(&db, attrs, vb);
+	val_before = db.val_used;
 
 	svc_handle = attdb_add_service(&db, 0xFFF0);
 	ATF_REQUIRE(svc_handle != 0);
@@ -8707,56 +9482,65 @@ ATF_TC_BODY(test_attdb_remove_service, tc)
 	    count_before, db.count);
 
 	ATF_CHECK(attdb_find_by_handle(&db, svc_handle) == NULL);
+	ATF_CHECK_EQ(db.val_used, val_before);
+
+	/* A descriptor reusing a removed slot must not inherit stale metadata. */
+	desc_handle = attdb_add_descriptor(&db, 0x2901, ATT_PERM_READ,
+	    NULL, 0);
+	ATF_REQUIRE(desc_handle != 0);
+	{
+		struct att_attr *a = attdb_find_by_handle(&db, desc_handle);
+
+		ATF_REQUIRE(a != NULL);
+		ATF_CHECK_EQ(a->owner_fd, -1);
+		ATF_CHECK_EQ(a->flags, 0);
+		ATF_CHECK(a->value == NULL);
+	}
 
 	/* Invalid handle should fail */
 	ret = attdb_remove_service(&db, 0xFFFF);
 	ATF_CHECK(ret != 0);
 }
 
-/* att_opcode_name: exercise indirectly via known opcode→response mappings */
+/* att_opcode_name: local diagnostic labels for independently encoded opcodes. */
 ATF_TC_WITHOUT_HEAD(test_att_opcode_name);
 ATF_TC_BODY(test_att_opcode_name, tc)
 {
-	struct att_conn ac;
-	int cf;
-	struct att_db db;
-	struct att_attr attrs[TEST_DB_MAX_ATTRS];
-	uint8_t vb[TEST_DB_VAL_SIZE];
-	uint8_t rsp[ATT_PDU_BUF_SIZE];
-	ssize_t n;
-
-	att_mock_pair(&ac, &cf);
-	build_test_db(&db, attrs, vb);
-
 	struct {
 		uint8_t	opcode;
-		uint8_t	expected_rsp;
-		uint8_t	extra[6];
-		size_t	len;
+		const char	*name;
 	} cases[] = {
-		{ ATT_OP_MTU_REQ, ATT_OP_MTU_RSP,
-		  { 0x17, 0x00, 0, 0, 0, 0 }, 3 },
-		{ ATT_OP_READ_REQ, ATT_OP_READ_RSP,
-		  { 0x03, 0x00, 0, 0, 0, 0 }, 3 },
-		{ ATT_OP_READ_REQ, ATT_OP_ERROR_RSP,
-		  { 0xFF, 0xFF, 0, 0, 0, 0 }, 3 },
+		{ BT_CORE63_ATT_OP_MTU_REQ, "MTU_REQ" },
+		{ BT_CORE63_ATT_OP_MTU_RSP, "MTU_RSP" },
+		{ BT_CORE63_ATT_OP_FIND_INFO_REQ, "FIND_INFO_REQ" },
+		{ BT_CORE63_ATT_OP_FIND_INFO_RSP, "FIND_INFO_RSP" },
+		{ BT_CORE63_ATT_OP_FIND_BY_TYPE_VALUE_REQ, "FIND_BY_TYPE_REQ" },
+		{ BT_CORE63_ATT_OP_READ_BY_TYPE_REQ, "READ_BY_TYPE_REQ" },
+		{ BT_CORE63_ATT_OP_READ_BY_TYPE_RSP, "READ_BY_TYPE_RSP" },
+		{ BT_CORE63_ATT_OP_READ_REQ, "READ_REQ" },
+		{ BT_CORE63_ATT_OP_READ_RSP, "READ_RSP" },
+		{ BT_CORE63_ATT_OP_READ_BLOB_REQ, "READ_BLOB_REQ" },
+		{ BT_CORE63_ATT_OP_READ_MULTIPLE_REQ, "READ_MULTI_REQ" },
+		{ BT_CORE63_ATT_OP_READ_MULTIPLE_VARIABLE_REQ,
+		    "READ_MULTI_VAR_REQ" },
+		{ BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ, "READ_BY_GRP_REQ" },
+		{ BT_CORE63_ATT_OP_WRITE_REQ, "WRITE_REQ" },
+		{ BT_CORE63_ATT_OP_WRITE_CMD, "WRITE_CMD" },
+		{ BT_CORE63_LEGACY_ATT_OP_SIGNED_WRITE_CMD,
+		    "SIGNED_WRITE_CMD" },
+		{ BT_CORE63_ATT_OP_PREPARE_WRITE_REQ, "PREP_WRITE_REQ" },
+		{ BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ, "EXEC_WRITE_REQ" },
+		{ BT_CORE63_ATT_OP_HANDLE_NOTIFY, "NOTIFY" },
+		{ BT_CORE63_ATT_OP_HANDLE_INDICATE, "INDICATE" },
+		{ BT_CORE63_ATT_OP_HANDLE_CONFIRM, "CONFIRM" },
+		{ BT_CORE63_ATT_OP_ERROR_RSP, "ERROR_RSP" },
+		{ 0x00, "UNKNOWN" },
+		{ 0xee, "UNKNOWN" },
 	};
 
-	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
-		uint8_t req[8];
-		req[0] = cases[i].opcode;
-		memcpy(req + 1, cases[i].extra, cases[i].len - 1);
-
-		att_server_handle(&ac, &db, req, cases[i].len, -1, 0);
-
-		n = recv(cf, rsp, sizeof(rsp), 0);
-		ATF_REQUIRE(n > 0);
-		ATF_CHECK_EQ_MSG(rsp[0], cases[i].expected_rsp,
-		    "opcode 0x%02x: expected rsp 0x%02x, got 0x%02x",
-		    cases[i].opcode, cases[i].expected_rsp, rsp[0]);
-	}
-
-	att_mock_cleanup(&ac, cf);
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+		ATF_CHECK_STREQ_MSG(att_opcode_name(cases[i].opcode),
+		    cases[i].name, "opcode 0x%02x", cases[i].opcode);
 }
 
 /* ================================================================
@@ -8781,7 +9565,7 @@ ATF_TC_BODY(test_notification_bearer_aware, tc)
 	/* Create a second socketpair for the bearer */
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, bearer_fds) == 0);
 	ac.bearer_fd = bearer_fds[0];
-	ac.bearer_mtu = ATT_DEFAULT_MTU;
+	ac.bearer_mtu = BT_CORE63_ATT_DEFAULT_MTU;
 
 	/* Send notification — should go to bearer_fd, not ac.fd */
 	int ret = att_send_notification(&ac, 0x0006, val, sizeof(val));
@@ -8789,8 +9573,8 @@ ATF_TC_BODY(test_notification_bearer_aware, tc)
 
 	/* Verify data arrived on the bearer peer, not on the primary peer */
 	n = recv(bearer_fds[1], buf, sizeof(buf), 0);
-	ATF_REQUIRE(n >= 7);	/* opcode(1) + handle(2) + value(4) */
-	ATF_CHECK_EQ(buf[0], ATT_OP_HANDLE_NOTIFY);
+	ATF_REQUIRE(n == BT_CORE63_ATT_HANDLE_VALUE_HEADER_SIZE + sizeof(val));
+	ATF_CHECK_EQ(buf[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
 	ATF_CHECK_EQ(get_le16(buf + 1), 0x0006);
 	ATF_CHECK_EQ(buf[3], 0xDE);
 	ATF_CHECK_EQ(buf[4], 0xAD);
@@ -8834,14 +9618,15 @@ ATF_TC_BODY(test_cccd_rfu_bits_masked, tc)
 	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
 	attdb_add_service(&db, 0xFFE0);
 	attdb_add_characteristic(&db, 0xFFE1,
-	    GATT_PROP_READ | GATT_PROP_NOTIFY | GATT_PROP_INDICATE,
+	    BT_CORE63_GATT_PROP_READ | BT_CORE63_GATT_PROP_NOTIFY |
+	    BT_CORE63_GATT_PROP_INDICATE,
 	    ATT_PERM_READ | ATT_PERM_WRITE,
 	    "\x00", 1);
 	cccd_handle = attdb_add_cccd(&db);
 	ATF_REQUIRE(cccd_handle != 0);
 
 	/* Write CCCD with all bits set (0xFFFF) */
-	req[0] = ATT_OP_WRITE_REQ;
+	req[0] = BT_CORE63_ATT_OP_WRITE_REQ;
 	put_le16(req + 1, cccd_handle);
 	put_le16(req + 3, 0xFFFF);
 
@@ -8850,21 +9635,1491 @@ ATF_TC_BODY(test_cccd_rfu_bits_masked, tc)
 	/* Read back the Write Response */
 	n = recv(peer, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 1);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_WRITE_RSP);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_WRITE_RSP);
 
 	/* Verify that only bits [1:0] were stored */
 	ATF_REQUIRE(ac.cccd_count >= 1);
-	ATF_CHECK_EQ_MSG(ac.cccds[0].value, 0x0003,
+	ATF_CHECK_EQ_MSG(ac.cccds[0].value, BT_CORE63_GATT_CCCD_DEFINED_MASK,
 	    "expected CCCD value 0x0003, got 0x%04x", ac.cccds[0].value);
 
 	att_mock_cleanup(&ac, peer);
 }
 
+/* ================================================================
+ * BLE 5.0-5.2 FEATURE TESTS
+ * ================================================================ */
+
+/* ----------------------------------------------------------------
+ * EATT (Enhanced ATT, BT 5.2) tests
+ * ---------------------------------------------------------------- */
+
+/*
+ * test_eatt_bearer_add: add an EATT bearer via socketpair, verify it
+ * is tracked in the att_conn.
+ */
+ATF_TC_WITHOUT_HEAD(test_eatt_bearer_add);
+ATF_TC_BODY(test_eatt_bearer_add, tc)
+{
+	struct att_conn ac;
+	int peer;
+	int eatt_pair[2];
+	const uint16_t test_mtu = 256;
+
+	att_mock_pair(&ac, &peer);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, eatt_pair) == 0);
+
+	/* Manually add bearer (simulating att_eatt_accept) */
+	ac.eatt[0].fd = eatt_pair[0];
+	ac.eatt[0].mtu = test_mtu;
+	ac.eatt[0].active = true;
+	ac.eatt[0].pending = 0;
+	ac.eatt_count = 1;
+
+	ATF_CHECK_EQ(ac.eatt_count, 1);
+	ATF_CHECK(ac.eatt[0].active);
+	ATF_CHECK_EQ(ac.eatt[0].fd, eatt_pair[0]);
+	ATF_CHECK_EQ(ac.eatt[0].mtu, test_mtu);
+
+	close(eatt_pair[0]);
+	close(eatt_pair[1]);
+	ac.eatt_count = 0;
+	att_mock_cleanup(&ac, peer);
+}
+
+/*
+ * test_eatt_bearer_select: a bearer may carry only one outstanding request;
+ * select an idle EATT bearer, then the idle primary when all EATT are busy.
+ */
+ATF_TC_WITHOUT_HEAD(test_eatt_bearer_select);
+ATF_TC_BODY(test_eatt_bearer_select, tc)
+{
+	struct att_conn ac;
+	int peer;
+	int pairs[3][2];
+
+	att_mock_pair(&ac, &peer);
+
+	for (int i = 0; i < 3; i++) {
+		ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, pairs[i]) == 0);
+		ac.eatt[i].fd = pairs[i][0];
+		ac.eatt[i].mtu = BT_CORE63_ATT_DEFAULT_MTU;
+		ac.eatt[i].active = true;
+	}
+	ac.eatt_count = 3;
+
+	ac.eatt[0].pending = 1;
+	ac.eatt[1].pending = 0;
+	ac.eatt[2].pending = 1;
+
+	/* Only bearer 1 is idle. */
+	ATF_CHECK_EQ(att_eatt_select_bearer(&ac), pairs[1][0]);
+
+	/* All EATT bearers are now occupied, so reserve the primary bearer. */
+	ATF_CHECK_EQ(att_eatt_select_bearer(&ac), ac.fd);
+
+	att_close_eatt(&ac);
+	for (int i = 0; i < 3; i++)
+		close(pairs[i][1]);
+	att_mock_cleanup(&ac, peer);
+}
+
+/*
+ * test_eatt_bearer_mtu: verify each EATT bearer has independent MTU.
+ */
+ATF_TC_WITHOUT_HEAD(test_eatt_bearer_mtu);
+ATF_TC_BODY(test_eatt_bearer_mtu, tc)
+{
+	struct att_conn ac;
+	int peer;
+	int eatt1[2], eatt2[2];
+	const uint16_t first_eatt_mtu = 128;
+	const uint16_t second_eatt_mtu = 512;
+
+	att_mock_pair(&ac, &peer);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, eatt1) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, eatt2) == 0);
+
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	ac.eatt[0].fd = eatt1[0];
+	ac.eatt[0].mtu = first_eatt_mtu;
+	ac.eatt[0].active = true;
+	ac.eatt[1].fd = eatt2[0];
+	ac.eatt[1].mtu = second_eatt_mtu;
+	ac.eatt[1].active = true;
+	ac.eatt_count = 2;
+
+	/* Verify each bearer has its own MTU, independent of primary */
+	ATF_CHECK_EQ(ac.mtu, BT_CORE63_ATT_DEFAULT_MTU);
+	ATF_CHECK_EQ(ac.eatt[0].mtu, first_eatt_mtu);
+	ATF_CHECK_EQ(ac.eatt[1].mtu, second_eatt_mtu);
+	ATF_CHECK(ac.eatt[0].mtu != ac.eatt[1].mtu);
+	ATF_CHECK(ac.eatt[0].mtu != ac.mtu);
+
+	att_close_eatt(&ac);
+	close(eatt1[1]);
+	close(eatt2[1]);
+	att_mock_cleanup(&ac, peer);
+}
+
+/*
+ * test_eatt_bearer_close: verify closing EATT bearers doesn't affect
+ * the primary bearer.
+ */
+ATF_TC_WITHOUT_HEAD(test_eatt_bearer_close);
+ATF_TC_BODY(test_eatt_bearer_close, tc)
+{
+	struct att_conn ac;
+	int peer;
+	int eatt_pair[2];
+	int saved_primary_fd;
+
+	att_mock_pair(&ac, &peer);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, eatt_pair) == 0);
+
+	saved_primary_fd = ac.fd;
+
+	ac.eatt[0].fd = eatt_pair[0];
+	ac.eatt[0].mtu = BT_CORE63_EATT_MIN_MTU;
+	ac.eatt[0].active = true;
+	ac.eatt_count = 1;
+
+	/* Close EATT bearers */
+	att_close_eatt(&ac);
+
+	/* Primary bearer should be unaffected */
+	ATF_CHECK_EQ(ac.fd, saved_primary_fd);
+	ATF_CHECK(ac.fd >= 0);
+	ATF_CHECK_EQ(ac.eatt_count, 0);
+
+	close(eatt_pair[1]);
+	att_mock_cleanup(&ac, peer);
+}
+
+/*
+ * test_eatt_write_cmd_uses_bearer: verify att_write_cmd selects an
+ * EATT bearer when one is available.  This was a bug where write_cmd
+ * always used the primary bearer.
+ */
+ATF_TC_WITHOUT_HEAD(test_eatt_write_cmd_uses_bearer);
+ATF_TC_BODY(test_eatt_write_cmd_uses_bearer, tc)
+{
+	struct att_conn ac;
+	int primary_peer;
+	int eatt_pair[2];
+	uint8_t buf[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+	struct pollfd pfd;
+
+	att_mock_pair(&ac, &primary_peer);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, eatt_pair) == 0);
+
+	ac.eatt[0].fd = eatt_pair[0];
+	ac.eatt[0].mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	ac.eatt[0].active = true;
+	ac.eatt[0].pending = 0;
+	ac.eatt_count = 1;
+
+	/* Send write cmd -- should go via EATT bearer */
+	uint8_t data[] = { 0x42 };
+	att_write_cmd(&ac, 0x0006, data, sizeof(data));
+
+	/* Verify data arrived on the EATT bearer peer */
+	n = recv(eatt_pair[1], buf, sizeof(buf), 0);
+	ATF_REQUIRE(n >= 4);
+	ATF_CHECK_EQ(buf[0], BT_CORE63_ATT_OP_WRITE_CMD);
+	ATF_CHECK_EQ(get_le16(buf + 1), 0x0006);
+	ATF_CHECK_EQ(buf[3], 0x42);
+
+	/* Primary peer should have nothing */
+	pfd.fd = primary_peer;
+	pfd.events = POLLIN;
+	ATF_CHECK_EQ(poll(&pfd, 1, 0), 0);
+
+	close(eatt_pair[0]);
+	close(eatt_pair[1]);
+	ac.eatt_count = 0;
+	att_mock_cleanup(&ac, primary_peer);
+}
+
+/* A Write Command must skip an EATT bearer whose own MTU is too small. */
+ATF_TC_WITHOUT_HEAD(test_eatt_write_cmd_selects_fitting_bearer);
+ATF_TC_BODY(test_eatt_write_cmd_selects_fitting_bearer, tc)
+{
+	struct att_conn ac;
+	struct pollfd pfd;
+	uint8_t data[30], pdu[64];
+	int primary_peer, small[2], large[2];
+	ssize_t n;
+
+	att_mock_pair(&ac, &primary_peer);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, small) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, large) == 0);
+	memset(data, 0xa5, sizeof(data));
+
+	/* Neither the fixed bearer nor EATT[0] can carry the 33-octet PDU. */
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	ac.eatt[0].fd = small[0];
+	ac.eatt[0].mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	ac.eatt[0].active = true;
+	ac.eatt[1].fd = large[0];
+	ac.eatt[1].mtu = BT_CORE63_EATT_MIN_MTU;
+	ac.eatt[1].active = true;
+	ac.eatt_count = 2;
+
+	ATF_REQUIRE_EQ(0,
+	    att_write_cmd(&ac, 0x0006, data, sizeof(data)));
+	n = recv(large[1], pdu, sizeof(pdu), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_WRITE_HEADER_SIZE + sizeof(data));
+	ATF_CHECK_EQ(pdu[0], BT_CORE63_ATT_OP_WRITE_CMD);
+	ATF_CHECK_EQ(get_le16(pdu + 1), 0x0006);
+	ATF_CHECK(memcmp(pdu + 3, data, sizeof(data)) == 0);
+
+	pfd.fd = small[1];
+	pfd.events = POLLIN;
+	ATF_CHECK_EQ(poll(&pfd, 1, 0), 0);
+	pfd.fd = primary_peer;
+	ATF_CHECK_EQ(poll(&pfd, 1, 0), 0);
+	ATF_CHECK_EQ(ac.eatt[0].pending, 0);
+	ATF_CHECK_EQ(ac.eatt[1].pending, 0);
+
+	close(small[0]);
+	close(small[1]);
+	close(large[0]);
+	close(large[1]);
+	ac.eatt_count = 0;
+	att_mock_cleanup(&ac, primary_peer);
+}
+
+/* A fitting fixed bearer remains the fallback after undersized EATT. */
+ATF_TC_WITHOUT_HEAD(test_eatt_write_cmd_mtu_fallback_primary);
+ATF_TC_BODY(test_eatt_write_cmd_mtu_fallback_primary, tc)
+{
+	struct att_conn ac;
+	struct pollfd pfd;
+	uint8_t data[30], pdu[64];
+	int primary_peer, small[2];
+	ssize_t n;
+
+	att_mock_pair(&ac, &primary_peer);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, small) == 0);
+	memset(data, 0x5a, sizeof(data));
+
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
+	ac.eatt[0].fd = small[0];
+	ac.eatt[0].mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	ac.eatt[0].active = true;
+	ac.eatt_count = 1;
+
+	ATF_REQUIRE_EQ(0,
+	    att_write_cmd(&ac, 0x0007, data, sizeof(data)));
+	n = recv(primary_peer, pdu, sizeof(pdu), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_WRITE_HEADER_SIZE + sizeof(data));
+	ATF_CHECK_EQ(pdu[0], BT_CORE63_ATT_OP_WRITE_CMD);
+	ATF_CHECK_EQ(get_le16(pdu + 1), 0x0007);
+	pfd.fd = small[1];
+	pfd.events = POLLIN;
+	ATF_CHECK_EQ(poll(&pfd, 1, 0), 0);
+	ATF_CHECK_EQ(ac.eatt[0].pending, 0);
+	ATF_CHECK_EQ(ac.primary_pending, 0);
+
+	close(small[0]);
+	close(small[1]);
+	ac.eatt_count = 0;
+	att_mock_cleanup(&ac, primary_peer);
+}
+
+/* No bearer may be selected when its negotiated MTU is below the PDU size. */
+ATF_TC_WITHOUT_HEAD(test_eatt_write_cmd_no_fitting_bearer);
+ATF_TC_BODY(test_eatt_write_cmd_no_fitting_bearer, tc)
+{
+	struct att_conn ac;
+	struct pollfd pfds[2];
+	uint8_t data[30];
+	int primary_peer, small[2];
+
+	att_mock_pair(&ac, &primary_peer);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, small) == 0);
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	ac.eatt[0].fd = small[0];
+	ac.eatt[0].mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	ac.eatt[0].active = true;
+	ac.eatt_count = 1;
+
+	errno = 0;
+	ATF_CHECK_EQ(att_write_cmd(&ac, 0x0008, data, sizeof(data)), -1);
+	ATF_CHECK_EQ(errno, EMSGSIZE);
+	ATF_CHECK_EQ(ac.eatt[0].pending, 0);
+	ATF_CHECK_EQ(ac.primary_pending, 0);
+	pfds[0].fd = primary_peer;
+	pfds[0].events = POLLIN;
+	pfds[1].fd = small[1];
+	pfds[1].events = POLLIN;
+	ATF_CHECK_EQ(poll(pfds, 2, 0), 0);
+
+	close(small[0]);
+	close(small[1]);
+	ac.eatt_count = 0;
+	att_mock_cleanup(&ac, primary_peer);
+}
+
+/* Mesh Proxy First/Last segments must retain one EATT ordering domain. */
+ATF_TC_WITHOUT_HEAD(test_eatt_write_cmd_sar_pins_large_bearer);
+ATF_TC_BODY(test_eatt_write_cmd_sar_pins_large_bearer, tc)
+{
+	struct att_conn ac;
+	struct pollfd pfds[2];
+	uint8_t first[30], last[2], pdu[64];
+	int primary_peer, small[2], large[2];
+	ssize_t n;
+
+	att_mock_pair(&ac, &primary_peer);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, small) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, large) == 0);
+	memset(first, 0x11, sizeof(first));
+	memset(last, 0x22, sizeof(last));
+
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	ac.eatt[0].fd = small[0];
+	ac.eatt[0].mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	ac.eatt[0].active = true;
+	ac.eatt[1].fd = large[0];
+	ac.eatt[1].mtu = BT_CORE63_EATT_MIN_MTU;
+	ac.eatt[1].active = true;
+	ac.eatt_count = 2;
+
+	/* The full-size First selects the only bearer that can carry it. */
+	ATF_REQUIRE_EQ(0,
+	    att_write_cmd(&ac, 0x0006, first, sizeof(first)));
+	n = recv(large[1], pdu, sizeof(pdu), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_WRITE_HEADER_SIZE + sizeof(first));
+	ATF_CHECK_EQ(pdu[3], 0x11);
+
+	/* The shorter Last still uses that bearer, not EATT[0]. */
+	ATF_REQUIRE_EQ(0, att_write_cmd(&ac, 0x0006, last, sizeof(last)));
+	n = recv(large[1], pdu, sizeof(pdu), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_WRITE_HEADER_SIZE + sizeof(last));
+	ATF_CHECK_EQ(pdu[3], 0x22);
+	ATF_CHECK(ac.write_cmd_bearer_pinned);
+	ATF_CHECK_EQ(ac.write_cmd_bearer_fd, large[0]);
+
+	pfds[0].fd = small[1];
+	pfds[0].events = POLLIN;
+	pfds[1].fd = primary_peer;
+	pfds[1].events = POLLIN;
+	ATF_CHECK_EQ(poll(pfds, 2, 0), 0);
+
+	close(small[0]);
+	close(small[1]);
+	close(large[0]);
+	close(large[1]);
+	ac.eatt_count = 0;
+	att_mock_cleanup(&ac, primary_peer);
+}
+
+/* A larger fixed bearer is likewise retained for a shorter Last segment. */
+ATF_TC_WITHOUT_HEAD(test_eatt_write_cmd_sar_pins_fixed_bearer);
+ATF_TC_BODY(test_eatt_write_cmd_sar_pins_fixed_bearer, tc)
+{
+	struct att_conn ac;
+	struct pollfd pfd;
+	uint8_t first[30], last = 0x7f, pdu[64];
+	int primary_peer, small[2];
+	ssize_t n;
+
+	att_mock_pair(&ac, &primary_peer);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, small) == 0);
+	memset(first, 0x33, sizeof(first));
+	ac.mtu = BT_CORE63_EATT_MIN_MTU;
+	ac.eatt[0].fd = small[0];
+	ac.eatt[0].mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	ac.eatt[0].active = true;
+	ac.eatt_count = 1;
+
+	ATF_REQUIRE_EQ(0,
+	    att_write_cmd(&ac, 0x0007, first, sizeof(first)));
+	ATF_REQUIRE_EQ(0, att_write_cmd(&ac, 0x0007, &last, sizeof(last)));
+	n = recv(primary_peer, pdu, sizeof(pdu), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_WRITE_HEADER_SIZE + sizeof(first));
+	ATF_CHECK_EQ(pdu[3], 0x33);
+	n = recv(primary_peer, pdu, sizeof(pdu), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_WRITE_HEADER_SIZE + sizeof(last));
+	ATF_CHECK_EQ(pdu[3], last);
+	ATF_CHECK_EQ(ac.write_cmd_bearer_fd, ac.fd);
+
+	pfd.fd = small[1];
+	pfd.events = POLLIN;
+	ATF_CHECK_EQ(poll(&pfd, 1, 0), 0);
+
+	close(small[0]);
+	close(small[1]);
+	ac.eatt_count = 0;
+	att_mock_cleanup(&ac, primary_peer);
+}
+
+/* Busy pins cannot be bypassed; removing the pin permits safe reselection. */
+ATF_TC_WITHOUT_HEAD(test_eatt_write_cmd_pin_busy_and_close);
+ATF_TC_BODY(test_eatt_write_cmd_pin_busy_and_close, tc)
+{
+	struct att_conn ac;
+	struct pollfd pfd;
+	uint8_t pdu[8];
+	int primary_peer, eatt[2], pinned_fd;
+	ssize_t n;
+
+	att_mock_pair(&ac, &primary_peer);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, eatt) == 0);
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	ac.eatt[0].fd = eatt[0];
+	ac.eatt[0].mtu = BT_CORE63_EATT_MIN_MTU;
+	ac.eatt[0].active = true;
+	ac.eatt_count = 1;
+	ATF_REQUIRE_EQ(0, att_write_cmd(&ac, 0x0006, "\x01", 1));
+	ATF_REQUIRE_EQ(recv(eatt[1], pdu, sizeof(pdu), 0),
+	    BT_CORE63_ATT_WRITE_HEADER_SIZE + 1);
+	pinned_fd = eatt[0];
+
+	ac.eatt[0].pending = 1;
+	errno = 0;
+	ATF_CHECK_EQ(att_write_cmd(&ac, 0x0006, "\x02", 1), -1);
+	ATF_CHECK_EQ(errno, EBUSY);
+	pfd.fd = primary_peer;
+	pfd.events = POLLIN;
+	ATF_CHECK_EQ(poll(&pfd, 1, 0), 0);
+	ac.eatt[0].pending = 0;
+
+	att_eatt_remove_bearer(&ac, pinned_fd);
+	ATF_CHECK(!ac.write_cmd_bearer_pinned);
+	ATF_REQUIRE_EQ(0, att_write_cmd(&ac, 0x0006, "\x03", 1));
+	n = recv(primary_peer, pdu, sizeof(pdu), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_WRITE_HEADER_SIZE + 1);
+	ATF_CHECK_EQ(pdu[3], 0x03);
+
+	close(eatt[1]);
+	att_mock_cleanup(&ac, primary_peer);
+}
+
+/*
+ * test_eatt_request_routing: verify att_request routes through
+ * EATT bearers and decrements pending count after response.
+ */
+ATF_TC_WITHOUT_HEAD(test_eatt_request_routing);
+ATF_TC_BODY(test_eatt_request_routing, tc)
+{
+	struct att_conn ac;
+	int primary_peer;
+	int eatt_pair[2];
+	uint8_t buf[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+	uint8_t readbuf[ATT_PDU_BUF_SIZE];
+	size_t outlen;
+
+	att_mock_pair(&ac, &primary_peer);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, eatt_pair) == 0);
+
+	ac.eatt[0].fd = eatt_pair[0];
+	ac.eatt[0].mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	ac.eatt[0].active = true;
+	ac.eatt[0].pending = 0;
+	ac.eatt_count = 1;
+
+	/* Fork: child mocks EATT peer, responds to Read Request */
+	pid_t pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		close(ac.fd);
+		close(primary_peer);
+
+		n = recv(eatt_pair[1], buf, sizeof(buf), 0);
+		if (n < BT_CORE63_ATT_READ_REQ_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_READ_REQ) {
+			close(eatt_pair[0]);
+			close(eatt_pair[1]);
+			_exit(1);
+		}
+
+		/* Send Read Response */
+		uint8_t rsp[5];
+		rsp[0] = BT_CORE63_ATT_OP_READ_RSP;
+		rsp[1] = 0xAA;
+		rsp[2] = 0xBB;
+		rsp[3] = 0xCC;
+		rsp[4] = 0xDD;
+		(void)send(eatt_pair[1], rsp, sizeof(rsp), 0);
+
+		close(eatt_pair[0]);
+		close(eatt_pair[1]);
+		_exit(0);
+	}
+
+	close(eatt_pair[1]);
+
+	int ret = att_read(&ac, 0x0006, readbuf, sizeof(readbuf), &outlen);
+	ATF_CHECK_EQ(ret, 0);
+	ATF_CHECK_EQ(outlen, 4);
+	ATF_CHECK_EQ(readbuf[0], 0xAA);
+	ATF_CHECK_EQ(readbuf[1], 0xBB);
+
+	int status;
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status));
+	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
+
+	close(eatt_pair[0]);
+	ac.eatt_count = 0;
+	att_mock_cleanup(&ac, primary_peer);
+}
+
+/*
+ * test_eatt_concurrent_bearer_requests: open 2 EATT bearers, send
+ * independent read requests on each, and verify independent responses.
+ * This exercises the multi-bearer concurrent request capability
+ * specified in BT 5.2 (Core Spec Vol 3 Part F Section 3.4).
+ */
+struct eatt_read_arg {
+	struct att_conn *ac;
+	uint16_t handle;
+	uint8_t value[2];
+	size_t value_len;
+	int result;
+};
+
+static void *
+eatt_read_thread(void *argp)
+{
+	struct eatt_read_arg *arg = argp;
+
+	arg->result = att_read(arg->ac, arg->handle, arg->value,
+	    sizeof(arg->value), &arg->value_len);
+	return (NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(test_eatt_concurrent_bearer_requests);
+ATF_TC_BODY(test_eatt_concurrent_bearer_requests, tc)
+{
+	struct att_conn ac;
+	int primary_peer;
+	int eatt1[2], eatt2[2];
+	uint8_t buf[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+
+	att_mock_pair(&ac, &primary_peer);
+
+	/* Create 2 EATT bearers via socketpairs */
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, eatt1) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, eatt2) == 0);
+
+	ac.eatt[0].fd = eatt1[0];
+	ac.eatt[0].mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	ac.eatt[0].active = true;
+	ac.eatt[0].pending = 0;
+
+	ac.eatt[1].fd = eatt2[0];
+	ac.eatt[1].mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	ac.eatt[1].active = true;
+	ac.eatt[1].pending = 0;
+
+	ac.eatt_count = 2;
+
+	/*
+	 * Fork a child to mock both EATT peer sides.
+	 * Each bearer responds to a Read Request with distinct data
+	 * so we can verify responses are independent.
+	 */
+	pid_t pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		close(ac.fd);
+		close(primary_peer);
+		close(eatt1[0]);
+		close(eatt2[0]);
+
+		/* Receive both requests before replying: both must be in flight. */
+		n = recv(eatt1[1], buf, sizeof(buf), 0);
+		if (n < BT_CORE63_ATT_READ_REQ_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_READ_REQ) {
+			close(eatt1[1]);
+			close(eatt2[1]);
+			_exit(1);
+		}
+		n = recv(eatt2[1], buf, sizeof(buf), 0);
+		if (n < BT_CORE63_ATT_READ_REQ_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_READ_REQ) {
+			close(eatt1[1]);
+			close(eatt2[1]);
+			_exit(2);
+		}
+		{
+			uint8_t rsp1[] = { BT_CORE63_ATT_OP_READ_RSP,
+			    0x11, 0x22 };
+			(void)send(eatt1[1], rsp1, sizeof(rsp1), 0);
+		}
+		{
+			uint8_t rsp2[] = { BT_CORE63_ATT_OP_READ_RSP,
+			    0xAA, 0xBB };
+			(void)send(eatt2[1], rsp2, sizeof(rsp2), 0);
+		}
+
+		close(eatt1[1]);
+		close(eatt2[1]);
+		_exit(0);
+	}
+
+	/* Parent: close peer sides */
+	close(eatt1[1]);
+	close(eatt2[1]);
+
+	struct eatt_read_arg reads[2] = {
+		{ .ac = &ac, .handle = 0x0010 },
+		{ .ac = &ac, .handle = 0x0020 },
+	};
+	pthread_t threads[2];
+
+	ATF_REQUIRE_EQ(pthread_create(&threads[0], NULL, eatt_read_thread,
+	    &reads[0]), 0);
+	ATF_REQUIRE_EQ(pthread_create(&threads[1], NULL, eatt_read_thread,
+	    &reads[1]), 0);
+	ATF_REQUIRE_EQ(pthread_join(threads[0], NULL), 0);
+	ATF_REQUIRE_EQ(pthread_join(threads[1], NULL), 0);
+	ATF_CHECK_EQ(reads[0].result, 0);
+	ATF_CHECK_EQ(reads[1].result, 0);
+	ATF_CHECK_EQ(reads[0].value_len, 2);
+	ATF_CHECK_EQ(reads[1].value_len, 2);
+	ATF_CHECK_MSG(reads[0].value[0] != reads[1].value[0],
+	    "concurrent EATT requests were not carried independently");
+
+	int status;
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status));
+	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
+
+	close(eatt1[0]);
+	close(eatt2[0]);
+	ac.eatt_count = 0;
+	att_mock_cleanup(&ac, primary_peer);
+}
+
+/* ----------------------------------------------------------------
+ * Multiple Handle Value Notification (BT 5.2) tests
+ * ---------------------------------------------------------------- */
+
+/*
+ * test_multiple_handle_value_ntf_basic: send MHVN with 2 entries,
+ * verify PDU format matches Core Spec Vol 3 Part F 3.4.7.5.
+ */
+ATF_TC_WITHOUT_HEAD(test_multiple_handle_value_ntf_basic);
+ATF_TC_BODY(test_multiple_handle_value_ntf_basic, tc)
+{
+	struct att_conn ac;
+	int client_fd;
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+
+	att_mock_pair(&ac, &client_fd);
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
+
+	uint16_t handles[2] = { 0x0010, 0x0020 };
+	uint8_t v1[] = { 0xAA, 0xBB, 0xCC };
+	uint8_t v2[] = { 0xDD, 0xEE };
+	const uint8_t *values[2] = { v1, v2 };
+	uint16_t lengths[2] = { 3, 2 };
+
+	int ret = att_send_multiple_handle_value_ntf(&ac, handles, values,
+	    lengths, 2);
+	ATF_CHECK_EQ(ret, 0);
+
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	/* 1 (opcode) + 4+3 (entry1) + 4+2 (entry2) = 14 */
+	ATF_CHECK_EQ(n, 14);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_MULTIPLE_HANDLE_NOTIFY);
+
+	/* Entry 1: handle=0x0010, len=3, value=AA BB CC */
+	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0010);
+	ATF_CHECK_EQ(get_le16(rsp + 3), 3);
+	ATF_CHECK_EQ(rsp[5], 0xAA);
+	ATF_CHECK_EQ(rsp[6], 0xBB);
+	ATF_CHECK_EQ(rsp[7], 0xCC);
+
+	/* Entry 2: handle=0x0020, len=2, value=DD EE */
+	ATF_CHECK_EQ(get_le16(rsp + 8), 0x0020);
+	ATF_CHECK_EQ(get_le16(rsp + 10), 2);
+	ATF_CHECK_EQ(rsp[12], 0xDD);
+	ATF_CHECK_EQ(rsp[13], 0xEE);
+
+	att_mock_cleanup(&ac, client_fd);
+}
+
+/*
+ * test_multiple_handle_value_ntf_truncation: verify entries that
+ * don't fit in the MTU are excluded entirely (not truncated mid-entry).
+ */
+ATF_TC_WITHOUT_HEAD(test_multiple_handle_value_ntf_truncation);
+ATF_TC_BODY(test_multiple_handle_value_ntf_truncation, tc)
+{
+	struct att_conn ac;
+	int client_fd;
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+
+	att_mock_pair(&ac, &client_fd);
+	/* MTU=23: available for data = 22 bytes after opcode */
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+
+	uint16_t handles[3] = { 0x0001, 0x0002, 0x0003 };
+	uint8_t v1[] = { 0x11, 0x22 };
+	uint8_t v2[] = { 0x33, 0x44, 0x55 };
+	uint8_t v3[] = { 0x66, 0x77, 0x88, 0x99, 0xaa,
+	    0xbb, 0xcc, 0xdd, 0xee, 0xff };
+	const uint8_t *values[3] = { v1, v2, v3 };
+	uint16_t lengths[3] = { 2, 3, 4 };
+
+	/*
+	 * Entry 1: 4+2=6 bytes.  After: pos=7 (1+6).
+	 * Entry 2: 4+3=7 bytes.  After: pos=14.
+	 * Entry 3: 4+4=8 bytes.  pos+8=22 <= 23=mtu: fits.
+	 * Total: 1+6+7+8=22.
+	 */
+	int ret = att_send_multiple_handle_value_ntf(&ac, handles, values,
+	    lengths, 3);
+	ATF_CHECK_EQ(ret, 0);
+
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_MULTIPLE_HANDLE_NOTIFY);
+	/* All 3 entries should fit: 1 + 6 + 7 + 8 = 22 <= MTU=23 */
+	ATF_CHECK_EQ(n, 22);
+
+	/* Keep the valid default MTU, but make entry 3 too large to fit. */
+	att_mock_cleanup(&ac, client_fd);
+	att_mock_pair(&ac, &client_fd);
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	lengths[2] = 10; /* 1 + 6 + 7 + (4 + 10) exceeds 23. */
+
+	ret = att_send_multiple_handle_value_ntf(&ac, handles, values,
+	    lengths, 3);
+	ATF_CHECK_EQ(ret, 0);
+
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_MULTIPLE_HANDLE_NOTIFY);
+	/* Only entries 1 and 2 should fit: 1+6+7=14 */
+	ATF_CHECK_EQ(n, 14);
+
+	/* Verify entry 1 is intact */
+	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0001);
+	ATF_CHECK_EQ(get_le16(rsp + 3), 2);
+	ATF_CHECK_EQ(rsp[5], 0x11);
+	ATF_CHECK_EQ(rsp[6], 0x22);
+
+	/* Verify entry 2 is intact */
+	ATF_CHECK_EQ(get_le16(rsp + 7), 0x0002);
+	ATF_CHECK_EQ(get_le16(rsp + 9), 3);
+	ATF_CHECK_EQ(rsp[11], 0x33);
+
+	att_mock_cleanup(&ac, client_fd);
+}
+
+/*
+ * test_multiple_handle_value_ntf_empty: verify behavior with zero entries.
+ * Should return 0 without sending anything.
+ */
+ATF_TC_WITHOUT_HEAD(test_multiple_handle_value_ntf_empty);
+ATF_TC_BODY(test_multiple_handle_value_ntf_empty, tc)
+{
+	struct att_conn ac;
+	int client_fd;
+	struct pollfd pfd;
+
+	att_mock_pair(&ac, &client_fd);
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
+
+	int ret = att_send_multiple_handle_value_ntf(&ac, NULL, NULL, NULL, 0);
+	ATF_CHECK_EQ(ret, 0);
+
+	/* Nothing should have been sent */
+	pfd.fd = client_fd;
+	pfd.events = POLLIN;
+	ATF_CHECK_EQ(poll(&pfd, 1, 50), 0);
+
+	att_mock_cleanup(&ac, client_fd);
+}
+
+/*
+ * test_multiple_handle_value_ntf_single: verify single-entry MHVN is valid.
+ */
+ATF_TC_WITHOUT_HEAD(test_multiple_handle_value_ntf_single);
+ATF_TC_BODY(test_multiple_handle_value_ntf_single, tc)
+{
+	struct att_conn ac;
+	int client_fd;
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+
+	att_mock_pair(&ac, &client_fd);
+	ac.mtu = BT_CORE63_ATT_MAX_MTU;
+
+	uint16_t handle = 0x0005;
+	uint8_t val[] = { 0x42 };
+	const uint8_t *valp = val;
+	uint16_t vlen = 1;
+
+	int ret = att_send_multiple_handle_value_ntf(&ac, &handle, &valp,
+	    &vlen, 1);
+	ATF_CHECK_EQ(ret, 0);
+
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	/* 1 (opcode) + 4+1 (entry) = 6 */
+	ATF_CHECK_EQ(n, 6);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_MULTIPLE_HANDLE_NOTIFY);
+	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0005);
+	ATF_CHECK_EQ(get_le16(rsp + 3), 1);
+	ATF_CHECK_EQ(rsp[5], 0x42);
+
+	att_mock_cleanup(&ac, client_fd);
+}
+
+/* ----------------------------------------------------------------
+ * Read Blob boundary tests (bug we fixed)
+ * ---------------------------------------------------------------- */
+
+/*
+ * test_read_blob_offset_equals_len: verify Read Blob with offset==value_len
+ * on a LONG attribute returns a zero-length response (not INVALID_OFFSET).
+ * This was a bug we fixed.
+ *
+ * Per Core Spec Vol 3 Part F 3.4.4.5, offset==value_len means "we
+ * have all the data" and the server returns an empty Read Blob Response
+ * to signal completion.
+ */
+ATF_TC_WITHOUT_HEAD(test_read_blob_offset_equals_len);
+ATF_TC_BODY(test_read_blob_offset_equals_len, tc)
+{
+	struct att_conn ac;
+	int client_fd;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t val_buf[TEST_DB_VAL_SIZE];
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+
+	att_mock_pair(&ac, &client_fd);
+	/* Use MTU=23, value_len=30 so the attribute IS long (30 > MTU-1=22) */
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+
+	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
+	attdb_add_service(&db, 0xFFE0);
+	{
+		uint8_t long_val[30];
+		memset(long_val, 0xAB, sizeof(long_val));
+		attdb_add_characteristic(&db, 0xFFE1,
+		    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ,
+		    long_val, sizeof(long_val));
+	}
+
+	/* Find the value handle (should be 3) */
+	struct att_attr *a = attdb_find_by_handle(&db, 0x0003);
+	ATF_REQUIRE(a != NULL);
+	ATF_REQUIRE_EQ(a->value_len, 30);
+
+	/* Read Blob with offset == value_len (30) */
+	uint8_t pdu[BT_CORE63_ATT_READ_BLOB_REQ_SIZE];
+	pdu[0] = BT_CORE63_ATT_OP_READ_BLOB_REQ;
+	put_le16(pdu + 1, TEST_SINGLE_CHAR_VALUE_HANDLE);
+	put_le16(pdu + 3, 30);  /* offset == value_len */
+
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE(n >= 1);
+
+	/* Should get a zero-length Read Blob Response (just the opcode) */
+	ATF_CHECK_EQ_MSG(rsp[0], BT_CORE63_ATT_OP_READ_BLOB_RSP,
+	    "expected Read Blob Response (0x0D), got 0x%02x", rsp[0]);
+	ATF_CHECK_EQ_MSG(n, BT_CORE63_ATT_OPCODE_SIZE,
+	    "expected 1-byte response (empty blob), got %zd", n);
+
+	att_mock_cleanup(&ac, client_fd);
+}
+
+/*
+ * test_read_blob_offset_exceeds_len: verify Read Blob with offset>value_len
+ * returns INVALID_OFFSET error.
+ */
+ATF_TC_WITHOUT_HEAD(test_read_blob_offset_exceeds_len);
+ATF_TC_BODY(test_read_blob_offset_exceeds_len, tc)
+{
+	struct att_conn ac;
+	int client_fd;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t val_buf[TEST_DB_VAL_SIZE];
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+
+	att_mock_pair(&ac, &client_fd);
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+
+	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
+	attdb_add_service(&db, 0xFFE0);
+	{
+		uint8_t long_val[30];
+		memset(long_val, 0xCD, sizeof(long_val));
+		attdb_add_characteristic(&db, 0xFFE1,
+		    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ,
+		    long_val, sizeof(long_val));
+	}
+
+	/* Read Blob with offset > value_len (31 > 30) */
+	uint8_t pdu[BT_CORE63_ATT_READ_BLOB_REQ_SIZE];
+	pdu[0] = BT_CORE63_ATT_OP_READ_BLOB_REQ;
+	put_le16(pdu + 1, TEST_SINGLE_CHAR_VALUE_HANDLE);
+	put_le16(pdu + 3, 31);  /* offset > value_len */
+
+	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INVALID_OFFSET);
+
+	att_mock_cleanup(&ac, client_fd);
+}
+
+/* ----------------------------------------------------------------
+ * Execute Write CCCD validation tests (bug we fixed)
+ * ---------------------------------------------------------------- */
+
+/*
+ * test_execute_write_cccd_split: verify that split Prepare Writes
+ * (1 byte at offset 0, 1 byte at offset 1) targeting a CCCD are
+ * validated after composition.  The server applies both fragments
+ * and then checks the composed 2-byte CCCD value against the parent
+ * characteristic's properties.
+ */
+ATF_TC_WITHOUT_HEAD(test_execute_write_cccd_split);
+ATF_TC_BODY(test_execute_write_cccd_split, tc)
+{
+	struct att_conn ac;
+	int peer;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t vb[TEST_DB_VAL_SIZE];
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+	uint16_t cccd_handle;
+
+	att_mock_pair(&ac, &peer);
+
+	/* Build DB with NOTIFY+INDICATE characteristic */
+	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
+	attdb_add_service(&db, 0xFFE0);
+	attdb_add_characteristic(&db, 0xFFE1,
+	    BT_CORE63_GATT_PROP_READ | BT_CORE63_GATT_PROP_WRITE |
+	    BT_CORE63_GATT_PROP_NOTIFY | BT_CORE63_GATT_PROP_INDICATE,
+	    ATT_PERM_READ | ATT_PERM_WRITE,
+	    "\x00", 1);
+	cccd_handle = attdb_add_cccd(&db);
+	ATF_REQUIRE(cccd_handle != 0);
+
+	/* Prepare Write #1: 1 byte at offset 0 (low byte = 0x03) */
+	{
+		uint8_t req[6];
+		req[0] = BT_CORE63_ATT_OP_PREPARE_WRITE_REQ;
+		put_le16(req + 1, cccd_handle);
+		put_le16(req + 3, 0);  /* offset=0 */
+		req[5] = BT_CORE63_GATT_CCCD_DEFINED_MASK;
+
+		att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+		n = recv(peer, rsp, sizeof(rsp), 0);
+		ATF_REQUIRE(n >= 1);
+		ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
+	}
+
+	/* Prepare Write #2: 1 byte at offset 1 (high byte = 0x00) */
+	{
+		uint8_t req[6];
+		req[0] = BT_CORE63_ATT_OP_PREPARE_WRITE_REQ;
+		put_le16(req + 1, cccd_handle);
+		put_le16(req + 3, 1);  /* offset=1 */
+		req[5] = 0x00;
+
+		att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+		n = recv(peer, rsp, sizeof(rsp), 0);
+		ATF_REQUIRE(n >= 1);
+		ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
+	}
+
+	/* Execute Write (commit) */
+	{
+		uint8_t req[BT_CORE63_ATT_EXECUTE_WRITE_REQ_SIZE] = {
+		    BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+		    BT_CORE63_ATT_EXECUTE_WRITE_COMMIT };
+		att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+		n = recv(peer, rsp, sizeof(rsp), 0);
+		ATF_REQUIRE(n >= 1);
+		/* Should succeed since NOTIFY|INDICATE are both valid */
+		ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP);
+	}
+
+	/* Verify CCCD was applied */
+	ATF_CHECK(ac.cccd_count >= 1);
+
+	att_mock_cleanup(&ac, peer);
+}
+
+/*
+ * test_execute_write_cccd_invalid_bits: verify that invalid CCCD bits
+ * (notify without notify property) are rejected at Execute time after
+ * split Prepare Writes are composed.
+ */
+ATF_TC_WITHOUT_HEAD(test_execute_write_cccd_invalid_bits);
+ATF_TC_BODY(test_execute_write_cccd_invalid_bits, tc)
+{
+	struct att_conn ac;
+	int peer;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t vb[TEST_DB_VAL_SIZE];
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+	uint16_t cccd_handle;
+
+	att_mock_pair(&ac, &peer);
+
+	/* Build DB with INDICATE-only characteristic (no NOTIFY) */
+	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, vb, TEST_DB_VAL_SIZE);
+	attdb_add_service(&db, 0xFFE0);
+	attdb_add_characteristic(&db, 0xFFE1,
+	    BT_CORE63_GATT_PROP_READ | BT_CORE63_GATT_PROP_WRITE |
+	    BT_CORE63_GATT_PROP_INDICATE,
+	    ATT_PERM_READ | ATT_PERM_WRITE,
+	    "\x00", 1);
+	cccd_handle = attdb_add_cccd(&db);
+	ATF_REQUIRE(cccd_handle != 0);
+
+	/* Prepare Write: split the CCCD value (0x0001 = NOTIFY) */
+	{
+		uint8_t req[6];
+		req[0] = BT_CORE63_ATT_OP_PREPARE_WRITE_REQ;
+		put_le16(req + 1, cccd_handle);
+		put_le16(req + 3, 0);  /* offset=0 */
+		req[5] = BT_CORE63_GATT_CCCD_NOTIFY;
+
+		att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+		n = recv(peer, rsp, sizeof(rsp), 0);
+		ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
+	}
+	{
+		uint8_t req[6];
+		req[0] = BT_CORE63_ATT_OP_PREPARE_WRITE_REQ;
+		put_le16(req + 1, cccd_handle);
+		put_le16(req + 3, 1);  /* offset=1 */
+		req[5] = 0x00;  /* high byte: 0 */
+
+		att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+		n = recv(peer, rsp, sizeof(rsp), 0);
+		ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_PREPARE_WRITE_RSP);
+	}
+
+	/* Execute Write (commit) */
+	{
+		uint8_t req[BT_CORE63_ATT_EXECUTE_WRITE_REQ_SIZE] = {
+		    BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ,
+		    BT_CORE63_ATT_EXECUTE_WRITE_COMMIT };
+		att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+		n = recv(peer, rsp, sizeof(rsp), 0);
+		ATF_REQUIRE(n >= 1);
+		ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+		ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_VALUE_NOT_ALLOWED);
+	}
+
+	/* Rejected execution must not create per-client CCCD state. */
+	ATF_CHECK_EQ(ac.cccd_count, 0);
+
+	att_mock_cleanup(&ac, peer);
+}
+
+/* ----------------------------------------------------------------
+ * Signed Writes (BT 4.0, previously untested scenarios)
+ * ---------------------------------------------------------------- */
+
+/*
+ * Dispatcher acceptance after the signature layer reports success.  The
+ * independent AES-CMAC correctness tests live in smp_crypto_test; this case
+ * verifies retained legacy ATT mutation and counter tracking only.
+ */
+ATF_TC_WITHOUT_HEAD(test_signed_write_valid);
+ATF_TC_BODY(test_signed_write_valid, tc)
+{
+	struct att_conn ac;
+	int cf;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t vb[TEST_DB_VAL_SIZE];
+	struct pollfd pfd;
+
+	att_mock_pair(&ac, &cf);
+	build_test_db(&db, attrs, vb);
+
+	ac.has_peer_csrk = true;
+	memset(ac.peer_csrk, 0x42, sizeof(ac.peer_csrk));
+	ac.has_peer_sign_counter = false;
+	ac.peer_sign_counter = 0;
+	test_signature_valid = true;
+
+	/*
+	 * Build Signed Write: opcode + handle(2) + value(1) + sig(12)
+	 * sig = counter(4) + mac(8)
+	 * The 12-byte legacy signature is counter(4) followed by MAC(8).
+	 */
+	uint8_t req[BT_CORE63_LEGACY_ATT_SIGNED_WRITE_MIN_SIZE + 1];
+	req[0] = BT_CORE63_LEGACY_ATT_OP_SIGNED_WRITE_CMD;
+	put_le16(req + 1, TEST_CUSTOM_VALUE_HANDLE);
+	req[3] = 0x99;
+	/* counter = 5 in LE at offset 4 */
+	put_le32(req + 4, 5);
+	memset(req + 4 + BT_CORE63_LEGACY_ATT_SIGN_COUNTER_SIZE, 0,
+	    BT_CORE63_LEGACY_ATT_MAC_SIZE); /* verifier controlled above */
+
+	struct att_attr *a = attdb_find_by_handle(&db,
+	    TEST_CUSTOM_VALUE_HANDLE);
+	ATF_REQUIRE(a != NULL);
+	uint8_t orig = a->value[0];
+
+	int ret = att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+	ATF_CHECK_EQ(ret, 0);
+
+	ATF_CHECK_EQ(a->value[0], 0x99);
+	ATF_CHECK(a->value[0] != orig);
+	ATF_CHECK(ac.has_peer_sign_counter);
+	ATF_CHECK_EQ(ac.peer_sign_counter, 5u);
+
+	/* No response for commands */
+	pfd.fd = cf;
+	pfd.events = POLLIN;
+	ATF_CHECK_EQ(poll(&pfd, 1, 50), 0);
+
+	att_mock_cleanup(&ac, cf);
+}
+
+/*
+ * test_signed_write_wrong_mac: verify that a signed write with an
+ * invalid MAC is silently dropped and the attribute value unchanged.
+ */
+ATF_TC_WITHOUT_HEAD(test_signed_write_wrong_mac);
+ATF_TC_BODY(test_signed_write_wrong_mac, tc)
+{
+	struct att_conn ac;
+	int cf;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t vb[TEST_DB_VAL_SIZE];
+	struct pollfd pfd;
+
+	att_mock_pair(&ac, &cf);
+	build_test_db(&db, attrs, vb);
+
+	ac.has_peer_csrk = true;
+	memset(ac.peer_csrk, 0xaa, sizeof(ac.peer_csrk));
+	test_signature_valid = false;
+
+	struct att_attr *a = attdb_find_by_handle(&db,
+	    TEST_CUSTOM_VALUE_HANDLE);
+	ATF_REQUIRE(a != NULL);
+	uint8_t orig = a->value[0];
+
+	/* Signed Write with wrong MAC bytes */
+	uint8_t req[BT_CORE63_LEGACY_ATT_SIGNED_WRITE_MIN_SIZE + 1];
+	req[0] = BT_CORE63_LEGACY_ATT_OP_SIGNED_WRITE_CMD;
+	put_le16(req + 1, TEST_CUSTOM_VALUE_HANDLE);
+	req[3] = 0xFF;
+	put_le32(req + 4, 1);
+	memset(req + 4 + BT_CORE63_LEGACY_ATT_SIGN_COUNTER_SIZE, 0xbb,
+	    BT_CORE63_LEGACY_ATT_MAC_SIZE);
+
+	int ret = att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+	ATF_CHECK_EQ(ret, 0);
+
+	/* Value must be unchanged */
+	ATF_CHECK_EQ_MSG(a->value[0], orig,
+	    "value should not change on bad MAC");
+
+	/* No response for commands */
+	pfd.fd = cf;
+	pfd.events = POLLIN;
+	ATF_CHECK_EQ(poll(&pfd, 1, 50), 0);
+
+	att_mock_cleanup(&ac, cf);
+}
+
+/*
+ * test_signed_write_counter_replay: verify sign counter replay detection.
+ * When a Signed Write arrives with a counter <= the stored counter,
+ * it should be silently dropped.
+ *
+ * The controllable verifier returns true so this reaches the actual replay
+ * comparison; cryptographic verification is covered separately.
+ */
+ATF_TC_WITHOUT_HEAD(test_signed_write_counter_replay);
+ATF_TC_BODY(test_signed_write_counter_replay, tc)
+{
+	struct att_conn ac;
+	int cf;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t vb[TEST_DB_VAL_SIZE];
+	struct pollfd pfd;
+
+	att_mock_pair(&ac, &cf);
+	build_test_db(&db, attrs, vb);
+
+	ac.has_peer_csrk = true;
+	memset(ac.peer_csrk, 0x42, sizeof(ac.peer_csrk));
+	/* Simulate having seen counter=10 previously */
+	ac.has_peer_sign_counter = true;
+	ac.peer_sign_counter = 10;
+	test_signature_valid = true;
+
+	struct att_attr *a = attdb_find_by_handle(&db,
+	    TEST_CUSTOM_VALUE_HANDLE);
+	ATF_REQUIRE(a != NULL);
+	uint8_t orig = a->value[0];
+
+	/* Signed Write with counter=5 (replay: 5 <= 10) */
+	uint8_t req[BT_CORE63_LEGACY_ATT_SIGNED_WRITE_MIN_SIZE + 1];
+	req[0] = BT_CORE63_LEGACY_ATT_OP_SIGNED_WRITE_CMD;
+	put_le16(req + 1, TEST_CUSTOM_VALUE_HANDLE);
+	req[3] = 0xEE;
+	put_le32(req + 4, 5);  /* counter=5, less than stored 10 */
+	memset(req + 4 + BT_CORE63_LEGACY_ATT_SIGN_COUNTER_SIZE, 0,
+	    BT_CORE63_LEGACY_ATT_MAC_SIZE);
+
+	int ret = att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+	ATF_CHECK_EQ(ret, 0);
+
+	/* Value must remain unchanged (replay protection) */
+	ATF_CHECK_EQ(a->value[0], orig);
+
+	/* Stored counter should not have changed */
+	ATF_CHECK_EQ(ac.peer_sign_counter, 10u);
+
+	/* No response */
+	pfd.fd = cf;
+	pfd.events = POLLIN;
+	ATF_CHECK_EQ(poll(&pfd, 1, 50), 0);
+
+	att_mock_cleanup(&ac, cf);
+}
+
+/* ----------------------------------------------------------------
+ * Prepare Write value verification tests (bug we fixed)
+ * ---------------------------------------------------------------- */
+
+/*
+ * Core 6.3 Vol 3 Part F §3.4.6.2: the response shall echo the request's
+ * handle, offset, and Part Attribute Value exactly.
+ */
+ATF_TC_WITHOUT_HEAD(test_prepare_write_value_echo);
+ATF_TC_BODY(test_prepare_write_value_echo, tc)
+{
+	struct att_conn ac;
+	int peer;
+	uint8_t buf[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+
+	att_mock_pair(&ac, &peer);
+
+	pid_t pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(ac.fd);
+
+		n = recv(peer, buf, sizeof(buf), 0);
+		if (n < BT_CORE63_ATT_PREPARE_WRITE_HEADER_SIZE + 1 ||
+		    buf[0] != BT_CORE63_ATT_OP_PREPARE_WRITE_REQ) {
+			close(peer);
+			_exit(1);
+		}
+
+		/* Echo back exactly (Prepare Write Response = request echoed) */
+		buf[0] = BT_CORE63_ATT_OP_PREPARE_WRITE_RSP;
+		(void)send(peer, buf, (size_t)n, 0);
+		close(peer);
+		_exit(0);
+	}
+
+	close(peer);
+	uint8_t data[] = { 0xAA, 0xBB, 0xCC };
+	int ret = att_prepare_write(&ac, TEST_CUSTOM_VALUE_HANDLE, 0,
+	    data, sizeof(data));
+	ATF_CHECK_EQ(ret, 0);
+
+	int status;
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	att_mock_cleanup(&ac, -1);
+}
+
+/*
+ * test_prepare_write_value_mismatch: verify that when the server echoes
+ * back a different value in Prepare Write Response, the client detects
+ * the mismatch and sends Execute Write Cancel.
+ *
+ * Core Spec Vol 3 Part F §3.4.6.2 requires an exact echo.  A mismatch
+ * invalidates the queued write and must cause Execute Write Cancel.
+ */
+ATF_TC_WITHOUT_HEAD(test_prepare_write_value_mismatch);
+ATF_TC_BODY(test_prepare_write_value_mismatch, tc)
+{
+	struct att_conn ac;
+	int peer;
+	uint8_t buf[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+
+	att_mock_pair(&ac, &peer);
+
+	pid_t pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(ac.fd);
+
+		n = recv(peer, buf, sizeof(buf), 0);
+		if (n < BT_CORE63_ATT_PREPARE_WRITE_HEADER_SIZE + 1 ||
+		    buf[0] != BT_CORE63_ATT_OP_PREPARE_WRITE_REQ) {
+			close(peer);
+			_exit(1);
+		}
+
+		/*
+		 * Echo back with MODIFIED value — this simulates a
+		 * server bug or attack.
+		 */
+		buf[0] = BT_CORE63_ATT_OP_PREPARE_WRITE_RSP;
+		if (n >= BT_CORE63_ATT_PREPARE_WRITE_HEADER_SIZE + 1)
+			buf[BT_CORE63_ATT_PREPARE_WRITE_HEADER_SIZE] ^=
+			    0xff; /* deliberate non-spec echo */
+		(void)send(peer, buf, (size_t)n, 0);
+
+		n = recv(peer, buf, sizeof(buf), 0);
+		if (n != BT_CORE63_ATT_EXECUTE_WRITE_REQ_SIZE ||
+		    buf[0] != BT_CORE63_ATT_OP_EXECUTE_WRITE_REQ ||
+		    buf[1] != BT_CORE63_ATT_EXECUTE_WRITE_CANCEL) {
+			close(peer);
+			_exit(2);
+		}
+		buf[0] = BT_CORE63_ATT_OP_EXECUTE_WRITE_RSP;
+		(void)send(peer, buf, BT_CORE63_ATT_OPCODE_SIZE, 0);
+		close(peer);
+		_exit(0);
+	}
+
+	close(peer);
+	uint8_t data[] = { 0xAA, 0xBB, 0xCC };
+	errno = 0;
+	int ret = att_prepare_write(&ac, TEST_CUSTOM_VALUE_HANDLE, 0,
+	    data, sizeof(data));
+	ATF_CHECK_EQ(ret, -1);
+	ATF_CHECK_EQ(errno, EPROTO);
+
+	int status;
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	att_mock_cleanup(&ac, -1);
+}
+
+/*
+ * P2: an ATT transaction timeout / bearer reset must disable the bearer.
+ * Core Spec Vol 3 Part F §3.3.3: after a transaction fails no more ATT PDUs
+ * shall be sent on that bearer -- a new bearer is required.  Here the peer
+ * signals EOF (SHUT_WR) so the pending Read hits the connection-closed path,
+ * which must mark the bearer failed; every subsequent request (Read, Write
+ * Request, Write Command) must then be refused up front with EPIPE instead of
+ * being re-sent on the dead fd.
+ */
+ATF_TC_WITHOUT_HEAD(test_att_bearer_failed_refuses_reuse);
+ATF_TC_BODY(test_att_bearer_failed_refuses_reuse, tc)
+{
+	struct att_conn ac;
+	int peer;
+	uint8_t buf[32];
+	size_t outlen;
+	int rc;
+
+	att_mock_pair(&ac, &peer);
+
+	/* Peer half-closes: our pending Read sees EOF -> ECONNRESET path. */
+	ATF_REQUIRE(shutdown(peer, SHUT_WR) == 0);
+	rc = att_read(&ac, 0x0003, buf, sizeof(buf), &outlen);
+	ATF_CHECK_MSG(rc != 0, "read on a reset bearer must fail");
+	ATF_CHECK_MSG(ac.failed,
+	    "a reset/closed bearer must be marked failed (§3.3.3)");
+
+	/* No further ATT PDUs may be sent: each request is refused with EPIPE. */
+	errno = 0;
+	rc = att_write_req(&ac, 0x0003, "\x01", 1);
+	ATF_CHECK(rc != 0);
+	ATF_CHECK_EQ_MSG(EPIPE, errno,
+	    "write request on a failed bearer must be refused with EPIPE");
+
+	errno = 0;
+	rc = att_read(&ac, 0x0003, buf, sizeof(buf), &outlen);
+	ATF_CHECK(rc != 0);
+	ATF_CHECK_EQ_MSG(EPIPE, errno,
+	    "read on a failed bearer must be refused with EPIPE");
+
+	errno = 0;
+	rc = att_write_cmd(&ac, 0x0003, "\x01", 1);
+	ATF_CHECK(rc != 0);
+	ATF_CHECK_EQ_MSG(EPIPE, errno,
+	    "write command on a failed bearer must be refused with EPIPE");
+
+	att_mock_cleanup(&ac, peer);
+}
+
+/*
+ * attdb_set_char_value: overwrite a characteristic value in place by UUID,
+ * bounded by the reserved capacity.  Backs the SET_NAME operator verb updating
+ * the GAP Device Name (0x2A00).
+ */
+ATF_TC_WITHOUT_HEAD(test_attdb_set_char_value);
+ATF_TC_BODY(test_attdb_set_char_value, tc)
+{
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t val_buf[TEST_DB_VAL_SIZE];
+	struct att_attr *a;
+	uint16_t h;
+
+	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val_buf, TEST_DB_VAL_SIZE);
+	attdb_add_service(&db, 0x1800);
+	/* Reserve 8 bytes of capacity, initial value "Test" (4 bytes). */
+	h = attdb_add_characteristic(&db, 0x2A00, GATT_PROP_READ, ATT_PERM_READ,
+	    "Test\0\0\0\0", 8);
+	a = attdb_find_by_handle(&db, h);
+	ATF_REQUIRE(a != NULL);
+	a->value_len = 4;
+
+	/* In-capacity update succeeds and updates the length. */
+	ATF_CHECK_EQ(0, attdb_set_char_value(&db, 0x2A00, "Newname", 7));
+	ATF_CHECK_EQ_MSG(7, a->value_len, "length updated");
+	ATF_CHECK_MSG(memcmp(a->value, "Newname", 7) == 0, "value updated");
+
+	/* Exactly at capacity. */
+	ATF_CHECK_EQ(0, attdb_set_char_value(&db, 0x2A00, "AbcdefgH", 8));
+	ATF_CHECK_EQ(8, a->value_len);
+
+	/* Over capacity is rejected without mutating. */
+	ATF_CHECK_EQ(-1, attdb_set_char_value(&db, 0x2A00, "TooLongValue", 12));
+	ATF_CHECK_EQ_MSG(8, a->value_len, "length unchanged after reject");
+
+	/* Unknown UUID is rejected. */
+	ATF_CHECK_EQ(-1, attdb_set_char_value(&db, 0x2A99, "x", 1));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, test_att_bearer_failed_refuses_reuse);
 
 	/* ATT Client tests */
 	ATF_TP_ADD_TC(tp, test_att_mtu_exchange);
+	ATF_TP_ADD_TC(tp, test_att_mtu_preferred);
 	ATF_TP_ADD_TC(tp, test_att_read);
 	ATF_TP_ADD_TC(tp, test_att_write_req);
 	ATF_TP_ADD_TC(tp, test_att_write_cmd);
@@ -8873,6 +11128,7 @@ ATF_TP_ADD_TCS(tp)
 
 	/* ATT Server tests */
 	ATF_TP_ADD_TC(tp, test_att_server_mtu);
+	ATF_TP_ADD_TC(tp, test_att_server_fixed_pdu_lengths);
 	ATF_TP_ADD_TC(tp, test_att_server_read_by_group);
 	ATF_TP_ADD_TC(tp, test_att_server_read_by_type);
 	ATF_TP_ADD_TC(tp, test_att_server_find_info);
@@ -8891,6 +11147,7 @@ ATF_TP_ADD_TCS(tp)
 
 	/* Audit hardening tests */
 	ATF_TP_ADD_TC(tp, test_att_server_perm_read_authen);
+	ATF_TP_ADD_TC(tp, test_att_conn_apply_encryption_gate);
 	ATF_TP_ADD_TC(tp, test_att_server_perm_write_authen);
 	ATF_TP_ADD_TC(tp, test_att_server_prepare_queue_bytes);
 	ATF_TP_ADD_TC(tp, test_att_server_read_multi_variable);
@@ -9090,6 +11347,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_gaw_write_to_char_decl);
 	ATF_TP_ADD_TC(tp, test_gaw_prepare_write_offset_past_maxlen);
 	ATF_TP_ADD_TC(tp, test_gaw_execute_offset_past_maxlen);
+	ATF_TP_ADD_TC(tp, test_gaw_execute_invalid_offset);
 	ATF_TP_ADD_TC(tp, test_gaw_write_req_empty_value);
 	ATF_TP_ADD_TC(tp, test_gaw_write_req_to_cccd_invalid);
 	ATF_TP_ADD_TC(tp, test_gaw_write_cmd_encrypt_required);
@@ -9102,12 +11360,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_gar_read_by_type_perm_denied);
 	ATF_TP_ADD_TC(tp, test_gar_read_multi_three_handles);
 	ATF_TP_ADD_TC(tp, test_gar_read_multi_var_three);
+	ATF_TP_ADD_TC(tp, test_gar_read_multiple_request_order);
 	ATF_TP_ADD_TC(tp, test_gar_read_by_group_full_range);
 	ATF_TP_ADD_TC(tp, test_gar_read_blob_encrypt_required);
 	ATF_TP_ADD_TC(tp, test_gar_read_by_type_char_value);
 	ATF_TP_ADD_TC(tp, test_gar_read_multi_concat_verify);
 	ATF_TP_ADD_TC(tp, test_gar_read_cccd_value);
 	ATF_TP_ADD_TC(tp, test_gar_read_by_type_handle_range);
+	ATF_TP_ADD_TC(tp, test_attdb_set_char_value);
 
 	/* Section C: Client role parity */
 	ATF_TP_ADD_TC(tp, test_client_find_info_128bit);
@@ -9216,6 +11476,44 @@ ATF_TP_ADD_TCS(tp)
 
 	/* CCCD RFU bit masking */
 	ATF_TP_ADD_TC(tp, test_cccd_rfu_bits_masked);
+
+	/* BLE 5.0-5.2: EATT bearer tests */
+	ATF_TP_ADD_TC(tp, test_eatt_bearer_add);
+	ATF_TP_ADD_TC(tp, test_eatt_bearer_select);
+	ATF_TP_ADD_TC(tp, test_eatt_bearer_mtu);
+	ATF_TP_ADD_TC(tp, test_eatt_bearer_close);
+	ATF_TP_ADD_TC(tp, test_eatt_write_cmd_uses_bearer);
+	ATF_TP_ADD_TC(tp, test_eatt_write_cmd_selects_fitting_bearer);
+	ATF_TP_ADD_TC(tp, test_eatt_write_cmd_mtu_fallback_primary);
+	ATF_TP_ADD_TC(tp, test_eatt_write_cmd_no_fitting_bearer);
+	ATF_TP_ADD_TC(tp, test_eatt_write_cmd_sar_pins_large_bearer);
+	ATF_TP_ADD_TC(tp, test_eatt_write_cmd_sar_pins_fixed_bearer);
+	ATF_TP_ADD_TC(tp, test_eatt_write_cmd_pin_busy_and_close);
+	ATF_TP_ADD_TC(tp, test_eatt_request_routing);
+	ATF_TP_ADD_TC(tp, test_eatt_concurrent_bearer_requests);
+
+	/* BLE 5.2: Multiple Handle Value Notification */
+	ATF_TP_ADD_TC(tp, test_multiple_handle_value_ntf_basic);
+	ATF_TP_ADD_TC(tp, test_multiple_handle_value_ntf_truncation);
+	ATF_TP_ADD_TC(tp, test_multiple_handle_value_ntf_empty);
+	ATF_TP_ADD_TC(tp, test_multiple_handle_value_ntf_single);
+
+	/* Read Blob boundary (bug fix) */
+	ATF_TP_ADD_TC(tp, test_read_blob_offset_equals_len);
+	ATF_TP_ADD_TC(tp, test_read_blob_offset_exceeds_len);
+
+	/* Execute Write CCCD validation (bug fix) */
+	ATF_TP_ADD_TC(tp, test_execute_write_cccd_invalid_bits);
+	ATF_TP_ADD_TC(tp, test_execute_write_cccd_split);
+
+	/* Signed Writes */
+	ATF_TP_ADD_TC(tp, test_signed_write_valid);
+	ATF_TP_ADD_TC(tp, test_signed_write_wrong_mac);
+	ATF_TP_ADD_TC(tp, test_signed_write_counter_replay);
+
+	/* Prepare Write value verification (bug fix) */
+	ATF_TP_ADD_TC(tp, test_prepare_write_value_echo);
+	ATF_TP_ADD_TC(tp, test_prepare_write_value_mismatch);
 
 	return (atf_no_error());
 }

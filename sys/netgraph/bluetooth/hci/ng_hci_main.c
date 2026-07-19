@@ -831,6 +831,12 @@ ng_hci_acl_rcvdata(hook_p hook, item_p item)
 	/* Check packet */
 	NGI_GET_M(item, m);
 
+	if (m->m_pkthdr.len < 1) {
+		NG_HCI_ALERT("%s: %s - empty HCI ACL data packet\n",
+			__func__, NG_NODE_NAME(unit->node));
+		error = EMSGSIZE;
+		goto drop;
+	}
 	if (*mtod(m, u_int8_t *) != NG_HCI_ACL_DATA_PKT) {
 		NG_HCI_ALERT(
 "%s: %s - invalid HCI data packet type=%#x\n",
@@ -951,6 +957,12 @@ ng_hci_sco_rcvdata(hook_p hook, item_p item)
 	/* Check packet */
 	NGI_GET_M(item, m);
 
+	if (m->m_pkthdr.len < 1) {
+		NG_HCI_ALERT("%s: %s - empty HCI SCO data packet\n",
+			__func__, NG_NODE_NAME(unit->node));
+		error = EMSGSIZE;
+		goto drop;
+	}
 	if (*mtod(m, u_int8_t *) != NG_HCI_SCO_DATA_PKT) {
 		NG_HCI_ALERT(
 "%s: %s - invalid HCI data packet type=%#x\n",
@@ -1070,6 +1082,12 @@ ng_hci_iso_rcvdata(hook_p hook, item_p item)
 	/* Check packet */
 	NGI_GET_M(item, m);
 
+	if (m->m_pkthdr.len < 1) {
+		NG_HCI_ALERT("%s: %s - empty HCI ISO data packet\n",
+			__func__, NG_NODE_NAME(unit->node));
+		error = EMSGSIZE;
+		goto drop;
+	}
 	if (*mtod(m, u_int8_t *) != NG_HCI_ISO_DATA_PKT) {
 		NG_HCI_ALERT(
 "%s: %s - invalid HCI data packet type=%#x\n",
@@ -1187,6 +1205,12 @@ ng_hci_raw_rcvdata(hook_p hook, item_p item)
 	NG_FREE_ITEM(item);
 
 	/* Check packet */
+	if (m->m_pkthdr.len < 1) {
+		NG_HCI_ALERT("%s: %s - empty HCI command packet\n",
+			__func__, NG_NODE_NAME(unit->node));
+		error = EMSGSIZE;
+		goto drop;
+	}
 	if (*mtod(m, u_int8_t *) != NG_HCI_CMD_PKT) {
 		NG_HCI_ALERT(
 "%s: %s - invalid HCI command packet type=%#x\n",

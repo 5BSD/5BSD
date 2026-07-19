@@ -1,0 +1,127 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ * All rights reserved.
+ */
+
+/*
+ * Bluetooth Mesh Replay Protection List (MshPRT_v1.1 Section 3.9.8).
+ * See mesh_rpl.h for the semantics.
+ */
+
+#include <sys/types.h>
+
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+#include "mesh_net.h"
+#include "mesh_probes.h"
+#include "mesh_rpl.h"
+
+void
+mesh_rpl_init(struct mesh_rpl *rpl, struct mesh_rpl_entry *storage, size_t n)
+{
+
+	if (rpl == NULL)
+		return;
+	rpl->entries = storage;
+	rpl->size = (storage != NULL) ? n : 0;
+	if (rpl->entries != NULL && rpl->size != 0)
+		memset(rpl->entries, 0, n * sizeof(*rpl->entries));
+}
+
+void
+mesh_rpl_reset(struct mesh_rpl *rpl)
+{
+
+	if (rpl == NULL || rpl->entries == NULL)
+		return;
+	memset(rpl->entries, 0, rpl->size * sizeof(*rpl->entries));
+}
+
+/*
+ * Is (iv_index, seq) strictly newer than the stored (e_iv, e_seq)?
+ * A higher IV Index is always newer; within an IV Index only a strictly
+ * greater SEQ is newer.  MshPRT_v1.1 Section 3.8.8.
+ */
+static int
+mesh_rpl_is_newer(uint32_t iv_index, uint32_t seq, uint32_t e_iv,
+    uint32_t e_seq)
+{
+
+	if (iv_index != e_iv)
+		return (iv_index > e_iv);
+	return (seq > e_seq);
+}
+
+int
+mesh_rpl_check(struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
+    uint32_t seq)
+{
+	size_t i, free_slot;
+
+	if (rpl == NULL || rpl->entries == NULL || rpl->size == 0)
+		return (-1);
+	/* SRC is a unicast element address and SEQ is a 24-bit wire field. */
+	if (src < 0x0001 || src > 0x7fff || seq > 0xffffff)
+		return (-1);
+
+	free_slot = rpl->size;
+	for (i = 0; i < rpl->size; i++) {
+		if (!rpl->entries[i].valid) {
+			if (free_slot == rpl->size)
+				free_slot = i;
+			continue;
+		}
+		if (rpl->entries[i].src == src) {
+			if (!mesh_rpl_is_newer(iv_index, seq,
+			    rpl->entries[i].iv_index, rpl->entries[i].seq)) {
+				/* Replay-protection hit: SRC seen with a <= seq. */
+				MESH_PROBE_RPL_CHECK(src, seq, 0);
+				return (0);		/* replay */
+			}
+			rpl->entries[i].iv_index = iv_index;
+			rpl->entries[i].seq = seq;
+			MESH_PROBE_RPL_CHECK(src, seq, 1);
+			return (1);			/* newer, updated */
+		}
+	}
+
+	if (free_slot == rpl->size) {
+		MESH_PROBE_RPL_CHECK(src, seq, -1);
+		return (-1);				/* full, SRC unknown */
+	}
+	rpl->entries[free_slot].src = src;
+	rpl->entries[free_slot].iv_index = iv_index;
+	rpl->entries[free_slot].seq = seq;
+	rpl->entries[free_slot].valid = 1;
+	MESH_PROBE_RPL_CHECK(src, seq, 1);
+	return (1);
+}
+
+int
+mesh_rpl_net_receive(struct mesh_rpl *rpl, const uint8_t enckey[16],
+    const uint8_t privkey[16], uint8_t nid, uint32_t iv_index,
+    const uint8_t *in, size_t inlen, struct mesh_net_pdu *out)
+{
+
+	if (out == NULL)
+		return (-1);
+	/*
+	 * Authenticate first: only a PDU whose NetMIC verifies is allowed to
+	 * touch the RPL, so attacker bytes cannot poison the list.
+	 */
+	if (mesh_net_decrypt(enckey, privkey, nid, iv_index, in, inlen,
+	    out) != 0)
+		return (-1);
+
+	if (mesh_rpl_check(rpl, out->src, iv_index, out->seq) != 1) {
+		MESH_PROBE_RPL_NET_RECV(out->src, 0);
+		memset(out, 0, sizeof(*out));
+		return (0);				/* replay */
+	}
+	MESH_PROBE_RPL_NET_RECV(out->src, 1);
+	return (1);
+}

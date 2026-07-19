@@ -119,6 +119,7 @@ _LIBRARIES=	\
 		be \
 		begemot \
 		ble \
+		blemesh \
 		bluetooth \
 		bsdxml \
 		bsm \
@@ -371,6 +372,7 @@ _DP_blacklist+=	pthread
 .endif
 .if ${MK_BLUETOOTH} != "no"
 _DP_ble+=	bluetooth
+_DP_blemesh+=	crypto
 .endif
 .if ${MK_BLOCKLIST} != "no"
 _DP_blocklist+=	pthread
@@ -909,6 +911,9 @@ LIBGTEST_MAINDIR=	${_LIB_OBJTOP}/lib/googletest/gtest_main
 LIBALIASDIR=	${_LIB_OBJTOP}/lib/libalias/libalias
 LIBBLACKLISTDIR=	${_LIB_OBJTOP}/lib/libblacklist
 LIBBLEDIR=		${_LIB_OBJTOP}/lib/libble
+# Library identity is "blemesh" (libblemesh.a/.so) but the source directory is
+# lib/libmesh, so the auto-default (lib/libblemesh) does not apply -- pin it.
+LIBBLEMESHDIR=		${_LIB_OBJTOP}/lib/libmesh
 LIBBLOCKLISTDIR=	${_LIB_OBJTOP}/lib/libblocklist
 LIBBLOCKSRUNTIMEDIR=	${_LIB_OBJTOP}/lib/libblocksruntime
 LIBBSNMPDIR=	${_LIB_OBJTOP}/lib/libbsnmp/libbsnmp

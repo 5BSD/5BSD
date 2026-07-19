@@ -97,8 +97,11 @@ le_set_scan_param(int s, int argc, char *argv[])
 
 	interval = (int)(atof(argv[1])/0.625);
 	interval = (interval < 4)? 4: interval;
+	if (interval > 0x4000) interval = 0x4000;
 	window = (int)(atof(argv[2])/0.625);
 	window = (window < 4) ? 4 : window;
+	if (window > 0x4000) window = 0x4000;
+	if (window > interval) window = interval;
 	
 	if (strcmp(argv[3], "public") == 0)
 		adrtype = 0;
@@ -115,9 +118,9 @@ le_set_scan_param(int s, int argc, char *argv[])
 		return (USAGE);
 
 	cp.le_scan_type = type;
-	cp.le_scan_interval = interval;
+	cp.le_scan_interval = htole16(interval);
 	cp.own_address_type = adrtype;
-	cp.le_scan_window = window;
+	cp.le_scan_window = htole16(window);
 	cp.scanning_filter_policy = policy;
 	n = sizeof(rp);
 
@@ -330,7 +333,7 @@ le_read_supported_states(int s, int argc, char *argv[])
 		return (FAILED);
 	}
 
-	fprintf(stdout, "LE States: %jx\n", rp.le_states);
+	fprintf(stdout, "LE States: %jx\n", (uintmax_t)le64toh(rp.le_states));
 	
 	return (OK); 
 }
@@ -459,8 +462,8 @@ le_set_advertising_param(int s, int argc, char *argv[])
 
 	int n, ch;
 
-	cp.advertising_interval_min = 0x800;
-	cp.advertising_interval_max = 0x800;
+	cp.advertising_interval_min = htole16(0x800);
+	cp.advertising_interval_max = htole16(0x800);
 	cp.advertising_type = 0;
 	cp.own_address_type = 0;
 	cp.direct_address_type = 0;
@@ -474,11 +477,11 @@ le_set_advertising_param(int s, int argc, char *argv[])
 		switch(ch) {
 		case 'm':
 			cp.advertising_interval_min =
-				(uint16_t)(strtod(optarg, NULL)/0.625);
+				htole16((uint16_t)(strtod(optarg, NULL)/0.625));
 			break;
 		case 'M':
 			cp.advertising_interval_max =
-				(uint16_t)(strtod(optarg, NULL)/0.625);
+				htole16((uint16_t)(strtod(optarg, NULL)/0.625));
 			break;
 		case 't':
 			cp.advertising_type =
@@ -628,13 +631,13 @@ le_read_buffer_size(int s, int argc, char *argv[])
 	}
 
 	fprintf(stdout, "ACL data packet length: %d\n",
-		rp.v1.hc_le_data_packet_length);
+		le16toh(rp.v1.hc_le_data_packet_length));
 	fprintf(stdout, "Number of ACL data packets: %d\n",
 		rp.v1.hc_total_num_le_data_packets);
 
 	if (v == 2) {
 		fprintf(stdout, "ISO data packet length: %d\n",
-			rp.v2.hc_iso_data_packet_length);
+			le16toh(rp.v2.hc_iso_data_packet_length));
 		fprintf(stdout, "Number of ISO data packets: %d\n",
 			rp.v2.hc_total_num_iso_data_packets);
 	}
@@ -679,8 +682,8 @@ le_scan(int s, int argc, char *argv[])
 	}
 
 	scan_param_cp.le_scan_type = active;
-	scan_param_cp.le_scan_interval = (uint16_t)(100/0.625);
-	scan_param_cp.le_scan_window = (uint16_t)(50/0.625);
+	scan_param_cp.le_scan_interval = htole16((uint16_t)(100/0.625));
+	scan_param_cp.le_scan_window = htole16((uint16_t)(50/0.625));
 	/* Address type public */
 	scan_param_cp.own_address_type = 0;
 	/* 'All' filter policy */
@@ -1123,8 +1126,8 @@ static void handle_le_connection_event(ng_hci_event_pkt_t* e, int bufsize, bool 
 				"Address: %s\n",
 				hci_bdaddr2str(&conn_event->address));
 			fprintf(stdout,
-				"Interval: %.2fms\n", 
-				6.25 * le16toh(conn_event->interval));
+				"Interval: %.2fms\n",
+				1.25 * le16toh(conn_event->interval));
 			fprintf(stdout,
 				"Latency: %d events\n", conn_event->latency);
 			fprintf(stdout,

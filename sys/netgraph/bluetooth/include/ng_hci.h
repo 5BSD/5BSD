@@ -530,6 +530,7 @@ typedef struct {
 	u_int8_t	link_type;  /* link type */
 	u_int16_t	con_handle; /* con_handle */
 	bdaddr_t	bdaddr;     /* remote unit address */
+	u_int8_t	role;       /* local role: 0x00 Central, 0x01 Peripheral */
 } ng_hci_lp_con_cfm_ep;
 
 /* Connection Indication Event */
@@ -538,6 +539,7 @@ typedef struct {
 	u_int8_t	link_type;                 /* link type */
 	u_int8_t	uclass[NG_HCI_CLASS_SIZE]; /* unit class */
 	bdaddr_t	bdaddr;                    /* remote unit address */
+	u_int16_t	con_handle;                /* CIS handle for ISO */
 } ng_hci_lp_con_ind_ep;
 
 /* Connection Response Event */
@@ -546,6 +548,7 @@ typedef struct {
 	u_int8_t	status;    /* 0x00 - accept connection */
 	u_int8_t	link_type; /* link type */
 	bdaddr_t	bdaddr;    /* remote unit address */
+	u_int16_t	con_handle; /* CIS handle for ISO */
 } ng_hci_lp_con_rsp_ep;
 
 /* Disconnection Indication Event */

@@ -382,6 +382,24 @@ SE_LIBUSB20= \
 	control.c
 .endif
 
+.if ${MK_BLUETOOTH} != "no"
+LDIRS+=		libble
+SE_DIRS+=	libble
+SE_LIBBLE= \
+	ble_battery.c \
+	ble_peripheral.c \
+	ble_scan.c \
+	ble_security.c \
+	ble_topmem.c \
+	ble_weather.c
+LDIRS+=		libblemesh
+SE_DIRS+=	libblemesh
+SE_LIBBLEMESH= \
+	Makefile \
+	README \
+	mesh_provision_configure.c
+.endif
+
 
 # Setup the FILES_GROUPS for all DIRS variables above.
 # The variables are prefixed by 'SE_' to prevent variable collision in

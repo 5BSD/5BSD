@@ -515,8 +515,15 @@ wait_for_more:
 		break;
 
 	case NG_HCI_EVENT_INQUIRY_RESULT: {
-		int max_ir = (n - sizeof(*e) - sizeof(*ep)) /
-		    sizeof(*ir);
+		/*
+		 * Core Spec 6.3 Vol 4 Part E §7.7.2 Inquiry Result: bound the
+		 * per-event response count to the bytes actually received.  Use
+		 * SIGNED arithmetic so a short INQUIRY_RESULT event (bt_devrecv
+		 * only guarantees n >= sizeof(*e)) cannot underflow the size_t
+		 * expression into a huge max_ir and drive an over-read.
+		 */
+		int avail = (int)n - (int)sizeof(*e) - (int)sizeof(*ep);
+		int max_ir = (avail > 0) ? avail / (int)sizeof(*ir) : 0;
 		int count = ep->num_responses;
 		if (count > max_ir)
 			count = max_ir;
@@ -595,7 +602,14 @@ bt_devremote_name(char const *devname, const bdaddr_t *remote, time_t to,
 	if (s < 0)
 		goto out;
 
-	if (bt_devreq(s, &r, to) == 0 || ep.status == 0x00)
+	/*
+	 * Core Spec 6.3 Vol 4 Part E §7.7.7: the Remote Name is valid only
+	 * when the request succeeded AND the Remote Name Request Complete
+	 * Status == 0x00.  Use && -- ep is memset(0) above, so a || would
+	 * report a bogus empty name whenever bt_devreq() failed/timed out
+	 * (ep.status still 0) or completed with a non-zero status.
+	 */
+	if (bt_devreq(s, &r, to) == 0 && ep.status == 0x00)
 		remote_name = strndup((const char *)&ep.name, sizeof(ep.name));
 
 	bt_devclose(s);
@@ -770,6 +784,7 @@ bt_dev2node(char const *devname, char *nodename, int nnlen)
 {
 	static char const *	 bt_dev_prefix[] = {
 		"ubt",		/* Bluetooth USB devices */
+		"vhci",		/* Virtual HCI controllers (ng_hci_virt) */
 		NULL		/* should be last */
 	};
 

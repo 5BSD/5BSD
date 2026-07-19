@@ -144,6 +144,10 @@ ng_hci_lp_con_req(ng_hci_unit_p unit, item_p item, hook_p hook)
 		 * identifying the configured CIS within its CIG.
 		 */
 		cis_handle = ep->con_handle;
+		if (ng_hci_con_by_handle(unit, cis_handle) != NULL) {
+			NG_FREE_ITEM(item);
+			return (EADDRINUSE);
+		}
 
 		/* Create connection descriptor */
 		cis_con = ng_hci_new_con(unit, NG_HCI_LINK_ISO_CIS);
@@ -306,6 +310,7 @@ ng_hci_lp_acl_con_req(ng_hci_unit_p unit, item_p item, hook_p hook)
 					cfm->status = 0;
 					cfm->link_type = con->link_type;
 					cfm->con_handle = con->con_handle;
+					cfm->role = con->role;
 					bcopy(&con->bdaddr, &cfm->bdaddr, 
 						sizeof(cfm->bdaddr));
 
@@ -675,6 +680,7 @@ ng_hci_lp_le_con_req(ng_hci_unit_p unit, item_p item, hook_p hook, int link_type
 					cfm->status = 0;
 					cfm->link_type = con->link_type;
 					cfm->con_handle = con->con_handle;
+					cfm->role = con->role;
 					bcopy(&con->bdaddr, &cfm->bdaddr, 
 						sizeof(cfm->bdaddr));
 
@@ -757,7 +763,23 @@ ng_hci_lp_le_con_req(ng_hci_unit_p unit, item_p item, hook_p hook, int link_type
 					NG_HCI_OCF_LE_CREATE_CONNECTION));
 
 	bcopy(&ep->bdaddr, &req->cp.peer_addr, sizeof(req->cp.peer_addr));
+	/*
+	 * Own_Address_Type is carried through from the initiator: 0x00/0x01
+	 * select the public/random device address, while 0x02/0x03 request a
+	 * Resolvable Private Address generated from the local IRK in the
+	 * controller's resolving list, falling back to the public/random
+	 * address when no matching entry exists (Core Spec Vol 4 Part E
+	 * Section 7.8.12; Vol 6 Part B Link Layer privacy; Vol 3 Part C
+	 * Section 10.7).
+	 */
 	req->cp.own_address_type = ep->own_address_type;
+	/*
+	 * Peer_Address is the peer's identity address and Peer_Address_Type
+	 * the matching identity type (0x00 public, 0x01 random), so that
+	 * controller-based address resolution can resolve or generate the
+	 * peer's Resolvable Private Address from its resolving-list entry
+	 * (Core Spec Vol 4 Part E Section 7.8.12; Vol 6 Part B).
+	 */
 	req->cp.peer_addr_type = (link_type == NG_HCI_LINK_LE_RANDOM)? 1:0;
 	req->cp.scan_interval = htole16(NG_HCI_LE_SCAN_INTERVAL_DEFAULT);
 	req->cp.scan_window = htole16(NG_HCI_LE_SCAN_WINDOW_DEFAULT);
@@ -914,7 +936,15 @@ ng_hci_lp_con_cfm(ng_hci_unit_con_p con, int status)
 				ep->link_type = con->link_type;
 				ep->con_handle = con->con_handle;
 				bcopy(&con->bdaddr, &ep->bdaddr, 
-					sizeof(ep->bdaddr));
+									sizeof(ep->bdaddr));
+				/*
+				 * Propagate our local role so L2CAP can enforce
+				 * direction-restricted signalling (e.g. the
+				 * Connection Parameter Update Request, Core Spec
+				 * Vol 3 Part A Section 4.20, which only a
+				 * Peripheral may send to a Central).
+				 */
+				ep->role = con->role;
 
 				NG_SEND_MSG_HOOK(error, unit->node, msg,
 					unit->acl, 0);
@@ -937,7 +967,15 @@ ng_hci_lp_con_cfm(ng_hci_unit_con_p con, int status)
 				ep->link_type = con->link_type;
 				ep->con_handle = con->con_handle;
 				bcopy(&con->bdaddr, &ep->bdaddr, 
-					sizeof(ep->bdaddr));
+									sizeof(ep->bdaddr));
+				/*
+				 * Propagate our local role so L2CAP can enforce
+				 * direction-restricted signalling (e.g. the
+				 * Connection Parameter Update Request, Core Spec
+				 * Vol 3 Part A Section 4.20, which only a
+				 * Peripheral may send to a Central).
+				 */
+				ep->role = con->role;
 
 				NG_SEND_MSG_HOOK(error, unit->node, msg,
 					unit->sco, 0);
@@ -960,7 +998,15 @@ ng_hci_lp_con_cfm(ng_hci_unit_con_p con, int status)
 				ep->link_type = con->link_type;
 				ep->con_handle = con->con_handle;
 				bcopy(&con->bdaddr, &ep->bdaddr,
-					sizeof(ep->bdaddr));
+									sizeof(ep->bdaddr));
+				/*
+				 * Propagate our local role so L2CAP can enforce
+				 * direction-restricted signalling (e.g. the
+				 * Connection Parameter Update Request, Core Spec
+				 * Vol 3 Part A Section 4.20, which only a
+				 * Peripheral may send to a Central).
+				 */
+				ep->role = con->role;
 
 				NG_SEND_MSG_HOOK(error, unit->node, msg,
 					unit->iso, 0);
@@ -1129,6 +1175,7 @@ ng_hci_lp_con_ind(ng_hci_unit_con_p con, u_int8_t *uclass)
 		ep->link_type = con->link_type;
 		bcopy(uclass, ep->uclass, sizeof(ep->uclass));
 		bcopy(&con->bdaddr, &ep->bdaddr, sizeof(ep->bdaddr));
+		ep->con_handle = con->con_handle;
 
 		NG_SEND_MSG_HOOK(error, unit->node, msg, hook, 0);
 	} else {
@@ -1219,6 +1266,8 @@ ng_hci_lp_con_rsp(ng_hci_unit_p unit, item_p item, hook_p hook)
 		if (con->link_type == ep->link_type &&
 		    (con->state == NG_HCI_CON_W4_LP_CON_RSP ||
 		     con->state == NG_HCI_CON_W4_CONN_COMPLETE) &&
+		    (ep->link_type != NG_HCI_LINK_ISO_CIS ||
+		     con->con_handle == ep->con_handle) &&
 		    bcmp(&con->bdaddr, &ep->bdaddr, sizeof(bdaddr_t)) == 0)
 			break;
 

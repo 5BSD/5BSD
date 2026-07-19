@@ -62,6 +62,14 @@ typedef struct ng_btsocket_iso_rtentry *	ng_btsocket_iso_rtentry_p;
 #define NG_BTSOCKET_ISO_MAX_REASM	0x0FFF	/* ISO SDU max length */
 
 /*
+ * Fallback ISO Data_Total_Length used when a controller advertises 0
+ * (unknown) on NGM_HCI_NODE_UP (Core Spec Vol 4 Part E §5.4.5).  The
+ * enforced upper bound (NG_BTSOCKET_ISO_MAX_PKT_SIZE) is defined in
+ * ng_btsocket_iso.c where MCLBYTES/sizeof(hdr) are in scope.
+ */
+#define NG_BTSOCKET_ISO_DEFAULT_PKT_SIZE	251
+
+/*
  * Bluetooth ISO socket PCB
  */
 
@@ -78,9 +86,14 @@ struct ng_btsocket_iso_pcb {
 	/* Fragment-to-SDU mapping for SYNC_CON_QUEUE sbdroprecord */
 #define NG_BTSOCKET_ISO_FRAG_RING_SZ	16
 	u_int8_t			 frag_ring[NG_BTSOCKET_ISO_FRAG_RING_SZ];
+	u_int8_t			 frag_ring_is_final[NG_BTSOCKET_ISO_FRAG_RING_SZ];
 	u_int8_t			 frag_ring_head; /* next write slot */
 	u_int8_t			 frag_ring_tail; /* next read slot */
 	u_int8_t			 frag_ring_rem;  /* remaining frags for tail SDU */
+	u_int8_t			 frag_ring_final; /* tail entry completes SDU */
+	u_int16_t			 tx_sdu_offset;  /* partial ISOAL send offset */
+	u_int16_t			 tx_sdu_seq_num; /* partial ISOAL sequence */
+	u_int16_t			 tx_unsynced; /* HCI packets awaiting completion */
 
 	u_int16_t			 flags;      /* socket flags */
 #define NG_BTSOCKET_ISO_CLIENT		(1 << 0)     /* socket is client */
@@ -95,6 +108,7 @@ struct ng_btsocket_iso_pcb {
 	struct callout			 timo;       /* timeout */
 
 	struct mbuf			*rx_frag;    /* ISOAL reassembly buffer */
+	u_int16_t			 rx_sdu_len; /* expected reassembled SDU */
 
 	ng_btsocket_iso_rtentry_p	 rt;         /* routing info */
 

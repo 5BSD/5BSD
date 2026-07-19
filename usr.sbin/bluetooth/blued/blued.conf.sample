@@ -23,9 +23,36 @@ security {
     # SMP I/O capability: none, display_only, display_yesno,
     #   keyboard_only, keyboard_display
     io_capability = "keyboard_display";
+
+    # Request bonding (persist keys).  When false the Bonding bit is
+    # cleared in the SMP AuthReq and pairing does not store long-term keys.
+    # Default: true (current behaviour).
     bondable = true;
-    # Require Secure Connections (reject legacy pairing)
-    sc_only = false;
+
+    # Require MITM-authenticated pairing (sets the MITM bit in AuthReq).
+    # When false, Just Works (unauthenticated) associations are offered.
+    # Default: true (current behaviour).
+    # mitm = true;
+
+    # LE Secure Connections mode: off | on | only
+    #   off  = advertise legacy only
+    #   on   = advertise SC, allow legacy fallback (default, current behaviour)
+    #   only = advertise SC and reject legacy pairing
+    sc = "on";
+
+    # Advertise Keypress Notifications during Passkey Entry (Core Spec Vol 3
+    # Part H 3.5.8).  Default: true (current behaviour).
+    # keypress = true;
+
+    # Key-distribution mask: which keys are exchanged during bonding, a
+    # comma list of enc (LTK), id (IRK), sign (CSRK), or "none".
+    # Default: "enc,id,sign" (current behaviour).
+    # key_dist = "enc,id,link"; # "sign" is only for pre-Core-5.1 peers
+
+    # Minimum pairing security floor: none | enc | auth | sc.  A pairing that
+    # cannot reach this level is rejected.  Default: auth.
+    # min_pairing_security = "auth";
+
     # Minimum encryption key size for legacy pairing (7-16, default 16).
     # SC always requires 16 regardless.  Lower values improve compat
     # with older peripherals.
@@ -42,16 +69,17 @@ features {
     # Valid range: 1-3600.  Default: 900 (15 minutes).
     # rpa_timeout = 900;
 
+    # Peer privacy mode applied to resolving-list entries:
+    #   "device"  = accept both RPAs and the peer identity address (default)
+    #   "network" = accept resolvable private addresses only
+    # privacy_mode = "device";
+
     # Enable peripheral (advertiser) mode (default: no)
     # peripheral_mode = false;
 
     # Enable scan (observer) mode on startup (default: no)
     # scan_mode = false;
 
-    # Number of pre-allocated L2CAP sockets for Capsicum sandbox.
-    # Must be set before cap_enter(); determines max concurrent
-    # reconnections.  Valid range: 1-64.  Default: 8.
-    # socket_pool_size = 8;
 }
 
 # Per-device overrides

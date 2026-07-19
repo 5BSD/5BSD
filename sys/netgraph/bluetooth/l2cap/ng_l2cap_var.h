@@ -99,6 +99,7 @@ typedef struct ng_l2cap {
     	u_int16_t			lecid;          /* last allocated CID for LE */
 
 	LIST_HEAD(, ng_l2cap_chan)	chan_list;    /* L2CAP channels */
+	u_int64_t			ecbfc_group_id; /* last inbound group id */
 } ng_l2cap_t;
 typedef ng_l2cap_t *			ng_l2cap_p;
 
@@ -123,6 +124,13 @@ typedef struct ng_l2cap_con {
 	u_int8_t			 ident;      /* last allocated ident */
 	uint8_t				 linktype;
 	uint8_t				 encryption;
+	uint8_t				 role;       /* local role on this link:
+						      * NG_HCI_ROLE_MASTER (Central)
+						      * or NG_HCI_ROLE_SLAVE
+						      * (Peripheral).  Carried from
+						      * HCI via LP_ConnectCfm so
+						      * L2CAP can enforce Vol 3
+						      * Part A Section 4.20. */
 
 	TAILQ_HEAD(, ng_l2cap_cmd)	 cmd_list;   /* pending L2CAP cmds */
 
@@ -178,6 +186,27 @@ typedef struct ng_l2cap_chan {
 	u_int16_t			rx_sdu_len;     /* expected total SDU length */
 	u_int16_t			rx_sdu_got;     /* bytes received so far */
 
+	/*
+	 * LE CoC SDU segmentation stall state (transmit path).
+	 * When the peer runs out of TX credits mid-SDU we STALL rather
+	 * than disconnect (Core Spec Vol 3 Part A Section 10.1: running
+	 * out of credits is a WAIT condition, not an error).  The unsent
+	 * remainder of the SDU (a fragment chain, no L2CAP headers yet)
+	 * is parked in tx_sdu_pending and resumed when the peer grants
+	 * more credits via an LE Flow Control Credit.  tx_sdu_pending !=
+	 * NULL is the "mid-SDU stalled" flag.
+	 */
+	struct mbuf			*tx_sdu_pending; /* unsent SDU remainder */
+	u_int32_t			tx_pending_token; /* L2CA_WRITE token to answer */
+	u_int16_t			tx_pending_len;   /* original SDU length to report */
+
+	/* Atomic inbound ECBFC connection-group acceptance. */
+	u_int64_t			ecbfc_group_id;
+	u_int8_t			ecbfc_group_count;
+	u_int8_t			ecbfc_group_index;
+	u_int8_t			ecbfc_response_seen;
+	u_int16_t			ecbfc_response_result;
+
 	/* Pending reconfig values (set before sending reconfig req) */
 	u_int16_t			pending_imtu;
 	u_int16_t			pending_mps;
@@ -201,6 +230,7 @@ typedef struct ng_l2cap_cmd {
 	u_int8_t 			 code;      /* L2CAP command opcode */
 	u_int8_t			 ident;     /* L2CAP command ident */
 	u_int32_t			 token;     /* L2CA message token */
+	u_int64_t			 ecbfc_group_id; /* inbound response group */
 
 	struct callout			 timo;      /* RTX/ERTX timeout */
 

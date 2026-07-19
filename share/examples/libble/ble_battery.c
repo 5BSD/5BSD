@@ -4,6 +4,8 @@
  * Usage: ble_battery <addr>
  *
  * Connects to the device, reads its battery level, and prints it.
+ * Demonstrates ble_connect, ble_read_battery, ble_disconnect, and
+ * the ble_errno/ble_strerror error handling API.
  */
 
 #include <poll.h>
@@ -13,6 +15,9 @@
 #include <ble.h>
 
 static int done;
+
+static void on_battery(const ble_addr_t *, uint16_t,
+    const uint8_t *, uint16_t, int, void *);
 
 static void
 on_connect(const ble_addr_t *addr, int error, void *arg)
@@ -63,11 +68,15 @@ main(int argc, char *argv[])
 	memset(&addr, 0, sizeof(addr));
 	if (bt_aton(argv[1], &ba))
 		memcpy(addr.addr, &ba, 6);
-	addr.addr_type = 1;	/* random — most common for peripherals */
+	addr.addr_type = 1;	/* random -- override with argv[2] "public" if needed */
+	if (argc > 2 && strcmp(argv[2], "public") == 0)
+		addr.addr_type = 0;
 
-	/* Register battery callback first, then connect */
-	/* The read_cb is set by ble_read_battery inside on_connect */
-	ble_connect(ctx, &addr, on_connect, ctx);
+	if (ble_connect(ctx, &addr, on_connect, ctx) < 0) {
+		fprintf(stderr, "ble_connect: %s\n", ble_strerror(ctx));
+		ble_close(ctx);
+		return (1);
+	}
 
 	pfd.fd = ble_fd(ctx);
 	pfd.events = POLLIN;

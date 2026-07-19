@@ -64,6 +64,19 @@
 
 SDT_PROVIDER_DECLARE(bluetooth);
 
+/*
+ * Largest ISO Data_Total_Length we will honor from a controller
+ * (Core Spec Vol 4 Part E §5.4.5).  It is bounded by what a single HCI
+ * ISO fragment can physically carry in one mbuf cluster: MCLBYTES is the
+ * cluster size and sizeof(ng_hci_isodata_pkt_t) is the fixed 5-byte HCI
+ * ISO header that every fragment (including continuations) carries.  This
+ * cap is what keeps ISOAL segmentation in ng_btsocket_iso_send2() from
+ * copying past the destination fragment buffer (finding #1) and gives all
+ * fragment classes one coherent max_pdu (finding #7).
+ */
+#define NG_BTSOCKET_ISO_MAX_PKT_SIZE \
+	((u_int16_t)(MCLBYTES - sizeof(ng_hci_isodata_pkt_t)))
+
 /* Socket layer probes for ISO */
 SDT_PROBE_DEFINE1(bluetooth, socket, connect, iso,
     "uint16_t"		/* con_handle */
@@ -102,6 +115,8 @@ static ng_disconnect_t	ng_btsocket_iso_node_disconnect;
 
 static void		ng_btsocket_iso_input   (void *, int);
 static void		ng_btsocket_iso_rtclean (void *, int);
+static int		ng_btsocket_iso_frag_ring_put
+				(ng_btsocket_iso_pcb_p, u_int8_t, int);
 
 /* Netgraph type descriptor */
 static struct ng_type	typestruct = {
@@ -191,7 +206,7 @@ static int ng_btsocket_iso_process_lp_discon_ind
 static int  ng_btsocket_iso_send_lp_con_req
 	(ng_btsocket_iso_pcb_p);
 static int  ng_btsocket_iso_send_lp_con_rsp
-	(ng_btsocket_iso_rtentry_p, bdaddr_p, int);
+	(ng_btsocket_iso_rtentry_p, bdaddr_p, u_int16_t, int);
 static int  ng_btsocket_iso_send_lp_discon_req
 	(ng_btsocket_iso_pcb_p);
 
@@ -212,7 +227,8 @@ static void ng_btsocket_iso_process_timeout (void *);
 
 static ng_btsocket_iso_pcb_p	ng_btsocket_iso_pcb_by_addr(bdaddr_p);
 static ng_btsocket_iso_pcb_p	ng_btsocket_iso_pcb_by_handle(bdaddr_p, int);
-static ng_btsocket_iso_pcb_p	ng_btsocket_iso_pcb_by_addrs(bdaddr_p, bdaddr_p);
+static void			ng_btsocket_iso_abort_rx_reassembly
+				(bdaddr_p, int);
 
 #define ng_btsocket_iso_wakeup_input_task() \
 	taskqueue_enqueue(taskqueue_swi, &ng_btsocket_iso_queue_task)
@@ -405,7 +421,7 @@ ng_btsocket_iso_process_lp_con_cfm(struct ng_mesg *msg,
 	mtx_lock(&ng_btsocket_iso_sockets_mtx);
 
 	/* Look for the socket with the token */
-	pcb = ng_btsocket_iso_pcb_by_addrs(&rt->src, &ep->bdaddr);
+	pcb = ng_btsocket_iso_pcb_by_handle(&rt->src, ep->con_handle);
 	if (pcb == NULL) {
 		mtx_unlock(&ng_btsocket_iso_sockets_mtx);
 		return (ENOENT);
@@ -526,13 +542,15 @@ ng_btsocket_iso_process_lp_con_ind(struct ng_mesg *msg,
 		pcb1->flags &= ~NG_BTSOCKET_ISO_CLIENT;
 
 		bcopy(&ep->bdaddr, &pcb1->dst, sizeof(pcb1->dst));
+		pcb1->con_handle = ep->con_handle;
 		pcb1->rt = rt;
 	} else
 		/* Nobody listens on requested BDADDR */
 		status = NG_HCI_ERROR_UNSPECIFIED;
 
 respond:
-	error = ng_btsocket_iso_send_lp_con_rsp(rt, &ep->bdaddr, status);
+	error = ng_btsocket_iso_send_lp_con_rsp(rt, &ep->bdaddr,
+	    ep->con_handle, status);
 	if (pcb1 != NULL) {
 		if (error != 0) {
 			pcb1->so->so_error = error;
@@ -573,12 +591,14 @@ ng_btsocket_iso_process_lp_discon_ind(struct ng_mesg *msg,
 
 	ep = (ng_hci_lp_discon_ind_ep *)(msg->data);
 
+	mtx_lock(&ng_btsocket_iso_rt_mtx);
 	mtx_lock(&ng_btsocket_iso_sockets_mtx);
 
 	/* Look for the socket with given connection handle */
 	pcb = ng_btsocket_iso_pcb_by_handle(&rt->src, ep->con_handle);
 	if (pcb == NULL) {
 		mtx_unlock(&ng_btsocket_iso_sockets_mtx);
+		mtx_unlock(&ng_btsocket_iso_rt_mtx);
 		return (0);
 	}
 
@@ -601,6 +621,13 @@ ng_btsocket_iso_process_lp_discon_ind(struct ng_mesg *msg,
 
 	if (pcb->flags & NG_BTSOCKET_ISO_TIMO)
 		ng_btsocket_iso_untimeout(pcb);
+	if (pcb->tx_unsynced > 0) {
+		if (rt->pending >= pcb->tx_unsynced)
+			rt->pending -= pcb->tx_unsynced;
+		else
+			rt->pending = 0;
+		pcb->tx_unsynced = 0;
+	}
 
 	SDT_PROBE1(bluetooth, socket, disconnect, iso,
 	    pcb->con_handle);
@@ -610,6 +637,7 @@ ng_btsocket_iso_process_lp_discon_ind(struct ng_mesg *msg,
 
 	mtx_unlock(&pcb->pcb_mtx);
 	mtx_unlock(&ng_btsocket_iso_sockets_mtx);
+	mtx_unlock(&ng_btsocket_iso_rt_mtx);
 
 	return (0);
 } /* ng_btsocket_iso_process_lp_discon_ind */
@@ -652,7 +680,7 @@ ng_btsocket_iso_send_lp_con_req(ng_btsocket_iso_pcb_p pcb)
 
 static int
 ng_btsocket_iso_send_lp_con_rsp(ng_btsocket_iso_rtentry_p rt, bdaddr_p dst,
-		int status)
+		u_int16_t con_handle, int status)
 {
 	struct ng_mesg		*msg = NULL;
 	ng_hci_lp_con_rsp_ep	*ep = NULL;
@@ -670,6 +698,7 @@ ng_btsocket_iso_send_lp_con_rsp(ng_btsocket_iso_rtentry_p rt, bdaddr_p dst,
 	ep->status = status;
 	ep->link_type = NG_HCI_LINK_ISO_CIS;
 	bcopy(dst, &ep->bdaddr, sizeof(ep->bdaddr));
+	ep->con_handle = con_handle;
 
 	NG_SEND_MSG_HOOK(error, ng_btsocket_iso_node, msg, rt->hook, 0);
 
@@ -707,6 +736,26 @@ ng_btsocket_iso_send_lp_discon_req(ng_btsocket_iso_pcb_p pcb)
 	return (error);
 } /* ng_btsocket_iso_send_lp_discon_req */
 
+static int
+ng_btsocket_iso_frag_ring_put(ng_btsocket_iso_pcb_p pcb, u_int8_t nfrags,
+    int final)
+{
+	u_int8_t next;
+
+	KASSERT(nfrags > 0,
+	    ("%s: zero-fragment ISO completion entry", __func__));
+
+	next = (pcb->frag_ring_head + 1) % NG_BTSOCKET_ISO_FRAG_RING_SZ;
+	if (next == pcb->frag_ring_tail)
+		return (ENOBUFS);
+
+	pcb->frag_ring[pcb->frag_ring_head] = nfrags;
+	pcb->frag_ring_is_final[pcb->frag_ring_head] = final != 0;
+	pcb->frag_ring_head = next;
+
+	return (0);
+}
+
 /*****************************************************************************
  *****************************************************************************
  **                              Socket interface
@@ -724,7 +773,9 @@ ng_btsocket_iso_data_input(struct mbuf *m, hook_p hook)
 	ng_btsocket_iso_pcb_t		*pcb = NULL;
 	ng_btsocket_iso_rtentry_t	*rt = NULL;
 	u_int16_t			 con_handle;
+	u_int16_t			 iso_sdu_len = 0;
 	u_int8_t			 pb_flag = 0x02; /* default: complete SDU */
+	int				 has_sdu_len = 0;
 
 	if (hook == NULL) {
 		NG_BTSOCKET_ISO_ALERT(
@@ -773,20 +824,23 @@ ng_btsocket_iso_data_input(struct mbuf *m, hook_p hook)
 			NG_BTSOCKET_ISO_ERR(
 "%s: Bad ISO data packet length, len=%d, length=%d\n",
 				__func__, m->m_pkthdr.len, data_total_len);
-			goto drop;
+			goto abort_rx_drop;
 		}
 
 		/*
-		 * Per Core Spec Vol 4 Part E §5.4.5: when TS_Flag=1,
-		 * a 4-byte Time_Stamp precedes the ISO Data Load.
-		 * Skip it before parsing the data load sub-header.
+		 * Per Core Spec Vol 4 Part E §5.4.5 the 4-byte Time_Stamp is
+		 * part of the ISO Data Load, which is present only on the first
+		 * fragment (PB_Flag 0b00) or a complete SDU (0b10) -- the same
+		 * packets that carry the data-load sub-header.  A TS_Flag set on
+		 * a continuation (0b01) or last (0b11) fragment is malformed and
+		 * MUST NOT consume 4 bytes of payload (finding #5).
 		 */
-		if (ts_flag) {
+		if (ts_flag && (pb_flag == 0x00 || pb_flag == 0x02)) {
 			if (m->m_pkthdr.len < 4) {
 				NG_BTSOCKET_ISO_ERR(
 "%s: ISO packet too short for timestamp, len=%d\n",
 					__func__, m->m_pkthdr.len);
-				goto drop;
+				goto abort_rx_drop;
 			}
 			m_adj(m, 4);
 		}
@@ -805,7 +859,7 @@ ng_btsocket_iso_data_input(struct mbuf *m, hook_p hook)
 				NG_BTSOCKET_ISO_ERR(
 "%s: ISO data packet too short for data load header, len=%d\n",
 					__func__, m->m_pkthdr.len);
-				goto drop;
+				goto abort_rx_drop;
 			}
 
 			if (m->m_len <
@@ -813,22 +867,49 @@ ng_btsocket_iso_data_input(struct mbuf *m, hook_p hook)
 				m = m_pullup(m,
 				    sizeof(ng_hci_iso_data_load_hdr_t));
 				if (m == NULL)
-					goto drop;
+					goto abort_rx_drop;
 			}
 
 			dlhdr = mtod(m, ng_hci_iso_data_load_hdr_t *);
+			iso_sdu_len = NG_HCI_ISO_SDU_LENGTH(
+			    le16toh(dlhdr->sdu_len_flags));
+			has_sdu_len = 1;
 
 			/* Check Packet_Status_Flag for data validity */
 			if (NG_HCI_ISO_PKT_STATUS(
 			    le16toh(dlhdr->sdu_len_flags)) == 0x02) {
-				/* Lost data -- drop the packet */
+				/*
+				 * Lost data invalidates any in-progress ISOAL
+				 * SDU on this handle.  Drop this packet and
+				 * clear stale fragments so a later continuation
+				 * or last fragment cannot complete old bytes.
+				 */
 				NG_BTSOCKET_ISO_INFO(
 "%s: ISO data lost (PSF=0b10), handle=%d\n",
 					__func__, con_handle);
-				goto drop;
+				goto abort_rx_drop;
 			}
 
 			m_adj(m, sizeof(ng_hci_iso_data_load_hdr_t));
+		}
+
+		if (pb_flag == 0x02 && has_sdu_len &&
+		    m->m_pkthdr.len != iso_sdu_len) {
+			NG_BTSOCKET_ISO_ERR(
+"%s: complete ISO SDU length mismatch, got=%d, expected=%d, handle=%d\n",
+			    __func__, m->m_pkthdr.len, iso_sdu_len,
+			    con_handle);
+			goto abort_rx_drop;
+		}
+
+		if (pb_flag == 0x00 && has_sdu_len &&
+		    (iso_sdu_len > NG_BTSOCKET_ISO_MAX_REASM ||
+		     m->m_pkthdr.len > iso_sdu_len)) {
+			NG_BTSOCKET_ISO_ERR(
+"%s: first ISO fragment exceeds declared SDU length, got=%d, expected=%d, handle=%d\n",
+			    __func__, m->m_pkthdr.len, iso_sdu_len,
+			    con_handle);
+			goto abort_rx_drop;
 		}
 	}
 
@@ -882,6 +963,7 @@ ng_btsocket_iso_data_input(struct mbuf *m, hook_p hook)
 			    __func__, con_handle);
 			NG_FREE_M(pcb->rx_frag);
 			pcb->rx_frag = NULL;
+			pcb->rx_sdu_len = 0;
 		}
 	} else if (pb_flag == 0x00) {
 		/* First fragment — start reassembly */
@@ -890,7 +972,25 @@ ng_btsocket_iso_data_input(struct mbuf *m, hook_p hook)
 "%s: new first fragment replaces incomplete reassembly, handle=%d\n",
 			    __func__, con_handle);
 			NG_FREE_M(pcb->rx_frag);
+			pcb->rx_frag = NULL;
+			pcb->rx_sdu_len = 0;
 		}
+		/*
+		 * Bound the reassembly at the very first fragment (finding #4).
+		 * A single first fragment can be as large as Data_Total_Length
+		 * (14-bit, ~16 KB); an SDU cannot exceed NG_BTSOCKET_ISO_MAX_REASM
+		 * (0x0FFF, Core Spec Vol 4 Part E §5.4.5), so reject it now
+		 * rather than growing an oversized buffer.
+		 */
+		if (m->m_pkthdr.len > NG_BTSOCKET_ISO_MAX_REASM) {
+			NG_BTSOCKET_ISO_ERR(
+"%s: first fragment exceeds max SDU, len=%d, handle=%d\n",
+			    __func__, m->m_pkthdr.len, con_handle);
+			mtx_unlock(&pcb->pcb_mtx);
+			mtx_unlock(&ng_btsocket_iso_sockets_mtx);
+			goto drop;
+		}
+		pcb->rx_sdu_len = iso_sdu_len;
 		pcb->rx_frag = m;
 		m = NULL;
 		mtx_unlock(&pcb->pcb_mtx);
@@ -906,6 +1006,19 @@ ng_btsocket_iso_data_input(struct mbuf *m, hook_p hook)
 			mtx_unlock(&ng_btsocket_iso_sockets_mtx);
 			goto drop;
 		}
+		if (pcb->rx_sdu_len == 0 ||
+		    pcb->rx_frag->m_pkthdr.len + m->m_pkthdr.len >
+		    pcb->rx_sdu_len) {
+			NG_BTSOCKET_ISO_ERR(
+"%s: continuation exceeds declared ISO SDU length, got=%d, add=%d, expected=%d, handle=%d\n",
+			    __func__, pcb->rx_frag->m_pkthdr.len,
+			    m->m_pkthdr.len, pcb->rx_sdu_len, con_handle);
+			NG_FREE_M(pcb->rx_frag);
+			pcb->rx_sdu_len = 0;
+			mtx_unlock(&pcb->pcb_mtx);
+			mtx_unlock(&ng_btsocket_iso_sockets_mtx);
+			goto drop;
+		}
 		{
 			int frag_len = m->m_pkthdr.len;
 			m_cat(pcb->rx_frag, m);
@@ -915,6 +1028,7 @@ ng_btsocket_iso_data_input(struct mbuf *m, hook_p hook)
 		if (pcb->rx_frag->m_pkthdr.len > NG_BTSOCKET_ISO_MAX_REASM) {
 			NG_FREE_M(pcb->rx_frag);
 			pcb->rx_frag = NULL;
+			pcb->rx_sdu_len = 0;
 			mtx_unlock(&pcb->pcb_mtx);
 			mtx_unlock(&ng_btsocket_iso_sockets_mtx);
 			goto done;
@@ -932,6 +1046,19 @@ ng_btsocket_iso_data_input(struct mbuf *m, hook_p hook)
 			mtx_unlock(&ng_btsocket_iso_sockets_mtx);
 			goto drop;
 		}
+		if (pcb->rx_sdu_len == 0 ||
+		    pcb->rx_frag->m_pkthdr.len + m->m_pkthdr.len >
+		    pcb->rx_sdu_len) {
+			NG_BTSOCKET_ISO_ERR(
+"%s: last fragment exceeds declared ISO SDU length, got=%d, add=%d, expected=%d, handle=%d\n",
+			    __func__, pcb->rx_frag->m_pkthdr.len,
+			    m->m_pkthdr.len, pcb->rx_sdu_len, con_handle);
+			NG_FREE_M(pcb->rx_frag);
+			pcb->rx_sdu_len = 0;
+			mtx_unlock(&pcb->pcb_mtx);
+			mtx_unlock(&ng_btsocket_iso_sockets_mtx);
+			goto drop;
+		}
 		m_cat(pcb->rx_frag, m);
 		m = pcb->rx_frag;
 		pcb->rx_frag = NULL;
@@ -941,6 +1068,31 @@ ng_btsocket_iso_data_input(struct mbuf *m, hook_p hook)
 			m->m_pkthdr.len = 0;
 			for (t = m; t != NULL; t = t->m_next)
 				m->m_pkthdr.len += t->m_len;
+		}
+		if (m->m_pkthdr.len != pcb->rx_sdu_len) {
+			NG_BTSOCKET_ISO_ERR(
+"%s: reassembled ISO SDU length mismatch, got=%d, expected=%d, handle=%d\n",
+			    __func__, m->m_pkthdr.len, pcb->rx_sdu_len,
+			    con_handle);
+			pcb->rx_sdu_len = 0;
+			mtx_unlock(&pcb->pcb_mtx);
+			mtx_unlock(&ng_btsocket_iso_sockets_mtx);
+			goto drop;
+		}
+		pcb->rx_sdu_len = 0;
+		/*
+		 * Enforce the SDU bound on the completed record too (finding
+		 * #4): a first(0b00)+last(0b11) pair with no continuation must
+		 * not deliver more than NG_BTSOCKET_ISO_MAX_REASM bytes
+		 * (Core Spec Vol 4 Part E §5.4.5).
+		 */
+		if (m->m_pkthdr.len > NG_BTSOCKET_ISO_MAX_REASM) {
+			NG_BTSOCKET_ISO_ERR(
+"%s: reassembled SDU exceeds max, len=%d, handle=%d\n",
+			    __func__, m->m_pkthdr.len, con_handle);
+			mtx_unlock(&pcb->pcb_mtx);
+			mtx_unlock(&ng_btsocket_iso_sockets_mtx);
+			goto drop;
 		}
 	}
 
@@ -973,6 +1125,11 @@ ng_btsocket_iso_data_input(struct mbuf *m, hook_p hook)
 drop:
 done:
 	NG_FREE_M(m); /* checks for m != NULL */
+	return;
+
+abort_rx_drop:
+	ng_btsocket_iso_abort_rx_reassembly(&rt->src, con_handle);
+	goto drop;
 } /* ng_btsocket_iso_data_input */
 
 /*
@@ -1015,7 +1172,21 @@ ng_btsocket_iso_default_msg_input(struct ng_mesg *msg, hook_p hook)
 			mtx_lock(&ng_btsocket_iso_rt_mtx);
 
 		bcopy(&ep->bdaddr, &rt->src, sizeof(rt->src));
-		rt->pkt_size = (ep->pkt_size == 0)? 251 : ep->pkt_size;
+		/*
+		 * Clamp the controller-advertised ISO Data_Total_Length to a
+		 * coherent, safe range (finding #1/#3/#7).  0 means "unknown"
+		 * -> conservative default.  The upper bound is the most an HCI
+		 * ISO fragment can carry in a single mbuf cluster, which is
+		 * what stops send2() segmentation from being driven past the
+		 * fragment buffer.  Written under rt_mtx so send2()'s read is
+		 * never torn against this update.
+		 */
+		if (ep->pkt_size <= sizeof(ng_hci_iso_data_load_hdr_t))
+			rt->pkt_size = NG_BTSOCKET_ISO_DEFAULT_PKT_SIZE;
+		else if (ep->pkt_size > NG_BTSOCKET_ISO_MAX_PKT_SIZE)
+			rt->pkt_size = NG_BTSOCKET_ISO_MAX_PKT_SIZE;
+		else
+			rt->pkt_size = ep->pkt_size;
 		rt->num_pkts = ep->num_pkts;
 		rt->hook = hook;
 
@@ -1038,19 +1209,14 @@ ng_btsocket_iso_default_msg_input(struct ng_mesg *msg, hook_p hook)
 
 		ep = (ng_hci_sync_con_queue_ep *)(msg->data);
 
-		rt->pending -= ep->completed;
-		if (rt->pending < 0) {
-			NG_BTSOCKET_ISO_WARN(
-"%s: Pending packet counter is out of sync! bdaddr=%x:%x:%x:%x:%x:%x, " \
-"handle=%d, pending=%d, completed=%d\n",
-				__func__,
-				rt->src.b[5], rt->src.b[4], rt->src.b[3],
-				rt->src.b[2], rt->src.b[1], rt->src.b[0],
-				ep->con_handle, rt->pending,
-				ep->completed);
-
-			rt->pending = 0;
-		}
+		/*
+		 * pending/num_pkts/pkt_size are shared route state read and
+		 * written from multiple contexts; serialize every access under
+		 * rt_mtx (finding #3).  Lock order is rt_mtx -> sockets_mtx ->
+		 * pcb_mtx, matching connect()'s rt_mtx -> pcb_mtx.  send2()
+		 * below therefore always runs with rt_mtx held.
+		 */
+		mtx_lock(&ng_btsocket_iso_rt_mtx);
 
 		mtx_lock(&ng_btsocket_iso_sockets_mtx);
 
@@ -1058,10 +1224,27 @@ ng_btsocket_iso_default_msg_input(struct ng_mesg *msg, hook_p hook)
 		pcb = ng_btsocket_iso_pcb_by_handle(&rt->src, ep->con_handle);
 		if (pcb == NULL) {
 			mtx_unlock(&ng_btsocket_iso_sockets_mtx);
+			mtx_unlock(&ng_btsocket_iso_rt_mtx);
 			break;
 		}
 
 		/* pcb is locked */
+		{
+			u_int16_t done;
+
+			done = min((u_int16_t)ep->completed, pcb->tx_unsynced);
+			pcb->tx_unsynced -= done;
+			if (rt->pending >= done)
+				rt->pending -= done;
+			else
+				rt->pending = 0;
+			if (done != ep->completed)
+				NG_BTSOCKET_ISO_WARN(
+"%s: completion exceeds socket credit accounting, handle=%d, " \
+"completed=%d, credited=%d\n", __func__, ep->con_handle,
+				    ep->completed, done);
+			ep->completed = done;
+		}
 
 		/* Check state */
 		if (pcb->state == NG_BTSOCKET_ISO_OPEN) {
@@ -1069,17 +1252,19 @@ ng_btsocket_iso_default_msg_input(struct ng_mesg *msg, hook_p hook)
 			ng_btsocket_iso_untimeout(pcb);
 
 			/*
-			 * Drop completed SDUs from the send queue.
-			 * Each SDU may span multiple HCI packets
-			 * (ISOAL segmentation); use the frag ring
-			 * to map HCI completions back to SDU records.
+			 * Retire completed HCI ISO packets from the send queue.
+			 * A large SDU can be emitted over multiple controller
+			 * credit windows, so frag-ring entries describe batches;
+			 * only an entry marked final completes and drops the
+			 * socket-buffer record.
 			 */
 			while (ep->completed > 0) {
 				if (pcb->frag_ring_rem == 0 &&
 				    pcb->frag_ring_tail !=
 				    pcb->frag_ring_head) {
-					pcb->frag_ring_rem =
-					    pcb->frag_ring[
+					pcb->frag_ring_rem = pcb->frag_ring[
+					    pcb->frag_ring_tail];
+					pcb->frag_ring_final = pcb->frag_ring_is_final[
 					    pcb->frag_ring_tail];
 					pcb->frag_ring_tail =
 					    (pcb->frag_ring_tail + 1) %
@@ -1087,20 +1272,32 @@ ng_btsocket_iso_default_msg_input(struct ng_mesg *msg, hook_p hook)
 				}
 				if (pcb->frag_ring_rem > 0) {
 					pcb->frag_ring_rem--;
-					if (pcb->frag_ring_rem == 0)
-						sbdroprecord(
-						    &pcb->so->so_snd);
+					if (pcb->frag_ring_rem == 0 &&
+					    pcb->frag_ring_final) {
+						sbdroprecord(&pcb->so->so_snd);
+						pcb->tx_sdu_offset = 0;
+						pcb->tx_sdu_seq_num = 0;
+						pcb->frag_ring_final = 0;
+					}
 				} else {
-					/* Fallback: no ring entry */
-					sbdroprecord(&pcb->so->so_snd);
+					NG_BTSOCKET_ISO_WARN(
+"%s: completion without ISO fragment-ring entry, handle=%d\n",
+					    __func__, ep->con_handle);
 				}
 				ep->completed--;
 			}
 
 			/* Send more if we have any */
-			if (sbavail(&pcb->so->so_snd) > 0)
-				if (ng_btsocket_iso_send2(pcb) == 0)
+			if (sbavail(&pcb->so->so_snd) > 0) {
+				if (pcb->frag_ring_rem == 0 &&
+				    pcb->frag_ring_tail == pcb->frag_ring_head) {
+					if (ng_btsocket_iso_send2(pcb) == 0)
+						ng_btsocket_iso_timeout(pcb);
+				} else {
+					/* Partial completions still need a progress watchdog. */
 					ng_btsocket_iso_timeout(pcb);
+				}
+			}
 
 			/* Wake up writers */
 			sowwakeup(pcb->so);
@@ -1108,6 +1305,7 @@ ng_btsocket_iso_default_msg_input(struct ng_mesg *msg, hook_p hook)
 
 		mtx_unlock(&pcb->pcb_mtx);
 		mtx_unlock(&ng_btsocket_iso_sockets_mtx);
+		mtx_unlock(&ng_btsocket_iso_rt_mtx);
 	} break;
 
 	default:
@@ -1553,6 +1751,19 @@ ng_btsocket_iso_connect(struct socket *so, struct sockaddr *nam,
 		return (EINPROGRESS);
 	}
 
+	/*
+	 * Only a CLOSED socket may (re)connect.  An OPEN or DISCONNECTING
+	 * socket already owns a live CIS and route; overwriting them here
+	 * would leak the connection and corrupt routing state.  Match the
+	 * SCO/L2CAP sibling and report EISCONN (finding #2).
+	 */
+	if (pcb->state != NG_BTSOCKET_ISO_CLOSED) {
+		mtx_unlock(&pcb->pcb_mtx);
+		mtx_unlock(&ng_btsocket_iso_rt_mtx);
+
+		return (EISCONN);
+	}
+
 	if (bcmp(&sa->iso_bdaddr, &pcb->src, sizeof(pcb->src)) == 0) {
 		mtx_unlock(&pcb->pcb_mtx);
 		mtx_unlock(&ng_btsocket_iso_rt_mtx);
@@ -1613,6 +1824,16 @@ ng_btsocket_iso_connect(struct socket *so, struct sockaddr *nam,
 
 /*
  * Process ioctl's calls on socket
+ *
+ * This socket is the ISO *data plane*: it exchanges HCI ISO data packets
+ * with ng_hci over the netgraph hook once a CIS/BIS handle is OPEN and the
+ * Controller has a data path for it.  The ISO *control plane* -- CIG
+ * provisioning (LE Set CIG Parameters, Core Spec Vol 4 Part E §7.8.97) and
+ * ISO data-path setup (LE Setup ISO Data Path, §7.8.109) -- is driven by
+ * the host daemon over its raw HCI command socket, not through this socket:
+ * a single HCI-command writer avoids command/handle races, and the socket
+ * layer deliberately does not originate arbitrary HCI commands.  There are
+ * therefore no ISO control ioctls; unknown requests return EINVAL.
  */
 
 int
@@ -1715,6 +1936,7 @@ ng_btsocket_iso_detach(struct socket *so)
 		NG_FREE_M(pcb->rx_frag);
 		pcb->rx_frag = NULL;
 	}
+	pcb->rx_sdu_len = 0;
 
 	LIST_REMOVE(pcb, next);
 
@@ -1851,11 +2073,19 @@ ng_btsocket_iso_send(struct socket *so, int flags, struct mbuf *m,
 		goto drop;
 	}
 
+	/*
+	 * send2() touches the shared route counters, so it must run under
+	 * rt_mtx as well as pcb_mtx.  Acquire rt_mtx first to keep the global
+	 * rt_mtx -> pcb_mtx lock order used by connect() and the input task
+	 * (finding #3); every exit below releases both.
+	 */
+	mtx_lock(&ng_btsocket_iso_rt_mtx);
 	mtx_lock(&pcb->pcb_mtx);
 
 	/* Make sure socket is connected */
 	if (pcb->state != NG_BTSOCKET_ISO_OPEN) {
 		mtx_unlock(&pcb->pcb_mtx);
+		mtx_unlock(&ng_btsocket_iso_rt_mtx);
 		error = ENOTCONN;
 		goto drop;
 	}
@@ -1864,6 +2094,7 @@ ng_btsocket_iso_send(struct socket *so, int flags, struct mbuf *m,
 	if (pcb->rt == NULL ||
 	    pcb->rt->hook == NULL || NG_HOOK_NOT_VALID(pcb->rt->hook)) {
 		mtx_unlock(&pcb->pcb_mtx);
+		mtx_unlock(&ng_btsocket_iso_rt_mtx);
 		error = ENETDOWN;
 		goto drop;
 	}
@@ -1882,6 +2113,7 @@ ng_btsocket_iso_send(struct socket *so, int flags, struct mbuf *m,
 			__func__, m->m_pkthdr.len);
 
 		mtx_unlock(&pcb->pcb_mtx);
+		mtx_unlock(&ng_btsocket_iso_rt_mtx);
 		error = EMSGSIZE;
 		goto drop;
 	}
@@ -1891,6 +2123,7 @@ ng_btsocket_iso_send(struct socket *so, int flags, struct mbuf *m,
 			__func__, m->m_pkthdr.len);
 
 		mtx_unlock(&pcb->pcb_mtx);
+		mtx_unlock(&ng_btsocket_iso_rt_mtx);
 		error = EMSGSIZE;
 		goto drop;
 	}
@@ -1917,6 +2150,7 @@ ng_btsocket_iso_send(struct socket *so, int flags, struct mbuf *m,
 	}
 
 	mtx_unlock(&pcb->pcb_mtx);
+	mtx_unlock(&ng_btsocket_iso_rt_mtx);
 drop:
 	NG_FREE_M(m); /* checks for != NULL */
 	NG_FREE_M(control);
@@ -1943,27 +2177,37 @@ ng_btsocket_iso_send2(ng_btsocket_iso_pcb_p pcb)
 	ng_hci_isodata_pkt_t		*hdr = NULL;
 	ng_hci_iso_data_load_hdr_t	*dlhdr = NULL;
 	u_int16_t			 sdu_len, max_pdu, frag_len, offset;
+	u_int16_t			 pkt_size;
 	u_int16_t			 saved_seq_num;
 	int				 error = 0;
 	int				 total_hdr;
 	u_int8_t			 pb_flag;
 
+	/*
+	 * pcb_mtx guards the socket/queue state; rt_mtx guards the shared
+	 * route counters (pending/num_pkts/pkt_size).  Both are held by every
+	 * caller (ng_btsocket_iso_send, NGM_HCI_SYNC_CON_QUEUE) so that these
+	 * fields cannot be torn or raced here (finding #3).
+	 */
 	mtx_assert(&pcb->pcb_mtx, MA_OWNED);
+	mtx_assert(&ng_btsocket_iso_rt_mtx, MA_OWNED);
 
 	total_hdr = sizeof(*hdr) + sizeof(*dlhdr);
 
 	/*
-	 * max_pdu is the largest SDU payload that fits in a first/complete
-	 * HCI ISO packet.  pkt_size is Data_Total_Length capacity (excludes
-	 * the 4-byte HCI ISO header but includes the data load sub-header).
-	 * For first/complete: subtract only the 4-byte data load sub-header.
-	 * For continuation/last: the full pkt_size is available.
+	 * Snapshot the negotiated ISO Data_Total_Length once (it is already
+	 * clamped to NG_BTSOCKET_ISO_MAX_PKT_SIZE on NGM_HCI_NODE_UP) and
+	 * derive one coherent max_pdu for every fragment class (finding #7).
+	 * max_pdu is the largest SDU payload that fits a first/complete HCI
+	 * ISO packet: pkt_size is Data_Total_Length capacity, which for
+	 * first/complete includes the 4-byte data-load sub-header, so we
+	 * subtract it; a continuation/last fragment carries no sub-header and
+	 * so may use the full pkt_size (Core Spec Vol 4 Part E §5.4.5).
 	 */
-	max_pdu = pcb->rt->pkt_size;
-	if (max_pdu <= (u_int16_t)sizeof(*dlhdr))
-		max_pdu = 251;	/* fallback: conservative default */
-	else
-		max_pdu -= sizeof(*dlhdr);
+	pkt_size = pcb->rt->pkt_size;
+	if (pkt_size <= (u_int16_t)sizeof(*dlhdr))
+		pkt_size = NG_BTSOCKET_ISO_DEFAULT_PKT_SIZE; /* fallback */
+	max_pdu = pkt_size - sizeof(*dlhdr);
 
 	while (pcb->rt->pending < pcb->rt->num_pkts &&
 	       sbavail(&pcb->so->so_snd) > 0) {
@@ -2014,11 +2258,12 @@ ng_btsocket_iso_send2(ng_btsocket_iso_pcb_p pcb)
 				break;
 			pcb->iso_seq_num++;
 			pcb->rt->pending++;
-			/* 1 HCI packet per SDU — record in frag ring */
-			pcb->frag_ring[pcb->frag_ring_head] = 1;
-			pcb->frag_ring_head = (pcb->frag_ring_head + 1) %
-			    NG_BTSOCKET_ISO_FRAG_RING_SZ;
+			pcb->tx_unsynced++;
+			error = ng_btsocket_iso_frag_ring_put(pcb, 1, 1);
+			if (error != 0)
+				break;
 			offset = sdu_len; /* mark SDU as fully sent */
+			break;
 		} else {
 			/*
 			 * ISOAL segmentation: SDU is too large for one
@@ -2026,8 +2271,12 @@ ng_btsocket_iso_send2(ng_btsocket_iso_pcb_p pcb)
 			 * First fragment carries the sub-header; subsequent
 			 * fragments have only the HCI ISO header.
 			 */
-			offset = 0;
-			saved_seq_num = pcb->iso_seq_num;
+			offset = pcb->tx_sdu_offset;
+			if (offset == 0) {
+				saved_seq_num = pcb->iso_seq_num;
+				pcb->tx_sdu_seq_num = saved_seq_num;
+			} else
+				saved_seq_num = pcb->tx_sdu_seq_num;
 			{
 			int nfrags = 0;
 			while (offset < sdu_len &&
@@ -2040,20 +2289,48 @@ ng_btsocket_iso_send2(ng_btsocket_iso_pcb_p pcb)
 
 				if (offset == 0) {
 					/* First fragment */
-					pb_flag = 0x00;
 					hdr_size = total_hdr;
 					frag_len = min(remaining, max_pdu);
 				} else {
 					/* Continuation or last — no sub-header,
 					 * full pkt_size available for payload */
 					hdr_size = sizeof(*hdr);
-					frag_len = min(remaining,
-					    pcb->rt->pkt_size);
-					if (offset + frag_len >= sdu_len)
-						pb_flag = 0x03; /* last */
-					else
-						pb_flag = 0x01; /* continuation */
+					frag_len = min(remaining, pkt_size);
 				}
+
+				/*
+				 * CRITICAL (finding #1): bound every fragment so
+				 * that hdr_size + frag_len fits in a single mbuf
+				 * cluster.  Without this, an oversized negotiated
+				 * pkt_size (or SDU) makes m_copydata() below write
+				 * far past the MHLEN/MCLBYTES destination buffer.
+				 * The remainder is picked up on the next loop
+				 * iteration, so the full SDU still reassembles per
+				 * §5.4.5.  (pkt_size is already clamped on NODE_UP;
+				 * this is the defence-in-depth invariant.)
+				 */
+				if (frag_len > (u_int16_t)(MCLBYTES - hdr_size))
+					frag_len = (u_int16_t)(MCLBYTES - hdr_size);
+
+				/*
+				 * PB_Flag is decided AFTER the cap: a capped
+				 * fragment may no longer reach the end of the SDU,
+				 * so what looked like a "last" fragment becomes a
+				 * "continuation".  The first fragment is always
+				 * 0b00 here (a fitting SDU took the complete-SDU
+				 * path above).
+				 */
+				if (offset == 0)
+					pb_flag = 0x00;		/* first */
+				else if (offset + frag_len >= sdu_len)
+					pb_flag = 0x03;		/* last */
+				else
+					pb_flag = 0x01;		/* continuation */
+
+				KASSERT(hdr_size + frag_len <= (int)MCLBYTES,
+				    ("%s: ISO fragment hdr=%d + payload=%d "
+				     "exceeds cluster %d", __func__, hdr_size,
+				     (int)frag_len, (int)MCLBYTES));
 
 				MGETHDR(frag, M_NOWAIT, MT_DATA);
 				if (frag == NULL) {
@@ -2100,24 +2377,25 @@ ng_btsocket_iso_send2(ng_btsocket_iso_pcb_p pcb)
 				if (error != 0)
 					break;
 				pcb->rt->pending++;
-				nfrags++;
-				if (nfrags >= 255) {
-					error = EMSGSIZE;
-					break;
-				}
+				pcb->tx_unsynced++;
 				offset += frag_len;
+				nfrags++;
+				/* The ring count is one octet; finish this batch at 255. */
+				if (nfrags == UINT8_MAX)
+					break;
 			}
 
-			/* Commit sequence number only if full SDU was sent */
+			if (nfrags > 0) {
+				error = ng_btsocket_iso_frag_ring_put(pcb,
+				    (u_int8_t)nfrags, offset >= sdu_len);
+				if (error != 0)
+					break;
+			}
+
 			if (offset >= sdu_len) {
 				pcb->iso_seq_num = saved_seq_num + 1;
-				/* Record fragment count for this SDU */
-				pcb->frag_ring[pcb->frag_ring_head] =
-				    (u_int8_t)nfrags;
-				pcb->frag_ring_head =
-				    (pcb->frag_ring_head + 1) %
-				    NG_BTSOCKET_ISO_FRAG_RING_SZ;
-			}
+			} else if (offset > pcb->tx_sdu_offset)
+				pcb->tx_sdu_offset = offset;
 			}
 
 			NG_FREE_M(m);
@@ -2125,10 +2403,9 @@ ng_btsocket_iso_send2(ng_btsocket_iso_pcb_p pcb)
 				break;
 			if (offset < sdu_len)
 				break;
+			break;
 		}
 
-		if (error == 0 && offset >= sdu_len)
-			sbdroprecord(&pcb->so->so_snd);
 	}
 
 	return ((pcb->rt->pending > 0) ? 0 : error);
@@ -2231,31 +2508,27 @@ ng_btsocket_iso_pcb_by_handle(bdaddr_p src, int con_handle)
 } /* ng_btsocket_iso_pcb_by_handle */
 
 /*
- * Look for the socket in CONNECTING state with given source and destination
- * addresses. Caller must hold ng_btsocket_iso_sockets_mtx.
- * Returns with locked pcb.
+ * Drop any partial ISOAL SDU for this source/handle after an HCI ISO packet
+ * tells us the current SDU stream is not usable.
  */
 
-static ng_btsocket_iso_pcb_p
-ng_btsocket_iso_pcb_by_addrs(bdaddr_p src, bdaddr_p dst)
+static void
+ng_btsocket_iso_abort_rx_reassembly(bdaddr_p src, int con_handle)
 {
-	ng_btsocket_iso_pcb_p	p = NULL;
+	ng_btsocket_iso_pcb_p	pcb = NULL;
 
-	mtx_assert(&ng_btsocket_iso_sockets_mtx, MA_OWNED);
-
-	LIST_FOREACH(p, &ng_btsocket_iso_sockets, next) {
-		mtx_lock(&p->pcb_mtx);
-
-		if (p->state == NG_BTSOCKET_ISO_CONNECTING &&
-		    bcmp(src, &p->src, sizeof(p->src)) == 0 &&
-		    bcmp(dst, &p->dst, sizeof(p->dst)) == 0)
-			return (p); /* return with locked pcb */
-
-		mtx_unlock(&p->pcb_mtx);
+	mtx_lock(&ng_btsocket_iso_sockets_mtx);
+	pcb = ng_btsocket_iso_pcb_by_handle(src, con_handle);
+	if (pcb != NULL) {
+		if (pcb->rx_frag != NULL) {
+			NG_FREE_M(pcb->rx_frag);
+			pcb->rx_frag = NULL;
+		}
+		pcb->rx_sdu_len = 0;
+		mtx_unlock(&pcb->pcb_mtx);
 	}
-
-	return (NULL);
-} /* ng_btsocket_iso_pcb_by_addrs */
+	mtx_unlock(&ng_btsocket_iso_sockets_mtx);
+} /* ng_btsocket_iso_abort_rx_reassembly */
 
 /*
  * Set timeout on socket
@@ -2303,24 +2576,54 @@ ng_btsocket_iso_process_timeout(void *xpcb)
 
 	mtx_assert(&pcb->pcb_mtx, MA_OWNED);
 
-	pcb->flags &= ~NG_BTSOCKET_ISO_TIMO;
 	pcb->so->so_error = ETIMEDOUT;
 
 	switch (pcb->state) {
 	case NG_BTSOCKET_ISO_CONNECTING:
 		/* Connect timeout - close the socket */
+		pcb->flags &= ~NG_BTSOCKET_ISO_TIMO;
 		pcb->state = NG_BTSOCKET_ISO_CLOSED;
 		soisdisconnected(pcb->so);
 		break;
 
 	case NG_BTSOCKET_ISO_OPEN:
-		/* Send timeout - did not get NGM_HCI_SYNC_CON_QUEUE */
+		/*
+		 * Lost completion accounting cannot be recovered safely: abort the
+		 * CIS and reset every fragment cursor before dropping the in-flight
+		 * record.  Leaving the PCB OPEN would let a late "final" completion
+		 * drop the following application SDU.
+		 */
+		/* Respect the global rt_mtx -> pcb_mtx order without blocking. */
+		if (pcb->rt != NULL && !mtx_trylock(&ng_btsocket_iso_rt_mtx)) {
+			callout_reset(&pcb->timo, 1,
+			    ng_btsocket_iso_process_timeout, pcb);
+			return;
+		}
+		pcb->flags &= ~NG_BTSOCKET_ISO_TIMO;
+		(void)ng_btsocket_iso_send_lp_discon_req(pcb);
+		if (pcb->rt != NULL) {
+			if (pcb->rt->pending >= pcb->tx_unsynced)
+				pcb->rt->pending -= pcb->tx_unsynced;
+			else
+				pcb->rt->pending = 0;
+			pcb->tx_unsynced = 0;
+		}
+		pcb->frag_ring_head = pcb->frag_ring_tail = 0;
+		pcb->frag_ring_rem = 0;
+		pcb->frag_ring_final = 0;
+		pcb->tx_sdu_offset = 0;
+		pcb->tx_sdu_seq_num = 0;
 		sbdroprecord(&pcb->so->so_snd);
+		pcb->state = NG_BTSOCKET_ISO_CLOSED;
+		soisdisconnected(pcb->so);
 		sowwakeup(pcb->so);
+		if (pcb->rt != NULL)
+			mtx_unlock(&ng_btsocket_iso_rt_mtx);
 		break;
 
 	case NG_BTSOCKET_ISO_DISCONNECTING:
 		/* Disconnect timeout - disconnect the socket anyway */
+		pcb->flags &= ~NG_BTSOCKET_ISO_TIMO;
 		pcb->state = NG_BTSOCKET_ISO_CLOSED;
 		soisdisconnected(pcb->so);
 		break;

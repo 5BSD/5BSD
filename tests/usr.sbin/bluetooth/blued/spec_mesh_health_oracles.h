@@ -1,0 +1,37 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Independent Mesh Health model opcode and scalar oracles.
+ * No production mesh header is included.
+ */
+
+#ifndef TESTS_BLUETOOTH_SPEC_MESH_HEALTH_ORACLES_H
+#define TESTS_BLUETOOTH_SPEC_MESH_HEALTH_ORACLES_H
+
+/* Mesh Model 1.1.1 §7.2 message summary. */
+#define BT_MESH_HLT_OP_CURRENT_STATUS		0x0004
+#define BT_MESH_HLT_OP_FAULT_STATUS		0x0005
+#define BT_MESH_HLT_OP_ATTENTION_GET		0x8004
+#define BT_MESH_HLT_OP_ATTENTION_SET		0x8005
+#define BT_MESH_HLT_OP_ATTENTION_SET_UNACK	0x8006
+#define BT_MESH_HLT_OP_ATTENTION_STATUS		0x8007
+#define BT_MESH_HLT_OP_FAULT_CLEAR		0x802f
+#define BT_MESH_HLT_OP_FAULT_CLEAR_UNACK	0x8030
+#define BT_MESH_HLT_OP_FAULT_GET		0x8031
+#define BT_MESH_HLT_OP_FAULT_TEST		0x8032
+#define BT_MESH_HLT_OP_FAULT_TEST_UNACK		0x8033
+#define BT_MESH_HLT_OP_PERIOD_GET		0x8034
+#define BT_MESH_HLT_OP_PERIOD_SET		0x8035
+#define BT_MESH_HLT_OP_PERIOD_SET_UNACK		0x8036
+#define BT_MESH_HLT_OP_PERIOD_STATUS		0x8037
+
+/* Mesh Model 1.1.1 §7 Health state/message field rules. */
+#define BT_MESH_HLT_NO_FAULT		0x00
+#define BT_MESH_HLT_FAST_PERIOD_DIVISOR_MAX	0x0f
+#define BT_MESH_HLT_FAST_PERIOD_DIVISOR_ABOVE_MAX	0x10
+#define BT_MESH_HLT_FAULT_STATUS_FIXED_PARAMS	3
+
+/* Mesh Profile 1.1.1 §3.7.3.1: reserved one-octet Access opcode. */
+#define BT_MESH_ACCESS_OPCODE_ONE_RFU	0x7f
+
+#endif /* TESTS_BLUETOOTH_SPEC_MESH_HEALTH_ORACLES_H */

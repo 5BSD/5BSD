@@ -133,6 +133,7 @@ struct ng_btsocket_l2cap_pcb {
 	bdaddr_t			 dst;	     /* Destination address */
 	uint8_t			 	 srctype;	/*source addr type*/
 	uint8_t			 	 dsttype;	/*source addr type*/
+	uint8_t				 own_addr_type;	/* LE HCI Own_Address_Type */
 
 	u_int16_t			 psm;	     /* PSM */
 	u_int16_t			 cid;	     /* Local channel ID */

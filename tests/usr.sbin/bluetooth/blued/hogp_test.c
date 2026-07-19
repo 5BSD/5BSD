@@ -18,63 +18,34 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "hogp_report.h"
+#include "spec_hogp_oracles.h"
+
 /* Provide globals needed by headers */
 extern atomic_int blued_verbose;
 extern int blued_daemonized;
 atomic_int blued_verbose = 0;
 int blued_daemonized = 0;
 
-/*
- * Report type constants and HOGP structures from blued.c.
- * Defined here so the test doesn't need to link blued.o.
- */
-#define HID_REPORT_TYPE_INPUT	0x01
-#define HID_REPORT_TYPE_OUTPUT	0x02
-#define HID_REPORT_TYPE_FEATURE	0x03
-
-struct hogp_report {
-	uint16_t	value_handle;
-	uint16_t	cccd_handle;
-	uint8_t		report_id;
-	uint8_t		report_type;
-};
-
-#define HOGP_MAX_REPORTS	16
-
 struct hogp_device {
-	char			_pad[256]; /* placeholder for att_conn etc. */
 	struct hogp_report	reports[HOGP_MAX_REPORTS];
 	int			nreports;
 };
 
-/*
- * Minimal blued_conn for testing — only hogp pointer matters.
- */
-struct blued_conn {
-	struct hogp_device	*hogp;
-};
-
-/*
- * hogp_find_feature_handle — copied from blued.c for testing
- * without linking the entire daemon.
- */
-static uint16_t
-hogp_find_feature_handle(struct blued_conn *conn, uint8_t report_id)
+static void
+assert_hogp_report_contract(void)
 {
-	struct hogp_device *dev;
-	int i;
 
-	if (conn == NULL || conn->hogp == NULL)
-		return (0);
-	dev = conn->hogp;
-
-	for (i = 0; i < dev->nreports; i++) {
-		if (dev->reports[i].report_type == HID_REPORT_TYPE_FEATURE &&
-		    dev->reports[i].report_id == report_id)
-			return (dev->reports[i].value_handle);
-	}
-	return (0);
+	ATF_CHECK_EQ(HID_REPORT_TYPE_INPUT, BT_HOGP111_REPORT_TYPE_INPUT);
+	ATF_CHECK_EQ(HID_REPORT_TYPE_OUTPUT, BT_HOGP111_REPORT_TYPE_OUTPUT);
+	ATF_CHECK_EQ(HID_REPORT_TYPE_FEATURE, BT_HOGP111_REPORT_TYPE_FEATURE);
 }
+
+/* Non-normative distinct report IDs and valid ATT handle sentinels. */
+#define TEST_REPORT_ID_ONE	1
+#define TEST_REPORT_ID_TWO	2
+#define TEST_HANDLE_ONE		0x0020
+#define TEST_HANDLE_TWO		0x0025
 
 /* ================================================================
  * hogp_find_feature_handle: single Feature report
@@ -82,23 +53,21 @@ hogp_find_feature_handle(struct blued_conn *conn, uint8_t report_id)
 ATF_TC_WITHOUT_HEAD(test_hogp_find_feature_single);
 ATF_TC_BODY(test_hogp_find_feature_single, tc)
 {
-	struct blued_conn conn;
 	struct hogp_device dev;
 	uint16_t handle;
 
-	memset(&conn, 0, sizeof(conn));
+	assert_hogp_report_contract();
 	memset(&dev, 0, sizeof(dev));
 
 	/* Set up one Feature report with id=1, handle=0x0020 */
-	dev.reports[0].value_handle = 0x0020;
-	dev.reports[0].report_id = 1;
-	dev.reports[0].report_type = 0x03;  /* HID_REPORT_TYPE_FEATURE */
+	dev.reports[0].value_handle = TEST_HANDLE_ONE;
+	dev.reports[0].report_id = TEST_REPORT_ID_ONE;
+	dev.reports[0].report_type = BT_HOGP111_REPORT_TYPE_FEATURE;
 	dev.nreports = 1;
 
-	conn.hogp = &dev;
-
-	handle = hogp_find_feature_handle(&conn, 1);
-	ATF_CHECK_EQ(handle, 0x0020);
+	handle = hogp_find_report_handle(dev.reports, dev.nreports,
+	    TEST_REPORT_ID_ONE, BT_HOGP111_REPORT_TYPE_FEATURE);
+	ATF_CHECK_EQ(handle, TEST_HANDLE_ONE);
 }
 
 /* ================================================================
@@ -107,22 +76,20 @@ ATF_TC_BODY(test_hogp_find_feature_single, tc)
 ATF_TC_WITHOUT_HEAD(test_hogp_find_feature_wrong_id);
 ATF_TC_BODY(test_hogp_find_feature_wrong_id, tc)
 {
-	struct blued_conn conn;
 	struct hogp_device dev;
 	uint16_t handle;
 
-	memset(&conn, 0, sizeof(conn));
+	assert_hogp_report_contract();
 	memset(&dev, 0, sizeof(dev));
 
-	dev.reports[0].value_handle = 0x0020;
-	dev.reports[0].report_id = 1;
-	dev.reports[0].report_type = 0x03;
+	dev.reports[0].value_handle = TEST_HANDLE_ONE;
+	dev.reports[0].report_id = TEST_REPORT_ID_ONE;
+	dev.reports[0].report_type = BT_HOGP111_REPORT_TYPE_FEATURE;
 	dev.nreports = 1;
 
-	conn.hogp = &dev;
-
 	/* Report ID 2 doesn't exist */
-	handle = hogp_find_feature_handle(&conn, 2);
+	handle = hogp_find_report_handle(dev.reports, dev.nreports,
+	    TEST_REPORT_ID_TWO, BT_HOGP111_REPORT_TYPE_FEATURE);
 	ATF_CHECK_EQ(handle, 0);
 }
 
@@ -132,22 +99,20 @@ ATF_TC_BODY(test_hogp_find_feature_wrong_id, tc)
 ATF_TC_WITHOUT_HEAD(test_hogp_find_feature_wrong_type);
 ATF_TC_BODY(test_hogp_find_feature_wrong_type, tc)
 {
-	struct blued_conn conn;
 	struct hogp_device dev;
 	uint16_t handle;
 
-	memset(&conn, 0, sizeof(conn));
+	assert_hogp_report_contract();
 	memset(&dev, 0, sizeof(dev));
 
 	/* Input report with id=1 — should NOT be found by Feature lookup */
-	dev.reports[0].value_handle = 0x0020;
-	dev.reports[0].report_id = 1;
-	dev.reports[0].report_type = 0x01;  /* HID_REPORT_TYPE_INPUT */
+	dev.reports[0].value_handle = TEST_HANDLE_ONE;
+	dev.reports[0].report_id = TEST_REPORT_ID_ONE;
+	dev.reports[0].report_type = BT_HOGP111_REPORT_TYPE_INPUT;
 	dev.nreports = 1;
 
-	conn.hogp = &dev;
-
-	handle = hogp_find_feature_handle(&conn, 1);
+	handle = hogp_find_report_handle(dev.reports, dev.nreports,
+	    TEST_REPORT_ID_ONE, BT_HOGP111_REPORT_TYPE_FEATURE);
 	ATF_CHECK_EQ(handle, 0);
 }
 
@@ -157,46 +122,46 @@ ATF_TC_BODY(test_hogp_find_feature_wrong_type, tc)
 ATF_TC_WITHOUT_HEAD(test_hogp_find_feature_multiple);
 ATF_TC_BODY(test_hogp_find_feature_multiple, tc)
 {
-	struct blued_conn conn;
 	struct hogp_device dev;
 	uint16_t handle;
 
-	memset(&conn, 0, sizeof(conn));
+	assert_hogp_report_contract();
 	memset(&dev, 0, sizeof(dev));
 
 	/* Input report id=0 */
 	dev.reports[0].value_handle = 0x0010;
 	dev.reports[0].report_id = 0;
-	dev.reports[0].report_type = 0x01;
+	dev.reports[0].report_type = BT_HOGP111_REPORT_TYPE_INPUT;
 
 	/* Output report id=0 */
 	dev.reports[1].value_handle = 0x0015;
 	dev.reports[1].report_id = 0;
-	dev.reports[1].report_type = 0x02;
+	dev.reports[1].report_type = BT_HOGP111_REPORT_TYPE_OUTPUT;
 
 	/* Feature report id=1 */
-	dev.reports[2].value_handle = 0x0020;
-	dev.reports[2].report_id = 1;
-	dev.reports[2].report_type = 0x03;
+	dev.reports[2].value_handle = TEST_HANDLE_ONE;
+	dev.reports[2].report_id = TEST_REPORT_ID_ONE;
+	dev.reports[2].report_type = BT_HOGP111_REPORT_TYPE_FEATURE;
 
 	/* Feature report id=2 */
-	dev.reports[3].value_handle = 0x0025;
-	dev.reports[3].report_id = 2;
-	dev.reports[3].report_type = 0x03;
+	dev.reports[3].value_handle = TEST_HANDLE_TWO;
+	dev.reports[3].report_id = TEST_REPORT_ID_TWO;
+	dev.reports[3].report_type = BT_HOGP111_REPORT_TYPE_FEATURE;
 
 	dev.nreports = 4;
-	conn.hogp = &dev;
-
 	/* Find feature id=2 */
-	handle = hogp_find_feature_handle(&conn, 2);
-	ATF_CHECK_EQ(handle, 0x0025);
+	handle = hogp_find_report_handle(dev.reports, dev.nreports,
+	    TEST_REPORT_ID_TWO, BT_HOGP111_REPORT_TYPE_FEATURE);
+	ATF_CHECK_EQ(handle, TEST_HANDLE_TWO);
 
 	/* Find feature id=1 */
-	handle = hogp_find_feature_handle(&conn, 1);
-	ATF_CHECK_EQ(handle, 0x0020);
+	handle = hogp_find_report_handle(dev.reports, dev.nreports,
+	    TEST_REPORT_ID_ONE, BT_HOGP111_REPORT_TYPE_FEATURE);
+	ATF_CHECK_EQ(handle, TEST_HANDLE_ONE);
 
 	/* Input id=0 should NOT be found */
-	handle = hogp_find_feature_handle(&conn, 0);
+	handle = hogp_find_report_handle(dev.reports, dev.nreports, 0,
+	    BT_HOGP111_REPORT_TYPE_FEATURE);
 	ATF_CHECK_EQ(handle, 0);
 }
 
@@ -206,13 +171,11 @@ ATF_TC_BODY(test_hogp_find_feature_multiple, tc)
 ATF_TC_WITHOUT_HEAD(test_hogp_find_feature_null_hogp);
 ATF_TC_BODY(test_hogp_find_feature_null_hogp, tc)
 {
-	struct blued_conn conn;
 	uint16_t handle;
 
-	memset(&conn, 0, sizeof(conn));
-	conn.hogp = NULL;
-
-	handle = hogp_find_feature_handle(&conn, 1);
+	assert_hogp_report_contract();
+	handle = hogp_find_report_handle(NULL, 1, TEST_REPORT_ID_ONE,
+	    BT_HOGP111_REPORT_TYPE_FEATURE);
 	ATF_CHECK_EQ(handle, 0);
 }
 
@@ -222,16 +185,14 @@ ATF_TC_BODY(test_hogp_find_feature_null_hogp, tc)
 ATF_TC_WITHOUT_HEAD(test_hogp_find_feature_empty);
 ATF_TC_BODY(test_hogp_find_feature_empty, tc)
 {
-	struct blued_conn conn;
 	struct hogp_device dev;
 	uint16_t handle;
 
-	memset(&conn, 0, sizeof(conn));
+	assert_hogp_report_contract();
 	memset(&dev, 0, sizeof(dev));
 	dev.nreports = 0;
-	conn.hogp = &dev;
-
-	handle = hogp_find_feature_handle(&conn, 0);
+	handle = hogp_find_report_handle(dev.reports, dev.nreports, 0,
+	    BT_HOGP111_REPORT_TYPE_FEATURE);
 	ATF_CHECK_EQ(handle, 0);
 }
 

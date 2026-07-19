@@ -1,0 +1,104 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Independent Bluetooth Core 6.3 wire-value oracles for dataflow_test.
+ * This file deliberately includes no production Bluetooth headers.
+ */
+
+#ifndef TESTS_BLUETOOTH_SPEC_DATAFLOW_ORACLES_H
+#define TESTS_BLUETOOTH_SPEC_DATAFLOW_ORACLES_H
+
+/* Core 6.3 Vol 4 Part A §2, Table 2.1: HCI packet indicators. */
+#define BT_DF_SPEC_HCI_COMMAND_PACKET		0x01
+#define BT_DF_SPEC_HCI_ACL_PACKET		0x02
+#define BT_DF_SPEC_HCI_EVENT_PACKET		0x04
+#define BT_DF_SPEC_HCI_ISO_PACKET		0x05
+
+/* Core 6.3 Vol 4 Part E §7.1.6 and §7.8 command definitions. */
+#define BT_DF_SPEC_OP_DISCONNECT		0x0406
+#define BT_DF_SPEC_OP_LE_SET_ADV_DATA		0x2008
+#define BT_DF_SPEC_OP_LE_SET_ADV_ENABLE		0x200a
+#define BT_DF_SPEC_OP_LE_SET_SCAN_ENABLE	0x200c
+#define BT_DF_SPEC_OP_LE_CREATE_CONNECTION	0x200d
+#define BT_DF_SPEC_OP_LE_ENABLE_ENCRYPTION	0x2019
+#define BT_DF_SPEC_OP_LE_LTK_REQ_REPLY		0x201a
+#define BT_DF_SPEC_OP_LE_SET_CIG_PARAMS		0x2062
+#define BT_DF_SPEC_OP_LE_CREATE_CIS		0x2064
+#define BT_DF_SPEC_OP_LE_CREATE_BIG		0x2068
+#define BT_DF_SPEC_OP_LE_BIG_CREATE_SYNC	0x206b
+#define BT_DF_SPEC_OP_LE_SETUP_ISO_DATA_PATH	0x206e
+
+/* Core 6.3 Vol 4 Part E §5.4.5: ISO packet masks and complete-SDU PB. */
+#define BT_DF_SPEC_CONN_HANDLE_MASK		0x0fff
+#define BT_DF_SPEC_ISO_DATA_LEN_MASK		0x3fff
+#define BT_DF_SPEC_ISO_SDU_LEN_MASK		0x0fff
+#define BT_DF_SPEC_ISO_COMPLETE_SDU_FLAGS	0x2000
+#define BT_DF_SPEC_ISO_HEADER_LEN		9
+#define BT_DF_SPEC_ISO_LOAD_HEADER_LEN		4
+
+/* Core 6.3 Vol 4 Part E §7.8.109: direction and HCI data-path identifiers. */
+#define BT_DF_SPEC_ISO_DIR_INPUT		0x00
+#define BT_DF_SPEC_ISO_DIR_OUTPUT		0x01
+#define BT_DF_SPEC_ISO_DATA_PATH_HCI		0x00
+#define BT_DF_SPEC_ISO_BOTH_PATHS_OPEN		0x03
+
+/* Core 6.3 Vol 4 Part E §7.7.15: Command Status event; §1.3 status. */
+#define BT_DF_SPEC_EVENT_COMMAND_STATUS		0x0f
+#define BT_DF_SPEC_STATUS_MEMORY_CAPACITY	0x07
+#define BT_DF_SPEC_NUM_COMMAND_PACKETS		0x01
+#define BT_DF_SPEC_COMMAND_STATUS_PACKET_LEN	7
+
+/* Core 6.3 Vol 3 Part A §2.1: fixed LE L2CAP channel identifiers. */
+#define BT_DF_SPEC_L2CAP_CID_ATT		0x0004
+#define BT_DF_SPEC_L2CAP_CID_SMP		0x0006
+
+/* Core 6.3 Vol 3 Part F §§3.4.7.1-.3: exact ATT wire opcodes. */
+#define BT_DF_SPEC_ATT_HANDLE_NOTIFY		0x1b
+#define BT_DF_SPEC_ATT_HANDLE_INDICATE		0x1d
+#define BT_DF_SPEC_ATT_HANDLE_CONFIRM		0x1e
+#define BT_DF_SPEC_ATT_VALUE_PDU_OVERHEAD	3
+#define BT_DF_SPEC_ATT_READ_RSP_OVERHEAD	1
+#define BT_DF_SPEC_ATT_PREP_WRITE_OVERHEAD	5
+
+/* Core 6.3 Vol 3 Part G §§3.3.1.1 and 3.3.3.3. */
+#define BT_DF_SPEC_GATT_PROP_READ		0x02
+#define BT_DF_SPEC_GATT_PROP_WRITE		0x08
+#define BT_DF_SPEC_GATT_PROP_NOTIFY		0x10
+#define BT_DF_SPEC_GATT_PROP_INDICATE		0x20
+#define BT_DF_SPEC_CCCD_NOTIFY			0x0001
+#define BT_DF_SPEC_CCCD_INDICATE		0x0002
+
+/* Bluetooth SIG Assigned Numbers: standardized 16-bit service/characteristic UUIDs. */
+#define BT_DF_SPEC_UUID_BATTERY_SERVICE		0x180f
+#define BT_DF_SPEC_UUID_HID_SERVICE		0x1812
+#define BT_DF_SPEC_UUID_REPORT			0x2a4d
+
+/* Core 6.3 Vol 3 Part H §3.3, Table 3.1: complete SMP PDU lengths. */
+#define BT_DF_SPEC_SMP_PAIRING_REQUEST		0x01
+#define BT_DF_SPEC_SMP_PAIRING_RESPONSE		0x02
+#define BT_DF_SPEC_SMP_PAIRING_CONFIRM		0x03
+#define BT_DF_SPEC_SMP_PAIRING_RANDOM		0x04
+#define BT_DF_SPEC_SMP_PAIRING_FAILED		0x05
+#define BT_DF_SPEC_SMP_ENCRYPTION_INFO		0x06
+#define BT_DF_SPEC_SMP_MASTER_IDENT		0x07
+#define BT_DF_SPEC_SMP_IDENTITY_INFO		0x08
+#define BT_DF_SPEC_SMP_IDENTITY_ADDR_INFO	0x09
+#define BT_DF_SPEC_SMP_SIGNING_INFO		0x0a
+#define BT_DF_SPEC_SMP_SECURITY_REQUEST		0x0b
+#define BT_DF_SPEC_SMP_PUBLIC_KEY		0x0c
+#define BT_DF_SPEC_SMP_DHKEY_CHECK		0x0d
+#define BT_DF_SPEC_SMP_KEYPRESS_NOTIFICATION	0x0e
+
+#define BT_DF_SPEC_SMP_LEN_PAIRING		7
+#define BT_DF_SPEC_SMP_LEN_128_BIT_VALUE	17
+#define BT_DF_SPEC_SMP_LEN_FAILED		2
+#define BT_DF_SPEC_SMP_LEN_MASTER_IDENT		11
+#define BT_DF_SPEC_SMP_LEN_IDENTITY_ADDR	8
+#define BT_DF_SPEC_SMP_LEN_SECURITY_REQUEST	2
+#define BT_DF_SPEC_SMP_LEN_PUBLIC_KEY		65
+#define BT_DF_SPEC_SMP_LEN_KEYPRESS		2
+
+/* Core 6.3 Vol 4 Part E §7.1.6: Remote User Terminated Connection. */
+#define BT_DF_SPEC_REASON_REMOTE_USER_TERM	0x13
+
+#endif /* TESTS_BLUETOOTH_SPEC_DATAFLOW_ORACLES_H */

@@ -180,8 +180,9 @@ SMP pairing parameters:
 .Pq none, display_only, display_yesno, keyboard_only, keyboard_display ,
 .Cm bondable
 .Pq boolean ,
-.Cm sc_only
-to require Secure Connections and reject legacy pairing, and
+.Cm sc
+.Pq off, on, or only
+to select the Secure Connections policy, and
 .Cm min_key_size
 minimum encryption key size for legacy SMP pairing (7\(en16, default 16).
 Secure Connections always requires 16 regardless of this setting.
@@ -197,8 +198,6 @@ Feature toggles:
 in seconds,
 .Cm rpa_timeout
 RPA rotation timeout in seconds (1\(en3600, default 900),
-.Cm socket_pool_size
-pre-allocated L2CAP sockets for Capsicum sandbox (1\(en64, default 8),
 .Cm peripheral_mode
 and
 .Cm scan_mode
@@ -249,8 +248,12 @@ creates a
 .Ux Ns -domain
 control socket at
 .Pa /var/run/blued.sock .
-Administrative tools can send newline-terminated commands and receive
-newline-terminated text responses.
+Clients first negotiate the versioned, length-prefixed binary protocol and
+then exchange request-ID-correlated typed operations, replies, and events.
+The public client interface is
+.Xr libble 3 ;
+.Xr bluedctl 8
+provides the administrative command-line interface.
 .Pp
 The following commands are supported:
 .Bl -tag -width "REMOVE_SERVICE"
@@ -278,6 +281,12 @@ or
 .Cm indicate ,
 a CCCD descriptor is automatically added.
 Returns the characteristic value handle on success.
+.It Cm ADD_INCLUDE Ar svc_handle Ar included_start Ar included_end Op Ar uuid16
+Add an Included Service declaration to an existing service.
+The include must be added before the service's first characteristic.
+For included services with 16-bit UUIDs,
+.Ar uuid16
+may be omitted and is inferred from the included service declaration.
 .It Cm ADD_SERVICE Ar uuid
 Create a new GATT service in the live database.
 The
@@ -475,19 +484,19 @@ File descriptors passed to control socket clients are restricted with
 to
 .Dv CAP_SEND , CAP_RECV , CAP_EVENT .
 .It
-Socket pool pre-allocation: when auto-reconnect is enabled,
-.Nm
-creates a pool of bound but unconnected L2CAP sockets before
-entering the sandbox.
-Reconnection inside capability mode uses
-.Xr cap_connect 2
-on these pre-allocated sockets.
+A narrowly scoped descriptor broker is forked before capability mode.
+It holds no daemon file descriptors and can only create L2CAP sequenced-packet
+sockets, which it passes to the sandbox over a capability-limited local socket.
+This permits bounded concurrent connects and reconnects without a finite
+startup socket inventory.
 .It
 SMP pairing supports both LE Legacy Pairing and LE Secure Connections
 (ECDH P-256).
-The
-.Cm sc_only
-configuration option rejects legacy pairing entirely.
+Setting
+.Cm sc
+to
+.Dq only
+rejects legacy pairing entirely.
 .El
 .Sh PROTOCOL OVERVIEW
 .Nm
@@ -527,7 +536,7 @@ and
 .It
 .Cm rpa_timeout
 .It
-.Cm bondable , sc_only , io_capability , min_key_size
+.Cm bondable , sc , io_capability , min_key_size
 .It
 .Cm privacy
 .It

@@ -174,6 +174,8 @@ int
 ng_hci_process_event(ng_hci_unit_p unit, struct mbuf *event)
 {
 	ng_hci_event_pkt_t	*hdr = NULL;
+	u_int8_t		 event_code;
+	int			 expected;
 	int			 error = 0;
 
 	/* Get event packet header */
@@ -182,17 +184,19 @@ ng_hci_process_event(ng_hci_unit_p unit, struct mbuf *event)
 		return (ENOBUFS);
 
 	hdr = mtod(event, ng_hci_event_pkt_t *);
+	event_code = hdr->event;
+	expected = sizeof(*hdr) + hdr->length;
 
 	NG_HCI_INFO(
 "%s: %s - got HCI event=%#x, length=%d\n",
 		__func__, NG_NODE_NAME(unit->node), hdr->event, hdr->length);
 
 	/* Validate that the mbuf contains the full event payload */
-	if (event->m_pkthdr.len < (int)(sizeof(*hdr) + hdr->length)) {
+	if (event->m_pkthdr.len != expected) {
 		NG_HCI_WARN(
-"%s: truncated HCI event (expected %d, got %d)\n",
+		    "%s: malformed HCI event length (expected %d, got %d)\n",
 			__func__,
-			(int)(sizeof(*hdr) + hdr->length),
+			expected,
 			event->m_pkthdr.len);
 		NG_FREE_M(event);
 		return (EMSGSIZE);
@@ -201,7 +205,7 @@ ng_hci_process_event(ng_hci_unit_p unit, struct mbuf *event)
 	/* Get rid of event header and process event */
 	m_adj(event, sizeof(*hdr));
 
-	switch (hdr->event) {
+	switch (event_code) {
 	case NG_HCI_EVENT_INQUIRY_COMPL:
 	case NG_HCI_EVENT_RETURN_LINK_KEYS:
 	case NG_HCI_EVENT_PIN_CODE_REQ:
@@ -586,6 +590,8 @@ le_advertizing_report(ng_hci_unit_p unit, struct mbuf *event)
 	int				 error = 0;
 	int				 num_reports = 0;
 	u_int8_t addr_type;
+	size_t off, payload_len;
+	int i;
 
 	NG_HCI_M_PULLUP(event, sizeof(*ep));
 	if (event == NULL)
@@ -593,6 +599,48 @@ le_advertizing_report(ng_hci_unit_p unit, struct mbuf *event)
 
 	ep = mtod(event, ng_hci_le_advertising_report_ep *);
 	num_reports = ep->num_reports;
+	payload_len = event->m_pkthdr.len - sizeof(*ep);
+
+	/*
+	 * Validate the complete variable-length report array before updating
+	 * the neighbor cache.  Vol 4 Part E Section 7.7.65.2 defines 1..25
+	 * reports, Event_Type 0..4, Address_Type 0..3, and legacy advertising
+	 * Data_Length at most 31.  Each report also has a trailing RSSI octet.
+	 */
+	if (num_reports < 1 || num_reports > 0x19) {
+		error = EMSGSIZE;
+		goto out;
+	}
+	off = 0;
+	for (i = 0; i < num_reports; i++) {
+		u_int8_t event_type, report_addr_type, data_len;
+		size_t report_len;
+
+		if (payload_len - off < 10) {
+			error = EMSGSIZE;
+			goto out;
+		}
+		m_copydata(event, sizeof(*ep) + off, 1,
+		    (caddr_t)&event_type);
+		m_copydata(event, sizeof(*ep) + off + 1, 1,
+		    (caddr_t)&report_addr_type);
+		m_copydata(event, sizeof(*ep) + off + 8, 1,
+		    (caddr_t)&data_len);
+		if (event_type > 4 || report_addr_type > 3 || data_len > 31) {
+			error = EMSGSIZE;
+			goto out;
+		}
+		report_len = 10 + data_len;
+		if (report_len > payload_len - off) {
+			error = EMSGSIZE;
+			goto out;
+		}
+		off += report_len;
+	}
+	if (off != payload_len) {
+		error = EMSGSIZE;
+		goto out;
+	}
 	m_adj(event, sizeof(*ep));
 	ep = NULL;
 
@@ -629,7 +677,9 @@ le_advertizing_report(ng_hci_unit_p unit, struct mbuf *event)
 		m_adj(event, sizeof(bdaddr));
 		
 		/* Lookup entry in the cache */
-		n = ng_hci_get_neighbor(unit, &bdaddr, (addr_type) ? NG_HCI_LINK_LE_RANDOM:NG_HCI_LINK_LE_PUBLIC);
+		n = ng_hci_get_neighbor(unit, &bdaddr,
+		    (addr_type == 1 || addr_type == 3) ?
+		    NG_HCI_LINK_LE_RANDOM : NG_HCI_LINK_LE_PUBLIC);
 		if (n == NULL) {
 			/* Create new entry */
 			n = ng_hci_new_neighbor(unit);
@@ -638,8 +688,8 @@ le_advertizing_report(ng_hci_unit_p unit, struct mbuf *event)
 				break;
 			}
 			bcopy(&bdaddr, &n->bdaddr, sizeof(n->bdaddr));
-			n->addrtype = (addr_type)? NG_HCI_LINK_LE_RANDOM :
-			  NG_HCI_LINK_LE_PUBLIC;
+			n->addrtype = (addr_type == 1 || addr_type == 3) ?
+			    NG_HCI_LINK_LE_RANDOM : NG_HCI_LINK_LE_PUBLIC;
 			
 		} else
 			getmicrotime(&n->updated);
@@ -723,6 +773,16 @@ le_con_compl_common(ng_hci_unit_p unit, u_int8_t status, u_int16_t handle,
 		con->encryption_mode = NG_HCI_ENCRYPTION_MODE_NONE;
 
 		/*
+		 * Store our local role for this LE link.  Core Spec Vol 4
+		 * Part E 7.7.65.1/.10/.41 Role: 0x00 = Central, 0x01 =
+		 * Peripheral.  Downstream consumers (e.g. L2CAP 4.20
+		 * Connection Parameter Update, which only the Peripheral
+		 * may initiate) rely on con->role being accurate; without
+		 * this it stays 0 (Central) from the M_ZERO alloc.
+		 */
+		con->role = role;
+
+		/*
 		 * LE connections are already established at the
 		 * controller level when we receive this event.
 		 * Send LP_CON_IND so L2CAP creates a connection
@@ -758,6 +818,13 @@ le_con_compl_common(ng_hci_unit_p unit, u_int8_t status, u_int16_t handle,
 
 	con->con_handle = NG_HCI_CON_HANDLE(le16toh(handle));
 	con->encryption_mode = NG_HCI_ENCRYPTION_MODE_NONE;
+
+	/*
+	 * Store our local role (Core Spec Vol 4 Part E 7.7.65.1/.10/.41:
+	 * 0x00 = Central, 0x01 = Peripheral) even for host-initiated LE
+	 * connections, so L2CAP can trust con->role.
+	 */
+	con->role = role;
 
 	ng_hci_lp_con_cfm(con, status);
 
@@ -1443,6 +1510,7 @@ le_event(ng_hci_unit_p unit, struct mbuf *event)
 	case NG_HCI_LEEV_CIS_REQUEST: {
 		ng_hci_le_cis_request_ep	*cisrep;
 		u_int16_t			 acl_h, cis_h;
+		bool				 forwarded;
 
 		NG_HCI_M_PULLUP(event, sizeof(*cisrep));
 		if (event == NULL)
@@ -1453,6 +1521,7 @@ le_event(ng_hci_unit_p unit, struct mbuf *event)
 		    le16toh(cisrep->acl_connection_handle));
 		cis_h = NG_HCI_CON_HANDLE(
 		    le16toh(cisrep->cis_connection_handle));
+		forwarded = false;
 
 		NG_HCI_INFO(
 "%s: %s - CIS request, acl_handle=%d cis_handle=%d cig=%d cis=%d\n",
@@ -1472,6 +1541,7 @@ le_event(ng_hci_unit_p unit, struct mbuf *event)
 
 			acl_con = ng_hci_con_by_handle(unit, acl_h);
 			if (acl_con != NULL &&
+			    ng_hci_con_by_handle(unit, cis_h) == NULL &&
 			    unit->iso != NULL && NG_HOOK_IS_VALID(unit->iso)) {
 			ng_hci_unit_con_p	 cis_con;
 			struct ng_mesg		*msg;
@@ -1494,16 +1564,20 @@ le_event(ng_hci_unit_p unit, struct mbuf *event)
 			}
 
 			/* Send LP_CON_IND to the ISO socket layer */
-			NG_MKMESSAGE(msg, NGM_HCI_COOKIE,
-			    NGM_HCI_LP_CON_IND, sizeof(*ep), M_NOWAIT);
+			msg = NULL;
+			if (cis_con != NULL)
+				NG_MKMESSAGE(msg, NGM_HCI_COOKIE,
+				    NGM_HCI_LP_CON_IND, sizeof(*ep), M_NOWAIT);
 			if (msg != NULL) {
 				ep = (ng_hci_lp_con_ind_ep *)(msg->data);
 				ep->link_type = NG_HCI_LINK_ISO_CIS;
 				bzero(&ep->uclass, sizeof(ep->uclass));
 				bcopy(&acl_con->bdaddr, &ep->bdaddr,
 				    sizeof(ep->bdaddr));
+				ep->con_handle = cis_h;
 				NG_SEND_MSG_HOOK(error, unit->node, msg,
 				    unit->iso, 0);
+				forwarded = (error == 0);
 				if (error != 0 && cis_con != NULL) {
 					struct __cis_rej2 {
 						ng_hci_cmd_pkt_t		 hdr;
@@ -1541,17 +1615,19 @@ le_event(ng_hci_unit_p unit, struct mbuf *event)
 							    unit);
 					}
 				}
-			} else if (cis_con != NULL) {
-				/* NG_MKMESSAGE failed; reject CIS */
+			} else {
+				/* Descriptor or message allocation failed; reject CIS. */
 				struct __cis_rej2 {
 					ng_hci_cmd_pkt_t		 hdr;
 					ng_hci_le_reject_cis_request_cp	 cp;
 				} __attribute__((packed))	*rej2;
 				struct mbuf			*rm;
 
-				ng_hci_con_untimeout(cis_con);
-				ng_hci_free_con(cis_con);
-				cis_con = NULL;
+				if (cis_con != NULL) {
+					ng_hci_con_untimeout(cis_con);
+					ng_hci_free_con(cis_con);
+					cis_con = NULL;
+				}
 
 				MGETHDR(rm, M_NOWAIT, MT_DATA);
 				if (rm != NULL) {
@@ -1579,13 +1655,15 @@ le_event(ng_hci_unit_p unit, struct mbuf *event)
 			}
 
 			SDT_PROBE3(bluetooth, hci, iso_cis, request,
-			    cis_h, acl_h, 1);
+			    cis_h, acl_h, forwarded ? 1 : 0);
 			NG_HCI_INFO(
-"%s: %s - CIS request forwarded to socket layer, cis_handle=%d\n",
-			    __func__, NG_NODE_NAME(unit->node), cis_h);
+"%s: %s - CIS request %s, cis_handle=%d\n",
+			    __func__, NG_NODE_NAME(unit->node),
+			    forwarded ? "forwarded to socket layer" : "rejected",
+			    cis_h);
 		} else {
 			/*
-			 * Reject: either no ACL connection, or no ISO
+			 * Reject: no ACL connection, duplicate CIS handle, or no ISO
 			 * hook connected to consume the data.
 			 */
 			struct __cis_reject {
@@ -1855,16 +1933,15 @@ inquiry_result(ng_hci_unit_p unit, struct mbuf *event)
 	ep = mtod(event, ng_hci_inquiry_result_ep *);
 	{
 	int				 num_responses = ep->num_responses;
+
+	if ((event->m_pkthdr.len - sizeof(*ep)) !=
+	    num_responses * sizeof(ng_hci_inquiry_response)) {
+		NG_FREE_M(event);
+		return (EMSGSIZE);
+	}
 	m_adj(event, sizeof(*ep));
 
 	for (; num_responses > 0; num_responses --) {
-		/* Validate remaining mbuf length:
-		 * bdaddr(6) + page_scan_rep_mode(1) +
-		 * page_scan_period_mode(1) + page_scan_mode(1) +
-		 * class(3) + clock_offset(2) = 14 bytes */
-		if (event->m_pkthdr.len < 14)
-			break;
-
 		/* Get remote unit address */
 		m_copydata(event, 0, sizeof(bdaddr), (caddr_t) &bdaddr);
 		m_adj(event, sizeof(bdaddr));
@@ -1929,15 +2006,15 @@ inquiry_result_with_rssi(ng_hci_unit_p unit, struct mbuf *event)
 	ep = mtod(event, ng_hci_inquiry_result_with_rssi_ep *);
 	{
 	int				 num_responses = ep->num_responses;
+
+	if ((event->m_pkthdr.len - sizeof(*ep)) !=
+	    num_responses * sizeof(ng_hci_inquiry_response_with_rssi)) {
+		NG_FREE_M(event);
+		return (EMSGSIZE);
+	}
 	m_adj(event, sizeof(*ep));
 
 	for (; num_responses > 0; num_responses --) {
-		/* Validate remaining mbuf length:
-		 * bdaddr(6) + page_scan_rep_mode(1) + reserved(1) +
-		 * class(3) + clock_offset(2) + rssi(1) = 14 bytes */
-		if (event->m_pkthdr.len < 14)
-			break;
-
 		/* Get remote unit address */
 		m_copydata(event, 0, sizeof(bdaddr), (caddr_t) &bdaddr);
 		m_adj(event, sizeof(bdaddr));
@@ -2635,13 +2712,15 @@ num_compl_pkts(ng_hci_unit_p unit, struct mbuf *event)
 	ep = mtod(event, ng_hci_num_compl_pkts_ep *);
 	{
 	u_int8_t			 num_handles = ep->num_con_handles;
+
+	if ((event->m_pkthdr.len - sizeof(*ep)) !=
+	    num_handles * (sizeof(h) + sizeof(p))) {
+		NG_FREE_M(event);
+		return (EMSGSIZE);
+	}
 	m_adj(event, sizeof(*ep));
 
 	for (; num_handles > 0; num_handles --) {
-		/* Validate remaining mbuf length */
-		if (event->m_pkthdr.len < sizeof(h) + sizeof(p))
-			break;
-
 		/* Get connection handle */
 		m_copydata(event, 0, sizeof(h), (caddr_t) &h);
 		m_adj(event, sizeof(h));

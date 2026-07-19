@@ -1,0 +1,114 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.Dd July 12, 2026
+.Dt NG_HCI_VIRT 4
+.Os
+.Sh NAME
+.Nm ng_hci_virt
+.Nd virtual HCI controller netgraph node type
+.Sh SYNOPSIS
+.In netgraph/bluetooth/include/ng_hci_virt.h
+.Sh DESCRIPTION
+The
+.Nm
+netgraph node type is a software stand-in for a physical Bluetooth
+controller.
+It presents the identical upstream contract as the
+.Xr ng_ubt 4
+USB controller driver \(em a single hook that connects to the
+.Xr ng_hci 4
+node's
+.Dq drv
+hook and carries type-prefixed HCI packets in both directions \(em so the
+Bluetooth stack
+.Pq Xr ng_hci 4 , Xr ng_l2cap 4 , Xr blued 8
+attaches to it exactly as it would to a real adapter, with no hardware
+present.
+.Pp
+Each node is bridged to userspace through a per-instance cloning character
+device,
+.Pa /dev/vhci Ns Ar N .
+The kernel performs no HCI parsing: the
+.Dq drv Ns -hook
+wire format (a one-byte packet-type indicator followed by the HCI payload)
+is delivered verbatim.
+Data arriving down the hook from
+.Xr ng_hci 4
+is host-to-controller traffic
+.Pq HCI Command, ACL, SCO or ISO
+and is queued for
+.Xr read 2 ;
+data written with
+.Xr write 2
+is controller-to-host traffic
+.Pq HCI Event, ACL, SCO or ISO
+and is forwarded up the hook.
+.Pp
+Nodes are created and destroyed through the
+.Pa /dev/vhci
+control device with the
+.Dv VHCI_CREATE
+and
+.Dv VHCI_DESTROY
+.Xr ioctl 2
+requests; a created node is named
+.Dq vhci Ns Ar N .
+The
+.Xr vhcitool 8
+utility drives this interface and runs a controller emulator on the
+userspace side.
+.Sh HOOKS
+.Bl -tag -width ".Va hook"
+.It Va hook
+The single controller hook.
+It is connected to the
+.Dq drv
+hook of an
+.Xr ng_hci 4
+node, typically with
+.Dq Li "mkpeer vhci Ns Ar N Ns : hci hook drv" .
+.El
+.Sh CONTROL MESSAGES
+This node type supports only the generic control messages.
+Instance lifecycle is managed through the
+.Pa /dev/vhci
+control device rather than netgraph control messages.
+.Sh FILES
+.Bl -tag -width ".Pa /dev/vhci Ns Ar N" -compact
+.It Pa /dev/vhci
+control device
+.Pq Dv VHCI_CREATE , Dv VHCI_DESTROY
+.It Pa /dev/vhci Ns Ar N
+per-node HCI packet endpoint
+.El
+.Sh SHUTDOWN
+A node shuts down when it is destroyed through
+.Dv VHCI_DESTROY ,
+when the module is unloaded, or when it receives a
+.Dv NGM_SHUTDOWN
+control message.
+Destruction fails with
+.Er EBUSY
+while
+.Pa /dev/vhci Ns Ar N
+is open.
+.Sh SEE ALSO
+.Xr netgraph 4 ,
+.Xr ng_hci 4 ,
+.Xr ng_l2cap 4 ,
+.Xr ng_ubt 4 ,
+.Xr blued 8 ,
+.Xr vhcitool 8
+.Sh AUTHORS
+.An Kory Heard
+.Sh SECURITY CONSIDERATIONS
+The
+.Pa /dev/vhci
+control device is restricted to the super-user
+.Pq Dv PRIV_DRIVER .
+A virtual controller injects HCI events directly into the kernel Bluetooth
+stack and must be trusted accordingly.

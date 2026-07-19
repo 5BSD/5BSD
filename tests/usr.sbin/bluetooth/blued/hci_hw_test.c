@@ -38,7 +38,7 @@
  *
  * ADDING NEW HARDWARE TESTS
  *
- *   BlueZ pattern: each test exercises one HCI command or a small
+ *   Pattern: each test exercises one HCI command or a small
  *   command sequence, resets the controller first, and restores
  *   state on exit.  Follow this model:
  *
@@ -103,6 +103,8 @@
 #include "ble_util.h"
 #include "hci_log.h"
 #include "hci_util.h"
+#include "adv_builder.h"
+#include "spec_hci_hw_oracles.h"
 
 /* ble_util.h globals */
 atomic_int blued_verbose = 1;	/* enable logging for diagnostics */
@@ -193,18 +195,18 @@ ATF_TC_BODY(hci_hw_read_features, tc)
 	ATF_CHECK_EQ(hci_le_read_local_features(fd, &features), 0);
 	ATF_CHECK_MSG(features != 0, "LE features are all zero");
 	/* LE Encryption (bit 0) is mandatory */
-	ATF_CHECK_MSG(features & LE_FEAT_ENCRYPTION,
+	ATF_CHECK_MSG(features & BT_HW_FEAT_ENCRYPTION,
 	    "LE Encryption not supported (mandatory feature)");
 	printf("LE features: 0x%llx\n", (unsigned long long)features);
-	if (features & LE_FEAT_DATA_LENGTH_EXT)
+	if (features & BT_HW_FEAT_DATA_LENGTH_EXT)
 		printf("  Data Length Extension: yes\n");
-	if (features & LE_FEAT_2M_PHY)
+	if (features & BT_HW_FEAT_2M_PHY)
 		printf("  2M PHY: yes\n");
-	if (features & LE_FEAT_EXT_ADVERTISING)
+	if (features & BT_HW_FEAT_EXT_ADVERTISING)
 		printf("  Extended Advertising: yes\n");
-	if (features & LE_FEAT_LL_PRIVACY)
+	if (features & BT_HW_FEAT_LL_PRIVACY)
 		printf("  LL Privacy: yes\n");
-	if (features & LE_FEAT_CONN_PARAM_REQ)
+	if (features & BT_HW_FEAT_CONN_PARAM_REQ)
 		printf("  Connection Parameter Request: yes\n");
 	close(fd);
 }
@@ -228,7 +230,10 @@ ATF_TC_BODY(hci_hw_read_buffer_size, tc)
 	if (ret == 0) {
 		printf("LE Buffer: acl_len=%d acl_num=%d iso_len=%d iso_num=%d\n",
 		    acl_len, acl_num, iso_len, iso_num);
-		ATF_CHECK(acl_len > 0 || acl_num > 0);
+		/*
+		 * Vol 4 Part E §7.8.2 permits both LE ACL fields to be zero
+		 * when the Controller shares the BR/EDR data buffers.
+		 */
 	} else {
 		printf("LE Read Buffer Size v2 not supported (OK)\n");
 	}
@@ -249,9 +254,9 @@ ATF_TC_HEAD(hci_hw_legacy_adv_cycle, tc)
 ATF_TC_BODY(hci_hw_legacy_adv_cycle, tc)
 {
 	int fd = open_adapter();
-	uint8_t adv_data[31];
+	uint8_t adv_data[BT_HW_LEGACY_ADV_DATA_MAX];
 	int adv_len;
-	uint16_t uuids[] = { 0x1800 };
+	uint16_t uuids[] = { BT_HW_GAP_SERVICE_UUID };
 
 	hci_reset(fd);
 	usleep(100000);
@@ -259,7 +264,7 @@ ATF_TC_BODY(hci_hw_legacy_adv_cycle, tc)
 	hci_node_init(fd);
 
 	ATF_CHECK_EQ(hci_le_set_advertising_params(fd,
-	    0x00A0, 0x00A0, 0x00, 0x00, 0x00), 0);
+	    BT_HW_ADV_INTERVAL_SAMPLE, BT_HW_ADV_INTERVAL_SAMPLE, 0, 0, 0), 0);
 
 	adv_len = ble_build_adv_data(adv_data, sizeof(adv_data),
 	    "ATF-Test", uuids, 1);
@@ -268,10 +273,10 @@ ATF_TC_BODY(hci_hw_legacy_adv_cycle, tc)
 	    (uint8_t)adv_len), 0);
 
 	/* Scan response */
-	uint8_t scan_rsp[31];
+	uint8_t scan_rsp[BT_HW_LEGACY_ADV_DATA_MAX];
 	int sr_len = 0;
 	scan_rsp[sr_len++] = 9; /* length */
-	scan_rsp[sr_len++] = 0x09; /* Complete Local Name */
+	scan_rsp[sr_len++] = BT_HW_AD_TYPE_NAME_COMPLETE;
 	memcpy(scan_rsp + sr_len, "ATF-Test", 8);
 	sr_len += 8;
 	ATF_CHECK_EQ(hci_le_set_scan_response_data(fd, scan_rsp,
@@ -308,9 +313,9 @@ ATF_TC_BODY(hci_hw_resolving_list, tc)
 	arc4random_buf(test_irk, sizeof(test_irk));
 
 	ATF_CHECK_EQ(hci_le_clear_resolving_list(fd), 0);
-	ATF_CHECK_EQ(hci_le_add_dev_resolving_list(fd, 0x00,
+	ATF_CHECK_EQ(hci_le_add_dev_resolving_list(fd, BT_HW_PUBLIC_ADDR_TYPE,
 	    test_addr, test_irk, zero_irk), 0);
-	ATF_CHECK_EQ(hci_le_set_rpa_timeout(fd, 900), 0);
+	ATF_CHECK_EQ(hci_le_set_rpa_timeout(fd, BT_HW_RPA_TIMEOUT_DEFAULT), 0);
 	ATF_CHECK_EQ(hci_le_set_addr_resolution_enable(fd, 1), 0);
 	ATF_CHECK_EQ(hci_le_set_addr_resolution_enable(fd, 0), 0);
 	ATF_CHECK_EQ(hci_le_clear_resolving_list(fd), 0);
@@ -338,9 +343,11 @@ ATF_TC_BODY(hci_hw_filter_accept_list, tc)
 	usleep(100000);
 
 	ATF_CHECK_EQ(hci_le_clear_filter_accept_list(fd), 0);
-	ATF_CHECK_EQ(hci_le_add_device_to_filter_accept_list(fd, 0x00,
+	ATF_CHECK_EQ(hci_le_add_device_to_filter_accept_list(fd,
+	    BT_HW_PUBLIC_ADDR_TYPE,
 	    test_addr), 0);
-	ATF_CHECK_EQ(hci_le_remove_device_from_filter_accept_list(fd, 0x00,
+	ATF_CHECK_EQ(hci_le_remove_device_from_filter_accept_list(fd,
+	    BT_HW_PUBLIC_ADDR_TYPE,
 	    test_addr), 0);
 	ATF_CHECK_EQ(hci_le_clear_filter_accept_list(fd), 0);
 
@@ -364,11 +371,11 @@ ATF_TC_BODY(hci_hw_data_length_defaults, tc)
 	uint64_t features = 0;
 
 	hci_le_read_local_features(fd, &features);
-	if (!(features & LE_FEAT_DATA_LENGTH_EXT))
+	if (!(features & BT_HW_FEAT_DATA_LENGTH_EXT))
 		atf_tc_skip("controller does not support DLE");
 
 	ATF_CHECK_EQ(hci_le_write_suggested_default_data_length(fd,
-	    0x00FB, 0x0848), 0);
+	    BT_HW_DATA_OCTETS_MAX, BT_HW_DATA_TIME_MAX), 0);
 	close(fd);
 }
 
@@ -385,10 +392,12 @@ ATF_TC_BODY(hci_hw_default_phy, tc)
 	uint64_t features = 0;
 
 	hci_le_read_local_features(fd, &features);
-	if (!(features & LE_FEAT_2M_PHY))
+	if (!(features & BT_HW_FEAT_2M_PHY))
 		atf_tc_skip("controller does not support 2M PHY");
 
-	ATF_CHECK_EQ(hci_le_set_default_phy(fd, 0x00, 0x02, 0x02), 0);
+	ATF_CHECK_EQ(hci_le_set_default_phy(fd,
+	    BT_HW_ALL_PHYS_HAVE_PREFERENCE, BT_HW_PHY_2M_BIT,
+	    BT_HW_PHY_2M_BIT), 0);
 	close(fd);
 }
 
@@ -399,17 +408,17 @@ ATF_TC_BODY(hci_hw_default_phy, tc)
 ATF_TC_WITHOUT_HEAD(test_adv_data_format);
 ATF_TC_BODY(test_adv_data_format, tc)
 {
-	uint8_t buf[31];
-	uint16_t uuids[] = { 0x1800, 0xFFE0 };
+	uint8_t buf[BT_HW_LEGACY_ADV_DATA_MAX];
+	uint16_t uuids[] = { BT_HW_GAP_SERVICE_UUID, 0xffe0 };
 	int len;
 
 	len = ble_build_adv_data(buf, sizeof(buf), "TestDev", uuids, 2);
 	ATF_REQUIRE(len > 0);
-	ATF_CHECK(len <= 31);
+	ATF_CHECK(len <= BT_HW_LEGACY_ADV_DATA_MAX);
 
 	/* First element should be Flags */
-	ATF_CHECK_EQ(buf[1], 0x01); /* AD type: Flags */
-	ATF_CHECK_EQ(buf[2], 0x06); /* LE General + BR/EDR Not Supported */
+	ATF_CHECK_EQ(buf[1], BT_HW_AD_TYPE_FLAGS);
+	ATF_CHECK_EQ(buf[2], BT_HW_AD_FLAGS_GENERAL_NO_BREDR);
 
 	/* Verify total length matches returned length */
 	int pos = 0;
@@ -476,14 +485,14 @@ ATF_TC_BODY(hci_hw_ext_adv_cycle, tc)
 {
 	int fd = open_adapter();
 	uint64_t features = 0;
-	uint8_t adv_data[31];
+	uint8_t adv_data[BT_HW_LEGACY_ADV_DATA_MAX];
 	int adv_len;
-	uint16_t uuids[] = { 0x1800 };
+	uint16_t uuids[] = { BT_HW_GAP_SERVICE_UUID };
 
 	hci_reset(fd);
 	usleep(100000);
 	hci_le_read_local_features(fd, &features);
-	if (!(features & LE_FEAT_EXT_ADVERTISING))
+	if (!(features & BT_HW_FEAT_EXT_ADVERTISING))
 		atf_tc_skip("controller does not support extended advertising");
 
 	hci_write_le_host_support(fd, 1, 1);
@@ -493,34 +502,76 @@ ATF_TC_BODY(hci_hw_ext_adv_cycle, tc)
 	hci_le_clear_adv_sets(fd);
 
 	/* Set ext adv params (legacy connectable) */
-	ATF_CHECK_EQ(hci_le_set_ext_adv_params(fd, 0x00,
-	    0x0013, 0x00A0, 0x00A0, 0x00, 0x00), 0);
+	ATF_CHECK_EQ(hci_le_set_ext_adv_params(fd, BT_HW_ADV_HANDLE_MIN,
+	    BT_HW_LEGACY_CONN_SCAN_PROPS, BT_HW_ADV_INTERVAL_SAMPLE,
+	    BT_HW_ADV_INTERVAL_SAMPLE, 0, BT_HW_PUBLIC_ADDR_TYPE), 0);
 
 	/* Set data */
 	adv_len = ble_build_adv_data(adv_data, sizeof(adv_data),
 	    "ATF-Ext", uuids, 1);
 	ATF_REQUIRE(adv_len > 0);
-	ATF_CHECK_EQ(hci_le_set_ext_adv_data(fd, 0x00, adv_data,
+	ATF_CHECK_EQ(hci_le_set_ext_adv_data(fd, BT_HW_ADV_HANDLE_MIN, adv_data,
 	    (uint8_t)adv_len), 0);
 
 	/* Set scan response */
-	uint8_t sr[31];
+	uint8_t sr[BT_HW_LEGACY_ADV_DATA_MAX];
 	int sr_len = 0;
 	sr[sr_len++] = 8;
-	sr[sr_len++] = 0x09;
+	sr[sr_len++] = BT_HW_AD_TYPE_NAME_COMPLETE;
 	memcpy(sr + sr_len, "ATF-Ext", 7);
 	sr_len += 7;
-	ATF_CHECK_EQ(hci_le_set_ext_scan_response_data(fd, 0x00, sr,
+	ATF_CHECK_EQ(hci_le_set_ext_scan_response_data(fd,
+	    BT_HW_ADV_HANDLE_MIN, sr,
 	    (uint8_t)sr_len), 0);
 
 	/* Enable, brief advertise, disable */
-	ATF_CHECK_EQ(hci_le_set_ext_adv_enable(fd, 1, 0x00), 0);
+	ATF_CHECK_EQ(hci_le_set_ext_adv_enable(fd, 1,
+	    BT_HW_ADV_HANDLE_MIN), 0);
 	usleep(200000);
-	ATF_CHECK_EQ(hci_le_set_ext_adv_enable(fd, 0, 0x00), 0);
+	ATF_CHECK_EQ(hci_le_set_ext_adv_enable(fd, 0,
+	    BT_HW_ADV_HANDLE_MIN), 0);
 
 	/* Remove set */
-	ATF_CHECK_EQ(hci_le_remove_adv_set(fd, 0x00), 0);
+	ATF_CHECK_EQ(hci_le_remove_adv_set(fd, BT_HW_ADV_HANDLE_MIN), 0);
 
+	close(fd);
+}
+
+/* BLE 5.0: Periodic advertising — Core Spec Vol 4 Part E §7.8.61-.63. */
+ATF_TC(hci_hw_periodic_adv_cycle);
+ATF_TC_HEAD(hci_hw_periodic_adv_cycle, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "Core Spec Vol 4 Part E §7.8.61-.63: periodic advertising cycle");
+}
+ATF_TC_BODY(hci_hw_periodic_adv_cycle, tc)
+{
+	int fd = open_adapter();
+	uint64_t features = 0;
+	const uint8_t data[] = { 0x02, BT_HW_AD_TYPE_FLAGS,
+	    BT_HW_AD_FLAGS_GENERAL_NO_BREDR };
+
+	hci_reset(fd);
+	usleep(100000);
+	ATF_REQUIRE_EQ(0, hci_le_read_local_features(fd, &features));
+	if ((features & BT_HW_FEAT_PERIODIC_ADVERTISING) == 0)
+		atf_tc_skip("controller does not support periodic advertising");
+
+	/* Periodic advertising is configured on the single deterministic set 0. */
+	ATF_REQUIRE_EQ(0, hci_le_clear_adv_sets(fd));
+	ATF_REQUIRE_EQ(0, hci_le_set_ext_adv_params(fd, BT_HW_ADV_HANDLE_MIN,
+	    BT_HW_LEGACY_CONN_SCAN_PROPS, BT_HW_ADV_INTERVAL_SAMPLE,
+	    BT_HW_ADV_INTERVAL_SAMPLE, 0, BT_HW_PUBLIC_ADDR_TYPE));
+	ATF_REQUIRE_EQ(0, hci_le_set_periodic_adv_params(fd,
+	    BT_HW_ADV_HANDLE_MIN, BT_HW_PERIODIC_INTERVAL_MIN,
+	    BT_HW_PERIODIC_INTERVAL_SAMPLE, 0));
+	ATF_REQUIRE_EQ(0, hci_le_set_periodic_adv_data(fd, 0, data,
+	    sizeof(data)));
+	ATF_REQUIRE_EQ(0, hci_le_set_periodic_adv_enable(fd, 1, 0));
+	usleep(200000);
+	ATF_CHECK_EQ(0, hci_le_set_periodic_adv_enable(fd, 0, 0));
+	ATF_CHECK_EQ(0, hci_le_remove_adv_set(fd, 0));
 	close(fd);
 }
 
@@ -544,7 +595,7 @@ ATF_TC_BODY(hci_hw_adv_capabilities, tc)
 	hci_write_le_host_support(fd, 1, 1);
 	hci_node_init(fd);
 	hci_le_read_local_features(fd, &features);
-	if (!(features & LE_FEAT_EXT_ADVERTISING))
+	if (!(features & BT_HW_FEAT_EXT_ADVERTISING))
 		atf_tc_skip("no extended advertising support");
 
 	ATF_CHECK_EQ(hci_le_read_num_supported_adv_sets(fd, &num_sets), 0);
@@ -552,7 +603,7 @@ ATF_TC_BODY(hci_hw_adv_capabilities, tc)
 	printf("Supported advertising sets: %d\n", num_sets);
 
 	ATF_CHECK_EQ(hci_le_read_max_adv_data_length(fd, &max_len), 0);
-	ATF_CHECK(max_len >= 31);
+	ATF_CHECK(max_len >= BT_HW_LEGACY_ADV_DATA_MAX);
 	printf("Max advertising data length: %d\n", max_len);
 
 	close(fd);
@@ -577,14 +628,14 @@ ATF_TC_BODY(hci_hw_ext_scan_2sec, tc)
 	hci_reset(fd);
 	usleep(100000);
 	hci_le_read_local_features(fd, &features);
-	if (!(features & LE_FEAT_EXT_ADVERTISING))
+	if (!(features & BT_HW_FEAT_EXT_ADVERTISING))
 		atf_tc_skip("no extended scanning support");
 
 	hci_write_le_host_support(fd, 1, 1);
 	hci_node_init(fd);
 
 	int ret = hci_le_ext_scan(fd, 2, results, BLE_MAX_SCAN_RESULTS,
-	    &nresults);
+	    &nresults, BT_HW_PHY_1M_BIT);
 	ATF_CHECK_EQ(ret, 0);
 	printf("Extended scan found %d device(s)\n", nresults);
 
@@ -609,18 +660,20 @@ ATF_TC_BODY(hci_hw_privacy_mode, tc)
 	hci_reset(fd);
 	usleep(100000);
 	hci_le_read_local_features(fd, &features);
-	if (!(features & LE_FEAT_LL_PRIVACY))
+	if (!(features & BT_HW_FEAT_LL_PRIVACY))
 		atf_tc_skip("no LL Privacy support");
 
 	hci_le_clear_resolving_list(fd);
 	arc4random_buf(irk, sizeof(irk));
-	ATF_CHECK_EQ(hci_le_add_dev_resolving_list(fd, 0x00,
+	ATF_CHECK_EQ(hci_le_add_dev_resolving_list(fd, BT_HW_PUBLIC_ADDR_TYPE,
 	    test_addr, irk, zero_irk), 0);
 
 	/* Device privacy mode (0x01) */
-	ATF_CHECK_EQ(hci_le_set_privacy_mode(fd, 0x00, test_addr, 0x01), 0);
+	ATF_CHECK_EQ(hci_le_set_privacy_mode(fd, BT_HW_PUBLIC_ADDR_TYPE,
+	    test_addr, BT_HW_PRIVACY_MODE_DEVICE), 0);
 	/* Network privacy mode (0x00) */
-	ATF_CHECK_EQ(hci_le_set_privacy_mode(fd, 0x00, test_addr, 0x00), 0);
+	ATF_CHECK_EQ(hci_le_set_privacy_mode(fd, BT_HW_PUBLIC_ADDR_TYPE,
+	    test_addr, BT_HW_PRIVACY_MODE_NETWORK), 0);
 
 	hci_le_clear_resolving_list(fd);
 	close(fd);
@@ -640,9 +693,9 @@ ATF_TC_BODY(hci_hw_conn_param_req, tc)
 	uint64_t features = 0;
 
 	ATF_CHECK_EQ(hci_le_read_local_features(fd, &features), 0);
-	/* BT 4.1+ controllers should support this */
-	ATF_CHECK_MSG(features & LE_FEAT_CONN_PARAM_REQ,
-	    "LE Connection Parameter Request not supported");
+	/* Vol 6 Part B §4.6 marks this feature optional; absence is not failure. */
+	if ((features & BT_HW_FEAT_CONN_PARAM_REQ) == 0)
+		atf_tc_skip("controller lacks optional Connection Parameters Request");
 	printf("LL Connection Parameter Request: supported\n");
 
 	close(fd);
@@ -652,15 +705,15 @@ ATF_TC_BODY(hci_hw_conn_param_req, tc)
 ATF_TC_WITHOUT_HEAD(test_adv_data_name_truncation);
 ATF_TC_BODY(test_adv_data_name_truncation, tc)
 {
-	uint8_t buf[31];
-	uint16_t uuids[] = { 0x1800 };
+	uint8_t buf[BT_HW_LEGACY_ADV_DATA_MAX];
+	uint16_t uuids[] = { BT_HW_GAP_SERVICE_UUID };
 	int len;
 
 	/* Long name that won't fit in 31 bytes with flags + UUID */
 	len = ble_build_adv_data(buf, sizeof(buf),
 	    "This Name Is Way Too Long For BLE", uuids, 1);
 	ATF_REQUIRE(len > 0);
-	ATF_CHECK(len <= 31);
+	ATF_CHECK(len <= BT_HW_LEGACY_ADV_DATA_MAX);
 
 	/* Should use Shortened Local Name (0x08) instead of Complete (0x09) */
 	int found_name = 0;
@@ -668,13 +721,13 @@ ATF_TC_BODY(test_adv_data_name_truncation, tc)
 	while (pos < len) {
 		int elen = buf[pos];
 		uint8_t type = buf[pos + 1];
-		if (type == 0x08 || type == 0x09)
+		if (type == BT_HW_AD_TYPE_NAME_SHORT ||
+		    type == BT_HW_AD_TYPE_NAME_COMPLETE)
 			found_name = type;
 		pos += 1 + elen;
 	}
-	/* If name was truncated, type should be 0x08 (Shortened) */
-	ATF_CHECK_MSG(found_name == 0x08 || found_name == 0x09,
-	    "no name AD element found");
+	/* CSS Part A §1.8 requires the shortened type after truncation. */
+	ATF_CHECK_EQ(found_name, BT_HW_AD_TYPE_NAME_SHORT);
 }
 
 /* ================================================================ */
@@ -716,6 +769,7 @@ ATF_TP_ADD_TCS(tp)
 
 	/* BLE 5.0 Extended Advertising */
 	ATF_TP_ADD_TC(tp, hci_hw_ext_adv_cycle);
+	ATF_TP_ADD_TC(tp, hci_hw_periodic_adv_cycle);
 	ATF_TP_ADD_TC(tp, hci_hw_adv_capabilities);
 	ATF_TP_ADD_TC(tp, hci_hw_ext_scan_2sec);
 

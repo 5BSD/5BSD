@@ -338,11 +338,6 @@ ng_btsocket_l2cap_node_connect(hook_p hook)
 	NG_HOOK_SET_PRIVATE(hook, NULL);
 	NG_HOOK_REF(hook); /* Keep extra reference to the hook */
 
-#if 0
-	NG_HOOK_FORCE_QUEUE(NG_HOOK_PEER(hook));
-	NG_HOOK_FORCE_QUEUE(hook);
-#endif
-
 	return (0);
 } /* ng_btsocket_l2cap_node_connect */
 
@@ -719,8 +714,10 @@ ng_btsocket_l2cap_process_l2ca_con_ind(struct ng_mesg *msg,
 		pcb1->cid = ip->lcid;
 		pcb1->rt = rt;
 
-		/* Set idtype and address types for LE channels */
-		if (ip->lcid == NG_L2CAP_ATT_CID)
+		/* Prefer the idtype supplied by L2CAP for dynamic channels. */
+		if (ip->idtype != 0)
+			pcb1->idtype = ip->idtype;
+		else if (ip->lcid == NG_L2CAP_ATT_CID)
 			pcb1->idtype = NG_L2CAP_L2CA_IDTYPE_ATT;
 		else if (ip->lcid == NG_L2CAP_SMP_CID)
 			pcb1->idtype = NG_L2CAP_L2CA_IDTYPE_SMP;
@@ -755,20 +752,16 @@ ng_btsocket_l2cap_process_l2ca_con_ind(struct ng_mesg *msg,
 respond:
 	/*
 	 * LE fixed channels (ATT/SMP) do not use L2CAP signalling-based
-	 * connect/config — skip ConnectRsp unconditionally.
+	 * connect/config.  Dynamic ECBFC indications do answer here: L2CAP
+	 * aggregates the individual listener decisions and emits one atomic
+	 * 0x18 response for the complete CID group.
 	 *
-	 * LE CoC channels also skip ConnectRsp when the connection
-	 * succeeded (result == 0), since the L2CAP layer already sent
-	 * the LE Credit Based Connection Response.  However, when no
-	 * socket is listening (result != 0), we must NOT suppress the
-	 * error — the L2CAP layer needs to send a rejection so the
-	 * remote peer knows the connection failed.
+	 * Dynamic LE CoC channels use this response as the service-acceptance
+	 * handshake.  L2CAP deliberately has not sent the peer a success yet;
+	 * always answer so an absent listener becomes SPSM Not Supported and a
+	 * real listener is the event that commits the channel OPEN.
 	 */
 	if (ip->lcid == NG_L2CAP_ATT_CID || ip->lcid == NG_L2CAP_SMP_CID)
-		error = 0;
-	else if ((ip->linktype == NG_HCI_LINK_LE_PUBLIC ||
-		  ip->linktype == NG_HCI_LINK_LE_RANDOM) &&
-		 result == 0)
 		error = 0;
 	else
 		error = ng_btsocket_l2cap_send_l2ca_con_rsp_req(token, rt,
@@ -1368,6 +1361,7 @@ ng_btsocket_l2cap_send_l2ca_con_req(ng_btsocket_l2cap_pcb_p pcb)
 	ip->psm = pcb->psm;
 	ip->linktype = ng_btsock_l2cap_addrtype_to_linktype(pcb->dsttype);
 	ip->idtype = pcb->idtype;
+	ip->own_address_type = pcb->own_addr_type;
 	NG_SEND_MSG_HOOK(error, ng_btsocket_l2cap_node, msg,pcb->rt->hook, 0);
 
 	return (error);
@@ -2347,6 +2341,14 @@ ng_btsocket_l2cap_connect(struct socket *so, struct sockaddr *nam,
 	if (sa->l2cap_family != AF_BLUETOOTH)
 		return (EAFNOSUPPORT);
 	if (sa->l2cap_len == sizeof(*sal)){
+		/*
+		 * Legacy sockaddr_l2cap_compat has no l2cap_cid /
+		 * l2cap_bdaddr_type.  Zero the promoted struct first so the
+		 * fields not present in the compat layout (notably l2cap_cid,
+		 * read at the PSM/CID check below) start defined instead of
+		 * carrying uninitialized stack contents.
+		 */
+		bzero(&ba, sizeof(ba));
 		bcopy(sal, &ba, sizeof(*sal));
 		sa = &ba;
 		sa->l2cap_len = sizeof(*sa);
@@ -2524,6 +2526,11 @@ ng_btsocket_l2cap_ctloutput(struct socket *so, struct sockopt *sopt)
 			}
 			break;
 
+		case SO_L2CAP_OWN_ADDR_TYPE:
+			error = sooptcopyout(sopt, &pcb->own_addr_type,
+			    sizeof(pcb->own_addr_type));
+			break;
+
 		default:
 			error = ENOPROTOOPT;
 			break;
@@ -2610,6 +2617,18 @@ ng_btsocket_l2cap_ctloutput(struct socket *so, struct sockopt *sopt)
 					pcb->need_encrypt =
 					    (v.encryption) ? 1 : 0;
 				break;
+
+			case SO_L2CAP_OWN_ADDR_TYPE: {
+				uint8_t own_addr_type;
+
+				error = sooptcopyin(sopt, &own_addr_type,
+				    sizeof(own_addr_type), sizeof(own_addr_type));
+				if (error == 0 && own_addr_type > 0x03)
+					error = EINVAL;
+				if (error == 0)
+					pcb->own_addr_type = own_addr_type;
+				break;
+			}
 
 			default:
 				error = ENOPROTOOPT;
@@ -3265,12 +3284,15 @@ ng_btsocket_l2cap_result2errno(int result)
 	case NG_HCI_ERROR_CON_TERM_LOCAL_HOST:
 		return (ECONNABORTED);
 
-#if 0 /* XXX not yet */
 	case 0x17: /* Repeated attempts */
-	case NG_HCI_ERROR_UNSPECIFIED:
 	case 0x23: /* LMP error transaction collision */
+		return (EAGAIN);
+
+	case NG_HCI_ERROR_UNSPECIFIED:
+		return (EIO);
+
 	case 0x28: /* Instant passed */
-#endif
+		return (ETIMEDOUT);
 	}
 
 	return (ENOSYS);

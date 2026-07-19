@@ -81,7 +81,8 @@ SDT_PROBE_DEFINE3(bluetooth, l2cap, data, recv,
  */
 
 int
-ng_l2cap_lp_con_req(ng_l2cap_p l2cap, bdaddr_p bdaddr, int type)
+ng_l2cap_lp_con_req(ng_l2cap_p l2cap, bdaddr_p bdaddr, int type,
+    uint8_t own_address_type)
 {
 	struct ng_mesg		*msg = NULL;
 	ng_hci_lp_con_req_ep	*ep = NULL;
@@ -126,6 +127,7 @@ ng_l2cap_lp_con_req(ng_l2cap_p l2cap, bdaddr_p bdaddr, int type)
 	ep = (ng_hci_lp_con_req_ep *) (msg->data);
 	bcopy(bdaddr, &ep->bdaddr, sizeof(ep->bdaddr));
 	ep->link_type = type;
+	ep->own_address_type = own_address_type;
 
 	con->flags |= NG_L2CAP_CON_OUTGOING;
 	con->state = NG_L2CAP_W4_LP_CON_CFM;
@@ -203,6 +205,15 @@ ng_l2cap_lp_con_cfm(ng_l2cap_p l2cap, struct ng_mesg *msg)
 	if (ep->status == 0) {
 		con->state = NG_L2CAP_CON_OPEN;
 		con->con_handle = ep->con_handle;
+
+		/*
+		 * Record our local role on this link (Core Spec Vol 4 Part E
+		 * 7.7.65: 0x00 = Central, 0x01 = Peripheral).  L2CAP needs it
+		 * to enforce direction-restricted signalling such as the
+		 * Connection Parameter Update Request (Vol 3 Part A Section
+		 * 4.20), which only a Peripheral may send to a Central.
+		 */
+		con->role = ep->role;
 
 		/*
 		 * For incoming LE connections, auto-create ATT and SMP
@@ -324,6 +335,7 @@ ng_l2cap_lp_con_ind(ng_l2cap_p l2cap, struct ng_mesg *msg)
 	rp->status = 0x00; /* accept connection */
 	rp->link_type = ep->link_type;
 	bcopy(&ep->bdaddr, &rp->bdaddr, sizeof(rp->bdaddr));
+	rp->con_handle = ep->con_handle;
 
 	con->state = NG_L2CAP_W4_LP_CON_CFM;
 	ng_l2cap_lp_timeout(con);
@@ -900,6 +912,18 @@ ng_l2cap_lp_receive(ng_l2cap_p l2cap, struct mbuf *m)
 				__func__, NG_NODE_NAME(l2cap->node),
 				con->con_handle);
 			goto drop;
+		}
+
+		if (length != m->m_pkthdr.len) {
+			NG_L2CAP_ERR(
+"%s: %s - HCI continuation length %d != mbuf length %d, dropping\n",
+				__func__, NG_NODE_NAME(l2cap->node),
+				length, m->m_pkthdr.len);
+			NG_FREE_M(m);
+			NG_FREE_M(con->rx_pkt);
+			con->rx_pkt = NULL;
+			con->rx_pkt_len = 0;
+			return (EMSGSIZE);
 		}
 
 		/* Validate fragment does not exceed remaining expected bytes */

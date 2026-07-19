@@ -6,6 +6,7 @@ SUBDIR=	\
 	l2cap	\
 	socket	\
 	ubt	\
-	ubtbcmfw
+	ubtbcmfw	\
+	vhci
 
 .include <bsd.subdir.mk>

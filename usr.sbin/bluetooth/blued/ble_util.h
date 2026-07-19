@@ -59,14 +59,10 @@ static const uint8_t bt_base_uuid_le[12] = {
  * Level 1: informational (-d or -v) — connection events, state changes
  * Level 2: trace (-vv) — every PDU, hex dumps, crypto steps
  *
- * The old blued_debug / DBG() interface is preserved for backward
- * compatibility: -d sets blued_verbose = 1.
+ * -d sets blued_verbose = 1.
  */
 extern atomic_int blued_verbose;	/* 0-5, atomic for thread safety */
 extern int blued_daemonized;	/* 1 if running as daemon (use syslog) */
-
-/* Backward compat */
-#define blued_debug	(blued_verbose > 0)
 
 #define _BLUED_LOG(layer, lvl, fmt, ...) do {			\
 	if (blued_verbose >= (lvl)) {				\
@@ -101,6 +97,7 @@ extern int blued_daemonized;	/* 1 if running as daemon (use syslog) */
 #define LOG_SMP(lvl, fmt, ...)	_BLUED_LOG("SMP",  lvl, fmt, ##__VA_ARGS__)
 #define LOG_GATT(lvl, fmt, ...)	_BLUED_LOG("GATT", lvl, fmt, ##__VA_ARGS__)
 #define LOG_HOGP(lvl, fmt, ...)	_BLUED_LOG("HOGP", lvl, fmt, ##__VA_ARGS__)
+#define LOG_ISO(lvl, fmt, ...)	_BLUED_LOG("ISO",  lvl, fmt, ##__VA_ARGS__)
 
 /* Hex dump helper for trace-level (level 2) logging */
 static inline void
@@ -118,11 +115,5 @@ blued_hexdump(const char *layer, const char *label,
 		fprintf(stderr, " %02x", data[i]);
 	fprintf(stderr, "\n");
 }
-
-/* Legacy macro — maps to generic level-1 logging */
-#define DBG(fmt, ...) do { \
-	if (blued_verbose >= 1) \
-		fprintf(stderr, "blued: " fmt "\n", ##__VA_ARGS__); \
-} while (0)
 
 #endif /* _BLUED_BLE_UTIL_H_ */

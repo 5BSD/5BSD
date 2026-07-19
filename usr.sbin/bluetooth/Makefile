@@ -12,9 +12,12 @@ SUBDIR= \
 	hcsecd \
 	l2control \
 	l2ping \
+	meshctl \
+	meshd \
 	rfcomm_pppd \
 	sdpcontrol \
-	sdpd
+	sdpd \
+	vhcitool
 
 .if ${MK_USB} != "no"
 SUBDIR+=	ath3kfw

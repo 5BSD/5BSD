@@ -407,6 +407,7 @@ MAN=	aac.4 \
 	ng_gif.4 \
 	ng_gif_demux.4 \
 	ng_hci.4 \
+	ng_hci_virt.4 \
 	ng_hole.4 \
 	ng_hub.4 \
 	ng_iface.4 \

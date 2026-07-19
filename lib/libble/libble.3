@@ -3,26 +3,174 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd June 27, 2026
+.Dd June 30, 2026
 .Dt LIBBLE 3
 .Os
 .Sh NAME
 .Nm libble ,
 .Nm ble_open ,
+.Nm ble_open_fd ,
+.Nm ble_handshake ,
 .Nm ble_close ,
+.Nm ble_fd ,
+.Nm ble_process ,
+.Nm ble_errno ,
+.Nm ble_strerror ,
+.Nm ble_is_connected ,
+.Nm ble_get_mtu ,
 .Nm ble_scan ,
+.Nm ble_scan_filtered ,
 .Nm ble_connect ,
+.Nm ble_connect_params ,
+.Nm ble_connect_name ,
+.Nm ble_disconnect ,
+.Nm ble_pair ,
+.Nm ble_rekey ,
+.Nm ble_bond_list ,
+.Nm ble_bond_export ,
+.Nm ble_bond_import ,
+.Nm ble_bond_record_data ,
+.Nm ble_bond_record_from_data ,
+.Nm ble_bond_record_free ,
+.Nm ble_unbond ,
+.Nm ble_connections ,
+.Nm ble_set_phy ,
+.Nm ble_set_data_length ,
+.Nm ble_set_adv_params ,
+.Nm ble_advertise ,
+.Nm ble_adapter_power ,
+.Nm ble_adapter_caps ,
+.Nm ble_set_discoverable ,
+.Nm ble_set_pairable ,
+.Nm ble_set_name ,
+.Nm ble_set_adv_data ,
+.Nm ble_set_scan_response ,
+.Nm ble_periodic_adv_params ,
+.Nm ble_periodic_adv_data ,
+.Nm ble_periodic_adv_enable ,
+.Nm ble_periodic_sync_create ,
+.Nm ble_periodic_sync_cancel ,
+.Nm ble_periodic_sync_terminate ,
+.Nm ble_periodic_adv_list_add ,
+.Nm ble_periodic_adv_list_remove ,
+.Nm ble_periodic_adv_list_clear ,
+.Nm ble_periodic_adv_list_size ,
+.Nm ble_past_transfer ,
+.Nm ble_past_receive_enable ,
+.Nm ble_past_set_info_transfer ,
+.Nm ble_past_params ,
+.Nm ble_past_default_params ,
+.Nm ble_path_loss_reporting ,
+.Nm ble_ecbfc_session_open ,
+.Nm ble_ecbfc_session_close ,
+.Nm ble_eatt_open ,
+.Nm ble_eatt_close ,
+.Nm ble_adv_set_create ,
+.Nm ble_adv_set_handle ,
+.Nm ble_adv_set_params ,
+.Nm ble_adv_set_data ,
+.Nm ble_adv_set_enable ,
+.Nm ble_adv_set_close ,
+.Nm ble_conn_params_update ,
+.Nm ble_get_rssi ,
 .Nm ble_discover ,
 .Nm ble_read ,
 .Nm ble_write ,
-.Nm ble_subscribe
+.Nm ble_write_no_response ,
+.Nm ble_subscribe ,
+.Nm ble_unsubscribe ,
+.Nm ble_add_service ,
+.Nm ble_add_characteristic ,
+.Nm ble_add_include ,
+.Nm ble_add_descriptor ,
+.Nm ble_set_value ,
+.Nm ble_notify ,
+.Nm ble_indicate ,
+.Nm ble_remove_service ,
+.Nm ble_gatt_begin ,
+.Nm ble_gatt_commit ,
+.Nm ble_gatt_rollback ,
+.Nm ble_register_agent ,
+.Nm ble_unregister_agent ,
+.Nm ble_on_write ,
+.Nm ble_on_read_request ,
+.Nm ble_on_authorize ,
+.Nm ble_add_char_ex ,
+.Nm ble_gatt_read_reply ,
+.Nm ble_gatt_read_reject ,
+.Nm ble_gatt_authorize_reply ,
+.Nm ble_read_battery ,
+.Nm ble_passkey_reply ,
+.Nm ble_numcmp_reply ,
+.Nm ble_on_passkey_display ,
+.Nm ble_on_passkey_input ,
+.Nm ble_on_numcmp ,
+.Nm ble_on_connected ,
+.Nm ble_on_disconnected ,
+.Nm ble_set_security_policy ,
+.Nm ble_get_security_policy ,
+.Nm ble_set_mitm ,
+.Nm ble_set_bondable ,
+.Nm ble_set_sc_mode ,
+.Nm ble_set_keypress ,
+.Nm ble_set_io_capability ,
+.Nm ble_set_min_security ,
+.Nm ble_set_min_key_size ,
+.Nm ble_set_key_distribution ,
+.Nm ble_set_rpa_timeout ,
+.Nm ble_set_privacy ,
+.Nm ble_set_preferred_mtu ,
+.Nm ble_get_security_info ,
+.Nm ble_oob_sc_generate ,
+.Nm ble_oob_inject_sc ,
+.Nm ble_oob_inject_legacy ,
+.Nm ble_oob_clear ,
+.Nm ble_resolv_add ,
+.Nm ble_resolv_remove ,
+.Nm ble_resolv_clear ,
+.Nm ble_resolv_entries ,
+.Nm ble_addr_parse ,
+.Nm ble_on_keypress ,
+.Nm ble_acquire_coc ,
+.Nm ble_acquire_iso ,
+.Nm ble_acquire_notify ,
+.Nm ble_acquire_write ,
+.Nm ble_ecbfc_session_count ,
+.Nm ble_ecbfc_session_fd ,
+.Nm ble_ecbfc_session_take_fd ,
+.Nm ble_ecbfc_session_omtu ,
+.Nm ble_ecbfc_session_reconfigure ,
+.Nm ble_iso_cig_create ,
+.Nm ble_iso_cis_create ,
+.Nm ble_iso_cis_teardown ,
+.Nm ble_iso_cig_remove ,
+.Nm ble_iso_cis_accept ,
+.Nm ble_iso_cis_reject ,
+.Nm ble_on_iso_cis_request ,
+.Nm ble_iso_big_create ,
+.Nm ble_iso_big_terminate ,
+.Nm ble_iso_big_create_sync ,
+.Nm ble_iso_big_terminate_sync ,
+.Nm ble_iso_acquire ,
+.Nm ble_iso_bis_acquire ,
+.Nm ble_on_iso_established ,
+.Nm ble_iso_fd ,
+.Nm ble_iso_send ,
+.Nm ble_iso_recv ,
+.Nm ble_iso_close ,
+.Nm ble_addr_str
 .Nd BLE client library for the blued daemon
 .Sh LIBRARY
-.Lb libble
+Bluetooth Low Energy Library
+.Pq Fl lble
 .Sh SYNOPSIS
 .In ble.h
 .Ft ble_ctx_t *
 .Fn ble_open "const char *sock_path"
+.Ft ble_ctx_t *
+.Fn ble_open_fd "int fd"
+.Ft int
+.Fn ble_handshake "ble_ctx_t *ctx"
 .Ft void
 .Fn ble_close "ble_ctx_t *ctx"
 .Ft int
@@ -30,11 +178,136 @@
 .Ft int
 .Fn ble_process "ble_ctx_t *ctx"
 .Ft int
+.Fn ble_errno "ble_ctx_t *ctx"
+.Ft "const char *"
+.Fn ble_strerror "ble_ctx_t *ctx"
+.Ft bool
+.Fn ble_is_connected "ble_ctx_t *ctx"
+.Ft uint16_t
+.Fn ble_get_mtu "ble_ctx_t *ctx"
+.Ft int
 .Fn ble_scan "ble_ctx_t *ctx" "ble_scan_cb cb" "void *arg"
+.Ft int
+.Fn ble_scan_filtered "ble_ctx_t *ctx" "const ble_scan_params_t *params" "ble_scan_cb cb" "void *arg"
 .Ft int
 .Fn ble_connect "ble_ctx_t *ctx" "const ble_addr_t *addr" "ble_connect_cb cb" "void *arg"
 .Ft int
+.Fn ble_connect_params "ble_ctx_t *ctx" "const ble_addr_t *addr" "const ble_conn_params_t *params" "ble_connect_cb cb" "void *arg"
+.Ft int
+.Fn ble_connect_name "ble_ctx_t *ctx" "uint8_t adapter_index" "const char *name" "ble_connect_cb cb" "void *arg"
+.Ft int
 .Fn ble_disconnect "ble_ctx_t *ctx" "const ble_addr_t *addr"
+.Ft int
+.Fn ble_pair "ble_ctx_t *ctx" "const ble_addr_t *addr"
+.Ft int
+.Fn ble_rekey "ble_ctx_t *ctx" "const ble_addr_t *addr"
+.Ft int
+.Fn ble_bond_list "ble_ctx_t *ctx" "ble_bond_t *bonds" "int max_bonds"
+.Ft ble_bond_record_t *
+.Fn ble_bond_export "ble_ctx_t *ctx" "const ble_addr_t *addr"
+.Ft int
+.Fn ble_bond_import "ble_ctx_t *ctx" "const ble_bond_record_t *rec"
+.Ft "const void *"
+.Fn ble_bond_record_data "const ble_bond_record_t *rec" "size_t *len"
+.Ft ble_bond_record_t *
+.Fn ble_bond_record_from_data "const void *data" "size_t len"
+.Ft void
+.Fn ble_bond_record_free "ble_bond_record_t *rec"
+.Ft int
+.Fn ble_unbond "ble_ctx_t *ctx" "const ble_addr_t *addr"
+.Ft int
+.Fn ble_connections "ble_ctx_t *ctx" "ble_connection_info_t *connections" "int max_connections"
+.Ft int
+.Fn ble_set_phy "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint8_t tx_phys" "uint8_t rx_phys"
+.Ft int
+.Fn ble_set_data_length "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t tx_octets" "uint16_t tx_time"
+.Ft int
+.Ft int
+.Fn ble_conn_params_update "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t interval_min" "uint16_t interval_max" "uint16_t latency" "uint16_t timeout"
+.Ft int
+.Fn ble_set_adv_params "ble_ctx_t *ctx" "const ble_adv_params_t *params"
+.Ft int
+.Fn ble_advertise "ble_ctx_t *ctx" "bool enable"
+.Ft int
+.Fn ble_adapter_power "ble_ctx_t *ctx" "int adapter_idx" "bool on"
+.Ft int
+.Fn ble_adapter_caps "ble_ctx_t *ctx" "int adapter_idx" "ble_adapter_caps_t *out"
+.Ft int
+.Fn ble_set_discoverable "ble_ctx_t *ctx" "bool enable" "unsigned int timeout" "bool limited"
+.Ft int
+.Fn ble_set_pairable "ble_ctx_t *ctx" "bool enable"
+.Ft int
+.Fn ble_set_name "ble_ctx_t *ctx" "const char *name"
+.Ft int
+.Fn ble_set_adv_data "ble_ctx_t *ctx" "const uint8_t *data" "uint16_t len"
+.Ft int
+.Fn ble_set_scan_response "ble_ctx_t *ctx" "const uint8_t *data" "uint16_t len"
+.Ft int
+.Ft int
+.Fn ble_adv_set_create "ble_ctx_t *ctx" "ble_adv_set_t **out"
+.Ft uint8_t
+.Fn ble_adv_set_handle "const ble_adv_set_t *set"
+.Ft int
+.Fn ble_adv_set_params "ble_adv_set_t *set" "uint16_t event_properties" "uint32_t interval_min" "uint32_t interval_max" "uint8_t primary_phy" "uint8_t secondary_phy"
+.Ft int
+.Fn ble_adv_set_data "ble_adv_set_t *set" "const uint8_t *data" "uint8_t len"
+.Ft int
+.Fn ble_adv_set_enable "ble_adv_set_t *set" "bool enable"
+.Ft void
+.Fn ble_adv_set_close "ble_adv_set_t *set"
+.Ft int
+.Fn ble_periodic_adv_params "ble_ctx_t *ctx" "uint8_t adapter_index" "uint16_t interval_min" "uint16_t interval_max" "uint16_t properties"
+.Ft int
+.Fn ble_periodic_adv_data "ble_ctx_t *ctx" "uint8_t adapter_index" "const uint8_t *data" "uint8_t len"
+.Ft int
+.Fn ble_periodic_adv_enable "ble_ctx_t *ctx" "uint8_t adapter_index" "bool enable"
+.Ft int
+.Fn ble_periodic_sync_create "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint8_t sid" "uint16_t skip" "uint16_t timeout"
+.Ft int
+.Fn ble_periodic_sync_cancel "ble_ctx_t *ctx" "uint8_t adapter_index"
+.Ft int
+.Fn ble_periodic_sync_terminate "ble_ctx_t *ctx" "uint8_t adapter_index" "uint16_t sync_handle"
+.Ft int
+.Fn ble_periodic_adv_list_add "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint8_t sid"
+.Ft int
+.Fn ble_periodic_adv_list_remove "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint8_t sid"
+.Ft int
+.Fn ble_periodic_adv_list_clear "ble_ctx_t *ctx" "uint8_t adapter_index"
+.Ft int
+.Fn ble_periodic_adv_list_size "ble_ctx_t *ctx" "uint8_t adapter_index" "uint8_t *size"
+.Ft int
+.Fn ble_past_transfer "ble_ctx_t *ctx" "const ble_addr_t *peer" "uint16_t service_data" "uint16_t sync_handle"
+.Ft int
+.Fn ble_past_receive_enable "ble_ctx_t *ctx" "uint8_t adapter_index" "uint16_t sync_handle" "bool enable"
+.Ft int
+.Fn ble_past_set_info_transfer "ble_ctx_t *ctx" "const ble_addr_t *peer" "uint16_t service_data" "uint8_t adv_handle"
+.Ft int
+.Fn ble_past_params "ble_ctx_t *ctx" "const ble_addr_t *peer" "uint8_t mode" "uint16_t skip" "uint16_t timeout" "uint8_t cte_type"
+.Ft int
+.Fn ble_past_default_params "ble_ctx_t *ctx" "uint8_t adapter_index" "uint8_t mode" "uint16_t skip" "uint16_t timeout" "uint8_t cte_type"
+.Ft int
+.Fn ble_path_loss_reporting "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint8_t low" "uint8_t low_hysteresis" "uint8_t high" "uint8_t high_hysteresis" "uint16_t min_time" "bool enable"
+.Ft int
+.Fn ble_eatt_open "ble_ctx_t *ctx" "const ble_addr_t *addr" "unsigned count"
+.Ft int
+.Fn ble_eatt_close "ble_ctx_t *ctx" "const ble_addr_t *addr"
+.Ft int
+.Fn ble_ecbfc_session_open "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t psm" "unsigned count" "ble_ecbfc_session_t **out"
+.Ft unsigned
+.Fn ble_ecbfc_session_count "const ble_ecbfc_session_t *session"
+.Ft int
+.Fn ble_ecbfc_session_fd "const ble_ecbfc_session_t *session" "unsigned channel"
+.Ft int
+.Fn ble_ecbfc_session_take_fd "ble_ecbfc_session_t *session" "unsigned channel"
+.Ft uint16_t
+.Fn ble_ecbfc_session_omtu "const ble_ecbfc_session_t *session" "unsigned channel"
+.Ft int
+.Fn ble_ecbfc_session_reconfigure "ble_ctx_t *ctx" "ble_ecbfc_session_t *session" "uint16_t mtu" "uint16_t mps"
+.Ft void
+.Fn ble_ecbfc_session_close "ble_ecbfc_session_t *session"
+.Ft int
+.Fn ble_get_rssi "ble_ctx_t *ctx" "const ble_addr_t *addr"
+.Ft int
 .Ft int
 .Fn ble_discover "ble_ctx_t *ctx" "const ble_addr_t *addr" "ble_discover_cb cb" "void *arg"
 .Ft int
@@ -42,11 +315,161 @@
 .Ft int
 .Fn ble_write "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t handle" "const uint8_t *value" "uint16_t len"
 .Ft int
+.Fn ble_write_no_response "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t handle" "const void *value" "uint16_t len"
+.Ft int
 .Fn ble_subscribe "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t handle" "ble_notify_cb cb" "void *arg"
+.Ft int
+.Fn ble_unsubscribe "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t handle"
 .Ft int
 .Fn ble_add_service "ble_ctx_t *ctx" "const ble_uuid_t *uuid" "uint16_t *out_handle"
 .Ft int
+.Fn ble_add_characteristic "ble_ctx_t *ctx" "uint16_t svc_handle" "const ble_uuid_t *uuid" "uint8_t props" "uint8_t perms" "const uint8_t *value" "uint16_t len" "uint16_t *out_handle"
+.Ft int
+.Fn ble_add_include "ble_ctx_t *ctx" "uint16_t svc_handle" "uint16_t included_start" "uint16_t included_end" "uint16_t uuid16" "uint16_t *out_handle"
+.Ft int
+.Fn ble_add_descriptor "ble_ctx_t *ctx" "uint16_t char_handle" "const ble_uuid_t *uuid" "uint8_t perms" "const uint8_t *value" "uint16_t len" "uint16_t *out_handle"
+.Ft int
+.Fn ble_set_value "ble_ctx_t *ctx" "uint16_t handle" "const uint8_t *value" "uint16_t len"
+.Ft int
+.Fn ble_notify "ble_ctx_t *ctx" "uint16_t handle" "const uint8_t *value" "uint16_t len"
+.Ft int
+.Fn ble_indicate "ble_ctx_t *ctx" "uint16_t handle" "const uint8_t *value" "uint16_t len"
+.Ft int
+.Fn ble_remove_service "ble_ctx_t *ctx" "uint16_t handle"
+.Ft int
+.Fn ble_gatt_begin "ble_ctx_t *ctx"
+.Ft int
+.Fn ble_gatt_commit "ble_ctx_t *ctx"
+.Ft int
+.Fn ble_gatt_rollback "ble_ctx_t *ctx"
+.Ft int
+.Fn ble_register_agent "ble_ctx_t *ctx" "ble_io_cap_t io_cap"
+.Ft int
+.Fn ble_unregister_agent "ble_ctx_t *ctx"
+.Ft void
+.Fn ble_on_write "ble_ctx_t *ctx" "ble_write_req_cb cb" "void *arg"
+.Ft int
+.Fn ble_add_char_ex "ble_ctx_t *ctx" "uint16_t svc_handle" "const ble_uuid_t *uuid" "uint8_t props" "uint8_t perms" "const uint8_t *value" "uint16_t len" "uint8_t flags" "uint16_t *out_handle"
+.Ft void
+.Fn ble_on_read_request "ble_ctx_t *ctx" "ble_read_req_cb cb" "void *arg"
+.Ft void
+.Fn ble_on_authorize "ble_ctx_t *ctx" "ble_authorize_cb cb" "void *arg"
+.Ft int
+.Fn ble_gatt_read_reply "ble_ctx_t *ctx" "uint16_t handle" "const uint8_t *value" "uint16_t len"
+.Ft int
+.Fn ble_gatt_read_reject "ble_ctx_t *ctx" "uint16_t handle" "uint8_t att_error"
+.Ft int
+.Fn ble_gatt_authorize_reply "ble_ctx_t *ctx" "uint16_t handle" "bool allow"
+.Ft int
+.Fn ble_passkey_reply "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint32_t passkey"
+.Ft int
+.Fn ble_numcmp_reply "ble_ctx_t *ctx" "const ble_addr_t *addr" "bool accept"
+.Ft void
+.Fn ble_on_passkey_display "ble_ctx_t *ctx" "ble_passkey_display_cb cb" "void *arg"
+.Ft void
+.Fn ble_on_passkey_input "ble_ctx_t *ctx" "ble_passkey_input_cb cb" "void *arg"
+.Ft void
+.Fn ble_on_numcmp "ble_ctx_t *ctx" "ble_numcmp_cb cb" "void *arg"
+.Ft void
+.Fn ble_on_connected "ble_ctx_t *ctx" "ble_conn_event_cb cb" "void *arg"
+.Ft void
+.Fn ble_on_disconnected "ble_ctx_t *ctx" "ble_disconn_event_cb cb" "void *arg"
+.Ft int
+.Fn ble_set_security_policy "ble_ctx_t *ctx" "const ble_security_policy_t *pol"
+.Ft int
+.Fn ble_get_security_policy "ble_ctx_t *ctx" "ble_security_policy_t *out"
+.Ft int
+.Fn ble_set_mitm "ble_ctx_t *ctx" "bool require_mitm"
+.Ft int
+.Fn ble_set_bondable "ble_ctx_t *ctx" "bool bondable"
+.Ft int
+.Fn ble_set_sc_mode "ble_ctx_t *ctx" "ble_sc_mode_t mode"
+.Ft int
+.Fn ble_set_keypress "ble_ctx_t *ctx" "bool enable"
+.Ft int
+.Fn ble_set_io_capability "ble_ctx_t *ctx" "ble_io_cap_t io_cap"
+.Ft int
+.Fn ble_set_min_security "ble_ctx_t *ctx" "ble_sec_level_t level"
+.Ft int
+.Fn ble_set_min_key_size "ble_ctx_t *ctx" "uint8_t key_size"
+.Ft int
+.Fn ble_set_key_distribution "ble_ctx_t *ctx" "uint8_t key_dist"
+.Ft int
+.Fn ble_set_rpa_timeout "ble_ctx_t *ctx" "unsigned int seconds"
+.Ft int
+.Fn ble_set_privacy "ble_ctx_t *ctx" "bool on"
+.Ft int
+.Fn ble_set_preferred_mtu "ble_ctx_t *ctx" "uint16_t mtu"
+.Ft int
+.Fn ble_get_security_info "ble_ctx_t *ctx" "const ble_addr_t *addr" "ble_security_info_t *out"
+.Ft int
+.Fn ble_oob_sc_generate "ble_ctx_t *ctx" "ble_oob_sc_t *out"
+.Ft int
+.Fn ble_oob_inject_sc "ble_ctx_t *ctx" "const ble_addr_t *addr" "const uint8_t confirm[16]" "const uint8_t random[16]"
+.Ft int
+.Fn ble_oob_inject_legacy "ble_ctx_t *ctx" "const ble_addr_t *addr" "const uint8_t tk[16]"
+.Ft int
+.Fn ble_oob_clear "ble_ctx_t *ctx" "const ble_addr_t *addr"
+.Ft int
+.Fn ble_resolv_add "ble_ctx_t *ctx" "const ble_addr_t *addr" "const uint8_t irk[16]"
+.Ft int
+.Fn ble_resolv_remove "ble_ctx_t *ctx" "const ble_addr_t *addr"
+.Ft int
+.Fn ble_resolv_clear "ble_ctx_t *ctx"
+.Ft int
+.Fn ble_resolv_entries "ble_ctx_t *ctx" "ble_resolv_entry_t *entries" "int max_entries"
+.Ft int
+.Fn ble_addr_parse "const char *text" "uint8_t addr_type" "ble_addr_t *out"
+.Ft void
+.Fn ble_on_keypress "ble_ctx_t *ctx" "ble_keypress_cb cb" "void *arg"
+.Ft int
+.Fn ble_acquire_coc "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t psm" "int *out_fd"
+.Ft int
+.Fn ble_acquire_iso "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t cis_handle" "int *out_fd"
+.Ft int
+.Fn ble_acquire_notify "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t handle" "int *out_fd" "uint16_t *out_mtu"
+.Ft int
+.Fn ble_acquire_write "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t handle" "int *out_fd"
+.Ft int
+.Fn ble_iso_cig_create "ble_ctx_t *ctx" "uint8_t adapter_index" "const ble_cig_params_t *params" "uint16_t *out_cis_handles" "int max"
+.Ft int
+.Fn ble_iso_cis_create "ble_ctx_t *ctx" "const ble_addr_t *peer" "uint8_t cig_id" "uint8_t cis_id"
+.Ft int
+.Fn ble_iso_cis_teardown "ble_ctx_t *ctx" "uint8_t adapter_index" "uint16_t cis_handle"
+.Ft int
+.Fn ble_iso_cig_remove "ble_ctx_t *ctx" "uint8_t adapter_index" "uint8_t cig_id"
+.Ft int
+.Fn ble_iso_cis_accept "ble_ctx_t *ctx" "uint8_t adapter_index" "uint16_t cis_handle"
+.Ft int
+.Fn ble_iso_cis_reject "ble_ctx_t *ctx" "uint8_t adapter_index" "uint16_t cis_handle" "uint8_t reason"
+.Ft void
+.Fn ble_on_iso_cis_request "ble_ctx_t *ctx" "ble_iso_cis_req_cb cb" "void *arg"
+.Ft int
+.Fn ble_iso_big_create "ble_ctx_t *ctx" "uint8_t adapter_index" "const ble_big_params_t *params"
+.Ft int
+.Fn ble_iso_big_terminate "ble_ctx_t *ctx" "uint8_t adapter_index" "uint8_t big_handle" "uint8_t reason"
+.Ft int
+.Fn ble_iso_big_create_sync "ble_ctx_t *ctx" "uint8_t adapter_index" "uint8_t big_handle" "uint16_t sync_handle" "const uint8_t *bis_indices" "int num_bis" "uint8_t mse" "uint16_t timeout" "const uint8_t broadcast_code[16]"
+.Ft int
+.Fn ble_iso_big_terminate_sync "ble_ctx_t *ctx" "uint8_t adapter_index" "uint8_t big_handle"
+.Ft int
+.Fn ble_iso_acquire "ble_ctx_t *ctx" "uint8_t adapter_index" "uint16_t cis_handle" "ble_iso_stream_t **out"
+.Ft int
+.Fn ble_iso_bis_acquire "ble_ctx_t *ctx" "uint8_t adapter_index" "uint8_t big_handle" "uint8_t bis_index" "ble_iso_stream_t **out"
+.Ft void
+.Fn ble_on_iso_established "ble_ctx_t *ctx" "ble_iso_est_cb cb" "void *arg"
+.Ft int
+.Fn ble_iso_fd "ble_iso_stream_t *s"
+.Ft int
+.Fn ble_iso_send "ble_iso_stream_t *s" "const void *sdu" "size_t len"
+.Ft int
+.Fn ble_iso_recv "ble_iso_stream_t *s" "void *buf" "size_t len"
+.Ft void
+.Fn ble_iso_close "ble_iso_stream_t *s"
+.Ft int
 .Fn ble_read_battery "ble_ctx_t *ctx" "const ble_addr_t *addr" "ble_read_cb cb" "void *arg"
+.Ft "const char *"
+.Fn ble_addr_str "const ble_addr_t *addr" "char buf[18]"
 .Sh DESCRIPTION
 The
 .Nm libble
@@ -54,15 +477,49 @@ library provides a callback-driven C API for Bluetooth Low Energy
 operations.
 It communicates with the
 .Xr blued 8
-daemon over its Unix domain control socket, abstracting the text
-protocol into typed function calls with asynchronous event delivery.
+daemon over its Unix domain control socket using correlated binary operations
+and typed asynchronous events.
+.Pp
+A
+.Vt ble_addr_t
+contains the peer address, its public or random address type, and the
+zero-based adapter index used for connection-scoped operations.
+.Fn ble_addr_parse
+initializes the adapter index to zero; callers targeting another controller
+set the
+.Va adapter_index
+member explicitly.
+.Fn ble_connections
+returns the same index in both the embedded address and the connection
+snapshot's
+.Va adapter_index
+member.
+.Pp
+.Fn ble_adapter_caps
+reports the selected adapter's LE feature bitmap, allowing callers to
+distinguish an unsupported controller feature from a daemon or transport
+failure.
+Periodic-advertising and synchronization functions require
+.Dv BLE_LE_FEAT_PERIODIC_ADV .
+.Fn ble_past_transfer
+requires
+.Dv BLE_LE_FEAT_PAST_SENDER ;
+.Fn ble_past_receive_enable
+requires
+.Dv BLE_LE_FEAT_PAST_RECIPIENT .
+The recipient feature also gates per-peer and default PAST receive parameters.
+Periodic-advertiser-list operations require
+.Dv BLE_LE_FEAT_PERIODIC_ADV .
+Set-info transfer requires the sender feature, and a nonzero advertising set
+handle must belong to the calling context.
+PAST is transport support only and does not imply an LE Audio profile.
 .Pp
 The design is similar in spirit to Apple's CoreBluetooth framework:
 applications open a context, register callbacks for events of interest,
 and drive event dispatch by calling
 .Fn ble_process
 when the socket is readable.
-.Pp
+.Ss Lifecycle
 .Fn ble_open
 connects to the blued control socket.
 If
@@ -72,9 +529,44 @@ is
 the default path
 .Pa /var/run/blued.sock
 is used.
-Returns an opaque context, or
+On a successful connection it performs the protocol handshake
+.Pq see Fn ble_handshake
+and, on success, returns an opaque context.
+It returns
 .Dv NULL
-on failure.
+on failure, including a connection error, a protocol version mismatch, or a
+handshake timeout;
+the handshake is bounded by a short internal timeout so the call never blocks
+indefinitely.
+.Pp
+.Fn ble_open_fd
+wraps an already-connected file descriptor in a
+.Vt ble_ctx_t ,
+useful for testing or pre-established connections.
+It does
+.Em not
+perform the handshake; callers must invoke
+.Fn ble_handshake
+before issuing operations.
+.Pp
+.Fn ble_handshake
+negotiates the framed binary control protocol on an open context: it sends
+the client protocol version and feature request, waits
+.Pq with a bounded timeout
+for the daemon's reply, and on success switches the context to the
+length-prefixed binary protocol.
+It returns 0 on success, or \-1 on a protocol version mismatch, a timeout, or
+an I/O error, with the specific cause available through
+.Fn ble_errno
+and
+.Fn ble_strerror .
+.Fn ble_open
+calls it automatically; a caller that wrapped a descriptor with
+.Fn ble_open_fd
+may call it to upgrade explicitly.
+.Pp
+.Fn ble_close
+closes the connection and frees all resources associated with the context.
 .Pp
 .Fn ble_fd
 returns the socket file descriptor for integration with
@@ -87,12 +579,74 @@ or
 reads available data from the daemon and dispatches any pending
 callbacks.
 Returns 0 on success, or \-1 if the connection was lost.
+.Ss Error Handling
+All functions that return
+.Vt int
+set an internal error state on failure.
 .Pp
+.Fn ble_errno
+returns the most recent error code, which is one of the
+.Dv BLE_ERR_*
+constants defined in
+.In ble.h :
+.Bl -tag -width BLE_ERR_TIMEOUT -compact
+.It Dv BLE_ERR_NONE
+No error.
+.It Dv BLE_ERR_SOCKET
+Socket I/O error.
+.It Dv BLE_ERR_PROTO
+Protocol parse error.
+.It Dv BLE_ERR_BUSY
+Operation already in progress.
+.It Dv BLE_ERR_NOTCONN
+Not connected.
+.It Dv BLE_ERR_INVAL
+Invalid argument.
+.It Dv BLE_ERR_DAEMON
+Daemon returned an error.
+.It Dv BLE_ERR_NOMEM
+Out of memory.
+.It Dv BLE_ERR_TIMEOUT
+Operation timed out.
+.It Dv BLE_ERR_PERM
+The daemon denied the operation for this client's privilege tier.
+.It Dv BLE_ERR_NOTFOUND
+The requested device, connection, handle, service, or bond was not found.
+.El
+.Pp
+.Fn ble_strerror
+returns a human-readable string describing the most recent error.
+.Ss Connection State
+.Fn ble_is_connected
+returns
+.Dv true
+if the context has an active connection
+.Pq tracked from OK CONNECT and OK disconnected responses .
+.Pp
+.Fn ble_get_mtu
+returns the negotiated ATT MTU for the current connection, or 0 if
+unknown or not connected.
+.Ss Central Mode \(em Scanning and Connection
 .Fn ble_scan
 initiates a BLE scan.
 Discovered devices are reported via the
 .Fa cb
 callback, one invocation per device.
+Returns \-1 with
+.Dv BLE_ERR_BUSY
+if a scan is already in progress.
+.Pp
+.Fn ble_scan_filtered
+uses explicit scan parameters and result filters.
+Passing
+.Dv NULL
+for
+.Fa params
+selects the same defaults as
+.Fn ble_scan .
+The daemon validates interval/window values and applies UUID, RSSI, and
+name-substring filtering to parsed advertising reports before invoking
+.Fa cb .
 .Pp
 .Fn ble_connect
 initiates a connection to the specified device.
@@ -100,30 +654,464 @@ The
 .Fa cb
 callback is invoked when the connection succeeds or fails.
 .Pp
+.Fn ble_connect_name
+scans for a device matching
+.Fa name
+(case-insensitive), then connects.
+.Pp
+.Fn ble_disconnect
+sends a disconnect request for the specified device address.
+.Ss Pairing and Bond Management
+.Fn ble_pair
+initiates or checks SMP pairing status for a connected device.
+SMP pairing is normally initiated automatically during connection
+setup; this function checks the bond state and reports whether the
+device is already bonded.
+.Pp
+.Fn ble_rekey
+rotates keys for an already bonded and connected central-role peer by
+driving a controlled re-pairing procedure.
+BLE has no in-place link-key update primitive, so this is a daemon-managed
+re-bond operation.
+.Pp
+.Fn ble_bond_list
+synchronously retrieves the list of bonded devices from the daemon.
+This function blocks with
+.Xr poll 2
+and has a 5-second timeout per response.
+It fills
+.Fa bonds
+with up to
+.Fa max_bonds
+entries and returns the number of bonds found, or \-1 on error.
+Each
+.Vt ble_bond_t
+entry contains the device address, key flags
+.Pq LTK, IRK, CSRK, Secure Connections, Link Key ,
+and the device name if known.
+.Pp
+.Fn ble_unbond
+removes the bond for the given device address from the daemon's
+bond database.
+.Pp
+.Fn ble_bond_export ,
+.Fn ble_bond_import ,
+.Fn ble_bond_record_data ,
+.Fn ble_bond_record_from_data ,
+and
+.Fn ble_bond_record_free
+provide privileged bond backup and migration.
+.Fn ble_bond_export
+returns an opaque heap-allocated record containing key material for one
+identity.
+The binary form is suitable for protected storage and later import on the
+same or another host.
+The record contains raw keys and must be treated as secret.
+.Pp
+.Fn ble_passkey_reply
+sends a passkey to the daemon in response to a passkey input request
+during SMP pairing.
+The
+.Fa passkey
+is a six-digit numeric value displayed on the remote device.
+.Pp
+.Fn ble_numcmp_reply
+responds to a numeric comparison request during Secure Connections
+pairing.
+Setting
+.Fa accept
+to
+.Dv true
+confirms the displayed value matches on both devices.
+.Pp
+.Fn ble_on_passkey_display
+registers a callback that is invoked when the daemon requires the
+application to display a passkey for the user.
+The
+.Fa passkey
+argument to the callback is a six-digit value the remote device will
+prompt its user to enter.
+.Pp
+.Fn ble_on_passkey_input
+registers a callback that is invoked when the daemon requests passkey
+entry from the user.
+The application should collect a six-digit numeric passkey and reply
+with
+.Fn ble_passkey_reply .
+.Pp
+.Fn ble_on_numcmp
+registers a callback that is invoked when the daemon requests numeric
+comparison confirmation during Secure Connections pairing.
+The
+.Fa value
+argument to the callback is a six-digit number the user should confirm
+matches the remote display, then reply with
+.Fn ble_numcmp_reply .
+.Pp
+.Fn ble_register_agent
+registers this client as the runtime pairing agent
+.Pq the common pairing-agent model
+with the given IO capability
+.Pq a Vt ble_io_cap_t : one of
+.Dv BLE_IO_DISPLAY_ONLY ,
+.Dv BLE_IO_DISPLAY_YESNO ,
+.Dv BLE_IO_KEYBOARD_ONLY ,
+.Dv BLE_IO_NO_INPUT_NO_OUTPUT ,
+or
+.Dv BLE_IO_KEYBOARD_DISPLAY .
+While registered, every pairing prompt routes to this client alone
+.Pq answered through the
+.Fn ble_on_passkey_display ,
+.Fn ble_on_passkey_input ,
+and
+.Fn ble_on_numcmp
+callbacks and the corresponding reply helpers ,
+and this IO capability overrides the daemon's static configuration when
+selecting the pairing association model
+.Pq Core Specification Volume 3 Part H Section 2.3.5.1 .
+A privileged connection is required.
+.Fn ble_unregister_agent
+relinquishes the role, restoring the static configuration; it is also
+released automatically when the client disconnects.
+.Ss Connection Parameters
+.Fn ble_connections
+returns a structured snapshot of connection state, role, security, PHY,
+ATT MTU, and connection parameters.
+.Pp
+.Fn ble_get_rssi
+returns the most recently cached RSSI value for the given address,
+or \-127 if no RSSI data is available.
+RSSI values are cached from scan results.
+.Ss Central Mode \(em GATT Operations
 .Fn ble_discover
 runs GATT service and characteristic discovery on a connected device.
 Results are delivered to the
 .Fa cb
-callback.
+callback in a single invocation with all accumulated services and
+characteristics.
 .Pp
 .Fn ble_read
 and
 .Fn ble_write
 perform GATT characteristic read and write operations.
+.Fn ble_write
+uses an ATT Write Request and waits for the peer's response.
+.Pp
+.Fn ble_write_no_response
+sends an ATT Write Command, which does not wait for acknowledgment
+from the peer.
+This is suitable for low-latency writes where reliability is not
+required (e.g., streaming sensor control data).
 .Pp
 .Fn ble_subscribe
 registers for characteristic value change notifications.
+Each call registers a per-handle callback (up to 16 handles).
 The
 .Fa cb
-callback fires for each notification received.
+callback fires for each notification received for that handle.
 .Pp
+.Fn ble_unsubscribe
+cancels a notification subscription for the given handle.
+.Ss Peripheral Mode \(em GATT Server
 .Fn ble_add_service
-and related peripheral-mode functions allow building a local GATT
-server.
+and
+.Fn ble_add_characteristic
+create services and characteristics in the local GATT database
+served by
+.Xr blued 8 .
+Both functions accept a
+.Vt ble_uuid_t
+that may contain either a 16-bit UUID
+.Pq via the Fa uuid16 field
+or a 128-bit UUID
+.Pq via the Fa uuid128 field when Fa uuid16 is 0 ,
+allowing custom vendor-defined services and characteristics.
 .Pp
+.Fn ble_add_include
+adds an Included Service declaration to
+.Fa svc_handle .
+For 16-bit included services,
+.Fa uuid16
+may name the included service UUID; pass 0 to let
+.Xr blued 8
+infer it from the included service declaration.
+For 128-bit included services,
+.Fa uuid16
+must be 0.
+.Pp
+.Fn ble_add_descriptor
+adds a descriptor to the most recently added local characteristic.
+The descriptor UUID may be 16-bit or 128-bit.
+.Pp
+.Fn ble_set_value
+updates the value of a local attribute.
+.Pp
+.Fn ble_notify
+and
+.Fn ble_indicate
+send server-side notifications and indications for a characteristic value
+to connected peers that have enabled the matching CCCD bit.
+.Pp
+.Fn ble_remove_service
+removes a service and all its attributes.
+.Pp
+.Fn ble_gatt_begin ,
+.Fn ble_gatt_commit ,
+and
+.Fn ble_gatt_rollback
+register a GATT application atomically
+.Pq the common atomic GATT-application registration semantics .
+After
+.Fn ble_gatt_begin ,
+the
+.Fn ble_add_service ,
+.Fn ble_add_characteristic ,
+.Fn ble_add_descriptor ,
+and
+.Fn ble_remove_service
+calls on this connection stage into a scratch database rather than
+mutating the live one, so peers never observe a partially-built
+application.
+.Fn ble_gatt_commit
+swaps the whole staged application into the live database with a single
+Database Hash recompute;
+.Fn ble_gatt_rollback
+discards the staged build, leaving the live database untouched
+.Pq a staging error also auto-rolls-back .
+Outside a transaction the add/remove helpers mutate the live database
+immediately, as before.
+.Pp
+.Fn ble_on_write
+registers a callback for remote write requests to locally-owned
+attributes.
+.Pp
+.Fn ble_add_char_ex
+adds an application-backed characteristic.
+Use
+.Dv BLE_CHAR_F_DYNAMIC
+to defer peer reads to
+.Fn ble_on_read_request
+and answer them with
+.Fn ble_gatt_read_reply
+or
+.Fn ble_gatt_read_reject .
+Use
+.Dv BLE_CHAR_F_AUTHORIZE
+to route peer reads and writes through
+.Fn ble_on_authorize ;
+the application answers with
+.Fn ble_gatt_authorize_reply .
+.Ss Adapter, Advertising, and Periodic Advertising
+.Fn ble_adapter_power
+powers an adapter up or down.
+An adapter index below zero selects the daemon's primary adapter.
+.Fn ble_adapter_caps
+returns the adapter address, power state, and raw LE feature bitmap.
+.Fn ble_set_discoverable ,
+.Fn ble_set_pairable ,
+and
+.Fn ble_set_name
+control GAP discoverability, pairing admission, and local name.
+These adapter and policy operations require a privileged daemon peer.
+.Pp
+.Fn ble_advertise
+enables or disables the primary advertising set.
+.Fn ble_set_adv_params ,
+.Fn ble_set_adv_data ,
+and
+.Fn ble_set_scan_response
+configure its parameters and raw advertising or scan-response payloads.
+Owned extended-advertising sets are created with
+.Fn ble_adv_set_create .
+The returned
+.Vt ble_adv_set_t
+owns its daemon allocation until
+.Fn ble_adv_set_close .
+.Fn ble_adv_set_handle
+returns the controller advertising handle.
+.Fn ble_adv_set_params ,
+.Fn ble_adv_set_data ,
+and
+.Fn ble_adv_set_enable
+configure and drive that set independently of the primary set.
+.Pp
+.Fn ble_periodic_adv_params ,
+.Fn ble_periodic_adv_data ,
+and
+.Fn ble_periodic_adv_enable
+control periodic advertising.
+.Fn ble_periodic_sync_create ,
+.Fn ble_periodic_sync_cancel ,
+and
+.Fn ble_periodic_sync_terminate
+control periodic synchronization.
+.Fn ble_periodic_adv_list_add ,
+.Fn ble_periodic_adv_list_remove ,
+.Fn ble_periodic_adv_list_clear ,
+and
+.Fn ble_periodic_adv_list_size
+manage the controller periodic advertiser list.
+Callers should check
+.Dv BLE_LE_FEAT_PERIODIC_ADV
+first.
+.Pp
+.Fn ble_past_transfer ,
+.Fn ble_past_set_info_transfer ,
+.Fn ble_past_receive_enable ,
+.Fn ble_past_params ,
+and
+.Fn ble_past_default_params
+expose Periodic Advertising Sync Transfer.
+The sender and recipient procedures are gated by
+.Dv BLE_LE_FEAT_PAST_SENDER
+and
+.Dv BLE_LE_FEAT_PAST_RECIPIENT ,
+respectively.
+.Pp
+.Fn ble_path_loss_reporting
+configures Core 5.2 path-loss monitoring for a live connection.
+Callers should check
+.Dv BLE_LE_FEAT_PATH_LOSS_MONITORING .
+.Ss Security, Privacy, and OOB Data
+.Fn ble_set_security_policy
+sets the complete runtime SMP policy in one request;
+.Fn ble_get_security_policy
+reads it back.
+The granular helpers
+.Fn ble_set_mitm ,
+.Fn ble_set_bondable ,
+.Fn ble_set_sc_mode ,
+.Fn ble_set_keypress ,
+.Fn ble_set_io_capability ,
+.Fn ble_set_min_security ,
+.Fn ble_set_min_key_size ,
+and
+.Fn ble_set_key_distribution
+modify individual policy fields.
+These policy setters are privileged.
+.Fn ble_get_security_info
+returns structured per-connection security state.
+.Pp
+.Fn ble_set_privacy
+enables or disables runtime LE privacy.
+.Fn ble_set_rpa_timeout
+sets the RPA rotation timeout.
+.Fn ble_resolv_add ,
+.Fn ble_resolv_remove ,
+.Fn ble_resolv_clear ,
+and
+.Fn ble_resolv_entries
+manage the controller resolving list; if no IRK is supplied to
+.Fn ble_resolv_add ,
+the daemon uses the bonded IRK for the peer.
+.Pp
+.Fn ble_oob_sc_generate ,
+.Fn ble_oob_inject_sc ,
+.Fn ble_oob_inject_legacy ,
+and
+.Fn ble_oob_clear
+manage pairing out-of-band data for LE Secure Connections and legacy OOB
+pairing.
+.Fn ble_on_keypress
+registers for inbound SMP Keypress Notification events.
+.Ss Data-Path Acquire, EATT, ECBFC, and ISO
+.Fn ble_acquire_coc ,
+.Fn ble_acquire_iso ,
+.Fn ble_acquire_notify ,
+and
+.Fn ble_acquire_write
+request capability-scoped file descriptors from the daemon.
+The caller owns the returned descriptor and must close it.
+These operations require daemon fd-passing support and a privileged peer.
+.Pp
+.Fn ble_ecbfc_session_open
+opens an Enhanced Credit Based Flow Control group.
+The returned
+.Vt ble_ecbfc_session_t
+owns all channel descriptors until
+.Fn ble_ecbfc_session_take_fd
+transfers one to the caller or
+.Fn ble_ecbfc_session_close
+closes the session.
+.Fn ble_ecbfc_session_fd
+returns a borrowed descriptor,
+.Fn ble_ecbfc_session_count
+returns the channel count,
+.Fn ble_ecbfc_session_omtu
+returns the output MTU, and
+.Fn ble_ecbfc_session_reconfigure
+requests a reconfiguration.
+.Fn ble_eatt_open
+and
+.Fn ble_eatt_close
+open or close daemon-owned EATT bearers on a connection.
+.Pp
+.Fn ble_iso_cig_create ,
+.Fn ble_iso_cis_create ,
+.Fn ble_iso_cis_teardown ,
+.Fn ble_iso_cig_remove ,
+.Fn ble_iso_cis_accept ,
+and
+.Fn ble_iso_cis_reject
+control CIS setup and teardown.
+.Fn ble_on_iso_cis_request
+receives peripheral CIS requests.
+.Fn ble_iso_big_create ,
+.Fn ble_iso_big_terminate ,
+.Fn ble_iso_big_create_sync ,
+and
+.Fn ble_iso_big_terminate_sync
+control BIS broadcast and synchronization.
+.Fn ble_iso_acquire
+and
+.Fn ble_iso_bis_acquire
+return owned
+.Vt ble_iso_stream_t
+handles for established streams.
+.Fn ble_on_iso_established
+receives stream establishment events.
+.Fn ble_iso_fd ,
+.Fn ble_iso_send ,
+.Fn ble_iso_recv ,
+and
+.Fn ble_iso_close
+operate on the stream data path.
+The ISO API is transport-only; it does not implement LE Audio profiles,
+codec negotiation, PACS, ASCS, or BAP.
+.Ss Convenience
 .Fn ble_read_battery
 is a convenience function that auto-discovers the Battery Service
 (UUID 0x180F) and reads the Battery Level characteristic.
+.Pp
+.Fn ble_addr_str
+formats a
+.Vt ble_addr_t
+as a colon-separated hexadecimal string
+.Pq e.g., Dq XX:XX:XX:XX:XX:XX
+into the caller-supplied buffer
+.Fa buf ,
+which must be at least 18 bytes.
+Returns a pointer to
+.Fa buf .
+.Sh THREAD SAFETY
+A
+.Vt ble_ctx_t
+context is
+.Em not
+thread-safe.
+Each context must be used from a single thread at a time.
+Multiple threads may each have their own independent contexts
+connected to the same daemon.
+.Pp
+For event-driven usage, obtain the socket descriptor with
+.Fn ble_fd
+and register it with
+.Xr kqueue 2
+or
+.Xr poll 2 .
+Call
+.Fn ble_process
+when the descriptor becomes readable.
 .Sh EXAMPLES
 Scan for nearby BLE devices:
 .Bd -literal -offset indent
@@ -145,6 +1133,11 @@ main(void)
     ble_ctx_t *ctx = ble_open(NULL);
     struct pollfd pfd;
 
+    if (ctx == NULL) {
+        fprintf(stderr, "ble_open failed\\n");
+        return (1);
+    }
+
     ble_scan(ctx, on_device, NULL);
 
     pfd.fd = ble_fd(ctx);
@@ -156,7 +1149,44 @@ main(void)
     return (0);
 }
 .Ed
+.Pp
+List bonded devices:
+.Bd -literal -offset indent
+#include <ble.h>
+#include <stdio.h>
+
+int
+main(void)
+{
+    ble_ctx_t *ctx = ble_open(NULL);
+    ble_bond_t bonds[BLE_MAX_BONDS];
+    int n, i;
+
+    if (ctx == NULL)
+        return (1);
+
+    n = ble_bond_list(ctx, bonds, BLE_MAX_BONDS);
+    if (n < 0) {
+        fprintf(stderr, "error: %s\\n", ble_strerror(ctx));
+        ble_close(ctx);
+        return (1);
+    }
+
+    for (i = 0; i < n; i++) {
+        char buf[18];
+        printf("%s %s ltk=%d irk=%d\\n",
+            ble_addr_str(&bonds[i].addr, buf),
+            bonds[i].name,
+            bonds[i].has_ltk, bonds[i].has_irk);
+    }
+
+    ble_close(ctx);
+    return (0);
+}
+.Ed
 .Sh SEE ALSO
+.Xr kqueue 2 ,
+.Xr poll 2 ,
 .Xr bluetooth 3 ,
 .Xr blued 8 ,
 .Xr bluedctl 8
@@ -164,6 +1194,10 @@ main(void)
 The
 .Nm libble
 library first appeared in
+.Fx 16.0 .
+.Pp
+Error handling, connection state tracking, bond management, and PHY
+query functions were added in
 .Fx 16.0 .
 .Sh AUTHORS
 .An Kory Heard

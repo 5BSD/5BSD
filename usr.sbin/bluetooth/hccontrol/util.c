@@ -2897,6 +2897,10 @@ hci_commands2str(uint8_t *commands, char *buffer, int size)
 		int	n, i, len0, len1;
 
 		memset(buffer, 0, size);
+		len1 = 0;	/* running line length; must be initialized
+				 * before the 60-col wrap test below to avoid
+				 * a garbage read and a buffer[-1] underflow
+				 * write (cf. hci_features2str). */
 		size--;
 
 
@@ -3194,7 +3198,7 @@ hci_status2str(int status)
 		/* 0x0c */ "Command disallowed",
 		/* 0x0d */ "Host rejected due to limited resources",
 		/* 0x0e */ "Host rejected due to security reasons",
-		/* 0x0f */ "Host rejected due to remote unit is a personal unit",
+		/* 0x0f */ "Rejected due to Unacceptable BD_ADDR", /* Core 6.3 Vol 1 Part F error 0x0F */
 		/* 0x10 */ "Host timeout",
 		/* 0x11 */ "Unsupported feature or parameter value",
 		/* 0x12 */ "Invalid HCI command parameter",
@@ -3215,9 +3219,9 @@ hci_status2str(int status)
 		/* 0x21 */ "Role change not allowed",
 		/* 0x22 */ "LMP response timeout",
 		/* 0x23 */ "LMP error transaction collision",
-		/* 0x24 */ "LMP PSU not allowed",
+		/* 0x24 */ "LMP PDU Not Allowed", /* Core 6.3 Vol 1 Part F error 0x24 */
 		/* 0x25 */ "Encryption mode not acceptable",
-		/* 0x26 */ "Unit key used",
+		/* 0x26 */ "Link Key cannot be Changed", /* Core 6.3 Vol 1 Part F error 0x26 */
 		/* 0x27 */ "QoS is not supported",
 		/* 0x28 */ "Instant passed",
 		/* 0x29 */ "Pairing with unit key not supported",
@@ -3334,7 +3338,6 @@ hci_le_chanmap2str(uint8_t *map, char *buffer, int size)
 		size--;
 
 		for (n = 0; n < 5; n++) {
-			fprintf(stdout, "%02x ", map[n]);
 			for (i = 0; i < 8; i++) {
 				len0 = strlen(buffer);
 				if (len0 >= size)
@@ -3359,7 +3362,6 @@ hci_le_chanmap2str(uint8_t *map, char *buffer, int size)
 				}
 			}
 		}
-		fprintf(stdout, "\n");
 	}
 done:
 	return (buffer);

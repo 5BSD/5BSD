@@ -85,7 +85,8 @@ ng_l2cap_l2ca_con_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 	con = ng_l2cap_con_by_addr(l2cap, &ip->bdaddr, ip->linktype);
 	if (con == NULL) {
 		/* Submit LP_ConnectReq to the lower layer */
-		error = ng_l2cap_lp_con_req(l2cap, &ip->bdaddr,ip->linktype);
+		error = ng_l2cap_lp_con_req(l2cap, &ip->bdaddr, ip->linktype,
+		    ip->own_address_type);
 		if (error != 0) {
 			NG_L2CAP_ERR(
 "%s: %s - unable to send LP_ConnectReq message, error=%d\n",
@@ -292,10 +293,24 @@ ng_l2cap_l2ca_con_rsp_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 		error = EINVAL;
 		goto out;
 	} else {
-		ch = ng_l2cap_chan_by_scid(l2cap, ip->lcid,
-		    (ip->linktype == NG_HCI_LINK_ACL) ?
-		    NG_L2CAP_L2CA_IDTYPE_BREDR :
-		    NG_L2CAP_L2CA_IDTYPE_LE);
+		/*
+		 * Dynamic CIDs are scoped to one logical link.  Resolve the
+		 * connection first, then distinguish legacy CoC from ECBFC; the
+		 * controller-wide compatibility lookup cannot make either
+		 * distinction reliably on multi-peer adapters.
+		 */
+		con = ng_l2cap_con_by_addr(l2cap, &ip->bdaddr, ip->linktype);
+		if (con != NULL) {
+			int idtype;
+
+			idtype = (ip->linktype == NG_HCI_LINK_ACL) ?
+			    NG_L2CAP_L2CA_IDTYPE_BREDR :
+			    NG_L2CAP_L2CA_IDTYPE_LE;
+			ch = ng_l2cap_chan_by_scid_con(con, ip->lcid, idtype);
+			if (ch == NULL)
+				ch = ng_l2cap_chan_by_scid_con(con, ip->lcid,
+				    NG_L2CAP_L2CA_IDTYPE_ECBFC);
+		}
 	}
 	if (ch == NULL) {
 		NG_L2CAP_ALERT(
@@ -319,6 +334,151 @@ ng_l2cap_l2ca_con_rsp_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 
 	dcid = ch->dcid;
 	con = ch->con;
+
+	/* Aggregate per-CID socket decisions into one atomic ECBFC response. */
+	if (ch->idtype == NG_L2CAP_L2CA_IDTYPE_ECBFC) {
+		ng_l2cap_chan_p group[5] = { NULL };
+		ng_l2cap_chan_p it;
+		u_int16_t dcids[5] = { 0 };
+		u_int16_t result = NG_L2CAP_LE_COC_SUCCESS;
+		int count = 0, seen = 0, i;
+
+		if (ch->ecbfc_response_seen) {
+			error = EALREADY;
+			goto out;
+		}
+		ch->ecbfc_response_seen = 1;
+		ch->ecbfc_response_result = ip->result;
+
+		LIST_FOREACH(it, &l2cap->chan_list, next) {
+			if (it->con != con ||
+			    it->idtype != NG_L2CAP_L2CA_IDTYPE_ECBFC ||
+			    it->ecbfc_group_id != ch->ecbfc_group_id)
+				continue;
+			if (it->ecbfc_group_index >= ch->ecbfc_group_count ||
+			    it->ecbfc_group_index >= nitems(group)) {
+				error = EPROTO;
+				goto ecbfc_fail;
+			}
+			group[it->ecbfc_group_index] = it;
+			count++;
+			if (it->ecbfc_response_seen)
+				seen++;
+		}
+		if (count != ch->ecbfc_group_count) {
+			error = EPROTO;
+			goto ecbfc_fail;
+		}
+		if (seen != count)
+			goto out;
+
+		for (i = 0; i < count; i++) {
+			if (group[i] == NULL) {
+				error = EPROTO;
+				goto ecbfc_fail;
+			}
+			if (group[i]->ecbfc_response_result ==
+			    NG_L2CAP_PSM_NOT_SUPPORTED)
+				result = NG_L2CAP_LE_COC_SPSM_NOT_SUPPORTED;
+			else if (group[i]->ecbfc_response_result != NG_L2CAP_SUCCESS &&
+			    result == NG_L2CAP_LE_COC_SUCCESS)
+				result = NG_L2CAP_LE_COC_NO_RESOURCES;
+		}
+		if (result == NG_L2CAP_LE_COC_SUCCESS)
+			for (i = 0; i < count; i++)
+				dcids[i] = group[i]->scid;
+
+		cmd = ng_l2cap_new_cmd(con,
+		    (result == NG_L2CAP_LE_COC_SUCCESS) ? group[0] : NULL,
+		    ch->ident, NG_L2CAP_CREDIT_CON_RSP, msg->header.token);
+		if (cmd == NULL) {
+			error = ENOMEM;
+			goto ecbfc_fail;
+		}
+		cmd->ecbfc_group_id = ch->ecbfc_group_id;
+		_ng_l2cap_credit_con_rsp(cmd->aux, ch->ident,
+		    (result == NG_L2CAP_LE_COC_SUCCESS) ? group[0]->imtu : 0,
+		    (result == NG_L2CAP_LE_COC_SUCCESS) ? group[0]->mps : 0,
+		    (result == NG_L2CAP_LE_COC_SUCCESS) ?
+		    group[0]->credits_local : 0, result, dcids, count);
+		if (cmd->aux == NULL) {
+			ng_l2cap_free_cmd(cmd);
+			error = ENOBUFS;
+			goto ecbfc_fail;
+		}
+
+		if (result == NG_L2CAP_LE_COC_SUCCESS) {
+			for (i = 0; i < count; i++)
+				group[i]->state = NG_L2CAP_OPEN;
+		} else {
+			for (i = 0; i < count; i++) {
+				(void)ng_l2cap_l2ca_discon_ind(group[i]);
+				ng_l2cap_free_chan(group[i]);
+			}
+		}
+		ng_l2cap_link_cmd(con, cmd);
+		ng_l2cap_lp_deliver(con);
+		goto out;
+
+ecbfc_fail:
+		for (i = 0; i < (int)nitems(group); i++) {
+			if (group[i] != NULL) {
+				(void)ng_l2cap_l2ca_discon_ind(group[i]);
+				ng_l2cap_free_chan(group[i]);
+			}
+		}
+		goto out;
+	}
+
+	/*
+	 * LE Credit Based Connection Requests use the same upper-layer
+	 * acceptance handshake as classic channels, but have their own wire
+	 * response and skip Config.  Do not publish OPEN or send success until
+	 * the socket layer has actually accepted the indication.
+	 */
+	if (ch->idtype == NG_L2CAP_L2CA_IDTYPE_LE) {
+		u_int16_t result;
+
+		if (ip->result == NG_L2CAP_SUCCESS)
+			result = NG_L2CAP_LE_COC_SUCCESS;
+		else if (ip->result == NG_L2CAP_PSM_NOT_SUPPORTED)
+			result = NG_L2CAP_LE_COC_SPSM_NOT_SUPPORTED;
+		else
+			result = NG_L2CAP_LE_COC_NO_RESOURCES;
+
+		cmd = ng_l2cap_new_cmd(con,
+		    (result == NG_L2CAP_LE_COC_SUCCESS) ? ch : NULL,
+		    ip->ident, NG_L2CAP_LE_CREDIT_CON_RSP, msg->header.token);
+		if (cmd == NULL) {
+			ng_l2cap_free_chan(ch);
+			error = ENOMEM;
+			goto out;
+		}
+
+		_ng_l2cap_le_credit_con_rsp(cmd->aux, ip->ident,
+		    (result == NG_L2CAP_LE_COC_SUCCESS) ? ch->scid : 0,
+		    (result == NG_L2CAP_LE_COC_SUCCESS) ? ch->imtu : 0,
+		    (result == NG_L2CAP_LE_COC_SUCCESS) ? ch->mps : 0,
+		    (result == NG_L2CAP_LE_COC_SUCCESS) ? ch->credits_local : 0,
+		    result);
+		if (cmd->aux == NULL) {
+			ng_l2cap_free_cmd(cmd);
+			ng_l2cap_free_chan(ch);
+			error = ENOBUFS;
+			goto out;
+		}
+
+		if (result == NG_L2CAP_LE_COC_SUCCESS) {
+			ch->state = NG_L2CAP_OPEN;
+			SDT_PROBE3(bluetooth, l2cap, channel, open,
+			    ch->scid, ch->dcid, ch->le_psm);
+		} else
+			ng_l2cap_free_chan(ch);
+
+		ng_l2cap_link_cmd(con, cmd);
+		ng_l2cap_lp_deliver(con);
+		goto out;
+	}
 
 	/*
 	 * Now we are pretty much sure it is our response. So create and send 
@@ -618,6 +778,7 @@ ng_l2cap_l2ca_con_ind(ng_l2cap_chan_p ch)
 		ip->psm = ch->psm;
 		ip->ident = ch->ident;
 		ip->linktype = ch->con->linktype;
+		ip->idtype = ch->idtype;
 		ip->imtu = ch->imtu;
 		ip->omtu = ch->omtu;
 
@@ -1181,6 +1342,7 @@ ng_l2cap_l2ca_receive(ng_l2cap_con_p con)
 	int idtype;
 	uint16_t *idp;
 	int silent = 0;
+	int credit_queued = 0;
 
 	NG_L2CAP_M_PULLUP(con->rx_pkt, sizeof(*hdr));
 	if (con->rx_pkt == NULL)
@@ -1210,12 +1372,23 @@ ng_l2cap_l2ca_receive(ng_l2cap_con_p con)
 		 */
 		silent = 1;
 		hdr->dcid = con->con_handle;
-	} else {
-		idtype = (con->linktype == NG_HCI_LINK_ACL) ?
-			NG_L2CAP_L2CA_IDTYPE_BREDR :
-			NG_L2CAP_L2CA_IDTYPE_LE;
-		ch = ng_l2cap_chan_by_scid(l2cap, hdr->dcid, idtype);
-	}
+		} else {
+			/*
+			 * Dynamic CIDs are link-local and ECBFC uses a distinct
+			 * channel identity.  Prefer the link's legacy mode, then
+			 * retry ECBFC so EATT K-frames reach their bearer without
+			 * changing legacy LE CoC routing.
+			 */
+			idtype = (con->linktype == NG_HCI_LINK_ACL) ?
+				NG_L2CAP_L2CA_IDTYPE_BREDR :
+				NG_L2CAP_L2CA_IDTYPE_LE;
+			ch = ng_l2cap_chan_by_scid_con(con, hdr->dcid, idtype);
+			if (ch == NULL) {
+				idtype = NG_L2CAP_L2CA_IDTYPE_ECBFC;
+				ch = ng_l2cap_chan_by_scid_con(con, hdr->dcid,
+				    idtype);
+			}
+		}
 	if (ch == NULL) {
 		if (!silent)
 			NG_L2CAP_ERR(
@@ -1338,8 +1511,30 @@ ng_l2cap_l2ca_receive(ng_l2cap_con_p con)
 			ch->rx_sdu_got = payload_len;
 			ch->rx_sdu = payload;
 
+			/*
+			 * This check must also cover the first K-frame.  A
+			 * complete SDU is recognized below, but treating "more
+			 * than complete" as complete would deliver octets beyond
+			 * the peer's declared SDU length.  Core Spec Vol 3 Part A
+			 * Section 3.4.3 requires a disconnect whenever the sum of
+			 * K-frame payload sizes exceeds the specified SDU length.
+			 */
+			if (ch->rx_sdu_got > ch->rx_sdu_len) {
+				NG_L2CAP_ERR(
+"%s: %s - first K-frame exceeds SDU length, got=%d, expected=%d, cid=%d. Disconnecting.\n",
+				    __func__, NG_NODE_NAME(l2cap->node),
+				    ch->rx_sdu_got, ch->rx_sdu_len,
+				    ch->scid);
+				NG_FREE_M(ch->rx_sdu);
+				ch->rx_sdu_len = 0;
+				ch->rx_sdu_got = 0;
+				ng_l2cap_l2ca_discon_ind(ch);
+				ng_l2cap_free_chan(ch);
+				return (EMSGSIZE);
+			}
+
 			/* SDU might fit entirely in one K-frame */
-			if (ch->rx_sdu_got >= ch->rx_sdu_len)
+			if (ch->rx_sdu_got == ch->rx_sdu_len)
 				goto le_coc_sdu_complete;
 
 			/* More K-frames expected */
@@ -1399,9 +1594,9 @@ le_coc_sdu_complete:
 				ng_l2cap_cmd_p	 credit_cmd;
 				struct mbuf	*credit_m;
 
-				credit_cmd = ng_l2cap_new_cmd(con, NULL,
-				    ng_l2cap_get_ident(con),
-				    NG_L2CAP_FLOW_CONTROL_CREDIT, 0);
+					credit_cmd = ng_l2cap_new_cmd(con, ch,
+					    ng_l2cap_get_ident(con),
+					    NG_L2CAP_FLOW_CONTROL_CREDIT, replenish);
 				if (credit_cmd != NULL) {
 					struct {
 						ng_l2cap_cmd_hdr_t hdr;
@@ -1426,12 +1621,12 @@ le_coc_sdu_complete:
 						c->param.credits =
 						    htole16(replenish);
 
-						credit_cmd->aux = credit_m;
-						ng_l2cap_link_cmd(con,
-						    credit_cmd);
-						ng_l2cap_lp_deliver(con);
-						ch->credits_local +=
-						    replenish;
+							credit_cmd->aux = credit_m;
+							ng_l2cap_link_cmd(con,
+							    credit_cmd);
+							ch->credits_local +=
+							    replenish;
+							credit_queued = 1;
 					} else {
 						ng_l2cap_free_cmd(
 						    credit_cmd);
@@ -1511,6 +1706,12 @@ le_coc_sdu_complete:
 	con->rx_pkt = NULL;
 drop:
 	NG_FREE_M(con->rx_pkt); /* checks for != NULL */
+	/*
+	 * Deliver only after this receive path has finished touching ch.  A
+	 * failed grant coherently disconnects/frees the channel in con_wakeup.
+	 */
+	if (credit_queued)
+		ng_l2cap_lp_deliver(con);
 
 	return (error);
 } /* ng_l2cap_receive */
@@ -1816,12 +2017,8 @@ ng_l2cap_l2ca_discon_ind(ng_l2cap_chan_p ch)
 		error = ENOMEM;
 	else {
 		ip = (ng_l2cap_l2ca_discon_ind_ip *)(msg->data);
-		if (ch->idtype == NG_L2CAP_L2CA_IDTYPE_ECBFC)
-			ip->idtype = (ch->con->linktype == NG_HCI_LINK_ACL) ?
-			    NG_L2CAP_L2CA_IDTYPE_BREDR :
-			    NG_L2CAP_L2CA_IDTYPE_LE;
-		else
-			ip->idtype = ch->idtype;
+		/* Socket PCBs are keyed by CID plus this channel identity. */
+		ip->idtype = ch->idtype;
 		if (ch->idtype == NG_L2CAP_L2CA_IDTYPE_ATT ||
 		   ch->idtype == NG_L2CAP_L2CA_IDTYPE_SMP)
 			ip->lcid = ch->con->con_handle;
@@ -1857,18 +2054,18 @@ ng_l2cap_l2ca_ping_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 	}
 
 	ip = (ng_l2cap_l2ca_ping_ip *)(msg->data);
-	if (msg->header.arglen < sizeof(*ip) + ip->echo_size) {
-		NG_L2CAP_ALERT(
-"%s: %s - L2CA_Ping request echo data overflows message, arglen=%d, echo_size=%d\n",
-			__func__, NG_NODE_NAME(l2cap->node),
-			msg->header.arglen, ip->echo_size);
-		error = EMSGSIZE;
-		goto out;
-	}
 	if (ip->echo_size > NG_L2CAP_MAX_ECHO_SIZE) {
 		NG_L2CAP_WARN(
 "%s: %s - invalid L2CA_Ping request. Echo size is too big, echo_size=%d\n",
 			__func__, NG_NODE_NAME(l2cap->node), ip->echo_size);
+		error = EMSGSIZE;
+		goto out;
+	}
+	if (msg->header.arglen - sizeof(*ip) < ip->echo_size) {
+		NG_L2CAP_ALERT(
+"%s: %s - L2CA_Ping request echo data overflows message, arglen=%d, echo_size=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node),
+			msg->header.arglen, ip->echo_size);
 		error = EMSGSIZE;
 		goto out;
 	}
@@ -1877,7 +2074,8 @@ ng_l2cap_l2ca_ping_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 	con = ng_l2cap_con_by_addr(l2cap, &ip->bdaddr, NG_HCI_LINK_ACL);
 	if (con == NULL) {
 		/* Submit LP_ConnectReq to the lower layer */
-	  error = ng_l2cap_lp_con_req(l2cap, &ip->bdaddr, NG_HCI_LINK_ACL);
+		error = ng_l2cap_lp_con_req(l2cap, &ip->bdaddr,
+		    NG_HCI_LINK_ACL, 0);
 		if (error != 0) {
 			NG_L2CAP_ERR(
 "%s: %s - unable to send LP_ConnectReq message, error=%d\n",
@@ -1996,10 +2194,10 @@ ng_l2cap_l2ca_get_info_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 	ip = (ng_l2cap_l2ca_get_info_ip *)(msg->data);
 
 	/* Check if we have connection to the unit */
-	con = ng_l2cap_con_by_addr(l2cap, &ip->bdaddr,ip->linktype);
+	con = ng_l2cap_con_by_addr(l2cap, &ip->bdaddr, ip->linktype);
 	if (con == NULL) {
 		/* Submit LP_ConnectReq to the lower layer */
-		error = ng_l2cap_lp_con_req(l2cap, &ip->bdaddr,ip->linktype);
+		error = ng_l2cap_lp_con_req(l2cap, &ip->bdaddr, ip->linktype, 0);
 		if (error != 0) {
 			NG_L2CAP_ERR(
 "%s: %s - unable to send LP_ConnectReq message, error=%d\n",

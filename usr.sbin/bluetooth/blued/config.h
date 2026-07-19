@@ -22,9 +22,18 @@
 #define BLUED_CTLSOCK_DEFAULT		"/var/run/blued.sock"
 #define BLUED_CONFIG_DEFAULT		"/etc/blued.conf"
 #define BLUED_MIN_KEY_SIZE_DEFAULT	16	/* KNOB-safe */
-#define BLUED_SOCKET_POOL_DEFAULT	8
+#define BLUED_MIN_PAIRING_SECURITY_DEFAULT	2 /* SMP_SEC_AUTH: secure default */
 #define BLUED_RECONNECT_MAX_DEFAULT	60
+#define BLUED_AUTOCONNECT_TRIES_DEFAULT	5	/* bounded startup reconnect budget */
 #define BLUED_RPA_TIMEOUT_DEFAULT	900	/* 15 minutes */
+
+/* LE Secure Connections mode (config `sc`), mirroring the common off/on/only. */
+#define BLUED_SC_OFF	0	/* never advertise SC (legacy only) */
+#define BLUED_SC_ON	1	/* advertise SC, allow legacy fallback (default) */
+#define BLUED_SC_ONLY	2	/* advertise SC, reject legacy pairing */
+
+/* Default key-distribution mask: LTK + IRK + CSRK (Core Spec Vol 3 Part H §3.6.1). */
+#define BLUED_KEY_DIST_DEFAULT	0x0b	/* SMP_KEY_DIST_ENC|ID|LINK */
 
 struct blued_char_conf {
 	uint16_t	uuid16;		/* 0 if using uuid128 */
@@ -63,19 +72,24 @@ struct blued_config {
 
 	uint8_t		io_capability;
 	bool		bondable;
-	bool		sc_only;
+	uint8_t		sc_mode;		/* BLUED_SC_OFF/ON/ONLY */
+	bool		mitm;			/* require MITM in AuthReq */
+	bool		keypress;		/* advertise Keypress Notif */
+	uint8_t		key_dist;		/* key-distribution mask */
+	uint8_t		min_pairing_security;	/* pairing floor: SMP_SEC_*
+						 * (none|enc|auth|sc) */
 
 	bool		eatt;
 	bool		privacy;
 	bool		reconnect;
+	bool		auto_connect;		/* reconnect known devices at startup */
 	int		reconnect_max_delay;
+	int		auto_connect_max_tries;	/* per-device startup retry budget */
 
 	int		min_key_size;		/* minimum encryption key size (7-16, default 16) */
 	int		rpa_timeout;		/* RPA rotation timeout (1-3600s) */
 	int		privacy_mode;		/* 0=network, 1=device (default) */
-	int		subrate_factor;		/* connection subrate factor (0=disabled, 1-500) */
-	int		socket_pool_size;	/* pre-allocated L2CAP sockets for Capsicum (1-64) */
-
+	int		subrate_factor;		/* reserved, unused (BT 5.3) */
 	bool		peripheral_mode;
 	bool		scan_mode;
 
@@ -90,6 +104,7 @@ struct blued_config {
 
 void	blued_config_defaults(struct blued_config *cfg);
 int	blued_config_load(struct blued_config *cfg, const char *path);
+int	blued_config_load_fd(struct blued_config *cfg, int fd);
 void	blued_config_apply_cli(struct blued_config *cfg, int argc, char **argv);
 
 /* Shared GATT property/permission parsing (used by config.c and ctl.c) */

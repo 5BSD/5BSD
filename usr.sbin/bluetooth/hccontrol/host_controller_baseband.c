@@ -1343,8 +1343,14 @@ hci_write_link_supervision_timeout(int s, int argc, char **argv)
 		if (sscanf(argv[1], "%d", &n) != 1 || n < 0 || n > 0xffff)
 			return (USAGE);
 
-		cp.timeout = (uint16_t) (n & 0x0fff);
-		cp.timeout = htole16(cp.timeout);
+		/*
+		 * Link_Supervision_Timeout is a full 16-bit field (Core Spec
+		 * 6.3 Vol 4 Part E §7.3.42, range 0x0000-0xFFFF); do NOT mask
+		 * to 12 bits (the 0x0fff mask above is for the 12-bit
+		 * Connection_Handle and was mis-copied here, silently
+		 * corrupting timeouts > 0x0FFF, e.g. 0x1000 -> 0).
+		 */
+		cp.timeout = htole16((uint16_t) n);
 		break;
 
 	default:

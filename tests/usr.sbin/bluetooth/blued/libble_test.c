@@ -5,22 +5,13 @@
  * All rights reserved.
  */
 
-/*
- * ATF unit tests for libble (lib/libble).
- *
- * Tests protocol serialization, response parsing, callback dispatch,
- * error handling, and API contracts.  Uses socketpair(2) to mock the
- * daemon side — no running blued required.
- */
+/* Typed-only libble tests not duplicated by ipc_client_test. */
 
 #include <sys/socket.h>
 
 #include <atf-c.h>
-#include <poll.h>
-#include <stdbool.h>
+#include <pthread.h>
 #include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -28,16 +19,13 @@
 #include <bluetooth.h>
 
 #include "ble.h"
-
-/* ================================================================
- * Helpers
- * ================================================================ */
+#include "ipc_proto.h"
 
 static ble_ctx_t *
 make_mock_ctx(int *daemon_fd)
 {
-	int sp[2];
 	ble_ctx_t *ctx;
+	int sp[2];
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
 	ctx = ble_open_fd(sp[0]);
@@ -47,1470 +35,1638 @@ make_mock_ctx(int *daemon_fd)
 }
 
 static void
-mock_send(int fd, const char *line)
+send_frame(int fd, uint16_t type, uint16_t arg, const void *payload,
+    size_t payload_len)
 {
-	char buf[1024];
-	int len;
+	uint8_t hdr[IPC_HDR_SIZE];
 
-	len = snprintf(buf, sizeof(buf), "%s\n", line);
-	ATF_REQUIRE(send(fd, buf, (size_t)len, 0) == len);
+	ipc_hdr_encode(hdr, (uint32_t)payload_len, type, arg);
+	ATF_REQUIRE_EQ(send(fd, hdr, sizeof(hdr), 0), (ssize_t)sizeof(hdr));
+	if (payload_len != 0)
+		ATF_REQUIRE_EQ(send(fd, payload, payload_len, 0),
+		    (ssize_t)payload_len);
 }
 
-static ssize_t
-mock_recv(int fd, char *buf, size_t bufsz)
+static void
+read_exact(int fd, void *buf, size_t len)
 {
-	struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
+	uint8_t *p;
 	ssize_t n;
 
-	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-	n = recv(fd, buf, bufsz - 1, 0);
-	if (n > 0)
-		buf[n] = '\0';
-	return (n);
-}
-
-/* ================================================================
- * SCAN: verify parsed fields, not just count
- * ================================================================ */
-static ble_scan_result_t last_scan;
-static int scan_count;
-
-static void
-scan_cb(const ble_scan_result_t *r, void *arg __unused)
-{
-	scan_count++;
-	last_scan = *r;
-}
-
-ATF_TC_WITHOUT_HEAD(test_scan_parses_fields);
-ATF_TC_BODY(test_scan_parses_fields, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-	char cmd[256];
-
-	ctx = make_mock_ctx(&dfd);
-	scan_count = 0;
-
-	ATF_CHECK_EQ(ble_scan(ctx, scan_cb, NULL), 0);
-	mock_recv(dfd, cmd, sizeof(cmd));
-	ATF_CHECK_MSG(strstr(cmd, "SCAN") != NULL, "cmd: %s", cmd);
-
-	mock_send(dfd, "SCANNING");
-	mock_send(dfd, "DEVICE [ubt0] aa:bb:cc:dd:ee:ff random rssi=-45 name=TestDevice mfr=0x004C svcs=0x180F");
-	mock_send(dfd, "END");
-	ATF_CHECK_EQ(ble_process(ctx), 0);
-
-	ATF_CHECK_EQ(scan_count, 1);
-	ATF_CHECK_EQ(last_scan.addr.addr_type, 1);  /* random */
-	ATF_CHECK_EQ(last_scan.rssi, -45);
-	ATF_CHECK_MSG(strcmp(last_scan.name, "TestDevice") == 0,
-	    "name: '%s'", last_scan.name);
-	ATF_CHECK_EQ(last_scan.mfr_id, 0x004C);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-ATF_TC_WITHOUT_HEAD(test_scan_public_addr_type);
-ATF_TC_BODY(test_scan_public_addr_type, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-	char cmd[256];
-
-	ctx = make_mock_ctx(&dfd);
-	scan_count = 0;
-
-	ble_scan(ctx, scan_cb, NULL);
-	mock_recv(dfd, cmd, sizeof(cmd));
-
-	mock_send(dfd, "SCANNING");
-	mock_send(dfd, "DEVICE [ubt0] 11:22:33:44:55:66 public rssi=-80 name= mfr=0xFFFF svcs=");
-	mock_send(dfd, "END");
-	ble_process(ctx);
-
-	ATF_CHECK_EQ(scan_count, 1);
-	ATF_CHECK_EQ(last_scan.addr.addr_type, 0);  /* public */
-	ATF_CHECK_EQ(last_scan.rssi, -80);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-ATF_TC_WITHOUT_HEAD(test_scan_while_pending_rejected);
-ATF_TC_BODY(test_scan_while_pending_rejected, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-	char tmp[256];
-
-	ctx = make_mock_ctx(&dfd);
-
-	/* First scan succeeds, registers callback */
-	ATF_CHECK_EQ(ble_scan(ctx, scan_cb, NULL), 0);
-	mock_recv(dfd, tmp, sizeof(tmp));  /* drain the SCAN command */
-
-	/* Second scan before first completes — must reject */
-	ATF_CHECK_EQ(ble_scan(ctx, scan_cb, NULL), -1);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * CONNECT: verify protocol string format
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_connect_random);
-ATF_TC_BODY(test_connect_random, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-	addr.addr_type = 1;
-
-	ATF_CHECK_EQ(ble_connect(ctx, &addr, NULL, NULL), 0);
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, "CONNECT") != NULL, "cmd: %s", cmd);
-	ATF_CHECK_MSG(strstr(cmd, "random") != NULL,
-	    "expected random type: %s", cmd);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-static void
-dummy_connect_cb(const ble_addr_t *a __unused, int e __unused,
-    void *arg __unused) {}
-
-ATF_TC_WITHOUT_HEAD(test_connect_while_pending_rejected);
-ATF_TC_BODY(test_connect_while_pending_rejected, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-
-	ATF_CHECK_EQ(ble_connect(ctx, &addr, dummy_connect_cb, NULL), 0);
-	ATF_CHECK_EQ(ble_connect(ctx, &addr, dummy_connect_cb, NULL), -1);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-ATF_TC_WITHOUT_HEAD(test_connect_name);
-ATF_TC_BODY(test_connect_name, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-	char cmd[256];
-
-	ctx = make_mock_ctx(&dfd);
-
-	ATF_CHECK_EQ(ble_connect_name(ctx, "Kory's iPod", NULL, NULL), 0);
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, "CONNECT_NAME") != NULL, "cmd: %s", cmd);
-	ATF_CHECK_MSG(strstr(cmd, "Kory's iPod") != NULL,
-	    "expected device name in: %s", cmd);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * WRITE: verify hex encoding
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_write_hex_encoding);
-ATF_TC_BODY(test_write_hex_encoding, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	uint8_t val[] = { 0x01, 0xAB, 0xFF, 0x00 };
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("11:22:33:44:55:66", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	ATF_CHECK_EQ(ble_write(ctx, &addr, 0x0025, val, 4), 0);
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, "WRITE") != NULL, "cmd: %s", cmd);
-	ATF_CHECK_MSG(strstr(cmd, "0x0025") != NULL, "handle: %s", cmd);
-	ATF_CHECK_MSG(strstr(cmd, "01ABFF00") != NULL,
-	    "hex: %s", cmd);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * SUBSCRIBE + NOTIFY: verify handle and value bytes
- * ================================================================ */
-static ble_addr_t notify_addr;
-static uint16_t notify_handle;
-static uint8_t notify_value[64];
-static uint16_t notify_len;
-static int notify_count;
-
-static void
-notify_cb(const ble_addr_t *addr, uint16_t handle,
-    const uint8_t *value, uint16_t len, void *arg __unused)
-{
-	notify_count++;
-	notify_addr = *addr;
-	notify_handle = handle;
-	if (len <= sizeof(notify_value)) {
-		memcpy(notify_value, value, len);
-		notify_len = len;
+	p = buf;
+	while (len != 0) {
+		n = recv(fd, p, len, 0);
+		ATF_REQUIRE(n > 0);
+		p += n;
+		len -= (size_t)n;
 	}
 }
 
-ATF_TC_WITHOUT_HEAD(test_notify_parses_handle_and_value);
-ATF_TC_BODY(test_notify_parses_handle_and_value, tc)
+static void
+read_frame(int fd, uint16_t *type, uint16_t *arg, uint8_t *payload,
+    size_t payload_size, size_t *payload_len)
 {
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char tmp[256];
-	bdaddr_t ba;
+	uint8_t hdr[IPC_HDR_SIZE];
+	uint32_t len;
 
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	ble_subscribe(ctx, &addr, 0x0025, notify_cb, NULL);
-	mock_recv(dfd, tmp, sizeof(tmp));
-
-	notify_count = 0;
-	mock_send(dfd, "OK SUBSCRIBE 0x0025");
-	mock_send(dfd, "EVENT NOTIFY aa:bb:cc:dd:ee:ff 0x0025 DEADBEEF");
-	ble_process(ctx);
-
-	ATF_CHECK_EQ(notify_count, 1);
-	ATF_CHECK_EQ(notify_handle, 0x0025);
-	ATF_CHECK_EQ(notify_len, 4);
-	ATF_CHECK_EQ(notify_value[0], 0xDE);
-	ATF_CHECK_EQ(notify_value[1], 0xAD);
-	ATF_CHECK_EQ(notify_value[2], 0xBE);
-	ATF_CHECK_EQ(notify_value[3], 0xEF);
-
-	close(dfd);
-	ble_close(ctx);
+	read_exact(fd, hdr, sizeof(hdr));
+	ipc_hdr_decode(hdr, &len, type, arg);
+	ATF_REQUIRE(len <= payload_size);
+	read_exact(fd, payload, len);
+	*payload_len = len;
 }
-
-ATF_TC_WITHOUT_HEAD(test_notify_empty_value);
-ATF_TC_BODY(test_notify_empty_value, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char tmp[256];
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	ble_subscribe(ctx, &addr, 0x0010, notify_cb, NULL);
-	mock_recv(dfd, tmp, sizeof(tmp));
-
-	notify_count = 0;
-	notify_len = 99;
-	mock_send(dfd, "OK SUBSCRIBE 0x0010");
-	mock_send(dfd, "EVENT NOTIFY aa:bb:cc:dd:ee:ff 0x0010");
-	ble_process(ctx);
-
-	ATF_CHECK_EQ(notify_count, 1);
-	ATF_CHECK_EQ(notify_handle, 0x0010);
-	ATF_CHECK_EQ(notify_len, 0);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * DISCOVER: verify parsed services and characteristics
- * ================================================================ */
-static int disc_nsvc, disc_nchar;
-static ble_service_t disc_svcs[16];
-static ble_characteristic_t disc_chars[64];
 
 static void
-disc_cb(const ble_addr_t *addr __unused,
-    const ble_service_t *svcs, int nsvc,
-    const ble_characteristic_t *chars, int nchar, void *arg __unused)
+enable_features(ble_ctx_t *ctx, int daemon_fd, uint32_t feature_mask)
 {
-	disc_nsvc = nsvc;
-	disc_nchar = nchar;
-	if (nsvc > 0 && nsvc <= 16)
-		memcpy(disc_svcs, svcs, nsvc * sizeof(svcs[0]));
-	if (nchar > 0 && nchar <= 64)
-		memcpy(disc_chars, chars, nchar * sizeof(chars[0]));
+	uint8_t features[IPC_HELLO_FEATURES_SIZE];
+	uint8_t payload[64];
+	uint16_t type, arg;
+	size_t payload_len;
+
+	ipc_put_le32(features, feature_mask);
+	send_frame(daemon_fd, IPC_T_HELLO, IPC_PROTO_VERSION,
+	    features, sizeof(features));
+	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
+	read_frame(daemon_fd, &type, &arg, payload, sizeof(payload),
+	    &payload_len);
+	ATF_CHECK_EQ(type, IPC_T_HELLO);
+	ATF_CHECK_EQ(arg, IPC_PROTO_VERSION);
+	ATF_CHECK_EQ(payload_len, IPC_HELLO_FEATURES_SIZE);
+	ATF_CHECK_EQ(ipc_get_le32(payload), IPC_FEATURE_EVENTS |
+	    IPC_FEATURE_FDPASS);
 }
 
-ATF_TC_WITHOUT_HEAD(test_discover_parses_service_and_char);
-ATF_TC_BODY(test_discover_parses_service_and_char, tc)
+static void
+enable_fdpass(ble_ctx_t *ctx, int daemon_fd)
 {
+
+	enable_features(ctx, daemon_fd, IPC_FEATURE_FDPASS);
+}
+
+static void
+send_fd(int fd, int passed_fd)
+{
+	struct cmsghdr *cmsg;
+	struct iovec iov;
+	struct msghdr msg;
+	char control[CMSG_SPACE(sizeof(int))];
+	char byte;
+
+	memset(&msg, 0, sizeof(msg));
+	byte = 0;
+	iov.iov_base = &byte;
+	iov.iov_len = sizeof(byte);
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	msg.msg_control = control;
+	msg.msg_controllen = sizeof(control);
+	memset(control, 0, sizeof(control));
+	cmsg = CMSG_FIRSTHDR(&msg);
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+	memcpy(CMSG_DATA(cmsg), &passed_fd, sizeof(passed_fd));
+	ATF_REQUIRE_EQ(sendmsg(fd, &msg, 0), 1);
+}
+
+struct delayed_fds {
+	int socket_fd;
+	int passed_fd;
+	unsigned count;
+};
+
+static void *
+send_fds_delayed(void *arg)
+{
+	struct delayed_fds *fds = arg;
+
+	/* Let the framed reply be consumed before its SCM_RIGHTS handout. */
+	usleep(10000);
+	for (unsigned i = 0; i < fds->count; i++)
+		send_fd(fds->socket_fd, fds->passed_fd);
+	return (NULL);
+}
+
+static void
+send_sync_reply_id(int fd, uint32_t request_id, uint16_t domain,
+    const void *body, size_t body_len)
+{
+	uint8_t payload[IPC_OP_PREFIX_SIZE + IPC_MAX_PAYLOAD];
+
+	ATF_REQUIRE(body_len <= IPC_MAX_PAYLOAD);
+	ipc_op_prefix_encode(payload, request_id, IPC_ERR_NONE, 0);
+	if (body_len != 0)
+		memcpy(payload + IPC_OP_PREFIX_SIZE, body, body_len);
+	send_frame(fd, IPC_T_OP_REPLY, domain, payload,
+	    IPC_OP_PREFIX_SIZE + body_len);
+}
+
+static void
+send_sync_reply(int fd, uint16_t domain, const void *body, size_t body_len)
+{
+
+	send_sync_reply_id(fd, 1, domain, body, body_len);
+}
+
+ATF_TC_WITHOUT_HEAD(acquire_notify_typed);
+ATF_TC_BODY(acquire_notify_typed, tc)
+{
+	ble_addr_t addr = { .addr = { 1, 2, 3, 4, 5, 6 }, .addr_type = 1 };
 	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	bdaddr_t ba;
+	uint8_t reply[IPC_OP_PREFIX_SIZE + IPC_GATT_ACQUIRE_REPLY_SIZE];
+	uint8_t request[IPC_OP_PREFIX_SIZE + IPC_GATT_REQ_SIZE];
+	uint32_t request_id;
+	uint16_t type, domain, status, flags, mtu;
+	size_t request_len;
+	int channel[2], daemon_fd, fd;
 
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
+	ctx = make_mock_ctx(&daemon_fd);
+	enable_fdpass(ctx, daemon_fd);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, channel) == 0);
+	ipc_op_prefix_encode(reply, 1, IPC_ERR_NONE, 0);
+	ipc_put_le16(reply + IPC_OP_PREFIX_SIZE, IPC_GATT_ACQUIRE_NOTIFY);
+	ipc_put_le16(reply + IPC_OP_PREFIX_SIZE + 2, 185);
+	send_frame(daemon_fd, IPC_T_OP_REPLY, IPC_OP_DOMAIN_GATT, reply,
+	    sizeof(reply));
+	send_fd(daemon_fd, channel[1]);
 
-	disc_nsvc = 0;
-	disc_nchar = 0;
+	fd = -1;
+	mtu = 0;
+	ATF_REQUIRE_EQ(ble_acquire_notify(ctx, &addr, 0x0042, &fd, &mtu), 0);
+	ATF_CHECK_EQ(mtu, 185);
+	ATF_REQUIRE(fd >= 0);
+	read_frame(daemon_fd, &type, &domain, request, sizeof(request),
+	    &request_len);
+	ATF_REQUIRE_EQ(request_len, sizeof(request));
+	ATF_CHECK_EQ(type, IPC_T_OP_REQ);
+	ATF_CHECK_EQ(domain, IPC_OP_DOMAIN_GATT);
+	ipc_op_prefix_decode(request, &request_id, &status, &flags);
+	ATF_CHECK_EQ(request_id, 1);
+	ATF_CHECK_EQ(status, 0);
+	ATF_CHECK_EQ(flags, 0);
+	ATF_CHECK_EQ(ipc_get_le16(request + IPC_OP_PREFIX_SIZE),
+	    IPC_GATT_ACQUIRE_NOTIFY);
+	ATF_CHECK_EQ(ipc_get_le16(request + IPC_OP_PREFIX_SIZE + 12), 0x0042);
 
-	ATF_CHECK_EQ(ble_discover(ctx, &addr, disc_cb, NULL), 0);
-	mock_recv(dfd, cmd, sizeof(cmd));
+	close(fd);
+	close(channel[0]);
+	close(channel[1]);
+	close(daemon_fd);
+	ble_close(ctx);
 
-	mock_send(dfd, "DISCOVER aa:bb:cc:dd:ee:ff");
-	mock_send(dfd, "  service uuid=0x1800 handles=0x0001-0x0005");
-	mock_send(dfd, "    char uuid=0x2A00 handle=0x0003 props=read");
-	mock_send(dfd, "  service uuid=0x180F handles=0x0010-0x0013");
-	mock_send(dfd, "    char uuid=0x2A19 handle=0x0012 props=read|notify");
-	mock_send(dfd, "END");
-	ble_process(ctx);
+}
 
-	/* Verify service count and fields */
-	ATF_CHECK_EQ(disc_nsvc, 2);
-	ATF_CHECK_EQ(disc_svcs[0].uuid.uuid16, 0x1800);
-	ATF_CHECK_EQ(disc_svcs[0].start_handle, 0x0001);
-	ATF_CHECK_EQ(disc_svcs[0].end_handle, 0x0005);
-	ATF_CHECK_EQ(disc_svcs[1].uuid.uuid16, 0x180F);
-	ATF_CHECK_EQ(disc_svcs[1].start_handle, 0x0010);
+ATF_TC_WITHOUT_HEAD(acquire_requires_fdpass);
+ATF_TC_BODY(acquire_requires_fdpass, tc)
+{
+	ble_addr_t addr = { 0 };
+	ble_ctx_t *ctx;
+	uint16_t mtu;
+	int daemon_fd, fd;
 
-	/* Verify characteristic count and fields */
-	ATF_CHECK_EQ(disc_nchar, 2);
-	ATF_CHECK_EQ(disc_chars[0].uuid.uuid16, 0x2A00);
-	ATF_CHECK_EQ(disc_chars[0].handle, 0x0003);
-	ATF_CHECK_EQ(disc_chars[0].properties, BLE_PROP_READ);
-	ATF_CHECK_EQ(disc_chars[1].uuid.uuid16, 0x2A19);
-	ATF_CHECK_EQ(disc_chars[1].handle, 0x0012);
-	ATF_CHECK_EQ(disc_chars[1].properties,
-	    BLE_PROP_READ | BLE_PROP_NOTIFY);
-
-	close(dfd);
+	ctx = make_mock_ctx(&daemon_fd);
+	fd = -1;
+	mtu = 0;
+	ATF_CHECK_EQ(ble_acquire_notify(ctx, &addr, 1, &fd, &mtu), -1);
+	ATF_CHECK_EQ(ble_errno(ctx), BLE_ERR_PERM);
+	ATF_CHECK_EQ(ble_acquire_write(ctx, &addr, 1, &fd), -1);
+	ATF_CHECK_EQ(ble_errno(ctx), BLE_ERR_PERM);
+	close(daemon_fd);
 	ble_close(ctx);
 }
 
-ATF_TC_WITHOUT_HEAD(test_discover_empty);
-ATF_TC_BODY(test_discover_empty, tc)
+ATF_TC_WITHOUT_HEAD(acquire_write_typed);
+ATF_TC_BODY(acquire_write_typed, tc)
 {
+	ble_addr_t addr = { .addr = { 6, 5, 4, 3, 2, 1 }, .addr_type = 1 };
 	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	bdaddr_t ba;
+	uint8_t reply[IPC_OP_PREFIX_SIZE + IPC_GATT_ACQUIRE_REPLY_SIZE];
+	uint8_t request[IPC_OP_PREFIX_SIZE + IPC_GATT_REQ_SIZE];
+	uint16_t type, domain;
+	size_t request_len;
+	int channel[2], daemon_fd, fd;
 
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("11:22:33:44:55:66", &ba);
-	memcpy(addr.addr, &ba, 6);
+	ctx = make_mock_ctx(&daemon_fd);
+	enable_fdpass(ctx, daemon_fd);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, channel) == 0);
+	ipc_op_prefix_encode(reply, 1, IPC_ERR_NONE, 0);
+	ipc_put_le16(reply + IPC_OP_PREFIX_SIZE, IPC_GATT_ACQUIRE_WRITE);
+	ipc_put_le16(reply + IPC_OP_PREFIX_SIZE + 2, 0);
+	send_frame(daemon_fd, IPC_T_OP_REPLY, IPC_OP_DOMAIN_GATT, reply,
+	    sizeof(reply));
+	send_fd(daemon_fd, channel[1]);
 
-	disc_nsvc = 99;
-	disc_nchar = 99;
+	fd = -1;
+	ATF_REQUIRE_EQ(0, ble_acquire_write(ctx, &addr, 0x0043, &fd));
+	ATF_REQUIRE(fd >= 0);
+	read_frame(daemon_fd, &type, &domain, request, sizeof(request),
+	    &request_len);
+	ATF_CHECK_EQ(IPC_T_OP_REQ, type);
+	ATF_CHECK_EQ(IPC_OP_DOMAIN_GATT, domain);
+	ATF_CHECK_EQ(IPC_GATT_ACQUIRE_WRITE,
+	    ipc_get_le16(request + IPC_OP_PREFIX_SIZE));
+	ATF_CHECK_EQ(0x0043,
+	    ipc_get_le16(request + IPC_OP_PREFIX_SIZE + 12));
 
-	ble_discover(ctx, &addr, disc_cb, NULL);
-	mock_recv(dfd, cmd, sizeof(cmd));
+	close(fd);
+	close(channel[0]);
+	close(channel[1]);
+	close(daemon_fd);
+	ble_close(ctx);
 
-	mock_send(dfd, "DISCOVER 11:22:33:44:55:66");
-	mock_send(dfd, "END");
-	ble_process(ctx);
+}
 
-	ATF_CHECK_EQ(disc_nsvc, 0);
-	ATF_CHECK_EQ(disc_nchar, 0);
+ATF_TC_WITHOUT_HEAD(acquire_coc_and_ecbfc_typed);
+ATF_TC_BODY(acquire_coc_and_ecbfc_typed, tc)
+{
+	ble_addr_t addr = {
+	    .addr = { 1, 3, 5, 7, 9, 11 }, .addr_type = 1,
+	    .adapter_index = 2
+	};
+	ble_ctx_t *ctx;
+	ble_ecbfc_session_t *session;
+	uint8_t reply[IPC_OP_PREFIX_SIZE + IPC_L2CAP_ACQUIRE_REPLY_SIZE];
+	uint8_t request[IPC_OP_PREFIX_SIZE + IPC_L2CAP_REQ_SIZE];
+	uint16_t type, domain;
+	size_t request_len;
+	int channel[2], daemon_fd, fd, taken;
+	pthread_t sender;
+	struct delayed_fds fds;
 
-	close(dfd);
+	ctx = make_mock_ctx(&daemon_fd);
+	enable_fdpass(ctx, daemon_fd);
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, channel));
+	memset(reply, 0, sizeof(reply));
+	ipc_op_prefix_encode(reply, 1, IPC_ERR_NONE, 0);
+	ipc_put_le16(reply + IPC_OP_PREFIX_SIZE, IPC_L2CAP_ACQUIRE_COC);
+	reply[IPC_OP_PREFIX_SIZE + 2] = 1;
+	ipc_put_le16(reply + IPC_OP_PREFIX_SIZE + 4, 512);
+	send_frame(daemon_fd, IPC_T_OP_REPLY, IPC_OP_DOMAIN_L2CAP, reply,
+	    sizeof(reply));
+	fds = (struct delayed_fds){ daemon_fd, channel[1], 1 };
+	ATF_REQUIRE_EQ(0, pthread_create(&sender, NULL, send_fds_delayed, &fds));
+	fd = -1;
+	ATF_REQUIRE_EQ_MSG(0, ble_acquire_coc(ctx, &addr, 0x0081, &fd),
+	    "ble error %d: %s", ble_errno(ctx), ble_strerror(ctx));
+	ATF_REQUIRE_EQ(0, pthread_join(sender, NULL));
+	ATF_REQUIRE(fd >= 0);
+	read_frame(daemon_fd, &type, &domain, request, sizeof(request),
+	    &request_len);
+	ATF_CHECK_EQ(IPC_T_OP_REQ, type);
+	ATF_CHECK_EQ(IPC_OP_DOMAIN_L2CAP, domain);
+	ATF_CHECK_EQ(IPC_L2CAP_ACQUIRE_COC,
+	    ipc_get_le16(request + IPC_OP_PREFIX_SIZE));
+	ATF_CHECK_EQ(0x0081,
+	    ipc_get_le16(request + IPC_OP_PREFIX_SIZE + 12));
+	ATF_CHECK_EQ(2, request[IPC_OP_PREFIX_SIZE + 16]);
+	close(fd);
+	close(channel[0]);
+	close(channel[1]);
+	close(daemon_fd);
+	ble_close(ctx);
+
+	ctx = make_mock_ctx(&daemon_fd);
+	enable_fdpass(ctx, daemon_fd);
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, channel));
+	memset(reply, 0, sizeof(reply));
+	ipc_op_prefix_encode(reply, 1, IPC_ERR_NONE, 0);
+	ipc_put_le16(reply + IPC_OP_PREFIX_SIZE, IPC_L2CAP_ACQUIRE_COC);
+	reply[IPC_OP_PREFIX_SIZE + 2] = 3;
+	ipc_put_le16(reply + IPC_OP_PREFIX_SIZE + 4, 100);
+	ipc_put_le16(reply + IPC_OP_PREFIX_SIZE + 6, 200);
+	ipc_put_le16(reply + IPC_OP_PREFIX_SIZE + 8, 300);
+	send_frame(daemon_fd, IPC_T_OP_REPLY, IPC_OP_DOMAIN_L2CAP, reply,
+	    sizeof(reply));
+	fds = (struct delayed_fds){ daemon_fd, channel[1], 3 };
+	ATF_REQUIRE_EQ(0, pthread_create(&sender, NULL, send_fds_delayed, &fds));
+	session = NULL;
+	ATF_REQUIRE_EQ_MSG(0, ble_ecbfc_session_open(ctx, &addr, 0x0083, 3,
+	    &session), "ble error %d: %s", ble_errno(ctx),
+	    ble_strerror(ctx));
+	ATF_REQUIRE_EQ(0, pthread_join(sender, NULL));
+	ATF_REQUIRE(session != NULL);
+	ATF_CHECK_EQ(3, ble_ecbfc_session_count(session));
+	ATF_CHECK_EQ(100, ble_ecbfc_session_omtu(session, 0));
+	ATF_CHECK_EQ(200, ble_ecbfc_session_omtu(session, 1));
+	ATF_CHECK_EQ(300, ble_ecbfc_session_omtu(session, 2));
+	ATF_CHECK(ble_ecbfc_session_fd(session, 0) >= 0);
+	taken = ble_ecbfc_session_take_fd(session, 1);
+	ATF_REQUIRE(taken >= 0);
+	ATF_CHECK_EQ(-1, ble_ecbfc_session_fd(session, 1));
+	ATF_CHECK_EQ(0, ble_ecbfc_session_count(NULL));
+	ATF_CHECK_EQ(-1, ble_ecbfc_session_fd(NULL, 0));
+	ATF_CHECK_EQ(0, ble_ecbfc_session_omtu(NULL, 0));
+	ATF_CHECK_EQ(-1, ble_ecbfc_session_take_fd(NULL, 0));
+	ATF_CHECK_EQ(-1, ble_ecbfc_session_reconfigure(ctx, NULL, 128, 64));
+	ATF_CHECK_EQ(BLE_ERR_INVAL, ble_errno(ctx));
+	ATF_CHECK_EQ(-1, ble_ecbfc_session_reconfigure(ctx, session, 63, 64));
+	ATF_CHECK_EQ(BLE_ERR_INVAL, ble_errno(ctx));
+	ATF_CHECK_EQ(-1, ble_ecbfc_session_reconfigure(ctx, session, 64, 63));
+	ATF_CHECK_EQ(BLE_ERR_INVAL, ble_errno(ctx));
+	/* AF_UNIX stand-ins reject the real SOL_L2CAP reconfiguration option. */
+	ATF_CHECK_EQ(-1, ble_ecbfc_session_reconfigure(ctx, session, 256, 128));
+	ATF_CHECK_EQ(BLE_ERR_SOCKET, ble_errno(ctx));
+	/* Once ownership of every channel is transferred, no socket remains. */
+	fd = ble_ecbfc_session_take_fd(session, 0);
+	ATF_REQUIRE(fd >= 0);
+	close(fd);
+	fd = ble_ecbfc_session_take_fd(session, 2);
+	ATF_REQUIRE(fd >= 0);
+	close(fd);
+	ATF_CHECK_EQ(0, ble_ecbfc_session_reconfigure(ctx, session, 256, 128));
+	close(taken);
+	ble_ecbfc_session_close(session);
+	ble_ecbfc_session_close(NULL);
+	close(channel[0]);
+	close(channel[1]);
+	close(daemon_fd);
+	ble_close(ctx);
+
+	/* Public validation and malformed broker replies fail without fd leaks. */
+	ctx = make_mock_ctx(&daemon_fd);
+	session = NULL;
+	fd = -1;
+	ATF_CHECK_EQ(-1, ble_acquire_coc(ctx, NULL, 1, &fd));
+	ATF_CHECK_EQ(BLE_ERR_INVAL, ble_errno(ctx));
+	ATF_CHECK_EQ(-1, ble_acquire_coc(ctx, &addr, 1, NULL));
+	ATF_CHECK_EQ(BLE_ERR_INVAL, ble_errno(ctx));
+	ATF_CHECK_EQ(-1, ble_acquire_coc(ctx, &addr, 1, &fd));
+	ATF_CHECK_EQ(BLE_ERR_PERM, ble_errno(ctx));
+	ATF_CHECK_EQ(-1, ble_ecbfc_session_open(ctx, &addr, 1, 0,
+	    &session));
+	ATF_CHECK_EQ(BLE_ERR_INVAL, ble_errno(ctx));
+	ATF_CHECK_EQ(-1, ble_ecbfc_session_open(ctx, &addr, 1, 6,
+	    &session));
+	ATF_CHECK_EQ(BLE_ERR_INVAL, ble_errno(ctx));
+	ATF_CHECK_EQ(-1, ble_ecbfc_session_open(ctx, &addr, 1, 1,
+	    &session));
+	ATF_CHECK_EQ(BLE_ERR_PERM, ble_errno(ctx));
+	close(daemon_fd);
+	ble_close(ctx);
+
+	ctx = make_mock_ctx(&daemon_fd);
+	enable_fdpass(ctx, daemon_fd);
+	memset(reply, 0, sizeof(reply));
+	ipc_op_prefix_encode(reply, 1, IPC_ERR_NONE, 0);
+	ipc_put_le16(reply + IPC_OP_PREFIX_SIZE, IPC_L2CAP_ACQUIRE_COC);
+	send_frame(daemon_fd, IPC_T_OP_REPLY, IPC_OP_DOMAIN_L2CAP, reply,
+	    sizeof(reply));
+	ATF_CHECK_EQ(-1, ble_ecbfc_session_open(ctx, &addr, 1, 2,
+	    &session));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+	close(daemon_fd);
 	ble_close(ctx);
 }
 
-ATF_TC_WITHOUT_HEAD(test_discover_error);
-ATF_TC_BODY(test_discover_error, tc)
+ATF_TC_WITHOUT_HEAD(scan_filter_validation_and_encoding);
+ATF_TC_BODY(scan_filter_validation_and_encoding, tc)
 {
 	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	bdaddr_t ba;
+	ble_scan_params_t params;
+	uint8_t request[IPC_OP_PREFIX_SIZE + IPC_GAP_SCAN_REQ_SIZE];
+	uint16_t type, domain;
+	size_t request_len;
+	int daemon_fd;
 
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("11:22:33:44:55:66", &ba);
-	memcpy(addr.addr, &ba, 6);
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(&params, 0, sizeof(params));
+	params.interval = 3;
+	ATF_CHECK_EQ(-1, ble_scan_filtered(ctx, &params, NULL, NULL));
+	params.interval = 0x4001;
+	ATF_CHECK_EQ(-1, ble_scan_filtered(ctx, &params, NULL, NULL));
+	params.interval = 0x10;
+	params.window = 3;
+	ATF_CHECK_EQ(-1, ble_scan_filtered(ctx, &params, NULL, NULL));
+	params.window = 0x4001;
+	ATF_CHECK_EQ(-1, ble_scan_filtered(ctx, &params, NULL, NULL));
+	params.window = 0x11;
+	ATF_CHECK_EQ(-1, ble_scan_filtered(ctx, &params, NULL, NULL));
+	params.window = 0x10;
+	strlcpy(params.name_sub, "bad name", sizeof(params.name_sub));
+	ATF_CHECK_EQ(-1, ble_scan_filtered(ctx, &params, NULL, NULL));
+	strlcpy(params.name_sub, "bad\177name", sizeof(params.name_sub));
+	ATF_CHECK_EQ(-1, ble_scan_filtered(ctx, &params, NULL, NULL));
 
-	disc_nsvc = 99;
+	/* An all-zero filter maps RSSI zero to the documented ANY sentinel. */
+	memset(&params, 0, sizeof(params));
+	ATF_REQUIRE_EQ(0, ble_scan_filtered(ctx, &params, NULL, NULL));
+	read_frame(daemon_fd, &type, &domain, request, sizeof(request),
+	    &request_len);
+	ATF_CHECK_EQ(IPC_T_OP_REQ, type);
+	ATF_CHECK_EQ(IPC_OP_DOMAIN_GAP, domain);
+	ATF_CHECK_EQ(IPC_GAP_SCAN, ipc_get_le16(request + IPC_OP_PREFIX_SIZE));
+	ATF_CHECK_EQ((uint8_t)BLE_RSSI_ANY, request[IPC_OP_PREFIX_SIZE + 10]);
 
-	ble_discover(ctx, &addr, disc_cb, NULL);
-	mock_recv(dfd, cmd, sizeof(cmd));
+	/* Every optional flag and filter is serialized into its fixed field. */
+	memset(&params, 0, sizeof(params));
+	params.interval = 0x20;
+	params.window = 0x10;
+	params.uuid16 = 0x180d;
+	params.rssi_min = -70;
+	params.passive = true;
+	params.accept_list = true;
+	params.no_dedup = true;
+	strlcpy(params.name_sub, "Heart", sizeof(params.name_sub));
+	ATF_REQUIRE_EQ(0, ble_scan_filtered(ctx, &params, NULL, NULL));
+	read_frame(daemon_fd, &type, &domain, request, sizeof(request),
+	    &request_len);
+	ATF_CHECK_EQ(IPC_GAP_SCAN_F_PASSIVE | IPC_GAP_SCAN_F_ACCEPT_LIST |
+	    IPC_GAP_SCAN_F_NO_DEDUP,
+	    ipc_get_le16(request + IPC_OP_PREFIX_SIZE + 2));
+	ATF_CHECK_EQ(0x20, ipc_get_le16(request + IPC_OP_PREFIX_SIZE + 4));
+	ATF_CHECK_EQ(0x10, ipc_get_le16(request + IPC_OP_PREFIX_SIZE + 6));
+	ATF_CHECK_EQ(0x180d, ipc_get_le16(request + IPC_OP_PREFIX_SIZE + 8));
+	ATF_CHECK_EQ((uint8_t)-70, request[IPC_OP_PREFIX_SIZE + 10]);
+	ATF_CHECK_STREQ((char *)request + IPC_OP_PREFIX_SIZE + 12, "Heart");
 
-	mock_send(dfd, "ERROR device not connected");
-	ble_process(ctx);
-
-	/* Error callback should fire with zero results */
-	ATF_CHECK_EQ(disc_nsvc, 0);
-
-	close(dfd);
+	close(daemon_fd);
 	ble_close(ctx);
 }
 
-ATF_TC_WITHOUT_HEAD(test_discover_while_pending_rejected);
-ATF_TC_BODY(test_discover_while_pending_rejected, tc)
+ATF_TC_WITHOUT_HEAD(acquire_reply_errors);
+ATF_TC_BODY(acquire_reply_errors, tc)
 {
+	static const struct {
+		uint32_t request_id;
+		uint16_t status;
+		uint16_t opcode;
+		int expected_error;
+	} cases[] = {
+		{ 1, IPC_ERR_NOT_FOUND, IPC_GATT_ACQUIRE_WRITE,
+		    BLE_ERR_NOTFOUND },
+		{ 2, IPC_ERR_NONE, IPC_GATT_ACQUIRE_WRITE, BLE_ERR_PROTO },
+		{ 1, IPC_ERR_NONE, IPC_GATT_ACQUIRE_NOTIFY, BLE_ERR_PROTO },
+	};
+	ble_addr_t addr = { 0 };
 	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char tmp[256];
+	uint8_t reply[IPC_OP_PREFIX_SIZE + IPC_GATT_ACQUIRE_REPLY_SIZE];
+	size_t i;
+	int daemon_fd, fd;
 
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
+	for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		ctx = make_mock_ctx(&daemon_fd);
+		enable_fdpass(ctx, daemon_fd);
+		ipc_op_prefix_encode(reply, cases[i].request_id,
+		    cases[i].status, 0);
+		ipc_put_le16(reply + IPC_OP_PREFIX_SIZE, cases[i].opcode);
+		ipc_put_le16(reply + IPC_OP_PREFIX_SIZE + 2, 0);
+		send_frame(daemon_fd, IPC_T_OP_REPLY, IPC_OP_DOMAIN_GATT,
+		    reply, sizeof(reply));
+		fd = -1;
+		ATF_CHECK_EQ(-1, ble_acquire_write(ctx, &addr, 1, &fd));
+		ATF_CHECK_EQ(cases[i].expected_error, ble_errno(ctx));
+		ATF_CHECK_EQ(-1, fd);
+		close(daemon_fd);
+		ble_close(ctx);
+	}
 
-	ATF_CHECK_EQ(ble_discover(ctx, &addr, disc_cb, NULL), 0);
-	mock_recv(dfd, tmp, sizeof(tmp));
-	ATF_CHECK_EQ(ble_discover(ctx, &addr, disc_cb, NULL), -1);
-
-	close(dfd);
+	/* Acquisition is exclusive with ordinary correlated operations. */
+	ctx = make_mock_ctx(&daemon_fd);
+	enable_fdpass(ctx, daemon_fd);
+	ATF_REQUIRE_EQ(0, ble_advertise(ctx, true));
+	fd = -1;
+	ATF_CHECK_EQ(-1, ble_acquire_write(ctx, &addr, 1, &fd));
+	ATF_CHECK_EQ(BLE_ERR_BUSY, ble_errno(ctx));
+	close(daemon_fd);
 	ble_close(ctx);
 }
 
-/* ================================================================
- * ADD_SERVICE: verify handle return
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_add_service_returns_handle);
-ATF_TC_BODY(test_add_service_returns_handle, tc)
+ATF_TC_WITHOUT_HEAD(addr_format);
+ATF_TC_BODY(addr_format, tc)
 {
+	ble_addr_t addr = { .addr = { 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa } };
+	char text[18];
+
+	ATF_CHECK_STREQ(ble_addr_str(&addr, text), "aa:bb:cc:dd:ee:ff");
+}
+
+ATF_TC_WITHOUT_HEAD(path_loss_serialization);
+ATF_TC_BODY(path_loss_serialization, tc)
+{
+	ble_addr_t addr = {
+		.addr = { 1, 2, 3, 4, 5, 6 },
+		.addr_type = 1,
+		.adapter_index = 3,
+	};
 	ble_ctx_t *ctx;
-	ble_uuid_t uuid;
+	uint8_t request[IPC_OP_PREFIX_SIZE + IPC_GAP_PATH_LOSS_REQ_SIZE];
+	uint32_t request_id;
+	uint16_t type, domain, status, flags;
+	size_t request_len;
+	int daemon_fd;
+
+	ctx = make_mock_ctx(&daemon_fd);
+	ATF_REQUIRE_EQ(ble_path_loss_reporting(ctx, &addr, 0x20, 0x02,
+	    0x60, 0x04, 0x1234, true), 0);
+	read_frame(daemon_fd, &type, &domain, request, sizeof(request),
+	    &request_len);
+	ATF_REQUIRE_EQ(request_len, sizeof(request));
+	ATF_CHECK_EQ(type, IPC_T_OP_REQ);
+	ATF_CHECK_EQ(domain, IPC_OP_DOMAIN_GAP);
+	ipc_op_prefix_decode(request, &request_id, &status, &flags);
+	ATF_CHECK_EQ(request_id, 1);
+	ATF_CHECK_EQ(status, 0);
+	ATF_CHECK_EQ(flags, 0);
+	ATF_CHECK_EQ(ipc_get_le16(request + IPC_OP_PREFIX_SIZE),
+	    IPC_GAP_PATH_LOSS);
+	ATF_CHECK_EQ(ipc_get_le16(request + IPC_OP_PREFIX_SIZE + 2), 0);
+	ATF_CHECK_EQ(request[IPC_OP_PREFIX_SIZE + 4], addr.addr_type);
+	ATF_CHECK_EQ(memcmp(request + IPC_OP_PREFIX_SIZE + 5, addr.addr,
+	    sizeof(addr.addr)), 0);
+	ATF_CHECK_EQ(request[IPC_OP_PREFIX_SIZE + 11], addr.adapter_index);
+	ATF_CHECK_EQ(request[IPC_OP_PREFIX_SIZE + 12], 0x20);
+	ATF_CHECK_EQ(request[IPC_OP_PREFIX_SIZE + 13], 0x02);
+	ATF_CHECK_EQ(request[IPC_OP_PREFIX_SIZE + 14], 0x60);
+	ATF_CHECK_EQ(request[IPC_OP_PREFIX_SIZE + 15], 0x04);
+	ATF_CHECK_EQ(ipc_get_le16(request + IPC_OP_PREFIX_SIZE + 16), 0x1234);
+	ATF_CHECK_EQ(request[IPC_OP_PREFIX_SIZE + 18], 1);
+	ATF_CHECK_EQ(request[IPC_OP_PREFIX_SIZE + 19], 0);
+
+	close(daemon_fd);
+	ble_close(ctx);
+}
+
+ATF_TC_WITHOUT_HEAD(path_loss_invalid_inputs);
+ATF_TC_BODY(path_loss_invalid_inputs, tc)
+{
+	ble_addr_t addr = { 0 };
+	ble_ctx_t *ctx;
+	int daemon_fd;
+
+	ctx = make_mock_ctx(&daemon_fd);
+	ATF_CHECK_EQ(ble_path_loss_reporting(ctx, NULL, 0x20, 0, 0x60, 0,
+	    1, true), -1);
+	ATF_CHECK_EQ(ble_errno(ctx), BLE_ERR_INVAL);
+	ATF_CHECK_EQ(ble_path_loss_reporting(ctx, &addr, 0x61, 0, 0x60, 0,
+	    1, false), -1);
+	ATF_CHECK_EQ(ble_errno(ctx), BLE_ERR_INVAL);
+
+	close(daemon_fd);
+	ble_close(ctx);
+}
+
+ATF_TC_WITHOUT_HEAD(public_api_command_families);
+ATF_TC_BODY(public_api_command_families, tc)
+{
+	ble_addr_t addr = { 0 };
+	ble_ctx_t *ctx;
+	uint8_t payload[IPC_OP_PREFIX_SIZE + IPC_MAX_PAYLOAD];
+	uint8_t scan_rsp[] = { 2, 0x0a, 0xec };
+	uint16_t type, domain;
+	size_t payload_len;
+	int daemon_fd, i;
+
+	ctx = make_mock_ctx(&daemon_fd);
+	ATF_CHECK_EQ(ble_gatt_begin(ctx), 0);
+	ATF_CHECK_EQ(ble_gatt_commit(ctx), 0);
+	ATF_CHECK_EQ(ble_gatt_rollback(ctx), 0);
+	ATF_CHECK_EQ(ble_advertise(ctx, true), 0);
+	ATF_CHECK_EQ(ble_adapter_power(ctx, 3, false), 0);
+	ATF_CHECK_EQ(ble_set_discoverable(ctx, true, 60, true), 0);
+	ATF_CHECK_EQ(ble_set_pairable(ctx, false), 0);
+	ATF_CHECK_EQ(ble_set_scan_response(ctx, scan_rsp, sizeof(scan_rsp)), 0);
+	ATF_CHECK_EQ(ble_set_privacy(ctx, true), 0);
+	ATF_CHECK_EQ(ble_set_mitm(ctx, true), 0);
+	ATF_CHECK_EQ(ble_set_bondable(ctx, true), 0);
+	ATF_CHECK_EQ(ble_set_sc_mode(ctx, BLE_SC_ONLY), 0);
+	ATF_CHECK_EQ(ble_set_keypress(ctx, true), 0);
+	ATF_CHECK_EQ(ble_set_io_capability(ctx, BLE_IO_KEYBOARD_DISPLAY), 0);
+	ATF_CHECK_EQ(ble_set_min_security(ctx, BLE_SEC_SC), 0);
+	ATF_CHECK_EQ(ble_set_min_key_size(ctx, 16), 0);
+	ATF_CHECK_EQ(ble_set_key_distribution(ctx,
+	    BLE_KEY_DIST_ENC | BLE_KEY_DIST_ID | BLE_KEY_DIST_SIGN), 0);
+	ATF_CHECK_EQ(ble_set_rpa_timeout(ctx, 3600), 0);
+	ATF_CHECK_EQ(ble_oob_clear(ctx, NULL), 0);
+	ATF_CHECK_EQ(ble_resolv_add(ctx, &addr, NULL), 0);
+	ATF_CHECK_EQ(ble_resolv_remove(ctx, &addr), 0);
+	ATF_CHECK_EQ(ble_resolv_clear(ctx), 0);
+
+	/* Every successful public call above must emit one typed operation. */
+	for (i = 0; i < 22; i++) {
+		read_frame(daemon_fd, &type, &domain, payload, sizeof(payload),
+		    &payload_len);
+		ATF_CHECK_EQ(type, IPC_T_OP_REQ);
+		ATF_CHECK(domain == IPC_OP_DOMAIN_CTL ||
+		    domain == IPC_OP_DOMAIN_ADV ||
+		    domain == IPC_OP_DOMAIN_SECURITY);
+		ATF_CHECK(payload_len >= IPC_OP_PREFIX_SIZE);
+	}
+
+	close(daemon_fd);
+	ble_close(ctx);
+}
+
+ATF_TC_WITHOUT_HEAD(public_api_validation_families);
+ATF_TC_BODY(public_api_validation_families, tc)
+{
+	ble_addr_t addr = { 0 };
+	ble_security_info_t security_info;
+	ble_security_policy_t policy = {
+		.io_cap = BLE_IO_NO_INPUT_NO_OUTPUT,
+		.sc_mode = BLE_SC_ON,
+		.min_security = BLE_SEC_ENC,
+		.min_key_size = 7,
+		.key_dist = BLE_KEY_DIST_ENC,
+	};
+	ble_resolv_entry_t entries[1];
+	uint8_t oob[16] = { 0 };
+	ble_ctx_t *ctx;
+	int daemon_fd;
+
+	ctx = make_mock_ctx(&daemon_fd);
+	ATF_CHECK_EQ(ble_set_discoverable(ctx, true, 3601, false), -1);
+	ATF_CHECK_EQ(ble_set_scan_response(ctx, NULL, 1), -1);
+	ATF_CHECK_EQ(ble_set_sc_mode(ctx, (ble_sc_mode_t)99), -1);
+	ATF_CHECK_EQ(ble_set_io_capability(ctx, (ble_io_cap_t)99), -1);
+	ATF_CHECK_EQ(ble_set_min_security(ctx, (ble_sec_level_t)99), -1);
+	ATF_CHECK_EQ(ble_set_min_key_size(ctx, 6), -1);
+	ATF_CHECK_EQ(ble_set_min_key_size(ctx, 17), -1);
+	ATF_CHECK_EQ(ble_set_key_distribution(ctx, 0x80), -1);
+	ATF_CHECK_EQ(ble_set_rpa_timeout(ctx, 0), -1);
+	ATF_CHECK_EQ(ble_set_rpa_timeout(ctx, 3601), -1);
+	ATF_CHECK_EQ(ble_set_security_policy(ctx, NULL), -1);
+	policy.io_cap = (ble_io_cap_t)99;
+	ATF_CHECK_EQ(ble_set_security_policy(ctx, &policy), -1);
+	policy.io_cap = BLE_IO_NO_INPUT_NO_OUTPUT;
+	policy.sc_mode = (ble_sc_mode_t)99;
+	ATF_CHECK_EQ(ble_set_security_policy(ctx, &policy), -1);
+	policy.sc_mode = BLE_SC_ON;
+	policy.min_security = (ble_sec_level_t)99;
+	ATF_CHECK_EQ(ble_set_security_policy(ctx, &policy), -1);
+	policy.min_security = BLE_SEC_ENC;
+	policy.min_key_size = 6;
+	ATF_CHECK_EQ(ble_set_security_policy(ctx, &policy), -1);
+	policy.min_key_size = 7;
+	policy.key_dist = 0x80;
+	ATF_CHECK_EQ(ble_set_security_policy(ctx, &policy), -1);
+	ATF_CHECK_EQ(ble_get_security_policy(ctx, NULL), -1);
+	ATF_CHECK_EQ(ble_get_security_info(ctx, NULL, &security_info), -1);
+	ATF_CHECK_EQ(ble_get_security_info(ctx, &addr, NULL), -1);
+	ATF_CHECK_EQ(ble_oob_sc_generate(ctx, NULL), -1);
+	ATF_CHECK_EQ(ble_oob_inject_sc(ctx, NULL, oob, oob), -1);
+	ATF_CHECK_EQ(ble_oob_inject_sc(ctx, &addr, NULL, oob), -1);
+	ATF_CHECK_EQ(ble_oob_inject_legacy(ctx, NULL, oob), -1);
+	ATF_CHECK_EQ(ble_oob_inject_legacy(ctx, &addr, NULL), -1);
+	ATF_CHECK_EQ(ble_resolv_add(ctx, NULL, oob), -1);
+	ATF_CHECK_EQ(ble_resolv_remove(ctx, NULL), -1);
+	ATF_CHECK_EQ(ble_resolv_entries(ctx, NULL, 1), -1);
+	ATF_CHECK_EQ(ble_resolv_entries(ctx, entries, 0), -1);
+	ATF_CHECK(ble_bond_export(ctx, NULL) == NULL);
+	ATF_CHECK_EQ(ble_bond_import(ctx, NULL), -1);
+	ATF_CHECK(ble_bond_record_data(NULL, NULL) == NULL);
+	ATF_CHECK(ble_bond_record_from_data(NULL, 1) == NULL);
+	ATF_CHECK(ble_bond_record_from_data(oob, 0) == NULL);
+	ble_bond_record_free(NULL);
+	ATF_CHECK_EQ(ble_errno(ctx), BLE_ERR_INVAL);
+
+	close(daemon_fd);
+	ble_close(ctx);
+}
+
+ATF_TC_WITHOUT_HEAD(public_api_utilities_and_callbacks);
+ATF_TC_BODY(public_api_utilities_and_callbacks, tc)
+{
+	ble_addr_t addr;
+	ble_bond_record_t *record;
+	ble_ctx_t *ctx;
+	const void *record_data;
+	const uint8_t serialized[] = { 1, 2, 3, 4 };
+	size_t record_len;
+	int daemon_fd;
+
+	ATF_CHECK_EQ(ble_addr_parse("11:22:33:44:55:66", 1, &addr), 0);
+	ATF_CHECK_EQ(addr.addr_type, 1);
+	ATF_CHECK_EQ(ble_addr_parse(NULL, 0, &addr), -1);
+	ATF_CHECK_EQ(ble_addr_parse("bad", 0, &addr), -1);
+	ATF_CHECK_EQ(ble_addr_parse("11:22:33:44:55:66", 2, &addr), -1);
+	ATF_CHECK_EQ(ble_addr_parse("11:22:33:44:55:66", 0, NULL), -1);
+	record = ble_bond_record_from_data(serialized, sizeof(serialized));
+	ATF_REQUIRE(record != NULL);
+	record_data = ble_bond_record_data(record, &record_len);
+	ATF_CHECK_EQ(sizeof(serialized), record_len);
+	ATF_CHECK_EQ(0, memcmp(serialized, record_data, record_len));
+	ble_bond_record_free(record);
+
+	ctx = make_mock_ctx(&daemon_fd);
+	ble_on_write(ctx, NULL, &addr);
+	ble_on_read_request(ctx, NULL, &addr);
+	ble_on_authorize(ctx, NULL, &addr);
+	ble_on_passkey_display(ctx, NULL, &addr);
+	ble_on_passkey_input(ctx, NULL, &addr);
+	ble_on_keypress(ctx, NULL, &addr);
+	close(daemon_fd);
+	ble_close(ctx);
+}
+
+ATF_TC_WITHOUT_HEAD(security_sync_query_matrix);
+ATF_TC_BODY(security_sync_query_matrix, tc)
+{
+	ble_addr_t addr = { .addr = { 1, 2, 3, 4, 5, 6 }, .addr_type = 1 };
+	ble_bond_record_t *record;
+	ble_ctx_t *ctx;
+	ble_oob_sc_t oob;
+	ble_resolv_entry_t entry;
+	ble_security_info_t info;
+	ble_security_policy_t policy;
+	uint8_t body[IPC_SECURITY_OOB_REPLY_SIZE];
+	const void *data;
+	size_t len;
+	int daemon_fd;
+
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(body, 0, IPC_SECURITY_POLICY_REPLY_SIZE);
+	ipc_put_le16(body, IPC_SECURITY_GET_POLICY);
+	body[2] = 1; body[3] = 1; body[4] = BLE_SC_ONLY;
+	body[5] = 1; body[6] = BLE_IO_KEYBOARD_DISPLAY;
+	body[7] = BLE_SEC_SC; body[8] = 16;
+	body[9] = BLE_KEY_DIST_ENC | BLE_KEY_DIST_ID;
+	ipc_put_le16(body + 10, 900);
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_SECURITY, body,
+	    IPC_SECURITY_POLICY_REPLY_SIZE);
+	ATF_REQUIRE_EQ(0, ble_get_security_policy(ctx, &policy));
+	ATF_CHECK(policy.mitm && policy.bonding && policy.keypress);
+	ATF_CHECK_EQ(900, policy.rpa_timeout);
+	close(daemon_fd); ble_close(ctx);
+
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(body, 0, IPC_SECURITY_INFO_REPLY_SIZE);
+	ipc_put_le16(body, IPC_SECURITY_GET_INFO);
+	body[2] = addr.addr_type;
+	memcpy(body + 3, addr.addr, sizeof(addr.addr));
+	body[9] = 16; body[10] = 4;
+	body[11] = IPC_SECURITY_INFO_F_ENCRYPTED |
+	    IPC_SECURITY_INFO_F_AUTHENTICATED | IPC_SECURITY_INFO_F_SC |
+	    IPC_SECURITY_INFO_F_BONDED;
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_SECURITY, body,
+	    IPC_SECURITY_INFO_REPLY_SIZE);
+	ATF_REQUIRE_EQ(0, ble_get_security_info(ctx, &addr, &info));
+	ATF_CHECK(info.encrypted && info.authenticated &&
+	    info.secure_connections && info.bonded);
+	close(daemon_fd); ble_close(ctx);
+
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(body, 0x5a, sizeof(body));
+	ipc_put_le16(body, IPC_SECURITY_OOB_GENERATE);
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_SECURITY, body, sizeof(body));
+	ATF_REQUIRE_EQ(0, ble_oob_sc_generate(ctx, &oob));
+	ATF_CHECK_EQ(0, memcmp(oob.confirm, body + 2, sizeof(oob.confirm)));
+	ATF_CHECK_EQ(0, memcmp(oob.pkx, body + 34, sizeof(oob.pkx)));
+	close(daemon_fd); ble_close(ctx);
+
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(body, 0, IPC_SECURITY_RESOLV_REPLY_HDR_SIZE +
+	    IPC_SECURITY_RESOLV_RECORD_SIZE);
+	ipc_put_le16(body, IPC_SECURITY_RESOLV_LIST);
+	ipc_put_le16(body + 2, 1);
+	body[4] = addr.addr_type;
+	memcpy(body + 5, addr.addr, sizeof(addr.addr));
+	body[11] = IPC_SECURITY_RESOLV_F_IN_LIST;
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_SECURITY, body,
+	    IPC_SECURITY_RESOLV_REPLY_HDR_SIZE + IPC_SECURITY_RESOLV_RECORD_SIZE);
+	ATF_REQUIRE_EQ(1, ble_resolv_entries(ctx, &entry, 1));
+	ATF_CHECK(entry.in_controller);
+	ATF_CHECK_EQ(0, memcmp(entry.addr.addr, addr.addr, sizeof(addr.addr)));
+	close(daemon_fd); ble_close(ctx);
+
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(body, 0, 8);
+	ipc_put_le16(body, IPC_SECURITY_BOND_EXPORT);
+	ipc_put_le16(body + 2, 4);
+	memcpy(body + 4, "bond", 4);
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_SECURITY, body, 8);
+	record = ble_bond_export(ctx, &addr);
+	ATF_REQUIRE(record != NULL);
+	data = ble_bond_record_data(record, &len);
+	ATF_CHECK_EQ(4u, len);
+	ATF_CHECK_EQ(0, memcmp(data, "bond", 4));
+	ble_bond_record_free(record);
+	close(daemon_fd); ble_close(ctx);
+}
+
+struct event_matrix_state {
+	int notify_calls;
+	int display_calls;
+	int input_calls;
+	int keypress_calls;
+	int cis_request_calls;
+	int iso_established_calls;
 	uint16_t handle;
-	int dfd;
-	char cmd[256];
+	uint16_t mtu;
+	uint32_t passkey;
+	uint8_t keypress;
+	uint8_t cig_id;
+	uint8_t cis_id;
+	uint8_t adapter_index;
+	uint8_t value[4];
+	uint16_t value_len;
+};
 
-	ctx = make_mock_ctx(&dfd);
-	memset(&uuid, 0, sizeof(uuid));
-	uuid.uuid16 = 0xFFE0;
-	handle = 0;
+static void
+record_notification(const ble_addr_t *addr __unused, uint16_t handle,
+    const uint8_t *value, uint16_t len, void *arg)
+{
+	struct event_matrix_state *state = arg;
 
-	ATF_CHECK_EQ(ble_add_service(ctx, &uuid, &handle), 0);
-	mock_recv(dfd, cmd, sizeof(cmd));
-	ATF_CHECK_MSG(strstr(cmd, "0xFFE0") != NULL, "uuid: %s", cmd);
+	state->notify_calls++;
+	state->handle = handle;
+	state->value_len = len;
+	memcpy(state->value, value, len);
+}
 
-	mock_send(dfd, "OK ADD_SERVICE handle=0x0020 uuid=0xFFE0");
-	ble_process(ctx);
+static void
+record_display(const ble_addr_t *addr __unused, uint32_t passkey, void *arg)
+{
+	struct event_matrix_state *state = arg;
 
-	ATF_CHECK_EQ(handle, 0x0020);
+	state->display_calls++;
+	state->passkey = passkey;
+}
 
-	close(dfd);
+static void
+record_input(const ble_addr_t *addr __unused, void *arg)
+{
+	struct event_matrix_state *state = arg;
+
+	state->input_calls++;
+}
+
+static void
+record_keypress(const ble_addr_t *addr __unused, uint8_t type, void *arg)
+{
+	struct event_matrix_state *state = arg;
+
+	state->keypress_calls++;
+	state->keypress = type;
+}
+
+static void
+record_cis_request(const ble_addr_t *addr, uint16_t handle,
+    uint8_t cig_id, uint8_t cis_id, void *arg)
+{
+	struct event_matrix_state *state = arg;
+
+	state->cis_request_calls++;
+	state->handle = handle;
+	state->cig_id = cig_id;
+	state->cis_id = cis_id;
+	state->adapter_index = addr->adapter_index;
+}
+
+static void
+record_iso_established(const ble_addr_t *addr, uint16_t handle,
+    uint16_t mtu, void *arg)
+{
+	struct event_matrix_state *state = arg;
+
+	state->iso_established_calls++;
+	state->handle = handle;
+	state->mtu = mtu;
+	state->adapter_index = addr->adapter_index;
+}
+
+ATF_TC_WITHOUT_HEAD(typed_event_callback_matrix);
+ATF_TC_BODY(typed_event_callback_matrix, tc)
+{
+	ble_addr_t addr = {
+		.addr = { 1, 2, 3, 4, 5, 6 },
+		.addr_type = 1,
+		.adapter_index = 2,
+	};
+	ble_ctx_t *ctx;
+	struct event_matrix_state state;
+	uint8_t event[IPC_OP_PREFIX_SIZE + IPC_GATT_NOTIFY_EVENT_SIZE + 4];
+	uint8_t request[IPC_OP_PREFIX_SIZE + IPC_MAX_PAYLOAD];
+	uint8_t *body = event + IPC_OP_PREFIX_SIZE;
+	uint32_t request_id;
+	uint16_t type, domain, status, flags;
+	size_t request_len;
+	int daemon_fd;
+
+	memset(&state, 0, sizeof(state));
+	ctx = make_mock_ctx(&daemon_fd);
+	enable_features(ctx, daemon_fd, IPC_FEATURE_EVENTS);
+	ble_on_passkey_display(ctx, record_display, &state);
+	ble_on_passkey_input(ctx, record_input, &state);
+	ble_on_keypress(ctx, record_keypress, &state);
+	ble_on_iso_cis_request(ctx, record_cis_request, &state);
+	ble_on_iso_established(ctx, record_iso_established, &state);
+
+	/* Register a per-handle notification callback and acknowledge it. */
+	ATF_REQUIRE_EQ(0, ble_subscribe(ctx, &addr, 0x0042,
+	    record_notification, &state));
+	read_frame(daemon_fd, &type, &domain, request, sizeof(request),
+	    &request_len);
+	ipc_op_prefix_decode(request, &request_id, &status, &flags);
+	ipc_op_prefix_encode(request, request_id, IPC_ERR_NONE, 0);
+	send_frame(daemon_fd, IPC_T_OP_REPLY, domain, request,
+	    IPC_OP_PREFIX_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+
+	memset(event, 0, sizeof(event));
+	ipc_op_prefix_encode(event, 0, IPC_ERR_NONE, 0);
+	ipc_put_le16(body, IPC_GATT_EV_NOTIFY);
+	body[2] = addr.addr_type;
+	memcpy(body + 3, addr.addr, sizeof(addr.addr));
+	ipc_put_le16(body + 9, 0x0042);
+	ipc_put_le16(body + 11, 3);
+	body[13] = addr.adapter_index;
+	ipc_put_le16(body + 14, 185);
+	memcpy(body + IPC_GATT_NOTIFY_EVENT_SIZE, "ble", 3);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_GATT, event,
+	    IPC_OP_PREFIX_SIZE + IPC_GATT_NOTIFY_EVENT_SIZE + 3);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(1, state.notify_calls);
+	ATF_CHECK_EQ(0x0042, state.handle);
+	ATF_CHECK_EQ(3, state.value_len);
+	ATF_CHECK_EQ(0, memcmp(state.value, "ble", 3));
+
+	/* Exercise every security event callback, including payload decoding. */
+	memset(event, 0, sizeof(event));
+	ipc_op_prefix_encode(event, 0, IPC_ERR_NONE, 0);
+	ipc_put_le16(body, IPC_SECURITY_EV_PASSKEY_DISPLAY);
+	body[2] = addr.addr_type;
+	memcpy(body + 3, addr.addr, sizeof(addr.addr));
+	ipc_put_le32(body + 9, 654321);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY, event,
+	    IPC_OP_PREFIX_SIZE + IPC_SECURITY_PASSKEY_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(1, state.display_calls);
+	ATF_CHECK_EQ(654321, state.passkey);
+
+	ipc_put_le16(body, IPC_SECURITY_EV_PASSKEY_INPUT);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY, event,
+	    IPC_OP_PREFIX_SIZE + IPC_SECURITY_INPUT_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(1, state.input_calls);
+
+	ipc_put_le16(body, IPC_SECURITY_EV_KEYPRESS);
+	body[9] = 4;
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY, event,
+	    IPC_OP_PREFIX_SIZE + IPC_SECURITY_KEYPRESS_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(1, state.keypress_calls);
+	ATF_CHECK_EQ(4, state.keypress);
+
+	/* Exercise both ISO asynchronous event variants. */
+	memset(event, 0, sizeof(event));
+	ipc_op_prefix_encode(event, 0, IPC_ERR_NONE, 0);
+	ipc_put_le16(body, IPC_ISO_EV_CIS_REQUEST);
+	body[2] = addr.addr_type;
+	memcpy(body + 3, addr.addr, sizeof(addr.addr));
+	ipc_put_le16(body + 9, 0x1234);
+	body[11] = 5;
+	body[12] = 6;
+	body[13] = 7;
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_ISO, event,
+	    IPC_OP_PREFIX_SIZE + IPC_ISO_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(1, state.cis_request_calls);
+	ATF_CHECK_EQ(5, state.cig_id);
+	ATF_CHECK_EQ(6, state.cis_id);
+	ATF_CHECK_EQ(7, state.adapter_index);
+
+	ipc_put_le16(body, IPC_ISO_EV_ESTABLISHED);
+	ipc_put_le16(body + 11, 251);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_ISO, event,
+	    IPC_OP_PREFIX_SIZE + IPC_ISO_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(1, state.iso_established_calls);
+	ATF_CHECK_EQ(0x1234, state.handle);
+	ATF_CHECK_EQ(251, state.mtu);
+	ATF_CHECK_EQ(7, state.adapter_index);
+
+	close(daemon_fd);
 	ble_close(ctx);
 }
 
-/* ================================================================
- * ble_command() raw API
- * ================================================================ */
-static int cmd_line_count;
-static bool cmd_saw_terminal;
-static int cmd_terminal_status;
-static char cmd_lines[8][256];
-
-static void
-cmd_cb(const char *line, bool terminal, int status, void *arg __unused)
+ATF_TC_WITHOUT_HEAD(typed_protocol_error_matrix);
+ATF_TC_BODY(typed_protocol_error_matrix, tc)
 {
-	if (cmd_line_count < 8)
-		strlcpy(cmd_lines[cmd_line_count], line,
-		    sizeof(cmd_lines[0]));
-	cmd_line_count++;
-	if (terminal) {
-		cmd_saw_terminal = true;
-		cmd_terminal_status = status;
+	static const struct {
+		uint16_t ipc_error;
+		int ble_error;
+	} error_cases[] = {
+		{ IPC_ERR_NOMEM, BLE_ERR_NOMEM },
+		{ IPC_ERR_PROTO, BLE_ERR_PROTO },
+		{ IPC_ERR_GENERIC, BLE_ERR_DAEMON },
+		{ IPC_ERR_UNKNOWN_CMD, BLE_ERR_DAEMON },
+		{ IPC_ERR_IO, BLE_ERR_DAEMON },
+	};
+	ble_ctx_t *ctx;
+	uint8_t payload[IPC_OP_PREFIX_SIZE + 4];
+	uint8_t request[IPC_OP_PREFIX_SIZE + IPC_MAX_PAYLOAD];
+	uint32_t request_id;
+	uint16_t type, domain, status, flags;
+	size_t request_len;
+	size_t i;
+	int daemon_fd;
+
+	ctx = make_mock_ctx(&daemon_fd);
+	enable_features(ctx, daemon_fd, IPC_FEATURE_EVENTS);
+
+	/* A short reply cannot be correlated to its pending request. */
+	ATF_REQUIRE_EQ(0, ble_advertise(ctx, true));
+	read_frame(daemon_fd, &type, &domain, request, sizeof(request),
+	    &request_len);
+	send_frame(daemon_fd, IPC_T_OP_REPLY, domain, payload,
+	    IPC_OP_PREFIX_SIZE - 1);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	/* Unknown reply flag bits are rejected after successful correlation. */
+	ipc_op_prefix_decode(request, &request_id, &status, &flags);
+	ipc_op_prefix_encode(payload, request_id, IPC_ERR_NONE, 0x8000);
+	send_frame(daemon_fd, IPC_T_OP_REPLY, domain, payload,
+	    IPC_OP_PREFIX_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	/* Invalid event correlation and domains may not be dispatched. */
+	ipc_op_prefix_encode(payload, 1, IPC_ERR_NONE, 0);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_GATT, payload,
+	    IPC_OP_PREFIX_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+	ipc_op_prefix_encode(payload, 0, IPC_ERR_NONE, 0);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, 0xffff, payload,
+	    IPC_OP_PREFIX_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	for (i = 0; i < sizeof(error_cases) / sizeof(error_cases[0]); i++) {
+		send_frame(daemon_fd, IPC_T_ERROR, error_cases[i].ipc_error,
+		    "daemon error", sizeof("daemon error") - 1);
+		ATF_REQUIRE_EQ(0, ble_process(ctx));
+		ATF_CHECK_EQ(error_cases[i].ble_error, ble_errno(ctx));
+	}
+
+	close(daemon_fd);
+	ble_close(ctx);
+}
+
+ATF_TC_WITHOUT_HEAD(typed_malformed_event_matrix);
+ATF_TC_BODY(typed_malformed_event_matrix, tc)
+{
+	ble_ctx_t *ctx;
+	uint8_t event[IPC_OP_PREFIX_SIZE + IPC_GAP_SCAN_RESULT_EVENT_SIZE];
+	uint8_t *body = event + IPC_OP_PREFIX_SIZE;
+	int daemon_fd;
+
+	ctx = make_mock_ctx(&daemon_fd);
+	enable_features(ctx, daemon_fd, IPC_FEATURE_EVENTS);
+	memset(event, 0, sizeof(event));
+	ipc_op_prefix_encode(event, 0, IPC_ERR_NONE, 0);
+
+	/* Status and flag bits are forbidden on every asynchronous event. */
+	ipc_put_le16(body, IPC_GATT_EV_NOTIFY);
+	ipc_op_prefix_encode(event, 0, IPC_ERR_IO, 0);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_GATT, event,
+	    IPC_OP_PREFIX_SIZE + 2);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+	ipc_op_prefix_encode(event, 0, IPC_ERR_NONE, 1);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_GATT, event,
+	    IPC_OP_PREFIX_SIZE + 2);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+	ipc_op_prefix_encode(event, 0, IPC_ERR_NONE, 0);
+
+	/* Invalid address types are rejected independently in each domain. */
+	ipc_put_le16(body, IPC_GATT_EV_NOTIFY);
+	body[2] = 2;
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_GATT, event,
+	    sizeof(event));
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	/* Each GATT server event validates its fixed and variable payload. */
+	memset(body, 0, IPC_GATT_VALUE_EVENT_SIZE + 1);
+	ipc_put_le16(body, IPC_GATT_EV_WRITE);
+	ipc_put_le16(body + 4, 1);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_GATT, event,
+	    IPC_OP_PREFIX_SIZE + IPC_GATT_VALUE_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	memset(body, 0, IPC_GATT_READ_EVENT_SIZE);
+	ipc_put_le16(body, IPC_GATT_EV_READ);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_GATT, event,
+	    IPC_OP_PREFIX_SIZE + IPC_GATT_READ_EVENT_SIZE - 1);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	memset(body, 0, IPC_GATT_AUTHORIZE_EVENT_SIZE);
+	ipc_put_le16(body, IPC_GATT_EV_AUTHORIZE);
+	body[2] = 2;
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_GATT, event,
+	    IPC_OP_PREFIX_SIZE + IPC_GATT_AUTHORIZE_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	memset(body, 0, IPC_GATT_NOTIFY_EVENT_SIZE);
+	ipc_put_le16(body, IPC_GATT_EV_NOTIFY);
+	body[2] = 1;
+	ipc_put_le16(body + 11, 1);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_GATT, event,
+	    IPC_OP_PREFIX_SIZE + IPC_GATT_NOTIFY_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	memset(body, 0, IPC_SECURITY_PASSKEY_EVENT_SIZE);
+	ipc_put_le16(body, IPC_SECURITY_EV_PASSKEY_DISPLAY);
+	body[2] = 2;
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY, event,
+	    IPC_OP_PREFIX_SIZE + IPC_SECURITY_PASSKEY_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	memset(body, 0, IPC_SECURITY_PASSKEY_EVENT_SIZE);
+	ipc_put_le16(body, IPC_SECURITY_EV_PASSKEY_INPUT);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY, event,
+	    IPC_OP_PREFIX_SIZE + 2);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	memset(body, 0, IPC_SECURITY_PASSKEY_EVENT_SIZE);
+	ipc_put_le16(body, 0xffff);
+	body[2] = 1;
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY, event,
+	    IPC_OP_PREFIX_SIZE + IPC_SECURITY_PASSKEY_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	/* A syntactically valid passkey event still enforces the value range. */
+	ipc_put_le16(body, IPC_SECURITY_EV_PASSKEY_DISPLAY);
+	body[2] = 1;
+	ipc_put_le32(body + 9, 1000000);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY, event,
+	    IPC_OP_PREFIX_SIZE + IPC_SECURITY_PASSKEY_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	/* ISO correlation, unknown domains, and GAP opcodes fail closed. */
+	memset(body, 0, IPC_ISO_EVENT_SIZE);
+	ipc_put_le16(body, IPC_ISO_EV_CIS_REQUEST);
+	body[2] = 1;
+	ipc_op_prefix_encode(event, 1, IPC_ERR_NONE, 0);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_ISO, event,
+	    IPC_OP_PREFIX_SIZE + IPC_ISO_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	ipc_op_prefix_encode(event, 0, IPC_ERR_NONE, 0);
+	ipc_put_le16(body, 0xffff);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, 0xfffe, event,
+	    IPC_OP_PREFIX_SIZE + 2);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_GAP, event,
+	    IPC_OP_PREFIX_SIZE + 2);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	memset(body, 0, IPC_GAP_CONNECTED_EVENT_SIZE);
+	ipc_put_le16(body, IPC_GAP_EV_CONNECTED);
+	body[2] = 2;
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_GAP, event,
+	    IPC_OP_PREFIX_SIZE + IPC_GAP_CONNECTED_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	memset(body, 0, IPC_GAP_DISCONNECTED_EVENT_SIZE);
+	ipc_put_le16(body, IPC_GAP_EV_DISCONNECTED);
+	body[2] = 2;
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_GAP, event,
+	    IPC_OP_PREFIX_SIZE + IPC_GAP_DISCONNECTED_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	memset(body, 0, IPC_ISO_EVENT_SIZE);
+	ipc_put_le16(body, 0xffff);
+	body[2] = 1;
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_ISO, event,
+	    IPC_OP_PREFIX_SIZE + IPC_ISO_EVENT_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	memset(body, 0, IPC_ISO_EVENT_SIZE);
+	ipc_put_le16(body, IPC_ISO_EV_CIS_REQUEST);
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_ISO, event,
+	    IPC_OP_PREFIX_SIZE + 2);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+
+	close(daemon_fd);
+	ble_close(ctx);
+}
+
+ATF_TC_WITHOUT_HEAD(pending_operation_capacity);
+ATF_TC_BODY(pending_operation_capacity, tc)
+{
+	ble_ctx_t *ctx;
+	uint8_t request[IPC_OP_PREFIX_SIZE + IPC_MAX_PAYLOAD];
+	uint16_t type, domain;
+	size_t request_len;
+	int daemon_fd, i;
+
+	ctx = make_mock_ctx(&daemon_fd);
+	for (i = 0; i < 64; i++)
+		ATF_REQUIRE_EQ_MSG(0, ble_subscribe(ctx, NULL, (uint16_t)i,
+		    NULL, NULL),
+		    "operation %d unexpectedly rejected", i);
+	ATF_CHECK_EQ(-1, ble_subscribe(ctx, NULL, 64, NULL, NULL));
+	ATF_CHECK_EQ(BLE_ERR_BUSY, ble_errno(ctx));
+
+	/* Confirm all accepted operations reached the mock daemon. */
+	for (i = 0; i < 64; i++) {
+		read_frame(daemon_fd, &type, &domain, request, sizeof(request),
+		    &request_len);
+		ATF_CHECK_EQ(IPC_T_OP_REQ, type);
+		ATF_CHECK_EQ(IPC_OP_DOMAIN_GATT, domain);
+	}
+
+	close(daemon_fd);
+	ble_close(ctx);
+}
+
+ATF_TC_WITHOUT_HEAD(typed_adv_set_lifecycle);
+ATF_TC_BODY(typed_adv_set_lifecycle, tc)
+{
+	ble_adv_set_t *set = NULL;
+	ble_ctx_t *ctx;
+	uint8_t create[IPC_ADV_SET_CREATE_REPLY_SIZE] = { 0 };
+	uint8_t data[] = { 0x02, 0x01, 0x06 };
+	int daemon_fd;
+
+	ctx = make_mock_ctx(&daemon_fd);
+	ipc_put_le16(create, IPC_ADV_SET_CREATE);
+	create[2] = 0x23;
+	send_sync_reply_id(daemon_fd, 1, IPC_OP_DOMAIN_ADV, create,
+	    sizeof(create));
+	ATF_REQUIRE_EQ(0, ble_adv_set_create(ctx, &set));
+	ATF_REQUIRE(set != NULL);
+	ATF_CHECK_EQ(0x23, ble_adv_set_handle(set));
+
+	send_sync_reply_id(daemon_fd, 2, IPC_OP_DOMAIN_ADV, NULL, 0);
+	ATF_CHECK_EQ(0, ble_adv_set_params(set, 0, 0x20, 0x40, 1, 2));
+	send_sync_reply_id(daemon_fd, 3, IPC_OP_DOMAIN_ADV, NULL, 0);
+	ATF_CHECK_EQ(0, ble_adv_set_data(set, data, sizeof(data)));
+	send_sync_reply_id(daemon_fd, 4, IPC_OP_DOMAIN_ADV, NULL, 0);
+	ATF_CHECK_EQ(0, ble_adv_set_data(set, NULL, 0));
+	send_sync_reply_id(daemon_fd, 5, IPC_OP_DOMAIN_ADV, NULL, 0);
+	ATF_CHECK_EQ(0, ble_adv_set_enable(set, true));
+	send_sync_reply_id(daemon_fd, 6, IPC_OP_DOMAIN_ADV, NULL, 0);
+	ble_adv_set_close(set);
+
+	close(daemon_fd);
+	ble_close(ctx);
+}
+
+ATF_TC_WITHOUT_HEAD(typed_structured_reply_rejections);
+ATF_TC_BODY(typed_structured_reply_rejections, tc)
+{
+	ble_addr_t addr = { .addr = { 1, 2, 3, 4, 5, 6 }, .addr_type = 1 };
+	ble_adv_set_t *set = NULL;
+	ble_adapter_caps_t caps;
+	ble_bond_t bond;
+	ble_cig_params_t cig;
+	ble_connection_info_t conn;
+	ble_ctx_t *ctx;
+	ble_security_info_t info;
+	ble_security_policy_t policy;
+	ble_status_t st;
+	uint8_t body[IPC_SECURITY_BOND_REPLY_HDR_SIZE +
+	    IPC_SECURITY_BOND_RECORD_SIZE];
+	uint16_t handles[1];
+	uint8_t size;
+	int daemon_fd;
+
+	/* CIG replies must carry a bounded count and reserved-zero byte. */
+	memset(&cig, 0, sizeof(cig));
+	cig.num_cis = 1;
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(body, 0, IPC_ISO_CIG_REPLY_SIZE);
+	ipc_put_le16(body, IPC_ISO_CIG_CREATE);
+	body[2] = 9;
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_ISO, body,
+	    IPC_ISO_CIG_REPLY_SIZE);
+	ATF_CHECK_EQ(-1, ble_iso_cig_create(ctx, 0, &cig, handles, 1));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+	close(daemon_fd); ble_close(ctx);
+
+	/* Owned advertising handle zero is reserved. */
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(body, 0, IPC_ADV_SET_CREATE_REPLY_SIZE);
+	ipc_put_le16(body, IPC_ADV_SET_CREATE);
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_ADV, body,
+	    IPC_ADV_SET_CREATE_REPLY_SIZE);
+	ATF_CHECK_EQ(-1, ble_adv_set_create(ctx, &set));
+	ATF_CHECK(set == NULL);
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+	close(daemon_fd); ble_close(ctx);
+
+	/* Periodic list replies reject nonzero reserved fields. */
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(body, 0, IPC_PERIODIC_SIZE_REPLY_SIZE);
+	ipc_put_le16(body, IPC_PERIODIC_LIST_SIZE);
+	body[3] = 1;
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_PERIODIC, body,
+	    IPC_PERIODIC_SIZE_REPLY_SIZE);
+	ATF_CHECK_EQ(-1, ble_periodic_adv_list_size(ctx, 0, &size));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+	close(daemon_fd); ble_close(ctx);
+
+	/* Global status accepts only the documented flag bit. */
+	ctx = make_mock_ctx(&daemon_fd);
+	ipc_status_reply_encode(body, 1, 2, 3, 0x8000);
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_CTL, body,
+	    IPC_STATUS_REPLY_SIZE);
+	ATF_CHECK_EQ(-1, ble_status(ctx, &st));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+	close(daemon_fd); ble_close(ctx);
+
+	/* Adapter identity in a reply must match the requested index. */
+	ctx = make_mock_ctx(&daemon_fd);
+	ipc_adapter_caps_reply_encode(body, 2, "mock", addr.addr, 0, 1, 0);
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_CTL, body,
+	    IPC_ADAPTER_CAPS_REPLY_SIZE);
+	ATF_CHECK_EQ(-1, ble_adapter_caps(ctx, 1, &caps));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+	close(daemon_fd); ble_close(ctx);
+
+	/* Snapshot counts are bounded before record iteration. */
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(body, 0, IPC_SECURITY_BOND_REPLY_HDR_SIZE);
+	ipc_put_le16(body, IPC_SECURITY_BOND_LIST);
+	ipc_put_le16(body + 2, BLE_MAX_BONDS + 1);
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_SECURITY, body,
+	    IPC_SECURITY_BOND_REPLY_HDR_SIZE);
+	ATF_CHECK_EQ(-1, ble_bond_list(ctx, &bond, 1));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+	close(daemon_fd); ble_close(ctx);
+
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(body, 0, IPC_GAP_CONNECTION_REPLY_HDR_SIZE);
+	ipc_put_le16(body, IPC_GAP_GET_CONNECTIONS);
+	ipc_put_le16(body + 2, IPC_GAP_CONNECTION_MAX + 1);
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_GAP, body,
+	    IPC_GAP_CONNECTION_REPLY_HDR_SIZE);
+	ATF_CHECK_EQ(-1, ble_connections(ctx, &conn, 1));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+	close(daemon_fd); ble_close(ctx);
+
+	/* Structured security replies reject impossible enums and levels. */
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(body, 0, IPC_SECURITY_POLICY_REPLY_SIZE);
+	ipc_put_le16(body, IPC_SECURITY_GET_POLICY);
+	body[2] = 2;
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_SECURITY, body,
+	    IPC_SECURITY_POLICY_REPLY_SIZE);
+	ATF_CHECK_EQ(-1, ble_get_security_policy(ctx, &policy));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+	close(daemon_fd); ble_close(ctx);
+
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(body, 0, IPC_SECURITY_INFO_REPLY_SIZE);
+	ipc_put_le16(body, IPC_SECURITY_GET_INFO);
+	body[2] = 2;
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_SECURITY, body,
+	    IPC_SECURITY_INFO_REPLY_SIZE);
+	ATF_CHECK_EQ(-1, ble_get_security_info(ctx, &addr, &info));
+	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+	close(daemon_fd); ble_close(ctx);
+}
+
+ATF_TC_WITHOUT_HEAD(typed_iso_stream_lifecycle);
+
+ATF_TC_WITHOUT_HEAD(connection_snapshot_record_matrix);
+ATF_TC_BODY(connection_snapshot_record_matrix, tc)
+{
+	ble_connection_info_t connections[2];
+	ble_addr_t first_addr, second_addr;
+	ble_ctx_t *ctx;
+	uint8_t body[IPC_GAP_CONNECTION_REPLY_HDR_SIZE +
+	    2 * IPC_GAP_CONNECTION_RECORD_SIZE];
+	uint8_t *record;
+	int daemon_fd, variant;
+
+	ctx = make_mock_ctx(&daemon_fd);
+	ATF_CHECK_EQ(-1, ble_connections(ctx, NULL, 1));
+	close(daemon_fd); ble_close(ctx);
+	ctx = make_mock_ctx(&daemon_fd);
+	ATF_CHECK_EQ(-1, ble_connections(ctx, connections, 0));
+	ATF_CHECK_EQ(BLE_ERR_INVAL, ble_errno(ctx));
+	close(daemon_fd); ble_close(ctx);
+
+	/* Two valid records are safely truncated to the caller's capacity. */
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_GAP_GET_CONNECTIONS);
+	ipc_put_le16(body + 2, 2);
+	record = body + IPC_GAP_CONNECTION_REPLY_HDR_SIZE;
+	record[0] = 1; record[7] = BLE_CONNECTION_ACTIVE; record[8] = 1;
+	memset(record + 1, 0x11, 6); record[13] = 1;
+	ipc_put_le16(record + 16, 185);
+	record[9] = IPC_GAP_CONN_F_ENCRYPTED |
+	    IPC_GAP_CONN_F_AUTHENTICATED | IPC_GAP_CONN_F_PHY_VALID;
+	record[10] = 16; record[11] = 2; record[12] = 3;
+	memcpy(record + 24, "first", 6);
+	record += IPC_GAP_CONNECTION_RECORD_SIZE;
+	record[0] = 0; record[7] = BLE_CONNECTION_ACTIVE; record[8] = 0;
+	memset(record + 1, 0x22, 6); record[13] = 2;
+	ipc_put_le16(record + 16, 247);
+	memcpy(record + 24, "second", 7);
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_GAP, body, sizeof(body));
+	ATF_REQUIRE_EQ(1, ble_connections(ctx, connections, 1));
+	ATF_CHECK_STREQ("first", connections[0].name);
+	ATF_CHECK(connections[0].encrypted);
+	ATF_CHECK(connections[0].authenticated);
+	ATF_CHECK(connections[0].phy_valid);
+	memset(&first_addr, 0, sizeof(first_addr));
+	first_addr.addr_type = 1; first_addr.adapter_index = 1;
+	memset(first_addr.addr, 0x11, sizeof(first_addr.addr));
+	memset(&second_addr, 0, sizeof(second_addr));
+	second_addr.addr_type = 0; second_addr.adapter_index = 2;
+	memset(second_addr.addr, 0x22, sizeof(second_addr.addr));
+	ATF_CHECK(ble_is_connected(ctx));
+	ATF_CHECK(ble_is_peer_connected(ctx, &first_addr));
+	ATF_CHECK(ble_is_peer_connected(ctx, &second_addr));
+	ATF_CHECK_EQ(185, ble_get_peer_mtu(ctx, &first_addr));
+	ATF_CHECK_EQ(247, ble_get_peer_mtu(ctx, &second_addr));
+	ATF_CHECK_EQ(0, ble_get_mtu(ctx));
+
+	/* A malformed replacement snapshot must preserve the last good cache. */
+	memset(body, 0, IPC_GAP_CONNECTION_REPLY_HDR_SIZE);
+	ipc_put_le16(body, IPC_GAP_GET_CONNECTIONS);
+	ipc_put_le16(body + 2, IPC_GAP_CONNECTION_MAX + 1);
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_GAP, body,
+	    IPC_GAP_CONNECTION_REPLY_HDR_SIZE);
+	ATF_CHECK_EQ(-1, ble_connections(ctx, connections, 2));
+	ATF_CHECK(ble_is_peer_connected(ctx, &first_addr));
+	ATF_CHECK(ble_is_peer_connected(ctx, &second_addr));
+	close(daemon_fd); ble_close(ctx);
+
+	/* Every constrained field in a connection record is validated. */
+	for (variant = 0; variant < 10; variant++) {
+		ctx = make_mock_ctx(&daemon_fd);
+		memset(body, 0, sizeof(body));
+		ipc_put_le16(body, IPC_GAP_GET_CONNECTIONS);
+		ipc_put_le16(body + 2, 1);
+		record = body + IPC_GAP_CONNECTION_REPLY_HDR_SIZE;
+		memcpy(record + 24, "peer", 5);
+		switch (variant) {
+		case 0: record[0] = 2; break;
+		case 1: record[7] = 4; break;
+		case 2: record[8] = 2; break;
+		case 3: record[9] = 0x80; break;
+		case 4: record[10] = 17; break;
+		case 5:
+			record[9] = IPC_GAP_CONN_F_ENCRYPTED;
+			record[10] = 6;
+			break;
+		case 6:
+			record[9] = IPC_GAP_CONN_F_AUTHENTICATED;
+			break;
+		case 7:
+			record[9] = IPC_GAP_CONN_F_PHY_VALID;
+			record[11] = 0; record[12] = 1;
+			break;
+		case 8: record[13] = 8; break;
+		case 9: memset(record + 24, 'x', 64); break;
+		}
+		send_sync_reply(daemon_fd, IPC_OP_DOMAIN_GAP, body,
+		    IPC_GAP_CONNECTION_REPLY_HDR_SIZE +
+		    IPC_GAP_CONNECTION_RECORD_SIZE);
+		ATF_CHECK_EQ(-1, ble_connections(ctx, connections, 2));
+		ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
+		close(daemon_fd); ble_close(ctx);
 	}
 }
 
-ATF_TC_WITHOUT_HEAD(test_command_oneshot_ok);
-ATF_TC_BODY(test_command_oneshot_ok, tc)
+ATF_TC_BODY(typed_iso_stream_lifecycle, tc)
 {
+	ble_iso_stream_t *stream = NULL;
 	ble_ctx_t *ctx;
-	int dfd;
-	char cmd[256];
+	struct delayed_fds fds;
+	pthread_t sender;
+	uint8_t body[IPC_ISO_ACQUIRE_REPLY_SIZE] = { 0 };
+	uint8_t tx[] = { 1, 2, 3 }, rx[4] = { 0 };
+	int channel[2], daemon_fd;
 
-	ctx = make_mock_ctx(&dfd);
-	cmd_line_count = 0;
-	cmd_saw_terminal = false;
+	ctx = make_mock_ctx(&daemon_fd);
+	enable_fdpass(ctx, daemon_fd);
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, channel));
+	ipc_put_le16(body, IPC_ISO_ACQUIRE);
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_ISO, body, sizeof(body));
+	fds = (struct delayed_fds){ daemon_fd, channel[1], 1 };
+	ATF_REQUIRE_EQ(0, pthread_create(&sender, NULL, send_fds_delayed, &fds));
+	ATF_REQUIRE_EQ(0, ble_iso_acquire(ctx, 2, 0x123, &stream));
+	ATF_REQUIRE_EQ(0, pthread_join(sender, NULL));
+	ATF_REQUIRE(stream != NULL);
+	ATF_CHECK(ble_iso_fd(stream) >= 0);
+	ATF_CHECK_EQ((int)sizeof(tx), ble_iso_send(stream, tx, sizeof(tx)));
+	ATF_REQUIRE_EQ((ssize_t)sizeof(tx), read(channel[0], rx, sizeof(rx)));
+	ATF_CHECK_EQ(0, memcmp(tx, rx, sizeof(tx)));
+	ATF_REQUIRE_EQ((ssize_t)sizeof(tx), write(channel[0], tx, sizeof(tx)));
+	memset(rx, 0, sizeof(rx));
+	ATF_CHECK_EQ((int)sizeof(tx), ble_iso_recv(stream, rx, sizeof(rx)));
+	ATF_CHECK_EQ(0, memcmp(tx, rx, sizeof(tx)));
+	ble_iso_close(stream);
+	close(channel[0]); close(channel[1]); close(daemon_fd); ble_close(ctx);
 
-	ble_command(ctx, "STATUS", cmd_cb, NULL, 0);
-	mock_recv(dfd, cmd, sizeof(cmd));
+	stream = NULL;
+	ctx = make_mock_ctx(&daemon_fd);
+	enable_fdpass(ctx, daemon_fd);
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, channel));
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_ISO_BIS_ACQUIRE);
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_ISO, body, sizeof(body));
+	fds = (struct delayed_fds){ daemon_fd, channel[1], 1 };
+	ATF_REQUIRE_EQ(0, pthread_create(&sender, NULL, send_fds_delayed, &fds));
+	ATF_REQUIRE_EQ(0, ble_iso_bis_acquire(ctx, 1, 2, 3, &stream));
+	ATF_REQUIRE_EQ(0, pthread_join(sender, NULL));
+	ATF_REQUIRE(stream != NULL);
+	ble_iso_close(stream);
+	close(channel[0]); close(channel[1]); close(daemon_fd); ble_close(ctx);
+}
 
-	mock_send(dfd, "STATUS adapters=1 connections=0");
-	ble_process(ctx);
+ATF_TC_WITHOUT_HEAD(battery_discovery_chains_read);
+ATF_TC_BODY(battery_discovery_chains_read, tc)
+{
+	ble_addr_t addr = {
+	    .addr = { 2, 4, 6, 8, 10, 12 }, .addr_type = 1,
+	    .adapter_index = 3
+	};
+	ble_ctx_t *ctx;
+	uint8_t event[IPC_OP_PREFIX_SIZE + IPC_GATT_DISCOVERY_EVENT_SIZE];
+	uint8_t request[IPC_OP_PREFIX_SIZE + IPC_MAX_PAYLOAD];
+	uint8_t *body = event + IPC_OP_PREFIX_SIZE;
+	uint32_t request_id;
+	uint16_t type, domain, status, flags;
+	size_t request_len;
+	int daemon_fd;
 
-	ATF_CHECK_EQ(cmd_line_count, 1);
-	ATF_CHECK(cmd_saw_terminal);
-	ATF_CHECK_EQ(cmd_terminal_status, 1);
-	ATF_CHECK_MSG(strstr(cmd_lines[0], "adapters=1") != NULL,
-	    "line: %s", cmd_lines[0]);
+	ATF_CHECK_EQ(-1, ble_read_battery(NULL, &addr, NULL, NULL));
+	ctx = make_mock_ctx(&daemon_fd);
+	ATF_CHECK_EQ(-1, ble_read_battery(ctx, NULL, NULL, NULL));
+	ATF_REQUIRE_EQ(0, ble_read_battery(ctx, &addr, NULL, NULL));
+	read_frame(daemon_fd, &type, &domain, request, sizeof(request),
+	    &request_len);
+	ipc_op_prefix_decode(request, &request_id, &status, &flags);
+	ATF_CHECK_EQ(IPC_GATT_DISCOVER,
+	    ipc_get_le16(request + IPC_OP_PREFIX_SIZE));
 
-	close(dfd);
+	memset(event, 0, sizeof(event));
+	ipc_op_prefix_encode(event, request_id, IPC_ERR_NONE, 0);
+	ipc_put_le16(body, IPC_GATT_EV_CHARACTERISTIC);
+	ipc_put_le16(body + 2, BLE_CHR_BATTERY_LEVEL);
+	ipc_put_le16(body + 20, 0x0025);
+	body[22] = 0x02;
+	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_GATT, event,
+	    sizeof(event));
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+
+	ipc_op_prefix_encode(event, request_id, IPC_ERR_NONE, 0);
+	send_frame(daemon_fd, IPC_T_OP_REPLY, IPC_OP_DOMAIN_GATT, event,
+	    IPC_OP_PREFIX_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	read_frame(daemon_fd, &type, &domain, request, sizeof(request),
+	    &request_len);
+	ATF_CHECK_EQ(IPC_T_OP_REQ, type);
+	ATF_CHECK_EQ(IPC_OP_DOMAIN_GATT, domain);
+	ATF_CHECK_EQ(IPC_GATT_READ,
+	    ipc_get_le16(request + IPC_OP_PREFIX_SIZE));
+	ATF_CHECK_EQ(0x0025,
+	    ipc_get_le16(request + IPC_OP_PREFIX_SIZE + 12));
+
+	close(daemon_fd);
 	ble_close(ctx);
 }
 
-ATF_TC_WITHOUT_HEAD(test_command_multiline_content);
-ATF_TC_BODY(test_command_multiline_content, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-	char cmd[256];
-
-	ctx = make_mock_ctx(&dfd);
-	cmd_line_count = 0;
-
-	ble_command(ctx, "LIST", cmd_cb, NULL, 0);
-	mock_recv(dfd, cmd, sizeof(cmd));
-
-	mock_send(dfd, "LIST");
-	mock_send(dfd, "aa:bb:cc:dd:ee:ff state=2 handle=0040 role=central encrypted=1 authenticated=0 key_size=16 name=MyKeyboard");
-	mock_send(dfd, "END");
-	ble_process(ctx);
-
-	ATF_CHECK_EQ(cmd_line_count, 3);
-	ATF_CHECK_MSG(strstr(cmd_lines[0], "LIST") != NULL,
-	    "line 0: %s", cmd_lines[0]);
-	ATF_CHECK_MSG(strstr(cmd_lines[1], "role=central") != NULL,
-	    "line 1: %s", cmd_lines[1]);
-	ATF_CHECK_MSG(strstr(cmd_lines[1], "encrypted=1") != NULL,
-	    "line 1 encrypted: %s", cmd_lines[1]);
-	ATF_CHECK_MSG(strstr(cmd_lines[1], "name=MyKeyboard") != NULL,
-	    "line 1 name: %s", cmd_lines[1]);
-	ATF_CHECK_MSG(strcmp(cmd_lines[2], "END") == 0,
-	    "line 2: %s", cmd_lines[2]);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-ATF_TC_WITHOUT_HEAD(test_command_error_status);
-ATF_TC_BODY(test_command_error_status, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-	char cmd[256];
-
-	ctx = make_mock_ctx(&dfd);
-	cmd_line_count = 0;
-	cmd_saw_terminal = false;
-	cmd_terminal_status = 0;
-
-	ble_command(ctx, "READ 11:22:33:44:55:66 0x9999", cmd_cb, NULL, 0);
-	mock_recv(dfd, cmd, sizeof(cmd));
-
-	mock_send(dfd, "ERROR device not connected");
-	ble_process(ctx);
-
-	ATF_CHECK_EQ(cmd_line_count, 1);
-	ATF_CHECK(cmd_saw_terminal);
-	ATF_CHECK_EQ(cmd_terminal_status, -1);
-	ATF_CHECK_MSG(strstr(cmd_lines[0], "not connected") != NULL,
-	    "error: %s", cmd_lines[0]);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-ATF_TC_WITHOUT_HEAD(test_command_streaming);
-ATF_TC_BODY(test_command_streaming, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-	char cmd[256];
-
-	ctx = make_mock_ctx(&dfd);
-	cmd_line_count = 0;
-	cmd_saw_terminal = false;
-
-	/* Streaming: callback should NOT be cleared on terminal */
-	ble_command(ctx, "SUBSCRIBE aa:bb:cc:dd:ee:ff 0x0025",
-	    cmd_cb, NULL, BLE_CMD_STREAMING);
-	mock_recv(dfd, cmd, sizeof(cmd));
-
-	mock_send(dfd, "OK SUBSCRIBE 0x0025");
-	ble_process(ctx);
-
-	/* Terminal received, but streaming keeps callback alive */
-	ATF_CHECK_EQ(cmd_line_count, 1);
-	ATF_CHECK(cmd_saw_terminal);
-
-	/* Send more data — should still be received */
-	cmd_line_count = 0;
-	mock_send(dfd, "EVENT NOTIFY aa:bb:cc:dd:ee:ff 0x0025 CAFE");
-	ble_process(ctx);
-	ATF_CHECK_EQ(cmd_line_count, 1);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * ble_on_line: unsolicited events
- * ================================================================ */
-static int unsol_count;
-static char unsol_line[256];
-
-static void
-unsol_cb(const char *line, bool terminal __unused, int status __unused,
-    void *arg __unused)
-{
-	unsol_count++;
-	strlcpy(unsol_line, line, sizeof(unsol_line));
-}
-
-ATF_TC_WITHOUT_HEAD(test_on_line_receives_events);
-ATF_TC_BODY(test_on_line_receives_events, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-
-	ctx = make_mock_ctx(&dfd);
-	unsol_count = 0;
-
-	ble_on_line(ctx, unsol_cb, NULL);
-
-	mock_send(dfd, "EVENT PASSKEY_DISPLAY aa:bb:cc:dd:ee:ff 123456");
-	ble_process(ctx);
-
-	ATF_CHECK_EQ(unsol_count, 1);
-	ATF_CHECK_MSG(strstr(unsol_line, "PASSKEY_DISPLAY") != NULL,
-	    "line: %s", unsol_line);
-	ATF_CHECK_MSG(strstr(unsol_line, "123456") != NULL,
-	    "passkey: %s", unsol_line);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * READ battery: verify DISCOVER+READ chain
- * ================================================================ */
-static int bat_read_called;
-static uint8_t bat_level;
-static int bat_error;
-
-static void
-bat_cb(const ble_addr_t *addr __unused, uint16_t handle __unused,
-    const uint8_t *value, uint16_t len, int error, void *arg __unused)
-{
-	bat_read_called = 1;
-	bat_error = error;
-	if (len > 0 && value != NULL)
-		bat_level = value[0];
-}
-
-ATF_TC_WITHOUT_HEAD(test_read_battery_chain);
-ATF_TC_BODY(test_read_battery_chain, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	bat_read_called = 0;
-	bat_level = 0;
-
-	ATF_CHECK_EQ(ble_read_battery(ctx, &addr, bat_cb, NULL), 0);
-
-	/* Step 1: library sends DISCOVER */
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, "DISCOVER") != NULL, "step1: %s", cmd);
-
-	/* Mock: Battery Service with Battery Level char */
-	mock_send(dfd, "DISCOVER aa:bb:cc:dd:ee:ff");
-	mock_send(dfd, "  service uuid=0x180F handles=0x0020-0x0023");
-	mock_send(dfd, "    char uuid=0x2A19 handle=0x0022 props=read");
-	mock_send(dfd, "END");
-	ble_process(ctx);
-
-	/* Step 2: library sends READ for the resolved handle */
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, "READ") != NULL, "step2: %s", cmd);
-	ATF_CHECK_MSG(strstr(cmd, "0x0022") != NULL,
-	    "wrong handle: %s", cmd);
-
-	/* Mock: battery level = 85 (0x55) */
-	mock_send(dfd, "OK READ 0x0022 len=1 value=55");
-	ble_process(ctx);
-
-	ATF_CHECK_EQ(bat_read_called, 1);
-	ATF_CHECK_EQ(bat_error, 0);
-	ATF_CHECK_EQ(bat_level, 0x55);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-ATF_TC_WITHOUT_HEAD(test_read_battery_not_found);
-ATF_TC_BODY(test_read_battery_not_found, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	bat_read_called = 0;
-	bat_error = 0;
-
-	ble_read_battery(ctx, &addr, bat_cb, NULL);
-	mock_recv(dfd, cmd, sizeof(cmd));
-
-	/* No Battery Service in discover results */
-	mock_send(dfd, "DISCOVER aa:bb:cc:dd:ee:ff");
-	mock_send(dfd, "  service uuid=0x1800 handles=0x0001-0x0005");
-	mock_send(dfd, "    char uuid=0x2A00 handle=0x0003 props=read");
-	mock_send(dfd, "END");
-	ble_process(ctx);
-
-	/* Should report error — no Battery Level char found */
-	ATF_CHECK_EQ(bat_read_called, 1);
-	ATF_CHECK_EQ(bat_error, -1);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * Connection lost
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_connection_lost);
-ATF_TC_BODY(test_connection_lost, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-
-	ctx = make_mock_ctx(&dfd);
-	close(dfd);
-	ATF_CHECK_EQ(ble_process(ctx), -1);
-	ble_close(ctx);
-}
-
-ATF_TC_WITHOUT_HEAD(test_connection_lost_mid_command);
-ATF_TC_BODY(test_connection_lost_mid_command, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-	char cmd[256];
-
-	ctx = make_mock_ctx(&dfd);
-	cmd_line_count = 0;
-
-	ble_command(ctx, "DISCOVER 11:22:33:44:55:66", cmd_cb, NULL, 0);
-	mock_recv(dfd, cmd, sizeof(cmd));
-
-	/* Send partial response then close */
-	mock_send(dfd, "DISCOVER 11:22:33:44:55:66");
-	ble_process(ctx);
-	ATF_CHECK_EQ(cmd_line_count, 1);
-
-	close(dfd);
-	ATF_CHECK_EQ(ble_process(ctx), -1);
-
-	ble_close(ctx);
-}
-
-/* ================================================================
- * ble_addr_str formatting
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_addr_str);
-ATF_TC_BODY(test_addr_str, tc)
-{
-	ble_addr_t addr;
-	char buf[18];
-	bdaddr_t ba;
-
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	ble_addr_str(&addr, buf);
-	ATF_CHECK_MSG(strcasecmp(buf, "aa:bb:cc:dd:ee:ff") == 0,
-	    "got: %s", buf);
-}
-
-/* ================================================================
- * SET_VALUE: verify hex encoding
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_set_value);
-ATF_TC_BODY(test_set_value, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-	char cmd[256];
-	uint8_t val[] = { 0xCA, 0xFE };
-
-	ctx = make_mock_ctx(&dfd);
-
-	ATF_CHECK_EQ(ble_set_value(ctx, 0x000A, val, 2), 0);
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, "SET_VALUE") != NULL, "cmd: %s", cmd);
-	ATF_CHECK_MSG(strstr(cmd, "0x000A") != NULL, "handle: %s", cmd);
-	ATF_CHECK_MSG(strstr(cmd, "CAFE") != NULL, "hex: %s", cmd);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * PASSKEY_REPLY: verify format
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_passkey_reply);
-ATF_TC_BODY(test_passkey_reply, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	ATF_CHECK_EQ(ble_passkey_reply(ctx, &addr, 123456), 0);
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, "PASSKEY_REPLY") != NULL, "cmd: %s", cmd);
-	ATF_CHECK_MSG(strstr(cmd, "123456") != NULL, "passkey: %s", cmd);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * DISCONNECT: verify format
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_disconnect);
-ATF_TC_BODY(test_disconnect, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("11:22:33:44:55:66", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	ATF_CHECK_EQ(ble_disconnect(ctx, &addr), 0);
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, "DISCONNECT") != NULL, "cmd: %s", cmd);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * READ while pending rejected
- * ================================================================ */
-static void
-dummy_read_cb(const ble_addr_t *a __unused, uint16_t h __unused,
-    const uint8_t *v __unused, uint16_t l __unused, int e __unused,
-    void *arg __unused) {}
-
-ATF_TC_WITHOUT_HEAD(test_read_while_pending_rejected);
-ATF_TC_BODY(test_read_while_pending_rejected, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char tmp[256];
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-
-	ATF_CHECK_EQ(ble_read(ctx, &addr, 0x0001, dummy_read_cb, NULL), 0);
-	mock_recv(dfd, tmp, sizeof(tmp));
-	ATF_CHECK_EQ(ble_read(ctx, &addr, 0x0002, dummy_read_cb, NULL), -1);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * UNSUBSCRIBE: verify format
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_unsubscribe);
-ATF_TC_BODY(test_unsubscribe, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	ATF_CHECK_EQ(ble_unsubscribe(ctx, &addr, 0x0025), 0);
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, "UNSUBSCRIBE") != NULL, "cmd: %s", cmd);
-	ATF_CHECK_MSG(strstr(cmd, "0x0025") != NULL, "handle: %s", cmd);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * REMOVE_SERVICE: verify format
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_remove_service);
-ATF_TC_BODY(test_remove_service, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-	char cmd[256];
-
-	ctx = make_mock_ctx(&dfd);
-
-	ATF_CHECK_EQ(ble_remove_service(ctx, 0x0020), 0);
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, "REMOVE_SERVICE") != NULL, "cmd: %s", cmd);
-	ATF_CHECK_MSG(strstr(cmd, "0x0020") != NULL, "handle: %s", cmd);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * NUMCMP_REPLY: verify yes/no format
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_numcmp_reply_yes);
-ATF_TC_BODY(test_numcmp_reply_yes, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	ATF_CHECK_EQ(ble_numcmp_reply(ctx, &addr, true), 0);
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, "NUMCMP_REPLY") != NULL, "cmd: %s", cmd);
-	ATF_CHECK_MSG(strstr(cmd, "yes") != NULL, "expected yes: %s", cmd);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-ATF_TC_WITHOUT_HEAD(test_numcmp_reply_no);
-ATF_TC_BODY(test_numcmp_reply_no, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	ATF_CHECK_EQ(ble_numcmp_reply(ctx, &addr, false), 0);
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, "no") != NULL, "expected no: %s", cmd);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * EVENT WRITE: verify ble_on_write callback fires
- * ================================================================ */
-static int write_req_count;
-static uint16_t write_req_handle;
-static uint8_t write_req_value[64];
-static uint16_t write_req_len;
-
-static void
-write_req_cb(uint16_t handle, const uint8_t *value, uint16_t len,
-    void *arg __unused)
-{
-	write_req_count++;
-	write_req_handle = handle;
-	if (len <= sizeof(write_req_value)) {
-		memcpy(write_req_value, value, len);
-		write_req_len = len;
-	}
-}
-
-ATF_TC_WITHOUT_HEAD(test_on_write_event);
-ATF_TC_BODY(test_on_write_event, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-
-	ctx = make_mock_ctx(&dfd);
-	write_req_count = 0;
-
-	ble_on_write(ctx, write_req_cb, NULL);
-
-	mock_send(dfd, "EVENT WRITE 0x000A BEEF");
-	ble_process(ctx);
-
-	ATF_CHECK_EQ(write_req_count, 1);
-	ATF_CHECK_EQ(write_req_handle, 0x000A);
-	ATF_CHECK_EQ(write_req_len, 2);
-	ATF_CHECK_EQ(write_req_value[0], 0xBE);
-	ATF_CHECK_EQ(write_req_value[1], 0xEF);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * Pairing event callbacks
- * ================================================================ */
-static int passkey_display_count;
-static uint32_t passkey_display_value;
-
-static void
-passkey_display_cb(const ble_addr_t *addr __unused, uint32_t passkey,
-    void *arg __unused)
-{
-	passkey_display_count++;
-	passkey_display_value = passkey;
-}
-
-ATF_TC_WITHOUT_HEAD(test_passkey_display_event);
-ATF_TC_BODY(test_passkey_display_event, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-
-	ctx = make_mock_ctx(&dfd);
-	passkey_display_count = 0;
-
-	ble_on_passkey_display(ctx, passkey_display_cb, NULL);
-
-	mock_send(dfd, "EVENT PASSKEY_DISPLAY aa:bb:cc:dd:ee:ff 042069");
-	ble_process(ctx);
-
-	ATF_CHECK_EQ(passkey_display_count, 1);
-	ATF_CHECK_EQ(passkey_display_value, 42069);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-static int passkey_input_count;
-
-static void
-passkey_input_cb(const ble_addr_t *addr __unused, void *arg __unused)
-{
-	passkey_input_count++;
-}
-
-ATF_TC_WITHOUT_HEAD(test_passkey_input_event);
-ATF_TC_BODY(test_passkey_input_event, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-
-	ctx = make_mock_ctx(&dfd);
-	passkey_input_count = 0;
-
-	ble_on_passkey_input(ctx, passkey_input_cb, NULL);
-
-	mock_send(dfd, "EVENT PASSKEY_INPUT aa:bb:cc:dd:ee:ff");
-	ble_process(ctx);
-
-	ATF_CHECK_EQ(passkey_input_count, 1);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-static int numcmp_event_count;
-static uint32_t numcmp_event_value;
-
-static void
-numcmp_event_cb(const ble_addr_t *addr __unused, uint32_t value,
-    void *arg __unused)
-{
-	numcmp_event_count++;
-	numcmp_event_value = value;
-}
-
-ATF_TC_WITHOUT_HEAD(test_numcmp_request_event);
-ATF_TC_BODY(test_numcmp_request_event, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-
-	ctx = make_mock_ctx(&dfd);
-	numcmp_event_count = 0;
-
-	ble_on_numcmp(ctx, numcmp_event_cb, NULL);
-
-	mock_send(dfd, "EVENT NUMCMP_REQUEST aa:bb:cc:dd:ee:ff 987654");
-	ble_process(ctx);
-
-	ATF_CHECK_EQ(numcmp_event_count, 1);
-	ATF_CHECK_EQ(numcmp_event_value, 987654);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * ADD_CHAR with value: verify hex encoding
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_add_char_with_value);
-ATF_TC_BODY(test_add_char_with_value, tc)
-{
-	ble_ctx_t *ctx;
-	ble_uuid_t uuid;
-	int dfd;
-	char cmd[256];
-	uint8_t val[] = { 0x48, 0x65, 0x6C };  /* "Hel" */
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&uuid, 0, sizeof(uuid));
-	uuid.uuid16 = 0xFFE1;
-
-	ATF_CHECK_EQ(ble_add_characteristic(ctx, 0x0020, &uuid,
-	    BLE_PROP_READ | BLE_PROP_WRITE, BLE_PERM_READ | BLE_PERM_WRITE,
-	    val, 3, NULL), 0);
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, "ADD_CHAR") != NULL, "cmd: %s", cmd);
-	ATF_CHECK_MSG(strstr(cmd, "0xFFE1") != NULL, "uuid: %s", cmd);
-	ATF_CHECK_MSG(strstr(cmd, "48656C") != NULL, "value hex: %s", cmd);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * Partial line buffering: data arrives without trailing \n
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_partial_line_buffering);
-ATF_TC_BODY(test_partial_line_buffering, tc)
-{
-	ble_ctx_t *ctx;
-	int dfd;
-
-	ctx = make_mock_ctx(&dfd);
-	cmd_line_count = 0;
-	cmd_saw_terminal = false;
-
-	ble_command(ctx, "STATUS", cmd_cb, NULL, 0);
-	{
-		char tmp[256];
-		mock_recv(dfd, tmp, sizeof(tmp));
-	}
-
-	/* Send partial data (no newline) */
-	ATF_REQUIRE(send(dfd, "STATUS adapters=", 16, 0) == 16);
-	ble_process(ctx);
-	ATF_CHECK_EQ(cmd_line_count, 0);  /* no complete line yet */
-
-	/* Send the rest */
-	ATF_REQUIRE(send(dfd, "1 connections=0\n", 16, 0) == 16);
-	ble_process(ctx);
-	ATF_CHECK_EQ(cmd_line_count, 1);
-	ATF_CHECK(cmd_saw_terminal);
-	ATF_CHECK_MSG(strstr(cmd_lines[0], "adapters=1") != NULL,
-	    "reassembled: %s", cmd_lines[0]);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * ERROR dispatch to connect_cb
- * ================================================================ */
-static int connect_error_code;
-static int connect_cb_called;
-
-static void
-connect_err_cb(const ble_addr_t *addr __unused, int error, void *arg __unused)
-{
-	connect_cb_called = 1;
-	connect_error_code = error;
-}
-
-ATF_TC_WITHOUT_HEAD(test_error_dispatches_to_connect_cb);
-ATF_TC_BODY(test_error_dispatches_to_connect_cb, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char tmp[256];
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	connect_cb_called = 0;
-	connect_error_code = 0;
-
-	ble_connect(ctx, &addr, connect_err_cb, NULL);
-	mock_recv(dfd, tmp, sizeof(tmp));
-
-	mock_send(dfd, "ERROR already connected");
-	ble_process(ctx);
-
-	ATF_CHECK_EQ(connect_cb_called, 1);
-	ATF_CHECK_EQ(connect_error_code, -1);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * ERROR dispatch to read_cb
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_error_dispatches_to_read_cb);
-ATF_TC_BODY(test_error_dispatches_to_read_cb, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char tmp[256];
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	bat_read_called = 0;
-	bat_error = 0;
-
-	ble_read(ctx, &addr, 0x0003, bat_cb, NULL);
-	mock_recv(dfd, tmp, sizeof(tmp));
-
-	mock_send(dfd, "ERROR read failed");
-	ble_process(ctx);
-
-	ATF_CHECK_EQ(bat_read_called, 1);
-	ATF_CHECK_EQ(bat_error, -1);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * Passkey boundary: 0 (min) and 999999 (max)
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_passkey_boundary_zero);
-ATF_TC_BODY(test_passkey_boundary_zero, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	ATF_CHECK_EQ(ble_passkey_reply(ctx, &addr, 0), 0);
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, " 0") != NULL, "passkey 0: %s", cmd);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-ATF_TC_WITHOUT_HEAD(test_passkey_boundary_max);
-ATF_TC_BODY(test_passkey_boundary_max, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	ATF_CHECK_EQ(ble_passkey_reply(ctx, &addr, 999999), 0);
-	ATF_REQUIRE(mock_recv(dfd, cmd, sizeof(cmd)) > 0);
-	ATF_CHECK_MSG(strstr(cmd, "999999") != NULL,
-	    "passkey max: %s", cmd);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * Discover with properties: verify all property flags parse
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_discover_all_properties);
-ATF_TC_BODY(test_discover_all_properties, tc)
-{
-	ble_ctx_t *ctx;
-	ble_addr_t addr;
-	int dfd;
-	char cmd[256];
-	bdaddr_t ba;
-
-	ctx = make_mock_ctx(&dfd);
-	memset(&addr, 0, sizeof(addr));
-	bt_aton("AA:BB:CC:DD:EE:FF", &ba);
-	memcpy(addr.addr, &ba, 6);
-
-	disc_nsvc = 0;
-	disc_nchar = 0;
-
-	ble_discover(ctx, &addr, disc_cb, NULL);
-	mock_recv(dfd, cmd, sizeof(cmd));
-
-	mock_send(dfd, "DISCOVER aa:bb:cc:dd:ee:ff");
-	mock_send(dfd, "  service uuid=0xFFE0 handles=0x0010-0x0020");
-	mock_send(dfd, "    char uuid=0xFFE1 handle=0x0012 props=read|write|notify|indicate|write_no_rsp|broadcast|auth_signed");
-	mock_send(dfd, "END");
-	ble_process(ctx);
-
-	ATF_CHECK_EQ(disc_nchar, 1);
-	ATF_CHECK_EQ(disc_chars[0].properties & BLE_PROP_READ, BLE_PROP_READ);
-	ATF_CHECK_EQ(disc_chars[0].properties & BLE_PROP_WRITE, BLE_PROP_WRITE);
-	ATF_CHECK_EQ(disc_chars[0].properties & BLE_PROP_NOTIFY, BLE_PROP_NOTIFY);
-	ATF_CHECK_EQ(disc_chars[0].properties & BLE_PROP_INDICATE, BLE_PROP_INDICATE);
-	ATF_CHECK_EQ(disc_chars[0].properties & BLE_PROP_WRITE_NO_RSP, BLE_PROP_WRITE_NO_RSP);
-	ATF_CHECK_EQ(disc_chars[0].properties & BLE_PROP_BROADCAST, BLE_PROP_BROADCAST);
-	ATF_CHECK_EQ(disc_chars[0].properties & BLE_PROP_AUTH_SIGNED_WRITE, BLE_PROP_AUTH_SIGNED_WRITE);
-
-	close(dfd);
-	ble_close(ctx);
-}
-
-/* ================================================================
- * ATF test program entry point
- * ================================================================ */
 ATF_TP_ADD_TCS(tp)
 {
-
-	/* Scan */
-	ATF_TP_ADD_TC(tp, test_scan_parses_fields);
-	ATF_TP_ADD_TC(tp, test_scan_public_addr_type);
-	ATF_TP_ADD_TC(tp, test_scan_while_pending_rejected);
-
-	/* Connect */
-	ATF_TP_ADD_TC(tp, test_connect_random);
-	ATF_TP_ADD_TC(tp, test_connect_while_pending_rejected);
-	ATF_TP_ADD_TC(tp, test_connect_name);
-
-	/* Write */
-	ATF_TP_ADD_TC(tp, test_write_hex_encoding);
-
-	/* Notify */
-	ATF_TP_ADD_TC(tp, test_notify_parses_handle_and_value);
-	ATF_TP_ADD_TC(tp, test_notify_empty_value);
-
-	/* Discover */
-	ATF_TP_ADD_TC(tp, test_discover_parses_service_and_char);
-	ATF_TP_ADD_TC(tp, test_discover_empty);
-	ATF_TP_ADD_TC(tp, test_discover_error);
-	ATF_TP_ADD_TC(tp, test_discover_while_pending_rejected);
-
-	/* Add service */
-	ATF_TP_ADD_TC(tp, test_add_service_returns_handle);
-
-	/* Raw command API */
-	ATF_TP_ADD_TC(tp, test_command_oneshot_ok);
-	ATF_TP_ADD_TC(tp, test_command_multiline_content);
-	ATF_TP_ADD_TC(tp, test_command_error_status);
-	ATF_TP_ADD_TC(tp, test_command_streaming);
-
-	/* Unsolicited events */
-	ATF_TP_ADD_TC(tp, test_on_line_receives_events);
-
-	/* Battery (DISCOVER+READ chain) */
-	ATF_TP_ADD_TC(tp, test_read_battery_chain);
-	ATF_TP_ADD_TC(tp, test_read_battery_not_found);
-
-	/* Error handling */
-	ATF_TP_ADD_TC(tp, test_connection_lost);
-	ATF_TP_ADD_TC(tp, test_connection_lost_mid_command);
-	ATF_TP_ADD_TC(tp, test_read_while_pending_rejected);
-
-	/* Utilities */
-	ATF_TP_ADD_TC(tp, test_addr_str);
-	ATF_TP_ADD_TC(tp, test_set_value);
-	ATF_TP_ADD_TC(tp, test_passkey_reply);
-	ATF_TP_ADD_TC(tp, test_disconnect);
-	ATF_TP_ADD_TC(tp, test_unsubscribe);
-	ATF_TP_ADD_TC(tp, test_remove_service);
-
-	/* Numeric comparison */
-	ATF_TP_ADD_TC(tp, test_numcmp_reply_yes);
-	ATF_TP_ADD_TC(tp, test_numcmp_reply_no);
-
-	/* EVENT WRITE */
-	ATF_TP_ADD_TC(tp, test_on_write_event);
-
-	/* Pairing event callbacks */
-	ATF_TP_ADD_TC(tp, test_passkey_display_event);
-	ATF_TP_ADD_TC(tp, test_passkey_input_event);
-	ATF_TP_ADD_TC(tp, test_numcmp_request_event);
-
-	/* ADD_CHAR with value */
-	ATF_TP_ADD_TC(tp, test_add_char_with_value);
-
-	/* Partial line buffering */
-	ATF_TP_ADD_TC(tp, test_partial_line_buffering);
-
-	/* Error dispatch */
-	ATF_TP_ADD_TC(tp, test_error_dispatches_to_connect_cb);
-	ATF_TP_ADD_TC(tp, test_error_dispatches_to_read_cb);
-
-	/* Passkey boundaries */
-	ATF_TP_ADD_TC(tp, test_passkey_boundary_zero);
-	ATF_TP_ADD_TC(tp, test_passkey_boundary_max);
-
-	/* Property parsing */
-	ATF_TP_ADD_TC(tp, test_discover_all_properties);
-
+	ATF_TP_ADD_TC(tp, acquire_notify_typed);
+	ATF_TP_ADD_TC(tp, acquire_requires_fdpass);
+	ATF_TP_ADD_TC(tp, acquire_write_typed);
+	ATF_TP_ADD_TC(tp, acquire_coc_and_ecbfc_typed);
+	ATF_TP_ADD_TC(tp, scan_filter_validation_and_encoding);
+	ATF_TP_ADD_TC(tp, acquire_reply_errors);
+	ATF_TP_ADD_TC(tp, addr_format);
+	ATF_TP_ADD_TC(tp, path_loss_serialization);
+	ATF_TP_ADD_TC(tp, path_loss_invalid_inputs);
+	ATF_TP_ADD_TC(tp, public_api_command_families);
+	ATF_TP_ADD_TC(tp, public_api_validation_families);
+	ATF_TP_ADD_TC(tp, public_api_utilities_and_callbacks);
+	ATF_TP_ADD_TC(tp, security_sync_query_matrix);
+	ATF_TP_ADD_TC(tp, typed_event_callback_matrix);
+	ATF_TP_ADD_TC(tp, typed_protocol_error_matrix);
+	ATF_TP_ADD_TC(tp, typed_malformed_event_matrix);
+	ATF_TP_ADD_TC(tp, typed_adv_set_lifecycle);
+	ATF_TP_ADD_TC(tp, typed_structured_reply_rejections);
+	ATF_TP_ADD_TC(tp, connection_snapshot_record_matrix);
+	ATF_TP_ADD_TC(tp, typed_iso_stream_lifecycle);
+	ATF_TP_ADD_TC(tp, pending_operation_capacity);
+	ATF_TP_ADD_TC(tp, battery_discovery_chains_read);
 	return (atf_no_error());
 }

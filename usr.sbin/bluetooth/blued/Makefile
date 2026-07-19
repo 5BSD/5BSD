@@ -1,12 +1,20 @@
 .include <src.opts.mk>
 
 PROG=	blued
-SRCS=	blued.c att.c att_server.c config.c conn.c ctl.c gatt.c hci_util.c hci_log.c smp.c
+SRCS=	blued.c blued_event.c blued_central.c blued_peripheral.c hogp_report.c \
+	att.c att_server.c att_server_dispatch.c att_server_notify.c \
+	att_server_hash.c config.c conn.c blued_persist.c blued_devmgr.c \
+	ctl.c ctl_conn.c ctl_gatt.c ctl_iso.c iso.c \
+	adv_builder.c \
+	gatt.c hci_util.c hci_adv.c hci_scan.c hci_conn.c hogp_boot.c \
+	hci_privacy.c hci_misc.c hci_log.c \
+	smp.c smp_crypto.c smp_keys.c smp_legacy.c smp_sc.c
 
 PACKAGE=	bluetooth
 
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
+CFLAGS+=	-I${SRCTOP}/lib/libble
 
 LIBADD=	bluetooth crypto pthread service ucl util
 

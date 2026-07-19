@@ -74,14 +74,16 @@
 #define NG_L2CAP_NULL_CID	0x0000	/* DO NOT USE THIS CID */
 #define NG_L2CAP_SIGNAL_CID	0x0001	/* signaling channel ID */
 #define NG_L2CAP_CLT_CID	0x0002	/* connectionless channel ID */
-#define NG_L2CAP_A2MP_CID	0x0003  
+#define NG_L2CAP_LEGACY_A2MP_CID 0x0003 /* Core 6.3: previously used */
+/* Source compatibility only; new code must name the removed assignment. */
+#define NG_L2CAP_A2MP_CID	NG_L2CAP_LEGACY_A2MP_CID
 #define NG_L2CAP_ATT_CID	0x0004  
 #define NG_L2CAP_LESIGNAL_CID	0x0005
 #define NG_L2CAP_SMP_CID	0x0006
 	/* 0x0007 - 0x003f Reserved */
 #define NG_L2CAP_FIRST_CID	0x0040	/* dynamically alloc. (start) */
 #define NG_L2CAP_LAST_CID	0xffff	/* dynamically alloc. (end) */
-#define NG_L2CAP_LELAST_CID	0xffff
+#define NG_L2CAP_LELAST_CID	0x007f
 
 /* L2CAP MTU */
 #define NG_L2CAP_MTU_LE_MINIMUM		23
@@ -450,6 +452,7 @@ typedef struct {
 	bdaddr_t	bdaddr;	/* remote unit address */
 	uint8_t		linktype;
 	uint8_t		idtype;
+	uint8_t		own_address_type;
 } ng_l2cap_l2ca_con_ip;
 
 /* L2CAP -> Upper */
@@ -472,6 +475,7 @@ typedef struct {
 	u_int16_t	psm;    /* Procotol/Service Multiplexor */
 	u_int8_t	ident;  /* identifier */
 	u_int8_t	linktype; /* link type*/
+	u_int16_t	idtype; /* ID type */
 	u_int16_t	imtu;   /* incoming MTU (LE CoC) */
 	u_int16_t	omtu;   /* outgoing MTU (LE CoC) */
 } ng_l2cap_l2ca_con_ind_ip;
@@ -596,12 +600,10 @@ typedef struct {
 	u_int16_t	lcid;  /* local group channel ID */
 } ng_l2cap_l2ca_grp_close_ip;
 
-#if 0
 /* L2CAP -> Upper */
- * typedef struct {
- * 	u_int16_t	result; /* 0x00 - success */
- * } ng_l2cap_l2ca_grp_close_op;
-#endif
+typedef struct {
+	u_int16_t	result; /* 0x00 - success */
+} ng_l2cap_l2ca_grp_close_op;
 
 /* L2CA_GroupAddMember */
 #define NGM_L2CAP_L2CA_GRP_ADD_MEMBER	0x8c
@@ -622,9 +624,7 @@ typedef struct {
 typedef ng_l2cap_l2ca_grp_add_member_ip	ng_l2cap_l2ca_grp_rem_member_ip;
 
 /* L2CAP -> Upper */
-#if 0
- * typedef ng_l2cap_l2ca_grp_add_member_op	ng_l2cap_l2ca_grp_rem_member_op;
-#endif
+typedef ng_l2cap_l2ca_grp_add_member_op	ng_l2cap_l2ca_grp_rem_member_op;
 
 /* L2CA_GroupMembeship */
 #define NGM_L2CAP_L2CA_GRP_MEMBERSHIP	0x8e
@@ -682,12 +682,10 @@ typedef struct {
 	u_int16_t	enable; /* 0x00 - disable */
 } ng_l2cap_l2ca_enable_clt_ip;
 
-#if 0
 /* L2CAP -> Upper */
- * typedef struct {
- * 	u_int16_t	result; /* 0x00 - success */
- * } ng_l2cap_l2ca_enable_clt_op;
-#endif
+typedef struct {
+	u_int16_t	result; /* 0x00 - success */
+} ng_l2cap_l2ca_enable_clt_op;
 /* L2CA_Reconfig — ECBFC reconfigure request (userspace -> L2CAP) */
 #define NGM_L2CAP_L2CA_RECONFIG		0x93
 /* Upper -> L2CAP */

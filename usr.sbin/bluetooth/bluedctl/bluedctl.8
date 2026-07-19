@@ -30,21 +30,33 @@
 .Nd control utility for the blued Bluetooth Low Energy daemon
 .Sh SYNOPSIS
 .Nm
-.Op Fl i
+.Op Fl ij
 .Op Fl s Ar socket
 .Ar command
 .Op Ar args ...
 .Nm
+.Op Fl j
+.Op Fl s Ar socket
+.Cm monitor
+.Nm
+.Op Fl s Ar socket
+.Cm keyboard Ar addr
+.Nm
 .Fl i
 .Op Fl s Ar socket
+.Nm
+.Cm help
+.Op Ar command
 .Sh DESCRIPTION
 The
 .Nm
 utility is a command-line client for the
 .Xr blued 8
 Bluetooth Low Energy daemon.
-It connects to the daemon's Unix domain control socket and sends
-text protocol commands.
+It uses
+.Xr libble 3
+to issue typed, correlated operations over the daemon's Unix domain
+control socket.
 .Pp
 In one-shot mode,
 .Nm
@@ -69,6 +81,9 @@ Type
 .Cm quit ,
 .Cm exit ,
 or press Ctrl-D to exit.
+.It Fl j
+Emit machine-readable JSON output: one JSON object per result or event,
+suitable for scripting.
 .It Fl s Ar socket
 Connect to the specified Unix domain socket path instead of the default
 .Pa /var/run/blued.sock .
@@ -87,6 +102,9 @@ Display daemon status including the number of active adapters and
 connections.
 .It Cm adapters
 List active Bluetooth adapters with their names and addresses.
+.It Cm adapter-caps Op Ar index
+Display the selected adapter's power state and LE Read Local Supported Features
+bitmask.  Check it before requesting optional controller procedures.
 .It Cm connect Ar addr Op Cm public | Cm random
 Initiate a BLE connection to the device with the specified Bluetooth
 address.
@@ -141,6 +159,13 @@ are the characteristic properties,
 are the attribute permissions, and the optional
 .Ar value_hex
 sets the initial value.
+.It Cm gatt-begin
+Begin an atomic local GATT database update.
+Subsequent add/remove operations are staged until committed.
+.It Cm gatt-commit
+Commit a staged local GATT database update atomically.
+.It Cm gatt-rollback
+Abort a staged local GATT database update.
 .It Cm remove-service Ar handle
 Remove a service and all its attributes from the local GATT database.
 .It Cm loglevel Op Ar level
@@ -170,6 +195,49 @@ line is received asynchronously before the reply can be sent.
 Open Enhanced Credit Based Flow Control channels to a connected device.
 .It Cm ecbfc-reconfig Ar addr mtu mps
 Reconfigure ECBFC channel parameters.
+.It Cm eatt-open Ar addr count
+Open one to five daemon-owned EATT bearers on an encrypted LE connection.
+.It Cm eatt-close Ar addr
+Close all daemon-owned EATT bearers for the connection.
+.It Cm iso-cig Ar cig_id Ar key=value ... Ar cis=id,msdu_c,msdu_p,phy_c,phy_p,rtn_c,rtn_p
+Configure a Connected Isochronous Group and one or more CIS parameter sets.
+Required group keys include
+.Ar sdu_int_c ,
+.Ar sdu_int_p ,
+.Ar lat_c ,
+and
+.Ar lat_p .
+.It Cm iso-cis Ar addr cig_id cis_id Op Cm push
+Create a Connected Isochronous Stream to a peer from a configured CIG.
+.It Cm iso-big Ar big_handle adv_handle Ar key=value ...
+Create a Broadcast Isochronous Group for a local advertising handle.
+.It Cm iso-big-sync Ar big_handle sync_handle Ar bis=list Op Ar key=value ...
+Synchronize to a Broadcast Isochronous Group.
+.It Cm iso-teardown-cis Ar handle Op Ar reason
+Teardown a CIS.
+.It Cm iso-remove-cig Ar cig_id
+Remove a configured CIG.
+.It Cm iso-accept Ar handle
+Accept a pending peripheral CIS request.
+.It Cm iso-reject Ar handle Op Ar reason
+Reject a pending peripheral CIS request.
+.It Cm iso-terminate-big Ar big_handle Op Ar reason
+Terminate a local BIG.
+.It Cm iso-big-terminate-sync Ar big_handle
+Terminate BIG synchronization.
+.It Cm adv-set-create
+Allocate an extended advertising set owned by this control connection.
+Handle zero is reserved for the primary advertising API.
+.It Cm adv-set-params Ar handle props-hex min max Op Ar primary secondary
+Configure event properties, intervals and optional PHYs for an owned set.
+.It Cm adv-set-data Ar handle hex
+Set the complete advertising payload for an owned set.
+.It Cm adv-set-enable Ar handle Cm on | Cm off
+Enable or disable an owned set.
+.It Cm adv-set-remove Ar handle
+Disable and remove an owned set.
+Sets are also removed automatically when
+their owning client disconnects.
 .It Cm battery Ar addr
 Read the battery level from a connected device by auto-discovering the
 Battery Service (UUID 0x180F) and reading the Battery Level
@@ -180,6 +248,22 @@ Read device information from a connected device by auto-discovering the
 Device Information Service (UUID 0x180A) and reading all available
 characteristics (manufacturer name, model number, serial number,
 hardware/firmware/software revision, system ID, PnP ID).
+.It Cm heart-rate Ar addr
+Read the heart rate measurement from a connected device by auto-discovering
+the Heart Rate Service (UUID 0x180D) and reading the Heart Rate Measurement
+characteristic.
+.It Cm thermometer Ar addr
+Read the temperature measurement from a connected device by auto-discovering
+the Health Thermometer Service (UUID 0x1809) and reading the Temperature
+Measurement characteristic.
+.It Cm time Ar addr
+Read the current time from a connected device by auto-discovering the
+Current Time Service (UUID 0x1805) and reading the Current Time
+characteristic.
+.It Cm find Ar addr
+Trigger a high alert on a connected device by writing to the Immediate
+Alert Service (UUID 0x1802).
+Useful for locating misplaced BLE peripherals.
 .It Cm bond-export
 Export the bond database in a text format suitable for diagnostics
 and backup.
@@ -190,6 +274,73 @@ Display connection parameters (interval, latency, supervision timeout)
 for all active connections, or for a specific device if
 .Ar addr
 is provided.
+.It Cm conninfo Op Ar addr
+Display per-connection information including the connection handle,
+role, negotiated ATT MTU, encryption state, and connection parameters,
+for all active connections or for a specific device.
+.It Cm advertise Cm on | Cm off
+Enable or disable LE advertising.
+Requires
+.Xr blued 8
+to have been started in peripheral mode.
+.It Cm per-adv-params Ar min max Op properties
+Configure periodic advertising for advertising set zero. Intervals are in
+1.25 ms units. The adapter must advertise the periodic-advertising LE feature.
+.It Cm per-adv-data Ar hex
+Set up to 252 bytes of periodic advertising data.
+.It Cm per-adv-enable Cm on | Cm off
+Enable or disable periodic advertising after its parameters and data are set.
+.It Cm per-sync-create Ar addr public|random sid Op skip timeout
+Request synchronization to a peer's periodic advertising train. Completion and
+reports arrive in monitor mode as EVENT PER_ADV_SYNC and EVENT PER_ADV_REPORT.
+.It Cm per-sync-cancel
+Cancel a pending periodic synchronization request.
+.It Cm per-sync-terminate Ar handle
+Terminate an established periodic synchronization.
+.It Cm per-adv-list-add Ar addr public|random sid
+Add a periodic advertiser to the controller list.
+.It Cm per-adv-list-remove Ar addr public|random sid
+Remove a periodic advertiser from the controller list.
+.It Cm per-adv-list-clear
+Clear the controller periodic-advertiser list.
+.It Cm per-adv-list-size
+Read the controller periodic-advertiser-list capacity.
+.It Cm path-loss Ar addr low low-hyst high high-hyst min-time Cm on | Cm off
+Configure controller path-loss threshold reporting for a connected peer.  The
+adapter must advertise the path-loss-monitoring LE feature.
+.It Cm past-transfer Ar peer service-data sync-handle
+Transfer an established periodic synchronization to a connected peer using
+Periodic Advertising Sync Transfer (PAST).  The adapter must advertise the
+PAST sender feature.
+.It Cm past-receive-enable Ar sync-handle Cm on | Cm off
+Allow or reject a PAST received for an established synchronization.  The
+adapter must advertise the PAST recipient feature.
+.It Cm past-set-info-transfer Ar peer service-data adv-handle
+Transfer synchronization information for a local periodic advertising set.
+Nonzero advertising handles must be owned by this client.
+.It Cm past-params Ar peer mode skip timeout cte-type
+Set PAST receive policy for an established peer connection.
+.It Cm past-default-params Ar mode skip timeout cte-type
+Set the PAST receive policy inherited by future connections.
+.It Cm adv-data Ar hex
+Set the advertising data payload (up to 31 bytes) from a hex string.
+.It Cm scan-resp Ar hex
+Set the scan-response data payload (up to 31 bytes) from a hex string.
+.It Cm monitor
+Subscribe to push events and print them live until interrupted:
+connection up/down
+.Pq Dq Li CONNECTED , Dq Li DISCONNECTED ,
+pairing prompts, and notifications.
+This is the live view for the keyboard-pairing workflow.
+.It Cm keyboard Ar addr
+Pair a keyboard end-to-end in one command: connect to
+.Ar addr ,
+answer any passkey or numeric-comparison prompt interactively, and
+report when the keyboard is connected and paired.
+After pairing, keystrokes flow through the system HID stack.
+.It Cm help Op Ar command
+Print a command summary, or detailed usage for
+.Ar command .
 .El
 .Sh EXAMPLES
 Scan for nearby BLE devices:
@@ -238,27 +389,60 @@ Use a custom socket path:
 .Bd -literal -offset indent
 # bluedctl -s /tmp/blued-test.sock status
 .Ed
+.Pp
+Pair a keyboard and start typing
+.Pq the Dq pair my keyboard and type No workflow :
+.Bd -literal -offset indent
+# bluedctl scan			# find the keyboard's address
+# bluedctl keyboard aa:bb:cc:dd:ee:ff
+Connecting to aa:bb:cc:dd:ee:ff ...
+Enter the passkey shown on the keyboard: 123456
+Connected to aa:bb:cc:dd:ee:ff (handle=0x0005, MTU=247).
+Keyboard is ready \(em it now types into this system via the HID stack.
+.Ed
+.Pp
+Alternatively, watch events live in one terminal while driving the
+connection from another:
+.Bd -literal -offset indent
+# bluedctl monitor &
+# bluedctl connect aa:bb:cc:dd:ee:ff
+CONNECTED    aa:bb:cc:dd:ee:ff  handle=0x0005 mtu=247
+PASSKEY      aa:bb:cc:dd:ee:ff  device needs a passkey; reply with: ...
+# bluedctl passkey aa:bb:cc:dd:ee:ff 123456
+.Ed
 .Sh PROTOCOL
 .Nm
 communicates with
 .Xr blued 8
-using a simple newline-terminated text protocol over a Unix domain
-stream socket.
-Commands are sent as uppercase strings with space-separated arguments.
-Responses consist of one or more lines, terminated by
-.Dq Li OK ,
-.Dq Li END ,
-or
-.Dq Li ERROR .
-.Pp
-Asynchronous events are prefixed with
-.Dq Li EVENT
-and may arrive at any time on the socket.
-In interactive mode, these are displayed immediately.
+through
+.Xr libble 3
+using the daemon's versioned binary protocol.
+Each operation carries a request identifier, typed domain and typed payload;
+the daemon echoes the request identifier in its structured result.
+Typed asynchronous events may arrive at any time and are displayed
+immediately in interactive mode.
 .Sh EXIT STATUS
 .Nm
-exits 0 on success, or 1 if the command failed, the daemon returned an
-error, or the connection could not be established.
+maps the daemon's structured error taxonomy onto distinct exit codes so
+scripts can react without scraping text:
+.Bl -tag -width "0" -compact -offset indent
+.It Li 0
+Success.
+.It Li 1
+Generic or daemon error.
+.It Li 2
+Invalid arguments.
+.It Li 3
+Device not connected or not found.
+.It Li 4
+Permission denied (the command requires a privileged peer).
+.It Li 5
+Rate limited or an operation is already in progress.
+.It Li 6
+Timed out waiting for a response.
+.El
+.Pp
+On error a short actionable hint is printed to standard error.
 .Sh FILES
 .Bl -tag -width "/var/run/blued.sock" -compact
 .It Pa /var/run/blued.sock

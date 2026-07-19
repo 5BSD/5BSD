@@ -124,6 +124,7 @@ BLUETOOTH=	blued \
 		bluetooth \
 		bthidd \
 		hcsecd \
+		meshd \
 		rfcomm_pppd_server \
 		sdpd \
 		ubthidhci

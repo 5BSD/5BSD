@@ -1,0 +1,15 @@
+comment = "Bluetooth host, Mesh, emulator, and peer test suite"
+
+desc = <<EOD
+ATF/Kyua unit and integration tests for the blued Bluetooth Low Energy
+daemon and the libble client library: SMP pairing and cryptography (Core
+Spec Vol 3 Part H sample vectors for c1/s1/f4/f5/f6/g2/h6/h7), ATT and GATT
+protocol handling, HCI command encoding, connection management, Bluetooth
+Mesh models, and advertising-data parsing.  The suite includes a userspace
+HCI controller emulator, an independent ATT/SMP peer, end-to-end scenarios,
+and standalone libFuzzer harnesses under fuzz/.  Its spec-derived tests are
+local regression oracles; they do not replace Bluetooth SIG qualification or
+Profile Tuning Suite execution.  Installed in
+/usr/tests/usr.sbin/bluetooth/blued and packaged separately from the full base
+test suite so it can be installed on its own.
+EOD
