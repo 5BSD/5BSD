@@ -12,4 +12,7 @@ CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD=		ucl
 
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+=	tests
+
 .include <bsd.lib.mk>

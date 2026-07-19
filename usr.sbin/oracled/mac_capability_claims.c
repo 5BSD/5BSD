@@ -373,7 +373,9 @@ apply_integrity(void)
 	if (cp_fd == -1)
 		return (-1);
 
-	flags = od.cfg.integrity_flags;
+	/* Defense in depth: configuration may never reopen PID signalling. */
+	flags = od.cfg.integrity_flags | ORACLED_REQUIRED_INTEGRITY_FLAGS;
+	od.cfg.integrity_flags = flags;
 
 	memset(&req, 0, sizeof(req));
 	req.op = CP_OP_SHIELD;

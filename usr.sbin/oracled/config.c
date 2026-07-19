@@ -125,13 +125,7 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct ort_net_claim *nc,
 	v = ucl_object_lookup(elem, "protocol");
 	if (v != NULL && ucl_object_type(v) == UCL_STRING) {
 		s = ucl_object_tostring(v);
-		if (strcmp(s, "*") == 0 || strcmp(s, "any") == 0)
-			nc->protocol = 0;
-		else if (strcmp(s, "tcp") == 0)
-			nc->protocol = IPPROTO_TCP;
-		else if (strcmp(s, "udp") == 0)
-			nc->protocol = IPPROTO_UDP;
-		else {
+		if (parse_net_protocol_string(s, &nc->protocol) != 0) {
 			syslog(LOG_ERR, "%s: unknown protocol: %s",
 			    label, s);
 			return (-1);
@@ -164,6 +158,8 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct ort_net_claim *nc,
 			nc->domain = AF_INET;
 		else if (strcmp(s, "inet6") == 0)
 			nc->domain = AF_INET6;
+		else if (strcmp(s, "bluetooth") == 0)
+			nc->domain = AF_BLUETOOTH;
 		else if (strcmp(s, "*") == 0 || strcmp(s, "any") == 0)
 			nc->domain = 0;
 		else {
@@ -175,16 +171,27 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct ort_net_claim *nc,
 
 	v = ucl_object_lookup(elem, "address");
 	if (v != NULL && ucl_object_type(v) == UCL_STRING) {
-		int addr_domain = 0;
-		if (parse_address_string(ucl_object_tostring(v),
-		    nc->addr, &nc->prefix, &addr_domain) != 0) {
-			syslog(LOG_ERR, "%s: invalid address: %s",
-			    label, ucl_object_tostring(v));
-			return (-1);
+		s = ucl_object_tostring(v);
+		if (nc->domain == AF_BLUETOOTH) {
+			/* BD_ADDR literal or "*"; sets prefix 0 (any) or 48. */
+			if (parse_bdaddr_string(s, nc->addr,
+			    &nc->prefix) != 0) {
+				syslog(LOG_ERR, "%s: invalid bluetooth "
+				    "address: %s", label, s);
+				return (-1);
+			}
+		} else {
+			int addr_domain = 0;
+			if (parse_address_string(s, nc->addr, &nc->prefix,
+			    &addr_domain) != 0) {
+				syslog(LOG_ERR, "%s: invalid address: %s",
+				    label, s);
+				return (-1);
+			}
+			/* Address implies domain if not explicitly set */
+			if (nc->domain == AF_INET && addr_domain != 0)
+				nc->domain = addr_domain;
 		}
-		/* Address implies domain if not explicitly set */
-		if (nc->domain == AF_INET && addr_domain != 0)
-			nc->domain = addr_domain;
 	}
 
 	v = ucl_object_lookup(elem, "prefix");
@@ -196,7 +203,14 @@ parse_ucl_net_claim(const ucl_object_t *elem, struct ort_net_claim *nc,
 			return (-1);
 		}
 		pfx = ucl_object_toint(v);
-		if (pfx < 0 || pfx > 128 ||
+		if (nc->domain == AF_BLUETOOTH) {
+			/* BD_ADDR match is all-or-nothing: 0=any, 48=exact. */
+			if (pfx != 0 && pfx != 48) {
+				syslog(LOG_ERR, "%s: invalid bluetooth "
+				    "prefix: %jd", label, (intmax_t)pfx);
+				return (-1);
+			}
+		} else if (pfx < 0 || pfx > 128 ||
 		    (nc->domain == AF_INET && pfx > 32)) {
 			syslog(LOG_ERR, "%s: invalid prefix: %jd",
 			    label, (intmax_t)pfx);
@@ -222,9 +236,9 @@ config_init_defaults(struct oracled_config *cfg)
 	strlcpy(cfg->service_manager, ORACLED_DEFAULT_SVC_MANAGER,
 	    sizeof(cfg->service_manager));
 
-	/* Integrity defaults: conservative — don't break rc(8). */
+	/* rc(8) administers Oracle through its root-only control socket. */
 	cfg->integrity_flags = CP_SF_PTRACE | CP_SF_WAIT | CP_SF_SCHED |
-	    CP_SF_KTRACE;
+	    CP_SF_KTRACE | ORACLED_REQUIRED_INTEGRITY_FLAGS;
 }
 
 static void
@@ -289,6 +303,8 @@ static const struct {
 } integrity_cfg_map[] = {
 	{ "ptrace",	CP_SF_PTRACE },
 	{ "signal",	CP_SF_SIGNAL },
+	{ "sigkill",	CP_SF_SIGKILL },
+	{ "sigcont",	CP_SF_SIGCONT },
 	{ "visible",	CP_SF_VISIBLE },
 	{ "wait",	CP_SF_WAIT },
 	{ "sched",	CP_SF_SCHED },
@@ -312,7 +328,12 @@ cfg_integrity(const ucl_object_t *root, struct oracled_config *cfg)
 			if (ucl_object_toboolean(o))
 				cfg->integrity_flags |=
 				    integrity_cfg_map[i].flag;
-			else
+			else if ((integrity_cfg_map[i].flag &
+			    ORACLED_REQUIRED_INTEGRITY_FLAGS) != 0) {
+				fprintf(stderr, "oracled: integrity.%s=false "
+				    "ignored; ambient signal protection is mandatory\n",
+				    integrity_cfg_map[i].name);
+			} else
 				cfg->integrity_flags &=
 				    ~integrity_cfg_map[i].flag;
 		}
@@ -502,6 +523,7 @@ config_load(struct oracled_config *cfg, const char *path)
 
 	/* Sections */
 	cfg_integrity(root, cfg);
+	cfg->integrity_flags |= ORACLED_REQUIRED_INTEGRITY_FLAGS;
 	cfg_claims(root, cfg);
 
 	ucl_object_unref(__DECONST(ucl_object_t *, root));

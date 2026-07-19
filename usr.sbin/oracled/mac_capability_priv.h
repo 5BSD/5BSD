@@ -79,6 +79,8 @@ static const struct {
 } integrity_flag_names[] = {
 	{ CP_SF_PTRACE,		"ptrace" },
 	{ CP_SF_SIGNAL,		"signal" },
+	{ CP_SF_SIGKILL,	"sigkill" },
+	{ CP_SF_SIGCONT,	"sigcont" },
 	{ CP_SF_VISIBLE,	"visible" },
 	{ CP_SF_WAIT,		"wait" },
 	{ CP_SF_SCHED,		"sched" },

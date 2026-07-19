@@ -167,7 +167,7 @@ run_kyua_case()
 	return "$case_status"
 }
 
-total=10
+total=13
 passed=0
 suite_status=0
 
@@ -177,7 +177,10 @@ for case_spec in \
 	capability_tokens_require_program_activation=serviced_integration_test:capability_tokens_require_program_activation \
 	incomplete_capability_set_prevents_exec=serviced_integration_test:incomplete_capability_set_prevents_exec \
 	bootstrap_channel_loss_kills_serviced=oracled_bootstrap_test:bootstrap_channel_loss_kills_serviced \
+	ambient_signals_denied_control_shutdown_allowed=oracled_bootstrap_test:ambient_signals_denied_control_shutdown_allowed \
 	cap_pro_exec_rotates_nonce=mac_capability_test:cap_pro_exec_rotates_nonce \
+	cap_pro_unshielded_same_session_sigcont_allowed=mac_capability_test:cap_pro_unshielded_same_session_sigcont_allowed \
+	cap_pro_foreign_sigcont_blocked=mac_capability_test:cap_pro_foreign_sigcont_blocked \
 	cap_pro_pdkill_bypasses_signal_shield=mac_capability_test:cap_pro_pdkill_bypasses_signal_shield \
 	cap_pro_pdkill_bypasses_sigkill_shield=mac_capability_test:cap_pro_pdkill_bypasses_sigkill_shield \
 	cap_pro_pdkill_bypasses_full_shield=mac_capability_test:cap_pro_pdkill_bypasses_full_shield \

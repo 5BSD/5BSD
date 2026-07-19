@@ -8,6 +8,12 @@ MAN=	libcapbundle.3
 SRCS=	libcapbundle.c libcapbundle_parse.c libcapbundle_verify.c
 INCS=	libcapbundle.h
 
+FILESGROUPS+=	examples
+examples=	examples/skyblued.ucl \
+		examples/skybluemeshd.ucl
+examplesDIR=	${SHAREDIR}/examples/libcapbundle
+examplesPACKAGE=	lib${LIB}
+
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 

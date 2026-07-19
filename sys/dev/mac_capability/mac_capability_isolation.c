@@ -368,15 +368,39 @@ fi_auth_net_matches(const struct fi_auth *fa, int domain, int protocol,
 			case BLUETOOTH_PROTO_L2CAP: {
 				struct sockaddr_l2cap *sl2 =
 				    (struct sockaddr_l2cap *)sa;
-				port = ntohs(sl2->l2cap_psm);
+
+				/*
+				 * Only read the PSM if the caller-supplied
+				 * sockaddr is long enough to hold it; a short
+				 * address leaves port 0 (wildcard) rather than
+				 * over-reading the allocation.
+				 */
+				if (sa->sa_len == 0 || sa->sa_len >=
+				    offsetof(struct sockaddr_l2cap, l2cap_psm) +
+				    sizeof(sl2->l2cap_psm))
+					port = ntohs(sl2->l2cap_psm);
 				break;
 			}
 			case BLUETOOTH_PROTO_RFCOMM: {
 				struct sockaddr_rfcomm *srf =
 				    (struct sockaddr_rfcomm *)sa;
-				port = srf->rfcomm_channel;
+
+				if (sa->sa_len == 0 || sa->sa_len >=
+				    offsetof(struct sockaddr_rfcomm,
+				    rfcomm_channel) + sizeof(srf->rfcomm_channel))
+					port = srf->rfcomm_channel;
 				break;
 			}
+			case BLUETOOTH_PROTO_SCO:
+			case BLUETOOTH_PROTO_ISO:
+				/*
+				 * SCO (sockaddr_sco) and ISO (sockaddr_iso)
+				 * carry no PSM/channel, so there is no port to
+				 * match on; isolation is enforced on the
+				 * BD_ADDR alone (see fi_net_addr_match()).
+				 */
+				port = 0;
+				break;
 			default:
 				port = 0;
 				break;
@@ -1018,19 +1042,60 @@ fi_net_addr_match(const struct fi_net_claim *nc, struct sockaddr *sa)
 		case BLUETOOTH_PROTO_L2CAP: {
 			struct sockaddr_l2cap *sl2 =
 			    (struct sockaddr_l2cap *)sa;
+
+			/*
+			 * The MAC hook runs on the raw bind/connect sockaddr,
+			 * whose length is caller-controlled and may be as small
+			 * as the 2-byte header.  Reject a sockaddr too short to
+			 * hold the BD_ADDR at its protocol-specific offset before
+			 * dereferencing it, so a short address can't drive an
+			 * out-of-bounds read past the allocation.
+			 */
+			if (sa->sa_len != 0 && sa->sa_len <
+			    offsetof(struct sockaddr_l2cap, l2cap_bdaddr) +
+			    sizeof(sl2->l2cap_bdaddr))
+				return (false);
 			bdaddr = sl2->l2cap_bdaddr.b;
 			break;
 		}
 		case BLUETOOTH_PROTO_RFCOMM: {
 			struct sockaddr_rfcomm *srf =
 			    (struct sockaddr_rfcomm *)sa;
+
+			if (sa->sa_len != 0 && sa->sa_len <
+			    offsetof(struct sockaddr_rfcomm, rfcomm_bdaddr) +
+			    sizeof(srf->rfcomm_bdaddr))
+				return (false);
 			bdaddr = srf->rfcomm_bdaddr.b;
 			break;
 		}
 		case BLUETOOTH_PROTO_SCO: {
 			struct sockaddr_sco *ssc =
 			    (struct sockaddr_sco *)sa;
+
+			if (sa->sa_len != 0 && sa->sa_len <
+			    offsetof(struct sockaddr_sco, sco_bdaddr) +
+			    sizeof(ssc->sco_bdaddr))
+				return (false);
 			bdaddr = ssc->sco_bdaddr.b;
+			break;
+		}
+		case BLUETOOTH_PROTO_ISO: {
+			struct sockaddr_iso *sis =
+			    (struct sockaddr_iso *)sa;
+
+			/*
+			 * ISO sockaddr layout (sockaddr_iso) places the
+			 * BD_ADDR after a 2-byte CIS/BIS handle, so iso_bdaddr
+			 * sits at offset 4 -- unlike sockaddr_sco.  Reject a
+			 * sockaddr too short to contain the full BD_ADDR before
+			 * dereferencing it.
+			 */
+			if (sa->sa_len != 0 && sa->sa_len <
+			    offsetof(struct sockaddr_iso, iso_bdaddr) +
+			    sizeof(sis->iso_bdaddr))
+				return (false);
+			bdaddr = sis->iso_bdaddr.b;
 			break;
 		}
 		default:
@@ -1094,15 +1159,37 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 			case BLUETOOTH_PROTO_L2CAP: {
 				struct sockaddr_l2cap *sl2 =
 				    (struct sockaddr_l2cap *)sa;
-				port = ntohs(sl2->l2cap_psm);
+
+				/*
+				 * Only read the PSM if the caller-supplied
+				 * sockaddr is long enough to hold it; a short
+				 * address leaves port 0 (wildcard) rather than
+				 * over-reading the allocation.
+				 */
+				if (sa->sa_len == 0 || sa->sa_len >=
+				    offsetof(struct sockaddr_l2cap, l2cap_psm) +
+				    sizeof(sl2->l2cap_psm))
+					port = ntohs(sl2->l2cap_psm);
 				break;
 			}
 			case BLUETOOTH_PROTO_RFCOMM: {
 				struct sockaddr_rfcomm *srf =
 				    (struct sockaddr_rfcomm *)sa;
-				port = srf->rfcomm_channel;
+
+				if (sa->sa_len == 0 || sa->sa_len >=
+				    offsetof(struct sockaddr_rfcomm,
+				    rfcomm_channel) + sizeof(srf->rfcomm_channel))
+					port = srf->rfcomm_channel;
 				break;
 			}
+			case BLUETOOTH_PROTO_SCO:
+			case BLUETOOTH_PROTO_ISO:
+				/*
+				 * SCO/ISO have no PSM/channel; the claim
+				 * matches on BD_ADDR only.
+				 */
+				port = 0;
+				break;
 			default:
 				port = 0;
 				break;

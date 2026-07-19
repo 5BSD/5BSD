@@ -4466,6 +4466,31 @@ ATF_TC_BODY(cap_pro_pdwait_bypasses_full_shield, tc)
 	close(pd);
 }
 
+ATF_TC(cap_pro_unshielded_same_session_sigcont_allowed);
+ATF_TC_HEAD(cap_pro_unshielded_same_session_sigcont_allowed, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "same-session SIGCONT remains allowed without a MAC shield");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_unshielded_same_session_sigcont_allowed, tc)
+{
+	int status;
+	pid_t pid;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		for (;;)
+			pause();
+	}
+	ATF_CHECK_EQ(run_shield_helper("sigcont", pid), 1);
+	ATF_REQUIRE_EQ(kill(pid, SIGKILL), 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
+	ATF_CHECK(WIFSIGNALED(status));
+	ATF_CHECK_EQ(WTERMSIG(status), SIGKILL);
+}
+
 ATF_TC(cap_pro_foreign_sigcont_blocked);
 ATF_TC_HEAD(cap_pro_foreign_sigcont_blocked, tc)
 {
@@ -4479,8 +4504,6 @@ ATF_TC_BODY(cap_pro_foreign_sigcont_blocked, tc)
 	int sv[2], status;
 	pid_t pid;
 
-	atf_tc_expect_fail("FreeBSD allows SIGCONT within same session "
-	    "(POSIX job control) — MAC hook bypassed by kern_prot.c:2168");
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
@@ -7232,6 +7255,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cap_pro_pdkill_sigterm_through_shield);
 	ATF_TP_ADD_TC(tp, cap_pro_pdwait_bypasses_wait_shield);
 	ATF_TP_ADD_TC(tp, cap_pro_pdwait_bypasses_full_shield);
+	ATF_TP_ADD_TC(tp, cap_pro_unshielded_same_session_sigcont_allowed);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_sigcont_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_visible_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_selective_flags);

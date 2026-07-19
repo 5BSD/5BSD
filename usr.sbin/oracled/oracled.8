@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd June 5, 2026
+.Dd July 19, 2026
 .Dt ORACLED 8
 .Os
 .Sh NAME
@@ -165,19 +165,21 @@ flags that protect
 from external interference.
 Each key is a boolean (true/false).
 The default integrity flags are
-.Dv CP_SF_PTRACE | CP_SF_WAIT | CP_SF_SCHED | CP_SF_KTRACE .
+.Dv CP_SF_PTRACE | CP_SF_SIGNAL | CP_SF_SIGKILL | CP_SF_SIGCONT |
+.Dv CP_SF_WAIT | CP_SF_SCHED | CP_SF_KTRACE .
 .Bl -tag -width "visible"
 .It Va ptrace
 Block ptrace attach from foreign nonces.
 Default: true.
 .It Va signal
 Block all signals except SIGKILL and SIGCONT from foreign nonces.
-Default: false.
-Enabling this prevents
-.Xr rc 8
-from stopping
-.Nm
-via signals; use the control socket for shutdown instead.
+Always enabled.
+.It Va sigkill
+Block SIGKILL from foreign nonces.
+Always enabled.
+.It Va sigcont
+Block SIGCONT from foreign nonces.
+Always enabled.
 .It Va visible
 Hide
 .Nm
@@ -200,6 +202,17 @@ Block passive syscall tracing via
 .Xr ktrace 1 .
 Default: true.
 .El
+.Pp
+The signal, sigkill, and sigcont protections are mandatory and cannot be
+disabled by configuration.
+Consequently, all foreign-nonce ambient PID signals, including signal 0,
+are denied.
+.Xr service 8
+uses the root-only control socket for status, reload, and graceful shutdown.
+An init or other supervisor may retain a process descriptor created by
+.Xr pdfork 2 ;
+.Xr pdkill 2
+through that descriptor remains the explicit forced-termination authority.
 .Ss Claims
 The
 .Va claims
@@ -381,6 +394,12 @@ Service management commands (check, load, services) are handled by
 via
 .Xr servicectl 8 .
 .Sh SIGNALS
+.Nm
+registers the following signals so that a process-descriptor supervisor can
+request reload or graceful shutdown with
+.Xr pdkill 2 .
+Foreign-nonce ambient PID-based delivery is denied by mandatory capability
+protection.
 .Bl -tag -width "SIGTERM, SIGINT"
 .It Dv SIGHUP
 Reload configuration, update claims (acquiring new claims and

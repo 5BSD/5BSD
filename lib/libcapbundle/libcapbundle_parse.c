@@ -412,21 +412,9 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 						    ucl_object_type(pv) ==
 						    UCL_STRING) {
 							ps = ucl_object_tostring(pv);
-							if (strcmp(ps, "tcp")
-							    == 0)
-								nc->protocol =
-								    IPPROTO_TCP;
-							else if (strcmp(ps,
-							    "udp") == 0)
-								nc->protocol =
-								    IPPROTO_UDP;
-							else if (strcmp(ps,
-							    "*") == 0 ||
-							    strcmp(ps, "any")
-							    == 0)
-								nc->protocol =
-								    0;
-							else {
+							if (parse_net_protocol_string(
+							    ps, &nc->protocol)
+							    != 0) {
 								syslog(
 								    LOG_WARNING,
 								    "capbundle "
@@ -490,6 +478,10 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 								nc->domain =
 								    AF_INET6;
 							else if (strcmp(ps,
+							    "bluetooth") == 0)
+								nc->domain =
+								    AF_BLUETOOTH;
+							else if (strcmp(ps,
 							    "*") == 0 ||
 							    strcmp(ps, "any")
 							    == 0)
@@ -511,28 +503,50 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 						if (pv != NULL &&
 						    ucl_object_type(pv) ==
 						    UCL_STRING) {
-							int addr_domain = 0;
-
-							if (parse_address_string(
-							    ucl_object_tostring(
-							    pv), nc->addr,
-							    &nc->prefix,
-							    &addr_domain)
-							    != 0) {
-								syslog(
-								    LOG_WARNING,
-								    "capbundle "
-								    "%s: invalid"
-								    " address: "
-								    "%s", path,
-								    ucl_object_tostring(pv));
-								continue;
-							}
+							ps = ucl_object_tostring(
+							    pv);
 							if (nc->domain ==
-							    AF_INET &&
-							    addr_domain != 0)
-								nc->domain =
-								    addr_domain;
+							    AF_BLUETOOTH) {
+								/* BD_ADDR or "*" */
+								if (parse_bdaddr_string(
+								    ps, nc->addr,
+								    &nc->prefix)
+								    != 0) {
+									syslog(
+									    LOG_WARNING,
+									    "capbundle "
+									    "%s: invalid"
+									    " bluetooth"
+									    " address: "
+									    "%s", path,
+									    ps);
+									continue;
+								}
+							} else {
+								int addr_domain =
+								    0;
+
+								if (parse_address_string(
+								    ps, nc->addr,
+								    &nc->prefix,
+								    &addr_domain)
+								    != 0) {
+									syslog(
+									    LOG_WARNING,
+									    "capbundle "
+									    "%s: invalid"
+									    " address: "
+									    "%s", path,
+									    ps);
+									continue;
+								}
+								if (nc->domain ==
+								    AF_INET &&
+								    addr_domain !=
+								    0)
+									nc->domain =
+									    addr_domain;
+							}
 						}
 
 						/* explicit prefix override */
@@ -544,7 +558,22 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 							int64_t pfx =
 							    ucl_object_toint(
 							    pv);
-							if (pfx < 0 ||
+							if (nc->domain ==
+							    AF_BLUETOOTH) {
+								/* 0=any, 48=exact */
+								if (pfx != 0 &&
+								    pfx != 48) {
+									syslog(
+									    LOG_WARNING,
+									    "capbundle "
+									    "%s: invalid"
+									    " bluetooth"
+									    " prefix: "
+									    "%jd", path,
+									    (intmax_t)pfx);
+									continue;
+								}
+							} else if (pfx < 0 ||
 							    pfx > 128 ||
 							    (nc->domain ==
 							    AF_INET &&

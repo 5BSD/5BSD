@@ -21,6 +21,8 @@ int	parse_jail_action_string(const char *s, uint32_t *actionsp);
 int	parse_jail_actions(const struct ucl_object_s *v, uint32_t *actionsp);
 int	parse_address_string(const char *s, uint8_t addr[16],
 	    uint8_t *prefixp, int *domainp);
+int	parse_net_protocol_string(const char *s, int *protop);
+int	parse_bdaddr_string(const char *s, uint8_t addr[16], uint8_t *prefixp);
 int	parse_file_action_string(const char *s, uint64_t *actionsp);
 int	parse_file_actions(const struct ucl_object_s *v, uint64_t *actionsp);
 

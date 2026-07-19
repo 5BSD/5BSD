@@ -27,6 +27,19 @@
 
 #include "claim_parse.h"
 
+/*
+ * AF_BLUETOOTH socket protocol numbers.  These mirror the stable
+ * BLUETOOTH_PROTO_* values in <netgraph/bluetooth/include/ng_btsocket.h>;
+ * that header drags in netgraph HCI type definitions that do not build
+ * in userspace, so the handful of numbers this parser needs are defined
+ * locally.
+ */
+#define	BT_PROTO_HCI	134
+#define	BT_PROTO_L2CAP	135
+#define	BT_PROTO_RFCOMM	136
+#define	BT_PROTO_SCO	137
+#define	BT_PROTO_ISO	138
+
 int
 parse_port_range_string(const char *s, uint16_t *minp, uint16_t *maxp)
 {
@@ -153,6 +166,82 @@ parse_address_string(const char *s, uint8_t addr[16],
 	}
 
 	return (-1);
+}
+
+/*
+ * Map a network protocol name to its numeric value.  Handles the IP
+ * transports (tcp, udp) and the AF_BLUETOOTH socket protocols
+ * (l2cap, rfcomm, sco, iso, hci); "*" / "any" is the 0 wildcard.
+ * Kept in one place so oracled and manifest parsers stay in sync with
+ * the mac_capability_isolation net-claim protocol field.  Returns 0
+ * with *protop set on success, -1 for an unrecognized name.
+ */
+int
+parse_net_protocol_string(const char *s, int *protop)
+{
+
+	if (strcmp(s, "*") == 0 || strcmp(s, "any") == 0)
+		*protop = 0;
+	else if (strcmp(s, "tcp") == 0)
+		*protop = IPPROTO_TCP;
+	else if (strcmp(s, "udp") == 0)
+		*protop = IPPROTO_UDP;
+	else if (strcmp(s, "l2cap") == 0)
+		*protop = BT_PROTO_L2CAP;
+	else if (strcmp(s, "rfcomm") == 0)
+		*protop = BT_PROTO_RFCOMM;
+	else if (strcmp(s, "sco") == 0)
+		*protop = BT_PROTO_SCO;
+	else if (strcmp(s, "iso") == 0)
+		*protop = BT_PROTO_ISO;
+	else if (strcmp(s, "hci") == 0)
+		*protop = BT_PROTO_HCI;
+	else
+		return (-1);
+	return (0);
+}
+
+/*
+ * Parse a Bluetooth device address for an isolation net claim.  "*"
+ * is the any-address wildcard (all-zero addr, prefix 0 -- the form the
+ * kernel treats as "match every BD_ADDR").  A "aa:bb:cc:dd:ee:ff"
+ * literal fills addr[0..5] with the six octets in the same byte order
+ * libbluetooth's bt_aton(3) uses (leftmost octet is most significant,
+ * i.e. b[5]) so the claim compares equal to the BD_ADDR the kernel
+ * reads out of the connect/bind sockaddr, and sets prefix 48 to select
+ * an exact 6-byte match.  Returns 0 on success, -1 for a malformed
+ * address.
+ */
+int
+parse_bdaddr_string(const char *s, uint8_t addr[16], uint8_t *prefixp)
+{
+	unsigned int octet[6];
+	int i, n;
+	char trailer;
+
+	memset(addr, 0, 16);
+	*prefixp = 0;
+
+	if (strcmp(s, "*") == 0)
+		return (0);
+
+	/*
+	 * Require exactly six colon-separated hex octets and nothing
+	 * after them; the trailing %c catches an over-long address.
+	 */
+	n = sscanf(s, "%x:%x:%x:%x:%x:%x%c", &octet[0], &octet[1],
+	    &octet[2], &octet[3], &octet[4], &octet[5], &trailer);
+	if (n != 6)
+		return (-1);
+	for (i = 0; i < 6; i++) {
+		if (octet[i] > 0xff)
+			return (-1);
+	}
+	/* bt_aton(3) order: leftmost octet lands in b[5]. */
+	for (i = 0; i < 6; i++)
+		addr[i] = (uint8_t)octet[5 - i];
+	*prefixp = 48;
+	return (0);
 }
 
 int

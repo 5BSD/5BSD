@@ -13,51 +13,39 @@ desc="Oracle capability-world service manager"
 rcvar="oracled_enable"
 command="/usr/sbin/${name}"
 pidfile="/var/run/${name}.pid"
+extra_commands="reload"
 
 stop_cmd="${name}_stop"
 status_cmd="${name}_status"
+reload_cmd="${name}_reload"
 
 oracled_stop()
 {
-	local _pid _i
+	local _i
 
-	if [ -S /var/run/oracled.sock ]; then
-		echo "Stopping ${name} via oraclectl."
-		/usr/sbin/oraclectl shutdown || true
-		# Wait for the daemon to exit (up to 10 seconds).
-		_i=0
-		while [ $_i -lt 100 ]; do
-			if [ ! -f "${pidfile}" ]; then
-				return 0
-			fi
-			_pid=$(cat "${pidfile}" 2>/dev/null)
-			if [ -z "$_pid" ] || ! kill -0 "$_pid" 2>/dev/null; then
-				rm -f "${pidfile}"
-				return 0
-			fi
-			_i=$((_i + 1))
-			sleep 0.1
-		done
-		echo "${name} did not exit, sending SIGKILL."
+	if [ ! -S /var/run/oracled.sock ]; then
+		echo "${name}: control socket unavailable; refusing ambient signal fallback." >&2
+		return 1
 	fi
-	# Fallback: signal-based stop (SIGTERM, then SIGKILL).
+
+	echo "Stopping ${name} via oraclectl."
+	/usr/sbin/oraclectl shutdown || return 1
+	_i=0
+	while [ -f "${pidfile}" ] && [ $_i -lt 100 ]; do
+		_i=$((_i + 1))
+		sleep 0.1
+	done
 	if [ -f "${pidfile}" ]; then
-		_pid=$(cat "${pidfile}" 2>/dev/null)
-		if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
-			kill -TERM "$_pid" 2>/dev/null
-			_i=0
-			while [ $_i -lt 50 ]; do
-				kill -0 "$_pid" 2>/dev/null || break
-				_i=$((_i + 1))
-				sleep 0.1
-			done
-			if kill -0 "$_pid" 2>/dev/null; then
-				echo "${name}: SIGTERM failed, sending SIGKILL."
-				kill -KILL "$_pid" 2>/dev/null
-			fi
-		fi
-		rm -f "${pidfile}"
+		echo "${name}: shutdown timed out; a procdesc supervisor is required for forced termination." >&2
+		return 1
 	fi
+	return 0
+}
+
+oracled_reload()
+{
+
+	/usr/sbin/oraclectl reload
 }
 
 oracled_status()
@@ -67,15 +55,11 @@ oracled_status()
 	if [ -S /var/run/oracled.sock ]; then
 		/usr/sbin/oraclectl status && return 0
 	fi
-	# Fallback: pidfile check with liveness verification.
+	# Ambient kill(2), including signal 0, is intentionally denied.
 	if [ -f "${pidfile}" ]; then
 		_pid=$(cat "${pidfile}" 2>/dev/null)
-		if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
-			echo "${name} is running as pid ${_pid}."
-			return 0
-		fi
-		echo "${name} is not running (stale pidfile)."
-		return 1
+		echo "${name} has pidfile for pid ${_pid:-unknown}, but its control socket is unavailable."
+		return 2
 	fi
 	echo "${name} is not running."
 	return 1

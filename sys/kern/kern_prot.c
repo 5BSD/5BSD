@@ -2294,12 +2294,21 @@ p_cansignal(struct thread *td, struct proc *p, int signum)
 
 	/*
 	 * UNIX signalling semantics require that processes in the same
-	 * session always be able to deliver SIGCONT to one another,
-	 * overriding the remaining protections.
+	 * session be able to deliver SIGCONT to one another, overriding the
+	 * remaining discretionary checks.  Mandatory access-control policy
+	 * must still be allowed to veto the operation.
 	 */
 	/* XXX: This will require an additional lock of some sort. */
-	if (signum == SIGCONT && td->td_proc->p_session == p->p_session)
+	if (signum == SIGCONT && td->td_proc->p_session == p->p_session) {
+#ifdef MAC
+		int error;
+
+		error = mac_proc_check_signal(td->td_ucred, p, signum);
+		if (error != 0)
+			return (error);
+#endif
 		return (0);
+	}
 	/*
 	 * Some compat layers use SIGTHR and higher signals for
 	 * communication between different kernel threads of the same

@@ -14,6 +14,7 @@ sockpath=
 logfile=
 serviced_bin=
 serviced_src=
+disable_signal_shields=false
 
 prepare_paths()
 {
@@ -183,6 +184,15 @@ control_socket = "$sockpath";
 control_socket_mode = "0700";
 service_manager = "$serviced_bin";
 EOF
+	if $disable_signal_shields; then
+		cat >> "$conffile" <<'EOF'
+integrity {
+    signal = false;
+    sigkill = false;
+    sigcont = false;
+}
+EOF
+	fi
 }
 
 start_oracled()
@@ -454,6 +464,56 @@ bootstrap_clean_shutdown_cleanup()
 	cleanup_common
 }
 
+atf_test_case ambient_signals_denied_control_shutdown_allowed cleanup
+ambient_signals_denied_control_shutdown_allowed_head()
+{
+	atf_set "descr" "foreign ambient signals are denied while control shutdown remains authorized"
+	atf_set "require.user" "root"
+	atf_set "require.kmods" "mac_capability mac_capability_capprotect"
+	atf_set "timeout" "60"
+}
+ambient_signals_denied_control_shutdown_allowed_body()
+{
+	local sig
+
+	disable_signal_shields=true
+	build_mock_serviced
+	start_oracled
+
+	if ! wait_for_file serviced-started.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "serviced did not start"
+	fi
+
+	# /bin/kill is exec'd with a foreign program nonce.  Exercise the
+	# general signal shield and the SIGKILL/SIGCONT special cases.
+	for sig in 0 HUP INT TERM STOP CONT KILL; do
+		atf_check -s not-exit:0 -e ignore \
+		    /bin/kill "-$sig" "$daemon_pid"
+		atf_check -s exit:0 -o match:"running" \
+		    oraclectl -s "$sockpath" status
+	done
+
+	# Configuration cannot turn the mandatory shields back off.
+	atf_check -s exit:0 -o ignore \
+	    grep "integrity.signal=false ignored" "$logfile"
+	atf_check -s exit:0 -o ignore \
+	    grep "integrity.sigkill=false ignored" "$logfile"
+	atf_check -s exit:0 -o ignore \
+	    grep "integrity.sigcont=false ignored" "$logfile"
+
+	# service(8) uses this authenticated control path, not kill(2).
+	atf_check -s exit:0 -o match:"shutdown initiated" \
+	    oraclectl -s "$sockpath" shutdown
+	wait "$daemon_pid" 2>/dev/null || true
+	daemon_pid=
+	atf_check -s exit:0 test ! -e "$pidfile"
+}
+ambient_signals_denied_control_shutdown_allowed_cleanup()
+{
+	cleanup_common
+}
+
 atf_test_case bootstrap_no_service_manager cleanup
 bootstrap_no_service_manager_head()
 {
@@ -509,5 +569,6 @@ atf_init_test_cases()
 	atf_add_test_case bootstrap_ready_logged
 	atf_add_test_case bootstrap_restart_on_crash
 	atf_add_test_case bootstrap_clean_shutdown
+	atf_add_test_case ambient_signals_denied_control_shutdown_allowed
 	atf_add_test_case bootstrap_no_service_manager
 }

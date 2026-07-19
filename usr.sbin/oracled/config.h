@@ -12,6 +12,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <dev/mac_capability/mac_capability_capprotect_proto.h>
+
 #include <oraclert.h>
 
 #define	ORACLED_DEFAULT_CONFFILE	"/etc/oracled.conf"
@@ -24,6 +26,10 @@
 #define	ORACLED_MAX_JAIL_CLAIMS		32
 #define	ORACLED_SYSTEM_GATE_NBITS	32	/* bits in uint32_t gate bitmask */
 #define	ORACLED_JAIL_DESC_MAX		96	/* jail_claim_string() output */
+
+/* Foreign-nonce ambient PID signalling is never an Oracle authority. */
+#define	ORACLED_REQUIRED_INTEGRITY_FLAGS	\
+	(CP_SF_SIGNAL | CP_SF_SIGKILL | CP_SF_SIGCONT)
 
 /* Claim provenance — where a claim originated. */
 #define	CLAIM_SOURCE_POLICY	0x01	/* from oracled.conf policy section */
