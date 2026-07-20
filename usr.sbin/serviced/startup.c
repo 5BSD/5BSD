@@ -49,12 +49,14 @@ log_loaded_manifest(const struct svc_manifest *m)
 		syslog(LOG_INFO, "startup: %s requires: %s",
 		    m->label, m->requires[j]);
 
-	if (m->ncap_paths + m->ncap_files + m->ncap_net +
-	    m->cap_system > 0)
+	if (m->ncap_paths + m->ncap_files + m->ncap_net + m->ncap_jail +
+	    m->ncap_vsock + m->ncap_services + (m->cap_system != 0) > 0)
 		syslog(LOG_INFO, "startup: %s capabilities: "
-		    "paths=%u files=%u network=%u system=0x%x",
+		    "paths=%u files=%u network=%u jails=%u vsock=%u "
+		    "services=%u system=0x%x",
 		    m->label, m->ncap_paths, m->ncap_files,
-		    m->ncap_net, m->cap_system);
+		    m->ncap_net, m->ncap_jail, m->ncap_vsock,
+		    m->ncap_services, m->cap_system);
 
 	if (m->has_jail)
 		syslog(LOG_INFO, "startup: %s jail: %s path=%s",

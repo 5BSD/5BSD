@@ -433,6 +433,40 @@ the receiver as
 Oracle-owned capability descriptors are irreversibly restricted against
 transfer, fork inheritance, and exec inheritance.
 .Pp
+Before launching a system-bundle service with
+.Va kmod_requires ,
+.Xr serviced 8
+sends an exact-sized
+.Dv ORACLE_OP_ENSURE_KMOD
+request.
+.Nm
+temporarily claims
+.Dv SYS_GATE_KLDSTAT | SYS_GATE_KLDLOAD ,
+checks or loads the named module under its own nonce, releases the temporary
+claim, and returns only status.
+No module authority or token is delegated to
+.Xr serviced 8 .
+Module paths and malformed names are rejected.
+.Pp
+For each manifest
+.Va capabilities.services
+entry,
+.Xr serviced 8
+sends an exact-sized
+.Dv ORACLE_OP_DELEGATE_SERVICE
+request.
+Only
+.Dq mount ,
+.Dq node ,
+and
+.Dq accounting ,
+and
+.Dq identity
+are accepted.
+The resulting descriptor is transferred once and arrives confined with
+.Dv CAP_XFER_NONE ;
+malformed or unknown requests are rejected.
+.Pp
 The serviced restart policy uses exponential backoff.
 If
 .Xr serviced 8
@@ -450,7 +484,7 @@ is instrumented with DTrace USDT probes in the
 provider.
 Probes are zero-cost when DTrace is not attached.
 .Pp
-.Em Lifecycle:
+.Em Lifecycle :
 .Bl -tag -width "shutdown-done(duration_ns)" -compact
 .It Li startup
 Daemon initialization complete.
@@ -463,7 +497,7 @@ Shutdown sequence complete.
 Configuration file parsed.
 .El
 .Pp
-.Em Claims:
+.Em Claims :
 .Bl -tag -width "claim-net-release(port_min, port_max, protocol)" -compact
 .It Li claim-path(path)
 File or directory claimed successfully.
@@ -483,7 +517,7 @@ Jail claim released.
 System gates released.
 .El
 .Pp
-.Em Dynamic Claims:
+.Em Dynamic Claims :
 .Bl -tag -width "dyn-release-net(port_min, port_max, protocol, refcount, result)" -compact
 .It Li dyn-claim-path(path, result)
 Dynamic path claim created or refcount bumped.
@@ -493,6 +527,8 @@ Dynamic network claim created or refcount bumped.
 Dynamic jail claim created or refcount bumped.
 .It Li dyn-claim-system(gates, result)
 Dynamic system gate claim created or refcount bumped.
+.It Li dyn-claim-vsock(cid, port_min, port_max, result)
+Dynamic VSOCK endpoint claim created or refcount bumped.
 .It Li dyn-release-path(path, refcount, result)
 Dynamic path claim released.
 Refcount is the value after decrement.
@@ -504,15 +540,17 @@ Dynamic jail claim released.
 Dynamic system gate claim released.
 .Ar released
 is the bitmask of gates whose refcount reached zero.
+.It Li dyn-release-vsock(cid, port_min, port_max, refcount, result)
+Dynamic VSOCK endpoint claim released.
 .El
 .Pp
-.Em Integrity:
+.Em Integrity :
 .Bl -tag -width "integrity(flags)" -compact
 .It Li integrity(flags)
 Capprotect integrity shield activated.
 .El
 .Pp
-.Em Control:
+.Em Control :
 .Bl -tag -width "ctl-cmd-done(op, uid, status, duration_ns)" -compact
 .It Li ctl-accept(uid)
 Control socket connection accepted.
@@ -524,7 +562,7 @@ Control command completed.
 Control command denied (EPERM).
 .El
 .Pp
-.Em Reload:
+.Em Reload :
 .Bl -tag -width "reload-claims-done(acquired, released, failed)" -compact
 .It Li reload()
 Configuration reload initiated.
@@ -534,25 +572,33 @@ Claim delta computation complete.
 Claim update complete.
 .El
 .Pp
-.Em Minting:
-.Bl -tag -width "mint-system(gates, result)" -compact
+.Em Minting :
+.Bl -tag -width "mint-file(path, actions, result)" -compact
 .It Li mint-path(path, result)
 Path isolation token minted.
+.It Li mint-file(path, actions, result)
+Action-narrowed file isolation token minted.
 .It Li mint-net(port_min, port_max, protocol, result)
 Network isolation token minted.
 .It Li mint-jail(jid, name, actions, result)
 Jail isolation token minted.
 .It Li mint-system(gates, result)
 System gate token minted.
+.It Li mint-vsock(cid, port_min, port_max, result)
+VSOCK endpoint token minted.
 .It Li create-jail(name, result)
 Jail created.
 .It Li channel-create(result)
 Channel created.
 .It Li coalition-create(result)
 Coalition created.
+.It Li kmod-ensure(name, result)
+Pre-exec kernel module prerequisite checked or loaded.
+.It Li service-delegate(name, result)
+Named capability service descriptor delegated for a service launch.
 .El
 .Pp
-.Em IPC:
+.Em IPC :
 .Bl -tag -width "ipc-dispatch-done(op, status, duration_ns)" -compact
 .It Li ipc-recv(op)
 Oracle protocol message received from serviced.
@@ -562,7 +608,7 @@ Oracle protocol reply sent.
 Oracle protocol dispatch complete.
 .El
 .Pp
-.Em Bootstrap:
+.Em Bootstrap :
 .Bl -tag -width "bootstrap-restart(count, delay_sec)" -compact
 .It Li bootstrap-start(pid)
 Serviced process started.
@@ -572,13 +618,13 @@ Serviced process exited.
 Serviced restart scheduled.
 .El
 .Pp
-.Em Connections:
+.Em Connections :
 .Bl -tag -width "conn-count(nconns)" -compact
 .It Li conn-count(nconns)
 Control socket connection count changed.
 .El
 .Pp
-.Em Errors:
+.Em Errors :
 .Bl -tag -width "error(subsys, msg)" -compact
 .It Li error(subsys, msg)
 Notable error.

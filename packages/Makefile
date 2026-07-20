@@ -23,6 +23,7 @@ SUBDIR=	blocklist \
 	cron \
 	ctl \
 	oracled \
+	oraclectl \
 	kldmgrd \
 	rebootd \
 	serviced \
@@ -162,6 +163,11 @@ SUBDIR.${MK_TELNET}+=		telnet
 SUBDIR.${MK_TESTS}+=		tests
 SUBDIR.${MK_TESTS}+=		bluetooth-tests
 SUBDIR.${MK_TESTS}+=		vsock-tests
+SUBDIR.${MK_TESTS}+=		oracled-tests oraclectl-tests
+SUBDIR.${MK_TESTS}+=		serviced-tests servicectl-tests
+SUBDIR.${MK_TESTS}+=		libcapability-tests libcapbundle-tests
+SUBDIR.${MK_TESTS}+=		liboraclert-tests libservice-tests
+SUBDIR.${MK_TESTS}+=		mac-capability-tests
 SUBDIR.${MK_TESTS_SUPPORT}+=	atf kyua
 SUBDIR.${MK_UNBOUND}+=		local-unbound
 SUBDIR.${MK_VI}+=		vi

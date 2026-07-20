@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd June 1, 2026
+.Dd July 20, 2026
 .Dt LIBSERVICE 3
 .Os
 .Sh NAME
@@ -14,6 +14,8 @@
 .Nm service_send ,
 .Nm service_recv ,
 .Nm service_channel_fd ,
+.Nm service_capability_fd ,
+.Nm service_authorize_capabilities ,
 .Nm service_protect
 .Nd client library for services managed by serviced
 .Sh LIBRARY
@@ -39,6 +41,10 @@
 .Ft int
 .Fn service_channel_fd void
 .Ft int
+.Fn service_capability_fd "const char *name"
+.Ft int
+.Fn service_authorize_capabilities void
+.Ft int
 .Fn service_protect "uint32_t flags"
 .Sh DESCRIPTION
 The
@@ -49,7 +55,10 @@ to communicate with the service manager over their inherited
 mac_capability pair channel.
 Services link against
 .Nm libservice
-and never need to include mac_capability headers or issue ioctls directly.
+for lifecycle and transport operations.
+Programs using a named capability service include that service's protocol
+header and issue its service-specific ioctl on the descriptor returned by
+.Fn service_capability_fd .
 .Pp
 .Fn service_init
 initializes the library by reading the
@@ -147,8 +156,51 @@ This is useful for registering the fd with
 .Xr kqueue 2
 for event-driven services.
 Returns \-1 if the library has not been initialized.
+.Pp
+.Fn service_capability_fd
+returns the borrowed descriptor associated with a manifest-requested
+.Dq mount ,
+.Dq node ,
+.Dq accounting ,
+or
+.Dq identity
+capability service.
+The mapping from
+.Ev ORACLED_CAPABILITY_FDS
+is parsed during
+.Fn service_init ,
+and every descriptor is verified against its kernel-reported service name.
+These are authority-bearing service descriptors and require no token
+activation.
+.Pp
+.Fn service_authorize_capabilities
+activates every isolation token descriptor named by the inherited
+.Ev ORACLED_TOKEN_FDS
+environment variable for the calling process.
+.Xr serviced 8
+delivers tokens but never activates them; the service must explicitly call
+this function after
+.Xr execve 2
+when it chooses to accept the manifest authorities.
+The complete descriptor list is parsed and every descriptor is verified as an
+isolation or system token before any token is activated.
+After validation, private duplication must also succeed before activation
+begins; a duplication failure leaves the caller-visible state unchanged.
+Once activation begins, the handles are consumed: the listed descriptor
+numbers are closed and
+.Ev ORACLED_TOKEN_FDS
+is removed from the environment, whether activation succeeds completely or
+one of the activation operations fails.
+On complete success the library retains private close-on-exec duplicates for
+the process lifetime, because closing the last token reference revokes the
+kernel authorization.
+The original descriptor numbers must not be reused by the caller.
+Calling the function again after successful activation is therefore a
+no-op.
 .Sh RETURN VALUES
 .Fn service_init ,
+.Fn service_authorize_capabilities ,
+.Fn service_protect ,
 .Fn service_ready ,
 .Fn service_register ,
 .Fn service_unregister ,
@@ -172,6 +224,8 @@ failure, setting
 .Fn service_channel_fd
 returns the pair file descriptor, or \-1 if the library has not
 been initialized.
+.Fn service_capability_fd
+returns a non-negative borrowed descriptor on success and \-1 on failure.
 .Pp
 .Fn service_protect
 applies
@@ -183,8 +237,34 @@ descriptor inherited from
 The
 .Fa flags
 argument is a
-.Dv CP_SF_*
-bitmask; 0 requests the capprotect default.
+.Dv SERVICE_PROTECT_*
+bitmask.
+The external-interference flags are
+.Dv SERVICE_PROTECT_PTRACE ,
+.Dv SERVICE_PROTECT_SIGNAL ,
+.Dv SERVICE_PROTECT_VISIBLE ,
+.Dv SERVICE_PROTECT_WAIT ,
+.Dv SERVICE_PROTECT_SIGKILL ,
+.Dv SERVICE_PROTECT_SIGCONT ,
+.Dv SERVICE_PROTECT_SCHED ,
+.Dv SERVICE_PROTECT_CORE ,
+and
+.Dv SERVICE_PROTECT_KTRACE .
+The self-restriction flags are
+.Dv SERVICE_PROTECT_NOPRIVS ,
+.Dv SERVICE_PROTECT_NOFORK ,
+.Dv SERVICE_PROTECT_NOIPC ,
+.Dv SERVICE_PROTECT_NOFDRECV ,
+.Dv SERVICE_PROTECT_NOEXEC ,
+and
+.Dv SERVICE_PROTECT_NOSOCK .
+.Dv SERVICE_PROTECT_EXTERNAL ,
+.Dv SERVICE_PROTECT_RESTRICT ,
+and
+.Dv SERVICE_PROTECT_ALL
+provide the corresponding aggregate masks.
+A flags value of 0 requests every protection known to the running kernel;
+an explicit mask gives the service a stable, reviewable policy.
 It returns 0 on success, or \-1 on failure with
 .Va errno
 set.
@@ -203,8 +283,14 @@ main(void)
     if (service_init() == -1)
         return (1);
 
-    service_ready();
-    service_register("org.example.myservice");
+    if (service_authorize_capabilities() == -1)
+        return (1);
+    if (service_protect(SERVICE_PROTECT_EXTERNAL) == -1)
+        return (1);
+    if (service_register("org.example.myservice") == -1)
+        return (1);
+    if (service_ready() == -1)
+        return (1);
 
     for (;;) {
         client_fd = service_accept(label, sizeof(label));
@@ -269,7 +355,13 @@ environment variable is not set.
 .It Bq Er EINVAL
 The value of
 .Ev ORACLED_CHANNEL_FD
-is not a valid file descriptor number.
+is not a valid descriptor number or does not identify a
+.Nm mac_capability
+channel endpoint, or
+.Ev ORACLED_CAPPROTECT_FD
+is present but does not identify a capprotect instance, or
+.Ev ORACLED_CAPABILITY_FDS
+is malformed or names a descriptor of the wrong capability-service type.
 .El
 .Pp
 .Fn service_register
@@ -316,6 +408,14 @@ and has not yet registered.
 .It Bq Er EIO
 Failed to create a pair or notify the provider.
 .El
+.Sh SEE ALSO
+.Xr kqueue 2 ,
+.Xr mac_capability_capprotect 4 ,
+.Xr serviced 5 ,
+.Xr serviced 8
+.Sh HISTORY
+.Nm libservice
+first appeared in 5BSD.
 .Sh CAVEATS
 The library is not thread-safe.
 The internal pair fd and notification queue are stored in static
@@ -329,6 +429,14 @@ without a subsequent
 The pair fd is shared between parent and child after fork, and
 interleaved messages will corrupt protocol state.
 .Pp
+Descriptors returned by
+.Fn service_lookup
+and
+.Fn service_accept
+arrive with
+.Dv CAP_XFER_NONE .
+They can be used for communication but cannot be delegated again.
+.Pp
 .Fn service_accept
 blocks on the pair fd.
 If the service needs to multiplex the pair fd with other event
@@ -341,9 +449,3 @@ or
 then call
 .Fn service_accept
 only when the fd is readable.
-.Sh SEE ALSO
-.Xr kqueue 2 ,
-.Xr serviced 8
-.Sh HISTORY
-.Nm libservice
-first appeared in 5BSD.

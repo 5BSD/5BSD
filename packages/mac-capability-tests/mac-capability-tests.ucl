@@ -1,0 +1,7 @@
+comment = "Kernel tests for the mac_capability security model"
+
+desc = <<EOD
+ATF/Kyua kernel-policy tests and helper binaries for mac_capability,
+including process protection, procdesc, isolation, identity, accounting,
+mount, and system-gate behavior.
+EOD

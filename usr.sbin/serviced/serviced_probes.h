@@ -76,6 +76,8 @@
 /* Per-service capability acquisition */
 #define	SERVICED_PROBE_CAP_MINT(label, type, result)	\
 	DTRACE_PROBE3(serviced, cap__mint, label, type, result)
+#define	SERVICED_PROBE_CAP_SERVICE(label, name, result)	\
+	DTRACE_PROBE3(serviced, cap__service, label, name, result)
 #define	SERVICED_PROBE_CAP_CHANNEL(label, result)	\
 	DTRACE_PROBE2(serviced, cap__channel, label, result)
 #define	SERVICED_PROBE_CAP_COALITION(label, result)	\
@@ -138,6 +140,8 @@
 	DTRACE_PROBE3(serviced, bundle__load, name, nservices, system)
 #define	SERVICED_PROBE_BUNDLE_SCAN(dir, nbundles)	\
 	DTRACE_PROBE2(serviced, bundle__scan, dir, nbundles)
+#define	SERVICED_PROBE_MANIFEST_REJECT(path, reason, system)	\
+	DTRACE_PROBE3(serviced, manifest__reject, path, reason, system)
 
 /* Errors */
 #define	SERVICED_PROBE_ERROR(subsys, msg)	\

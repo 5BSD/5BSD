@@ -217,7 +217,7 @@ usage(void)
 	    "  reload              reload service bundles\n"
 	    "  stop <label>        stop a running service\n"
 	    "  install <path.cap>  install a .cap bundle to /Capabilities/\n"
-	    "  verify <path.cap>   validate bundle integrity\n"
+	    "  verify <path.cap> [...]  validate bundles and dependency graph\n"
 	    "  bundles             list all registered bundles\n");
 	exit(EX_USAGE);
 }
@@ -262,9 +262,9 @@ main(int argc, char *argv[])
 		return (cmd_install(argv[1]));
 	}
 	if (strcmp(cmd, "verify") == 0) {
-		if (argc != 2)
+		if (argc < 2)
 			errx(EX_USAGE, "verify requires a .cap bundle path");
-		return (cmd_verify(argv[1]));
+		return (cmd_verify(argc - 1, argv + 1));
 	}
 	if (strcmp(cmd, "bundles") == 0 && argc == 1)
 		return (cmd_bundles());

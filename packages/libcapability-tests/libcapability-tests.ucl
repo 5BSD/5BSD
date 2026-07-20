@@ -1,0 +1,5 @@
+comment = "Tests for the managed-daemon capability library"
+
+desc = <<EOD
+ATF/Kyua lifecycle and authorization tests for libcapability.
+EOD

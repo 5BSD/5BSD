@@ -102,6 +102,31 @@ fi_net_query(int svc, int domain, int protocol, uint16_t port_min,
 }
 
 static int
+fi_vsock_query(int svc, uint64_t cid, uint32_t port_min,
+    uint32_t port_max, uint8_t direction, uint32_t expected_flags)
+{
+	struct mac_capability_call_args ca;
+	struct fi_vsock_request vr;
+	struct fi_reply rpl;
+
+	memset(&vr, 0, sizeof(vr));
+	vr.op = FI_OP_QUERY_VSOCK;
+	vr.cid = cid;
+	vr.port_min = port_min;
+	vr.port_max = port_max;
+	vr.direction = direction;
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &vr;
+	ca.req_len = sizeof(vr);
+	ca.reply = &rpl;
+	ca.reply_len = sizeof(rpl);
+	if (ioctl(svc, MAC_CAPABILITY_CALL, &ca) != 0)
+		return (2);
+	return (rpl.flags == expected_flags ? 0 : 1);
+}
+
+static int
 socket_create(int domain, int type, int protocol)
 {
 	int s;
@@ -281,6 +306,50 @@ main(int argc, char **argv)
 		return (fi_net_query(svc, domain, protocol,
 		    (uint16_t)port_min, (uint16_t)port_max,
 		    (uint8_t)direction, (uint32_t)expected_flags));
+	}
+
+	/*
+	 * vsock-token-query <svc_fd> <token_fd> <cid> <port_min>
+	 *     <port_max> <direction> <expected_flags>
+	 *
+	 * This mode is exec'd so authorization is applied to a program nonce
+	 * different from the claim owner.  Keep the token open through the
+	 * query: the descriptor is the authorization lease.
+	 */
+	if (argc == 9 && strcmp(argv[1], "vsock-token-query") == 0) {
+		int token_fd, result;
+		unsigned long long cid;
+		unsigned long port_min, port_max, expected_flags;
+
+		svc = (int)strtol(argv[2], &end, 10);
+		if (*end != '\0')
+			return (2);
+		token_fd = (int)strtol(argv[3], &end, 10);
+		if (*end != '\0')
+			return (2);
+		cid = strtoull(argv[4], &end, 10);
+		if (*end != '\0')
+			return (2);
+		port_min = strtoul(argv[5], &end, 10);
+		if (*end != '\0' || port_min > UINT32_MAX)
+			return (2);
+		port_max = strtoul(argv[6], &end, 10);
+		if (*end != '\0' || port_max > UINT32_MAX)
+			return (2);
+		direction = strtoul(argv[7], &end, 10);
+		if (*end != '\0' || direction > UINT8_MAX)
+			return (2);
+		expected_flags = strtoul(argv[8], &end, 10);
+		if (*end != '\0' || expected_flags > UINT32_MAX)
+			return (2);
+
+		if (fi_authorize(token_fd) != 0)
+			return (10);
+		result = fi_vsock_query(svc, (uint64_t)cid,
+		    (uint32_t)port_min, (uint32_t)port_max,
+		    (uint8_t)direction, (uint32_t)expected_flags);
+		close(token_fd);
+		return (result);
 	}
 
 	/*

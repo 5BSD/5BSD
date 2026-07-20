@@ -16,6 +16,8 @@
 #include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/jail.h>
+#include <sys/linker.h>
+#include <sys/module.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
@@ -167,12 +169,16 @@ handle_mint_file(const void *payload, uint32_t len, uint64_t reply_token)
 	const struct oracle_mint_file_req *req;
 	int token_fd;
 
-	if (len < sizeof(*req)) {
+	if (len != sizeof(*req)) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
 	req = payload;
 
+	if (req->_pad != 0) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
 	if (strnlen(req->path, PATH_MAX) >= PATH_MAX) {
 		proto_reply(ENAMETOOLONG, reply_token, NULL, 0);
 		return;
@@ -189,7 +195,7 @@ handle_mint_file(const void *payload, uint32_t len, uint64_t reply_token)
 		int err;
 
 		if (auto_claim_path(req->path, &err) != 0) {
-			ORACLED_PROBE_MINT_PATH(req->path, err);
+			ORACLED_PROBE_MINT_FILE(req->path, req->actions, err);
 			proto_reply(err, reply_token, NULL, 0);
 			return;
 		}
@@ -198,12 +204,12 @@ handle_mint_file(const void *payload, uint32_t len, uint64_t reply_token)
 	token_fd = mac_capability_mint_file_token(req->path, req->actions);
 	if (token_fd == -1) {
 		release_auto_claim_path(req->path);
-		ORACLED_PROBE_MINT_PATH(req->path, EIO);
+		ORACLED_PROBE_MINT_FILE(req->path, req->actions, EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
 		return;
 	}
 
-	ORACLED_PROBE_MINT_PATH(req->path, 0);
+	ORACLED_PROBE_MINT_FILE(req->path, req->actions, 0);
 	proto_reply(0, reply_token, &token_fd, 1);
 	close(token_fd);
 }
@@ -274,6 +280,32 @@ handle_mint_jail(const void *payload, uint32_t len, uint64_t reply_token)
 }
 
 static void
+handle_mint_vsock(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	struct ort_vsock_claim vc;
+	int err, token_fd;
+	if (!validate_vsock_req(payload, len, &vc, &err)) {
+		ORACLED_PROBE_MINT_VSOCK(0, 0, 0, err);
+		proto_reply(err, reply_token, NULL, 0);
+		return;
+	}
+	if (auto_claim_vsock(&vc, &err) != 0) {
+		ORACLED_PROBE_MINT_VSOCK(vc.cid, vc.port_min, vc.port_max, err);
+		proto_reply(err, reply_token, NULL, 0);
+		return;
+	}
+	token_fd = mac_capability_mint_vsock_token(&vc);
+	if (token_fd == -1) {
+		release_auto_claim_vsock(&vc);
+		proto_reply(EIO, reply_token, NULL, 0);
+		return;
+	}
+	ORACLED_PROBE_MINT_VSOCK(vc.cid, vc.port_min, vc.port_max, 0);
+	proto_reply(0, reply_token, &token_fd, 1);
+	close(token_fd);
+}
+
+static void
 handle_create_jail(const void *payload, uint32_t len, uint64_t reply_token)
 {
 	const struct oracle_create_jail_req *req;
@@ -282,11 +314,15 @@ handle_create_jail(const void *payload, uint32_t len, uint64_t reply_token)
 	struct in_addr ip4;
 	int jd, persist, niov;
 
-	if (len < sizeof(*req)) {
+	if (len != sizeof(*req)) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
 	req = payload;
+	if (req->_pad != 0) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
 
 	/* Validate strings are NUL-terminated. */
 	if (memchr(req->name, '\0', sizeof(req->name)) == NULL ||
@@ -391,11 +427,15 @@ handle_mint_system(const void *payload, uint32_t len, uint64_t reply_token)
 	const struct oracle_system_req *req;
 	int token_fd;
 
-	if (len < sizeof(*req)) {
+	if (len != sizeof(*req)) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
 	req = payload;
+	if (req->gates == 0 || (req->gates & ~SYS_GATE_ALL) != 0) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
 
 	{
 		int err;
@@ -472,6 +512,70 @@ handle_ping(uint64_t reply_token)
 	proto_reply(0, reply_token, NULL, 0);
 }
 
+static void
+handle_ensure_kmod(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	const struct oracle_kmod_req *req;
+	const uint32_t gates = SYS_GATE_KLDLOAD | SYS_GATE_KLDSTAT;
+	int error, id;
+
+	if (!validate_kmod_req(payload, len, &req, &error)) {
+		ORACLED_PROBE_KMOD_ENSURE("", error);
+		proto_reply(error, reply_token, NULL, 0);
+		return;
+	}
+	if (auto_claim_system(gates, &error) != 0) {
+		ORACLED_PROBE_KMOD_ENSURE(req->name, error);
+		proto_reply(error, reply_token, NULL, 0);
+		return;
+	}
+
+	id = modfind(req->name);
+	if (id == -1) {
+		id = kldload(req->name);
+		if (id == -1)
+			error = errno;
+		else
+			error = 0;
+	} else {
+		error = 0;
+	}
+	release_auto_claim_system(gates);
+
+	if (error == 0)
+		syslog(LOG_INFO, "oracle_proto: ensured kernel module %s",
+		    req->name);
+	else
+		syslog(LOG_ERR, "oracle_proto: ensure kernel module %s: %s",
+		    req->name, strerror(error));
+	ORACLED_PROBE_KMOD_ENSURE(req->name, error);
+	proto_reply(error, reply_token, NULL, 0);
+}
+
+static void
+handle_delegate_service(const void *payload, uint32_t len,
+    uint64_t reply_token)
+{
+	const struct oracle_service_req *req;
+	int error, fd;
+
+	if (!validate_service_req(payload, len, &req, &error)) {
+		ORACLED_PROBE_SERVICE_DELEGATE("", error);
+		proto_reply(error, reply_token, NULL, 0);
+		return;
+	}
+	fd = mac_capability_connect_for_delegate(req->name);
+	if (fd == -1) {
+		error = errno;
+		ORACLED_PROBE_SERVICE_DELEGATE(req->name, error);
+		proto_reply(error, reply_token, NULL, 0);
+		return;
+	}
+	ORACLED_PROBE_SERVICE_DELEGATE(req->name, 0);
+	proto_reply(0, reply_token, &fd, 1);
+	close(fd);
+}
+
 /* Claim/release handlers and sweep are in oracle_proto_claims.c. */
 
 /*
@@ -488,7 +592,10 @@ proto_dispatch_one(void)
 		struct oracle_path_req path;
 		struct oracle_net_req net;
 		struct oracle_jail_req jail;
+		struct oracle_vsock_req vsock;
 		struct oracle_system_req system;
+		struct oracle_kmod_req kmod;
+		struct oracle_service_req service;
 		struct oracle_req_hdr hdr;
 	} buf;
 	uint32_t op;
@@ -547,6 +654,9 @@ proto_dispatch_one(void)
 	case ORACLE_OP_MINT_JAIL:
 		handle_mint_jail(&buf, ra.payload_len, ra.reply_token);
 		break;
+	case ORACLE_OP_MINT_VSOCK:
+		handle_mint_vsock(&buf, ra.payload_len, ra.reply_token);
+		break;
 	case ORACLE_OP_MINT_SYSTEM:
 		handle_mint_system(&buf, ra.payload_len, ra.reply_token);
 		break;
@@ -554,16 +664,34 @@ proto_dispatch_one(void)
 		handle_create_jail(&buf, ra.payload_len, ra.reply_token);
 		break;
 	case ORACLE_OP_CREATE_CHANNEL:
-		handle_create_channel(ra.reply_token);
+		if (ra.payload_len != sizeof(struct oracle_req_hdr))
+			proto_reply(EINVAL, ra.reply_token, NULL, 0);
+		else
+			handle_create_channel(ra.reply_token);
 		break;
 	case ORACLE_OP_CREATE_COALITION:
-		handle_create_coalition(ra.reply_token);
+		if (ra.payload_len != sizeof(struct oracle_req_hdr))
+			proto_reply(EINVAL, ra.reply_token, NULL, 0);
+		else
+			handle_create_coalition(ra.reply_token);
 		break;
 	case ORACLE_OP_READY:
-		handle_ready(ra.reply_token);
+		if (ra.payload_len != sizeof(struct oracle_req_hdr))
+			proto_reply(EINVAL, ra.reply_token, NULL, 0);
+		else
+			handle_ready(ra.reply_token);
 		break;
 	case ORACLE_OP_PING:
-		handle_ping(ra.reply_token);
+		if (ra.payload_len != sizeof(struct oracle_req_hdr))
+			proto_reply(EINVAL, ra.reply_token, NULL, 0);
+		else
+			handle_ping(ra.reply_token);
+		break;
+	case ORACLE_OP_ENSURE_KMOD:
+		handle_ensure_kmod(&buf, ra.payload_len, ra.reply_token);
+		break;
+	case ORACLE_OP_DELEGATE_SERVICE:
+		handle_delegate_service(&buf, ra.payload_len, ra.reply_token);
 		break;
 	case ORACLE_OP_CLAIM_PATH:
 		handle_claim_path(&buf, ra.payload_len, ra.reply_token);
@@ -577,6 +705,9 @@ proto_dispatch_one(void)
 	case ORACLE_OP_CLAIM_SYSTEM:
 		handle_claim_system(&buf, ra.payload_len, ra.reply_token);
 		break;
+	case ORACLE_OP_CLAIM_VSOCK:
+		handle_claim_vsock(&buf, ra.payload_len, ra.reply_token);
+		break;
 	case ORACLE_OP_RELEASE_PATH:
 		handle_release_path(&buf, ra.payload_len, ra.reply_token);
 		break;
@@ -588,6 +719,9 @@ proto_dispatch_one(void)
 		break;
 	case ORACLE_OP_RELEASE_SYSTEM:
 		handle_release_system(&buf, ra.payload_len, ra.reply_token);
+		break;
+	case ORACLE_OP_RELEASE_VSOCK:
+		handle_release_vsock(&buf, ra.payload_len, ra.reply_token);
 		break;
 	default:
 		syslog(LOG_WARNING, "oracle_proto: unknown op %u", op);

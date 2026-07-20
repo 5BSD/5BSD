@@ -30,6 +30,7 @@ provider serviced {
 
 	/* Per-service capability acquisition */
 	probe cap__mint(const char *label, const char *type, int result);
+	probe cap__service(const char *label, const char *name, int result);
 	probe cap__channel(const char *label, int result);
 	probe cap__coalition(const char *label, int result);
 
@@ -70,6 +71,7 @@ provider serviced {
 	/* Bundle registry */
 	probe bundle__load(const char *name, unsigned int nservices, int system);
 	probe bundle__scan(const char *dir, unsigned int nbundles);
+	probe manifest__reject(const char *path, const char *reason, int system);
 
 	/* Errors */
 	probe error(const char *subsys, const char *msg);

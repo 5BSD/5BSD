@@ -1,4 +1,4 @@
-.Dd June 7, 2026
+.Dd July 19, 2026
 .Dt LIBCAPBUNDLE 3
 .Os
 .Sh NAME
@@ -40,6 +40,14 @@
 .Fn capbundle_svc_requires "const struct capbundle_service *s" "unsigned idx"
 .Ft bool
 .Fn capbundle_svc_on_demand "const struct capbundle_service *s"
+.Ft unsigned
+.Fn capbundle_svc_narguments "const struct capbundle_service *s"
+.Ft const char *
+.Fn capbundle_svc_argument "const struct capbundle_service *s" "unsigned idx"
+.Ft unsigned
+.Fn capbundle_svc_nenvironment "const struct capbundle_service *s"
+.Ft const char *
+.Fn capbundle_svc_environment "const struct capbundle_service *s" "unsigned idx"
 .Ft int
 .Fn capbundle_svc_fill_manifest "const struct capbundle_service *s" "struct svc_manifest *m"
 .Ft int
@@ -89,19 +97,22 @@ frees all resources.
 .El
 .Ss Service.ucl Format
 Each Service.ucl file is a UCL document with the following keys:
+.Pp
+Parsing is strict: unknown keys, wrong types, invalid values, and entries
+beyond documented limits reject the complete bundle.
 .Bl -tag -width "capabilities"
 .It Va bundle_id
 (string, required for verification)
 Reverse-domain bundle identifier.
-Maximum 128 characters.
+Maximum 127 characters.
 .It Va version
 (string, optional)
 Version string.
-Maximum 32 characters.
+Maximum 31 characters.
 .It Va author
 (string, optional)
 Author name.
-Maximum 128 characters.
+Maximum 127 characters.
 .It Va program
 (string, required)
 Executable name relative to
@@ -114,6 +125,22 @@ Maximum 8 entries; names must fit serviced's manifest label limit.
 (string or array, optional)
 Service names this service depends on.
 Maximum 8 entries.
+.It Va kmod_requires
+(string or array, optional)
+Up to 8 kernel module names to load before launch for system bundles.
+Only letters, digits, period, underscore, and hyphen are accepted; module
+paths are rejected.
+.It Va arguments
+(array, optional)
+Literal argument strings appended after the program name in
+.Va argv .
+No shell parsing is performed.
+.It Va environment
+(object, optional)
+String-valued environment variables.
+Names beginning with
+.Dq ORACLED_
+are reserved.
 .It Va on_demand
 (boolean, optional)
 If true, the service is launched on first lookup rather than at boot.
@@ -127,25 +154,25 @@ or
 .Dq never .
 Default:
 .Dq never .
-Unknown values produce a syslog warning and default to never.
+Unknown values reject the manifest.
 .It Va stop_timeout
 (integer, optional)
 Seconds to wait for graceful shutdown before SIGKILL.
-Clamped to range 1\(en300.
+Values outside 1\(en300 reject the manifest.
 Default: 5.
 .It Va max_failures
 (integer, optional)
 Consecutive rapid restarts before disabling service.
-Clamped to range 1\(en100.
+Values outside 1\(en100 reject the manifest.
 Default: 10.
 .It Va user
 (string, optional)
 Username for privilege drop.
-Maximum 64 characters.
+Maximum 63 characters.
 .It Va group
 (string, optional)
 Group name for privilege drop.
-Maximum 64 characters.
+Maximum 63 characters.
 .It Va capabilities
 (object, optional)
 Capability claims to delegate to the service.
@@ -174,11 +201,21 @@ Valid gate names:
 .Dq kenv_read ,
 .Dq acct ,
 .Dq audit .
-Unknown names produce a syslog warning and are ignored.
+Unknown names reject the manifest.
+.It Va services
+Array containing any of
+.Dq mount ,
+.Dq node ,
+.Dq accounting ,
+or
+.Dq identity .
+At most four unique entries are accepted.
+These request mac_capability service descriptors rather than activation
+tokens.
 .It Va paths
 Array of absolute filesystem paths (strings).
 Maximum 16 entries.
-Non-absolute paths produce a warning and are skipped.
+Non-absolute paths reject the manifest.
 .It Va files
 Array of file capability objects, each with:
 .Bl -tag -width "actions" -compact
@@ -225,6 +262,11 @@ Alias for
 .It Va protocol
 .Dq tcp ,
 .Dq udp ,
+.Dq hci ,
+.Dq l2cap ,
+.Dq rfcomm ,
+.Dq sco ,
+.Dq iso ,
 .Dq any ,
 or
 .Dq * .
@@ -239,18 +281,34 @@ Default: bind.
 .It Va domain
 .Dq inet ,
 .Dq inet6 ,
+.Dq bluetooth ,
 .Dq any ,
 or
 .Dq * .
 Default: inet.
 .It Va address
 IP address or CIDR notation
-.Pq e.g., Dq 192.168.1.0/24 .
+.Pq e.g., Dq 192.168.1.0/24 ,
+or a BD_ADDR for the Bluetooth domain.
+A specific address requires an explicit matching domain.
 .It Va prefix
 Explicit CIDR prefix length (0\(en32 for inet, 0\(en128 for inet6).
+Requires a specific
+.Va address .
 .El
 Maximum 16 entries.
-Invalid entries produce a warning and are skipped.
+Invalid entries reject the manifest.
+.It Va vsock
+Array of VSOCK endpoint objects.
+Each object accepts a numeric or wildcard
+.Va cid ,
+a 32-bit
+.Va port
+or
+.Va ports
+range, and a bind/connect/any
+.Va direction .
+Maximum 16 entries.
 .It Va jails
 Array of jail capability objects or shorthand values.
 Each element may be:
@@ -275,8 +333,12 @@ An object with keys:
 .Dq * ) .
 .El
 Maximum 16 entries.
-Entries with neither jid nor name are skipped.
+Entries with neither jid nor name reject the bundle.
 .El
+.Pp
+For the complete authoritative schema, value defaults, limits, and token
+activation model, see
+.Xr serviced 5 .
 .Ss Verification Checks
 .Fn capbundle_verify
 performs:
@@ -309,7 +371,8 @@ and
 .Fn capbundle_svc_requires
 return NULL if the index is out of bounds.
 .Sh SEE ALSO
-.Xr serviced 8 ,
-.Xr servicectl 8 ,
 .Xr libservice 3 ,
-.Xr mac_capability_system 4
+.Xr mac_capability_system 4 ,
+.Xr serviced 5 ,
+.Xr servicectl 8 ,
+.Xr serviced 8

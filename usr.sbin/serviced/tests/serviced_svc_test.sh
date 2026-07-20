@@ -17,7 +17,7 @@ fi
 
 assert_stack_alive()
 {
-	if ! kill -0 "$daemon_pid" 2>/dev/null; then
+	if ! capd_guardian_is_running; then
 		cat "$logfile" 2>/dev/null
 		atf_fail "oracled exited unexpectedly"
 	fi
@@ -34,6 +34,7 @@ restart_never_no_restart_head()
 {
 	atf_set "descr" "restart=never service stays stopped after exit"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 restart_never_no_restart_body()
 {
@@ -69,6 +70,7 @@ restart_on_failure_ignores_clean_head()
 {
 	atf_set "descr" "restart=on-failure does not restart on exit(0)"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 restart_on_failure_ignores_clean_body()
 {
@@ -104,6 +106,7 @@ restart_on_failure_restarts_on_error_head()
 {
 	atf_set "descr" "restart=on-failure restarts after nonzero exit"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 restart_on_failure_restarts_on_error_body()
 {
@@ -143,6 +146,7 @@ restart_always_restarts_clean_head()
 {
 	atf_set "descr" "restart=always restarts even after exit(0)"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 restart_always_restarts_clean_body()
 {
@@ -180,6 +184,7 @@ circuit_breaker_disables_head()
 {
 	atf_set "descr" "crashing restart=always service is disabled by circuit breaker"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 circuit_breaker_disables_body()
 {
@@ -211,6 +216,7 @@ shutdown_kills_sigterm_ignorer_head()
 {
 	atf_set "descr" "shutdown kills a service that ignores SIGTERM"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 shutdown_kills_sigterm_ignorer_body()
 {
@@ -252,6 +258,7 @@ shutdown_kills_subtree_head()
 {
 	atf_set "descr" "shutdown cleans up child processes spawned by a service"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 shutdown_kills_subtree_body()
 {
@@ -298,6 +305,7 @@ service_environment_minimal_head()
 {
 	atf_set "descr" "service child receives minimal environment"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 service_environment_minimal_body()
 {
@@ -338,6 +346,7 @@ service_runs_as_user_head()
 {
 	atf_set "descr" "service with user= runs as that user"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 service_runs_as_user_body()
 {
@@ -373,6 +382,7 @@ dependency_order_head()
 {
 	atf_set "descr" "services start in dependency order"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 dependency_order_body()
 {
@@ -417,16 +427,17 @@ dependency_order_cleanup()
 }
 
 # ===================================================================
-# SIGHUP reload: new manifests loaded on reload
+# Authenticated reload: new manifests are forwarded to serviced
 # ===================================================================
 
-atf_test_case sighup_reload cleanup
-sighup_reload_head()
+atf_test_case control_reload cleanup
+control_reload_head()
 {
-	atf_set "descr" "SIGHUP triggers manifest reload in serviced"
+	atf_set "descr" "Oracle control reload triggers manifest reload in serviced"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
-sighup_reload_body()
+control_reload_body()
 {
 	start_stack
 
@@ -436,8 +447,8 @@ sighup_reload_body()
 	    "echo \$\$ > ${WORK}/new-svc.pid" \
 	    'sleep 60'
 
-	# Send SIGHUP to oracled (forwarded to serviced).
-	kill -HUP "$daemon_pid"
+	# Use Oracle's authenticated control endpoint; ambient SIGHUP is shielded.
+	reload_stack
 
 	if ! wait_for_file new-svc.pid; then
 		cat "$logfile" 2>/dev/null
@@ -445,7 +456,7 @@ sighup_reload_body()
 	fi
 	assert_stack_alive
 }
-sighup_reload_cleanup()
+control_reload_cleanup()
 {
 	if [ -f new-svc.pid ]; then
 		kill "$(cat new-svc.pid)" 2>/dev/null || true
@@ -462,6 +473,7 @@ restart_backoff_head()
 {
 	atf_set "descr" "fast-crashing service gets delayed restart (backoff)"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 restart_backoff_body()
 {
@@ -493,100 +505,17 @@ svc_unregister_explicit_head()
 {
 	atf_set "descr" "service can explicitly unregister a name via SVC_OP_UNREGISTER"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 svc_unregister_explicit_body()
 {
-	require_cc
-	cat > unreg_svc.c <<'CEOF'
-#include <sys/types.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include <dev/mac_capability/mac_capability_ioctl.h>
-#include <serviced_svc_proto.h>
-
-static int
-send_recv(int fd, const void *req, uint32_t reqlen, uint64_t token,
-    struct svc_reply *rpl)
-{
-	struct mac_capability_sendmsg_args sa;
-	struct mac_capability_recvmsg_args ra;
-
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = req;
-	sa.payload_len = reqlen;
-	sa.reply_token = token;
-	if (ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) return (-1);
-	memset(&ra, 0, sizeof(ra));
-	ra.payload = rpl;
-	ra.payload_len = sizeof(*rpl);
-	if (ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) return (-1);
-	return (0);
-}
-
-int main(void)
-{
-	struct svc_req_hdr ready_req;
-	struct svc_register_req reg_req;
-	struct svc_register_req unreg_req;
-	struct svc_reply rpl;
-	const char *fd_str;
-	int channel_fd;
-	FILE *out;
-
-	fd_str = getenv("ORACLED_CHANNEL_FD");
-	if (!fd_str) return (1);
-	channel_fd = atoi(fd_str);
-
-	/* Send READY. */
-	ready_req.op = SVC_OP_READY;
-	if (send_recv(channel_fd, &ready_req, sizeof(ready_req), 1, &rpl) == -1)
-		return (1);
-
-	/* Register the name. */
-	memset(&reg_req, 0, sizeof(reg_req));
-	reg_req.op = SVC_OP_REGISTER;
-	strlcpy(reg_req.name, "org.test.unreg.svc",
-	    sizeof(reg_req.name));
-	if (send_recv(channel_fd, &reg_req, sizeof(reg_req), 2, &rpl) == -1)
-		return (1);
-
-	out = fopen(OUTDIR "/unreg-register.out", "w");
-	if (out != NULL) {
-		fprintf(out, "register_status=%d\n", rpl.status);
-		fclose(out);
-	}
-	if (rpl.status != 0) return (1);
-
-	/* Explicitly unregister. */
-	memset(&unreg_req, 0, sizeof(unreg_req));
-	unreg_req.op = SVC_OP_UNREGISTER;
-	strlcpy(unreg_req.name, "org.test.unreg.svc",
-	    sizeof(unreg_req.name));
-	if (send_recv(channel_fd, &unreg_req, sizeof(unreg_req), 3, &rpl) == -1)
-		return (1);
-
-	out = fopen(OUTDIR "/unreg-result.out", "w");
-	if (out != NULL) {
-		fprintf(out, "unregister_status=%d\n", rpl.status);
-		fclose(out);
-	}
-
-	sleep(30);
-	return (0);
-}
-CEOF
-	# OUTDIR bakes the absolute work dir into the binary so the service's
-	# fopen() calls land in $WORK even though the service runs with a minimal
-	# environment and its CWD is not guaranteed to be $WORK.
-	atf_check -s exit:0 -e ignore cc -Wall -DOUTDIR="\"$(pwd)\"" -I/usr/src/sys -I/usr/src/lib/liboraclert -o unreg_svc unreg_svc.c
+	find_capd_service_fixture
 
 	find_serviced
 	prepare_paths
-	make_svc_bin system org.test.unreg.svc '' "$(pwd)/unreg_svc"
+	make_svc_bin system org.test.unreg.svc \
+	    "arguments = [\"unregister\", \"org.test.unreg.svc\", \"$(pwd)/unreg-register.out\", \"$(pwd)/unreg-result.out\"];" \
+	    "$capd_service_fixture"
 	write_config
 
 	start_stack
@@ -611,7 +540,6 @@ CEOF
 }
 svc_unregister_explicit_cleanup()
 {
-	pkill -9 -f unreg_svc 2>/dev/null || true
 	cleanup_common
 	rm -f unreg_svc unreg_svc.c unreg-register.out unreg-result.out
 }
@@ -625,98 +553,10 @@ sctl_privilege_denied_head()
 {
 	atf_set "descr" "unprivileged peer cannot run a privileged control op (reload); control socket is root-owned and not world-accessible"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 sctl_privilege_denied_body()
 {
-	require_cc
-
-	# Helper: drop to an unprivileged user, connect to the control
-	# socket, send a privileged op (RELOAD) and record the outcome.
-	# The result file is written with a RELATIVE path so that, after
-	# dropping to nobody, only the (chmod'd) CWD needs to be writable —
-	# not every parent of an absolute path.  A refused connect and an
-	# app-level EPERM are both recorded; both mean "denied".
-	cat > sctl_deny.c <<'CEOF'
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <errno.h>
-#include <pwd.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <serviced_ctl.h>
-
-int
-main(int argc, char **argv)
-{
-	struct sockaddr_un un;
-	struct sctl_request req;
-	struct sctl_reply rpl;
-	struct passwd *pw;
-	FILE *out;
-	ssize_t n;
-	size_t off;
-	int fd, connerr;
-
-	if (argc < 2)
-		return (2);
-	pw = getpwnam("nobody");
-	if (pw == NULL)
-		return (2);
-	if (setgid(pw->pw_gid) == -1 || setuid(pw->pw_uid) == -1)
-		return (2);
-	if (setuid(0) != -1)		/* must NOT be able to regain root */
-		return (2);
-
-	fd = socket(PF_LOCAL, SOCK_STREAM, 0);
-	if (fd == -1)
-		return (2);
-	memset(&un, 0, sizeof(un));
-	un.sun_family = AF_LOCAL;
-	strlcpy(un.sun_path, argv[1], sizeof(un.sun_path));
-
-	connerr = 0;
-	if (connect(fd, (struct sockaddr *)&un, sizeof(un)) == -1)
-		connerr = errno;
-
-	out = fopen("sctl-deny.out", "w");
-	if (out == NULL)
-		return (2);
-
-	if (connerr != 0) {
-		fprintf(out, "connect_errno=%d\nstatus=-1\n", connerr);
-		fclose(out);
-		return (0);
-	}
-
-	memset(&req, 0, sizeof(req));
-	req.version = SERVICED_CTL_VERSION;
-	req.op = SCTL_OP_RELOAD;
-	if (write(fd, &req, sizeof(req)) != (ssize_t)sizeof(req)) {
-		fprintf(out, "connect_errno=0\nstatus=-2\n");
-		fclose(out);
-		return (0);
-	}
-	off = 0;
-	while (off < sizeof(rpl)) {
-		n = read(fd, (char *)&rpl + off, sizeof(rpl) - off);
-		if (n <= 0)
-			break;
-		off += (size_t)n;
-	}
-	if (off < sizeof(rpl))
-		fprintf(out, "connect_errno=0\nstatus=-3\n");
-	else
-		fprintf(out, "connect_errno=0\nstatus=%u\n", rpl.status);
-	fclose(out);
-	return (0);
-}
-CEOF
-	atf_check -s exit:0 -e ignore cc -Wall \
-	    -I/usr/src/lib/liboraclert -o sctl_deny sctl_deny.c
-
 	prepare_paths
 	start_stack
 
@@ -745,7 +585,8 @@ CEOF
 	chmod 0777 "${WORK}" 2>/dev/null || true
 	chmod 0777 "${CTL_SOCK}" 2>/dev/null || true
 
-	atf_check -s exit:0 ./sctl_deny "${CTL_SOCK}"
+	atf_check -s exit:0 "$(atf_get_srcdir)/capd_protocol_fixture" \
+	    control-deny "${CTL_SOCK}" sctl-deny.out
 	atf_check -s exit:0 -o match:"status=" cat sctl-deny.out
 	atf_check -s exit:0 -o not-match:"status=0$" cat sctl-deny.out
 	assert_stack_alive
@@ -753,7 +594,7 @@ CEOF
 sctl_privilege_denied_cleanup()
 {
 	cleanup_common
-	rm -f sctl_deny sctl_deny.c sctl-deny.out
+	rm -f sctl-deny.out
 }
 
 atf_init_test_cases()
@@ -778,7 +619,7 @@ atf_init_test_cases()
 	atf_add_test_case dependency_order
 
 	# Reload
-	atf_add_test_case sighup_reload
+	atf_add_test_case control_reload
 
 	# Naming protocol
 	atf_add_test_case svc_unregister_explicit

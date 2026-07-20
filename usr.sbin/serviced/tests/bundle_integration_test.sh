@@ -10,6 +10,8 @@
 
 . $(atf_get_srcdir)/test_helpers.sh
 
+DTRACE_PID=
+
 # ---------------------------------------------------------------
 # Test: System bundle boot-start
 # ---------------------------------------------------------------
@@ -17,6 +19,7 @@ atf_test_case system_bundle_startup cleanup
 system_bundle_startup_head() {
 	atf_set "descr" "System bundle services start at boot"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 system_bundle_startup_body() {
 	prepare_paths
@@ -46,6 +49,7 @@ atf_test_case on_demand_launch cleanup
 on_demand_launch_head() {
 	atf_set "descr" "On-demand service launches on first lookup"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 on_demand_launch_body() {
 	prepare_paths
@@ -78,6 +82,7 @@ atf_test_case on_demand_timeout cleanup
 on_demand_timeout_head() {
 	atf_set "descr" "On-demand launch times out if service never reports ready"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 on_demand_timeout_body() {
 	prepare_paths
@@ -111,6 +116,7 @@ atf_test_case tiered_startup cleanup
 tiered_startup_head() {
 	atf_set "descr" "Services launch in dependency order via tiers"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 tiered_startup_body() {
 	prepare_paths
@@ -146,6 +152,7 @@ atf_test_case stop_service cleanup
 stop_service_head() {
 	atf_set "descr" "Stop a running service via servicectl stop"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 stop_service_body() {
 	prepare_paths
@@ -175,6 +182,7 @@ atf_test_case stop_nonexistent cleanup
 stop_nonexistent_head() {
 	atf_set "descr" "Stop returns ENOENT for unknown service label"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 stop_nonexistent_body() {
 	prepare_paths
@@ -194,6 +202,7 @@ atf_test_case reload_new_service cleanup
 reload_new_service_head() {
 	atf_set "descr" "Reload detects and launches newly added bundle services"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 reload_new_service_body() {
 	prepare_paths
@@ -227,6 +236,7 @@ atf_test_case reload_remove_service cleanup
 reload_remove_service_head() {
 	atf_set "descr" "Reload stops services whose bundle was removed"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 reload_remove_service_body() {
 	prepare_paths
@@ -260,6 +270,7 @@ atf_test_case circular_dep_fatal cleanup
 circular_dep_fatal_head() {
 	atf_set "descr" "Circular dependency aborts serviced startup"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 circular_dep_fatal_body() {
 	prepare_paths
@@ -287,6 +298,7 @@ atf_test_case missing_system_bundle_optional cleanup
 missing_system_bundle_optional_head() {
 	atf_set "descr" "Missing /Capabilities/System is optional"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 missing_system_bundle_optional_body() {
 	prepare_paths
@@ -325,34 +337,132 @@ bundles_list_cleanup() {
 # ---------------------------------------------------------------
 atf_test_case dtrace_probes cleanup
 dtrace_probes_head() {
-	atf_set "descr" "DTrace probes fire during startup and on-demand"
+	atf_set "descr" "DTrace startup schema is registered and capability orchestration probes fire"
 	atf_set "require.user" "root"
 	atf_set "require.progs" "dtrace"
+	require_oracle_stack_kmods mac_capability_identity
+	atf_set "timeout" "60"
 }
 dtrace_probes_body() {
+	local i serviced_pid
+
 	prepare_paths
-	create_system_bundle "Traced" "org.test.trace" "traced" \
-	    "org.test.trace.svc"
+	printf 'probe target\n' > "${WORK}/dtrace-token-target"
 
-	# Start dtrace in background
-	dtrace -n 'serviced:::startup-begin { printf("BEGIN %d\n", arg0); }' \
-	    -n 'serviced:::startup-done { printf("DONE %llu\n", arg0); exit(0); }' \
-	    -o "${WORK}/dtrace.out" &
-	DTRACE_PID=$!
-	sleep 1
-
+	# USDT -Z accepts an initially unmatched description but does not attach
+	# it retroactively when a provider registers.  Start an empty stack first,
+	# then bind to the exact live provider PIDs.  The startup probes have
+	# already fired, so validate their registered schema with dtrace -l; the
+	# capability probes below are exercised by a subsequent reload.
 	start_stack
-	wait_for_file "${WORK}/traced.ready" 5
+	serviced_pid=
+	i=0
+	while [ -z "$serviced_pid" ] && [ "$i" -lt 100 ]; do
+		serviced_pid=$(sed -n \
+		    's/.*bootstrap: started serviced pid \([0-9][0-9]*\).*/\1/p' \
+		    "$logfile" 2>/dev/null | tail -1)
+		if [ -n "$serviced_pid" ] &&
+		    ! kill -0 "$serviced_pid" 2>/dev/null; then
+			serviced_pid=
+		fi
+		i=$((i + 1))
+		[ -n "$serviced_pid" ] || sleep 0.1
+	done
+	if [ -z "$serviced_pid" ]; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "could not identify the live serviced provider"
+	fi
+	atf_check -s exit:0 -o match:'startup-begin' \
+	    dtrace -l -n "serviced${serviced_pid}:::startup-begin"
+	atf_check -s exit:0 -o match:'startup-done' \
+	    dtrace -l -n "serviced${serviced_pid}:::startup-done"
 
-	# Wait for dtrace to collect
-	sleep 2
-	kill ${DTRACE_PID} 2>/dev/null
-	wait ${DTRACE_PID} 2>/dev/null
+	dtrace -n 'BEGIN { printf("CONSUMER_READY\n"); }' \
+	    -n "serviced${serviced_pid}:::cap-service { printf(\"SVC_CAP %s %s %d\\n\", copyinstr(arg0), copyinstr(arg1), arg2); }" \
+	    -n "oracled${daemon_pid}:::mint-file { printf(\"FILE %s 0x%x %d\\n\", copyinstr(arg0), arg1, arg2); }" \
+	    -n "oracled${daemon_pid}:::service-delegate { printf(\"SERVICE %s %d\\n\", copyinstr(arg0), arg1); }" \
+	    -o "${WORK}/dtrace.out" 2>"${WORK}/dtrace.err" &
+	DTRACE_PID=$!
+	printf '%s\n' "$DTRACE_PID" > "${WORK}/dtrace.pid"
+	i=0
+	while ! grep -q 'CONSUMER_READY' "${WORK}/dtrace.out" 2>/dev/null &&
+	    kill -0 "${DTRACE_PID}" 2>/dev/null && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if ! grep -q 'CONSUMER_READY' "${WORK}/dtrace.out" 2>/dev/null; then
+		wait "${DTRACE_PID}" 2>/dev/null || true
+		cat "${WORK}/dtrace.err" >&2
+		atf_fail "DTrace consumer did not become ready"
+	fi
 
-	atf_check -s exit:0 -o match:"BEGIN" \
+	create_system_bundle "Traced" "org.test.trace" "traced" \
+	    "org.test.trace.svc" \
+	    "capabilities { files = [ { path = \"${WORK}/dtrace-token-target\"; actions = [\"read\"]; } ]; services = [\"identity\"]; }"
+	atf_check -s exit:0 -o ignore \
+	    servicectl -s "${CTL_SOCK}" reload
+	if ! wait_for_file "${WORK}/traced.ready" 5; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "traced service did not become ready"
+	fi
+
+	# Wait until every expected probe record is visible, or until the
+	# consumer exits.  This provides a bounded, event-based completion point.
+	i=0
+	while [ "$i" -lt 100 ]; do
+		if grep -q 'FILE.*dtrace-token-target' "${WORK}/dtrace.out" 2>/dev/null &&
+		    grep -q 'SERVICE identity 0' "${WORK}/dtrace.out" 2>/dev/null &&
+		    grep -q 'SVC_CAP org.test.trace.svc identity 0' \
+		    "${WORK}/dtrace.out" 2>/dev/null; then
+			break
+		fi
+		kill -0 "${DTRACE_PID}" 2>/dev/null || break
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if ! grep -q 'FILE.*dtrace-token-target' "${WORK}/dtrace.out" 2>/dev/null ||
+	    ! grep -q 'SERVICE identity 0' "${WORK}/dtrace.out" 2>/dev/null ||
+	    ! grep -q 'SVC_CAP org.test.trace.svc identity 0' \
+	    "${WORK}/dtrace.out" 2>/dev/null; then
+		cat "${WORK}/dtrace.err" >&2
+		cat "${WORK}/dtrace.out" >&2
+		atf_fail "capability orchestration probes did not all fire"
+	fi
+	kill -INT "${DTRACE_PID}" 2>/dev/null || true
+	wait "${DTRACE_PID}" 2>/dev/null || true
+	DTRACE_PID=
+	rm -f "${WORK}/dtrace.pid"
+
+	atf_check -s exit:0 -o match:"FILE.*dtrace-token-target" \
+	    cat "${WORK}/dtrace.out"
+	atf_check -s exit:0 -o match:"SERVICE identity 0" \
+	    cat "${WORK}/dtrace.out"
+	atf_check -s exit:0 -o match:"SVC_CAP org.test.trace.svc identity 0" \
 	    cat "${WORK}/dtrace.out"
 }
 dtrace_probes_cleanup() {
+	local dtrace_pid i
+
+	if [ -r "${WORK}/dtrace.pid" ]; then
+		read -r dtrace_pid < "${WORK}/dtrace.pid" || dtrace_pid=
+		case "$dtrace_pid" in
+		''|*[!0-9]*) ;;
+		*)
+			if [ "$(ps -p "$dtrace_pid" -o comm= 2>/dev/null)" =
+			    "dtrace" ]; then
+				kill -INT "$dtrace_pid" 2>/dev/null || true
+				i=0
+				while kill -0 "$dtrace_pid" 2>/dev/null &&
+				    [ "$i" -lt 20 ]; do
+					i=$((i + 1))
+					sleep 0.1
+				done
+				kill -KILL "$dtrace_pid" 2>/dev/null || true
+			fi
+			;;
+		esac
+		rm -f "${WORK}/dtrace.pid"
+	fi
 	cleanup_common
 }
 
@@ -363,6 +473,7 @@ atf_test_case reload_cycle_rejected cleanup
 reload_cycle_rejected_head() {
 	atf_set "descr" "Reload rejects new bundles that form a dependency cycle"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 reload_cycle_rejected_body() {
 	prepare_paths
@@ -403,6 +514,7 @@ atf_test_case reload_dependency_order cleanup
 reload_dependency_order_head() {
 	atf_set "descr" "Reload sorts new services by dependency before launch"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 reload_dependency_order_body() {
 	prepare_paths
@@ -437,6 +549,7 @@ atf_test_case reload_changed_bundle cleanup
 reload_changed_bundle_head() {
 	atf_set "descr" "Reload restarts service when bundle manifest changes"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 reload_changed_bundle_body() {
 	prepare_paths
@@ -477,6 +590,7 @@ atf_test_case stop_already_stopped cleanup
 stop_already_stopped_head() {
 	atf_set "descr" "Stop on already-stopped service returns error"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 stop_already_stopped_body() {
 	prepare_paths
@@ -507,6 +621,7 @@ atf_test_case coalition_kill_on_timeout cleanup
 coalition_kill_on_timeout_head() {
 	atf_set "descr" "Service ignoring SIGTERM is killed via coalition after stop_timeout"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 coalition_kill_on_timeout_body() {
 	prepare_paths
@@ -573,6 +688,7 @@ atf_test_case on_demand_crash_relaunch cleanup
 on_demand_crash_relaunch_head() {
 	atf_set "descr" "On-demand service that crashes is relaunched on next lookup"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 on_demand_crash_relaunch_body() {
 	prepare_paths
@@ -682,6 +798,7 @@ atf_test_case on_demand_concurrent_lookup cleanup
 on_demand_concurrent_lookup_head() {
 	atf_set "descr" "Multiple concurrent lookups for same on-demand service produce one launch"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 on_demand_concurrent_lookup_body() {
 	prepare_paths
@@ -722,6 +839,7 @@ atf_test_case reload_noop cleanup
 reload_noop_head() {
 	atf_set "descr" "Reload with no bundle changes reports zero deltas and leaves services running"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 reload_noop_body() {
 	prepare_paths
@@ -751,6 +869,7 @@ atf_test_case reload_attribution cleanup
 reload_attribution_head() {
 	atf_set "descr" "A service launched by reload is attributed by=reload in status"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 reload_attribution_body() {
 	prepare_paths

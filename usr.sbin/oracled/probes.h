@@ -59,6 +59,8 @@
 	DTRACE_PROBE3(oracled, dyn__claim__jail, name, actions, result)
 #define	ORACLED_PROBE_DYN_CLAIM_SYSTEM(gates, result)	\
 	DTRACE_PROBE2(oracled, dyn__claim__system, gates, result)
+#define	ORACLED_PROBE_DYN_CLAIM_VSOCK(cid, pmin, pmax, result)	\
+	DTRACE_PROBE4(oracled, dyn__claim__vsock, cid, pmin, pmax, result)
 #define	ORACLED_PROBE_DYN_RELEASE_PATH(path, refcount, result)	\
 	DTRACE_PROBE3(oracled, dyn__release__path, path, refcount, result)
 #define	ORACLED_PROBE_DYN_RELEASE_NET(port_min, port_max, proto, refcount, result)	\
@@ -67,6 +69,8 @@
 	DTRACE_PROBE4(oracled, dyn__release__jail, name, actions, refcount, result)
 #define	ORACLED_PROBE_DYN_RELEASE_SYSTEM(gates, released, result)	\
 	DTRACE_PROBE3(oracled, dyn__release__system, gates, released, result)
+#define	ORACLED_PROBE_DYN_RELEASE_VSOCK(cid, pmin, pmax, refcount, result) \
+	DTRACE_PROBE5(oracled, dyn__release__vsock, cid, pmin, pmax, refcount, result)
 
 /* Integrity */
 #define	ORACLED_PROBE_INTEGRITY(flags)	\
@@ -93,18 +97,26 @@
 /* Token minting — serviced requests capabilities for children */
 #define	ORACLED_PROBE_MINT_PATH(path, result)	\
 	DTRACE_PROBE2(oracled, mint__path, path, result)
+#define	ORACLED_PROBE_MINT_FILE(path, actions, result)	\
+	DTRACE_PROBE3(oracled, mint__file, path, actions, result)
 #define	ORACLED_PROBE_MINT_NET(port_min, port_max, proto, result)	\
 	DTRACE_PROBE4(oracled, mint__net, port_min, port_max, proto, result)
 #define	ORACLED_PROBE_MINT_JAIL(jid, name, actions, result)	\
 	DTRACE_PROBE4(oracled, mint__jail, jid, name, actions, result)
 #define	ORACLED_PROBE_MINT_SYSTEM(gates, result)	\
 	DTRACE_PROBE2(oracled, mint__system, gates, result)
+#define	ORACLED_PROBE_MINT_VSOCK(cid, pmin, pmax, result)	\
+	DTRACE_PROBE4(oracled, mint__vsock, cid, pmin, pmax, result)
 #define	ORACLED_PROBE_CREATE_JAIL(name, result)	\
 	DTRACE_PROBE2(oracled, create__jail, name, result)
 #define	ORACLED_PROBE_CHANNEL_CREATE(result)	\
 	DTRACE_PROBE1(oracled, channel__create, result)
 #define	ORACLED_PROBE_COALITION_CREATE(result)	\
 	DTRACE_PROBE1(oracled, coalition__create, result)
+#define	ORACLED_PROBE_KMOD_ENSURE(name, result)	\
+	DTRACE_PROBE2(oracled, kmod__ensure, name, result)
+#define	ORACLED_PROBE_SERVICE_DELEGATE(name, result)	\
+	DTRACE_PROBE2(oracled, service__delegate, name, result)
 
 /* Oracle protocol IPC */
 #define	ORACLED_PROBE_IPC_RECV(op)	\

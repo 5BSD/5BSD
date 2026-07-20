@@ -1,0 +1,6 @@
+comment = "Tests for the 5BSD service control utility"
+
+desc = <<EOD
+ATF/Kyua tests for servicectl manifest verification, installation, and
+control behavior, installed separately from the runtime utility.
+EOD

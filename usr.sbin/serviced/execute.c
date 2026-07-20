@@ -44,8 +44,10 @@
 #define	SVC_CAPPROTECT_FD	4	/* capprotect service instance */
 #define	SVC_TOKEN_BASE	5	/* tokens start after service plumbing */
 #define	SVC_MAX_TOKENS	(SERVICED_MAX_CAP_PATHS + SERVICED_MAX_CAP_FILES + \
-				    SERVICED_MAX_CAP_NET + SERVICED_MAX_CAP_JAIL + 1)
-#define	SVC_MAX_ENV	16
+				    SERVICED_MAX_CAP_NET + SERVICED_MAX_CAP_JAIL + \
+				    SERVICED_MAX_CAP_VSOCK + 1)
+#define	SVC_INTERNAL_ENV	9
+#define	SVC_MAX_ENV	(SVC_INTERNAL_ENV + SERVICED_MAX_ENVIRONMENT)
 
 /*
  * Worst-case size of the comma-separated ORACLED_TOKEN_FDS list: every
@@ -55,6 +57,8 @@
  * strip capabilities from, or mis-number a token for, the child).
  */
 #define	SVC_TOKEN_FDS_STRLEN	(SVC_MAX_TOKENS * 12 + 1)
+#define	SVC_SERVICE_FDS_STRLEN	(SERVICED_MAX_CAP_SERVICES * \
+	(SERVICED_CAP_SERVICE_NAME_MAX + 12) + 1)
 
 /*
  * Build the token fd list string for ORACLED_TOKEN_FDS env var.
@@ -79,6 +83,18 @@ build_token_fds_str(char *buf, size_t bufsz, unsigned ntokens)
 	buf[off] = '\0';
 }
 
+static bool
+manifest_has_env(const struct svc_manifest *m, const char *name)
+{
+	size_t n = strlen(name);
+	unsigned i;
+	for (i = 0; i < m->nenvironment; i++)
+		if (strncmp(m->environment[i], name, n) == 0 &&
+		    m->environment[i][n] == '=')
+			return (true);
+	return (false);
+}
+
 /*
  * Child process setup and exec.  Does not return on success.
  * All functions called here must be async-signal-safe or safe
@@ -86,16 +102,19 @@ build_token_fds_str(char *buf, size_t bufsz, unsigned ntokens)
  */
 static void __dead2
 child_exec(struct svc_manifest *m, int child_channel_fd,
-    int capprotect_fd, int *token_fds, unsigned ntokens, int jail_fd,
+    int capprotect_fd, int *token_fds, unsigned ntokens,
+    int *service_fds, unsigned nservices, int jail_fd,
     uid_t uid, gid_t gid, bool have_creds, const char *homedir,
     gid_t *groups, int ngroups)
 {
 	char channel_env[64], capprotect_env[64], label_env[128];
 	char token_env[SVC_TOKEN_FDS_STRLEN + sizeof("ORACLED_TOKEN_FDS=")];
+	char service_env[SVC_SERVICE_FDS_STRLEN +
+	    sizeof("ORACLED_CAPABILITY_FDS=")];
 	char user_env[128], home_env[PATH_MAX + 8];
 	char fds_str[SVC_TOKEN_FDS_STRLEN];
 	char *env[SVC_MAX_ENV];
-	char *argv[2];
+	char *argv[SERVICED_MAX_ARGUMENTS + 2];
 	int nullfd, fd;
 	bool have_capprotect;
 	unsigned i, envc;
@@ -121,7 +140,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	{
 		int safe_base;
 
-		safe_base = SVC_TOKEN_BASE + (int)ntokens + 1;
+		safe_base = SVC_TOKEN_BASE + (int)ntokens + (int)nservices + 1;
 		if (child_channel_fd < safe_base) {
 			fd = fcntl(child_channel_fd, F_DUPFD, safe_base);
 			if (fd == -1)
@@ -136,6 +155,15 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 					_exit(126);
 				(void)close(token_fds[i]);
 				token_fds[i] = fd;
+			}
+		}
+		for (i = 0; i < nservices; i++) {
+			if (service_fds[i] < safe_base) {
+				fd = fcntl(service_fds[i], F_DUPFD, safe_base);
+				if (fd == -1)
+					_exit(126);
+				(void)close(service_fds[i]);
+				service_fds[i] = fd;
 			}
 		}
 		if (capprotect_fd >= 0 && capprotect_fd < safe_base) {
@@ -173,6 +201,12 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 			_exit(126);
 		(void)close(token_fds[i]);
 	}
+	for (i = 0; i < nservices; i++) {
+		fd = SVC_TOKEN_BASE + (int)ntokens + (int)i;
+		if (dup2(service_fds[i], fd) == -1)
+			_exit(126);
+		(void)close(service_fds[i]);
+	}
 
 	/* Attach to jail descriptor before closefrom() destroys it.
 	 * Must also happen before credential drop since jail_attach_jd
@@ -184,7 +218,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 		jail_fd = -1;
 	}
 
-	closefrom(SVC_TOKEN_BASE + (int)ntokens);
+	closefrom(SVC_TOKEN_BASE + (int)ntokens + (int)nservices);
 
 	if (fcntl(SVC_CHANNEL_FD, F_SETFD, 0) == -1)
 		_exit(126);
@@ -194,11 +228,19 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 		if (fcntl(SVC_TOKEN_BASE + (int)i, F_SETFD, 0) == -1)
 			_exit(126);
 	}
+	for (i = 0; i < nservices; i++) {
+		if (fcntl(SVC_TOKEN_BASE + (int)ntokens + (int)i,
+		    F_SETFD, 0) == -1)
+			_exit(126);
+	}
 
 	/* Build minimal environment. */
 	envc = 0;
-	env[envc++] = __DECONST(char *,
-	    "PATH=/sbin:/bin:/usr/sbin:/usr/bin");
+	for (i = 0; i < m->nenvironment; i++)
+		env[envc++] = m->environment[i];
+	if (!manifest_has_env(m, "PATH"))
+		env[envc++] = __DECONST(char *,
+		    "PATH=/sbin:/bin:/usr/sbin:/usr/bin");
 
 	(void)snprintf(channel_env, sizeof(channel_env),
 	    "ORACLED_CHANNEL_FD=%d", SVC_CHANNEL_FD);
@@ -215,15 +257,29 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 		    "ORACLED_TOKEN_FDS=%s", fds_str);
 		env[envc++] = token_env;
 	}
+	if (nservices > 0) {
+		size_t off = sizeof("ORACLED_CAPABILITY_FDS=") - 1;
+
+		memcpy(service_env, "ORACLED_CAPABILITY_FDS=", off);
+		for (i = 0; i < nservices; i++) {
+			off += (size_t)snprintf(service_env + off,
+			    sizeof(service_env) - off, "%s%s=%u",
+			    i == 0 ? "" : ",", m->cap_services[i],
+			    SVC_TOKEN_BASE + ntokens + i);
+		}
+		env[envc++] = service_env;
+	}
 
 	(void)snprintf(label_env, sizeof(label_env),
 	    "ORACLED_LABEL=%s", m->label);
 	env[envc++] = label_env;
 
-	if (m->user[0] != '\0') {
+	if (m->user[0] != '\0' && !manifest_has_env(m, "USER")) {
 		(void)snprintf(user_env, sizeof(user_env),
 		    "USER=%s", m->user);
 		env[envc++] = user_env;
+	}
+	if (m->user[0] != '\0' && !manifest_has_env(m, "HOME")) {
 		(void)snprintf(home_env, sizeof(home_env),
 		    "HOME=%s", homedir != NULL ? homedir : "/var/empty");
 		env[envc++] = home_env;
@@ -258,7 +314,9 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 		argv[0]++;
 	else
 		argv[0] = m->program;
-	argv[1] = NULL;
+	for (i = 0; i < m->narguments; i++)
+		argv[i + 1] = m->arguments[i];
+	argv[m->narguments + 1] = NULL;
 
 	execve(m->program, argv, env);
 	_exit(127);
@@ -276,7 +334,8 @@ svc_exec(struct svc_runtime *svc, int kq)
 	struct svc_manifest minted_manifest;
 	int oracle_end, child_end, coalition_fd, capprotect_fd;
 	int token_fds[SVC_MAX_TOKENS];
-	unsigned ntokens;
+	int service_fds[SERVICED_MAX_CAP_SERVICES];
+	unsigned ntokens, nservices;
 	uid_t uid;
 	gid_t gid;
 	gid_t groups[NGROUPS_MAX + 1];
@@ -325,13 +384,16 @@ svc_exec(struct svc_runtime *svc, int kq)
 	if (m->ncap_paths > SERVICED_MAX_CAP_PATHS ||
 	    m->ncap_files > SERVICED_MAX_CAP_FILES ||
 	    m->ncap_net > SERVICED_MAX_CAP_NET ||
-	    m->ncap_jail > SERVICED_MAX_CAP_JAIL) {
+	    m->ncap_jail > SERVICED_MAX_CAP_JAIL ||
+	    m->ncap_vsock > SERVICED_MAX_CAP_VSOCK ||
+	    m->ncap_services > SERVICED_MAX_CAP_SERVICES) {
+		/* Keep count validation next to the launch barrier. */
 		syslog(LOG_ERR, "svc_exec %s: invalid capability counts",
 		    m->label);
 		return (-1);
 	}
 	expected_tokens = m->ncap_paths + m->ncap_files + m->ncap_net +
-	    m->ncap_jail + (m->cap_system != 0 ? 1u : 0u);
+	    m->ncap_jail + m->ncap_vsock + (m->cap_system != 0 ? 1u : 0u);
 	if (expected_tokens > SVC_MAX_TOKENS) {
 		syslog(LOG_ERR, "svc_exec %s: too many capability tokens: %u",
 		    m->label, expected_tokens);
@@ -412,6 +474,8 @@ svc_exec(struct svc_runtime *svc, int kq)
 		return (-1);
 	}
 	if (cap_xfer_limit(oracle_end, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(oracle_end, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(oracle_end, CAP_CLOEXEC_LOCKED) == -1 ||
 	    cap_xfer_limit(child_end, CAP_XFER_NONE) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: channel confinement: %m",
 		    m->label);
@@ -431,7 +495,9 @@ svc_exec(struct svc_runtime *svc, int kq)
 		close(child_end);
 		return (-1);
 	}
-	if (cap_xfer_limit(coalition_fd, CAP_XFER_NONE) == -1) {
+	if (cap_xfer_limit(coalition_fd, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(coalition_fd, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(coalition_fd, CAP_CLOEXEC_LOCKED) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: coalition confinement: %m",
 		    m->label);
 		close(oracle_end);
@@ -473,6 +539,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 
 	clock_gettime(CLOCK_MONOTONIC, &mint_start);
 	ntokens = 0;
+	nservices = 0;
 
 #define	MINT_CHECK_DEADLINE() do {					\
 	clock_gettime(CLOCK_MONOTONIC, &mint_now);			\
@@ -561,6 +628,19 @@ svc_exec(struct svc_runtime *svc, int kq)
 		    m->cap_jail[i];
 		MINT_CHECK_DEADLINE();
 	}
+	for (i = 0; i < m->ncap_vsock; i++) {
+		int tfd = oracle_mint_vsock(sd.oracle_channel_fd,
+		    &m->cap_vsock[i]);
+		if (tfd == -1) {
+			SERVICED_PROBE_CAP_MINT(m->label, "vsock", -1);
+			goto fail_tokens;
+		}
+		SERVICED_PROBE_CAP_MINT(m->label, "vsock", 0);
+		token_fds[ntokens++] = tfd;
+		minted_manifest.cap_vsock[minted_manifest.ncap_vsock++] =
+		    m->cap_vsock[i];
+		MINT_CHECK_DEADLINE();
+	}
 	if (m->cap_system != 0) {
 		int tfd = oracle_mint_system(sd.oracle_channel_fd,
 		    m->cap_system);
@@ -575,6 +655,22 @@ svc_exec(struct svc_runtime *svc, int kq)
 		token_fds[ntokens++] = tfd;
 		minted_manifest.cap_system = m->cap_system;
 	}
+	for (i = 0; i < m->ncap_services; i++) {
+		int sfd = oracle_delegate_service(sd.oracle_channel_fd,
+		    m->cap_services[i]);
+
+		if (sfd == -1) {
+			syslog(LOG_ERR, "svc_exec %s: failed to delegate "
+			    "capability service %s", m->label,
+			    m->cap_services[i]);
+			SERVICED_PROBE_CAP_SERVICE(m->label,
+			    m->cap_services[i], -1);
+			goto fail_tokens;
+		}
+		service_fds[nservices++] = sfd;
+		SERVICED_PROBE_CAP_SERVICE(m->label, m->cap_services[i], 0);
+		MINT_CHECK_DEADLINE();
+	}
 
 #undef MINT_CHECK_DEADLINE
 	}
@@ -584,9 +680,10 @@ svc_exec(struct svc_runtime *svc, int kq)
 	 * pdfork().  The child receives only the complete manifest token set;
 	 * any missing token takes the fail_tokens cleanup path instead.
 	 */
-	if (ntokens != expected_tokens) {
+	if (ntokens != expected_tokens || nservices != m->ncap_services) {
 		syslog(LOG_ERR, "svc_exec %s: incomplete capability set "
-		    "(%u/%u tokens)", m->label, ntokens, expected_tokens);
+		    "(%u/%u tokens, %u/%u services)", m->label, ntokens,
+		    expected_tokens, nservices, m->ncap_services);
 		goto fail_tokens;
 	}
 
@@ -620,7 +717,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	if (pid == 0) {
 		/* Child — does not return. */
 			child_exec(m, child_end, capprotect_fd, token_fds, ntokens,
-			    svc->jail_fd,
+			    service_fds, nservices, svc->jail_fd,
 		    uid, gid, have_creds,
 		    homedir[0] != '\0' ? homedir : NULL,
 		    groups, ngroups);
@@ -635,6 +732,8 @@ svc_exec(struct svc_runtime *svc, int kq)
 	}
 	for (i = 0; i < ntokens; i++)
 		close(token_fds[i]);
+	for (i = 0; i < nservices; i++)
+		close(service_fds[i]);
 	if (svc->jail_fd >= 0 &&
 	    (cap_xfer_limit(svc->jail_fd, CAP_XFER_NONE) == -1 ||
 	    cap_clofork_limit(svc->jail_fd, CAP_CLOFORK_LOCKED) == -1 ||
@@ -778,6 +877,8 @@ fail_tokens:
 		close(capprotect_fd);
 	for (i = 0; i < ntokens; i++)
 		close(token_fds[i]);
+	for (i = 0; i < nservices; i++)
+		close(service_fds[i]);
 	if (svc->jail_fd >= 0) {
 		jail_remove_jd(svc->jail_fd);
 		close(svc->jail_fd);

@@ -11,6 +11,7 @@
  */
 
 #include <sys/ioctl.h>
+#include <sys/capsicum.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
@@ -40,6 +41,16 @@ svc_channel_reply(struct svc_runtime *svc, uint32_t op, int status,
 	sa.payload_len = sizeof(rpl);
 	sa.reply_token = reply_token;
 	if (nfds > 0 && fds != NULL) {
+		for (int i = 0; i < nfds; i++) {
+			if (cap_xfer_limit(fds[i], CAP_XFER_ONCE) == -1) {
+				rpl.status = errno;
+				fds = NULL;
+				nfds = 0;
+				break;
+			}
+		}
+	}
+	if (nfds > 0 && fds != NULL) {
 		sa.fds = fds;
 		sa.nfds = (uint32_t)nfds;
 	}
@@ -49,7 +60,7 @@ svc_channel_reply(struct svc_runtime *svc, uint32_t op, int status,
 		    svc->manifest.label);
 		SERVICED_PROBE_ERROR("svc_proto", "channel reply failed");
 	} else
-		SERVICED_PROBE_IPC_REPLY(svc->manifest.label, op, status);
+		SERVICED_PROBE_IPC_REPLY(svc->manifest.label, op, rpl.status);
 }
 
 static void
@@ -74,13 +85,18 @@ handle_svc_register(struct svc_runtime *svc, const void *payload,
 	const struct svc_register_req *req;
 	int error;
 
-	if (len < sizeof(*req)) {
+	if (len != sizeof(*req)) {
 		svc_channel_reply(svc, SVC_OP_REGISTER, EINVAL, reply_token,
 		    NULL, 0);
 		return;
 	}
 	req = payload;
 
+	if (req->flags != 0) {
+		svc_channel_reply(svc, SVC_OP_REGISTER, EINVAL, reply_token,
+		    NULL, 0);
+		return;
+	}
 	if (strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
 		svc_channel_reply(svc, SVC_OP_REGISTER, ENAMETOOLONG,
 		    reply_token, NULL, 0);
@@ -98,13 +114,18 @@ handle_svc_unregister(struct svc_runtime *svc, const void *payload,
 	const struct svc_unregister_req *req;
 	int error;
 
-	if (len < sizeof(*req)) {
+	if (len != sizeof(*req)) {
 		svc_channel_reply(svc, SVC_OP_UNREGISTER, EINVAL, reply_token,
 		    NULL, 0);
 		return;
 	}
 	req = payload;
 
+	if (req->flags != 0) {
+		svc_channel_reply(svc, SVC_OP_UNREGISTER, EINVAL, reply_token,
+		    NULL, 0);
+		return;
+	}
 	if (strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
 		svc_channel_reply(svc, SVC_OP_UNREGISTER, ENAMETOOLONG,
 		    reply_token, NULL, 0);
@@ -122,13 +143,18 @@ handle_svc_lookup(struct svc_runtime *svc, const void *payload,
 	const struct svc_lookup_req *req;
 	int client_fd, error;
 
-	if (len < sizeof(*req)) {
+	if (len != sizeof(*req)) {
 		svc_channel_reply(svc, SVC_OP_LOOKUP, EINVAL, reply_token,
 		    NULL, 0);
 		return;
 	}
 	req = payload;
 
+	if (req->flags != 0) {
+		svc_channel_reply(svc, SVC_OP_LOOKUP, EINVAL, reply_token,
+		    NULL, 0);
+		return;
+	}
 	if (strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
 		svc_channel_reply(svc, SVC_OP_LOOKUP, ENAMETOOLONG, reply_token,
 		    NULL, 0);
@@ -216,7 +242,11 @@ supervisor_handle_channel(struct kevent *kev)
 
 	switch (op) {
 	case SVC_OP_READY:
-		handle_svc_ready(svc, ra.reply_token);
+		if (ra.payload_len != sizeof(struct svc_req_hdr))
+			svc_channel_reply(svc, op, EINVAL, ra.reply_token,
+			    NULL, 0);
+		else
+			handle_svc_ready(svc, ra.reply_token);
 		break;
 	case SVC_OP_REGISTER:
 		handle_svc_register(svc, buf, ra.payload_len, ra.reply_token);

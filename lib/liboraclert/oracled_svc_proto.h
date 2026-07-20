@@ -13,8 +13,9 @@
  * oracled holds the other end and dispatches requests from its event
  * loop.  All requests are initiated by serviced; oracled only replies.
  *
- * File descriptors (tokens, channels, coalitions) are returned as
- * attached fds in the SENDMSG reply, not as integers in the payload.
+ * File descriptors (activation tokens, channels, coalitions, and named
+ * capability-service instances) are returned as attached fds in the SENDMSG
+ * reply, not as integers in the payload.
  */
 
 #ifndef ORACLED_SVC_PROTO_H
@@ -25,7 +26,7 @@
 
 #define	ORACLE_PROTO_VERSION_MAJOR	0
 #define	ORACLE_PROTO_VERSION_MINOR	0
-#define	ORACLE_PROTO_VERSION_PATCH	1
+#define	ORACLE_PROTO_VERSION_PATCH	3
 #define	ORACLE_PROTO_VERSION		1
 
 /*
@@ -40,6 +41,7 @@
 #define	ORACLE_OP_PING			7	/* liveness check */
 #define	ORACLE_OP_MINT_FILE		8	/* mint narrowed file token */
 #define	ORACLE_OP_MINT_JAIL		9	/* mint jail isolation token */
+#define	ORACLE_OP_MINT_VSOCK		19	/* mint VSOCK isolation token */
 
 /*
  * Common request header — used for operations with no extra parameters
@@ -55,8 +57,9 @@ struct oracle_req_hdr {
  *   reply: oracle_reply { .status }
  *   reply_fds[0] = isolation token fd (on success)
  *
- * Requests a path isolation token.  oracled validates that path
- * is within its claimed set before minting.
+ * Requests a path isolation token.  If the path is not already held,
+ * oracled first claims it as a reference-counted service claim and then
+ * mints the token.  Policy claims remain immortal.
  */
 struct oracle_path_req {
 	uint32_t	op;		/* ORACLE_OP_MINT_PATH / CLAIM / RELEASE */
@@ -70,8 +73,8 @@ struct oracle_path_req {
  *   reply: oracle_reply { .status }
  *   reply_fds[0] = isolation token fd (on success)
  *
- * Requests a narrowed file isolation token.  oracled validates that
- * path is within its claimed set before minting and asks
+ * Requests a narrowed file isolation token.  oracled ensures the path is
+ * held (creating a reference-counted service claim when necessary) and asks
  * mac_capability_isolation to constrain authorization to the given FI_FS_*
  * action mask.
  */
@@ -89,8 +92,8 @@ struct oracle_mint_file_req {
  *   reply_fds[0] = network isolation token fd (on success)
  *
  * Mints a network isolation token for the requested endpoint or range.
- * oracled validates that the endpoint is covered by one of its claimed
- * network endpoints before minting.  Ports are in host byte order;
+ * oracled ensures the endpoint is held (creating a reference-counted service
+ * claim when necessary) before minting.  Ports are in host byte order;
  * 0..65535 means any port.
  */
 struct oracle_net_req {
@@ -167,6 +170,44 @@ struct oracle_jail_req {
 #define	ORACLE_OP_RELEASE_NET		16	/* release a dynamic network claim */
 #define	ORACLE_OP_RELEASE_JAIL		17	/* release a dynamic jail claim */
 #define	ORACLE_OP_RELEASE_SYSTEM	18	/* release dynamic system gates */
+#define	ORACLE_OP_CLAIM_VSOCK		20
+#define	ORACLE_OP_RELEASE_VSOCK	21
+#define	ORACLE_OP_ENSURE_KMOD		22	/* load startup prerequisite */
+#define	ORACLE_OP_DELEGATE_SERVICE	23	/* delegate named service fd */
+
+struct oracle_vsock_req {
+	uint32_t	op;
+	uint32_t	_pad;
+	uint64_t	cid;
+	uint32_t	port_min;
+	uint32_t	port_max;
+	uint8_t		direction;
+	uint8_t		_reserved[7];
+};
+
+/*
+ * ORACLE_OP_ENSURE_KMOD
+ *   req: oracle_kmod_req
+ *   reply: oracle_reply { .status }
+ *
+ * Ensures a module required before service exec is loaded.  This operation
+ * executes in oracled's nonce because serviced must not retain ambient
+ * KLDLOAD/KLDSTAT authority.  Only a simple module name is accepted; paths
+ * and traversal components are deliberately excluded.
+ */
+#define	ORACLE_KMOD_NAME_MAX	128
+struct oracle_kmod_req {
+	uint32_t	op;
+	uint32_t	_pad;
+	char		name[ORACLE_KMOD_NAME_MAX];
+};
+
+#define	ORACLE_SERVICE_NAME_MAX	16
+struct oracle_service_req {
+	uint32_t	op;
+	uint32_t	_pad;
+	char		name[ORACLE_SERVICE_NAME_MAX];
+};
 
 struct oracle_create_jail_req {
 	uint32_t	op;		/* ORACLE_OP_CREATE_JAIL */
@@ -183,8 +224,8 @@ struct oracle_create_jail_req {
  *   reply: oracle_reply { .status }
  *   reply_fds[0] = system gate token fd (on success)
  *
- * Mints a system gate token.  oracled validates that gates is a
- * subset of its claimed gates before minting.
+ * Mints a system gate token.  oracled dynamically claims gates not already
+ * held and reference-counts service ownership before minting.
  */
 struct oracle_system_req {
 	uint32_t	op;		/* ORACLE_OP_MINT_SYSTEM / CLAIM / RELEASE */
@@ -227,7 +268,7 @@ struct oracle_system_req {
  *   req:  oracle_req_hdr { .op = ORACLE_OP_PING }
  *   reply: oracle_reply { .status = 0 }
  *
- * Liveness check.  Either side may send.
+ * Liveness request sent by serviced; oracled replies.
  */
 
 /*

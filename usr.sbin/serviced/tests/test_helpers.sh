@@ -4,6 +4,8 @@
 # Common test helpers shared across serviced test suites.
 #
 
+. "$(atf_get_srcdir)/capd_test_harness.sh"
+
 daemon_pid=
 pidfile=
 conffile=
@@ -13,31 +15,17 @@ serviced_bin=
 
 find_serviced()
 {
-	local p
-	local _m _p
-	# obj dir is ${MACHINE}.${MACHINE_ARCH}: uname -m / uname -p (they
-	# differ on e.g. arm64/aarch64), not uname -p twice.
-	_m=$(uname -m)
-	_p=$(uname -p)
-	for p in \
-	    "$(command -v serviced 2>/dev/null)" \
-	    /usr/libexec/serviced \
-	    /usr/obj/usr/src/${_m}.${_p}/usr.sbin/serviced/serviced
-	do
-		if [ -n "$p" ] && [ -x "$p" ]; then
-			serviced_bin="$p"
-			return
-		fi
-	done
-	atf_skip "serviced binary not found"
+	capd_find_serviced
+	serviced_bin=$capd_serviced_bin
 }
 
 prepare_paths()
 {
-	pidfile="$(pwd)/oracled.pid"
-	conffile="$(pwd)/oracled.conf"
-	sockpath="$(pwd)/oracled.sock"
-	logfile="$(pwd)/oracled.log"
+	capd_paths_init
+	pidfile=$CAPD_PIDFILE
+	conffile=$CAPD_CONFIG
+	sockpath=$CAPD_ORACLE_SOCKET
+	logfile=$CAPD_LOG
 	mkdir -p "${APPS_DIR}" "${USER_APPS_DIR}"
 }
 
@@ -58,30 +46,13 @@ EOF
 
 start_stack()
 {
-	require_mac_capability
 	prepare_paths
-	write_config
-
-	oracled -d -f "$conffile" >"$logfile" 2>&1 &
-	daemon_pid=$!
-
-	# Wait for oracled control socket.
-	i=0
-	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ ! -S "$sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "oracled did not create control socket"
+	if [ ! -r "$conffile" ]; then
+		write_config
 	fi
-
-	# Wait for serviced to be ready (check oracle status).
-	i=0
-	while ! grep -q "serviced ready" "$logfile" 2>/dev/null && [ "$i" -lt 150 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
+	capd_start_stack
+	daemon_pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status |
+	    sed -n 's/^running pid=//p')
 }
 
 wait_for_file()
@@ -97,53 +68,61 @@ wait_for_file()
 	test -s "$path"
 }
 
-stop_stack()
+wait_for_log()
 {
-	local ctlpath i pidpath target
+	local i pattern
 
-	target=$daemon_pid
-	pidpath=${pidfile:-"$(pwd)/oracled.pid"}
-	ctlpath=${sockpath:-"$(pwd)/oracled.sock"}
-	if [ -z "$target" ] && [ -r "$pidpath" ]; then
-		read -r target < "$pidpath" || target=
-	fi
-
-	# The control socket is the supported graceful-shutdown authority and
-	# exercises the same path an administrator uses.  PID signaling is only
-	# a bounded failure-path fallback for a wedged test daemon.
-	if [ -S "$ctlpath" ] && command -v oraclectl >/dev/null 2>&1; then
-		oraclectl -s "$ctlpath" shutdown >/dev/null 2>&1 || true
-	fi
-	case "$target" in
-	''|*[!0-9]*)
-		return
-		;;
-	esac
-
-	# This pidfile lives in ATF's private work directory and belongs to the
-	# Oracle launched by this case.  Process metadata may be hidden after a
-	# service activates an isolation token, so do not depend on ps(1).
-	if [ ! -S "$ctlpath" ]; then
-		kill -TERM "$target" 2>/dev/null || true
-	fi
+	pattern=$1
 	i=0
-	while kill -0 "$target" 2>/dev/null && [ "$i" -lt 350 ]; do
+	while ! grep -Eq "$pattern" "$logfile" 2>/dev/null &&
+	    [ "$i" -lt 150 ]; do
 		i=$((i + 1))
 		sleep 0.1
 	done
-	if kill -0 "$target" 2>/dev/null; then
-		# Abrupt Oracle death closes the procdesc and must also terminate
-		# this test's protected serviced child.
-		kill -KILL "$target" 2>/dev/null || true
-		i=0
-		while kill -0 "$target" 2>/dev/null && [ "$i" -lt 50 ]; do
-			i=$((i + 1))
-			sleep 0.1
-		done
+	grep -Eq "$pattern" "$logfile" 2>/dev/null
+}
+
+reload_stack()
+{
+	if [ ! -S "$sockpath" ]; then
+		atf_fail "Oracle control socket is unavailable for reload"
 	fi
-	wait "$target" 2>/dev/null || true
+	atf_check -s exit:0 -o ignore \
+	    oraclectl -s "$sockpath" reload
+}
+
+stop_stack()
+{
+	local i result target
+
+	prepare_paths
+	capd_find_guardian
+	if [ -S "$CAPD_GUARDIAN_SOCKET" ] || [ -n "$capd_guardian_pid" ]; then
+		capd_stop_stack
+		result=$?
+		daemon_pid=
+		return "$result"
+	fi
+
+	# Transitional path for cases not yet launched through the guardian.
+	target=$daemon_pid
+	if [ -z "$target" ] && [ -r "$pidfile" ]; then
+		read -r target <"$pidfile" || target=
+	fi
+	if [ -S "$sockpath" ]; then
+		oraclectl -s "$sockpath" shutdown >/dev/null 2>&1 || true
+	fi
+	case "$target" in
+	''|*[!0-9]*) return 0 ;;
+	esac
+	i=0
+	while ps -p "$target" -o pid= 2>/dev/null | grep -q '[0-9]' &&
+	    [ "$i" -lt 350 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
 	daemon_pid=
-	if kill -0 "$target" 2>/dev/null; then
+	if ps -p "$target" -o pid= 2>/dev/null | grep -q '[0-9]'; then
 		echo "test cleanup: Oracle $target did not exit" >&2
 		return 1
 	fi
@@ -152,13 +131,22 @@ stop_stack()
 
 cleanup_common()
 {
-	stop_stack
+	local cleanup_status
+
+	cleanup_status=0
+	# The body process owned the guardian lease.  ATF cleanup runs in a new
+	# process, after lease closure may already have initiated fail-safe stack
+	# termination.  Do not turn that expected race into a broken test; judge
+	# cleanup by whether the recovery pass removes the complete stack.
+	stop_stack || true
+	capd_cleanup_stack || cleanup_status=1
 	sleep 0.2
 	rm -rf oracled.pid oracled.conf oracled.sock \
 	    serviced.sock oracled.log lookup-name *.out *.pid *.sh *.c \
 	    provider_svc client_svc ready_svc squat_svc \
 	    lookup_client lookup_client.build.log ready_svc.build.log \
 	    *.target *.result *.ready
+	return "$cleanup_status"
 }
 
 write_executable()
@@ -170,11 +158,14 @@ write_executable()
 	chmod +x "$path"
 }
 
-require_cc()
+# Every test that launches Oracle also exercises its mandatory capability
+# services, even when the test itself is concerned with only one of them.
+# Declare the complete baseline in the test head so Kyua can load modules
+# before entering the body.  Additional capability-service modules may be
+# supplied by callers as positional arguments.
+require_oracle_stack_kmods()
 {
-	if ! command -v cc >/dev/null 2>&1; then
-		atf_skip "cc not available"
-	fi
+	capd_require_stack_kmods "$@"
 }
 
 # Genuine environment precondition: the mac_capability device must be
@@ -184,38 +175,30 @@ require_cc()
 # is a real regression and must be an atf_fail.
 require_mac_capability()
 {
-	if [ ! -c /dev/mac_capability ]; then
-		atf_skip "mac_capability device not available"
-	fi
+	capd_require_device
 }
 
-libservice_path=
+capd_service_fixture=
 
-find_libservice()
+find_capd_service_fixture()
 {
-	local p _m _p
-	_m=$(uname -m)
-	_p=$(uname -p)
-	for p in \
-	    /usr/obj/usr/src/${_m}.${_p}/lib/libservice/libservice.so.1 \
-	    /usr/lib/libservice.so
+	local candidate srcdir
+
+	if [ -n "$capd_service_fixture" ] && [ -x "$capd_service_fixture" ]; then
+		return 0
+	fi
+	srcdir=$(atf_get_srcdir)
+	for candidate in \
+	    "${CAPD_SERVICE_FIXTURE:-}" \
+	    "${srcdir}/capd_service_fixture" \
+	    "$(command -v capd_service_fixture 2>/dev/null)"
 	do
-		if [ -n "$p" ] && [ -f "$p" ]; then
-			libservice_path="$(dirname "$p")"
-			return
+		if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+			capd_service_fixture=$candidate
+			return 0
 		fi
 	done
-	atf_skip "libservice not found"
-}
-
-cc_with_libservice()
-{
-	require_cc
-	find_libservice
-	cc -Wall -Wextra \
-	    -I/usr/src/lib/libservice \
-	    -L"$libservice_path" -Wl,-rpath,"$libservice_path" -lservice \
-	    "$@"
+	atf_fail "capd_service_fixture is unavailable"
 }
 
 # --- Bundle test helpers ---
@@ -243,51 +226,9 @@ CTL_SOCK="${WORK}/serviced.sock"
 build_ready_svc()
 {
 	[ -x ./ready_svc ] && return 0
-	require_cc
-	find_libservice
-	cat > ready_svc.c <<'CEOF'
-#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
-#include <libservice.h>
-
-int
-main(int argc, char **argv)
-{
-	const char *name;
-	char path[256];
-	FILE *f;
-
-	/* Reach RUNNING before advertising readiness to the test. */
-	if (service_init() == 0)
-		(void)service_ready();
-
-	/* Give serviced a moment to process SVC_OP_READY (STARTING->RUNNING)
-	 * before the ready file — several tests check status with no sleep. */
-	usleep(200000);
-
-	if (argc > 1 && argv[1][0] != '\0') {
-		name = argv[1];
-	} else {
-		name = strrchr(argv[0], '/');
-		name = (name != NULL) ? name + 1 : argv[0];
-	}
-	(void)snprintf(path, sizeof(path), "%s.ready", name);
-	f = fopen(path, "w");
-	if (f != NULL) {
-		fprintf(f, "ready\n");
-		fclose(f);
-	}
-
-	pause();
-	return (0);
-}
-CEOF
-	if ! cc_with_libservice -o ready_svc ready_svc.c \
-	    >ready_svc.build.log 2>&1; then
-		cat ready_svc.build.log >&2
-		atf_fail "failed to build ready_svc"
-	fi
+	find_capd_service_fixture
+	cp "$capd_service_fixture" ready_svc
+	chmod 0555 ready_svc
 }
 
 # Create a system bundle (.cap) in the fake /Capabilities/System.
@@ -314,6 +255,7 @@ create_system_bundle()
 	author = "test";
 	program = "${prog}";
 	provides = ["${provides}"];
+	arguments = ["compat-ready"];
 	${extra}
 	UCL
 
@@ -350,6 +292,7 @@ create_user_bundle()
 	author = "test";
 	program = "${prog}";
 	provides = ["${provides}"];
+	arguments = ["compat-ready"];
 	${extra}
 	UCL
 
@@ -460,65 +403,9 @@ make_svc_bin()
 build_lookup_client()
 {
 	[ -x ./lookup_client ] && return 0
-	require_cc
-	find_libservice
-	cat > lookup_client.c <<'CEOF'
-#include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <libservice.h>
-
-int
-main(int argc, char **argv)
-{
-	char tfile[256], rfile[256], target[256];
-	const char *label;
-	FILE *f;
-	int fd, rc;
-
-	label = getenv("ORACLED_LABEL");
-	if (label == NULL || label[0] == '\0')
-		label = "lookup_client";
-	(void)snprintf(tfile, sizeof(tfile), "%s.target", label);
-	(void)snprintf(rfile, sizeof(rfile), "%s.result", label);
-
-	/* Target name: file first, then argv[1] as a fallback. */
-	target[0] = '\0';
-	f = fopen(tfile, "r");
-	if (f != NULL) {
-		if (fgets(target, sizeof(target), f) != NULL) {
-			size_t l = strlen(target);
-			if (l > 0 && target[l - 1] == '\n')
-				target[l - 1] = '\0';
-		}
-		fclose(f);
-	}
-	if (target[0] == '\0' && argc > 1)
-		(void)strlcpy(target, argv[1], sizeof(target));
-
-	rc = 1;
-	fd = -1;
-	if (service_init() == 0 && service_ready() == 0) {
-		fd = service_lookup(target);
-		if (fd != -1)
-			rc = 0;
-	}
-
-	f = fopen(rfile, "w");
-	if (f != NULL) {
-		fprintf(f, "fd=%d\nerrno=%d\nrc=%d\n", fd, errno, rc);
-		fclose(f);
-	}
-	return (rc);
-}
-CEOF
-	if ! cc_with_libservice -o lookup_client lookup_client.c \
-	    >lookup_client.build.log 2>&1; then
-		cat lookup_client.build.log >&2
-		atf_fail "failed to build lookup_client"
-	fi
+	find_capd_service_fixture
+	cp "$capd_service_fixture" lookup_client
+	chmod 0555 lookup_client
 }
 
 # Trigger a lookup of <name> from a managed client service and wait for the
@@ -541,9 +428,10 @@ run_lookup_client()
 
 	# Install the client as a boot-start service (runs once) and ask
 	# serviced to pick up the new bundle.
-	make_svc_bin user "$label" 'restart = "never";' \
+	make_svc_bin user "$label" \
+	    'restart = "never"; arguments = ["compat-lookup"];' \
 	    "$(pwd)/lookup_client" >/dev/null
-	kill -HUP "$daemon_pid" 2>/dev/null || true
+	reload_stack
 
 	# Wait for the client to record its lookup result.
 	max=$(( timeout * 10 ))
@@ -561,17 +449,28 @@ run_lookup_client()
 # Start the stack expecting it to fail (for negative tests).
 start_stack_expect_failure()
 {
+	local i
+
 	require_mac_capability
 	prepare_paths
 	write_config
-
-	oracled -d -f "$conffile" >"$logfile" 2>&1 &
-	local pid=$!
-	sleep 1
-	# If it's still running, it didn't fail as expected
-	if kill -0 "$pid" 2>/dev/null; then
-		kill "$pid" 2>/dev/null
+	capd_find_guardian
+	capd_launch_oracle
+	daemon_pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status |
+	    sed -n 's/^running pid=//p')
+	i=0
+	while ! grep -Eq 'serviced ready|cycle detected|dependency sort failed|serviced exited' \
+	    "$logfile" 2>/dev/null && [ "$i" -lt 50 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	# Oracle is allowed to remain healthy and supervise restart attempts; the
+	# contract under test is that serviced never reports ready with an invalid
+	# registry.  Always use the authenticated shutdown path for cleanup.
+	if grep -q "serviced ready" "$logfile" 2>/dev/null; then
+		stop_stack
 		return 1
 	fi
+	stop_stack
 	return 0
 }

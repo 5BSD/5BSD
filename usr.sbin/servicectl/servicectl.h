@@ -13,7 +13,7 @@
 int	cmd_install(const char *bundle_path);
 
 /* verify.c */
-int	cmd_verify(const char *bundle_path);
+int	cmd_verify(int argc, char *argv[]);
 int	cmd_bundles(void);
 
 #endif /* SERVICECTL_H */

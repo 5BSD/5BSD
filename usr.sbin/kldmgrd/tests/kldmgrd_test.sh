@@ -16,6 +16,8 @@
 # Requires: root, mac_capability device available.
 #
 
+. "$(atf_get_srcdir)/capd_test_harness.sh"
+
 # ---------------------------------------------------------------
 # Helpers — inlined because kldmgrd lives outside the serviced tree.
 # ---------------------------------------------------------------
@@ -36,18 +38,8 @@ saved_allow_file=
 
 find_serviced()
 {
-	local p
-	for p in \
-	    "$(command -v serviced 2>/dev/null)" \
-	    /usr/libexec/serviced \
-	    /usr/obj/usr/src/arm64.aarch64/usr.sbin/serviced/serviced
-	do
-		if [ -n "$p" ] && [ -x "$p" ]; then
-			serviced_bin="$p"
-			return
-		fi
-	done
-	atf_skip "serviced binary not found"
+	capd_find_serviced
+	serviced_bin=$capd_serviced_bin
 }
 
 find_kldmgrd()
@@ -69,30 +61,22 @@ find_kldmgrd()
 
 require_mac_capability()
 {
-	if [ ! -c /dev/mac_capability ]; then
-		atf_skip "mac_capability device not available"
-	fi
-}
-
-require_cc()
-{
-	if ! command -v cc >/dev/null 2>&1; then
-		atf_skip "cc not available"
-	fi
+	capd_require_device
 }
 
 prepare_paths()
 {
-	WORK="$(pwd)"
-	APPS_DIR="${WORK}/Capabilities/System"
-	USER_APPS_DIR="${WORK}/Capabilities"
-	CTL_SOCK="${WORK}/serviced.sock"
+	capd_paths_init
+	WORK=$CAPD_WORK
+	APPS_DIR=$CAPD_APPS_SYSTEM
+	USER_APPS_DIR=$CAPD_APPS_USER
+	CTL_SOCK=$CAPD_SERVICED_SOCKET
 
-	pidfile="${WORK}/oracled.pid"
-	conffile="${WORK}/oracled.conf"
+	pidfile=$CAPD_PIDFILE
+	conffile=$CAPD_CONFIG
 	manifestdir="${WORK}/serviced.d"
-	sockpath="${WORK}/oracled.sock"
-	logfile="${WORK}/oracled.log"
+	sockpath=$CAPD_ORACLE_SOCKET
+	logfile=$CAPD_LOG
 	mkdir -p "$manifestdir"
 	mkdir -p "${APPS_DIR}" "${USER_APPS_DIR}"
 }
@@ -136,28 +120,9 @@ start_stack()
 {
 	prepare_paths
 	write_config
-
-	oracled -d -f "$conffile" >"$logfile" 2>&1 &
-	daemon_pid=$!
-
-	# Wait for oracled control socket.
-	i=0
-	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ ! -S "$sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "oracled did not create control socket"
-	fi
-
-	# Wait for serviced to be ready.
-	i=0
-	while ! grep -q "serviced ready" "$logfile" 2>/dev/null && \
-	    [ "$i" -lt 150 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
+	capd_start_stack
+	daemon_pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status |
+	    sed -n 's/^running pid=//p')
 }
 
 wait_for_file()
@@ -173,30 +138,22 @@ wait_for_file()
 	test -s "$path"
 }
 
-wait_for_log()
-{
-	local pattern i
-	pattern="$1"
-	i=0
-	while ! grep -q "$pattern" "$logfile" 2>/dev/null && [ "$i" -lt 150 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	grep -q "$pattern" "$logfile" 2>/dev/null
-}
-
 stop_stack()
 {
-	if [ -n "$daemon_pid" ]; then
-		kill -TERM "$daemon_pid" 2>/dev/null || true
-		wait "$daemon_pid" 2>/dev/null || true
-	fi
+	local result
+
+	capd_paths_init
+	capd_find_guardian
+	capd_stop_stack
+	result=$?
+	daemon_pid=
+	return "$result"
 }
 
 cleanup_common()
 {
-	stop_stack
-	pkill -9 -f "serviced.d" 2>/dev/null || true
+	stop_stack || return 1
+	capd_cleanup_stack || return 1
 	sleep 0.2
 	# Restore /etc/kldmgrd.allow if we saved a backup.
 	if [ -n "$saved_allow_file" ] && [ -f "${saved_allow_file}" ]; then
@@ -234,218 +191,10 @@ write_executable()
 
 build_kldmgr_client()
 {
-	require_cc
-	cat > "${WORK}/kldmgr_client.c" <<'CEOF'
-/*
- * Test client for kldmgrd.
- *
- * Launched as a serviced-managed service.  Reads command from a file
- * ("cmd.in"), executes it against kldmgrd, writes result to "result.out".
- *
- * cmd.in format: <op> [name] [raw_opcode]
- *   op = "list" | "load" | "unload" | "raw"
- *   name = module name (for load/unload) or ignored
- *   raw_opcode = numeric op (for "raw")
- */
-
-#include <sys/types.h>
-
-#include <err.h>
-#include <errno.h>
-#include <signal.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-
-#include <libservice.h>
-
-#define	KLDMGR_OP_LOAD		1
-#define	KLDMGR_OP_UNLOAD	2
-#define	KLDMGR_OP_LIST		3
-
-#define	KLDMGR_NAME_MAX	128
-#define	KLDMGR_LIST_MAX	64
-
-struct kldmgr_req {
-	uint32_t	op;
-	uint32_t	_pad;
-	char		name[KLDMGR_NAME_MAX];
-} __packed;
-
-struct kldmgr_reply {
-	int32_t		status;
-	int32_t		id;
-} __packed;
-
-struct kldmgr_list_entry {
-	int32_t		id;
-	char		name[KLDMGR_NAME_MAX];
-} __packed;
-
-struct kldmgr_list_reply {
-	int32_t		status;
-	uint32_t	count;
-	/* entries follow */
-} __packed;
-
-int
-main(void)
-{
-	FILE *fin, *fout;
-	char op[32], name[KLDMGR_NAME_MAX];
-	int raw_op, fd;
-	struct kldmgr_req req;
-	ssize_t n;
-
-	if (service_init() == -1) {
-		fprintf(stderr, "service_init failed\n");
-		return (1);
-	}
-
-	/* Signal readiness to serviced. */
-	service_ready();
-
-	/*
-	 * Wait for cmd.in to appear.  The test harness creates this
-	 * after the stack is up and kldmgrd is registered.
-	 */
-	for (int i = 0; i < 100; i++) {
-		fin = fopen("cmd.in", "r");
-		if (fin != NULL)
-			break;
-		usleep(100000);
-	}
-	if (fin == NULL) {
-		fout = fopen("result.out", "w");
-		if (fout) {
-			fprintf(fout, "error=cmd.in not found\n");
-			fclose(fout);
-		}
-		return (1);
-	}
-
-	memset(op, 0, sizeof(op));
-	memset(name, 0, sizeof(name));
-	raw_op = 0;
-	fscanf(fin, "%31s %127s %d", op, name, &raw_op);
-	fclose(fin);
-
-	/* Connect to kldmgrd. */
-	fd = service_lookup("org.5bsd.system.kldmgr");
-	if (fd < 0) {
-		fout = fopen("result.out", "w");
-		if (fout) {
-			fprintf(fout, "error=service_lookup failed: %s\n",
-			    strerror(errno));
-			fclose(fout);
-		}
-		return (1);
-	}
-
-	memset(&req, 0, sizeof(req));
-
-	if (strcmp(op, "list") == 0) {
-		req.op = KLDMGR_OP_LIST;
-	} else if (strcmp(op, "load") == 0) {
-		req.op = KLDMGR_OP_LOAD;
-		strlcpy(req.name, name, sizeof(req.name));
-	} else if (strcmp(op, "unload") == 0) {
-		req.op = KLDMGR_OP_UNLOAD;
-		strlcpy(req.name, name, sizeof(req.name));
-	} else if (strcmp(op, "raw") == 0) {
-		req.op = (uint32_t)raw_op;
-		strlcpy(req.name, name, sizeof(req.name));
-	} else {
-		fout = fopen("result.out", "w");
-		if (fout) {
-			fprintf(fout, "error=unknown op: %s\n", op);
-			fclose(fout);
-		}
-		close(fd);
-		return (1);
-	}
-
-	if (service_send(fd, &req, sizeof(req)) != 0) {
-		fout = fopen("result.out", "w");
-		if (fout) {
-			fprintf(fout, "error=service_send failed: %s\n",
-			    strerror(errno));
-			fclose(fout);
-		}
-		close(fd);
-		return (1);
-	}
-
-	fout = fopen("result.out", "w");
-	if (fout == NULL) {
-		close(fd);
-		return (1);
-	}
-
-	if (strcmp(op, "list") == 0) {
-		/*
-		 * LIST reply: fixed header + variable entries.
-		 * Read the fixed header first, then entries.
-		 */
-		char buf[sizeof(struct kldmgr_list_reply) +
-		    KLDMGR_LIST_MAX * sizeof(struct kldmgr_list_entry)];
-		struct kldmgr_list_reply *lr;
-		struct kldmgr_list_entry *ent;
-		uint32_t i;
-
-		n = service_recv(fd, buf, sizeof(buf), NULL);
-		if (n < (ssize_t)sizeof(struct kldmgr_list_reply)) {
-			fprintf(fout, "error=short list reply (%zd)\n", n);
-			fclose(fout);
-			close(fd);
-			return (1);
-		}
-
-		lr = (struct kldmgr_list_reply *)buf;
-		fprintf(fout, "status=%d\n", lr->status);
-		fprintf(fout, "count=%u\n", lr->count);
-
-		ent = (struct kldmgr_list_entry *)(buf +
-		    sizeof(struct kldmgr_list_reply));
-		for (i = 0; i < lr->count &&
-		    (ssize_t)(sizeof(*lr) + (i + 1) * sizeof(*ent)) <= n;
-		    i++) {
-			fprintf(fout, "module.%u.id=%d\n", i, ent[i].id);
-			fprintf(fout, "module.%u.name=%s\n", i, ent[i].name);
-		}
-	} else {
-		struct kldmgr_reply reply;
-
-		n = service_recv(fd, &reply, sizeof(reply), NULL);
-		if (n < (ssize_t)sizeof(reply)) {
-			fprintf(fout, "error=short reply (%zd)\n", n);
-			fclose(fout);
-			close(fd);
-			return (1);
-		}
-
-		fprintf(fout, "status=%d\n", reply.status);
-		fprintf(fout, "id=%d\n", reply.id);
-	}
-
-	fclose(fout);
-	close(fd);
-
-	/* Keep running so serviced doesn't restart us. */
-	for (;;)
-		sleep(60);
-
-	return (0);
+	cp "$(atf_get_srcdir)/capd_protocol_fixture" \
+	    "${WORK}/kldmgr_client"
+	chmod 755 "${WORK}/kldmgr_client"
 }
-CEOF
-	atf_check -s exit:0 -e ignore cc -Wall \
-	    -I/usr/src/sys -I/usr/src/lib/libservice \
-	    -I/usr/src/usr.sbin/kldmgrd \
-	    -o "${WORK}/kldmgr_client" "${WORK}/kldmgr_client.c" -lservice
-}
-
 # Install the test client as a serviced-managed service.
 # Args: $1 = label (default "org.test.kldclient")
 install_client_bundle()
@@ -460,6 +209,7 @@ bundle_id = "${label}";
 version = "1.0";
 author = "test";
 program = "kldmgr_client";
+arguments = ["kld", "${WORK}/cmd.in", "${WORK}/result.out"];
 provides = ["${label}"];
 UCL
 }
@@ -503,6 +253,7 @@ kldmgrd_list_head()
 	atf_set "descr" "LIST op returns loaded kernel modules"
 	atf_set "require.user" "root"
 	atf_set "timeout" "120"
+	capd_require_stack_kmods
 }
 kldmgrd_list_body()
 {
@@ -515,12 +266,6 @@ kldmgrd_list_body()
 	setup_allow_file "*"
 	write_config
 	start_stack
-
-	# Wait for kldmgrd to be registered.
-	if ! wait_for_log "kldmgrd.*registered\|org.5bsd.system.kldmgr.*ready"; then
-		# Fall back: just wait for the client bundle to start.
-		sleep 3
-	fi
 
 	run_client_op list
 
@@ -560,6 +305,7 @@ kldmgrd_load_invalid_name_head()
 	atf_set "descr" "LOAD with path traversal name returns ERR"
 	atf_set "require.user" "root"
 	atf_set "timeout" "120"
+	capd_require_stack_kmods
 }
 kldmgrd_load_invalid_name_body()
 {
@@ -572,10 +318,6 @@ kldmgrd_load_invalid_name_body()
 	setup_allow_file "*"
 	write_config
 	start_stack
-
-	if ! wait_for_log "kldmgrd.*registered\|org.5bsd.system.kldmgr.*ready"; then
-		sleep 3
-	fi
 
 	run_client_op load "../etc/passwd"
 
@@ -605,6 +347,7 @@ kldmgrd_load_nonexistent_head()
 	atf_set "descr" "LOAD nonexistent module returns NOTFOUND"
 	atf_set "require.user" "root"
 	atf_set "timeout" "120"
+	capd_require_stack_kmods
 }
 kldmgrd_load_nonexistent_body()
 {
@@ -617,10 +360,6 @@ kldmgrd_load_nonexistent_body()
 	setup_allow_file "*"
 	write_config
 	start_stack
-
-	if ! wait_for_log "kldmgrd.*registered\|org.5bsd.system.kldmgr.*ready"; then
-		sleep 3
-	fi
 
 	run_client_op load "nonexistent_test_module_xyz"
 
@@ -650,6 +389,7 @@ kldmgrd_load_special_chars_head()
 	atf_set "descr" "LOAD with shell metacharacters returns ERR"
 	atf_set "require.user" "root"
 	atf_set "timeout" "120"
+	capd_require_stack_kmods
 }
 kldmgrd_load_special_chars_body()
 {
@@ -662,10 +402,6 @@ kldmgrd_load_special_chars_body()
 	setup_allow_file "*"
 	write_config
 	start_stack
-
-	if ! wait_for_log "kldmgrd.*registered\|org.5bsd.system.kldmgr.*ready"; then
-		sleep 3
-	fi
 
 	# The semicolon and spaces make this an invalid module name.
 	run_client_op load ";rm"
@@ -697,6 +433,7 @@ kldmgrd_permission_denied_head()
 	atf_set "descr" "Client not in allow file gets PERM"
 	atf_set "require.user" "root"
 	atf_set "timeout" "120"
+	capd_require_stack_kmods
 }
 kldmgrd_permission_denied_body()
 {
@@ -710,10 +447,6 @@ kldmgrd_permission_denied_body()
 	setup_allow_file "org.5bsd.system.other"
 	write_config
 	start_stack
-
-	if ! wait_for_log "kldmgrd.*registered\|org.5bsd.system.kldmgr.*ready"; then
-		sleep 3
-	fi
 
 	run_client_op list
 
@@ -743,6 +476,7 @@ kldmgrd_unknown_op_head()
 	atf_set "descr" "Unknown op code returns ERR"
 	atf_set "require.user" "root"
 	atf_set "timeout" "120"
+	capd_require_stack_kmods
 }
 kldmgrd_unknown_op_body()
 {
@@ -755,10 +489,6 @@ kldmgrd_unknown_op_body()
 	setup_allow_file "*"
 	write_config
 	start_stack
-
-	if ! wait_for_log "kldmgrd.*registered\|org.5bsd.system.kldmgr.*ready"; then
-		sleep 3
-	fi
 
 	run_client_op raw ignored 99
 

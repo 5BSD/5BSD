@@ -26,19 +26,7 @@
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
 
 #include "claim_parse.h"
-
-/*
- * AF_BLUETOOTH socket protocol numbers.  These mirror the stable
- * BLUETOOTH_PROTO_* values in <netgraph/bluetooth/include/ng_btsocket.h>;
- * that header drags in netgraph HCI type definitions that do not build
- * in userspace, so the handful of numbers this parser needs are defined
- * locally.
- */
-#define	BT_PROTO_HCI	134
-#define	BT_PROTO_L2CAP	135
-#define	BT_PROTO_RFCOMM	136
-#define	BT_PROTO_SCO	137
-#define	BT_PROTO_ISO	138
+#include "oraclert.h"
 
 int
 parse_port_range_string(const char *s, uint16_t *minp, uint16_t *maxp)
@@ -187,15 +175,15 @@ parse_net_protocol_string(const char *s, int *protop)
 	else if (strcmp(s, "udp") == 0)
 		*protop = IPPROTO_UDP;
 	else if (strcmp(s, "l2cap") == 0)
-		*protop = BT_PROTO_L2CAP;
+		*protop = ORT_BTPROTO_L2CAP;
 	else if (strcmp(s, "rfcomm") == 0)
-		*protop = BT_PROTO_RFCOMM;
+		*protop = ORT_BTPROTO_RFCOMM;
 	else if (strcmp(s, "sco") == 0)
-		*protop = BT_PROTO_SCO;
+		*protop = ORT_BTPROTO_SCO;
 	else if (strcmp(s, "iso") == 0)
-		*protop = BT_PROTO_ISO;
+		*protop = ORT_BTPROTO_ISO;
 	else if (strcmp(s, "hci") == 0)
-		*protop = BT_PROTO_HCI;
+		*protop = ORT_BTPROTO_HCI;
 	else
 		return (-1);
 	return (0);

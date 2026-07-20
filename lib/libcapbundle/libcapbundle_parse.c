@@ -9,12 +9,14 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/vsock.h>
 #include <sys/stat.h>
 #include <netinet/in.h>
 
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
 
 #include <errno.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +27,583 @@
 #include "claim_parse.h"
 #include "gates.h"
 #include "libcapbundle_internal.h"
+
+static bool
+key_in(const char *key, const char *const *allowed, size_t nallowed)
+{
+	size_t i;
+
+	for (i = 0; i < nallowed; i++)
+		if (strcmp(key, allowed[i]) == 0)
+			return (true);
+	return (false);
+}
+
+static int
+parse_vsock_ports(const ucl_object_t *v, uint32_t *minp, uint32_t *maxp)
+{
+	const char *s;
+	char *end;
+	uint64_t lo, hi;
+
+	if (v == NULL || (ucl_object_type(v) == UCL_STRING &&
+	    strcmp(ucl_object_tostring(v), "*") == 0)) {
+		*minp = 0;
+		*maxp = UINT32_MAX;
+		return (0);
+	}
+	if (ucl_object_type(v) == UCL_INT) {
+		int64_t n = ucl_object_toint(v);
+		if (n < 0 || (uint64_t)n > UINT32_MAX)
+			return (-1);
+		*minp = *maxp = (uint32_t)n;
+		return (0);
+	}
+	if (ucl_object_type(v) != UCL_STRING)
+		return (-1);
+	s = ucl_object_tostring(v);
+	errno = 0;
+	lo = strtoull(s, &end, 10);
+	if (errno != 0 || end == s || *end != '-' || lo > UINT32_MAX)
+		return (-1);
+	s = end + 1;
+	hi = strtoull(s, &end, 10);
+	if (errno != 0 || *end != '\0' || hi > UINT32_MAX || lo > hi)
+		return (-1);
+	*minp = (uint32_t)lo;
+	*maxp = (uint32_t)hi;
+	return (0);
+}
+
+static int
+validate_keys(const ucl_object_t *obj, const char *where,
+    const char *const *allowed, size_t nallowed, char *errbuf, size_t errlen)
+{
+	const ucl_object_t *v;
+	ucl_object_iter_t it;
+	const char *key;
+
+	if (obj == NULL || ucl_object_type(obj) != UCL_OBJECT) {
+		snprintf(errbuf, errlen, "%s must be an object", where);
+		return (-1);
+	}
+	it = NULL;
+	while ((v = ucl_object_iterate(obj, &it, true)) != NULL) {
+		key = ucl_object_key(v);
+		if (key == NULL || !key_in(key, allowed, nallowed)) {
+			snprintf(errbuf, errlen, "%s: unknown key '%s'", where,
+			    key != NULL ? key : "");
+			return (-1);
+		}
+	}
+	return (0);
+}
+
+static int
+validate_string_list(const ucl_object_t *root, const char *key, unsigned max,
+    size_t maxlen, char *errbuf, size_t errlen)
+{
+	const ucl_object_t *arr, *v;
+	ucl_object_iter_t it;
+	unsigned n;
+
+	arr = ucl_object_lookup(root, key);
+	if (arr == NULL)
+		return (0);
+	if (ucl_object_type(arr) == UCL_STRING) {
+		if (ucl_object_tostring(arr)[0] == '\0' ||
+		    strlen(ucl_object_tostring(arr)) >= maxlen) {
+			snprintf(errbuf, errlen, "%s contains an invalid string", key);
+			return (-1);
+		}
+		return (0);
+	}
+	if (ucl_object_type(arr) != UCL_ARRAY) {
+		snprintf(errbuf, errlen, "%s must be a string or array", key);
+		return (-1);
+	}
+	n = 0;
+	it = NULL;
+	while ((v = ucl_object_iterate(arr, &it, true)) != NULL) {
+		if (++n > max) {
+			snprintf(errbuf, errlen, "%s has more than %u entries", key,
+			    max);
+			return (-1);
+		}
+		if (ucl_object_type(v) != UCL_STRING ||
+		    ucl_object_tostring(v)[0] == '\0' ||
+		    strlen(ucl_object_tostring(v)) >= maxlen) {
+			snprintf(errbuf, errlen, "%s contains an invalid string", key);
+			return (-1);
+		}
+	}
+	return (0);
+}
+
+static int
+validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
+{
+	static const char *const top[] = { "bundle_id", "version", "author",
+	    "program", "provides", "requires", "kmod_requires", "on_demand",
+	    "restart", "capabilities", "user", "group", "stop_timeout",
+	    "max_failures", "arguments", "environment" };
+	static const char *const capkeys[] = { "paths", "files", "network",
+	    "jails", "vsock", "services", "system" };
+	static const char *const service_names[] = { "mount", "node",
+	    "accounting", "identity" };
+	static const char *const filekeys[] = { "path", "actions" };
+	static const char *const netkeys[] = { "domain", "protocol", "port",
+	    "ports", "direction", "address", "prefix" };
+	static const char *const jailkeys[] = { "jid", "name", "actions" };
+	static const char *const vsockkeys[] = { "cid", "port", "ports",
+	    "direction" };
+	const ucl_object_t *caps, *arr, *v, *x;
+	ucl_object_iter_t it;
+	bool service_seen[nitems(service_names)];
+	unsigned n;
+
+	memset(service_seen, 0, sizeof(service_seen));
+
+	if (ucl_object_type(root) != UCL_OBJECT) {
+		snprintf(errbuf, errlen, "manifest must be an object");
+		return (-1);
+	}
+	if (validate_keys(root, "manifest", top, nitems(top), errbuf, errlen) != 0)
+		return (-1);
+	for (n = 0; n < 6; n++) {
+		static const char *const strings[] = { "bundle_id", "version",
+		    "author", "program", "user", "group" };
+		static const size_t limits[] = { CAPBUNDLE_ID_MAX,
+		    CAPBUNDLE_VERSION_MAX, CAPBUNDLE_AUTHOR_MAX, PATH_MAX, 64, 64 };
+		v = ucl_object_lookup(root, strings[n]);
+		if (v != NULL && (ucl_object_type(v) != UCL_STRING ||
+		    ucl_object_tostring(v)[0] == '\0' ||
+		    strlen(ucl_object_tostring(v)) >= limits[n])) {
+			snprintf(errbuf, errlen, "%s must be a non-empty string shorter "
+			    "than %zu bytes", strings[n], limits[n]);
+			return (-1);
+		}
+	}
+	v = ucl_object_lookup(root, "on_demand");
+	if (v != NULL && ucl_object_type(v) != UCL_BOOLEAN) {
+		snprintf(errbuf, errlen, "on_demand must be a boolean");
+		return (-1);
+	}
+	v = ucl_object_lookup(root, "restart");
+	if (v != NULL && (ucl_object_type(v) != UCL_STRING ||
+	    (strcmp(ucl_object_tostring(v), "never") != 0 &&
+	    strcmp(ucl_object_tostring(v), "always") != 0 &&
+	    strcmp(ucl_object_tostring(v), "on-failure") != 0))) {
+		snprintf(errbuf, errlen, "invalid restart policy");
+		return (-1);
+	}
+	v = ucl_object_lookup(root, "stop_timeout");
+	if (v != NULL && (ucl_object_type(v) != UCL_INT ||
+	    ucl_object_toint(v) < 1 || ucl_object_toint(v) > 300)) {
+		snprintf(errbuf, errlen, "stop_timeout must be between 1 and 300");
+		return (-1);
+	}
+	v = ucl_object_lookup(root, "max_failures");
+	if (v != NULL && (ucl_object_type(v) != UCL_INT ||
+	    ucl_object_toint(v) < 1 || ucl_object_toint(v) > 100)) {
+		snprintf(errbuf, errlen, "max_failures must be between 1 and 100");
+		return (-1);
+	}
+	if (validate_string_list(root, "provides", CAPBUNDLE_MAX_PROVIDES,
+	    CAPBUNDLE_NAME_MAX + 1, errbuf, errlen) != 0 ||
+	    validate_string_list(root, "requires", CAPBUNDLE_MAX_REQUIRES,
+	    CAPBUNDLE_NAME_MAX + 1, errbuf, errlen) != 0 ||
+	    validate_string_list(root, "kmod_requires", CAPBUNDLE_MAX_KMOD_REQUIRES,
+	    sizeof(((struct capbundle_service *)0)->kmod_requires[0]), errbuf,
+	    errlen) != 0 ||
+	    validate_string_list(root, "arguments", SERVICED_MAX_ARGUMENTS,
+	    SERVICED_ARGUMENT_MAX, errbuf, errlen) != 0)
+		return (-1);
+
+	arr = ucl_object_lookup(root, "kmod_requires");
+	if (arr != NULL) {
+		it = NULL;
+		while ((v = ucl_object_iterate(arr, &it, true)) != NULL) {
+			const char *name, *p;
+
+			name = ucl_object_tostring(v);
+			for (p = name; *p != '\0'; p++)
+				if (!(isalnum((unsigned char)*p) || *p == '_' ||
+				    *p == '-' || *p == '.')) {
+					snprintf(errbuf, errlen,
+					    "invalid kernel module name '%s'", name);
+					return (-1);
+				}
+		}
+	}
+
+	/* Arguments are deliberately an array: a scalar is too easy to mistake
+	 * for shell text, and serviced never performs shell splitting. */
+	arr = ucl_object_lookup(root, "arguments");
+	if (arr != NULL && ucl_object_type(arr) != UCL_ARRAY) {
+		snprintf(errbuf, errlen, "arguments must be an array");
+		return (-1);
+	}
+
+	arr = ucl_object_lookup(root, "environment");
+	if (arr != NULL) {
+		if (ucl_object_type(arr) != UCL_OBJECT) {
+			snprintf(errbuf, errlen, "environment must be an object");
+			return (-1);
+		}
+		n = 0;
+		it = NULL;
+		while ((v = ucl_object_iterate(arr, &it, true)) != NULL) {
+			const char *key = ucl_object_key(v), *p;
+			if (++n > SERVICED_MAX_ENVIRONMENT || key == NULL ||
+			    key[0] == '\0' || strncmp(key, "ORACLED_", 8) == 0 ||
+			    ucl_object_type(v) != UCL_STRING) {
+				snprintf(errbuf, errlen, "invalid environment entry");
+				return (-1);
+			}
+			for (p = key; *p != '\0'; p++)
+				if (!(isalnum((unsigned char)*p) || *p == '_') ||
+				    (p == key && isdigit((unsigned char)*p))) {
+					snprintf(errbuf, errlen,
+					    "invalid environment name '%s'", key);
+					return (-1);
+				}
+			if (strlen(key) + strlen(ucl_object_tostring(v)) + 2 >
+			    SERVICED_ENVIRONMENT_MAX) {
+				snprintf(errbuf, errlen, "environment entry '%s' is too long",
+				    key);
+				return (-1);
+			}
+		}
+	}
+
+	caps = ucl_object_lookup(root, "capabilities");
+	if (caps == NULL)
+		return (0);
+	if (ucl_object_type(caps) != UCL_OBJECT) {
+		snprintf(errbuf, errlen, "capabilities must be an object");
+		return (-1);
+	}
+	if (validate_keys(caps, "capabilities", capkeys, nitems(capkeys),
+	    errbuf, errlen) != 0)
+		return (-1);
+
+#define VALIDATE_CAP_ARRAY(name, max) do { \
+	arr = ucl_object_lookup(caps, (name)); \
+	if (arr != NULL && ucl_object_type(arr) != UCL_ARRAY) { \
+		snprintf(errbuf, errlen, "capabilities.%s must be an array", (name)); \
+		return (-1); \
+	} \
+	if (arr != NULL && ucl_array_size(arr) > (unsigned)(max)) { \
+		snprintf(errbuf, errlen, "capabilities.%s has too many entries", (name)); \
+		return (-1); \
+	} \
+} while (0)
+	VALIDATE_CAP_ARRAY("paths", CAPBUNDLE_MAX_CAP_PATHS);
+	VALIDATE_CAP_ARRAY("files", CAPBUNDLE_MAX_CAP_FILES);
+	VALIDATE_CAP_ARRAY("network", CAPBUNDLE_MAX_CAP_NET);
+	VALIDATE_CAP_ARRAY("jails", CAPBUNDLE_MAX_CAP_JAIL);
+	VALIDATE_CAP_ARRAY("vsock", CAPBUNDLE_MAX_CAP_VSOCK);
+	VALIDATE_CAP_ARRAY("services", CAPBUNDLE_MAX_CAP_SERVICES);
+	VALIDATE_CAP_ARRAY("system", nitems(gate_names));
+#undef VALIDATE_CAP_ARRAY
+
+	arr = ucl_object_lookup(caps, "paths");
+	it = NULL;
+	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL)
+		if (ucl_object_type(v) != UCL_STRING ||
+		    ucl_object_tostring(v)[0] != '/' ||
+		    strlen(ucl_object_tostring(v)) >= PATH_MAX) {
+			snprintf(errbuf, errlen, "invalid capabilities.paths entry");
+			return (-1);
+		}
+
+	arr = ucl_object_lookup(caps, "system");
+	it = NULL;
+	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
+		bool found = false;
+		unsigned gi;
+		if (ucl_object_type(v) != UCL_STRING) {
+			snprintf(errbuf, errlen, "invalid capabilities.system entry");
+			return (-1);
+		}
+		for (gi = 0; gi < nitems(gate_names); gi++)
+			if (strcmp(ucl_object_tostring(v), gate_names[gi].name) == 0)
+				found = true;
+		if (!found) {
+			snprintf(errbuf, errlen, "unknown system gate '%s'",
+			    ucl_object_tostring(v));
+			return (-1);
+		}
+	}
+
+	arr = ucl_object_lookup(caps, "services");
+	it = NULL;
+	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
+		bool found = false;
+		unsigned si;
+		if (ucl_object_type(v) != UCL_STRING) {
+			snprintf(errbuf, errlen,
+			    "invalid capabilities.services entry");
+			return (-1);
+		}
+		for (si = 0; si < nitems(service_names); si++)
+			if (strcmp(ucl_object_tostring(v), service_names[si]) == 0) {
+				if (service_seen[si]) {
+					snprintf(errbuf, errlen,
+					    "duplicate capability service '%s'",
+					    service_names[si]);
+					return (-1);
+				}
+				service_seen[si] = true;
+				found = true;
+			}
+		if (!found) {
+			snprintf(errbuf, errlen, "unknown capability service '%s'",
+			    ucl_object_tostring(v));
+			return (-1);
+		}
+	}
+
+	arr = ucl_object_lookup(caps, "files");
+	it = NULL;
+	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
+		uint64_t actions;
+		if (validate_keys(v, "capabilities.files entry", filekeys,
+		    nitems(filekeys), errbuf, errlen) != 0)
+			return (-1);
+		x = ucl_object_lookup(v, "path");
+		if (x == NULL || ucl_object_type(x) != UCL_STRING ||
+		    ucl_object_tostring(x)[0] != '/' ||
+		    strlen(ucl_object_tostring(x)) >= PATH_MAX ||
+		    parse_file_actions(ucl_object_lookup(v, "actions"), &actions) != 0) {
+			snprintf(errbuf, errlen, "invalid capabilities.files entry");
+			return (-1);
+		}
+	}
+
+	arr = ucl_object_lookup(caps, "network");
+	it = NULL;
+	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
+		uint16_t lo = 0, hi = UINT16_MAX;
+		uint8_t addr[16], prefix;
+		int domain = AF_INET, addr_domain, protocol;
+		const char *s, *protocol_name = NULL;
+		bool has_specific_address = false;
+		if (ucl_object_type(v) != UCL_OBJECT) {
+			snprintf(errbuf, errlen,
+			    "capabilities.network entries must be objects");
+			return (-1);
+		}
+		if (validate_keys(v, "capabilities.network entry", netkeys,
+		    nitems(netkeys), errbuf, errlen) != 0)
+			return (-1);
+		if (ucl_object_lookup(v, "port") != NULL &&
+		    ucl_object_lookup(v, "ports") != NULL) {
+			snprintf(errbuf, errlen, "network entry has both port and ports");
+			return (-1);
+		}
+		x = ucl_object_lookup(v, "port");
+		if (x == NULL) x = ucl_object_lookup(v, "ports");
+		if (parse_port_range_obj(x, &lo, &hi) != 0) {
+			snprintf(errbuf, errlen, "invalid network port range");
+			return (-1);
+		}
+		x = ucl_object_lookup(v, "domain");
+		if (x != NULL) {
+			if (ucl_object_type(x) != UCL_STRING) {
+				snprintf(errbuf, errlen, "network domain must be a string");
+				return (-1);
+			}
+			s = ucl_object_tostring(x);
+			if (strcmp(s, "inet") == 0)
+				domain = AF_INET;
+			else if (strcmp(s, "inet6") == 0)
+				domain = AF_INET6;
+			else if (strcmp(s, "bluetooth") == 0)
+				domain = AF_BLUETOOTH;
+			else if (strcmp(s, "any") == 0 || strcmp(s, "*") == 0)
+				domain = 0;
+			else {
+				snprintf(errbuf, errlen, "invalid network domain '%s'", s);
+				return (-1);
+			}
+		}
+		x = ucl_object_lookup(v, "protocol");
+		if (x != NULL && (ucl_object_type(x) != UCL_STRING ||
+		    parse_net_protocol_string(ucl_object_tostring(x), &protocol) != 0)) {
+			snprintf(errbuf, errlen, "invalid network protocol");
+			return (-1);
+		}
+		if (x != NULL)
+			protocol_name = ucl_object_tostring(x);
+		if (protocol_name != NULL && domain != 0 &&
+		    ((domain == AF_BLUETOOTH &&
+		    (strcmp(protocol_name, "tcp") == 0 ||
+		    strcmp(protocol_name, "udp") == 0)) ||
+		    (domain != AF_BLUETOOTH &&
+		    strcmp(protocol_name, "tcp") != 0 &&
+		    strcmp(protocol_name, "udp") != 0 &&
+		    strcmp(protocol_name, "any") != 0 &&
+		    strcmp(protocol_name, "*") != 0))) {
+			snprintf(errbuf, errlen,
+			    "network protocol is incompatible with domain");
+			return (-1);
+		}
+		x = ucl_object_lookup(v, "direction");
+		if (x != NULL && (ucl_object_type(x) != UCL_STRING ||
+		    (strcmp(ucl_object_tostring(x), "bind") != 0 &&
+		    strcmp(ucl_object_tostring(x), "connect") != 0 &&
+		    strcmp(ucl_object_tostring(x), "any") != 0 &&
+		    strcmp(ucl_object_tostring(x), "*") != 0))) {
+			snprintf(errbuf, errlen, "invalid network direction");
+			return (-1);
+		}
+		x = ucl_object_lookup(v, "address");
+		if (x != NULL) {
+			if (ucl_object_type(x) != UCL_STRING) {
+				snprintf(errbuf, errlen, "network address must be a string");
+				return (-1);
+			}
+			s = ucl_object_tostring(x);
+			if ((domain == AF_BLUETOOTH &&
+			    parse_bdaddr_string(s, addr, &prefix) != 0) ||
+			    (domain != AF_BLUETOOTH &&
+			    parse_address_string(s, addr, &prefix, &addr_domain) != 0)) {
+				snprintf(errbuf, errlen, "invalid network address '%s'", s);
+				return (-1);
+			}
+			has_specific_address = memcmp(addr,
+			    (const uint8_t[16]){ 0 }, sizeof(addr)) != 0;
+			if (domain == 0 && has_specific_address) {
+				snprintf(errbuf, errlen,
+				    "specific network address requires an explicit domain");
+				return (-1);
+			}
+			if (domain == AF_INET && addr_domain == AF_INET6) {
+				snprintf(errbuf, errlen, "IPv6 address requires inet6 domain");
+				return (-1);
+			}
+			if (domain == AF_INET6 && addr_domain == AF_INET) {
+				snprintf(errbuf, errlen, "IPv4 address requires inet domain");
+				return (-1);
+			}
+		}
+		x = ucl_object_lookup(v, "prefix");
+		if (x != NULL) {
+			int64_t pfx;
+			if (ucl_object_type(x) != UCL_INT) {
+				snprintf(errbuf, errlen, "network prefix must be an integer");
+				return (-1);
+			}
+			pfx = ucl_object_toint(x);
+			if (!has_specific_address) {
+				snprintf(errbuf, errlen,
+				    "network prefix requires a specific address");
+				return (-1);
+			}
+			if ((domain == AF_BLUETOOTH && pfx != 0 && pfx != 48) ||
+			    (domain != AF_BLUETOOTH && (pfx < 0 || pfx > 128 ||
+			    (domain == AF_INET && pfx > 32)))) {
+				snprintf(errbuf, errlen, "invalid network prefix");
+				return (-1);
+			}
+		}
+	}
+
+	arr = ucl_object_lookup(caps, "jails");
+	it = NULL;
+	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
+		uint32_t actions;
+		if (ucl_object_type(v) == UCL_OBJECT &&
+		    validate_keys(v, "capabilities.jails entry", jailkeys,
+		    nitems(jailkeys), errbuf, errlen) != 0)
+			return (-1);
+		if (ucl_object_type(v) != UCL_OBJECT &&
+		    ucl_object_type(v) != UCL_STRING && ucl_object_type(v) != UCL_INT) {
+			snprintf(errbuf, errlen, "invalid capabilities.jails entry");
+			return (-1);
+		}
+		if (ucl_object_type(v) == UCL_OBJECT &&
+		    parse_jail_actions(ucl_object_lookup(v, "actions"), &actions) != 0) {
+			snprintf(errbuf, errlen, "invalid jail actions");
+			return (-1);
+		}
+		if (ucl_object_type(v) == UCL_INT &&
+		    (ucl_object_toint(v) <= 0 || ucl_object_toint(v) > INT32_MAX)) {
+			snprintf(errbuf, errlen, "invalid jail jid");
+			return (-1);
+		}
+		if (ucl_object_type(v) == UCL_STRING &&
+		    (ucl_object_tostring(v)[0] == '\0' ||
+		    strlen(ucl_object_tostring(v)) >= 64)) {
+			snprintf(errbuf, errlen, "invalid jail name");
+			return (-1);
+		}
+		if (ucl_object_type(v) == UCL_OBJECT) {
+			const ucl_object_t *jid = ucl_object_lookup(v, "jid");
+			const ucl_object_t *name = ucl_object_lookup(v, "name");
+			if (jid == NULL && name == NULL) {
+				snprintf(errbuf, errlen, "jail entry requires jid or name");
+				return (-1);
+			}
+			if (jid != NULL && (ucl_object_type(jid) != UCL_INT ||
+			    ucl_object_toint(jid) <= 0 || ucl_object_toint(jid) > INT32_MAX)) {
+				snprintf(errbuf, errlen, "invalid jail jid");
+				return (-1);
+			}
+			if (name != NULL && (ucl_object_type(name) != UCL_STRING ||
+			    ucl_object_tostring(name)[0] == '\0' ||
+			    strlen(ucl_object_tostring(name)) >= 64)) {
+				snprintf(errbuf, errlen, "invalid jail name");
+				return (-1);
+			}
+		}
+	}
+	arr = ucl_object_lookup(caps, "vsock");
+	it = NULL;
+	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
+		uint32_t lo, hi;
+		if (ucl_object_type(v) != UCL_OBJECT) {
+			snprintf(errbuf, errlen,
+			    "capabilities.vsock entries must be objects");
+			return (-1);
+		}
+		if (validate_keys(v, "capabilities.vsock entry", vsockkeys,
+		    nitems(vsockkeys), errbuf, errlen) != 0)
+			return (-1);
+		if (ucl_object_lookup(v, "port") != NULL &&
+		    ucl_object_lookup(v, "ports") != NULL) {
+			snprintf(errbuf, errlen, "vsock entry has both port and ports");
+			return (-1);
+		}
+		x = ucl_object_lookup(v, "port");
+		if (x == NULL) x = ucl_object_lookup(v, "ports");
+		if (parse_vsock_ports(x, &lo, &hi) != 0) {
+			snprintf(errbuf, errlen, "invalid vsock port range");
+			return (-1);
+		}
+		x = ucl_object_lookup(v, "cid");
+		if (x != NULL && !((ucl_object_type(x) == UCL_INT &&
+		    ucl_object_toint(x) >= 0) ||
+		    (ucl_object_type(x) == UCL_STRING &&
+		    (strcmp(ucl_object_tostring(x), "*") == 0 ||
+		    strcmp(ucl_object_tostring(x), "any") == 0)))) {
+			snprintf(errbuf, errlen, "invalid vsock cid");
+			return (-1);
+		}
+		x = ucl_object_lookup(v, "direction");
+		if (x != NULL && (ucl_object_type(x) != UCL_STRING ||
+		    (strcmp(ucl_object_tostring(x), "bind") != 0 &&
+		    strcmp(ucl_object_tostring(x), "connect") != 0 &&
+		    strcmp(ucl_object_tostring(x), "any") != 0 &&
+		    strcmp(ucl_object_tostring(x), "*") != 0))) {
+			snprintf(errbuf, errlen, "invalid vsock direction");
+			return (-1);
+		}
+	}
+	return (0);
+}
 
 /* --- UCL parsing helpers --- */
 
@@ -211,6 +790,11 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 		return (-1);
 	}
 
+	if (validate_manifest_schema(root, errbuf, errlen) != 0) {
+		ucl_object_unref(root);
+		return (-1);
+	}
+
 	/* Bundle metadata (extracted from first service parsed). */
 	parse_string_field(root, "bundle_id", bundle_id, bundle_id_sz);
 	parse_string_field(root, "version", version, version_sz);
@@ -244,6 +828,24 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 		return (-1);
 	}
 	strlcpy(svc->program, bin_path, sizeof(svc->program));
+
+	v = ucl_object_lookup(root, "arguments");
+	if (v != NULL) {
+		const ucl_object_t *arg;
+		ucl_object_iter_t ait = NULL;
+		while ((arg = ucl_object_iterate(v, &ait, true)) != NULL)
+			strlcpy(svc->arguments[svc->narguments++],
+			    ucl_object_tostring(arg), SERVICED_ARGUMENT_MAX);
+	}
+	v = ucl_object_lookup(root, "environment");
+	if (v != NULL) {
+		const ucl_object_t *ev;
+		ucl_object_iter_t eit = NULL;
+		while ((ev = ucl_object_iterate(v, &eit, true)) != NULL)
+			(void)snprintf(svc->environment[svc->nenvironment++],
+			    SERVICED_ENVIRONMENT_MAX, "%s=%s", ucl_object_key(ev),
+			    ucl_object_tostring(ev));
+	}
 
 	/* Label — use first provides name, or derive from program. */
 	parse_string_array(root, "provides", svc->provides,
@@ -709,6 +1311,53 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 					}
 				}
 			}
+
+			/* VSOCK endpoint capabilities. */
+			{
+				const ucl_object_t *vsocks, *velem, *vv;
+				ucl_object_iter_t vit = NULL;
+				vsocks = ucl_object_lookup(caps, "vsock");
+				while (vsocks != NULL && (velem = ucl_object_iterate(
+				    vsocks, &vit, true)) != NULL) {
+					struct ort_vsock_claim *vc =
+					    &svc->cap_vsock[svc->ncap_vsock];
+					const char *dir;
+					memset(vc, 0, sizeof(*vc));
+					vc->cid = VSOCK_CID_ANY;
+					vc->direction = ORT_NET_DIR_BIND;
+					vv = ucl_object_lookup(velem, "port");
+					if (vv == NULL)
+						vv = ucl_object_lookup(velem, "ports");
+					if (parse_vsock_ports(vv, &vc->port_min,
+					    &vc->port_max) != 0)
+						continue;
+					vv = ucl_object_lookup(velem, "cid");
+					if (vv != NULL && ucl_object_type(vv) == UCL_INT) {
+						int64_t cid = ucl_object_toint(vv);
+						if (cid < 0)
+							continue;
+						vc->cid = (uint64_t)cid;
+					}
+					vv = ucl_object_lookup(velem, "direction");
+					if (vv != NULL) {
+						dir = ucl_object_tostring(vv);
+						if (strcmp(dir, "bind") == 0)
+							vc->direction = ORT_NET_DIR_BIND;
+						else if (strcmp(dir, "connect") == 0)
+							vc->direction = ORT_NET_DIR_CONNECT;
+						else if (strcmp(dir, "any") == 0 ||
+						    strcmp(dir, "*") == 0)
+							vc->direction = ORT_NET_DIR_ANY;
+						else
+							continue;
+					}
+					svc->ncap_vsock++;
+				}
+			}
+
+			parse_string_array_n(caps, "services", svc->cap_services,
+			    sizeof(svc->cap_services[0]),
+			    CAPBUNDLE_MAX_CAP_SERVICES, &svc->ncap_services);
 		}
 	}
 
@@ -732,7 +1381,7 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 		return (-1);
 	}
 
-	/* Stop timeout / max failures — clamp to same ranges as manifest.c */
+	/* Schema validation above guarantees both lifecycle ranges. */
 	v = ucl_object_lookup(root, "stop_timeout");
 	if (v != NULL && ucl_object_type(v) == UCL_INT) {
 		int64_t t = ucl_object_toint(v);
@@ -754,6 +1403,29 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 	} else
 		svc->max_failures = 10;
 
+	/* Every declared capability must survive detailed parsing. */
+	{
+		const ucl_object_t *caps = ucl_object_lookup(root, "capabilities");
+#define CHECK_CAP_COUNT(key, field) do { \
+		v = caps != NULL ? ucl_object_lookup(caps, (key)) : NULL; \
+		if (v != NULL && svc->field != ucl_array_size(v)) \
+			goto malformed_capability; \
+} while (0)
+		CHECK_CAP_COUNT("paths", ncap_paths);
+		CHECK_CAP_COUNT("files", ncap_files);
+		CHECK_CAP_COUNT("network", ncap_net);
+		CHECK_CAP_COUNT("jails", ncap_jail);
+		CHECK_CAP_COUNT("vsock", ncap_vsock);
+		CHECK_CAP_COUNT("services", ncap_services);
+#undef CHECK_CAP_COUNT
+	}
+
 	ucl_object_unref(root);
 	return (0);
+
+malformed_capability:
+	if (errbuf != NULL)
+		snprintf(errbuf, errlen, "%s: malformed capability entry", path);
+	ucl_object_unref(root);
+	return (-1);
 }

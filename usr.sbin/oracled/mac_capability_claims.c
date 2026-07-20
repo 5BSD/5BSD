@@ -161,6 +161,22 @@ mac_capability_claim_jail(const struct oracled_jail_claim *jc)
 	return (0);
 }
 
+int
+mac_capability_claim_vsock(const struct ort_vsock_claim *vc)
+{
+	struct fi_vsock_request req;
+	struct fi_reply reply;
+
+	memset(&req, 0, sizeof(req));
+	req.op = FI_OP_CLAIM_VSOCK;
+	req.cid = vc->cid;
+	req.port_min = vc->port_min;
+	req.port_max = vc->port_max;
+	req.direction = vc->direction;
+	return (mac_capability_do_call(mac_capability_isolation_fd, &req,
+	    sizeof(req), &reply, sizeof(reply)));
+}
+
 /*
  * Release a single vnode claim via the isolation service.
  */
@@ -199,6 +215,22 @@ mac_capability_release_path(const char *path)
 	syslog(LOG_INFO, "isolation: released %s", path);
 	ORACLED_PROBE_CLAIM_PATH_RELEASE(path);
 	return (0);
+}
+
+int
+mac_capability_release_vsock(const struct ort_vsock_claim *vc)
+{
+	struct fi_vsock_request req;
+	struct fi_reply reply;
+
+	memset(&req, 0, sizeof(req));
+	req.op = FI_OP_RELEASE_VSOCK;
+	req.cid = vc->cid;
+	req.port_min = vc->port_min;
+	req.port_max = vc->port_max;
+	req.direction = vc->direction;
+	return (mac_capability_do_call(mac_capability_isolation_fd, &req,
+	    sizeof(req), &reply, sizeof(reply)));
 }
 
 /*

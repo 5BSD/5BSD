@@ -7,6 +7,8 @@
 # channel protocol works, and bootstrap restart logic is sound.
 #
 
+. "$(atf_get_srcdir)/capd_test_harness.sh"
+
 daemon_pid=
 pidfile=
 conffile=
@@ -15,167 +17,55 @@ logfile=
 serviced_bin=
 serviced_src=
 disable_signal_shields=false
+shield_helper=
 
 prepare_paths()
 {
-	pidfile="$(pwd)/oracled.pid"
-	conffile="$(pwd)/oracled.conf"
-	sockpath="$(pwd)/oracled.sock"
-	logfile="$(pwd)/oracled.log"
+	capd_paths_init
+	pidfile=$CAPD_PIDFILE
+	conffile=$CAPD_CONFIG
+	sockpath=$CAPD_ORACLE_SOCKET
+	logfile=$CAPD_LOG
 }
 
-require_cc()
+# Oracle opens these mandatory capability services during initialization,
+# before a test-specific mock serviced process is started.  Keep the complete
+# prerequisite set in ATF metadata so Kyua loads it before each test body.
+require_oracle_stack_kmods()
 {
-	if ! command -v cc >/dev/null 2>&1; then
-		atf_skip "cc not available"
-	fi
+	capd_require_stack_kmods
 }
 
 build_mock_serviced()
 {
-	require_cc
-	serviced_src="$(pwd)/mock_serviced.c"
-	serviced_bin="$(pwd)/mock_serviced"
-	cat > "$serviced_src" <<'CEOF'
-#include <sys/types.h>
-#include <sys/event.h>
+	serviced_src=
+	serviced_bin="$(atf_get_srcdir)/capd_bootstrap_fixture"
+	if [ ! -x "$serviced_bin" ]; then
+		atf_fail "bootstrap fixture not found: $serviced_bin"
+	fi
+}
 
-#include <errno.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <syslog.h>
-#include <unistd.h>
-
-#include <dev/mac_capability/mac_capability_ioctl.h>
-
-/* Inline protocol definitions to avoid build dependency. */
-#define ORACLE_OP_READY  6
-#define ORACLE_OP_PING   7
-
-struct oracle_req_hdr {
-	uint32_t op;
-};
-
-struct oracle_reply {
-	int32_t status;
-};
-
-static int
-send_op(int channel_fd, uint32_t op)
+find_shield_helper()
 {
-	struct mac_capability_sendmsg_args sa;
-	struct mac_capability_recvmsg_args ra;
-	struct oracle_req_hdr req;
-	struct oracle_reply rpl;
+	local candidate srcdir
 
-	memset(&req, 0, sizeof(req));
-	req.op = op;
-
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = &req;
-	sa.payload_len = sizeof(req);
-	sa.reply_token = op;
-
-	if (ioctl(channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1)
-		return (-1);
-
-	memset(&ra, 0, sizeof(ra));
-	ra.payload = &rpl;
-	ra.payload_len = sizeof(rpl);
-
-	if (ioctl(channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1)
-		return (-1);
-
-	return (rpl.status);
+	if [ -n "$shield_helper" ] && [ -x "$shield_helper" ]; then
+		return 0
+	fi
+	srcdir=$(atf_get_srcdir)
+	for candidate in \
+	    "${CAPD_SHIELD_HELPER:-}" \
+	    "${srcdir}/mac_capability_shield_helper" \
+	    "/usr/tests/sys/mac_capability/mac_capability_shield_helper" \
+	    "$(command -v mac_capability_shield_helper 2>/dev/null)"
+	do
+		if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+			shield_helper=$candidate
+			return 0
+		fi
+	done
+	atf_fail "mac_capability_shield_helper is unavailable"
 }
-
-int
-main(void)
-{
-	const char *fd_str, *mode = NULL;
-	int channel_fd;
-	FILE *out;
-
-	openlog("mock_serviced", LOG_PID, LOG_DAEMON);
-
-	fd_str = getenv("ORACLED_CHANNEL_FD");
-	if (fd_str == NULL) {
-		syslog(LOG_ERR, "ORACLED_CHANNEL_FD not set");
-		return (1);
-	}
-	channel_fd = atoi(fd_str);
-
-	/*
-	 * Read mode from a file (env vars don't survive the
-	 * explicit execve environment in bootstrap_child_exec).
-	 */
-	{
-		FILE *mf = fopen("mock-mode", "r");
-		static char mbuf[64];
-		if (mf != NULL) {
-			if (fgets(mbuf, sizeof(mbuf), mf) != NULL) {
-				size_t len = strlen(mbuf);
-				if (len > 0 && mbuf[len-1] == '\n')
-					mbuf[len-1] = '\0';
-				mode = mbuf;
-			}
-			fclose(mf);
-		}
-	}
-	if (mode == NULL || mode[0] == '\0')
-		mode = "ready-then-sleep";
-
-	/* Write a marker file so tests can detect we started. */
-	out = fopen("serviced-started.out", "w");
-	if (out != NULL) {
-		fprintf(out, "pid=%d\nchannel_fd=%d\nmode=%s\n",
-		    getpid(), channel_fd, mode);
-		fclose(out);
-	}
-
-	if (strcmp(mode, "ready-then-sleep") == 0) {
-		if (send_op(channel_fd, ORACLE_OP_READY) != 0)
-			syslog(LOG_WARNING, "READY failed");
-
-		/* Sleep until killed. */
-		while (1)
-			sleep(60);
-	}
-
-	if (strcmp(mode, "crash-immediately") == 0) {
-		return (1);
-	}
-
-	if (strcmp(mode, "ping-then-sleep") == 0) {
-		if (send_op(channel_fd, ORACLE_OP_PING) != 0) {
-			syslog(LOG_ERR, "PING failed");
-			return (1);
-		}
-		out = fopen("serviced-ping-ok.out", "w");
-		if (out != NULL) {
-			fprintf(out, "ok\n");
-			fclose(out);
-		}
-		while (1)
-			sleep(60);
-	}
-
-	if (strcmp(mode, "close-channel-then-sleep") == 0) {
-		close(channel_fd);
-		while (1)
-			sleep(60);
-	}
-
-	syslog(LOG_ERR, "unknown mode: %s", mode);
-	return (1);
-}
-CEOF
-	atf_check -s exit:0 cc -Wall -Wextra -I/usr/src/sys \
-	    -o "$serviced_bin" "$serviced_src"
-}
-
 write_config()
 {
 	cat > "$conffile" <<EOF
@@ -200,19 +90,10 @@ start_oracled()
 	prepare_paths
 	mkdir -p "$(pwd)/serviced.d"
 	write_config
-
-	oracled -d -f "$conffile" >"$logfile" 2>&1 &
-	daemon_pid=$!
-
-	i=0
-	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ ! -S "$sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "oracled did not create control socket"
-	fi
+	capd_find_guardian
+	capd_launch_oracle
+	daemon_pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status |
+	    sed -n 's/^running pid=//p')
 }
 
 wait_for_file()
@@ -227,59 +108,63 @@ wait_for_file()
 	test -s "$path"
 }
 
-stop_oracled()
+wait_for_log()
 {
-	local ctlpath i pidpath target
-
-	target=$daemon_pid
-	pidpath=${pidfile:-"$(pwd)/oracled.pid"}
-	ctlpath=${sockpath:-"$(pwd)/oracled.sock"}
-	if [ -z "$target" ] && [ -r "$pidpath" ]; then
-		read -r target < "$pidpath" || target=
-	fi
-	if [ -S "$ctlpath" ] && command -v oraclectl >/dev/null 2>&1; then
-		oraclectl -s "$ctlpath" shutdown >/dev/null 2>&1 || true
-	fi
-	case "$target" in
-	''|*[!0-9]*)
-		return
-		;;
-	esac
-
-	# This pidfile lives in ATF's private work directory.  Avoid ps(1)
-	# validation because capability isolation may hide process metadata.
-	if [ ! -S "$ctlpath" ]; then
-		kill -TERM "$target" 2>/dev/null || true
-	fi
+	local pattern i
+	pattern="$1"
 	i=0
-	while kill -0 "$target" 2>/dev/null && [ "$i" -lt 350 ]; do
+	while ! grep -q "$pattern" "$logfile" 2>/dev/null &&
+	    [ "$i" -lt 100 ]; do
 		i=$((i + 1))
 		sleep 0.1
 	done
-	if kill -0 "$target" 2>/dev/null; then
-		kill -KILL "$target" 2>/dev/null || true
-		i=0
-		while kill -0 "$target" 2>/dev/null && [ "$i" -lt 50 ]; do
-			i=$((i + 1))
-			sleep 0.1
-		done
+	grep -q "$pattern" "$logfile" 2>/dev/null
+}
+
+wait_for_authenticated_shutdown()
+{
+	if ! capd_wait_guardian_exit 100; then
+		capd_dump_diagnostics
+		atf_fail "Oracle did not exit after authenticated shutdown"
 	fi
-	wait "$target" 2>/dev/null || true
+	capd_close_lease
+	if [ -n "$capd_guardian_pid" ]; then
+		wait "$capd_guardian_pid" 2>/dev/null ||
+		    atf_fail "guardian reported an unclean Oracle shutdown"
+		capd_guardian_pid=
+	fi
 	daemon_pid=
-	if kill -0 "$target" 2>/dev/null; then
-		echo "test cleanup: Oracle $target did not exit" >&2
-		return 1
-	fi
-	return 0
+}
+
+stop_oracled()
+{
+	local result
+
+	capd_paths_init
+	capd_find_guardian
+	capd_stop_stack
+	result=$?
+	daemon_pid=
+	return "$result"
 }
 
 cleanup_common()
 {
-	stop_oracled
+	local cleanup_status
+
+	cleanup_status=0
+	# ATF invokes cleanup in a new process.  Exiting the body closes its
+	# guardian lease, so the guardian may already be performing the intended
+	# fail-safe shutdown when this graceful request races it.  Cleanup is
+	# successful if the recovery pass proves that no stack remains; tests
+	# concerned with graceful shutdown assert that behavior in their body.
+	stop_oracled || true
+	capd_cleanup_stack || cleanup_status=1
 	sleep 0.2
 	rm -rf oracled.pid oracled.conf serviced.d oracled.sock \
 	    oracled.log mock_serviced mock_serviced.c mock-mode \
 	    serviced-started.out serviced-ping-ok.out
+	return "$cleanup_status"
 }
 
 # -------------------------------------------------------------------
@@ -291,6 +176,7 @@ bootstrap_starts_serviced_head()
 {
 	atf_set "descr" "oracled starts serviced as its child via pdfork"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 bootstrap_starts_serviced_body()
 {
@@ -321,6 +207,7 @@ bootstrap_channel_ping_head()
 {
 	atf_set "descr" "serviced can ping oracled over the channel"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 bootstrap_channel_ping_body()
 {
@@ -342,11 +229,44 @@ bootstrap_channel_ping_cleanup()
 	cleanup_common
 }
 
+atf_test_case control_reload_reaches_serviced cleanup
+control_reload_reaches_serviced_head()
+{
+	atf_set "descr" "authenticated Oracle reload is forwarded to serviced"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+	atf_set "timeout" "60"
+}
+control_reload_reaches_serviced_body()
+{
+	echo "wait-for-reload" > mock-mode
+	build_mock_serviced
+	start_oracled
+
+	if ! wait_for_file serviced-started.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "serviced did not start"
+	fi
+	atf_check -s exit:0 -o match:"reload:" \
+	    oraclectl -s "$sockpath" reload
+	if ! wait_for_file serviced-reload.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "serviced did not receive the forwarded reload"
+	fi
+	atf_check -s exit:0 -o inline:'reloaded\n' cat serviced-reload.out
+}
+control_reload_reaches_serviced_cleanup()
+{
+	rm -f mock-mode serviced-reload.out
+	cleanup_common
+}
+
 atf_test_case bootstrap_channel_loss_kills_serviced cleanup
 bootstrap_channel_loss_kills_serviced_head()
 {
 	atf_set "descr" "loss of the exclusive Oracle channel kills the serviced instance"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 	atf_set "timeout" "60"
 }
 bootstrap_channel_loss_kills_serviced_body()
@@ -357,7 +277,7 @@ bootstrap_channel_loss_kills_serviced_body()
 
 	if ! wait_for_file serviced-started.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "serviced did not start"
+		atf_fail "bootstrap fixture did not start"
 	fi
 
 	i=0
@@ -383,6 +303,7 @@ bootstrap_ready_logged_head()
 {
 	atf_set "descr" "oracled logs when serviced sends READY"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 bootstrap_ready_logged_body()
 {
@@ -394,11 +315,10 @@ bootstrap_ready_logged_body()
 		atf_skip "serviced did not start"
 	fi
 
-	# Give oracled time to process the READY message.
-	sleep 1
-
-	atf_check -s exit:0 -o ignore \
-	    grep "oracle_proto: serviced ready" "$logfile"
+	if ! wait_for_log "oracle_proto: serviced ready"; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "oracled did not process serviced READY"
+	fi
 }
 bootstrap_ready_logged_cleanup()
 {
@@ -410,6 +330,7 @@ bootstrap_restart_on_crash_head()
 {
 	atf_set "descr" "oracled restarts serviced after it crashes"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 bootstrap_restart_on_crash_body()
 {
@@ -418,7 +339,7 @@ bootstrap_restart_on_crash_body()
 	start_oracled
 
 	# Wait for the restart log entry.
-	if ! sh -c "i=0; while ! grep -q 'scheduling restart' '$logfile' && [ \$i -lt 100 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'scheduling restart' '$logfile'"; then
+	if ! wait_for_log "scheduling restart"; then
 		cat "$logfile" 2>/dev/null
 		atf_skip "restart not observed (mac_capability may not be loaded)"
 	fi
@@ -441,6 +362,7 @@ bootstrap_clean_shutdown_head()
 {
 	atf_set "descr" "shutdown stops serviced before oracled exits"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 bootstrap_clean_shutdown_body()
 {
@@ -453,8 +375,7 @@ bootstrap_clean_shutdown_body()
 	fi
 
 	atf_check -s exit:0 -o ignore oraclectl -s "$sockpath" shutdown
-	wait "$daemon_pid" 2>/dev/null || true
-	daemon_pid=
+	wait_for_authenticated_shutdown
 
 	atf_check -s exit:0 -o ignore \
 	    grep "bootstrap: stopping serviced" "$logfile"
@@ -469,15 +390,16 @@ ambient_signals_denied_control_shutdown_allowed_head()
 {
 	atf_set "descr" "foreign ambient signals are denied while control shutdown remains authorized"
 	atf_set "require.user" "root"
-	atf_set "require.kmods" "mac_capability mac_capability_capprotect"
+	require_oracle_stack_kmods
 	atf_set "timeout" "60"
 }
 ambient_signals_denied_control_shutdown_allowed_body()
 {
-	local sig
+	local operation signal_status
 
 	disable_signal_shields=true
 	build_mock_serviced
+	find_shield_helper
 	start_oracled
 
 	if ! wait_for_file serviced-started.out; then
@@ -485,11 +407,27 @@ ambient_signals_denied_control_shutdown_allowed_body()
 		atf_fail "serviced did not start"
 	fi
 
-	# /bin/kill is exec'd with a foreign program nonce.  Exercise the
-	# general signal shield and the SIGKILL/SIGCONT special cases.
-	for sig in 0 HUP INT TERM STOP CONT KILL; do
-		atf_check -s not-exit:0 -e ignore \
-		    /bin/kill "-$sig" "$daemon_pid"
+	# The build-time helper is exec'd from a vnode known to rotate the
+	# program nonce (proved by cap_pro_exec_rotates_nonce).  A system
+	# /bin/kill cannot be used as that proof: depending on its executable
+	# vnode and mount policy, it may not present a distinct nonzero nonce and
+	# therefore is not a reliable foreign observer.  Exercise the general,
+	# SIGKILL, and SIGCONT branches.
+	for operation in signal0 signal sigkill sigcont; do
+		"$shield_helper" "$operation" "$daemon_pid"
+		signal_status=$?
+		case "$signal_status" in
+		0) ;;
+		1)
+			if [ "$operation" = sigcont ]; then
+				atf_fail "foreign same-session SIGCONT bypassed MAC policy; install and boot a kernel containing the p_cansignal MAC veto"
+			fi
+			atf_fail "foreign ambient $operation unexpectedly reached Oracle"
+			;;
+		*)
+			atf_fail "signal helper failed for $operation (status $signal_status)"
+			;;
+		esac
 		atf_check -s exit:0 -o match:"running" \
 		    oraclectl -s "$sockpath" status
 	done
@@ -505,8 +443,7 @@ ambient_signals_denied_control_shutdown_allowed_body()
 	# service(8) uses this authenticated control path, not kill(2).
 	atf_check -s exit:0 -o match:"shutdown initiated" \
 	    oraclectl -s "$sockpath" shutdown
-	wait "$daemon_pid" 2>/dev/null || true
-	daemon_pid=
+	wait_for_authenticated_shutdown
 	atf_check -s exit:0 test ! -e "$pidfile"
 }
 ambient_signals_denied_control_shutdown_allowed_cleanup()
@@ -519,6 +456,7 @@ bootstrap_no_service_manager_head()
 {
 	atf_set "descr" "oracled starts without service_manager if not configured"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 bootstrap_no_service_manager_body()
 {
@@ -536,18 +474,10 @@ control_socket_mode = "0700";
 service_manager = "";
 EOF
 
-	oracled -d -f "$conffile" >"$logfile" 2>&1 &
-	daemon_pid=$!
-
-	i=0
-	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ ! -S "$sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "oracled did not create control socket"
-	fi
+	capd_find_guardian
+	capd_launch_oracle
+	daemon_pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status |
+	    sed -n 's/^running pid=//p')
 
 	# Should log that no service_manager is configured.
 	atf_check -s exit:0 -o ignore \
@@ -565,6 +495,7 @@ atf_init_test_cases()
 {
 	atf_add_test_case bootstrap_starts_serviced
 	atf_add_test_case bootstrap_channel_ping
+	atf_add_test_case control_reload_reaches_serviced
 	atf_add_test_case bootstrap_channel_loss_kills_serviced
 	atf_add_test_case bootstrap_ready_logged
 	atf_add_test_case bootstrap_restart_on_crash

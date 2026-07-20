@@ -14,6 +14,8 @@
 # Requires: root, mac_capability device, cc(1).
 #
 
+. "$(atf_get_srcdir)/capd_test_harness.sh"
+
 # ---------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------
@@ -33,18 +35,8 @@ CTL_SOCK="${WORK}/serviced.sock"
 
 find_serviced()
 {
-	local p
-	for p in \
-	    "$(command -v serviced 2>/dev/null)" \
-	    /usr/libexec/serviced \
-	    /usr/obj/usr/src/arm64.aarch64/usr.sbin/serviced/serviced
-	do
-		if [ -n "$p" ] && [ -x "$p" ]; then
-			serviced_bin="$p"
-			return
-		fi
-	done
-	atf_skip "serviced binary not found"
+	capd_find_serviced
+	serviced_bin=$capd_serviced_bin
 }
 
 find_rebootd()
@@ -65,25 +57,20 @@ find_rebootd()
 
 require_mac_capability()
 {
-	if [ ! -c /dev/mac_capability ]; then
-		atf_skip "mac_capability device not available"
-	fi
-}
-
-require_cc()
-{
-	if ! command -v cc >/dev/null 2>&1; then
-		atf_skip "cc not available"
-	fi
+	capd_require_device
 }
 
 prepare_paths()
 {
-	pidfile="${WORK}/oracled.pid"
-	conffile="${WORK}/oracled.conf"
+	capd_paths_init
+	WORK=$CAPD_WORK
+	APPS_DIR=$CAPD_APPS_SYSTEM
+	CTL_SOCK=$CAPD_SERVICED_SOCKET
+	pidfile=$CAPD_PIDFILE
+	conffile=$CAPD_CONFIG
 	manifestdir="${WORK}/serviced.d"
-	sockpath="${WORK}/oracled.sock"
-	logfile="${WORK}/oracled.log"
+	sockpath=$CAPD_ORACLE_SOCKET
+	logfile=$CAPD_LOG
 	mkdir -p "$manifestdir"
 	mkdir -p "${APPS_DIR}"
 }
@@ -106,28 +93,9 @@ start_stack()
 {
 	prepare_paths
 	write_config
-
-	oracled -d -f "$conffile" >"$logfile" 2>&1 &
-	daemon_pid=$!
-
-	# Wait for oracled control socket.
-	i=0
-	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ ! -S "$sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "oracled did not create control socket"
-	fi
-
-	# Wait for serviced to be ready.
-	i=0
-	while ! grep -q "serviced ready" "$logfile" 2>/dev/null && \
-	    [ "$i" -lt 150 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
+	capd_start_stack
+	daemon_pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status |
+	    sed -n 's/^running pid=//p')
 }
 
 wait_for_file()
@@ -145,16 +113,20 @@ wait_for_file()
 
 stop_stack()
 {
-	if [ -n "$daemon_pid" ]; then
-		kill -TERM "$daemon_pid" 2>/dev/null || true
-		wait "$daemon_pid" 2>/dev/null || true
-	fi
+	local result
+
+	capd_paths_init
+	capd_find_guardian
+	capd_stop_stack
+	result=$?
+	daemon_pid=
+	return "$result"
 }
 
 cleanup_common()
 {
-	stop_stack
-	pkill -9 -f "serviced.d" 2>/dev/null || true
+	stop_stack || return 1
+	capd_cleanup_stack || return 1
 	sleep 0.2
 	rm -rf "${WORK}/oracled.pid" "${WORK}/oracled.conf" \
 	    "${WORK}/serviced.d" "${WORK}/oracled.sock" \
@@ -204,87 +176,9 @@ UCL
 build_rebootd_client()
 {
 	local name="$1"
-	local body="$2"
-
-	cat > "${WORK}/${name}.c" <<CEOF
-#include <sys/types.h>
-#include <sys/reboot.h>
-
-#include <err.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-
-#include <libservice.h>
-
-/* Inline protocol definitions from rebootd_proto.h */
-#define	REBOOT_OP_REBOOT	1
-#define	REBOOT_OP_SHUTDOWN	2
-#define	REBOOT_OP_STATUS	3
-
-#define	REBOOT_STATUS_OK	0
-#define	REBOOT_STATUS_ERR	1
-#define	REBOOT_STATUS_PERM	3
-#define	REBOOT_STATUS_PENDING	4
-
-struct reboot_req {
-	uint32_t	op;
-	uint32_t	flags;
-} __packed;
-
-struct reboot_reply {
-	int32_t		status;
-	uint32_t	_pad;
-} __packed;
-
-int
-main(void)
-{
-	const char *outpath;
-	int peer_fd;
-	FILE *outfile;
-
-	outpath = getenv("TEST_OUTPUT");
-	if (outpath == NULL)
-		errx(1, "TEST_OUTPUT not set");
-
-	if (service_init() == -1)
-		errx(1, "service_init");
-
-	if (service_ready() == -1)
-		errx(1, "service_ready");
-
-	peer_fd = service_lookup("org.5bsd.system.reboot");
-	if (peer_fd == -1)
-		errx(1, "service_lookup");
-
-	outfile = fopen(outpath, "w");
-	if (outfile == NULL)
-		err(1, "fopen %s", outpath);
-
-	{
-		${body}
-	}
-
-	fclose(outfile);
-
-	/* Keep process alive so serviced does not restart us. */
-	for (;;)
-		sleep(60);
-
-	return (0);
+	cp "$(atf_get_srcdir)/capd_protocol_fixture" "${WORK}/${name}"
+	chmod 755 "${WORK}/${name}"
 }
-CEOF
-
-	cc -o "${WORK}/${name}" "${WORK}/${name}.c" \
-	    -I/usr/src/lib/libservice \
-	    -L/usr/obj/usr/src/arm64.aarch64/lib/libservice \
-	    -lservice 2>&1 || \
-	    atf_fail "failed to compile ${name}"
-}
-
 # ---------------------------------------------------------------
 # Create a serviced manifest for a test client binary.
 #
@@ -292,11 +186,20 @@ CEOF
 # ---------------------------------------------------------------
 create_client_manifest()
 {
-	local label="$1" binary="$2" env_key="$3" env_val="$4"
+	local label="$1" binary="$2" env_key="$3" env_val="$4" operation
+
+	case "${binary##*/}" in
+	rebootd_status_client) operation=status ;;
+	rebootd_perm_client) operation=reboot ;;
+	rebootd_unknown_client) operation=unknown ;;
+	rebootd_flags_client) operation=invalid-flags ;;
+	*) atf_fail "unknown reboot fixture name: ${binary##*/}" ;;
+	esac
 
 	cat > "${manifestdir}/${label}.ucl" <<EOF
 label = "${label}";
 program = "${binary}";
+arguments = ["reboot", "${operation}", "${env_val}"];
 environment {
     ${env_key} = "${env_val}";
 }
@@ -312,29 +215,12 @@ rebootd_status_head()
 	atf_set "descr" "STATUS op returns REBOOT_STATUS_OK"
 	atf_set "require.user" "root"
 	atf_set "timeout" "60"
+	capd_require_stack_kmods
 }
 rebootd_status_body()
 {
 	require_mac_capability
-	require_cc
-
-	build_rebootd_client "rebootd_status_client" '
-		struct reboot_req req;
-		struct reboot_reply reply;
-
-		memset(&req, 0, sizeof(req));
-		req.op = REBOOT_OP_STATUS;
-		req.flags = 0;
-
-		if (service_send(peer_fd, &req, sizeof(req)) == -1)
-			err(1, "send");
-
-		if (service_recv(peer_fd, &reply, sizeof(reply), NULL) !=
-		    (ssize_t)sizeof(reply))
-			err(1, "recv");
-
-		fprintf(outfile, "%d\n", reply.status);
-	'
+	build_rebootd_client "rebootd_status_client"
 
 	start_stack
 	create_rebootd_bundle
@@ -344,7 +230,7 @@ rebootd_status_body()
 	    "TEST_OUTPUT" "${WORK}/status.out"
 
 	# Reload to pick up rebootd bundle + test client.
-	kill -HUP "$daemon_pid"
+	atf_check -s exit:0 -o ignore oraclectl -s "$sockpath" reload
 
 	if ! wait_for_file "${WORK}/status.out" 20; then
 		cat "$logfile" 2>/dev/null
@@ -360,7 +246,7 @@ rebootd_status_cleanup()
 }
 
 # ---------------------------------------------------------------
-# Test: rebootd_permission_denied — REBOOT op denied by allow file
+# Remaining protocol validation cases.
 # ---------------------------------------------------------------
 atf_test_case rebootd_permission_denied cleanup
 rebootd_permission_denied_head()
@@ -368,50 +254,24 @@ rebootd_permission_denied_head()
 	atf_set "descr" "REBOOT op returns PERM when client not in allow file"
 	atf_set "require.user" "root"
 	atf_set "timeout" "60"
+	capd_require_stack_kmods
 }
 rebootd_permission_denied_body()
 {
 	require_mac_capability
-	require_cc
-
-	build_rebootd_client "rebootd_perm_client" '
-		struct reboot_req req;
-		struct reboot_reply reply;
-
-		memset(&req, 0, sizeof(req));
-		req.op = REBOOT_OP_REBOOT;
-		req.flags = 0;
-
-		if (service_send(peer_fd, &req, sizeof(req)) == -1)
-			err(1, "send");
-
-		if (service_recv(peer_fd, &reply, sizeof(reply), NULL) !=
-		    (ssize_t)sizeof(reply))
-			err(1, "recv");
-
-		fprintf(outfile, "%d\n", reply.status);
-	'
-
-	start_stack
-	create_rebootd_bundle
-
-	# Write an allow file that only permits a label that is NOT ours.
+	build_rebootd_client "rebootd_perm_client"
 	mkdir -p "${WORK}/rebootd_etc"
 	printf "org.5bsd.not.our.service\n" > "${WORK}/rebootd_etc/rebootd.allow"
 	export REBOOTD_ALLOW_FILE="${WORK}/rebootd_etc/rebootd.allow"
-
-	create_client_manifest "test-reboot-perm" \
-	    "${WORK}/rebootd_perm_client" \
+	start_stack
+	create_rebootd_bundle
+	create_client_manifest "test-reboot-perm" "${WORK}/rebootd_perm_client" \
 	    "TEST_OUTPUT" "${WORK}/perm.out"
-
-	kill -HUP "$daemon_pid"
-
+	atf_check -s exit:0 -o ignore oraclectl -s "$sockpath" reload
 	if ! wait_for_file "${WORK}/perm.out" 20; then
 		cat "$logfile" 2>/dev/null
 		atf_fail "test client did not produce output"
 	fi
-
-	# REBOOT_STATUS_PERM == 3
 	atf_check -s exit:0 -o inline:"3\n" cat "${WORK}/perm.out"
 }
 rebootd_permission_denied_cleanup()
@@ -420,54 +280,27 @@ rebootd_permission_denied_cleanup()
 	rm -rf "${WORK}/rebootd_etc"
 }
 
-# ---------------------------------------------------------------
-# Test: rebootd_unknown_op — unknown op returns ERR
-# ---------------------------------------------------------------
 atf_test_case rebootd_unknown_op cleanup
 rebootd_unknown_op_head()
 {
 	atf_set "descr" "Unknown op code returns REBOOT_STATUS_ERR"
 	atf_set "require.user" "root"
 	atf_set "timeout" "60"
+	capd_require_stack_kmods
 }
 rebootd_unknown_op_body()
 {
 	require_mac_capability
-	require_cc
-
-	build_rebootd_client "rebootd_unknown_client" '
-		struct reboot_req req;
-		struct reboot_reply reply;
-
-		memset(&req, 0, sizeof(req));
-		req.op = 99;
-		req.flags = 0;
-
-		if (service_send(peer_fd, &req, sizeof(req)) == -1)
-			err(1, "send");
-
-		if (service_recv(peer_fd, &reply, sizeof(reply), NULL) !=
-		    (ssize_t)sizeof(reply))
-			err(1, "recv");
-
-		fprintf(outfile, "%d\n", reply.status);
-	'
-
+	build_rebootd_client "rebootd_unknown_client"
 	start_stack
 	create_rebootd_bundle
-
 	create_client_manifest "test-reboot-unknown" \
-	    "${WORK}/rebootd_unknown_client" \
-	    "TEST_OUTPUT" "${WORK}/unknown.out"
-
-	kill -HUP "$daemon_pid"
-
+	    "${WORK}/rebootd_unknown_client" "TEST_OUTPUT" "${WORK}/unknown.out"
+	atf_check -s exit:0 -o ignore oraclectl -s "$sockpath" reload
 	if ! wait_for_file "${WORK}/unknown.out" 20; then
 		cat "$logfile" 2>/dev/null
 		atf_fail "test client did not produce output"
 	fi
-
-	# REBOOT_STATUS_ERR == 1
 	atf_check -s exit:0 -o inline:"1\n" cat "${WORK}/unknown.out"
 }
 rebootd_unknown_op_cleanup()
@@ -475,60 +308,30 @@ rebootd_unknown_op_cleanup()
 	cleanup_common
 }
 
-# ---------------------------------------------------------------
-# Test: rebootd_invalid_flags — REBOOT op with bad flags returns ERR
-# ---------------------------------------------------------------
 atf_test_case rebootd_invalid_flags cleanup
 rebootd_invalid_flags_head()
 {
 	atf_set "descr" "REBOOT op with invalid flags returns REBOOT_STATUS_ERR"
 	atf_set "require.user" "root"
 	atf_set "timeout" "60"
+	capd_require_stack_kmods
 }
 rebootd_invalid_flags_body()
 {
 	require_mac_capability
-	require_cc
-
-	build_rebootd_client "rebootd_flags_client" '
-		struct reboot_req req;
-		struct reboot_reply reply;
-
-		memset(&req, 0, sizeof(req));
-		req.op = REBOOT_OP_REBOOT;
-		req.flags = 0xFFFF;	/* Includes bits outside REBOOT_ALLOWED_FLAGS */
-
-		if (service_send(peer_fd, &req, sizeof(req)) == -1)
-			err(1, "send");
-
-		if (service_recv(peer_fd, &reply, sizeof(reply), NULL) !=
-		    (ssize_t)sizeof(reply))
-			err(1, "recv");
-
-		fprintf(outfile, "%d\n", reply.status);
-	'
-
-	start_stack
-	create_rebootd_bundle
-
-	# Client must be in the allow file since flag check is AFTER
-	# the permission check.
+	build_rebootd_client "rebootd_flags_client"
 	mkdir -p "${WORK}/rebootd_etc"
 	printf "test-reboot-flags\n" > "${WORK}/rebootd_etc/rebootd.allow"
 	export REBOOTD_ALLOW_FILE="${WORK}/rebootd_etc/rebootd.allow"
-
-	create_client_manifest "test-reboot-flags" \
-	    "${WORK}/rebootd_flags_client" \
+	start_stack
+	create_rebootd_bundle
+	create_client_manifest "test-reboot-flags" "${WORK}/rebootd_flags_client" \
 	    "TEST_OUTPUT" "${WORK}/flags.out"
-
-	kill -HUP "$daemon_pid"
-
+	atf_check -s exit:0 -o ignore oraclectl -s "$sockpath" reload
 	if ! wait_for_file "${WORK}/flags.out" 20; then
 		cat "$logfile" 2>/dev/null
 		atf_fail "test client did not produce output"
 	fi
-
-	# REBOOT_STATUS_ERR == 1
 	atf_check -s exit:0 -o inline:"1\n" cat "${WORK}/flags.out"
 }
 rebootd_invalid_flags_cleanup()
@@ -537,7 +340,6 @@ rebootd_invalid_flags_cleanup()
 	rm -rf "${WORK}/rebootd_etc"
 }
 
-# ---------------------------------------------------------------
 atf_init_test_cases()
 {
 	atf_add_test_case rebootd_status

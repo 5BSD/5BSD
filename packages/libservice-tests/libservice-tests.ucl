@@ -1,0 +1,6 @@
+comment = "Tests for the 5BSD service runtime library"
+
+desc = <<EOD
+ATF/Kyua descriptor, registration, lookup, and protection tests for
+libservice.
+EOD

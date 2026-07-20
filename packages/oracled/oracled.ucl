@@ -25,13 +25,13 @@
  * SUCH DAMAGE.
  */
 
-comment = "5BSD capability oracle daemon and control utility"
+comment = "5BSD capability oracle daemon"
 
 desc = <<EOD
 oracled is the 5BSD capability oracle daemon.  It mediates dynamic mac_capability
 claim/release between services with reference counting, allowing services to
 negotiate capability access at runtime.
 
-This package provides the oracled(8) daemon and the oraclectl(8) CLI control
-utility.
+This package provides the oracled(8) daemon.  The control utility is packaged
+separately as oraclectl.
 EOD

@@ -7,7 +7,16 @@
 # ATF tests for libcapbundle — bundle parsing, validation, and cycle detection.
 #
 
-. $(atf_get_srcdir)/../../common/subr.sh 2>/dev/null || true
+# Development builds can point the installed ATF program at matching object
+# binaries without tainting the atf-sh interpreter via its parent environment.
+if [ -n "${TEST_BINDIR:-}" ]; then
+	PATH="${TEST_BINDIR}:${PATH}"
+	export PATH
+fi
+if [ -n "${TEST_LIBDIR:-}" ]; then
+	LD_LIBRARY_PATH="${TEST_LIBDIR}"
+	export LD_LIBRARY_PATH
+fi
 
 # Helper: create a minimal valid bundle
 create_bundle() {
@@ -82,7 +91,7 @@ missing_services_dir_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
 	mkdir -p "${TMPDIR}/Bad.cap/bin"
 
-	atf_check -s exit:1 -e match:"invalid bundle" \
+	atf_check -s exit:1 -e match:"etc/ not found" \
 	    servicectl verify "${TMPDIR}/Bad.cap"
 }
 missing_services_dir_cleanup() {
@@ -195,17 +204,29 @@ cross_bundle_cycle_body() {
 	create_bundle_with_requires "B" "org.b" "bd" "org.b.svc" "org.a.svc"
 
 	# Both bundles are valid individually
-	atf_check -s exit:0 servicectl verify "${TMPDIR}/A.cap"
-	atf_check -s exit:0 servicectl verify "${TMPDIR}/B.cap"
+	atf_check -s exit:0 -o ignore servicectl verify "${TMPDIR}/A.cap"
+	atf_check -s exit:0 -o ignore servicectl verify "${TMPDIR}/B.cap"
 
-	# But together they form a cycle — serviced should detect this
-	# at startup.  For now verify the library detects it via the
-	# scan_dir + check_cycles path.
-	# (Full integration test requires running serviced.)
+	# Together they form a cycle and must be rejected.
+	atf_check -s exit:1 -o ignore -e match:"circular dependency" \
+	    servicectl verify "${TMPDIR}/A.cap" "${TMPDIR}/B.cap"
 }
 cross_bundle_cycle_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
 }
+
+atf_test_case duplicate_bundle_ids cleanup
+duplicate_bundle_ids_head() {
+	atf_set "descr" "A loaded bundle set cannot contain duplicate bundle identifiers"
+}
+duplicate_bundle_ids_body() {
+	TMPDIR=$(atf_get_srcdir)/work.$$
+	create_bundle "One" "org.test.duplicate" "oned" "org.test.one"
+	create_bundle "Two" "org.test.duplicate" "twod" "org.test.two"
+	atf_check -s exit:1 -o ignore -e match:"duplicate bundle_id" \
+	    servicectl verify "${TMPDIR}/One.cap" "${TMPDIR}/Two.cap"
+}
+duplicate_bundle_ids_cleanup() { rm -rf "$(atf_get_srcdir)/work.$$"; }
 
 # ---------------------------------------------------------------
 # Test: Multiple services in one bundle
@@ -236,7 +257,7 @@ UCL
 	    servicectl verify "${TMPDIR}/Multi.cap"
 	atf_check -s exit:0 -o match:"org.test.multi.alpha" \
 	    servicectl verify "${TMPDIR}/Multi.cap"
-	atf_check -s exit:0 -o match:"on-demand" \
+	atf_check -s exit:0 -o match:"on_demand: yes" \
 	    servicectl verify "${TMPDIR}/Multi.cap"
 }
 multi_service_bundle_cleanup() {
@@ -357,7 +378,9 @@ program = "filed";
 provides = ["org.test.file.svc"];
 capabilities {
     files = [
-        {path = "/var/log/app.log"; actions = ["write", "create", "append"];},
+        {path = "/var/log/app.log"; actions = ["lookup", "stat", "read",
+          "write", "append", "create", "delete", "rename_from",
+          "rename_to", "link", "exec", "setattr", "truncate", "connect"];},
         {path = "/var/run/app.pid"; actions = "*";},
     ];
 }
@@ -443,7 +466,7 @@ all_system_gates_cleanup() {
 }
 
 # ---------------------------------------------------------------
-# Test: Invalid port value (> 65535) is rejected
+# Test: Invalid port value (> 65535) rejects the bundle
 # ---------------------------------------------------------------
 atf_test_case invalid_port_range cleanup
 invalid_port_range_head() {
@@ -470,22 +493,21 @@ capabilities {
 }
 UCL
 
-	# The invalid port should be skipped (network cap count = 0),
-	# but bundle still valid overall.  Verify it doesn't crash.
-	atf_check -s exit:0 servicectl verify "${TMPDIR}/BadPort.cap"
+	atf_check -s exit:1 -e match:"invalid network port range" \
+	    servicectl verify "${TMPDIR}/BadPort.cap"
 }
 invalid_port_range_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
 }
 
 # ---------------------------------------------------------------
-# Test: stop_timeout clamping
+# Test: out-of-range stop_timeout rejection
 # ---------------------------------------------------------------
-atf_test_case stop_timeout_clamp cleanup
-stop_timeout_clamp_head() {
-	atf_set "descr" "stop_timeout clamped to 1-300 range"
+atf_test_case stop_timeout_rejected cleanup
+stop_timeout_rejected_head() {
+	atf_set "descr" "stop_timeout outside 1-300 rejects the manifest"
 }
-stop_timeout_clamp_body() {
+stop_timeout_rejected_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
 
 	dir=$(create_bundle "Clamp" "org.test.clamp" "clampd" "org.test.clamp.svc")
@@ -495,11 +517,11 @@ stop_timeout = 9999;
 max_failures = 0;
 UCL
 
-	# Should parse without error (values get clamped)
-	atf_check -s exit:0 -o match:"Verification: PASSED" \
+	# Security-relevant lifecycle values are rejected, not rewritten.
+	atf_check -s exit:1 -e match:"stop_timeout must be between" \
 	    servicectl verify "${dir}"
 }
-stop_timeout_clamp_cleanup() {
+stop_timeout_rejected_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
 }
 
@@ -521,8 +543,7 @@ version = "1.0";
 provides = ["org.test.noprog.svc"];
 UCL
 
-	# Should fail — no valid services found (parse error on missing program)
-	atf_check -s exit:1 -e match:"no valid services" \
+	atf_check -s exit:1 -e match:"missing 'program' field" \
 	    servicectl verify "${TMPDIR}/NoProg.cap"
 }
 missing_program_cleanup() {
@@ -611,9 +632,7 @@ capabilities {
 }
 UCL
 
-	# Should parse successfully but skip the relative path.
-	# Only /valid/path should be in the result.
-	atf_check -s exit:0 -o match:"Verification: PASSED" \
+	atf_check -s exit:1 -e match:"invalid capabilities.paths" \
 	    servicectl verify "${TMPDIR}/Rel.cap"
 }
 relative_cap_path_cleanup() {
@@ -625,7 +644,7 @@ relative_cap_path_cleanup() {
 # ---------------------------------------------------------------
 atf_test_case unknown_gate_name cleanup
 unknown_gate_name_head() {
-	atf_set "descr" "Unknown system gate logged but does not block parsing"
+	atf_set "descr" "Unknown system gate rejects the manifest"
 }
 unknown_gate_name_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
@@ -646,8 +665,7 @@ capabilities {
 }
 UCL
 
-	# Parsing succeeds; the unknown gate is simply ignored.
-	atf_check -s exit:0 -o match:"Verification: PASSED" \
+	atf_check -s exit:1 -e match:"unknown system gate" \
 	    servicectl verify "${TMPDIR}/UGate.cap"
 }
 unknown_gate_name_cleanup() {
@@ -659,7 +677,7 @@ unknown_gate_name_cleanup() {
 # ---------------------------------------------------------------
 atf_test_case empty_jail_name cleanup
 empty_jail_name_head() {
-	atf_set "descr" "Jail with empty name string is skipped"
+	atf_set "descr" "Jail with empty name string rejects the manifest"
 }
 empty_jail_name_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
@@ -683,11 +701,166 @@ capabilities {
 }
 UCL
 
-	# Should succeed — empty string is skipped, validjail kept.
-	atf_check -s exit:0 -o match:"Verification: PASSED" \
+	atf_check -s exit:1 -e match:"invalid jail name" \
 	    servicectl verify "${TMPDIR}/EJail.cap"
 }
 empty_jail_name_cleanup() {
+	rm -rf "$(atf_get_srcdir)/work.$$"
+}
+
+atf_test_case arguments_environment_and_vsock cleanup
+arguments_environment_and_vsock_head() {
+	atf_set "descr" "Parse literal arguments, environment, and VSOCK capabilities"
+}
+arguments_environment_and_vsock_body() {
+	TMPDIR=$(atf_get_srcdir)/work.$$
+	dir=$(create_bundle "Exec" "org.test.exec" "execd" "org.test.exec.svc")
+	cat >> "${dir}/etc/execd.ucl" <<'UCL'
+arguments = ["--literal value", "--flag"];
+environment { APP_MODE = "test"; EMPTY = ""; }
+capabilities {
+	services = ["mount", "node", "accounting", "identity"];
+    vsock = [
+        { cid = "any"; ports = "1024-2048"; direction = "connect"; },
+        { cid = 7; port = 9000; direction = "bind"; },
+    ];
+}
+UCL
+	atf_check -s exit:0 -o match:'arguments: \[--literal value\] \[--flag\]' \
+	    -o match:'environment:.*\[APP_MODE=test\].*\[EMPTY=\]' \
+	    -o match:'capabilities: paths=0 files=0 network=0 jails=0 vsock=2 services=4 system=0x0' \
+	    -o match:'service: mount' -o match:'service: node' \
+	    -o match:'service: accounting' \
+	    -o match:'service: identity' \
+	    -o match:'vsock: cid=7 ports=9000-9000 direction=bind' \
+	    servicectl verify "${dir}"
+}
+arguments_environment_and_vsock_cleanup() { rm -rf "$(atf_get_srcdir)/work.$$"; }
+
+atf_test_case unknown_key_rejected cleanup
+unknown_key_rejected_head() { atf_set "descr" "Reject misspelled manifest keys"; }
+unknown_key_rejected_body() {
+	TMPDIR=$(atf_get_srcdir)/work.$$
+	dir=$(create_bundle "Typo" "org.test.typo" "typod" "org.test.typo.svc")
+	cat >> "${dir}/etc/typod.ucl" <<'UCL'
+restert = "always";
+UCL
+	atf_check -s exit:1 -e match:"unknown key 'restert'" servicectl verify "${dir}"
+}
+unknown_key_rejected_cleanup() { rm -rf "$(atf_get_srcdir)/work.$$"; }
+
+atf_test_case reserved_environment_rejected cleanup
+reserved_environment_rejected_head() {
+	atf_set "descr" "Manifest cannot replace serviced protocol environment"
+}
+reserved_environment_rejected_body() {
+	TMPDIR=$(atf_get_srcdir)/work.$$
+	dir=$(create_bundle "Env" "org.test.env" "envd" "org.test.env.svc")
+	cat >> "${dir}/etc/envd.ucl" <<'UCL'
+environment { ORACLED_CHANNEL_FD = "99"; }
+UCL
+	atf_check -s exit:1 -e match:"invalid environment entry" servicectl verify "${dir}"
+}
+reserved_environment_rejected_cleanup() { rm -rf "$(atf_get_srcdir)/work.$$"; }
+
+atf_test_case malformed_schema_matrix cleanup
+malformed_schema_matrix_head() {
+	atf_set "descr" "Every typed manifest surface rejects malformed values"
+}
+malformed_schema_matrix_body() {
+	TMPDIR=$(atf_get_srcdir)/work.$$
+	mkdir -p "${TMPDIR}"
+
+	assert_bad() {
+		name="$1"
+		expect="$2"
+		snippet="$3"
+		dir=$(create_bundle "$name" "org.test.$name" "${name}d" \
+		    "org.test.$name.svc")
+		printf '%s\n' "$snippet" >> "${dir}/etc/${name}d.ucl"
+		atf_check -s exit:1 -o ignore -e match:"$expect" \
+		    servicectl verify "$dir"
+	}
+
+	assert_bad args "arguments must be an array" 'arguments = "--shell words";'
+	assert_bad envtype "environment must be an object" 'environment = ["A=B"];'
+	assert_bad envname "invalid environment name" 'environment { "9BAD" = "x"; }'
+	assert_bad kmodname "invalid kernel module name" \
+	    'kmod_requires = ["../evil.ko"];'
+	assert_bad captype "capabilities must be an object" \
+	    'capabilities = "all";'
+	assert_bad capkey "unknown key 'sockets'" 'capabilities { sockets = []; }'
+	assert_bad netentry "capabilities.network entries must be objects" \
+	    'capabilities { network = ["all"]; }'
+	assert_bad netdomain "network domain must be a string" \
+	    'capabilities { network = [{ domain = 4; }]; }'
+	assert_bad netproto "invalid network protocol" \
+	    'capabilities { network = [{ protocol = "bogus"; }]; }'
+	assert_bad netmismatch "network protocol is incompatible" \
+	    'capabilities { network = [{ domain = "bluetooth"; protocol = "tcp"; }]; }'
+	assert_bad netdir "invalid network direction" \
+	    'capabilities { network = [{ direction = "listen"; }]; }'
+	assert_bad netaddr "invalid network address" \
+	    'capabilities { network = [{ address = "not-an-address"; }]; }'
+	assert_bad netprefix "network prefix must be an integer" \
+	    'capabilities { network = [{ prefix = "24"; }]; }'
+	assert_bad netprefixnoaddr "network prefix requires a specific address" \
+	    'capabilities { network = [{ domain = "inet"; prefix = 24; }]; }'
+	assert_bad netanyaddr "specific network address requires an explicit domain" \
+	    'capabilities { network = [{ domain = "any"; address = "2001:db8::/32"; }]; }'
+	assert_bad fileaction "invalid capabilities.files entry" \
+	    'capabilities { files = [{ path = "/tmp/x"; actions = ["bogus"]; }]; }'
+	assert_bad jailselector "jail entry requires jid or name" \
+	    'capabilities { jails = [{ actions = ["get"]; }]; }'
+	assert_bad vsockentry "capabilities.vsock entries must be objects" \
+	    'capabilities { vsock = [7]; }'
+	assert_bad vsockcid "invalid vsock cid" \
+	    'capabilities { vsock = [{ cid = -1; port = 7; }]; }'
+	assert_bad vsockdir "invalid vsock direction" \
+	    'capabilities { vsock = [{ direction = "listen"; }]; }'
+	assert_bad capservice "unknown capability service" \
+	    'capabilities { services = ["channel"]; }'
+	assert_bad dupservice "duplicate capability service" \
+	    'capabilities { services = ["mount", "mount"]; }'
+}
+malformed_schema_matrix_cleanup() { rm -rf "$(atf_get_srcdir)/work.$$"; }
+
+atf_test_case symlink_rejected cleanup
+symlink_rejected_head() {
+	atf_set "descr" "Executable policy bundles reject symlinks"
+}
+symlink_rejected_body() {
+	TMPDIR=$(atf_get_srcdir)/work.$$
+	dir=$(create_bundle "Link" "org.test.link" "linkd" "org.test.link.svc")
+	ln -s bin/linkd "${dir}/alias"
+	atf_check -s exit:1 -o ignore -e match:'symlink or non-regular object' \
+	    servicectl verify "$dir"
+}
+symlink_rejected_cleanup() { rm -rf "$(atf_get_srcdir)/work.$$"; }
+
+atf_test_case excess_service_manifests_rejected cleanup
+excess_service_manifests_rejected_head() {
+	atf_set "descr" "A bundle cannot silently ignore service manifests past its limit"
+}
+excess_service_manifests_rejected_body() {
+	TMPDIR=$(atf_get_srcdir)/work.$$
+	dir="${TMPDIR}/Large.cap"
+	mkdir -p "$dir/etc" "$dir/bin"
+	i=0
+	while [ "$i" -lt 33 ]; do
+		printf '#!/bin/sh\nexit 0\n' > "$dir/bin/svc$i"
+		chmod 755 "$dir/bin/svc$i"
+		cat > "$dir/etc/svc$i.ucl" <<UCL
+bundle_id = "org.test.large";
+program = "svc$i";
+provides = ["org.test.large.svc$i"];
+UCL
+		i=$((i + 1))
+	done
+	atf_check -s exit:1 -o ignore -e match:"more than 32 service manifests" \
+	    servicectl verify "$dir"
+}
+excess_service_manifests_rejected_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
 }
 
@@ -699,6 +872,7 @@ atf_init_test_cases() {
 	atf_add_test_case duplicate_provides
 	atf_add_test_case self_require
 	atf_add_test_case cross_bundle_cycle
+	atf_add_test_case duplicate_bundle_ids
 	atf_add_test_case multi_service_bundle
 	atf_add_test_case capabilities_parsing
 	atf_add_test_case on_demand_flag
@@ -707,11 +881,17 @@ atf_init_test_cases() {
 	atf_add_test_case jail_capabilities
 	atf_add_test_case all_system_gates
 	atf_add_test_case invalid_port_range
-	atf_add_test_case stop_timeout_clamp
+	atf_add_test_case stop_timeout_rejected
 	atf_add_test_case missing_program
 	atf_add_test_case missing_provides
 	atf_add_test_case missing_bundle_id
 	atf_add_test_case relative_cap_path
 	atf_add_test_case unknown_gate_name
 	atf_add_test_case empty_jail_name
+	atf_add_test_case arguments_environment_and_vsock
+	atf_add_test_case unknown_key_rejected
+	atf_add_test_case reserved_environment_rejected
+	atf_add_test_case malformed_schema_matrix
+	atf_add_test_case symlink_rejected
+	atf_add_test_case excess_service_manifests_rejected
 }

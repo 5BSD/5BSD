@@ -4,10 +4,13 @@
 # Tests for servicectl(8) and serviced's control socket.
 #
 
+. "$(atf_get_srcdir)/capd_test_harness.sh"
+
 daemon_pid=
 pidfile=
 conffile=
 manifestdir=
+user_manifestdir=
 sockpath=
 sctl_sockpath=
 logfile=
@@ -15,36 +18,24 @@ serviced_bin=
 
 find_serviced()
 {
-	local p _arch
-	_arch=$(uname -p)
-	for p in \
-	    "$(command -v serviced 2>/dev/null)" \
-	    /usr/libexec/serviced \
-	    /usr/obj/usr/src/${_arch}.${_arch}/usr.sbin/serviced/serviced
-	do
-		if [ -n "$p" ] && [ -x "$p" ]; then
-			serviced_bin="$p"
-			return
-		fi
-	done
-	atf_skip "serviced binary not found"
+	capd_find_serviced
+	serviced_bin=$capd_serviced_bin
 }
 
-require_cc()
+require_oracle_stack_kmods()
 {
-	if ! command -v cc >/dev/null 2>&1; then
-		atf_skip "cc not available"
-	fi
+	capd_require_stack_kmods
 }
 
 find_servicectl()
 {
-	local p _arch
+	local p _machine _arch
+	_machine=$(uname -m)
 	_arch=$(uname -p)
 	for p in \
-	    "$(command -v servicectl 2>/dev/null)" \
+	    /usr/obj/usr/src/${_machine}.${_arch}/usr.sbin/servicectl/servicectl \
 	    /usr/sbin/servicectl \
-	    /usr/obj/usr/src/${_arch}.${_arch}/usr.sbin/servicectl/servicectl
+	    "$(command -v servicectl 2>/dev/null)"
 	do
 		if [ -n "$p" ] && [ -x "$p" ]; then
 			servicectl_bin="$p"
@@ -56,13 +47,17 @@ find_servicectl()
 
 prepare_paths()
 {
-	pidfile="$(pwd)/oracled.pid"
-	conffile="$(pwd)/oracled.conf"
-	manifestdir="$(pwd)/serviced.d"
-	sockpath="$(pwd)/oracled.sock"
-	sctl_sockpath="$(pwd)/serviced.sock"
-	logfile="$(pwd)/oracled.log"
-	mkdir -p "$manifestdir"
+	capd_paths_init
+	pidfile=$CAPD_PIDFILE
+	conffile=$CAPD_CONFIG
+	manifestdir=$CAPD_APPS_SYSTEM
+	user_manifestdir=$CAPD_APPS_USER
+	sockpath=$CAPD_ORACLE_SOCKET
+	sctl_sockpath=$CAPD_SERVICED_SOCKET
+	logfile=$CAPD_LOG
+	mkdir -p "$manifestdir" "$user_manifestdir"
+	export SERVICED_BUNDLE_DIR_SYSTEM="$manifestdir"
+	export SERVICED_BUNDLE_DIR_USER="$user_manifestdir"
 }
 
 write_config()
@@ -81,26 +76,9 @@ start_stack()
 {
 	prepare_paths
 	write_config
-
-	oracled -d -f "$conffile" >"$logfile" 2>&1 &
-	daemon_pid=$!
-
-	i=0
-	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ ! -S "$sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "oracled did not create control socket"
-	fi
-
-	# Wait for serviced to be ready.
-	i=0
-	while ! grep -q "serviced ready" "$logfile" 2>/dev/null && [ "$i" -lt 150 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
+	capd_start_stack
+	daemon_pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status |
+	    sed -n 's/^running pid=//p')
 
 	# Wait for serviced control socket.
 	i=0
@@ -108,21 +86,30 @@ start_stack()
 		i=$((i + 1))
 		sleep 0.1
 	done
+	if [ ! -S "$sctl_sockpath" ]; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "serviced did not create its control socket"
+	fi
 }
 
 stop_stack()
 {
-	if [ -n "$daemon_pid" ]; then
-		kill -TERM "$daemon_pid" 2>/dev/null || true
-		wait "$daemon_pid" 2>/dev/null || true
-	fi
+	local result
+
+	capd_paths_init
+	capd_find_guardian
+	capd_stop_stack
+	result=$?
+	daemon_pid=
+	return "$result"
 }
 
 cleanup_common()
 {
-	stop_stack
+	stop_stack || return 1
+	capd_cleanup_stack || return 1
 	sleep 0.2
-	rm -rf oracled.pid oracled.conf serviced.d oracled.sock \
+	rm -rf oracled.pid oracled.conf Capabilities oracled.sock \
 	    serviced.sock oracled.log *.out *.sh
 }
 
@@ -144,6 +131,7 @@ servicectl_status_head()
 {
 	atf_set "descr" "servicectl status reports serviced state"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 servicectl_status_body()
 {
@@ -172,19 +160,22 @@ servicectl_services_lists_head()
 {
 	atf_set "descr" "servicectl services lists loaded services"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 servicectl_services_lists_body()
 {
 	find_servicectl
 	prepare_paths
 
-	write_executable "$(pwd)/long-svc.sh" \
+	mkdir -p "$manifestdir/long-svc.cap/etc" "$manifestdir/long-svc.cap/bin"
+	write_executable "$manifestdir/long-svc.cap/bin/long-svc" \
 	    '#!/bin/sh' \
 	    'echo $$ > long-svc.pid' \
 	    'sleep 60'
-	cat > "$manifestdir/long-svc.ucl" <<EOF
-label = "long-svc";
-program = "$(pwd)/long-svc.sh";
+	cat > "$manifestdir/long-svc.cap/etc/long-svc.ucl" <<EOF
+bundle_id = "org.test.long-svc";
+program = "long-svc";
+provides = ["org.test.long-svc"];
 EOF
 
 	start_stack
@@ -221,6 +212,7 @@ servicectl_reload_head()
 {
 	atf_set "descr" "servicectl reload triggers manifest reload"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 servicectl_reload_body()
 {
@@ -233,13 +225,15 @@ servicectl_reload_body()
 	fi
 
 	# Add a manifest after startup.
-	write_executable "$(pwd)/reload-svc.sh" \
+	mkdir -p "$manifestdir/reload-svc.cap/etc" "$manifestdir/reload-svc.cap/bin"
+	write_executable "$manifestdir/reload-svc.cap/bin/reload-svc" \
 	    '#!/bin/sh' \
 	    'echo $$ > reload-svc.pid' \
 	    'sleep 60'
-	cat > "$manifestdir/reload-svc.ucl" <<EOF
-label = "reload-svc";
-program = "$(pwd)/reload-svc.sh";
+	cat > "$manifestdir/reload-svc.cap/etc/reload-svc.ucl" <<EOF
+bundle_id = "org.test.reload-svc";
+program = "reload-svc";
+provides = ["org.test.reload-svc"];
 EOF
 
 	atf_check -s exit:0 -o ignore "$servicectl_bin" -s "$sctl_sockpath" reload
@@ -315,6 +309,7 @@ servicectl_reload_nonroot_head()
 {
 	atf_set "descr" "servicectl reload denied for non-root"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 servicectl_reload_nonroot_body()
 {
@@ -429,65 +424,10 @@ sctl_oversized_payload_head()
 {
 	atf_set "descr" "serviced rejects oversized control payloads"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 sctl_oversized_payload_body()
 {
-	require_cc
-	cat > rawctl.c <<'CEOF'
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-
-struct sctl_request {
-	uint32_t version;
-	uint32_t op;
-	uint32_t flags;
-	uint32_t datalen;
-} __attribute__((packed));
-
-struct sctl_reply {
-	uint32_t status;
-	uint32_t flags;
-} __attribute__((packed));
-
-int main(int argc, char **argv)
-{
-	struct sockaddr_un un;
-	struct sctl_request req;
-	struct sctl_reply rpl;
-	int fd;
-
-	if (argc < 2) return (2);
-	fd = socket(PF_LOCAL, SOCK_STREAM, 0);
-	if (fd == -1) return (2);
-	memset(&un, 0, sizeof(un));
-	un.sun_family = AF_LOCAL;
-	strlcpy(un.sun_path, argv[1], sizeof(un.sun_path));
-	if (connect(fd, (struct sockaddr *)&un, sizeof(un)) == -1) return (2);
-
-	memset(&req, 0, sizeof(req));
-	req.version = 1;
-	req.op = 4; /* SCTL_OP_CHECK */
-	req.datalen = 9999; /* way over max */
-	write(fd, &req, sizeof(req));
-
-	/* Server should close connection without reply. */
-	if (read(fd, &rpl, sizeof(rpl)) <= 0) {
-		printf("rejected\n");
-		close(fd);
-		return (0);
-	}
-	printf("status=%u\n", rpl.status);
-	close(fd);
-	return (0);
-}
-CEOF
-	atf_check -s exit:0 -e ignore cc -Wall -o rawctl rawctl.c
-
 	start_stack
 	if [ ! -S "$sctl_sockpath" ]; then
 		cat "$logfile" 2>/dev/null
@@ -496,11 +436,11 @@ CEOF
 
 	# Server replies with EMSGSIZE error.
 	atf_check -s exit:0 -o match:"status=" \
-	    ./rawctl "$sctl_sockpath"
+	    "$(atf_get_srcdir)/capd_protocol_fixture" control-oversized \
+	    "$sctl_sockpath"
 }
 sctl_oversized_payload_cleanup()
 {
-	rm -f rawctl rawctl.c
 	cleanup_common
 }
 
@@ -512,6 +452,7 @@ atf_test_case servicectl_install_valid cleanup
 servicectl_install_valid_head() {
     atf_set "descr" "servicectl install copies valid bundle to install dir"
     atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 servicectl_install_valid_body() {
     find_servicectl
@@ -522,6 +463,7 @@ servicectl_install_valid_body() {
     mkdir -p "${src}/etc" "${src}/bin" "$idir"
     printf '#!/bin/sh\nexec sleep 3600\n' > "${src}/bin/instd"
     chmod 755 "${src}/bin/instd"
+	chown -R nobody:nobody "$src"
     cat > "${src}/etc/instd.ucl" <<EOF
 bundle_id = "org.test.install";
 version = "1.0";
@@ -537,6 +479,8 @@ EOF
     # Verify bundle was copied
     atf_check -s exit:0 test -d "${idir}/InstallMe.cap"
     atf_check -s exit:0 test -x "${idir}/InstallMe.cap/bin/instd"
+	atf_check -s exit:0 -o inline:'0\n' stat -f %u \
+	    "${idir}/InstallMe.cap/bin/instd"
 }
 servicectl_install_valid_cleanup() {
     rm -rf InstallMe.cap install_target
@@ -579,6 +523,7 @@ atf_test_case servicectl_install_overwrite cleanup
 servicectl_install_overwrite_head() {
     atf_set "descr" "servicectl install rejects overwrite of existing bundle"
     atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 servicectl_install_overwrite_body() {
     find_servicectl

@@ -143,9 +143,9 @@ calling `VOP_OPEN`.  This means:
 - The path string comes from oracled's config, not from untrusted
   input
 
-## Manifest changes
+## Manifest changes proposed by this document
 
-The service manifest `capabilities` section currently supports:
+When this proposal was written, its path example was:
 
 ```ucl
 capabilities {
@@ -153,7 +153,13 @@ capabilities {
 }
 ```
 
-With path-based claims, add a `mountpoints` key:
+The current manifest also supports fine-grained files, network endpoints,
+jails, VSOCK endpoints, and system gates; see `serviced(5)` for that
+authoritative schema.  Neither `mountpoints` nor object-valued `paths` below
+is currently accepted.  They remain possible extensions if the proposed
+kernel operation is implemented.
+
+This proposal would add a `mountpoints` key:
 
 ```ucl
 capabilities {

@@ -50,6 +50,10 @@
 #include <netgraph/bluetooth/l2cap/ng_l2cap_ulpi.h>
 #include <netgraph/bluetooth/l2cap/ng_l2cap_misc.h>
 
+#include <sys/sdt.h>
+SDT_PROVIDER_DECLARE(bluetooth);
+SDT_PROBE_DECLARE(bluetooth, l2cap, channel, open);
+
 /******************************************************************************
  ******************************************************************************
  **                 Upper Layer Protocol Interface module
@@ -972,6 +976,7 @@ ng_l2cap_l2ca_cfg_rsp_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 	ng_l2cap_cmd_p			 cmd = NULL;
 	struct mbuf			*opt = NULL;
 	u_int16_t			*mtu = NULL;
+	u_int16_t			*flush_timo = NULL;
 	ng_l2cap_flow_p			 flow = NULL;
 	int				 error = 0;
 
@@ -1022,7 +1027,7 @@ ng_l2cap_l2ca_cfg_rsp_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
 	}
 
 	if (mtu != NULL || flow != NULL) {
-		_ng_l2cap_build_cfg_options(opt, mtu, NULL, flow);
+		_ng_l2cap_build_cfg_options(opt, mtu, flush_timo, flow);
 		if (opt == NULL) {
 			error = ENOBUFS;
 			goto out;

@@ -1,6 +1,6 @@
 .include <src.opts.mk>
 
-PACKAGE=oracled
+PACKAGE=oraclectl
 PROG=	oraclectl
 MAN=	oraclectl.8
 

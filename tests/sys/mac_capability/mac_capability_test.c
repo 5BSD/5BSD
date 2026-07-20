@@ -4475,20 +4475,23 @@ ATF_TC_HEAD(cap_pro_unshielded_same_session_sigcont_allowed, tc)
 }
 ATF_TC_BODY(cap_pro_unshielded_same_session_sigcont_allowed, tc)
 {
-	int status;
+	int pd, status;
 	pid_t pid;
 
-	pid = fork();
+	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
 		for (;;)
 			pause();
 	}
-	ATF_CHECK_EQ(run_shield_helper("sigcont", pid), 1);
+	ATF_REQUIRE_MSG(run_shield_helper("sigcont", pid) == 1,
+	    "same-session SIGCONT was not allowed for unshielded pid %d",
+	    (int)pid);
 	ATF_REQUIRE_EQ(kill(pid, SIGKILL), 0);
 	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_CHECK(WIFSIGNALED(status));
 	ATF_CHECK_EQ(WTERMSIG(status), SIGKILL);
+	close(pd);
 }
 
 ATF_TC(cap_pro_foreign_sigcont_blocked);
@@ -4501,28 +4504,51 @@ ATF_TC_HEAD(cap_pro_foreign_sigcont_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_sigcont_blocked, tc)
 {
-	int sv[2], status;
+	char byte;
+	ssize_t nbytes;
+	int pd, result, sv[2], status;
 	pid_t pid;
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
+	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
-		char buf;
 		int fd;
+
 		close(sv[0]);
 		fd = capprotect_shield(CP_SF_SIGCONT);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
+		if (fd < 0)
+			_exit(10);
+		if (write(sv[1], "s", 1) != 1)
+			_exit(11);
+		if (read(sv[1], &byte, 1) != 1 || byte != 'g')
+			_exit(12);
+		close(fd);
+		close(sv[1]);
+		_exit(0);
 	}
 	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
-	ATF_CHECK_EQ(run_shield_helper("sigcont", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
+	do {
+		nbytes = read(sv[0], &byte, 1);
+	} while (nbytes < 0 && errno == EINTR);
+	ATF_REQUIRE_MSG(nbytes == 1 && byte == 's',
+	    "shielded child did not report readiness");
+	result = run_shield_helper("sigcont", pid);
+	ATF_REQUIRE_MSG(result != 1,
+	    "foreign same-session SIGCONT bypassed MAC policy; install and boot "
+	    "a kernel containing the p_cansignal MAC veto");
+	ATF_REQUIRE_MSG(result == 0,
+	    "shield helper sigcont failed with status %d for pid %d",
+	    result, (int)pid);
+	do {
+		nbytes = write(sv[0], "g", 1);
+	} while (nbytes < 0 && errno == EINTR);
+	ATF_REQUIRE_MSG(nbytes == 1, "could not release shielded child");
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "shielded child exited abnormally (status %#x)", status);
 	close(sv[0]);
+	close(pd);
 }
 
 ATF_TC(cap_pro_foreign_visible_blocked);

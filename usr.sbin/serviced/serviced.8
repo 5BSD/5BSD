@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd June 5, 2026
+.Dd July 20, 2026
 .Dt SERVICED 8
 .Os
 .Sh NAME
@@ -16,8 +16,9 @@ It is started by
 .Xr oracled 8
 as a single child process via
 .Xr pdfork 2
-and inherits a mac_capability channel for requesting capability tokens,
-channels, and coalitions from the oracle.
+and inherits a mac_capability channel for requesting activation tokens,
+channels, coalitions, named capability-service descriptors, and pre-exec
+kernel-module prerequisites from the oracle.
 .Pp
 .Nm
 scans capability bundles from
@@ -101,7 +102,8 @@ inherits the following file descriptors from
 .It channel (fd 3)
 Mac_capability channel back to
 .Xr oracled 8 .
-Used to request capability tokens, channels, and coalitions.
+Used to request activation tokens, channels, coalitions, named
+capability-service descriptors, and pre-exec kernel-module prerequisites.
 Always required.
 .It channel_svc (fd 4)
 Delegated mac_capability channel service instance.
@@ -167,182 +169,15 @@ Service manifests are UCL files embedded in capability bundles under
 Each
 .Pa *.ucl
 file declares one service.
-Files are loaded in lexicographic order and topologically sorted
-by dependency before launch.
-Invalid manifests are logged and skipped.
+Files are parsed strictly and topologically sorted before launch.
+An unknown key, wrong type, invalid capability, excess entry, unknown
+dependency, duplicate provider, or dependency cycle rejects the bundle set;
+authority declarations are never silently dropped.
 .Pp
-A maximum of 64 services may be loaded.
-.Pp
-The following keys are supported:
-.Bl -tag -width "max_failures"
-.It Va label Pq required
-Unique name for the service.
-Used in log messages, dependency references, the naming registry,
-and control socket responses.
-Maximum 63 characters.
-.It Va program Pq required
-Absolute path to the service binary.
-Must be executable.
-.It Va description
-Human-readable description.
-Cosmetic only.
-.It Va user
-Run the service as this user.
-Sets uid, gid, and supplementary groups via
-.Xr getpwnam 3
-and
-.Xr getgrouplist 3 .
-Credential failures are fatal to prevent privilege escalation.
-.It Va group
-Run the service with this primary group.
-Overrides the group from
-.Va user
-if both are set.
-.It Va restart
-Restart policy when the service exits.
-One of:
-.Dq never
-(default),
-.Dq always ,
-or
-.Dq on-failure
-(restart only on non-zero exit).
-.It Va stop_timeout
-Seconds to wait after
-.Dv SIGTERM
-before sending
-.Dv SIGKILL .
-Clamped to the range 1\(en300.
-Default: 5.
-.It Va max_failures
-Circuit breaker threshold.
-After this many consecutive rapid failures, the service is permanently
-disabled until the next manifest reload.
-Clamped to the range 1\(en100.
-Default: 10.
-.It Va provides
-Array of capability names this service provides.
-Maximum 8 entries.
-Used by the dependency graph to determine start order.
-Names must be unique across all loaded manifests.
-.It Va requires
-Array of capability names this service depends on.
-Maximum 8 entries.
-The service will not start until all required capabilities are
-available.
-.It Va capabilities
-Object containing capability tokens to delegate to the service.
-See
-.Sx Capabilities
-below.
-.It Va jail
-Object describing a jail to create for the service.
-See
-.Sx Jail
-below.
-.El
-.Ss Capabilities
-The
-.Va capabilities
-object may contain the following arrays:
-.Bl -tag -width "network"
-.It Va paths
-Array of absolute filesystem paths (maximum 16).
-.Nm
-requests an isolation access token for each path from the oracle
-and passes it to the service.
-.It Va files
-Array of fine-grained file capability objects (maximum 16).
-Each object has:
-.Bl -tag -width "actions" -compact
-.It Va path
-Target file path (required).
-.It Va actions
-A string or array of
-.Dv FI_FS_*
-operation names:
-.Dq read ,
-.Dq write ,
-.Dq exec ,
-.Dq create ,
-.Dq delete ,
-.Dq stat ,
-.Dq lookup ,
-.Dq append ,
-.Dq rename_from ,
-.Dq rename_to ,
-.Dq link ,
-.Dq setattr ,
-.Dq truncate ,
-.Dq uipc_connect ,
-or
-.Dq *
-/
-.Dq all
-for all operations.
-.El
-.It Va network
-Array of network endpoint objects (maximum 16).
-Each object has:
-.Bl -tag -width "direction" -compact
-.It Va domain
-Address family:
-.Dq inet
-(default),
-.Dq inet6 ,
-or
-.Dq * .
-.It Va protocol
-Transport protocol:
-.Dq tcp ,
-.Dq udp ,
-or
-.Dq * .
-.It Va port
-Integer port number, or
-.Dq * .
-.It Va ports
-Port range as
-.Dq min-max ,
-or
-.Dq * .
-.It Va direction
-.Dq bind
-(default),
-.Dq connect ,
-or
-.Dq * .
-.It Va address
-IP address or CIDR notation (optional).
-.It Va prefix
-CIDR prefix length (optional).
-.El
-.It Va jails
-Array of jail operation tokens (maximum 16).
-Grants the service authority to perform jail operations.
-.It Va system
-Array of system gate names (e.g.,
-.Dq kldload ,
-.Dq reboot ,
-.Dq sysctl ) .
-.Nm
-requests a system access token from the oracle with the specified
-gates.
-.El
-.Ss Jail
-The optional
-.Va jail
-object creates a jail for the service at launch time:
-.Bl -tag -width "hostname"
-.It Va name Pq required
-Jail name.
-.It Va path Pq required
-Root filesystem path for the jail.
-.It Va hostname
-Hostname inside the jail.
-.It Va ip4
-IPv4 address to assign to the jail.
-.El
+The authoritative schema, including literal arguments, environment variables,
+restart policy, and filesystem, Internet, Bluetooth, VSOCK, jail, and system
+capabilities, is documented in
+.Xr serviced 5 .
 .Sh SERVICE ENVIRONMENT
 Each launched service receives a minimal environment:
 .Bl -tag -width "ORACLED_TOKEN_FDS"
@@ -360,12 +195,44 @@ Comma-separated list of file descriptor numbers for capability
 tokens (starting at 5).
 Only set if the manifest declares capabilities.
 The descriptors appear in manifest-category order: paths, files,
-network endpoints, jail operations, and finally one combined system-gate
-token when system gates were requested.
+network endpoints, jail operations, VSOCK endpoints, and finally one combined
+system-gate token when system gates were requested.
 All requested descriptors are installed before
 .Xr execve 2 ;
 the executed program is responsible for activating them under its new
 post-exec nonce.
+.Fn service_authorize_capabilities
+from
+.Xr libservice 3
+provides the standard opt-in operation.
+It consumes the inherited activation-token descriptor numbers after validating
+the complete list and retains private close-on-exec references for the process
+lifetime.
+The retained references are required because closing the last token reference
+revokes the kernel authorization; close-on-exec prevents inheritance by a
+later program image.
+.It Ev ORACLED_CAPABILITY_FDS
+Comma-separated
+.Dq name=fd
+map for manifest-requested mount, node, accounting, and identity capability
+service
+descriptors.
+These descriptors follow the token range, are ready for service-specific
+ioctls, and are not activated as process access tokens.
+Programs obtain the borrowed descriptor with
+.Fn service_capability_fd
+from
+.Xr libservice 3 .
+All are acquired before
+.Xr pdfork 2 ;
+failure to acquire any requested descriptor prevents execution.
+.It Ev ORACLED_CAPPROTECT_FD
+Optional capprotect instance descriptor (always fd 4 when present).
+The supervisor does not activate it.
+The program chooses its own shield flags by calling
+.Fn service_protect
+from
+.Xr libservice 3 .
 .It Ev ORACLED_LABEL
 The service label from the manifest.
 .It Ev USER
@@ -377,6 +244,16 @@ Home directory of the service user.
 Only set when
 .Va user
 is specified.
+.It Ar manifest environment
+String values declared by the manifest are included.
+They may override the default
+.Ev PATH ,
+.Ev USER ,
+and
+.Ev HOME
+values, but not reserved
+.Ev ORACLED_*
+protocol variables.
 .El
 .Pp
 Standard I/O (fds 0, 1, 2) is redirected to
@@ -394,7 +271,7 @@ Duplicate labels or
 .Va provides
 names across manifests are fatal.
 A dependency cycle is a fatal error; no services are started.
-Unknown providers are warned about but treated as satisfied.
+Unknown providers are rejected before services are launched.
 .Ss Fork, Exec, and Coalitions
 Each service is launched with
 .Xr pdfork 2 ,
@@ -634,104 +511,139 @@ provides DTrace USDT probes under the
 provider.
 .Ss Service Lifecycle
 .Bl -tag -width "svc-disabled(label, count)" -compact
-.It svc-start Ns ( Ns Ar label , pid Ns )
+.It Li svc-start(label, pid)
 Service process created.
-.It svc-exec Ns ( Ns Ar label , pid Ns )
+.It Li svc-exec(label, pid)
 Service exec confirmed via
 .Dv NOTE_EXEC .
-.It svc-exit Ns ( Ns Ar label , pid , status Ns )
+.It Li svc-exit(label, pid, status)
 Service process exited.
-.It svc-restart Ns ( Ns Ar label , count Ns )
+.It Li svc-restart(label, count)
 Service restart initiated.
-.It svc-stop Ns ( Ns Ar label , pid Ns )
+.It Li svc-stop(label, pid)
 Service stop requested.
-.It svc-load Ns ( Ns Ar label Ns )
+.It Li svc-load(label)
 Service manifest loaded.
-.It svc-disabled Ns ( Ns Ar label , count Ns )
+.It Li svc-disabled(label, count)
 Service disabled by circuit breaker.
-.It svc-count Ns ( Ns Ar n Ns )
+.It Li svc-count(n)
 Total loaded service count changed.
 .El
 .Ss Manifest Reload
 .Bl -tag -width "svc-removed(label)" -compact
-.It reload Ns ( Ns Ar nnew , nchanged , nremoved Ns )
+.It Li manifest-reject(path, reason, system)
+A malformed or unverifiable manifest was rejected.
+.Ar system
+is non-zero for the system bundle directory.
+.It Li reload(nnew, nchanged, nremoved)
 Manifest reload completed.
-.It svc-removed Ns ( Ns Ar label Ns )
+.It Li svc-removed(label)
 Service removed during reload.
-.It svc-changed Ns ( Ns Ar label Ns )
+.It Li svc-changed(label)
 Service manifest changed during reload.
 .El
 .Ss Naming
 .Bl -tag -width "naming-unregister(name)" -compact
-.It naming-register Ns ( Ns Ar name , owner Ns )
+.It Li naming-register(name, owner)
 Name registered.
-.It naming-unregister Ns ( Ns Ar name Ns )
+.It Li naming-unregister(name)
 Name unregistered.
-.It naming-lookup Ns ( Ns Ar name , requester Ns )
+.It Li naming-lookup(name, requester)
 Name lookup performed.
-.It naming-deny Ns ( Ns Ar name , errno Ns )
+.It Li naming-deny(name, errno)
 Name operation denied.
-.It naming-count Ns ( Ns Ar n Ns )
+.It Li naming-count(n)
 Total registered name count changed.
 .El
 .Ss Control Socket
 .Bl -tag -width "sctl-cmd-done(op, uid, status, duration_ns)" -compact
-.It sctl-cmd Ns ( Ns Ar op , uid Ns )
+.It Li sctl-cmd(op, uid)
 Control command received.
-.It sctl-cmd-done Ns ( Ns Ar op , uid , status , duration_ns Ns )
+.It Li sctl-cmd-done(op, uid, status, duration_ns)
 Control command completed.
-.It sctl-deny Ns ( Ns Ar op , uid Ns )
+.It Li sctl-deny(op, uid)
 Control command denied (insufficient privileges).
 .El
 .Ss Capabilities
-.Bl -tag -width "cap-coalition(label, result)" -compact
-.It cap-mint Ns ( Ns Ar label , type , result Ns )
+.Bl -tag -width "cap-service(label, name, result)" -compact
+.It Li cap-mint(label, type, result)
 Capability token minted.
-.It cap-channel Ns ( Ns Ar label , result Ns )
+.It Li cap-service(label, name, result)
+Named capability-service descriptor acquired.
+.It Li cap-channel(label, result)
 Channel created.
-.It cap-coalition Ns ( Ns Ar label , result Ns )
+.It Li cap-coalition(label, result)
 Coalition created.
 .El
 .Ss Exec Setup
 .Bl -tag -width "svc-exec-done(label, duration_ns, ntokens)" -compact
-.It svc-exec-done Ns ( Ns Ar label , duration_ns , ntokens Ns )
+.It Li svc-exec-done(label, duration_ns, ntokens)
 Service exec setup completed.
-.It svc-exec-fail Ns ( Ns Ar label , errno Ns )
+.It Li svc-exec-fail(label, errno)
 Service exec setup failed.
 .El
 .Ss IPC
 .Bl -tag -width "ipc-reply(label, op, status)" -compact
-.It ipc-recv Ns ( Ns Ar label , op Ns )
+.It Li ipc-recv(label, op)
 IPC message received from service.
-.It ipc-reply Ns ( Ns Ar label , op , status Ns )
+.It Li ipc-reply(label, op, status)
 IPC reply sent to service.
 .El
 .Ss Timeouts
 .Bl -tag -width "timeout-fire(label, type)" -compact
-.It timeout-arm Ns ( Ns Ar label , type , seconds Ns )
+.It Li timeout-arm(label, type, seconds)
 Timer armed.
-.It timeout-fire Ns ( Ns Ar label , type Ns )
+.It Li timeout-fire(label, type)
 Timer expired.
 .El
 .Ss Connections
 .Bl -tag -width "conn-close(nconns)" -compact
-.It conn-accept Ns ( Ns Ar uid , nconns Ns )
+.It Li conn-accept(uid, nconns)
 Control socket connection accepted.
-.It conn-close Ns ( Ns Ar nconns Ns )
+.It Li conn-close(nconns)
 Control socket connection closed.
 .El
 .Ss Shutdown
 .Bl -tag -width "shutdown-done(duration_ns)" -compact
-.It shutdown-start Ns ( Ns Ar nservices Ns )
+.It Li shutdown-start(nservices)
 Graceful shutdown initiated.
-.It shutdown-done Ns ( Ns Ar duration_ns Ns )
+.It Li shutdown-done(duration_ns)
 Shutdown completed.
+.El
+.Ss Startup Orchestration
+.Bl -tag -width "startup-begin(nservices, ntiers)" -compact
+.It Li startup-begin(nservices, ntiers)
+Dependency-ordered startup began.
+.It Li startup-tier(tier, launched)
+A dependency tier was launched.
+.It Li startup-done(duration_ms)
+Initial startup completed.
+.El
+.Ss On-Demand Launch
+.Bl -tag -width "on-demand-launch(name, requester)" -compact
+.It Li on-demand-launch(name, requester)
+An on-demand lookup initiated a service launch.
+.It Li on-demand-coalesce(name)
+Another lookup joined an in-progress launch.
+.It Li on-demand-ready(name, nwaiters)
+The service became ready and waiting lookups were released.
+.It Li on-demand-timeout(name)
+An on-demand launch exceeded its readiness deadline.
+.El
+.Ss Bundle Registry
+.Bl -tag -width "bundle-load(name, nservices, system)" -compact
+.It Li bundle-load(name, nservices, system)
+A bundle was loaded.
+.Ar system
+is non-zero for a system bundle.
+.It Li bundle-scan(dir, nbundles)
+A bundle directory scan completed.
 .El
 .Ss Errors
 .Bl -tag -width "oracle-disconnected()" -compact
-.It error Ns ( Ns Ar subsys , msg Ns )
+.It Li error(subsys, msg)
 Error occurred in subsystem.
-.It oracle-disconnected Ns ( Ns )
+.It Li oracle-disconnected()
 Oracle channel closed unexpectedly.
 .El
 .Sh FILES
@@ -743,6 +655,10 @@ User-installed capability bundles.
 .It Pa /var/run/serviced.sock
 Control socket (mode 0700).
 .El
+.Pp
+Both bundle directories and all loaded bundle contents must be root-owned and
+not group- or world-writable; symlinks and non-regular bundle objects are
+rejected before parsing.
 .Sh EXIT STATUS
 .Ex -std
 .Pp
@@ -751,57 +667,22 @@ exits with an error if the
 .Ev ORACLED_CHANNEL_FD
 environment variable is not set or the channel fd is invalid.
 .Sh EXAMPLES
-Minimal service manifest:
+Minimal bundle service manifest:
 .Bd -literal -offset indent
 # myservice.ucl
-label = "myservice";
-program = "/usr/local/sbin/myservice";
+bundle_id = "org.example.myservice";
+version = "1.0";
+author = "Example";
+program = "myservice";
+provides = ["org.example.myservice"];
+arguments = ["--foreground"];
+environment { APP_MODE = "production"; }
 restart = "always";
 .Ed
 .Pp
-Service with dependencies and capabilities:
-.Bd -literal -offset indent
-label = "webapp";
-program = "/usr/local/sbin/webapp";
-user = "www";
-group = "www";
-provides = ["http"];
-requires = ["database"];
-restart = "on-failure";
-stop_timeout = 10;
-max_failures = 20;
-capabilities {
-    paths = ["/var/www"];
-    files = [
-        {
-            path = "/var/log/webapp.log";
-            actions = ["write", "create", "append"];
-        },
-    ];
-    network = [
-        {
-            port = 8080;
-            protocol = "tcp";
-            direction = "bind";
-            address = "127.0.0.1";
-        },
-    ];
-    system = ["sysctl"];
-}
-.Ed
-.Pp
-Service running inside a jail:
-.Bd -literal -offset indent
-label = "sandboxed";
-program = "/usr/local/sbin/sandboxed";
-restart = "on-failure";
-jail {
-    name = "sandboxed";
-    path = "/var/jails/sandboxed";
-    hostname = "sandboxed.local";
-    ip4 = "10.0.0.2";
-}
-.Ed
+See
+.Xr serviced 5
+for complete capability examples.
 .Sh SEE ALSO
 .Xr kqueue 2 ,
 .Xr pdfork 2 ,

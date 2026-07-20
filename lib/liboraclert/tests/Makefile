@@ -1,4 +1,4 @@
-PACKAGE=	tests
+PACKAGE=	liboraclert-tests
 
 ATF_TESTS_C=	claim_parse_test
 

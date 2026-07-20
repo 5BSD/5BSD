@@ -88,6 +88,10 @@ cmd_install(const char *bundle_path)
 		warnx("install: invalid bundle name: %s", bname);
 		return (1);
 	}
+	if (geteuid() != 0) {
+		warnx("install: root privileges are required");
+		return (1);
+	}
 	snprintf(dst, sizeof(dst), "%s/%s", idir, bname);
 
 	/* Check if already installed. */
@@ -103,7 +107,9 @@ cmd_install(const char *bundle_path)
 		return (1);
 	}
 	if (pid == 0) {
-		execl("/bin/cp", "cp", "-Rp", bundle_path, dst, (char *)NULL);
+		/* Do not preserve source ownership: installed policy must be
+		 * root-owned so it cannot be changed after verification. */
+		execl("/bin/cp", "cp", "-R", bundle_path, dst, (char *)NULL);
 		_exit(127);
 	}
 

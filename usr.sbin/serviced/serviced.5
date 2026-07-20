@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd June 5, 2026
+.Dd July 20, 2026
 .Dt SERVICED 5
 .Os
 .Sh NAME
@@ -13,28 +13,52 @@ They are typically embedded in capability bundles under
 .Pa etc/
 and parsed by
 .Xr libcapbundle 3 .
-A maximum of 64 services may be loaded at any time.
+A bundle may contain at most 32 service manifests, and at most 64 services may
+be loaded across the complete bundle set.
 .Pp
 Labels must be globally unique across all manifests.
+Bundle identifiers must be globally unique across the loaded bundle set.
 Labels and capability names should use reverse-domain format
 (containing at least one dot) for the naming registry.
 .Ss Required Keys
 .Bl -tag -width "program"
-.It Va label
-Unique service identifier (e.g.,
-.Dq org.5bsd.sshd ) .
-Maximum 63 characters.
-Used in log messages, dependency references, the naming registry,
-and control socket responses.
+.It Va bundle_id
+Stable reverse-domain identifier shared by every service manifest in the
+bundle.
 .It Va program
-Absolute path to the service executable.
-The file must exist and be executable.
+Path relative to the bundle's
+.Pa bin/
+directory.
+Absolute paths, empty paths, and paths containing
+.Dq ..
+are rejected.
+.It Va provides
+A globally unique service name or array of names.
+The first name is the service label used by serviced.
 .El
 .Ss Optional Keys
 .Bl -tag -width "max_failures"
-.It Va description
-Human-readable description of the service.
-Cosmetic only.
+.It Va version
+Bundle version string.
+If present, it must match across every service manifest in the bundle.
+.It Va author
+Bundle author string.
+If present, it must match across every service manifest in the bundle.
+.It Va arguments
+Array of literal argument strings placed after
+.Va argv[0] .
+No shell is invoked and no word splitting, expansion, or substitution occurs.
+Maximum 32 arguments of 255 bytes each.
+.It Va environment
+Object mapping environment-variable names to string values.
+Maximum 32 entries.
+Names use the portable identifier form (a letter or underscore followed by
+letters, digits, or underscores), values must be strings, and each resulting
+.Dq name=value
+entry must be shorter than 1024 bytes.
+Names beginning with
+.Dq ORACLED_
+are reserved and rejected.
 .It Va user
 Drop privileges to this user before executing the service.
 The user is resolved via
@@ -67,22 +91,16 @@ Seconds to wait after sending
 .Dv SIGTERM
 before escalating to
 .Dv SIGKILL .
-Clamped to the range 1\(en300.
+Must be in the range 1\(en300.
 Default: 5.
 .It Va max_failures
 Circuit breaker threshold.
 After this many consecutive rapid failures, the service is permanently
 disabled until the next manifest reload.
-Clamped to the range 1\(en100.
+Must be in the range 1\(en100.
 Default: 10.
-.It Va provides
-Array of capability names this service exports.
-Maximum 8 entries.
-Names must be unique across all loaded manifests; duplicate
-.Va provides
-names cause the manifest reload to be rejected.
 .It Va requires
-Array of capability names this service depends on.
+A service name or array of service names this service depends on.
 Maximum 8 entries.
 The service will not start until all required capabilities are
 available.
@@ -93,17 +111,29 @@ launched on first
 .Xr service_lookup 3
 request for one of its provided names.
 Default: false.
+.It Va kmod_requires
+String or array of up to 8 kernel module names that must be loaded before
+launch.
+Only system bundles may request module loading.
+Names may contain only letters, digits, period, underscore, and hyphen;
+paths are rejected.
+The request is executed by
+.Xr oracled 8
+under its nonce so
+.Nm
+does not retain ambient kernel-module authority.
 .It Va capabilities
-Object containing capability tokens to delegate to the service.
+Object containing capability tokens and service descriptors to delegate.
 See
 .Sx Capabilities
 below.
-.It Va jail
-Object describing a jail to create for the service at launch time.
-See
-.Sx Jail
-below.
 .El
+.Pp
+Unknown keys, wrong value types, excess array entries, invalid capability
+entries, and out-of-range values reject the entire bundle.
+Security declarations are never silently discarded or truncated.
+Reload validation is transactional: a rejected replacement leaves the previous
+registry and running services intact.
 .Ss Capabilities
 The
 .Va capabilities
@@ -122,6 +152,37 @@ Resources that are declared in
 are
 .Em policy claims
 and are never released.
+.Pp
+Every requested isolation authority is minted before
+.Xr pdfork 2 .
+If any mint fails or the set is incomplete, the program is not executed.
+The token descriptors are inherited after
+.Xr execve 2
+and named by
+.Ev ORACLED_TOKEN_FDS .
+They remain inactive until the program calls
+.Fn service_authorize_capabilities
+from
+.Xr libservice 3
+or explicitly performs the equivalent authorization operation.
+The standard library operation consumes the activation handles after
+validating the complete set, closes the inherited descriptor numbers, and
+removes
+.Ev ORACLED_TOKEN_FDS
+so a later program image cannot discover the inherited descriptor numbers.
+It retains private close-on-exec references for the process lifetime because
+closing the last reference would revoke the kernel authorization.
+Likewise, process shielding is a program decision made through
+.Fn service_protect
+from
+.Xr libservice 3 ;
+it is not a manifest or supervisor policy.
+.Pp
+This object covers every delegable token family implemented by the
+mac_capability isolation and system services, plus the explicitly requested
+mount, process-node, accounting, and identity service descriptors.
+Channel, coalition, procdesc, Capsicum, and capprotect descriptors remain
+lifecycle plumbing or explicit per-process confinement decisions.
 .Pp
 It may contain the following sub-keys:
 .Bl -tag -width "network"
@@ -171,12 +232,18 @@ Address family:
 .Dq inet
 (default),
 .Dq inet6 ,
+.Dq bluetooth ,
 or
 .Dq * .
 .It Va protocol
 Transport protocol:
 .Dq tcp ,
 .Dq udp ,
+.Dq hci ,
+.Dq l2cap ,
+.Dq rfcomm ,
+.Dq sco ,
+.Dq iso ,
 or
 .Dq * .
 .It Va port
@@ -199,43 +266,94 @@ should be specified.
 or
 .Dq * .
 .It Va address
-IP address or CIDR notation (e.g.,
-.Dq 10.0.0.0/24 ) .
+IP address or CIDR notation
+.Pq e.g., Dq 10.0.0.0/24 ,
+or a Bluetooth BD_ADDR when
+.Va domain
+is
+.Dq bluetooth .
 Optional.
+A specific address requires an explicit, matching
+.Va domain ;
+the wildcard domain may only be combined with a wildcard address.
 .It Va prefix
 CIDR prefix length as an integer.
 Optional; provides an alternative to embedding the prefix in
 .Va address .
+It requires a specific address.
 .El
 .It Va jails
 Array of jail operation tokens (maximum 16).
 Grants the service authority to perform jail operations via
 delegated capability tokens.
+An entry may be a positive numeric JID, a non-empty jail name, or an object
+containing
+.Va jid
+and/or
+.Va name
+plus optional
+.Va actions .
+Actions are
+.Dq create ,
+.Dq get ,
+.Dq set ,
+.Dq remove ,
+and
+.Dq attach ;
+omitting actions grants all jail actions.
+.It Va services
+Array containing any of
+.Dq mount ,
+.Dq node ,
+.Dq accounting ,
+or
+.Dq identity
+(maximum 4, without duplicates).
+These entries request authority-bearing mac_capability service descriptors,
+not activation tokens.
+They are delivered through
+.Ev ORACLED_CAPABILITY_FDS
+and obtained by name with
+.Fn service_capability_fd
+from
+.Xr libservice 3 .
+.It Va vsock
+Array of VSOCK endpoint capability objects (maximum 16).
+Each object accepts
+.Va cid
+as an integer or
+.Dq any ,
+.Va port
+as a 32-bit integer or
+.Va ports
+as
+.Dq min-max ,
+and
+.Va direction
+as
+.Dq bind ,
+.Dq connect ,
+or
+.Dq any .
+The defaults are any CID, all ports, and bind direction.
 .It Va system
-Array of system gate names (maximum 16).
+Array of system gate names (maximum 11).
 .Xr serviced 8
 requests a system access token from the oracle with the specified
 gates and passes it to the service.
-See
-.Xr mac_capability_system 4
-for the list of available gate names.
-.El
-.Ss Jail
-The optional
-.Va jail
-object creates a jail for the service at launch time.
-It contains the following keys:
-.Bl -tag -width "hostname"
-.It Va name Pq required
-Jail name.
-.It Va path Pq required
-Root filesystem path for the jail.
-.It Va hostname
-Hostname inside the jail.
-Defaults to the value of
-.Va name .
-.It Va ip4
-IPv4 address to assign to the jail.
+The complete set is
+.Dq kldload ,
+.Dq kldunload ,
+.Dq kldstat ,
+.Dq reboot ,
+.Dq swapon ,
+.Dq swapoff ,
+.Dq sysctl ,
+.Dq kenv ,
+.Dq acct ,
+.Dq audit ,
+and
+.Dq kenv_read .
 .El
 .Ss Dependency Resolution
 Before launching services,
@@ -258,8 +376,7 @@ Services may list it in
 without a corresponding
 .Va provides .
 .It
-Unknown providers (those not declared by any loaded manifest) produce
-a warning but are treated as satisfied.
+Unknown providers reject the bundle set.
 .It
 Dependency cycles are fatal: no services are started if a cycle is
 detected.
@@ -270,23 +387,43 @@ values or duplicate
 .Va provides
 names across manifests cause the entire reload to be rejected.
 .El
+.Sh FILES
+.Bl -tag -width "/Capabilities/System/"
+.It Pa /Capabilities/System/
+System capability bundles.
+Each
+.Pa *.cap
+directory may contain Service.ucl files in the same format;
+see
+.Xr libcapbundle 3 .
+.It Pa /Capabilities/
+User-installed capability bundles.
+.El
+.Pp
+Both bundle roots and every loaded bundle tree must be owned by root and must
+not be writable by group or other.
+Symlinks and non-regular objects inside a bundle are rejected.
+This makes manifests executable security policy rather than mutable
+application data.
 .Sh EXAMPLES
 Minimal service manifest:
 .Bd -literal -offset indent
 # myservice.ucl
-label = "myservice";
-program = "/usr/local/sbin/myservice";
+bundle_id = "org.example.myservice";
+program = "myservice";
+provides = ["org.example.myservice"];
 restart = "always";
 .Ed
 .Pp
 Service with dependencies and file capabilities:
 .Bd -literal -offset indent
-label = "org.5bsd.webapp";
-program = "/usr/local/sbin/webapp";
-description = "Example web application";
+bundle_id = "org.example.webapp";
+program = "webapp";
+provides = ["org.example.webapp"];
+arguments = ["--foreground", "--config", "/etc/webapp.conf"];
+environment { APP_MODE = "production"; }
 user = "www";
 group = "www";
-provides = ["http"];
 requires = ["database"];
 restart = "on-failure";
 stop_timeout = 10;
@@ -317,31 +454,6 @@ capabilities {
     system = ["sysctl"];
 }
 .Ed
-.Pp
-Service running inside a jail:
-.Bd -literal -offset indent
-label = "org.5bsd.sandboxed";
-program = "/usr/local/sbin/sandboxed";
-restart = "on-failure";
-jail {
-    name = "sandboxed";
-    path = "/var/jails/sandboxed";
-    hostname = "sandboxed.local";
-    ip4 = "10.0.0.2";
-}
-.Ed
-.Sh FILES
-.Bl -tag -width "/Capabilities/System/"
-.It Pa /Capabilities/System/
-System capability bundles.
-Each
-.Pa *.cap
-directory may contain Service.ucl files in the same format;
-see
-.Xr libcapbundle 3 .
-.It Pa /Capabilities/
-User-installed capability bundles.
-.El
 .Sh SEE ALSO
 .Xr libcapbundle 3 ,
 .Xr mac_capability 4 ,
@@ -349,8 +461,8 @@ User-installed capability bundles.
 .Xr mac_capability_system 4 ,
 .Xr oracled.conf 5 ,
 .Xr oracled 8 ,
-.Xr serviced 8 ,
-.Xr servicectl 8
+.Xr servicectl 8 ,
+.Xr serviced 8
 .Sh HISTORY
 The
 .Nm

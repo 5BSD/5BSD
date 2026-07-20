@@ -150,13 +150,14 @@ retry:
 	}
 
 	/*
-	 * Reject a reply too short to contain a full status word — otherwise
-	 * we would return uninitialized stack as the oracled status (a bogus
-	 * success or errno).  Close any fds that arrived with it.
+	 * The reply wire shape is exact.  Successful descriptor-producing
+	 * operations must return the requested number of fds; errors and
+	 * status-only operations must return none.
 	 */
-	if (ra.payload_len < sizeof(rpl)) {
-		syslog(LOG_ERR, "oracle_rpc: short reply (%u bytes)",
-		    (unsigned)ra.payload_len);
+	if (ra.payload_len != sizeof(rpl) ||
+	    ra.nfds != (uint32_t)(rpl.status == 0 ? max_reply_fds : 0)) {
+		syslog(LOG_ERR, "oracle_rpc: malformed reply (%u bytes, %u fds)",
+		    (unsigned)ra.payload_len, (unsigned)ra.nfds);
 		for (i = 0; i < max_reply_fds; i++) {
 			if (reply_fds[i] >= 0) {
 				close(reply_fds[i]);
@@ -235,6 +236,18 @@ fill_system_req(struct oracle_system_req *req, uint32_t op, uint32_t gates)
 	memset(req, 0, sizeof(*req));
 	req->op = op;
 	req->gates = gates;
+}
+
+static void
+fill_vsock_req(struct oracle_vsock_req *req, uint32_t op,
+    const struct ort_vsock_claim *vc)
+{
+	memset(req, 0, sizeof(*req));
+	req->op = op;
+	req->cid = vc->cid;
+	req->port_min = vc->port_min;
+	req->port_max = vc->port_max;
+	req->direction = vc->direction;
 }
 
 /*
@@ -349,6 +362,16 @@ oracle_mint_jail(int channel_fd, const struct serviced_jail_claim *jc)
 }
 
 int
+oracle_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc)
+{
+	struct oracle_vsock_req req;
+	int token_fd, status;
+	fill_vsock_req(&req, ORACLE_OP_MINT_VSOCK, vc);
+	status = oracle_rpc(channel_fd, &req, sizeof(req), &token_fd, 1, NULL);
+	return (check_status_fd(status, token_fd));
+}
+
+int
 oracle_create_jail(int channel_fd, const char *name, const char *path,
     const char *hostname, const char *ip4_addr)
 {
@@ -441,6 +464,42 @@ oracle_create_coalition(int channel_fd)
 
 	status = oracle_rpc(channel_fd, &req, sizeof(req), &cfd, 1, NULL);
 	return (check_status_fd(status, cfd));
+}
+
+int
+oracle_ensure_kmod(int channel_fd, const char *name)
+{
+	struct oracle_kmod_req req;
+	int status;
+
+	if (name == NULL || name[0] == '\0' ||
+	    strlcpy(req.name, name, sizeof(req.name)) >= sizeof(req.name)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	req.op = ORACLE_OP_ENSURE_KMOD;
+	req._pad = 0;
+	status = oracle_rpc(channel_fd, &req, sizeof(req), NULL, 0, NULL);
+	return (check_status(status));
+}
+
+int
+oracle_delegate_service(int channel_fd, const char *name)
+{
+	struct oracle_service_req req;
+	int fd, status;
+
+	if (name == NULL ||
+	    (strcmp(name, "mount") != 0 && strcmp(name, "node") != 0 &&
+	    strcmp(name, "accounting") != 0 && strcmp(name, "identity") != 0)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&req, 0, sizeof(req));
+	req.op = ORACLE_OP_DELEGATE_SERVICE;
+	strlcpy(req.name, name, sizeof(req.name));
+	status = oracle_rpc(channel_fd, &req, sizeof(req), &fd, 1, NULL);
+	return (check_status_fd(status, fd));
 }
 
 int
@@ -650,6 +709,13 @@ oracle_release_manifest(int channel_fd, const struct svc_manifest *m)
 
 		fill_jail_req(&req, ORACLE_OP_RELEASE_JAIL,
 		    &m->cap_jail[i]);
+		if (oracle_release_send(channel_fd, &req, sizeof(req)) != 0)
+			nsent++;
+	}
+	for (i = 0; i < m->ncap_vsock; i++) {
+		struct oracle_vsock_req req;
+		fill_vsock_req(&req, ORACLE_OP_RELEASE_VSOCK,
+		    &m->cap_vsock[i]);
 		if (oracle_release_send(channel_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}

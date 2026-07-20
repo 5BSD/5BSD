@@ -33,9 +33,16 @@
 #define	SERVICED_MAX_CAP_FILES		16
 #define	SERVICED_MAX_CAP_NET		16
 #define	SERVICED_MAX_CAP_JAIL		16
+#define	SERVICED_MAX_CAP_VSOCK		16
+#define	SERVICED_MAX_CAP_SERVICES	4
+#define	SERVICED_CAP_SERVICE_NAME_MAX	16
 #define	SERVICED_LABEL_MAX		64
 #define	SERVICED_MAX_KMOD_REQUIRES	8
 #define	SERVICED_KMOD_NAME_MAX		128
+#define	SERVICED_MAX_ARGUMENTS		32
+#define	SERVICED_ARGUMENT_MAX		256
+#define	SERVICED_MAX_ENVIRONMENT	32
+#define	SERVICED_ENVIRONMENT_MAX	1024
 
 /* Restart policy */
 #define	SVC_RESTART_NEVER		0
@@ -63,6 +70,10 @@ struct svc_manifest {
 	char		label[SERVICED_LABEL_MAX];
 	char		description[256];
 	char		program[PATH_MAX];
+	char		arguments[SERVICED_MAX_ARGUMENTS][SERVICED_ARGUMENT_MAX];
+	unsigned	narguments;
+	char		environment[SERVICED_MAX_ENVIRONMENT][SERVICED_ENVIRONMENT_MAX];
+	unsigned	nenvironment;
 	char		user[64];
 	char		group[64];
 
@@ -81,6 +92,11 @@ struct svc_manifest {
 	unsigned	ncap_net;
 	struct serviced_jail_claim cap_jail[SERVICED_MAX_CAP_JAIL];
 	unsigned	ncap_jail;
+	struct ort_vsock_claim cap_vsock[SERVICED_MAX_CAP_VSOCK];
+	unsigned	ncap_vsock;
+	char		cap_services[SERVICED_MAX_CAP_SERVICES]
+		    [SERVICED_CAP_SERVICE_NAME_MAX];
+	unsigned	ncap_services;
 	uint32_t	cap_system;	/* SYS_GATE_* bitmask */
 
 	/* Jail to create and attach child into (optional). */
@@ -95,7 +111,7 @@ struct svc_manifest {
 	unsigned	max_failures;	/* circuit breaker threshold (default 10) */
 	bool		on_demand;	/* true = launch on first lookup */
 
-	/* Required kernel modules (loaded via kldmgrd before launch) */
+	/* Required kernel modules (ensured by oracled before launch) */
 	char		kmod_requires[SERVICED_MAX_KMOD_REQUIRES][SERVICED_KMOD_NAME_MAX];
 	unsigned	nkmod_requires;
 };

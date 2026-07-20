@@ -24,10 +24,14 @@ provider oracled {
 	probe dyn__claim__net(int port_min, int port_max, int protocol, int result);
 	probe dyn__claim__jail(const char *name, uint32_t actions, int result);
 	probe dyn__claim__system(uint32_t gates, int result);
+	probe dyn__claim__vsock(uint64_t cid, uint32_t port_min,
+	    uint32_t port_max, int result);
 	probe dyn__release__path(const char *path, uint32_t refcount, int result);
 	probe dyn__release__net(int port_min, int port_max, int protocol, uint32_t refcount, int result);
 	probe dyn__release__jail(const char *name, uint32_t actions, uint32_t refcount, int result);
 	probe dyn__release__system(uint32_t gates, uint32_t released, int result);
+	probe dyn__release__vsock(uint64_t cid, uint32_t port_min,
+	    uint32_t port_max, uint32_t refcount, int result);
 
 	/* Integrity */
 	probe integrity(uint32_t flags);
@@ -45,12 +49,17 @@ provider oracled {
 
 	/* Token minting — serviced requests capabilities for children */
 	probe mint__path(const char *path, int result);
+	probe mint__file(const char *path, uint64_t actions, int result);
 	probe mint__net(int port_min, int port_max, int protocol, int result);
 	probe mint__jail(int jid, const char *name, uint32_t actions, int result);
 	probe mint__system(uint32_t gates, int result);
+	probe mint__vsock(uint64_t cid, uint32_t port_min,
+	    uint32_t port_max, int result);
 	probe create__jail(const char *name, int result);
 	probe channel__create(int result);
 	probe coalition__create(int result);
+	probe kmod__ensure(const char *name, int result);
+	probe service__delegate(const char *name, int result);
 
 	/* Oracle protocol IPC — channel to serviced */
 	probe ipc__recv(uint32_t op);

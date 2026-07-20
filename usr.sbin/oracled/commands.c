@@ -168,9 +168,11 @@ cmd_reload(uid_t euid, struct ctl_reply *reply,
 	}
 
 	/*
-	 * Service manifest reload is handled by serviced.
-	 * SIGHUP is forwarded to serviced by the bootstrap.
+	 * The control socket is the supported administrative authority after
+	 * Oracle installs its signal shield.  Forward the authenticated reload
+	 * to serviced just as the legacy SIGHUP compatibility path does.
 	 */
+	bootstrap_signal(SIGHUP);
 	reply->status = CTL_STATUS_OK;
 	reply->flags = (uint32_t)off;
 }

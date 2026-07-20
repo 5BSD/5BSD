@@ -116,11 +116,14 @@ int	oracle_mint_path(int channel_fd, const char *path);
 int	oracle_mint_file(int channel_fd, const char *path, uint64_t actions);
 int	oracle_mint_net(int channel_fd, const struct ort_net_claim *nc);
 int	oracle_mint_jail(int channel_fd, const struct serviced_jail_claim *jc);
+int	oracle_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc);
 int	oracle_mint_system(int channel_fd, uint32_t gates);
 int	oracle_create_jail(int channel_fd, const char *name, const char *path,
 	    const char *hostname, const char *ip4_addr);
 int	oracle_create_channel(int channel_fd, int *our_end, int *child_end);
 int	oracle_create_coalition(int channel_fd);
+int	oracle_ensure_kmod(int channel_fd, const char *name);
+int	oracle_delegate_service(int channel_fd, const char *name);
 int	oracle_send_ready(int channel_fd);
 int	oracle_claim_path(int channel_fd, const char *path);
 int	oracle_claim_net(int channel_fd, const struct ort_net_claim *nc);

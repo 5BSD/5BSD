@@ -2215,7 +2215,12 @@ create-source-src-package: _pkgbootstrap .PHONY
 .if !empty(GIT_CMD) && exists(${GIT_CMD}) && exists(${SRCDIR}/.git)
 	@cd ${SRCDIR}; \
 		( echo "@override_prefix /usr/src" ;  \
-		${GIT_CMD} ls-files --recurse-submodules ":!:sys/" ) \
+		${GIT_CMD} ls-files --recurse-submodules ":!:sys/" | \
+		while IFS= read -r file; do \
+			if [ -e "$$file" ] || [ -L "$$file" ]; then \
+				printf '%s\n' "$$file"; \
+			fi; \
+		done ) \
 		> ${SSTAGEDIR}/src.plist
 	flua ${SRCDIR}/release/packages/generate-ucl.lua \
 		PKGNAME "src" \
@@ -2241,7 +2246,12 @@ create-source-src-sys-package: _pkgbootstrap .PHONY
 .if !empty(GIT_CMD) && exists(${GIT_CMD}) && exists(${SRCDIR}/.git)
 	@cd ${SRCDIR}; \
 		( echo "@override_prefix /usr/src" ; \
-		${GIT_CMD} ls-files --recurse-submodules "sys/" ) \
+		${GIT_CMD} ls-files --recurse-submodules "sys/" | \
+		while IFS= read -r file; do \
+			if [ -e "$$file" ] || [ -L "$$file" ]; then \
+				printf '%s\n' "$$file"; \
+			fi; \
+		done ) \
 		> ${SSTAGEDIR}/src-sys.plist
 	flua ${SRCDIR}/release/packages/generate-ucl.lua \
 		PKGNAME "src-sys" \

@@ -1,10 +1,20 @@
-label = "org.5bsd.blued";
-program = "/usr/sbin/blued";
-description = "Bluetooth Low Energy daemon";
+bundle_id = "org.5bsd.blued";
+version = "1.0";
+author = "5BSD";
+program = "blued";
 
 restart = "on-failure";
 stop_timeout = 10;
 max_failures = 10;
 
-provides = ["bluetooth-le"];
-requires = ["ORACLED"];
+provides = ["org.5bsd.blued"];
+
+capabilities {
+    network = [{
+        domain = "bluetooth";
+        protocol = "any";
+        address = "*";
+        direction = "any";
+    }];
+    paths = ["/dev/vhid"];
+}

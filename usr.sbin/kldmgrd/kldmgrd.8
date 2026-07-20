@@ -2,7 +2,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd June 9, 2026
+.Dd July 19, 2026
 .Dt KLDMGRD 8
 .Os
 .Sh NAME
@@ -20,7 +20,9 @@ with
 .Xr serviced 8 .
 .Pp
 Clients connect with
-.Xr service_lookup 3 .
+.Fn service_lookup
+from
+.Xr libservice 3 .
 The
 .Xr serviced 8
 naming layer authenticates the provider name but does not authorize
@@ -40,6 +42,13 @@ The special label
 allows all clients and should only be used on systems where the
 service name is otherwise protected.
 If the file is missing, all requests are denied.
+.Pp
+At startup,
+.Xr libcapability 3
+validates and activates the bundle's inherited system token before applying
+the daemon's self-selected capprotect shield, registering its name, or
+reporting readiness.
+Token activation failure is fatal.
 .Sh PROTOCOL
 Requests use
 .Vt struct kldmgr_req .

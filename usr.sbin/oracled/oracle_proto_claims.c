@@ -17,6 +17,7 @@
 #include <netinet/in.h>
 
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
+#include <dev/mac_capability/mac_capability_system_proto.h>
 
 #include <errno.h>
 #include <string.h>
@@ -78,6 +79,19 @@ find_jail_claim(const struct oracled_jail_claim *jc)
 	return (-1);
 }
 
+static int
+find_vsock_claim(const struct ort_vsock_claim *vc)
+{
+	unsigned i;
+	for (i = 0; i < od.cfg.nclaim_vsock; i++) {
+		const struct ort_vsock_claim *c = &od.cfg.claim_vsock[i];
+		if (c->cid == vc->cid && c->port_min == vc->port_min &&
+		    c->port_max == vc->port_max && c->direction == vc->direction)
+			return ((int)i);
+	}
+	return (-1);
+}
+
 /*
  * --- Remove helpers ---
  *
@@ -112,6 +126,8 @@ DEFINE_REMOVE_CLAIM(net, claim_net, claim_net_source,
     claim_net_refcount, nclaim_net)
 DEFINE_REMOVE_CLAIM(jail, claim_jail, claim_jail_source,
     claim_jail_refcount, nclaim_jail)
+DEFINE_REMOVE_CLAIM(vsock, claim_vsock, claim_vsock_source,
+    claim_vsock_refcount, nclaim_vsock)
 
 /* --- Auto-claim helpers --- */
 
@@ -214,6 +230,31 @@ auto_claim_jail(const struct oracled_jail_claim *jc, int *errp)
 }
 
 int
+auto_claim_vsock(const struct ort_vsock_claim *vc, int *errp)
+{
+	int idx = find_vsock_claim(vc);
+	if (idx >= 0) {
+		if (od.cfg.claim_vsock_source[idx] == CLAIM_SOURCE_SERVICE)
+			od.cfg.claim_vsock_refcount[idx]++;
+		return (0);
+	}
+	if (od.cfg.nclaim_vsock >= ORACLED_MAX_VSOCK_CLAIMS) {
+		*errp = ENOSPC;
+		return (-1);
+	}
+	if (mac_capability_claim_vsock(vc) != 0) {
+		*errp = EIO;
+		return (-1);
+	}
+	idx = (int)od.cfg.nclaim_vsock++;
+	od.cfg.claim_vsock[idx] = *vc;
+	od.cfg.claim_vsock_source[idx] = CLAIM_SOURCE_SERVICE;
+	od.cfg.claim_vsock_refcount[idx] = 1;
+	ORACLED_PROBE_DYN_CLAIM_VSOCK(vc->cid, vc->port_min, vc->port_max, 0);
+	return (0);
+}
+
+int
 auto_claim_system(uint32_t gates, int *errp)
 {
 	uint32_t new_bits;
@@ -311,6 +352,23 @@ release_auto_claim_jail(const struct oracled_jail_claim *jc)
 }
 
 void
+release_auto_claim_vsock(const struct ort_vsock_claim *vc)
+{
+	uint32_t new_refcount;
+	int idx = find_vsock_claim(vc);
+	if (idx < 0 || od.cfg.claim_vsock_source[idx] != CLAIM_SOURCE_SERVICE ||
+	    od.cfg.claim_vsock_refcount[idx] == 0)
+		return;
+	new_refcount = --od.cfg.claim_vsock_refcount[idx];
+	if (new_refcount == 0) {
+		(void)mac_capability_release_vsock(&od.cfg.claim_vsock[idx]);
+		remove_vsock_claim((unsigned)idx);
+	}
+	ORACLED_PROBE_DYN_RELEASE_VSOCK(vc->cid, vc->port_min, vc->port_max,
+	    new_refcount, 0);
+}
+
+void
 release_auto_claim_system(uint32_t gates)
 {
 	uint32_t release_bits;
@@ -401,18 +459,31 @@ handle_claim_system(const void *payload, uint32_t len, uint64_t reply_token)
 	const struct oracle_system_req *req;
 	int err;
 
-	if (len < sizeof(*req)) {
+	if (len != sizeof(*req)) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
 	req = payload;
 
-	if (req->gates == 0) {
+	if (req->gates == 0 || (req->gates & ~SYS_GATE_ALL) != 0) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
 
 	if (auto_claim_system(req->gates, &err) != 0) {
+		proto_reply(err, reply_token, NULL, 0);
+		return;
+	}
+	proto_reply(0, reply_token, NULL, 0);
+}
+
+void
+handle_claim_vsock(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	struct ort_vsock_claim vc;
+	int err;
+	if (!validate_vsock_req(payload, len, &vc, &err) ||
+	    auto_claim_vsock(&vc, &err) != 0) {
 		proto_reply(err, reply_token, NULL, 0);
 		return;
 	}
@@ -587,13 +658,13 @@ handle_release_system(const void *payload, uint32_t len, uint64_t reply_token)
 	uint32_t release_bits;
 	unsigned bit;
 
-	if (len < sizeof(*req)) {
+	if (len != sizeof(*req)) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
 	req = payload;
 
-	if (req->gates == 0) {
+	if (req->gates == 0 || (req->gates & ~SYS_GATE_ALL) != 0) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
@@ -637,6 +708,32 @@ handle_release_system(const void *payload, uint32_t len, uint64_t reply_token)
 	proto_reply(0, reply_token, NULL, 0);
 }
 
+void
+handle_release_vsock(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	struct ort_vsock_claim vc;
+	int err, idx;
+	if (!validate_vsock_req(payload, len, &vc, &err)) {
+		proto_reply(err, reply_token, NULL, 0);
+		return;
+	}
+	idx = find_vsock_claim(&vc);
+	if (idx < 0) {
+		ORACLED_PROBE_DYN_RELEASE_VSOCK(vc.cid, vc.port_min, vc.port_max,
+		    0, ENOENT);
+		proto_reply(ENOENT, reply_token, NULL, 0);
+		return;
+	}
+	if (od.cfg.claim_vsock_source[idx] != CLAIM_SOURCE_SERVICE) {
+		ORACLED_PROBE_DYN_RELEASE_VSOCK(vc.cid, vc.port_min, vc.port_max,
+		    od.cfg.claim_vsock_refcount[idx], EPERM);
+		proto_reply(EPERM, reply_token, NULL, 0);
+		return;
+	}
+	release_auto_claim_vsock(&vc);
+	proto_reply(0, reply_token, NULL, 0);
+}
+
 /* --- Sweep --- */
 
 void
@@ -671,6 +768,12 @@ sweep_dynamic_claims(void)
 			    "oracle_proto: sweep released jail %s",
 			    od.cfg.claim_jail[i - 1].name);
 			remove_jail_claim(i - 1);
+		}
+	}
+	for (i = od.cfg.nclaim_vsock; i > 0; i--) {
+		if (od.cfg.claim_vsock_source[i - 1] == CLAIM_SOURCE_SERVICE) {
+			(void)mac_capability_release_vsock(&od.cfg.claim_vsock[i - 1]);
+			remove_vsock_claim(i - 1);
 		}
 	}
 

@@ -2965,8 +2965,11 @@ main(int argc, char *argv[])
 
 	/* 0. serviced integration: if launched by serviced, init service lib */
 	if (getenv("ORACLED_CHANNEL_FD") != NULL) {
-		if (service_init() == 0)
-			blued_serviced = 1;
+		if (service_init() == -1)
+			err(1, "initialize serviced channel");
+		if (service_authorize_capabilities() == -1)
+			err(1, "activate serviced capabilities");
+		blued_serviced = 1;
 	}
 
 	/* 1. Set config defaults */
@@ -3855,8 +3858,15 @@ main(int argc, char *argv[])
 			if (kevent(blued_g.kq, &kev, 1, NULL, 0, NULL) < 0)
 				warn("kevent service_channel_fd");
 		}
-		service_register("org.5bsd.blued");
-		service_ready();
+		/* The daemon chooses its external shield after initialization.
+		 * serviced retains stop authority through its procdesc; pdkill
+		 * deliberately bypasses ambient signal checks. */
+		if (service_protect(SERVICE_PROTECT_EXTERNAL) == -1)
+			err(1, "protect serviced process");
+		if (service_register("org.5bsd.blued") == -1)
+			err(1, "register serviced name");
+		if (service_ready() == -1)
+			err(1, "report serviced readiness");
 	}
 
 	/*

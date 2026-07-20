@@ -19,13 +19,68 @@
 #include <netinet/in.h>
 
 #include <stdbool.h>
+#include <ctype.h>
 #include <stdint.h>
 #include <string.h>
 
-#include <oraclert.h>			/* ORT_NET_DIR_ANY */
+#include <oraclert.h>
 #include <dev/mac_capability/mac_capability_isolation_proto.h>	/* FI_JAIL_ALL */
 
 #include "oracled_svc_proto.h"
+#include "config.h"
+
+static inline bool
+validate_kmod_req(const void *payload, uint32_t len,
+    const struct oracle_kmod_req **reqp, int *errp)
+{
+	const struct oracle_kmod_req *req;
+	size_t i, n;
+
+	if (len != sizeof(*req)) {
+		*errp = EINVAL;
+		return (false);
+	}
+	req = payload;
+	n = strnlen(req->name, sizeof(req->name));
+	if (req->_pad != 0 || n == 0 || n == sizeof(req->name)) {
+		*errp = EINVAL;
+		return (false);
+	}
+	for (i = 0; i < n; i++) {
+		if (isalnum((unsigned char)req->name[i]) ||
+		    req->name[i] == '_' || req->name[i] == '-' ||
+		    req->name[i] == '.')
+			continue;
+		*errp = EINVAL;
+		return (false);
+	}
+	*reqp = req;
+	return (true);
+}
+
+static inline bool
+validate_service_req(const void *payload, uint32_t len,
+    const struct oracle_service_req **reqp, int *errp)
+{
+	const struct oracle_service_req *req;
+
+	if (len != sizeof(*req)) {
+		*errp = EINVAL;
+		return (false);
+	}
+	req = payload;
+	if (req->_pad != 0 ||
+	    memchr(req->name, '\0', sizeof(req->name)) == NULL ||
+	    (strcmp(req->name, "mount") != 0 &&
+	    strcmp(req->name, "node") != 0 &&
+	    strcmp(req->name, "accounting") != 0 &&
+	    strcmp(req->name, "identity") != 0)) {
+		*errp = EINVAL;
+		return (false);
+	}
+	*reqp = req;
+	return (true);
+}
 
 /*
  * Validate an oracle_path_req payload.  Returns true if the request
@@ -38,12 +93,16 @@ validate_path_req(const void *payload, uint32_t len,
 {
 	const struct oracle_path_req *req;
 
-	if (len < sizeof(*req)) {
+	if (len != sizeof(*req)) {
 		*errp = EINVAL;
 		return (false);
 	}
 	req = payload;
 
+	if (req->_pad != 0) {
+		*errp = EINVAL;
+		return (false);
+	}
 	if (strnlen(req->path, PATH_MAX) >= PATH_MAX) {
 		*errp = ENAMETOOLONG;
 		return (false);
@@ -68,19 +127,35 @@ validate_net_req(const void *payload, uint32_t len,
 {
 	const struct oracle_net_req *req;
 
-	if (len < sizeof(*req)) {
+	if (len != sizeof(*req)) {
 		*errp = EINVAL;
 		return (false);
 	}
 	req = payload;
 
-	if (req->direction == 0 || (req->direction & ~ORT_NET_DIR_ANY) != 0 ||
+	if (req->_pad != 0 || req->_reserved[0] != 0 ||
+	    req->_reserved[1] != 0 || req->direction == 0 ||
+	    (req->direction & ~ORT_NET_DIR_ANY) != 0 ||
 	    (req->domain != 0 && req->domain != AF_INET &&
-	    req->domain != AF_INET6) ||
+	    req->domain != AF_INET6 && req->domain != AF_BLUETOOTH) ||
 	    (req->protocol != 0 && req->protocol != IPPROTO_TCP &&
+	    req->protocol != IPPROTO_UDP &&
+	    req->protocol != ORT_BTPROTO_HCI &&
+	    req->protocol != ORT_BTPROTO_L2CAP &&
+	    req->protocol != ORT_BTPROTO_RFCOMM &&
+	    req->protocol != ORT_BTPROTO_SCO &&
+	    req->protocol != ORT_BTPROTO_ISO) ||
+	    (req->domain == AF_BLUETOOTH &&
+	    (req->protocol == IPPROTO_TCP || req->protocol == IPPROTO_UDP)) ||
+	    (req->domain != 0 && req->domain != AF_BLUETOOTH &&
+	    req->protocol != 0 && req->protocol != IPPROTO_TCP &&
 	    req->protocol != IPPROTO_UDP) ||
 	    req->prefix > 128 ||
 	    (req->domain == AF_INET && req->prefix > 32) ||
+	    (req->domain == AF_BLUETOOTH && req->prefix != 0 &&
+	    req->prefix != 48) ||
+	    (req->domain == 0 && (req->prefix != 0 ||
+	    memcmp(req->addr, (const uint8_t[16]){ 0 }, 16) != 0)) ||
 	    req->port_min > req->port_max) {
 		*errp = EINVAL;
 		return (false);
@@ -108,13 +183,13 @@ validate_jail_req(const void *payload, uint32_t len,
 {
 	const struct oracle_jail_req *req;
 
-	if (len < sizeof(*req)) {
+	if (len != sizeof(*req)) {
 		*errp = EINVAL;
 		return (false);
 	}
 	req = payload;
 
-	if (req->jid < 0 || req->actions == 0 ||
+	if (req->_pad != 0 || req->jid < 0 || req->actions == 0 ||
 	    (req->actions & ~FI_JAIL_ALL) != 0) {
 		*errp = EINVAL;
 		return (false);
@@ -132,6 +207,31 @@ validate_jail_req(const void *payload, uint32_t len,
 	jc->jid = req->jid;
 	jc->actions = req->actions;
 	strlcpy(jc->name, req->name, sizeof(jc->name));
+	return (true);
+}
+
+static inline bool
+validate_vsock_req(const void *payload, uint32_t len,
+    struct ort_vsock_claim *vc, int *errp)
+{
+	const struct oracle_vsock_req *req;
+
+	if (len != sizeof(*req)) {
+		*errp = EINVAL;
+		return (false);
+	}
+	req = payload;
+	if (req->_pad != 0 ||
+	    memcmp(req->_reserved, (const uint8_t[7]){ 0 }, 7) != 0 ||
+	    req->port_min > req->port_max || req->direction == 0 ||
+	    (req->direction & ~ORT_NET_DIR_ANY) != 0) {
+		*errp = EINVAL;
+		return (false);
+	}
+	vc->cid = req->cid;
+	vc->port_min = req->port_min;
+	vc->port_max = req->port_max;
+	vc->direction = req->direction;
 	return (true);
 }
 

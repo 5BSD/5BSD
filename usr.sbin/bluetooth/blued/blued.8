@@ -22,7 +22,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd June 18, 2026
+.Dd July 19, 2026
 .Dt BLUED 8
 .Os
 .Sh NAME
@@ -83,6 +83,21 @@ enters a
 .Xr capsicum 4
 sandbox, restricting itself to only the file descriptors required
 for operation.
+.Pp
+When launched by
+.Xr serviced 8 ,
+.Nm
+validates and activates every capability token listed in its inherited
+.Ev ORACLED_TOKEN_FDS
+environment variable before opening controllers, Bluetooth sockets, or
+device nodes.
+Failure to initialize the service channel or activate any token is fatal.
+After initialization it selects the external capprotect shield itself;
+.Xr serviced 8
+retains shutdown authority through the process descriptor.
+It registers the name
+.Dq org.5bsd.blued
+and reports readiness only after initialization completes.
 .Pp
 The options are as follows:
 .Bl -tag -width indent
@@ -567,6 +582,11 @@ Shut down the daemon gracefully.
 .El
 .Sh FILES
 .Bl -tag -width "/usr/share/examples/blued/blued.conf.sample" -compact
+.It Pa /Capabilities/System/Blued.cap
+Trusted system-service bundle used by
+.Xr serviced 8 .
+.It Pa /usr/sbin/blued
+Compatibility symlink to the executable in the system-service bundle.
 .It Pa /etc/blued.conf
 Default configuration file (UCL format).
 .It Pa /var/run/blued.pid

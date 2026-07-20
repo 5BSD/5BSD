@@ -22,13 +22,6 @@
 #include "claim_parse.h"
 #include "oraclert.h"
 
-/* Stable AF_BLUETOOTH protocol numbers (see ng_btsocket.h). */
-#define	BT_PROTO_HCI	134
-#define	BT_PROTO_L2CAP	135
-#define	BT_PROTO_RFCOMM	136
-#define	BT_PROTO_SCO	137
-#define	BT_PROTO_ISO	138
-
 /*
  * Mirror of the ort_net_claim -> fi_net_request assembly oracled uses
  * in mac_capability_claim_net().  Kept here so the test asserts the
@@ -63,15 +56,28 @@ ATF_TC_BODY(protocol_names, tc)
 	ATF_REQUIRE(parse_net_protocol_string("udp", &p) == 0);
 	ATF_CHECK_EQ(IPPROTO_UDP, p);
 	ATF_REQUIRE(parse_net_protocol_string("l2cap", &p) == 0);
-	ATF_CHECK_EQ(BT_PROTO_L2CAP, p);
+	ATF_CHECK_EQ(ORT_BTPROTO_L2CAP, p);
 	ATF_REQUIRE(parse_net_protocol_string("rfcomm", &p) == 0);
-	ATF_CHECK_EQ(BT_PROTO_RFCOMM, p);
+	ATF_CHECK_EQ(ORT_BTPROTO_RFCOMM, p);
 	ATF_REQUIRE(parse_net_protocol_string("sco", &p) == 0);
-	ATF_CHECK_EQ(BT_PROTO_SCO, p);
+	ATF_CHECK_EQ(ORT_BTPROTO_SCO, p);
 	ATF_REQUIRE(parse_net_protocol_string("iso", &p) == 0);
-	ATF_CHECK_EQ(BT_PROTO_ISO, p);
+	ATF_CHECK_EQ(ORT_BTPROTO_ISO, p);
 	ATF_REQUIRE(parse_net_protocol_string("hci", &p) == 0);
-	ATF_CHECK_EQ(BT_PROTO_HCI, p);
+	ATF_CHECK_EQ(ORT_BTPROTO_HCI, p);
+
+	ATF_CHECK_STREQ("any", ort_net_protocol_name(0));
+	ATF_CHECK_STREQ("tcp", ort_net_protocol_name(IPPROTO_TCP));
+	ATF_CHECK_STREQ("udp", ort_net_protocol_name(IPPROTO_UDP));
+	ATF_CHECK_STREQ("hci", ort_net_protocol_name(ORT_BTPROTO_HCI));
+	ATF_CHECK_STREQ("l2cap", ort_net_protocol_name(ORT_BTPROTO_L2CAP));
+	ATF_CHECK_STREQ("rfcomm", ort_net_protocol_name(ORT_BTPROTO_RFCOMM));
+	ATF_CHECK_STREQ("sco", ort_net_protocol_name(ORT_BTPROTO_SCO));
+	ATF_CHECK_STREQ("iso", ort_net_protocol_name(ORT_BTPROTO_ISO));
+	ATF_CHECK_STREQ("any", ort_net_domain_name(0));
+	ATF_CHECK_STREQ("inet", ort_net_domain_name(AF_INET));
+	ATF_CHECK_STREQ("inet6", ort_net_domain_name(AF_INET6));
+	ATF_CHECK_STREQ("bluetooth", ort_net_domain_name(AF_BLUETOOTH));
 
 	/* Unknown names are rejected. */
 	ATF_CHECK(parse_net_protocol_string("sctp", &p) != 0);
@@ -208,7 +214,7 @@ ATF_TC_BODY(scoped_l2cap_claim, tc)
 	build_fi_net_request(&nc, &req);
 
 	ATF_CHECK_EQ(AF_BLUETOOTH, req.domain);
-	ATF_CHECK_EQ(BT_PROTO_L2CAP, req.protocol);
+	ATF_CHECK_EQ(ORT_BTPROTO_L2CAP, req.protocol);
 	ATF_CHECK_EQ(48, req.prefix);
 	ATF_CHECK_EQ(0x55, req.addr[0]);
 	ATF_CHECK_EQ(0x00, req.addr[5]);

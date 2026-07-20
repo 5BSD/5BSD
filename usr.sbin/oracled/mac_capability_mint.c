@@ -169,6 +169,32 @@ mac_capability_mint_jail_token(const struct oracled_jail_claim *jc)
 	return (token_fd);
 }
 
+int
+mac_capability_mint_vsock_token(const struct ort_vsock_claim *vc)
+{
+	struct mac_capability_call_args call;
+	struct fi_vsock_request req;
+	struct fi_reply reply;
+	int token_fd = -1;
+
+	memset(&req, 0, sizeof(req));
+	req.op = FI_OP_MINT_VSOCK;
+	req.cid = vc->cid;
+	req.port_min = vc->port_min;
+	req.port_max = vc->port_max;
+	req.direction = vc->direction;
+	memset(&call, 0, sizeof(call));
+	call.req = &req;
+	call.req_len = sizeof(req);
+	call.reply = &reply;
+	call.reply_len = sizeof(reply);
+	call.reply_fds = &token_fd;
+	call.reply_nfds = 1;
+	if (ioctl(mac_capability_isolation_fd, MAC_CAPABILITY_CALL, &call) == -1)
+		return (-1);
+	return (token_fd);
+}
+
 /*
  * Mint a system access token for the given gate bitmask.
  * Returns the token fd on success, -1 on failure.

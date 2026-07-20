@@ -1,0 +1,5 @@
+comment = "Tests for the Oracle runtime protocol library"
+
+desc = <<EOD
+ATF/Kyua parser and protocol-name tests for liboraclert.
+EOD

@@ -6,7 +6,8 @@
  * serviced — service manager and naming registry.
  *
  * Started by oracled as its single child.  Inherits a mac_capability channel
- * on fd 3 for requesting tokens, channels, and coalitions from the
+ * on fd 3 for requesting activation tokens, channels, coalitions, named
+ * capability-service descriptors, and kernel-module prerequisites from the
  * oracle.  Scans capability bundles, dependency-sorts, pdfork/execs
  * services, and manages their lifecycle (restart, shutdown).
  *

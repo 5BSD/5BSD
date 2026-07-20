@@ -24,6 +24,7 @@
 #define	ORACLED_MAX_PATH_CLAIMS		64
 #define	ORACLED_MAX_NET_CLAIMS		32
 #define	ORACLED_MAX_JAIL_CLAIMS		32
+#define	ORACLED_MAX_VSOCK_CLAIMS	32
 #define	ORACLED_SYSTEM_GATE_NBITS	32	/* bits in uint32_t gate bitmask */
 #define	ORACLED_JAIL_DESC_MAX		96	/* jail_claim_string() output */
 
@@ -64,6 +65,10 @@ struct oracled_config {
 	uint8_t		claim_jail_source[ORACLED_MAX_JAIL_CLAIMS];
 	uint32_t	claim_jail_refcount[ORACLED_MAX_JAIL_CLAIMS];
 	unsigned int	nclaim_jail;
+	struct ort_vsock_claim claim_vsock[ORACLED_MAX_VSOCK_CLAIMS];
+	uint8_t		claim_vsock_source[ORACLED_MAX_VSOCK_CLAIMS];
+	uint32_t	claim_vsock_refcount[ORACLED_MAX_VSOCK_CLAIMS];
+	unsigned int	nclaim_vsock;
 	uint32_t	claim_system;		/* SYS_GATE_* bitmask (all) */
 	uint32_t	claim_system_policy;	/* policy-originated bits */
 	uint32_t	claim_system_service;	/* service-originated bits */

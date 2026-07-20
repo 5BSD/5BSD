@@ -62,6 +62,12 @@ unsigned	 capbundle_svc_nrequires(const struct capbundle_service *s);
 const char	*capbundle_svc_requires(const struct capbundle_service *s,
 		    unsigned idx);
 bool		 capbundle_svc_on_demand(const struct capbundle_service *s);
+unsigned	 capbundle_svc_narguments(const struct capbundle_service *s);
+const char	*capbundle_svc_argument(const struct capbundle_service *s,
+		    unsigned idx);
+unsigned	 capbundle_svc_nenvironment(const struct capbundle_service *s);
+const char	*capbundle_svc_environment(const struct capbundle_service *s,
+		    unsigned idx);
 
 /*
  * Fill a svc_manifest struct from a bundle service.
@@ -93,8 +99,8 @@ int	capbundle_check_cycles(struct capbundle **bundles, unsigned nbundles,
  * Scan a directory for .cap bundles.
  * Calls cb for each successfully opened bundle.
  * If cb returns non-zero, scanning stops and that value is returned.
- * Returns 0 on success, -1 on directory error.
- * Bundles that fail to open are logged and skipped.
+ * Returns 0 on success, -1 on a directory or malformed-bundle error.
+ * Invalid bundles stop the scan; declarations are never silently skipped.
  */
 typedef int (*capbundle_scan_cb)(struct capbundle *b, void *ctx);
 int	capbundle_scan_dir(const char *dirpath, capbundle_scan_cb cb, void *ctx);

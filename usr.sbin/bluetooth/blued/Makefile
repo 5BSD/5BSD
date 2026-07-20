@@ -12,9 +12,26 @@ SRCS=	blued.c blued_event.c blued_central.c blued_peripheral.c hogp_report.c \
 
 PACKAGE=	bluetooth
 
+BLUED_CAP=	/Capabilities/System/Blued.cap
+BLUED_CAP_BIN=	${BLUED_CAP}/bin
+BLUED_CAP_ETC=	${BLUED_CAP}/etc
+
+DIRS+=	BLUED_CAP BLUED_CAP_BIN BLUED_CAP_ETC
+BLUED_CAPPACKAGE=	${PACKAGE}
+BLUED_CAP_BINPACKAGE=	${PACKAGE}
+BLUED_CAP_ETCPACKAGE=	${PACKAGE}
+
+BINDIR=	${BLUED_CAP_BIN}
+SYMLINKS=	${BLUED_CAP_BIN}/blued /usr/sbin/blued
+
+FILESGROUPS+=	SERVICES
+SERVICES=	blued.ucl
+SERVICESDIR=	${BLUED_CAP_ETC}
+
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS+=	-I${SRCTOP}/lib/libble
+CFLAGS+=	-I${SRCTOP}/lib/libservice
 
 LIBADD=	bluetooth crypto pthread service ucl util
 
@@ -34,10 +51,12 @@ MAN=	blued.8
 CONFS=	blued.conf.sample
 CONFSDIR=	${SHAREDIR}/examples/blued
 
-DIRS=	BLUED_DBDIR
+DIRS+=	BLUED_DBDIR
 BLUED_DBDIR=	/var/db/blued
 BLUED_DBDIR_MODE=	0700
 
 WARNS?=	6
 
 .include <bsd.prog.mk>
+
+_proginstall: installdirs-BLUED_CAP_BIN

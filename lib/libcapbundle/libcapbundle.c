@@ -84,31 +84,65 @@ capbundle_open(const char *path, struct capbundle **bp,
 	{
 		unsigned nfailed = 0;
 		char fail_errbuf[256];
+		char first_failure[256] = "";
 
 		while ((de = readdir(d)) != NULL) {
+			char parsed_id[CAPBUNDLE_ID_MAX] = "";
+			char parsed_version[CAPBUNDLE_VERSION_MAX] = "";
+			char parsed_author[CAPBUNDLE_AUTHOR_MAX] = "";
 			len = strlen(de->d_name);
 			if (len < 5 ||
 			    strcmp(de->d_name + len - 4, ".ucl") != 0)
 				continue;
-			if (b->nservices >= CAPBUNDLE_MAX_SERVICES)
+			if (b->nservices >= CAPBUNDLE_MAX_SERVICES) {
+				nfailed++;
+				if (first_failure[0] == '\0')
+					snprintf(first_failure, sizeof(first_failure),
+					    "more than %u service manifests",
+					    CAPBUNDLE_MAX_SERVICES);
 				break;
+			}
 
 			snprintf(svc_path, sizeof(svc_path), "%s/%s",
 			    services_dir, de->d_name);
 
 			if (capbundle_parse_service_ucl(svc_path, b->path,
 			    &b->services[b->nservices],
-			    b->bundle_id, sizeof(b->bundle_id),
-			    b->version, sizeof(b->version),
-			    b->author, sizeof(b->author),
+			    parsed_id, sizeof(parsed_id),
+			    parsed_version, sizeof(parsed_version),
+			    parsed_author, sizeof(parsed_author),
 			    fail_errbuf,
 			    sizeof(fail_errbuf)) == 0) {
+				if (b->nservices == 0) {
+					strlcpy(b->bundle_id, parsed_id,
+					    sizeof(b->bundle_id));
+					strlcpy(b->version, parsed_version,
+					    sizeof(b->version));
+					strlcpy(b->author, parsed_author,
+					    sizeof(b->author));
+				} else if (strcmp(b->bundle_id, parsed_id) != 0 ||
+				    strcmp(b->version, parsed_version) != 0 ||
+				    strcmp(b->author, parsed_author) != 0) {
+					syslog(LOG_WARNING,
+					    "capbundle %s: inconsistent metadata in %s",
+					    b->name, de->d_name);
+					nfailed++;
+					if (first_failure[0] == '\0')
+						snprintf(first_failure,
+						    sizeof(first_failure),
+						    "%s: inconsistent bundle metadata",
+						    de->d_name);
+					continue;
+				}
 				b->nservices++;
 			} else {
 				syslog(LOG_WARNING,
 				    "capbundle %s: skipping %s: %s",
 				    b->name, de->d_name, fail_errbuf);
 				nfailed++;
+				if (first_failure[0] == '\0')
+					strlcpy(first_failure, fail_errbuf,
+					    sizeof(first_failure));
 			}
 		}
 		closedir(d);
@@ -116,9 +150,8 @@ capbundle_open(const char *path, struct capbundle **bp,
 		/* Fail the bundle if any Service.ucl files failed to parse. */
 		if (nfailed > 0) {
 			if (errbuf)
-				snprintf(errbuf, errlen,
-				    "%s: %u service(s) failed to parse",
-				    b->name, nfailed);
+				snprintf(errbuf, errlen, "%s: %u service(s) failed: %s",
+				    b->name, nfailed, first_failure);
 			capbundle_close(b);
 			return (-1);
 		}
@@ -248,6 +281,30 @@ capbundle_svc_on_demand(const struct capbundle_service *s)
 	return (s->on_demand);
 }
 
+unsigned
+capbundle_svc_narguments(const struct capbundle_service *s)
+{
+	return (s->narguments);
+}
+
+const char *
+capbundle_svc_argument(const struct capbundle_service *s, unsigned idx)
+{
+	return (idx < s->narguments ? s->arguments[idx] : NULL);
+}
+
+unsigned
+capbundle_svc_nenvironment(const struct capbundle_service *s)
+{
+	return (s->nenvironment);
+}
+
+const char *
+capbundle_svc_environment(const struct capbundle_service *s, unsigned idx)
+{
+	return (idx < s->nenvironment ? s->environment[idx] : NULL);
+}
+
 /*
  * Fill a svc_manifest from a bundle service.
  * This is the canonical way to populate all fields including capabilities.
@@ -265,6 +322,16 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	    manifest_copy(s->user, m->user, sizeof(m->user)) == -1 ||
 	    manifest_copy(s->group, m->group, sizeof(m->group)) == -1)
 		return (-1);
+	m->narguments = s->narguments;
+	for (i = 0; i < s->narguments; i++)
+		if (manifest_copy(s->arguments[i], m->arguments[i],
+		    sizeof(m->arguments[i])) == -1)
+			return (-1);
+	m->nenvironment = s->nenvironment;
+	for (i = 0; i < s->nenvironment; i++)
+		if (manifest_copy(s->environment[i], m->environment[i],
+		    sizeof(m->environment[i])) == -1)
+			return (-1);
 
 	m->nprovides = s->nprovides;
 	for (i = 0; i < s->nprovides && i < CAPBUNDLE_MAX_PROVIDES; i++) {
@@ -313,6 +380,14 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	m->ncap_jail = MIN(s->ncap_jail, SERVICED_MAX_CAP_JAIL);
 	for (i = 0; i < m->ncap_jail; i++)
 		m->cap_jail[i] = s->cap_jail[i];
+	m->ncap_vsock = s->ncap_vsock;
+	for (i = 0; i < m->ncap_vsock; i++)
+		m->cap_vsock[i] = s->cap_vsock[i];
+	m->ncap_services = s->ncap_services;
+	for (i = 0; i < m->ncap_services; i++)
+		if (manifest_copy(s->cap_services[i], m->cap_services[i],
+		    sizeof(m->cap_services[i])) == -1)
+			return (-1);
 
 	/* Kernel module requirements */
 	m->nkmod_requires = MIN(s->nkmod_requires, SERVICED_MAX_KMOD_REQUIRES);
@@ -356,8 +431,12 @@ capbundle_scan_dir(const char *dirpath, capbundle_scan_cb cb, void *ctx)
 
 		snprintf(path, sizeof(path), "%s/%s", dirpath, de->d_name);
 
-		if (capbundle_open(path, &b, errbuf, sizeof(errbuf)) == -1)
-			continue;	/* skip invalid bundles */
+		if (capbundle_open(path, &b, errbuf, sizeof(errbuf)) == -1) {
+			syslog(LOG_WARNING, "capbundle scan: %s", errbuf);
+			errno = EINVAL;
+			closedir(d);
+			return (-1);
+		}
 
 		ret = cb(b, ctx);
 		if (ret != 0) {

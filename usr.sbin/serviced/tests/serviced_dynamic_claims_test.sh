@@ -48,6 +48,7 @@ shared_path_survives_exit_head()
 {
 	atf_set "descr" "Shared dynamic claim survives when one user exits"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 	atf_set "timeout" "60"
 }
 shared_path_survives_exit_body()
@@ -70,7 +71,7 @@ shared_path_survives_exit_body()
 	    "echo \$\$ > ${WORK}/svc-b.pid" \
 	    "echo running > ${WORK}/svc-b-running.out" \
 	    'while true; do sleep 1; done'
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	if ! wait_for_file svc-a-running.out; then
 		cat "$logfile" 2>/dev/null
@@ -123,6 +124,7 @@ dynamic_claim_fully_released_head()
 {
 	atf_set "descr" "Dynamic claim released from kernel when last user exits"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 	atf_set "timeout" "60"
 }
 dynamic_claim_fully_released_body()
@@ -137,7 +139,7 @@ dynamic_claim_fully_released_body()
 	    "echo \$\$ > ${WORK}/sole-user.pid" \
 	    "echo running > ${WORK}/sole-user-running.out" \
 	    'while true; do sleep 1; done'
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	if ! wait_for_file sole-user-running.out; then
 		cat "$logfile" 2>/dev/null
@@ -182,6 +184,7 @@ policy_claim_immune_to_release_head()
 {
 	atf_set "descr" "Policy claims survive service exit (EPERM on release)"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 	atf_set "timeout" "60"
 }
 policy_claim_immune_to_release_body()
@@ -214,30 +217,12 @@ EOF
 	    "echo running > ${WORK}/policy-svc-running.out" \
 	    'while true; do sleep 1; done'
 
-	oracled -d -f "$conffile" >"$logfile" 2>&1 &
-	daemon_pid=$!
-
-	# Wait for control socket
-	i=0
-	while [ ! -S "$sockpath" ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ ! -S "$sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "oracled did not create control socket"
-	fi
-
-	# Wait for serviced ready
-	i=0
-	while ! grep -q "serviced ready" "$logfile" 2>/dev/null && \
-	    [ "$i" -lt 150 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
+	capd_start_stack
+	daemon_pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status |
+	    sed -n 's/^running pid=//p')
 
 	# Reload to pick up manifest
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	if ! wait_for_file policy-svc-running.out; then
 		cat "$logfile" 2>/dev/null
@@ -279,6 +264,7 @@ multi_cap_batched_release_head()
 {
 	atf_set "descr" "Multiple dynamic claims all released on service exit"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 	atf_set "timeout" "60"
 }
 multi_cap_batched_release_body()
@@ -293,7 +279,7 @@ multi_cap_batched_release_body()
 	    "echo \$\$ > ${WORK}/multi-svc.pid" \
 	    "echo running > ${WORK}/multi-svc-running.out" \
 	    'while true; do sleep 1; done'
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	if ! wait_for_file multi-svc-running.out; then
 		cat "$logfile" 2>/dev/null
@@ -333,7 +319,7 @@ multi_cap_batched_release_body()
 	    '#!/bin/sh' \
 	    "echo running > ${WORK}/health-svc-running.out" \
 	    'while true; do sleep 1; done'
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	if ! wait_for_file health-svc-running.out; then
 		cat "$logfile" 2>/dev/null
@@ -361,6 +347,7 @@ duplicate_release_no_underflow_head()
 {
 	atf_set "descr" "Duplicate release returns error, does not underflow refcount"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 	atf_set "timeout" "60"
 }
 duplicate_release_no_underflow_body()
@@ -375,7 +362,7 @@ duplicate_release_no_underflow_body()
 	    "echo \$\$ > ${WORK}/dup-svc.pid" \
 	    "echo running > ${WORK}/dup-svc-running.out" \
 	    'while true; do sleep 1; done'
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	if ! wait_for_file dup-svc-running.out; then
 		cat "$logfile" 2>/dev/null
@@ -397,7 +384,7 @@ duplicate_release_no_underflow_body()
 	    "echo \$\$ > ${WORK}/dup2-svc.pid" \
 	    "echo running > ${WORK}/dup2-svc-running.out" \
 	    'while true; do sleep 1; done'
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	if ! wait_for_file dup2-svc-running.out; then
 		cat "$logfile" 2>/dev/null
@@ -429,6 +416,7 @@ sweep_all_claim_types_head()
 {
 	atf_set "descr" "Sweep on serviced exit releases path and network claims"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 	atf_set "timeout" "60"
 }
 sweep_all_claim_types_body()
@@ -446,7 +434,7 @@ sweep_all_claim_types_body()
 	    "echo \$\$ > ${WORK}/sweep-svc.pid" \
 	    "echo running > ${WORK}/sweep-svc-running.out" \
 	    'while true; do sleep 1; done'
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	if ! wait_for_file sweep-svc-running.out; then
 		cat "$logfile" 2>/dev/null

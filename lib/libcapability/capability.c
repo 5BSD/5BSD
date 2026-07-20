@@ -20,7 +20,6 @@
 #include <unistd.h>
 
 #include <libservice.h>
-#include <dev/mac_capability/mac_capability_capprotect_proto.h>
 #include "capability.h"
 
 
@@ -107,13 +106,11 @@ cap_daemon_run(const struct cap_daemon_config *cfg)
 
 	if (service_init() == -1)
 		return (-1);
-	if (service_protect(CP_SF_PTRACE | CP_SF_VISIBLE | CP_SF_WAIT |
-	    CP_SF_SCHED | CP_SF_CORE | CP_SF_KTRACE) == -1) {
-		if (errno != ENOTSUP)
-			syslog(LOG_WARNING, "service protect: %m");
-	} else {
-		syslog(LOG_INFO, "service protect active");
-	}
+	if (service_authorize_capabilities() == -1)
+		return (-1);
+	if (service_protect(SERVICE_PROTECT_EXTERNAL) == -1)
+		return (-1);
+	syslog(LOG_INFO, "service protect active");
 	if (service_register(cfg->service_name) == -1)
 		return (-1);
 	if (service_ready() == -1)

@@ -11,6 +11,8 @@
 #include <sys/param.h>
 
 #include <err.h>
+#include <errno.h>
+#include <fts.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,11 +21,53 @@
 
 /* --- Verification --- */
 
+static int
+verify_tree_shape(const char *path, char *errbuf, size_t errlen)
+{
+	FTS *fts;
+	FTSENT *ent;
+	char *paths[2];
+
+	paths[0] = __DECONST(char *, path);
+	paths[1] = NULL;
+	fts = fts_open(paths, FTS_PHYSICAL | FTS_NOCHDIR, NULL);
+	if (fts == NULL) {
+		if (errbuf != NULL)
+			snprintf(errbuf, errlen, "%s: %s", path, strerror(errno));
+		return (-1);
+	}
+	errno = 0;
+	while ((ent = fts_read(fts)) != NULL) {
+		if (ent->fts_info == FTS_DP)
+			continue;
+		if (ent->fts_info != FTS_D && ent->fts_info != FTS_F) {
+			if (errbuf != NULL)
+				snprintf(errbuf, errlen,
+				    "%s: symlink or non-regular object is not allowed",
+				    ent->fts_path);
+			(void)fts_close(fts);
+			return (-1);
+		}
+	}
+	if (errno != 0) {
+		if (errbuf != NULL)
+			snprintf(errbuf, errlen, "%s: traversal failed: %s", path,
+			    strerror(errno));
+		(void)fts_close(fts);
+		return (-1);
+	}
+	(void)fts_close(fts);
+	return (0);
+}
+
 int
 capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 {
 	unsigned i, j, k;
 	struct stat sb;
+
+	if (verify_tree_shape(b->path, errbuf, errlen) != 0)
+		return (-1);
 
 	if (b->bundle_id[0] == '\0') {
 		if (errbuf)
@@ -74,6 +118,15 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 					    b->name, s->provides[j]);
 				return (-1);
 			}
+			for (k = j + 1; k < s->nprovides; k++) {
+				if (strcmp(s->provides[j], s->provides[k]) == 0) {
+					if (errbuf)
+						snprintf(errbuf, errlen,
+						    "%s: duplicate provides '%s'",
+						    b->name, s->provides[j]);
+					return (-1);
+				}
+			}
 		}
 		for (j = 0; j < s->nrequires; j++) {
 			if (strlen(s->requires[j]) >= SERVICED_LABEL_MAX) {
@@ -82,6 +135,15 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 					    "%s: requires name too long: %s",
 					    b->name, s->requires[j]);
 				return (-1);
+			}
+			for (k = j + 1; k < s->nrequires; k++) {
+				if (strcmp(s->requires[j], s->requires[k]) == 0) {
+					if (errbuf)
+						snprintf(errbuf, errlen,
+						    "%s: duplicate requires '%s'",
+						    b->name, s->requires[j]);
+					return (-1);
+				}
 			}
 		}
 
@@ -137,7 +199,7 @@ capbundle_check_cycles(struct capbundle **bundles, unsigned nbundles,
 	struct node {
 		const char *name;		/* first provides name = identity */
 		unsigned in_degree;
-		unsigned deps[CAPBUNDLE_MAX_REQUIRES];
+		unsigned *deps;
 		unsigned ndeps;
 	};
 	struct node *nodes;
@@ -161,6 +223,18 @@ capbundle_check_cycles(struct capbundle **bundles, unsigned nbundles,
 		if (errbuf)
 			snprintf(errbuf, errlen, "out of memory");
 		return (-1);
+	}
+	for (i = 0; i < cap; i++) {
+		nodes[i].deps = calloc(cap, sizeof(*nodes[i].deps));
+		if (nodes[i].deps == NULL) {
+			while (i > 0)
+				free(nodes[--i].deps);
+			free(nodes);
+			free(queue);
+			if (errbuf)
+				snprintf(errbuf, errlen, "out of memory");
+			return (-1);
+		}
 	}
 
 	/* Populate nodes. */
@@ -207,24 +281,8 @@ capbundle_check_cycles(struct capbundle **bundles, unsigned nbundles,
 found:
 				if (provider_idx != (unsigned)-1) {
 					/* Edge: provider -> this node */
-					if (nodes[provider_idx].ndeps <
-					    CAPBUNDLE_MAX_REQUIRES) {
-						nodes[provider_idx].deps[
-						    nodes[provider_idx].ndeps++] =
-						    nnodes;
-					} else {
-						/*
-						 * Truncating edges: cycle
-						 * detection may miss cycles
-						 * involving this provider.
-						 */
-						warnx("capbundle: provider "
-						    "'%s' has too many "
-						    "dependents for cycle "
-						    "detection (max %d)",
-						    nodes[provider_idx].name,
-						    CAPBUNDLE_MAX_REQUIRES);
-					}
+					nodes[provider_idx].deps[
+					    nodes[provider_idx].ndeps++] = nnodes;
 					nodes[nnodes].in_degree++;
 				}
 			}
@@ -265,10 +323,14 @@ found:
 				}
 			}
 		}
+		for (i = 0; i < cap; i++)
+			free(nodes[i].deps);
 		free(nodes);
 		return (-1);
 	}
 
+	for (i = 0; i < cap; i++)
+		free(nodes[i].deps);
 	free(nodes);
 	return (0);
 }

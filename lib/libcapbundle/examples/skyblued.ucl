@@ -14,10 +14,11 @@
 # all "any", direction = any.  direction MUST be "any" -- the block-all
 # gate only fires on a claim whose direction is the bind+connect union.
 
-label = "org.5bsd.skyblued";
-program = "/usr/sbin/skyblued";
-description = "Bluetooth capability broker (sole HCI owner)";
-provides = ["bluetooth"];
+bundle_id = "org.5bsd.skyblue";
+version = "1.0";
+author = "5BSD";
+program = "skyblued";
+provides = ["org.5bsd.bluetooth"];
 restart = "on-failure";
 stop_timeout = 10;
 

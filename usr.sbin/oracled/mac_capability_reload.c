@@ -424,6 +424,20 @@ mac_capability_reload_claims(const struct oracled_config *newcfg)
 		    jail_claim_in, ORACLED_MAX_JAIL_CLAIMS);
 		eff->nclaim_jail = n;
 
+		/* VSOCK currently has service-manifest dynamic claims only. */
+		n = 0;
+		for (i = 0; i < oldcfg->nclaim_vsock &&
+		    n < ORACLED_MAX_VSOCK_CLAIMS; i++) {
+			if (oldcfg->claim_vsock_source[i] != CLAIM_SOURCE_SERVICE)
+				continue;
+			eff->claim_vsock[n] = oldcfg->claim_vsock[i];
+			eff->claim_vsock_source[n] = CLAIM_SOURCE_SERVICE;
+			eff->claim_vsock_refcount[n] =
+			    oldcfg->claim_vsock_refcount[i];
+			n++;
+		}
+		eff->nclaim_vsock = n;
+
 #undef CARRY_FORWARD
 
 		/* System gates: add only what was acquired, remove only

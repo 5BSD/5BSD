@@ -20,6 +20,7 @@ TESTS_SUBDIRS+=		geom
 TESTS_SUBDIRS+=		kern
 TESTS_SUBDIRS+=		kqueue
 TESTS_SUBDIRS+=		mac
+TESTS_SUBDIRS+=		mac_capability
 TESTS_SUBDIRS+=		mqueue
 TESTS_SUBDIRS+=		net
 TESTS_SUBDIRS+=		${_netgraph}

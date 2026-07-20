@@ -24,11 +24,17 @@
 #define	CAPBUNDLE_MAX_CAP_FILES		16
 #define	CAPBUNDLE_MAX_CAP_NET		16
 #define	CAPBUNDLE_MAX_CAP_JAIL		16
+#define	CAPBUNDLE_MAX_CAP_VSOCK		16
+#define	CAPBUNDLE_MAX_CAP_SERVICES	SERVICED_MAX_CAP_SERVICES
 #define	CAPBUNDLE_MAX_KMOD_REQUIRES	8
 
 /* Internal service representation. */
 struct capbundle_service {
 	char	program[PATH_MAX];	/* absolute resolved path */
+	char	arguments[SERVICED_MAX_ARGUMENTS][SERVICED_ARGUMENT_MAX];
+	unsigned narguments;
+	char	environment[SERVICED_MAX_ENVIRONMENT][SERVICED_ENVIRONMENT_MAX];
+	unsigned nenvironment;
 	char	label[CAPBUNDLE_NAME_MAX + 1];
 	char	provides[CAPBUNDLE_MAX_PROVIDES][CAPBUNDLE_NAME_MAX + 1];
 	unsigned nprovides;
@@ -56,6 +62,11 @@ struct capbundle_service {
 	/* Jail capabilities */
 	struct serviced_jail_claim cap_jail[CAPBUNDLE_MAX_CAP_JAIL];
 	unsigned ncap_jail;
+	struct ort_vsock_claim cap_vsock[CAPBUNDLE_MAX_CAP_VSOCK];
+	unsigned ncap_vsock;
+	char	cap_services[CAPBUNDLE_MAX_CAP_SERVICES]
+		    [SERVICED_CAP_SERVICE_NAME_MAX];
+	unsigned ncap_services;
 
 	/* User/group for privilege drop */
 	char	user[64];

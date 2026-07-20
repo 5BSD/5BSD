@@ -1,3 +1,4 @@
+PACKAGE=	mac-capability-tests
 TESTSDIR=	${TESTSBASE}/sys/mac_capability
 
 ATF_TESTS_C+=	mac_capability_test

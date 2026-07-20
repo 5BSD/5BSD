@@ -70,19 +70,30 @@ manifest_equal(const struct svc_manifest *a, const struct svc_manifest *b)
 	    strcmp(a->program, b->program) != 0 ||
 	    strcmp(a->user, b->user) != 0 ||
 	    strcmp(a->group, b->group) != 0 ||
+	    a->narguments != b->narguments ||
+	    a->nenvironment != b->nenvironment ||
 	    a->restart != b->restart ||
 	    a->stop_timeout != b->stop_timeout ||
 	    a->max_failures != b->max_failures ||
 	    a->on_demand != b->on_demand ||
 	    a->nprovides != b->nprovides ||
 	    a->nrequires != b->nrequires ||
+	    a->nkmod_requires != b->nkmod_requires ||
 	    a->ncap_paths != b->ncap_paths ||
 	    a->ncap_net != b->ncap_net ||
 	    a->ncap_files != b->ncap_files ||
 	    a->ncap_jail != b->ncap_jail ||
+	    a->ncap_vsock != b->ncap_vsock ||
+	    a->ncap_services != b->ncap_services ||
 	    a->cap_system != b->cap_system ||
 	    a->has_jail != b->has_jail)
 		return (false);
+	for (i = 0; i < a->narguments; i++)
+		if (strcmp(a->arguments[i], b->arguments[i]) != 0)
+			return (false);
+	for (i = 0; i < a->nenvironment; i++)
+		if (strcmp(a->environment[i], b->environment[i]) != 0)
+			return (false);
 	if (a->has_jail &&
 	    (strcmp(a->jail_name, b->jail_name) != 0 ||
 	    strcmp(a->jail_path, b->jail_path) != 0 ||
@@ -102,6 +113,9 @@ manifest_equal(const struct svc_manifest *a, const struct svc_manifest *b)
 	for (i = 0; i < a->nrequires; i++)
 		if (strcmp(a->requires[i], b->requires[i]) != 0)
 			return (false);
+	for (i = 0; i < a->nkmod_requires; i++)
+		if (strcmp(a->kmod_requires[i], b->kmod_requires[i]) != 0)
+			return (false);
 	for (i = 0; i < a->ncap_paths; i++)
 		if (strcmp(a->cap_paths[i], b->cap_paths[i]) != 0)
 			return (false);
@@ -116,6 +130,13 @@ manifest_equal(const struct svc_manifest *a, const struct svc_manifest *b)
 	for (i = 0; i < a->ncap_jail; i++)
 		if (memcmp(&a->cap_jail[i], &b->cap_jail[i],
 		    sizeof(a->cap_jail[i])) != 0)
+			return (false);
+	for (i = 0; i < a->ncap_vsock; i++)
+		if (memcmp(&a->cap_vsock[i], &b->cap_vsock[i],
+		    sizeof(a->cap_vsock[i])) != 0)
+			return (false);
+	for (i = 0; i < a->ncap_services; i++)
+		if (strcmp(a->cap_services[i], b->cap_services[i]) != 0)
 			return (false);
 	return (true);
 }
@@ -249,28 +270,18 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 	}
 
 	/*
-	 * Rescan the bundle registry.  Teardown the old registry only
-	 * after confirming the new one initializes successfully, so
-	 * that a rescan failure does not break on-demand lookups that
-	 * depend on the existing registry.
-	 *
-	 * bundle_registry_init() clears and rebuilds global state, so
-	 * we must teardown first.  On init failure, the registry is
-	 * empty but running services continue unaffected.
+	 * Rescan the registry transactionally.  A malformed replacement leaves
+	 * both running services and the previous on-demand registry intact.
 	 */
-	bundle_registry_teardown();
 	if (bundle_registry_init() == -1) {
 		syslog(LOG_ERR, "reload: bundle registry rescan failed; "
-		    "running services continue, on-demand lookups "
-		    "unavailable until next successful reload");
+		    "previous registry and running services retained");
 		if (summary != NULL && sumlen > 0)
 			snprintf(summary, sumlen,
 			    "error: bundle rescan failed, "
 			    "running services unaffected\n");
 		/*
-		 * Return -1 so the caller knows the reload was not
-		 * fully successful.  Running services are unaffected
-		 * but the registry is now empty.
+		 * Return -1 so the caller knows no replacement state was applied.
 		 */
 		return (-1);
 	}

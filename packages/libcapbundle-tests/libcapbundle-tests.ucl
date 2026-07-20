@@ -1,0 +1,5 @@
+comment = "Tests for the capability-bundle manifest library"
+
+desc = <<EOD
+ATF/Kyua schema, parsing, and validation tests for libcapbundle.
+EOD

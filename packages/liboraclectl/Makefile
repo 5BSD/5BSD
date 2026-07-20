@@ -1,6 +1,6 @@
 WORLDPACKAGE=	liboraclectl
 PKG_SETS=	minimal minimal-jail
-SUBPACKAGES=	dbg dev man
+SUBPACKAGES=	dbg dev
 COMPAT_PKGS=	dbg dev lib
 
 PKG_LICENSES=	BSD2CLAUSE

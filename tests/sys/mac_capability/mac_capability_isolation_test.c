@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/vsock.h>
 #include <sys/wait.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -129,6 +130,28 @@ fi_authorize(int token_fd)
 	ca.reply = &rpl;
 	ca.reply_len = sizeof(rpl);
 	return (ioctl(token_fd, MAC_CAPABILITY_CALL, &ca));
+}
+
+static int
+fi_vsock_call(int svc, uint32_t op, const struct fi_vsock_request *input,
+    int *tokenp)
+{
+	struct mac_capability_call_args ca;
+	struct fi_vsock_request req = *input;
+	struct fi_reply rpl;
+
+	req.op = op;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply = &rpl;
+	ca.reply_len = sizeof(rpl);
+	if (tokenp != NULL) {
+		*tokenp = -1;
+		ca.reply_fds = tokenp;
+		ca.reply_nfds = 1;
+	}
+	return (ioctl(svc, MAC_CAPABILITY_CALL, &ca));
 }
 
 static char tmppath[128];
@@ -981,6 +1004,37 @@ fi_helper_path(const atf_tc_t *tc)
 	snprintf(path, sizeof(path), "%s/mac_capability_isolation_helper",
 	    atf_tc_get_config_var(tc, "srcdir"));
 	return (path);
+}
+
+static int
+run_vsock_token_query_helper(const atf_tc_t *tc, int svc, int token,
+    const struct fi_vsock_request *req, uint32_t expected_flags)
+{
+	char svcstr[16], tokenstr[16], cidstr[32], minstr[16], maxstr[16];
+	char dirstr[16], flagstr[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	snprintf(svcstr, sizeof(svcstr), "%d", svc);
+	snprintf(tokenstr, sizeof(tokenstr), "%d", token);
+	snprintf(cidstr, sizeof(cidstr), "%ju", (uintmax_t)req->cid);
+	snprintf(minstr, sizeof(minstr), "%u", req->port_min);
+	snprintf(maxstr, sizeof(maxstr), "%u", req->port_max);
+	snprintf(dirstr, sizeof(dirstr), "%u", req->direction);
+	snprintf(flagstr, sizeof(flagstr), "%u", expected_flags);
+	path = fi_helper_path(tc);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(path, path, "vsock-token-query", svcstr, tokenstr,
+		    cidstr, minstr, maxstr, dirstr, flagstr, NULL);
+		_exit(127);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE(WIFEXITED(status));
+	return (WEXITSTATUS(status));
 }
 
 static int
@@ -2694,6 +2748,36 @@ ATF_TC_HEAD(net_token_mint_returns_fd, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "FI_OP_MINT_NET returns a valid token fd");
 	atf_tc_set_md_var(tc, "require.user", "root");
+}
+
+ATF_TC(vsock_token_claim_mint_authorize);
+ATF_TC_HEAD(vsock_token_claim_mint_authorize, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "An exec'd program activates a VSOCK token without inheriting claim ownership");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_isolation");
+}
+ATF_TC_BODY(vsock_token_claim_mint_authorize, tc)
+{
+	struct fi_vsock_request req;
+	int svc, token;
+
+	svc = fi_connect();
+	memset(&req, 0, sizeof(req));
+	req.cid = VSOCK_CID_ANY;
+	req.port_min = 18000;
+	req.port_max = 18010;
+	req.direction = FI_NET_CONNECT;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == 0);
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_MINT_VSOCK, &req, &token) == 0);
+	ATF_REQUIRE(token >= 0);
+	ATF_REQUIRE_MSG(run_vsock_token_query_helper(tc, svc, token, &req,
+	    FI_QF_CLAIMED | FI_QF_AUTHORIZED) == 0,
+	    "exec'd program could not activate and query VSOCK token");
+	close(token);
+	close(svc);
 }
 ATF_TC_BODY(net_token_mint_returns_fd, tc)
 {
@@ -4431,6 +4515,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, token_dup_lifetime);
 
 	/* Network access tokens */
+	ATF_TP_ADD_TC(tp, vsock_token_claim_mint_authorize);
 	ATF_TP_ADD_TC(tp, net_token_mint_returns_fd);
 	ATF_TP_ADD_TC(tp, net_token_authorize_grants_bind);
 	ATF_TP_ADD_TC(tp, net_token_scoped_to_endpoint);

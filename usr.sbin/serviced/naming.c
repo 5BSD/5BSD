@@ -8,7 +8,8 @@
  * Services register names (e.g., "org.5bsd.sshd") via their channel
  * to serviced.  Clients look up names and receive a channel
  * endpoint to the named service.  serviced brokers the connection
- * by creating a new channel (via oracled) and pushing one end to each
+ * by minting a new channel from its delegated channel service and pushing
+ * one end to each
  * party.
  *
  * The registry is a simple hash table keyed by name.  Entries are
@@ -16,6 +17,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/capsicum.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
@@ -276,7 +278,8 @@ naming_rebind_owner(struct svc_runtime *old_owner,
 /*
  * Look up a name and broker a connection.
  *
- * Creates a new channel via oracled, pushes one end to the provider
+ * Creates a new channel through serviced's delegated channel factory, pushes
+ * one end to the provider
  * service (SVC_OP_NEW_CLIENT notification), and returns the other
  * end to the caller.
  *
@@ -306,12 +309,20 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 	}
 
 	/* Create a channel for the connection. */
-	if (oracle_create_channel(sd.oracle_channel_fd,
-	    &provider_end, &client_end) != 0) {
+	if (mac_cap_create_channel(&provider_end, &client_end) != 0) {
 		syslog(LOG_WARNING,
 		    "naming: lookup '%s': failed to create channel", name);
 		SERVICED_PROBE_ERROR("naming", "lookup channel creation failed");
 		*errp = EIO;
+		return (-1);
+	}
+	/* Each endpoint crosses exactly one channel-message edge.  The kernel
+	 * consumes CAP_XFER_ONCE and installs CAP_XFER_NONE at the service. */
+	if (cap_xfer_limit(provider_end, CAP_XFER_ONCE) == -1 ||
+	    cap_xfer_limit(client_end, CAP_XFER_ONCE) == -1) {
+		close(provider_end);
+		close(client_end);
+		*errp = ENOTCAPABLE;
 		return (-1);
 	}
 

@@ -21,6 +21,7 @@ capability_tokens_delivered_head()
 {
 	atf_set "descr" "Service receives capability token fds from oracle"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 	atf_set "timeout" "60"
 }
 capability_tokens_delivered_body()
@@ -30,59 +31,7 @@ capability_tokens_delivered_body()
 	printf 'path target\n' > "$token_path_target"
 	printf 'file target\n' > "$token_file_target"
 
-	cat > token_svc.c <<'CEOF'
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <errno.h>
-#include <sys/capsicum.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <libservice.h>
-
-int
-main(void)
-{
-	FILE *out;
-	const char *token_fds;
-	char *tok, *copy;
-	int confined_count = 0, fd, valid_count = 0;
-	struct stat sb;
-
-	if (service_init() == -1) return (1);
-	if (service_ready() == -1) return (1);
-
-	out = fopen("token-check.out", "w");
-	if (out == NULL) return (1);
-
-	fprintf(out, "channel_fd=%d\n", service_channel_fd());
-
-	token_fds = getenv("ORACLED_TOKEN_FDS");
-	if (token_fds != NULL && token_fds[0] != '\0') {
-		fprintf(out, "token_fds=%s\n", token_fds);
-		copy = strdup(token_fds);
-		tok = strtok(copy, ",");
-		while (tok != NULL) {
-			fd = atoi(tok);
-			if (fstat(fd, &sb) == 0) {
-				valid_count++;
-				errno = 0;
-				if (cap_xfer_limit(fd, CAP_XFER_ONCE) == -1 &&
-				    errno == ENOTCAPABLE)
-					confined_count++;
-			}
-			tok = strtok(NULL, ",");
-		}
-		free(copy);
-	}
-	fprintf(out, "valid_tokens=%d\n", valid_count);
-	fprintf(out, "confined_tokens=%d\n", confined_count);
-	fclose(out);
-	sleep(30);
-	return (0);
-}
-CEOF
-	cc_with_libservice -o token_svc token_svc.c
+	find_capd_service_fixture
 
 	start_stack
 
@@ -96,9 +45,11 @@ CEOF
         direction = \"bind\";
         address = \"127.0.0.1\";
     }];
-}" "$(pwd)/token_svc"
+	}
+	arguments = ["token-inventory", "token-check.out"];
+" "$capd_service_fixture"
 	# Reload to pick up the bundle
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	if ! wait_for_file token-check.out; then
 		cat "$logfile" 2>/dev/null
@@ -127,8 +78,9 @@ capability_tokens_delivered_cleanup()
 atf_test_case capability_tokens_require_program_activation cleanup
 capability_tokens_require_program_activation_head()
 {
-	atf_set "descr" "serviced delivers inactive tokens for the program to activate after exec"
+	atf_set "descr" "libservice activates delivered tokens and retains their kernel authorization lease after consuming the inherited descriptors"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 	atf_set "timeout" "60"
 }
 capability_tokens_require_program_activation_body()
@@ -136,88 +88,15 @@ capability_tokens_require_program_activation_body()
 	activation_target="${WORK}/activation-target"
 	printf 'capability payload\n' > "$activation_target"
 
-	cat > token_activate_svc.c <<'CEOF'
-#include <sys/ioctl.h>
-
-#include <dev/mac_capability/mac_capability_ioctl.h>
-#include <dev/mac_capability/mac_capability_isolation_proto.h>
-
-#include <errno.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-
-#include <libservice.h>
-
-#ifndef TARGET_PATH
-#error TARGET_PATH must name the claimed test file
-#endif
-
-int
-main(void)
-{
-	struct mac_capability_call_args call;
-	struct fi_request req;
-	struct fi_reply reply;
-	const char *token_fds;
-	FILE *out;
-	int before_errno, fd, token_fd;
-
-	if (service_init() == -1)
-		return (1);
-	token_fds = getenv("ORACLED_TOKEN_FDS");
-	if (token_fds == NULL || strchr(token_fds, ',') != NULL)
-		return (2);
-	token_fd = atoi(token_fds);
-
-	fd = open(TARGET_PATH, O_RDONLY);
-	before_errno = fd == -1 ? errno : 0;
-	if (fd >= 0)
-		close(fd);
-
-	memset(&req, 0, sizeof(req));
-	req.op = FI_OP_AUTHORIZE;
-	memset(&reply, 0, sizeof(reply));
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-	if (ioctl(token_fd, MAC_CAPABILITY_CALL, &call) == -1)
-		return (3);
-
-	fd = open(TARGET_PATH, O_RDONLY);
-	out = fopen("token-activation.out", "w");
-	if (out == NULL)
-		return (4);
-	fprintf(out, "before_denied=%d\n",
-	    before_errno == EACCES || before_errno == EPERM);
-	fprintf(out, "authorize=ok\n");
-	fprintf(out, "after_open=%s\n", fd >= 0 ? "ok" : "failed");
-	fclose(out);
-	if (fd >= 0)
-		close(fd);
-	if (before_errno != EACCES && before_errno != EPERM)
-		return (5);
-	if (fd < 0)
-		return (6);
-	if (service_ready() == -1)
-		return (7);
-	sleep(30);
-	return (0);
-}
-CEOF
-	cc_with_libservice -I/usr/src/sys \
-	    -DTARGET_PATH="\"${activation_target}\"" \
-	    -o token_activate_svc token_activate_svc.c
+	find_capd_service_fixture
 
 	start_stack
 	make_svc_bin system token-activate "capabilities {
     paths = [\"${activation_target}\"];
-}" "$(pwd)/token_activate_svc"
-	kill -HUP "$daemon_pid"
+}
+arguments = [\"token-activate\", \"${activation_target}\", \"token-activation.out\"];" \
+	    "$capd_service_fixture"
+	reload_stack
 
 	if ! wait_for_file token-activation.out; then
 		cat "$logfile" 2>/dev/null
@@ -225,6 +104,7 @@ CEOF
 	fi
 	atf_check -s exit:0 -o match:"before_denied=1" cat token-activation.out
 	atf_check -s exit:0 -o match:"authorize=ok" cat token-activation.out
+	atf_check -s exit:0 -o match:"token_consumed=1" cat token-activation.out
 	atf_check -s exit:0 -o match:"after_open=ok" cat token-activation.out
 	stop_stack
 }
@@ -244,6 +124,7 @@ incomplete_capability_set_prevents_exec_head()
 {
 	atf_set "descr" "A failed mint cleans partial claims and prevents service exec"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 	atf_set "timeout" "60"
 }
 incomplete_capability_set_prevents_exec_body()
@@ -260,7 +141,7 @@ incomplete_capability_set_prevents_exec_body()
 	    '#!/bin/sh' \
 	    "echo executed > ${WORK}/mint-fail-executed.out" \
 	    'sleep 30'
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	i=0
 	while ! grep -q "svc_exec mint-fail: failed to mint token" \
@@ -303,6 +184,7 @@ crash_recovery_restarts_head()
 {
 	atf_set "descr" "Service with restart=on-failure restarts after crash"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 crash_recovery_restarts_body()
 {
@@ -317,7 +199,7 @@ crash_recovery_restarts_body()
 	    'fi' \
 	    "echo \"first\" > ${WORK}/crash-count.out" \
 	    'exit 1'
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	if ! wait_for_file crash-restarted.out; then
 		cat "$logfile" 2>/dev/null
@@ -341,6 +223,7 @@ circuit_breaker_stops_restarts_head()
 {
 	atf_set "descr" "Circuit breaker disables service after max_failures"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 circuit_breaker_stops_restarts_body()
 {
@@ -349,7 +232,7 @@ circuit_breaker_stops_restarts_body()
 	make_svc system fastcrash 'restart = "on-failure"; max_failures = 3;' \
 	    '#!/bin/sh' \
 	    'exit 1'
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	# Wait for circuit breaker message in log
 	i=0
@@ -377,6 +260,7 @@ graceful_shutdown_sigterm_head()
 {
 	atf_set "descr" "Service receives SIGTERM on graceful shutdown"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 graceful_shutdown_sigterm_body()
 {
@@ -387,7 +271,7 @@ graceful_shutdown_sigterm_body()
 	    "trap 'echo \"got-sigterm\" > ${WORK}/sigterm-marker.out; exit 0' TERM" \
 	    "echo \"ready\" > ${WORK}/trapper-ready.out" \
 	    'while true; do sleep 1; done'
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	if ! wait_for_file trapper-ready.out; then
 		cat "$logfile" 2>/dev/null
@@ -395,7 +279,8 @@ graceful_shutdown_sigterm_body()
 	fi
 
 	# Shut down the stack — this sends SIGTERM to services
-	kill -TERM "$daemon_pid"
+	atf_check -s exit:0 -o match:"shutdown initiated" \
+	    oraclectl -s "$sockpath" shutdown
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
 
@@ -421,8 +306,9 @@ graceful_shutdown_sigterm_cleanup()
 atf_test_case procdesc_is_only_signal_authority cleanup
 procdesc_is_only_signal_authority_head()
 {
-	atf_set "descr" "ambient SIGKILL is denied but Oracle death kills serviced through procdesc"
+	atf_set "descr" "ambient SIGKILL is denied but Oracle can stop serviced through its procdesc"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 	atf_set "timeout" "60"
 }
 procdesc_is_only_signal_authority_body()
@@ -445,10 +331,23 @@ procdesc_is_only_signal_authority_body()
 		atf_fail "serviced died after denied ambient SIGKILL"
 	fi
 
-	# Abrupt Oracle death closes its exclusive non-daemon procdesc.  The
-	# kernel must kill that exact serviced instance without consulting the
-	# capprotect signal hook.
-	kill -KILL "$daemon_pid"
+	# Oracle is protected from ambient signals too.  Ask it to shut down over
+	# its administrative channel; bootstrap_stop() then signals this exact
+	# serviced instance through Oracle's procdesc, bypassing the ambient
+	# capprotect signal check.  Waiting for socket removal first gives this
+	# asynchronous path a hard diagnostic deadline instead of hanging in
+	# wait(1) if shutdown regresses.
+	atf_check -s exit:0 -o match:"shutdown initiated" \
+	    oraclectl -s "$sockpath" shutdown
+	i=0
+	while [ -S "$sockpath" ] && [ "$i" -lt 350 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if [ -S "$sockpath" ]; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "Oracle control socket remained after shutdown deadline"
+	fi
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
 	i=0
@@ -475,6 +374,7 @@ dependency_order_with_caps_head()
 {
 	atf_set "descr" "Provider starts before consumer in dependency order"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 dependency_order_with_caps_body()
 {
@@ -491,7 +391,7 @@ dependency_order_with_caps_body()
 	    '#!/bin/sh' \
 	    "date +%s%N > ${WORK}/consumer-time.out" \
 	    'exec sleep 30'
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	if ! wait_for_file provider-time.out; then
 		cat "$logfile" 2>/dev/null
@@ -531,6 +431,7 @@ reload_adds_service_head()
 {
 	atf_set "descr" "SIGHUP reload picks up new manifest and starts service"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 reload_adds_service_body()
 {
@@ -541,7 +442,7 @@ reload_adds_service_body()
 	    '#!/bin/sh' \
 	    "echo \"hello\" > ${WORK}/hello-started.out" \
 	    'exec sleep 30'
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	if ! wait_for_file hello-started.out; then
 		cat "$logfile" 2>/dev/null
@@ -565,6 +466,7 @@ reload_removes_service_head()
 {
 	atf_set "descr" "Removing manifest and reloading stops the service"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 reload_removes_service_body()
 {
@@ -583,7 +485,7 @@ reload_removes_service_body()
 
 	# Remove the bundle and reload
 	rm -rf "${APPS_DIR}/removeme.cap"
-	kill -HUP "$daemon_pid"
+	reload_stack
 
 	# Wait for removal to be logged
 	i=0
@@ -618,6 +520,7 @@ audit_records_best_effort_head()
 {
 	atf_set "descr" "serviced emits BSM audit records (best effort; skips if audit unavailable)"
 	atf_set "require.user" "root"
+	require_oracle_stack_kmods
 }
 audit_records_best_effort_body()
 {
@@ -640,7 +543,7 @@ audit_records_best_effort_body()
 	    '#!/bin/sh' \
 	    "echo run > ${WORK}/audsvc.out" \
 	    'sleep 30'
-	kill -HUP "$daemon_pid"
+	reload_stack
 	if ! wait_for_file "${WORK}/audsvc.out" 5; then
 		cat "$logfile" 2>/dev/null
 		atf_fail "service did not start"
@@ -664,6 +567,202 @@ audit_records_best_effort_cleanup()
 	rm -f audsvc audsvc.out
 }
 
+atf_test_case manifest_arguments_environment cleanup
+manifest_arguments_environment_head()
+{
+	atf_set "descr" "Manifest arguments and environment reach execve literally"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+	atf_set "timeout" "60"
+}
+manifest_arguments_environment_body()
+{
+	find_capd_service_fixture
+	start_stack
+	make_svc_bin system manifest-exec \
+	    'arguments = ["manifest-report", "manifest-exec.out", "literal value", "--flag"];
+environment { APP_MODE = "test"; EMPTY = ""; }' "$capd_service_fixture"
+	reload_stack
+	wait_for_file manifest-exec.out 10 || atf_fail "service did not exec"
+	atf_check -s exit:0 -o inline:'argc=3\narg1=literal value\narg2=--flag\nmode=test\nempty=\n' \
+	    cat manifest-exec.out
+	stop_stack
+}
+manifest_arguments_environment_cleanup()
+{
+	cleanup_common
+	rm -f manifest_exec_svc manifest_exec_svc.c manifest-exec.out
+}
+
+atf_test_case remaining_token_families_activate cleanup
+remaining_token_families_activate_head()
+{
+	atf_set "descr" "Jail, VSOCK, and system manifest tokens mint and activate after exec"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+	atf_set "timeout" "60"
+}
+remaining_token_families_activate_body()
+{
+	find_capd_service_fixture
+	start_stack
+	make_svc_bin system token-families 'capabilities {
+    jails = [{ name = "org.test.token-jail"; actions = ["get"]; }];
+    vsock = [{ cid = "any"; port = 48001; direction = "connect"; }];
+	    system = ["kldstat"];
+}
+arguments = ["authorize-tokens", "token-families.out"];' \
+	    "$capd_service_fixture"
+	reload_stack
+	wait_for_file token-families.out 10 || {
+		cat "$logfile" 2>/dev/null
+		atf_fail "token family service did not become ready"
+	}
+	atf_check -s exit:0 -o match:'fds=5,6,7' cat token-families.out
+	atf_check -s exit:0 -o match:'authorized=yes' cat token-families.out
+	oraclectl -s "$sockpath" status > token-families-status.out
+	atf_check -s exit:0 -o match:'vsock:[[:space:]]+1' \
+	    cat token-families-status.out
+	atf_check -s exit:0 -o match:'ports=48001-48001 connect.*refcount=1' \
+	    cat token-families-status.out
+	stop_stack
+}
+remaining_token_families_activate_cleanup()
+{
+	cleanup_common
+	rm -f token_families_svc token_families_svc.c token-families.out \
+	    token-families-status.out
+}
+
+atf_test_case capability_service_descriptors_delivered cleanup
+capability_service_descriptors_delivered_head()
+{
+	atf_set "descr" "Manifest capability services arrive named and non-transferable"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods mac_capability_mount mac_capability_node \
+	    mac_capability_accounting mac_capability_identity
+	atf_set "timeout" "60"
+}
+capability_service_descriptors_delivered_body()
+{
+	find_capd_service_fixture
+	start_stack
+	make_svc_bin system capability-services \
+	    'capabilities { services = ["mount", "node", "accounting", "identity"]; }
+arguments = ["capability-services", "capability-services.out"];' \
+	    "$capd_service_fixture"
+	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
+	wait_for_file capability-services.out 10 || {
+		cat "$logfile" 2>/dev/null
+		atf_fail "capability-service test program did not start"
+	}
+	for name in mount node accounting identity; do
+		atf_check -s exit:0 -o match:"${name}=valid confined=1" \
+		    grep "^${name}=" capability-services.out
+	done
+	stop_stack
+}
+capability_service_descriptors_delivered_cleanup()
+{
+	cleanup_common
+	rm -f capability_service_svc capability_service_svc.c \
+	    capability-services.out
+}
+
+atf_test_case malformed_reload_is_transactional cleanup
+malformed_reload_is_transactional_head()
+{
+	atf_set "descr" "Malformed bundle rejects reload without replacing the live registry"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+	atf_set "timeout" "60"
+}
+malformed_reload_is_transactional_body()
+{
+	find_capd_service_fixture
+	start_stack
+	make_svc_bin system reload-guard \
+	    'arguments = ["ready", "reload-guard.out"];' \
+	    "$capd_service_fixture"
+	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
+	wait_for_file reload-guard.out 10 || atf_fail "guard service did not start"
+
+	mkdir -p "$USER_APPS_DIR/bad.cap/etc" "$USER_APPS_DIR/bad.cap/bin"
+	printf '#!/bin/sh\nexit 0\n' > "$USER_APPS_DIR/bad.cap/bin/bad"
+	chmod 755 "$USER_APPS_DIR/bad.cap/bin/bad"
+	cat > "$USER_APPS_DIR/bad.cap/etc/bad.ucl" <<'UCL'
+bundle_id = "org.test.bad";
+program = "bad";
+provides = ["org.test.bad"];
+restert = "always";
+UCL
+	atf_check -s exit:1 -o ignore -e match:'reload' \
+	    servicectl -s "$CTL_SOCK" reload
+	atf_check -s exit:0 -o match:'reload-guard' \
+	    servicectl -s "$CTL_SOCK" services
+	stop_stack
+}
+malformed_reload_is_transactional_cleanup()
+{
+	cleanup_common
+	rm -f reload_guard_svc reload_guard_svc.c reload-guard.out
+}
+
+atf_test_case untrusted_bundle_rejected cleanup
+untrusted_bundle_rejected_head()
+{
+	atf_set "descr" "Writable bundle policy cannot be loaded by serviced"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+	atf_set "timeout" "60"
+}
+untrusted_bundle_rejected_body()
+{
+	build_ready_svc
+	start_stack
+	dir=$(make_svc_bin user untrusted '' "$(pwd)/ready_svc")
+	chmod 0777 "$dir"
+	atf_check -s exit:1 -o ignore -e match:'reload' \
+	    servicectl -s "$CTL_SOCK" reload
+	test ! -e untrusted.ready || atf_fail "untrusted service executed"
+	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" services
+	stop_stack
+}
+untrusted_bundle_rejected_cleanup()
+{
+	chmod 0755 "${USER_APPS_DIR}/untrusted.cap" 2>/dev/null || true
+	cleanup_common
+}
+
+atf_test_case kmod_prerequisite_uses_oracle cleanup
+kmod_prerequisite_uses_oracle_head()
+{
+	atf_set "descr" "System bundle module prerequisites execute under Oracle authority"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+	atf_set "timeout" "60"
+}
+kmod_prerequisite_uses_oracle_body()
+{
+	build_ready_svc
+	start_stack
+	make_svc_bin system kmod-prereq \
+	    'kmod_requires = ["mac_capability"];
+arguments = ["compat-ready"];' "$(pwd)/ready_svc"
+	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
+	wait_for_file kmod-prereq.ready 10 || {
+		cat "$logfile" 2>/dev/null
+		atf_fail "service with a loaded-module prerequisite did not start"
+	}
+	atf_check -s exit:0 -o ignore \
+	    grep 'ensured kernel module mac_capability' "$logfile"
+	stop_stack
+}
+kmod_prerequisite_uses_oracle_cleanup()
+{
+	cleanup_common
+}
+
 # ===================================================================
 
 atf_init_test_cases()
@@ -679,4 +778,10 @@ atf_init_test_cases()
 	atf_add_test_case reload_adds_service
 	atf_add_test_case reload_removes_service
 	atf_add_test_case audit_records_best_effort
+	atf_add_test_case manifest_arguments_environment
+	atf_add_test_case remaining_token_families_activate
+	atf_add_test_case capability_service_descriptors_delivered
+	atf_add_test_case malformed_reload_is_transactional
+	atf_add_test_case untrusted_bundle_rejected
+	atf_add_test_case kmod_prerequisite_uses_oracle
 }

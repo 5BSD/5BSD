@@ -8,11 +8,12 @@
 # would be denied EACCES at create time.  It reaches the radio only via
 # the fds skyblued hands it over the control socket.
 
-label = "org.5bsd.skybluemeshd";
-program = "/usr/sbin/skybluemeshd";
-description = "BLE mesh daemon (radio client of skyblued)";
-provides = ["blemesh"];
-requires = ["bluetooth"];
+bundle_id = "org.5bsd.skybluemesh";
+version = "1.0";
+author = "5BSD";
+program = "skybluemeshd";
+provides = ["org.5bsd.blemesh"];
+requires = ["org.5bsd.bluetooth"];
 restart = "on-failure";
 stop_timeout = 10;
 

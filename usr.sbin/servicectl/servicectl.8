@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd June 5, 2026
+.Dd July 19, 2026
 .Dt SERVICECTL 8
 .Os
 .Sh NAME
@@ -19,7 +19,7 @@
 .Cm install Ar path.cap
 .Nm
 .Op Fl s Ar socket
-.Cm verify Ar path.cap
+.Cm verify Ar path.cap ...
 .Nm
 .Op Fl s Ar socket
 .Cm bundles
@@ -70,19 +70,21 @@ Install a
 bundle to
 .Pa /Capabilities/ .
 The bundle is verified before installation.
+Source ownership is not preserved: the installed policy tree is created as
+root so its original owner cannot modify it after verification.
 After copying, run
 .Cm servicectl reload
 to register the new services.
 .Pp
 Requires root privileges.
-.It Cm verify Ar path.cap
-Validate a
+.It Cm verify Ar path.cap ...
+Validate one or more
 .Pa .cap
-bundle's integrity.
-Checks that the bundle structure is correct, all Service.ucl files
-parse successfully, binaries exist and are executable, provides names
-are unique, and no self-dependencies exist.
-Prints a summary of the bundle's services on success.
+bundles.
+Checks that bundle structure and every manifest are valid, binaries exist and
+are executable, provided names are unique, and dependencies are acyclic.
+When multiple paths are supplied, their combined dependency graph is checked.
+Prints a summary of each bundle on success.
 .It Cm bundles
 List all installed bundles from
 .Pa /Capabilities/System/

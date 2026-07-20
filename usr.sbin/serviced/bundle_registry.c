@@ -16,6 +16,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <fts.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,6 +45,52 @@ is_bundle_name(const char *name)
 	return (strcmp(name + len - 4, ".cap") == 0);
 }
 
+static bool
+trusted_tree(const char *path, char *errbuf, size_t errlen)
+{
+	FTS *fts;
+	FTSENT *ent;
+	char *paths[2];
+	bool trusted;
+
+	paths[0] = __DECONST(char *, path);
+	paths[1] = NULL;
+	fts = fts_open(paths, FTS_PHYSICAL | FTS_NOCHDIR, NULL);
+	if (fts == NULL) {
+		snprintf(errbuf, errlen, "%s: fts_open: %s", path,
+		    strerror(errno));
+		return (false);
+	}
+	trusted = true;
+	errno = 0;
+	while ((ent = fts_read(fts)) != NULL) {
+		if (ent->fts_info == FTS_DP)
+			continue;
+		if (ent->fts_info != FTS_D && ent->fts_info != FTS_F) {
+			snprintf(errbuf, errlen,
+			    "%s: symlink or non-regular object is not allowed",
+			    ent->fts_path);
+			trusted = false;
+			break;
+		}
+		if (ent->fts_statp->st_uid != 0 ||
+		    (ent->fts_statp->st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+			snprintf(errbuf, errlen,
+			    "%s: policy must be root-owned and not group/world-writable",
+			    ent->fts_path);
+			trusted = false;
+			break;
+		}
+	}
+	if (ent == NULL && errno != 0 && trusted) {
+		snprintf(errbuf, errlen, "%s: traversal failed: %s", path,
+		    strerror(errno));
+		trusted = false;
+	}
+	(void)fts_close(fts);
+	return (trusted);
+}
+
 struct provides_entry {
 	struct provides_entry	*next;
 	char			 name[CAPBUNDLE_NAME_MAX + 1];
@@ -67,6 +114,16 @@ provides_hashfn(const char *s)
 {
 
 	return (serviced_hash_djb2(s) % PROVIDES_HASH_SIZE);
+}
+
+static bool
+provides_exists(const char *name)
+{
+	struct provides_entry *e;
+	for (e = provides_hash[provides_hashfn(name)]; e != NULL; e = e->next)
+		if (strcmp(e->name, name) == 0)
+			return (true);
+	return (false);
 }
 
 /*
@@ -122,18 +179,12 @@ scan_cb(struct capbundle *b, void *ctx)
 
 	/* Validate bundle integrity. */
 	if (capbundle_verify(b, errbuf, sizeof(errbuf)) == -1) {
-		if (sc->system) {
-			syslog(LOG_ERR,
-			    "bundle_registry: SYSTEM bundle '%s' invalid: %s",
-			    capbundle_name(b), errbuf);
-			capbundle_close(b);
-			return (-1);  /* fatal for system bundles */
-		}
-		syslog(LOG_WARNING,
-		    "bundle_registry: skipping '%s': %s",
-		    capbundle_name(b), errbuf);
+		SERVICED_PROBE_MANIFEST_REJECT(capbundle_name(b), errbuf,
+		    sc->system ? 1 : 0);
+		syslog(LOG_ERR, "bundle_registry: %sbundle '%s' invalid: %s",
+		    sc->system ? "SYSTEM " : "", capbundle_name(b), errbuf);
 		capbundle_close(b);
-		return (0);  /* non-fatal for user bundles */
+		return (-1);
 	}
 
 	/* Grow array if needed. */
@@ -154,6 +205,16 @@ scan_cb(struct capbundle *b, void *ctx)
 
 	bundles[nbundles].bundle = b;
 	bundles[nbundles].system = sc->system;
+	for (i = 0; i < nbundles; i++) {
+		if (strcmp(capbundle_id(b),
+		    capbundle_id(bundles[i].bundle)) == 0) {
+			syslog(LOG_ERR, "bundle_registry: duplicate bundle_id '%s'",
+			    capbundle_id(b));
+			capbundle_close(b);
+			bundles[nbundles].bundle = NULL;
+			return (-1);
+		}
+	}
 
 	/* Check for label collisions with already-loaded bundles. */
 	for (i = 0; i < capbundle_nservices(b); i++) {
@@ -172,13 +233,8 @@ scan_cb(struct capbundle *b, void *ctx)
 					    "'%s' collides with '%s'",
 					    label, capbundle_name(b),
 					    capbundle_name(prev));
-					if (sc->system) {
-						capbundle_close(b);
-						return (-1);
-					}
-					/* Skip the entire user bundle. */
 					capbundle_close(b);
-					return (0);
+					return (-1);
 				}
 			}
 		}
@@ -192,8 +248,9 @@ scan_cb(struct capbundle *b, void *ctx)
 		for (j = 0; j < np; j++) {
 			const char *name = capbundle_svc_provides(svc, j);
 			if (provides_insert(name, nbundles, i,
-			    sc->system) == -1 && sc->system) {
-				/* Duplicate in system bundle = fatal. */
+			    sc->system) == -1) {
+				capbundle_close(b);
+				bundles[nbundles].bundle = NULL;
 				return (-1);
 			}
 		}
@@ -218,6 +275,15 @@ scan_bundle_dir(const char *dirpath, bool system)
 	char errbuf[256];
 	struct capbundle *b;
 	int ret;
+	struct stat sb;
+
+	if (lstat(dirpath, &sb) == -1 || !S_ISDIR(sb.st_mode) ||
+	    sb.st_uid != 0 || (sb.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+		syslog(LOG_ERR, "bundle_registry: %s must be a root-owned, "
+		    "non-group/world-writable directory", dirpath);
+		errno = EPERM;
+		return (-1);
+	}
 
 	d = opendir(dirpath);
 	if (d == NULL)
@@ -229,18 +295,21 @@ scan_bundle_dir(const char *dirpath, bool system)
 			continue;
 
 		snprintf(path, sizeof(path), "%s/%s", dirpath, de->d_name);
+		if (!trusted_tree(path, errbuf, sizeof(errbuf))) {
+			SERVICED_PROBE_MANIFEST_REJECT(path, errbuf,
+			    system ? 1 : 0);
+			syslog(LOG_ERR, "bundle_registry: %sbundle '%s' "
+			    "untrusted: %s", system ? "SYSTEM " : "", path,
+			    errbuf);
+			closedir(d);
+			return (-1);
+		}
 		if (capbundle_open(path, &b, errbuf, sizeof(errbuf)) == -1) {
-			if (system) {
-				syslog(LOG_ERR,
-				    "bundle_registry: SYSTEM bundle '%s' "
-				    "invalid: %s", path, errbuf);
-				closedir(d);
-				return (-1);
-			}
-			syslog(LOG_WARNING,
-			    "bundle_registry: skipping '%s': %s",
-			    path, errbuf);
-			continue;
+			SERVICED_PROBE_MANIFEST_REJECT(path, errbuf, system ? 1 : 0);
+			syslog(LOG_ERR, "bundle_registry: %sbundle '%s' invalid: %s",
+			    system ? "SYSTEM " : "", path, errbuf);
+			closedir(d);
+			return (-1);
 		}
 
 		ret = scan_cb(b, &ctx);
@@ -254,20 +323,44 @@ scan_bundle_dir(const char *dirpath, bool system)
 	return (0);
 }
 
+static void
+registry_dispose(struct bundle_state *state, unsigned nstate,
+    struct provides_entry *hash[PROVIDES_HASH_SIZE])
+{
+	struct provides_entry *e, *next;
+	unsigned h, i;
+
+	for (h = 0; h < PROVIDES_HASH_SIZE; h++)
+		for (e = hash[h]; e != NULL; e = next) {
+			next = e->next;
+			free(e);
+		}
+	for (i = 0; i < nstate; i++)
+		capbundle_close(state[i].bundle);
+	free(state);
+}
+
 /*
  * Initialize the bundle registry.
  * Scans system and user bundle directories.
- * Returns 0 on success, -1 on fatal error (system bundle issues).
+ * The replacement is built transactionally.  On failure the previous
+ * registry remains available to running and on-demand services.
  */
 int
 bundle_registry_init(void)
 {
+	struct bundle_state *old_bundles;
+	struct provides_entry *old_hash[PROVIDES_HASH_SIZE];
 	char errbuf[512];
 	struct stat sb;
 	struct capbundle **cycle_bundles;
-	unsigned i;
+	unsigned i, old_nbundles, old_bundles_cap, nservices;
 	int cycle_ret;
 
+	old_bundles = bundles;
+	old_nbundles = nbundles;
+	old_bundles_cap = bundles_cap;
+	memcpy(old_hash, provides_hash, sizeof(old_hash));
 	memset(provides_hash, 0, sizeof(provides_hash));
 	nbundles = 0;
 	bundles_cap = 0;
@@ -281,7 +374,7 @@ bundle_registry_init(void)
 		if (scan_bundle_dir(serviced_bundle_dir_system, true) == -1) {
 			syslog(LOG_ERR,
 			    "bundle_registry: system bundle scan failed");
-			return (-1);
+			goto fail;
 		}
 	} else {
 		syslog(LOG_INFO,
@@ -289,10 +382,14 @@ bundle_registry_init(void)
 		    serviced_bundle_dir_system);
 	}
 
-	/* User bundles: optional, errors are non-fatal. */
+	/* User bundle directory is optional; malformed bundles are fatal. */
 	if (stat(serviced_bundle_dir_user, &sb) == 0 &&
 	    S_ISDIR(sb.st_mode)) {
-		(void)scan_bundle_dir(serviced_bundle_dir_user, false);
+		if (scan_bundle_dir(serviced_bundle_dir_user, false) == -1) {
+			syslog(LOG_ERR,
+			    "bundle_registry: user bundle scan failed");
+			goto fail;
+		}
 	} else {
 		syslog(LOG_INFO,
 		    "bundle_registry: %s not found, skipping",
@@ -301,7 +398,37 @@ bundle_registry_init(void)
 
 	if (nbundles == 0) {
 		syslog(LOG_WARNING, "bundle_registry: no bundles loaded");
+		registry_dispose(old_bundles, old_nbundles, old_hash);
 		return (0);
+	}
+	nservices = 0;
+	for (i = 0; i < nbundles; i++) {
+		nservices += capbundle_nservices(bundles[i].bundle);
+		if (nservices > SERVICED_MAX_SERVICES) {
+			syslog(LOG_CRIT,
+			    "bundle_registry: %u services exceeds limit %u",
+			    nservices, SERVICED_MAX_SERVICES);
+			goto fail;
+		}
+	}
+	for (i = 0; i < nbundles; i++) {
+		unsigned si, ri;
+		struct capbundle *b = bundles[i].bundle;
+		for (si = 0; si < capbundle_nservices(b); si++) {
+			struct capbundle_service *svc = capbundle_service(b, si);
+			for (ri = 0; ri < capbundle_svc_nrequires(svc); ri++) {
+				const char *req = capbundle_svc_requires(svc, ri);
+				if (strcmp(req, "ORACLED") != 0 && !provides_exists(req)) {
+					syslog(LOG_CRIT,
+					    "bundle_registry: %s requires unknown provider %s",
+					    capbundle_svc_label(svc), req);
+					SERVICED_PROBE_MANIFEST_REJECT(
+					    capbundle_name(b), "unknown provider",
+					    bundles[i].system ? 1 : 0);
+					goto fail;
+				}
+			}
+		}
 	}
 
 	/*
@@ -315,7 +442,7 @@ bundle_registry_init(void)
 		syslog(LOG_CRIT,
 		    "bundle_registry: out of memory for cycle check — "
 		    "cannot start");
-		return (-1);
+		goto fail;
 	}
 	for (i = 0; i < nbundles; i++)
 		cycle_bundles[i] = bundles[i].bundle;
@@ -326,14 +453,23 @@ bundle_registry_init(void)
 	if (cycle_ret == -1) {
 		syslog(LOG_CRIT,
 		    "bundle_registry: %s — cannot start", errbuf);
-		return (-1);
+		goto fail;
 	}
 
 	syslog(LOG_INFO,
 	    "bundle_registry: %u bundles loaded, dependency graph acyclic",
 	    nbundles);
 	SERVICED_PROBE_BUNDLE_SCAN("all", nbundles);
+	registry_dispose(old_bundles, old_nbundles, old_hash);
 	return (0);
+
+fail:
+	registry_dispose(bundles, nbundles, provides_hash);
+	bundles = old_bundles;
+	nbundles = old_nbundles;
+	bundles_cap = old_bundles_cap;
+	memcpy(provides_hash, old_hash, sizeof(provides_hash));
+	return (-1);
 }
 
 /*
@@ -398,21 +534,8 @@ bundle_registry_count(void)
 void
 bundle_registry_teardown(void)
 {
-	unsigned h, i;
-	struct provides_entry *e, *next;
-
-	for (h = 0; h < PROVIDES_HASH_SIZE; h++) {
-		for (e = provides_hash[h]; e != NULL; e = next) {
-			next = e->next;
-			free(e);
-		}
-		provides_hash[h] = NULL;
-	}
-
-	for (i = 0; i < nbundles; i++)
-		capbundle_close(bundles[i].bundle);
-
-	free(bundles);
+	registry_dispose(bundles, nbundles, provides_hash);
+	memset(provides_hash, 0, sizeof(provides_hash));
 	bundles = NULL;
 	nbundles = 0;
 	bundles_cap = 0;

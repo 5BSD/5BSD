@@ -84,6 +84,12 @@ which re-scans capability bundles.
 Prints a summary of claim changes.
 Requires root.
 .El
+.Sh FILES
+.Bl -tag -width "/var/run/oracled.sock"
+.It Pa /var/run/oracled.sock
+Unix domain socket used to communicate with
+.Xr oracled 8 .
+.El
 .Sh EXIT STATUS
 .Ex -std
 .Pp
@@ -96,12 +102,6 @@ is not running,
 .Nm
 exits with
 .Er EX_UNAVAILABLE .
-.Sh FILES
-.Bl -tag -width "/var/run/oracled.sock"
-.It Pa /var/run/oracled.sock
-Unix domain socket used to communicate with
-.Xr oracled 8 .
-.El
 .Sh SEE ALSO
 .Xr oracled 8 ,
 .Xr servicectl 8
