@@ -213,10 +213,38 @@ vi_vq_init(struct virtio_softc *vs, uint32_t pfn)
 	char *base;
 
 	vq = &vs->vs_queues[vs->vs_curq];
-	vq->vq_pfn = pfn;
+	if (pfn == 0) {
+		vq->vq_flags = 0;
+		vq->vq_pfn = 0;
+		vq->vq_desc = NULL;
+		vq->vq_avail = NULL;
+		vq->vq_used = NULL;
+		vq->vq_last_avail = 0;
+		vq->vq_next_used = 0;
+		vq->vq_save_used = 0;
+		return;
+	}
 	phys = (uint64_t)pfn << VRING_PFN;
 	size = vring_size_aligned(vq->vq_qsize);
 	base = paddr_guest2host(vs->vs_pi->pi_vmctx, phys, size);
+	if (base == NULL) {
+		EPRINTLN("%s: virtqueue %u maps outside guest memory",
+		    vs->vs_vc->vc_name, vq->vq_num);
+		vq->vq_flags = 0;
+		vq->vq_pfn = 0;
+		vq->vq_desc = NULL;
+		vq->vq_avail = NULL;
+		vq->vq_used = NULL;
+		vq->vq_last_avail = 0;
+		vq->vq_next_used = 0;
+		vq->vq_save_used = 0;
+		vs->vs_status |= VIRTIO_CONFIG_S_NEEDS_RESET;
+		if ((vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
+			vi_interrupt(vs, VIRTIO_PCI_ISR_CONFIG,
+			    vs->vs_msix_cfg_idx);
+		return;
+	}
+	vq->vq_pfn = pfn;
 
 	/* First page(s) are descriptors... */
 	vq->vq_desc = (struct vring_desc *)base;

@@ -379,6 +379,48 @@ ATF_TC_BODY(indirect_mapping_validation, tc)
 	ATF_CHECK(vq_getchain(&vq, &iov, 1, &req) == -1);
 }
 
+ATF_TC_WITHOUT_HEAD(legacy_queue_mapping_validation);
+ATF_TC_BODY(legacy_queue_mapping_validation, tc)
+{
+	union { max_align_t align; uint8_t bytes[8192]; } ring_mem;
+	union { max_align_t align; uint8_t bytes[64]; } avail_mem;
+	union { max_align_t align; uint8_t bytes[128]; } used_mem;
+	struct virtio_softc vs;
+	struct virtio_consts vc = { 0 };
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	struct vring_desc desc[8];
+	size_t ring_size;
+
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	vc.vc_nvq = 1;
+	vs.vs_queues = &vq;
+	vs.vs_curq = 0;
+	ring_size = vring_size_aligned(vq.vq_qsize);
+	ATF_REQUIRE(ring_size <= sizeof(ring_mem.bytes));
+	add_region(0x4000, ring_mem.bytes, ring_size);
+
+	vi_vq_init(&vs, 4);
+	ATF_CHECK(vq.vq_pfn == 4);
+	ATF_CHECK((vq.vq_flags & VQ_ALLOC) != 0);
+	ATF_CHECK(vq.vq_desc == (void *)ring_mem.bytes);
+
+	vi_vq_init(&vs, 0);
+	ATF_CHECK(vq.vq_pfn == 0 && vq.vq_flags == 0);
+	ATF_CHECK(vq.vq_desc == NULL && vq.vq_avail == NULL &&
+	    vq.vq_used == NULL);
+
+	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	vi_vq_init(&vs, 0xdead);
+	ATF_CHECK(vq.vq_pfn == 0 && vq.vq_flags == 0);
+	ATF_CHECK(vq.vq_last_avail == 0 && vq.vq_next_used == 0 &&
+	    vq.vq_save_used == 0);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	ATF_CHECK((vs.vs_isr & VIRTIO_PCI_ISR_CONFIG) != 0);
+}
+
 ATF_TC_WITHOUT_HEAD(event_idx_interrupts);
 ATF_TC_BODY(event_idx_interrupts, tc)
 {
@@ -416,6 +458,7 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, direct_mapping_validation);
 	ATF_TP_ADD_TC(tp, indirect_mapping_validation);
+	ATF_TP_ADD_TC(tp, legacy_queue_mapping_validation);
 	ATF_TP_ADD_TC(tp, event_idx_interrupts);
 	ATF_TP_ADD_TC(tp, notify_without_msix_does_not_relock_device);
 	ATF_TP_ADD_TC(tp, isr_read_serializes_intx);
