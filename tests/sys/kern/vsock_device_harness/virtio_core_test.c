@@ -225,8 +225,17 @@ ATF_TC_BODY(notify_without_msix_does_not_relock_device, tc)
 		vq.vq_msix_idx = VIRTIO_MSI_NO_VECTOR;
 		if (vi_intr_init(&vs, 1, 0) != 0)
 			_exit(3);
+		vq.vq_flags = VQ_ALLOC;
+		if (vq_ring_ready(&vq))
+			_exit(4);
 		vi_pci_write(&pi, 0, VIRTIO_PCI_QUEUE_NOTIFY, 2, 0);
-		_exit(vs.vs_isr == VIRTIO_PCI_ISR_INTR ? 0 : 4);
+		if (vs.vs_isr != 0 || g_notifications != 0 ||
+		    !vq.vq_notify_pending)
+			_exit(5);
+		vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 1,
+		    VIRTIO_CONFIG_STATUS_DRIVER_OK);
+		_exit(vq_ring_ready(&vq) && vs.vs_isr == VIRTIO_PCI_ISR_INTR &&
+		    g_notifications == 1 && !vq.vq_notify_pending ? 0 : 6);
 	}
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
 	ATF_CHECK(WIFEXITED(status));
@@ -511,8 +520,10 @@ ATF_TC_BODY(legacy_queue_mapping_validation, tc)
 	ATF_CHECK((vq.vq_flags & VQ_ALLOC) != 0);
 	ATF_CHECK(vq.vq_desc == (void *)ring_mem.bytes);
 
+	vq.vq_notify_pending = true;
 	vi_vq_init(&vs, 0);
 	ATF_CHECK(vq.vq_pfn == 0 && vq.vq_flags == 0);
+	ATF_CHECK(!vq.vq_notify_pending);
 	ATF_CHECK(vq.vq_desc == NULL && vq.vq_avail == NULL &&
 	    vq.vq_used == NULL);
 

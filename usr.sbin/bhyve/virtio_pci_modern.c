@@ -513,6 +513,9 @@ vi_modern_status_write(struct virtio_softc *vs, uint8_t status)
 			    vs->vs_modern->driver_features);
 		VIRTIO_PROBE_FEATURES(vs->vs_modern->driver_features);
 	}
+	if ((old_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0 &&
+	    (status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
+		vi_pci_notify_ready_queues(vs);
 }
 
 static void

@@ -242,6 +242,7 @@ run_entropy_interrupt_path(void)
 	sc.vrsc_vs.vs_mtx = &sc.vrsc_mtx;
 	if (vi_intr_init(&sc.vrsc_vs, 1, 0) != 0)
 		return (2);
+	sc.vrsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	sc.vrsc_fd = 10;
 	sc.vrsc_vq.vq_qsize = nitems(desc);
 	sc.vrsc_vq.vq_flags = VQ_ALLOC;

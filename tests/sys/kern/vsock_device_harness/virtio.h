@@ -49,6 +49,7 @@ struct vqueue_info {
 	uint32_t vq_pfn;
 	uint16_t vq_qsize_max;
 	uint16_t vq_enabled;
+	bool vq_notify_pending;
 	uint64_t vq_desc_gpa;
 	uint64_t vq_driver_gpa;
 	uint64_t vq_device_gpa;
@@ -115,8 +116,7 @@ static inline int
 vq_ring_ready(struct vqueue_info *vq)
 {
 	return ((vq->vq_flags & VQ_ALLOC) != 0 &&
-	    (vq->vq_vs->vs_transport != VIRTIO_PCI_TRANSPORT_MODERN ||
-	    (vq->vq_vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0));
+	    (vq->vq_vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0);
 }
 static inline void
 vq_kick_enable(struct vqueue_info *vq)
@@ -148,6 +148,7 @@ int  vi_pci_select_transport(struct virtio_softc *, const nvlist_t *,
     enum virtio_pci_transport_policy);
 bool vi_pci_is_modern(const struct virtio_softc *);
 void vi_pci_notify_queue(struct virtio_softc *, uint64_t);
+void vi_pci_notify_ready_queues(struct virtio_softc *);
 int  vi_pci_modern_init(struct virtio_softc *, int);
 void vi_pci_modern_set_identity(struct virtio_softc *, uint16_t);
 void vi_pci_modern_reset(struct virtio_softc *);

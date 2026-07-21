@@ -111,6 +111,7 @@ vi_reset_dev(struct virtio_softc *vs)
 		vq->vq_save_used = 0;
 		vq->vq_pfn = 0;
 		vq->vq_msix_idx = VIRTIO_MSI_NO_VECTOR;
+		vq->vq_notify_pending = false;
 	}
 	vs->vs_negotiated_caps = 0;
 	vs->vs_curq = 0;
@@ -134,12 +135,16 @@ vi_pci_notify_queue(struct virtio_softc *vs, uint64_t qidx)
 	}
 	vq = &vs->vs_queues[qidx];
 	if (vs->vs_transport == VIRTIO_PCI_TRANSPORT_MODERN &&
-	    (!vq->vq_enabled ||
-	    (vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0))
+	    !vq->vq_enabled)
 		return;
 	/* A malformed ring is fatal until the driver performs a real reset. */
 	if ((vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
 		return;
+	if ((vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0) {
+		vq->vq_notify_pending = true;
+		return;
+	}
+	vq->vq_notify_pending = false;
 	if (vq->vq_notify != NULL)
 		(*vq->vq_notify)(DEV_SOFTC(vs), vq);
 	else if (vc->vc_qnotify != NULL)
@@ -147,6 +152,27 @@ vi_pci_notify_queue(struct virtio_softc *vs, uint64_t qidx)
 	else
 		EPRINTLN("%s: qnotify queue %ju: missing vq/vc notify",
 		    vc->vc_name, (uintmax_t)qidx);
+}
+
+/*
+ * A driver can make buffers available before setting DRIVER_OK, but the
+ * device must not consume them until DRIVER_OK.  Replay notifications that
+ * arrived early once the device becomes live so those buffers are not
+ * stranded.
+ */
+void
+vi_pci_notify_ready_queues(struct virtio_softc *vs)
+{
+	struct vqueue_info *vq;
+	int i;
+
+	if ((vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0)
+		return;
+	for (i = 0; i < vs->vs_vc->vc_nvq; i++) {
+		vq = &vs->vs_queues[i];
+		if (vq->vq_notify_pending)
+			vi_pci_notify_queue(vs, i);
+	}
 }
 
 void
@@ -230,6 +256,7 @@ vi_vq_init(struct virtio_softc *vs, uint32_t pfn)
 	if (pfn == 0) {
 		vq->vq_flags = 0;
 		vq->vq_pfn = 0;
+		vq->vq_notify_pending = false;
 		vq->vq_desc = NULL;
 		vq->vq_avail = NULL;
 		vq->vq_used = NULL;
@@ -899,6 +926,9 @@ bad:
 		vs->vs_status = value;
 		if (value == 0)
 			(*vc->vc_reset)(DEV_SOFTC(vs));
+		else if ((old_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0 &&
+		    (value & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
+			vi_pci_notify_ready_queues(vs);
 		break;
 	case VIRTIO_MSI_CONFIG_VECTOR:
 		vs->vs_msix_cfg_idx = value;
@@ -1013,10 +1043,11 @@ vi_pci_snapshot_queues(struct virtio_softc *vs, struct vm_snapshot_meta *meta)
 		SNAPSHOT_VAR_OR_LEAVE(vq->vq_next_used, meta, ret, done);
 		SNAPSHOT_VAR_OR_LEAVE(vq->vq_save_used, meta, ret, done);
 		SNAPSHOT_VAR_OR_LEAVE(vq->vq_msix_idx, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(vq->vq_notify_pending, meta, ret, done);
 
 		SNAPSHOT_VAR_OR_LEAVE(vq->vq_pfn, meta, ret, done);
 
-		if (!vq_ring_ready(vq))
+		if ((vq->vq_flags & VQ_ALLOC) == 0)
 			continue;
 
 		addr_size = vq->vq_qsize * sizeof(struct vring_desc);

@@ -342,6 +342,7 @@ struct vqueue_info {
 	uint32_t vq_pfn;	/* PFN of virt queue (not shifted!) */
 	uint16_t vq_qsize_max;	/* modern: maximum queue size */
 	uint16_t vq_enabled;	/* modern: queue_enable */
+	bool	 vq_notify_pending; /* kick received before DRIVER_OK */
 	uint64_t vq_desc_gpa;	/* modern descriptor table address */
 	uint64_t vq_driver_gpa;	/* modern available ring address */
 	uint64_t vq_device_gpa;	/* modern used ring address */
@@ -365,8 +366,7 @@ vq_ring_ready(struct vqueue_info *vq)
 {
 
 	return ((vq->vq_flags & VQ_ALLOC) != 0 &&
-	    (vq->vq_vs->vs_transport != VIRTIO_PCI_TRANSPORT_MODERN ||
-	    (vq->vq_vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0));
+	    (vq->vq_vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0);
 }
 
 /*
@@ -487,6 +487,7 @@ void	vi_pci_modern_write(struct pci_devinst *, int, uint64_t, int,
 int	vi_pci_modern_cfgread(struct pci_devinst *, int, int, uint32_t *);
 int	vi_pci_modern_cfgwrite(struct pci_devinst *, int, int, uint32_t);
 void	vi_pci_notify_queue(struct virtio_softc *, uint64_t);
+void	vi_pci_notify_ready_queues(struct virtio_softc *);
 int	vi_intr_init(struct virtio_softc *vs, int barnum, int use_msix);
 void	vi_reset_dev(struct virtio_softc *);
 /* Mark an unrecoverable device error and notify an active driver. */
