@@ -169,7 +169,9 @@ struct pci_vtblk_ioreq {
 	uint8_t				*io_status;
 	uint32_t			io_data_len;
 	bool				io_writes_data;
+	bool				io_active;
 	uint16_t			io_idx;
+	uint64_t			io_generation;
 };
 
 struct virtio_blk_discard_write_zeroes {
@@ -188,6 +190,7 @@ struct pci_vtblk_softc {
 	struct vtblk_config vbsc_cfg;
 	struct virtio_consts vbsc_consts;
 	struct blockif_ctxt *bc;
+	uint64_t vbsc_generation;
 	char vbsc_ident[VTBLK_BLK_ID_BYTES];
 	struct pci_vtblk_ioreq vbsc_ios[VTBLK_RINGSZ];
 };
@@ -223,8 +226,19 @@ static void
 pci_vtblk_reset(void *vsc)
 {
 	struct pci_vtblk_softc *sc = vsc;
+	struct pci_vtblk_ioreq *io;
+	int error, i;
 
 	DPRINTF(("vtblk: device reset requested !"));
+	sc->vbsc_generation++;
+	for (i = 0; i < VTBLK_RINGSZ; i++) {
+		io = &sc->vbsc_ios[i];
+		if (!io->io_active)
+			continue;
+		error = blockif_cancel(sc->bc, &io->io_req);
+		if (error == 0 || error == EINVAL)
+			io->io_active = false;
+	}
 	vi_reset_dev(&sc->vbsc_vs);
 }
 
@@ -233,6 +247,8 @@ pci_vtblk_done_locked(struct pci_vtblk_ioreq *io, int err)
 {
 	struct pci_vtblk_softc *sc = io->io_sc;
 	uint32_t used_len;
+
+	io->io_active = false;
 
 	/* convert errno into a virtio block error return */
 	if (err == EOPNOTSUPP || err == ENOSYS)
@@ -295,7 +311,10 @@ pci_vtblk_done(struct blockif_req *br, int err)
 	struct pci_vtblk_softc *sc = io->io_sc;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
-	pci_vtblk_done_locked(io, err);
+	if (io->io_active && io->io_generation == sc->vbsc_generation)
+		pci_vtblk_done_locked(io, err);
+	else
+		io->io_active = false;
 	pthread_mutex_unlock(&sc->vsc_mtx);
 }
 
@@ -348,6 +367,10 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 	}
 
 	io = &sc->vbsc_ios[req.idx];
+	if (io->io_active) {
+		pci_vtblk_complete_invalid(vq, &req, iov, n);
+		return;
+	}
 	io->io_data_len = 0;
 	io->io_writes_data = false;
 	vbh = (struct virtio_blk_hdr *)iov[0].iov_base;
@@ -416,6 +439,8 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 		 writeop ? "write/discard" : "read/ident", iolen, i - 1,
 		 io->io_req.br_offset));
 
+	io->io_active = true;
+	io->io_generation = sc->vbsc_generation;
 	switch (type) {
 	case VBH_OP_READ:
 		err = blockif_read(sc->bc, &io->io_req);

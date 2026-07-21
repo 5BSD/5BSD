@@ -31,9 +31,12 @@ static int g_backend_reads;
 static int g_backend_writes;
 static int g_backend_flushes;
 static int g_backend_deletes;
+static int g_cancel_calls;
+static int g_cancel_error;
 static int g_rel_calls;
 static uint32_t g_rel_len;
 static int g_end_calls;
+static int g_reset_calls;
 
 static struct virtio_blk_hdr g_header;
 static struct virtio_blk_discard_write_zeroes g_discard;
@@ -66,9 +69,12 @@ reset_mocks(void)
 	g_backend_writes = 0;
 	g_backend_flushes = 0;
 	g_backend_deletes = 0;
+	g_cancel_calls = 0;
+	g_cancel_error = 0;
 	g_rel_calls = 0;
 	g_rel_len = UINT32_MAX;
 	g_end_calls = 0;
+	g_reset_calls = 0;
 }
 
 static void
@@ -79,6 +85,7 @@ setup_softc(struct pci_vtblk_softc *sc)
 	for (int i = 0; i < VTBLK_RINGSZ; i++) {
 		sc->vbsc_ios[i].io_sc = sc;
 		sc->vbsc_ios[i].io_idx = i;
+		sc->vbsc_ios[i].io_req.br_param = &sc->vbsc_ios[i];
 	}
 }
 
@@ -140,6 +147,22 @@ blockif_delete(struct blockif_ctxt *bc __unused, struct blockif_req *req __unuse
 
 	g_backend_deletes++;
 	return (g_backend_error);
+}
+
+int
+blockif_cancel(struct blockif_ctxt *bc __unused,
+    struct blockif_req *req __unused)
+{
+
+	g_cancel_calls++;
+	return (g_cancel_error);
+}
+
+void
+vi_reset_dev(struct virtio_softc *vs __unused)
+{
+
+	g_reset_calls++;
 }
 
 ATF_TC_WITHOUT_HEAD(malformed_chains);
@@ -308,11 +331,53 @@ ATF_TC_BODY(discard_validation, tc)
 	ATF_CHECK(g_status == VTBLK_S_UNSUPP);
 }
 
+ATF_TC_WITHOUT_HEAD(reset_discards_outstanding_io);
+ATF_TC_BODY(reset_discards_outstanding_io, tc)
+{
+	struct pci_vtblk_softc sc;
+	struct pci_vtblk_ioreq *io;
+
+	reset_mocks();
+	setup_softc(&sc);
+	ATF_REQUIRE(pthread_mutex_init(&sc.vsc_mtx, NULL) == 0);
+	g_header.vbh_type = htole32(VBH_OP_READ);
+	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	io = &sc.vbsc_ios[g_req.idx];
+	ATF_REQUIRE(io->io_active);
+	ATF_CHECK(io->io_generation == 0);
+	ATF_CHECK(g_backend_reads == 1 && g_rel_calls == 0);
+
+	/* A queued request is removed without receiving a callback. */
+	g_cancel_error = 0;
+	pci_vtblk_reset(&sc);
+	ATF_CHECK(g_cancel_calls == 1 && g_reset_calls == 1);
+	ATF_CHECK(sc.vbsc_generation == 1);
+	ATF_CHECK(!io->io_active && g_rel_calls == 0);
+	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+
+	/* An active request reaches its callback after reset and is discarded. */
+	reset_mocks();
+	setup_softc(&sc);
+	ATF_REQUIRE(pthread_mutex_init(&sc.vsc_mtx, NULL) == 0);
+	g_header.vbh_type = htole32(VBH_OP_READ);
+	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	io = &sc.vbsc_ios[g_req.idx];
+	g_cancel_error = EBUSY;
+	pci_vtblk_reset(&sc);
+	ATF_REQUIRE(io->io_active);
+	pci_vtblk_done(&io->io_req, 0);
+	ATF_CHECK(!io->io_active);
+	ATF_CHECK(g_rel_calls == 0 && g_end_calls == 0);
+	ATF_CHECK(g_status == UINT8_MAX);
+	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, malformed_chains);
 	ATF_TP_ADD_TC(tp, opcode_layouts);
 	ATF_TP_ADD_TC(tp, backend_and_range_errors);
 	ATF_TP_ADD_TC(tp, discard_validation);
+	ATF_TP_ADD_TC(tp, reset_discards_outstanding_io);
 	return (atf_no_error());
 }
