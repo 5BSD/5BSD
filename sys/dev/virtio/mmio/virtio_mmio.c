@@ -833,6 +833,7 @@ static void
 vtmmio_probe_and_attach_child(struct vtmmio_softc *sc)
 {
 	device_t dev, child;
+	int error;
 
 	dev = sc->dev;
 	child = sc->vtmmio_child_dev;
@@ -857,7 +858,17 @@ vtmmio_probe_and_attach_child(struct vtmmio_softc *sc)
 		vtmmio_set_status(dev, VIRTIO_CONFIG_STATUS_ACK);
 	} else {
 		vtmmio_set_status(dev, VIRTIO_CONFIG_STATUS_DRIVER_OK);
-		VIRTIO_ATTACH_COMPLETED(child);
+		error = VIRTIO_ATTACH_COMPLETED(child);
+		if (error != 0) {
+			device_printf(child,
+			    "attach-completed callback failed: %d\n", error);
+			vtmmio_set_status(dev, VIRTIO_CONFIG_STATUS_FAILED);
+			if (device_detach(child) != 0)
+				device_printf(child,
+				    "failed to detach after attach-completed error\n");
+			else
+				vtmmio_set_status(dev, VIRTIO_CONFIG_STATUS_ACK);
+		}
 	}
 }
 

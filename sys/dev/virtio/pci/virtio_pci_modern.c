@@ -1131,6 +1131,7 @@ static void
 vtpci_modern_probe_and_attach_child(struct vtpci_modern_softc *sc)
 {
 	device_t dev, child;
+	int error;
 
 	dev = sc->vtpci_dev;
 	child = vtpci_child_device(&sc->vtpci_common);
@@ -1149,7 +1150,16 @@ vtpci_modern_probe_and_attach_child(struct vtpci_modern_softc *sc)
 		vtpci_modern_child_detached(dev, child);
 	} else {
 		vtpci_modern_set_status(sc, VIRTIO_CONFIG_STATUS_DRIVER_OK);
-		VIRTIO_ATTACH_COMPLETED(child);
+		error = VIRTIO_ATTACH_COMPLETED(child);
+		if (error != 0) {
+			device_printf(child,
+			    "attach-completed callback failed: %d\n", error);
+			vtpci_modern_set_status(sc,
+			    VIRTIO_CONFIG_STATUS_FAILED);
+			if (device_detach(child) != 0)
+				device_printf(child,
+				    "failed to detach after attach-completed error\n");
+		}
 	}
 }
 
