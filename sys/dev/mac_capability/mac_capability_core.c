@@ -93,9 +93,6 @@ SDT_PROBE_DEFINE6(mac_capability, , , control,
 SDT_PROBE_DEFINE6(mac_capability, , , fd__receive,
     "const char *", "uint64_t", "int", "pid_t", "struct ucred *",
     "uint64_t");
-SDT_PROBE_DEFINE6(mac_capability, , , ioctl__deny,
-    "const char *", "uint64_t", "u_long", "pid_t", "struct ucred *",
-    "uint64_t");
 SDT_PROBE_DEFINE6(mac_capability, , , error,
     "const char *", "uint64_t", "u_long", "pid_t", "uint64_t", "int");
 SDT_PROBE_DEFINE6(mac_capability, , , instance__create,

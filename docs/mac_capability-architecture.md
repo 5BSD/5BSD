@@ -126,27 +126,27 @@ The unit of authority is the **instance fd** returned by MAC_CAPABILITY_CONNECT.
 
 ### Operations on an instance fd
 
-| Operation | Ioctl | Capsicum Right | Effect |
-|-----------|-------|----------------|--------|
-| Send async message | MAC_CAPABILITY_SENDMSG | CAP_MAC_CAPABILITY_SEND | Enqueue on service RX queue |
-| Receive async message | MAC_CAPABILITY_RECVMSG | CAP_MAC_CAPABILITY_RECV | Dequeue from TX queue (blocks) |
-| Synchronous call | MAC_CAPABILITY_CALL | CAP_MAC_CAPABILITY_SEND + CAP_MAC_CAPABILITY_RECV + CAP_IOCTL | Run handler in caller thread |
-| Query metadata | MAC_CAPABILITY_GETINFO | (none) | Read service name, badge, limits, features |
-| Strip send | MAC_CAPABILITY_REVOKE_SEND | (none) | Block future SENDMSG (one-way) |
-| Strip recv | MAC_CAPABILITY_REVOKE_RECV | (none) | Block future RECVMSG (one-way) |
-| Strip call | MAC_CAPABILITY_REVOKE_CALL | (none) | Block future CALL (one-way) |
-| Strip mint | MAC_CAPABILITY_REVOKE_MINT | (none) | Block future MINT_INSTANCE (one-way) |
-| Mint instance | MAC_CAPABILITY_MINT_INSTANCE | CAP_MAC_CAPABILITY_MINT | Create new instance from mintable service |
-| Destroy instance | MAC_CAPABILITY_TERMINATE | (none) | Kill for all holders |
-| kqueue readiness | EVFILT_READ / EVFILT_WRITE | (none) | TX has data / RX has space |
-| Prevent delegation | cap_xfer_limit(fd, CAP_XFER_NONE) | (syscall) | Disable fd transfer (one-way) |
+| Operation | Ioctl allowlist entry | Effect |
+|-----------|-----------------------|--------|
+| Send async message | MAC_CAPABILITY_SENDMSG | Enqueue on service RX queue |
+| Receive async message | MAC_CAPABILITY_RECVMSG | Dequeue from TX queue (blocks) |
+| Synchronous call | MAC_CAPABILITY_CALL | Run service handler in caller thread |
+| Query metadata | MAC_CAPABILITY_GETINFO | Read service name, badge, limits, features |
+| Strip send | MAC_CAPABILITY_REVOKE_SEND | Block future SENDMSG (one-way) |
+| Strip recv | MAC_CAPABILITY_REVOKE_RECV | Block future RECVMSG (one-way) |
+| Strip call | MAC_CAPABILITY_REVOKE_CALL | Block future CALL (one-way) |
+| Strip mint | MAC_CAPABILITY_REVOKE_MINT | Block future MINT_INSTANCE (one-way) |
+| Mint instance | MAC_CAPABILITY_MINT_INSTANCE | Create new instance from mintable service |
+| Destroy instance | MAC_CAPABILITY_TERMINATE | Kill the instance for all holders |
+| kqueue readiness | CAP_EVENT (not an ioctl) | TX has data / RX has space |
+| Prevent delegation | cap_xfer_limit(fd, CAP_XFER_NONE) | Disable fd transfer (one-way) |
 
 ### Capability narrowing
 
 Rights can only be reduced, never re-escalated:
 
-1. **cap_rights_limit()** -- restrict Capsicum rights on the fd.
-2. **cap_ioctls_limit()** -- whitelist specific ioctl commands.
+1. **cap_rights_limit()** -- retain `CAP_IOCTL` and any non-ioctl rights the fd needs.
+2. **cap_ioctls_limit()** -- irreversibly whitelist specific ioctl commands.
 3. **MAC_CAPABILITY_REVOKE_SEND/RECV/CALL/MINT** -- instance-level one-way latch.
 4. **cap_xfer_limit(..., CAP_XFER_NONE)** -- prevent fd transfer via SCM_RIGHTS and mac_capability messages.
 
@@ -156,7 +156,8 @@ non-transferable handle by combining them.
 ### fd passing in messages
 
 Messages (SENDMSG, CALL) can carry up to `MAC_CAPABILITY_MAX_FDS` (32)
-file descriptors.  Capsicum rights on attached fds are preserved.
+file descriptors.  Attached fds preserve their complete Capsicum restrictions,
+including rights and ioctl allowlists.
 The DFLAG_PASSABLE check and per-fd CAP_XFER state prevent passing
 non-transferable fds.
 
@@ -175,9 +176,9 @@ mac_capability is fully usable inside `cap_enter()`:
 | Operation | Available in Capsicum mode? |
 |-----------|---------------------------|
 | MAC_CAPABILITY_CONNECT (on /dev/mac_capability) | Yes, if fd opened before cap_enter |
-| SENDMSG, RECVMSG, CALL | Yes, with appropriate rights |
+| SENDMSG, RECVMSG, CALL | Yes, with CAP_IOCTL and the command allowlisted |
 | GETINFO, LOCK, REVOKE_*, TERMINATE | Yes |
-| MINT_INSTANCE | Yes, with CAP_MAC_CAPABILITY_MINT right |
+| MINT_INSTANCE | Yes, with CAP_IOCTL and MINT_INSTANCE allowlisted |
 | kqueue on instance fd | Yes |
 | __mac_get_proc / __mac_set_proc | Yes (CAPENABLED) |
 | mac_syscall | **No** (not CAPENABLED) |
@@ -295,7 +296,8 @@ mac_capability_reply(s, mac_capability_msg_token(msg), data, len, fds, fcaps, nf
 ```
 
 - `fds`: file pointers to attach.  NULL if none.
-- `fcaps`: Capsicum rights to preserve on those fds.  NULL = full rights.
+- `fcaps`: per-descriptor Capsicum restrictions to preserve, including rights
+  and ioctl allowlists.  NULL means full rights.
 - `mac_capability_msg_token(msg)`: pass the sender's token back for correlation.
 
 ## Notifications
@@ -826,7 +828,6 @@ tests/sys/mac_capability/         ATF kernel tests via kyua
 
 - `DTYPE_MAC_CAPABILITY` (17) in sys/sys/file.h
 - `KF_TYPE_MAC_CAPABILITY` (17) in sys/sys/user.h
-- `CAP_MAC_CAPABILITY_SEND` / `CAP_MAC_CAPABILITY_RECV` / `CAP_MAC_CAPABILITY_MINT` in sys/sys/capsicum.h (reserved)
 
 ## Exported Kernel API
 
@@ -896,7 +897,7 @@ Provider: `mac_capability` (core messaging)
 | `fd-mint` | service name, badge, pid, cred, nonce, svc flags |
 | `instance-create` / `instance-finalize` / `instance-lastclose` | service name, badge, ... |
 | `service-create` / `service-destroy` | service name, flags, ... |
-| `control` / `ioctl-deny` / `rights-change` | service name, badge, cmd, pid, cred, nonce |
+| `control` / `rights-change` | service name, badge, cmd, pid, cred, nonce |
 | `queue-pressure` | service name, badge, reason, current, limit |
 | `error` | service name, badge, cmd, pid, nonce, errno |
 

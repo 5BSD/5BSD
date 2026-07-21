@@ -57,15 +57,6 @@ mac_capability:::control
 	    ((struct ucred *)arg4)->cr_prison->pr_id);
 }
 
-mac_capability:::ioctl-deny
-{
-	printf("%-6d %-6d %-6d 0x%016x %-10s %-16s %-8d cmd=%-6d %d\n",
-	    arg3, ((struct ucred *)arg4)->cr_uid,
-	    ((struct ucred *)arg4)->cr_gid, arg5, "RT-DENY",
-	    copyinstr(arg0), arg1, arg2,
-	    ((struct ucred *)arg4)->cr_prison->pr_id);
-}
-
 mac_capability:::service-create
 {
 	printf("%-6s %-6s %-6s %-18s %-10s %-16s %-8s flags=0x%x q=%d tx=%d limit=%d\n",

@@ -18,6 +18,7 @@
 #define	KSTORE_OP_GET		2	/* retrieve value by key */
 #define	KSTORE_OP_DELETE	3	/* remove a key */
 #define	KSTORE_OP_MINT		4	/* create member fd (owner only) */
+#define	KSTORE_OP_ECHO_FD	5	/* return one attached fd */
 
 #define	KSTORE_STATUS_OK	0
 #define	KSTORE_STATUS_NOTFOUND	1

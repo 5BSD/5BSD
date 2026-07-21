@@ -50,16 +50,6 @@
 #define	CAP_XFER_NONE		2
 #endif
 
-#ifndef CAP_MAC_CAPABILITY_SEND
-#define	CAP_MAC_CAPABILITY_SEND		CAPRIGHT(1, 0x0000000080000000ULL)
-#endif
-#ifndef CAP_MAC_CAPABILITY_RECV
-#define	CAP_MAC_CAPABILITY_RECV		CAPRIGHT(1, 0x0000000100000000ULL)
-#endif
-#ifndef CAP_MAC_CAPABILITY_MINT
-#define	CAP_MAC_CAPABILITY_MINT		CAPRIGHT(1, 0x0000000200000000ULL)
-#endif
-
 static int
 closed_fd(void)
 {
@@ -344,6 +334,29 @@ ATF_TC_BODY(capsicum_ioctl_limit, tc)
 	ATF_CHECK_ERRNO(ENOTCAPABLE, ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == -1);
 
 	close(fd);
+}
+
+static int
+verify_getinfo_only(int fd)
+{
+	struct mac_capability_info_args info;
+	struct mac_capability_sendmsg_args sa;
+	cap_ioctl_t cmd;
+	char payload = 'x';
+
+	if (cap_ioctls_get(fd, &cmd, 1) != 1 ||
+	    cmd != MAC_CAPABILITY_GETINFO)
+		return (1);
+	memset(&info, 0, sizeof(info));
+	if (ioctl(fd, MAC_CAPABILITY_GETINFO, &info) != 0)
+		return (2);
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = &payload;
+	sa.payload_len = sizeof(payload);
+	if (ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) != -1 ||
+	    errno != ENOTCAPABLE)
+		return (3);
+	return (0);
 }
 
 ATF_TC(capsicum_fcntl_limit);
@@ -1072,17 +1085,18 @@ ATF_TC(scm_rights_passing);
 ATF_TC_HEAD(scm_rights_passing, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Instance fd sent via SCM_RIGHTS works in recipient");
+	    "SCM_RIGHTS preserves a mac_capability fd ioctl allowlist");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
 }
 ATF_TC_BODY(scm_rights_passing, tc)
 {
-	struct ks_request req;
+	cap_ioctl_t cmds[] = { MAC_CAPABILITY_GETINFO };
 	int sv[2], fd, status;
 	pid_t pid;
 
 	fd = mac_capability_connect("test_keystore");
 	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(cap_ioctls_limit(fd, cmds, nitems(cmds)) == 0);
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
 
 	pid = fork();
@@ -1097,7 +1111,6 @@ ATF_TC_BODY(scm_rights_passing, tc)
 			char buf[CMSG_SPACE(sizeof(int))];
 		} cmsgbuf;
 		struct cmsghdr *cmsg;
-		char reply[256];
 		int received_fd;
 		char dummy;
 
@@ -1120,23 +1133,8 @@ ATF_TC_BODY(scm_rights_passing, tc)
 			_exit(2);
 		memcpy(&received_fd, CMSG_DATA(cmsg), sizeof(int));
 
-		{
-			struct mac_capability_sendmsg_args sa;
-			struct mac_capability_recvmsg_args ra;
-
-			req.op = KS_OP_FETCH;
-			req.keyid = mac_capability_missing_key();
-			memset(&sa, 0, sizeof(sa));
-			sa.payload = &req;
-			sa.payload_len = sizeof(req);
-			if (ioctl(received_fd, MAC_CAPABILITY_SENDMSG, &sa) != 0)
-				_exit(3);
-			memset(&ra, 0, sizeof(ra));
-			ra.payload = &reply;
-			ra.payload_len = sizeof(reply);
-			if (ioctl(received_fd, MAC_CAPABILITY_RECVMSG, &ra) != 0)
-				_exit(4);
-		}
+		if (verify_getinfo_only(received_fd) != 0)
+			_exit(3);
 		close(received_fd);
 		close(sv[1]);
 		_exit(0);
@@ -2537,6 +2535,49 @@ ATF_TC_BODY(channel_fd_passing, tc)
 	close(fd_a);
 }
 
+ATF_TC(channel_preserves_ioctl_limit);
+ATF_TC_HEAD(channel_preserves_ioctl_limit, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "mac_capability message transfer preserves an fd ioctl allowlist");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(channel_preserves_ioctl_limit, tc)
+{
+	struct mac_capability_sendmsg_args sa;
+	struct mac_capability_recvmsg_args ra;
+	cap_ioctl_t cmds[] = { MAC_CAPABILITY_GETINFO };
+	int fd_a, fd_b, target_fd, target_peer, received_fd;
+	char buf[4];
+
+	mac_capability_channel_create(&fd_a, &fd_b);
+	mac_capability_channel_create(&target_fd, &target_peer);
+	ATF_REQUIRE(cap_ioctls_limit(target_fd, cmds, nitems(cmds)) == 0);
+
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = "fd";
+	sa.payload_len = 2;
+	sa.fds = &target_fd;
+	sa.nfds = 1;
+	ATF_REQUIRE(ioctl(fd_a, MAC_CAPABILITY_SENDMSG, &sa) == 0);
+
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
+	ra.fds = &received_fd;
+	ra.nfds = 1;
+	ATF_REQUIRE(ioctl(fd_b, MAC_CAPABILITY_RECVMSG, &ra) == 0);
+	ATF_REQUIRE_EQ(ra.nfds, 1);
+	ATF_CHECK_EQ(verify_getinfo_only(received_fd), 0);
+
+	close(received_fd);
+	close(target_peer);
+	close(target_fd);
+	close(fd_b);
+	close(fd_a);
+}
+
 /* ================================================================
  * Channel: stress — many messages
  * ================================================================ */
@@ -3237,6 +3278,45 @@ ATF_TC_BODY(call_reply_nfds_too_many, tc)
 	ATF_CHECK_ERRNO(EINVAL, ioctl(fd, MAC_CAPABILITY_CALL, &ca) == -1);
 
 	close(fd);
+}
+
+ATF_TC(call_reply_preserves_ioctl_limit);
+ATF_TC_HEAD(call_reply_preserves_ioctl_limit, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "MAC_CAPABILITY_CALL reply fd preserves its ioctl allowlist");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_test_kernelstore");
+}
+ATF_TC_BODY(call_reply_preserves_ioctl_limit, tc)
+{
+	struct mac_capability_call_args ca;
+	struct kstore_request kr;
+	cap_ioctl_t cmds[] = { MAC_CAPABILITY_GETINFO };
+	int svc_fd, target_fd, received_fd;
+
+	svc_fd = mac_capability_connect("test_kernelstore");
+	ATF_REQUIRE(svc_fd >= 0);
+	target_fd = mac_capability_connect("test_kernelstore");
+	ATF_REQUIRE(target_fd >= 0);
+	ATF_REQUIRE(cap_ioctls_limit(target_fd, cmds, nitems(cmds)) == 0);
+
+	memset(&kr, 0, sizeof(kr));
+	kr.op = KSTORE_OP_ECHO_FD;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &kr;
+	ca.req_len = sizeof(kr);
+	ca.req_fds = &target_fd;
+	ca.req_nfds = 1;
+	ca.reply_fds = &received_fd;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE(ioctl(svc_fd, MAC_CAPABILITY_CALL, &ca) == 0);
+	ATF_REQUIRE_EQ(ca.reply_nfds, 1);
+	ATF_CHECK_EQ(verify_getinfo_only(received_fd), 0);
+
+	close(received_fd);
+	close(target_fd);
+	close(svc_fd);
 }
 
 /* ================================================================
@@ -6350,7 +6430,7 @@ ATF_TC_BODY(capsicum_gates_terminate, tc)
 }
 
 /* ================================================================
- * Mint restriction tests (CAP_MAC_CAPABILITY_MINT + REVOKE_MINT)
+ * Mint restriction tests (ioctl allowlist + REVOKE_MINT)
  * ================================================================ */
 
 static int
@@ -6364,16 +6444,16 @@ channel_mint_instance(int fd)
 	return (ma.fd);
 }
 
-ATF_TC(capsicum_mint_right);
-ATF_TC_HEAD(capsicum_mint_right, tc)
+ATF_TC(capsicum_mint_ioctl_limit);
+ATF_TC_HEAD(capsicum_mint_ioctl_limit, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Stripping CAP_MAC_CAPABILITY_MINT blocks MINT_INSTANCE");
+	    "Removing MINT_INSTANCE from the ioctl allowlist blocks minting");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel");
 }
-ATF_TC_BODY(capsicum_mint_right, tc)
+ATF_TC_BODY(capsicum_mint_ioctl_limit, tc)
 {
-	cap_rights_t rights;
+	cap_ioctl_t cmds[] = { MAC_CAPABILITY_GETINFO };
 	int fd, minted;
 
 	fd = mac_capability_connect("channel");
@@ -6384,9 +6464,7 @@ ATF_TC_BODY(capsicum_mint_right, tc)
 	ATF_REQUIRE_MSG(minted >= 0, "mint before limit: %s", strerror(errno));
 	close(minted);
 
-	/* Strip CAP_MAC_CAPABILITY_MINT, keep IOCTL. */
-	cap_rights_init(&rights, CAP_IOCTL, CAP_MAC_CAPABILITY_SEND, CAP_MAC_CAPABILITY_RECV);
-	ATF_REQUIRE(cap_rights_limit(fd, &rights) == 0);
+	ATF_REQUIRE(cap_ioctls_limit(fd, cmds, nitems(cmds)) == 0);
 
 	/* Mint should now fail with ENOTCAPABLE. */
 	ATF_CHECK_ERRNO(ENOTCAPABLE,
@@ -7171,6 +7249,7 @@ ATF_TP_ADD_TCS(tp)
 
 	/* Channel: additional coverage */
 	ATF_TP_ADD_TC(tp, channel_fd_passing);
+	ATF_TP_ADD_TC(tp, channel_preserves_ioctl_limit);
 	ATF_TP_ADD_TC(tp, channel_stress);
 	ATF_TP_ADD_TC(tp, channel_getinfo);
 
@@ -7198,6 +7277,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, call_reply_fds_zero);
 	ATF_TP_ADD_TC(tp, call_reply_fds_buf_no_fds);
 	ATF_TP_ADD_TC(tp, call_reply_nfds_too_many);
+	ATF_TP_ADD_TC(tp, call_reply_preserves_ioctl_limit);
 
 	/* CAP_XFER_NONE */
 	ATF_TP_ADD_TC(tp, xfer_none_prevents_transfer);
@@ -7314,7 +7394,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cap_pro_nosock_socketpair_blocked);
 
 	/* Mint restriction */
-	ATF_TP_ADD_TC(tp, capsicum_mint_right);
+	ATF_TP_ADD_TC(tp, capsicum_mint_ioctl_limit);
 	ATF_TP_ADD_TC(tp, revoke_mint_blocks_minting);
 
 	return (atf_no_error());

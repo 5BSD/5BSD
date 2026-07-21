@@ -14,15 +14,6 @@ dtrace:::BEGIN
 	    "DETAIL");
 }
 
-mac_capability:::ioctl-deny
-{
-	printf("%-6d %-18s %-20s cmd=%-10d %-18s 0x%016x svc=%s badge=%d uid=%d gid=%d\n",
-	    arg3, "mac_capability", "ioctl-deny", arg2, "-", arg5,
-	    copyinstr(arg0), arg1, ((struct ucred *)arg4)->cr_uid,
-	    ((struct ucred *)arg4)->cr_gid);
-	@denies["mac_capability", "ioctl"] = count();
-}
-
 mac_capability:::error
 /arg5 != 0/
 {

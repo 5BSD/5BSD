@@ -5,10 +5,10 @@
  *
  * Tests for:
  *   - mac_capability_identity service (IDENTITY_OP_SELF, IDENTITY_OP_QUERY)
- *   - Capsicum rights enforcement (CAP_MAC_CAPABILITY_SEND, CAP_MAC_CAPABILITY_RECV)
- *   - CAP_ALL1 correctness
+ *   - Capsicum ioctl allowlist enforcement
  */
 
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/capsicum.h>
 #include <sys/ioctl.h>
@@ -28,14 +28,6 @@
 #include "mac_capability_ioctl.h"
 #include "mac_capability_test_helpers.h"
 #include "mac_capability_identity_proto.h"
-
-#ifndef CAP_MAC_CAPABILITY_SEND
-#define	CAP_MAC_CAPABILITY_SEND		CAPRIGHT(1, 0x0000000080000000ULL)
-#endif
-
-#ifndef CAP_MAC_CAPABILITY_RECV
-#define	CAP_MAC_CAPABILITY_RECV		CAPRIGHT(1, 0x0000000100000000ULL)
-#endif
 
 static int
 identity_call(int fd, const struct identity_request *req,
@@ -325,54 +317,48 @@ ATF_TC_BODY(identity_bad_op, tc)
 }
 
 /* ----------------------------------------------------------------
- * Capsicum rights enforcement tests
+ * Capsicum ioctl allowlist enforcement tests
  * ---------------------------------------------------------------- */
 
-ATF_TC(capsicum_default_rights_include_send_recv);
-ATF_TC_HEAD(capsicum_default_rights_include_send_recv, tc)
+ATF_TC(capsicum_default_ioctls_unrestricted);
+ATF_TC_HEAD(capsicum_default_ioctls_unrestricted, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Fresh mac_capability fds carry both CAP_MAC_CAPABILITY_SEND and CAP_MAC_CAPABILITY_RECV");
+	    "Fresh mac_capability fds initially allow all ioctl commands");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_identity");
 }
-ATF_TC_BODY(capsicum_default_rights_include_send_recv, tc)
+ATF_TC_BODY(capsicum_default_ioctls_unrestricted, tc)
 {
-	cap_rights_t have, need;
 	int fd;
 
 	fd = mac_capability_connect("identity");
 	ATF_REQUIRE(fd >= 0);
 
-	ATF_REQUIRE(cap_rights_get(fd, &have) == 0);
-	cap_rights_init(&need, CAP_IOCTL, CAP_MAC_CAPABILITY_SEND, CAP_MAC_CAPABILITY_RECV);
-	ATF_CHECK_MSG(cap_rights_contains(&have, &need),
-	    "fresh mac_capability fd missing SEND/RECV rights");
+	ATF_CHECK_EQ(cap_ioctls_get(fd, NULL, 0), CAP_IOCTLS_ALL);
 
 	close(fd);
 }
 
-ATF_TC(capsicum_send_right);
-ATF_TC_HEAD(capsicum_send_right, tc)
+ATF_TC(capsicum_send_ioctl_limit);
+ATF_TC_HEAD(capsicum_send_ioctl_limit, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "SENDMSG requires CAP_MAC_CAPABILITY_SEND right");
+	    "SENDMSG is denied when absent from the fd ioctl allowlist");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_test_keystore");
 }
-ATF_TC_BODY(capsicum_send_right, tc)
+ATF_TC_BODY(capsicum_send_ioctl_limit, tc)
 {
 	struct mac_capability_sendmsg_args sa;
-	cap_rights_t rights;
+	cap_ioctl_t cmds[] = { MAC_CAPABILITY_RECVMSG };
 	int fd;
 	char buf[16];
 
 	fd = mac_capability_connect("test_keystore");
 	ATF_REQUIRE(fd >= 0);
 
-	/* Restrict to IOCTL + RECV only (no SEND) */
-	cap_rights_init(&rights, CAP_IOCTL, CAP_MAC_CAPABILITY_RECV);
-	ATF_REQUIRE(cap_rights_limit(fd, &rights) == 0);
+	ATF_REQUIRE(cap_ioctls_limit(fd, cmds, nitems(cmds)) == 0);
 
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = buf;
@@ -383,27 +369,25 @@ ATF_TC_BODY(capsicum_send_right, tc)
 	close(fd);
 }
 
-ATF_TC(capsicum_recv_right);
-ATF_TC_HEAD(capsicum_recv_right, tc)
+ATF_TC(capsicum_recv_ioctl_limit);
+ATF_TC_HEAD(capsicum_recv_ioctl_limit, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "RECVMSG requires CAP_MAC_CAPABILITY_RECV right");
+	    "RECVMSG is denied when absent from the fd ioctl allowlist");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_test_keystore");
 }
-ATF_TC_BODY(capsicum_recv_right, tc)
+ATF_TC_BODY(capsicum_recv_ioctl_limit, tc)
 {
 	struct mac_capability_recvmsg_args ra;
-	cap_rights_t rights;
+	cap_ioctl_t cmds[] = { MAC_CAPABILITY_SENDMSG };
 	int fd;
 	char buf[128];
 
 	fd = mac_capability_connect("test_keystore");
 	ATF_REQUIRE(fd >= 0);
 
-	/* Restrict to IOCTL + SEND only (no RECV) */
-	cap_rights_init(&rights, CAP_IOCTL, CAP_MAC_CAPABILITY_SEND);
-	ATF_REQUIRE(cap_rights_limit(fd, &rights) == 0);
+	ATF_REQUIRE(cap_ioctls_limit(fd, cmds, nitems(cmds)) == 0);
 
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = buf;
@@ -414,19 +398,19 @@ ATF_TC_BODY(capsicum_recv_right, tc)
 	close(fd);
 }
 
-ATF_TC(capsicum_call_needs_both);
-ATF_TC_HEAD(capsicum_call_needs_both, tc)
+ATF_TC(capsicum_call_ioctl_limit);
+ATF_TC_HEAD(capsicum_call_ioctl_limit, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "CALL requires both CAP_MAC_CAPABILITY_SEND and CAP_MAC_CAPABILITY_RECV");
+	    "CALL is denied when absent from the fd ioctl allowlist");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_identity");
 }
-ATF_TC_BODY(capsicum_call_needs_both, tc)
+ATF_TC_BODY(capsicum_call_ioctl_limit, tc)
 {
 	struct identity_request req;
 	struct identity_reply reply;
-	cap_rights_t rights;
+	cap_ioctl_t cmds[] = { MAC_CAPABILITY_GETINFO };
 	int fd;
 
 	fd = mac_capability_connect("identity");
@@ -435,47 +419,32 @@ ATF_TC_BODY(capsicum_call_needs_both, tc)
 	memset(&req, 0, sizeof(req));
 	req.op = IDENTITY_OP_SELF;
 
-	/* SEND only — CALL should fail */
-	cap_rights_init(&rights, CAP_IOCTL, CAP_MAC_CAPABILITY_SEND);
-	ATF_REQUIRE(cap_rights_limit(fd, &rights) == 0);
-	ATF_CHECK_ERRNO(ENOTCAPABLE,
-	    identity_call(fd, &req, NULL, 0, &reply) == -1);
-
-	close(fd);
-
-	/* RECV only — CALL should also fail */
-	fd = mac_capability_connect("identity");
-	ATF_REQUIRE(fd >= 0);
-
-	cap_rights_init(&rights, CAP_IOCTL, CAP_MAC_CAPABILITY_RECV);
-	ATF_REQUIRE(cap_rights_limit(fd, &rights) == 0);
+	ATF_REQUIRE(cap_ioctls_limit(fd, cmds, nitems(cmds)) == 0);
 	ATF_CHECK_ERRNO(ENOTCAPABLE,
 	    identity_call(fd, &req, NULL, 0, &reply) == -1);
 
 	close(fd);
 }
 
-ATF_TC(capsicum_call_with_both);
-ATF_TC_HEAD(capsicum_call_with_both, tc)
+ATF_TC(capsicum_call_ioctl_allowed);
+ATF_TC_HEAD(capsicum_call_ioctl_allowed, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "CALL succeeds with both SEND and RECV rights");
+	    "CALL succeeds when present in the fd ioctl allowlist");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_identity");
 }
-ATF_TC_BODY(capsicum_call_with_both, tc)
+ATF_TC_BODY(capsicum_call_ioctl_allowed, tc)
 {
 	struct identity_request req;
 	struct identity_reply reply;
-	cap_rights_t rights;
+	cap_ioctl_t cmds[] = { MAC_CAPABILITY_CALL };
 	int fd;
 
 	fd = mac_capability_connect("identity");
 	ATF_REQUIRE(fd >= 0);
 
-	cap_rights_init(&rights, CAP_IOCTL, CAP_MAC_CAPABILITY_SEND,
-	    CAP_MAC_CAPABILITY_RECV);
-	ATF_REQUIRE(cap_rights_limit(fd, &rights) == 0);
+	ATF_REQUIRE(cap_ioctls_limit(fd, cmds, nitems(cmds)) == 0);
 
 	memset(&req, 0, sizeof(req));
 	req.op = IDENTITY_OP_SELF;
@@ -486,26 +455,24 @@ ATF_TC_BODY(capsicum_call_with_both, tc)
 	close(fd);
 }
 
-ATF_TC(capsicum_getinfo_no_special_rights);
-ATF_TC_HEAD(capsicum_getinfo_no_special_rights, tc)
+ATF_TC(capsicum_getinfo_ioctl_allowed);
+ATF_TC_HEAD(capsicum_getinfo_ioctl_allowed, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "GETINFO works with only CAP_IOCTL (no SEND/RECV)");
+	    "GETINFO works when it is the only allowed ioctl command");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_identity");
 }
-ATF_TC_BODY(capsicum_getinfo_no_special_rights, tc)
+ATF_TC_BODY(capsicum_getinfo_ioctl_allowed, tc)
 {
 	struct mac_capability_info_args info;
-	cap_rights_t rights;
+	cap_ioctl_t cmds[] = { MAC_CAPABILITY_GETINFO };
 	int fd;
 
 	fd = mac_capability_connect("identity");
 	ATF_REQUIRE(fd >= 0);
 
-	/* Only CAP_IOCTL — no SEND or RECV */
-	cap_rights_init(&rights, CAP_IOCTL);
-	ATF_REQUIRE(cap_rights_limit(fd, &rights) == 0);
+	ATF_REQUIRE(cap_ioctls_limit(fd, cmds, nitems(cmds)) == 0);
 
 	memset(&info, 0, sizeof(info));
 	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_GETINFO, &info) == 0);
@@ -515,24 +482,27 @@ ATF_TC_BODY(capsicum_getinfo_no_special_rights, tc)
 	close(fd);
 }
 
-ATF_TC(capsicum_revoke_no_rights);
-ATF_TC_HEAD(capsicum_revoke_no_rights, tc)
+ATF_TC(capsicum_revoke_ioctls_allowed);
+ATF_TC_HEAD(capsicum_revoke_ioctls_allowed, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "REVOKE_SEND/RECV/CALL work with only CAP_IOCTL");
+	    "REVOKE_SEND/RECV/CALL work when explicitly allowlisted");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_identity");
 }
-ATF_TC_BODY(capsicum_revoke_no_rights, tc)
+ATF_TC_BODY(capsicum_revoke_ioctls_allowed, tc)
 {
-	cap_rights_t rights;
+	cap_ioctl_t cmds[] = {
+		MAC_CAPABILITY_REVOKE_SEND,
+		MAC_CAPABILITY_REVOKE_RECV,
+		MAC_CAPABILITY_REVOKE_CALL,
+	};
 	int fd;
 
 	fd = mac_capability_connect("identity");
 	ATF_REQUIRE(fd >= 0);
 
-	cap_rights_init(&rights, CAP_IOCTL);
-	ATF_REQUIRE(cap_rights_limit(fd, &rights) == 0);
+	ATF_REQUIRE(cap_ioctls_limit(fd, cmds, nitems(cmds)) == 0);
 
 	/* Capability narrowing should always work */
 	ATF_CHECK(ioctl(fd, MAC_CAPABILITY_REVOKE_SEND, NULL) == 0);
@@ -558,14 +528,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, identity_query_wrong_fd_type);
 	ATF_TP_ADD_TC(tp, identity_bad_op);
 
-	/* Capsicum rights enforcement */
-	ATF_TP_ADD_TC(tp, capsicum_default_rights_include_send_recv);
-	ATF_TP_ADD_TC(tp, capsicum_send_right);
-	ATF_TP_ADD_TC(tp, capsicum_recv_right);
-	ATF_TP_ADD_TC(tp, capsicum_call_needs_both);
-	ATF_TP_ADD_TC(tp, capsicum_call_with_both);
-	ATF_TP_ADD_TC(tp, capsicum_getinfo_no_special_rights);
-	ATF_TP_ADD_TC(tp, capsicum_revoke_no_rights);
+	/* Capsicum ioctl allowlist enforcement */
+	ATF_TP_ADD_TC(tp, capsicum_default_ioctls_unrestricted);
+	ATF_TP_ADD_TC(tp, capsicum_send_ioctl_limit);
+	ATF_TP_ADD_TC(tp, capsicum_recv_ioctl_limit);
+	ATF_TP_ADD_TC(tp, capsicum_call_ioctl_limit);
+	ATF_TP_ADD_TC(tp, capsicum_call_ioctl_allowed);
+	ATF_TP_ADD_TC(tp, capsicum_getinfo_ioctl_allowed);
+	ATF_TP_ADD_TC(tp, capsicum_revoke_ioctls_allowed);
 
 	return (atf_no_error());
 }

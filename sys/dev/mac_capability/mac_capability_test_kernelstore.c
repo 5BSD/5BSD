@@ -147,8 +147,7 @@ kstore_init(struct mac_capability_instance *s, void *arg __unused)
 static int
 kstore_call(struct mac_capability_instance *s,
     const void *req, size_t reqlen,
-    struct file **fds __unused, struct filecaps *fcaps __unused,
-    int nfds __unused,
+    struct file **fds, struct filecaps *fcaps __unused, int nfds,
     void *reply, size_t *replylenp,
     struct file **reply_fds, int *reply_nfdsp,
     void *arg __unused)
@@ -358,6 +357,16 @@ kstore_call(struct mac_capability_instance *s,
 		*replylenp = 0;
 		return (0);
 	}
+
+	case KSTORE_OP_ECHO_FD:
+		if (nfds != 1 || *reply_nfdsp < 1)
+			return (EINVAL);
+		if (!fhold(fds[0]))
+			return (EBADF);
+		reply_fds[0] = fds[0];
+		*reply_nfdsp = 1;
+		*replylenp = 0;
+		return (0);
 
 	default:
 		return (EOPNOTSUPP);

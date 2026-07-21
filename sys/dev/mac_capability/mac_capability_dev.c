@@ -56,7 +56,6 @@ SDT_PROBE_DECLARE(mac_capability, , , close);
 SDT_PROBE_DECLARE(mac_capability, , , fd__close);
 SDT_PROBE_DECLARE(mac_capability, , , fd__receive);
 SDT_PROBE_DECLARE(mac_capability, , , control);
-SDT_PROBE_DECLARE(mac_capability, , , ioctl__deny);
 SDT_PROBE_DECLARE(mac_capability, , , error);
 SDT_PROBE_DECLARE(mac_capability, , , instance__finalize);
 SDT_PROBE_DECLARE(mac_capability, , , instance__lastclose);
@@ -71,57 +70,6 @@ static fo_close_t	mac_capability_instance_close;
 static fo_fdclose_t	mac_capability_instance_fdclose;
 static fo_fill_kinfo_t	mac_capability_instance_fill_kinfo;
 static fo_cmp_t		mac_capability_instance_cmp;
-
-/*
- * Capsicum per-ioctl rights enforcement.
- *
- * MAC_CAPABILITY_SENDMSG  requires  CAP_MAC_CAPABILITY_SEND
- * MAC_CAPABILITY_CALL     requires  CAP_MAC_CAPABILITY_SEND (request) + CAP_MAC_CAPABILITY_RECV (reply)
- * MAC_CAPABILITY_RECVMSG  requires  CAP_MAC_CAPABILITY_RECV
- * MAC_CAPABILITY_MINT_INSTANCE requires CAP_MAC_CAPABILITY_MINT
- *
- * GETINFO, REVOKE_*, TERMINATE are always allowed — they are
- * introspection or capability-narrowing operations.
- */
-static int
-mac_capability_instance_ioctl_check(struct file *fp, u_long cmd,
-    const cap_rights_t *havep)
-{
-	struct mac_capability_instance *s;
-	struct mac_capability_service *svc;
-	cap_rights_t need;
-	int error;
-
-	switch (cmd) {
-	case MAC_CAPABILITY_SENDMSG:
-		cap_rights_init(&need, CAP_IOCTL, CAP_MAC_CAPABILITY_SEND);
-		break;
-	case MAC_CAPABILITY_RECVMSG:
-		cap_rights_init(&need, CAP_IOCTL, CAP_MAC_CAPABILITY_RECV);
-		break;
-	case MAC_CAPABILITY_CALL:
-		cap_rights_init(&need, CAP_IOCTL, CAP_MAC_CAPABILITY_SEND,
-		    CAP_MAC_CAPABILITY_RECV);
-		break;
-	case MAC_CAPABILITY_MINT_INSTANCE:
-		cap_rights_init(&need, CAP_IOCTL, CAP_MAC_CAPABILITY_MINT);
-		break;
-	default:
-		return (0);
-	}
-	error = cap_check(havep, &need);
-	if (error != 0) {
-		s = fp->f_data;
-		svc = s != NULL ? s->ci_service : NULL;
-		if (svc != NULL) {
-			SDT_PROBE6(mac_capability, , , ioctl__deny,
-			    svc->csvc_name, s->ci_badge, cmd,
-			    curthread->td_proc->p_pid, curthread->td_ucred,
-			    mac_capability_proc_nonce(curthread->td_ucred));
-		}
-	}
-	return (error);
-}
 
 const struct fileops mac_capability_instance_ops = {
 	.fo_read = invfo_rdwr,
@@ -138,7 +86,6 @@ const struct fileops mac_capability_instance_ops = {
 	.fo_sendfile = invfo_sendfile,
 	.fo_fill_kinfo = mac_capability_instance_fill_kinfo,
 	.fo_cmp = mac_capability_instance_cmp,
-	.fo_ioctl_check = mac_capability_instance_ioctl_check,
 	.fo_flags = DFLAG_PASSABLE,
 };
 

@@ -34,12 +34,8 @@
  * read()/write() are not supported on capabilities.
  *
  * Capsicum integration:
- *   cap_ioctls_limit() restricts which ioctls a given fd can perform.
- *   cap_rights_limit() enforces per-operation rights:
- *     CAP_MAC_CAPABILITY_SEND   required for SENDMSG
- *     CAP_MAC_CAPABILITY_RECV   required for RECVMSG
- *     CAP_MAC_CAPABILITY_SEND + CAP_MAC_CAPABILITY_RECV required for CALL
- *     CAP_MAC_CAPABILITY_MINT   required for MINT_INSTANCE
+ *   CAP_IOCTL permits ioctl use on the fd, and cap_ioctls_limit()
+ *   irreversibly restricts which commands the fd can perform.
  */
 
 #ifndef _DEV_MAC_CAPABILITY_MAC_CAPABILITY_IOCTL_H_

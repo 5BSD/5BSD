@@ -154,29 +154,27 @@ and
 .Dq :closed .
 .Ss File descriptor passing
 Capabilities can carry up to 32 file descriptors per message.
-Attached fds preserve their Capsicum rights through the transfer.
+Attached fds preserve their Capsicum rights and ioctl allowlists through the
+transfer.
 .Ss Capsicum integration
 .Nm
 descriptors participate in
 .Xr capsicum 4
 rights enforcement.
-The following Capsicum rights govern ioctl access:
-.Bl -tag -width CAP_MAC_CAPABILITY_SEND
-.It Dv CAP_MAC_CAPABILITY_SEND
-Required for
+The
+.Dv CAP_IOCTL
+right permits ioctl use on a descriptor, while
+.Xr cap_ioctls_limit 2
+irreversibly restricts the descriptor to a command allowlist.
+For example, a send-only capability retains
+.Dv CAP_IOCTL
+and allowlists
 .Dv MAC_CAPABILITY_SENDMSG .
-.It Dv CAP_MAC_CAPABILITY_RECV
-Required for
-.Dv MAC_CAPABILITY_RECVMSG .
-.It Dv CAP_MAC_CAPABILITY_SEND , CAP_MAC_CAPABILITY_RECV , CAP_IOCTL
-All three required for
-.Dv MAC_CAPABILITY_CALL .
-.It Dv CAP_MAC_CAPABILITY_MINT
-Required for
-.Dv MAC_CAPABILITY_MINT_INSTANCE .
-.El
 .Pp
-The following ioctls are always allowed without a rights check:
+Introspection and narrowing commands are not exempt from Capsicum checks.
+They require
+.Dv CAP_IOCTL
+and must remain in the descriptor's ioctl allowlist if the list is limited:
 .Dv MAC_CAPABILITY_GETINFO ,
 .Dv MAC_CAPABILITY_REVOKE_SEND ,
 .Dv MAC_CAPABILITY_REVOKE_RECV ,
@@ -234,9 +232,10 @@ One-way latch.
 Kill the instance for all holders.
 .It Dv MAC_CAPABILITY_MINT_INSTANCE
 Create a new instance from an existing mintable instance.
-Requires the
-.Dv CAP_MAC_CAPABILITY_MINT
-Capsicum right.
+Requires
+.Dv CAP_IOCTL
+and an ioctl allowlist containing
+.Dv MAC_CAPABILITY_MINT_INSTANCE .
 Only available on services registered with the
 .Dv MAC_CAPABILITY_SVC_MINTABLE
 flag.

@@ -332,19 +332,13 @@
 /* Allows for posix_fadvise(2). */
 #define	CAP_POSIX_FADVISE	CAPRIGHT(1, 0x0000000020000000ULL)
 
-/* mac_capability capability message interface operations. */
-/* Allows sending requests on a mac_capability instance fd. */
-#define	CAP_MAC_CAPABILITY_SEND		CAPRIGHT(1, 0x0000000080000000ULL)
-/* Allows receiving replies on a mac_capability instance fd. */
-#define	CAP_MAC_CAPABILITY_RECV		CAPRIGHT(1, 0x0000000100000000ULL)
-/* Allows minting a fresh instance from a mintable mac_capability instance fd. */
-#define	CAP_MAC_CAPABILITY_MINT		CAPRIGHT(1, 0x0000000200000000ULL)
-
 /* All used bits for index 1. */
-#define	CAP_ALL1		CAPRIGHT(1, 0x00000003EFFFFFFFULL)
+#define	CAP_ALL1		CAPRIGHT(1, 0x000000006FFFFFFFULL)
 
 /* Available bits for index 1. */
 #define	CAP_UNUSED1_28		CAPRIGHT(1, 0x0000000010000000ULL)
+/* ... */
+#define	CAP_UNUSED1_31		CAPRIGHT(1, 0x0000000080000000ULL)
 /* ... */
 #define	CAP_UNUSED1_57		CAPRIGHT(1, 0x0100000000000000ULL)
 

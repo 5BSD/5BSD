@@ -24,7 +24,6 @@ mac_capability:::fd-install { @fdinst[copyinstr(arg0)] = count(); }
 mac_capability:::fd-receive { @fdrecv[copyinstr(arg0)] = count(); }
 mac_capability:::fd-close { @fdclose[copyinstr(arg0)] = count(); }
 mac_capability:::control  { @controls[copyinstr(arg0), arg2] = count(); }
-mac_capability:::ioctl-deny { @rtdenies[copyinstr(arg0), arg2, arg5] = count(); }
 mac_capability:::error { @rterrors[copyinstr(arg0), arg2, arg5] = count(); }
 mac_capability:::state { @rtstates[copyinstr(arg0), arg2, arg3] = count(); }
 mac_capability:::instance-create { @instcreate[copyinstr(arg0)] = count(); }
@@ -90,9 +89,6 @@ dtrace:::END
 
 	printf("\n--- Control ioctls by service/cmd ---\n");
 	printa("  %-20s cmd=%-10d %@d\n", @controls);
-
-	printf("\n--- mac_capability ioctl denials by service/cmd/nonce ---\n");
-	printa("  %-20s cmd=%-10d nonce=0x%016x %@d\n", @rtdenies);
 
 	printf("\n--- mac_capability errors by service/cmd/errno ---\n");
 	printa("  %-20s cmd=%-10d errno=%-6d %@d\n", @rterrors);

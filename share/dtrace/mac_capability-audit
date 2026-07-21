@@ -28,7 +28,6 @@ mac_capability:::rights-change
 	@events[probename] = count();
 }
 
-mac_capability:::ioctl-deny,
 mac_capability:::instance-finalize,
 mac_capability:::instance-lastclose
 {

@@ -1254,8 +1254,8 @@ node_call(struct mac_capability_instance *s __unused,
 	 * No Capsicum rights check on the attached procdesc.
 	 * Authority comes from holding the node service fd, not from
 	 * the procdesc rights.  The procdesc is an opaque target
-	 * identifier.  Narrow what the caller can do by narrowing
-	 * the service fd (CAP_MAC_CAPABILITY_SEND/RECV, revoke operations).
+	 * identifier.  Narrow what the caller can do with the service fd's
+	 * ioctl allowlist and the revoke operations.
 	 */
 	error = mac_capability_resolve_proc(fds, nfds, &p);
 	if (error == ESRCH) {
