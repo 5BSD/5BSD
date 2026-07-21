@@ -223,7 +223,8 @@ int l9p_server_init(struct l9p_server **serverp, struct l9p_backend *backend);
 int l9p_connection_init(struct l9p_server *server,
     struct l9p_connection **connp);
 void l9p_connection_free(struct l9p_connection *conn);
-void l9p_connection_recv(struct l9p_connection *conn, const struct iovec *iov,
+/* Returns 0 if the request was accepted, or -1 if it was rejected. */
+int l9p_connection_recv(struct l9p_connection *conn, const struct iovec *iov,
     size_t niov, void *aux);
 void l9p_connection_close(struct l9p_connection *conn);
 struct l9p_fid *l9p_connection_alloc_fid(struct l9p_connection *conn,

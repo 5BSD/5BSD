@@ -204,7 +204,7 @@ l9p_socket_thread(void *arg)
 
 		iov.iov_base = buf;
 		iov.iov_len = length;
-		l9p_connection_recv(sc->ls_conn, &iov, 1, NULL);
+		(void)l9p_connection_recv(sc->ls_conn, &iov, 1, NULL);
 		free(buf);
 	}
 

@@ -517,6 +517,16 @@ The modern setting selects the non-transitional VirtIO PCI transport and
 device ID 0x1048.
 .It Cm virtio-9p
 Virtio 9p (VirtFS) interface.
+The optional
+.Cm transport
+setting accepts
+.Cm legacy
+or
+.Cm modern .
+If omitted, the legacy PCI transport and device identity are retained for
+compatibility.
+The modern setting selects the non-transitional VirtIO PCI transport and
+device ID 0x1049.
 .It Cm virtio-rnd
 Virtio RNG interface.
 The optional
@@ -810,6 +820,14 @@ are:
 .Bl -tag -width 10n
 .It Cm ro
 Expose the share in read-only mode.
+.It Cm transport= Ns Ar transport
+Select
+.Cm legacy
+or
+.Cm modern
+VirtIO PCI transport.
+The default is
+.Cm legacy .
 .El
 .Ss TTY device backends
 .Bl -tag -width 10n

@@ -297,6 +297,26 @@ PCI pass-through device.
 PCI 16550 serial device.
 .It Li virtio-9p
 VirtIO 9p (VirtFS) interface.
+Requires
+.Va sharename
+and
+.Va path
+configuration variables.
+The optional
+.Va ro
+boolean exposes the share read-only.
+The optional
+.Va transport
+variable is either
+.Li legacy
+or
+.Li modern .
+It defaults to
+.Li legacy
+to preserve the existing PCI identity and interface.
+The
+.Li modern
+value selects the non-transitional VirtIO PCI transport and device ID 0x1049.
 .It Li virtio-blk
 VirtIO block storage interface.
 .It Li virtio-console

@@ -67,4 +67,5 @@ void pci_lintr_deassert(struct pci_devinst *);
 #define PCIC_INPUTDEV 0x09
 #define PCIS_INPUTDEV_OTHER 0x80
 #define PCIC_CRYPTO 0x10
+#define PCIC_STORAGE 0x01
 #endif

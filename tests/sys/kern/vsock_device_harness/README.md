@@ -1,8 +1,8 @@
 # bhyve VirtIO device-level harnesses
 
-Standalone unit harnesses for the bhyve virtio-vsock, virtio-input, and
-virtio-rng backends, the shared split-ring parser, and the generic modern
-VirtIO PCI transport.
+Standalone unit harnesses for the bhyve virtio-vsock, virtio-input,
+virtio-rng, virtio-console, and virtio-9p backends, the shared split-ring
+parser, and the generic modern VirtIO PCI transport.
 
 It `#include`s the real device `.c` and mocks the virtio RX ring (to capture the
 packets the device injects back toward the guest) and the host-socket syscalls
@@ -22,7 +22,7 @@ which supplies the mock-header shadowing and `--wrap` linker flags the stock
 suite.  The standalone script also exercises transport policy, PCI identity
 and capability layout, 64-bit feature negotiation, separately addressed
 virtqueues, notification and ISR behavior, and the PCI configuration access
-window, including the modern network, SCSI, and console device identities.
+window, including the modern network, SCSI, console, and 9P device identities.
 The entropy interrupt test combines the real virtio-rng callback with
 the real legacy BAR notification and shared split-ring completion path; only
 guest memory and the PCI/VMM boundary are mocked.
@@ -35,6 +35,9 @@ descriptors without losing the response tail);
 virtio-console feature and configuration bounds, fragmented control messages,
 invalid port IDs and queue directions, multi-descriptor data transfer, and
 host-side backpressure without data loss;
+virtio-9p configuration bounds, request/response descriptor directions,
+lib9p request rejection, synchronous flush completion, and stale completion
+after reset;
 virtio-input configuration bounds, event/status queue directions and frame
 delivery; virtio-rng short, invalid and failed host reads; virtio-rng queue
 notification through MSI/INTx delivery with MSI-X disabled; and vsock state,

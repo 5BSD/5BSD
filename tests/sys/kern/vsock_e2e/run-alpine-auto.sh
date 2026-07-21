@@ -59,6 +59,7 @@ run_input_device=no
 run_block_device=no
 run_scsi_device=no
 run_console_device=no
+run_9p_device=no
 for device in $DEVICES; do
 	case "$device" in
 	vsock) run_vsock=yes ;;
@@ -68,14 +69,16 @@ for device in $DEVICES; do
 	block) run_block_device=yes ;;
 	scsi) run_scsi_device=yes ;;
 	console) run_console_device=yes ;;
+	9p) run_9p_device=yes ;;
 	*) echo "invalid device test: $device" >&2; exit 2 ;;
 	esac
 done
 [ "$run_vsock" = yes ] || [ "$run_net_device" = yes ] ||
     [ "$run_rng_device" = yes ] ||
     [ "$run_input_device" = yes ] || [ "$run_block_device" = yes ] ||
-    [ "$run_scsi_device" = yes ] || [ "$run_console_device" = yes ] || {
-	echo "DEVICES must select net, vsock, rng, input, block, scsi, console, or a combination" >&2
+    [ "$run_scsi_device" = yes ] || [ "$run_console_device" = yes ] ||
+    [ "$run_9p_device" = yes ] || {
+	echo "DEVICES must select net, vsock, rng, input, block, scsi, console, 9p, or a combination" >&2
 	exit 2
 }
 
@@ -386,6 +389,8 @@ launch_vm()
 	    -s "9,virtio-scsi,/dev/cam/ctl$scsi_transport_opt"
 	[ "$run_console_device" = no ] || set -- "$@" \
 	    -s "10,virtio-console,$console_name=$console_socket$console_transport_opt"
+	[ "$run_9p_device" = no ] || set -- "$@" \
+	    -s "11,virtio-9p,$ninep_tag=$ninep_share$ninep_transport_opt"
 	set -- "$@" -s 31,lpc -l "com1,tcp=127.0.0.1:$CONSOLE_PORT" \
 	    -l "bootrom,$UEFI" "$vmname"
 	env BHYVE_VTVSOCK_DEBUG="$VSOCK_DEBUG" \
@@ -455,6 +460,11 @@ provision_guest()
 		guest_cmd 'modprobe virtio_console' 30
 		copy_guest_file "$here/gconsole.py" /tmp/gconsole.py
 		guest_cmd 'python3 /tmp/gconsole.py --self-test | grep -q "^SELFTEST PASS$"' 30
+	fi
+	if [ "$run_9p_device" = yes ]; then
+		guest_cmd 'modprobe 9p; modprobe 9pnet; modprobe 9pnet_virtio' 30
+		copy_guest_file "$here/g9p.py" /tmp/g9p.py
+		guest_cmd 'python3 /tmp/g9p.py --self-test | grep -q "^SELFTEST PASS$"' 30
 	fi
 }
 
@@ -594,6 +604,19 @@ run_console()
 	echo "PASS console bidirectional transport=$transport name=$console_name"
 }
 
+run_9p()
+{
+	mountpoint=/mnt/bhyve-9p
+	guest_token="guest-9p-$transport-$$"
+	host_token="host-9p-$transport-$$"
+	guest_cmd "python3 /tmp/g9p.py '$transport'" 30
+	guest_cmd "set -eu; mkdir -p '$mountpoint'; grep -qs ' $mountpoint ' /proc/mounts || mount -t 9p -o trans=virtio,version=9p2000.L,msize=262144 '$ninep_tag' '$mountpoint'; [ \"\$(cat '$mountpoint/host-seed')\" = '$ninep_seed' ]; printf %s '$guest_token' > '$mountpoint/guest-to-host'; sync" 45
+	[ "$(cat "$ninep_share/guest-to-host")" = "$guest_token" ]
+	printf %s "$host_token" > "$ninep_share/host-to-guest"
+	guest_cmd "[ \"\$(cat '$mountpoint/host-to-guest')\" = '$host_token' ]" 30
+	echo "PASS 9p bidirectional transport=$transport tag=$ninep_tag"
+}
+
 run_vsock_smoke()
 {
 	DIR=$sockdir TRANSPORT=$transport GPY=/tmp/gvsock.py \
@@ -626,6 +649,7 @@ verify_no_msix()
 reset_devices()
 {
 	echo "== Alpine $transport: reset and rebind virtio devices =="
+	[ "$run_9p_device" = no ] || guest_cmd 'umount /mnt/bhyve-9p' 30
 	guest_cmd "set -eu; for bdf in $virtio_bdfs; do echo \"reset \$bdf\"; echo \"\$bdf\" > /sys/bus/pci/drivers/virtio-pci/unbind; sleep 1; echo \"\$bdf\" > /sys/bus/pci/drivers/virtio-pci/bind; sleep 1; done" 90
 	run_lifecycle_smokes
 }
@@ -639,6 +663,7 @@ run_lifecycle_smokes()
 	[ "$run_block_device" = no ] || verify_block
 	[ "$run_scsi_device" = no ] || verify_scsi
 	[ "$run_console_device" = no ] || run_console
+	[ "$run_9p_device" = no ] || run_9p
 }
 
 reboot_hold_connector()
@@ -800,6 +825,9 @@ for transport in $TRANSPORTS; do
 	input_name="bhyve-e2e-input-$transport-$$"
 	console_socket="$WORKDIR/$transport.virtio-console.sock"
 	console_name="bhyve-e2e-console-$transport-$$"
+	ninep_share="$WORKDIR/$transport.9p-share"
+	ninep_tag="bhyve-e2e-9p-$transport-$$"
+	ninep_seed="seed-9p-$transport-$$"
 	if [ "$transport" = modern ]; then
 		net_transport_opt=",transport=modern"
 		vsock_transport_opt=",transport=modern"
@@ -808,6 +836,7 @@ for transport in $TRANSPORTS; do
 		block_transport_opt=",transport=modern"
 		scsi_transport_opt=",transport=modern"
 		console_transport_opt=",transport=modern"
+		ninep_transport_opt=",transport=modern"
 	else
 		# Deliberately omit the option to exercise the compatibility default.
 		net_transport_opt=
@@ -816,6 +845,7 @@ for transport in $TRANSPORTS; do
 		block_transport_opt=
 		scsi_transport_opt=
 		console_transport_opt=
+		ninep_transport_opt=
 	fi
 	virtio_bdfs="0000:00:04.0"
 	[ "$run_vsock" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:05.0"
@@ -824,10 +854,18 @@ for transport in $TRANSPORTS; do
 	[ "$run_block_device" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:08.0"
 	[ "$run_scsi_device" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:09.0"
 	[ "$run_console_device" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:0a.0"
+	[ "$run_9p_device" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:0b.0"
 	mkdir -p "$sockdir"
 	chmod 0700 "$sockdir"
 	rm -f "$sockdir/sock"
 	[ "$run_console_device" = no ] || rm -f "$console_socket"
+	if [ "$run_9p_device" = yes ]; then
+		mkdir -p -m 0700 "$ninep_share"
+		chmod 0700 "$ninep_share"
+		rm -f "$ninep_share/host-seed" \
+		    "$ninep_share/guest-to-host" "$ninep_share/host-to-guest"
+		printf %s "$ninep_seed" > "$ninep_share/host-seed"
+	fi
 	: > "$bhyve_log"
 	if [ "$run_block_device" = yes ]; then
 		truncate -s "${BLOCK_IMAGE_MB}M" "$block_image"
@@ -864,6 +902,7 @@ for transport in $TRANSPORTS; do
 	[ "$run_block_device" = no ] || run_block
 	[ "$run_scsi_device" = no ] || run_scsi
 	[ "$run_console_device" = no ] || run_console
+	[ "$run_9p_device" = no ] || run_9p
 	verify_no_msix
 	[ "$RESET_TEST" = no ] || reset_devices
 	[ "$REBOOT_TEST" = no ] || reboot_guest

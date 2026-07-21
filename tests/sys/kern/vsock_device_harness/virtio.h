@@ -20,6 +20,7 @@ struct virtio_softc {
 	struct virtio_consts *vs_vc;
 	int vs_flags;
 	pthread_mutex_t *vs_mtx;
+	pthread_mutex_t vs_isr_mtx;
 	struct pci_devinst *vs_pi;
 	uint32_t vs_negotiated_caps;
 	struct vqueue_info *vs_queues;
@@ -93,6 +94,8 @@ struct virtio_consts {
 #define VIRTIO_ID_ENTROPY 4
 #define VIRTIO_DEV_CONSOLE 0x1003
 #define VIRTIO_ID_CONSOLE 3
+#define VIRTIO_DEV_9P 0x1009
+#define VIRTIO_ID_9P 9
 #define VIRTIO_REV_INPUT 1
 #define VIRTIO_SUBVEN_INPUT 0x108e
 #define VIRTIO_SUBDEV_INPUT 0x1100

@@ -61,13 +61,13 @@ ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
 ```
 
 The default topology order is
-`net vsock rng block scsi console input combined`.  Net, vsock, RNG, block,
-SCSI, and console run both `modern` and `legacy`; input's real-VM data path runs
+`net vsock rng block scsi console 9p input combined`.  Net, vsock, RNG, block,
+SCSI, console, and 9P run both `modern` and `legacy`; input's real-VM data path runs
 only with its modern interface because upstream Alpine has no driver for
 bhyve's historical hybrid interface.  Every topology retains and verifies the
 network interface used to provision the guest.  SCSI uses a uniquely sized,
 fully backed CTL ramdisk which is removed on exit.  The legacy combined run
-contains net, vsock, RNG, block, SCSI, and console and reports the input
+contains net, vsock, RNG, block, SCSI, console, and 9P and reports the input
 omission.  A development run can narrow either axis, for example:
 
 ```sh
