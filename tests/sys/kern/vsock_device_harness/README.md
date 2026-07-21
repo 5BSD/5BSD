@@ -38,5 +38,7 @@ credit: it remains queued, sends only one CREDIT_REQUEST across repeated
 callbacks and RX-notification redispatch, keeps a reaper timestamp through a
 liveness probe and credit update, and clears it after delivery.  Connection
 setup coverage also rejects nonzero initial `fwd_cnt` values before opening a
-host relay socket.  See `../vsock_e2e/FRAMEWORK.md` for the complete acceptance
-layers and the checklist for adding another device.
+host relay socket.  A discarded type-mismatched data packet is also credited
+back at the reporting threshold so the sender cannot remain blocked on bytes
+bhyve no longer holds.  See `../vsock_e2e/FRAMEWORK.md` for the complete
+acceptance layers and the checklist for adding another device.

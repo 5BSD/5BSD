@@ -590,6 +590,34 @@ ATF_TC_BODY(rw_forwards_to_host, tc)
 	free(sc);
 }
 
+/* --- A known but connection-mismatched RW type is discarded and counted as
+ * consumed.  Crossing the reporting threshold must still send CREDIT_UPDATE,
+ * or the guest can remain blocked on bytes bhyve no longer holds. --- */
+ATF_TC_WITHOUT_HEAD(rw_type_mismatch_reports_credit);
+ATF_TC_BODY(rw_type_mismatch_reports_credit, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+	uint8_t pay[VTVSOCK_CREDIT_UPDATE_THRESHOLD];
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	memset(pay, 'M', sizeof(pay));
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST,
+	    1234, 80, sizeof(pay), 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, pay, sizeof(pay));
+
+	ATF_CHECK(g_send_calls == 0);	/* malformed payload not relayed */
+	ATF_CHECK(nconns(sc) == 1);	/* current drop policy is nonfatal */
+	ATF_CHECK(c->fwd_cnt == sizeof(pay));
+	ATF_CHECK(c->last_fwd_cnt == c->fwd_cnt);
+	ATF_CHECK(g_ninject == 1 &&
+	    g_inject[0].op == VIRTIO_VSOCK_OP_CREDIT_UPDATE &&
+	    g_inject[0].fwd_cnt == sizeof(pay));
+	free(sc);
+}
+
 ATF_TC_WITHOUT_HEAD(peer_fwd_cnt_overflow_rst);
 ATF_TC_BODY(peer_fwd_cnt_overflow_rst, tc)
 {
@@ -1753,6 +1781,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, request_nonzero_initial_fwd_cnt_rst);
 	ATF_TP_ADD_TC(tp, request_no_listener_rst);
 	ATF_TP_ADD_TC(tp, rw_forwards_to_host);
+	ATF_TP_ADD_TC(tp, rw_type_mismatch_reports_credit);
 	ATF_TP_ADD_TC(tp, peer_fwd_cnt_overflow_rst);
 	ATF_TP_ADD_TC(tp, credit_update_full_ring_parked);
 	ATF_TP_ADD_TC(tp, shutdown_both_closes);

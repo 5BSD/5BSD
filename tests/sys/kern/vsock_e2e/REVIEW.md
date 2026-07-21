@@ -71,7 +71,9 @@ defends. Fix: mirror the data path (recvmsg, treat 0+!MSG_EOR as EOF).
 - **G3 (fixed)** `uipc_vsock.c:2139` — `vsock_sosend` now reads
   `SBS_CANTSENDMORE` under the send-buffer lock and consumes `so_error` under
   `SOCK_LOCK`, serializing the read-and-clear with asynchronous reset writers.
-- **Device nit**: type-mismatched OP_RW skips the credit update.
+- **Mismatched data credit (fixed)**: bhyve's nonfatal wrong-type OP_RW drop
+  now reports consumption when it crosses the credit threshold, so the peer
+  cannot remain throttled on bytes already discarded.
 - **Initial request credit (fixed)**: a new flow has sent no bytes, so bhyve
   rejects an OP_REQUEST with nonzero `fwd_cnt` before opening its host relay
   socket; accepting it could make unsigned credit accounting self-starve.

@@ -1934,6 +1934,7 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 			    "on %u:%u, dropping", type, conn->type,
 			    src_port, dst_port));
 			conn->fwd_cnt += paylen;
+			vtvsock_maybe_credit_update(sc, conn);
 			break;
 		}
 
