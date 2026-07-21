@@ -283,6 +283,7 @@ static size_t pci_vtscsi_control_handle(struct pci_vtscsi_softc *, void *,
     size_t, size_t);
 static void pci_vtscsi_tmf_handle(struct pci_vtscsi_softc *,
     struct pci_vtscsi_ctrl_tmf *);
+static uint8_t pci_vtscsi_tmf_response(uint8_t);
 static void pci_vtscsi_an_handle(struct pci_vtscsi_softc *,
     struct pci_vtscsi_ctrl_an *);
 
@@ -580,10 +581,10 @@ pci_vtscsi_tmf_handle(struct pci_vtscsi_softc *sc,
 	io->io_hdr.nexus.initid = sc->vss_iid;
 	io->io_hdr.nexus.targ_lun = pci_vtscsi_get_lun(tmf->lun);
 	io->taskio.tag_type = CTL_TAG_SIMPLE;
-	io->taskio.tag_num = tmf->id;
+	io->taskio.tag_num = le64toh(tmf->id);
 	io->io_hdr.flags |= CTL_FLAG_USER_TAG;
 
-	switch (tmf->subtype) {
+	switch (le32toh(tmf->subtype)) {
 	case VIRTIO_SCSI_T_TMF_ABORT_TASK:
 		io->taskio.task_action = CTL_TASK_ABORT_TASK;
 		break;
@@ -634,8 +635,27 @@ pci_vtscsi_tmf_handle(struct pci_vtscsi_softc *sc,
 		WPRINTF("CTL_IO: err=%d (%s)", errno, strerror(errno));
 		tmf->response = VIRTIO_SCSI_S_FAILURE;
 	} else
-		tmf->response = io->taskio.task_status;
+		tmf->response = pci_vtscsi_tmf_response(io->taskio.task_status);
 	ctl_scsi_free_io(io);
+}
+
+static uint8_t
+pci_vtscsi_tmf_response(uint8_t status)
+{
+
+	switch (status) {
+	case CTL_TASK_FUNCTION_COMPLETE:
+		return (VIRTIO_SCSI_S_FUNCTION_COMPLETE);
+	case CTL_TASK_FUNCTION_SUCCEEDED:
+		return (VIRTIO_SCSI_S_FUNCTION_SUCCEEDED);
+	case CTL_TASK_FUNCTION_REJECTED:
+	case CTL_TASK_FUNCTION_NOT_SUPPORTED:
+		return (VIRTIO_SCSI_S_FUNCTION_REJECTED);
+	case CTL_TASK_LUN_DOES_NOT_EXIST:
+		return (VIRTIO_SCSI_S_BAD_TARGET);
+	default:
+		return (VIRTIO_SCSI_S_FAILURE);
+	}
 }
 
 static void

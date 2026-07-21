@@ -258,6 +258,24 @@ ATF_TC_BODY(control_queue_validation, tc)
 	ATF_CHECK(g_rel_calls == 0);
 }
 
+ATF_TC_WITHOUT_HEAD(tmf_response_mapping);
+ATF_TC_BODY(tmf_response_mapping, tc)
+{
+
+	ATF_CHECK(pci_vtscsi_tmf_response(CTL_TASK_FUNCTION_COMPLETE) ==
+	    VIRTIO_SCSI_S_FUNCTION_COMPLETE);
+	ATF_CHECK(pci_vtscsi_tmf_response(CTL_TASK_FUNCTION_SUCCEEDED) ==
+	    VIRTIO_SCSI_S_FUNCTION_SUCCEEDED);
+	ATF_CHECK(pci_vtscsi_tmf_response(CTL_TASK_FUNCTION_REJECTED) ==
+	    VIRTIO_SCSI_S_FUNCTION_REJECTED);
+	ATF_CHECK(pci_vtscsi_tmf_response(CTL_TASK_FUNCTION_NOT_SUPPORTED) ==
+	    VIRTIO_SCSI_S_FUNCTION_REJECTED);
+	ATF_CHECK(pci_vtscsi_tmf_response(CTL_TASK_LUN_DOES_NOT_EXIST) ==
+	    VIRTIO_SCSI_S_BAD_TARGET);
+	ATF_CHECK(pci_vtscsi_tmf_response(UINT8_MAX) ==
+	    VIRTIO_SCSI_S_FAILURE);
+}
+
 ATF_TC_WITHOUT_HEAD(request_queue_validation);
 ATF_TC_BODY(request_queue_validation, tc)
 {
@@ -369,6 +387,7 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, control_handler_validation);
 	ATF_TP_ADD_TC(tp, control_queue_validation);
+	ATF_TP_ADD_TC(tp, tmf_response_mapping);
 	ATF_TP_ADD_TC(tp, request_queue_validation);
 	ATF_TP_ADD_TC(tp, request_payload_validation);
 	ATF_TP_ADD_TC(tp, reset_discards_pending_requests);
