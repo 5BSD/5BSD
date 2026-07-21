@@ -55,28 +55,30 @@ transport_wakeup(void *chan)
 	}
 }
 
-void
+int
 vsock_transport_register(const struct vtvsock_transport *ops __unused,
-    uint64_t cid, uint64_t features)
+    const void *owner __unused, uint64_t cid, uint64_t features)
 {
 	register_calls++;
 	registered_cid = cid;
 	registered_features = features;
+	return (0);
 }
 
 void
-vsock_transport_unregister(void)
+vsock_transport_unregister(const void *owner __unused)
 {
 	unregister_calls++;
 }
 
-void
+int
 vsock_transport_register_locked(const struct vtvsock_transport *ops __unused,
-    uint64_t cid, uint64_t features)
+    const void *owner __unused, uint64_t cid, uint64_t features)
 {
 	register_locked_calls++;
 	registered_cid = cid;
 	registered_features = features;
+	return (0);
 }
 
 void vsock_transport_reset_locked(void) { reset_calls++; }

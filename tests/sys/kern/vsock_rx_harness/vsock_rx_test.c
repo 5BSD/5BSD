@@ -83,6 +83,7 @@ reset_state(void)
 	vsock_kmock_sndbuf_lock_depth = 0;
 	/* fresh domain state each test */
 	vtvsock_remote_transport = NULL;
+	vtvsock_remote_transport_owner = NULL;
 	vtvsock_guest_cid = VSOCK_CID_LOCAL;
 	vtvsock_remote_features = 0;
 }
@@ -91,7 +92,8 @@ static void
 register_mock(uint64_t cid, uint64_t features)
 {
 	mtx_lock(&vtvsock_mtx);
-	vsock_transport_register_locked(&mock_transport, cid, features);
+	ATF_REQUIRE(vsock_transport_register_locked(&mock_transport,
+	    &mock_transport, cid, features) == 0);
 	mtx_unlock(&vtvsock_mtx);
 }
 
@@ -450,7 +452,7 @@ ATF_TC_BODY(transport_reset_and_reregister, tc)
 	ATF_CHECK(pcb->state == VTVSOCK_ESTABLISHED);
 	ATF_CHECK(pcb->on_connlist);
 
-	vsock_transport_unregister();
+	vsock_transport_unregister(&mock_transport);
 	ATF_CHECK(vtvsock_remote_transport == NULL);
 	ATF_CHECK(vtvsock_guest_cid == VSOCK_CID_LOCAL);
 	ATF_CHECK(pcb->state == VTVSOCK_CLOSED);
@@ -460,6 +462,33 @@ ATF_TC_BODY(transport_reset_and_reregister, tc)
 
 	register_mock(4, VIRTIO_VSOCK_F_STREAM);
 	ATF_CHECK(((struct vtvsock_pcb *)listener->so_pcb)->local.svm_cid == 4);
+}
+
+/* --- A second transport cannot replace the active transport, and an
+ * unrelated detach cannot unregister it. --- */
+ATF_TC_WITHOUT_HEAD(transport_registration_is_owner_scoped);
+ATF_TC_BODY(transport_registration_is_owner_scoped, tc)
+{
+	static const int owner1, owner2;
+
+	reset_state();
+	ATF_CHECK(vsock_transport_register(&mock_transport, &owner1, 3,
+	    VIRTIO_VSOCK_F_STREAM) == 0);
+	ATF_CHECK(vsock_transport_register(&mock_transport, &owner2, 4,
+	    VIRTIO_VSOCK_F_STREAM) == EBUSY);
+	ATF_CHECK(vtvsock_remote_transport == &mock_transport);
+	ATF_CHECK(vtvsock_remote_transport_owner == &owner1);
+	ATF_CHECK(vtvsock_guest_cid == 3);
+
+	vsock_transport_unregister(&owner2);
+	ATF_CHECK(vtvsock_remote_transport == &mock_transport);
+	ATF_CHECK(vtvsock_remote_transport_owner == &owner1);
+	ATF_CHECK(vtvsock_guest_cid == 3);
+
+	vsock_transport_unregister(&owner1);
+	ATF_CHECK(vtvsock_remote_transport == NULL);
+	ATF_CHECK(vtvsock_remote_transport_owner == NULL);
+	ATF_CHECK(vtvsock_guest_cid == VSOCK_CID_LOCAL);
 }
 
 /* --- The non-blocking TX-ring gate must return before m_uiotombuf consumes
@@ -638,6 +667,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, seqpacket_fragment_limit_rst);
 	ATF_TP_ADD_TC(tp, deferred_shutdown_timeout);
 	ATF_TP_ADD_TC(tp, transport_reset_and_reregister);
+	ATF_TP_ADD_TC(tp, transport_registration_is_owner_scoped);
 	ATF_TP_ADD_TC(tp, nonblocking_tx_not_consumed_when_ring_full);
 	ATF_TP_ADD_TC(tp, send_terminal_state_checks_are_locked);
 	ATF_TP_ADD_TC(tp, seqpacket_msg_eor_transport_marker);

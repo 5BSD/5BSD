@@ -187,6 +187,7 @@ uint64_t vtvsock_guest_cid = VSOCK_CID_LOCAL;
 
 /* Remote transport, registered by virtio_vsock on attach. */
 static const struct vtvsock_transport *vtvsock_remote_transport;
+static const void *vtvsock_remote_transport_owner;
 static uint64_t vtvsock_remote_features;
 
 /* Tunable default buffer sizes for new sockets. */
@@ -3157,14 +3158,20 @@ vsock_transport_reset_locked(void)
  * attach/detach to register/unregister itself with the socket domain.
  * ---------------------------------------------------------------------- */
 
-void
+int
 vsock_transport_register_locked(const struct vtvsock_transport *ops,
-    uint64_t guest_cid, uint64_t features)
+    const void *owner, uint64_t guest_cid, uint64_t features)
 {
 	struct vtvsock_pcb *lpcb;
 
 	mtx_assert(&vtvsock_mtx, MA_OWNED);
+	KASSERT(ops != NULL, ("%s: NULL transport", __func__));
+	KASSERT(owner != NULL, ("%s: NULL owner", __func__));
+	if (vtvsock_remote_transport != NULL &&
+	    vtvsock_remote_transport_owner != owner)
+		return (EBUSY);
 	vtvsock_remote_transport = ops;
+	vtvsock_remote_transport_owner = owner;
 	/*
 	 * Never let a reserved CID (HYPERVISOR 0, HOST 2, ANY 0xffffffff, or the
 	 * 64-bit all-ones) become our guest CID: bind() admits svm_cid when it
@@ -3189,22 +3196,31 @@ vsock_transport_register_locked(const struct vtvsock_transport *ops,
 		    lpcb->state == VTVSOCK_BOUND) && !lpcb->bound_local)
 			lpcb->local.svm_cid = guest_cid;
 	}
+	return (0);
 }
 
-void
+int
 vsock_transport_register(const struct vtvsock_transport *ops,
-    uint64_t guest_cid, uint64_t features)
+    const void *owner, uint64_t guest_cid, uint64_t features)
 {
+	int error;
+
 	mtx_lock(&vtvsock_mtx);
-	vsock_transport_register_locked(ops, guest_cid, features);
+	error = vsock_transport_register_locked(ops, owner, guest_cid, features);
 	mtx_unlock(&vtvsock_mtx);
+	return (error);
 }
 
 void
-vsock_transport_unregister(void)
+vsock_transport_unregister(const void *owner)
 {
 	mtx_lock(&vtvsock_mtx);
+	if (vtvsock_remote_transport_owner != owner) {
+		mtx_unlock(&vtvsock_mtx);
+		return;
+	}
 	vtvsock_remote_transport = NULL;
+	vtvsock_remote_transport_owner = NULL;
 	vtvsock_remote_features = 0;
 	vtvsock_guest_cid = VSOCK_CID_LOCAL;
 	/* Reset all remote connections */

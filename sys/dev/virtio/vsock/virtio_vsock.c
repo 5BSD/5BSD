@@ -1291,8 +1291,10 @@ again:
 			    &new_cid, sizeof(new_cid));
 			new_cid = vtvsock_sanitize_cid(sc->sc_dev, new_cid);
 			sc->sc_guest_cid = new_cid;
-			vsock_transport_register_locked(&vtvsock_virtio_transport,
-			    new_cid, sc->sc_features);
+			KASSERT(vsock_transport_register_locked(
+			    &vtvsock_virtio_transport, sc, new_cid,
+			    sc->sc_features) == 0,
+			    ("%s: lost transport ownership", __func__));
 			vsock_transport_reset_locked();
 			/*
 			 * reset_locked woke per-pcb credit sleepers, but a
@@ -1511,8 +1513,12 @@ vtvsock_attach_completed(device_t dev)
 	atomic_store_ptr(&vtvsock_sc, sc);
 
 	/* Register with the AF_VSOCK domain layer. */
-	vsock_transport_register(&vtvsock_virtio_transport,
-	    sc->sc_guest_cid, sc->sc_features);
+	if (vsock_transport_register(&vtvsock_virtio_transport, sc,
+	    sc->sc_guest_cid, sc->sc_features) != 0) {
+		atomic_store_ptr(&vtvsock_sc, NULL);
+		device_printf(dev, "another AF_VSOCK transport is active\n");
+		return (EBUSY);
+	}
 
 	/*
 	 * DRIVER_OK is set: it is now legal to notify the device about the rx
@@ -1560,7 +1566,7 @@ vtvsock_detach(device_t dev)
 	mtx_unlock(&vtvsock_mtx);
 
 	/* Unregister from the AF_VSOCK domain layer (resets all connections). */
-	vsock_transport_unregister();
+	vsock_transport_unregister(sc);
 
 	/*
 	 * Hold vtvsock_mtx across interrupt-disable, device stop, AND drain.

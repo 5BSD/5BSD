@@ -190,9 +190,9 @@ extern counter_u64_t	vtvsock_cnt_conns;
  * ---------------------------------------------------------------------- */
 
 /* Transport registration (called by virtio_vsock on attach/detach) */
-void	vsock_transport_register(const struct vtvsock_transport *ops,
-	    uint64_t guest_cid, uint64_t features);
-void	vsock_transport_unregister(void);
+int	vsock_transport_register(const struct vtvsock_transport *ops,
+	    const void *owner, uint64_t guest_cid, uint64_t features);
+void	vsock_transport_unregister(const void *owner);
 
 /* RX callback (called by virtio_vsock interrupt handler) */
 void	vsock_rx_packet(void *buf, uint32_t len);
@@ -203,8 +203,8 @@ void	vsock_rx_packet(void *buf, uint32_t len);
  * re-registers a transport that detach has already unregistered).  The
  * caller holds the domain's internal lock across both; see vsock_rx_packet.
  */
-void	vsock_transport_register_locked(const struct vtvsock_transport *ops,
-	    uint64_t guest_cid, uint64_t features);
+int	vsock_transport_register_locked(const struct vtvsock_transport *ops,
+	    const void *owner, uint64_t guest_cid, uint64_t features);
 void	vsock_transport_reset_locked(void);
 
 /* PCB helper needed by the virtio transport ops in virtio_vsock.c */
