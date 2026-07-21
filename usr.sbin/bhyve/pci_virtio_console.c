@@ -112,6 +112,7 @@ struct pci_vtcon_port {
 
 struct pci_vtcon_sock
 {
+	struct pci_vtcon_softc * vss_sc;
 	struct pci_vtcon_port *  vss_port;
 	const char *             vss_path;
 	struct mevent *          vss_server_evp;
@@ -322,6 +323,7 @@ pci_vtcon_sock_add(struct pci_vtcon_softc *sc, const char *port_name,
 		error = -1;
 		goto out;
 	}
+	sock->vss_sc = sc;
 
 	s = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (s < 0) {
@@ -449,13 +451,22 @@ static void
 pci_vtcon_sock_accept(int fd __unused, enum ev_type t __unused, void *arg)
 {
 	struct pci_vtcon_sock *sock = (struct pci_vtcon_sock *)arg;
-	int s;
+	struct virtio_softc *vs;
+	int flags, s;
 
 	s = accept(sock->vss_server_fd, NULL, NULL);
 	if (s < 0)
 		return;
+	flags = fcntl(s, F_GETFL);
+	if (flags < 0 || fcntl(s, F_SETFL, flags | O_NONBLOCK) < 0) {
+		close(s);
+		return;
+	}
 
-	if (sock->vss_open) {
+	vs = &sock->vss_sc->vsc_vs;
+	VS_LOCK(vs);
+	if (sock->vss_port == NULL || sock->vss_open) {
+		VS_UNLOCK(vs);
 		close(s);
 		return;
 	}
@@ -464,11 +475,13 @@ pci_vtcon_sock_accept(int fd __unused, enum ev_type t __unused, void *arg)
 	if (sock->vss_conn_evp == NULL) {
 		close(s);
 		sock->vss_conn_fd = -1;
+		VS_UNLOCK(vs);
 		return;
 	}
 	sock->vss_open = true;
 
 	pci_vtcon_open_port(sock->vss_port, true);
+	VS_UNLOCK(vs);
 }
 
 static void
@@ -498,19 +511,24 @@ pci_vtcon_sock_rx(int fd __unused, enum ev_type t __unused, void *arg)
 {
 	struct pci_vtcon_port *port;
 	struct pci_vtcon_sock *sock = (struct pci_vtcon_sock *)arg;
+	struct virtio_softc *vs;
 	struct vqueue_info *vq;
 	struct vi_req req;
 	struct iovec iov[VTCON_RINGSZ];
 	int len, n;
 
+	vs = &sock->vss_sc->vsc_vs;
+	VS_LOCK(vs);
 	port = sock->vss_port;
+	if (port == NULL)
+		goto out;
 	vq = pci_vtcon_port_to_vq(port, true);
 
 	if (!sock->vss_open)
-		return;
+		goto out;
 	if (!port->vsp_rx_ready) {
 		mevent_disable(sock->vss_conn_evp);
-		return;
+		goto out;
 	}
 
 	if (!vq_has_descs(vq)) {
@@ -519,7 +537,7 @@ pci_vtcon_sock_rx(int fd __unused, enum ev_type t __unused, void *arg)
 			port->vsp_rx_ready = false;
 			mevent_disable(sock->vss_conn_evp);
 			vq_endchains(vq, 1);
-			return;
+			goto out;
 		}
 		vq_kick_disable(vq);
 	}
@@ -542,7 +560,7 @@ pci_vtcon_sock_rx(int fd __unused, enum ev_type t __unused, void *arg)
 			if (len == 0)
 				goto close;
 
-			return;
+			goto out;
 		}
 		if (len < 0) {
 			vq_retchains(vq, 1);
@@ -553,9 +571,12 @@ pci_vtcon_sock_rx(int fd __unused, enum ev_type t __unused, void *arg)
 	} while (vq_has_descs(vq));
 
 	vq_endchains(vq, 1);
+	goto out;
 
 close:
 	pci_vtcon_sock_close(sock);
+out:
+	VS_UNLOCK(vs);
 }
 
 static void

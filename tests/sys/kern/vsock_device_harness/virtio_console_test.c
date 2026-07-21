@@ -452,11 +452,14 @@ ATF_TC_BODY(receive_preserves_data, tc)
 	memset(&sc, 0, sizeof(sc));
 	memset(&sock, 0, sizeof(sock));
 	memset(&used, 0, sizeof(used));
+	ATF_REQUIRE(pthread_mutex_init(&sc.vsc_mtx, NULL) == 0);
+	sc.vsc_vs.vs_mtx = &sc.vsc_mtx;
 	sc.vsc_ports[0].vsp_sc = &sc;
 	sc.vsc_ports[0].vsp_enabled = true;
 	sc.vsc_ports[0].vsp_rx_ready = true;
 	sc.vsc_ports[0].vsp_txq = 0;
 	sc.vsc_queues[0].vq_used = &used;
+	sock.vss_sc = &sc;
 	sock.vss_port = &sc.vsc_ports[0];
 	sock.vss_open = true;
 	sock.vss_conn_fd = sv[1];
@@ -480,8 +483,11 @@ ATF_TC_BODY(receive_preserves_data, tc)
 	ATF_CHECK(memcmp(a, "he", 2) == 0);
 	ATF_CHECK(memcmp(b, "llo", 3) == 0);
 	ATF_CHECK(g_rel_calls == 1 && g_rel_len == 5);
+	ATF_CHECK(sock.vss_open);
+	ATF_CHECK(sock.vss_conn_fd == sv[1]);
 	close(sv[0]);
 	close(sv[1]);
+	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
 }
 
 ATF_TP_ADD_TCS(tp)
