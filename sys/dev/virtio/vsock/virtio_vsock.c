@@ -1133,7 +1133,7 @@ again:
 		 * leak this buffer into an about-to-be-drained ring.  Free it
 		 * and stop instead.
 		 */
-		if (vtvsock_global_softc() == NULL) {
+		if (vtvsock_global_softc() != sc) {
 			free(buf, M_VTVSOCK);
 			return;
 		}
@@ -1509,16 +1509,26 @@ static int
 vtvsock_attach_completed(device_t dev)
 {
 	struct vtvsock_softc *sc = device_get_softc(dev);
+	int error;
 
-	/* Publish the softc so the transport ops and interrupt guards see it. */
-	atomic_store_ptr(&vtvsock_sc, sc);
-
-	/* Register with the AF_VSOCK domain layer. */
-	if (vsock_transport_register(&vtvsock_virtio_transport, sc,
-	    sc->sc_guest_cid, sc->sc_features) != 0) {
-		atomic_store_ptr(&vtvsock_sc, NULL);
+	/*
+	 * Claim transport ownership and publish the softc as one operation.
+	 * In particular, a second device must not overwrite the first device's
+	 * softc and then clear it when transport registration returns EBUSY.
+	 */
+	mtx_lock(&vtvsock_mtx);
+	if (vtvsock_global_softc() != NULL)
+		error = EBUSY;
+	else
+		error = vsock_transport_register_locked(
+		    &vtvsock_virtio_transport, sc, sc->sc_guest_cid,
+		    sc->sc_features);
+	if (error == 0)
+		atomic_store_ptr(&vtvsock_sc, sc);
+	mtx_unlock(&vtvsock_mtx);
+	if (error != 0) {
 		device_printf(dev, "another AF_VSOCK transport is active\n");
-		return (EBUSY);
+		return (error);
 	}
 
 	/*
@@ -1551,12 +1561,15 @@ vtvsock_detach(device_t dev)
 {
 	struct vtvsock_softc *sc;
 	void *buf;
+	bool owner;
 
 	sc = device_get_softc(dev);
 
 	/* Stop accepting new traffic. */
 	mtx_lock(&vtvsock_mtx);
-	atomic_store_ptr(&vtvsock_sc, NULL);
+	owner = vtvsock_global_softc() == sc;
+	if (owner)
+		atomic_store_ptr(&vtvsock_sc, NULL);
 	/*
 	 * Wake any sender blocked in vtvsock_virtio_send waiting on the TX ring
 	 * (msleep on &sc->sc_txvq).  It re-fetches the softc after waking, sees
@@ -1567,7 +1580,8 @@ vtvsock_detach(device_t dev)
 	mtx_unlock(&vtvsock_mtx);
 
 	/* Unregister from the AF_VSOCK domain layer (resets all connections). */
-	vsock_transport_unregister(sc);
+	if (owner)
+		vsock_transport_unregister(sc);
 
 	/*
 	 * Hold vtvsock_mtx across interrupt-disable, device stop, AND drain.

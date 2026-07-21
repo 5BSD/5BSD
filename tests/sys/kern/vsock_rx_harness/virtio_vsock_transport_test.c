@@ -445,6 +445,7 @@ struct interrupt_gate {
 };
 
 static struct interrupt_gate *active_rx_gate;
+static struct vtvsock_softc *replacement_rx_softc;
 
 struct interrupt_runner {
 	struct vtvsock_softc *sc;
@@ -494,6 +495,13 @@ block_rx_delivery(void *buf __unused, uint32_t len __unused)
 {
 
 	block_on_gate(active_rx_gate);
+}
+
+static void
+replace_rx_owner(void *buf __unused, uint32_t len __unused)
+{
+
+	atomic_store_ptr(&vtvsock_sc, replacement_rx_softc);
 }
 
 static void
@@ -667,6 +675,38 @@ ATF_TC_BODY(rx_interrupt_detach_during_delivery, tc)
 	active_rx_gate = NULL;
 }
 
+ATF_TC_WITHOUT_HEAD(rx_recycle_rejects_replacement_device);
+ATF_TC_BODY(rx_recycle_rejects_replacement_device, tc)
+{
+	struct sglist sg;
+	struct sglist_seg seg;
+	struct virtqueue rxvq;
+	struct vtvsock_softc old, replacement;
+	void *buf;
+
+	reset_state();
+	memset(&old, 0, sizeof(old));
+	memset(&replacement, 0, sizeof(replacement));
+	mock_vq_init(&rxvq, 1);
+	old.sc_rxvq = &rxvq;
+	buf = calloc(1, VTVSOCK_RX_BUFSZ);
+	ATF_REQUIRE(buf != NULL);
+	one_seg(&sg, &seg);
+	ATF_REQUIRE(virtqueue_enqueue(&rxvq, buf, &sg, 0, 1) == 0);
+	ATF_REQUIRE(mock_vq_complete(&rxvq, buf, 0));
+	atomic_store_ptr(&vtvsock_sc, &old);
+	replacement_rx_softc = &replacement;
+	transport_rx_packet_hook = replace_rx_owner;
+
+	mtx_lock(&vtvsock_mtx);
+	vtvsock_rx_process_locked(&old);
+	mtx_unlock(&vtvsock_mtx);
+	ATF_CHECK(vtvsock_global_softc() == &replacement);
+	ATF_CHECK(rxvq.entry_count == 0);
+	ATF_CHECK(rxvq.notify_count == 0);
+	replacement_rx_softc = NULL;
+}
+
 ATF_TC_WITHOUT_HEAD(tx_interrupt_serializes_detach);
 ATF_TC_BODY(tx_interrupt_serializes_detach, tc)
 {
@@ -754,7 +794,8 @@ ATF_TC_BODY(attach_completed_detach_lifecycle, tc)
 	ATF_CHECK(sc.sc_eventvq->notify_count == 0);
 	ATF_REQUIRE(vtvsock_attach_completed(&dev) == 0);
 	ATF_CHECK(vtvsock_global_softc() == &sc);
-	ATF_CHECK(register_calls == 1);
+	ATF_CHECK(register_calls == 0);
+	ATF_CHECK(register_locked_calls == 1);
 	ATF_CHECK(registered_cid == 14);
 	ATF_CHECK(registered_features == sc.sc_features);
 	ATF_CHECK(sc.sc_rxvq->notify_count == 1);
@@ -775,6 +816,50 @@ ATF_TC_BODY(attach_completed_detach_lifecycle, tc)
 	kfree(rxvq);
 	kfree(txvq);
 	kfree(eventvq);
+}
+
+ATF_TC_WITHOUT_HEAD(second_device_preserves_transport_owner);
+ATF_TC_BODY(second_device_preserves_transport_owner, tc)
+{
+	struct vtvsock_softc first, second;
+	struct fake_device first_dev, second_dev;
+
+	reset_state();
+	memset(&first, 0, sizeof(first));
+	memset(&second, 0, sizeof(second));
+	memset(&first_dev, 0, sizeof(first_dev));
+	memset(&second_dev, 0, sizeof(second_dev));
+	first_dev.softc = &first;
+	first_dev.type = VIRTIO_ID_VSOCK;
+	first_dev.config_cid = 14;
+	first_dev.offered_features = VIRTIO_VSOCK_F_STREAM;
+	second_dev.softc = &second;
+	second_dev.type = VIRTIO_ID_VSOCK;
+	second_dev.config_cid = 15;
+	second_dev.offered_features = VIRTIO_VSOCK_F_STREAM;
+
+	ATF_REQUIRE(vtvsock_attach(&first_dev) == 0);
+	ATF_REQUIRE(vtvsock_attach_completed(&first_dev) == 0);
+	ATF_CHECK(vtvsock_global_softc() == &first);
+	ATF_CHECK(register_locked_calls == 1);
+
+	ATF_REQUIRE(vtvsock_attach(&second_dev) == 0);
+	ATF_CHECK(vtvsock_attach_completed(&second_dev) == EBUSY);
+	ATF_CHECK(vtvsock_global_softc() == &first);
+	ATF_CHECK(register_locked_calls == 1);
+	ATF_REQUIRE(vtvsock_detach(&second_dev) == 0);
+	ATF_CHECK(vtvsock_global_softc() == &first);
+	ATF_CHECK(unregister_calls == 0);
+
+	ATF_REQUIRE(vtvsock_detach(&first_dev) == 0);
+	ATF_CHECK(vtvsock_global_softc() == NULL);
+	ATF_CHECK(unregister_calls == 1);
+	kfree(first.sc_rxvq);
+	kfree(first.sc_txvq);
+	kfree(first.sc_eventvq);
+	kfree(second.sc_rxvq);
+	kfree(second.sc_txvq);
+	kfree(second.sc_eventvq);
 }
 
 ATF_TC_WITHOUT_HEAD(attach_rejects_undersized_queues);
@@ -884,8 +969,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, transport_reset_recycles_event_and_wakes);
 	ATF_TP_ADD_TC(tp, detach_wakes_tx_ring_blocked_sender);
 	ATF_TP_ADD_TC(tp, rx_interrupt_detach_during_delivery);
+	ATF_TP_ADD_TC(tp, rx_recycle_rejects_replacement_device);
 	ATF_TP_ADD_TC(tp, tx_interrupt_serializes_detach);
 	ATF_TP_ADD_TC(tp, attach_completed_detach_lifecycle);
+	ATF_TP_ADD_TC(tp, second_device_preserves_transport_owner);
 	ATF_TP_ADD_TC(tp, attach_rejects_undersized_queues);
 	ATF_TP_ADD_TC(tp, nowait_allocation_failures_cleanup);
 	return (atf_no_error());
