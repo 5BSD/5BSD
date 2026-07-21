@@ -334,8 +334,6 @@ _vq_record(int i, struct vring_desc *vd, struct vmctx *ctx, struct iovec *iov,
 		reqp->writable++;
 	return (true);
 }
-#define	VQ_MAX_DESCRIPTORS	512	/* see below */
-
 /*
  * Examine the chain of descriptors starting at the "next one" to
  * make sure that they describe a sensible request.  If so, return
@@ -358,7 +356,7 @@ _vq_record(int i, struct vring_desc *vd, struct vmctx *ctx, struct iovec *iov,
  * host address wise, also using the vmtctx) into the given iov[]
  * array (of the given size).  If the array overflows, we stop
  * placing values into the array but keep processing descriptors,
- * up to VQ_MAX_DESCRIPTORS, before giving up and returning -1.
+ * up to the queue size, before giving up and returning -1.
  * So you, the caller, must not assume that iov[] is as big as the
  * return value (you can process the same thing twice to allocate
  * a larger iov array if needed, or supply a zero length to find
@@ -425,7 +423,7 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 	ctx = vs->vs_pi->pi_vmctx;
 	req.idx = next = vq->vq_avail->ring[idx & (vq->vq_qsize - 1)];
 	vq->vq_last_avail++;
-	for (i = 0; i < VQ_MAX_DESCRIPTORS; next = vdir->next) {
+	for (i = 0; i < vq->vq_qsize; next = vdir->next) {
 		if (next >= vq->vq_qsize) {
 			EPRINTLN(
 			    "%s: descriptor index %u out of range, "
@@ -435,8 +433,8 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 		}
 		vdir = &vq->vq_desc[next];
 		if ((vdir->flags & VRING_DESC_F_INDIRECT) == 0) {
-			if (vdir->len > UINT32_MAX - chain_len) {
-				EPRINTLN("%s: descriptor chain exceeds 2^32-1 "
+			if (chain_len + vdir->len > (UINT64_C(1) << 32)) {
+				EPRINTLN("%s: descriptor chain exceeds 2^32 "
 				    "bytes", name);
 				goto bad;
 			}
@@ -492,9 +490,9 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 					    name);
 					goto bad;
 				}
-				if (vp->len > UINT32_MAX - chain_len) {
+				if (chain_len + vp->len > (UINT64_C(1) << 32)) {
 					EPRINTLN("%s: indirect descriptor chain "
-					    "exceeds 2^32-1 bytes", name);
+					    "exceeds 2^32 bytes", name);
 					goto bad;
 				}
 				chain_len += vp->len;
@@ -503,7 +501,7 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 					    "outside guest memory", name);
 					goto bad;
 				}
-				if (++i > VQ_MAX_DESCRIPTORS)
+				if (++i > vq->vq_qsize)
 					goto loopy;
 				if ((vp->flags & VRING_DESC_F_NEXT) == 0)
 					break;
@@ -523,8 +521,8 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 
 loopy:
 	EPRINTLN(
-	    "%s: descriptor loop? count > %d - driver confused?",
-	    name, i);
+	    "%s: descriptor loop? count > %u - driver confused?",
+	    name, vq->vq_qsize);
 
 bad:
 	vi_set_needs_reset(vs);

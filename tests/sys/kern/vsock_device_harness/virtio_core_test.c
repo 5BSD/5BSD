@@ -472,7 +472,7 @@ ATF_TC_BODY(descriptor_chain_byte_limit, tc)
 	struct vqueue_info vq;
 	struct vring_desc desc[8];
 	struct vi_req req;
-	struct iovec iov[2];
+	struct iovec iov[3];
 	uint8_t payload;
 
 	setup_queue(&vs, &vc, &pi, &vq, desc,
@@ -486,6 +486,17 @@ ATF_TC_BODY(descriptor_chain_byte_limit, tc)
 	desc[0].next = 1;
 	desc[1].addr = 0x1000;
 	desc[1].len = 1;
+	desc[1].flags = 0;
+	/* Section 2.7.5.2 permits exactly 2^32 aggregate bytes. */
+	ATF_CHECK(vq_getchain(&vq, iov, nitems(iov), &req) == 2);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) == 0);
+
+	/* One byte beyond the limit is malformed. */
+	vq.vq_last_avail = 0;
+	desc[1].flags = VRING_DESC_F_NEXT;
+	desc[1].next = 2;
+	desc[2].addr = 0x1000;
+	desc[2].len = 1;
 	ATF_CHECK(vq_getchain(&vq, iov, nitems(iov), &req) == -1);
 	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
 }
@@ -515,6 +526,46 @@ ATF_TC_BODY(fatal_ring_error_blocks_later_kicks, tc)
 	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	vi_pci_notify_queue(&vs, 0);
 	ATF_CHECK(g_notifications == 1);
+}
+
+ATF_TC_WITHOUT_HEAD(chain_can_use_full_queue);
+ATF_TC_BODY(chain_can_use_full_queue, tc)
+{
+	struct virtio_softc vs;
+	struct virtio_consts vc = { 0 };
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	struct vring_desc *desc;
+	struct vring_avail *avail;
+	struct vring_used *used;
+	struct vi_req req;
+	struct iovec iov;
+	uint8_t payload;
+	const uint16_t qsize = 1024;
+	const uint16_t chain_len = qsize;
+
+	desc = calloc(qsize, sizeof(*desc));
+	avail = calloc(1, sizeof(*avail) +
+	    (qsize + 1) * sizeof(avail->ring[0]));
+	used = calloc(1, sizeof(*used) +
+	    (qsize + 1) * sizeof(used->ring[0]));
+	ATF_REQUIRE(desc != NULL && avail != NULL && used != NULL);
+	setup_queue(&vs, &vc, &pi, &vq, desc, avail, used);
+	vq.vq_qsize = qsize;
+	add_region(0x1000, &payload, sizeof(payload));
+	for (uint16_t i = 0; i < chain_len; i++) {
+		desc[i].addr = 0x1000;
+		desc[i].len = sizeof(payload);
+		if (i + 1 < chain_len) {
+			desc[i].flags = VRING_DESC_F_NEXT;
+			desc[i].next = i + 1;
+		}
+	}
+	ATF_CHECK(vq_getchain(&vq, &iov, 1, &req) == chain_len);
+	ATF_CHECK(req.readable == chain_len && req.writable == 0);
+	free(used);
+	free(avail);
+	free(desc);
 }
 ATF_TC_WITHOUT_HEAD(legacy_queue_mapping_validation);
 ATF_TC_BODY(legacy_queue_mapping_validation, tc)
@@ -599,6 +650,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, indirect_mapping_validation);
 	ATF_TP_ADD_TC(tp, descriptor_chain_byte_limit);
 	ATF_TP_ADD_TC(tp, fatal_ring_error_blocks_later_kicks);
+	ATF_TP_ADD_TC(tp, chain_can_use_full_queue);
 	ATF_TP_ADD_TC(tp, legacy_queue_mapping_validation);
 	ATF_TP_ADD_TC(tp, event_idx_interrupts);
 	ATF_TP_ADD_TC(tp, legacy_non_io_bar_is_ignored);
