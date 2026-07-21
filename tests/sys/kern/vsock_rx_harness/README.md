@@ -13,7 +13,9 @@ here).  The transport binary directly covers CID config sanitization,
 descriptor-aware TX readiness, reclaim-and-retry, bounded control queuing,
 FIFO interrupt draining, the SEQPACKET peer-credit-window boundary,
 transport-reset wakeup/recycling, and the
-attach-completed/detach lifecycle.  Deterministic pthread schedules also force
+attach-completed/detach lifecycle.  It also verifies that RX or TX rings too
+small for one maximum direct-descriptor packet fail attach cleanly.
+Deterministic pthread schedules also force
 RX and TX interrupt handlers to overlap detach on both sides of the transport
 mutex.
 

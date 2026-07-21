@@ -97,7 +97,8 @@ gating, connect() failure SS_ISCONNECTING clearing.
 `uipc_vsock.c` and `virtio_vsock.c` in separate ATF binaries.  Crafted peer
 packets cover the RX state machine; a descriptor-owning virtqueue model covers
 TX readiness, reclaim/retry, bounded FIFO drain, reset recycling/wakeup, and
-attach/detach.  A pthread-backed sleep model now blocks a real send thread on
+attach/detach, including undersized RX/TX ring rejection.  A pthread-backed
+sleep model now blocks a real send thread on
 the full-ring channel while another thread detaches the device, covering the
 G5 wakeup and stale-softc guard.  Additional gates pause RX after it dequeues
 and drops the mutex, allowing detach to drain before RX resumes, and pause TX

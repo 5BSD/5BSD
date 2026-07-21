@@ -773,6 +773,43 @@ ATF_TC_BODY(attach_completed_detach_lifecycle, tc)
 	kfree(eventvq);
 }
 
+ATF_TC_WITHOUT_HEAD(attach_rejects_undersized_queues);
+ATF_TC_BODY(attach_rejects_undersized_queues, tc)
+{
+	struct fake_device dev;
+	struct vtvsock_softc sc;
+	int queue, size;
+
+	for (queue = 0; queue < 2; queue++) {
+		reset_state();
+		memset(&dev, 0, sizeof(dev));
+		memset(&sc, 0, sizeof(sc));
+		dev.softc = &sc;
+		dev.type = VIRTIO_ID_VSOCK;
+		dev.config_cid = 14;
+		dev.offered_features = VIRTIO_VSOCK_F_STREAM;
+		size = queue == 0 ? VTVSOCK_RX_SEGS - 1 :
+		    VTVSOCK_TX_SEGS - 1;
+		dev.queue_sizes[queue] = size;
+
+		ATF_CHECK(vtvsock_attach(&dev) == ENXIO);
+		ATF_CHECK(dev.stop_calls == 1);
+		ATF_CHECK(dev.printf_calls == 1);
+		ATF_CHECK(register_calls == 0);
+		ATF_CHECK(vtvsock_global_softc() == NULL);
+		ATF_REQUIRE(sc.sc_rxvq != NULL);
+		ATF_REQUIRE(sc.sc_txvq != NULL);
+		ATF_REQUIRE(sc.sc_eventvq != NULL);
+		ATF_CHECK(sc.sc_rxvq->entry_count == 0);
+		ATF_CHECK(sc.sc_txvq->entry_count == 0);
+		ATF_CHECK(sc.sc_eventvq->entry_count == 0);
+
+		kfree(sc.sc_rxvq);
+		kfree(sc.sc_txvq);
+		kfree(sc.sc_eventvq);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, cid_sanitization);
@@ -787,5 +824,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rx_interrupt_detach_during_delivery);
 	ATF_TP_ADD_TC(tp, tx_interrupt_serializes_detach);
 	ATF_TP_ADD_TC(tp, attach_completed_detach_lifecycle);
+	ATF_TP_ADD_TC(tp, attach_rejects_undersized_queues);
 	return (atf_no_error());
 }

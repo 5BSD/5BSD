@@ -12,16 +12,16 @@ Linux VirtIO drivers.  The packaged matrix passed isolated and combined
 modern/legacy vsock, RNG, and block coverage plus modern input.  The focused
 legacy no-MSI-X gate also passed driver reset/rebind, monitor-mode reboot, and
 post-reboot data-path/persistence checks.  Direct `virtio_vsock.c` coverage is
-now packaged with the guest harness: 12 ATF cases / 720 assertions exercise
+now packaged with the guest harness: 13 ATF cases / 742 assertions exercise
 descriptor-aware readiness, reclaim/retry, bounded FIFO control queuing,
 interrupt drain/wakeup, the SEQPACKET peer-window boundary, event reset,
-attach-completed/detach, and a real
+undersized-ring rejection, attach-completed/detach, and a real
 pthread sender blocked on the full-ring sleep channel while detach wakes it
 within one second.  Deterministic RX/TX handler schedules now overlap detach
 both outside and inside the transport mutex.
 The socket-domain half now has 13 ATF cases / 89 assertions, including locked
 send-side terminal-state checks that close G3; together the guest harness has
-25 cases / 809 assertions.
+26 cases / 831 assertions.
 The focused no-MSI-X run now also passes monitor-mode reboot with established
 STREAM and SEQPACKET endpoints: each is echo-proven before reboot, both old
 endpoints disconnect within 30 seconds, and fresh connections pass afterward.
@@ -66,7 +66,7 @@ remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
 | `vsock_test.c` (ATF) | socket ops + **loopback** transport | 152/153 pass (1 platform skip) |
 | `vsock_wire_test.c` (ATF) | struct/ABI wire layout | complete for static layout |
 | `vsock_device_harness/` | bhyve host device TX/RX ingress | 222 vsock checks plus transport/device suites |
-| `vsock_rx_harness/` | guest domain + direct VirtIO transport | 25 tests / 809 checks |
+| `vsock_rx_harness/` | guest domain + direct VirtIO transport | 26 tests / 831 checks |
 | `vsock_e2e/` (live guest) | upstream Linux driver interop | modern/legacy matrix passed; root-only |
 
 **Remaining structural limitation:** both guest source files now have direct
@@ -302,7 +302,7 @@ boundary.  Interrupt-vs-detach scheduling remains a kernel-runtime stress item
 rather than an uncovered source interleaving.
 
 **Lowest-priority (Tier 3, documented in REVIEW.md, likely leave alone):**
-auto-bind port exhaustion, EMFILE/fd exhaustion, allocation-failure paths and
-undersized-ring attach.  Guest holding-queue overflow and bhyve pending-reply
-overflow are now covered by their direct transport/device harnesses; the
-remaining cases need fault injection and are hard to hit in practice.
+auto-bind port exhaustion, EMFILE/fd exhaustion, and allocation-failure paths.
+Guest holding-queue overflow, bhyve pending-reply overflow, and undersized-ring
+attach are now covered by their direct transport/device harnesses; the
+remaining cases need broad fault injection and are hard to hit in practice.

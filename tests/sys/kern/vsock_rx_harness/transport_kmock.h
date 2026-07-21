@@ -27,6 +27,7 @@ struct fake_device {
 	int		 finalize_error;
 	int		 alloc_error;
 	int		 setup_intr_error;
+	int		 queue_sizes[3];
 	int		 stop_calls;
 	int		 printf_calls;
 	const char	*desc;
@@ -235,7 +236,8 @@ static inline int virtio_alloc_virtqueues(device_t d, int n,
 		struct virtqueue *vq = calloc(1, sizeof(*vq));
 		if (vq == NULL)
 			return (ENOMEM);
-		mock_vq_init(vq, 256);
+		mock_vq_init(vq, d->queue_sizes[i] != 0 ?
+		    d->queue_sizes[i] : 256);
 		*info[i].vqai_vq = vq;
 	}
 	return (0);
