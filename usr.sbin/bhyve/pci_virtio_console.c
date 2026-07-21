@@ -452,16 +452,11 @@ pci_vtcon_sock_accept(int fd __unused, enum ev_type t __unused, void *arg)
 {
 	struct pci_vtcon_sock *sock = (struct pci_vtcon_sock *)arg;
 	struct virtio_softc *vs;
-	int flags, s;
+	int s;
 
 	s = accept(sock->vss_server_fd, NULL, NULL);
 	if (s < 0)
 		return;
-	flags = fcntl(s, F_GETFL);
-	if (flags < 0 || fcntl(s, F_SETFL, flags | O_NONBLOCK) < 0) {
-		close(s);
-		return;
-	}
 
 	vs = &sock->vss_sc->vsc_vs;
 	VS_LOCK(vs);
@@ -568,6 +563,8 @@ pci_vtcon_sock_rx(int fd __unused, enum ev_type t __unused, void *arg)
 		}
 
 		vq_relchain(vq, req.idx, len);
+		/* Process at most one read per readiness notification. */
+		break;
 	} while (vq_has_descs(vq));
 
 	vq_endchains(vq, 1);

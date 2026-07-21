@@ -477,12 +477,14 @@ ATF_TC_BODY(receive_preserves_data, tc)
 	g_chain_n = 2;
 	g_readable = 0;
 	g_writable = 2;
+	g_descs = 2;
 	g_chain_iov[0] = (struct iovec){ .iov_base = a, .iov_len = sizeof(a) };
 	g_chain_iov[1] = (struct iovec){ .iov_base = b, .iov_len = sizeof(b) };
 	pci_vtcon_sock_rx(sv[1], EVF_READ, &sock);
 	ATF_CHECK(memcmp(a, "he", 2) == 0);
 	ATF_CHECK(memcmp(b, "llo", 3) == 0);
 	ATF_CHECK(g_rel_calls == 1 && g_rel_len == 5);
+	ATF_CHECK(g_descs == 1);
 	ATF_CHECK(sock.vss_open);
 	ATF_CHECK(sock.vss_conn_fd == sv[1]);
 	close(sv[0]);
