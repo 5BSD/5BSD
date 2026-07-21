@@ -19,7 +19,8 @@ trap 'rm -rf "$work"' EXIT
 
 cp "$here"/*.h "$here/vsock_device_test.c" \
     "$here/virtio_modern_test.c" "$here/virtio_input_test.c" \
-    "$here/virtio_rnd_test.c" "$here/virtio_core_test.c" "$work/"
+    "$here/virtio_rnd_test.c" "$here/virtio_rnd_interrupt_test.c" \
+    "$here/virtio_core_test.c" "$work/"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock.c"        "$work/pci_virtio_vsock.c"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock_iov.h"    "$work/pci_virtio_vsock_iov.h"
 # DTrace USDT probe wrappers: harness builds WITHOUT -DWITH_DTRACE, so the header
@@ -69,7 +70,8 @@ EOF
 
 "$cc" -g -O1 -fsanitize="$sanitizers" \
 	-I"$work/atfshim" -I"$work/inc" \
-    -I"$work" -I"$srctop/sys" -o "$work/modern-test" \
+	-I"$work" -I"$srctop/usr.sbin" -I"$srctop/sys" \
+	-o "$work/modern-test" \
     "$work/virtio_modern_test.c" -lpthread
 
 "$work/modern-test"
@@ -90,7 +92,16 @@ EOF
 
 "$cc" -g -O1 -fsanitize="$sanitizers" -ffunction-sections \
 	-DWITHOUT_CAPSICUM -I"$work/atfshim" -I"$work/inc" \
-    -I"$work" -I"$srctop/sys" -Wl,--gc-sections -o "$work/core-test" \
-    "$work/virtio_core_test.c"
+	-I"$work" -I"$srctop/usr.sbin" -I"$srctop/sys" \
+	-Wl,--gc-sections -o "$work/rnd-interrupt-test" \
+	"$work/virtio_rnd_interrupt_test.c" -lpthread
+
+"$work/rnd-interrupt-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" -ffunction-sections \
+	-DWITHOUT_CAPSICUM -I"$work/atfshim" -I"$work/inc" \
+	-I"$work" -I"$srctop/usr.sbin" -I"$srctop/sys" \
+	-Wl,--gc-sections -o "$work/core-test" \
+	"$work/virtio_core_test.c" -lpthread
 
 "$work/core-test"

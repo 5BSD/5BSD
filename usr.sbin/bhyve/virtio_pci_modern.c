@@ -246,19 +246,11 @@ fail:
 	return (error);
 }
 
-/* Caller holds the device mutex, matching other virtio device callbacks. */
 static void
 vi_modern_config_interrupt(struct virtio_softc *vs)
 {
 
-	if (pci_msix_enabled(vs->vs_pi)) {
-		if (vs->vs_msix_cfg_idx != VIRTIO_MSI_NO_VECTOR)
-			pci_generate_msix(vs->vs_pi, vs->vs_msix_cfg_idx);
-	} else {
-		vs->vs_isr |= VIRTIO_PCI_ISR_CONFIG;
-		pci_generate_msi(vs->vs_pi, 0);
-		pci_lintr_assert(vs->vs_pi);
-	}
+	vi_interrupt(vs, VIRTIO_PCI_ISR_CONFIG, vs->vs_msix_cfg_idx);
 }
 
 void
@@ -616,10 +608,7 @@ vi_pci_modern_read(struct pci_devinst *pi, int baridx, uint64_t offset,
 	if (offset < sizeof(struct virtio_pci_common_cfg)) {
 		result = vi_modern_common_read(vs, offset, size);
 	} else if (offset == VIRTIO_MODERN_ISR_OFF && size == 1) {
-		result = vs->vs_isr;
-		vs->vs_isr = 0;
-		if (result != 0)
-			pci_lintr_deassert(pi);
+		result = vi_isr_read(vs);
 	} else if (offset >= VIRTIO_MODERN_DEVICE_OFF &&
 	    offset + size <= VIRTIO_MODERN_DEVICE_OFF +
 	    vs->vs_vc->vc_cfgsize && (size == 1 || size == 2 || size == 4) &&

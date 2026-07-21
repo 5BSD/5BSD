@@ -3,6 +3,8 @@
  * source is included so its register-level behavior can be tested without a
  * VM or /dev/vmm.
  */
+#include <sys/param.h>
+#include <sys/nv.h>
 #include <sys/types.h>
 
 #include <errno.h>
@@ -14,6 +16,9 @@
 
 #include <atf-c.h>
 
+#include "pci_emul.h"
+#include <bhyve/virtio.h>
+#define	MOCK_VIRTIO_H
 #include "virtio_pci_modern.c"
 
 struct nvlist {
@@ -247,6 +252,7 @@ setup_transport(struct virtio_softc *vs, struct pci_devinst *pi,
 	g_applied_features = 0;
 	queues[0].vq_qsize = 256;
 	queues[1].vq_qsize = 128;
+	ATF_REQUIRE(pthread_mutex_init(&vs->vs_isr_mtx, NULL) == 0);
 	queues[0].vq_msix_idx = VIRTIO_MSI_NO_VECTOR;
 	queues[1].vq_msix_idx = VIRTIO_MSI_NO_VECTOR;
 	vs->vs_vc = &test_consts;

@@ -256,6 +256,8 @@ struct virtio_softc {
 	struct virtio_consts *vs_vc;	/* constants (see below) */
 	int	vs_flags;		/* VIRTIO_* flags from above */
 	pthread_mutex_t *vs_mtx;	/* POSIX mutex, if any */
+	/* Innermost lock: never acquire vs_mtx while holding this mutex. */
+	pthread_mutex_t vs_isr_mtx;	/* protects ISR and INTx state */
 	struct pci_devinst *vs_pi;	/* PCI device instance */
 	uint32_t vs_negotiated_caps;	/* negotiated capabilities */
 	struct vqueue_info *vs_queues;	/* one per vc_nvq */
@@ -278,6 +280,9 @@ do {									\
 	if (vs->vs_mtx)							\
 		pthread_mutex_unlock(vs->vs_mtx);			\
 } while (0)
+
+#define	VS_ISR_LOCK(vs)	pthread_mutex_lock(&(vs)->vs_isr_mtx)
+#define	VS_ISR_UNLOCK(vs)	pthread_mutex_unlock(&(vs)->vs_isr_mtx)
 
 struct virtio_consts {
 	const char *vc_name;		/* name of driver (for diagnostics) */
@@ -388,12 +393,32 @@ vi_interrupt(struct virtio_softc *vs, uint8_t isr, uint16_t msix_idx)
 		if (!vi_pci_is_modern(vs) || msix_idx != VIRTIO_MSI_NO_VECTOR)
 			pci_generate_msix(vs->vs_pi, msix_idx);
 	} else {
-		VS_LOCK(vs);
+		VS_ISR_LOCK(vs);
 		vs->vs_isr |= isr;
 		pci_generate_msi(vs->vs_pi, 0);
 		pci_lintr_assert(vs->vs_pi);
-		VS_UNLOCK(vs);
+		VS_ISR_UNLOCK(vs);
 	}
+}
+
+/*
+ * Read and acknowledge all pending non-MSI-X interrupt reasons.  Keep the
+ * ISR transition and INTx deassertion atomic with respect to vi_interrupt()
+ * so a concurrent interrupt cannot leave a nonzero ISR with INTx deasserted.
+ */
+static inline uint8_t
+vi_isr_read(struct virtio_softc *vs)
+{
+	uint8_t isr;
+
+	VS_ISR_LOCK(vs);
+	isr = vs->vs_isr;
+	vs->vs_isr = 0;
+	if (isr != 0)
+		pci_lintr_deassert(vs->vs_pi);
+	VS_ISR_UNLOCK(vs);
+
+	return (isr);
 }
 
 /*

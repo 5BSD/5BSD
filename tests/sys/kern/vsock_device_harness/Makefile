@@ -15,11 +15,13 @@ ATF_TESTS_C+=	vsock_device_test
 ATF_TESTS_C+=	virtio_modern_test
 ATF_TESTS_C+=	virtio_input_test
 ATF_TESTS_C+=	virtio_rnd_test
+ATF_TESTS_C+=	virtio_rnd_interrupt_test
 ATF_TESTS_C+=	virtio_core_test
 CFLAGS.vsock_device_test+=	-DWITHOUT_CAPSICUM \
 				-I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/sys
 CFLAGS.virtio_modern_test+=	-I${.CURDIR} -I${.OBJDIR} \
+				-I${SRCTOP}/usr.sbin \
 				-I${SRCTOP}/sys
 CFLAGS.virtio_input_test+=	-DWITHOUT_CAPSICUM \
 				-I${.CURDIR} -I${.OBJDIR} \
@@ -27,8 +29,13 @@ CFLAGS.virtio_input_test+=	-DWITHOUT_CAPSICUM \
 CFLAGS.virtio_rnd_test+=	-DWITHOUT_CAPSICUM \
 				-I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/sys
+CFLAGS.virtio_rnd_interrupt_test+= -DWITHOUT_CAPSICUM -ffunction-sections \
+				-I${.CURDIR} -I${.OBJDIR} \
+				-I${SRCTOP}/usr.sbin \
+				-I${SRCTOP}/sys
 CFLAGS.virtio_core_test+=	-DWITHOUT_CAPSICUM -ffunction-sections \
 				-I${.CURDIR} -I${.OBJDIR} \
+				-I${SRCTOP}/usr.sbin \
 				-I${SRCTOP}/sys
 # The mock-included device source and the ld --wrap interceptors (non-static so
 # the linker binds them, tripping -Wmissing-prototypes) warn; keep non-fatal.
@@ -41,6 +48,8 @@ CWARNFLAGS.virtio_input_test.c+=	-Wno-error \
 					-Wno-thread-safety-analysis
 CWARNFLAGS.virtio_rnd_test.c+=	-Wno-error \
 					-Wno-thread-safety-analysis
+CWARNFLAGS.virtio_rnd_interrupt_test.c+= -Wno-error \
+					-Wno-thread-safety-analysis
 CWARNFLAGS.virtio_core_test.c+=	-Wno-error \
 					-Wno-thread-safety-analysis
 LDFLAGS.vsock_device_test+=	-Wl,--wrap=socket -Wl,--wrap=connectat \
@@ -49,9 +58,13 @@ LDFLAGS.vsock_device_test+=	-Wl,--wrap=socket -Wl,--wrap=connectat \
 	-Wl,--wrap=socketpair -Wl,--wrap=fcntl -Wl,--wrap=setsockopt \
 	-Wl,--wrap=getsockopt -Wl,--wrap=recvmsg -Wl,--wrap=ioctl
 LDFLAGS.virtio_core_test+=	-Wl,--gc-sections
+LDFLAGS.virtio_rnd_interrupt_test+= -Wl,--gc-sections
 LIBADD.vsock_device_test+=	pthread
+LIBADD.virtio_modern_test+=	pthread
 LIBADD.virtio_input_test+=	pthread
 LIBADD.virtio_rnd_test+=	pthread
+LIBADD.virtio_rnd_interrupt_test+= pthread
+LIBADD.virtio_core_test+=	pthread
 CLEANFILES+=	pci_virtio_vsock.c pci_virtio_vsock_iov.h \
 		pci_virtio_vsock_probes.h virtio_pci_modern.c \
 		virtio_pci_modern_probes.h pci_virtio_input.c pci_virtio_rnd.c \

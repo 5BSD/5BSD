@@ -1,15 +1,25 @@
 /* Tests for the real bhyve split-ring parser and interrupt decision logic. */
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <sys/wait.h>
 
 #include <assert.h>
+#include <errno.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
 
 #include <atf-c.h>
 
+#include "pci_emul.h"
+#include <bhyve/virtio.h>
+#define	MOCK_VIRTIO_H
 #include "virtio.c"
 
 struct vmctx { int unused; };
@@ -23,6 +33,11 @@ struct guest_region {
 static struct guest_region g_regions[4];
 static int g_region_count;
 static int g_interrupts;
+static bool g_lintr_asserted;
+static bool g_hold_deassert;
+static bool g_deassert_entered;
+static pthread_mutex_t g_intr_test_mtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_intr_test_cv = PTHREAD_COND_INITIALIZER;
 
 void *
 paddr_guest2host(struct vmctx *ctx __unused, uintptr_t gpa, size_t len)
@@ -41,13 +56,39 @@ paddr_guest2host(struct vmctx *ctx __unused, uintptr_t gpa, size_t len)
 }
 
 void
-mock_vq_interrupt(struct virtio_softc *vs __unused,
-    struct vqueue_info *vq __unused)
+pci_lintr_deassert(struct pci_devinst *pi __unused)
+{
+	pthread_mutex_lock(&g_intr_test_mtx);
+	if (g_hold_deassert) {
+		g_deassert_entered = true;
+		pthread_cond_broadcast(&g_intr_test_cv);
+		while (g_hold_deassert)
+			pthread_cond_wait(&g_intr_test_cv, &g_intr_test_mtx);
+	}
+	g_lintr_asserted = false;
+	pthread_mutex_unlock(&g_intr_test_mtx);
+}
+
+void
+pci_lintr_assert(struct pci_devinst *pi __unused)
+{
+	pthread_mutex_lock(&g_intr_test_mtx);
+	g_lintr_asserted = true;
+	pthread_mutex_unlock(&g_intr_test_mtx);
+}
+
+void
+pci_generate_msi(struct pci_devinst *pi __unused, int vector __unused)
 {
 	g_interrupts++;
 }
 
-void pci_lintr_deassert(struct pci_devinst *pi __unused) {}
+void
+pci_generate_msix(struct pci_devinst *pi __unused, int vector __unused)
+{
+	g_interrupts++;
+}
+
 void vi_pci_modern_reset(struct virtio_softc *vs __unused) {}
 int pci_emul_alloc_bar(struct pci_devinst *pi __unused, int bar __unused,
     enum pcibar_type type __unused, uint64_t size __unused) { return (0); }
@@ -94,6 +135,7 @@ setup_queue(struct virtio_softc *vs, struct virtio_consts *vc,
 	vs->vs_vc = vc;
 	vs->vs_pi = pi;
 	vs->vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	ATF_REQUIRE(vi_intr_init(vs, 1, 0) == 0);
 	vq->vq_vs = vs;
 	vq->vq_qsize = 8;
 	vq->vq_flags = VQ_ALLOC;
@@ -104,6 +146,144 @@ setup_queue(struct virtio_softc *vs, struct virtio_consts *vc,
 	avail->ring[0] = 0;
 	g_region_count = 0;
 	g_interrupts = 0;
+	g_lintr_asserted = false;
+	g_hold_deassert = false;
+	g_deassert_entered = false;
+}
+
+static void
+notify_and_interrupt(void *arg, struct vqueue_info *vq)
+{
+
+	vq_interrupt(arg, vq);
+}
+
+ATF_TC_WITHOUT_HEAD(notify_without_msix_does_not_relock_device);
+ATF_TC_BODY(notify_without_msix_does_not_relock_device, tc)
+{
+	struct virtio_consts vc = {
+		.vc_name = "notify-test",
+		.vc_nvq = 1,
+		.vc_qnotify = notify_and_interrupt,
+	};
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	pthread_mutex_t device_mtx;
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		alarm(2);
+		memset(&vs, 0, sizeof(vs));
+		memset(&pi, 0, sizeof(pi));
+		memset(&vq, 0, sizeof(vq));
+		if (pthread_mutex_init(&device_mtx, NULL) != 0)
+			_exit(2);
+		vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+		vs.vs_mtx = &device_mtx;
+		vq.vq_msix_idx = VIRTIO_MSI_NO_VECTOR;
+		if (vi_intr_init(&vs, 1, 0) != 0)
+			_exit(3);
+		vi_pci_write(&pi, 0, VIRTIO_PCI_QUEUE_NOTIFY, 2, 0);
+		_exit(vs.vs_isr == VIRTIO_PCI_ISR_INTR ? 0 : 4);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK(WIFEXITED(status));
+	if (WIFEXITED(status))
+		ATF_CHECK(WEXITSTATUS(status) == 0);
+}
+
+struct interrupt_race_ctx {
+	struct virtio_softc *vs;
+	bool producer_started;
+	bool producer_done;
+};
+
+static void *
+read_isr_thread(void *arg)
+{
+	struct virtio_softc *vs = arg;
+
+	(void)vi_isr_read(vs);
+	return (NULL);
+}
+
+static void *
+raise_interrupt_thread(void *arg)
+{
+	struct interrupt_race_ctx *ctx = arg;
+
+	pthread_mutex_lock(&g_intr_test_mtx);
+	ctx->producer_started = true;
+	pthread_cond_broadcast(&g_intr_test_cv);
+	pthread_mutex_unlock(&g_intr_test_mtx);
+	vi_interrupt(ctx->vs, VIRTIO_PCI_ISR_INTR, VIRTIO_MSI_NO_VECTOR);
+	pthread_mutex_lock(&g_intr_test_mtx);
+	ctx->producer_done = true;
+	pthread_cond_broadcast(&g_intr_test_cv);
+	pthread_mutex_unlock(&g_intr_test_mtx);
+	return (NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(isr_read_serializes_intx);
+ATF_TC_BODY(isr_read_serializes_intx, tc)
+{
+	struct interrupt_race_ctx ctx;
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct timespec deadline;
+	pthread_t producer, reader;
+	bool completed_while_deasserting;
+	int error;
+
+	memset(&ctx, 0, sizeof(ctx));
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	vs.vs_pi = &pi;
+	ATF_REQUIRE(pthread_mutex_init(&vs.vs_isr_mtx, NULL) == 0);
+	ctx.vs = &vs;
+	vs.vs_isr = VIRTIO_PCI_ISR_INTR;
+	pthread_mutex_lock(&g_intr_test_mtx);
+	g_lintr_asserted = true;
+	g_hold_deassert = true;
+	g_deassert_entered = false;
+	pthread_mutex_unlock(&g_intr_test_mtx);
+
+	ATF_REQUIRE(pthread_create(&reader, NULL, read_isr_thread, &vs) == 0);
+	pthread_mutex_lock(&g_intr_test_mtx);
+	while (!g_deassert_entered)
+		pthread_cond_wait(&g_intr_test_cv, &g_intr_test_mtx);
+	pthread_mutex_unlock(&g_intr_test_mtx);
+	ATF_REQUIRE(pthread_create(&producer, NULL, raise_interrupt_thread,
+	    &ctx) == 0);
+
+	pthread_mutex_lock(&g_intr_test_mtx);
+	while (!ctx.producer_started)
+		pthread_cond_wait(&g_intr_test_cv, &g_intr_test_mtx);
+	ATF_REQUIRE(clock_gettime(CLOCK_REALTIME, &deadline) == 0);
+	deadline.tv_nsec += 100000000;
+	if (deadline.tv_nsec >= 1000000000) {
+		deadline.tv_sec++;
+		deadline.tv_nsec -= 1000000000;
+	}
+	error = 0;
+	while (!ctx.producer_done && error == 0)
+		error = pthread_cond_timedwait(&g_intr_test_cv,
+		    &g_intr_test_mtx, &deadline);
+	completed_while_deasserting = ctx.producer_done;
+	g_hold_deassert = false;
+	pthread_cond_broadcast(&g_intr_test_cv);
+	pthread_mutex_unlock(&g_intr_test_mtx);
+
+	ATF_REQUIRE(pthread_join(reader, NULL) == 0);
+	ATF_REQUIRE(pthread_join(producer, NULL) == 0);
+	ATF_CHECK(!completed_while_deasserting);
+	ATF_CHECK(error == ETIMEDOUT);
+	ATF_CHECK(vs.vs_isr == VIRTIO_PCI_ISR_INTR);
+	ATF_CHECK(g_lintr_asserted);
 }
 
 ATF_TC_WITHOUT_HEAD(direct_mapping_validation);
@@ -229,5 +409,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, direct_mapping_validation);
 	ATF_TP_ADD_TC(tp, indirect_mapping_validation);
 	ATF_TP_ADD_TC(tp, event_idx_interrupts);
+	ATF_TP_ADD_TC(tp, notify_without_msix_does_not_relock_device);
+	ATF_TP_ADD_TC(tp, isr_read_serializes_intx);
 	return (atf_no_error());
 }

@@ -115,9 +115,7 @@ vi_reset_dev(struct virtio_softc *vs)
 	vs->vs_negotiated_caps = 0;
 	vs->vs_curq = 0;
 	/* vs->vs_status = 0; -- redundant */
-	if (vs->vs_isr)
-		pci_lintr_deassert(vs->vs_pi);
-	vs->vs_isr = 0;
+	(void)vi_isr_read(vs);
 	vs->vs_msix_cfg_idx = VIRTIO_MSI_NO_VECTOR;
 	vi_pci_modern_reset(vs);
 }
@@ -165,8 +163,8 @@ vi_set_io_bar(struct virtio_softc *vs, int barnum)
 }
 
 /*
- * Initialize MSI-X vector capabilities if we're to use MSI-X,
- * or MSI capabilities if not.
+ * Initialize interrupt-state serialization and MSI-X vector capabilities if
+ * we're to use MSI-X, or MSI capabilities if not.
  *
  * We assume we want one MSI-X vector per queue, here, plus one
  * for the config vec.
@@ -176,14 +174,19 @@ vi_intr_init(struct virtio_softc *vs, int barnum, int use_msix)
 {
 	int nvec;
 
+	if (pthread_mutex_init(&vs->vs_isr_mtx, NULL) != 0)
+		return (1);
+
 	if (use_msix) {
 		vs->vs_flags |= VIRTIO_USE_MSIX;
 		VS_LOCK(vs);
 		vi_reset_dev(vs); /* set all vectors to NO_VECTOR */
 		VS_UNLOCK(vs);
 		nvec = vs->vs_vc->vc_nvq + 1;
-		if (pci_emul_add_msixcap(vs->vs_pi, nvec, barnum))
+		if (pci_emul_add_msixcap(vs->vs_pi, nvec, barnum)) {
+			pthread_mutex_destroy(&vs->vs_isr_mtx);
 			return (1);
+		}
 	} else
 		vs->vs_flags &= ~VIRTIO_USE_MSIX;
 
@@ -702,10 +705,7 @@ bad:
 		value = vs->vs_status;
 		break;
 	case VIRTIO_PCI_ISR:
-		value = vs->vs_isr;
-		vs->vs_isr = 0;		/* a read clears this flag */
-		if (value)
-			pci_lintr_deassert(pi);
+		value = vi_isr_read(vs);
 		break;
 	case VIRTIO_MSI_CONFIG_VECTOR:
 		value = vs->vs_msix_cfg_idx;
@@ -896,7 +896,12 @@ vi_pci_snapshot_softc(struct virtio_softc *vs, struct vm_snapshot_meta *meta)
 	SNAPSHOT_VAR_OR_LEAVE(vs->vs_negotiated_caps, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(vs->vs_curq, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(vs->vs_status, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vs->vs_isr, meta, ret, done);
+	VS_ISR_LOCK(vs);
+	SNAPSHOT_VAR_OR_LEAVE(vs->vs_isr, meta, ret, done_isr);
+done_isr:
+	VS_ISR_UNLOCK(vs);
+	if (ret != 0)
+		goto done;
 	SNAPSHOT_VAR_OR_LEAVE(vs->vs_msix_cfg_idx, meta, ret, done);
 
 done:
