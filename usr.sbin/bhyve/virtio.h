@@ -457,11 +457,15 @@ struct iovec;
 /*
  * Request description returned by vq_getchain.
  *
- * Writable iovecs start at iov[req.readable].
+ * If ordered is true, writable iovecs start at iov[req.readable].
+ * VirtIO drivers are required to place all device-readable descriptors
+ * before any device-writable descriptors, but device models must validate
+ * that guest-provided invariant before relying on it.
  */
 struct vi_req {
 	int readable;		/* num of readable iovecs */
 	int writable;		/* num of writable iovecs */
+	bool ordered;		/* readable descriptors precede writable ones */
 	unsigned int idx;	/* ring index */
 };
 

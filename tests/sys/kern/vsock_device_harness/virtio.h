@@ -56,7 +56,11 @@ struct vqueue_info {
 	struct vring_avail *vq_avail;
 	struct vring_used *vq_used;
 };
-struct vi_req { uint16_t idx; int readable, writable; };
+struct vi_req {
+	uint16_t idx;
+	int readable, writable;
+	bool ordered;
+};
 struct virtio_consts {
 	const char *vc_name;
 	int vc_nvq;
@@ -96,10 +100,13 @@ struct virtio_consts {
 #define VIRTIO_ID_CONSOLE 3
 #define VIRTIO_DEV_9P 0x1009
 #define VIRTIO_ID_9P 9
+#define VIRTIO_DEV_BLOCK 0x1001
+#define VIRTIO_ID_BLOCK 2
 #define VIRTIO_REV_INPUT 1
 #define VIRTIO_SUBVEN_INPUT 0x108e
 #define VIRTIO_SUBDEV_INPUT 0x1100
 #define VIRTIO_VENDOR    0x1af4
+#define VIRTIO_PCI_ISR_CONFIG 0x2
 static inline int
 vq_ring_ready(struct vqueue_info *vq)
 {
@@ -146,6 +153,7 @@ int  vi_pci_modern_cfgwrite(struct pci_devinst *, int, int, uint32_t);
 int  vi_intr_init(struct virtio_softc *, int, int);
 void vi_set_io_bar(struct virtio_softc *, int);
 void vi_reset_dev(struct virtio_softc *);
+void vi_interrupt(struct virtio_softc *, uint8_t, uint16_t);
 uint64_t vi_pci_read(struct pci_devinst *, int, uint64_t, int);
 void vi_pci_write(struct pci_devinst *, int, uint64_t, int, uint64_t);
 #endif

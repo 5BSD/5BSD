@@ -15,6 +15,8 @@ enum pcibar_type {
 struct pci_devinst {
 	struct vmctx *pi_vmctx;
 	void *pi_arg;
+	int pi_slot;
+	int pi_func;
 	int pi_prevcap;
 	int pi_capend;
 	struct {

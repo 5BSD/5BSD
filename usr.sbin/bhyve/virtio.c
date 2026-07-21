@@ -260,9 +260,11 @@ _vq_record(int i, struct vring_desc *vd, struct vmctx *ctx, struct iovec *iov,
 		iov[i].iov_len = len;
 		iov[i].iov_base = base;
 	}
-	if ((vd->flags & VRING_DESC_F_WRITE) == 0)
+	if ((vd->flags & VRING_DESC_F_WRITE) == 0) {
+		if (reqp->writable != 0)
+			reqp->ordered = false;
 		reqp->readable++;
-	else
+	} else
 		reqp->writable++;
 	return (true);
 }
@@ -318,6 +320,7 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 	vs = vq->vq_vs;
 	name = vs->vs_vc->vc_name;
 	memset(&req, 0, sizeof(req));
+	req.ordered = true;
 
 	/*
 	 * Note: it's the responsibility of the guest not to

@@ -329,6 +329,14 @@ ATF_TC_BODY(direct_mapping_validation, tc)
 	desc[1].addr = 0x1004;
 	ATF_CHECK(vq_getchain(&vq, &iov, 1, &req) == 2);
 	ATF_CHECK(req.readable == 1 && req.writable == 1);
+	ATF_CHECK(req.ordered);
+
+	vq.vq_last_avail = 0;
+	desc[0].flags = VRING_DESC_F_WRITE | VRING_DESC_F_NEXT;
+	desc[1].flags = 0;
+	ATF_CHECK(vq_getchain(&vq, &iov, 1, &req) == 2);
+	ATF_CHECK(req.readable == 1 && req.writable == 1);
+	ATF_CHECK(!req.ordered);
 }
 
 ATF_TC_WITHOUT_HEAD(indirect_mapping_validation);
