@@ -139,7 +139,6 @@ struct vtinput_event {
 
 struct vtinput_event_elem {
 	struct vtinput_event event;
-	struct iovec iov;
 	uint16_t idx;
 };
 
@@ -199,6 +198,7 @@ static void
 pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 {
 	struct pci_vtinput_softc *sc = vsc;
+	struct iovec iov[VTINPUT_RINGSZ];
 	uint32_t completed;
 
 	completed = 0;
@@ -206,16 +206,14 @@ pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 
 	while (vq_has_descs(vq)) {
 		/* get descriptor chain */
-		struct iovec iov;
 		struct vi_req req;
-		const int n = vq_getchain(vq, &iov, 1, &req);
+		const int n = vq_getchain(vq, iov, nitems(iov), &req);
 		if (n <= 0) {
 			WPRINTF(("%s: invalid descriptor: %d", __func__, n));
 			break;
 		}
-		if (n != 1 || req.readable != 1 || req.writable != 0 ||
-		    iov.iov_base == NULL ||
-		    iov.iov_len < sizeof(struct vtinput_event)) {
+		if (n > (int)nitems(iov) || req.readable != n ||
+		    req.writable != 0) {
 			WPRINTF(("%s: invalid status descriptor", __func__));
 			vq_relchain(vq, req.idx, 0);
 			continue;
@@ -223,7 +221,23 @@ pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 
 		/* get event */
 		struct vtinput_event event;
-		memcpy(&event, iov.iov_base, sizeof(event));
+		size_t copied = 0;
+		for (int i = 0; i < n && copied < sizeof(event); i++) {
+			size_t len;
+
+			if (iov[i].iov_base == NULL && iov[i].iov_len != 0)
+				break;
+			len = MIN(iov[i].iov_len, sizeof(event) - copied);
+			if (len != 0)
+				memcpy((uint8_t *)&event + copied,
+				    iov[i].iov_base, len);
+			copied += len;
+		}
+		if (copied != sizeof(event)) {
+			WPRINTF(("%s: short status event", __func__));
+			vq_relchain(vq, req.idx, 0);
+			continue;
+		}
 		DPRINTF2(("vtinput: status event type=%u code=%u value=%d",
 		    event.type, event.code, (int32_t)event.value));
 
@@ -239,7 +253,7 @@ pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 		 * avoid endless loops by ignoring EV_MSC
 		 */
 		if (event.type == EV_MSC) {
-			vq_relchain(vq, req.idx, sizeof(event));
+			vq_relchain(vq, req.idx, 0);
 			continue;
 		}
 
@@ -266,7 +280,7 @@ pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 			    host_event.code, host_event.value));
 		}
 
-		vq_relchain(vq, req.idx, sizeof(event));
+		vq_relchain(vq, req.idx, 0);
 		completed++;
 	}
 	vq_endchains(vq, 1);
@@ -562,6 +576,8 @@ static void
 vtinput_eventqueue_send_events(
     struct vtinput_eventqueue *queue, struct vqueue_info *vq)
 {
+	struct iovec iov[VTINPUT_RINGSZ];
+
 	/*
 	 * First iteration through eventqueue:
 	 *   Get descriptor chains.
@@ -581,15 +597,14 @@ vtinput_eventqueue_send_events(
 		}
 
 		/* get descriptor chain */
-		struct iovec iov;
 		struct vi_req req;
-		const int n = vq_getchain(vq, &iov, 1, &req);
+		const int n = vq_getchain(vq, iov, nitems(iov), &req);
 		if (n <= 0) {
 			WPRINTF(("%s: invalid descriptor: %d", __func__, n));
 			vtinput_eventqueue_drop_events(queue, vq, i);
 			goto done;
 		}
-		if (n != 1) {
+		if (n > (int)nitems(iov)) {
 			WPRINTF(
 			    ("%s: invalid number of descriptors in chain: %d",
 				__func__, n));
@@ -598,19 +613,36 @@ vtinput_eventqueue_send_events(
 			vq_relchain(vq, req.idx, 0);
 			goto done;
 		}
-		if (req.readable != 0 || req.writable != 1 ||
-		    iov.iov_base == NULL ||
-		    iov.iov_len < sizeof(struct vtinput_event)) {
-			WPRINTF(("%s: invalid descriptor length: %lu", __func__,
-			    iov.iov_len));
+		if (req.readable != 0 || req.writable != n) {
+			WPRINTF(("%s: invalid event descriptor", __func__));
 			/* Drop the frame in available-ring order. */
 			vtinput_eventqueue_drop_events(queue, vq, i);
 			vq_relchain(vq, req.idx, 0);
 			goto done;
 		}
 
-		/* save descriptor */
-		queue->events[i].iov = iov;
+		/* Fill the buffer, but publish it only after the entire frame fits. */
+		size_t copied = 0;
+		for (int j = 0; j < n && copied < sizeof(struct vtinput_event);
+		    j++) {
+			size_t len;
+
+			if (iov[j].iov_base == NULL && iov[j].iov_len != 0)
+				break;
+			len = MIN(iov[j].iov_len,
+			    sizeof(struct vtinput_event) - copied);
+			if (len != 0)
+				memcpy(iov[j].iov_base,
+				    (uint8_t *)&queue->events[i].event + copied,
+				    len);
+			copied += len;
+		}
+		if (copied != sizeof(struct vtinput_event)) {
+			WPRINTF(("%s: short event buffer", __func__));
+			vtinput_eventqueue_drop_events(queue, vq, i);
+			vq_relchain(vq, req.idx, 0);
+			goto done;
+		}
 		queue->events[i].idx = req.idx;
 	}
 
@@ -619,10 +651,8 @@ vtinput_eventqueue_send_events(
 	 *   Send events to guest by releasing chains
 	 */
 	for (uint32_t i = 0; i < queue->idx; ++i) {
-		struct vtinput_event_elem event = queue->events[i];
-		memcpy(event.iov.iov_base, &event.event,
+		vq_relchain(vq, queue->events[i].idx,
 		    sizeof(struct vtinput_event));
-		vq_relchain(vq, event.idx, sizeof(struct vtinput_event));
 	}
 done:
 	/* clear queue and send interrupt to guest */

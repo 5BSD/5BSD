@@ -57,6 +57,7 @@ static int g_getchain_readable;
 static int g_getchain_writable;
 static size_t g_getchain_len;
 static bool g_getchain_null;
+static bool g_getchain_split;
 static int g_getchain_calls;
 static bool g_require_queue_lock;
 static int g_bad_chain_call;
@@ -92,6 +93,7 @@ reset_mocks(void)
 	g_getchain_writable = 1;
 	g_getchain_len = sizeof(struct vtinput_event);
 	g_getchain_null = false;
+	g_getchain_split = false;
 	g_getchain_calls = 0;
 	g_require_queue_lock = false;
 	g_bad_chain_call = -1;
@@ -339,7 +341,13 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 	if (n <= 0)
 		return (n);
 	ATF_REQUIRE(slot < (int)nitems(g_iov_buf));
-	if (niov > 0) {
+	if (g_getchain_split) {
+		ATF_REQUIRE(n == 2 && niov >= 2);
+		iov[0].iov_base = g_iov_buf[slot];
+		iov[0].iov_len = 3;
+		iov[1].iov_base = g_iov_buf[slot] + 3;
+		iov[1].iov_len = sizeof(struct vtinput_event) - 3;
+	} else if (niov > 0) {
 		iov[0].iov_base = g_getchain_null ? NULL : g_iov_buf[slot];
 		iov[0].iov_len = g_getchain_len;
 	}
@@ -549,7 +557,7 @@ ATF_TC_BODY(hostile_status_descriptors, tc)
 		g_getchain_readable = 1;
 		g_getchain_writable = 0;
 		switch (kind) {
-		case 0: g_getchain_n = 2; break;
+		case 0: g_getchain_n = VTINPUT_RINGSZ + 1; break;
 		case 1: g_getchain_readable = 0; g_getchain_writable = 1; break;
 		case 2: g_getchain_len = sizeof(struct vtinput_event) - 1; break;
 		case 3: g_getchain_null = true; break;
@@ -579,7 +587,7 @@ ATF_TC_BODY(hostile_event_descriptors, tc)
 		ATF_REQUIRE(vtinput_eventqueue_add_event(&queue, &event) == 0);
 		g_descs = 1;
 		switch (kind) {
-		case 0: g_getchain_n = 2; break;
+		case 0: g_getchain_n = VTINPUT_RINGSZ + 1; break;
 		case 1: g_getchain_readable = 1; g_getchain_writable = 0; break;
 		case 2: g_getchain_len = sizeof(struct vtinput_event) - 1; break;
 		case 3: g_getchain_null = true; break;
@@ -588,6 +596,55 @@ ATF_TC_BODY(hostile_event_descriptors, tc)
 		ATF_CHECK(g_rel_calls == 1 && g_rel_len[0] == 0);
 		free(queue.events);
 	}
+}
+
+ATF_TC_WITHOUT_HEAD(scatter_gather_events);
+ATF_TC_BODY(scatter_gather_events, tc)
+{
+	struct pci_vtinput_softc sc;
+	struct vtinput_eventqueue queue;
+	struct vtinput_event event;
+	struct input_event host_event;
+	struct vqueue_info vq;
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	memset(&vq, 0, sizeof(vq));
+	sc.vsc_fd = 10;
+	event.type = EV_LED;
+	event.code = LED_CAPSL;
+	event.value = 1;
+	memcpy(g_iov_buf[0], &event, sizeof(event));
+	g_descs = 1;
+	g_getchain_n = 2;
+	g_getchain_readable = 2;
+	g_getchain_writable = 0;
+	g_getchain_split = true;
+	pci_vtinput_notify_statusq(&sc, &vq);
+	ATF_CHECK(g_host_write_calls == 1);
+	ATF_CHECK(g_host_write_event.type == EV_LED);
+	ATF_CHECK(g_host_write_event.code == LED_CAPSL);
+	ATF_CHECK(g_host_write_event.value == 1);
+	ATF_CHECK(g_rel_calls == 1 && g_rel_len[0] == 0);
+
+	reset_mocks();
+	memset(&queue, 0, sizeof(queue));
+	memset(&host_event, 0, sizeof(host_event));
+	host_event.type = EV_KEY;
+	host_event.code = KEY_A;
+	host_event.value = 1;
+	ATF_REQUIRE(vtinput_eventqueue_add_event(&queue, &host_event) == 0);
+	event = queue.events[0].event;
+	g_descs = 1;
+	g_getchain_n = 2;
+	g_getchain_readable = 0;
+	g_getchain_writable = 2;
+	g_getchain_split = true;
+	vtinput_eventqueue_send_events(&queue, &vq);
+	ATF_CHECK(g_rel_calls == 1 &&
+	    g_rel_len[0] == sizeof(struct vtinput_event));
+	ATF_CHECK(memcmp(g_iov_buf[0], &event, sizeof(event)) == 0);
+	free(queue.events);
 }
 
 ATF_TC_WITHOUT_HEAD(status_error_finishes_completions);
@@ -692,6 +749,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, syn_report_flushes_frame);
 	ATF_TP_ADD_TC(tp, hostile_status_descriptors);
 	ATF_TP_ADD_TC(tp, hostile_event_descriptors);
+	ATF_TP_ADD_TC(tp, scatter_gather_events);
 	ATF_TP_ADD_TC(tp, status_error_finishes_completions);
 	ATF_TP_ADD_TC(tp, partial_frame_rollback);
 	ATF_TP_ADD_TC(tp, oversized_frame_dropped);
