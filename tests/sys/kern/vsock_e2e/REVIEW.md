@@ -124,8 +124,13 @@ the 4 remaining malformed-TX drops, reaper timeouts (advance the clock).
 SEQPACKET SHUT_RDWR, SEQPACKET peer-close EOF+SIGPIPE, connect_timeout ERANGE.
 
 ## Testplan §6 status
-Automated: rows 1-4 and 6-16.
-Partial: row 5.  Row 10 includes live Alpine remote SEQPACKET graceful close
+Automated: rows 1-16.  Row 5 treats the local receive limit and the remote
+peer-advertised `buf_alloc` as the meaningful MAX/MAX+1 boundaries; VirtIO
+defines flow-control windows, not a universal SEQPACKET record maximum.  The
+direct guest transport verifies exact-window fragmentation and atomic
+window+1 `EMSGSIZE`, the bhyve harness covers its matching receive behavior,
+and Alpine carries a 200 KiB record whole in both directions.  Row 10 includes
+live Alpine remote SEQPACKET graceful close
 in both directions, with payload and EOF observed at each endpoint.  Row 11
 combines the existing guest-client kill with a live Alpine host-connector kill,
 guest EOF/reset, and immediate reconnect.  Row 13 is automated in the direct

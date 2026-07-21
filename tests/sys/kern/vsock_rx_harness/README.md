@@ -11,7 +11,8 @@ loopback-only ATF suite (`vsock_test`) and the AF_UNIX-limited e2e suite
 structurally cannot reach (a crafted/malicious peer can only be injected
 here).  The transport binary directly covers CID config sanitization,
 descriptor-aware TX readiness, reclaim-and-retry, bounded control queuing,
-FIFO interrupt draining, transport-reset wakeup/recycling, and the
+FIFO interrupt draining, the SEQPACKET peer-credit-window boundary,
+transport-reset wakeup/recycling, and the
 attach-completed/detach lifecycle.  Deterministic pthread schedules also force
 RX and TX interrupt handlers to overlap detach on both sides of the transport
 mutex.
@@ -48,7 +49,10 @@ flow-control-violation ECONNRESET, CID_LOCAL wire isolation, SEQPACKET
 fragment-limit RST, deferred-teardown timeout, and transport reset with CID
 re-registration.  It also covers the global inbound connection cap, the
 non-blocking TX-ready gate before uio consumption, and guest SEQPACKET
-`MSG_EOR` transport marking.  Send-side terminal-state checks assert that
+`MSG_EOR` transport marking.  An exact peer-advertised-window record is
+accepted and fragmented with EOM/EOR only on its final packet; one byte more
+returns `EMSGSIZE` without consuming credit or closing the connection.
+Send-side terminal-state checks assert that
 `SBS_CANTSENDMORE` and the `so_error` read-and-clear use their owning locks, so
 an asynchronous reset error cannot be erased by a racing sender.  The direct
 transport binary additionally checks

@@ -71,12 +71,14 @@
  *      MSG_EOR) can have it split or merged.  Best practice: one send per
  *      record, and set MSG_EOR to make the boundary explicit.
  *
- *   2. RECORD SIZE.  Host->guest: the relay socketpair is sized to one
- *      advertised window (VTVSOCK_BUF_ALLOC, 256 KiB), so a record up to that
- *      size is delivered whole; the device fragments each on-wire packet to fit
- *      the guest's RX buffers transparently, so the app just does one send per
- *      record.  A record larger than the window still cannot be sent atomically
- *      and the guest sees several records.  Guest->host: records are
+ *   2. RECORD SIZE.  Host->guest: the relay socketpair is sized to
+ *      VTVSOCK_BUF_ALLOC (256 KiB), but the deliverable-record limit for a
+ *      connection is the guest's advertised buf_alloc.  The device waits until
+ *      current credit covers the whole record, then fragments it across
+ *      on-wire packets while preserving one record boundary.  A record larger
+ *      than the guest's full advertised window cannot be delivered; the host
+ *      send may fail at the relay-socket limit, or the device resets the
+ *      connection if it receives such a record.  Guest->host: records are
  *      reassembled up to 4 MiB -- BUT to RECEIVE a record larger than ~64 KiB
  *      the host app must raise SO_RCVBUF on its ACCEPTED socket.  FreeBSD caps a
  *      SOCK_SEQPACKET record at net.local.seqpacket.maxseqpacket (64 KiB) by

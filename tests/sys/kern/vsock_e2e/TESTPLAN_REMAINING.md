@@ -12,16 +12,16 @@ Linux VirtIO drivers.  The packaged matrix passed isolated and combined
 modern/legacy vsock, RNG, and block coverage plus modern input.  The focused
 legacy no-MSI-X gate also passed driver reset/rebind, monitor-mode reboot, and
 post-reboot data-path/persistence checks.  Direct `virtio_vsock.c` coverage is
-now packaged with the guest harness: 11 ATF cases / 637 assertions exercise
+now packaged with the guest harness: 12 ATF cases / 720 assertions exercise
 descriptor-aware readiness, reclaim/retry, bounded FIFO control queuing,
-interrupt drain/wakeup, event reset, attach-completed/detach, and a real
+interrupt drain/wakeup, the SEQPACKET peer-window boundary, event reset,
+attach-completed/detach, and a real
 pthread sender blocked on the full-ring sleep channel while detach wakes it
 within one second.  Deterministic RX/TX handler schedules now overlap detach
-both outside and inside the transport mutex.  The remaining work is narrower
-boundary definition below.
+both outside and inside the transport mutex.
 The socket-domain half now has 13 ATF cases / 89 assertions, including locked
 send-side terminal-state checks that close G3; together the guest harness has
-24 cases / 726 assertions.
+25 cases / 809 assertions.
 The focused no-MSI-X run now also passes monitor-mode reboot with established
 STREAM and SEQPACKET endpoints: each is echo-proven before reboot, both old
 endpoints disconnect within 30 seconds, and fresh connections pass afterward.
@@ -35,6 +35,12 @@ Abrupt peer death is now covered in both directions as well: the original
 guest-client SIGKILL makes the host observe teardown, while the Alpine matrix
 SIGKILLs an echo-proven host connector and requires guest EOF/reset plus an
 immediate fresh connection.
+Row 5 now uses the boundary VirtIO actually defines: `buf_alloc`, the peer's
+advertised credit window, rather than a universal SEQPACKET maximum.  The
+direct guest transport accepts an exact-window record across two wire packets
+and rejects window+1 atomically without closing; the bhyve harness covers the
+matching receive-window and current-credit behavior.  Live Alpine retains a
+200 KiB whole-record test in both directions as an interoperability check.
 
 **2026-07-09 (this session):** closed GAP 1, GAP 2, GAP 4, GAP 5. The only
 remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
@@ -60,7 +66,7 @@ remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
 | `vsock_test.c` (ATF) | socket ops + **loopback** transport | 152/153 pass (1 platform skip) |
 | `vsock_wire_test.c` (ATF) | struct/ABI wire layout | complete for static layout |
 | `vsock_device_harness/` | bhyve host device TX/RX ingress | 209 vsock checks plus transport/device suites |
-| `vsock_rx_harness/` | guest domain + direct VirtIO transport | 24 tests / 726 checks |
+| `vsock_rx_harness/` | guest domain + direct VirtIO transport | 25 tests / 809 checks |
 | `vsock_e2e/` (live guest) | upstream Linux driver interop | modern/legacy matrix passed; root-only |
 
 **Remaining structural limitation:** both guest source files now have direct
@@ -263,7 +269,7 @@ Small, high-value additions to `vsock_test.c` (loopback, already in CI):
 | Row | Scenario | Status |
 |---|---|---|
 | 1–4 | echo, bulk, credit churn | ✅ e2e + ATF |
-| 5 | seqpacket record sizes 0/1/MAX/MAX+1 | ⚠️ partial (exact-MAX + remote-wire missing → GAP 5.1, GAP 1.7) |
+| 5 | seqpacket 0/1 and local/peer-window boundaries | ✅ ATF + both direct harnesses + 200 KiB e2e both directions |
 | 6 | MSG_EOR/partial records | ✅ device + guest RX harnesses + e2e |
 | 7, 8 | dead host/guest port | ✅ e2e |
 | 9 | ≥256 concurrent, excess refused, slots freed | ✅ host and guest harnesses |
@@ -289,12 +295,11 @@ G4, and VNET/reset fixes.
 
 **Phase D — ATF edges (GAP 5).** Completed.
 
-**Remaining targeted work:** resolve the remote-wire scope of row 5.  Virtio
-defines credit windows rather than a universal SEQPACKET record maximum, while
-bhyve intentionally reassembles records larger than its advertised window;
-the live MAX/MAX+1 criterion therefore needs an implementation-specific bound
-instead of assuming 256 KiB.  Interrupt-vs-detach scheduling remains a
-kernel-runtime stress item rather than an uncovered source interleaving.
+**Remaining targeted work:** none in the §6 functional matrix.  VirtIO defines
+credit windows rather than a universal SEQPACKET record maximum, so row 5 is
+closed at the local receive limit and the remote peer-advertised `buf_alloc`
+boundary.  Interrupt-vs-detach scheduling remains a kernel-runtime stress item
+rather than an uncovered source interleaving.
 
 **Lowest-priority (Tier 3, documented in REVIEW.md, likely leave alone):**
 auto-bind port exhaustion, EMFILE/fd exhaustion, pending-ring overflow,

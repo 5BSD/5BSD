@@ -133,6 +133,30 @@ new_control_packet(void)
 	return (hdr);
 }
 
+static struct mbuf *
+new_data_chain(size_t len, bool eor)
+{
+	struct mbuf *head, **next, *m;
+	size_t chunk;
+
+	head = NULL;
+	next = &head;
+	while (len != 0) {
+		m = m_get(M_WAITOK, MT_DATA);
+		ATF_REQUIRE(m != NULL);
+		chunk = MIN(len, (size_t)MLEN);
+		m->m_len = (int)chunk;
+		memset(m->m_data, 'X', chunk);
+		*next = m;
+		next = &m->m_next;
+		len -= chunk;
+	}
+	ATF_REQUIRE(head != NULL);
+	if (eor)
+		head->m_flags |= M_PROTO1;
+	return (head);
+}
+
 static void
 one_seg(struct sglist *sg, struct sglist_seg *seg)
 {
@@ -172,6 +196,64 @@ ATF_TC_BODY(tx_ready_descriptor_threshold, tc)
 	txvq.nfree = VTVSOCK_TX_SEGS;
 	sc.sc_txq_count = 1;
 	ATF_CHECK(!vtvsock_virtio_tx_ready(NULL));
+}
+
+ATF_TC_WITHOUT_HEAD(seqpacket_peer_window_boundary);
+ATF_TC_BODY(seqpacket_peer_window_boundary, tc)
+{
+	const uint32_t window = VTVSOCK_MAX_PKT_BUF + 1;
+	struct virtio_vsock_hdr *first, *last;
+	struct socket so;
+	struct virtqueue txvq;
+	struct vtvsock_pcb pcb;
+	struct vtvsock_softc sc;
+	void *cookies[2];
+
+	reset_state();
+	memset(&pcb, 0, sizeof(pcb));
+	memset(&sc, 0, sizeof(sc));
+	memset(&so, 0, sizeof(so));
+	mock_vq_init(&txvq, 128);
+	sc.sc_txvq = &txvq;
+	so.so_type = SOCK_SEQPACKET;
+	pcb.so = &so;
+	pcb.state = VTVSOCK_ESTABLISHED;
+	pcb.local.svm_cid = 14;
+	pcb.local.svm_port = 1000;
+	pcb.remote.svm_cid = VSOCK_CID_HOST;
+	pcb.remote.svm_port = 2000;
+	pcb.peer_buf_alloc = window;
+	atomic_store_ptr(&vtvsock_sc, &sc);
+
+	/* Exactly the advertised window is one record, fragmented on the wire. */
+	ATF_REQUIRE(vtvsock_virtio_send(&pcb, 0,
+	    new_data_chain(window, true), NULL, NULL, NULL) == 0);
+	ATF_REQUIRE(txvq.entry_count == 2);
+	first = txvq.entries[0].cookie;
+	last = txvq.entries[1].cookie;
+	cookies[0] = first;
+	cookies[1] = last;
+	ATF_CHECK(le32toh(first->len) == VTVSOCK_MAX_PKT_BUF);
+	ATF_CHECK(le32toh(first->flags) == 0);
+	ATF_CHECK(le32toh(last->len) == 1);
+	ATF_CHECK(le32toh(last->flags) ==
+	    (VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR));
+	ATF_CHECK(pcb.tx_cnt == window);
+	ATF_CHECK(pcb.state == VTVSOCK_ESTABLISHED);
+
+	/* One byte beyond that window is rejected atomically and non-fatally. */
+	so.so_state = SS_NBIO;
+	ATF_CHECK(vtvsock_virtio_send(&pcb, 0,
+	    new_data_chain((size_t)window + 1, true), NULL, NULL, NULL) ==
+	    EMSGSIZE);
+	ATF_CHECK(txvq.entry_count == 2);
+	ATF_CHECK(pcb.tx_cnt == window);
+	ATF_CHECK(pcb.state == VTVSOCK_ESTABLISHED);
+
+	ATF_REQUIRE(mock_vq_complete(&txvq, cookies[0], 0));
+	ATF_REQUIRE(mock_vq_complete(&txvq, cookies[1], 0));
+	vtvsock_txvq_reclaim(&sc);
+	ATF_CHECK(txvq.entry_count == 0);
 }
 
 ATF_TC_WITHOUT_HEAD(enqueue_reclaims_then_retries);
@@ -695,6 +777,7 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, cid_sanitization);
 	ATF_TP_ADD_TC(tp, tx_ready_descriptor_threshold);
+	ATF_TP_ADD_TC(tp, seqpacket_peer_window_boundary);
 	ATF_TP_ADD_TC(tp, enqueue_reclaims_then_retries);
 	ATF_TP_ADD_TC(tp, control_queue_bounded);
 	ATF_TP_ADD_TC(tp, partial_ring_is_transient);
