@@ -140,8 +140,8 @@ setup_queue(struct pci_vtscsi_softc *sc, struct pci_vtscsi_request *req,
 
 	memset(sc, 0, sizeof(*sc));
 	memset(req, 0, sizeof(*req));
-	memset(cmd_rd, 0, sizeof(struct pci_vtscsi_req_cmd_rd) + 32);
-	memset(cmd_wr, 0, sizeof(struct pci_vtscsi_req_cmd_wr) + 96);
+	memset(cmd_rd, 0, VTSCSI_MAX_IN_HEADER_LEN);
+	memset(cmd_wr, 0, VTSCSI_MAX_OUT_HEADER_LEN);
 	memset(io, 0, sizeof(*io));
 	sc->vss_config.cdb_size = 32;
 	sc->vss_config.sense_size = 96;
@@ -276,14 +276,49 @@ ATF_TC_BODY(tmf_response_mapping, tc)
 	    VIRTIO_SCSI_S_FAILURE);
 }
 
+ATF_TC_WITHOUT_HEAD(config_writes);
+ATF_TC_BODY(config_writes, tc)
+{
+	struct pci_vtscsi_softc sc;
+	uint32_t old_num_queues;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.vss_config.num_queues = 1;
+	sc.vss_config.sense_size = 96;
+	sc.vss_config.cdb_size = 32;
+	old_num_queues = sc.vss_config.num_queues;
+
+	ATF_CHECK(pci_vtscsi_cfgwrite(&sc,
+	    offsetof(struct pci_vtscsi_config, sense_size), 4, 64) == 0);
+	ATF_CHECK(sc.vss_config.sense_size == 64);
+	ATF_CHECK(pci_vtscsi_cfgwrite(&sc,
+	    offsetof(struct pci_vtscsi_config, cdb_size), 4, 16) == 0);
+	ATF_CHECK(sc.vss_config.cdb_size == 16);
+	ATF_CHECK(pci_vtscsi_cfgwrite(&sc,
+	    offsetof(struct pci_vtscsi_config, num_queues), 4, 2) == 1);
+	ATF_CHECK(sc.vss_config.num_queues == old_num_queues);
+	ATF_CHECK(pci_vtscsi_cfgwrite(&sc,
+	    offsetof(struct pci_vtscsi_config, sense_size), 4,
+	    SSD_FULL_SIZE + 1) == 1);
+	ATF_CHECK(pci_vtscsi_cfgwrite(&sc,
+	    offsetof(struct pci_vtscsi_config, cdb_size), 4, 0) == 1);
+	ATF_CHECK(pci_vtscsi_cfgwrite(&sc,
+	    offsetof(struct pci_vtscsi_config, cdb_size), 2, 16) == 1);
+
+	sc.vss_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	ATF_CHECK(pci_vtscsi_cfgwrite(&sc,
+	    offsetof(struct pci_vtscsi_config, cdb_size), 4, 12) == 1);
+	ATF_CHECK(sc.vss_config.cdb_size == 16);
+}
+
 ATF_TC_WITHOUT_HEAD(request_queue_validation);
 ATF_TC_BODY(request_queue_validation, tc)
 {
 	struct pci_vtscsi_softc sc;
 	struct pci_vtscsi_request req;
 	union ctl_io io;
-	uint8_t cmd_rd[sizeof(struct pci_vtscsi_req_cmd_rd) + 32];
-	uint8_t cmd_wr[sizeof(struct pci_vtscsi_req_cmd_wr) + 96];
+	uint8_t cmd_rd[VTSCSI_MAX_IN_HEADER_LEN];
+	uint8_t cmd_wr[VTSCSI_MAX_OUT_HEADER_LEN];
 	uint8_t output;
 
 	reset_mocks();
@@ -363,8 +398,8 @@ ATF_TC_BODY(reset_discards_pending_requests, tc)
 	struct pci_vtscsi_request req;
 	struct pci_vtscsi_queue *q;
 	union ctl_io io;
-	uint8_t cmd_rd[sizeof(struct pci_vtscsi_req_cmd_rd) + 32];
-	uint8_t cmd_wr[sizeof(struct pci_vtscsi_req_cmd_wr) + 96];
+	uint8_t cmd_rd[VTSCSI_MAX_IN_HEADER_LEN];
+	uint8_t cmd_wr[VTSCSI_MAX_OUT_HEADER_LEN];
 
 	reset_mocks();
 	setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
@@ -391,9 +426,9 @@ ATF_TC_BODY(tmf_completes_pending_requests, tc)
 	struct pci_vtscsi_queue *q;
 	struct iovec output_iov;
 	union ctl_io io;
-	uint8_t cmd_rd[sizeof(struct pci_vtscsi_req_cmd_rd) + 32];
-	uint8_t cmd_wr[sizeof(struct pci_vtscsi_req_cmd_wr) + 96];
-	uint8_t output[sizeof(cmd_wr)];
+	uint8_t cmd_rd[VTSCSI_MAX_IN_HEADER_LEN];
+	uint8_t cmd_wr[VTSCSI_MAX_OUT_HEADER_LEN];
+	uint8_t output[sizeof(struct pci_vtscsi_req_cmd_wr) + 96];
 	const uint8_t lun[8] = { 0x01, 0, 0, 1 };
 
 	reset_mocks();
@@ -430,6 +465,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, control_handler_validation);
 	ATF_TP_ADD_TC(tp, control_queue_validation);
 	ATF_TP_ADD_TC(tp, tmf_response_mapping);
+	ATF_TP_ADD_TC(tp, config_writes);
 	ATF_TP_ADD_TC(tp, request_queue_validation);
 	ATF_TP_ADD_TC(tp, request_payload_validation);
 	ATF_TP_ADD_TC(tp, reset_discards_pending_requests);

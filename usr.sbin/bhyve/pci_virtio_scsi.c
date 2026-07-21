@@ -78,6 +78,11 @@
 #define	VTSCSI_OUT_HEADER_LEN(_sc) 	\
 	(sizeof(struct pci_vtscsi_req_cmd_wr) + _sc->vss_config.sense_size)
 
+#define	VTSCSI_MAX_IN_HEADER_LEN		\
+	(sizeof(struct pci_vtscsi_req_cmd_rd) + CTL_MAX_CDBLEN)
+#define	VTSCSI_MAX_OUT_HEADER_LEN	\
+	(sizeof(struct pci_vtscsi_req_cmd_wr) + SSD_FULL_SIZE)
+
 #define	VIRTIO_SCSI_MAX_CHANNEL	0
 #define	VIRTIO_SCSI_MAX_TARGET	0
 #define	VIRTIO_SCSI_MAX_LUN	16383
@@ -424,10 +429,29 @@ pci_vtscsi_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 }
 
 static int
-pci_vtscsi_cfgwrite(void *vsc __unused, int offset __unused, int size __unused,
-    uint32_t val __unused)
+pci_vtscsi_cfgwrite(void *vsc, int offset, int size, uint32_t val)
 {
-	return (0);
+	struct pci_vtscsi_softc *sc = vsc;
+
+	/* Device-specific setup is complete once the driver becomes active. */
+	if (size != sizeof(uint32_t) ||
+	    (sc->vss_vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
+		return (1);
+
+	switch (offset) {
+	case offsetof(struct pci_vtscsi_config, sense_size):
+		if (val > SSD_FULL_SIZE)
+			return (1);
+		sc->vss_config.sense_size = val;
+		return (0);
+	case offsetof(struct pci_vtscsi_config, cdb_size):
+		if (val == 0 || val > CTL_MAX_CDBLEN)
+			return (1);
+		sc->vss_config.cdb_size = val;
+		return (0);
+	default:
+		return (1);
+	}
 }
 
 /*
@@ -773,10 +797,10 @@ pci_vtscsi_alloc_request(struct pci_vtscsi_softc *sc)
 	if (req == NULL)
 		goto fail;
 
-	req->vsr_cmd_rd = calloc(1, VTSCSI_IN_HEADER_LEN(sc));
+	req->vsr_cmd_rd = calloc(1, VTSCSI_MAX_IN_HEADER_LEN);
 	if (req->vsr_cmd_rd == NULL)
 		goto fail;
-	req->vsr_cmd_wr = calloc(1, VTSCSI_OUT_HEADER_LEN(sc));
+	req->vsr_cmd_wr = calloc(1, VTSCSI_MAX_OUT_HEADER_LEN);
 	if (req->vsr_cmd_wr == NULL)
 		goto fail;
 
@@ -968,8 +992,8 @@ pci_vtscsi_recycle_request(struct pci_vtscsi_queue *q,
 	void *ctl_io = req->vsr_ctl_io;
 
 	ctl_scsi_zero_io(req->vsr_ctl_io);
-	memset(cmd_rd, 0, VTSCSI_IN_HEADER_LEN(q->vsq_sc));
-	memset(cmd_wr, 0, VTSCSI_OUT_HEADER_LEN(q->vsq_sc));
+	memset(cmd_rd, 0, VTSCSI_MAX_IN_HEADER_LEN);
+	memset(cmd_wr, 0, VTSCSI_MAX_OUT_HEADER_LEN);
 	memset(req, 0, sizeof(*req));
 	req->vsr_cmd_rd = cmd_rd;
 	req->vsr_cmd_wr = cmd_wr;
