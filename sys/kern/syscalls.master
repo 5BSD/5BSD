@@ -3471,11 +3471,7 @@
 626	AUE_NULL	UNIMPL
 627	AUE_NULL	UNIMPL
 628	AUE_NULL	UNIMPL
-629	AUE_CAP_AMBIENT_LIMIT	STD|CAPENABLED {
-		int cap_ambient_limit(
-		    int fd
-		);
-	}
+629	AUE_NULL	UNIMPL
 630	AUE_PDSELF	STD|CAPREQUIRED {
 		int pdself(
 		    _Out_ int *fdp,

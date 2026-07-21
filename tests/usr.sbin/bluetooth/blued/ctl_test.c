@@ -3432,11 +3432,8 @@ ATF_TC_BODY(test_ipc_typed_control_runtime_settings, tc)
 
 /*
  * Read one framed reply into pl and, when the daemon's fd handout follows,
- * receive the SCM_RIGHTS descriptor via recvmsg.  cap_ambient_limit() can fail
- * outside capability mode, in which case blued_ctl_send_fd sends an error frame
- * instead of the fd; both outcomes are reported so the caller can assert the
- * branch that actually occurred.  Returns the received fd, or -1 if no fd was
- * delivered (error path).
+ * receive the SCM_RIGHTS descriptor via recvmsg.  Returns the received fd, or
+ * -1 if no fd was delivered.
  */
 static int
 broker_recv_fd(int fd)

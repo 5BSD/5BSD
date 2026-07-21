@@ -668,7 +668,6 @@
 #define	AUE_CAP_XFER_LIMIT	43274	/* FreeBSD-specific. */
 #define	AUE_CAP_CLOEXEC_LIMIT	43275	/* FreeBSD-specific. */
 #define	AUE_CAP_CLOFORK_LIMIT	43276	/* FreeBSD-specific. */
-#define	AUE_CAP_AMBIENT_LIMIT	43300	/* 5BSD */
 #define	AUE_PDSELF		43301	/* 5BSD */
 #define	AUE_PDCMP		43302	/* 5BSD */
 #define	AUE_PDINCAPMODE		43304	/* 5BSD */

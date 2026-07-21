@@ -3719,8 +3719,7 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				    fdep[i]->fde_clofork_state;
 				fdesc->fd_ofiles[*fdp].fde_flags |=
 				    fdep[i]->fde_flags &
-				    (UF_CAP_SUFFICIENT |
-				    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
+				    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 				unp_externalize_fp(fp);
 				SDT_PROBE6(fd, , , scm__rights__recv, fp,
 				    *fdp, td->td_proc->p_pid, td->td_ucred,
@@ -3992,8 +3991,7 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
 				    fde->fde_clofork_state;
 				fdep[i]->fde_flags =
 				    fde->fde_flags &
-				    (UF_CAP_SUFFICIENT |
-				    UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
+				    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 				unp_internalize_fp(fdep[i]->fde_file);
 				SDT_PROBE6(fd, , , scm__rights__send,
 				    fdep[i]->fde_file, *fdp,

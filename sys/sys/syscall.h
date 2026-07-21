@@ -544,7 +544,6 @@
 #define	SYS_cap_xfer_limit	603
 #define	SYS_cap_cloexec_limit	604
 #define	SYS_cap_clofork_limit	605
-#define	SYS_cap_ambient_limit	629
 #define	SYS_pdself	630
 #define	SYS_pdcmp	631
 #define	SYS_pdincapmode	633

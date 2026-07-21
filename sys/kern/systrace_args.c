@@ -3579,13 +3579,6 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 2;
 		break;
 	}
-	/* cap_ambient_limit */
-	case 629: {
-		struct cap_ambient_limit_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		*n_args = 1;
-		break;
-	}
 	/* pdself */
 	case 630: {
 		struct pdself_args *p = params;
@@ -9629,16 +9622,6 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
-	/* cap_ambient_limit */
-	case 629:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		default:
-			break;
-		};
-		break;
 	/* pdself */
 	case 630:
 		switch (ndx) {
@@ -11738,11 +11721,6 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* cap_clofork_limit */
 	case 605:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* cap_ambient_limit */
-	case 629:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

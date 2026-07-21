@@ -217,24 +217,14 @@ kern_bindat(struct thread *td, int dirfd, int fd, struct sockaddr *sa)
 	if (error != 0)
 		return (error);
 	so = fp->f_data;
-	bool cap_sufficient = false;
-#ifdef CAPABILITY_MODE
-	{
-		struct filedesc *fdp = td->td_proc->p_fd;
-		cap_sufficient = IN_CAPABILITY_MODE(td) &&
-		    (fdp->fd_ofiles[fd].fde_flags & UF_CAP_SUFFICIENT);
-	}
-#endif
 #ifdef KTRACE
 	if (KTRPOINT(td, KTR_STRUCT))
 		ktrsockaddr(sa);
 #endif
 #ifdef MAC
-	if (!cap_sufficient) {
-		error = mac_socket_check_bind(td->td_ucred, so, sa);
-		if (error != 0)
-			goto done;
-	}
+	error = mac_socket_check_bind(td->td_ucred, so, sa);
+	if (error != 0)
+		goto done;
 #endif
 	if (dirfd == AT_FDCWD)
 		error = sobind(so, sa, td);
@@ -279,18 +269,8 @@ kern_listen(struct thread *td, int s, int backlog)
 	error = getsock(td, s, &cap_listen_rights, &fp);
 	if (error == 0) {
 		so = fp->f_data;
-		bool cap_sufficient = false;
-#ifdef CAPABILITY_MODE
-		{
-			struct filedesc *fdp = td->td_proc->p_fd;
-			cap_sufficient = IN_CAPABILITY_MODE(td) &&
-			    (fdp->fd_ofiles[s].fde_flags &
-			    UF_CAP_SUFFICIENT);
-		}
-#endif
 #ifdef MAC
-		if (!cap_sufficient)
-			error = mac_socket_check_listen(td->td_ucred, so);
+		error = mac_socket_check_listen(td->td_ucred, so);
 		if (error == 0)
 #endif
 			error = solisten(so, backlog, td);
@@ -370,20 +350,10 @@ kern_accept4(struct thread *td, int s, struct sockaddr *sa, int flags,
 		error = EINVAL;
 		goto done;
 	}
-	bool cap_sufficient = false;
-#ifdef CAPABILITY_MODE
-	{
-		struct filedesc *fdp = td->td_proc->p_fd;
-		cap_sufficient = IN_CAPABILITY_MODE(td) &&
-		    (fdp->fd_ofiles[s].fde_flags & UF_CAP_SUFFICIENT);
-	}
-#endif
 #ifdef MAC
-	if (!cap_sufficient) {
-		error = mac_socket_check_accept(td->td_ucred, head);
-		if (error != 0)
-			goto done;
-	}
+	error = mac_socket_check_accept(td->td_ucred, head);
+	if (error != 0)
+		goto done;
 #endif
 	error = falloc_caps(td, &nfp, &fd,
 	    ((flags & SOCK_CLOEXEC) != 0 ? O_CLOEXEC : 0) |
@@ -526,24 +496,14 @@ kern_connectat(struct thread *td, int dirfd, int fd, struct sockaddr *sa)
 		error = EALREADY;
 		goto done1;
 	}
-	bool cap_sufficient = false;
-#ifdef CAPABILITY_MODE
-	{
-		struct filedesc *fdp = td->td_proc->p_fd;
-		cap_sufficient = IN_CAPABILITY_MODE(td) &&
-		    (fdp->fd_ofiles[fd].fde_flags & UF_CAP_SUFFICIENT);
-	}
-#endif
 #ifdef KTRACE
 	if (KTRPOINT(td, KTR_STRUCT))
 		ktrsockaddr(sa);
 #endif
 #ifdef MAC
-	if (!cap_sufficient) {
-		error = mac_socket_check_connect(td->td_ucred, so, sa);
-		if (error != 0)
-			goto bad;
-	}
+	error = mac_socket_check_connect(td->td_ucred, so, sa);
+	if (error != 0)
+		goto bad;
 #endif
 	error = soconnectat(dirfd, so, sa, td);
 	if (error != 0)
@@ -787,34 +747,23 @@ kern_sendit(struct thread *td, int s, struct msghdr *mp, int flags,
 		return (error);
 	}
 	so = (struct socket *)fp->f_data;
-
-	bool cap_sufficient = false;
-#ifdef CAPABILITY_MODE
-	{
-		struct filedesc *fdp = td->td_proc->p_fd;
-		cap_sufficient = IN_CAPABILITY_MODE(td) &&
-		    (fdp->fd_ofiles[s].fde_flags & UF_CAP_SUFFICIENT);
-	}
-#endif
 #ifdef KTRACE
 	if (mp->msg_name != NULL && KTRPOINT(td, KTR_STRUCT))
 		ktrsockaddr(mp->msg_name);
 #endif
 #ifdef MAC
-	if (!cap_sufficient) {
-		if (mp->msg_name != NULL) {
-			error = mac_socket_check_connect(td->td_ucred, so,
-			    mp->msg_name);
-			if (error != 0) {
-				m_freem(control);
-				goto bad;
-			}
-		}
-		error = mac_socket_check_send(td->td_ucred, so);
+	if (mp->msg_name != NULL) {
+		error = mac_socket_check_connect(td->td_ucred, so,
+		    mp->msg_name);
 		if (error != 0) {
 			m_freem(control);
 			goto bad;
 		}
+	}
+	error = mac_socket_check_send(td->td_ucred, so);
+	if (error != 0) {
+		m_freem(control);
+		goto bad;
 	}
 #endif
 
@@ -960,22 +909,11 @@ kern_recvit(struct thread *td, int s, struct msghdr *mp, enum uio_seg fromseg,
 	if (error != 0)
 		return (error);
 	so = fp->f_data;
-
-	bool cap_sufficient = false;
-#ifdef CAPABILITY_MODE
-	{
-		struct filedesc *fdp = td->td_proc->p_fd;
-		cap_sufficient = IN_CAPABILITY_MODE(td) &&
-		    (fdp->fd_ofiles[s].fde_flags & UF_CAP_SUFFICIENT);
-	}
-#endif
 #ifdef MAC
-	if (!cap_sufficient) {
-		error = mac_socket_check_receive(td->td_ucred, so);
-		if (error != 0) {
-			fdrop(fp, td);
-			return (error);
-		}
+	error = mac_socket_check_receive(td->td_ucred, so);
+	if (error != 0) {
+		fdrop(fp, td);
+		return (error);
 	}
 #endif
 
@@ -1321,19 +1259,9 @@ kern_setsockopt(struct thread *td, int s, int level, int name,
 	if (error == 0) {
 		sopt.sopt_rights = &fcaps.fc_rights;
 		so = fp->f_data;
-		bool cap_sufficient = false;
-#ifdef CAPABILITY_MODE
-		{
-			struct filedesc *fdp = td->td_proc->p_fd;
-			cap_sufficient = IN_CAPABILITY_MODE(td) &&
-			    (fdp->fd_ofiles[s].fde_flags &
-			    UF_CAP_SUFFICIENT);
-		}
-#endif
 #ifdef MAC
-		if (!cap_sufficient)
-			error = mac_socket_check_setsockopt(td->td_ucred,
-			    so, level, name);
+		error = mac_socket_check_setsockopt(td->td_ucred, so, level,
+		    name);
 		if (error == 0)
 #endif
 		error = sosetopt(so, &sopt);

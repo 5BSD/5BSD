@@ -285,19 +285,12 @@ int
 kern_readv(struct thread *td, int fd, struct uio *auio)
 {
 	struct file *fp;
-	uint8_t fde_flags;
-	int error, fof_flags;
+	int error;
 
-	error = fget_read_fde_flags(td, fd, &cap_read_rights, &fp,
-	    &fde_flags);
+	error = fget_read(td, fd, &cap_read_rights, &fp);
 	if (error)
 		return (error);
-	fof_flags = 0;
-#ifdef CAPABILITY_MODE
-	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_CAP_SUFFICIENT))
-		fof_flags |= FOF_CAP_SUFFICIENT;
-#endif
-	error = dofileread(td, fd, fp, auio, (off_t)-1, fof_flags);
+	error = dofileread(td, fd, fp, auio, (off_t)-1, 0);
 	fdrop(fp, td);
 	return (error);
 }
@@ -331,25 +324,18 @@ int
 kern_preadv(struct thread *td, int fd, struct uio *auio, off_t offset)
 {
 	struct file *fp;
-	uint8_t fde_flags;
-	int error, fof_flags;
+	int error;
 
-	error = fget_read_fde_flags(td, fd, &cap_pread_rights, &fp,
-	    &fde_flags);
+	error = fget_read(td, fd, &cap_pread_rights, &fp);
 	if (error)
 		return (error);
-	fof_flags = FOF_OFFSET;
-#ifdef CAPABILITY_MODE
-	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_CAP_SUFFICIENT))
-		fof_flags |= FOF_CAP_SUFFICIENT;
-#endif
 	if (!(fp->f_ops->fo_flags & DFLAG_SEEKABLE))
 		error = ESPIPE;
 	else if (offset < 0 &&
 	    (fp->f_vnode == NULL || fp->f_vnode->v_type != VCHR))
 		error = EXTERROR(EINVAL, "neg offset");
 	else
-		error = dofileread(td, fd, fp, auio, offset, fof_flags);
+		error = dofileread(td, fd, fp, auio, offset, FOF_OFFSET);
 	fdrop(fp, td);
 	return (error);
 }
@@ -501,19 +487,12 @@ int
 kern_writev(struct thread *td, int fd, struct uio *auio)
 {
 	struct file *fp;
-	uint8_t fde_flags;
-	int error, fof_flags;
+	int error;
 
-	error = fget_write_fde_flags(td, fd, &cap_write_rights, &fp,
-	    &fde_flags);
+	error = fget_write(td, fd, &cap_write_rights, &fp);
 	if (error)
 		return (error);
-	fof_flags = 0;
-#ifdef CAPABILITY_MODE
-	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_CAP_SUFFICIENT))
-		fof_flags |= FOF_CAP_SUFFICIENT;
-#endif
-	error = dofilewrite(td, fd, fp, auio, (off_t)-1, fof_flags);
+	error = dofilewrite(td, fd, fp, auio, (off_t)-1, 0);
 	fdrop(fp, td);
 	return (error);
 }
@@ -547,25 +526,18 @@ int
 kern_pwritev(struct thread *td, int fd, struct uio *auio, off_t offset)
 {
 	struct file *fp;
-	uint8_t fde_flags;
-	int error, fof_flags;
+	int error;
 
-	error = fget_write_fde_flags(td, fd, &cap_pwrite_rights, &fp,
-	    &fde_flags);
+	error = fget_write(td, fd, &cap_pwrite_rights, &fp);
 	if (error)
 		return (error);
-	fof_flags = FOF_OFFSET;
-#ifdef CAPABILITY_MODE
-	if (IN_CAPABILITY_MODE(td) && (fde_flags & UF_CAP_SUFFICIENT))
-		fof_flags |= FOF_CAP_SUFFICIENT;
-#endif
 	if (!(fp->f_ops->fo_flags & DFLAG_SEEKABLE))
 		error = ESPIPE;
 	else if (offset < 0 &&
 	    (fp->f_vnode == NULL || fp->f_vnode->v_type != VCHR))
 		error = EXTERROR(EINVAL, "neg offset");
 	else
-		error = dofilewrite(td, fd, fp, auio, offset, fof_flags);
+		error = dofilewrite(td, fd, fp, auio, offset, FOF_OFFSET);
 	fdrop(fp, td);
 	return (error);
 }
@@ -761,7 +733,6 @@ kern_ioctl(struct thread *td, int fd, u_long com, caddr_t data)
 	struct file *fp;
 	struct filedesc *fdp;
 	int error, f_flag, tmp, locked;
-	bool cap_sufficient = false;
 
 	AUDIT_ARG_FD(fd);
 	AUDIT_ARG_CMD(com);
@@ -813,11 +784,6 @@ kern_ioctl(struct thread *td, int fd, u_long com, caddr_t data)
 		error = EBADF;
 		goto out;
 	}
-#ifdef CAPABILITY_MODE
-	cap_sufficient = IN_CAPABILITY_MODE(td) &&
-	    (fdp->fd_ofiles[fd].fde_flags & UF_CAP_SUFFICIENT);
-#endif
-
 	f_flag = 0;
 	switch (com) {
 	case FIONCLEX:
@@ -829,11 +795,9 @@ kern_ioctl(struct thread *td, int fd, u_long com, caddr_t data)
 	case FIONBIO:
 	case FIOASYNC:
 #ifdef MAC
-		if (!cap_sufficient) {
-			error = mac_file_check_ioctl(td->td_ucred, fp, fd, com);
-			if (error != 0)
-				break;
-		}
+		error = mac_file_check_ioctl(td->td_ucred, fp, fd, com);
+		if (error != 0)
+			break;
 #endif
 		f_flag = com == FIONBIO ? FNONBLOCK : FASYNC;
 		tmp = *(int *)data;
@@ -852,11 +816,9 @@ kern_ioctl(struct thread *td, int fd, u_long com, caddr_t data)
 		break;
 	default:
 #ifdef MAC
-		if (!cap_sufficient) {
-			error = mac_file_check_ioctl(td->td_ucred, fp, fd, com);
-			if (error != 0)
-				break;
-		}
+		error = mac_file_check_ioctl(td->td_ucred, fp, fd, com);
+		if (error != 0)
+			break;
 #endif
 		error = fo_ioctl(fp, com, data, td->td_ucred, td);
 		break;

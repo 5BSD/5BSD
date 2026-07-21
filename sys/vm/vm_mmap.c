@@ -435,19 +435,10 @@ kern_mmap(struct thread *td, const struct mmap_req *mrp)
 				goto done;
 		}
 #ifdef MAC
-		{
-			bool cap_sufficient = false;
-#ifdef CAPABILITY_MODE
-			cap_sufficient = IN_CAPABILITY_MODE(td) &&
-			    (fde_flags & UF_CAP_SUFFICIENT);
-#endif
-			if (!cap_sufficient) {
-				error = mac_file_check_mmap(td->td_ucred, fp,
-				    fd, prot, flags, addr, size);
-				if (error != 0)
-					goto done;
-			}
-		}
+			error = mac_file_check_mmap(td->td_ucred, fp, fd, prot,
+			    flags, addr, size);
+			if (error != 0)
+				goto done;
 #endif
 		if (fp->f_ops == &shm_ops && shm_largepage(fp->f_data))
 			addr = orig_addr;

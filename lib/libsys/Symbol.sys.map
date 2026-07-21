@@ -391,7 +391,6 @@ FBSD_1.8 {
 };
 
 FBSD_1.9 {
-	cap_ambient_limit;
 	cap_cloexec_limit;
 	cap_clofork_limit;
 	cap_lookup_capmode;

@@ -448,7 +448,6 @@ MIASM =  \
 	cap_xfer_limit.o \
 	cap_cloexec_limit.o \
 	cap_clofork_limit.o \
-	cap_ambient_limit.o \
 	pdself.o \
 	pdcmp.o \
 	pdincapmode.o \

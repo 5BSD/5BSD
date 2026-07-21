@@ -867,31 +867,6 @@ sys_cap_clofork_limit(struct thread *td, struct cap_clofork_limit_args *uap)
 }
 
 int
-sys_cap_ambient_limit(struct thread *td, struct cap_ambient_limit_args *uap)
-{
-	struct filedesc *fdp = td->td_proc->p_fd;
-	struct filedescent *fde;
-	int fd = uap->fd;
-
-	AUDIT_ARG_FD(fd);
-	FILEDESC_XLOCK(fdp);
-	fde = fdeget_noref(fdp, fd);
-	if (fde == NULL) {
-		FILEDESC_XUNLOCK(fdp);
-		return (EBADF);
-	}
-#ifdef CAPABILITIES
-	seqc_write_begin(&fde->fde_seqc);
-#endif
-	fde->fde_flags |= UF_CAP_SUFFICIENT;
-#ifdef CAPABILITIES
-	seqc_write_end(&fde->fde_seqc);
-#endif
-	FILEDESC_XUNLOCK(fdp);
-	return (0);
-}
-
-int
 sys_cap_mmap_capmode(struct thread *td, struct cap_mmap_capmode_args *uap)
 {
 	struct filedesc *fdp = td->td_proc->p_fd;
@@ -1020,13 +995,6 @@ sys_cap_cloexec_limit(struct thread *td, struct cap_cloexec_limit_args *uap)
 
 int
 sys_cap_clofork_limit(struct thread *td, struct cap_clofork_limit_args *uap)
-{
-
-	return (ENOSYS);
-}
-
-int
-sys_cap_ambient_limit(struct thread *td, struct cap_ambient_limit_args *uap)
 {
 
 	return (ENOSYS);

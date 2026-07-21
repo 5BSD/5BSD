@@ -478,7 +478,6 @@ typedef int (__sys_renameat2_t)(int, const char *, int, const char *, int);
 typedef int (__sys_cap_xfer_limit_t)(int, int);
 typedef int (__sys_cap_cloexec_limit_t)(int, int);
 typedef int (__sys_cap_clofork_limit_t)(int, int);
-typedef int (__sys_cap_ambient_limit_t)(int);
 typedef int (__sys_pdself_t)(int *, int);
 typedef int (__sys_pdcmp_t)(int, int, int *);
 typedef int (__sys_pdincapmode_t)(int);
@@ -897,7 +896,6 @@ int __sys_renameat2(int oldfd, const char * old, int newfd, const char * new, in
 int __sys_cap_xfer_limit(int fd, int state);
 int __sys_cap_cloexec_limit(int fd, int state);
 int __sys_cap_clofork_limit(int fd, int state);
-int __sys_cap_ambient_limit(int fd);
 int __sys_pdself(int * fdp, int flags);
 int __sys_pdcmp(int fd1, int fd2, int * result);
 int __sys_pdincapmode(int fd);

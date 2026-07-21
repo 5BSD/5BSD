@@ -155,8 +155,6 @@ static const struct syscall_decode decoded_syscalls[] = {
 		    { Int, 3 } } },
 	{ .name = "break", .ret_type = 1, .nargs = 1,
 	  .args = { { Ptr, 0 } } },
-	{ .name = "cap_ambient_limit", .ret_type = 1, .nargs = 1,
-	  .args = { { Int, 0 } } },
 	{ .name = "cap_cloexec_limit", .ret_type = 1, .nargs = 2,
 	  .args = { { Int, 0 }, { Int, 1 } } },
 	{ .name = "cap_clofork_limit", .ret_type = 1, .nargs = 2,

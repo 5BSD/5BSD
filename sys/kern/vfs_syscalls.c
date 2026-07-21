@@ -387,21 +387,10 @@ kern_fstatfs(struct thread *td, int fd, struct statfs *buf)
 	fdrop(fp, td);
 #ifdef MAC
 	if (mp != NULL) {
-		bool cap_sufficient = false;
-#ifdef CAPABILITY_MODE
-		{
-			struct filedesc *fdp = td->td_proc->p_fd;
-			cap_sufficient = IN_CAPABILITY_MODE(td) &&
-			    (fdp->fd_ofiles[fd].fde_flags &
-			    UF_CAP_SUFFICIENT);
-		}
-#endif
-		if (!cap_sufficient) {
-			error = mac_mount_check_stat(td->td_ucred, mp);
-			if (error != 0) {
-				vfs_rel(mp);
-				return (error);
-			}
+		error = mac_mount_check_stat(td->td_ucred, mp);
+		if (error != 0) {
+			vfs_rel(mp);
+			return (error);
 		}
 	}
 #endif
@@ -3020,27 +3009,13 @@ sys_fchflags(struct thread *td, struct fchflags_args *uap)
 		if (error != 0)
 			goto out;
 	}
-	{
-		bool cap_sufficient = false;
-#ifdef CAPABILITY_MODE
-		{
-			struct filedesc *fdp = td->td_proc->p_fd;
-			cap_sufficient = IN_CAPABILITY_MODE(td) &&
-			    (fdp->fd_ofiles[uap->fd].fde_flags &
-			    UF_CAP_SUFFICIENT);
-		}
-#endif
 #ifdef MAC
-		if (!cap_sufficient) {
-			vn_lock(vp, LK_SHARED | LK_RETRY);
-			error = mac_vnode_check_setflags(td->td_ucred, vp,
-			    uap->flags);
-			VOP_UNLOCK(vp);
-			if (error != 0)
-				goto out;
-		}
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = mac_vnode_check_setflags(td->td_ucred, vp, uap->flags);
+	VOP_UNLOCK(vp);
+	if (error != 0)
+		goto out;
 #endif
-	}
 	error = setfflags(td, vp, uap->flags);
 out:
 	fdrop(fp, td);
@@ -3178,30 +3153,19 @@ sys_fchmod(struct thread *td, struct fchmod_args *uap)
 	error = fget(td, uap->fd, &cap_fchmod_rights, &fp);
 	if (error != 0)
 		return (error);
-	{
-		bool cap_sufficient = false;
-#ifdef CAPABILITY_MODE
-		{
-			struct filedesc *fdp = td->td_proc->p_fd;
-			cap_sufficient = IN_CAPABILITY_MODE(td) &&
-			    (fdp->fd_ofiles[uap->fd].fde_flags &
-			    UF_CAP_SUFFICIENT);
-		}
-#endif
 #ifdef MAC
-		if (!cap_sufficient) {
-			struct vnode *vp = fp->f_vnode;
-			if (vp != NULL) {
-				vn_lock(vp, LK_SHARED | LK_RETRY);
-				error = mac_vnode_check_setmode(td->td_ucred,
-				    vp, uap->mode & ALLPERMS);
-				VOP_UNLOCK(vp);
-				if (error != 0)
-					goto out;
-			}
+	{
+		struct vnode *vp = fp->f_vnode;
+		if (vp != NULL) {
+			vn_lock(vp, LK_SHARED | LK_RETRY);
+			error = mac_vnode_check_setmode(td->td_ucred, vp,
+			    uap->mode & ALLPERMS);
+			VOP_UNLOCK(vp);
+			if (error != 0)
+				goto out;
 		}
-#endif
 	}
+#endif
 	error = fo_chmod(fp, uap->mode, td->td_ucred, td);
 #ifdef MAC
 out:
@@ -3348,30 +3312,19 @@ sys_fchown(struct thread *td, struct fchown_args *uap)
 	error = fget(td, uap->fd, &cap_fchown_rights, &fp);
 	if (error != 0)
 		return (error);
-	{
-		bool cap_sufficient = false;
-#ifdef CAPABILITY_MODE
-		{
-			struct filedesc *fdp = td->td_proc->p_fd;
-			cap_sufficient = IN_CAPABILITY_MODE(td) &&
-			    (fdp->fd_ofiles[uap->fd].fde_flags &
-			    UF_CAP_SUFFICIENT);
-		}
-#endif
 #ifdef MAC
-		if (!cap_sufficient) {
-			struct vnode *vp = fp->f_vnode;
-			if (vp != NULL) {
-				vn_lock(vp, LK_SHARED | LK_RETRY);
-				error = mac_vnode_check_setowner(td->td_ucred,
-				    vp, uap->uid, uap->gid);
-				VOP_UNLOCK(vp);
-				if (error != 0)
-					goto out;
-			}
+	{
+		struct vnode *vp = fp->f_vnode;
+		if (vp != NULL) {
+			vn_lock(vp, LK_SHARED | LK_RETRY);
+			error = mac_vnode_check_setowner(td->td_ucred, vp,
+			    uap->uid, uap->gid);
+			VOP_UNLOCK(vp);
+			if (error != 0)
+				goto out;
 		}
-#endif
 	}
+#endif
 	error = fo_chown(fp, uap->uid, uap->gid, td->td_ucred, td);
 #ifdef MAC
 out:
@@ -3652,27 +3605,13 @@ kern_futimes(struct thread *td, int fd, const struct timeval *tptr,
 		VOP_UNLOCK(vp);
 	}
 #endif
-	{
-		bool cap_sufficient = false;
-#ifdef CAPABILITY_MODE
-		{
-			struct filedesc *fdp = td->td_proc->p_fd;
-			cap_sufficient = IN_CAPABILITY_MODE(td) &&
-			    (fdp->fd_ofiles[fd].fde_flags &
-			    UF_CAP_SUFFICIENT);
-		}
-#endif
 #ifdef MAC
-		if (!cap_sufficient) {
-			vn_lock(vp, LK_SHARED | LK_RETRY);
-			error = mac_vnode_check_setutimes(td->td_ucred, vp,
-			    ts[0], ts[1]);
-			VOP_UNLOCK(vp);
-			if (error != 0)
-				goto out;
-		}
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = mac_vnode_check_setutimes(td->td_ucred, vp, ts[0], ts[1]);
+	VOP_UNLOCK(vp);
+	if (error != 0)
+		goto out;
 #endif
-	}
 	error = setutimes(td, vp, ts, 2, tptr == NULL);
 #ifdef MAC
 out:
@@ -3714,27 +3653,13 @@ kern_futimens(struct thread *td, int fd, const struct timespec *tptr,
 		VOP_UNLOCK(vp);
 	}
 #endif
-	{
-		bool cap_sufficient = false;
-#ifdef CAPABILITY_MODE
-		{
-			struct filedesc *fdp = td->td_proc->p_fd;
-			cap_sufficient = IN_CAPABILITY_MODE(td) &&
-			    (fdp->fd_ofiles[fd].fde_flags &
-			    UF_CAP_SUFFICIENT);
-		}
-#endif
 #ifdef MAC
-		if (!cap_sufficient) {
-			vn_lock(vp, LK_SHARED | LK_RETRY);
-			error = mac_vnode_check_setutimes(td->td_ucred, vp,
-			    ts[0], ts[1]);
-			VOP_UNLOCK(vp);
-			if (error != 0)
-				goto out;
-		}
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = mac_vnode_check_setutimes(td->td_ucred, vp, ts[0], ts[1]);
+	VOP_UNLOCK(vp);
+	if (error != 0)
+		goto out;
 #endif
-	}
 	error = setutimes(td, vp, ts, 2, flags & UTIMENS_NULL);
 #ifdef MAC
 out:

@@ -1944,9 +1944,6 @@ struct cap_clofork_limit_args {
 	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
 	char state_l_[PADL_(int)]; int state; char state_r_[PADR_(int)];
 };
-struct cap_ambient_limit_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-};
 struct pdself_args {
 	char fdp_l_[PADL_(int *)]; int * fdp; char fdp_r_[PADR_(int *)];
 	char flags_l_[PADL_(int)]; int flags; char flags_r_[PADR_(int)];
@@ -2378,7 +2375,6 @@ int	sys_renameat2(struct thread *, struct renameat2_args *);
 int	sys_cap_xfer_limit(struct thread *, struct cap_xfer_limit_args *);
 int	sys_cap_cloexec_limit(struct thread *, struct cap_cloexec_limit_args *);
 int	sys_cap_clofork_limit(struct thread *, struct cap_clofork_limit_args *);
-int	sys_cap_ambient_limit(struct thread *, struct cap_ambient_limit_args *);
 int	sys_pdself(struct thread *, struct pdself_args *);
 int	sys_pdcmp(struct thread *, struct pdcmp_args *);
 int	sys_pdincapmode(struct thread *, struct pdincapmode_args *);
@@ -3389,7 +3385,6 @@ int	freebsd14_setgroups(struct thread *, struct freebsd14_setgroups_args *);
 #define	SYS_AUE_cap_xfer_limit	AUE_CAP_XFER_LIMIT
 #define	SYS_AUE_cap_cloexec_limit	AUE_CAP_CLOEXEC_LIMIT
 #define	SYS_AUE_cap_clofork_limit	AUE_CAP_CLOFORK_LIMIT
-#define	SYS_AUE_cap_ambient_limit	AUE_CAP_AMBIENT_LIMIT
 #define	SYS_AUE_pdself	AUE_PDSELF
 #define	SYS_AUE_pdcmp	AUE_PDCMP
 #define	SYS_AUE_pdincapmode	AUE_PDINCAPMODE

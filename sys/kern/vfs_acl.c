@@ -39,8 +39,6 @@
  * Type-specific routines go into subr_acl_<type>.c.
  */
 
-#include "opt_capsicum.h"
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/sysproto.h>
@@ -74,11 +72,9 @@ static int	kern___acl_get_path(struct thread *td, const char *path,
 static int	kern___acl_set_path(struct thread *td, const char *path,
 		    acl_type_t type, const struct acl *aclp, int follow);
 static int	vacl_set_acl(struct thread *td, struct vnode *vp,
-		    acl_type_t type, const struct acl *aclp,
-		    bool skip_mac);
+		    acl_type_t type, const struct acl *aclp);
 static int	vacl_get_acl(struct thread *td, struct vnode *vp,
-		    acl_type_t type, struct acl *aclp,
-		    bool skip_mac);
+		    acl_type_t type, struct acl *aclp);
 static int	vacl_aclcheck(struct thread *td, struct vnode *vp,
 		    acl_type_t type, const struct acl *aclp);
 
@@ -226,7 +222,7 @@ acl_type_unold(int type)
  */
 static int
 vacl_set_acl(struct thread *td, struct vnode *vp, acl_type_t type,
-    const struct acl *aclp, bool skip_mac)
+    const struct acl *aclp)
 {
 	struct acl *inkernelacl;
 	struct mount *mp;
@@ -243,12 +239,9 @@ vacl_set_acl(struct thread *td, struct vnode *vp, acl_type_t type,
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 	AUDIT_ARG_VNODE1(vp);
 #ifdef MAC
-	if (!skip_mac) {
-		error = mac_vnode_check_setacl(td->td_ucred, vp, type,
-		    inkernelacl);
-		if (error != 0)
-			goto out_unlock;
-	}
+	error = mac_vnode_check_setacl(td->td_ucred, vp, type, inkernelacl);
+	if (error != 0)
+		goto out_unlock;
 #endif
 	error = VOP_SETACL(vp, acl_type_unold(type), inkernelacl,
 	    td->td_ucred, td);
@@ -269,7 +262,7 @@ out:
  */
 static int
 vacl_get_acl(struct thread *td, struct vnode *vp, acl_type_t type,
-    struct acl *aclp, bool skip_mac)
+    struct acl *aclp)
 {
 	struct acl *inkernelacl;
 	int error;
@@ -279,11 +272,9 @@ vacl_get_acl(struct thread *td, struct vnode *vp, acl_type_t type,
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 	AUDIT_ARG_VNODE1(vp);
 #ifdef MAC
-	if (!skip_mac) {
-		error = mac_vnode_check_getacl(td->td_ucred, vp, type);
-		if (error != 0)
-			goto out;
-	}
+	error = mac_vnode_check_getacl(td->td_ucred, vp, type);
+	if (error != 0)
+		goto out;
 #endif
 	error = VOP_GETACL(vp, acl_type_unold(type), inkernelacl,
 	    td->td_ucred, td);
@@ -302,8 +293,7 @@ out:
  * Given a vnode, delete its ACL.
  */
 static int
-vacl_delete(struct thread *td, struct vnode *vp, acl_type_t type,
-    bool skip_mac)
+vacl_delete(struct thread *td, struct vnode *vp, acl_type_t type)
 {
 	struct mount *mp;
 	int error;
@@ -315,11 +305,9 @@ vacl_delete(struct thread *td, struct vnode *vp, acl_type_t type,
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 	AUDIT_ARG_VNODE1(vp);
 #ifdef MAC
-	if (!skip_mac) {
-		error = mac_vnode_check_deleteacl(td->td_ucred, vp, type);
-		if (error != 0)
-			goto out;
-	}
+	error = mac_vnode_check_deleteacl(td->td_ucred, vp, type);
+	if (error != 0)
+		goto out;
 #endif
 	error = VOP_SETACL(vp, acl_type_unold(type), 0, td->td_ucred, td);
 #ifdef MAC
@@ -390,7 +378,7 @@ kern___acl_get_path(struct thread *td, const char *path, acl_type_t type,
 	NDINIT(&nd, LOOKUP, follow | AUDITVNODE1, UIO_USERSPACE, path);
 	error = namei(&nd);
 	if (error == 0) {
-		error = vacl_get_acl(td, nd.ni_vp, type, aclp, false);
+		error = vacl_get_acl(td, nd.ni_vp, type, aclp);
 		vrele(nd.ni_vp);
 		NDFREE_PNBUF(&nd);
 	}
@@ -429,7 +417,7 @@ kern___acl_set_path(struct thread *td, const char *path,
 	NDINIT(&nd, LOOKUP, follow | AUDITVNODE1, UIO_USERSPACE, path);
 	error = namei(&nd);
 	if (error == 0) {
-		error = vacl_set_acl(td, nd.ni_vp, type, aclp, false);
+		error = vacl_set_acl(td, nd.ni_vp, type, aclp);
 		vrele(nd.ni_vp);
 		NDFREE_PNBUF(&nd);
 	}
@@ -444,20 +432,13 @@ sys___acl_get_fd(struct thread *td, struct __acl_get_fd_args *uap)
 {
 	struct file *fp;
 	cap_rights_t rights;
-	uint8_t fde_flags;
 	int error;
-	bool cap_sufficient = false;
 
 	AUDIT_ARG_FD(uap->filedes);
 	error = getvnode_path(td, uap->filedes,
-	    cap_rights_init_one(&rights, CAP_ACL_GET), &fde_flags, &fp);
+	    cap_rights_init_one(&rights, CAP_ACL_GET), NULL, &fp);
 	if (error == 0) {
-#ifdef CAPABILITY_MODE
-		cap_sufficient = IN_CAPABILITY_MODE(td) &&
-		    (fde_flags & UF_CAP_SUFFICIENT);
-#endif
-		error = vacl_get_acl(td, fp->f_vnode, uap->type, uap->aclp,
-		    cap_sufficient);
+		error = vacl_get_acl(td, fp->f_vnode, uap->type, uap->aclp);
 		fdrop(fp, td);
 	}
 	return (error);
@@ -471,24 +452,17 @@ sys___acl_set_fd(struct thread *td, struct __acl_set_fd_args *uap)
 {
 	struct file *fp;
 	cap_rights_t rights;
-	uint8_t fde_flags;
 	int error;
-	bool cap_sufficient = false;
 
 	AUDIT_ARG_FD(uap->filedes);
 	error = getvnode_path(td, uap->filedes,
-	    cap_rights_init_one(&rights, CAP_ACL_SET), &fde_flags, &fp);
+	    cap_rights_init_one(&rights, CAP_ACL_SET), NULL, &fp);
 	if (error == 0) {
 		if (fp->f_ops == &path_fileops) {
 			fdrop(fp, td);
 			return (EBADF);
 		}
-#ifdef CAPABILITY_MODE
-		cap_sufficient = IN_CAPABILITY_MODE(td) &&
-		    (fde_flags & UF_CAP_SUFFICIENT);
-#endif
-		error = vacl_set_acl(td, fp->f_vnode, uap->type, uap->aclp,
-		    cap_sufficient);
+		error = vacl_set_acl(td, fp->f_vnode, uap->type, uap->aclp);
 		fdrop(fp, td);
 	}
 	return (error);
@@ -524,7 +498,7 @@ kern___acl_delete_path(struct thread *td, const char *path,
 	NDINIT(&nd, LOOKUP, follow, UIO_USERSPACE, path);
 	error = namei(&nd);
 	if (error == 0) {
-		error = vacl_delete(td, nd.ni_vp, type, false);
+		error = vacl_delete(td, nd.ni_vp, type);
 		vrele(nd.ni_vp);
 		NDFREE_PNBUF(&nd);
 	}
@@ -539,24 +513,17 @@ sys___acl_delete_fd(struct thread *td, struct __acl_delete_fd_args *uap)
 {
 	struct file *fp;
 	cap_rights_t rights;
-	uint8_t fde_flags;
 	int error;
-	bool cap_sufficient = false;
 
 	AUDIT_ARG_FD(uap->filedes);
 	error = getvnode_path(td, uap->filedes,
-	    cap_rights_init_one(&rights, CAP_ACL_DELETE), &fde_flags, &fp);
+	    cap_rights_init_one(&rights, CAP_ACL_DELETE), NULL, &fp);
 	if (error == 0) {
 		if (fp->f_ops == &path_fileops) {
 			fdrop(fp, td);
 			return (EBADF);
 		}
-#ifdef CAPABILITY_MODE
-		cap_sufficient = IN_CAPABILITY_MODE(td) &&
-		    (fde_flags & UF_CAP_SUFFICIENT);
-#endif
-		error = vacl_delete(td, fp->f_vnode, uap->type,
-		    cap_sufficient);
+		error = vacl_delete(td, fp->f_vnode, uap->type);
 		fdrop(fp, td);
 	}
 	return (error);

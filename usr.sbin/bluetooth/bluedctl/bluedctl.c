@@ -165,7 +165,6 @@ ctl_harden_fd(int fd)
 	(void)cap_xfer_limit(fd, CAP_XFER_NONE);
 	(void)cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED);
 	(void)cap_clofork_limit(fd, CAP_CLOFORK_LOCKED);
-	(void)cap_ambient_limit(fd);
 }
 
 /*

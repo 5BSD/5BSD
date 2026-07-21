@@ -831,8 +831,6 @@ FBSDprivate_1.0 {
 	__sys_cap_cloexec_limit;
 	_cap_clofork_limit;
 	__sys_cap_clofork_limit;
-	_cap_ambient_limit;
-	__sys_cap_ambient_limit;
 	_pdself;
 	__sys_pdself;
 	_pdcmp;

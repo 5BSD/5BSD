@@ -307,7 +307,6 @@ struct user {
 #define	KF_FLAG_EXEC		0x00004000
 #define	KF_FLAG_MMAP_CAPMODE	0x00010000
 #define	KF_FLAG_LOOKUP_CAPMODE	0x00020000
-#define	KF_FLAG_CAP_SUFFICIENT	0x00040000
 
 /*
  * Old format.  Has variable hidden padding due to alignment.

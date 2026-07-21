@@ -371,7 +371,6 @@ ctl_send_fd_with_rights(struct blued_ctl_client *client, int fd_to_send,
 	(void)cap_xfer_limit(dup_fd, CAP_XFER_ONCE);
 	(void)cap_cloexec_limit(dup_fd, CAP_CLOEXEC_LOCKED);
 	(void)cap_clofork_limit(dup_fd, CAP_CLOFORK_LOCKED);
-	(void)cap_ambient_limit(dup_fd);
 
 	if (ctl_queue_fd(client, dup_fd) < 0) {
 		close(dup_fd);
@@ -5053,7 +5052,6 @@ blued_ctl_accept(void)
 		(void)cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED);
 		(void)cap_clofork_limit(fd, CAP_CLOFORK_LOCKED);
 		(void)cap_xfer_limit(fd, CAP_XFER_ONCE);
-		(void)cap_ambient_limit(fd);
 	}
 
 	/* Enforce maximum control client count to prevent fd exhaustion */

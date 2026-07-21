@@ -617,7 +617,6 @@
 43274:AUE_CAP_XFER_LIMIT:cap_xfer_limit(2):fm
 43275:AUE_CAP_CLOEXEC_LIMIT:cap_cloexec_limit(2):fm
 43276:AUE_CAP_CLOFORK_LIMIT:cap_clofork_limit(2):fm
-43300:AUE_CAP_AMBIENT_LIMIT:cap_ambient_limit(2):fm
 43301:AUE_PDSELF:pdself(2):pc
 43302:AUE_PDCMP:pdcmp(2):pc
 43304:AUE_PDINCAPMODE:pdincapmode(2):ot

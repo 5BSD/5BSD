@@ -586,12 +586,6 @@ int cap_xfer_limit(int fd, int state);
 int cap_cloexec_limit(int fd, int state);
 int cap_clofork_limit(int fd, int state);
 /*
- * Marks a descriptor as capability-pure.  When the caller is in
- * capability mode, fileops-level MAC checks are skipped for read/write
- * operations on this descriptor.  Monotonic: once set, cannot be cleared.
- */
-int cap_ambient_limit(int fd);
-/*
  * Requires capability mode before the descriptor may be mmap(2)'d.
  * Monotonic: once set, cannot be cleared.
  */

@@ -73,19 +73,6 @@ The only system call that requires capability mode to invoke is
 .Xr pdself 2 ,
 which returns a process descriptor for the calling process.
 .Pp
-Instead of separate capability-mode system call variants,
-.Nm
-uses the per-descriptor
-.Dv UF_CAP_SUFFICIENT
-flag to bypass ambient authority checks.
-When a capability-mode process operates on a descriptor that has
-.Dv UF_CAP_SUFFICIENT
-set, MAC policy, DAC credential re-validation, and jail confinement
-checks are skipped \(em the descriptor's capability rights are treated
-as sufficient authority.
-The flag may be set directly on individual descriptors via
-.Xr cap_ambient_limit 2 .
-.Pp
 For instance,
 .Xr sysctl 2
 can be used to query process-local information such as address space layout,

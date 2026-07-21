@@ -1237,8 +1237,7 @@ vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 	 * Try to read from page cache.  VIRF_DOOMED check is racy but
 	 * allows us to avoid unneeded work outright.
 	 */
-	if (vn_io_pgcache_read_enable &&
-	    (!mac_vnode_check_read_enabled() || (flags & FOF_CAP_SUFFICIENT)) &&
+	if (vn_io_pgcache_read_enable && !mac_vnode_check_read_enabled() &&
 	    (vn_irflag_read(vp) & (VIRF_DOOMED | VIRF_PGREAD)) == VIRF_PGREAD) {
 		error = VOP_READ_PGCACHE(vp, uio, ioflag, fp->f_cred);
 		if (error == 0) {
@@ -1266,8 +1265,7 @@ vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 
 	error = 0;
 #ifdef MAC
-	if (!(flags & FOF_CAP_SUFFICIENT))
-		error = mac_vnode_check_read(active_cred, fp->f_cred, vp);
+	error = mac_vnode_check_read(active_cred, fp->f_cred, vp);
 	if (error == 0)
 #endif
 		error = VOP_READ(vp, uio, ioflag, fp->f_cred);
@@ -1338,8 +1336,7 @@ vn_write(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 
 	error = 0;
 #ifdef MAC
-	if (!(flags & FOF_CAP_SUFFICIENT))
-		error = mac_vnode_check_write(active_cred, fp->f_cred, vp);
+	error = mac_vnode_check_write(active_cred, fp->f_cred, vp);
 	if (error == 0)
 #endif
 		error = VOP_WRITE(vp, uio, ioflag, fp->f_cred);

@@ -173,7 +173,7 @@ out:
  */
 static int
 extattr_set_vp(struct vnode *vp, int attrnamespace, const char *attrname,
-    void *data, size_t nbytes, struct thread *td, bool skip_mac)
+    void *data, size_t nbytes, struct thread *td)
 {
 	struct mount *mp;
 	struct uio auio;
@@ -201,12 +201,10 @@ extattr_set_vp(struct vnode *vp, int attrnamespace, const char *attrname,
 	cnt = nbytes;
 
 #ifdef MAC
-	if (!skip_mac) {
-		error = mac_vnode_check_setextattr(td->td_ucred, vp,
-		    attrnamespace, attrname);
-		if (error)
-			goto done;
-	}
+	error = mac_vnode_check_setextattr(td->td_ucred, vp, attrnamespace,
+	    attrname);
+	if (error)
+		goto done;
 #endif
 
 	error = VOP_SETEXTATTR(vp, attrnamespace, attrname, &auio,
@@ -252,25 +250,19 @@ kern_extattr_set_fd(struct thread *td, int fd, int attrnamespace,
 {
 	struct file *fp;
 	cap_rights_t rights;
-	uint8_t fde_flags;
 	int error;
-	bool cap_sufficient = false;
 
 	AUDIT_ARG_FD(fd);
 	AUDIT_ARG_VALUE(attrnamespace);
 	AUDIT_ARG_TEXT(attrname);
 
 	error = getvnode_path(td, fd,
-	    cap_rights_init_one(&rights, CAP_EXTATTR_SET), &fde_flags, &fp);
+	    cap_rights_init_one(&rights, CAP_EXTATTR_SET), NULL, &fp);
 	if (error)
 		return (error);
 
-#ifdef CAPABILITY_MODE
-	cap_sufficient = IN_CAPABILITY_MODE(td) &&
-	    (fde_flags & UF_CAP_SUFFICIENT);
-#endif
 	error = extattr_set_vp(fp->f_vnode, attrnamespace,
-	    attrname, data, nbytes, td, cap_sufficient);
+	    attrname, data, nbytes, td);
 	fdrop(fp, td);
 
 	return (error);
@@ -342,7 +334,7 @@ kern_extattr_set_path(struct thread *td, const char *path, int attrnamespace,
 	NDFREE_PNBUF(&nd);
 
 	error = extattr_set_vp(nd.ni_vp, attrnamespace, attrname, data,
-	    nbytes, td, false);
+	    nbytes, td);
 
 	vrele(nd.ni_vp);
 	return (error);
@@ -360,7 +352,7 @@ kern_extattr_set_path(struct thread *td, const char *path, int attrnamespace,
  */
 static int
 extattr_get_vp(struct vnode *vp, int attrnamespace, const char *attrname,
-    void *data, size_t nbytes, struct thread *td, bool skip_mac)
+    void *data, size_t nbytes, struct thread *td)
 {
 	struct uio auio, *auiop;
 	struct iovec aiov;
@@ -397,12 +389,10 @@ extattr_get_vp(struct vnode *vp, int attrnamespace, const char *attrname,
 		sizep = &size;
 
 #ifdef MAC
-	if (!skip_mac) {
-		error = mac_vnode_check_getextattr(td->td_ucred, vp,
-		    attrnamespace, attrname);
-		if (error)
-			goto done;
-	}
+	error = mac_vnode_check_getextattr(td->td_ucred, vp, attrnamespace,
+	    attrname);
+	if (error)
+		goto done;
 #endif
 
 	error = VOP_GETEXTATTR(vp, attrnamespace, attrname, auiop, sizep,
@@ -448,25 +438,19 @@ kern_extattr_get_fd(struct thread *td, int fd, int attrnamespace,
 {
 	struct file *fp;
 	cap_rights_t rights;
-	uint8_t fde_flags;
 	int error;
-	bool cap_sufficient = false;
 
 	AUDIT_ARG_FD(fd);
 	AUDIT_ARG_VALUE(attrnamespace);
 	AUDIT_ARG_TEXT(attrname);
 
 	error = getvnode_path(td, fd,
-	    cap_rights_init_one(&rights, CAP_EXTATTR_GET), &fde_flags, &fp);
+	    cap_rights_init_one(&rights, CAP_EXTATTR_GET), NULL, &fp);
 	if (error)
 		return (error);
 
-#ifdef CAPABILITY_MODE
-	cap_sufficient = IN_CAPABILITY_MODE(td) &&
-	    (fde_flags & UF_CAP_SUFFICIENT);
-#endif
 	error = extattr_get_vp(fp->f_vnode, attrnamespace,
-	    attrname, data, nbytes, td, cap_sufficient);
+	    attrname, data, nbytes, td);
 
 	fdrop(fp, td);
 	return (error);
@@ -536,7 +520,7 @@ kern_extattr_get_path(struct thread *td, const char *path, int attrnamespace,
 	NDFREE_PNBUF(&nd);
 
 	error = extattr_get_vp(nd.ni_vp, attrnamespace, attrname, data,
-	    nbytes, td, false);
+	    nbytes, td);
 
 	vrele(nd.ni_vp);
 	return (error);
@@ -554,7 +538,7 @@ kern_extattr_get_path(struct thread *td, const char *path, int attrnamespace,
  */
 static int
 extattr_delete_vp(struct vnode *vp, int attrnamespace, const char *attrname,
-    struct thread *td, bool skip_mac)
+    struct thread *td)
 {
 	struct mount *mp;
 	int error;
@@ -565,12 +549,10 @@ extattr_delete_vp(struct vnode *vp, int attrnamespace, const char *attrname,
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 
 #ifdef MAC
-	if (!skip_mac) {
-		error = mac_vnode_check_deleteextattr(td->td_ucred, vp,
-		    attrnamespace, attrname);
-		if (error)
-			goto done;
-	}
+	error = mac_vnode_check_deleteextattr(td->td_ucred, vp, attrnamespace,
+	    attrname);
+	if (error)
+		goto done;
 #endif
 
 	error = VOP_DELETEEXTATTR(vp, attrnamespace, attrname, td->td_ucred,
@@ -615,25 +597,19 @@ kern_extattr_delete_fd(struct thread *td, int fd, int attrnamespace,
 {
 	struct file *fp;
 	cap_rights_t rights;
-	uint8_t fde_flags;
 	int error;
-	bool cap_sufficient = false;
 
 	AUDIT_ARG_FD(fd);
 	AUDIT_ARG_VALUE(attrnamespace);
 	AUDIT_ARG_TEXT(attrname);
 
 	error = getvnode_path(td, fd,
-	    cap_rights_init_one(&rights, CAP_EXTATTR_DELETE), &fde_flags, &fp);
+	    cap_rights_init_one(&rights, CAP_EXTATTR_DELETE), NULL, &fp);
 	if (error)
 		return (error);
 
-#ifdef CAPABILITY_MODE
-	cap_sufficient = IN_CAPABILITY_MODE(td) &&
-	    (fde_flags & UF_CAP_SUFFICIENT);
-#endif
 	error = extattr_delete_vp(fp->f_vnode, attrnamespace,
-	    attrname, td, cap_sufficient);
+	    attrname, td);
 	fdrop(fp, td);
 	return (error);
 }
@@ -698,8 +674,7 @@ kern_extattr_delete_path(struct thread *td, const char *path, int attrnamespace,
 		return(error);
 	NDFREE_PNBUF(&nd);
 
-	error = extattr_delete_vp(nd.ni_vp, attrnamespace, attrname, td,
-	    false);
+	error = extattr_delete_vp(nd.ni_vp, attrnamespace, attrname, td);
 	vrele(nd.ni_vp);
 	return(error);
 }
@@ -716,7 +691,7 @@ kern_extattr_delete_path(struct thread *td, const char *path, int attrnamespace,
  */
 static int
 extattr_list_vp(struct vnode *vp, int attrnamespace, struct uio *auiop,
-    struct thread *td, bool skip_mac)
+    struct thread *td)
 {
 	size_t size, *sizep;
 	ssize_t cnt;
@@ -734,13 +709,10 @@ extattr_list_vp(struct vnode *vp, int attrnamespace, struct uio *auiop,
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 
 #ifdef MAC
-	if (!skip_mac) {
-		error = mac_vnode_check_listextattr(td->td_ucred, vp,
-		    attrnamespace);
-		if (error) {
-			VOP_UNLOCK(vp);
-			return (error);
-		}
+	error = mac_vnode_check_listextattr(td->td_ucred, vp, attrnamespace);
+	if (error) {
+		VOP_UNLOCK(vp);
+		return (error);
 	}
 #endif
 
@@ -794,23 +766,16 @@ kern_extattr_list_fd(struct thread *td, int fd, int attrnamespace,
 {
 	struct file *fp;
 	cap_rights_t rights;
-	uint8_t fde_flags;
 	int error;
-	bool cap_sufficient = false;
 
 	AUDIT_ARG_FD(fd);
 	AUDIT_ARG_VALUE(attrnamespace);
 	error = getvnode_path(td, fd,
-	    cap_rights_init_one(&rights, CAP_EXTATTR_LIST), &fde_flags, &fp);
+	    cap_rights_init_one(&rights, CAP_EXTATTR_LIST), NULL, &fp);
 	if (error)
 		return (error);
 
-#ifdef CAPABILITY_MODE
-	cap_sufficient = IN_CAPABILITY_MODE(td) &&
-	    (fde_flags & UF_CAP_SUFFICIENT);
-#endif
-	error = extattr_list_vp(fp->f_vnode, attrnamespace, auiop, td,
-	    cap_sufficient);
+	error = extattr_list_vp(fp->f_vnode, attrnamespace, auiop, td);
 
 	fdrop(fp, td);
 	return (error);
@@ -887,9 +852,8 @@ kern_extattr_list_path(struct thread *td, const char *path, int attrnamespace,
 		return (error);
 	NDFREE_PNBUF(&nd);
 
-	error = extattr_list_vp(nd.ni_vp, attrnamespace, auiop, td, false);
+	error = extattr_list_vp(nd.ni_vp, attrnamespace, auiop, td);
 
 	vrele(nd.ni_vp);
 	return (error);
 }
-
