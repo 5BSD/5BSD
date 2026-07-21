@@ -284,6 +284,10 @@ static size_t pci_vtscsi_control_handle(struct pci_vtscsi_softc *, void *,
 static void pci_vtscsi_tmf_handle(struct pci_vtscsi_softc *,
     struct pci_vtscsi_ctrl_tmf *);
 static uint8_t pci_vtscsi_tmf_response(uint8_t);
+static bool pci_vtscsi_tmf_affects_commands(uint32_t);
+static void pci_vtscsi_tmf_pause(struct pci_vtscsi_softc *);
+static void pci_vtscsi_tmf_complete(struct pci_vtscsi_softc *, uint32_t,
+    const uint8_t *, uint64_t);
 static void pci_vtscsi_an_handle(struct pci_vtscsi_softc *,
     struct pci_vtscsi_ctrl_an *);
 
@@ -554,6 +558,10 @@ pci_vtscsi_tmf_handle(struct pci_vtscsi_softc *sc,
     struct pci_vtscsi_ctrl_tmf *tmf)
 {
 	union ctl_io *io;
+	uint32_t subtype;
+	uint8_t response;
+	uint64_t id;
+	bool paused;
 	int err;
 
 	if (pci_vtscsi_check_lun(tmf->lun) == false) {
@@ -576,15 +584,17 @@ pci_vtscsi_tmf_handle(struct pci_vtscsi_softc *sc,
 	}
 
 	ctl_scsi_zero_io(io);
+	subtype = le32toh(tmf->subtype);
+	id = le64toh(tmf->id);
 
 	io->io_hdr.io_type = CTL_IO_TASK;
 	io->io_hdr.nexus.initid = sc->vss_iid;
 	io->io_hdr.nexus.targ_lun = pci_vtscsi_get_lun(tmf->lun);
 	io->taskio.tag_type = CTL_TAG_SIMPLE;
-	io->taskio.tag_num = le64toh(tmf->id);
+	io->taskio.tag_num = id;
 	io->io_hdr.flags |= CTL_FLAG_USER_TAG;
 
-	switch (le32toh(tmf->subtype)) {
+	switch (subtype) {
 	case VIRTIO_SCSI_T_TMF_ABORT_TASK:
 		io->taskio.task_action = CTL_TASK_ABORT_TASK;
 		break;
@@ -621,6 +631,9 @@ pci_vtscsi_tmf_handle(struct pci_vtscsi_softc *sc,
 		ctl_scsi_free_io(io);
 		return;
 	}
+	paused = pci_vtscsi_tmf_affects_commands(subtype);
+	if (paused)
+		pci_vtscsi_tmf_pause(sc);
 
 	if (pci_vtscsi_debug) {
 		struct sbuf *sb = sbuf_new_auto();
@@ -633,9 +646,17 @@ pci_vtscsi_tmf_handle(struct pci_vtscsi_softc *sc,
 	err = ioctl(sc->vss_ctl_fd, CTL_IO, io);
 	if (err != 0) {
 		WPRINTF("CTL_IO: err=%d (%s)", errno, strerror(errno));
-		tmf->response = VIRTIO_SCSI_S_FAILURE;
+		response = VIRTIO_SCSI_S_FAILURE;
 	} else
-		tmf->response = pci_vtscsi_tmf_response(io->taskio.task_status);
+		response = pci_vtscsi_tmf_response(io->taskio.task_status);
+	if (paused) {
+		if (response == VIRTIO_SCSI_S_FUNCTION_COMPLETE ||
+		    response == VIRTIO_SCSI_S_FUNCTION_SUCCEEDED)
+			pci_vtscsi_tmf_complete(sc, subtype, tmf->lun, id);
+		for (int i = 0; i < VTSCSI_REQUESTQ; i++)
+			pci_vtscsi_resume_queue(&sc->vss_queues[i]);
+	}
+	tmf->response = response;
 	ctl_scsi_free_io(io);
 }
 
@@ -655,6 +676,85 @@ pci_vtscsi_tmf_response(uint8_t status)
 		return (VIRTIO_SCSI_S_BAD_TARGET);
 	default:
 		return (VIRTIO_SCSI_S_FAILURE);
+	}
+}
+
+static bool
+pci_vtscsi_tmf_affects_commands(uint32_t subtype)
+{
+
+	return (subtype == VIRTIO_SCSI_T_TMF_ABORT_TASK ||
+	    subtype == VIRTIO_SCSI_T_TMF_ABORT_TASK_SET ||
+	    subtype == VIRTIO_SCSI_T_TMF_CLEAR_TASK_SET ||
+	    subtype == VIRTIO_SCSI_T_TMF_I_T_NEXUS_RESET ||
+	    subtype == VIRTIO_SCSI_T_TMF_LOGICAL_UNIT_RESET);
+}
+
+static void
+pci_vtscsi_tmf_pause(struct pci_vtscsi_softc *sc)
+{
+	struct pci_vtscsi_queue *q;
+
+	for (int i = 0; i < VTSCSI_REQUESTQ; i++) {
+		q = &sc->vss_queues[i];
+		if (q->vsq_sc == NULL)
+			continue;
+		pthread_mutex_lock(&q->vsq_rmtx);
+		q->vsq_quiescing = true;
+		pthread_mutex_unlock(&q->vsq_rmtx);
+	}
+}
+
+static bool
+pci_vtscsi_tmf_matches(struct pci_vtscsi_request *req, uint32_t subtype,
+    const uint8_t *lun, uint64_t id)
+{
+
+	if (subtype == VIRTIO_SCSI_T_TMF_I_T_NEXUS_RESET)
+		return (true);
+	if (memcmp(req->vsr_cmd_rd->lun, lun, sizeof(req->vsr_cmd_rd->lun)) != 0)
+		return (false);
+	if (subtype == VIRTIO_SCSI_T_TMF_ABORT_TASK)
+		return (le64toh(req->vsr_cmd_rd->id) == id);
+	return (true);
+}
+
+/*
+ * CTL has completed the active commands affected by the TMF.  Wait until the
+ * worker threads have published those completions, then complete commands
+ * which bhyve had consumed from the available ring but had not submitted to
+ * CTL.  The controlq response is published only after this function returns.
+ */
+static void
+pci_vtscsi_tmf_complete(struct pci_vtscsi_softc *sc, uint32_t subtype,
+    const uint8_t *lun, uint64_t id)
+{
+	struct pci_vtscsi_req_queue keep;
+	struct pci_vtscsi_request *req;
+	struct pci_vtscsi_queue *q;
+	uint8_t response;
+
+	response = subtype == VIRTIO_SCSI_T_TMF_I_T_NEXUS_RESET ||
+	    subtype == VIRTIO_SCSI_T_TMF_LOGICAL_UNIT_RESET ?
+	    VIRTIO_SCSI_S_RESET : VIRTIO_SCSI_S_ABORTED;
+	for (int i = 0; i < VTSCSI_REQUESTQ; i++) {
+		q = &sc->vss_queues[i];
+		if (q->vsq_sc == NULL)
+			continue;
+		STAILQ_INIT(&keep);
+		pthread_mutex_lock(&q->vsq_rmtx);
+		while (q->vsq_active != 0)
+			pthread_cond_wait(&q->vsq_cv, &q->vsq_rmtx);
+		while ((req = pci_vtscsi_get_request(&q->vsq_requests)) != NULL) {
+			if (!pci_vtscsi_tmf_matches(req, subtype, lun, id)) {
+				pci_vtscsi_put_request(&keep, req);
+				continue;
+			}
+			req->vsr_cmd_wr->response = response;
+			pci_vtscsi_return_request(q, req, 0);
+		}
+		STAILQ_CONCAT(&q->vsq_requests, &keep);
+		pthread_mutex_unlock(&q->vsq_rmtx);
 	}
 }
 

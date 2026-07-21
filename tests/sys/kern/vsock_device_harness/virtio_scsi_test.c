@@ -383,6 +383,48 @@ ATF_TC_BODY(reset_discards_pending_requests, tc)
 	teardown_queue(&sc);
 }
 
+ATF_TC_WITHOUT_HEAD(tmf_completes_pending_requests);
+ATF_TC_BODY(tmf_completes_pending_requests, tc)
+{
+	struct pci_vtscsi_softc sc;
+	struct pci_vtscsi_request req;
+	struct pci_vtscsi_queue *q;
+	struct iovec output_iov;
+	union ctl_io io;
+	uint8_t cmd_rd[sizeof(struct pci_vtscsi_req_cmd_rd) + 32];
+	uint8_t cmd_wr[sizeof(struct pci_vtscsi_req_cmd_wr) + 96];
+	uint8_t output[sizeof(cmd_wr)];
+	const uint8_t lun[8] = { 0x01, 0, 0, 1 };
+
+	reset_mocks();
+	setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
+	q = &sc.vss_queues[0];
+	ATF_REQUIRE(pci_vtscsi_get_request(&q->vsq_free_requests) == &req);
+	memcpy(cmd_rd + offsetof(struct pci_vtscsi_req_cmd_rd, lun), lun,
+	    sizeof(lun));
+	memcpy(cmd_rd + offsetof(struct pci_vtscsi_req_cmd_rd, id),
+	    &(uint64_t){ htole64(0x1234) }, sizeof(req.vsr_cmd_rd->id));
+	req.vsr_idx = 23;
+	output_iov = (struct iovec){
+		.iov_base = output,
+		.iov_len = sizeof(output),
+	};
+	req.vsr_iov_out = &output_iov;
+	req.vsr_niov_out = 1;
+	pci_vtscsi_put_request(&q->vsq_requests, &req);
+
+	pci_vtscsi_tmf_pause(&sc);
+	pci_vtscsi_tmf_complete(&sc, VIRTIO_SCSI_T_TMF_ABORT_TASK, lun,
+	    0x1234);
+	ATF_CHECK(g_rel_calls == 1 && g_rel_idx == 23 &&
+	    g_rel_len == sizeof(output));
+	ATF_CHECK(output[offsetof(struct pci_vtscsi_req_cmd_wr, response)] ==
+	    VIRTIO_SCSI_S_ABORTED);
+	ATF_CHECK(STAILQ_EMPTY(&q->vsq_requests));
+	pci_vtscsi_resume_queue(q);
+	teardown_queue(&sc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, control_handler_validation);
@@ -391,5 +433,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, request_queue_validation);
 	ATF_TP_ADD_TC(tp, request_payload_validation);
 	ATF_TP_ADD_TC(tp, reset_discards_pending_requests);
+	ATF_TP_ADD_TC(tp, tmf_completes_pending_requests);
 	return (atf_no_error());
 }
