@@ -23,6 +23,9 @@ endpoints disconnect within 30 seconds, and fresh connections pass afterward.
 Every live vsock preflight now also asserts guest-initiated reserved-CID
 behavior: CID 0 times out with ETIMEDOUT, while CID 2 on an unused host port
 is rejected with ECONNRESET.
+The modern and legacy Alpine matrices also pass explicit remote SEQPACKET
+graceful-close probes in both directions: each receiver observes the payload
+followed by EOF, and each initiating endpoint observes the peer's final EOF.
 
 **2026-07-09 (this session):** closed GAP 1, GAP 2, GAP 4, GAP 5. The only
 remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
@@ -253,7 +256,7 @@ Small, high-value additions to `vsock_test.c` (loopback, already in CI):
 | 6 | MSG_EOR/partial records | ✅ device + guest RX harnesses + e2e |
 | 7, 8 | dead host/guest port | ✅ e2e |
 | 9 | ≥256 concurrent, excess refused, slots freed | ✅ host and guest harnesses |
-| 10 | graceful close both directions | ⚠️ stream ✅, seqpacket-remote ❌ |
+| 10 | graceful close both directions | ✅ stream + remote SEQPACKET, both directions |
 | 11 | abrupt peer kill | ✅ e2e (one direction) |
 | 12 | guest reboot with conns open | ✅ e2e, stream + seqpacket old-endpoint teardown and fresh reconnect |
 | 13 | detach with blocked sender (≤1s wakeup) | ✅ direct transport harness, pthread-blocked full-ring sender |
@@ -275,9 +278,9 @@ G4, and VNET/reset fixes.
 
 **Phase D — ATF edges (GAP 5).** Completed.
 
-**Remaining targeted work:** finish the remote-wire halves of rows 5 and 10,
-and the reverse direction of row 11.  Interrupt-vs-detach scheduling and G3
-remain lower-priority structural/code-review items.
+**Remaining targeted work:** finish the remote-wire half of row 5 and the
+reverse direction of row 11.  Interrupt-vs-detach scheduling and G3 remain
+lower-priority structural/code-review items.
 
 **Lowest-priority (Tier 3, documented in REVIEW.md, likely leave alone):**
 auto-bind port exhaustion, EMFILE/fd exhaustion, pending-ring overflow,

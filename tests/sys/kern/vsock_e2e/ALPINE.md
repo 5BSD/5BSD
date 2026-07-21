@@ -5,7 +5,9 @@ The modern run verifies PCI device `1af4:1053`; the legacy control run verifies
 `1af4:1013`.  The data matrix then tests STREAM and SEQPACKET in both
 directions, including a 200 KiB record and bulk transfer.  Each live vsock
 preflight also connects from the guest to reserved CID 0 and to an unused port
-on host CID 2, requiring ETIMEDOUT and ECONNRESET respectively.
+on host CID 2, requiring ETIMEDOUT and ECONNRESET respectively.  The full data
+matrix explicitly half-closes remote SEQPACKET connections in each direction
+and requires the payload and EOF to reach both endpoints.
 
 The automated runner also loads Alpine's upstream `virtio_input` driver and
 connects bhyve to a disposable composite host `uinput` device.  Using its

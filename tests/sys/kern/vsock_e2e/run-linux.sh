@@ -200,6 +200,27 @@ ok=$?
 [ "$ok" -eq 0 ] || diag_capture seqpacket_echo_h2g "$rc" "$out"
 res seqpacket_echo_h2g "$ok"
 
+# Require a host write-half shutdown to reach the guest as EOF.  The guest
+# then closes its endpoint, which must return EOF to vsh-connect as well.
+close_token=E2E-H2G-SEQ-CLOSE
+gbg "close-l seq 7010 $close_token"
+if out=$(printf %s "$close_token" |
+    vshc "$DIR" 7010 -s); then
+	rc=0
+else
+	rc=$?
+fi
+sleep 1
+if o=$(gout); then guest_rc=0; else guest_rc=$?; fi
+printf '%s\n' "$o" | grep -q '^PASS graceful-close-listener type=seq$' &&
+    [ "$rc" -eq 0 ] && [ "$guest_rc" -eq 0 ] && [ -z "$out" ]
+ok=$?
+if [ "$ok" -ne 0 ]; then
+	diag_capture seqpacket_graceful_close_h2g "$rc" "$o"
+	echo "  guest status=$guest_rc host-bytes=$(printf %s "$out" | wc -c | tr -d ' ')" >&2
+fi
+res seqpacket_graceful_close_h2g "$ok"
+
 gbg "recv-l seq 7003"
 if head -c "$REC" /dev/zero | tr '\0' A |
     vshc "$DIR" 7003 -s -1 >/dev/null; then rc=0; else rc=$?; fi
@@ -269,6 +290,34 @@ if [ "$ok" -ne 0 ]; then
 	cat "$HOST_WORK/7006.listener.log" >&2 || true
 fi
 res seqpacket_echo_g2h "$ok"
+
+# The guest now initiates the write-half shutdown.  unix-pipe must drain the
+# record and observe EOF before closing, and the guest must observe that close
+# as EOF rather than timing out or being reset.
+close_token=E2E-G2H-SEQ-CLOSE
+rm -f "$DIR/7011"
+timeout 20 "$TOOLS/unix-pipe" -l -s -d "$DIR/7011" \
+    >"$HOST_WORK/7011.close.out" 2>"$HOST_WORK/7011.listener.log" &
+lpid=$!
+sleep 1
+if o=$($ACMD "python3 $GPY close seq 7011 $close_token" 15); then
+	guest_rc=0
+else
+	guest_rc=$?
+fi
+listener_rc=0; wait "$lpid" 2>/dev/null || listener_rc=$?
+if close_out=$(cat "$HOST_WORK/7011.close.out"); then host_read_rc=0; else host_read_rc=$?; fi
+[ "$guest_rc" -eq 0 ] && [ "$listener_rc" -eq 0 ] &&
+    [ "$host_read_rc" -eq 0 ] && [ "$close_out" = "$close_token" ] &&
+    [ "$o" = 'PASS graceful-close-client type=seq' ]
+ok=$?
+if [ "$ok" -ne 0 ]; then
+	diag_capture seqpacket_graceful_close_g2h "$guest_rc" "$o"
+	echo "  listener status=$listener_rc read-status=$host_read_rc" >&2
+	diag_capture seqpacket_graceful_close_g2h_payload "$host_read_rc" "$close_out"
+	cat "$HOST_WORK/7011.listener.log" >&2 || true
+fi
+res seqpacket_graceful_close_g2h "$ok"
 
 rm -f "$DIR/7007"; timeout 30 "$TOOLS/unix-pipe" -l -s -d "$DIR/7007" \
     > "$HOST_WORK/g2h.seq.out" 2>"$HOST_WORK/7007.listener.log" &
