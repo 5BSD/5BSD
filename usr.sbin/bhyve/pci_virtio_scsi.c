@@ -145,6 +145,8 @@ struct pci_vtscsi_queue {
 	struct pci_vtscsi_req_queue       vsq_free_requests;
 	struct pci_vtscsi_worker *        vsq_workers;
 	int                               vsq_nworkers;
+	unsigned int                      vsq_active;
+	bool                              vsq_quiescing;
 };
 
 struct pci_vtscsi_worker {
@@ -295,6 +297,8 @@ static bool pci_vtscsi_queue_request(struct pci_vtscsi_softc *,
     struct vqueue_info *);
 static void pci_vtscsi_recycle_request(struct pci_vtscsi_queue *,
     struct pci_vtscsi_request *);
+static void pci_vtscsi_quiesce_queue(struct pci_vtscsi_queue *);
+static void pci_vtscsi_resume_queue(struct pci_vtscsi_queue *);
 static void pci_vtscsi_return_request(struct pci_vtscsi_queue *,
     struct pci_vtscsi_request *, uint32_t);
 static uint32_t pci_vtscsi_request_handle(struct pci_vtscsi_softc *,
@@ -332,7 +336,8 @@ pci_vtscsi_proc(void *arg)
 
 		pthread_mutex_lock(&q->vsq_rmtx);
 
-		while (STAILQ_EMPTY(&q->vsq_requests) && !worker->vsw_exiting)
+		while ((STAILQ_EMPTY(&q->vsq_requests) || q->vsq_quiescing) &&
+		    !worker->vsw_exiting)
 			pthread_cond_wait(&q->vsq_cv, &q->vsq_rmtx);
 
 		if (worker->vsw_exiting) {
@@ -341,6 +346,8 @@ pci_vtscsi_proc(void *arg)
 		}
 
 		req = pci_vtscsi_get_request(&q->vsq_requests);
+		if (req != NULL)
+			q->vsq_active++;
 		pthread_mutex_unlock(&q->vsq_rmtx);
 		if (req == NULL)
 			continue;
@@ -352,6 +359,12 @@ pci_vtscsi_proc(void *arg)
 		iolen = pci_vtscsi_request_handle(sc, req);
 
 		pci_vtscsi_return_request(q, req, iolen);
+
+		pthread_mutex_lock(&q->vsq_rmtx);
+		q->vsq_active--;
+		if (q->vsq_active == 0)
+			pthread_cond_broadcast(&q->vsq_cv);
+		pthread_mutex_unlock(&q->vsq_rmtx);
 	}
 }
 
@@ -363,7 +376,11 @@ pci_vtscsi_reset(void *vsc)
 	sc = vsc;
 
 	DPRINTF("device reset requested");
+	for (int i = 0; i < VTSCSI_REQUESTQ; i++)
+		pci_vtscsi_quiesce_queue(&sc->vss_queues[i]);
 	vi_reset_dev(&sc->vss_vs);
+	for (int i = 0; i < VTSCSI_REQUESTQ; i++)
+		pci_vtscsi_resume_queue(&sc->vss_queues[i]);
 
 	/* initialize config structure */
 	sc->vss_config = (struct pci_vtscsi_config){
@@ -841,6 +858,44 @@ pci_vtscsi_recycle_request(struct pci_vtscsi_queue *q,
 	pthread_mutex_lock(&q->vsq_fmtx);
 	pci_vtscsi_put_request(&q->vsq_free_requests, req);
 	pthread_mutex_unlock(&q->vsq_fmtx);
+}
+
+/*
+ * A reset must not complete while a worker can still publish a used-ring
+ * entry.  Stop workers from taking more requests, wait for requests already
+ * submitted to CTL to complete, and discard requests which were consumed
+ * from the available ring but not yet submitted.  vi_reset_dev() subsequently
+ * forgets those old-ring descriptors.
+ */
+static void
+pci_vtscsi_quiesce_queue(struct pci_vtscsi_queue *q)
+{
+	struct pci_vtscsi_request *req;
+
+	/* The initial device reset runs before request queues are initialized. */
+	if (q->vsq_sc == NULL)
+		return;
+
+	pthread_mutex_lock(&q->vsq_rmtx);
+	q->vsq_quiescing = true;
+	while (q->vsq_active != 0)
+		pthread_cond_wait(&q->vsq_cv, &q->vsq_rmtx);
+	while ((req = pci_vtscsi_get_request(&q->vsq_requests)) != NULL)
+		pci_vtscsi_recycle_request(q, req);
+	pthread_mutex_unlock(&q->vsq_rmtx);
+}
+
+static void
+pci_vtscsi_resume_queue(struct pci_vtscsi_queue *q)
+{
+
+	if (q->vsq_sc == NULL)
+		return;
+
+	pthread_mutex_lock(&q->vsq_rmtx);
+	q->vsq_quiescing = false;
+	pthread_cond_broadcast(&q->vsq_cv);
+	pthread_mutex_unlock(&q->vsq_rmtx);
 }
 
 static void

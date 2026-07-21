@@ -149,8 +149,11 @@ setup_queue(struct pci_vtscsi_softc *sc, struct pci_vtscsi_request *req,
 	q = &sc->vss_queues[0];
 	q->vsq_sc = sc;
 	q->vsq_vq = &sc->vss_vq[2];
+	pthread_mutex_init(&q->vsq_rmtx, NULL);
 	pthread_mutex_init(&q->vsq_fmtx, NULL);
 	pthread_mutex_init(&q->vsq_qmtx, NULL);
+	pthread_cond_init(&q->vsq_cv, NULL);
+	STAILQ_INIT(&q->vsq_requests);
 	STAILQ_INIT(&q->vsq_free_requests);
 	req->vsr_cmd_rd = (struct pci_vtscsi_req_cmd_rd *)cmd_rd;
 	req->vsr_cmd_wr = (struct pci_vtscsi_req_cmd_wr *)cmd_wr;
@@ -163,8 +166,10 @@ teardown_queue(struct pci_vtscsi_softc *sc)
 {
 	struct pci_vtscsi_queue *q = &sc->vss_queues[0];
 
+	pthread_cond_destroy(&q->vsq_cv);
 	pthread_mutex_destroy(&q->vsq_qmtx);
 	pthread_mutex_destroy(&q->vsq_fmtx);
+	pthread_mutex_destroy(&q->vsq_rmtx);
 }
 
 ATF_TC_WITHOUT_HEAD(control_handler_validation);
@@ -333,11 +338,39 @@ ATF_TC_BODY(request_payload_validation, tc)
 	ATF_CHECK(response.response == VIRTIO_SCSI_S_FAILURE);
 }
 
+ATF_TC_WITHOUT_HEAD(reset_discards_pending_requests);
+ATF_TC_BODY(reset_discards_pending_requests, tc)
+{
+	struct pci_vtscsi_softc sc;
+	struct pci_vtscsi_request req;
+	struct pci_vtscsi_queue *q;
+	union ctl_io io;
+	uint8_t cmd_rd[sizeof(struct pci_vtscsi_req_cmd_rd) + 32];
+	uint8_t cmd_wr[sizeof(struct pci_vtscsi_req_cmd_wr) + 96];
+
+	reset_mocks();
+	setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
+	q = &sc.vss_queues[0];
+	ATF_REQUIRE(pci_vtscsi_get_request(&q->vsq_free_requests) == &req);
+	pci_vtscsi_put_request(&q->vsq_requests, &req);
+
+	pci_vtscsi_quiesce_queue(q);
+	ATF_CHECK(q->vsq_quiescing);
+	ATF_CHECK(STAILQ_EMPTY(&q->vsq_requests));
+	ATF_CHECK(pci_vtscsi_get_request(&q->vsq_free_requests) == &req);
+	ATF_CHECK(g_rel_calls == 0 && g_end_calls == 0);
+
+	pci_vtscsi_resume_queue(q);
+	ATF_CHECK(!q->vsq_quiescing);
+	teardown_queue(&sc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, control_handler_validation);
 	ATF_TP_ADD_TC(tp, control_queue_validation);
 	ATF_TP_ADD_TC(tp, request_queue_validation);
 	ATF_TP_ADD_TC(tp, request_payload_validation);
+	ATF_TP_ADD_TC(tp, reset_discards_pending_requests);
 	return (atf_no_error());
 }
