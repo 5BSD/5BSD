@@ -8,8 +8,8 @@ STATUS: D1, D2, D3 FIXED (commit be4d3921bc7, device harness 86 checks).
 G1, G3, G4, G5 FIXED (G1/G4/G5 in commit 65e6d29b5a8). The guest unit harness
 now covers both `uipc_vsock.c` and `virtio_vsock.c`, including a concurrent
 TX-ring-blocked send/detach wakeup and deterministic RX/TX interrupt-versus-
-detach schedules.  Remaining targeted scope is the portable remote record
-boundary definition.
+detach schedules.  The functional matrix is complete; remaining Tier-3 items
+require broad resource-exhaustion or allocation fault injection.
 
 ## Confirmed real bugs
 
@@ -116,7 +116,8 @@ reclaim, feature-negotiation permutations, CID_LOCAL wire isolation,
 SEQPACKET frag-limit RST, deferred-teardown callout, TRANSPORT_RESET, and
 guest->host MSG_EOR wire emission.
 
-**Device harness additions:** connection cap (257 REQUESTs), the whole
+**Device harness additions:** connection cap (257 REQUESTs), bounded pending-
+reply overflow/FIFO/credit retry, the whole
 control-socket path (VSOCK_CTL_CONNECT limits/idle-timeout/errnos/unknown-cmd),
 the 4 remaining malformed-TX drops, reaper timeouts (advance the clock).
 

@@ -669,6 +669,57 @@ ATF_TC_BODY(credit_update_full_ring_parked, tc)
 	free(sc);
 }
 
+ATF_TC_WITHOUT_HEAD(pending_reply_overflow_retries_credit);
+ATF_TC_BODY(pending_reply_overflow_retries_credit, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+	bool fifo_ok;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->tx_cnt = 2000;
+	c->fwd_cnt = VTVSOCK_CREDIT_UPDATE_THRESHOLD;
+	c->last_fwd_cnt = 0;
+	g_rx_descs = 0;
+
+	/* Fill the bounded out-of-ring reply storage with older packets. */
+	for (int i = 0; i < VTVSOCK_PEND_MAX; i++)
+		ATF_REQUIRE(vtvsock_send_ctrl(sc, c,
+		    VIRTIO_VSOCK_OP_CREDIT_REQUEST, 0) == 0);
+	ATF_CHECK(sc->vsc_pend_count == VTVSOCK_PEND_MAX);
+	ATF_CHECK(sc->vsc_pend_drops == 0);
+
+	/* This reply is dropped; its credit state must remain unreported. */
+	mkhdr(&h, VIRTIO_VSOCK_OP_CREDIT_REQUEST, STREAM, 3, VSOCK_CID_HOST,
+	    1234, 80, 0, 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(sc->vsc_pend_count == VTVSOCK_PEND_MAX);
+	ATF_CHECK(sc->vsc_pend_drops == 1);
+	ATF_CHECK(c->last_fwd_cnt == 0);
+	ATF_CHECK(g_ninject == 0);
+
+	/* Refill drains only the older packets, in FIFO order. */
+	g_rx_descs = 256;
+	vtvsock_pend_flush(sc);
+	ATF_CHECK(sc->vsc_pend_count == 0);
+	ATF_CHECK(g_ninject == VTVSOCK_PEND_MAX);
+	fifo_ok = true;
+	for (int i = 0; i < g_ninject; i++)
+		fifo_ok &= g_inject[i].op == VIRTIO_VSOCK_OP_CREDIT_REQUEST;
+	ATF_CHECK(fifo_ok);
+
+	/* Because last_fwd_cnt was preserved, the next check retries the update. */
+	g_ninject = 0;
+	vtvsock_maybe_credit_update(sc, c);
+	ATF_CHECK(g_ninject == 1);
+	ATF_CHECK(g_inject[0].op == VIRTIO_VSOCK_OP_CREDIT_UPDATE);
+	ATF_CHECK(g_inject[0].fwd_cnt == VTVSOCK_CREDIT_UPDATE_THRESHOLD);
+	ATF_CHECK(c->last_fwd_cnt == c->fwd_cnt);
+	free(sc);
+}
+
 ATF_TC_WITHOUT_HEAD(shutdown_both_closes);
 ATF_TC_BODY(shutdown_both_closes, tc)
 {
@@ -1784,6 +1835,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rw_type_mismatch_reports_credit);
 	ATF_TP_ADD_TC(tp, peer_fwd_cnt_overflow_rst);
 	ATF_TP_ADD_TC(tp, credit_update_full_ring_parked);
+	ATF_TP_ADD_TC(tp, pending_reply_overflow_retries_credit);
 	ATF_TP_ADD_TC(tp, shutdown_both_closes);
 	ATF_TP_ADD_TC(tp, seqpacket_request_response);
 	ATF_TP_ADD_TC(tp, wrong_dst_cid_dropped);

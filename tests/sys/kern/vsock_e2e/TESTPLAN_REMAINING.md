@@ -65,7 +65,7 @@ remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
 |---|---|---|
 | `vsock_test.c` (ATF) | socket ops + **loopback** transport | 152/153 pass (1 platform skip) |
 | `vsock_wire_test.c` (ATF) | struct/ABI wire layout | complete for static layout |
-| `vsock_device_harness/` | bhyve host device TX/RX ingress | 209 vsock checks plus transport/device suites |
+| `vsock_device_harness/` | bhyve host device TX/RX ingress | 222 vsock checks plus transport/device suites |
 | `vsock_rx_harness/` | guest domain + direct VirtIO transport | 25 tests / 809 checks |
 | `vsock_e2e/` (live guest) | upstream Linux driver interop | modern/legacy matrix passed; root-only |
 
@@ -302,7 +302,7 @@ boundary.  Interrupt-vs-detach scheduling remains a kernel-runtime stress item
 rather than an uncovered source interleaving.
 
 **Lowest-priority (Tier 3, documented in REVIEW.md, likely leave alone):**
-auto-bind port exhaustion, EMFILE/fd exhaustion, pending-ring overflow,
-allocation-failure paths and undersized-ring attach.  Holding-queue overflow is
-now covered by the direct transport harness; the remaining cases need fault
-injection and are hard to hit in practice.
+auto-bind port exhaustion, EMFILE/fd exhaustion, allocation-failure paths and
+undersized-ring attach.  Guest holding-queue overflow and bhyve pending-reply
+overflow are now covered by their direct transport/device harnesses; the
+remaining cases need fault injection and are hard to hit in practice.

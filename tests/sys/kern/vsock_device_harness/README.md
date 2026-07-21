@@ -40,5 +40,8 @@ liveness probe and credit update, and clears it after delivery.  Connection
 setup coverage also rejects nonzero initial `fwd_cnt` values before opening a
 host relay socket.  A discarded type-mismatched data packet is also credited
 back at the reporting threshold so the sender cannot remain blocked on bytes
-bhyve no longer holds.  See `../vsock_e2e/FRAMEWORK.md` for the complete
+bhyve no longer holds.  Pending-control-reply coverage fills the bounded ring,
+verifies overflow accounting without false credit advancement, drains the
+retained FIFO, and confirms that the dropped credit update is retried.
+See `../vsock_e2e/FRAMEWORK.md` for the complete
 acceptance layers and the checklist for adding another device.
