@@ -715,6 +715,33 @@ ATF_TC_BODY(oversized_frame_dropped, tc)
 	ATF_CHECK(g_rel_calls == 0);
 }
 
+ATF_TC_WITHOUT_HEAD(reset_discards_stale_events);
+ATF_TC_BODY(reset_discards_stale_events, tc)
+{
+	struct pci_vtinput_softc sc;
+	pthread_mutex_t mtx;
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_fd = 10;
+	sc.vsc_eventqueue.idx = 2;
+	sc.vsc_drop_frame = true;
+	pci_vtinput_reset(&sc);
+	ATF_CHECK(sc.vsc_eventqueue.idx == 0);
+	ATF_CHECK(!sc.vsc_drop_frame);
+
+	ATF_REQUIRE(pthread_mutex_init(&mtx, NULL) == 0);
+	sc.vsc_vs.vs_mtx = &mtx;
+	g_read_events[0].type = EV_KEY;
+	g_read_events[1].type = EV_SYN;
+	g_read_event_count = 2;
+	vtinput_read_event(10, EVF_READ, &sc);
+	ATF_CHECK(g_read_event_index == 2);
+	ATF_CHECK(sc.vsc_eventqueue.idx == 0);
+	ATF_CHECK(g_rel_calls == 0);
+	pthread_mutex_destroy(&mtx);
+}
+
 ATF_TC_WITHOUT_HEAD(config_bounds);
 ATF_TC_BODY(config_bounds, tc)
 {
@@ -753,6 +780,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, status_error_finishes_completions);
 	ATF_TP_ADD_TC(tp, partial_frame_rollback);
 	ATF_TP_ADD_TC(tp, oversized_frame_dropped);
+	ATF_TP_ADD_TC(tp, reset_discards_stale_events);
 	ATF_TP_ADD_TC(tp, config_bounds);
 	return (atf_no_error());
 }

@@ -186,6 +186,8 @@ pci_vtinput_reset(void *vsc)
 
 	DPRINTF(("%s: device reset requested", __func__));
 	vi_reset_dev(&sc->vsc_vs);
+	sc->vsc_eventqueue.idx = 0;
+	sc->vsc_drop_frame = false;
 }
 
 static void
@@ -688,6 +690,14 @@ vtinput_read_event(int fd __attribute((unused)),
 
 	/* skip if driver isn't ready */
 	if (!(sc->vsc_vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK)) {
+		/*
+		 * Keep the nonblocking evdev descriptor drained while the queue is
+		 * inactive.  Otherwise the persistent read event can spin the event
+		 * loop and stale input can cross a guest device reset.
+		 */
+		struct input_event event;
+		while (vtinput_read_event_from_host(sc->vsc_fd, &event) == 0)
+			;
 		VS_UNLOCK(vs);
 		return;
 	}
