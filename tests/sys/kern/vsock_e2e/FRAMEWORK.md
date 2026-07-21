@@ -68,7 +68,9 @@ ISO=/path/to/alpine-virt.iso ./run-alpine-no-msix.sh
 
 It runs the legacy net/vsock/RNG/block combination with bhyve `-W`, resets and
 rebinds every attached VirtIO PCI function, rechecks data paths, reboots under
-monitor mode, and verifies the same block prefix after the fresh guest boot.
+monitor mode with established STREAM and SEQPACKET connections, requires both
+old endpoints to disconnect within 30 seconds, and verifies fresh vsock paths
+and the same block prefix after the new guest boot.
 
 `VM_FREE_GATES=no` skips the first two gates for a repeated VM-only debugging
 run; it is not an acceptance result by itself.  Gate 1 requires the bhyve

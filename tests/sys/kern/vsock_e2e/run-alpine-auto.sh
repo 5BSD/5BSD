@@ -176,10 +176,14 @@ ifconfig "$tap" up
 vm_pid=
 console_pid=
 input_pid=
+reboot_stream_pid=
+reboot_seq_pid=
 vmname=
 console_log=
 bhyve_log=
 input_log=
+reboot_stream_log=
+reboot_seq_log=
 stop_console()
 {
 	[ -z "$console_pid" ] || pkill -TERM -P "$console_pid" 2>/dev/null || true
@@ -189,6 +193,12 @@ stop_console()
 }
 cleanup_vm()
 {
+	for hold_pid in "$reboot_stream_pid" "$reboot_seq_pid"; do
+		[ -z "$hold_pid" ] || kill "$hold_pid" 2>/dev/null || true
+		[ -z "$hold_pid" ] || wait "$hold_pid" 2>/dev/null || true
+	done
+	reboot_stream_pid=
+	reboot_seq_pid=
 	stop_console
 	if [ -n "$vm_pid" ]; then
 		kill "$vm_pid" 2>/dev/null || true
@@ -223,6 +233,7 @@ report_failure()
 {
 	echo "==== retained failure diagnostics ====" >&2
 	for item in "bhyve:$bhyve_log" "input-provider:$input_log" \
+	    "reboot-stream:$reboot_stream_log" "reboot-seq:$reboot_seq_log" \
 	    "guest-console:$console_log"; do
 		label=${item%%:*}
 		path=${item#*:}
@@ -476,12 +487,115 @@ run_lifecycle_smokes()
 	[ "$run_block_device" = no ] || verify_block
 }
 
+reboot_hold_connector()
+{
+	type=$1
+	port=$2
+	log=$3
+	shift 3
+	attempt=0
+	while [ "$attempt" -lt 5 ]; do
+		if timeout 180 "$tools/vsh-connect" "$@" -w \
+		    "$sockdir" "$port" > "$log" 2>&1; then
+			return 0
+		else
+			status=$?
+		fi
+		# Retry only the explicit guest-not-ready control response, and only
+		# before the helper has proved an established connection.
+		[ "$status" -eq 4 ] && ! grep -q '^READY$' "$log" || return "$status"
+		attempt=$((attempt + 1))
+		sleep 1
+	done
+	echo "$type lifecycle connector exhausted readiness retries" >> "$log"
+	return 4
+}
+
+start_reboot_vsock_holds()
+{
+	echo "== Alpine $transport: establish live vsock reboot endpoints =="
+	reboot_stream_log="$WORKDIR/$transport.reboot-stream.log"
+	reboot_seq_log="$WORKDIR/$transport.reboot-seq.log"
+	: > "$reboot_stream_log"
+	: > "$reboot_seq_log"
+	guest_cmd "set -eu; pkill -9 python3 2>/dev/null || true; rm -f /tmp/reboot-stream.out /tmp/reboot-seq.out; nohup python3 /tmp/gvsock.py echo-l stream 7011 >/tmp/reboot-stream.out 2>&1 & nohup python3 /tmp/gvsock.py echo-l seq 7012 >/tmp/reboot-seq.out 2>&1 & i=0; while { ! grep -q '^up$' /tmp/reboot-stream.out 2>/dev/null || ! grep -q '^up$' /tmp/reboot-seq.out 2>/dev/null; } && [ \"\$i\" -lt 15 ]; do sleep 1; i=\$((i + 1)); done; grep -q '^up$' /tmp/reboot-stream.out; grep -q '^up$' /tmp/reboot-seq.out" 20 >/dev/null
+	reboot_hold_connector stream 7011 "$reboot_stream_log" &
+	reboot_stream_pid=$!
+	reboot_hold_connector seq 7012 "$reboot_seq_log" -s &
+	reboot_seq_pid=$!
+
+	i=0
+	while { ! grep -q '^READY$' "$reboot_stream_log" 2>/dev/null ||
+	    ! grep -q '^READY$' "$reboot_seq_log" 2>/dev/null; }; do
+		kill -0 "$reboot_stream_pid" 2>/dev/null || {
+			cat "$reboot_stream_log" >&2
+			return 1
+		}
+		kill -0 "$reboot_seq_pid" 2>/dev/null || {
+			cat "$reboot_seq_log" >&2
+			return 1
+		}
+		[ "$i" -lt 30 ] || {
+			echo "timed out establishing reboot lifecycle endpoints" >&2
+			return 1
+		}
+		sleep 1
+		i=$((i + 1))
+	done
+	# READY must describe endpoints that are still open, not helpers that
+	# connected and immediately observed an unrelated close.
+	kill -0 "$reboot_stream_pid" 2>/dev/null
+	kill -0 "$reboot_seq_pid" 2>/dev/null
+	echo "PASS live reboot endpoints stream=7011 seq=7012"
+}
+
+verify_reboot_vsock_disconnects()
+{
+	i=0
+	while { ! grep -q '^DISCONNECTED$' "$reboot_stream_log" 2>/dev/null ||
+	    ! grep -q '^DISCONNECTED$' "$reboot_seq_log" 2>/dev/null; } &&
+	    [ "$i" -lt 30 ]; do
+		kill -0 "$reboot_stream_pid" 2>/dev/null || {
+			cat "$reboot_stream_log" >&2
+			return 1
+		}
+		kill -0 "$reboot_seq_pid" 2>/dev/null || {
+			cat "$reboot_seq_log" >&2
+			return 1
+		}
+		sleep 1
+		i=$((i + 1))
+	done
+	[ "$i" -lt 30 ] || {
+		echo "old vsock endpoints survived guest reboot for 30s" >&2
+		return 1
+	}
+	stream_status=0
+	wait "$reboot_stream_pid" || stream_status=$?
+	seq_status=0
+	wait "$reboot_seq_pid" || seq_status=$?
+	reboot_stream_pid=
+	reboot_seq_pid=
+	[ "$stream_status" -eq 0 ] && [ "$seq_status" -eq 0 ] &&
+	    grep -q '^READY$' "$reboot_stream_log" &&
+	    grep -q '^DISCONNECTED$' "$reboot_stream_log" &&
+	    grep -q '^READY$' "$reboot_seq_log" &&
+	    grep -q '^DISCONNECTED$' "$reboot_seq_log" || {
+		echo "vsock reboot disconnect verification failed: stream=$stream_status seq=$seq_status" >&2
+		cat "$reboot_stream_log" >&2
+		cat "$reboot_seq_log" >&2
+		return 1
+	}
+	echo "PASS reboot disconnected established stream and seqpacket endpoints"
+}
+
 reboot_guest()
 {
 	echo "== Alpine $transport: monitor-mode reboot =="
 	old_boot_id=$(guest_cmd 'cat /proc/sys/kernel/random/boot_id' 15)
 	negotiations=0
 	[ "$run_vsock" = no ] || negotiations=$(grep -c 'negotiated features=' "$bhyve_log" 2>/dev/null || true)
+	[ "$run_vsock" = no ] || start_reboot_vsock_holds
 	printf 'sync; reboot -f\r' >> "$console_input"
 
 	i=0
@@ -501,6 +615,7 @@ reboot_guest()
 		sleep 8
 		kill -0 "$vm_pid" 2>/dev/null || { echo "bhyve monitor exited during guest reboot" >&2; return 1; }
 	fi
+	[ "$run_vsock" = no ] || verify_reboot_vsock_disconnects
 
 	stop_console
 	start_console

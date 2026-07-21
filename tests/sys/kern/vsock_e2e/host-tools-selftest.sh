@@ -127,6 +127,30 @@ check_vsh_bulk()
 	echo "PASS  vsh_connect_stream_bulk"
 }
 
+check_vsh_lifecycle()
+{
+	type=$1
+	flag=$2
+	dir="$work/vsh-lifecycle-$type"
+	mkdir "$dir"
+	"$TOOLS/vsh-connect-test-server" "$dir/sock" "$type" live \
+	    >"$dir/server.log" 2>&1 &
+	server_pid=$!
+	wait_for_socket "$dir/sock" || {
+		cat "$dir/server.log" >&2
+		return 1
+	}
+	if [ -n "$flag" ]; then
+		out=$(timeout 10 "$TOOLS/vsh-connect" "$flag" -w "$dir" 7001)
+	else
+		out=$(timeout 10 "$TOOLS/vsh-connect" -w "$dir" 7001)
+	fi
+	wait "$server_pid"
+	server_pid=
+	[ "$out" = "$(printf 'READY\nDISCONNECTED')" ]
+	echo "PASS  vsh_connect_lifecycle_$type"
+}
+
 check_unix_pipe_bulk()
 {
 	sock="$work/unix-bulk.sock"
@@ -258,6 +282,8 @@ check_unix_pipe seq -s
 dd if=/dev/zero bs=1024 count=1024 2>/dev/null | tr '\0' B > "$work/bulk.in"
 dd if=/dev/zero bs=1024 count=200 2>/dev/null | tr '\0' R > "$work/record.in"
 check_vsh_bulk
+check_vsh_lifecycle stream ""
+check_vsh_lifecycle seq -s
 check_unix_pipe_bulk
 check_unix_pipe_seq_record
 check_cli_rejection

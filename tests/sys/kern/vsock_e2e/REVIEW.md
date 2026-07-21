@@ -107,6 +107,6 @@ the 4 remaining malformed-TX drops, reaper timeouts (advance the clock).
 SEQPACKET SHUT_RDWR, SEQPACKET peer-close EOF+SIGPIPE, connect_timeout ERANGE.
 
 ## Testplan §6 status
-Automated: rows 1-4, 7, 8, 11 (partial), 15. Partial: 5, 6, 10, 14.
-Aspirational (no automation): row 9 (>=256 conns/cap), row 12 (guest reboot),
-row 13 (bhyve-detach blocked-sender wakeup), row 16 (CID_LOCAL wire isolation).
+Automated: rows 1-4, 6-9, 12, 15, 16; row 11 is automated in one direction.
+Partial: rows 5, 10, 14.  Manual only: row 13 (bhyve-detach blocked-sender
+wakeup).

@@ -16,6 +16,9 @@ now packaged with the guest harness: 8 ATF cases / 592 assertions exercise
 descriptor-aware readiness, reclaim/retry, bounded FIFO control queuing,
 interrupt drain/wakeup, event reset, and attach-completed/detach.  The
 remaining work is the truly concurrent/manual-only §6 lifecycle rows below.
+The focused no-MSI-X run now also passes monitor-mode reboot with established
+STREAM and SEQPACKET endpoints: each is echo-proven before reboot, both old
+endpoints disconnect within 30 seconds, and fresh connections pass afterward.
 
 **2026-07-09 (this session):** closed GAP 1, GAP 2, GAP 4, GAP 5. The only
 remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
@@ -247,7 +250,7 @@ Small, high-value additions to `vsock_test.c` (loopback, already in CI):
 | 9 | ≥256 concurrent, excess refused, slots freed | ✅ host and guest harnesses |
 | 10 | graceful close both directions | ⚠️ stream ✅, seqpacket-remote ❌ |
 | 11 | abrupt peer kill | ✅ e2e (one direction) |
-| 12 | guest reboot with conns open | ❌ **aspirational** → GAP 1.9 |
+| 12 | guest reboot with conns open | ✅ e2e, stream + seqpacket old-endpoint teardown and fresh reconnect |
 | 13 | detach with blocked sender (≤1s wakeup) | ❌ **manual only** (G5 fix now makes this pass; needs a test) |
 | 14 | reserved-CID connects | ⚠️ bind-side ✅, guest-initiated ❌ |
 | 15 | port 0 / auto-bind | ✅ ATF |
@@ -267,9 +270,8 @@ G4, and VNET/reset fixes.
 
 **Phase D — ATF edges (GAP 5).** Completed.
 
-**Next targeted work:** guest reboot with connections deliberately left open
-(row 12), detach with a genuinely blocked sender (row 13), and automated
-guest-initiated reserved-CID behavior (row 14).
+**Next targeted work:** detach with a genuinely blocked sender (row 13), and
+automated guest-initiated reserved-CID behavior (row 14).
 
 **Lowest-priority (Tier 3, documented in REVIEW.md, likely leave alone):**
 auto-bind port exhaustion, EMFILE/fd exhaustion, pending-ring overflow,

@@ -50,7 +50,9 @@ runner and console framing, adds bhyve `-W`, and defaults to Alpine's legacy
 virtio-net, vsock, block, and RNG drivers.  The test requires at most one
 allocated interrupt vector per device, then exercises real traffic, driver
 unbind/rebind resets, a monitor-mode guest reboot, and post-reboot block-data
-persistence:
+persistence.  Before reboot it establishes live STREAM and SEQPACKET echo
+connections; both old endpoints must disconnect within 30 seconds, and fresh
+connections must pass after the guest returns:
 
 ```sh
 su root -c 'ISO=/path/to/alpine-virt.iso ./run-alpine-no-msix.sh'

@@ -1,7 +1,9 @@
 #!/bin/sh
 # Acceptance test for bhyve's shared VirtIO interrupt path.  The guest uses
 # Alpine's upstream legacy drivers while bhyve -W removes MSI-X, forcing the
-# one-vector MSI/INTx fallback exercised by virtio.c.
+# one-vector MSI/INTx fallback exercised by virtio.c.  The monitor-mode reboot
+# keeps echo-proven STREAM and SEQPACKET endpoints open and requires both old
+# endpoints to disconnect before post-reboot data-path checks.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)

@@ -26,6 +26,7 @@ struct vsock_ctl_msg {
 
 #define	VSOCK_CTL_CONNECT	1
 #define	ECHO_BUFSIZE		(8U * 1024 * 1024)
+#define	LIFECYCLE_PROBE_SIZE	(sizeof("VSOCK-LIFECYCLE") - 1)
 
 static void
 write_all(int fd, const void *buffer, size_t length)
@@ -72,6 +73,20 @@ echo_data(int fd)
 	free(buf);
 }
 
+static void
+echo_live_probe(int fd)
+{
+	char buf[LIFECYCLE_PROBE_SIZE];
+	ssize_t n;
+
+	do {
+		n = recv(fd, buf, sizeof(buf), MSG_WAITALL);
+	} while (n < 0 && errno == EINTR);
+	if (n != (ssize_t)sizeof(buf))
+		errx(1, "failed to read complete live probe: %zd", n);
+	write_all(fd, buf, (size_t)n);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -81,17 +96,20 @@ main(int argc, char **argv)
 	struct iovec iov;
 	struct msghdr msg;
 	char control[CMSG_SPACE(sizeof(int))];
-	int accepted, data[2], listener, type;
+	int accepted, data[2], listener, live, type;
 	ssize_t n;
 
-	if (argc != 3)
-		errx(2, "usage: vsh-connect-test-server socket-path stream|seq");
+	if (argc != 3 && argc != 4)
+		errx(2, "usage: vsh-connect-test-server socket-path stream|seq [live]");
 	if (strcmp(argv[2], "stream") == 0)
 		type = SOCK_STREAM;
 	else if (strcmp(argv[2], "seq") == 0)
 		type = SOCK_SEQPACKET;
 	else
 		errx(2, "socket type must be stream or seq");
+	live = argc == 4 && strcmp(argv[3], "live") == 0;
+	if (argc == 4 && !live)
+		errx(2, "mode must be live");
 
 	memset(&sun, 0, sizeof(sun));
 	sun.sun_family = AF_UNIX;
@@ -145,7 +163,10 @@ main(int argc, char **argv)
 	close(data[0]);
 	close(accepted);
 	close(listener);
-	echo_data(data[1]);
+	if (live)
+		echo_live_probe(data[1]);
+	else
+		echo_data(data[1]);
 	close(data[1]);
 	return (0);
 }

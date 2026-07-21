@@ -2,9 +2,10 @@
  * vsh-connect — host→guest connector through the bhyve vsock device's
  * control socket (e2e suite version).
  *
- * usage: vsh-connect [-s] <dir> <port>
+ * usage: vsh-connect [-s] [-w] <dir> <port>
  *
  *   -s   request SOCK_SEQPACKET
+ *   -w   verify a built-in echo, then wait for peer disconnect
  *
  * The device sets LOCAL_CAP_CONNECT on the control socket, so the
  * client must be in capability mode: open the socket directory first,
@@ -251,11 +252,67 @@ relay(int sfd, bool seqpacket)
 	return (0);
 }
 
+/*
+ * Lifecycle mode: prove that the connection is live before an external test
+ * resets/reboots the peer, then wait for the established endpoint to close.
+ * Keeping this independent of stdin prevents an input EOF from half-closing
+ * the socket before the lifecycle event under test.
+ */
+static int
+wait_for_disconnect(int sfd, bool seqpacket)
+{
+	static const char token[] = "VSOCK-LIFECYCLE";
+	char buf[sizeof(token) - 1];
+	size_t offset;
+	ssize_t n;
+
+	if (write_socket(sfd, token, sizeof(token) - 1, seqpacket) < 0) {
+		perror("write lifecycle probe");
+		return (1);
+	}
+	offset = 0;
+	while (offset < sizeof(buf)) {
+		do {
+			n = read(sfd, buf + offset, sizeof(buf) - offset);
+		} while (n < 0 && errno == EINTR);
+		if (n <= 0) {
+			if (n < 0)
+				perror("read lifecycle echo");
+			else
+				fprintf(stderr, "EOF before lifecycle echo\n");
+			return (1);
+		}
+		offset += (size_t)n;
+	}
+	if (memcmp(buf, token, sizeof(buf)) != 0) {
+		fprintf(stderr, "lifecycle echo mismatch\n");
+		return (1);
+	}
+	printf("READY\n");
+	fflush(stdout);
+
+	for (;;) {
+		do {
+			n = read(sfd, buf, sizeof(buf));
+		} while (n < 0 && errno == EINTR);
+		if (n == 0)
+			break;
+		if (n < 0) {
+			if (errno == ECONNRESET || errno == ENOTCONN)
+				break;
+			perror("wait for lifecycle disconnect");
+			return (1);
+		}
+	}
+	printf("DISCONNECTED\n");
+	return (0);
+}
+
 int
 main(int argc, char **argv)
 {
 	int type = SOCK_STREAM;
-	int oneshot = 0;
+	int oneshot = 0, wait_disconnect = 0;
 	int ch, dfd, cs, datafd = -1;
 	uint32_t port;
 	cap_rights_t rights;
@@ -264,12 +321,13 @@ main(int argc, char **argv)
 
 	signal(SIGPIPE, SIG_IGN);
 
-	while ((ch = getopt(argc, argv, "s1")) != -1) {
+	while ((ch = getopt(argc, argv, "s1w")) != -1) {
 		switch (ch) {
 		case 's': type = SOCK_SEQPACKET; break;
 		case '1': oneshot = 1; break;	/* send all stdin as ONE record */
+		case 'w': wait_disconnect = 1; break;
 		default:
-			fprintf(stderr, "usage: %s [-s] [-1] <dir> <port>\n",
+			fprintf(stderr, "usage: %s [-s] [-1|-w] <dir> <port>\n",
 			    argv[0]);
 			return (2);
 		}
@@ -277,7 +335,11 @@ main(int argc, char **argv)
 	argc -= optind;
 	argv += optind;
 	if (argc != 2) {
-		fprintf(stderr, "usage: vsh-connect [-s] <dir> <port>\n");
+		fprintf(stderr, "usage: vsh-connect [-s] [-1|-w] <dir> <port>\n");
+		return (2);
+	}
+	if (oneshot && wait_disconnect) {
+		fprintf(stderr, "-1 and -w are mutually exclusive\n");
 		return (2);
 	}
 	if (parse_port(argv[1], &port) < 0) {
@@ -336,5 +398,7 @@ main(int argc, char **argv)
 	close(cs);
 	if (oneshot)
 		return (relay_oneshot(datafd, type == SOCK_SEQPACKET));
+	if (wait_disconnect)
+		return (wait_for_disconnect(datafd, type == SOCK_SEQPACKET));
 	return (relay(datafd, type == SOCK_SEQPACKET));
 }
