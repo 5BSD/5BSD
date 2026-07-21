@@ -7,7 +7,9 @@ directions, including a 200 KiB record and bulk transfer.  Each live vsock
 preflight also connects from the guest to reserved CID 0 and to an unused port
 on host CID 2, requiring ETIMEDOUT and ECONNRESET respectively.  The full data
 matrix explicitly half-closes remote SEQPACKET connections in each direction
-and requires the payload and EOF to reach both endpoints.
+and requires the payload and EOF to reach both endpoints.  It also SIGKILLs an
+echo-proven host connector, requires the guest to observe EOF or reset, and
+then verifies an immediate fresh connection.
 
 The automated runner also loads Alpine's upstream `virtio_input` driver and
 connects bhyve to a disposable composite host `uinput` device.  Using its

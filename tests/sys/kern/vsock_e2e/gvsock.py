@@ -44,6 +44,18 @@ def expect_eof(sock, context):
         raise RuntimeError(f"{context}: expected EOF, received {data!r}")
 
 
+def disconnect_outcome(sock):
+    try:
+        data = sock.recv(1)
+    except OSError as exc:
+        if exc.errno in (errno.ECONNRESET, errno.ENOTCONN):
+            return errno.errorcode[exc.errno]
+        raise
+    if data:
+        raise RuntimeError(f"expected peer disconnect, received {data!r}")
+    return "EOF"
+
+
 def find_bound_vsock(sys_root, expected_device):
     matches = []
     pattern = os.path.join(sys_root, "bus/pci/devices/*")
@@ -165,6 +177,14 @@ def self_test():
     finally:
         left.close()
         right.close()
+    left, right = socket.socketpair()
+    try:
+        left.close()
+        if disconnect_outcome(right) != "EOF":
+            raise AssertionError("closed peer was not classified as EOF")
+    finally:
+        left.close()
+        right.close()
     if connect_error_name(TimeoutError()) != "ETIMEDOUT":
         raise AssertionError("timeout outcome was misclassified")
     if connect_error_name(ConnectionResetError(errno.ECONNRESET, "reset")) != (
@@ -238,6 +258,23 @@ def close_client(sock_type, port, payload):
     print(f"PASS graceful-close-client type={sock_type}", flush=True)
 
 
+def abrupt_listener(sock_type, port):
+    token = b"VSOCK-LIFECYCLE"
+    listener = make_socket(sock_type)
+    listener.bind((VMADDR_CID_ANY, port))
+    listener.listen(1)
+    print("up", flush=True)
+    conn, _ = listener.accept()
+    conn.settimeout(10.0)
+    with conn:
+        received = recv_exact(conn, len(token))
+        if received != token:
+            raise RuntimeError(f"abrupt-close probe mismatch: {received!r}")
+        send_data(conn, sock_type, received)
+        outcome = disconnect_outcome(conn)
+    print(f"PASS abrupt-disconnect-listener outcome={outcome}", flush=True)
+
+
 def main():
     if sys.argv[1:] == ["--self-test"]:
         self_test()
@@ -255,7 +292,7 @@ def main():
         raise SystemExit(
             "usage: gvsock.py --self-test | preflight modern|legacy | "
             "reserved-cids | "
-            "echo-l|recv-l|close-l|close|send|send-echo "
+            "echo-l|recv-l|close-l|close|abrupt-l|send|send-echo "
             "stream|seq port [value]"
         )
     command, sock_type, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
@@ -269,6 +306,8 @@ def main():
         close_listener(sock_type, port, sys.argv[4])
     elif command == "close" and len(sys.argv) == 5:
         close_client(sock_type, port, sys.argv[4])
+    elif command == "abrupt-l" and len(sys.argv) == 4:
+        abrupt_listener(sock_type, port)
     elif command == "send" and len(sys.argv) == 5:
         size = int(sys.argv[4])
         conn = make_socket(sock_type)

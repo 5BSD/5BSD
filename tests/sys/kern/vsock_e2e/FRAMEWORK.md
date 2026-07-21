@@ -36,6 +36,8 @@ Run the gates in this order.  Early failures are cheaper and more specific.
    reserved-CID behavior: CID 0 must time out and CID 2 on an unused host port
    must be reset.  Its full data matrix requires remote SEQPACKET graceful
    close in both directions, with the payload and EOF observed by each peer.
+   It also SIGKILLs an established host connector, requires guest EOF/reset,
+   and proves a fresh connection immediately afterward.
 5. **Transport compatibility.** `modern` explicitly opts in to the modern
    transport.  `legacy` deliberately omits the transport option, which tests
    existing bhyve command lines rather than a synthetic explicit-legacy path.

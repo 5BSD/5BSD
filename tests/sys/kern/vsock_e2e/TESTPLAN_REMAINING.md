@@ -26,6 +26,10 @@ is rejected with ECONNRESET.
 The modern and legacy Alpine matrices also pass explicit remote SEQPACKET
 graceful-close probes in both directions: each receiver observes the payload
 followed by EOF, and each initiating endpoint observes the peer's final EOF.
+Abrupt peer death is now covered in both directions as well: the original
+guest-client SIGKILL makes the host observe teardown, while the Alpine matrix
+SIGKILLs an echo-proven host connector and requires guest EOF/reset plus an
+immediate fresh connection.
 
 **2026-07-09 (this session):** closed GAP 1, GAP 2, GAP 4, GAP 5. The only
 remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
@@ -257,7 +261,7 @@ Small, high-value additions to `vsock_test.c` (loopback, already in CI):
 | 7, 8 | dead host/guest port | ✅ e2e |
 | 9 | ≥256 concurrent, excess refused, slots freed | ✅ host and guest harnesses |
 | 10 | graceful close both directions | ✅ stream + remote SEQPACKET, both directions |
-| 11 | abrupt peer kill | ✅ e2e (one direction) |
+| 11 | abrupt peer kill | ✅ e2e, both directions + recovery |
 | 12 | guest reboot with conns open | ✅ e2e, stream + seqpacket old-endpoint teardown and fresh reconnect |
 | 13 | detach with blocked sender (≤1s wakeup) | ✅ direct transport harness, pthread-blocked full-ring sender |
 | 14 | reserved-CID connects | ✅ guest-initiated e2e + bind-side harness |
@@ -278,8 +282,11 @@ G4, and VNET/reset fixes.
 
 **Phase D — ATF edges (GAP 5).** Completed.
 
-**Remaining targeted work:** finish the remote-wire half of row 5 and the
-reverse direction of row 11.  Interrupt-vs-detach scheduling and G3 remain
+**Remaining targeted work:** resolve the remote-wire scope of row 5.  Virtio
+defines credit windows rather than a universal SEQPACKET record maximum, while
+bhyve intentionally reassembles records larger than its advertised window;
+the live MAX/MAX+1 criterion therefore needs an implementation-specific bound
+instead of assuming 256 KiB.  Interrupt-vs-detach scheduling and G3 remain
 lower-priority structural/code-review items.
 
 **Lowest-priority (Tier 3, documented in REVIEW.md, likely leave alone):**

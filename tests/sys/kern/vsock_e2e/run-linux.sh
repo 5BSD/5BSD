@@ -74,6 +74,12 @@ gbg() {
 	fi
 }
 gout() { $ACMD 'cat /tmp/g.out; pkill -9 python3 2>/dev/null || true' 12; }
+gwait() {
+	_pattern=$1
+	$ACMD "i=0; while ! grep -Eq '$_pattern' /tmp/g.out 2>/dev/null && \
+	    [ \"\$i\" -lt 10 ]; do sleep 1; i=\$((i + 1)); done; \
+	    grep -Eq '$_pattern' /tmp/g.out" 15 >/dev/null
+}
 
 # A listener can report ready immediately before its REQUEST/RESPONSE reaches
 # the host control path.  Retry only the device's explicit ECONNREFUSED status;
@@ -318,6 +324,61 @@ if [ "$ok" -ne 0 ]; then
 	cat "$HOST_WORK/7011.listener.log" >&2 || true
 fi
 res seqpacket_graceful_close_g2h "$ok"
+
+# Kill the established host endpoint without shutdown/close cooperation.  The
+# guest must observe EOF or reset promptly, and a fresh connection afterward
+# proves the device remains usable.
+gbg "abrupt-l stream 7012"
+abrupt_log="$HOST_WORK/7012.abrupt.log"
+"$TOOLS/vsh-connect" -w "$DIR" 7012 >"$abrupt_log" 2>&1 &
+abrupt_pid=$!
+abrupt_ready=no
+i=0
+while [ "$i" -lt 10 ]; do
+	if grep -q '^READY$' "$abrupt_log" 2>/dev/null; then
+		abrupt_ready=yes
+		break
+	fi
+	if ! kill -0 "$abrupt_pid" 2>/dev/null; then
+		break
+	fi
+	sleep 1
+	i=$((i + 1))
+done
+abrupt_kill_rc=1
+abrupt_wait_rc=0
+if [ "$abrupt_ready" = yes ]; then
+	if kill -KILL "$abrupt_pid" 2>/dev/null; then abrupt_kill_rc=0; fi
+fi
+wait "$abrupt_pid" 2>/dev/null || abrupt_wait_rc=$?
+guest_wait_rc=0
+gwait '^PASS abrupt-disconnect-listener outcome=(EOF|ECONNRESET|ENOTCONN)$' ||
+    guest_wait_rc=$?
+if o=$(gout); then guest_rc=0; else guest_rc=$?; fi
+printf '%s\n' "$o" |
+    grep -Eq '^PASS abrupt-disconnect-listener outcome=(EOF|ECONNRESET|ENOTCONN)$' &&
+    [ "$abrupt_ready" = yes ] && [ "$abrupt_kill_rc" -eq 0 ] &&
+    [ "$abrupt_wait_rc" -ne 0 ] && [ "$guest_wait_rc" -eq 0 ] &&
+    [ "$guest_rc" -eq 0 ]
+ok=$?
+if [ "$ok" -ne 0 ]; then
+	diag_capture abrupt_host_kill_guest_observe "$guest_rc" "$o"
+	echo "  ready=$abrupt_ready kill=$abrupt_kill_rc wait=$abrupt_wait_rc guest-wait=$guest_wait_rc" >&2
+	cat "$abrupt_log" >&2 || true
+fi
+res abrupt_host_kill_guest_observe "$ok"
+
+gbg "echo-l stream 7013"
+if out=$(printf 'E2E-AFTER-HOST-KILL' |
+    vshc "$DIR" 7013); then
+	rc=0
+else
+	rc=$?
+fi
+[ "$rc" -eq 0 ] && [ "$out" = "E2E-AFTER-HOST-KILL" ]
+ok=$?
+[ "$ok" -eq 0 ] || diag_capture after_abrupt_host_kill "$rc" "$out"
+res after_abrupt_host_kill "$ok"
 
 rm -f "$DIR/7007"; timeout 30 "$TOOLS/unix-pipe" -l -s -d "$DIR/7007" \
     > "$HOST_WORK/g2h.seq.out" 2>"$HOST_WORK/7007.listener.log" &

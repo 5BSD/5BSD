@@ -109,10 +109,11 @@ the 4 remaining malformed-TX drops, reaper timeouts (advance the clock).
 SEQPACKET SHUT_RDWR, SEQPACKET peer-close EOF+SIGPIPE, connect_timeout ERANGE.
 
 ## Testplan §6 status
-Automated: rows 1-4, 6-10, 12, 14-16; row 11 is automated in one direction.
+Automated: rows 1-4 and 6-16.
 Partial: row 5.  Row 10 includes live Alpine remote SEQPACKET graceful close
-in both directions, with payload and EOF observed at each endpoint.  Row 13
-is automated in the direct guest transport harness with a pthread-blocked
-sender and a one-second wakeup deadline.  Row 14 includes live Alpine guest
-connects: CID 0 yields ETIMEDOUT and CID 2 on an unused host port yields
-ECONNRESET.
+in both directions, with payload and EOF observed at each endpoint.  Row 11
+combines the existing guest-client kill with a live Alpine host-connector kill,
+guest EOF/reset, and immediate reconnect.  Row 13 is automated in the direct
+guest transport harness with a pthread-blocked sender and a one-second wakeup
+deadline.  Row 14 includes live Alpine guest connects: CID 0 yields ETIMEDOUT
+and CID 2 on an unused host port yields ECONNRESET.
