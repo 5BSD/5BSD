@@ -110,6 +110,7 @@ void vq_endchains(struct vqueue_info *vq, int i)
 /* ================= mock mevent / virtio glue ================= */
 static struct mevent { int fd; } g_mev[128];
 static int g_nmev;
+static int g_mevent_enable_calls;
 struct mevent *
 mevent_add(int fd, enum ev_type t, void (*cb)(int, enum ev_type, void *),
     void *p)
@@ -120,8 +121,10 @@ mevent_add(int fd, enum ev_type t, void (*cb)(int, enum ev_type, void *),
 	m->fd = fd;
 	return (m);
 }
-int mevent_enable(struct mevent *m) { (void)m; return (0); }
-int mevent_disable(struct mevent *m) { (void)m; return (0); }
+int mevent_enable(struct mevent *m)
+{ (void)m; g_mevent_enable_calls++; return (0); }
+int mevent_disable(struct mevent *m)
+{ (void)m; return (0); }
 int mevent_delete(struct mevent *m) { (void)m; return (0); }
 int mevent_delete_close(struct mevent *m) { if (m) (void)close(m->fd); return (0); }
 
@@ -379,6 +382,7 @@ reset_caps(void)
 	g_recv_zero_dgram = 0; g_recv_no_eor = 0;
 	g_chain_readable = 0; g_chain_writable = 1; g_getchain_consumes = 0;
 	g_rel_len = 0; g_endchains = 0;
+	g_mevent_enable_calls = 0;
 }
 
 ATF_TC_WITHOUT_HEAD(port_allocator_skips_reserved);
@@ -751,6 +755,71 @@ ATF_TC_BODY(host_rx_respects_credit, tc)
 	ATF_CHECK(g_inject[0].op == VIRTIO_VSOCK_OP_RW);
 	ATF_CHECK(g_inject[0].len <= 10);	/* must not exceed credit */
 	ATF_CHECK(c->tx_cnt <= 10);
+	free(sc);
+}
+
+/* --- A SEQPACKET record that fits the peer's whole window but not its
+ * current credit is deferred atomically.  Mark that disabled-read interval as
+ * a credit stall, request one update, and clear the mark only after the record
+ * actually progresses. --- */
+ATF_TC_WITHOUT_HEAD(seqpacket_partial_credit_tracks_stall);
+ATF_TC_BODY(seqpacket_partial_credit_tracks_stall, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+	uint8_t rec[100];
+	time_t stall_started;
+	int enable_calls;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	c->evp = mevent_add(c->fd, EVF_READ, vtvsock_conn_data_cb, sc);
+	c->peer_buf_alloc = 200;
+	c->peer_fwd_cnt = 0;
+	c->tx_cnt = 150;		/* current credit 50 < 100-byte record */
+	memset(rec, 'C', sizeof(rec));
+	stage_recv(rec, sizeof(rec));
+
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(g_recv_off == 0);	/* record remains atomic and queued */
+	ATF_CHECK(g_ninject == 1);
+	ATF_CHECK(g_inject[0].op == VIRTIO_VSOCK_OP_CREDIT_REQUEST);
+	ATF_CHECK(c->stall_time != 0);
+	stall_started = c->stall_time;
+
+	/* A spurious redispatch must not send another request or restart time. */
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(g_ninject == 1);
+	ATF_CHECK(c->stall_time == stall_started);
+
+	/* An RX notification may retry, but cannot clear the credit stall. */
+	enable_calls = g_mevent_enable_calls;
+	pci_vtvsock_notify_rx(sc, NULL);
+	ATF_CHECK(g_mevent_enable_calls == enable_calls + 1);
+	ATF_CHECK(c->stall_time == stall_started);
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(g_ninject == 1);	/* redispatch sent no duplicate request */
+
+	/* Seeing the queued record proves liveness, not data progress. */
+	c->stall_time = 1;		/* force the reaper's five-second probe */
+	vtvsock_reap_stale(sc);
+	ATF_CHECK(c->stall_time != 0);
+	ATF_CHECK(g_recv_off == 0);
+
+	/* Guest consumed 100 prior bytes: credit grows from 50 to 150. */
+	enable_calls = g_mevent_enable_calls;
+	mkhdr(&h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, SEQPACKET, 3,
+	    VSOCK_CID_HOST, 1234, 80, 0, 0, 200, 100);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(vtvsock_peer_credit(c) == 150);
+	ATF_CHECK(g_mevent_enable_calls == enable_calls + 1);
+	ATF_CHECK(c->stall_time != 0);	/* no progress merely promised */
+
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(g_recv_off == sizeof(rec));
+	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_RW);
+	ATF_CHECK(c->stall_time == 0);
 	free(sc);
 }
 
@@ -1660,6 +1729,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, request_collision_keeps_host_connect);
 	ATF_TP_ADD_TC(tp, host_rx_forwards_to_guest);
 	ATF_TP_ADD_TC(tp, host_rx_respects_credit);
+	ATF_TP_ADD_TC(tp, seqpacket_partial_credit_tracks_stall);
 	ATF_TP_ADD_TC(tp, host_rx_fragments_to_small_rx_buffer);
 	ATF_TP_ADD_TC(tp, host_rx_stream_fragments_to_small_rx_buffer);
 	ATF_TP_ADD_TC(tp, host_rx_oversized_seqpacket_record_resets);

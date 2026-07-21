@@ -16,7 +16,8 @@ Run the gates in this order.  Early failures are cheaper and more specific.
    machine, and guest `virtio_vsock.c` transport.  They exercise malformed
    descriptors, invalid queue directions, short buffers, queue ownership and
    exhaustion, reset/failure cleanup, interrupt suppression, feature
-   negotiation, credit handling, lifecycle wakeups, and boundary sizes under
+   negotiation, credit handling (including atomic-record partial-credit
+   stalls), lifecycle wakeups, and boundary sizes under
    ASan and UBSan.  The guest transport test uses a pthread-backed kernel
    sleep shim to race a TX-ring-blocked sender against detach and enforce the
    one-second wakeup contract.  The guest socket-domain test also verifies

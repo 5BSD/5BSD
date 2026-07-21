@@ -33,5 +33,9 @@ virtio-input configuration bounds, event/status queue directions and frame
 delivery; virtio-rng short, invalid and failed host reads; virtio-rng queue
 notification through MSI/INTx delivery with MSI-X disabled; and vsock state,
 credit, record-boundary, shutdown, timeout, resource-limit, and hostile-packet
-cases.  See `../vsock_e2e/FRAMEWORK.md` for the complete acceptance layers and
-the checklist for adding another device.
+cases.  SEQPACKET credit coverage includes an atomic record larger than current
+credit: it remains queued, sends only one CREDIT_REQUEST across repeated
+callbacks and RX-notification redispatch, keeps a reaper timestamp through a
+liveness probe and credit update, and clears it after delivery.  See
+`../vsock_e2e/FRAMEWORK.md` for the complete acceptance layers and the
+checklist for adding another device.

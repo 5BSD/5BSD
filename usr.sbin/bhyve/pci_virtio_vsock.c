@@ -1133,6 +1133,27 @@ vtvsock_peer_credit(const struct vtvsock_conn *conn)
 }
 
 /*
+ * Stop host reads that cannot make progress for lack of guest credit, request
+ * one fresh credit report, and remember when the stall began.  The timestamp
+ * suppresses duplicate requests and lets the reaper probe for a host peer that
+ * disappeared while the read event was disabled.  Actual data progress clears
+ * it; a CREDIT_UPDATE alone may still be too small for an atomic record.
+ */
+static void
+vtvsock_mark_credit_stall(struct pci_vtvsock_softc *sc,
+    struct vtvsock_conn *conn)
+{
+
+	if (conn->evp != NULL)
+		mevent_disable(conn->evp);
+	if (conn->stall_time == 0) {
+		(void)vtvsock_send_ctrl(sc, conn,
+		    VIRTIO_VSOCK_OP_CREDIT_REQUEST, 0);
+		conn->stall_time = monotonic_seconds();
+	}
+}
+
+/*
  * Decide whether we need to send a CREDIT_UPDATE to the guest.  We do so
  * when we have freed a significant amount of buffer space since the last
  * update we sent.
@@ -2007,11 +2028,10 @@ vtvsock_reap_stale(struct pci_vtvsock_softc *sc)
 		 * peer died while stalled, the EOF is invisible (we are not
 		 * reading) and the connection would ping-pong
 		 * CREDIT_REQUEST/UPDATE forever.  ONLY such long-stalled
-		 * connections are probed -- an actively flowing transfer
-		 * re-enables its event as credit arrives, which clears
-		 * stall_time, so a healthy connection is never probed and
-		 * never mistaken for a dead one.  MSG_PEEK distinguishes a
-		 * real EOF (0) from merely-no-data (EAGAIN).
+		 * connections are probed.  A live peer with buffered data keeps
+		 * the stall marker but advances its probe time; actual forwarding
+		 * clears it.  MSG_PEEK distinguishes a real EOF (0) from
+		 * merely-no-data (EAGAIN).
 		 */
 		if (conn->state == CONN_ESTABLISHED && conn->fd >= 0 &&
 		    !conn->host_eof && conn->stall_time != 0 &&
@@ -2039,8 +2059,13 @@ vtvsock_reap_stale(struct pci_vtvsock_softc *sc)
 				vtvsock_host_eof(sc, conn);
 			} else if (pn > 0 ||
 			    (pn == 0 && (pmsg.msg_flags & MSG_EOR) != 0)) {
-				/* Data (or an empty record) buffered: alive. */
-				conn->stall_time = 0;
+				/*
+				 * Data (or an empty record) is buffered, so the host
+				 * peer is alive.  Keep the nonzero stall marker until
+				 * data actually progresses, but rate-limit another
+				 * probe to the next interval.
+				 */
+				conn->stall_time = now;
 			}
 		}
 		if (conn->close_time == 0)
@@ -2310,12 +2335,13 @@ pci_vtvsock_notify_rx(void *vsc, struct vqueue_info *vq __unused)
 			 * this credit gate a connection stalled on a full guest
 			 * window is re-enabled on every RX refill, immediately
 			 * re-stalls, and busy-loops at the guest's notify rate.
-			 * A genuinely credit-stalled connection stays disabled
-			 * (and stall_time intact for the reaper) until its
-			 * CREDIT_UPDATE arrives.
+			 * A zero-credit connection stays disabled until its
+			 * CREDIT_UPDATE arrives.  A partial-credit atomic record
+			 * may be retried by an RX notification, but stall_time
+			 * remains intact so the retry neither sends another
+			 * CREDIT_REQUEST nor escapes reaper accounting.
 			 */
 			mevent_enable(conn->evp);
-			conn->stall_time = 0;
 		}
 	}
 	pthread_mutex_unlock(&sc->vsc_mtx);
@@ -2530,25 +2556,12 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 			    conn->guest_port);
 			DPRINTF(("vtvsock: no peer credit, requesting update"));
 			/*
-			 * Solicit a fresh CREDIT_UPDATE from the guest (spec
-			 * §5.10.6.3, matching the guest driver and Linux).  Sent
-			 * once per stall: we immediately disable the mevent
-			 * below, and only the guest's CREDIT_UPDATE re-enables
-			 * it, so this cannot spin.
+			 * Solicit a fresh CREDIT_UPDATE (spec §5.10.6.3), stop
+			 * the level-triggered read event from spinning, and let
+			 * the reaper distinguish a wedged connection from a
+			 * briefly throttled one.
 			 */
-			(void)vtvsock_send_ctrl(sc, conn,
-			    VIRTIO_VSOCK_OP_CREDIT_REQUEST, 0);
-			/*
-			 * Disable mevent to prevent level-triggered
-			 * busy-loop.  Re-enabled on CREDIT_UPDATE.  Record the
-			 * stall start so the reaper can distinguish a
-			 * genuinely wedged connection from a briefly-throttled
-			 * healthy one.
-			 */
-			if (conn->evp != NULL)
-				mevent_disable(conn->evp);
-			if (conn->stall_time == 0)
-				conn->stall_time = monotonic_seconds();
+			vtvsock_mark_credit_stall(sc, conn);
 			break;
 		}
 
@@ -2646,8 +2659,9 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 					memset(&dmsg, 0, sizeof(dmsg));
 					(void)recvmsg(conn->fd, &dmsg,
 					    MSG_DONTWAIT);
-					(void)vtvsock_inject_rx(sc, conn,
-					    VIRTIO_VSOCK_OP_RW, eflags, NULL, 0);
+					if (vtvsock_inject_rx(sc, conn,
+					    VIRTIO_VSOCK_OP_RW, eflags, NULL, 0) == 0)
+						conn->stall_time = 0;
 				}
 				break;
 			}
@@ -2708,8 +2722,7 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 					DPRINTF(("vtvsock: SEQPACKET record %zd "
 					    "> credit %u, deferring",
 					    msgsize, maxread));
-					if (conn->evp != NULL)
-						mevent_disable(conn->evp);
+					vtvsock_mark_credit_stall(sc, conn);
 					break;
 				}
 			}
@@ -2795,6 +2808,7 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 			}
 			goto conn_error;
 		}
+		conn->stall_time = 0;
 
 		/*
 		 * Inject into the RX (host->guest) virtqueue.
