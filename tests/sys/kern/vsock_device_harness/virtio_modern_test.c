@@ -532,11 +532,20 @@ ATF_TC_BODY(config_change_msix, tc)
 	vi_pci_modern_config_changed(&vs);
 	ATF_CHECK(g_msix_count == 0);
 	ATF_CHECK(vi_pci_modern_read(&pi, 2,
+	    VIRTIO_PCI_COMMON_CFGGENERATION, 1) == 0);
+	ATF_CHECK(vi_pci_modern_read(&pi, 2,
+	    VIRTIO_MODERN_DEVICE_OFF, 1) == 0);
+	ATF_CHECK(vi_pci_modern_read(&pi, 2,
 	    VIRTIO_PCI_COMMON_CFGGENERATION, 1) == 1);
 	vs.vs_msix_cfg_idx = 1;
-	vi_pci_modern_config_changed(&vs);
+	for (int i = 0; i < 256; i++)
+		vi_pci_modern_config_changed(&vs);
 	ATF_CHECK(g_msix_count == 1);
 	ATF_CHECK(g_msix_vector == 1);
+	ATF_CHECK(vi_pci_modern_read(&pi, 2,
+	    VIRTIO_PCI_COMMON_CFGGENERATION, 1) == 1);
+	ATF_CHECK(vi_pci_modern_read(&pi, 2,
+	    VIRTIO_MODERN_DEVICE_OFF, 1) == 0);
 	ATF_CHECK(vi_pci_modern_read(&pi, 2,
 	    VIRTIO_PCI_COMMON_CFGGENERATION, 1) == 2);
 }

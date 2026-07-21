@@ -477,8 +477,10 @@ int	vi_pci_select_transport(struct virtio_softc *, const struct nvlist *,
 int	vi_pci_modern_init(struct virtio_softc *, int);
 void	vi_pci_modern_set_identity(struct virtio_softc *, uint16_t);
 void	vi_pci_modern_reset(struct virtio_softc *);
-/* Increment config_generation and notify; caller holds vs_mtx, if present. */
+/* Record a modern config change and notify; caller holds vs_mtx, if present. */
 void	vi_pci_modern_config_changed(struct virtio_softc *);
+/* Notify a config change using the active transport; caller holds vs_mtx. */
+void	vi_pci_config_changed(struct virtio_softc *);
 uint64_t vi_pci_modern_read(struct pci_devinst *, int, uint64_t, int);
 void	vi_pci_modern_write(struct pci_devinst *, int, uint64_t, int,
 	    uint64_t);

@@ -111,6 +111,7 @@ struct blockif_ctxt {
 	blockif_resize_cb	*bc_resize_cb;
 	void			*bc_resize_cb_arg;
 	struct mevent		*bc_resize_event;
+	unsigned int		bc_resize_inflight;
 
 	/* Request elements and free/pending/busy queues */
 	TAILQ_HEAD(, blockif_elem) bc_freeq;
@@ -680,6 +681,8 @@ static void
 blockif_resized(int fd, enum ev_type type __unused, void *arg)
 {
 	struct blockif_ctxt *bc;
+	blockif_resize_cb *cb;
+	void *cb_arg;
 	struct stat sb;
 	off_t mediasize;
 
@@ -696,12 +699,25 @@ blockif_resized(int fd, enum ev_type type __unused, void *arg)
 		mediasize = sb.st_size;
 
 	bc = arg;
+	cb = NULL;
+	cb_arg = NULL;
 	pthread_mutex_lock(&bc->bc_mtx);
-	if (mediasize != bc->bc_size) {
+	if (!bc->bc_closing && bc->bc_resize_cb != NULL &&
+	    mediasize != bc->bc_size) {
 		bc->bc_size = mediasize;
-		bc->bc_resize_cb(bc, bc->bc_resize_cb_arg, bc->bc_size);
+		cb = bc->bc_resize_cb;
+		cb_arg = bc->bc_resize_cb_arg;
+		bc->bc_resize_inflight++;
 	}
 	pthread_mutex_unlock(&bc->bc_mtx);
+	if (cb != NULL) {
+		cb(bc, cb_arg, mediasize);
+		pthread_mutex_lock(&bc->bc_mtx);
+		bc->bc_resize_inflight--;
+		if (bc->bc_resize_inflight == 0)
+			pthread_cond_broadcast(&bc->bc_work_done_cond);
+		pthread_mutex_unlock(&bc->bc_mtx);
+	}
 }
 
 int
@@ -896,6 +912,8 @@ blockif_close(struct blockif_ctxt *bc)
 	bc->bc_closing = 1;
 	if (bc->bc_resize_event != NULL)
 		mevent_disable(bc->bc_resize_event);
+	while (bc->bc_resize_inflight != 0)
+		pthread_cond_wait(&bc->bc_work_done_cond, &bc->bc_mtx);
 	pthread_mutex_unlock(&bc->bc_mtx);
 	pthread_cond_broadcast(&bc->bc_cond);
 	for (i = 0; i < BLOCKIF_NUMTHR; i++)

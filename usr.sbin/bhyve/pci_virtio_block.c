@@ -538,12 +538,15 @@ pci_vtblk_resized(struct blockif_ctxt *bctxt __unused, void *arg,
     size_t new_size)
 {
 	struct pci_vtblk_softc *sc;
+	struct virtio_softc *vs;
 
 	sc = arg;
+	vs = &sc->vbsc_vs;
 
+	VS_LOCK(vs);
 	sc->vbsc_cfg.vbc_capacity = new_size / VTBLK_BSIZE; /* 512-byte units */
-	vi_interrupt(&sc->vbsc_vs, VIRTIO_PCI_ISR_CONFIG,
-	    sc->vbsc_vs.vs_msix_cfg_idx);
+	vi_pci_config_changed(vs);
+	VS_UNLOCK(vs);
 }
 
 static int

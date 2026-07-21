@@ -54,6 +54,7 @@ struct virtio_pci_modern {
 	int bar;
 	uint8_t config_generation;
 	uint8_t pci_cfg_capoff;
+	bool config_pending;
 };
 
 static uint64_t
@@ -259,9 +260,20 @@ vi_pci_modern_config_changed(struct virtio_softc *vs)
 
 	if (vs->vs_modern == NULL)
 		return;
-	vs->vs_modern->config_generation++;
-	VIRTIO_PROBE_CONFIG_CHANGED(vs->vs_modern->config_generation);
+	if (vs->vs_modern->config_pending)
+		return;
+	vs->vs_modern->config_pending = true;
 	vi_modern_config_interrupt(vs);
+}
+
+void
+vi_pci_config_changed(struct virtio_softc *vs)
+{
+
+	if (vi_pci_is_modern(vs))
+		vi_pci_modern_config_changed(vs);
+	else
+		vi_interrupt(vs, VIRTIO_PCI_ISR_CONFIG, vs->vs_msix_cfg_idx);
 }
 
 static void
@@ -287,6 +299,7 @@ vi_pci_modern_reset(struct virtio_softc *vs)
 	vs->vs_modern->driver_features = 0;
 	vs->vs_modern->device_feature_select = 0;
 	vs->vs_modern->driver_feature_select = 0;
+	vs->vs_modern->config_pending = false;
 	for (i = 0; i < vs->vs_vc->vc_nvq; i++) {
 		vq = &vs->vs_queues[i];
 		vq->vq_enabled = 0;
@@ -625,8 +638,15 @@ vi_pci_modern_read(struct pci_devinst *pi, int baridx, uint64_t offset,
 		else
 			error = (*vs->vs_vc->vc_cfgread)((void *)vs,
 			    offset - VIRTIO_MODERN_DEVICE_OFF, size, &value);
-		if (error == 0)
+		if (error == 0) {
+			if (vs->vs_modern->config_pending) {
+				vs->vs_modern->config_generation++;
+				vs->vs_modern->config_pending = false;
+				VIRTIO_PROBE_CONFIG_CHANGED(
+				    vs->vs_modern->config_generation);
+			}
 			result = value;
+		}
 	}
 	VS_UNLOCK(vs);
 	return (result);

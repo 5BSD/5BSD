@@ -37,6 +37,7 @@ static int g_rel_calls;
 static uint32_t g_rel_len;
 static int g_end_calls;
 static int g_reset_calls;
+static int g_config_changes;
 
 static struct virtio_blk_hdr g_header;
 static struct virtio_blk_discard_write_zeroes g_discard;
@@ -75,6 +76,7 @@ reset_mocks(void)
 	g_rel_len = UINT32_MAX;
 	g_end_calls = 0;
 	g_reset_calls = 0;
+	g_config_changes = 0;
 }
 
 static void
@@ -163,6 +165,13 @@ vi_reset_dev(struct virtio_softc *vs __unused)
 {
 
 	g_reset_calls++;
+}
+
+void
+vi_pci_config_changed(struct virtio_softc *vs __unused)
+{
+
+	g_config_changes++;
 }
 
 ATF_TC_WITHOUT_HEAD(malformed_chains);
@@ -372,6 +381,21 @@ ATF_TC_BODY(reset_discards_outstanding_io, tc)
 	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
 }
 
+ATF_TC_WITHOUT_HEAD(resize_notifies_configuration_change);
+ATF_TC_BODY(resize_notifies_configuration_change, tc)
+{
+	struct pci_vtblk_softc sc;
+
+	reset_mocks();
+	setup_softc(&sc);
+	ATF_REQUIRE(pthread_mutex_init(&sc.vsc_mtx, NULL) == 0);
+	sc.vbsc_vs.vs_mtx = &sc.vsc_mtx;
+	pci_vtblk_resized(NULL, &sc, 4096);
+	ATF_CHECK(sc.vbsc_cfg.vbc_capacity == 8);
+	ATF_CHECK(g_config_changes == 1);
+	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, malformed_chains);
@@ -379,5 +403,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, backend_and_range_errors);
 	ATF_TP_ADD_TC(tp, discard_validation);
 	ATF_TP_ADD_TC(tp, reset_discards_outstanding_io);
+	ATF_TP_ADD_TC(tp, resize_notifies_configuration_change);
 	return (atf_no_error());
 }
