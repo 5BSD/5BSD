@@ -20,6 +20,7 @@
 #include <sys/time.h>
 #include <sys/queue.h>		/* real: TAILQ/LIST */
 #include <errno.h>
+#include <limits.h>
 #include <poll.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -300,8 +301,27 @@ void m_cat(struct mbuf *, struct mbuf *);
 void m_copyback(struct mbuf *, int, int, const void *);
 static inline struct mbuf *
 m_getm2(struct mbuf *prev __unused, int len, int how, int type, int flags)
-{ struct mbuf *m = m_get(how, type); if (m == NULL) return (NULL);
-  if (flags & M_PKTHDR) m->m_flags |= M_PKTHDR; m->m_len = len; return (m); }
+{
+	struct mbuf *first, **next, *m;
+	int allocated;
+
+	first = NULL;
+	next = &first;
+	allocated = 0;
+	do {
+		m = m_get(how, type);
+		if (m == NULL) {
+			m_freem(first);
+			return (NULL);
+		}
+		if (first == NULL && (flags & M_PKTHDR) != 0)
+			m->m_flags |= M_PKTHDR;
+		*next = m;
+		next = &m->m_next;
+		allocated += MLEN;
+	} while (allocated < len);
+	return (first);
+}
 
 /* ======================================================================
  * socket / sockbuf — real byte accounting so credit tests are meaningful.
@@ -315,6 +335,10 @@ struct sockbuf {
 	struct mbuf	*sb_mb;		/* queued chain (record list) */
 	struct mbuf	*sb_mbtail;
 };
+extern int vsock_kmock_record_pkthdrs;
+extern int vsock_kmock_record_pkthdr_len;
+extern int vsock_kmock_record_len;
+extern int vsock_kmock_record_mflags;
 #define SBS_CANTSENDMORE	0x0010
 #define SBS_CANTRCVMORE		0x0020
 
@@ -380,7 +404,19 @@ sbappendstream_locked(struct sockbuf *sb, struct mbuf *m, int flags __unused)
 static inline void
 sbappendrecord_locked(struct sockbuf *sb, struct mbuf *m)
 {
-	sb->sb_cc += m_length(m, NULL);
+	struct mbuf *n;
+
+	vsock_kmock_record_pkthdrs = 0;
+	for (n = m; n != NULL; n = n->m_next) {
+		if ((n->m_flags & M_PKTHDR) != 0)
+			vsock_kmock_record_pkthdrs++;
+	}
+	vsock_kmock_record_pkthdr_len = m->m_pkthdr.len;
+	vsock_kmock_record_len = m_length(m, NULL);
+	vsock_kmock_record_mflags = 0;
+	for (n = m; n != NULL; n = n->m_next)
+		vsock_kmock_record_mflags |= n->m_flags;
+	sb->sb_cc += vsock_kmock_record_len;
 	m_freem(m);
 }
 static inline void
@@ -428,6 +464,9 @@ struct uio {
 	ssize_t		 uio_resid;
 	struct thread	*uio_td;
 };
+struct uio *cloneuio(struct uio *);
+void freeuio(struct uio *);
+void uioadvance(struct uio *, size_t);
 
 int sopoll_generic(struct socket *, int, struct thread *);
 int sosend_generic(struct socket *, struct sockaddr *, struct uio *,

@@ -37,6 +37,7 @@
 #define	VSOCK_CID_LOCAL		UINT32_C(1)
 #define	VSOCK_CID_HOST		UINT32_C(2)
 #define	VSOCK_CID_ANY		UINT32_C(0xffffffff)	/* wildcard local CID */
+#define	VSOCK_TRANSPORT_MAX_PAYLOAD	(64 * 1024)
 
 #define	VSOCK_PORT_ANY		UINT32_C(0xffffffff)	/* auto-assign */
 

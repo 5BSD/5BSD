@@ -2951,13 +2951,15 @@ ATF_TC_BODY(seqpacket_msg_eor, tc)
 {
 	struct msghdr mh;
 	struct iovec iov;
+	struct msghdr smh;
+	struct iovec siov;
 	char buf[64];
 	int ls, cs, as;
 
 	(void)tc;
 	vsock_pair(SOCK_SEQPACKET, &ls, &cs, &as);
 
-	/* Send a single complete message — should arrive with MSG_EOR */
+	/* A message boundary (EOM) alone is not a record boundary (EOR). */
 	ATF_REQUIRE(send(cs, "record", 6, 0) == 6);
 
 	memset(&mh, 0, sizeof(mh));
@@ -2969,19 +2971,24 @@ ATF_TC_BODY(seqpacket_msg_eor, tc)
 
 	ATF_REQUIRE(recvmsg(as, &mh, 0) == 6);
 	ATF_REQUIRE(memcmp(buf, "record", 6) == 0);
-	ATF_REQUIRE_MSG(mh.msg_flags & MSG_EOR,
-	    "MSG_EOR not set on SEQPACKET message (flags=0x%x)",
+	ATF_REQUIRE_MSG((mh.msg_flags & MSG_EOR) == 0,
+	    "MSG_EOR set without sender MSG_EOR (flags=0x%x)",
 	    mh.msg_flags);
 
-	/* Second message — verify boundary and MSG_EOR again */
-	ATF_REQUIRE(send(cs, "next", 4, 0) == 4);
+	/* An explicit sender MSG_EOR must be reflected on the same message. */
+	memset(&smh, 0, sizeof(smh));
+	siov.iov_base = __DECONST(char *, "next");
+	siov.iov_len = 4;
+	smh.msg_iov = &siov;
+	smh.msg_iovlen = 1;
+	ATF_REQUIRE(sendmsg(cs, &smh, MSG_EOR) == 4);
 
 	mh.msg_flags = 0;
 	iov.iov_len = sizeof(buf);
 	ATF_REQUIRE(recvmsg(as, &mh, 0) == 4);
 	ATF_REQUIRE(memcmp(buf, "next", 4) == 0);
 	ATF_REQUIRE_MSG(mh.msg_flags & MSG_EOR,
-	    "MSG_EOR not set on second message (flags=0x%x)",
+	    "MSG_EOR not propagated from sender (flags=0x%x)",
 	    mh.msg_flags);
 
 	close(as);
@@ -3037,9 +3044,17 @@ ATF_TC_BODY(seqpacket_eor_multi_record, tc)
 	/* Send 5 messages; each should arrive as a separate record */
 	for (i = 0; i < 5; i++) {
 		char msg[8];
+		struct msghdr smh;
+		struct iovec siov;
+
 		snprintf(msg, sizeof(msg), "msg%d", i);
-		ATF_REQUIRE(send(cs, msg, strlen(msg), 0) ==
-		    (ssize_t)strlen(msg));
+		memset(&smh, 0, sizeof(smh));
+		siov.iov_base = msg;
+		siov.iov_len = strlen(msg);
+		smh.msg_iov = &siov;
+		smh.msg_iovlen = 1;
+		ATF_REQUIRE(sendmsg(cs, &smh, MSG_EOR) ==
+		    (ssize_t)siov.iov_len);
 	}
 
 	for (i = 0; i < 5; i++) {
@@ -5504,6 +5519,172 @@ ATF_TC_BODY(connect_timeout_erange, tc)
 /* ATF test plan                                                       */
 /* ------------------------------------------------------------------ */
 
+ATF_TC(native_userspace_transport);
+ATF_TC_HEAD(native_userspace_transport, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(native_userspace_transport, tc)
+{
+	struct vsock_transport_attach attach;
+	struct virtio_vsock_hdr *request, response;
+	struct sockaddr_vm peer;
+	uint8_t packet[sizeof(*request) + 64];
+	const char host_data[] = "host-native";
+	const char guest_data[] = "guest-native";
+	uint32_t local_cid;
+	socklen_t optlen;
+	ssize_t len;
+	int error, provider, second, s;
+
+	provider = open("/dev/vsock", O_RDWR | O_NONBLOCK);
+	ATF_REQUIRE_MSG(provider >= 0, "open /dev/vsock: %s",
+	    strerror(errno));
+	memset(&attach, 0, sizeof(attach));
+	attach.version = VSOCK_TRANSPORT_VERSION;
+	attach.guest_cid = 42;
+	attach.features = VIRTIO_VSOCK_F_STREAM;
+	{
+		struct vsock_transport_attach invalid = attach;
+
+		invalid.features |= UINT64_C(1) << 63;
+		errno = 0;
+		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_ATTACH,
+		    &invalid) == -1);
+		ATF_CHECK(errno == EINVAL);
+	}
+	if (ioctl(provider, VSOCK_IOC_TRANSPORT_ATTACH, &attach) < 0) {
+		if (errno == EBUSY) {
+			close(provider);
+			atf_tc_skip("an AF_VSOCK remote transport is active");
+		}
+		ATF_REQUIRE_MSG(false, "transport attach: %s", strerror(errno));
+	}
+	local_cid = 0;
+	ATF_REQUIRE(ioctl(provider, IOCTL_VM_SOCKETS_GET_LOCAL_CID,
+	    &local_cid) == 0);
+	ATF_CHECK(local_cid == VSOCK_CID_HOST);
+
+	second = open("/dev/vsock", O_RDWR | O_NONBLOCK);
+	ATF_REQUIRE(second >= 0);
+	errno = 0;
+	ATF_CHECK(ioctl(second, VSOCK_IOC_TRANSPORT_ATTACH, &attach) == -1);
+	ATF_CHECK(errno == EBUSY);
+	close(second);
+
+	s = socket(AF_VSOCK, SOCK_STREAM | SOCK_NONBLOCK, 0);
+	ATF_REQUIRE_MSG(s >= 0, "socket: %s", strerror(errno));
+	memset(&peer, 0, sizeof(peer));
+	peer.svm_len = sizeof(peer);
+	peer.svm_family = AF_VSOCK;
+	peer.svm_cid = attach.guest_cid;
+	peer.svm_port = 9000;
+	errno = 0;
+	ATF_CHECK(connect(s, (struct sockaddr *)&peer, sizeof(peer)) == -1);
+	ATF_CHECK(errno == EINPROGRESS);
+
+	ATF_CHECK(read(provider, packet, 0) == 0);
+	errno = 0;
+	ATF_CHECK(read(provider, packet, sizeof(*request) - 1) == -1);
+	ATF_CHECK(errno == EMSGSIZE);
+	len = read(provider, packet, sizeof(packet));
+	ATF_REQUIRE_MSG(len == (ssize_t)sizeof(*request),
+	    "request read returned %zd: %s", len, strerror(errno));
+	request = (struct virtio_vsock_hdr *)packet;
+	ATF_CHECK(le16toh(request->op) == VIRTIO_VSOCK_OP_REQUEST);
+	ATF_CHECK(le64toh(request->src_cid) == VSOCK_CID_HOST);
+	ATF_CHECK(le64toh(request->dst_cid) == attach.guest_cid);
+	ATF_CHECK(le32toh(request->dst_port) == peer.svm_port);
+
+	memset(&response, 0, sizeof(response));
+	response.src_cid = htole64(attach.guest_cid);
+	response.dst_cid = htole64(VSOCK_CID_HOST);
+	response.src_port = request->dst_port;
+	response.dst_port = request->src_port;
+	response.type = request->type;
+	response.op = htole16(VIRTIO_VSOCK_OP_RESPONSE);
+	response.buf_alloc = htole32(65536);
+	response.src_cid = htole64(attach.guest_cid + 1);
+	errno = 0;
+	ATF_CHECK(write(provider, &response, sizeof(response)) == -1);
+	ATF_CHECK(errno == EINVAL);
+	response.src_cid = htole64(attach.guest_cid);
+	ATF_REQUIRE(write(provider, &response, sizeof(response)) ==
+	    (ssize_t)sizeof(response));
+	optlen = sizeof(error);
+	error = -1;
+	ATF_REQUIRE(getsockopt(s, SOL_SOCKET, SO_ERROR, &error, &optlen) == 0);
+	ATF_CHECK(error == 0);
+
+	ATF_REQUIRE(send(s, host_data, sizeof(host_data), 0) ==
+	    (ssize_t)sizeof(host_data));
+	len = read(provider, packet, sizeof(packet));
+	ATF_REQUIRE(len == (ssize_t)(sizeof(*request) + sizeof(host_data)));
+	request = (struct virtio_vsock_hdr *)packet;
+	ATF_CHECK(le16toh(request->op) == VIRTIO_VSOCK_OP_RW);
+	ATF_CHECK(le32toh(request->len) == sizeof(host_data));
+	ATF_CHECK(memcmp(packet + sizeof(*request), host_data,
+	    sizeof(host_data)) == 0);
+
+	response = *request;
+	response.src_cid = htole64(attach.guest_cid);
+	response.dst_cid = htole64(VSOCK_CID_HOST);
+	response.src_port = request->dst_port;
+	response.dst_port = request->src_port;
+	response.len = htole32(sizeof(guest_data));
+	response.fwd_cnt = htole32(sizeof(host_data));
+	memcpy(packet, &response, sizeof(response));
+	memcpy(packet + sizeof(response), guest_data, sizeof(guest_data));
+	ATF_REQUIRE(write(provider, packet,
+	    sizeof(response) + sizeof(guest_data)) ==
+	    (ssize_t)(sizeof(response) + sizeof(guest_data)));
+	memset(packet, 0, sizeof(packet));
+	ATF_REQUIRE(recv(s, packet, sizeof(guest_data), 0) ==
+	    (ssize_t)sizeof(guest_data));
+	ATF_CHECK(memcmp(packet, guest_data, sizeof(guest_data)) == 0);
+
+	/*
+	 * Fill the provider's control queue with RST replies for unknown flows.
+	 * The next nonblocking write must apply backpressure before consuming the
+	 * packet; draining one reply must make the fd writable again.
+	 */
+	while (read(provider, packet, sizeof(packet)) > 0)
+		;
+	ATF_REQUIRE(errno == EAGAIN || errno == EWOULDBLOCK);
+	memset(&response, 0, sizeof(response));
+	response.src_cid = htole64(attach.guest_cid);
+	response.dst_cid = htole64(VSOCK_CID_HOST);
+	response.src_port = htole32(65000);
+	response.dst_port = htole32(65001);
+	response.type = htole16(VIRTIO_VSOCK_TYPE_STREAM);
+	response.op = htole16(VIRTIO_VSOCK_OP_CREDIT_UPDATE);
+	for (error = 0; error < 256; error++) {
+		len = write(provider, &response, sizeof(response));
+		if (len < 0)
+			break;
+		ATF_REQUIRE(len == (ssize_t)sizeof(response));
+	}
+	ATF_CHECK(error == 128);
+	ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
+	{
+		struct pollfd pfd = { .fd = provider, .events = POLLOUT };
+
+		ATF_CHECK(poll(&pfd, 1, 0) == 0);
+		ATF_REQUIRE(read(provider, packet, sizeof(packet)) ==
+		    (ssize_t)sizeof(response));
+		pfd.revents = 0;
+		ATF_CHECK(poll(&pfd, 1, 0) == 1);
+		ATF_CHECK((pfd.revents & POLLOUT) != 0);
+		ATF_REQUIRE(write(provider, &response, sizeof(response)) ==
+		    (ssize_t)sizeof(response));
+	}
+	while (read(provider, packet, sizeof(packet)) > 0)
+		;
+
+	close(s);
+	close(provider);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	/* Group 1: Basic socket operations */
@@ -5758,6 +5939,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, bind_cid_local_explicit);
 	ATF_TP_ADD_TC(tp, bind_port_zero_literal);
 	ATF_TP_ADD_TC(tp, get_local_cid_ioctl);
+
+	/* Group 53: privileged VMM packet transport. */
+	ATF_TP_ADD_TC(tp, native_userspace_transport);
 
 	return (atf_no_error());
 }

@@ -20,10 +20,16 @@ static bool g_tx_ready;
 static int g_send_calls;
 static int g_last_send_mflags;
 static int g_last_send_len;
+static int g_send_len[4];
+static int g_send_error;
 int vsock_kmock_sock_lock_calls;
 int vsock_kmock_sock_lock_depth;
 int vsock_kmock_sndbuf_lock_calls;
 int vsock_kmock_sndbuf_lock_depth;
+int vsock_kmock_record_pkthdrs;
+int vsock_kmock_record_pkthdr_len;
+int vsock_kmock_record_len;
+int vsock_kmock_record_mflags;
 
 static int
 mock_send_pkt(struct vtvsock_pcb *pcb, uint16_t op, uint32_t flags,
@@ -50,8 +56,10 @@ static int mock_send(struct vtvsock_pcb *p __unused, int f __unused,
 	g_send_calls++;
 	g_last_send_mflags = m->m_flags;
 	g_last_send_len = m_length(m, NULL);
+	if (g_send_calls <= (int)nitems(g_send_len))
+		g_send_len[g_send_calls - 1] = g_last_send_len;
 	m_freem(m);
-	return (0);
+	return (g_send_error);
 }
 static int mock_disconnect(struct vtvsock_pcb *p __unused) { return (0); }
 static int mock_shutdown(struct vtvsock_pcb *p __unused, enum shutdown_how h __unused) { return (0); }
@@ -62,6 +70,12 @@ static const struct vtvsock_transport mock_transport = {
 	.tx_ready = mock_tx_ready, .send_pkt = mock_send_pkt,
 	.send_rst = mock_send_rst, .send_credit_update = mock_send_credit_update,
 };
+
+static void register_mock(uint64_t, uint64_t);
+static void mkhdr(struct virtio_vsock_hdr *, uint16_t, uint16_t, uint64_t,
+    uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+static struct vtvsock_pcb *establish_remote(int, uint32_t, uint32_t,
+    struct socket **);
 
 static void
 reset_state(void)
@@ -75,12 +89,18 @@ reset_state(void)
 	g_ncap = 0; g_credit_updates = 0;
 	g_tx_ready = true;
 	g_send_calls = 0;
+	g_send_error = 0;
 	g_last_send_mflags = 0;
 	g_last_send_len = 0;
+	memset(g_send_len, 0, sizeof(g_send_len));
 	vsock_kmock_sock_lock_calls = 0;
 	vsock_kmock_sock_lock_depth = 0;
 	vsock_kmock_sndbuf_lock_calls = 0;
 	vsock_kmock_sndbuf_lock_depth = 0;
+	vsock_kmock_record_pkthdrs = 0;
+	vsock_kmock_record_pkthdr_len = 0;
+	vsock_kmock_record_len = 0;
+	vsock_kmock_record_mflags = 0;
 	/* fresh domain state each test */
 	vtvsock_remote_transport = NULL;
 	vtvsock_remote_transport_owner = NULL;
@@ -88,6 +108,25 @@ reset_state(void)
 	vtvsock_remote_features = 0;
 }
 
+ATF_TC_WITHOUT_HEAD(seqpacket_rx_eor_follows_wire_flag);
+ATF_TC_BODY(seqpacket_rx_eor_follows_wire_flag, tc)
+{
+	struct vtvsock_pcb *pcb;
+	struct virtio_vsock_hdr *h;
+	uint8_t pkt[sizeof(*h) + 8];
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM | VIRTIO_VSOCK_F_SEQPACKET);
+	pcb = establish_remote(SOCK_SEQPACKET, 94, 1251, NULL);
+	ATF_REQUIRE(pcb != NULL);
+	h = (struct virtio_vsock_hdr *)pkt;
+	memset(pkt + sizeof(*h), 0x6b, 8);
+	mkhdr(h, VIRTIO_VSOCK_OP_RW, VIRTIO_VSOCK_TYPE_SEQPACKET,
+	    VSOCK_CID_HOST, 1251, 94, 8,
+	    VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR, 65536, 0);
+	vsock_rx_packet(pkt, sizeof(pkt));
+	ATF_CHECK((vsock_kmock_record_mflags & M_EOR) != 0);
+}
 static void
 register_mock(uint64_t cid, uint64_t features)
 {
@@ -182,7 +221,8 @@ establish_remote(int socket_type, uint32_t local_port, uint32_t peer_port,
 
 /* ================================================================= */
 
-/* --- reserved CIDs must never become the guest CID (bind safety) --- */
+/* --- invalid local CIDs fall back to loopback; HOST is valid for a
+ * host-side userspace transport. --- */
 ATF_TC_WITHOUT_HEAD(reserved_cid_sanitized);
 ATF_TC_BODY(reserved_cid_sanitized, tc)
 {
@@ -190,7 +230,7 @@ ATF_TC_BODY(reserved_cid_sanitized, tc)
 	register_mock(VSOCK_CID_HYPERVISOR, 0);
 	ATF_CHECK(vtvsock_guest_cid == VSOCK_CID_LOCAL);
 	register_mock(VSOCK_CID_HOST, 0);
-	ATF_CHECK(vtvsock_guest_cid == VSOCK_CID_LOCAL);
+	ATF_CHECK(vtvsock_guest_cid == VSOCK_CID_HOST);
 	register_mock(VSOCK_CID_ANY, 0);
 	ATF_CHECK(vtvsock_guest_cid == VSOCK_CID_LOCAL);
 	register_mock(3, 0);			/* a valid CID is accepted */
@@ -525,6 +565,73 @@ ATF_TC_BODY(nonblocking_tx_not_consumed_when_ring_full, tc)
 	ATF_CHECK(g_last_send_len == (int)(sizeof(data) - 1));
 }
 
+/* --- Capacity can disappear after tx_ready() when another socket shares the
+ * transport.  A post-copy transient error must not advance the caller. --- */
+ATF_TC_WITHOUT_HEAD(post_copy_send_error_preserves_uio);
+ATF_TC_BODY(post_copy_send_error_preserves_uio, tc)
+{
+	struct vtvsock_pcb *pcb;
+	struct iovec iov;
+	struct uio uio;
+	char data[] = "race";
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	pcb = establish_remote(SOCK_STREAM, 92, 1249, NULL);
+	ATF_REQUIRE(pcb != NULL);
+	memset(&uio, 0, sizeof(uio));
+	iov.iov_base = data;
+	iov.iov_len = sizeof(data) - 1;
+	uio.uio_iov = &iov;
+	uio.uio_iovcnt = 1;
+	uio.uio_resid = sizeof(data) - 1;
+	g_tx_ready = true;
+	g_send_error = EWOULDBLOCK;
+	ATF_CHECK(vsock_sosend(pcb->so, NULL, &uio, NULL, NULL,
+	    MSG_DONTWAIT, NULL) == EWOULDBLOCK);
+	ATF_CHECK(uio.uio_resid == (ssize_t)(sizeof(data) - 1));
+	ATF_CHECK(iov.iov_len == sizeof(data) - 1);
+	ATF_CHECK(g_send_calls == 1);
+
+	g_send_error = 0;
+	ATF_CHECK(vsock_sosend(pcb->so, NULL, &uio, NULL, NULL,
+	    MSG_DONTWAIT, NULL) == 0);
+	ATF_CHECK(uio.uio_resid == 0);
+}
+
+/* --- One remote STREAM transport call carries at most one wire packet, so
+ * an error cannot follow an unreportable partially enqueued chunk. --- */
+ATF_TC_WITHOUT_HEAD(remote_stream_send_is_packet_atomic);
+ATF_TC_BODY(remote_stream_send_is_packet_atomic, tc)
+{
+	struct vtvsock_pcb *pcb;
+	struct iovec iov;
+	struct uio uio;
+	char *data;
+	size_t len;
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	pcb = establish_remote(SOCK_STREAM, 91, 1248, NULL);
+	ATF_REQUIRE(pcb != NULL);
+	len = VSOCK_TRANSPORT_MAX_PAYLOAD + 17;
+	data = calloc(1, len);
+	ATF_REQUIRE(data != NULL);
+	memset(&uio, 0, sizeof(uio));
+	iov.iov_base = data;
+	iov.iov_len = len;
+	uio.uio_iov = &iov;
+	uio.uio_iovcnt = 1;
+	uio.uio_resid = len;
+	pcb->peer_buf_alloc = len;
+	ATF_CHECK(vsock_sosend(pcb->so, NULL, &uio, NULL, NULL, 0, NULL) == 0);
+	ATF_CHECK(uio.uio_resid == 0);
+	ATF_CHECK(g_send_calls == 2);
+	ATF_CHECK(g_send_len[0] == VSOCK_TRANSPORT_MAX_PAYLOAD);
+	ATF_CHECK(g_send_len[1] == 17);
+	kfree(data);
+}
+
 /* --- Send-side terminal state is read under its owning locks.  In
  * particular, serializing the so_error read-and-clear with asynchronous
  * reset writers prevents a new error store from being erased by a racing
@@ -567,8 +674,8 @@ ATF_TC_BODY(send_terminal_state_checks_are_locked, tc)
 	ATF_CHECK(uio.uio_resid == (ssize_t)(sizeof(data) - 1));
 }
 
-/* --- Every SEQPACKET send has a local record boundary (M_EOR), while only
- * an explicit MSG_EOR is carried to the virtio transport as M_PROTO1. --- */
+/* --- VirtIO EOM delimits every message; EOR is present only when the sender
+ * supplied MSG_EOR.  M_PROTO1 is the transport marker for that EOR. --- */
 ATF_TC_WITHOUT_HEAD(seqpacket_msg_eor_transport_marker);
 ATF_TC_BODY(seqpacket_msg_eor_transport_marker, tc)
 {
@@ -593,13 +700,38 @@ ATF_TC_BODY(seqpacket_msg_eor_transport_marker, tc)
 	ATF_CHECK((g_last_send_mflags & M_EOR) != 0);
 	ATF_CHECK((g_last_send_mflags & M_PROTO1) != 0);
 
+	iov.iov_base = data;
+	iov.iov_len = sizeof(data) - 1;
+	uio.uio_iov = &iov;
+	uio.uio_iovcnt = 1;
 	uio.uio_resid = sizeof(data) - 1;
 	g_send_calls = 0;
 	g_last_send_mflags = 0;
 	ATF_CHECK(vsock_sosend(pcb->so, NULL, &uio, NULL, NULL, 0, NULL) == 0);
 	ATF_CHECK(g_send_calls == 1);
-	ATF_CHECK((g_last_send_mflags & M_EOR) != 0);
+	ATF_CHECK((g_last_send_mflags & M_EOR) == 0);
 	ATF_CHECK((g_last_send_mflags & M_PROTO1) == 0);
+}
+
+/* --- A packet shorter than hdr.len is malformed, not a truncated message. --- */
+ATF_TC_WITHOUT_HEAD(rx_truncated_payload_is_rejected);
+ATF_TC_BODY(rx_truncated_payload_is_rejected, tc)
+{
+	struct vtvsock_pcb *pcb;
+	struct virtio_vsock_hdr *h;
+	uint8_t pkt[sizeof(*h) + 4];
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	pcb = establish_remote(SOCK_STREAM, 93, 1250, NULL);
+	ATF_REQUIRE(pcb != NULL);
+	h = (struct virtio_vsock_hdr *)pkt;
+	memset(pkt + sizeof(*h), 0xa5, 4);
+	mkhdr(h, VIRTIO_VSOCK_OP_RW, VIRTIO_VSOCK_TYPE_STREAM,
+	    VSOCK_CID_HOST, 1250, 93, 8, 0, 65536, 0);
+	vsock_rx_packet(pkt, sizeof(pkt));
+	ATF_CHECK(pcb->so->so_rcv.sb_cc == 0);
+	ATF_CHECK(cap_count(VIRTIO_VSOCK_OP_RST) == 1);
 }
 
 /* --- The guest-side global connection cap rejects excess REQUESTs and a
@@ -664,13 +796,17 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rx_peer_fwd_cnt_spoof_rst);
 	ATF_TP_ADD_TC(tp, rx_flow_control_violation_rst);
 	ATF_TP_ADD_TC(tp, cid_local_wire_isolation);
+	ATF_TP_ADD_TC(tp, seqpacket_rx_eor_follows_wire_flag);
 	ATF_TP_ADD_TC(tp, seqpacket_fragment_limit_rst);
 	ATF_TP_ADD_TC(tp, deferred_shutdown_timeout);
 	ATF_TP_ADD_TC(tp, transport_reset_and_reregister);
 	ATF_TP_ADD_TC(tp, transport_registration_is_owner_scoped);
 	ATF_TP_ADD_TC(tp, nonblocking_tx_not_consumed_when_ring_full);
+	ATF_TP_ADD_TC(tp, post_copy_send_error_preserves_uio);
+	ATF_TP_ADD_TC(tp, remote_stream_send_is_packet_atomic);
 	ATF_TP_ADD_TC(tp, send_terminal_state_checks_are_locked);
 	ATF_TP_ADD_TC(tp, seqpacket_msg_eor_transport_marker);
+	ATF_TP_ADD_TC(tp, rx_truncated_payload_is_rejected);
 	ATF_TP_ADD_TC(tp, inbound_connection_cap_reclaims_slot);
 	return (atf_no_error());
 }

@@ -250,18 +250,20 @@ vtvsock_global_softc(void)
  * zeroed) and must not be a reserved value: 0 (hypervisor), 1 (local),
  * 2 (host), or 0xffffffff.  Mask the reserved high bits so a host that
  * leaves garbage there cannot register a bogus 64-bit CID, and warn on a
- * reserved value.  We still return it (rather than failing attach) so a
- * misconfigured host degrades gracefully instead of wedging the driver.
+ * reserved value.  A reserved value falls back to CID_LOCAL, leaving only
+ * loopback available instead of registering a guest transport as CID_HOST.
  */
 static uint64_t
 vtvsock_sanitize_cid(device_t dev, uint64_t cid)
 {
 	cid &= 0xffffffffULL;
 	if (cid == VSOCK_CID_HYPERVISOR || cid == VSOCK_CID_LOCAL ||
-	    cid == VSOCK_CID_HOST || cid == 0xffffffffULL)
+	    cid == VSOCK_CID_HOST || cid == 0xffffffffULL) {
 		device_printf(dev,
 		    "warning: host assigned reserved guest CID %ju\n",
 		    (uintmax_t)cid);
+		cid = VSOCK_CID_LOCAL;
+	}
 	return (cid);
 }
 
@@ -776,8 +778,7 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 		/*
 		 * EOM on the final fragment of a SEQPACKET message.
 		 * EOR only when the application passed MSG_EOR, which
-		 * vsock_sosend() propagates as M_PROTO1 (M_EOR marks the
-		 * local record boundary and is set on every record).
+		 * vsock_sosend() propagates as M_PROTO1.
 		 */
 		pkt_flags = 0;
 		if (seqpacket && (offset + chunk >= total)) {

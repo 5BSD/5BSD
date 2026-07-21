@@ -2,6 +2,6 @@
 
 KMOD=	vsock
 
-SRCS=	uipc_vsock.c
+SRCS=	uipc_vsock.c uipc_vsock_user.c
 
 .include <bsd.kmod.mk>

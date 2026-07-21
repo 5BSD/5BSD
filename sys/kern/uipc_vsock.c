@@ -980,20 +980,19 @@ vsock_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 		return (EINVAL);
 
 	/*
-	 * Reserved CIDs (virtio §5.10.4) can never name a local guest endpoint:
-	 * HYPERVISOR (0) is rejected outright, and HOST (2) belongs to the host
-	 * side.  ANY (0xffffffff) is the "any local CID" wildcard, remapped to
-	 * our guest CID below.  LOCAL (1) is always bindable and denotes a
+	 * HYPERVISOR (0) can never name a local endpoint.  HOST (2) is bindable
+	 * only when a host-side userspace transport registered it as our local
+	 * CID.  ANY (0xffffffff) is the "any local CID" wildcard, remapped to
+	 * our local CID below.  LOCAL (1) is always bindable and denotes a
 	 * loopback-only endpoint, matching Linux (a listener bound to
 	 * VMADDR_CID_LOCAL is reachable only via loopback connects to CID 1,
-	 * never from the remote transport).  vtvsock_guest_cid is itself
-	 * sanitized against reserved values at transport registration, so the
-	 * "== vtvsock_guest_cid" gate below can never be tricked into
-	 * accepting HYPERVISOR or HOST.
+	 * never from the remote transport).  Guest-side transports sanitize
+	 * HOST before registration.
 	 */
 	if (svm->svm_cid == VSOCK_CID_HYPERVISOR)
 		return (EINVAL);
-	if (svm->svm_cid == VSOCK_CID_HOST)
+	if (svm->svm_cid == VSOCK_CID_HOST &&
+	    vtvsock_guest_cid != VSOCK_CID_HOST)
 		return (EADDRNOTAVAIL);
 
 	/*
@@ -2081,20 +2080,18 @@ vtvsock_local_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 }
 
 /*
- * pr_sosend: copy user data only after transport capacity for it exists.
+ * pr_sosend: advance user data only after the transport accepts it.
  *
  * sosend_generic() drains the uio into mbufs BEFORE calling pr_send, and
  * sousrsend() clears transient errors (EWOULDBLOCK/EINTR/ERESTART) for
  * stream sockets whenever the uio shows progress.  A pr_send that fails
  * transiently after the copy therefore reports a successful write while the
- * data has been freed -- silent loss.  Gate on vtvsock_tx_space() first, so
- * a transient failure can only happen before the affected bytes leave the
- * uio, and "progress" seen by sousrsend() is always data the transport
- * really accepted (proper short-write semantics).
- *
- * The socket IO send lock serializes writers, so space observed here cannot
- * be consumed by a competing sender before the transport takes the copy
- * (space only grows in between: reader drains / CREDIT_UPDATE arrives).
+ * data has been freed -- silent loss.  The socket IO send lock is per socket,
+ * while remote sockets share a transport queue, so a successful tx_ready()
+ * check cannot reserve capacity against a sender on another socket.  Copy
+ * through a cloned uio and advance the caller's uio only after send() accepts
+ * the packet.  A transient post-copy failure then leaves the caller's
+ * accounting unchanged and can be retried safely.
  */
 static int
 vsock_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
@@ -2102,10 +2099,11 @@ vsock_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 {
 	struct vtvsock_pcb *pcb;
 	struct mbuf *m;
+	struct uio *copy_uio;
 	ssize_t resid;
 	size_t space, chunk, cap;
 	sbintime_t timo;
-	bool cantsend, nbio, seqpacket;
+	bool cantsend, nbio, remote, seqpacket;
 	int error;
 
 	/*
@@ -2256,12 +2254,32 @@ vsock_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 			error = EWOULDBLOCK;
 			goto release;
 		}
+		remote = pcb->transport != &vtvsock_local_transport;
 		mtx_unlock(&vtvsock_mtx);
 
 		chunk = seqpacket ? (size_t)resid :
 		    MIN(space, (size_t)resid);
+		/*
+		 * Keep each remote STREAM handoff to one wire packet.  A transport
+		 * may otherwise enqueue several fragments and then fail, after the
+		 * whole chunk has already been removed from the caller's uio.  One
+		 * packet per call makes transport acceptance atomic and preserves
+		 * accurate short-write accounting in this layer.
+		 */
+		if (!seqpacket && remote)
+			chunk = MIN(chunk, (size_t)VSOCK_TRANSPORT_MAX_PAYLOAD);
+		if (chunk > INT_MAX) {
+			error = EMSGSIZE;
+			break;
+		}
 		if (chunk > 0) {
-			m = m_uiotombuf(uio, M_WAITOK, chunk, 0, 0);
+			copy_uio = cloneuio(uio);
+			if (copy_uio == NULL) {
+				error = ENOBUFS;
+				break;
+			}
+			m = m_uiotombuf(copy_uio, M_WAITOK, (int)chunk, 0, 0);
+			freeuio(copy_uio);
 			if (m == NULL) {
 				error = ENOBUFS;
 				break;
@@ -2271,24 +2289,13 @@ vsock_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 			m = m_get(M_WAITOK, MT_DATA);
 			m->m_len = 0;
 		}
-		if (seqpacket) {
-			/*
-			 * Every complete SEQPACKET record is delivered with
-			 * MSG_EOR (POSIX; matches AF_UNIX SOCK_SEQPACKET and
-			 * this suite's conformance tests), so mark the record
-			 * boundary unconditionally.  The sender's explicit
-			 * MSG_EOR travels separately as M_PROTO1: the virtio
-			 * transport maps it to VIRTIO_VSOCK_SEQ_EOR so a
-			 * Linux peer sees exactly the flag the sender set.
-			 */
-			m->m_flags |= M_EOR;
-			if (flags & MSG_EOR)
-				m->m_flags |= M_PROTO1;
-		}
+		if (seqpacket && (flags & MSG_EOR) != 0)
+			m->m_flags |= M_EOR | M_PROTO1;
 
 		error = pcb->transport->send(pcb, 0, m, NULL, NULL, td);
 		if (error != 0)
 			break;
+		uioadvance(uio, chunk);
 		resid = uio->uio_resid;
 	} while (resid > 0);
 
@@ -2442,8 +2449,24 @@ vsock_rx_packet(void *buf, uint32_t len)
 
 	payload = (uint8_t *)buf + sizeof(*hdr);
 	payload_len = len - sizeof(*hdr);
-	if (payload_len > hdr_len)
-		payload_len = hdr_len;
+	if (payload_len < hdr_len) {
+		/*
+		 * hdr.len is the payload size.  A transport buffer may contain
+		 * trailing bytes, but it must contain the complete advertised
+		 * payload; accepting a short buffer would silently truncate STREAM
+		 * data or prematurely complete a SEQPACKET message.
+		 */
+		counter_u64_add(vtvsock_cnt_rx_drops, 1);
+		mtx_lock(&vtvsock_mtx);
+		if (hdr_op != VIRTIO_VSOCK_OP_RST &&
+		    vtvsock_remote_transport != NULL)
+			(void)vtvsock_remote_transport->send_rst(
+			    vtvsock_guest_cid, hdr_dst_port, hdr_src_cid,
+			    hdr_src_port, hdr_type);
+		mtx_unlock(&vtvsock_mtx);
+		return;
+	}
+	payload_len = hdr_len;
 
 	/* Validate type field (§5.10.6.4.1: RST for unknown type). */
 	if (hdr_type != VIRTIO_VSOCK_TYPE_STREAM &&
@@ -2895,16 +2918,9 @@ vsock_rx_packet(void *buf, uint32_t len)
 					for (last = m; last->m_next != NULL;
 					    last = last->m_next)
 						;
-					/*
-					 * Complete record: always a local
-					 * record boundary (recv reports
-					 * MSG_EOR).  The peer's explicit
-					 * MSG_EOR (wire SEQ_EOR) is kept as
-					 * M_PROTO1.
-					 */
-					last->m_flags |= M_EOR;
+					/* EOR mirrors the sender's MSG_EOR. */
 					if (hdr_flags & VIRTIO_VSOCK_SEQ_EOR)
-						last->m_flags |= M_PROTO1;
+						last->m_flags |= M_EOR;
 				}
 				sowwakeup(so);
 				SOCK_RECVBUF_LOCK(so);
@@ -2986,16 +3002,9 @@ vsock_rx_packet(void *buf, uint32_t len)
 					for (last = m; last->m_next != NULL;
 					    last = last->m_next)
 						;
-					/*
-					 * Complete record: always a local
-					 * record boundary (recv reports
-					 * MSG_EOR).  The peer's explicit
-					 * MSG_EOR (wire SEQ_EOR) is kept as
-					 * M_PROTO1.
-					 */
-					last->m_flags |= M_EOR;
+					/* EOR mirrors the sender's MSG_EOR. */
 					if (hdr_flags & VIRTIO_VSOCK_SEQ_EOR)
-						last->m_flags |= M_PROTO1;
+						last->m_flags |= M_EOR;
 				}
 				sowwakeup(so);
 				SOCK_RECVBUF_LOCK(so);
@@ -3173,14 +3182,11 @@ vsock_transport_register_locked(const struct vtvsock_transport *ops,
 	vtvsock_remote_transport = ops;
 	vtvsock_remote_transport_owner = owner;
 	/*
-	 * Never let a reserved CID (HYPERVISOR 0, HOST 2, ANY 0xffffffff, or the
-	 * 64-bit all-ones) become our guest CID: bind() admits svm_cid when it
-	 * equals vtvsock_guest_cid, so a reserved value here would make a
-	 * reserved CID bindable.  A transport advertising a bogus CID falls back
-	 * to loopback-only (LOCAL), matching the unregistered default.
+	 * HYPERVISOR, ANY, and the 64-bit all-ones value can never be a local
+	 * endpoint.  HOST is valid for the privileged userspace transport;
+	 * guest-side transports sanitize it before registration.
 	 */
-	if (guest_cid == VSOCK_CID_HYPERVISOR || guest_cid == VSOCK_CID_HOST ||
-	    guest_cid == VSOCK_CID_ANY ||
+	if (guest_cid == VSOCK_CID_HYPERVISOR || guest_cid == VSOCK_CID_ANY ||
 	    guest_cid == UINT64_C(0xffffffffffffffff))
 		guest_cid = VSOCK_CID_LOCAL;
 	vtvsock_guest_cid = guest_cid;
@@ -3229,40 +3235,6 @@ vsock_transport_unregister(const void *owner)
 }
 
 /* -----------------------------------------------------------------------
- * /dev/vsock character device
- *
- * Linux compatibility: ported code discovers the local CID by opening
- * /dev/vsock and issuing IOCTL_VM_SOCKETS_GET_LOCAL_CID (see af_vsock.c's
- * vsock_dev_do_ioctl).  The same ioctl is also accepted on any vsock socket
- * (vsock_control) and the CID is exported as kern.vsock.guest_cid.
- * ---------------------------------------------------------------------- */
-
-static struct cdev *vtvsock_cdev;
-
-static int
-vsock_dev_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
-    struct thread *td)
-{
-	(void)dev;
-	(void)fflag;
-	(void)td;
-
-	switch (cmd) {
-	case IOCTL_VM_SOCKETS_GET_LOCAL_CID:
-		*(uint32_t *)data = (uint32_t)vtvsock_guest_cid;
-		return (0);
-	default:
-		return (ENOTTY);
-	}
-}
-
-static struct cdevsw vsock_cdevsw = {
-	.d_version =	D_VERSION,
-	.d_name =	"vsock",
-	.d_ioctl =	vsock_dev_ioctl,
-};
-
-/* -----------------------------------------------------------------------
  * Module glue
  * ---------------------------------------------------------------------- */
 
@@ -3274,16 +3246,21 @@ vsock_modevent(module_t mod, int type, void *data)
 
 	switch (type) {
 	case MOD_LOAD:
-		/* Mode 0666 like Linux's /dev/vsock: the only operation is
-		 * reading the (public) local CID. */
-		vtvsock_cdev = make_dev(&vsock_cdevsw, 0, UID_ROOT,
-		    GID_WHEEL, 0666, "vsock");
 		vtvsock_cnt_tx_packets = counter_u64_alloc(M_WAITOK);
 		vtvsock_cnt_tx_bytes = counter_u64_alloc(M_WAITOK);
 		vtvsock_cnt_rx_packets = counter_u64_alloc(M_WAITOK);
 		vtvsock_cnt_rx_bytes = counter_u64_alloc(M_WAITOK);
 		vtvsock_cnt_rx_drops = counter_u64_alloc(M_WAITOK);
 		vtvsock_cnt_conns = counter_u64_alloc(M_WAITOK);
+		if (vsock_cdev_create() != 0) {
+			counter_u64_free(vtvsock_cnt_tx_packets);
+			counter_u64_free(vtvsock_cnt_tx_bytes);
+			counter_u64_free(vtvsock_cnt_rx_packets);
+			counter_u64_free(vtvsock_cnt_rx_bytes);
+			counter_u64_free(vtvsock_cnt_rx_drops);
+			counter_u64_free(vtvsock_cnt_conns);
+			return (ENXIO);
+		}
 		return (0);
 	case MOD_QUIESCE:
 	case MOD_UNLOAD:

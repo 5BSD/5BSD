@@ -216,4 +216,7 @@ uint32_t	vtvsock_get_credit(struct vtvsock_pcb *, uint32_t);
 /* Timeout callbacks (used by transport disconnect to arm close callout) */
 void	vtvsock_close_timeout(void *);
 
+/* /dev/vsock userspace transport endpoint. */
+int	vsock_cdev_create(void);
+
 #endif /* !_KERN_UIPC_VSOCK_H_ */

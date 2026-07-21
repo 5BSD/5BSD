@@ -72,6 +72,28 @@
  */
 #define	IOCTL_VM_SOCKETS_GET_LOCAL_CID	_IOR('v', 0xb9, uint32_t)
 
+/*
+ * Register a privileged userspace provider for the kernel AF_VSOCK domain.
+ * The provider exchanges one complete little-endian virtio-vsock packet per
+ * read(2) or write(2) on /dev/vsock.  This is intended for a VMM which owns
+ * the configured guest CID; only one provider can be active because the
+ * socket domain currently has one remote-transport slot.
+ */
+#define	VSOCK_TRANSPORT_VERSION		1
+#define	VSOCK_TRANSPORT_MAX_PAYLOAD	(64 * 1024)
+
+struct vsock_transport_attach {
+	uint32_t	version;
+	uint32_t	guest_cid;
+	uint64_t	features;
+	uint64_t	reserved[2];
+};
+
+#define	VSOCK_IOC_TRANSPORT_ATTACH	_IOW('v', 0xba, \
+	    struct vsock_transport_attach)
+#define	VSOCK_IOC_TRANSPORT_SET_FEATURES _IOW('v', 0xbb, uint64_t)
+#define	VSOCK_IOC_TRANSPORT_RESET	_IO('v', 0xbc)
+
 #define	SO_VM_SOCKETS_BUFFER_SIZE	0
 #define	SO_VM_SOCKETS_BUFFER_MIN_SIZE	1
 #define	SO_VM_SOCKETS_BUFFER_MAX_SIZE	2

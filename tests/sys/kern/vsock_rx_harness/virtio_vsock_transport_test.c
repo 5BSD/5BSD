@@ -178,7 +178,7 @@ ATF_TC_BODY(cid_sanitization, tc)
 	ATF_CHECK(vtvsock_sanitize_cid(&dev, 0xfeedface0000000eULL) == 14);
 	ATF_CHECK(dev.printf_calls == 0);
 	ATF_CHECK(vtvsock_sanitize_cid(&dev, 0x123400000002ULL) ==
-	    VSOCK_CID_HOST);
+	    VSOCK_CID_LOCAL);
 	ATF_CHECK(dev.printf_calls == 1);
 }
 
