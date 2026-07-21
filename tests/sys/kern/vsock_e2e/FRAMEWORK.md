@@ -17,7 +17,9 @@ Run the gates in this order.  Early failures are cheaper and more specific.
    descriptors, invalid queue directions, short buffers, queue ownership and
    exhaustion, reset/failure cleanup, interrupt suppression, feature
    negotiation, credit handling, lifecycle wakeups, and boundary sizes under
-   ASan and UBSan.
+   ASan and UBSan.  The guest transport test uses a pthread-backed kernel
+   sleep shim to race a TX-ring-blocked sender against detach and enforce the
+   one-second wakeup contract.
 2. **Host helper controls (VM-free).** Run `host-tools-selftest.sh` with
    `TOOLS` set to the Makefile's `.OBJDIR`.  It validates stream and SEQPACKET
    relays, an intentionally fragmented SCM_RIGHTS control reply, a 1 MiB

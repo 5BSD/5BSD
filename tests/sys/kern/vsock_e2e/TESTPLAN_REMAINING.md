@@ -12,10 +12,11 @@ Linux VirtIO drivers.  The packaged matrix passed isolated and combined
 modern/legacy vsock, RNG, and block coverage plus modern input.  The focused
 legacy no-MSI-X gate also passed driver reset/rebind, monitor-mode reboot, and
 post-reboot data-path/persistence checks.  Direct `virtio_vsock.c` coverage is
-now packaged with the guest harness: 8 ATF cases / 592 assertions exercise
+now packaged with the guest harness: 9 ATF cases / 606 assertions exercise
 descriptor-aware readiness, reclaim/retry, bounded FIFO control queuing,
-interrupt drain/wakeup, event reset, and attach-completed/detach.  The
-remaining work is the truly concurrent/manual-only §6 lifecycle rows below.
+interrupt drain/wakeup, event reset, attach-completed/detach, and a real
+pthread sender blocked on the full-ring sleep channel while detach wakes it
+within one second.  The remaining work is narrower lifecycle coverage below.
 The focused no-MSI-X run now also passes monitor-mode reboot with established
 STREAM and SEQPACKET endpoints: each is echo-proven before reboot, both old
 endpoints disconnect within 30 seconds, and fresh connections pass afterward.
@@ -44,14 +45,14 @@ remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
 | `vsock_test.c` (ATF) | socket ops + **loopback** transport | 152/153 pass (1 platform skip) |
 | `vsock_wire_test.c` (ATF) | struct/ABI wire layout | complete for static layout |
 | `vsock_device_harness/` | bhyve host device TX/RX ingress | 181 vsock checks plus transport/device suites |
-| `vsock_rx_harness/` | guest domain + direct VirtIO transport | 20 tests / 671 checks |
+| `vsock_rx_harness/` | guest domain + direct VirtIO transport | 21 tests / 685 checks |
 | `vsock_e2e/` (live guest) | upstream Linux driver interop | modern/legacy matrix passed; root-only |
 
 **Remaining structural limitation:** both guest source files now have direct
 userspace coverage and the live Alpine matrix exercises the complete stack.
-The userspace mutex/sleep model is deterministic, however, so it cannot force
-true simultaneous interrupt-vs-detach scheduling or block a real sender while
-detach/reset wakes it; those remain lifecycle tests.
+The pthread-backed transport sleep model now forces a send-vs-detach race, but
+it does not force a real kernel interrupt handler to overlap detach; that
+scheduling edge remains a lifecycle limitation.
 
 ---
 
@@ -251,7 +252,7 @@ Small, high-value additions to `vsock_test.c` (loopback, already in CI):
 | 10 | graceful close both directions | ⚠️ stream ✅, seqpacket-remote ❌ |
 | 11 | abrupt peer kill | ✅ e2e (one direction) |
 | 12 | guest reboot with conns open | ✅ e2e, stream + seqpacket old-endpoint teardown and fresh reconnect |
-| 13 | detach with blocked sender (≤1s wakeup) | ❌ **manual only** (G5 fix now makes this pass; needs a test) |
+| 13 | detach with blocked sender (≤1s wakeup) | ✅ direct transport harness, pthread-blocked full-ring sender |
 | 14 | reserved-CID connects | ⚠️ bind-side ✅, guest-initiated ❌ |
 | 15 | port 0 / auto-bind | ✅ ATF |
 | 16 | CID_LOCAL isolation | ✅ guest RX harness |
@@ -270,8 +271,8 @@ G4, and VNET/reset fixes.
 
 **Phase D — ATF edges (GAP 5).** Completed.
 
-**Next targeted work:** detach with a genuinely blocked sender (row 13), and
-automated guest-initiated reserved-CID behavior (row 14).
+**Next targeted work:** automated guest-initiated reserved-CID behavior
+(row 14).
 
 **Lowest-priority (Tier 3, documented in REVIEW.md, likely leave alone):**
 auto-bind port exhaustion, EMFILE/fd exhaustion, pending-ring overflow,

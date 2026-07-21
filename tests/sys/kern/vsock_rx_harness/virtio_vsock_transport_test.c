@@ -3,7 +3,11 @@
  * The socket-domain callbacks and virtqueues are instrumented, but the code
  * under test is sys/dev/virtio/vsock/virtio_vsock.c without copied logic.
  */
+#define VSOCK_REAL_SLEEP 1
 #include "transport_kmock.h"
+
+#include <pthread_np.h>
+#include <unistd.h>
 
 MALLOC_DEFINE(M_VTVSOCK, "vtvsock", "virtio vsock test");
 struct mtx vtvsock_mtx;
@@ -17,8 +21,39 @@ counter_u64_t vtvsock_cnt_rx_drops = &rx_drops;
 counter_u64_t vtvsock_cnt_conns = &conns;
 
 void *transport_last_wakeup;
+static pthread_cond_t transport_sleep_cv = PTHREAD_COND_INITIALIZER;
+static _Atomic(void *) transport_sleep_chan;
+static uint64_t transport_wake_generation;
+static bool transport_mtx_initialized;
 static int register_calls, register_locked_calls, unregister_calls, reset_calls;
 static uint64_t registered_cid, registered_features;
+
+int
+transport_msleep(void *chan, struct mtx *m, int pri __unused,
+    const char *w __unused, int timo __unused)
+{
+	uint64_t generation;
+
+	generation = transport_wake_generation;
+	atomic_store(&transport_sleep_chan, chan);
+	while (generation == transport_wake_generation) {
+		if (pthread_cond_wait(&transport_sleep_cv, &m->native) != 0)
+			abort();
+	}
+	atomic_store(&transport_sleep_chan, NULL);
+	return (0);
+}
+
+void
+transport_wakeup(void *chan)
+{
+	transport_last_wakeup = chan;
+	if (atomic_load(&transport_sleep_chan) == chan) {
+		transport_wake_generation++;
+		if (pthread_cond_broadcast(&transport_sleep_cv) != 0)
+			abort();
+	}
+}
 
 void
 vsock_transport_register(const struct vtvsock_transport *ops __unused,
@@ -69,7 +104,12 @@ static void
 reset_state(void)
 {
 	atomic_store_ptr(&vtvsock_sc, NULL);
-	memset(&vtvsock_mtx, 0, sizeof(vtvsock_mtx));
+	if (transport_mtx_initialized)
+		mtx_destroy(&vtvsock_mtx);
+	mtx_init(&vtvsock_mtx, "vsock transport test", NULL, MTX_DEF);
+	transport_mtx_initialized = true;
+	atomic_store(&transport_sleep_chan, NULL);
+	transport_wake_generation = 0;
 	transport_last_wakeup = NULL;
 	register_calls = register_locked_calls = unregister_calls = reset_calls = 0;
 	registered_cid = registered_features = 0;
@@ -300,6 +340,88 @@ ATF_TC_BODY(transport_reset_recycles_event_and_wakes, tc)
 	kfree(evt);
 }
 
+struct blocked_sender {
+	struct vtvsock_pcb *pcb;
+	struct mbuf *m;
+	int result;
+};
+
+static void *
+run_blocked_sender(void *arg)
+{
+	struct blocked_sender *sender = arg;
+
+	sender->result = vtvsock_virtio_send(sender->pcb, 0, sender->m,
+	    NULL, NULL, NULL);
+	return (NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(detach_wakes_tx_ring_blocked_sender);
+ATF_TC_BODY(detach_wakes_tx_ring_blocked_sender, tc)
+{
+	struct blocked_sender sender;
+	struct fake_device dev;
+	struct mbuf *m;
+	struct sglist sg;
+	struct sglist_seg seg;
+	struct socket so;
+	struct timespec deadline;
+	struct virtqueue txvq;
+	struct vtvsock_pcb pcb;
+	struct vtvsock_softc sc;
+	pthread_t thread;
+	void *blocker;
+	int i;
+
+	reset_state();
+	memset(&dev, 0, sizeof(dev));
+	memset(&pcb, 0, sizeof(pcb));
+	memset(&sc, 0, sizeof(sc));
+	memset(&so, 0, sizeof(so));
+	mock_vq_init(&txvq, 1);
+	sc.sc_dev = &dev;
+	sc.sc_txvq = &txvq;
+	dev.softc = &sc;
+	so.so_type = SOCK_STREAM;
+	pcb.so = &so;
+	pcb.state = VTVSOCK_ESTABLISHED;
+	pcb.local.svm_cid = 14;
+	pcb.local.svm_port = 1000;
+	pcb.remote.svm_cid = VSOCK_CID_HOST;
+	pcb.remote.svm_port = 2000;
+	pcb.peer_buf_alloc = 4096;
+	blocker = calloc(1, sizeof(struct virtio_vsock_hdr));
+	ATF_REQUIRE(blocker != NULL);
+	one_seg(&sg, &seg);
+	ATF_REQUIRE(virtqueue_enqueue(&txvq, blocker, &sg, 1, 0) == 0);
+	atomic_store_ptr(&vtvsock_sc, &sc);
+
+	m = m_get(M_WAITOK, MT_DATA);
+	ATF_REQUIRE(m != NULL);
+	m->m_len = 1;
+	m->m_data[0] = 'X';
+	sender = (struct blocked_sender) { .pcb = &pcb, .m = m, .result = -1 };
+	ATF_REQUIRE(pthread_create(&thread, NULL, run_blocked_sender, &sender) == 0);
+	for (i = 0; i < 5000; i++) {
+		if (atomic_load(&transport_sleep_chan) == &sc.sc_txvq)
+			break;
+		usleep(1000);
+	}
+	ATF_REQUIRE_MSG(i < 5000, "sender did not block on the TX ring");
+	ATF_CHECK(pcb.tx_cnt == 0);
+
+	ATF_REQUIRE(clock_gettime(CLOCK_REALTIME, &deadline) == 0);
+	deadline.tv_sec++;
+	ATF_REQUIRE(vtvsock_detach(&dev) == 0);
+	ATF_REQUIRE_MSG(pthread_timedjoin_np(thread, NULL, &deadline) == 0,
+	    "TX-ring-blocked sender was not woken within one second");
+	ATF_CHECK(sender.result == ENXIO);
+	ATF_CHECK(pcb.tx_cnt == 0);
+	ATF_CHECK(vtvsock_global_softc() == NULL);
+	ATF_CHECK(txvq.entry_count == 0);
+	ATF_CHECK(transport_last_wakeup == &sc.sc_txvq);
+}
+
 ATF_TC_WITHOUT_HEAD(attach_completed_detach_lifecycle);
 ATF_TC_BODY(attach_completed_detach_lifecycle, tc)
 {
@@ -357,6 +479,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, partial_ring_is_transient);
 	ATF_TP_ADD_TC(tp, tx_interrupt_drains_fifo_and_wakes);
 	ATF_TP_ADD_TC(tp, transport_reset_recycles_event_and_wakes);
+	ATF_TP_ADD_TC(tp, detach_wakes_tx_ring_blocked_sender);
 	ATF_TP_ADD_TC(tp, attach_completed_detach_lifecycle);
 	return (atf_no_error());
 }

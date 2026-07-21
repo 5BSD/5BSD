@@ -47,5 +47,5 @@ $cc -O1 -g -fsanitize="$sanitizers" -I. -Iatfshim -include kmock.h \
 ./rxtest
 $cc -O1 -g -fsanitize="$sanitizers" -I. -Iatfshim \
     -Wno-macro-redefined -Wno-unused-function -Wno-unused-variable \
-    -o transporttest virtio_vsock_transport_test.c
+    -pthread -o transporttest virtio_vsock_transport_test.c
 ./transporttest

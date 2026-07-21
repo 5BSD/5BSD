@@ -6,8 +6,9 @@ the source. Severity: HANG/LOSS/CRASH > throughput/spec > cosmetic.
 
 STATUS: D1, D2, D3 FIXED (commit be4d3921bc7, device harness 86 checks).
 G1, G4, G5 FIXED (commit 65e6d29b5a8, guest kernel). The guest unit harness
-now covers both `uipc_vsock.c` and `virtio_vsock.c`. Remaining: G3 (minor lock
-race), device nits, and genuinely concurrent lifecycle coverage.
+now covers both `uipc_vsock.c` and `virtio_vsock.c`, including a concurrent
+TX-ring-blocked send/detach wakeup. Remaining: G3 (minor lock race), device
+nits, and interrupt-vs-detach scheduling coverage.
 
 ## Confirmed real bugs
 
@@ -86,9 +87,10 @@ gating, connect() failure SS_ISCONNECTING clearing.
 `uipc_vsock.c` and `virtio_vsock.c` in separate ATF binaries.  Crafted peer
 packets cover the RX state machine; a descriptor-owning virtqueue model covers
 TX readiness, reclaim/retry, bounded FIFO drain, reset recycling/wakeup, and
-attach/detach.  The remaining limitation is simultaneous scheduling: its
-userspace mutex and sleep model is deterministic, so interrupt-vs-detach and a
-genuinely blocked sender still require lifecycle/e2e tests.
+attach/detach.  A pthread-backed sleep model now blocks a real send thread on
+the full-ring channel while another thread detaches the device, covering the
+G5 wakeup and stale-softc guard.  Interrupt-vs-detach scheduling remains a
+structural limitation.
 
 **Completed action:** build a guest-side unit harness mirroring
 `vsock_device_harness/` — `#include` `uipc_vsock.c` with a mock
@@ -108,5 +110,5 @@ SEQPACKET SHUT_RDWR, SEQPACKET peer-close EOF+SIGPIPE, connect_timeout ERANGE.
 
 ## Testplan §6 status
 Automated: rows 1-4, 6-9, 12, 15, 16; row 11 is automated in one direction.
-Partial: rows 5, 10, 14.  Manual only: row 13 (bhyve-detach blocked-sender
-wakeup).
+Partial: rows 5, 10, 14.  Row 13 is automated in the direct guest transport
+harness with a pthread-blocked sender and a one-second wakeup deadline.

@@ -13,6 +13,7 @@ CFLAGS.vsock_rx_test+=	-I${.CURDIR} -I${.OBJDIR}
 ATF_TESTS_C+=	virtio_vsock_transport_test
 SRCS.virtio_vsock_transport_test=	virtio_vsock_transport_test.c
 CFLAGS.virtio_vsock_transport_test+=	-I${.CURDIR} -I${.OBJDIR}
+LIBADD.virtio_vsock_transport_test+=	pthread
 
 # The included kernel source has intentional sockaddr casts, a local variable
 # named ticks, and sysctl handlers unused by this userspace harness.
@@ -23,6 +24,7 @@ CWARNFLAGS.vsock_rx_test.c+=	-Wno-cast-align \
 CWARNFLAGS.glue.c+=		-Wno-macro-redefined
 CWARNFLAGS.virtio_vsock_transport_test.c+=	-Wno-unused-function \
 					-Wno-unused-variable \
+					-Wno-thread-safety-analysis \
 					-Wno-macro-redefined
 
 CLEANFILES+=	uipc_vsock.c virtio_vsock.c

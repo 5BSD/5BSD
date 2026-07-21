@@ -47,6 +47,9 @@ re-registration.  It also covers the global inbound connection cap, the
 non-blocking TX-ready gate before uio consumption, and guest SEQPACKET
 `MSG_EOR` transport marking.  The direct transport binary additionally checks
 descriptor ownership, bounded FIFO overflow, interrupt and reset wakeup
-channels, and attach/detach reclamation.  `msleep` is still a non-blocking stub
-and `wakeup` is instrumented rather than scheduled, so genuinely blocking
-credit/ring stalls stay in the e2e suite.
+channels, and attach/detach reclamation.  For the transport binary, `msleep`
+and `wakeup` use a pthread mutex/condition pair: a real sender blocks on a full
+TX ring while detach runs concurrently, then must wake within one second,
+return `ENXIO`, restore credit, and leave the queue empty.  The socket-domain
+binary retains the deterministic non-blocking sleep shim for its state-machine
+tests; live credit stalls remain in the e2e suite.

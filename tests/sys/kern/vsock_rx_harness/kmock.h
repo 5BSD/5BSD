@@ -141,34 +141,57 @@ sysctl_wire_old_buffer(struct sysctl_req *r __unused, size_t l __unused)
 { return (0); }
 #define SYSCTL_OUT(r, p, l)	(0)
 
-/* ---- mutex: single-threaded harness, so a recursion-tolerant no-op ---- */
+/* ---- mutex ---- */
+#ifdef VSOCK_REAL_SLEEP
+#include <pthread.h>
+struct mtx { pthread_mutex_t native; };
+#else
 struct mtx { int depth; };
+#endif
 #define MTX_DEF		0
 #define MA_OWNED	0
 #define MA_NOTOWNED	0
+#ifdef VSOCK_REAL_SLEEP
+static inline void mtx_init(struct mtx *m, const char *n __unused,
+    const char *t __unused, int o __unused)
+{ if (pthread_mutex_init(&m->native, NULL) != 0) abort(); }
+static inline void mtx_destroy(struct mtx *m)
+{ if (pthread_mutex_destroy(&m->native) != 0) abort(); }
+static inline void mtx_lock(struct mtx *m)
+{ if (pthread_mutex_lock(&m->native) != 0) abort(); }
+static inline void mtx_unlock(struct mtx *m)
+{ if (pthread_mutex_unlock(&m->native) != 0) abort(); }
+#else
 static inline void mtx_init(struct mtx *m, const char *n __unused,
     const char *t __unused, int o __unused) { m->depth = 0; }
 static inline void mtx_destroy(struct mtx *m __unused) {}
 static inline void mtx_lock(struct mtx *m) { m->depth++; }
 static inline void mtx_unlock(struct mtx *m) { m->depth--; }
+#endif
 static inline void mtx_assert(struct mtx *m __unused, int w __unused) {}
 #define MTX_SYSINIT(a,b,c,d)
 
-/* ---- sleep/wakeup: the target tests are synchronous and never actually
- * block, so msleep returns EWOULDBLOCK (timeout) immediately and wakeup is a
- * no-op.  Tests that require a real blocking wakeup are out of scope here and
- * live in the e2e suite. ---- */
+/* ---- sleep/wakeup ---- */
 #define PSOCK		0
 #define PCATCH		0
 #define PDROP		0
+#ifdef VSOCK_REAL_SLEEP
+int transport_msleep(void *, struct mtx *, int, const char *, int);
+void transport_wakeup(void *);
+static inline int
+msleep(void *chan, struct mtx *m, int pri, const char *w, int timo)
+{ return (transport_msleep(chan, m, pri, w, timo)); }
+static inline void wakeup(void *chan) { transport_wakeup(chan); }
+#else
 static inline int
 msleep(void *chan __unused, struct mtx *m __unused, int pri __unused,
     const char *w __unused, int timo __unused) { return (EWOULDBLOCK); }
+static inline void wakeup(void *chan __unused) {}
+#endif
 static inline int
 msleep_sbt(void *chan __unused, struct mtx *m __unused, int pri __unused,
     const char *w __unused, int64_t sbt __unused, int64_t pr __unused,
     int fl __unused) { return (EWOULDBLOCK); }
-static inline void wakeup(void *chan __unused) {}
 #define tstosbt(x)	(0)
 #define sbttots(x)	(0)
 #define SBT_1S		1

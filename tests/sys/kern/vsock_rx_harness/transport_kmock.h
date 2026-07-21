@@ -273,7 +273,9 @@ soisdisconnecting(struct socket *so)
 }
 
 extern void *transport_last_wakeup;
+#ifndef VSOCK_REAL_SLEEP
 #undef wakeup
 #define wakeup(chan)	(transport_last_wakeup = (chan))
+#endif
 
 #endif /* VSOCK_TRANSPORT_KMOCK_H */
