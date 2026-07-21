@@ -164,6 +164,18 @@ void set_config_value_node(nvlist_t *n, const char *k, const char *v)
 { (void)n; (void)k; (void)v; }
 
 /* ================= wrapped host-socket syscalls ================= */
+void *__real_realloc(void *, size_t);
+static int g_realloc_fail;
+void *
+__wrap_realloc(void *ptr, size_t size)
+{
+	if (g_realloc_fail) {
+		g_realloc_fail = 0;
+		return (NULL);
+	}
+	return (__real_realloc(ptr, size));
+}
+
 int __wrap_socket(int a, int b, int c)
 { (void)a; (void)b; (void)c; g_socket_calls++; return (g_next_fd++); }
 int
@@ -388,6 +400,7 @@ reset_caps(void)
 	g_chain_readable = 0; g_chain_writable = 1; g_getchain_consumes = 0;
 	g_rel_len = 0; g_endchains = 0;
 	g_mevent_enable_calls = 0;
+	g_realloc_fail = 0;
 }
 
 ATF_TC_WITHOUT_HEAD(port_allocator_skips_reserved);
@@ -1086,6 +1099,31 @@ ATF_TC_BODY(seqpacket_reassembles_to_eom, tc)
 	ATF_CHECK(g_send_len == 7);	/* both fragments combined */
 	ATF_CHECK(memcmp(g_send_buf, "ABCDEFG", 7) == 0);
 	ATF_CHECK((g_send_flags & MSG_EOR) != 0);	/* EOR propagated */
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(seqpacket_realloc_failure_resets_cleanly);
+ATF_TC_BODY(seqpacket_realloc_failure_resets_cleanly, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr h;
+	uint8_t payload = 'X';
+
+	reset_caps();
+	(void)mk_established(sc, 1234, 80, SEQPACKET);
+	g_realloc_fail = 1;
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST, 1234,
+	    80, sizeof(payload), 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, &payload, sizeof(payload));
+
+	ATF_CHECK(g_realloc_fail == 0);
+	ATF_CHECK(nconns(sc) == 0);
+	ATF_CHECK(sc->vsc_conn_count == 0);
+	ATF_CHECK(sc->vsc_reasm_total == 0);
+	ATF_CHECK(sc->vsc_txbuf_total == 0);
+	ATF_CHECK(g_send_calls == 0);
+	ATF_CHECK(g_ninject == 1);
+	ATF_CHECK(g_inject[0].op == VIRTIO_VSOCK_OP_RST);
 	free(sc);
 }
 
@@ -1849,6 +1887,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, host_rx_oversized_seqpacket_record_resets);
 	ATF_TP_ADD_TC(tp, host_eof_sends_shutdown);
 	ATF_TP_ADD_TC(tp, seqpacket_reassembles_to_eom);
+	ATF_TP_ADD_TC(tp, seqpacket_realloc_failure_resets_cleanly);
 	ATF_TP_ADD_TC(tp, seqpacket_large_record_credits_incrementally);
 	ATF_TP_ADD_TC(tp, seqpacket_zero_len_record);
 	ATF_TP_ADD_TC(tp, rx_chain_not_writable_dropped);

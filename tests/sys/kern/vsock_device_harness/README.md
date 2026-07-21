@@ -43,5 +43,7 @@ back at the reporting threshold so the sender cannot remain blocked on bytes
 bhyve no longer holds.  Pending-control-reply coverage fills the bounded ring,
 verifies overflow accounting without false credit advancement, drains the
 retained FIFO, and confirms that the dropped credit update is retried.
+Fault injection also forces SEQPACKET reassembly growth to fail and verifies
+RST/connection cleanup without leaking either device-global byte budget.
 See `../vsock_e2e/FRAMEWORK.md` for the complete
 acceptance layers and the checklist for adding another device.

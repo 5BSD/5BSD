@@ -65,7 +65,7 @@ remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
 |---|---|---|
 | `vsock_test.c` (ATF) | socket ops + **loopback** transport | 152/153 pass (1 platform skip) |
 | `vsock_wire_test.c` (ATF) | struct/ABI wire layout | complete for static layout |
-| `vsock_device_harness/` | bhyve host device TX/RX ingress | 222 vsock checks plus transport/device suites |
+| `vsock_device_harness/` | bhyve host device TX/RX ingress | 230 vsock checks plus transport/device suites |
 | `vsock_rx_harness/` | guest domain + direct VirtIO transport | 27 tests / 849 checks |
 | `vsock_e2e/` (live guest) | upstream Linux driver interop | modern/legacy matrix passed; root-only |
 
@@ -302,9 +302,9 @@ boundary.  Interrupt-vs-detach scheduling remains a kernel-runtime stress item
 rather than an uncovered source interleaving.
 
 **Lowest-priority (Tier 3, documented in REVIEW.md, likely leave alone):**
-auto-bind port exhaustion, EMFILE/fd exhaustion, and the broad bhyve host-side
-allocation-failure matrix.  Guest holding-queue overflow, bhyve pending-reply
-overflow, undersized-ring attach, and representative guest attach/send
-allocation failures are now covered by their direct transport/device
-harnesses; the remaining cases need process-wide fault injection and are hard
-to hit in practice.
+auto-bind port exhaustion, EMFILE/fd exhaustion, and the remaining bhyve
+host-side allocation-failure matrix.  Guest holding-queue overflow, bhyve
+pending-reply overflow and reassembly-growth failure, undersized-ring attach,
+and representative guest attach/send allocation failures are now covered by
+their direct transport/device harnesses; the remaining cases need broader
+process-wide fault injection and are hard to hit in practice.

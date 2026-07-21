@@ -119,8 +119,9 @@ SEQPACKET frag-limit RST, deferred-teardown callout, TRANSPORT_RESET, and
 guest->host MSG_EOR wire emission.
 
 **Device harness additions:** connection cap (257 REQUESTs), bounded pending-
-reply overflow/FIFO/credit retry, the whole
-control-socket path (VSOCK_CTL_CONNECT limits/idle-timeout/errnos/unknown-cmd),
+reply overflow/FIFO/credit retry, SEQPACKET reallocation-failure cleanup, the
+whole control-socket path (VSOCK_CTL_CONNECT limits/idle-timeout/errnos/
+unknown-cmd),
 the 4 remaining malformed-TX drops, reaper timeouts (advance the clock).
 
 **ATF additions:** SEQPACKET exact-MAX boundary (succeeds) vs +1 (EMSGSIZE),
