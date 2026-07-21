@@ -195,6 +195,30 @@ ATF_TC_BODY(legacy_status_preserves_needs_reset, tc)
 	ATF_CHECK(vs.vs_status == 0);
 }
 
+ATF_TC_WITHOUT_HEAD(legacy_non_io_bar_is_ignored);
+ATF_TC_BODY(legacy_non_io_bar_is_ignored, tc)
+{
+	struct virtio_consts vc = {
+		.vc_name = "bar-test",
+		.vc_nvq = 1,
+	};
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	memset(&vq, 0, sizeof(vq));
+	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	ATF_CHECK(vi_pci_read(&pi, 1, VIRTIO_PCI_STATUS, 1) == UINT8_MAX);
+	ATF_CHECK(vi_pci_read(&pi, 1, VIRTIO_PCI_STATUS, 2) == UINT16_MAX);
+	ATF_CHECK(vi_pci_read(&pi, 1, VIRTIO_PCI_STATUS, 4) == UINT32_MAX);
+	ATF_CHECK(vi_pci_read(&pi, 1, VIRTIO_PCI_STATUS, 8) == UINT64_MAX);
+	vi_pci_write(&pi, 1, VIRTIO_PCI_STATUS, 1,
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK);
+	ATF_CHECK(vs.vs_status == 0);
+}
+
 ATF_TC_WITHOUT_HEAD(notify_without_msix_does_not_relock_device);
 ATF_TC_BODY(notify_without_msix_does_not_relock_device, tc)
 {
@@ -577,6 +601,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, fatal_ring_error_blocks_later_kicks);
 	ATF_TP_ADD_TC(tp, legacy_queue_mapping_validation);
 	ATF_TP_ADD_TC(tp, event_idx_interrupts);
+	ATF_TP_ADD_TC(tp, legacy_non_io_bar_is_ignored);
 	ATF_TP_ADD_TC(tp, legacy_status_preserves_needs_reset);
 	ATF_TP_ADD_TC(tp, notify_without_msix_does_not_relock_device);
 	ATF_TP_ADD_TC(tp, isr_read_serializes_intx);

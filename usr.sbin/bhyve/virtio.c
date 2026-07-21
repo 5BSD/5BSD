@@ -674,6 +674,22 @@ static struct config_reg {
 	{ VIRTIO_MSI_QUEUE_VECTOR,	2, 0, "QUEUE_VECTOR" },
 };
 
+static uint64_t
+vi_pci_bad_value(int size)
+{
+
+	switch (size) {
+	case 1:
+		return (UINT8_MAX);
+	case 2:
+		return (UINT16_MAX);
+	case 4:
+		return (UINT32_MAX);
+	default:
+		return (UINT64_MAX);
+	}
+}
+
 static inline struct config_reg *
 vi_find_cr(int offset) {
 	u_int hi, lo, mid;
@@ -721,8 +737,8 @@ vi_pci_read(struct pci_devinst *pi, int baridx, uint64_t offset, int size)
 	if (vi_pci_is_modern(vs))
 		return (vi_pci_modern_read(pi, baridx, offset, size));
 
-	/* XXX probably should do something better than just assert() */
-	assert(baridx == 0);
+	if (baridx != 0)
+		return (vi_pci_bad_value(size));
 
 	if (vs->vs_mtx)
 		pthread_mutex_lock(vs->vs_mtx);
@@ -844,8 +860,8 @@ vi_pci_write(struct pci_devinst *pi, int baridx, uint64_t offset, int size,
 		return;
 	}
 
-	/* XXX probably should do something better than just assert() */
-	assert(baridx == 0);
+	if (baridx != 0)
+		return;
 
 	if (vs->vs_mtx)
 		pthread_mutex_lock(vs->vs_mtx);
