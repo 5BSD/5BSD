@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 14, 2026
+.Dd July 21, 2026
 .Dt BHYVE 8
 .Os
 .Sh NAME
@@ -483,6 +483,16 @@ PCI pass-through device.
 Virtio network interface.
 .It Cm virtio-blk
 Virtio block storage interface.
+The optional
+.Cm transport
+setting accepts
+.Cm legacy
+or
+.Cm modern .
+If omitted, the legacy PCI transport and its existing device identity are used
+for compatibility with existing guests and launch scripts.
+The modern setting selects the non-transitional VirtIO PCI transport and
+device ID 0x1042.
 .It Cm virtio-scsi
 Virtio SCSI interface.
 .It Cm virtio-9p

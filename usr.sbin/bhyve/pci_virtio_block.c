@@ -497,6 +497,9 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 	sc->vbsc_vq.vq_qsize = VTBLK_RINGSZ;
 	/* sc->vbsc_vq.vq_notify = we have no per-queue notify */
+	if (vi_pci_select_transport(&sc->vbsc_vs, nvl,
+	    VIRTIO_PCI_LEGACY_DEFAULT) != 0)
+		goto failed;
 
 	/*
 	 * If an explicit identifier is not given, create an
@@ -549,20 +552,31 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 	 * have the device, class, and subdev_0 as fields in
 	 * the virtio constants structure.
 	 */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_BLOCK);
-	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
-	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_STORAGE);
-	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_BLOCK);
-	pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
-
-	if (vi_intr_init(&sc->vbsc_vs, 1, fbsdrun_virtio_msix())) {
-		blockif_close(sc->bc);
-		free(sc);
-		return (1);
+	if (vi_pci_is_modern(&sc->vbsc_vs))
+		vi_pci_modern_set_identity(&sc->vbsc_vs, VIRTIO_ID_BLOCK);
+	else {
+		pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_BLOCK);
+		pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
+		pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_BLOCK);
+		pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
 	}
-	vi_set_io_bar(&sc->vbsc_vs, 0);
+	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_STORAGE);
+
+	if (vi_intr_init(&sc->vbsc_vs, 1, fbsdrun_virtio_msix()))
+		goto failed;
+	if (vi_pci_is_modern(&sc->vbsc_vs)) {
+		if (vi_pci_modern_init(&sc->vbsc_vs, 2) != 0)
+			goto failed;
+	} else
+		vi_set_io_bar(&sc->vbsc_vs, 0);
 	blockif_register_resize_callback(sc->bc, pci_vtblk_resized, sc);
 	return (0);
+
+failed:
+	blockif_close(sc->bc);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+	return (1);
 }
 
 static int
@@ -590,6 +604,8 @@ static const struct pci_devemu pci_de_vblk = {
 	.pe_emu =	"virtio-blk",
 	.pe_init =	pci_vtblk_init,
 	.pe_legacy_config = blockif_legacy_config,
+	.pe_cfgwrite =	vi_pci_modern_cfgwrite,
+	.pe_cfgread =	vi_pci_modern_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read,
 #ifdef BHYVE_SNAPSHOT
