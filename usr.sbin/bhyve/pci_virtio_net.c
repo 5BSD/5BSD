@@ -569,6 +569,8 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	 * change depending on the backend.
 	 */
 	sc = calloc(1, sizeof(struct pci_vtnet_softc));
+	if (sc == NULL)
+		return (ENOMEM);
 
 	sc->vsc_consts = vtnet_vi_consts;
 	pthread_mutex_init(&sc->vsc_mtx, NULL);
@@ -628,27 +630,35 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	 */
 	sc->vsc_config.max_virtqueue_pairs = 1;
 
-	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_NET);
-	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
-	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_NETWORK);
-	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_NETWORK);
-	pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
-
 	/* Link is always up. */
 	sc->vsc_config.status = 1;
 
 	vi_softc_linkup(&sc->vsc_vs, &sc->vsc_consts, sc, pi, sc->vsc_queues);
 	sc->vsc_vs.vs_mtx = &sc->vsc_mtx;
+	if (vi_pci_select_transport(&sc->vsc_vs, nvl,
+	    VIRTIO_PCI_LEGACY_DEFAULT) != 0)
+		goto failed;
+
+	/* initialize config space */
+	if (vi_pci_is_modern(&sc->vsc_vs))
+		vi_pci_modern_set_identity(&sc->vsc_vs, VIRTIO_ID_NETWORK);
+	else {
+		pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_NET);
+		pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
+		pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_NETWORK);
+		pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
+	}
+	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_NETWORK);
 
 	/* use BAR 1 to map MSI-X table and PBA, if we're using MSI-X */
-	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix())) {
-		free(sc);
-		return (1);
-	}
+	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
+		goto failed;
 
-	/* use BAR 0 to map config regs in IO space */
-	vi_set_io_bar(&sc->vsc_vs, 0);
+	if (vi_pci_is_modern(&sc->vsc_vs)) {
+		if (vi_pci_modern_init(&sc->vsc_vs, 2) != 0)
+			goto failed;
+	} else
+		vi_set_io_bar(&sc->vsc_vs, 0);
 
 	sc->resetting = 0;
 
@@ -670,6 +680,12 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	pthread_set_name_np(sc->tx_tid, tname);
 
 	return (0);
+
+failed:
+	netbe_cleanup(sc->vsc_be);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+	return (1);
 }
 
 static int
@@ -804,6 +820,8 @@ static const struct pci_devemu pci_de_vnet = {
 	.pe_emu = 	"virtio-net",
 	.pe_init =	pci_vtnet_init,
 	.pe_legacy_config = netbe_legacy_config,
+	.pe_cfgwrite =	vi_pci_modern_cfgwrite,
+	.pe_cfgread =	vi_pci_modern_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read,
 #ifdef BHYVE_SNAPSHOT

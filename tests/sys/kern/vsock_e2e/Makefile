@@ -68,6 +68,7 @@ ${PACKAGE}FILES+=	gvsock.py
 ${PACKAGE}FILES+=	ginput.py
 ${PACKAGE}FILES+=	grng.py
 ${PACKAGE}FILES+=	gblock.py
+${PACKAGE}FILES+=	gnet.py
 ${PACKAGE}FILES+=	ALPINE.md
 ${PACKAGE}FILES+=	FIVEBSD.md
 ${PACKAGE}FILES+=	FRAMEWORK.md

@@ -11,6 +11,13 @@ and requires the payload and EOF to reach both endpoints.  It also SIGKILLs an
 echo-proven host connector, requires the guest to observe EOF or reset, and
 then verifies an immediate fresh connection.
 
+Every VM also verifies its provisioning interface is uniquely backed by
+Alpine's upstream `virtio_net` driver.  Modern runs require PCI device
+`1af4:1041`; legacy runs require `1af4:1000` while deliberately omitting the
+transport option.  DHCP package installation and a three-packet gateway ping
+prove the transmit, receive, and interrupt paths rather than enumeration
+alone.  `DEVICES=net` provides a focused topology for this check.
+
 The automated runner also loads Alpine's upstream `virtio_input` driver and
 connects bhyve to a disposable composite host `uinput` device.  Using its
 specification-mandated modern transport, it checks the PCI capability layout,
@@ -42,11 +49,12 @@ removes its own tap interface, chooses an unused TCP console port, and confines
 VM destruction to its unique per-run names.  Logs are retained
 under `/tmp/bhyve-vsock-alpine` by default.
 
-Set `DEVICES=vsock`, `DEVICES=rng`, or `DEVICES=input` to run a device in
-isolation; `DEVICES=block` uses a disposable sparse image and verifies a
-deterministic write/read checksum.  The default,
-`DEVICES='vsock rng input'`, attaches those three devices and runs every suite
-to detect cross-device regressions.
+Set `DEVICES=net`, `DEVICES=vsock`, `DEVICES=rng`, or `DEVICES=input` to run a
+device in isolation; `DEVICES=block` uses a disposable sparse image and
+verifies a deterministic write/read checksum.  A provisioning virtio-net
+interface remains present in every topology and is always verified.  The
+default, `DEVICES='vsock rng input'`, attaches those three devices beside the
+network interface and runs every suite to detect cross-device regressions.
 
 ## No-MSI-X interrupt and lifecycle regression
 
@@ -72,9 +80,9 @@ can narrow a debugging run without changing the acceptance defaults.
 
 For acceptance testing, use `run-alpine-matrix.sh`.  It first runs the
 sanitizer-backed real-source device harnesses and VM-free host pipeline
-controls.  It then runs vsock, RNG, block, and input alone, followed by all devices
-together, for every selected transport.  This distinguishes device regressions
-from cross-device interactions:
+controls.  It then runs net, vsock, RNG, block, and input alone, followed by
+all devices together, for every selected transport.  This distinguishes
+device regressions from cross-device interactions:
 
 ```sh
 ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh

@@ -50,21 +50,24 @@ fi
 [ -f "$UEFI" ] || { echo "UEFI firmware not found: $UEFI" >&2; exit 1; }
 
 run_vsock=no
+run_net_device=no
 run_rng_device=no
 run_input_device=no
 run_block_device=no
 for device in $DEVICES; do
 	case "$device" in
 	vsock) run_vsock=yes ;;
+	net) run_net_device=yes ;;
 	rng) run_rng_device=yes ;;
 	input) run_input_device=yes ;;
 	block) run_block_device=yes ;;
 	*) echo "invalid device test: $device" >&2; exit 2 ;;
 	esac
 done
-[ "$run_vsock" = yes ] || [ "$run_rng_device" = yes ] ||
+[ "$run_vsock" = yes ] || [ "$run_net_device" = yes ] ||
+    [ "$run_rng_device" = yes ] ||
     [ "$run_input_device" = yes ] || [ "$run_block_device" = yes ] || {
-	echo "DEVICES must select vsock, rng, input, block, or a combination" >&2
+	echo "DEVICES must select net, vsock, rng, input, block, or a combination" >&2
 	exit 2
 }
 
@@ -312,7 +315,8 @@ start_console()
 launch_vm()
 {
 	set -- "$BHYVE" -c 2 -m 2G -H -w \
-	    -s 0,hostbridge -s "3,ahci-cd,$ISO" -s "4,virtio-net,$tap"
+	    -s 0,hostbridge -s "3,ahci-cd,$ISO" \
+	    -s "4,virtio-net,$tap$net_transport_opt"
 	[ "$VIRTIO_MSIX" = yes ] || set -- "$@" -W
 	[ "$REBOOT_TEST" = no ] || set -- "$@" -M
 	[ "$run_vsock" = no ] || set -- "$@" \
@@ -360,6 +364,8 @@ provision_guest()
 	printf 'root\r' >> "$console_input"
 	sleep 2
 	guest_cmd 'set -eu; ip link set eth0 up; udhcpc -n -q -t 5 -T 3 -i eth0; release=$(cut -d. -f1,2 /etc/alpine-release); case "$release" in *.*) ;; *) echo "invalid Alpine release: $release" >&2; exit 1;; esac; major=${release%.*}; minor=${release#*.}; case "$major:$minor" in *[!0-9:]*|:|*:) echo "invalid Alpine release: $release" >&2; exit 1;; esac; repository="https://dl-cdn.alpinelinux.org/alpine/v${release}/main"; printf "%s\n" "$repository" > /etc/apk/repositories; apk add --no-cache python3; printf "PROVISION alpine=%s repository=%s " "$(cat /etc/alpine-release)" "$repository"; python3 --version' 150
+	copy_guest_file "$here/gnet.py" /tmp/gnet.py
+	guest_cmd 'python3 /tmp/gnet.py --self-test | grep -q "^SELFTEST PASS$"' 30
 	if [ "$run_vsock" = yes ]; then
 		guest_cmd 'modprobe vsock; modprobe vmw_vsock_virtio_transport' 30
 		copy_guest_file "$here/gvsock.py" /tmp/gvsock.py
@@ -462,6 +468,14 @@ run_vsock_smoke()
 
 run_network_smoke()
 {
+	output=$(guest_cmd "python3 /tmp/gnet.py '$transport'" 30) || {
+		status=$?
+		echo "guest virtio-net verification failed (status $status)" >&2
+		[ -z "$output" ] || printf '%s\n' "$output" >&2
+		return "$status"
+	}
+	printf '%s\n' "$output"
+	printf '%s\n' "$output" | grep -q '^PASS net interface=eth0 '
 	guest_cmd 'set -eu; ip link set eth0 up; udhcpc -n -q -t 5 -T 3 -i eth0; gateway=$(ip route | awk '\''/^default/{print $3; exit}'\''); [ -n "$gateway" ]; ping -c 3 -W 2 "$gateway"; echo "PASS network gateway=$gateway"' 45
 }
 
@@ -645,12 +659,14 @@ for transport in $TRANSPORTS; do
 	input_log="$WORKDIR/$transport.input.log"
 	input_name="bhyve-e2e-input-$transport-$$"
 	if [ "$transport" = modern ]; then
+		net_transport_opt=",transport=modern"
 		vsock_transport_opt=",transport=modern"
 		input_transport_opt=",transport=modern"
 		rng_transport_opt=",transport=modern"
 		block_transport_opt=",transport=modern"
 	else
 		# Deliberately omit the option to exercise the compatibility default.
+		net_transport_opt=
 		vsock_transport_opt=
 		rng_transport_opt=
 		block_transport_opt=
@@ -692,6 +708,7 @@ for transport in $TRANSPORTS; do
 	echo "== Alpine $transport: boot and test =="
 	launch_vm
 	provision_guest
+	run_network_smoke
 	[ "$run_vsock" = no ] || run_matrix
 	[ "$run_rng_device" = no ] || run_rng
 	[ "$run_input_device" = no ] || run_input

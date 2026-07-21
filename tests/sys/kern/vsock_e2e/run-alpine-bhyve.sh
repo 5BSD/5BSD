@@ -78,7 +78,7 @@ if [ -n "$IMAGE" ]; then
 else
 	set -- "$@" -s "3,ahci-cd,$ISO"
 fi
-[ -z "$TAP" ] || set -- "$@" -s "4,virtio-net,$TAP"
+[ -z "$TAP" ] || set -- "$@" -s "4,virtio-net,$TAP,transport=$TRANSPORT"
 set -- "$@" -s "5,virtio-vsock,cid=$CID,path=$DIR,transport=$TRANSPORT"
 [ -z "$BLOCK_IMAGE" ] || set -- "$@" -s "6,virtio-blk,$BLOCK_IMAGE,transport=$TRANSPORT"
 [ "$RNG" = no ] || set -- "$@" -s "7,virtio-rnd,transport=$TRANSPORT"

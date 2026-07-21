@@ -22,7 +22,8 @@ which supplies the mock-header shadowing and `--wrap` linker flags the stock
 suite.  The standalone script also exercises transport policy, PCI identity
 and capability layout, 64-bit feature negotiation, separately addressed
 virtqueues, notification and ISR behavior, and the PCI configuration access
-window.  The entropy interrupt test combines the real virtio-rng callback with
+window, including the modern network device identity.  The entropy interrupt
+test combines the real virtio-rng callback with
 the real legacy BAR notification and shared split-ring completion path; only
 guest memory and the PCI/VMM boundary are mocked.
 
