@@ -102,6 +102,8 @@ struct virtio_consts {
 #define VIRTIO_ID_9P 9
 #define VIRTIO_DEV_BLOCK 0x1001
 #define VIRTIO_ID_BLOCK 2
+#define VIRTIO_DEV_NET 0x1000
+#define VIRTIO_ID_NETWORK 1
 #define VIRTIO_REV_INPUT 1
 #define VIRTIO_SUBVEN_INPUT 0x108e
 #define VIRTIO_SUBDEV_INPUT 0x1100
@@ -135,6 +137,8 @@ int  vq_has_descs(struct vqueue_info *);
 int  vq_getchain(struct vqueue_info *, struct iovec *, int, struct vi_req *);
 void vq_retchains(struct vqueue_info *, uint16_t);
 void vq_relchain(struct vqueue_info *, uint16_t, uint32_t);
+void vq_relchain_prepare(struct vqueue_info *, uint16_t, uint32_t);
+void vq_relchain_publish(struct vqueue_info *);
 void vq_endchains(struct vqueue_info *, int);
 void vi_softc_linkup(struct virtio_softc *, struct virtio_consts *, void *,
     struct pci_devinst *, struct vqueue_info *);

@@ -231,8 +231,7 @@ iov_trim_hdr(struct iovec *iov, int *iovcnt, unsigned int hlen)
 
 struct virtio_mrg_rxbuf_info {
 	uint16_t idx;
-	uint16_t pad;
-	uint32_t len;
+	size_t len;
 };
 
 static void
@@ -253,7 +252,7 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 
 	for (;;) {
 		struct virtio_net_rxhdr *hdr;
-		uint32_t riov_bytes;
+		size_t riov_bytes;
 		struct iovec *riov;
 		uint32_t ulen;
 		int riov_len;
@@ -285,7 +284,6 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 		do {
 			int n = vq_getchain(vq, riov, VTNET_MAXSEGS - riov_len,
 			    &req);
-			info[n_chains].idx = req.idx;
 
 			if (n == 0) {
 				/*
@@ -311,17 +309,38 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 				vq_kick_disable(vq);
 				continue;
 			}
-			assert(n >= 1 && riov_len + n <= VTNET_MAXSEGS);
+			if (n < 0) {
+				for (int i = 0; i < n_chains; i++)
+					vq_relchain(vq, info[i].idx, 0);
+				vq_endchains(vq, 0);
+				return;
+			}
+			if (n > VTNET_MAXSEGS - riov_len ||
+			    req.readable != 0 || req.writable != n) {
+				DPRINTF(("vtnet: invalid receive descriptor chain"));
+				vq_relchain(vq, req.idx, 0);
+				continue;
+			}
+			info[n_chains].idx = req.idx;
+			info[n_chains].len = count_iov(riov, n);
+			riov_bytes += info[n_chains].len;
 			riov_len += n;
 			if (!sc->rx_merge) {
 				n_chains = 1;
 				break;
 			}
-			info[n_chains].len = (uint32_t)count_iov(riov, n);
-			riov_bytes += info[n_chains].len;
 			riov += n;
 			n_chains++;
-		} while (riov_bytes < plen && riov_len < VTNET_MAXSEGS);
+		} while (riov_bytes < (size_t)plen &&
+		    riov_len < VTNET_MAXSEGS);
+		if (riov_bytes < (size_t)plen ||
+		    iov[0].iov_len < (sc->rx_merge ? sc->vhdrlen :
+		    (size_t)prepend_hdr_len)) {
+			DPRINTF(("vtnet: receive buffers too small"));
+			for (int i = 0; i < n_chains; i++)
+				vq_relchain(vq, info[i].idx, 0);
+			continue;
+		}
 
 		riov = iov;
 		hdr = riov[0].iov_base;
@@ -371,18 +390,19 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			int i = 0;
 
 			do {
-				iolen = info[i].len;
+				iolen = MIN(info[i].len, (size_t)UINT32_MAX);
 				if (iolen > ulen) {
 					iolen = ulen;
 				}
 				vq_relchain_prepare(vq, info[i].idx, iolen);
 				ulen -= iolen;
 				i++;
-			} while (ulen > 0);
+			} while (ulen > 0 && i < n_chains);
 
 			hdr->vrh_bufs = i;
 			vq_relchain_publish(vq);
-			assert(i == n_chains);
+			if (ulen != 0)
+				WPRINTF(("vtnet: receive chain accounting error"));
 		}
 	}
 
@@ -432,7 +452,6 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 	struct iovec iov[VTNET_MAXSEGS + 1];
 	struct iovec *siov = iov;
 	struct vi_req req;
-	ssize_t len;
 	int n;
 
 	/*
@@ -440,8 +459,13 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 	 * contains the virtio-net header.
 	 */
 	n = vq_getchain(vq, iov, VTNET_MAXSEGS, &req);
-	assert(n >= 1 && n <= VTNET_MAXSEGS);
-
+	if (n <= 0)
+		return;
+	if (n > VTNET_MAXSEGS || req.writable != 0 || req.readable != n) {
+		DPRINTF(("vtnet: invalid transmit descriptor chain"));
+		vq_relchain(vq, req.idx, 0);
+		return;
+	}
 	if (sc->vhdrlen != sc->be_vhdrlen) {
 		/*
 		 * The frontend uses a virtio-net header, but the backend
@@ -451,25 +475,15 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 		siov = iov_trim_hdr(siov, &n, sc->vhdrlen);
 	}
 
-	if (siov == NULL) {
-		/* The chain is nonsensical. Just drop it. */
-		len = 0;
-	} else {
-		len = netbe_send(sc->vsc_be, siov, n);
-		if (len < 0) {
-			/*
-			 * If send failed, report that 0 bytes
-			 * were read.
-			 */
-			len = 0;
-		}
-	}
+	if (siov != NULL)
+		(void)netbe_send(sc->vsc_be, siov, n);
 
 	/*
-	 * Return the processed chain to the guest, reporting
-	 * the number of bytes that we read.
+	 * Return the processed chain to the guest.  Used length is the
+	 * number of bytes written by the device, which is zero for an
+	 * entirely device-readable transmit chain.
 	 */
-	vq_relchain(vq, req.idx, len);
+	vq_relchain(vq, req.idx, 0);
 }
 
 /* Called on TX kick. */
@@ -694,8 +708,8 @@ pci_vtnet_cfgwrite(void *vsc, int offset, int size, uint32_t value)
 	struct pci_vtnet_softc *sc = vsc;
 	void *ptr;
 
-	if (offset < (int)sizeof(sc->vsc_config.mac)) {
-		assert(offset + size <= (int)sizeof(sc->vsc_config.mac));
+	if (offset >= 0 && size > 0 &&
+	    offset <= (int)sizeof(sc->vsc_config.mac) - size) {
 		/*
 		 * The driver is allowed to change the MAC address
 		 */

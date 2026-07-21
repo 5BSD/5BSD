@@ -1,8 +1,8 @@
 # bhyve VirtIO device-level harnesses
 
 Standalone unit harnesses for the bhyve virtio-vsock, virtio-input,
-virtio-rng, virtio-console, virtio-9p, and virtio-block backends, the shared
-split-ring parser, and the generic modern VirtIO PCI transport.
+virtio-rng, virtio-console, virtio-9p, virtio-block, and virtio-net backends,
+the shared split-ring parser, and the generic modern VirtIO PCI transport.
 
 It `#include`s the real device `.c` and mocks the virtio RX ring (to capture the
 packets the device injects back toward the guest) and the host-socket syscalls
@@ -41,6 +41,9 @@ after reset;
 virtio-block descriptor ordering, header/status placement, opcode-specific
 layouts, offset overflow, discard flags and feature negotiation, and immediate
 backend queue errors;
+virtio-net RX/TX descriptor directions and bounds, undersized receive buffers,
+merged-buffer accounting beyond 32 bits, zero TX used lengths, and
+configuration-write bounds;
 virtio-input configuration bounds, event/status queue directions and frame
 delivery; virtio-rng short, invalid and failed host reads; virtio-rng queue
 notification through MSI/INTx delivery with MSI-X disabled; and vsock state,
