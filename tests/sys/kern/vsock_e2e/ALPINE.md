@@ -14,14 +14,17 @@ This covers host uinput -> bhyve -> virtio event queue -> Linux evdev and the
 reverse guest evdev -> virtio status queue -> host uinput path without physical
 input hardware.
 
-The fully automated path needs only an Alpine `virt` ISO and the object-tree
-bhyve binary. It boots and provisions a disposable RAM-only guest, then runs
+The fully automated path needs only an Alpine `virt` ISO and a bhyve binary.
+The runner prefers the matching object-tree binary, using `SRCTOP` and
+`OBJROOT`, then falls back to `bhyve` in `PATH`.  It similarly discovers the
+usual `uefi-firmware` and `edk2-bhyve` firmware locations.  It boots and
+provisions a disposable RAM-only guest, then runs
 the requested transport tests.  Use the matrix runner below for the complete
 modern and applicable legacy coverage:
 
 ```sh
-cd /usr/src/tests/sys/kern/vsock_e2e
-su root -c 'ISO=/home/me/alpine-virt.iso ./run-alpine-auto.sh'
+cd /path/to/vsock_e2e
+su root -c 'ISO=/path/to/alpine-virt.iso ./run-alpine-auto.sh'
 ```
 
 The standard assigns virtio-input no transitional PCI identity.  bhyve retains
@@ -34,12 +37,34 @@ VM destruction to its unique per-run names.  Logs are retained
 under `/tmp/bhyve-vsock-alpine` by default.
 
 Set `DEVICES=vsock`, `DEVICES=rng`, or `DEVICES=input` to run a device in
-isolation.  The default, `DEVICES='vsock rng input'`, attaches all three
-devices and runs every suite to detect cross-device regressions.
+isolation; `DEVICES=block` uses a disposable sparse image and verifies a
+deterministic write/read checksum.  The default,
+`DEVICES='vsock rng input'`, attaches those three devices and runs every suite
+to detect cross-device regressions.
+
+## No-MSI-X interrupt and lifecycle regression
+
+`run-alpine-no-msix.sh` packages the focused regression that previously
+required separate launch and console scripts.  It uses the common automated
+runner and console framing, adds bhyve `-W`, and defaults to Alpine's legacy
+virtio-net, vsock, block, and RNG drivers.  The test requires at most one
+allocated interrupt vector per device, then exercises real traffic, driver
+unbind/rebind resets, a monitor-mode guest reboot, and post-reboot block-data
+persistence:
+
+```sh
+su root -c 'ISO=/path/to/alpine-virt.iso ./run-alpine-no-msix.sh'
+```
+
+There are no machine-specific paths in the wrapper.  Override `BHYVE`, `UEFI`,
+`SRCTOP`, `OBJROOT`, `WORKDIR`, `BRIDGE`, or `UPLINK` when automatic discovery
+does not match the host.  `BLOCK_TEST_MB` and `BLOCK_IMAGE_MB` control the
+written prefix and disposable image size.  `RESET_TEST=no` or `REBOOT_TEST=no`
+can narrow a debugging run without changing the acceptance defaults.
 
 For acceptance testing, use `run-alpine-matrix.sh`.  It first runs the
 sanitizer-backed real-source device harnesses and VM-free host pipeline
-controls.  It then runs vsock, RNG, and input alone, followed by all devices
+controls.  It then runs vsock, RNG, block, and input alone, followed by all devices
 together, for every selected transport.  This distinguishes device regressions
 from cross-device interactions:
 
@@ -57,11 +82,11 @@ For manual debugging, start with either an installed **raw** Alpine disk or an
 Alpine `virt` ISO.  From the host:
 
 ```sh
-cd /usr/src/tests/sys/kern/vsock_e2e
+cd /path/to/vsock_e2e
 make
-IMAGE=$HOME/vm/alpine.raw TRANSPORT=modern ./run-alpine-bhyve.sh
+IMAGE=/path/to/alpine.raw TRANSPORT=modern ./run-alpine-bhyve.sh
 # Or the RAM-only serial-console rig already used for vsock testing:
-ISO=$HOME/vm/alpine-virt-3.24.1-x86_64.iso \
+ISO=/path/to/alpine-virt.iso \
 CONSOLE=tcp=127.0.0.1:4322 \
 TRANSPORT=modern ./run-alpine-bhyve.sh
 ```

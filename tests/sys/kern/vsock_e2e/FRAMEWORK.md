@@ -45,16 +45,27 @@ and 2 once before starting the topology/transport VM matrix:
 ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
 ```
 
-The default topology order is `vsock rng input combined`.  Vsock and RNG run
-both `modern` and `legacy`; input's real-VM data path runs only with its modern
-interface because upstream Alpine has no driver for bhyve's historical hybrid
-interface.  The legacy combined run contains vsock and RNG and reports that
-input omission.  A development run can narrow either axis, for example:
+The default topology order is `vsock rng block input combined`.  Vsock, RNG,
+and block run both `modern` and `legacy`; input's real-VM data path runs only
+with its modern interface because upstream Alpine has no driver for bhyve's
+historical hybrid interface.  The legacy combined run contains vsock, RNG,
+and block and reports that input omission.  A development run can narrow
+either axis, for example:
 
 ```sh
 ISO=/path/to/alpine-virt.iso \
 TRANSPORTS=modern TOPOLOGIES='rng combined' ./run-alpine-matrix.sh
 ```
+
+The focused shared-interrupt lifecycle gate is:
+
+```sh
+ISO=/path/to/alpine-virt.iso ./run-alpine-no-msix.sh
+```
+
+It runs the legacy net/vsock/RNG/block combination with bhyve `-W`, resets and
+rebinds every attached VirtIO PCI function, rechecks data paths, reboots under
+monitor mode, and verifies the same block prefix after the fresh guest boot.
 
 `VM_FREE_GATES=no` skips the first two gates for a repeated VM-only debugging
 run; it is not an acceptance result by itself.  Gate 1 requires the bhyve

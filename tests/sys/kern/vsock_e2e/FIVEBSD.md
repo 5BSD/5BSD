@@ -8,9 +8,9 @@ lines retain their old PCI identities and behavior.
 Run it as root from the source tree:
 
 ```sh
-cd /usr/src/tests/sys/kern/vsock_e2e
-env IMAGE=/home/koryheard/vm/bsd-guest.img \
-    WORKDIR=/root/bhyve-vsock-5bsd \
+cd /path/to/vsock_e2e
+env IMAGE=/path/to/disposable-guest.img \
+    WORKDIR=/tmp/bhyve-vsock-5bsd \
     TRANSPORTS="modern legacy" \
     BULK_MB=256 \
     sh ./run-5bsd-auto.sh

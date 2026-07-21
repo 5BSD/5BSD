@@ -4,16 +4,27 @@
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
-IMAGE=${IMAGE:-/home/koryheard/vm/bsd-guest.img}
-BHYVE=${BHYVE:-/usr/obj/usr/src/$(uname -p).$(uname -p)/usr.sbin/bhyve/bhyve}
-BHYVELOAD=${BHYVELOAD:-/usr/sbin/bhyveload}
-BHYVECTL=${BHYVECTL:-/usr/sbin/bhyvectl}
+IMAGE=${IMAGE:?set IMAGE to a disposable 5BSD raw disk}
+BHYVE=${BHYVE:-}
+BHYVELOAD=${BHYVELOAD:-$(command -v bhyveload 2>/dev/null || true)}
+BHYVECTL=${BHYVECTL:-$(command -v bhyvectl 2>/dev/null || true)}
+SRCTOP=${SRCTOP:-$(cd "$here/../../../.." && pwd)}
+OBJROOT=${OBJROOT:-/usr/obj}
 WORKDIR=${WORKDIR:-/tmp/bhyve-vsock-5bsd}
 TRANSPORTS=${TRANSPORTS:-"modern legacy"}
 CID=${CID:-3}
 CONSOLE_PORT=${CONSOLE_PORT:-}
 BULK_MB=${BULK_MB:-256}
 KEEP_VM=${KEEP_VM:-no}
+
+if [ -z "$BHYVE" ]; then
+	object_bhyve="$OBJROOT$SRCTOP/$(uname -p).$(uname -p)/usr.sbin/bhyve/bhyve"
+	if [ -x "$object_bhyve" ]; then
+		BHYVE=$object_bhyve
+	else
+		BHYVE=$(command -v bhyve 2>/dev/null || true)
+	fi
+fi
 
 [ "$(id -u)" -eq 0 ] || {
 	echo "run-5bsd-auto.sh must run as root" >&2

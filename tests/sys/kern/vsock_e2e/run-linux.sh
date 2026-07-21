@@ -16,8 +16,8 @@
 #   - $TOOLS names the object directory containing unix-pipe and vsh-connect
 #
 # Env: DIR, TOOLS, ACMD, GPY (guest path to gvsock.py), REC (record size bytes),
-# TRANSPORT (modern or default legacy), HOST_WORK, and optional BHYVE_LOG and
-# CONSOLE_LOG_PATH diagnostics.
+# TRANSPORT (modern or default legacy), HOST_WORK, and optional BHYVE_LOG,
+# CONSOLE_LOG_PATH, and SMOKE_ONLY diagnostics/lifecycle controls.
 set -u
 
 DIR=${DIR:-$HOME/vm/vsock-sockdir-linux}
@@ -29,6 +29,7 @@ TRANSPORT=${TRANSPORT:-modern}
 HOST_WORK=${HOST_WORK:-${TMPDIR:-/tmp}/vsock-linux-e2e.$$}
 BHYVE_LOG=${BHYVE_LOG:-}
 CONSOLE_LOG_PATH=${CONSOLE_LOG_PATH:-}
+SMOKE_ONLY=${SMOKE_ONLY:-no}
 mkdir -p "$HOST_WORK"
 
 PASS=0; FAIL=0; FAILED=""
@@ -98,6 +99,10 @@ case "$TRANSPORT" in
 modern|legacy) ;;
 *) echo "TRANSPORT must be modern or legacy" >&2; exit 2 ;;
 esac
+case "$SMOKE_ONLY" in
+yes|no) ;;
+*) echo "SMOKE_ONLY must be yes or no" >&2; exit 2 ;;
+esac
 
 # Fail before the data tests unless the exact expected PCI function is uniquely
 # bound to the upstream driver.  The helper also proves AF_VSOCK socket
@@ -147,6 +152,12 @@ if [ "$smoke_rc" -ne 0 ] || [ "$smoke_host_rc" -ne 0 ] ||
 	exit 2
 fi
 echo "PASS  preflight_data_g2h"
+
+if [ "$SMOKE_ONLY" = yes ]; then
+	echo "----"
+	echo "linux e2e smoke: 2 passed, 0 failed"
+	exit 0
+fi
 
 # --- host->guest (guest is the server) ---
 gbg "echo-l stream 7001"
