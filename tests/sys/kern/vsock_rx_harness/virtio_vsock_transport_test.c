@@ -119,6 +119,8 @@ reset_state(void)
 	register_calls = register_locked_calls = unregister_calls = reset_calls = 0;
 	registered_cid = registered_features = 0;
 	transport_rx_packet_hook = NULL;
+	kmock_nowait_malloc_fail_after = -1;
+	kmock_nowait_malloc_calls = 0;
 	tx_packets = tx_bytes = rx_packets = rx_bytes = rx_drops = conns = 0;
 }
 
@@ -810,6 +812,64 @@ ATF_TC_BODY(attach_rejects_undersized_queues, tc)
 	}
 }
 
+ATF_TC_WITHOUT_HEAD(nowait_allocation_failures_cleanup);
+ATF_TC_BODY(nowait_allocation_failures_cleanup, tc)
+{
+	struct fake_device dev;
+	struct socket so;
+	struct virtqueue txvq;
+	struct vtvsock_pcb pcb;
+	struct vtvsock_softc sc;
+
+	/* Attach must drain the four event buffers posted before RX allocation. */
+	reset_state();
+	memset(&dev, 0, sizeof(dev));
+	memset(&sc, 0, sizeof(sc));
+	dev.softc = &sc;
+	dev.type = VIRTIO_ID_VSOCK;
+	dev.config_cid = 14;
+	dev.offered_features = VIRTIO_VSOCK_F_STREAM;
+	kmock_nowait_malloc_fail_after = 0;
+	ATF_CHECK(vtvsock_attach(&dev) == ENOMEM);
+	ATF_CHECK(kmock_nowait_malloc_calls == 1);
+	ATF_CHECK(dev.stop_calls == 1);
+	ATF_CHECK(register_calls == 0);
+	ATF_CHECK(vtvsock_global_softc() == NULL);
+	ATF_REQUIRE(sc.sc_rxvq != NULL);
+	ATF_REQUIRE(sc.sc_txvq != NULL);
+	ATF_REQUIRE(sc.sc_eventvq != NULL);
+	ATF_CHECK(sc.sc_rxvq->entry_count == 0);
+	ATF_CHECK(sc.sc_txvq->entry_count == 0);
+	ATF_CHECK(sc.sc_eventvq->entry_count == 0);
+	kfree(sc.sc_rxvq);
+	kfree(sc.sc_txvq);
+	kfree(sc.sc_eventvq);
+
+	/* A failed data-packet allocation must return its consumed credit. */
+	reset_state();
+	memset(&pcb, 0, sizeof(pcb));
+	memset(&sc, 0, sizeof(sc));
+	memset(&so, 0, sizeof(so));
+	mock_vq_init(&txvq, 128);
+	sc.sc_txvq = &txvq;
+	so.so_type = SOCK_STREAM;
+	pcb.so = &so;
+	pcb.state = VTVSOCK_ESTABLISHED;
+	pcb.local.svm_cid = 14;
+	pcb.local.svm_port = 1000;
+	pcb.remote.svm_cid = VSOCK_CID_HOST;
+	pcb.remote.svm_port = 2000;
+	pcb.peer_buf_alloc = 4096;
+	atomic_store_ptr(&vtvsock_sc, &sc);
+	kmock_nowait_malloc_fail_after = 0;
+	ATF_CHECK(vtvsock_virtio_send(&pcb, 0, new_data_chain(1, false),
+	    NULL, NULL, NULL) == ENOMEM);
+	ATF_CHECK(kmock_nowait_malloc_calls == 1);
+	ATF_CHECK(pcb.tx_cnt == 0);
+	ATF_CHECK(pcb.state == VTVSOCK_ESTABLISHED);
+	ATF_CHECK(txvq.entry_count == 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, cid_sanitization);
@@ -825,5 +885,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, tx_interrupt_serializes_detach);
 	ATF_TP_ADD_TC(tp, attach_completed_detach_lifecycle);
 	ATF_TP_ADD_TC(tp, attach_rejects_undersized_queues);
+	ATF_TP_ADD_TC(tp, nowait_allocation_failures_cleanup);
 	return (atf_no_error());
 }

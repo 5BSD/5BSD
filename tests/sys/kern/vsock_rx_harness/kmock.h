@@ -67,11 +67,22 @@ struct malloc_type { const char *name; };
 /* Capture libc malloc/free before shadowing them with the 2-arg kernel forms. */
 static void *(* const libc_malloc)(size_t) = malloc;
 static void (* const libc_free)(void *) = free;
+static int kmock_nowait_malloc_fail_after = -1;
+static unsigned int kmock_nowait_malloc_calls;
 static inline void kfree(void *p) { libc_free(p); }
 static inline void *
 k_malloc(size_t s, struct malloc_type *t __unused, int fl)
 {
-	void *p = libc_malloc(s);
+	void *p;
+	unsigned int call;
+
+	if ((fl & M_NOWAIT) != 0) {
+		call = kmock_nowait_malloc_calls++;
+		if (kmock_nowait_malloc_fail_after >= 0 &&
+		    call >= (unsigned int)kmock_nowait_malloc_fail_after)
+			return (NULL);
+	}
+	p = libc_malloc(s);
 	if (p != NULL && (fl & M_ZERO))
 		memset(p, 0, s);
 	return (p);
