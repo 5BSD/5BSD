@@ -127,6 +127,60 @@ ATF_TC_BODY(seqpacket_rx_eor_follows_wire_flag, tc)
 	vsock_rx_packet(pkt, sizeof(pkt));
 	ATF_CHECK((vsock_kmock_record_mflags & M_EOR) != 0);
 }
+
+ATF_TC_WITHOUT_HEAD(rx_mbuf_chain_copy);
+ATF_TC_BODY(rx_mbuf_chain_copy, tc)
+{
+	struct mbuf *m, *n;
+	uint8_t payload[MLEN * 2 + 37];
+	size_t offset;
+	int headers;
+
+	for (size_t i = 0; i < sizeof(payload); i++)
+		payload[i] = (uint8_t)(i * 29 + 7);
+	m = vsock_mbuf_from_buffer(payload, sizeof(payload));
+	ATF_REQUIRE(m != NULL);
+	ATF_CHECK(m->m_pkthdr.len == sizeof(payload));
+	offset = 0;
+	headers = 0;
+	for (n = m; n != NULL; n = n->m_next) {
+		ATF_CHECK(n->m_len > 0);
+		ATF_CHECK(memcmp(n->m_data, payload + offset, n->m_len) == 0);
+		offset += n->m_len;
+		if ((n->m_flags & M_PKTHDR) != 0)
+			headers++;
+	}
+	ATF_CHECK(offset == sizeof(payload));
+	ATF_CHECK(headers == 1);
+	m_freem(m);
+}
+
+ATF_TC_WITHOUT_HEAD(seqpacket_fragment_mbuf_headers);
+ATF_TC_BODY(seqpacket_fragment_mbuf_headers, tc)
+{
+	struct vtvsock_pcb *pcb;
+	struct virtio_vsock_hdr *h;
+	uint8_t pkt[sizeof(*h) + 32];
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM | VIRTIO_VSOCK_F_SEQPACKET);
+	pcb = establish_remote(SOCK_SEQPACKET, 90, 1247, NULL);
+	ATF_REQUIRE(pcb != NULL);
+	h = (struct virtio_vsock_hdr *)pkt;
+	memset(pkt + sizeof(*h), 0x5a, 32);
+	mkhdr(h, VIRTIO_VSOCK_OP_RW, VIRTIO_VSOCK_TYPE_SEQPACKET,
+	    VSOCK_CID_HOST, 1247, 90, 32, 0, 65536, 0);
+	vsock_rx_packet(pkt, sizeof(pkt));
+	ATF_CHECK(pcb->seqpacket_partial != NULL);
+	mkhdr(h, VIRTIO_VSOCK_OP_RW, VIRTIO_VSOCK_TYPE_SEQPACKET,
+	    VSOCK_CID_HOST, 1247, 90, 32, VIRTIO_VSOCK_SEQ_EOM,
+	    65536, 0);
+	vsock_rx_packet(pkt, sizeof(pkt));
+	ATF_CHECK(pcb->seqpacket_partial == NULL);
+	ATF_CHECK(vsock_kmock_record_pkthdrs == 1);
+	ATF_CHECK(vsock_kmock_record_pkthdr_len == 64);
+	ATF_CHECK(vsock_kmock_record_len == 64);
+}
 static void
 register_mock(uint64_t cid, uint64_t features)
 {
@@ -797,6 +851,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rx_flow_control_violation_rst);
 	ATF_TP_ADD_TC(tp, cid_local_wire_isolation);
 	ATF_TP_ADD_TC(tp, seqpacket_rx_eor_follows_wire_flag);
+	ATF_TP_ADD_TC(tp, rx_mbuf_chain_copy);
+	ATF_TP_ADD_TC(tp, seqpacket_fragment_mbuf_headers);
 	ATF_TP_ADD_TC(tp, seqpacket_fragment_limit_rst);
 	ATF_TP_ADD_TC(tp, deferred_shutdown_timeout);
 	ATF_TP_ADD_TC(tp, transport_reset_and_reregister);

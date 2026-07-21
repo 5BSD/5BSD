@@ -72,6 +72,12 @@ m_uiotombuf(struct uio *uio, int how, int len, int align, int flags)
 }
 void m_cat(struct mbuf *m, struct mbuf *n)
 { while (m->m_next) m = m->m_next; m->m_next = n; }
+void m_catpkt(struct mbuf *m, struct mbuf *n)
+{
+	m->m_pkthdr.len += n->m_pkthdr.len;
+	n->m_flags &= ~M_PKTHDR;
+	m_cat(m, n);
+}
 void m_copyback(struct mbuf *m, int off, int len, const void *cp)
 { (void)off; (void)cp; if (m) m->m_len = off + len; }
 int sopoll_generic(struct socket *so, int e, struct thread *t)

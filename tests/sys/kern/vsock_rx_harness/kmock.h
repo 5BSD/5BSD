@@ -268,6 +268,8 @@ struct mbuf {
 #define M_EOR		0x00000004
 #define M_PROTO1	0x00001000
 #define M_PKTHDR	0x00000002
+#define mtod(m, t)	((t)((m)->m_data))
+#define M_TRAILINGSPACE(m)	(MLEN - (m)->m_len)
 
 static inline struct mbuf *
 m_get(int how __unused, int type __unused)
@@ -298,6 +300,7 @@ m_length(struct mbuf *m, struct mbuf **last)
 struct uio;
 struct mbuf *m_uiotombuf(struct uio *uio, int how, int len, int align, int flags);
 void m_cat(struct mbuf *, struct mbuf *);
+void m_catpkt(struct mbuf *, struct mbuf *);
 void m_copyback(struct mbuf *, int, int, const void *);
 static inline struct mbuf *
 m_getm2(struct mbuf *prev __unused, int len, int how, int type, int flags)

@@ -50,6 +50,7 @@
 #include <sys/errno.h>
 #include <sys/kernel.h>
 #include <sys/libkern.h>
+#include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
@@ -2409,6 +2410,41 @@ vtvsock_local_shutdown(struct vtvsock_pcb *pcb, enum shutdown_how how)
  * is extracted from every packet before the opcode switch.
  * ---------------------------------------------------------------------- */
 
+static struct mbuf *
+vsock_mbuf_from_buffer(const void *buf, size_t len)
+{
+	const uint8_t *src;
+	struct mbuf *m, *n;
+	size_t copied, chunk;
+
+	if (len > INT_MAX)
+		return (NULL);
+	m = m_getm2(NULL, (int)len, M_NOWAIT, MT_DATA, M_PKTHDR);
+	if (m == NULL)
+		return (NULL);
+
+	/*
+	 * m_getm2() allocates enough storage, but leaves every m_len at zero.
+	 * Fill that storage directly.  m_copyback() is not suitable here: it
+	 * skips zero-length elements in a preallocated chain, then may allocate
+	 * more M_NOWAIT mbufs without reporting a partial copy to its caller.
+	 */
+	src = buf;
+	copied = 0;
+	for (n = m; n != NULL && copied < len; n = n->m_next) {
+		chunk = MIN((size_t)M_TRAILINGSPACE(n), len - copied);
+		memcpy(mtod(n, void *), src + copied, chunk);
+		n->m_len = (int)chunk;
+		copied += chunk;
+	}
+	if (__predict_false(copied != len)) {
+		m_freem(m);
+		return (NULL);
+	}
+	m->m_pkthdr.len = (int)len;
+	return (m);
+}
+
 void
 vsock_rx_packet(void *buf, uint32_t len)
 {
@@ -2947,14 +2983,13 @@ vsock_rx_packet(void *buf, uint32_t len)
 			goto teardown_close;
 		}
 
-		m = m_getm2(NULL, payload_len, M_NOWAIT, MT_DATA, M_PKTHDR);
+		m = vsock_mbuf_from_buffer(payload, payload_len);
 		if (m == NULL) {
 			/* Out of mbufs; send RST. */
 			teardown_rst = true;
 			teardown_drop = true;
 			goto teardown_close;
 		}
-		m_copyback(m, 0, payload_len, payload);
 
 		pcb->rx_bytes += (uint32_t)payload_len;
 		counter_u64_add(vtvsock_cnt_rx_bytes, payload_len);
@@ -2984,7 +3019,7 @@ vsock_rx_packet(void *buf, uint32_t len)
 					goto teardown_close;
 				}
 				pcb->seqpacket_frag_count++;
-				m_cat(pcb->seqpacket_partial, m);
+				m_catpkt(pcb->seqpacket_partial, m);
 				m = NULL;
 			} else {
 				pcb->seqpacket_partial = m;
