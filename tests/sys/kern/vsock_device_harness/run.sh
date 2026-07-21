@@ -20,7 +20,7 @@ trap 'rm -rf "$work"' EXIT
 cp "$here"/*.h "$here/vsock_device_test.c" \
     "$here/virtio_modern_test.c" "$here/virtio_input_test.c" \
     "$here/virtio_rnd_test.c" "$here/virtio_rnd_interrupt_test.c" \
-    "$here/virtio_core_test.c" "$work/"
+    "$here/virtio_core_test.c" "$here/iov_test.c" "$work/"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock.c"        "$work/pci_virtio_vsock.c"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock_iov.h"    "$work/pci_virtio_vsock_iov.h"
 # DTrace USDT probe wrappers: harness builds WITHOUT -DWITH_DTRACE, so the header
@@ -31,6 +31,8 @@ ln -s "$srctop/usr.sbin/bhyve/virtio_pci_modern_probes.h" "$work/virtio_pci_mode
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_input.c" "$work/pci_virtio_input.c"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_rnd.c" "$work/pci_virtio_rnd.c"
 ln -s "$srctop/usr.sbin/bhyve/virtio.c" "$work/virtio.c"
+ln -s "$srctop/usr.sbin/bhyve/iov.c" "$work/iov.c"
+ln -s "$srctop/usr.sbin/bhyve/iov.h" "$work/iov.h"
 
 mkdir -p "$work/inc/sys"
 cp "$srctop/sys/sys/vsock.h" "$work/inc/sys/vsock.h"
@@ -105,3 +107,10 @@ EOF
 	"$work/virtio_core_test.c" -lpthread
 
 "$work/core-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" \
+	-I"$work/atfshim" -I"$work/inc" \
+	-I"$work" -I"$srctop/sys" \
+	-o "$work/iov-test" "$work/iov_test.c"
+
+"$work/iov-test"

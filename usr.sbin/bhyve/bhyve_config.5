@@ -855,6 +855,11 @@ The path of a CAM target layer (CTL) device to export:
 .Pa /dev/cam/ctl Ns Oo Ar pp . Ns Ar vp Oc .
 .It Va iid Ta integer Ta 0 Ta
 Initiator ID to use when sending requests to the CTL port.
+.It Va transport Ta string Ta legacy Ta
+VirtIO PCI transport to expose, either
+.Dq legacy
+or
+.Dq modern .
 .El
 .Sh SEE ALSO
 .Xr expand_number 3 ,

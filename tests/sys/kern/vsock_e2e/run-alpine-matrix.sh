@@ -7,7 +7,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 ISO=${ISO:?set ISO to an Alpine virt ISO}
 WORKDIR=${WORKDIR:-/tmp/bhyve-virtio-alpine-matrix}
 TRANSPORTS=${TRANSPORTS:-"modern legacy"}
-TOPOLOGIES=${TOPOLOGIES:-"net vsock rng block input combined"}
+TOPOLOGIES=${TOPOLOGIES:-"net vsock rng block scsi input combined"}
 VM_FREE_GATES=${VM_FREE_GATES:-yes}
 
 [ "$(id -u)" -eq 0 ] || {
@@ -64,7 +64,7 @@ esac
 
 for topology in $TOPOLOGIES; do
 	case "$topology" in
-	net|vsock|rng|block|input|combined) ;;
+	net|vsock|rng|block|scsi|input|combined) ;;
 	*) echo "invalid topology: $topology" >&2; exit 2 ;;
 	esac
 	for transport in $TRANSPORTS; do
@@ -76,14 +76,15 @@ for topology in $TOPOLOGIES; do
 		vsock:*) devices=vsock ;;
 		rng:*) devices=rng ;;
 		block:*) devices=block ;;
+		scsi:*) devices=scsi ;;
 		input:modern) devices=input ;;
 		input:legacy)
 			echo "==== topology=input transport=legacy: SKIP (historical bhyve interface has no upstream Alpine driver) ===="
 			continue
 			;;
-		combined:modern) devices="net vsock rng block input" ;;
+		combined:modern) devices="net vsock rng block scsi input" ;;
 		combined:legacy)
-			devices="net vsock rng block"
+			devices="net vsock rng block scsi"
 			echo "==== topology=combined transport=legacy: historical input omitted (no upstream Alpine driver) ===="
 			;;
 		esac

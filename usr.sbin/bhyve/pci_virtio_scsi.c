@@ -142,14 +142,14 @@ struct pci_vtscsi_queue {
 	pthread_cond_t                    vsq_cv;
 	struct pci_vtscsi_req_queue       vsq_requests;
 	struct pci_vtscsi_req_queue       vsq_free_requests;
-	LIST_HEAD(, pci_vtscsi_worker)    vsq_workers;
+	struct pci_vtscsi_worker *        vsq_workers;
+	int                               vsq_nworkers;
 };
 
 struct pci_vtscsi_worker {
 	struct pci_vtscsi_queue *     vsw_queue;
 	pthread_t                     vsw_thread;
 	bool                          vsw_exiting;
-	LIST_ENTRY(pci_vtscsi_worker) vsw_link;
 };
 
 struct pci_vtscsi_request {
@@ -180,6 +180,7 @@ struct pci_vtscsi_softc {
 	pthread_mutex_t          vss_mtx;
 	int                      vss_iid;
 	int                      vss_ctl_fd;
+	bool                     vss_mtx_initialized;
 	uint32_t                 vss_features;
 	struct pci_vtscsi_config vss_config;
 };
@@ -717,7 +718,7 @@ pci_vtscsi_queue_request(struct pci_vtscsi_softc *sc, struct vqueue_info *vq)
 	 * by one to make room for a new iovec covering the first part of the
 	 * output data portion.
 	 */
-	req->vsr_data_iov_out = split_iov(req->vsr_iov_out, &req->vsr_niov_out,
+	(void)split_iov(req->vsr_iov_out, &req->vsr_niov_out,
 	    VTSCSI_OUT_HEADER_LEN(q->vsq_sc), &req->vsr_data_niov_out);
 
 	/*
@@ -728,13 +729,25 @@ pci_vtscsi_queue_request(struct pci_vtscsi_softc *sc, struct vqueue_info *vq)
 	 */
 	req->vsr_niov_in += req->vsr_niov_out + req->vsr_data_niov_out;
 
-	req->vsr_data_iov_in = split_iov(req->vsr_iov_in, &req->vsr_niov_in,
+	(void)split_iov(req->vsr_iov_in, &req->vsr_niov_in,
 	    VTSCSI_IN_HEADER_LEN(q->vsq_sc), &req->vsr_data_niov_in);
 
 	/*
 	 * And of course we now have to adjust data_niov_in accordingly.
 	 */
 	req->vsr_data_niov_in -= req->vsr_niov_out + req->vsr_data_niov_out;
+
+	/*
+	 * Either split may have moved later entries to make room.  Recompute
+	 * every section pointer from the final layout instead of retaining a
+	 * pointer returned before the second split.
+	 */
+	req->vsr_data_iov_in = req->vsr_data_niov_in == 0 ? NULL :
+	    &req->vsr_iov[req->vsr_niov_in];
+	req->vsr_iov_out = &req->vsr_iov[req->vsr_niov_in +
+	    req->vsr_data_niov_in];
+	req->vsr_data_iov_out = req->vsr_data_niov_out == 0 ? NULL :
+	    &req->vsr_iov_out[req->vsr_niov_out];
 
 	/*
 	 * iov_to_buf() realloc()s the buffer given as 3rd argument to the
@@ -860,6 +873,20 @@ pci_vtscsi_request_handle(struct pci_vtscsi_softc *sc,
 	io->scsiio.ext_data_filled = 0;
 	io->scsiio.cdb_len = sc->vss_config.cdb_size;
 	memcpy(io->scsiio.cdb, req->vsr_cmd_rd->cdb, sc->vss_config.cdb_size);
+	DPRINTF("submit opcode=0x%02x flags=0x%x readable=%zu writable=%zu "
+	    "data_len=%u sg=%u", io->scsiio.cdb[0], io->io_hdr.flags,
+	    req->vsr_data_niov_in, req->vsr_data_niov_out, ext_data_len,
+	    ext_sg_entries);
+	if (pci_vtscsi_debug && ext_sg_entries != 0) {
+		const struct iovec *first = ext_data_ptr;
+
+		if (first->iov_len >= 4) {
+			const uint8_t *data = first->iov_base;
+
+			DPRINTF("pre-io data bytes=%02x%02x%02x%02x len=%zu",
+			    data[0], data[1], data[2], data[3], first->iov_len);
+		}
+	}
 
 	if (pci_vtscsi_debug) {
 		struct sbuf *sb = sbuf_new_auto();
@@ -870,6 +897,22 @@ pci_vtscsi_request_handle(struct pci_vtscsi_softc *sc,
 	}
 
 	err = ioctl(sc->vss_ctl_fd, CTL_IO, io);
+	if (pci_vtscsi_debug && ext_sg_entries != 0 &&
+	    (io->io_hdr.flags & CTL_FLAG_DATA_MASK) == CTL_FLAG_DATA_IN) {
+		const struct iovec *first = ext_data_ptr;
+
+		if (first->iov_len >= 4) {
+			const uint8_t *data = first->iov_base;
+
+			DPRINTF("post-io data bytes=%02x%02x%02x%02x len=%zu",
+			    data[0], data[1], data[2], data[3], first->iov_len);
+		}
+	}
+	DPRINTF("complete opcode=0x%02x ioctl=%d ctl_status=0x%x "
+	    "port_status=%u scsi_status=0x%x filled=%u/%u",
+	    io->scsiio.cdb[0], err, io->io_hdr.status,
+	    io->io_hdr.port_status, io->scsiio.scsi_status,
+	    io->scsiio.ext_data_filled, ext_data_len);
 	if (err != 0) {
 		WPRINTF("CTL_IO: err=%d (%s)", errno, strerror(errno));
 		req->vsr_cmd_wr->response = VIRTIO_SCSI_S_FAILURE;
@@ -884,7 +927,16 @@ pci_vtscsi_request_handle(struct pci_vtscsi_softc *sc,
 		    req->vsr_cmd_wr->sense_len);
 	}
 
-	nxferred = io->scsiio.ext_data_filled;
+	/*
+	 * The used-ring length counts bytes written by the device.  DATA OUT is
+	 * readable by the device, so only its response header is counted by the
+	 * caller.  DATA IN is writable by the device and must also include the
+	 * transferred payload.
+	 */
+	if ((io->io_hdr.flags & CTL_FLAG_DATA_MASK) == CTL_FLAG_DATA_IN)
+		nxferred = io->scsiio.ext_data_filled;
+	else
+		nxferred = 0;
 	return (nxferred);
 }
 
@@ -935,9 +987,8 @@ static int
 pci_vtscsi_init_queue(struct pci_vtscsi_softc *sc,
     struct pci_vtscsi_queue *queue, int num)
 {
-	struct pci_vtscsi_worker *workers;
 	char tname[MAXCOMLEN + 1];
-	int i;
+	int error, i;
 
 	queue->vsq_sc = sc;
 	queue->vsq_vq = &sc->vss_vq[num + 2];
@@ -948,7 +999,6 @@ pci_vtscsi_init_queue(struct pci_vtscsi_softc *sc,
 	pthread_cond_init(&queue->vsq_cv, NULL);
 	STAILQ_INIT(&queue->vsq_requests);
 	STAILQ_INIT(&queue->vsq_free_requests);
-	LIST_INIT(&queue->vsq_workers);
 
 	for (i = 0; i < VTSCSI_RINGSZ; i++) {
 		struct pci_vtscsi_request *req;
@@ -960,19 +1010,25 @@ pci_vtscsi_init_queue(struct pci_vtscsi_softc *sc,
 		pci_vtscsi_put_request(&queue->vsq_free_requests, req);
 	}
 
-	workers = calloc(VTSCSI_THR_PER_Q, sizeof(struct pci_vtscsi_worker));
-	if (workers == NULL)
+	queue->vsq_workers = calloc(VTSCSI_THR_PER_Q,
+	    sizeof(struct pci_vtscsi_worker));
+	if (queue->vsq_workers == NULL)
 		goto fail;
 
 	for (i = 0; i < VTSCSI_THR_PER_Q; i++) {
-		workers[i].vsw_queue = queue;
+		queue->vsq_workers[i].vsw_queue = queue;
 
-		pthread_create(&workers[i].vsw_thread, NULL, &pci_vtscsi_proc,
-		    (void *)&workers[i]);
+		error = pthread_create(&queue->vsq_workers[i].vsw_thread, NULL,
+		    &pci_vtscsi_proc, &queue->vsq_workers[i]);
+		if (error != 0) {
+			WPRINTF("failed to create request worker: %s",
+			    strerror(error));
+			goto fail;
+		}
+		queue->vsq_nworkers++;
 
 		snprintf(tname, sizeof(tname), "vtscsi:%d-%d", num, i);
-		pthread_set_name_np(workers[i].vsw_thread, tname);
-		LIST_INSERT_HEAD(&queue->vsq_workers, &workers[i], vsw_link);
+		pthread_set_name_np(queue->vsq_workers[i].vsw_thread, tname);
 	}
 
 	return (0);
@@ -990,6 +1046,20 @@ pci_vtscsi_destroy_queue(struct pci_vtscsi_queue *queue)
 	if (queue->vsq_sc == NULL)
 		return;
 
+	if (queue->vsq_nworkers != 0) {
+		pthread_mutex_lock(&queue->vsq_rmtx);
+		for (int i = 0; i < queue->vsq_nworkers; i++)
+			queue->vsq_workers[i].vsw_exiting = true;
+		pthread_cond_broadcast(&queue->vsq_cv);
+		pthread_mutex_unlock(&queue->vsq_rmtx);
+
+		for (int i = 0; i < queue->vsq_nworkers; i++)
+			pthread_join(queue->vsq_workers[i].vsw_thread, NULL);
+	}
+	free(queue->vsq_workers);
+	queue->vsq_workers = NULL;
+	queue->vsq_nworkers = 0;
+
 	for (int i = VTSCSI_RINGSZ; i > 0; i--) {
 		struct pci_vtscsi_request *req;
 
@@ -1004,6 +1074,7 @@ pci_vtscsi_destroy_queue(struct pci_vtscsi_queue *queue)
 	pthread_mutex_destroy(&queue->vsq_qmtx);
 	pthread_mutex_destroy(&queue->vsq_fmtx);
 	pthread_mutex_destroy(&queue->vsq_rmtx);
+	queue->vsq_sc = NULL;
 }
 
 static int
@@ -1033,9 +1104,17 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 	int err;
 	int i;
 
+	value = getenv("BHYVE_VTSCSI_DEBUG");
+	if (value != NULL) {
+		pci_vtscsi_debug = atoi(value);
+		if (pci_vtscsi_debug < 1)
+			pci_vtscsi_debug = 1;
+	}
+
 	sc = calloc(1, sizeof(struct pci_vtscsi_softc));
 	if (sc == NULL)
 		return (-1);
+	sc->vss_ctl_fd = -1;
 
 	value = get_config_value_node(nvl, "iid");
 	if (value != NULL)
@@ -1059,6 +1138,7 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 
 	pthread_mutex_init(&sc->vss_mtx, NULL);
+	sc->vss_mtx_initialized = true;
 
 	vi_softc_linkup(&sc->vss_vs, &vtscsi_vi_consts, sc, pi, sc->vss_vq);
 	sc->vss_vs.vs_mtx = &sc->vss_mtx;
@@ -1088,23 +1168,36 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 	for (i = 2; i < VTSCSI_MAXQ; i++) {
 		sc->vss_vq[i].vq_qsize = VTSCSI_RINGSZ;
 		sc->vss_vq[i].vq_notify = pci_vtscsi_requestq_notify;
+	}
+	if (vi_pci_select_transport(&sc->vss_vs, nvl,
+	    VIRTIO_PCI_LEGACY_DEFAULT) != 0)
+		goto fail;
 
+	/* initialize config space */
+	if (vi_pci_is_modern(&sc->vss_vs))
+		vi_pci_modern_set_identity(&sc->vss_vs, VIRTIO_ID_SCSI);
+	else {
+		pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_SCSI);
+		pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
+		pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_SCSI);
+		pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
+	}
+	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_STORAGE);
+
+	if (vi_intr_init(&sc->vss_vs, 1, fbsdrun_virtio_msix()))
+		goto fail;
+	if (vi_pci_is_modern(&sc->vss_vs)) {
+		if (vi_pci_modern_init(&sc->vss_vs, 2) != 0)
+			goto fail;
+	} else
+		vi_set_io_bar(&sc->vss_vs, 0);
+
+	/* Start workers only after every fallible PCI transport operation. */
+	for (i = 2; i < VTSCSI_MAXQ; i++) {
 		err = pci_vtscsi_init_queue(sc, &sc->vss_queues[i - 2], i - 2);
 		if (err != 0)
 			goto fail;
 	}
-
-	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_SCSI);
-	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
-	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_STORAGE);
-	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_SCSI);
-	pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
-
-	if (vi_intr_init(&sc->vss_vs, 1, fbsdrun_virtio_msix()))
-		goto fail;
-
-	vi_set_io_bar(&sc->vss_vs, 0);
 
 	return (0);
 
@@ -1112,8 +1205,10 @@ fail:
 	for (i = 2; i < VTSCSI_MAXQ; i++)
 		pci_vtscsi_destroy_queue(&sc->vss_queues[i - 2]);
 
-	if (sc->vss_ctl_fd > 0)
+	if (sc->vss_ctl_fd >= 0)
 		close(sc->vss_ctl_fd);
+	if (sc->vss_mtx_initialized)
+		pthread_mutex_destroy(&sc->vss_mtx);
 
 	free(sc);
 	return (-1);
@@ -1124,6 +1219,8 @@ static const struct pci_devemu pci_de_vscsi = {
 	.pe_emu =	"virtio-scsi",
 	.pe_init =	pci_vtscsi_init,
 	.pe_legacy_config = pci_vtscsi_legacy_config,
+	.pe_cfgwrite =	vi_pci_modern_cfgwrite,
+	.pe_cfgread =	vi_pci_modern_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read
 };

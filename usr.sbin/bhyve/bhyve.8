@@ -505,6 +505,16 @@ The modern setting selects the non-transitional VirtIO PCI transport and
 device ID 0x1042.
 .It Cm virtio-scsi
 Virtio SCSI interface.
+The optional
+.Cm transport
+setting accepts
+.Cm legacy
+or
+.Cm modern .
+If omitted, the legacy PCI transport and its existing device identity are used
+for compatibility with existing guests and launch scripts.
+The modern setting selects the non-transitional VirtIO PCI transport and
+device ID 0x1048.
 .It Cm virtio-9p
 Virtio 9p (VirtFS) interface.
 .It Cm virtio-rnd

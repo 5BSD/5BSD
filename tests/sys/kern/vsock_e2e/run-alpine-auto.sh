@@ -17,11 +17,14 @@ CONSOLE_PORT=${CONSOLE_PORT:-}
 KEEP_VM=${KEEP_VM:-no}
 VSOCK_DEBUG=${VSOCK_DEBUG:-1}
 INPUT_DEBUG=${INPUT_DEBUG:-1}
+SCSI_DEBUG=${SCSI_DEBUG:-1}
 VIRTIO_MSIX=${VIRTIO_MSIX:-yes}
 RESET_TEST=${RESET_TEST:-no}
 REBOOT_TEST=${REBOOT_TEST:-no}
 BLOCK_TEST_MB=${BLOCK_TEST_MB:-256}
 BLOCK_IMAGE_MB=${BLOCK_IMAGE_MB:-1024}
+SCSI_TEST_MB=${SCSI_TEST_MB:-32}
+SCSI_IMAGE_MB=${SCSI_IMAGE_MB:-128}
 BRIDGE=${BRIDGE:-bridge0}
 UPLINK=${UPLINK:-}
 
@@ -54,6 +57,7 @@ run_net_device=no
 run_rng_device=no
 run_input_device=no
 run_block_device=no
+run_scsi_device=no
 for device in $DEVICES; do
 	case "$device" in
 	vsock) run_vsock=yes ;;
@@ -61,13 +65,15 @@ for device in $DEVICES; do
 	rng) run_rng_device=yes ;;
 	input) run_input_device=yes ;;
 	block) run_block_device=yes ;;
+	scsi) run_scsi_device=yes ;;
 	*) echo "invalid device test: $device" >&2; exit 2 ;;
 	esac
 done
 [ "$run_vsock" = yes ] || [ "$run_net_device" = yes ] ||
     [ "$run_rng_device" = yes ] ||
-    [ "$run_input_device" = yes ] || [ "$run_block_device" = yes ] || {
-	echo "DEVICES must select net, vsock, rng, input, block, or a combination" >&2
+    [ "$run_input_device" = yes ] || [ "$run_block_device" = yes ] ||
+    [ "$run_scsi_device" = yes ] || {
+	echo "DEVICES must select net, vsock, rng, input, block, scsi, or a combination" >&2
 	exit 2
 }
 
@@ -86,6 +92,14 @@ esac
 [ "$BLOCK_TEST_MB" -gt 0 ] && [ "$BLOCK_IMAGE_MB" -gt 0 ] &&
     [ "$BLOCK_TEST_MB" -le "$BLOCK_IMAGE_MB" ] || {
 	echo "require 0 < BLOCK_TEST_MB <= BLOCK_IMAGE_MB" >&2
+	exit 2
+}
+case "$SCSI_TEST_MB:$SCSI_IMAGE_MB" in
+*[!0-9:]*|:*|*:) echo "SCSI sizes must be positive integer MiB values" >&2; exit 2 ;;
+esac
+[ "$SCSI_TEST_MB" -gt 0 ] && [ "$SCSI_IMAGE_MB" -gt 0 ] &&
+    [ "$SCSI_TEST_MB" -le "$SCSI_IMAGE_MB" ] || {
+	echo "require 0 < SCSI_TEST_MB <= SCSI_IMAGE_MB" >&2
 	exit 2
 }
 if { [ "$RESET_TEST" = yes ] || [ "$REBOOT_TEST" = yes ]; } &&
@@ -150,6 +164,7 @@ done
 kldload -n vmm
 [ "$run_input_device" = no ] || kldload -n uinput
 [ "$run_input_device" = no ] || "$tools/uinput-inject" --kernel-self-test
+[ "$run_scsi_device" = no ] || kldload -n ctl
 sysctl net.link.tap.up_on_open=1 >/dev/null
 
 if [ -z "$CONSOLE_PORT" ]; then
@@ -187,6 +202,9 @@ bhyve_log=
 input_log=
 reboot_stream_log=
 reboot_seq_log=
+scsi_create_log=
+scsi_lun_id=
+scsi_size_bytes=
 stop_console()
 {
 	[ -z "$console_pid" ] || pkill -TERM -P "$console_pid" 2>/dev/null || true
@@ -228,6 +246,11 @@ cleanup_all()
 		return
 	fi
 	cleanup_vm
+	if [ -n "$scsi_lun_id" ]; then
+		ctladm remove -b ramdisk -l "$scsi_lun_id" >/dev/null ||
+		    echo "warning: failed to remove CTL LUN $scsi_lun_id" >&2
+		scsi_lun_id=
+	fi
 	ifconfig "$BRIDGE" deletem "$tap" >/dev/null 2>&1 || true
 	ifconfig "$tap" destroy >/dev/null 2>&1 || true
 	[ "$bridge_created" = no ] || ifconfig "$BRIDGE" destroy >/dev/null 2>&1 || true
@@ -236,6 +259,7 @@ report_failure()
 {
 	echo "==== retained failure diagnostics ====" >&2
 	for item in "bhyve:$bhyve_log" "input-provider:$input_log" \
+	    "scsi-create:$scsi_create_log" \
 	    "reboot-stream:$reboot_stream_log" "reboot-seq:$reboot_seq_log" \
 	    "guest-console:$console_log"; do
 		label=${item%%:*}
@@ -257,6 +281,25 @@ on_exit()
 }
 trap on_exit EXIT
 trap 'exit 130' INT TERM
+
+if [ "$run_scsi_device" = yes ]; then
+	scsi_create_log="$WORKDIR/scsi-create.log"
+	scsi_size_bytes=$((SCSI_IMAGE_MB * 1024 * 1024 + ($$ % 8192) * 512))
+	# A ramdisk without capacity is CTL's intentionally fake backend: it
+	# discards writes and returns zeroes.  Back the full advertised LUN so
+	# the guest test verifies real data persistence.
+	ctladm create -b ramdisk -s "$scsi_size_bytes" \
+	    -o "capacity=$scsi_size_bytes" > "$scsi_create_log"
+	scsi_lun_id=$(awk '/^LUN ID:/ {print $NF}' "$scsi_create_log")
+	case "$scsi_lun_id" in
+	''|*[!0-9]*) echo "invalid CTL LUN ID: $scsi_lun_id" >&2; exit 1 ;;
+	esac
+	[ "$scsi_lun_id" -le 16383 ] || {
+		echo "CTL LUN ID exceeds virtio-scsi limit: $scsi_lun_id" >&2
+		exit 1
+	}
+	grep -q '^LUN created successfully$' "$scsi_create_log"
+fi
 
 wait_for()
 {
@@ -327,10 +370,13 @@ launch_vm()
 	    -s "7,virtio-rnd$rng_transport_opt"
 	[ "$run_block_device" = no ] || set -- "$@" \
 	    -s "8,virtio-blk,$block_image$block_transport_opt"
+	[ "$run_scsi_device" = no ] || set -- "$@" \
+	    -s "9,virtio-scsi,/dev/cam/ctl$scsi_transport_opt"
 	set -- "$@" -s 31,lpc -l "com1,tcp=127.0.0.1:$CONSOLE_PORT" \
 	    -l "bootrom,$UEFI" "$vmname"
 	env BHYVE_VTVSOCK_DEBUG="$VSOCK_DEBUG" \
-	    BHYVE_VTINPUT_DEBUG="$INPUT_DEBUG" "$@" \
+	    BHYVE_VTINPUT_DEBUG="$INPUT_DEBUG" \
+	    BHYVE_VTSCSI_DEBUG="$SCSI_DEBUG" "$@" \
 	    >> "$bhyve_log" 2>&1 &
 	vm_pid=$!
 	start_console
@@ -385,6 +431,11 @@ provision_guest()
 		guest_cmd 'modprobe virtio_blk' 30
 		copy_guest_file "$here/gblock.py" /tmp/gblock.py
 		guest_cmd 'python3 /tmp/gblock.py --self-test | grep -q "^SELFTEST PASS$"' 30
+	fi
+	if [ "$run_scsi_device" = yes ]; then
+		guest_cmd 'modprobe virtio_scsi' 30
+		copy_guest_file "$here/gscsi.py" /tmp/gscsi.py
+		guest_cmd 'python3 /tmp/gscsi.py --self-test | grep -q "^SELFTEST PASS$"' 30
 	fi
 }
 
@@ -456,6 +507,33 @@ verify_block()
 	printf '%s\n' "$output" | grep -q '^PASS block-persist bytes='
 }
 
+run_scsi()
+{
+	scsi_bytes=$((SCSI_TEST_MB * 1024 * 1024))
+	output=$(guest_cmd "python3 /tmp/gscsi.py write '$transport' '$scsi_size_bytes' '$scsi_bytes'" 120) || {
+		status=$?
+		echo "guest virtio-scsi verification failed (status $status)" >&2
+		[ -z "$output" ] || printf '%s\n' "$output" >&2
+		return "$status"
+	}
+	printf '%s\n' "$output"
+	scsi_sha256=$(printf '%s\n' "$output" |
+	    sed -n 's/^PASS scsi bytes=[0-9][0-9]* sha256=\([0-9a-f][0-9a-f]*\) device=.*/\1/p')
+	[ "${#scsi_sha256}" -eq 64 ]
+}
+
+verify_scsi()
+{
+	output=$(guest_cmd "python3 /tmp/gscsi.py verify '$transport' '$scsi_size_bytes' '$scsi_bytes' '$scsi_sha256'" 120) || {
+		status=$?
+		echo "post-lifecycle virtio-scsi verification failed (status $status)" >&2
+		[ -z "$output" ] || printf '%s\n' "$output" >&2
+		return "$status"
+	}
+	printf '%s\n' "$output"
+	printf '%s\n' "$output" | grep -q '^PASS scsi-persist bytes='
+}
+
 run_vsock_smoke()
 {
 	DIR=$sockdir TRANSPORT=$transport GPY=/tmp/gvsock.py \
@@ -499,6 +577,7 @@ run_lifecycle_smokes()
 	[ "$run_vsock" = no ] || run_vsock_smoke
 	[ "$run_rng_device" = no ] || run_rng
 	[ "$run_block_device" = no ] || verify_block
+	[ "$run_scsi_device" = no ] || verify_scsi
 }
 
 reboot_hold_connector()
@@ -664,18 +743,21 @@ for transport in $TRANSPORTS; do
 		input_transport_opt=",transport=modern"
 		rng_transport_opt=",transport=modern"
 		block_transport_opt=",transport=modern"
+		scsi_transport_opt=",transport=modern"
 	else
 		# Deliberately omit the option to exercise the compatibility default.
 		net_transport_opt=
 		vsock_transport_opt=
 		rng_transport_opt=
 		block_transport_opt=
+		scsi_transport_opt=
 	fi
 	virtio_bdfs="0000:00:04.0"
 	[ "$run_vsock" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:05.0"
 	[ "$run_input_device" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:06.0"
 	[ "$run_rng_device" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:07.0"
 	[ "$run_block_device" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:08.0"
+	[ "$run_scsi_device" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:09.0"
 	mkdir -p "$sockdir"
 	chmod 0700 "$sockdir"
 	rm -f "$sockdir/sock"
@@ -713,6 +795,7 @@ for transport in $TRANSPORTS; do
 	[ "$run_rng_device" = no ] || run_rng
 	[ "$run_input_device" = no ] || run_input
 	[ "$run_block_device" = no ] || run_block
+	[ "$run_scsi_device" = no ] || run_scsi
 	verify_no_msix
 	[ "$RESET_TEST" = no ] || reset_devices
 	[ "$REBOOT_TEST" = no ] || reboot_guest
