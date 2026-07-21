@@ -12,11 +12,12 @@ Run the gates in this order.  Early failures are cheaper and more specific.
 
 1. **Device and transport harnesses (VM-free).** Run
    `../vsock_device_harness/run.sh` and `../vsock_rx_harness/run.sh`.  These
-   tests include the real bhyve device sources and the guest
-   `uipc_vsock.c` RX state machine.  They exercise malformed descriptors,
-   invalid queue directions, short buffers, reset/failure cleanup, interrupt
-   suppression, feature negotiation, credit handling, and boundary sizes
-   under ASan and UBSan.
+   tests include the real bhyve device sources, guest `uipc_vsock.c` RX state
+   machine, and guest `virtio_vsock.c` transport.  They exercise malformed
+   descriptors, invalid queue directions, short buffers, queue ownership and
+   exhaustion, reset/failure cleanup, interrupt suppression, feature
+   negotiation, credit handling, lifecycle wakeups, and boundary sizes under
+   ASan and UBSan.
 2. **Host helper controls (VM-free).** Run `host-tools-selftest.sh` with
    `TOOLS` set to the Makefile's `.OBJDIR`.  It validates stream and SEQPACKET
    relays, an intentionally fragmented SCM_RIGHTS control reply, a 1 MiB

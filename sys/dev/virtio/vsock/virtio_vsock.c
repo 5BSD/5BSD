@@ -103,8 +103,10 @@ SDT_PROBE_DEFINE6(vsock, , , pkt__tx,
  * sglist_append() fails with EFBIG and the buffer is rejected -- which
  * breaks attach (every ~64KB RX buffer) and large sends (TX).
  */
-#define	VTVSOCK_RX_SEGS			(howmany(VTVSOCK_RX_BUFSZ, PAGE_SIZE) + 1)
-#define	VTVSOCK_TX_SEGS			(howmany(sizeof(struct virtio_vsock_hdr) + \
+#define	VTVSOCK_RX_SEGS			((int)howmany(VTVSOCK_RX_BUFSZ, \
+					    PAGE_SIZE) + 1)
+#define	VTVSOCK_TX_SEGS			((int)howmany( \
+					    sizeof(struct virtio_vsock_hdr) + \
 					    VTVSOCK_MAX_PKT_BUF, PAGE_SIZE) + 1)
 
 /*

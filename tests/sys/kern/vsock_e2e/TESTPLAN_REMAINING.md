@@ -11,9 +11,11 @@ test cases to close them, and a phased roadmap.
 Linux VirtIO drivers.  The packaged matrix passed isolated and combined
 modern/legacy vsock, RNG, and block coverage plus modern input.  The focused
 legacy no-MSI-X gate also passed driver reset/rebind, monitor-mode reboot, and
-post-reboot data-path/persistence checks.  The remaining work is narrower:
-direct `virtio_vsock.c` transport concurrency coverage and the manual-only
-§6 lifecycle rows called out below.
+post-reboot data-path/persistence checks.  Direct `virtio_vsock.c` coverage is
+now packaged with the guest harness: 8 ATF cases / 592 assertions exercise
+descriptor-aware readiness, reclaim/retry, bounded FIFO control queuing,
+interrupt drain/wakeup, event reset, and attach-completed/detach.  The
+remaining work is the truly concurrent/manual-only §6 lifecycle rows below.
 
 **2026-07-09 (this session):** closed GAP 1, GAP 2, GAP 4, GAP 5. The only
 remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
@@ -39,13 +41,14 @@ remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
 | `vsock_test.c` (ATF) | socket ops + **loopback** transport | 152/153 pass (1 platform skip) |
 | `vsock_wire_test.c` (ATF) | struct/ABI wire layout | complete for static layout |
 | `vsock_device_harness/` | bhyve host device TX/RX ingress | 181 vsock checks plus transport/device suites |
-| `vsock_rx_harness/` | guest `uipc_vsock.c` RX/send state | 12 tests / 79 checks |
+| `vsock_rx_harness/` | guest domain + direct VirtIO transport | 20 tests / 671 checks |
 | `vsock_e2e/` (live guest) | upstream Linux driver interop | modern/legacy matrix passed; root-only |
 
-**Remaining structural limitation:** `uipc_vsock.c:vsock_rx_packet()` now has
-crafted-peer CI coverage and the live Alpine matrix exercises the complete
-guest stack, but `sys/dev/virtio/vsock/virtio_vsock.c` still has no direct
-userspace unit harness for virtqueue concurrency and detach races.
+**Remaining structural limitation:** both guest source files now have direct
+userspace coverage and the live Alpine matrix exercises the complete stack.
+The userspace mutex/sleep model is deterministic, however, so it cannot force
+true simultaneous interrupt-vs-detach scheduling or block a real sender while
+detach/reset wakes it; those remain lifecycle tests.
 
 ---
 
@@ -264,11 +267,12 @@ G4, and VNET/reset fixes.
 
 **Phase D — ATF edges (GAP 5).** Completed.
 
-**Next targeted work:** direct unit coverage for `virtio_vsock.c`, guest reboot
-with connections deliberately left open (row 12), detach with a blocked sender
-(row 13), and automated guest-initiated reserved-CID behavior (row 14).
+**Next targeted work:** guest reboot with connections deliberately left open
+(row 12), detach with a genuinely blocked sender (row 13), and automated
+guest-initiated reserved-CID behavior (row 14).
 
 **Lowest-priority (Tier 3, documented in REVIEW.md, likely leave alone):**
 auto-bind port exhaustion, EMFILE/fd exhaustion, pending-ring overflow,
-allocation-failure paths, holding-queue overflow, undersized-ring attach —
-all need fault injection and are hard to hit in practice.
+allocation-failure paths and undersized-ring attach.  Holding-queue overflow is
+now covered by the direct transport harness; the remaining cases need fault
+injection and are hard to hit in practice.

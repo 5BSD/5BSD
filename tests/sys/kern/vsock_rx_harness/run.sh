@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build and run the guest-side vsock RX unit harness WITHOUT the ATF runtime,
+# Build and run both guest-side vsock unit harnesses WITHOUT the ATF runtime,
 # using a tiny atf-c.h shim (mirrors vsock_device_harness/run.sh).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
@@ -8,9 +8,14 @@ cc=${CC:-cc}
 sanitizers=${SANITIZERS:-address,undefined}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-cp "$here"/kmock.h "$here"/glue.c "$here"/vsock_rx_test.c "$work"/
-cp -R "$here"/sys "$here"/net "$here"/kern "$work"/
+cp "$here"/kmock.h "$here"/transport_kmock.h "$here"/glue.c \
+    "$here"/vsock_rx_test.c "$here"/virtio_vsock_transport_test.c \
+    "$here"/virtio_if.h "$work"/
+cp -R "$here"/sys "$here"/net "$here"/kern "$here"/machine \
+    "$here"/dev "$work"/
 ln -s "$srctop/sys/kern/uipc_vsock.c" "$work"/uipc_vsock.c
+ln -s "$srctop/sys/dev/virtio/vsock/virtio_vsock.c" \
+    "$work"/virtio_vsock.c
 mkdir -p "$work/atfshim"
 cat > "$work/atfshim/atf-c.h" <<'EOF'
 #ifndef ATF_SHIM_H
@@ -32,7 +37,7 @@ static int atf_checks, atf_failed;
     fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); abort(); } } while (0)
 #define ATF_TP_ADD_TC(tp, n) do { atf_tcbody_##n(); } while (0)
 #define atf_no_error() (fprintf(stderr, \
-    "rx harness: %d checks, %d failed\n", atf_checks, atf_failed), atf_failed ? 1 : 0)
+    "harness: %d checks, %d failed\n", atf_checks, atf_failed), atf_failed ? 1 : 0)
 #define ATF_TP_ADD_TCS(tp) int main(void)
 #endif
 EOF
@@ -40,3 +45,7 @@ cd "$work"
 $cc -O1 -g -fsanitize="$sanitizers" -I. -Iatfshim -include kmock.h \
     -Wno-macro-redefined -o rxtest vsock_rx_test.c glue.c
 ./rxtest
+$cc -O1 -g -fsanitize="$sanitizers" -I. -Iatfshim \
+    -Wno-macro-redefined -Wno-unused-function -Wno-unused-variable \
+    -o transporttest virtio_vsock_transport_test.c
+./transporttest
