@@ -58,6 +58,7 @@ run_rng_device=no
 run_input_device=no
 run_block_device=no
 run_scsi_device=no
+run_console_device=no
 for device in $DEVICES; do
 	case "$device" in
 	vsock) run_vsock=yes ;;
@@ -66,14 +67,15 @@ for device in $DEVICES; do
 	input) run_input_device=yes ;;
 	block) run_block_device=yes ;;
 	scsi) run_scsi_device=yes ;;
+	console) run_console_device=yes ;;
 	*) echo "invalid device test: $device" >&2; exit 2 ;;
 	esac
 done
 [ "$run_vsock" = yes ] || [ "$run_net_device" = yes ] ||
     [ "$run_rng_device" = yes ] ||
     [ "$run_input_device" = yes ] || [ "$run_block_device" = yes ] ||
-    [ "$run_scsi_device" = yes ] || {
-	echo "DEVICES must select net, vsock, rng, input, block, scsi, or a combination" >&2
+    [ "$run_scsi_device" = yes ] || [ "$run_console_device" = yes ] || {
+	echo "DEVICES must select net, vsock, rng, input, block, scsi, console, or a combination" >&2
 	exit 2
 }
 
@@ -153,6 +155,7 @@ else
 fi
 required_tools=
 [ "$run_vsock" = no ] || required_tools="unix-pipe vsh-connect vsh-connect-test-server uinput-inject"
+[ "$run_console_device" = no ] || required_tools="$required_tools unix-pipe"
 [ "$run_input_device" = no ] || required_tools="$required_tools uinput-inject"
 for tool in $required_tools; do
 	[ -x "$tools/$tool" ] || {
@@ -196,6 +199,7 @@ console_pid=
 input_pid=
 reboot_stream_pid=
 reboot_seq_pid=
+console_exchange_pid=
 vmname=
 console_log=
 bhyve_log=
@@ -205,6 +209,7 @@ reboot_seq_log=
 scsi_create_log=
 scsi_lun_id=
 scsi_size_bytes=
+console_exchange_log=
 stop_console()
 {
 	[ -z "$console_pid" ] || pkill -TERM -P "$console_pid" 2>/dev/null || true
@@ -214,6 +219,12 @@ stop_console()
 }
 cleanup_vm()
 {
+	if [ -n "$console_exchange_pid" ]; then
+		pkill -TERM -P "$console_exchange_pid" 2>/dev/null || true
+		kill "$console_exchange_pid" 2>/dev/null || true
+		wait "$console_exchange_pid" 2>/dev/null || true
+	fi
+	console_exchange_pid=
 	for hold_pid in "$reboot_stream_pid" "$reboot_seq_pid"; do
 		[ -z "$hold_pid" ] || kill "$hold_pid" 2>/dev/null || true
 		[ -z "$hold_pid" ] || wait "$hold_pid" 2>/dev/null || true
@@ -260,6 +271,7 @@ report_failure()
 	echo "==== retained failure diagnostics ====" >&2
 	for item in "bhyve:$bhyve_log" "input-provider:$input_log" \
 	    "scsi-create:$scsi_create_log" \
+	    "console-exchange:$console_exchange_log" \
 	    "reboot-stream:$reboot_stream_log" "reboot-seq:$reboot_seq_log" \
 	    "guest-console:$console_log"; do
 		label=${item%%:*}
@@ -372,6 +384,8 @@ launch_vm()
 	    -s "8,virtio-blk,$block_image$block_transport_opt"
 	[ "$run_scsi_device" = no ] || set -- "$@" \
 	    -s "9,virtio-scsi,/dev/cam/ctl$scsi_transport_opt"
+	[ "$run_console_device" = no ] || set -- "$@" \
+	    -s "10,virtio-console,$console_name=$console_socket$console_transport_opt"
 	set -- "$@" -s 31,lpc -l "com1,tcp=127.0.0.1:$CONSOLE_PORT" \
 	    -l "bootrom,$UEFI" "$vmname"
 	env BHYVE_VTVSOCK_DEBUG="$VSOCK_DEBUG" \
@@ -436,6 +450,11 @@ provision_guest()
 		guest_cmd 'modprobe virtio_scsi' 30
 		copy_guest_file "$here/gscsi.py" /tmp/gscsi.py
 		guest_cmd 'python3 /tmp/gscsi.py --self-test | grep -q "^SELFTEST PASS$"' 30
+	fi
+	if [ "$run_console_device" = yes ]; then
+		guest_cmd 'modprobe virtio_console' 30
+		copy_guest_file "$here/gconsole.py" /tmp/gconsole.py
+		guest_cmd 'python3 /tmp/gconsole.py --self-test | grep -q "^SELFTEST PASS$"' 30
 	fi
 }
 
@@ -534,6 +553,47 @@ verify_scsi()
 	printf '%s\n' "$output" | grep -q '^PASS scsi-persist bytes='
 }
 
+run_console()
+{
+	host_token="host-$transport-$$"
+	guest_token="guest-$transport-$$"
+	console_exchange_log="$WORKDIR/$transport.console-exchange.log"
+	guest_cmd "i=0; until python3 /tmp/gconsole.py check '$transport' '$console_name'; do i=\$((i + 1)); [ \"\$i\" -lt 20 ]; sleep 1; done" 30
+	i=0
+	while [ ! -S "$console_socket" ] && [ "$i" -lt 20 ]; do
+		sleep 1
+		i=$((i + 1))
+	done
+	[ -S "$console_socket" ] || {
+		echo "virtio-console host socket did not appear: $console_socket" >&2
+		return 1
+	}
+	: > "$console_exchange_log"
+	( { printf '%s' "$host_token"; sleep 30; } |
+	    timeout 35 "$tools/unix-pipe" "$console_socket" > "$console_exchange_log" ) &
+	console_exchange_pid=$!
+	guest_cmd "python3 /tmp/gconsole.py exchange '$transport' '$console_name' '$host_token' '$guest_token'" 30
+	i=0
+	while ! grep -q "^$guest_token$" "$console_exchange_log" 2>/dev/null; do
+		kill -0 "$console_exchange_pid" 2>/dev/null || {
+			echo "virtio-console host exchange exited early" >&2
+			return 1
+		}
+		[ "$i" -lt 20 ] || {
+			echo "timed out waiting for virtio-console guest payload" >&2
+			return 1
+		}
+		sleep 1
+		i=$((i + 1))
+	done
+	pkill -TERM -P "$console_exchange_pid" 2>/dev/null || true
+	kill "$console_exchange_pid" 2>/dev/null || true
+	wait "$console_exchange_pid" 2>/dev/null || true
+	console_exchange_pid=
+	sleep 1
+	echo "PASS console bidirectional transport=$transport name=$console_name"
+}
+
 run_vsock_smoke()
 {
 	DIR=$sockdir TRANSPORT=$transport GPY=/tmp/gvsock.py \
@@ -578,6 +638,7 @@ run_lifecycle_smokes()
 	[ "$run_rng_device" = no ] || run_rng
 	[ "$run_block_device" = no ] || verify_block
 	[ "$run_scsi_device" = no ] || verify_scsi
+	[ "$run_console_device" = no ] || run_console
 }
 
 reboot_hold_connector()
@@ -737,6 +798,8 @@ for transport in $TRANSPORTS; do
 	input_path_file="$WORKDIR/$transport.input.path"
 	input_log="$WORKDIR/$transport.input.log"
 	input_name="bhyve-e2e-input-$transport-$$"
+	console_socket="$WORKDIR/$transport.virtio-console.sock"
+	console_name="bhyve-e2e-console-$transport-$$"
 	if [ "$transport" = modern ]; then
 		net_transport_opt=",transport=modern"
 		vsock_transport_opt=",transport=modern"
@@ -744,6 +807,7 @@ for transport in $TRANSPORTS; do
 		rng_transport_opt=",transport=modern"
 		block_transport_opt=",transport=modern"
 		scsi_transport_opt=",transport=modern"
+		console_transport_opt=",transport=modern"
 	else
 		# Deliberately omit the option to exercise the compatibility default.
 		net_transport_opt=
@@ -751,6 +815,7 @@ for transport in $TRANSPORTS; do
 		rng_transport_opt=
 		block_transport_opt=
 		scsi_transport_opt=
+		console_transport_opt=
 	fi
 	virtio_bdfs="0000:00:04.0"
 	[ "$run_vsock" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:05.0"
@@ -758,9 +823,11 @@ for transport in $TRANSPORTS; do
 	[ "$run_rng_device" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:07.0"
 	[ "$run_block_device" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:08.0"
 	[ "$run_scsi_device" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:09.0"
+	[ "$run_console_device" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:0a.0"
 	mkdir -p "$sockdir"
 	chmod 0700 "$sockdir"
 	rm -f "$sockdir/sock"
+	[ "$run_console_device" = no ] || rm -f "$console_socket"
 	: > "$bhyve_log"
 	if [ "$run_block_device" = yes ]; then
 		truncate -s "${BLOCK_IMAGE_MB}M" "$block_image"
@@ -796,6 +863,7 @@ for transport in $TRANSPORTS; do
 	[ "$run_input_device" = no ] || run_input
 	[ "$run_block_device" = no ] || run_block
 	[ "$run_scsi_device" = no ] || run_scsi
+	[ "$run_console_device" = no ] || run_console
 	verify_no_msix
 	[ "$RESET_TEST" = no ] || reset_devices
 	[ "$REBOOT_TEST" = no ] || reboot_guest

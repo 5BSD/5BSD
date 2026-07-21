@@ -22,8 +22,8 @@ which supplies the mock-header shadowing and `--wrap` linker flags the stock
 suite.  The standalone script also exercises transport policy, PCI identity
 and capability layout, 64-bit feature negotiation, separately addressed
 virtqueues, notification and ISR behavior, and the PCI configuration access
-window, including the modern network and SCSI device identities.  The entropy
-interrupt test combines the real virtio-rng callback with
+window, including the modern network, SCSI, and console device identities.
+The entropy interrupt test combines the real virtio-rng callback with
 the real legacy BAR notification and shared split-ring completion path; only
 guest memory and the PCI/VMM boundary are mocked.
 
@@ -32,6 +32,9 @@ guest memory and the PCI/VMM boundary are mocked.
 Coverage includes malformed direct and indirect descriptors; EVENT_IDX;
 in-place iovec splitting (including packed virtio-scsi request/data
 descriptors without losing the response tail);
+virtio-console feature and configuration bounds, fragmented control messages,
+invalid port IDs and queue directions, multi-descriptor data transfer, and
+host-side backpressure without data loss;
 virtio-input configuration bounds, event/status queue directions and frame
 delivery; virtio-rng short, invalid and failed host reads; virtio-rng queue
 notification through MSI/INTx delivery with MSI-X disabled; and vsock state,

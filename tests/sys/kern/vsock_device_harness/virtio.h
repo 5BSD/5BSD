@@ -91,6 +91,8 @@ struct virtio_consts {
 #define VIRTIO_ID_INPUT  18
 #define VIRTIO_DEV_RANDOM 0x1005
 #define VIRTIO_ID_ENTROPY 4
+#define VIRTIO_DEV_CONSOLE 0x1003
+#define VIRTIO_ID_CONSOLE 3
 #define VIRTIO_REV_INPUT 1
 #define VIRTIO_SUBVEN_INPUT 0x108e
 #define VIRTIO_SUBDEV_INPUT 0x1100
@@ -101,6 +103,16 @@ vq_ring_ready(struct vqueue_info *vq)
 	return ((vq->vq_flags & VQ_ALLOC) != 0 &&
 	    (vq->vq_vs->vs_transport != VIRTIO_PCI_TRANSPORT_MODERN ||
 	    (vq->vq_vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0));
+}
+static inline void
+vq_kick_enable(struct vqueue_info *vq)
+{
+	vq->vq_used->flags &= ~VRING_USED_F_NO_NOTIFY;
+}
+static inline void
+vq_kick_disable(struct vqueue_info *vq)
+{
+	vq->vq_used->flags |= VRING_USED_F_NO_NOTIFY;
 }
 #define VQ_USED_EVENT_IDX(vq) ((vq)->vq_avail->ring[(vq)->vq_qsize])
 void mock_vq_interrupt(struct virtio_softc *, struct vqueue_info *);

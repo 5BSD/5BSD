@@ -36,6 +36,12 @@ upstream `virtio_scsi` driver and PCI device `1af4:1048` for modern or
 capacity, and verifies a deterministic write/read checksum.  The runner
 removes only the CTL LUN it created, including on test failure.
 
+`DEVICES=console` attaches a named virtio-console port backed by a host UNIX
+stream socket.  The guest verifier requires PCI device `1af4:1043` for modern
+or `1af4:1003` for option-omitted legacy, confirms the upstream
+`virtio_console` binding and named port, and exchanges distinct payloads in
+both directions with the host.
+
 The fully automated path needs only an Alpine `virt` ISO and a bhyve binary.
 The runner prefers the matching object-tree binary, using `SRCTOP` and
 `OBJROOT`, then falls back to `bhyve` in `PATH`.  It similarly discovers the
@@ -58,12 +64,13 @@ removes its own tap interface, chooses an unused TCP console port, and confines
 VM destruction to its unique per-run names.  Logs are retained
 under `/tmp/bhyve-vsock-alpine` by default.
 
-Set `DEVICES=net`, `DEVICES=vsock`, `DEVICES=rng`, `DEVICES=input`, or
-`DEVICES=scsi` to run a device in isolation; `DEVICES=block` uses a disposable
-sparse image and verifies a deterministic write/read checksum.  A provisioning
-virtio-net interface remains present in every topology and is always verified.
-The default, `DEVICES='vsock rng input'`, attaches those three devices beside
-the network interface and runs every suite to detect cross-device regressions.
+Set `DEVICES=net`, `DEVICES=vsock`, `DEVICES=rng`, `DEVICES=input`,
+`DEVICES=scsi`, or `DEVICES=console` to run a device in isolation;
+`DEVICES=block` uses a disposable sparse image and verifies a deterministic
+write/read checksum.  A provisioning virtio-net interface remains present in
+every topology and is always verified.  The default,
+`DEVICES='vsock rng input'`, attaches those three devices beside the network
+interface and runs every suite to detect cross-device regressions.
 
 ## No-MSI-X interrupt and lifecycle regression
 
@@ -89,9 +96,9 @@ can narrow a debugging run without changing the acceptance defaults.
 
 For acceptance testing, use `run-alpine-matrix.sh`.  It first runs the
 sanitizer-backed real-source device harnesses and VM-free host pipeline
-controls.  It then runs net, vsock, RNG, block, SCSI, and input alone, followed
-by all devices together, for every selected transport.  This distinguishes
-device regressions from cross-device interactions:
+controls.  It then runs net, vsock, RNG, block, SCSI, console, and input alone,
+followed by all devices together, for every selected transport.  This
+distinguishes device regressions from cross-device interactions:
 
 ```sh
 ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh

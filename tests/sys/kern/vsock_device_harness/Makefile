@@ -18,6 +18,7 @@ ATF_TESTS_C+=	virtio_rnd_test
 ATF_TESTS_C+=	virtio_rnd_interrupt_test
 ATF_TESTS_C+=	virtio_core_test
 ATF_TESTS_C+=	iov_test
+ATF_TESTS_C+=	virtio_console_test
 CFLAGS.vsock_device_test+=	-DWITHOUT_CAPSICUM \
 				-I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/sys
@@ -40,6 +41,9 @@ CFLAGS.virtio_core_test+=	-DWITHOUT_CAPSICUM -ffunction-sections \
 				-I${SRCTOP}/sys
 CFLAGS.iov_test+=		-I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/sys
+CFLAGS.virtio_console_test+= -DWITHOUT_CAPSICUM -ffunction-sections \
+				-fdata-sections -I${.CURDIR} -I${.OBJDIR} \
+				-I${SRCTOP}/usr.sbin -I${SRCTOP}/sys
 # The mock-included device source and the ld --wrap interceptors (non-static so
 # the linker binds them, tripping -Wmissing-prototypes) warn; keep non-fatal.
 # Must be CWARNFLAGS.<src> (appended after -Werror) -- CFLAGS.<prog> is emitted
@@ -55,6 +59,8 @@ CWARNFLAGS.virtio_rnd_interrupt_test.c+= -Wno-error \
 					-Wno-thread-safety-analysis
 CWARNFLAGS.virtio_core_test.c+=	-Wno-error \
 					-Wno-thread-safety-analysis
+CWARNFLAGS.virtio_console_test.c+= -Wno-error \
+					-Wno-thread-safety-analysis
 LDFLAGS.vsock_device_test+=	-Wl,--wrap=socket -Wl,--wrap=connectat \
 	-Wl,--wrap=send -Wl,--wrap=recv -Wl,--wrap=sendmsg -Wl,--wrap=shutdown \
 	-Wl,--wrap=poll -Wl,--wrap=close -Wl,--wrap=accept \
@@ -63,16 +69,18 @@ LDFLAGS.vsock_device_test+=	-Wl,--wrap=socket -Wl,--wrap=connectat \
 	-Wl,--wrap=realloc
 LDFLAGS.virtio_core_test+=	-Wl,--gc-sections
 LDFLAGS.virtio_rnd_interrupt_test+= -Wl,--gc-sections
+LDFLAGS.virtio_console_test+= -Wl,--gc-sections
 LIBADD.vsock_device_test+=	pthread
 LIBADD.virtio_modern_test+=	pthread
 LIBADD.virtio_input_test+=	pthread
 LIBADD.virtio_rnd_test+=	pthread
 LIBADD.virtio_rnd_interrupt_test+= pthread
 LIBADD.virtio_core_test+=	pthread
+LIBADD.virtio_console_test+= pthread
 CLEANFILES+=	pci_virtio_vsock.c pci_virtio_vsock_iov.h \
 		pci_virtio_vsock_probes.h virtio_pci_modern.c \
 		virtio_pci_modern_probes.h pci_virtio_input.c pci_virtio_rnd.c \
-		virtio.c iov.c iov.h
+		pci_virtio_console.c virtio.c iov.c iov.h
 
 # Copy the DUT sources into ${.OBJDIR} at beforedepend (not as an .o prerequisite:
 # ATF builds a PIE object, so an .o-only prerequisite never fires and a stale
@@ -80,7 +88,7 @@ CLEANFILES+=	pci_virtio_vsock.c pci_virtio_vsock_iov.h \
 beforedepend:	pci_virtio_vsock.c pci_virtio_vsock_iov.h \
 		pci_virtio_vsock_probes.h virtio_pci_modern.c \
 		virtio_pci_modern_probes.h pci_virtio_input.c pci_virtio_rnd.c \
-		virtio.c iov.c iov.h
+		pci_virtio_console.c virtio.c iov.c iov.h
 pci_virtio_vsock.c:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_vsock.c
 	cp ${.ALLSRC} ${.TARGET}
 pci_virtio_vsock_iov.h:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_vsock_iov.h
@@ -95,6 +103,8 @@ virtio_pci_modern_probes.h: ${SRCTOP}/usr.sbin/bhyve/virtio_pci_modern_probes.h
 pci_virtio_input.c:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_input.c
 	cp ${.ALLSRC} ${.TARGET}
 pci_virtio_rnd.c:	${SRCTOP}/usr.sbin/bhyve/pci_virtio_rnd.c
+	cp ${.ALLSRC} ${.TARGET}
+pci_virtio_console.c: ${SRCTOP}/usr.sbin/bhyve/pci_virtio_console.c
 	cp ${.ALLSRC} ${.TARGET}
 virtio.c:	${SRCTOP}/usr.sbin/bhyve/virtio.c
 	cp ${.ALLSRC} ${.TARGET}

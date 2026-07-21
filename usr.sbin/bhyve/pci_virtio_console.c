@@ -59,6 +59,7 @@
 #include "bhyverun.h"
 #include "config.h"
 #include "debug.h"
+#include "iov.h"
 #include "pci_emul.h"
 #include "virtio.h"
 #include "mevent.h"
@@ -81,7 +82,7 @@
 #define	VTCON_F_MULTIPORT	1
 #define	VTCON_F_EMERG_WRITE	2
 #define	VTCON_S_HOSTCAPS	\
-    (VTCON_F_SIZE | VTCON_F_MULTIPORT | VTCON_F_EMERG_WRITE)
+    (1ULL << VTCON_F_SIZE | 1ULL << VTCON_F_MULTIPORT)
 
 static int pci_vtcon_debug;
 #define DPRINTF(params) if (pci_vtcon_debug) PRINTLN params
@@ -92,6 +93,7 @@ struct pci_vtcon_port;
 struct pci_vtcon_config;
 typedef void (pci_vtcon_cb_t)(struct pci_vtcon_port *, void *, struct iovec *,
     int);
+typedef void (pci_vtcon_rx_cb_t)(struct pci_vtcon_port *, void *);
 
 struct pci_vtcon_port {
 	struct pci_vtcon_softc * vsp_sc;
@@ -105,6 +107,7 @@ struct pci_vtcon_port {
 	int                      vsp_txq;
 	void *                   vsp_arg;
 	pci_vtcon_cb_t *         vsp_cb;
+	pci_vtcon_rx_cb_t *      vsp_rx_cb;
 };
 
 struct pci_vtcon_sock
@@ -127,6 +130,7 @@ struct pci_vtcon_softc {
 	char *                   vsc_rootdir;
 	int                      vsc_kq;
 	bool                     vsc_ready;
+	bool                     vsc_mtx_initialized;
 	struct pci_vtcon_port    vsc_control_port;
  	struct pci_vtcon_port    vsc_ports[VTCON_MAXPORTS];
 	struct pci_vtcon_config *vsc_config;
@@ -160,10 +164,13 @@ static void pci_vtcon_sock_accept(int, enum ev_type,  void *);
 static void pci_vtcon_sock_rx(int, enum ev_type, void *);
 static void pci_vtcon_sock_tx(struct pci_vtcon_port *, void *, struct iovec *,
     int);
+static void pci_vtcon_sock_rx_enable(struct pci_vtcon_port *, void *);
+static void pci_vtcon_sock_close(struct pci_vtcon_sock *);
 static void pci_vtcon_control_send(struct pci_vtcon_softc *,
     struct pci_vtcon_control *, const void *, size_t);
 static void pci_vtcon_announce_port(struct pci_vtcon_port *);
 static void pci_vtcon_open_port(struct pci_vtcon_port *, bool);
+static void pci_vtcon_destroy(struct pci_vtcon_softc *);
 
 static struct virtio_consts vtcon_vi_consts = {
 	.vc_name =	"vtcon",
@@ -180,11 +187,15 @@ static void
 pci_vtcon_reset(void *vsc)
 {
 	struct pci_vtcon_softc *sc;
+	int i;
 
 	sc = vsc;
 
 	DPRINTF(("vtcon: device reset requested!"));
 	vi_reset_dev(&sc->vsc_vs);
+	sc->vsc_ready = false;
+	for (i = 0; i < VTCON_MAXPORTS; i++)
+		sc->vsc_ports[i].vsp_rx_ready = false;
 }
 
 static void
@@ -201,7 +212,11 @@ pci_vtcon_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 	struct pci_vtcon_softc *sc = vsc;
 	void *ptr;
 
+	if (offset < 0 || size <= 0 || size > (int)sizeof(*retval) ||
+	    offset > (int)sizeof(*sc->vsc_config) - size)
+		return (-1);
 	ptr = (uint8_t *)sc->vsc_config + offset;
+	*retval = 0;
 	memcpy(retval, ptr, size);
 	return (0);
 }
@@ -210,7 +225,7 @@ static int
 pci_vtcon_cfgwrite(void *vsc __unused, int offset __unused, int size __unused,
     uint32_t val __unused)
 {
-	return (0);
+	return (-1);
 }
 
 static inline struct pci_vtcon_port *
@@ -238,7 +253,7 @@ pci_vtcon_port_to_vq(struct pci_vtcon_port *port, bool tx_queue)
 
 static struct pci_vtcon_port *
 pci_vtcon_port_add(struct pci_vtcon_softc *sc, int port_id, const char *name,
-    pci_vtcon_cb_t *cb, void *arg)
+    pci_vtcon_cb_t *cb, pci_vtcon_rx_cb_t *rx_cb, void *arg)
 {
 	struct pci_vtcon_port *port;
 
@@ -251,6 +266,7 @@ pci_vtcon_port_add(struct pci_vtcon_softc *sc, int port_id, const char *name,
 	port->vsp_sc = sc;
 	port->vsp_name = name;
 	port->vsp_cb = cb;
+	port->vsp_rx_cb = rx_cb;
 	port->vsp_arg = arg;
 
 	if (port->vsp_id == 0) {
@@ -275,6 +291,7 @@ pci_vtcon_sock_add(struct pci_vtcon_softc *sc, const char *port_name,
 	const char *name, *path;
 	char *cp, *pathcopy;
 	long port;
+	bool bound = false;
 	int s = -1, fd = -1, error = 0;
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_t rights;
@@ -290,6 +307,12 @@ pci_vtcon_sock_add(struct pci_vtcon_softc *sc, const char *port_name,
 	path = get_config_value_node(nvl, "path");
 	if (path == NULL) {
 		EPRINTLN("vtcon: required path missing for port %ld", port);
+		error = -1;
+		goto out;
+	}
+	name = get_config_value_node(nvl, "name");
+	if (name == NULL) {
+		EPRINTLN("vtcon: required name missing for port %ld", port);
 		error = -1;
 		goto out;
 	}
@@ -319,16 +342,24 @@ pci_vtcon_sock_add(struct pci_vtcon_softc *sc, const char *port_name,
 		goto out;
 	}
 
+	memset(&sun, 0, sizeof(sun));
 	sun.sun_family = AF_UNIX;
 	sun.sun_len = sizeof(struct sockaddr_un);
 	strcpy(pathcopy, path);
-	strlcpy(sun.sun_path, basename(pathcopy), sizeof(sun.sun_path));
+	if (strlcpy(sun.sun_path, basename(pathcopy), sizeof(sun.sun_path)) >=
+	    sizeof(sun.sun_path)) {
+		free(pathcopy);
+		errno = ENAMETOOLONG;
+		error = -1;
+		goto out;
+	}
 	free(pathcopy);
 
 	if (bindat(fd, s, (struct sockaddr *)&sun, sun.sun_len) < 0) {
 		error = -1;
 		goto out;
 	}
+	bound = true;
 
 	if (fcntl(s, F_SETFL, O_NONBLOCK) < 0) {
 		error = -1;
@@ -346,19 +377,8 @@ pci_vtcon_sock_add(struct pci_vtcon_softc *sc, const char *port_name,
 		errx(EX_OSERR, "Unable to apply rights for sandbox");
 #endif
 
-	name = get_config_value_node(nvl, "name");
-	if (name == NULL) {
-		EPRINTLN("vtcon: required name missing for port %ld", port);
-		error = -1;
-		goto out;
-	}
-	sock->vss_port = pci_vtcon_port_add(sc, port, name, pci_vtcon_sock_tx, sock);
-	if (sock->vss_port == NULL) {
-		error = -1;
-		goto out;
-	}
-
 	sock->vss_open = false;
+	sock->vss_path = path;
 	sock->vss_conn_fd = -1;
 	sock->vss_server_fd = s;
 	sock->vss_server_evp = mevent_add(s, EVF_READ, pci_vtcon_sock_accept,
@@ -368,18 +388,61 @@ pci_vtcon_sock_add(struct pci_vtcon_softc *sc, const char *port_name,
 		error = -1;
 		goto out;
 	}
+	sock->vss_port = pci_vtcon_port_add(sc, port, name, pci_vtcon_sock_tx,
+	    pci_vtcon_sock_rx_enable, sock);
+	if (sock->vss_port == NULL) {
+		error = -1;
+		goto out;
+	}
 
 out:
+	if (error != 0 && bound)
+		unlinkat(fd, sun.sun_path, 0);
 	if (fd != -1)
 		close(fd);
 
 	if (error != 0) {
+		if (sock != NULL && sock->vss_server_evp != NULL) {
+			mevent_delete_close(sock->vss_server_evp);
+			s = -1;
+		}
 		if (s != -1)
 			close(s);
 		free(sock);
 	}
 
 	return (error);
+}
+
+static void
+pci_vtcon_destroy(struct pci_vtcon_softc *sc)
+{
+	struct pci_vtcon_sock *sock;
+	int i;
+
+	if (sc == NULL)
+		return;
+	for (i = 0; i < VTCON_MAXPORTS; i++) {
+		if (!sc->vsc_ports[i].vsp_enabled ||
+		    sc->vsc_ports[i].vsp_arg == NULL)
+			continue;
+		sock = sc->vsc_ports[i].vsp_arg;
+		if (sock->vss_conn_evp != NULL)
+			mevent_delete_close(sock->vss_conn_evp);
+		else if (sock->vss_conn_fd >= 0)
+			close(sock->vss_conn_fd);
+		if (sock->vss_server_evp != NULL)
+			mevent_delete_close(sock->vss_server_evp);
+		else if (sock->vss_server_fd >= 0)
+			close(sock->vss_server_fd);
+		if (sock->vss_path != NULL)
+			unlink(sock->vss_path);
+		free(sock);
+	}
+	if (sc->vsc_mtx_initialized)
+		pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc->vsc_config);
+	free(sc);
 }
 
 static void
@@ -396,12 +459,38 @@ pci_vtcon_sock_accept(int fd __unused, enum ev_type t __unused, void *arg)
 		close(s);
 		return;
 	}
-
-	sock->vss_open = true;
 	sock->vss_conn_fd = s;
 	sock->vss_conn_evp = mevent_add(s, EVF_READ, pci_vtcon_sock_rx, sock);
+	if (sock->vss_conn_evp == NULL) {
+		close(s);
+		sock->vss_conn_fd = -1;
+		return;
+	}
+	sock->vss_open = true;
 
 	pci_vtcon_open_port(sock->vss_port, true);
+}
+
+static void
+pci_vtcon_sock_close(struct pci_vtcon_sock *sock)
+{
+	if (sock->vss_conn_evp != NULL)
+		mevent_delete_close(sock->vss_conn_evp);
+	else if (sock->vss_conn_fd >= 0)
+		close(sock->vss_conn_fd);
+	sock->vss_conn_evp = NULL;
+	sock->vss_conn_fd = -1;
+	sock->vss_open = false;
+	pci_vtcon_open_port(sock->vss_port, false);
+}
+
+static void
+pci_vtcon_sock_rx_enable(struct pci_vtcon_port *port __unused, void *arg)
+{
+	struct pci_vtcon_sock *sock = arg;
+
+	if (sock->vss_open && sock->vss_conn_evp != NULL)
+		mevent_enable(sock->vss_conn_evp);
 }
 
 static void
@@ -411,42 +500,53 @@ pci_vtcon_sock_rx(int fd __unused, enum ev_type t __unused, void *arg)
 	struct pci_vtcon_sock *sock = (struct pci_vtcon_sock *)arg;
 	struct vqueue_info *vq;
 	struct vi_req req;
-	struct iovec iov;
-	static char dummybuf[2048];
+	struct iovec iov[VTCON_RINGSZ];
 	int len, n;
 
 	port = sock->vss_port;
 	vq = pci_vtcon_port_to_vq(port, true);
 
-	if (!sock->vss_open || !port->vsp_rx_ready) {
-		len = read(sock->vss_conn_fd, dummybuf, sizeof(dummybuf));
-		if (len == 0)
-			goto close;
-
+	if (!sock->vss_open)
+		return;
+	if (!port->vsp_rx_ready) {
+		mevent_disable(sock->vss_conn_evp);
 		return;
 	}
 
 	if (!vq_has_descs(vq)) {
-		len = read(sock->vss_conn_fd, dummybuf, sizeof(dummybuf));
-		vq_endchains(vq, 1);
-		if (len == 0)
-			goto close;
-
-		return;
+		vq_kick_enable(vq);
+		if (!vq_has_descs(vq)) {
+			port->vsp_rx_ready = false;
+			mevent_disable(sock->vss_conn_evp);
+			vq_endchains(vq, 1);
+			return;
+		}
+		vq_kick_disable(vq);
 	}
 
 	do {
-		n = vq_getchain(vq, &iov, 1, &req);
-		assert(n == 1);
-		len = readv(sock->vss_conn_fd, &iov, n);
+		n = vq_getchain(vq, iov, nitems(iov), &req);
+		if (n <= 0)
+			break;
+		if (req.readable != 0 || req.writable != n) {
+			WPRINTF(("vtcon: invalid receive descriptor chain"));
+			vq_relchain(vq, req.idx, 0);
+			continue;
+		}
+		len = readv(sock->vss_conn_fd, iov, n);
 
-		if (len == 0 || (len < 0 && errno == EWOULDBLOCK)) {
+		if (len == 0 || (len < 0 && (errno == EAGAIN ||
+		    errno == EWOULDBLOCK))) {
 			vq_retchains(vq, 1);
 			vq_endchains(vq, 0);
 			if (len == 0)
 				goto close;
 
 			return;
+		}
+		if (len < 0) {
+			vq_retchains(vq, 1);
+			goto close;
 		}
 
 		vq_relchain(vq, req.idx, len);
@@ -455,9 +555,7 @@ pci_vtcon_sock_rx(int fd __unused, enum ev_type t __unused, void *arg)
 	vq_endchains(vq, 1);
 
 close:
-	mevent_delete_close(sock->vss_conn_evp);
-	sock->vss_conn_fd = -1;
-	sock->vss_open = false;
+	pci_vtcon_sock_close(sock);
 }
 
 static void
@@ -480,9 +578,7 @@ pci_vtcon_sock_tx(struct pci_vtcon_port *port __unused, void *arg __unused,
 	}
 
 	if (ret <= 0) {
-		mevent_delete_close(sock->vss_conn_evp);
-		sock->vss_conn_fd = -1;
-		sock->vss_open = false;
+		pci_vtcon_sock_close(sock);
 	}
 }
 
@@ -492,17 +588,27 @@ pci_vtcon_control_tx(struct pci_vtcon_port *port, void *arg __unused,
 {
 	struct pci_vtcon_softc *sc;
 	struct pci_vtcon_port *tmp;
-	struct pci_vtcon_control resp, *ctrl;
+	struct pci_vtcon_control ctrl, resp;
+	size_t copied, len;
 	int i;
 
-	assert(niov == 1);
-
 	sc = port->vsp_sc;
-	ctrl = (struct pci_vtcon_control *)iov->iov_base;
+	copied = 0;
+	for (i = 0; i < niov && copied < sizeof(ctrl); i++) {
+		len = MIN(iov[i].iov_len, sizeof(ctrl) - copied);
+		memcpy((uint8_t *)&ctrl + copied, iov[i].iov_base, len);
+		copied += len;
+	}
+	if (copied != sizeof(ctrl)) {
+		WPRINTF(("vtcon: short control message"));
+		return;
+	}
 
-	switch (ctrl->event) {
+	switch (ctrl.event) {
 	case VTCON_DEVICE_READY:
-		sc->vsc_ready = true;
+		sc->vsc_ready = ctrl.value == 1;
+		if (!sc->vsc_ready)
+			break;
 		/* set port ready events for registered ports */
 		for (i = 0; i < VTCON_MAXPORTS; i++) {
 			tmp = &sc->vsc_ports[i];
@@ -515,16 +621,21 @@ pci_vtcon_control_tx(struct pci_vtcon_port *port, void *arg __unused,
 		break;
 
 	case VTCON_PORT_READY:
-		tmp = &sc->vsc_ports[ctrl->id];
-		if (ctrl->id >= VTCON_MAXPORTS || !tmp->vsp_enabled) {
-			WPRINTF(("VTCON_PORT_READY event for unknown port %d",
-			    ctrl->id));
+		if (ctrl.id >= VTCON_MAXPORTS) {
+			WPRINTF(("VTCON_PORT_READY event for unknown port %u",
+			    ctrl.id));
+			return;
+		}
+		tmp = &sc->vsc_ports[ctrl.id];
+		if (!tmp->vsp_enabled || ctrl.value != 1) {
+			WPRINTF(("VTCON_PORT_READY event for unavailable port %u",
+			    ctrl.id));
 			return;
 		}
 
 		if (tmp->vsp_console) {
 			resp.event = VTCON_CONSOLE_PORT;
-			resp.id = ctrl->id;
+			resp.id = ctrl.id;
 			resp.value = 1;
 			pci_vtcon_control_send(sc, &resp, NULL, 0);
 		}
@@ -552,8 +663,8 @@ pci_vtcon_open_port(struct pci_vtcon_port *port, bool open)
 {
 	struct pci_vtcon_control event;
 
+	port->vsp_open = open;
 	if (!port->vsp_sc->vsc_ready) {
-		port->vsp_open = true;
 		return;
 	}
 
@@ -569,30 +680,42 @@ pci_vtcon_control_send(struct pci_vtcon_softc *sc,
 {
 	struct vqueue_info *vq;
 	struct vi_req req;
-	struct iovec iov;
+	struct iovec iov[VTCON_RINGSZ];
+	uint8_t *msg;
+	size_t msglen;
+	uint32_t used;
 	int n;
 
 	if (len > SIZE_T_MAX - sizeof(struct pci_vtcon_control))
 		return;
+	msglen = sizeof(struct pci_vtcon_control) + len;
 
 	vq = pci_vtcon_port_to_vq(&sc->vsc_control_port, true);
 
 	if (!vq_has_descs(vq))
 		return;
 
-	n = vq_getchain(vq, &iov, 1, &req);
-	assert(n == 1);
-
-	if (iov.iov_len < sizeof(struct pci_vtcon_control) + len)
+	n = vq_getchain(vq, iov, nitems(iov), &req);
+	if (n <= 0)
+		return;
+	used = 0;
+	if (req.readable != 0 || req.writable != n ||
+	    !check_iov_len(iov, n, msglen)) {
+		WPRINTF(("vtcon: invalid control receive descriptor chain"));
 		goto out;
+	}
 
-	memcpy(iov.iov_base, ctrl, sizeof(struct pci_vtcon_control));
+	msg = malloc(msglen);
+	if (msg == NULL)
+		goto out;
+	memcpy(msg, ctrl, sizeof(struct pci_vtcon_control));
 	if (len > 0)
-		memcpy((uint8_t *)iov.iov_base +
-		    sizeof(struct pci_vtcon_control), payload, len);
+		memcpy(msg + sizeof(struct pci_vtcon_control), payload, len);
+	used = buf_to_iov(msg, msglen, iov, n);
+	free(msg);
 
 out:
-	vq_relchain(vq, req.idx, sizeof(struct pci_vtcon_control) + len);
+	vq_relchain(vq, req.idx, used);
 	vq_endchains(vq, 1);
 }
 
@@ -602,7 +725,7 @@ pci_vtcon_notify_tx(void *vsc, struct vqueue_info *vq)
 {
 	struct pci_vtcon_softc *sc;
 	struct pci_vtcon_port *port;
-	struct iovec iov[1];
+	struct iovec iov[VTCON_RINGSZ];
 	struct vi_req req;
 	int n;
 
@@ -610,10 +733,16 @@ pci_vtcon_notify_tx(void *vsc, struct vqueue_info *vq)
 	port = pci_vtcon_vq_to_port(sc, vq);
 
 	while (vq_has_descs(vq)) {
-		n = vq_getchain(vq, iov, 1, &req);
-		assert(n == 1);
-		if (port != NULL)
-			port->vsp_cb(port, port->vsp_arg, iov, 1);
+		n = vq_getchain(vq, iov, nitems(iov), &req);
+		if (n <= 0)
+			break;
+		if (req.writable != 0 || req.readable != n) {
+			WPRINTF(("vtcon: invalid transmit descriptor chain"));
+			vq_relchain(vq, req.idx, 0);
+			continue;
+		}
+		if (port->vsp_enabled && port->vsp_cb != NULL)
+			port->vsp_cb(port, port->vsp_arg, iov, n);
 
 		/*
 		 * Release this chain and handle more
@@ -632,9 +761,11 @@ pci_vtcon_notify_rx(void *vsc, struct vqueue_info *vq)
 	sc = vsc;
 	port = pci_vtcon_vq_to_port(sc, vq);
 
-	if (!port->vsp_rx_ready) {
+	if (port->vsp_enabled && !port->vsp_rx_ready) {
 		port->vsp_rx_ready = 1;
 		vq_kick_disable(vq);
+		if (port->vsp_rx_cb != NULL)
+			port->vsp_rx_cb(port, port->vsp_arg);
 	}
 }
 
@@ -673,11 +804,21 @@ pci_vtcon_legacy_config(nvlist_t *nvl, const char *opts)
 	nvlist_t *ports_nvl;
 	int error, port;
 
+	if (opts == NULL)
+		return (0);
 	ports_nvl = create_relative_config_node(nvl, "port");
 	tofree = str = strdup(opts);
+	if (str == NULL)
+		return (-1);
 	error = 0;
 	port = 0;
 	while ((opt = strsep(&str, ",")) != NULL) {
+		if (strcmp(opt, "transport=legacy") == 0 ||
+		    strcmp(opt, "transport=modern") == 0) {
+			set_config_value_node(nvl, "transport",
+			    strchr(opt, '=') + 1);
+			continue;
+		}
 		error = pci_vtcon_legacy_config_port(ports_nvl, port, opt);
 		if (error)
 			break;
@@ -695,12 +836,20 @@ pci_vtcon_init(struct pci_devinst *pi, nvlist_t *nvl)
 	int i;
 
 	sc = calloc(1, sizeof(struct pci_vtcon_softc));
+	if (sc == NULL)
+		return (1);
 	sc->vsc_config = calloc(1, sizeof(struct pci_vtcon_config));
+	if (sc->vsc_config == NULL) {
+		free(sc);
+		return (1);
+	}
 	sc->vsc_config->max_nr_ports = VTCON_MAXPORTS;
 	sc->vsc_config->cols = 80;
 	sc->vsc_config->rows = 25;
 
-	pthread_mutex_init(&sc->vsc_mtx, NULL);
+	if (pthread_mutex_init(&sc->vsc_mtx, NULL) != 0)
+		goto fail;
+	sc->vsc_mtx_initialized = true;
 
 	vi_softc_linkup(&sc->vsc_vs, &vtcon_vi_consts, sc, pi, sc->vsc_queues);
 	sc->vsc_vs.vs_mtx = &sc->vsc_mtx;
@@ -711,17 +860,9 @@ pci_vtcon_init(struct pci_devinst *pi, nvlist_t *nvl)
 		    ? pci_vtcon_notify_rx
 		    : pci_vtcon_notify_tx;
 	}
-
-	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_CONSOLE);
-	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
-	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_SIMPLECOMM);
-	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_CONSOLE);
-	pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
-
-	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
-		return (1);
-	vi_set_io_bar(&sc->vsc_vs, 0);
+	if (vi_pci_select_transport(&sc->vsc_vs, nvl,
+	    VIRTIO_PCI_LEGACY_DEFAULT) != 0)
+		goto fail;
 
 	/* create control port */
 	sc->vsc_control_port.vsp_sc = sc;
@@ -746,17 +887,42 @@ pci_vtcon_init(struct pci_devinst *pi, nvlist_t *nvl)
 			    nvlist_get_nvlist(ports_nvl, name)) < 0) {
 				EPRINTLN("cannot create port %s: %s",
 				    name, strerror(errno));
-				return (1);
+				goto fail;
 			}
 		}
 	}
 
+	/* initialize config space */
+	if (vi_pci_is_modern(&sc->vsc_vs))
+		vi_pci_modern_set_identity(&sc->vsc_vs, VIRTIO_ID_CONSOLE);
+	else {
+		pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_CONSOLE);
+		pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
+		pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_CONSOLE);
+		pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
+	}
+	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_SIMPLECOMM);
+
+	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
+		goto fail;
+	if (vi_pci_is_modern(&sc->vsc_vs)) {
+		if (vi_pci_modern_init(&sc->vsc_vs, 2) != 0)
+			goto fail;
+	} else
+		vi_set_io_bar(&sc->vsc_vs, 0);
+
 	return (0);
+
+fail:
+	pci_vtcon_destroy(sc);
+	return (1);
 }
 
 static const struct pci_devemu pci_de_vcon = {
 	.pe_emu =	"virtio-console",
 	.pe_init =	pci_vtcon_init,
+	.pe_cfgwrite =	vi_pci_modern_cfgwrite,
+	.pe_cfgread =	vi_pci_modern_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read,
 	.pe_legacy_config = pci_vtcon_legacy_config,

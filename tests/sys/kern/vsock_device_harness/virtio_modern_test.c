@@ -326,6 +326,9 @@ ATF_TC_BODY(capability_chain, tc)
 	vi_pci_modern_set_identity(&vs, VIRTIO_ID_SCSI);
 	ATF_CHECK(pci_get_cfgdata32(&pi, PCIR_VENDOR) == 0x10481af4);
 	ATF_CHECK(pci_get_cfgdata32(&pi, PCIR_SUBVEND_0) == 0x00481af4);
+	vi_pci_modern_set_identity(&vs, VIRTIO_ID_CONSOLE);
+	ATF_CHECK(pci_get_cfgdata32(&pi, PCIR_VENDOR) == 0x10431af4);
+	ATF_CHECK(pci_get_cfgdata32(&pi, PCIR_SUBVEND_0) == 0x00431af4);
 	vi_pci_modern_set_identity(&vs, VIRTIO_ID_VSOCK);
 	ATF_CHECK(g_bar == 2);
 	ATF_CHECK(g_bar_type == PCIBAR_MEM64);

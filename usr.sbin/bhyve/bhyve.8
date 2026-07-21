@@ -533,6 +533,16 @@ device ID 0x1044.
 Virtio console interface, which exposes multiple ports
 to the guest in the form of simple char devices for simple IO
 between the guest and host userspaces.
+The optional
+.Cm transport
+setting accepts
+.Cm legacy
+or
+.Cm modern .
+If omitted, the legacy PCI transport and device identity are retained for
+compatibility.
+The modern setting selects the non-transitional VirtIO PCI transport and
+device ID 0x1043.
 .It Cm virtio-input
 Virtio input interface.
 The required

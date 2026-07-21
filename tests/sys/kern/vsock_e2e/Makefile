@@ -70,6 +70,7 @@ ${PACKAGE}FILES+=	grng.py
 ${PACKAGE}FILES+=	gblock.py
 ${PACKAGE}FILES+=	gnet.py
 ${PACKAGE}FILES+=	gscsi.py
+${PACKAGE}FILES+=	gconsole.py
 ${PACKAGE}FILES+=	ALPINE.md
 ${PACKAGE}FILES+=	FIVEBSD.md
 ${PACKAGE}FILES+=	FRAMEWORK.md
