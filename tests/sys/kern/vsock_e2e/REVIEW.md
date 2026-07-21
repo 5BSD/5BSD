@@ -7,8 +7,9 @@ the source. Severity: HANG/LOSS/CRASH > throughput/spec > cosmetic.
 STATUS: D1, D2, D3 FIXED (commit be4d3921bc7, device harness 86 checks).
 G1, G3, G4, G5 FIXED (G1/G4/G5 in commit 65e6d29b5a8). The guest unit harness
 now covers both `uipc_vsock.c` and `virtio_vsock.c`, including a concurrent
-TX-ring-blocked send/detach wakeup. Remaining: device nits and
-interrupt-vs-detach scheduling coverage.
+TX-ring-blocked send/detach wakeup and deterministic RX/TX interrupt-versus-
+detach schedules.  Remaining targeted scope is the portable remote record
+boundary definition.
 
 ## Confirmed real bugs
 
@@ -98,8 +99,13 @@ packets cover the RX state machine; a descriptor-owning virtqueue model covers
 TX readiness, reclaim/retry, bounded FIFO drain, reset recycling/wakeup, and
 attach/detach.  A pthread-backed sleep model now blocks a real send thread on
 the full-ring channel while another thread detaches the device, covering the
-G5 wakeup and stale-softc guard.  Interrupt-vs-detach scheduling remains a
-structural limitation.
+G5 wakeup and stale-softc guard.  Additional gates pause RX after it dequeues
+and drops the mutex, allowing detach to drain before RX resumes, and pause TX
+dequeue under the mutex while detach waits.  They verify private-buffer
+ownership, serialized queue access, and late-interrupt guards under ASan/UBSan.
+The pthread harness also passes ThreadSanitizer.  Actual kernel interrupt-
+thread scheduling remains a live-stress concern, but the critical source-level
+lock-drop and lock-held interleavings are deterministic.
 
 **Completed action:** build a guest-side unit harness mirroring
 `vsock_device_harness/` — `#include` `uipc_vsock.c` with a mock

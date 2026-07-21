@@ -20,9 +20,11 @@ Run the gates in this order.  Early failures are cheaper and more specific.
    stalls), lifecycle wakeups, and boundary sizes under
    ASan and UBSan.  The guest transport test uses a pthread-backed kernel
    sleep shim to race a TX-ring-blocked sender against detach and enforce the
-   one-second wakeup contract.  The guest socket-domain test also verifies
-   that send-side shutdown and asynchronous errors are checked under their
-   owning locks before any user data is consumed.
+   one-second wakeup contract.  It also schedules RX delivery across detach's
+   queue drain and makes TX interrupt dequeue hold the transport mutex while
+   detach waits.  The guest socket-domain test verifies that send-side shutdown
+   and asynchronous errors are checked under their owning locks before any
+   user data is consumed.
 2. **Host helper controls (VM-free).** Run `host-tools-selftest.sh` with
    `TOOLS` set to the Makefile's `.OBJDIR`.  It validates stream and SEQPACKET
    relays, an intentionally fragmented SCM_RIGHTS control reply, a 1 MiB

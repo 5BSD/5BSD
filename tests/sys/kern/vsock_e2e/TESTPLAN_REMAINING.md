@@ -12,14 +12,16 @@ Linux VirtIO drivers.  The packaged matrix passed isolated and combined
 modern/legacy vsock, RNG, and block coverage plus modern input.  The focused
 legacy no-MSI-X gate also passed driver reset/rebind, monitor-mode reboot, and
 post-reboot data-path/persistence checks.  Direct `virtio_vsock.c` coverage is
-now packaged with the guest harness: 9 ATF cases / 606 assertions exercise
+now packaged with the guest harness: 11 ATF cases / 637 assertions exercise
 descriptor-aware readiness, reclaim/retry, bounded FIFO control queuing,
 interrupt drain/wakeup, event reset, attach-completed/detach, and a real
 pthread sender blocked on the full-ring sleep channel while detach wakes it
-within one second.  The remaining work is narrower lifecycle coverage below.
+within one second.  Deterministic RX/TX handler schedules now overlap detach
+both outside and inside the transport mutex.  The remaining work is narrower
+boundary definition below.
 The socket-domain half now has 13 ATF cases / 89 assertions, including locked
 send-side terminal-state checks that close G3; together the guest harness has
-22 cases / 695 assertions.
+24 cases / 726 assertions.
 The focused no-MSI-X run now also passes monitor-mode reboot with established
 STREAM and SEQPACKET endpoints: each is echo-proven before reboot, both old
 endpoints disconnect within 30 seconds, and fresh connections pass afterward.
@@ -58,14 +60,16 @@ remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
 | `vsock_test.c` (ATF) | socket ops + **loopback** transport | 152/153 pass (1 platform skip) |
 | `vsock_wire_test.c` (ATF) | struct/ABI wire layout | complete for static layout |
 | `vsock_device_harness/` | bhyve host device TX/RX ingress | 209 vsock checks plus transport/device suites |
-| `vsock_rx_harness/` | guest domain + direct VirtIO transport | 22 tests / 695 checks |
+| `vsock_rx_harness/` | guest domain + direct VirtIO transport | 24 tests / 726 checks |
 | `vsock_e2e/` (live guest) | upstream Linux driver interop | modern/legacy matrix passed; root-only |
 
 **Remaining structural limitation:** both guest source files now have direct
 userspace coverage and the live Alpine matrix exercises the complete stack.
-The pthread-backed transport sleep model now forces a send-vs-detach race, but
-it does not force a real kernel interrupt handler to overlap detach; that
-scheduling edge remains a lifecycle limitation.
+The pthread-backed transport model forces send-vs-detach plus RX/TX handler-
+versus-detach interleavings through the real handler code.  It does not emulate
+the kernel interrupt-thread runtime itself; scheduler stress remains live-only,
+but the critical queue-ownership branches are directly scheduled in the
+harness.
 
 ---
 
@@ -290,7 +294,7 @@ defines credit windows rather than a universal SEQPACKET record maximum, while
 bhyve intentionally reassembles records larger than its advertised window;
 the live MAX/MAX+1 criterion therefore needs an implementation-specific bound
 instead of assuming 256 KiB.  Interrupt-vs-detach scheduling remains a
-lower-priority structural coverage item.
+kernel-runtime stress item rather than an uncovered source interleaving.
 
 **Lowest-priority (Tier 3, documented in REVIEW.md, likely leave alone):**
 auto-bind port exhaustion, EMFILE/fd exhaustion, pending-ring overflow,

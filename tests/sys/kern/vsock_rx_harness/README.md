@@ -12,7 +12,9 @@ structurally cannot reach (a crafted/malicious peer can only be injected
 here).  The transport binary directly covers CID config sanitization,
 descriptor-aware TX readiness, reclaim-and-retry, bounded control queuing,
 FIFO interrupt draining, transport-reset wakeup/recycling, and the
-attach-completed/detach lifecycle.
+attach-completed/detach lifecycle.  Deterministic pthread schedules also force
+RX and TX interrupt handlers to overlap detach on both sides of the transport
+mutex.
 
 ## Correctness
 
@@ -26,6 +28,7 @@ don't pass blindly.
 ## Run
 
     sh run.sh        # builds under ASan/UBSan with a tiny atf-c.h shim
+    SANITIZERS=thread sh run.sh  # concurrency schedules under TSan
     make             # builds the packaged ATF test
 
 ## Files
@@ -53,6 +56,9 @@ descriptor ownership, bounded FIFO overflow, interrupt and reset wakeup
 channels, and attach/detach reclamation.  For the transport binary, `msleep`
 and `wakeup` use a pthread mutex/condition pair: a real sender blocks on a full
 TX ring while detach runs concurrently, then must wake within one second,
-return `ENXIO`, restore credit, and leave the queue empty.  The socket-domain
-binary retains the deterministic non-blocking sleep shim for its state-machine
-tests; live credit stalls remain in the e2e suite.
+return `ENXIO`, restore credit, and leave the queue empty.  Separate gates hold
+RX delivery open after it drops the transport mutex while detach drains, and
+hold TX dequeue under the mutex while detach waits; both assert queue ownership,
+late-callback guards, and no post-teardown rearm.  The socket-domain binary
+retains the deterministic non-blocking sleep shim for its state-machine tests;
+live credit stalls remain in the e2e suite.

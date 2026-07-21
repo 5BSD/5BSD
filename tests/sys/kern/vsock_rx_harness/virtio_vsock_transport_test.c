@@ -6,7 +6,6 @@
 #define VSOCK_REAL_SLEEP 1
 #include "transport_kmock.h"
 
-#include <pthread_np.h>
 #include <unistd.h>
 
 MALLOC_DEFINE(M_VTVSOCK, "vtvsock", "virtio vsock test");
@@ -27,6 +26,7 @@ static uint64_t transport_wake_generation;
 static bool transport_mtx_initialized;
 static int register_calls, register_locked_calls, unregister_calls, reset_calls;
 static uint64_t registered_cid, registered_features;
+static void (*transport_rx_packet_hook)(void *, uint32_t);
 
 int
 transport_msleep(void *chan, struct mtx *m, int pri __unused,
@@ -80,7 +80,12 @@ vsock_transport_register_locked(const struct vtvsock_transport *ops __unused,
 }
 
 void vsock_transport_reset_locked(void) { reset_calls++; }
-void vsock_rx_packet(void *buf __unused, uint32_t len __unused) {}
+void
+vsock_rx_packet(void *buf, uint32_t len)
+{
+	if (transport_rx_packet_hook != NULL)
+		transport_rx_packet_hook(buf, len);
+}
 void vtvsock_pcb_remove_lists_locked(struct vtvsock_pcb *pcb __unused) {}
 void vtvsock_close_timeout(void *arg __unused) {}
 
@@ -113,6 +118,7 @@ reset_state(void)
 	transport_last_wakeup = NULL;
 	register_calls = register_locked_calls = unregister_calls = reset_calls = 0;
 	registered_cid = registered_features = 0;
+	transport_rx_packet_hook = NULL;
 	tx_packets = tx_bytes = rx_packets = rx_bytes = rx_drops = conns = 0;
 }
 
@@ -343,8 +349,104 @@ ATF_TC_BODY(transport_reset_recycles_event_and_wakes, tc)
 struct blocked_sender {
 	struct vtvsock_pcb *pcb;
 	struct mbuf *m;
+	_Atomic bool done;
 	int result;
 };
+
+struct interrupt_gate {
+	_Atomic bool entered;
+	_Atomic bool release;
+};
+
+static struct interrupt_gate *active_rx_gate;
+
+struct interrupt_runner {
+	struct vtvsock_softc *sc;
+	_Atomic bool done;
+};
+
+struct detach_runner {
+	struct fake_device *dev;
+	_Atomic bool started;
+	_Atomic bool done;
+	int result;
+};
+
+static bool
+wait_for_flag(_Atomic bool *flag, int timeout_ms)
+{
+	int i;
+
+	for (i = 0; i < timeout_ms; i++) {
+		if (atomic_load(flag))
+			return (true);
+		usleep(1000);
+	}
+	return (false);
+}
+
+static int
+join_after_flag(pthread_t thread, _Atomic bool *done, int timeout_ms)
+{
+
+	if (!wait_for_flag(done, timeout_ms))
+		return (ETIMEDOUT);
+	return (pthread_join(thread, NULL));
+}
+
+static void
+block_on_gate(struct interrupt_gate *gate)
+{
+
+	atomic_store(&gate->entered, true);
+	while (!atomic_load(&gate->release))
+		usleep(100);
+}
+
+static void
+block_rx_delivery(void *buf __unused, uint32_t len __unused)
+{
+
+	block_on_gate(active_rx_gate);
+}
+
+static void
+block_tx_dequeue(struct virtqueue *vq __unused, void *arg)
+{
+
+	block_on_gate(arg);
+}
+
+static void *
+run_rx_interrupt(void *arg)
+{
+	struct interrupt_runner *runner = arg;
+
+	vtvsock_rx_intr(runner->sc);
+	atomic_store(&runner->done, true);
+	return (NULL);
+}
+
+static void *
+run_tx_interrupt(void *arg)
+{
+	struct interrupt_runner *runner = arg;
+
+	vtvsock_tx_intr(runner->sc);
+	atomic_store(&runner->done, true);
+	return (NULL);
+}
+
+static void *
+run_detach(void *arg)
+{
+	struct detach_runner *runner = arg;
+
+	atomic_store(&runner->started, true);
+	runner->result = vtvsock_detach(runner->dev);
+	atomic_store(&runner->done, true);
+	return (NULL);
+}
 
 static void *
 run_blocked_sender(void *arg)
@@ -353,6 +455,7 @@ run_blocked_sender(void *arg)
 
 	sender->result = vtvsock_virtio_send(sender->pcb, 0, sender->m,
 	    NULL, NULL, NULL);
+	atomic_store(&sender->done, true);
 	return (NULL);
 }
 
@@ -365,7 +468,6 @@ ATF_TC_BODY(detach_wakes_tx_ring_blocked_sender, tc)
 	struct sglist sg;
 	struct sglist_seg seg;
 	struct socket so;
-	struct timespec deadline;
 	struct virtqueue txvq;
 	struct vtvsock_pcb pcb;
 	struct vtvsock_softc sc;
@@ -410,16 +512,135 @@ ATF_TC_BODY(detach_wakes_tx_ring_blocked_sender, tc)
 	ATF_REQUIRE_MSG(i < 5000, "sender did not block on the TX ring");
 	ATF_CHECK(pcb.tx_cnt == 0);
 
-	ATF_REQUIRE(clock_gettime(CLOCK_REALTIME, &deadline) == 0);
-	deadline.tv_sec++;
 	ATF_REQUIRE(vtvsock_detach(&dev) == 0);
-	ATF_REQUIRE_MSG(pthread_timedjoin_np(thread, NULL, &deadline) == 0,
+	ATF_REQUIRE_MSG(join_after_flag(thread, &sender.done, 1000) == 0,
 	    "TX-ring-blocked sender was not woken within one second");
 	ATF_CHECK(sender.result == ENXIO);
 	ATF_CHECK(pcb.tx_cnt == 0);
 	ATF_CHECK(vtvsock_global_softc() == NULL);
 	ATF_CHECK(txvq.entry_count == 0);
 	ATF_CHECK(transport_last_wakeup == &sc.sc_txvq);
+}
+
+ATF_TC_WITHOUT_HEAD(rx_interrupt_detach_during_delivery);
+ATF_TC_BODY(rx_interrupt_detach_during_delivery, tc)
+{
+	struct detach_runner detach;
+	struct fake_device dev;
+	struct interrupt_gate gate;
+	struct interrupt_runner intr;
+	struct sglist sg;
+	struct sglist_seg seg;
+	struct virtqueue rxvq;
+	struct vtvsock_softc sc;
+	pthread_t detach_thread, intr_thread;
+	void *buf;
+
+	reset_state();
+	memset(&detach, 0, sizeof(detach));
+	memset(&dev, 0, sizeof(dev));
+	memset(&gate, 0, sizeof(gate));
+	memset(&intr, 0, sizeof(intr));
+	memset(&sc, 0, sizeof(sc));
+	mock_vq_init(&rxvq, 1);
+	sc.sc_dev = &dev;
+	sc.sc_rxvq = &rxvq;
+	dev.softc = &sc;
+	detach.dev = &dev;
+	intr.sc = &sc;
+	buf = calloc(1, VTVSOCK_RX_BUFSZ);
+	ATF_REQUIRE(buf != NULL);
+	one_seg(&sg, &seg);
+	ATF_REQUIRE(virtqueue_enqueue(&rxvq, buf, &sg, 0, 1) == 0);
+	ATF_REQUIRE(mock_vq_complete(&rxvq, buf, 0));
+	atomic_store_ptr(&vtvsock_sc, &sc);
+	active_rx_gate = &gate;
+	transport_rx_packet_hook = block_rx_delivery;
+
+	ATF_REQUIRE(pthread_create(&intr_thread, NULL, run_rx_interrupt,
+	    &intr) == 0);
+	ATF_REQUIRE_MSG(wait_for_flag(&gate.entered, 5000),
+	    "RX interrupt did not enter socket-domain delivery");
+	ATF_CHECK(rxvq.entry_count == 0);	/* handler owns the buffer */
+
+	ATF_REQUIRE(pthread_create(&detach_thread, NULL, run_detach,
+	    &detach) == 0);
+	ATF_REQUIRE_MSG(join_after_flag(detach_thread, &detach.done, 1000) == 0,
+	    "detach did not finish while RX delivery was open");
+	ATF_CHECK(detach.result == 0);
+	ATF_CHECK(vtvsock_global_softc() == NULL);
+	ATF_CHECK(!atomic_load(&intr.done));
+
+	atomic_store(&gate.release, true);
+	ATF_REQUIRE_MSG(join_after_flag(intr_thread, &intr.done, 1000) == 0,
+	    "RX interrupt did not leave after detach");
+	ATF_CHECK(atomic_load(&intr.done));
+	ATF_CHECK(rxvq.entry_count == 0);
+	ATF_CHECK(rxvq.enable_count == 0);	/* torn-down queue not re-armed */
+	ATF_CHECK(rxvq.notify_count == 0);	/* nor notified/refilled */
+	active_rx_gate = NULL;
+}
+
+ATF_TC_WITHOUT_HEAD(tx_interrupt_serializes_detach);
+ATF_TC_BODY(tx_interrupt_serializes_detach, tc)
+{
+	struct detach_runner detach;
+	struct fake_device dev;
+	struct interrupt_gate gate;
+	struct interrupt_runner intr;
+	struct sglist sg;
+	struct sglist_seg seg;
+	struct virtio_vsock_hdr *pkt;
+	struct virtqueue txvq;
+	struct vtvsock_softc sc;
+	pthread_t detach_thread, intr_thread;
+	int enable_count;
+
+	reset_state();
+	memset(&detach, 0, sizeof(detach));
+	memset(&dev, 0, sizeof(dev));
+	memset(&gate, 0, sizeof(gate));
+	memset(&intr, 0, sizeof(intr));
+	memset(&sc, 0, sizeof(sc));
+	mock_vq_init(&txvq, 1);
+	sc.sc_dev = &dev;
+	sc.sc_txvq = &txvq;
+	dev.softc = &sc;
+	detach.dev = &dev;
+	intr.sc = &sc;
+	pkt = new_control_packet();
+	one_seg(&sg, &seg);
+	ATF_REQUIRE(virtqueue_enqueue(&txvq, pkt, &sg, 1, 0) == 0);
+	ATF_REQUIRE(mock_vq_complete(&txvq, pkt, 0));
+	txvq.dequeue_hook = block_tx_dequeue;
+	txvq.dequeue_hook_arg = &gate;
+	atomic_store_ptr(&vtvsock_sc, &sc);
+
+	ATF_REQUIRE(pthread_create(&intr_thread, NULL, run_tx_interrupt,
+	    &intr) == 0);
+	ATF_REQUIRE_MSG(wait_for_flag(&gate.entered, 5000),
+	    "TX interrupt did not enter dequeue while holding the lock");
+	ATF_REQUIRE(pthread_create(&detach_thread, NULL, run_detach,
+	    &detach) == 0);
+	ATF_REQUIRE_MSG(wait_for_flag(&detach.started, 5000),
+	    "detach thread did not start");
+	ATF_CHECK(!atomic_load(&detach.done));
+	ATF_CHECK(vtvsock_global_softc() == &sc);
+
+	atomic_store(&gate.release, true);
+	ATF_REQUIRE_MSG(join_after_flag(intr_thread, &intr.done, 1000) == 0,
+	    "TX interrupt did not finish");
+	ATF_REQUIRE_MSG(join_after_flag(detach_thread, &detach.done, 1000) == 0,
+	    "detach did not follow the TX interrupt");
+	ATF_CHECK(detach.result == 0);
+	ATF_CHECK(vtvsock_global_softc() == NULL);
+	ATF_CHECK(txvq.entry_count == 0);
+	ATF_CHECK(txvq.enable_count == 1);
+
+	/* A late callback after teardown must return without touching the queue. */
+	enable_count = txvq.enable_count;
+	vtvsock_tx_intr(&sc);
+	ATF_CHECK(txvq.enable_count == enable_count);
 }
 
 ATF_TC_WITHOUT_HEAD(attach_completed_detach_lifecycle);
@@ -480,6 +701,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, tx_interrupt_drains_fifo_and_wakes);
 	ATF_TP_ADD_TC(tp, transport_reset_recycles_event_and_wakes);
 	ATF_TP_ADD_TC(tp, detach_wakes_tx_ring_blocked_sender);
+	ATF_TP_ADD_TC(tp, rx_interrupt_detach_during_delivery);
+	ATF_TP_ADD_TC(tp, tx_interrupt_serializes_detach);
 	ATF_TP_ADD_TC(tp, attach_completed_detach_lifecycle);
 	return (atf_no_error());
 }

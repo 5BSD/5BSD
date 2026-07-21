@@ -105,6 +105,8 @@ struct virtqueue {
 	int disable_count;
 	void *enqueue_order[MOCK_VQ_MAX];
 	int enqueue_count;
+	void (*dequeue_hook)(struct virtqueue *, void *);
+	void *dequeue_hook_arg;
 };
 
 static inline void
@@ -169,6 +171,9 @@ static inline void *
 virtqueue_dequeue(struct virtqueue *vq, uint32_t *len)
 {
 	struct mock_vq_entry e;
+
+	if (vq->dequeue_hook != NULL)
+		vq->dequeue_hook(vq, vq->dequeue_hook_arg);
 
 	for (int i = 0; i < vq->entry_count; i++) {
 		if (!vq->entries[i].complete)
