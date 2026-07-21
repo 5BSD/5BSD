@@ -13,14 +13,17 @@
 static int test_open(const char *, int, ...);
 static int test_close(int);
 static ssize_t test_read(int, void *, size_t);
+static ssize_t test_readv(int, const struct iovec *, int);
 
 #define open test_open
 #define close test_close
 #define read test_read
+#define readv test_readv
 #include "pci_virtio_rnd.c"
 #undef open
 #undef close
 #undef read
+#undef readv
 
 struct nvlist { int unused; };
 
@@ -75,6 +78,26 @@ test_read(int fd __unused, void *buf, size_t len)
 	return (g_read_result);
 }
 
+static ssize_t
+test_readv(int fd __unused, const struct iovec *iov, int iovcnt)
+{
+	ssize_t left;
+
+	g_read_calls++;
+	if (g_read_result < 0) {
+		errno = EIO;
+		return (-1);
+	}
+	left = g_read_result;
+	for (int i = 0; i < iovcnt && left > 0; i++) {
+		size_t len = MIN((size_t)left, iov[i].iov_len);
+
+		memset(iov[i].iov_base, 0xa5, len);
+		left -= len;
+	}
+	return (g_read_result - left);
+}
+
 int
 vq_has_descs(struct vqueue_info *vq __unused)
 {
@@ -87,9 +110,12 @@ vq_getchain(struct vqueue_info *vq __unused, struct iovec *iov, int niov,
 {
 	if (g_chain_n <= 0)
 		return (g_chain_n);
-	ATF_REQUIRE(niov == 1);
-	iov->iov_base = g_null_iov ? NULL : g_iov;
-	iov->iov_len = g_iov_len;
+	ATF_REQUIRE(niov == VTRND_RINGSZ);
+	for (int i = 0; i < MIN(g_chain_n, niov); i++) {
+		iov[i].iov_base = g_null_iov ? NULL :
+		    g_iov + i * sizeof(g_iov) / MIN(g_chain_n, niov);
+		iov[i].iov_len = g_iov_len;
+	}
 	req->idx = 7;
 	req->readable = g_readable;
 	req->writable = g_writable;
@@ -170,7 +196,7 @@ ATF_TC_BODY(hostile_descriptors, tc)
 	for (int kind = 0; kind < 6; kind++) {
 		reset_mocks();
 		switch (kind) {
-		case 0: g_chain_n = 2; break;
+		case 0: g_chain_n = VTRND_RINGSZ + 1; break;
 		case 1: g_readable = 1; g_writable = 0; break;
 		case 2: g_null_iov = true; break;
 		case 3: g_iov_len = 0; break;
@@ -184,6 +210,28 @@ ATF_TC_BODY(hostile_descriptors, tc)
 			ATF_CHECK(g_rel_len == 0);
 		ATF_CHECK(g_end_calls == 1);
 	}
+}
+
+ATF_TC_WITHOUT_HEAD(scatter_gather);
+ATF_TC_BODY(scatter_gather, tc)
+{
+	struct pci_vtrnd_softc sc;
+	struct vqueue_info vq;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&vq, 0, sizeof(vq));
+	sc.vrsc_fd = 10;
+	reset_mocks();
+	g_chain_n = 2;
+	g_writable = 2;
+	g_iov_len = 8;
+	g_read_result = 13;
+	pci_vtrnd_notify(&sc, &vq);
+	ATF_CHECK(g_read_calls == 1);
+	ATF_CHECK(g_rel_calls == 1 && g_rel_len == 13);
+	ATF_CHECK(memcmp(g_iov, "\xa5\xa5\xa5\xa5\xa5\xa5\xa5\xa5", 8) == 0);
+	ATF_CHECK(memcmp(g_iov + sizeof(g_iov) / 2,
+	    "\xa5\xa5\xa5\xa5\xa5", 5) == 0);
 }
 
 ATF_TC_WITHOUT_HEAD(random_read_failures);
@@ -229,6 +277,7 @@ ATF_TC_BODY(init_failures, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, hostile_descriptors);
+	ATF_TP_ADD_TC(tp, scatter_gather);
 	ATF_TP_ADD_TC(tp, random_read_failures);
 	ATF_TP_ADD_TC(tp, init_failures);
 	return (atf_no_error());

@@ -25,14 +25,17 @@
 static int test_open(const char *, int, ...);
 static int test_close(int);
 static ssize_t test_read(int, void *, size_t);
+static ssize_t test_readv(int, const struct iovec *, int);
 
 #define	open	test_open
 #define	close	test_close
 #define	read	test_read
+#define	readv	test_readv
 #include "pci_virtio_rnd.c"
 #undef open
 #undef close
 #undef read
+#undef readv
 
 #include "virtio.c"
 
@@ -66,6 +69,20 @@ test_read(int fd __unused, void *buf, size_t len)
 	g_read_calls++;
 	memset(buf, 0xa5, len);
 	return ((ssize_t)len);
+}
+
+static ssize_t
+test_readv(int fd __unused, const struct iovec *iov, int iovcnt)
+{
+	ssize_t total;
+
+	g_read_calls++;
+	total = 0;
+	for (int i = 0; i < iovcnt; i++) {
+		memset(iov[i].iov_base, 0xa5, iov[i].iov_len);
+		total += iov[i].iov_len;
+	}
+	return (total);
 }
 
 void *
@@ -235,8 +252,12 @@ run_entropy_interrupt_path(void)
 	sc.vrsc_vq.vq_used = used;
 	sc.vrsc_vq.vq_msix_idx = VIRTIO_MSI_NO_VECTOR;
 	desc[0].addr = 0x1000;
-	desc[0].len = sizeof(g_guest_buf);
-	desc[0].flags = VRING_DESC_F_WRITE;
+	desc[0].len = sizeof(g_guest_buf) / 2;
+	desc[0].flags = VRING_DESC_F_WRITE | VRING_DESC_F_NEXT;
+	desc[0].next = 1;
+	desc[1].addr = 0x1000 + sizeof(g_guest_buf) / 2;
+	desc[1].len = sizeof(g_guest_buf) / 2;
+	desc[1].flags = VRING_DESC_F_WRITE;
 	avail->idx = 1;
 	avail->ring[0] = 0;
 

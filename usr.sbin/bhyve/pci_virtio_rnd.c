@@ -104,11 +104,11 @@ pci_vtrnd_reset(void *vsc)
 static void
 pci_vtrnd_notify(void *vsc, struct vqueue_info *vq)
 {
-	struct iovec iov;
+	struct iovec iov[VTRND_RINGSZ];
 	struct pci_vtrnd_softc *sc;
 	struct vi_req req;
 	ssize_t len;
-	int n;
+	int i, n;
 
 	sc = vsc;
 
@@ -118,19 +118,28 @@ pci_vtrnd_notify(void *vsc, struct vqueue_info *vq)
 	}
 
 	while (vq_has_descs(vq)) {
-		n = vq_getchain(vq, &iov, 1, &req);
+		n = vq_getchain(vq, iov, nitems(iov), &req);
 		if (n <= 0) {
 			WPRINTF(("vtrnd: invalid descriptor chain"));
 			break;
 		}
-		if (n != 1 || req.readable != 0 || req.writable != 1 ||
-		    iov.iov_base == NULL || iov.iov_len == 0) {
+		if (n > (int)nitems(iov) || req.readable != 0 ||
+		    req.writable != n) {
 			WPRINTF(("vtrnd: invalid writable descriptor"));
 			vq_relchain(vq, req.idx, 0);
 			continue;
 		}
+		for (i = 0; i < n; i++) {
+			if (iov[i].iov_base == NULL || iov[i].iov_len == 0)
+				break;
+		}
+		if (i != n) {
+			WPRINTF(("vtrnd: invalid writable buffer"));
+			vq_relchain(vq, req.idx, 0);
+			continue;
+		}
 
-		len = read(sc->vrsc_fd, iov.iov_base, iov.iov_len);
+		len = readv(sc->vrsc_fd, iov, n);
 
 		DPRINTF(("vtrnd: vtrnd_notify(): %zd", len));
 
