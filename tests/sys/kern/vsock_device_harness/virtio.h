@@ -160,6 +160,7 @@ int  vi_pci_modern_cfgwrite(struct pci_devinst *, int, int, uint32_t);
 int  vi_intr_init(struct virtio_softc *, int, int);
 void vi_set_io_bar(struct virtio_softc *, int);
 void vi_reset_dev(struct virtio_softc *);
+void vi_set_needs_reset(struct virtio_softc *);
 void vi_interrupt(struct virtio_softc *, uint8_t, uint16_t);
 uint64_t vi_pci_read(struct pci_devinst *, int, uint64_t, int);
 void vi_pci_write(struct pci_devinst *, int, uint64_t, int, uint64_t);

@@ -581,7 +581,16 @@ transport and device ID 0x1052.
 Virtio vsock interface for host-guest socket transport.
 The device is configured with
 .Cm cid
-(guest context identifier, from 3 through 4294967294) and
+(guest context identifier, from 3 through 4294967294).
+The optional
+.Cm backend
+setting accepts
+.Cm unix
+or
+.Cm native
+and defaults to
+.Cm unix .
+The Unix backend also requires
 .Cm path
 (existing host directory for Unix domain sockets).
 The optional
@@ -600,6 +609,21 @@ For host-to-guest connections, host processes connect to
 .Pa <path>/sock
 and send a 16-byte control message containing the command, guest port, socket
 type, and status fields.
+The native backend does not accept
+.Cm path .
+It attaches the VM to the host
+.Dv AF_VSOCK
+domain through
+.Pa /dev/vsock ,
+so host applications use ordinary
+.Xr socket 2 ,
+.Xr bind 2 ,
+and
+.Xr connect 2
+calls with local CID 2 and the configured guest CID.
+Only one native backend may be active on a host at a time; a second instance
+fails with
+.Er EBUSY .
 See
 .Xr vsock 4
 for details.

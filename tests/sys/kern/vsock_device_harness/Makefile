@@ -93,7 +93,7 @@ LDFLAGS.vsock_device_test+=	-Wl,--wrap=socket -Wl,--wrap=connectat \
 	-Wl,--wrap=poll -Wl,--wrap=close -Wl,--wrap=accept \
 	-Wl,--wrap=socketpair -Wl,--wrap=fcntl -Wl,--wrap=setsockopt \
 	-Wl,--wrap=getsockopt -Wl,--wrap=recvmsg -Wl,--wrap=ioctl \
-	-Wl,--wrap=realloc
+	-Wl,--wrap=realloc -Wl,--wrap=writev
 LDFLAGS.virtio_core_test+=	-Wl,--gc-sections
 LDFLAGS.virtio_rnd_interrupt_test+= -Wl,--gc-sections
 LDFLAGS.virtio_console_test+= -Wl,--gc-sections

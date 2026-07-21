@@ -28,11 +28,13 @@
 /*
  * VirtIO vsock device emulation for bhyve.
  *
- * This implements a protocol-aware virtio-vsock host transport.  The bhyve
- * device acts as CID 2 (VSOCK_CID_HOST).  All host-side I/O uses Unix
- * sockets rooted in a directory fd.
+ * The bhyve device acts as CID 2 (VSOCK_CID_HOST).  The default Unix backend
+ * implements the virtio-vsock protocol and relays connections through Unix
+ * sockets rooted in a directory fd.  The optional native backend forwards
+ * complete wire packets to the host kernel through /dev/vsock, making normal
+ * host AF_VSOCK sockets the protocol endpoint instead.
  *
- * Two connection directions are supported:
+ * The Unix backend supports two connection directions:
  *
  * Host-to-guest:
  *   1. Host app connects to the control socket at <dir>/sock.
@@ -469,6 +471,16 @@ struct pci_vtvsock_softc {
 	uint64_t		vsc_guest_cid;
 
 	char			*vsc_path;
+	bool			 vsc_native;
+	bool			 vsc_native_failed;
+	int			 vsc_native_fd;
+	struct mevent		*vsc_native_evp;
+	struct mevent		*vsc_native_write_evp;
+	uint8_t			*vsc_native_rx_buf;
+	uint8_t			*vsc_native_rx;
+	uint32_t		 vsc_native_rx_off;
+	uint8_t			*vsc_native_tx;
+	size_t			 vsc_native_tx_len;
 	int			vsc_dfd;	/* directory fd for connectat() */
 	int			vsc_ctl_fd;	/* control socket (listener) */
 	struct mevent		*vsc_ctl_evp;
@@ -523,6 +535,10 @@ static void vtvsock_conn_close(struct pci_vtvsock_softc *,
     struct vtvsock_conn *);
 static void vtvsock_host_eof(struct pci_vtvsock_softc *,
     struct vtvsock_conn *);
+static void vtvsock_native_read_cb(int, enum ev_type, void *);
+static void vtvsock_native_write_cb(int, enum ev_type, void *);
+static void vtvsock_native_drain(struct pci_vtvsock_softc *);
+static bool vtvsock_rx_ready(struct pci_vtvsock_softc *);
 
 static struct virtio_consts vtvsock_vi_consts = {
 	.vc_name =		"vtvsock",
@@ -923,11 +939,12 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 	}
 
 	avail = iov_total(iov, n);
-	if (avail <= sizeof(*hdrp)) {
+	if (avail < sizeof(*hdrp) ||
+	    (avail == sizeof(*hdrp) && paylen != 0)) {
 		/*
-		 * The chain cannot hold even the header.  A conformant guest
-		 * posts RX buffers large enough for a header plus payload;
-		 * drop a malformed one.
+		 * The chain cannot hold the header, or has no room to make
+		 * progress on a non-empty payload.  A header-only chain is valid
+		 * for a control packet or an empty SEQPACKET record.
 		 */
 		VSOCK_PROBE_DESC_DROP("rx-descriptor-too-small");
 		DPRINTF(("vtvsock: rx descriptor too small for header (%zu)",
@@ -954,8 +971,8 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 	 * return is always non-negative.
 	 */
 	{
-		uint32_t cap = (uint32_t)(avail - sizeof(*hdrp));
-		uint32_t w = (paylen < cap) ? paylen : cap;
+		size_t cap = avail - sizeof(*hdrp);
+		uint32_t w = cap < paylen ? (uint32_t)cap : paylen;
 		struct virtio_vsock_hdr h = *hdrp;
 
 		h.len = htole32(w);
@@ -993,6 +1010,154 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 		}
 		return ((int)w);
 	}
+}
+
+/*
+ * Forward a packet produced by the host AF_VSOCK transport into guest RX
+ * buffers.  Large RW payloads are split only at guest-buffer boundaries;
+ * vtvsock_inject_raw() removes EOM/EOR from non-final fragments.
+ */
+static void
+vtvsock_native_drain(struct pci_vtvsock_softc *sc)
+{
+	struct virtio_vsock_hdr *hdr;
+	struct virtio_vsock_hdr fragment;
+	uint8_t *payload;
+	uint32_t paylen, remaining;
+	int written;
+
+	while (!sc->vsc_native_failed && sc->vsc_native_rx != NULL) {
+		hdr = (struct virtio_vsock_hdr *)sc->vsc_native_rx;
+		paylen = le32toh(hdr->len);
+		payload = sc->vsc_native_rx + sizeof(*hdr);
+		if (!vtvsock_rx_ready(sc))
+			break;
+		if (paylen == 0) {
+			written = vtvsock_inject_raw(sc, hdr, NULL, 0);
+			if (written < 0)
+				break;
+			sc->vsc_native_rx_off = 0;
+		} else {
+			remaining = paylen - sc->vsc_native_rx_off;
+			fragment = *hdr;
+			fragment.len = htole32(remaining);
+			written = vtvsock_inject_raw(sc, &fragment,
+			    payload + sc->vsc_native_rx_off, remaining);
+			if (written <= 0)
+				break;
+			sc->vsc_native_rx_off += (uint32_t)written;
+			if (sc->vsc_native_rx_off < paylen)
+				continue;
+		}
+		if (sc->vsc_native_rx != sc->vsc_native_rx_buf)
+			free(sc->vsc_native_rx);
+		sc->vsc_native_rx = NULL;
+		sc->vsc_native_rx_off = 0;
+	}
+	if (sc->vsc_native_evp != NULL) {
+		if (sc->vsc_native_failed || sc->vsc_native_rx != NULL ||
+		    !vtvsock_rx_ready(sc))
+			mevent_disable(sc->vsc_native_evp);
+		else
+			mevent_enable(sc->vsc_native_evp);
+	}
+}
+
+static void
+vtvsock_native_read_cb(int fd, enum ev_type type __unused, void *arg)
+{
+	struct pci_vtvsock_softc *sc = arg;
+	struct virtio_vsock_hdr *hdr;
+	bool disable, fatal;
+	ssize_t len;
+
+	pthread_mutex_lock(&sc->vsc_mtx);
+	disable = false;
+	fatal = false;
+	vtvsock_native_drain(sc);
+	while (!sc->vsc_native_failed && sc->vsc_native_rx == NULL &&
+	    vtvsock_rx_ready(sc)) {
+		len = read(fd, sc->vsc_native_rx_buf,
+		    sizeof(*hdr) + VTVSOCK_MAX_PKT);
+		if (len < 0) {
+			if (errno != EAGAIN && errno != EWOULDBLOCK) {
+				WPRINTF(("vtvsock: native transport read failed: %s",
+				    strerror(errno)));
+				disable = true;
+				fatal = true;
+			}
+			break;
+		}
+		if (len < (ssize_t)sizeof(*hdr)) {
+			WPRINTF(("vtvsock: native transport returned short packet"));
+			disable = true;
+			fatal = true;
+			break;
+		}
+		hdr = (struct virtio_vsock_hdr *)sc->vsc_native_rx_buf;
+		if (le32toh(hdr->len) !=
+		    (uint32_t)len - (uint32_t)sizeof(*hdr)) {
+			WPRINTF(("vtvsock: native transport packet length mismatch"));
+			disable = true;
+			fatal = true;
+			break;
+		}
+		sc->vsc_native_rx = sc->vsc_native_rx_buf;
+		sc->vsc_native_rx_off = 0;
+		vtvsock_native_drain(sc);
+	}
+	if (fatal) {
+		sc->vsc_native_failed = true;
+		vi_set_needs_reset(&sc->vsc_vs);
+	}
+	if (disable && sc->vsc_native_evp != NULL)
+		mevent_disable(sc->vsc_native_evp);
+	pthread_mutex_unlock(&sc->vsc_mtx);
+}
+
+/* Retry a complete guest packet parked when /dev/vsock applied backpressure. */
+static void
+vtvsock_native_write_cb(int fd, enum ev_type type __unused, void *arg)
+{
+	struct pci_vtvsock_softc *sc = arg;
+	struct iovec iov;
+	bool resume;
+	ssize_t sent;
+
+	resume = false;
+	pthread_mutex_lock(&sc->vsc_mtx);
+	if (sc->vsc_native_failed || sc->vsc_native_tx == NULL) {
+		if (sc->vsc_native_write_evp != NULL)
+			mevent_disable(sc->vsc_native_write_evp);
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
+	iov.iov_base = sc->vsc_native_tx;
+	iov.iov_len = sc->vsc_native_tx_len;
+	sent = writev(fd, &iov, 1);
+	if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
+	if (sent == (ssize_t)sc->vsc_native_tx_len ||
+	    (sent < 0 && (errno == EINVAL || errno == EMSGSIZE))) {
+		free(sc->vsc_native_tx);
+		sc->vsc_native_tx = NULL;
+		sc->vsc_native_tx_len = 0;
+		if (sc->vsc_native_write_evp != NULL)
+			mevent_disable(sc->vsc_native_write_evp);
+		resume = true;
+	} else {
+		WPRINTF(("vtvsock: native transport retry failed: %s",
+		    sent < 0 ? strerror(errno) : "short write"));
+		sc->vsc_native_failed = true;
+		vi_set_needs_reset(&sc->vsc_vs);
+		if (sc->vsc_native_write_evp != NULL)
+			mevent_disable(sc->vsc_native_write_evp);
+	}
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	if (resume)
+		pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
 }
 
 /*
@@ -2183,6 +2348,11 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 	int n;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
+	if (sc->vsc_native &&
+	    (sc->vsc_native_failed || sc->vsc_native_tx != NULL)) {
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
 
 	while (vq_has_descs(vq)) {
 		n = vq_getchain(vq, iov, VTVSOCK_MAX_IOV, &req);
@@ -2296,7 +2466,64 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 			}
 		}
 
-		vtvsock_process_tx_pkt(sc, &hdr, payload, paylen);
+		if (sc->vsc_native) {
+			struct iovec native_iov[2];
+			ssize_t expected, sent;
+
+			native_iov[0].iov_base = &hdr;
+			native_iov[0].iov_len = sizeof(hdr);
+			native_iov[1].iov_base = payload;
+			native_iov[1].iov_len = paylen;
+			expected = (ssize_t)sizeof(hdr) + paylen;
+			sent = writev(sc->vsc_native_fd, native_iov,
+			    paylen == 0 ? 1 : 2);
+			if (sent != expected) {
+				/*
+				 * EINVAL/EMSGSIZE rejects a malformed guest packet and is
+				 * handled like the validation drops above.  Any other error
+				 * means the backend can no longer accept traffic.  Consume
+				 * this descriptor, stop before consuming subsequent ones,
+				 * and require the guest to reset the device.
+				 */
+				if (sent < 0 &&
+				    (errno == EINVAL || errno == EMSGSIZE)) {
+					DPRINTF(("vtvsock: native transport rejected "
+					    "guest packet: %s", strerror(errno)));
+				} else if (sent < 0 &&
+				    (errno == EAGAIN || errno == EWOULDBLOCK)) {
+					sc->vsc_native_tx = malloc((size_t)expected);
+					if (sc->vsc_native_tx != NULL) {
+						memcpy(sc->vsc_native_tx, &hdr,
+						    sizeof(hdr));
+						if (paylen != 0)
+							memcpy(sc->vsc_native_tx + sizeof(hdr),
+							    payload, paylen);
+						sc->vsc_native_tx_len = (size_t)expected;
+						if (sc->vsc_native_write_evp != NULL)
+							mevent_enable(
+							    sc->vsc_native_write_evp);
+						vq_relchain(vq, req.idx, 0);
+						break;
+					}
+					WPRINTF(("vtvsock: native transport retry "
+					    "allocation failed"));
+					sc->vsc_native_failed = true;
+					vi_set_needs_reset(&sc->vsc_vs);
+					vq_relchain(vq, req.idx, 0);
+					break;
+				} else {
+					WPRINTF(("vtvsock: native transport write "
+					    "failed: %s", sent < 0 ? strerror(errno) :
+					    "short write"));
+					sc->vsc_native_failed = true;
+					vi_set_needs_reset(&sc->vsc_vs);
+					vq_relchain(vq, req.idx, 0);
+					break;
+				}
+			}
+		} else {
+			vtvsock_process_tx_pkt(sc, &hdr, payload, paylen);
+		}
 		/* TX is output-only; device does not write back to the desc. */
 		vq_relchain(vq, req.idx, 0);
 	}
@@ -2305,7 +2532,8 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 	free(payload);
 
 	/* Opportunistically reap while we hold the lock (also timer-driven). */
-	vtvsock_reap_stale(sc);
+	if (!sc->vsc_native)
+		vtvsock_reap_stale(sc);
 
 	pthread_mutex_unlock(&sc->vsc_mtx);
 }
@@ -2324,6 +2552,11 @@ pci_vtvsock_notify_rx(void *vsc, struct vqueue_info *vq __unused)
 	struct vtvsock_conn *conn;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
+	if (sc->vsc_native) {
+		vtvsock_native_drain(sc);
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
 	/*
 	 * Parked control replies go out first, in the descriptors the guest
 	 * just posted, before any connection data is re-enabled behind them.
@@ -3302,6 +3535,24 @@ pci_vtvsock_reset(void *vsc)
 	DPRINTF(("vtvsock: device reset requested"));
 
 	pthread_mutex_lock(&sc->vsc_mtx);
+	if (sc->vsc_native) {
+		if (ioctl(sc->vsc_native_fd, VSOCK_IOC_TRANSPORT_RESET) < 0) {
+			WPRINTF(("vtvsock: native transport reset failed: %s",
+			    strerror(errno)));
+			sc->vsc_native_failed = true;
+		} else {
+			sc->vsc_native_failed = false;
+		}
+		if (sc->vsc_native_rx != sc->vsc_native_rx_buf)
+			free(sc->vsc_native_rx);
+		sc->vsc_native_rx = NULL;
+		sc->vsc_native_rx_off = 0;
+		free(sc->vsc_native_tx);
+		sc->vsc_native_tx = NULL;
+		sc->vsc_native_tx_len = 0;
+		if (sc->vsc_native_write_evp != NULL)
+			mevent_disable(sc->vsc_native_write_evp);
+	}
 	/* Discard parked control replies; the rings are being reset. */
 	sc->vsc_pend_head = 0;
 	sc->vsc_pend_count = 0;
@@ -3329,6 +3580,22 @@ pci_vtvsock_neg_features(void *vsc, uint64_t negotiated_features)
 	struct pci_vtvsock_softc *sc = vsc;
 
 	sc->vsc_features = negotiated_features;
+	if (sc->vsc_native) {
+		if (ioctl(sc->vsc_native_fd,
+		    VSOCK_IOC_TRANSPORT_SET_FEATURES, &negotiated_features) < 0) {
+			WPRINTF(("vtvsock: native feature update failed: %s",
+			    strerror(errno)));
+			sc->vsc_native_failed = true;
+		}
+		/*
+		 * A failed backend stays failed until a successful device reset.
+		 * In particular, a SET_FEATURES ioctl succeeding after RESET failed
+		 * does not restore the connection state that RESET was meant to
+		 * discard.  Reassert NEEDS_RESET when the guest renegotiates.
+		 */
+		if (sc->vsc_native_failed)
+			vi_set_needs_reset(&sc->vsc_vs);
+	}
 	DPRINTF(("vtvsock: negotiated features=%#jx device_caps=%#jx",
 	    (uintmax_t)negotiated_features,
 	    (uintmax_t)vtvsock_vi_consts.vc_hv_caps));
@@ -3394,9 +3661,10 @@ static int
 pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtvsock_softc *sc;
-	const char *cidstr, *path;
+	const char *backend, *cidstr, *path;
 	pthread_mutexattr_t mtx_attr;
 	struct sockaddr_un sun;
+	bool mtx_initialized = false;
 	int s   = -1;
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_t rights;
@@ -3419,6 +3687,7 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 	sc->vsc_ctl_fd = -1;
 	sc->vsc_dfd    = -1;
+	sc->vsc_native_fd = -1;
 	sc->vsc_config.guest_cid = 0;
 	sc->vsc_next_port = VTVSOCK_PORT_MIN;
 	TAILQ_INIT(&sc->vsc_conns);
@@ -3455,15 +3724,30 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vsc_guest_cid = cid;
 	sc->vsc_config.guest_cid = htole64(cid);
 
-	/* --- Validate path (directory) --- */
+	/* --- Select host backend and validate its configuration. --- */
+	backend = get_config_value_node(nvl, "backend");
+	if (backend == NULL || strcmp(backend, "unix") == 0)
+		sc->vsc_native = false;
+	else if (strcmp(backend, "native") == 0)
+		sc->vsc_native = true;
+	else {
+		WPRINTF(("vtvsock: backend must be 'unix' or 'native'"));
+		goto failed;
+	}
 	path = get_config_value_node(nvl, "path");
-	if (path == NULL) {
+	if (!sc->vsc_native && path == NULL) {
 		WPRINTF(("vtvsock: path is required"));
 		goto failed;
 	}
-	sc->vsc_path = strdup(path);
-	if (sc->vsc_path == NULL)
+	if (sc->vsc_native && path != NULL) {
+		WPRINTF(("vtvsock: path is not valid with backend=native"));
 		goto failed;
+	}
+	if (!sc->vsc_native) {
+		sc->vsc_path = strdup(path);
+		if (sc->vsc_path == NULL)
+			goto failed;
+	}
 
 	/* --- Mutex (recursive so virtio layer can re-enter) --- */
 	if (pthread_mutexattr_init(&mtx_attr) != 0)
@@ -3477,6 +3761,7 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 		pthread_mutexattr_destroy(&mtx_attr);
 		goto failed;
 	}
+	mtx_initialized = true;
 	pthread_mutexattr_destroy(&mtx_attr);
 
 	/* --- Link virtio softc --- */
@@ -3505,6 +3790,66 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	pci_set_cfgdata8(pi,  PCIR_CLASS,   PCIC_SIMPLECOMM);
 	/* "other" subclass: subclass 0 (UART) invites serial-driver probes */
 	pci_set_cfgdata8(pi,  PCIR_SUBCLASS, 0x80);
+
+	if (sc->vsc_native) {
+		struct vsock_transport_attach attach;
+
+		sc->vsc_native_rx_buf = malloc(sizeof(struct virtio_vsock_hdr) +
+		    VTVSOCK_MAX_PKT);
+		if (sc->vsc_native_rx_buf == NULL) {
+			WPRINTF(("vtvsock: native transport receive buffer "
+			    "allocation failed"));
+			goto failed;
+		}
+		sc->vsc_native_fd = open("/dev/vsock", O_RDWR | O_NONBLOCK);
+		if (sc->vsc_native_fd < 0) {
+			WPRINTF(("vtvsock: open /dev/vsock failed: %s",
+			    strerror(errno)));
+			goto failed;
+		}
+		memset(&attach, 0, sizeof(attach));
+		attach.version = VSOCK_TRANSPORT_VERSION;
+		attach.guest_cid = (uint32_t)cid;
+		if (ioctl(sc->vsc_native_fd, VSOCK_IOC_TRANSPORT_ATTACH,
+		    &attach) < 0) {
+			WPRINTF(("vtvsock: native transport attach failed: %s",
+			    strerror(errno)));
+			goto failed;
+		}
+#ifndef WITHOUT_CAPSICUM
+		{
+			const cap_ioctl_t cmds[] = {
+				VSOCK_IOC_TRANSPORT_SET_FEATURES,
+				VSOCK_IOC_TRANSPORT_RESET,
+			};
+
+			cap_rights_init(&rights, CAP_EVENT, CAP_IOCTL, CAP_READ,
+			    CAP_WRITE);
+			if (caph_rights_limit(sc->vsc_native_fd, &rights) == -1)
+				errx(EX_OSERR,
+				    "Unable to apply rights for native vsock");
+			if (caph_ioctls_limit(sc->vsc_native_fd, cmds,
+			    nitems(cmds)) == -1)
+				errx(EX_OSERR,
+				    "Unable to limit native vsock ioctls");
+			vtvsock_cap_lockdown(sc->vsc_native_fd);
+		}
+#endif
+		sc->vsc_native_evp = mevent_add(sc->vsc_native_fd, EVF_READ,
+		    vtvsock_native_read_cb, sc);
+		if (sc->vsc_native_evp == NULL) {
+			WPRINTF(("vtvsock: mevent_add for native transport failed"));
+			goto failed;
+		}
+		sc->vsc_native_write_evp = mevent_add_disabled(
+		    sc->vsc_native_fd, EVF_WRITE, vtvsock_native_write_cb, sc);
+		if (sc->vsc_native_write_evp == NULL) {
+			WPRINTF(("vtvsock: mevent_add for native transport writes "
+			    "failed"));
+			goto failed;
+		}
+		goto setup_pci;
+	}
 
 	/* --- Open directory fd --- */
 	sc->vsc_dfd = open(path, O_RDONLY | O_DIRECTORY);
@@ -3594,6 +3939,7 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 		goto failed;
 	}
 
+setup_pci:
 	/* --- Virtio interrupt and BAR --- */
 	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
 		goto failed;
@@ -3629,8 +3975,21 @@ failed:
 			mevent_delete(sc->vsc_reap_evp);
 		if (sc->vsc_ctl_evp != NULL)
 			mevent_delete(sc->vsc_ctl_evp);
+		if (sc->vsc_native_write_evp != NULL)
+			mevent_delete(sc->vsc_native_write_evp);
+		if (sc->vsc_native_evp != NULL) {
+			mevent_delete_close(sc->vsc_native_evp);
+			sc->vsc_native_fd = -1;
+		} else if (sc->vsc_native_fd >= 0) {
+			close(sc->vsc_native_fd);
+		}
+		if (sc->vsc_native_rx != sc->vsc_native_rx_buf)
+			free(sc->vsc_native_rx);
+		free(sc->vsc_native_rx_buf);
+		free(sc->vsc_native_tx);
 		free(sc->vsc_path);
-		pthread_mutex_destroy(&sc->vsc_mtx);
+		if (mtx_initialized)
+			pthread_mutex_destroy(&sc->vsc_mtx);
 		free(sc);
 	}
 	return (-1);
