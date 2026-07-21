@@ -17,6 +17,7 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>		/* real: sockaddr, AF_*, msghdr, SOCK_* */
+#include <sys/time.h>
 #include <sys/queue.h>		/* real: TAILQ/LIST */
 #include <errno.h>
 #include <poll.h>
@@ -135,6 +136,10 @@ sysctl_handle_int(struct sysctl_oid *o __unused, void *p __unused,
 static inline int
 sysctl_handle_long(struct sysctl_oid *o __unused, void *p __unused,
     int a __unused, struct sysctl_req *r __unused) { return (0); }
+static inline int
+sysctl_wire_old_buffer(struct sysctl_req *r __unused, size_t l __unused)
+{ return (0); }
+#define SYSCTL_OUT(r, p, l)	(0)
 
 /* ---- mutex: single-threaded harness, so a recursion-tolerant no-op ---- */
 struct mtx { int depth; };
@@ -168,6 +173,9 @@ static inline void wakeup(void *chan __unused) {}
 #define sbttots(x)	(0)
 #define SBT_1S		1
 #define hz		1000
+static inline int
+tvtohz(const struct timeval *tv)
+{ return ((int)(tv->tv_sec * hz + (tv->tv_usec * hz + 999999) / 1000000)); }
 
 /* ---- callout: record armed/stopped; the reaper/timeout tests fire it
  * manually. ---- */
@@ -346,6 +354,8 @@ static inline void socantrcvmore(struct socket *so) { socantrcvmore_locked(so); 
 static inline void socantsendmore(struct socket *so) { socantsendmore_locked(so); }
 static inline void soisconnected(struct socket *so)
 { so->so_state &= ~(SS_ISCONNECTING | SS_ISDISCONNECTING); so->so_state |= SS_ISCONNECTED; }
+static inline void soisconnecting(struct socket *so)
+{ so->so_state &= ~(SS_ISCONNECTED | SS_ISDISCONNECTED); so->so_state |= SS_ISCONNECTING; }
 static inline void soisdisconnected(struct socket *so)
 { so->so_state &= ~(SS_ISCONNECTING | SS_ISCONNECTED); so->so_state |= SS_ISDISCONNECTED;
   so->so_rcv.sb_state |= SBS_CANTRCVMORE; so->so_snd.sb_state |= SBS_CANTSENDMORE; }
@@ -360,6 +370,9 @@ static inline int
 so_setsockopt(struct socket *so, int level __unused, int name __unused,
     const void *val, size_t len __unused)
 { int v = *(const int *)val; so->so_snd.sb_hiwat = v; so->so_rcv.sb_hiwat = v; return (0); }
+static inline int
+sbsetopt(struct socket *so __unused, struct sockopt *sopt __unused)
+{ return (0); }
 
 /* sonewconn: allocate a child socket cloned from the listener, run pr_attach */
 struct socket *vsock_kmock_sonewconn(struct socket *head, int connstatus);
@@ -375,6 +388,14 @@ struct uio {
 	ssize_t		 uio_resid;
 	struct thread	*uio_td;
 };
+
+int sopoll_generic(struct socket *, int, struct thread *);
+int sosend_generic(struct socket *, struct sockaddr *, struct uio *,
+    struct mbuf *, struct mbuf *, int, struct thread *);
+int soreceive_generic(struct socket *, struct sockaddr **, struct uio *,
+    struct mbuf **, struct mbuf **, int *);
+int soreceive_stream(struct socket *, struct sockaddr **, struct uio *,
+    struct mbuf **, struct mbuf **, int *);
 
 /* protosw / domain (registration is stubbed; the DUT reaches ops through the
  * global protosw it defines, so give the real named fields it initializes). */
@@ -411,6 +432,7 @@ typedef int modeventtype_t;
 #define bzero(p, n)	memset((p), 0, (n))
 #define bcopy(s, d, n)	memmove((d), (s), (n))
 #define ovbcopy(s, d, n) memmove((d), (s), (n))
+extern struct vnet _thevnet;
 extern volatile int ticks;
 extern uint32_t arc4random(void);
 extern uint32_t arc4random_uniform(uint32_t);

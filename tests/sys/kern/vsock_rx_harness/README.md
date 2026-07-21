@@ -22,7 +22,8 @@ don't pass blindly.
 
 ## Run
 
-    sh run.sh        # builds under ASan with a tiny atf-c.h shim, runs inline
+    sh run.sh        # builds under ASan/UBSan with a tiny atf-c.h shim
+    make             # builds the packaged ATF test
 
 ## Files
 
@@ -34,9 +35,10 @@ don't pass blindly.
 ## Scope / TODO
 
 Covered: reserved-CID sanitization, feature-negotiation gating (both
-directions), credit arithmetic incl. wrap, peer_fwd_cnt spoof -> RST via the
-real RX path.  Follow-ups (infrastructure now exists, cheap to add): the
+directions), credit arithmetic incl. wrap, peer_fwd_cnt spoof -> RST,
 flow-control-violation ECONNRESET, CID_LOCAL wire isolation, SEQPACKET
-frag-limit RST, deferred-teardown callout, TRANSPORT_RESET.  msleep/wakeup
-are stubs (return EWOULDBLOCK), so blocking-sender credit-stall tests stay
-in the e2e suite.
+fragment-limit RST, deferred-teardown timeout, and transport reset with CID
+re-registration.  It also covers the global inbound connection cap, the
+non-blocking TX-ready gate before uio consumption, and guest SEQPACKET
+`MSG_EOR` transport marking.  `msleep`/`wakeup` are stubs (return
+EWOULDBLOCK), so blocking-sender credit-stall tests stay in the e2e suite.

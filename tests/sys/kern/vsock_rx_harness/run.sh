@@ -3,11 +3,14 @@
 # using a tiny atf-c.h shim (mirrors vsock_device_harness/run.sh).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
+srctop=${SRCTOP:-$(cd "$here/../../../.." && pwd)}
+cc=${CC:-cc}
+sanitizers=${SANITIZERS:-address,undefined}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cp "$here"/kmock.h "$here"/glue.c "$here"/vsock_rx_test.c "$work"/
 cp -R "$here"/sys "$here"/net "$here"/kern "$work"/
-ln -s /usr/src/sys/kern/uipc_vsock.c "$work"/uipc_vsock.c
+ln -s "$srctop/sys/kern/uipc_vsock.c" "$work"/uipc_vsock.c
 mkdir -p "$work/atfshim"
 cat > "$work/atfshim/atf-c.h" <<'EOF'
 #ifndef ATF_SHIM_H
@@ -34,7 +37,6 @@ static int atf_checks, atf_failed;
 #endif
 EOF
 cd "$work"
-cc=${CC:-cc}
-$cc -O1 -g -fsanitize=address -I. -Iatfshim -include kmock.h \
+$cc -O1 -g -fsanitize="$sanitizers" -I. -Iatfshim -include kmock.h \
     -Wno-macro-redefined -o rxtest vsock_rx_test.c glue.c
 ./rxtest

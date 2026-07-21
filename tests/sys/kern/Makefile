@@ -179,6 +179,7 @@ TESTS_SUBDIRS+=	pipe
 TESTS_SUBDIRS+=	tty
 TESTS_SUBDIRS+=	vsock_device_harness
 TESTS_SUBDIRS+=	vsock_e2e
+TESTS_SUBDIRS+=	vsock_rx_harness
 
 .include <netbsd-tests.test.mk>
 

@@ -7,6 +7,14 @@ test cases to close them, and a phased roadmap.
 
 ## Progress log
 
+**2026-07-21:** closed GAP 3 with Alpine 3.24.1 using its unmodified upstream
+Linux VirtIO drivers.  The packaged matrix passed isolated and combined
+modern/legacy vsock, RNG, and block coverage plus modern input.  The focused
+legacy no-MSI-X gate also passed driver reset/rebind, monitor-mode reboot, and
+post-reboot data-path/persistence checks.  The remaining work is narrower:
+direct `virtio_vsock.c` transport concurrency coverage and the manual-only
+§6 lifecycle rows called out below.
+
 **2026-07-09 (this session):** closed GAP 1, GAP 2, GAP 4, GAP 5. The only
 remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
 - GAP 4 + GAP 2: device harness 86 → 111 checks (conn cap, reaper timers,
@@ -16,12 +24,13 @@ remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
   EOF/EPIPE, connect ERANGE) — all pass in-guest.
 - GAP 1: **guest RX unit harness BUILT** (tests/sys/kern/vsock_rx_harness).
   Compiles the kernel uipc_vsock.c in userspace via kmock.h; drives the real
-  vsock_rx_packet state machine. 5 tests / 20 checks, negative-control
+  vsock_rx_packet state machine. 12 tests / 79 checks, negative-control
   verified. Covers reserved-CID sanitization, feature-negotiation gating,
   credit arithmetic incl. wrap, peer_fwd_cnt spoof → RST, flow-control
-  violation → ECONNRESET. Cheap follow-ups remain (CID_LOCAL isolation,
-  frag-limit RST, deferred-teardown callout, TRANSPORT_RESET) — the
-  infrastructure now exists, each is ~20 lines.
+  violation → ECONNRESET, CID_LOCAL isolation, SEQPACKET fragment-limit RST,
+  deferred teardown, transport reset/CID re-registration, connection-cap slot
+  reclaim, the G1 TX-ready gate, and guest `MSG_EOR` emission. The harness is
+  packaged as an ATF test and runs in the Alpine matrix's VM-free gate.
 
 ## Where coverage stands today (baseline)
 
@@ -29,22 +38,20 @@ remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
 |---|---|---|
 | `vsock_test.c` (ATF) | socket ops + **loopback** transport | 152/153 pass (1 platform skip) |
 | `vsock_wire_test.c` (ATF) | struct/ABI wire layout | complete for static layout |
-| `vsock_device_harness/` | bhyve host device TX/RX ingress | 86 checks |
-| `vsock_e2e/` (live guest) | host↔guest §6 matrix | 14/14, **not in CI** (needs bhyve+guest) |
+| `vsock_device_harness/` | bhyve host device TX/RX ingress | 181 vsock checks plus transport/device suites |
+| `vsock_rx_harness/` | guest `uipc_vsock.c` RX/send state | 12 tests / 79 checks |
+| `vsock_e2e/` (live guest) | upstream Linux driver interop | modern/legacy matrix passed; root-only |
 
-**The one-sentence problem:** the ATF suite is thorough but *loopback-only*
-(it never routes through a remote transport), the device harness covers only
-the *host* device, and everything genuinely wire/credit/reset-related on the
-**guest** side is exercised only by the 14 live e2e tests — which are not
-automated. Two whole bodies of code have **zero automated coverage**:
-`uipc_vsock.c:vsock_rx_packet()` (the guest RX state machine, ~700 lines) and
-all of `sys/dev/virtio/vsock/virtio_vsock.c` (the guest transport).
+**Remaining structural limitation:** `uipc_vsock.c:vsock_rx_packet()` now has
+crafted-peer CI coverage and the live Alpine matrix exercises the complete
+guest stack, but `sys/dev/virtio/vsock/virtio_vsock.c` still has no direct
+userspace unit harness for virtqueue concurrency and detach races.
 
 ---
 
-## GAP 1 (BIGGEST) — guest RX state machine + virtio transport: no automated coverage
+## GAP 1 — guest RX state machine coverage (CLOSED)
 
-**What's untested:** every wire event the guest handles —
+**Original gap:** every wire event the guest handles —
 OP_REQUEST/RESPONSE/RST/SHUTDOWN/RW/CREDIT_UPDATE/CREDIT_REQUEST — plus
 peer-credit ingest, the `peer_fwd_cnt` spoof check, the cumulative-overflow
 ECONNRESET, SEQPACKET wire reassembly + frag-limit, the deferred-teardown
@@ -56,7 +63,7 @@ ring-full sleep loops, detach-vs-inflight races, and the new G1 `tx_ready` gate.
 (the VNET panic, the pr_sosend data loss, G1). A regression here is silent
 data loss or a hang, and nothing in CI would catch it.
 
-**The fix — one new harness unlocks most of it.** Build
+**Implemented:** a harness at
 `tests/sys/kern/vsock_rx_harness/` mirroring `vsock_device_harness/`:
 `#include "uipc_vsock.c"` with a mock `vtvsock_transport` that **captures
 emitted packets**, plus mock sockbuf primitives. Then drive `vsock_rx_packet`
@@ -91,8 +98,7 @@ Concrete cases (each is one ATF check-group):
     non-blocking send returns EWOULDBLOCK *before* consuming the uio (regression
     for the silent-loss fix).
 
-**Effort:** ~1 focused session, and it is the HARDEST item — see the scoping
-below. **Payoff:** converts 11 Tier-1/2 behaviors from live-e2e-only to CI.
+**Result:** 11 Tier-1/2 behaviors moved from live-e2e-only coverage into CI.
 
 ### GAP 1 scoping (dependency analysis, done 2026-07-09)
 
@@ -138,10 +144,10 @@ no listener correctly gives ECONNRESET. The CID-0 timeout matches Linux
 
 ---
 
-## GAP 2 — bhyve control-socket path (host-facing, privileged, behind Capsicum)
+## GAP 2 — bhyve control-socket path (CLOSED)
 
-**What's untested:** `pci_vtvsock_ctl_conn_cb`/`ctl_accept`. e2e covers only the
-happy host→guest path + one refused case. Untested: the `VTVSOCK_MAX_CTL_CONNS`
+**Original gap:** `pci_vtvsock_ctl_conn_cb`/`ctl_accept`. e2e covered only the
+happy host→guest path + one refused case. Untested was the `VTVSOCK_MAX_CTL_CONNS`
 (16) cap, the 30 s idle-timeout reap of a ctl conn that never sent CONNECT, the
 CONNECTING-reap `-ETIMEDOUT` reply, the `-ENOMEM` paths, unknown-`cmd`, and
 SCM_RIGHTS fd correctness under the cap.
@@ -162,13 +168,13 @@ sendmsg / recvmsg):
 
 ---
 
-## GAP 3 — Linux guest interop (§4): the independent conformance oracle, never run
+## GAP 3 — Linux guest interop (§4) (CLOSED)
 
-**What's untested:** literally everything against a non-5BSD implementation.
-Every wire/credit/EOR behavior has only ever been exercised 5BSD↔5BSD. This is
-the difference between "we believe it's spec-conformant" and "we know."
+Validated with Alpine 3.24.1's upstream drivers in both modern and legacy
+transport modes.  The matrix covers bidirectional stream/SEQPACKET traffic,
+credit churn and bulk checksums, isolated devices, and combined-device runs.
 
-**Three specific risks this would settle** (from the conformance review):
+**Four specific risks this settled** (from the conformance review):
 - The `NO_IMPLIED_STREAM` feature bit (bit 2) — ratified in virtio 1.4 but
   historically contested; confirm a real Linux kernel negotiates it correctly.
 - Legacy config-space endianness assumption (fine on x86, unverified elsewhere).
@@ -176,7 +182,7 @@ the difference between "we believe it's spec-conformant" and "we know."
 - Legacy virtio-PCI binding: confirm the guest kernel has
   `CONFIG_VIRTIO_PCI_LEGACY` (mainstream x86 yes; stripped cloud kernels no).
 
-**The fix — execute testplan §4:**
+**Validation executed from testplan §4:**
 1. Host prereq: `pkg install edk2-bhyve` (UEFI firmware).
 2. Boot an Alpine/Debian cloud image with a serial console (§4.1–4.3).
 3. `modprobe vsock vmw_vsock_virtio_transport`; confirm attach + `/dev/vsock`.
@@ -185,12 +191,12 @@ the difference between "we believe it's spec-conformant" and "we know."
    python `AF_VSOCK` snippets. Compare byte-exact (sha256) for bulk.
 5. Capture `BHYVE_VTVSOCK_DEBUG=1` during rows 3/4/9 to watch credit under load.
 
-**Effort:** ~1 session (mostly image/firmware setup). **Payoff:** the firm
-answer to "could a Linux guest work" — highest external-confidence signal.
+**Result:** independent Linux confirmation of the wire protocol, feature
+negotiation, and legacy/modern driver binding.
 
 ---
 
-## GAP 4 — device harness: caps, malformed input, reaper timers
+## GAP 4 — device harness caps, malformed input, reaper timers (CLOSED)
 
 Cheap additions to the existing `vsock_device_harness/`:
 1. **Connection cap** — drive 257 OP_REQUESTs (`VTVSOCK_MAX_CONNS` = 256);
@@ -208,7 +214,7 @@ Cheap additions to the existing `vsock_device_harness/`:
 
 ---
 
-## GAP 5 — ATF loopback: SEQPACKET edges + teardown holes
+## GAP 5 — ATF loopback SEQPACKET edges and teardown holes (CLOSED)
 
 Small, high-value additions to `vsock_test.c` (loopback, already in CI):
 1. **SEQPACKET exact-MAX boundary** — send exactly `sb_hiwat` bytes (must
@@ -233,32 +239,34 @@ Small, high-value additions to `vsock_test.c` (loopback, already in CI):
 |---|---|---|
 | 1–4 | echo, bulk, credit churn | ✅ e2e + ATF |
 | 5 | seqpacket record sizes 0/1/MAX/MAX+1 | ⚠️ partial (exact-MAX + remote-wire missing → GAP 5.1, GAP 1.7) |
-| 6 | MSG_EOR/partial records | ⚠️ partial (guest→host emit missing → GAP 1.10) |
+| 6 | MSG_EOR/partial records | ✅ device + guest RX harnesses + e2e |
 | 7, 8 | dead host/guest port | ✅ e2e |
-| 9 | ≥256 concurrent, excess refused, slots freed | ❌ **aspirational** → GAP 1.4 + GAP 4.1 |
+| 9 | ≥256 concurrent, excess refused, slots freed | ✅ host and guest harnesses |
 | 10 | graceful close both directions | ⚠️ stream ✅, seqpacket-remote ❌ |
 | 11 | abrupt peer kill | ✅ e2e (one direction) |
 | 12 | guest reboot with conns open | ❌ **aspirational** → GAP 1.9 |
 | 13 | detach with blocked sender (≤1s wakeup) | ❌ **manual only** (G5 fix now makes this pass; needs a test) |
 | 14 | reserved-CID connects | ⚠️ bind-side ✅, guest-initiated ❌ |
 | 15 | port 0 / auto-bind | ✅ ATF |
-| 16 | CID_LOCAL isolation | ❌ **aspirational** → GAP 1.6 |
+| 16 | CID_LOCAL isolation | ✅ guest RX harness |
 
 ---
 
-## Phased roadmap (recommended order)
+## Completed roadmap
 
-**Phase A — the guest RX harness (GAP 1).** Highest leverage: one new harness
-closes 11 behaviors including 3 that regression-guard this session's fixes
-(G1, G4, the VNET/reset path). Unprivileged, CI-able. *Do this first.*
+**Phase A — the guest RX harness (GAP 1).** Completed.  One unprivileged,
+CI-able harness closes 11 behaviors including 3 that regression-guard the G1,
+G4, and VNET/reset fixes.
 
-**Phase B — Linux interop (GAP 3).** The firm external answer on conformance;
-independent of A. Can run in parallel with A (different machine/setup).
+**Phase B — Linux interop (GAP 3).** Completed with the Alpine matrix.
 
-**Phase C — harness fill-in (GAP 2 + GAP 4).** Control-socket path and device
-caps/timers; extends the existing device harness.
+**Phase C — harness fill-in (GAP 2 + GAP 4).** Completed in the device harness.
 
-**Phase D — ATF edges (GAP 5).** Cheapest; can slot in anytime.
+**Phase D — ATF edges (GAP 5).** Completed.
+
+**Next targeted work:** direct unit coverage for `virtio_vsock.c`, guest reboot
+with connections deliberately left open (row 12), detach with a blocked sender
+(row 13), and automated guest-initiated reserved-CID behavior (row 14).
 
 **Lowest-priority (Tier 3, documented in REVIEW.md, likely leave alone):**
 auto-bind port exhaustion, EMFILE/fd exhaustion, pending-ring overflow,

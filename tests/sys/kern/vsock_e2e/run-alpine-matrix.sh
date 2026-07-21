@@ -41,7 +41,14 @@ yes)
 		echo "set SRCTOP or use VM_FREE_GATES=no for a VM-only rerun" >&2
 		exit 1
 	}
+	rx_harness="$srctop/tests/sys/kern/vsock_rx_harness/run.sh"
+	[ -f "$rx_harness" ] || {
+		echo "RX harness source not found: $rx_harness" >&2
+		echo "set SRCTOP or use VM_FREE_GATES=no for a VM-only rerun" >&2
+		exit 1
+	}
 	SRCTOP="$srctop" sh "$device_harness"
+	SRCTOP="$srctop" sh "$rx_harness"
 	echo "==== VM-free host pipeline controls ===="
 	if [ -f "$here/Makefile" ]; then
 		make -C "$here"
