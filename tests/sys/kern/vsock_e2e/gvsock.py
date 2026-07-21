@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Linux guest helper and strict preflight for bhyve virtio-vsock E2E."""
 
+import errno
 import glob
 import os
 import socket
@@ -73,6 +74,36 @@ def preflight(transport):
     print(f"PASS preflight transport={transport} pci={expected}")
 
 
+def connect_error_name(exc):
+    if isinstance(exc, TimeoutError):
+        return "ETIMEDOUT"
+    if isinstance(exc, OSError) and exc.errno is not None:
+        return errno.errorcode.get(exc.errno, f"ERRNO_{exc.errno}")
+    return type(exc).__name__
+
+
+def failed_connect(cid, port, timeout):
+    conn = make_socket("stream")
+    conn.settimeout(timeout)
+    try:
+        conn.connect((cid, port))
+    except (OSError, TimeoutError) as exc:
+        return connect_error_name(exc)
+    finally:
+        conn.close()
+    raise RuntimeError(f"reserved CID {cid} unexpectedly connected")
+
+
+def reserved_cid_connects():
+    cid0 = failed_connect(0, 7109, 3.0)
+    if cid0 != "ETIMEDOUT":
+        raise RuntimeError(f"CID 0 returned {cid0}, expected ETIMEDOUT")
+    cid2 = failed_connect(2, 7109, 3.0)
+    if cid2 != "ECONNRESET":
+        raise RuntimeError(f"CID 2 returned {cid2}, expected ECONNRESET")
+    print(f"PASS reserved-cids cid0={cid0} cid2={cid2}")
+
+
 def make_fake_device(
     root, name, device, driver="vmw_vsock_virtio_transport"
 ):
@@ -121,6 +152,12 @@ def self_test():
             pass
         else:
             raise AssertionError("duplicate devices were accepted")
+    if connect_error_name(TimeoutError()) != "ETIMEDOUT":
+        raise AssertionError("timeout outcome was misclassified")
+    if connect_error_name(ConnectionResetError(errno.ECONNRESET, "reset")) != (
+        "ECONNRESET"
+    ):
+        raise AssertionError("reset outcome was misclassified")
     print("SELFTEST PASS")
 
 
@@ -166,9 +203,13 @@ def main():
     ):
         preflight(sys.argv[2])
         return
+    if sys.argv[1:] == ["reserved-cids"]:
+        reserved_cid_connects()
+        return
     if len(sys.argv) < 4:
         raise SystemExit(
             "usage: gvsock.py --self-test | preflight modern|legacy | "
+            "reserved-cids | "
             "echo-l|recv-l|send|send-echo stream|seq port [value]"
         )
     command, sock_type, port = sys.argv[1], sys.argv[2], int(sys.argv[3])

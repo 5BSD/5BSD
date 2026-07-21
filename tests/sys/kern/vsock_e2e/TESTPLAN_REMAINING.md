@@ -20,6 +20,9 @@ within one second.  The remaining work is narrower lifecycle coverage below.
 The focused no-MSI-X run now also passes monitor-mode reboot with established
 STREAM and SEQPACKET endpoints: each is echo-proven before reboot, both old
 endpoints disconnect within 30 seconds, and fresh connections pass afterward.
+Every live vsock preflight now also asserts guest-initiated reserved-CID
+behavior: CID 0 times out with ETIMEDOUT, while CID 2 on an unused host port
+is rejected with ECONNRESET.
 
 **2026-07-09 (this session):** closed GAP 1, GAP 2, GAP 4, GAP 5. The only
 remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
@@ -144,10 +147,11 @@ injector — but note the e2e path canNOT reach the malicious-peer cases
 bhyve only emits well-formed wire frames, so those RST/teardown paths are
 reachable ONLY by a unit harness or a raw-wire injector.
 
-**Empirical note (2026-07-09):** a guest connect to reserved CID 0 *times
-out* rather than fast-failing (ETIMEDOUT via the connect callout); CID 2 with
-no listener correctly gives ECONNRESET. The CID-0 timeout matches Linux
-(unreachable CID), so likely not a bug, but worth an explicit assertion.
+**Automated result (2026-07-21):** every Alpine vsock preflight asserts that a
+guest connect to reserved CID 0 times out with ETIMEDOUT and that CID 2 with
+no listener returns ECONNRESET.  The CID-0 result matches Linux's treatment of
+an unreachable CID; the CID-2 result proves bhyve returned RST for the unused
+host port.
 
 ---
 
@@ -253,7 +257,7 @@ Small, high-value additions to `vsock_test.c` (loopback, already in CI):
 | 11 | abrupt peer kill | ✅ e2e (one direction) |
 | 12 | guest reboot with conns open | ✅ e2e, stream + seqpacket old-endpoint teardown and fresh reconnect |
 | 13 | detach with blocked sender (≤1s wakeup) | ✅ direct transport harness, pthread-blocked full-ring sender |
-| 14 | reserved-CID connects | ⚠️ bind-side ✅, guest-initiated ❌ |
+| 14 | reserved-CID connects | ✅ guest-initiated e2e + bind-side harness |
 | 15 | port 0 / auto-bind | ✅ ATF |
 | 16 | CID_LOCAL isolation | ✅ guest RX harness |
 
@@ -271,8 +275,9 @@ G4, and VNET/reset fixes.
 
 **Phase D — ATF edges (GAP 5).** Completed.
 
-**Next targeted work:** automated guest-initiated reserved-CID behavior
-(row 14).
+**Remaining targeted work:** finish the remote-wire halves of rows 5 and 10,
+and the reverse direction of row 11.  Interrupt-vs-detach scheduling and G3
+remain lower-priority structural/code-review items.
 
 **Lowest-priority (Tier 3, documented in REVIEW.md, likely leave alone):**
 auto-bind port exhaustion, EMFILE/fd exhaustion, pending-ring overflow,

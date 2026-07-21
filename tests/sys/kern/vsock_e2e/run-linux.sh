@@ -113,6 +113,22 @@ $ACMD "test -r $GPY && python3 $GPY preflight $TRANSPORT" 20 >/dev/null || {
 	exit 2
 }
 
+# Lock down guest-initiated behavior for the reserved hypervisor CID and the
+# host CID with no listener.  CID 0 is unreachable and times out on Linux;
+# CID 2 is routable, so bhyve must answer the unused port with RST.
+if reserved_out=$($ACMD "python3 $GPY reserved-cids" 12); then
+	reserved_rc=0
+else
+	reserved_rc=$?
+fi
+if [ "$reserved_rc" -ne 0 ] ||
+    [ "$reserved_out" != "PASS reserved-cids cid0=ETIMEDOUT cid2=ECONNRESET" ]; then
+	diag_capture reserved_cids "$reserved_rc" "$reserved_out"
+	dump_context
+	exit 2
+fi
+echo "PASS  preflight_reserved_cids"
+
 # Prove both directions before running the larger matrix.  Every subsequent
 # case depends on these same control and data paths; cascading failures after
 # either smoke probe only obscure the root cause.

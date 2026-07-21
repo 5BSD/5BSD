@@ -32,7 +32,9 @@ Run the gates in this order.  Early failures are cheaper and more specific.
 4. **Isolated real-VM test.** `DEVICES=<name>` must attach only that device.
    The verifier must uniquely match the expected PCI function, prove it is
    bound to the intended upstream driver, and exercise actual data in every
-   supported direction.
+   supported direction.  Each vsock preflight also verifies guest-initiated
+   reserved-CID behavior: CID 0 must time out and CID 2 on an unused host port
+   must be reset.
 5. **Transport compatibility.** `modern` explicitly opts in to the modern
    transport.  `legacy` deliberately omits the transport option, which tests
    existing bhyve command lines rather than a synthetic explicit-legacy path.
