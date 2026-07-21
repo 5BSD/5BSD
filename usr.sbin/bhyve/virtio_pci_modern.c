@@ -281,11 +281,7 @@ vi_modern_set_needs_reset(struct virtio_softc *vs, const char *why)
 {
 
 	VIRTIO_PROBE_ERROR(why);
-	if ((vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
-		return;
-	vs->vs_status |= VIRTIO_CONFIG_S_NEEDS_RESET;
-	if ((vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
-		vi_modern_config_interrupt(vs);
+	vi_set_needs_reset(vs);
 }
 
 void

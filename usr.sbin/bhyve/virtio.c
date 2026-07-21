@@ -137,6 +137,9 @@ vi_pci_notify_queue(struct virtio_softc *vs, uint64_t qidx)
 	    (!vq->vq_enabled ||
 	    (vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0))
 		return;
+	/* A malformed ring is fatal until the driver performs a real reset. */
+	if ((vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
+		return;
 	if (vq->vq_notify != NULL)
 		(*vq->vq_notify)(DEV_SOFTC(vs), vq);
 	else if (vc->vc_qnotify != NULL)
@@ -144,6 +147,17 @@ vi_pci_notify_queue(struct virtio_softc *vs, uint64_t qidx)
 	else
 		EPRINTLN("%s: qnotify queue %ju: missing vq/vc notify",
 		    vc->vc_name, (uintmax_t)qidx);
+}
+
+void
+vi_set_needs_reset(struct virtio_softc *vs)
+{
+
+	if ((vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
+		return;
+	vs->vs_status |= VIRTIO_CONFIG_S_NEEDS_RESET;
+	if ((vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
+		vi_interrupt(vs, VIRTIO_PCI_ISR_CONFIG, vs->vs_msix_cfg_idx);
 }
 
 /*
@@ -238,10 +252,7 @@ vi_vq_init(struct virtio_softc *vs, uint32_t pfn)
 		vq->vq_last_avail = 0;
 		vq->vq_next_used = 0;
 		vq->vq_save_used = 0;
-		vs->vs_status |= VIRTIO_CONFIG_S_NEEDS_RESET;
-		if ((vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
-			vi_interrupt(vs, VIRTIO_PCI_ISR_CONFIG,
-			    vs->vs_msix_cfg_idx);
+		vi_set_needs_reset(vs);
 		return;
 	}
 	vq->vq_pfn = pfn;
@@ -339,6 +350,7 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 	int i;
 	u_int ndesc, n_indir;
 	u_int idx, next;
+	uint64_t chain_len;
 	struct vi_req req;
 	struct vring_desc *vdir, *vindir, *vp;
 	struct vmctx *ctx;
@@ -349,6 +361,7 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 	name = vs->vs_vc->vc_name;
 	memset(&req, 0, sizeof(req));
 	req.ordered = true;
+	chain_len = 0;
 
 	/*
 	 * Note: it's the responsibility of the guest not to
@@ -368,11 +381,10 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 	if (ndesc == 0)
 		return (0);
 	if (ndesc > vq->vq_qsize) {
-		/* XXX need better way to diagnose issues */
 		EPRINTLN(
 		    "%s: ndesc (%u) out of range, driver confused?",
 		    name, (u_int)ndesc);
-		return (-1);
+		goto bad;
 	}
 
 	/*
@@ -392,14 +404,20 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 			    "%s: descriptor index %u out of range, "
 			    "driver confused?",
 			    name, next);
-			return (-1);
+			goto bad;
 		}
 		vdir = &vq->vq_desc[next];
 		if ((vdir->flags & VRING_DESC_F_INDIRECT) == 0) {
+			if (vdir->len > UINT32_MAX - chain_len) {
+				EPRINTLN("%s: descriptor chain exceeds 2^32-1 "
+				    "bytes", name);
+				goto bad;
+			}
+			chain_len += vdir->len;
 			if (!_vq_record(i, vdir, ctx, iov, niov, &req)) {
 				EPRINTLN("%s: descriptor maps outside guest memory",
 				    name);
-				return (-1);
+				goto bad;
 			}
 			i++;
 		} else if ((vs->vs_negotiated_caps &
@@ -408,22 +426,27 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 			    "%s: descriptor has forbidden INDIRECT flag, "
 			    "driver confused?",
 			    name);
-			return (-1);
+			goto bad;
 		} else {
+			if ((vdir->flags & VRING_DESC_F_NEXT) != 0) {
+				EPRINTLN("%s: descriptor has both INDIRECT and NEXT "
+				    "flags", name);
+				goto bad;
+			}
 			n_indir = vdir->len / 16;
 			if ((vdir->len & 0xf) || n_indir == 0) {
 				EPRINTLN(
 				    "%s: invalid indir len 0x%x, "
 				    "driver confused?",
 				    name, (u_int)vdir->len);
-				return (-1);
+				goto bad;
 			}
 			vindir = paddr_guest2host(ctx,
 			    vdir->addr, vdir->len);
 			if (vindir == NULL) {
 				EPRINTLN("%s: indirect descriptor table maps outside "
 				    "guest memory", name);
-				return (-1);
+				goto bad;
 			}
 			/*
 			 * Indirects start at the 0th, then follow
@@ -440,12 +463,18 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 					    "%s: indirect desc has INDIR flag,"
 					    " driver confused?",
 					    name);
-					return (-1);
+					goto bad;
 				}
+				if (vp->len > UINT32_MAX - chain_len) {
+					EPRINTLN("%s: indirect descriptor chain "
+					    "exceeds 2^32-1 bytes", name);
+					goto bad;
+				}
+				chain_len += vp->len;
 				if (!_vq_record(i, vp, ctx, iov, niov, &req)) {
 					EPRINTLN("%s: indirect descriptor maps "
 					    "outside guest memory", name);
-					return (-1);
+					goto bad;
 				}
 				if (++i > VQ_MAX_DESCRIPTORS)
 					goto loopy;
@@ -457,7 +486,7 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 					    "%s: invalid next %u > %u, "
 					    "driver confused?",
 					    name, (u_int)next, n_indir);
-					return (-1);
+					goto bad;
 				}
 			}
 		}
@@ -469,6 +498,9 @@ loopy:
 	EPRINTLN(
 	    "%s: descriptor loop? count > %d - driver confused?",
 	    name, i);
+
+bad:
+	vi_set_needs_reset(vs);
 	return (-1);
 
 done:
@@ -770,6 +802,7 @@ vi_pci_write(struct pci_devinst *pi, int baridx, uint64_t offset, int size,
 	uint64_t virtio_config_size, max;
 	const char *name;
 	uint32_t newoff;
+	uint8_t old_status;
 	int error;
 
 	if (vs->vs_flags & VIRTIO_USE_MSIX) {
@@ -860,6 +893,9 @@ bad:
 		vi_pci_notify_queue(vs, value);
 		break;
 	case VIRTIO_PCI_STATUS:
+		old_status = vs->vs_status;
+		if (value != 0)
+			value |= old_status & VIRTIO_CONFIG_S_NEEDS_RESET;
 		vs->vs_status = value;
 		if (value == 0)
 			(*vc->vc_reset)(DEV_SOFTC(vs));

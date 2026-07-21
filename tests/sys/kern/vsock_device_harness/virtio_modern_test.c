@@ -162,6 +162,17 @@ pci_generate_msix(struct pci_devinst *pi __unused, int vector)
 }
 
 void
+vi_set_needs_reset(struct virtio_softc *vs)
+{
+
+	if ((vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
+		return;
+	vs->vs_status |= VIRTIO_CONFIG_S_NEEDS_RESET;
+	if ((vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
+		vi_interrupt(vs, VIRTIO_PCI_ISR_CONFIG, vs->vs_msix_cfg_idx);
+}
+
+void
 vi_pci_notify_queue(struct virtio_softc *vs, uint64_t queue)
 {
 

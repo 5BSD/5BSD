@@ -489,6 +489,8 @@ int	vi_pci_modern_cfgwrite(struct pci_devinst *, int, int, uint32_t);
 void	vi_pci_notify_queue(struct virtio_softc *, uint64_t);
 int	vi_intr_init(struct virtio_softc *vs, int barnum, int use_msix);
 void	vi_reset_dev(struct virtio_softc *);
+/* Mark an unrecoverable device error and notify an active driver. */
+void	vi_set_needs_reset(struct virtio_softc *);
 void	vi_set_io_bar(struct virtio_softc *, int);
 
 int	vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,

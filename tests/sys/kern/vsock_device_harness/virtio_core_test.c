@@ -33,6 +33,7 @@ struct guest_region {
 static struct guest_region g_regions[4];
 static int g_region_count;
 static int g_interrupts;
+static int g_notifications;
 static bool g_lintr_asserted;
 static bool g_hold_deassert;
 static bool g_deassert_entered;
@@ -155,7 +156,43 @@ static void
 notify_and_interrupt(void *arg, struct vqueue_info *vq)
 {
 
+	g_notifications++;
 	vq_interrupt(arg, vq);
+}
+
+static void
+reset_status(void *arg)
+{
+	struct virtio_softc *vs = arg;
+
+	vs->vs_status = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(legacy_status_preserves_needs_reset);
+ATF_TC_BODY(legacy_status_preserves_needs_reset, tc)
+{
+	struct virtio_consts vc = {
+		.vc_name = "status-test",
+		.vc_nvq = 1,
+		.vc_reset = reset_status,
+	};
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	memset(&vq, 0, sizeof(vq));
+	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	vs.vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	vi_set_needs_reset(&vs);
+	ATF_REQUIRE((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 1,
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 1, 0);
+	ATF_CHECK(vs.vs_status == 0);
 }
 
 ATF_TC_WITHOUT_HEAD(notify_without_msix_does_not_relock_device);
@@ -177,6 +214,7 @@ ATF_TC_BODY(notify_without_msix_does_not_relock_device, tc)
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
 		alarm(2);
+		g_notifications = 0;
 		memset(&vs, 0, sizeof(vs));
 		memset(&pi, 0, sizeof(pi));
 		memset(&vq, 0, sizeof(vq));
@@ -312,8 +350,12 @@ ATF_TC_BODY(direct_mapping_validation, tc)
 	ATF_CHECK(req.readable == 0 && req.writable == 1);
 
 	vq.vq_last_avail = 0;
+	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	desc[0].addr = 0xdead0000;
 	ATF_CHECK(vq_getchain(&vq, &iov, 1, &req) == -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	ATF_CHECK(vi_isr_read(&vs) == VIRTIO_PCI_ISR_CONFIG);
+	ATF_CHECK(!g_lintr_asserted);
 
 	vq.vq_last_avail = 0;
 	desc[0].addr = 0x1000;
@@ -324,6 +366,7 @@ ATF_TC_BODY(direct_mapping_validation, tc)
 	desc[1].len = 4;
 	desc[1].flags = VRING_DESC_F_WRITE;
 	ATF_CHECK(vq_getchain(&vq, &iov, 1, &req) == -1);
+	ATF_CHECK(vi_isr_read(&vs) == 0);
 
 	vq.vq_last_avail = 0;
 	desc[1].addr = 0x1004;
@@ -377,8 +420,69 @@ ATF_TC_BODY(indirect_mapping_validation, tc)
 	desc[0].addr = 0x2000;
 	indirect[0].addr = 0xbeef0000;
 	ATF_CHECK(vq_getchain(&vq, &iov, 1, &req) == -1);
+
+	vq.vq_last_avail = 0;
+	indirect[0].addr = 0x1000;
+	desc[0].flags = VRING_DESC_F_INDIRECT | VRING_DESC_F_NEXT;
+	desc[0].next = 1;
+	ATF_CHECK(vq_getchain(&vq, &iov, 1, &req) == -1);
 }
 
+ATF_TC_WITHOUT_HEAD(descriptor_chain_byte_limit);
+ATF_TC_BODY(descriptor_chain_byte_limit, tc)
+{
+	union { max_align_t align; uint8_t bytes[64]; } avail_mem;
+	union { max_align_t align; uint8_t bytes[128]; } used_mem;
+	struct virtio_softc vs;
+	struct virtio_consts vc = { 0 };
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	struct vring_desc desc[8];
+	struct vi_req req;
+	struct iovec iov[2];
+	uint8_t payload;
+
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	/* The parser maps these ranges but does not access their contents. */
+	add_region(0x1000, &payload, UINT32_MAX);
+	desc[0].addr = 0x1000;
+	desc[0].len = UINT32_MAX;
+	desc[0].flags = VRING_DESC_F_NEXT;
+	desc[0].next = 1;
+	desc[1].addr = 0x1000;
+	desc[1].len = 1;
+	ATF_CHECK(vq_getchain(&vq, iov, nitems(iov), &req) == -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+}
+
+ATF_TC_WITHOUT_HEAD(fatal_ring_error_blocks_later_kicks);
+ATF_TC_BODY(fatal_ring_error_blocks_later_kicks, tc)
+{
+	struct virtio_consts vc = {
+		.vc_name = "fatal-notify-test",
+		.vc_nvq = 1,
+		.vc_qnotify = notify_and_interrupt,
+	};
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	memset(&vq, 0, sizeof(vq));
+	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK |
+	    VIRTIO_CONFIG_S_NEEDS_RESET;
+	g_notifications = 0;
+	vi_pci_notify_queue(&vs, 0);
+	ATF_CHECK(g_notifications == 0);
+
+	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	vi_pci_notify_queue(&vs, 0);
+	ATF_CHECK(g_notifications == 1);
+}
 ATF_TC_WITHOUT_HEAD(legacy_queue_mapping_validation);
 ATF_TC_BODY(legacy_queue_mapping_validation, tc)
 {
@@ -458,8 +562,11 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, direct_mapping_validation);
 	ATF_TP_ADD_TC(tp, indirect_mapping_validation);
+	ATF_TP_ADD_TC(tp, descriptor_chain_byte_limit);
+	ATF_TP_ADD_TC(tp, fatal_ring_error_blocks_later_kicks);
 	ATF_TP_ADD_TC(tp, legacy_queue_mapping_validation);
 	ATF_TP_ADD_TC(tp, event_idx_interrupts);
+	ATF_TP_ADD_TC(tp, legacy_status_preserves_needs_reset);
 	ATF_TP_ADD_TC(tp, notify_without_msix_does_not_relock_device);
 	ATF_TP_ADD_TC(tp, isr_read_serializes_intx);
 	return (atf_no_error());
