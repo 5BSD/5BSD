@@ -431,6 +431,9 @@ vi_modern_set_address(uint64_t *address, uint64_t offset, uint32_t value)
 static int
 vi_modern_map_vq(struct virtio_softc *vs, struct vqueue_info *vq)
 {
+	struct vring_avail *avail;
+	struct vring_desc *desc;
+	struct vring_used *used;
 	size_t avail_size, desc_size, used_size;
 
 	if (vq->vq_qsize == 0 || !powerof2(vq->vq_qsize) ||
@@ -442,14 +445,17 @@ vi_modern_map_vq(struct virtio_softc *vs, struct vqueue_info *vq)
 	desc_size = sizeof(struct vring_desc) * vq->vq_qsize;
 	avail_size = 6 + sizeof(uint16_t) * vq->vq_qsize;
 	used_size = 6 + sizeof(struct vring_used_elem) * vq->vq_qsize;
-	vq->vq_desc = paddr_guest2host(vs->vs_pi->pi_vmctx,
+	desc = paddr_guest2host(vs->vs_pi->pi_vmctx,
 	    vq->vq_desc_gpa, desc_size);
-	vq->vq_avail = paddr_guest2host(vs->vs_pi->pi_vmctx,
+	avail = paddr_guest2host(vs->vs_pi->pi_vmctx,
 	    vq->vq_driver_gpa, avail_size);
-	vq->vq_used = paddr_guest2host(vs->vs_pi->pi_vmctx,
+	used = paddr_guest2host(vs->vs_pi->pi_vmctx,
 	    vq->vq_device_gpa, used_size);
-	if (vq->vq_desc == NULL || vq->vq_avail == NULL || vq->vq_used == NULL)
+	if (desc == NULL || avail == NULL || used == NULL)
 		return (EFAULT);
+	vq->vq_desc = desc;
+	vq->vq_avail = avail;
+	vq->vq_used = used;
 	return (0);
 }
 

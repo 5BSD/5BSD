@@ -489,6 +489,36 @@ ATF_TC_BODY(queue_and_interrupts, tc)
 	ATF_CHECK(queues[0].vq_msix_idx == VIRTIO_MSI_NO_VECTOR);
 }
 
+ATF_TC_WITHOUT_HEAD(queue_mapping_is_atomic);
+ATF_TC_BODY(queue_mapping_is_atomic, tc)
+{
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info queues[2];
+	struct vring_avail *old_avail;
+	struct vring_desc *old_desc;
+	struct vring_used *old_used;
+
+	setup_transport(&vs, &pi, queues);
+	old_desc = (struct vring_desc *)&g_guest_mem[16];
+	old_avail = (struct vring_avail *)&g_guest_mem[32];
+	old_used = (struct vring_used *)&g_guest_mem[48];
+	queues[1].vq_desc = old_desc;
+	queues[1].vq_avail = old_avail;
+	queues[1].vq_used = old_used;
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_Q_SELECT, 2, 1);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_Q_DESCLO, 4, 0x1000);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_Q_AVAILLO, 4, 0x7000);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_Q_USEDLO, 4,
+	    sizeof(g_guest_mem));
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_Q_ENABLE, 2, 1);
+	ATF_CHECK(queues[1].vq_enabled == 0);
+	ATF_CHECK(queues[1].vq_desc == old_desc);
+	ATF_CHECK(queues[1].vq_avail == old_avail);
+	ATF_CHECK(queues[1].vq_used == old_used);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+}
+
 ATF_TC_WITHOUT_HEAD(config_change_msix);
 ATF_TC_BODY(config_change_msix, tc)
 {
@@ -623,6 +653,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, features_and_status);
 	ATF_TP_ADD_TC(tp, ring_features_require_device_opt_in);
 	ATF_TP_ADD_TC(tp, queue_and_interrupts);
+	ATF_TP_ADD_TC(tp, queue_mapping_is_atomic);
 	ATF_TP_ADD_TC(tp, config_change_msix);
 	ATF_TP_ADD_TC(tp, queue_size_validation);
 	ATF_TP_ADD_TC(tp, pci_cfg_window);
