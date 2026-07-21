@@ -1598,6 +1598,19 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 			vtvsock_conn_close(sc, conn);
 			break;
 		}
+		/*
+		 * A new flow has not transmitted any bytes, so the peer cannot
+		 * already have consumed data from it.  Accepting a nonzero
+		 * initial fwd_cnt makes the unsigned credit calculation account
+		 * for bytes that never existed and can immediately starve the
+		 * connection.  Reject it before opening the host relay socket.
+		 */
+		if (le32toh(hdr->fwd_cnt) != 0) {
+			DPRINTF(("vtvsock: REQUEST with nonzero initial "
+			    "fwd_cnt %u, sending RST", le32toh(hdr->fwd_cnt)));
+			vtvsock_send_rst_noconn(sc, dst_port, src_port, type);
+			break;
+		}
 		{
 			struct sockaddr_un csun;
 			char portstr[16];

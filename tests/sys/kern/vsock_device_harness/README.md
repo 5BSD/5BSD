@@ -36,6 +36,7 @@ credit, record-boundary, shutdown, timeout, resource-limit, and hostile-packet
 cases.  SEQPACKET credit coverage includes an atomic record larger than current
 credit: it remains queued, sends only one CREDIT_REQUEST across repeated
 callbacks and RX-notification redispatch, keeps a reaper timestamp through a
-liveness probe and credit update, and clears it after delivery.  See
-`../vsock_e2e/FRAMEWORK.md` for the complete acceptance layers and the
-checklist for adding another device.
+liveness probe and credit update, and clears it after delivery.  Connection
+setup coverage also rejects nonzero initial `fwd_cnt` values before opening a
+host relay socket.  See `../vsock_e2e/FRAMEWORK.md` for the complete acceptance
+layers and the checklist for adding another device.

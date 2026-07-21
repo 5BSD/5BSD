@@ -61,6 +61,8 @@ static int g_endchains;
 /* ---- host-socket syscall effects ---- */
 static int g_next_fd = 500;
 static int g_connectat_result;
+static int g_socket_calls;
+static int g_connectat_calls;
 static uint8_t g_send_buf[65536];
 static size_t g_send_len;
 static int g_send_calls;
@@ -162,11 +164,13 @@ void set_config_value_node(nvlist_t *n, const char *k, const char *v)
 { (void)n; (void)k; (void)v; }
 
 /* ================= wrapped host-socket syscalls ================= */
-int __wrap_socket(int a, int b, int c) { (void)a; (void)b; (void)c; return (g_next_fd++); }
+int __wrap_socket(int a, int b, int c)
+{ (void)a; (void)b; (void)c; g_socket_calls++; return (g_next_fd++); }
 int
 __wrap_connectat(int dfd, int s, const struct sockaddr *a, socklen_t l)
 {
 	(void)dfd; (void)s; (void)a; (void)l;
+	g_connectat_calls++;
 	if (g_connectat_result < 0)
 		errno = ECONNREFUSED;
 	return (g_connectat_result);
@@ -377,6 +381,7 @@ reset_caps(void)
 {
 	g_ninject = 0; g_send_calls = 0; g_send_len = 0;
 	g_rx_descs = 256; g_connectat_result = 0;
+	g_socket_calls = 0; g_connectat_calls = 0;
 	g_rxbuf_len = sizeof(g_rxbuf);
 	g_recv_len = 0; g_recv_off = 0; g_recv_chunk_max = 0; g_recv_eof = 0;
 	g_recv_zero_dgram = 0; g_recv_no_eor = 0;
@@ -521,6 +526,33 @@ ATF_TC_BODY(request_connect_ok, tc)
 	fc = TAILQ_FIRST(&sc->vsc_conns);
 	ATF_CHECK(fc != NULL && fc->state == CONN_ESTABLISHED);
 	free(sc);
+}
+
+/* --- A new flow has tx_cnt == 0, so a nonzero initial fwd_cnt cannot
+ * describe bytes consumed by the guest.  Reject both an ordinary forward
+ * value and a wrap-looking value rather than creating a self-starved flow. --- */
+ATF_TC_WITHOUT_HEAD(request_nonzero_initial_fwd_cnt_rst);
+ATF_TC_BODY(request_nonzero_initial_fwd_cnt_rst, tc)
+{
+	const uint32_t invalid[] = { 1, UINT32_MAX };
+	struct pci_vtvsock_softc *sc;
+	struct virtio_vsock_hdr h;
+	size_t i;
+
+	for (i = 0; i < nitems(invalid); i++) {
+		sc = mk_sc();
+		reset_caps();
+		g_connectat_result = 0;	/* would otherwise establish */
+		mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST, STREAM, 3,
+		    VSOCK_CID_HOST, 1234, 80, 0, 0, 256 * 1024,
+		    invalid[i]);
+		vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+		ATF_CHECK(nconns(sc) == 0);
+		ATF_CHECK(g_ninject == 1 &&
+		    g_inject[0].op == VIRTIO_VSOCK_OP_RST);
+		ATF_CHECK(g_socket_calls == 0 && g_connectat_calls == 0);
+		free(sc);
+	}
 }
 
 ATF_TC_WITHOUT_HEAD(request_no_listener_rst);
@@ -1718,6 +1750,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, unknown_conn_rst);
 	ATF_TP_ADD_TC(tp, rst_unknown_conn_ignored);
 	ATF_TP_ADD_TC(tp, request_connect_ok);
+	ATF_TP_ADD_TC(tp, request_nonzero_initial_fwd_cnt_rst);
 	ATF_TP_ADD_TC(tp, request_no_listener_rst);
 	ATF_TP_ADD_TC(tp, rw_forwards_to_host);
 	ATF_TP_ADD_TC(tp, peer_fwd_cnt_overflow_rst);

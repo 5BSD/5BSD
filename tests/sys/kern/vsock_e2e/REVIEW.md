@@ -71,8 +71,10 @@ defends. Fix: mirror the data path (recvmsg, treat 0+!MSG_EOR as EOF).
 - **G3 (fixed)** `uipc_vsock.c:2139` — `vsock_sosend` now reads
   `SBS_CANTSENDMORE` under the send-buffer lock and consumes `so_error` under
   `SOCK_LOCK`, serializing the read-and-clear with asynchronous reset writers.
-- **Device nits**: OP_REQUEST doesn't validate peer_fwd_cnt vs tx_cnt (self-
-  inflicted starve); type-mismatched OP_RW skips the credit update.
+- **Device nit**: type-mismatched OP_RW skips the credit update.
+- **Initial request credit (fixed)**: a new flow has sent no bytes, so bhyve
+  rejects an OP_REQUEST with nonzero `fwd_cnt` before opening its host relay
+  socket; accepting it could make unsigned credit accounting self-starve.
 - **SEQPACKET partial-credit stall (fixed)**: an atomic record larger than
   current credit now sends one CREDIT_REQUEST, timestamps the disabled read
   event for the reaper, preserves it across RX-ring redispatch, suppresses

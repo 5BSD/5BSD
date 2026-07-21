@@ -57,7 +57,7 @@ remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
 |---|---|---|
 | `vsock_test.c` (ATF) | socket ops + **loopback** transport | 152/153 pass (1 platform skip) |
 | `vsock_wire_test.c` (ATF) | struct/ABI wire layout | complete for static layout |
-| `vsock_device_harness/` | bhyve host device TX/RX ingress | 198 vsock checks plus transport/device suites |
+| `vsock_device_harness/` | bhyve host device TX/RX ingress | 204 vsock checks plus transport/device suites |
 | `vsock_rx_harness/` | guest domain + direct VirtIO transport | 22 tests / 695 checks |
 | `vsock_e2e/` (live guest) | upstream Linux driver interop | modern/legacy matrix passed; root-only |
 
