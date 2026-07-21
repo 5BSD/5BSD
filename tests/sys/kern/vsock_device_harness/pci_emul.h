@@ -47,6 +47,7 @@ uint32_t pci_get_cfgdata32(struct pci_devinst *, int);
 int pci_emul_alloc_bar(struct pci_devinst *, int, enum pcibar_type, uint64_t);
 int pci_emul_add_capability(struct pci_devinst *, const u_char *, int);
 int pci_emul_add_msixcap(struct pci_devinst *, int, int);
+int pci_emul_add_boot_device(struct pci_devinst *, int);
 void pci_emul_add_msicap(struct pci_devinst *, int);
 void pci_lintr_request(struct pci_devinst *);
 int pci_msix_enabled(struct pci_devinst *);
@@ -70,5 +71,6 @@ void pci_lintr_deassert(struct pci_devinst *);
 #define PCIS_INPUTDEV_OTHER 0x80
 #define PCIC_CRYPTO 0x10
 #define PCIC_STORAGE 0x01
+#define PCIS_STORAGE_SCSI 0x00
 #define PCIC_NETWORK 0x02
 #endif

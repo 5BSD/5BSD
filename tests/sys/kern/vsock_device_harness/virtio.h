@@ -104,6 +104,8 @@ struct virtio_consts {
 #define VIRTIO_ID_BLOCK 2
 #define VIRTIO_DEV_NET 0x1000
 #define VIRTIO_ID_NETWORK 1
+#define VIRTIO_DEV_SCSI 0x1008
+#define VIRTIO_ID_SCSI 8
 #define VIRTIO_REV_INPUT 1
 #define VIRTIO_SUBVEN_INPUT 0x108e
 #define VIRTIO_SUBDEV_INPUT 0x1100
