@@ -20,6 +20,10 @@ static bool g_tx_ready;
 static int g_send_calls;
 static int g_last_send_mflags;
 static int g_last_send_len;
+int vsock_kmock_sock_lock_calls;
+int vsock_kmock_sock_lock_depth;
+int vsock_kmock_sndbuf_lock_calls;
+int vsock_kmock_sndbuf_lock_depth;
 
 static int
 mock_send_pkt(struct vtvsock_pcb *pcb, uint16_t op, uint32_t flags,
@@ -73,6 +77,10 @@ reset_state(void)
 	g_send_calls = 0;
 	g_last_send_mflags = 0;
 	g_last_send_len = 0;
+	vsock_kmock_sock_lock_calls = 0;
+	vsock_kmock_sock_lock_depth = 0;
+	vsock_kmock_sndbuf_lock_calls = 0;
+	vsock_kmock_sndbuf_lock_depth = 0;
 	/* fresh domain state each test */
 	vtvsock_remote_transport = NULL;
 	vtvsock_guest_cid = VSOCK_CID_LOCAL;
@@ -488,6 +496,48 @@ ATF_TC_BODY(nonblocking_tx_not_consumed_when_ring_full, tc)
 	ATF_CHECK(g_last_send_len == (int)(sizeof(data) - 1));
 }
 
+/* --- Send-side terminal state is read under its owning locks.  In
+ * particular, serializing the so_error read-and-clear with asynchronous
+ * reset writers prevents a new error store from being erased by a racing
+ * clear. --- */
+ATF_TC_WITHOUT_HEAD(send_terminal_state_checks_are_locked);
+ATF_TC_BODY(send_terminal_state_checks_are_locked, tc)
+{
+	struct vtvsock_pcb *pcb;
+	struct iovec iov;
+	struct uio uio;
+	char data[] = "state";
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	pcb = establish_remote(SOCK_STREAM, 89, 1246, NULL);
+	ATF_REQUIRE(pcb != NULL);
+	memset(&uio, 0, sizeof(uio));
+	iov.iov_base = data;
+	iov.iov_len = sizeof(data) - 1;
+	uio.uio_iov = &iov;
+	uio.uio_iovcnt = 1;
+	uio.uio_resid = sizeof(data) - 1;
+
+	vsock_kmock_sndbuf_lock_calls = 0;
+	pcb->so->so_snd.sb_state |= SBS_CANTSENDMORE;
+	ATF_CHECK(vsock_sosend(pcb->so, NULL, &uio, NULL, NULL, 0, NULL) ==
+	    EPIPE);
+	ATF_CHECK(vsock_kmock_sndbuf_lock_calls == 1);
+	ATF_CHECK(vsock_kmock_sndbuf_lock_depth == 0);
+	ATF_CHECK(uio.uio_resid == (ssize_t)(sizeof(data) - 1));
+
+	pcb->so->so_snd.sb_state &= ~SBS_CANTSENDMORE;
+	pcb->so->so_error = ECONNRESET;
+	vsock_kmock_sock_lock_calls = 0;
+	ATF_CHECK(vsock_sosend(pcb->so, NULL, &uio, NULL, NULL, 0, NULL) ==
+	    ECONNRESET);
+	ATF_CHECK(vsock_kmock_sock_lock_calls == 1);
+	ATF_CHECK(vsock_kmock_sock_lock_depth == 0);
+	ATF_CHECK(pcb->so->so_error == 0);
+	ATF_CHECK(uio.uio_resid == (ssize_t)(sizeof(data) - 1));
+}
+
 /* --- Every SEQPACKET send has a local record boundary (M_EOR), while only
  * an explicit MSG_EOR is carried to the virtio transport as M_PROTO1. --- */
 ATF_TC_WITHOUT_HEAD(seqpacket_msg_eor_transport_marker);
@@ -589,6 +639,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, deferred_shutdown_timeout);
 	ATF_TP_ADD_TC(tp, transport_reset_and_reregister);
 	ATF_TP_ADD_TC(tp, nonblocking_tx_not_consumed_when_ring_full);
+	ATF_TP_ADD_TC(tp, send_terminal_state_checks_are_locked);
 	ATF_TP_ADD_TC(tp, seqpacket_msg_eor_transport_marker);
 	ATF_TP_ADD_TC(tp, inbound_connection_cap_reclaims_slot);
 	return (atf_no_error());

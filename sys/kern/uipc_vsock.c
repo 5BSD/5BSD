@@ -2104,7 +2104,7 @@ vsock_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 	ssize_t resid;
 	size_t space, chunk, cap;
 	sbintime_t timo;
-	bool nbio, seqpacket;
+	bool cantsend, nbio, seqpacket;
 	int error;
 
 	/*
@@ -2136,15 +2136,21 @@ vsock_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		return (error);
 
 	do {
-		if (so->so_snd.sb_state & SBS_CANTSENDMORE) {
+		SOCK_SENDBUF_LOCK(so);
+		cantsend = (so->so_snd.sb_state & SBS_CANTSENDMORE) != 0;
+		SOCK_SENDBUF_UNLOCK(so);
+		if (cantsend) {
 			error = EPIPE;
 			break;
 		}
+		SOCK_LOCK(so);
 		if (so->so_error != 0) {
 			error = so->so_error;
 			so->so_error = 0;
+			SOCK_UNLOCK(so);
 			break;
 		}
+		SOCK_UNLOCK(so);
 
 		mtx_lock(&vtvsock_mtx);
 		pcb = so->so_pcb;

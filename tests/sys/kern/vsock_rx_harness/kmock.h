@@ -332,13 +332,19 @@ struct socket {
 #define SO_ACCEPTCONN		0x0002
 #define SOLISTENING(so)		((so)->so_listening)
 
-/* locks: no-ops (single thread) */
+/* locks: count selected acquisitions while remaining single-threaded */
+extern int vsock_kmock_sock_lock_calls;
+extern int vsock_kmock_sock_lock_depth;
+extern int vsock_kmock_sndbuf_lock_calls;
+extern int vsock_kmock_sndbuf_lock_depth;
 #define SOCK_RECVBUF_LOCK(so)	do { } while (0)
 #define SOCK_RECVBUF_UNLOCK(so)	do { } while (0)
-#define SOCK_SENDBUF_LOCK(so)	do { } while (0)
-#define SOCK_SENDBUF_UNLOCK(so)	do { } while (0)
-#define SOCK_LOCK(so)		do { } while (0)
-#define SOCK_UNLOCK(so)		do { } while (0)
+#define SOCK_SENDBUF_LOCK(so)	do { vsock_kmock_sndbuf_lock_calls++; \
+	vsock_kmock_sndbuf_lock_depth++; } while (0)
+#define SOCK_SENDBUF_UNLOCK(so)	do { vsock_kmock_sndbuf_lock_depth--; } while (0)
+#define SOCK_LOCK(so)		do { vsock_kmock_sock_lock_calls++; \
+	vsock_kmock_sock_lock_depth++; } while (0)
+#define SOCK_UNLOCK(so)		do { vsock_kmock_sock_lock_depth--; } while (0)
 #define SOCKBUF_LOCK(sb)	do { } while (0)
 #define SOCKBUF_UNLOCK(sb)	do { } while (0)
 #define SOCK_IO_SEND_LOCK(so, fl)	(0)

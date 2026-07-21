@@ -5,10 +5,10 @@ coverage) over the AF_VSOCK stack. Each finding below was verified against
 the source. Severity: HANG/LOSS/CRASH > throughput/spec > cosmetic.
 
 STATUS: D1, D2, D3 FIXED (commit be4d3921bc7, device harness 86 checks).
-G1, G4, G5 FIXED (commit 65e6d29b5a8, guest kernel). The guest unit harness
+G1, G3, G4, G5 FIXED (G1/G4/G5 in commit 65e6d29b5a8). The guest unit harness
 now covers both `uipc_vsock.c` and `virtio_vsock.c`, including a concurrent
-TX-ring-blocked send/detach wakeup. Remaining: G3 (minor lock race), device
-nits, and interrupt-vs-detach scheduling coverage.
+TX-ring-blocked send/detach wakeup. Remaining: device nits and
+interrupt-vs-detach scheduling coverage.
 
 ## Confirmed real bugs
 
@@ -68,8 +68,9 @@ defends. Fix: mirror the data path (recvmsg, treat 0+!MSG_EOR as EOF).
   that rewinds fwd_cnt inflates `used` and stalls the sender. Clamp with MAX.
 - **G5** `virtio_vsock.c:806` — TX-ring-full sleeper (`&sc->sc_txvq`) not woken
   by `vsock_transport_reset_locked` (live migration); bounded by 1s poll.
-- **G3** `uipc_vsock.c:2139` — so_error/sb_state read-cleared without SOCK_LOCK
-  in vsock_sosend; a racing async-reset store can be lost.
+- **G3 (fixed)** `uipc_vsock.c:2139` — `vsock_sosend` now reads
+  `SBS_CANTSENDMORE` under the send-buffer lock and consumes `so_error` under
+  `SOCK_LOCK`, serializing the read-and-clear with asynchronous reset writers.
 - **Device nits**: OP_REQUEST doesn't validate peer_fwd_cnt vs tx_cnt (self-
   inflicted starve); type-mismatched OP_RW skips the credit update; seqpacket
   "record > current credit" defer doesn't set stall_time.

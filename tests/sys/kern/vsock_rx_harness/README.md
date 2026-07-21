@@ -45,7 +45,10 @@ flow-control-violation ECONNRESET, CID_LOCAL wire isolation, SEQPACKET
 fragment-limit RST, deferred-teardown timeout, and transport reset with CID
 re-registration.  It also covers the global inbound connection cap, the
 non-blocking TX-ready gate before uio consumption, and guest SEQPACKET
-`MSG_EOR` transport marking.  The direct transport binary additionally checks
+`MSG_EOR` transport marking.  Send-side terminal-state checks assert that
+`SBS_CANTSENDMORE` and the `so_error` read-and-clear use their owning locks, so
+an asynchronous reset error cannot be erased by a racing sender.  The direct
+transport binary additionally checks
 descriptor ownership, bounded FIFO overflow, interrupt and reset wakeup
 channels, and attach/detach reclamation.  For the transport binary, `msleep`
 and `wakeup` use a pthread mutex/condition pair: a real sender blocks on a full

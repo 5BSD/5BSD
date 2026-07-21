@@ -17,6 +17,9 @@ descriptor-aware readiness, reclaim/retry, bounded FIFO control queuing,
 interrupt drain/wakeup, event reset, attach-completed/detach, and a real
 pthread sender blocked on the full-ring sleep channel while detach wakes it
 within one second.  The remaining work is narrower lifecycle coverage below.
+The socket-domain half now has 13 ATF cases / 89 assertions, including locked
+send-side terminal-state checks that close G3; together the guest harness has
+22 cases / 695 assertions.
 The focused no-MSI-X run now also passes monitor-mode reboot with established
 STREAM and SEQPACKET endpoints: each is echo-proven before reboot, both old
 endpoints disconnect within 30 seconds, and fresh connections pass afterward.
@@ -40,7 +43,7 @@ remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
   EOF/EPIPE, connect ERANGE) — all pass in-guest.
 - GAP 1: **guest RX unit harness BUILT** (tests/sys/kern/vsock_rx_harness).
   Compiles the kernel uipc_vsock.c in userspace via kmock.h; drives the real
-  vsock_rx_packet state machine. 12 tests / 79 checks, negative-control
+  vsock_rx_packet state machine. 13 tests / 89 checks, negative-control
   verified. Covers reserved-CID sanitization, feature-negotiation gating,
   credit arithmetic incl. wrap, peer_fwd_cnt spoof → RST, flow-control
   violation → ECONNRESET, CID_LOCAL isolation, SEQPACKET fragment-limit RST,
@@ -55,7 +58,7 @@ remaining gap is GAP 3 (Linux interop), which needs the Linux VM.
 | `vsock_test.c` (ATF) | socket ops + **loopback** transport | 152/153 pass (1 platform skip) |
 | `vsock_wire_test.c` (ATF) | struct/ABI wire layout | complete for static layout |
 | `vsock_device_harness/` | bhyve host device TX/RX ingress | 181 vsock checks plus transport/device suites |
-| `vsock_rx_harness/` | guest domain + direct VirtIO transport | 21 tests / 685 checks |
+| `vsock_rx_harness/` | guest domain + direct VirtIO transport | 22 tests / 695 checks |
 | `vsock_e2e/` (live guest) | upstream Linux driver interop | modern/legacy matrix passed; root-only |
 
 **Remaining structural limitation:** both guest source files now have direct
@@ -286,8 +289,8 @@ G4, and VNET/reset fixes.
 defines credit windows rather than a universal SEQPACKET record maximum, while
 bhyve intentionally reassembles records larger than its advertised window;
 the live MAX/MAX+1 criterion therefore needs an implementation-specific bound
-instead of assuming 256 KiB.  Interrupt-vs-detach scheduling and G3 remain
-lower-priority structural/code-review items.
+instead of assuming 256 KiB.  Interrupt-vs-detach scheduling remains a
+lower-priority structural coverage item.
 
 **Lowest-priority (Tier 3, documented in REVIEW.md, likely leave alone):**
 auto-bind port exhaustion, EMFILE/fd exhaustion, pending-ring overflow,
