@@ -8,6 +8,7 @@
 
 _arch=$(uname -p)
 _objdir="/usr/obj/usr/src/${_arch}.${_arch}/tests/sys/kern"
+_mac_objdir="/usr/obj/usr/src/${_arch}.${_arch}/tests/sys/mac_capability"
 OUT="${1:-/tmp/vsock_test_results.txt}"
 
 # Test binaries to run, in order.  BINARY optionally overrides the path to the
@@ -36,10 +37,15 @@ echo "Kernel: $(uname -r) $(uname -v | head -1)" >> "$OUT"
 echo "========================================" >> "$OUT"
 
 run_case() {
-	# $1 = binary, $2 = test-case ident
+	# $1 = binary, $2 = test-case ident, $3 = optional ATF srcdir
 	_bin=$1
 	_tc=$2
-	output=$("$_bin" "$_tc" 2>&1)
+	_srcdir=${3:-}
+	if [ -n "$_srcdir" ]; then
+		output=$("$_bin" -v "srcdir=$_srcdir" "$_tc" 2>&1)
+	else
+		output=$("$_bin" "$_tc" 2>&1)
+	fi
 	# Find the ATF result token robustly instead of trusting the last line
 	# (trailing warnings on stderr would otherwise be misread as failures).
 	result=$(printf '%s\n' "$output" | \
@@ -74,6 +80,20 @@ for bin in $BINARIES; do
 		run_case "$bin" "$tc"
 	done
 done
+
+# The isolation suite is broader than vsock, so include only its AF_VSOCK
+# ownership cases here.  An explicit srcdir lets exec'd helper tests find the
+# companion binary when this script is run from another directory.
+MAC_BINARY="${MAC_BINARY:-${_mac_objdir}/mac_capability_isolation_test}"
+if [ -x "$MAC_BINARY" ]; then
+	echo "" >> "$OUT"
+	echo "### $(basename "$MAC_BINARY") (vsock cases)" >> "$OUT"
+	tests=$("$MAC_BINARY" -l 2>/dev/null | sed -n 's/^ident: \(vsock_[^ ]*\)$/\1/p')
+	for tc in $tests; do
+		TOTAL=$((TOTAL+1))
+		run_case "$MAC_BINARY" "$tc" "$_mac_objdir"
+	done
+fi
 
 echo "========================================" >> "$OUT"
 echo "TOTAL: $PASS passed, $FAIL failed, $SKIP skipped (of $TOTAL)" >> "$OUT"
