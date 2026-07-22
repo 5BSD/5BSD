@@ -6,23 +6,51 @@
 # write kern.vsock.* sysctls or bind privileged ports (they carry
 # require.user=root and will SKIP under an unprivileged run rather than fail).
 
+_script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 _arch=$(uname -p)
-_objdir="/usr/obj/usr/src/${_arch}.${_arch}/tests/sys/kern"
-_mac_objdir="/usr/obj/usr/src/${_arch}.${_arch}/tests/sys/mac_capability"
+if [ -f "${_script_dir}/Makefile" ]; then
+	_srctop=${SRCTOP:-$(CDPATH= cd -- "${_script_dir}/../../.." && pwd)}
+else
+	_srctop=${SRCTOP:-/usr/src}
+fi
+_objtop=${OBJTOP:-/usr/obj${_srctop}/${_arch}.${_arch}}
+if [ -x "${_script_dir}/vsock_test" ]; then
+	_objdir=${KERN_TEST_DIR:-${_script_dir}}
+	_mac_objdir=${MAC_TEST_DIR:-${_script_dir}/../mac_capability}
+else
+	_objdir=${KERN_TEST_DIR:-${_objtop}/tests/sys/kern}
+	_mac_objdir=${MAC_TEST_DIR:-${_objtop}/tests/sys/mac_capability}
+fi
 OUT="${1:-/tmp/vsock_test_results.txt}"
 
 # Test binaries to run, in order.  BINARY optionally overrides the path to the
 # primary functional suite (e.g. to point at a locally built binary); the
-# wire/iov/device ABI suites are added from the object directory.
+# wire/iov/device/RX ABI suites are added from their actual subdirectories.
 BINARY="${BINARY:-${_objdir}/vsock_test}"
 BINARIES="$BINARY ${_objdir}/vsock_wire_test ${_objdir}/vsock_iov_test \
-    ${_objdir}/vsock_device_test"
+    ${_objdir}/vsock_device_harness/vsock_device_test \
+    ${_objdir}/vsock_device_harness/virtio_modern_test \
+    ${_objdir}/vsock_device_harness/virtio_input_test \
+    ${_objdir}/vsock_device_harness/virtio_rnd_test \
+    ${_objdir}/vsock_device_harness/virtio_rnd_interrupt_test \
+    ${_objdir}/vsock_device_harness/virtio_core_test \
+    ${_objdir}/vsock_device_harness/iov_test \
+    ${_objdir}/vsock_device_harness/virtio_console_test \
+    ${_objdir}/vsock_device_harness/virtio_9p_test \
+    ${_objdir}/vsock_device_harness/virtio_block_test \
+    ${_objdir}/vsock_device_harness/virtio_net_test \
+    ${_objdir}/vsock_device_harness/virtio_scsi_test \
+    ${_objdir}/vsock_rx_harness/vsock_rx_test \
+    ${_objdir}/vsock_rx_harness/virtio_vsock_transport_test"
 
-if [ ! -x "$BINARY" ]; then
-	echo "ERROR: $BINARY not found or not executable" >&2
-	echo "Build with: make -C /usr/src/tests/sys/kern vsock_test" >&2
-	exit 1
-fi
+MAC_BINARY="${MAC_BINARY:-${_mac_objdir}/mac_capability_isolation_test}"
+for _bin in $BINARIES "$MAC_BINARY"; do
+	if [ ! -x "$_bin" ]; then
+		echo "ERROR: $_bin not found or not executable" >&2
+		echo "Build the vsock-tests, tests, and mac-capability-tests suites first" >&2
+		exit 1
+	fi
+done
 
 if [ "$(id -u)" -ne 0 ]; then
 	echo "WARNING: not running as root; privileged cases will SKIP or fail" >&2
@@ -71,7 +99,6 @@ run_case() {
 
 TOTAL=0
 for bin in $BINARIES; do
-	[ -x "$bin" ] || continue
 	echo "" >> "$OUT"
 	echo "### $(basename "$bin")" >> "$OUT"
 	tests=$("$bin" -l 2>/dev/null | grep 'ident:' | sed 's/ident: //')
@@ -84,16 +111,13 @@ done
 # The isolation suite is broader than vsock, so include only its AF_VSOCK
 # ownership cases here.  An explicit srcdir lets exec'd helper tests find the
 # companion binary when this script is run from another directory.
-MAC_BINARY="${MAC_BINARY:-${_mac_objdir}/mac_capability_isolation_test}"
-if [ -x "$MAC_BINARY" ]; then
-	echo "" >> "$OUT"
-	echo "### $(basename "$MAC_BINARY") (vsock cases)" >> "$OUT"
-	tests=$("$MAC_BINARY" -l 2>/dev/null | sed -n 's/^ident: \(vsock_[^ ]*\)$/\1/p')
-	for tc in $tests; do
-		TOTAL=$((TOTAL+1))
-		run_case "$MAC_BINARY" "$tc" "$_mac_objdir"
-	done
-fi
+echo "" >> "$OUT"
+echo "### $(basename "$MAC_BINARY") (vsock cases)" >> "$OUT"
+tests=$("$MAC_BINARY" -l 2>/dev/null | sed -n 's/^ident: \(vsock_[^ ]*\)$/\1/p')
+for tc in $tests; do
+	TOTAL=$((TOTAL+1))
+	run_case "$MAC_BINARY" "$tc" "$_mac_objdir"
+done
 
 echo "========================================" >> "$OUT"
 echo "TOTAL: $PASS passed, $FAIL failed, $SKIP skipped (of $TOTAL)" >> "$OUT"

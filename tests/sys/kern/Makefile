@@ -105,6 +105,8 @@ ATF_TESTS_SH+=	sysctl_security_jail_children
 
 ${PACKAGE}FILES+=	sonewconn_overflow.py
 ${PACKAGE}FILESMODE_sonewconn_overflow.py=0555
+${PACKAGE}FILES+=	run_vsock_tests.sh
+${PACKAGE}FILESMODE_run_vsock_tests.sh=0555
 
 BINDIR=		${TESTSDIR}
 PROGS+=		coredump_phnum_helper
