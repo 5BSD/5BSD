@@ -132,6 +132,15 @@ mevent_add(int fd __unused, enum ev_type type __unused,
 	return (&ev);
 }
 
+struct mevent *
+mevent_add_disabled(int fd __unused, enum ev_type type __unused,
+    void (*cb)(int, enum ev_type, void *) __unused, void *arg __unused)
+{
+	static struct mevent ev;
+
+	return (&ev);
+}
+
 int
 mevent_enable(struct mevent *ev __unused)
 {
@@ -492,6 +501,64 @@ ATF_TC_BODY(receive_preserves_data, tc)
 	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
 }
 
+ATF_TC_WITHOUT_HEAD(transmit_backpressure);
+ATF_TC_BODY(transmit_backpressure, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct pci_vtcon_sock sock;
+	struct pci_vtcon_port port;
+	struct mevent read_ev, write_ev;
+	struct iovec iov;
+	char fill[4096], drain[16384], got[8];
+	int flags, sv[2];
+	ssize_t n;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	flags = fcntl(sv[1], F_GETFL);
+	ATF_REQUIRE(flags >= 0);
+	ATF_REQUIRE(fcntl(sv[1], F_SETFL, flags | O_NONBLOCK) == 0);
+	memset(fill, 0xa5, sizeof(fill));
+	while (write(sv[1], fill, sizeof(fill)) > 0)
+		;
+	ATF_REQUIRE(errno == EAGAIN || errno == EWOULDBLOCK);
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&sock, 0, sizeof(sock));
+	memset(&port, 0, sizeof(port));
+	ATF_REQUIRE(pthread_mutex_init(&sc.vsc_mtx, NULL) == 0);
+	sc.vsc_vs.vs_mtx = &sc.vsc_mtx;
+	port.vsp_sc = &sc;
+	sock.vss_sc = &sc;
+	sock.vss_port = &port;
+	sock.vss_open = true;
+	sock.vss_conn_fd = sv[1];
+	sock.vss_conn_evp = &read_ev;
+	sock.vss_write_evp = &write_ev;
+	iov = (struct iovec){ .iov_base = __DECONST(char *, "marker"),
+	    .iov_len = 6 };
+	reset_mocks();
+	pci_vtcon_sock_tx(&port, &sock, &iov, 1);
+	ATF_CHECK(sock.vss_open);
+	ATF_CHECK(sock.vss_tx_len - sock.vss_tx_off == 6);
+	ATF_CHECK(g_enable_calls == 1);
+
+	flags = fcntl(sv[0], F_GETFL);
+	ATF_REQUIRE(flags >= 0);
+	ATF_REQUIRE(fcntl(sv[0], F_SETFL, flags | O_NONBLOCK) == 0);
+	while (read(sv[0], drain, sizeof(drain)) > 0)
+		;
+	ATF_REQUIRE(errno == EAGAIN || errno == EWOULDBLOCK);
+	pci_vtcon_sock_tx_event(sv[1], EVF_WRITE, &sock);
+	ATF_CHECK(sock.vss_tx_len == 0);
+	n = read(sv[0], got, sizeof(got));
+	ATF_REQUIRE(n == 6);
+	ATF_CHECK(memcmp(got, "marker", 6) == 0);
+	free(sock.vss_tx_buf);
+	close(sv[0]);
+	close(sv[1]);
+	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, transport_and_features);
@@ -500,5 +567,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, transmit_validation);
 	ATF_TP_ADD_TC(tp, control_receive_scatter);
 	ATF_TP_ADD_TC(tp, receive_preserves_data);
+	ATF_TP_ADD_TC(tp, transmit_backpressure);
 	return (atf_no_error());
 }

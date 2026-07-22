@@ -77,6 +77,7 @@ struct pci_vt9p_softc {
 	struct l9p_connection *  vsc_conn;
 	uint64_t                 vsc_generation;
 	bool                     vsc_resetting;
+	bool                     vsc_notify_pending;
 };
 
 struct pci_vt9p_request {
@@ -162,7 +163,11 @@ pci_vt9p_reset(void *vsc)
 	sc->vsc_resetting = false;
 	if (newconn == NULL) {
 		WPRINTF(("vt9p: cannot reinitialize 9P connection\n"));
-		sc->vsc_vs.vs_status |= VIRTIO_CONFIG_S_NEEDS_RESET;
+		vi_set_needs_reset(&sc->vsc_vs);
+	} else if (sc->vsc_notify_pending) {
+		/* A guest kick raced the unlocked connection drain. */
+		sc->vsc_notify_pending = false;
+		pci_vt9p_notify(sc, &sc->vsc_vq);
 	}
 }
 
@@ -247,14 +252,16 @@ pci_vt9p_notify(void *vsc, struct vqueue_info *vq)
 	int n;
 
 	sc = vsc;
-	if (sc->vsc_resetting || sc->vsc_conn == NULL)
+	if (sc->vsc_resetting || sc->vsc_conn == NULL) {
+		sc->vsc_notify_pending = true;
 		return;
+	}
 
 	while (vq_has_descs(vq)) {
 		n = vq_getchain(vq, iov, VT9P_MAX_IOV, &req);
 		if (n <= 0)
 			break;
-		if (n > VT9P_MAX_IOV || req.readable == 0 ||
+		if (n > VT9P_MAX_IOV || !req.ordered || req.readable == 0 ||
 		    req.writable == 0 || req.readable + req.writable != n) {
 			DPRINTF(("vt9p: invalid descriptor chain\n"));
 			vq_relchain(vq, req.idx, 0);

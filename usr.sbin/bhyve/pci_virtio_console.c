@@ -68,6 +68,7 @@
 #define	VTCON_RINGSZ	64
 #define	VTCON_MAXPORTS	16
 #define	VTCON_MAXQ	(VTCON_MAXPORTS * 2 + 2)
+#define	VTCON_SOCK_TX_MAX	(1024 * 1024)
 
 #define	VTCON_DEVICE_READY	0
 #define	VTCON_DEVICE_ADD	1
@@ -117,9 +118,14 @@ struct pci_vtcon_sock
 	const char *             vss_path;
 	struct mevent *          vss_server_evp;
 	struct mevent *          vss_conn_evp;
+	struct mevent *          vss_write_evp;
 	int                      vss_server_fd;
 	int                      vss_conn_fd;
 	bool                     vss_open;
+	uint8_t *                vss_tx_buf;
+	size_t                   vss_tx_off;
+	size_t                   vss_tx_len;
+	size_t                   vss_tx_cap;
 };
 
 struct pci_vtcon_softc {
@@ -163,6 +169,7 @@ static int pci_vtcon_cfgwrite(void *, int, int, uint32_t);
 static void pci_vtcon_neg_features(void *, uint64_t);
 static void pci_vtcon_sock_accept(int, enum ev_type,  void *);
 static void pci_vtcon_sock_rx(int, enum ev_type, void *);
+static void pci_vtcon_sock_tx_event(int, enum ev_type, void *);
 static void pci_vtcon_sock_tx(struct pci_vtcon_port *, void *, struct iovec *,
     int);
 static void pci_vtcon_sock_rx_enable(struct pci_vtcon_port *, void *);
@@ -429,6 +436,8 @@ pci_vtcon_destroy(struct pci_vtcon_softc *sc)
 		    sc->vsc_ports[i].vsp_arg == NULL)
 			continue;
 		sock = sc->vsc_ports[i].vsp_arg;
+		if (sock->vss_write_evp != NULL)
+			mevent_delete(sock->vss_write_evp);
 		if (sock->vss_conn_evp != NULL)
 			mevent_delete_close(sock->vss_conn_evp);
 		else if (sock->vss_conn_fd >= 0)
@@ -439,6 +448,7 @@ pci_vtcon_destroy(struct pci_vtcon_softc *sc)
 			close(sock->vss_server_fd);
 		if (sock->vss_path != NULL)
 			unlink(sock->vss_path);
+		free(sock->vss_tx_buf);
 		free(sock);
 	}
 	if (sc->vsc_mtx_initialized)
@@ -454,7 +464,7 @@ pci_vtcon_sock_accept(int fd __unused, enum ev_type t __unused, void *arg)
 	struct virtio_softc *vs;
 	int s;
 
-	s = accept(sock->vss_server_fd, NULL, NULL);
+	s = accept4(sock->vss_server_fd, NULL, NULL, SOCK_NONBLOCK);
 	if (s < 0)
 		return;
 
@@ -473,6 +483,15 @@ pci_vtcon_sock_accept(int fd __unused, enum ev_type t __unused, void *arg)
 		VS_UNLOCK(vs);
 		return;
 	}
+	sock->vss_write_evp = mevent_add_disabled(s, EVF_WRITE,
+	    pci_vtcon_sock_tx_event, sock);
+	if (sock->vss_write_evp == NULL) {
+		mevent_delete_close(sock->vss_conn_evp);
+		sock->vss_conn_evp = NULL;
+		sock->vss_conn_fd = -1;
+		VS_UNLOCK(vs);
+		return;
+	}
 	sock->vss_open = true;
 
 	pci_vtcon_open_port(sock->vss_port, true);
@@ -482,13 +501,21 @@ pci_vtcon_sock_accept(int fd __unused, enum ev_type t __unused, void *arg)
 static void
 pci_vtcon_sock_close(struct pci_vtcon_sock *sock)
 {
+	if (sock->vss_write_evp != NULL)
+		mevent_delete(sock->vss_write_evp);
 	if (sock->vss_conn_evp != NULL)
 		mevent_delete_close(sock->vss_conn_evp);
 	else if (sock->vss_conn_fd >= 0)
 		close(sock->vss_conn_fd);
 	sock->vss_conn_evp = NULL;
+	sock->vss_write_evp = NULL;
 	sock->vss_conn_fd = -1;
 	sock->vss_open = false;
+	free(sock->vss_tx_buf);
+	sock->vss_tx_buf = NULL;
+	sock->vss_tx_off = 0;
+	sock->vss_tx_len = 0;
+	sock->vss_tx_cap = 0;
 	pci_vtcon_open_port(sock->vss_port, false);
 }
 
@@ -577,27 +604,98 @@ out:
 }
 
 static void
-pci_vtcon_sock_tx(struct pci_vtcon_port *port __unused, void *arg __unused,
+pci_vtcon_sock_drain(struct pci_vtcon_sock *sock)
+{
+	ssize_t n;
+
+	if (!sock->vss_open || sock->vss_conn_fd < 0 ||
+	    sock->vss_tx_off == sock->vss_tx_len)
+		return;
+	n = write(sock->vss_conn_fd, sock->vss_tx_buf + sock->vss_tx_off,
+	    sock->vss_tx_len - sock->vss_tx_off);
+	if (n > 0) {
+		sock->vss_tx_off += (size_t)n;
+		if (sock->vss_tx_off == sock->vss_tx_len) {
+			sock->vss_tx_off = 0;
+			sock->vss_tx_len = 0;
+			(void)mevent_disable(sock->vss_write_evp);
+		} else
+			(void)mevent_enable(sock->vss_write_evp);
+		return;
+	}
+	if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK ||
+	    errno == EINTR)) {
+		(void)mevent_enable(sock->vss_write_evp);
+		return;
+	}
+	pci_vtcon_sock_close(sock);
+}
+
+static void
+pci_vtcon_sock_tx_event(int fd __unused, enum ev_type type __unused, void *arg)
+{
+	struct pci_vtcon_sock *sock;
+	struct virtio_softc *vs;
+
+	sock = arg;
+	vs = &sock->vss_sc->vsc_vs;
+	VS_LOCK(vs);
+	pci_vtcon_sock_drain(sock);
+	VS_UNLOCK(vs);
+}
+
+static void
+pci_vtcon_sock_tx(struct pci_vtcon_port *port __unused, void *arg,
     struct iovec *iov, int niov)
 {
 	struct pci_vtcon_sock *sock;
-	int i, ret;
+	size_t cap, need, pending, total;
+	uint8_t *buf;
+	int i;
 
-	sock = (struct pci_vtcon_sock *)arg;
-
-	if (sock->vss_conn_fd == -1)
+	sock = arg;
+	if (!sock->vss_open || sock->vss_conn_fd < 0)
 		return;
 
+	total = 0;
 	for (i = 0; i < niov; i++) {
-		ret = stream_write(sock->vss_conn_fd, iov[i].iov_base,
-		    iov[i].iov_len);
-		if (ret <= 0)
-			break;
+		if (iov[i].iov_len > VTCON_SOCK_TX_MAX - total) {
+			pci_vtcon_sock_close(sock);
+			return;
+		}
+		total += iov[i].iov_len;
 	}
-
-	if (ret <= 0) {
+	pending = sock->vss_tx_len - sock->vss_tx_off;
+	if (total > VTCON_SOCK_TX_MAX - pending) {
 		pci_vtcon_sock_close(sock);
+		return;
 	}
+	if (sock->vss_tx_off != 0 &&
+	    sock->vss_tx_cap - sock->vss_tx_len < total) {
+		memmove(sock->vss_tx_buf, sock->vss_tx_buf + sock->vss_tx_off,
+		    pending);
+		sock->vss_tx_off = 0;
+		sock->vss_tx_len = pending;
+	}
+	need = sock->vss_tx_len + total;
+	if (need > sock->vss_tx_cap) {
+		cap = MAX((size_t)4096, sock->vss_tx_cap);
+		while (cap < need)
+			cap = MIN(cap * 2, (size_t)VTCON_SOCK_TX_MAX);
+		buf = realloc(sock->vss_tx_buf, cap);
+		if (buf == NULL) {
+			pci_vtcon_sock_close(sock);
+			return;
+		}
+		sock->vss_tx_buf = buf;
+		sock->vss_tx_cap = cap;
+	}
+	for (i = 0; i < niov; i++) {
+		memcpy(sock->vss_tx_buf + sock->vss_tx_len,
+		    iov[i].iov_base, iov[i].iov_len);
+		sock->vss_tx_len += iov[i].iov_len;
+	}
+	pci_vtcon_sock_drain(sock);
 }
 
 static void

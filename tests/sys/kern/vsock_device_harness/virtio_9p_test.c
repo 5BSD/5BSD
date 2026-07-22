@@ -30,6 +30,7 @@ static int g_descs;
 static int g_chain_n;
 static int g_readable;
 static int g_writable;
+static bool g_ordered;
 static int g_recv_result;
 static bool g_complete_immediately;
 static int g_recv_calls;
@@ -41,6 +42,8 @@ static int g_end_calls;
 static int g_connection_closes;
 static int g_connection_inits;
 static int g_connection_init_result;
+static int g_needs_reset_calls;
+static struct pci_vt9p_softc *g_notify_during_close;
 static struct l9p_connection g_connection;
 
 static void
@@ -63,6 +66,7 @@ reset_mocks(void)
 	g_chain_n = 2;
 	g_readable = 1;
 	g_writable = 1;
+	g_ordered = true;
 	g_recv_result = 0;
 	g_complete_immediately = false;
 	g_recv_calls = 0;
@@ -74,6 +78,8 @@ reset_mocks(void)
 	g_connection_closes = 0;
 	g_connection_inits = 0;
 	g_connection_init_result = 0;
+	g_needs_reset_calls = 0;
+	g_notify_during_close = NULL;
 }
 
 const char *
@@ -130,6 +136,7 @@ vq_getchain(struct vqueue_info *vq __unused, struct iovec *iov, int niov,
 	req->idx = 7;
 	req->readable = g_readable;
 	req->writable = g_writable;
+	req->ordered = g_ordered;
 	g_descs--;
 	return (g_chain_n);
 }
@@ -171,6 +178,9 @@ void
 l9p_connection_close(struct l9p_connection *conn __unused)
 {
 	g_connection_closes++;
+	if (g_notify_during_close != NULL)
+		pci_vt9p_notify(g_notify_during_close,
+		    &g_notify_during_close->vsc_vq);
 }
 
 void
@@ -196,6 +206,13 @@ l9p_connection_init(struct l9p_server *server __unused,
 void
 vi_reset_dev(struct virtio_softc *vs __unused)
 {
+}
+
+void
+vi_set_needs_reset(struct virtio_softc *vs)
+{
+	g_needs_reset_calls++;
+	vs->vs_status |= VIRTIO_CONFIG_S_NEEDS_RESET;
 }
 
 static void
@@ -294,6 +311,35 @@ ATF_TC_BODY(invalid_chains, tc)
 	ATF_CHECK(g_rel_len == 0);
 	ATF_CHECK(g_end_calls == 1);
 	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+
+	reset_mocks();
+	setup_softc(&sc);
+	g_ordered = false;
+	pci_vt9p_notify(&sc, &sc.vsc_vq);
+	ATF_CHECK(g_recv_calls == 0);
+	ATF_CHECK(g_rel_calls == 1);
+	ATF_CHECK(g_rel_len == 0);
+	ATF_CHECK(g_end_calls == 1);
+	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(reset_replays_notify);
+ATF_TC_BODY(reset_replays_notify, tc)
+{
+	struct pci_vt9p_softc sc;
+
+	reset_mocks();
+	setup_softc(&sc);
+	g_notify_during_close = &sc;
+	ATF_REQUIRE(pthread_mutex_lock(&sc.vsc_mtx) == 0);
+	pci_vt9p_reset(&sc);
+	ATF_REQUIRE(pthread_mutex_unlock(&sc.vsc_mtx) == 0);
+	ATF_CHECK(g_connection_closes == 1);
+	ATF_CHECK(g_connection_inits == 1);
+	ATF_CHECK(g_recv_calls == 1);
+	ATF_CHECK(!sc.vsc_notify_pending);
+	free(g_recv_aux);
+	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
 }
 
 ATF_TC_WITHOUT_HEAD(rejected_request);
@@ -372,6 +418,7 @@ ATF_TC_BODY(reset_reinit_failure, tc)
 	ATF_CHECK(sc.vsc_conn == NULL);
 	ATF_CHECK(!sc.vsc_resetting);
 	ATF_CHECK((sc.vsc_vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	ATF_CHECK(g_needs_reset_calls == 1);
 	ATF_REQUIRE(pthread_mutex_unlock(&sc.vsc_mtx) == 0);
 	ATF_CHECK(g_connection_closes == 1);
 	ATF_CHECK(g_connection_inits == 1);
@@ -384,6 +431,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, option_parser);
 	ATF_TP_ADD_TC(tp, descriptor_lifetime);
 	ATF_TP_ADD_TC(tp, invalid_chains);
+	ATF_TP_ADD_TC(tp, reset_replays_notify);
 	ATF_TP_ADD_TC(tp, rejected_request);
 	ATF_TP_ADD_TC(tp, synchronous_completion);
 	ATF_TP_ADD_TC(tp, stale_completion);
