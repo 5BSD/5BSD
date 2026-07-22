@@ -767,6 +767,34 @@ ATF_TC_BODY(seqpacket_msg_eor_transport_marker, tc)
 	ATF_CHECK((g_last_send_mflags & M_PROTO1) == 0);
 }
 
+/* --- Atomic socket records, including empty ones, carry an mbuf packet
+ * header.  soreceive relies on the same invariant as the generic send path. --- */
+ATF_TC_WITHOUT_HEAD(seqpacket_zero_length_has_packet_header);
+ATF_TC_BODY(seqpacket_zero_length_has_packet_header, tc)
+{
+	struct vtvsock_pcb *pcb;
+	struct iovec iov;
+	struct uio uio;
+	char data;
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM | VIRTIO_VSOCK_F_SEQPACKET);
+	pcb = establish_remote(SOCK_SEQPACKET, 95, 1252, NULL);
+	ATF_REQUIRE(pcb != NULL);
+	memset(&uio, 0, sizeof(uio));
+	iov.iov_base = &data;
+	iov.iov_len = 0;
+	uio.uio_iov = &iov;
+	uio.uio_iovcnt = 1;
+	uio.uio_resid = 0;
+
+	ATF_CHECK(vsock_sosend(pcb->so, NULL, &uio, NULL, NULL, 0, NULL) == 0);
+	ATF_CHECK(g_send_calls == 1);
+	ATF_CHECK(g_last_send_len == 0);
+	ATF_CHECK((g_last_send_mflags & M_PKTHDR) != 0);
+	ATF_CHECK((g_last_send_mflags & (M_EOR | M_PROTO1)) == 0);
+}
+
 /* --- A packet shorter than hdr.len is malformed, not a truncated message. --- */
 ATF_TC_WITHOUT_HEAD(rx_truncated_payload_is_rejected);
 ATF_TC_BODY(rx_truncated_payload_is_rejected, tc)
@@ -862,6 +890,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, remote_stream_send_is_packet_atomic);
 	ATF_TP_ADD_TC(tp, send_terminal_state_checks_are_locked);
 	ATF_TP_ADD_TC(tp, seqpacket_msg_eor_transport_marker);
+	ATF_TP_ADD_TC(tp, seqpacket_zero_length_has_packet_header);
 	ATF_TP_ADD_TC(tp, rx_truncated_payload_is_rejected);
 	ATF_TP_ADD_TC(tp, inbound_connection_cap_reclaims_slot);
 	return (atf_no_error());

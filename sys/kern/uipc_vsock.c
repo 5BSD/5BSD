@@ -2287,8 +2287,9 @@ vsock_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 			}
 		} else {
 			/* Zero-length SEQPACKET record (Linux semantics). */
-			m = m_get(M_WAITOK, MT_DATA);
+			m = m_gethdr(M_WAITOK, MT_DATA);
 			m->m_len = 0;
+			m->m_pkthdr.len = 0;
 		}
 		if (seqpacket && (flags & MSG_EOR) != 0)
 			m->m_flags |= M_EOR | M_PROTO1;
