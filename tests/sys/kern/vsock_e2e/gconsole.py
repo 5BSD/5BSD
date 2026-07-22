@@ -5,8 +5,10 @@ import errno
 import glob
 import os
 import select
+import socket
 import sys
 import tempfile
+import threading
 import time
 
 
@@ -73,36 +75,43 @@ def wait_io(fd, readable, deadline):
         raise RuntimeError("virtio-console send timed out")
 
 
+def exchange_fd(fd, incoming, outgoing, timeout=20):
+    deadline = time.monotonic() + timeout
+    offset = 0
+    while offset < len(outgoing):
+        wait_io(fd, False, deadline)
+        try:
+            written = os.write(fd, outgoing[offset:])
+        except OSError as error:
+            if error.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                continue
+            raise
+        if written <= 0:
+            raise RuntimeError("short virtio-console write")
+        offset += written
+
+    received = bytearray()
+    while len(received) < len(incoming):
+        wait_io(fd, True, deadline)
+        try:
+            chunk = os.read(fd, len(incoming) - len(received))
+        except BlockingIOError:
+            continue
+        if not chunk:
+            raise RuntimeError("virtio-console closed during receive")
+        received.extend(chunk)
+    if bytes(received) != incoming:
+        raise RuntimeError(
+            f"virtio-console payload mismatch: {bytes(received)!r}"
+        )
+
+
 def exchange(path, incoming, outgoing, timeout=20):
     fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
-    deadline = time.monotonic() + timeout
-    received = bytearray()
     try:
-        while len(received) < len(incoming):
-            wait_io(fd, True, deadline)
-            try:
-                chunk = os.read(fd, len(incoming) - len(received))
-            except BlockingIOError:
-                continue
-            if not chunk:
-                raise RuntimeError("virtio-console closed during receive")
-            received.extend(chunk)
-        if bytes(received) != incoming:
-            raise RuntimeError(
-                f"virtio-console payload mismatch: {bytes(received)!r}"
-            )
-        offset = 0
-        while offset < len(outgoing):
-            wait_io(fd, False, deadline)
-            try:
-                written = os.write(fd, outgoing[offset:])
-            except OSError as error:
-                if error.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
-                    continue
-                raise
-            if written <= 0:
-                raise RuntimeError("short virtio-console write")
-            offset += written
+        # Write first so the host knows the guest has opened the port before
+        # sending.  bhyve may discard host bytes delivered before PORT_READY.
+        exchange_fd(fd, incoming, outgoing, timeout)
     finally:
         os.close(fd)
 
@@ -137,6 +146,38 @@ def self_test():
             pass
         else:
             raise AssertionError("accepted wrong console transport")
+
+    incoming = b"host-ready"
+    outgoing = b"guest-ready"
+    left, right = socket.socketpair()
+    peer_errors = []
+
+    def peer():
+        try:
+            received = bytearray()
+            while len(received) < len(outgoing):
+                chunk = right.recv(len(outgoing) - len(received))
+                if not chunk:
+                    raise AssertionError("exchange self-test closed early")
+                received.extend(chunk)
+            if bytes(received) != outgoing:
+                raise AssertionError(f"wrong guest payload: {received!r}")
+            right.sendall(incoming)
+        except BaseException as error:
+            peer_errors.append(error)
+
+    worker = threading.Thread(target=peer)
+    worker.start()
+    try:
+        exchange_fd(left.fileno(), incoming, outgoing, timeout=2)
+    finally:
+        left.close()
+        right.close()
+    worker.join(timeout=2)
+    if worker.is_alive():
+        raise AssertionError("exchange self-test peer did not exit")
+    if peer_errors:
+        raise peer_errors[0]
     print("SELFTEST PASS")
 
 
