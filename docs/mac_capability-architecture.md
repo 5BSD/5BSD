@@ -638,7 +638,7 @@ System gates:
 
 ### isolation (sync, MAC_CAPABILITY_CALL)
 
-File, directory, Unix-socket, network, and jail isolation by nonce.
+File, directory, Unix-socket, network, vsock, and jail isolation by nonce.
 Claims establish broad ownership; tokens delegate narrowed access.
 
 **File/directory operations:**
@@ -680,6 +680,29 @@ File action masks for token narrowing:
 
 Network claims support port ranges (min..max), CIDR address prefixes
 (e.g., 10.0.0.0/8), protocol wildcards, and direction (bind/connect/any).
+
+**Vsock operations:**
+
+| Operation | What it does |
+|-----------|-------------|
+| CLAIM_VSOCK | Claim a CID, 32-bit port range, and bind/connect direction |
+| RELEASE_VSOCK | Release an exact vsock claim |
+| QUERY_VSOCK | Check vsock ownership and authorization |
+| MINT_VSOCK | Create a token narrowed to a covered vsock tuple |
+
+Vsock claims are owned by program nonce and live as long as their isolation
+instance fd.  Bind claims identify local endpoints; connect claims identify
+destinations.  `VSOCK_CID_ANY` and port ranges provide controlled wildcards.
+Socket type is intentionally outside the key, so a claim covers both stream
+and sequenced-packet sockets.  Wildcard and ephemeral binds are checked for
+overlap with exact claims rather than being allowed to bypass them.
+
+The endpoint policy applies to the AF_VSOCK socket API.  The current native
+host transport allows only one privileged `/dev/vsock` provider; access to
+that device can be delegated using vnode isolation.  Supporting multiple
+simultaneous providers is an explicit integration boundary: transport attach
+must then acquire a provider-CID claim, with its own allow/deny probes and
+attach/detach/race tests.
 
 **Jail operations:**
 
@@ -803,7 +826,7 @@ sys/dev/mac_capability/
     mac_capability_kern.c         KPI: dispatch, reply/notify/revoke
     mac_capability_label.c/h      program nonce (identity) MACF label
     mac_capability_identity.c     identity service (SELF, QUERY)
-    mac_capability_isolation.c    file/net/jail isolation (claims, tokens, MACF)
+    mac_capability_isolation.c    file/net/vsock/jail isolation (claims, tokens, MACF)
     mac_capability_capprotect.c   capability protection (ptrace/signal/visibility via MACF)
     mac_capability_system.c       system gate enforcement via MACF
     mac_capability_coalition.c    resource group management (enlist, terminate, timers)
@@ -867,7 +890,7 @@ tests/sys/mac_capability/         ATF kernel tests via kyua
 - **mac_capability_ioctl.h** -- shared kernel/userspace ioctl definitions
 - **mac_capability_label.h** -- program nonce accessor
 - **mac_capability_internal.h** -- framework internals (not for service modules)
-- **mac_capability_isolation_proto.h** -- file/net/jail isolation wire protocol
+- **mac_capability_isolation_proto.h** -- file/net/vsock/jail isolation wire protocol
 - **mac_capability_capprotect_proto.h** -- capability protection wire protocol
 - **mac_capability_system_proto.h** -- system gate wire protocol
 - **mac_capability_coalition_proto.h** -- coalition wire protocol
@@ -901,16 +924,18 @@ Provider: `mac_capability` (core messaging)
 | `queue-pressure` | service name, badge, reason, current, limit |
 | `error` | service name, badge, cmd, pid, nonce, errno |
 
-Provider: `mac_capability_isolation` (file/net/jail enforcement)
+Provider: `mac_capability_isolation` (file/net/vsock/jail enforcement)
 
 | Probe | Args |
 |---|---|
 | `deny` | name, owner nonce, caller nonce |
 | `deny-action` | name, owner nonce, caller nonce, claim id, actions |
 | `deny-net` | owner nonce, caller nonce, claim id, domain, proto\|dir, port |
+| `deny-vsock` | owner nonce, caller nonce, claim id, CID, port, direction |
 | `deny-jail` | owner nonce, caller nonce, claim id, jid, name, actions |
 | `allow-action` | name, owner nonce, caller nonce, claim id, actions |
 | `allow-net` | owner nonce, caller nonce, claim id, domain, proto\|dir, port |
+| `allow-vsock` | owner nonce, caller nonce, claim id, CID, port, direction |
 | `allow-jail` | owner nonce, caller nonce, claim id, jid, name, actions |
 | `token-narrow` | type, owner nonce, claim id, actions, 0 |
 | `query` | type, caller nonce, 0, 0, reply flags |

@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd June 5, 2026
+.Dd July 21, 2026
 .Dt MAC_CAPABILITY_ISOLATION 4
 .Os
 .Sh NAME
@@ -17,8 +17,9 @@
 .Sh DESCRIPTION
 The
 .Nm
-service provides file, network, and jail isolation by program nonce.
-A process claims a resource (vnode, network endpoint, or jail) via its
+service provides file, network, vsock, and jail isolation by program nonce.
+A process claims a resource (vnode, network endpoint, vsock endpoint, or jail)
+via its
 .Xr mac_capability 4
 instance fd; the caller's nonce becomes the owner.
 Processes with a foreign nonce are denied access to claimed resources
@@ -64,7 +65,7 @@ only new vnode operations are gated.
 .Pp
 File operations:
 .Bl -tag -width FI_OP_AUTHORIZE
-.It Dv FI_OP_CLAIM Ta 1
+.It Dv FI_OP_CLAIM No (1)
 Claim isolation over a vnode.
 The target is identified by passing an open fd in the request
 .Pq Fa cm_nfds Ns = Ns 1 .
@@ -74,11 +75,11 @@ Fails with
 if already claimed by a different nonce.
 Re-claiming the same vnode from the same nonce transfers ownership
 to the calling instance.
-.It Dv FI_OP_RELEASE Ta 2
+.It Dv FI_OP_RELEASE No (2)
 Release a previously claimed vnode.
 Only the owning nonce may release.
 Pass any fd referring to the same vnode.
-.It Dv FI_OP_QUERY Ta 3
+.It Dv FI_OP_QUERY No (3)
 Query whether a vnode is currently claimed.
 The caller must supply a valid
 .Dv FI_FS_*
@@ -87,20 +88,20 @@ The reply
 .Fa flags
 field contains:
 .Bl -tag -width FI_QF_AUTHORIZED -compact
-.It Dv FI_QF_CLAIMED Ta 0x01
+.It Dv FI_QF_CLAIMED No (0x01)
 Vnode is claimed by some nonce.
-.It Dv FI_QF_MINE Ta 0x02
+.It Dv FI_QF_MINE No (0x02)
 Vnode is claimed by the caller's nonce.
-.It Dv FI_QF_AUTHORIZED Ta 0x04
+.It Dv FI_QF_AUTHORIZED No (0x04)
 Caller is authorized via token.
 .El
-.It Dv FI_OP_MINT Ta 10
+.It Dv FI_OP_MINT No (10)
 Create an access token for a vnode claim.
 The caller must be the claim owner and must supply a valid
 .Dv FI_FS_*
 actions mask.
 The token is returned as a reply fd.
-.It Dv FI_OP_AUTHORIZE Ta 11
+.It Dv FI_OP_AUTHORIZE No (11)
 Activate a token.
 Called by the recipient on the token fd.
 Adds the caller's nonce to the claim's authorized set.
@@ -139,7 +140,7 @@ protocol, port range, CIDR address prefix, and direction.
 .Pp
 Network operations:
 .Bl -tag -width FI_OP_RELEASE_NET
-.It Dv FI_OP_CLAIM_NET Ta 4
+.It Dv FI_OP_CLAIM_NET No (4)
 Claim a network endpoint.
 No fd is needed; the endpoint is described in
 .Vt struct fi_net_request .
@@ -149,11 +150,11 @@ Domain, protocol, and an all-zero address are wildcards.
 Fails with
 .Er EBUSY
 if the endpoint overlaps an existing claim from a different nonce.
-.It Dv FI_OP_RELEASE_NET Ta 5
+.It Dv FI_OP_RELEASE_NET No (5)
 Release a network claim.
-.It Dv FI_OP_QUERY_NET Ta 6
+.It Dv FI_OP_QUERY_NET No (6)
 Query whether a network endpoint is claimed.
-.It Dv FI_OP_MINT_NET Ta 12
+.It Dv FI_OP_MINT_NET No (12)
 Create a network access token.
 The endpoint description in the request is embedded in the token.
 .El
@@ -174,20 +175,77 @@ CIDR prefix lengths for
 are mapped to the v4-mapped region
 .Pq e.g., IPv4 /24 becomes bit offset 96+24=120 .
 A prefix of 0 with an all-zero address means any address.
+.Ss Vsock Isolation
+Vsock isolation gates
+.Xr socket 2 ,
+.Xr bind 2 ,
+and
+.Xr connect 2
+for
+.Dv AF_VSOCK .
+Claims are owned by the caller's program nonce and are keyed by a VM context
+identifier (CID), an inclusive 32-bit port range, and a bind/connect direction.
+They apply to both stream and sequenced-packet sockets; socket type is
+intentionally not part of the key, so claiming an endpoint reserves it across
+both protocol types.
+.Pp
+For bind claims, CID and port describe the requested local endpoint.
+For connect claims, they describe the destination endpoint.
+.Dv VSOCK_CID_ANY
+matches any CID.
+Ports are in host byte order.
+A wildcard-CID or
+.Dv VSOCK_PORT_ANY
+bind is treated as overlapping every matching exact claim, preventing an
+ephemeral bind from bypassing ownership of a claimed port.
+.Pp
+Vsock operations:
+.Bl -tag -width FI_OP_RELEASE_VSOCK
+.It Dv FI_OP_CLAIM_VSOCK No (14)
+Claim a CID, port range, and direction tuple described by
+.Vt struct fi_vsock_request .
+Fails with
+.Er EBUSY
+when it overlaps a claim owned by another nonce.
+.It Dv FI_OP_RELEASE_VSOCK No (15)
+Release an exactly matching claim owned by the caller's nonce.
+.It Dv FI_OP_QUERY_VSOCK No (16)
+Query claim ownership and token authorization.
+.It Dv FI_OP_MINT_VSOCK No (17)
+Mint an access token narrowed to a tuple covered by one of the caller's claims.
+.El
+.Pp
+A fully wildcard claim
+.Pq any CID, all ports, both directions
+also gates creation of
+.Dv AF_VSOCK
+sockets.
+As with other isolation claims, ownership is tied to the isolation instance fd,
+not to a PID; closing or revoking the instance releases its claims.
+.Pp
+These endpoint claims govern the socket API.
+The native host provider's privileged
+.Dv VSOCK_IOC_TRANSPORT_ATTACH
+operation is separately serialized by the vsock subsystem.
+Access to the current single-provider
+.Pa /dev/vsock
+device can be delegated with a vnode claim.
+If vsock gains simultaneous multiple providers, provider-CID attachment must
+become an explicit isolation resource rather than relying on device ownership.
 .Ss Jail Isolation
 Jail isolation gates jail operations by JID, name, or both.
 .Pp
 Jail operations:
 .Bl -tag -width FI_OP_RELEASE_JAIL
-.It Dv FI_OP_CLAIM_JAIL Ta 7
+.It Dv FI_OP_CLAIM_JAIL No (7)
 Claim a jail.
 At least one of JID or name must be specified.
 A claim with both keys protects either identifier for the same jail.
-.It Dv FI_OP_RELEASE_JAIL Ta 8
+.It Dv FI_OP_RELEASE_JAIL No (8)
 Release a jail claim.
-.It Dv FI_OP_QUERY_JAIL Ta 9
+.It Dv FI_OP_QUERY_JAIL No (9)
 Query whether a jail is claimed.
-.It Dv FI_OP_MINT_JAIL Ta 13
+.It Dv FI_OP_MINT_JAIL No (13)
 Create a jail access token with a
 .Dv FI_JAIL_*
 action mask.
@@ -213,11 +271,12 @@ creation succeeds); in that case, matching is by name alone.
 Tokens minted by
 .Dv FI_OP_MINT ,
 .Dv FI_OP_MINT_NET ,
+.Dv FI_OP_MINT_JAIL ,
 and
-.Dv FI_OP_MINT_JAIL
-carry an action mask that limits the operations the token holder
-is authorized to perform.
-The mask is fixed at mint time and cannot be widened.
+.Dv FI_OP_MINT_VSOCK
+carry a scope that limits the operations the token holder is authorized to
+perform.
+The scope is fixed at mint time and cannot be widened.
 .Pp
 For file tokens, authorization checks require that every bit in the
 requested action mask is present in the token's
@@ -230,6 +289,7 @@ field in the
 is checked similarly.
 For network tokens, the direction, domain, protocol, port range, and
 address prefix must all be covered by the token's endpoint description.
+For vsock tokens, CID, port range, and direction must be covered.
 .Ss MACF Enforcement
 The service registers MAC policy hooks for:
 .Bl -dash -compact
@@ -264,27 +324,31 @@ The following DTrace probes are available under the
 .Nm mac_capability_isolation
 provider:
 .Bl -tag -width "token-narrow"
-.It Li deny Ns ( Ns Fa name , owner_nonce , caller_nonce Ns )
+.It Li "deny(name, owner_nonce, caller_nonce)"
 A vnode operation was denied because no claim matched the caller's nonce.
-.It Li deny-action Ns ( Ns Fa name , owner_nonce , caller_nonce , claim_id , actions Ns )
+.It Li "deny-action(name, owner_nonce, caller_nonce, claim_id, actions)"
 A vnode operation was denied; includes the claim ID and requested action mask.
-.It Li deny-net Ns ( Ns Fa owner_nonce , caller_nonce , claim_id , domain , proto|dir , port Ns )
+.It Li "deny-net(owner_nonce, caller_nonce, claim_id, domain, proto|dir, port)"
 A network operation was denied.
-.It Li deny-jail Ns ( Ns Fa owner_nonce , caller_nonce , claim_id , jid , name , actions Ns )
+.It Li "deny-vsock(owner_nonce, caller_nonce, claim_id, cid, port, direction)"
+A vsock socket creation, bind, or connect operation was denied.
+.It Li "deny-jail(owner_nonce, caller_nonce, claim_id, jid, name, actions)"
 A jail operation was denied.
-.It Li allow-action Ns ( Ns Fa name , owner_nonce , caller_nonce , claim_id , actions Ns )
+.It Li "allow-action(name, owner_nonce, caller_nonce, claim_id, actions)"
 A vnode operation was allowed (nonce match or valid token).
-.It Li allow-net Ns ( Ns Fa owner_nonce , caller_nonce , claim_id , domain , proto|dir , port Ns )
+.It Li "allow-net(owner_nonce, caller_nonce, claim_id, domain, proto|dir, port)"
 A network operation was allowed.
-.It Li allow-jail Ns ( Ns Fa owner_nonce , caller_nonce , claim_id , jid , name , actions Ns )
+.It Li "allow-vsock(owner_nonce, caller_nonce, claim_id, cid, port, direction)"
+A vsock operation was allowed by ownership or a matching token.
+.It Li "allow-jail(owner_nonce, caller_nonce, claim_id, jid, name, actions)"
 A jail operation was allowed.
-.It Li token-narrow Ns ( Ns Fa type , owner_nonce , claim_id , actions , 0 Ns )
+.It Li "token-narrow(type, owner_nonce, claim_id, actions, 0)"
 A token was minted with a narrowed action mask.
-.It Li query Ns ( Ns Fa type , caller_nonce , 0 , 0 , reply_flags Ns )
+.It Li "query(type, caller_nonce, 0, 0, reply_flags)"
 A query was performed; reply_flags contains
 .Dv FI_QF_*
 result.
-.It Li state Ns ( Ns Fa name , nonce , nonce , claim_id , op , errno Ns )
+.It Li "state(name, nonce, nonce, claim_id, op, errno)"
 A state change occurred (claim, release, authorize).
 .El
 .Sh EXAMPLES
@@ -334,6 +398,21 @@ struct mac_capability_call_args ca = {
 ioctl(iso, MAC_CAPABILITY_CALL, &ca);
 .Ed
 .Pp
+Claim host access to a guest service on CID 14, port 7000:
+.Bd -literal
+struct fi_vsock_request vr = {
+    .op = FI_OP_CLAIM_VSOCK,
+    .cid = 14,
+    .port_min = 7000,
+    .port_max = 7000,
+    .direction = FI_NET_CONNECT,
+};
+struct mac_capability_call_args ca = {
+    .req = &vr, .req_len = sizeof(vr)
+};
+ioctl(iso, MAC_CAPABILITY_CALL, &ca);
+.Ed
+.Pp
 Claim a jail by name and JID:
 .Bd -literal
 struct fi_jail_request jr = {
@@ -356,6 +435,7 @@ or invalid request structure.
 .It Bq Er EBUSY
 .Dv FI_OP_CLAIM ,
 .Dv FI_OP_CLAIM_NET ,
+.Dv FI_OP_CLAIM_VSOCK ,
 or
 .Dv FI_OP_CLAIM_JAIL
 attempted on a resource already claimed by a different nonce.
@@ -399,15 +479,24 @@ struct fi_jail_request {
     uint32_t actions;  /* FI_JAIL_* mask */
     char     name[64]; /* NUL-terminated jail name */
 } __packed;
+
+struct fi_vsock_request {
+    uint32_t op;       /* CLAIM_VSOCK, RELEASE_VSOCK, etc. */
+    uint32_t flags;    /* reserved, must be 0 */
+    uint64_t cid;      /* VSOCK_CID_ANY or a 32-bit CID */
+    uint32_t port_min; /* host byte order */
+    uint32_t port_max; /* host byte order */
+    uint8_t  direction;/* FI_NET_* bitmask */
+    uint8_t  _pad[3];
+} __packed;
 .Ed
 .Sh SEE ALSO
+.Xr mac 4 ,
 .Xr mac_capability 4 ,
 .Xr mac_capability_capprotect 4 ,
 .Xr mac_capability_system 4 ,
-.Xr mac 4 ,
 .Xr oracled 8
 .Sh HISTORY
 The
 .Nm
-service first appeared in
-.Tn 5BSD .
+service first appeared in 5BSD.

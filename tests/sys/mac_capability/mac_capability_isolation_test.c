@@ -1038,6 +1038,56 @@ run_vsock_token_query_helper(const atf_tc_t *tc, int svc, int token,
 }
 
 static int
+run_vsock_access_helper(const atf_tc_t *tc, int token, uint64_t cid,
+    uint32_t port, uint8_t direction)
+{
+	char tokenstr[16], cidstr[32], portstr[16], dirstr[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	snprintf(tokenstr, sizeof(tokenstr), "%d", token);
+	snprintf(cidstr, sizeof(cidstr), "%ju", (uintmax_t)cid);
+	snprintf(portstr, sizeof(portstr), "%u", port);
+	snprintf(dirstr, sizeof(dirstr), "%u", direction);
+	path = fi_helper_path(tc);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		if (token >= 0)
+			execl(path, path, "vsock-token-try", tokenstr,
+			    cidstr, portstr, dirstr, NULL);
+		else
+			execl(path, path, "vsock-try", cidstr, portstr,
+			    dirstr, NULL);
+		_exit(127);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE(WIFEXITED(status));
+	return (WEXITSTATUS(status));
+}
+
+static int
+run_vsock_short_bind_helper(const atf_tc_t *tc)
+{
+	const char *path;
+	pid_t pid;
+	int status;
+
+	path = fi_helper_path(tc);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(path, path, "vsock-short-bind", NULL);
+		_exit(127);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE(WIFEXITED(status));
+	return (WEXITSTATUS(status));
+}
+
+static int
 run_net_claim_helper(const atf_tc_t *tc, int svc, uint32_t op, int domain,
     int protocol, uint16_t port, uint8_t direction, const char *addr,
     uint8_t prefix)
@@ -2779,6 +2829,167 @@ ATF_TC_BODY(vsock_token_claim_mint_authorize, tc)
 	close(token);
 	close(svc);
 }
+
+#define	VSOCK_TC_HEAD(name, description)\
+	ATF_TC(name);\
+	ATF_TC_HEAD(name, tc)\
+	{\
+		atf_tc_set_md_var(tc, "descr", description);\
+		atf_tc_set_md_var(tc, "require.user", "root");\
+		atf_tc_set_md_var(tc, "require.kmods",\
+		    "mac_capability mac_capability_isolation");\
+	}
+
+VSOCK_TC_HEAD(vsock_claim_blocks_foreign_bind,
+    "A wildcard-CID vsock port claim blocks a foreign bind")
+ATF_TC_BODY(vsock_claim_blocks_foreign_bind, tc)
+{
+	struct fi_vsock_request req;
+	int svc;
+
+	svc = fi_connect();
+	memset(&req, 0, sizeof(req));
+	req.cid = VSOCK_CID_ANY;
+	req.port_min = req.port_max = 18600;
+	req.direction = FI_NET_BIND;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == 0);
+	ATF_CHECK_EQ(1, run_vsock_access_helper(tc, -1, VSOCK_CID_ANY,
+	    req.port_min, FI_NET_BIND));
+	close(svc);
+}
+
+VSOCK_TC_HEAD(vsock_claim_blocks_foreign_connect,
+    "A specific CID and port claim blocks a foreign connect")
+ATF_TC_BODY(vsock_claim_blocks_foreign_connect, tc)
+{
+	struct fi_vsock_request req;
+	int svc;
+
+	svc = fi_connect();
+	memset(&req, 0, sizeof(req));
+	req.cid = 3;
+	req.port_min = req.port_max = 18601;
+	req.direction = FI_NET_CONNECT;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == 0);
+	ATF_CHECK_EQ(1, run_vsock_access_helper(tc, -1, req.cid,
+	    req.port_min, FI_NET_CONNECT));
+	close(svc);
+}
+
+VSOCK_TC_HEAD(vsock_token_authorizes_bind,
+    "A narrowed vsock token authorizes its holder's bind")
+ATF_TC_BODY(vsock_token_authorizes_bind, tc)
+{
+	struct fi_vsock_request req;
+	int svc, token;
+
+	svc = fi_connect();
+	memset(&req, 0, sizeof(req));
+	req.cid = VSOCK_CID_ANY;
+	req.port_min = req.port_max = 18602;
+	req.direction = FI_NET_BIND;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == 0);
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_MINT_VSOCK, &req, &token) == 0);
+	ATF_CHECK_EQ(0, run_vsock_access_helper(tc, token, VSOCK_CID_ANY,
+	    req.port_min, FI_NET_BIND));
+	close(token);
+	close(svc);
+}
+
+VSOCK_TC_HEAD(vsock_exact_claim_blocks_wildcard_bind,
+    "An exact vsock claim cannot be bypassed by wildcard ephemeral bind")
+ATF_TC_BODY(vsock_exact_claim_blocks_wildcard_bind, tc)
+{
+	struct fi_vsock_request req;
+	int svc;
+
+	svc = fi_connect();
+	memset(&req, 0, sizeof(req));
+	req.cid = VSOCK_CID_LOCAL;
+	req.port_min = req.port_max = 18603;
+	req.direction = FI_NET_BIND;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == 0);
+	ATF_CHECK_EQ(1, run_vsock_access_helper(tc, -1, VSOCK_CID_ANY,
+	    VSOCK_PORT_ANY, FI_NET_BIND));
+	close(svc);
+}
+
+VSOCK_TC_HEAD(vsock_release_allows_bind,
+    "Releasing a vsock claim removes the policy denial")
+ATF_TC_BODY(vsock_release_allows_bind, tc)
+{
+	struct fi_vsock_request req;
+	int result, svc;
+
+	svc = fi_connect();
+	memset(&req, 0, sizeof(req));
+	req.cid = VSOCK_CID_ANY;
+	req.port_min = req.port_max = 18604;
+	req.direction = FI_NET_BIND;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == 0);
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_RELEASE_VSOCK, &req, NULL) == 0);
+	result = run_vsock_access_helper(tc, -1, VSOCK_CID_ANY,
+	    req.port_min, FI_NET_BIND);
+	ATF_CHECK_MSG(result != 1, "released claim still denied bind");
+	close(svc);
+}
+
+VSOCK_TC_HEAD(vsock_wildcard_claim_blocks_socket_create,
+    "A fully wildcard vsock claim gates AF_VSOCK socket creation")
+ATF_TC_BODY(vsock_wildcard_claim_blocks_socket_create, tc)
+{
+	struct fi_vsock_request req;
+	int svc;
+
+	svc = fi_connect();
+	memset(&req, 0, sizeof(req));
+	req.cid = VSOCK_CID_ANY;
+	req.port_min = 0;
+	req.port_max = UINT32_MAX;
+	req.direction = FI_NET_ANY;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == 0);
+	ATF_CHECK_EQ(1, run_vsock_access_helper(tc, -1, VSOCK_CID_ANY,
+	    18605, FI_NET_BIND));
+	close(svc);
+}
+
+VSOCK_TC_HEAD(vsock_rejects_out_of_range_cid,
+    "Vsock claims reject CIDs wider than sockaddr_vm")
+ATF_TC_BODY(vsock_rejects_out_of_range_cid, tc)
+{
+	struct fi_vsock_request req;
+	int svc;
+
+	svc = fi_connect();
+	memset(&req, 0, sizeof(req));
+	req.cid = (uint64_t)UINT32_MAX + 1;
+	req.port_min = req.port_max = 18606;
+	req.direction = FI_NET_BIND;
+	errno = 0;
+	ATF_CHECK(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == -1);
+	ATF_CHECK_EQ(EINVAL, errno);
+	close(svc);
+}
+
+VSOCK_TC_HEAD(vsock_short_sockaddr_is_rejected_safely,
+    "A short AF_VSOCK sockaddr reaches protocol validation without policy OOB reads")
+ATF_TC_BODY(vsock_short_sockaddr_is_rejected_safely, tc)
+{
+	struct fi_vsock_request req;
+	int svc;
+
+	svc = fi_connect();
+	memset(&req, 0, sizeof(req));
+	req.cid = VSOCK_CID_ANY;
+	req.port_min = req.port_max = 18607;
+	req.direction = FI_NET_BIND;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == 0);
+	ATF_CHECK_EQ(0, run_vsock_short_bind_helper(tc));
+	close(svc);
+}
+
+#undef VSOCK_TC_HEAD
+
 ATF_TC_BODY(net_token_mint_returns_fd, tc)
 {
 	int svc, token;
@@ -4516,6 +4727,14 @@ ATF_TP_ADD_TCS(tp)
 
 	/* Network access tokens */
 	ATF_TP_ADD_TC(tp, vsock_token_claim_mint_authorize);
+	ATF_TP_ADD_TC(tp, vsock_claim_blocks_foreign_bind);
+	ATF_TP_ADD_TC(tp, vsock_claim_blocks_foreign_connect);
+	ATF_TP_ADD_TC(tp, vsock_token_authorizes_bind);
+	ATF_TP_ADD_TC(tp, vsock_exact_claim_blocks_wildcard_bind);
+	ATF_TP_ADD_TC(tp, vsock_release_allows_bind);
+	ATF_TP_ADD_TC(tp, vsock_wildcard_claim_blocks_socket_create);
+	ATF_TP_ADD_TC(tp, vsock_rejects_out_of_range_cid);
+	ATF_TP_ADD_TC(tp, vsock_short_sockaddr_is_rejected_safely);
 	ATF_TP_ADD_TC(tp, net_token_mint_returns_fd);
 	ATF_TP_ADD_TC(tp, net_token_authorize_grants_bind);
 	ATF_TP_ADD_TC(tp, net_token_scoped_to_endpoint);

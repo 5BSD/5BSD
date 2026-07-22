@@ -70,12 +70,16 @@ SDT_PROBE_DEFINE5(mac_capability_isolation, , , deny__action,
     "const char *", "uint64_t", "uint64_t", "uint64_t", "uint64_t");
 SDT_PROBE_DEFINE6(mac_capability_isolation, , , deny__net,
     "uint64_t", "uint64_t", "uint64_t", "int", "uint32_t", "uint16_t");
+SDT_PROBE_DEFINE6(mac_capability_isolation, , , deny__vsock,
+    "uint64_t", "uint64_t", "uint64_t", "uint64_t", "uint32_t", "uint8_t");
 SDT_PROBE_DEFINE6(mac_capability_isolation, , , deny__jail,
     "uint64_t", "uint64_t", "uint64_t", "int", "const char *", "uint32_t");
 SDT_PROBE_DEFINE5(mac_capability_isolation, , , allow__action,
     "const char *", "uint64_t", "uint64_t", "uint64_t", "uint64_t");
 SDT_PROBE_DEFINE6(mac_capability_isolation, , , allow__net,
     "uint64_t", "uint64_t", "uint64_t", "int", "uint32_t", "uint16_t");
+SDT_PROBE_DEFINE6(mac_capability_isolation, , , allow__vsock,
+    "uint64_t", "uint64_t", "uint64_t", "uint64_t", "uint32_t", "uint8_t");
 SDT_PROBE_DEFINE6(mac_capability_isolation, , , allow__jail,
     "uint64_t", "uint64_t", "uint64_t", "int", "const char *", "uint32_t");
 SDT_PROBE_DEFINE5(mac_capability_isolation, , , token__narrow,
@@ -1454,6 +1458,8 @@ static __inline u_long
 fi_vsock_hash_fn(uint32_t port, uint64_t cid)
 {
 
+	if (cid == VSOCK_CID_ANY)
+		cid = 0;
 	return (((u_long)port ^ (u_long)(cid >> 4)) & fi_vsock_hashmask);
 }
 
@@ -1475,7 +1481,7 @@ static bool
 fi_vsock_cid_match(uint64_t claim_cid, uint64_t sa_cid)
 {
 
-	if (claim_cid == VSOCK_CID_ANY)
+	if (claim_cid == VSOCK_CID_ANY || sa_cid == VSOCK_CID_ANY)
 		return (true);
 	return (claim_cid == sa_cid);
 }
@@ -1558,6 +1564,9 @@ fi_vsock_check(struct ucred *cred, struct sockaddr *sa, uint8_t direction)
 
 	if (sa == NULL || sa->sa_family != AF_VSOCK)
 		return (0);
+	/* The MAC hook sees the caller-controlled sockaddr before AF_VSOCK. */
+	if (sa->sa_len != 0 && sa->sa_len < sizeof(*svm))
+		return (0);
 
 	svm = (struct sockaddr_vm *)sa;
 	cid = svm->svm_cid;
@@ -1567,17 +1576,32 @@ fi_vsock_check(struct ucred *cred, struct sockaddr *sa, uint8_t direction)
 
 	rw_rlock(&fi_vsock_lock);
 	{
-		u_long buckets[4];
-		int nbuckets = 4, i, j;
+		u_long buckets[FI_VSOCK_HASH_SIZE];
+		int nbuckets, i, j;
 		bool dup;
 #define	VSOCK_DENY_MAX	8
 		struct { uint64_t nonce; uint64_t claim_id; } denied[VSOCK_DENY_MAX];
 		int ndeny = 0;
 
-		buckets[0] = fi_vsock_hash_fn(port, cid);
-		buckets[1] = fi_vsock_hash_fn(0, cid);
-		buckets[2] = fi_vsock_hash_fn(port, 0);
-		buckets[3] = fi_vsock_hash_fn(0, 0);
+		/*
+		 * A wildcard bind can be assigned any concrete local CID or
+		 * ephemeral port by the protocol.  Scan every bucket so such a
+		 * bind cannot evade an exact claim.  Concrete endpoints retain the
+		 * four-bucket fast path (exact/range crossed with exact/wild CID).
+		 */
+		if (cid == VSOCK_CID_ANY || port == VSOCK_PORT_ANY) {
+			nbuckets = fi_vsock_hashmask + 1;
+			KASSERT((u_int)nbuckets <= nitems(buckets),
+			    ("vsock hash grew beyond lookup array"));
+			for (i = 0; i < nbuckets; i++)
+				buckets[i] = i;
+		} else {
+			nbuckets = 4;
+			buckets[0] = fi_vsock_hash_fn(port, cid);
+			buckets[1] = fi_vsock_hash_fn(0, cid);
+			buckets[2] = fi_vsock_hash_fn(port, 0);
+			buckets[3] = fi_vsock_hash_fn(0, 0);
+		}
 
 		for (i = 0; i < nbuckets; i++) {
 			dup = false;
@@ -1596,10 +1620,15 @@ fi_vsock_check(struct ucred *cred, struct sockaddr *sa, uint8_t direction)
 					continue;
 				if (!fi_vsock_cid_match(vc->fv_cid, cid))
 					continue;
-				if (!fi_vsock_port_in_range(vc, port))
+				if (port != VSOCK_PORT_ANY &&
+				    !fi_vsock_port_in_range(vc, port))
 					continue;
 				if (caller_nonce != 0 &&
 				    caller_nonce == vc->fv_nonce) {
+					SDT_PROBE6(mac_capability_isolation, , ,
+					    allow__vsock, vc->fv_nonce,
+					    caller_nonce, vc->fv_id, cid, port,
+					    direction);
 					rw_runlock(&fi_vsock_lock);
 					return (0);
 				}
@@ -1620,12 +1649,24 @@ fi_vsock_check(struct ucred *cred, struct sockaddr *sa, uint8_t direction)
 					    caller_nonce, denied[i].nonce,
 					    denied[i].claim_id, cid, port,
 					    direction)) {
+						SDT_PROBE6(mac_capability_isolation,
+						    , , allow__vsock,
+						    denied[i].nonce,
+						    caller_nonce,
+						    denied[i].claim_id, cid,
+						    port, direction);
 						rw_runlock(&fi_auth_lock);
 						return (0);
 					}
 				}
 				rw_runlock(&fi_auth_lock);
 			}
+			SDT_PROBE3(mac_capability_isolation, , , deny,
+			    direction == FI_NET_BIND ? "vsock_bind" :
+			    "vsock_connect", denied[0].nonce, caller_nonce);
+			SDT_PROBE6(mac_capability_isolation, , , deny__vsock,
+			    denied[0].nonce, caller_nonce, denied[0].claim_id,
+			    cid, port, direction);
 			return (EACCES);
 		}
 #undef VSOCK_DENY_MAX
@@ -1660,6 +1701,9 @@ fi_vsock_check_create(struct ucred *cred)
 				continue;
 			if (caller_nonce != 0 &&
 			    caller_nonce == vc->fv_nonce) {
+				SDT_PROBE6(mac_capability_isolation, , ,
+				    allow__vsock, vc->fv_nonce, caller_nonce,
+				    vc->fv_id, VSOCK_CID_ANY, 0, FI_NET_ANY);
 				rw_runlock(&fi_vsock_lock);
 				return (0);
 			}
@@ -1673,11 +1717,21 @@ fi_vsock_check_create(struct ucred *cred)
 					if (fi_is_authorized_vsock(
 					    caller_nonce, owner, claim_id,
 					    VSOCK_CID_ANY, 0, FI_NET_ANY)) {
+						SDT_PROBE6(mac_capability_isolation,
+						    , , allow__vsock, owner,
+						    caller_nonce, claim_id,
+						    VSOCK_CID_ANY, 0,
+						    FI_NET_ANY);
 						rw_runlock(&fi_auth_lock);
 						return (0);
 					}
 					rw_runlock(&fi_auth_lock);
 				}
+				SDT_PROBE3(mac_capability_isolation, , , deny,
+				    "vsock_socket_create", owner, caller_nonce);
+				SDT_PROBE6(mac_capability_isolation, , ,
+				    deny__vsock, owner, caller_nonce, claim_id,
+				    VSOCK_CID_ANY, 0, FI_NET_ANY);
 			}
 			return (EACCES);
 		}
@@ -2311,6 +2365,8 @@ fi_validate_vsock_request(const void *req, size_t reqlen,
 	vr = (const struct fi_vsock_request *)req;
 	if (vr->flags != 0)
 		return (EINVAL);
+	if (vr->cid > UINT32_MAX)
+		return (EINVAL);
 	if (vr->direction == 0 || (vr->direction & ~FI_NET_ANY) != 0)
 		return (EINVAL);
 	if (vr->port_min > vr->port_max)
@@ -2366,6 +2422,9 @@ fi_do_claim_vsock(struct mac_capability_instance *s, struct fi_priv *priv,
 		LIST_INSERT_HEAD(&priv->fip_vsock_claims, existing,
 		    fv_instlink);
 		existing->fv_inst = s;
+		SDT_PROBE6(mac_capability_isolation, , , state,
+		    "vsock-reclaim", nonce, nonce, existing->fv_id,
+		    FI_OP_CLAIM_VSOCK, 0);
 		rw_wunlock(&fi_vsock_lock);
 		free(vc, M_FILE_ISOLATION);
 		return (0);
@@ -2383,6 +2442,8 @@ fi_do_claim_vsock(struct mac_capability_instance *s, struct fi_priv *priv,
 	LIST_INSERT_HEAD(&fi_vsock_hash[bucket], vc, fv_hashlink);
 	LIST_INSERT_HEAD(&priv->fip_vsock_claims, vc, fv_instlink);
 	atomic_add_int(&fi_vsock_claim_count, 1);
+	SDT_PROBE6(mac_capability_isolation, , , state, "vsock-claim",
+	    nonce, nonce, vc->fv_id, FI_OP_CLAIM_VSOCK, 0);
 	rw_wunlock(&fi_vsock_lock);
 	return (0);
 }
@@ -2411,6 +2472,9 @@ fi_do_release_vsock(const struct fi_vsock_request *vr, uint64_t nonce)
 		LIST_REMOVE(vc, fv_hashlink);
 		LIST_REMOVE(vc, fv_instlink);
 		atomic_subtract_int(&fi_vsock_claim_count, 1);
+		SDT_PROBE6(mac_capability_isolation, , , state,
+		    "vsock-release", nonce, nonce, vc->fv_id,
+		    FI_OP_RELEASE_VSOCK, 0);
 		rw_wunlock(&fi_vsock_lock);
 		free(vc, M_FILE_ISOLATION);
 		return (0);
@@ -2458,6 +2522,9 @@ fi_do_query_vsock(const struct fi_vsock_request *vr, uint64_t nonce,
 			if (nonce != 0 && vc->fv_nonce == nonce) {
 				rpl->flags |= FI_QF_MINE;
 				rw_runlock(&fi_vsock_lock);
+				SDT_PROBE5(mac_capability_isolation, , , query,
+				    "vsock", nonce, (uint64_t)0, (uint64_t)0,
+				    rpl->flags);
 				return (0);
 			}
 			if (nmatches < VSOCK_QUERY_MAX) {
@@ -2481,6 +2548,8 @@ fi_do_query_vsock(const struct fi_vsock_request *vr, uint64_t nonce,
 		}
 		rw_runlock(&fi_auth_lock);
 	}
+	SDT_PROBE5(mac_capability_isolation, , , query, "vsock", nonce,
+	    (uint64_t)0, (uint64_t)0, rpl->flags);
 	return (0);
 #undef VSOCK_QUERY_MAX
 }

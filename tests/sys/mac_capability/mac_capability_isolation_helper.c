@@ -8,6 +8,7 @@
 #include <sys/jail.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/vsock.h>
 #include <sys/wait.h>
 #include <netinet/in.h>
 
@@ -218,6 +219,48 @@ fi_authorize(int token_fd)
 	return (ioctl(token_fd, MAC_CAPABILITY_CALL, &ca));
 }
 
+/*
+ * Return 0 when the vsock operation succeeds, 1 when MAC policy denies it,
+ * and 2 when it reaches the protocol but fails for another reason (for
+ * example, because no native provider is attached).  Both 0 and 2 prove
+ * that the isolation hook allowed the operation.
+ */
+static int
+vsock_access(uint64_t cid, uint32_t port, uint8_t direction)
+{
+	struct sockaddr_vm svm;
+	int error, s;
+
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	if (s < 0) {
+		if (errno == EACCES || errno == EPERM)
+			return (1);
+		return (2);
+	}
+	memset(&svm, 0, sizeof(svm));
+	svm.svm_len = sizeof(svm);
+	svm.svm_family = AF_VSOCK;
+	svm.svm_cid = (uint32_t)cid;
+	svm.svm_port = port;
+	if (direction == FI_NET_BIND)
+		error = bind(s, (struct sockaddr *)&svm, sizeof(svm));
+	else if (direction == FI_NET_CONNECT)
+		error = connect(s, (struct sockaddr *)&svm, sizeof(svm));
+	else {
+		close(s);
+		return (2);
+	}
+	if (error == 0) {
+		close(s);
+		return (0);
+	}
+	error = errno;
+	close(s);
+	if (error == EACCES || error == EPERM)
+		return (1);
+	return (2);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -225,6 +268,66 @@ main(int argc, char **argv)
 	const char *addr;
 	int svc, op, domain, protocol;
 	unsigned long port, direction, prefix;
+
+	/* Exercise the MAC hook with only the sockaddr header present. */
+	if (argc == 2 && strcmp(argv[1], "vsock-short-bind") == 0) {
+		struct sockaddr sa;
+		int error, s;
+
+		s = socket(AF_VSOCK, SOCK_STREAM, 0);
+		if (s < 0)
+			return (errno == EACCES || errno == EPERM ? 1 : 2);
+		memset(&sa, 0, sizeof(sa));
+		sa.sa_len = 2;
+		sa.sa_family = AF_VSOCK;
+		error = bind(s, &sa, sa.sa_len);
+		if (error == 0) {
+			close(s);
+			return (2);
+		}
+		error = errno;
+		close(s);
+		return (error == EINVAL ? 0 :
+		    (error == EACCES || error == EPERM ? 1 : 2));
+	}
+
+	/*
+	 * vsock-try <cid> <port> <direction>
+	 * vsock-token-try <token_fd> <cid> <port> <direction>
+	 *
+	 * The first mode preserves the three-state vsock_access() result so a
+	 * parent can require a policy denial.  The token mode returns success
+	 * for either an operational success or a non-policy transport error.
+	 */
+	if ((argc == 5 && strcmp(argv[1], "vsock-try") == 0) ||
+	    (argc == 6 && strcmp(argv[1], "vsock-token-try") == 0)) {
+		unsigned long long cid;
+		int arg, result, token_fd;
+
+		arg = 2;
+		if (argc == 6) {
+			token_fd = (int)strtol(argv[arg++], &end, 10);
+			if (*end != '\0')
+				return (2);
+			if (fi_authorize(token_fd) != 0)
+				return (10);
+		}
+		cid = strtoull(argv[arg++], &end, 10);
+		if (*end != '\0' || cid > UINT32_MAX)
+			return (2);
+		port = strtoul(argv[arg++], &end, 10);
+		if (*end != '\0' || port > UINT32_MAX)
+			return (2);
+		direction = strtoul(argv[arg], &end, 10);
+		if (*end != '\0' ||
+		    (direction != FI_NET_BIND && direction != FI_NET_CONNECT))
+			return (2);
+		result = vsock_access((uint64_t)cid, (uint32_t)port,
+		    (uint8_t)direction);
+		if (argc == 6)
+			return (result == 1 ? 1 : 0);
+		return (result);
+	}
 
 	/*
 	 * net-token-bind <token_fd> <port>

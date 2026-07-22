@@ -231,8 +231,11 @@ struct fi_jail_request {
 /*
  * vsock request (ops 14-17): no fd needed.
  * port_min/port_max are host byte order (32-bit vsock ports).
- * cid is the VM context ID (VSOCK_CID_ANY=any, else specific).
+ * cid is the 32-bit VM context ID widened on the wire
+ * (VSOCK_CID_ANY=any, else specific).  Values above UINT32_MAX are invalid.
  * Reuses FI_NET_BIND/FI_NET_CONNECT direction flags.
+ * Socket type is intentionally not part of the key: claims cover both
+ * SOCK_STREAM and SOCK_SEQPACKET endpoints.
  */
 struct fi_vsock_request {
 	uint32_t	op;
