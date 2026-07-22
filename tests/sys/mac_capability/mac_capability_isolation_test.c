@@ -2896,6 +2896,39 @@ ATF_TC_BODY(vsock_token_authorizes_bind, tc)
 	close(svc);
 }
 
+VSOCK_TC_HEAD(vsock_token_authorizes_beyond_eight_claims,
+    "VSOCK authorization scans every matching claim")
+ATF_TC_BODY(vsock_token_authorizes_beyond_eight_claims, tc)
+{
+	struct fi_vsock_request claim, req, extra;
+	int svc, token;
+
+	svc = fi_connect();
+	memset(&claim, 0, sizeof(claim));
+	claim.cid = VSOCK_CID_ANY;
+	claim.port_min = 18602;
+	claim.port_max = 18622;
+	claim.direction = FI_NET_BIND;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &claim, NULL) == 0);
+	req = claim;
+	req.port_min = req.port_max = 18612;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_MINT_VSOCK, &req, &token) == 0);
+	for (uint32_t i = 0; i < 9; i++) {
+		extra = claim;
+		extra.port_min = claim.port_min - i - 1;
+		extra.port_max = claim.port_max + i + 1;
+		ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &extra,
+		    NULL) == 0);
+	}
+	ATF_CHECK_EQ(0, run_vsock_access_helper(tc, token, VSOCK_CID_ANY,
+	    req.port_min, FI_NET_BIND));
+	ATF_REQUIRE_MSG(run_vsock_token_query_helper(tc, svc, token, &req,
+	    FI_QF_CLAIMED | FI_QF_AUTHORIZED) == 0,
+	    "authorization for the ninth displaced claim was not found");
+	close(token);
+	close(svc);
+}
+
 VSOCK_TC_HEAD(vsock_exact_claim_blocks_wildcard_bind,
     "An exact vsock claim cannot be bypassed by wildcard ephemeral bind")
 ATF_TC_BODY(vsock_exact_claim_blocks_wildcard_bind, tc)
@@ -4730,6 +4763,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, vsock_claim_blocks_foreign_bind);
 	ATF_TP_ADD_TC(tp, vsock_claim_blocks_foreign_connect);
 	ATF_TP_ADD_TC(tp, vsock_token_authorizes_bind);
+	ATF_TP_ADD_TC(tp, vsock_token_authorizes_beyond_eight_claims);
 	ATF_TP_ADD_TC(tp, vsock_exact_claim_blocks_wildcard_bind);
 	ATF_TP_ADD_TC(tp, vsock_release_allows_bind);
 	ATF_TP_ADD_TC(tp, vsock_wildcard_claim_blocks_socket_create);

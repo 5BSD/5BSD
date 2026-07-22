@@ -1551,13 +1551,46 @@ fi_is_authorized_vsock(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 	return (0);
 }
 
+static bool
+fi_auth_vsock_covers_request(const struct fi_auth *fa,
+    const struct fi_vsock_request *vr)
+{
+
+	if (!fa->fa_is_vsock)
+		return (false);
+	if ((fa->fa_vsock.direction & vr->direction) != vr->direction)
+		return (false);
+	if (fa->fa_vsock.cid != VSOCK_CID_ANY &&
+	    (vr->cid == VSOCK_CID_ANY || fa->fa_vsock.cid != vr->cid))
+		return (false);
+	return (fa->fa_vsock.port_min <= vr->port_min &&
+	    fa->fa_vsock.port_max >= vr->port_max);
+}
+
+static int
+fi_is_authorized_vsock_request(uint64_t accessor, uint64_t owner,
+    uint64_t claim_id, const struct fi_vsock_request *vr)
+{
+	struct fi_auth *fa;
+
+	rw_assert(&fi_auth_lock, RA_RLOCKED);
+	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
+		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    fa->fa_claim_id == claim_id &&
+		    fi_auth_vsock_covers_request(fa, vr))
+			return (1);
+	}
+	return (0);
+}
+
 static int
 fi_vsock_check(struct ucred *cred, struct sockaddr *sa, uint8_t direction)
 {
 	struct fi_vsock_claim *vc;
 	struct sockaddr_vm *svm;
-	uint64_t caller_nonce, cid;
+	uint64_t caller_nonce, cid, denied_id, denied_nonce;
 	uint32_t port;
+	bool denied;
 
 	if (atomic_load_acq_int(&fi_vsock_claim_count) == 0)
 		return (0);
@@ -1573,15 +1606,18 @@ fi_vsock_check(struct ucred *cred, struct sockaddr *sa, uint8_t direction)
 	port = svm->svm_port;
 
 	caller_nonce = mac_capability_proc_nonce(cred);
+	denied = false;
+	denied_nonce = 0;
+	denied_id = 0;
 
 	rw_rlock(&fi_vsock_lock);
+	/* Lock order for combined lookups is claim table, then auth table. */
+	if (caller_nonce != 0)
+		rw_rlock(&fi_auth_lock);
 	{
 		u_long buckets[FI_VSOCK_HASH_SIZE];
 		int nbuckets, i, j;
 		bool dup;
-#define	VSOCK_DENY_MAX	8
-		struct { uint64_t nonce; uint64_t claim_id; } denied[VSOCK_DENY_MAX];
-		int ndeny = 0;
 
 		/*
 		 * A wildcard bind can be assigned any concrete local CID or
@@ -1629,50 +1665,43 @@ fi_vsock_check(struct ucred *cred, struct sockaddr *sa, uint8_t direction)
 					    allow__vsock, vc->fv_nonce,
 					    caller_nonce, vc->fv_id, cid, port,
 					    direction);
+					rw_runlock(&fi_auth_lock);
 					rw_runlock(&fi_vsock_lock);
 					return (0);
 				}
-				if (ndeny < VSOCK_DENY_MAX) {
-					denied[ndeny].nonce = vc->fv_nonce;
-					denied[ndeny].claim_id = vc->fv_id;
-					ndeny++;
+				if (caller_nonce != 0 && fi_is_authorized_vsock(
+				    caller_nonce, vc->fv_nonce, vc->fv_id, cid, port,
+				    direction)) {
+					SDT_PROBE6(mac_capability_isolation, , ,
+					    allow__vsock, vc->fv_nonce, caller_nonce,
+					    vc->fv_id, cid, port, direction);
+					rw_runlock(&fi_auth_lock);
+					rw_runlock(&fi_vsock_lock);
+					return (0);
+				}
+				if (!denied) {
+					denied = true;
+					denied_nonce = vc->fv_nonce;
+					denied_id = vc->fv_id;
 				}
 			}
 		}
-
-		if (ndeny > 0) {
-			rw_runlock(&fi_vsock_lock);
-			if (caller_nonce != 0) {
-				rw_rlock(&fi_auth_lock);
-				for (i = 0; i < ndeny; i++) {
-					if (fi_is_authorized_vsock(
-					    caller_nonce, denied[i].nonce,
-					    denied[i].claim_id, cid, port,
-					    direction)) {
-						SDT_PROBE6(mac_capability_isolation,
-						    , , allow__vsock,
-						    denied[i].nonce,
-						    caller_nonce,
-						    denied[i].claim_id, cid,
-						    port, direction);
-						rw_runlock(&fi_auth_lock);
-						return (0);
-					}
-				}
-				rw_runlock(&fi_auth_lock);
-			}
-			SDT_PROBE3(mac_capability_isolation, , , deny,
-			    (uintptr_t)(direction == FI_NET_BIND ? "vsock_bind" :
-			    "vsock_connect"), denied[0].nonce, caller_nonce);
-			SDT_PROBE6(mac_capability_isolation, , , deny__vsock,
-			    denied[0].nonce, caller_nonce, denied[0].claim_id,
-			    cid, port, direction);
-			return (EACCES);
-		}
-#undef VSOCK_DENY_MAX
 	}
 
+	if (caller_nonce != 0)
+		rw_runlock(&fi_auth_lock);
 	rw_runlock(&fi_vsock_lock);
+	if (denied) {
+		/* SDT arguments compile out in kernels built without KDTRACE_HOOKS. */
+		(void)denied_nonce;
+		(void)denied_id;
+		SDT_PROBE3(mac_capability_isolation, , , deny,
+		    (uintptr_t)(direction == FI_NET_BIND ? "vsock_bind" :
+		    "vsock_connect"), denied_nonce, caller_nonce);
+		SDT_PROBE6(mac_capability_isolation, , , deny__vsock,
+		    denied_nonce, caller_nonce, denied_id, cid, port, direction);
+		return (EACCES);
+	}
 	return (0);
 }
 
@@ -2492,9 +2521,6 @@ fi_do_query_vsock(const struct fi_vsock_request *vr, uint64_t nonce,
 	uint32_t hash_port;
 	int i, j;
 	bool dup;
-#define	VSOCK_QUERY_MAX	8
-	struct { uint64_t nonce; uint64_t claim_id; } matches[VSOCK_QUERY_MAX];
-	int nmatches = 0;
 
 	hash_port = fi_vsock_hash_port(vr->port_min, vr->port_max);
 
@@ -2505,6 +2531,8 @@ fi_do_query_vsock(const struct fi_vsock_request *vr, uint64_t nonce,
 
 	rpl->flags = 0;
 	rw_rlock(&fi_vsock_lock);
+	if (nonce != 0)
+		rw_rlock(&fi_auth_lock);
 	for (i = 0; i < nitems(buckets); i++) {
 		dup = false;
 		for (j = 0; j < i; j++) {
@@ -2521,37 +2549,24 @@ fi_do_query_vsock(const struct fi_vsock_request *vr, uint64_t nonce,
 			rpl->flags |= FI_QF_CLAIMED;
 			if (nonce != 0 && vc->fv_nonce == nonce) {
 				rpl->flags |= FI_QF_MINE;
+				rw_runlock(&fi_auth_lock);
 				rw_runlock(&fi_vsock_lock);
 				SDT_PROBE5(mac_capability_isolation, , , query,
 				    "vsock", nonce, (uint64_t)0, (uint64_t)0,
 				    rpl->flags);
 				return (0);
 			}
-			if (nmatches < VSOCK_QUERY_MAX) {
-				matches[nmatches].nonce = vc->fv_nonce;
-				matches[nmatches].claim_id = vc->fv_id;
-				nmatches++;
-			}
-		}
-	}
-	rw_runlock(&fi_vsock_lock);
-
-	if (nmatches > 0 && nonce != 0) {
-		rw_rlock(&fi_auth_lock);
-		for (i = 0; i < nmatches; i++) {
-			if (fi_is_authorized_vsock(nonce,
-			    matches[i].nonce, matches[i].claim_id,
-			    vr->cid, vr->port_min, vr->direction)) {
+			if (nonce != 0 && fi_is_authorized_vsock_request(nonce,
+			    vc->fv_nonce, vc->fv_id, vr))
 				rpl->flags |= FI_QF_AUTHORIZED;
-				break;
-			}
 		}
-		rw_runlock(&fi_auth_lock);
 	}
+	if (nonce != 0)
+		rw_runlock(&fi_auth_lock);
+	rw_runlock(&fi_vsock_lock);
 	SDT_PROBE5(mac_capability_isolation, , , query, "vsock", nonce,
 	    (uint64_t)0, (uint64_t)0, rpl->flags);
 	return (0);
-#undef VSOCK_QUERY_MAX
 }
 
 /*
