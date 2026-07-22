@@ -2,22 +2,25 @@
 # vsock end-to-end driver for a LINUX guest (companion to run.sh, which drives a
 # 5BSD guest).  The FreeBSD guest tools (vsock-pipe) do not build on Linux, so
 # the guest side is driven by gvsock.py (AF_VSOCK via python3, shipped here);
-# the HOST side reuses the same unix-pipe / vsh-connect binaries as run.sh.
+# the host side uses unix-pipe/vsh-connect for backend=unix and vsock-pipe
+# over the host AF_VSOCK domain for backend=native.
 #
 # Covers the same matrix for BOTH socket types and BOTH directions:
 #   echo (stream/seqpacket, h2g/g2h), a large record delivered whole
 #   (seqpacket, h2g/g2h), and a bulk transfer (stream, h2g/g2h).
 #
 # Requirements:
-#   - a running Linux guest (CID 3+) with the vsock device at path=$DIR, its
-#     virtio-vsock modules loaded, and python3 present
+#   - a running Linux guest (CID 3+) with a virtio-vsock device, its modules
+#     loaded, and python3 present; backend=unix also requires path=$DIR
 #   - gvsock.py copied into the guest (e.g. /tmp/gvsock.py)
 #   - $ACMD: runs its 1st arg in the guest and prints stdout (a console helper)
-#   - $TOOLS names the object directory containing unix-pipe and vsh-connect
+#   - $TOOLS names the object directory containing unix-pipe, vsh-connect,
+#     and vsock-pipe
 #
 # Env: DIR, TOOLS, ACMD, GPY (guest path to gvsock.py), REC (record size bytes),
-# TRANSPORT (modern or default legacy), HOST_WORK, and optional BHYVE_LOG,
-# CONSOLE_LOG_PATH, and SMOKE_ONLY diagnostics/lifecycle controls.
+# TRANSPORT (modern or default legacy), BACKEND (unix or native), GUEST_CID
+# (required for native), HOST_WORK, and optional BHYVE_LOG, CONSOLE_LOG_PATH,
+# and SMOKE_ONLY diagnostics/lifecycle controls.
 set -u
 
 DIR=${DIR:-$HOME/vm/vsock-sockdir-linux}
@@ -26,6 +29,8 @@ ACMD=${ACMD:-"sh $HOME/vm/acmd.sh"}
 GPY=${GPY:-/tmp/gvsock.py}
 REC=${REC:-204800}
 TRANSPORT=${TRANSPORT:-modern}
+BACKEND=${BACKEND:-unix}
+GUEST_CID=${GUEST_CID:-}
 HOST_WORK=${HOST_WORK:-${TMPDIR:-/tmp}/vsock-linux-e2e.$$}
 BHYVE_LOG=${BHYVE_LOG:-}
 CONSOLE_LOG_PATH=${CONSOLE_LOG_PATH:-}
@@ -49,8 +54,12 @@ dump_context() {
 	echo "---- vsock failure context ----" >&2
 	echo "guest helper output:" >&2
 	$ACMD 'cat /tmp/g.out 2>/dev/null || true' 12 >&2 || true
-	echo "host socket directory:" >&2
-	ls -la "$DIR" >&2 || true
+	if [ "$BACKEND" = unix ]; then
+		echo "host socket directory:" >&2
+		ls -la "$DIR" >&2 || true
+	else
+		echo "host backend: native guest_cid=$GUEST_CID" >&2
+	fi
 	if [ -n "$BHYVE_LOG" ] && [ -r "$BHYVE_LOG" ]; then
 		echo "recent bhyve log:" >&2
 		tail -n 80 "$BHYVE_LOG" >&2 || true
@@ -90,7 +99,11 @@ vshc() {
 	shift 2
 	_try=0
 	while [ "$_try" -lt 5 ]; do
-		timeout 20 "$TOOLS/vsh-connect" "$@" "$_dir" "$_port"
+		if [ "$BACKEND" = native ]; then
+			timeout 20 "$TOOLS/vsock-pipe" "$@" "$GUEST_CID" "$_port"
+		else
+			timeout 20 "$TOOLS/vsh-connect" "$@" "$_dir" "$_port"
+		fi
 		_rc=$?
 		[ "$_rc" -ne 4 ] && return "$_rc"
 		sleep 1
@@ -99,11 +112,41 @@ vshc() {
 	return 4
 }
 
-echo "vsock linux e2e: DIR=$DIR REC=$REC"
+host_listener() {
+	_timeout=$1
+	_port=$2
+	shift 2
+	if [ "$BACKEND" = native ]; then
+		timeout "$_timeout" "$TOOLS/vsock-pipe" -l "$@" "$_port"
+	else
+		rm -f "$DIR/$_port"
+		timeout "$_timeout" "$TOOLS/unix-pipe" -l "$@" "$DIR/$_port"
+	fi
+}
+
+host_wait_disconnect() {
+	_port=$1
+	if [ "$BACKEND" = native ]; then
+		"$TOOLS/vsock-pipe" -w "$GUEST_CID" "$_port"
+	else
+		"$TOOLS/vsh-connect" -w "$DIR" "$_port"
+	fi
+}
+
+echo "vsock linux e2e: backend=$BACKEND DIR=$DIR REC=$REC"
 
 case "$TRANSPORT" in
 modern|legacy) ;;
 *) echo "TRANSPORT must be modern or legacy" >&2; exit 2 ;;
+esac
+case "$BACKEND" in
+unix) ;;
+native)
+	case "$GUEST_CID" in
+	''|*[!0-9]*) echo "GUEST_CID must be numeric for backend=native" >&2; exit 2 ;;
+	esac
+	;;
+*) echo "BACKEND must be unix or native" >&2; exit 2 ;;
 esac
 case "$SMOKE_ONLY" in
 yes|no) ;;
@@ -152,8 +195,7 @@ if [ "$smoke_rc" -ne 0 ] || [ "$smoke_out" != VSOCK-SMOKE-H2G ]; then
 fi
 echo "PASS  preflight_data_h2g"
 
-rm -f "$DIR/6992"
-timeout 20 "$TOOLS/unix-pipe" -l -e -n 1 "$DIR/6992" \
+host_listener 20 6992 -e -n 1 \
     >"$HOST_WORK/smoke-g2h.host.log" 2>&1 &
 smoke_pid=$!
 sleep 1
@@ -257,7 +299,7 @@ fi
 res stream_bulk_h2g "$ok"
 
 # --- guest->host (host is the server) ---
-rm -f "$DIR/7005"; timeout 20 "$TOOLS/unix-pipe" -l -e -n 1 "$DIR/7005" \
+host_listener 20 7005 -e -n 1 \
     >"$HOST_WORK/7005.listener.log" 2>&1 &
 lpid=$!
 sleep 1
@@ -277,7 +319,7 @@ if [ "$ok" -ne 0 ]; then
 fi
 res stream_echo_g2h "$ok"
 
-rm -f "$DIR/7006"; timeout 20 "$TOOLS/unix-pipe" -l -s -e -n 1 "$DIR/7006" \
+host_listener 20 7006 -s -e -n 1 \
     >"$HOST_WORK/7006.listener.log" 2>&1 &
 lpid=$!
 sleep 1
@@ -301,8 +343,7 @@ res seqpacket_echo_g2h "$ok"
 # record and observe EOF before closing, and the guest must observe that close
 # as EOF rather than timing out or being reset.
 close_token=E2E-G2H-SEQ-CLOSE
-rm -f "$DIR/7011"
-timeout 20 "$TOOLS/unix-pipe" -l -s -d "$DIR/7011" \
+host_listener 20 7011 -s -d \
     >"$HOST_WORK/7011.close.out" 2>"$HOST_WORK/7011.listener.log" &
 lpid=$!
 sleep 1
@@ -330,7 +371,7 @@ res seqpacket_graceful_close_g2h "$ok"
 # proves the device remains usable.
 gbg "abrupt-l stream 7012"
 abrupt_log="$HOST_WORK/7012.abrupt.log"
-"$TOOLS/vsh-connect" -w "$DIR" 7012 >"$abrupt_log" 2>&1 &
+host_wait_disconnect 7012 >"$abrupt_log" 2>&1 &
 abrupt_pid=$!
 abrupt_ready=no
 i=0
@@ -380,7 +421,7 @@ ok=$?
 [ "$ok" -eq 0 ] || diag_capture after_abrupt_host_kill "$rc" "$out"
 res after_abrupt_host_kill "$ok"
 
-rm -f "$DIR/7007"; timeout 30 "$TOOLS/unix-pipe" -l -s -d "$DIR/7007" \
+host_listener 30 7007 -s -d \
     > "$HOST_WORK/g2h.seq.out" 2>"$HOST_WORK/7007.listener.log" &
 lpid=$!
 sleep 1
@@ -399,7 +440,7 @@ if [ "$ok" -ne 0 ]; then
 fi
 res seqpacket_bigrecord_g2h "$ok"
 
-rm -f "$DIR/7008"; timeout 30 "$TOOLS/unix-pipe" -l -d "$DIR/7008" \
+host_listener 30 7008 -d \
     > "$HOST_WORK/g2h.stream.out" 2>"$HOST_WORK/7008.listener.log" &
 lpid=$!
 sleep 1

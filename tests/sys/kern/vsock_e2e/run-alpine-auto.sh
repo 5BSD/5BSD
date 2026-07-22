@@ -12,6 +12,7 @@ OBJROOT=${OBJROOT:-/usr/obj}
 WORKDIR=${WORKDIR:-/tmp/bhyve-vsock-alpine}
 TRANSPORTS=${TRANSPORTS:-modern}
 DEVICES=${DEVICES:-"vsock rng input"}
+VSOCK_BACKEND=${VSOCK_BACKEND:-unix}
 CID=${CID:-4}
 CONSOLE_PORT=${CONSOLE_PORT:-}
 KEEP_VM=${KEEP_VM:-no}
@@ -51,6 +52,14 @@ fi
 [ -f "$ISO" ] || { echo "ISO not found: $ISO" >&2; exit 1; }
 [ -x "$BHYVE" ] || { echo "bhyve not found: $BHYVE" >&2; exit 1; }
 [ -f "$UEFI" ] || { echo "UEFI firmware not found: $UEFI" >&2; exit 1; }
+case "$VSOCK_BACKEND" in
+unix|native) ;;
+*) echo "VSOCK_BACKEND must be unix or native" >&2; exit 2 ;;
+esac
+[ "$VSOCK_BACKEND" != native ] || [ -c /dev/vsock ] || {
+	echo "backend=native requires /dev/vsock" >&2
+	exit 1
+}
 
 run_vsock=no
 run_net_device=no
@@ -157,7 +166,7 @@ else
 	tools=${TOOLS:-$here}
 fi
 required_tools=
-[ "$run_vsock" = no ] || required_tools="unix-pipe vsh-connect vsh-connect-test-server uinput-inject"
+[ "$run_vsock" = no ] || required_tools="unix-pipe vsock-pipe vsh-connect vsh-connect-test-server uinput-inject"
 [ "$run_console_device" = no ] || required_tools="$required_tools unix-pipe"
 [ "$run_input_device" = no ] || required_tools="$required_tools uinput-inject"
 for tool in $required_tools; do
@@ -378,7 +387,7 @@ launch_vm()
 	[ "$VIRTIO_MSIX" = yes ] || set -- "$@" -W
 	[ "$REBOOT_TEST" = no ] || set -- "$@" -M
 	[ "$run_vsock" = no ] || set -- "$@" \
-	    -s "5,virtio-vsock,cid=$CID,path=$sockdir$vsock_transport_opt"
+	    -s "5,virtio-vsock,cid=$CID$vsock_backend_opt$vsock_transport_opt"
 	[ "$run_input_device" = no ] || set -- "$@" \
 	    -s "6,virtio-input,$input_path$input_transport_opt"
 	[ "$run_rng_device" = no ] || set -- "$@" \
@@ -470,7 +479,8 @@ provision_guest()
 
 run_matrix()
 {
-	DIR=$sockdir TRANSPORT=$transport GPY=/tmp/gvsock.py \
+	DIR=$sockdir TRANSPORT=$transport VSOCK_BACKEND=$VSOCK_BACKEND \
+	BACKEND=$VSOCK_BACKEND GUEST_CID=$CID GPY=/tmp/gvsock.py \
 	TOOLS="$tools" \
 	HOST_WORK="$WORKDIR/$transport.host" \
 	BHYVE_LOG="$bhyve_log" CONSOLE_LOG_PATH="$console_log" \
@@ -579,7 +589,17 @@ run_console()
 		return 1
 	}
 	: > "$console_exchange_log"
-	( { printf '%s' "$host_token"; sleep 30; } |
+	# Do not send until the guest has opened the port and sent its token.
+	# The port node can exist before the virtio PORT_READY handshake, and bytes
+	# written in that interval are allowed to be discarded by the backend.
+	( { i=0; until grep -q "$guest_token" "$console_exchange_log" 2>/dev/null; do
+	        [ "$i" -lt 20 ] || exit 1
+	        sleep 1
+	        i=$((i + 1))
+	    done
+	    printf '%s' "$host_token"
+	    sleep 30
+	  } |
 	    timeout 35 "$tools/unix-pipe" "$console_socket" > "$console_exchange_log" ) &
 	console_exchange_pid=$!
 	guest_cmd "python3 /tmp/gconsole.py exchange '$transport' '$console_name' '$host_token' '$guest_token'" 30
@@ -846,6 +866,11 @@ for transport in $TRANSPORTS; do
 		scsi_transport_opt=
 		console_transport_opt=
 		ninep_transport_opt=
+	fi
+	if [ "$VSOCK_BACKEND" = native ]; then
+		vsock_backend_opt=",backend=native"
+	else
+		vsock_backend_opt=",path=$sockdir"
 	fi
 	virtio_bdfs="0000:00:04.0"
 	[ "$run_vsock" = no ] || virtio_bdfs="$virtio_bdfs 0000:00:05.0"

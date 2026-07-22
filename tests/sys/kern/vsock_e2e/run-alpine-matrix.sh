@@ -7,7 +7,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 ISO=${ISO:?set ISO to an Alpine virt ISO}
 WORKDIR=${WORKDIR:-/tmp/bhyve-virtio-alpine-matrix}
 TRANSPORTS=${TRANSPORTS:-"modern legacy"}
-TOPOLOGIES=${TOPOLOGIES:-"net vsock rng block scsi console 9p input combined"}
+TOPOLOGIES=${TOPOLOGIES:-"net vsock vsock-native rng block scsi console 9p input combined"}
 VM_FREE_GATES=${VM_FREE_GATES:-yes}
 
 [ "$(id -u)" -eq 0 ] || {
@@ -64,16 +64,27 @@ esac
 
 for topology in $TOPOLOGIES; do
 	case "$topology" in
-	net|vsock|rng|block|scsi|console|9p|input|combined) ;;
+	net|vsock|vsock-native|rng|block|scsi|console|9p|input|combined) ;;
 	*) echo "invalid topology: $topology" >&2; exit 2 ;;
 	esac
 	for transport in $TRANSPORTS; do
 		case "$transport" in modern|legacy) ;;
 		*) echo "invalid transport: $transport" >&2; exit 2 ;;
 		esac
+		backend=unix
+		reset_test=${RESET_TEST:-no}
+		reboot_test=${REBOOT_TEST:-no}
 		case "$topology:$transport" in
 		net:*) devices=net ;;
 		vsock:*) devices=vsock ;;
+		vsock-native:*)
+			devices=vsock
+			backend=native
+			# Exercise VSOCK_IOC_TRANSPORT_RESET on driver reset and
+			# provider detach/re-attach across monitor-mode reboot.
+			reset_test=yes
+			reboot_test=yes
+			;;
 		rng:*) devices=rng ;;
 		block:*) devices=block ;;
 		scsi:*) devices=scsi ;;
@@ -90,8 +101,10 @@ for topology in $TOPOLOGIES; do
 			echo "==== topology=combined transport=legacy: historical input omitted (no upstream Alpine driver) ===="
 			;;
 		esac
-		echo "==== topology=$topology transport=$transport devices=$devices ===="
+		echo "==== topology=$topology transport=$transport backend=$backend devices=$devices ===="
 		env ISO="$ISO" TRANSPORTS="$transport" DEVICES="$devices" \
+		    VSOCK_BACKEND="$backend" RESET_TEST="$reset_test" \
+		    REBOOT_TEST="$reboot_test" \
 		    WORKDIR="$WORKDIR/$topology" \
 		    sh "$here/run-alpine-auto.sh"
 	done

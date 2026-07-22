@@ -28,6 +28,7 @@ MAN=
 
 # Host-side helper programs.
 PROGS+=		unix-pipe
+PROGS+=		vsock-pipe
 PROGS+=		vsh-connect
 PROGS+=		vsh-connect-test-server
 PROGS+=		uinput-inject

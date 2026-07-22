@@ -19,7 +19,7 @@ cleanup()
 }
 trap cleanup EXIT INT TERM
 
-for tool in unix-pipe vsh-connect vsh-connect-test-server uinput-inject; do
+for tool in unix-pipe vsock-pipe vsh-connect vsh-connect-test-server uinput-inject; do
 	[ -x "$TOOLS/$tool" ] || {
 		echo "missing helper: $TOOLS/$tool" >&2
 		exit 1
@@ -106,6 +106,52 @@ check_unix_pipe()
 	server_pid=
 	[ "$out" = "$payload" ]
 	echo "PASS  unix_pipe_$type"
+}
+
+check_vsock_pipe()
+{
+	type=$1
+	flag=$2
+	port=$3
+	payload="vsock-$type-probe"
+	if [ -n "$flag" ]; then
+		"$TOOLS/vsock-pipe" -l "$flag" -e -n 1 "$port" \
+		    >"$work/vsock-$type.log" 2>&1 &
+	else
+		"$TOOLS/vsock-pipe" -l -e -n 1 "$port" \
+		    >"$work/vsock-$type.log" 2>&1 &
+	fi
+	server_pid=$!
+	sleep 0.2
+	kill -0 "$server_pid" 2>/dev/null || {
+		cat "$work/vsock-$type.log" >&2
+		return 1
+	}
+	if [ -n "$flag" ]; then
+		out=$(printf %s "$payload" | timeout 10 \
+		    "$TOOLS/vsock-pipe" "$flag" 1 "$port")
+	else
+		out=$(printf %s "$payload" | timeout 10 \
+		    "$TOOLS/vsock-pipe" 1 "$port")
+	fi
+	wait "$server_pid"
+	server_pid=
+	[ "$out" = "$payload" ]
+	echo "PASS  vsock_pipe_local_$type"
+}
+
+check_vsock_seq_bigrecord()
+{
+	port=$1
+	"$TOOLS/vsock-pipe" -l -s -d "$port" >"$work/vsock-seq-big.out" \
+	    2>"$work/vsock-seq-big.log" &
+	server_pid=$!
+	sleep 0.2
+	"$TOOLS/vsock-pipe" -s -1 1 "$port" <"$work/record.in" >/dev/null
+	wait "$server_pid"
+	server_pid=
+	cmp "$work/record.in" "$work/vsock-seq-big.out"
+	echo "PASS  vsock_pipe_local_seq_200k_record"
 }
 
 check_vsh_bulk()
@@ -221,6 +267,14 @@ check_cli_rejection()
 		status=$?
 	fi
 	[ "$status" -eq 2 ]
+	if "$TOOLS/vsock-pipe" -l -e -n invalid 7000 \
+	    >"$work/vsock-invalid.log" 2>&1; then
+		echo "vsock-pipe accepted an invalid connection count" >&2
+		return 1
+	else
+		status=$?
+	fi
+	[ "$status" -eq 2 ]
 	echo "PASS  malformed_helper_arguments_rejected"
 }
 
@@ -279,8 +333,12 @@ check_vsh stream ""
 check_vsh seq -s
 check_unix_pipe stream ""
 check_unix_pipe seq -s
+vsock_port=$((45000 + ($$ % 10000)))
+check_vsock_pipe stream "" "$vsock_port"
+check_vsock_pipe seq -s "$((vsock_port + 1))"
 dd if=/dev/zero bs=1024 count=1024 2>/dev/null | tr '\0' B > "$work/bulk.in"
 dd if=/dev/zero bs=1024 count=200 2>/dev/null | tr '\0' R > "$work/record.in"
+check_vsock_seq_bigrecord "$((vsock_port + 2))"
 check_vsh_bulk
 check_vsh_lifecycle stream ""
 check_vsh_lifecycle seq -s

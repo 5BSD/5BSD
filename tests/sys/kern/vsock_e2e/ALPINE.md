@@ -110,6 +110,18 @@ distinguishes device regressions from cross-device interactions:
 ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
 ```
 
+The default matrix also runs the focused `vsock-native` topology for modern
+and legacy transport.  It launches bhyve with `backend=native`, uses ordinary
+host `AF_VSOCK` sockets rather than the Unix control/data socket protocol, and
+runs the same bidirectional STREAM/SEQPACKET, large-record, graceful-close,
+abrupt-close, reset, and monitor-mode reboot checks.  Only one native-backed VM
+may run at a time because `/dev/vsock` grants the remote transport to one
+provider.  To repeat just that gate:
+
+```sh
+TOPOLOGIES=vsock-native ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
+```
+
 Set `VM_FREE_GATES=no` only when repeating VM boots after those exact source
 and helper binaries have already passed in the same worktree.
 

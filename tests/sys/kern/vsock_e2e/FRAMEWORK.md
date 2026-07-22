@@ -60,9 +60,17 @@ and 2 once before starting the topology/transport VM matrix:
 ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
 ```
 
+`vsock-native` is a focused matrix topology that selects bhyve's
+`backend=native` provider and host `AF_VSOCK` helpers.  It is intentionally
+separate from `vsock`, which remains the compatibility test for the default
+Unix socket backend.  The native topology forces driver reset and monitor-mode
+reboot so provider reset, detach, and re-attach are exercised as well as the
+data path.
+
 The default topology order is
-`net vsock rng block scsi console 9p input combined`.  Net, vsock, RNG, block,
-SCSI, console, and 9P run both `modern` and `legacy`; input's real-VM data path runs
+`net vsock vsock-native rng block scsi console 9p input combined`.  Net, both
+vsock backends, RNG, block, SCSI, console, and 9P run both `modern` and `legacy`;
+input's real-VM data path runs
 only with its modern interface because upstream Alpine has no driver for
 bhyve's historical hybrid interface.  Every topology retains and verifies the
 network interface used to provision the guest.  SCSI uses a uniquely sized,
