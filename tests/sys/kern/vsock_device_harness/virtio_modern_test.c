@@ -407,8 +407,10 @@ ATF_TC_BODY(features_and_status, tc)
 	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GF, 4,
 	    3 | VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_RING_F_EVENT_IDX);
 	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_STATUS, 1,
-	    VIRTIO_CONFIG_S_FEATURES_OK);
+	    VIRTIO_CONFIG_S_FEATURES_OK | VIRTIO_CONFIG_STATUS_DRIVER_OK);
 	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_FEATURES_OK) == 0);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0);
+	ATF_CHECK(g_notify_count == 0);
 	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GFSELECT, 4, 1);
 	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GF, 4, 1);
 	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_STATUS, 1,
@@ -418,6 +420,48 @@ ATF_TC_BODY(features_and_status, tc)
 	    VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_RING_F_EVENT_IDX));
 	ATF_CHECK(vs.vs_negotiated_caps == (3 | VIRTIO_RING_F_INDIRECT_DESC |
 	    VIRTIO_RING_F_EVENT_IDX));
+
+	/* Nonzero status writes cannot clear accepted bits or set reserved bits. */
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_STATUS, 1,
+	    VIRTIO_CONFIG_STATUS_ACK | 0x30);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_FEATURES_OK) != 0);
+	ATF_CHECK((vs.vs_status & 0x30) == 0);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GFSELECT, 4, 0);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GF, 4, 0);
+	ATF_CHECK(vi_pci_modern_read(&pi, 2, VIRTIO_PCI_COMMON_GF, 4) ==
+	    (3 | VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_RING_F_EVENT_IDX));
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_STATUS, 1,
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_STATUS, 1,
+	    VIRTIO_CONFIG_STATUS_ACK);
+	ATF_CHECK((vs.vs_status & (VIRTIO_CONFIG_S_FEATURES_OK |
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK)) ==
+	    (VIRTIO_CONFIG_S_FEATURES_OK |
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK));
+
+	/* Invalid driver feature bits must make the device reject FEATURES_OK. */
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_STATUS, 1, 0);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GFSELECT, 4, 0);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GF, 4,
+	    3 | (1U << 23));
+	ATF_CHECK(vi_pci_modern_read(&pi, 2, VIRTIO_PCI_COMMON_GF, 4) ==
+	    (3 | (1U << 23)));
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GFSELECT, 4, 1);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GF, 4, 1);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_STATUS, 1,
+	    VIRTIO_CONFIG_S_FEATURES_OK | VIRTIO_CONFIG_STATUS_DRIVER_OK);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_FEATURES_OK) == 0);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0);
+	ATF_CHECK(g_notify_count == 0);
+
+	/* Rewriting the page with a valid subset permits negotiation. */
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GFSELECT, 4, 0);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GF, 4, 3);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_STATUS, 1,
+	    VIRTIO_CONFIG_S_FEATURES_OK);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_FEATURES_OK) != 0);
+	ATF_CHECK(g_applied_features == (VIRTIO_F_VERSION_1 | 3));
 	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_STATUS, 1, 0);
 	ATF_CHECK(vs.vs_status == 0);
 	ATF_CHECK(vs.vs_modern->driver_features == 0);
@@ -485,8 +529,10 @@ ATF_TC_BODY(queue_and_interrupts, tc)
 	vi_pci_modern_write(&pi, 2, VIRTIO_MODERN_NOTIFY_OFF, 2, 0);
 	ATF_CHECK(g_notify_count == 0);
 	ATF_CHECK(queues[0].vq_notify_pending);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GFSELECT, 4, 1);
+	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_GF, 4, 1);
 	vi_pci_modern_write(&pi, 2, VIRTIO_PCI_COMMON_STATUS, 1,
-	    VIRTIO_CONFIG_STATUS_DRIVER_OK);
+	    VIRTIO_CONFIG_S_FEATURES_OK | VIRTIO_CONFIG_STATUS_DRIVER_OK);
 	ATF_CHECK(vq_ring_ready(&queues[0]));
 	ATF_CHECK(g_notify_count == 1);
 	ATF_CHECK(!queues[0].vq_notify_pending);

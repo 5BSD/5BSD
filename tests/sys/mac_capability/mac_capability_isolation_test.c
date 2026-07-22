@@ -2731,6 +2731,33 @@ run_net_token_bind(const atf_tc_t *tc, int token_fd, uint16_t port)
 }
 
 static int
+run_net_token_socket(const atf_tc_t *tc, int token_fd, int domain, int type,
+    int protocol)
+{
+	char domain_str[16], protocol_str[16], token_str[16], type_str[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	path = fi_helper_path(tc);
+	snprintf(token_str, sizeof(token_str), "%d", token_fd);
+	snprintf(domain_str, sizeof(domain_str), "%d", domain);
+	snprintf(type_str, sizeof(type_str), "%d", type);
+	snprintf(protocol_str, sizeof(protocol_str), "%d", protocol);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(path, path, "net-token-socket", token_str, domain_str,
+		    type_str, protocol_str, NULL);
+		_exit(127);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE(WIFEXITED(status));
+	return (WEXITSTATUS(status));
+}
+
+static int
 run_net_token_query(const atf_tc_t *tc, int svc, int token_fd, int domain,
     int protocol, uint16_t port_min, uint16_t port_max, uint8_t direction,
     uint32_t expected_flags)
@@ -2986,6 +3013,53 @@ ATF_TC_BODY(vsock_wildcard_claim_blocks_socket_create, tc)
 	close(svc);
 }
 
+VSOCK_TC_HEAD(vsock_wildcard_token_allows_socket_create,
+    "A fully wildcard vsock token authorizes socket creation and bind")
+ATF_TC_BODY(vsock_wildcard_token_allows_socket_create, tc)
+{
+	struct fi_vsock_request req;
+	int svc, token;
+
+	svc = fi_connect();
+	memset(&req, 0, sizeof(req));
+	req.cid = VSOCK_CID_ANY;
+	req.port_min = 0;
+	req.port_max = UINT32_MAX;
+	req.direction = FI_NET_ANY;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == 0);
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_MINT_VSOCK, &req, &token) == 0);
+	ATF_CHECK_EQ(0, run_vsock_access_helper(tc, token, VSOCK_CID_ANY,
+	    18605, FI_NET_BIND));
+	close(token);
+	close(svc);
+}
+
+VSOCK_TC_HEAD(vsock_wildcard_claim_allows_narrow_token,
+    "A token narrowed from a wildcard claim can create a socket but remains scoped")
+ATF_TC_BODY(vsock_wildcard_claim_allows_narrow_token, tc)
+{
+	struct fi_vsock_request claim, token_req;
+	int svc, token;
+
+	svc = fi_connect();
+	memset(&claim, 0, sizeof(claim));
+	claim.cid = VSOCK_CID_ANY;
+	claim.port_min = 0;
+	claim.port_max = UINT32_MAX;
+	claim.direction = FI_NET_ANY;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &claim, NULL) == 0);
+	token_req = claim;
+	token_req.port_min = token_req.port_max = 18608;
+	token_req.direction = FI_NET_BIND;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_MINT_VSOCK, &token_req, &token) == 0);
+	ATF_CHECK_EQ(0, run_vsock_access_helper(tc, token, VSOCK_CID_ANY,
+	    token_req.port_min, FI_NET_BIND));
+	ATF_CHECK_EQ(1, run_vsock_access_helper(tc, token, VSOCK_CID_ANY,
+	    token_req.port_min + 1, FI_NET_BIND));
+	close(token);
+	close(svc);
+}
+
 VSOCK_TC_HEAD(vsock_rejects_out_of_range_cid,
     "Vsock claims reject CIDs wider than sockaddr_vm")
 ATF_TC_BODY(vsock_rejects_out_of_range_cid, tc)
@@ -3066,6 +3140,73 @@ ATF_TC_BODY(net_token_authorize_grants_bind, tc)
 	rc = run_net_token_bind(tc, token, 18551);
 	ATF_CHECK_MSG(rc == 0,
 	    "bind should succeed with authorized token (got %d)", rc);
+
+	close(token);
+	close(svc);
+}
+
+ATF_TC(net_wildcard_claim_allows_narrow_token);
+ATF_TC_HEAD(net_wildcard_claim_allows_narrow_token, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A token narrowed from a domain-wide network claim can create a "
+	    "socket but remains endpoint-scoped");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_wildcard_claim_allows_narrow_token, tc)
+{
+	int rc, svc, token;
+	uint16_t port_net;
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET, 0,
+	    IPPROTO_TCP, 0, FI_NET_ANY) == 0);
+
+	port_net = htons(18556);
+	token = fi_net_mint(svc, AF_INET, IPPROTO_TCP, port_net, FI_NET_BIND);
+	ATF_REQUIRE_MSG(token >= 0, "fi_net_mint: %s", strerror(errno));
+
+	rc = run_net_token_bind(tc, token, 18556);
+	ATF_CHECK_MSG(rc == 0,
+	    "narrow token should permit its claimed bind (got %d)", rc);
+	rc = run_net_token_bind(tc, token, 18557);
+	ATF_CHECK_MSG(rc == 1,
+	    "narrow token must not permit another bind (got %d)", rc);
+	rc = run_net_token_socket(tc, token, AF_INET6, SOCK_STREAM,
+	    IPPROTO_TCP);
+	ATF_CHECK_MSG(rc == 1,
+	    "AF_INET token must not permit AF_INET6 socket creation (got %d)",
+	    rc);
+
+	close(token);
+	close(svc);
+}
+
+ATF_TC(net_overlapping_claims_accept_later_token);
+ATF_TC_HEAD(net_overlapping_claims_accept_later_token, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Authorization from any matching same-owner network claim permits "
+	    "socket creation and bind");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(net_overlapping_claims_accept_later_token, tc)
+{
+	int rc, svc, token;
+	uint16_t port_net;
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET, 0,
+	    IPPROTO_TCP, 0, FI_NET_ANY) == 0);
+	ATF_REQUIRE(fi_net_call(svc, FI_OP_CLAIM_NET, AF_INET,
+	    IPPROTO_TCP, 0, FI_NET_ANY) == 0);
+
+	port_net = htons(18558);
+	token = fi_net_mint(svc, 0, IPPROTO_TCP, port_net, FI_NET_BIND);
+	ATF_REQUIRE_MSG(token >= 0, "fi_net_mint: %s", strerror(errno));
+	rc = run_net_token_bind(tc, token, 18558);
+	ATF_CHECK_MSG(rc == 0,
+	    "later matching token should permit bind (got %d)", rc);
 
 	close(token);
 	close(svc);
@@ -4767,10 +4908,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, vsock_exact_claim_blocks_wildcard_bind);
 	ATF_TP_ADD_TC(tp, vsock_release_allows_bind);
 	ATF_TP_ADD_TC(tp, vsock_wildcard_claim_blocks_socket_create);
+	ATF_TP_ADD_TC(tp, vsock_wildcard_token_allows_socket_create);
+	ATF_TP_ADD_TC(tp, vsock_wildcard_claim_allows_narrow_token);
 	ATF_TP_ADD_TC(tp, vsock_rejects_out_of_range_cid);
 	ATF_TP_ADD_TC(tp, vsock_short_sockaddr_is_rejected_safely);
 	ATF_TP_ADD_TC(tp, net_token_mint_returns_fd);
 	ATF_TP_ADD_TC(tp, net_token_authorize_grants_bind);
+	ATF_TP_ADD_TC(tp, net_wildcard_claim_allows_narrow_token);
+	ATF_TP_ADD_TC(tp, net_overlapping_claims_accept_later_token);
 	ATF_TP_ADD_TC(tp, net_token_scoped_to_endpoint);
 	ATF_TP_ADD_TC(tp, net_token_close_revokes);
 	ATF_TP_ADD_TC(tp, net_token_mint_requires_claim);

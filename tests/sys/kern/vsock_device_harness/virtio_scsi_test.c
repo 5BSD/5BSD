@@ -36,6 +36,38 @@ static int g_end_calls;
 static int g_ctl_allocs;
 static int g_ctl_frees;
 static union ctl_io g_ctl_io;
+static int g_mutex_init_calls;
+static int g_mutex_init_fail_at;
+static int g_cond_init_calls;
+static int g_cond_init_fail_at;
+
+int __real_pthread_mutex_init(pthread_mutex_t *, const pthread_mutexattr_t *);
+int __real_pthread_cond_init(pthread_cond_t *, const pthread_condattr_t *);
+int __wrap_pthread_mutex_init(pthread_mutex_t *, const pthread_mutexattr_t *);
+int __wrap_pthread_cond_init(pthread_cond_t *, const pthread_condattr_t *);
+
+int
+__wrap_pthread_mutex_init(pthread_mutex_t *mutex,
+    const pthread_mutexattr_t *attr)
+{
+
+	g_mutex_init_calls++;
+	if (g_mutex_init_fail_at != 0 &&
+	    g_mutex_init_calls == g_mutex_init_fail_at)
+		return (EAGAIN);
+	return (__real_pthread_mutex_init(mutex, attr));
+}
+
+int
+__wrap_pthread_cond_init(pthread_cond_t *cond, const pthread_condattr_t *attr)
+{
+
+	g_cond_init_calls++;
+	if (g_cond_init_fail_at != 0 &&
+	    g_cond_init_calls == g_cond_init_fail_at)
+		return (EAGAIN);
+	return (__real_pthread_cond_init(cond, attr));
+}
 
 static void
 reset_mocks(void)
@@ -50,6 +82,10 @@ reset_mocks(void)
 	g_end_calls = 0;
 	g_ctl_allocs = 0;
 	g_ctl_frees = 0;
+	g_mutex_init_calls = 0;
+	g_mutex_init_fail_at = 0;
+	g_cond_init_calls = 0;
+	g_cond_init_fail_at = 0;
 }
 
 static void
@@ -418,6 +454,40 @@ ATF_TC_BODY(reset_discards_pending_requests, tc)
 	teardown_queue(&sc);
 }
 
+ATF_TC_WITHOUT_HEAD(queue_sync_init_failures);
+ATF_TC_BODY(queue_sync_init_failures, tc)
+{
+	struct pci_vtscsi_softc sc;
+	struct pci_vtscsi_queue *q;
+
+	for (int fail_at = 1; fail_at <= 3; fail_at++) {
+		reset_mocks();
+		memset(&sc, 0, sizeof(sc));
+		g_mutex_init_fail_at = fail_at;
+		ATF_CHECK(pci_vtscsi_init_queue(&sc, &sc.vss_queues[0], 0) ==
+		    -1);
+		q = &sc.vss_queues[0];
+		ATF_CHECK(q->vsq_sc == NULL);
+		ATF_CHECK(!q->vsq_rmtx_initialized);
+		ATF_CHECK(!q->vsq_fmtx_initialized);
+		ATF_CHECK(!q->vsq_qmtx_initialized);
+		ATF_CHECK(!q->vsq_cv_initialized);
+		ATF_CHECK(g_ctl_allocs == g_ctl_frees);
+	}
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	g_cond_init_fail_at = 1;
+	ATF_CHECK(pci_vtscsi_init_queue(&sc, &sc.vss_queues[0], 0) == -1);
+	q = &sc.vss_queues[0];
+	ATF_CHECK(q->vsq_sc == NULL);
+	ATF_CHECK(!q->vsq_rmtx_initialized);
+	ATF_CHECK(!q->vsq_fmtx_initialized);
+	ATF_CHECK(!q->vsq_qmtx_initialized);
+	ATF_CHECK(!q->vsq_cv_initialized);
+	ATF_CHECK(g_ctl_allocs == g_ctl_frees);
+}
+
 ATF_TC_WITHOUT_HEAD(tmf_completes_pending_requests);
 ATF_TC_BODY(tmf_completes_pending_requests, tc)
 {
@@ -468,6 +538,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, config_writes);
 	ATF_TP_ADD_TC(tp, request_queue_validation);
 	ATF_TP_ADD_TC(tp, request_payload_validation);
+	ATF_TP_ADD_TC(tp, queue_sync_init_failures);
 	ATF_TP_ADD_TC(tp, reset_discards_pending_requests);
 	ATF_TP_ADD_TC(tp, tmf_completes_pending_requests);
 	return (atf_no_error());

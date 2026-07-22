@@ -2800,6 +2800,7 @@ soreceive_generic_locked(struct socket *so, struct sockaddr **psa,
 	int moff, type = 0;
 	ssize_t orig_resid = uio->uio_resid;
 	bool report_real_len = false;
+	bool atomic_zero_record = false;
 
 	SOCK_IO_RECV_ASSERT_LOCKED(so);
 
@@ -3025,6 +3026,31 @@ dontblock:
 			}
 		}
 	}
+	/*
+	 * sbappendrecord_locked() intentionally permits empty records.  Detect
+	 * one after stripping any address and control mbufs so an empty atomic
+	 * record carrying ancillary data is handled the same way.  Consuming the
+	 * record makes no change to uio_resid, so remember that it is nevertheless
+	 * progress; otherwise the no-progress check below restarts and a
+	 * nonblocking receive incorrectly returns EWOULDBLOCK after already
+	 * removing it.  M_EOR cannot be used as the test because protocols such
+	 * as VirtIO vsock distinguish message boundaries from an explicit sender
+	 * MSG_EOR record boundary.
+	 */
+	if ((pr->pr_flags & PR_ATOMIC) != 0 && m != NULL &&
+	    m->m_type == MT_DATA && m->m_len == 0 &&
+	    m_length(m->m_next, NULL) == 0) {
+		struct mbuf *zm;
+
+		atomic_zero_record = true;
+		/* The copy loop may not run for a zero-capacity receive. */
+		for (zm = m; zm != NULL; zm = zm->m_next) {
+			if ((zm->m_flags & M_EOR) != 0) {
+				flags |= MSG_EOR;
+				break;
+			}
+		}
+	}
 	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
 	SBLASTRECORDCHK(&so->so_rcv);
 	SBLASTMBUFCHK(&so->so_rcv);
@@ -3215,11 +3241,19 @@ dontblock:
 
 	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
 	if (m != NULL && pr->pr_flags & PR_ATOMIC) {
-		if (report_real_len)
-			uio->uio_resid -= m_length(m, NULL) - moff;
-		flags |= MSG_TRUNC;
-		if ((flags & MSG_PEEK) == 0)
-			(void) sbdroprecord_locked(&so->so_rcv);
+		if (atomic_zero_record) {
+			/* A zero-capacity receive still consumes an empty record. */
+			if ((flags & MSG_PEEK) == 0) {
+				(void)sbdroprecord_locked(&so->so_rcv);
+				m = NULL;
+			}
+		} else {
+			if (report_real_len)
+				uio->uio_resid -= m_length(m, NULL) - moff;
+			flags |= MSG_TRUNC;
+			if ((flags & MSG_PEEK) == 0)
+				(void)sbdroprecord_locked(&so->so_rcv);
+		}
 	}
 	if ((flags & MSG_PEEK) == 0) {
 		if (m == NULL) {
@@ -3251,7 +3285,7 @@ dontblock:
 		}
 	}
 	SOCKBUF_LOCK_ASSERT(&so->so_rcv);
-	if (orig_resid == uio->uio_resid && orig_resid &&
+	if (orig_resid == uio->uio_resid && orig_resid && !atomic_zero_record &&
 	    (flags & MSG_EOR) == 0 && (so->so_rcv.sb_state & SBS_CANTRCVMORE) == 0) {
 		SOCKBUF_UNLOCK(&so->so_rcv);
 		goto restart;
@@ -4468,6 +4502,20 @@ sohasoutofband(struct socket *so)
 	if (so->so_sigio != NULL)
 		pgsigio(&so->so_sigio, SIGURG, 0);
 	selwakeuppri(&so->so_rdsel, PSOCK);
+}
+
+bool
+soreadabledata(struct socket *so)
+{
+
+	/*
+	 * Atomic protocols consume one queued record at a time regardless of
+	 * SO_RCVLOWAT.  In particular, an empty record is readable even though
+	 * it contributes no bytes to sbavail().
+	 */
+	return (sbavail(&so->so_rcv) >= so->so_rcv.sb_lowat ||
+	    ((so->so_proto->pr_flags & PR_ATOMIC) != 0 &&
+	    so->so_rcv.sb_mb != NULL) || so->so_error || so->so_rerror);
 }
 
 int

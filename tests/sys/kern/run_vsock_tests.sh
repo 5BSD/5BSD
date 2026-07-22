@@ -74,10 +74,19 @@ run_case() {
 	else
 		output=$("$_bin" "$_tc" 2>&1)
 	fi
+	case_status=$?
 	# Find the ATF result token robustly instead of trusting the last line
 	# (trailing warnings on stderr would otherwise be misread as failures).
 	result=$(printf '%s\n' "$output" | \
 	    grep -E '^(passed|skipped|failed)' | tail -1)
+	if [ "$case_status" -ne 0 ]; then
+		FAIL=$((FAIL+1))
+		echo "FAIL  ${_tc}" >> "$OUT"
+		echo "test case exited with status $case_status" >> "$OUT"
+		printf '%s\n' "$output" | grep -v WARNING >> "$OUT"
+		echo "" >> "$OUT"
+		return
+	fi
 	case "$result" in
 	passed*)
 		PASS=$((PASS+1))
@@ -101,7 +110,21 @@ TOTAL=0
 for bin in $BINARIES; do
 	echo "" >> "$OUT"
 	echo "### $(basename "$bin")" >> "$OUT"
-	tests=$("$bin" -l 2>/dev/null | grep 'ident:' | sed 's/ident: //')
+	list_output=$("$bin" -l 2>&1)
+	list_status=$?
+	tests=$(printf '%s\n' "$list_output" | sed -n 's/^ident: \([^ ]*\)$/\1/p')
+	if [ "$list_status" -ne 0 ] || [ -z "$tests" ]; then
+		TOTAL=$((TOTAL+1))
+		FAIL=$((FAIL+1))
+		echo "FAIL  $(basename "$bin")::__list__" >> "$OUT"
+		if [ "$list_status" -ne 0 ]; then
+			echo "test listing exited with status $list_status" >> "$OUT"
+		else
+			echo "test listing returned no ATF cases" >> "$OUT"
+		fi
+		printf '%s\n\n' "$list_output" >> "$OUT"
+		continue
+	fi
 	for tc in $tests; do
 		TOTAL=$((TOTAL+1))
 		run_case "$bin" "$tc"
@@ -113,7 +136,21 @@ done
 # companion binary when this script is run from another directory.
 echo "" >> "$OUT"
 echo "### $(basename "$MAC_BINARY") (vsock cases)" >> "$OUT"
-tests=$("$MAC_BINARY" -l 2>/dev/null | sed -n 's/^ident: \(vsock_[^ ]*\)$/\1/p')
+list_output=$("$MAC_BINARY" -l 2>&1)
+list_status=$?
+tests=$(printf '%s\n' "$list_output" | \
+    sed -n 's/^ident: \(vsock_[^ ]*\)$/\1/p')
+if [ "$list_status" -ne 0 ] || [ -z "$tests" ]; then
+	TOTAL=$((TOTAL+1))
+	FAIL=$((FAIL+1))
+	echo "FAIL  $(basename "$MAC_BINARY")::__list_vsock__" >> "$OUT"
+	if [ "$list_status" -ne 0 ]; then
+		echo "test listing exited with status $list_status" >> "$OUT"
+	else
+		echo "test listing returned no AF_VSOCK cases" >> "$OUT"
+	fi
+	printf '%s\n\n' "$list_output" >> "$OUT"
+fi
 for tc in $tests; do
 	TOTAL=$((TOTAL+1))
 	run_case "$MAC_BINARY" "$tc" "$_mac_objdir"

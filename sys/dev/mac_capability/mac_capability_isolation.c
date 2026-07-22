@@ -109,8 +109,6 @@ struct fi_claim {
  * ---------------------------------------------------------------- */
 
 #define	FI_NET_HASH_SIZE	32
-#define	FI_NET_MAX_DENIED	16	/* max distinct nonces checked per lookup */
-
 struct fi_net_claim {
 	LIST_ENTRY(fi_net_claim) fn_hashlink;
 	LIST_ENTRY(fi_net_claim) fn_instlink;
@@ -221,7 +219,7 @@ SYSCTL_NODE(_kern, OID_AUTO, mac_capability_isolation,
     CTLFLAG_RW | CTLFLAG_MPSAFE, 0, "mac_capability isolation");
 SYSCTL_UINT(_kern_mac_capability_isolation, OID_AUTO, max_auth, CTLFLAG_RDTUN,
     &fi_max_auth, 0,
-    "Maximum authorization entries per nonce (0 = unlimited)");
+    "Maximum total authorization entries (0 = unlimited)");
 SYSCTL_UINT(_kern_mac_capability_isolation, OID_AUTO, auth_count, CTLFLAG_RD,
     __DEVOLATILE(u_int *, &fi_auth_count), 0,
     "Current number of authorization entries");
@@ -450,6 +448,24 @@ fi_is_authorized_net(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 	return (0);
 }
 
+static int
+fi_is_authorized_net_socket(uint64_t accessor, uint64_t owner,
+    uint64_t claim_id, int domain, int protocol)
+{
+	struct fi_auth *fa;
+
+	rw_assert(&fi_auth_lock, RA_RLOCKED);
+	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
+		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    fa->fa_claim_id == claim_id && fa->fa_is_net &&
+		    (fa->fa_net.domain == 0 || fa->fa_net.domain == domain) &&
+		    (fa->fa_net.protocol == 0 || protocol == 0 ||
+		    fa->fa_net.protocol == protocol))
+			return (1);
+	}
+	return (0);
+}
+
 static bool
 fi_auth_net_covers_request(const struct fi_auth *fa,
     const struct fi_net_request *nr)
@@ -618,23 +634,23 @@ fi_check_vp_common(struct ucred *cred, struct vnode *vp,
 	owner_nonce = c->fi_nonce;
 	claim_id = c->fi_id;
 	if (caller_nonce != 0 && caller_nonce == owner_nonce) {
-		rw_runlock(&fi_lock);
 		SDT_PROBE5(mac_capability_isolation, , , allow__action,
 		    probe_name, owner_nonce, caller_nonce, claim_id,
 		    actions);
+		rw_runlock(&fi_lock);
 		return (0);
 	}
-	rw_runlock(&fi_lock);
 
-	/* Check authorization table — caller may hold a token. */
+	/* Keep the claim stable while consulting its authorization entry. */
 	if (caller_nonce != 0) {
 		rw_rlock(&fi_auth_lock);
 		if (fi_is_authorized(caller_nonce, owner_nonce, claim_id,
 		    actions)) {
-			rw_runlock(&fi_auth_lock);
 			SDT_PROBE5(mac_capability_isolation, , , allow__action,
 			    probe_name, owner_nonce, caller_nonce,
 			    claim_id, actions);
+			rw_runlock(&fi_auth_lock);
+			rw_runlock(&fi_lock);
 			return (0);
 		}
 		rw_runlock(&fi_auth_lock);
@@ -644,6 +660,7 @@ fi_check_vp_common(struct ucred *cred, struct vnode *vp,
 	    owner_nonce, caller_nonce);
 	SDT_PROBE5(mac_capability_isolation, , , deny__action, probe_name,
 	    owner_nonce, caller_nonce, claim_id, actions);
+	rw_runlock(&fi_lock);
 	return (EACCES);
 }
 
@@ -1204,6 +1221,9 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 	caller_nonce = mac_capability_proc_nonce(cred);
 
 	rw_rlock(&fi_net_lock);
+	/* Lock order for combined lookups is claim table, then auth table. */
+	if (caller_nonce != 0)
+		rw_rlock(&fi_auth_lock);
 
 	/*
 	 * Probe all 4 wildcard combinations of (port, domain):
@@ -1212,25 +1232,28 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 	 *   (port, 0)       — "this port on any domain"
 	 *   (0, 0)          — "anything"
 	 *
-	 * Two-pass logic:
+	 * Matching logic:
 	 *   1. If ANY matching claim has our nonce → allow immediately.
-	 *   2. If claims exist but none match our nonce → EACCES.
-	 *   3. If no claims match at all → allow (unclaimed resource).
+	 *   2. If ANY matching claim authorizes our nonce → allow.
+	 *   3. If claims exist but none match our nonce → EACCES.
+	 *   4. If no claims match at all → allow (unclaimed resource).
 	 */
 	{
 		u_long buckets[4];
-		int nbuckets = 4, i, j;
-		bool dup;
-#define	NET_DENY_MAX	8
-		struct { uint64_t nonce; uint64_t claim_id; } denied[NET_DENY_MAX];
-		int ndeny = 0;
+		uint64_t denied_nonce, denied_id;
+		int i, j;
+		bool denied, dup;
+
+		denied = false;
+		denied_nonce = 0;
+		denied_id = 0;
 
 		buckets[0] = fi_net_hash_fn(port, domain);
 		buckets[1] = fi_net_hash_fn(0, domain);
 		buckets[2] = fi_net_hash_fn(port, 0);
 		buckets[3] = fi_net_hash_fn(0, 0);
 
-		for (i = 0; i < nbuckets; i++) {
+		for (i = 0; i < nitems(buckets); i++) {
 			dup = false;
 			for (j = 0; j < i; j++) {
 				if (buckets[j] == buckets[i]) {
@@ -1258,64 +1281,54 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 				/* Claim matches */
 				if (caller_nonce != 0 &&
 				    caller_nonce == nc->fn_nonce) {
-					/* Our claim — allow */
-					rw_runlock(&fi_net_lock);
 					SDT_PROBE6(mac_capability_isolation, , ,
 					    allow__net, nc->fn_nonce,
 					    caller_nonce, nc->fn_id,
 					    domain,
 					    ((uint32_t)protocol << 8) |
 					    direction, port);
+					rw_runlock(&fi_auth_lock);
+					rw_runlock(&fi_net_lock);
 					return (0);
 				}
-				if (ndeny < NET_DENY_MAX) {
-					denied[ndeny].nonce = nc->fn_nonce;
-					denied[ndeny].claim_id = nc->fn_id;
-					ndeny++;
+				if (caller_nonce != 0 && fi_is_authorized_net(
+				    caller_nonce, nc->fn_nonce, nc->fn_id, domain,
+				    protocol, sa, direction)) {
+					SDT_PROBE6(mac_capability_isolation, , ,
+					    allow__net, nc->fn_nonce, caller_nonce,
+					    nc->fn_id, domain,
+					    ((uint32_t)protocol << 8) | direction,
+					    port);
+					rw_runlock(&fi_auth_lock);
+					rw_runlock(&fi_net_lock);
+					return (0);
+				}
+				if (!denied) {
+					denied = true;
+					denied_nonce = nc->fn_nonce;
+					denied_id = nc->fn_id;
 				}
 			}
 		}
 
-		if (ndeny > 0) {
-			rw_runlock(&fi_net_lock);
-
-			/*
-			 * Check authorization against every matching
-			 * foreign claim.  Allow if any is authorized.
-			 */
-			if (caller_nonce != 0) {
-				rw_rlock(&fi_auth_lock);
-				for (i = 0; i < ndeny; i++) {
-					if (fi_is_authorized_net(caller_nonce,
-					    denied[i].nonce,
-					    denied[i].claim_id, domain,
-					    protocol, sa, direction)) {
-						rw_runlock(&fi_auth_lock);
-						SDT_PROBE6(mac_capability_isolation, , ,
-						    allow__net,
-						    denied[i].nonce,
-						    caller_nonce,
-						    denied[i].claim_id,
-						    domain,
-						    ((uint32_t)protocol << 8) |
-						    direction, port);
-						return (0);
-					}
-				}
-				rw_runlock(&fi_auth_lock);
-			}
+		if (denied) {
+			/* Probe arguments compile out without KDTRACE_HOOKS. */
+			(void)denied_nonce;
+			(void)denied_id;
 			SDT_PROBE3(mac_capability_isolation, , , deny,
-			    (uintptr_t)"net",
-			    denied[0].nonce, caller_nonce);
+			    (uintptr_t)"net", denied_nonce, caller_nonce);
 			SDT_PROBE6(mac_capability_isolation, , , deny__net,
-			    denied[0].nonce, caller_nonce,
-			    denied[0].claim_id, domain,
+			    denied_nonce, caller_nonce, denied_id, domain,
 			    ((uint32_t)protocol << 8) | direction, port);
+			if (caller_nonce != 0)
+				rw_runlock(&fi_auth_lock);
+			rw_runlock(&fi_net_lock);
 			return (EACCES);
 		}
-#undef NET_DENY_MAX
 	}
 
+	if (caller_nonce != 0)
+		rw_runlock(&fi_auth_lock);
 	rw_runlock(&fi_net_lock);
 	return (0);
 }
@@ -1325,18 +1338,26 @@ fi_check_socket_create(struct ucred *cred, int domain, int type __unused,
     int protocol)
 {
 	struct fi_net_claim *nc;
-	uint64_t caller_nonce;
+	uint64_t caller_nonce, denied_id, denied_nonce;
+	bool denied;
 
 	if (domain == AF_VSOCK) {
 		int error = fi_vsock_check_create(cred);
 		if (error != 0)
 			return (error);
 	}
+	/* Generic network claims cover only the families they can gate later. */
+	if (domain != AF_INET && domain != AF_INET6 &&
+	    domain != AF_BLUETOOTH)
+		return (0);
 
 	if (atomic_load_acq_int(&fi_net_claim_count) == 0)
 		return (0);
 
 	caller_nonce = mac_capability_proc_nonce(cred);
+	denied = false;
+	denied_id = 0;
+	denied_nonce = 0;
 
 	/*
 	 * Only enforce for domain-wide claims: port=0, addr=0, and
@@ -1345,6 +1366,9 @@ fi_check_socket_create(struct ucred *cred, int domain, int type __unused,
 	 * Only a fully-wildcard "block all networking" claim triggers here.
 	 */
 	rw_rlock(&fi_net_lock);
+	/* Keep each wildcard claim stable across its authorization lookup. */
+	if (caller_nonce != 0)
+		rw_rlock(&fi_auth_lock);
 	{
 		static const struct in6_addr zero_addr;
 		u_long buckets[2];
@@ -1381,42 +1405,43 @@ fi_check_socket_create(struct ucred *cred, int domain, int type __unused,
 				/* Fully-wild claim — check nonce */
 				if (caller_nonce != 0 &&
 				    caller_nonce == nc->fn_nonce) {
+					rw_runlock(&fi_auth_lock);
 					rw_runlock(&fi_net_lock);
 					return (0);
 				}
-				{
-					uint64_t owner_nonce = nc->fn_nonce;
-					uint64_t claim_id = nc->fn_id;
-
+				/*
+				 * Any token derived from this domain-wide claim
+				 * permits creating an inert socket.  Its narrowed
+				 * endpoint is still enforced by bind/connect below.
+				 */
+				if (caller_nonce != 0 && fi_is_authorized_net_socket(
+				    caller_nonce, nc->fn_nonce, nc->fn_id, domain,
+				    protocol)) {
+					rw_runlock(&fi_auth_lock);
 					rw_runlock(&fi_net_lock);
-					/* Check auth table. */
-					if (caller_nonce != 0) {
-						rw_rlock(&fi_auth_lock);
-						if (fi_is_authorized_net(
-						    caller_nonce, owner_nonce,
-						    claim_id, domain,
-						    protocol, NULL,
-						    FI_NET_ANY)) {
-							rw_runlock(
-							    &fi_auth_lock);
-							return (0);
-						}
-						rw_runlock(&fi_auth_lock);
-					}
-					SDT_PROBE3(mac_capability_isolation, , ,
-					    deny, "socket_create",
-					    owner_nonce, caller_nonce);
-					SDT_PROBE6(mac_capability_isolation, , ,
-					    deny__net, owner_nonce,
-					    caller_nonce, claim_id, domain,
-					    ((uint32_t)protocol << 8) |
-					    FI_NET_ANY, 0);
+					return (0);
 				}
-				return (EACCES);
+				if (!denied) {
+					denied = true;
+					denied_nonce = nc->fn_nonce;
+					denied_id = nc->fn_id;
+				}
 			}
 		}
 	}
+	if (caller_nonce != 0)
+		rw_runlock(&fi_auth_lock);
 	rw_runlock(&fi_net_lock);
+	if (denied) {
+		(void)denied_nonce;
+		(void)denied_id;
+		SDT_PROBE3(mac_capability_isolation, , , deny,
+		    "socket_create", denied_nonce, caller_nonce);
+		SDT_PROBE6(mac_capability_isolation, , , deny__net,
+		    denied_nonce, caller_nonce, denied_id, domain,
+		    ((uint32_t)protocol << 8) | FI_NET_ANY, 0);
+		return (EACCES);
+	}
 	return (0);
 }
 
@@ -1546,6 +1571,21 @@ fi_is_authorized_vsock(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
 		    fa->fa_claim_id == claim_id &&
 		    fi_auth_vsock_matches(fa, cid, port, direction))
+			return (1);
+	}
+	return (0);
+}
+
+static int
+fi_is_authorized_vsock_claim(uint64_t accessor, uint64_t owner,
+    uint64_t claim_id)
+{
+	struct fi_auth *fa;
+
+	rw_assert(&fi_auth_lock, RA_RLOCKED);
+	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
+		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    fa->fa_claim_id == claim_id && fa->fa_is_vsock)
 			return (1);
 	}
 	return (0);
@@ -1709,14 +1749,21 @@ static int
 fi_vsock_check_create(struct ucred *cred)
 {
 	struct fi_vsock_claim *vc;
-	uint64_t caller_nonce;
+	uint64_t caller_nonce, denied_id, denied_nonce;
+	bool denied;
 
 	if (atomic_load_acq_int(&fi_vsock_claim_count) == 0)
 		return (0);
 
 	caller_nonce = mac_capability_proc_nonce(cred);
+	denied = false;
+	denied_id = 0;
+	denied_nonce = 0;
 
 	rw_rlock(&fi_vsock_lock);
+	/* Keep the claim stable while consulting its authorization entry. */
+	if (caller_nonce != 0)
+		rw_rlock(&fi_auth_lock);
 	{
 		u_long bucket = fi_vsock_hash_fn(0, 0);
 
@@ -1733,39 +1780,44 @@ fi_vsock_check_create(struct ucred *cred)
 				SDT_PROBE6(mac_capability_isolation, , ,
 				    allow__vsock, vc->fv_nonce, caller_nonce,
 				    vc->fv_id, VSOCK_CID_ANY, 0, FI_NET_ANY);
+				rw_runlock(&fi_auth_lock);
 				rw_runlock(&fi_vsock_lock);
 				return (0);
 			}
-			{
-				uint64_t owner = vc->fv_nonce;
-				uint64_t claim_id = vc->fv_id;
-
-				rw_runlock(&fi_vsock_lock);
-				if (caller_nonce != 0) {
-					rw_rlock(&fi_auth_lock);
-					if (fi_is_authorized_vsock(
-					    caller_nonce, owner, claim_id,
-					    VSOCK_CID_ANY, 0, FI_NET_ANY)) {
-						SDT_PROBE6(mac_capability_isolation,
-						    , , allow__vsock, owner,
-						    caller_nonce, claim_id,
-						    VSOCK_CID_ANY, 0,
-						    FI_NET_ANY);
-						rw_runlock(&fi_auth_lock);
-						return (0);
-					}
-					rw_runlock(&fi_auth_lock);
-				}
-				SDT_PROBE3(mac_capability_isolation, , , deny,
-				    "vsock_socket_create", owner, caller_nonce);
+			/*
+			 * Any token derived from this domain-wide claim permits
+			 * creating an inert socket.  Its narrowed CID, port, and
+			 * direction are still enforced by bind/connect below.
+			 */
+			if (caller_nonce != 0 && fi_is_authorized_vsock_claim(
+			    caller_nonce, vc->fv_nonce, vc->fv_id)) {
 				SDT_PROBE6(mac_capability_isolation, , ,
-				    deny__vsock, owner, caller_nonce, claim_id,
-				    VSOCK_CID_ANY, 0, FI_NET_ANY);
+				    allow__vsock, vc->fv_nonce, caller_nonce,
+				    vc->fv_id, VSOCK_CID_ANY, 0, FI_NET_ANY);
+				rw_runlock(&fi_auth_lock);
+				rw_runlock(&fi_vsock_lock);
+				return (0);
 			}
-			return (EACCES);
+			if (!denied) {
+				denied = true;
+				denied_nonce = vc->fv_nonce;
+				denied_id = vc->fv_id;
+			}
 		}
 	}
+	if (caller_nonce != 0)
+		rw_runlock(&fi_auth_lock);
 	rw_runlock(&fi_vsock_lock);
+	if (denied) {
+		(void)denied_nonce;
+		(void)denied_id;
+		SDT_PROBE3(mac_capability_isolation, , , deny,
+		    "vsock_socket_create", denied_nonce, caller_nonce);
+		SDT_PROBE6(mac_capability_isolation, , , deny__vsock,
+		    denied_nonce, caller_nonce, denied_id, VSOCK_CID_ANY, 0,
+		    FI_NET_ANY);
+		return (EACCES);
+	}
 	return (0);
 }
 
@@ -1906,19 +1958,15 @@ fi_do_query(struct file *fp, uint64_t nonce, uint64_t actions,
 	rw_rlock(&fi_lock);
 	c = fi_claim_lookup(vp);
 	if (c != NULL) {
-		uint64_t owner = c->fi_nonce;
-		uint64_t claim_id = c->fi_id;
-
 		rpl->flags |= FI_QF_CLAIMED;
-		if (nonce != 0 && owner == nonce) {
+		if (nonce != 0 && c->fi_nonce == nonce) {
 			rpl->flags |= FI_QF_MINE;
 		} else if (nonce != 0) {
-			rw_runlock(&fi_lock);
 			rw_rlock(&fi_auth_lock);
-			if (fi_is_authorized(nonce, owner, claim_id, actions))
+			if (fi_is_authorized(nonce, c->fi_nonce, c->fi_id,
+			    actions))
 				rpl->flags |= FI_QF_AUTHORIZED;
 			rw_runlock(&fi_auth_lock);
-			return (0);
 		}
 	}
 	rw_runlock(&fi_lock);
@@ -2135,9 +2183,6 @@ fi_do_query_net(const struct fi_net_request *nr, uint64_t nonce,
 	uint16_t port_min, port_max, hash_port;
 	int i, j;
 	bool dup;
-#define	NET_QUERY_MAX	8
-	struct { uint64_t nonce; uint64_t claim_id; } matches[NET_QUERY_MAX];
-	int nmatches = 0;
 
 	port_min = ntohs(nr->port_min);
 	port_max = ntohs(nr->port_max);
@@ -2150,6 +2195,8 @@ fi_do_query_net(const struct fi_net_request *nr, uint64_t nonce,
 
 	rpl->flags = 0;
 	rw_rlock(&fi_net_lock);
+	if (nonce != 0)
+		rw_rlock(&fi_auth_lock);
 	for (i = 0; i < nitems(buckets); i++) {
 		dup = false;
 		for (j = 0; j < i; j++) {
@@ -2166,34 +2213,21 @@ fi_do_query_net(const struct fi_net_request *nr, uint64_t nonce,
 			rpl->flags |= FI_QF_CLAIMED;
 			if (nonce != 0 && nc->fn_nonce == nonce) {
 				rpl->flags |= FI_QF_MINE;
+				rw_runlock(&fi_auth_lock);
 				rw_runlock(&fi_net_lock);
 				return (0);
 			}
-			if (nmatches < NET_QUERY_MAX) {
-				matches[nmatches].nonce = nc->fn_nonce;
-				matches[nmatches].claim_id = nc->fn_id;
-				nmatches++;
-			}
-		}
-	}
-	rw_runlock(&fi_net_lock);
-
-	/* Check authorization against all matching foreign claims. */
-	if (nmatches > 0 && nonce != 0) {
-		rw_rlock(&fi_auth_lock);
-		for (i = 0; i < nmatches; i++) {
-			if (fi_is_authorized_net_request(nonce,
-			    matches[i].nonce, matches[i].claim_id, nr)) {
+			if (nonce != 0 && fi_is_authorized_net_request(nonce,
+			    nc->fn_nonce, nc->fn_id, nr))
 				rpl->flags |= FI_QF_AUTHORIZED;
-				break;
-			}
 		}
-		rw_runlock(&fi_auth_lock);
 	}
+	if (nonce != 0)
+		rw_runlock(&fi_auth_lock);
+	rw_runlock(&fi_net_lock);
 	SDT_PROBE5(mac_capability_isolation, , , query, "net", nonce,
 	    (uint64_t)0, (uint64_t)0, rpl->flags);
 	return (0);
-#undef NET_QUERY_MAX
 }
 
 static int
@@ -2344,35 +2378,28 @@ fi_do_query_jail(const struct fi_jail_request *jr, uint64_t nonce,
     struct fi_reply *rpl)
 {
 	struct fi_jail_claim *jc;
-	uint64_t owner_nonce;
-	uint64_t claim_id;
 
 	rw_rlock(&fi_jail_lock);
+	if (nonce != 0)
+		rw_rlock(&fi_auth_lock);
 	LIST_FOREACH(jc, &fi_jail_claims, fj_link) {
 		if (!fi_jail_claim_matches(jc, jr))
 			continue;
 		rpl->flags |= FI_QF_CLAIMED;
-		owner_nonce = jc->fj_nonce;
-		claim_id = jc->fj_id;
-		if (nonce != 0 && owner_nonce == nonce) {
+		if (nonce != 0 && jc->fj_nonce == nonce) {
 			rpl->flags |= FI_QF_MINE;
+			rw_runlock(&fi_auth_lock);
 			rw_runlock(&fi_jail_lock);
 			SDT_PROBE5(mac_capability_isolation, , , query, "jail",
 			    nonce, (uint64_t)0, (uint64_t)0, rpl->flags);
 			return (0);
 		}
-		rw_runlock(&fi_jail_lock);
-		if (nonce != 0) {
-			rw_rlock(&fi_auth_lock);
-			if (fi_is_authorized_jail(nonce, owner_nonce,
-			    claim_id, jr))
-				rpl->flags |= FI_QF_AUTHORIZED;
-			rw_runlock(&fi_auth_lock);
-		}
-		SDT_PROBE5(mac_capability_isolation, , , query, "jail",
-		    nonce, (uint64_t)0, (uint64_t)0, rpl->flags);
-		return (0);
+		if (nonce != 0 && fi_is_authorized_jail(nonce,
+		    jc->fj_nonce, jc->fj_id, jr))
+			rpl->flags |= FI_QF_AUTHORIZED;
 	}
+	if (nonce != 0)
+		rw_runlock(&fi_auth_lock);
 	rw_runlock(&fi_jail_lock);
 	SDT_PROBE5(mac_capability_isolation, , , query, "jail",
 	    nonce, (uint64_t)0, (uint64_t)0, rpl->flags);
@@ -3204,6 +3231,9 @@ fi_revoke(struct mac_capability_instance *s, uint64_t badge __unused,
 			LIST_REMOVE(vc, fv_hashlink);
 			LIST_REMOVE(vc, fv_instlink);
 			atomic_subtract_int(&fi_vsock_claim_count, 1);
+			SDT_PROBE6(mac_capability_isolation, , , state,
+			    "vsock-claim-remove", vc->fv_nonce, 0, vc->fv_id,
+			    FI_OP_RELEASE_VSOCK, 0);
 			free(vc, M_FILE_ISOLATION);
 		}
 		rw_wunlock(&fi_vsock_lock);
@@ -3246,8 +3276,9 @@ fi_check_jail_common(struct ucred *cred, int32_t jid, const char *name,
 {
 	struct fi_jail_claim *jc;
 	struct fi_jail_request req;
-	uint64_t caller_nonce, owner_nonce, claim_id;
-	char claim_name[sizeof(((struct fi_jail_request *)0)->name)];
+	uint64_t caller_nonce, denied_id, denied_nonce;
+	char denied_name[sizeof(((struct fi_jail_request *)0)->name)];
+	bool denied;
 
 	if (atomic_load_acq_int(&fi_jail_claim_count) == 0)
 		return (0);
@@ -3259,43 +3290,55 @@ fi_check_jail_common(struct ucred *cred, int32_t jid, const char *name,
 		strlcpy(req.name, name, sizeof(req.name));
 
 	caller_nonce = mac_capability_proc_nonce(cred);
+	denied = false;
+	denied_id = 0;
+	denied_nonce = 0;
+	denied_name[0] = '\0';
 	rw_rlock(&fi_jail_lock);
+	if (caller_nonce != 0)
+		rw_rlock(&fi_auth_lock);
 	LIST_FOREACH(jc, &fi_jail_claims, fj_link) {
 		if ((jc->fj_actions & actions) != actions)
 			continue;
 		if (!fi_jail_claim_matches(jc, &req))
 			continue;
 		if (caller_nonce != 0 && caller_nonce == jc->fj_nonce) {
-			rw_runlock(&fi_jail_lock);
 			SDT_PROBE6(mac_capability_isolation, , , allow__jail,
 			    jc->fj_nonce, caller_nonce, jc->fj_id,
 			    jid, what, actions);
+			rw_runlock(&fi_auth_lock);
+			rw_runlock(&fi_jail_lock);
 			return (0);
 		}
-		owner_nonce = jc->fj_nonce;
-		claim_id = jc->fj_id;
-		strlcpy(claim_name, jc->fj_name, sizeof(claim_name));
-		rw_runlock(&fi_jail_lock);
-		if (caller_nonce != 0) {
-			rw_rlock(&fi_auth_lock);
-			if (fi_is_authorized_jail(caller_nonce, owner_nonce,
-			    claim_id, &req)) {
-				rw_runlock(&fi_auth_lock);
-				SDT_PROBE6(mac_capability_isolation, , ,
-				    allow__jail, owner_nonce,
-				    caller_nonce, claim_id,
-				    jid, what, actions);
-				return (0);
-			}
+		if (caller_nonce != 0 && fi_is_authorized_jail(caller_nonce,
+		    jc->fj_nonce, jc->fj_id, &req)) {
+			SDT_PROBE6(mac_capability_isolation, , , allow__jail,
+			    jc->fj_nonce, caller_nonce, jc->fj_id, jid, what,
+			    actions);
 			rw_runlock(&fi_auth_lock);
+			rw_runlock(&fi_jail_lock);
+			return (0);
 		}
-		SDT_PROBE3(mac_capability_isolation, , , deny, what, owner_nonce,
-		    caller_nonce);
-		SDT_PROBE6(mac_capability_isolation, , , deny__jail, owner_nonce,
-		    caller_nonce, claim_id, jid, claim_name, actions);
+		if (!denied) {
+			denied = true;
+			denied_nonce = jc->fj_nonce;
+			denied_id = jc->fj_id;
+			strlcpy(denied_name, jc->fj_name, sizeof(denied_name));
+		}
+	}
+	if (caller_nonce != 0)
+		rw_runlock(&fi_auth_lock);
+	rw_runlock(&fi_jail_lock);
+	if (denied) {
+		(void)denied_nonce;
+		(void)denied_id;
+		SDT_PROBE3(mac_capability_isolation, , , deny, what,
+		    denied_nonce, caller_nonce);
+		SDT_PROBE6(mac_capability_isolation, , , deny__jail,
+		    denied_nonce, caller_nonce, denied_id, jid, denied_name,
+		    actions);
 		return (EACCES);
 	}
-	rw_runlock(&fi_jail_lock);
 	return (0);
 }
 
@@ -3452,6 +3495,9 @@ mac_capability_isolation_modevent(module_t mod __unused, int type,
 
 		error = mac_capability_service_create(&p, &fi_svc);
 		if (error != 0) {
+			rw_destroy(&fi_auth_lock);
+			hashdestroy(fi_auth_hash, M_FILE_ISOLATION,
+			    fi_auth_hashmask);
 			rw_destroy(&fi_vsock_lock);
 			hashdestroy(fi_vsock_hash, M_FILE_ISOLATION,
 			    fi_vsock_hashmask);

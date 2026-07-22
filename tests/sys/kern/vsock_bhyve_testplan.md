@@ -16,7 +16,7 @@ cover the pieces in isolation; this document covers the missing layer:
 ```
    +--------------------------- 5BSD HOST -----------------------------+
    |                                                                   |
-   |   host app  <--AF_UNIX-->  bhyve (pci_virtio_vsock, CID 2)        |
+   |   host app  <-- AF_UNIX bridge or host AF_VSOCK -->  bhyve       |
    |                                   |  virtio PCI                   |
    |                                   v                               |
    |   +----------------- GUEST (CID = N >= 3) ----------------------+ |
@@ -30,22 +30,31 @@ Key facts that drive the setup (from the device header comment and
 
 * **bhyve is always CID 2** (`VSOCK_CID_HOST`). The guest CID is whatever you
   pass as `cid=` and **must be `>= 3` and `< 0xffffffff`**.
-* The host side does **not** use the host kernel's AF_VSOCK. All host I/O is
-  **AF_UNIX sockets rooted in a directory** you provide via `path=`. So the
-  *host* needs no vsock kernel support at all — only the guest kernels do.
-* **Guest → host:** guest connects to `CID 2 : <port>`; bhyve `connectat()`s to
+* The default `backend=unix` mode uses **AF_UNIX sockets rooted in a
+  directory** supplied via `path=`.  It needs no host vsock kernel support.
+* `backend=native` instead attaches bhyve to the host `/dev/vsock` transport.
+  Host applications then use ordinary AF_VSOCK sockets, `path=` is invalid,
+  and the host `vsock` module must be loaded.  The provider is exclusive and
+  every running guest must have a unique CID.
+* **Guest → host (`backend=unix`):** guest connects to `CID 2 : <port>`;
+  bhyve `connectat()`s to
   `<dir>/<port>` (e.g. `<dir>/80`). A host process must be **listening on that
   Unix socket** or the guest gets `OP_RST` (ECONNRESET).
-* **Host → guest:** a host app connects to the control socket `<dir>/sock`,
+* **Host → guest (`backend=unix`):** a host app connects to the control socket
+  `<dir>/sock`,
   sends a `struct vsock_ctl_msg{cmd=VSOCK_CTL_CONNECT, port, type}`, and on
   success bhyve returns `status=0` plus one end of a socketpair via
   `SCM_RIGHTS`. There is no off-the-shelf tool for this handshake — use the
   `vsh-connect` helper in Appendix B.
+* In `backend=native` mode the same directions use host AF_VSOCK bind/connect
+  calls; the automated Alpine matrix covers both directions and transport
+  reset through this path.
 * Loopback inside a guest uses **CID 1** (`VSOCK_CID_LOCAL`).
 
-This model matches Firecracker/QEMU "hybrid vsock", so a **stock Linux guest
-virtio-vsock driver works unmodified** against our device — which is exactly
-what makes Linux a good independent conformance oracle.
+The Unix backend matches the Firecracker/QEMU "hybrid vsock" model, while the
+native backend exposes the conventional host AF_VSOCK API.  A **stock Linux
+guest virtio-vsock driver works unmodified** with either backend, which is what
+makes Linux a useful independent conformance oracle.
 
 ---
 

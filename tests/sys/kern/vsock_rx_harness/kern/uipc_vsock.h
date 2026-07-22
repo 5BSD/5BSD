@@ -67,6 +67,9 @@
  */
 #define	VTVSOCK_CONNECT_TIMEOUT		(hz * 2)
 
+/* Private socket-layer-to-transport send flags. */
+#define	VTVSOCK_SEND_F_NONBLOCK		0x100
+
 /* -----------------------------------------------------------------------
  * Connection state machine
  * ---------------------------------------------------------------------- */

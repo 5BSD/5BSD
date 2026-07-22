@@ -558,6 +558,7 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 	MD5_CTX mdctx;
 	u_char digest[16];
 	struct pci_vtblk_softc *sc;
+	bool intr_initialized;
 	off_t size;
 	int i, sectsz, sts, sto;
 
@@ -573,6 +574,7 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 	if (blockif_add_boot_device(pi, bctxt)) {
 		perror("Invalid boot device");
+		blockif_close(bctxt);
 		return (1);
 	}
 
@@ -581,6 +583,11 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 	blockif_psectsz(bctxt, &sts, &sto);
 
 	sc = calloc(1, sizeof(struct pci_vtblk_softc));
+	if (sc == NULL) {
+		blockif_close(bctxt);
+		return (1);
+	}
+	intr_initialized = false;
 	sc->bc = bctxt;
 	for (i = 0; i < VTBLK_RINGSZ; i++) {
 		struct pci_vtblk_ioreq *io = &sc->vbsc_ios[i];
@@ -594,7 +601,11 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (blockif_candelete(sc->bc))
 		sc->vbsc_consts.vc_hv_caps |= VTBLK_F_DISCARD;
 
-	pthread_mutex_init(&sc->vsc_mtx, NULL);
+	if (pthread_mutex_init(&sc->vsc_mtx, NULL) != 0) {
+		blockif_close(sc->bc);
+		free(sc);
+		return (1);
+	}
 
 	/* init virtio softc and virtqueues */
 	vi_softc_linkup(&sc->vbsc_vs, &sc->vbsc_consts, sc, pi, &sc->vbsc_vq);
@@ -669,6 +680,7 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 	if (vi_intr_init(&sc->vbsc_vs, 1, fbsdrun_virtio_msix()))
 		goto failed;
+	intr_initialized = true;
 	if (vi_pci_is_modern(&sc->vbsc_vs)) {
 		if (vi_pci_modern_init(&sc->vbsc_vs, 2) != 0)
 			goto failed;
@@ -679,6 +691,9 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 failed:
 	blockif_close(sc->bc);
+	free(sc->vbsc_vs.vs_modern);
+	if (intr_initialized)
+		pthread_mutex_destroy(&sc->vbsc_vs.vs_isr_mtx);
 	pthread_mutex_destroy(&sc->vsc_mtx);
 	free(sc);
 	return (1);

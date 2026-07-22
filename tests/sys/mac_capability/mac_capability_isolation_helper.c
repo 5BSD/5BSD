@@ -370,6 +370,35 @@ main(int argc, char **argv)
 		return (2);
 	}
 
+	/* Authorize a network token, then attempt socket creation. */
+	if (argc == 6 && strcmp(argv[1], "net-token-socket") == 0) {
+		int s, token_fd, type;
+
+		token_fd = (int)strtol(argv[2], &end, 10);
+		if (*end != '\0')
+			return (2);
+		domain = (int)strtol(argv[3], &end, 10);
+		if (*end != '\0')
+			return (2);
+		type = (int)strtol(argv[4], &end, 10);
+		if (*end != '\0')
+			return (2);
+		protocol = (int)strtol(argv[5], &end, 10);
+		if (*end != '\0')
+			return (2);
+		if (fi_authorize(token_fd) != 0)
+			return (10);
+		close(token_fd);
+		s = socket(domain, type, protocol);
+		if (s >= 0) {
+			close(s);
+			return (0);
+		}
+		if (errno == EACCES || errno == EPERM)
+			return (1);
+		return (2);
+	}
+
 	/*
 	 * net-token-query <svc_fd> <token_fd> <domain> <protocol>
 	 *     <port_min> <port_max> <direction> <expected_flags>

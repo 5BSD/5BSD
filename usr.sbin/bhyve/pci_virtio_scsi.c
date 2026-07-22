@@ -146,6 +146,10 @@ struct pci_vtscsi_queue {
 	pthread_mutex_t                   vsq_fmtx;
 	pthread_mutex_t                   vsq_qmtx;
 	pthread_cond_t                    vsq_cv;
+	bool                              vsq_rmtx_initialized;
+	bool                              vsq_fmtx_initialized;
+	bool                              vsq_qmtx_initialized;
+	bool                              vsq_cv_initialized;
 	struct pci_vtscsi_req_queue       vsq_requests;
 	struct pci_vtscsi_req_queue       vsq_free_requests;
 	struct pci_vtscsi_worker *        vsq_workers;
@@ -1281,13 +1285,25 @@ pci_vtscsi_init_queue(struct pci_vtscsi_softc *sc,
 
 	queue->vsq_sc = sc;
 	queue->vsq_vq = &sc->vss_vq[num + 2];
-
-	pthread_mutex_init(&queue->vsq_rmtx, NULL);
-	pthread_mutex_init(&queue->vsq_fmtx, NULL);
-	pthread_mutex_init(&queue->vsq_qmtx, NULL);
-	pthread_cond_init(&queue->vsq_cv, NULL);
 	STAILQ_INIT(&queue->vsq_requests);
 	STAILQ_INIT(&queue->vsq_free_requests);
+
+	error = pthread_mutex_init(&queue->vsq_rmtx, NULL);
+	if (error != 0)
+		goto fail;
+	queue->vsq_rmtx_initialized = true;
+	error = pthread_mutex_init(&queue->vsq_fmtx, NULL);
+	if (error != 0)
+		goto fail;
+	queue->vsq_fmtx_initialized = true;
+	error = pthread_mutex_init(&queue->vsq_qmtx, NULL);
+	if (error != 0)
+		goto fail;
+	queue->vsq_qmtx_initialized = true;
+	error = pthread_cond_init(&queue->vsq_cv, NULL);
+	if (error != 0)
+		goto fail;
+	queue->vsq_cv_initialized = true;
 
 	for (i = 0; i < VTSCSI_RINGSZ; i++) {
 		struct pci_vtscsi_request *req;
@@ -1359,10 +1375,22 @@ pci_vtscsi_destroy_queue(struct pci_vtscsi_queue *queue)
 		pci_vtscsi_free_request(req);
 	}
 
-	pthread_cond_destroy(&queue->vsq_cv);
-	pthread_mutex_destroy(&queue->vsq_qmtx);
-	pthread_mutex_destroy(&queue->vsq_fmtx);
-	pthread_mutex_destroy(&queue->vsq_rmtx);
+	if (queue->vsq_cv_initialized) {
+		pthread_cond_destroy(&queue->vsq_cv);
+		queue->vsq_cv_initialized = false;
+	}
+	if (queue->vsq_qmtx_initialized) {
+		pthread_mutex_destroy(&queue->vsq_qmtx);
+		queue->vsq_qmtx_initialized = false;
+	}
+	if (queue->vsq_fmtx_initialized) {
+		pthread_mutex_destroy(&queue->vsq_fmtx);
+		queue->vsq_fmtx_initialized = false;
+	}
+	if (queue->vsq_rmtx_initialized) {
+		pthread_mutex_destroy(&queue->vsq_rmtx);
+		queue->vsq_rmtx_initialized = false;
+	}
 	queue->vsq_sc = NULL;
 }
 
@@ -1389,6 +1417,7 @@ static int
 pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtscsi_softc *sc;
+	bool intr_initialized;
 	const char *devname, *value;
 	int err;
 	int i;
@@ -1403,6 +1432,7 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc = calloc(1, sizeof(struct pci_vtscsi_softc));
 	if (sc == NULL)
 		return (-1);
+	intr_initialized = false;
 	sc->vss_ctl_fd = -1;
 
 	value = get_config_value_node(nvl, "iid");
@@ -1426,24 +1456,12 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 		goto fail;
 	}
 
-	pthread_mutex_init(&sc->vss_mtx, NULL);
+	if (pthread_mutex_init(&sc->vss_mtx, NULL) != 0)
+		goto fail;
 	sc->vss_mtx_initialized = true;
 
 	vi_softc_linkup(&sc->vss_vs, &vtscsi_vi_consts, sc, pi, sc->vss_vq);
 	sc->vss_vs.vs_mtx = &sc->vss_mtx;
-
-	/*
-	 * Perform a "reset" before we set up our queues.
-	 *
-	 * This will write the default config into vss_config, which is used
-	 * by the rest of the driver to get the request header size. Note that
-	 * if we ever allow the guest to override sense size through config
-	 * space writes, pre-allocation of I/O requests will have to change
-	 * accordingly.
-	 */
-	pthread_mutex_lock(&sc->vss_mtx);
-	pci_vtscsi_reset(sc);
-	pthread_mutex_unlock(&sc->vss_mtx);
 
 	/* controlq */
 	sc->vss_vq[0].vq_qsize = VTSCSI_RINGSZ;
@@ -1475,11 +1493,21 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 	if (vi_intr_init(&sc->vss_vs, 1, fbsdrun_virtio_msix()))
 		goto fail;
+	intr_initialized = true;
 	if (vi_pci_is_modern(&sc->vss_vs)) {
 		if (vi_pci_modern_init(&sc->vss_vs, 2) != 0)
 			goto fail;
 	} else
 		vi_set_io_bar(&sc->vss_vs, 0);
+
+	/*
+	 * Establish the default configuration only after vi_intr_init() has
+	 * initialized the ISR mutex used by vi_reset_dev().  The request workers
+	 * need these sizes, so reset before allocating any of their requests.
+	 */
+	pthread_mutex_lock(&sc->vss_mtx);
+	pci_vtscsi_reset(sc);
+	pthread_mutex_unlock(&sc->vss_mtx);
 
 	/* Start workers only after every fallible PCI transport operation. */
 	for (i = 2; i < VTSCSI_MAXQ; i++) {
@@ -1496,6 +1524,9 @@ fail:
 
 	if (sc->vss_ctl_fd >= 0)
 		close(sc->vss_ctl_fd);
+	free(sc->vss_vs.vs_modern);
+	if (intr_initialized)
+		pthread_mutex_destroy(&sc->vss_vs.vs_isr_mtx);
 	if (sc->vss_mtx_initialized)
 		pthread_mutex_destroy(&sc->vss_mtx);
 

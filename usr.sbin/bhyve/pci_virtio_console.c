@@ -137,6 +137,7 @@ struct pci_vtcon_softc {
 	char *                   vsc_rootdir;
 	int                      vsc_kq;
 	bool                     vsc_ready;
+	bool                     vsc_intr_initialized;
 	bool                     vsc_mtx_initialized;
 	struct pci_vtcon_port    vsc_control_port;
  	struct pci_vtcon_port    vsc_ports[VTCON_MAXPORTS];
@@ -451,6 +452,9 @@ pci_vtcon_destroy(struct pci_vtcon_softc *sc)
 		free(sock->vss_tx_buf);
 		free(sock);
 	}
+	free(sc->vsc_vs.vs_modern);
+	if (sc->vsc_intr_initialized)
+		pthread_mutex_destroy(&sc->vsc_vs.vs_isr_mtx);
 	if (sc->vsc_mtx_initialized)
 		pthread_mutex_destroy(&sc->vsc_mtx);
 	free(sc->vsc_config);
@@ -611,8 +615,8 @@ pci_vtcon_sock_drain(struct pci_vtcon_sock *sock)
 	if (!sock->vss_open || sock->vss_conn_fd < 0 ||
 	    sock->vss_tx_off == sock->vss_tx_len)
 		return;
-	n = write(sock->vss_conn_fd, sock->vss_tx_buf + sock->vss_tx_off,
-	    sock->vss_tx_len - sock->vss_tx_off);
+	n = send(sock->vss_conn_fd, sock->vss_tx_buf + sock->vss_tx_off,
+	    sock->vss_tx_len - sock->vss_tx_off, MSG_NOSIGNAL);
 	if (n > 0) {
 		sock->vss_tx_off += (size_t)n;
 		if (sock->vss_tx_off == sock->vss_tx_len) {
@@ -1021,6 +1025,7 @@ pci_vtcon_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
 		goto fail;
+	sc->vsc_intr_initialized = true;
 	if (vi_pci_is_modern(&sc->vsc_vs)) {
 		if (vi_pci_modern_init(&sc->vsc_vs, 2) != 0)
 			goto fail;

@@ -356,9 +356,7 @@ soeventmtx(struct socket *so, const sb_which which)
     ((so)->so_proto->pr_flags & PR_ATOMIC)
 
 /* can we read something from so? */
-#define	soreadabledata(so) \
-	(sbavail(&(so)->so_rcv) >= (so)->so_rcv.sb_lowat || \
-	(so)->so_error || (so)->so_rerror)
+bool	soreadabledata(struct socket *so);
 #define	_soreadable(so) \
 	(soreadabledata(so) || ((so)->so_rcv.sb_state & SBS_CANTRCVMORE))
 

@@ -50,6 +50,11 @@ static int g_enable_calls;
 static int g_disable_calls;
 static int g_callback_calls;
 static int g_callback_niov;
+static int g_send_override_fd;
+static ssize_t g_send_result;
+static int g_send_errno;
+static int g_send_flags;
+static bool g_realloc_fail;
 
 static void
 reset_mocks(void)
@@ -72,6 +77,39 @@ reset_mocks(void)
 	g_disable_calls = 0;
 	g_callback_calls = 0;
 	g_callback_niov = 0;
+	g_send_override_fd = -1;
+	g_send_result = 0;
+	g_send_errno = 0;
+	g_send_flags = 0;
+	g_realloc_fail = false;
+}
+
+ssize_t __real_send(int, const void *, size_t, int);
+ssize_t __wrap_send(int, const void *, size_t, int);
+void *__real_realloc(void *, size_t);
+void *__wrap_realloc(void *, size_t);
+
+ssize_t
+__wrap_send(int fd, const void *buf, size_t len, int flags)
+{
+
+	if (fd != g_send_override_fd)
+		return (__real_send(fd, buf, len, flags));
+	g_send_flags = flags;
+	if (g_send_result < 0)
+		errno = g_send_errno;
+	return (g_send_result);
+}
+
+void *
+__wrap_realloc(void *ptr, size_t size)
+{
+
+	if (g_realloc_fail) {
+		g_realloc_fail = false;
+		return (NULL);
+	}
+	return (__real_realloc(ptr, size));
 }
 
 const char *
@@ -559,6 +597,106 @@ ATF_TC_BODY(transmit_backpressure, tc)
 	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
 }
 
+ATF_TC_WITHOUT_HEAD(transmit_partial_and_compaction);
+ATF_TC_BODY(transmit_partial_and_compaction, tc)
+{
+	struct pci_vtcon_sock sock;
+	struct mevent read_ev, write_ev;
+	struct iovec iov;
+
+	memset(&sock, 0, sizeof(sock));
+	sock.vss_open = true;
+	sock.vss_conn_fd = 101;
+	sock.vss_conn_evp = &read_ev;
+	sock.vss_write_evp = &write_ev;
+	reset_mocks();
+	g_send_override_fd = sock.vss_conn_fd;
+	g_send_result = 3;
+	iov = (struct iovec){
+		.iov_base = __DECONST(char *, "abcdef"), .iov_len = 6,
+	};
+	pci_vtcon_sock_tx(NULL, &sock, &iov, 1);
+	ATF_CHECK(sock.vss_open);
+	ATF_CHECK((g_send_flags & MSG_NOSIGNAL) != 0);
+	ATF_CHECK(sock.vss_tx_off == 3 && sock.vss_tx_len == 6);
+	ATF_CHECK(memcmp(sock.vss_tx_buf, "abcdef", 6) == 0);
+	ATF_CHECK(g_enable_calls == 1);
+
+	/* Force the next append to compact the three pending bytes first. */
+	sock.vss_tx_cap = sock.vss_tx_len;
+	g_send_result = -1;
+	g_send_errno = EAGAIN;
+	iov = (struct iovec){
+		.iov_base = __DECONST(char *, "gh"), .iov_len = 2,
+	};
+	pci_vtcon_sock_tx(NULL, &sock, &iov, 1);
+	ATF_CHECK(sock.vss_open);
+	ATF_CHECK(sock.vss_tx_off == 0 && sock.vss_tx_len == 5);
+	ATF_CHECK(memcmp(sock.vss_tx_buf, "defgh", 5) == 0);
+	ATF_CHECK(g_enable_calls == 2);
+	free(sock.vss_tx_buf);
+}
+
+ATF_TC_WITHOUT_HEAD(transmit_failure_paths);
+ATF_TC_BODY(transmit_failure_paths, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct pci_vtcon_sock sock;
+	struct pci_vtcon_port port;
+	struct mevent read_ev, write_ev;
+	struct iovec iov;
+	char byte = 0;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&port, 0, sizeof(port));
+	port.vsp_sc = &sc;
+	memset(&sock, 0, sizeof(sock));
+	sock.vss_port = &port;
+	sock.vss_open = true;
+	sock.vss_conn_fd = 102;
+	sock.vss_conn_evp = &read_ev;
+	sock.vss_write_evp = &write_ev;
+	reset_mocks();
+	g_send_override_fd = sock.vss_conn_fd;
+	g_realloc_fail = true;
+	iov = (struct iovec){ .iov_base = &byte, .iov_len = 1 };
+	pci_vtcon_sock_tx(NULL, &sock, &iov, 1);
+	ATF_CHECK(!sock.vss_open);
+	ATF_CHECK(sock.vss_tx_buf == NULL && sock.vss_tx_len == 0);
+
+	memset(&sock, 0, sizeof(sock));
+	sock.vss_port = &port;
+	sock.vss_open = true;
+	sock.vss_conn_fd = 103;
+	sock.vss_conn_evp = &read_ev;
+	sock.vss_write_evp = &write_ev;
+	sock.vss_tx_buf = malloc(1);
+	ATF_REQUIRE(sock.vss_tx_buf != NULL);
+	sock.vss_tx_len = VTCON_SOCK_TX_MAX;
+	sock.vss_tx_cap = VTCON_SOCK_TX_MAX;
+	pci_vtcon_sock_tx(NULL, &sock, &iov, 1);
+	ATF_CHECK(!sock.vss_open);
+	ATF_CHECK(sock.vss_tx_buf == NULL && sock.vss_tx_len == 0);
+
+	memset(&sock, 0, sizeof(sock));
+	sock.vss_port = &port;
+	sock.vss_open = true;
+	sock.vss_conn_fd = 104;
+	sock.vss_conn_evp = &read_ev;
+	sock.vss_write_evp = &write_ev;
+	sock.vss_tx_buf = malloc(1);
+	ATF_REQUIRE(sock.vss_tx_buf != NULL);
+	sock.vss_tx_buf[0] = 0x5a;
+	sock.vss_tx_len = 1;
+	sock.vss_tx_cap = 1;
+	g_send_override_fd = sock.vss_conn_fd;
+	g_send_result = -1;
+	g_send_errno = EPIPE;
+	pci_vtcon_sock_drain(&sock);
+	ATF_CHECK(!sock.vss_open);
+	ATF_CHECK(sock.vss_tx_buf == NULL && sock.vss_tx_len == 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, transport_and_features);
@@ -568,5 +706,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, control_receive_scatter);
 	ATF_TP_ADD_TC(tp, receive_preserves_data);
 	ATF_TP_ADD_TC(tp, transmit_backpressure);
+	ATF_TP_ADD_TC(tp, transmit_partial_and_compaction);
+	ATF_TP_ADD_TC(tp, transmit_failure_paths);
 	return (atf_no_error());
 }

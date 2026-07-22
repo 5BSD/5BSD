@@ -126,7 +126,7 @@ EOF
 "$cc" -g -O1 -fsanitize="$sanitizers" -ffunction-sections -fdata-sections \
 	-DWITHOUT_CAPSICUM -I"$work/atfshim" -I"$work/inc" \
 	-I"$work" -I"$srctop/usr.sbin" -I"$srctop/sys" \
-	-Wl,--gc-sections -o "$work/console-test" \
+	-Wl,--gc-sections,--wrap=send,--wrap=realloc -o "$work/console-test" \
 	"$work/virtio_console_test.c" -lpthread
 
 "$work/console-test"
@@ -161,7 +161,8 @@ EOF
 	-DWITHOUT_CAPSICUM -I"$work/atfshim" -I"$work/inc" \
 	-I"$work" -I"$srctop/usr.sbin/bhyve" \
 	-I"$srctop/usr.sbin" -I"$srctop/sys" \
-	-Wl,--gc-sections -o "$work/scsi-test" \
+	-Wl,--gc-sections,--wrap=pthread_mutex_init,--wrap=pthread_cond_init \
+	-o "$work/scsi-test" \
 	"$work/virtio_scsi_test.c" -lpthread
 
 "$work/scsi-test"

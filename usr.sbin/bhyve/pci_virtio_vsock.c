@@ -854,8 +854,10 @@ vtvsock_build_hdr(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
  * Inject a prebuilt header + optional payload into the RX virtqueue.
  * Must be called with vsc_mtx held.
  *
- * Returns 0 on success, -1 if no descriptors were available or the chain
- * was malformed (a malformed chain is consumed and released).
+ * Returns the number of payload bytes written, or -1 if no descriptors were
+ * available or the chain was malformed (a malformed chain is consumed and
+ * released).  A header-only packet therefore succeeds with a return value of
+ * zero.
  */
 static int
 vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
@@ -3664,7 +3666,7 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	const char *backend, *cidstr, *path;
 	pthread_mutexattr_t mtx_attr;
 	struct sockaddr_un sun;
-	bool mtx_initialized = false;
+	bool intr_initialized = false, mtx_initialized = false;
 	int s   = -1;
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_t rights;
@@ -3943,6 +3945,7 @@ setup_pci:
 	/* --- Virtio interrupt and BAR --- */
 	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
 		goto failed;
+	intr_initialized = true;
 	if (vi_pci_is_modern(&sc->vsc_vs)) {
 		if (vi_pci_modern_init(&sc->vsc_vs, 2) != 0)
 			goto failed;
@@ -3988,6 +3991,9 @@ failed:
 		free(sc->vsc_native_rx_buf);
 		free(sc->vsc_native_tx);
 		free(sc->vsc_path);
+		free(sc->vsc_vs.vs_modern);
+		if (intr_initialized)
+			pthread_mutex_destroy(&sc->vsc_vs.vs_isr_mtx);
 		if (mtx_initialized)
 			pthread_mutex_destroy(&sc->vsc_mtx);
 		free(sc);

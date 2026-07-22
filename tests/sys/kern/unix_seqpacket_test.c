@@ -28,6 +28,7 @@
 #include <sys/cdefs.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -1375,6 +1376,55 @@ ATF_TC_BODY(peek_race, tc)
 	close(sv[1]);
 }
 
+ATF_TC_WITHOUT_HEAD(zero_length_record);
+ATF_TC_BODY(zero_length_record, tc)
+{
+	char buf[8];
+	struct iovec iov;
+	struct msghdr msg;
+	struct pollfd pfd;
+	int sv[2];
+
+	do_socketpair_nonblocking(sv);
+	memset(&msg, 0, sizeof(msg));
+	iov.iov_base = buf;
+	iov.iov_len = sizeof(buf);
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+
+	ATF_REQUIRE_EQ(0, send(sv[0], "", 0, 0));
+	pfd.fd = sv[1];
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	ATF_REQUIRE_EQ(1, poll(&pfd, 1, 0));
+	ATF_CHECK((pfd.revents & POLLIN) != 0);
+	iov.iov_len = 0;
+	ATF_REQUIRE_EQ(0, recvmsg(sv[1], &msg, MSG_PEEK));
+	ATF_CHECK((msg.msg_flags & (MSG_EOR | MSG_TRUNC)) == 0);
+	pfd.revents = 0;
+	ATF_REQUIRE_EQ(1, poll(&pfd, 1, 0));
+	ATF_CHECK((pfd.revents & POLLIN) != 0);
+	msg.msg_flags = 0;
+	ATF_REQUIRE_EQ(0, recvmsg(sv[1], &msg, 0));
+	ATF_CHECK((msg.msg_flags & (MSG_EOR | MSG_TRUNC)) == 0);
+	iov.iov_len = sizeof(buf);
+	pfd.revents = 0;
+	ATF_REQUIRE_EQ(0, poll(&pfd, 1, 0));
+
+	iov.iov_len = 0;
+	ATF_REQUIRE_EQ(0, sendmsg(sv[0], &msg, MSG_EOR));
+	msg.msg_flags = 0;
+	ATF_REQUIRE_EQ(0, recvmsg(sv[1], &msg, 0));
+	ATF_CHECK((msg.msg_flags & MSG_EOR) != 0);
+
+	iov.iov_len = sizeof(buf);
+	ATF_REQUIRE_EQ(1, send(sv[0], "x", 1, 0));
+	ATF_REQUIRE_EQ(1, recv(sv[1], buf, sizeof(buf), 0));
+	ATF_CHECK_EQ('x', buf[0]);
+	close(sv[0]);
+	close(sv[1]);
+}
+
 /*
  * Main.
  */
@@ -1432,6 +1482,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, pipe_128k_128k);
 	ATF_TP_ADD_TC(tp, random_eor_and_waitall);
 	ATF_TP_ADD_TC(tp, peek_race);
+	ATF_TP_ADD_TC(tp, zero_length_record);
 
 	return atf_no_error();
 }

@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd July 21, 2026
+.Dd July 22, 2026
 .Dt MAC_CAPABILITY_ISOLATION 4
 .Os
 .Sh NAME
@@ -168,6 +168,11 @@ Direction flags:
 .Pp
 Listen is not separately enforced; bind is the gate.
 Socket creation is enforced only for fully-wildcard (domain-wide) claims.
+A token narrowed from such a claim permits creating an unconnected socket;
+the narrowed endpoint is still enforced by
+.Xr bind 2
+and
+.Xr connect 2 .
 .Pp
 IPv4 addresses are stored as v4-mapped IPv6.
 CIDR prefix lengths for
@@ -290,6 +295,11 @@ is checked similarly.
 For network tokens, the direction, domain, protocol, port range, and
 address prefix must all be covered by the token's endpoint description.
 For vsock tokens, CID, port range, and direction must be covered.
+A token narrowed from a domain-wide vsock claim likewise permits creating an
+unconnected socket; the narrowed tuple is then enforced by
+.Xr bind 2
+and
+.Xr connect 2 .
 .Ss MACF Enforcement
 The service registers MAC policy hooks for:
 .Bl -dash -compact

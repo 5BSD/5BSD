@@ -2294,7 +2294,8 @@ vsock_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		if (seqpacket && (flags & MSG_EOR) != 0)
 			m->m_flags |= M_EOR | M_PROTO1;
 
-		error = pcb->transport->send(pcb, 0, m, NULL, NULL, td);
+		error = pcb->transport->send(pcb,
+		    nbio ? VTVSOCK_SEND_F_NONBLOCK : 0, m, NULL, NULL, td);
 		if (error != 0)
 			break;
 		uioadvance(uio, chunk);

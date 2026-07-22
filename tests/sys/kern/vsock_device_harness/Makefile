@@ -96,11 +96,13 @@ LDFLAGS.vsock_device_test+=	-Wl,--wrap=socket -Wl,--wrap=connectat \
 	-Wl,--wrap=realloc -Wl,--wrap=writev
 LDFLAGS.virtio_core_test+=	-Wl,--gc-sections
 LDFLAGS.virtio_rnd_interrupt_test+= -Wl,--gc-sections
-LDFLAGS.virtio_console_test+= -Wl,--gc-sections
+LDFLAGS.virtio_console_test+= -Wl,--gc-sections -Wl,--wrap=send \
+				-Wl,--wrap=realloc
 LDFLAGS.virtio_9p_test+=	-Wl,--gc-sections
 LDFLAGS.virtio_block_test+=	-Wl,--gc-sections
 LDFLAGS.virtio_net_test+=	-Wl,--gc-sections
-LDFLAGS.virtio_scsi_test+=	-Wl,--gc-sections
+LDFLAGS.virtio_scsi_test+=	-Wl,--gc-sections \
+	-Wl,--wrap=pthread_mutex_init -Wl,--wrap=pthread_cond_init
 LIBADD.vsock_device_test+=	pthread
 LIBADD.virtio_modern_test+=	pthread
 LIBADD.virtio_input_test+=	pthread

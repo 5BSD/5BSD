@@ -753,7 +753,7 @@ static int
 pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtinput_softc *sc;
-	bool mtx_attr_initialized;
+	bool intr_initialized, mtx_attr_initialized;
 	const char *debug;
 
 	debug = getenv("BHYVE_VTINPUT_DEBUG");
@@ -773,6 +773,7 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (sc == NULL)
 		return (-1);
 	sc->vsc_fd = -1;
+	intr_initialized = false;
 	mtx_attr_initialized = false;
 
 	sc->vsc_evdev = get_config_value_node(nvl, "path");
@@ -881,6 +882,7 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 	/* add MSI-X table BAR */
 	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
 		goto failed;
+	intr_initialized = true;
 	if (vi_pci_is_modern(&sc->vsc_vs)) {
 		if (vi_pci_modern_init(&sc->vsc_vs, 2) != 0)
 			goto failed;
@@ -892,6 +894,9 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 failed:
 	if (sc->vsc_evp)
 		mevent_delete(sc->vsc_evp);
+	free(sc->vsc_vs.vs_modern);
+	if (intr_initialized)
+		pthread_mutex_destroy(&sc->vsc_vs.vs_isr_mtx);
 	if (sc->vsc_eventqueue.events)
 		free(sc->vsc_eventqueue.events);
 	if (sc->vsc_mtx_initialized)

@@ -9,6 +9,8 @@ WORKDIR=${WORKDIR:-/tmp/bhyve-virtio-alpine-matrix}
 TRANSPORTS=${TRANSPORTS:-"modern legacy"}
 TOPOLOGIES=${TOPOLOGIES:-"net vsock vsock-native rng block scsi console 9p input combined"}
 VM_FREE_GATES=${VM_FREE_GATES:-yes}
+reset_test_default=${RESET_TEST:-no}
+reboot_test_default=${REBOOT_TEST:-no}
 
 [ "$(id -u)" -eq 0 ] || {
 	echo "run-alpine-matrix.sh must run as root" >&2
@@ -72,8 +74,8 @@ for topology in $TOPOLOGIES; do
 		*) echo "invalid transport: $transport" >&2; exit 2 ;;
 		esac
 		backend=unix
-		reset_test=${RESET_TEST:-no}
-		reboot_test=${REBOOT_TEST:-no}
+		reset_test=$reset_test_default
+		reboot_test=$reboot_test_default
 		case "$topology:$transport" in
 		net:*) devices=net ;;
 		vsock:*) devices=vsock ;;

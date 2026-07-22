@@ -22,6 +22,7 @@ static int g_ncap;
 static int g_credit_updates;
 static bool g_tx_ready;
 static int g_send_calls;
+static int g_last_send_flags;
 static int g_last_send_mflags;
 static int g_last_send_len;
 static int g_send_len[4];
@@ -53,11 +54,12 @@ mock_send_rst(uint64_t scid __unused, uint32_t sport __unused,
 	return (0);
 }
 static void mock_send_credit_update(struct vtvsock_pcb *pcb __unused) { g_credit_updates++; }
-static int mock_send(struct vtvsock_pcb *p __unused, int f __unused,
+static int mock_send(struct vtvsock_pcb *p __unused, int f,
     struct mbuf *m, struct sockaddr *a __unused, struct mbuf *c __unused,
     struct thread *t __unused)
 {
 	g_send_calls++;
+	g_last_send_flags = f;
 	g_last_send_mflags = m->m_flags;
 	g_last_send_len = m_length(m, NULL);
 	if (g_send_calls <= (int)nitems(g_send_len))
@@ -93,6 +95,7 @@ reset_state(void)
 	g_ncap = 0; g_credit_updates = 0;
 	g_tx_ready = true;
 	g_send_calls = 0;
+	g_last_send_flags = 0;
 	g_send_error = 0;
 	g_last_send_mflags = 0;
 	g_last_send_len = 0;
@@ -620,6 +623,7 @@ ATF_TC_BODY(nonblocking_tx_not_consumed_when_ring_full, tc)
 	    MSG_DONTWAIT, NULL) == 0);
 	ATF_CHECK(uio.uio_resid == 0);
 	ATF_CHECK(g_send_calls == 1);
+	ATF_CHECK((g_last_send_flags & VTVSOCK_SEND_F_NONBLOCK) != 0);
 	ATF_CHECK(g_last_send_len == (int)(sizeof(data) - 1));
 }
 

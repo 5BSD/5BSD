@@ -916,13 +916,27 @@ ATF_TC_WITHOUT_HEAD(seqpacket_zero_length);
 ATF_TC_BODY(seqpacket_zero_length, tc)
 {
 	char buf[8];
+	struct iovec iov;
+	struct msghdr mh;
+	struct pollfd pfd;
 	int ls, cs, as;
 
 	(void)tc;
 
 	vsock_pair(SOCK_SEQPACKET, &ls, &cs, &as);
 	ATF_REQUIRE(fcntl(as, F_SETFL, O_NONBLOCK) != -1);
+	memset(&mh, 0, sizeof(mh));
+	iov.iov_base = buf;
+	iov.iov_len = sizeof(buf);
+	mh.msg_iov = &iov;
+	mh.msg_iovlen = 1;
 	ATF_REQUIRE(send(cs, "", 0, 0) == 0);
+	pfd.fd = as;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	ATF_REQUIRE(poll(&pfd, 1, 0) == 1);
+	ATF_CHECK((pfd.revents & POLLIN) != 0);
+	iov.iov_len = 0;
 	/*
 	 * Linux semantics: a zero-length SEQPACKET message is delivered as a
 	 * distinct 0-byte record (recv returns 0), not dropped -- and the
@@ -930,7 +944,25 @@ ATF_TC_BODY(seqpacket_zero_length, tc)
 	 * received normally, which proves the 0-byte recv was a message, not
 	 * peer-close.
 	 */
-	ATF_CHECK(recv(as, buf, sizeof(buf), 0) == 0);
+	ATF_CHECK(recvmsg(as, &mh, MSG_PEEK) == 0);
+	ATF_CHECK((mh.msg_flags & (MSG_EOR | MSG_TRUNC)) == 0);
+	pfd.revents = 0;
+	ATF_REQUIRE(poll(&pfd, 1, 0) == 1);
+	ATF_CHECK((pfd.revents & POLLIN) != 0);
+	mh.msg_flags = 0;
+	ATF_CHECK(recvmsg(as, &mh, 0) == 0);
+	ATF_CHECK((mh.msg_flags & (MSG_EOR | MSG_TRUNC)) == 0);
+	iov.iov_len = sizeof(buf);
+	pfd.revents = 0;
+	ATF_REQUIRE(poll(&pfd, 1, 0) == 0);
+
+	/* An explicit zero-length record boundary remains visible to recvmsg. */
+	iov.iov_len = 0;
+	ATF_REQUIRE(sendmsg(cs, &mh, MSG_EOR) == 0);
+	mh.msg_flags = 0;
+	ATF_CHECK(recvmsg(as, &mh, 0) == 0);
+	ATF_CHECK((mh.msg_flags & MSG_EOR) != 0);
+	iov.iov_len = sizeof(buf);
 	ATF_REQUIRE(send(cs, "hi", 2, 0) == 2);
 	ATF_CHECK(recv(as, buf, sizeof(buf), 0) == 2);
 

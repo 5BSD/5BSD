@@ -626,11 +626,10 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 	size_t total, offset, chunk;
 	uint32_t credit;
 	uint32_t pkt_flags;
-	bool seqpacket;
+	bool nonblocking, seqpacket;
 	bool credit_req_sent;
 	int error;
 
-	(void)flags;	/* PRUS_*; MSG_EOR arrives via M_EOR on the mbuf */
 	(void)addr;
 	(void)td;
 
@@ -641,6 +640,8 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 
 	KASSERT(pcb->so != NULL, ("%s: pcb %p has NULL so", __func__, pcb));
 	seqpacket = (pcb->so->so_type == SOCK_SEQPACKET);
+	nonblocking = (flags & VTVSOCK_SEND_F_NONBLOCK) != 0 ||
+	    (pcb->so->so_state & SS_NBIO) != 0;
 
 	total = m_length(m, NULL);
 	if (total == 0) {
@@ -718,7 +719,7 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 			credit = vtvsock_get_credit(pcb, (uint32_t)chunk);
 			if (credit != 0)
 				break;
-			if (pcb->so->so_state & SS_NBIO) {
+			if (nonblocking) {
 				error = EWOULDBLOCK;
 				goto out;
 			}
@@ -821,8 +822,7 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 		if (sc->sc_txq_count != 0)
 			vtvsock_txq_drain(sc);
 		error = vtvsock_txvq_enqueue(sc, buf, &sg);
-		if (error == EWOULDBLOCK &&
-		    !(pcb->so->so_state & SS_NBIO) &&
+		if (error == EWOULDBLOCK && !nonblocking &&
 		    pcb->state == VTVSOCK_ESTABLISHED) {
 			/*
 			 * TX ring is full (not a credit stall -- credit was

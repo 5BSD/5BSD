@@ -67,6 +67,13 @@
  */
 #define	VTVSOCK_CONNECT_TIMEOUT		(hz * 2)
 
+/*
+ * Private flags passed from the socket layer to transport send callbacks.
+ * Keep these disjoint from PRUS_* so a transport can also receive an mbuf
+ * through the generic socket send path.
+ */
+#define	VTVSOCK_SEND_F_NONBLOCK		0x100
+
 /* -----------------------------------------------------------------------
  * Connection state machine
  * ---------------------------------------------------------------------- */

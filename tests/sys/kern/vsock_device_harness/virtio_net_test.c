@@ -28,6 +28,7 @@ struct mock_chain {
 };
 
 static struct mock_chain g_chains[4];
+static struct net_backend g_backend;
 static int g_chain_count;
 static int g_chain_next;
 static ssize_t g_peek_len;
@@ -82,6 +83,7 @@ setup_softc(struct pci_vtnet_softc *sc)
 {
 
 	memset(sc, 0, sizeof(*sc));
+	sc->vsc_be = &g_backend;
 	sc->features_negotiated = true;
 	sc->vhdrlen = sizeof(struct virtio_net_rxhdr);
 	sc->vsc_queues[VTNET_RXQ].vq_used = &g_used;
@@ -272,6 +274,26 @@ ATF_TC_BODY(receive_validation, tc)
 	ATF_CHECK(((struct virtio_net_rxhdr *)g_packet)->vrh_bufs == 1);
 }
 
+ATF_TC_WITHOUT_HEAD(disconnected_backend);
+ATF_TC_BODY(disconnected_backend, tc)
+{
+	struct pci_vtnet_softc sc;
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_be = NULL;
+	add_chain(1, 1, 0, true, g_packet, sizeof(g_packet));
+	pci_vtnet_proctx(&sc, &sc.vsc_queues[VTNET_TXQ]);
+	ATF_CHECK(g_send_calls == 0);
+	ATF_CHECK(g_rel_calls == 1 && g_rel_len[0] == 0);
+
+	/* No backend means no RX callback work or backend dereference. */
+	g_peek_len = 60;
+	pci_vtnet_rx(&sc);
+	ATF_CHECK(g_chain_next == 1);
+	ATF_CHECK(g_recv_calls == 0);
+}
+
 ATF_TC_WITHOUT_HEAD(config_write_bounds);
 ATF_TC_BODY(config_write_bounds, tc)
 {
@@ -292,6 +314,7 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, transmit_validation);
 	ATF_TP_ADD_TC(tp, receive_validation);
+	ATF_TP_ADD_TC(tp, disconnected_backend);
 	ATF_TP_ADD_TC(tp, config_write_bounds);
 	return (atf_no_error());
 }

@@ -291,6 +291,46 @@ ATF_TC_BODY(seqpacket_peer_window_boundary, tc)
 	ATF_CHECK(txvq.entry_count == 0);
 }
 
+ATF_TC_WITHOUT_HEAD(per_call_nonblocking_survives_ring_race);
+ATF_TC_BODY(per_call_nonblocking_survives_ring_race, tc)
+{
+	struct socket so;
+	struct virtqueue txvq;
+	struct vtvsock_pcb pcb;
+	struct vtvsock_softc sc;
+	struct sglist sg;
+	struct sglist_seg seg;
+	void *blocker;
+
+	reset_state();
+	memset(&pcb, 0, sizeof(pcb));
+	memset(&sc, 0, sizeof(sc));
+	memset(&so, 0, sizeof(so));
+	mock_vq_init(&txvq, 1);
+	sc.sc_txvq = &txvq;
+	so.so_type = SOCK_STREAM;
+	/* The descriptor is blocking; only this send call is nonblocking. */
+	so.so_state = 0;
+	pcb.so = &so;
+	pcb.state = VTVSOCK_ESTABLISHED;
+	pcb.local.svm_cid = 14;
+	pcb.local.svm_port = 1000;
+	pcb.remote.svm_cid = VSOCK_CID_HOST;
+	pcb.remote.svm_port = 2000;
+	pcb.peer_buf_alloc = 4096;
+	atomic_store_ptr(&vtvsock_sc, &sc);
+
+	blocker = new_control_packet();
+	one_seg(&sg, &seg);
+	ATF_REQUIRE(virtqueue_enqueue(&txvq, blocker, &sg, 1, 0) == 0);
+	ATF_CHECK(vtvsock_virtio_send(&pcb, VTVSOCK_SEND_F_NONBLOCK,
+	    new_data_chain(1, false), NULL, NULL, NULL) == EWOULDBLOCK);
+	ATF_CHECK(pcb.tx_cnt == 0);
+	ATF_CHECK(txvq.entry_count == 1);
+	ATF_REQUIRE(mock_vq_complete(&txvq, blocker, 0));
+	vtvsock_txvq_reclaim(&sc);
+}
+
 ATF_TC_WITHOUT_HEAD(enqueue_reclaims_then_retries);
 ATF_TC_BODY(enqueue_reclaims_then_retries, tc)
 {
@@ -1173,6 +1213,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cid_sanitization);
 	ATF_TP_ADD_TC(tp, tx_ready_descriptor_threshold);
 	ATF_TP_ADD_TC(tp, seqpacket_peer_window_boundary);
+	ATF_TP_ADD_TC(tp, per_call_nonblocking_survives_ring_race);
 	ATF_TP_ADD_TC(tp, enqueue_reclaims_then_retries);
 	ATF_TP_ADD_TC(tp, control_queue_bounded);
 	ATF_TP_ADD_TC(tp, partial_ring_is_transient);

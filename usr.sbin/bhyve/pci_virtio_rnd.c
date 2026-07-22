@@ -163,6 +163,7 @@ static int
 pci_vtrnd_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtrnd_softc *sc;
+	bool intr_initialized;
 	int fd;
 	int len;
 	uint8_t v;
@@ -201,6 +202,7 @@ pci_vtrnd_init(struct pci_devinst *pi, nvlist_t *nvl)
 		close(fd);
 		return (1);
 	}
+	intr_initialized = false;
 
 	if (pthread_mutex_init(&sc->vrsc_mtx, NULL) != 0) {
 		close(fd);
@@ -232,6 +234,7 @@ pci_vtrnd_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 	if (vi_intr_init(&sc->vrsc_vs, 1, fbsdrun_virtio_msix()))
 		goto failed;
+	intr_initialized = true;
 	if (vi_pci_is_modern(&sc->vrsc_vs)) {
 		if (vi_pci_modern_init(&sc->vrsc_vs, 2) != 0)
 			goto failed;
@@ -242,6 +245,9 @@ pci_vtrnd_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 failed:
 	close(fd);
+	free(sc->vrsc_vs.vs_modern);
+	if (intr_initialized)
+		pthread_mutex_destroy(&sc->vrsc_vs.vs_isr_mtx);
 	pthread_mutex_destroy(&sc->vrsc_mtx);
 	free(sc);
 	return (1);

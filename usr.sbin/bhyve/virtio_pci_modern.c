@@ -488,6 +488,10 @@ vi_modern_enable_vq(struct virtio_softc *vs, struct vqueue_info *vq)
 static void
 vi_modern_status_write(struct virtio_softc *vs, uint8_t status)
 {
+	const uint8_t driver_status_mask = VIRTIO_CONFIG_STATUS_ACK |
+	    VIRTIO_CONFIG_STATUS_DRIVER | VIRTIO_CONFIG_STATUS_DRIVER_OK |
+	    VIRTIO_CONFIG_S_FEATURES_OK | VIRTIO_CONFIG_STATUS_FAILED;
+	uint64_t features, negotiated_features;
 	uint8_t old_status;
 
 	old_status = vs->vs_status;
@@ -497,21 +501,33 @@ vi_modern_status_write(struct virtio_softc *vs, uint8_t status)
 		(*vs->vs_vc->vc_reset)((void *)vs);
 		return;
 	}
+	/*
+	 * Driver-owned status bits are cumulative until a full reset.  Preserve
+	 * every bit previously accepted so a malicious or buggy guest cannot
+	 * clear FEATURES_OK, rewrite driver_features, and renegotiate a live
+	 * backend.  Reserved and device-owned bits from the guest are ignored.
+	 */
+	status &= driver_status_mask;
+	status |= old_status & (driver_status_mask |
+	    VIRTIO_CONFIG_S_NEEDS_RESET);
+	features = vi_modern_device_features(vs);
 	if ((status & VIRTIO_CONFIG_S_FEATURES_OK) != 0 &&
-	    (vs->vs_modern->driver_features & VIRTIO_F_VERSION_1) == 0)
+	    (((vs->vs_modern->driver_features & VIRTIO_F_VERSION_1) == 0) ||
+	    (vs->vs_modern->driver_features & ~features) != 0))
 		status &= ~VIRTIO_CONFIG_S_FEATURES_OK;
-	/* NEEDS_RESET is device-owned and remains set until a full reset. */
-	status |= old_status & VIRTIO_CONFIG_S_NEEDS_RESET;
+	/* A modern device must not become ready before features are accepted. */
+	if ((status & VIRTIO_CONFIG_S_FEATURES_OK) == 0)
+		status &= ~VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	vs->vs_status = status;
 	VIRTIO_PROBE_STATUS(old_status, status);
 	if ((old_status & VIRTIO_CONFIG_S_FEATURES_OK) == 0 &&
 	    (status & VIRTIO_CONFIG_S_FEATURES_OK) != 0) {
-		vs->vs_negotiated_caps =
-		    (uint32_t)vs->vs_modern->driver_features;
+		negotiated_features = vs->vs_modern->driver_features & features;
+		vs->vs_negotiated_caps = (uint32_t)negotiated_features;
 		if (vs->vs_vc->vc_apply_features != NULL)
 			(*vs->vs_vc->vc_apply_features)((void *)vs,
-			    vs->vs_modern->driver_features);
-		VIRTIO_PROBE_FEATURES(vs->vs_modern->driver_features);
+			    negotiated_features);
+		VIRTIO_PROBE_FEATURES(negotiated_features);
 	}
 	if ((old_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0 &&
 	    (status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
@@ -523,7 +539,7 @@ vi_modern_common_write(struct virtio_softc *vs, uint64_t offset, int size,
     uint64_t value)
 {
 	struct vqueue_info *vq;
-	uint64_t features, mask;
+	uint64_t mask;
 	uint32_t select;
 
 	vq = vi_modern_selected_vq(vs);
@@ -541,12 +557,11 @@ vi_modern_common_write(struct virtio_softc *vs, uint64_t offset, int size,
 		if (size != 4 || select >= 2 ||
 		    (vs->vs_status & VIRTIO_CONFIG_S_FEATURES_OK) != 0)
 			break;
-		features = vi_modern_device_features(vs);
 		mask = UINT32_MAX;
 		mask <<= 32 * select;
 		vs->vs_modern->driver_features &= ~mask;
 		vs->vs_modern->driver_features |=
-		    (((uint64_t)(uint32_t)value << (32 * select)) & features);
+		    (uint64_t)(uint32_t)value << (32 * select);
 		break;
 	case VIRTIO_PCI_COMMON_MSIX:
 		if (size == 2) {

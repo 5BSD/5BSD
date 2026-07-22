@@ -174,7 +174,8 @@ pci_vtnet_reset(void *vsc)
 	 * the first receive buffers and kicks us.
 	 */
 	sc->features_negotiated = false;
-	netbe_rx_disable(sc->vsc_be);
+	if (sc->vsc_be != NULL)
+		netbe_rx_disable(sc->vsc_be);
 
 	/* Set sc->resetting and give a chance to the TX thread to stop. */
 	pthread_mutex_lock(&sc->tx_mtx);
@@ -244,6 +245,8 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 	struct vi_req req;
 
 	vq = &sc->vsc_queues[VTNET_RXQ];
+	if (sc->vsc_be == NULL)
+		return;
 
 	/* Features must be negotiated */
 	if (!sc->features_negotiated) {
@@ -440,8 +443,10 @@ pci_vtnet_ping_rxq(void *vsc, struct vqueue_info *vq)
 		return;
 	}
 
-	vq_kick_disable(vq);
-	netbe_rx_enable(sc->vsc_be);
+	if (sc->vsc_be != NULL) {
+		vq_kick_disable(vq);
+		netbe_rx_enable(sc->vsc_be);
+	}
 	pthread_mutex_unlock(&sc->rx_mtx);
 }
 
@@ -475,7 +480,7 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 		siov = iov_trim_hdr(siov, &n, sc->vhdrlen);
 	}
 
-	if (siov != NULL)
+	if (siov != NULL && sc->vsc_be != NULL)
 		(void)netbe_send(sc->vsc_be, siov, n);
 
 	/*
@@ -572,10 +577,11 @@ static int
 pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtnet_softc *sc;
+	bool intr_initialized;
 	const char *value;
 	char tname[MAXCOMLEN + 1];
 	unsigned long mtu = ETHERMTU;
-	int err;
+	int err = 1;
 
 	/*
 	 * Allocate data structures for further virtio initializations.
@@ -585,9 +591,31 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc = calloc(1, sizeof(struct pci_vtnet_softc));
 	if (sc == NULL)
 		return (ENOMEM);
+	intr_initialized = false;
 
 	sc->vsc_consts = vtnet_vi_consts;
-	pthread_mutex_init(&sc->vsc_mtx, NULL);
+	if (pthread_mutex_init(&sc->vsc_mtx, NULL) != 0) {
+		free(sc);
+		return (ENOMEM);
+	}
+	if (pthread_mutex_init(&sc->rx_mtx, NULL) != 0) {
+		pthread_mutex_destroy(&sc->vsc_mtx);
+		free(sc);
+		return (ENOMEM);
+	}
+	if (pthread_mutex_init(&sc->tx_mtx, NULL) != 0) {
+		pthread_mutex_destroy(&sc->rx_mtx);
+		pthread_mutex_destroy(&sc->vsc_mtx);
+		free(sc);
+		return (ENOMEM);
+	}
+	if (pthread_cond_init(&sc->tx_cond, NULL) != 0) {
+		pthread_mutex_destroy(&sc->tx_mtx);
+		pthread_mutex_destroy(&sc->rx_mtx);
+		pthread_mutex_destroy(&sc->vsc_mtx);
+		free(sc);
+		return (ENOMEM);
+	}
 
 	sc->vsc_queues[VTNET_RXQ].vq_qsize = VTNET_RINGSZ;
 	sc->vsc_queues[VTNET_RXQ].vq_notify = pci_vtnet_ping_rxq;
@@ -602,8 +630,7 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (value != NULL) {
 		err = net_parsemac(value, sc->vsc_config.mac);
 		if (err) {
-			free(sc);
-			return (err);
+			goto failed;
 		}
 	} else
 		net_genmac(pi, sc->vsc_config.mac);
@@ -612,15 +639,13 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (value != NULL) {
 		err = net_parsemtu(value, &mtu);
 		if (err) {
-			free(sc);
-			return (err);
+			goto failed;
 		}
 
 		if (mtu < VTNET_MIN_MTU || mtu > VTNET_MAX_MTU) {
 			err = EINVAL;
 			errno = EINVAL;
-			free(sc);
-			return (err);
+			goto failed;
 		}
 		sc->vsc_consts.vc_hv_caps |= VIRTIO_NET_F_MTU;
 	}
@@ -630,13 +655,13 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (get_config_value_node(nvl, "backend") != NULL) {
 		err = netbe_init(&sc->vsc_be, nvl, pci_vtnet_rx_callback, sc);
 		if (err) {
-			free(sc);
-			return (err);
+			goto failed;
 		}
 	}
 
-	sc->vsc_consts.vc_hv_caps |= VIRTIO_NET_F_MRG_RXBUF |
-	    netbe_get_cap(sc->vsc_be);
+	sc->vsc_consts.vc_hv_caps |= VIRTIO_NET_F_MRG_RXBUF;
+	if (sc->vsc_be != NULL)
+		sc->vsc_consts.vc_hv_caps |= netbe_get_cap(sc->vsc_be);
 
 	/*
 	 * Since we do not actually support multiqueue,
@@ -644,8 +669,8 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	 */
 	sc->vsc_config.max_virtqueue_pairs = 1;
 
-	/* Link is always up. */
-	sc->vsc_config.status = 1;
+	/* A configured backend provides carrier; an unattached NIC is down. */
+	sc->vsc_config.status = sc->vsc_be != NULL ? 1 : 0;
 
 	vi_softc_linkup(&sc->vsc_vs, &sc->vsc_consts, sc, pi, sc->vsc_queues);
 	sc->vsc_vs.vs_mtx = &sc->vsc_mtx;
@@ -667,6 +692,7 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	/* use BAR 1 to map MSI-X table and PBA, if we're using MSI-X */
 	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
 		goto failed;
+	intr_initialized = true;
 
 	if (vi_pci_is_modern(&sc->vsc_vs)) {
 		if (vi_pci_modern_init(&sc->vsc_vs, 2) != 0)
@@ -675,10 +701,8 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 		vi_set_io_bar(&sc->vsc_vs, 0);
 
 	sc->resetting = 0;
-
 	sc->rx_merge = 0;
 	sc->vhdrlen = sizeof(struct virtio_net_rxhdr) - 2;
-	pthread_mutex_init(&sc->rx_mtx, NULL);
 
 	/*
 	 * Initialize tx semaphore & spawn TX processing thread.
@@ -686,9 +710,9 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	 * spawned.
 	 */
 	sc->tx_in_progress = 0;
-	pthread_mutex_init(&sc->tx_mtx, NULL);
-	pthread_cond_init(&sc->tx_cond, NULL);
-	pthread_create(&sc->tx_tid, NULL, pci_vtnet_tx_thread, (void *)sc);
+	err = pthread_create(&sc->tx_tid, NULL, pci_vtnet_tx_thread, sc);
+	if (err != 0)
+		goto failed;
 	snprintf(tname, sizeof(tname), "vtnet-%d:%d tx", pi->pi_slot,
 	    pi->pi_func);
 	pthread_set_name_np(sc->tx_tid, tname);
@@ -697,9 +721,15 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 failed:
 	netbe_cleanup(sc->vsc_be);
+	free(sc->vsc_vs.vs_modern);
+	if (intr_initialized)
+		pthread_mutex_destroy(&sc->vsc_vs.vs_isr_mtx);
+	pthread_cond_destroy(&sc->tx_cond);
+	pthread_mutex_destroy(&sc->tx_mtx);
+	pthread_mutex_destroy(&sc->rx_mtx);
 	pthread_mutex_destroy(&sc->vsc_mtx);
 	free(sc);
-	return (1);
+	return (err != 0 ? err : 1);
 }
 
 static int
@@ -753,9 +783,12 @@ pci_vtnet_neg_features(void *vsc, uint64_t negotiated_features)
 		sc->rx_merge = 0;
 	}
 
-	/* Tell the backend to enable some capabilities it has advertised. */
-	netbe_set_cap(sc->vsc_be, negotiated_features, sc->vhdrlen);
-	sc->be_vhdrlen = netbe_get_vnet_hdr_len(sc->vsc_be);
+	/* Tell a configured backend to enable capabilities it advertised. */
+	if (sc->vsc_be != NULL) {
+		netbe_set_cap(sc->vsc_be, negotiated_features, sc->vhdrlen);
+		sc->be_vhdrlen = netbe_get_vnet_hdr_len(sc->vsc_be);
+	} else
+		sc->be_vhdrlen = 0;
 	assert(sc->be_vhdrlen == 0 || sc->be_vhdrlen == sc->vhdrlen);
 
 	pthread_mutex_lock(&sc->rx_mtx);
@@ -816,7 +849,8 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	if (meta->op == VM_SNAPSHOT_RESTORE &&
 	    sc->features_negotiated) {
 		pci_vtnet_neg_features(sc, sc->vsc_features);
-		netbe_rx_enable(sc->vsc_be);
+		if (sc->vsc_be != NULL)
+			netbe_rx_enable(sc->vsc_be);
 	}
 
 	SNAPSHOT_VAR_OR_LEAVE(sc->vsc_config, meta, ret, done);

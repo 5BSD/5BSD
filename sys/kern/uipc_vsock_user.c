@@ -68,6 +68,7 @@ struct vsock_user_provider {
 	struct vsock_user_packet *write_packet;
 	uint32_t guest_cid;
 	uint32_t queue_count;
+	u_int read_inflight;
 	bool write_reserved;
 	bool registered;
 };
@@ -225,7 +226,7 @@ vsock_user_tx_ready(struct vtvsock_pcb *pcb __unused)
 }
 
 static int
-vsock_user_send(struct vtvsock_pcb *pcb, int flags __unused, struct mbuf *m,
+vsock_user_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
     struct sockaddr *addr __unused, struct mbuf *control,
     struct thread *td __unused)
 {
@@ -234,13 +235,15 @@ vsock_user_send(struct vtvsock_pcb *pcb, int flags __unused, struct mbuf *m,
 	size_t chunk, offset, total;
 	uint32_t credit, packet_flags;
 	uint16_t type;
-	bool credit_request_sent, seqpacket;
+	bool credit_request_sent, nonblocking, seqpacket;
 	int error;
 
 	if (control != NULL)
 		m_freem(control);
 	total = m_length(m, NULL);
 	seqpacket = pcb->so->so_type == SOCK_SEQPACKET;
+	nonblocking = (flags & VTVSOCK_SEND_F_NONBLOCK) != 0 ||
+	    (pcb->so->so_state & SS_NBIO) != 0;
 	type = seqpacket ? VIRTIO_VSOCK_TYPE_SEQPACKET :
 	    VIRTIO_VSOCK_TYPE_STREAM;
 	error = 0;
@@ -284,7 +287,7 @@ vsock_user_send(struct vtvsock_pcb *pcb, int flags __unused, struct mbuf *m,
 			credit = vtvsock_get_credit(pcb, (uint32_t)chunk);
 			if (credit != 0)
 				break;
-			if ((pcb->so->so_state & SS_NBIO) != 0) {
+			if (nonblocking) {
 				error = EWOULDBLOCK;
 				goto out;
 			}
@@ -324,8 +327,7 @@ vsock_user_send(struct vtvsock_pcb *pcb, int flags __unused, struct mbuf *m,
 		    VIRTIO_VSOCK_OP_RW, packet_flags, pcb->buf_alloc,
 		    pcb->fwd_cnt, payload, chunk, false);
 		free(payload, M_VTVSOCK);
-		if (error == EWOULDBLOCK &&
-		    (pcb->so->so_state & SS_NBIO) == 0 &&
+		if (error == EWOULDBLOCK && !nonblocking &&
 		    pcb->state == VTVSOCK_ESTABLISHED) {
 			pcb->tx_cnt -= (uint32_t)chunk;
 			error = msleep(provider, &vtvsock_mtx, PSOCK | PCATCH,
@@ -499,11 +501,18 @@ vsock_dev_read(struct cdev *dev __unused, struct uio *uio, int ioflag)
 	}
 	STAILQ_REMOVE_HEAD(&provider->queue, link);
 	provider->queue_count--;
+	provider->read_inflight++;
 	wakeup(provider);
 	vsock_user_notify_locked(provider);
 	mtx_unlock(&vtvsock_mtx);
 	error = uiomove(packet->data, packet->len, uio);
 	free(packet, M_VTVSOCK);
+	mtx_lock(&vtvsock_mtx);
+	KASSERT(provider->read_inflight > 0,
+	    ("%s: read in-flight count underflow", __func__));
+	provider->read_inflight--;
+	wakeup(provider);
+	mtx_unlock(&vtvsock_mtx);
 	return (error);
 out:
 	mtx_unlock(&vtvsock_mtx);
@@ -659,11 +668,13 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 			return (ENXIO);
 		mtx_lock(&vtvsock_mtx);
 		/*
-		 * A write drops the domain lock while copying and validating its
-		 * packet.  Do not let a pre-reset packet re-enter the same provider
-		 * after reset merely because its owner pointer is still current.
+		 * Reads and writes drop the domain lock while copying packets.  Wait
+		 * for both directions so reset neither admits a pre-reset inbound
+		 * packet nor returns while an old outbound packet is still being
+		 * copied to the provider.
 		 */
-		while (provider->write_thread != NULL) {
+		while (provider->write_thread != NULL ||
+		    provider->read_inflight != 0) {
 			error = msleep(provider, &vtvsock_mtx, PCATCH,
 			    "vsockur", 0);
 			if (error != 0) {
