@@ -2447,7 +2447,7 @@ vsock_mbuf_from_buffer(const void *buf, size_t len)
 }
 
 void
-vsock_rx_packet(void *buf, uint32_t len)
+vsock_rx_packet(const void *owner, void *buf, uint32_t len)
 {
 	struct virtio_vsock_hdr *hdr;
 	struct vtvsock_pcb *pcb;
@@ -2478,6 +2478,21 @@ vsock_rx_packet(void *buf, uint32_t len)
 	hdr_buf_alloc = le32toh(hdr->buf_alloc);
 	hdr_fwd_cnt   = le32toh(hdr->fwd_cnt);
 
+	/*
+	 * Attribute every packet to the transport instance that dequeued it.
+	 * A driver drops the transport lock while entering the socket domain,
+	 * so unregister/replacement can otherwise race this call and leave a
+	 * newly-created PCB with a NULL or unrelated transport.  Check once
+	 * before accounting, and again below whenever the domain lock is taken.
+	 */
+	mtx_lock(&vtvsock_mtx);
+	if (owner == NULL || vtvsock_remote_transport == NULL ||
+	    vtvsock_remote_transport_owner != owner) {
+		mtx_unlock(&vtvsock_mtx);
+		return;
+	}
+	mtx_unlock(&vtvsock_mtx);
+
 	counter_u64_add(vtvsock_cnt_rx_packets, 1);
 
 	/* Metadata-only trace of every inbound packet (no payload). */
@@ -2495,7 +2510,8 @@ vsock_rx_packet(void *buf, uint32_t len)
 		 */
 		counter_u64_add(vtvsock_cnt_rx_drops, 1);
 		mtx_lock(&vtvsock_mtx);
-		if (hdr_op != VIRTIO_VSOCK_OP_RST &&
+		if (vtvsock_remote_transport_owner == owner &&
+		    hdr_op != VIRTIO_VSOCK_OP_RST &&
 		    vtvsock_remote_transport != NULL)
 			(void)vtvsock_remote_transport->send_rst(
 			    vtvsock_guest_cid, hdr_dst_port, hdr_src_cid,
@@ -2509,7 +2525,8 @@ vsock_rx_packet(void *buf, uint32_t len)
 	if (hdr_type != VIRTIO_VSOCK_TYPE_STREAM &&
 	    hdr_type != VIRTIO_VSOCK_TYPE_SEQPACKET) {
 		mtx_lock(&vtvsock_mtx);
-		if (vtvsock_remote_transport != NULL)
+		if (vtvsock_remote_transport_owner == owner &&
+		    vtvsock_remote_transport != NULL)
 			(void)vtvsock_remote_transport->send_rst(
 			    vtvsock_guest_cid, hdr_dst_port,
 			    hdr_src_cid, hdr_src_port, hdr_type);
@@ -2518,6 +2535,11 @@ vsock_rx_packet(void *buf, uint32_t len)
 	}
 
 	mtx_lock(&vtvsock_mtx);
+	if (vtvsock_remote_transport == NULL ||
+	    vtvsock_remote_transport_owner != owner) {
+		mtx_unlock(&vtvsock_mtx);
+		return;
+	}
 
 	/*
 	 * Locate the PCB.  For OP_REQUEST, look for a listening socket in

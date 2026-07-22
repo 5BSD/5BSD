@@ -11,6 +11,10 @@
 
 #include <atf-c.h>
 
+/* Every synthetic packet is delivered by the registered mock transport. */
+#define	vsock_rx_packet(buf, len) \
+	vsock_rx_packet(&mock_transport, (buf), (len))
+
 /* ---- captured emitted packets (guest -> wire) ---- */
 struct cap { uint16_t op; uint32_t flags, len; uint64_t dst_cid; uint32_t dst_port; };
 static struct cap g_cap[64];
@@ -854,6 +858,25 @@ ATF_TC_BODY(inbound_connection_cap_reclaims_slot, tc)
 	vtvsock_max_conn = saved_max_conn;
 }
 
+ATF_TC_WITHOUT_HEAD(stale_transport_packet_is_dropped);
+ATF_TC_BODY(stale_transport_packet_is_dropped, tc)
+{
+	struct socket *listener;
+	struct virtio_vsock_hdr h;
+	int stale_owner = 0;
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	listener = mk_socket(SOCK_STREAM);
+	ATF_REQUIRE(listener != NULL);
+	ATF_REQUIRE(bind_listen(listener, 96) == 0);
+	mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST, VIRTIO_VSOCK_TYPE_STREAM,
+	    VSOCK_CID_HOST, 1253, 96, 0, 0, 65536, 0);
+	(vsock_rx_packet)(&stale_owner, &h, sizeof(h));
+	ATF_CHECK(vtvsock_conn_count == 0);
+	ATF_CHECK(g_ncap == 0);
+}
+
 /* sonewconn in the DUT's TU so it can reach static vsock_attach + protosw. */
 struct socket *
 vsock_kmock_sonewconn(struct socket *head, int connstatus)
@@ -893,5 +916,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, seqpacket_zero_length_has_packet_header);
 	ATF_TP_ADD_TC(tp, rx_truncated_payload_is_rejected);
 	ATF_TP_ADD_TC(tp, inbound_connection_cap_reclaims_slot);
+	ATF_TP_ADD_TC(tp, stale_transport_packet_is_dropped);
 	return (atf_no_error());
 }

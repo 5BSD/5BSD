@@ -195,7 +195,7 @@ int	vsock_transport_register(const struct vtvsock_transport *ops,
 void	vsock_transport_unregister(const void *owner);
 
 /* RX callback (called by virtio_vsock interrupt handler) */
-void	vsock_rx_packet(void *buf, uint32_t len);
+void	vsock_rx_packet(const void *owner, void *buf, uint32_t len);
 
 /*
  * Lock-held variants, so the driver's event handler can process a

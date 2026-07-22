@@ -577,7 +577,7 @@ vsock_dev_write(struct cdev *dev __unused, struct uio *uio, int ioflag)
 		error = EINVAL;
 		goto out;
 	}
-	vsock_rx_packet(packet, (uint32_t)len);
+	vsock_rx_packet(provider, packet, (uint32_t)len);
 	free(packet, M_VTVSOCK);
 	error = 0;
 out:
@@ -658,6 +658,19 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 		if (error != 0 || !provider->registered)
 			return (ENXIO);
 		mtx_lock(&vtvsock_mtx);
+		/*
+		 * A write drops the domain lock while copying and validating its
+		 * packet.  Do not let a pre-reset packet re-enter the same provider
+		 * after reset merely because its owner pointer is still current.
+		 */
+		while (provider->write_thread != NULL) {
+			error = msleep(provider, &vtvsock_mtx, PCATCH,
+			    "vsockur", 0);
+			if (error != 0) {
+				mtx_unlock(&vtvsock_mtx);
+				return (error);
+			}
+		}
 		vsock_user_purge_locked(provider);
 		vsock_transport_reset_locked();
 		error = vsock_transport_register_locked(&vsock_user_transport,

@@ -175,6 +175,10 @@ struct vtvsock_softc {
 	 * mark.  Protected by vtvsock_mtx.
 	 */
 	bool			 sc_rx_stalled;
+	/* Packets currently being delivered with vtvsock_mtx dropped. */
+	u_int			 sc_rx_inflight;
+	/* Reset events sleeping until an in-flight RX delivery finishes. */
+	u_int			 sc_event_inflight;
 };
 
 /* -----------------------------------------------------------------------
@@ -1115,11 +1119,12 @@ vtvsock_rx_process_locked(struct vtvsock_softc *sc)
 again:
 	while (sc->sc_txq_count < VTVSOCK_TXQ_HIWAT &&
 	    (buf = virtqueue_dequeue(sc->sc_rxvq, &len)) != NULL) {
+		sc->sc_rx_inflight++;
 		mtx_unlock(&vtvsock_mtx);
 
 		if (len > VTVSOCK_RX_BUFSZ)
 			len = VTVSOCK_RX_BUFSZ;
-		vsock_rx_packet(buf, len);
+		vsock_rx_packet(sc, buf, len);
 
 		/*
 		 * Recycle the buffer back into the RX virtqueue.
@@ -1127,6 +1132,10 @@ again:
 		 * so the buffer is safe to reuse without zeroing.
 		 */
 		mtx_lock(&vtvsock_mtx);
+		KASSERT(sc->sc_rx_inflight > 0,
+		    ("%s: RX in-flight count underflow", __func__));
+		sc->sc_rx_inflight--;
+		wakeup(&sc->sc_rx_inflight);
 		/*
 		 * If detach began while the lock was dropped it cleared the
 		 * global softc and will drain the ring; re-enqueuing now would
@@ -1288,6 +1297,30 @@ again:
 			 * module (a dangling-transport UAF).  The softc==NULL check
 			 * above already excludes a detach that started earlier.
 			 */
+			/*
+			 * RX drops vtvsock_mtx while entering the socket domain.  Let
+			 * any packet already dequeued finish before resetting domain
+			 * state; otherwise an old-generation packet could create a new
+			 * connection immediately after TRANSPORT_RESET.
+			 */
+			sc->sc_event_inflight++;
+			while (sc->sc_rx_inflight != 0 &&
+			    vtvsock_global_softc() == sc)
+				(void)msleep(&sc->sc_rx_inflight, &vtvsock_mtx,
+				    0, "vtrst", 0);
+			if (vtvsock_global_softc() != sc) {
+				KASSERT(sc->sc_event_inflight > 0,
+				    ("%s: event in-flight count underflow",
+				    __func__));
+				sc->sc_event_inflight--;
+				wakeup(&sc->sc_event_inflight);
+				free(evt, M_VTVSOCK);
+				goto out;
+			}
+			KASSERT(sc->sc_event_inflight > 0,
+			    ("%s: event in-flight count underflow", __func__));
+			sc->sc_event_inflight--;
+			wakeup(&sc->sc_event_inflight);
 			virtio_read_device_config(sc->sc_dev, 0,
 			    &new_cid, sizeof(new_cid));
 			new_cid = vtvsock_sanitize_cid(sc->sc_dev, new_cid);
@@ -1322,6 +1355,7 @@ again:
 		virtqueue_disable_intr(sc->sc_eventvq);
 		goto again;
 	}
+out:
 	mtx_unlock(&vtvsock_mtx);
 }
 
@@ -1593,6 +1627,20 @@ vtvsock_detach(device_t dev)
 	 * virtqueue MMIO concurrently with a handler doing the same.
 	 */
 	mtx_lock(&vtvsock_mtx);
+	/*
+	 * An RX handler may have dequeued a buffer and dropped vtvsock_mtx
+	 * around vsock_rx_packet() before detach cleared the global softc.
+	 * Wait for it to regain the lock, discard that owned buffer, and leave
+	 * the handler before stopping or draining the virtqueues.  Otherwise
+	 * detach can return while the handler still references sc, and the
+	 * device softc may be freed underneath it by the bus.
+	 */
+	while (sc->sc_rx_inflight != 0)
+		(void)msleep(&sc->sc_rx_inflight, &vtvsock_mtx, 0,
+		    "vtdrain", 0);
+	while (sc->sc_event_inflight != 0)
+		(void)msleep(&sc->sc_event_inflight, &vtvsock_mtx, 0,
+		    "vtevent", 0);
 
 	/* Disable interrupts before stopping the device. */
 	if (sc->sc_rxvq != NULL)

@@ -21,8 +21,12 @@ counter_u64_t vtvsock_cnt_conns = &conns;
 
 void *transport_last_wakeup;
 static pthread_cond_t transport_sleep_cv = PTHREAD_COND_INITIALIZER;
-static _Atomic(void *) transport_sleep_chan;
-static uint64_t transport_wake_generation;
+#define TRANSPORT_SLEEP_SLOTS 8
+static struct {
+	_Atomic(void *) channel;
+	uint64_t generation;
+	u_int waiters;
+} transport_sleep[TRANSPORT_SLEEP_SLOTS];
 static bool transport_mtx_initialized;
 static int register_calls, register_locked_calls, unregister_calls, reset_calls;
 static uint64_t registered_cid, registered_features;
@@ -32,26 +36,48 @@ int
 transport_msleep(void *chan, struct mtx *m, int pri __unused,
     const char *w __unused, int timo __unused)
 {
+	int free_slot;
+	u_int i;
 	uint64_t generation;
 
-	generation = transport_wake_generation;
-	atomic_store(&transport_sleep_chan, chan);
-	while (generation == transport_wake_generation) {
+	free_slot = -1;
+	for (i = 0; i < nitems(transport_sleep); i++) {
+		if (atomic_load(&transport_sleep[i].channel) == chan)
+			break;
+		if (free_slot == -1 &&
+		    atomic_load(&transport_sleep[i].channel) == NULL)
+			free_slot = (int)i;
+	}
+	if (i == nitems(transport_sleep) && free_slot != -1)
+		i = (u_int)free_slot;
+	if (i == nitems(transport_sleep))
+		abort();
+	if (transport_sleep[i].waiters == 0)
+		atomic_store(&transport_sleep[i].channel, chan);
+	transport_sleep[i].waiters++;
+	generation = transport_sleep[i].generation;
+	while (generation == transport_sleep[i].generation) {
 		if (pthread_cond_wait(&transport_sleep_cv, &m->native) != 0)
 			abort();
 	}
-	atomic_store(&transport_sleep_chan, NULL);
+	if (--transport_sleep[i].waiters == 0)
+		atomic_store(&transport_sleep[i].channel, NULL);
 	return (0);
 }
 
 void
 transport_wakeup(void *chan)
 {
+	u_int i;
+
 	transport_last_wakeup = chan;
-	if (atomic_load(&transport_sleep_chan) == chan) {
-		transport_wake_generation++;
+	for (i = 0; i < nitems(transport_sleep); i++) {
+		if (atomic_load(&transport_sleep[i].channel) != chan)
+			continue;
+		transport_sleep[i].generation++;
 		if (pthread_cond_broadcast(&transport_sleep_cv) != 0)
 			abort();
+		break;
 	}
 }
 
@@ -83,7 +109,7 @@ vsock_transport_register_locked(const struct vtvsock_transport *ops __unused,
 
 void vsock_transport_reset_locked(void) { reset_calls++; }
 void
-vsock_rx_packet(void *buf, uint32_t len)
+vsock_rx_packet(const void *owner __unused, void *buf, uint32_t len)
 {
 	if (transport_rx_packet_hook != NULL)
 		transport_rx_packet_hook(buf, len);
@@ -110,13 +136,18 @@ vtvsock_get_credit(struct vtvsock_pcb *pcb, uint32_t wanted)
 static void
 reset_state(void)
 {
+	u_int i;
+
 	atomic_store_ptr(&vtvsock_sc, NULL);
 	if (transport_mtx_initialized)
 		mtx_destroy(&vtvsock_mtx);
 	mtx_init(&vtvsock_mtx, "vsock transport test", NULL, MTX_DEF);
 	transport_mtx_initialized = true;
-	atomic_store(&transport_sleep_chan, NULL);
-	transport_wake_generation = 0;
+	for (i = 0; i < nitems(transport_sleep); i++) {
+		atomic_store(&transport_sleep[i].channel, NULL);
+		transport_sleep[i].generation = 0;
+		transport_sleep[i].waiters = 0;
+	}
 	transport_last_wakeup = NULL;
 	register_calls = register_locked_calls = unregister_calls = reset_calls = 0;
 	registered_cid = registered_features = 0;
@@ -472,6 +503,22 @@ wait_for_flag(_Atomic bool *flag, int timeout_ms)
 	return (false);
 }
 
+static bool
+wait_for_sleep_channel(void *channel, int timeout_ms)
+{
+	int elapsed;
+	u_int i;
+
+	for (elapsed = 0; elapsed < timeout_ms; elapsed++) {
+		for (i = 0; i < nitems(transport_sleep); i++) {
+			if (atomic_load(&transport_sleep[i].channel) == channel)
+				return (true);
+		}
+		usleep(1000);
+	}
+	return (false);
+}
+
 static int
 join_after_flag(pthread_t thread, _Atomic bool *done, int timeout_ms)
 {
@@ -527,6 +574,16 @@ run_tx_interrupt(void *arg)
 	struct interrupt_runner *runner = arg;
 
 	vtvsock_tx_intr(runner->sc);
+	atomic_store(&runner->done, true);
+	return (NULL);
+}
+
+static void *
+run_event_interrupt(void *arg)
+{
+	struct interrupt_runner *runner = arg;
+
+	vtvsock_event_intr(runner->sc);
 	atomic_store(&runner->done, true);
 	return (NULL);
 }
@@ -599,7 +656,7 @@ ATF_TC_BODY(detach_wakes_tx_ring_blocked_sender, tc)
 	sender = (struct blocked_sender) { .pcb = &pcb, .m = m, .result = -1 };
 	ATF_REQUIRE(pthread_create(&thread, NULL, run_blocked_sender, &sender) == 0);
 	for (i = 0; i < 5000; i++) {
-		if (atomic_load(&transport_sleep_chan) == &sc.sc_txvq)
+		if (wait_for_sleep_channel(&sc.sc_txvq, 1))
 			break;
 		usleep(1000);
 	}
@@ -659,19 +716,173 @@ ATF_TC_BODY(rx_interrupt_detach_during_delivery, tc)
 
 	ATF_REQUIRE(pthread_create(&detach_thread, NULL, run_detach,
 	    &detach) == 0);
-	ATF_REQUIRE_MSG(join_after_flag(detach_thread, &detach.done, 1000) == 0,
-	    "detach did not finish while RX delivery was open");
-	ATF_CHECK(detach.result == 0);
+	ATF_REQUIRE_MSG(wait_for_flag(&detach.started, 5000),
+	    "detach thread did not start");
+	usleep(100000);
+	ATF_CHECK(!atomic_load(&detach.done));
 	ATF_CHECK(vtvsock_global_softc() == NULL);
 	ATF_CHECK(!atomic_load(&intr.done));
 
 	atomic_store(&gate.release, true);
 	ATF_REQUIRE_MSG(join_after_flag(intr_thread, &intr.done, 1000) == 0,
 	    "RX interrupt did not leave after detach");
+	ATF_REQUIRE_MSG(join_after_flag(detach_thread, &detach.done, 1000) == 0,
+	    "detach did not finish after RX delivery left");
+	ATF_CHECK(detach.result == 0);
 	ATF_CHECK(atomic_load(&intr.done));
 	ATF_CHECK(rxvq.entry_count == 0);
 	ATF_CHECK(rxvq.enable_count == 0);	/* torn-down queue not re-armed */
 	ATF_CHECK(rxvq.notify_count == 0);	/* nor notified/refilled */
+	active_rx_gate = NULL;
+}
+
+ATF_TC_WITHOUT_HEAD(transport_reset_waits_for_rx_delivery);
+ATF_TC_BODY(transport_reset_waits_for_rx_delivery, tc)
+{
+	struct fake_device dev;
+	struct interrupt_gate gate;
+	struct interrupt_runner event_intr, rx_intr;
+	struct sglist sg;
+	struct sglist_seg seg;
+	struct virtio_vsock_event *evt;
+	struct virtqueue eventvq, rxvq, txvq;
+	struct vtvsock_softc sc;
+	pthread_t event_thread, rx_thread;
+	void *buf;
+	int last;
+
+	reset_state();
+	memset(&dev, 0, sizeof(dev));
+	memset(&gate, 0, sizeof(gate));
+	memset(&event_intr, 0, sizeof(event_intr));
+	memset(&rx_intr, 0, sizeof(rx_intr));
+	memset(&sc, 0, sizeof(sc));
+	mock_vq_init(&eventvq, 1);
+	mock_vq_init(&rxvq, 1);
+	mock_vq_init(&txvq, 1);
+	dev.softc = &sc;
+	dev.config_cid = 14;
+	sc.sc_dev = &dev;
+	sc.sc_eventvq = &eventvq;
+	sc.sc_rxvq = &rxvq;
+	sc.sc_txvq = &txvq;
+	sc.sc_features = VIRTIO_VSOCK_F_STREAM;
+	rx_intr.sc = &sc;
+	event_intr.sc = &sc;
+	buf = calloc(1, VTVSOCK_RX_BUFSZ);
+	ATF_REQUIRE(buf != NULL);
+	one_seg(&sg, &seg);
+	ATF_REQUIRE(virtqueue_enqueue(&rxvq, buf, &sg, 0, 1) == 0);
+	ATF_REQUIRE(mock_vq_complete(&rxvq, buf, 0));
+	evt = calloc(1, sizeof(*evt));
+	ATF_REQUIRE(evt != NULL);
+	evt->id = htole32(VIRTIO_VSOCK_EVENT_TRANSPORT_RESET);
+	ATF_REQUIRE(virtqueue_enqueue(&eventvq, evt, &sg, 0, 1) == 0);
+	ATF_REQUIRE(mock_vq_complete(&eventvq, evt, sizeof(*evt)));
+	atomic_store_ptr(&vtvsock_sc, &sc);
+	active_rx_gate = &gate;
+	transport_rx_packet_hook = block_rx_delivery;
+
+	ATF_REQUIRE(pthread_create(&rx_thread, NULL, run_rx_interrupt,
+	    &rx_intr) == 0);
+	ATF_REQUIRE_MSG(wait_for_flag(&gate.entered, 5000),
+	    "RX delivery did not block");
+	ATF_REQUIRE(pthread_create(&event_thread, NULL, run_event_interrupt,
+	    &event_intr) == 0);
+	usleep(100000);
+	ATF_CHECK(!atomic_load(&event_intr.done));
+	ATF_CHECK(reset_calls == 0);
+	atomic_store(&gate.release, true);
+	ATF_REQUIRE(join_after_flag(rx_thread, &rx_intr.done, 1000) == 0);
+	ATF_REQUIRE(join_after_flag(event_thread, &event_intr.done, 1000) == 0);
+	ATF_CHECK(reset_calls == 1);
+	ATF_CHECK(sc.sc_rx_inflight == 0);
+
+	last = 0;
+	while ((buf = virtqueue_drain(&rxvq, &last)) != NULL)
+		kfree(buf);
+	last = 0;
+	while ((buf = virtqueue_drain(&eventvq, &last)) != NULL)
+		kfree(buf);
+	active_rx_gate = NULL;
+}
+
+ATF_TC_WITHOUT_HEAD(detach_waits_for_reset_event);
+ATF_TC_BODY(detach_waits_for_reset_event, tc)
+{
+	struct detach_runner detach;
+	struct fake_device dev;
+	struct interrupt_gate gate;
+	struct interrupt_runner event_intr, rx_intr;
+	struct sglist sg;
+	struct sglist_seg seg;
+	struct virtio_vsock_event *evt;
+	struct virtqueue eventvq, rxvq, txvq;
+	struct vtvsock_softc sc;
+	pthread_t detach_thread, event_thread, rx_thread;
+	void *buf;
+
+	reset_state();
+	memset(&detach, 0, sizeof(detach));
+	memset(&dev, 0, sizeof(dev));
+	memset(&gate, 0, sizeof(gate));
+	memset(&event_intr, 0, sizeof(event_intr));
+	memset(&rx_intr, 0, sizeof(rx_intr));
+	memset(&sc, 0, sizeof(sc));
+	mock_vq_init(&eventvq, 1);
+	mock_vq_init(&rxvq, 1);
+	mock_vq_init(&txvq, 1);
+	dev.softc = &sc;
+	dev.config_cid = 14;
+	sc.sc_dev = &dev;
+	sc.sc_eventvq = &eventvq;
+	sc.sc_rxvq = &rxvq;
+	sc.sc_txvq = &txvq;
+	detach.dev = &dev;
+	rx_intr.sc = &sc;
+	event_intr.sc = &sc;
+	one_seg(&sg, &seg);
+	buf = calloc(1, VTVSOCK_RX_BUFSZ);
+	ATF_REQUIRE(buf != NULL);
+	ATF_REQUIRE(virtqueue_enqueue(&rxvq, buf, &sg, 0, 1) == 0);
+	ATF_REQUIRE(mock_vq_complete(&rxvq, buf, 0));
+	evt = calloc(1, sizeof(*evt));
+	ATF_REQUIRE(evt != NULL);
+	evt->id = htole32(VIRTIO_VSOCK_EVENT_TRANSPORT_RESET);
+	ATF_REQUIRE(virtqueue_enqueue(&eventvq, evt, &sg, 0, 1) == 0);
+	ATF_REQUIRE(mock_vq_complete(&eventvq, evt, sizeof(*evt)));
+	atomic_store_ptr(&vtvsock_sc, &sc);
+	active_rx_gate = &gate;
+	transport_rx_packet_hook = block_rx_delivery;
+
+	ATF_REQUIRE(pthread_create(&rx_thread, NULL, run_rx_interrupt,
+	    &rx_intr) == 0);
+	ATF_REQUIRE_MSG(wait_for_flag(&gate.entered, 5000),
+	    "RX delivery did not block");
+	ATF_REQUIRE(pthread_create(&event_thread, NULL, run_event_interrupt,
+	    &event_intr) == 0);
+	ATF_REQUIRE_MSG(wait_for_sleep_channel(&sc.sc_rx_inflight, 5000),
+	    "reset event did not wait for RX delivery");
+	ATF_REQUIRE(pthread_create(&detach_thread, NULL, run_detach,
+	    &detach) == 0);
+	ATF_REQUIRE_MSG(wait_for_flag(&detach.started, 5000),
+	    "detach thread did not start");
+	usleep(100000);
+	ATF_CHECK(!atomic_load(&detach.done));
+	ATF_CHECK(!atomic_load(&event_intr.done));
+	ATF_CHECK(vtvsock_global_softc() == NULL);
+
+	atomic_store(&gate.release, true);
+	ATF_REQUIRE(join_after_flag(rx_thread, &rx_intr.done, 1000) == 0);
+	ATF_REQUIRE(join_after_flag(event_thread, &event_intr.done, 1000) == 0);
+	ATF_REQUIRE(join_after_flag(detach_thread, &detach.done, 1000) == 0);
+	ATF_CHECK(detach.result == 0);
+	ATF_CHECK(reset_calls == 0);
+	ATF_CHECK(sc.sc_rx_inflight == 0);
+	ATF_CHECK(sc.sc_event_inflight == 0);
+	ATF_CHECK(rxvq.entry_count == 0);
+	ATF_CHECK(eventvq.entry_count == 0);
+	ATF_CHECK(dev.stop_calls == 1);
 	active_rx_gate = NULL;
 }
 
@@ -969,6 +1180,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, transport_reset_recycles_event_and_wakes);
 	ATF_TP_ADD_TC(tp, detach_wakes_tx_ring_blocked_sender);
 	ATF_TP_ADD_TC(tp, rx_interrupt_detach_during_delivery);
+	ATF_TP_ADD_TC(tp, transport_reset_waits_for_rx_delivery);
+	ATF_TP_ADD_TC(tp, detach_waits_for_reset_event);
 	ATF_TP_ADD_TC(tp, rx_recycle_rejects_replacement_device);
 	ATF_TP_ADD_TC(tp, tx_interrupt_serializes_detach);
 	ATF_TP_ADD_TC(tp, attach_completed_detach_lifecycle);
