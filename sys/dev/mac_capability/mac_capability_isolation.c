@@ -1662,8 +1662,8 @@ fi_vsock_check(struct ucred *cred, struct sockaddr *sa, uint8_t direction)
 				rw_runlock(&fi_auth_lock);
 			}
 			SDT_PROBE3(mac_capability_isolation, , , deny,
-			    direction == FI_NET_BIND ? "vsock_bind" :
-			    "vsock_connect", denied[0].nonce, caller_nonce);
+			    (uintptr_t)(direction == FI_NET_BIND ? "vsock_bind" :
+			    "vsock_connect"), denied[0].nonce, caller_nonce);
 			SDT_PROBE6(mac_capability_isolation, , , deny__vsock,
 			    denied[0].nonce, caller_nonce, denied[0].claim_id,
 			    cid, port, direction);
