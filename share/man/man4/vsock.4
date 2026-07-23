@@ -22,7 +22,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 21, 2026
+.Dd July 23, 2026
 .Dt VSOCK 4
 .Os
 .Sh NAME
@@ -267,7 +267,7 @@ the native
 encoding is used, so ported code must be recompiled against
 .In sys/vsock.h .
 .El
-.Ss Userspace VMM Transport
+.Ss VMM Transport Provider
 A privileged VMM can attach one remote guest to the host socket domain through
 .Pa /dev/vsock .
 After attachment, the host local CID is
@@ -282,10 +282,32 @@ and its payload per
 .Xr read 2
 or
 .Xr write 2 .
+The
+.Dv VSOCK_IOC_TRANSPORT_ATTACH
+and
+.Dv VSOCK_IOC_TRANSPORT_SET_FEATURES
+feature fields contain only
+.Dv VIRTIO_VSOCK_F_*
+device-specific bits.
+Common VirtIO transport and ring bits, such as
+.Dv VIRTIO_F_VERSION_1 ,
+are outside this provider interface and are rejected with
+.Er EINVAL .
 The packet interface is reserved for VMM implementations; attaching it
 requires the
 .Dv PRIV_DRIVER
 privilege.
+When kernel auditing is enabled and the applicable audit class is selected,
+provider control ioctls are recorded as standard
+.Dv AUE_IOCTL
+events.
+Packet reads and writes and individual vsock connections do not have a
+dedicated BSM audit event.
+The
+.Li provider-*
+DTrace probes described below add the guest CID, feature, queue, and packet
+metadata needed for vsock-specific operational auditing without exposing
+payload contents.
 Only one remote transport can be registered at a time.
 An attachment therefore fails with
 .Er EBUSY
@@ -296,7 +318,7 @@ The
 .Xr bhyve 8
 .Cm virtio-vsock
 device selects this interface with
-.Cm backend=native .
+.Cm backend=kernel .
 .Ss Tunable Parameters
 The following
 .Xr sysctl 8
@@ -405,6 +427,9 @@ Connect attempt timed out (args: CID, port).
 .It Li pkt-rx
 Inbound packet received; metadata only, no payload
 (args: op, src CID, src port, dst port, length, flags).
+.It Li pkt-drop
+Inbound packet rejected before delivery
+(args: stable reason string, op, src CID, src port, dst port).
 .It Li pkt-tx
 Outbound packet sent; metadata only, no payload
 (args: op, src CID, src port, dst port, length, flags).
@@ -435,7 +460,47 @@ Provided by
 only present on a guest with the VirtIO transport loaded.
 .It Li disconnect
 Connection torn down (args: CID, port).
+.It Li provider-attach
+A privileged VMM transport attached
+(args: guest CID, negotiated device features).
+.It Li provider-detach
+The VMM transport detached (arg: guest CID).
+.It Li provider-reset
+The VMM transport reset its guest-facing state (arg: guest CID).
+.It Li provider-features
+The VMM updated its negotiated device features
+(args: guest CID, features).
+.It Li provider-enqueue
+The kernel queued a complete packet for the VMM to read
+(args: operation, payload length, queue depth).
+.It Li provider-dequeue
+The VMM read a queued packet
+(args: operation, payload length, remaining queue depth).
+.It Li provider-inject
+The VMM supplied a complete guest packet to the kernel
+(args: operation, payload length).
+.It Li provider-backpressure
+The bounded VMM packet queue rejected an enqueue
+(args: queue depth, is_control).
+.It Li provider-reject
+The
+.Pa /dev/vsock
+provider interface rejected an invalid packet
+(args: packet length, errno).
 .El
+.Pp
+The
+.Li provider-*
+probes are provided by
+.Pa vsock.ko
+and are active when
+.Xr bhyve 8
+uses
+.Cm backend=kernel .
+They expose packet metadata and resource state only, never payload contents.
+The installed
+.Pa /usr/share/dtrace/vsock-provider
+script summarizes this provider path.
 .Ss Differences from Linux
 .Bl -bullet
 .It
@@ -524,28 +589,69 @@ on arm64 by default.
 The host-side device is emulated by
 .Xr bhyve 8
 using the virtio-vsock PCI device.
-It is configured with the following
+The
+.Cm backend
+option selects where the host-side vsock endpoints are implemented:
+.Bl -tag -width "backend=userspace"
+.It Cm backend=userspace
+Use the
+.Xr bhyve 8
+userspace protocol engine and Unix sockets in the directory named by
+.Cm path .
+This is the default.
+.It Cm backend=kernel
+Pass complete VirtIO-vsock packets between the guest and the
+.Pa /dev/vsock
+kernel transport provider.
+Host applications use ordinary
+.Dv AF_VSOCK
+sockets.
+The
+.Cm path
+option is not accepted with this backend.
+.El
+.Pp
+The corresponding
 .Xr bhyve 8
 .Fl s
-option:
+options are:
 .Bd -literal -offset indent
--s N,virtio-vsock,cid=<CID>,path=<directory>
+-s N,virtio-vsock,cid=<CID>,backend=userspace,path=<directory>
+-s N,virtio-vsock,cid=<CID>,backend=kernel
 .Ed
 .Pp
 where
 .Ar CID
-is the guest's context identifier, from 3 through 4294967294, and
+is the guest's context identifier, from 3 through 4294967294.
+For the userspace backend,
 .Ar directory
 is a directory on the host for Unix sockets.
 The directory must exist before
 .Xr bhyve 8
 starts.
+Omitting
+.Cm backend
+selects
+.Cm userspace ,
+so existing configurations containing
+.Cm path
+continue to work.
+.Pp
+The kernel backend requires
+.Pa vsock.ko
+and exclusive ownership of the remote transport provider.
+Only one kernel-backed virtual machine can be active at a time.
+If another provider already owns the transport,
+.Xr bhyve 8
+fails device initialization.
+.Pp
 The PCI transport defaults to the legacy-compatible interface used by earlier
 .Xr bhyve 8
 versions.
 Modern VirtIO PCI transport is an explicit opt-in:
 .Bd -literal -offset indent
--s 5,virtio-vsock,cid=3,path=/var/run/vm1,transport=modern
+-s 5,virtio-vsock,cid=3,backend=userspace,path=/var/run/vm1,transport=modern
+-s 5,virtio-vsock,cid=3,backend=kernel,transport=modern
 .Ed
 .Pp
 The accepted values are
@@ -559,7 +665,7 @@ Omitting
 .Cm transport
 retains the legacy device identity and I/O BAR, so existing command lines and
 guests continue to behave as before.
-.Ss Guest-to-Host Connections
+.Ss Userspace Backend: Guest-to-Host Connections
 When a guest application connects to
 .Dv VSOCK_CID_HOST
 on port
@@ -588,9 +694,9 @@ To expose a host service on port 80:
 .Bd -literal -offset indent
 mkdir /var/run/vm1
 socat UNIX-LISTEN:/var/run/vm1/80,fork EXEC:myservice
-bhyve -s 5,virtio-vsock,cid=3,path=/var/run/vm1 ...
+bhyve -s 5,virtio-vsock,cid=3,backend=userspace,path=/var/run/vm1 ...
 .Ed
-.Ss Host-to-Guest Connections
+.Ss Userspace Backend: Host-to-Guest Connections
 A host application connects to
 .Pa <directory>/sock
 and sends a 16-byte control message:
@@ -626,6 +732,60 @@ The host application uses the received fd for data transfer.
 This design is compatible with
 .Xr capsicum 4
 capability mode.
+The
+.Xr bhyve 8
+.Li vsock
+USDT provider reports connection lifecycle, credit stalls, bounded-resource
+overflows, and rejected guest descriptors for this backend.
+The installed
+.Pa /usr/share/dtrace/vsock-overview ,
+.Pa vsock-perf ,
+and
+.Pa vsock-security
+scripts consume these probes without logging payload contents.
+.Ss Kernel Backend
+With
+.Cm backend=kernel ,
+.Xr bhyve 8
+registers as the remote transport provider for
+.Pa /dev/vsock
+and forwards complete VirtIO-vsock packets between that provider and the
+guest's virtqueues.
+The guest observes the configured
+.Ar CID ;
+the host endpoint is
+.Dv VSOCK_CID_HOST
+.Pq 2 .
+.Pp
+Host applications use the normal socket API described above.
+For guest-to-host service, a host process creates an
+.Dv AF_VSOCK
+socket and listens on a local port.
+For host-to-guest service, it connects an
+.Dv AF_VSOCK
+socket to the configured guest CID and port.
+Both
+.Dv SOCK_STREAM
+and
+.Dv SOCK_SEQPACKET
+are supported.
+There is no Unix socket directory, control message, or
+.Dv SCM_RIGHTS
+handoff in this mode.
+.Pp
+The
+.Pa /dev/vsock
+transport-provider interface is used by
+.Xr bhyve 8 ;
+it is not the application data interface.
+Applications continue to use
+.Xr socket 2 ,
+.Xr bind 2 ,
+.Xr listen 2 ,
+and
+.Xr connect 2 .
+Closing the virtual machine unregisters the provider and releases exclusive
+ownership for a subsequent provider.
 .Pp
 See
 .Xr bhyve_config 5

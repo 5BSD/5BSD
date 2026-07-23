@@ -7,13 +7,16 @@
  * vsock-security -- hostile-guest-input signals for the virtio-vsock host
  * device.  bhyve treats every guest-supplied virtqueue descriptor as hostile
  * and rejects malformed / spoofed input; this script aggregates those
- * rejections.  A sustained spike in desc-drop or spoofed/unknown-CID rejects
- * from a running guest is an attack probe or a badly broken guest driver --
- * either way, worth an alert.  desc-drop reasons include: rx/tx-chain-too-long,
- * rx/tx-bad-descriptor-addr, rx-not-writable, rx-descriptor-too-small,
+ * rejections.  For backend=kernel it also reports invalid /dev/vsock provider
+ * packets and bounded-provider-queue pressure.  A sustained spike in any of
+ * these signals from a running guest is an attack probe or a badly broken
+ * guest driver -- either way, worth an alert.  desc-drop reasons include:
+ * rx/tx-chain-too-long, rx/tx-bad-descriptor-addr, rx-not-writable,
+ * rx-descriptor-too-small, tx-not-readable, tx-packet-too-small,
+ * tx-payload-too-large, tx-control-payload, tx-truncated-payload,
  * unknown-dst-cid, spoofed-src-cid.
  *
- * Probes: "vsock" USDT provider in bhyve (usr.sbin/bhyve/pci_virtio_vsock.c).
+ * Probes: "vsock" USDT provider in bhyve and kernel SDT provider in vsock.ko.
  *
  * Usage: vsock-security            (all bhyve on the host)
  *        dtrace -qs vsock-security -p `pgrep -n bhyve`
@@ -22,17 +25,40 @@
 vsock*:::desc-drop	{ @drops[copyinstr(arg0)] = count(); total++; }
 vsock*:::conn-reset	{ @resets[arg0, arg1] = count(); }
 vsock*:::pend-drop	{ penddrop++; }
+vsock:::provider-reject	{ @provider_reject[arg1] = count(); providerdrop++; }
+vsock:::pkt-drop
+{
+	@kernel_drop[stringof(arg0)] = count();
+	kerneldrop++;
+}
+vsock:::provider-backpressure
+{
+	@provider_full[arg1 ? "control" : "data"] = count();
+	providerfull++;
+}
 
 tick-5sec
 {
 	printf("\n==== vsock host-device security @ %Y ====\n", walltimestamp);
 	printf("rejected/malformed descriptors (5s): %d\n", total);
 	printf("pending-reply ring drops (5s):       %d\n", penddrop);
+	printf("rejected kernel-provider packets:    %d\n", providerdrop);
+	printf("kernel-provider backpressure:        %d\n", providerfull);
+	printf("kernel-domain packet drops:          %d\n", kerneldrop);
 	printf("by reason:\n");
 	printa("  %-26s %@d\n", @drops);
+	printf("provider rejects by errno:\n");
+	printa("  errno=%d %@d\n", @provider_reject);
+	printf("provider backpressure by class:\n");
+	printa("  %-8s %@d\n", @provider_full);
+	printf("kernel-domain drops by reason:\n");
+	printa("  %-24s %@d\n", @kernel_drop);
 	printf("connection resets by cid:port:\n");
 	printa("  cid=%d port=%d  %@d\n", @resets);
 
-	total = 0; penddrop = 0;
-	trunc(@drops); trunc(@resets);
+	total = 0; penddrop = 0; providerdrop = 0; providerfull = 0;
+	kerneldrop = 0;
+	trunc(@drops); trunc(@provider_reject); trunc(@provider_full);
+	trunc(@kernel_drop);
+	trunc(@resets);
 }

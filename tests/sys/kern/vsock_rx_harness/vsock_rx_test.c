@@ -27,6 +27,7 @@ static int g_last_send_mflags;
 static int g_last_send_len;
 static int g_send_len[4];
 static int g_send_error;
+static uint64_t g_rx_drop_count;
 int vsock_kmock_sock_lock_calls;
 int vsock_kmock_sock_lock_depth;
 int vsock_kmock_sndbuf_lock_calls;
@@ -99,6 +100,8 @@ reset_state(void)
 	g_send_error = 0;
 	g_last_send_mflags = 0;
 	g_last_send_len = 0;
+	g_rx_drop_count = 0;
+	vtvsock_cnt_rx_drops = &g_rx_drop_count;
 	memset(g_send_len, 0, sizeof(g_send_len));
 	vsock_kmock_sock_lock_calls = 0;
 	vsock_kmock_sock_lock_depth = 0;
@@ -824,6 +827,42 @@ ATF_TC_BODY(rx_truncated_payload_is_rejected, tc)
 	ATF_CHECK(cap_count(VIRTIO_VSOCK_OP_RST) == 1);
 }
 
+/*
+ * Only OP_RW may carry bytes.  In particular, a malformed control packet must
+ * be rejected before its credit fields or opcode can mutate a live PCB.
+ */
+ATF_TC_WITHOUT_HEAD(rx_control_payload_is_rejected_before_state_change);
+ATF_TC_BODY(rx_control_payload_is_rejected_before_state_change, tc)
+{
+	struct vtvsock_pcb *pcb;
+	struct virtio_vsock_hdr *h;
+	uint8_t pkt[sizeof(*h) + 4];
+	uint32_t original_credit;
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	pcb = establish_remote(SOCK_STREAM, 98, 1255, NULL);
+	ATF_REQUIRE(pcb != NULL);
+	original_credit = pcb->peer_buf_alloc;
+	h = (struct virtio_vsock_hdr *)pkt;
+	memset(pkt + sizeof(*h), 0xa5, 4);
+	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, VIRTIO_VSOCK_TYPE_STREAM,
+	    VSOCK_CID_HOST, 1255, 98, 4, 0, 1, 0);
+	g_ncap = 0;
+	vsock_rx_packet(pkt, sizeof(pkt));
+	ATF_CHECK(pcb->state == VTVSOCK_ESTABLISHED);
+	ATF_CHECK(pcb->peer_buf_alloc == original_credit);
+	ATF_CHECK(g_ncap == 0);
+	ATF_CHECK(g_rx_drop_count == 1);
+
+	mkhdr(h, VIRTIO_VSOCK_OP_RST, VIRTIO_VSOCK_TYPE_STREAM,
+	    VSOCK_CID_HOST, 1255, 98, 4, 0, 0, 0);
+	vsock_rx_packet(pkt, sizeof(pkt));
+	ATF_CHECK(pcb->state == VTVSOCK_ESTABLISHED);
+	ATF_CHECK(g_ncap == 0);
+	ATF_CHECK(g_rx_drop_count == 2);
+}
+
 /* --- The guest-side global connection cap rejects excess REQUESTs and a
  * peer RST immediately releases a slot for another connection. --- */
 ATF_TC_WITHOUT_HEAD(inbound_connection_cap_reclaims_slot);
@@ -881,6 +920,67 @@ ATF_TC_BODY(stale_transport_packet_is_dropped, tc)
 	ATF_CHECK(g_ncap == 0);
 }
 
+/*
+ * so_snd is intentionally empty for remote vsock sockets, so generic socket
+ * poll/kqueue would always claim writable.  Verify that transport capacity
+ * masks readiness, records a waiter, wakes it when capacity returns, honors
+ * NOTE_LOWAT, and reports EOF when transport reset closes the PCB.
+ */
+ATF_TC_WITHOUT_HEAD(transport_write_readiness_poll_kqueue);
+ATF_TC_BODY(transport_write_readiness_poll_kqueue, tc)
+{
+	struct vtvsock_pcb *pcb;
+	struct knote kn;
+	size_t space;
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	pcb = establish_remote(SOCK_STREAM, 97, 1254, NULL);
+	ATF_REQUIRE(pcb != NULL);
+
+	g_tx_ready = false;
+	ATF_CHECK(vsock_sopoll(pcb->so, POLLOUT, NULL) == 0);
+	ATF_CHECK(pcb->so->so_wrsel.recorded == 1);
+	g_tx_ready = true;
+	ATF_CHECK((vsock_sopoll(pcb->so, POLLOUT, NULL) & POLLOUT) != 0);
+
+	memset(&kn, 0, sizeof(kn));
+	kn.kn_filter = EVFILT_WRITE;
+	ATF_REQUIRE(vsock_kqfilter(pcb->so, &kn) == 0);
+	g_tx_ready = false;
+	mtx_lock(&vtvsock_mtx);
+	kn.kn_triggered = kn.kn_fop->f_event(&kn, 0);
+	mtx_unlock(&vtvsock_mtx);
+	ATF_CHECK(kn.kn_triggered == 0);
+
+	g_tx_ready = true;
+	mtx_lock(&vtvsock_mtx);
+	vsock_tx_wakeup_locked(pcb);
+	mtx_unlock(&vtvsock_mtx);
+	ATF_CHECK(kn.kn_triggered == 1);
+	space = vtvsock_tx_space(pcb);
+	ATF_CHECK(kn.kn_data == (int64_t)space);
+
+	kn.kn_sfflags = NOTE_LOWAT;
+	kn.kn_sdata = (int64_t)space + 1;
+	mtx_lock(&vtvsock_mtx);
+	kn.kn_triggered = kn.kn_fop->f_event(&kn, 0);
+	mtx_unlock(&vtvsock_mtx);
+	ATF_CHECK(kn.kn_triggered == 0);
+	kn.kn_sdata = (int64_t)space;
+	mtx_lock(&vtvsock_mtx);
+	kn.kn_triggered = kn.kn_fop->f_event(&kn, 0);
+	mtx_unlock(&vtvsock_mtx);
+	ATF_CHECK(kn.kn_triggered == 1);
+
+	mtx_lock(&vtvsock_mtx);
+	vsock_transport_reset_locked();
+	mtx_unlock(&vtvsock_mtx);
+	ATF_CHECK(kn.kn_triggered == 1);
+	ATF_CHECK((kn.kn_flags & EV_EOF) != 0);
+	kn.kn_fop->f_detach(&kn);
+}
+
 /* sonewconn in the DUT's TU so it can reach static vsock_attach + protosw. */
 struct socket *
 vsock_kmock_sonewconn(struct socket *head, int connstatus)
@@ -919,7 +1019,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, seqpacket_msg_eor_transport_marker);
 	ATF_TP_ADD_TC(tp, seqpacket_zero_length_has_packet_header);
 	ATF_TP_ADD_TC(tp, rx_truncated_payload_is_rejected);
+	ATF_TP_ADD_TC(tp, rx_control_payload_is_rejected_before_state_change);
 	ATF_TP_ADD_TC(tp, inbound_connection_cap_reclaims_slot);
 	ATF_TP_ADD_TC(tp, stale_transport_packet_is_dropped);
+	ATF_TP_ADD_TC(tp, transport_write_readiness_poll_kqueue);
 	return (atf_no_error());
 }

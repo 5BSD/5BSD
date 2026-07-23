@@ -18,6 +18,14 @@ counter_u64_t vtvsock_cnt_rx_packets = &rx_packets;
 counter_u64_t vtvsock_cnt_rx_bytes = &rx_bytes;
 counter_u64_t vtvsock_cnt_rx_drops = &rx_drops;
 counter_u64_t vtvsock_cnt_conns = &conns;
+int vsock_kmock_sock_lock_calls;
+int vsock_kmock_sock_lock_depth;
+int vsock_kmock_sndbuf_lock_calls;
+int vsock_kmock_sndbuf_lock_depth;
+int vsock_kmock_record_pkthdrs;
+int vsock_kmock_record_pkthdr_len;
+int vsock_kmock_record_len;
+int vsock_kmock_record_mflags;
 
 void *transport_last_wakeup;
 static pthread_cond_t transport_sleep_cv = PTHREAD_COND_INITIALIZER;
@@ -29,6 +37,7 @@ static struct {
 } transport_sleep[TRANSPORT_SLEEP_SLOTS];
 static bool transport_mtx_initialized;
 static int register_calls, register_locked_calls, unregister_calls, reset_calls;
+static int pcb_tx_wakeup_calls, transport_tx_wakeup_calls;
 static uint64_t registered_cid, registered_features;
 static void (*transport_rx_packet_hook)(void *, uint32_t);
 
@@ -116,6 +125,18 @@ vsock_rx_packet(const void *owner __unused, void *buf, uint32_t len)
 }
 void vtvsock_pcb_remove_lists_locked(struct vtvsock_pcb *pcb __unused) {}
 void vtvsock_close_timeout(void *arg __unused) {}
+void
+vsock_tx_wakeup_locked(struct vtvsock_pcb *pcb)
+{
+	pcb_tx_wakeup_calls++;
+	wakeup(&pcb->tx_cnt);
+}
+void
+vsock_transport_tx_wakeup_locked(
+    const struct vtvsock_transport *transport __unused)
+{
+	transport_tx_wakeup_calls++;
+}
 
 uint32_t
 vtvsock_get_credit(struct vtvsock_pcb *pcb, uint32_t wanted)
@@ -150,6 +171,9 @@ reset_state(void)
 	}
 	transport_last_wakeup = NULL;
 	register_calls = register_locked_calls = unregister_calls = reset_calls = 0;
+	pcb_tx_wakeup_calls = transport_tx_wakeup_calls = 0;
+	vsock_kmock_sock_lock_calls = vsock_kmock_sock_lock_depth = 0;
+	vsock_kmock_sndbuf_lock_calls = vsock_kmock_sndbuf_lock_depth = 0;
 	registered_cid = registered_features = 0;
 	transport_rx_packet_hook = NULL;
 	kmock_nowait_malloc_fail_after = -1;
@@ -451,12 +475,16 @@ ATF_TC_BODY(tx_interrupt_drains_fifo_and_wakes, tc)
 	ATF_CHECK(txvq.entries[0].cookie == first);
 	ATF_CHECK(sc.sc_txq_count == 1);
 	ATF_CHECK(transport_last_wakeup == &sc.sc_txvq);
+	ATF_CHECK(transport_tx_wakeup_calls == 1);
 	ATF_REQUIRE(mock_vq_complete(&txvq, first, 0));
 	vtvsock_tx_intr(&sc);
 	ATF_CHECK(txvq.entries[0].cookie == second);
 	ATF_CHECK(sc.sc_txq_count == 0);
+	ATF_CHECK(transport_tx_wakeup_calls == 2);
 	ATF_REQUIRE(mock_vq_complete(&txvq, second, 0));
-	vtvsock_txvq_reclaim(&sc);
+	vtvsock_tx_intr(&sc);
+	ATF_CHECK(txvq.entry_count == 0);
+	ATF_CHECK(transport_tx_wakeup_calls == 3);
 }
 
 ATF_TC_WITHOUT_HEAD(transport_reset_recycles_event_and_wakes);

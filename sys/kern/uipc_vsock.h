@@ -39,6 +39,7 @@
 #include <sys/types.h>
 #include <sys/queue.h>
 #include <sys/callout.h>
+#include <sys/event.h>
 #include <sys/mutex.h>
 #include <sys/socket.h>
 #include <sys/vsock.h>
@@ -128,6 +129,14 @@ struct vtvsock_pcb {
 	struct socket			*so;
 	struct vtvsock_pcb		*peer;		/* loopback only */
 	const struct vtvsock_transport	*transport;
+	/*
+	 * EVFILT_WRITE cannot use the generic socket send-buffer knlist:
+	 * vsock sends directly to its transport and so_snd stays empty.  Keep
+	 * write knotes on a list protected by vtvsock_mtx so their callback can
+	 * inspect both peer credit and transport capacity without a lock-order
+	 * inversion against the socket send-buffer lock.
+	 */
+	struct knlist			 tx_knlist;
 	struct sockaddr_vm		 local;
 	struct sockaddr_vm		 remote;
 
@@ -213,6 +222,9 @@ void	vsock_rx_packet(const void *owner, void *buf, uint32_t len);
 int	vsock_transport_register_locked(const struct vtvsock_transport *ops,
 	    const void *owner, uint64_t guest_cid, uint64_t features);
 void	vsock_transport_reset_locked(void);
+void	vsock_tx_wakeup_locked(struct vtvsock_pcb *);
+void	vsock_transport_tx_wakeup_locked(
+	    const struct vtvsock_transport *transport);
 
 /* PCB helper needed by the virtio transport ops in virtio_vsock.c */
 void	vtvsock_pcb_remove_lists_locked(struct vtvsock_pcb *);

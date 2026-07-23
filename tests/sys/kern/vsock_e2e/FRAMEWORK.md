@@ -60,23 +60,23 @@ and 2 once before starting the topology/transport VM matrix:
 ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
 ```
 
-`vsock-native` is a focused matrix topology that selects bhyve's
-`backend=native` provider and host `AF_VSOCK` helpers.  It is intentionally
-separate from `vsock`, which remains the compatibility test for the default
-Unix socket backend.  The native topology forces driver reset and monitor-mode
-reboot so provider reset, detach, and re-attach are exercised as well as the
-data path.
+`vsock-kernel` is a focused matrix topology that selects bhyve's
+`backend=kernel` provider and host `AF_VSOCK` helpers.  It is intentionally
+separate from `vsock-userspace`, which remains the compatibility test for the
+default userspace socket backend.  The kernel topology forces driver reset and
+monitor-mode reboot so provider reset, detach, and re-attach are exercised as
+well as the data path.
 
 The default topology order is
-`net vsock vsock-native rng block scsi console 9p input combined`.  Net, both
-vsock backends, RNG, block, SCSI, console, and 9P run both `modern` and `legacy`;
-input's real-VM data path runs
-only with its modern interface because upstream Alpine has no driver for
-bhyve's historical hybrid interface.  Every topology retains and verifies the
-network interface used to provision the guest.  SCSI uses a uniquely sized,
-fully backed CTL ramdisk which is removed on exit.  The legacy combined run
-contains net, vsock, RNG, block, SCSI, console, and 9P and reports the input
-omission.  A development run can narrow either axis, for example:
+`net vsock-userspace vsock-kernel rng block scsi console 9p input combined`.
+Net, both vsock backends, RNG, block, SCSI, console, and 9P run both `modern`
+and `legacy`; input's real-VM data path runs only with its modern interface
+because upstream Alpine has no driver for bhyve's historical hybrid interface.
+Every topology retains and verifies the network interface used to provision
+the guest.  SCSI uses a uniquely sized, fully backed CTL ramdisk which is
+removed on exit.  The legacy combined run contains net, vsock, RNG, block,
+SCSI, console, and 9P and reports the input omission.  A development run can
+narrow either axis, for example:
 
 ```sh
 ISO=/path/to/alpine-virt.iso \
@@ -94,6 +94,14 @@ rebinds every attached VirtIO PCI function, rechecks data paths, reboots under
 monitor mode with established STREAM and SEQPACKET connections, requires both
 old endpoints to disconnect within 30 seconds, and verifies fresh vsock paths
 and the same block prefix after the new guest boot.
+
+`VSOCK_SOAK_ITERATIONS=N` converts either focused vsock topology into a
+same-process longevity gate.  After the initial full matrix, it repeats that
+matrix `N` times and checks bhyve descriptor/RSS growth after every iteration.
+The kernel backend additionally requires `kern.vsock.cur_connections` to
+return to its post-warmup baseline.  This is the acceptance gate for slow
+descriptor, connection, and heap leaks; it complements rather than replaces
+the sanitizer and deterministic race harnesses.
 
 `VM_FREE_GATES=no` skips the first two gates for a repeated VM-only debugging
 run; it is not an acceptance result by itself.  Gate 1 requires the bhyve

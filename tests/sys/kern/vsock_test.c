@@ -38,6 +38,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
+#include <pthread_np.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -5551,23 +5552,78 @@ ATF_TC_BODY(connect_timeout_erange, tc)
 /* ATF test plan                                                       */
 /* ------------------------------------------------------------------ */
 
-ATF_TC(native_userspace_transport);
-ATF_TC_HEAD(native_userspace_transport, tc)
+struct provider_write_args {
+	pthread_barrier_t *barrier;
+	const void *packet;
+	size_t len;
+	ssize_t result;
+	int error;
+	int fd;
+};
+
+struct provider_read_args {
+	pthread_barrier_t *barrier;
+	void *packet;
+	size_t len;
+	ssize_t result;
+	int error;
+	int fd;
+};
+
+static void *
+provider_blocked_write_thread(void *arg)
+{
+	struct provider_write_args *a = arg;
+	int error;
+
+	error = pthread_barrier_wait(a->barrier);
+	if (error != 0 && error != PTHREAD_BARRIER_SERIAL_THREAD) {
+		a->result = -2;
+		a->error = error;
+		return (NULL);
+	}
+	errno = 0;
+	a->result = write(a->fd, a->packet, a->len);
+	a->error = errno;
+	return (NULL);
+}
+
+static void *
+provider_blocked_read_thread(void *arg)
+{
+	struct provider_read_args *a = arg;
+	int error;
+
+	error = pthread_barrier_wait(a->barrier);
+	if (error != 0 && error != PTHREAD_BARRIER_SERIAL_THREAD) {
+		a->result = -2;
+		a->error = error;
+		return (NULL);
+	}
+	errno = 0;
+	a->result = read(a->fd, a->packet, a->len);
+	a->error = errno;
+	return (NULL);
+}
+
+ATF_TC(kernel_transport_provider);
+ATF_TC_HEAD(kernel_transport_provider, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(native_userspace_transport, tc)
+ATF_TC_BODY(kernel_transport_provider, tc)
 {
 	struct vsock_transport_attach attach;
-	struct virtio_vsock_hdr *request, response;
+	struct virtio_vsock_hdr *request, response, unused_request, unused_rst;
 	struct sockaddr_vm peer;
 	uint8_t packet[sizeof(*request) + 64];
-	const char host_data[] = "host-native";
-	const char guest_data[] = "guest-native";
+	const char host_data[] = "host-kernel";
+	const char guest_data[] = "guest-kernel";
 	uint32_t local_cid;
 	socklen_t optlen;
 	ssize_t len;
-	int error, provider, second, s;
+	bool saw_shutdown;
+	int error, kq, provider, second, s;
 
 	provider = open("/dev/vsock", O_RDWR | O_NONBLOCK);
 	ATF_REQUIRE_MSG(provider >= 0, "open /dev/vsock: %s",
@@ -5596,13 +5652,144 @@ ATF_TC_BODY(native_userspace_transport, tc)
 	ATF_REQUIRE(ioctl(provider, IOCTL_VM_SOCKETS_GET_LOCAL_CID,
 	    &local_cid) == 0);
 	ATF_CHECK(local_cid == VSOCK_CID_HOST);
+	{
+		uint64_t invalid_features, valid_features;
+
+		invalid_features = attach.features | (UINT64_C(1) << 63);
+		errno = 0;
+		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_SET_FEATURES,
+		    &invalid_features) == -1);
+		ATF_CHECK(errno == EINVAL);
+		valid_features = VIRTIO_VSOCK_F_STREAM;
+		ATF_REQUIRE(ioctl(provider, VSOCK_IOC_TRANSPORT_SET_FEATURES,
+		    &valid_features) == 0);
+	}
 
 	second = open("/dev/vsock", O_RDWR | O_NONBLOCK);
 	ATF_REQUIRE(second >= 0);
 	errno = 0;
 	ATF_CHECK(ioctl(second, VSOCK_IOC_TRANSPORT_ATTACH, &attach) == -1);
 	ATF_CHECK(errno == EBUSY);
-	close(second);
+
+	/*
+	 * Reject short datagrams and header/payload length mismatches without
+	 * poisoning the provider.  A valid packet immediately afterward proves
+	 * that both error paths release the serialized writer reservation.
+	 */
+	memset(&response, 0, sizeof(response));
+	response.src_cid = htole64(attach.guest_cid);
+	response.dst_cid = htole64(VSOCK_CID_HOST);
+	response.src_port = htole32(12345);
+	response.dst_port = htole32(UINT32_MAX - 1);
+	response.type = htole16(VIRTIO_VSOCK_TYPE_STREAM);
+	response.op = htole16(VIRTIO_VSOCK_OP_RW);
+	errno = 0;
+	ATF_CHECK(write(provider, &response, sizeof(response) - 1) == -1);
+	ATF_CHECK(errno == EMSGSIZE);
+	response.len = htole32(1);
+	errno = 0;
+	ATF_CHECK(write(provider, &response, sizeof(response)) == -1);
+	ATF_CHECK(errno == EINVAL);
+
+	/*
+	 * Match the bhyve kernel-backend path exactly: a guest REQUEST to an
+	 * unused host port must synchronously enqueue an RST on /dev/vsock.
+	 * The userspace transport reserves a queue slot while processing the
+	 * write, so the nonblocking read immediately afterward must succeed.
+	 */
+	memset(&unused_request, 0, sizeof(unused_request));
+	unused_request.src_cid = htole64(attach.guest_cid);
+	unused_request.dst_cid = htole64(VSOCK_CID_HOST);
+	unused_request.src_port = htole32(12345);
+	unused_request.dst_port = htole32(UINT32_MAX - 1);
+	unused_request.type = htole16(VIRTIO_VSOCK_TYPE_STREAM);
+	unused_request.op = htole16(VIRTIO_VSOCK_OP_REQUEST);
+	unused_request.buf_alloc = htole32(65536);
+	ATF_REQUIRE(write(provider, &unused_request,
+	    sizeof(unused_request)) == (ssize_t)sizeof(unused_request));
+	errno = 0;
+	ATF_CHECK(read(provider, (void *)(uintptr_t)-1,
+	    sizeof(unused_rst)) == -1);
+	ATF_CHECK(errno == EFAULT);
+	len = read(provider, &unused_rst, sizeof(unused_rst));
+	ATF_REQUIRE_MSG(len == (ssize_t)sizeof(unused_rst),
+	    "unused-port RST read returned %zd: %s", len, strerror(errno));
+	ATF_CHECK(le16toh(unused_rst.op) == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(le16toh(unused_rst.type) == VIRTIO_VSOCK_TYPE_STREAM);
+	ATF_CHECK(le64toh(unused_rst.src_cid) == VSOCK_CID_HOST);
+	ATF_CHECK(le64toh(unused_rst.dst_cid) == attach.guest_cid);
+	ATF_CHECK(unused_rst.src_port == unused_request.dst_port);
+	ATF_CHECK(unused_rst.dst_port == unused_request.src_port);
+
+	/*
+	 * A device reset must purge unread pre-reset output and leave the provider
+	 * reusable after features are renegotiated.
+	 */
+	ATF_REQUIRE(write(provider, &unused_request,
+	    sizeof(unused_request)) == (ssize_t)sizeof(unused_request));
+	ATF_REQUIRE(ioctl(provider, VSOCK_IOC_TRANSPORT_RESET) == 0);
+	errno = 0;
+	ATF_CHECK(read(provider, packet, sizeof(packet)) == -1);
+	ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
+	{
+		uint64_t features = VIRTIO_VSOCK_F_STREAM;
+
+		ATF_REQUIRE(ioctl(provider, VSOCK_IOC_TRANSPORT_SET_FEATURES,
+		    &features) == 0);
+	}
+	/*
+	 * A blocking read must not silently cross a provider reset and consume a
+	 * packet from the new transport epoch.  Reset wakes the empty-queue
+	 * waiter with ECANCELED, after which the same provider remains usable.
+	 */
+	{
+		struct provider_read_args args;
+		pthread_barrier_t barrier;
+		pthread_t thread;
+		struct timespec deadline;
+		int flags, join_error;
+
+		flags = fcntl(provider, F_GETFL);
+		ATF_REQUIRE(flags >= 0);
+		ATF_REQUIRE(fcntl(provider, F_SETFL, flags & ~O_NONBLOCK) == 0);
+		ATF_REQUIRE(pthread_barrier_init(&barrier, NULL, 2) == 0);
+		memset(&args, 0, sizeof(args));
+		args.barrier = &barrier;
+		args.packet = packet;
+		args.len = sizeof(packet);
+		args.fd = provider;
+		ATF_REQUIRE(pthread_create(&thread, NULL,
+		    provider_blocked_read_thread, &args) == 0);
+		error = pthread_barrier_wait(&barrier);
+		ATF_REQUIRE(error == 0 ||
+		    error == PTHREAD_BARRIER_SERIAL_THREAD);
+		/*
+		 * The empty queue is the deterministic blocking condition; this
+		 * delay only orders read(2) before the reset ioctl.
+		 */
+		usleep(100000);
+		ATF_REQUIRE(ioctl(provider, VSOCK_IOC_TRANSPORT_RESET) == 0);
+		ATF_REQUIRE(clock_gettime(CLOCK_REALTIME, &deadline) == 0);
+		deadline.tv_sec += 2;
+		join_error = pthread_timedjoin_np(thread, NULL, &deadline);
+		if (join_error == ETIMEDOUT) {
+			ATF_REQUIRE(pthread_cancel(thread) == 0);
+			ATF_REQUIRE(pthread_join(thread, NULL) == 0);
+		}
+		ATF_REQUIRE_MSG(join_error == 0,
+		    "provider read did not wake after reset: %s",
+		    strerror(join_error));
+		ATF_REQUIRE(pthread_barrier_destroy(&barrier) == 0);
+		ATF_CHECK(args.result == -1);
+		ATF_CHECK(args.error == ECANCELED);
+		ATF_REQUIRE(fcntl(provider, F_SETFL, flags) == 0);
+		{
+			uint64_t features = VIRTIO_VSOCK_F_STREAM;
+
+			ATF_REQUIRE(ioctl(provider,
+			    VSOCK_IOC_TRANSPORT_SET_FEATURES, &features) == 0);
+		}
+	}
 
 	s = socket(AF_VSOCK, SOCK_STREAM | SOCK_NONBLOCK, 0);
 	ATF_REQUIRE_MSG(s >= 0, "socket: %s", strerror(errno));
@@ -5677,8 +5864,9 @@ ATF_TC_BODY(native_userspace_transport, tc)
 
 	/*
 	 * Fill the provider's control queue with RST replies for unknown flows.
-	 * The next nonblocking write must apply backpressure before consuming the
-	 * packet; draining one reply must make the fd writable again.
+	 * Both an inbound provider write and a local shutdown must apply
+	 * backpressure without consuming or permanently half-closing state.
+	 * Draining one reply must make the fd writable and let shutdown retry.
 	 */
 	while (read(provider, packet, sizeof(packet)) > 0)
 		;
@@ -5699,22 +5887,144 @@ ATF_TC_BODY(native_userspace_transport, tc)
 	ATF_CHECK(error == 128);
 	ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
 	{
+		struct pollfd pfd = { .fd = s, .events = POLLOUT };
+
+		ATF_CHECK(poll(&pfd, 1, 0) == 0);
+	}
+	kq = kqueue();
+	ATF_REQUIRE_MSG(kq >= 0, "kqueue: %s", strerror(errno));
+	{
+		struct kevent change, event;
+		struct timespec zero = { 0, 0 };
+
+		EV_SET(&change, s, EVFILT_WRITE, EV_ADD | EV_CLEAR,
+		    0, 0, NULL);
+		ATF_REQUIRE(kevent(kq, &change, 1, NULL, 0, NULL) == 0);
+		ATF_CHECK(kevent(kq, NULL, 0, &event, 1, &zero) == 0);
+	}
+	errno = 0;
+	ATF_CHECK(shutdown(s, SHUT_RDWR) == -1);
+	ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
+	{
 		struct pollfd pfd = { .fd = provider, .events = POLLOUT };
 
 		ATF_CHECK(poll(&pfd, 1, 0) == 0);
-		ATF_REQUIRE(read(provider, packet, sizeof(packet)) ==
-		    (ssize_t)sizeof(response));
+		for (error = 0; error < 65; error++)
+			ATF_REQUIRE(read(provider, packet, sizeof(packet)) ==
+			    (ssize_t)sizeof(response));
 		pfd.revents = 0;
 		ATF_CHECK(poll(&pfd, 1, 0) == 1);
 		ATF_CHECK((pfd.revents & POLLOUT) != 0);
-		ATF_REQUIRE(write(provider, &response, sizeof(response)) ==
-		    (ssize_t)sizeof(response));
 	}
-	while (read(provider, packet, sizeof(packet)) > 0)
-		;
+	{
+		struct pollfd pfd = { .fd = s, .events = POLLOUT };
+
+		ATF_CHECK(poll(&pfd, 1, 0) == 1);
+		ATF_CHECK((pfd.revents & POLLOUT) != 0);
+	}
+	{
+		struct kevent event;
+		struct timespec one_second = { 1, 0 };
+
+		ATF_CHECK(kevent(kq, NULL, 0, &event, 1,
+		    &one_second) == 1);
+		ATF_CHECK(event.filter == EVFILT_WRITE);
+		ATF_CHECK(event.ident == (uintptr_t)s);
+	}
+	close(kq);
+	ATF_REQUIRE(shutdown(s, SHUT_RDWR) == 0);
+	saw_shutdown = false;
+	while ((len = read(provider, packet, sizeof(packet))) > 0) {
+		request = (struct virtio_vsock_hdr *)packet;
+		if (le16toh(request->op) == VIRTIO_VSOCK_OP_SHUTDOWN) {
+			ATF_CHECK(le32toh(request->flags) ==
+			    (VIRTIO_VSOCK_SHUTDOWN_RCV |
+			    VIRTIO_VSOCK_SHUTDOWN_SEND));
+			saw_shutdown = true;
+		}
+	}
+	ATF_CHECK(saw_shutdown);
+	ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
 
 	close(s);
+
+	/*
+	 * A blocking provider writer waiting behind a full queue belongs to the
+	 * pre-reset transport epoch.  Reset must wake it with ECANCELED, not let
+	 * it inject a stale guest packet after queues and PCBs were reset.
+	 */
+	for (error = 0; error < 128; error++)
+		ATF_REQUIRE(write(provider, &response, sizeof(response)) ==
+		    (ssize_t)sizeof(response));
+	{
+		struct provider_write_args args;
+		struct kevent change, event;
+		pthread_barrier_t barrier;
+		pthread_t thread;
+		struct timespec zero = { 0, 0 };
+		struct timespec one_second = { 1, 0 };
+		struct timespec deadline;
+		int flags, join_error, reset_kq;
+
+		flags = fcntl(provider, F_GETFL);
+		ATF_REQUIRE(flags >= 0);
+		reset_kq = kqueue();
+		ATF_REQUIRE(reset_kq >= 0);
+		EV_SET(&change, provider, EVFILT_WRITE, EV_ADD | EV_CLEAR,
+		    0, 0, NULL);
+		ATF_REQUIRE(kevent(reset_kq, &change, 1, NULL, 0, NULL) == 0);
+		ATF_CHECK(kevent(reset_kq, NULL, 0, &event, 1, &zero) == 0);
+		ATF_REQUIRE(fcntl(provider, F_SETFL, flags & ~O_NONBLOCK) == 0);
+		ATF_REQUIRE(pthread_barrier_init(&barrier, NULL, 2) == 0);
+		memset(&args, 0, sizeof(args));
+		args.barrier = &barrier;
+		args.packet = &response;
+		args.len = sizeof(response);
+		args.fd = provider;
+		ATF_REQUIRE(pthread_create(&thread, NULL,
+		    provider_blocked_write_thread, &args) == 0);
+		error = pthread_barrier_wait(&barrier);
+		ATF_REQUIRE(error == 0 ||
+		    error == PTHREAD_BARRIER_SERIAL_THREAD);
+		/*
+		 * Give the released writer a scheduling quantum to enter write(2).
+		 * Queue fullness above is the deterministic blocking condition;
+		 * this delay only orders the two syscalls.
+		 */
+		usleep(100000);
+		ATF_REQUIRE(ioctl(provider, VSOCK_IOC_TRANSPORT_RESET) == 0);
+		ATF_CHECK(kevent(reset_kq, NULL, 0, &event, 1,
+		    &one_second) == 1);
+		ATF_CHECK(event.filter == EVFILT_WRITE);
+		ATF_CHECK(event.ident == (uintptr_t)provider);
+		ATF_REQUIRE(clock_gettime(CLOCK_REALTIME, &deadline) == 0);
+		deadline.tv_sec += 2;
+		join_error = pthread_timedjoin_np(thread, NULL, &deadline);
+		if (join_error == ETIMEDOUT) {
+			ATF_REQUIRE(pthread_cancel(thread) == 0);
+			ATF_REQUIRE(pthread_join(thread, NULL) == 0);
+		}
+		ATF_REQUIRE_MSG(join_error == 0,
+		    "provider write did not wake after reset: %s",
+		    strerror(join_error));
+		ATF_REQUIRE(pthread_barrier_destroy(&barrier) == 0);
+		ATF_CHECK(args.result == -1);
+		ATF_CHECK(args.error == ECANCELED);
+		ATF_REQUIRE(fcntl(provider, F_SETFL, flags) == 0);
+		close(reset_kq);
+	}
+	errno = 0;
+	ATF_CHECK(read(provider, packet, sizeof(packet)) == -1);
+	ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
 	close(provider);
+	/*
+	 * The failed EBUSY attach above must not poison the losing descriptor.
+	 * Once the first owner closes, retrying that exact fd must succeed rather
+	 * than reporting EALREADY from stale cdev-private state.
+	 */
+	ATF_REQUIRE_MSG(ioctl(second, VSOCK_IOC_TRANSPORT_ATTACH, &attach) == 0,
+	    "retry transport attach after owner close: %s", strerror(errno));
+	close(second);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -5973,7 +6283,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, get_local_cid_ioctl);
 
 	/* Group 53: privileged VMM packet transport. */
-	ATF_TP_ADD_TC(tp, native_userspace_transport);
+	ATF_TP_ADD_TC(tp, kernel_transport_provider);
 
 	return (atf_no_error());
 }

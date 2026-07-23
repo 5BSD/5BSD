@@ -6,8 +6,10 @@
  *
  * vsock-overview -- trace all major virtio-vsock host-device events on one
  * screen.  Probes come from the "vsock" USDT provider in bhyve
- * (usr.sbin/bhyve/pci_virtio_vsock.c).  conn-reset state: 0=CONNECTING,
- * 1=ESTABLISHED, 2=CLOSING.
+ * (usr.sbin/bhyve/pci_virtio_vsock.c) and the "vsock" kernel SDT provider.
+ * The latter covers host AF_VSOCK sockets and bhyve's backend=kernel
+ * /dev/vsock provider.  conn-reset state: 0=CONNECTING, 1=ESTABLISHED,
+ * 2=CLOSING.
  *
  * Usage: vsock-overview            (trace every bhyve on the host)
  *        dtrace -qs vsock-overview -p `pgrep -n bhyve`
@@ -25,3 +27,15 @@ vsock*:::reasm-overflow  { printf("%-20Y %-14s cid=%d port=%d bytes=%d\n",   wal
 vsock*:::pend-drop       { printf("%-20Y %-14s pend=%d\n",                   walltimestamp, "PEND_DROP",   arg0); }
 vsock*:::desc-drop       { printf("%-20Y %-14s why=%s\n",                    walltimestamp, "DESC_DROP",   copyinstr(arg0)); }
 vsock*:::conn-count      { printf("%-20Y %-14s live=%d\n",                   walltimestamp, "CONN_COUNT",  arg0); }
+
+vsock:::provider-attach  { printf("%-20Y %-14s cid=%d features=0x%x\n",       walltimestamp, "PROVIDER_UP", arg0, arg1); }
+vsock:::provider-detach  { printf("%-20Y %-14s cid=%d\n",                    walltimestamp, "PROVIDER_DOWN", arg0); }
+vsock:::provider-reset   { printf("%-20Y %-14s cid=%d\n",                    walltimestamp, "PROVIDER_RST", arg0); }
+vsock:::provider-backpressure { printf("%-20Y %-14s depth=%d control=%d\n",   walltimestamp, "PROVIDER_FULL", arg0, arg1); }
+vsock:::provider-reject  { printf("%-20Y %-14s bytes=%d errno=%d\n",          walltimestamp, "PROVIDER_DROP", arg0, arg1); }
+vsock:::pkt-drop         { printf("%-20Y %-14s why=%s op=%d cid=%d sport=%d dport=%d\n", walltimestamp, "KPKT_DROP", stringof(arg0), arg1, arg2, arg3, arg4); }
+vsock:::connect-request  { printf("%-20Y %-14s cid=%d port=%d\n",             walltimestamp, "KCONNECT_REQ", arg0, arg1); }
+vsock:::connect-established { printf("%-20Y %-14s cid=%d port=%d\n",          walltimestamp, "KCONNECTED", arg0, arg1); }
+vsock:::connect-refused  { printf("%-20Y %-14s cid=%d port=%d\n",             walltimestamp, "KREFUSED", arg0, arg1); }
+vsock:::connect-timeout  { printf("%-20Y %-14s cid=%d port=%d\n",             walltimestamp, "KTIMEOUT", arg0, arg1); }
+vsock:::disconnect       { printf("%-20Y %-14s cid=%d port=%d\n",             walltimestamp, "KDISCONNECT", arg0, arg1); }

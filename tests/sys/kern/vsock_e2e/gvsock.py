@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """Linux guest helper and strict preflight for bhyve virtio-vsock E2E."""
 
+import array
 import errno
+import fcntl
 import glob
 import os
 import socket
 import sys
 import tempfile
+import threading
 import time
 
 
 AF_VSOCK = getattr(socket, "AF_VSOCK", 40)
 VMADDR_CID_ANY = getattr(socket, "VMADDR_CID_ANY", 0xFFFFFFFF)
+# Linux UAPI include/uapi/linux/vm_sockets.h:
+#     #define IOCTL_VM_SOCKETS_GET_LOCAL_CID _IO(7, 0xb9)
+IOCTL_VM_SOCKETS_GET_LOCAL_CID = 0x7B9
 
 
 def make_socket(sock_type):
@@ -84,12 +90,32 @@ def find_bound_vsock(sys_root, expected_device):
         )
 
 
-def preflight(transport):
+def get_local_cid(path="/dev/vsock", ioctl_fn=fcntl.ioctl):
+    cid = array.array("I", [0])
+    with open(path, "rb", buffering=0) as device:
+        ioctl_fn(
+            device.fileno(),
+            IOCTL_VM_SOCKETS_GET_LOCAL_CID,
+            cid,
+            True,
+        )
+    return cid[0]
+
+
+def preflight(transport, expected_cid):
     expected = "0x1053" if transport == "modern" else "0x1013"
     probe = make_socket("stream")
     probe.close()
+    local_cid = get_local_cid()
+    if local_cid != expected_cid:
+        raise RuntimeError(
+            f"guest local CID is {local_cid}, expected {expected_cid}"
+        )
     find_bound_vsock("/sys", expected)
-    print(f"PASS preflight transport={transport} pci={expected}")
+    print(
+        f"PASS preflight transport={transport} pci={expected} "
+        f"guest_cid={expected_cid}"
+    )
 
 
 def connect_error_name(exc):
@@ -100,8 +126,8 @@ def connect_error_name(exc):
     return type(exc).__name__
 
 
-def failed_connect(cid, port, timeout):
-    conn = make_socket("stream")
+def failed_connect(cid, port, timeout, sock_type="stream"):
+    conn = make_socket(sock_type)
     conn.settimeout(timeout)
     try:
         conn.connect((cid, port))
@@ -113,13 +139,156 @@ def failed_connect(cid, port, timeout):
 
 
 def reserved_cid_connects():
+    cid2_seq = failed_connect(2, 7109, 3.0, "seq")
+    if cid2_seq != "ECONNRESET":
+        raise RuntimeError(
+            f"SEQPACKET CID 2 returned {cid2_seq}, expected ECONNRESET"
+        )
+    cid2_before = failed_connect(2, 7109, 3.0)
+    if cid2_before != "ECONNRESET":
+        raise RuntimeError(
+            f"initial CID 2 returned {cid2_before}, expected ECONNRESET"
+        )
     cid0 = failed_connect(0, 7109, 3.0)
     if cid0 != "ETIMEDOUT":
         raise RuntimeError(f"CID 0 returned {cid0}, expected ETIMEDOUT")
-    cid2 = failed_connect(2, 7109, 3.0)
-    if cid2 != "ECONNRESET":
-        raise RuntimeError(f"CID 2 returned {cid2}, expected ECONNRESET")
-    print(f"PASS reserved-cids cid0={cid0} cid2={cid2}")
+    cid2_after = failed_connect(2, 7109, 3.0)
+    if cid2_after != "ECONNRESET":
+        raise RuntimeError(
+            f"CID 2 after reserved-CID probe returned {cid2_after}, "
+            "expected ECONNRESET"
+        )
+    print(
+        f"PASS reserved-cids cid2-seq={cid2_seq} cid2-before={cid2_before} "
+        f"cid0={cid0} cid2-after={cid2_after}"
+    )
+
+
+def refused_connect_storm(
+    sock_type, port, attempts, connect_fn=failed_connect, emit=True
+):
+    if attempts < 1 or attempts > 1024:
+        raise RuntimeError("refused-connect attempt count must be in [1, 1024]")
+    for attempt in range(1, attempts + 1):
+        outcome = connect_fn(2, port, 3.0, sock_type)
+        if outcome != "ECONNRESET":
+            raise RuntimeError(
+                f"{sock_type} refused connect {attempt}/{attempts} returned "
+                f"{outcome}, expected ECONNRESET"
+            )
+    if emit:
+        print(
+            f"PASS refused-connect-storm type={sock_type} "
+            f"attempts={attempts}"
+        )
+
+
+def validate_parallel_range(base_port, count):
+    if count < 2 or count > 64:
+        raise RuntimeError("parallel connection count must be in [2, 64]")
+    if base_port < 1 or base_port + count - 1 > 0xFFFFFFFF:
+        raise RuntimeError("parallel port range is outside [1, 0xffffffff]")
+
+
+def run_parallel(workers, context):
+    errors = []
+    error_lock = threading.Lock()
+
+    def run(worker):
+        try:
+            worker()
+        except BaseException as exc:
+            with error_lock:
+                errors.append(f"{type(exc).__name__}: {exc}")
+
+    threads = [threading.Thread(target=run, args=(worker,)) for worker in workers]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    if errors:
+        raise RuntimeError(f"{context}: " + "; ".join(errors))
+
+
+def parallel_echo_listeners(sock_type, base_port, count):
+    validate_parallel_range(base_port, count)
+    listeners = []
+    workers = []
+    try:
+        for offset in range(count):
+            listener = make_socket(sock_type)
+            listener.settimeout(20.0)
+            listener.bind((VMADDR_CID_ANY, base_port + offset))
+            listener.listen(1)
+            listeners.append(listener)
+
+        for listener in listeners:
+            def worker(listener=listener):
+                try:
+                    conn, _ = listener.accept()
+                    conn.settimeout(20.0)
+                    with conn:
+                        while True:
+                            data = conn.recv(65536)
+                            if not data:
+                                break
+                            send_data(conn, sock_type, data)
+                finally:
+                    listener.close()
+
+            workers.append(worker)
+        print("up", flush=True)
+        run_parallel(workers, f"parallel {sock_type} listeners")
+    finally:
+        for listener in listeners:
+            listener.close()
+    print(
+        f"PASS parallel-echo-listeners type={sock_type} count={count}",
+        flush=True,
+    )
+
+
+def parallel_echo_clients(sock_type, base_port, count):
+    validate_parallel_range(base_port, count)
+    workers = []
+
+    for offset in range(count):
+        port = base_port + offset
+        payload = f"PARALLEL-{sock_type}-{offset:02d}".encode()
+
+        def worker(port=port, payload=payload):
+            conn = None
+            for attempt in range(5):
+                candidate = make_socket(sock_type)
+                candidate.settimeout(20.0)
+                try:
+                    candidate.connect((2, port))
+                    conn = candidate
+                    break
+                except ConnectionResetError:
+                    candidate.close()
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.2)
+                except BaseException:
+                    candidate.close()
+                    raise
+            if conn is None:
+                raise RuntimeError(f"port {port} did not connect")
+            with conn:
+                send_data(conn, sock_type, payload)
+                echoed = recv_exact(conn, len(payload))
+                if echoed != payload:
+                    raise RuntimeError(
+                        f"port {port} echo mismatch: {echoed!r} != {payload!r}"
+                    )
+        workers.append(worker)
+
+    run_parallel(workers, f"parallel {sock_type} clients")
+    print(
+        f"PASS parallel-echo-clients type={sock_type} count={count}",
+        flush=True,
+    )
 
 
 def make_fake_device(
@@ -170,6 +339,20 @@ def self_test():
             pass
         else:
             raise AssertionError("duplicate devices were accepted")
+        ioctl_path = os.path.join(root, "vsock")
+        with open(ioctl_path, "wb"):
+            pass
+
+        def fake_local_cid_ioctl(fd, request, cid, mutate):
+            if fd < 0 or request != IOCTL_VM_SOCKETS_GET_LOCAL_CID:
+                raise AssertionError("incorrect local-CID ioctl request")
+            if not mutate or len(cid) != 1:
+                raise AssertionError("incorrect local-CID ioctl argument")
+            cid[0] = 4
+            return 0
+
+        if get_local_cid(ioctl_path, fake_local_cid_ioctl) != 4:
+            raise AssertionError("local-CID ioctl result was decoded incorrectly")
     left, right = socket.socketpair()
     try:
         left.shutdown(socket.SHUT_WR)
@@ -191,6 +374,42 @@ def self_test():
         "ECONNRESET"
     ):
         raise AssertionError("reset outcome was misclassified")
+    refused_calls = []
+
+    def fake_refused(cid, port, timeout, sock_type):
+        refused_calls.append((cid, port, timeout, sock_type))
+        return "ECONNRESET"
+
+    refused_connect_storm("seq", 7108, 3, fake_refused, emit=False)
+    if refused_calls != [(2, 7108, 3.0, "seq")] * 3:
+        raise AssertionError("refused-connect storm used incorrect endpoints")
+    validate_parallel_range(7200, 8)
+    for base_port, count in ((0, 8), (7200, 1), (0xFFFFFFFF, 2), (7200, 65)):
+        try:
+            validate_parallel_range(base_port, count)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(
+                f"invalid parallel range {base_port}/{count} was accepted"
+            )
+    completed = []
+    run_parallel(
+        [lambda index=index: completed.append(index) for index in range(8)],
+        "self-test",
+    )
+    if sorted(completed) != list(range(8)):
+        raise AssertionError("parallel worker did not run exactly once")
+    try:
+        run_parallel(
+            [lambda: None, lambda: (_ for _ in ()).throw(ValueError("test"))],
+            "self-test-error",
+        )
+    except RuntimeError as exc:
+        if "ValueError: test" not in str(exc):
+            raise
+    else:
+        raise AssertionError("parallel worker failure was ignored")
     print("SELFTEST PASS")
 
 
@@ -279,26 +498,40 @@ def main():
     if sys.argv[1:] == ["--self-test"]:
         self_test()
         return
-    if len(sys.argv) == 3 and sys.argv[1] == "preflight" and sys.argv[2] in (
+    if len(sys.argv) == 4 and sys.argv[1] == "preflight" and sys.argv[2] in (
         "modern",
         "legacy",
     ):
-        preflight(sys.argv[2])
+        try:
+            expected_cid = int(sys.argv[3], 0)
+        except ValueError as exc:
+            raise SystemExit("preflight guest CID must be an integer") from exc
+        if expected_cid < 3 or expected_cid >= VMADDR_CID_ANY:
+            raise SystemExit("preflight guest CID must be in [3, 0xfffffffe]")
+        preflight(sys.argv[2], expected_cid)
         return
     if sys.argv[1:] == ["reserved-cids"]:
         reserved_cid_connects()
         return
     if len(sys.argv) < 4:
         raise SystemExit(
-            "usage: gvsock.py --self-test | preflight modern|legacy | "
-            "reserved-cids | "
+            "usage: gvsock.py --self-test | "
+            "preflight modern|legacy guest-cid | "
+            "reserved-cids | refused-storm stream|seq port attempts | "
+            "parallel-echo-l|parallel-send-echo stream|seq base-port count | "
             "echo-l|recv-l|close-l|close|abrupt-l|send|send-echo "
             "stream|seq port [value]"
         )
     command, sock_type, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
     if sock_type not in ("stream", "seq"):
         raise SystemExit("socket type must be stream or seq")
-    if command == "echo-l" and len(sys.argv) == 4:
+    if command == "refused-storm" and len(sys.argv) == 5:
+        refused_connect_storm(sock_type, port, int(sys.argv[4]))
+    elif command == "parallel-echo-l" and len(sys.argv) == 5:
+        parallel_echo_listeners(sock_type, port, int(sys.argv[4]))
+    elif command == "parallel-send-echo" and len(sys.argv) == 5:
+        parallel_echo_clients(sock_type, port, int(sys.argv[4]))
+    elif command == "echo-l" and len(sys.argv) == 4:
         echo_listener(sock_type, port)
     elif command == "recv-l" and len(sys.argv) == 4:
         receive_listener(sock_type, port)

@@ -15,6 +15,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,6 +57,16 @@ struct virtio_pci_modern {
 	uint8_t pci_cfg_capoff;
 	bool config_pending;
 };
+
+static int vi_modern_debug;
+
+#define	MODERN_DPRINTF(level, fmt, ...)					\
+	do {								\
+		if (vi_modern_debug >= (level)) {			\
+			EPRINTLN(fmt, ##__VA_ARGS__);			\
+			fflush(stderr);					\
+		}							\
+	} while (0)
 
 static uint64_t
 vi_modern_device_features(const struct virtio_softc *vs)
@@ -177,9 +188,16 @@ int
 vi_pci_modern_init(struct virtio_softc *vs, int barnum)
 {
 	struct virtio_pci_modern *modern;
+	const char *debug;
 	struct vqueue_info *vq;
 	int error, i;
 
+	debug = getenv("BHYVE_VIRTIO_DEBUG");
+	if (debug != NULL) {
+		vi_modern_debug = atoi(debug);
+		if (vi_modern_debug < 1)
+			vi_modern_debug = 1;
+	}
 	if (!vi_pci_is_modern(vs))
 		return (EINVAL);
 	if (barnum < 0 || barnum > PCIR_MAX_BAR_0 - 1) {
@@ -206,6 +224,8 @@ vi_pci_modern_init(struct virtio_softc *vs, int barnum)
 	}
 	modern->bar = barnum;
 	vs->vs_modern = modern;
+	MODERN_DPRINTF(1, "%s: modern transport BAR=%d debug=%d",
+	    vs->vs_vc->vc_name, barnum, vi_modern_debug);
 
 	for (i = 0; i < vs->vs_vc->vc_nvq; i++) {
 		vq = &vs->vs_queues[i];
@@ -495,6 +515,9 @@ vi_modern_status_write(struct virtio_softc *vs, uint8_t status)
 	uint8_t old_status;
 
 	old_status = vs->vs_status;
+	MODERN_DPRINTF(2, "%s: modern status write old=%#x requested=%#x "
+	    "driver_features=%#jx", vs->vs_vc->vc_name, old_status, status,
+	    (uintmax_t)vs->vs_modern->driver_features);
 	if (status == 0) {
 		VIRTIO_PROBE_RESET();
 		vs->vs_status = 0;
@@ -594,7 +617,7 @@ vi_modern_common_write(struct virtio_softc *vs, uint64_t offset, int size,
 				vq->vq_msix_idx = VIRTIO_MSI_NO_VECTOR;
 		}
 		break;
-	case VIRTIO_PCI_COMMON_Q_ENABLE:
+		case VIRTIO_PCI_COMMON_Q_ENABLE:
 		if (size == 2 && value == 1 && vq != NULL &&
 		    !vq->vq_enabled) {
 			if (vi_modern_enable_vq(vs, vq) != 0)
@@ -604,6 +627,9 @@ vi_modern_common_write(struct virtio_softc *vs, uint64_t offset, int size,
 				VIRTIO_PROBE_QUEUE_ENABLE(vq->vq_num,
 				    vq->vq_desc_gpa, vq->vq_driver_gpa,
 				    vq->vq_device_gpa, vq->vq_qsize);
+			MODERN_DPRINTF(2, "%s: modern queue enable q=%u "
+			    "enabled=%u size=%u", vs->vs_vc->vc_name,
+			    vq->vq_num, vq->vq_enabled, vq->vq_qsize);
 		}
 		break;
 	case VIRTIO_PCI_COMMON_Q_DESCLO:
@@ -679,6 +705,11 @@ vi_pci_modern_write(struct pci_devinst *pi, int baridx, uint64_t offset,
 	if (offset < sizeof(struct virtio_pci_common_cfg)) {
 		vi_modern_common_write(vs, offset, size, value);
 	} else if (offset == VIRTIO_MODERN_NOTIFY_OFF && size == 2) {
+		MODERN_DPRINTF(2, "%s: modern notify q=%ju status=%#x "
+		    "enabled=%u", vs->vs_vc->vc_name, (uintmax_t)value,
+		    vs->vs_status,
+		    value < (uint64_t)vs->vs_vc->vc_nvq ?
+		    vs->vs_queues[value].vq_enabled : 0);
 		VIRTIO_PROBE_QUEUE_NOTIFY((uint16_t)value);
 		vi_pci_notify_queue(vs, value);
 	} else if (offset >= VIRTIO_MODERN_DEVICE_OFF &&

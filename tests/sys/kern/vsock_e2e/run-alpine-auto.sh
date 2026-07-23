@@ -12,11 +12,15 @@ OBJROOT=${OBJROOT:-/usr/obj}
 WORKDIR=${WORKDIR:-/tmp/bhyve-vsock-alpine}
 TRANSPORTS=${TRANSPORTS:-modern}
 DEVICES=${DEVICES:-"vsock rng input"}
-VSOCK_BACKEND=${VSOCK_BACKEND:-unix}
+VSOCK_BACKEND=${VSOCK_BACKEND:-userspace}
 CID=${CID:-4}
 CONSOLE_PORT=${CONSOLE_PORT:-}
 KEEP_VM=${KEEP_VM:-no}
-VSOCK_DEBUG=${VSOCK_DEBUG:-1}
+# VSOCK_DEBUG is the harness-facing spelling.  Also honor bhyve's direct
+# environment name so an operator's direct BHYVE_VTVSOCK_DEBUG setting is not
+# silently overwritten by the harness default.
+VSOCK_DEBUG=${VSOCK_DEBUG:-${BHYVE_VTVSOCK_DEBUG:-1}}
+VIRTIO_DEBUG=${VIRTIO_DEBUG:-${BHYVE_VIRTIO_DEBUG:-0}}
 INPUT_DEBUG=${INPUT_DEBUG:-1}
 SCSI_DEBUG=${SCSI_DEBUG:-1}
 VIRTIO_MSIX=${VIRTIO_MSIX:-yes}
@@ -26,6 +30,10 @@ BLOCK_TEST_MB=${BLOCK_TEST_MB:-256}
 BLOCK_IMAGE_MB=${BLOCK_IMAGE_MB:-1024}
 SCSI_TEST_MB=${SCSI_TEST_MB:-32}
 SCSI_IMAGE_MB=${SCSI_IMAGE_MB:-128}
+VSOCK_SOAK_ITERATIONS=${VSOCK_SOAK_ITERATIONS:-0}
+VSOCK_SOAK_RESET_EVERY=${VSOCK_SOAK_RESET_EVERY:-10}
+VSOCK_SOAK_MAX_FD_GROWTH=${VSOCK_SOAK_MAX_FD_GROWTH:-0}
+VSOCK_SOAK_MAX_RSS_KB=${VSOCK_SOAK_MAX_RSS_KB:-16384}
 BRIDGE=${BRIDGE:-bridge0}
 UPLINK=${UPLINK:-}
 
@@ -53,13 +61,19 @@ fi
 [ -x "$BHYVE" ] || { echo "bhyve not found: $BHYVE" >&2; exit 1; }
 [ -f "$UEFI" ] || { echo "UEFI firmware not found: $UEFI" >&2; exit 1; }
 case "$VSOCK_BACKEND" in
-unix|native) ;;
-*) echo "VSOCK_BACKEND must be unix or native" >&2; exit 2 ;;
+userspace|kernel) ;;
+*) echo "VSOCK_BACKEND must be userspace or kernel" >&2; exit 2 ;;
 esac
-[ "$VSOCK_BACKEND" != native ] || [ -c /dev/vsock ] || {
-	echo "backend=native requires /dev/vsock" >&2
+[ "$VSOCK_BACKEND" != kernel ] || [ -c /dev/vsock ] || {
+	echo "backend=kernel requires /dev/vsock" >&2
 	exit 1
 }
+for setting in "$VSOCK_SOAK_ITERATIONS" "$VSOCK_SOAK_RESET_EVERY" \
+    "$VSOCK_SOAK_MAX_FD_GROWTH" "$VSOCK_SOAK_MAX_RSS_KB"; do
+	case "$setting" in
+	''|*[!0-9]*) echo "vsock soak limits must be non-negative integers" >&2; exit 2 ;;
+	esac
+done
 
 run_vsock=no
 run_net_device=no
@@ -403,6 +417,7 @@ launch_vm()
 	set -- "$@" -s 31,lpc -l "com1,tcp=127.0.0.1:$CONSOLE_PORT" \
 	    -l "bootrom,$UEFI" "$vmname"
 	env BHYVE_VTVSOCK_DEBUG="$VSOCK_DEBUG" \
+	    BHYVE_VIRTIO_DEBUG="$VIRTIO_DEBUG" \
 	    BHYVE_VTINPUT_DEBUG="$INPUT_DEBUG" \
 	    BHYVE_VTSCSI_DEBUG="$SCSI_DEBUG" "$@" \
 	    >> "$bhyve_log" 2>&1 &
@@ -477,15 +492,142 @@ provision_guest()
 	fi
 }
 
-run_matrix()
+run_vsock_driver()
 {
 	DIR=$sockdir TRANSPORT=$transport VSOCK_BACKEND=$VSOCK_BACKEND \
 	BACKEND=$VSOCK_BACKEND GUEST_CID=$CID GPY=/tmp/gvsock.py \
-	TOOLS="$tools" \
-	HOST_WORK="$WORKDIR/$transport.host" \
+	TOOLS="$tools" SMOKE_ONLY="$1" HOST_WORK="$2" \
 	BHYVE_LOG="$bhyve_log" CONSOLE_LOG_PATH="$console_log" \
 	ACMD="env CONSOLE_LOG=$console_log CONSOLE_INPUT=$console_input sh $here/acmd-console.sh" \
 	    sh "$here/run-linux.sh"
+}
+
+run_matrix()
+{
+	run_vsock_driver no "$WORKDIR/$transport.host"
+}
+
+process_fd_count()
+{
+	procstat -f "$vm_pid" 2>/dev/null |
+	    awk 'NR > 1 && $1 ~ /^[0-9]+$/ { n++ } END { print n + 0 }'
+}
+
+process_rss_kb()
+{
+	ps -o rss= -p "$vm_pid" | awk '{ print $1 + 0 }'
+}
+
+kernel_vsock_malloc_stats()
+{
+	vmstat -m | awk '$1 == "vtvsock" { print $2, $3; found = 1 }
+	    END { if (!found) print "0 0" }'
+}
+
+run_vsock_soak()
+{
+	[ "$VSOCK_SOAK_ITERATIONS" -gt 0 ] || return 0
+	command -v procstat >/dev/null
+	command -v ps >/dev/null
+	sleep 2
+	base_fds=$(process_fd_count)
+	base_rss=$(process_rss_kb)
+	[ "$base_fds" -gt 0 ] && [ "$base_rss" -gt 0 ] || {
+		echo "could not read bhyve resource baseline for pid $vm_pid" >&2
+		return 1
+	}
+	max_fds=$((base_fds + VSOCK_SOAK_MAX_FD_GROWTH))
+	max_rss=$((base_rss + VSOCK_SOAK_MAX_RSS_KB))
+	peak_fds=$base_fds
+	peak_rss=$base_rss
+	soak_started=$(date +%s)
+	base_conns=-
+	base_kallocs=-
+	base_kmem=-
+	base_drops=-
+	if [ "$VSOCK_BACKEND" = kernel ]; then
+		command -v vmstat >/dev/null
+		base_conns=$(sysctl -n kern.vsock.cur_connections)
+		set -- $(kernel_vsock_malloc_stats)
+		base_kallocs=$1
+		base_kmem=$2
+		base_drops=$(sysctl -n kern.vsock.rx_drops)
+	fi
+	echo "== Alpine $transport: vsock $VSOCK_BACKEND soak " \
+	    "iterations=$VSOCK_SOAK_ITERATIONS base_fds=$base_fds " \
+	    "base_rss_kb=$base_rss base_connections=$base_conns " \
+	    "base_kernel_allocs=$base_kallocs base_kernel_bytes=$base_kmem " \
+	    "base_rx_drops=$base_drops =="
+	i=1
+	while [ "$i" -le "$VSOCK_SOAK_ITERATIONS" ]; do
+		run_vsock_driver no "$WORKDIR/$transport.soak.$i"
+		if [ "$VSOCK_SOAK_RESET_EVERY" -gt 0 ] &&
+		    [ $((i % VSOCK_SOAK_RESET_EVERY)) -eq 0 ]; then
+			echo "== Alpine $transport: vsock soak reset iteration=$i =="
+			guest_cmd 'set -eu; bdf=0000:00:05.0; echo "$bdf" > /sys/bus/pci/drivers/virtio-pci/unbind; sleep 1; echo "$bdf" > /sys/bus/pci/drivers/virtio-pci/bind; sleep 1' 30
+			run_vsock_driver yes "$WORKDIR/$transport.soak-reset.$i"
+		fi
+		sleep 2
+		kill -0 "$vm_pid"
+		cur_fds=$(process_fd_count)
+		cur_rss=$(process_rss_kb)
+		[ "$cur_fds" -le "$peak_fds" ] || peak_fds=$cur_fds
+		[ "$cur_rss" -le "$peak_rss" ] || peak_rss=$cur_rss
+		[ "$cur_fds" -gt 0 ] && [ "$cur_rss" -gt 0 ] || {
+			echo "could not read bhyve resources after soak iteration $i" >&2
+			return 1
+		}
+		[ "$cur_fds" -le "$max_fds" ] || {
+			echo "vsock soak fd growth: baseline=$base_fds current=$cur_fds limit=$max_fds" >&2
+			return 1
+		}
+		[ "$cur_rss" -le "$max_rss" ] || {
+			echo "vsock soak RSS growth: baseline=${base_rss}KB current=${cur_rss}KB limit=${max_rss}KB" >&2
+			return 1
+		}
+		if [ "$VSOCK_BACKEND" = kernel ]; then
+			j=0
+			while [ "$(sysctl -n kern.vsock.cur_connections)" -ne "$base_conns" ] &&
+			    [ "$j" -lt 10 ]; do
+				sleep 1
+				j=$((j + 1))
+			done
+			cur_conns=$(sysctl -n kern.vsock.cur_connections)
+			[ "$cur_conns" -eq "$base_conns" ] || {
+				echo "vsock soak connection growth: baseline=$base_conns current=$cur_conns iteration=$i" >&2
+				return 1
+			}
+			set -- $(kernel_vsock_malloc_stats)
+			cur_kallocs=$1
+			cur_kmem=$2
+			cur_drops=$(sysctl -n kern.vsock.rx_drops)
+			[ "$cur_kallocs" -eq "$base_kallocs" ] &&
+			    [ "$cur_kmem" -eq "$base_kmem" ] || {
+				echo "vsock soak kernel allocation growth: baseline=${base_kallocs}/${base_kmem} current=${cur_kallocs}/${cur_kmem} iteration=$i" >&2
+				return 1
+			}
+			[ "$cur_drops" -eq "$base_drops" ] || {
+				echo "vsock soak unexpected RX drops: baseline=$base_drops current=$cur_drops iteration=$i" >&2
+				return 1
+			}
+		fi
+		echo "PASS vsock-soak iteration=$i fds=$cur_fds rss_kb=$cur_rss " \
+		    "connections=${cur_conns:--} kernel_allocs=${cur_kallocs:--} " \
+		    "kernel_bytes=${cur_kmem:--} rx_drops=${cur_drops:--}"
+		i=$((i + 1))
+	done
+	connection_delta=-
+	if [ "$VSOCK_BACKEND" = kernel ]; then
+		connection_delta=$((cur_conns - base_conns))
+	fi
+	soak_elapsed=$(($(date +%s) - soak_started))
+	echo "PASS vsock-soak-summary backend=$VSOCK_BACKEND " \
+	    "iterations=$VSOCK_SOAK_ITERATIONS elapsed_seconds=$soak_elapsed " \
+	    "fd_delta=$((cur_fds - base_fds)) peak_fds=$peak_fds " \
+	    "rss_delta_kb=$((cur_rss - base_rss)) " \
+	    "peak_rss_kb=$peak_rss " \
+	    "connection_delta=$connection_delta kernel_allocs=${cur_kallocs:--} " \
+	    "kernel_bytes=${cur_kmem:--} rx_drops=${cur_drops:--}"
 }
 
 run_input()
@@ -639,12 +781,7 @@ run_9p()
 
 run_vsock_smoke()
 {
-	DIR=$sockdir TRANSPORT=$transport GPY=/tmp/gvsock.py \
-	TOOLS="$tools" SMOKE_ONLY=yes \
-	HOST_WORK="$WORKDIR/$transport.lifecycle.host" \
-	BHYVE_LOG="$bhyve_log" CONSOLE_LOG_PATH="$console_log" \
-	ACMD="env CONSOLE_LOG=$console_log CONSOLE_INPUT=$console_input sh $here/acmd-console.sh" \
-	    sh "$here/run-linux.sh"
+	run_vsock_driver yes "$WORKDIR/$transport.lifecycle.host"
 }
 
 run_network_smoke()
@@ -694,15 +831,32 @@ reboot_hold_connector()
 	shift 3
 	attempt=0
 	while [ "$attempt" -lt 5 ]; do
-		if timeout 180 "$tools/vsh-connect" "$@" -w \
-		    "$sockdir" "$port" > "$log" 2>&1; then
-			return 0
+		if [ "$VSOCK_BACKEND" = kernel ]; then
+			retry_status=3
+			if timeout 180 "$tools/vsock-pipe" "$@" -w \
+			    "$CID" "$port" > "$log" 2>&1; then
+				status=0
+			else
+				status=$?
+			fi
 		else
-			status=$?
+			retry_status=4
+			if timeout 180 "$tools/vsh-connect" "$@" -w \
+			    "$sockdir" "$port" > "$log" 2>&1; then
+				status=0
+			else
+				status=$?
+			fi
 		fi
-		# Retry only the explicit guest-not-ready control response, and only
-		# before the helper has proved an established connection.
-		[ "$status" -eq 4 ] && ! grep -q '^READY$' "$log" || return "$status"
+		if [ "$status" -eq 0 ]; then
+			return 0
+		fi
+		# Each backend reports its explicit not-yet-listening response with
+		# a different status: the Unix control connector uses 4, while an
+		# AF_VSOCK connect rejected with ECONNRESET uses 3.  Retry only that
+		# response and never retry after the helper proved establishment.
+		[ "$status" -eq "$retry_status" ] &&
+		    ! grep -q '^READY$' "$log" || return "$status"
 		attempt=$((attempt + 1))
 		sleep 1
 	done
@@ -867,8 +1021,8 @@ for transport in $TRANSPORTS; do
 		console_transport_opt=
 		ninep_transport_opt=
 	fi
-	if [ "$VSOCK_BACKEND" = native ]; then
-		vsock_backend_opt=",backend=native"
+	if [ "$VSOCK_BACKEND" = kernel ]; then
+		vsock_backend_opt=",backend=kernel"
 	else
 		vsock_backend_opt=",path=$sockdir"
 	fi
@@ -921,7 +1075,10 @@ for transport in $TRANSPORTS; do
 	launch_vm
 	provision_guest
 	run_network_smoke
-	[ "$run_vsock" = no ] || run_matrix
+	if [ "$run_vsock" = yes ]; then
+		run_matrix
+		run_vsock_soak
+	fi
 	[ "$run_rng_device" = no ] || run_rng
 	[ "$run_input_device" = no ] || run_input
 	[ "$run_block_device" = no ] || run_block

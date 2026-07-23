@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 14, 2026
+.Dd July 23, 2026
 .Dt BHYVE_CONFIG 5
 .Os
 .Sh NAME
@@ -374,12 +374,12 @@ specifies the guest context identifier, from 3 through 4294967294.
 The optional
 .Va backend
 variable is either
-.Li unix
+.Li userspace
 or
-.Li native
+.Li kernel
 and defaults to
-.Li unix .
-The Unix backend requires
+.Li userspace .
+The userspace backend requires
 .Va path ,
 which specifies an existing host directory for Unix domain sockets.
 The optional
@@ -403,7 +403,7 @@ For a host-to-guest connection, a host process connects to
 .Pa <path>/sock
 and sends the 16-byte control message documented in
 .Xr vsock 4 .
-The native backend rejects
+The kernel backend rejects
 .Va path
 and attaches the VM to the host
 .Dv AF_VSOCK
@@ -411,7 +411,7 @@ domain through
 .Pa /dev/vsock .
 Host applications then use normal vsock sockets with local CID 2 and the
 configured guest CID.
-The host socket domain supports one remote transport, so only one native
+The host socket domain supports one remote transport, so only one kernel
 backend may be active at a time.
 .It Li virtio-scsi
 VirtIO SCSI interface.

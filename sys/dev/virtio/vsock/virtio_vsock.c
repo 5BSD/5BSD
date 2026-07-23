@@ -868,34 +868,29 @@ out:
 	/*
 	 * Handle partial sends (some chunks enqueued, then error).
 	 *
-	 * SEQPACKET: orphaned fragments have no EOM, leaving the peer's
-	 * reassembly buffer in limbo.  RST tears down the connection so
-	 * the peer discards the incomplete record.
-	 *
-	 * STREAM: the sent bytes are on the wire and will be delivered.
-	 * The remaining bytes are lost.  We return error to the caller
-	 * rather than returning success (which would silently lose data).
-	 * The caller (sosend_generic) stops the send and propagates the
-	 * error to userspace; the application should treat it as a
-	 * partial write and close/reconnect.  Do NOT roll back tx_cnt —
-	 * the peer has already received and accounted for those bytes.
+	 * SEQPACKET orphaned fragments have no EOM.  STREAM has a subtler version
+	 * of the same problem: sosend_generic() has already consumed this entire
+	 * mbuf from the caller's uio, while the transport cannot report the exact
+	 * prefix placed on the wire.  Leaving either socket type established can
+	 * therefore duplicate a prefix on retry or silently gap the stream.
+	 * Reset the connection so the peer discards an incomplete record and no
+	 * later write can continue after a partial transport send.  Do not roll
+	 * back tx_cnt; the peer may already have accounted for the prefix.
 	 */
 	if (offset > 0 && offset < total) {
-		if (seqpacket) {
-			vtvsock_pcb_remove_lists_locked(pcb);
-			pcb->state = VTVSOCK_CLOSED;
-			(void)vtvsock_send_rst_locked(
-			    pcb->local.svm_cid, pcb->local.svm_port,
-			    pcb->remote.svm_cid, pcb->remote.svm_port,
-			    VIRTIO_VSOCK_TYPE_SEQPACKET);
-			wakeup(&pcb->state);
-			mtx_unlock(&vtvsock_mtx);
-			soisdisconnected(pcb->so);
-			m_freem(m);
-			return (error != 0 ? error : EIO);
-		}
-		error = (error != 0) ? error : EIO;
-		offset = 0;
+		vtvsock_pcb_remove_lists_locked(pcb);
+		pcb->state = VTVSOCK_CLOSED;
+		vsock_tx_wakeup_locked(pcb);
+		(void)vtvsock_send_rst_locked(
+		    pcb->local.svm_cid, pcb->local.svm_port,
+		    pcb->remote.svm_cid, pcb->remote.svm_port,
+		    seqpacket ? VIRTIO_VSOCK_TYPE_SEQPACKET :
+		    VIRTIO_VSOCK_TYPE_STREAM);
+		wakeup(&pcb->state);
+		mtx_unlock(&vtvsock_mtx);
+		soisdisconnected(pcb->so);
+		m_freem(m);
+		return (error != 0 ? error : EIO);
 	}
 	mtx_unlock(&vtvsock_mtx);
 	m_freem(m);
@@ -921,6 +916,7 @@ vtvsock_virtio_disconnect(struct vtvsock_pcb *pcb)
 		(void)vtvsock_send_pkt_locked(pcb, VIRTIO_VSOCK_OP_SHUTDOWN,
 		    shut_flags, NULL, 0);
 		pcb->state = VTVSOCK_CLOSING;
+		vsock_tx_wakeup_locked(pcb);
 		callout_reset(&pcb->close_callout, VTVSOCK_CLOSE_TIMEOUT,
 		    vtvsock_close_timeout, pcb);
 		soisdisconnecting(so);
@@ -943,11 +939,13 @@ vtvsock_virtio_disconnect(struct vtvsock_pcb *pcb)
 		    0, NULL, 0);
 		vtvsock_pcb_remove_lists_locked(pcb);
 		pcb->state = VTVSOCK_CLOSED;
+		vsock_tx_wakeup_locked(pcb);
 		soisdisconnected(so);
 		wakeup(&pcb->state);
 	} else if (pcb->state != VTVSOCK_CLOSED) {
 		vtvsock_pcb_remove_lists_locked(pcb);
 		pcb->state = VTVSOCK_CLOSED;
+		vsock_tx_wakeup_locked(pcb);
 		soisdisconnected(so);
 	}
 
@@ -1242,6 +1240,7 @@ again:
 	 * completed descriptors have been reclaimed (see vtvsock_virtio_send).
 	 */
 	wakeup(&sc->sc_txvq);
+	vsock_transport_tx_wakeup_locked(&vtvsock_virtio_transport);
 	mtx_unlock(&vtvsock_mtx);
 }
 

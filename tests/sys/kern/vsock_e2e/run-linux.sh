@@ -2,8 +2,8 @@
 # vsock end-to-end driver for a LINUX guest (companion to run.sh, which drives a
 # 5BSD guest).  The FreeBSD guest tools (vsock-pipe) do not build on Linux, so
 # the guest side is driven by gvsock.py (AF_VSOCK via python3, shipped here);
-# the host side uses unix-pipe/vsh-connect for backend=unix and vsock-pipe
-# over the host AF_VSOCK domain for backend=native.
+# the host side uses unix-pipe/vsh-connect for backend=userspace and vsock-pipe
+# over the host AF_VSOCK domain for backend=kernel.
 #
 # Covers the same matrix for BOTH socket types and BOTH directions:
 #   echo (stream/seqpacket, h2g/g2h), a large record delivered whole
@@ -11,15 +11,16 @@
 #
 # Requirements:
 #   - a running Linux guest (CID 3+) with a virtio-vsock device, its modules
-#     loaded, and python3 present; backend=unix also requires path=$DIR
+#     loaded, and python3 present; backend=userspace also requires path=$DIR
 #   - gvsock.py copied into the guest (e.g. /tmp/gvsock.py)
 #   - $ACMD: runs its 1st arg in the guest and prints stdout (a console helper)
 #   - $TOOLS names the object directory containing unix-pipe, vsh-connect,
 #     and vsock-pipe
 #
 # Env: DIR, TOOLS, ACMD, GPY (guest path to gvsock.py), REC (record size bytes),
-# TRANSPORT (modern or default legacy), BACKEND (unix or native), GUEST_CID
-# (required for native), HOST_WORK, and optional BHYVE_LOG, CONSOLE_LOG_PATH,
+# TRANSPORT (modern or default legacy), BACKEND (userspace or kernel), GUEST_CID
+# (required and checked against the guest transport), HOST_WORK, and optional
+# BHYVE_LOG, CONSOLE_LOG_PATH,
 # and SMOKE_ONLY diagnostics/lifecycle controls.
 set -u
 
@@ -29,7 +30,7 @@ ACMD=${ACMD:-"sh $HOME/vm/acmd.sh"}
 GPY=${GPY:-/tmp/gvsock.py}
 REC=${REC:-204800}
 TRANSPORT=${TRANSPORT:-modern}
-BACKEND=${BACKEND:-unix}
+BACKEND=${BACKEND:-userspace}
 GUEST_CID=${GUEST_CID:-}
 HOST_WORK=${HOST_WORK:-${TMPDIR:-/tmp}/vsock-linux-e2e.$$}
 BHYVE_LOG=${BHYVE_LOG:-}
@@ -54,11 +55,11 @@ dump_context() {
 	echo "---- vsock failure context ----" >&2
 	echo "guest helper output:" >&2
 	$ACMD 'cat /tmp/g.out 2>/dev/null || true' 12 >&2 || true
-	if [ "$BACKEND" = unix ]; then
+	if [ "$BACKEND" = userspace ]; then
 		echo "host socket directory:" >&2
 		ls -la "$DIR" >&2 || true
 	else
-		echo "host backend: native guest_cid=$GUEST_CID" >&2
+		echo "host backend: kernel guest_cid=$GUEST_CID" >&2
 	fi
 	if [ -n "$BHYVE_LOG" ] && [ -r "$BHYVE_LOG" ]; then
 		echo "recent bhyve log:" >&2
@@ -90,6 +91,121 @@ gwait() {
 	    grep -Eq '$_pattern' /tmp/g.out" 15 >/dev/null
 }
 
+run_parallel_h2g() {
+	ph_type=$1
+	ph_base=$2
+	ph_count=$3
+	ph_flags=
+	[ "$ph_type" = stream ] || ph_flags=-s
+	ph_dir="$HOST_WORK/parallel-h2g-$ph_type"
+	mkdir -p "$ph_dir"
+	# HOST_WORK is intentionally reusable for post-failure diagnosis.  Remove
+	# only this case's prior result files so a worker killed before writing its
+	# status cannot be mistaken for a successful worker from an earlier run.
+	rm -f "$ph_dir"/*.out "$ph_dir"/*.err "$ph_dir"/*.status
+	gbg "parallel-echo-l $ph_type $ph_base $ph_count"
+	ph_pids=
+	ph_i=0
+	while [ "$ph_i" -lt "$ph_count" ]; do
+		ph_port=$((ph_base + ph_i))
+		ph_token=$(printf 'PARALLEL-%s-%02d' "$ph_type" "$ph_i")
+		(
+			printf %s "$ph_token" |
+			    vshc "$DIR" "$ph_port" $ph_flags \
+			    >"$ph_dir/$ph_i.out" 2>"$ph_dir/$ph_i.err"
+			printf '%s\n' "$?" >"$ph_dir/$ph_i.status"
+		) &
+		ph_pids="$ph_pids $!"
+		ph_i=$((ph_i + 1))
+	done
+	for ph_pid in $ph_pids; do
+		wait "$ph_pid" 2>/dev/null || true
+	done
+	ph_ok=0
+	ph_i=0
+	while [ "$ph_i" -lt "$ph_count" ]; do
+		ph_token=$(printf 'PARALLEL-%s-%02d' "$ph_type" "$ph_i")
+		if [ ! -r "$ph_dir/$ph_i.status" ] ||
+		    [ "$(cat "$ph_dir/$ph_i.status")" -ne 0 ] ||
+		    [ "$(cat "$ph_dir/$ph_i.out")" != "$ph_token" ]; then
+			ph_ok=1
+		fi
+		ph_i=$((ph_i + 1))
+	done
+	gwait "^PASS parallel-echo-listeners type=$ph_type count=$ph_count$" ||
+	    ph_ok=1
+	if ph_guest_out=$(gout); then
+		ph_guest_rc=0
+	else
+		ph_guest_rc=$?
+		ph_ok=1
+	fi
+	printf '%s\n' "$ph_guest_out" |
+	    grep -q "^PASS parallel-echo-listeners type=$ph_type count=$ph_count$" ||
+	    ph_ok=1
+	if [ "$ph_ok" -ne 0 ]; then
+		diag_capture "parallel_${ph_type}_h2g_guest" "$ph_guest_rc" \
+		    "$ph_guest_out"
+		ph_i=0
+		while [ "$ph_i" -lt "$ph_count" ]; do
+			echo "  client $ph_i status=$(cat "$ph_dir/$ph_i.status" 2>/dev/null || echo missing)" >&2
+			cat "$ph_dir/$ph_i.err" >&2 2>/dev/null || true
+			ph_i=$((ph_i + 1))
+		done
+	fi
+	res "parallel_${ph_type}_h2g" "$ph_ok"
+}
+
+run_parallel_g2h() {
+	pg_type=$1
+	pg_base=$2
+	pg_count=$3
+	pg_flags=
+	[ "$pg_type" = stream ] || pg_flags=-s
+	pg_dir="$HOST_WORK/parallel-g2h-$pg_type"
+	mkdir -p "$pg_dir"
+	rm -f "$pg_dir"/*.log
+	pg_pids=
+	pg_i=0
+	while [ "$pg_i" -lt "$pg_count" ]; do
+		pg_port=$((pg_base + pg_i))
+		host_listener 30 "$pg_port" $pg_flags -e -n 1 \
+		    >"$pg_dir/$pg_i.log" 2>&1 &
+		pg_pids="$pg_pids $!"
+		pg_i=$((pg_i + 1))
+	done
+	sleep 1
+	if pg_guest_out=$($ACMD \
+	    "python3 $GPY parallel-send-echo $pg_type $pg_base $pg_count" 30); then
+		pg_guest_rc=0
+	else
+		pg_guest_rc=$?
+		for pg_pid in $pg_pids; do
+			kill "$pg_pid" 2>/dev/null || true
+		done
+	fi
+	pg_ok=0
+	[ "$pg_guest_rc" -eq 0 ] &&
+	    [ "$pg_guest_out" = "PASS parallel-echo-clients type=$pg_type count=$pg_count" ] ||
+	    pg_ok=1
+	pg_i=0
+	for pg_pid in $pg_pids; do
+		pg_listener_rc=0
+		wait "$pg_pid" 2>/dev/null || pg_listener_rc=$?
+		if [ "$pg_listener_rc" -ne 0 ]; then
+			echo "  listener $pg_i status=$pg_listener_rc" >&2
+			cat "$pg_dir/$pg_i.log" >&2 2>/dev/null || true
+			pg_ok=1
+		fi
+		pg_i=$((pg_i + 1))
+	done
+	if [ "$pg_ok" -ne 0 ]; then
+		diag_capture "parallel_${pg_type}_g2h_guest" "$pg_guest_rc" \
+		    "$pg_guest_out"
+	fi
+	res "parallel_${pg_type}_g2h" "$pg_ok"
+}
+
 # A listener can report ready immediately before its REQUEST/RESPONSE reaches
 # the host control path.  Retry only the device's explicit ECONNREFUSED status;
 # every other connector error is returned immediately.
@@ -99,7 +215,7 @@ vshc() {
 	shift 2
 	_try=0
 	while [ "$_try" -lt 5 ]; do
-		if [ "$BACKEND" = native ]; then
+		if [ "$BACKEND" = kernel ]; then
 			timeout 20 "$TOOLS/vsock-pipe" "$@" "$GUEST_CID" "$_port"
 		else
 			timeout 20 "$TOOLS/vsh-connect" "$@" "$_dir" "$_port"
@@ -116,7 +232,7 @@ host_listener() {
 	_timeout=$1
 	_port=$2
 	shift 2
-	if [ "$BACKEND" = native ]; then
+	if [ "$BACKEND" = kernel ]; then
 		timeout "$_timeout" "$TOOLS/vsock-pipe" -l "$@" "$_port"
 	else
 		rm -f "$DIR/$_port"
@@ -126,7 +242,7 @@ host_listener() {
 
 host_wait_disconnect() {
 	_port=$1
-	if [ "$BACKEND" = native ]; then
+	if [ "$BACKEND" = kernel ]; then
 		"$TOOLS/vsock-pipe" -w "$GUEST_CID" "$_port"
 	else
 		"$TOOLS/vsh-connect" -w "$DIR" "$_port"
@@ -139,14 +255,13 @@ case "$TRANSPORT" in
 modern|legacy) ;;
 *) echo "TRANSPORT must be modern or legacy" >&2; exit 2 ;;
 esac
+case "$GUEST_CID" in
+''|*[!0-9]*) echo "GUEST_CID must be numeric" >&2; exit 2 ;;
+esac
 case "$BACKEND" in
-unix) ;;
-native)
-	case "$GUEST_CID" in
-	''|*[!0-9]*) echo "GUEST_CID must be numeric for backend=native" >&2; exit 2 ;;
-	esac
-	;;
-*) echo "BACKEND must be unix or native" >&2; exit 2 ;;
+userspace) ;;
+kernel) ;;
+*) echo "BACKEND must be userspace or kernel" >&2; exit 2 ;;
 esac
 case "$SMOKE_ONLY" in
 yes|no) ;;
@@ -156,7 +271,7 @@ esac
 # Fail before the data tests unless the exact expected PCI function is uniquely
 # bound to the upstream driver.  The helper also proves AF_VSOCK socket
 # creation, so a similarly named but unbound device cannot satisfy preflight.
-$ACMD "test -r $GPY && python3 $GPY preflight $TRANSPORT" 20 >/dev/null || {
+$ACMD "test -r $GPY && python3 $GPY preflight $TRANSPORT $GUEST_CID" 20 || {
 	echo "Alpine preflight failed: helper, driver binding, or PCI identity" >&2
 	dump_context
 	exit 2
@@ -171,12 +286,63 @@ else
 	reserved_rc=$?
 fi
 if [ "$reserved_rc" -ne 0 ] ||
-    [ "$reserved_out" != "PASS reserved-cids cid0=ETIMEDOUT cid2=ECONNRESET" ]; then
+    [ "$reserved_out" != "PASS reserved-cids cid2-seq=ECONNRESET cid2-before=ECONNRESET cid0=ETIMEDOUT cid2-after=ECONNRESET" ]; then
 	diag_capture reserved_cids "$reserved_rc" "$reserved_out"
 	dump_context
 	exit 2
 fi
 echo "PASS  preflight_reserved_cids"
+
+# Repeatedly exercise the two refusal paths before opening a successful
+# connection.  This catches leaked CONNECTING/control/provider state that a
+# single failed connect cannot expose, and the smoke probes immediately below
+# prove that the backend recovers rather than merely returning the expected
+# errno.
+for refused_type in stream seq; do
+	if refused_out=$($ACMD \
+	    "python3 $GPY refused-storm $refused_type 7108 32" 60); then
+		refused_rc=0
+	else
+		refused_rc=$?
+	fi
+	[ "$refused_rc" -eq 0 ] &&
+	    [ "$refused_out" = "PASS refused-connect-storm type=$refused_type attempts=32" ]
+	ok=$?
+	[ "$ok" -eq 0 ] ||
+	    diag_capture "refused_storm_g2h_$refused_type" "$refused_rc" "$refused_out"
+	res "refused_storm_g2h_$refused_type" "$ok"
+done
+
+if [ "$BACKEND" = kernel ]; then
+	host_refused_status=3
+else
+	host_refused_status=4
+fi
+for refused_type in stream seq; do
+	refused_flags=
+	[ "$refused_type" = stream ] || refused_flags=-s
+	refused_rc=0
+	refused_count=0
+	while [ "$refused_count" -lt 32 ]; do
+		if [ "$BACKEND" = kernel ]; then
+			timeout 5 "$TOOLS/vsock-pipe" $refused_flags \
+			    "$GUEST_CID" 7108 </dev/null >/dev/null 2>&1
+		else
+			timeout 5 "$TOOLS/vsh-connect" $refused_flags \
+			    "$DIR" 7108 </dev/null >/dev/null 2>&1
+		fi
+		refused_rc=$?
+		[ "$refused_rc" -eq "$host_refused_status" ] || break
+		refused_count=$((refused_count + 1))
+	done
+	[ "$refused_count" -eq 32 ] &&
+	    [ "$refused_rc" -eq "$host_refused_status" ]
+	ok=$?
+	if [ "$ok" -ne 0 ]; then
+		echo "  refused_storm_h2g_$refused_type: completed=$refused_count/32 rc=$refused_rc expected=$host_refused_status" >&2
+	fi
+	res "refused_storm_h2g_$refused_type" "$ok"
+done
 
 # Prove both directions before running the larger matrix.  Every subsequent
 # case depends on these same control and data paths; cascading failures after
@@ -223,6 +389,14 @@ if [ "$SMOKE_ONLY" = yes ]; then
 	exit 0
 fi
 
+# Exercise shared connection tables, virtqueues, provider queues, credit
+# wakeups, and simultaneous teardown.  Each worker uses a distinct endpoint
+# and payload, and success requires every endpoint on both sides to complete.
+run_parallel_h2g stream 7200 8
+run_parallel_h2g seq 7210 8
+run_parallel_g2h stream 7220 8
+run_parallel_g2h seq 7230 8
+
 # --- host->guest (guest is the server) ---
 gbg "echo-l stream 7001"
 if out=$(printf 'E2E-H2G-STREAM' |
@@ -268,6 +442,28 @@ if [ "$ok" -ne 0 ]; then
 	echo "  guest status=$guest_rc host-bytes=$(printf %s "$out" | wc -c | tr -d ' ')" >&2
 fi
 res seqpacket_graceful_close_h2g "$ok"
+
+# STREAM uses byte-oriented receive and a different relay path from
+# SEQPACKET.  Verify the same bidirectional half-close contract explicitly
+# rather than assuming the SEQPACKET result covers it.
+close_token=E2E-H2G-STREAM-CLOSE
+gbg "close-l stream 7014 $close_token"
+if out=$(printf %s "$close_token" |
+    vshc "$DIR" 7014); then
+	rc=0
+else
+	rc=$?
+fi
+sleep 1
+if o=$(gout); then guest_rc=0; else guest_rc=$?; fi
+printf '%s\n' "$o" | grep -q '^PASS graceful-close-listener type=stream$' &&
+    [ "$rc" -eq 0 ] && [ "$guest_rc" -eq 0 ] && [ -z "$out" ]
+ok=$?
+if [ "$ok" -ne 0 ]; then
+	diag_capture stream_graceful_close_h2g "$rc" "$o"
+	echo "  guest status=$guest_rc host-bytes=$(printf %s "$out" | wc -c | tr -d ' ')" >&2
+fi
+res stream_graceful_close_h2g "$ok"
 
 gbg "recv-l seq 7003"
 if head -c "$REC" /dev/zero | tr '\0' A |
@@ -365,6 +561,30 @@ if [ "$ok" -ne 0 ]; then
 	cat "$HOST_WORK/7011.listener.log" >&2 || true
 fi
 res seqpacket_graceful_close_g2h "$ok"
+
+close_token=E2E-G2H-STREAM-CLOSE
+host_listener 20 7015 -d \
+    >"$HOST_WORK/7015.close.out" 2>"$HOST_WORK/7015.listener.log" &
+lpid=$!
+sleep 1
+if o=$($ACMD "python3 $GPY close stream 7015 $close_token" 15); then
+	guest_rc=0
+else
+	guest_rc=$?
+fi
+listener_rc=0; wait "$lpid" 2>/dev/null || listener_rc=$?
+if close_out=$(cat "$HOST_WORK/7015.close.out"); then host_read_rc=0; else host_read_rc=$?; fi
+[ "$guest_rc" -eq 0 ] && [ "$listener_rc" -eq 0 ] &&
+    [ "$host_read_rc" -eq 0 ] && [ "$close_out" = "$close_token" ] &&
+    [ "$o" = 'PASS graceful-close-client type=stream' ]
+ok=$?
+if [ "$ok" -ne 0 ]; then
+	diag_capture stream_graceful_close_g2h "$guest_rc" "$o"
+	echo "  listener status=$listener_rc read-status=$host_read_rc" >&2
+	diag_capture stream_graceful_close_g2h_payload "$host_read_rc" "$close_out"
+	cat "$HOST_WORK/7015.listener.log" >&2 || true
+fi
+res stream_graceful_close_g2h "$ok"
 
 # Kill the established host endpoint without shutdown/close cooperation.  The
 # guest must observe EOF or reset promptly, and a fresh connection afterward

@@ -110,20 +110,62 @@ distinguishes device regressions from cross-device interactions:
 ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
 ```
 
-The default matrix also runs the focused `vsock-native` topology for modern
-and legacy transport.  It launches bhyve with `backend=native`, uses ordinary
-host `AF_VSOCK` sockets rather than the Unix control/data socket protocol, and
-runs the same bidirectional STREAM/SEQPACKET, large-record, graceful-close,
-abrupt-close, reset, and monitor-mode reboot checks.  Only one native-backed VM
-may run at a time because `/dev/vsock` grants the remote transport to one
-provider.  To repeat just that gate:
+The matrix names the two host implementations `vsock-userspace` and
+`vsock-kernel`.  The userspace topology selects bhyve's default
+`backend=userspace` protocol engine and its Unix control/data socket protocol.
+The kernel topology selects `backend=kernel` and uses ordinary host
+`AF_VSOCK` sockets through `/dev/vsock`.  Both topologies run for modern and
+legacy transport and execute the same bidirectional STREAM/SEQPACKET,
+large-record, graceful-close, abrupt-close, reset, and monitor-mode reboot
+checks.  Only one kernel-backed VM may run at a time because `/dev/vsock`
+grants the remote transport to one provider.  To repeat either gate:
 
 ```sh
-TOPOLOGIES=vsock-native ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
+TOPOLOGIES=vsock-userspace ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
+TOPOLOGIES=vsock-kernel ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
 ```
 
 Set `VM_FREE_GATES=no` only when repeating VM boots after those exact source
 and helper binaries have already passed in the same worktree.
+
+For a long-lived backend gate, set `VSOCK_SOAK_ITERATIONS` on either focused
+topology.  Each iteration reuses the same bhyve process and reruns the complete
+bidirectional Linux matrix, including repeated refused connections for both
+socket types and directions, STREAM and SEQPACKET graceful close, abrupt
+endpoint death, large records, bulk data, eight simultaneous distinct
+connections for each socket type and direction, and an immediate success
+probe after each error phase.  The parallel cases require every client,
+listener, and uniquely tagged echo to complete; they exercise connection-table,
+virtqueue, provider-queue, credit-wakeup, and teardown contention rather than
+merely increasing a byte counter.  Every tenth iteration (configurable with
+`VSOCK_SOAK_RESET_EVERY`, or disabled with zero) also unbinds and rebinds the
+guest vsock PCI function and reruns the error-and-data smoke gate.  The runner
+requires the host kernel connection gauge to return to its post-warmup baseline
+for `backend=kernel`, requires the `vtvsock` kernel malloc allocation count and
+bytes to return to baseline, and rejects any new kernel RX drops.  Both
+backends fail if bhyve's descriptor count or resident memory grows beyond the
+configured allowances:
+
+```sh
+TOPOLOGIES=vsock-userspace TRANSPORTS=modern \
+VSOCK_SOAK_ITERATIONS=100 ISO=/path/to/alpine-virt.iso \
+    ./run-alpine-matrix.sh
+
+TOPOLOGIES=vsock-kernel TRANSPORTS=modern \
+VSOCK_SOAK_ITERATIONS=100 ISO=/path/to/alpine-virt.iso \
+    ./run-alpine-matrix.sh
+```
+
+The default allowances are zero additional bhyve descriptors and 16 MiB of
+resident memory after the first complete matrix has warmed the process.  The
+final summary records elapsed time, descriptor and RSS baselines/deltas/peaks,
+kernel-connection state, kernel allocations, and RX drops.
+Override `VSOCK_SOAK_MAX_FD_GROWTH` or `VSOCK_SOAK_MAX_RSS_KB` only when the
+reason is understood and recorded.  A zero iteration count, the default,
+keeps the normal acceptance matrix bounded.
+`VSOCK_DEBUG=2` enables per-packet vsock metadata when diagnosing a failure;
+generic `VIRTIO_DEBUG` remains off by default so a soak run does not generate
+unbounded queue-notification logs.
 
 See `FRAMEWORK.md` for the VM-free gates, failure-reporting contract, and the
 required checklist when another VirtIO device is added.
@@ -154,6 +196,7 @@ Run the host/guest matrix:
 ```sh
 DIR=$HOME/vm/vsock-sockdir-alpine \
 TRANSPORT=modern \
+GUEST_CID=4 \
 ACMD="sh $PWD/acmd-ssh.sh" \
 GPY=/tmp/gvsock.py \
 ./run-linux.sh

@@ -61,6 +61,7 @@ SCRIPTS=	blued-att \
 		vsock-connections \
 		vsock-overview \
 		vsock-perf \
+		vsock-provider \
 		vsock-security
 
 SCRIPTSDIR= ${SHAREDIR}/dtrace

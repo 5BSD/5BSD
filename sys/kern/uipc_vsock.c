@@ -48,6 +48,7 @@
 #include <sys/counter.h>
 #include <sys/domain.h>
 #include <sys/errno.h>
+#include <sys/event.h>
 #include <sys/kernel.h>
 #include <sys/libkern.h>
 #include <sys/limits.h>
@@ -111,6 +112,12 @@ SDT_PROBE_DEFINE6(vsock, , , pkt__rx,
     "uint32_t",	/* dst port */
     "uint32_t",	/* payload len */
     "uint32_t");	/* flags */
+SDT_PROBE_DEFINE5(vsock, , , pkt__drop,
+    "const char *",	/* stable reason string; never packet data */
+    "uint16_t",	/* op */
+    "uint64_t",	/* src CID */
+    "uint32_t",	/* src port */
+    "uint32_t");	/* dst port */
 SDT_PROBE_DEFINE4(vsock, , , rst__received,
     "uint64_t",	/* remote CID */
     "uint32_t",	/* remote port */
@@ -203,6 +210,16 @@ counter_u64_t vtvsock_cnt_rx_packets;
 counter_u64_t vtvsock_cnt_rx_bytes;
 counter_u64_t vtvsock_cnt_rx_drops;
 counter_u64_t vtvsock_cnt_conns;
+
+static void
+vtvsock_rx_drop(const char *reason __unused, uint16_t op __unused,
+    uint64_t src_cid __unused, uint32_t src_port __unused,
+    uint32_t dst_port __unused)
+{
+	counter_u64_add(vtvsock_cnt_rx_drops, 1);
+	SDT_PROBE5(vsock, , , pkt__drop, reason, op, src_cid, src_port,
+	    dst_port);
+}
 
 SYSCTL_NODE(_kern, OID_AUTO, vsock, CTLFLAG_RD, 0, "VSOCK");
 
@@ -368,6 +385,7 @@ static int	vsock_disconnect(struct socket *);
 static int	vsock_shutdown(struct socket *, enum shutdown_how);
 static void	vsock_abort(struct socket *);
 static int	vsock_sopoll(struct socket *, int, struct thread *);
+static int	vsock_kqfilter(struct socket *, struct knote *);
 static int	vsock_control(struct socket *, unsigned long, void *,
 		    struct ifnet *, struct thread *);
 
@@ -430,6 +448,7 @@ static struct protosw vsock_stream_protosw = {
 	.pr_shutdown =	vsock_shutdown,
 	.pr_abort =	vsock_abort,
 	.pr_sopoll =	vsock_sopoll,
+	.pr_kqfilter =	vsock_kqfilter,
 	.pr_control =	vsock_control,
 };
 
@@ -455,6 +474,7 @@ static struct protosw vsock_seqpacket_protosw = {
 	.pr_shutdown =	vsock_shutdown,
 	.pr_abort =	vsock_abort,
 	.pr_sopoll =	vsock_sopoll,
+	.pr_kqfilter =	vsock_kqfilter,
 	.pr_control =	vsock_control,
 };
 
@@ -547,6 +567,7 @@ vtvsock_pcb_alloc(struct socket *so)
 		return (NULL);
 	pcb->so = so;
 	pcb->transport = &vtvsock_local_transport;
+	knlist_init_mtx(&pcb->tx_knlist, &vtvsock_mtx);
 	vtvsock_pcb_set_addr(&pcb->local, VSOCK_CID_ANY, VSOCK_PORT_ANY);
 	vtvsock_pcb_set_addr(&pcb->remote, VSOCK_CID_ANY, VSOCK_PORT_ANY);
 	pcb->state = VTVSOCK_CLOSED;
@@ -575,6 +596,7 @@ vtvsock_pcb_free(struct vtvsock_pcb *pcb)
 	 * NOTE: callout_drain() must NOT be called here; vsock_detach()
 	 * already drained the callouts before calling vtvsock_pcb_free().
 	 */
+	knlist_destroy(&pcb->tx_knlist);
 	free(pcb, M_VTVSOCK);
 }
 
@@ -779,7 +801,7 @@ vtvsock_close_timeout(void *arg)
 	}
 	pcb->state = VTVSOCK_CLOSED;
 	vtvsock_pcb_remove_lists_locked(pcb);
-
+	vsock_tx_wakeup_locked(pcb);
 	soisdisconnected(so);
 }
 
@@ -805,6 +827,7 @@ vtvsock_connect_timeout(void *arg)
 		    pcb->remote.svm_cid, pcb->remote.svm_port);
 		pcb->state = VTVSOCK_CLOSED;
 		vtvsock_pcb_remove_lists_locked(pcb);
+		vsock_tx_wakeup_locked(pcb);
 		SOCK_LOCK(so);
 		so->so_error = ETIMEDOUT;
 		SOCK_UNLOCK(so);
@@ -943,6 +966,12 @@ vsock_detach(struct socket *so)
 	 */
 	mtx_lock(&vtvsock_mtx);
 	vtvsock_pcb_remove_lists_locked(pcb);
+	/*
+	 * Tear down transport-locked write knotes before publishing pcb->so ==
+	 * NULL or freeing the PCB.  knlist_clear() may temporarily drop and
+	 * reacquire vtvsock_mtx while waiting for an active callback.
+	 */
+	knlist_clear(&pcb->tx_knlist, 1);
 	pcb->so = NULL;
 	mtx_unlock(&vtvsock_mtx);
 
@@ -1266,6 +1295,8 @@ vsock_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 
 		soisconnected(so);
 		soisconnected(child_so);
+		vsock_tx_wakeup_locked(pcb);
+		vsock_tx_wakeup_locked(child);
 		SDT_PROBE3(vsock, , , connect__established,
 		    dst->svm_cid, dst->svm_port, 1);
 		mtx_unlock(&vtvsock_mtx);
@@ -1364,6 +1395,7 @@ fail:
 		}
 		pcb->state = VTVSOCK_BOUND;
 	}
+	vsock_tx_wakeup_locked(pcb);
 	/*
 	 * If we advanced to CONNECTING (soisconnecting()), clear SS_ISCONNECTING
 	 * on every failure path -- send_pkt error, EINTR/signal from msleep, and
@@ -1778,6 +1810,7 @@ vsock_soreceive(struct socket *so, struct sockaddr **psa, struct uio *uio,
 				/* App drained in time; cancel the close timer. */
 				callout_stop(&pcb->close_callout);
 				vtvsock_pcb_remove_lists_locked(pcb);
+				vsock_tx_wakeup_locked(pcb);
 				/*
 				 * send_pkt, not send_rst: the PCB is live, so
 				 * the RST carries real credit fields per
@@ -1814,10 +1847,8 @@ vsock_soreceive(struct socket *so, struct sockaddr **psa, struct uio *uio,
 			mtx_lock(&vtvsock_mtx);
 			pcb = so->so_pcb;
 			if (pcb != NULL && pcb->peer != NULL) {
-				wakeup(&pcb->peer->tx_cnt);
-				/* Re-arm poll/select POLLOUT on the sender. */
-				if (pcb->peer->so != NULL)
-					sowwakeup(pcb->peer->so);
+				/* Re-arm blocking, poll/select, and kqueue writers. */
+				vsock_tx_wakeup_locked(pcb->peer);
 			}
 			mtx_unlock(&vtvsock_mtx);
 		}
@@ -1897,20 +1928,147 @@ static int
 vsock_sopoll(struct socket *so, int events, struct thread *td)
 {
 	struct vtvsock_pcb *pcb;
+	bool blocked;
 	int revents;
 
 	revents = sopoll_generic(so, events, td);
 
 	if ((revents & (POLLOUT | POLLWRNORM)) != 0) {
+		blocked = false;
 		mtx_lock(&vtvsock_mtx);
 		pcb = so->so_pcb;
 		if (pcb != NULL &&
 		    pcb->state == VTVSOCK_ESTABLISHED &&
-		    vtvsock_tx_space(pcb) == 0)
+		    (vtvsock_tx_space(pcb) == 0 ||
+		    (pcb->transport->tx_ready != NULL &&
+		    !pcb->transport->tx_ready(pcb)))) {
+			/*
+			 * sopoll_generic() considered the empty protocol send buffer
+			 * writable, so it did not register this waiter.  Register while
+			 * holding vtvsock_mtx, the same lock transports hold when they
+			 * transition back to ready and call
+			 * vsock_transport_tx_wakeup_locked().  This closes the
+			 * ready-before-selrecord lost-wakeup window.
+			 */
+			SOCK_LOCK(so);
+			SOCK_SENDBUF_LOCK(so);
+			selrecord(td, &so->so_wrsel);
+			so->so_snd.sb_flags |= SB_SEL;
+			SOCK_SENDBUF_UNLOCK(so);
+			SOCK_UNLOCK(so);
+			blocked = true;
+		}
+		if (blocked)
 			revents &= ~(POLLOUT | POLLWRNORM);
 		mtx_unlock(&vtvsock_mtx);
 	}
 	return (revents);
+}
+
+static void
+vsock_filt_sowdetach(struct knote *kn)
+{
+	struct vtvsock_pcb *pcb = kn->kn_hook;
+
+	mtx_lock(&vtvsock_mtx);
+	knlist_remove(&pcb->tx_knlist, kn, 1);
+	mtx_unlock(&vtvsock_mtx);
+}
+
+static int
+vsock_filt_sowrite(struct knote *kn, long hint __unused)
+{
+	struct vtvsock_pcb *pcb = kn->kn_hook;
+	size_t space;
+
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
+	kn->kn_data = 0;
+	if (pcb->state == VTVSOCK_CLOSED ||
+	    pcb->state == VTVSOCK_CLOSING) {
+		kn->kn_flags |= EV_EOF;
+		return (1);
+	}
+	if (pcb->state != VTVSOCK_ESTABLISHED ||
+	    pcb->so == NULL)
+		return (0);
+	space = vtvsock_tx_space(pcb);
+	kn->kn_data = MIN(space, (size_t)INT64_MAX);
+	if (space == 0 ||
+	    (pcb->transport->tx_ready != NULL &&
+	    !pcb->transport->tx_ready(pcb)))
+		return (0);
+	if ((kn->kn_sfflags & NOTE_LOWAT) != 0)
+		return (space >= (size_t)kn->kn_sdata);
+	return (1);
+}
+
+static const struct filterops vsock_write_filtops = {
+	.f_isfd = 1,
+	.f_detach = vsock_filt_sowdetach,
+	.f_event = vsock_filt_sowrite,
+	.f_copy = knote_triv_copy,
+};
+
+/*
+ * Use the generic socket filters for receive/empty state.  EVFILT_WRITE needs
+ * a vsock-specific list and callback because so_snd never reflects peer credit
+ * or a shared transport queue.
+ */
+static int
+vsock_kqfilter(struct socket *so, struct knote *kn)
+{
+	struct vtvsock_pcb *pcb;
+
+	if (kn->kn_filter != EVFILT_WRITE)
+		return (sokqfilter_generic(so, kn));
+	mtx_lock(&vtvsock_mtx);
+	pcb = so->so_pcb;
+	if (pcb == NULL || pcb->so == NULL) {
+		mtx_unlock(&vtvsock_mtx);
+		return (EINVAL);
+	}
+	kn->kn_fop = &vsock_write_filtops;
+	kn->kn_hook = pcb;
+	knlist_add(&pcb->tx_knlist, kn, 1);
+	mtx_unlock(&vtvsock_mtx);
+	return (0);
+}
+
+/*
+ * Re-evaluate every kind of writer: a blocking send sleeping on tx_cnt,
+ * poll/select waiters on so_wrsel, and transport-aware EVFILT_WRITE knotes.
+ * Caller holds vtvsock_mtx so the readiness transition and knote evaluation
+ * are serialized.
+ */
+void
+vsock_tx_wakeup_locked(struct vtvsock_pcb *pcb)
+{
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
+	wakeup(&pcb->tx_cnt);
+	if (pcb->so != NULL)
+		sowwakeup(pcb->so);
+	KNOTE_LOCKED(&pcb->tx_knlist, 0);
+}
+
+/*
+ * A transport-wide queue became writable.  Remote PCBs share that queue, so
+ * wake every socket using this transport; its next poll/send rechecks credit
+ * and queue capacity under vtvsock_mtx.
+ */
+void
+vsock_transport_tx_wakeup_locked(const struct vtvsock_transport *transport)
+{
+	struct vtvsock_pcb *pcb;
+
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
+	for (u_int i = 0; i < VTVSOCK_CONNHASH_SIZE; i++) {
+		LIST_FOREACH(pcb, &vtvsock_conn[i], connlink) {
+			if (pcb->transport != transport ||
+			    pcb->state != VTVSOCK_ESTABLISHED || pcb->so == NULL)
+				continue;
+			vsock_tx_wakeup_locked(pcb);
+		}
+	}
 }
 
 /*
@@ -2323,10 +2481,11 @@ vtvsock_local_disconnect(struct vtvsock_pcb *pcb)
 	if (pcb->peer != NULL) {
 		peer_so = pcb->peer->so;
 		/* Wake any peer thread blocked in vtvsock_local_send. */
-		wakeup(&pcb->peer->tx_cnt);
+		vsock_tx_wakeup_locked(pcb->peer);
 	}
 	vtvsock_pcb_remove_lists_locked(pcb);
 	pcb->state = VTVSOCK_CLOSED;
+	vsock_tx_wakeup_locked(pcb);
 
 	if (peer_so != NULL) {
 		SOCK_RECVBUF_LOCK(peer_so);
@@ -2364,7 +2523,7 @@ vtvsock_local_shutdown(struct vtvsock_pcb *pcb, enum shutdown_how how)
 		SOCK_RECVBUF_LOCK(so);
 		socantrcvmore_locked(so);
 		if (pcb->peer != NULL)
-			wakeup(&pcb->peer->tx_cnt);
+			vsock_tx_wakeup_locked(pcb->peer);
 		mtx_unlock(&vtvsock_mtx);
 		break;
 	case SHUT_WR:
@@ -2384,7 +2543,7 @@ vtvsock_local_shutdown(struct vtvsock_pcb *pcb, enum shutdown_how how)
 		SOCK_RECVBUF_LOCK(so);
 		socantrcvmore_locked(so);
 		if (pcb->peer != NULL)
-			wakeup(&pcb->peer->tx_cnt);
+			vsock_tx_wakeup_locked(pcb->peer);
 		mtx_unlock(&vtvsock_mtx);
 		SOCK_SENDBUF_LOCK(so);
 		socantsendmore_locked(so);
@@ -2509,7 +2668,8 @@ vsock_rx_packet(const void *owner, void *buf, uint32_t len)
 		 * payload; accepting a short buffer would silently truncate STREAM
 		 * data or prematurely complete a SEQPACKET message.
 		 */
-		counter_u64_add(vtvsock_cnt_rx_drops, 1);
+		vtvsock_rx_drop("truncated-payload", hdr_op, hdr_src_cid,
+		    hdr_src_port, hdr_dst_port);
 		mtx_lock(&vtvsock_mtx);
 		if (vtvsock_remote_transport_owner == owner &&
 		    hdr_op != VIRTIO_VSOCK_OP_RST &&
@@ -2522,9 +2682,23 @@ vsock_rx_packet(const void *owner, void *buf, uint32_t len)
 	}
 	payload_len = hdr_len;
 
+	/*
+	 * Only OP_RW carries payload.  Reject a payload-bearing control packet
+	 * before PCB lookup or credit ingestion: otherwise a malformed
+	 * CREDIT_UPDATE/SHUTDOWN could mutate a live connection while its
+	 * unaccounted payload bytes were silently ignored.
+	 */
+	if (hdr_op != VIRTIO_VSOCK_OP_RW && payload_len != 0) {
+		vtvsock_rx_drop("control-payload", hdr_op, hdr_src_cid,
+		    hdr_src_port, hdr_dst_port);
+		return;
+	}
+
 	/* Validate type field (§5.10.6.4.1: RST for unknown type). */
 	if (hdr_type != VIRTIO_VSOCK_TYPE_STREAM &&
 	    hdr_type != VIRTIO_VSOCK_TYPE_SEQPACKET) {
+		vtvsock_rx_drop("unknown-type", hdr_op, hdr_src_cid,
+		    hdr_src_port, hdr_dst_port);
 		mtx_lock(&vtvsock_mtx);
 		if (vtvsock_remote_transport_owner == owner &&
 		    vtvsock_remote_transport != NULL)
@@ -2634,10 +2808,13 @@ vsock_rx_packet(const void *owner, void *buf, uint32_t len)
 	 * tears the connection down regardless of type, and replying to a
 	 * wrong-type RST with an RST would be a needless RST-for-RST.
 	 */
-	if (hdr_op != VIRTIO_VSOCK_OP_REQUEST && hdr_op != VIRTIO_VSOCK_OP_RST) {
+	if (hdr_op != VIRTIO_VSOCK_OP_REQUEST &&
+	    hdr_op != VIRTIO_VSOCK_OP_RST) {
 		uint16_t expected_type = (so->so_type == SOCK_SEQPACKET) ?
 		    VIRTIO_VSOCK_TYPE_SEQPACKET : VIRTIO_VSOCK_TYPE_STREAM;
 		if (hdr_type != expected_type) {
+			vtvsock_rx_drop("socket-type-mismatch", hdr_op,
+			    hdr_src_cid, hdr_src_port, hdr_dst_port);
 			if (vtvsock_remote_transport != NULL)
 				(void)vtvsock_remote_transport->send_rst(
 				    vtvsock_guest_cid, hdr_dst_port,
@@ -2677,7 +2854,7 @@ vsock_rx_packet(const void *owner, void *buf, uint32_t len)
 		 */
 		if ((int32_t)(hdr_fwd_cnt - pcb->peer_fwd_cnt) > 0)
 			pcb->peer_fwd_cnt = hdr_fwd_cnt;
-		wakeup(&pcb->tx_cnt);
+		vsock_tx_wakeup_locked(pcb);
 	}
 
 	switch (hdr_op) {
@@ -2787,6 +2964,7 @@ vsock_rx_packet(const void *owner, void *buf, uint32_t len)
 				    VIRTIO_VSOCK_OP_RESPONSE, 0, NULL, 0);
 
 			soisconnected(child_so);
+			vsock_tx_wakeup_locked(child);
 			counter_u64_add(vtvsock_cnt_conns, 1);
 		}
 		mtx_unlock(&vtvsock_mtx);
@@ -2805,6 +2983,7 @@ vsock_rx_packet(const void *owner, void *buf, uint32_t len)
 			SDT_PROBE3(vsock, , , connect__established,
 			    pcb->remote.svm_cid, pcb->remote.svm_port, 0);
 			soisconnected(so);
+			vsock_tx_wakeup_locked(pcb);
 			counter_u64_add(vtvsock_cnt_conns, 1);
 			mtx_unlock(&vtvsock_mtx);
 		} else {
@@ -3153,13 +3332,14 @@ teardown_close:
 	 * routine teardown, not a drop, and must not inflate rx_drops.
 	 */
 	if (teardown_drop)
-		counter_u64_add(vtvsock_cnt_rx_drops, 1);
+		vtvsock_rx_drop("connection-teardown", hdr_op, hdr_src_cid,
+		    hdr_src_port, hdr_dst_port);
 	callout_stop(&pcb->close_callout);
 	callout_stop(&pcb->connect_callout);
 	vtvsock_pcb_remove_lists_locked(pcb);
 	pcb->state = VTVSOCK_CLOSED;
 	wakeup(&pcb->state);
-	wakeup(&pcb->tx_cnt);
+	vsock_tx_wakeup_locked(pcb);
 	/*
 	 * send_pkt, not send_rst: the PCB is live here, so the RST carries
 	 * our real buf_alloc/fwd_cnt as §5.10.6.3.1 requires of every packet
@@ -3210,7 +3390,7 @@ vsock_transport_reset_locked(void)
 			vtvsock_pcb_remove_lists_locked(pcb);
 			pcb->state = VTVSOCK_CLOSED;
 			wakeup(&pcb->state);
-			wakeup(&pcb->tx_cnt);
+			vsock_tx_wakeup_locked(pcb);
 			SOCK_LOCK(so);
 			so->so_error = ECONNRESET;
 			SOCK_UNLOCK(so);

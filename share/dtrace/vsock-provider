@@ -1,0 +1,131 @@
+#!/usr/sbin/dtrace -qs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * vsock-provider -- observe bhyve's backend=kernel transport provider.
+ *
+ * These are kernel SDT probes from vsock.ko.  They cover privileged provider
+ * attach/detach/reset, negotiated features, packet movement across /dev/vsock,
+ * queue pressure, malformed provider packets, and the host AF_VSOCK connection
+ * lifecycle.  Payload contents are never exposed.
+ *
+ * Usage: vsock-provider
+ */
+
+vsock:::provider-attach
+{
+	printf("%-20Y PROVIDER_ATTACH cid=%d features=0x%x\n",
+	    walltimestamp, arg0, arg1);
+}
+
+vsock:::provider-detach
+{
+	printf("%-20Y PROVIDER_DETACH cid=%d\n", walltimestamp, arg0);
+}
+
+vsock:::provider-reset
+{
+	printf("%-20Y PROVIDER_RESET  cid=%d\n", walltimestamp, arg0);
+}
+
+vsock:::provider-features
+{
+	printf("%-20Y PROVIDER_FEATURES cid=%d features=0x%x\n",
+	    walltimestamp, arg0, arg1);
+}
+
+vsock:::provider-enqueue
+{
+	enqueued++;
+	depth = arg2;
+	@depth = quantize(arg2);
+}
+
+vsock:::provider-dequeue
+{
+	dequeued++;
+	depth = arg2;
+}
+
+vsock:::provider-inject
+{
+	injected++;
+}
+
+vsock:::provider-backpressure
+{
+	backpressure++;
+	@backpressure[arg1 ? "control" : "data"] = count();
+}
+
+vsock:::provider-reject
+{
+	rejected++;
+	@reject_errno[arg1] = count();
+}
+
+vsock:::pkt-drop
+{
+	rx_dropped++;
+	@rx_drop_reason[stringof(arg0)] = count();
+}
+
+vsock:::connect-request
+{
+	connects++;
+	printf("%-20Y CONNECT_REQUEST cid=%d port=%d\n",
+	    walltimestamp, arg0, arg1);
+}
+
+vsock:::connect-established
+{
+	established++;
+	printf("%-20Y CONNECTED       cid=%d port=%d\n",
+	    walltimestamp, arg0, arg1);
+}
+
+vsock:::connect-refused
+{
+	refused++;
+}
+
+vsock:::connect-timeout
+{
+	timeouts++;
+}
+
+vsock:::disconnect
+{
+	disconnected++;
+}
+
+tick-5sec
+{
+	printf("\n==== vsock kernel provider @ %Y ====\n", walltimestamp);
+	printf("queue depth:             %d\n", depth);
+	printf("enqueued/dequeued:       %d/%d\n", enqueued, dequeued);
+	printf("injected:                %d\n", injected);
+	printf("backpressure/rejected:   %d/%d\n", backpressure, rejected);
+	printf("domain RX drops:         %d\n", rx_dropped);
+	printf("connect/established:     %d/%d\n", connects, established);
+	printf("refused/timeout/closed:  %d/%d/%d\n",
+	    refused, timeouts, disconnected);
+	printf("queue-depth histogram:\n");
+	printa(@depth);
+	printf("backpressure by class:\n");
+	printa("  %-8s %@d\n", @backpressure);
+	printf("rejected provider packets by errno:\n");
+	printa("  errno=%d %@d\n", @reject_errno);
+	printf("domain RX drops by reason:\n");
+	printa("  %-24s %@d\n", @rx_drop_reason);
+
+	enqueued = 0; dequeued = 0; injected = 0;
+	backpressure = 0; rejected = 0;
+	rx_dropped = 0;
+	connects = 0; established = 0; refused = 0; timeouts = 0;
+	disconnected = 0;
+	trunc(@depth); trunc(@backpressure); trunc(@reject_errno);
+	trunc(@rx_drop_reason);
+}

@@ -183,6 +183,114 @@ static inline void mtx_unlock(struct mtx *m) { m->depth--; }
 static inline void mtx_assert(struct mtx *m __unused, int w __unused) {}
 #define MTX_SYSINIT(a,b,c,d)
 
+/* ---- kqueue/select: enough real list/readiness behavior for write tests ---- */
+#define EVFILT_READ	(-1)
+#define EVFILT_WRITE	(-2)
+#define EV_EOF		0x8000
+#define NOTE_LOWAT	0x0001
+#define SB_SEL		0x0001
+
+struct knote;
+struct thread;
+struct filterops {
+	int	f_isfd;
+	void	(*f_detach)(struct knote *);
+	int	(*f_event)(struct knote *, long);
+	void	(*f_copy)(struct knote *, struct knote *);
+};
+struct knote {
+	int			 kn_filter;
+	unsigned int		 kn_flags;
+	unsigned int		 kn_sfflags;
+	int64_t			 kn_data;
+	int64_t			 kn_sdata;
+	void			*kn_hook;
+	const struct filterops	*kn_fop;
+	struct knote		*kn_next;
+	int			 kn_triggered;
+};
+struct knlist {
+	struct knote	*head;
+	struct mtx	*lock;
+};
+struct selinfo {
+	struct knlist	 si_note;
+	unsigned int	 recorded;
+	unsigned int	 wakeups;
+};
+static inline void
+knlist_init_mtx(struct knlist *list, struct mtx *lock)
+{
+	list->head = NULL;
+	list->lock = lock;
+}
+static inline void
+knlist_destroy(struct knlist *list)
+{
+	if (list->head != NULL)
+		abort();
+}
+static inline void
+knlist_add(struct knlist *list, struct knote *kn, int locked __unused)
+{
+	kn->kn_next = list->head;
+	list->head = kn;
+}
+static inline void
+knlist_remove(struct knlist *list, struct knote *kn, int locked __unused)
+{
+	struct knote **cursor;
+
+	for (cursor = &list->head; *cursor != NULL;
+	    cursor = &(*cursor)->kn_next) {
+		if (*cursor == kn) {
+			*cursor = kn->kn_next;
+			kn->kn_next = NULL;
+			return;
+		}
+	}
+	abort();
+}
+static inline void
+knlist_clear(struct knlist *list, int locked __unused)
+{
+	struct knote *kn;
+
+	while ((kn = list->head) != NULL) {
+		list->head = kn->kn_next;
+		kn->kn_next = NULL;
+		kn->kn_flags |= EV_EOF;
+	}
+}
+static inline void
+knote_triv_copy(struct knote *src __unused, struct knote *dst __unused)
+{
+}
+static inline void
+kmock_knote_locked(struct knlist *list, long hint)
+{
+	struct knote *kn;
+
+	for (kn = list->head; kn != NULL; kn = kn->kn_next)
+		kn->kn_triggered = kn->kn_fop->f_event(kn, hint);
+}
+#define KNOTE_LOCKED(list, hint)	kmock_knote_locked((list), (hint))
+static inline void
+selrecord(struct thread *td __unused, struct selinfo *sel)
+{
+	sel->recorded++;
+}
+static inline void
+selwakeup(struct selinfo *sel)
+{
+	sel->wakeups++;
+	kmock_knote_locked(&sel->si_note, 0);
+}
+static inline void
+seldrain(struct selinfo *sel __unused)
+{
+}
+
 /* ---- sleep/wakeup ---- */
 #define PSOCK		0
 #define PCATCH		0
@@ -331,6 +439,7 @@ m_getm2(struct mbuf *prev __unused, int len, int how, int type, int flags)
  * ==================================================================== */
 struct sockbuf {
 	int		 sb_state;
+	int		 sb_flags;
 	u_int		 sb_cc;		/* bytes currently queued */
 	u_int		 sb_hiwat;
 	u_int		 sb_lowat;
@@ -357,6 +466,7 @@ struct socket {
 	short		 so_qlimit;
 	struct sockbuf	 so_rcv;
 	struct sockbuf	 so_snd;
+	struct selinfo	 so_wrsel;
 	/* listen-side overlay (real kernel unions these; keep separate here) */
 	u_int		 sol_sbrcv_hiwat;
 	u_int		 sol_sbsnd_hiwat;
@@ -472,6 +582,11 @@ void freeuio(struct uio *);
 void uioadvance(struct uio *, size_t);
 
 int sopoll_generic(struct socket *, int, struct thread *);
+static inline int
+sokqfilter_generic(struct socket *so __unused, struct knote *kn __unused)
+{
+	return (0);
+}
 int sosend_generic(struct socket *, struct sockaddr *, struct uio *,
     struct mbuf *, struct mbuf *, int, struct thread *);
 int soreceive_generic(struct socket *, struct sockaddr **, struct uio *,
@@ -490,6 +605,7 @@ struct protosw {
 	void	*pr_ctloutput; void *pr_setsbopt; void *pr_soreceive;
 	void	*pr_send; void *pr_sosend; void *pr_disconnect; void *pr_close;
 	void	*pr_detach; void *pr_shutdown; void *pr_abort; void *pr_sopoll;
+	void	*pr_kqfilter;
 	void	*pr_control;
 };
 struct domain { int dom_family; const char *dom_name; void *dom_probe;

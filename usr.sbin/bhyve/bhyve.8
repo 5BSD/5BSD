@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 21, 2026
+.Dd July 23, 2026
 .Dt BHYVE 8
 .Os
 .Sh NAME
@@ -585,12 +585,12 @@ The device is configured with
 The optional
 .Cm backend
 setting accepts
-.Cm unix
+.Cm userspace
 or
-.Cm native
+.Cm kernel
 and defaults to
-.Cm unix .
-The Unix backend also requires
+.Cm userspace .
+The userspace backend also requires
 .Cm path
 (existing host directory for Unix domain sockets).
 The optional
@@ -609,7 +609,7 @@ For host-to-guest connections, host processes connect to
 .Pa <path>/sock
 and send a 16-byte control message containing the command, guest port, socket
 type, and status fields.
-The native backend does not accept
+The kernel backend does not accept
 .Cm path .
 It attaches the VM to the host
 .Dv AF_VSOCK
@@ -621,7 +621,7 @@ so host applications use ordinary
 and
 .Xr connect 2
 calls with local CID 2 and the configured guest CID.
-Only one native backend may be active on a host at a time; a second instance
+Only one kernel backend may be active on a host at a time; a second instance
 fails with
 .Er EBUSY .
 See

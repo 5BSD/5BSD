@@ -85,7 +85,7 @@
 struct vsock_transport_attach {
 	uint32_t	version;
 	uint32_t	guest_cid;
-	uint64_t	features;
+	uint64_t	features;	/* VIRTIO_VSOCK_F_* device bits only */
 	uint64_t	reserved[2];
 };
 

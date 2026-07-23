@@ -30,29 +30,29 @@ Key facts that drive the setup (from the device header comment and
 
 * **bhyve is always CID 2** (`VSOCK_CID_HOST`). The guest CID is whatever you
   pass as `cid=` and **must be `>= 3` and `< 0xffffffff`**.
-* The default `backend=unix` mode uses **AF_UNIX sockets rooted in a
+* The default `backend=userspace` mode uses **AF_UNIX sockets rooted in a
   directory** supplied via `path=`.  It needs no host vsock kernel support.
-* `backend=native` instead attaches bhyve to the host `/dev/vsock` transport.
+* `backend=kernel` instead attaches bhyve to the host `/dev/vsock` transport.
   Host applications then use ordinary AF_VSOCK sockets, `path=` is invalid,
   and the host `vsock` module must be loaded.  The provider is exclusive and
   every running guest must have a unique CID.
-* **Guest → host (`backend=unix`):** guest connects to `CID 2 : <port>`;
+* **Guest → host (`backend=userspace`):** guest connects to `CID 2 : <port>`;
   bhyve `connectat()`s to
   `<dir>/<port>` (e.g. `<dir>/80`). A host process must be **listening on that
   Unix socket** or the guest gets `OP_RST` (ECONNRESET).
-* **Host → guest (`backend=unix`):** a host app connects to the control socket
+* **Host → guest (`backend=userspace`):** a host app connects to the control socket
   `<dir>/sock`,
   sends a `struct vsock_ctl_msg{cmd=VSOCK_CTL_CONNECT, port, type}`, and on
   success bhyve returns `status=0` plus one end of a socketpair via
   `SCM_RIGHTS`. There is no off-the-shelf tool for this handshake — use the
   `vsh-connect` helper in Appendix B.
-* In `backend=native` mode the same directions use host AF_VSOCK bind/connect
+* In `backend=kernel` mode the same directions use host AF_VSOCK bind/connect
   calls; the automated Alpine matrix covers both directions and transport
   reset through this path.
 * Loopback inside a guest uses **CID 1** (`VSOCK_CID_LOCAL`).
 
-The Unix backend matches the Firecracker/QEMU "hybrid vsock" model, while the
-native backend exposes the conventional host AF_VSOCK API.  A **stock Linux
+The userspace backend matches the Firecracker/QEMU "hybrid vsock" model, while
+the kernel backend exposes the conventional host AF_VSOCK API.  A **stock Linux
 guest virtio-vsock driver works unmodified** with either backend, which is what
 makes Linux a useful independent conformance oracle.
 
@@ -87,6 +87,10 @@ sudo sysctl hw.vmm.* | head # confirm vmm present
 # A working directory for images + the vsock unix-socket dir:
 mkdir -p ~/vm/vsock-sockdir     # this becomes path=<dir>
 ```
+
+The directory is needed only by `backend=userspace`.  To test
+`backend=kernel`, load `vsock.ko` on the host and ensure no other remote
+transport provider owns `/dev/vsock`.
 
 ### 2.3 (Linux guests only) UEFI firmware
 
@@ -170,14 +174,18 @@ bhyve -c 2 -m 2G -H -w \
   -s 0,hostbridge \
   -s 3,virtio-blk,~/vm/bsd-guest.img \
   -s 4,virtio-net,tap0 \
-  -s 5,virtio-vsock,cid=${CID},path=${DIR} \
+  -s 5,virtio-vsock,cid=${CID},backend=userspace,path=${DIR} \
   -s 31,lpc -l com1,stdio \
   bsdguest
 ```
 
-The device string is `virtio-vsock,cid=<N>,path=<dir>` (parsed by
-`pci_vtvsock_legacy_config`). Set `BHYVE_VTVSOCK_DEBUG=1` in bhyve's environment
-to get per-packet host-side drop/parse tracing.
+The userspace device string is
+`virtio-vsock,cid=<N>,backend=userspace,path=<dir>` (parsed by
+`pci_vtvsock_legacy_config`).  Omitting `backend` selects `userspace` for
+compatibility.  The kernel form is
+`virtio-vsock,cid=<N>,backend=kernel` and does not accept `path`.  Set
+`BHYVE_VTVSOCK_DEBUG=1` in bhyve's environment for lifecycle and error
+tracing, or use level 2 for per-packet metadata.
 
 ### 3.4 Verify attach inside the guest
 
@@ -243,7 +251,7 @@ bhyve -c 2 -m 2G -H -w \
   -s 0,hostbridge \
   -s 3,virtio-blk,~/vm/linux-guest.raw \
   -s 4,virtio-net,tap1 \
-  -s 5,virtio-vsock,cid=${CID},path=${DIR} \
+  -s 5,virtio-vsock,cid=${CID},backend=userspace,path=${DIR} \
   -s 29,fbuf,tcp=0.0.0.0:5900,w=800,h=600 \
   -s 31,lpc -l com1,stdio \
   -l bootrom,${UEFI} \
@@ -367,16 +375,28 @@ Do these explicitly with **5BSD host + Linux guest** and compare against
 
 * Rows 1–6 with Linux as the guest exercise our host device against an
   independent transport — the strongest conformance signal.
-* Capture `BHYVE_VTVSOCK_DEBUG=1` host logs and/or the `share/dtrace/vsock-*`
+* Capture `BHYVE_VTVSOCK_DEBUG=2` host logs and/or the `share/dtrace/vsock-*`
   scripts during rows 3, 4, 9 to watch credit accounting under load.
 
 ---
 
 ## 7. What to watch / instrumentation
 
-* **Host:** run bhyve with `BHYVE_VTVSOCK_DEBUG=1` for per-packet drop/parse
-  diagnostics; attach the `vsock-connections` / `vsock-perf` / `vsock-security`
-  DTrace scripts under `share/dtrace/`.
+* **Host, both backends:** run bhyve with `BHYVE_VTVSOCK_DEBUG=1` for lifecycle
+  and error diagnostics or `BHYVE_VTVSOCK_DEBUG=2` for per-packet metadata.
+  `vsock-overview` shows the combined host view.  The `vsock-security` script
+  likewise includes both bhyve descriptor rejections and kernel-provider
+  rejects.
+* **Host, `backend=userspace`:** `vsock-connections` and `vsock-perf` report
+  bhyve's relay lifecycle, credit, and bounded-resource state.
+* **Host, `backend=kernel`:** `vsock-provider` traces privileged
+  `/dev/vsock` provider attach/detach/reset, packet queue depth, backpressure,
+  invalid provider packets, and host AF_VSOCK connection churn.  When kernel
+  auditing is enabled and the relevant class is selected, the standard
+  FreeBSD audit trail records privileged provider control ioctls as
+  `AUE_IOCTL`.  Neither backend has a dedicated BSM event for every packet or
+  vsock connection; DTrace supplies the vsock-specific CID, feature, queue,
+  and lifecycle metadata without recording payloads.
 * **5BSD guest:** `sysctl kern.vsock` (guest_cid, counters, max_conn); `netstat`
   additions if present; `dtrace` on the guest driver.
 * **Leak checks:** after each teardown scenario confirm host conn/ctl-conn and
@@ -515,7 +535,7 @@ int main(int argc, char **argv) {
 | `vmm.ko` | `kldload vmm` | — | — |
 | edk2 UEFI (`BHYVE_UEFI.fd`) | `pkg install edk2-bhyve` (Linux guest only) | — | — |
 | `vsock.ko` + `virtio_vsock.ko` | — | build from tree (§3.2) | — (built into distro kernel) |
-| vsock kernel modules | not needed on host | `virtio_vsock_load=YES` | `modprobe vsock vmw_vsock_virtio_transport` |
+| vsock kernel modules | `vsock_load=YES` for `backend=kernel`; not needed for `backend=userspace` | `virtio_vsock_load=YES` | `modprobe vsock vmw_vsock_virtio_transport` |
 | Guest OS image | — | build/install from fork (§3.1) | download distro cloud image (§4.1) |
 | Test tooling | `vsh-connect` (App. B), `nc -U` | App. A helpers, `kyua`/ATF | `socat`, `python3`, `ncat` |
 
@@ -527,7 +547,7 @@ int main(int argc, char **argv) {
 # HOST
 CID=3; DIR=~/vm/vsock-sockdir; mkdir -p $DIR
 kldload vmm
-# ... launch 5BSD guest with -s 5,virtio-vsock,cid=$CID,path=$DIR (see §3.3)
+# ... launch 5BSD guest with backend=userspace,path=$DIR (see §3.3)
 nc -lU $DIR/1234 &                 # host listener for guest->host
 
 # GUEST (5BSD)

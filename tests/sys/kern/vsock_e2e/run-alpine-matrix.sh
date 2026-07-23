@@ -7,7 +7,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 ISO=${ISO:?set ISO to an Alpine virt ISO}
 WORKDIR=${WORKDIR:-/tmp/bhyve-virtio-alpine-matrix}
 TRANSPORTS=${TRANSPORTS:-"modern legacy"}
-TOPOLOGIES=${TOPOLOGIES:-"net vsock vsock-native rng block scsi console 9p input combined"}
+TOPOLOGIES=${TOPOLOGIES:-"net vsock-userspace vsock-kernel rng block scsi console 9p input combined"}
 VM_FREE_GATES=${VM_FREE_GATES:-yes}
 reset_test_default=${RESET_TEST:-no}
 reboot_test_default=${REBOOT_TEST:-no}
@@ -66,22 +66,22 @@ esac
 
 for topology in $TOPOLOGIES; do
 	case "$topology" in
-	net|vsock|vsock-native|rng|block|scsi|console|9p|input|combined) ;;
+	net|vsock-userspace|vsock-kernel|rng|block|scsi|console|9p|input|combined) ;;
 	*) echo "invalid topology: $topology" >&2; exit 2 ;;
 	esac
 	for transport in $TRANSPORTS; do
 		case "$transport" in modern|legacy) ;;
 		*) echo "invalid transport: $transport" >&2; exit 2 ;;
 		esac
-		backend=unix
+		backend=userspace
 		reset_test=$reset_test_default
 		reboot_test=$reboot_test_default
 		case "$topology:$transport" in
 		net:*) devices=net ;;
-		vsock:*) devices=vsock ;;
-		vsock-native:*)
+		vsock-userspace:*) devices=vsock ;;
+		vsock-kernel:*)
 			devices=vsock
-			backend=native
+			backend=kernel
 			# Exercise VSOCK_IOC_TRANSPORT_RESET on driver reset and
 			# provider detach/re-attach across monitor-mode reboot.
 			reset_test=yes

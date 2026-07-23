@@ -40,6 +40,8 @@ struct cap_pkt { uint16_t op, type; uint32_t src_port, dst_port, len, flags,
 static struct cap_pkt g_inject[128];
 static int g_ninject;
 static int g_rx_descs = 256;
+static struct vqueue_info *g_one_shot_vq;
+static bool g_one_shot_vq_consumed;
 static uint8_t g_rxbuf[64 * 1024 + 128];
 /* Size the guest RX buffer vq_getchain() hands back; tests shrink it to
  * exercise host->guest packet fragmentation to a small (e.g. 4 KiB Linux) RX
@@ -75,21 +77,38 @@ static int g_writev_errno;
 static int g_needs_reset_calls;
 static unsigned long g_ioctl_fail_request;
 static int g_ioctl_fail_errno;
+static unsigned long g_ioctl_last_request;
+static uint64_t g_ioctl_features;
 
 /* ================= mock virtio RX ring ================= */
-int vq_has_descs(struct vqueue_info *vq) { (void)vq; return (g_rx_descs > 0); }
+int
+vq_has_descs(struct vqueue_info *vq)
+{
+	if (vq == g_one_shot_vq)
+		return (!g_one_shot_vq_consumed);
+	return (g_rx_descs > 0);
+}
 int
 vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
     struct vi_req *req)
 {
-	(void)vq;
+	if (vq == g_one_shot_vq) {
+		if (g_one_shot_vq_consumed)
+			return (0);
+		g_one_shot_vq_consumed = true;
+	}
 	if (niov < 1 || g_rx_descs <= 0)
 		return (0);
 	iov[0].iov_base = g_rxbuf;
 	iov[0].iov_len = g_rxbuf_len;
 	req->idx = 0;
-	req->readable = g_chain_readable;
-	req->writable = g_chain_writable;
+	if (vq == g_one_shot_vq) {
+		req->readable = 1;
+		req->writable = 0;
+	} else {
+		req->readable = g_chain_readable;
+		req->writable = g_chain_writable;
+	}
 	if (g_getchain_consumes)
 		g_rx_descs--;		/* let drop-everything loops terminate */
 	return (1);
@@ -252,6 +271,9 @@ static size_t g_recv_chunk_max;	/* limit one recv(), 0 means unlimited */
 static int g_recv_eof;		/* when set, recv() returns 0 (EOF) once drained */
 static int g_recv_zero_dgram;	/* a real 0-length SEQPACKET record is queued */
 static int g_recv_no_eor;	/* SEQPACKET record delivered WITHOUT MSG_EOR */
+static bool g_sendmsg_override;
+static ssize_t g_sendmsg_result;
+static int g_sendmsg_errno;
 ssize_t
 __wrap_recv(int fd, void *b, size_t n, int f)
 {
@@ -275,14 +297,22 @@ __wrap_recv(int fd, void *b, size_t n, int f)
 	g_recv_off += take;
 	return (ssize_t)take;
 }
-ssize_t __wrap_sendmsg(int fd, const struct msghdr *m, int f)
-{ (void)fd; (void)f; return (m->msg_iovlen ? (ssize_t)m->msg_iov[0].iov_len : 0); }
+ssize_t
+__wrap_sendmsg(int fd, const struct msghdr *m, int f)
+{
+	(void)fd;
+	(void)f;
+	if (g_sendmsg_override) {
+		errno = g_sendmsg_errno;
+		return (g_sendmsg_result);
+	}
+	return (m->msg_iovlen ? (ssize_t)m->msg_iov[0].iov_len : 0);
+}
 /*
- * recvmsg() is NOT in the Makefile's ld --wrap set, so this plain definition
- * shadows libc's recvmsg for the whole test binary.  The device's SEQPACKET RX
- * probe (vtvsock_conn_data_cb) uses recvmsg to tell a real EOF from an empty
- * datagram; model both here.  Consuming reads (no MSG_PEEK) dequeue the staged
- * record, mirroring __wrap_recv's staging so the two stay consistent.
+ * recvmsg() is in both harness linkers' --wrap sets.  The device's SEQPACKET
+ * RX probe (vtvsock_conn_data_cb) uses it to distinguish a real EOF from an
+ * empty datagram; model both here.  Consuming reads (no MSG_PEEK) dequeue the
+ * staged record, mirroring __wrap_recv's staging so the two stay consistent.
  */
 ssize_t
 __wrap_recvmsg(int fd, struct msghdr *m, int flags)
@@ -335,6 +365,7 @@ __wrap_ioctl(int fd, unsigned long request, ...)
 {
 	va_list ap;
 	int *argp;
+	uint64_t *featuresp;
 
 	(void)fd;
 	if (request == g_ioctl_fail_request) {
@@ -347,6 +378,13 @@ __wrap_ioctl(int fd, unsigned long request, ...)
 		va_end(ap);
 		if (argp != NULL)
 			*argp = (int)(g_recv_len - g_recv_off);
+	} else if (request == VSOCK_IOC_TRANSPORT_SET_FEATURES) {
+		va_start(ap, request);
+		featuresp = va_arg(ap, uint64_t *);
+		va_end(ap);
+		g_ioctl_last_request = request;
+		if (featuresp != NULL)
+			g_ioctl_features = *featuresp;
 	}
 	return (0);
 }
@@ -442,10 +480,12 @@ reset_caps(void)
 {
 	g_ninject = 0; g_send_calls = 0; g_send_len = 0;
 	g_rx_descs = 256; g_connectat_result = 0;
+	g_one_shot_vq = NULL; g_one_shot_vq_consumed = false;
 	g_socket_calls = 0; g_connectat_calls = 0;
 	g_rxbuf_len = sizeof(g_rxbuf);
 	g_recv_len = 0; g_recv_off = 0; g_recv_chunk_max = 0; g_recv_eof = 0;
 	g_recv_zero_dgram = 0; g_recv_no_eor = 0;
+	g_sendmsg_override = false; g_sendmsg_result = 0; g_sendmsg_errno = 0;
 	g_chain_readable = 0; g_chain_writable = 1; g_getchain_consumes = 0;
 	g_rel_len = 0; g_endchains = 0;
 	g_mevent_enable_calls = 0;
@@ -456,6 +496,29 @@ reset_caps(void)
 	g_needs_reset_calls = 0;
 	g_ioctl_fail_request = 0;
 	g_ioctl_fail_errno = 0;
+	g_ioctl_last_request = 0;
+	g_ioctl_features = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(send_fd_requires_complete_frame);
+ATF_TC_BODY(send_fd_requires_complete_frame, tc)
+{
+	static const char reply[] = "control-reply";
+
+	reset_caps();
+	ATF_CHECK(vtvsock_send_fd(10, 11, reply, sizeof(reply)) == 0);
+
+	g_sendmsg_override = true;
+	g_sendmsg_result = sizeof(reply) - 1;
+	errno = 0;
+	ATF_CHECK(vtvsock_send_fd(10, 11, reply, sizeof(reply)) == -1);
+	ATF_CHECK(errno == EMSGSIZE);
+
+	g_sendmsg_result = -1;
+	g_sendmsg_errno = EAGAIN;
+	errno = 0;
+	ATF_CHECK(vtvsock_send_fd(10, 11, reply, sizeof(reply)) == -1);
+	ATF_CHECK(errno == EAGAIN);
 }
 
 ATF_TC_WITHOUT_HEAD(port_allocator_skips_reserved);
@@ -1696,7 +1759,7 @@ ATF_TC_BODY(ctl_connect_accepts_short_reads, tc)
 
 /*
  * --- only the two socket types represented by virtio-vsock are accepted.
- * An invalid native socket type gets a deterministic error reply and must not
+ * An invalid kernel socket type gets a deterministic error reply and must not
  * create a relay socket or emit a request to the guest. ---
  */
 ATF_TC_WITHOUT_HEAD(ctl_connect_rejects_invalid_type);
@@ -1914,25 +1977,89 @@ ATF_TC_BODY(tx_oversized_paylen_dropped, tc)
 	free(sc);
 }
 
-ATF_TC_WITHOUT_HEAD(native_rx_fragments_for_guest_buffers);
-ATF_TC_BODY(native_rx_fragments_for_guest_buffers, tc)
+/*
+ * --- malformed guest TX: control operations are header-only.  Reject a
+ * payload-bearing CREDIT_UPDATE before it reaches either backend.  Use the
+ * kernel backend here so a regression cannot hand the malformed frame to the
+ * host /dev/vsock provider; the validation is shared with the userspace
+ * backend. ---
+ */
+ATF_TC_WITHOUT_HEAD(tx_control_payload_dropped);
+ATF_TC_BODY(tx_control_payload_dropped, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr *h = (void *)g_rxbuf;
+
+	reset_caps();
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_fd = 700;
+	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
+	    1234, 80, 1, 0, 256 * 1024, 0);
+	g_rxbuf[sizeof(*h)] = 0xa5;
+	g_rxbuf_len = sizeof(*h) + 1;
+	g_chain_readable = 1;
+	g_chain_writable = 0;
+	g_getchain_consumes = 1;
+	g_rx_descs = 1;
+
+	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
+	ATF_CHECK(g_writev_calls == 0);
+	ATF_CHECK(g_send_calls == 0);
+	ATF_CHECK(g_rx_descs == 0);
+	ATF_CHECK(g_needs_reset_calls == 0);
+	ATF_CHECK(!sc->vsc_kernel_failed);
+	free(sc);
+}
+
+/*
+ * --- malformed guest TX: an OP_RW must supply every byte declared by
+ * hdr.len.  A short descriptor chain is dropped rather than forwarded as a
+ * truncated message or charged inconsistently against connection credit. ---
+ */
+ATF_TC_WITHOUT_HEAD(tx_truncated_payload_dropped);
+ATF_TC_BODY(tx_truncated_payload_dropped, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr *h = (void *)g_rxbuf;
+
+	reset_caps();
+	(void)mk_established(sc, 1234, 80, STREAM);
+	mkhdr(h, VIRTIO_VSOCK_OP_RW, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    8, 0, 256 * 1024, 0);
+	memset(g_rxbuf + sizeof(*h), 0x5a, 4);
+	g_rxbuf_len = sizeof(*h) + 4;
+	g_chain_readable = 1;
+	g_chain_writable = 0;
+	g_getchain_consumes = 1;
+	g_rx_descs = 1;
+
+	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
+	ATF_CHECK(g_send_calls == 0);
+	ATF_CHECK(g_writev_calls == 0);
+	ATF_CHECK(g_rx_descs == 0);
+	ATF_CHECK(nconns(sc) == 1);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(kernel_rx_fragments_for_guest_buffers);
+ATF_TC_BODY(kernel_rx_fragments_for_guest_buffers, tc)
 {
 	struct pci_vtvsock_softc *sc = mk_sc();
 	struct virtio_vsock_hdr *h;
 	uint32_t payload_len = 5000;
 
 	reset_caps();
-	sc->vsc_native = true;
-	sc->vsc_native_rx = calloc(1, sizeof(*h) + payload_len);
-	ATF_REQUIRE(sc->vsc_native_rx != NULL);
-	h = (struct virtio_vsock_hdr *)sc->vsc_native_rx;
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_rx = calloc(1, sizeof(*h) + payload_len);
+	ATF_REQUIRE(sc->vsc_kernel_rx != NULL);
+	h = (struct virtio_vsock_hdr *)sc->vsc_kernel_rx;
 	mkhdr(h, VIRTIO_VSOCK_OP_RW, SEQPACKET, VSOCK_CID_HOST, 3,
 	    80, 1234, payload_len,
 	    VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR, 65536, 0);
 	g_rxbuf_len = sizeof(*h) + 2048;
 	g_rx_descs = 3;
 	pthread_mutex_lock(&sc->vsc_mtx);
-	vtvsock_native_drain(sc);
+	vtvsock_kernel_drain(sc);
 	pthread_mutex_unlock(&sc->vsc_mtx);
 	ATF_CHECK(g_ninject == 3);
 	ATF_CHECK(g_inject[0].len == 2048);
@@ -1942,12 +2069,12 @@ ATF_TC_BODY(native_rx_fragments_for_guest_buffers, tc)
 	ATF_CHECK(g_inject[1].flags == 0);
 	ATF_CHECK(g_inject[2].flags ==
 	    (VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR));
-	ATF_CHECK(sc->vsc_native_rx == NULL);
+	ATF_CHECK(sc->vsc_kernel_rx == NULL);
 	free(sc);
 }
 
-ATF_TC_WITHOUT_HEAD(native_rx_accepts_header_only_packet);
-ATF_TC_BODY(native_rx_accepts_header_only_packet, tc)
+ATF_TC_WITHOUT_HEAD(kernel_rx_accepts_header_only_packet);
+ATF_TC_BODY(kernel_rx_accepts_header_only_packet, tc)
 {
 	struct pci_vtvsock_softc *sc = mk_sc();
 	struct virtio_vsock_hdr h;
@@ -1964,8 +2091,8 @@ ATF_TC_BODY(native_rx_accepts_header_only_packet, tc)
 	free(sc);
 }
 
-ATF_TC_WITHOUT_HEAD(native_rx_large_descriptor_capacity);
-ATF_TC_BODY(native_rx_large_descriptor_capacity, tc)
+ATF_TC_WITHOUT_HEAD(kernel_rx_large_descriptor_capacity);
+ATF_TC_BODY(kernel_rx_large_descriptor_capacity, tc)
 {
 	struct pci_vtvsock_softc *sc = mk_sc();
 	struct virtio_vsock_hdr h;
@@ -1985,8 +2112,8 @@ ATF_TC_BODY(native_rx_large_descriptor_capacity, tc)
 	free(sc);
 }
 
-ATF_TC_WITHOUT_HEAD(native_rx_reuses_preallocated_buffer);
-ATF_TC_BODY(native_rx_reuses_preallocated_buffer, tc)
+ATF_TC_WITHOUT_HEAD(kernel_rx_reuses_preallocated_buffer);
+ATF_TC_BODY(kernel_rx_reuses_preallocated_buffer, tc)
 {
 	struct pci_vtvsock_softc *sc = mk_sc();
 	struct virtio_vsock_hdr h;
@@ -1998,39 +2125,84 @@ ATF_TC_BODY(native_rx_reuses_preallocated_buffer, tc)
 	ATF_REQUIRE(__real_fcntl(sv[0], F_SETFL, O_NONBLOCK) == 0);
 	buffer = calloc(1, sizeof(h) + VTVSOCK_MAX_PKT);
 	ATF_REQUIRE(buffer != NULL);
-	sc->vsc_native = true;
-	sc->vsc_native_rx_buf = buffer;
-	sc->vsc_native_evp = &g_mev[0];
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_rx_buf = buffer;
+	sc->vsc_kernel_evp = &g_mev[0];
 	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	mkhdr(&h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, VSOCK_CID_HOST, 3,
 	    80, 1234, 0, 0, 65536, 0);
 	g_rxbuf_len = sizeof(h);
 	g_rx_descs = 1;
 	ATF_REQUIRE(write(sv[1], &h, sizeof(h)) == sizeof(h));
-	vtvsock_native_read_cb(sv[0], EVF_READ, sc);
+	vtvsock_kernel_read_cb(sv[0], EVF_READ, sc);
 	ATF_CHECK(g_ninject == 1);
-	ATF_CHECK(sc->vsc_native_rx == NULL);
-	ATF_CHECK(sc->vsc_native_rx_buf == buffer);
-	ATF_CHECK(!sc->vsc_native_failed);
+	ATF_CHECK(sc->vsc_kernel_rx == NULL);
+	ATF_CHECK(sc->vsc_kernel_rx_buf == buffer);
+	ATF_CHECK(!sc->vsc_kernel_failed);
 	__real_close(sv[1]);
 	__real_close(sv[0]);
 	free(buffer);
 	free(sc);
 }
 
-ATF_TC_WITHOUT_HEAD(native_rx_fatal_error_disables_event);
-ATF_TC_BODY(native_rx_fatal_error_disables_event, tc)
+ATF_TC_WITHOUT_HEAD(kernel_rx_refill_pulls_queued_packet);
+ATF_TC_BODY(kernel_rx_refill_pulls_queued_packet, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr h;
+	uint8_t *buffer;
+	int disable_calls, sv[2];
+
+	reset_caps();
+	ATF_REQUIRE(__real_socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
+	ATF_REQUIRE(__real_fcntl(sv[0], F_SETFL, O_NONBLOCK) == 0);
+	buffer = calloc(1, sizeof(h) + VTVSOCK_MAX_PKT);
+	ATF_REQUIRE(buffer != NULL);
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_fd = sv[0];
+	sc->vsc_kernel_rx_buf = buffer;
+	sc->vsc_kernel_evp = &g_mev[0];
+	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	mkhdr(&h, VIRTIO_VSOCK_OP_RST, STREAM, VSOCK_CID_HOST, 3,
+	    7109, 1234, 0, 0, 0, 0);
+
+	/* The provider becomes readable before the guest posts an RX buffer. */
+	g_rx_descs = 0;
+	ATF_REQUIRE(write(sv[1], &h, sizeof(h)) == sizeof(h));
+	vtvsock_kernel_read_cb(sv[0], EVF_READ, sc);
+	ATF_CHECK(g_ninject == 0);
+	ATF_CHECK(sc->vsc_kernel_rx == NULL);
+	disable_calls = g_mevent_disable_calls;
+	ATF_CHECK(disable_calls > 0);
+
+	/* Refilling RX must pull the already-queued RST without a new event. */
+	g_rxbuf_len = sizeof(h);
+	g_rx_descs = 1;
+	pci_vtvsock_notify_rx(sc, &sc->vsc_queues[VTVSOCK_RXQ]);
+	ATF_CHECK(g_ninject == 1);
+	ATF_CHECK(g_inject[0].op == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(sc->vsc_kernel_rx == NULL);
+	ATF_CHECK(!sc->vsc_kernel_failed);
+
+	__real_close(sv[1]);
+	__real_close(sv[0]);
+	free(buffer);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(kernel_rx_fatal_error_disables_event);
+ATF_TC_BODY(kernel_rx_fatal_error_disables_event, tc)
 {
 	struct pci_vtvsock_softc *sc = mk_sc();
 	int enable_calls;
 
 	reset_caps();
-	sc->vsc_native = true;
-	sc->vsc_native_evp = &g_mev[0];
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_evp = &g_mev[0];
 	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
-	vtvsock_native_read_cb(-1, EVF_READ, sc);
+	vtvsock_kernel_read_cb(-1, EVF_READ, sc);
 	ATF_CHECK(g_mevent_disable_calls == 1);
-	ATF_CHECK(sc->vsc_native_failed);
+	ATF_CHECK(sc->vsc_kernel_failed);
 	ATF_CHECK(g_needs_reset_calls == 1);
 	ATF_CHECK((sc->vsc_vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
 	enable_calls = g_mevent_enable_calls;
@@ -2040,15 +2212,141 @@ ATF_TC_BODY(native_rx_fatal_error_disables_event, tc)
 	free(sc);
 }
 
-ATF_TC_WITHOUT_HEAD(native_tx_fatal_error_needs_reset);
-ATF_TC_BODY(native_tx_fatal_error_needs_reset, tc)
+ATF_TC_WITHOUT_HEAD(kernel_rx_short_packet_needs_reset);
+ATF_TC_BODY(kernel_rx_short_packet_needs_reset, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	uint8_t byte, *buffer;
+	int sv[2];
+
+	reset_caps();
+	ATF_REQUIRE(__real_socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
+	ATF_REQUIRE(__real_fcntl(sv[0], F_SETFL, O_NONBLOCK) == 0);
+	buffer = calloc(1, sizeof(struct virtio_vsock_hdr) + VTVSOCK_MAX_PKT);
+	ATF_REQUIRE(buffer != NULL);
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_rx_buf = buffer;
+	sc->vsc_kernel_evp = &g_mev[0];
+	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	g_rx_descs = 1;
+	byte = 0xa5;
+	ATF_REQUIRE(write(sv[1], &byte, sizeof(byte)) == sizeof(byte));
+
+	vtvsock_kernel_read_cb(sv[0], EVF_READ, sc);
+	ATF_CHECK(sc->vsc_kernel_failed);
+	ATF_CHECK(g_needs_reset_calls == 1);
+	ATF_CHECK((sc->vsc_vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	ATF_CHECK(g_mevent_disable_calls == 1);
+	ATF_CHECK(g_ninject == 0);
+
+	__real_close(sv[1]);
+	__real_close(sv[0]);
+	free(buffer);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(kernel_rx_length_mismatch_needs_reset);
+ATF_TC_BODY(kernel_rx_length_mismatch_needs_reset, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr h;
+	uint8_t *buffer;
+	int sv[2];
+
+	reset_caps();
+	ATF_REQUIRE(__real_socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
+	ATF_REQUIRE(__real_fcntl(sv[0], F_SETFL, O_NONBLOCK) == 0);
+	buffer = calloc(1, sizeof(h) + VTVSOCK_MAX_PKT);
+	ATF_REQUIRE(buffer != NULL);
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_rx_buf = buffer;
+	sc->vsc_kernel_evp = &g_mev[0];
+	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	g_rx_descs = 1;
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, STREAM, VSOCK_CID_HOST, 3,
+	    80, 1234, 1, 0, 65536, 0);
+	ATF_REQUIRE(write(sv[1], &h, sizeof(h)) == sizeof(h));
+
+	vtvsock_kernel_read_cb(sv[0], EVF_READ, sc);
+	ATF_CHECK(sc->vsc_kernel_failed);
+	ATF_CHECK(g_needs_reset_calls == 1);
+	ATF_CHECK((sc->vsc_vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	ATF_CHECK(g_mevent_disable_calls == 1);
+	ATF_CHECK(g_ninject == 0);
+
+	__real_close(sv[1]);
+	__real_close(sv[0]);
+	free(buffer);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(kernel_reset_success_recovers_backend);
+ATF_TC_BODY(kernel_reset_success_recovers_backend, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr *h;
+	uint8_t *buffer;
+	int sv[2];
+
+	reset_caps();
+	ATF_REQUIRE(__real_socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
+	ATF_REQUIRE(__real_fcntl(sv[0], F_SETFL, O_NONBLOCK) == 0);
+	buffer = calloc(1, sizeof(*h) + VTVSOCK_MAX_PKT);
+	ATF_REQUIRE(buffer != NULL);
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_fd = sv[0];
+	sc->vsc_kernel_failed = true;
+	sc->vsc_kernel_rx_buf = buffer;
+	sc->vsc_kernel_rx = calloc(1, sizeof(*h));
+	ATF_REQUIRE(sc->vsc_kernel_rx != NULL);
+	sc->vsc_kernel_rx_off = 7;
+	sc->vsc_kernel_tx = calloc(1, sizeof(*h));
+	ATF_REQUIRE(sc->vsc_kernel_tx != NULL);
+	sc->vsc_kernel_tx_len = sizeof(*h);
+	sc->vsc_kernel_evp = &g_mev[0];
+	sc->vsc_kernel_write_evp = &g_mev[1];
+
+	pci_vtvsock_reset(sc);
+	ATF_CHECK(!sc->vsc_kernel_failed);
+	ATF_CHECK(sc->vsc_kernel_rx == NULL);
+	ATF_CHECK(sc->vsc_kernel_rx_off == 0);
+	ATF_CHECK(sc->vsc_kernel_tx == NULL);
+	ATF_CHECK(sc->vsc_kernel_tx_len == 0);
+	ATF_CHECK(g_mevent_disable_calls == 1);
+
+	pci_vtvsock_neg_features(sc, VIRTIO_VSOCK_F_STREAM);
+	ATF_CHECK(!sc->vsc_kernel_failed);
+	ATF_CHECK(g_ioctl_features == VIRTIO_VSOCK_F_STREAM);
+
+	h = (struct virtio_vsock_hdr *)g_rxbuf;
+	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
+	    1234, 80, 0, 0, 65536, 0);
+	g_rxbuf_len = sizeof(*h);
+	g_chain_readable = 1;
+	g_chain_writable = 0;
+	g_getchain_consumes = 1;
+	g_rx_descs = 1;
+	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
+	ATF_CHECK(g_writev_calls == 1);
+	ATF_CHECK(!sc->vsc_kernel_failed);
+	ATF_CHECK(g_needs_reset_calls == 0);
+
+	__real_close(sv[1]);
+	__real_close(sv[0]);
+	free(buffer);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(kernel_tx_fatal_error_needs_reset);
+ATF_TC_BODY(kernel_tx_fatal_error_needs_reset, tc)
 {
 	struct pci_vtvsock_softc *sc = mk_sc();
 	struct virtio_vsock_hdr *h = (void *)g_rxbuf;
 
 	reset_caps();
-	sc->vsc_native = true;
-	sc->vsc_native_fd = 700;
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_fd = 700;
 	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
 	    1234, 80, 0, 0, 65536, 0);
@@ -2062,7 +2360,7 @@ ATF_TC_BODY(native_tx_fatal_error_needs_reset, tc)
 	g_writev_errno = ENXIO;
 	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
 	ATF_CHECK(g_writev_calls == 1);
-	ATF_CHECK(sc->vsc_native_failed);
+	ATF_CHECK(sc->vsc_kernel_failed);
 	ATF_CHECK(g_needs_reset_calls == 1);
 	ATF_CHECK((sc->vsc_vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
 	ATF_CHECK(g_rx_descs == 1);
@@ -2073,17 +2371,45 @@ ATF_TC_BODY(native_tx_fatal_error_needs_reset, tc)
 	free(sc);
 }
 
-ATF_TC_WITHOUT_HEAD(native_tx_backpressure_is_retried);
-ATF_TC_BODY(native_tx_backpressure_is_retried, tc)
+ATF_TC_WITHOUT_HEAD(kernel_tx_short_write_needs_reset);
+ATF_TC_BODY(kernel_tx_short_write_needs_reset, tc)
 {
 	struct pci_vtvsock_softc *sc = mk_sc();
 	struct virtio_vsock_hdr *h = (void *)g_rxbuf;
 
 	reset_caps();
-	sc->vsc_native = true;
-	sc->vsc_native_fd = 700;
-	sc->vsc_native_write_evp = mevent_add_disabled(700, EVF_WRITE,
-	    vtvsock_native_write_cb, sc);
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_fd = 700;
+	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
+	    1234, 80, 0, 0, 65536, 0);
+	g_rxbuf_len = sizeof(*h);
+	g_chain_readable = 1;
+	g_chain_writable = 0;
+	g_getchain_consumes = 1;
+	g_rx_descs = 1;
+	g_writev_override = true;
+	g_writev_result = sizeof(*h) - 1;
+	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
+	ATF_CHECK(g_writev_calls == 1);
+	ATF_CHECK(sc->vsc_kernel_failed);
+	ATF_CHECK(g_needs_reset_calls == 1);
+	ATF_CHECK((sc->vsc_vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	ATF_CHECK(g_rx_descs == 0);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(kernel_tx_backpressure_is_retried);
+ATF_TC_BODY(kernel_tx_backpressure_is_retried, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr *h = (void *)g_rxbuf;
+
+	reset_caps();
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_fd = 700;
+	sc->vsc_kernel_write_evp = mevent_add_disabled(700, EVF_WRITE,
+	    vtvsock_kernel_write_cb, sc);
 	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
 	    1234, 80, 0, 0, 65536, 0);
 	g_rxbuf_len = sizeof(*h);
@@ -2095,32 +2421,72 @@ ATF_TC_BODY(native_tx_backpressure_is_retried, tc)
 	g_writev_result = -1;
 	g_writev_errno = EWOULDBLOCK;
 	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
-	ATF_CHECK(!sc->vsc_native_failed);
-	ATF_REQUIRE(sc->vsc_native_tx != NULL);
-	ATF_CHECK(sc->vsc_native_tx_len == sizeof(*h));
+	ATF_CHECK(!sc->vsc_kernel_failed);
+	ATF_REQUIRE(sc->vsc_kernel_tx != NULL);
+	ATF_CHECK(sc->vsc_kernel_tx_len == sizeof(*h));
 	ATF_CHECK(g_rx_descs == 1);
 	ATF_CHECK(g_writev_calls == 1);
 	ATF_CHECK(g_mevent_enable_calls == 1);
 
 	g_writev_override = false;
-	vtvsock_native_write_cb(700, EVF_WRITE, sc);
-	ATF_CHECK(sc->vsc_native_tx == NULL);
-	ATF_CHECK(!sc->vsc_native_failed);
+	vtvsock_kernel_write_cb(700, EVF_WRITE, sc);
+	ATF_CHECK(sc->vsc_kernel_tx == NULL);
+	ATF_CHECK(!sc->vsc_kernel_failed);
 	ATF_CHECK(g_rx_descs == 0);
 	ATF_CHECK(g_writev_calls == 3);
 	ATF_CHECK(g_mevent_disable_calls == 1);
 	free(sc);
 }
 
-ATF_TC_WITHOUT_HEAD(native_tx_malformed_packet_is_dropped);
-ATF_TC_BODY(native_tx_malformed_packet_is_dropped, tc)
+ATF_TC_WITHOUT_HEAD(kernel_tx_retry_short_write_needs_reset);
+ATF_TC_BODY(kernel_tx_retry_short_write_needs_reset, tc)
 {
 	struct pci_vtvsock_softc *sc = mk_sc();
 	struct virtio_vsock_hdr *h = (void *)g_rxbuf;
 
 	reset_caps();
-	sc->vsc_native = true;
-	sc->vsc_native_fd = 700;
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_fd = 700;
+	sc->vsc_kernel_write_evp = mevent_add_disabled(700, EVF_WRITE,
+	    vtvsock_kernel_write_cb, sc);
+	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
+	    1234, 80, 0, 0, 65536, 0);
+	g_rxbuf_len = sizeof(*h);
+	g_chain_readable = 1;
+	g_chain_writable = 0;
+	g_getchain_consumes = 1;
+	g_rx_descs = 1;
+	g_writev_override = true;
+	g_writev_result = -1;
+	g_writev_errno = EWOULDBLOCK;
+	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
+	ATF_REQUIRE(sc->vsc_kernel_tx != NULL);
+	ATF_CHECK(!sc->vsc_kernel_failed);
+
+	g_writev_result = sizeof(*h) - 1;
+	g_writev_errno = 0;
+	vtvsock_kernel_write_cb(700, EVF_WRITE, sc);
+	ATF_CHECK(sc->vsc_kernel_failed);
+	ATF_CHECK(g_needs_reset_calls == 1);
+	ATF_CHECK((sc->vsc_vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	ATF_CHECK(sc->vsc_kernel_tx != NULL);
+
+	pci_vtvsock_reset(sc);
+	ATF_CHECK(!sc->vsc_kernel_failed);
+	ATF_CHECK(sc->vsc_kernel_tx == NULL);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(kernel_tx_malformed_packet_is_dropped);
+ATF_TC_BODY(kernel_tx_malformed_packet_is_dropped, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr *h = (void *)g_rxbuf;
+
+	reset_caps();
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_fd = 700;
 	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
 	    1234, 80, 0, 0, 65536, 0);
 	g_rxbuf_len = sizeof(*h);
@@ -2133,60 +2499,81 @@ ATF_TC_BODY(native_tx_malformed_packet_is_dropped, tc)
 	g_writev_errno = EINVAL;
 	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
 	ATF_CHECK(g_writev_calls == 1);
-	ATF_CHECK(!sc->vsc_native_failed);
+	ATF_CHECK(!sc->vsc_kernel_failed);
 	ATF_CHECK(g_needs_reset_calls == 0);
 	ATF_CHECK(g_rx_descs == 0);
 	free(sc);
 }
 
-ATF_TC_WITHOUT_HEAD(native_failure_survives_feature_update);
-ATF_TC_BODY(native_failure_survives_feature_update, tc)
+ATF_TC_WITHOUT_HEAD(kernel_failure_survives_feature_update);
+ATF_TC_BODY(kernel_failure_survives_feature_update, tc)
 {
 	struct pci_vtvsock_softc *sc = mk_sc();
 
 	reset_caps();
-	sc->vsc_native = true;
-	sc->vsc_native_fd = 700;
-	sc->vsc_native_failed = true;
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_fd = 700;
+	sc->vsc_kernel_failed = true;
 	pci_vtvsock_neg_features(sc, VIRTIO_VSOCK_F_STREAM);
-	ATF_CHECK(sc->vsc_native_failed);
+	ATF_CHECK(sc->vsc_kernel_failed);
 	ATF_CHECK(g_needs_reset_calls == 1);
 	ATF_CHECK((sc->vsc_vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
 	free(sc);
 }
 
-ATF_TC_WITHOUT_HEAD(native_reset_failure_remains_fatal);
-ATF_TC_BODY(native_reset_failure_remains_fatal, tc)
+ATF_TC_WITHOUT_HEAD(kernel_feature_update_masks_transport_bits);
+ATF_TC_BODY(kernel_feature_update_masks_transport_bits, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	uint64_t negotiated;
+
+	reset_caps();
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_fd = 700;
+	negotiated = VIRTIO_F_VERSION_1 | VIRTIO_RING_F_INDIRECT_DESC |
+	    VIRTIO_VSOCK_F_SEQPACKET;
+	pci_vtvsock_neg_features(sc, negotiated);
+	ATF_CHECK(g_ioctl_last_request ==
+	    VSOCK_IOC_TRANSPORT_SET_FEATURES);
+	ATF_CHECK(g_ioctl_features == VIRTIO_VSOCK_F_SEQPACKET);
+	ATF_CHECK(sc->vsc_features == negotiated);
+	ATF_CHECK(!sc->vsc_kernel_failed);
+	ATF_CHECK(g_needs_reset_calls == 0);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(kernel_reset_failure_remains_fatal);
+ATF_TC_BODY(kernel_reset_failure_remains_fatal, tc)
 {
 	struct pci_vtvsock_softc *sc = mk_sc();
 
 	reset_caps();
-	sc->vsc_native = true;
-	sc->vsc_native_fd = 700;
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_fd = 700;
 	g_ioctl_fail_request = VSOCK_IOC_TRANSPORT_RESET;
 	g_ioctl_fail_errno = EIO;
 	pci_vtvsock_reset(sc);
-	ATF_CHECK(sc->vsc_native_failed);
+	ATF_CHECK(sc->vsc_kernel_failed);
 
 	/* A later successful feature update cannot repair a failed reset. */
 	g_ioctl_fail_request = 0;
 	pci_vtvsock_neg_features(sc, VIRTIO_VSOCK_F_STREAM);
-	ATF_CHECK(sc->vsc_native_failed);
+	ATF_CHECK(sc->vsc_kernel_failed);
 	ATF_CHECK(g_needs_reset_calls == 1);
 	ATF_CHECK((sc->vsc_vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
 	free(sc);
 }
 
-ATF_TC_WITHOUT_HEAD(native_tx_forwards_complete_packet);
-ATF_TC_BODY(native_tx_forwards_complete_packet, tc)
+ATF_TC_WITHOUT_HEAD(kernel_tx_forwards_complete_packet);
+ATF_TC_BODY(kernel_tx_forwards_complete_packet, tc)
 {
 	struct pci_vtvsock_softc *sc = mk_sc();
 	struct virtio_vsock_hdr *h = (void *)g_rxbuf;
-	const char payload[] = "native-vsock";
+	const char payload[] = "kernel-vsock";
 
 	reset_caps();
-	sc->vsc_native = true;
-	sc->vsc_native_fd = 700;
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_fd = 700;
 	mkhdr(h, VIRTIO_VSOCK_OP_RW, STREAM, 3, VSOCK_CID_HOST,
 	    1234, 80, sizeof(payload), 0, 65536, 0);
 	memcpy(g_rxbuf + sizeof(*h), payload, sizeof(payload));
@@ -2203,10 +2590,76 @@ ATF_TC_BODY(native_tx_forwards_complete_packet, tc)
 	free(sc);
 }
 
+ATF_TC_WITHOUT_HEAD(kernel_tx_pulls_synchronous_reply);
+ATF_TC_BODY(kernel_tx_pulls_synchronous_reply, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr *tx = (void *)g_rxbuf;
+	struct virtio_vsock_hdr reply;
+	uint8_t *buffer;
+	int sv[2];
+
+	reset_caps();
+	ATF_REQUIRE(__real_socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
+	ATF_REQUIRE(__real_fcntl(sv[0], F_SETFL, O_NONBLOCK) == 0);
+	buffer = calloc(1, sizeof(reply) + VTVSOCK_MAX_PKT);
+	ATF_REQUIRE(buffer != NULL);
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_fd = sv[0];
+	sc->vsc_kernel_rx_buf = buffer;
+	sc->vsc_kernel_evp = &g_mev[0];
+	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+
+	/* Guest REQUEST to an unused host port. */
+	mkhdr(tx, VIRTIO_VSOCK_OP_REQUEST, STREAM, 3, VSOCK_CID_HOST,
+	    1234, 7109, 0, 0, 65536, 0);
+	g_rxbuf_len = sizeof(*tx);
+	g_chain_readable = 0;
+	g_chain_writable = 1;
+	g_getchain_consumes = 0;
+	g_rx_descs = 1;	/* one guest RX chain */
+	g_one_shot_vq = &sc->vsc_queues[VTVSOCK_TXQ];
+
+	/* Model the RST that /dev/vsock queues synchronously during writev. */
+	mkhdr(&reply, VIRTIO_VSOCK_OP_RST, STREAM, VSOCK_CID_HOST, 3,
+	    7109, 1234, 0, 0, 0, 0);
+	ATF_REQUIRE(write(sv[1], &reply, sizeof(reply)) == sizeof(reply));
+	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
+	ATF_CHECK(g_writev_calls == 1);
+	ATF_CHECK(g_ninject == 1);
+	ATF_CHECK(g_inject[0].op == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(!sc->vsc_kernel_failed);
+
+	__real_close(sv[1]);
+	__real_close(sv[0]);
+	free(buffer);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(backend_names_are_userspace_and_kernel);
+ATF_TC_BODY(backend_names_are_userspace_and_kernel, tc)
+{
+	bool is_kernel;
+
+	is_kernel = true;
+	ATF_CHECK(vtvsock_parse_backend(NULL, &is_kernel) == 0);
+	ATF_CHECK(!is_kernel);
+	is_kernel = true;
+	ATF_CHECK(vtvsock_parse_backend("userspace", &is_kernel) == 0);
+	ATF_CHECK(!is_kernel);
+	is_kernel = false;
+	ATF_CHECK(vtvsock_parse_backend("kernel", &is_kernel) == 0);
+	ATF_CHECK(is_kernel);
+	ATF_CHECK(vtvsock_parse_backend("unix", &is_kernel) == -1);
+	ATF_CHECK(vtvsock_parse_backend("native", &is_kernel) == -1);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, backend_names_are_userspace_and_kernel);
 	ATF_TP_ADD_TC(tp, spoofed_src_cid);
 	ATF_TP_ADD_TC(tp, port_allocator_skips_reserved);
+	ATF_TP_ADD_TC(tp, send_fd_requires_complete_frame);
 	ATF_TP_ADD_TC(tp, unknown_type_rst);
 	ATF_TP_ADD_TC(tp, unknown_conn_rst);
 	ATF_TP_ADD_TC(tp, rst_unknown_conn_ignored);
@@ -2257,17 +2710,27 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reaper_closes_stuck_closing);
 	ATF_TP_ADD_TC(tp, reaper_times_out_connecting);
 	ATF_TP_ADD_TC(tp, tx_oversized_paylen_dropped);
-	ATF_TP_ADD_TC(tp, native_rx_fragments_for_guest_buffers);
-	ATF_TP_ADD_TC(tp, native_rx_accepts_header_only_packet);
-	ATF_TP_ADD_TC(tp, native_rx_large_descriptor_capacity);
-	ATF_TP_ADD_TC(tp, native_rx_reuses_preallocated_buffer);
-	ATF_TP_ADD_TC(tp, native_rx_fatal_error_disables_event);
-	ATF_TP_ADD_TC(tp, native_tx_forwards_complete_packet);
-	ATF_TP_ADD_TC(tp, native_tx_fatal_error_needs_reset);
-	ATF_TP_ADD_TC(tp, native_tx_backpressure_is_retried);
-	ATF_TP_ADD_TC(tp, native_tx_malformed_packet_is_dropped);
-	ATF_TP_ADD_TC(tp, native_failure_survives_feature_update);
-	ATF_TP_ADD_TC(tp, native_reset_failure_remains_fatal);
+	ATF_TP_ADD_TC(tp, tx_control_payload_dropped);
+	ATF_TP_ADD_TC(tp, tx_truncated_payload_dropped);
+	ATF_TP_ADD_TC(tp, kernel_rx_fragments_for_guest_buffers);
+	ATF_TP_ADD_TC(tp, kernel_rx_accepts_header_only_packet);
+	ATF_TP_ADD_TC(tp, kernel_rx_large_descriptor_capacity);
+	ATF_TP_ADD_TC(tp, kernel_rx_reuses_preallocated_buffer);
+	ATF_TP_ADD_TC(tp, kernel_rx_refill_pulls_queued_packet);
+	ATF_TP_ADD_TC(tp, kernel_rx_fatal_error_disables_event);
+	ATF_TP_ADD_TC(tp, kernel_rx_short_packet_needs_reset);
+	ATF_TP_ADD_TC(tp, kernel_rx_length_mismatch_needs_reset);
+	ATF_TP_ADD_TC(tp, kernel_reset_success_recovers_backend);
+	ATF_TP_ADD_TC(tp, kernel_tx_forwards_complete_packet);
+	ATF_TP_ADD_TC(tp, kernel_tx_pulls_synchronous_reply);
+	ATF_TP_ADD_TC(tp, kernel_tx_fatal_error_needs_reset);
+	ATF_TP_ADD_TC(tp, kernel_tx_short_write_needs_reset);
+	ATF_TP_ADD_TC(tp, kernel_tx_backpressure_is_retried);
+	ATF_TP_ADD_TC(tp, kernel_tx_retry_short_write_needs_reset);
+	ATF_TP_ADD_TC(tp, kernel_tx_malformed_packet_is_dropped);
+	ATF_TP_ADD_TC(tp, kernel_failure_survives_feature_update);
+	ATF_TP_ADD_TC(tp, kernel_feature_update_masks_transport_bits);
+	ATF_TP_ADD_TC(tp, kernel_reset_failure_remains_fatal);
 
 	return (atf_no_error());
 }

@@ -34,6 +34,7 @@
 #include <sys/event.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
+#include <sys/filio.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -43,6 +44,7 @@
 #include <sys/priv.h>
 #include <sys/queue.h>
 #include <sys/selinfo.h>
+#include <sys/sdt.h>
 #include <sys/socket.h>
 #include <sys/socketvar.h>
 #include <sys/systm.h>
@@ -50,6 +52,35 @@
 #include <sys/vsock.h>
 
 #include <kern/uipc_vsock.h>
+
+SDT_PROVIDER_DECLARE(vsock);
+SDT_PROBE_DEFINE2(vsock, , , provider__attach,
+    "uint32_t",	/* guest CID */
+    "uint64_t");	/* negotiated device features */
+SDT_PROBE_DEFINE1(vsock, , , provider__detach,
+    "uint32_t");	/* guest CID */
+SDT_PROBE_DEFINE1(vsock, , , provider__reset,
+    "uint32_t");	/* guest CID */
+SDT_PROBE_DEFINE2(vsock, , , provider__features,
+    "uint32_t",	/* guest CID */
+    "uint64_t");	/* negotiated device features */
+SDT_PROBE_DEFINE3(vsock, , , provider__enqueue,
+    "uint16_t",	/* packet operation */
+    "uint32_t",	/* payload bytes */
+    "uint32_t");	/* queue depth */
+SDT_PROBE_DEFINE3(vsock, , , provider__dequeue,
+    "uint16_t",	/* packet operation */
+    "uint32_t",	/* payload bytes */
+    "uint32_t");	/* queue depth */
+SDT_PROBE_DEFINE2(vsock, , , provider__inject,
+    "uint16_t",	/* packet operation */
+    "uint32_t");	/* payload bytes */
+SDT_PROBE_DEFINE2(vsock, , , provider__backpressure,
+    "uint32_t",	/* queue depth */
+    "int");	/* control packet */
+SDT_PROBE_DEFINE2(vsock, , , provider__reject,
+    "uint32_t",	/* packet bytes */
+    "int");	/* errno */
 
 #define	VSOCK_USER_QUEUE_MAX		128
 #define	VSOCK_USER_QUEUE_DATA_HIWAT	64
@@ -69,6 +100,7 @@ struct vsock_user_provider {
 	uint32_t guest_cid;
 	uint32_t queue_count;
 	u_int read_inflight;
+	uint64_t generation;
 	bool write_reserved;
 	bool registered;
 };
@@ -155,8 +187,11 @@ vsock_user_build_locked(struct vsock_user_provider *provider,
 	    (!reserved && provider->write_reserved &&
 	    provider->queue_count >= VSOCK_USER_QUEUE_MAX - 1) ||
 	    (!control &&
-	    provider->queue_count >= VSOCK_USER_QUEUE_DATA_HIWAT))
+	    provider->queue_count >= VSOCK_USER_QUEUE_DATA_HIWAT)) {
+		SDT_PROBE2(vsock, , , provider__backpressure,
+		    provider->queue_count, control);
 		return (EWOULDBLOCK);
+	}
 	len = sizeof(*hdr) + payload_len;
 	if (reserved && payload_len == 0 && provider->write_packet != NULL) {
 		packet = provider->write_packet;
@@ -182,6 +217,8 @@ vsock_user_build_locked(struct vsock_user_provider *provider,
 		memcpy(packet->data + sizeof(*hdr), payload, payload_len);
 	STAILQ_INSERT_TAIL(&provider->queue, packet, link);
 	provider->queue_count++;
+	SDT_PROBE3(vsock, , , provider__enqueue, op,
+	    (uint32_t)payload_len, provider->queue_count);
 	if (reserved)
 		provider->write_reserved = false;
 	vsock_user_notify_locked(provider);
@@ -351,20 +388,25 @@ vsock_user_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 
 out:
 	if (offset > 0 && offset < total) {
-		if (seqpacket) {
-			vtvsock_pcb_remove_lists_locked(pcb);
-			pcb->state = VTVSOCK_CLOSED;
-			(void)vsock_user_send_rst(pcb->local.svm_cid,
-			    pcb->local.svm_port, pcb->remote.svm_cid,
-			    pcb->remote.svm_port, VIRTIO_VSOCK_TYPE_SEQPACKET);
-			wakeup(&pcb->state);
-			mtx_unlock(&vtvsock_mtx);
-			soisdisconnected(pcb->so);
-			m_freem(m);
-			return (error != 0 ? error : EIO);
-		}
-		error = error != 0 ? error : EIO;
-		offset = 0;
+		/*
+		 * sosend_generic() has already consumed the whole mbuf from the
+		 * caller's uio, so the protocol cannot report the exact prefix sent.
+		 * Keeping a STREAM connection alive here would let the caller retry
+		 * bytes whose prefix is already queued, duplicating data or silently
+		 * gapping the stream.  Reset both socket types; SEQPACKET additionally
+		 * needs the RST to discard its unterminated record.
+		 */
+		vtvsock_pcb_remove_lists_locked(pcb);
+		pcb->state = VTVSOCK_CLOSED;
+		vsock_tx_wakeup_locked(pcb);
+		(void)vsock_user_send_rst(pcb->local.svm_cid,
+		    pcb->local.svm_port, pcb->remote.svm_cid,
+		    pcb->remote.svm_port, type);
+		wakeup(&pcb->state);
+		mtx_unlock(&vtvsock_mtx);
+		soisdisconnected(pcb->so);
+		m_freem(m);
+		return (error != 0 ? error : EIO);
 	}
 	mtx_unlock(&vtvsock_mtx);
 	m_freem(m);
@@ -382,6 +424,7 @@ vsock_user_disconnect(struct vtvsock_pcb *pcb)
 		    VIRTIO_VSOCK_SHUTDOWN_RCV | VIRTIO_VSOCK_SHUTDOWN_SEND,
 		    NULL, 0);
 		pcb->state = VTVSOCK_CLOSING;
+		vsock_tx_wakeup_locked(pcb);
 		callout_reset(&pcb->close_callout, VTVSOCK_CLOSE_TIMEOUT,
 		    vtvsock_close_timeout, pcb);
 		soisdisconnecting(so);
@@ -390,11 +433,13 @@ vsock_user_disconnect(struct vtvsock_pcb *pcb)
 		(void)vsock_user_send_pkt(pcb, VIRTIO_VSOCK_OP_RST, 0, NULL, 0);
 		vtvsock_pcb_remove_lists_locked(pcb);
 		pcb->state = VTVSOCK_CLOSED;
+		vsock_tx_wakeup_locked(pcb);
 		soisdisconnected(so);
 		wakeup(&pcb->state);
 	} else if (pcb->state != VTVSOCK_CLOSED) {
 		vtvsock_pcb_remove_lists_locked(pcb);
 		pcb->state = VTVSOCK_CLOSED;
+		vsock_tx_wakeup_locked(pcb);
 		soisdisconnected(so);
 	}
 	mtx_unlock(&vtvsock_mtx);
@@ -406,6 +451,7 @@ vsock_user_shutdown(struct vtvsock_pcb *pcb, enum shutdown_how how)
 {
 	struct socket *so = pcb->so;
 	uint32_t flags;
+	int error;
 
 	switch (how) {
 	case SHUT_RD:
@@ -421,11 +467,19 @@ vsock_user_shutdown(struct vtvsock_pcb *pcb, enum shutdown_how how)
 	default:
 		return (EINVAL);
 	}
+	error = 0;
 	mtx_lock(&vtvsock_mtx);
 	if (pcb->state == VTVSOCK_ESTABLISHED)
-		(void)vsock_user_send_pkt(pcb, VIRTIO_VSOCK_OP_SHUTDOWN,
+		error = vsock_user_send_pkt(pcb, VIRTIO_VSOCK_OP_SHUTDOWN,
 		    flags, NULL, 0);
 	mtx_unlock(&vtvsock_mtx);
+	/*
+	 * Do not make the local half-close permanent unless the peer notification
+	 * was queued.  In particular, a full provider queue is recoverable:
+	 * shutdown(2) returns EWOULDBLOCK and the caller may retry after POLLOUT.
+	 */
+	if (error != 0)
+		return (error);
 	if (how == SHUT_RD || how == SHUT_RDWR) {
 		SOCK_RECVBUF_LOCK(so);
 		socantrcvmore_locked(so);
@@ -452,8 +506,10 @@ vsock_user_dtor(void *arg)
 {
 	struct vsock_user_provider *provider = arg;
 
-	if (provider->registered)
+	if (provider->registered) {
+		SDT_PROBE1(vsock, , , provider__detach, provider->guest_cid);
 		vsock_transport_unregister(provider);
+	}
 	mtx_lock(&vtvsock_mtx);
 	provider->registered = false;
 	if (vsock_user_active == provider)
@@ -473,6 +529,7 @@ vsock_dev_read(struct cdev *dev __unused, struct uio *uio, int ioflag)
 {
 	struct vsock_user_provider *provider;
 	struct vsock_user_packet *packet;
+	uint64_t generation;
 	int error;
 
 	error = devfs_get_cdevpriv((void **)&provider);
@@ -481,7 +538,17 @@ vsock_dev_read(struct cdev *dev __unused, struct uio *uio, int ioflag)
 	if (uio->uio_resid == 0)
 		return (0);
 	mtx_lock(&vtvsock_mtx);
-	while ((packet = STAILQ_FIRST(&provider->queue)) == NULL) {
+	generation = provider->generation;
+	for (;;) {
+		/*
+		 * Serialize dequeue and copyout.  Otherwise reader A can remove
+		 * packet 1 and fault in uiomove() while reader B successfully
+		 * delivers packet 2; putting packet 1 back afterward would violate
+		 * the complete-packet FIFO contract.
+		 */
+		if (provider->read_inflight == 0 &&
+		    (packet = STAILQ_FIRST(&provider->queue)) != NULL)
+			break;
 		if (!provider->registered) {
 			error = ENXIO;
 			goto out;
@@ -494,25 +561,56 @@ vsock_dev_read(struct cdev *dev __unused, struct uio *uio, int ioflag)
 		    "vsockur", 0);
 		if (error != 0)
 			goto out;
+		/*
+		 * A read that started in the old transport epoch must not consume a
+		 * packet produced after reset.  Reset waits for an active copyout,
+		 * increments generation, purges the queue, and wakes every waiter.
+		 */
+		if (provider->generation != generation) {
+			error = ECANCELED;
+			goto out;
+		}
 	}
 	if ((size_t)uio->uio_resid < packet->len) {
 		error = EMSGSIZE;
 		goto out;
 	}
 	STAILQ_REMOVE_HEAD(&provider->queue, link);
-	provider->queue_count--;
+	/*
+	 * Keep queue_count charged while copyout is in flight.  If uiomove()
+	 * faults, the packet is put back at the head and no producer may have
+	 * consumed its capacity in the meantime.
+	 */
 	provider->read_inflight++;
-	wakeup(provider);
 	vsock_user_notify_locked(provider);
 	mtx_unlock(&vtvsock_mtx);
 	error = uiomove(packet->data, packet->len, uio);
-	free(packet, M_VTVSOCK);
 	mtx_lock(&vtvsock_mtx);
 	KASSERT(provider->read_inflight > 0,
 	    ("%s: read in-flight count underflow", __func__));
 	provider->read_inflight--;
+	if (error == 0) {
+		KASSERT(provider->queue_count > 0,
+		    ("%s: queue count underflow", __func__));
+		provider->queue_count--;
+		SDT_PROBE3(vsock, , , provider__dequeue,
+		    le16toh(((struct virtio_vsock_hdr *)packet->data)->op),
+		    le32toh(((struct virtio_vsock_hdr *)packet->data)->len),
+		    provider->queue_count);
+		if (provider->queue_count ==
+		    VSOCK_USER_QUEUE_DATA_HIWAT - 1)
+			vsock_transport_tx_wakeup_locked(
+			    &vsock_user_transport);
+	} else {
+		/* A failed read consumes no packet; preserve FIFO order. */
+		STAILQ_INSERT_HEAD(&provider->queue, packet, link);
+		packet = NULL;
+	}
 	wakeup(provider);
+	vsock_user_notify_locked(provider);
 	mtx_unlock(&vtvsock_mtx);
+	if (packet != NULL)
+		free(packet, M_VTVSOCK);
 	return (error);
 out:
 	mtx_unlock(&vtvsock_mtx);
@@ -526,16 +624,20 @@ vsock_dev_write(struct cdev *dev __unused, struct uio *uio, int ioflag)
 	struct virtio_vsock_hdr *hdr;
 	struct vsock_user_packet *reply;
 	uint8_t *packet;
+	uint64_t generation;
 	size_t len;
 	int error;
 
 	error = devfs_get_cdevpriv((void **)&provider);
-	if (error != 0 || !provider->registered)
+	if (error != 0)
 		return (ENXIO);
 	len = uio->uio_resid;
 	if (len < sizeof(*hdr) ||
-	    len > sizeof(*hdr) + VSOCK_TRANSPORT_MAX_PAYLOAD)
+	    len > sizeof(*hdr) + VSOCK_TRANSPORT_MAX_PAYLOAD) {
+		SDT_PROBE2(vsock, , , provider__reject, (uint32_t)len,
+		    EMSGSIZE);
 		return (EMSGSIZE);
+	}
 	/*
 	 * Processing one inbound packet may synchronously enqueue one control
 	 * reply.  Reserve the final queue slot before consuming the caller's uio,
@@ -544,6 +646,11 @@ vsock_dev_write(struct cdev *dev __unused, struct uio *uio, int ioflag)
 	 * reply backpressure.
 	 */
 	mtx_lock(&vtvsock_mtx);
+	if (!provider->registered) {
+		mtx_unlock(&vtvsock_mtx);
+		return (ENXIO);
+	}
+	generation = provider->generation;
 	while (provider->write_thread != NULL ||
 	    provider->queue_count >= VSOCK_USER_QUEUE_MAX) {
 		if ((ioflag & O_NONBLOCK) != 0) {
@@ -559,6 +666,15 @@ vsock_dev_write(struct cdev *dev __unused, struct uio *uio, int ioflag)
 		if (!provider->registered) {
 			mtx_unlock(&vtvsock_mtx);
 			return (ENXIO);
+		}
+		/*
+		 * This write entered before a transport reset and slept without
+		 * reserving the writer slot.  Do not admit its old-epoch packet
+		 * after reset purged queues and connection state.
+		 */
+		if (provider->generation != generation) {
+			mtx_unlock(&vtvsock_mtx);
+			return (ECANCELED);
 		}
 	}
 	provider->write_thread = curthread;
@@ -582,10 +698,14 @@ vsock_dev_write(struct cdev *dev __unused, struct uio *uio, int ioflag)
 	if (le32toh(hdr->len) != len - sizeof(*hdr) ||
 	    le64toh(hdr->src_cid) != provider->guest_cid ||
 	    le64toh(hdr->dst_cid) != VSOCK_CID_HOST) {
+		SDT_PROBE2(vsock, , , provider__reject, (uint32_t)len,
+		    EINVAL);
 		free(packet, M_VTVSOCK);
 		error = EINVAL;
 		goto out;
 	}
+	SDT_PROBE2(vsock, , , provider__inject, le16toh(hdr->op),
+	    le32toh(hdr->len));
 	vsock_rx_packet(provider, packet, (uint32_t)len);
 	free(packet, M_VTVSOCK);
 	error = 0;
@@ -611,6 +731,13 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 	uint64_t features;
 	int error;
 
+	/*
+	 * F_SETFL uses FIONBIO to notify file implementations when O_NONBLOCK
+	 * changes.  devfs already passes the current descriptor state to read
+	 * and write in ioflag, so no per-provider state needs updating here.
+	 */
+	if (cmd == FIONBIO)
+		return (0);
 	if (cmd == IOCTL_VM_SOCKETS_GET_LOCAL_CID) {
 		*(uint32_t *)data = (uint32_t)vtvsock_guest_cid;
 		return (0);
@@ -647,7 +774,20 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 			vsock_user_active = provider;
 		}
 		mtx_unlock(&vtvsock_mtx);
-		return (error);
+		if (error != 0) {
+			/*
+			 * The attach did not acquire transport ownership.  Do not
+			 * strand cdev-private state on this fd: callers must be able to
+			 * retry the same descriptor after the current owner detaches.
+			 * Clearing cdevpriv invokes vsock_user_dtor(), which is safe here
+			 * because registered was never published.
+			 */
+			devfs_clear_cdevpriv();
+			return (error);
+		}
+		SDT_PROBE2(vsock, , , provider__attach,
+		    provider->guest_cid, attach->features);
+		return (0);
 	}
 	if (cmd == VSOCK_IOC_TRANSPORT_SET_FEATURES) {
 		features = *(uint64_t *)data;
@@ -660,6 +800,9 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 		error = vsock_transport_register_locked(&vsock_user_transport,
 		    provider, VSOCK_CID_HOST, features);
 		mtx_unlock(&vtvsock_mtx);
+		if (error == 0)
+			SDT_PROBE2(vsock, , , provider__features,
+			    provider->guest_cid, features);
 		return (error);
 	}
 	if (cmd == VSOCK_IOC_TRANSPORT_RESET) {
@@ -682,11 +825,22 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 				return (error);
 			}
 		}
+		/*
+		 * Invalidate writers that entered before this reset but were
+		 * sleeping for queue capacity or the serialized writer slot.
+		 * Active copies have drained above, so every old-epoch packet is
+		 * now either queued (and purged below) or completed.
+		 */
+		provider->generation++;
 		vsock_user_purge_locked(provider);
+		vsock_user_notify_locked(provider);
 		vsock_transport_reset_locked();
 		error = vsock_transport_register_locked(&vsock_user_transport,
 		    provider, VSOCK_CID_HOST, 0);
 		mtx_unlock(&vtvsock_mtx);
+		if (error == 0)
+			SDT_PROBE1(vsock, , , provider__reset,
+			    provider->guest_cid);
 		return (error);
 	}
 	return (ENOTTY);
@@ -703,7 +857,8 @@ vsock_dev_poll(struct cdev *dev __unused, int events, struct thread *td)
 	revents = 0;
 	mtx_lock(&vtvsock_mtx);
 	if ((events & (POLLIN | POLLRDNORM)) != 0) {
-		if (!STAILQ_EMPTY(&provider->queue) || !provider->registered)
+		if ((!STAILQ_EMPTY(&provider->queue) &&
+		    provider->read_inflight == 0) || !provider->registered)
 			revents |= events & (POLLIN | POLLRDNORM);
 		else
 			selrecord(td, &provider->sel);
@@ -774,8 +929,10 @@ vsock_dev_kqread(struct knote *kn, long hint __unused)
 
 	mtx_assert(&vtvsock_mtx, MA_OWNED);
 	packet = STAILQ_FIRST(&provider->queue);
-	kn->kn_data = packet != NULL ? packet->len : 0;
-	return (packet != NULL || !provider->registered);
+	kn->kn_data = packet != NULL && provider->read_inflight == 0 ?
+	    packet->len : 0;
+	return ((packet != NULL && provider->read_inflight == 0) ||
+	    !provider->registered);
 }
 
 static void
