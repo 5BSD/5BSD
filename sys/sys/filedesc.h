@@ -58,8 +58,8 @@ struct filedescent {
 	struct filecaps	 fde_caps;	/* per-descriptor rights */
 	uint8_t		 fde_flags;	/* per-process open file flags */
 	uint8_t		 fde_xfer_state; /* transfer state (CAP_XFER_*) */
-	uint8_t		 fde_cloexec_state; /* cloexec lock (CAP_CLOEXEC_*) */
-	uint8_t		 fde_clofork_state; /* clofork lock (CAP_CLOFORK_*) */
+	uint8_t		 fde_cloexec_state; /* exec propagation state */
+	uint8_t		 fde_clofork_state; /* fork propagation state */
 	seqc_t		 fde_seqc;	/* keep file and caps in sync */
 };
 #define	fde_rights	fde_caps.fc_rights
@@ -276,7 +276,7 @@ int	fdcheckstd(struct thread *td);
 void	fdclose(struct thread *td, struct file *fp, int idx);
 void	fdcloseexec(struct thread *td, struct ucred *newcred);
 void	fdsetugidsafety(struct thread *td);
-struct	filedesc *fdcopy(struct filedesc *fdp, struct proc *p1);
+struct	filedesc *fdcopy(struct filedesc *fdp, struct proc *p1, bool isfork);
 void	fdunshare(struct thread *td);
 void	fdescfree(struct thread *td);
 int	fdlastfile(struct filedesc *fdp);

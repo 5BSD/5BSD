@@ -140,6 +140,8 @@ The unit of authority is the **instance fd** returned by MAC_CAPABILITY_CONNECT.
 | Destroy instance | MAC_CAPABILITY_TERMINATE | Kill the instance for all holders |
 | kqueue readiness | CAP_EVENT (not an ioctl) | TX has data / RX has space |
 | Prevent delegation | cap_xfer_limit(fd, CAP_XFER_NONE) | Disable fd transfer (one-way) |
+| Permit one exec boundary | cap_cloexec_limit(fd, CAP_CLOEXEC_ONCE) | Survive one exec, then lock |
+| Permit one fork boundary | cap_clofork_limit(fd, CAP_CLOFORK_ONCE) | Inherit once, then lock both entries |
 
 ### Capability narrowing
 
@@ -148,16 +150,17 @@ Rights can only be reduced, never re-escalated:
 1. **cap_rights_limit()** -- retain `CAP_IOCTL` and any non-ioctl rights the fd needs.
 2. **cap_ioctls_limit()** -- irreversibly whitelist specific ioctl commands.
 3. **MAC_CAPABILITY_REVOKE_SEND/RECV/CALL/MINT** -- instance-level one-way latch.
-4. **cap_xfer_limit(..., CAP_XFER_NONE)** -- prevent fd transfer via SCM_RIGHTS and mac_capability messages.
+4. **cap_xfer_limit()** -- bound fd transfer via SCM_RIGHTS and mac_capability messages.
+5. **cap_cloexec_limit() / cap_clofork_limit()** -- bound propagation across image and child-process boundaries.
 
-All four compose.  A process can hand a child a send-only,
+All five compose.  A process can hand a child a send-only,
 non-transferable handle by combining them.
 
 ### fd passing in messages
 
 Messages (SENDMSG, CALL) can carry up to `MAC_CAPABILITY_MAX_FDS` (32)
 file descriptors.  Attached fds preserve their complete Capsicum restrictions,
-including rights and ioctl allowlists.
+including rights, ioctl allowlists, and xfer/cloexec/clofork propagation states.
 The DFLAG_PASSABLE check and per-fd CAP_XFER state prevent passing
 non-transferable fds.
 
@@ -166,6 +169,11 @@ non-transferable fds.
 - **fork** -- child inherits the fd
 - **dup** -- shares the same capability (same queues)
 - **SCM_RIGHTS** -- pass to any process unless CAP_XFER state blocks it
+
+`CAP_CLOFORK_ONCE` allows one child to inherit an fd and then locks both
+the parent and child entries against further fork propagation.
+`CAP_CLOEXEC_ONCE` allows the fd to survive one exec and then locks it
+against the next exec.
 
 ---
 
@@ -558,6 +566,8 @@ capability fds via SCM_RIGHTS.
 
 Capabilities can be attenuated before delegation:
 - `cap_xfer_limit(fd, CAP_XFER_NONE)` prevents further SCM_RIGHTS and mac_capability fd passing
+- `cap_cloexec_limit(fd, CAP_CLOEXEC_ONCE)` permits one exec boundary and then forces close-on-exec
+- `cap_clofork_limit(fd, CAP_CLOFORK_ONCE)` permits one fork boundary and then forces close-on-fork in both branches
 - `MAC_CAPABILITY_REVOKE_SEND` / `MAC_CAPABILITY_REVOKE_RECV` / `MAC_CAPABILITY_REVOKE_CALL` / `MAC_CAPABILITY_REVOKE_MINT` strip operations
 - `cap_ioctls_limit` restricts which ioctls the holder can perform
 

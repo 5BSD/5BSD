@@ -116,6 +116,10 @@ SDT_PROBE_DEFINE4(fd, , , cloexec__enforce,
     "struct file *", "int", "pid_t", "short");
 SDT_PROBE_DEFINE4(fd, , , clofork__enforce,
     "struct file *", "int", "pid_t", "short");
+SDT_PROBE_DEFINE6(fd, , , cloexec__consume,
+    "struct file *", "int", "pid_t", "struct ucred *", "short", "int");
+SDT_PROBE_DEFINE6(fd, , , clofork__consume,
+    "struct file *", "int", "pid_t", "pid_t", "struct ucred *", "short");
 
 static __read_mostly uma_zone_t file_zone;
 static __read_mostly uma_zone_t filedesc0_zone;
@@ -2552,7 +2556,7 @@ fdunshare(struct thread *td)
 	if (refcount_load(&p->p_fd->fd_refcnt) == 1)
 		return;
 
-	tmp = fdcopy(p->p_fd, p);
+	tmp = fdcopy(p->p_fd, p, false);
 	fdescfree(td);
 	p->p_fd = tmp;
 }
@@ -2578,10 +2582,12 @@ pdunshare(struct thread *td)
 
 /*
  * Copy a filedesc structure.  A NULL pointer in returns a NULL reference,
- * this is to ease callers, not catch errors.
+ * this is to ease callers, not catch errors.  If isfork is true, consume
+ * CAP_CLOFORK_ONCE states while constructing the child's table.  Internal
+ * copies used to unshare a table must not consume a fork boundary.
  */
 struct filedesc *
-fdcopy(struct filedesc *fdp, struct proc *p1)
+fdcopy(struct filedesc *fdp, struct proc *p1, bool isfork)
 {
 	struct filedesc *newfdp;
 	struct filedescent *nfde, *ofde;
@@ -2593,14 +2599,29 @@ fdcopy(struct filedesc *fdp, struct proc *p1)
 
 	fork_pass = false;
 	newfdp = fdinit();
-	FILEDESC_SLOCK(fdp);
+	/*
+	 * CAP_CLOFORK_ONCE consumption mutates the source table.  A real fork
+	 * therefore takes the exclusive lock so the first of concurrent forks
+	 * consumes it atomically.  Preserve the shared-lock path for internal
+	 * copies that do not cross a fork boundary.
+	 */
+	if (isfork)
+		FILEDESC_XLOCK(fdp);
+	else
+		FILEDESC_SLOCK(fdp);
 	for (;;) {
 		lastfile = fdlastfile(fdp);
 		if (lastfile < newfdp->fd_nfiles)
 			break;
-		FILEDESC_SUNLOCK(fdp);
+		if (isfork)
+			FILEDESC_XUNLOCK(fdp);
+		else
+			FILEDESC_SUNLOCK(fdp);
 		fdgrowtable(newfdp, lastfile + 1);
-		FILEDESC_SLOCK(fdp);
+		if (isfork)
+			FILEDESC_XLOCK(fdp);
+		else
+			FILEDESC_SLOCK(fdp);
 	}
 
 	/*
@@ -2649,13 +2670,25 @@ fdcopy(struct filedesc *fdp, struct proc *p1)
 		if (fp != NULL)
 			nfde->fde_file = fp;
 		filecaps_copy(&ofde->fde_caps, &nfde->fde_caps, true);
+		if (isfork &&
+		    ofde->fde_clofork_state == CAP_CLOFORK_ONCE) {
+			ofde->fde_clofork_state = CAP_CLOFORK_LOCKED;
+			nfde->fde_clofork_state = CAP_CLOFORK_LOCKED;
+			SDT_PROBE6(fd, , , clofork__consume,
+			    nfde->fde_file, i, curthread->td_proc->p_pid,
+			    p1->p_pid, curthread->td_ucred,
+			    nfde->fde_file->f_type);
+		}
 		fdused_init(newfdp, i);
 		SDT_PROBE6(fd, , , fork__inherit, nfde->fde_file, i,
 		    curthread->td_proc->p_pid, p1->p_pid, curthread->td_ucred,
 		    nfde->fde_file->f_type);
 	}
 	MPASS(newfdp->fd_freefile != -1);
-	FILEDESC_SUNLOCK(fdp);
+	if (isfork)
+		FILEDESC_XUNLOCK(fdp);
+	else
+		FILEDESC_SUNLOCK(fdp);
 
 	/*
 	 * Now handle copying kqueues, since all fds, including
@@ -2963,29 +2996,32 @@ fdcloseexec(struct thread *td, struct ucred *newcred)
 			fdfree(fdp, i);
 			(void) closefp(fdp, i, fp, td, false, false);
 			FILEDESC_UNLOCK_ASSERT(fdp);
-#ifdef MAC
 		} else {
 			FILEDESC_XLOCK(fdp);
+#ifdef MAC
 			if (mac_file_check_inherit(td->td_ucred,
 			    newcred, fp, i) != 0) {
 				fdfree(fdp, i);
 				(void) closefp(fdp, i, fp, td, false, false);
 				FILEDESC_UNLOCK_ASSERT(fdp);
-			} else {
-				FILEDESC_XUNLOCK(fdp);
-				if (fde->fde_flags & UF_FOCLOSE)
-					fde->fde_flags &= ~UF_FOCLOSE;
+				continue;
 			}
-		}
-#else
-		} else if (fde->fde_flags & UF_FOCLOSE) {
-			/*
-			 * https://austingroupbugs.net/view.php?id=1851
-			 * FD_CLOFORK should not be preserved across exec
-			 */
-			fde->fde_flags &= ~UF_FOCLOSE;
-		}
 #endif
+			if (fde->fde_cloexec_state == CAP_CLOEXEC_ONCE) {
+				fde->fde_cloexec_state = CAP_CLOEXEC_LOCKED;
+				SDT_PROBE6(fd, , , cloexec__consume, fp, i,
+				    td->td_proc->p_pid, td->td_ucred,
+				    fp->f_type, CAP_CLOEXEC_LOCKED);
+			}
+			if (fde->fde_flags & UF_FOCLOSE) {
+				/*
+				 * https://austingroupbugs.net/view.php?id=1851
+				 * FD_CLOFORK should not be preserved across exec
+				 */
+				fde->fde_flags &= ~UF_FOCLOSE;
+			}
+			FILEDESC_XUNLOCK(fdp);
+		}
 	}
 }
 

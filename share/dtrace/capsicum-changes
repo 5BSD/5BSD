@@ -6,8 +6,8 @@
  *
  * capsicum-changes -- trace Capsicum authority narrowing.
  *
- * Shows cap_enter(), cap_rights_limit(), cap_ioctls_limit(), and
- * cap_fcntls_limit() events with credentials and final errno.
+ * Shows cap_enter(), capability limit operations, and one-shot
+ * descriptor propagation consumption with credentials and final errno.
  *
  * Usage: capsicum-changes
  */
@@ -51,6 +51,38 @@ capsicum:::fcntls-limit
 	    arg1, ((struct ucred *)arg2)->cr_uid,
 	    ((struct ucred *)arg2)->cr_gid, arg0, "FCNTLS-LIMIT",
 	    arg5, arg4, arg3);
+}
+
+capsicum:::xfer-limit,
+capsicum:::cloexec-limit,
+capsicum:::clofork-limit
+{
+	printf("%-6d %-6d %-6d %-8d %-16s %-8s %-8d state=%d old=%d\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0, probename,
+	    "-", arg4, arg3, arg5);
+}
+
+/*
+ * cloexec consume: file*, fd, pid, ucred, f_type, new state.
+ */
+fd:::cloexec-consume
+{
+	printf("%-6d %-6d %-6d %-8d %-16s %-8d %-8s new_state=%d\n",
+	    arg2, ((struct ucred *)arg3)->cr_uid,
+	    ((struct ucred *)arg3)->cr_gid, arg1, "CLOEXEC-ONCE",
+	    arg4, "-", arg5);
+}
+
+/*
+ * clofork consume: file*, fd, parent pid, child pid, ucred, f_type.
+ */
+fd:::clofork-consume
+{
+	printf("%-6d %-6d %-6d %-8d %-16s %-8d %-8s child=%d\n",
+	    arg2, ((struct ucred *)arg4)->cr_uid,
+	    ((struct ucred *)arg4)->cr_gid, arg1, "CLOFORK-ONCE",
+	    arg5, "-", arg3);
 }
 
 capsicum:::ioctl-deny

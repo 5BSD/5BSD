@@ -483,7 +483,7 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 			pd = pdshare(p1->p_pd);
 		else
 			pd = pdcopy(p1->p_pd);
-		fd = fdcopy(p1->p_fd, p2);
+		fd = fdcopy(p1->p_fd, p2, true);
 		fdtol = NULL;
 	} else {
 		if (fr->fr_flags2 & FR2_SHARE_PATHS)

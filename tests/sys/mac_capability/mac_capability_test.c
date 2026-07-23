@@ -49,6 +49,12 @@
 #define	CAP_XFER_ONCE		1
 #define	CAP_XFER_NONE		2
 #endif
+#ifndef CAP_CLOEXEC_ONCE
+#define	CAP_CLOEXEC_ONCE	2
+#endif
+#ifndef CAP_CLOFORK_ONCE
+#define	CAP_CLOFORK_ONCE	2
+#endif
 
 static int
 closed_fd(void)
@@ -1903,6 +1909,8 @@ ATF_TC_BODY(channel_forwards_fds_and_metadata, tc)
 
 	mac_capability_channel_create(&fd_a, &fd_b);
 	ATF_REQUIRE(pipe(pipefd) == 0);
+	ATF_REQUIRE(cap_cloexec_limit(pipefd[0], CAP_CLOEXEC_ONCE) == 0);
+	ATF_REQUIRE(cap_clofork_limit(pipefd[0], CAP_CLOFORK_ONCE) == 0);
 
 	memset(&info, 0, sizeof(info));
 	ATF_REQUIRE(ioctl(fd_a, MAC_CAPABILITY_GETINFO, &info) == 0);
@@ -1936,6 +1944,12 @@ ATF_TC_BODY(channel_forwards_fds_and_metadata, tc)
 	ATF_CHECK_EQ(ra.trailer.gid, trailer.gid);
 	ATF_CHECK_EQ(ra.trailer.prison_id, trailer.prison_id);
 	ATF_CHECK_EQ(ra.trailer.nonce, trailer.nonce);
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    cap_cloexec_limit(recv_fd, CAP_CLOEXEC_UNLOCKED) == -1);
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    cap_clofork_limit(recv_fd, CAP_CLOFORK_UNLOCKED) == -1);
+	ATF_REQUIRE(cap_cloexec_limit(recv_fd, CAP_CLOEXEC_ONCE) == 0);
+	ATF_REQUIRE(cap_clofork_limit(recv_fd, CAP_CLOFORK_ONCE) == 0);
 
 	ATF_REQUIRE(write(pipefd[1], "test", 4) == 4);
 	memset(buf, 0, sizeof(buf));
@@ -3300,6 +3314,8 @@ ATF_TC_BODY(call_reply_preserves_ioctl_limit, tc)
 	target_fd = mac_capability_connect("test_kernelstore");
 	ATF_REQUIRE(target_fd >= 0);
 	ATF_REQUIRE(cap_ioctls_limit(target_fd, cmds, nitems(cmds)) == 0);
+	ATF_REQUIRE(cap_cloexec_limit(target_fd, CAP_CLOEXEC_ONCE) == 0);
+	ATF_REQUIRE(cap_clofork_limit(target_fd, CAP_CLOFORK_ONCE) == 0);
 
 	memset(&kr, 0, sizeof(kr));
 	kr.op = KSTORE_OP_ECHO_FD;
@@ -3313,6 +3329,12 @@ ATF_TC_BODY(call_reply_preserves_ioctl_limit, tc)
 	ATF_REQUIRE(ioctl(svc_fd, MAC_CAPABILITY_CALL, &ca) == 0);
 	ATF_REQUIRE_EQ(ca.reply_nfds, 1);
 	ATF_CHECK_EQ(verify_getinfo_only(received_fd), 0);
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    cap_cloexec_limit(received_fd, CAP_CLOEXEC_UNLOCKED) == -1);
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    cap_clofork_limit(received_fd, CAP_CLOFORK_UNLOCKED) == -1);
+	ATF_REQUIRE(cap_cloexec_limit(received_fd, CAP_CLOEXEC_ONCE) == 0);
+	ATF_REQUIRE(cap_clofork_limit(received_fd, CAP_CLOFORK_ONCE) == 0);
 
 	close(received_fd);
 	close(target_fd);
@@ -3847,6 +3869,80 @@ ATF_TC_BODY(xfer_recvmsg_once_arrives_none, tc)
 		close(recv_fd);
 	}
 
+	close(pipefd[0]);
+	close(pipefd[1]);
+	close(fd);
+}
+
+ATF_TC(propagation_once_recvmsg_preserved);
+ATF_TC_HEAD(propagation_once_recvmsg_preserved, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "mac_capability RECVMSG preserves CLOEXEC_ONCE and CLOFORK_ONCE");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_test_keystore");
+}
+ATF_TC_BODY(propagation_once_recvmsg_preserved, tc)
+{
+	struct mac_capability_sendmsg_args sa;
+	struct mac_capability_recvmsg_args ra;
+	struct ks_request req;
+	char buf[64];
+	int fd, pipefd[2], recv_fd, status;
+	pid_t pid;
+
+	fd = mac_capability_connect("test_keystore");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(pipe(pipefd) == 0);
+	ATF_REQUIRE(cap_cloexec_limit(pipefd[0], CAP_CLOEXEC_ONCE) == 0);
+	ATF_REQUIRE(cap_clofork_limit(pipefd[0], CAP_CLOFORK_ONCE) == 0);
+
+	req.op = KS_OP_FETCH;
+	req.keyid = mac_capability_missing_key();
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = &req;
+	sa.payload_len = sizeof(req);
+	sa.fds = &pipefd[0];
+	sa.nfds = 1;
+	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == 0);
+
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
+	ra.fds = &recv_fd;
+	ra.nfds = 1;
+	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
+	ATF_REQUIRE_EQ(ra.nfds, 1);
+
+	/* These two checks together prove each exact intermediate state. */
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    cap_cloexec_limit(recv_fd, CAP_CLOEXEC_UNLOCKED) == -1);
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    cap_clofork_limit(recv_fd, CAP_CLOFORK_UNLOCKED) == -1);
+	ATF_REQUIRE(cap_cloexec_limit(recv_fd, CAP_CLOEXEC_ONCE) == 0);
+	ATF_REQUIRE(cap_clofork_limit(recv_fd, CAP_CLOFORK_ONCE) == 0);
+
+	/* The received fork state must be enforced, not merely stored. */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0)
+		_exit(fcntl(recv_fd, F_GETFD) == -1 ? 40 : 0);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "mac_capability descriptor missed its permitted fork (exit %d)",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0)
+		_exit(fcntl(recv_fd, F_GETFD) == -1 && errno == EBADF ?
+		    0 : 41);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "mac_capability descriptor survived a second fork (exit %d)",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+
+	close(recv_fd);
 	close(pipefd[0]);
 	close(pipefd[1]);
 	close(fd);
@@ -7290,6 +7386,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, xfer_sendmsg_multi_atomic);
 	ATF_TP_ADD_TC(tp, xfer_recvmsg_unlimited_preserved);
 	ATF_TP_ADD_TC(tp, xfer_recvmsg_once_arrives_none);
+	ATF_TP_ADD_TC(tp, propagation_once_recvmsg_preserved);
 	ATF_TP_ADD_TC(tp, xfer_call_none_rejected);
 	ATF_TP_ADD_TC(tp, xfer_call_once_consumed);
 

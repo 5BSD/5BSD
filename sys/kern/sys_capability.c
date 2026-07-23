@@ -791,10 +791,21 @@ kern_cap_cloexec_limit(struct thread *td, int fd, int state)
 {
 	struct filedesc *fdp;
 	struct filedescent *fdep;
-	int error, old_state = -1;
+	int error, new_rank, old_rank, old_state = -1;
 
-	if (state < CAP_CLOEXEC_UNLOCKED || state > CAP_CLOEXEC_LOCKED)
+	switch (state) {
+	case CAP_CLOEXEC_UNLOCKED:
+		new_rank = 0;
+		break;
+	case CAP_CLOEXEC_ONCE:
+		new_rank = 1;
+		break;
+	case CAP_CLOEXEC_LOCKED:
+		new_rank = 2;
+		break;
+	default:
 		return (EINVAL);
+	}
 
 	fdp = td->td_proc->p_fd;
 	FILEDESC_XLOCK(fdp);
@@ -805,7 +816,20 @@ kern_cap_cloexec_limit(struct thread *td, int fd, int state)
 		goto out_probe;
 	}
 	old_state = fdep->fde_cloexec_state;
-	if (state < old_state) {
+	switch (old_state) {
+	case CAP_CLOEXEC_UNLOCKED:
+		old_rank = 0;
+		break;
+	case CAP_CLOEXEC_ONCE:
+		old_rank = 1;
+		break;
+	case CAP_CLOEXEC_LOCKED:
+		old_rank = 2;
+		break;
+	default:
+		panic("%s: invalid cloexec state %d", __func__, old_state);
+	}
+	if (new_rank < old_rank) {
 		FILEDESC_XUNLOCK(fdp);
 		error = ENOTCAPABLE;
 		goto out_probe;
@@ -831,10 +855,21 @@ kern_cap_clofork_limit(struct thread *td, int fd, int state)
 {
 	struct filedesc *fdp;
 	struct filedescent *fdep;
-	int error, old_state = -1;
+	int error, new_rank, old_rank, old_state = -1;
 
-	if (state < CAP_CLOFORK_UNLOCKED || state > CAP_CLOFORK_LOCKED)
+	switch (state) {
+	case CAP_CLOFORK_UNLOCKED:
+		new_rank = 0;
+		break;
+	case CAP_CLOFORK_ONCE:
+		new_rank = 1;
+		break;
+	case CAP_CLOFORK_LOCKED:
+		new_rank = 2;
+		break;
+	default:
 		return (EINVAL);
+	}
 
 	fdp = td->td_proc->p_fd;
 	FILEDESC_XLOCK(fdp);
@@ -845,7 +880,20 @@ kern_cap_clofork_limit(struct thread *td, int fd, int state)
 		goto out_probe;
 	}
 	old_state = fdep->fde_clofork_state;
-	if (state < old_state) {
+	switch (old_state) {
+	case CAP_CLOFORK_UNLOCKED:
+		old_rank = 0;
+		break;
+	case CAP_CLOFORK_ONCE:
+		old_rank = 1;
+		break;
+	case CAP_CLOFORK_LOCKED:
+		old_rank = 2;
+		break;
+	default:
+		panic("%s: invalid clofork state %d", __func__, old_state);
+	}
+	if (new_rank < old_rank) {
 		FILEDESC_XUNLOCK(fdp);
 		error = ENOTCAPABLE;
 		goto out_probe;

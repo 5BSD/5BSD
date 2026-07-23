@@ -55,23 +55,35 @@
 #define	CAP_XFER_NONE		2	/* no transfer permitted */
 
 /*
- * Close-on-exec lock state (fde_cloexec_state).
- * Monotonically increasing; can only tighten.  When locked, the
- * kernel closes the descriptor on exec regardless of the FD_CLOEXEC
- * flag.  The process can still set/clear FD_CLOEXEC freely — the
- * lock is a separate, invisible layer.  Default is unlocked.
+ * Close-on-exec propagation state (fde_cloexec_state).
+ * Monotonically tightening.  CAP_CLOEXEC_ONCE permits the descriptor
+ * to survive one exec, then transitions it to CAP_CLOEXEC_LOCKED.
+ * When locked, the kernel closes the descriptor on exec regardless of
+ * the FD_CLOEXEC flag.  The process can still set/clear FD_CLOEXEC
+ * freely — the state is a separate, invisible layer.  Default is
+ * unlocked.
+ *
+ * Keep the existing LOCKED value for ABI compatibility.  The numeric
+ * values are therefore not in semantic restriction order.
  */
 #define	CAP_CLOEXEC_UNLOCKED	0	/* process can set/clear (default) */
 #define	CAP_CLOEXEC_LOCKED	1	/* CLOEXEC forced, cannot be cleared */
+#define	CAP_CLOEXEC_ONCE	2	/* survive one exec, then lock */
 
 /*
- * Close-on-fork lock state (fde_clofork_state).
- * Monotonically increasing; can only tighten.  When locked, the
- * kernel skips this descriptor during fork regardless of the
- * FD_CLOFORK flag.  Default is unlocked.
+ * Close-on-fork propagation state (fde_clofork_state).
+ * Monotonically tightening.  CAP_CLOFORK_ONCE permits one child to
+ * inherit the descriptor, then transitions both the parent and child
+ * entries to CAP_CLOFORK_LOCKED.  When locked, the kernel skips this
+ * descriptor during fork regardless of the FD_CLOFORK flag.  Default
+ * is unlocked.
+ *
+ * Keep the existing LOCKED value for ABI compatibility.  The numeric
+ * values are therefore not in semantic restriction order.
  */
 #define	CAP_CLOFORK_UNLOCKED	0	/* process can set/clear (default) */
 #define	CAP_CLOFORK_LOCKED	1	/* close-on-fork forced */
+#define	CAP_CLOFORK_ONCE	2	/* survive one fork, then lock */
 
 #ifndef _KERNEL
 #include <stdbool.h>

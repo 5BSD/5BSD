@@ -11,6 +11,7 @@ CFLAGS+=	-I${SRCTOP}/tests
 
 ATF_TESTS_C+=	basic_signal
 ATF_TESTS_C+=	cap_confinement_test
+LIBADD.cap_confinement_test+=	pthread
 ATF_TESTS_C+=	cap_xfer_test
 ATF_TESTS_C+=	copy_file_range
 .if ${MACHINE_ARCH} != "i386" && ${MACHINE_ARCH} != "powerpc"
