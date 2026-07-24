@@ -123,11 +123,13 @@ that reset retains the historical writeback default, toggles Linux's virtio-blk
 in writethrough mode.
 
 Modern network runs default to `NET_QUEUES=2`.  The verifier requires
-`VIRTIO_NET_F_CTRL_VQ`, `VIRTIO_NET_F_MQ`, and `VIRTIO_NET_F_RSS`, checks the
-exact Linux RX and TX queue counts under `/sys/class/net/eth0/queues`, and
-repeats those checks after driver unbind/rebind and monitor-mode reboot when
-lifecycle testing is enabled.  Linux selects RSS mode with its standard
-128-entry indirection table and 40-byte Toeplitz key during device setup.
+`VIRTIO_NET_F_CTRL_VQ`, `VIRTIO_NET_F_MQ`,
+`VIRTIO_NET_F_HASH_REPORT`, and `VIRTIO_NET_F_RSS`, checks the exact Linux RX
+and TX queue counts under `/sys/class/net/eth0/queues`, and repeats those
+checks after driver unbind/rebind and monitor-mode reboot when lifecycle
+testing is enabled.  Linux selects RSS mode with its standard 128-entry
+indirection table and 40-byte Toeplitz key during device setup and consumes
+the 20-byte receive header used for hash reports.
 The verifier also uses `ethtool` to replace the live indirection table and
 read back the resulting Toeplitz configuration, exercising the RSS control
 command rather than checking only its negotiated feature bit.

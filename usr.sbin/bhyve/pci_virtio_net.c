@@ -127,6 +127,7 @@ struct virtio_net_config {
 #define	VTNET_CTRL_MQ			4
 #define	VTNET_CTRL_MQ_VQ_PAIRS_SET	0
 #define	VTNET_CTRL_MQ_RSS_CONFIG	1
+#define	VTNET_CTRL_MQ_HASH_CONFIG	2
 #define	VTNET_CTRL_OK			0
 #define	VTNET_CTRL_ERR			1
 
@@ -140,6 +141,25 @@ struct virtio_net_config {
 #define	VTNET_RSS_COMMAND_MIN		15
 #define	VTNET_RSS_COMMAND_MAX		(13 + VTNET_RSS_TABLE_SIZE * 2 + \
 					    VTNET_RSS_KEY_SIZE)
+#define	VTNET_HASH_COMMAND_MIN		15
+#define	VTNET_HASH_COMMAND_MAX		(15 + VTNET_RSS_KEY_SIZE)
+
+#define	VTNET_HASH_REPORT_NONE		0
+#define	VTNET_HASH_REPORT_IPV4		1
+#define	VTNET_HASH_REPORT_TCPV4		2
+#define	VTNET_HASH_REPORT_UDPV4		3
+#define	VTNET_HASH_REPORT_IPV6		4
+#define	VTNET_HASH_REPORT_TCPV6		5
+#define	VTNET_HASH_REPORT_UDPV6		6
+
+struct virtio_net_hash_report {
+	uint32_t hash_value;
+	uint16_t hash_report;
+	uint16_t padding;
+} __packed;
+_Static_assert(sizeof(struct virtio_net_rxhdr) +
+    sizeof(struct virtio_net_hash_report) == 20,
+    "VirtIO-net HASH_REPORT header must be 20 bytes");
 
 struct pci_vtnet_rss_config {
 	uint32_t hash_types;
@@ -148,6 +168,12 @@ struct pci_vtnet_rss_config {
 	uint16_t indirection_table[VTNET_RSS_TABLE_SIZE];
 	uint16_t max_tx_vq;
 	uint16_t enabled_mask;
+	uint8_t key_length;
+	uint8_t key[VTNET_RSS_KEY_SIZE];
+};
+
+struct pci_vtnet_hash_config {
+	uint32_t hash_types;
 	uint8_t key_length;
 	uint8_t key[VTNET_RSS_KEY_SIZE];
 };
@@ -193,6 +219,7 @@ struct pci_vtnet_softc {
 	uint16_t	vsc_max_pairs;
 	uint64_t	vsc_flow_map[VTNET_FLOW_ENTRIES];
 	bool		rss_enabled;
+	bool		hash_configured;
 	uint32_t	rss_hash_types;
 	uint16_t	rss_indirection_mask;
 	uint16_t	rss_unclassified_queue;
@@ -200,7 +227,9 @@ struct pci_vtnet_softc {
 	uint16_t	rss_max_tx_vq;
 	uint8_t		rss_key_length;
 	uint8_t		rss_key[VTNET_RSS_KEY_SIZE];
-	uint8_t		vsc_rx_buf[NETBE_MAX_RECORD_SIZE];
+	uint8_t		vsc_rx_buf[VTNET_MAX_PKT_LEN +
+			    sizeof(struct virtio_net_rxhdr) +
+			    sizeof(struct virtio_net_hash_report)];
 	size_t		rx_staged_len;
 
 	size_t		vhdrlen;
@@ -218,6 +247,9 @@ static size_t
 pci_vtnet_header_len(const struct pci_vtnet_softc *sc, uint64_t features)
 {
 
+	if ((features & VIRTIO_NET_F_HASH_REPORT) != 0)
+		return (sizeof(struct virtio_net_rxhdr) +
+		    sizeof(struct virtio_net_hash_report));
 	if (sc->vsc_vs.vs_transport == VIRTIO_PCI_TRANSPORT_MODERN ||
 	    (features & VIRTIO_NET_F_MRG_RXBUF) != 0)
 		return (sizeof(struct virtio_net_rxhdr));
@@ -430,14 +462,17 @@ pci_vtnet_rss_toeplitz(const uint8_t *key, size_t key_len,
 
 static bool
 pci_vtnet_rss_hash(const struct pci_vtnet_softc *sc, const uint8_t *frame,
-    size_t len, uint32_t *hash)
+    size_t len, uint32_t *hash, uint16_t *report)
 {
 	uint8_t input[36];
 	uint16_t ether_type, frag;
+	uint16_t hash_report;
 	size_t input_len, l3off, l4off, packet_end;
 	uint8_t protocol;
 	bool fragmented;
 
+	if (report != NULL)
+		*report = VTNET_HASH_REPORT_NONE;
 	if (sc->rss_hash_types == 0 || len < ETHER_HDR_LEN)
 		return (false);
 	l3off = ETHER_HDR_LEN;
@@ -459,6 +494,7 @@ pci_vtnet_rss_hash(const struct pci_vtnet_softc *sc, const uint8_t *frame,
 			return (false);
 		memcpy(input, frame + l3off + 12, 8);
 		input_len = 8;
+		hash_report = VTNET_HASH_REPORT_IPV4;
 		protocol = frame[l3off + 9];
 		frag = pci_vtnet_be16(frame + l3off + 6);
 		/*
@@ -472,11 +508,13 @@ pci_vtnet_rss_hash(const struct pci_vtnet_softc *sc, const uint8_t *frame,
 		    iplen >= ihl + VTNET_TCP_HEADER_MIN) {
 			memcpy(input + input_len, frame + l3off + ihl, 4);
 			input_len += 4;
+			hash_report = VTNET_HASH_REPORT_TCPV4;
 		} else if (!fragmented && protocol == IPPROTO_UDP &&
 		    (sc->rss_hash_types & VTNET_RSS_HASH_TYPE_UDPV4) != 0 &&
 		    iplen >= ihl + VTNET_UDP_HEADER_SIZE) {
 			memcpy(input + input_len, frame + l3off + ihl, 4);
 			input_len += 4;
+			hash_report = VTNET_HASH_REPORT_UDPV4;
 		} else if ((sc->rss_hash_types &
 		    VTNET_RSS_HASH_TYPE_IPV4) == 0)
 			return (false);
@@ -491,6 +529,7 @@ pci_vtnet_rss_hash(const struct pci_vtnet_softc *sc, const uint8_t *frame,
 		packet_end = l3off + iplen;
 		memcpy(input, frame + l3off + 8, 32);
 		input_len = 32;
+		hash_report = VTNET_HASH_REPORT_IPV6;
 		protocol = frame[l3off + 6];
 		l4off = l3off + 40;
 		fragmented = false;
@@ -535,19 +574,25 @@ pci_vtnet_rss_hash(const struct pci_vtnet_softc *sc, const uint8_t *frame,
 		    packet_end >= l4off + VTNET_TCP_HEADER_MIN) {
 			memcpy(input + input_len, frame + l4off, 4);
 			input_len += 4;
+			hash_report = VTNET_HASH_REPORT_TCPV6;
 		} else if (!fragmented && protocol == IPPROTO_UDP &&
 		    (sc->rss_hash_types & VTNET_RSS_HASH_TYPE_UDPV6) != 0 &&
 		    packet_end >= l4off + VTNET_UDP_HEADER_SIZE) {
 			memcpy(input + input_len, frame + l4off, 4);
 			input_len += 4;
+			hash_report = VTNET_HASH_REPORT_UDPV6;
 		} else if ((sc->rss_hash_types &
 		    VTNET_RSS_HASH_TYPE_IPV6) == 0)
 			return (false);
 	} else
 		return (false);
 
-	return (pci_vtnet_rss_toeplitz(sc->rss_key, sc->rss_key_length,
-	    input, input_len, hash));
+	if (!pci_vtnet_rss_toeplitz(sc->rss_key, sc->rss_key_length,
+	    input, input_len, hash))
+		return (false);
+	if (report != NULL)
+		*report = hash_report;
+	return (true);
 }
 
 static bool
@@ -638,6 +683,7 @@ pci_vtnet_reset(void *vsc)
 	sc->tx_current_vq = NULL;
 	sc->tx_control_pause = false;
 	sc->rss_enabled = false;
+	sc->hash_configured = false;
 	sc->rss_hash_types = 0;
 	sc->rss_indirection_mask = 0;
 	sc->rss_unclassified_queue = 0;
@@ -866,7 +912,7 @@ pci_vtnet_tx_header_valid(const struct pci_vtnet_softc *sc,
 	 */
 	if ((hdr->vrh_flags & VTNET_HDR_F_DATA_VALID) != 0)
 		return (false);
-	if (sc->vhdrlen == sizeof(*hdr) && le16toh(hdr->vrh_bufs) != 0)
+	if (sc->vhdrlen >= sizeof(*hdr) && le16toh(hdr->vrh_bufs) != 0)
 		return (false);
 
 	/*
@@ -1060,17 +1106,30 @@ struct virtio_mrg_rxbuf_info {
 
 static struct vqueue_info *
 pci_vtnet_select_rxq(struct pci_vtnet_softc *sc, const uint8_t *frame,
-    size_t frame_len, bool *drop)
+    size_t frame_len, bool *drop, uint32_t *packet_hash,
+    uint16_t *hash_report)
 {
 	struct vqueue_info *vq;
 	uint32_t hash;
+	uint16_t report;
 	uint16_t pair, start;
+	bool hashed;
 
 	*drop = false;
+	hash = 0;
+	report = VTNET_HASH_REPORT_NONE;
+	hashed = false;
+	if (sc->rss_enabled || sc->hash_configured)
+		hashed = pci_vtnet_rss_hash(sc, frame, frame_len, &hash,
+		    &report);
+	if (packet_hash != NULL)
+		*packet_hash = hashed ? hash : 0;
+	if (hash_report != NULL)
+		*hash_report = hashed ? report : VTNET_HASH_REPORT_NONE;
 	if (sc->rx_enabled_mask == 0)
 		return (NULL);
 	if (sc->rss_enabled) {
-		if (pci_vtnet_rss_hash(sc, frame, frame_len, &hash))
+		if (hashed)
 			pair = sc->rss_indirection_table[
 			    hash & sc->rss_indirection_mask];
 		else
@@ -1125,7 +1184,6 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 	struct virtio_mrg_rxbuf_info info[VTNET_MAXSEGS];
 	struct iovec iov[VTNET_MAXSEGS + 1];
 	struct vi_req req;
-	size_t prepend_hdr_len;
 
 	if (sc->vsc_be == NULL)
 		return;
@@ -1145,19 +1203,25 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 	 * path safe if backend state changes unexpectedly or a future restore
 	 * path fails to revalidate derived framing state.
 	 */
-	if (sc->be_vhdrlen != 0 && sc->be_vhdrlen != sc->vhdrlen) {
-		WPRINTF(("vtnet: backend and guest header lengths differ"));
+	if (sc->be_vhdrlen != 0 &&
+	    !((sc->be_vhdrlen == sizeof(struct virtio_net_rxhdr) -
+	    sizeof(((struct virtio_net_rxhdr *)0)->vrh_bufs) &&
+	    sc->vhdrlen == sc->be_vhdrlen) ||
+	    (sc->be_vhdrlen == sizeof(struct virtio_net_rxhdr) &&
+	    sc->vhdrlen >= sc->be_vhdrlen))) {
+		WPRINTF(("vtnet: invalid backend header length"));
 		netbe_rx_disable(sc->vsc_be);
 		vi_set_needs_reset(&sc->vsc_vs);
 		return;
 	}
-	prepend_hdr_len = sc->vhdrlen - sc->be_vhdrlen;
 
 	for (;;) {
 		struct virtio_net_rxhdr hdr;
+		struct virtio_net_hash_report hash_hdr;
 		struct vqueue_info *vq;
 		struct iovec backend_iov;
 		struct iovec frame_iov;
+		size_t frame_len;
 		size_t plen;
 		size_t riov_bytes;
 		struct iovec *riov;
@@ -1166,6 +1230,8 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 		int n_chains;
 		ssize_t backend_len;
 		ssize_t rlen;
+		uint32_t packet_hash;
+		uint16_t hash_report;
 		bool drop;
 
 		if (sc->rx_staged_len == 0) {
@@ -1189,6 +1255,12 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 				(void)netbe_rx_discard(sc->vsc_be);
 				continue;
 			}
+			if ((size_t)backend_len < sc->be_vhdrlen) {
+				WPRINTF(("vtnet: dropping truncated backend "
+				    "header (%zd bytes)", backend_len));
+				(void)netbe_rx_discard(sc->vsc_be);
+				continue;
+			}
 
 			/*
 			 * Automatic receive steering needs the packet's flow
@@ -1197,8 +1269,7 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			 * buffer.  If no receive buffer is available, retain
 			 * this record until a later queue kick.
 			 */
-			backend_iov.iov_base =
-			    sc->vsc_rx_buf + prepend_hdr_len;
+			backend_iov.iov_base = sc->vsc_rx_buf;
 			backend_iov.iov_len = (size_t)backend_len;
 			rlen = netbe_recv(sc->vsc_be, &backend_iov, 1);
 			if (rlen != backend_len) {
@@ -1206,16 +1277,25 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 				    backend_len, rlen));
 				continue;
 			}
-			plen = (size_t)rlen + prepend_hdr_len;
-			if (prepend_hdr_len != 0)
-				memset(sc->vsc_rx_buf, 0, prepend_hdr_len);
+			frame_len = (size_t)rlen - sc->be_vhdrlen;
+			if (sc->vhdrlen != sc->be_vhdrlen) {
+				memmove(sc->vsc_rx_buf + sc->vhdrlen,
+				    sc->vsc_rx_buf + sc->be_vhdrlen,
+				    frame_len);
+				memset(sc->vsc_rx_buf + sc->be_vhdrlen, 0,
+				    sc->vhdrlen - sc->be_vhdrlen);
+			}
+			plen = frame_len + sc->vhdrlen;
 			sc->rx_staged_len = plen;
 		} else
 			plen = sc->rx_staged_len;
+		if (plen < sc->vhdrlen) {
+			sc->rx_staged_len = 0;
+			continue;
+		}
 		memset(&hdr, 0, sizeof(hdr));
-		memcpy(&hdr, sc->vsc_rx_buf, sc->vhdrlen);
-		if (plen < sc->vhdrlen ||
-		    !pci_vtnet_rx_header_valid(sc, &hdr,
+		memcpy(&hdr, sc->vsc_rx_buf, MIN(sc->vhdrlen, sizeof(hdr)));
+		if (!pci_vtnet_rx_header_valid(sc, &hdr,
 		    plen - sc->vhdrlen)) {
 			DPRINTF(("vtnet: invalid receive offload metadata"));
 			sc->rx_staged_len = 0;
@@ -1230,7 +1310,7 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			continue;
 		}
 		vq = pci_vtnet_select_rxq(sc, sc->vsc_rx_buf + sc->vhdrlen,
-		    plen - sc->vhdrlen, &drop);
+		    plen - sc->vhdrlen, &drop, &packet_hash, &hash_report);
 		if (vq == NULL) {
 			if (drop || pci_vtnet_all_rxqs_resetting(sc)) {
 				sc->rx_staged_len = 0;
@@ -1238,6 +1318,13 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			}
 			netbe_rx_disable(sc->vsc_be);
 			return;
+		}
+		if ((sc->vsc_features & VIRTIO_NET_F_HASH_REPORT) != 0) {
+			hash_hdr.hash_value = htole32(packet_hash);
+			hash_hdr.hash_report = htole16(hash_report);
+			hash_hdr.padding = 0;
+			memcpy(sc->vsc_rx_buf + sizeof(hdr), &hash_hdr,
+			    sizeof(hash_hdr));
 		}
 
 		/*
@@ -1320,7 +1407,7 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			 * num_buffers is present on every modern packet even
 			 * when mergeable receive buffers were not negotiated.
 			 */
-			if (sc->vhdrlen == sizeof(hdr)) {
+			if (sc->vhdrlen >= sizeof(hdr)) {
 				num_buffers = htole16(1);
 				memcpy(sc->vsc_rx_buf +
 				    offsetof(struct virtio_net_rxhdr, vrh_bufs),
@@ -1468,7 +1555,8 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 		return;
 	}
 	memset(&hdr, 0, sizeof(hdr));
-	if (!pci_vtnet_iov_read(iov, n, 0, &hdr, sc->vhdrlen) ||
+	if (!pci_vtnet_iov_read(iov, n, 0, &hdr,
+	    MIN(sc->vhdrlen, sizeof(hdr))) ||
 	    !pci_vtnet_tx_header_valid(sc, &hdr,
 	    total_len - sc->vhdrlen)) {
 		DPRINTF(("vtnet: invalid transmit offload metadata"));
@@ -1681,6 +1769,8 @@ pci_vtnet_set_queue_state(struct pci_vtnet_softc *sc, uint16_t tx_pairs,
 		sc->tx_next_pair = 0;
 	sc->rss_enabled = rss != NULL;
 	if (rss != NULL) {
+		sc->hash_configured =
+		    (sc->vsc_features & VIRTIO_NET_F_HASH_REPORT) != 0;
 		sc->rss_hash_types = rss->hash_types;
 		sc->rss_indirection_mask = rss->indirection_mask;
 		sc->rss_unclassified_queue = rss->unclassified_queue;
@@ -1690,14 +1780,17 @@ pci_vtnet_set_queue_state(struct pci_vtnet_softc *sc, uint16_t tx_pairs,
 		sc->rss_key_length = rss->key_length;
 		memcpy(sc->rss_key, rss->key, sizeof(sc->rss_key));
 	} else {
-		sc->rss_hash_types = 0;
 		sc->rss_indirection_mask = 0;
 		sc->rss_unclassified_queue = 0;
 		memset(sc->rss_indirection_table, 0,
 		    sizeof(sc->rss_indirection_table));
 		sc->rss_max_tx_vq = 1;
-		sc->rss_key_length = 0;
-		memset(sc->rss_key, 0, sizeof(sc->rss_key));
+		if ((sc->vsc_features & VIRTIO_NET_F_HASH_REPORT) == 0) {
+			sc->hash_configured = false;
+			sc->rss_hash_types = 0;
+			sc->rss_key_length = 0;
+			memset(sc->rss_key, 0, sizeof(sc->rss_key));
+		}
 	}
 	sc->tx_control_pause = false;
 	pthread_cond_signal(&sc->tx_cond);
@@ -1719,6 +1812,20 @@ pci_vtnet_set_queue_state(struct pci_vtnet_softc *sc, uint16_t tx_pairs,
 			}
 		}
 	}
+	pthread_mutex_unlock(&sc->rx_mtx);
+}
+
+static void
+pci_vtnet_set_hash_config(struct pci_vtnet_softc *sc,
+    const struct pci_vtnet_hash_config *config)
+{
+
+	pthread_mutex_lock(&sc->rx_mtx);
+	sc->rss_hash_types = config->hash_types;
+	sc->rss_key_length = config->key_length;
+	memset(sc->rss_key, 0, sizeof(sc->rss_key));
+	memcpy(sc->rss_key, config->key, config->key_length);
+	sc->hash_configured = true;
 	pthread_mutex_unlock(&sc->rx_mtx);
 }
 
@@ -1789,12 +1896,40 @@ pci_vtnet_parse_rss_config(struct pci_vtnet_softc *sc,
 	return (true);
 }
 
+static bool
+pci_vtnet_parse_hash_config(const uint8_t *command, size_t command_size,
+    struct pci_vtnet_hash_config *config)
+{
+	uint32_t hash_types;
+
+	if (command_size < VTNET_HASH_COMMAND_MIN ||
+	    command_size > VTNET_HASH_COMMAND_MAX)
+		return (false);
+	memcpy(&hash_types, command + 2, sizeof(hash_types));
+	config->hash_types = le32toh(hash_types);
+	if ((config->hash_types & ~VTNET_RSS_HASH_TYPES) != 0)
+		return (false);
+	for (size_t i = 6; i < 14; i++) {
+		if (command[i] != 0)
+			return (false);
+	}
+	config->key_length = command[14];
+	if (config->key_length > VTNET_RSS_KEY_SIZE ||
+	    VTNET_HASH_COMMAND_MIN + config->key_length != command_size)
+		return (false);
+	memset(config->key, 0, sizeof(config->key));
+	memcpy(config->key, command + VTNET_HASH_COMMAND_MIN,
+	    config->key_length);
+	return (true);
+}
+
 static void
 pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
 {
 	struct pci_vtnet_softc *sc;
 	struct iovec iov[VTNET_MAXSEGS];
 	struct vi_req req;
+	struct pci_vtnet_hash_config hash;
 	struct pci_vtnet_rss_config rss;
 	uint8_t command[VTNET_RSS_COMMAND_MAX], ack;
 	uint16_t pairs;
@@ -1841,6 +1976,13 @@ pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
 		    pci_vtnet_parse_rss_config(sc, command, insize, &rss)) {
 			pci_vtnet_set_queue_state(sc, rss.max_tx_vq,
 			    rss.enabled_mask, 0, &rss);
+			ack = VTNET_CTRL_OK;
+		} else if (command_valid && command[0] == VTNET_CTRL_MQ &&
+		    command[1] == VTNET_CTRL_MQ_HASH_CONFIG &&
+		    (sc->vsc_features & VIRTIO_NET_F_HASH_REPORT) != 0 &&
+		    (sc->vsc_features & VIRTIO_NET_F_RSS) == 0 &&
+		    pci_vtnet_parse_hash_config(command, insize, &hash)) {
+			pci_vtnet_set_hash_config(sc, &hash);
 			ack = VTNET_CTRL_OK;
 		}
 		if (outsize < sizeof(ack) ||
@@ -2020,7 +2162,8 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 	if (pairs > 1)
 		sc->vsc_consts.vc_hv_caps |= VIRTIO_NET_F_CTRL_VQ |
-		    VIRTIO_NET_F_MQ | VIRTIO_NET_F_RSS;
+		    VIRTIO_NET_F_MQ | VIRTIO_NET_F_HASH_REPORT |
+		    VIRTIO_NET_F_RSS;
 
 	/* initialize config space */
 	if (vi_pci_is_modern(&sc->vsc_vs))
@@ -2136,12 +2279,13 @@ pci_vtnet_apply_features(struct pci_vtnet_softc *sc,
 
 	/*
 	 * VirtIO 1.4 section 5.1.3 makes VIRTIO_NET_F_CTRL_VQ a
-	 * prerequisite for VIRTIO_NET_F_MQ.  Treat a driver which selects MQ
-	 * without its control queue as a failed negotiation instead of
-	 * exposing queue pairs which can never be enabled.
+	 * prerequisite for VIRTIO_NET_F_MQ, VIRTIO_NET_F_HASH_REPORT, and
+	 * VIRTIO_NET_F_RSS.  Treat a driver which selects any of them without
+	 * its control queue as a failed negotiation instead of exposing
+	 * functionality which can never be configured.
 	 */
-	if ((negotiated_features &
-	    (VIRTIO_NET_F_MQ | VIRTIO_NET_F_RSS)) != 0 &&
+	if ((negotiated_features & (VIRTIO_NET_F_MQ |
+	    VIRTIO_NET_F_HASH_REPORT | VIRTIO_NET_F_RSS)) != 0 &&
 	    ((negotiated_features & VIRTIO_NET_F_CTRL_VQ) == 0 ||
 	    sc->vsc_max_pairs <= 1)) {
 		sc->features_negotiated = false;
@@ -2162,6 +2306,12 @@ pci_vtnet_apply_features(struct pci_vtnet_softc *sc,
 		sc->tx_active_pairs = 1;
 		sc->tx_next_pair = 0;
 		sc->rss_enabled = false;
+		if ((negotiated_features & VIRTIO_NET_F_HASH_REPORT) == 0) {
+			sc->hash_configured = false;
+			sc->rss_hash_types = 0;
+			sc->rss_key_length = 0;
+			memset(sc->rss_key, 0, sizeof(sc->rss_key));
+		}
 		memset(sc->vsc_flow_map, 0, sizeof(sc->vsc_flow_map));
 	}
 
@@ -2175,7 +2325,9 @@ pci_vtnet_apply_features(struct pci_vtnet_softc *sc,
 		 * into a capability-application failure.
 		 */
 		backend_features = negotiated_features & VTNET_BACKEND_CAPS;
-		backend_vhdrlen = backend_features != 0 ? sc->vhdrlen : 0;
+		backend_vhdrlen = backend_features != 0 ?
+		    pci_vtnet_header_len(sc, negotiated_features &
+		    ~VIRTIO_NET_F_HASH_REPORT) : 0;
 		if (netbe_set_cap(sc->vsc_be, backend_features,
 		    backend_vhdrlen) != 0) {
 			/*
@@ -2281,6 +2433,7 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	SNAPSHOT_VAR_OR_LEAVE(sc->rx_active_pairs, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->rx_enabled_mask, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->rss_enabled, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(sc->hash_configured, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->rss_hash_types, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->rss_indirection_mask, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->rss_unclassified_queue, meta, ret, done);
@@ -2311,6 +2464,13 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 		valid_mask = (1U << sc->vsc_max_pairs) - 1;
 		if (sc->rx_enabled_mask == 0 ||
 		    (sc->rx_enabled_mask & ~valid_mask) != 0 ||
+		    (sc->hash_configured &&
+		    (!sc->features_negotiated ||
+		    (sc->vsc_features & (VIRTIO_NET_F_CTRL_VQ |
+		    VIRTIO_NET_F_HASH_REPORT)) !=
+		    (VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_HASH_REPORT) ||
+		    (sc->rss_hash_types & ~VTNET_RSS_HASH_TYPES) != 0 ||
+		    sc->rss_key_length > VTNET_RSS_KEY_SIZE)) ||
 		    (sc->rss_enabled &&
 		    (!sc->features_negotiated ||
 		    (sc->vsc_features & (VIRTIO_NET_F_CTRL_VQ |
@@ -2325,7 +2485,9 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 		    sc->rss_unclassified_queue) ||
 		    sc->rss_max_tx_vq < 1 ||
 		    sc->rss_max_tx_vq > sc->vsc_max_pairs ||
-		    sc->rss_key_length > VTNET_RSS_KEY_SIZE)) ||
+		    sc->rss_key_length > VTNET_RSS_KEY_SIZE ||
+		    ((sc->vsc_features & VIRTIO_NET_F_HASH_REPORT) != 0 &&
+		    !sc->hash_configured))) ||
 		    (!sc->rss_enabled &&
 		    (sc->rx_active_pairs < 1 ||
 		    sc->rx_active_pairs > sc->vsc_max_pairs ||
@@ -2378,6 +2540,8 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 		 * format before allowing the backend to resume delivery.
 		 */
 		if (sc->rx_staged_len != 0) {
+			struct virtio_net_hash_report hash_hdr;
+
 			if (!sc->features_negotiated ||
 			    sc->rx_staged_len < sc->vhdrlen ||
 			    sc->rx_staged_len >
@@ -2386,11 +2550,26 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 				goto done;
 			}
 			memset(&hdr, 0, sizeof(hdr));
-			memcpy(&hdr, sc->vsc_rx_buf, sc->vhdrlen);
+			memcpy(&hdr, sc->vsc_rx_buf,
+			    MIN(sc->vhdrlen, sizeof(hdr)));
 			if (!pci_vtnet_rx_header_valid(sc, &hdr,
 			    sc->rx_staged_len - sc->vhdrlen)) {
 				ret = EINVAL;
 				goto done;
+			}
+			if ((sc->vsc_features &
+			    VIRTIO_NET_F_HASH_REPORT) != 0) {
+				memcpy(&hash_hdr, sc->vsc_rx_buf + sizeof(hdr),
+				    sizeof(hash_hdr));
+				if (le16toh(hash_hdr.hash_report) >
+				    VTNET_HASH_REPORT_UDPV6 ||
+				    hash_hdr.padding != 0 ||
+				    (hash_hdr.hash_report ==
+				    htole16(VTNET_HASH_REPORT_NONE) &&
+				    hash_hdr.hash_value != 0)) {
+					ret = EINVAL;
+					goto done;
+				}
 			}
 			frame_iov.iov_base = sc->vsc_rx_buf;
 			frame_iov.iov_len = sc->rx_staged_len;

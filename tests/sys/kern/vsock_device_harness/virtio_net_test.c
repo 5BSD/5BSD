@@ -55,6 +55,8 @@
 #define	VIRTIO_NET_F_CTRL_VQ		VIRTIO14_NET_F_CTRL_VQ
 #undef VIRTIO_NET_F_MQ
 #define	VIRTIO_NET_F_MQ		VIRTIO14_NET_F_MQ
+#undef VIRTIO_NET_F_HASH_REPORT
+#define	VIRTIO_NET_F_HASH_REPORT	VIRTIO14_NET_F_HASH_REPORT
 #undef VIRTIO_NET_F_RSS
 #define	VIRTIO_NET_F_RSS		VIRTIO14_NET_F_RSS
 #undef VTNET_HDR_F_NEEDS_CSUM
@@ -610,6 +612,17 @@ ATF_TC_BODY(receive_length_bounds, tc)
 	ATF_CHECK_EQ(g_chain_next, 0);
 	ATF_CHECK_EQ(g_recv_calls, 0);
 
+	/* A record shorter than its promised base header is consumed safely. */
+	reset_mocks();
+	setup_softc(&sc);
+	sc.be_vhdrlen = VIRTIO14_NET_MODERN_HDR_SIZE;
+	g_peek_len = VIRTIO14_NET_MODERN_HDR_SIZE - 1;
+	add_chain(1, 0, 1, true, g_packet, sizeof(g_packet));
+	pci_vtnet_rx(&sc);
+	ATF_CHECK_EQ(g_discard_calls, 1);
+	ATF_CHECK_EQ(g_chain_next, 0);
+	ATF_CHECK_EQ(g_recv_calls, 0);
+
 	/*
 	 * The standard's largest advertised MTU still fits the device's
 	 * bounded packet buffer.  A backend record beyond that bound is
@@ -648,6 +661,31 @@ ATF_TC_BODY(receive_length_bounds, tc)
 	ATF_CHECK_EQ(g_rel_calls, 1);
 	ATF_CHECK_EQ(g_rel_len[0], VIRTIO14_NET_MAX_BASE_RECORD_SIZE);
 	free(record);
+
+	/*
+	 * HASH_REPORT adds eight guest-visible bytes without changing the
+	 * maximum record accepted from the host backend.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_features = VIRTIO14_NET_F_HASH_REPORT;
+	sc.vhdrlen = VIRTIO14_NET_HASH_HDR_SIZE;
+	sc.be_vhdrlen = VIRTIO14_NET_MODERN_HDR_SIZE;
+	record = calloc(1, VIRTIO14_NET_MAX_GSO_PACKET_SIZE +
+	    VIRTIO14_NET_HASH_HDR_SIZE);
+	ATF_REQUIRE(record != NULL);
+	g_peek_len = VIRTIO14_NET_MAX_BASE_RECORD_SIZE;
+	g_recv_result = VIRTIO14_NET_MAX_BASE_RECORD_SIZE;
+	add_chain(1, 0, 1, true, record,
+	    VIRTIO14_NET_MAX_GSO_PACKET_SIZE +
+	    VIRTIO14_NET_HASH_HDR_SIZE);
+	pci_vtnet_rx(&sc);
+	ATF_CHECK_EQ(g_discard_calls, 0);
+	ATF_CHECK_EQ(g_recv_calls, 1);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len[0], VIRTIO14_NET_MAX_GSO_PACKET_SIZE +
+	    VIRTIO14_NET_HASH_HDR_SIZE);
+	free(record);
 }
 
 ATF_TC_WITHOUT_HEAD(receive_header_layout);
@@ -672,6 +710,18 @@ ATF_TC_BODY(receive_header_layout, tc)
 	    VIRTIO14_NET_HDR_CSUM_OFFSET_OFF);
 	ATF_CHECK_EQ(offsetof(struct virtio_net_rxhdr, vrh_bufs),
 	    VIRTIO14_NET_HDR_NUM_BUFFERS_OFF);
+	ATF_CHECK_EQ(sizeof(struct virtio_net_rxhdr) +
+	    sizeof(struct virtio_net_hash_report),
+	    VIRTIO14_NET_HASH_HDR_SIZE);
+	ATF_CHECK_EQ(sizeof(struct virtio_net_rxhdr) +
+	    offsetof(struct virtio_net_hash_report, hash_value),
+	    VIRTIO14_NET_HDR_HASH_VALUE_OFF);
+	ATF_CHECK_EQ(sizeof(struct virtio_net_rxhdr) +
+	    offsetof(struct virtio_net_hash_report, hash_report),
+	    VIRTIO14_NET_HDR_HASH_REPORT_OFF);
+	ATF_CHECK_EQ(sizeof(struct virtio_net_rxhdr) +
+	    offsetof(struct virtio_net_hash_report, padding),
+	    VIRTIO14_NET_HDR_HASH_PADDING_OFF);
 	ATF_CHECK_EQ(sizeof(struct virtio_net_config),
 	    VIRTIO14_NET_CONFIG_SIZE);
 	ATF_CHECK_EQ(offsetof(struct virtio_net_config, mac),
@@ -703,6 +753,8 @@ ATF_TC_BODY(receive_header_layout, tc)
 	sc.vsc_vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
 	ATF_CHECK_EQ(pci_vtnet_header_len(&sc, 0),
 	    VIRTIO14_NET_MODERN_HDR_SIZE);
+	ATF_CHECK_EQ(pci_vtnet_header_len(&sc,
+	    VIRTIO14_NET_F_HASH_REPORT), VIRTIO14_NET_HASH_HDR_SIZE);
 
 	reset_mocks();
 	setup_softc(&sc);
@@ -1640,6 +1692,25 @@ build_rss_command(uint8_t *request, size_t request_size, uint16_t table_mask,
 	return (total);
 }
 
+static size_t
+build_hash_command(uint8_t *request, size_t request_size, uint32_t hash_types,
+    const uint8_t *key, uint8_t key_length)
+{
+	size_t total;
+
+	total = VIRTIO14_NET_HASH_COMMAND_MIN + key_length;
+	ATF_REQUIRE(total <= request_size);
+	memset(request, 0, total);
+	request[VIRTIO14_NET_CTRL_CLASS_OFF] = VIRTIO14_NET_CTRL_MQ;
+	request[VIRTIO14_NET_CTRL_COMMAND_OFF] =
+	    VIRTIO14_NET_CTRL_MQ_HASH_CONFIG;
+	virtio14_store_le32(request + VIRTIO14_NET_HASH_TYPES_OFF,
+	    hash_types);
+	request[VIRTIO14_NET_HASH_KEY_LENGTH_OFF] = key_length;
+	memcpy(request + VIRTIO14_NET_HASH_KEY_OFF, key, key_length);
+	return (total);
+}
+
 static uint8_t
 run_rss_command(struct pci_vtnet_softc *sc, const uint8_t *request,
     size_t request_size)
@@ -1802,6 +1873,37 @@ ATF_TC_BODY(multiqueue_feature_dependency, tc)
 	ATF_CHECK(pci_vtnet_apply_features(&sc,
 	    VIRTIO14_NET_F_CTRL_VQ | VIRTIO14_NET_F_RSS));
 	ATF_CHECK_EQ(g_needs_reset_calls, 0);
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_max_pairs = 2;
+	ATF_CHECK(!pci_vtnet_apply_features(&sc,
+	    VIRTIO14_NET_F_HASH_REPORT));
+	ATF_CHECK_EQ(g_needs_reset_calls, 1);
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_max_pairs = 2;
+	ATF_CHECK(pci_vtnet_apply_features(&sc,
+	    VIRTIO14_NET_F_CTRL_VQ | VIRTIO14_NET_F_HASH_REPORT));
+	ATF_CHECK_EQ(g_needs_reset_calls, 0);
+	ATF_CHECK_EQ(sc.vhdrlen, VIRTIO14_NET_HASH_HDR_SIZE);
+	ATF_CHECK_EQ(g_set_cap_header_len, 0);
+
+	/*
+	 * HASH_REPORT extends only the guest header.  A host backend with
+	 * negotiated offloads must still be configured for the base header.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_max_pairs = 2;
+	sc.vsc_vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	ATF_CHECK(pci_vtnet_apply_features(&sc, VIRTIO14_NET_F_CTRL_VQ |
+	    VIRTIO14_NET_F_HASH_REPORT | VIRTIO14_NET_F_CSUM));
+	ATF_CHECK_EQ(sc.vhdrlen, VIRTIO14_NET_HASH_HDR_SIZE);
+	ATF_CHECK_EQ(sc.be_vhdrlen, VIRTIO14_NET_MODERN_HDR_SIZE);
+	ATF_CHECK_EQ(g_set_cap_header_len,
+	    VIRTIO14_NET_MODERN_HDR_SIZE);
 }
 
 ATF_TC_WITHOUT_HEAD(multiqueue_control_commands);
@@ -1877,19 +1979,21 @@ ATF_TC_BODY(multiqueue_flow_steering, tc)
 	hash = pci_vtnet_flow_hash(forward, sizeof(forward));
 	pci_vtnet_flow_learn(&sc, hash, 1);
 	add_chain(1, 0, 1, true, g_packet, sizeof(g_packet));
-	vq = pci_vtnet_select_rxq(&sc, reverse, sizeof(reverse), &drop);
+	vq = pci_vtnet_select_rxq(&sc, reverse, sizeof(reverse), &drop,
+	    NULL, NULL);
 	ATF_REQUIRE(vq != NULL);
 	ATF_CHECK(!drop);
 	ATF_CHECK_EQ(vq->vq_num, VIRTIO14_NET_RXQ(1));
 
 	vq_set_resetting(&sc.vsc_queues[VIRTIO14_NET_RXQ(1)], true);
-	vq = pci_vtnet_select_rxq(&sc, reverse, sizeof(reverse), &drop);
+	vq = pci_vtnet_select_rxq(&sc, reverse, sizeof(reverse), &drop,
+	    NULL, NULL);
 	ATF_REQUIRE(vq != NULL);
 	ATF_CHECK(!drop);
 	ATF_CHECK_EQ(vq->vq_num, VIRTIO14_NET_RXQ(0));
 	vq_set_resetting(&sc.vsc_queues[VIRTIO14_NET_RXQ(0)], true);
 	ATF_CHECK(pci_vtnet_select_rxq(&sc, reverse, sizeof(reverse),
-	    &drop) == NULL);
+	    &drop, NULL, NULL) == NULL);
 	ATF_CHECK(!drop);
 	destroy_multiqueue_softc(&sc);
 }
@@ -2151,35 +2255,43 @@ ATF_TC_BODY(rss_command_and_steering, tc)
 	ATF_CHECK_EQ(sc.rss_key_length, sizeof(rss_test_key));
 
 	make_ipv4_tcp_flow(frame, false, 443);
-	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash));
+	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash,
+	    NULL));
 	ATF_CHECK_EQ(hash, 0x45de0bccU);
 	frame[20] = 0x20;
-	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash));
+	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash,
+	    NULL));
 	ATF_CHECK_EQ(hash, 0x45de0bccU);
 	frame[20] = 0;
 	frame[21] = 1;
-	ATF_CHECK(!pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash));
+	ATF_CHECK(!pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash,
+	    NULL));
 	frame[21] = 0;
 	frame[17] = 20;
-	ATF_CHECK(!pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash));
+	ATF_CHECK(!pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash,
+	    NULL));
 	frame[17] = 50;
 	add_chain(1, 0, 1, true, g_packet, sizeof(g_packet));
-	vq = pci_vtnet_select_rxq(&sc, frame, sizeof(frame), &drop);
+	vq = pci_vtnet_select_rxq(&sc, frame, sizeof(frame), &drop,
+	    NULL, NULL);
 	ATF_REQUIRE(vq != NULL);
 	ATF_CHECK(!drop);
 	ATF_CHECK_EQ(vq->vq_num, VIRTIO14_NET_RXQ(1));
 
 	vq_set_resetting(&sc.vsc_queues[VIRTIO14_NET_RXQ(1)], true);
-	vq = pci_vtnet_select_rxq(&sc, frame, sizeof(frame), &drop);
+	vq = pci_vtnet_select_rxq(&sc, frame, sizeof(frame), &drop,
+	    NULL, NULL);
 	ATF_CHECK(vq == NULL);
 	ATF_CHECK(drop);
 
 	sc.rss_hash_types = VIRTIO14_NET_RSS_HASH_TYPE_TCPV6;
 	make_ipv6_tcp_flow(frame, false);
-	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash));
+	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash,
+	    NULL));
 	ATF_CHECK_EQ(hash, 0x22225eecU);
 	make_ipv6_tcp_flow(frame, true);
-	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash));
+	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash,
+	    NULL));
 	ATF_CHECK_EQ(hash, 0x22225eecU);
 	destroy_multiqueue_softc(&sc);
 }
@@ -2260,6 +2372,214 @@ ATF_TC_BODY(rss_command_validation, tc)
 	destroy_multiqueue_softc(&sc);
 }
 
+ATF_TC_WITHOUT_HEAD(hash_report_header_translation);
+ATF_TC_BODY(hash_report_header_translation, tc)
+{
+	struct pci_vtnet_softc sc;
+	uint8_t *frame;
+	uint32_t hash;
+	size_t backend_len, frame_len;
+
+	/*
+	 * The host backend retains the 12-byte base header while the modern
+	 * guest sees the document's 20-byte HASH_REPORT header.  Construct the
+	 * backend record using only literal document offsets.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_features = VIRTIO14_NET_F_HASH_REPORT;
+	sc.vhdrlen = VIRTIO14_NET_HASH_HDR_SIZE;
+	sc.be_vhdrlen = VIRTIO14_NET_MODERN_HDR_SIZE;
+	sc.hash_configured = true;
+	sc.rss_hash_types = VIRTIO14_NET_RSS_HASH_TYPE_TCPV4;
+	sc.rss_key_length = sizeof(rss_test_key);
+	memcpy(sc.rss_key, rss_test_key, sizeof(rss_test_key));
+	frame = g_backend_packet + VIRTIO14_NET_MODERN_HDR_SIZE;
+	frame_len = 88;
+	make_ipv4_tcp_flow(frame, false, 443);
+	backend_len = VIRTIO14_NET_MODERN_HDR_SIZE + frame_len;
+	g_peek_len = backend_len;
+	g_recv_result = backend_len;
+	add_chain(1, 0, 1, true, g_packet, sizeof(g_packet));
+	pci_vtnet_rx(&sc);
+	ATF_REQUIRE_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len[0],
+	    VIRTIO14_NET_HASH_HDR_SIZE + frame_len);
+	ATF_CHECK_EQ(virtio14_load_le16(g_packet +
+	    VIRTIO14_NET_HDR_NUM_BUFFERS_OFF),
+	    VIRTIO14_NET_SINGLE_BUFFER_COUNT);
+	ATF_CHECK_EQ(virtio14_load_le32(g_packet +
+	    VIRTIO14_NET_HDR_HASH_VALUE_OFF), 0x45de0bccU);
+	ATF_CHECK_EQ(virtio14_load_le16(g_packet +
+	    VIRTIO14_NET_HDR_HASH_REPORT_OFF),
+	    VIRTIO14_NET_HASH_REPORT_TCPV4);
+	ATF_CHECK_EQ(virtio14_load_le16(g_packet +
+	    VIRTIO14_NET_HDR_HASH_PADDING_OFF), 0);
+	ATF_CHECK_EQ(memcmp(g_packet + VIRTIO14_NET_HASH_HDR_SIZE, frame,
+	    frame_len), 0);
+
+	/*
+	 * A guest transmit header also has 20 bytes, but HASH_REPORT metadata
+	 * is device-to-driver information.  It is stripped, and only a clean
+	 * 12-byte base header is rebuilt for the backend.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_features = VIRTIO14_NET_F_HASH_REPORT;
+	sc.vhdrlen = VIRTIO14_NET_HASH_HDR_SIZE;
+	sc.be_vhdrlen = VIRTIO14_NET_MODERN_HDR_SIZE;
+	memset(g_packet, 0, sizeof(g_packet));
+	memset(g_packet + VIRTIO14_NET_HDR_HASH_VALUE_OFF, 0xa5,
+	    VIRTIO14_NET_HASH_HDR_SIZE -
+	    VIRTIO14_NET_HDR_HASH_VALUE_OFF);
+	frame_len = sizeof(g_packet) - VIRTIO14_NET_HASH_HDR_SIZE;
+	g_send_result = VIRTIO14_NET_MODERN_HDR_SIZE + frame_len;
+	add_chain(1, 1, 0, true, g_packet, sizeof(g_packet));
+	pci_vtnet_proctx(&sc, &sc.vsc_queues[VIRTIO14_NET_TRANSMITQ]);
+	ATF_REQUIRE_EQ(g_send_calls, 1);
+	ATF_CHECK_EQ(g_send_bytes,
+	    VIRTIO14_NET_MODERN_HDR_SIZE + frame_len);
+	ATF_REQUIRE(g_send_header_valid);
+	ATF_CHECK_EQ(memcmp(&g_send_header,
+	    &(struct virtio_net_rxhdr){ 0 },
+	    VIRTIO14_NET_MODERN_HDR_SIZE), 0);
+
+	/*
+	 * Before HASH_CONFIG, or for a packet outside configured types, the
+	 * device reports NONE and a zero hash value.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_features = VIRTIO14_NET_F_HASH_REPORT;
+	sc.vhdrlen = VIRTIO14_NET_HASH_HDR_SIZE;
+	make_ipv4_tcp_flow(g_backend_packet, false, 443);
+	g_peek_len = frame_len = 88;
+	g_recv_result = frame_len;
+	add_chain(1, 0, 1, true, g_packet, sizeof(g_packet));
+	pci_vtnet_rx(&sc);
+	ATF_REQUIRE_EQ(g_rel_calls, 1);
+	hash = virtio14_load_le32(g_packet +
+	    VIRTIO14_NET_HDR_HASH_VALUE_OFF);
+	ATF_CHECK_EQ(hash, 0);
+	ATF_CHECK_EQ(virtio14_load_le16(g_packet +
+	    VIRTIO14_NET_HDR_HASH_REPORT_OFF),
+	    VIRTIO14_NET_HASH_REPORT_NONE);
+}
+
+ATF_TC_WITHOUT_HEAD(hash_config_command_validation);
+ATF_TC_BODY(hash_config_command_validation, tc)
+{
+	struct pci_vtnet_hash_config parsed;
+	struct pci_vtnet_softc sc;
+	uint8_t request[VIRTIO14_NET_HASH_COMMAND_MAX];
+	size_t request_size;
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 2);
+	sc.vsc_features |= VIRTIO14_NET_F_HASH_REPORT;
+	request_size = build_hash_command(request, sizeof(request),
+	    VIRTIO14_NET_RSS_HASH_TYPES_BASIC, rss_test_key,
+	    sizeof(rss_test_key));
+	ATF_CHECK_EQ(request_size, VIRTIO14_NET_HASH_COMMAND_MAX);
+	ATF_REQUIRE(pci_vtnet_parse_hash_config(request, request_size,
+	    &parsed));
+	ATF_CHECK_EQ(parsed.hash_types,
+	    VIRTIO14_NET_RSS_HASH_TYPES_BASIC);
+	ATF_CHECK_EQ(parsed.key_length, sizeof(rss_test_key));
+	ATF_CHECK_EQ(memcmp(parsed.key, rss_test_key,
+	    sizeof(rss_test_key)), 0);
+	ATF_REQUIRE_EQ(run_rss_command(&sc, request, request_size),
+	    VIRTIO14_NET_CTRL_OK);
+	ATF_CHECK(sc.hash_configured);
+	ATF_CHECK(!sc.rss_enabled);
+	ATF_CHECK_EQ(sc.rss_hash_types,
+	    VIRTIO14_NET_RSS_HASH_TYPES_BASIC);
+
+	/* PAIRS_SET changes queues but does not erase an independent hash. */
+	ATF_REQUIRE_EQ(run_mq_pairs_command(&sc, 2, VIRTIO14_NET_CTRL_MQ,
+	    VIRTIO14_NET_CTRL_MQ_VQ_PAIRS_SET), VIRTIO14_NET_CTRL_OK);
+	ATF_CHECK(sc.hash_configured);
+	ATF_CHECK_EQ(sc.rss_key_length, sizeof(rss_test_key));
+
+	/* Reserved bytes, unsupported types, and lengths are all rejected. */
+	request[VIRTIO14_NET_HASH_RESERVED_OFF] = 1;
+	ATF_CHECK(!pci_vtnet_parse_hash_config(request, request_size,
+	    &parsed));
+	ATF_CHECK_EQ(run_rss_command(&sc, request, request_size),
+	    VIRTIO14_NET_CTRL_ERR);
+	request[VIRTIO14_NET_HASH_RESERVED_OFF] = 0;
+	virtio14_store_le32(request + VIRTIO14_NET_HASH_TYPES_OFF,
+	    VIRTIO14_NET_RSS_HASH_TYPES_BASIC | (1U << 31));
+	ATF_CHECK(!pci_vtnet_parse_hash_config(request, request_size,
+	    &parsed));
+	virtio14_store_le32(request + VIRTIO14_NET_HASH_TYPES_OFF,
+	    VIRTIO14_NET_RSS_HASH_TYPES_BASIC);
+	ATF_CHECK(!pci_vtnet_parse_hash_config(request, request_size - 1,
+	    &parsed));
+	request[VIRTIO14_NET_HASH_KEY_LENGTH_OFF] =
+	    VIRTIO14_NET_RSS_KEY_SIZE_MIN + 1;
+	ATF_CHECK(!pci_vtnet_parse_hash_config(request, request_size,
+	    &parsed));
+	ATF_CHECK(sc.hash_configured);
+	ATF_CHECK_EQ(sc.rss_hash_types,
+	    VIRTIO14_NET_RSS_HASH_TYPES_BASIC);
+	ATF_CHECK_EQ(sc.rss_key_length, sizeof(rss_test_key));
+
+	/* RSS_CONFIG is the authoritative hash command when RSS is selected. */
+	request[VIRTIO14_NET_HASH_KEY_LENGTH_OFF] = sizeof(rss_test_key);
+	sc.vsc_features |= VIRTIO14_NET_F_RSS;
+	ATF_CHECK_EQ(run_rss_command(&sc, request, request_size),
+	    VIRTIO14_NET_CTRL_ERR);
+	ATF_CHECK(sc.hash_configured);
+	ATF_CHECK_EQ(sc.rss_hash_types,
+	    VIRTIO14_NET_RSS_HASH_TYPES_BASIC);
+	destroy_multiqueue_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(hash_report_type_mapping);
+ATF_TC_BODY(hash_report_type_mapping, tc)
+{
+	struct pci_vtnet_softc sc;
+	uint8_t frame[88];
+	uint32_t hash;
+	uint16_t report;
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.rss_key_length = sizeof(rss_test_key);
+	memcpy(sc.rss_key, rss_test_key, sizeof(rss_test_key));
+
+	make_ipv4_tcp_flow(frame, false, 443);
+	sc.rss_hash_types = VIRTIO14_NET_RSS_HASH_TYPE_TCPV4;
+	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash,
+	    &report));
+	ATF_CHECK_EQ(report, VIRTIO14_NET_HASH_REPORT_TCPV4);
+	sc.rss_hash_types = VIRTIO14_NET_RSS_HASH_TYPE_IPV4;
+	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash,
+	    &report));
+	ATF_CHECK_EQ(report, VIRTIO14_NET_HASH_REPORT_IPV4);
+	frame[23] = IPPROTO_UDP;
+	sc.rss_hash_types = VIRTIO14_NET_RSS_HASH_TYPE_UDPV4;
+	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash,
+	    &report));
+	ATF_CHECK_EQ(report, VIRTIO14_NET_HASH_REPORT_UDPV4);
+
+	make_ipv6_tcp_flow(frame, false);
+	sc.rss_hash_types = VIRTIO14_NET_RSS_HASH_TYPE_TCPV6;
+	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash,
+	    &report));
+	ATF_CHECK_EQ(report, VIRTIO14_NET_HASH_REPORT_TCPV6);
+	sc.rss_hash_types = VIRTIO14_NET_RSS_HASH_TYPE_IPV6;
+	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash,
+	    &report));
+	ATF_CHECK_EQ(report, VIRTIO14_NET_HASH_REPORT_IPV6);
+	frame[20] = IPPROTO_UDP;
+	sc.rss_hash_types = VIRTIO14_NET_RSS_HASH_TYPE_UDPV6;
+	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash,
+	    &report));
+	ATF_CHECK_EQ(report, VIRTIO14_NET_HASH_REPORT_UDPV6);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, transmit_validation);
@@ -2297,5 +2617,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rss_toeplitz_vector);
 	ATF_TP_ADD_TC(tp, rss_command_and_steering);
 	ATF_TP_ADD_TC(tp, rss_command_validation);
+	ATF_TP_ADD_TC(tp, hash_report_header_translation);
+	ATF_TP_ADD_TC(tp, hash_config_command_validation);
+	ATF_TP_ADD_TC(tp, hash_report_type_mapping);
 	return (atf_no_error());
 }

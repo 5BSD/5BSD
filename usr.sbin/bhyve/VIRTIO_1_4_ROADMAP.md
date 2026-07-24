@@ -40,9 +40,11 @@ soaks.
 
 ## P1: existing-device performance and lifecycle
 
-1. **Network multiqueue and RSS.**  Add the control virtqueue, queue-pair
-   negotiation, receive steering, hash reporting, and per-queue reset.  This is
-   the largest immediate throughput improvement for multi-vCPU guests.
+1. **Network multiqueue, RSS, and hash reports.**  Implemented with the
+   control virtqueue, queue-pair negotiation, receive steering, 20-byte
+   HASH_REPORT receive headers, independent HASH_CONFIG handling, and
+   per-queue reset.  Host backends retain their 10- or 12-byte base-header
+   contract.
 2. **Block multiqueue.**  `VIRTIO_BLK_F_MQ`, up to eight independent request
    queues, queue-local quiesce/reset, an independent document oracle, and a
    Linux hardware-queue gate are implemented.  Modern devices also implement

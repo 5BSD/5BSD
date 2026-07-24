@@ -777,11 +777,14 @@ The default is 1.
 Values greater than 1 require
 .Cm transport=modern
 and advertise the VirtIO control-queue, automatic multiqueue steering, and
-receive-side scaling features.
+receive-side scaling and receive-hash-reporting features.
 Only the first queue pair is active after reset; a conforming guest enables
 additional pairs with a VirtIO network multiqueue control command.
 RSS-capable guests can program a 128-entry indirection table, a 40-byte
 Toeplitz key, and IPv4, IPv6, TCP, and UDP hash types.
+The device writes the resulting hash value and protocol report into the
+extended receive header while retaining the base header expected by host
+network backends.
 .Pp
 With
 .Cm netgraph

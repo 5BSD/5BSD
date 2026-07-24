@@ -11,6 +11,7 @@ VIRTIO_RING_F_INDIRECT_DESC = 28
 VIRTIO_RING_F_EVENT_IDX = 29
 VIRTIO_NET_F_CTRL_VQ = 17
 VIRTIO_NET_F_MQ = 22
+VIRTIO_NET_F_HASH_REPORT = 57
 VIRTIO_NET_F_RSS = 60
 VIRTIO_F_NOTIFICATION_DATA = 38
 VIRTIO_F_RING_RESET = 40
@@ -26,6 +27,7 @@ MODERN_REQUIRED_FEATURES = REQUIRED_FEATURES + (
 MULTIQUEUE_REQUIRED_FEATURES = (
     (VIRTIO_NET_F_CTRL_VQ, "VIRTIO_NET_F_CTRL_VQ"),
     (VIRTIO_NET_F_MQ, "VIRTIO_NET_F_MQ"),
+    (VIRTIO_NET_F_HASH_REPORT, "VIRTIO_NET_F_HASH_REPORT"),
     (VIRTIO_NET_F_RSS, "VIRTIO_NET_F_RSS"),
 )
 MODERN_MULTIQUEUE_REQUIRED_FEATURES = (
@@ -302,6 +304,7 @@ def main():
         f"ring_reset={'yes' if notification_data else 'n/a'} "
         f"queue_pairs={expected_pairs} "
         f"mq={'yes' if expected_pairs > 1 else 'no'} "
+        f"hash_report={'yes' if expected_pairs > 1 else 'no'} "
         f"rss={'yes' if expected_pairs > 1 else 'no'}"
     )
 

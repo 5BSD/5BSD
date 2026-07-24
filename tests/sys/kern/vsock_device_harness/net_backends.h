@@ -24,6 +24,7 @@
 #define VIRTIO_NET_F_STATUS	(1U << 16)
 #define VIRTIO_NET_F_CTRL_VQ	(1U << 17)
 #define VIRTIO_NET_F_MQ		(1U << 22)
+#define VIRTIO_NET_F_HASH_REPORT (1ULL << 57)
 #define VIRTIO_NET_F_RSS	(1ULL << 60)
 #define NETBE_MAX_RECORD_SIZE	(65589U + 12U)
 
