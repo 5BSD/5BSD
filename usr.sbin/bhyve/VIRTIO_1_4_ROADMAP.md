@@ -51,8 +51,11 @@ soaks.
    The existing topology fields are already advertised and covered.
 3. **SCSI multiqueue and events.**  Modern devices now expose up to eight
    independently resettable request queues with a bounded device-wide worker
-   budget and an exact Linux hardware-queue oracle.  Hotplug/change event
-   delivery remains to be implemented without disturbing unrelated queues.
+   budget and an exact Linux hardware-queue oracle.  HOTPLUG and CHANGE remain
+   deliberately unadvertised: correct delivery first requires a loss-aware
+   asynchronous CTL subscription for ordered LUN add, remove, and parameter
+   changes.  Snapshot polling is not an acceptable substitute because it can
+   silently collapse transitions and cannot implement EVENTS_MISSED reliably.
 4. **9P queue reset.**  Implemented with generation-fenced asynchronous
    request draining, preserving the lib9p connection and fid state while the
    old queue relinquishes every guest buffer.

@@ -345,6 +345,13 @@ static struct virtio_consts vtscsi_vi_consts = {
 	.vc_apply_features = pci_vtscsi_neg_features,
 	.vc_qenable =	pci_vtscsi_qenable,
 	.vc_qreset =	pci_vtscsi_qreset,
+	/*
+	 * HOTPLUG and CHANGE require a loss-aware asynchronous CTL event
+	 * source.  CTL's userspace interface currently provides commands and
+	 * snapshots, but no subscription which can preserve add, remove, and
+	 * parameter-change ordering.  Keep both bits clear until such an
+	 * interface exists; polling would create silent event-loss races.
+	 */
 	.vc_hv_caps =	VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_F_RING_RESET,
 };
 

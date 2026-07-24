@@ -831,6 +831,16 @@ ATF_TC_BODY(queue_sync_init_failures, tc)
 	ATF_CHECK(g_ctl_allocs == g_ctl_frees);
 }
 
+ATF_TC_WITHOUT_HEAD(event_features_require_reliable_source);
+ATF_TC_BODY(event_features_require_reliable_source, tc)
+{
+
+	ATF_CHECK_EQ(VIRTIO14_SCSI_F_HOTPLUG_BIT, 1);
+	ATF_CHECK_EQ(VIRTIO14_SCSI_F_CHANGE_BIT, 2);
+	ATF_CHECK_EQ(vtscsi_vi_consts.vc_hv_caps &
+	    (VIRTIO14_SCSI_F_HOTPLUG | VIRTIO14_SCSI_F_CHANGE), 0);
+}
+
 ATF_TC_WITHOUT_HEAD(tmf_completes_pending_requests);
 ATF_TC_BODY(tmf_completes_pending_requests, tc)
 {
@@ -970,6 +980,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reset_completes_pending_requests);
 	ATF_TP_ADD_TC(tp, queue_reset_quiesces_only_selected_queue);
 	ATF_TP_ADD_TC(tp, multiqueue_configuration);
+	ATF_TP_ADD_TC(tp, event_features_require_reliable_source);
 	ATF_TP_ADD_TC(tp, tmf_completes_pending_requests);
 	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
 	return (atf_no_error());
