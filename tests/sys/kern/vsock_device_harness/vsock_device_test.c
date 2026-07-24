@@ -33,6 +33,53 @@
 
 /* Device under test (its quote-includes resolve to the mock headers here). */
 #include "pci_virtio_vsock.c"
+#include "virtio_1_4_spec.h"
+#include "virtio_1_4_wire.h"
+
+/* Compile the DUT first, then use only section-cited wire values in tests. */
+#undef VIRTIO_CONFIG_STATUS_DRIVER_OK
+#define	VIRTIO_CONFIG_STATUS_DRIVER_OK	VIRTIO14_STATUS_DRIVER_OK
+#undef VIRTIO_CONFIG_S_NEEDS_RESET
+#define	VIRTIO_CONFIG_S_NEEDS_RESET	VIRTIO14_STATUS_DEVICE_NEEDS_RESET
+#undef VIRTIO_F_RING_RESET
+#define	VIRTIO_F_RING_RESET		VIRTIO14_F_RING_RESET
+#undef VIRTIO_F_VERSION_1
+#define	VIRTIO_F_VERSION_1		VIRTIO14_F_VERSION_1
+#undef VIRTIO_RING_F_INDIRECT_DESC
+#define	VIRTIO_RING_F_INDIRECT_DESC	VIRTIO14_F_RING_INDIRECT_DESC
+#undef VIRTIO_VSOCK_F_STREAM
+#define	VIRTIO_VSOCK_F_STREAM		VIRTIO14_VSOCK_F_STREAM
+#undef VIRTIO_VSOCK_F_SEQPACKET
+#define	VIRTIO_VSOCK_F_SEQPACKET	VIRTIO14_VSOCK_F_SEQPACKET
+#undef VIRTIO_VSOCK_F_NO_IMPLIED_STREAM
+#define	VIRTIO_VSOCK_F_NO_IMPLIED_STREAM \
+	VIRTIO14_VSOCK_F_NO_IMPLIED_STREAM
+#undef VIRTIO_VSOCK_TYPE_STREAM
+#define	VIRTIO_VSOCK_TYPE_STREAM	VIRTIO14_VSOCK_TYPE_STREAM
+#undef VIRTIO_VSOCK_TYPE_SEQPACKET
+#define	VIRTIO_VSOCK_TYPE_SEQPACKET	VIRTIO14_VSOCK_TYPE_SEQPACKET
+#undef VIRTIO_VSOCK_OP_REQUEST
+#define	VIRTIO_VSOCK_OP_REQUEST		VIRTIO14_VSOCK_OP_REQUEST
+#undef VIRTIO_VSOCK_OP_RESPONSE
+#define	VIRTIO_VSOCK_OP_RESPONSE	VIRTIO14_VSOCK_OP_RESPONSE
+#undef VIRTIO_VSOCK_OP_RST
+#define	VIRTIO_VSOCK_OP_RST		VIRTIO14_VSOCK_OP_RST
+#undef VIRTIO_VSOCK_OP_SHUTDOWN
+#define	VIRTIO_VSOCK_OP_SHUTDOWN	VIRTIO14_VSOCK_OP_SHUTDOWN
+#undef VIRTIO_VSOCK_OP_RW
+#define	VIRTIO_VSOCK_OP_RW		VIRTIO14_VSOCK_OP_RW
+#undef VIRTIO_VSOCK_OP_CREDIT_UPDATE
+#define	VIRTIO_VSOCK_OP_CREDIT_UPDATE	VIRTIO14_VSOCK_OP_CREDIT_UPDATE
+#undef VIRTIO_VSOCK_OP_CREDIT_REQUEST
+#define	VIRTIO_VSOCK_OP_CREDIT_REQUEST	VIRTIO14_VSOCK_OP_CREDIT_REQUEST
+#undef VIRTIO_VSOCK_SHUTDOWN_RCV
+#define	VIRTIO_VSOCK_SHUTDOWN_RCV	VIRTIO14_VSOCK_SHUTDOWN_RECEIVE
+#undef VIRTIO_VSOCK_SHUTDOWN_SEND
+#define	VIRTIO_VSOCK_SHUTDOWN_SEND	VIRTIO14_VSOCK_SHUTDOWN_SEND
+#undef VIRTIO_VSOCK_SEQ_EOM
+#define	VIRTIO_VSOCK_SEQ_EOM		VIRTIO14_VSOCK_SEQ_EOM
+#undef VIRTIO_VSOCK_SEQ_EOR
+#define	VIRTIO_VSOCK_SEQ_EOR		VIRTIO14_VSOCK_SEQ_EOR
 
 /* ---- captured packets injected toward the guest (RX ring) ---- */
 struct cap_pkt { uint16_t op, type; uint32_t src_port, dst_port, len, flags,
@@ -121,7 +168,7 @@ vq_relchain(struct vqueue_info *vq, uint16_t idx, uint32_t len)
 
 	(void)vq; (void)idx;
 	g_rel_len = len;
-	if (len < sizeof(*h))
+	if (len < VIRTIO14_VSOCK_HEADER_SIZE)
 		return;			/* a drop (relchain with len 0) */
 	p = &g_inject[g_ninject++];
 	p->op = le16toh(h->op);
@@ -470,6 +517,9 @@ mk_sc(void)
 	struct pci_vtvsock_softc *sc = calloc(1, sizeof(*sc));
 	sc->vsc_guest_cid = 3;
 	sc->vsc_next_port = VTVSOCK_PORT_MIN;
+	sc->vsc_features = VIRTIO_VSOCK_F_STREAM |
+	    VIRTIO_VSOCK_F_SEQPACKET |
+	    VIRTIO_VSOCK_F_NO_IMPLIED_STREAM;
 	TAILQ_INIT(&sc->vsc_conns);
 	TAILQ_INIT(&sc->vsc_ctl_conns);
 	pthread_mutex_init(&sc->vsc_mtx, NULL);
@@ -581,10 +631,20 @@ mkhdr(struct virtio_vsock_hdr *h, uint16_t op, uint16_t type, uint64_t scid,
 	h->fwd_cnt = htole32(fcnt);
 }
 
+static void
+process_tx_wire(struct pci_vtvsock_softc *sc, const uint8_t *wire,
+    const void *payload, size_t payload_len)
+{
+
+	vtvsock_process_tx_pkt(sc,
+	    (const struct virtio_vsock_hdr *)(const void *)wire, payload,
+	    payload_len);
+}
+
 #define STREAM VIRTIO_VSOCK_TYPE_STREAM
 #define SEQPACKET VIRTIO_VSOCK_TYPE_SEQPACKET
 
-/* --- adversarial cases against the untrusted TX state machine --- */
+/* --- invalid-input cases for the guest-controlled TX state machine --- */
 ATF_TC_WITHOUT_HEAD(spoofed_src_cid);
 ATF_TC_BODY(spoofed_src_cid, tc)
 {
@@ -1083,7 +1143,7 @@ ATF_TC_BODY(host_rx_fragments_to_small_rx_buffer, tc)
 	int i, last;
 	reset_caps();
 	g_rxbuf_len = 100;		/* header(44) + 56 payload per buffer */
-	cap = 100 - sizeof(struct virtio_vsock_hdr);	/* == 56 */
+	cap = 100 - VIRTIO14_VSOCK_HEADER_SIZE;	/* == 56 */
 	c = mk_established(sc, 1234, 80, SEQPACKET);	/* ample credit */
 	memset(rec, 'X', sizeof(rec));
 	stage_recv(rec, sizeof(rec));			/* one 200-byte record */
@@ -1121,7 +1181,7 @@ ATF_TC_BODY(host_rx_stream_fragments_to_small_rx_buffer, tc)
 	int i;
 	reset_caps();
 	g_rxbuf_len = 100;		/* header(44) + 56 payload per buffer */
-	cap = 100 - sizeof(struct virtio_vsock_hdr);
+	cap = 100 - VIRTIO14_VSOCK_HEADER_SIZE;
 	c = mk_established(sc, 1234, 80, STREAM);	/* ample credit */
 	memset(data, 'S', sizeof(data));
 	stage_recv(data, sizeof(data));
@@ -1786,6 +1846,68 @@ ATF_TC_BODY(ctl_connect_rejects_invalid_type, tc)
 	free(sc);
 }
 
+ATF_TC_WITHOUT_HEAD(negotiated_socket_types);
+ATF_TC_BODY(negotiated_socket_types, tc)
+{
+	struct pci_vtvsock_softc *sc;
+	struct vtvsock_ctl_conn *cc;
+	struct virtio_vsock_hdr h;
+	struct vsock_ctl_msg reply;
+
+	ATF_CHECK((vtvsock_vi_consts.vc_hv_caps &
+	    VIRTIO14_VSOCK_F_STREAM) != 0);
+	ATF_CHECK((vtvsock_vi_consts.vc_hv_caps &
+	    VIRTIO14_VSOCK_F_SEQPACKET) != 0);
+	ATF_CHECK((vtvsock_vi_consts.vc_hv_caps &
+	    VIRTIO14_VSOCK_F_NO_IMPLIED_STREAM) != 0);
+
+	sc = mk_sc();
+	ATF_CHECK(vtvsock_type_supported(sc, VIRTIO14_VSOCK_TYPE_STREAM));
+	ATF_CHECK(vtvsock_type_supported(sc,
+	    VIRTIO14_VSOCK_TYPE_SEQPACKET));
+
+	/* No device feature bits retains the historical implied STREAM. */
+	sc->vsc_features = 0;
+	ATF_CHECK(vtvsock_type_supported(sc, VIRTIO14_VSOCK_TYPE_STREAM));
+	ATF_CHECK(!vtvsock_type_supported(sc,
+	    VIRTIO14_VSOCK_TYPE_SEQPACKET));
+
+	/* SEQPACKET can imply STREAM only without NO_IMPLIED_STREAM. */
+	sc->vsc_features = VIRTIO14_VSOCK_F_SEQPACKET;
+	ATF_CHECK(vtvsock_type_supported(sc, VIRTIO14_VSOCK_TYPE_STREAM));
+	ATF_CHECK(vtvsock_type_supported(sc,
+	    VIRTIO14_VSOCK_TYPE_SEQPACKET));
+	sc->vsc_features = VIRTIO14_VSOCK_F_SEQPACKET |
+	    VIRTIO14_VSOCK_F_NO_IMPLIED_STREAM;
+	ATF_CHECK(!vtvsock_type_supported(sc,
+	    VIRTIO14_VSOCK_TYPE_STREAM));
+	ATF_CHECK(vtvsock_type_supported(sc,
+	    VIRTIO14_VSOCK_TYPE_SEQPACKET));
+
+	/* A guest request for an unnegotiated type is rejected before I/O. */
+	reset_caps();
+	mkhdr(&h, VIRTIO14_VSOCK_OP_REQUEST, STREAM, 3,
+	    VIRTIO14_VSOCK_CID_HOST, 1234, 80, 0, 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK_EQ(nconns(sc), 0);
+	ATF_REQUIRE_EQ(g_ninject, 1);
+	ATF_CHECK_EQ(g_inject[0].op, VIRTIO14_VSOCK_OP_RST);
+	ATF_CHECK_EQ(g_socket_calls, 0);
+	ATF_CHECK_EQ(g_connectat_calls, 0);
+
+	/* The host control API observes the same negotiated type policy. */
+	reset_caps();
+	cc = mk_ctl_conn(sc, g_next_fd++, 100);
+	stage_ctl_msg(VSOCK_CTL_CONNECT, 1234, SOCK_STREAM);
+	pci_vtvsock_ctl_conn_cb(cc->fd, EVF_READ, sc);
+	ATF_CHECK_EQ(nconns(sc), 0);
+	ATF_CHECK_EQ(g_ninject, 0);
+	ATF_REQUIRE_EQ(g_send_len, sizeof(reply));
+	memcpy(&reply, g_send_buf, sizeof(reply));
+	ATF_CHECK_EQ(reply.status, -ESOCKTNOSUPPORT);
+	free(sc);
+}
+
 /*
  * --- relay socket buffers are enlarged to one advertised window
  * (VTVSOCK_BUF_ALLOC) on connect, so a full-window SEQPACKET record traverses
@@ -1995,8 +2117,8 @@ ATF_TC_BODY(tx_control_payload_dropped, tc)
 	sc->vsc_kernel_fd = 700;
 	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
 	    1234, 80, 1, 0, 256 * 1024, 0);
-	g_rxbuf[sizeof(*h)] = 0xa5;
-	g_rxbuf_len = sizeof(*h) + 1;
+	g_rxbuf[VIRTIO14_VSOCK_HEADER_SIZE] = 0xa5;
+	g_rxbuf_len = VIRTIO14_VSOCK_HEADER_SIZE + 1;
 	g_chain_readable = 1;
 	g_chain_writable = 0;
 	g_getchain_consumes = 1;
@@ -2026,8 +2148,8 @@ ATF_TC_BODY(tx_truncated_payload_dropped, tc)
 	(void)mk_established(sc, 1234, 80, STREAM);
 	mkhdr(h, VIRTIO_VSOCK_OP_RW, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
 	    8, 0, 256 * 1024, 0);
-	memset(g_rxbuf + sizeof(*h), 0x5a, 4);
-	g_rxbuf_len = sizeof(*h) + 4;
+	memset(g_rxbuf + VIRTIO14_VSOCK_HEADER_SIZE, 0x5a, 4);
+	g_rxbuf_len = VIRTIO14_VSOCK_HEADER_SIZE + 4;
 	g_chain_readable = 1;
 	g_chain_writable = 0;
 	g_getchain_consumes = 1;
@@ -2050,13 +2172,14 @@ ATF_TC_BODY(kernel_rx_fragments_for_guest_buffers, tc)
 
 	reset_caps();
 	sc->vsc_kernel = true;
-	sc->vsc_kernel_rx = calloc(1, sizeof(*h) + payload_len);
+	sc->vsc_kernel_rx = calloc(1,
+	    VIRTIO14_VSOCK_HEADER_SIZE + payload_len);
 	ATF_REQUIRE(sc->vsc_kernel_rx != NULL);
 	h = (struct virtio_vsock_hdr *)sc->vsc_kernel_rx;
 	mkhdr(h, VIRTIO_VSOCK_OP_RW, SEQPACKET, VSOCK_CID_HOST, 3,
 	    80, 1234, payload_len,
 	    VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR, 65536, 0);
-	g_rxbuf_len = sizeof(*h) + 2048;
+	g_rxbuf_len = VIRTIO14_VSOCK_HEADER_SIZE + 2048;
 	g_rx_descs = 3;
 	pthread_mutex_lock(&sc->vsc_mtx);
 	vtvsock_kernel_drain(sc);
@@ -2082,11 +2205,11 @@ ATF_TC_BODY(kernel_rx_accepts_header_only_packet, tc)
 	reset_caps();
 	mkhdr(&h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, VSOCK_CID_HOST, 3,
 	    80, 1234, 0, 0, 65536, 0);
-	g_rxbuf_len = sizeof(h);
+	g_rxbuf_len = VIRTIO14_VSOCK_HEADER_SIZE;
 	g_rx_descs = 1;
 	ATF_CHECK(vtvsock_inject_raw(sc, &h, NULL, 0) == 0);
 	ATF_CHECK(g_ninject == 1);
-	ATF_CHECK(g_rel_len == sizeof(h));
+	ATF_CHECK(g_rel_len == VIRTIO14_VSOCK_HEADER_SIZE);
 	ATF_CHECK(g_inject[0].len == 0);
 	free(sc);
 }
@@ -2102,13 +2225,13 @@ ATF_TC_BODY(kernel_rx_large_descriptor_capacity, tc)
 	mkhdr(&h, VIRTIO_VSOCK_OP_RW, STREAM, VSOCK_CID_HOST, 3,
 	    80, 1234, 1, 0, 65536, 0);
 	/* The mock advertises a large chain; only the copied prefix is accessed. */
-	g_rxbuf_len = (size_t)UINT32_MAX + sizeof(h) + 1;
+	g_rxbuf_len = (size_t)UINT32_MAX + VIRTIO14_VSOCK_HEADER_SIZE + 1;
 	g_rx_descs = 1;
 	ATF_CHECK(vtvsock_inject_raw(sc, &h, &payload, 1) == 1);
 	ATF_CHECK(g_ninject == 1);
-	ATF_CHECK(g_rel_len == sizeof(h) + 1);
+	ATF_CHECK(g_rel_len == VIRTIO14_VSOCK_HEADER_SIZE + 1);
 	ATF_CHECK(g_inject[0].len == 1);
-	ATF_CHECK(g_rxbuf[sizeof(h)] == payload);
+	ATF_CHECK(g_rxbuf[VIRTIO14_VSOCK_HEADER_SIZE] == payload);
 	free(sc);
 }
 
@@ -2123,7 +2246,7 @@ ATF_TC_BODY(kernel_rx_reuses_preallocated_buffer, tc)
 	reset_caps();
 	ATF_REQUIRE(__real_socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
 	ATF_REQUIRE(__real_fcntl(sv[0], F_SETFL, O_NONBLOCK) == 0);
-	buffer = calloc(1, sizeof(h) + VTVSOCK_MAX_PKT);
+	buffer = calloc(1, VIRTIO14_VSOCK_HEADER_SIZE + VTVSOCK_MAX_PKT);
 	ATF_REQUIRE(buffer != NULL);
 	sc->vsc_kernel = true;
 	sc->vsc_kernel_rx_buf = buffer;
@@ -2131,9 +2254,10 @@ ATF_TC_BODY(kernel_rx_reuses_preallocated_buffer, tc)
 	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	mkhdr(&h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, VSOCK_CID_HOST, 3,
 	    80, 1234, 0, 0, 65536, 0);
-	g_rxbuf_len = sizeof(h);
+	g_rxbuf_len = VIRTIO14_VSOCK_HEADER_SIZE;
 	g_rx_descs = 1;
-	ATF_REQUIRE(write(sv[1], &h, sizeof(h)) == sizeof(h));
+	ATF_REQUIRE(write(sv[1], &h, VIRTIO14_VSOCK_HEADER_SIZE) ==
+	    VIRTIO14_VSOCK_HEADER_SIZE);
 	vtvsock_kernel_read_cb(sv[0], EVF_READ, sc);
 	ATF_CHECK(g_ninject == 1);
 	ATF_CHECK(sc->vsc_kernel_rx == NULL);
@@ -2156,7 +2280,7 @@ ATF_TC_BODY(kernel_rx_refill_pulls_queued_packet, tc)
 	reset_caps();
 	ATF_REQUIRE(__real_socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
 	ATF_REQUIRE(__real_fcntl(sv[0], F_SETFL, O_NONBLOCK) == 0);
-	buffer = calloc(1, sizeof(h) + VTVSOCK_MAX_PKT);
+	buffer = calloc(1, VIRTIO14_VSOCK_HEADER_SIZE + VTVSOCK_MAX_PKT);
 	ATF_REQUIRE(buffer != NULL);
 	sc->vsc_kernel = true;
 	sc->vsc_kernel_fd = sv[0];
@@ -2168,7 +2292,8 @@ ATF_TC_BODY(kernel_rx_refill_pulls_queued_packet, tc)
 
 	/* The provider becomes readable before the guest posts an RX buffer. */
 	g_rx_descs = 0;
-	ATF_REQUIRE(write(sv[1], &h, sizeof(h)) == sizeof(h));
+	ATF_REQUIRE(write(sv[1], &h, VIRTIO14_VSOCK_HEADER_SIZE) ==
+	    VIRTIO14_VSOCK_HEADER_SIZE);
 	vtvsock_kernel_read_cb(sv[0], EVF_READ, sc);
 	ATF_CHECK(g_ninject == 0);
 	ATF_CHECK(sc->vsc_kernel_rx == NULL);
@@ -2176,7 +2301,7 @@ ATF_TC_BODY(kernel_rx_refill_pulls_queued_packet, tc)
 	ATF_CHECK(disable_calls > 0);
 
 	/* Refilling RX must pull the already-queued RST without a new event. */
-	g_rxbuf_len = sizeof(h);
+	g_rxbuf_len = VIRTIO14_VSOCK_HEADER_SIZE;
 	g_rx_descs = 1;
 	pci_vtvsock_notify_rx(sc, &sc->vsc_queues[VTVSOCK_RXQ]);
 	ATF_CHECK(g_ninject == 1);
@@ -2222,7 +2347,7 @@ ATF_TC_BODY(kernel_rx_short_packet_needs_reset, tc)
 	reset_caps();
 	ATF_REQUIRE(__real_socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
 	ATF_REQUIRE(__real_fcntl(sv[0], F_SETFL, O_NONBLOCK) == 0);
-	buffer = calloc(1, sizeof(struct virtio_vsock_hdr) + VTVSOCK_MAX_PKT);
+	buffer = calloc(1, VIRTIO14_VSOCK_HEADER_SIZE + VTVSOCK_MAX_PKT);
 	ATF_REQUIRE(buffer != NULL);
 	sc->vsc_kernel = true;
 	sc->vsc_kernel_rx_buf = buffer;
@@ -2256,7 +2381,7 @@ ATF_TC_BODY(kernel_rx_length_mismatch_needs_reset, tc)
 	reset_caps();
 	ATF_REQUIRE(__real_socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
 	ATF_REQUIRE(__real_fcntl(sv[0], F_SETFL, O_NONBLOCK) == 0);
-	buffer = calloc(1, sizeof(h) + VTVSOCK_MAX_PKT);
+	buffer = calloc(1, VIRTIO14_VSOCK_HEADER_SIZE + VTVSOCK_MAX_PKT);
 	ATF_REQUIRE(buffer != NULL);
 	sc->vsc_kernel = true;
 	sc->vsc_kernel_rx_buf = buffer;
@@ -2265,7 +2390,8 @@ ATF_TC_BODY(kernel_rx_length_mismatch_needs_reset, tc)
 	g_rx_descs = 1;
 	mkhdr(&h, VIRTIO_VSOCK_OP_RW, STREAM, VSOCK_CID_HOST, 3,
 	    80, 1234, 1, 0, 65536, 0);
-	ATF_REQUIRE(write(sv[1], &h, sizeof(h)) == sizeof(h));
+	ATF_REQUIRE(write(sv[1], &h, VIRTIO14_VSOCK_HEADER_SIZE) ==
+	    VIRTIO14_VSOCK_HEADER_SIZE);
 
 	vtvsock_kernel_read_cb(sv[0], EVF_READ, sc);
 	ATF_CHECK(sc->vsc_kernel_failed);
@@ -2291,20 +2417,22 @@ ATF_TC_BODY(kernel_reset_success_recovers_backend, tc)
 	reset_caps();
 	ATF_REQUIRE(__real_socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
 	ATF_REQUIRE(__real_fcntl(sv[0], F_SETFL, O_NONBLOCK) == 0);
-	buffer = calloc(1, sizeof(*h) + VTVSOCK_MAX_PKT);
+	buffer = calloc(1, VIRTIO14_VSOCK_HEADER_SIZE + VTVSOCK_MAX_PKT);
 	ATF_REQUIRE(buffer != NULL);
 	sc->vsc_kernel = true;
 	sc->vsc_kernel_fd = sv[0];
 	sc->vsc_kernel_failed = true;
 	sc->vsc_kernel_rx_buf = buffer;
-	sc->vsc_kernel_rx = calloc(1, sizeof(*h));
+	sc->vsc_kernel_rx = calloc(1, VIRTIO14_VSOCK_HEADER_SIZE);
 	ATF_REQUIRE(sc->vsc_kernel_rx != NULL);
 	sc->vsc_kernel_rx_off = 7;
-	sc->vsc_kernel_tx = calloc(1, sizeof(*h));
+	sc->vsc_kernel_tx = calloc(1, VIRTIO14_VSOCK_HEADER_SIZE);
 	ATF_REQUIRE(sc->vsc_kernel_tx != NULL);
-	sc->vsc_kernel_tx_len = sizeof(*h);
+	sc->vsc_kernel_tx_len = VIRTIO14_VSOCK_HEADER_SIZE;
 	sc->vsc_kernel_evp = &g_mev[0];
 	sc->vsc_kernel_write_evp = &g_mev[1];
+	sc->vsc_features = VIRTIO_VSOCK_F_STREAM |
+	    VIRTIO_VSOCK_F_SEQPACKET;
 
 	pci_vtvsock_reset(sc);
 	ATF_CHECK(!sc->vsc_kernel_failed);
@@ -2312,6 +2440,7 @@ ATF_TC_BODY(kernel_reset_success_recovers_backend, tc)
 	ATF_CHECK(sc->vsc_kernel_rx_off == 0);
 	ATF_CHECK(sc->vsc_kernel_tx == NULL);
 	ATF_CHECK(sc->vsc_kernel_tx_len == 0);
+	ATF_CHECK(sc->vsc_features == 0);
 	ATF_CHECK(g_mevent_disable_calls == 1);
 
 	pci_vtvsock_neg_features(sc, VIRTIO_VSOCK_F_STREAM);
@@ -2321,7 +2450,7 @@ ATF_TC_BODY(kernel_reset_success_recovers_backend, tc)
 	h = (struct virtio_vsock_hdr *)g_rxbuf;
 	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
 	    1234, 80, 0, 0, 65536, 0);
-	g_rxbuf_len = sizeof(*h);
+	g_rxbuf_len = VIRTIO14_VSOCK_HEADER_SIZE;
 	g_chain_readable = 1;
 	g_chain_writable = 0;
 	g_getchain_consumes = 1;
@@ -2350,7 +2479,7 @@ ATF_TC_BODY(kernel_tx_fatal_error_needs_reset, tc)
 	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
 	    1234, 80, 0, 0, 65536, 0);
-	g_rxbuf_len = sizeof(*h);
+	g_rxbuf_len = VIRTIO14_VSOCK_HEADER_SIZE;
 	g_chain_readable = 1;
 	g_chain_writable = 0;
 	g_getchain_consumes = 1;
@@ -2383,13 +2512,13 @@ ATF_TC_BODY(kernel_tx_short_write_needs_reset, tc)
 	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
 	    1234, 80, 0, 0, 65536, 0);
-	g_rxbuf_len = sizeof(*h);
+	g_rxbuf_len = VIRTIO14_VSOCK_HEADER_SIZE;
 	g_chain_readable = 1;
 	g_chain_writable = 0;
 	g_getchain_consumes = 1;
 	g_rx_descs = 1;
 	g_writev_override = true;
-	g_writev_result = sizeof(*h) - 1;
+	g_writev_result = VIRTIO14_VSOCK_HEADER_SIZE - 1;
 	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
 	ATF_CHECK(g_writev_calls == 1);
 	ATF_CHECK(sc->vsc_kernel_failed);
@@ -2412,7 +2541,7 @@ ATF_TC_BODY(kernel_tx_backpressure_is_retried, tc)
 	    vtvsock_kernel_write_cb, sc);
 	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
 	    1234, 80, 0, 0, 65536, 0);
-	g_rxbuf_len = sizeof(*h);
+	g_rxbuf_len = VIRTIO14_VSOCK_HEADER_SIZE;
 	g_chain_readable = 1;
 	g_chain_writable = 0;
 	g_getchain_consumes = 1;
@@ -2423,7 +2552,7 @@ ATF_TC_BODY(kernel_tx_backpressure_is_retried, tc)
 	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
 	ATF_CHECK(!sc->vsc_kernel_failed);
 	ATF_REQUIRE(sc->vsc_kernel_tx != NULL);
-	ATF_CHECK(sc->vsc_kernel_tx_len == sizeof(*h));
+	ATF_CHECK(sc->vsc_kernel_tx_len == VIRTIO14_VSOCK_HEADER_SIZE);
 	ATF_CHECK(g_rx_descs == 1);
 	ATF_CHECK(g_writev_calls == 1);
 	ATF_CHECK(g_mevent_enable_calls == 1);
@@ -2452,7 +2581,7 @@ ATF_TC_BODY(kernel_tx_retry_short_write_needs_reset, tc)
 	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
 	    1234, 80, 0, 0, 65536, 0);
-	g_rxbuf_len = sizeof(*h);
+	g_rxbuf_len = VIRTIO14_VSOCK_HEADER_SIZE;
 	g_chain_readable = 1;
 	g_chain_writable = 0;
 	g_getchain_consumes = 1;
@@ -2464,7 +2593,7 @@ ATF_TC_BODY(kernel_tx_retry_short_write_needs_reset, tc)
 	ATF_REQUIRE(sc->vsc_kernel_tx != NULL);
 	ATF_CHECK(!sc->vsc_kernel_failed);
 
-	g_writev_result = sizeof(*h) - 1;
+	g_writev_result = VIRTIO14_VSOCK_HEADER_SIZE - 1;
 	g_writev_errno = 0;
 	vtvsock_kernel_write_cb(700, EVF_WRITE, sc);
 	ATF_CHECK(sc->vsc_kernel_failed);
@@ -2475,6 +2604,7 @@ ATF_TC_BODY(kernel_tx_retry_short_write_needs_reset, tc)
 	pci_vtvsock_reset(sc);
 	ATF_CHECK(!sc->vsc_kernel_failed);
 	ATF_CHECK(sc->vsc_kernel_tx == NULL);
+	ATF_CHECK(sc->vsc_features == 0);
 	free(sc);
 }
 
@@ -2489,7 +2619,7 @@ ATF_TC_BODY(kernel_tx_malformed_packet_is_dropped, tc)
 	sc->vsc_kernel_fd = 700;
 	mkhdr(h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
 	    1234, 80, 0, 0, 65536, 0);
-	g_rxbuf_len = sizeof(*h);
+	g_rxbuf_len = VIRTIO14_VSOCK_HEADER_SIZE;
 	g_chain_readable = 1;
 	g_chain_writable = 0;
 	g_getchain_consumes = 1;
@@ -2576,16 +2706,18 @@ ATF_TC_BODY(kernel_tx_forwards_complete_packet, tc)
 	sc->vsc_kernel_fd = 700;
 	mkhdr(h, VIRTIO_VSOCK_OP_RW, STREAM, 3, VSOCK_CID_HOST,
 	    1234, 80, sizeof(payload), 0, 65536, 0);
-	memcpy(g_rxbuf + sizeof(*h), payload, sizeof(payload));
-	g_rxbuf_len = sizeof(*h) + sizeof(payload);
+	memcpy(g_rxbuf + VIRTIO14_VSOCK_HEADER_SIZE, payload,
+	    sizeof(payload));
+	g_rxbuf_len = VIRTIO14_VSOCK_HEADER_SIZE + sizeof(payload);
 	g_chain_readable = 1;
 	g_chain_writable = 0;
 	g_getchain_consumes = 1;
 	g_rx_descs = 1;
 	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
 	ATF_CHECK(g_writev_calls == 1);
-	ATF_CHECK(g_writev_len == sizeof(*h) + sizeof(payload));
-	ATF_CHECK(memcmp(g_writev_buf + sizeof(*h), payload,
+	ATF_CHECK(g_writev_len ==
+	    VIRTIO14_VSOCK_HEADER_SIZE + sizeof(payload));
+	ATF_CHECK(memcmp(g_writev_buf + VIRTIO14_VSOCK_HEADER_SIZE, payload,
 	    sizeof(payload)) == 0);
 	free(sc);
 }
@@ -2602,7 +2734,7 @@ ATF_TC_BODY(kernel_tx_pulls_synchronous_reply, tc)
 	reset_caps();
 	ATF_REQUIRE(__real_socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
 	ATF_REQUIRE(__real_fcntl(sv[0], F_SETFL, O_NONBLOCK) == 0);
-	buffer = calloc(1, sizeof(reply) + VTVSOCK_MAX_PKT);
+	buffer = calloc(1, VIRTIO14_VSOCK_HEADER_SIZE + VTVSOCK_MAX_PKT);
 	ATF_REQUIRE(buffer != NULL);
 	sc->vsc_kernel = true;
 	sc->vsc_kernel_fd = sv[0];
@@ -2613,7 +2745,7 @@ ATF_TC_BODY(kernel_tx_pulls_synchronous_reply, tc)
 	/* Guest REQUEST to an unused host port. */
 	mkhdr(tx, VIRTIO_VSOCK_OP_REQUEST, STREAM, 3, VSOCK_CID_HOST,
 	    1234, 7109, 0, 0, 65536, 0);
-	g_rxbuf_len = sizeof(*tx);
+	g_rxbuf_len = VIRTIO14_VSOCK_HEADER_SIZE;
 	g_chain_readable = 0;
 	g_chain_writable = 1;
 	g_getchain_consumes = 0;
@@ -2623,7 +2755,8 @@ ATF_TC_BODY(kernel_tx_pulls_synchronous_reply, tc)
 	/* Model the RST that /dev/vsock queues synchronously during writev. */
 	mkhdr(&reply, VIRTIO_VSOCK_OP_RST, STREAM, VSOCK_CID_HOST, 3,
 	    7109, 1234, 0, 0, 0, 0);
-	ATF_REQUIRE(write(sv[1], &reply, sizeof(reply)) == sizeof(reply));
+	ATF_REQUIRE(write(sv[1], &reply, VIRTIO14_VSOCK_HEADER_SIZE) ==
+	    VIRTIO14_VSOCK_HEADER_SIZE);
 	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
 	ATF_CHECK(g_writev_calls == 1);
 	ATF_CHECK(g_ninject == 1);
@@ -2654,9 +2787,183 @@ ATF_TC_BODY(backend_names_are_userspace_and_kernel, tc)
 	ATF_CHECK(vtvsock_parse_backend("native", &is_kernel) == -1);
 }
 
+ATF_TC_WITHOUT_HEAD(queue_reset_discards_only_selected_queue_work);
+ATF_TC_BODY(queue_reset_discards_only_selected_queue_work, tc)
+{
+	struct pci_vtvsock_softc *sc;
+	uint8_t *tx;
+
+	sc = mk_sc();
+	reset_caps();
+	tx = malloc(4);
+	ATF_REQUIRE(tx != NULL);
+	memcpy(tx, "test", 4);
+	sc->vsc_pend_count = 1;
+	sc->vsc_kernel_tx = tx;
+	sc->vsc_kernel_tx_len = 4;
+	sc->vsc_kernel_write_evp = &g_mev[1];
+
+	/* Resetting RX preserves work owned by TX and device protocol state. */
+	sc->vsc_queues[VIRTIO14_VSOCK_RECEIVEQ].vq_num =
+	    VIRTIO14_VSOCK_RECEIVEQ;
+	ATF_CHECK_EQ(pci_vtvsock_qreset(sc,
+	    &sc->vsc_queues[VIRTIO14_VSOCK_RECEIVEQ], 7), 0);
+	ATF_CHECK(sc->vsc_pend_count == 1);
+	ATF_CHECK(sc->vsc_kernel_tx == tx);
+	ATF_CHECK(sc->vsc_kernel_tx_len == 4);
+	ATF_CHECK(memcmp(sc->vsc_kernel_tx, "test", 4) == 0);
+
+	/*
+	 * Resetting TX discards the copied request that was waiting for host
+	 * transport capacity and disables its retry callback.  It must never be
+	 * submitted after the driver has replaced the TX virtqueue.
+	 */
+	sc->vsc_queues[VIRTIO14_VSOCK_TRANSMITQ].vq_num =
+	    VIRTIO14_VSOCK_TRANSMITQ;
+	ATF_CHECK_EQ(pci_vtvsock_qreset(sc,
+	    &sc->vsc_queues[VIRTIO14_VSOCK_TRANSMITQ], 8), 0);
+	ATF_CHECK(sc->vsc_pend_count == 1);
+	ATF_CHECK(sc->vsc_kernel_tx == NULL);
+	ATF_CHECK_EQ(sc->vsc_kernel_tx_len, 0);
+	ATF_CHECK_EQ(g_mevent_disable_calls, 1);
+
+	sc->vsc_queues[VIRTIO14_VSOCK_EVENTQ].vq_num =
+	    VIRTIO14_VSOCK_EVENTQ;
+	ATF_CHECK_EQ(pci_vtvsock_qreset(sc,
+	    &sc->vsc_queues[VIRTIO14_VSOCK_EVENTQ], 9), 0);
+	ATF_CHECK(sc->vsc_pend_count == 1);
+	ATF_CHECK((vtvsock_vi_consts.vc_hv_caps &
+	    VIRTIO14_F_RING_RESET) != 0);
+
+	sc->vsc_queues[0].vq_num = VIRTIO14_VSOCK_EVENTQ + 1;
+	ATF_CHECK_EQ(pci_vtvsock_qreset(sc, &sc->vsc_queues[0], 10), EINVAL);
+
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(virtio_1_4_wire_layout);
+ATF_TC_BODY(virtio_1_4_wire_layout, tc)
+{
+	struct pci_vtvsock_softc sc;
+	struct vtvsock_conn conn;
+	struct virtio_vsock_hdr hdr;
+	const uint8_t expected[] = {
+		0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11,
+		0x24, 0x23, 0x22, 0x21,
+		0x34, 0x33, 0x32, 0x31,
+		0x44, 0x43, 0x42, 0x41,
+		0x02, 0x00,
+		0x05, 0x00,
+		0x01, 0x00, 0x00, 0x00,
+		0x54, 0x53, 0x52, 0x51,
+		0x64, 0x63, 0x62, 0x61,
+	};
+	uint32_t value;
+
+	/* VirtIO 1.4 section 5.10.6. */
+	ATF_CHECK_EQ(sizeof(struct virtio_vsock_config),
+	    VIRTIO14_VSOCK_CONFIG_SIZE);
+	ATF_CHECK_EQ(offsetof(struct virtio_vsock_config, guest_cid),
+	    VIRTIO14_VSOCK_CONFIG_GUEST_CID_OFF);
+	ATF_CHECK_EQ(sizeof(struct virtio_vsock_hdr),
+	    VIRTIO14_VSOCK_HEADER_SIZE);
+	ATF_CHECK_EQ(offsetof(struct virtio_vsock_hdr, src_cid),
+	    VIRTIO14_VSOCK_HDR_SRC_CID_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_vsock_hdr, dst_cid),
+	    VIRTIO14_VSOCK_HDR_DST_CID_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_vsock_hdr, src_port),
+	    VIRTIO14_VSOCK_HDR_SRC_PORT_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_vsock_hdr, dst_port),
+	    VIRTIO14_VSOCK_HDR_DST_PORT_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_vsock_hdr, len),
+	    VIRTIO14_VSOCK_HDR_LEN_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_vsock_hdr, type),
+	    VIRTIO14_VSOCK_HDR_TYPE_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_vsock_hdr, op),
+	    VIRTIO14_VSOCK_HDR_OP_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_vsock_hdr, flags),
+	    VIRTIO14_VSOCK_HDR_FLAGS_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_vsock_hdr, buf_alloc),
+	    VIRTIO14_VSOCK_HDR_BUF_ALLOC_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_vsock_hdr, fwd_cnt),
+	    VIRTIO14_VSOCK_HDR_FWD_CNT_OFF);
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&conn, 0, sizeof(conn));
+	sc.vsc_guest_cid = UINT64_C(0x1112131415161718);
+	conn.local_port = UINT32_C(0x21222324);
+	conn.guest_port = UINT32_C(0x31323334);
+	conn.type = VIRTIO14_VSOCK_TYPE_SEQPACKET;
+	conn.buf_alloc = UINT32_C(0x51525354);
+	conn.fwd_cnt = UINT32_C(0x61626364);
+	vtvsock_build_hdr(&sc, &conn, VIRTIO14_VSOCK_OP_RW,
+	    VIRTIO14_VSOCK_SEQ_EOM, UINT32_C(0x41424344), &hdr);
+	ATF_CHECK(memcmp(&hdr, expected, sizeof(expected)) == 0);
+
+	sc.vsc_config.guest_cid = htole64(4);
+	value = UINT32_MAX;
+	ATF_CHECK_EQ(pci_vtvsock_cfgread(&sc, 0, 4, &value), 0);
+	ATF_CHECK_EQ(value, 4);
+	value = UINT32_MAX;
+	ATF_CHECK_EQ(pci_vtvsock_cfgread(&sc, -1, 1, &value), -1);
+	ATF_CHECK_EQ(value, 0);
+	value = UINT32_MAX;
+	ATF_CHECK_EQ(pci_vtvsock_cfgread(&sc, 0, 3, &value), -1);
+	ATF_CHECK_EQ(value, 0);
+	value = UINT32_MAX;
+	ATF_CHECK_EQ(pci_vtvsock_cfgread(&sc,
+	    VIRTIO14_VSOCK_CONFIG_SIZE - 1, 4, &value), -1);
+	ATF_CHECK_EQ(value, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(document_wire_vectors);
+ATF_TC_BODY(document_wire_vectors, tc)
+{
+	struct pci_vtvsock_softc *sc;
+	uint64_t aligned[(VIRTIO14_VSOCK_HEADER_SIZE +
+	    sizeof(uint64_t) - 1) / sizeof(uint64_t)];
+	uint8_t *wire;
+
+	/*
+	 * Feed the TX state machine a header assembled solely from the wire
+	 * offsets in section 5.10.6.  The aligned integer storage avoids
+	 * imposing the production structure's layout or alignment on the
+	 * vector itself.
+	 */
+	wire = (uint8_t *)(void *)aligned;
+	memset(wire, 0, VIRTIO14_VSOCK_HEADER_SIZE);
+	virtio14_store_le64(wire + VIRTIO14_VSOCK_HDR_SRC_CID_OFF, 3);
+	virtio14_store_le64(wire + VIRTIO14_VSOCK_HDR_DST_CID_OFF,
+	    VIRTIO14_VSOCK_CID_HOST);
+	virtio14_store_le32(wire + VIRTIO14_VSOCK_HDR_SRC_PORT_OFF, 1234);
+	virtio14_store_le32(wire + VIRTIO14_VSOCK_HDR_DST_PORT_OFF, 80);
+	virtio14_store_le32(wire + VIRTIO14_VSOCK_HDR_LEN_OFF, 0);
+	virtio14_store_le16(wire + VIRTIO14_VSOCK_HDR_TYPE_OFF,
+	    VIRTIO14_VSOCK_TYPE_STREAM);
+	virtio14_store_le16(wire + VIRTIO14_VSOCK_HDR_OP_OFF,
+	    VIRTIO14_VSOCK_OP_RW);
+	virtio14_store_le32(wire + VIRTIO14_VSOCK_HDR_BUF_ALLOC_OFF,
+	    256 * 1024);
+
+	sc = mk_sc();
+	reset_caps();
+	process_tx_wire(sc, wire, NULL, 0);
+	ATF_CHECK_EQ(nconns(sc), 0);
+	ATF_REQUIRE_EQ(g_ninject, 1);
+	ATF_CHECK_EQ(g_inject[0].op, VIRTIO14_VSOCK_OP_RST);
+	ATF_CHECK_EQ(g_inject[0].src_port, 80);
+	ATF_CHECK_EQ(g_inject[0].dst_port, 1234);
+	free(sc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
+	ATF_TP_ADD_TC(tp, document_wire_vectors);
 	ATF_TP_ADD_TC(tp, backend_names_are_userspace_and_kernel);
+	ATF_TP_ADD_TC(tp, queue_reset_discards_only_selected_queue_work);
 	ATF_TP_ADD_TC(tp, spoofed_src_cid);
 	ATF_TP_ADD_TC(tp, port_allocator_skips_reserved);
 	ATF_TP_ADD_TC(tp, send_fd_requires_complete_frame);
@@ -2702,6 +3009,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, ctl_connect_emits_request);
 	ATF_TP_ADD_TC(tp, ctl_connect_accepts_short_reads);
 	ATF_TP_ADD_TC(tp, ctl_connect_rejects_invalid_type);
+	ATF_TP_ADD_TC(tp, negotiated_socket_types);
 	ATF_TP_ADD_TC(tp, relay_bufsize_enlarged_on_connect);
 	ATF_TP_ADD_TC(tp, ctl_unknown_cmd_ignored);
 	ATF_TP_ADD_TC(tp, ctl_connect_socketpair_fail);

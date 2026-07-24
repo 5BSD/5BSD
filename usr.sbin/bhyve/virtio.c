@@ -47,6 +47,7 @@
 #include "snapshot.h"
 #endif
 #include "virtio.h"
+#include "virtio_pci_modern_probes.h"
 
 /*
  * Functions for dealing with generalized "virtual devices" as
@@ -105,7 +106,7 @@ vi_reset_dev(struct virtio_softc *vs)
 
 	nvq = vs->vs_vc->vc_nvq;
 	for (vq = vs->vs_queues, i = 0; i < nvq; vq++, i++) {
-		vq->vq_flags = 0;
+		vq_set_allocated(vq, false);
 		vq->vq_last_avail = 0;
 		vq->vq_next_used = 0;
 		vq->vq_save_used = 0;
@@ -135,7 +136,7 @@ vi_pci_notify_queue(struct virtio_softc *vs, uint64_t qidx)
 	}
 	vq = &vs->vs_queues[qidx];
 	if (vs->vs_transport == VIRTIO_PCI_TRANSPORT_MODERN &&
-	    !vq->vq_enabled)
+	    (!vq->vq_enabled || vq_is_resetting(vq)))
 		return;
 	/* A malformed ring is fatal until the driver performs a real reset. */
 	if ((vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
@@ -145,6 +146,7 @@ vi_pci_notify_queue(struct virtio_softc *vs, uint64_t qidx)
 		return;
 	}
 	vq->vq_notify_pending = false;
+	VIRTIO_PROBE_QUEUE_NOTIFY(vc->vc_name, (uint16_t)qidx);
 	if (vq->vq_notify != NULL)
 		(*vq->vq_notify)(DEV_SOFTC(vs), vq);
 	else if (vc->vc_qnotify != NULL)
@@ -179,6 +181,15 @@ void
 vi_set_needs_reset(struct virtio_softc *vs)
 {
 
+	if (vs->vs_resetting) {
+		/*
+		 * A device reset must finish with status zero.  Remember a
+		 * backend reinitialization failure and expose NEEDS_RESET when
+		 * the driver starts the next initialization attempt.
+		 */
+		vs->vs_reset_failed = true;
+		return;
+	}
 	if ((vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
 		return;
 	vs->vs_status |= VIRTIO_CONFIG_S_NEEDS_RESET;
@@ -254,7 +265,7 @@ vi_vq_init(struct virtio_softc *vs, uint32_t pfn)
 
 	vq = &vs->vs_queues[vs->vs_curq];
 	if (pfn == 0) {
-		vq->vq_flags = 0;
+		vq_set_allocated(vq, false);
 		vq->vq_pfn = 0;
 		vq->vq_notify_pending = false;
 		vq->vq_desc = NULL;
@@ -271,7 +282,7 @@ vi_vq_init(struct virtio_softc *vs, uint32_t pfn)
 	if (base == NULL) {
 		EPRINTLN("%s: virtqueue %u maps outside guest memory",
 		    vs->vs_vc->vc_name, vq->vq_num);
-		vq->vq_flags = 0;
+		vq_set_allocated(vq, false);
 		vq->vq_pfn = 0;
 		vq->vq_desc = NULL;
 		vq->vq_avail = NULL;
@@ -299,7 +310,7 @@ vi_vq_init(struct virtio_softc *vs, uint32_t pfn)
 	vq->vq_used = (struct vring_used *)base;
 
 	/* Mark queue as allocated, and start at 0 when we use it. */
-	vq->vq_flags = VQ_ALLOC;
+	vq_set_allocated(vq, true);
 	vq->vq_last_avail = 0;
 	vq->vq_next_used = 0;
 	vq->vq_save_used = 0;
@@ -402,7 +413,14 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 	 * then trim off excess bits.
 	 */
 	idx = vq->vq_last_avail;
-	ndesc = (uint16_t)((u_int)vq->vq_avail->idx - idx);
+	/*
+	 * The driver publishes descriptors and available-ring entries before
+	 * its release-ordered idx update.  The acquire load both samples the
+	 * producer index once and orders every subsequent ring/descriptor read
+	 * after that publication.
+	 */
+	ndesc = (uint16_t)((u_int)atomic_load_acq_16(
+	    &vq->vq_avail->idx) - idx);
 	if (ndesc == 0)
 		return (0);
 	if (ndesc > vq->vq_qsize) {
@@ -411,7 +429,6 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 		    name, (u_int)ndesc);
 		goto bad;
 	}
-
 	/*
 	 * Now count/parse "involved" descriptors starting from
 	 * the head of the chain.
@@ -571,12 +588,11 @@ void
 vq_relchain_publish(struct vqueue_info *vq)
 {
 	/*
-	 * Ensure the used descriptor is visible before updating the index.
-	 * This is necessary on ISAs with memory ordering less strict than x86
-	 * (and even on x86 to act as a compiler barrier).
+	 * Publish every used-ring element before the driver can observe the
+	 * new used index.  A release store expresses both the compiler and CPU
+	 * ordering required by VirtIO 1.4 section 2.7.8.
 	 */
-	atomic_thread_fence_rel();
-	vq->vq_used->idx = vq->vq_next_used;
+	atomic_store_rel_16(&vq->vq_used->idx, vq->vq_next_used);
 }
 
 /*
@@ -626,7 +642,13 @@ vq_endchains(struct vqueue_info *vq, int used_all_avail)
 	 */
 	vs = vq->vq_vs;
 	old_idx = vq->vq_save_used;
-	vq->vq_save_used = new_idx = vq->vq_used->idx;
+	/*
+	 * vq_next_used is the device-owned producer index.  Do not reread the
+	 * shared used index for interrupt accounting: a conforming driver never
+	 * writes it, but using host-owned state also makes this path robust
+	 * against a confused guest.
+	 */
+	vq->vq_save_used = new_idx = vq->vq_next_used;
 
 	/*
 	 * Use full memory barrier between "idx" store from preceding
@@ -689,21 +711,22 @@ vi_pci_bad_value(int size)
 }
 
 static inline struct config_reg *
-vi_find_cr(int offset) {
-	u_int hi, lo, mid;
+vi_find_cr(uint64_t offset)
+{
+	size_t hi, lo, mid;
 	struct config_reg *cr;
 
 	lo = 0;
-	hi = sizeof(config_regs) / sizeof(*config_regs) - 1;
-	while (hi >= lo) {
-		mid = (hi + lo) >> 1;
+	hi = nitems(config_regs);
+	while (lo < hi) {
+		mid = lo + (hi - lo) / 2;
 		cr = &config_regs[mid];
 		if (cr->cr_offset == offset)
 			return (cr);
 		if (cr->cr_offset < offset)
 			lo = mid + 1;
 		else
-			hi = mid - 1;
+			hi = mid;
 	}
 	return (NULL);
 }
@@ -720,7 +743,7 @@ vi_pci_read(struct pci_devinst *pi, int baridx, uint64_t offset, int size)
 	struct virtio_softc *vs = pi->pi_arg;
 	struct virtio_consts *vc;
 	struct config_reg *cr;
-	uint64_t virtio_config_size, max;
+	uint64_t config_offset, virtio_config_size, max;
 	const char *name;
 	uint32_t newoff;
 	uint32_t value;
@@ -744,6 +767,11 @@ vi_pci_read(struct pci_devinst *pi, int baridx, uint64_t offset, int size)
 	vc = vs->vs_vc;
 	name = vc->vc_name;
 	value = size == 1 ? 0xff : size == 2 ? 0xffff : 0xffffffff;
+	if (vs->vs_resetting) {
+		if (offset == VIRTIO_PCI_STATUS && size == 1)
+			value = vs->vs_status;
+		goto done;
+	}
 
 	if (size != 1 && size != 2 && size != 4)
 		goto bad;
@@ -753,19 +781,27 @@ vi_pci_read(struct pci_devinst *pi, int baridx, uint64_t offset, int size)
 	if (offset >= virtio_config_size) {
 		/*
 		 * Subtract off the standard size (including MSI-X
-		 * registers if enabled) and dispatch to underlying driver.
-		 * If that fails, fall into general code.
+		 * registers if enabled) and dispatch to the underlying driver.
+		 * Do not reinterpret a rejected device-configuration access as
+		 * a transport register.  In the non-MSI-X layout, device
+		 * configuration starts at the same numeric offsets used for the
+		 * MSI-X vector registers in the MSI-X layout.
 		 */
-		newoff = offset - virtio_config_size;
-		max = vc->vc_cfgsize ? vc->vc_cfgsize : 0x100000000;
-		if (newoff + size > max)
-			goto bad;
-		if (vc->vc_cfgread != NULL)
-			error = (*vc->vc_cfgread)(DEV_SOFTC(vs), newoff, size, &value);
-		else
-			error = 0;
-		if (!error)
+		config_offset = offset - virtio_config_size;
+		max = vc->vc_cfgsize;
+		if (config_offset > INT_MAX || config_offset > max ||
+		    (uint64_t)size > max - config_offset) {
+			EPRINTLN("%s: read from bad device config "
+			    "offset/size %ju/%d", name,
+			    (uintmax_t)config_offset, size);
 			goto done;
+		}
+		newoff = config_offset;
+		error = vc->vc_cfgread == NULL ? 0 :
+		    (*vc->vc_cfgread)(DEV_SOFTC(vs), newoff, size, &value);
+		if (error != 0)
+			value = vi_pci_bad_value(size);
+		goto done;
 	}
 
 bad:
@@ -840,11 +876,10 @@ vi_pci_write(struct pci_devinst *pi, int baridx, uint64_t offset, int size,
 	struct vqueue_info *vq;
 	struct virtio_consts *vc;
 	struct config_reg *cr;
-	uint64_t virtio_config_size, max;
+	uint64_t config_offset, virtio_config_size, max;
 	const char *name;
 	uint32_t newoff;
 	uint8_t old_status;
-	int error;
 
 	if (vs->vs_flags & VIRTIO_USE_MSIX) {
 		if (baridx == pci_msix_table_bar(pi) ||
@@ -866,27 +901,42 @@ vi_pci_write(struct pci_devinst *pi, int baridx, uint64_t offset, int size,
 
 	vc = vs->vs_vc;
 	name = vc->vc_name;
+	if (vs->vs_resetting)
+		goto done;
 
 	if (size != 1 && size != 2 && size != 4)
 		goto bad;
+	/*
+	 * The PCI emulation normally supplies a value already limited to the
+	 * access width.  Keep this entry point self-contained as well: callers
+	 * such as snapshot restore and unit harnesses must not be able to place
+	 * high bits into a narrower legacy register.
+	 */
+	value &= vi_pci_bad_value(size);
 
 	virtio_config_size = VIRTIO_PCI_CONFIG_OFF(pci_msix_enabled(pi));
 
 	if (offset >= virtio_config_size) {
 		/*
 		 * Subtract off the standard size (including MSI-X
-		 * registers if enabled) and dispatch to underlying driver.
+		 * registers if enabled) and dispatch to the underlying driver.
+		 * A rejected access remains a device-configuration access; see
+		 * the matching read path for the overlapping-offset rationale.
 		 */
-		newoff = offset - virtio_config_size;
-		max = vc->vc_cfgsize ? vc->vc_cfgsize : 0x100000000;
-		if (newoff + size > max)
-			goto bad;
-		if (vc->vc_cfgwrite != NULL)
-			error = (*vc->vc_cfgwrite)(DEV_SOFTC(vs), newoff, size, value);
-		else
-			error = 0;
-		if (!error)
+		config_offset = offset - virtio_config_size;
+		max = vc->vc_cfgsize;
+		if (config_offset > INT_MAX || config_offset > max ||
+		    (uint64_t)size > max - config_offset) {
+			EPRINTLN("%s: write to bad device config "
+			    "offset/size %ju/%d", name,
+			    (uintmax_t)config_offset, size);
 			goto done;
+		}
+		newoff = config_offset;
+		if (vc->vc_cfgwrite != NULL)
+			(void)(*vc->vc_cfgwrite)(DEV_SOFTC(vs), newoff, size,
+			    value);
+		goto done;
 	}
 
 bad:
@@ -912,14 +962,26 @@ bad:
 
 	switch (offset) {
 	case VIRTIO_PCI_GUEST_FEATURES:
+		/*
+		 * Legacy devices have no FEATURES_OK handshake.  DRIVER_OK is
+		 * therefore the last unambiguous initialization boundary; do
+		 * not let a later write change a live backend's interpretation
+		 * of descriptors.
+		 */
+		if ((vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
+			break;
 		vs->vs_negotiated_caps = value & vc->vc_hv_caps;
 		if (vc->vc_apply_features)
 			(*vc->vc_apply_features)(DEV_SOFTC(vs),
 			    vs->vs_negotiated_caps);
+		VIRTIO_PROBE_FEATURES(vc->vc_name,
+		    vs->vs_negotiated_caps);
 		break;
 	case VIRTIO_PCI_QUEUE_PFN:
 		if (vs->vs_curq >= vc->vc_nvq)
 			goto bad_qindex;
+		if ((vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
+			break;
 		vi_vq_init(vs, value);
 		break;
 	case VIRTIO_PCI_QUEUE_SEL:
@@ -935,23 +997,53 @@ bad:
 		break;
 	case VIRTIO_PCI_STATUS:
 		old_status = vs->vs_status;
-		if (value != 0)
-			value |= old_status & VIRTIO_CONFIG_S_NEEDS_RESET;
-		vs->vs_status = value;
-		if (value == 0)
+		if (value == 0) {
+			VIRTIO_PROBE_RESET(vc->vc_name);
+			vs->vs_reset_failed = false;
+			vs->vs_resetting = true;
 			(*vc->vc_reset)(DEV_SOFTC(vs));
-		else if ((old_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0 &&
-		    (value & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
-			vi_pci_notify_ready_queues(vs);
+			vs->vs_status = 0;
+			vs->vs_resetting = false;
+			VIRTIO_PROBE_STATUS(vc->vc_name, old_status, 0);
+		} else {
+			value &= VIRTIO_CONFIG_STATUS_ACK |
+			    VIRTIO_CONFIG_STATUS_DRIVER |
+			    VIRTIO_CONFIG_STATUS_DRIVER_OK |
+			    VIRTIO_CONFIG_S_FEATURES_OK |
+			    VIRTIO_CONFIG_STATUS_FAILED;
+			value |= old_status &
+			    (VIRTIO_CONFIG_STATUS_ACK |
+			    VIRTIO_CONFIG_STATUS_DRIVER |
+			    VIRTIO_CONFIG_STATUS_DRIVER_OK |
+			    VIRTIO_CONFIG_S_FEATURES_OK |
+			    VIRTIO_CONFIG_STATUS_FAILED |
+			    VIRTIO_CONFIG_S_NEEDS_RESET);
+			if (vs->vs_reset_failed)
+				value |= VIRTIO_CONFIG_S_NEEDS_RESET;
+			vs->vs_status = (uint8_t)value;
+			VIRTIO_PROBE_STATUS(vc->vc_name, old_status,
+			    vs->vs_status);
+			if ((old_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0 &&
+			    (value & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
+				vi_pci_notify_ready_queues(vs);
+		}
 		break;
 	case VIRTIO_MSI_CONFIG_VECTOR:
-		vs->vs_msix_cfg_idx = value;
+		if (value == VIRTIO_MSI_NO_VECTOR ||
+		    value < (uint64_t)vs->vs_pi->pi_msix.table_count)
+			vs->vs_msix_cfg_idx = value;
+		else
+			vs->vs_msix_cfg_idx = VIRTIO_MSI_NO_VECTOR;
 		break;
 	case VIRTIO_MSI_QUEUE_VECTOR:
 		if (vs->vs_curq >= vc->vc_nvq)
 			goto bad_qindex;
 		vq = &vs->vs_queues[vs->vs_curq];
-		vq->vq_msix_idx = value;
+		if (value == VIRTIO_MSI_NO_VECTOR ||
+		    value < (uint64_t)vs->vs_pi->pi_msix.table_count)
+			vq->vq_msix_idx = value;
+		else
+			vq->vq_msix_idx = VIRTIO_MSI_NO_VECTOR;
 		break;
 	}
 	goto done;
@@ -975,7 +1067,6 @@ vi_pci_pause(struct pci_devinst *pi)
 	vs = pi->pi_arg;
 	vc = vs->vs_vc;
 
-	vc = vs->vs_vc;
 	assert(vc->vc_pause != NULL);
 	(*vc->vc_pause)(DEV_SOFTC(vs));
 
@@ -991,7 +1082,6 @@ vi_pci_resume(struct pci_devinst *pi)
 	vs = pi->pi_arg;
 	vc = vs->vs_vc;
 
-	vc = vs->vs_vc;
 	assert(vc->vc_resume != NULL);
 	(*vc->vc_resume)(DEV_SOFTC(vs));
 
@@ -1001,10 +1091,18 @@ vi_pci_resume(struct pci_devinst *pi)
 static int
 vi_pci_snapshot_softc(struct virtio_softc *vs, struct vm_snapshot_meta *meta)
 {
+	uint32_t legacy_negotiated_caps;
 	int ret;
 
 	SNAPSHOT_VAR_OR_LEAVE(vs->vs_flags, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vs->vs_negotiated_caps, meta, ret, done);
+	/*
+	 * Modern transport snapshots are rejected by vi_pci_snapshot().
+	 * Preserve the established 32-bit legacy snapshot representation even
+	 * though the in-memory field is now wide enough for modern feature bits.
+	 */
+	legacy_negotiated_caps = (uint32_t)vs->vs_negotiated_caps;
+	SNAPSHOT_VAR_OR_LEAVE(legacy_negotiated_caps, meta, ret, done);
+	vs->vs_negotiated_caps = legacy_negotiated_caps;
 	SNAPSHOT_VAR_OR_LEAVE(vs->vs_curq, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(vs->vs_status, meta, ret, done);
 	VS_ISR_LOCK(vs);
@@ -1022,11 +1120,28 @@ done:
 static int
 vi_pci_snapshot_consts(struct virtio_consts *vc, struct vm_snapshot_meta *meta)
 {
+	uint64_t current_legacy_hv_caps, snapshot_legacy_hv_caps;
 	int ret;
 
 	SNAPSHOT_VAR_CMP_OR_LEAVE(vc->vc_nvq, meta, ret, done);
 	SNAPSHOT_VAR_CMP_OR_LEAVE(vc->vc_cfgsize, meta, ret, done);
-	SNAPSHOT_VAR_CMP_OR_LEAVE(vc->vc_hv_caps, meta, ret, done);
+	/*
+	 * Keep the established 64-bit snapshot slot, but compare only the
+	 * legacy-visible feature set and permit the destination to offer a
+	 * superset.  New optional legacy features such as EVENT_IDX do not
+	 * change the interpretation of a restored device unless the saved
+	 * negotiated-feature word selected them.
+	 */
+	current_legacy_hv_caps = vc->vc_hv_caps & UINT32_MAX;
+	snapshot_legacy_hv_caps = current_legacy_hv_caps;
+	SNAPSHOT_VAR_OR_LEAVE(snapshot_legacy_hv_caps, meta, ret, done);
+	if (meta->op == VM_SNAPSHOT_RESTORE &&
+	    (snapshot_legacy_hv_caps & ~current_legacy_hv_caps) != 0) {
+		EPRINTLN("%s: restored VirtIO device lacks saved features %#jx",
+		    __func__, (uintmax_t)(snapshot_legacy_hv_caps &
+		    ~current_legacy_hv_caps));
+		ret = ENOTSUP;
+	}
 
 done:
 	return (ret);
@@ -1061,7 +1176,7 @@ vi_pci_snapshot_queues(struct virtio_softc *vs, struct vm_snapshot_meta *meta)
 
 		SNAPSHOT_VAR_OR_LEAVE(vq->vq_pfn, meta, ret, done);
 
-		if ((vq->vq_flags & VQ_ALLOC) == 0)
+		if (!vq_is_allocated(vq))
 			continue;
 
 		addr_size = vq->vq_qsize * sizeof(struct vring_desc);
@@ -1108,6 +1223,14 @@ vi_pci_snapshot(struct vm_snapshot_meta *meta)
 	ret = vi_pci_snapshot_consts(vc, meta);
 	if (ret != 0)
 		goto done;
+	if (meta->op == VM_SNAPSHOT_RESTORE &&
+	    (vs->vs_negotiated_caps & ~vc->vc_hv_caps) != 0) {
+		EPRINTLN("%s: restored VirtIO negotiated unsupported features "
+		    "%#jx", __func__, (uintmax_t)(vs->vs_negotiated_caps &
+		    ~vc->vc_hv_caps));
+		ret = ENOTSUP;
+		goto done;
+	}
 
 	/* Save virtio queue info */
 	ret = vi_pci_snapshot_queues(vs, meta);

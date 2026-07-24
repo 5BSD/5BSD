@@ -1001,9 +1001,11 @@ vq_ring_must_notify_host(struct virtqueue *vq)
 static void
 vq_ring_notify_host(struct virtqueue *vq)
 {
+	uint16_t avail_idx;
 
+	avail_idx = vq_htog16(vq, vq->vq_ring.avail->idx);
 	VIRTIO_BUS_NOTIFY_VQ(vq->vq_dev, vq->vq_queue_index,
-	    vq->vq_notify_offset);
+	    vq->vq_notify_offset, avail_idx);
 }
 
 static void

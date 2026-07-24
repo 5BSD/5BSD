@@ -32,7 +32,7 @@ EOF
 
 	atf_check -s exit:1 -o match:'TOTAL: 0 passed, 18 failed' -e ignore \
 	    env BINARY="$(pwd)/helper" KERN_TEST_DIR="$(pwd)/kern" \
-	    MAC_TEST_DIR="$(pwd)/mac" sh \
+	    MAC_TEST_DIR="$(pwd)/mac" MAC_CONTROL_PREFLIGHT=no sh \
 	    "$(atf_get_srcdir)/run_vsock_tests.sh" "$(pwd)/results"
 	atf_check -s exit:0 -o match:'test listing exited with status 9' \
 	    grep 'test listing exited with status 9' results
@@ -55,7 +55,7 @@ EOF
 
 	atf_check -s exit:1 -o match:'TOTAL: 0 passed, 18 failed' -e ignore \
 	    env BINARY="$(pwd)/helper" KERN_TEST_DIR="$(pwd)/kern" \
-	    MAC_TEST_DIR="$(pwd)/mac" sh \
+	    MAC_TEST_DIR="$(pwd)/mac" MAC_CONTROL_PREFLIGHT=no sh \
 	    "$(atf_get_srcdir)/run_vsock_tests.sh" "$(pwd)/results"
 	atf_check -s exit:0 -o match:'test case exited with status 7' \
 	    grep 'test case exited with status 7' results

@@ -166,6 +166,7 @@ struct pci_vtinput_softc {
 };
 
 static void pci_vtinput_reset(void *);
+static int pci_vtinput_qreset(void *, struct vqueue_info *, uint64_t);
 static int pci_vtinput_cfgread(void *, int, int, uint32_t *);
 static int pci_vtinput_cfgwrite(void *, int, int, uint32_t);
 
@@ -176,7 +177,8 @@ static struct virtio_consts vtinput_vi_consts = {
 	.vc_reset =	pci_vtinput_reset,
 	.vc_cfgread =	pci_vtinput_cfgread,
 	.vc_cfgwrite =	pci_vtinput_cfgwrite,
-	.vc_hv_caps =	0,
+	.vc_qreset =	pci_vtinput_qreset,
+	.vc_hv_caps =	VIRTIO_F_IN_ORDER | VIRTIO_F_RING_RESET,
 };
 
 static void
@@ -188,6 +190,31 @@ pci_vtinput_reset(void *vsc)
 	vi_reset_dev(&sc->vsc_vs);
 	sc->vsc_eventqueue.idx = 0;
 	sc->vsc_drop_frame = false;
+	memset(&sc->vsc_config, 0, sizeof(sc->vsc_config));
+	sc->vsc_config_valid = 0;
+}
+
+static int
+pci_vtinput_qreset(void *vsc, struct vqueue_info *vq,
+    uint64_t generation __unused)
+{
+	struct pci_vtinput_softc *sc;
+
+	sc = vsc;
+	if (vq->vq_num >= VTINPUT_MAXQ)
+		return (EINVAL);
+
+	/*
+	 * Host events are staged outside guest memory until a complete input
+	 * frame is available.  Discard an incomplete frame when the event queue
+	 * is reset so it cannot be delivered through a later queue incarnation.
+	 * Status-queue operations complete synchronously while vsc_mtx is held.
+	 */
+	if (vq->vq_num == VTINPUT_EVENTQ) {
+		sc->vsc_eventqueue.idx = 0;
+		sc->vsc_drop_frame = false;
+	}
+	return (0);
 }
 
 static void
@@ -240,8 +267,12 @@ pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 			vq_relchain(vq, req.idx, 0);
 			continue;
 		}
+		const uint16_t type = le16toh(event.type);
+		const uint16_t code = le16toh(event.code);
+		const int32_t value = (int32_t)le32toh(event.value);
+
 		DPRINTF2(("vtinput: status event type=%u code=%u value=%d",
-		    event.type, event.code, (int32_t)event.value));
+		    type, code, value));
 
 		/*
 		 * on multi touch devices:
@@ -254,16 +285,16 @@ pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 		 * - frames become larger and larger
 		 * avoid endless loops by ignoring EV_MSC
 		 */
-		if (event.type == EV_MSC) {
+		if (type == EV_MSC) {
 			vq_relchain(vq, req.idx, 0);
 			continue;
 		}
 
 		/* send event to evdev */
 		struct input_event host_event;
-		host_event.type = event.type;
-		host_event.code = event.code;
-		host_event.value = event.value;
+		host_event.type = type;
+		host_event.code = code;
+		host_event.value = value;
 		if (gettimeofday(&host_event.time, NULL) != 0) {
 			WPRINTF(("%s: failed gettimeofday", __func__));
 		}
@@ -316,12 +347,14 @@ static int
 pci_vtinput_read_config_id_name(struct pci_vtinput_softc *sc)
 {
 	char name[128];
+
+	memset(name, 0, sizeof(name));
 	if (ioctl(sc->vsc_fd, EVIOCGNAME(sizeof(name) - 1), name) < 0) {
 		return (1);
 	}
 
-	memcpy(sc->vsc_config.u.string, name, sizeof(name));
 	sc->vsc_config.size = strnlen(name, sizeof(name));
+	memcpy(sc->vsc_config.u.string, name, sc->vsc_config.size);
 
 	return (0);
 }
@@ -343,10 +376,10 @@ pci_vtinput_read_config_id_devids(struct pci_vtinput_softc *sc)
 		return (1);
 	}
 
-	sc->vsc_config.u.ids.bustype = devids.bustype;
-	sc->vsc_config.u.ids.vendor = devids.vendor;
-	sc->vsc_config.u.ids.product = devids.product;
-	sc->vsc_config.u.ids.version = devids.version;
+	sc->vsc_config.u.ids.bustype = htole16(devids.bustype);
+	sc->vsc_config.u.ids.vendor = htole16(devids.vendor);
+	sc->vsc_config.u.ids.product = htole16(devids.product);
+	sc->vsc_config.u.ids.version = htole16(devids.version);
 	sc->vsc_config.size = sizeof(struct vtinput_devids);
 
 	return (0);
@@ -409,7 +442,7 @@ pci_vtinput_read_config_ev_bits(struct pci_vtinput_softc *sc, uint8_t type)
 	 * number of elements.
 	 */
 	count = howmany(count, sizeof(long) * 8) * sizeof(long);
-	const unsigned int cmd = EVIOCGBIT(sc->vsc_config.subsel, count);
+	const unsigned int cmd = EVIOCGBIT(type, count);
 	const int size = pci_vtinput_get_bitmap(sc, cmd, count);
 	if (size <= 0) {
 		return (1);
@@ -423,11 +456,6 @@ pci_vtinput_read_config_ev_bits(struct pci_vtinput_softc *sc, uint8_t type)
 static int
 pci_vtinput_read_config_abs_info(struct pci_vtinput_softc *sc)
 {
-	/* check if evdev has EV_ABS */
-	if (!pci_vtinput_read_config_ev_bits(sc, EV_ABS)) {
-		return (1);
-	}
-
 	/* get abs information */
 	struct input_absinfo abs;
 	if (ioctl(sc->vsc_fd, EVIOCGABS(sc->vsc_config.subsel), &abs) < 0) {
@@ -435,11 +463,11 @@ pci_vtinput_read_config_abs_info(struct pci_vtinput_softc *sc)
 	}
 
 	/* save abs information */
-	sc->vsc_config.u.abs.min = abs.minimum;
-	sc->vsc_config.u.abs.max = abs.maximum;
-	sc->vsc_config.u.abs.fuzz = abs.fuzz;
-	sc->vsc_config.u.abs.flat = abs.flat;
-	sc->vsc_config.u.abs.res = abs.resolution;
+	sc->vsc_config.u.abs.min = htole32(abs.minimum);
+	sc->vsc_config.u.abs.max = htole32(abs.maximum);
+	sc->vsc_config.u.abs.fuzz = htole32(abs.fuzz);
+	sc->vsc_config.u.abs.flat = htole32(abs.flat);
+	sc->vsc_config.u.abs.res = htole32(abs.resolution);
 	sc->vsc_config.size = sizeof(struct vtinput_absinfo);
 
 	return (0);
@@ -448,6 +476,15 @@ pci_vtinput_read_config_abs_info(struct pci_vtinput_softc *sc)
 static int
 pci_vtinput_read_config(struct pci_vtinput_softc *sc)
 {
+	/*
+	 * select and subsel are driver-owned.  Every other byte is a fresh
+	 * device response so an unsupported query cannot expose data from a
+	 * previous selection or uninitialized host memory.
+	 */
+	sc->vsc_config.size = 0;
+	memset(sc->vsc_config.reserved, 0, sizeof(sc->vsc_config.reserved));
+	memset(&sc->vsc_config.u, 0, sizeof(sc->vsc_config.u));
+
 	switch (sc->vsc_config.select) {
 	case VTINPUT_CFG_UNSET:
 		return (0);
@@ -489,7 +526,6 @@ pci_vtinput_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 		if (pci_vtinput_read_config(sc) != 0) {
 			DPRINTF(("%s: could not read config %d/%d", __func__,
 			    sc->vsc_config.select, sc->vsc_config.subsel));
-			return (0);
 		}
 		sc->vsc_config_valid = 1;
 	}
@@ -550,9 +586,9 @@ vtinput_eventqueue_add_event(
 
 	/* save event */
 	struct vtinput_event *event = &queue->events[queue->idx].event;
-	event->type = e->type;
-	event->code = e->code;
-	event->value = e->value;
+	event->type = htole16(e->type);
+	event->code = htole16(e->code);
+	event->value = htole32(e->value);
 	queue->idx++;
 
 	return (0);
@@ -685,15 +721,18 @@ vtinput_read_event(int fd __attribute((unused)),
 {
 	struct pci_vtinput_softc *sc = arg;
 	struct virtio_softc *vs = &sc->vsc_vs;
+	struct vqueue_info *event_vq;
 
 	VS_LOCK(vs);
+	event_vq = &sc->vsc_queues[VTINPUT_EVENTQ];
 
-	/* skip if driver isn't ready */
-	if (!(sc->vsc_vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK)) {
+	/* Skip if the device or its independently-resettable event queue is idle. */
+	if (!(sc->vsc_vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) ||
+	    !vq_ring_ready(event_vq)) {
 		/*
 		 * Keep the nonblocking evdev descriptor drained while the queue is
 		 * inactive.  Otherwise the persistent read event can spin the event
-		 * loop and stale input can cross a guest device reset.
+		 * loop and stale input can cross a guest device or queue reset.
 		 */
 		struct input_event event;
 		while (vtinput_read_event_from_host(sc->vsc_fd, &event) == 0)
@@ -721,7 +760,7 @@ vtinput_read_event(int fd __attribute((unused)),
 
 		/* send host events to guest */
 		vtinput_eventqueue_send_events(
-		    &sc->vsc_eventqueue, &sc->vsc_queues[VTINPUT_EVENTQ]);
+		    &sc->vsc_eventqueue, event_vq);
 	}
 
 	VS_UNLOCK(vs);
@@ -862,7 +901,7 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vsc_queues[VTINPUT_STATUSQ].vq_qsize = VTINPUT_RINGSZ;
 	sc->vsc_queues[VTINPUT_STATUSQ].vq_notify = pci_vtinput_notify_statusq;
 	if (vi_pci_select_transport(&sc->vsc_vs, nvl,
-	    VIRTIO_PCI_LEGACY_DEFAULT) != 0)
+	    VIRTIO_PCI_MODERN_DEFAULT) != 0)
 		goto failed;
 
 	/* initialize config space */
@@ -870,11 +909,15 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 		vi_pci_modern_set_identity(&sc->vsc_vs, VIRTIO_ID_INPUT);
 	else {
 		/* Preserve the historical identity for compatibility. */
-		pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_INPUT);
+		pci_set_cfgdata16(pi, PCIR_DEVICE,
+		    VIRTIO_PCI_COMPAT_INPUT_DEVICE);
 		pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
-		pci_set_cfgdata8(pi, PCIR_REVID, VIRTIO_REV_INPUT);
-		pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_SUBDEV_INPUT);
-		pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_SUBVEN_INPUT);
+		pci_set_cfgdata8(pi, PCIR_REVID,
+		    VIRTIO_PCI_COMPAT_INPUT_REVISION);
+		pci_set_cfgdata16(pi, PCIR_SUBDEV_0,
+		    VIRTIO_PCI_COMPAT_INPUT_SUBDEVICE);
+		pci_set_cfgdata16(pi, PCIR_SUBVEND_0,
+		    VIRTIO_PCI_COMPAT_INPUT_SUBVENDOR);
 	}
 	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_INPUTDEV);
 	pci_set_cfgdata8(pi, PCIR_SUBCLASS, PCIS_INPUTDEV_OTHER);

@@ -95,5 +95,11 @@ struct virtio_net_rxhdr {
 	uint16_t	vrh_bufs;
 } __packed;
 #define VNET_HDR_LEN	sizeof(struct virtio_net_rxhdr)
+/*
+ * VirtIO 1.4 section 5.1.9.3 permits a 65,589-byte GSO packet.  Backends
+ * which carry the base virtio-net header therefore need room for a complete
+ * 65,601-byte record.
+ */
+#define	NETBE_MAX_RECORD_SIZE	(65589U + VNET_HDR_LEN)
 
 #endif /* __NET_BACKENDS_H__ */

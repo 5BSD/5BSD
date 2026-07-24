@@ -18,7 +18,14 @@
 #include <atf-c.h>
 
 #include "pci_virtio_9p.c"
+#include "virtio_1_4_spec.h"
 
+#undef VIRTIO_CONFIG_S_NEEDS_RESET
+#define	VIRTIO_CONFIG_S_NEEDS_RESET	VIRTIO14_STATUS_DEVICE_NEEDS_RESET
+#undef VIRTIO_9P_F_MOUNT_TAG
+#define	VIRTIO_9P_F_MOUNT_TAG		VIRTIO14_9P_F_MOUNT_TAG
+#undef VIRTIO_F_RING_RESET
+#define	VIRTIO_F_RING_RESET		VIRTIO14_F_RING_RESET
 struct nvlist {
 	int unused;
 };
@@ -93,6 +100,13 @@ get_config_bool_node_default(const nvlist_t *nvl __unused,
     const char *name __unused, bool value)
 {
 	return (value);
+}
+
+bool
+vi_pci_is_modern(const struct virtio_softc *vs)
+{
+
+	return (vs->vs_transport == VIRTIO_PCI_TRANSPORT_MODERN);
 }
 
 void
@@ -220,7 +234,16 @@ setup_softc(struct pci_vt9p_softc *sc)
 {
 	memset(sc, 0, sizeof(*sc));
 	init_recursive_mutex(&sc->vsc_mtx);
+	ATF_REQUIRE(pthread_cond_init(&sc->vsc_reset_cv, NULL) == 0);
 	sc->vsc_conn = &g_connection;
+}
+
+static void
+destroy_softc(struct pci_vt9p_softc *sc)
+{
+
+	ATF_REQUIRE(pthread_cond_destroy(&sc->vsc_reset_cv) == 0);
+	ATF_REQUIRE(pthread_mutex_destroy(&sc->vsc_mtx) == 0);
 }
 
 ATF_TC_WITHOUT_HEAD(config_bounds);
@@ -242,6 +265,9 @@ ATF_TC_BODY(config_bounds, tc)
 	    &value) == EINVAL);
 	ATF_CHECK(pci_vt9p_cfgread(&sc, VT9P_CONFIGSPACESZ - 1, 2,
 	    &value) == EINVAL);
+	ATF_CHECK(pci_vt9p_cfgread(&sc, 0, 0, &value) == EINVAL);
+	ATF_CHECK(pci_vt9p_cfgread(&sc, 0, 3, &value) == EINVAL);
+	ATF_CHECK(pci_vt9p_cfgread(&sc, 0, 8, &value) == EINVAL);
 }
 
 ATF_TC_WITHOUT_HEAD(option_parser);
@@ -293,7 +319,7 @@ ATF_TC_BODY(descriptor_lifetime, tc)
 	ATF_CHECK(preq->vsr_iov[0].iov_len == 16);
 	ATF_CHECK(preq->vsr_iov[1].iov_len == 32);
 	free(preq);
-	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+	destroy_softc(&sc);
 }
 
 ATF_TC_WITHOUT_HEAD(invalid_chains);
@@ -310,7 +336,7 @@ ATF_TC_BODY(invalid_chains, tc)
 	ATF_CHECK(g_rel_calls == 1);
 	ATF_CHECK(g_rel_len == 0);
 	ATF_CHECK(g_end_calls == 1);
-	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+	destroy_softc(&sc);
 
 	reset_mocks();
 	setup_softc(&sc);
@@ -320,26 +346,27 @@ ATF_TC_BODY(invalid_chains, tc)
 	ATF_CHECK(g_rel_calls == 1);
 	ATF_CHECK(g_rel_len == 0);
 	ATF_CHECK(g_end_calls == 1);
-	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+	destroy_softc(&sc);
 }
 
-ATF_TC_WITHOUT_HEAD(reset_replays_notify);
-ATF_TC_BODY(reset_replays_notify, tc)
+ATF_TC_WITHOUT_HEAD(reset_discards_stale_notify);
+ATF_TC_BODY(reset_discards_stale_notify, tc)
 {
 	struct pci_vt9p_softc sc;
 
 	reset_mocks();
 	setup_softc(&sc);
+	sc.vsc_features = UINT64_MAX;
 	g_notify_during_close = &sc;
 	ATF_REQUIRE(pthread_mutex_lock(&sc.vsc_mtx) == 0);
 	pci_vt9p_reset(&sc);
 	ATF_REQUIRE(pthread_mutex_unlock(&sc.vsc_mtx) == 0);
 	ATF_CHECK(g_connection_closes == 1);
 	ATF_CHECK(g_connection_inits == 1);
-	ATF_CHECK(g_recv_calls == 1);
+	ATF_CHECK(g_recv_calls == 0);
 	ATF_CHECK(!sc.vsc_notify_pending);
-	free(g_recv_aux);
-	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+	ATF_CHECK_EQ(sc.vsc_features, 0);
+	destroy_softc(&sc);
 }
 
 ATF_TC_WITHOUT_HEAD(rejected_request);
@@ -356,7 +383,7 @@ ATF_TC_BODY(rejected_request, tc)
 	ATF_CHECK(g_rel_calls == 1);
 	ATF_CHECK(g_rel_len == 0);
 	ATF_CHECK(g_end_calls == 1);
-	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+	destroy_softc(&sc);
 }
 
 ATF_TC_WITHOUT_HEAD(synchronous_completion);
@@ -374,7 +401,7 @@ ATF_TC_BODY(synchronous_completion, tc)
 	ATF_CHECK(g_rel_calls == 1);
 	ATF_CHECK(g_rel_len == 17);
 	ATF_CHECK(g_end_calls == 2);
-	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+	destroy_softc(&sc);
 }
 
 ATF_TC_WITHOUT_HEAD(stale_completion);
@@ -402,7 +429,7 @@ ATF_TC_BODY(stale_completion, tc)
 	ATF_CHECK(g_connection_closes == 1);
 	ATF_CHECK(g_connection_inits == 1);
 	ATF_CHECK(sc.vsc_conn == &g_connection);
-	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+	destroy_softc(&sc);
 }
 
 ATF_TC_WITHOUT_HEAD(reset_reinit_failure);
@@ -422,7 +449,105 @@ ATF_TC_BODY(reset_reinit_failure, tc)
 	ATF_REQUIRE(pthread_mutex_unlock(&sc.vsc_mtx) == 0);
 	ATF_CHECK(g_connection_closes == 1);
 	ATF_CHECK(g_connection_inits == 1);
-	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+	destroy_softc(&sc);
+}
+
+static void *
+finish_prior_reset(void *arg)
+{
+	struct pci_vt9p_softc *sc;
+	int error, unlock_error;
+
+	sc = arg;
+	error = pthread_mutex_lock(&sc->vsc_mtx);
+	if (error != 0)
+		return ((void *)(uintptr_t)error);
+	sc->vsc_resetting = false;
+	error = pthread_cond_broadcast(&sc->vsc_reset_cv);
+	unlock_error = pthread_mutex_unlock(&sc->vsc_mtx);
+	if (error == 0)
+		error = unlock_error;
+	return ((void *)(uintptr_t)error);
+}
+
+ATF_TC_WITHOUT_HEAD(full_reset_waits_for_prior_reconnect);
+ATF_TC_BODY(full_reset_waits_for_prior_reconnect, tc)
+{
+	struct pci_vt9p_softc sc;
+	pthread_t thread;
+	void *result;
+
+	reset_mocks();
+	setup_softc(&sc);
+	ATF_REQUIRE(pthread_mutex_lock(&sc.vsc_mtx) == 0);
+	sc.vsc_resetting = true;
+	ATF_REQUIRE(pthread_create(&thread, NULL, finish_prior_reset, &sc) == 0);
+
+	pci_vt9p_reset(&sc);
+
+	ATF_REQUIRE(pthread_mutex_unlock(&sc.vsc_mtx) == 0);
+	ATF_REQUIRE(pthread_join(thread, &result) == 0);
+	ATF_REQUIRE(result == NULL);
+	ATF_CHECK_EQ(g_connection_closes, 1);
+	ATF_CHECK_EQ(g_connection_inits, 1);
+	ATF_CHECK(!sc.vsc_resetting);
+	ATF_CHECK(sc.vsc_conn == &g_connection);
+	destroy_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(virtio_1_4_wire_layout);
+ATF_TC_BODY(virtio_1_4_wire_layout, tc)
+{
+
+	ATF_CHECK_EQ(sizeof(struct pci_vt9p_config),
+	    VIRTIO14_9P_CONFIG_TAG_LEN_SIZE);
+	ATF_CHECK_EQ(offsetof(struct pci_vt9p_config, tag_len),
+	    VIRTIO14_9P_CONFIG_TAG_LEN_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vt9p_config, tag),
+	    VIRTIO14_9P_CONFIG_TAG_LEN_SIZE);
+}
+
+ATF_TC_WITHOUT_HEAD(modern_mount_tag_wire_bytes);
+ATF_TC_BODY(modern_mount_tag_wire_bytes, tc)
+{
+	struct pci_vt9p_softc sc;
+	uint8_t config[VT9P_CONFIGSPACESZ];
+	char tag[VT9P_MAXTAGSZ + 1];
+
+	/*
+	 * Section 2.7 requires non-legacy device configuration fields to be
+	 * little-endian.  A 256-byte tag makes both length bytes observable;
+	 * the expected bytes are a document-derived vector, not a serialized
+	 * DUT structure.
+	 */
+	memset(&sc, 0, sizeof(sc));
+	memset(config, 0, sizeof(config));
+	memset(tag, 'x', sizeof(tag) - 1);
+	tag[sizeof(tag) - 1] = '\0';
+	sc.vsc_config = (struct pci_vt9p_config *)(void *)config;
+	sc.vsc_vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	pci_vt9p_set_tag(&sc, tag);
+
+	ATF_CHECK_EQ(config[VIRTIO14_9P_CONFIG_TAG_LEN_OFF], 0x00);
+	ATF_CHECK_EQ(config[VIRTIO14_9P_CONFIG_TAG_LEN_OFF + 1], 0x01);
+	ATF_CHECK_EQ(config[VIRTIO14_9P_CONFIG_TAG_LEN_SIZE], (uint8_t)'x');
+	ATF_CHECK_EQ(config[VIRTIO14_9P_CONFIG_TAG_LEN_SIZE +
+	    VT9P_MAXTAGSZ - 1], (uint8_t)'x');
+}
+
+ATF_TC_WITHOUT_HEAD(optional_queue_reset_not_advertised);
+ATF_TC_BODY(optional_queue_reset_not_advertised, tc)
+{
+
+	/*
+	 * VirtIO 1.4 section 2.6.1 makes queue reset optional.  The 9P
+	 * implementation cannot cancel one queue without discarding connection
+	 * and fid state, so it must not offer VIRTIO_F_RING_RESET.
+	 */
+	ATF_CHECK(vt9p_vi_consts.vc_qreset == NULL);
+	ATF_CHECK_EQ(vt9p_vi_consts.vc_hv_caps & VIRTIO_F_RING_RESET, 0);
+	ATF_CHECK_EQ(vt9p_vi_consts.vc_hv_caps,
+	    VIRTIO14_9P_F_MOUNT_TAG);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -431,10 +556,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, option_parser);
 	ATF_TP_ADD_TC(tp, descriptor_lifetime);
 	ATF_TP_ADD_TC(tp, invalid_chains);
-	ATF_TP_ADD_TC(tp, reset_replays_notify);
+	ATF_TP_ADD_TC(tp, reset_discards_stale_notify);
 	ATF_TP_ADD_TC(tp, rejected_request);
 	ATF_TP_ADD_TC(tp, synchronous_completion);
 	ATF_TP_ADD_TC(tp, stale_completion);
 	ATF_TP_ADD_TC(tp, reset_reinit_failure);
+	ATF_TP_ADD_TC(tp, full_reset_waits_for_prior_reconnect);
+	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
+	ATF_TP_ADD_TC(tp, modern_mount_tag_wire_bytes);
+	ATF_TP_ADD_TC(tp, optional_queue_reset_not_advertised);
 	return (atf_no_error());
 }

@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <machine/atomic.h>
 #include <sys/uio.h>
 #include <dev/virtio/virtio_config.h>
 #include <dev/virtio/virtio_ring.h>
@@ -22,10 +23,12 @@ struct virtio_softc {
 	pthread_mutex_t *vs_mtx;
 	pthread_mutex_t vs_isr_mtx;
 	struct pci_devinst *vs_pi;
-	uint32_t vs_negotiated_caps;
+	uint64_t vs_negotiated_caps;
 	struct vqueue_info *vs_queues;
 	int vs_curq;
 	uint8_t vs_status;
+	bool vs_resetting;
+	bool vs_reset_failed;
 	uint8_t vs_isr;
 	uint16_t vs_msix_cfg_idx;
 	enum virtio_pci_transport vs_transport;
@@ -49,7 +52,10 @@ struct vqueue_info {
 	uint32_t vq_pfn;
 	uint16_t vq_qsize_max;
 	uint16_t vq_enabled;
+	uint16_t vq_reset;
+	volatile uint16_t vq_resetting;
 	bool vq_notify_pending;
+	uint64_t vq_generation;
 	uint64_t vq_desc_gpa;
 	uint64_t vq_driver_gpa;
 	uint64_t vq_device_gpa;
@@ -71,6 +77,8 @@ struct virtio_consts {
 	int (*vc_cfgread)(void *, int, int, uint32_t *);
 	int (*vc_cfgwrite)(void *, int, int, uint32_t);
 	void (*vc_apply_features)(void *, uint64_t);
+	int (*vc_qenable)(void *, struct vqueue_info *);
+	int (*vc_qreset)(void *, struct vqueue_info *, uint64_t);
 	uint64_t vc_hv_caps;
 	void (*vc_pause)(void *);
 	void (*vc_resume)(void *);
@@ -91,48 +99,86 @@ struct virtio_consts {
 	pthread_mutex_lock((vs)->vs_mtx); } while (0)
 #define VS_UNLOCK(vs) do { if ((vs)->vs_mtx != NULL) \
 	pthread_mutex_unlock((vs)->vs_mtx); } while (0)
-#define VIRTIO_DEV_VSOCK 0x1013
+#define VIRTIO_PCI_COMPAT_VSOCK_DEVICE 0x1013
 #define VIRTIO_ID_VSOCK  19
-#define VIRTIO_DEV_INPUT 0x1052
+#define VIRTIO_PCI_COMPAT_INPUT_DEVICE 0x1052
 #define VIRTIO_ID_INPUT  18
-#define VIRTIO_DEV_RANDOM 0x1005
+#define VIRTIO_PCI_TRANSITIONAL_ENTROPY 0x1005
 #define VIRTIO_ID_ENTROPY 4
-#define VIRTIO_DEV_CONSOLE 0x1003
+#define VIRTIO_PCI_TRANSITIONAL_CONSOLE 0x1003
 #define VIRTIO_ID_CONSOLE 3
-#define VIRTIO_DEV_9P 0x1009
+#define VIRTIO_PCI_TRANSITIONAL_9P 0x1009
 #define VIRTIO_ID_9P 9
-#define VIRTIO_DEV_BLOCK 0x1001
+#define VIRTIO_PCI_TRANSITIONAL_BLOCK 0x1001
 #define VIRTIO_ID_BLOCK 2
-#define VIRTIO_DEV_NET 0x1000
+#define VIRTIO_PCI_TRANSITIONAL_NET 0x1000
 #define VIRTIO_ID_NETWORK 1
-#define VIRTIO_DEV_SCSI 0x1008
+#define VIRTIO_PCI_TRANSITIONAL_SCSI 0x1004
 #define VIRTIO_ID_SCSI 8
-#define VIRTIO_REV_INPUT 1
-#define VIRTIO_SUBVEN_INPUT 0x108e
-#define VIRTIO_SUBDEV_INPUT 0x1100
+#define VIRTIO_PCI_COMPAT_INPUT_REVISION 1
+#define VIRTIO_PCI_COMPAT_INPUT_SUBVENDOR 0x108e
+#define VIRTIO_PCI_COMPAT_INPUT_SUBDEVICE 0x1100
 #define VIRTIO_VENDOR    0x1af4
 #define VIRTIO_PCI_ISR_CONFIG 0x2
 static inline int
+vq_is_allocated(const struct vqueue_info *vq)
+{
+	return ((atomic_load_acq_16(&vq->vq_flags) & VQ_ALLOC) != 0);
+}
+static inline void
+vq_set_allocated(struct vqueue_info *vq, bool allocated)
+{
+	atomic_store_rel_16(&vq->vq_flags, allocated ? VQ_ALLOC : 0);
+}
+static inline int
+vq_is_resetting(const struct vqueue_info *vq)
+{
+	return (atomic_load_acq_16(&vq->vq_resetting) != 0);
+}
+static inline void
+vq_set_resetting(struct vqueue_info *vq, bool resetting)
+{
+	atomic_store_rel_16(&vq->vq_resetting, resetting ? 1 : 0);
+}
+static inline int
 vq_ring_ready(struct vqueue_info *vq)
 {
-	return ((vq->vq_flags & VQ_ALLOC) != 0 &&
+	return (vq_is_allocated(vq) &&
+	    !vq_is_resetting(vq) &&
 	    (vq->vq_vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0);
 }
+#define VQ_AVAIL_EVENT_IDX(vq) \
+	(*(uint16_t *)&(vq)->vq_used->ring[(vq)->vq_qsize])
+#define VQ_USED_EVENT_IDX(vq) ((vq)->vq_avail->ring[(vq)->vq_qsize])
 static inline void
 vq_kick_enable(struct vqueue_info *vq)
 {
-	vq->vq_used->flags &= ~VRING_USED_F_NO_NOTIFY;
+	if (vq->vq_vs != NULL &&
+	    (vq->vq_vs->vs_negotiated_caps &
+	    VIRTIO_RING_F_EVENT_IDX) != 0) {
+		vq->vq_used->flags = 0;
+		VQ_AVAIL_EVENT_IDX(vq) = vq->vq_last_avail;
+	} else
+		vq->vq_used->flags = 0;
 }
 static inline void
 vq_kick_disable(struct vqueue_info *vq)
 {
-	vq->vq_used->flags |= VRING_USED_F_NO_NOTIFY;
+	if (vq->vq_vs != NULL &&
+	    (vq->vq_vs->vs_negotiated_caps &
+	    VIRTIO_RING_F_EVENT_IDX) != 0) {
+		vq->vq_used->flags = 0;
+		VQ_AVAIL_EVENT_IDX(vq) =
+		    vq->vq_last_avail + vq->vq_qsize - 1;
+	} else
+		vq->vq_used->flags = VRING_USED_F_NO_NOTIFY;
 }
-#define VQ_USED_EVENT_IDX(vq) ((vq)->vq_avail->ring[(vq)->vq_qsize])
 void mock_vq_interrupt(struct virtio_softc *, struct vqueue_info *);
 static inline void
 vq_interrupt(struct virtio_softc *vs, struct vqueue_info *vq)
 {
+	if (vq_is_resetting(vq))
+		return;
 	mock_vq_interrupt(vs, vq);
 }
 int  vq_has_descs(struct vqueue_info *);
@@ -152,6 +198,7 @@ void vi_pci_notify_ready_queues(struct virtio_softc *);
 int  vi_pci_modern_init(struct virtio_softc *, int);
 void vi_pci_modern_set_identity(struct virtio_softc *, uint16_t);
 void vi_pci_modern_reset(struct virtio_softc *);
+void vi_pci_modern_queue_reset_complete(struct vqueue_info *, uint64_t, int);
 void vi_pci_modern_config_changed(struct virtio_softc *);
 void vi_pci_config_changed(struct virtio_softc *);
 uint64_t vi_pci_modern_read(struct pci_devinst *, int, uint64_t, int);

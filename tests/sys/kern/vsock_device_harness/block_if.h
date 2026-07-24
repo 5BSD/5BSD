@@ -37,6 +37,7 @@ int blockif_is_ro(struct blockif_ctxt *);
 int blockif_candelete(struct blockif_ctxt *);
 int blockif_read(struct blockif_ctxt *, struct blockif_req *);
 int blockif_write(struct blockif_ctxt *, struct blockif_req *);
+int blockif_write_zeroes(struct blockif_ctxt *, struct blockif_req *);
 int blockif_flush(struct blockif_ctxt *, struct blockif_req *);
 int blockif_delete(struct blockif_ctxt *, struct blockif_req *);
 int blockif_cancel(struct blockif_ctxt *, struct blockif_req *);

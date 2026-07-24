@@ -5,6 +5,10 @@
 # Must be run as root: the vsock module may need loading, and several cases
 # write kern.vsock.* sysctls or bind privileged ports (they carry
 # require.user=root and will SKIP under an unprivileged run rather than fail).
+#
+# The AF_VSOCK MAC isolation cases need access to /dev/mac_capability.  Stop
+# oracled (and any other process holding an isolation claim on that device)
+# before running this suite; restart it after the tests finish.
 
 _script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 _arch=$(uname -p)
@@ -52,7 +56,15 @@ for _bin in $BINARIES "$MAC_BINARY"; do
 	fi
 done
 
-if [ "$(id -u)" -ne 0 ]; then
+if [ "$(id -u)" -eq 0 ]; then
+	if [ "${MAC_CONTROL_PREFLIGHT:-yes}" != no ] &&
+	    [ ! -c "${MAC_CONTROL_DEVICE:-/dev/mac_capability}" ]; then
+		echo "ERROR: /dev/mac_capability is not accessible." >&2
+		echo "Stop oracled and any other capability broker holding an" >&2
+		echo "isolation claim on the control device, then rerun this suite." >&2
+		exit 1
+	fi
+else
 	echo "WARNING: not running as root; privileged cases will SKIP or fail" >&2
 fi
 

@@ -5,7 +5,18 @@ import glob
 import os
 import struct
 import sys
+import tempfile
 import time
+
+# VirtIO 1.4 feature allocation (§6).
+VIRTIO_F_IN_ORDER = 35
+VIRTIO_F_NOTIFICATION_DATA = 38
+VIRTIO_F_RING_RESET = 40
+
+MODERN_REQUIRED_FEATURES = (
+    (VIRTIO_F_NOTIFICATION_DATA, "VIRTIO_F_NOTIFICATION_DATA"),
+    (VIRTIO_F_RING_RESET, "VIRTIO_F_RING_RESET"),
+)
 
 EVENT = struct.Struct("@llHHi")
 EV_SYN, EV_KEY, EV_REL, EV_ABS, EV_LED = 0, 1, 2, 3, 17
@@ -50,6 +61,27 @@ def has_vendor_capability(config):
     return parse_vendor_capability(open(config, "rb").read(256))
 
 
+def negotiated_feature(pci, bit):
+    children = glob.glob(pci + "/virtio*")
+    if len(children) != 1:
+        raise RuntimeError(
+            f"expected one virtio child below {pci}, found {len(children)}"
+        )
+    feature_path = children[0] + "/features"
+    try:
+        features = open(feature_path, encoding="ascii").read().strip()
+    except OSError as error:
+        raise RuntimeError(f"cannot read {feature_path}: {error}") from error
+    if len(features) <= bit or any(value not in "01" for value in features):
+        raise RuntimeError(f"invalid virtio feature bitmap: {features!r}")
+    return features[bit] == "1"
+
+def require_features(pci, required):
+    for bit, name in required:
+        if not negotiated_feature(pci, bit):
+            raise RuntimeError(f"virtio-input did not negotiate {name}")
+
+
 def check_event_prefix(received):
     if received != EXPECTED[: len(received)]:
         raise RuntimeError(f"unexpected event sequence: {received!r}")
@@ -84,6 +116,29 @@ def self_test():
             pass
         else:
             raise AssertionError("bad event sequence was accepted")
+    with tempfile.TemporaryDirectory() as root:
+        child = os.path.join(root, "virtio0")
+        os.mkdir(child)
+        features = ["0"] * 64
+        for bit, _ in MODERN_REQUIRED_FEATURES:
+            features[bit] = "1"
+        with open(child + "/features", "w", encoding="ascii") as stream:
+            stream.write("".join(features) + "\n")
+        require_features(root, MODERN_REQUIRED_FEATURES)
+        assert not negotiated_feature(root, 34)
+        for missing_bit, missing_name in MODERN_REQUIRED_FEATURES:
+            missing = features.copy()
+            missing[missing_bit] = "0"
+            with open(child + "/features", "w", encoding="ascii") as stream:
+                stream.write("".join(missing) + "\n")
+            try:
+                require_features(root, MODERN_REQUIRED_FEATURES)
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError(
+                    f"missing input feature {missing_name} was accepted"
+                )
     print("SELFTEST PASS")
 
 
@@ -112,6 +167,9 @@ def main():
     modern = has_vendor_capability(pci + "/config")
     if modern != (sys.argv[2] == "modern"):
         raise RuntimeError("PCI capability layout does not match requested transport")
+    if modern:
+        require_features(pci, MODERN_REQUIRED_FEATURES)
+    in_order = modern and negotiated_feature(pci, VIRTIO_F_IN_ORDER)
 
     fd = os.open("/dev/input/" + event, os.O_RDWR | os.O_NONBLOCK)
     try:
@@ -121,6 +179,11 @@ def main():
                     break
             except BlockingIOError:
                 break
+        print(
+            "FEATURE "
+            f"in_order={'yes' if in_order else ('no' if modern else 'n/a')}",
+            flush=True,
+        )
         print("READY", flush=True)
         received, pending = [], b""
         deadline = time.monotonic() + 15

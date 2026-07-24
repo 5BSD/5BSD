@@ -11,6 +11,7 @@ TOPOLOGIES=${TOPOLOGIES:-"net vsock-userspace vsock-kernel rng block scsi consol
 VM_FREE_GATES=${VM_FREE_GATES:-yes}
 reset_test_default=${RESET_TEST:-no}
 reboot_test_default=${REBOOT_TEST:-no}
+reset_soak_iterations=${VIRTIO_RESET_SOAK_ITERATIONS:-0}
 
 [ "$(id -u)" -eq 0 ] || {
 	echo "run-alpine-matrix.sh must run as root" >&2
@@ -33,9 +34,47 @@ mode=$(stat -f %Lp "$WORKDIR")
 	exit 1
 }
 
+for transport in $TRANSPORTS; do
+	case "$transport" in
+	modern|legacy) ;;
+	*) echo "invalid transport: $transport" >&2; exit 2 ;;
+	esac
+done
+for topology in $TOPOLOGIES; do
+	case "$topology" in
+	net|vsock-userspace|vsock-kernel|rng|block|scsi|console|9p|input|combined) ;;
+	*) echo "invalid topology: $topology" >&2; exit 2 ;;
+	esac
+done
+case "$reset_soak_iterations" in
+''|*[!0-9]*)
+	echo "VIRTIO_RESET_SOAK_ITERATIONS must be a non-negative integer" >&2
+	exit 2
+	;;
+esac
+case "$reset_test_default:$reboot_test_default" in
+yes:yes|yes:no|no:yes|no:no) ;;
+*) echo "RESET_TEST and REBOOT_TEST must be yes or no" >&2; exit 2 ;;
+esac
+if { [ "$reset_test_default" = yes ] ||
+    [ "$reboot_test_default" = yes ] ||
+    [ "$reset_soak_iterations" -gt 0 ]; } &&
+    case " $TRANSPORTS " in *" modern "*) true ;; *) false ;; esac; then
+	for topology in $TOPOLOGIES; do
+		case "$topology" in
+		input|combined)
+			echo "modern reset/reboot lifecycle runs cannot include " \
+			    "topology=$topology because its input provider is " \
+			    "one-shot; select explicit reset-capable topologies" >&2
+			exit 2
+			;;
+		esac
+	done
+fi
+
 case "$VM_FREE_GATES" in
 yes)
-	echo "==== VM-free adversarial device harnesses ===="
+	echo "==== VM-free boundary and lifecycle device harnesses ===="
 	srctop=${SRCTOP:-/usr/src}
 	device_harness="$srctop/tests/sys/kern/vsock_device_harness/run.sh"
 	[ -f "$device_harness" ] || {
@@ -65,14 +104,7 @@ no) ;;
 esac
 
 for topology in $TOPOLOGIES; do
-	case "$topology" in
-	net|vsock-userspace|vsock-kernel|rng|block|scsi|console|9p|input|combined) ;;
-	*) echo "invalid topology: $topology" >&2; exit 2 ;;
-	esac
 	for transport in $TRANSPORTS; do
-		case "$transport" in modern|legacy) ;;
-		*) echo "invalid transport: $transport" >&2; exit 2 ;;
-		esac
 		backend=userspace
 		reset_test=$reset_test_default
 		reboot_test=$reboot_test_default
@@ -94,13 +126,13 @@ for topology in $TOPOLOGIES; do
 		9p:*) devices=9p ;;
 		input:modern) devices=input ;;
 		input:legacy)
-			echo "==== topology=input transport=legacy: SKIP (historical bhyve interface has no upstream Alpine driver) ===="
+			echo "==== topology=input transport=legacy: SKIP (VirtIO 1.4 defines no transitional input device) ===="
 			continue
 			;;
 		combined:modern) devices="net vsock rng block scsi console 9p input" ;;
 		combined:legacy)
 			devices="net vsock rng block scsi console 9p"
-			echo "==== topology=combined transport=legacy: historical input omitted (no upstream Alpine driver) ===="
+			echo "==== topology=combined transport=legacy: input omitted (no VirtIO 1.4 transitional identity) ===="
 			;;
 		esac
 		echo "==== topology=$topology transport=$transport backend=$backend devices=$devices ===="

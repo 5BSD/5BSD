@@ -70,6 +70,7 @@
 enum blockop {
 	BOP_READ,
 	BOP_WRITE,
+	BOP_WRITE_ZEROES,
 	BOP_FLUSH,
 	BOP_DELETE
 };
@@ -131,6 +132,7 @@ struct blockif_sig_elem {
 };
 
 static struct blockif_sig_elem *blockif_bse_head;
+static uint8_t blockif_zeroes[MAXPHYS] __aligned(PAGE_SIZE);
 
 static int
 blockif_enqueue(struct blockif_ctxt *bc, struct blockif_req *breq,
@@ -153,6 +155,9 @@ blockif_enqueue(struct blockif_ctxt *bc, struct blockif_req *breq,
 		off = breq->br_offset;
 		for (i = 0; i < breq->br_iovcnt; i++)
 			off += breq->br_iov[i].iov_len;
+		break;
+	case BOP_WRITE_ZEROES:
+		off = breq->br_offset + breq->br_resid;
 		break;
 	default:
 		off = OFF_MAX;
@@ -234,7 +239,7 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 	struct blockif_req *br;
 	off_t arg[2];
 	ssize_t n;
-	size_t clen, len, off, boff, voff;
+	size_t clen, len, off, boff, voff, written;
 	int i, err;
 
 	br = be->be_req;
@@ -260,6 +265,15 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 			n = pread(bc->bc_fd, buf, len, br->br_offset + off);
 			if (n < 0) {
 				err = errno;
+				break;
+			}
+			if (n == 0) {
+				/*
+				 * A short backing object or an unexpected EOF
+				 * made no forward progress.  Do not spin forever
+				 * with the same residual request.
+				 */
+				err = EIO;
 				break;
 			}
 			len = (size_t)n;
@@ -314,12 +328,52 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 				boff += clen;
 			} while (boff < len);
 
-			n = pwrite(bc->bc_fd, buf, len, br->br_offset + off);
+			/*
+			 * The guest iovec cursor above now points past this
+			 * staged chunk.  Drain the complete chunk before
+			 * staging later guest bytes; a partial pwrite must not
+			 * skip the unwritten suffix.
+			 */
+			written = 0;
+			while (written < len) {
+				n = pwrite(bc->bc_fd, buf + written,
+				    len - written, br->br_offset + off);
+				if (n < 0) {
+					err = errno;
+					break;
+				}
+				if (n == 0) {
+					err = EIO;
+					break;
+				}
+				written += (size_t)n;
+				off += (size_t)n;
+				br->br_resid -= n;
+			}
+			if (err != 0)
+				break;
+		}
+		break;
+	case BOP_WRITE_ZEROES:
+		if (bc->bc_rdonly) {
+			err = EROFS;
+			break;
+		}
+		off = 0;
+		while (br->br_resid > 0) {
+			len = MIN((size_t)br->br_resid,
+			    sizeof(blockif_zeroes));
+			n = pwrite(bc->bc_fd, blockif_zeroes, len,
+			    br->br_offset + off);
 			if (n < 0) {
 				err = errno;
 				break;
 			}
-			off += n;
+			if (n == 0) {
+				err = EIO;
+				break;
+			}
+			off += (size_t)n;
 			br->br_resid -= n;
 		}
 		break;
@@ -803,6 +857,16 @@ blockif_write(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
 	assert(bc->bc_magic == BLOCKIF_SIG);
 	return (blockif_request(bc, breq, BOP_WRITE));
+}
+
+int
+blockif_write_zeroes(struct blockif_ctxt *bc, struct blockif_req *breq)
+{
+	assert(bc->bc_magic == BLOCKIF_SIG);
+	if (breq->br_offset < 0 || breq->br_resid < 0 ||
+	    breq->br_resid > OFF_MAX - breq->br_offset)
+		return (EINVAL);
+	return (blockif_request(bc, breq, BOP_WRITE_ZEROES));
 }
 
 int

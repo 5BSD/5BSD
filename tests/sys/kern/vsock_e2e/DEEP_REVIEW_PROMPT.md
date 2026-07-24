@@ -1,4 +1,4 @@
-# VirtIO-vsock adversarial review loop
+# VirtIO-vsock correctness review loop
 
 Use this prompt against the complete change range and current worktree.  Do
 not treat a successful build, a happy-path VM run, or a previous review as
@@ -75,7 +75,7 @@ credit wait, TX backlog drain, kqueue detach, and callback dispatch.  Verify
 lock order and all wakeups.  Require deterministic harness schedules for
 important races.
 
-### Pass D: hostile protocol and boundary values
+### Pass D: protocol validation and boundary values
 
 Exercise wrong CIDs, wrong port pairs, reserved CIDs/ports, unknown operation
 and type, invalid flags, control packets with payload, mismatched length,
@@ -93,7 +93,7 @@ reuse one bhyve process, include errors and abrupt teardown—not just
 successful echo—and check fd, RSS, connection, and bounded-queue state after
 warmup.
 
-### Pass F: observability and security boundary
+### Pass F: observability and authority boundaries
 
 For every fatal error, nonfatal drop, reset, attach/detach, backpressure
 episode, and resource-limit rejection, verify an operator can distinguish it

@@ -31,6 +31,7 @@
 #ifndef	_VIRTIO_MMIO_H
 #define	_VIRTIO_MMIO_H
 
+#ifdef _KERNEL
 DECLARE_CLASS(vtmmio_driver);
 
 struct vtmmio_virtqueue;
@@ -40,6 +41,9 @@ struct vtmmio_softc {
 	struct resource			*res[2];
 
 	uint64_t			vtmmio_features;
+	uint64_t			vtmmio_reinit_features;
+	bool				vtmmio_reinit_features_valid;
+	bool				vtmmio_device_config_failed;
 	uint32_t			vtmmio_flags;
 	uint32_t			vtmmio_version;
 
@@ -54,6 +58,7 @@ struct vtmmio_softc {
 
 int vtmmio_probe(device_t);
 int vtmmio_attach(device_t);
+#endif
 
 #define	VIRTIO_MMIO_MAGIC_VALUE		0x000
 #define	VIRTIO_MMIO_VERSION		0x004
@@ -80,6 +85,7 @@ int vtmmio_attach(device_t);
 #define	VIRTIO_MMIO_QUEUE_AVAIL_HIGH	0x094	/* requires version 2 */
 #define	VIRTIO_MMIO_QUEUE_USED_LOW	0x0a0	/* requires version 2 */
 #define	VIRTIO_MMIO_QUEUE_USED_HIGH	0x0a4	/* requires version 2 */
+#define	VIRTIO_MMIO_QUEUE_RESET		0x0c0	/* requires RingReset */
 #define	VIRTIO_MMIO_CONFIG_GENERATION	0x0fc	/* requires version 2 */
 #define	VIRTIO_MMIO_CONFIG		0x100
 #define	VIRTIO_MMIO_MAGIC_VIRT		0x74726976

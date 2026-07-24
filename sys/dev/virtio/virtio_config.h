@@ -76,13 +76,51 @@
  * this is for compatibility with legacy systems.
  */
 #define VIRTIO_F_IOMMU_PLATFORM		(1ULL << 33)
+#define VIRTIO_F_ACCESS_PLATFORM	VIRTIO_F_IOMMU_PLATFORM
 
 /*
- * Some VirtIO feature bits (currently bits 28 through 34) are
- * reserved for the transport being used (eg. virtio_ring), the
- * rest are per-device feature bits.
+ * The device uses packed virtqueues.
+ */
+#define VIRTIO_F_RING_PACKED		(1ULL << 34)
+
+/* The device uses buffers in the order in which they become available. */
+#define VIRTIO_F_IN_ORDER		(1ULL << 35)
+
+/* Memory accesses by the device are ordered as seen by the driver. */
+#define VIRTIO_F_ORDER_PLATFORM		(1ULL << 36)
+
+/* The device supports Single Root I/O Virtualization. */
+#define VIRTIO_F_SR_IOV			(1ULL << 37)
+
+/* Driver notifications carry the available index or wrap counter. */
+#define VIRTIO_F_NOTIFICATION_DATA	(1ULL << 38)
+
+/* The PCI common configuration provides per-queue notification data. */
+#define VIRTIO_F_NOTIF_CONFIG_DATA	(1ULL << 39)
+
+/* The driver can reset individual virtqueues. */
+#define VIRTIO_F_RING_RESET		(1ULL << 40)
+
+/* The device exposes one or more administration virtqueues. */
+#define VIRTIO_F_ADMIN_VQ		(1ULL << 41)
+
+/* The driver can suspend the device through the status field. */
+#define VIRTIO_F_SUSPEND		(1ULL << 43)
+
+/*
+ * VirtIO 1.4 reserves the contiguous range 28 through 40 for transport,
+ * virtqueue, and feature-negotiation mechanisms.  Bit 41 is
+ * VIRTIO_F_ADMIN_VQ for modern owner devices, while bits 41 and 42 are also
+ * assigned by section 5.1.3.2 only to the legacy network interface; leave
+ * both to the transport/device-specific negotiation path.  Bit 43 is the
+ * non-contiguous VIRTIO_F_SUSPEND common feature.
+ * VIRTIO_TRANSPORT_F_END is exclusive.
  */
 #define VIRTIO_TRANSPORT_F_START	28
-#define VIRTIO_TRANSPORT_F_END		34
+#define VIRTIO_TRANSPORT_F_END		41
+#define VIRTIO_TRANSPORT_F_MASK					\
+	(((((1ULL << (VIRTIO_TRANSPORT_F_END -			\
+	    VIRTIO_TRANSPORT_F_START)) - 1) <<			\
+	    VIRTIO_TRANSPORT_F_START)) | VIRTIO_F_SUSPEND)
 
 #endif /* _VIRTIO_CONFIG_H_ */

@@ -82,6 +82,8 @@
 	(sizeof(struct pci_vtscsi_req_cmd_rd) + CTL_MAX_CDBLEN)
 #define	VTSCSI_MAX_OUT_HEADER_LEN	\
 	(sizeof(struct pci_vtscsi_req_cmd_wr) + SSD_FULL_SIZE)
+#define	VTSCSI_MAX_SECTORS	\
+	((UINT32_MAX - VTSCSI_MAX_OUT_HEADER_LEN) / 512)
 
 #define	VIRTIO_SCSI_MAX_CHANNEL	0
 #define	VIRTIO_SCSI_MAX_TARGET	0
@@ -281,6 +283,8 @@ struct pci_vtscsi_req_cmd_wr {
 
 static void *pci_vtscsi_proc(void *);
 static void pci_vtscsi_reset(void *);
+static int pci_vtscsi_qenable(void *, struct vqueue_info *);
+static int pci_vtscsi_qreset(void *, struct vqueue_info *, uint64_t);
 static void pci_vtscsi_neg_features(void *, uint64_t);
 static int pci_vtscsi_cfgread(void *, int, int, uint32_t *);
 static int pci_vtscsi_cfgwrite(void *, int, int, uint32_t);
@@ -311,7 +315,7 @@ static bool pci_vtscsi_queue_request(struct pci_vtscsi_softc *,
     struct vqueue_info *);
 static void pci_vtscsi_recycle_request(struct pci_vtscsi_queue *,
     struct pci_vtscsi_request *);
-static void pci_vtscsi_quiesce_queue(struct pci_vtscsi_queue *);
+static void pci_vtscsi_quiesce_queue(struct pci_vtscsi_queue *, bool);
 static void pci_vtscsi_resume_queue(struct pci_vtscsi_queue *);
 static void pci_vtscsi_return_request(struct pci_vtscsi_queue *,
     struct pci_vtscsi_request *, uint32_t);
@@ -334,8 +338,42 @@ static struct virtio_consts vtscsi_vi_consts = {
 	.vc_cfgread =	pci_vtscsi_cfgread,
 	.vc_cfgwrite =	pci_vtscsi_cfgwrite,
 	.vc_apply_features = pci_vtscsi_neg_features,
-	.vc_hv_caps =	VIRTIO_RING_F_INDIRECT_DESC,
+	.vc_qenable =	pci_vtscsi_qenable,
+	.vc_qreset =	pci_vtscsi_qreset,
+	.vc_hv_caps =	VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_F_RING_RESET,
 };
+
+/*
+ * Modern VirtIO fields are little-endian.  The legacy PCI interface retains
+ * guest-native byte order, which is host-native for bhyve's virtual machine.
+ */
+static uint32_t
+pci_vtscsi_decode32(const struct pci_vtscsi_softc *sc, uint32_t value)
+{
+
+	return (vi_pci_is_modern(&sc->vss_vs) ? le32toh(value) : value);
+}
+
+static uint64_t
+pci_vtscsi_decode64(const struct pci_vtscsi_softc *sc, uint64_t value)
+{
+
+	return (vi_pci_is_modern(&sc->vss_vs) ? le64toh(value) : value);
+}
+
+static uint32_t
+pci_vtscsi_encode32(const struct pci_vtscsi_softc *sc, uint32_t value)
+{
+
+	return (vi_pci_is_modern(&sc->vss_vs) ? htole32(value) : value);
+}
+
+static uint16_t
+pci_vtscsi_encode16(const struct pci_vtscsi_softc *sc, uint16_t value)
+{
+
+	return (vi_pci_is_modern(&sc->vss_vs) ? htole16(value) : value);
+}
 
 static void *
 pci_vtscsi_proc(void *arg)
@@ -391,18 +429,23 @@ pci_vtscsi_reset(void *vsc)
 
 	DPRINTF("device reset requested");
 	for (int i = 0; i < VTSCSI_REQUESTQ; i++)
-		pci_vtscsi_quiesce_queue(&sc->vss_queues[i]);
+		pci_vtscsi_quiesce_queue(&sc->vss_queues[i], true);
 	vi_reset_dev(&sc->vss_vs);
 	for (int i = 0; i < VTSCSI_REQUESTQ; i++)
 		pci_vtscsi_resume_queue(&sc->vss_queues[i]);
+	sc->vss_features = 0;
 
 	/* initialize config structure */
 	sc->vss_config = (struct pci_vtscsi_config){
 		.num_queues = VTSCSI_REQUESTQ,
 		/* Leave room for the request and the response. */
 		.seg_max = VTSCSI_MAXSEG - 2,
-		/* CTL apparently doesn't have a limit here */
-		.max_sectors = INT32_MAX,
+		/*
+		 * ext_data_len and the used-ring length are 32-bit values.
+		 * Advertise the largest whole-sector transfer which always
+		 * leaves room for the maximum response header.
+		 */
+		.max_sectors = VTSCSI_MAX_SECTORS,
 		.cmd_per_lun = 1,
 		.event_info_size = sizeof(struct pci_vtscsi_event),
 		.sense_size = 96,
@@ -411,6 +454,42 @@ pci_vtscsi_reset(void *vsc)
 		.max_target = VIRTIO_SCSI_MAX_TARGET,
 		.max_lun = VIRTIO_SCSI_MAX_LUN
 	};
+}
+
+static int
+pci_vtscsi_qenable(void *vsc, struct vqueue_info *vq)
+{
+	struct pci_vtscsi_softc *sc;
+
+	sc = vsc;
+	if (vq->vq_num >= VTSCSI_MAXQ)
+		return (EINVAL);
+	if (vq->vq_num >= 2)
+		pci_vtscsi_resume_queue(&sc->vss_queues[vq->vq_num - 2]);
+	return (0);
+}
+
+static int
+pci_vtscsi_qreset(void *vsc, struct vqueue_info *vq,
+    uint64_t generation __unused)
+{
+	struct pci_vtscsi_softc *sc;
+
+	sc = vsc;
+	if (vq->vq_num >= VTSCSI_MAXQ)
+		return (EINVAL);
+
+	/*
+	 * Control and event commands execute synchronously under vss_mtx.
+	 * A request queue has independent workers: quiescing waits for active
+	 * CTL calls to publish their results and recycles requests which have
+	 * left the available ring but have not started.  Leave it quiesced
+	 * until the replacement queue is enabled.
+	 */
+	if (vq->vq_num >= 2)
+		pci_vtscsi_quiesce_queue(&sc->vss_queues[vq->vq_num - 2],
+		    false);
+	return (0);
 }
 
 static void
@@ -425,9 +504,27 @@ static int
 pci_vtscsi_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 {
 	struct pci_vtscsi_softc *sc = vsc;
+	struct pci_vtscsi_config wire;
 	void *ptr;
 
-	ptr = (uint8_t *)&sc->vss_config + offset;
+	*retval = 0;
+	if (offset < 0 || (size != 1 && size != 2 && size != 4) ||
+	    (size_t)offset > sizeof(sc->vss_config) ||
+	    (size_t)size > sizeof(sc->vss_config) - (size_t)offset)
+		return (EINVAL);
+	wire = sc->vss_config;
+	wire.num_queues = pci_vtscsi_encode32(sc, wire.num_queues);
+	wire.seg_max = pci_vtscsi_encode32(sc, wire.seg_max);
+	wire.max_sectors = pci_vtscsi_encode32(sc, wire.max_sectors);
+	wire.cmd_per_lun = pci_vtscsi_encode32(sc, wire.cmd_per_lun);
+	wire.event_info_size =
+	    pci_vtscsi_encode32(sc, wire.event_info_size);
+	wire.sense_size = pci_vtscsi_encode32(sc, wire.sense_size);
+	wire.cdb_size = pci_vtscsi_encode32(sc, wire.cdb_size);
+	wire.max_channel = pci_vtscsi_encode16(sc, wire.max_channel);
+	wire.max_target = pci_vtscsi_encode16(sc, wire.max_target);
+	wire.max_lun = pci_vtscsi_encode32(sc, wire.max_lun);
+	ptr = (uint8_t *)&wire + offset;
 	memcpy(retval, ptr, size);
 	return (0);
 }
@@ -441,6 +538,7 @@ pci_vtscsi_cfgwrite(void *vsc, int offset, int size, uint32_t val)
 	if (size != sizeof(uint32_t) ||
 	    (sc->vss_vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
 		return (1);
+	val = pci_vtscsi_decode32(sc, val);
 
 	switch (offset) {
 	case offsetof(struct pci_vtscsi_config, sense_size):
@@ -468,7 +566,7 @@ pci_vtscsi_cfgwrite(void *vsc, int offset, int size, uint32_t val)
  * byte 0 select the address mode used in the remaining bits and bytes.
  *
  *
- * Only the first two levels are acutally used by virtio-scsi:
+ * Only the first two levels are actually used by virtio-scsi:
  *
  * Level 1: 0x01, 0xTT: Peripheral Device Addressing: Bus 1, Target 0-255
  * Level 2: 0xLL, 0xLL: Peripheral Device Addressing: Bus MBZ, LUN 0-255
@@ -546,7 +644,7 @@ pci_vtscsi_control_handle(struct pci_vtscsi_softc *sc, void *buf,
 	}
 
 	memcpy(&type, buf, sizeof(type));
-	type = le32toh(type);
+	type = pci_vtscsi_decode32(sc, type);
 
 	if (type == VIRTIO_SCSI_T_TMF) {
 		if (insize != offsetof(struct pci_vtscsi_ctrl_tmf, response) ||
@@ -612,8 +710,8 @@ pci_vtscsi_tmf_handle(struct pci_vtscsi_softc *sc,
 	}
 
 	ctl_scsi_zero_io(io);
-	subtype = le32toh(tmf->subtype);
-	id = le64toh(tmf->id);
+	subtype = pci_vtscsi_decode32(sc, tmf->subtype);
+	id = pci_vtscsi_decode64(sc, tmf->id);
 
 	io->io_hdr.io_type = CTL_IO_TASK;
 	io->io_hdr.nexus.initid = sc->vss_iid;
@@ -734,8 +832,9 @@ pci_vtscsi_tmf_pause(struct pci_vtscsi_softc *sc)
 }
 
 static bool
-pci_vtscsi_tmf_matches(struct pci_vtscsi_request *req, uint32_t subtype,
-    const uint8_t *lun, uint64_t id)
+pci_vtscsi_tmf_matches(struct pci_vtscsi_softc *sc,
+    struct pci_vtscsi_request *req, uint32_t subtype, const uint8_t *lun,
+    uint64_t id)
 {
 
 	if (subtype == VIRTIO_SCSI_T_TMF_I_T_NEXUS_RESET)
@@ -743,7 +842,7 @@ pci_vtscsi_tmf_matches(struct pci_vtscsi_request *req, uint32_t subtype,
 	if (memcmp(req->vsr_cmd_rd->lun, lun, sizeof(req->vsr_cmd_rd->lun)) != 0)
 		return (false);
 	if (subtype == VIRTIO_SCSI_T_TMF_ABORT_TASK)
-		return (le64toh(req->vsr_cmd_rd->id) == id);
+		return (pci_vtscsi_decode64(sc, req->vsr_cmd_rd->id) == id);
 	return (true);
 }
 
@@ -774,7 +873,7 @@ pci_vtscsi_tmf_complete(struct pci_vtscsi_softc *sc, uint32_t subtype,
 		while (q->vsq_active != 0)
 			pthread_cond_wait(&q->vsq_cv, &q->vsq_rmtx);
 		while ((req = pci_vtscsi_get_request(&q->vsq_requests)) != NULL) {
-			if (!pci_vtscsi_tmf_matches(req, subtype, lun, id)) {
+			if (!pci_vtscsi_tmf_matches(sc, req, subtype, lun, id)) {
 				pci_vtscsi_put_request(&keep, req);
 				continue;
 			}
@@ -1010,13 +1109,15 @@ pci_vtscsi_recycle_request(struct pci_vtscsi_queue *q,
 
 /*
  * A reset must not complete while a worker can still publish a used-ring
- * entry.  Stop workers from taking more requests, wait for requests already
- * submitted to CTL to complete, and discard requests which were consumed
- * from the available ring but not yet submitted.  vi_reset_dev() subsequently
- * forgets those old-ring descriptors.
+ * entry.  Stop workers from taking more requests and wait for requests
+ * already submitted to CTL to complete.  A full device reset completes
+ * requests which were consumed from the available ring but not yet submitted
+ * with VIRTIO_SCSI_S_RESET, as required by VirtIO 1.4 section 5.6.6.1.1.
+ * A selective queue reset instead discards them because the old queue
+ * incarnation must not receive further used entries or notifications.
  */
 static void
-pci_vtscsi_quiesce_queue(struct pci_vtscsi_queue *q)
+pci_vtscsi_quiesce_queue(struct pci_vtscsi_queue *q, bool complete)
 {
 	struct pci_vtscsi_request *req;
 
@@ -1028,8 +1129,13 @@ pci_vtscsi_quiesce_queue(struct pci_vtscsi_queue *q)
 	q->vsq_quiescing = true;
 	while (q->vsq_active != 0)
 		pthread_cond_wait(&q->vsq_cv, &q->vsq_rmtx);
-	while ((req = pci_vtscsi_get_request(&q->vsq_requests)) != NULL)
-		pci_vtscsi_recycle_request(q, req);
+	while ((req = pci_vtscsi_get_request(&q->vsq_requests)) != NULL) {
+		if (complete) {
+			req->vsr_cmd_wr->response = VIRTIO_SCSI_S_RESET;
+			pci_vtscsi_return_request(q, req, 0);
+		} else
+			pci_vtscsi_recycle_request(q, req);
+	}
 	pthread_mutex_unlock(&q->vsq_rmtx);
 }
 
@@ -1063,6 +1169,41 @@ pci_vtscsi_return_request(struct pci_vtscsi_queue *q,
 	vq_relchain(q->vsq_vq, idx, iolen);
 	vq_endchains(q->vsq_vq, 0);
 	pthread_mutex_unlock(&q->vsq_qmtx);
+}
+
+/*
+ * CTL_IO returning from ioctl(2) only means that the command reached CTL.
+ * Translate CTL's command and frontend transport status separately.  A SCSI
+ * error is a completed command: its SCSI status and sense data are returned
+ * with VIRTIO_SCSI_S_OK.  Other CTL failures must not be presented to the
+ * guest as a completed SCSI command.
+ */
+static uint8_t
+pci_vtscsi_request_response(const union ctl_io *io, uint32_t data_len)
+{
+	ctl_io_status status;
+
+	if (io->io_hdr.port_status != 0)
+		return (VIRTIO_SCSI_S_TRANSPORT_FAILURE);
+
+	status = io->io_hdr.status & CTL_STATUS_MASK;
+	switch (status) {
+	case CTL_SUCCESS:
+	case CTL_SCSI_ERROR:
+		if (io->scsiio.ext_data_filled > data_len)
+			return (VIRTIO_SCSI_S_OVERRUN);
+		return (VIRTIO_SCSI_S_OK);
+	case CTL_SEL_TIMEOUT:
+		return (VIRTIO_SCSI_S_TRANSPORT_FAILURE);
+	case CTL_CMD_ABORTED:
+		return (VIRTIO_SCSI_S_ABORTED);
+	case CTL_STATUS_NONE:
+	case CTL_CMD_TIMEOUT:
+	case CTL_ERROR:
+	case CTL_NVME_ERROR:
+	default:
+		return (VIRTIO_SCSI_S_FAILURE);
+	}
 }
 
 static uint32_t
@@ -1113,7 +1254,8 @@ pci_vtscsi_request_handle(struct pci_vtscsi_softc *sc,
 		io->io_hdr.flags |= CTL_FLAG_DATA_IN;
 
 	io->scsiio.sense_len = sc->vss_config.sense_size;
-	io->scsiio.tag_num = req->vsr_cmd_rd->id;
+	io->scsiio.tag_num =
+	    pci_vtscsi_decode64(sc, req->vsr_cmd_rd->id);
 	io->io_hdr.flags |= CTL_FLAG_USER_TAG;
 	switch (req->vsr_cmd_rd->task_attr) {
 	case VIRTIO_SCSI_S_ORDERED:
@@ -1180,19 +1322,24 @@ pci_vtscsi_request_handle(struct pci_vtscsi_softc *sc,
 		WPRINTF("CTL_IO: err=%d (%s)", errno, strerror(errno));
 		req->vsr_cmd_wr->response = VIRTIO_SCSI_S_FAILURE;
 	} else {
-		req->vsr_cmd_wr->sense_len =
-		    MIN(io->scsiio.sense_len, sc->vss_config.sense_size);
+		req->vsr_cmd_wr->response =
+		    pci_vtscsi_request_response(io, ext_data_len);
 		if (io->scsiio.ext_data_filled > ext_data_len) {
-			req->vsr_cmd_wr->residual = 0;
-			req->vsr_cmd_wr->response = VIRTIO_SCSI_S_OVERRUN;
+			req->vsr_cmd_wr->residual =
+			    pci_vtscsi_encode32(sc, 0);
 		} else {
-			req->vsr_cmd_wr->residual = ext_data_len -
-			    io->scsiio.ext_data_filled;
-			req->vsr_cmd_wr->response = VIRTIO_SCSI_S_OK;
+			req->vsr_cmd_wr->residual = pci_vtscsi_encode32(sc,
+			    ext_data_len - io->scsiio.ext_data_filled);
 		}
 		req->vsr_cmd_wr->status = io->scsiio.scsi_status;
-		memcpy(&req->vsr_cmd_wr->sense, &io->scsiio.sense_data,
-		    req->vsr_cmd_wr->sense_len);
+		if ((io->io_hdr.status & CTL_STATUS_MASK) == CTL_SCSI_ERROR) {
+			req->vsr_cmd_wr->sense_len = pci_vtscsi_encode32(sc,
+			    MIN(io->scsiio.sense_len,
+			    sc->vss_config.sense_size));
+			memcpy(&req->vsr_cmd_wr->sense, &io->scsiio.sense_data,
+			    MIN(io->scsiio.sense_len,
+			    sc->vss_config.sense_size));
+		}
 	}
 
 	/*
@@ -1484,7 +1631,8 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (vi_pci_is_modern(&sc->vss_vs))
 		vi_pci_modern_set_identity(&sc->vss_vs, VIRTIO_ID_SCSI);
 	else {
-		pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_SCSI);
+		pci_set_cfgdata16(pi, PCIR_DEVICE,
+		    VIRTIO_PCI_TRANSITIONAL_SCSI);
 		pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
 		pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_SCSI);
 		pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);

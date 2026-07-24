@@ -316,9 +316,25 @@ netmap_recv(struct net_backend *be, const struct iovec *iov, int iovcnt)
 			iov++;
 			iovcnt--;
 			if (iovcnt == 0) {
-				/* No space to receive. */
-				EPRINTLN("Short iov, drop %zd bytes",
-				    totlen);
+				/*
+				 * No space to receive.  Consume the rest of
+				 * this packet, including every netmap fragment,
+				 * before reporting the short iovec.  Callers
+				 * use a deliberately short buffer to discard an
+				 * invalid packet; leaving head unchanged would
+				 * present that same packet forever.
+				 */
+				while ((slot->flags & NS_MOREFRAG) != 0) {
+					head = nm_ring_next(ring, head);
+					if (head == ring->tail)
+						break;
+					slot = ring->slot + head;
+				}
+				if (head != ring->tail)
+					head = nm_ring_next(ring, head);
+				ring->head = ring->cur = head;
+				EPRINTLN("Short iov, dropped packet after "
+				    "%zd bytes", totlen);
 				return (-ENOSPC);
 			}
 			iov_frag_buf = iov->iov_base;

@@ -5,6 +5,17 @@ import glob
 import hashlib
 import os
 import sys
+import tempfile
+
+# VirtIO 1.4 feature allocation (§6).
+VIRTIO_F_IN_ORDER = 35
+VIRTIO_F_NOTIFICATION_DATA = 38
+VIRTIO_F_RING_RESET = 40
+
+MODERN_REQUIRED_FEATURES = (
+    (VIRTIO_F_NOTIFICATION_DATA, "VIRTIO_F_NOTIFICATION_DATA"),
+    (VIRTIO_F_RING_RESET, "VIRTIO_F_RING_RESET"),
+)
 
 
 def find_bound_rng(expected_device):
@@ -20,15 +31,34 @@ def find_bound_rng(expected_device):
         children = []
         for child in glob.glob(pci + "/virtio*"):
             driver = child + "/driver"
-            if os.path.islink(driver):
-                children.append(os.path.basename(os.path.realpath(driver)))
-        if "virtio_rng" in children:
-            matches.append(pci)
+            if os.path.islink(driver) and os.path.basename(
+                os.path.realpath(driver)
+            ) == "virtio_rng":
+                children.append(child)
+        if len(children) == 1:
+            matches.append((pci, children[0]))
     if len(matches) != 1:
         raise RuntimeError(
             f"expected one PCI {expected_device} device bound to virtio_rng, "
             f"found {len(matches)}"
         )
+    return matches[0][1]
+
+
+def negotiated_feature(child, bit):
+    feature_path = child + "/features"
+    try:
+        features = open(feature_path, encoding="ascii").read().strip()
+    except OSError as error:
+        raise RuntimeError(f"cannot read {feature_path}: {error}") from error
+    if len(features) <= bit or any(value not in "01" for value in features):
+        raise RuntimeError(f"invalid virtio feature bitmap: {features!r}")
+    return features[bit] == "1"
+
+def require_features(child, required):
+    for bit, name in required:
+        if not negotiated_feature(child, bit):
+            raise RuntimeError(f"virtio-rng did not negotiate {name}")
 
 
 def read_exact(fd, size):
@@ -62,6 +92,30 @@ def self_test():
             raise AssertionError("short RNG stream was accepted")
     finally:
         os.close(read_fd)
+
+    with tempfile.TemporaryDirectory() as root:
+        child = os.path.join(root, "virtio0")
+        os.mkdir(child)
+        features = ["0"] * 64
+        for bit, _ in MODERN_REQUIRED_FEATURES:
+            features[bit] = "1"
+        with open(child + "/features", "w", encoding="ascii") as stream:
+            stream.write("".join(features) + "\n")
+        require_features(child, MODERN_REQUIRED_FEATURES)
+        assert not negotiated_feature(child, 34)
+        for missing_bit, missing_name in MODERN_REQUIRED_FEATURES:
+            missing = features.copy()
+            missing[missing_bit] = "0"
+            with open(child + "/features", "w", encoding="ascii") as stream:
+                stream.write("".join(missing) + "\n")
+            try:
+                require_features(child, MODERN_REQUIRED_FEATURES)
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError(
+                    f"missing RNG feature {missing_name} was accepted"
+                )
     print("SELFTEST PASS")
 
 
@@ -72,7 +126,9 @@ def main():
     if len(sys.argv) != 2 or sys.argv[1] not in ("modern", "legacy"):
         raise SystemExit("usage: grng.py modern|legacy")
     expected_device = "0x1044" if sys.argv[1] == "modern" else "0x1005"
-    find_bound_rng(expected_device)
+    child = find_bound_rng(expected_device)
+    if sys.argv[1] == "modern":
+        require_features(child, MODERN_REQUIRED_FEATURES)
     current = open(
         "/sys/class/misc/hw_random/rng_current", encoding="ascii"
     ).read().strip()
@@ -91,7 +147,14 @@ def main():
                 total += len(data)
     finally:
         os.close(fd)
-    print(f"PASS rng bytes={total} sha256={digest.hexdigest()}")
+    modern = sys.argv[1] == "modern"
+    in_order = modern and negotiated_feature(child, VIRTIO_F_IN_ORDER)
+    print(
+        f"PASS rng bytes={total} sha256={digest.hexdigest()} "
+        f"in_order={'yes' if in_order else ('no' if modern else 'n/a')} "
+        f"notification_data={'yes' if modern else 'n/a'} "
+        f"ring_reset={'yes' if modern else 'n/a'}"
+    )
 
 
 if __name__ == "__main__":

@@ -16,8 +16,46 @@
 
 #include <atf-c.h>
 
+#include "virtio_1_4_spec.h"
+#include "virtio_1_4_wire.h"
 #include "pci_virtio_scsi.c"
 #include "iov.c"
+
+/* Test-side command and response values come from VirtIO 1.4. */
+#undef VIRTIO_SCSI_T_TMF
+#define	VIRTIO_SCSI_T_TMF		VIRTIO14_SCSI_T_TMF
+#undef VIRTIO_SCSI_T_TMF_ABORT_TASK
+#define	VIRTIO_SCSI_T_TMF_ABORT_TASK	VIRTIO14_SCSI_T_TMF_ABORT_TASK
+#undef VIRTIO_SCSI_T_AN_QUERY
+#define	VIRTIO_SCSI_T_AN_QUERY		VIRTIO14_SCSI_T_AN_QUERY
+#undef VIRTIO_SCSI_S_FUNCTION_COMPLETE
+#define	VIRTIO_SCSI_S_FUNCTION_COMPLETE \
+	VIRTIO14_SCSI_S_FUNCTION_COMPLETE
+#undef VIRTIO_SCSI_S_FUNCTION_SUCCEEDED
+#define	VIRTIO_SCSI_S_FUNCTION_SUCCEEDED \
+	VIRTIO14_SCSI_S_FUNCTION_SUCCEEDED
+#undef VIRTIO_SCSI_S_FUNCTION_REJECTED
+#define	VIRTIO_SCSI_S_FUNCTION_REJECTED \
+	VIRTIO14_SCSI_S_FUNCTION_REJECTED
+#undef VIRTIO_SCSI_S_OK
+#define	VIRTIO_SCSI_S_OK		VIRTIO14_SCSI_S_OK
+#undef VIRTIO_SCSI_S_OVERRUN
+#define	VIRTIO_SCSI_S_OVERRUN		VIRTIO14_SCSI_S_OVERRUN
+#undef VIRTIO_SCSI_S_ABORTED
+#define	VIRTIO_SCSI_S_ABORTED		VIRTIO14_SCSI_S_ABORTED
+#undef VIRTIO_SCSI_S_BAD_TARGET
+#define	VIRTIO_SCSI_S_BAD_TARGET	VIRTIO14_SCSI_S_BAD_TARGET
+#undef VIRTIO_SCSI_S_RESET
+#define	VIRTIO_SCSI_S_RESET		VIRTIO14_SCSI_S_RESET
+#undef VIRTIO_SCSI_S_TRANSPORT_FAILURE
+#define	VIRTIO_SCSI_S_TRANSPORT_FAILURE \
+	VIRTIO14_SCSI_S_TRANSPORT_FAILURE
+#undef VIRTIO_SCSI_S_FAILURE
+#define	VIRTIO_SCSI_S_FAILURE		VIRTIO14_SCSI_S_FAILURE
+#undef VIRTIO_CONFIG_STATUS_DRIVER_OK
+#define	VIRTIO_CONFIG_STATUS_DRIVER_OK	VIRTIO14_STATUS_DRIVER_OK
+#undef VIRTIO_F_RING_RESET
+#define	VIRTIO_F_RING_RESET		VIRTIO14_F_RING_RESET
 
 #define MOCK_MAX_IOV 70
 
@@ -140,6 +178,18 @@ vq_endchains(struct vqueue_info *vq __unused, int used_all __unused)
 	g_end_calls++;
 }
 
+void
+vi_reset_dev(struct virtio_softc *vs __unused)
+{
+}
+
+bool
+vi_pci_is_modern(const struct virtio_softc *vs)
+{
+
+	return (vs->vs_transport == VIRTIO_PCI_TRANSPORT_MODERN);
+}
+
 union ctl_io *
 ctl_scsi_alloc_io(uint32_t initid __unused)
 {
@@ -179,8 +229,8 @@ setup_queue(struct pci_vtscsi_softc *sc, struct pci_vtscsi_request *req,
 	memset(cmd_rd, 0, VTSCSI_MAX_IN_HEADER_LEN);
 	memset(cmd_wr, 0, VTSCSI_MAX_OUT_HEADER_LEN);
 	memset(io, 0, sizeof(*io));
-	sc->vss_config.cdb_size = 32;
-	sc->vss_config.sense_size = 96;
+	sc->vss_config.cdb_size = VIRTIO14_SCSI_DEFAULT_CDB_SIZE;
+	sc->vss_config.sense_size = VIRTIO14_SCSI_DEFAULT_SENSE_SIZE;
 	sc->vss_vq[2].vq_num = 2;
 	q = &sc->vss_queues[0];
 	q->vsq_sc = sc;
@@ -215,7 +265,8 @@ ATF_TC_BODY(control_handler_validation, tc)
 	struct pci_vtscsi_ctrl_tmf tmf = {
 		.type = htole32(VIRTIO_SCSI_T_TMF),
 		.subtype = htole32(UINT32_MAX),
-		.lun = { 0x01, 0x00, 0x00, 0x00 },
+		.lun = { VIRTIO14_SCSI_LUN_ADDRESS_METHOD, 0x00, 0x00,
+		    0x00 },
 	};
 	struct pci_vtscsi_ctrl_an an = {
 		.type = htole32(VIRTIO_SCSI_T_AN_QUERY),
@@ -226,16 +277,18 @@ ATF_TC_BODY(control_handler_validation, tc)
 	reset_mocks();
 	memset(&sc, 0, sizeof(sc));
 	written = pci_vtscsi_control_handle(&sc, &tmf,
-	    offsetof(struct pci_vtscsi_ctrl_tmf, response), 1);
+	    VIRTIO14_SCSI_TMF_RESPONSE_OFF, VIRTIO14_SCSI_TMF_RESPONSE_SIZE);
 	ATF_CHECK(written == 1);
 	ATF_CHECK(*(uint8_t *)&tmf == VIRTIO_SCSI_S_FUNCTION_REJECTED);
 	ATF_CHECK(g_ctl_allocs == 1 && g_ctl_frees == 1);
 
 	reset_mocks();
 	written = pci_vtscsi_control_handle(&sc, &an,
-	    offsetof(struct pci_vtscsi_ctrl_an, event_actual),
-	    sizeof(an.event_actual) + sizeof(an.response));
-	ATF_CHECK(written == sizeof(an.event_actual) + sizeof(an.response));
+	    VIRTIO14_SCSI_AN_EVENT_ACTUAL_OFF,
+	    VIRTIO14_SCSI_AN_EVENT_ACTUAL_SIZE +
+	    VIRTIO14_SCSI_AN_RESPONSE_SIZE);
+	ATF_CHECK(written == VIRTIO14_SCSI_AN_EVENT_ACTUAL_SIZE +
+	    VIRTIO14_SCSI_AN_RESPONSE_SIZE);
 	for (size_t i = 0; i < written; i++)
 		ATF_CHECK(((uint8_t *)&an)[i] == 0);
 
@@ -253,27 +306,28 @@ ATF_TC_WITHOUT_HEAD(control_queue_validation);
 ATF_TC_BODY(control_queue_validation, tc)
 {
 	struct pci_vtscsi_softc sc;
-	struct pci_vtscsi_ctrl_an input = {
-		.type = htole32(VIRTIO_SCSI_T_AN_QUERY),
-	};
-	uint8_t before[sizeof(input)];
-	uint8_t output[5];
+	uint8_t input[VIRTIO14_SCSI_AN_REQUEST_SIZE];
+	uint8_t before[VIRTIO14_SCSI_AN_REQUEST_SIZE];
+	uint8_t output[VIRTIO14_SCSI_AN_EVENT_ACTUAL_SIZE +
+	    VIRTIO14_SCSI_AN_RESPONSE_SIZE];
 
 	reset_mocks();
 	memset(&sc, 0, sizeof(sc));
+	memset(input, 0, sizeof(input));
+	virtio14_store_le32(input, VIRTIO14_SCSI_T_AN_QUERY);
 	memset(output, 0xa5, sizeof(output));
-	memcpy(before, &input, sizeof(before));
+	memcpy(before, input, sizeof(before));
 	set_chain(2, 1, 1, true);
 	g_chain.iov[0] = (struct iovec){
-		.iov_base = &input,
-		.iov_len = offsetof(struct pci_vtscsi_ctrl_an, event_actual),
+		.iov_base = input,
+		.iov_len = VIRTIO14_SCSI_AN_EVENT_ACTUAL_OFF,
 	};
 	g_chain.iov[1] = (struct iovec){
 		.iov_base = output,
 		.iov_len = sizeof(output),
 	};
 	pci_vtscsi_controlq_notify(&sc, &sc.vss_vq[0]);
-	ATF_CHECK(memcmp(before, &input, sizeof(input)) == 0);
+	ATF_CHECK(memcmp(before, input, sizeof(input)) == 0);
 	ATF_CHECK(g_rel_calls == 1 && g_rel_len == sizeof(output));
 	for (size_t i = 0; i < sizeof(output); i++)
 		ATF_CHECK(output[i] == 0);
@@ -317,34 +371,147 @@ ATF_TC_BODY(config_writes, tc)
 {
 	struct pci_vtscsi_softc sc;
 	uint32_t old_num_queues;
+	uint32_t value;
 
 	memset(&sc, 0, sizeof(sc));
 	sc.vss_config.num_queues = 1;
-	sc.vss_config.sense_size = 96;
-	sc.vss_config.cdb_size = 32;
+	sc.vss_config.sense_size = VIRTIO14_SCSI_DEFAULT_SENSE_SIZE;
+	sc.vss_config.cdb_size = VIRTIO14_SCSI_DEFAULT_CDB_SIZE;
 	old_num_queues = sc.vss_config.num_queues;
 
 	ATF_CHECK(pci_vtscsi_cfgwrite(&sc,
-	    offsetof(struct pci_vtscsi_config, sense_size), 4, 64) == 0);
+	    VIRTIO14_SCSI_CONFIG_SENSE_SIZE_OFF, 4, 64) == 0);
 	ATF_CHECK(sc.vss_config.sense_size == 64);
 	ATF_CHECK(pci_vtscsi_cfgwrite(&sc,
-	    offsetof(struct pci_vtscsi_config, cdb_size), 4, 16) == 0);
+	    VIRTIO14_SCSI_CONFIG_CDB_SIZE_OFF, 4, 16) == 0);
 	ATF_CHECK(sc.vss_config.cdb_size == 16);
 	ATF_CHECK(pci_vtscsi_cfgwrite(&sc,
-	    offsetof(struct pci_vtscsi_config, num_queues), 4, 2) == 1);
+	    VIRTIO14_SCSI_CONFIG_NUM_QUEUES_OFF, 4, 2) == 1);
 	ATF_CHECK(sc.vss_config.num_queues == old_num_queues);
 	ATF_CHECK(pci_vtscsi_cfgwrite(&sc,
-	    offsetof(struct pci_vtscsi_config, sense_size), 4,
+	    VIRTIO14_SCSI_CONFIG_SENSE_SIZE_OFF, 4,
 	    SSD_FULL_SIZE + 1) == 1);
 	ATF_CHECK(pci_vtscsi_cfgwrite(&sc,
-	    offsetof(struct pci_vtscsi_config, cdb_size), 4, 0) == 1);
+	    VIRTIO14_SCSI_CONFIG_CDB_SIZE_OFF, 4, 0) == 1);
 	ATF_CHECK(pci_vtscsi_cfgwrite(&sc,
-	    offsetof(struct pci_vtscsi_config, cdb_size), 2, 16) == 1);
+	    VIRTIO14_SCSI_CONFIG_CDB_SIZE_OFF, 2, 16) == 1);
+
+	value = UINT32_MAX;
+	ATF_CHECK_EQ(pci_vtscsi_cfgread(&sc,
+	    VIRTIO14_SCSI_CONFIG_CDB_SIZE_OFF, 4, &value), 0);
+	ATF_CHECK_EQ(value, 16);
+	value = UINT32_MAX;
+	ATF_CHECK_EQ(pci_vtscsi_cfgread(&sc, -1, 1, &value), EINVAL);
+	ATF_CHECK_EQ(value, 0);
+	value = UINT32_MAX;
+	ATF_CHECK_EQ(pci_vtscsi_cfgread(&sc, 0, 3, &value), EINVAL);
+	ATF_CHECK_EQ(value, 0);
+	value = UINT32_MAX;
+	ATF_CHECK_EQ(pci_vtscsi_cfgread(&sc,
+	    VIRTIO14_SCSI_CONFIG_SIZE - 1, 4,
+	    &value), EINVAL);
+	ATF_CHECK_EQ(value, 0);
 
 	sc.vss_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	ATF_CHECK(pci_vtscsi_cfgwrite(&sc,
-	    offsetof(struct pci_vtscsi_config, cdb_size), 4, 12) == 1);
+	    VIRTIO14_SCSI_CONFIG_CDB_SIZE_OFF, 4, 12) == 1);
 	ATF_CHECK(sc.vss_config.cdb_size == 16);
+}
+
+ATF_TC_WITHOUT_HEAD(config_defaults);
+ATF_TC_BODY(config_defaults, tc)
+{
+	struct pci_vtscsi_softc sc;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.vss_features = UINT32_MAX;
+	pci_vtscsi_reset(&sc);
+	ATF_CHECK_EQ(sc.vss_features, 0);
+	ATF_CHECK_EQ(sc.vss_config.num_queues, VTSCSI_REQUESTQ);
+	ATF_CHECK_EQ(sc.vss_config.seg_max, VTSCSI_MAXSEG - 2);
+	ATF_CHECK_EQ(sc.vss_config.max_sectors, VTSCSI_MAX_SECTORS);
+	ATF_CHECK(
+	    (uint64_t)sc.vss_config.max_sectors *
+	    VIRTIO14_SCSI_SECTOR_BYTES +
+	    VTSCSI_MAX_OUT_HEADER_LEN <= UINT32_MAX);
+	ATF_CHECK(
+	    ((uint64_t)sc.vss_config.max_sectors + 1) *
+	    VIRTIO14_SCSI_SECTOR_BYTES +
+	    VTSCSI_MAX_OUT_HEADER_LEN > UINT32_MAX);
+	ATF_CHECK_EQ(sc.vss_config.sense_size,
+	    VIRTIO14_SCSI_DEFAULT_SENSE_SIZE);
+	ATF_CHECK_EQ(sc.vss_config.cdb_size,
+	    VIRTIO14_SCSI_DEFAULT_CDB_SIZE);
+	ATF_CHECK_EQ(sc.vss_config.max_channel,
+	    VIRTIO14_SCSI_MAX_CHANNEL);
+	ATF_CHECK(sc.vss_config.max_target <=
+	    VIRTIO14_SCSI_MAX_TARGET_LIMIT);
+	ATF_CHECK(sc.vss_config.max_lun <=
+	    VIRTIO14_SCSI_MAX_LUN_LIMIT);
+}
+
+ATF_TC_WITHOUT_HEAD(document_wire_vectors);
+ATF_TC_BODY(document_wire_vectors, tc)
+{
+	struct pci_vtscsi_softc sc;
+	uint64_t aligned[(VIRTIO14_SCSI_TMF_REQUEST_SIZE +
+	    VIRTIO14_SCSI_TMF_RESPONSE_SIZE + sizeof(uint64_t) - 1) /
+	    sizeof(uint64_t)];
+	uint8_t *wire;
+	uint64_t id_wire;
+	uint32_t response_wire;
+	uint32_t config_wire;
+	size_t written;
+
+	/*
+	 * Encode a TMF request using only section 5.6.6.2 offsets.  An all-zero
+	 * LUN is invalid, so the documented BAD_TARGET response is deterministic
+	 * and does not depend on a CTL backend.
+	 */
+	memset(&sc, 0, sizeof(sc));
+	wire = (uint8_t *)(void *)aligned;
+	memset(wire, 0, VIRTIO14_SCSI_TMF_REQUEST_SIZE +
+	    VIRTIO14_SCSI_TMF_RESPONSE_SIZE);
+	virtio14_store_le32(wire + VIRTIO14_SCSI_TMF_TYPE_OFF,
+	    VIRTIO14_SCSI_T_TMF);
+	virtio14_store_le32(wire + VIRTIO14_SCSI_TMF_SUBTYPE_OFF,
+	    VIRTIO14_SCSI_T_TMF_ABORT_TASK);
+	written = pci_vtscsi_control_handle(&sc, wire,
+	    VIRTIO14_SCSI_TMF_REQUEST_SIZE,
+	    VIRTIO14_SCSI_TMF_RESPONSE_SIZE);
+	ATF_REQUIRE_EQ(written, VIRTIO14_SCSI_TMF_RESPONSE_SIZE);
+	ATF_CHECK_EQ(wire[0], VIRTIO14_SCSI_S_BAD_TARGET);
+
+	/*
+	 * Section 5.6.6 declares the command id le64 and response lengths le32.
+	 * Build both solely as byte vectors, then verify the transport-aware
+	 * conversion used by the device model.
+	 */
+	sc.vss_vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	memset(wire, 0, VIRTIO14_SCSI_CMD_REQUEST_FIXED_SIZE);
+	virtio14_store_le64(wire + VIRTIO14_SCSI_CMD_REQUEST_ID_OFF,
+	    UINT64_C(0x0123456789abcdef));
+	memcpy(&id_wire, wire + VIRTIO14_SCSI_CMD_REQUEST_ID_OFF,
+	    VIRTIO14_SCSI_CMD_REQUEST_ID_SIZE);
+	ATF_CHECK_EQ(pci_vtscsi_decode64(&sc, id_wire),
+	    UINT64_C(0x0123456789abcdef));
+
+	response_wire = pci_vtscsi_encode32(&sc, UINT32_C(0x10203040));
+	memcpy(wire, &response_wire, sizeof(response_wire));
+	ATF_CHECK_EQ(wire[0], 0x40);
+	ATF_CHECK_EQ(wire[1], 0x30);
+	ATF_CHECK_EQ(wire[2], 0x20);
+	ATF_CHECK_EQ(wire[3], 0x10);
+
+	sc.vss_config.max_lun = UINT32_C(0x01020304);
+	ATF_REQUIRE_EQ(pci_vtscsi_cfgread(&sc,
+	    VIRTIO14_SCSI_CONFIG_MAX_LUN_OFF, sizeof(config_wire),
+	    &config_wire), 0);
+	memcpy(wire, &config_wire, sizeof(config_wire));
+	ATF_CHECK_EQ(wire[0], 0x04);
+	ATF_CHECK_EQ(wire[1], 0x03);
+	ATF_CHECK_EQ(wire[2], 0x02);
+	ATF_CHECK_EQ(wire[3], 0x01);
 }
 
 ATF_TC_WITHOUT_HEAD(request_queue_validation);
@@ -386,7 +553,7 @@ ATF_TC_BODY(request_queue_validation, tc)
 	set_chain(2, 1, 1, true);
 	g_chain.iov[0] = (struct iovec){
 		.iov_base = cmd_rd,
-		.iov_len = sizeof(cmd_rd),
+		.iov_len = VIRTIO14_SCSI_DEFAULT_CMD_REQUEST_SIZE,
 	};
 	g_chain.iov[1] = (struct iovec){
 		.iov_base = &output,
@@ -427,8 +594,93 @@ ATF_TC_BODY(request_payload_validation, tc)
 	ATF_CHECK(response.response == VIRTIO_SCSI_S_FAILURE);
 }
 
-ATF_TC_WITHOUT_HEAD(reset_discards_pending_requests);
-ATF_TC_BODY(reset_discards_pending_requests, tc)
+ATF_TC_WITHOUT_HEAD(request_response_mapping);
+ATF_TC_BODY(request_response_mapping, tc)
+{
+	union ctl_io io;
+
+	memset(&io, 0, sizeof(io));
+	io.io_hdr.status = CTL_SUCCESS;
+	io.scsiio.ext_data_filled = 4096;
+	ATF_CHECK_EQ(pci_vtscsi_request_response(&io, 4096),
+	    VIRTIO_SCSI_S_OK);
+	io.scsiio.ext_data_filled++;
+	ATF_CHECK_EQ(pci_vtscsi_request_response(&io, 4096),
+	    VIRTIO_SCSI_S_OVERRUN);
+
+	memset(&io, 0, sizeof(io));
+	io.io_hdr.status = CTL_SCSI_ERROR | CTL_AUTOSENSE;
+	io.scsiio.scsi_status = SCSI_STATUS_CHECK_COND;
+	ATF_CHECK_EQ(pci_vtscsi_request_response(&io, 0),
+	    VIRTIO_SCSI_S_OK);
+
+	io.io_hdr.status = CTL_CMD_ABORTED;
+	ATF_CHECK_EQ(pci_vtscsi_request_response(&io, 0),
+	    VIRTIO_SCSI_S_ABORTED);
+	io.io_hdr.status = CTL_SEL_TIMEOUT;
+	ATF_CHECK_EQ(pci_vtscsi_request_response(&io, 0),
+	    VIRTIO_SCSI_S_TRANSPORT_FAILURE);
+	io.io_hdr.status = CTL_ERROR;
+	ATF_CHECK_EQ(pci_vtscsi_request_response(&io, 0),
+	    VIRTIO_SCSI_S_FAILURE);
+	io.io_hdr.status = CTL_STATUS_NONE;
+	ATF_CHECK_EQ(pci_vtscsi_request_response(&io, 0),
+	    VIRTIO_SCSI_S_FAILURE);
+
+	io.io_hdr.status = CTL_SUCCESS;
+	io.io_hdr.port_status = 1;
+	ATF_CHECK_EQ(pci_vtscsi_request_response(&io, 0),
+	    VIRTIO_SCSI_S_TRANSPORT_FAILURE);
+	io.io_hdr.status = CTL_CMD_ABORTED;
+	ATF_CHECK_EQ(pci_vtscsi_request_response(&io, 0),
+	    VIRTIO_SCSI_S_TRANSPORT_FAILURE);
+}
+
+ATF_TC_WITHOUT_HEAD(reset_completes_pending_requests);
+ATF_TC_BODY(reset_completes_pending_requests, tc)
+{
+	struct pci_vtscsi_softc sc;
+	struct pci_vtscsi_request req;
+	struct pci_vtscsi_queue *q;
+	union ctl_io io;
+	uint8_t cmd_rd[VTSCSI_MAX_IN_HEADER_LEN];
+	uint8_t cmd_wr[VTSCSI_MAX_OUT_HEADER_LEN];
+	uint8_t response[VTSCSI_MAX_OUT_HEADER_LEN];
+	size_t response_len;
+
+	reset_mocks();
+	setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
+	q = &sc.vss_queues[0];
+	ATF_REQUIRE(pci_vtscsi_get_request(&q->vsq_free_requests) == &req);
+	memset(response, 0, sizeof(response));
+	response_len = VIRTIO14_SCSI_DEFAULT_CMD_RESPONSE_SIZE;
+	req.vsr_idx = 19;
+	req.vsr_iov_out = &req.vsr_iov[0];
+	req.vsr_niov_out = 1;
+	req.vsr_iov[0] = (struct iovec){
+		.iov_base = response,
+		.iov_len = response_len,
+	};
+	pci_vtscsi_put_request(&q->vsq_requests, &req);
+
+	pci_vtscsi_quiesce_queue(q, true);
+	ATF_CHECK(q->vsq_quiescing);
+	ATF_CHECK(STAILQ_EMPTY(&q->vsq_requests));
+	ATF_CHECK(pci_vtscsi_get_request(&q->vsq_free_requests) == &req);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_idx, 19);
+	ATF_CHECK_EQ(g_rel_len, response_len);
+	ATF_CHECK_EQ(g_end_calls, 1);
+	ATF_CHECK_EQ(response[VIRTIO14_SCSI_CMD_RESPONSE_RESPONSE_OFF],
+	    VIRTIO14_SCSI_S_RESET);
+
+	pci_vtscsi_resume_queue(q);
+	ATF_CHECK(!q->vsq_quiescing);
+	teardown_queue(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(queue_reset_quiesces_only_selected_queue);
+ATF_TC_BODY(queue_reset_quiesces_only_selected_queue, tc)
 {
 	struct pci_vtscsi_softc sc;
 	struct pci_vtscsi_request req;
@@ -442,15 +694,21 @@ ATF_TC_BODY(reset_discards_pending_requests, tc)
 	q = &sc.vss_queues[0];
 	ATF_REQUIRE(pci_vtscsi_get_request(&q->vsq_free_requests) == &req);
 	pci_vtscsi_put_request(&q->vsq_requests, &req);
+	sc.vss_vq[2].vq_num = 2;
 
-	pci_vtscsi_quiesce_queue(q);
+	ATF_CHECK_EQ(pci_vtscsi_qreset(&sc, &sc.vss_vq[2], 9), 0);
 	ATF_CHECK(q->vsq_quiescing);
 	ATF_CHECK(STAILQ_EMPTY(&q->vsq_requests));
 	ATF_CHECK(pci_vtscsi_get_request(&q->vsq_free_requests) == &req);
-	ATF_CHECK(g_rel_calls == 0 && g_end_calls == 0);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+	ATF_CHECK((vtscsi_vi_consts.vc_hv_caps &
+	    VIRTIO_F_RING_RESET) != 0);
 
-	pci_vtscsi_resume_queue(q);
+	ATF_CHECK_EQ(pci_vtscsi_qenable(&sc, &sc.vss_vq[2]), 0);
 	ATF_CHECK(!q->vsq_quiescing);
+	sc.vss_vq[2].vq_num = VTSCSI_MAXQ;
+	ATF_CHECK_EQ(pci_vtscsi_qreset(&sc, &sc.vss_vq[2], 10), EINVAL);
+	ATF_CHECK_EQ(pci_vtscsi_qenable(&sc, &sc.vss_vq[2]), EINVAL);
 	teardown_queue(&sc);
 }
 
@@ -498,17 +756,19 @@ ATF_TC_BODY(tmf_completes_pending_requests, tc)
 	union ctl_io io;
 	uint8_t cmd_rd[VTSCSI_MAX_IN_HEADER_LEN];
 	uint8_t cmd_wr[VTSCSI_MAX_OUT_HEADER_LEN];
-	uint8_t output[sizeof(struct pci_vtscsi_req_cmd_wr) + 96];
-	const uint8_t lun[8] = { 0x01, 0, 0, 1 };
+	uint8_t output[VIRTIO14_SCSI_DEFAULT_CMD_RESPONSE_SIZE];
+	const uint8_t lun[VIRTIO14_SCSI_LUN_SIZE] = {
+		VIRTIO14_SCSI_LUN_ADDRESS_METHOD, 0, 0, 1
+	};
 
 	reset_mocks();
 	setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
 	q = &sc.vss_queues[0];
 	ATF_REQUIRE(pci_vtscsi_get_request(&q->vsq_free_requests) == &req);
-	memcpy(cmd_rd + offsetof(struct pci_vtscsi_req_cmd_rd, lun), lun,
-	    sizeof(lun));
-	memcpy(cmd_rd + offsetof(struct pci_vtscsi_req_cmd_rd, id),
-	    &(uint64_t){ htole64(0x1234) }, sizeof(req.vsr_cmd_rd->id));
+	memcpy(cmd_rd + VIRTIO14_SCSI_CMD_REQUEST_LUN_OFF, lun,
+	    VIRTIO14_SCSI_LUN_SIZE);
+	virtio14_store_le64(cmd_rd + VIRTIO14_SCSI_CMD_REQUEST_ID_OFF,
+	    UINT64_C(0x1234));
 	req.vsr_idx = 23;
 	output_iov = (struct iovec){
 		.iov_base = output,
@@ -523,11 +783,91 @@ ATF_TC_BODY(tmf_completes_pending_requests, tc)
 	    0x1234);
 	ATF_CHECK(g_rel_calls == 1 && g_rel_idx == 23 &&
 	    g_rel_len == sizeof(output));
-	ATF_CHECK(output[offsetof(struct pci_vtscsi_req_cmd_wr, response)] ==
+	ATF_CHECK(output[VIRTIO14_SCSI_CMD_RESPONSE_RESPONSE_OFF] ==
 	    VIRTIO_SCSI_S_ABORTED);
 	ATF_CHECK(STAILQ_EMPTY(&q->vsq_requests));
 	pci_vtscsi_resume_queue(q);
 	teardown_queue(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(virtio_1_4_wire_layout);
+ATF_TC_BODY(virtio_1_4_wire_layout, tc)
+{
+
+	ATF_CHECK_EQ(sizeof(struct pci_vtscsi_config),
+	    VIRTIO14_SCSI_CONFIG_SIZE);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_config, num_queues),
+	    VIRTIO14_SCSI_CONFIG_NUM_QUEUES_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_config, seg_max),
+	    VIRTIO14_SCSI_CONFIG_SEG_MAX_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_config, max_sectors),
+	    VIRTIO14_SCSI_CONFIG_MAX_SECTORS_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_config, cmd_per_lun),
+	    VIRTIO14_SCSI_CONFIG_CMD_PER_LUN_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_config, event_info_size),
+	    VIRTIO14_SCSI_CONFIG_EVENT_INFO_SIZE_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_config, sense_size),
+	    VIRTIO14_SCSI_CONFIG_SENSE_SIZE_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_config, cdb_size),
+	    VIRTIO14_SCSI_CONFIG_CDB_SIZE_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_config, max_channel),
+	    VIRTIO14_SCSI_CONFIG_MAX_CHANNEL_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_config, max_target),
+	    VIRTIO14_SCSI_CONFIG_MAX_TARGET_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_config, max_lun),
+	    VIRTIO14_SCSI_CONFIG_MAX_LUN_OFF);
+
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_ctrl_tmf, response),
+	    VIRTIO14_SCSI_TMF_RESPONSE_OFF);
+	ATF_CHECK_EQ(sizeof(struct pci_vtscsi_ctrl_tmf),
+	    VIRTIO14_SCSI_TMF_REQUEST_SIZE +
+	    VIRTIO14_SCSI_TMF_RESPONSE_SIZE);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_ctrl_an, event_actual),
+	    VIRTIO14_SCSI_AN_EVENT_ACTUAL_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_ctrl_an, response),
+	    VIRTIO14_SCSI_AN_RESPONSE_OFF);
+	ATF_CHECK_EQ(sizeof(struct pci_vtscsi_ctrl_an),
+	    VIRTIO14_SCSI_AN_RESPONSE_OFF +
+	    VIRTIO14_SCSI_AN_RESPONSE_SIZE);
+
+	ATF_CHECK_EQ(sizeof(struct pci_vtscsi_event),
+	    VIRTIO14_SCSI_EVENT_SIZE);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_event, event),
+	    VIRTIO14_SCSI_EVENT_EVENT_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_event, lun),
+	    VIRTIO14_SCSI_EVENT_LUN_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_event, reason),
+	    VIRTIO14_SCSI_EVENT_REASON_OFF);
+
+	ATF_CHECK_EQ(sizeof(struct pci_vtscsi_req_cmd_rd),
+	    VIRTIO14_SCSI_CMD_REQUEST_FIXED_SIZE);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_req_cmd_rd, lun),
+	    VIRTIO14_SCSI_CMD_REQUEST_LUN_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_req_cmd_rd, id),
+	    VIRTIO14_SCSI_CMD_REQUEST_ID_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_req_cmd_rd, task_attr),
+	    VIRTIO14_SCSI_CMD_REQUEST_TASK_ATTR_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_req_cmd_rd, prio),
+	    VIRTIO14_SCSI_CMD_REQUEST_PRIO_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_req_cmd_rd, crn),
+	    VIRTIO14_SCSI_CMD_REQUEST_CRN_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_req_cmd_rd, cdb),
+	    VIRTIO14_SCSI_CMD_REQUEST_CDB_OFF);
+
+	ATF_CHECK_EQ(sizeof(struct pci_vtscsi_req_cmd_wr),
+	    VIRTIO14_SCSI_CMD_RESPONSE_FIXED_SIZE);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_req_cmd_wr, sense_len),
+	    VIRTIO14_SCSI_CMD_RESPONSE_SENSE_LEN_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_req_cmd_wr, residual),
+	    VIRTIO14_SCSI_CMD_RESPONSE_RESIDUAL_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_req_cmd_wr, status_qualifier),
+	    VIRTIO14_SCSI_CMD_RESPONSE_STATUS_QUALIFIER_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_req_cmd_wr, status),
+	    VIRTIO14_SCSI_CMD_RESPONSE_STATUS_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_req_cmd_wr, response),
+	    VIRTIO14_SCSI_CMD_RESPONSE_RESPONSE_OFF);
+	ATF_CHECK_EQ(offsetof(struct pci_vtscsi_req_cmd_wr, sense),
+	    VIRTIO14_SCSI_CMD_RESPONSE_SENSE_OFF);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -536,10 +876,15 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, control_queue_validation);
 	ATF_TP_ADD_TC(tp, tmf_response_mapping);
 	ATF_TP_ADD_TC(tp, config_writes);
+	ATF_TP_ADD_TC(tp, config_defaults);
+	ATF_TP_ADD_TC(tp, document_wire_vectors);
 	ATF_TP_ADD_TC(tp, request_queue_validation);
 	ATF_TP_ADD_TC(tp, request_payload_validation);
+	ATF_TP_ADD_TC(tp, request_response_mapping);
 	ATF_TP_ADD_TC(tp, queue_sync_init_failures);
-	ATF_TP_ADD_TC(tp, reset_discards_pending_requests);
+	ATF_TP_ADD_TC(tp, reset_completes_pending_requests);
+	ATF_TP_ADD_TC(tp, queue_reset_quiesces_only_selected_queue);
 	ATF_TP_ADD_TC(tp, tmf_completes_pending_requests);
+	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
 	return (atf_no_error());
 }

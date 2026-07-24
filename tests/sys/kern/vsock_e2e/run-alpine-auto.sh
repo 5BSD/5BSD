@@ -34,6 +34,9 @@ VSOCK_SOAK_ITERATIONS=${VSOCK_SOAK_ITERATIONS:-0}
 VSOCK_SOAK_RESET_EVERY=${VSOCK_SOAK_RESET_EVERY:-10}
 VSOCK_SOAK_MAX_FD_GROWTH=${VSOCK_SOAK_MAX_FD_GROWTH:-0}
 VSOCK_SOAK_MAX_RSS_KB=${VSOCK_SOAK_MAX_RSS_KB:-16384}
+VIRTIO_RESET_SOAK_ITERATIONS=${VIRTIO_RESET_SOAK_ITERATIONS:-0}
+VIRTIO_RESET_SOAK_MAX_FD_GROWTH=${VIRTIO_RESET_SOAK_MAX_FD_GROWTH:-0}
+VIRTIO_RESET_SOAK_MAX_RSS_KB=${VIRTIO_RESET_SOAK_MAX_RSS_KB:-16384}
 BRIDGE=${BRIDGE:-bridge0}
 UPLINK=${UPLINK:-}
 
@@ -69,9 +72,12 @@ esac
 	exit 1
 }
 for setting in "$VSOCK_SOAK_ITERATIONS" "$VSOCK_SOAK_RESET_EVERY" \
-    "$VSOCK_SOAK_MAX_FD_GROWTH" "$VSOCK_SOAK_MAX_RSS_KB"; do
+    "$VSOCK_SOAK_MAX_FD_GROWTH" "$VSOCK_SOAK_MAX_RSS_KB" \
+    "$VIRTIO_RESET_SOAK_ITERATIONS" \
+    "$VIRTIO_RESET_SOAK_MAX_FD_GROWTH" \
+    "$VIRTIO_RESET_SOAK_MAX_RSS_KB"; do
 	case "$setting" in
-	''|*[!0-9]*) echo "vsock soak limits must be non-negative integers" >&2; exit 2 ;;
+	''|*[!0-9]*) echo "soak limits must be non-negative integers" >&2; exit 2 ;;
 	esac
 done
 
@@ -130,7 +136,8 @@ esac
 	echo "require 0 < SCSI_TEST_MB <= SCSI_IMAGE_MB" >&2
 	exit 2
 }
-if { [ "$RESET_TEST" = yes ] || [ "$REBOOT_TEST" = yes ]; } &&
+if { [ "$RESET_TEST" = yes ] || [ "$REBOOT_TEST" = yes ] ||
+    [ "$VIRTIO_RESET_SOAK_ITERATIONS" -gt 0 ]; } &&
     [ "$run_input_device" = yes ]; then
 	echo "reset/reboot lifecycle tests do not yet support the one-shot input provider" >&2
 	exit 2
@@ -452,7 +459,7 @@ provision_guest()
 	wait_for_login 120
 	printf 'root\r' >> "$console_input"
 	sleep 2
-	guest_cmd 'set -eu; ip link set eth0 up; udhcpc -n -q -t 5 -T 3 -i eth0; release=$(cut -d. -f1,2 /etc/alpine-release); case "$release" in *.*) ;; *) echo "invalid Alpine release: $release" >&2; exit 1;; esac; major=${release%.*}; minor=${release#*.}; case "$major:$minor" in *[!0-9:]*|:|*:) echo "invalid Alpine release: $release" >&2; exit 1;; esac; repository="https://dl-cdn.alpinelinux.org/alpine/v${release}/main"; printf "%s\n" "$repository" > /etc/apk/repositories; apk add --no-cache python3; printf "PROVISION alpine=%s repository=%s " "$(cat /etc/alpine-release)" "$repository"; python3 --version' 150
+	guest_cmd 'set -eu; ip link set eth0 up; udhcpc -n -q -t 5 -T 3 -i eth0; release=$(cut -d. -f1,2 /etc/alpine-release); case "$release" in *.*) ;; *) echo "invalid Alpine release: $release" >&2; exit 1;; esac; major=${release%.*}; minor=${release#*.}; case "$major:$minor" in *[!0-9:]*|:|*:) echo "invalid Alpine release: $release" >&2; exit 1;; esac; repository="https://dl-cdn.alpinelinux.org/alpine/v${release}/main"; printf "%s\n" "$repository" > /etc/apk/repositories; apk add --no-cache python3; printf "PROVISION alpine=%s kernel=%s repository=%s " "$(cat /etc/alpine-release)" "$(uname -r)" "$repository"; python3 --version' 150
 	copy_guest_file "$here/gnet.py" /tmp/gnet.py
 	guest_cmd 'python3 /tmp/gnet.py --self-test | grep -q "^SELFTEST PASS$"' 30
 	if [ "$run_vsock" = yes ]; then
@@ -823,6 +830,66 @@ run_lifecycle_smokes()
 	[ "$run_9p_device" = no ] || run_9p
 }
 
+run_reset_soak()
+{
+	[ "$VIRTIO_RESET_SOAK_ITERATIONS" -gt 0 ] || return 0
+	command -v procstat >/dev/null
+	command -v ps >/dev/null
+	sleep 2
+	reset_base_fds=$(process_fd_count)
+	reset_base_rss=$(process_rss_kb)
+	[ "$reset_base_fds" -gt 0 ] && [ "$reset_base_rss" -gt 0 ] || {
+		echo "could not read bhyve reset-soak resource baseline for pid $vm_pid" >&2
+		return 1
+	}
+	reset_max_fds=$((reset_base_fds +
+	    VIRTIO_RESET_SOAK_MAX_FD_GROWTH))
+	reset_max_rss=$((reset_base_rss + VIRTIO_RESET_SOAK_MAX_RSS_KB))
+	reset_peak_fds=$reset_base_fds
+	reset_peak_rss=$reset_base_rss
+	reset_started=$(date +%s)
+	echo "== Alpine $transport: virtio reset soak " \
+	    "iterations=$VIRTIO_RESET_SOAK_ITERATIONS " \
+	    "base_fds=$reset_base_fds base_rss_kb=$reset_base_rss =="
+
+	reset_i=1
+	while [ "$reset_i" -le "$VIRTIO_RESET_SOAK_ITERATIONS" ]; do
+		echo "== Alpine $transport: virtio reset soak iteration=$reset_i =="
+		reset_devices
+		kill -0 "$vm_pid"
+		reset_cur_fds=$(process_fd_count)
+		reset_cur_rss=$(process_rss_kb)
+		[ "$reset_cur_fds" -le "$reset_peak_fds" ] ||
+		    reset_peak_fds=$reset_cur_fds
+		[ "$reset_cur_rss" -le "$reset_peak_rss" ] ||
+		    reset_peak_rss=$reset_cur_rss
+		[ "$reset_cur_fds" -gt 0 ] && [ "$reset_cur_rss" -gt 0 ] || {
+			echo "could not read bhyve resources after reset-soak iteration $reset_i" >&2
+			return 1
+		}
+		[ "$reset_cur_fds" -le "$reset_max_fds" ] || {
+			echo "virtio reset-soak fd growth: baseline=$reset_base_fds current=$reset_cur_fds limit=$reset_max_fds" >&2
+			return 1
+		}
+		[ "$reset_cur_rss" -le "$reset_max_rss" ] || {
+			echo "virtio reset-soak RSS growth: baseline=${reset_base_rss}KB current=${reset_cur_rss}KB limit=${reset_max_rss}KB" >&2
+			return 1
+		}
+		echo "PASS virtio-reset-soak iteration=$reset_i " \
+		    "fds=$reset_cur_fds rss_kb=$reset_cur_rss"
+		reset_i=$((reset_i + 1))
+	done
+
+	reset_elapsed=$(($(date +%s) - reset_started))
+	echo "PASS virtio-reset-soak-summary " \
+	    "iterations=$VIRTIO_RESET_SOAK_ITERATIONS " \
+	    "elapsed_seconds=$reset_elapsed " \
+	    "fd_delta=$((reset_cur_fds - reset_base_fds)) " \
+	    "peak_fds=$reset_peak_fds " \
+	    "rss_delta_kb=$((reset_cur_rss - reset_base_rss)) " \
+	    "peak_rss_kb=$reset_peak_rss"
+}
+
 reboot_hold_connector()
 {
 	type=$1
@@ -1086,7 +1153,11 @@ for transport in $TRANSPORTS; do
 	[ "$run_console_device" = no ] || run_console
 	[ "$run_9p_device" = no ] || run_9p
 	verify_no_msix
-	[ "$RESET_TEST" = no ] || reset_devices
+	if [ "$VIRTIO_RESET_SOAK_ITERATIONS" -gt 0 ]; then
+		run_reset_soak
+	else
+		[ "$RESET_TEST" = no ] || reset_devices
+	fi
 	[ "$REBOOT_TEST" = no ] || reboot_guest
 
 	cleanup_vm

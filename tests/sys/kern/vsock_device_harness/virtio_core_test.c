@@ -21,6 +21,57 @@
 #include <bhyve/virtio.h>
 #define	MOCK_VIRTIO_H
 #include "virtio.c"
+#include "virtio_1_4_spec.h"
+
+/* The real core is compiled above; test-side wire values are the 1.4 oracle. */
+#undef VIRTIO_CONFIG_STATUS_ACK
+#define	VIRTIO_CONFIG_STATUS_ACK	VIRTIO14_STATUS_ACKNOWLEDGE
+#undef VIRTIO_CONFIG_STATUS_DRIVER_OK
+#define	VIRTIO_CONFIG_STATUS_DRIVER_OK	VIRTIO14_STATUS_DRIVER_OK
+#undef VIRTIO_CONFIG_S_NEEDS_RESET
+#define	VIRTIO_CONFIG_S_NEEDS_RESET	VIRTIO14_STATUS_DEVICE_NEEDS_RESET
+#undef VIRTIO_F_NOTIFY_ON_EMPTY
+#define	VIRTIO_F_NOTIFY_ON_EMPTY	VIRTIO14_F_NOTIFY_ON_EMPTY
+#undef VIRTIO_F_RING_RESET
+#define	VIRTIO_F_RING_RESET		VIRTIO14_F_RING_RESET
+#undef VIRTIO_RING_F_INDIRECT_DESC
+#define	VIRTIO_RING_F_INDIRECT_DESC	VIRTIO14_F_RING_INDIRECT_DESC
+#undef VIRTIO_RING_F_EVENT_IDX
+#define	VIRTIO_RING_F_EVENT_IDX		VIRTIO14_F_RING_EVENT_IDX
+#undef VRING_DESC_F_NEXT
+#define	VRING_DESC_F_NEXT		VIRTIO14_DESC_F_NEXT
+#undef VRING_DESC_F_WRITE
+#define	VRING_DESC_F_WRITE		VIRTIO14_DESC_F_WRITE
+#undef VRING_DESC_F_INDIRECT
+#define	VRING_DESC_F_INDIRECT		VIRTIO14_DESC_F_INDIRECT
+#undef VRING_USED_F_NO_NOTIFY
+#define	VRING_USED_F_NO_NOTIFY		VIRTIO14_USED_F_NO_NOTIFY
+#undef VIRTIO_MSI_NO_VECTOR
+#define	VIRTIO_MSI_NO_VECTOR		VIRTIO14_MSI_NO_VECTOR
+#undef VIRTIO_PCI_HOST_FEATURES
+#define	VIRTIO_PCI_HOST_FEATURES	VIRTIO14_LEGACY_DEVICE_FEATURES
+#undef VIRTIO_PCI_GUEST_FEATURES
+#define	VIRTIO_PCI_GUEST_FEATURES	VIRTIO14_LEGACY_DRIVER_FEATURES
+#undef VIRTIO_PCI_QUEUE_PFN
+#define	VIRTIO_PCI_QUEUE_PFN		VIRTIO14_LEGACY_QUEUE_ADDRESS
+#undef VIRTIO_PCI_QUEUE_NOTIFY
+#define	VIRTIO_PCI_QUEUE_NOTIFY		VIRTIO14_LEGACY_QUEUE_NOTIFY
+#undef VIRTIO_PCI_STATUS
+#define	VIRTIO_PCI_STATUS		VIRTIO14_LEGACY_DEVICE_STATUS
+#undef VIRTIO_PCI_ISR
+#define	VIRTIO_PCI_ISR			VIRTIO14_LEGACY_ISR_STATUS
+#undef VIRTIO_PCI_ISR_INTR
+#define	VIRTIO_PCI_ISR_INTR		VIRTIO14_ISR_QUEUE
+#undef VIRTIO_PCI_ISR_CONFIG
+#define	VIRTIO_PCI_ISR_CONFIG		VIRTIO14_ISR_CONFIG
+#undef VIRTIO_MSI_CONFIG_VECTOR
+#define	VIRTIO_MSI_CONFIG_VECTOR	VIRTIO14_LEGACY_CONFIG_MSIX_VECTOR
+#undef VIRTIO_MSI_QUEUE_VECTOR
+#define	VIRTIO_MSI_QUEUE_VECTOR		VIRTIO14_LEGACY_QUEUE_MSIX_VECTOR
+#undef VIRTIO_PCI_CONFIG_OFF
+#define	VIRTIO_PCI_CONFIG_OFF(msix)	((msix) ? \
+	    VIRTIO14_LEGACY_MSIX_DEVICE_CFG_OFF : \
+	    VIRTIO14_LEGACY_DEVICE_CFG_OFF)
 
 struct vmctx { int unused; };
 
@@ -34,9 +85,17 @@ static struct guest_region g_regions[4];
 static int g_region_count;
 static int g_interrupts;
 static int g_notifications;
+static int g_cfg_reads;
+static int g_cfg_writes;
+static int g_cfg_error;
+static int g_apply_features;
+static uint64_t g_applied_features;
+static bool g_msix_enabled;
 static bool g_lintr_asserted;
 static bool g_hold_deassert;
 static bool g_deassert_entered;
+static bool g_reset_reports_failure;
+static uint8_t g_reset_observed_status;
 static pthread_mutex_t g_intr_test_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_intr_test_cv = PTHREAD_COND_INITIALIZER;
 
@@ -109,7 +168,11 @@ uint64_t pci_emul_msix_tread(struct pci_devinst *pi __unused,
     uint64_t off __unused, int size __unused) { return (0); }
 void pci_emul_msix_twrite(struct pci_devinst *pi __unused,
     uint64_t off __unused, int size __unused, uint64_t val __unused) {}
-int pci_msix_enabled(struct pci_devinst *pi __unused) { return (0); }
+int pci_msix_enabled(struct pci_devinst *pi __unused)
+{
+
+	return (g_msix_enabled);
+}
 
 static void
 add_region(uint64_t gpa, void *host, size_t len)
@@ -147,6 +210,7 @@ setup_queue(struct virtio_softc *vs, struct virtio_consts *vc,
 	avail->ring[0] = 0;
 	g_region_count = 0;
 	g_interrupts = 0;
+	g_msix_enabled = false;
 	g_lintr_asserted = false;
 	g_hold_deassert = false;
 	g_deassert_entered = false;
@@ -165,7 +229,225 @@ reset_status(void *arg)
 {
 	struct virtio_softc *vs = arg;
 
+	g_reset_observed_status = vs->vs_status;
 	vs->vs_status = 0;
+	if (g_reset_reports_failure)
+		vi_set_needs_reset(vs);
+}
+
+static int
+test_cfgread(void *arg __unused, int offset __unused, int size __unused,
+    uint32_t *value)
+{
+
+	g_cfg_reads++;
+	*value = 0x12345678;
+	return (g_cfg_error);
+}
+
+static int
+test_cfgwrite(void *arg __unused, int offset __unused, int size __unused,
+    uint32_t value __unused)
+{
+
+	g_cfg_writes++;
+	return (g_cfg_error);
+}
+
+static void
+test_apply_features(void *arg __unused, uint64_t features)
+{
+
+	g_apply_features++;
+	g_applied_features = features;
+}
+
+ATF_TC_WITHOUT_HEAD(legacy_live_configuration_is_frozen);
+ATF_TC_BODY(legacy_live_configuration_is_frozen, tc)
+{
+	struct virtio_consts vc = {
+		.vc_name = "legacy-lifecycle-test",
+		.vc_nvq = 1,
+		.vc_apply_features = test_apply_features,
+		.vc_hv_caps = VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_F_RING_RESET,
+	};
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	memset(&vq, 0, sizeof(vq));
+	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	vs.vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	g_apply_features = 0;
+	g_applied_features = 0;
+
+	/*
+	 * A 32-bit feature register cannot negotiate the modern bit 40 even
+	 * when a direct caller supplies high bits in the uint64_t argument.
+	 */
+	vi_pci_write(&pi, 0, VIRTIO_PCI_GUEST_FEATURES, 4,
+	    VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_F_RING_RESET);
+	ATF_CHECK(vs.vs_negotiated_caps == VIRTIO_F_NOTIFY_ON_EMPTY);
+	ATF_CHECK(g_apply_features == 1);
+	ATF_CHECK(g_applied_features == VIRTIO_F_NOTIFY_ON_EMPTY);
+
+	vq.vq_pfn = 0x1234;
+	vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 1,
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK);
+	vi_pci_write(&pi, 0, VIRTIO_PCI_GUEST_FEATURES, 4, 0);
+	vi_pci_write(&pi, 0, VIRTIO_PCI_QUEUE_PFN, 4, 0x5678);
+	ATF_CHECK(vs.vs_negotiated_caps == VIRTIO_F_NOTIFY_ON_EMPTY);
+	ATF_CHECK(g_apply_features == 1);
+	ATF_CHECK(vq.vq_pfn == 0x1234);
+
+	/* Nonzero status writes cannot clear an accepted status bit. */
+	vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 1,
+	    VIRTIO_CONFIG_STATUS_ACK);
+	ATF_CHECK((vs.vs_status & (VIRTIO_CONFIG_STATUS_ACK |
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK)) ==
+	    (VIRTIO_CONFIG_STATUS_ACK | VIRTIO_CONFIG_STATUS_DRIVER_OK));
+}
+
+ATF_TC_WITHOUT_HEAD(legacy_config_offset_overflow);
+ATF_TC_BODY(legacy_config_offset_overflow, tc)
+{
+	struct virtio_consts vc = {
+		.vc_name = "config-range-test",
+		.vc_nvq = 1,
+		.vc_cfgsize = 4,
+		.vc_cfgread = test_cfgread,
+		.vc_cfgwrite = test_cfgwrite,
+	};
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	uint64_t config;
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	memset(&vq, 0, sizeof(vq));
+	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	vs.vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	g_msix_enabled = false;
+	config = VIRTIO_PCI_CONFIG_OFF(0);
+	g_cfg_reads = 0;
+	g_cfg_writes = 0;
+	g_cfg_error = 0;
+
+	ATF_CHECK(vi_pci_read(&pi, 0, config, 4) == 0x12345678);
+	vi_pci_write(&pi, 0, config, 4, 0xa5a5a5a5);
+	ATF_CHECK(g_cfg_reads == 1);
+	ATF_CHECK(g_cfg_writes == 1);
+
+	ATF_CHECK(vi_pci_read(&pi, 0, UINT64_MAX, 1) == UINT8_MAX);
+	ATF_CHECK(vi_pci_read(&pi, 0, UINT64_MAX - 1, 4) == UINT32_MAX);
+	vi_pci_write(&pi, 0, UINT64_MAX, 1, 0xff);
+	ATF_CHECK(g_cfg_reads == 1);
+	ATF_CHECK(g_cfg_writes == 1);
+}
+
+ATF_TC_WITHOUT_HEAD(legacy_zero_length_device_config);
+ATF_TC_BODY(legacy_zero_length_device_config, tc)
+{
+	struct virtio_consts vc = {
+		.vc_name = "empty-config-test",
+		.vc_nvq = 1,
+		.vc_cfgsize = 0,
+		.vc_cfgread = test_cfgread,
+		.vc_cfgwrite = test_cfgwrite,
+	};
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	uint64_t config;
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	memset(&vq, 0, sizeof(vq));
+	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	vs.vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	g_msix_enabled = false;
+	config = VIRTIO_PCI_CONFIG_OFF(0);
+	g_cfg_reads = 0;
+	g_cfg_writes = 0;
+	g_cfg_error = 0;
+
+	ATF_CHECK(vi_pci_read(&pi, 0, config, 1) == UINT8_MAX);
+	vi_pci_write(&pi, 0, config, 1, 0xa5);
+	ATF_CHECK(g_cfg_reads == 0);
+	ATF_CHECK(g_cfg_writes == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(legacy_rejected_config_is_not_msix);
+ATF_TC_BODY(legacy_rejected_config_is_not_msix, tc)
+{
+	struct virtio_consts vc = {
+		.vc_name = "config-reject-test",
+		.vc_nvq = 1,
+		.vc_cfgsize = 4,
+		.vc_cfgread = test_cfgread,
+		.vc_cfgwrite = test_cfgwrite,
+	};
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	uint64_t config;
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	memset(&vq, 0, sizeof(vq));
+	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	vs.vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	vs.vs_msix_cfg_idx = 1;
+	vq.vq_msix_idx = 1;
+	g_msix_enabled = false;
+	g_cfg_reads = 0;
+	g_cfg_writes = 0;
+	g_cfg_error = EINVAL;
+	config = VIRTIO14_LEGACY_DEVICE_CFG_OFF;
+
+	ATF_CHECK(vi_pci_read(&pi, 0, config, 2) == UINT16_MAX);
+	ATF_CHECK(vi_pci_read(&pi, 0, config + 2, 2) == UINT16_MAX);
+	vi_pci_write(&pi, 0, config, 2, 0);
+	vi_pci_write(&pi, 0, config + 2, 2, 0);
+	ATF_CHECK(vs.vs_msix_cfg_idx == 1);
+	ATF_CHECK(vq.vq_msix_idx == 1);
+	ATF_CHECK(g_cfg_reads == 2);
+	ATF_CHECK(g_cfg_writes == 2);
+	g_cfg_error = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(legacy_msix_vector_validation);
+ATF_TC_BODY(legacy_msix_vector_validation, tc)
+{
+	struct virtio_consts vc = {
+		.vc_name = "legacy-msix-test",
+		.vc_nvq = 1,
+	};
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	memset(&vq, 0, sizeof(vq));
+	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	vs.vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	pi.pi_msix.table_count = 2;
+	g_msix_enabled = true;
+
+	vi_pci_write(&pi, 0, VIRTIO_MSI_CONFIG_VECTOR, 2, 7);
+	ATF_CHECK(vs.vs_msix_cfg_idx == VIRTIO_MSI_NO_VECTOR);
+	vi_pci_write(&pi, 0, VIRTIO_MSI_CONFIG_VECTOR, 2, 1);
+	ATF_CHECK(vs.vs_msix_cfg_idx == 1);
+
+	vi_pci_write(&pi, 0, VIRTIO_MSI_QUEUE_VECTOR, 2, 7);
+	ATF_CHECK(vq.vq_msix_idx == VIRTIO_MSI_NO_VECTOR);
+	vi_pci_write(&pi, 0, VIRTIO_MSI_QUEUE_VECTOR, 2, 0);
+	ATF_CHECK(vq.vq_msix_idx == 0);
+	g_msix_enabled = false;
 }
 
 ATF_TC_WITHOUT_HEAD(legacy_status_preserves_needs_reset);
@@ -191,8 +473,19 @@ ATF_TC_BODY(legacy_status_preserves_needs_reset, tc)
 	vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 1,
 	    VIRTIO_CONFIG_STATUS_DRIVER_OK);
 	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	g_reset_observed_status = 0;
+	g_reset_reports_failure = true;
 	vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 1, 0);
+	ATF_CHECK((g_reset_observed_status &
+	    VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
 	ATF_CHECK(vs.vs_status == 0);
+	ATF_CHECK(vs.vs_reset_failed);
+	vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 1,
+	    VIRTIO_CONFIG_STATUS_ACK);
+	ATF_CHECK((vs.vs_status & (VIRTIO_CONFIG_STATUS_ACK |
+	    VIRTIO_CONFIG_S_NEEDS_RESET)) ==
+	    (VIRTIO_CONFIG_STATUS_ACK | VIRTIO_CONFIG_S_NEEDS_RESET));
+	g_reset_reports_failure = false;
 }
 
 ATF_TC_WITHOUT_HEAD(legacy_non_io_bar_is_ignored);
@@ -246,6 +539,7 @@ ATF_TC_BODY(notify_without_msix_does_not_relock_device, tc)
 			_exit(2);
 		vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
 		vs.vs_mtx = &device_mtx;
+		g_msix_enabled = false;
 		vq.vq_msix_idx = VIRTIO_MSI_NO_VECTOR;
 		if (vi_intr_init(&vs, 1, 0) != 0)
 			_exit(3);
@@ -314,6 +608,7 @@ ATF_TC_BODY(isr_read_serializes_intx, tc)
 	memset(&vs, 0, sizeof(vs));
 	memset(&pi, 0, sizeof(pi));
 	vs.vs_pi = &pi;
+	g_msix_enabled = false;
 	ATF_REQUIRE(pthread_mutex_init(&vs.vs_isr_mtx, NULL) == 0);
 	ctx.vs = &vs;
 	vs.vs_isr = VIRTIO_PCI_ISR_INTR;
@@ -434,13 +729,13 @@ ATF_TC_BODY(indirect_mapping_validation, tc)
 	    (struct vring_used *)used_mem.bytes);
 	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
 	add_region(0x1000, payload, sizeof(payload));
-	add_region(0x2000, indirect, sizeof(indirect));
+	add_region(0x2000, indirect, VIRTIO14_SPLIT_DESC_SIZE);
 	memset(indirect, 0, sizeof(indirect));
 	indirect[0].addr = 0x1000;
 	indirect[0].len = sizeof(payload);
 	indirect[0].flags = VRING_DESC_F_WRITE;
 	desc[0].addr = 0x2000;
-	desc[0].len = sizeof(indirect);
+	desc[0].len = VIRTIO14_SPLIT_DESC_SIZE;
 	desc[0].flags = VRING_DESC_F_INDIRECT;
 	ATF_CHECK(vq_getchain(&vq, &iov, 1, &req) == 1);
 	ATF_CHECK(iov.iov_base == payload && req.writable == 1);
@@ -544,11 +839,11 @@ ATF_TC_BODY(chain_can_use_full_queue, tc)
 	const uint16_t qsize = 1024;
 	const uint16_t chain_len = qsize;
 
-	desc = calloc(qsize, sizeof(*desc));
-	avail = calloc(1, sizeof(*avail) +
-	    (qsize + 1) * sizeof(avail->ring[0]));
-	used = calloc(1, sizeof(*used) +
-	    (qsize + 1) * sizeof(used->ring[0]));
+	desc = calloc(qsize, VIRTIO14_SPLIT_DESC_SIZE);
+	avail = calloc(1, VIRTIO14_SPLIT_AVAIL_HEADER_SIZE +
+	    (qsize + 1) * VIRTIO14_SPLIT_AVAIL_ELEM_SIZE);
+	used = calloc(1, VIRTIO14_SPLIT_USED_HEADER_SIZE +
+	    (qsize + 1) * VIRTIO14_SPLIT_USED_ELEM_SIZE);
 	ATF_REQUIRE(desc != NULL && avail != NULL && used != NULL);
 	setup_queue(&vs, &vc, &pi, &vq, desc, avail, used);
 	vq.vq_qsize = qsize;
@@ -628,20 +923,89 @@ ATF_TC_BODY(event_idx_interrupts, tc)
 	used = (struct vring_used *)used_mem.bytes;
 	setup_queue(&vs, &vc, &pi, &vq, desc, avail, used);
 	vs.vs_negotiated_caps = VIRTIO_RING_F_EVENT_IDX;
-	used->idx = 1;
 	avail->ring[vq.vq_qsize] = 0;
+	vq_relchain(&vq, 0, 0);
 	vq_endchains(&vq, 0);
 	ATF_CHECK(g_interrupts == 1);
 
-	used->idx = 2;
 	avail->ring[vq.vq_qsize] = 2;
+	vq_relchain(&vq, 1, 0);
 	vq_endchains(&vq, 0);
 	ATF_CHECK(g_interrupts == 1);
 
-	used->idx = 3;
 	avail->ring[vq.vq_qsize] = 2;
+	vq_relchain(&vq, 2, 0);
 	vq_endchains(&vq, 0);
 	ATF_CHECK(g_interrupts == 2);
+}
+
+ATF_TC_WITHOUT_HEAD(event_idx_kick_suppression);
+ATF_TC_BODY(event_idx_kick_suppression, tc)
+{
+	union { max_align_t align; uint8_t bytes[64]; } avail_mem;
+	union { max_align_t align; uint8_t bytes[128]; } used_mem;
+	struct virtio_softc vs;
+	struct virtio_consts vc = { 0 };
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	struct vring_desc desc[8];
+	struct vring_avail *avail;
+	struct vring_used *used;
+
+	avail = (struct vring_avail *)avail_mem.bytes;
+	used = (struct vring_used *)used_mem.bytes;
+	setup_queue(&vs, &vc, &pi, &vq, desc, avail, used);
+	vs.vs_negotiated_caps = VIRTIO_RING_F_EVENT_IDX;
+	vq.vq_last_avail = 10;
+	used->flags = UINT16_MAX;
+
+	vq_kick_enable(&vq);
+	ATF_CHECK(used->flags == 0);
+	ATF_CHECK(VQ_AVAIL_EVENT_IDX(&vq) == 10);
+
+	vq_kick_disable(&vq);
+	ATF_CHECK(used->flags == 0);
+	ATF_CHECK(VQ_AVAIL_EVENT_IDX(&vq) == 17);
+
+	vs.vs_negotiated_caps = 0;
+	vq_kick_disable(&vq);
+	ATF_CHECK(used->flags == VRING_USED_F_NO_NOTIFY);
+	vq_kick_enable(&vq);
+	ATF_CHECK(used->flags == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(msix_no_vector_suppressed);
+ATF_TC_BODY(msix_no_vector_suppressed, tc)
+{
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	vs.vs_pi = &pi;
+	ATF_REQUIRE(pthread_mutex_init(&vs.vs_isr_mtx, NULL) == 0);
+	g_interrupts = 0;
+	g_msix_enabled = true;
+
+	vs.vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	vi_interrupt(&vs, VIRTIO_PCI_ISR_INTR, VIRTIO_MSI_NO_VECTOR);
+	ATF_CHECK(g_interrupts == 0);
+	ATF_CHECK(vs.vs_isr == 0);
+	vi_interrupt(&vs, VIRTIO_PCI_ISR_INTR, 0);
+	ATF_CHECK(g_interrupts == 1);
+	ATF_CHECK(vs.vs_isr == 0);
+
+	vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	vi_interrupt(&vs, VIRTIO_PCI_ISR_CONFIG, VIRTIO_MSI_NO_VECTOR);
+	ATF_CHECK(g_interrupts == 1);
+	ATF_CHECK(vs.vs_isr == VIRTIO_PCI_ISR_CONFIG);
+	ATF_CHECK(vi_isr_read(&vs) == VIRTIO_PCI_ISR_CONFIG);
+	vi_interrupt(&vs, VIRTIO_PCI_ISR_CONFIG, 1);
+	ATF_CHECK(g_interrupts == 2);
+	ATF_CHECK(vs.vs_isr == VIRTIO_PCI_ISR_CONFIG);
+	ATF_CHECK(vi_isr_read(&vs) == VIRTIO_PCI_ISR_CONFIG);
+	g_msix_enabled = false;
+	ATF_REQUIRE(pthread_mutex_destroy(&vs.vs_isr_mtx) == 0);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -653,6 +1017,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, chain_can_use_full_queue);
 	ATF_TP_ADD_TC(tp, legacy_queue_mapping_validation);
 	ATF_TP_ADD_TC(tp, event_idx_interrupts);
+	ATF_TP_ADD_TC(tp, event_idx_kick_suppression);
+	ATF_TP_ADD_TC(tp, msix_no_vector_suppressed);
+	ATF_TP_ADD_TC(tp, legacy_live_configuration_is_frozen);
+	ATF_TP_ADD_TC(tp, legacy_config_offset_overflow);
+	ATF_TP_ADD_TC(tp, legacy_zero_length_device_config);
+	ATF_TP_ADD_TC(tp, legacy_rejected_config_is_not_msix);
+	ATF_TP_ADD_TC(tp, legacy_msix_vector_validation);
 	ATF_TP_ADD_TC(tp, legacy_non_io_bar_is_ignored);
 	ATF_TP_ADD_TC(tp, legacy_status_preserves_needs_reset);
 	ATF_TP_ADD_TC(tp, notify_without_msix_does_not_relock_device);

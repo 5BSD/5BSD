@@ -11,6 +11,17 @@ import tempfile
 
 CHUNK_SIZE = 1024 * 1024
 DIRECT_ALIGNMENT = 4096
+VIRTIO_RING_F_INDIRECT_DESC = 28
+VIRTIO_F_NOTIFICATION_DATA = 38
+VIRTIO_F_RING_RESET = 40
+
+REQUIRED_FEATURES = (
+    (VIRTIO_RING_F_INDIRECT_DESC, "VIRTIO_RING_F_INDIRECT_DESC"),
+)
+MODERN_REQUIRED_FEATURES = REQUIRED_FEATURES + (
+    (VIRTIO_F_NOTIFICATION_DATA, "VIRTIO_F_NOTIFICATION_DATA"),
+    (VIRTIO_F_RING_RESET, "VIRTIO_F_RING_RESET"),
+)
 
 
 def find_bound_scsi(
@@ -49,7 +60,10 @@ def find_bound_scsi(
                     continue
                 if sectors * 512 == expected_size:
                     matches.append(
-                        os.path.join(dev_root, os.path.basename(block))
+                        (
+                            os.path.join(dev_root, os.path.basename(block)),
+                            child,
+                        )
                     )
     if len(matches) != 1:
         raise RuntimeError(
@@ -57,6 +71,23 @@ def find_bound_scsi(
             f"capacity {expected_size}, found {len(matches)}"
         )
     return matches[0]
+
+
+def negotiated_feature(child, bit):
+    feature_path = child + "/features"
+    try:
+        features = open(feature_path, encoding="ascii").read().strip()
+    except OSError as error:
+        raise RuntimeError(f"cannot read {feature_path}: {error}") from error
+    if len(features) <= bit or any(value not in "01" for value in features):
+        raise RuntimeError(f"invalid virtio feature bitmap: {features!r}")
+    return features[bit] == "1"
+
+
+def require_features(child, required):
+    for bit, name in required:
+        if not negotiated_feature(child, bit):
+            raise RuntimeError(f"virtio-scsi did not negotiate {name}")
 
 
 def pattern_chunk(counter, size):
@@ -151,11 +182,35 @@ def self_test():
             stream.write("0x1048\n")
         with open(block + "/size", "w", encoding="ascii") as stream:
             stream.write("4096\n")
+        features = ["0"] * 64
+        for bit, _ in MODERN_REQUIRED_FEATURES:
+            features[bit] = "1"
+        with open(child + "/features", "w", encoding="ascii") as stream:
+            stream.write("".join(features) + "\n")
         os.symlink(driver, child + "/driver")
         os.symlink(scsi_device, block + "/device")
-        found = find_bound_scsi("0x1048", 2 * CHUNK_SIZE, sys_root, root)
-        if found != root + "/vdz":
-            raise AssertionError(f"wrong SCSI path: {found}")
+        found, found_child = find_bound_scsi(
+            "0x1048", 2 * CHUNK_SIZE, sys_root, root
+        )
+        if found != root + "/vdz" or found_child != child:
+            raise AssertionError(
+                f"wrong SCSI device: {(found, found_child)!r}"
+            )
+        require_features(found_child, MODERN_REQUIRED_FEATURES)
+        for missing_bit, missing_name in MODERN_REQUIRED_FEATURES:
+            missing = features.copy()
+            missing[missing_bit] = "0"
+            with open(child + "/features", "w", encoding="ascii") as stream:
+                stream.write("".join(missing) + "\n")
+            try:
+                require_features(found_child, MODERN_REQUIRED_FEATURES)
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError(
+                    f"missing modern SCSI feature {missing_name} "
+                    "was accepted"
+                )
         try:
             find_bound_scsi("0x1048", CHUNK_SIZE, sys_root, root)
         except RuntimeError:
@@ -191,19 +246,28 @@ def main():
             f"SCSI direct-I/O byte count must be a multiple of "
             f"{DIRECT_ALIGNMENT}"
         )
-    device = find_bound_scsi(expected_pci_device(transport), capacity)
+    device, child = find_bound_scsi(expected_pci_device(transport), capacity)
+    require_features(child, REQUIRED_FEATURES)
+    if transport == "modern":
+        require_features(child, MODERN_REQUIRED_FEATURES)
     if command == "write" and len(sys.argv) == 5:
         wanted = write_pattern(device, size, direct=True)
         actual = read_digest(device, size, direct=True)
         if actual != wanted:
             raise RuntimeError(f"SCSI checksum mismatch: {actual} != {wanted}")
-        print(f"PASS scsi bytes={size} sha256={actual} device={device}")
+        print(
+            f"PASS scsi bytes={size} sha256={actual} device={device} "
+            "indirect_desc=yes"
+        )
     elif command == "verify" and len(sys.argv) == 6:
         wanted = sys.argv[5]
         actual = read_digest(device, size, direct=True)
         if actual != wanted:
             raise RuntimeError(f"SCSI checksum mismatch: {actual} != {wanted}")
-        print(f"PASS scsi-persist bytes={size} sha256={actual} device={device}")
+        print(
+            f"PASS scsi-persist bytes={size} sha256={actual} device={device} "
+            "indirect_desc=yes"
+        )
     else:
         raise SystemExit("invalid gscsi.py command or argument count")
 

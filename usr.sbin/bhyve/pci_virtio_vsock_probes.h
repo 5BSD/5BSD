@@ -11,7 +11,7 @@
  *
  * Example D scripts (bhyve pid = $target):
  *   dtrace -n 'vsock$target:::'                            all host-device probes
- *   dtrace -n 'vsock*:::desc-drop{ @[copyinstr(arg0)] = count(); }'   attack signal
+ *   dtrace -n 'vsock*:::desc-drop{ @[copyinstr(arg0)] = count(); }'   rejected input
  *   dtrace -n 'vsock*:::conn-reset{ @[arg0, arg1] = count(); }'       resets by cid:port
  *   dtrace -n 'vsock*:::tx-overflow{ @ = quantize(arg2); }'          backlog histogram
  */
@@ -54,7 +54,7 @@
 #define	VSOCK_PROBE_RX_RINGFULL(cid, port)		\
 	DTRACE_PROBE2(vsock, rx__ringfull, cid, port)
 
-/* Security: malformed / spoofed guest input rejected */
+/* Input validation: malformed or inconsistent guest input rejected */
 #define	VSOCK_PROBE_DESC_DROP(why)			\
 	DTRACE_PROBE1(vsock, desc__drop, why)
 /* Resource watermark */

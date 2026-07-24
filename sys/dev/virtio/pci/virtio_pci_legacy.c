@@ -76,7 +76,7 @@ static int	vtpci_legacy_write_ivar(device_t, device_t, int, uintptr_t);
 
 static uint8_t	vtpci_legacy_read_isr(device_t);
 static uint16_t	vtpci_legacy_get_vq_size(device_t, int);
-static bus_size_t vtpci_legacy_get_vq_notify_off(device_t, int);
+static int	vtpci_legacy_get_vq_notify_off(device_t, int, bus_size_t *);
 static void	vtpci_legacy_set_vq(device_t, struct virtqueue *);
 static void	vtpci_legacy_disable_vq(device_t, int);
 static int	vtpci_legacy_register_cfg_msix(device_t,
@@ -92,7 +92,8 @@ static int	vtpci_legacy_setup_interrupts(device_t, enum intr_type);
 static void	vtpci_legacy_stop(device_t);
 static int	vtpci_legacy_reinit(device_t, uint64_t);
 static void	vtpci_legacy_reinit_complete(device_t);
-static void	vtpci_legacy_notify_vq(device_t, uint16_t, bus_size_t);
+static void	vtpci_legacy_notify_vq(device_t, uint16_t, bus_size_t,
+		    uint16_t);
 static void	vtpci_legacy_read_dev_config(device_t, bus_size_t, void *, int);
 static void	vtpci_legacy_write_dev_config(device_t, bus_size_t, const void *, int);
 
@@ -420,6 +421,7 @@ vtpci_legacy_reinit(device_t dev, uint64_t features)
 {
 	struct vtpci_legacy_softc *sc;
 	struct vtpci_common *cn;
+	uint64_t added_features, negotiated_features;
 	int error;
 
 	sc = device_get_softc(dev);
@@ -436,6 +438,19 @@ vtpci_legacy_reinit(device_t dev, uint64_t features)
 	 * This will need to be rethought when we want to support migration.
 	 */
 
+	if (!cn->vtpci_reinit_features_valid) {
+		cn->vtpci_reinit_features = cn->vtpci_features;
+		cn->vtpci_reinit_features_valid = true;
+	}
+	if (!virtio_features_subset(cn->vtpci_reinit_features,
+	    features)) {
+		added_features = features & ~cn->vtpci_reinit_features;
+		device_printf(dev,
+		    "cannot add features %#jx during reinitialization\n",
+		    (uintmax_t)added_features);
+		return (EINVAL);
+	}
+
 	if (vtpci_legacy_get_status(sc) != VIRTIO_CONFIG_STATUS_RESET)
 		vtpci_legacy_stop(dev);
 
@@ -446,11 +461,20 @@ vtpci_legacy_reinit(device_t dev, uint64_t features)
 	vtpci_legacy_set_status(sc, VIRTIO_CONFIG_STATUS_ACK);
 	vtpci_legacy_set_status(sc, VIRTIO_CONFIG_STATUS_DRIVER);
 
-	vtpci_legacy_negotiate_features(dev, features);
+	negotiated_features = vtpci_legacy_negotiate_features(dev, features);
+	if (!virtio_features_subset(negotiated_features, features)) {
+		device_printf(dev,
+		    "features %#jx unavailable during reinitialization\n",
+		    (uintmax_t)(features & ~negotiated_features));
+		vtpci_legacy_stop(dev);
+		return (ENOTSUP);
+	}
 
 	error = vtpci_reinit(cn);
-	if (error)
+	if (error) {
+		vtpci_legacy_stop(dev);
 		return (error);
+	}
 
 	return (0);
 }
@@ -466,7 +490,8 @@ vtpci_legacy_reinit_complete(device_t dev)
 }
 
 static void
-vtpci_legacy_notify_vq(device_t dev, uint16_t queue, bus_size_t offset)
+vtpci_legacy_notify_vq(device_t dev, uint16_t queue, bus_size_t offset,
+    uint16_t avail_idx __unused)
 {
 	struct vtpci_legacy_softc *sc;
 
@@ -583,12 +608,12 @@ vtpci_legacy_alloc_resources(struct vtpci_legacy_softc *sc)
 	int rid, i;
 
 	dev = sc->vtpci_dev;
-	
+
 	/*
 	 * Most hypervisors export the common configuration structure in IO
 	 * space, but some use memory space; try both.
 	 */
-	for (i = 0; nitems(res_types); i++) {
+	for (i = 0; i < nitems(res_types); i++) {
 		rid = PCIR_BAR(0);
 		sc->vtpci_res_type = res_types[i];
 		sc->vtpci_res = bus_alloc_resource_any(dev, res_types[i], &rid,
@@ -628,6 +653,16 @@ vtpci_legacy_probe_and_attach_child(struct vtpci_legacy_softc *sc)
 	if (child == NULL || device_get_state(child) != DS_NOTPRESENT)
 		return;
 
+	/*
+	 * FAILED ends the current initialization attempt.  Retry only after
+	 * returning the device to reset and acknowledging it again.
+	 */
+	if ((vtpci_legacy_get_status(sc) &
+	    VIRTIO_CONFIG_STATUS_FAILED) != 0) {
+		vtpci_legacy_reset(sc);
+		vtpci_legacy_set_status(sc, VIRTIO_CONFIG_STATUS_ACK);
+	}
+
 	if (device_probe(child) != 0)
 		return;
 
@@ -643,11 +678,15 @@ vtpci_legacy_probe_and_attach_child(struct vtpci_legacy_softc *sc)
 		if (error != 0) {
 			device_printf(child,
 			    "attach-completed callback failed: %d\n", error);
-			vtpci_legacy_set_status(sc,
-			    VIRTIO_CONFIG_STATUS_FAILED);
 			if (device_detach(child) != 0)
 				device_printf(child,
 				    "failed to detach after attach-completed error\n");
+			/*
+			 * child_detached() resets the transport and restores
+			 * ACKNOWLEDGE, so FAILED must be the final transition.
+			 */
+			vtpci_legacy_set_status(sc,
+			    VIRTIO_CONFIG_STATUS_FAILED);
 		}
 	}
 }
@@ -744,10 +783,12 @@ vtpci_legacy_get_vq_size(device_t dev, int idx)
 	return (vtpci_legacy_read_header_2(sc, VIRTIO_PCI_QUEUE_NUM));
 }
 
-static bus_size_t
-vtpci_legacy_get_vq_notify_off(device_t dev, int idx)
+static int
+vtpci_legacy_get_vq_notify_off(device_t dev, int idx,
+    bus_size_t *notify_offset)
 {
-	return (VIRTIO_PCI_QUEUE_NOTIFY);
+	*notify_offset = VIRTIO_PCI_QUEUE_NOTIFY;
+	return (0);
 }
 
 static void

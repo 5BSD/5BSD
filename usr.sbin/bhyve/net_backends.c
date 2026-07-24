@@ -426,8 +426,11 @@ netbe_set_cap(struct net_backend *be, uint64_t features,
 	be->fe_vnet_hdr_len = vnet_hdr_len;
 
 	ret = be->set_cap(be, features, vnet_hdr_len);
-	assert(be->be_vnet_hdr_len == 0 ||
-	       be->be_vnet_hdr_len == be->fe_vnet_hdr_len);
+	if (ret == 0 && be->be_vnet_hdr_len != be->fe_vnet_hdr_len) {
+		EPRINTLN("network backend installed header length %u, expected %u",
+		    be->be_vnet_hdr_len, be->fe_vnet_hdr_len);
+		return (EPROTO);
+	}
 
 	return (ret);
 }
@@ -469,9 +472,12 @@ netbe_rx_discard(struct net_backend *be)
 	/*
 	 * MP note: the dummybuf is only used to discard frames,
 	 * so there is no need for it to be per-vtnet or locked.
-	 * We only make it large enough for TSO-sized segment.
+	 * VirtIO 1.4 section 5.1.9.3 defines the largest packet as
+	 * 65,589 bytes and the base virtio-net header as 12 bytes.
+	 * Keep enough room for the complete 65,601-byte backend record so
+	 * discarding it never relies on backend-specific truncation behavior.
 	 */
-	static uint8_t dummybuf[65536 + 64];
+	static uint8_t dummybuf[NETBE_MAX_RECORD_SIZE];
 	struct iovec iov;
 
 	iov.iov_base = dummybuf;

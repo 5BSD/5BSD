@@ -65,7 +65,8 @@ _Static_assert(VTBLK_RINGSZ <= BLOCKIF_RING_MAX, "Each ring entry must be able t
 #define	VTBLK_S_IOERR	1
 #define	VTBLK_S_UNSUPP	2
 
-#define	VTBLK_BLK_ID_BYTES	20 + 1
+#define	VTBLK_BLK_ID_LEN	20
+#define	VTBLK_BLK_ID_BYTES	(VTBLK_BLK_ID_LEN + 1)
 
 /* Capability bits */
 #define	VTBLK_F_BARRIER		(1 << 0)	/* Does host support barriers? */
@@ -104,6 +105,9 @@ _Static_assert(VTBLK_RINGSZ <= BLOCKIF_RING_MAX, "Each ring entry must be able t
  * delete requests.
  */
 #define	VTBLK_MAX_DISCARD_SECT	((16 << 20) / VTBLK_BSIZE)	/* 16 MiB */
+#define	VTBLK_MAX_WRITE_ZEROES_SECT \
+	((16 << 20) / VTBLK_BSIZE)	/* 16 MiB */
+#define	VTBLK_MAX_WRITE_ZEROES_SEG	1
 
 /*
  * Config space "registers"
@@ -169,12 +173,16 @@ struct pci_vtblk_ioreq {
 	uint8_t				*io_status;
 	uint32_t			io_data_len;
 	bool				io_writes_data;
+	bool				io_full_transfer;
+	bool				io_is_write;
+	bool				io_stabilizing;
 	bool				io_active;
 	uint16_t			io_idx;
 	uint64_t			io_generation;
 };
 
 struct virtio_blk_discard_write_zeroes {
+#define	VTBLK_WRITE_ZEROES_FLAG_UNMAP	0x00000001
 	uint64_t	sector;
 	uint32_t	num_sectors;
 	uint32_t	flags;
@@ -186,16 +194,32 @@ struct virtio_blk_discard_write_zeroes {
 struct pci_vtblk_softc {
 	struct virtio_softc vbsc_vs;
 	pthread_mutex_t vsc_mtx;
+	pthread_cond_t vbsc_reset_cond;
 	struct vqueue_info vbsc_vq;
 	struct vtblk_config vbsc_cfg;
 	struct virtio_consts vbsc_consts;
 	struct blockif_ctxt *bc;
 	uint64_t vbsc_generation;
+	uint64_t vbsc_qreset_generation;
+	bool vbsc_qreset_pending;
+	bool vbsc_resetting;
+	bool vbsc_reset_waiting;
 	char vbsc_ident[VTBLK_BLK_ID_BYTES];
 	struct pci_vtblk_ioreq vbsc_ios[VTBLK_RINGSZ];
 };
 
 static void pci_vtblk_reset(void *);
+static int pci_vtblk_cancel_request_locked(struct pci_vtblk_softc *,
+    struct pci_vtblk_ioreq *);
+static void pci_vtblk_reset_enter(struct pci_vtblk_softc *);
+static void pci_vtblk_reset_leave(struct pci_vtblk_softc *);
+static bool pci_vtblk_requests_drained(const struct pci_vtblk_softc *);
+static bool pci_vtblk_write_needs_stabilization(
+    const struct pci_vtblk_softc *);
+static void pci_vtblk_configure_range_limits(struct pci_vtblk_softc *,
+    int, int);
+static int pci_vtblk_qreset(void *, struct vqueue_info *, uint64_t);
+static uint64_t pci_vtblk_backend_caps(struct blockif_ctxt *);
 static void pci_vtblk_notify(void *, struct vqueue_info *);
 static int pci_vtblk_cfgread(void *, int, int, uint32_t *);
 static int pci_vtblk_cfgwrite(void *, int, int, uint32_t);
@@ -214,7 +238,8 @@ static struct virtio_consts vtblk_vi_consts = {
 	.vc_cfgread =	pci_vtblk_cfgread,
 	.vc_cfgwrite =	pci_vtblk_cfgwrite,
 	.vc_apply_features = NULL,
-	.vc_hv_caps =	VTBLK_S_HOSTCAPS,
+	.vc_qreset =	pci_vtblk_qreset,
+	.vc_hv_caps =	VTBLK_S_HOSTCAPS | VIRTIO_F_RING_RESET,
 #ifdef BHYVE_SNAPSHOT
 	.vc_pause =	pci_vtblk_pause,
 	.vc_resume =	pci_vtblk_resume,
@@ -230,16 +255,151 @@ pci_vtblk_reset(void *vsc)
 	int error, i;
 
 	DPRINTF(("vtblk: device reset requested !"));
+	pci_vtblk_reset_enter(sc);
+	sc->vbsc_qreset_pending = false;
 	sc->vbsc_generation++;
+	/*
+	 * Invalidate the ring before cancellation.  Stale callbacks can then
+	 * finish without publishing to guest memory while this reset waits for
+	 * the host backend to stop using their data buffers.
+	 */
+	vi_reset_dev(&sc->vbsc_vs);
 	for (i = 0; i < VTBLK_RINGSZ; i++) {
 		io = &sc->vbsc_ios[i];
 		if (!io->io_active)
 			continue;
-		error = blockif_cancel(sc->bc, &io->io_req);
-		if (error == 0 || error == EINVAL)
-			io->io_active = false;
+		error = pci_vtblk_cancel_request_locked(sc, io);
+		if (error != 0 && error != EBUSY)
+			vi_set_needs_reset(&sc->vbsc_vs);
 	}
-	vi_reset_dev(&sc->vbsc_vs);
+	while (!pci_vtblk_requests_drained(sc)) {
+		sc->vbsc_reset_waiting = true;
+		pthread_cond_wait(&sc->vbsc_reset_cond, &sc->vsc_mtx);
+	}
+	sc->vbsc_reset_waiting = false;
+	pci_vtblk_reset_leave(sc);
+}
+
+/*
+ * Queue cancellation drops vsc_mtx because blockif_cancel() can wait for a
+ * completion callback which takes that mutex.  Serialize reset owners across
+ * that unlocked interval so two vCPUs cannot cancel or recycle the same
+ * blockif_req concurrently.
+ */
+static void
+pci_vtblk_reset_enter(struct pci_vtblk_softc *sc)
+{
+
+	while (sc->vbsc_resetting)
+		pthread_cond_wait(&sc->vbsc_reset_cond, &sc->vsc_mtx);
+	sc->vbsc_resetting = true;
+}
+
+static void
+pci_vtblk_reset_leave(struct pci_vtblk_softc *sc)
+{
+
+	sc->vbsc_resetting = false;
+	pthread_cond_broadcast(&sc->vbsc_reset_cond);
+}
+
+/*
+ * blockif_cancel() can wait for an in-flight backend operation.  The backend
+ * invokes pci_vtblk_done() before that operation leaves its busy queue, and
+ * the callback needs vsc_mtx.  Drop the device lock while cancelling or the
+ * reset path and completion callback can wait on each other forever.
+ *
+ * Callers have already invalidated the queue and advanced vbsc_generation, so
+ * no request can be reused while the lock is dropped.  EINVAL means the
+ * backend no longer owns the request; either the callback has completed or is
+ * completing it through the stale-generation path.
+ */
+static int
+pci_vtblk_cancel_request_locked(struct pci_vtblk_softc *sc,
+    struct pci_vtblk_ioreq *io)
+{
+	int error;
+
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	error = blockif_cancel(sc->bc, &io->io_req);
+	pthread_mutex_lock(&sc->vsc_mtx);
+	if (error == 0 || error == EINVAL)
+		io->io_active = false;
+	return (error);
+}
+
+static bool
+pci_vtblk_write_needs_stabilization(const struct pci_vtblk_softc *sc)
+{
+	uint64_t negotiated, offered;
+
+	negotiated = sc->vbsc_vs.vs_negotiated_caps;
+	offered = sc->vbsc_consts.vc_hv_caps;
+	if ((negotiated & VTBLK_F_CONFIG_WCE) != 0)
+		return (sc->vbsc_cfg.vbc_writeback == 0);
+	return ((offered & VTBLK_F_FLUSH) != 0 &&
+	    (negotiated & VTBLK_F_FLUSH) == 0);
+}
+
+static bool
+pci_vtblk_requests_drained(const struct pci_vtblk_softc *sc)
+{
+	int i;
+
+	for (i = 0; i < VTBLK_RINGSZ; i++) {
+		if (sc->vbsc_ios[i].io_active)
+			return (false);
+	}
+	return (true);
+}
+
+static int
+pci_vtblk_qreset(void *vsc, struct vqueue_info *vq, uint64_t generation)
+{
+	struct pci_vtblk_softc *sc;
+	struct pci_vtblk_ioreq *io;
+	bool pending;
+	int error, i;
+
+	sc = vsc;
+	if (vq->vq_num != 0)
+		return (EINVAL);
+	pci_vtblk_reset_enter(sc);
+
+	/*
+	 * Invalidate every request from the old queue incarnation before
+	 * cancellation.  Pending requests are removed synchronously.  For a
+	 * busy request, EBUSY means its normal callback may still be pending;
+	 * keep queue_reset asserted until that callback has stopped using the
+	 * old guest buffers.
+	 */
+	sc->vbsc_generation++;
+	sc->vbsc_qreset_pending = false;
+	pending = false;
+	for (i = 0; i < VTBLK_RINGSZ; i++) {
+		io = &sc->vbsc_ios[i];
+		if (!io->io_active)
+			continue;
+		error = pci_vtblk_cancel_request_locked(sc, io);
+		switch (error) {
+		case 0:
+		case EINVAL:
+			break;
+		case EBUSY:
+			pending = true;
+			break;
+		default:
+			pci_vtblk_reset_leave(sc);
+			return (error);
+		}
+	}
+	if (!pending || pci_vtblk_requests_drained(sc)) {
+		pci_vtblk_reset_leave(sc);
+		return (0);
+	}
+	sc->vbsc_qreset_generation = generation;
+	sc->vbsc_qreset_pending = true;
+	return (EINPROGRESS);
 }
 
 static void
@@ -309,58 +469,203 @@ pci_vtblk_done(struct blockif_req *br, int err)
 {
 	struct pci_vtblk_ioreq *io = br->br_param;
 	struct pci_vtblk_softc *sc = io->io_sc;
+	uint64_t generation;
+	bool complete, reset_complete;
 
+	complete = true;
+	reset_complete = false;
+	generation = 0;
 	pthread_mutex_lock(&sc->vsc_mtx);
-	if (io->io_active && io->io_generation == sc->vbsc_generation)
-		pci_vtblk_done_locked(io, err);
-	else
+	if (io->io_active && io->io_generation == sc->vbsc_generation) {
+		if (err == 0 && io->io_full_transfer &&
+		    io->io_req.br_resid != 0)
+			err = EIO;
+		if (err == 0 && io->io_is_write && !io->io_stabilizing &&
+		    pci_vtblk_write_needs_stabilization(sc)) {
+			io->io_stabilizing = true;
+			err = blockif_flush(sc->bc, &io->io_req);
+			if (err == 0)
+				complete = false;
+		}
+		if (complete) {
+			io->io_stabilizing = false;
+			pci_vtblk_done_locked(io, err);
+		}
+	} else {
 		io->io_active = false;
+		io->io_stabilizing = false;
+	}
+	if (sc->vbsc_reset_waiting)
+		pthread_cond_broadcast(&sc->vbsc_reset_cond);
+	if (sc->vbsc_qreset_pending && pci_vtblk_requests_drained(sc)) {
+		generation = sc->vbsc_qreset_generation;
+		sc->vbsc_qreset_pending = false;
+		pci_vtblk_reset_leave(sc);
+		reset_complete = true;
+	}
 	pthread_mutex_unlock(&sc->vsc_mtx);
+	if (reset_complete)
+		vi_pci_modern_queue_reset_complete(&sc->vbsc_vq,
+		    generation, 0);
 }
 
 static void
 pci_vtblk_complete_invalid(struct vqueue_info *vq, const struct vi_req *req,
     struct iovec *iov, int n)
 {
+	uint8_t *status;
 	uint32_t len;
+	int i;
 
 	len = 0;
 	if (n >= 2 && n <= BLOCKIF_IOV_MAX + 2 && req->ordered &&
-	    req->writable != 0 && iov[n - 1].iov_len >= 1) {
-		*(uint8_t *)iov[n - 1].iov_base = VTBLK_S_IOERR;
-		len = 1;
+	    req->readable > 0 && req->writable > 0 &&
+	    req->readable + req->writable == n) {
+		for (i = n - 1; i >= req->readable; i--) {
+			if (iov[i].iov_len == 0)
+				continue;
+			status = (uint8_t *)iov[i].iov_base +
+			    iov[i].iov_len - 1;
+			*status = VTBLK_S_IOERR;
+			len = 1;
+			break;
+		}
 	}
 	vq_relchain(vq, req->idx, len);
 	vq_endchains(vq, 0);
 }
 
+/*
+ * The block status is the final byte of the device-writable portion of the
+ * descriptor chain, not necessarily a byte in the final descriptor.  Split
+ * rings permit zero-length descriptors, so walk backwards over them.
+ */
+static bool
+pci_vtblk_status_ptr(const struct vi_req *req, struct iovec *iov, int n,
+    uint8_t **status)
+{
+	int i;
+
+	if (n < 2 || req->readable <= 0 || req->writable <= 0 ||
+	    req->readable + req->writable != n)
+		return (false);
+	for (i = n - 1; i >= req->readable; i--) {
+		if (iov[i].iov_len == 0)
+			continue;
+		*status = (uint8_t *)iov[i].iov_base + iov[i].iov_len - 1;
+		return (true);
+	}
+	return (false);
+}
+
+static bool
+pci_vtblk_iov_read(const struct iovec *iov, int niov, size_t offset,
+    void *dst, size_t length)
+{
+	size_t copy, skip;
+	uint8_t *out;
+	int i;
+
+	out = dst;
+	skip = offset;
+	for (i = 0; i < niov && length != 0; i++) {
+		if (skip >= iov[i].iov_len) {
+			skip -= iov[i].iov_len;
+			continue;
+		}
+		copy = MIN(length, iov[i].iov_len - skip);
+		memcpy(out, (const uint8_t *)iov[i].iov_base + skip, copy);
+		out += copy;
+		length -= copy;
+		skip = 0;
+	}
+	return (length == 0);
+}
+
+/*
+ * Copy a byte range from an input iovec into an output iovec without copying
+ * the data itself.  This permits the fixed block header and trailing status
+ * byte to share descriptors with data, as allowed by the generic split-ring
+ * buffer layout.
+ */
+static int
+pci_vtblk_iov_slice(const struct iovec *iov, int niov, size_t offset,
+    size_t length, struct iovec *out, int out_max, int *out_count)
+{
+	size_t copy, skip;
+	int i, n;
+
+	n = 0;
+	skip = offset;
+	for (i = 0; i < niov && length != 0; i++) {
+		if (skip >= iov[i].iov_len) {
+			skip -= iov[i].iov_len;
+			continue;
+		}
+		if (n == out_max)
+			return (E2BIG);
+		copy = MIN(length, iov[i].iov_len - skip);
+		out[n].iov_base = (uint8_t *)iov[i].iov_base + skip;
+		out[n].iov_len = copy;
+		n++;
+		length -= copy;
+		skip = 0;
+	}
+	if (length != 0)
+		return (EINVAL);
+	*out_count = n;
+	return (0);
+}
+
+static int
+pci_vtblk_iov_length(const struct iovec *iov, int niov, size_t *length)
+{
+	size_t total;
+	int i;
+
+	total = 0;
+	for (i = 0; i < niov; i++) {
+		if (iov[i].iov_len > SIZE_MAX - total)
+			return (EOVERFLOW);
+		total += iov[i].iov_len;
+	}
+	*length = total;
+	return (0);
+}
+
 static void
 pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 {
-	struct virtio_blk_hdr *vbh;
+	struct virtio_blk_hdr vbh;
 	struct pci_vtblk_ioreq *io;
 	int i, n;
 	int err;
 	ssize_t iolen;
 	int writeop, type;
+	uint64_t sector, sectors;
+	size_t data_len, readable_len, writable_len;
 	struct vi_req req;
 	struct iovec iov[BLOCKIF_IOV_MAX + 2];
-	struct virtio_blk_discard_write_zeroes *discard;
+	struct virtio_blk_discard_write_zeroes discard;
 
 	n = vq_getchain(vq, iov, BLOCKIF_IOV_MAX + 2, &req);
 	if (n <= 0)
 		return;
 
 	/*
-	 * The first descriptor will be the read-only fixed header,
-	 * and the last is for status (hence +2 above and below).
-	 * The remaining iov's are the actual data I/O vectors.
+	 * Descriptors are direction-ordered, but the protocol header, data, and
+	 * status fields need not align to descriptor boundaries.  The readable
+	 * section starts with the fixed header and the writable section ends
+	 * with the status byte.
 	 */
 	if (n < 2 || n > BLOCKIF_IOV_MAX + 2 || !req.ordered ||
 	    req.readable == 0 || req.writable == 0 ||
 	    req.readable + req.writable != n ||
-	    iov[0].iov_len != sizeof(struct virtio_blk_hdr) ||
-	    iov[n - 1].iov_len < 1) {
+	    pci_vtblk_iov_length(iov, req.readable, &readable_len) != 0 ||
+	    pci_vtblk_iov_length(&iov[req.readable], req.writable,
+	    &writable_len) != 0 ||
+	    readable_len < sizeof(vbh) || writable_len < 1 ||
+	    !pci_vtblk_iov_read(iov, req.readable, 0, &vbh, sizeof(vbh))) {
 		DPRINTF(("virtio-block: invalid descriptor chain"));
 		pci_vtblk_complete_invalid(vq, &req, iov, n);
 		return;
@@ -373,57 +678,116 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 	}
 	io->io_data_len = 0;
 	io->io_writes_data = false;
-	vbh = (struct virtio_blk_hdr *)iov[0].iov_base;
-	memcpy(&io->io_req.br_iov, &iov[1], sizeof(struct iovec) * (n - 2));
-	io->io_req.br_iovcnt = n - 2;
-	if (le64toh(vbh->vbh_sector) > (uint64_t)OFF_MAX / VTBLK_BSIZE) {
+	io->io_full_transfer = false;
+	io->io_is_write = false;
+	io->io_stabilizing = false;
+	sector = le64toh(vbh.vbh_sector);
+	if (sector > (uint64_t)OFF_MAX / VTBLK_BSIZE) {
 		pci_vtblk_complete_invalid(vq, &req, iov, n);
 		return;
 	}
-	io->io_req.br_offset = le64toh(vbh->vbh_sector) * VTBLK_BSIZE;
-	io->io_status = (uint8_t *)iov[--n].iov_base;
+	io->io_req.br_offset = sector * VTBLK_BSIZE;
+	if (!pci_vtblk_status_ptr(&req, iov, n, &io->io_status)) {
+		pci_vtblk_complete_invalid(vq, &req, iov, n);
+		return;
+	}
 
 	/* The legacy BARRIER flag was not advertised. */
-	type = le32toh(vbh->vbh_type);
+	type = le32toh(vbh.vbh_type);
 	if ((type & VBH_FLAG_BARRIER) != 0) {
 		pci_vtblk_done_locked(io, EOPNOTSUPP);
 		return;
 	}
-	writeop = (type == VBH_OP_WRITE || type == VBH_OP_DISCARD);
-	/*
-	 * - Write op implies read-only descriptor
-	 * - Read/ident op implies write-only descriptor
-	 *
-	 * By taking away either the read-only fixed header or the write-only
-	 * status iovec, the following condition should hold true.
-	 */
-	if (writeop && (req.readable != n || req.writable != 1)) {
-		pci_vtblk_done_locked(io, EINVAL);
+	if (type == VBH_OP_WRITE &&
+	    (sc->vbsc_consts.vc_hv_caps & VTBLK_F_RO) != 0) {
+		pci_vtblk_done_locked(io, EROFS);
 		return;
 	}
-	if (!writeop && (type == VBH_OP_READ || type == VBH_OP_IDENT) &&
-	    (req.readable != 1 || req.writable != n)) {
-		pci_vtblk_done_locked(io, EINVAL);
+	if (type != VBH_OP_READ && type != VBH_OP_WRITE &&
+	    type != VBH_OP_DISCARD && type != VBH_OP_WRITE_ZEROES &&
+	    type != VBH_OP_FLUSH && type != VBH_OP_FLUSH_OUT &&
+	    type != VBH_OP_IDENT) {
+		pci_vtblk_done_locked(io, EOPNOTSUPP);
+		return;
+	}
+	if (type == VBH_OP_DISCARD || type == VBH_OP_WRITE_ZEROES) {
+		/*
+		 * Section 5.2.6.2 requires UNSUPP when the operation was not
+		 * negotiated.  Check negotiation before the read-only media
+		 * boundary so a read-only device does not turn an unsupported
+		 * operation into IOERR.  The second check is defensive against
+		 * stale or corrupted negotiated state.
+		 */
+		uint64_t feature;
+
+		feature = type == VBH_OP_DISCARD ? VTBLK_F_DISCARD :
+		    VTBLK_F_WRITE_ZEROES;
+		if ((sc->vbsc_vs.vs_negotiated_caps & feature) == 0) {
+			pci_vtblk_done_locked(io, EOPNOTSUPP);
+			return;
+		}
+		if ((sc->vbsc_consts.vc_hv_caps & VTBLK_F_RO) != 0) {
+			pci_vtblk_done_locked(io, EROFS);
+			return;
+		}
+	}
+	writeop = (type == VBH_OP_WRITE || type == VBH_OP_DISCARD ||
+	    type == VBH_OP_WRITE_ZEROES);
+	/*
+	 * Write/discard data follows the header in the readable section.
+	 * Read/ident data precedes status in the writable section.
+	 */
+	if (writeop) {
+		if (writable_len != 1)
+			err = EINVAL;
+		else {
+			data_len = readable_len - sizeof(vbh);
+			err = pci_vtblk_iov_slice(iov, req.readable,
+			    sizeof(vbh), data_len, io->io_req.br_iov,
+			    BLOCKIF_IOV_MAX, &io->io_req.br_iovcnt);
+		}
+	} else if (type == VBH_OP_READ || type == VBH_OP_IDENT) {
+		if (readable_len != sizeof(vbh))
+			err = EINVAL;
+		else {
+			data_len = writable_len - 1;
+			err = pci_vtblk_iov_slice(&iov[req.readable],
+			    req.writable, 0, data_len, io->io_req.br_iov,
+			    BLOCKIF_IOV_MAX, &io->io_req.br_iovcnt);
+		}
+	} else {
+		data_len = 0;
+		io->io_req.br_iovcnt = 0;
+		err = readable_len == sizeof(vbh) && writable_len == 1 ?
+		    0 : EINVAL;
+	}
+	if (err != 0) {
+		pci_vtblk_done_locked(io, err);
 		return;
 	}
 	if ((type == VBH_OP_FLUSH || type == VBH_OP_FLUSH_OUT) &&
-	    (n != 1 || req.readable != 1 || req.writable != 1)) {
-		pci_vtblk_done_locked(io, EINVAL);
-		return;
-	}
-	if (type == VBH_OP_IDENT && n < 2) {
+	    sector != 0) {
 		pci_vtblk_done_locked(io, EINVAL);
 		return;
 	}
 
-	iolen = 0;
-	for (i = 1; i < n; i++) {
-		iolen += iov[i].iov_len;
-	}
-	if ((type == VBH_OP_READ || type == VBH_OP_WRITE) &&
-	    iolen > OFF_MAX - io->io_req.br_offset) {
+	if (data_len > SSIZE_MAX) {
 		pci_vtblk_done_locked(io, EINVAL);
 		return;
+	}
+	iolen = data_len;
+	if (type == VBH_OP_READ || type == VBH_OP_WRITE) {
+		if (iolen % VTBLK_BSIZE != 0 ||
+		    iolen > OFF_MAX - io->io_req.br_offset) {
+			pci_vtblk_done_locked(io, EINVAL);
+			return;
+		}
+		sectors = (uint64_t)iolen / VTBLK_BSIZE;
+		if (sector > sc->vbsc_cfg.vbc_capacity ||
+		    sectors > sc->vbsc_cfg.vbc_capacity - sector) {
+			pci_vtblk_done_locked(io, EINVAL);
+			return;
+		}
 	}
 	if ((type == VBH_OP_READ || type == VBH_OP_IDENT) &&
 	    iolen > UINT32_MAX - 1) {
@@ -432,11 +796,16 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 	}
 	io->io_req.br_resid = iolen;
 	io->io_writes_data = type == VBH_OP_READ || type == VBH_OP_IDENT;
+	io->io_full_transfer = type == VBH_OP_READ || type == VBH_OP_WRITE ||
+	    type == VBH_OP_WRITE_ZEROES;
+	io->io_is_write = type == VBH_OP_WRITE ||
+	    type == VBH_OP_WRITE_ZEROES;
 	if (io->io_writes_data)
 		io->io_data_len = (uint32_t)iolen;
 
 	DPRINTF(("virtio-block: %s op, %zd bytes, %d segs, offset %ld",
-		 writeop ? "write/discard" : "read/ident", iolen, i - 1,
+		 writeop ? "write/discard" : "read/ident", iolen,
+		 io->io_req.br_iovcnt,
 		 io->io_req.br_offset));
 
 	io->io_active = true;
@@ -449,67 +818,84 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 		err = blockif_write(sc->bc, &io->io_req);
 		break;
 	case VBH_OP_DISCARD:
+	case VBH_OP_WRITE_ZEROES:
 		/*
 		 * We currently only support a single request, if the guest
 		 * has submitted a request that doesn't conform to the
 		 * requirements, we return a error.
 		 */
-		if ((sc->vbsc_vs.vs_negotiated_caps & VTBLK_F_DISCARD) == 0) {
-			pci_vtblk_done_locked(io, EOPNOTSUPP);
-			return;
-		}
-		if (n != 2 || iov[1].iov_len != sizeof(*discard)) {
+		if (iolen != sizeof(discard) ||
+		    !pci_vtblk_iov_read(io->io_req.br_iov,
+		    io->io_req.br_iovcnt, 0, &discard, sizeof(discard))) {
 			pci_vtblk_done_locked(io, EINVAL);
 			return;
 		}
 
-		/* The segments to discard are provided rather than data */
-		discard = (struct virtio_blk_discard_write_zeroes *)
-		    iov[1].iov_base;
-
 		/*
-		 * virtio v1.1 5.2.6.2:
+		 * VirtIO 1.4 section 5.2.6.2:
 		 * The device MUST set the status byte to VIRTIO_BLK_S_UNSUPP
 		 * for discard and write zeroes commands if any unknown flag is
 		 * set. Furthermore, the device MUST set the status byte to
 		 * VIRTIO_BLK_S_UNSUPP for discard commands if the unmap flag
 		 * is set.
 		 *
-		 * Currently there are no known flags for a DISCARD request.
+		 * UNMAP is valid only for WRITE ZEROES.  The backend still
+		 * writes actual zeroes, so write_zeroes_may_unmap remains zero.
 		 */
-		if (le32toh(discard->flags) != 0) {
-			pci_vtblk_done_locked(io, ENOTSUP);
+		if ((type == VBH_OP_DISCARD && le32toh(discard.flags) != 0) ||
+		    (type == VBH_OP_WRITE_ZEROES &&
+		    (le32toh(discard.flags) &
+		    ~VTBLK_WRITE_ZEROES_FLAG_UNMAP) != 0)) {
+			pci_vtblk_done_locked(io, EOPNOTSUPP);
 			return;
 		}
 
-		/* Make sure the request doesn't exceed our size limit */
-		if (le32toh(discard->num_sectors) > VTBLK_MAX_DISCARD_SECT ||
-		    le64toh(discard->sector) >
+		/* Make sure the request doesn't exceed our size limit. */
+		sectors = le32toh(discard.num_sectors);
+		if ((type == VBH_OP_DISCARD &&
+		    sectors > VTBLK_MAX_DISCARD_SECT) ||
+		    (type == VBH_OP_WRITE_ZEROES &&
+		    sectors > VTBLK_MAX_WRITE_ZEROES_SECT) ||
+		    le64toh(discard.sector) >
 		    (uint64_t)OFF_MAX / VTBLK_BSIZE) {
 			pci_vtblk_done_locked(io, EINVAL);
 			return;
 		}
+		sector = le64toh(discard.sector);
+		if (sector > sc->vbsc_cfg.vbc_capacity ||
+		    sectors > sc->vbsc_cfg.vbc_capacity - sector) {
+			pci_vtblk_done_locked(io, EINVAL);
+			return;
+		}
 
-		io->io_req.br_offset =
-		    le64toh(discard->sector) * VTBLK_BSIZE;
-		io->io_req.br_resid =
-		    le32toh(discard->num_sectors) * VTBLK_BSIZE;
-		err = blockif_delete(sc->bc, &io->io_req);
+		io->io_req.br_offset = sector * VTBLK_BSIZE;
+		io->io_req.br_resid = (ssize_t)sectors * VTBLK_BSIZE;
+		if (type == VBH_OP_DISCARD)
+			err = blockif_delete(sc->bc, &io->io_req);
+		else
+			err = blockif_write_zeroes(sc->bc, &io->io_req);
 		break;
 	case VBH_OP_FLUSH:
 	case VBH_OP_FLUSH_OUT:
 		err = blockif_flush(sc->bc, &io->io_req);
 		break;
 	case VBH_OP_IDENT:
+		if (iolen != VTBLK_BLK_ID_LEN) {
+			pci_vtblk_done_locked(io, EINVAL);
+			return;
+		}
 		/* The serial number is padded with zeroes, not terminated. */
-		for (i = 1; i < n; i++)
-			memset(iov[i].iov_base, 0, iov[i].iov_len);
-		for (i = 1, err = 0; i < n && err < VTBLK_BLK_ID_BYTES; i++) {
+		for (i = 0; i < io->io_req.br_iovcnt; i++)
+			memset(io->io_req.br_iov[i].iov_base, 0,
+			    io->io_req.br_iov[i].iov_len);
+		for (i = 0, err = 0; i < io->io_req.br_iovcnt &&
+		    err < VTBLK_BLK_ID_LEN; i++) {
 			size_t len;
 
-			len = MIN(iov[i].iov_len,
-			    (size_t)VTBLK_BLK_ID_BYTES - err);
-			memcpy(iov[i].iov_base, sc->vbsc_ident + err, len);
+			len = MIN(io->io_req.br_iov[i].iov_len,
+			    (size_t)VTBLK_BLK_ID_LEN - err);
+			memcpy(io->io_req.br_iov[i].iov_base,
+			    sc->vbsc_ident + err, len);
 			err += len;
 		}
 		io->io_req.br_resid = 0;
@@ -547,6 +933,40 @@ pci_vtblk_resized(struct blockif_ctxt *bctxt __unused, void *arg,
 	sc->vbsc_cfg.vbc_capacity = new_size / VTBLK_BSIZE; /* 512-byte units */
 	vi_pci_config_changed(vs);
 	VS_UNLOCK(vs);
+}
+
+static uint64_t
+pci_vtblk_backend_caps(struct blockif_ctxt *bc)
+{
+	uint64_t caps;
+
+	caps = VTBLK_S_HOSTCAPS | VIRTIO_F_RING_RESET;
+	if (blockif_is_ro(bc))
+		caps |= VTBLK_F_RO;
+	else {
+		caps |= VTBLK_F_WRITE_ZEROES;
+		if (blockif_candelete(bc))
+			caps |= VTBLK_F_DISCARD;
+	}
+	return (caps);
+}
+
+static void
+pci_vtblk_configure_range_limits(struct pci_vtblk_softc *sc, int sectsz,
+    int psectsz)
+{
+
+	sc->vbsc_cfg.max_discard_sectors = VTBLK_MAX_DISCARD_SECT;
+	sc->vbsc_cfg.max_discard_seg = VTBLK_MAX_DISCARD_SEG;
+	sc->vbsc_cfg.discard_sector_alignment =
+	    MAX(sectsz, psectsz) / VTBLK_BSIZE;
+	if ((sc->vbsc_consts.vc_hv_caps & VTBLK_F_WRITE_ZEROES) != 0) {
+		sc->vbsc_cfg.max_write_zeroes_sectors =
+		    VTBLK_MAX_WRITE_ZEROES_SECT;
+		sc->vbsc_cfg.max_write_zeroes_seg =
+		    VTBLK_MAX_WRITE_ZEROES_SEG;
+		sc->vbsc_cfg.write_zeroes_may_unmap = 0;
+	}
 }
 
 static int
@@ -598,10 +1018,15 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 
 	bcopy(&vtblk_vi_consts, &sc->vbsc_consts, sizeof (vtblk_vi_consts));
-	if (blockif_candelete(sc->bc))
-		sc->vbsc_consts.vc_hv_caps |= VTBLK_F_DISCARD;
+	sc->vbsc_consts.vc_hv_caps = pci_vtblk_backend_caps(sc->bc);
 
 	if (pthread_mutex_init(&sc->vsc_mtx, NULL) != 0) {
+		blockif_close(sc->bc);
+		free(sc);
+		return (1);
+	}
+	if (pthread_cond_init(&sc->vbsc_reset_cond, NULL) != 0) {
+		pthread_mutex_destroy(&sc->vsc_mtx);
 		blockif_close(sc->bc);
 		free(sc);
 		return (1);
@@ -659,9 +1084,7 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vbsc_cfg.vbc_topology.min_io_size = 0;
 	sc->vbsc_cfg.vbc_topology.opt_io_size = 0;
 	sc->vbsc_cfg.vbc_writeback = 0;
-	sc->vbsc_cfg.max_discard_sectors = VTBLK_MAX_DISCARD_SECT;
-	sc->vbsc_cfg.max_discard_seg = VTBLK_MAX_DISCARD_SEG;
-	sc->vbsc_cfg.discard_sector_alignment = MAX(sectsz, sts) / VTBLK_BSIZE;
+	pci_vtblk_configure_range_limits(sc, sectsz, sts);
 
 	/*
 	 * Should we move some of this into virtio.c?  Could
@@ -671,7 +1094,8 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (vi_pci_is_modern(&sc->vbsc_vs))
 		vi_pci_modern_set_identity(&sc->vbsc_vs, VIRTIO_ID_BLOCK);
 	else {
-		pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_BLOCK);
+		pci_set_cfgdata16(pi, PCIR_DEVICE,
+		    VIRTIO_PCI_TRANSITIONAL_BLOCK);
 		pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
 		pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_BLOCK);
 		pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
@@ -694,6 +1118,7 @@ failed:
 	free(sc->vbsc_vs.vs_modern);
 	if (intr_initialized)
 		pthread_mutex_destroy(&sc->vbsc_vs.vs_isr_mtx);
+	pthread_cond_destroy(&sc->vbsc_reset_cond);
 	pthread_mutex_destroy(&sc->vsc_mtx);
 	free(sc);
 	return (1);
@@ -714,7 +1139,11 @@ pci_vtblk_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 	struct pci_vtblk_softc *sc = vsc;
 	void *ptr;
 
-	/* our caller has already verified offset and size */
+	*retval = 0;
+	if (offset < 0 || (size != 1 && size != 2 && size != 4) ||
+	    (size_t)offset > sizeof(sc->vbsc_cfg) ||
+	    (size_t)size > sizeof(sc->vbsc_cfg) - (size_t)offset)
+		return (EINVAL);
 	ptr = (uint8_t *)&sc->vbsc_cfg + offset;
 	memcpy(retval, ptr, size);
 	return (0);

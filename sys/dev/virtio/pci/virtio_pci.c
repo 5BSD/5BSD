@@ -117,10 +117,12 @@ vtpci_get_vq_size(struct vtpci_common *cn, int idx)
 	return (VIRTIO_PCI_GET_VQ_SIZE(cn->vtpci_dev, idx));
 }
 
-static bus_size_t
-vtpci_get_vq_notify_off(struct vtpci_common *cn, int idx)
+static int
+vtpci_get_vq_notify_off(struct vtpci_common *cn, int idx,
+    bus_size_t *notify_offset)
 {
-	return (VIRTIO_PCI_GET_VQ_NOTIFY_OFF(cn->vtpci_dev, idx));
+	return (VIRTIO_PCI_GET_VQ_NOTIFY_OFF(cn->vtpci_dev, idx,
+	    notify_offset));
 }
 
 static void
@@ -208,6 +210,8 @@ vtpci_child_detached(struct vtpci_common *cn)
 	cn->vtpci_child_feat_desc = NULL;
 	cn->vtpci_host_features = 0;
 	cn->vtpci_features = 0;
+	cn->vtpci_reinit_features = 0;
+	cn->vtpci_reinit_features_valid = false;
 }
 
 int
@@ -360,7 +364,13 @@ vtpci_alloc_virtqueues(struct vtpci_common *cn, int nvqs,
 		info = &vq_info[idx];
 
 		size = vtpci_get_vq_size(cn, idx);
-		notify_offset = vtpci_get_vq_notify_off(cn, idx);
+		error = vtpci_get_vq_notify_off(cn, idx, &notify_offset);
+		if (error) {
+			device_printf(dev,
+			    "invalid virtqueue %d notification offset: %d\n",
+			    idx, error);
+			break;
+		}
 
 		error = virtqueue_alloc(dev, idx, size, notify_offset, align,
 		    ~(vm_paddr_t)0, info, &vq);

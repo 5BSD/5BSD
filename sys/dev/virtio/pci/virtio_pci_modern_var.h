@@ -110,6 +110,13 @@ struct virtio_pci_cfg_cap {
 
 #define VIRTIO_PCI_NOTIFY_CAP_MULT	16
 
+/*
+ * A virtio PCI capability can reference only one of the six conventional
+ * PCI BARs.  Validate the byte-sized capability field before using it as an
+ * array index or converting it to a PCIR_BAR() offset.
+ */
+#define VIRTIO_PCI_CAP_BAR_VALID(bar)	((uint8_t)(bar) <= 5)
+
 #define VIRTIO_PCI_COMMON_DFSELECT	0
 #define VIRTIO_PCI_COMMON_DF		4
 #define VIRTIO_PCI_COMMON_GFSELECT	8
@@ -129,5 +136,14 @@ struct virtio_pci_cfg_cap {
 #define VIRTIO_PCI_COMMON_Q_AVAILHI	44
 #define VIRTIO_PCI_COMMON_Q_USEDLO	48
 #define VIRTIO_PCI_COMMON_Q_USEDHI	52
+/*
+ * Optional extensions to struct virtio_pci_common_cfg.  Keep the base
+ * structure at its original 56-byte size so drivers remain compatible with
+ * devices which do not offer these features.
+ */
+#define VIRTIO_PCI_COMMON_Q_NDATA	56
+#define VIRTIO_PCI_COMMON_Q_RESET	58
+#define VIRTIO_PCI_COMMON_ADM_Q_IDX	60
+#define VIRTIO_PCI_COMMON_ADM_Q_NUM	62
 
 #endif /* _VIRTIO_PCI_MODERN_VAR_H */

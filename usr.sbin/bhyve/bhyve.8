@@ -573,10 +573,12 @@ setting accepts
 .Cm legacy
 or
 .Cm modern .
-If omitted, the historical legacy register interface and PCI identity are
-retained for compatibility with existing guests and launch scripts.
-The modern setting selects the standards-compliant non-transitional VirtIO PCI
-transport and device ID 0x1052.
+If omitted, the standards-compliant non-transitional VirtIO PCI transport and
+device ID 0x1052 are used.
+The explicit
+.Cm legacy
+setting retains bhyve's historical register interface for compatibility, but
+VirtIO 1.4 assigns no transitional PCI device ID to the input device.
 .It Cm virtio-vsock
 Virtio vsock interface for host-guest socket transport.
 The device is configured with
@@ -627,6 +629,21 @@ fails with
 See
 .Xr vsock 4
 for details.
+.Pp
+Every
+.Cm modern
+VirtIO device listed above advertises the VirtIO 1.4
+.Dv VIRTIO_F_RING_RESET
+facility.
+A guest may reset one virtqueue without resetting the device.
+While a queue reset is in progress,
+.Nm
+rejects notifications and configuration changes for that queue; after the
+reset completes, the guest may configure new queue addresses, size, and
+interrupt vector before enabling it again.
+The
+.Cm legacy
+transport does not advertise this facility.
 .It Cm ahci
 AHCI controller attached to arbitrary devices.
 .It Cm ahci-cd
@@ -1315,6 +1332,38 @@ Breakpoints are supported on Intel CPUs that support single stepping.
 Note that continuing from a breakpoint while interrupts are enabled in the
 guest may not work as expected due to timer interrupts firing while single
 stepping over the breakpoint.
+.Sh VIRTIO DIAGNOSTICS
+When built with DTrace support,
+.Nm
+provides
+.Dq virtio
+USDT probes for feature and status negotiation, queue enable, notification,
+queue-reset begin, completion and failure, configuration-window access,
+configuration changes, device reset, and transport errors.
+The first argument of every probe is the device-model name, such as
+.Dq vtnet ,
+.Dq vtblk ,
+or
+.Dq vtvsock ,
+so events from devices with the same queue index can be distinguished.
+They can be listed with:
+.Bd -literal -offset indent
+dtrace -l -P virtio
+.Ed
+.Pp
+Queue-reset probes include the queue index and a generation number, allowing a
+consumer to correlate an asynchronous reset completion with the reset that
+started it.
+The failure probe also includes the backend error.
+For example, the following reports queue-reset failures from running
+.Nm
+processes:
+.Bd -literal -offset indent
+dtrace -n 'virtio*:::transport-queue-reset-fail {
+	printf("%s queue=%u generation=%u error=%d\en",
+	    copyinstr(arg0), arg1, arg2, arg3);
+}'
+.Ed
 .Sh SIGNAL HANDLING
 .Nm
 deals with the following signals:

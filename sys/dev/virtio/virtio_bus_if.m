@@ -31,6 +31,7 @@ INTERFACE virtio_bus;
 
 HEADER {
 struct vq_alloc_info;
+struct virtqueue;
 };
 
 CODE {
@@ -44,6 +45,12 @@ CODE {
 	virtio_bus_default_config_generation(device_t dev)
 	{
 		return (0);
+	}
+
+	static int
+	virtio_bus_default_reset_vq(device_t dev, struct virtqueue *vq)
+	{
+		return (EOPNOTSUPP);
 	}
 };
 
@@ -85,10 +92,16 @@ METHOD void reinit_complete {
 	device_t	dev;
 };
 
+METHOD int reset_vq {
+	device_t		dev;
+	struct virtqueue	*vq;
+} DEFAULT virtio_bus_default_reset_vq;
+
 METHOD void notify_vq {
 	device_t	dev;
 	uint16_t	queue;
 	bus_size_t	offset;
+	uint16_t	avail_idx;
 };
 
 METHOD int config_generation {
@@ -108,4 +121,3 @@ METHOD void write_device_config {
 	const void	*src;
 	int		len;
 };
-

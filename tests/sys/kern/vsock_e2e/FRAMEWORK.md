@@ -29,8 +29,8 @@ Run the gates in this order.  Early failures are cheaper and more specific.
    `TOOLS` set to the Makefile's `.OBJDIR`.  It validates stream and SEQPACKET
    relays, an intentionally fragmented SCM_RIGHTS control reply, a 1 MiB
    stream, a single 200 KiB record, and the serial-console payload chunking
-   used to provision guests.  It also attacks input-provider path, command,
-   and status-event parsing without opening `/dev/uinput`.
+   used to provision guests.  It also validates rejected input-provider paths,
+   commands, and status events without opening `/dev/uinput`.
 3. **Guest verifier self-tests.** Each guest helper must have a
    `--self-test` mode for parsing and negative cases that do not require its
    device.  `run-alpine-auto.sh` executes it after a checksum-verified upload.
@@ -71,7 +71,8 @@ The default topology order is
 `net vsock-userspace vsock-kernel rng block scsi console 9p input combined`.
 Net, both vsock backends, RNG, block, SCSI, console, and 9P run both `modern`
 and `legacy`; input's real-VM data path runs only with its modern interface
-because upstream Alpine has no driver for bhyve's historical hybrid interface.
+because VirtIO 1.4 assigns no transitional PCI identity to the input device,
+and upstream Alpine has no driver for bhyve's historical hybrid interface.
 Every topology retains and verifies the network interface used to provision
 the guest.  SCSI uses a uniquely sized, fully backed CTL ramdisk which is
 removed on exit.  The legacy combined run contains net, vsock, RNG, block,
@@ -103,6 +104,20 @@ return to its post-warmup baseline.  This is the acceptance gate for slow
 descriptor, connection, and heap leaks; it complements rather than replaces
 the sanitizer and deterministic race harnesses.
 
+`VIRTIO_RESET_SOAK_ITERATIONS=N` repeatedly unbinds and rebinds every selected
+VirtIO PCI function, reruns the real network and selected device data checks,
+and bounds bhyve descriptor and RSS growth after every cycle.  Block and SCSI
+checks verify the original data after each reset; console, 9P, RNG, and vsock
+perform fresh transfers.  The one-shot input provider is excluded from this
+gate.  For example:
+
+```sh
+ISO=/path/to/alpine-virt.iso VM_FREE_GATES=no \
+TOPOLOGIES='net vsock-userspace vsock-kernel rng block scsi console 9p' \
+TRANSPORTS=modern \
+VIRTIO_RESET_SOAK_ITERATIONS=100 ./run-alpine-matrix.sh
+```
+
 `VM_FREE_GATES=no` skips the first two gates for a repeated VM-only debugging
 run; it is not an acceptance result by itself.  Gate 1 requires the bhyve
 source tree named by `SRCTOP` (default `/usr/src`).  The VM runners and host
@@ -110,13 +125,31 @@ controls otherwise work from either a source/object build or an installed test
 package, using helper binaries installed beside the scripts when no Makefile is
 present.
 
+## FreeBSD guest queue-reset acceptance
+
+The Alpine matrix validates bhyve as the VirtIO device.  The complementary
+FreeBSD guest transport test must run inside a disposable bhyve VM using a
+modern virtio-rng device:
+
+```sh
+ITERATIONS=100 /usr/tests/sys/kern/vsock_e2e/run-freebsd-vtrnd-reset.sh
+```
+
+The test requires `kern.vm_guest=bhyve`, an attached `vtrnd` below
+`virtio_pci`, and the `virtio:::queue-reset-end` DTrace probe.  It keeps
+random reads active while repeatedly detaching and reattaching the entropy
+driver, verifies random-source registration at each transition, and requires
+at least one successful queue-0 reset probe for every detach with no reset
+errors.  This distinguishes negotiated individual queue reset from the safe
+full-device-reset fallback.  Increase `ITERATIONS` for a teardown soak.
+
 ## Adding a device
 
 A new device is complete only when all of the following are present:
 
-- a device-harness target that includes the real backend and attacks descriptor
-  counts, directions, lengths, addresses, queue exhaustion, reset, and host-I/O
-  errors;
+- a device-harness target that includes the real backend and validates
+  descriptor counts, directions, lengths, addresses, queue exhaustion, reset,
+  and host-I/O errors;
 - a guest verifier with `--self-test`, unique PCI/driver binding checks, exact
   data assertions, awkward boundary sizes, repetitions, and useful failures;
 - a `DEVICES` selector and isolated topology in the Alpine runners;

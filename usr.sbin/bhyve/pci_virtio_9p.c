@@ -34,6 +34,7 @@
 #include <sys/linker_set.h>
 #include <sys/uio.h>
 #include <sys/capsicum.h>
+#include <sys/endian.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -56,6 +57,7 @@
 #define VT9P_RINGSZ	256
 #define	VT9P_MAXTAGSZ	256
 #define	VT9P_CONFIGSPACESZ	(VT9P_MAXTAGSZ + sizeof(uint16_t))
+#define	VIRTIO_9P_F_MOUNT_TAG	(1ULL << 0)
 
 static int pci_vt9p_debug;
 #define DPRINTF(params) if (pci_vt9p_debug) printf params
@@ -68,6 +70,7 @@ struct pci_vt9p_softc {
 	struct virtio_softc      vsc_vs;
 	struct vqueue_info       vsc_vq;
 	pthread_mutex_t          vsc_mtx;
+	pthread_cond_t           vsc_reset_cv;
 	uint64_t                 vsc_cfg;
 	uint64_t                 vsc_features;
 	char *                   vsc_rootpath;
@@ -105,6 +108,7 @@ static void pci_vt9p_reset(void *);
 static void pci_vt9p_notify(void *, struct vqueue_info *);
 static int pci_vt9p_cfgread(void *, int, int, uint32_t *);
 static void pci_vt9p_neg_features(void *, uint64_t);
+static void pci_vt9p_set_tag(struct pci_vt9p_softc *, const char *);
 
 static void
 pci_vt9p_configure_connection(struct l9p_connection *conn)
@@ -116,6 +120,17 @@ pci_vt9p_configure_connection(struct l9p_connection *conn)
 	conn->lc_lt.lt_drop_response = pci_vt9p_drop;
 }
 
+static void
+pci_vt9p_set_tag(struct pci_vt9p_softc *sc, const char *tag)
+{
+	uint16_t tag_len;
+
+	tag_len = (uint16_t)strlen(tag);
+	sc->vsc_config->tag_len = vi_pci_is_modern(&sc->vsc_vs) ?
+	    htole16(tag_len) : tag_len;
+	memcpy(sc->vsc_config->tag, tag, tag_len);
+}
+
 static struct virtio_consts vt9p_vi_consts = {
 	.vc_name =	"vt9p",
 	.vc_nvq =	1,
@@ -124,22 +139,24 @@ static struct virtio_consts vt9p_vi_consts = {
 	.vc_qnotify =	pci_vt9p_notify,
 	.vc_cfgread =	pci_vt9p_cfgread,
 	.vc_apply_features = pci_vt9p_neg_features,
-	.vc_hv_caps =	(1 << 0),
+	.vc_hv_caps =	VIRTIO_9P_F_MOUNT_TAG,
 };
 
-static void
-pci_vt9p_reset(void *vsc)
+static int
+pci_vt9p_reconnect(struct pci_vt9p_softc *sc)
 {
-	struct pci_vt9p_softc *sc;
 	struct l9p_connection *conn, *newconn;
 
-	sc = vsc;
-
-	DPRINTF(("vt9p: device reset requested !\n"));
-	sc->vsc_generation++;
-	vi_reset_dev(&sc->vsc_vs);
-	if (sc->vsc_resetting)
-		return;
+	/*
+	 * A reconnect may have dropped vsc_mtx while draining lib9p just as
+	 * another vCPU starts a full device reset.  The full reset must not
+	 * publish status zero until that drain has finished: otherwise the
+	 * driver can configure and kick a new queue while the stale callback is
+	 * still replacing vsc_conn.  Serialize reset generations here instead
+	 * of treating an in-progress reset as a completed one.
+	 */
+	while (sc->vsc_resetting)
+		pthread_cond_wait(&sc->vsc_reset_cv, &sc->vsc_mtx);
 	sc->vsc_resetting = true;
 	conn = sc->vsc_conn;
 	sc->vsc_conn = NULL;
@@ -161,14 +178,35 @@ pci_vt9p_reset(void *vsc)
 	pthread_mutex_lock(&sc->vsc_mtx);
 	sc->vsc_conn = newconn;
 	sc->vsc_resetting = false;
+	/*
+	 * Every kick observed while the old connection was draining belongs to
+	 * the queue incarnation invalidated by the reset.  Never replay it
+	 * against the replacement connection; the driver must kick the newly
+	 * enabled queue.
+	 */
+	sc->vsc_notify_pending = false;
+	pthread_cond_broadcast(&sc->vsc_reset_cv);
 	if (newconn == NULL) {
 		WPRINTF(("vt9p: cannot reinitialize 9P connection\n"));
-		vi_set_needs_reset(&sc->vsc_vs);
-	} else if (sc->vsc_notify_pending) {
-		/* A guest kick raced the unlocked connection drain. */
-		sc->vsc_notify_pending = false;
-		pci_vt9p_notify(sc, &sc->vsc_vq);
+		return (EIO);
 	}
+	return (0);
+}
+
+static void
+pci_vt9p_reset(void *vsc)
+{
+	struct pci_vt9p_softc *sc;
+	int error;
+
+	sc = vsc;
+	DPRINTF(("vt9p: device reset requested !\n"));
+	sc->vsc_generation++;
+	vi_reset_dev(&sc->vsc_vs);
+	sc->vsc_features = 0;
+	error = pci_vt9p_reconnect(sc);
+	if (error != 0)
+		vi_set_needs_reset(&sc->vsc_vs);
 }
 
 static void
@@ -185,10 +223,11 @@ pci_vt9p_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 	struct pci_vt9p_softc *sc = vsc;
 	void *ptr;
 
-	if (offset < 0 || size <= 0 ||
+	if (offset < 0 || (size != 1 && size != 2 && size != 4) ||
 	    (size_t)offset > VT9P_CONFIGSPACESZ ||
 	    (size_t)size > VT9P_CONFIGSPACESZ - (size_t)offset)
 		return (EINVAL);
+	*retval = 0;
 	ptr = (uint8_t *)sc->vsc_config + offset;
 	memcpy(retval, ptr, size);
 	return (0);
@@ -339,6 +378,7 @@ pci_vt9p_init(struct pci_devinst *pi, nvlist_t *nvl)
 	pthread_mutexattr_t mtx_attr;
 	int rootfd;
 	bool intr_initialized, mtx_attr_initialized, mtx_initialized;
+	bool reset_cv_initialized;
 	bool ro;
 	cap_rights_t rootcap;
 
@@ -347,6 +387,7 @@ pci_vt9p_init(struct pci_devinst *pi, nvlist_t *nvl)
 	intr_initialized = false;
 	mtx_attr_initialized = false;
 	mtx_initialized = false;
+	reset_cv_initialized = false;
 	ro = get_config_bool_node_default(nvl, "ro", false);
 	sharename = get_config_value_node(nvl, "sharename");
 	if (sharename == NULL) {
@@ -385,6 +426,9 @@ pci_vt9p_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (pthread_mutex_init(&sc->vsc_mtx, &mtx_attr) != 0)
 		goto fail;
 	mtx_initialized = true;
+	if (pthread_cond_init(&sc->vsc_reset_cv, NULL) != 0)
+		goto fail;
+	reset_cv_initialized = true;
 	pthread_mutexattr_destroy(&mtx_attr);
 	mtx_attr_initialized = false;
 
@@ -401,20 +445,19 @@ pci_vt9p_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (cap_rights_limit(rootfd, &rootcap) != 0)
 		goto fail;
 
-	sc->vsc_config->tag_len = (uint16_t)strlen(sharename);
-	memcpy(sc->vsc_config->tag, sharename, sc->vsc_config->tag_len);
-
 	vi_softc_linkup(&sc->vsc_vs, &vt9p_vi_consts, sc, pi, &sc->vsc_vq);
 	sc->vsc_vs.vs_mtx = &sc->vsc_mtx;
 	sc->vsc_vq.vq_qsize = VT9P_RINGSZ;
 	if (vi_pci_select_transport(&sc->vsc_vs, nvl,
 	    VIRTIO_PCI_LEGACY_DEFAULT) != 0)
 		goto fail;
+	pci_vt9p_set_tag(sc, sharename);
 
 	if (vi_pci_is_modern(&sc->vsc_vs))
 		vi_pci_modern_set_identity(&sc->vsc_vs, VIRTIO_ID_9P);
 	else {
-		pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_9P);
+		pci_set_cfgdata16(pi, PCIR_DEVICE,
+		    VIRTIO_PCI_TRANSITIONAL_9P);
 		pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
 		pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_9P);
 		pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);
@@ -458,6 +501,8 @@ fail:
 		free(sc->vsc_vs.vs_modern);
 		if (intr_initialized)
 			pthread_mutex_destroy(&sc->vsc_vs.vs_isr_mtx);
+		if (reset_cv_initialized)
+			pthread_cond_destroy(&sc->vsc_reset_cv);
 		if (mtx_initialized)
 			pthread_mutex_destroy(&sc->vsc_mtx);
 		free(sc->vsc_config);

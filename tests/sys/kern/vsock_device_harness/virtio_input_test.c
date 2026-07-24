@@ -36,6 +36,34 @@ static ssize_t test_write(int, const void *, size_t);
 #undef ioctl
 #undef read
 #undef write
+#include "virtio_1_4_spec.h"
+#include "bhyve_virtio_compat.h"
+
+/* Keep test stimuli independent of the device's protocol definitions. */
+#undef VIRTIO_CONFIG_STATUS_DRIVER_OK
+#define	VIRTIO_CONFIG_STATUS_DRIVER_OK	VIRTIO14_STATUS_DRIVER_OK
+#undef VIRTIO_F_IN_ORDER
+#define	VIRTIO_F_IN_ORDER		VIRTIO14_F_IN_ORDER
+#undef VIRTIO_ID_INPUT
+#define	VIRTIO_ID_INPUT			VIRTIO14_DEVICE_INPUT
+#undef VTINPUT_CFG_ABS_INFO
+#define	VTINPUT_CFG_ABS_INFO		VIRTIO14_INPUT_CFG_ABS_INFO
+#undef VTINPUT_CFG_UNSET
+#define	VTINPUT_CFG_UNSET		VIRTIO14_INPUT_CFG_UNSET
+#undef VTINPUT_CFG_ID_NAME
+#define	VTINPUT_CFG_ID_NAME		VIRTIO14_INPUT_CFG_ID_NAME
+#undef VTINPUT_CFG_ID_SERIAL
+#define	VTINPUT_CFG_ID_SERIAL		VIRTIO14_INPUT_CFG_ID_SERIAL
+#undef VTINPUT_CFG_ID_DEVIDS
+#define	VTINPUT_CFG_ID_DEVIDS		VIRTIO14_INPUT_CFG_ID_DEVIDS
+#undef VTINPUT_CFG_PROP_BITS
+#define	VTINPUT_CFG_PROP_BITS		VIRTIO14_INPUT_CFG_PROP_BITS
+#undef VTINPUT_CFG_EV_BITS
+#define	VTINPUT_CFG_EV_BITS		VIRTIO14_INPUT_CFG_EV_BITS
+#undef VTINPUT_EVENTQ
+#define	VTINPUT_EVENTQ			VIRTIO14_INPUT_EVENTQ
+#undef VTINPUT_STATUSQ
+#define	VTINPUT_STATUSQ			VIRTIO14_INPUT_STATUSQ
 
 struct nvlist {
 	int unused;
@@ -62,7 +90,7 @@ static int g_getchain_calls;
 static bool g_require_queue_lock;
 static int g_bad_chain_call;
 static int g_bad_chain_n;
-static uint8_t g_iov_buf[64][sizeof(struct vtinput_event)];
+static uint8_t g_iov_buf[64][VIRTIO14_INPUT_EVENT_SIZE];
 static int g_rel_calls;
 static uint32_t g_rel_len[64];
 static uint16_t g_rel_idx[64];
@@ -77,6 +105,12 @@ static int g_read_event_index;
 static char g_config_path[128];
 static char g_legacy_opts[128];
 static int g_legacy_parse_calls;
+static bool g_ioctl_abs_success;
+static bool g_ioctl_name_success;
+static bool g_ioctl_devids_success;
+static bool g_ioctl_prop_success;
+static bool g_ioctl_ev_success;
+static unsigned long g_last_ioctl;
 
 static void
 reset_mocks(void)
@@ -91,7 +125,7 @@ reset_mocks(void)
 	g_getchain_n = 1;
 	g_getchain_readable = 0;
 	g_getchain_writable = 1;
-	g_getchain_len = sizeof(struct vtinput_event);
+	g_getchain_len = VIRTIO14_INPUT_EVENT_SIZE;
 	g_getchain_null = false;
 	g_getchain_split = false;
 	g_getchain_calls = 0;
@@ -112,6 +146,12 @@ reset_mocks(void)
 	g_config_path[0] = '\0';
 	g_legacy_opts[0] = '\0';
 	g_legacy_parse_calls = 0;
+	g_ioctl_abs_success = false;
+	g_ioctl_name_success = false;
+	g_ioctl_devids_success = false;
+	g_ioctl_prop_success = false;
+	g_ioctl_ev_success = false;
+	g_last_ioctl = 0;
 }
 
 const char *
@@ -155,8 +195,88 @@ test_close(int fd __unused)
 }
 
 static int
-test_ioctl(int fd __unused, unsigned long request __unused, ...)
+test_ioctl(int fd __unused, unsigned long request, ...)
 {
+	const int key_count = howmany(KEY_CNT, sizeof(long) * 8) *
+	    sizeof(long);
+	const int prop_count = howmany(INPUT_PROP_CNT, sizeof(long) * 8) *
+	    sizeof(long);
+	va_list ap;
+
+	g_last_ioctl = request;
+	if (request == EVIOCGABS(ABS_X)) {
+		struct input_absinfo *abs;
+
+		if (!g_ioctl_abs_success) {
+			errno = EINVAL;
+			return (-1);
+		}
+		va_start(ap, request);
+		abs = va_arg(ap, struct input_absinfo *);
+		va_end(ap);
+		memset(abs, 0, sizeof(*abs));
+		abs->minimum = -100;
+		abs->maximum = 100;
+		abs->fuzz = 2;
+		abs->flat = 3;
+		abs->resolution = 4;
+		return (0);
+	}
+	if (request == EVIOCGNAME(127)) {
+		char *name;
+
+		if (!g_ioctl_name_success) {
+			errno = EINVAL;
+			return (-1);
+		}
+		va_start(ap, request);
+		name = va_arg(ap, char *);
+		va_end(ap);
+		memcpy(name, "mock-input", sizeof("mock-input"));
+		return (sizeof("mock-input"));
+	}
+	if (request == EVIOCGID) {
+		struct input_id *ids;
+
+		if (!g_ioctl_devids_success) {
+			errno = EINVAL;
+			return (-1);
+		}
+		va_start(ap, request);
+		ids = va_arg(ap, struct input_id *);
+		va_end(ap);
+		ids->bustype = UINT16_C(0x1122);
+		ids->vendor = UINT16_C(0x3344);
+		ids->product = UINT16_C(0x5566);
+		ids->version = UINT16_C(0x7788);
+		return (0);
+	}
+	if (request == EVIOCGPROP(prop_count)) {
+		uint8_t *bitmap;
+
+		if (!g_ioctl_prop_success) {
+			errno = EINVAL;
+			return (-1);
+		}
+		va_start(ap, request);
+		bitmap = va_arg(ap, uint8_t *);
+		va_end(ap);
+		bitmap[3] = 0x80;
+		return (0);
+	}
+	if (request == EVIOCGBIT(EV_KEY, key_count)) {
+		uint8_t *bitmap;
+
+		if (!g_ioctl_ev_success) {
+			errno = EINVAL;
+			return (-1);
+		}
+		va_start(ap, request);
+		bitmap = va_arg(ap, uint8_t *);
+		va_end(ap);
+		bitmap[17] = 0x04;
+		return (0);
+	}
 	return (0);
 }
 
@@ -239,12 +359,15 @@ int
 vi_pci_select_transport(struct virtio_softc *vs, const nvlist_t *nvl __unused,
     enum virtio_pci_transport_policy policy)
 {
-	ATF_CHECK(policy == VIRTIO_PCI_LEGACY_DEFAULT);
+	ATF_CHECK(policy == VIRTIO_PCI_MODERN_DEFAULT);
 	if (g_transport != NULL && strcmp(g_transport, "bogus") == 0)
 		return (EINVAL);
-	vs->vs_transport = g_transport != NULL &&
-	    strcmp(g_transport, "modern") == 0 ?
-	    VIRTIO_PCI_TRANSPORT_MODERN : VIRTIO_PCI_TRANSPORT_LEGACY;
+	if (g_transport == NULL)
+		vs->vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	else
+		vs->vs_transport = strcmp(g_transport, "legacy") == 0 ?
+		    VIRTIO_PCI_TRANSPORT_LEGACY :
+		    VIRTIO_PCI_TRANSPORT_MODERN;
 	return (0);
 }
 
@@ -346,7 +469,7 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 		iov[0].iov_base = g_iov_buf[slot];
 		iov[0].iov_len = 3;
 		iov[1].iov_base = g_iov_buf[slot] + 3;
-		iov[1].iov_len = sizeof(struct vtinput_event) - 3;
+		iov[1].iov_len = VIRTIO14_INPUT_EVENT_SIZE - 3;
 	} else if (niov > 0) {
 		iov[0].iov_base = g_getchain_null ? NULL : g_iov_buf[slot];
 		iov[0].iov_len = g_getchain_len;
@@ -435,10 +558,26 @@ ATF_TC_BODY(transport_compatibility, tc)
 	reset_mocks();
 	memset(&pi, 0, sizeof(pi));
 	ATF_REQUIRE(pci_vtinput_init(&pi, &nvl) == 0);
+	ATF_CHECK(g_modern_init == 2);
+	ATF_CHECK(g_io_bar == 0);
+	ATF_CHECK(g_modern_identity == VIRTIO_ID_INPUT);
+	ATF_CHECK(pci_de_vinput.pe_cfgread == vi_pci_modern_cfgread);
+	ATF_CHECK(pci_de_vinput.pe_cfgwrite == vi_pci_modern_cfgwrite);
+	free_input_softc(&pi);
+
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_transport = "legacy";
+	ATF_REQUIRE(pci_vtinput_init(&pi, &nvl) == 0);
 	ATF_CHECK(g_modern_init == 0);
 	ATF_CHECK(g_io_bar == 1);
 	memcpy(&value, &pi.pi_cfgdata[PCIR_DEVICE], sizeof(value));
-	ATF_CHECK(value == VIRTIO_DEV_INPUT);
+	/*
+	 * Explicit legacy mode preserves bhyve's historical non-standard
+	 * identity.  It is deliberately not represented by a VIRTIO14_ oracle
+	 * value because section 4.1.2 defines no transitional input ID.
+	 */
+	ATF_CHECK(value == BHYVE_COMPAT_VIRTIO_INPUT_LEGACY_DEVICE_ID);
 	free_input_softc(&pi);
 
 	reset_mocks();
@@ -517,6 +656,7 @@ ATF_TC_BODY(syn_report_flushes_frame, tc)
 	ATF_REQUIRE(pthread_mutex_init(&mtx, NULL) == 0);
 	sc.vsc_vs.vs_mtx = &mtx;
 	sc.vsc_queues[VTINPUT_EVENTQ].vq_vs = &sc.vsc_vs;
+	vq_set_allocated(&sc.vsc_queues[VTINPUT_EVENTQ], true);
 	g_require_queue_lock = true;
 	sc.vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	sc.vsc_eventqueue.size = VTINPUT_MAX_PKT_LEN;
@@ -533,8 +673,8 @@ ATF_TC_BODY(syn_report_flushes_frame, tc)
 	vtinput_read_event(10, EVF_READ, &sc);
 	ATF_CHECK(g_read_event_index == 2);
 	ATF_CHECK(g_rel_calls == 2);
-	ATF_CHECK(g_rel_len[0] == sizeof(struct vtinput_event));
-	ATF_CHECK(g_rel_len[1] == sizeof(struct vtinput_event));
+	ATF_CHECK(g_rel_len[0] == VIRTIO14_INPUT_EVENT_SIZE);
+	ATF_CHECK(g_rel_len[1] == VIRTIO14_INPUT_EVENT_SIZE);
 	ATF_CHECK(g_end_calls == 1);
 	ATF_CHECK(sc.vsc_eventqueue.idx == 0);
 	free(sc.vsc_eventqueue.events);
@@ -559,7 +699,9 @@ ATF_TC_BODY(hostile_status_descriptors, tc)
 		switch (kind) {
 		case 0: g_getchain_n = VTINPUT_RINGSZ + 1; break;
 		case 1: g_getchain_readable = 0; g_getchain_writable = 1; break;
-		case 2: g_getchain_len = sizeof(struct vtinput_event) - 1; break;
+		case 2:
+			g_getchain_len = VIRTIO14_INPUT_EVENT_SIZE - 1;
+			break;
 		case 3: g_getchain_null = true; break;
 		case 4: g_getchain_n = -1; break;
 		}
@@ -589,7 +731,9 @@ ATF_TC_BODY(hostile_event_descriptors, tc)
 		switch (kind) {
 		case 0: g_getchain_n = VTINPUT_RINGSZ + 1; break;
 		case 1: g_getchain_readable = 1; g_getchain_writable = 0; break;
-		case 2: g_getchain_len = sizeof(struct vtinput_event) - 1; break;
+		case 2:
+			g_getchain_len = VIRTIO14_INPUT_EVENT_SIZE - 1;
+			break;
 		case 3: g_getchain_null = true; break;
 		}
 		vtinput_eventqueue_send_events(&queue, &vq);
@@ -603,18 +747,20 @@ ATF_TC_BODY(scatter_gather_events, tc)
 {
 	struct pci_vtinput_softc sc;
 	struct vtinput_eventqueue queue;
-	struct vtinput_event event;
 	struct input_event host_event;
 	struct vqueue_info vq;
+	const uint8_t status_wire[VIRTIO14_INPUT_EVENT_SIZE] = {
+		0x11, 0x00, 0x01, 0x00, 0x78, 0x56, 0x34, 0x12
+	};
+	const uint8_t expected_event_wire[VIRTIO14_INPUT_EVENT_SIZE] = {
+		0x34, 0x12, 0x78, 0x56, 0x78, 0x56, 0x34, 0x12
+	};
 
 	reset_mocks();
 	memset(&sc, 0, sizeof(sc));
 	memset(&vq, 0, sizeof(vq));
 	sc.vsc_fd = 10;
-	event.type = EV_LED;
-	event.code = LED_CAPSL;
-	event.value = 1;
-	memcpy(g_iov_buf[0], &event, sizeof(event));
+	memcpy(g_iov_buf[0], status_wire, sizeof(status_wire));
 	g_descs = 1;
 	g_getchain_n = 2;
 	g_getchain_readable = 2;
@@ -622,19 +768,18 @@ ATF_TC_BODY(scatter_gather_events, tc)
 	g_getchain_split = true;
 	pci_vtinput_notify_statusq(&sc, &vq);
 	ATF_CHECK(g_host_write_calls == 1);
-	ATF_CHECK(g_host_write_event.type == EV_LED);
-	ATF_CHECK(g_host_write_event.code == LED_CAPSL);
-	ATF_CHECK(g_host_write_event.value == 1);
+	ATF_CHECK(g_host_write_event.type == 0x11);
+	ATF_CHECK(g_host_write_event.code == 0x01);
+	ATF_CHECK(g_host_write_event.value == 0x12345678);
 	ATF_CHECK(g_rel_calls == 1 && g_rel_len[0] == 0);
 
 	reset_mocks();
 	memset(&queue, 0, sizeof(queue));
 	memset(&host_event, 0, sizeof(host_event));
-	host_event.type = EV_KEY;
-	host_event.code = KEY_A;
-	host_event.value = 1;
+	host_event.type = 0x1234;
+	host_event.code = 0x5678;
+	host_event.value = 0x12345678;
 	ATF_REQUIRE(vtinput_eventqueue_add_event(&queue, &host_event) == 0);
-	event = queue.events[0].event;
 	g_descs = 1;
 	g_getchain_n = 2;
 	g_getchain_readable = 0;
@@ -642,8 +787,9 @@ ATF_TC_BODY(scatter_gather_events, tc)
 	g_getchain_split = true;
 	vtinput_eventqueue_send_events(&queue, &vq);
 	ATF_CHECK(g_rel_calls == 1 &&
-	    g_rel_len[0] == sizeof(struct vtinput_event));
-	ATF_CHECK(memcmp(g_iov_buf[0], &event, sizeof(event)) == 0);
+	    g_rel_len[0] == VIRTIO14_INPUT_EVENT_SIZE);
+	ATF_CHECK(memcmp(g_iov_buf[0], expected_event_wire,
+	    sizeof(expected_event_wire)) == 0);
 	free(queue.events);
 }
 
@@ -666,6 +812,59 @@ ATF_TC_BODY(status_error_finishes_completions, tc)
 	ATF_CHECK(g_host_write_calls == 1);
 	ATF_CHECK(g_rel_calls == 1);
 	ATF_CHECK(g_end_calls == 1);
+}
+
+ATF_TC_WITHOUT_HEAD(in_order_completion);
+ATF_TC_BODY(in_order_completion, tc)
+{
+	struct pci_vtinput_softc sc;
+	struct vtinput_eventqueue queue;
+	struct vtinput_event events[3];
+	struct input_event host_event;
+	struct vqueue_info vq;
+
+	ATF_CHECK((vtinput_vi_consts.vc_hv_caps & VIRTIO_F_IN_ORDER) != 0);
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	memset(&vq, 0, sizeof(vq));
+	sc.vsc_fd = 10;
+	g_descs = nitems(events);
+	g_getchain_readable = 1;
+	g_getchain_writable = 0;
+	for (size_t i = 0; i < nitems(events); i++) {
+		events[i].type = EV_LED;
+		events[i].code = LED_CAPSL;
+		events[i].value = i;
+		memcpy(g_iov_buf[i], &events[i], VIRTIO14_INPUT_EVENT_SIZE);
+	}
+	pci_vtinput_notify_statusq(&sc, &vq);
+	ATF_CHECK(g_host_write_calls == (int)nitems(events));
+	ATF_CHECK(g_rel_calls == (int)nitems(events));
+	for (size_t i = 0; i < nitems(events); i++)
+		ATF_CHECK(g_rel_idx[i] == i && g_rel_len[i] == 0);
+
+	reset_mocks();
+	memset(&queue, 0, sizeof(queue));
+	memset(&host_event, 0, sizeof(host_event));
+	host_event.type = EV_KEY;
+	host_event.code = KEY_A;
+	g_descs = nitems(events);
+	for (size_t i = 0; i < nitems(events); i++) {
+		host_event.value = i;
+		ATF_REQUIRE(vtinput_eventqueue_add_event(&queue,
+		    &host_event) == 0);
+		events[i] = queue.events[i].event;
+	}
+	vtinput_eventqueue_send_events(&queue, &vq);
+	ATF_CHECK(g_rel_calls == (int)nitems(events));
+	for (size_t i = 0; i < nitems(events); i++) {
+		ATF_CHECK(g_rel_idx[i] == i &&
+		    g_rel_len[i] == VIRTIO14_INPUT_EVENT_SIZE);
+		ATF_CHECK(memcmp(g_iov_buf[i], &events[i],
+		    VIRTIO14_INPUT_EVENT_SIZE) == 0);
+	}
+	free(queue.events);
 }
 
 ATF_TC_WITHOUT_HEAD(partial_frame_rollback);
@@ -704,6 +903,8 @@ ATF_TC_BODY(oversized_frame_dropped, tc)
 	memset(&sc, 0, sizeof(sc));
 	sc.vsc_fd = 10;
 	sc.vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	sc.vsc_queues[VTINPUT_EVENTQ].vq_vs = &sc.vsc_vs;
+	vq_set_allocated(&sc.vsc_queues[VTINPUT_EVENTQ], true);
 	sc.vsc_eventqueue.size = VTINPUT_MAX_FRAME_EVENTS;
 	sc.vsc_eventqueue.idx = VTINPUT_MAX_FRAME_EVENTS;
 	g_read_events[0].type = EV_SYN;
@@ -726,9 +927,14 @@ ATF_TC_BODY(reset_discards_stale_events, tc)
 	sc.vsc_fd = 10;
 	sc.vsc_eventqueue.idx = 2;
 	sc.vsc_drop_frame = true;
+	memset(&sc.vsc_config, 0xa5, sizeof(sc.vsc_config));
+	sc.vsc_config_valid = 1;
 	pci_vtinput_reset(&sc);
 	ATF_CHECK(sc.vsc_eventqueue.idx == 0);
 	ATF_CHECK(!sc.vsc_drop_frame);
+	ATF_CHECK(!sc.vsc_config_valid);
+	for (size_t i = 0; i < sizeof(sc.vsc_config); i++)
+		ATF_CHECK_EQ(((uint8_t *)&sc.vsc_config)[i], 0);
 
 	ATF_REQUIRE(pthread_mutex_init(&mtx, NULL) == 0);
 	sc.vsc_vs.vs_mtx = &mtx;
@@ -742,6 +948,61 @@ ATF_TC_BODY(reset_discards_stale_events, tc)
 	pthread_mutex_destroy(&mtx);
 }
 
+ATF_TC_WITHOUT_HEAD(queue_reset_drops_host_events);
+ATF_TC_BODY(queue_reset_drops_host_events, tc)
+{
+	struct pci_vtinput_softc sc;
+	pthread_mutex_t mtx;
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_fd = 10;
+	sc.vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	ATF_REQUIRE(pthread_mutex_init(&mtx, NULL) == 0);
+	sc.vsc_vs.vs_mtx = &mtx;
+	sc.vsc_queues[VTINPUT_EVENTQ].vq_vs = &sc.vsc_vs;
+	/* Queue reset has completed, so VQ_ALLOC and all mappings are zero. */
+	g_read_events[0].type = EV_KEY;
+	g_read_events[1].type = EV_SYN;
+	g_read_events[1].code = SYN_REPORT;
+	g_read_event_count = 2;
+
+	vtinput_read_event(10, EVF_READ, &sc);
+
+	ATF_CHECK_EQ(g_read_event_index, 2);
+	ATF_CHECK_EQ(g_getchain_calls, 0);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+	ATF_CHECK_EQ(g_end_calls, 0);
+	pthread_mutex_destroy(&mtx);
+}
+
+ATF_TC_WITHOUT_HEAD(queue_reset_isolated);
+ATF_TC_BODY(queue_reset_isolated, tc)
+{
+	struct pci_vtinput_softc sc;
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_queues[VTINPUT_EVENTQ].vq_num = VTINPUT_EVENTQ;
+	sc.vsc_queues[VTINPUT_STATUSQ].vq_num = VTINPUT_STATUSQ;
+	sc.vsc_eventqueue.idx = 2;
+	sc.vsc_drop_frame = true;
+
+	ATF_CHECK_EQ(pci_vtinput_qreset(&sc,
+	    &sc.vsc_queues[VTINPUT_STATUSQ], 1), 0);
+	ATF_CHECK_EQ(sc.vsc_eventqueue.idx, 2);
+	ATF_CHECK(sc.vsc_drop_frame);
+
+	ATF_CHECK_EQ(pci_vtinput_qreset(&sc,
+	    &sc.vsc_queues[VTINPUT_EVENTQ], 2), 0);
+	ATF_CHECK_EQ(sc.vsc_eventqueue.idx, 0);
+	ATF_CHECK(!sc.vsc_drop_frame);
+
+	sc.vsc_queues[VTINPUT_EVENTQ].vq_num = VTINPUT_MAXQ;
+	ATF_CHECK_EQ(pci_vtinput_qreset(&sc,
+	    &sc.vsc_queues[VTINPUT_EVENTQ], 3), EINVAL);
+}
+
 ATF_TC_WITHOUT_HEAD(config_bounds);
 ATF_TC_BODY(config_bounds, tc)
 {
@@ -753,7 +1014,7 @@ ATF_TC_BODY(config_bounds, tc)
 	ATF_CHECK(pci_vtinput_cfgread(&sc, -1, 1, &value) == 0);
 	ATF_CHECK(value == 0);
 	value = UINT32_MAX;
-	ATF_CHECK(pci_vtinput_cfgread(&sc, sizeof(sc.vsc_config), 4,
+	ATF_CHECK(pci_vtinput_cfgread(&sc, VIRTIO14_INPUT_CONFIG_SIZE, 4,
 	    &value) == 0);
 	ATF_CHECK(value == 0);
 	value = UINT32_MAX;
@@ -763,13 +1024,173 @@ ATF_TC_BODY(config_bounds, tc)
 	ATF_CHECK(pci_vtinput_cfgwrite(&sc, -1, 1, 0) == 1);
 	ATF_CHECK(pci_vtinput_cfgwrite(&sc, INT_MAX, INT_MAX, 0) == 1);
 	ATF_CHECK(pci_vtinput_cfgwrite(&sc, 1, 2, 0) == 1);
-	ATF_CHECK(pci_vtinput_cfgwrite(&sc, 0, 2, 0x1101) == 0);
-	ATF_CHECK(sc.vsc_config.select == 1);
-	ATF_CHECK(sc.vsc_config.subsel == 0x11);
+	ATF_CHECK(pci_vtinput_cfgwrite(&sc, 0, 2,
+	    VIRTIO14_INPUT_CFG_ID_NAME |
+	    VIRTIO14_INPUT_CFG_EV_BITS << 8) == 0);
+	ATF_CHECK(sc.vsc_config.select == VIRTIO14_INPUT_CFG_ID_NAME);
+	ATF_CHECK(sc.vsc_config.subsel == VIRTIO14_INPUT_CFG_EV_BITS);
+}
+
+ATF_TC_WITHOUT_HEAD(config_responses);
+ATF_TC_BODY(config_responses, tc)
+{
+	struct pci_vtinput_softc sc;
+	uint32_t value;
+
+	reset_mocks();
+	memset(&sc, 0xa5, sizeof(sc));
+	sc.vsc_fd = 10;
+	sc.vsc_config.select = VTINPUT_CFG_ABS_INFO;
+	sc.vsc_config.subsel = ABS_X;
+	sc.vsc_config_valid = 0;
+	g_ioctl_abs_success = true;
+	value = 0;
+	ATF_CHECK_EQ(pci_vtinput_cfgread(&sc,
+	    VIRTIO14_INPUT_CONFIG_SIZE_OFF, 1, &value), 0);
+	ATF_CHECK_EQ(value, VIRTIO14_INPUT_ABSINFO_SIZE);
+	ATF_CHECK_EQ(g_last_ioctl, EVIOCGABS(ABS_X));
+	ATF_CHECK_EQ(sc.vsc_config.u.abs.min, (uint32_t)-100);
+	ATF_CHECK_EQ(sc.vsc_config.u.abs.max, 100);
+	ATF_CHECK_EQ(sc.vsc_config.u.abs.fuzz, 2);
+	ATF_CHECK_EQ(sc.vsc_config.u.abs.flat, 3);
+	ATF_CHECK_EQ(sc.vsc_config.u.abs.res, 4);
+	for (size_t i = 0; i < VIRTIO14_INPUT_CONFIG_RESERVED_SIZE; i++)
+		ATF_CHECK_EQ(sc.vsc_config.reserved[i], 0);
+
+	memset(sc.vsc_config.u.bitmap, 0xa5,
+	    VIRTIO14_INPUT_CONFIG_UNION_SIZE);
+	sc.vsc_config.select = UINT8_MAX;
+	sc.vsc_config.subsel = UINT8_MAX;
+	sc.vsc_config.size = UINT8_MAX;
+	sc.vsc_config_valid = 0;
+	value = UINT32_MAX;
+	ATF_CHECK_EQ(pci_vtinput_cfgread(&sc,
+	    VIRTIO14_INPUT_CONFIG_SIZE_OFF, 1, &value), 0);
+	ATF_CHECK_EQ(value, 0);
+	ATF_CHECK(sc.vsc_config_valid);
+	for (size_t i = 0; i < VIRTIO14_INPUT_CONFIG_UNION_SIZE; i++)
+		ATF_CHECK_EQ(sc.vsc_config.u.bitmap[i], 0);
+
+	sc.vsc_config.select = VTINPUT_CFG_ID_NAME;
+	sc.vsc_config.subsel = 0;
+	sc.vsc_config_valid = 0;
+	g_ioctl_name_success = true;
+	value = 0;
+	ATF_CHECK_EQ(pci_vtinput_cfgread(&sc,
+	    VIRTIO14_INPUT_CONFIG_SIZE_OFF, 1, &value), 0);
+	ATF_CHECK_EQ(value, strlen("mock-input"));
+	ATF_CHECK(memcmp(sc.vsc_config.u.string, "mock-input",
+	    strlen("mock-input")) == 0);
+	for (size_t i = strlen("mock-input");
+	    i < VIRTIO14_INPUT_CONFIG_STRING_SIZE; i++)
+		ATF_CHECK_EQ(sc.vsc_config.u.string[i], 0);
+}
+
+ATF_TC_WITHOUT_HEAD(config_selector_matrix);
+ATF_TC_BODY(config_selector_matrix, tc)
+{
+	struct pci_vtinput_softc sc;
+	uint32_t value;
+
+	/* An unsupported serial number is represented by a zero size. */
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_fd = 10;
+	sc.vsc_config.select = VIRTIO14_INPUT_CFG_ID_SERIAL;
+	ATF_CHECK_EQ(pci_vtinput_cfgread(&sc,
+	    VIRTIO14_INPUT_CONFIG_SIZE_OFF, 1, &value), 0);
+	ATF_CHECK_EQ(value, 0);
+	ATF_CHECK_EQ(g_last_ioctl, 0);
+
+	/* Device IDs are converted into the document's little-endian fields. */
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_fd = 10;
+	sc.vsc_config.select = VIRTIO14_INPUT_CFG_ID_DEVIDS;
+	g_ioctl_devids_success = true;
+	ATF_CHECK_EQ(pci_vtinput_cfgread(&sc,
+	    VIRTIO14_INPUT_CONFIG_SIZE_OFF, 1, &value), 0);
+	ATF_CHECK_EQ(value, VIRTIO14_INPUT_DEVIDS_SIZE);
+	ATF_CHECK_EQ(g_last_ioctl, EVIOCGID);
+	ATF_CHECK_EQ(le16toh(sc.vsc_config.u.ids.bustype),
+	    UINT16_C(0x1122));
+	ATF_CHECK_EQ(le16toh(sc.vsc_config.u.ids.vendor),
+	    UINT16_C(0x3344));
+	ATF_CHECK_EQ(le16toh(sc.vsc_config.u.ids.product),
+	    UINT16_C(0x5566));
+	ATF_CHECK_EQ(le16toh(sc.vsc_config.u.ids.version),
+	    UINT16_C(0x7788));
+
+	/* Bitmap size is the last nonzero byte, not the ioctl buffer capacity. */
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_fd = 10;
+	sc.vsc_config.select = VIRTIO14_INPUT_CFG_PROP_BITS;
+	g_ioctl_prop_success = true;
+	ATF_CHECK_EQ(pci_vtinput_cfgread(&sc,
+	    VIRTIO14_INPUT_CONFIG_SIZE_OFF, 1, &value), 0);
+	ATF_CHECK_EQ(value, 4);
+	ATF_CHECK_EQ(sc.vsc_config.u.bitmap[3], 0x80);
+	ATF_CHECK_EQ(sc.vsc_config.u.bitmap[4], 0);
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_fd = 10;
+	sc.vsc_config.select = VIRTIO14_INPUT_CFG_EV_BITS;
+	sc.vsc_config.subsel = EV_KEY;
+	g_ioctl_ev_success = true;
+	ATF_CHECK_EQ(pci_vtinput_cfgread(&sc,
+	    VIRTIO14_INPUT_CONFIG_SIZE_OFF, 1, &value), 0);
+	ATF_CHECK_EQ(value, 18);
+	ATF_CHECK_EQ(sc.vsc_config.u.bitmap[17], 0x04);
+	ATF_CHECK_EQ(sc.vsc_config.u.bitmap[18], 0);
+
+	/* Unsupported event types must return an empty, scrubbed response. */
+	reset_mocks();
+	memset(&sc, 0xa5, sizeof(sc));
+	sc.vsc_fd = 10;
+	sc.vsc_config.select = VIRTIO14_INPUT_CFG_EV_BITS;
+	sc.vsc_config.subsel = UINT8_MAX;
+	sc.vsc_config_valid = 0;
+	ATF_CHECK_EQ(pci_vtinput_cfgread(&sc,
+	    VIRTIO14_INPUT_CONFIG_SIZE_OFF, 1, &value), 0);
+	ATF_CHECK_EQ(value, 0);
+	ATF_CHECK_EQ(g_last_ioctl, 0);
+	for (size_t i = 0; i < VIRTIO14_INPUT_CONFIG_UNION_SIZE; i++)
+		ATF_CHECK_EQ(sc.vsc_config.u.bitmap[i], 0);
+}
+
+ATF_TC_WITHOUT_HEAD(virtio_1_4_wire_layout);
+ATF_TC_BODY(virtio_1_4_wire_layout, tc)
+{
+	/* VirtIO 1.4 sections 5.8.4 and 5.8.6. */
+	ATF_CHECK_EQ(sizeof(struct vtinput_config),
+	    VIRTIO14_INPUT_CONFIG_SIZE);
+	ATF_CHECK_EQ(sizeof(struct vtinput_absinfo),
+	    VIRTIO14_INPUT_ABSINFO_SIZE);
+	ATF_CHECK_EQ(sizeof(struct vtinput_devids),
+	    VIRTIO14_INPUT_DEVIDS_SIZE);
+	ATF_CHECK_EQ(sizeof(struct vtinput_event),
+	    VIRTIO14_INPUT_EVENT_SIZE);
+	ATF_CHECK_EQ(offsetof(struct vtinput_event, type),
+	    VIRTIO14_INPUT_EVENT_TYPE_OFF);
+	ATF_CHECK_EQ(offsetof(struct vtinput_event, code),
+	    VIRTIO14_INPUT_EVENT_CODE_OFF);
+	ATF_CHECK_EQ(offsetof(struct vtinput_event, value),
+	    VIRTIO14_INPUT_EVENT_VALUE_OFF);
+	ATF_CHECK_EQ(offsetof(struct vtinput_config, select),
+	    VIRTIO14_INPUT_CONFIG_SELECT_OFF);
+	ATF_CHECK_EQ(offsetof(struct vtinput_config, subsel),
+	    VIRTIO14_INPUT_CONFIG_SUBSEL_OFF);
+	ATF_CHECK_EQ(offsetof(struct vtinput_config, size),
+	    VIRTIO14_INPUT_CONFIG_SIZE_OFF);
+	ATF_CHECK_EQ(offsetof(struct vtinput_config, u),
+	    VIRTIO14_INPUT_CONFIG_UNION_OFF);
 }
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
 	ATF_TP_ADD_TC(tp, transport_compatibility);
 	ATF_TP_ADD_TC(tp, command_line_config);
 	ATF_TP_ADD_TC(tp, eventqueue_growth);
@@ -778,9 +1199,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, hostile_event_descriptors);
 	ATF_TP_ADD_TC(tp, scatter_gather_events);
 	ATF_TP_ADD_TC(tp, status_error_finishes_completions);
+	ATF_TP_ADD_TC(tp, in_order_completion);
 	ATF_TP_ADD_TC(tp, partial_frame_rollback);
 	ATF_TP_ADD_TC(tp, oversized_frame_dropped);
 	ATF_TP_ADD_TC(tp, reset_discards_stale_events);
+	ATF_TP_ADD_TC(tp, queue_reset_drops_host_events);
+	ATF_TP_ADD_TC(tp, queue_reset_isolated);
 	ATF_TP_ADD_TC(tp, config_bounds);
+	ATF_TP_ADD_TC(tp, config_responses);
+	ATF_TP_ADD_TC(tp, config_selector_matrix);
 	return (atf_no_error());
 }

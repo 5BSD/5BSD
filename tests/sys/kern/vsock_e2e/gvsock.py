@@ -19,6 +19,18 @@ VMADDR_CID_ANY = getattr(socket, "VMADDR_CID_ANY", 0xFFFFFFFF)
 #     #define IOCTL_VM_SOCKETS_GET_LOCAL_CID _IO(7, 0xb9)
 IOCTL_VM_SOCKETS_GET_LOCAL_CID = 0x7B9
 
+# VirtIO 1.4 socket-device and common feature allocation (§5.10.3 and §6).
+VIRTIO_VSOCK_F_STREAM = 0
+VIRTIO_VSOCK_F_SEQPACKET = 1
+VIRTIO_VSOCK_F_NO_IMPLIED_STREAM = 2
+VIRTIO_F_NOTIFICATION_DATA = 38
+VIRTIO_F_RING_RESET = 40
+
+MODERN_REQUIRED_FEATURES = (
+    (VIRTIO_F_NOTIFICATION_DATA, "VIRTIO_F_NOTIFICATION_DATA"),
+    (VIRTIO_F_RING_RESET, "VIRTIO_F_RING_RESET"),
+)
+
 
 def make_socket(sock_type):
     kind = socket.SOCK_SEQPACKET if sock_type == "seq" else socket.SOCK_STREAM
@@ -75,19 +87,64 @@ def find_bound_vsock(sys_root, expected_device):
             continue
         if vendor != "0x1af4" or device != expected_device:
             continue
-        drivers = []
         for child in glob.glob(pci + "/virtio*"):
             driver = child + "/driver"
-            if os.path.islink(driver):
-                drivers.append(os.path.basename(os.path.realpath(driver)))
-        if "vmw_vsock_virtio_transport" in drivers:
-            matches.append(pci)
+            if os.path.islink(driver) and os.path.basename(
+                os.path.realpath(driver)
+            ) == "vmw_vsock_virtio_transport":
+                matches.append(child)
     if len(matches) != 1:
         raise RuntimeError(
             f"expected one PCI {expected_device} device bound to "
             f"vmw_vsock_virtio_transport, "
             f"found {len(matches)}"
         )
+    return matches[0]
+
+
+def negotiated_feature(child, bit):
+    feature_path = os.path.join(child, "features")
+    try:
+        with open(feature_path, encoding="ascii") as stream:
+            features = stream.read().strip()
+    except OSError as error:
+        raise RuntimeError(f"cannot read {feature_path}: {error}") from error
+    if len(features) <= bit or any(value not in "01" for value in features):
+        raise RuntimeError(f"invalid virtio feature bitmap: {features!r}")
+    return features[bit] == "1"
+
+
+def validate_socket_features(child):
+    stream = negotiated_feature(child, VIRTIO_VSOCK_F_STREAM)
+    seqpacket = negotiated_feature(child, VIRTIO_VSOCK_F_SEQPACKET)
+    no_implied_stream = negotiated_feature(
+        child, VIRTIO_VSOCK_F_NO_IMPLIED_STREAM
+    )
+
+    if not seqpacket:
+        raise RuntimeError(
+            "virtio-vsock did not negotiate VIRTIO_VSOCK_F_SEQPACKET"
+        )
+    if no_implied_stream and not stream:
+        raise RuntimeError(
+            "virtio-vsock negotiated NO_IMPLIED_STREAM without STREAM"
+        )
+    names = ["seqpacket"]
+    if stream:
+        names.insert(0, "stream")
+    else:
+        names.insert(0, "stream-implied")
+    if no_implied_stream:
+        names.append("no-implied-stream")
+    return ",".join(names)
+
+
+def validate_modern_features(child):
+    features = validate_socket_features(child)
+    for bit, name in MODERN_REQUIRED_FEATURES:
+        if not negotiated_feature(child, bit):
+            raise RuntimeError(f"virtio-vsock did not negotiate {name}")
+    return features
 
 
 def get_local_cid(path="/dev/vsock", ioctl_fn=fcntl.ioctl):
@@ -111,10 +168,17 @@ def preflight(transport, expected_cid):
         raise RuntimeError(
             f"guest local CID is {local_cid}, expected {expected_cid}"
         )
-    find_bound_vsock("/sys", expected)
+    child = find_bound_vsock("/sys", expected)
+    features = (
+        validate_modern_features(child)
+        if transport == "modern"
+        else validate_socket_features(child)
+    )
     print(
         f"PASS preflight transport={transport} pci={expected} "
-        f"guest_cid={expected_cid}"
+        f"guest_cid={expected_cid} features={features} "
+        f"notification_data={'yes' if transport == 'modern' else 'n/a'} "
+        f"ring_reset={'yes' if transport == 'modern' else 'n/a'}"
     )
 
 
@@ -292,17 +356,28 @@ def parallel_echo_clients(sock_type, base_port, count):
 
 
 def make_fake_device(
-    root, name, device, driver="vmw_vsock_virtio_transport"
+    root,
+    name,
+    device,
+    driver="vmw_vsock_virtio_transport",
+    features=(1,),
 ):
     pci = os.path.join(root, "bus/pci/devices", name)
-    os.makedirs(pci + "/virtio0")
+    child = pci + "/virtio0"
+    os.makedirs(child)
     with open(pci + "/vendor", "w", encoding="ascii") as stream:
         stream.write("0x1af4\n")
     with open(pci + "/device", "w", encoding="ascii") as stream:
         stream.write(device + "\n")
     driver_path = os.path.join(root, "bus/virtio/drivers", driver)
     os.makedirs(driver_path, exist_ok=True)
-    os.symlink(driver_path, pci + "/virtio0/driver")
+    os.symlink(driver_path, child + "/driver")
+    feature_bits = ["0"] * 64
+    for bit in features:
+        feature_bits[bit] = "1"
+    with open(child + "/features", "w", encoding="ascii") as stream:
+        stream.write("".join(feature_bits) + "\n")
+    return child
 
 
 def self_test():
@@ -323,8 +398,53 @@ def self_test():
         right.close()
 
     with tempfile.TemporaryDirectory() as root:
-        make_fake_device(root, "0000:00:05.0", "0x1053")
-        find_bound_vsock(root, "0x1053")
+        make_fake_device(
+            root, "0000:00:05.0", "0x1053", features=(1, 38, 40)
+        )
+        child = find_bound_vsock(root, "0x1053")
+        if validate_modern_features(child) != "stream-implied,seqpacket":
+            raise AssertionError("Linux-compatible implied STREAM was rejected")
+        explicit = make_fake_device(
+            root, "0000:00:08.0", "0x1013", features=(0, 1, 2)
+        )
+        if validate_socket_features(explicit) != (
+            "stream,seqpacket,no-implied-stream"
+        ):
+            raise AssertionError("explicit VirtIO 1.4 socket features failed")
+        invalid = make_fake_device(
+            root, "0000:00:09.0", "0x1013", features=(1, 2)
+        )
+        try:
+            validate_socket_features(invalid)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("NO_IMPLIED_STREAM without STREAM was accepted")
+        if negotiated_feature(child, 3):
+            raise AssertionError("unset vsock feature was reported")
+        for missing_bit, missing_name in (
+            (VIRTIO_VSOCK_F_SEQPACKET, "VIRTIO_VSOCK_F_SEQPACKET"),
+            (VIRTIO_F_NOTIFICATION_DATA, "VIRTIO_F_NOTIFICATION_DATA"),
+            (VIRTIO_F_RING_RESET, "VIRTIO_F_RING_RESET"),
+        ):
+            bitmap = ["0"] * 64
+            for bit in (
+                VIRTIO_VSOCK_F_SEQPACKET,
+                VIRTIO_F_NOTIFICATION_DATA,
+                VIRTIO_F_RING_RESET,
+            ):
+                if bit != missing_bit:
+                    bitmap[bit] = "1"
+            with open(child + "/features", "w", encoding="ascii") as stream:
+                stream.write("".join(bitmap) + "\n")
+            try:
+                validate_modern_features(child)
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError(
+                    f"missing vsock feature {missing_name} was accepted"
+                )
         make_fake_device(root, "0000:00:06.0", "0x1013", "wrong_driver")
         try:
             find_bound_vsock(root, "0x1013")

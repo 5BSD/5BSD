@@ -36,11 +36,10 @@
 #include <dev/virtio/pci/virtio_pci_var.h>
 
 /*
- * These are derived from several virtio specifications.
- *
- * Some useful links:
- *    https://github.com/rustyrussell/virtio-spec
- *    http://people.redhat.com/pbonzini/virtio-spec.pdf
+ * The transport and device constants below follow OASIS VirtIO 1.4.
+ * Explicit legacy compatibility modes also retain selected historical
+ * bhyve identities; those extensions are named separately from standard
+ * transitional identities.
  */
 
 /*
@@ -159,40 +158,28 @@
  */
 #define	VRING_PFN		12
 
-/*
- * PCI vendor/device IDs
- */
-#define	VIRTIO_VENDOR		0x1AF4
-#define	VIRTIO_DEV_NET		0x1000
-#define	VIRTIO_DEV_BLOCK	0x1001
-#define	VIRTIO_DEV_CONSOLE	0x1003
-#define	VIRTIO_DEV_SCSI		0x1004
-#define	VIRTIO_DEV_RANDOM	0x1005
-#define	VIRTIO_DEV_9P		0x1009
-#define	VIRTIO_DEV_INPUT	0x1052
-/*
- * bhyve's virtio is the legacy (0.9) transport, so the vsock device must
- * use a device ID in the transitional range [0x1000, 0x103f] — guest
- * drivers bind modern IDs (0x1040+) to the virtio-modern transport and
- * fail on the missing capability structures.  The device type is carried
- * in the PCI subdevice ID (VIRTIO_ID_VSOCK).
- */
-#define	VIRTIO_DEV_VSOCK	0x1013
+/* OASIS VirtIO 1.4 sections 4.1.2 and 4.1.2.3. */
+#define	VIRTIO_VENDOR			0x1AF4
+#define	VIRTIO_PCI_MODERN_DEVICE_BASE	0x1040
+#define	VIRTIO_PCI_MODERN_SUBDEV_BASE	0x0040
+#define	VIRTIO_PCI_MODERN_REVISION	1
+#define	VIRTIO_PCI_TRANSITIONAL_NET	0x1000
+#define	VIRTIO_PCI_TRANSITIONAL_BLOCK	0x1001
+#define	VIRTIO_PCI_TRANSITIONAL_CONSOLE	0x1003
+#define	VIRTIO_PCI_TRANSITIONAL_SCSI	0x1004
+#define	VIRTIO_PCI_TRANSITIONAL_ENTROPY	0x1005
+#define	VIRTIO_PCI_TRANSITIONAL_9P	0x1009
 
 /*
- * PCI revision IDs
+ * Historical explicit-legacy compatibility identities.  VirtIO 1.4 defines
+ * no transitional PCI identity for input or vsock, so neither constant is
+ * part of the standards-conforming modern profile.
  */
-#define VIRTIO_REV_INPUT	1
-
-/*
- * PCI subvendor IDs
- */
-#define VIRTIO_SUBVEN_INPUT	0x108E
-
-/*
- * PCI subdevice IDs
- */
-#define VIRTIO_SUBDEV_INPUT	0x1100
+#define	VIRTIO_PCI_COMPAT_INPUT_DEVICE	0x1052
+#define	VIRTIO_PCI_COMPAT_INPUT_REVISION	1
+#define	VIRTIO_PCI_COMPAT_INPUT_SUBVENDOR	0x108E
+#define	VIRTIO_PCI_COMPAT_INPUT_SUBDEVICE	0x1100
+#define	VIRTIO_PCI_COMPAT_VSOCK_DEVICE	0x1013
 
 /* From section 2.3, "Virtqueue Configuration", of the virtio specification */
 static inline int
@@ -259,11 +246,13 @@ struct virtio_softc {
 	/* Innermost lock: never acquire vs_mtx while holding this mutex. */
 	pthread_mutex_t vs_isr_mtx;	/* protects ISR and INTx state */
 	struct pci_devinst *vs_pi;	/* PCI device instance */
-	uint32_t vs_negotiated_caps;	/* negotiated capabilities */
+	uint64_t vs_negotiated_caps;	/* negotiated capabilities */
 	struct vqueue_info *vs_queues;	/* one per vc_nvq */
 	int	vs_curq;		/* current queue */
 	uint8_t	vs_status;		/* value from last status write */
-	uint8_t	vs_isr;			/* ISR flags, if not MSI-X */
+	bool	vs_resetting;		/* device reset callback is still active */
+	bool	vs_reset_failed;	/* report reset callback failure on reinit */
+	uint8_t	vs_isr;			/* PCI ISR status flags */
 	uint16_t vs_msix_cfg_idx;	/* MSI-X vector for config event */
 	enum virtio_pci_transport vs_transport;
 	struct virtio_pci_modern *vs_modern;
@@ -271,14 +260,14 @@ struct virtio_softc {
 
 #define	VS_LOCK(vs)							\
 do {									\
-	if (vs->vs_mtx)							\
-		pthread_mutex_lock(vs->vs_mtx);				\
+	if ((vs)->vs_mtx)						\
+		pthread_mutex_lock((vs)->vs_mtx);			\
 } while (0)
 
 #define	VS_UNLOCK(vs)							\
 do {									\
-	if (vs->vs_mtx)							\
-		pthread_mutex_unlock(vs->vs_mtx);			\
+	if ((vs)->vs_mtx)						\
+		pthread_mutex_unlock((vs)->vs_mtx);			\
 } while (0)
 
 #define	VS_ISR_LOCK(vs)	pthread_mutex_lock(&(vs)->vs_isr_mtx)
@@ -297,6 +286,10 @@ struct virtio_consts {
 					/* called to write config regs */
 	void    (*vc_apply_features)(void *, uint64_t);
 				/* called to apply negotiated features */
+	int	(*vc_qenable)(void *, struct vqueue_info *);
+				/* called with vs_mtx held after queue enable */
+	int	(*vc_qreset)(void *, struct vqueue_info *, uint64_t);
+				/* with vs_mtx held; 0 or async EINPROGRESS */
 	uint64_t vc_hv_caps;		/* hypervisor-provided capabilities */
 	void	(*vc_pause)(void *);	/* called to pause device activity */
 	void	(*vc_resume)(void *);	/* called to resume device activity */
@@ -342,7 +335,10 @@ struct vqueue_info {
 	uint32_t vq_pfn;	/* PFN of virt queue (not shifted!) */
 	uint16_t vq_qsize_max;	/* modern: maximum queue size */
 	uint16_t vq_enabled;	/* modern: queue_enable */
+	uint16_t vq_reset;	/* modern: queue_reset */
+	volatile uint16_t vq_resetting; /* queue backend is being drained */
 	bool	 vq_notify_pending; /* kick received before DRIVER_OK */
+	uint64_t vq_generation;	/* changes whenever queue ownership resets */
 	uint64_t vq_desc_gpa;	/* modern descriptor table address */
 	uint64_t vq_driver_gpa;	/* modern available ring address */
 	uint64_t vq_device_gpa;	/* modern used ring address */
@@ -362,10 +358,39 @@ struct vqueue_info {
  * Is this ring ready for I/O?
  */
 static inline int
+vq_is_allocated(const struct vqueue_info *vq)
+{
+
+	return ((atomic_load_acq_16(&vq->vq_flags) & VQ_ALLOC) != 0);
+}
+
+static inline void
+vq_set_allocated(struct vqueue_info *vq, bool allocated)
+{
+
+	atomic_store_rel_16(&vq->vq_flags, allocated ? VQ_ALLOC : 0);
+}
+
+static inline int
+vq_is_resetting(const struct vqueue_info *vq)
+{
+
+	return (atomic_load_acq_16(&vq->vq_resetting) != 0);
+}
+
+static inline void
+vq_set_resetting(struct vqueue_info *vq, bool resetting)
+{
+
+	atomic_store_rel_16(&vq->vq_resetting, resetting ? 1 : 0);
+}
+
+static inline int
 vq_ring_ready(struct vqueue_info *vq)
 {
 
-	return ((vq->vq_flags & VQ_ALLOC) != 0 &&
+	return (vq_is_allocated(vq) &&
+	    !vq_is_resetting(vq) &&
 	    (vq->vq_vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0);
 }
 
@@ -378,7 +403,7 @@ vq_has_descs(struct vqueue_info *vq)
 {
 
 	return (vq_ring_ready(vq) && vq->vq_last_avail !=
-	    vq->vq_avail->idx);
+	    atomic_load_acq_16(&vq->vq_avail->idx));
 }
 
 /*
@@ -390,7 +415,18 @@ vi_interrupt(struct virtio_softc *vs, uint8_t isr, uint16_t msix_idx)
 {
 
 	if (pci_msix_enabled(vs->vs_pi)) {
-		if (!vi_pci_is_modern(vs) || msix_idx != VIRTIO_MSI_NO_VECTOR)
+		/*
+		 * VirtIO 1.4 section 4.1.4.5.1 requires the device
+		 * configuration bit to be set before a configuration change
+		 * notification even when MSI-X is enabled.  Queue interrupts
+		 * do not set the ISR in MSI-X mode.
+		 */
+		if ((isr & VIRTIO_PCI_ISR_CONFIG) != 0) {
+			VS_ISR_LOCK(vs);
+			vs->vs_isr |= VIRTIO_PCI_ISR_CONFIG;
+			VS_ISR_UNLOCK(vs);
+		}
+		if (msix_idx != VIRTIO_MSI_NO_VECTOR)
 			pci_generate_msix(vs->vs_pi, msix_idx);
 	} else {
 		VS_ISR_LOCK(vs);
@@ -429,6 +465,8 @@ static inline void
 vq_interrupt(struct virtio_softc *vs, struct vqueue_info *vq)
 {
 
+	if (vq_is_resetting(vq))
+		return;
 	vi_interrupt(vs, VIRTIO_PCI_ISR_INTR, vq->vq_msix_idx);
 }
 
@@ -436,11 +474,19 @@ static inline void
 vq_kick_enable(struct vqueue_info *vq)
 {
 
-	vq->vq_used->flags &= ~VRING_USED_F_NO_NOTIFY;
+	if ((vq->vq_vs->vs_negotiated_caps &
+	    VIRTIO_RING_F_EVENT_IDX) != 0) {
+		/*
+		 * Ask for a notification when the driver publishes its next
+		 * available entry.  With EVENT_IDX, flags must remain zero.
+		 */
+		vq->vq_used->flags = 0;
+		VQ_AVAIL_EVENT_IDX(vq) = vq->vq_last_avail;
+	} else
+		vq->vq_used->flags = 0;
 	/*
-	 * Full memory barrier to make sure the store to vq_used->flags
-	 * happens before the load from vq_avail->idx, which results from a
-	 * subsequent call to vq_has_descs().
+	 * Full memory barrier to make sure the suppression update happens
+	 * before the load from vq_avail->idx in a subsequent vq_has_descs().
 	 */
 	atomic_thread_fence_seq_cst();
 }
@@ -449,7 +495,17 @@ static inline void
 vq_kick_disable(struct vqueue_info *vq)
 {
 
-	vq->vq_used->flags |= VRING_USED_F_NO_NOTIFY;
+	if ((vq->vq_vs->vs_negotiated_caps &
+	    VIRTIO_RING_F_EVENT_IDX) != 0) {
+		/*
+		 * Defer the requested notification for one full ring while the
+		 * device is actively polling or has another wakeup source.
+		 */
+		vq->vq_used->flags = 0;
+		VQ_AVAIL_EVENT_IDX(vq) =
+		    vq->vq_last_avail + vq->vq_qsize - 1;
+	} else
+		vq->vq_used->flags = VRING_USED_F_NO_NOTIFY;
 }
 
 struct iovec;
@@ -477,6 +533,8 @@ int	vi_pci_select_transport(struct virtio_softc *, const struct nvlist *,
 int	vi_pci_modern_init(struct virtio_softc *, int);
 void	vi_pci_modern_set_identity(struct virtio_softc *, uint16_t);
 void	vi_pci_modern_reset(struct virtio_softc *);
+void	vi_pci_modern_queue_reset_complete(struct vqueue_info *, uint64_t,
+	    int);
 /* Record a modern config change and notify; caller holds vs_mtx, if present. */
 void	vi_pci_modern_config_changed(struct virtio_softc *);
 /* Notify a config change using the active transport; caller holds vs_mtx. */

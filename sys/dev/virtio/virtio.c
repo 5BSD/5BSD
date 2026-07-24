@@ -33,6 +33,7 @@
 #include <sys/sysctl.h>
 #include <sys/module.h>
 #include <sys/sbuf.h>
+#include <sys/sdt.h>
 
 #include <machine/bus.h>
 #include <machine/resource.h>
@@ -47,6 +48,13 @@
 
 static int virtio_modevent(module_t, int, void *);
 static const char *virtio_feature_name(uint64_t, struct virtio_feature_desc *);
+
+SDT_PROVIDER_DEFINE(virtio);
+SDT_PROBE_DEFINE2(virtio, , , reinit__begin, "device_t", "uint64_t");
+SDT_PROBE_DEFINE3(virtio, , , reinit__end, "device_t", "uint64_t", "int");
+SDT_PROBE_DEFINE2(virtio, , , queue__reset__begin, "device_t", "uint16_t");
+SDT_PROBE_DEFINE3(virtio, , , queue__reset__end, "device_t", "uint16_t",
+    "int");
 
 static struct virtio_ident {
 	uint16_t	devid;
@@ -88,6 +96,14 @@ static struct virtio_feature_desc virtio_common_feature_desc[] = {
 	{ VIRTIO_F_BAD_FEATURE,		"BadFeature"		}, /* Legacy */
 	{ VIRTIO_F_VERSION_1,		"Version1"		},
 	{ VIRTIO_F_IOMMU_PLATFORM,	"IOMMUPlatform"		},
+	{ VIRTIO_F_RING_PACKED,		"RingPacked"		},
+	{ VIRTIO_F_IN_ORDER,		"InOrder"		},
+	{ VIRTIO_F_ORDER_PLATFORM,	"OrderPlatform"		},
+	{ VIRTIO_F_SR_IOV,		"SRIOV"			},
+	{ VIRTIO_F_NOTIFICATION_DATA,	"NotificationData"	},
+	{ VIRTIO_F_NOTIF_CONFIG_DATA,	"NotifConfigData"	},
+	{ VIRTIO_F_RING_RESET,		"RingReset"		},
+	{ VIRTIO_F_SUSPEND,		"Suspend"		},
 
 	{ 0, NULL }
 };
@@ -197,18 +213,8 @@ out:
 uint64_t
 virtio_filter_transport_features(uint64_t features)
 {
-	uint64_t transport, mask;
 
-	transport = (1ULL <<
-	    (VIRTIO_TRANSPORT_F_END - VIRTIO_TRANSPORT_F_START)) - 1;
-	transport <<= VIRTIO_TRANSPORT_F_START;
-
-	mask = -1ULL & ~transport;
-	mask |= VIRTIO_RING_F_INDIRECT_DESC;
-	mask |= VIRTIO_RING_F_EVENT_IDX;
-	mask |= VIRTIO_F_VERSION_1;
-
-	return (features & mask);
+	return (virtio_supported_transport_features(features));
 }
 
 bool
@@ -302,8 +308,13 @@ virtio_stop(device_t dev)
 int
 virtio_reinit(device_t dev, uint64_t features)
 {
+	int error;
 
-	return (VIRTIO_BUS_REINIT(device_get_parent(dev), features));
+	SDT_PROBE2(virtio, , , reinit__begin, dev, features);
+	error = VIRTIO_BUS_REINIT(device_get_parent(dev), features);
+	SDT_PROBE3(virtio, , , reinit__end, dev, features, error);
+
+	return (error);
 }
 
 void
@@ -311,6 +322,20 @@ virtio_reinit_complete(device_t dev)
 {
 
 	VIRTIO_BUS_REINIT_COMPLETE(device_get_parent(dev));
+}
+
+int
+virtio_reset_virtqueue(device_t dev, struct virtqueue *vq)
+{
+	uint16_t index __diagused;
+	int error;
+
+	index = virtqueue_index(vq);
+	SDT_PROBE2(virtio, , , queue__reset__begin, dev, index);
+	error = VIRTIO_BUS_RESET_VQ(device_get_parent(dev), vq);
+	SDT_PROBE3(virtio, , , queue__reset__end, dev, index, error);
+
+	return (error);
 }
 
 int

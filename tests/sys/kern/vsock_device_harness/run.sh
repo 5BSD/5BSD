@@ -17,13 +17,19 @@ sanitizers=${SANITIZERS:-address,undefined}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
+"$here/validate-virtio-requirements.sh" \
+    "$here/virtio-1.4-requirements.tsv"
+
 cp "$here"/*.h "$here/vsock_device_test.c" \
     "$here/virtio_modern_test.c" "$here/virtio_input_test.c" \
     "$here/virtio_rnd_test.c" "$here/virtio_rnd_interrupt_test.c" \
 	"$here/virtio_core_test.c" "$here/iov_test.c" \
 	"$here/virtio_console_test.c" "$here/virtio_9p_test.c" \
-	"$here/virtio_block_test.c" "$here/virtio_net_test.c" \
-	"$here/virtio_scsi_test.c" "$work/"
+	"$here/virtio_block_test.c" "$here/block_if_test.c" \
+	"$here/virtio_net_test.c" \
+	"$here/virtio_scsi_test.c" "$here/virtio_guest_contract_test.c" \
+	"$here/virtio_host_contract_test.c" \
+	"$work/"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock.c"        "$work/pci_virtio_vsock.c"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock_iov.h"    "$work/pci_virtio_vsock_iov.h"
 # DTrace USDT probe wrappers: harness builds WITHOUT -DWITH_DTRACE, so the header
@@ -58,9 +64,11 @@ static int atf_checks, atf_failed;
 #define ATF_CHECK(x) do { atf_checks++; if (!(x)) { \
     fprintf(stderr, "  FAIL %s:%d: %s\n", __FILE__, __LINE__, #x); \
     atf_failed++; } } while (0)
+#define ATF_CHECK_EQ(a, b) ATF_CHECK((a) == (b))
 #define ATF_REQUIRE(x) do { if (!(x)) { \
     fprintf(stderr, "  ABORT %s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } \
     } while (0)
+#define ATF_REQUIRE_EQ(a, b) ATF_REQUIRE((a) == (b))
 #define ATF_TP_ADD_TC(tp, n) do { atf_tcbody_##n(); } while (0)
 #define atf_no_error() (fprintf(stderr, \
     "device harness: %d checks, %d failed\n", atf_checks, atf_failed), \
@@ -117,6 +125,20 @@ EOF
 "$work/core-test"
 
 "$cc" -g -O1 -fsanitize="$sanitizers" \
+	-I"$work/atfshim" -I"$srctop/sys" \
+	-o "$work/guest-contract-test" \
+	"$work/virtio_guest_contract_test.c"
+
+"$work/guest-contract-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" \
+	-I"$work/atfshim" -I"$srctop/usr.sbin" -I"$srctop/sys" \
+	-o "$work/host-contract-test" \
+	"$work/virtio_host_contract_test.c"
+
+"$work/host-contract-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" \
 	-I"$work/atfshim" -I"$work/inc" \
 	-I"$work" -I"$srctop/sys" \
 	-o "$work/iov-test" "$work/iov_test.c"
@@ -148,6 +170,15 @@ EOF
 	"$work/virtio_block_test.c" -lpthread
 
 "$work/block-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" -ffunction-sections -fdata-sections \
+	-DWITHOUT_CAPSICUM -I"$work/atfshim" -I"$work/inc" \
+	-I"$work" -I"$srctop/usr.sbin/bhyve" \
+	-I"$srctop/usr.sbin" -I"$srctop/sys" \
+	-Wl,--gc-sections,--wrap=pwrite -o "$work/block-if-test" \
+	"$work/block_if_test.c" -lpthread
+
+"$work/block-if-test"
 
 "$cc" -g -O1 -fsanitize="$sanitizers" -ffunction-sections -fdata-sections \
 	-DWITHOUT_CAPSICUM -I"$work/atfshim" -I"$work/inc" \

@@ -60,6 +60,7 @@
 #include "virtio.h"
 
 #define VTRND_RINGSZ	64
+#define VTRND_MAX_BYTES	(64 * 1024)
 
 
 static int pci_vtrnd_debug;
@@ -86,7 +87,7 @@ static struct virtio_consts vtrnd_vi_consts = {
 	.vc_cfgsize =	0,
 	.vc_reset =	pci_vtrnd_reset,
 	.vc_qnotify =	pci_vtrnd_notify,
-	.vc_hv_caps =	0,
+	.vc_hv_caps =	VIRTIO_F_IN_ORDER | VIRTIO_F_RING_RESET,
 };
 
 static void
@@ -108,7 +109,8 @@ pci_vtrnd_notify(void *vsc, struct vqueue_info *vq)
 	struct pci_vtrnd_softc *sc;
 	struct vi_req req;
 	ssize_t len;
-	int i, n;
+	size_t total;
+	int i, n, niov;
 
 	sc = vsc;
 
@@ -139,14 +141,36 @@ pci_vtrnd_notify(void *vsc, struct vqueue_info *vq)
 			continue;
 		}
 
-		len = readv(sc->vrsc_fd, iov, n);
+		/*
+		 * The entropy device may use less than the supplied buffer.
+		 * Bound each host read so one guest request cannot monopolize
+		 * the device mutex or ask the host random source for an
+		 * unreasonably large transfer.
+		 */
+		total = 0;
+		for (niov = 0; niov < n && total < VTRND_MAX_BYTES; niov++) {
+			iov[niov].iov_len = MIN(iov[niov].iov_len,
+			    VTRND_MAX_BYTES - total);
+			total += iov[niov].iov_len;
+		}
+
+		do {
+			len = readv(sc->vrsc_fd, iov, niov);
+		} while (len < 0 && errno == EINTR);
 
 		DPRINTF(("vtrnd: vtrnd_notify(): %zd", len));
 
 		if (len <= 0) {
 			WPRINTF(("vtrnd: read from /dev/random failed: %s",
 			    len == 0 ? "unexpected EOF" : strerror(errno)));
-			vq_relchain(vq, req.idx, 0);
+			vq_retchains(vq, 1);
+			/*
+			 * There is no readiness event associated with this
+			 * retained descriptor.  Treat even a transient failure as
+			 * a device error instead of leaving the guest request
+			 * permanently available with no future kick guaranteed.
+			 */
+			vi_set_needs_reset(&sc->vrsc_vs);
 			break;
 		}
 
@@ -225,7 +249,8 @@ pci_vtrnd_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (vi_pci_is_modern(&sc->vrsc_vs))
 		vi_pci_modern_set_identity(&sc->vrsc_vs, VIRTIO_ID_ENTROPY);
 	else {
-		pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_RANDOM);
+		pci_set_cfgdata16(pi, PCIR_DEVICE,
+		    VIRTIO_PCI_TRANSITIONAL_ENTROPY);
 		pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
 		pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_ENTROPY);
 		pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);

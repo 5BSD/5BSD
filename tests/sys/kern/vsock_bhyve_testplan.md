@@ -92,6 +92,13 @@ The directory is needed only by `backend=userspace`.  To test
 `backend=kernel`, load `vsock.ko` on the host and ensure no other remote
 transport provider owns `/dev/vsock`.
 
+The root host suite also runs the MAC capability AF_VSOCK ownership cases.
+Before invoking `run_vsock_tests.sh`, stop `oracled` and any other capability
+broker holding an isolation claim on `/dev/mac_capability`.  Such a claim
+correctly makes the control device inaccessible to the test process and would
+otherwise turn every MAC/vsock case into the same `EACCES` setup failure.
+Restart the broker after the suite completes.
+
 ### 2.3 (Linux guests only) UEFI firmware
 
 Linux guests boot via UEFI. Install the edk2 firmware for bhyve:

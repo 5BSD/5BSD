@@ -1794,26 +1794,28 @@ ATF_TC_BODY(fionwrite_stream, tc)
 /* Group 16: zerocopy compat                                           */
 /* ------------------------------------------------------------------ */
 
-ATF_TC_WITHOUT_HEAD(zerocopy_sockopt_compat);
-ATF_TC_BODY(zerocopy_sockopt_compat, tc)
+ATF_TC_WITHOUT_HEAD(linux_zerocopy_sockopt_rejected);
+ATF_TC_BODY(linux_zerocopy_sockopt_rejected, tc)
 {
+	static const int linux_so_zerocopy = 60;
+	int s, val;
+
 	(void)tc;
 
-#ifndef SO_ZEROCOPY
-	atf_tc_skip("SO_ZEROCOPY not defined on this platform");
-#else
-	{
-		int s, val;
-
-		s = socket(AF_VSOCK, SOCK_STREAM, 0);
-		ATF_REQUIRE(s >= 0);
-
-		val = 1;
-		(void)setsockopt(s, SOL_SOCKET, SO_ZEROCOPY, &val, sizeof(val));
-
-		close(s);
-	}
-#endif
+	/*
+	 * Linux assigns SOL_SOCKET option 60 to SO_ZEROCOPY.  FreeBSD does not
+	 * implement the MSG_ZEROCOPY completion ABI, so reject the Linux option
+	 * deterministically instead of silently accepting a contract that the
+	 * socket cannot honor.
+	 */
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
+	val = 1;
+	errno = 0;
+	ATF_CHECK(setsockopt(s, SOL_SOCKET, linux_so_zerocopy, &val,
+	    sizeof(val)) == -1);
+	ATF_CHECK(errno == ENOPROTOOPT);
+	close(s);
 }
 
 /* ------------------------------------------------------------------ */
@@ -5947,6 +5949,14 @@ ATF_TC_BODY(kernel_transport_provider, tc)
 	ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
 
 	close(s);
+	/*
+	 * Closing an established socket emits one final SHUTDOWN through the
+	 * provider.  Drain it before constructing the independently full queue
+	 * used by the reset-wakeup test below.
+	 */
+	while (read(provider, packet, sizeof(packet)) > 0)
+		;
+	ATF_REQUIRE(errno == EAGAIN || errno == EWOULDBLOCK);
 
 	/*
 	 * A blocking provider writer waiting behind a full queue belongs to the
@@ -6114,7 +6124,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, sysctl_guest_cid_local);
 
 	/* Group 16: zerocopy compat */
-	ATF_TP_ADD_TC(tp, zerocopy_sockopt_compat);
+	ATF_TP_ADD_TC(tp, linux_zerocopy_sockopt_rejected);
 
 	/* Group 17: SO_RCVLOWAT */
 	ATF_TP_ADD_TC(tp, rcvlowat_default);

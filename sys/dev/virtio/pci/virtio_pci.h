@@ -45,6 +45,8 @@ struct vtpci_common {
 	device_t			 vtpci_dev;
 	uint64_t			 vtpci_host_features;
 	uint64_t			 vtpci_features;
+	uint64_t			 vtpci_reinit_features;
+	bool				 vtpci_reinit_features_valid;
 	struct vtpci_virtqueue		*vtpci_vqs;
 	int				 vtpci_nvqs;
 

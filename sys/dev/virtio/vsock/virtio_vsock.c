@@ -115,7 +115,7 @@ SDT_PROBE_DEFINE6(vsock, , , pkt__tx,
  * virtqueue because the host is keeping the ring full.  Rather than dropping
  * such a reply -- which silently fails an inbound connect (lost RESPONSE),
  * stalls the peer (lost CREDIT_UPDATE), or leaks a stale peer connection
- * (lost RST), violating virtio 1.2/1.3 §5.10.6.1.1 -- we retain it and drain
+ * (lost RST), violating VirtIO 1.4 §5.10.6.1.1 -- we retain it and drain
  * it from vtvsock_tx_intr as descriptors complete (mirroring the send list in
  * Linux's virtio_transport).  The bound keeps a wedged host from growing guest
  * memory without limit.  RX-generated replies are additionally kept lossless by
@@ -249,7 +249,7 @@ vtvsock_global_softc(void)
 }
 
 /*
- * Sanitize the guest CID read from device config.  Per virtio 1.2/1.3 §5.10.4
+ * Sanitize the guest CID read from device config.  Per VirtIO 1.4 §5.10.4
  * the CID occupies the low 32 bits of guest_cid (upper 32 reserved and
  * zeroed) and must not be a reserved value: 0 (hypervisor), 1 (local),
  * 2 (host), or 0xffffffff.  Mask the reserved high bits so a host that
@@ -509,7 +509,7 @@ vtvsock_send_pkt_locked(struct vtvsock_pcb *pcb, uint16_t op, uint32_t flags,
 	 * Control/reply packets (RESPONSE, RST, CREDIT_UPDATE, SHUTDOWN) route
 	 * through here and must not be silently dropped when the ring is full:
 	 * a lost RESPONSE fails an inbound connect, a lost CREDIT_UPDATE stalls
-	 * the peer, a lost RST leaks a stale connection (virtio 1.2/1.3 §5.10.6.1).
+	 * the peer, a lost RST leaks a stale connection (VirtIO 1.4 §5.10.6.1).
 	 * vtvsock_ctrl_submit() reclaims and retries, then retains the packet on
 	 * the bounded software holding queue (drained by vtvsock_tx_intr) rather
 	 * than dropping it; it always consumes ownership of 'pkt'.
@@ -1065,7 +1065,7 @@ vtvsock_queue_rx_buffers(struct vtvsock_softc *sc, bool notify)
 	}
 	/*
 	 * Kick the device unless the caller is the attach-time preload:
-	 * notifying before DRIVER_OK violates virtio 1.2 §3.1.1, so attach
+	 * notifying before DRIVER_OK violates VirtIO 1.4 §3.1.1, so attach
 	 * defers the notify to vtvsock_attach_completed().
 	 */
 	if (notify)
@@ -1447,7 +1447,7 @@ vtvsock_attach(device_t dev)
 	sc->sc_guest_cid = vtvsock_sanitize_cid(dev, sc->sc_guest_cid);
 
 	/*
-	 * Device initialization order per virtio 1.2/1.3 §5.10.5: populate the
+	 * Device initialization order per VirtIO 1.4 §5.10.5: populate the
 	 * event virtqueue (step 2) before the rx virtqueue (step 3).
 	 */
 	sglist_init(&sg, 1, segs);
@@ -1480,7 +1480,7 @@ vtvsock_attach(device_t dev)
 
 	/*
 	 * Pre-populate the RX virtqueue.  Post the buffers but do NOT notify
-	 * the device yet: notifying before DRIVER_OK violates virtio 1.2
+	 * the device yet: notifying before DRIVER_OK violates VirtIO 1.4
 	 * §3.1.1.  The notify happens in vtvsock_attach_completed(), which the
 	 * bus calls after it sets DRIVER_OK.
 	 */
@@ -1504,7 +1504,7 @@ vtvsock_attach(device_t dev)
 	 * Everything the device can observe -- publishing the softc, going live
 	 * with the AF_VSOCK domain, notifying the queues, and enabling
 	 * interrupts -- is deferred to vtvsock_attach_completed(), which the
-	 * virtio bus calls after it sets DRIVER_OK (virtio 1.2 §3.1.1).  Until
+	 * virtio bus calls after it sets DRIVER_OK (VirtIO 1.4 §3.1.1).  Until
 	 * then the rings are merely populated, which the spec permits.
 	 */
 	return (0);
@@ -1533,7 +1533,7 @@ fail:
 
 /*
  * Called by the virtio bus after it sets DRIVER_OK, i.e. once the device is
- * permitted to be used (virtio 1.2 §3.1.1).  Only here do we make the device
+ * permitted to be used (VirtIO 1.4 §3.1.1).  Only here do we make the device
  * live: publish the softc, register the transport with the AF_VSOCK domain,
  * notify the queues whose buffers were posted during attach, and enable
  * interrupts.  This runs synchronously right after vtvsock_attach() returns.

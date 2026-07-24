@@ -24,30 +24,46 @@ static ssize_t test_readv(int, const struct iovec *, int);
 #undef close
 #undef read
 #undef readv
+#include "virtio_1_4_spec.h"
+
+#undef VIRTIO_F_IN_ORDER
+#define	VIRTIO_F_IN_ORDER	VIRTIO14_F_IN_ORDER
+
+#define	TEST_HOST_RND_READ_LIMIT	(64U * 1024U)
 
 struct nvlist { int unused; };
 
 static int g_open_result, g_read_calls, g_close_calls;
 static ssize_t g_read_result;
+static int g_read_errno;
+static bool g_readv_eintr_once;
+static size_t g_readv_bytes;
 static int g_descs, g_chain_n, g_readable, g_writable;
 static bool g_null_iov;
 static size_t g_iov_len;
-static uint8_t g_iov[64];
-static int g_rel_calls, g_end_calls;
+static uint8_t g_iov[VTRND_MAX_BYTES * 2];
+static int g_rel_calls, g_ret_calls, g_end_calls, g_needs_reset;
 static uint32_t g_rel_len;
+static uint16_t g_rel_idx[8];
+static uint16_t g_next_idx;
 
 static void
 reset_mocks(void)
 {
 	g_open_result = 10;
 	g_read_result = 1;
+	g_read_errno = EIO;
+	g_readv_eintr_once = false;
+	g_readv_bytes = 0;
 	g_read_calls = g_close_calls = 0;
 	g_descs = g_chain_n = g_writable = 1;
 	g_readable = 0;
 	g_null_iov = false;
 	g_iov_len = sizeof(g_iov);
-	g_rel_calls = g_end_calls = 0;
+	g_rel_calls = g_ret_calls = g_end_calls = g_needs_reset = 0;
 	g_rel_len = UINT32_MAX;
+	memset(g_rel_idx, 0, sizeof(g_rel_idx));
+	g_next_idx = 7;
 }
 
 static int
@@ -70,7 +86,7 @@ test_read(int fd __unused, void *buf, size_t len)
 {
 	g_read_calls++;
 	if (g_read_result < 0) {
-		errno = EIO;
+		errno = g_read_errno;
 		return (-1);
 	}
 	if (g_read_result > 0 && len > 0)
@@ -84,8 +100,16 @@ test_readv(int fd __unused, const struct iovec *iov, int iovcnt)
 	ssize_t left;
 
 	g_read_calls++;
+	if (g_readv_eintr_once) {
+		g_readv_eintr_once = false;
+		errno = EINTR;
+		return (-1);
+	}
+	g_readv_bytes = 0;
+	for (int i = 0; i < iovcnt; i++)
+		g_readv_bytes += iov[i].iov_len;
 	if (g_read_result < 0) {
-		errno = EIO;
+		errno = g_read_errno;
 		return (-1);
 	}
 	left = g_read_result;
@@ -116,7 +140,7 @@ vq_getchain(struct vqueue_info *vq __unused, struct iovec *iov, int niov,
 		    g_iov + i * sizeof(g_iov) / MIN(g_chain_n, niov);
 		iov[i].iov_len = g_iov_len;
 	}
-	req->idx = 7;
+	req->idx = g_next_idx++;
 	req->readable = g_readable;
 	req->writable = g_writable;
 	g_descs--;
@@ -126,12 +150,19 @@ vq_getchain(struct vqueue_info *vq __unused, struct iovec *iov, int niov,
 void
 vq_relchain(struct vqueue_info *vq __unused, uint16_t idx, uint32_t len)
 {
-	ATF_CHECK(idx == 7);
+	ATF_REQUIRE(g_rel_calls < (int)nitems(g_rel_idx));
+	ATF_CHECK_EQ(idx, 7 + g_rel_calls);
+	g_rel_idx[g_rel_calls] = idx;
 	g_rel_calls++;
 	g_rel_len = len;
 }
 
-void vq_retchains(struct vqueue_info *vq __unused, uint16_t count __unused) {}
+void
+vq_retchains(struct vqueue_info *vq __unused, uint16_t count)
+{
+	g_ret_calls += count;
+	g_descs += count;
+}
 
 void
 vq_endchains(struct vqueue_info *vq __unused, int all_avail __unused)
@@ -170,6 +201,8 @@ int vi_intr_init(struct virtio_softc *vs __unused, int bar __unused,
     int msix __unused) { return (0); }
 void vi_set_io_bar(struct virtio_softc *vs __unused, int bar __unused) {}
 void vi_reset_dev(struct virtio_softc *vs __unused) {}
+void vi_set_needs_reset(struct virtio_softc *vs __unused)
+{ g_needs_reset++; }
 int fbsdrun_virtio_msix(void) { return (1); }
 int vi_pci_modern_cfgread(struct pci_devinst *pi __unused,
     int off __unused, int size __unused, uint32_t *val __unused) { return (0); }
@@ -248,12 +281,52 @@ ATF_TC_BODY(random_read_failures, tc)
 		g_read_result = result;
 		pci_vtrnd_notify(&sc, &vq);
 		ATF_CHECK(g_read_calls == 1);
-		ATF_CHECK(g_rel_calls == 1 && g_rel_len == 0);
+		ATF_CHECK(g_rel_calls == 0);
+		ATF_CHECK(g_ret_calls == 1);
+		ATF_CHECK(g_needs_reset == 1);
 	}
+	reset_mocks();
+	g_read_result = -1;
+	g_read_errno = EAGAIN;
+	pci_vtrnd_notify(&sc, &vq);
+	ATF_CHECK(g_rel_calls == 0);
+	ATF_CHECK(g_ret_calls == 1);
+	ATF_CHECK(g_needs_reset == 1);
+
+	reset_mocks();
+	g_readv_eintr_once = true;
+	g_read_result = 17;
+	pci_vtrnd_notify(&sc, &vq);
+	ATF_CHECK(g_read_calls == 2);
+	ATF_CHECK(g_rel_calls == 1 && g_rel_len == 17);
+	ATF_CHECK(g_ret_calls == 0 && g_needs_reset == 0);
+
 	reset_mocks();
 	g_read_result = 17;
 	pci_vtrnd_notify(&sc, &vq);
 	ATF_CHECK(g_rel_calls == 1 && g_rel_len == 17);
+}
+
+ATF_TC_WITHOUT_HEAD(read_is_bounded);
+ATF_TC_BODY(read_is_bounded, tc)
+{
+	struct pci_vtrnd_softc sc;
+	struct vqueue_info vq;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&vq, 0, sizeof(vq));
+	sc.vrsc_fd = 10;
+	reset_mocks();
+	g_chain_n = 2;
+	g_writable = 2;
+	g_iov_len = TEST_HOST_RND_READ_LIMIT;
+	g_read_result = TEST_HOST_RND_READ_LIMIT;
+	pci_vtrnd_notify(&sc, &vq);
+
+	ATF_CHECK_EQ(g_read_calls, 1);
+	ATF_CHECK_EQ(g_readv_bytes, TEST_HOST_RND_READ_LIMIT);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len, TEST_HOST_RND_READ_LIMIT);
 }
 
 ATF_TC_WITHOUT_HEAD(init_failures);
@@ -274,11 +347,35 @@ ATF_TC_BODY(init_failures, tc)
 	ATF_CHECK(g_read_calls == 1 && g_close_calls == 1);
 }
 
+ATF_TC_WITHOUT_HEAD(in_order_completions);
+ATF_TC_BODY(in_order_completions, tc)
+{
+	struct pci_vtrnd_softc sc;
+	struct vqueue_info vq;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&vq, 0, sizeof(vq));
+	sc.vrsc_fd = 10;
+	reset_mocks();
+	g_descs = 3;
+	pci_vtrnd_notify(&sc, &vq);
+
+	ATF_CHECK((vtrnd_vi_consts.vc_hv_caps & VIRTIO_F_IN_ORDER) != 0);
+	ATF_CHECK_EQ(g_read_calls, 3);
+	ATF_CHECK_EQ(g_rel_calls, 3);
+	ATF_CHECK_EQ(g_rel_idx[0], 7);
+	ATF_CHECK_EQ(g_rel_idx[1], 8);
+	ATF_CHECK_EQ(g_rel_idx[2], 9);
+	ATF_CHECK_EQ(g_end_calls, 1);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, hostile_descriptors);
 	ATF_TP_ADD_TC(tp, scatter_gather);
 	ATF_TP_ADD_TC(tp, random_read_failures);
+	ATF_TP_ADD_TC(tp, read_is_bounded);
 	ATF_TP_ADD_TC(tp, init_failures);
+	ATF_TP_ADD_TC(tp, in_order_completions);
 	return (atf_no_error());
 }

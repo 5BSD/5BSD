@@ -33,10 +33,176 @@
 #include <dev/virtio/virtio_ids.h>
 #include <dev/virtio/virtio_config.h>
 
+/* VirtIO 1.4 section 2.7: maximum split virtqueue size. */
+#define	VIRTIO_SPLIT_QUEUE_SIZE_MAX	32768U
+
+static inline bool
+virtio_features_subset(uint64_t available, uint64_t requested)
+{
+
+	return ((requested & ~available) == 0);
+}
+
+static inline bool
+virtio_split_queue_size_valid(uint32_t size)
+{
+
+	return (size != 0 && size <= VIRTIO_SPLIT_QUEUE_SIZE_MAX &&
+	    (size & (size - 1)) == 0);
+}
+
+/* VirtIO 1.4 section 4.1.5.2 PCI notification write width. */
+static inline uint8_t
+virtio_pci_queue_notify_size(bool notification_data)
+{
+
+	return (notification_data ? 4 : 2);
+}
+
+/*
+ * NotificationData is implemented by the transport.  A child driver's
+ * feature mask cannot override validation of the device notification window.
+ */
+static inline uint64_t
+virtio_modern_notification_data_features(uint64_t child_features,
+    uint64_t host_features, bool layout_valid)
+{
+
+	child_features &= ~VIRTIO_F_NOTIFICATION_DATA;
+	if ((host_features & VIRTIO_F_NOTIFICATION_DATA) != 0 && layout_valid)
+		child_features |= VIRTIO_F_NOTIFICATION_DATA;
+	return (child_features);
+}
+
+/* VirtIO 1.4 sections 2.9 and 4.1.5.2, split-ring notification data. */
+static inline uint32_t
+virtio_split_notification_data(uint16_t queue, uint16_t avail_idx)
+{
+
+	return ((uint32_t)queue | (uint32_t)avail_idx << 16);
+}
+
+static inline bool
+virtio_config_range_valid(uint64_t size, uint64_t offset, uint64_t length)
+{
+
+	return (offset <= size && length <= size - offset);
+}
+
+/*
+ * VirtIO 1.4 sections 4.1.3.1 and 4.2.2.2 require naturally aligned
+ * accesses matching the field width.  A 64-bit field is transferred as two
+ * aligned 32-bit accesses by the transport implementation.
+ */
+static inline bool
+virtio_modern_config_access_valid(uint64_t size, uint64_t offset, int length)
+{
+	uint64_t alignment;
+
+	switch (length) {
+	case 1:
+	case 2:
+	case 4:
+	case 8:
+		break;
+	default:
+		return (false);
+	}
+	alignment = length > 4 ? 4 : length;
+	return (virtio_config_range_valid(size, offset, length) &&
+	    offset % alignment == 0);
+}
+
+/* Assemble and split the independently accessible halves of a 64-bit field. */
+static inline uint64_t
+virtio_config_read64_parts(bool modern, uint32_t low, uint32_t high)
+{
+
+	return (((uint64_t)virtio_htog32(modern, high) << 32) |
+	    virtio_htog32(modern, low));
+}
+
+static inline void
+virtio_config_write64_parts(bool modern, uint64_t value, uint32_t *low,
+    uint32_t *high)
+{
+
+	*low = virtio_gtoh32(modern, (uint32_t)value);
+	*high = virtio_gtoh32(modern, value >> 32);
+}
+
+/*
+ * Keep only document-assigned device and legacy bits plus transport features
+ * implemented by the common split-ring driver.
+ */
+static inline uint64_t
+virtio_supported_transport_features(uint64_t features)
+{
+	uint64_t mask;
+
+	/*
+	 * VirtIO 1.4 section 2.2 allocates device features at bits 0--23,
+	 * 41--42, and 50--127.  Bits 24 and 27 are also valid on a legacy
+	 * interface.  Start with only those non-common allocations so reserved
+	 * bits 25--26 and 44--49 cannot pass through merely because they sit
+	 * outside VIRTIO_TRANSPORT_F_MASK.
+	 */
+	mask = (1ULL << 24) - 1;
+	mask |= VIRTIO_F_NOTIFY_ON_EMPTY;
+	mask |= VIRTIO_F_ANY_LAYOUT;
+	mask |= 3ULL << 41;
+	mask |= ~((1ULL << 50) - 1);
+	mask |= VIRTIO_RING_F_INDIRECT_DESC;
+	mask |= VIRTIO_RING_F_EVENT_IDX;
+	mask |= VIRTIO_F_VERSION_1;
+	mask |= VIRTIO_F_IN_ORDER;
+	mask |= VIRTIO_F_NOTIFICATION_DATA;
+	mask |= VIRTIO_F_RING_RESET;
+
+	return (features & mask);
+}
+
+/*
+ * Bits 24 and 27 are legacy-only.  Bits 41 and 42 are device-specific only
+ * for the legacy network interface; in a modern transport bit 41 is
+ * VIRTIO_F_ADMIN_VQ and bit 42 is reserved.  None is implemented by the
+ * common FreeBSD modern transport.
+ */
+static inline uint64_t
+virtio_modern_supported_transport_features(uint64_t features)
+{
+
+	features = virtio_supported_transport_features(features);
+	features &= ~VIRTIO_F_NOTIFY_ON_EMPTY;
+	features &= ~VIRTIO_F_ANY_LAYOUT;
+	features &= ~VIRTIO_F_ADMIN_VQ;
+	features &= ~(1ULL << 42);
+	return (features);
+}
+
+/*
+ * The legacy MMIO register layout has no QueueReset register.  Filter the
+ * feature before negotiation so a version 1 transport cannot promise a
+ * queue-reset operation it has no way to perform.
+ */
+static inline uint64_t
+virtio_mmio_supported_transport_features(uint32_t version, uint64_t features)
+{
+
+	if (version > 1)
+		features = virtio_modern_supported_transport_features(features);
+	else {
+		features = virtio_supported_transport_features(features);
+		features &= ~VIRTIO_F_RING_RESET;
+	}
+	return (features);
+}
+
 #ifdef _KERNEL
 
 struct sbuf;
 struct vq_alloc_info;
+struct virtqueue;
 
 /*
  * Each virtqueue indirect descriptor list must be physically contiguous.
@@ -113,12 +279,18 @@ void	 virtio_stop(device_t dev);
 int	 virtio_config_generation(device_t dev);
 int	 virtio_reinit(device_t dev, uint64_t features);
 void	 virtio_reinit_complete(device_t dev);
+/*
+ * The child driver must quiesce the queue before resetting it.  A successful
+ * reset leaves the queue disabled; it must be configured again before reuse.
+ */
+int	 virtio_reset_virtqueue(device_t dev, struct virtqueue *vq);
 int	 virtio_child_pnpinfo(device_t busdev, device_t child, struct sbuf *sb);
 
 /*
- * Read/write a variable amount from the device specific (ie, network)
- * configuration region. This region is encoded in the same endian as
- * the guest.
+ * Read/write a variable amount from the device-specific (for example,
+ * network) configuration region.  Legacy transports use guest-native byte
+ * order; modern transports convert the little-endian wire fields to and from
+ * guest-native values before invoking these interfaces.
  */
 void	 virtio_read_device_config(device_t dev, bus_size_t offset,
 	     void *dst, int length);

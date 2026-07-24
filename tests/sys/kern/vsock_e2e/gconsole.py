@@ -11,6 +11,16 @@ import tempfile
 import threading
 import time
 
+# VirtIO 1.4 feature allocation (§6).
+VIRTIO_F_IN_ORDER = 35
+VIRTIO_F_NOTIFICATION_DATA = 38
+VIRTIO_F_RING_RESET = 40
+
+MODERN_REQUIRED_FEATURES = (
+    (VIRTIO_F_NOTIFICATION_DATA, "VIRTIO_F_NOTIFICATION_DATA"),
+    (VIRTIO_F_RING_RESET, "VIRTIO_F_RING_RESET"),
+)
+
 
 def expected_pci_device(transport):
     if transport == "modern":
@@ -18,6 +28,17 @@ def expected_pci_device(transport):
     if transport == "legacy":
         return "0x1003"
     raise RuntimeError(f"invalid transport: {transport}")
+
+
+def negotiated_feature(virtio, bit):
+    feature_path = virtio + "/features"
+    try:
+        features = open(feature_path, encoding="ascii").read().strip()
+    except OSError as error:
+        raise RuntimeError(f"cannot read {feature_path}: {error}") from error
+    if len(features) <= bit or any(value not in "01" for value in features):
+        raise RuntimeError(f"invalid virtio feature bitmap: {features!r}")
+    return features[bit] == "1"
 
 
 def find_port(transport, wanted_name, sys_root="/sys", dev_root="/dev"):
@@ -53,7 +74,17 @@ def find_port(transport, wanted_name, sys_root="/sys", dev_root="/dev"):
                 port_path = os.path.realpath(device_link)
                 if os.path.commonpath((child_path, port_path)) != child_path:
                     continue
-                matches.append(os.path.join(dev_root, os.path.basename(port)))
+                if transport == "modern":
+                    for bit, feature_name in MODERN_REQUIRED_FEATURES:
+                        if not negotiated_feature(child, bit):
+                            raise RuntimeError(
+                                "virtio-console did not negotiate "
+                                f"{feature_name}"
+                            )
+                matches.append((
+                    os.path.join(dev_root, os.path.basename(port)),
+                    child,
+                ))
     if len(matches) != 1:
         raise RuntimeError(
             f"expected one PCI {expected} virtio_console port named "
@@ -133,19 +164,42 @@ def self_test():
             stream.write("0x1043\n")
         with open(port + "/name", "w", encoding="utf-8") as stream:
             stream.write("bhyve-e2e-console\n")
+        features = ["0"] * 64
+        for bit, _ in MODERN_REQUIRED_FEATURES:
+            features[bit] = "1"
+        with open(child + "/features", "w", encoding="ascii") as stream:
+            stream.write("".join(features) + "\n")
         os.symlink(driver, child + "/driver")
         os.symlink(port_device, port + "/device")
-        found = find_port(
+        found, child_path = find_port(
             "modern", "bhyve-e2e-console", sys_root=sys_root, dev_root=root
         )
         if found != root + "/vport0p1":
             raise AssertionError(f"wrong console path: {found}")
+        if child_path != child:
+            raise AssertionError(f"wrong console virtio device: {child_path}")
         try:
             find_port("legacy", "bhyve-e2e-console", sys_root, root)
         except RuntimeError:
             pass
         else:
             raise AssertionError("accepted wrong console transport")
+        for missing_bit, missing_name in MODERN_REQUIRED_FEATURES:
+            missing = features.copy()
+            missing[missing_bit] = "0"
+            with open(child + "/features", "w", encoding="ascii") as stream:
+                stream.write("".join(missing) + "\n")
+            try:
+                find_port(
+                    "modern", "bhyve-e2e-console", sys_root=sys_root,
+                    dev_root=root
+                )
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError(
+                    f"accepted console without {missing_name}"
+                )
 
     incoming = b"host-ready"
     outgoing = b"guest-ready"
@@ -191,14 +245,25 @@ def main():
             "exchange transport name incoming outgoing"
         )
     command, transport, name = sys.argv[1:4]
-    path = find_port(transport, name)
+    path, child = find_port(transport, name)
+    modern = transport == "modern"
+    in_order = modern and negotiated_feature(child, VIRTIO_F_IN_ORDER)
+    feature_status = (
+        "yes" if in_order else ("no" if modern else "n/a")
+    )
     if command == "check" and len(sys.argv) == 4:
-        print(f"PASS console-device name={name} device={path}")
+        print(
+            f"PASS console-device name={name} device={path} "
+            f"in_order={feature_status}"
+        )
     elif command == "exchange" and len(sys.argv) == 6:
         incoming = sys.argv[4].encode("ascii")
         outgoing = sys.argv[5].encode("ascii")
         exchange(path, incoming, outgoing)
-        print(f"PASS console-exchange name={name} device={path}")
+        print(
+            f"PASS console-exchange name={name} device={path} "
+            f"in_order={feature_status}"
+        )
     else:
         raise SystemExit("invalid gconsole.py command or argument count")
 

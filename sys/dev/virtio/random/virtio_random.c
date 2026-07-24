@@ -33,6 +33,7 @@
 #include <sys/eventhandler.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
+#include <sys/mutex.h>
 #include <sys/module.h>
 #include <sys/sglist.h>
 #include <sys/random.h>
@@ -52,7 +53,10 @@ struct vtrnd_softc {
 	uint64_t		 vtrnd_features;
 	struct virtqueue	*vtrnd_vq;
 	eventhandler_tag	 eh;
-	bool			 inactive;
+	struct mtx		 vtrnd_mtx;
+	bool			 mtx_initialized;
+	atomic_bool		 inactive;
+	bool			 source_registered;
 	struct sglist		 *vtrnd_sg;
 	uint32_t		 *vtrnd_value;
 };
@@ -71,9 +75,10 @@ static int	vtrnd_harvest(struct vtrnd_softc *, void *, size_t *);
 static void	vtrnd_enqueue(struct vtrnd_softc *sc);
 static unsigned	vtrnd_read(void *, unsigned);
 
-#define VTRND_FEATURES	0
+#define VTRND_FEATURES	VIRTIO_F_RING_RESET
 
 static struct virtio_feature_desc vtrnd_feature_desc[] = {
+	{ VIRTIO_F_RING_RESET,	"RingReset"	},
 	{ 0, NULL }
 };
 
@@ -145,6 +150,9 @@ vtrnd_attach(device_t dev)
 
 	sc = device_get_softc(dev);
 	sc->vtrnd_dev = dev;
+	atomic_store_explicit(&sc->inactive, true, memory_order_relaxed);
+	mtx_init(&sc->vtrnd_mtx, device_get_nameunit(dev), "vtrnd", MTX_DEF);
+	sc->mtx_initialized = true;
 	virtio_set_feature_desc(dev, vtrnd_feature_desc);
 
 	len = sizeof(*sc->vtrnd_value) * HARVESTSIZE;
@@ -178,10 +186,10 @@ vtrnd_attach(device_t dev)
 		goto fail;
 	}
 
-	sc->inactive = false;
-	random_source_register(&random_vtrnd);
-
 	vtrnd_enqueue(sc);
+	random_source_register(&random_vtrnd);
+	sc->source_registered = true;
+	atomic_store_explicit(&sc->inactive, false, memory_order_release);
 
 fail:
 	if (error)
@@ -194,26 +202,60 @@ static int
 vtrnd_detach(device_t dev)
 {
 	struct vtrnd_softc *sc;
-	uint32_t rdlen;
+	struct vtrnd_softc *exp;
+	int error, last;
 
 	sc = device_get_softc(dev);
-	KASSERT(
-	    atomic_load_explicit(&g_vtrnd_softc, memory_order_acquire) == sc,
-	    ("only one global instance at a time"));
-
-	sc->inactive = true;
+	atomic_store_explicit(&sc->inactive, true, memory_order_release);
 	if (sc->eh != NULL) {
 		EVENTHANDLER_DEREGISTER(shutdown_post_sync, sc->eh);
 		sc->eh = NULL;
 	}
-	random_source_deregister(&random_vtrnd);
+	if (sc->source_registered) {
+		/*
+		 * This also waits for every epoch-protected rs_read callback.
+		 * Keep it before clearing the published softc and destroying
+		 * vtrnd_mtx: the epoch wait is what pins sc between the global
+		 * pointer load in vtrnd_read() and its mutex acquisition.
+		 */
+		random_source_deregister(&random_vtrnd);
+		sc->source_registered = false;
+	}
 
-	/* clear the queue */
-	virtqueue_poll(sc->vtrnd_vq, &rdlen);
+	exp = sc;
+	(void)atomic_compare_exchange_strong_explicit(&g_vtrnd_softc, &exp,
+	    NULL, memory_order_acq_rel, memory_order_acquire);
 
-	atomic_store_explicit(&g_vtrnd_softc, NULL, memory_order_release);
-	sglist_free(sc->vtrnd_sg);
-	zfree(sc->vtrnd_value, M_DEVBUF);
+	if (sc->mtx_initialized)
+		mtx_lock(&sc->vtrnd_mtx);
+	if (sc->vtrnd_vq != NULL && !virtqueue_empty(sc->vtrnd_vq)) {
+		error = virtio_reset_virtqueue(dev, sc->vtrnd_vq);
+		if (error != 0) {
+			if (error != EOPNOTSUPP)
+				device_printf(dev,
+				    "cannot reset virtqueue: %d; resetting device\n",
+				    error);
+			virtio_stop(dev);
+		}
+		last = 0;
+		while (virtqueue_drain(sc->vtrnd_vq, &last) != NULL)
+			;
+	}
+	sc->vtrnd_vq = NULL;
+
+	if (sc->vtrnd_sg != NULL) {
+		sglist_free(sc->vtrnd_sg);
+		sc->vtrnd_sg = NULL;
+	}
+	if (sc->vtrnd_value != NULL) {
+		zfree(sc->vtrnd_value, M_DEVBUF);
+		sc->vtrnd_value = NULL;
+	}
+	if (sc->mtx_initialized) {
+		mtx_unlock(&sc->vtrnd_mtx);
+		mtx_destroy(&sc->vtrnd_mtx);
+		sc->mtx_initialized = false;
+	}
 	return (0);
 }
 
@@ -223,7 +265,7 @@ vtrnd_shutdown(device_t dev)
 	struct vtrnd_softc *sc;
 
 	sc = device_get_softc(dev);
-	sc->inactive = true;
+	atomic_store_explicit(&sc->inactive, true, memory_order_release);
 
 	return(0);
 }
@@ -291,7 +333,7 @@ vtrnd_harvest(struct vtrnd_softc *sc, void *buf, size_t *sz)
 	void *cookie;
 	uint32_t rdlen;
 
-	if (sc->inactive)
+	if (atomic_load_explicit(&sc->inactive, memory_order_acquire))
 		return (EDEADLK);
 
 	vq = sc->vtrnd_vq;
@@ -316,12 +358,14 @@ vtrnd_read(void *buf, unsigned usz)
 	size_t sz;
 	int error;
 
-	sc = g_vtrnd_softc;
+	sc = atomic_load_explicit(&g_vtrnd_softc, memory_order_acquire);
 	if (sc == NULL)
 		return (0);
 
+	mtx_lock(&sc->vtrnd_mtx);
 	sz = usz;
 	error = vtrnd_harvest(sc, buf, &sz);
+	mtx_unlock(&sc->vtrnd_mtx);
 	if (error != 0)
 		return (0);
 

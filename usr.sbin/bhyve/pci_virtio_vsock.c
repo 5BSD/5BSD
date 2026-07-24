@@ -522,6 +522,7 @@ struct pci_vtvsock_softc {
 
 /* Forward declarations */
 static void pci_vtvsock_reset(void *);
+static int  pci_vtvsock_qreset(void *, struct vqueue_info *, uint64_t);
 static void pci_vtvsock_notify_rx(void *, struct vqueue_info *);
 static void pci_vtvsock_notify_tx(void *, struct vqueue_info *);
 static void pci_vtvsock_notify_event(void *, struct vqueue_info *);
@@ -543,11 +544,36 @@ static bool vtvsock_rx_ready(struct pci_vtvsock_softc *);
 #define	VTVSOCK_DEVICE_FEATURES	(VIRTIO_VSOCK_F_STREAM |		\
 	    VIRTIO_VSOCK_F_SEQPACKET | VIRTIO_VSOCK_F_NO_IMPLIED_STREAM)
 
+static bool
+vtvsock_type_supported(const struct pci_vtvsock_softc *sc, uint16_t type)
+{
+	uint64_t features;
+
+	features = sc->vsc_features & VTVSOCK_DEVICE_FEATURES;
+	switch (type) {
+	case VIRTIO_VSOCK_TYPE_STREAM:
+		/*
+		 * Section 5.10.3.2 preserves the original feature-less STREAM
+		 * behavior.  SEQPACKET may also imply STREAM unless the driver
+		 * negotiated NO_IMPLIED_STREAM.
+		 */
+		return ((features & VIRTIO_VSOCK_F_STREAM) != 0 ||
+		    features == 0 ||
+		    ((features & VIRTIO_VSOCK_F_SEQPACKET) != 0 &&
+		    (features & VIRTIO_VSOCK_F_NO_IMPLIED_STREAM) == 0));
+	case VIRTIO_VSOCK_TYPE_SEQPACKET:
+		return ((features & VIRTIO_VSOCK_F_SEQPACKET) != 0);
+	default:
+		return (false);
+	}
+}
+
 static struct virtio_consts vtvsock_vi_consts = {
 	.vc_name =		"vtvsock",
 	.vc_nvq =		VTVSOCK_MAXQ,
 	.vc_cfgsize =		sizeof(struct virtio_vsock_config),
 	.vc_reset =		pci_vtvsock_reset,
+	.vc_qreset =		pci_vtvsock_qreset,
 	.vc_cfgread =		pci_vtvsock_cfgread,
 	.vc_cfgwrite =		pci_vtvsock_cfgwrite,
 	.vc_apply_features =	pci_vtvsock_neg_features,
@@ -556,7 +582,7 @@ static struct virtio_consts vtvsock_vi_consts = {
 	 * always together with F_STREAM: this device supports stream, the
 	 * bit only makes that support explicit for 1.4-aware drivers.
 	 */
-	.vc_hv_caps =		VTVSOCK_DEVICE_FEATURES,
+	.vc_hv_caps =		VTVSOCK_DEVICE_FEATURES | VIRTIO_F_RING_RESET,
 };
 
 /* -------------------------------------------------------------------------
@@ -886,10 +912,11 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 
 	if (!vq_has_descs(vq)) {
 		DPRINTF2(("vtvsock: RX inject unavailable op=%u ring=%d "
-		    "enabled=%u status=%#x caps=%#x last_avail=%u "
+		    "enabled=%u status=%#x caps=%#jx last_avail=%u "
 		    "avail_idx=%u used_idx=%u pending=%u",
 		    le16toh(hdrp->op), vq_ring_ready(vq), vq->vq_enabled,
-		    sc->vsc_vs.vs_status, sc->vsc_vs.vs_negotiated_caps,
+		    sc->vsc_vs.vs_status,
+		    (uintmax_t)sc->vsc_vs.vs_negotiated_caps,
 		    vq->vq_last_avail,
 		    vq->vq_avail == NULL ? 0 : vq->vq_avail->idx,
 		    vq->vq_used == NULL ? 0 : vq->vq_used->idx,
@@ -1723,6 +1750,12 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 		vtvsock_send_rst_noconn(sc, dst_port, src_port, type);
 		return;
 	}
+	if (!vtvsock_type_supported(sc, type)) {
+		DPRINTF(("vtvsock: unnegotiated type %u from guest, sending RST",
+		    type));
+		vtvsock_send_rst_noconn(sc, dst_port, src_port, type);
+		return;
+	}
 
 	/*
 	 * Extract peer credit state from every incoming packet (not just
@@ -2518,6 +2551,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 
 		if (sc->vsc_kernel) {
 			struct iovec kernel_iov[2];
+			int error;
 			ssize_t expected, sent;
 
 			kernel_iov[0].iov_base = &hdr;
@@ -2527,6 +2561,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 			expected = (ssize_t)sizeof(hdr) + paylen;
 			sent = writev(sc->vsc_kernel_fd, kernel_iov,
 			    paylen == 0 ? 1 : 2);
+			error = sent < 0 ? errno : 0;
 			DPRINTF2(("vtvsock: kernel TX op=%u src=%ju:%u "
 			    "dst=%ju:%u len=%u result=%zd%s%s",
 			    le16toh(hdr.op), (uintmax_t)le64toh(hdr.src_cid),
@@ -2534,7 +2569,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 			    (uintmax_t)le64toh(hdr.dst_cid),
 			    le32toh(hdr.dst_port), paylen, sent,
 			    sent < 0 ? " error=" : "",
-			    sent < 0 ? strerror(errno) : ""));
+			    sent < 0 ? strerror(error) : ""));
 			if (sent != expected) {
 				/*
 				 * EINVAL/EMSGSIZE rejects a malformed guest packet and is
@@ -2544,11 +2579,11 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 				 * and require the guest to reset the device.
 				 */
 				if (sent < 0 &&
-				    (errno == EINVAL || errno == EMSGSIZE)) {
+				    (error == EINVAL || error == EMSGSIZE)) {
 					DPRINTF(("vtvsock: kernel transport rejected "
-					    "guest packet: %s", strerror(errno)));
+					    "guest packet: %s", strerror(error)));
 				} else if (sent < 0 &&
-				    (errno == EAGAIN || errno == EWOULDBLOCK)) {
+				    (error == EAGAIN || error == EWOULDBLOCK)) {
 					sc->vsc_kernel_tx = malloc((size_t)expected);
 					if (sc->vsc_kernel_tx != NULL) {
 						memcpy(sc->vsc_kernel_tx, &hdr,
@@ -2571,7 +2606,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 					break;
 				} else {
 					WPRINTF(("vtvsock: kernel transport write "
-					    "failed: %s", sent < 0 ? strerror(errno) :
+					    "failed: %s", sent < 0 ? strerror(error) :
 					    "short write"));
 					sc->vsc_kernel_failed = true;
 					vi_set_needs_reset(&sc->vsc_vs);
@@ -3321,6 +3356,7 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 	struct pci_vtvsock_softc *sc = arg;
 	struct vtvsock_ctl_conn *cc, *cctmp;
 	struct vsock_ctl_msg msg;
+	int error;
 	ssize_t nr;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
@@ -3340,6 +3376,7 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 
 	nr = recv(fd, (uint8_t *)&cc->msg + cc->msg_off,
 	    sizeof(cc->msg) - cc->msg_off, MSG_DONTWAIT);
+	error = nr < 0 ? errno : 0;
 	DPRINTF2(("vtvsock: ctl fd=%d recv=%zd offset=%zu", fd, nr,
 	    cc->msg_off));
 	if (nr <= 0) {
@@ -3347,7 +3384,7 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 		 * EOF and hard errors terminate the request.  A would-block leaves
 		 * the partially accumulated SOCK_STREAM frame intact.
 		 */
-		if (nr == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
+		if (nr == 0 || (error != EAGAIN && error != EWOULDBLOCK)) {
 			TAILQ_REMOVE(&sc->vsc_ctl_conns, cc, link);
 			sc->vsc_ctl_conn_count--;
 			if (cc->evp != NULL)
@@ -3392,6 +3429,14 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 
 			WPRINTF(("vtvsock: unsupported ctl socket type %u",
 			    msg.type));
+			reply = msg;
+			reply.status = -ESOCKTNOSUPPORT;
+			(void)send(fd, &reply, sizeof(reply), MSG_NOSIGNAL);
+			break;
+		}
+		if (!vtvsock_type_supported(sc, vtype)) {
+			struct vsock_ctl_msg reply;
+
 			reply = msg;
 			reply.status = -ESOCKTNOSUPPORT;
 			(void)send(fd, &reply, sizeof(reply), MSG_NOSIGNAL);
@@ -3644,6 +3689,38 @@ pci_vtvsock_reset(void *vsc)
 	pthread_mutex_unlock(&sc->vsc_mtx);
 
 	vi_reset_dev(&sc->vsc_vs);
+	sc->vsc_features = 0;
+}
+
+static int
+pci_vtvsock_qreset(void *vsc, struct vqueue_info *vq,
+    uint64_t generation __unused)
+{
+	struct pci_vtvsock_softc *sc;
+
+	sc = vsc;
+	if (vq->vq_num >= VTVSOCK_MAXQ)
+		return (EINVAL);
+
+	/*
+	 * A packet parked after /dev/vsock returns EAGAIN is a request consumed
+	 * from the TX virtqueue.  Section 2.6.1 requires the device to stop
+	 * executing requests from a reset queue, so discard that copy and stop
+	 * its retry event.  RX packets and pending device-generated control
+	 * replies did not originate from the TX queue and remain valid for the
+	 * replacement RX queue.
+	 *
+	 * The common transport freezes and detaches the selected queue while
+	 * holding vsc_mtx before invoking this callback.
+	 */
+	if (vq->vq_num == VTVSOCK_TXQ) {
+		free(sc->vsc_kernel_tx);
+		sc->vsc_kernel_tx = NULL;
+		sc->vsc_kernel_tx_len = 0;
+		if (sc->vsc_kernel_write_evp != NULL)
+			mevent_disable(sc->vsc_kernel_write_evp);
+	}
+	return (0);
 }
 
 static void
@@ -3687,9 +3764,10 @@ pci_vtvsock_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 {
 	struct pci_vtvsock_softc *sc = vsc;
 
-	if (offset < 0 || size < 0 || size > (int)sizeof(uint32_t) ||
-	    (unsigned)offset + (unsigned)size > sizeof(sc->vsc_config)) {
-		*retval = 0;
+	*retval = 0;
+	if (offset < 0 || (size != 1 && size != 2 && size != 4) ||
+	    (size_t)offset > sizeof(sc->vsc_config) ||
+	    (size_t)size > sizeof(sc->vsc_config) - (size_t)offset) {
 		return (-1);
 	}
 	memcpy(retval, (uint8_t *)&sc->vsc_config + offset, size);
@@ -3768,7 +3846,8 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	/*
 	 * Enable verbose per-packet DPRINTF tracing when requested.  Guest-
 	 * triggerable parse/drop diagnostics are logged at this level (not
-	 * WPRINTF) so a hostile guest cannot flood the host log by default.
+	 * WPRINTF) so repeated invalid input cannot flood the host log by
+	 * default.
 	 */
 	if (getenv("BHYVE_VTVSOCK_DEBUG") != NULL) {
 		pci_vtvsock_debug = atoi(getenv("BHYVE_VTVSOCK_DEBUG"));
@@ -3809,7 +3888,7 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (cid >= UINT32_MAX) {
 		/*
 		 * 0xffffffff (== UINT32_MAX == VSOCK_CID_ANY) is a reserved CID
-		 * per virtio 1.2/1.3 §5.10.4, and anything above it does not fit
+		 * per VirtIO 1.4 §5.10.4, and anything above it does not fit
 		 * the 32-bit CID space.  Reject both.
 		 */
 		WPRINTF(("vtvsock: cid must be < 0xffffffff (got %llu)",
@@ -3876,7 +3955,8 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (vi_pci_is_modern(&sc->vsc_vs))
 		vi_pci_modern_set_identity(&sc->vsc_vs, VIRTIO_ID_VSOCK);
 	else {
-		pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_VSOCK);
+		pci_set_cfgdata16(pi, PCIR_DEVICE,
+		    VIRTIO_PCI_COMPAT_VSOCK_DEVICE);
 		pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
 		pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_VSOCK);
 		pci_set_cfgdata16(pi, PCIR_SUBVEND_0, VIRTIO_VENDOR);

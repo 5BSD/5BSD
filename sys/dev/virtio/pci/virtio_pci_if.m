@@ -43,9 +43,10 @@ METHOD uint16_t get_vq_size {
 	int		idx;
 };
 
-METHOD bus_size_t get_vq_notify_off {
+METHOD int get_vq_notify_off {
 	device_t	dev;
 	int		idx;
+	bus_size_t	*offset;
 };
 
 METHOD void set_vq {
