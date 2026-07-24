@@ -523,7 +523,7 @@ provision_guest()
 	wait_for_login 120
 	printf 'root\r' >> "$console_input"
 	sleep 2
-	guest_cmd 'set -eu; ip link set eth0 up; udhcpc -n -q -t 5 -T 3 -i eth0; release=$(cut -d. -f1,2 /etc/alpine-release); case "$release" in *.*) ;; *) echo "invalid Alpine release: $release" >&2; exit 1;; esac; major=${release%.*}; minor=${release#*.}; case "$major:$minor" in *[!0-9:]*|:|*:) echo "invalid Alpine release: $release" >&2; exit 1;; esac; repository="https://dl-cdn.alpinelinux.org/alpine/v${release}/main"; printf "%s\n" "$repository" > /etc/apk/repositories; apk add --no-cache python3; printf "PROVISION alpine=%s kernel=%s repository=%s " "$(cat /etc/alpine-release)" "$(uname -r)" "$repository"; python3 --version' 150
+	guest_cmd 'set -eu; ip link set eth0 up; udhcpc -n -q -t 5 -T 3 -i eth0; release=$(cut -d. -f1,2 /etc/alpine-release); case "$release" in *.*) ;; *) echo "invalid Alpine release: $release" >&2; exit 1;; esac; major=${release%.*}; minor=${release#*.}; case "$major:$minor" in *[!0-9:]*|:|*:) echo "invalid Alpine release: $release" >&2; exit 1;; esac; repository="https://dl-cdn.alpinelinux.org/alpine/v${release}/main"; printf "%s\n" "$repository" > /etc/apk/repositories; apk add --no-cache ethtool python3; printf "PROVISION alpine=%s kernel=%s repository=%s " "$(cat /etc/alpine-release)" "$(uname -r)" "$repository"; python3 --version' 150
 	copy_guest_file "$here/gnet.py" /tmp/gnet.py
 	guest_cmd 'python3 /tmp/gnet.py --self-test | grep -q "^SELFTEST PASS$"' 30
 	if [ "$run_vsock" = yes ]; then

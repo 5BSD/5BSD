@@ -81,6 +81,7 @@ void	netbe_rx_enable(net_backend_t *be);
 #define	VIRTIO_NET_F_GUEST_ANNOUNCE \
 				(1 << 21) /* guest can send gratuitous pkts */
 #define	VIRTIO_NET_F_MQ		(1 << 22) /* host supports multiple VQ pairs */
+#define	VIRTIO_NET_F_RSS	(1ULL << 60) /* configurable RSS steering */
 
 /*
  * Fixed network header size

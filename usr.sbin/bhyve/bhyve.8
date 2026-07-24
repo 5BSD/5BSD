@@ -776,10 +776,12 @@ device.
 The default is 1.
 Values greater than 1 require
 .Cm transport=modern
-and advertise the VirtIO control-queue and automatic multiqueue steering
-features.
+and advertise the VirtIO control-queue, automatic multiqueue steering, and
+receive-side scaling features.
 Only the first queue pair is active after reset; a conforming guest enables
-additional pairs with the VirtIO network multiqueue control command.
+additional pairs with a VirtIO network multiqueue control command.
+RSS-capable guests can program a 128-entry indirection table, a 40-byte
+Toeplitz key, and IPv4, IPv6, TCP, and UDP hash types.
 .Pp
 With
 .Cm netgraph

@@ -65,6 +65,10 @@
 #define	VTNET_MAX_PAIRS	8
 #define	VTNET_FLOW_ENTRIES	1024
 #define	VTNET_TX_BUDGET	64
+#define	VTNET_RSS_KEY_SIZE	40
+#define	VTNET_RSS_TABLE_SIZE	128
+#define	VTNET_TCP_HEADER_MIN	20
+#define	VTNET_UDP_HEADER_SIZE	8
 
 /*
  * VirtIO 1.4 section 5.1.9.3 permits a 65,589-byte incoming GSO packet.
@@ -106,6 +110,11 @@ struct virtio_net_config {
 	uint16_t status;
 	uint16_t max_virtqueue_pairs;
 	uint16_t mtu;
+	uint32_t speed;
+	uint8_t duplex;
+	uint8_t rss_max_key_size;
+	uint16_t rss_max_indirection_table_length;
+	uint32_t supported_hash_types;
 } __packed;
 
 /*
@@ -117,8 +126,31 @@ struct virtio_net_config {
 
 #define	VTNET_CTRL_MQ			4
 #define	VTNET_CTRL_MQ_VQ_PAIRS_SET	0
+#define	VTNET_CTRL_MQ_RSS_CONFIG	1
 #define	VTNET_CTRL_OK			0
 #define	VTNET_CTRL_ERR			1
+
+#define	VTNET_RSS_HASH_TYPE_IPV4	(1U << 0)
+#define	VTNET_RSS_HASH_TYPE_TCPV4	(1U << 1)
+#define	VTNET_RSS_HASH_TYPE_UDPV4	(1U << 2)
+#define	VTNET_RSS_HASH_TYPE_IPV6	(1U << 3)
+#define	VTNET_RSS_HASH_TYPE_TCPV6	(1U << 4)
+#define	VTNET_RSS_HASH_TYPE_UDPV6	(1U << 5)
+#define	VTNET_RSS_HASH_TYPES		((1U << 6) - 1)
+#define	VTNET_RSS_COMMAND_MIN		15
+#define	VTNET_RSS_COMMAND_MAX		(13 + VTNET_RSS_TABLE_SIZE * 2 + \
+					    VTNET_RSS_KEY_SIZE)
+
+struct pci_vtnet_rss_config {
+	uint32_t hash_types;
+	uint16_t indirection_mask;
+	uint16_t unclassified_queue;
+	uint16_t indirection_table[VTNET_RSS_TABLE_SIZE];
+	uint16_t max_tx_vq;
+	uint16_t enabled_mask;
+	uint8_t key_length;
+	uint8_t key[VTNET_RSS_KEY_SIZE];
+};
 
 /*
  * Debug printf
@@ -157,8 +189,17 @@ struct pci_vtnet_softc {
 	uint16_t	tx_next_pair;
 
 	uint16_t	rx_active_pairs;
+	uint16_t	rx_enabled_mask;
 	uint16_t	vsc_max_pairs;
 	uint64_t	vsc_flow_map[VTNET_FLOW_ENTRIES];
+	bool		rss_enabled;
+	uint32_t	rss_hash_types;
+	uint16_t	rss_indirection_mask;
+	uint16_t	rss_unclassified_queue;
+	uint16_t	rss_indirection_table[VTNET_RSS_TABLE_SIZE];
+	uint16_t	rss_max_tx_vq;
+	uint8_t		rss_key_length;
+	uint8_t		rss_key[VTNET_RSS_KEY_SIZE];
 	uint8_t		vsc_rx_buf[NETBE_MAX_RECORD_SIZE];
 	size_t		rx_staged_len;
 
@@ -358,6 +399,165 @@ pci_vtnet_flow_pair(struct pci_vtnet_softc *sc, uint32_t hash,
 	return ((uint16_t)(hash % active_pairs));
 }
 
+static bool
+pci_vtnet_rss_toeplitz(const uint8_t *key, size_t key_len,
+    const uint8_t *input, size_t input_len, uint32_t *result)
+{
+	uint32_t hash, window;
+	size_t input_bits, key_bits;
+
+	input_bits = input_len * 8;
+	key_bits = key_len * 8;
+	if (key_len < sizeof(window) || key_bits < input_bits + 31)
+		return (false);
+	window = (uint32_t)key[0] << 24 | (uint32_t)key[1] << 16 |
+	    (uint32_t)key[2] << 8 | key[3];
+	hash = 0;
+	for (size_t bit = 0; bit < input_bits; bit++) {
+		size_t next;
+
+		if ((input[bit / 8] & (0x80U >> (bit % 8))) != 0)
+			hash ^= window;
+		next = bit + 32;
+		window <<= 1;
+		if (next < key_bits &&
+		    (key[next / 8] & (0x80U >> (next % 8))) != 0)
+			window |= 1;
+	}
+	*result = hash;
+	return (true);
+}
+
+static bool
+pci_vtnet_rss_hash(const struct pci_vtnet_softc *sc, const uint8_t *frame,
+    size_t len, uint32_t *hash)
+{
+	uint8_t input[36];
+	uint16_t ether_type, frag;
+	size_t input_len, l3off, l4off, packet_end;
+	uint8_t protocol;
+	bool fragmented;
+
+	if (sc->rss_hash_types == 0 || len < ETHER_HDR_LEN)
+		return (false);
+	l3off = ETHER_HDR_LEN;
+	ether_type = pci_vtnet_be16(frame + 12);
+	while ((ether_type == ETHERTYPE_VLAN || ether_type == ETHERTYPE_QINQ) &&
+	    len >= l3off + ETHER_VLAN_ENCAP_LEN) {
+		ether_type = pci_vtnet_be16(frame + l3off + 2);
+		l3off += ETHER_VLAN_ENCAP_LEN;
+	}
+
+	input_len = 0;
+	if (ether_type == ETHERTYPE_IP && len >= l3off + 20 &&
+	    (frame[l3off] >> 4) == 4) {
+		size_t ihl, iplen;
+
+		ihl = (frame[l3off] & 0x0f) * 4;
+		iplen = pci_vtnet_be16(frame + l3off + 2);
+		if (ihl < 20 || iplen < ihl || len < l3off + iplen)
+			return (false);
+		memcpy(input, frame + l3off + 12, 8);
+		input_len = 8;
+		protocol = frame[l3off + 9];
+		frag = pci_vtnet_be16(frame + l3off + 6);
+		/*
+		 * A first fragment still contains the transport header even
+		 * when more fragments follow.  Only a non-zero fragment offset
+		 * makes the four-tuple unavailable.
+		 */
+		fragmented = (frag & 0x1fff) != 0;
+		if (!fragmented && protocol == IPPROTO_TCP &&
+		    (sc->rss_hash_types & VTNET_RSS_HASH_TYPE_TCPV4) != 0 &&
+		    iplen >= ihl + VTNET_TCP_HEADER_MIN) {
+			memcpy(input + input_len, frame + l3off + ihl, 4);
+			input_len += 4;
+		} else if (!fragmented && protocol == IPPROTO_UDP &&
+		    (sc->rss_hash_types & VTNET_RSS_HASH_TYPE_UDPV4) != 0 &&
+		    iplen >= ihl + VTNET_UDP_HEADER_SIZE) {
+			memcpy(input + input_len, frame + l3off + ihl, 4);
+			input_len += 4;
+		} else if ((sc->rss_hash_types &
+		    VTNET_RSS_HASH_TYPE_IPV4) == 0)
+			return (false);
+	} else if (ether_type == ETHERTYPE_IPV6 && len >= l3off + 40 &&
+	    (frame[l3off] >> 4) == 6) {
+		unsigned int extensions;
+		size_t iplen;
+
+		iplen = 40 + pci_vtnet_be16(frame + l3off + 4);
+		if (len < l3off + iplen)
+			return (false);
+		packet_end = l3off + iplen;
+		memcpy(input, frame + l3off + 8, 32);
+		input_len = 32;
+		protocol = frame[l3off + 6];
+		l4off = l3off + 40;
+		fragmented = false;
+		/*
+		 * VirtIO 1.4 section 5.1.9.4.3.4 says that when none of the
+		 * extension-aware hash types is enabled, the device skips IPv6
+		 * extension headers and applies the basic IPv6 hash rules.
+		 */
+		for (extensions = 0; extensions < 16; extensions++) {
+			size_t extlen;
+
+			if (protocol == IPPROTO_HOPOPTS ||
+			    protocol == IPPROTO_ROUTING ||
+			    protocol == IPPROTO_DSTOPTS ||
+			    protocol == IPPROTO_MH ||
+			    protocol == IPPROTO_HIP ||
+			    protocol == IPPROTO_SHIM6) {
+				if (packet_end < l4off + 2)
+					return (false);
+				extlen = ((size_t)frame[l4off + 1] + 1) * 8;
+			} else if (protocol == IPPROTO_FRAGMENT) {
+				if (packet_end < l4off + 8)
+					return (false);
+				frag = pci_vtnet_be16(frame + l4off + 2);
+				fragmented |= (frag & 0xfff8) != 0;
+				extlen = 8;
+			} else if (protocol == IPPROTO_AH) {
+				if (packet_end < l4off + 2)
+					return (false);
+				extlen = ((size_t)frame[l4off + 1] + 2) * 4;
+			} else
+				break;
+			if (extlen == 0 || packet_end < l4off + extlen)
+				return (false);
+			protocol = frame[l4off];
+			l4off += extlen;
+		}
+		if (extensions == 16)
+			return (false);
+		if (!fragmented && protocol == IPPROTO_TCP &&
+		    (sc->rss_hash_types & VTNET_RSS_HASH_TYPE_TCPV6) != 0 &&
+		    packet_end >= l4off + VTNET_TCP_HEADER_MIN) {
+			memcpy(input + input_len, frame + l4off, 4);
+			input_len += 4;
+		} else if (!fragmented && protocol == IPPROTO_UDP &&
+		    (sc->rss_hash_types & VTNET_RSS_HASH_TYPE_UDPV6) != 0 &&
+		    packet_end >= l4off + VTNET_UDP_HEADER_SIZE) {
+			memcpy(input + input_len, frame + l4off, 4);
+			input_len += 4;
+		} else if ((sc->rss_hash_types &
+		    VTNET_RSS_HASH_TYPE_IPV6) == 0)
+			return (false);
+	} else
+		return (false);
+
+	return (pci_vtnet_rss_toeplitz(sc->rss_key, sc->rss_key_length,
+	    input, input_len, hash));
+}
+
+static bool
+pci_vtnet_rxq_enabled(const struct pci_vtnet_softc *sc, uint16_t pair)
+{
+
+	return (pair < sc->vsc_max_pairs &&
+	    (sc->rx_enabled_mask & (1U << pair)) != 0);
+}
+
 static void pci_vtnet_reset(void *);
 static int pci_vtnet_qenable(void *, struct vqueue_info *);
 static int pci_vtnet_qreset(void *, struct vqueue_info *, uint64_t);
@@ -432,10 +632,20 @@ pci_vtnet_reset(void *vsc)
 	sc->rx_merge = 0;
 	sc->vhdrlen = pci_vtnet_header_len(sc, 0);
 	sc->rx_active_pairs = 1;
+	sc->rx_enabled_mask = 1;
 	sc->tx_active_pairs = 1;
 	sc->tx_next_pair = 0;
 	sc->tx_current_vq = NULL;
 	sc->tx_control_pause = false;
+	sc->rss_enabled = false;
+	sc->rss_hash_types = 0;
+	sc->rss_indirection_mask = 0;
+	sc->rss_unclassified_queue = 0;
+	sc->rss_max_tx_vq = 1;
+	sc->rss_key_length = 0;
+	memset(sc->rss_indirection_table, 0,
+	    sizeof(sc->rss_indirection_table));
+	memset(sc->rss_key, 0, sizeof(sc->rss_key));
 	sc->rx_staged_len = 0;
 	memset(sc->vsc_flow_map, 0, sizeof(sc->vsc_flow_map));
 
@@ -458,7 +668,7 @@ pci_vtnet_qenable(void *vsc, struct vqueue_info *vq)
 		return (0);
 	pair = vq->vq_num / 2;
 	if ((vq->vq_num & 1) == 0) {
-		if (pair >= sc->rx_active_pairs)
+		if (!pci_vtnet_rxq_enabled(sc, pair))
 			return (0);
 		/*
 		 * Enabling the ring does not imply that receive buffers are
@@ -492,17 +702,20 @@ pci_vtnet_qreset(void *vsc, struct vqueue_info *vq,
 	pair = vq->vq_num / 2;
 	if ((vq->vq_num & 1) == 0) {
 		/*
-		 * Serialize with the backend callback.  In multiqueue mode the
-		 * receive selector avoids this queue and reselects another live
-		 * pair.  With no other live receive queue, stop readiness events
-		 * until a queue is re-enabled and kicked.
+		 * Serialize with the backend callback.  Automatic multiqueue
+		 * steering reselects another live pair.  RSS instead drops a
+		 * packet whose configured destination is being reset.  With no
+		 * other live receive queue, stop readiness events until a queue
+		 * is re-enabled and kicked.
 		 */
 		pthread_mutex_lock(&sc->rx_mtx);
 		another = false;
 		all_resetting = true;
-		for (uint16_t i = 0; i < sc->rx_active_pairs; i++) {
+		for (uint16_t i = 0; i < sc->vsc_max_pairs; i++) {
 			struct vqueue_info *candidate;
 
+			if (!pci_vtnet_rxq_enabled(sc, i))
+				continue;
 			candidate = &sc->vsc_queues[pci_vtnet_rxq_index(i)];
 			if (!vq_is_resetting(candidate))
 				all_resetting = false;
@@ -847,12 +1060,34 @@ struct virtio_mrg_rxbuf_info {
 
 static struct vqueue_info *
 pci_vtnet_select_rxq(struct pci_vtnet_softc *sc, const uint8_t *frame,
-    size_t frame_len)
+    size_t frame_len, bool *drop)
 {
 	struct vqueue_info *vq;
 	uint32_t hash;
 	uint16_t pair, start;
 
+	*drop = false;
+	if (sc->rx_enabled_mask == 0)
+		return (NULL);
+	if (sc->rss_enabled) {
+		if (pci_vtnet_rss_hash(sc, frame, frame_len, &hash))
+			pair = sc->rss_indirection_table[
+			    hash & sc->rss_indirection_mask];
+		else
+			pair = sc->rss_unclassified_queue;
+		if (!pci_vtnet_rxq_enabled(sc, pair)) {
+			*drop = true;
+			return (NULL);
+		}
+		vq = &sc->vsc_queues[pci_vtnet_rxq_index(pair)];
+		if (vq_is_resetting(vq)) {
+			*drop = true;
+			return (NULL);
+		}
+		if (vq_ring_ready(vq) && vq_has_descs(vq))
+			return (vq);
+		return (NULL);
+	}
 	if (sc->rx_active_pairs == 0)
 		return (NULL);
 	hash = pci_vtnet_flow_hash(frame, frame_len);
@@ -860,7 +1095,8 @@ pci_vtnet_select_rxq(struct pci_vtnet_softc *sc, const uint8_t *frame,
 	for (uint16_t i = 0; i < sc->rx_active_pairs; i++) {
 		pair = (start + i) % sc->rx_active_pairs;
 		vq = &sc->vsc_queues[pci_vtnet_rxq_index(pair)];
-		if (!vq_is_resetting(vq) && vq_ring_ready(vq) &&
+		if (pci_vtnet_rxq_enabled(sc, pair) &&
+		    !vq_is_resetting(vq) && vq_ring_ready(vq) &&
 		    vq_has_descs(vq))
 			return (vq);
 	}
@@ -871,9 +1107,11 @@ static bool
 pci_vtnet_all_rxqs_resetting(struct pci_vtnet_softc *sc)
 {
 
-	if (sc->rx_active_pairs == 0)
+	if (sc->rx_enabled_mask == 0)
 		return (true);
-	for (uint16_t i = 0; i < sc->rx_active_pairs; i++) {
+	for (uint16_t i = 0; i < sc->vsc_max_pairs; i++) {
+		if (!pci_vtnet_rxq_enabled(sc, i))
+			continue;
 		if (!vq_is_resetting(
 		    &sc->vsc_queues[pci_vtnet_rxq_index(i)]))
 			return (false);
@@ -928,6 +1166,7 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 		int n_chains;
 		ssize_t backend_len;
 		ssize_t rlen;
+		bool drop;
 
 		if (sc->rx_staged_len == 0) {
 			backend_len = netbe_peek_recvlen(sc->vsc_be);
@@ -991,9 +1230,9 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			continue;
 		}
 		vq = pci_vtnet_select_rxq(sc, sc->vsc_rx_buf + sc->vhdrlen,
-		    plen - sc->vhdrlen);
+		    plen - sc->vhdrlen, &drop);
 		if (vq == NULL) {
-			if (pci_vtnet_all_rxqs_resetting(sc)) {
+			if (drop || pci_vtnet_all_rxqs_resetting(sc)) {
 				sc->rx_staged_len = 0;
 				continue;
 			}
@@ -1180,7 +1419,7 @@ pci_vtnet_ping_rxq(void *vsc, struct vqueue_info *vq)
 		return;
 	}
 	pair = vq->vq_num / 2;
-	if (pair >= sc->rx_active_pairs) {
+	if (!pci_vtnet_rxq_enabled(sc, pair)) {
 		pthread_mutex_unlock(&sc->rx_mtx);
 		return;
 	}
@@ -1396,7 +1635,9 @@ pci_vtnet_tx_thread(void *param)
 }
 
 static void
-pci_vtnet_set_active_pairs(struct pci_vtnet_softc *sc, uint16_t pairs)
+pci_vtnet_set_queue_state(struct pci_vtnet_softc *sc, uint16_t tx_pairs,
+    uint16_t rx_mask, uint16_t automatic_pairs,
+    const struct pci_vtnet_rss_config *rss)
 {
 	struct vqueue_info *vq;
 	uint16_t old_pairs;
@@ -1404,7 +1645,7 @@ pci_vtnet_set_active_pairs(struct pci_vtnet_softc *sc, uint16_t pairs)
 	pthread_mutex_lock(&sc->rx_mtx);
 	pthread_mutex_lock(&sc->tx_mtx);
 	old_pairs = sc->tx_active_pairs;
-	if (pairs < old_pairs) {
+	if (tx_pairs < old_pairs) {
 		/*
 		 * The control acknowledgement is the boundary after which the
 		 * driver may reclaim disabled queues.  Pause the worker and
@@ -1419,7 +1660,7 @@ pci_vtnet_set_active_pairs(struct pci_vtnet_softc *sc, uint16_t pairs)
 			pthread_mutex_lock(&sc->tx_mtx);
 		}
 		pthread_mutex_unlock(&sc->tx_mtx);
-		for (uint16_t i = pairs; i < old_pairs; i++) {
+		for (uint16_t i = tx_pairs; i < old_pairs; i++) {
 			uint16_t budget;
 
 			vq = &sc->vsc_queues[pci_vtnet_txq_index(i)];
@@ -1433,10 +1674,31 @@ pci_vtnet_set_active_pairs(struct pci_vtnet_softc *sc, uint16_t pairs)
 		pthread_mutex_lock(&sc->tx_mtx);
 	}
 
-	sc->rx_active_pairs = pairs;
-	sc->tx_active_pairs = pairs;
-	if (sc->tx_next_pair >= pairs)
+	sc->rx_active_pairs = automatic_pairs;
+	sc->rx_enabled_mask = rx_mask;
+	sc->tx_active_pairs = tx_pairs;
+	if (sc->tx_next_pair >= tx_pairs)
 		sc->tx_next_pair = 0;
+	sc->rss_enabled = rss != NULL;
+	if (rss != NULL) {
+		sc->rss_hash_types = rss->hash_types;
+		sc->rss_indirection_mask = rss->indirection_mask;
+		sc->rss_unclassified_queue = rss->unclassified_queue;
+		memcpy(sc->rss_indirection_table, rss->indirection_table,
+		    sizeof(sc->rss_indirection_table));
+		sc->rss_max_tx_vq = rss->max_tx_vq;
+		sc->rss_key_length = rss->key_length;
+		memcpy(sc->rss_key, rss->key, sizeof(sc->rss_key));
+	} else {
+		sc->rss_hash_types = 0;
+		sc->rss_indirection_mask = 0;
+		sc->rss_unclassified_queue = 0;
+		memset(sc->rss_indirection_table, 0,
+		    sizeof(sc->rss_indirection_table));
+		sc->rss_max_tx_vq = 1;
+		sc->rss_key_length = 0;
+		memset(sc->rss_key, 0, sizeof(sc->rss_key));
+	}
 	sc->tx_control_pause = false;
 	pthread_cond_signal(&sc->tx_cond);
 	pthread_mutex_unlock(&sc->tx_mtx);
@@ -1446,7 +1708,9 @@ pci_vtnet_set_active_pairs(struct pci_vtnet_softc *sc, uint16_t pairs)
 	 * is required to configure them before issuing PAIRS_SET.
 	 */
 	if (sc->vsc_be != NULL && sc->features_negotiated) {
-		for (uint16_t i = 0; i < pairs; i++) {
+		for (uint16_t i = 0; i < sc->vsc_max_pairs; i++) {
+			if (!pci_vtnet_rxq_enabled(sc, i))
+				continue;
 			vq = &sc->vsc_queues[pci_vtnet_rxq_index(i)];
 			if (!vq_is_resetting(vq) && vq_ring_ready(vq) &&
 			    vq_has_descs(vq)) {
@@ -1459,14 +1723,83 @@ pci_vtnet_set_active_pairs(struct pci_vtnet_softc *sc, uint16_t pairs)
 }
 
 static void
+pci_vtnet_set_active_pairs(struct pci_vtnet_softc *sc, uint16_t pairs)
+{
+
+	pci_vtnet_set_queue_state(sc, pairs, (1U << pairs) - 1, pairs, NULL);
+}
+
+static bool
+pci_vtnet_parse_rss_config(struct pci_vtnet_softc *sc,
+    const uint8_t *command, size_t command_size,
+    struct pci_vtnet_rss_config *rss)
+{
+	size_t key_offset, table_entries, trailer_offset;
+	uint32_t hash_types;
+	uint16_t value;
+
+	/*
+	 * The two-byte control header precedes the RSS command-specific data.
+	 * Its fixed prefix is hash_types, table mask, and unclassified queue.
+	 */
+	if (command_size < VTNET_RSS_COMMAND_MIN)
+		return (false);
+	memcpy(&hash_types, command + 2, sizeof(hash_types));
+	rss->hash_types = le32toh(hash_types);
+	if ((rss->hash_types & ~VTNET_RSS_HASH_TYPES) != 0)
+		return (false);
+	memcpy(&value, command + 6, sizeof(value));
+	rss->indirection_mask = le16toh(value);
+	table_entries = (size_t)rss->indirection_mask + 1;
+	if (table_entries > VTNET_RSS_TABLE_SIZE ||
+	    !powerof2(table_entries))
+		return (false);
+	memcpy(&value, command + 8, sizeof(value));
+	rss->unclassified_queue = le16toh(value);
+	if (rss->unclassified_queue >= sc->vsc_max_pairs)
+		return (false);
+
+	trailer_offset = 10 + table_entries * sizeof(uint16_t);
+	key_offset = trailer_offset + sizeof(uint16_t) + sizeof(uint8_t);
+	if (key_offset > command_size)
+		return (false);
+	memcpy(&value, command + trailer_offset, sizeof(value));
+	rss->max_tx_vq = le16toh(value);
+	if (rss->max_tx_vq < 1 || rss->max_tx_vq > sc->vsc_max_pairs)
+		return (false);
+	rss->key_length = command[trailer_offset + sizeof(uint16_t)];
+	if (rss->key_length > VTNET_RSS_KEY_SIZE ||
+	    key_offset + rss->key_length != command_size)
+		return (false);
+
+	memset(rss->indirection_table, 0,
+	    sizeof(rss->indirection_table));
+	rss->enabled_mask = 1U << rss->unclassified_queue;
+	for (size_t i = 0; i < table_entries; i++) {
+		memcpy(&value, command + 10 + i * sizeof(value),
+		    sizeof(value));
+		value = le16toh(value);
+		if (value >= sc->vsc_max_pairs)
+			return (false);
+		rss->indirection_table[i] = value;
+		rss->enabled_mask |= 1U << value;
+	}
+	memset(rss->key, 0, sizeof(rss->key));
+	memcpy(rss->key, command + key_offset, rss->key_length);
+	return (true);
+}
+
+static void
 pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
 {
 	struct pci_vtnet_softc *sc;
 	struct iovec iov[VTNET_MAXSEGS];
 	struct vi_req req;
-	uint8_t command[4], ack;
+	struct pci_vtnet_rss_config rss;
+	uint8_t command[VTNET_RSS_COMMAND_MAX], ack;
 	uint16_t pairs;
 	size_t insize, outsize;
+	bool command_valid;
 	int budget, n;
 
 	sc = vsc;
@@ -1489,11 +1822,12 @@ pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
 		insize = count_iov(iov, req.readable);
 		outsize = count_iov(&iov[req.readable], req.writable);
 		ack = VTNET_CTRL_ERR;
-		if (insize == sizeof(command) && outsize >= sizeof(ack) &&
-		    pci_vtnet_iov_read(iov, req.readable, 0, command,
-		    sizeof(command)) &&
-		    command[0] == VTNET_CTRL_MQ &&
+		command_valid = insize <= sizeof(command) && insize >= 2 &&
+		    outsize >= sizeof(ack) &&
+		    pci_vtnet_iov_read(iov, req.readable, 0, command, insize);
+		if (command_valid && command[0] == VTNET_CTRL_MQ &&
 		    command[1] == VTNET_CTRL_MQ_VQ_PAIRS_SET &&
+		    insize == 4 &&
 		    (sc->vsc_features & VIRTIO_NET_F_MQ) != 0) {
 			memcpy(&pairs, &command[2], sizeof(pairs));
 			pairs = le16toh(pairs);
@@ -1501,6 +1835,13 @@ pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
 				pci_vtnet_set_active_pairs(sc, pairs);
 				ack = VTNET_CTRL_OK;
 			}
+		} else if (command_valid && command[0] == VTNET_CTRL_MQ &&
+		    command[1] == VTNET_CTRL_MQ_RSS_CONFIG &&
+		    (sc->vsc_features & VIRTIO_NET_F_RSS) != 0 &&
+		    pci_vtnet_parse_rss_config(sc, command, insize, &rss)) {
+			pci_vtnet_set_queue_state(sc, rss.max_tx_vq,
+			    rss.enabled_mask, 0, &rss);
+			ack = VTNET_CTRL_OK;
 		}
 		if (outsize < sizeof(ack) ||
 		    !pci_vtnet_iov_write(&iov[req.readable], req.writable,
@@ -1656,6 +1997,13 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 
 	sc->vsc_config.max_virtqueue_pairs = pairs;
+	sc->vsc_config.speed = htole32(UINT32_MAX);
+	sc->vsc_config.duplex = UINT8_MAX;
+	sc->vsc_config.rss_max_key_size = VTNET_RSS_KEY_SIZE;
+	sc->vsc_config.rss_max_indirection_table_length =
+	    htole16(VTNET_RSS_TABLE_SIZE);
+	sc->vsc_config.supported_hash_types =
+	    htole32(VTNET_RSS_HASH_TYPES);
 
 	/* A configured backend provides carrier; an unattached NIC is down. */
 	sc->vsc_config.status = sc->vsc_be != NULL ? 1 : 0;
@@ -1672,7 +2020,7 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 	if (pairs > 1)
 		sc->vsc_consts.vc_hv_caps |= VIRTIO_NET_F_CTRL_VQ |
-		    VIRTIO_NET_F_MQ;
+		    VIRTIO_NET_F_MQ | VIRTIO_NET_F_RSS;
 
 	/* initialize config space */
 	if (vi_pci_is_modern(&sc->vsc_vs))
@@ -1701,6 +2049,7 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc->rx_merge = 0;
 	sc->vhdrlen = pci_vtnet_header_len(sc, 0);
 	sc->rx_active_pairs = 1;
+	sc->rx_enabled_mask = 1;
 	sc->tx_active_pairs = 1;
 
 	/*
@@ -1791,7 +2140,8 @@ pci_vtnet_apply_features(struct pci_vtnet_softc *sc,
 	 * without its control queue as a failed negotiation instead of
 	 * exposing queue pairs which can never be enabled.
 	 */
-	if ((negotiated_features & VIRTIO_NET_F_MQ) != 0 &&
+	if ((negotiated_features &
+	    (VIRTIO_NET_F_MQ | VIRTIO_NET_F_RSS)) != 0 &&
 	    ((negotiated_features & VIRTIO_NET_F_CTRL_VQ) == 0 ||
 	    sc->vsc_max_pairs <= 1)) {
 		sc->features_negotiated = false;
@@ -1805,10 +2155,13 @@ pci_vtnet_apply_features(struct pci_vtnet_softc *sc,
 	sc->vhdrlen = pci_vtnet_header_len(sc, negotiated_features);
 	sc->rx_merge =
 	    (negotiated_features & VIRTIO_NET_F_MRG_RXBUF) != 0;
-	if ((negotiated_features & VIRTIO_NET_F_MQ) == 0) {
+	if ((negotiated_features &
+	    (VIRTIO_NET_F_MQ | VIRTIO_NET_F_RSS)) == 0) {
 		sc->rx_active_pairs = 1;
+		sc->rx_enabled_mask = 1;
 		sc->tx_active_pairs = 1;
 		sc->tx_next_pair = 0;
+		sc->rss_enabled = false;
 		memset(sc->vsc_flow_map, 0, sizeof(sc->vsc_flow_map));
 	}
 
@@ -1926,6 +2279,17 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	SNAPSHOT_VAR_OR_LEAVE(sc->vhdrlen, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->be_vhdrlen, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->rx_active_pairs, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(sc->rx_enabled_mask, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(sc->rss_enabled, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(sc->rss_hash_types, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(sc->rss_indirection_mask, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(sc->rss_unclassified_queue, meta, ret, done);
+	SNAPSHOT_BUF_OR_LEAVE(sc->rss_indirection_table,
+	    sizeof(sc->rss_indirection_table), meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(sc->rss_max_tx_vq, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(sc->rss_key_length, meta, ret, done);
+	SNAPSHOT_BUF_OR_LEAVE(sc->rss_key, sizeof(sc->rss_key), meta, ret,
+	    done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->rx_staged_len, meta, ret, done);
 	if (sc->rx_staged_len > sizeof(sc->vsc_rx_buf)) {
 		ret = EINVAL;
@@ -1942,17 +2306,60 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	 * against the current backend.
 	 */
 	if (meta->op == VM_SNAPSHOT_RESTORE) {
-		if (sc->rx_active_pairs < 1 ||
+		uint16_t valid_mask;
+
+		valid_mask = (1U << sc->vsc_max_pairs) - 1;
+		if (sc->rx_enabled_mask == 0 ||
+		    (sc->rx_enabled_mask & ~valid_mask) != 0 ||
+		    (sc->rss_enabled &&
+		    (!sc->features_negotiated ||
+		    (sc->vsc_features & (VIRTIO_NET_F_CTRL_VQ |
+		    VIRTIO_NET_F_RSS)) !=
+		    (VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_RSS) ||
+		    sc->rx_active_pairs != 0 ||
+		    (sc->rss_hash_types & ~VTNET_RSS_HASH_TYPES) != 0 ||
+		    sc->rss_indirection_mask >= VTNET_RSS_TABLE_SIZE ||
+		    !powerof2((size_t)sc->rss_indirection_mask + 1) ||
+		    sc->rss_unclassified_queue >= sc->vsc_max_pairs ||
+		    !pci_vtnet_rxq_enabled(sc,
+		    sc->rss_unclassified_queue) ||
+		    sc->rss_max_tx_vq < 1 ||
+		    sc->rss_max_tx_vq > sc->vsc_max_pairs ||
+		    sc->rss_key_length > VTNET_RSS_KEY_SIZE)) ||
+		    (!sc->rss_enabled &&
+		    (sc->rx_active_pairs < 1 ||
 		    sc->rx_active_pairs > sc->vsc_max_pairs ||
+		    sc->rx_enabled_mask !=
+		    (uint16_t)((1U << sc->rx_active_pairs) - 1) ||
 		    (sc->rx_active_pairs > 1 &&
 		    (!sc->features_negotiated ||
 		    (sc->vsc_features & (VIRTIO_NET_F_CTRL_VQ |
 		    VIRTIO_NET_F_MQ)) !=
-		    (VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_MQ))) {
+		    (VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_MQ)))))) {
 			ret = EINVAL;
 			goto done;
 		}
-		sc->tx_active_pairs = sc->rx_active_pairs;
+		if (sc->rss_enabled) {
+			uint16_t enabled_mask;
+
+			enabled_mask = 1U << sc->rss_unclassified_queue;
+			for (size_t i = 0;
+			    i <= sc->rss_indirection_mask; i++) {
+				if (!pci_vtnet_rxq_enabled(sc,
+				    sc->rss_indirection_table[i])) {
+					ret = EINVAL;
+					goto done;
+				}
+				enabled_mask |=
+				    1U << sc->rss_indirection_table[i];
+			}
+			if (enabled_mask != sc->rx_enabled_mask) {
+				ret = EINVAL;
+				goto done;
+			}
+		}
+		sc->tx_active_pairs = sc->rss_enabled ?
+		    sc->rss_max_tx_vq : sc->rx_active_pairs;
 		sc->tx_next_pair = 0;
 		sc->tx_current_vq = NULL;
 		sc->tx_control_pause = false;

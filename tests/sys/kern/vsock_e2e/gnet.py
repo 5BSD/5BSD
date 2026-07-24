@@ -3,6 +3,7 @@
 
 import glob
 import os
+import subprocess
 import sys
 import tempfile
 
@@ -10,6 +11,7 @@ VIRTIO_RING_F_INDIRECT_DESC = 28
 VIRTIO_RING_F_EVENT_IDX = 29
 VIRTIO_NET_F_CTRL_VQ = 17
 VIRTIO_NET_F_MQ = 22
+VIRTIO_NET_F_RSS = 60
 VIRTIO_F_NOTIFICATION_DATA = 38
 VIRTIO_F_RING_RESET = 40
 
@@ -24,6 +26,7 @@ MODERN_REQUIRED_FEATURES = REQUIRED_FEATURES + (
 MULTIQUEUE_REQUIRED_FEATURES = (
     (VIRTIO_NET_F_CTRL_VQ, "VIRTIO_NET_F_CTRL_VQ"),
     (VIRTIO_NET_F_MQ, "VIRTIO_NET_F_MQ"),
+    (VIRTIO_NET_F_RSS, "VIRTIO_NET_F_RSS"),
 )
 MODERN_MULTIQUEUE_REQUIRED_FEATURES = (
     MODERN_REQUIRED_FEATURES + MULTIQUEUE_REQUIRED_FEATURES
@@ -102,6 +105,34 @@ def require_queue_pairs(expected, interface="eth0", sys_root="/sys"):
         raise RuntimeError(
             f"virtio-net exposed rx={rx} tx={tx} queues, expected {expected}"
         )
+
+
+def require_rss(expected_pairs, run=subprocess.run):
+    update = run(
+        ["ethtool", "-X", "eth0", "equal", str(expected_pairs)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if update.returncode != 0:
+        raise RuntimeError(
+            "Linux could not program the virtio-net RSS table: "
+            + (update.stderr.strip() or update.stdout.strip())
+        )
+    query = run(
+        ["ethtool", "-x", "eth0"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if query.returncode != 0:
+        raise RuntimeError(
+            "Linux could not read the virtio-net RSS table: "
+            + (query.stderr.strip() or query.stdout.strip())
+        )
+    output = query.stdout.lower()
+    if "indirection table" not in output or "toeplitz" not in output:
+        raise RuntimeError("ethtool RSS output lacks table or Toeplitz state")
 
 
 def make_mock_device(
@@ -194,6 +225,42 @@ def self_test():
             pass
         else:
             raise AssertionError("accepted duplicate virtio-net devices")
+    calls = []
+
+    class Result:
+        def __init__(self, returncode=0, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def rss_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        if argv[1] == "-x":
+            return Result(
+                stdout=(
+                    "RX flow hash indirection table for eth0\n"
+                    "RSS hash function: toeplitz\n"
+                )
+            )
+        return Result()
+
+    require_rss(2, rss_run)
+    if [call[0] for call in calls] != [
+        ["ethtool", "-X", "eth0", "equal", "2"],
+        ["ethtool", "-x", "eth0"],
+    ]:
+        raise AssertionError("wrong ethtool RSS commands")
+
+    def rss_failure(argv, **kwargs):
+        return Result(returncode=1, stderr="rejected")
+
+    try:
+        require_rss(2, rss_failure)
+    except RuntimeError as error:
+        if "rejected" not in str(error):
+            raise
+    else:
+        raise AssertionError("accepted failed RSS programming")
     print("SELFTEST PASS")
 
 
@@ -226,13 +293,16 @@ def main():
     elif expected_pairs != 1:
         raise RuntimeError("legacy virtio-net must use one queue pair")
     require_queue_pairs(expected_pairs)
+    if expected_pairs > 1:
+        require_rss(expected_pairs)
     print(
         f"PASS net interface=eth0 pci={pci} device={expected_device} "
         f"driver=virtio_net indirect_desc=yes event_idx=yes "
         f"notification_data={'yes' if notification_data else 'n/a'} "
         f"ring_reset={'yes' if notification_data else 'n/a'} "
         f"queue_pairs={expected_pairs} "
-        f"mq={'yes' if expected_pairs > 1 else 'no'}"
+        f"mq={'yes' if expected_pairs > 1 else 'no'} "
+        f"rss={'yes' if expected_pairs > 1 else 'no'}"
     )
 
 

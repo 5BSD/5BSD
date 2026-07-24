@@ -55,6 +55,8 @@
 #define	VIRTIO_NET_F_CTRL_VQ		VIRTIO14_NET_F_CTRL_VQ
 #undef VIRTIO_NET_F_MQ
 #define	VIRTIO_NET_F_MQ		VIRTIO14_NET_F_MQ
+#undef VIRTIO_NET_F_RSS
+#define	VIRTIO_NET_F_RSS		VIRTIO14_NET_F_RSS
 #undef VTNET_HDR_F_NEEDS_CSUM
 #define	VTNET_HDR_F_NEEDS_CSUM		VIRTIO14_NET_HDR_F_NEEDS_CSUM
 #undef VTNET_HDR_F_DATA_VALID
@@ -219,6 +221,7 @@ setup_softc(struct pci_vtnet_softc *sc)
 	sc->vsc_consts = vtnet_vi_consts;
 	sc->vsc_max_pairs = 1;
 	sc->rx_active_pairs = 1;
+	sc->rx_enabled_mask = 1;
 	sc->tx_active_pairs = 1;
 	sc->vhdrlen = VIRTIO14_NET_MODERN_HDR_SIZE;
 	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
@@ -679,6 +682,17 @@ ATF_TC_BODY(receive_header_layout, tc)
 	    VIRTIO14_NET_CONFIG_MAX_PAIRS_OFF);
 	ATF_CHECK_EQ(offsetof(struct virtio_net_config, mtu),
 	    VIRTIO14_NET_CONFIG_MTU_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_net_config, speed),
+	    VIRTIO14_NET_CONFIG_SPEED_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_net_config, duplex),
+	    VIRTIO14_NET_CONFIG_DUPLEX_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_net_config, rss_max_key_size),
+	    VIRTIO14_NET_CONFIG_RSS_KEY_SIZE_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_net_config,
+	    rss_max_indirection_table_length),
+	    VIRTIO14_NET_CONFIG_RSS_TABLE_SIZE_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_net_config, supported_hash_types),
+	    VIRTIO14_NET_CONFIG_HASH_TYPES_OFF);
 
 	memset(&sc, 0, sizeof(sc));
 	sc.vsc_vs.vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
@@ -1586,6 +1600,74 @@ run_mq_pairs_command(struct pci_vtnet_softc *sc, uint16_t pairs,
 	return (ack);
 }
 
+static const uint8_t rss_test_key[VIRTIO14_NET_RSS_KEY_SIZE_MIN] = {
+	0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2,
+	0x41, 0x67, 0x25, 0x3d, 0x43, 0xa3, 0x8f, 0xb0,
+	0xd0, 0xca, 0x2b, 0xcb, 0xae, 0x7b, 0x30, 0xb4,
+	0x77, 0xcb, 0x2d, 0xa3, 0x80, 0x30, 0xf2, 0x0c,
+	0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa,
+};
+
+static size_t
+build_rss_command(uint8_t *request, size_t request_size, uint16_t table_mask,
+    const uint16_t *table, uint16_t unclassified, uint16_t max_tx,
+    uint32_t hash_types, const uint8_t *key, uint8_t key_length)
+{
+	size_t entries, key_offset, trailer_offset, total;
+
+	entries = (size_t)table_mask + 1;
+	trailer_offset = VIRTIO14_NET_RSS_TABLE_OFF +
+	    entries * sizeof(uint16_t);
+	key_offset = trailer_offset + sizeof(uint16_t) + sizeof(uint8_t);
+	total = key_offset + key_length;
+	ATF_REQUIRE(total <= request_size);
+	memset(request, 0, total);
+	request[VIRTIO14_NET_CTRL_CLASS_OFF] = VIRTIO14_NET_CTRL_MQ;
+	request[VIRTIO14_NET_CTRL_COMMAND_OFF] =
+	    VIRTIO14_NET_CTRL_MQ_RSS_CONFIG;
+	virtio14_store_le32(request + VIRTIO14_NET_RSS_HASH_TYPES_OFF,
+	    hash_types);
+	virtio14_store_le16(request + VIRTIO14_NET_RSS_TABLE_MASK_OFF,
+	    table_mask);
+	virtio14_store_le16(request + VIRTIO14_NET_RSS_UNCLASSIFIED_OFF,
+	    unclassified);
+	for (size_t i = 0; i < entries; i++)
+		virtio14_store_le16(request + VIRTIO14_NET_RSS_TABLE_OFF +
+		    i * sizeof(uint16_t), table[i]);
+	virtio14_store_le16(request + trailer_offset, max_tx);
+	request[trailer_offset + sizeof(uint16_t)] = key_length;
+	memcpy(request + key_offset, key, key_length);
+	return (total);
+}
+
+static uint8_t
+run_rss_command(struct pci_vtnet_softc *sc, const uint8_t *request,
+    size_t request_size)
+{
+	struct vqueue_info *ctlq;
+	uint8_t ack;
+
+	reset_mocks();
+	ack = 0xff;
+	g_chains[0].n = 2;
+	g_chains[0].req.idx = 10;
+	g_chains[0].req.readable = 1;
+	g_chains[0].req.writable = 1;
+	g_chains[0].req.ordered = true;
+	g_chains[0].iov[0].iov_base = __DECONST(void *, request);
+	g_chains[0].iov[0].iov_len = request_size;
+	g_chains[0].iov[1].iov_base = &ack;
+	g_chains[0].iov[1].iov_len = sizeof(ack);
+	g_chain_count = 1;
+	ctlq = &sc->vsc_queues[
+	    VIRTIO14_NET_MQ_CONTROLQ(sc->vsc_max_pairs)];
+	pci_vtnet_ping_ctlq(sc, ctlq);
+	ATF_REQUIRE_EQ(g_chain_next, 1);
+	ATF_REQUIRE_EQ(g_rel_calls, 1);
+	ATF_REQUIRE_EQ(g_rel_len[0], 1);
+	return (ack);
+}
+
 static void
 make_ipv4_tcp_flow(uint8_t *frame, bool reverse, uint16_t destination_port)
 {
@@ -1611,6 +1693,7 @@ make_ipv4_tcp_flow(uint8_t *frame, bool reverse, uint16_t destination_port)
 	frame[12] = 0x08;
 	frame[13] = 0x00;
 	frame[14] = 0x45;
+	frame[17] = 50;
 	frame[23] = IPPROTO_TCP;
 	memcpy(frame + 26, source_ip, 4);
 	memcpy(frame + 30, destination_ip, 4);
@@ -1618,6 +1701,41 @@ make_ipv4_tcp_flow(uint8_t *frame, bool reverse, uint16_t destination_port)
 	frame[35] = source_port;
 	frame[36] = destination_port >> 8;
 	frame[37] = destination_port;
+	frame[46] = 0x50;
+}
+
+static void
+make_ipv6_tcp_flow(uint8_t *frame, bool extension_header)
+{
+	static const uint8_t source[16] = {
+		0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 1,
+	};
+	static const uint8_t destination[16] = {
+		0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 2,
+	};
+	size_t l4off;
+
+	memset(frame, 0, 88);
+	frame[12] = 0x86;
+	frame[13] = 0xdd;
+	frame[14] = 0x60;
+	frame[19] = 34;
+	frame[20] = extension_header ? IPPROTO_HOPOPTS : IPPROTO_TCP;
+	memcpy(frame + 22, source, sizeof(source));
+	memcpy(frame + 38, destination, sizeof(destination));
+	l4off = 54;
+	if (extension_header) {
+		frame[l4off] = IPPROTO_TCP;
+		frame[l4off + 1] = 0;
+		l4off += 8;
+	}
+	frame[l4off] = 0xc0;
+	frame[l4off + 1] = 0x00;
+	frame[l4off + 2] = 0x01;
+	frame[l4off + 3] = 0xbb;
+	frame[l4off + 12] = 0x50;
 }
 
 ATF_TC_WITHOUT_HEAD(multiqueue_policy_and_topology);
@@ -1671,6 +1789,19 @@ ATF_TC_BODY(multiqueue_feature_dependency, tc)
 	    VIRTIO14_NET_CTRL_MQ_PAIRS_MIN);
 	ATF_CHECK_EQ(sc.tx_active_pairs,
 	    VIRTIO14_NET_CTRL_MQ_PAIRS_MIN);
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_max_pairs = 2;
+	ATF_CHECK(!pci_vtnet_apply_features(&sc, VIRTIO14_NET_F_RSS));
+	ATF_CHECK_EQ(g_needs_reset_calls, 1);
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_max_pairs = 2;
+	ATF_CHECK(pci_vtnet_apply_features(&sc,
+	    VIRTIO14_NET_F_CTRL_VQ | VIRTIO14_NET_F_RSS));
+	ATF_CHECK_EQ(g_needs_reset_calls, 0);
 }
 
 ATF_TC_WITHOUT_HEAD(multiqueue_control_commands);
@@ -1728,6 +1859,7 @@ ATF_TC_BODY(multiqueue_flow_steering, tc)
 	struct vqueue_info *vq;
 	uint8_t forward[64], reverse[64], other[64];
 	uint32_t hash;
+	bool drop;
 
 	make_ipv4_tcp_flow(forward, false, 443);
 	make_ipv4_tcp_flow(reverse, true, 443);
@@ -1740,20 +1872,25 @@ ATF_TC_BODY(multiqueue_flow_steering, tc)
 	reset_mocks();
 	setup_multiqueue_softc(&sc, 2);
 	sc.rx_active_pairs = 2;
+	sc.rx_enabled_mask = 3;
 	sc.tx_active_pairs = 2;
 	hash = pci_vtnet_flow_hash(forward, sizeof(forward));
 	pci_vtnet_flow_learn(&sc, hash, 1);
 	add_chain(1, 0, 1, true, g_packet, sizeof(g_packet));
-	vq = pci_vtnet_select_rxq(&sc, reverse, sizeof(reverse));
+	vq = pci_vtnet_select_rxq(&sc, reverse, sizeof(reverse), &drop);
 	ATF_REQUIRE(vq != NULL);
+	ATF_CHECK(!drop);
 	ATF_CHECK_EQ(vq->vq_num, VIRTIO14_NET_RXQ(1));
 
 	vq_set_resetting(&sc.vsc_queues[VIRTIO14_NET_RXQ(1)], true);
-	vq = pci_vtnet_select_rxq(&sc, reverse, sizeof(reverse));
+	vq = pci_vtnet_select_rxq(&sc, reverse, sizeof(reverse), &drop);
 	ATF_REQUIRE(vq != NULL);
+	ATF_CHECK(!drop);
 	ATF_CHECK_EQ(vq->vq_num, VIRTIO14_NET_RXQ(0));
 	vq_set_resetting(&sc.vsc_queues[VIRTIO14_NET_RXQ(0)], true);
-	ATF_CHECK(pci_vtnet_select_rxq(&sc, reverse, sizeof(reverse)) == NULL);
+	ATF_CHECK(pci_vtnet_select_rxq(&sc, reverse, sizeof(reverse),
+	    &drop) == NULL);
+	ATF_CHECK(!drop);
 	destroy_multiqueue_softc(&sc);
 }
 
@@ -1829,6 +1966,7 @@ ATF_TC_BODY(multiqueue_tx_learns_reverse_flow, tc)
 	reset_mocks();
 	setup_multiqueue_softc(&sc, 2);
 	sc.rx_active_pairs = 2;
+	sc.rx_enabled_mask = 3;
 	sc.tx_active_pairs = 2;
 	make_ipv4_tcp_flow(g_packet + VIRTIO14_NET_MODERN_HDR_SIZE, false,
 	    443);
@@ -1879,6 +2017,7 @@ ATF_TC_BODY(multiqueue_all_reset_drops_staged_packet, tc)
 	reset_mocks();
 	setup_multiqueue_softc(&sc, 2);
 	sc.rx_active_pairs = 2;
+	sc.rx_enabled_mask = 3;
 	sc.tx_active_pairs = 2;
 	vq_set_resetting(&sc.vsc_queues[VIRTIO14_NET_RXQ(0)], true);
 	vq_set_resetting(&sc.vsc_queues[VIRTIO14_NET_RXQ(1)], true);
@@ -1900,6 +2039,7 @@ ATF_TC_BODY(multiqueue_queue_reset_isolation, tc)
 	reset_mocks();
 	setup_multiqueue_softc(&sc, 2);
 	sc.rx_active_pairs = 2;
+	sc.rx_enabled_mask = 3;
 	sc.tx_active_pairs = 2;
 	ATF_CHECK_EQ(pci_vtnet_qreset(&sc,
 	    &sc.vsc_queues[VIRTIO14_NET_RXQ(1)], 1), 0);
@@ -1966,6 +2106,160 @@ ATF_TC_BODY(multiqueue_tx_scheduler_rotates, tc)
 	destroy_multiqueue_softc(&sc);
 }
 
+ATF_TC_WITHOUT_HEAD(rss_toeplitz_vector);
+ATF_TC_BODY(rss_toeplitz_vector, tc)
+{
+	static const uint8_t tuple[] = {
+		192, 0, 2, 1, 198, 51, 100, 2, 0xc0, 0x00, 0x01, 0xbb,
+	};
+	uint32_t hash;
+
+	/*
+	 * Literal oracle generated from the Microsoft RSS key and the
+	 * document-defined network-order IPv4/TCP tuple above.
+	 */
+	ATF_REQUIRE(pci_vtnet_rss_toeplitz(rss_test_key,
+	    sizeof(rss_test_key), tuple, sizeof(tuple), &hash));
+	ATF_CHECK_EQ(hash, 0x45de0bccU);
+	ATF_CHECK(!pci_vtnet_rss_toeplitz(rss_test_key, 4, tuple,
+	    sizeof(tuple), &hash));
+}
+
+ATF_TC_WITHOUT_HEAD(rss_command_and_steering);
+ATF_TC_BODY(rss_command_and_steering, tc)
+{
+	struct pci_vtnet_softc sc;
+	struct vqueue_info *vq;
+	uint8_t frame[88], request[VIRTIO14_NET_RSS_COMMAND_MAX];
+	uint16_t table[2] = { 1, 0 };
+	uint32_t hash;
+	size_t request_size;
+	bool drop;
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 2);
+	sc.vsc_features |= VIRTIO14_NET_F_RSS;
+	request_size = build_rss_command(request, sizeof(request), 1, table,
+	    1, 2, VIRTIO14_NET_RSS_HASH_TYPE_TCPV4, rss_test_key,
+	    sizeof(rss_test_key));
+	ATF_CHECK_EQ(run_rss_command(&sc, request, request_size),
+	    VIRTIO14_NET_CTRL_OK);
+	ATF_CHECK(sc.rss_enabled);
+	ATF_CHECK_EQ(sc.rx_active_pairs, 0);
+	ATF_CHECK_EQ(sc.rx_enabled_mask, 3);
+	ATF_CHECK_EQ(sc.tx_active_pairs, 2);
+	ATF_CHECK_EQ(sc.rss_key_length, sizeof(rss_test_key));
+
+	make_ipv4_tcp_flow(frame, false, 443);
+	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash));
+	ATF_CHECK_EQ(hash, 0x45de0bccU);
+	frame[20] = 0x20;
+	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash));
+	ATF_CHECK_EQ(hash, 0x45de0bccU);
+	frame[20] = 0;
+	frame[21] = 1;
+	ATF_CHECK(!pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash));
+	frame[21] = 0;
+	frame[17] = 20;
+	ATF_CHECK(!pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash));
+	frame[17] = 50;
+	add_chain(1, 0, 1, true, g_packet, sizeof(g_packet));
+	vq = pci_vtnet_select_rxq(&sc, frame, sizeof(frame), &drop);
+	ATF_REQUIRE(vq != NULL);
+	ATF_CHECK(!drop);
+	ATF_CHECK_EQ(vq->vq_num, VIRTIO14_NET_RXQ(1));
+
+	vq_set_resetting(&sc.vsc_queues[VIRTIO14_NET_RXQ(1)], true);
+	vq = pci_vtnet_select_rxq(&sc, frame, sizeof(frame), &drop);
+	ATF_CHECK(vq == NULL);
+	ATF_CHECK(drop);
+
+	sc.rss_hash_types = VIRTIO14_NET_RSS_HASH_TYPE_TCPV6;
+	make_ipv6_tcp_flow(frame, false);
+	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash));
+	ATF_CHECK_EQ(hash, 0x22225eecU);
+	make_ipv6_tcp_flow(frame, true);
+	ATF_REQUIRE(pci_vtnet_rss_hash(&sc, frame, sizeof(frame), &hash));
+	ATF_CHECK_EQ(hash, 0x22225eecU);
+	destroy_multiqueue_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(rss_command_validation);
+ATF_TC_BODY(rss_command_validation, tc)
+{
+	struct pci_vtnet_rss_config rss;
+	struct pci_vtnet_softc sc;
+	uint8_t request[VIRTIO14_NET_RSS_COMMAND_MAX];
+	uint16_t table[VIRTIO14_NET_RSS_TABLE_SIZE_MIN] = { 0, 1 };
+	size_t request_size;
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 2);
+	request_size = build_rss_command(request, sizeof(request), 1, table,
+	    0, 2, VIRTIO14_NET_RSS_HASH_TYPES_BASIC, rss_test_key,
+	    sizeof(rss_test_key));
+	ATF_CHECK(pci_vtnet_parse_rss_config(&sc, request, request_size,
+	    &rss));
+	ATF_CHECK_EQ(rss.indirection_mask, 1);
+	ATF_CHECK_EQ(rss.enabled_mask, 3);
+
+	for (size_t i = 0; i < nitems(table); i++)
+		table[i] = i & 1;
+	request_size = build_rss_command(request, sizeof(request), 127, table,
+	    0, 2, VIRTIO14_NET_RSS_HASH_TYPES_BASIC, rss_test_key,
+	    sizeof(rss_test_key));
+	ATF_CHECK_EQ(request_size, sizeof(request));
+	ATF_CHECK(pci_vtnet_parse_rss_config(&sc, request, request_size,
+	    &rss));
+
+	request_size = build_rss_command(request, sizeof(request), 1, table,
+	    0, 2, VIRTIO14_NET_RSS_HASH_TYPES_BASIC, rss_test_key,
+	    sizeof(rss_test_key));
+	virtio14_store_le32(request + VIRTIO14_NET_RSS_HASH_TYPES_OFF,
+	    VIRTIO14_NET_RSS_HASH_TYPES_BASIC | (1U << 31));
+	ATF_CHECK(!pci_vtnet_parse_rss_config(&sc, request, request_size,
+	    &rss));
+	virtio14_store_le32(request + VIRTIO14_NET_RSS_HASH_TYPES_OFF,
+	    VIRTIO14_NET_RSS_HASH_TYPES_BASIC);
+	ATF_CHECK(!pci_vtnet_parse_rss_config(&sc, request,
+	    request_size - 1, &rss));
+
+	request_size = build_rss_command(request, sizeof(request), 1, table,
+	    2, 2, VIRTIO14_NET_RSS_HASH_TYPES_BASIC, rss_test_key,
+	    sizeof(rss_test_key));
+	ATF_CHECK(!pci_vtnet_parse_rss_config(&sc, request, request_size,
+	    &rss));
+
+	table[0] = 1;
+	table[1] = 0;
+	request_size = build_rss_command(request, sizeof(request), 1, table,
+	    1, 2, VIRTIO14_NET_RSS_HASH_TYPE_TCPV4, rss_test_key,
+	    sizeof(rss_test_key));
+	sc.vsc_features |= VIRTIO14_NET_F_RSS;
+	ATF_REQUIRE_EQ(run_rss_command(&sc, request, request_size),
+	    VIRTIO14_NET_CTRL_OK);
+	virtio14_store_le32(request + VIRTIO14_NET_RSS_HASH_TYPES_OFF,
+	    VIRTIO14_NET_RSS_HASH_TYPE_TCPV4 | (1U << 31));
+	ATF_CHECK_EQ(run_rss_command(&sc, request, request_size),
+	    VIRTIO14_NET_CTRL_ERR);
+	ATF_CHECK(sc.rss_enabled);
+	ATF_CHECK_EQ(sc.rss_hash_types,
+	    VIRTIO14_NET_RSS_HASH_TYPE_TCPV4);
+	ATF_CHECK_EQ(sc.rss_unclassified_queue, 1);
+	ATF_CHECK_EQ(sc.rss_indirection_table[0], 1);
+	ATF_CHECK_EQ(sc.rss_indirection_table[1], 0);
+	ATF_CHECK_EQ(sc.rx_enabled_mask, 3);
+	ATF_CHECK_EQ(sc.tx_active_pairs, 2);
+	ATF_CHECK_EQ(run_mq_pairs_command(&sc, 2, VIRTIO14_NET_CTRL_MQ,
+	    VIRTIO14_NET_CTRL_MQ_VQ_PAIRS_SET), VIRTIO14_NET_CTRL_OK);
+	ATF_CHECK(!sc.rss_enabled);
+	ATF_CHECK_EQ(sc.rss_hash_types, 0);
+	ATF_CHECK_EQ(sc.rss_key_length, 0);
+	ATF_CHECK_EQ(sc.rx_active_pairs, 2);
+	ATF_CHECK_EQ(sc.rx_enabled_mask, 3);
+	destroy_multiqueue_softc(&sc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, transmit_validation);
@@ -2000,5 +2294,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, multiqueue_queue_reset_isolation);
 	ATF_TP_ADD_TC(tp, multiqueue_tx_event_idx_recheck);
 	ATF_TP_ADD_TC(tp, multiqueue_tx_scheduler_rotates);
+	ATF_TP_ADD_TC(tp, rss_toeplitz_vector);
+	ATF_TP_ADD_TC(tp, rss_command_and_steering);
+	ATF_TP_ADD_TC(tp, rss_command_validation);
 	return (atf_no_error());
 }
