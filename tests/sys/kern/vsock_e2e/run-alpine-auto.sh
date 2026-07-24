@@ -32,6 +32,7 @@ REBOOT_TEST=${REBOOT_TEST:-no}
 BLOCK_TEST_MB=${BLOCK_TEST_MB:-256}
 BLOCK_IMAGE_MB=${BLOCK_IMAGE_MB:-1024}
 BLOCK_QUEUES=${BLOCK_QUEUES:-2}
+NET_QUEUES=${NET_QUEUES:-2}
 SCSI_TEST_MB=${SCSI_TEST_MB:-32}
 SCSI_IMAGE_MB=${SCSI_IMAGE_MB:-128}
 SCSI_QUEUES=${SCSI_QUEUES:-2}
@@ -152,6 +153,13 @@ case "$BLOCK_QUEUES" in
 esac
 [ "$BLOCK_QUEUES" -ge 1 ] && [ "$BLOCK_QUEUES" -le 8 ] || {
 	echo "BLOCK_QUEUES must be an integer from 1 through 8" >&2
+	exit 2
+}
+case "$NET_QUEUES" in
+''|*[!0-9]*) echo "NET_QUEUES must be an integer from 1 through 8" >&2; exit 2 ;;
+esac
+[ "$NET_QUEUES" -ge 1 ] && [ "$NET_QUEUES" -le 8 ] || {
+	echo "NET_QUEUES must be an integer from 1 through 8" >&2
 	exit 2
 }
 case "$SCSI_TEST_MB:$SCSI_IMAGE_MB" in
@@ -460,7 +468,7 @@ launch_vm()
 {
 	set -- "$BHYVE" -c "$vm_cpus" -m 2G -H -w \
 	    -s 0,hostbridge -s "3,ahci-cd,$ISO" \
-	    -s "4,virtio-net,$tap$net_transport_opt"
+	    -s "4,virtio-net,$tap$net_transport_opt$net_queues_opt"
 	[ "$VIRTIO_MSIX" = yes ] || set -- "$@" -W
 	[ "$REBOOT_TEST" = no ] || set -- "$@" -M
 	[ "$run_vsock" = no ] || set -- "$@" \
@@ -872,7 +880,7 @@ run_vsock_smoke()
 
 run_network_smoke()
 {
-	output=$(guest_cmd "python3 /tmp/gnet.py '$transport'" 30) || {
+	output=$(guest_cmd "python3 /tmp/gnet.py '$transport' '$net_queues_expected'" 30) || {
 		status=$?
 		echo "guest virtio-net verification failed (status $status)" >&2
 		[ -z "$output" ] || printf '%s\n' "$output" >&2
@@ -1152,6 +1160,9 @@ for transport in $TRANSPORTS; do
 	ninep_seed="seed-9p-$transport-$$"
 	if [ "$transport" = modern ]; then
 		vm_cpus=2
+		if [ "$NET_QUEUES" -gt "$vm_cpus" ]; then
+			vm_cpus=$NET_QUEUES
+		fi
 		if [ "$run_block_device" = yes ] &&
 		    [ "$BLOCK_QUEUES" -gt "$vm_cpus" ]; then
 			vm_cpus=$BLOCK_QUEUES
@@ -1161,6 +1172,8 @@ for transport in $TRANSPORTS; do
 			vm_cpus=$SCSI_QUEUES
 		fi
 		net_transport_opt=",transport=modern"
+		net_queues_opt=",queues=$NET_QUEUES"
+		net_queues_expected=$NET_QUEUES
 		vsock_transport_opt=",transport=modern"
 		input_transport_opt=",transport=modern"
 		rng_transport_opt=",transport=modern"
@@ -1176,6 +1189,8 @@ for transport in $TRANSPORTS; do
 		vm_cpus=2
 		# Deliberately omit the option to exercise the compatibility default.
 		net_transport_opt=
+		net_queues_opt=
+		net_queues_expected=1
 		vsock_transport_opt=
 		rng_transport_opt=
 		block_transport_opt=

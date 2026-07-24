@@ -53,6 +53,8 @@
 #define	VIRTIO_NET_F_STATUS		VIRTIO14_NET_F_STATUS
 #undef VIRTIO_NET_F_CTRL_VQ
 #define	VIRTIO_NET_F_CTRL_VQ		VIRTIO14_NET_F_CTRL_VQ
+#undef VIRTIO_NET_F_MQ
+#define	VIRTIO_NET_F_MQ		VIRTIO14_NET_F_MQ
 #undef VTNET_HDR_F_NEEDS_CSUM
 #define	VTNET_HDR_F_NEEDS_CSUM		VIRTIO14_NET_HDR_F_NEEDS_CSUM
 #undef VTNET_HDR_F_DATA_VALID
@@ -125,6 +127,7 @@ static uint16_t g_prepare_idx[8];
 static uint32_t g_prepare_len[8];
 static int g_publish_calls;
 static int g_rx_disable_calls;
+static int g_rx_enable_calls;
 static int g_reset_calls;
 static int g_set_cap_calls;
 static int g_set_cap_result;
@@ -134,7 +137,9 @@ static uint64_t g_set_cap_features;
 static unsigned int g_set_cap_header_len;
 static bool g_preserve_backend_header_len;
 static bool g_hide_next_getchain;
+static bool g_hide_next_has_desc;
 static uint8_t g_packet[128];
+static uint8_t g_backend_packet[NETBE_MAX_RECORD_SIZE];
 static uint64_t g_used_storage[16];
 #define	g_used	(*(struct vring_used *)(void *)g_used_storage)
 
@@ -149,12 +154,30 @@ count_iov(const struct iovec *iov, size_t niov)
 	return (total);
 }
 
+size_t
+buf_to_iov(const void *buf, size_t buflen, const struct iovec *iov,
+    size_t niov)
+{
+	const uint8_t *src;
+	size_t copy, written;
+
+	src = buf;
+	written = 0;
+	for (size_t i = 0; i < niov && written < buflen; i++) {
+		copy = MIN(iov[i].iov_len, buflen - written);
+		memcpy(iov[i].iov_base, src + written, copy);
+		written += copy;
+	}
+	return (written);
+}
+
 static void
 reset_mocks(void)
 {
 
 	memset(g_chains, 0, sizeof(g_chains));
 	memset(g_packet, 0, sizeof(g_packet));
+	memset(g_backend_packet, 0, sizeof(g_backend_packet));
 	memset(g_used_storage, 0, sizeof(g_used_storage));
 	g_chain_count = 0;
 	g_chain_next = 0;
@@ -172,6 +195,7 @@ reset_mocks(void)
 	g_prepare_calls = 0;
 	g_publish_calls = 0;
 	g_rx_disable_calls = 0;
+	g_rx_enable_calls = 0;
 	g_reset_calls = 0;
 	g_set_cap_calls = 0;
 	g_set_cap_result = 0;
@@ -181,6 +205,7 @@ reset_mocks(void)
 	g_set_cap_header_len = 0;
 	g_preserve_backend_header_len = false;
 	g_hide_next_getchain = false;
+	g_hide_next_has_desc = false;
 }
 
 static void
@@ -191,11 +216,69 @@ setup_softc(struct pci_vtnet_softc *sc)
 	sc->vsc_be = &g_backend;
 	sc->features_negotiated = true;
 	sc->tx_features_negotiated = true;
+	sc->vsc_consts = vtnet_vi_consts;
+	sc->vsc_max_pairs = 1;
+	sc->rx_active_pairs = 1;
+	sc->tx_active_pairs = 1;
 	sc->vhdrlen = VIRTIO14_NET_MODERN_HDR_SIZE;
 	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	sc->vsc_queues[VTNET_RXQ].vq_vs = &sc->vsc_vs;
+	sc->vsc_queues[VTNET_RXQ].vq_num = VTNET_RXQ;
 	vq_set_allocated(&sc->vsc_queues[VTNET_RXQ], true);
 	sc->vsc_queues[VTNET_RXQ].vq_used = &g_used;
+	sc->vsc_queues[VTNET_TXQ].vq_vs = &sc->vsc_vs;
+	sc->vsc_queues[VTNET_TXQ].vq_num = VTNET_TXQ;
+	vq_set_allocated(&sc->vsc_queues[VTNET_TXQ], true);
+	sc->vsc_queues[VTNET_TXQ].vq_used = &g_used;
+}
+
+static void
+setup_multiqueue_softc(struct pci_vtnet_softc *sc, uint16_t pairs)
+{
+
+	setup_softc(sc);
+	ATF_REQUIRE(pairs >= 2 && pairs <= VTNET_MAX_PAIRS);
+	sc->vsc_max_pairs = pairs;
+	sc->vsc_consts.vc_nvq = pairs * 2 + 1;
+	sc->vsc_config.max_virtqueue_pairs = pairs;
+	sc->vsc_features = VIRTIO14_NET_F_CTRL_VQ | VIRTIO14_NET_F_MQ;
+	for (uint16_t i = 0; i < pairs; i++) {
+		struct vqueue_info *rxq, *txq;
+
+		rxq = &sc->vsc_queues[VIRTIO14_NET_RXQ(i)];
+		txq = &sc->vsc_queues[VIRTIO14_NET_TXQ(i)];
+		rxq->vq_vs = &sc->vsc_vs;
+		rxq->vq_num = VIRTIO14_NET_RXQ(i);
+		rxq->vq_qsize = VTNET_RINGSZ;
+		rxq->vq_used = &g_used;
+		vq_set_allocated(rxq, true);
+		txq->vq_vs = &sc->vsc_vs;
+		txq->vq_num = VIRTIO14_NET_TXQ(i);
+		txq->vq_qsize = VTNET_RINGSZ;
+		txq->vq_used = &g_used;
+		vq_set_allocated(txq, true);
+	}
+	sc->vsc_queues[VIRTIO14_NET_MQ_CONTROLQ(pairs)].vq_vs =
+	    &sc->vsc_vs;
+	sc->vsc_queues[VIRTIO14_NET_MQ_CONTROLQ(pairs)].vq_num =
+	    VIRTIO14_NET_MQ_CONTROLQ(pairs);
+	sc->vsc_queues[VIRTIO14_NET_MQ_CONTROLQ(pairs)].vq_qsize =
+	    VTNET_RINGSZ;
+	sc->vsc_queues[VIRTIO14_NET_MQ_CONTROLQ(pairs)].vq_used = &g_used;
+	vq_set_allocated(
+	    &sc->vsc_queues[VIRTIO14_NET_MQ_CONTROLQ(pairs)], true);
+	ATF_REQUIRE(pthread_mutex_init(&sc->rx_mtx, NULL) == 0);
+	ATF_REQUIRE(pthread_mutex_init(&sc->tx_mtx, NULL) == 0);
+	ATF_REQUIRE(pthread_cond_init(&sc->tx_cond, NULL) == 0);
+}
+
+static void
+destroy_multiqueue_softc(struct pci_vtnet_softc *sc)
+{
+
+	ATF_REQUIRE(pthread_cond_destroy(&sc->tx_cond) == 0);
+	ATF_REQUIRE(pthread_mutex_destroy(&sc->tx_mtx) == 0);
+	ATF_REQUIRE(pthread_mutex_destroy(&sc->rx_mtx) == 0);
 }
 
 static void
@@ -220,6 +303,10 @@ int
 vq_has_descs(struct vqueue_info *vq __unused)
 {
 
+	if (g_hide_next_has_desc) {
+		g_hide_next_has_desc = false;
+		return (0);
+	}
 	return (g_chain_next < g_chain_count);
 }
 
@@ -293,12 +380,16 @@ netbe_peek_recvlen(net_backend_t *be __unused)
 }
 
 ssize_t
-netbe_recv(net_backend_t *be __unused, const struct iovec *iov __unused,
-    int niov __unused)
+netbe_recv(net_backend_t *be __unused, const struct iovec *iov, int niov)
 {
+	size_t len;
 
 	g_recv_calls++;
 	g_peek_len = 0;
+	if (g_recv_result > 0) {
+		len = MIN((size_t)g_recv_result, sizeof(g_backend_packet));
+		(void)buf_to_iov(g_backend_packet, len, iov, niov);
+	}
 	return (g_recv_result);
 }
 
@@ -329,7 +420,11 @@ netbe_rx_disable(net_backend_t *be __unused)
 {
 	g_rx_disable_calls++;
 }
-void netbe_rx_enable(net_backend_t *be __unused) {}
+void
+netbe_rx_enable(net_backend_t *be __unused)
+{
+	g_rx_enable_calls++;
+}
 
 int
 netbe_set_cap(net_backend_t *be __unused, uint64_t features,
@@ -432,26 +527,29 @@ ATF_TC_BODY(receive_validation, tc)
 	reset_mocks();
 	setup_softc(&sc);
 	g_peek_len = 60;
+	g_recv_result = 60;
 	add_chain(-1, 0, 0, true, NULL, 0);
 	pci_vtnet_rx(&sc);
 	ATF_CHECK(g_chain_next == 1);
-	ATF_CHECK(g_recv_calls == 0);
+	ATF_CHECK(g_recv_calls == 1);
 	ATF_CHECK(g_rel_calls == 0);
 
 	reset_mocks();
 	setup_softc(&sc);
 	g_peek_len = 60;
+	g_recv_result = 60;
 	add_chain(1, 1, 0, true, g_packet, sizeof(g_packet));
 	pci_vtnet_rx(&sc);
-	ATF_CHECK(g_recv_calls == 0);
+	ATF_CHECK(g_recv_calls == 1);
 	ATF_CHECK(g_rel_calls == 1 && g_rel_len[0] == 0);
 
 	reset_mocks();
 	setup_softc(&sc);
 	g_peek_len = 60;
+	g_recv_result = 60;
 	add_chain(1, 0, 1, true, g_packet, sc.vhdrlen + 8);
 	pci_vtnet_rx(&sc);
-	ATF_CHECK(g_recv_calls == 0);
+	ATF_CHECK(g_recv_calls == 1);
 	ATF_CHECK(g_rel_calls == 1 && g_rel_len[0] == 0);
 
 	reset_mocks();
@@ -1275,8 +1373,7 @@ ATF_TC_BODY(mtu_frame_enforcement, tc)
 	add_chain(1, 0, 1, true, g_packet, sizeof(g_packet));
 	pci_vtnet_rx(&sc);
 	ATF_CHECK_EQ(g_recv_calls, 1);
-	ATF_CHECK_EQ(g_rel_calls, 1);
-	ATF_CHECK_EQ(g_rel_len[0], 0);
+	ATF_CHECK_EQ(g_rel_calls, 0);
 }
 
 ATF_TC_WITHOUT_HEAD(queue_reset_isolated);
@@ -1334,7 +1431,7 @@ ATF_TC_BODY(stale_rx_callback_after_queue_reset, tc)
 	pci_vtnet_rx(&sc);
 
 	ATF_CHECK_EQ(g_chain_next, 0);
-	ATF_CHECK_EQ(g_recv_calls, 0);
+	ATF_CHECK_EQ(g_recv_calls, 1);
 	ATF_CHECK_EQ(g_rel_calls, 0);
 }
 
@@ -1457,6 +1554,418 @@ ATF_TC_BODY(document_feature_advertisement, tc)
 	ATF_CHECK((vtnet_vi_consts.vc_hv_caps & VIRTIO14_NET_F_STATUS) != 0);
 }
 
+static uint8_t
+run_mq_pairs_command(struct pci_vtnet_softc *sc, uint16_t pairs,
+    uint8_t class, uint8_t command)
+{
+	struct vqueue_info *ctlq;
+	uint8_t ack, request[VIRTIO14_NET_CTRL_MQ_SIZE];
+
+	reset_mocks();
+	memset(request, 0, sizeof(request));
+	request[VIRTIO14_NET_CTRL_CLASS_OFF] = class;
+	request[VIRTIO14_NET_CTRL_COMMAND_OFF] = command;
+	virtio14_store_le16(request + VIRTIO14_NET_CTRL_DATA_OFF, pairs);
+	ack = 0xff;
+	g_chains[0].n = 2;
+	g_chains[0].req.idx = 10;
+	g_chains[0].req.readable = 1;
+	g_chains[0].req.writable = 1;
+	g_chains[0].req.ordered = true;
+	g_chains[0].iov[0].iov_base = request;
+	g_chains[0].iov[0].iov_len = sizeof(request);
+	g_chains[0].iov[1].iov_base = &ack;
+	g_chains[0].iov[1].iov_len = sizeof(ack);
+	g_chain_count = 1;
+	ctlq = &sc->vsc_queues[
+	    VIRTIO14_NET_MQ_CONTROLQ(sc->vsc_max_pairs)];
+	pci_vtnet_ping_ctlq(sc, ctlq);
+	ATF_REQUIRE_EQ(g_chain_next, 1);
+	ATF_REQUIRE_EQ(g_rel_calls, 1);
+	ATF_REQUIRE_EQ(g_rel_len[0], 1);
+	return (ack);
+}
+
+static void
+make_ipv4_tcp_flow(uint8_t *frame, bool reverse, uint16_t destination_port)
+{
+	static const uint8_t mac_a[ETHER_ADDR_LEN] =
+	    { 0x02, 0, 0, 0, 0, 1 };
+	static const uint8_t mac_b[ETHER_ADDR_LEN] =
+	    { 0x02, 0, 0, 0, 0, 2 };
+	static const uint8_t ip_a[4] = { 192, 0, 2, 1 };
+	static const uint8_t ip_b[4] = { 198, 51, 100, 2 };
+	const uint8_t *destination_mac, *destination_ip;
+	const uint8_t *source_mac, *source_ip;
+	uint16_t source_port;
+
+	memset(frame, 0, 64);
+	destination_mac = reverse ? mac_a : mac_b;
+	source_mac = reverse ? mac_b : mac_a;
+	destination_ip = reverse ? ip_a : ip_b;
+	source_ip = reverse ? ip_b : ip_a;
+	source_port = reverse ? destination_port : 49152;
+	destination_port = reverse ? 49152 : destination_port;
+	memcpy(frame, destination_mac, ETHER_ADDR_LEN);
+	memcpy(frame + ETHER_ADDR_LEN, source_mac, ETHER_ADDR_LEN);
+	frame[12] = 0x08;
+	frame[13] = 0x00;
+	frame[14] = 0x45;
+	frame[23] = IPPROTO_TCP;
+	memcpy(frame + 26, source_ip, 4);
+	memcpy(frame + 30, destination_ip, 4);
+	frame[34] = source_port >> 8;
+	frame[35] = source_port;
+	frame[36] = destination_port >> 8;
+	frame[37] = destination_port;
+}
+
+ATF_TC_WITHOUT_HEAD(multiqueue_policy_and_topology);
+ATF_TC_BODY(multiqueue_policy_and_topology, tc)
+{
+	const char *errstr;
+	uint16_t pairs;
+
+	ATF_CHECK_EQ(pci_vtnet_parse_queues(NULL, &pairs, &errstr), 0);
+	ATF_CHECK_EQ(pairs, VIRTIO14_NET_CTRL_MQ_PAIRS_MIN);
+	ATF_CHECK_EQ(pci_vtnet_parse_queues("8", &pairs, &errstr), 0);
+	ATF_CHECK_EQ(pairs, 8);
+	ATF_CHECK_EQ(pci_vtnet_parse_queues("0", &pairs, &errstr), EINVAL);
+	ATF_CHECK_EQ(pci_vtnet_parse_queues("9", &pairs, &errstr), EINVAL);
+	ATF_CHECK_EQ(pci_vtnet_parse_queues("two", &pairs, &errstr), EINVAL);
+
+	for (uint16_t pair = 0; pair < 8; pair++) {
+		ATF_CHECK_EQ(pci_vtnet_rxq_index(pair),
+		    VIRTIO14_NET_RXQ(pair));
+		ATF_CHECK_EQ(pci_vtnet_txq_index(pair),
+		    VIRTIO14_NET_TXQ(pair));
+	}
+	ATF_CHECK_EQ(VIRTIO14_NET_MQ_CONTROLQ(8), 16);
+	ATF_CHECK_EQ(VTNET_MAX_PAIRS, 8);
+	ATF_CHECK(VTNET_MAX_PAIRS <= VIRTIO14_NET_CTRL_MQ_PAIRS_MAX);
+}
+
+ATF_TC_WITHOUT_HEAD(multiqueue_feature_dependency);
+ATF_TC_BODY(multiqueue_feature_dependency, tc)
+{
+	struct pci_vtnet_softc sc;
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_max_pairs = 2;
+	ATF_CHECK(!pci_vtnet_apply_features(&sc, VIRTIO14_NET_F_MQ));
+	ATF_CHECK_EQ(g_needs_reset_calls, 1);
+	ATF_CHECK(!sc.features_negotiated);
+	ATF_CHECK(!sc.tx_features_negotiated);
+	ATF_CHECK_EQ(g_set_cap_calls, 0);
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_max_pairs = 2;
+	ATF_CHECK(pci_vtnet_apply_features(&sc,
+	    VIRTIO14_NET_F_CTRL_VQ | VIRTIO14_NET_F_MQ));
+	ATF_CHECK_EQ(g_needs_reset_calls, 0);
+	ATF_CHECK(sc.features_negotiated);
+	ATF_CHECK(sc.tx_features_negotiated);
+	ATF_CHECK_EQ(sc.rx_active_pairs,
+	    VIRTIO14_NET_CTRL_MQ_PAIRS_MIN);
+	ATF_CHECK_EQ(sc.tx_active_pairs,
+	    VIRTIO14_NET_CTRL_MQ_PAIRS_MIN);
+}
+
+ATF_TC_WITHOUT_HEAD(multiqueue_control_commands);
+ATF_TC_BODY(multiqueue_control_commands, tc)
+{
+	struct pci_vtnet_softc sc;
+	uint8_t ack;
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 2);
+	ATF_CHECK_EQ(sc.rx_active_pairs,
+	    VIRTIO14_NET_CTRL_MQ_PAIRS_MIN);
+	ATF_CHECK_EQ(sc.tx_active_pairs,
+	    VIRTIO14_NET_CTRL_MQ_PAIRS_MIN);
+
+	ack = run_mq_pairs_command(&sc, 2, VIRTIO14_NET_CTRL_MQ,
+	    VIRTIO14_NET_CTRL_MQ_VQ_PAIRS_SET);
+	ATF_CHECK_EQ(ack, VIRTIO14_NET_CTRL_OK);
+	ATF_CHECK_EQ(sc.rx_active_pairs, 2);
+	ATF_CHECK_EQ(sc.tx_active_pairs, 2);
+
+	ack = run_mq_pairs_command(&sc, 0, VIRTIO14_NET_CTRL_MQ,
+	    VIRTIO14_NET_CTRL_MQ_VQ_PAIRS_SET);
+	ATF_CHECK_EQ(ack, VIRTIO14_NET_CTRL_ERR);
+	ATF_CHECK_EQ(sc.rx_active_pairs, 2);
+	ATF_CHECK_EQ(sc.tx_active_pairs, 2);
+
+	ack = run_mq_pairs_command(&sc, 3, VIRTIO14_NET_CTRL_MQ,
+	    VIRTIO14_NET_CTRL_MQ_VQ_PAIRS_SET);
+	ATF_CHECK_EQ(ack, VIRTIO14_NET_CTRL_ERR);
+	ATF_CHECK_EQ(sc.rx_active_pairs, 2);
+
+	ack = run_mq_pairs_command(&sc, 1, VIRTIO14_NET_CTRL_MQ,
+	    VIRTIO14_NET_CTRL_MQ_VQ_PAIRS_SET + 1);
+	ATF_CHECK_EQ(ack, VIRTIO14_NET_CTRL_ERR);
+	ATF_CHECK_EQ(sc.rx_active_pairs, 2);
+
+	ack = run_mq_pairs_command(&sc, 1, VIRTIO14_NET_CTRL_MQ + 1,
+	    VIRTIO14_NET_CTRL_MQ_VQ_PAIRS_SET);
+	ATF_CHECK_EQ(ack, VIRTIO14_NET_CTRL_ERR);
+	ATF_CHECK_EQ(sc.rx_active_pairs, 2);
+
+	ack = run_mq_pairs_command(&sc, 1, VIRTIO14_NET_CTRL_MQ,
+	    VIRTIO14_NET_CTRL_MQ_VQ_PAIRS_SET);
+	ATF_CHECK_EQ(ack, VIRTIO14_NET_CTRL_OK);
+	ATF_CHECK_EQ(sc.rx_active_pairs, 1);
+	ATF_CHECK_EQ(sc.tx_active_pairs, 1);
+	destroy_multiqueue_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(multiqueue_flow_steering);
+ATF_TC_BODY(multiqueue_flow_steering, tc)
+{
+	struct pci_vtnet_softc sc;
+	struct vqueue_info *vq;
+	uint8_t forward[64], reverse[64], other[64];
+	uint32_t hash;
+
+	make_ipv4_tcp_flow(forward, false, 443);
+	make_ipv4_tcp_flow(reverse, true, 443);
+	make_ipv4_tcp_flow(other, false, 8443);
+	ATF_REQUIRE_EQ(pci_vtnet_flow_hash(forward, sizeof(forward)),
+	    pci_vtnet_flow_hash(reverse, sizeof(reverse)));
+	ATF_CHECK(pci_vtnet_flow_hash(forward, sizeof(forward)) !=
+	    pci_vtnet_flow_hash(other, sizeof(other)));
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 2);
+	sc.rx_active_pairs = 2;
+	sc.tx_active_pairs = 2;
+	hash = pci_vtnet_flow_hash(forward, sizeof(forward));
+	pci_vtnet_flow_learn(&sc, hash, 1);
+	add_chain(1, 0, 1, true, g_packet, sizeof(g_packet));
+	vq = pci_vtnet_select_rxq(&sc, reverse, sizeof(reverse));
+	ATF_REQUIRE(vq != NULL);
+	ATF_CHECK_EQ(vq->vq_num, VIRTIO14_NET_RXQ(1));
+
+	vq_set_resetting(&sc.vsc_queues[VIRTIO14_NET_RXQ(1)], true);
+	vq = pci_vtnet_select_rxq(&sc, reverse, sizeof(reverse));
+	ATF_REQUIRE(vq != NULL);
+	ATF_CHECK_EQ(vq->vq_num, VIRTIO14_NET_RXQ(0));
+	vq_set_resetting(&sc.vsc_queues[VIRTIO14_NET_RXQ(0)], true);
+	ATF_CHECK(pci_vtnet_select_rxq(&sc, reverse, sizeof(reverse)) == NULL);
+	destroy_multiqueue_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(multiqueue_control_descriptor_validation);
+ATF_TC_BODY(multiqueue_control_descriptor_validation, tc)
+{
+	struct pci_vtnet_softc sc;
+	struct vqueue_info *ctlq;
+	uint8_t ack, request[VIRTIO14_NET_CTRL_MQ_SIZE];
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 2);
+	ctlq = &sc.vsc_queues[VIRTIO14_NET_MQ_CONTROLQ(2)];
+	memset(request, 0, sizeof(request));
+	request[VIRTIO14_NET_CTRL_CLASS_OFF] = VIRTIO14_NET_CTRL_MQ;
+	request[VIRTIO14_NET_CTRL_COMMAND_OFF] =
+	    VIRTIO14_NET_CTRL_MQ_VQ_PAIRS_SET;
+	virtio14_store_le16(request + VIRTIO14_NET_CTRL_DATA_OFF, 2);
+	ack = 0xff;
+	g_chains[0].n = 3;
+	g_chains[0].req.idx = 10;
+	g_chains[0].req.readable = 2;
+	g_chains[0].req.writable = 1;
+	g_chains[0].req.ordered = true;
+	g_chains[0].iov[0] = (struct iovec){
+	    .iov_base = request,
+	    .iov_len = 1,
+	};
+	g_chains[0].iov[1] = (struct iovec){
+	    .iov_base = request + 1,
+	    .iov_len = sizeof(request) - 1,
+	};
+	g_chains[0].iov[2] = (struct iovec){
+	    .iov_base = &ack,
+	    .iov_len = sizeof(ack),
+	};
+	g_chain_count = 1;
+	pci_vtnet_ping_ctlq(&sc, ctlq);
+	ATF_CHECK_EQ(ack, VIRTIO14_NET_CTRL_OK);
+	ATF_CHECK_EQ(sc.rx_active_pairs, 2);
+	ATF_REQUIRE_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len[0], 1);
+
+	reset_mocks();
+	g_chains[0].n = 2;
+	g_chains[0].req.idx = 10;
+	g_chains[0].req.readable = 1;
+	g_chains[0].req.writable = 1;
+	g_chains[0].req.ordered = false;
+	g_chains[0].iov[0] = (struct iovec){
+	    .iov_base = request,
+	    .iov_len = sizeof(request),
+	};
+	g_chains[0].iov[1] = (struct iovec){
+	    .iov_base = &ack,
+	    .iov_len = sizeof(ack),
+	};
+	g_chain_count = 1;
+	pci_vtnet_ping_ctlq(&sc, ctlq);
+	ATF_REQUIRE_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len[0], 0);
+	ATF_CHECK_EQ(sc.rx_active_pairs, 2);
+	destroy_multiqueue_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(multiqueue_tx_learns_reverse_flow);
+ATF_TC_BODY(multiqueue_tx_learns_reverse_flow, tc)
+{
+	struct pci_vtnet_softc sc;
+	uint8_t reverse[64];
+	uint32_t hash;
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 2);
+	sc.rx_active_pairs = 2;
+	sc.tx_active_pairs = 2;
+	make_ipv4_tcp_flow(g_packet + VIRTIO14_NET_MODERN_HDR_SIZE, false,
+	    443);
+	make_ipv4_tcp_flow(reverse, true, 443);
+	g_send_result = sizeof(reverse);
+	add_chain(1, 1, 0, true, g_packet,
+	    VIRTIO14_NET_MODERN_HDR_SIZE + sizeof(reverse));
+	pci_vtnet_proctx(&sc, &sc.vsc_queues[VIRTIO14_NET_TXQ(1)]);
+	ATF_REQUIRE_EQ(g_send_calls, 1);
+	hash = pci_vtnet_flow_hash(reverse, sizeof(reverse));
+	ATF_CHECK_EQ(pci_vtnet_flow_pair(&sc, hash, 2), 1);
+	destroy_multiqueue_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(staged_receive_waits_for_buffer);
+ATF_TC_BODY(staged_receive_waits_for_buffer, tc)
+{
+	struct pci_vtnet_softc sc;
+
+	reset_mocks();
+	setup_softc(&sc);
+	ATF_REQUIRE(pthread_mutex_init(&sc.rx_mtx, NULL) == 0);
+	g_backend_packet[0] = 0x5a;
+	g_peek_len = 60;
+	g_recv_result = 60;
+	pci_vtnet_rx(&sc);
+	ATF_REQUIRE_EQ(g_recv_calls, 1);
+	ATF_REQUIRE_EQ(g_rx_disable_calls, 1);
+	ATF_REQUIRE_EQ(sc.rx_staged_len,
+	    VIRTIO14_NET_MODERN_HDR_SIZE + 60);
+
+	add_chain(1, 0, 1, true, g_packet, sizeof(g_packet));
+	pci_vtnet_ping_rxq(&sc, &sc.vsc_queues[VIRTIO14_NET_RECEIVEQ]);
+	ATF_CHECK_EQ(g_recv_calls, 1);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len[0], VIRTIO14_NET_MODERN_HDR_SIZE + 60);
+	ATF_CHECK_EQ(sc.rx_staged_len, 0);
+	ATF_CHECK_EQ(g_packet[VIRTIO14_NET_MODERN_HDR_SIZE], 0x5a);
+	ATF_CHECK_EQ(g_rx_enable_calls, 1);
+	ATF_REQUIRE(pthread_mutex_destroy(&sc.rx_mtx) == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(multiqueue_all_reset_drops_staged_packet);
+ATF_TC_BODY(multiqueue_all_reset_drops_staged_packet, tc)
+{
+	struct pci_vtnet_softc sc;
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 2);
+	sc.rx_active_pairs = 2;
+	sc.tx_active_pairs = 2;
+	vq_set_resetting(&sc.vsc_queues[VIRTIO14_NET_RXQ(0)], true);
+	vq_set_resetting(&sc.vsc_queues[VIRTIO14_NET_RXQ(1)], true);
+	g_peek_len = 60;
+	g_recv_result = 60;
+	pci_vtnet_rx(&sc);
+	ATF_CHECK_EQ(g_recv_calls, 1);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+	ATF_CHECK_EQ(g_rx_disable_calls, 0);
+	ATF_CHECK_EQ(sc.rx_staged_len, 0);
+	destroy_multiqueue_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(multiqueue_queue_reset_isolation);
+ATF_TC_BODY(multiqueue_queue_reset_isolation, tc)
+{
+	struct pci_vtnet_softc sc;
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 2);
+	sc.rx_active_pairs = 2;
+	sc.tx_active_pairs = 2;
+	ATF_CHECK_EQ(pci_vtnet_qreset(&sc,
+	    &sc.vsc_queues[VIRTIO14_NET_RXQ(1)], 1), 0);
+	ATF_CHECK_EQ(g_rx_disable_calls, 0);
+	ATF_CHECK_EQ(pci_vtnet_qreset(&sc,
+	    &sc.vsc_queues[VIRTIO14_NET_TXQ(1)], 2), 0);
+	ATF_CHECK_EQ(pci_vtnet_qreset(&sc,
+	    &sc.vsc_queues[VIRTIO14_NET_MQ_CONTROLQ(2)], 3), 0);
+	ATF_CHECK_EQ(pci_vtnet_qreset(&sc,
+	    &(struct vqueue_info){ .vq_num = 4 }, 4), EINVAL);
+	destroy_multiqueue_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(multiqueue_tx_event_idx_recheck);
+ATF_TC_BODY(multiqueue_tx_event_idx_recheck, tc)
+{
+	struct pci_vtnet_softc sc;
+	struct vqueue_info *vq;
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 2);
+	sc.tx_active_pairs = 1;
+	sc.vsc_vs.vs_negotiated_caps = VIRTIO_RING_F_EVENT_IDX;
+	sc.vsc_queues[VIRTIO14_NET_TXQ(0)].vq_qsize = 8;
+	sc.vsc_queues[VIRTIO14_NET_TXQ(1)].vq_qsize = 8;
+	add_chain(1, 1, 0, true, g_packet, sizeof(g_packet));
+
+	/*
+	 * The first scan misses a descriptor which appears while the worker
+	 * enables kicks.  The arm helper must observe it before sleeping.
+	 */
+	g_hide_next_has_desc = true;
+	ATF_REQUIRE(pci_vtnet_tx_find_work_locked(&sc) == NULL);
+	vq = pci_vtnet_tx_arm_locked(&sc);
+	ATF_REQUIRE(vq != NULL);
+	ATF_CHECK_EQ(vq->vq_num, VIRTIO14_NET_TXQ(0));
+	destroy_multiqueue_softc(&sc);
+
+	/* Unmapped queues must not dereference a used ring while arming. */
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_queues[VIRTIO14_NET_TXQ(0)].vq_used = NULL;
+	vq_set_allocated(&sc.vsc_queues[VIRTIO14_NET_TXQ(0)], false);
+	ATF_CHECK(pci_vtnet_tx_arm_locked(&sc) == NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(multiqueue_tx_scheduler_rotates);
+ATF_TC_BODY(multiqueue_tx_scheduler_rotates, tc)
+{
+	struct pci_vtnet_softc sc;
+	struct vqueue_info *first, *second;
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 2);
+	sc.tx_active_pairs = 2;
+	add_chain(1, 1, 0, true, g_packet, sizeof(g_packet));
+	first = pci_vtnet_tx_find_work_locked(&sc);
+	second = pci_vtnet_tx_find_work_locked(&sc);
+	ATF_REQUIRE(first != NULL);
+	ATF_REQUIRE(second != NULL);
+	ATF_CHECK_EQ(first->vq_num, VIRTIO14_NET_TXQ(0));
+	ATF_CHECK_EQ(second->vq_num, VIRTIO14_NET_TXQ(1));
+	ATF_CHECK_EQ(VTNET_TX_BUDGET, 64);
+	destroy_multiqueue_softc(&sc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, transmit_validation);
@@ -1480,5 +1989,16 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, event_idx_rx_enable_recheck);
 	ATF_TP_ADD_TC(tp, document_wire_vectors);
 	ATF_TP_ADD_TC(tp, document_feature_advertisement);
+	ATF_TP_ADD_TC(tp, multiqueue_policy_and_topology);
+	ATF_TP_ADD_TC(tp, multiqueue_feature_dependency);
+	ATF_TP_ADD_TC(tp, multiqueue_control_commands);
+	ATF_TP_ADD_TC(tp, multiqueue_flow_steering);
+	ATF_TP_ADD_TC(tp, multiqueue_control_descriptor_validation);
+	ATF_TP_ADD_TC(tp, multiqueue_tx_learns_reverse_flow);
+	ATF_TP_ADD_TC(tp, staged_receive_waits_for_buffer);
+	ATF_TP_ADD_TC(tp, multiqueue_all_reset_drops_staged_packet);
+	ATF_TP_ADD_TC(tp, multiqueue_queue_reset_isolation);
+	ATF_TP_ADD_TC(tp, multiqueue_tx_event_idx_recheck);
+	ATF_TP_ADD_TC(tp, multiqueue_tx_scheduler_rotates);
 	return (atf_no_error());
 }

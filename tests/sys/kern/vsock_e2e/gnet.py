@@ -8,6 +8,8 @@ import tempfile
 
 VIRTIO_RING_F_INDIRECT_DESC = 28
 VIRTIO_RING_F_EVENT_IDX = 29
+VIRTIO_NET_F_CTRL_VQ = 17
+VIRTIO_NET_F_MQ = 22
 VIRTIO_F_NOTIFICATION_DATA = 38
 VIRTIO_F_RING_RESET = 40
 
@@ -18,6 +20,13 @@ REQUIRED_FEATURES = (
 MODERN_REQUIRED_FEATURES = REQUIRED_FEATURES + (
     (VIRTIO_F_NOTIFICATION_DATA, "VIRTIO_F_NOTIFICATION_DATA"),
     (VIRTIO_F_RING_RESET, "VIRTIO_F_RING_RESET"),
+)
+MULTIQUEUE_REQUIRED_FEATURES = (
+    (VIRTIO_NET_F_CTRL_VQ, "VIRTIO_NET_F_CTRL_VQ"),
+    (VIRTIO_NET_F_MQ, "VIRTIO_NET_F_MQ"),
+)
+MODERN_MULTIQUEUE_REQUIRED_FEATURES = (
+    MODERN_REQUIRED_FEATURES + MULTIQUEUE_REQUIRED_FEATURES
 )
 
 
@@ -80,7 +89,24 @@ def require_features(expected_device, required, sys_root="/sys"):
             raise RuntimeError(f"virtio-net did not negotiate {name}")
 
 
-def make_mock_device(root, bdf, device, interface=None, features=()):
+def queue_pairs(interface="eth0", sys_root="/sys"):
+    queue_root = os.path.join(sys_root, "class/net", interface, "queues")
+    rx = glob.glob(os.path.join(queue_root, "rx-*"))
+    tx = glob.glob(os.path.join(queue_root, "tx-*"))
+    return len(rx), len(tx)
+
+
+def require_queue_pairs(expected, interface="eth0", sys_root="/sys"):
+    rx, tx = queue_pairs(interface, sys_root)
+    if rx != expected or tx != expected:
+        raise RuntimeError(
+            f"virtio-net exposed rx={rx} tx={tx} queues, expected {expected}"
+        )
+
+
+def make_mock_device(
+    root, bdf, device, interface=None, features=(), queues=1
+):
     sys_root = os.path.join(root, "sys")
     pci = os.path.join(sys_root, "bus/pci/devices", bdf)
     child = os.path.join(pci, "virtio0")
@@ -101,6 +127,11 @@ def make_mock_device(root, bdf, device, interface=None, features=()):
         net = os.path.join(sys_root, "class/net", interface)
         os.makedirs(net)
         os.symlink(child, net + "/device")
+        queue_root = os.path.join(net, "queues")
+        os.makedirs(queue_root)
+        for pair in range(queues):
+            os.makedirs(os.path.join(queue_root, f"rx-{pair}"))
+            os.makedirs(os.path.join(queue_root, f"tx-{pair}"))
     return sys_root
 
 
@@ -108,24 +139,35 @@ def self_test():
     with tempfile.TemporaryDirectory() as root:
         sys_root = make_mock_device(
             root, "0000:00:04.0", "0x1041", "eth0",
-            features=tuple(bit for bit, _ in MODERN_REQUIRED_FEATURES)
+            features=tuple(
+                bit
+                for bit, _ in MODERN_MULTIQUEUE_REQUIRED_FEATURES
+            ),
+            queues=2,
         )
         if find_bound_net("0x1041", sys_root=sys_root) != "0000:00:04.0":
             raise AssertionError("wrong virtio-net PCI function")
-        require_features("0x1041", MODERN_REQUIRED_FEATURES, sys_root)
+        require_features(
+            "0x1041", MODERN_MULTIQUEUE_REQUIRED_FEATURES, sys_root
+        )
+        require_queue_pairs(2, sys_root=sys_root)
         feature_path = os.path.join(
             sys_root,
             "bus/pci/devices/0000:00:04.0/virtio0/features",
         )
-        for missing_bit, missing_name in MODERN_REQUIRED_FEATURES:
+        for missing_bit, missing_name in MODERN_MULTIQUEUE_REQUIRED_FEATURES:
             features = ["0"] * 64
-            for bit, _ in MODERN_REQUIRED_FEATURES:
+            for bit, _ in MODERN_MULTIQUEUE_REQUIRED_FEATURES:
                 features[bit] = "1"
             features[missing_bit] = "0"
             with open(feature_path, "w", encoding="ascii") as stream:
                 stream.write("".join(features) + "\n")
             try:
-                require_features("0x1041", MODERN_REQUIRED_FEATURES, sys_root)
+                require_features(
+                    "0x1041",
+                    MODERN_MULTIQUEUE_REQUIRED_FEATURES,
+                    sys_root,
+                )
             except RuntimeError:
                 pass
             else:
@@ -133,6 +175,12 @@ def self_test():
                     f"missing modern network feature {missing_name} "
                     "was accepted"
                 )
+        try:
+            require_queue_pairs(1, sys_root=sys_root)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("accepted the wrong network queue count")
         try:
             find_bound_net("0x1000", sys_root=sys_root)
         except RuntimeError:
@@ -153,19 +201,38 @@ def main():
     if sys.argv[1:] == ["--self-test"]:
         self_test()
         return
-    if len(sys.argv) != 2 or sys.argv[1] not in ("modern", "legacy"):
-        raise SystemExit("usage: gnet.py --self-test | modern|legacy")
+    if len(sys.argv) not in (2, 3) or sys.argv[1] not in (
+        "modern", "legacy"
+    ):
+        raise SystemExit(
+            "usage: gnet.py --self-test | modern|legacy [queue-pairs]"
+        )
+    try:
+        expected_pairs = int(sys.argv[2]) if len(sys.argv) == 3 else 1
+    except ValueError as error:
+        raise SystemExit("queue-pairs must be a positive integer") from error
+    if expected_pairs < 1:
+        raise SystemExit("queue-pairs must be a positive integer")
     expected_device = "0x1041" if sys.argv[1] == "modern" else "0x1000"
     pci = find_bound_net(expected_device)
     require_features(expected_device, REQUIRED_FEATURES)
     notification_data = sys.argv[1] == "modern"
     if sys.argv[1] == "modern":
         require_features(expected_device, MODERN_REQUIRED_FEATURES)
+        if expected_pairs > 1:
+            require_features(
+                expected_device, MULTIQUEUE_REQUIRED_FEATURES
+            )
+    elif expected_pairs != 1:
+        raise RuntimeError("legacy virtio-net must use one queue pair")
+    require_queue_pairs(expected_pairs)
     print(
         f"PASS net interface=eth0 pci={pci} device={expected_device} "
         f"driver=virtio_net indirect_desc=yes event_idx=yes "
         f"notification_data={'yes' if notification_data else 'n/a'} "
-        f"ring_reset={'yes' if notification_data else 'n/a'}"
+        f"ring_reset={'yes' if notification_data else 'n/a'} "
+        f"queue_pairs={expected_pairs} "
+        f"mq={'yes' if expected_pairs > 1 else 'no'}"
     )
 
 

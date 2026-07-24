@@ -22,6 +22,9 @@
 #define VIRTIO_NET_F_HOST_UFO	(1U << 14)
 #define VIRTIO_NET_F_MRG_RXBUF	(1U << 15)
 #define VIRTIO_NET_F_STATUS	(1U << 16)
+#define VIRTIO_NET_F_CTRL_VQ	(1U << 17)
+#define VIRTIO_NET_F_MQ		(1U << 22)
+#define NETBE_MAX_RECORD_SIZE	(65589U + 12U)
 
 struct virtio_net_rxhdr {
 	uint8_t vrh_flags;

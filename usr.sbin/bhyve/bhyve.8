@@ -705,12 +705,14 @@ considered unconnected.
 .Cm tap Ar N
 .Op Cm \&,mac= Ar xx:xx:xx:xx:xx:xx
 .Op Cm \&,mtu= Ar N
+.Op Cm \&,queues= Ar N
 .Xc
 .It
 .Xo
 .Cm vmnet Ar N
 .Op Cm \&,mac= Ar xx:xx:xx:xx:xx:xx
 .Op Cm \&,mtu= Ar N
+.Op Cm \&,queues= Ar N
 .Xc
 .It
 .Cm ngd Ar N
@@ -721,6 +723,7 @@ considered unconnected.
 .Op Cm \&,hook= Ar HOOK
 .Op Cm \&,mac= Ar xx:xx:xx:xx:xx:xx
 .Op Cm \&,mtu= Ar N
+.Op Cm \&,queues= Ar N
 .Xc
 .It
 .Xo
@@ -729,6 +732,7 @@ considered unconnected.
 .Op Cm \&,hostfwd= Ar proto : Ar hostaddr : Ar hostport - Ar guestaddr : Ar guestport
 .Op Cm \&,mac= Ar xx:xx:xx:xx:xx:xx
 .Op Cm \&,mtu= Ar N
+.Op Cm \&,queues= Ar N
 .Xc
 .El
 .Sm on
@@ -763,6 +767,19 @@ devices, the
 .Cm mtu
 parameter can be specified to inform the guest about the largest MTU
 that should be allowed, expressed in bytes.
+.Pp
+The
+.Cm queues
+parameter configures between 1 and 8 transmit/receive queue pairs for a
+.Cm virtio-net
+device.
+The default is 1.
+Values greater than 1 require
+.Cm transport=modern
+and advertise the VirtIO control-queue and automatic multiqueue steering
+features.
+Only the first queue pair is active after reset; a conforming guest enables
+additional pairs with the VirtIO network multiqueue control command.
 .Pp
 With
 .Cm netgraph

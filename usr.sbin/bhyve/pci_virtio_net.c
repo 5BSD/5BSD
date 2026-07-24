@@ -34,6 +34,7 @@
 #include <machine/vmm_snapshot.h>
 #include <net/ethernet.h>
 #include <net/if.h> /* IFNAMSIZ */
+#include <netinet/in.h>
 
 #include <err.h>
 #include <errno.h>
@@ -61,6 +62,9 @@
 #define VTNET_RINGSZ	1024
 
 #define VTNET_MAXSEGS	256
+#define	VTNET_MAX_PAIRS	8
+#define	VTNET_FLOW_ENTRIES	1024
+#define	VTNET_TX_BUDGET	64
 
 /*
  * VirtIO 1.4 section 5.1.9.3 permits a 65,589-byte incoming GSO packet.
@@ -109,9 +113,12 @@ struct virtio_net_config {
  */
 #define VTNET_RXQ	0
 #define VTNET_TXQ	1
-#define VTNET_CTLQ	2	/* NB: not yet supported */
+#define	VTNET_MAXQ	(VTNET_MAX_PAIRS * 2 + 1)
 
-#define VTNET_MAXQ	3
+#define	VTNET_CTRL_MQ			4
+#define	VTNET_CTRL_MQ_VQ_PAIRS_SET	0
+#define	VTNET_CTRL_OK			0
+#define	VTNET_CTRL_ERR			1
 
 /*
  * Debug printf
@@ -125,7 +132,7 @@ static int pci_vtnet_debug;
  */
 struct pci_vtnet_softc {
 	struct virtio_softc vsc_vs;
-	struct vqueue_info vsc_queues[VTNET_MAXQ - 1];
+	struct vqueue_info vsc_queues[VTNET_MAXQ];
 	pthread_mutex_t vsc_mtx;
 
 	net_backend_t	*vsc_be;
@@ -144,6 +151,16 @@ struct pci_vtnet_softc {
 	pthread_mutex_t	tx_mtx;
 	pthread_cond_t	tx_cond;
 	int		tx_in_progress;
+	struct vqueue_info *tx_current_vq;
+	bool		tx_control_pause;
+	uint16_t	tx_active_pairs;
+	uint16_t	tx_next_pair;
+
+	uint16_t	rx_active_pairs;
+	uint16_t	vsc_max_pairs;
+	uint64_t	vsc_flow_map[VTNET_FLOW_ENTRIES];
+	uint8_t		vsc_rx_buf[NETBE_MAX_RECORD_SIZE];
+	size_t		rx_staged_len;
 
 	size_t		vhdrlen;
 	size_t		be_vhdrlen;
@@ -167,7 +184,182 @@ pci_vtnet_header_len(const struct pci_vtnet_softc *sc, uint64_t features)
 	    sizeof(((struct virtio_net_rxhdr *)0)->vrh_bufs));
 }
 
+static uint16_t
+pci_vtnet_rxq_index(uint16_t pair)
+{
+
+	return (pair * 2);
+}
+
+static uint16_t
+pci_vtnet_txq_index(uint16_t pair)
+{
+
+	return (pair * 2 + 1);
+}
+
+static uint16_t
+pci_vtnet_ctlq_index(const struct pci_vtnet_softc *sc)
+{
+
+	return (sc->vsc_max_pairs * 2);
+}
+
+static bool pci_vtnet_iov_read(const struct iovec *, int, size_t, void *,
+    size_t);
+
+static uint32_t
+pci_vtnet_hash_bytes(uint32_t hash, const void *data, size_t len)
+{
+	const uint8_t *bytes;
+
+	bytes = data;
+	while (len-- != 0) {
+		hash ^= *bytes++;
+		hash *= 16777619U;
+	}
+	return (hash);
+}
+
+static uint16_t
+pci_vtnet_be16(const uint8_t *bytes)
+{
+
+	return ((uint16_t)bytes[0] << 8 | bytes[1]);
+}
+
+/*
+ * Produce a direction-independent flow key.  Automatic receive steering
+ * does not expose a programmable hash, but packets belonging to a flow must
+ * stay together and a reverse-direction packet should follow the transmit
+ * queue learned for that flow.
+ */
+static uint32_t
+pci_vtnet_flow_hash(const uint8_t *frame, size_t len)
+{
+	uint8_t endpoints[2][18];
+	const uint8_t *first, *second;
+	uint32_t hash;
+	uint16_t ether_type, frag, port[2];
+	size_t addr_len, endpoint_len, l3off;
+	uint8_t protocol;
+	int cmp;
+
+	hash = 2166136261U;
+	if (len < ETHER_HDR_LEN)
+		return (pci_vtnet_hash_bytes(hash, frame, len));
+
+	l3off = ETHER_HDR_LEN;
+	ether_type = pci_vtnet_be16(frame + 12);
+	while ((ether_type == ETHERTYPE_VLAN || ether_type == ETHERTYPE_QINQ) &&
+	    len >= l3off + ETHER_VLAN_ENCAP_LEN) {
+		ether_type = pci_vtnet_be16(frame + l3off + 2);
+		l3off += ETHER_VLAN_ENCAP_LEN;
+	}
+
+	memset(endpoints, 0, sizeof(endpoints));
+	protocol = 0;
+	addr_len = 0;
+	port[0] = port[1] = 0;
+	if (ether_type == ETHERTYPE_IP && len >= l3off + 20 &&
+	    (frame[l3off] >> 4) == 4) {
+		size_t ihl;
+
+		ihl = (frame[l3off] & 0x0f) * 4;
+		if (ihl >= 20 && len >= l3off + ihl) {
+			addr_len = 4;
+			protocol = frame[l3off + 9];
+			memcpy(endpoints[0], frame + l3off + 12, addr_len);
+			memcpy(endpoints[1], frame + l3off + 16, addr_len);
+			frag = pci_vtnet_be16(frame + l3off + 6);
+			if ((frag & 0x3fff) == 0 &&
+			    (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP) &&
+			    len >= l3off + ihl + 4) {
+				port[0] = pci_vtnet_be16(frame + l3off + ihl);
+				port[1] = pci_vtnet_be16(frame + l3off + ihl + 2);
+			}
+		}
+	} else if (ether_type == ETHERTYPE_IPV6 && len >= l3off + 40 &&
+	    (frame[l3off] >> 4) == 6) {
+		addr_len = 16;
+		protocol = frame[l3off + 6];
+		memcpy(endpoints[0], frame + l3off + 8, addr_len);
+		memcpy(endpoints[1], frame + l3off + 24, addr_len);
+		/*
+		 * Hash IPv6 addresses and next-header only.  This remains stable
+		 * across extension and fragment headers while still keeping each
+		 * host-pair/protocol flow on one receive queue.
+		 */
+	}
+	if (addr_len == 0) {
+		addr_len = ETHER_ADDR_LEN;
+		memcpy(endpoints[0], frame, addr_len);
+		memcpy(endpoints[1], frame + ETHER_ADDR_LEN, addr_len);
+	}
+	endpoints[0][addr_len] = (uint8_t)(port[0] >> 8);
+	endpoints[0][addr_len + 1] = (uint8_t)port[0];
+	endpoints[1][addr_len] = (uint8_t)(port[1] >> 8);
+	endpoints[1][addr_len + 1] = (uint8_t)port[1];
+	endpoint_len = addr_len + 2;
+	cmp = memcmp(endpoints[0], endpoints[1], endpoint_len);
+	first = endpoints[cmp <= 0 ? 0 : 1];
+	second = endpoints[cmp <= 0 ? 1 : 0];
+	hash = pci_vtnet_hash_bytes(hash, &ether_type, sizeof(ether_type));
+	hash = pci_vtnet_hash_bytes(hash, &protocol, sizeof(protocol));
+	hash = pci_vtnet_hash_bytes(hash, first, endpoint_len);
+	hash = pci_vtnet_hash_bytes(hash, second, endpoint_len);
+	return (hash);
+}
+
+static uint32_t
+pci_vtnet_iov_flow_hash(const struct iovec *iov, int niov, size_t offset)
+{
+	uint8_t frame[128];
+	size_t total, len;
+
+	total = count_iov(iov, niov);
+	if (offset >= total)
+		return (0);
+	len = MIN(sizeof(frame), total - offset);
+	if (!pci_vtnet_iov_read(iov, niov, offset, frame, len))
+		return (0);
+	return (pci_vtnet_flow_hash(frame, len));
+}
+
+static void
+pci_vtnet_flow_learn(struct pci_vtnet_softc *sc, uint32_t hash,
+    uint16_t pair)
+{
+	uint64_t entry;
+
+	if (hash == 0 || pair >= sc->vsc_max_pairs)
+		return;
+	entry = (uint64_t)hash << 32 | (uint32_t)pair + 1;
+	atomic_store_rel_64(&sc->vsc_flow_map[hash &
+	    (VTNET_FLOW_ENTRIES - 1)], entry);
+}
+
+static uint16_t
+pci_vtnet_flow_pair(struct pci_vtnet_softc *sc, uint32_t hash,
+    uint16_t active_pairs)
+{
+	uint64_t entry;
+	uint16_t pair;
+
+	if (active_pairs <= 1)
+		return (0);
+	entry = atomic_load_acq_64(&sc->vsc_flow_map[hash &
+	    (VTNET_FLOW_ENTRIES - 1)]);
+	if ((uint32_t)(entry >> 32) == hash && (uint32_t)entry != 0) {
+		pair = (uint16_t)((uint32_t)entry - 1);
+		if (pair < active_pairs)
+			return (pair);
+	}
+	return ((uint16_t)(hash % active_pairs));
+}
+
 static void pci_vtnet_reset(void *);
+static int pci_vtnet_qenable(void *, struct vqueue_info *);
 static int pci_vtnet_qreset(void *, struct vqueue_info *, uint64_t);
 /* static void pci_vtnet_notify(void *, struct vqueue_info *); */
 static int pci_vtnet_cfgread(void *, int, int, uint32_t *);
@@ -182,12 +374,13 @@ static int pci_vtnet_snapshot(void *, struct vm_snapshot_meta *);
 
 static struct virtio_consts vtnet_vi_consts = {
 	.vc_name =	"vtnet",
-	.vc_nvq =	VTNET_MAXQ - 1,
+	.vc_nvq =	2,
 	.vc_cfgsize =	sizeof(struct virtio_net_config),
 	.vc_reset =	pci_vtnet_reset,
 	.vc_cfgread =	pci_vtnet_cfgread,
 	.vc_cfgwrite =	pci_vtnet_cfgwrite,
 	.vc_apply_features = pci_vtnet_neg_features,
+	.vc_qenable =	pci_vtnet_qenable,
 	.vc_qreset =	pci_vtnet_qreset,
 	.vc_hv_caps =	VTNET_S_HOSTCAPS | VIRTIO_F_RING_RESET,
 #ifdef BHYVE_SNAPSHOT
@@ -238,6 +431,13 @@ pci_vtnet_reset(void *vsc)
 	sc->vsc_features = 0;
 	sc->rx_merge = 0;
 	sc->vhdrlen = pci_vtnet_header_len(sc, 0);
+	sc->rx_active_pairs = 1;
+	sc->tx_active_pairs = 1;
+	sc->tx_next_pair = 0;
+	sc->tx_current_vq = NULL;
+	sc->tx_control_pause = false;
+	sc->rx_staged_len = 0;
+	memset(sc->vsc_flow_map, 0, sizeof(sc->vsc_flow_map));
 
 	sc->resetting = 0;
 	pthread_mutex_unlock(&sc->tx_mtx);
@@ -245,43 +445,97 @@ pci_vtnet_reset(void *vsc)
 }
 
 static int
+pci_vtnet_qenable(void *vsc, struct vqueue_info *vq)
+{
+	struct pci_vtnet_softc *sc;
+	uint16_t pair;
+
+	sc = vsc;
+	if (vq->vq_num >= sc->vsc_consts.vc_nvq ||
+	    vq != &sc->vsc_queues[vq->vq_num])
+		return (EINVAL);
+	if (vq->vq_num == pci_vtnet_ctlq_index(sc))
+		return (0);
+	pair = vq->vq_num / 2;
+	if ((vq->vq_num & 1) == 0) {
+		if (pair >= sc->rx_active_pairs)
+			return (0);
+		/*
+		 * Enabling the ring does not imply that receive buffers are
+		 * present.  The driver's subsequent kick performs the backend
+		 * enable after the common transport publishes the queue.
+		 */
+		return (0);
+	}
+
+	pthread_mutex_lock(&sc->tx_mtx);
+	if (pair < sc->tx_active_pairs && sc->tx_features_negotiated)
+		pthread_cond_signal(&sc->tx_cond);
+	pthread_mutex_unlock(&sc->tx_mtx);
+	return (0);
+}
+
+static int
 pci_vtnet_qreset(void *vsc, struct vqueue_info *vq,
     uint64_t generation __unused)
 {
 	struct pci_vtnet_softc *sc;
+	bool all_resetting, another;
+	uint16_t pair;
 
 	sc = vsc;
-	switch (vq->vq_num) {
-	case VTNET_RXQ:
+	if (vq->vq_num >= sc->vsc_consts.vc_nvq ||
+	    vq != &sc->vsc_queues[vq->vq_num])
+		return (EINVAL);
+	if (vq->vq_num == pci_vtnet_ctlq_index(sc))
+		return (0);
+	pair = vq->vq_num / 2;
+	if ((vq->vq_num & 1) == 0) {
 		/*
-		 * Serialize with the backend callback and stop new packets.
-		 * The queue remains disabled until the re-enabled queue is
-		 * kicked, preserving packets in the backend across the reset.
+		 * Serialize with the backend callback.  In multiqueue mode the
+		 * receive selector avoids this queue and reselects another live
+		 * pair.  With no other live receive queue, stop readiness events
+		 * until a queue is re-enabled and kicked.
 		 */
 		pthread_mutex_lock(&sc->rx_mtx);
-		if (sc->vsc_be != NULL)
+		another = false;
+		all_resetting = true;
+		for (uint16_t i = 0; i < sc->rx_active_pairs; i++) {
+			struct vqueue_info *candidate;
+
+			candidate = &sc->vsc_queues[pci_vtnet_rxq_index(i)];
+			if (!vq_is_resetting(candidate))
+				all_resetting = false;
+			if (i == pair)
+				continue;
+			if (vq_ring_ready(candidate) &&
+			    !vq_is_resetting(candidate)) {
+				another = true;
+				break;
+			}
+		}
+		if (!another && sc->vsc_be != NULL)
 			netbe_rx_disable(sc->vsc_be);
+		if (all_resetting)
+			sc->rx_staged_len = 0;
 		pthread_mutex_unlock(&sc->rx_mtx);
 		return (0);
-	case VTNET_TXQ:
+	}
+	if ((vq->vq_num & 1) != 0) {
 		/*
-		 * Stop the worker after its current synchronous send.  The
-		 * atomic queue-reset flag suppresses an interrupt from that
-		 * final pass, and clearing VQ_ALLOC prevents another pass.
+		 * Stop after the current synchronous send from this queue.
+		 * Other active transmit queues remain available to the worker.
 		 */
 		pthread_mutex_lock(&sc->tx_mtx);
-		sc->resetting = 1;
-		while (sc->tx_in_progress) {
+		while (sc->tx_in_progress && sc->tx_current_vq == vq) {
 			pthread_mutex_unlock(&sc->tx_mtx);
 			usleep(10000);
 			pthread_mutex_lock(&sc->tx_mtx);
 		}
-		sc->resetting = 0;
 		pthread_mutex_unlock(&sc->tx_mtx);
 		return (0);
-	default:
-		return (EINVAL);
 	}
+	return (EINVAL);
 }
 
 static __inline struct iovec *
@@ -591,22 +845,55 @@ struct virtio_mrg_rxbuf_info {
 	size_t len;
 };
 
+static struct vqueue_info *
+pci_vtnet_select_rxq(struct pci_vtnet_softc *sc, const uint8_t *frame,
+    size_t frame_len)
+{
+	struct vqueue_info *vq;
+	uint32_t hash;
+	uint16_t pair, start;
+
+	if (sc->rx_active_pairs == 0)
+		return (NULL);
+	hash = pci_vtnet_flow_hash(frame, frame_len);
+	start = pci_vtnet_flow_pair(sc, hash, sc->rx_active_pairs);
+	for (uint16_t i = 0; i < sc->rx_active_pairs; i++) {
+		pair = (start + i) % sc->rx_active_pairs;
+		vq = &sc->vsc_queues[pci_vtnet_rxq_index(pair)];
+		if (!vq_is_resetting(vq) && vq_ring_ready(vq) &&
+		    vq_has_descs(vq))
+			return (vq);
+	}
+	return (NULL);
+}
+
+static bool
+pci_vtnet_all_rxqs_resetting(struct pci_vtnet_softc *sc)
+{
+
+	if (sc->rx_active_pairs == 0)
+		return (true);
+	for (uint16_t i = 0; i < sc->rx_active_pairs; i++) {
+		if (!vq_is_resetting(
+		    &sc->vsc_queues[pci_vtnet_rxq_index(i)]))
+			return (false);
+	}
+	return (true);
+}
+
 static void
 pci_vtnet_rx(struct pci_vtnet_softc *sc)
 {
 	struct virtio_mrg_rxbuf_info info[VTNET_MAXSEGS];
-	struct iovec header_iov[VTNET_MAXSEGS + 1];
 	struct iovec iov[VTNET_MAXSEGS + 1];
-	struct vqueue_info *vq;
 	struct vi_req req;
 	size_t prepend_hdr_len;
 
-	vq = &sc->vsc_queues[VTNET_RXQ];
 	if (sc->vsc_be == NULL)
 		return;
 
 	/* Features must be negotiated */
-	if (!sc->features_negotiated || !vq_ring_ready(vq)) {
+	if (!sc->features_negotiated) {
 		/*
 		 * netbe_rx_disable() prevents future readiness events, but an
 		 * event already queued in mevent may run after an RX queue
@@ -630,40 +917,89 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 
 	for (;;) {
 		struct virtio_net_rxhdr hdr;
+		struct vqueue_info *vq;
+		struct iovec backend_iov;
+		struct iovec frame_iov;
 		size_t plen;
 		size_t riov_bytes;
 		struct iovec *riov;
 		uint32_t ulen;
-		int header_iov_len;
 		int riov_len;
 		int n_chains;
 		ssize_t backend_len;
 		ssize_t rlen;
 
-		backend_len = netbe_peek_recvlen(sc->vsc_be);
-		if (backend_len <= 0) {
+		if (sc->rx_staged_len == 0) {
+			backend_len = netbe_peek_recvlen(sc->vsc_be);
+			if (backend_len <= 0) {
+				/*
+				 * No more packets (backend_len == 0), or backend
+				 * errored (backend_len < 0).  Each staged packet
+				 * is published before the next backend peek.
+				 */
+				return;
+			}
+			if ((size_t)backend_len >
+			    VTNET_MAX_PKT_LEN + sc->be_vhdrlen) {
+				/*
+				 * Do not leave an impossible record permanently
+				 * at the head of the backend queue.
+				 */
+				WPRINTF(("vtnet: dropping oversized backend "
+				    "packet (%zd bytes)", backend_len));
+				(void)netbe_rx_discard(sc->vsc_be);
+				continue;
+			}
+
 			/*
-			 * No more packets (backend_len == 0), or backend
-			 * errored (backend_len < 0). Interrupt if needed and
-			 * stop.
+			 * Automatic receive steering needs the packet's flow
+			 * before a receive queue can be selected.  Consume one
+			 * complete record into a bounded device-owned staging
+			 * buffer.  If no receive buffer is available, retain
+			 * this record until a later queue kick.
 			 */
-			vq_endchains(vq, /*used_all_avail=*/0);
-			return;
-		}
-		if ((size_t)backend_len >
-		    VTNET_MAX_PKT_LEN + sc->be_vhdrlen) {
-			/*
-			 * Do not leave an impossible record permanently at
-			 * the head of the backend queue.  All supported
-			 * backends discard an entire packet when the receive
-			 * iovec is shorter than that packet.
-			 */
-			WPRINTF(("vtnet: dropping oversized backend packet "
-			    "(%zd bytes)", backend_len));
-			(void)netbe_rx_discard(sc->vsc_be);
+			backend_iov.iov_base =
+			    sc->vsc_rx_buf + prepend_hdr_len;
+			backend_iov.iov_len = (size_t)backend_len;
+			rlen = netbe_recv(sc->vsc_be, &backend_iov, 1);
+			if (rlen != backend_len) {
+				WPRINTF(("netbe_recv: expected %zd bytes, got %zd",
+				    backend_len, rlen));
+				continue;
+			}
+			plen = (size_t)rlen + prepend_hdr_len;
+			if (prepend_hdr_len != 0)
+				memset(sc->vsc_rx_buf, 0, prepend_hdr_len);
+			sc->rx_staged_len = plen;
+		} else
+			plen = sc->rx_staged_len;
+		memset(&hdr, 0, sizeof(hdr));
+		memcpy(&hdr, sc->vsc_rx_buf, sc->vhdrlen);
+		if (plen < sc->vhdrlen ||
+		    !pci_vtnet_rx_header_valid(sc, &hdr,
+		    plen - sc->vhdrlen)) {
+			DPRINTF(("vtnet: invalid receive offload metadata"));
+			sc->rx_staged_len = 0;
 			continue;
 		}
-		plen = (size_t)backend_len + prepend_hdr_len;
+		frame_iov.iov_base = sc->vsc_rx_buf;
+		frame_iov.iov_len = plen;
+		if (!pci_vtnet_frame_within_mtu(sc, &frame_iov, 1,
+		    sc->vhdrlen, plen, hdr.vrh_gso_type)) {
+			DPRINTF(("vtnet: dropping receive frame larger than MTU"));
+			sc->rx_staged_len = 0;
+			continue;
+		}
+		vq = pci_vtnet_select_rxq(sc, sc->vsc_rx_buf + sc->vhdrlen,
+		    plen - sc->vhdrlen);
+		if (vq == NULL) {
+			if (pci_vtnet_all_rxqs_resetting(sc)) {
+				sc->rx_staged_len = 0;
+				continue;
+			}
+			netbe_rx_disable(sc->vsc_be);
+			return;
+		}
 
 		/*
 		 * Get a descriptor chain to store the next ingress
@@ -681,32 +1017,28 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 
 			if (n == 0) {
 				/*
-				 * No rx buffers. Enable RX kicks and double
-				 * check.
+				 * The staged packet has already been removed
+				 * from the backend.  Close the EVENT_IDX race
+				 * before returning partial chains: a descriptor
+				 * can become visible between the empty dequeue
+				 * and enabling guest kicks.
 				 */
 				vq_kick_enable(vq);
-				if (!vq_has_descs(vq)) {
-					/*
-					 * Still no buffers. Return the unused
-					 * chains (if any), interrupt if needed
-					 * (including for NOTIFY_ON_EMPTY), and
-					 * disable the backend until the next
-					 * kick.
-					 */
-					vq_retchains(vq, n_chains);
-					vq_endchains(vq, /*used_all_avail=*/1);
-					netbe_rx_disable(sc->vsc_be);
-					return;
+				if (vq_has_descs(vq)) {
+					vq_kick_disable(vq);
+					continue;
 				}
-
-				/* More rx buffers found, so keep going. */
-				vq_kick_disable(vq);
-				continue;
+				for (int i = 0; i < n_chains; i++)
+					vq_relchain(vq, info[i].idx, 0);
+				vq_endchains(vq, /*used_all_avail=*/1);
+				netbe_rx_disable(sc->vsc_be);
+				return;
 			}
 			if (n < 0) {
 				for (int i = 0; i < n_chains; i++)
 					vq_relchain(vq, info[i].idx, 0);
 				vq_endchains(vq, 0);
+				netbe_rx_disable(sc->vsc_be);
 				return;
 			}
 			if (n > VTNET_MAXSEGS - riov_len ||
@@ -732,71 +1064,7 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			DPRINTF(("vtnet: receive buffers too small"));
 			for (int i = 0; i < n_chains; i++)
 				vq_relchain(vq, info[i].idx, 0);
-			continue;
-		}
-
-		riov = iov;
-		header_iov_len = riov_len;
-		memcpy(header_iov, iov,
-		    header_iov_len * sizeof(header_iov[0]));
-		if (prepend_hdr_len > 0) {
-			memset(&hdr, 0, sizeof(hdr));
-			/*
-			 * The frontend uses a virtio-net header, but the
-			 * backend does not. We need to prepend a zeroed
-			 * header.
-			 */
-			riov = iov_trim_hdr(riov, &riov_len, prepend_hdr_len);
-			if (riov == NULL) {
-				/*
-				 * The first collected chain is nonsensical,
-				 * as it is not even enough to store the
-				 * virtio-net header. Just drop it.
-				 */
-				vq_relchain(vq, info[0].idx, 0);
-				vq_retchains(vq, n_chains - 1);
-				continue;
-			}
-			if (!pci_vtnet_iov_write(header_iov, header_iov_len,
-			    0, &hdr, prepend_hdr_len)) {
-				vq_relchain(vq, info[0].idx, 0);
-				vq_retchains(vq, n_chains - 1);
-				continue;
-			}
-		}
-
-		rlen = netbe_recv(sc->vsc_be, riov, riov_len);
-		if (rlen != backend_len) {
-			/*
-			 * If this happens it means there is something
-			 * wrong with the backend (e.g., some other
-			 * process is stealing our packets).
-			 */
-			WPRINTF(("netbe_recv: expected %zd bytes, "
-				"got %zd", backend_len, rlen));
-			vq_retchains(vq, n_chains);
-			continue;
-		}
-		memset(&hdr, 0, sizeof(hdr));
-		if (!pci_vtnet_iov_read(header_iov, header_iov_len, 0, &hdr,
-		    sc->vhdrlen)) {
-			for (int i = 0; i < n_chains; i++)
-				vq_relchain(vq, info[i].idx, 0);
-			continue;
-		}
-		if ((size_t)rlen < sc->be_vhdrlen ||
-		    !pci_vtnet_rx_header_valid(sc, &hdr,
-		    (size_t)rlen - sc->be_vhdrlen)) {
-			DPRINTF(("vtnet: invalid receive offload metadata"));
-			for (int i = 0; i < n_chains; i++)
-				vq_relchain(vq, info[i].idx, 0);
-			continue;
-		}
-		if (!pci_vtnet_frame_within_mtu(sc, riov, riov_len,
-		    sc->be_vhdrlen, (size_t)rlen, hdr.vrh_gso_type)) {
-			DPRINTF(("vtnet: dropping receive frame larger than MTU"));
-			for (int i = 0; i < n_chains; i++)
-				vq_relchain(vq, info[i].idx, 0);
+			vq_endchains(vq, 0);
 			continue;
 		}
 
@@ -815,41 +1083,57 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			 */
 			if (sc->vhdrlen == sizeof(hdr)) {
 				num_buffers = htole16(1);
-				if (!pci_vtnet_iov_write(header_iov,
-				    header_iov_len,
+				memcpy(sc->vsc_rx_buf +
 				    offsetof(struct virtio_net_rxhdr, vrh_bufs),
-				    &num_buffers, sizeof(num_buffers))) {
-					vq_relchain(vq, info[0].idx, 0);
-					continue;
-				}
+				    &num_buffers, sizeof(num_buffers));
+			}
+			if (buf_to_iov(sc->vsc_rx_buf, plen, iov,
+			    riov_len) != plen) {
+				vq_relchain(vq, info[0].idx, 0);
+				vq_endchains(vq, 0);
+				continue;
 			}
 			vq_relchain(vq, info[0].idx, ulen);
 		} else {
-			uint32_t iolen;
+			uint32_t iolen, remaining;
 			uint16_t num_buffers;
 			int i = 0;
 
+			remaining = ulen;
 			do {
 				iolen = MIN(info[i].len, (size_t)UINT32_MAX);
-				if (iolen > ulen) {
-					iolen = ulen;
-				}
-				vq_relchain_prepare(vq, info[i].idx, iolen);
-				ulen -= iolen;
+				if (iolen > remaining)
+					iolen = remaining;
+				remaining -= iolen;
 				i++;
-			} while (ulen > 0 && i < n_chains);
+			} while (remaining > 0 && i < n_chains);
 
 			num_buffers = htole16(i);
-			if (!pci_vtnet_iov_write(header_iov, header_iov_len,
+			memcpy(sc->vsc_rx_buf +
 			    offsetof(struct virtio_net_rxhdr, vrh_bufs),
-			    &num_buffers, sizeof(num_buffers))) {
+			    &num_buffers, sizeof(num_buffers));
+			if (buf_to_iov(sc->vsc_rx_buf, plen, iov,
+			    riov_len) != plen) {
 				WPRINTF(("vtnet: receive header accounting error"));
-				return;
+				for (i = 0; i < n_chains; i++)
+					vq_relchain(vq, info[i].idx, 0);
+				vq_endchains(vq, 0);
+				continue;
+			}
+			remaining = ulen;
+			for (i = 0; remaining > 0 && i < n_chains; i++) {
+				iolen = MIN(info[i].len, (size_t)UINT32_MAX);
+				if (iolen > remaining)
+					iolen = remaining;
+				vq_relchain_prepare(vq, info[i].idx, iolen);
+				remaining -= iolen;
 			}
 			vq_relchain_publish(vq);
-			if (ulen != 0)
+			if (remaining != 0)
 				WPRINTF(("vtnet: receive chain accounting error"));
 		}
+		sc->rx_staged_len = 0;
+		vq_endchains(vq, /*used_all_avail=*/0);
 	}
 
 }
@@ -882,20 +1166,31 @@ static void
 pci_vtnet_ping_rxq(void *vsc, struct vqueue_info *vq)
 {
 	struct pci_vtnet_softc *sc = vsc;
+	uint16_t pair;
 
 	/*
 	 * A qnotify means that the rx process can now begin.
 	 * Enable RX only if features are negotiated.
 	 */
 	pthread_mutex_lock(&sc->rx_mtx);
-	if (!sc->features_negotiated) {
+	if (!sc->features_negotiated || (vq->vq_num & 1) != 0 ||
+	    vq->vq_num >= pci_vtnet_ctlq_index(sc) ||
+	    vq != &sc->vsc_queues[vq->vq_num]) {
+		pthread_mutex_unlock(&sc->rx_mtx);
+		return;
+	}
+	pair = vq->vq_num / 2;
+	if (pair >= sc->rx_active_pairs) {
 		pthread_mutex_unlock(&sc->rx_mtx);
 		return;
 	}
 
 	if (sc->vsc_be != NULL) {
 		vq_kick_disable(vq);
-		netbe_rx_enable(sc->vsc_be);
+		if (sc->rx_staged_len != 0)
+			pci_vtnet_rx(sc);
+		if (sc->rx_staged_len == 0)
+			netbe_rx_enable(sc->vsc_be);
 	}
 	pthread_mutex_unlock(&sc->rx_mtx);
 }
@@ -910,7 +1205,9 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 	struct vi_req req;
 	struct virtio_net_rxhdr hdr;
 	uint8_t gso_type;
-	size_t total_len;
+	uint32_t flow_hash;
+	size_t send_len, total_len;
+	ssize_t sent;
 	int i, n;
 
 	/*
@@ -940,6 +1237,7 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 		return;
 	}
 	gso_type = hdr.vrh_gso_type;
+	flow_hash = pci_vtnet_iov_flow_hash(iov, n, sc->vhdrlen);
 	/*
 	 * Always separate the guest header from the packet.  If the backend
 	 * consumes a vnet header, rebuild it from the validated fields so
@@ -960,10 +1258,15 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 		n++;
 	}
 
+	send_len = siov != NULL ? count_iov(siov, n) : 0;
 	if (siov != NULL && pci_vtnet_frame_within_mtu(sc, siov, n,
-	    sc->be_vhdrlen, count_iov(siov, n), gso_type) &&
-	    sc->vsc_be != NULL)
-		(void)netbe_send(sc->vsc_be, siov, n);
+	    sc->be_vhdrlen, send_len, gso_type) && sc->vsc_be != NULL) {
+		sent = netbe_send(sc->vsc_be, siov, n);
+		if (sent == (ssize_t)send_len && (vq->vq_num & 1) != 0 &&
+		    vq->vq_num < pci_vtnet_ctlq_index(sc))
+			pci_vtnet_flow_learn(sc, flow_hash,
+			    (vq->vq_num - 1) / 2);
+	}
 
 	/*
 	 * Return the processed chain to the guest.  Used length is the
@@ -978,19 +1281,60 @@ static void
 pci_vtnet_ping_txq(void *vsc, struct vqueue_info *vq)
 {
 	struct pci_vtnet_softc *sc = vsc;
+	uint16_t pair;
 
-	/*
-	 * Any ring entries to process?
-	 */
-	if (!vq_has_descs(vq))
+	if ((vq->vq_num & 1) == 0 ||
+	    vq->vq_num >= pci_vtnet_ctlq_index(sc) ||
+	    vq != &sc->vsc_queues[vq->vq_num])
 		return;
+	pair = (vq->vq_num - 1) / 2;
 
 	/* Signal the tx thread for processing */
 	pthread_mutex_lock(&sc->tx_mtx);
-	vq_kick_disable(vq);
-	if (sc->tx_in_progress == 0)
+	if (pair < sc->tx_active_pairs && sc->tx_features_negotiated &&
+	    vq_has_descs(vq)) {
+		vq_kick_disable(vq);
 		pthread_cond_signal(&sc->tx_cond);
+	}
 	pthread_mutex_unlock(&sc->tx_mtx);
+}
+
+static struct vqueue_info *
+pci_vtnet_tx_find_work_locked(struct pci_vtnet_softc *sc)
+{
+	struct vqueue_info *vq;
+	uint16_t pair;
+
+	for (uint16_t i = 0; i < sc->tx_active_pairs; i++) {
+		pair = (sc->tx_next_pair + i) % sc->tx_active_pairs;
+		vq = &sc->vsc_queues[pci_vtnet_txq_index(pair)];
+		if (!vq_is_resetting(vq) && vq_ring_ready(vq) &&
+		    vq_has_descs(vq)) {
+			sc->tx_next_pair = (pair + 1) % sc->tx_active_pairs;
+			return (vq);
+		}
+	}
+	return (NULL);
+}
+
+/*
+ * Arm guest notifications only for mapped, active queues, then close the
+ * EVENT_IDX race by checking for work again before the worker sleeps.
+ */
+static struct vqueue_info *
+pci_vtnet_tx_arm_locked(struct pci_vtnet_softc *sc)
+{
+	struct vqueue_info *vq;
+
+	if (sc->resetting || sc->tx_control_pause ||
+	    !sc->tx_features_negotiated)
+		return (NULL);
+	for (uint16_t i = 0; i < sc->tx_active_pairs; i++) {
+		vq = &sc->vsc_queues[pci_vtnet_txq_index(i)];
+		if (vq_ring_ready(vq))
+			vq_kick_enable(vq);
+	}
+	return (pci_vtnet_tx_find_work_locked(sc));
 }
 
 /*
@@ -1001,35 +1345,29 @@ pci_vtnet_tx_thread(void *param)
 {
 	struct pci_vtnet_softc *sc = param;
 	struct vqueue_info *vq;
-	int error;
+	bool used_all;
+	int budget, error;
 
-	vq = &sc->vsc_queues[VTNET_TXQ];
-
-	/*
-	 * Let us wait till the tx queue pointers get initialised &
-	 * first tx signaled
-	 */
 	pthread_mutex_lock(&sc->tx_mtx);
-	error = pthread_cond_wait(&sc->tx_cond, &sc->tx_mtx);
-	assert(error == 0);
-
 	for (;;) {
-		/* note - tx mutex is locked here */
-		while (sc->resetting || !sc->tx_features_negotiated ||
-		    !vq_has_descs(vq)) {
-			vq_kick_enable(vq);
-			if (!sc->resetting && sc->tx_features_negotiated &&
-			    vq_has_descs(vq))
-				break;
-
+		vq = pci_vtnet_tx_find_work_locked(sc);
+		while (sc->resetting || sc->tx_control_pause ||
+		    !sc->tx_features_negotiated || vq == NULL) {
 			sc->tx_in_progress = 0;
+			sc->tx_current_vq = NULL;
+			vq = pci_vtnet_tx_arm_locked(sc);
+			if (vq != NULL)
+				break;
 			error = pthread_cond_wait(&sc->tx_cond, &sc->tx_mtx);
 			assert(error == 0);
+			vq = pci_vtnet_tx_find_work_locked(sc);
 		}
 		vq_kick_disable(vq);
 		sc->tx_in_progress = 1;
+		sc->tx_current_vq = vq;
 		pthread_mutex_unlock(&sc->tx_mtx);
 
+		budget = VTNET_TX_BUDGET;
 		do {
 			/*
 			 * Run through entries, placing them into
@@ -1037,25 +1375,143 @@ pci_vtnet_tx_thread(void *param)
 			 * is found
 			 */
 			pci_vtnet_proctx(sc, vq);
-		} while (vq_has_descs(vq));
+		} while (--budget != 0 && !vq_is_resetting(vq) &&
+		    vq_ring_ready(vq) &&
+		    vq_has_descs(vq));
 
 		/*
-		 * Generate an interrupt if needed.
+		 * Generate an interrupt if needed.  A bounded batch keeps one
+		 * continuously busy queue from starving the other active
+		 * transmit pairs.
 		 */
-		vq_endchains(vq, /*used_all_avail=*/1);
+		if (!vq_is_resetting(vq)) {
+			used_all = !vq_has_descs(vq);
+			vq_endchains(vq, used_all);
+		}
 
 		pthread_mutex_lock(&sc->tx_mtx);
+		sc->tx_in_progress = 0;
+		sc->tx_current_vq = NULL;
 	}
 }
 
-#ifdef notyet
+static void
+pci_vtnet_set_active_pairs(struct pci_vtnet_softc *sc, uint16_t pairs)
+{
+	struct vqueue_info *vq;
+	uint16_t old_pairs;
+
+	pthread_mutex_lock(&sc->rx_mtx);
+	pthread_mutex_lock(&sc->tx_mtx);
+	old_pairs = sc->tx_active_pairs;
+	if (pairs < old_pairs) {
+		/*
+		 * The control acknowledgement is the boundary after which the
+		 * driver may reclaim disabled queues.  Pause the worker and
+		 * retire every packet already made available on a queue being
+		 * disabled before publishing that acknowledgement.
+		 */
+		sc->tx_control_pause = true;
+		pthread_cond_signal(&sc->tx_cond);
+		while (sc->tx_in_progress) {
+			pthread_mutex_unlock(&sc->tx_mtx);
+			usleep(10000);
+			pthread_mutex_lock(&sc->tx_mtx);
+		}
+		pthread_mutex_unlock(&sc->tx_mtx);
+		for (uint16_t i = pairs; i < old_pairs; i++) {
+			uint16_t budget;
+
+			vq = &sc->vsc_queues[pci_vtnet_txq_index(i)];
+			budget = vq->vq_qsize;
+			while (budget-- != 0 && !vq_is_resetting(vq) &&
+			    vq_ring_ready(vq) && vq_has_descs(vq))
+				pci_vtnet_proctx(sc, vq);
+			if (!vq_is_resetting(vq) && vq_ring_ready(vq))
+				vq_endchains(vq, !vq_has_descs(vq));
+		}
+		pthread_mutex_lock(&sc->tx_mtx);
+	}
+
+	sc->rx_active_pairs = pairs;
+	sc->tx_active_pairs = pairs;
+	if (sc->tx_next_pair >= pairs)
+		sc->tx_next_pair = 0;
+	sc->tx_control_pause = false;
+	pthread_cond_signal(&sc->tx_cond);
+	pthread_mutex_unlock(&sc->tx_mtx);
+
+	/*
+	 * Extra receive queues may already contain buffers because the driver
+	 * is required to configure them before issuing PAIRS_SET.
+	 */
+	if (sc->vsc_be != NULL && sc->features_negotiated) {
+		for (uint16_t i = 0; i < pairs; i++) {
+			vq = &sc->vsc_queues[pci_vtnet_rxq_index(i)];
+			if (!vq_is_resetting(vq) && vq_ring_ready(vq) &&
+			    vq_has_descs(vq)) {
+				netbe_rx_enable(sc->vsc_be);
+				break;
+			}
+		}
+	}
+	pthread_mutex_unlock(&sc->rx_mtx);
+}
+
 static void
 pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
 {
+	struct pci_vtnet_softc *sc;
+	struct iovec iov[VTNET_MAXSEGS];
+	struct vi_req req;
+	uint8_t command[4], ack;
+	uint16_t pairs;
+	size_t insize, outsize;
+	int budget, n;
 
-	DPRINTF(("vtnet: control qnotify!"));
+	sc = vsc;
+	if (vq->vq_num != pci_vtnet_ctlq_index(sc) ||
+	    vq != &sc->vsc_queues[vq->vq_num] ||
+	    (sc->vsc_features & VIRTIO_NET_F_CTRL_VQ) == 0)
+		return;
+	budget = vq->vq_qsize;
+	while (budget-- != 0 && vq_has_descs(vq)) {
+		n = vq_getchain(vq, iov, nitems(iov), &req);
+		if (n <= 0)
+			break;
+		if (n > (int)nitems(iov) || !req.ordered ||
+		    req.readable == 0 || req.writable == 0 ||
+		    req.readable + req.writable != n) {
+			DPRINTF(("vtnet: invalid control descriptor chain"));
+			vq_relchain(vq, req.idx, 0);
+			continue;
+		}
+		insize = count_iov(iov, req.readable);
+		outsize = count_iov(&iov[req.readable], req.writable);
+		ack = VTNET_CTRL_ERR;
+		if (insize == sizeof(command) && outsize >= sizeof(ack) &&
+		    pci_vtnet_iov_read(iov, req.readable, 0, command,
+		    sizeof(command)) &&
+		    command[0] == VTNET_CTRL_MQ &&
+		    command[1] == VTNET_CTRL_MQ_VQ_PAIRS_SET &&
+		    (sc->vsc_features & VIRTIO_NET_F_MQ) != 0) {
+			memcpy(&pairs, &command[2], sizeof(pairs));
+			pairs = le16toh(pairs);
+			if (pairs >= 1 && pairs <= sc->vsc_max_pairs) {
+				pci_vtnet_set_active_pairs(sc, pairs);
+				ack = VTNET_CTRL_OK;
+			}
+		}
+		if (outsize < sizeof(ack) ||
+		    !pci_vtnet_iov_write(&iov[req.readable], req.writable,
+		    0, &ack, sizeof(ack))) {
+			vq_relchain(vq, req.idx, 0);
+			continue;
+		}
+		vq_relchain(vq, req.idx, sizeof(ack));
+	}
+	vq_endchains(vq, !vq_has_descs(vq));
 }
-#endif
 
 static bool
 pci_vtnet_mtu_valid(unsigned long mtu)
@@ -1065,15 +1521,40 @@ pci_vtnet_mtu_valid(unsigned long mtu)
 }
 
 static int
+pci_vtnet_parse_queues(const char *value, uint16_t *pairs,
+    const char **errstr)
+{
+	long parsed;
+
+	*errstr = NULL;
+	if (value == NULL) {
+		*pairs = 1;
+		return (0);
+	}
+	parsed = strtonum(value, 1, VTNET_MAX_PAIRS, errstr);
+	if (*errstr != NULL)
+		return (EINVAL);
+	*pairs = (uint16_t)parsed;
+	return (0);
+}
+
+static int
 pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtnet_softc *sc;
 	uint64_t backend_features;
 	bool intr_initialized;
-	const char *value;
+	const char *errstr, *value;
 	char tname[MAXCOMLEN + 1];
 	unsigned long mtu = ETHERMTU;
+	uint16_t pairs;
 	int err = 1;
+
+	value = get_config_value_node(nvl, "queues");
+	if (pci_vtnet_parse_queues(value, &pairs, &errstr) != 0) {
+		EPRINTLN("virtio-net queues is %s: %s", errstr, value);
+		return (EINVAL);
+	}
 
 	/*
 	 * Allocate data structures for further virtio initializations.
@@ -1086,6 +1567,8 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	intr_initialized = false;
 
 	sc->vsc_consts = vtnet_vi_consts;
+	sc->vsc_max_pairs = pairs;
+	sc->vsc_consts.vc_nvq = pairs > 1 ? pairs * 2 + 1 : 2;
 	if (pthread_mutex_init(&sc->vsc_mtx, NULL) != 0) {
 		free(sc);
 		return (ENOMEM);
@@ -1109,14 +1592,22 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 		return (ENOMEM);
 	}
 
-	sc->vsc_queues[VTNET_RXQ].vq_qsize = VTNET_RINGSZ;
-	sc->vsc_queues[VTNET_RXQ].vq_notify = pci_vtnet_ping_rxq;
-	sc->vsc_queues[VTNET_TXQ].vq_qsize = VTNET_RINGSZ;
-	sc->vsc_queues[VTNET_TXQ].vq_notify = pci_vtnet_ping_txq;
-#ifdef notyet
-	sc->vsc_queues[VTNET_CTLQ].vq_qsize = VTNET_RINGSZ;
-        sc->vsc_queues[VTNET_CTLQ].vq_notify = pci_vtnet_ping_ctlq;
-#endif
+	for (uint16_t i = 0; i < pairs; i++) {
+		sc->vsc_queues[pci_vtnet_rxq_index(i)].vq_qsize =
+		    VTNET_RINGSZ;
+		sc->vsc_queues[pci_vtnet_rxq_index(i)].vq_notify =
+		    pci_vtnet_ping_rxq;
+		sc->vsc_queues[pci_vtnet_txq_index(i)].vq_qsize =
+		    VTNET_RINGSZ;
+		sc->vsc_queues[pci_vtnet_txq_index(i)].vq_notify =
+		    pci_vtnet_ping_txq;
+	}
+	if (pairs > 1) {
+		sc->vsc_queues[pci_vtnet_ctlq_index(sc)].vq_qsize =
+		    VTNET_RINGSZ;
+		sc->vsc_queues[pci_vtnet_ctlq_index(sc)].vq_notify =
+		    pci_vtnet_ping_ctlq;
+	}
 
 	value = get_config_value_node(nvl, "mac");
 	if (value != NULL) {
@@ -1164,11 +1655,7 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 		sc->vsc_consts.vc_hv_caps |= backend_features;
 	}
 
-	/*
-	 * Since we do not actually support multiqueue,
-	 * set the maximum virtqueue pairs to 1.
-	 */
-	sc->vsc_config.max_virtqueue_pairs = 1;
+	sc->vsc_config.max_virtqueue_pairs = pairs;
 
 	/* A configured backend provides carrier; an unattached NIC is down. */
 	sc->vsc_config.status = sc->vsc_be != NULL ? 1 : 0;
@@ -1178,6 +1665,14 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (vi_pci_select_transport(&sc->vsc_vs, nvl,
 	    VIRTIO_PCI_LEGACY_DEFAULT) != 0)
 		goto failed;
+	if (pairs > 1 && !vi_pci_is_modern(&sc->vsc_vs)) {
+		EPRINTLN("virtio-net queues requires transport=modern");
+		err = EINVAL;
+		goto failed;
+	}
+	if (pairs > 1)
+		sc->vsc_consts.vc_hv_caps |= VIRTIO_NET_F_CTRL_VQ |
+		    VIRTIO_NET_F_MQ;
 
 	/* initialize config space */
 	if (vi_pci_is_modern(&sc->vsc_vs))
@@ -1205,6 +1700,8 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc->resetting = 0;
 	sc->rx_merge = 0;
 	sc->vhdrlen = pci_vtnet_header_len(sc, 0);
+	sc->rx_active_pairs = 1;
+	sc->tx_active_pairs = 1;
 
 	/*
 	 * Initialize tx semaphore & spawn TX processing thread.
@@ -1288,11 +1785,32 @@ pci_vtnet_apply_features(struct pci_vtnet_softc *sc,
 	uint64_t backend_features;
 	size_t backend_vhdrlen;
 
+	/*
+	 * VirtIO 1.4 section 5.1.3 makes VIRTIO_NET_F_CTRL_VQ a
+	 * prerequisite for VIRTIO_NET_F_MQ.  Treat a driver which selects MQ
+	 * without its control queue as a failed negotiation instead of
+	 * exposing queue pairs which can never be enabled.
+	 */
+	if ((negotiated_features & VIRTIO_NET_F_MQ) != 0 &&
+	    ((negotiated_features & VIRTIO_NET_F_CTRL_VQ) == 0 ||
+	    sc->vsc_max_pairs <= 1)) {
+		sc->features_negotiated = false;
+		sc->tx_features_negotiated = false;
+		vi_set_needs_reset(&sc->vsc_vs);
+		return (false);
+	}
+
 	sc->vsc_features = negotiated_features;
 
 	sc->vhdrlen = pci_vtnet_header_len(sc, negotiated_features);
 	sc->rx_merge =
 	    (negotiated_features & VIRTIO_NET_F_MRG_RXBUF) != 0;
+	if ((negotiated_features & VIRTIO_NET_F_MQ) == 0) {
+		sc->rx_active_pairs = 1;
+		sc->tx_active_pairs = 1;
+		sc->tx_next_pair = 0;
+		memset(sc->vsc_flow_map, 0, sizeof(sc->vsc_flow_map));
+	}
 
 	/* Tell a configured backend to enable capabilities it advertised. */
 	if (sc->vsc_be != NULL) {
@@ -1376,7 +1894,7 @@ pci_vtnet_resume(void *vsc)
 	DPRINTF(("vtnet: device resume requested !\n"));
 
 	if (sc->tx_features_negotiated &&
-	    vq_has_descs(&sc->vsc_queues[VTNET_TXQ]))
+	    pci_vtnet_tx_find_work_locked(sc) != NULL)
 		pthread_cond_signal(&sc->tx_cond);
 	pthread_mutex_unlock(&sc->tx_mtx);
 	/* The RX lock should have been acquired in vtnet_pause. */
@@ -1387,6 +1905,8 @@ static int
 pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 {
 	int ret;
+	struct iovec frame_iov;
+	struct virtio_net_rxhdr hdr;
 	struct pci_vtnet_softc *sc = vsc;
 
 	DPRINTF(("vtnet: device snapshot requested !\n"));
@@ -1405,6 +1925,14 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 
 	SNAPSHOT_VAR_OR_LEAVE(sc->vhdrlen, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->be_vhdrlen, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(sc->rx_active_pairs, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(sc->rx_staged_len, meta, ret, done);
+	if (sc->rx_staged_len > sizeof(sc->vsc_rx_buf)) {
+		ret = EINVAL;
+		goto done;
+	}
+	SNAPSHOT_BUF_OR_LEAVE(sc->vsc_rx_buf, sc->rx_staged_len, meta, ret,
+	    done);
 
 	/*
 	 * Force reapplication only after all saved fields have been consumed.
@@ -1413,13 +1941,61 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	 * also overwrites the saved derived header fields with values verified
 	 * against the current backend.
 	 */
-	if (meta->op == VM_SNAPSHOT_RESTORE &&
-	    sc->features_negotiated) {
-		if (pci_vtnet_apply_features(sc, sc->vsc_features) &&
-		    sc->vsc_be != NULL)
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		if (sc->rx_active_pairs < 1 ||
+		    sc->rx_active_pairs > sc->vsc_max_pairs ||
+		    (sc->rx_active_pairs > 1 &&
+		    (!sc->features_negotiated ||
+		    (sc->vsc_features & (VIRTIO_NET_F_CTRL_VQ |
+		    VIRTIO_NET_F_MQ)) !=
+		    (VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_MQ))) {
+			ret = EINVAL;
+			goto done;
+		}
+		sc->tx_active_pairs = sc->rx_active_pairs;
+		sc->tx_next_pair = 0;
+		sc->tx_current_vq = NULL;
+		sc->tx_control_pause = false;
+		memset(sc->vsc_flow_map, 0, sizeof(sc->vsc_flow_map));
+		if (sc->features_negotiated) {
+			if (!pci_vtnet_apply_features(sc, sc->vsc_features)) {
+				ret = EINVAL;
+				goto done;
+			}
+		} else
+			sc->tx_features_negotiated = false;
+
+		/*
+		 * A staged packet is device state, not opaque snapshot data.
+		 * Validate it against the restored feature-dependent header
+		 * format before allowing the backend to resume delivery.
+		 */
+		if (sc->rx_staged_len != 0) {
+			if (!sc->features_negotiated ||
+			    sc->rx_staged_len < sc->vhdrlen ||
+			    sc->rx_staged_len >
+			    VTNET_MAX_PKT_LEN + sc->vhdrlen) {
+				ret = EINVAL;
+				goto done;
+			}
+			memset(&hdr, 0, sizeof(hdr));
+			memcpy(&hdr, sc->vsc_rx_buf, sc->vhdrlen);
+			if (!pci_vtnet_rx_header_valid(sc, &hdr,
+			    sc->rx_staged_len - sc->vhdrlen)) {
+				ret = EINVAL;
+				goto done;
+			}
+			frame_iov.iov_base = sc->vsc_rx_buf;
+			frame_iov.iov_len = sc->rx_staged_len;
+			if (!pci_vtnet_frame_within_mtu(sc, &frame_iov, 1,
+			    sc->vhdrlen, sc->rx_staged_len,
+			    hdr.vrh_gso_type)) {
+				ret = EINVAL;
+				goto done;
+			}
+		}
+		if (sc->vsc_be != NULL)
 			netbe_rx_enable(sc->vsc_be);
-	} else if (meta->op == VM_SNAPSHOT_RESTORE) {
-		sc->tx_features_negotiated = false;
 	}
 
 done:

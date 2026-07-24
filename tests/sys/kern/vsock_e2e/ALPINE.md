@@ -122,6 +122,14 @@ that reset retains the historical writeback default, toggles Linux's virtio-blk
 `cache_type` attribute through both modes, and leaves the persistence workload
 in writethrough mode.
 
+Modern network runs default to `NET_QUEUES=2`.  The verifier requires
+`VIRTIO_NET_F_CTRL_VQ` and `VIRTIO_NET_F_MQ`, checks the exact Linux RX and TX
+queue counts under `/sys/class/net/eth0/queues`, and repeats those checks after
+driver unbind/rebind and monitor-mode reboot when lifecycle testing is enabled.
+Set `NET_QUEUES=1..8` to select another advertised queue-pair count.  The
+runner supplies at least that many vCPUs so Linux can activate every pair.
+Legacy runs deliberately retain one pair.
+
 For acceptance testing, use `run-alpine-matrix.sh`.  It first runs the
 sanitizer-backed real-source device harnesses and VM-free host pipeline
 controls.  It then runs net, vsock, RNG, block, SCSI, console, 9P, and input
