@@ -22,6 +22,7 @@
 #include "pci_virtio_block.c"
 
 enum {
+	DUT_VTBLK_F_CONFIG_WCE = VTBLK_F_CONFIG_WCE,
 	DUT_VTBLK_F_MQ = VTBLK_F_MQ,
 };
 
@@ -54,6 +55,8 @@ enum {
 #define	VTBLK_F_RO			VIRTIO14_BLK_F_RO
 #undef VTBLK_F_FLUSH
 #define	VTBLK_F_FLUSH			VIRTIO14_BLK_F_FLUSH
+#undef VTBLK_F_CONFIG_WCE
+#define	VTBLK_F_CONFIG_WCE		VIRTIO14_BLK_F_CONFIG_WCE
 #undef VTBLK_F_MQ
 #define	VTBLK_F_MQ			VIRTIO14_BLK_F_MQ
 #undef VTBLK_F_DISCARD
@@ -1351,6 +1354,55 @@ ATF_TC_BODY(multiqueue_option_validation, tc)
 	ATF_CHECK(errstr != NULL);
 }
 
+ATF_TC_WITHOUT_HEAD(write_cache_configuration);
+ATF_TC_BODY(write_cache_configuration, tc)
+{
+	struct pci_vtblk_softc sc;
+	const int offset = VIRTIO14_BLK_CONFIG_WRITEBACK_OFF;
+
+	reset_mocks();
+	setup_softc(&sc);
+	ATF_REQUIRE(pthread_mutex_init(&sc.vsc_mtx, NULL) == 0);
+	ATF_REQUIRE(pthread_cond_init(&sc.vbsc_reset_cond, NULL) == 0);
+
+	ATF_CHECK_EQ(DUT_VTBLK_F_CONFIG_WCE,
+	    VIRTIO14_BLK_F_CONFIG_WCE);
+	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback, 0);
+	ATF_CHECK_EQ(pci_vtblk_cfgwrite(&sc, offset, 1, 1), EINVAL);
+	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback, 0);
+
+	sc.vbsc_vs.vs_negotiated_caps =
+	    VIRTIO14_BLK_F_CONFIG_WCE | VIRTIO14_BLK_F_FLUSH;
+	pci_vtblk_neg_features(&sc, sc.vbsc_vs.vs_negotiated_caps);
+	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback,
+	    VTBLK_DEFAULT_WRITEBACK);
+	ATF_REQUIRE_EQ(pci_vtblk_cfgwrite(&sc, offset, 1, 1), 0);
+	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback, 1);
+	ATF_CHECK(!pci_vtblk_write_needs_stabilization(&sc));
+	ATF_CHECK_EQ(pci_vtblk_cfgwrite(&sc, offset, 2, 0), EINVAL);
+	ATF_CHECK_EQ(pci_vtblk_cfgwrite(&sc, offset, 1, 2), EINVAL);
+	ATF_CHECK_EQ(pci_vtblk_cfgwrite(&sc, offset + 1, 1, 0), EINVAL);
+
+	ATF_REQUIRE_EQ(pci_vtblk_cfgwrite(&sc, offset, 1, 0), 0);
+	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback, 0);
+	ATF_CHECK(pci_vtblk_write_needs_stabilization(&sc));
+
+	ATF_REQUIRE_EQ(pci_vtblk_cfgwrite(&sc, offset, 1, 1), 0);
+	pthread_mutex_lock(&sc.vsc_mtx);
+	pci_vtblk_reset(&sc);
+	pthread_mutex_unlock(&sc.vsc_mtx);
+	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback,
+	    VTBLK_DEFAULT_WRITEBACK);
+	ATF_CHECK(!pci_vtblk_write_needs_stabilization(&sc));
+
+	pci_vtblk_neg_features(&sc, VIRTIO14_BLK_F_CONFIG_WCE);
+	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback, 0);
+	ATF_CHECK(pci_vtblk_write_needs_stabilization(&sc));
+
+	ATF_REQUIRE(pthread_cond_destroy(&sc.vbsc_reset_cond) == 0);
+	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+}
+
 ATF_TC_WITHOUT_HEAD(config_read_bounds);
 ATF_TC_BODY(config_read_bounds, tc)
 {
@@ -1538,6 +1590,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, multiqueue_reset_isolation);
 	ATF_TP_ADD_TC(tp, multiqueue_document_contract);
 	ATF_TP_ADD_TC(tp, multiqueue_option_validation);
+	ATF_TP_ADD_TC(tp, write_cache_configuration);
 	ATF_TP_ADD_TC(tp, config_read_bounds);
 	ATF_TP_ADD_TC(tp, document_wire_vectors);
 	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);

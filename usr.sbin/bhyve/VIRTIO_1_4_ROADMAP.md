@@ -45,9 +45,10 @@ soaks.
    the largest immediate throughput improvement for multi-vCPU guests.
 2. **Block multiqueue.**  `VIRTIO_BLK_F_MQ`, up to eight independent request
    queues, queue-local quiesce/reset, an independent document oracle, and a
-   Linux hardware-queue gate are implemented.  The remaining block item is
-   writable `VIRTIO_BLK_F_CONFIG_WCE`; the existing topology fields are
-   already advertised and covered.
+   Linux hardware-queue gate are implemented.  Modern devices also implement
+   writable `VIRTIO_BLK_F_CONFIG_WCE`, retain the historical writeback reset
+   default, and stabilize guest-selected writethrough writes before completion.
+   The existing topology fields are already advertised and covered.
 3. **SCSI multiqueue and events.**  Scale request queues with vCPUs and cover
    hotplug/change events without disturbing unrelated queues.
 4. **9P queue reset.**  Refactor lib9p request ownership so a selected queue can

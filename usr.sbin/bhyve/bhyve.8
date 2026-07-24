@@ -510,6 +510,10 @@ Values greater than 1 advertise
 .Dv VIRTIO_BLK_F_MQ
 and create that many independent request virtqueues.
 The default is one queue.
+Modern block devices also advertise
+.Dv VIRTIO_BLK_F_CONFIG_WCE .
+They retain the historical writeback default, permit the guest to select
+writethrough mode, and return to writeback mode on device reset.
 .It Cm virtio-scsi
 Virtio SCSI interface.
 The optional

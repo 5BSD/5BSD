@@ -106,7 +106,10 @@ Modern block runs default to `BLOCK_QUEUES=2`.  The verifier requires
 multiqueue device.  Set `BLOCK_QUEUES=1..8` to select another advertised queue
 count; the runner supplies at least that many vCPUs so Linux does not
 legitimately reduce its hardware-queue count.  Legacy runs deliberately retain
-one queue.
+one queue.  The modern gate also requires `VIRTIO_BLK_F_CONFIG_WCE`, verifies
+that reset retains the historical writeback default, toggles Linux's virtio-blk
+`cache_type` attribute through both modes, and leaves the persistence workload
+in writethrough mode.
 
 For acceptance testing, use `run-alpine-matrix.sh`.  It first runs the
 sanitizer-backed real-source device harnesses and VM-free host pipeline

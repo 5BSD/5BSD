@@ -60,6 +60,7 @@
 #define	VTBLK_RINGSZ	128
 #define	VTBLK_MAXQ	8
 #define	VTBLK_MAXREQ	(VTBLK_RINGSZ * VTBLK_MAXQ)
+#define	VTBLK_DEFAULT_WRITEBACK	1
 
 _Static_assert(VTBLK_MAXREQ <= BLOCKIF_RING_MAX,
     "All ring entries must be able to queue a request");
@@ -228,6 +229,7 @@ static bool pci_vtblk_write_needs_stabilization(
 static void pci_vtblk_configure_range_limits(struct pci_vtblk_softc *,
     int, int);
 static int pci_vtblk_qreset(void *, struct vqueue_info *, uint64_t);
+static void pci_vtblk_neg_features(void *, uint64_t);
 static uint64_t pci_vtblk_backend_caps(struct blockif_ctxt *);
 static void pci_vtblk_notify(void *, struct vqueue_info *);
 static int pci_vtblk_cfgread(void *, int, int, uint32_t *);
@@ -246,7 +248,7 @@ static struct virtio_consts vtblk_vi_consts = {
 	.vc_qnotify =	pci_vtblk_notify,
 	.vc_cfgread =	pci_vtblk_cfgread,
 	.vc_cfgwrite =	pci_vtblk_cfgwrite,
-	.vc_apply_features = NULL,
+	.vc_apply_features = pci_vtblk_neg_features,
 	.vc_qreset =	pci_vtblk_qreset,
 	.vc_hv_caps =	VTBLK_S_HOSTCAPS | VIRTIO_F_RING_RESET,
 #ifdef BHYVE_SNAPSHOT
@@ -267,6 +269,7 @@ pci_vtblk_reset(void *vsc)
 	pci_vtblk_reset_enter(sc);
 	sc->vbsc_qreset_pending = false;
 	sc->vbsc_qreset_vq = NULL;
+	sc->vbsc_cfg.vbc_writeback = VTBLK_DEFAULT_WRITEBACK;
 	sc->vbsc_generation++;
 	/*
 	 * Invalidate the ring before cancellation.  Stale callbacks can then
@@ -350,6 +353,26 @@ pci_vtblk_write_needs_stabilization(const struct pci_vtblk_softc *sc)
 		return (sc->vbsc_cfg.vbc_writeback == 0);
 	return ((offered & VTBLK_F_FLUSH) != 0 &&
 	    (negotiated & VTBLK_F_FLUSH) == 0);
+}
+
+static void
+pci_vtblk_neg_features(void *vsc, uint64_t negotiated_features)
+{
+	struct pci_vtblk_softc *sc;
+
+	sc = vsc;
+	/*
+	 * Section 5.2.5.2 requires writethrough when CONFIG_WCE is selected
+	 * without FLUSH.  Otherwise retain the reset default.  A buffered
+	 * blockif backend has historically been presented as writeback when
+	 * FLUSH is negotiated, so defaulting to writeback preserves existing
+	 * performance and durability semantics.
+	 */
+	if ((negotiated_features & VTBLK_F_CONFIG_WCE) != 0 &&
+	    (negotiated_features & VTBLK_F_FLUSH) == 0)
+		sc->vbsc_cfg.vbc_writeback = 0;
+	else
+		sc->vbsc_cfg.vbc_writeback = VTBLK_DEFAULT_WRITEBACK;
 }
 
 static bool
@@ -1115,6 +1138,8 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 	if (sc->vbsc_nqueues > 1)
 		sc->vbsc_consts.vc_hv_caps |= VTBLK_F_MQ;
+	if (vi_pci_is_modern(&sc->vbsc_vs))
+		sc->vbsc_consts.vc_hv_caps |= VTBLK_F_CONFIG_WCE;
 
 	/*
 	 * If an explicit identifier is not given, create an
@@ -1157,7 +1182,7 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 	    (sto != 0) ? ((sts - sto) / sectsz) : 0;
 	sc->vbsc_cfg.vbc_topology.min_io_size = 0;
 	sc->vbsc_cfg.vbc_topology.opt_io_size = 0;
-	sc->vbsc_cfg.vbc_writeback = 0;
+	sc->vbsc_cfg.vbc_writeback = VTBLK_DEFAULT_WRITEBACK;
 	sc->vbsc_cfg.num_queues = htole16(sc->vbsc_nqueues);
 	pci_vtblk_configure_range_limits(sc, sectsz, sts);
 
@@ -1211,12 +1236,23 @@ failed_early:
 }
 
 static int
-pci_vtblk_cfgwrite(void *vsc __unused, int offset, int size __unused,
-    uint32_t value __unused)
+pci_vtblk_cfgwrite(void *vsc, int offset, int size, uint32_t value)
 {
+	struct pci_vtblk_softc *sc;
 
-	DPRINTF(("vtblk: write to readonly reg %d", offset));
-	return (1);
+	sc = vsc;
+	if (offset == offsetof(struct vtblk_config, vbc_writeback) &&
+	    size == sizeof(sc->vbsc_cfg.vbc_writeback) &&
+	    (sc->vbsc_vs.vs_negotiated_caps & VTBLK_F_CONFIG_WCE) != 0 &&
+	    value <= 1) {
+		sc->vbsc_cfg.vbc_writeback = value;
+		DPRINTF(("vtblk: cache mode changed to %s",
+		    value != 0 ? "writeback" : "writethrough"));
+		return (0);
+	}
+	DPRINTF(("vtblk: invalid device config write offset=%d size=%d "
+	    "value=%#x", offset, size, value));
+	return (EINVAL);
 }
 
 static int

@@ -15,6 +15,7 @@ SECTOR_SIZE = 512
 # Linux UAPI include/uapi/linux/fs.h: _IO(0x12, 127).
 BLKZEROOUT = 0x127F
 VIRTIO_BLK_F_WRITE_ZEROES = 14
+VIRTIO_BLK_F_CONFIG_WCE = 11
 VIRTIO_BLK_F_MQ = 12
 VIRTIO_RING_F_INDIRECT_DESC = 28
 VIRTIO_F_NOTIFICATION_DATA = 38
@@ -25,6 +26,7 @@ REQUIRED_FEATURES = (
     (VIRTIO_RING_F_INDIRECT_DESC, "VIRTIO_RING_F_INDIRECT_DESC"),
 )
 MODERN_REQUIRED_FEATURES = REQUIRED_FEATURES + (
+    (VIRTIO_BLK_F_CONFIG_WCE, "VIRTIO_BLK_F_CONFIG_WCE"),
     (VIRTIO_F_NOTIFICATION_DATA, "VIRTIO_F_NOTIFICATION_DATA"),
     (VIRTIO_F_RING_RESET, "VIRTIO_F_RING_RESET"),
 )
@@ -100,6 +102,39 @@ def require_multiqueue(child, device, expected, sys_root="/sys"):
             f"virtio-blk exposed {len(queues)} Linux hardware queues, "
             f"expected {expected}"
         )
+
+
+def exercise_write_cache(device, sys_root="/sys"):
+    name = os.path.basename(device)
+    path = os.path.join(sys_root, "class/block", name, "cache_type")
+
+    def read_mode():
+        try:
+            with open(path, "r", encoding="ascii") as stream:
+                return stream.read().strip()
+        except OSError as error:
+            raise RuntimeError(f"cannot read {path}: {error}") from error
+
+    def write_mode(mode):
+        try:
+            with open(path, "w", encoding="ascii") as stream:
+                stream.write(mode + "\n")
+        except OSError as error:
+            raise RuntimeError(
+                f"cannot set virtio-blk cache mode to {mode}: {error}"
+            ) from error
+
+    if read_mode() != "write back":
+        raise RuntimeError("virtio-blk did not start in writeback mode")
+    write_mode("write through")
+    if read_mode() != "write through":
+        raise RuntimeError("virtio-blk did not enter writethrough mode")
+    write_mode("write back")
+    if read_mode() != "write back":
+        raise RuntimeError("virtio-blk did not return to writeback mode")
+    write_mode("write through")
+    if read_mode() != "write through":
+        raise RuntimeError("virtio-blk did not finish in writethrough mode")
 
 
 def pattern_chunk(counter, size):
@@ -317,6 +352,12 @@ def self_test():
             queue + "/write_zeroes_max_bytes", "w", encoding="ascii"
         ) as stream:
             stream.write(f"{4 * CHUNK_SIZE}\n")
+        with open(
+            root + "/sys/class/block/vdz/cache_type",
+            "w",
+            encoding="ascii",
+        ) as stream:
+            stream.write("write back\n")
         if (
             require_write_zeroes_limit(
                 root + "/dev/vdz", CHUNK_SIZE, root + "/sys"
@@ -344,6 +385,7 @@ def self_test():
         require_multiqueue(
             found_child, found, 4, root + "/sys"
         )
+        exercise_write_cache(found, root + "/sys")
         try:
             require_multiqueue(found_child, found, 3, root + "/sys")
         except RuntimeError:
@@ -375,6 +417,8 @@ def main():
     if transport == "modern":
         require_features(child, MODERN_REQUIRED_FEATURES)
     require_multiqueue(child, device, expected_queues)
+    if transport == "modern":
+        exercise_write_cache(device)
     if command == "write" and len(sys.argv) == 5:
         pattern_digest = write_pattern(device, size)
         zero_offset, zero_length = zero_test_range(size)
