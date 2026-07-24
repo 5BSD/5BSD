@@ -68,6 +68,12 @@ struct filedescent {
 #define	fde_nioctls	fde_caps.fc_nioctls
 
 #ifdef _KERNEL
+struct fdinstall_prop {
+	uint8_t	fip_xfer_state;
+	uint8_t	fip_cloexec_state;
+	uint8_t	fip_clofork_state;
+};
+
 static inline void
 fde_copy(struct filedescent *from, struct filedescent *to)
 {
@@ -266,10 +272,19 @@ int	_falloc_noinstall(struct thread *td, struct file **resultfp, u_int n);
 #define	falloc_noinstall(td, resultfp) _falloc_noinstall(td, resultfp, 1)
 void	_finstall(struct filedesc *fdp, struct file *fp, int fd, int flags,
 	    struct filecaps *fcaps);
+void	_finstall_prop(struct filedesc *fdp, struct file *fp, int fd,
+	    int flags, struct filecaps *fcaps,
+	    const struct fdinstall_prop *prop);
 int	finstall(struct thread *td, struct file *fp, int *resultfd, int flags,
 	    struct filecaps *fcaps);
+int	finstall_prop(struct thread *td, struct file *fp, int *resultfd,
+	    int flags, struct filecaps *fcaps,
+	    const struct fdinstall_prop *prop);
 int	finstall_refed(struct thread *td, struct file *fp, int *resultfd, int flags,
 	    struct filecaps *fcaps);
+int	finstall_refed_prop(struct thread *td, struct file *fp, int *resultfd,
+	    int flags, struct filecaps *fcaps,
+	    const struct fdinstall_prop *prop);
 int	fdalloc(struct thread *td, int minfd, int *result);
 int	fdallocn(struct thread *td, int minfd, int *fds, int n);
 int	fdcheckstd(struct thread *td);

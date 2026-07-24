@@ -1,0 +1,63 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Trace EnvFD lifecycle, value generations, and kqueue notifications.
+ * Value contents and EnvFD names are intentionally never traced.
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-6s %-6s %-18s %-18s %-10s %-10s %s\n",
+	    "PID", "UID", "GID", "OBJECT", "EVENT", "GEN", "SIZE",
+	    "DETAIL");
+}
+
+envfd:::create
+{
+	printf("%-6d %-6d %-6d %-18p %-18s %-10s %-10d flags=%#x errno=%d\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0, "CREATE", "-", arg4,
+	    arg3, arg5);
+}
+
+envfd:::read,
+envfd:::write
+{
+	printf("%-6d %-6d %-6d %-18p %-18s %-10d %-10d errno=%d\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0, probename,
+	    arg3, arg4, arg5);
+}
+
+envfd:::seal
+{
+	printf("%-6d %-6d %-6d %-18p %-18s %-10d %-10d %s\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0, "SEAL",
+	    arg3, arg4, "");
+}
+
+envfd:::notify
+{
+	printf("%-6d %-6s %-6s %-18p %-18s %-10d %-10d notes=%#x\n",
+	    arg1, "-", "-", arg0, "KQUEUE-NOTIFY", arg2, arg3, arg4);
+}
+
+envfd:::close
+{
+	printf("%-6d %-6d %-6d %-18p %-18s %-10d %-10d state=%d\n",
+	    arg1, arg2 == 0 ? -1 : ((struct ucred *)arg2)->cr_uid,
+	    arg2 == 0 ? -1 : ((struct ucred *)arg2)->cr_gid, arg0, "CLOSE",
+	    arg3, arg4, arg5);
+}
+
+envfd:::deny-capmode
+{
+	printf("%-6d %-6d %-6d %-18p %-18s %-10s %-10s op=%d errno=%d\n",
+	    arg1, ((struct ucred *)arg2)->cr_uid,
+	    ((struct ucred *)arg2)->cr_gid, arg0, "DENY-CAPMODE",
+	    "-", "-", arg3, arg4);
+}

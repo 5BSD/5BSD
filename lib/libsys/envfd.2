@@ -1,0 +1,310 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd July 24, 2026
+.Dt ENVFD_CREATE 2
+.Os
+.Sh NAME
+.Nm envfd_create
+.Nd create a named, descriptor-backed environment value
+.Sh LIBRARY
+.Lb libc
+.Sh SYNOPSIS
+.In sys/envfd.h
+.Ft int
+.Fn envfd_create "const char *name" "const struct envfd_create_options *options"
+.Sh DESCRIPTION
+The
+.Fn envfd_create
+function creates an environment descriptor containing one named binary value.
+The descriptor is initially unwritten.
+Each successful
+.Xr write 2
+atomically replaces the complete value, and each
+.Xr read 2
+returns a complete snapshot of the current value.
+The name is immutable and is descriptive metadata rather than a global lookup
+key.
+It must be non-empty, fit in
+.Dv ENVFD_NAME_MAX
+bytes including its terminating null byte, and must not contain
+.Ql = .
+No character encoding or shell-identifier syntax is imposed.
+.Pp
+The
+.Fa options
+structure must be zero-initialized except for the documented members:
+.Bl -tag -width "Va eco_max_value_size"
+.It Va eco_size
+Must be
+.Li sizeof(struct envfd_create_options) .
+.It Va eco_flags
+Zero or more of:
+.Bl -tag -width "Dv ENVFD_CAPMODE_ONLY"
+.It Dv ENVFD_WRITE_ONCE
+The first successful write seals the shared object.
+Every later write fails with
+.Er EROFS ,
+including writes through descriptors obtained with
+.Xr dup 2 ,
+.Xr fork 2 ,
+or
+.Dv SCM_RIGHTS .
+.It Dv ENVFD_CAPMODE_ONLY
+Reading, writing, querying information, calling
+.Xr fstat 2 ,
+and registering an
+.Dv EVFILT_ENVFD
+event require the calling process to be in Capsicum capability mode.
+.El
+.It Va eco_access
+One of
+.Dv O_RDONLY ,
+.Dv O_WRONLY ,
+or
+.Dv O_RDWR .
+.It Va eco_fdflags
+Zero or more of
+.Dv FD_CLOEXEC
+and
+.Dv FD_CLOFORK .
+.It Va eco_xfer_state
+An initial
+.Dv CAP_XFER_*
+state.
+.It Va eco_cloexec_state
+An initial
+.Dv CAP_CLOEXEC_*
+state.
+.It Va eco_clofork_state
+An initial
+.Dv CAP_CLOFORK_*
+state.
+.It Va eco_max_value_size
+The maximum value size accepted by
+.Xr write 2 .
+It must not exceed
+.Va kern.envfd.max_value_size .
+.El
+.Pp
+The descriptor flags and propagation states are installed atomically with the
+new descriptor.
+They cannot be observed in their default states by another thread.
+.Ss Input and output
+A successful write is all-or-nothing.
+Short writes are never returned.
+A zero-length write publishes an empty value, advances the generation, and,
+when
+.Dv ENVFD_WRITE_ONCE
+is set, seals the object.
+.Pp
+Reading an unwritten descriptor fails with
+.Er ENOATTR .
+If the supplied buffer is smaller than the current value,
+.Xr read 2
+fails with
+.Er EMSGSIZE
+without returning a partial value.
+A zero-length read is handled as a no-op by the generic
+.Xr read 2
+path and returns zero without examining whether the descriptor is unwritten,
+empty, or non-empty.
+Call
+.Dv ENVFD_GETINFO
+and retry the read if a concurrent replacement changes the required size.
+Reads do not consume or modify the value.
+.Xr pread 2 ,
+.Xr pwrite 2 ,
+.Xr aio_read 2 ,
+.Xr aio_write 2 ,
+.Xr lseek 2 ,
+.Xr mmap 2 ,
+.Xr ftruncate 2 ,
+and
+.Xr sendfile 2
+are not supported.
+.Pp
+Because EnvFD input and output operations never block,
+.Xr poll 2
+and
+.Xr select 2
+report requested ordinary read or write readiness without indicating whether
+a value is present or whether a write would succeed.
+Use
+.Dv EVFILT_ENVFD
+to wait for value changes.
+.Ss Information
+The
+.Dv ENVFD_GETINFO
+ioctl fills a
+.Vt struct envfd_info
+with the immutable name, object flags, current state, value size, maximum
+size, and generation.
+The state is one of:
+.Bl -tag -width "Dv ENVFD_STATE_UNWRITTEN"
+.It Dv ENVFD_STATE_UNWRITTEN
+No successful write has occurred.
+.It Dv ENVFD_STATE_READY
+A value is present and later writes remain permitted.
+.It Dv ENVFD_STATE_SEALED
+A value is present and the shared object is permanently write-sealed.
+.El
+.Pp
+Every successful write advances the 64-bit generation, including a write
+whose bytes equal the previous value.
+.Xr fstat 2
+reports the current value size in
+.Va st_size .
+.Ss Kqueue notification
+Environment descriptors support
+.Dv EVFILT_ENVFD
+with
+.Dv EV_CLEAR
+semantics.
+The requested
+.Va fflags
+must contain one or both of:
+.Bl -tag -width "Dv NOTE_ENVFD_SEALED"
+.It Dv NOTE_ENVFD_WRITE
+A successful write replaced the value.
+.It Dv NOTE_ENVFD_SEALED
+The successful write permanently sealed a
+.Dv ENVFD_WRITE_ONCE
+object.
+.El
+.Pp
+Returned events contain the latest generation in
+.Va data
+and the latest value size in
+.Va ext[0] .
+Multiple writes may coalesce into one event; a generation jump identifies
+that condition.
+Reads and failed writes do not generate events.
+The
+.Dv EVFILT_READ
+and
+.Dv EVFILT_WRITE
+filters are not supported.
+.Pp
+To avoid missing a write concurrent with registration, register
+.Dv EVFILT_ENVFD
+first and then obtain the current generation with
+.Dv ENVFD_GETINFO .
+.Ss Capsicum
+Environment descriptors use existing Capsicum rights:
+.Bl -column "CAP_IOCTL" "ENVFD_GETINFO" -offset indent
+.It Dv CAP_READ Ta Xr read 2
+.It Dv CAP_WRITE Ta Xr write 2
+.It Dv CAP_EVENT Ta Dv EVFILT_ENVFD
+.It Dv CAP_FSTAT Ta Xr fstat 2
+.It Dv CAP_IOCTL Ta Dv ENVFD_GETINFO
+.El
+.Pp
+The
+.Dv ENVFD_GETINFO
+command must also be present in the descriptor's
+.Xr cap_ioctls_limit 2
+allowlist when such a list is installed.
+.Ss Resource accounting
+The kernel charges each object and each immutable value blob to the creating
+process's real UID and to system-wide EnvFD totals.
+The new and old blobs are both charged while a replacement is being
+published.
+An old value remains charged while a concurrent reader still holds its
+snapshot.
+The limits and current totals are exposed under
+.Va kern.envfd :
+.Bl -tag -width "Va max_user_objects"
+.It Va max_objects
+Maximum system-wide object count.
+.It Va max_bytes
+Maximum system-wide kernel bytes.
+.It Va max_user_objects
+Maximum object count for one real UID.
+.It Va max_user_bytes
+Maximum kernel bytes for one real UID.
+.It Va max_value_size
+Maximum configured size of one value.
+.It Va objects
+Current system-wide object count.
+.It Va bytes
+Current system-wide kernel bytes.
+.El
+Setting one of the four object or byte limits to zero disables that
+particular limit.
+.Ss DTrace
+The
+.Li envfd
+provider exposes
+.Li create ,
+.Li read ,
+.Li write ,
+.Li seal ,
+.Li notify ,
+.Li close ,
+and
+.Li deny-capmode
+probes.
+The installed
+.Pa /usr/share/dtrace/envfd-events
+script provides a lifecycle view without tracing names or value contents.
+.Sh RETURN VALUES
+On success,
+.Fn envfd_create
+returns a new file descriptor.
+On failure, -1 is returned and
+.Va errno
+is set.
+.Sh ERRORS
+In addition to errors from descriptor allocation,
+.Fn envfd_create ,
+.Xr read 2 ,
+and
+.Xr write 2
+may fail with:
+.Bl -tag -width Er
+.It Bq Er EFBIG
+The configured maximum exceeds the system maximum, or a write exceeds the
+configured maximum value size.
+.It Bq Er ECAPMODE
+An operation on an
+.Dv ENVFD_CAPMODE_ONLY
+descriptor was attempted outside capability mode.
+.It Bq Er EINVAL
+A structure field, flag, state, access mode, or name is invalid.
+.It Bq Er EMFILE
+The real UID has reached its EnvFD object limit.
+.It Bq Er EMSGSIZE
+A read buffer is smaller than the current value.
+.It Bq Er ENFILE
+The system-wide EnvFD object limit has been reached.
+.It Bq Er ENAMETOOLONG
+The name is longer than
+.Dv ENVFD_NAME_MAX
+including its terminating null byte.
+.It Bq Er ENOATTR
+The descriptor has not been written.
+.It Bq Er ENOMEM
+An EnvFD memory limit or allocation prevented the operation.
+.It Bq Er EOVERFLOW
+The generation cannot be advanced.
+.It Bq Er EROFS
+The shared object is write-sealed.
+.El
+.Sh SEE ALSO
+.Xr cap_enter 2 ,
+.Xr cap_ioctls_limit 2 ,
+.Xr cap_rights_limit 2 ,
+.Xr cap_xfer_limit 2 ,
+.Xr ioctl 2 ,
+.Xr kevent 2 ,
+.Xr read 2 ,
+.Xr write 2 ,
+.Xr capsicum 4
+.Sh HISTORY
+The
+.Fn envfd_create
+function first appeared in
+.Fx 16.0 .

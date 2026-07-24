@@ -1649,6 +1649,12 @@ uifree(struct uidinfo *uip)
 	if (uip->ui_vmmcnt != 0)
 		printf("freeing vmmcnt: uid = %d, vmmcnt = %ld\n",
 		    uip->ui_uid, uip->ui_vmmcnt);
+	if (uip->ui_envfdcnt != 0)
+		printf("freeing uidinfo: uid = %d, envfdcnt = %ld\n",
+		    uip->ui_uid, uip->ui_envfdcnt);
+	if (uip->ui_envfdbytes != 0)
+		printf("freeing uidinfo: uid = %d, envfdbytes = %ld\n",
+		    uip->ui_uid, uip->ui_envfdbytes);
 	free(uip, M_UIDINFO);
 }
 
@@ -1774,6 +1780,20 @@ chgvmmcnt(struct uidinfo *uip, int diff, rlim_t max)
 {
 
 	return (chglimit(uip, &uip->ui_vmmcnt, diff, max, "vmmcnt"));
+}
+
+int
+chgenvfdcnt(struct uidinfo *uip, int diff, rlim_t max)
+{
+
+	return (chglimit(uip, &uip->ui_envfdcnt, diff, max, "envfdcnt"));
+}
+
+int
+chgenvfdbytes(struct uidinfo *uip, int diff, rlim_t max)
+{
+
+	return (chglimit(uip, &uip->ui_envfdbytes, diff, max, "envfdbytes"));
 }
 
 static int

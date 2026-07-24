@@ -629,6 +629,10 @@ procstat_getfiles_kvm(struct procstat *procstat, struct kinfo_proc *kp, int mmap
 			type = PS_FST_TYPE_INOTIFY;
 			data = file.f_data;
 			break;
+		case DTYPE_ENVFD:
+			type = PS_FST_TYPE_ENVFD;
+			data = file.f_data;
+			break;
 		default:
 			continue;
 		}
@@ -723,6 +727,7 @@ kinfo_type2fst(int kftype)
 		{ KF_TYPE_EVENTFD, PS_FST_TYPE_EVENTFD },
 		{ KF_TYPE_INOTIFY, PS_FST_TYPE_INOTIFY },
 		{ KF_TYPE_MAC_CAPABILITY, PS_FST_TYPE_MAC_CAPABILITY },
+		{ KF_TYPE_ENVFD, PS_FST_TYPE_ENVFD },
 		{ KF_TYPE_UNKNOWN, PS_FST_TYPE_UNKNOWN }
 	};
 #define NKFTYPES	(sizeof(kftypes2fst) / sizeof(*kftypes2fst))

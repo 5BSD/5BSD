@@ -22,7 +22,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd April 3, 2022
+.Dd July 24, 2026
 .Dt LIBPROCSTAT 3
 .Os
 .Sh NAME
@@ -569,6 +569,10 @@ argument indicates an actual error message in case of failure.
 .Nm procstat_get_sem_info
 .It Li PS_FST_TYPE_SHM
 .Nm procstat_get_shm_info
+.It Li PS_FST_TYPE_ENVFD
+No type-specific accessor; the generic
+.Vt filestat
+fields identify the environment descriptor.
 .El
 .Sh SEE ALSO
 .Xr fstat 1 ,

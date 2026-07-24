@@ -31,6 +31,7 @@ SCRIPTS=	blued-att \
 		procdesc-lifecycle \
 		disklatency \
 		disklatencycmd \
+		envfd-events \
 		hotopen \
 		nfsattrstats \
 		nfsclienttime \

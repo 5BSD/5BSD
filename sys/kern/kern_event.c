@@ -388,6 +388,7 @@ static struct {
 	[~EVFILT_EMPTY] = { &file_filtops, 1 },
 	[~EVFILT_JAIL] = { &jail_filtops, 1 },
 	[~EVFILT_JAILDESC] = { &file_filtops, 1 },
+	[~EVFILT_ENVFD] = { &file_filtops, 1 },
 };
 
 /*

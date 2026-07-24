@@ -28,9 +28,12 @@
 #ifndef _SYS_SPECIALFD_H_
 #define _SYS_SPECIALFD_H_
 
+#include <sys/envfd.h>
+
 enum specialfd_type {
 	SPECIALFD_EVENTFD	  = 1,
 	SPECIALFD_INOTIFY	  = 2,
+	SPECIALFD_ENVFD		  = 3,
 };
 
 struct specialfd_eventfd {
@@ -40,6 +43,15 @@ struct specialfd_eventfd {
 
 struct specialfd_inotify {
 	int flags;
+};
+
+/*
+ * Keep the specialfd request pointer-free so the native and freebsd32 ABIs
+ * use the same representation.
+ */
+struct specialfd_envfd {
+	struct envfd_create_options options;
+	char name[ENVFD_NAME_MAX];
 };
 
 #endif /* !_SYS_SPECIALFD_H_ */

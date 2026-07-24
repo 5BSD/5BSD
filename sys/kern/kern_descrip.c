@@ -2330,11 +2330,29 @@ void
 _finstall(struct filedesc *fdp, struct file *fp, int fd, int flags,
     struct filecaps *fcaps)
 {
+
+	_finstall_prop(fdp, fp, fd, flags, fcaps, NULL);
+}
+
+/*
+ * Install a file with optional non-default descriptor propagation states.
+ * The entry is initialized while the descriptor table remains exclusively
+ * locked, so no fork, exec, or transfer can observe default states first.
+ */
+void
+_finstall_prop(struct filedesc *fdp, struct file *fp, int fd, int flags,
+    struct filecaps *fcaps, const struct fdinstall_prop *prop)
+{
 	struct filedescent *fde;
 
 	MPASS(fp != NULL);
 	if (fcaps != NULL)
 		filecaps_validate(fcaps, __func__);
+	MPASS(prop == NULL || prop->fip_xfer_state <= CAP_XFER_NONE);
+	MPASS(prop == NULL ||
+	    prop->fip_cloexec_state <= CAP_CLOEXEC_ONCE);
+	MPASS(prop == NULL ||
+	    prop->fip_clofork_state <= CAP_CLOFORK_ONCE);
 	FILEDESC_XLOCK_ASSERT(fdp);
 
 	fde = &fdp->fd_ofiles[fd];
@@ -2343,9 +2361,15 @@ _finstall(struct filedesc *fdp, struct file *fp, int fd, int flags,
 #endif
 	fde->fde_file = fp;
 	fde->fde_flags = open_to_fde_flags(flags, true);
-	fde->fde_xfer_state = CAP_XFER_UNLIMITED;
-	fde->fde_cloexec_state = CAP_CLOEXEC_UNLOCKED;
-	fde->fde_clofork_state = CAP_CLOFORK_UNLOCKED;
+	if (prop == NULL) {
+		fde->fde_xfer_state = CAP_XFER_UNLIMITED;
+		fde->fde_cloexec_state = CAP_CLOEXEC_UNLOCKED;
+		fde->fde_clofork_state = CAP_CLOFORK_UNLOCKED;
+	} else {
+		fde->fde_xfer_state = prop->fip_xfer_state;
+		fde->fde_cloexec_state = prop->fip_cloexec_state;
+		fde->fde_clofork_state = prop->fip_clofork_state;
+	}
 	if (fcaps != NULL)
 		filecaps_move(fcaps, &fde->fde_caps);
 	else
@@ -2359,6 +2383,14 @@ int
 finstall_refed(struct thread *td, struct file *fp, int *fd, int flags,
     struct filecaps *fcaps)
 {
+
+	return (finstall_refed_prop(td, fp, fd, flags, fcaps, NULL));
+}
+
+int
+finstall_refed_prop(struct thread *td, struct file *fp, int *fd, int flags,
+    struct filecaps *fcaps, const struct fdinstall_prop *prop)
+{
 	struct filedesc *fdp = td->td_proc->p_fd;
 	int error;
 
@@ -2367,7 +2399,7 @@ finstall_refed(struct thread *td, struct file *fp, int *fd, int flags,
 	FILEDESC_XLOCK(fdp);
 	error = fdalloc(td, 0, fd);
 	if (__predict_true(error == 0)) {
-		_finstall(fdp, fp, *fd, flags, fcaps);
+		_finstall_prop(fdp, fp, *fd, flags, fcaps, prop);
 		SDT_PROBE6(fd, , , install, fp, *fd, td->td_proc->p_pid,
 		    td->td_ucred, fp->f_type, flags);
 	}
@@ -2379,13 +2411,21 @@ int
 finstall(struct thread *td, struct file *fp, int *fd, int flags,
     struct filecaps *fcaps)
 {
+
+	return (finstall_prop(td, fp, fd, flags, fcaps, NULL));
+}
+
+int
+finstall_prop(struct thread *td, struct file *fp, int *fd, int flags,
+    struct filecaps *fcaps, const struct fdinstall_prop *prop)
+{
 	int error;
 
 	MPASS(fd != NULL);
 
 	if (!fhold(fp))
 		return (EBADF);
-	error = finstall_refed(td, fp, fd, flags, fcaps);
+	error = finstall_refed_prop(td, fp, fd, flags, fcaps, prop);
 	if (__predict_false(error != 0)) {
 		fdrop(fp, td);
 	}
@@ -5474,6 +5514,8 @@ file_type_to_name(short type)
 		return ("timerfd");
 	case DTYPE_JAILDESC:
 		return ("jail");
+	case DTYPE_ENVFD:
+		return ("envfd");
 	default:
 		return ("unkn");
 	}

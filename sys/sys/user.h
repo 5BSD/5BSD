@@ -270,6 +270,7 @@ struct user {
 #define	KF_TYPE_INOTIFY	15
 #define	KF_TYPE_JAILDESC	16
 #define	KF_TYPE_MAC_CAPABILITY	17
+#define	KF_TYPE_ENVFD		18
 #define	KF_TYPE_UNKNOWN	255
 
 #define	KF_VTYPE_VNON	0
@@ -470,6 +471,14 @@ struct kinfo_file {
 				uint64_t	kf_inotify_npending;
 				uint64_t	kf_inotify_nbpending;
 			} kf_inotify;
+			struct {
+				uint64_t	kf_envfd_value_size;
+				uint64_t	kf_envfd_max_size;
+				uint64_t	kf_envfd_generation;
+				uint64_t	kf_envfd_addr;
+				uint32_t	kf_envfd_flags;
+				uint32_t	kf_envfd_state;
+			} kf_envfd;
 		} kf_un;
 	};
 	uint16_t	kf_status;		/* Status flags. */

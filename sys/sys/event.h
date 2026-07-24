@@ -47,7 +47,8 @@
 #define EVFILT_EMPTY		(-13)	/* empty send socket buf */
 #define EVFILT_JAIL		(-14)	/* attached to struct prison */
 #define EVFILT_JAILDESC		(-15)	/* attached to jail descriptors */
-#define EVFILT_SYSCOUNT		15
+#define EVFILT_ENVFD		(-16)	/* attached to environment descriptors */
+#define EVFILT_SYSCOUNT		16
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
 #define	EV_SET(kevp_, a, b, c, d, e, f) do {	\
@@ -224,6 +225,11 @@ struct freebsd11_kevent32 {
 #define	NOTE_JAIL_REMOVE	0x10000000	/* jail was removed */
 #define NOTE_JAIL_MULTI		0x08000000	/* multiple child or attach */
 #define	NOTE_JAIL_CTRLMASK	0xf0000000	/* mask for hint bits */
+
+/* data/hint flags for EVFILT_ENVFD */
+#define	NOTE_ENVFD_WRITE	0x00000001	/* value was replaced */
+#define	NOTE_ENVFD_SEALED	0x00000002	/* object became write-sealed */
+#define	NOTE_ENVFD_CTRLMASK	0x00000003
 
 /* additional flags for EVFILT_TIMER */
 #define NOTE_SECONDS		0x00000001	/* data is seconds */

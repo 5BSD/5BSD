@@ -438,6 +438,11 @@ procstat_files(struct procstat *procstat, struct kinfo_proc *kipp)
 			xo_emit("{eq:fd_type/mac_capability}");
 			break;
 
+		case PS_FST_TYPE_ENVFD:
+			str = "N";
+			xo_emit("{eq:fd_type/envfd}");
+			break;
+
 		case PS_FST_TYPE_NONE:
 			str = "?";
 			xo_emit("{eq:fd_type/none}");

@@ -24,6 +24,9 @@ ATF_TESTS_C+=	kern_descrip_test
 TEST_METADATA.kern_descrip_test+= is_exclusive="true"
 PLAIN_TESTS_C+=	execve_overflow
 ATF_TESTS_C+=	exterr_test
+ATF_TESTS_C+=	envfd_test
+LIBADD.envfd_test+=	pthread
+TEST_METADATA.envfd_test+=	is_exclusive="true"
 ATF_TESTS_C+=	fdgrowtable_test
 ATF_TESTS_C+=	getdirentries_test
 ATF_TESTS_C+=	jail_lookup_root

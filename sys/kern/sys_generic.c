@@ -961,13 +961,62 @@ out:
 	return (error);
 }
 
+static int
+specialfd_envfd_validate(const struct specialfd_envfd *se)
+{
+	const struct envfd_create_options *eco;
+	u_int i;
+
+	eco = &se->options;
+	if (eco->eco_size != sizeof(*eco) ||
+	    (eco->eco_flags & ~ENVFD_VALID_FLAGS) != 0 ||
+	    (eco->eco_access != O_RDONLY &&
+	    eco->eco_access != O_WRONLY &&
+	    eco->eco_access != O_RDWR) ||
+	    (eco->eco_fdflags & ~(FD_CLOEXEC | FD_CLOFORK)) != 0 ||
+	    eco->eco_reserved0 != 0)
+		return (EINVAL);
+	for (i = 0; i < nitems(eco->eco_reserved); i++) {
+		if (eco->eco_reserved[i] != 0)
+			return (EINVAL);
+	}
+	switch (eco->eco_xfer_state) {
+	case CAP_XFER_UNLIMITED:
+	case CAP_XFER_ONCE:
+	case CAP_XFER_NONE:
+		break;
+	default:
+		return (EINVAL);
+	}
+	switch (eco->eco_cloexec_state) {
+	case CAP_CLOEXEC_UNLOCKED:
+	case CAP_CLOEXEC_ONCE:
+	case CAP_CLOEXEC_LOCKED:
+		break;
+	default:
+		return (EINVAL);
+	}
+	switch (eco->eco_clofork_state) {
+	case CAP_CLOFORK_UNLOCKED:
+	case CAP_CLOFORK_ONCE:
+	case CAP_CLOFORK_LOCKED:
+		break;
+	default:
+		return (EINVAL);
+	}
+	return (0);
+}
+
 int
 kern_specialfd(struct thread *td, int type, void *arg)
 {
+	struct fdinstall_prop prop, *propp;
 	struct file *fp;
 	int error, fd, fflags;
 
+	AUDIT_ARG_CMD(type);
 	fflags = 0;
+	propp = NULL;
 	error = falloc_noinstall(td, &fp);
 	if (error != 0)
 		return (error);
@@ -986,7 +1035,26 @@ kern_specialfd(struct thread *td, int type, void *arg)
 		struct specialfd_inotify *si;
 
 		si = arg;
+		AUDIT_ARG_FFLAGS(si->flags);
 		error = inotify_create_file(td, fp, si->flags, &fflags);
+		break;
+	}
+	case SPECIALFD_ENVFD: {
+		struct specialfd_envfd *se;
+
+		se = arg;
+		error = specialfd_envfd_validate(se);
+		if (error != 0)
+			break;
+		if ((se->options.eco_fdflags & FD_CLOEXEC) != 0)
+			fflags |= O_CLOEXEC;
+		if ((se->options.eco_fdflags & FD_CLOFORK) != 0)
+			fflags |= O_CLOFORK;
+		prop.fip_xfer_state = se->options.eco_xfer_state;
+		prop.fip_cloexec_state = se->options.eco_cloexec_state;
+		prop.fip_clofork_state = se->options.eco_clofork_state;
+		propp = &prop;
+		error = envfd_create_file(td, fp, se->name, &se->options);
 		break;
 	}
 	default:
@@ -995,7 +1063,7 @@ kern_specialfd(struct thread *td, int type, void *arg)
 	}
 
 	if (error == 0)
-		error = finstall(td, fp, &fd, fflags, NULL);
+		error = finstall_prop(td, fp, &fd, fflags, NULL, propp);
 	fdrop(fp, td);
 	if (error == 0)
 		td->td_retval[0] = fd;
@@ -1037,6 +1105,24 @@ sys___specialfd(struct thread *td, struct __specialfd_args *args)
 		if (error != 0)
 			break;
 		error = kern_specialfd(td, args->type, &si);
+		break;
+	}
+	case SPECIALFD_ENVFD: {
+		struct specialfd_envfd se;
+
+		if (args->len != sizeof(se)) {
+			error = EXTERROR(EINVAL, "envfd params ABI");
+			break;
+		}
+		error = copyin(args->req, &se, sizeof(se));
+		if (error != 0)
+			break;
+		error = specialfd_envfd_validate(&se);
+		if (error != 0) {
+			error = EXTERROR(EINVAL, "invalid envfd options");
+			break;
+		}
+		error = kern_specialfd(td, args->type, &se);
 		break;
 	}
 	default:
