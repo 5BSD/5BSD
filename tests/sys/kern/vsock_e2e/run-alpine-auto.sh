@@ -14,6 +14,9 @@ TRANSPORTS=${TRANSPORTS:-modern}
 DEVICES=${DEVICES:-"vsock rng input"}
 VSOCK_BACKEND=${VSOCK_BACKEND:-userspace}
 CID=${CID:-4}
+PORT_OFFSET=${PORT_OFFSET:-0}
+VSOCK_BARRIER_DIR=${VSOCK_BARRIER_DIR:-}
+VSOCK_BARRIER_CIDS=${VSOCK_BARRIER_CIDS:-}
 CONSOLE_PORT=${CONSOLE_PORT:-}
 KEEP_VM=${KEEP_VM:-no}
 # VSOCK_DEBUG is the harness-facing spelling.  Also honor bhyve's direct
@@ -67,6 +70,13 @@ case "$VSOCK_BACKEND" in
 userspace|kernel) ;;
 *) echo "VSOCK_BACKEND must be userspace or kernel" >&2; exit 2 ;;
 esac
+case "$CID" in
+''|*[!0-9]*) echo "CID must be numeric" >&2; exit 2 ;;
+esac
+[ "$CID" -ge 3 ] && [ "$CID" -le 4294967294 ] || {
+	echo "CID must be a non-reserved 32-bit guest CID" >&2
+	exit 2
+}
 [ "$VSOCK_BACKEND" != kernel ] || [ -c /dev/vsock ] || {
 	echo "backend=kernel requires /dev/vsock" >&2
 	exit 1
@@ -80,6 +90,13 @@ for setting in "$VSOCK_SOAK_ITERATIONS" "$VSOCK_SOAK_RESET_EVERY" \
 	''|*[!0-9]*) echo "soak limits must be non-negative integers" >&2; exit 2 ;;
 	esac
 done
+case "$PORT_OFFSET" in
+''|*[!0-9]*) echo "PORT_OFFSET must be a non-negative integer" >&2; exit 2 ;;
+esac
+[ "$PORT_OFFSET" -le 1000000 ] || {
+	echo "PORT_OFFSET must not exceed 1000000" >&2
+	exit 2
+}
 
 run_vsock=no
 run_net_device=no
@@ -180,6 +197,29 @@ prepare_workdir()
 	}
 }
 prepare_workdir "$WORKDIR"
+if [ -n "$VSOCK_BARRIER_DIR" ]; then
+	[ "$VSOCK_BACKEND" = kernel ] || {
+		echo "VSOCK_BARRIER_DIR is valid only with backend=kernel" >&2
+		exit 2
+	}
+	[ ! -L "$VSOCK_BARRIER_DIR" ] &&
+	    [ -d "$VSOCK_BARRIER_DIR" ] ||
+	    { echo "invalid VSOCK_BARRIER_DIR: $VSOCK_BARRIER_DIR" >&2; exit 2; }
+	[ "$(stat -f %u "$VSOCK_BARRIER_DIR")" -eq 0 ] &&
+	    [ "$(stat -f %Lp "$VSOCK_BARRIER_DIR")" = 700 ] ||
+	    { echo "VSOCK_BARRIER_DIR must be root-owned mode 0700" >&2; exit 2; }
+	barrier_has_cid=no
+	for barrier_cid in $VSOCK_BARRIER_CIDS; do
+		case "$barrier_cid" in
+		''|*[!0-9]*) echo "VSOCK_BARRIER_CIDS must be numeric" >&2; exit 2 ;;
+		esac
+		[ "$barrier_cid" != "$CID" ] || barrier_has_cid=yes
+	done
+	[ "$barrier_has_cid" = yes ] || {
+		echo "VSOCK_BARRIER_CIDS must include CID $CID" >&2
+		exit 2
+	}
+fi
 if [ -f "$here/Makefile" ]; then
 	make -C "$here"
 	tools=${TOOLS:-$(make -C "$here" -V .OBJDIR)}
@@ -504,6 +544,7 @@ run_vsock_driver()
 	DIR=$sockdir TRANSPORT=$transport VSOCK_BACKEND=$VSOCK_BACKEND \
 	BACKEND=$VSOCK_BACKEND GUEST_CID=$CID GPY=/tmp/gvsock.py \
 	TOOLS="$tools" SMOKE_ONLY="$1" HOST_WORK="$2" \
+	PORT_OFFSET="$PORT_OFFSET" \
 	BHYVE_LOG="$bhyve_log" CONSOLE_LOG_PATH="$console_log" \
 	ACMD="env CONSOLE_LOG=$console_log CONSOLE_INPUT=$console_input sh $here/acmd-console.sh" \
 	    sh "$here/run-linux.sh"
@@ -512,6 +553,28 @@ run_vsock_driver()
 run_matrix()
 {
 	run_vsock_driver no "$WORKDIR/$transport.host"
+}
+
+wait_vsock_provider_barrier()
+{
+	[ -n "$VSOCK_BARRIER_DIR" ] || return 0
+	: > "$VSOCK_BARRIER_DIR/cid-$CID"
+	i=0
+	while :; do
+		barrier_ready=yes
+		for barrier_cid in $VSOCK_BARRIER_CIDS; do
+			[ -f "$VSOCK_BARRIER_DIR/cid-$barrier_cid" ] ||
+			    barrier_ready=no
+		done
+		[ "$barrier_ready" = yes ] && break
+		[ "$i" -lt 180 ] || {
+			echo "timed out waiting for VSOCK provider barrier" >&2
+			return 1
+		}
+		sleep 1
+		i=$((i + 1))
+	done
+	echo "PASS provider barrier CIDs=$VSOCK_BARRIER_CIDS"
 }
 
 process_fd_count()
@@ -938,10 +1001,12 @@ start_reboot_vsock_holds()
 	reboot_seq_log="$WORKDIR/$transport.reboot-seq.log"
 	: > "$reboot_stream_log"
 	: > "$reboot_seq_log"
-	guest_cmd "set -eu; pkill -9 python3 2>/dev/null || true; rm -f /tmp/reboot-stream.out /tmp/reboot-seq.out; nohup python3 /tmp/gvsock.py echo-l stream 7011 >/tmp/reboot-stream.out 2>&1 & nohup python3 /tmp/gvsock.py echo-l seq 7012 >/tmp/reboot-seq.out 2>&1 & i=0; while { ! grep -q '^up$' /tmp/reboot-stream.out 2>/dev/null || ! grep -q '^up$' /tmp/reboot-seq.out 2>/dev/null; } && [ \"\$i\" -lt 15 ]; do sleep 1; i=\$((i + 1)); done; grep -q '^up$' /tmp/reboot-stream.out; grep -q '^up$' /tmp/reboot-seq.out" 20 >/dev/null
-	reboot_hold_connector stream 7011 "$reboot_stream_log" &
+	guest_cmd "set -eu; pkill -9 python3 2>/dev/null || true; rm -f /tmp/reboot-stream.out /tmp/reboot-seq.out; nohup python3 /tmp/gvsock.py echo-l stream $((7011 + PORT_OFFSET)) >/tmp/reboot-stream.out 2>&1 & nohup python3 /tmp/gvsock.py echo-l seq $((7012 + PORT_OFFSET)) >/tmp/reboot-seq.out 2>&1 & i=0; while { ! grep -q '^up$' /tmp/reboot-stream.out 2>/dev/null || ! grep -q '^up$' /tmp/reboot-seq.out 2>/dev/null; } && [ \"\$i\" -lt 15 ]; do sleep 1; i=\$((i + 1)); done; grep -q '^up$' /tmp/reboot-stream.out; grep -q '^up$' /tmp/reboot-seq.out" 20 >/dev/null
+	reboot_hold_connector stream "$((7011 + PORT_OFFSET))" \
+	    "$reboot_stream_log" &
 	reboot_stream_pid=$!
-	reboot_hold_connector seq 7012 "$reboot_seq_log" -s &
+	reboot_hold_connector seq "$((7012 + PORT_OFFSET))" \
+	    "$reboot_seq_log" -s &
 	reboot_seq_pid=$!
 
 	i=0
@@ -966,7 +1031,7 @@ start_reboot_vsock_holds()
 	# connected and immediately observed an unrelated close.
 	kill -0 "$reboot_stream_pid" 2>/dev/null
 	kill -0 "$reboot_seq_pid" 2>/dev/null
-	echo "PASS live reboot endpoints stream=7011 seq=7012"
+	echo "PASS live reboot endpoints stream=$((7011 + PORT_OFFSET)) seq=$((7012 + PORT_OFFSET))"
 }
 
 verify_reboot_vsock_disconnects()
@@ -1143,6 +1208,7 @@ for transport in $TRANSPORTS; do
 	provision_guest
 	run_network_smoke
 	if [ "$run_vsock" = yes ]; then
+		wait_vsock_provider_barrier
 		run_matrix
 		run_vsock_soak
 	fi

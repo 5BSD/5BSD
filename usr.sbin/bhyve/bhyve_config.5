@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 23, 2026
+.Dd July 24, 2026
 .Dt BHYVE_CONFIG 5
 .Os
 .Sh NAME
@@ -411,8 +411,9 @@ domain through
 .Pa /dev/vsock .
 Host applications then use normal vsock sockets with local CID 2 and the
 configured guest CID.
-The host socket domain supports one remote transport, so only one kernel
-backend may be active at a time.
+Kernel backends for distinct guest CIDs may be active concurrently.
+An already attached CID is rejected with
+.Er EADDRINUSE .
 .It Li virtio-scsi
 VirtIO SCSI interface.
 .It Li xhci

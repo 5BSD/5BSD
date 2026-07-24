@@ -117,13 +117,26 @@ The kernel topology selects `backend=kernel` and uses ordinary host
 `AF_VSOCK` sockets through `/dev/vsock`.  Both topologies run for modern and
 legacy transport and execute the same bidirectional STREAM/SEQPACKET,
 large-record, graceful-close, abrupt-close, reset, and monitor-mode reboot
-checks.  Only one kernel-backed VM may run at a time because `/dev/vsock`
-grants the remote transport to one provider.  To repeat either gate:
+checks. Kernel-backed VMs with distinct guest CIDs may run concurrently;
+duplicate CIDs fail deterministically with `EADDRINUSE`. To repeat either
+gate:
 
 ```sh
 TOPOLOGIES=vsock-userspace ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
 TOPOLOGIES=vsock-kernel ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
 ```
+
+The fleet gate runs two complete kernel-backed guests concurrently. It gives
+each guest a disjoint AF_VSOCK port range and exercises reset/rebind in both
+VMs while the other provider remains active:
+
+```sh
+ISO=/path/to/alpine-virt.iso ./run-alpine-multi-vsock.sh
+```
+
+`CID1`, `CID2`, `PORT_OFFSET1`, `PORT_OFFSET2`, `CONSOLE_PORT1`, and
+`CONSOLE_PORT2` can be overridden. The two port offsets must differ by at
+least 300 so parallel and lifecycle endpoints cannot overlap.
 
 Set `VM_FREE_GATES=no` only when repeating VM boots after those exact source
 and helper binaries have already passed in the same worktree.

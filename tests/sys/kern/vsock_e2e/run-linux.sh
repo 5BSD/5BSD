@@ -19,8 +19,9 @@
 #
 # Env: DIR, TOOLS, ACMD, GPY (guest path to gvsock.py), REC (record size bytes),
 # TRANSPORT (modern or default legacy), BACKEND (userspace or kernel), GUEST_CID
-# (required and checked against the guest transport), HOST_WORK, and optional
-# BHYVE_LOG, CONSOLE_LOG_PATH,
+# (required and checked against the guest transport), HOST_WORK, PORT_OFFSET
+# (added to every test port for concurrent VMs), and optional BHYVE_LOG,
+# CONSOLE_LOG_PATH,
 # and SMOKE_ONLY diagnostics/lifecycle controls.
 set -u
 
@@ -36,6 +37,7 @@ HOST_WORK=${HOST_WORK:-${TMPDIR:-/tmp}/vsock-linux-e2e.$$}
 BHYVE_LOG=${BHYVE_LOG:-}
 CONSOLE_LOG_PATH=${CONSOLE_LOG_PATH:-}
 SMOKE_ONLY=${SMOKE_ONLY:-no}
+PORT_OFFSET=${PORT_OFFSET:-0}
 mkdir -p "$HOST_WORK"
 
 PASS=0; FAIL=0; FAILED=""
@@ -267,6 +269,13 @@ case "$SMOKE_ONLY" in
 yes|no) ;;
 *) echo "SMOKE_ONLY must be yes or no" >&2; exit 2 ;;
 esac
+case "$PORT_OFFSET" in
+''|*[!0-9]*) echo "PORT_OFFSET must be a non-negative integer" >&2; exit 2 ;;
+esac
+[ "$PORT_OFFSET" -le 1000000 ] || {
+	echo "PORT_OFFSET must not exceed 1000000" >&2
+	exit 2
+}
 
 # Fail before the data tests unless the exact expected PCI function is uniquely
 # bound to the upstream driver.  The helper also proves AF_VSOCK socket
@@ -300,7 +309,7 @@ echo "PASS  preflight_reserved_cids"
 # errno.
 for refused_type in stream seq; do
 	if refused_out=$($ACMD \
-	    "python3 $GPY refused-storm $refused_type 7108 32" 60); then
+	    "python3 $GPY refused-storm $refused_type $((7108 + PORT_OFFSET)) 32" 60); then
 		refused_rc=0
 	else
 		refused_rc=$?
@@ -326,10 +335,12 @@ for refused_type in stream seq; do
 	while [ "$refused_count" -lt 32 ]; do
 		if [ "$BACKEND" = kernel ]; then
 			timeout 5 "$TOOLS/vsock-pipe" $refused_flags \
-			    "$GUEST_CID" 7108 </dev/null >/dev/null 2>&1
+			    "$GUEST_CID" "$((7108 + PORT_OFFSET))" \
+			    </dev/null >/dev/null 2>&1
 		else
 			timeout 5 "$TOOLS/vsh-connect" $refused_flags \
-			    "$DIR" 7108 </dev/null >/dev/null 2>&1
+			    "$DIR" "$((7108 + PORT_OFFSET))" \
+			    </dev/null >/dev/null 2>&1
 		fi
 		refused_rc=$?
 		[ "$refused_rc" -eq "$host_refused_status" ] || break
@@ -347,9 +358,9 @@ done
 # Prove both directions before running the larger matrix.  Every subsequent
 # case depends on these same control and data paths; cascading failures after
 # either smoke probe only obscure the root cause.
-gbg "echo-l stream 6991"
+gbg "echo-l stream $((6991 + PORT_OFFSET))"
 if smoke_out=$(printf 'VSOCK-SMOKE-H2G' |
-    vshc "$DIR" 6991); then
+    vshc "$DIR" "$((6991 + PORT_OFFSET))"); then
 	smoke_rc=0
 else
 	smoke_rc=$?
@@ -361,13 +372,13 @@ if [ "$smoke_rc" -ne 0 ] || [ "$smoke_out" != VSOCK-SMOKE-H2G ]; then
 fi
 echo "PASS  preflight_data_h2g"
 
-host_listener 20 6992 -e -n 1 \
+host_listener 20 "$((6992 + PORT_OFFSET))" -e -n 1 \
     >"$HOST_WORK/smoke-g2h.host.log" 2>&1 &
 smoke_pid=$!
 sleep 1
 smoke_host_rc=0
 if smoke_out=$($ACMD \
-    "python3 $GPY send-echo stream 6992 VSOCK-SMOKE-G2H" 15); then
+    "python3 $GPY send-echo stream $((6992 + PORT_OFFSET)) VSOCK-SMOKE-G2H" 15); then
 	smoke_rc=0
 else
 	smoke_rc=$?
@@ -392,15 +403,15 @@ fi
 # Exercise shared connection tables, virtqueues, provider queues, credit
 # wakeups, and simultaneous teardown.  Each worker uses a distinct endpoint
 # and payload, and success requires every endpoint on both sides to complete.
-run_parallel_h2g stream 7200 8
-run_parallel_h2g seq 7210 8
-run_parallel_g2h stream 7220 8
-run_parallel_g2h seq 7230 8
+run_parallel_h2g stream "$((7200 + PORT_OFFSET))" 8
+run_parallel_h2g seq "$((7210 + PORT_OFFSET))" 8
+run_parallel_g2h stream "$((7220 + PORT_OFFSET))" 8
+run_parallel_g2h seq "$((7230 + PORT_OFFSET))" 8
 
 # --- host->guest (guest is the server) ---
-gbg "echo-l stream 7001"
+gbg "echo-l stream $((7001 + PORT_OFFSET))"
 if out=$(printf 'E2E-H2G-STREAM' |
-    vshc "$DIR" 7001); then
+    vshc "$DIR" "$((7001 + PORT_OFFSET))"); then
 	rc=0
 else
 	rc=$?
@@ -410,9 +421,9 @@ ok=$?
 [ "$ok" -eq 0 ] || diag_capture stream_echo_h2g "$rc" "$out"
 res stream_echo_h2g "$ok"
 
-gbg "echo-l seq 7002"
+gbg "echo-l seq $((7002 + PORT_OFFSET))"
 if out=$(printf 'E2E-H2G-SEQ' |
-    vshc "$DIR" 7002 -s); then
+    vshc "$DIR" "$((7002 + PORT_OFFSET))" -s); then
 	rc=0
 else
 	rc=$?
@@ -425,9 +436,9 @@ res seqpacket_echo_h2g "$ok"
 # Require a host write-half shutdown to reach the guest as EOF.  The guest
 # then closes its endpoint, which must return EOF to vsh-connect as well.
 close_token=E2E-H2G-SEQ-CLOSE
-gbg "close-l seq 7010 $close_token"
+gbg "close-l seq $((7010 + PORT_OFFSET)) $close_token"
 if out=$(printf %s "$close_token" |
-    vshc "$DIR" 7010 -s); then
+    vshc "$DIR" "$((7010 + PORT_OFFSET))" -s); then
 	rc=0
 else
 	rc=$?
@@ -447,9 +458,9 @@ res seqpacket_graceful_close_h2g "$ok"
 # SEQPACKET.  Verify the same bidirectional half-close contract explicitly
 # rather than assuming the SEQPACKET result covers it.
 close_token=E2E-H2G-STREAM-CLOSE
-gbg "close-l stream 7014 $close_token"
+gbg "close-l stream $((7014 + PORT_OFFSET)) $close_token"
 if out=$(printf %s "$close_token" |
-    vshc "$DIR" 7014); then
+    vshc "$DIR" "$((7014 + PORT_OFFSET))"); then
 	rc=0
 else
 	rc=$?
@@ -465,9 +476,13 @@ if [ "$ok" -ne 0 ]; then
 fi
 res stream_graceful_close_h2g "$ok"
 
-gbg "recv-l seq 7003"
+gbg "recv-l seq $((7003 + PORT_OFFSET))"
 if head -c "$REC" /dev/zero | tr '\0' A |
-    vshc "$DIR" 7003 -s -1 >/dev/null; then rc=0; else rc=$?; fi
+    vshc "$DIR" "$((7003 + PORT_OFFSET))" -s -1 >/dev/null; then
+	rc=0
+else
+	rc=$?
+fi
 sleep 1
 if o=$(gout); then guest_rc=0; else guest_rc=$?; fi
 printf '%s\n' "$o" | grep -q "RECORD len=$REC" &&
@@ -480,9 +495,13 @@ if [ "$ok" -ne 0 ]; then
 fi
 res seqpacket_bigrecord_h2g "$ok"
 
-gbg "recv-l stream 7004"
+gbg "recv-l stream $((7004 + PORT_OFFSET))"
 if head -c "$REC" /dev/zero | tr '\0' B |
-    vshc "$DIR" 7004 -1 >/dev/null; then rc=0; else rc=$?; fi
+    vshc "$DIR" "$((7004 + PORT_OFFSET))" -1 >/dev/null; then
+	rc=0
+else
+	rc=$?
+fi
 sleep 1
 if o=$(gout); then guest_rc=0; else guest_rc=$?; fi
 printf '%s\n' "$o" | grep -q "bytes=$REC" &&
@@ -495,11 +514,12 @@ fi
 res stream_bulk_h2g "$ok"
 
 # --- guest->host (host is the server) ---
-host_listener 20 7005 -e -n 1 \
+host_listener 20 "$((7005 + PORT_OFFSET))" -e -n 1 \
     >"$HOST_WORK/7005.listener.log" 2>&1 &
 lpid=$!
 sleep 1
-if o=$($ACMD "python3 $GPY send-echo stream 7005 E2E-G2H-STREAM" 15); then
+if o=$($ACMD \
+    "python3 $GPY send-echo stream $((7005 + PORT_OFFSET)) E2E-G2H-STREAM" 15); then
 	guest_rc=0
 else
 	guest_rc=$?
@@ -515,11 +535,12 @@ if [ "$ok" -ne 0 ]; then
 fi
 res stream_echo_g2h "$ok"
 
-host_listener 20 7006 -s -e -n 1 \
+host_listener 20 "$((7006 + PORT_OFFSET))" -s -e -n 1 \
     >"$HOST_WORK/7006.listener.log" 2>&1 &
 lpid=$!
 sleep 1
-if o=$($ACMD "python3 $GPY send-echo seq 7006 E2E-G2H-SEQ" 15); then
+if o=$($ACMD \
+    "python3 $GPY send-echo seq $((7006 + PORT_OFFSET)) E2E-G2H-SEQ" 15); then
 	guest_rc=0
 else
 	guest_rc=$?
@@ -539,11 +560,12 @@ res seqpacket_echo_g2h "$ok"
 # record and observe EOF before closing, and the guest must observe that close
 # as EOF rather than timing out or being reset.
 close_token=E2E-G2H-SEQ-CLOSE
-host_listener 20 7011 -s -d \
+host_listener 20 "$((7011 + PORT_OFFSET))" -s -d \
     >"$HOST_WORK/7011.close.out" 2>"$HOST_WORK/7011.listener.log" &
 lpid=$!
 sleep 1
-if o=$($ACMD "python3 $GPY close seq 7011 $close_token" 15); then
+if o=$($ACMD \
+    "python3 $GPY close seq $((7011 + PORT_OFFSET)) $close_token" 15); then
 	guest_rc=0
 else
 	guest_rc=$?
@@ -563,11 +585,12 @@ fi
 res seqpacket_graceful_close_g2h "$ok"
 
 close_token=E2E-G2H-STREAM-CLOSE
-host_listener 20 7015 -d \
+host_listener 20 "$((7015 + PORT_OFFSET))" -d \
     >"$HOST_WORK/7015.close.out" 2>"$HOST_WORK/7015.listener.log" &
 lpid=$!
 sleep 1
-if o=$($ACMD "python3 $GPY close stream 7015 $close_token" 15); then
+if o=$($ACMD \
+    "python3 $GPY close stream $((7015 + PORT_OFFSET)) $close_token" 15); then
 	guest_rc=0
 else
 	guest_rc=$?
@@ -589,9 +612,9 @@ res stream_graceful_close_g2h "$ok"
 # Kill the established host endpoint without shutdown/close cooperation.  The
 # guest must observe EOF or reset promptly, and a fresh connection afterward
 # proves the device remains usable.
-gbg "abrupt-l stream 7012"
+gbg "abrupt-l stream $((7012 + PORT_OFFSET))"
 abrupt_log="$HOST_WORK/7012.abrupt.log"
-host_wait_disconnect 7012 >"$abrupt_log" 2>&1 &
+host_wait_disconnect "$((7012 + PORT_OFFSET))" >"$abrupt_log" 2>&1 &
 abrupt_pid=$!
 abrupt_ready=no
 i=0
@@ -629,9 +652,9 @@ if [ "$ok" -ne 0 ]; then
 fi
 res abrupt_host_kill_guest_observe "$ok"
 
-gbg "echo-l stream 7013"
+gbg "echo-l stream $((7013 + PORT_OFFSET))"
 if out=$(printf 'E2E-AFTER-HOST-KILL' |
-    vshc "$DIR" 7013); then
+    vshc "$DIR" "$((7013 + PORT_OFFSET))"); then
 	rc=0
 else
 	rc=$?
@@ -641,11 +664,12 @@ ok=$?
 [ "$ok" -eq 0 ] || diag_capture after_abrupt_host_kill "$rc" "$out"
 res after_abrupt_host_kill "$ok"
 
-host_listener 30 7007 -s -d \
+host_listener 30 "$((7007 + PORT_OFFSET))" -s -d \
     > "$HOST_WORK/g2h.seq.out" 2>"$HOST_WORK/7007.listener.log" &
 lpid=$!
 sleep 1
-if $ACMD "python3 $GPY send seq 7007 $REC" 20 >/dev/null; then
+if $ACMD \
+    "python3 $GPY send seq $((7007 + PORT_OFFSET)) $REC" 20 >/dev/null; then
 	guest_rc=0
 else
 	guest_rc=$?
@@ -660,11 +684,12 @@ if [ "$ok" -ne 0 ]; then
 fi
 res seqpacket_bigrecord_g2h "$ok"
 
-host_listener 30 7008 -d \
+host_listener 30 "$((7008 + PORT_OFFSET))" -d \
     > "$HOST_WORK/g2h.stream.out" 2>"$HOST_WORK/7008.listener.log" &
 lpid=$!
 sleep 1
-if $ACMD "python3 $GPY send stream 7008 $REC" 20 >/dev/null; then
+if $ACMD \
+    "python3 $GPY send stream $((7008 + PORT_OFFSET)) $REC" 20 >/dev/null; then
 	guest_rc=0
 else
 	guest_rc=$?

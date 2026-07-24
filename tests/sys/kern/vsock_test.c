@@ -5671,7 +5671,7 @@ ATF_TC_BODY(kernel_transport_provider, tc)
 	ATF_REQUIRE(second >= 0);
 	errno = 0;
 	ATF_CHECK(ioctl(second, VSOCK_IOC_TRANSPORT_ATTACH, &attach) == -1);
-	ATF_CHECK(errno == EBUSY);
+	ATF_CHECK(errno == EADDRINUSE);
 
 	/*
 	 * Reject short datagrams and header/payload length mismatches without
@@ -6028,13 +6028,465 @@ ATF_TC_BODY(kernel_transport_provider, tc)
 	ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
 	close(provider);
 	/*
-	 * The failed EBUSY attach above must not poison the losing descriptor.
+	 * The failed EADDRINUSE attach above must not poison the losing
+	 * descriptor.
 	 * Once the first owner closes, retrying that exact fd must succeed rather
 	 * than reporting EALREADY from stale cdev-private state.
 	 */
 	ATF_REQUIRE_MSG(ioctl(second, VSOCK_IOC_TRANSPORT_ATTACH, &attach) == 0,
 	    "retry transport attach after owner close: %s", strerror(errno));
 	close(second);
+}
+
+static void
+provider_complete_connect(int provider, int s, uint32_t guest_cid,
+    uint16_t type)
+{
+	struct virtio_vsock_hdr request, response;
+	socklen_t optlen;
+	ssize_t len;
+	int error;
+
+	len = read(provider, &request, sizeof(request));
+	ATF_REQUIRE_MSG(len == (ssize_t)sizeof(request),
+	    "provider CID %u request read returned %zd: %s", guest_cid,
+	    len, strerror(errno));
+	ATF_CHECK(le16toh(request.op) == VIRTIO_VSOCK_OP_REQUEST);
+	ATF_CHECK(le16toh(request.type) == type);
+	ATF_CHECK(le64toh(request.src_cid) == VSOCK_CID_HOST);
+	ATF_CHECK(le64toh(request.dst_cid) == guest_cid);
+
+	memset(&response, 0, sizeof(response));
+	response.src_cid = request.dst_cid;
+	response.dst_cid = request.src_cid;
+	response.src_port = request.dst_port;
+	response.dst_port = request.src_port;
+	response.type = request.type;
+	response.op = htole16(VIRTIO_VSOCK_OP_RESPONSE);
+	response.buf_alloc = htole32(65536);
+	ATF_REQUIRE(write(provider, &response, sizeof(response)) ==
+	    (ssize_t)sizeof(response));
+	optlen = sizeof(error);
+	error = -1;
+	ATF_REQUIRE(getsockopt(s, SOL_SOCKET, SO_ERROR, &error, &optlen) == 0);
+	ATF_CHECK(error == 0);
+}
+
+static int
+provider_start_connect(uint32_t guest_cid, uint32_t port, int type)
+{
+	struct sockaddr_vm peer;
+	int s;
+
+	s = socket(AF_VSOCK, type | SOCK_NONBLOCK, 0);
+	ATF_REQUIRE_MSG(s >= 0, "socket CID %u: %s", guest_cid,
+	    strerror(errno));
+	memset(&peer, 0, sizeof(peer));
+	peer.svm_len = sizeof(peer);
+	peer.svm_family = AF_VSOCK;
+	peer.svm_cid = guest_cid;
+	peer.svm_port = port;
+	errno = 0;
+	ATF_REQUIRE(connect(s, (struct sockaddr *)&peer, sizeof(peer)) == -1);
+	ATF_REQUIRE_MSG(errno == EINPROGRESS,
+	    "connect CID %u returned %s", guest_cid, strerror(errno));
+	return (s);
+}
+
+ATF_TC(kernel_transport_multiple_providers);
+ATF_TC_HEAD(kernel_transport_multiple_providers, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(kernel_transport_multiple_providers, tc)
+{
+	struct vsock_transport_attach attach1, attach2;
+	const char payload[] = "provider-two";
+	struct virtio_vsock_hdr *packet;
+	union {
+		struct virtio_vsock_hdr hdr;
+		uint8_t bytes[sizeof(struct virtio_vsock_hdr) +
+		    sizeof(payload)];
+	} packet_buf;
+	size_t count_len;
+	u_int provider_count;
+	ssize_t len;
+	int duplicate, p1, p2, replacement, s1, s2, s3;
+
+	count_len = sizeof(provider_count);
+	ATF_REQUIRE_MSG(sysctlbyname("kern.vsock.userspace_providers",
+	    &provider_count, &count_len, NULL, 0) == 0,
+	    "kern.vsock.userspace_providers: %s", strerror(errno));
+	if (provider_count != 0)
+		atf_tc_skip("another /dev/vsock provider is active");
+
+	memset(&attach1, 0, sizeof(attach1));
+	attach1.version = VSOCK_TRANSPORT_VERSION;
+	attach1.guest_cid = 42;
+	attach1.features = VIRTIO_VSOCK_F_STREAM;
+	attach2 = attach1;
+	attach2.guest_cid = 43;
+	attach2.features = VIRTIO_VSOCK_F_SEQPACKET |
+	    VIRTIO_VSOCK_F_NO_IMPLIED_STREAM;
+
+	p1 = open("/dev/vsock", O_RDWR | O_NONBLOCK);
+	p2 = open("/dev/vsock", O_RDWR | O_NONBLOCK);
+	duplicate = open("/dev/vsock", O_RDWR | O_NONBLOCK);
+	ATF_REQUIRE(p1 >= 0 && p2 >= 0 && duplicate >= 0);
+	if (ioctl(p1, VSOCK_IOC_TRANSPORT_ATTACH, &attach1) < 0) {
+		if (errno == EBUSY)
+			atf_tc_skip("another AF_VSOCK transport is active");
+		ATF_REQUIRE_MSG(false, "first provider attach: %s",
+		    strerror(errno));
+	}
+	ATF_REQUIRE_MSG(ioctl(p2, VSOCK_IOC_TRANSPORT_ATTACH, &attach2) == 0,
+	    "second provider attach: %s", strerror(errno));
+	errno = 0;
+	ATF_CHECK(ioctl(duplicate, VSOCK_IOC_TRANSPORT_ATTACH,
+	    &attach1) == -1);
+	ATF_CHECK(errno == EADDRINUSE);
+	close(duplicate);
+
+	count_len = sizeof(provider_count);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.userspace_providers",
+	    &provider_count, &count_len, NULL, 0) == 0);
+	ATF_CHECK(provider_count == 2);
+
+	/*
+	 * The aggregate transport admits both socket types, while the provider
+	 * selected by the destination CID enforces its own negotiated features.
+	 */
+	{
+		struct virtio_vsock_hdr unsupported_request, unsupported_rst;
+		struct sockaddr_vm peer;
+		int unsupported;
+
+		unsupported = socket(AF_VSOCK, SOCK_STREAM | SOCK_NONBLOCK, 0);
+		ATF_REQUIRE(unsupported >= 0);
+		memset(&peer, 0, sizeof(peer));
+		peer.svm_len = sizeof(peer);
+		peer.svm_family = AF_VSOCK;
+		peer.svm_cid = attach2.guest_cid;
+		peer.svm_port = 9000;
+		errno = 0;
+		ATF_CHECK(connect(unsupported, (struct sockaddr *)&peer,
+		    sizeof(peer)) == -1);
+		ATF_CHECK(errno == EPROTONOSUPPORT);
+		close(unsupported);
+
+		memset(&unsupported_request, 0, sizeof(unsupported_request));
+		unsupported_request.src_cid = htole64(attach1.guest_cid);
+		unsupported_request.dst_cid = htole64(VSOCK_CID_HOST);
+		unsupported_request.src_port = htole32(8000);
+		unsupported_request.dst_port = htole32(8001);
+		unsupported_request.type =
+		    htole16(VIRTIO_VSOCK_TYPE_SEQPACKET);
+		unsupported_request.op =
+		    htole16(VIRTIO_VSOCK_OP_REQUEST);
+		ATF_REQUIRE(write(p1, &unsupported_request,
+		    sizeof(unsupported_request)) ==
+		    (ssize_t)sizeof(unsupported_request));
+		ATF_REQUIRE(read(p1, &unsupported_rst,
+		    sizeof(unsupported_rst)) ==
+		    (ssize_t)sizeof(unsupported_rst));
+		ATF_CHECK(le16toh(unsupported_rst.op) ==
+		    VIRTIO_VSOCK_OP_RST);
+		ATF_CHECK(le16toh(unsupported_rst.type) ==
+		    VIRTIO_VSOCK_TYPE_SEQPACKET);
+		ATF_CHECK(le64toh(unsupported_rst.dst_cid) ==
+		    attach1.guest_cid);
+		errno = 0;
+		ATF_CHECK(read(p2, &unsupported_rst,
+		    sizeof(unsupported_rst)) == -1);
+		ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
+	}
+
+	s1 = provider_start_connect(attach1.guest_cid, 9001, SOCK_STREAM);
+	s2 = provider_start_connect(attach2.guest_cid, 9002,
+	    SOCK_SEQPACKET);
+	provider_complete_connect(p1, s1, attach1.guest_cid,
+	    VIRTIO_VSOCK_TYPE_STREAM);
+	provider_complete_connect(p2, s2, attach2.guest_cid,
+	    VIRTIO_VSOCK_TYPE_SEQPACKET);
+
+	ATF_REQUIRE(send(s2, payload, sizeof(payload), 0) ==
+	    (ssize_t)sizeof(payload));
+	packet = &packet_buf.hdr;
+	len = read(p2, packet_buf.bytes, sizeof(packet_buf.bytes));
+	ATF_REQUIRE_MSG(len == (ssize_t)(sizeof(*packet) + sizeof(payload)),
+	    "CID 43 data read returned %zd", len);
+	ATF_CHECK(le64toh(packet->dst_cid) == attach2.guest_cid);
+	ATF_CHECK(le16toh(packet->type) == VIRTIO_VSOCK_TYPE_SEQPACKET);
+	errno = 0;
+	ATF_CHECK(read(p1, packet_buf.bytes, sizeof(packet_buf.bytes)) == -1);
+	ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
+
+	/*
+	 * A feature change starts a new epoch for only that CID.  It must purge
+	 * old-type packets and reset that CID without disturbing another
+	 * provider's established socket.
+	 */
+	ATF_REQUIRE(send(s1, payload, sizeof(payload), 0) ==
+	    (ssize_t)sizeof(payload));
+	{
+		uint64_t features;
+		socklen_t optlen;
+		int error;
+
+		features = VIRTIO_VSOCK_F_SEQPACKET |
+		    VIRTIO_VSOCK_F_NO_IMPLIED_STREAM;
+		ATF_REQUIRE(ioctl(p1, VSOCK_IOC_TRANSPORT_SET_FEATURES,
+		    &features) == 0);
+		optlen = sizeof(error);
+		error = 0;
+		ATF_REQUIRE(getsockopt(s1, SOL_SOCKET, SO_ERROR, &error,
+		    &optlen) == 0);
+		ATF_CHECK(error == ECONNRESET);
+		errno = 0;
+		ATF_CHECK(read(p1, packet_buf.bytes,
+		    sizeof(packet_buf.bytes)) == -1);
+		ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
+		ATF_REQUIRE(send(s2, payload, sizeof(payload), 0) ==
+		    (ssize_t)sizeof(payload));
+		len = read(p2, packet_buf.bytes, sizeof(packet_buf.bytes));
+		ATF_REQUIRE_MSG(len ==
+		    (ssize_t)(sizeof(*packet) + sizeof(payload)),
+		    "CID 43 post-feature data read returned %zd", len);
+
+		close(s1);
+		features = VIRTIO_VSOCK_F_STREAM;
+		ATF_REQUIRE(ioctl(p1, VSOCK_IOC_TRANSPORT_SET_FEATURES,
+		    &features) == 0);
+		s1 = provider_start_connect(attach1.guest_cid, 9001,
+		    SOCK_STREAM);
+		provider_complete_connect(p1, s1, attach1.guest_cid,
+		    VIRTIO_VSOCK_TYPE_STREAM);
+	}
+
+	/*
+	 * Resetting one provider disconnects only that CID.  The other guest's
+	 * established connection must continue to route to its own queue.
+	 */
+	ATF_REQUIRE(ioctl(p1, VSOCK_IOC_TRANSPORT_RESET) == 0);
+	{
+		socklen_t optlen = sizeof(int);
+		int error = 0;
+
+		ATF_REQUIRE(getsockopt(s1, SOL_SOCKET, SO_ERROR, &error,
+		    &optlen) == 0);
+		ATF_CHECK(error == ECONNRESET);
+	}
+	ATF_REQUIRE(send(s2, payload, sizeof(payload), 0) ==
+	    (ssize_t)sizeof(payload));
+	len = read(p2, packet_buf.bytes, sizeof(packet_buf.bytes));
+	ATF_REQUIRE_MSG(len == (ssize_t)(sizeof(*packet) + sizeof(payload)),
+	    "CID 43 post-reset data read returned %zd", len);
+
+	close(s1);
+	close(p1);
+	count_len = sizeof(provider_count);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.userspace_providers",
+	    &provider_count, &count_len, NULL, 0) == 0);
+	ATF_CHECK(provider_count == 1);
+	ATF_REQUIRE(send(s2, payload, sizeof(payload), 0) ==
+	    (ssize_t)sizeof(payload));
+	len = read(p2, packet_buf.bytes, sizeof(packet_buf.bytes));
+	ATF_REQUIRE_MSG(len == (ssize_t)(sizeof(*packet) + sizeof(payload)),
+	    "CID 43 post-detach data read returned %zd", len);
+
+	replacement = open("/dev/vsock", O_RDWR | O_NONBLOCK);
+	ATF_REQUIRE(replacement >= 0);
+	ATF_REQUIRE_MSG(ioctl(replacement, VSOCK_IOC_TRANSPORT_ATTACH,
+	    &attach1) == 0, "CID reuse while CID 43 remains active: %s",
+	    strerror(errno));
+	count_len = sizeof(provider_count);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.userspace_providers",
+	    &provider_count, &count_len, NULL, 0) == 0);
+	ATF_CHECK(provider_count == 2);
+
+	close(s2);
+	close(p2);
+	count_len = sizeof(provider_count);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.userspace_providers",
+	    &provider_count, &count_len, NULL, 0) == 0);
+	ATF_CHECK(provider_count == 1);
+	s3 = provider_start_connect(attach1.guest_cid, 9003, SOCK_STREAM);
+	provider_complete_connect(replacement, s3, attach1.guest_cid,
+	    VIRTIO_VSOCK_TYPE_STREAM);
+	close(s3);
+	close(replacement);
+	count_len = sizeof(provider_count);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.userspace_providers",
+	    &provider_count, &count_len, NULL, 0) == 0);
+	ATF_CHECK(provider_count == 0);
+}
+
+ATF_TC(kernel_transport_provider_scale);
+ATF_TC_HEAD(kernel_transport_provider_scale, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(kernel_transport_provider_scale, tc)
+{
+	enum { PROVIDERS = 1024, FIRST_CID = 1000 };
+	struct vsock_transport_attach attach;
+	size_t count_len;
+	u_int provider_count;
+	int *providers;
+
+	count_len = sizeof(provider_count);
+	ATF_REQUIRE_MSG(sysctlbyname("kern.vsock.userspace_providers",
+	    &provider_count, &count_len, NULL, 0) == 0,
+	    "kern.vsock.userspace_providers: %s", strerror(errno));
+	if (provider_count != 0)
+		atf_tc_skip("another /dev/vsock provider is active");
+
+	providers = calloc(PROVIDERS, sizeof(*providers));
+	ATF_REQUIRE(providers != NULL);
+	for (u_int i = 0; i < PROVIDERS; i++)
+		providers[i] = -1;
+
+	memset(&attach, 0, sizeof(attach));
+	attach.version = VSOCK_TRANSPORT_VERSION;
+	attach.features = VIRTIO_VSOCK_F_STREAM;
+	for (u_int i = 0; i < PROVIDERS; i++) {
+		attach.guest_cid = FIRST_CID + i;
+		providers[i] = open("/dev/vsock", O_RDWR | O_NONBLOCK);
+		ATF_REQUIRE_MSG(providers[i] >= 0,
+		    "open provider %u: %s", i, strerror(errno));
+		if (ioctl(providers[i], VSOCK_IOC_TRANSPORT_ATTACH,
+		    &attach) < 0) {
+			if (i == 0 && errno == EBUSY)
+				atf_tc_skip(
+				    "another AF_VSOCK transport is active");
+			ATF_REQUIRE_MSG(false, "attach CID %u: %s",
+			    attach.guest_cid, strerror(errno));
+		}
+	}
+	count_len = sizeof(provider_count);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.userspace_providers",
+	    &provider_count, &count_len, NULL, 0) == 0);
+	ATF_CHECK(provider_count == PROVIDERS);
+
+	/*
+	 * Close in a permutation instead of insertion order.  With 256 buckets,
+	 * this walks colliding chains while other entries in every bucket remain
+	 * registered.
+	 */
+	for (u_int lane = 0; lane < 4; lane++) {
+		for (u_int i = lane; i < PROVIDERS; i += 4) {
+			close(providers[i]);
+			providers[i] = -1;
+		}
+	}
+	count_len = sizeof(provider_count);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.userspace_providers",
+	    &provider_count, &count_len, NULL, 0) == 0);
+	ATF_CHECK(provider_count == 0);
+	free(providers);
+}
+
+struct provider_attach_race_arg {
+	pthread_barrier_t *barrier;
+	struct vsock_transport_attach attach;
+	int fd;
+	int result;
+	int error;
+};
+
+static void *
+provider_attach_race(void *arg)
+{
+	struct provider_attach_race_arg *race = arg;
+	int error;
+
+	error = pthread_barrier_wait(race->barrier);
+	if (error != 0 && error != PTHREAD_BARRIER_SERIAL_THREAD) {
+		race->result = -1;
+		race->error = error;
+		return (NULL);
+	}
+	race->result = ioctl(race->fd, VSOCK_IOC_TRANSPORT_ATTACH,
+	    &race->attach);
+	race->error = race->result == 0 ? 0 : errno;
+	return (NULL);
+}
+
+ATF_TC(kernel_transport_duplicate_attach_race);
+ATF_TC_HEAD(kernel_transport_duplicate_attach_race, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(kernel_transport_duplicate_attach_race, tc)
+{
+	struct provider_attach_race_arg races[2];
+	struct vsock_transport_attach probe_attach;
+	pthread_barrier_t barrier;
+	pthread_t threads[2];
+	size_t count_len;
+	u_int provider_count;
+	int error, probe;
+
+	count_len = sizeof(provider_count);
+	ATF_REQUIRE_MSG(sysctlbyname("kern.vsock.userspace_providers",
+	    &provider_count, &count_len, NULL, 0) == 0,
+	    "kern.vsock.userspace_providers: %s", strerror(errno));
+	if (provider_count != 0)
+		atf_tc_skip("another /dev/vsock provider is active");
+
+	memset(&probe_attach, 0, sizeof(probe_attach));
+	probe_attach.version = VSOCK_TRANSPORT_VERSION;
+	probe_attach.guest_cid = 4999;
+	probe_attach.features = VIRTIO_VSOCK_F_STREAM;
+	probe = open("/dev/vsock", O_RDWR | O_NONBLOCK);
+	ATF_REQUIRE(probe >= 0);
+	if (ioctl(probe, VSOCK_IOC_TRANSPORT_ATTACH, &probe_attach) < 0) {
+		if (errno == EBUSY)
+			atf_tc_skip("another AF_VSOCK transport is active");
+		ATF_REQUIRE_MSG(false, "provider probe attach: %s",
+		    strerror(errno));
+	}
+	close(probe);
+
+	for (u_int round = 0; round < 64; round++) {
+		ATF_REQUIRE(pthread_barrier_init(&barrier, NULL, 3) == 0);
+		memset(races, 0, sizeof(races));
+		for (u_int i = 0; i < 2; i++) {
+			races[i].barrier = &barrier;
+			races[i].attach.version = VSOCK_TRANSPORT_VERSION;
+			races[i].attach.guest_cid = 5000 + round;
+			races[i].attach.features = VIRTIO_VSOCK_F_STREAM;
+			races[i].fd = open("/dev/vsock",
+			    O_RDWR | O_NONBLOCK);
+			ATF_REQUIRE(races[i].fd >= 0);
+			ATF_REQUIRE(pthread_create(&threads[i], NULL,
+			    provider_attach_race, &races[i]) == 0);
+		}
+		error = pthread_barrier_wait(&barrier);
+		ATF_REQUIRE(error == 0 ||
+		    error == PTHREAD_BARRIER_SERIAL_THREAD);
+		for (u_int i = 0; i < 2; i++)
+			ATF_REQUIRE(pthread_join(threads[i], NULL) == 0);
+		ATF_CHECK_MSG((races[0].result == 0) !=
+		    (races[1].result == 0),
+		    "round %u results %d/%d errors %d/%d", round,
+		    races[0].result, races[1].result, races[0].error,
+		    races[1].error);
+		for (u_int i = 0; i < 2; i++) {
+			if (races[i].result != 0)
+				ATF_CHECK_MSG(races[i].error == EADDRINUSE,
+				    "round %u loser %u returned %s", round, i,
+				    strerror(races[i].error));
+			close(races[i].fd);
+		}
+		ATF_REQUIRE(pthread_barrier_destroy(&barrier) == 0);
+	}
+	count_len = sizeof(provider_count);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.userspace_providers",
+	    &provider_count, &count_len, NULL, 0) == 0);
+	ATF_CHECK(provider_count == 0);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -6294,6 +6746,9 @@ ATF_TP_ADD_TCS(tp)
 
 	/* Group 53: privileged VMM packet transport. */
 	ATF_TP_ADD_TC(tp, kernel_transport_provider);
+	ATF_TP_ADD_TC(tp, kernel_transport_multiple_providers);
+	ATF_TP_ADD_TC(tp, kernel_transport_provider_scale);
+	ATF_TP_ADD_TC(tp, kernel_transport_duplicate_attach_race);
 
 	return (atf_no_error());
 }

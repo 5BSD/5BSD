@@ -39,31 +39,32 @@ vsock:::provider-features
 vsock:::provider-enqueue
 {
 	enqueued++;
-	depth = arg2;
-	@depth = quantize(arg2);
+	depth = arg3;
+	@depth[arg0] = quantize(arg3);
 }
 
 vsock:::provider-dequeue
 {
 	dequeued++;
-	depth = arg2;
+	depth = arg3;
 }
 
 vsock:::provider-inject
 {
 	injected++;
+	@injected_by_cid[arg0] = count();
 }
 
 vsock:::provider-backpressure
 {
 	backpressure++;
-	@backpressure[arg1 ? "control" : "data"] = count();
+	@backpressure[arg0, arg2 ? "control" : "data"] = count();
 }
 
 vsock:::provider-reject
 {
 	rejected++;
-	@reject_errno[arg1] = count();
+	@reject_errno[arg0, arg2] = count();
 }
 
 vsock:::pkt-drop
@@ -114,10 +115,12 @@ tick-5sec
 	    refused, timeouts, disconnected);
 	printf("queue-depth histogram:\n");
 	printa(@depth);
+	printf("injected packets by CID:\n");
+	printa("  cid=%d %@d\n", @injected_by_cid);
 	printf("backpressure by class:\n");
-	printa("  %-8s %@d\n", @backpressure);
+	printa("  cid=%d %-8s %@d\n", @backpressure);
 	printf("rejected provider packets by errno:\n");
-	printa("  errno=%d %@d\n", @reject_errno);
+	printa("  cid=%d errno=%d %@d\n", @reject_errno);
 	printf("domain RX drops by reason:\n");
 	printa("  %-24s %@d\n", @rx_drop_reason);
 
@@ -126,6 +129,7 @@ tick-5sec
 	rx_dropped = 0;
 	connects = 0; established = 0; refused = 0; timeouts = 0;
 	disconnected = 0;
-	trunc(@depth); trunc(@backpressure); trunc(@reject_errno);
+	trunc(@depth); trunc(@injected_by_cid); trunc(@backpressure);
+	trunc(@reject_errno);
 	trunc(@rx_drop_reason);
 }

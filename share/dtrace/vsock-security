@@ -25,7 +25,7 @@
 vsock*:::desc-drop	{ @drops[copyinstr(arg0)] = count(); total++; }
 vsock*:::conn-reset	{ @resets[arg0, arg1] = count(); }
 vsock*:::pend-drop	{ penddrop++; }
-vsock:::provider-reject	{ @provider_reject[arg1] = count(); providerdrop++; }
+vsock:::provider-reject	{ @provider_reject[arg0, arg2] = count(); providerdrop++; }
 vsock:::pkt-drop
 {
 	@kernel_drop[stringof(arg0)] = count();
@@ -33,7 +33,7 @@ vsock:::pkt-drop
 }
 vsock:::provider-backpressure
 {
-	@provider_full[arg1 ? "control" : "data"] = count();
+	@provider_full[arg0, arg2 ? "control" : "data"] = count();
 	providerfull++;
 }
 
@@ -48,9 +48,9 @@ tick-5sec
 	printf("by reason:\n");
 	printa("  %-26s %@d\n", @drops);
 	printf("provider rejects by errno:\n");
-	printa("  errno=%d %@d\n", @provider_reject);
+	printa("  cid=%d errno=%d %@d\n", @provider_reject);
 	printf("provider backpressure by class:\n");
-	printa("  %-8s %@d\n", @provider_full);
+	printa("  cid=%d %-8s %@d\n", @provider_full);
 	printf("kernel-domain drops by reason:\n");
 	printa("  %-24s %@d\n", @kernel_drop);
 	printf("connection resets by cid:port:\n");

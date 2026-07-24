@@ -88,9 +88,9 @@ sudo sysctl hw.vmm.* | head # confirm vmm present
 mkdir -p ~/vm/vsock-sockdir     # this becomes path=<dir>
 ```
 
-The directory is needed only by `backend=userspace`.  To test
-`backend=kernel`, load `vsock.ko` on the host and ensure no other remote
-transport provider owns `/dev/vsock`.
+The directory is needed only by `backend=userspace`. To test
+`backend=kernel`, load `vsock.ko` on the host and choose a guest CID not
+already attached by another provider. Distinct CIDs may run concurrently.
 
 The root host suite also runs the MAC capability AF_VSOCK ownership cases.
 Before invoking `run_vsock_tests.sh`, stop `oracled` and any other capability
@@ -98,6 +98,16 @@ broker holding an isolation claim on `/dev/mac_capability`.  Such a claim
 correctly makes the control device inaccessible to the test process and would
 otherwise turn every MAC/vsock case into the same `EACCES` setup failure.
 Restart the broker after the suite completes.
+
+After the single-VM matrices pass, run the concurrent kernel-provider gate:
+
+```sh
+ISO=/path/to/alpine-virt.iso \
+    /usr/tests/sys/kern/vsock_e2e/run-alpine-multi-vsock.sh
+```
+
+It requires two distinct guest CIDs, uses separate console and socket port
+ranges, and requires the provider-count sysctl to return to zero afterward.
 
 ### 2.3 (Linux guests only) UEFI firmware
 

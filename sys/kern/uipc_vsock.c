@@ -878,6 +878,8 @@ static int
 vsock_attach(struct socket *so, int proto, struct thread *td)
 {
 	struct vtvsock_pcb *pcb;
+	uint64_t remote_features;
+	bool remote_present, unlock;
 	int error;
 
 	(void)proto;
@@ -902,20 +904,27 @@ vsock_attach(struct socket *so, int proto, struct thread *td)
 	 * F_NO_IMPLIED_STREAM without F_STREAM (virtio 1.4 §5.10.3: with no
 	 * bits negotiated, or SEQPACKET alone, stream is implied).
 	 *
-	 * These fields are read without vtvsock_mtx: attach also runs via
-	 * sonewconn() on the RX path with the mutex already held, so it must
-	 * not lock.  The unlocked read only races module load/unload of the
-	 * transport, and either ordering is acceptable.
+	 * attach also runs via sonewconn() on the RX path with vtvsock_mtx
+	 * already held.  Take the mutex only for direct socket creation and use
+	 * one consistent snapshot; provider attach, detach, reset, and feature
+	 * updates may otherwise race these fields.
 	 */
+	unlock = !mtx_owned(&vtvsock_mtx);
+	if (unlock)
+		mtx_lock(&vtvsock_mtx);
+	remote_present = vtvsock_remote_transport != NULL;
+	remote_features = vtvsock_remote_features;
+	if (unlock)
+		mtx_unlock(&vtvsock_mtx);
 	if (so->so_type == SOCK_SEQPACKET) {
-		if (vtvsock_remote_transport != NULL &&
-		    !(vtvsock_remote_features & VIRTIO_VSOCK_F_SEQPACKET))
+		if (remote_present &&
+		    !(remote_features & VIRTIO_VSOCK_F_SEQPACKET))
 			return (EPROTONOSUPPORT);
 	} else {
-		if (vtvsock_remote_transport != NULL &&
-		    (vtvsock_remote_features &
+		if (remote_present &&
+		    (remote_features &
 		    VIRTIO_VSOCK_F_NO_IMPLIED_STREAM) != 0 &&
-		    (vtvsock_remote_features & VIRTIO_VSOCK_F_STREAM) == 0)
+		    (remote_features & VIRTIO_VSOCK_F_STREAM) == 0)
 			return (EPROTONOSUPPORT);
 	}
 
@@ -2064,6 +2073,29 @@ vsock_transport_tx_wakeup_locked(const struct vtvsock_transport *transport)
 	for (u_int i = 0; i < VTVSOCK_CONNHASH_SIZE; i++) {
 		LIST_FOREACH(pcb, &vtvsock_conn[i], connlink) {
 			if (pcb->transport != transport ||
+			    pcb->state != VTVSOCK_ESTABLISHED || pcb->so == NULL)
+				continue;
+			vsock_tx_wakeup_locked(pcb);
+		}
+	}
+}
+
+/*
+ * One CID-local transport queue became writable.  Multiplexed transports use
+ * this form so draining one guest does not wake writers for every other guest
+ * sharing the transport operations vector.
+ */
+void
+vsock_transport_tx_wakeup_cid_locked(
+    const struct vtvsock_transport *transport, uint64_t remote_cid)
+{
+	struct vtvsock_pcb *pcb;
+
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
+	for (u_int i = 0; i < VTVSOCK_CONNHASH_SIZE; i++) {
+		LIST_FOREACH(pcb, &vtvsock_conn[i], connlink) {
+			if (pcb->transport != transport ||
+			    pcb->remote.svm_cid != remote_cid ||
 			    pcb->state != VTVSOCK_ESTABLISHED || pcb->so == NULL)
 				continue;
 			vsock_tx_wakeup_locked(pcb);
@@ -3367,20 +3399,27 @@ teardown_close:
 /* -----------------------------------------------------------------------
  * Transport reset
  *
- * Reset all remote connections.  Called from vsock_transport_unregister()
- * and from the driver's TRANSPORT_RESET event handler, always with
+ * Reset remote connections owned by a transport, optionally restricted to
+ * one remote CID.  Called from transport detach/reset handlers with
  * vtvsock_mtx held.
  * ---------------------------------------------------------------------- */
 
-void
-vsock_transport_reset_locked(void)
+static void
+vsock_transport_reset_matching_locked(
+    const struct vtvsock_transport *transport, uint64_t remote_cid,
+    bool match_cid)
 {
 	struct vtvsock_pcb *pcb, *tmp;
 	struct socket *so;
 
-	/* Reset all connected sockets across every hash bucket. */
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
+	if (transport == NULL)
+		return;
 	for (u_int i = 0; i < VTVSOCK_CONNHASH_SIZE; i++) {
 		LIST_FOREACH_SAFE(pcb, &vtvsock_conn[i], connlink, tmp) {
+			if (pcb->transport != transport ||
+			    (match_cid && pcb->remote.svm_cid != remote_cid))
+				continue;
 			so = pcb->so;
 			KASSERT(so != NULL,
 			    ("%s: pcb %p on connlist with NULL so",
@@ -3397,6 +3436,20 @@ vsock_transport_reset_locked(void)
 			soisdisconnected(so);
 		}
 	}
+}
+
+void
+vsock_transport_reset_locked(void)
+{
+	vsock_transport_reset_matching_locked(vtvsock_remote_transport, 0,
+	    false);
+}
+
+void
+vsock_transport_reset_cid_locked(
+    const struct vtvsock_transport *transport, uint64_t remote_cid)
+{
+	vsock_transport_reset_matching_locked(transport, remote_cid, true);
 }
 
 /* -----------------------------------------------------------------------
@@ -3457,19 +3510,38 @@ vsock_transport_register(const struct vtvsock_transport *ops,
 }
 
 void
-vsock_transport_unregister(const void *owner)
+vsock_transport_unregister_locked(const void *owner)
 {
-	mtx_lock(&vtvsock_mtx);
+	const struct vtvsock_transport *transport;
+	struct vtvsock_pcb *lpcb;
+
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
 	if (vtvsock_remote_transport_owner != owner) {
-		mtx_unlock(&vtvsock_mtx);
 		return;
 	}
+	transport = vtvsock_remote_transport;
+	vsock_transport_reset_matching_locked(transport, 0, false);
 	vtvsock_remote_transport = NULL;
 	vtvsock_remote_transport_owner = NULL;
 	vtvsock_remote_features = 0;
 	vtvsock_guest_cid = VSOCK_CID_LOCAL;
-	/* Reset all remote connections */
-	vsock_transport_reset_locked();
+	/*
+	 * Non-loopback listeners track the currently registered transport CID.
+	 * Restore their local endpoint when the last remote transport leaves so
+	 * they cannot retain a stale guest or host CID across provider changes.
+	 */
+	LIST_FOREACH(lpcb, &vtvsock_bound, link) {
+		if ((lpcb->state == VTVSOCK_LISTEN ||
+		    lpcb->state == VTVSOCK_BOUND) && !lpcb->bound_local)
+			lpcb->local.svm_cid = VSOCK_CID_LOCAL;
+	}
+}
+
+void
+vsock_transport_unregister(const void *owner)
+{
+	mtx_lock(&vtvsock_mtx);
+	vsock_transport_unregister_locked(owner);
 	mtx_unlock(&vtvsock_mtx);
 }
 

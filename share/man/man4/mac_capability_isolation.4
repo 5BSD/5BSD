@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd July 22, 2026
+.Dd July 24, 2026
 .Dt MAC_CAPABILITY_ISOLATION 4
 .Os
 .Sh NAME
@@ -231,12 +231,18 @@ not to a PID; closing or revoking the instance releases its claims.
 These endpoint claims govern the socket API.
 The native host provider's privileged
 .Dv VSOCK_IOC_TRANSPORT_ATTACH
-operation is separately serialized by the vsock subsystem.
-Access to the current single-provider
+operation is separately authorized by
+.Dv PRIV_DRIVER
+and serialized by guest CID in the vsock subsystem.
+Access to the
 .Pa /dev/vsock
-device can be delegated with a vnode claim.
-If vsock gains simultaneous multiple providers, provider-CID attachment must
-become an explicit isolation resource rather than relying on device ownership.
+device can additionally be constrained with a vnode claim; such a claim does
+not replace the
+.Dv PRIV_DRIVER
+check.
+Distinct provider CIDs may be active concurrently, while a duplicate CID is
+rejected with
+.Er EADDRINUSE .
 .Ss Jail Isolation
 Jail isolation gates jail operations by JID, name, or both.
 .Pp

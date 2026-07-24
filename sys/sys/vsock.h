@@ -76,8 +76,9 @@
  * Register a privileged userspace provider for the kernel AF_VSOCK domain.
  * The provider exchanges one complete little-endian virtio-vsock packet per
  * read(2) or write(2) on /dev/vsock.  This is intended for a VMM which owns
- * the configured guest CID; only one provider can be active because the
- * socket domain currently has one remote-transport slot.
+ * the configured guest CID.  Providers for distinct guest CIDs may be active
+ * concurrently; attaching a CID already owned by another provider fails with
+ * EADDRINUSE.
  */
 #define	VSOCK_TRANSPORT_VERSION		1
 #define	VSOCK_TRANSPORT_MAX_PAYLOAD	(64 * 1024)

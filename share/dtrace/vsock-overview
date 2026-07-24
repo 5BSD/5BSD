@@ -31,8 +31,8 @@ vsock*:::conn-count      { printf("%-20Y %-14s live=%d\n",                   wal
 vsock:::provider-attach  { printf("%-20Y %-14s cid=%d features=0x%x\n",       walltimestamp, "PROVIDER_UP", arg0, arg1); }
 vsock:::provider-detach  { printf("%-20Y %-14s cid=%d\n",                    walltimestamp, "PROVIDER_DOWN", arg0); }
 vsock:::provider-reset   { printf("%-20Y %-14s cid=%d\n",                    walltimestamp, "PROVIDER_RST", arg0); }
-vsock:::provider-backpressure { printf("%-20Y %-14s depth=%d control=%d\n",   walltimestamp, "PROVIDER_FULL", arg0, arg1); }
-vsock:::provider-reject  { printf("%-20Y %-14s bytes=%d errno=%d\n",          walltimestamp, "PROVIDER_DROP", arg0, arg1); }
+vsock:::provider-backpressure { printf("%-20Y %-14s cid=%d depth=%d control=%d\n", walltimestamp, "PROVIDER_FULL", arg0, arg1, arg2); }
+vsock:::provider-reject  { printf("%-20Y %-14s cid=%d bytes=%d errno=%d\n",    walltimestamp, "PROVIDER_DROP", arg0, arg1, arg2); }
 vsock:::pkt-drop         { printf("%-20Y %-14s why=%s op=%d cid=%d sport=%d dport=%d\n", walltimestamp, "KPKT_DROP", stringof(arg0), arg1, arg2, arg3, arg4); }
 vsock:::connect-request  { printf("%-20Y %-14s cid=%d port=%d\n",             walltimestamp, "KCONNECT_REQ", arg0, arg1); }
 vsock:::connect-established { printf("%-20Y %-14s cid=%d port=%d\n",          walltimestamp, "KCONNECTED", arg0, arg1); }

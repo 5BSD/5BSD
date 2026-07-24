@@ -22,7 +22,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 23, 2026
+.Dd July 24, 2026
 .Dt VSOCK 4
 .Os
 .Sh NAME
@@ -268,7 +268,7 @@ encoding is used, so ported code must be recompiled against
 .In sys/vsock.h .
 .El
 .Ss VMM Transport Provider
-A privileged VMM can attach one remote guest to the host socket domain through
+A privileged VMM can attach a remote guest to the host socket domain through
 .Pa /dev/vsock .
 After attachment, the host local CID is
 .Dv VSOCK_CID_HOST
@@ -308,12 +308,16 @@ The
 DTrace probes described below add the guest CID, feature, queue, and packet
 metadata needed for vsock-specific operational auditing without exposing
 payload contents.
-Only one remote transport can be registered at a time.
-An attachment therefore fails with
+VMM providers for distinct guest CIDs can be registered concurrently.
+An attachment fails with
+.Er EADDRINUSE
+when another provider owns the requested CID, or with
 .Er EBUSY
-when a VirtIO guest driver or another VMM transport is already active.
-Closing the provider descriptor unregisters the transport and resets its live
-connections.
+when a different kernel transport owns the remote socket-domain slot.
+Closing or resetting one provider resets only connections to that provider's
+guest CID; other attached guests remain active.
+Changing a provider's negotiated socket-type features also resets existing
+connections to that CID before publishing the new feature set.
 The
 .Xr bhyve 8
 .Cm virtio-vsock
@@ -360,6 +364,13 @@ Inbound connection requests that would exceed this ceiling are refused with a
 reset, providing a fleet-safe backstop against connection-table growth driven
 by a malicious peer, independent of per-listener backlog limits.
 Default: 16384.
+.It Va kern.vsock.userspace_providers
+Read-only count of guest-CID providers currently attached through
+.Pa /dev/vsock .
+This is normally the number of running
+.Xr bhyve 8
+devices using
+.Cm backend=kernel .
 .El
 .Pp
 Buffer size values affect new sockets only; existing sockets are not modified.
@@ -472,21 +483,21 @@ The VMM updated its negotiated device features
 (args: guest CID, features).
 .It Li provider-enqueue
 The kernel queued a complete packet for the VMM to read
-(args: operation, payload length, queue depth).
+(args: guest CID, operation, payload length, queue depth).
 .It Li provider-dequeue
 The VMM read a queued packet
-(args: operation, payload length, remaining queue depth).
+(args: guest CID, operation, payload length, remaining queue depth).
 .It Li provider-inject
 The VMM supplied a complete guest packet to the kernel
-(args: operation, payload length).
+(args: guest CID, operation, payload length).
 .It Li provider-backpressure
 The bounded VMM packet queue rejected an enqueue
-(args: queue depth, is_control).
+(args: guest CID, queue depth, is_control).
 .It Li provider-reject
 The
 .Pa /dev/vsock
 provider interface rejected an invalid packet
-(args: packet length, errno).
+(args: guest CID, packet length, errno).
 .El
 .Pp
 The
@@ -639,9 +650,9 @@ continue to work.
 .Pp
 The kernel backend requires
 .Pa vsock.ko
-and exclusive ownership of the remote transport provider.
-Only one kernel-backed virtual machine can be active at a time.
-If another provider already owns the transport,
+and ownership of a unique guest CID.
+Multiple kernel-backed virtual machines can be active concurrently.
+If another provider already owns the requested CID,
 .Xr bhyve 8
 fails device initialization.
 .Pp

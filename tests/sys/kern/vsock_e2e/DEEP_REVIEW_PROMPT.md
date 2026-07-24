@@ -16,6 +16,13 @@ VirtIO device:
   code it calls in `sys/kern/uipc_vsock.c`;
 * all direct harnesses and live tests under `tests/sys/kern/vsock_*`.
 
+Treat the kernel provider as a CID-keyed multiplexer.  Include simultaneous
+providers with different feature sets, duplicate-CID attach races, CID reuse,
+hash collisions, and independent reset/detach while other providers have
+active sockets and queued packets.  Prove that no provider pointer survives
+a lock-dropping copy or sleep, and that a wakeup for one CID cannot be lost or
+incorrectly satisfy another CID's routing decision.
+
 Review the diff and the surrounding implementation.  Code outside the diff
 is in scope when a changed call site depends on its lifetime, locking, error,
 or protocol contract.
@@ -72,8 +79,9 @@ mevent, virtqueue, and copy boundary, consider:
 Interleave reset/detach with blocked provider read/write, a parked kernel
 packet, a partially injected guest record, a pending control connection,
 credit wait, TX backlog drain, kqueue detach, and callback dispatch.  Verify
-lock order and all wakeups.  Require deterministic harness schedules for
-important races.
+lock order and all wakeups.  Also interleave same-CID attach, different-CID
+attach, per-CID feature changes, and last-provider unregister.  Require
+deterministic harness schedules for important races.
 
 ### Pass D: protocol validation and boundary values
 
@@ -91,7 +99,8 @@ reassembly, TX-backlog, descriptor, and host socket limits.  Repeatedly fail
 connections in both directions, then prove immediate recovery.  A soak must
 reuse one bhyve process, include errors and abrupt teardown—not just
 successful echo—and check fd, RSS, connection, and bounded-queue state after
-warmup.
+warmup.  Exercise enough simultaneous provider CIDs to collide in the
+provider hash table, and record attach/detach time and provider-count recovery.
 
 ### Pass F: observability and authority boundaries
 

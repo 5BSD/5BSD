@@ -221,10 +221,15 @@ void	vsock_rx_packet(const void *owner, void *buf, uint32_t len);
  */
 int	vsock_transport_register_locked(const struct vtvsock_transport *ops,
 	    const void *owner, uint64_t guest_cid, uint64_t features);
+void	vsock_transport_unregister_locked(const void *owner);
 void	vsock_transport_reset_locked(void);
+void	vsock_transport_reset_cid_locked(
+	    const struct vtvsock_transport *transport, uint64_t remote_cid);
 void	vsock_tx_wakeup_locked(struct vtvsock_pcb *);
 void	vsock_transport_tx_wakeup_locked(
 	    const struct vtvsock_transport *transport);
+void	vsock_transport_tx_wakeup_cid_locked(
+	    const struct vtvsock_transport *transport, uint64_t remote_cid);
 
 /* PCB helper needed by the virtio transport ops in virtio_vsock.c */
 void	vtvsock_pcb_remove_lists_locked(struct vtvsock_pcb *);

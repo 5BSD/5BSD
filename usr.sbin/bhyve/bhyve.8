@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 23, 2026
+.Dd July 24, 2026
 .Dt BHYVE 8
 .Os
 .Sh NAME
@@ -623,9 +623,10 @@ so host applications use ordinary
 and
 .Xr connect 2
 calls with local CID 2 and the configured guest CID.
-Only one kernel backend may be active on a host at a time; a second instance
-fails with
-.Er EBUSY .
+Kernel backends for distinct guest CIDs may run concurrently.
+A second instance using an already attached CID fails with
+.Er EADDRINUSE .
+The host routes each connection and provider reset by its remote guest CID.
 See
 .Xr vsock 4
 for details.

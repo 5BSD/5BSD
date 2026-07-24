@@ -47,6 +47,7 @@
 #include <sys/sdt.h>
 #include <sys/socket.h>
 #include <sys/socketvar.h>
+#include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <sys/uio.h>
 #include <sys/vsock.h>
@@ -64,26 +65,33 @@ SDT_PROBE_DEFINE1(vsock, , , provider__reset,
 SDT_PROBE_DEFINE2(vsock, , , provider__features,
     "uint32_t",	/* guest CID */
     "uint64_t");	/* negotiated device features */
-SDT_PROBE_DEFINE3(vsock, , , provider__enqueue,
+SDT_PROBE_DEFINE4(vsock, , , provider__enqueue,
+    "uint32_t",	/* guest CID */
     "uint16_t",	/* packet operation */
     "uint32_t",	/* payload bytes */
     "uint32_t");	/* queue depth */
-SDT_PROBE_DEFINE3(vsock, , , provider__dequeue,
+SDT_PROBE_DEFINE4(vsock, , , provider__dequeue,
+    "uint32_t",	/* guest CID */
     "uint16_t",	/* packet operation */
     "uint32_t",	/* payload bytes */
     "uint32_t");	/* queue depth */
-SDT_PROBE_DEFINE2(vsock, , , provider__inject,
+SDT_PROBE_DEFINE3(vsock, , , provider__inject,
+    "uint32_t",	/* guest CID */
     "uint16_t",	/* packet operation */
     "uint32_t");	/* payload bytes */
-SDT_PROBE_DEFINE2(vsock, , , provider__backpressure,
+SDT_PROBE_DEFINE3(vsock, , , provider__backpressure,
+    "uint32_t",	/* guest CID */
     "uint32_t",	/* queue depth */
     "int");	/* control packet */
-SDT_PROBE_DEFINE2(vsock, , , provider__reject,
+SDT_PROBE_DEFINE3(vsock, , , provider__reject,
+    "uint32_t",	/* guest CID */
     "uint32_t",	/* packet bytes */
     "int");	/* errno */
 
 #define	VSOCK_USER_QUEUE_MAX		128
 #define	VSOCK_USER_QUEUE_DATA_HIWAT	64
+#define	VSOCK_USER_PROVIDER_BUCKETS	256
+#define	VSOCK_USER_PROVIDER_MASK	(VSOCK_USER_PROVIDER_BUCKETS - 1)
 
 struct vsock_user_packet {
 	STAILQ_ENTRY(vsock_user_packet) link;
@@ -93,6 +101,7 @@ struct vsock_user_packet {
 STAILQ_HEAD(vsock_user_packet_queue, vsock_user_packet);
 
 struct vsock_user_provider {
+	LIST_ENTRY(vsock_user_provider) link;
 	struct vsock_user_packet_queue queue;
 	struct selinfo sel;
 	struct thread *write_thread;
@@ -101,12 +110,29 @@ struct vsock_user_provider {
 	uint32_t queue_count;
 	u_int read_inflight;
 	uint64_t generation;
+	uint64_t features;
 	bool write_reserved;
 	bool registered;
 };
 
-static struct vsock_user_provider *vsock_user_active;
+LIST_HEAD(vsock_user_provider_head, vsock_user_provider);
+/*
+ * The socket domain owns one stable vsock_user_transport, while this table
+ * multiplexes independent VMM descriptors by their remote guest CID.  Socket
+ * PCBs retain only the stable transport pointer; provider objects are looked
+ * up under vtvsock_mtx for every operation and are never retained across a
+ * sleep.  This lets one provider detach without invalidating another guest's
+ * PCBs or leaving a sleeping sender with a freed provider pointer.
+ */
+static struct vsock_user_provider_head
+    vsock_user_providers[VSOCK_USER_PROVIDER_BUCKETS];
+static u_int vsock_user_provider_count;
 static struct cdev *vsock_cdev;
+
+SYSCTL_DECL(_kern_vsock);
+SYSCTL_UINT(_kern_vsock, OID_AUTO, userspace_providers, CTLFLAG_RD,
+    &vsock_user_provider_count, 0,
+    "Number of attached /dev/vsock transport providers");
 
 static int vsock_user_send(struct vtvsock_pcb *, int, struct mbuf *,
     struct sockaddr *, struct mbuf *, struct thread *);
@@ -138,6 +164,97 @@ vsock_user_features_valid(uint64_t features)
 	return ((features & ~known) == 0);
 }
 
+static u_int
+vsock_user_bucket(uint64_t guest_cid)
+{
+	uint32_t hash;
+
+	hash = (uint32_t)guest_cid ^ (uint32_t)(guest_cid >> 32);
+	hash ^= hash >> 16;
+	hash *= UINT32_C(0x7feb352d);
+	hash ^= hash >> 15;
+	return (hash & VSOCK_USER_PROVIDER_MASK);
+}
+
+static bool
+vsock_user_supports_type(const struct vsock_user_provider *provider,
+    uint16_t type)
+{
+	uint64_t features;
+
+	features = provider->features;
+	if (type == VIRTIO_VSOCK_TYPE_SEQPACKET)
+		return ((features & VIRTIO_VSOCK_F_SEQPACKET) != 0);
+	if (type != VIRTIO_VSOCK_TYPE_STREAM)
+		return (true);
+	return ((features & VIRTIO_VSOCK_F_STREAM) != 0 ||
+	    (features & VIRTIO_VSOCK_F_NO_IMPLIED_STREAM) == 0);
+}
+
+static struct vsock_user_provider *
+vsock_user_lookup_locked(uint64_t guest_cid)
+{
+	struct vsock_user_provider_head *head;
+	struct vsock_user_provider *provider;
+	u_int bucket;
+
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
+	bucket = vsock_user_bucket(guest_cid);
+	head = &vsock_user_providers[bucket];
+	LIST_FOREACH(provider, head, link) {
+		if (provider->registered && provider->guest_cid == guest_cid)
+			return (provider);
+	}
+	return (NULL);
+}
+
+static void *
+vsock_user_send_channel(uint64_t guest_cid)
+{
+	return (&vsock_user_providers[vsock_user_bucket(guest_cid)]);
+}
+
+static uint64_t
+vsock_user_aggregate_features_locked(void)
+{
+	struct vsock_user_provider *provider;
+	uint64_t features;
+	u_int bucket;
+	bool stream;
+
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
+	features = 0;
+	stream = false;
+	for (bucket = 0; bucket < VSOCK_USER_PROVIDER_BUCKETS; bucket++) {
+		LIST_FOREACH(provider, &vsock_user_providers[bucket], link) {
+			if (!provider->registered)
+				continue;
+			if (vsock_user_supports_type(provider,
+			    VIRTIO_VSOCK_TYPE_STREAM))
+				stream = true;
+			if (vsock_user_supports_type(provider,
+			    VIRTIO_VSOCK_TYPE_SEQPACKET))
+				features |= VIRTIO_VSOCK_F_SEQPACKET;
+		}
+	}
+	if (stream)
+		features |= VIRTIO_VSOCK_F_STREAM;
+	else
+		features |= VIRTIO_VSOCK_F_NO_IMPLIED_STREAM;
+	return (features);
+}
+
+static int
+vsock_user_sync_transport_locked(void)
+{
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
+	KASSERT(vsock_user_provider_count != 0,
+	    ("%s: no providers", __func__));
+	return (vsock_transport_register_locked(&vsock_user_transport,
+	    &vsock_user_transport, VSOCK_CID_HOST,
+	    vsock_user_aggregate_features_locked()));
+}
+
 static void
 vsock_user_notify_locked(struct vsock_user_provider *provider)
 {
@@ -158,6 +275,7 @@ vsock_user_purge_locked(struct vsock_user_provider *provider)
 	}
 	provider->queue_count = 0;
 	wakeup(provider);
+	wakeup(vsock_user_send_channel(provider->guest_cid));
 }
 
 static int
@@ -179,8 +297,11 @@ vsock_user_build_locked(struct vsock_user_provider *provider,
 	if (provider == NULL || dst_cid != provider->guest_cid ||
 	    src_cid != VSOCK_CID_HOST)
 		return (EHOSTUNREACH);
-	if (!provider->registered || provider != vsock_user_active)
+	if (!provider->registered)
 		return (ENXIO);
+	if (op != VIRTIO_VSOCK_OP_RST &&
+	    !vsock_user_supports_type(provider, type))
+		return (EPROTONOSUPPORT);
 	reserved = control && provider->write_reserved &&
 	    provider->write_thread == curthread;
 	if (provider->queue_count >= VSOCK_USER_QUEUE_MAX ||
@@ -188,8 +309,8 @@ vsock_user_build_locked(struct vsock_user_provider *provider,
 	    provider->queue_count >= VSOCK_USER_QUEUE_MAX - 1) ||
 	    (!control &&
 	    provider->queue_count >= VSOCK_USER_QUEUE_DATA_HIWAT)) {
-		SDT_PROBE2(vsock, , , provider__backpressure,
-		    provider->queue_count, control);
+		SDT_PROBE3(vsock, , , provider__backpressure,
+		    provider->guest_cid, provider->queue_count, control);
 		return (EWOULDBLOCK);
 	}
 	len = sizeof(*hdr) + payload_len;
@@ -217,7 +338,7 @@ vsock_user_build_locked(struct vsock_user_provider *provider,
 		memcpy(packet->data + sizeof(*hdr), payload, payload_len);
 	STAILQ_INSERT_TAIL(&provider->queue, packet, link);
 	provider->queue_count++;
-	SDT_PROBE3(vsock, , , provider__enqueue, op,
+	SDT_PROBE4(vsock, , , provider__enqueue, provider->guest_cid, op,
 	    (uint32_t)payload_len, provider->queue_count);
 	if (reserved)
 		provider->write_reserved = false;
@@ -236,7 +357,8 @@ vsock_user_send_pkt(struct vtvsock_pcb *pcb, uint16_t op, uint32_t flags,
 	mtx_assert(&vtvsock_mtx, MA_OWNED);
 	type = pcb->so != NULL && pcb->so->so_type == SOCK_SEQPACKET ?
 	    VIRTIO_VSOCK_TYPE_SEQPACKET : VIRTIO_VSOCK_TYPE_STREAM;
-	return (vsock_user_build_locked(vsock_user_active,
+	return (vsock_user_build_locked(
+	    vsock_user_lookup_locked(pcb->remote.svm_cid),
 	    pcb->local.svm_cid, pcb->local.svm_port, pcb->remote.svm_cid,
 	    pcb->remote.svm_port, type, op, flags, pcb->buf_alloc,
 	    pcb->fwd_cnt, payload, payload_len, true));
@@ -247,18 +369,23 @@ vsock_user_send_rst(uint64_t src_cid, uint32_t src_port, uint64_t dst_cid,
     uint32_t dst_port, uint16_t type)
 {
 	mtx_assert(&vtvsock_mtx, MA_OWNED);
-	return (vsock_user_build_locked(vsock_user_active, src_cid, src_port,
+	return (vsock_user_build_locked(vsock_user_lookup_locked(dst_cid),
+	    src_cid, src_port,
 	    dst_cid, dst_port, type, VIRTIO_VSOCK_OP_RST, 0, 0, 0,
 	    NULL, 0, true));
 }
 
 static bool
-vsock_user_tx_ready(struct vtvsock_pcb *pcb __unused)
+vsock_user_tx_ready(struct vtvsock_pcb *pcb)
 {
-	struct vsock_user_provider *provider = vsock_user_active;
+	struct vsock_user_provider *provider;
 
 	mtx_assert(&vtvsock_mtx, MA_OWNED);
+	provider = vsock_user_lookup_locked(pcb->remote.svm_cid);
 	return (provider != NULL && provider->registered &&
+	    vsock_user_supports_type(provider,
+	    pcb->so->so_type == SOCK_SEQPACKET ?
+	    VIRTIO_VSOCK_TYPE_SEQPACKET : VIRTIO_VSOCK_TYPE_STREAM) &&
 	    provider->queue_count < VSOCK_USER_QUEUE_DATA_HIWAT);
 }
 
@@ -288,9 +415,13 @@ vsock_user_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 	credit_request_sent = false;
 
 	mtx_lock(&vtvsock_mtx);
-	provider = vsock_user_active;
-	if (provider == NULL || !provider->registered) {
-		error = ENXIO;
+	provider = vsock_user_lookup_locked(pcb->remote.svm_cid);
+	if (provider == NULL) {
+		error = EHOSTUNREACH;
+		goto out;
+	}
+	if (!vsock_user_supports_type(provider, type)) {
+		error = EPROTONOSUPPORT;
 		goto out;
 	}
 	if (total == 0) {
@@ -338,9 +469,10 @@ vsock_user_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 			if (error != 0 && error != EWOULDBLOCK)
 				goto out;
 			error = 0;
-			provider = vsock_user_active;
-			if (provider == NULL || !provider->registered) {
-				error = ENXIO;
+			provider =
+			    vsock_user_lookup_locked(pcb->remote.svm_cid);
+			if (provider == NULL) {
+				error = EHOSTUNREACH;
 				goto out;
 			}
 		}
@@ -367,13 +499,17 @@ vsock_user_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 		if (error == EWOULDBLOCK && !nonblocking &&
 		    pcb->state == VTVSOCK_ESTABLISHED) {
 			pcb->tx_cnt -= (uint32_t)chunk;
-			error = msleep(provider, &vtvsock_mtx, PSOCK | PCATCH,
+			error = msleep(
+			    vsock_user_send_channel(pcb->remote.svm_cid),
+			    &vtvsock_mtx,
+			    PSOCK | PCATCH,
 			    "vsockuq", hz);
 			if (error != 0 && error != EWOULDBLOCK)
 				break;
-			provider = vsock_user_active;
-			if (provider == NULL || !provider->registered) {
-				error = ENXIO;
+			provider =
+			    vsock_user_lookup_locked(pcb->remote.svm_cid);
+			if (provider == NULL) {
+				error = EHOSTUNREACH;
 				break;
 			}
 			error = 0;
@@ -505,16 +641,31 @@ static void
 vsock_user_dtor(void *arg)
 {
 	struct vsock_user_provider *provider = arg;
+	int error;
 
+	mtx_lock(&vtvsock_mtx);
 	if (provider->registered) {
 		SDT_PROBE1(vsock, , , provider__detach, provider->guest_cid);
-		vsock_transport_unregister(provider);
+		vsock_transport_reset_cid_locked(&vsock_user_transport,
+		    provider->guest_cid);
+		LIST_REMOVE(provider, link);
+		KASSERT(vsock_user_provider_count != 0,
+		    ("%s: provider count underflow", __func__));
+		vsock_user_provider_count--;
+		provider->registered = false;
+		provider->generation++;
+		if (vsock_user_provider_count == 0) {
+			vsock_transport_unregister_locked(
+			    &vsock_user_transport);
+		} else {
+			error = vsock_user_sync_transport_locked();
+			if (error != 0)
+				panic("%s: transport resync failed: %d",
+				    __func__, error);
+		}
 	}
-	mtx_lock(&vtvsock_mtx);
-	provider->registered = false;
-	if (vsock_user_active == provider)
-		vsock_user_active = NULL;
 	wakeup(provider);
+	wakeup(vsock_user_send_channel(provider->guest_cid));
 	vsock_user_notify_locked(provider);
 	vsock_user_purge_locked(provider);
 	mtx_unlock(&vtvsock_mtx);
@@ -593,20 +744,22 @@ vsock_dev_read(struct cdev *dev __unused, struct uio *uio, int ioflag)
 		KASSERT(provider->queue_count > 0,
 		    ("%s: queue count underflow", __func__));
 		provider->queue_count--;
-		SDT_PROBE3(vsock, , , provider__dequeue,
+		SDT_PROBE4(vsock, , , provider__dequeue,
+		    provider->guest_cid,
 		    le16toh(((struct virtio_vsock_hdr *)packet->data)->op),
 		    le32toh(((struct virtio_vsock_hdr *)packet->data)->len),
 		    provider->queue_count);
 		if (provider->queue_count ==
 		    VSOCK_USER_QUEUE_DATA_HIWAT - 1)
-			vsock_transport_tx_wakeup_locked(
-			    &vsock_user_transport);
+			vsock_transport_tx_wakeup_cid_locked(
+			    &vsock_user_transport, provider->guest_cid);
 	} else {
 		/* A failed read consumes no packet; preserve FIFO order. */
 		STAILQ_INSERT_HEAD(&provider->queue, packet, link);
 		packet = NULL;
 	}
 	wakeup(provider);
+	wakeup(vsock_user_send_channel(provider->guest_cid));
 	vsock_user_notify_locked(provider);
 	mtx_unlock(&vtvsock_mtx);
 	if (packet != NULL)
@@ -634,8 +787,8 @@ vsock_dev_write(struct cdev *dev __unused, struct uio *uio, int ioflag)
 	len = uio->uio_resid;
 	if (len < sizeof(*hdr) ||
 	    len > sizeof(*hdr) + VSOCK_TRANSPORT_MAX_PAYLOAD) {
-		SDT_PROBE2(vsock, , , provider__reject, (uint32_t)len,
-		    EMSGSIZE);
+		SDT_PROBE3(vsock, , , provider__reject,
+		    provider->guest_cid, (uint32_t)len, EMSGSIZE);
 		return (EMSGSIZE);
 	}
 	/*
@@ -698,15 +851,34 @@ vsock_dev_write(struct cdev *dev __unused, struct uio *uio, int ioflag)
 	if (le32toh(hdr->len) != len - sizeof(*hdr) ||
 	    le64toh(hdr->src_cid) != provider->guest_cid ||
 	    le64toh(hdr->dst_cid) != VSOCK_CID_HOST) {
-		SDT_PROBE2(vsock, , , provider__reject, (uint32_t)len,
-		    EINVAL);
+		SDT_PROBE3(vsock, , , provider__reject,
+		    provider->guest_cid, (uint32_t)len, EINVAL);
 		free(packet, M_VTVSOCK);
 		error = EINVAL;
 		goto out;
 	}
-	SDT_PROBE2(vsock, , , provider__inject, le16toh(hdr->op),
-	    le32toh(hdr->len));
-	vsock_rx_packet(provider, packet, (uint32_t)len);
+	mtx_lock(&vtvsock_mtx);
+	if (!vsock_user_supports_type(provider, le16toh(hdr->type))) {
+		SDT_PROBE3(vsock, , , provider__reject,
+		    provider->guest_cid, (uint32_t)len, EPROTONOSUPPORT);
+		/*
+		 * A packet using a type this guest did not negotiate is a guest
+		 * protocol error, not a provider failure.  VirtIO 1.4 requires
+		 * unsupported socket types to receive RST.  The serialized writer
+		 * reservation guarantees capacity for this synchronous reply.
+		 */
+		error = vsock_user_build_locked(provider, VSOCK_CID_HOST,
+		    le32toh(hdr->dst_port), provider->guest_cid,
+		    le32toh(hdr->src_port), le16toh(hdr->type),
+		    VIRTIO_VSOCK_OP_RST, 0, 0, 0, NULL, 0, true);
+		mtx_unlock(&vtvsock_mtx);
+		free(packet, M_VTVSOCK);
+		goto out;
+	}
+	mtx_unlock(&vtvsock_mtx);
+	SDT_PROBE3(vsock, , , provider__inject, provider->guest_cid,
+	    le16toh(hdr->op), le32toh(hdr->len));
+	vsock_rx_packet(&vsock_user_transport, packet, (uint32_t)len);
 	free(packet, M_VTVSOCK);
 	error = 0;
 out:
@@ -728,7 +900,7 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 {
 	struct vsock_transport_attach *attach;
 	struct vsock_user_provider *provider;
-	uint64_t features;
+	uint64_t features, old_features;
 	int error;
 
 	/*
@@ -760,6 +932,7 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 		STAILQ_INIT(&provider->queue);
 		knlist_init_mtx(&provider->sel.si_note, &vtvsock_mtx);
 		provider->guest_cid = attach->guest_cid;
+		provider->features = attach->features;
 		error = devfs_set_cdevpriv(provider, vsock_user_dtor);
 		if (error != 0) {
 			knlist_destroy(&provider->sel.si_note);
@@ -767,11 +940,20 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 			return (error);
 		}
 		mtx_lock(&vtvsock_mtx);
-		error = vsock_transport_register_locked(&vsock_user_transport,
-		    provider, VSOCK_CID_HOST, attach->features);
-		if (error == 0) {
+		if (vsock_user_lookup_locked(provider->guest_cid) != NULL) {
+			error = EADDRINUSE;
+		} else {
 			provider->registered = true;
-			vsock_user_active = provider;
+			LIST_INSERT_HEAD(&vsock_user_providers[
+			    vsock_user_bucket(provider->guest_cid)],
+			    provider, link);
+			vsock_user_provider_count++;
+			error = vsock_user_sync_transport_locked();
+			if (error != 0) {
+				LIST_REMOVE(provider, link);
+				vsock_user_provider_count--;
+				provider->registered = false;
+			}
 		}
 		mtx_unlock(&vtvsock_mtx);
 		if (error != 0) {
@@ -794,11 +976,42 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 		if (!vsock_user_features_valid(features))
 			return (EINVAL);
 		error = devfs_get_cdevpriv((void **)&provider);
-		if (error != 0 || !provider->registered)
+		if (error != 0)
 			return (ENXIO);
 		mtx_lock(&vtvsock_mtx);
-		error = vsock_transport_register_locked(&vsock_user_transport,
-		    provider, VSOCK_CID_HOST, features);
+		if (!provider->registered)
+			error = ENXIO;
+		else {
+			while (provider->write_thread != NULL ||
+			    provider->read_inflight != 0) {
+				error = msleep(provider, &vtvsock_mtx, PCATCH,
+				    "vsockuf", 0);
+				if (error != 0 || !provider->registered)
+					break;
+			}
+			if (!provider->registered)
+				error = ENXIO;
+		}
+		if (error == 0) {
+			old_features = provider->features;
+			if (old_features != features) {
+				/*
+				 * A feature epoch is also a packet epoch.  Do not
+				 * expose packets queued under the old socket-type
+				 * contract after the VMM reports a new negotiation.
+				 */
+				provider->generation++;
+				vsock_user_purge_locked(provider);
+				vsock_user_notify_locked(provider);
+				vsock_transport_reset_cid_locked(
+				    &vsock_user_transport,
+				    provider->guest_cid);
+			}
+			provider->features = features;
+			error = vsock_user_sync_transport_locked();
+			if (error != 0)
+				provider->features = old_features;
+		}
 		mtx_unlock(&vtvsock_mtx);
 		if (error == 0)
 			SDT_PROBE2(vsock, , , provider__features,
@@ -807,9 +1020,13 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 	}
 	if (cmd == VSOCK_IOC_TRANSPORT_RESET) {
 		error = devfs_get_cdevpriv((void **)&provider);
-		if (error != 0 || !provider->registered)
+		if (error != 0)
 			return (ENXIO);
 		mtx_lock(&vtvsock_mtx);
+		if (!provider->registered) {
+			mtx_unlock(&vtvsock_mtx);
+			return (ENXIO);
+		}
 		/*
 		 * Reads and writes drop the domain lock while copying packets.  Wait
 		 * for both directions so reset neither admits a pre-reset inbound
@@ -834,9 +1051,10 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 		provider->generation++;
 		vsock_user_purge_locked(provider);
 		vsock_user_notify_locked(provider);
-		vsock_transport_reset_locked();
-		error = vsock_transport_register_locked(&vsock_user_transport,
-		    provider, VSOCK_CID_HOST, 0);
+		vsock_transport_reset_cid_locked(&vsock_user_transport,
+		    provider->guest_cid);
+		provider->features = 0;
+		error = vsock_user_sync_transport_locked();
 		mtx_unlock(&vtvsock_mtx);
 		if (error == 0)
 			SDT_PROBE1(vsock, , , provider__reset,
