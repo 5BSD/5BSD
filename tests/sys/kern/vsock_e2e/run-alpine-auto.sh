@@ -31,6 +31,7 @@ RESET_TEST=${RESET_TEST:-no}
 REBOOT_TEST=${REBOOT_TEST:-no}
 BLOCK_TEST_MB=${BLOCK_TEST_MB:-256}
 BLOCK_IMAGE_MB=${BLOCK_IMAGE_MB:-1024}
+BLOCK_QUEUES=${BLOCK_QUEUES:-2}
 SCSI_TEST_MB=${SCSI_TEST_MB:-32}
 SCSI_IMAGE_MB=${SCSI_IMAGE_MB:-128}
 VSOCK_SOAK_ITERATIONS=${VSOCK_SOAK_ITERATIONS:-0}
@@ -143,6 +144,13 @@ esac
 [ "$BLOCK_TEST_MB" -gt 0 ] && [ "$BLOCK_IMAGE_MB" -gt 0 ] &&
     [ "$BLOCK_TEST_MB" -le "$BLOCK_IMAGE_MB" ] || {
 	echo "require 0 < BLOCK_TEST_MB <= BLOCK_IMAGE_MB" >&2
+	exit 2
+}
+case "$BLOCK_QUEUES" in
+''|*[!0-9]*) echo "BLOCK_QUEUES must be an integer from 1 through 8" >&2; exit 2 ;;
+esac
+[ "$BLOCK_QUEUES" -ge 1 ] && [ "$BLOCK_QUEUES" -le 8 ] || {
+	echo "BLOCK_QUEUES must be an integer from 1 through 8" >&2
 	exit 2
 }
 case "$SCSI_TEST_MB:$SCSI_IMAGE_MB" in
@@ -442,7 +450,7 @@ start_console()
 
 launch_vm()
 {
-	set -- "$BHYVE" -c 2 -m 2G -H -w \
+	set -- "$BHYVE" -c "$vm_cpus" -m 2G -H -w \
 	    -s 0,hostbridge -s "3,ahci-cd,$ISO" \
 	    -s "4,virtio-net,$tap$net_transport_opt"
 	[ "$VIRTIO_MSIX" = yes ] || set -- "$@" -W
@@ -454,7 +462,7 @@ launch_vm()
 	[ "$run_rng_device" = no ] || set -- "$@" \
 	    -s "7,virtio-rnd$rng_transport_opt"
 	[ "$run_block_device" = no ] || set -- "$@" \
-	    -s "8,virtio-blk,$block_image$block_transport_opt"
+	    -s "8,virtio-blk,$block_image$block_transport_opt$block_queues_opt"
 	[ "$run_scsi_device" = no ] || set -- "$@" \
 	    -s "9,virtio-scsi,/dev/cam/ctl$scsi_transport_opt"
 	[ "$run_console_device" = no ] || set -- "$@" \
@@ -734,7 +742,7 @@ run_rng()
 run_block()
 {
 	block_bytes=$((BLOCK_TEST_MB * 1024 * 1024))
-	output=$(guest_cmd "python3 /tmp/gblock.py write '$transport' '$block_bytes'" 180) || {
+	output=$(guest_cmd "python3 /tmp/gblock.py write '$transport' '$block_bytes' '$block_queues_expected'" 180) || {
 		status=$?
 		echo "guest virtio-blk verification failed (status $status)" >&2
 		[ -z "$output" ] || printf '%s\n' "$output" >&2
@@ -748,7 +756,7 @@ run_block()
 
 verify_block()
 {
-	output=$(guest_cmd "python3 /tmp/gblock.py verify '$transport' '$block_bytes' '$block_sha256'" 120) || {
+	output=$(guest_cmd "python3 /tmp/gblock.py verify '$transport' '$block_bytes' '$block_sha256' '$block_queues_expected'" 120) || {
 		status=$?
 		echo "post-lifecycle virtio-blk verification failed (status $status)" >&2
 		[ -z "$output" ] || printf '%s\n' "$output" >&2
@@ -1135,20 +1143,30 @@ for transport in $TRANSPORTS; do
 	ninep_tag="bhyve-e2e-9p-$transport-$$"
 	ninep_seed="seed-9p-$transport-$$"
 	if [ "$transport" = modern ]; then
+		vm_cpus=2
+		if [ "$run_block_device" = yes ] &&
+		    [ "$BLOCK_QUEUES" -gt "$vm_cpus" ]; then
+			vm_cpus=$BLOCK_QUEUES
+		fi
 		net_transport_opt=",transport=modern"
 		vsock_transport_opt=",transport=modern"
 		input_transport_opt=",transport=modern"
 		rng_transport_opt=",transport=modern"
 		block_transport_opt=",transport=modern"
+		block_queues_opt=",queues=$BLOCK_QUEUES"
+		block_queues_expected=$BLOCK_QUEUES
 		scsi_transport_opt=",transport=modern"
 		console_transport_opt=",transport=modern"
 		ninep_transport_opt=",transport=modern"
 	else
+		vm_cpus=2
 		# Deliberately omit the option to exercise the compatibility default.
 		net_transport_opt=
 		vsock_transport_opt=
 		rng_transport_opt=
 		block_transport_opt=
+		block_queues_opt=
+		block_queues_expected=1
 		scsi_transport_opt=
 		console_transport_opt=
 		ninep_transport_opt=

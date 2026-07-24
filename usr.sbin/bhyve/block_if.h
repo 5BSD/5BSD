@@ -49,7 +49,7 @@ struct vm_snapshot_meta;
  * pending requests that can be queued.
  */
 #define	BLOCKIF_IOV_MAX		128	/* not practical to be IOV_MAX */
-#define	BLOCKIF_RING_MAX	128
+#define	BLOCKIF_RING_MAX	1024
 
 struct blockif_req {
 	int		br_iovcnt;

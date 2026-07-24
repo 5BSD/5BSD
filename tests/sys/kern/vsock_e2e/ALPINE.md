@@ -100,6 +100,14 @@ does not match the host.  `BLOCK_TEST_MB` and `BLOCK_IMAGE_MB` control the
 written prefix and disposable image size.  `RESET_TEST=no` or `REBOOT_TEST=no`
 can narrow a debugging run without changing the acceptance defaults.
 
+Modern block runs default to `BLOCK_QUEUES=2`.  The verifier requires
+`VIRTIO_BLK_F_MQ`, counts the Linux hardware queues under
+`/sys/class/block/*/mq`, and exercises reset/rebind plus persistence with the
+multiqueue device.  Set `BLOCK_QUEUES=1..8` to select another advertised queue
+count; the runner supplies at least that many vCPUs so Linux does not
+legitimately reduce its hardware-queue count.  Legacy runs deliberately retain
+one queue.
+
 For acceptance testing, use `run-alpine-matrix.sh`.  It first runs the
 sanitizer-backed real-source device harnesses and VM-free host pipeline
 controls.  It then runs net, vsock, RNG, block, SCSI, console, 9P, and input

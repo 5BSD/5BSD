@@ -15,6 +15,7 @@ SECTOR_SIZE = 512
 # Linux UAPI include/uapi/linux/fs.h: _IO(0x12, 127).
 BLKZEROOUT = 0x127F
 VIRTIO_BLK_F_WRITE_ZEROES = 14
+VIRTIO_BLK_F_MQ = 12
 VIRTIO_RING_F_INDIRECT_DESC = 28
 VIRTIO_F_NOTIFICATION_DATA = 38
 VIRTIO_F_RING_RESET = 40
@@ -77,6 +78,28 @@ def require_features(child, required):
     for bit, name in required:
         if not negotiated_feature(child, bit):
             raise RuntimeError(f"virtio-blk did not negotiate {name}")
+
+
+def require_multiqueue(child, device, expected, sys_root="/sys"):
+    if expected < 1:
+        raise RuntimeError(f"invalid expected queue count: {expected}")
+    if expected > 1 and not negotiated_feature(child, VIRTIO_BLK_F_MQ):
+        raise RuntimeError("virtio-blk did not negotiate VIRTIO_BLK_F_MQ")
+    name = os.path.basename(device)
+    mq_path = os.path.join(sys_root, "class/block", name, "mq")
+    try:
+        queues = [
+            entry
+            for entry in os.listdir(mq_path)
+            if entry.isdigit() and os.path.isdir(os.path.join(mq_path, entry))
+        ]
+    except OSError as error:
+        raise RuntimeError(f"cannot inspect {mq_path}: {error}") from error
+    if len(queues) != expected:
+        raise RuntimeError(
+            f"virtio-blk exposed {len(queues)} Linux hardware queues, "
+            f"expected {expected}"
+        )
 
 
 def pattern_chunk(counter, size):
@@ -288,6 +311,8 @@ def self_test():
 
         queue = root + "/sys/class/block/vdz/queue"
         os.makedirs(queue)
+        for index in range(4):
+            os.makedirs(root + f"/sys/class/block/vdz/mq/{index}")
         with open(
             queue + "/write_zeroes_max_bytes", "w", encoding="ascii"
         ) as stream:
@@ -307,6 +332,24 @@ def self_test():
             pass
         else:
             raise AssertionError("undersized WRITE ZEROES limit was accepted")
+        try:
+            require_multiqueue(found_child, found, 4, root + "/sys")
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("missing VIRTIO_BLK_F_MQ was accepted")
+        features[VIRTIO_BLK_F_MQ] = "1"
+        with open(child + "/features", "w", encoding="ascii") as stream:
+            stream.write("".join(features) + "\n")
+        require_multiqueue(
+            found_child, found, 4, root + "/sys"
+        )
+        try:
+            require_multiqueue(found_child, found, 3, root + "/sys")
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("wrong Linux hardware queue count was accepted")
         if zero_test_range(2 * CHUNK_SIZE) != (CHUNK_SIZE, CHUNK_SIZE):
             raise AssertionError("wrong WRITE ZEROES test range")
     print("SELFTEST PASS")
@@ -316,20 +359,23 @@ def main():
     if sys.argv[1:] == ["--self-test"]:
         self_test()
         return
-    if len(sys.argv) not in (4, 5):
+    if len(sys.argv) not in (5, 6):
         raise SystemExit(
             "usage: gblock.py --self-test | "
-            "write transport bytes | verify transport bytes sha256"
+            "write transport bytes queues | "
+            "verify transport bytes sha256 queues"
         )
     command, transport, size_text = sys.argv[1:4]
     size = int(size_text)
+    expected_queues = int(sys.argv[-1])
     if size <= 0:
         raise RuntimeError("byte count must be positive")
     device, child = find_bound_block(expected_device(transport))
     require_features(child, REQUIRED_FEATURES)
     if transport == "modern":
         require_features(child, MODERN_REQUIRED_FEATURES)
-    if command == "write" and len(sys.argv) == 4:
+    require_multiqueue(child, device, expected_queues)
+    if command == "write" and len(sys.argv) == 5:
         pattern_digest = write_pattern(device, size)
         zero_offset, zero_length = zero_test_range(size)
         expected = expected_pattern_digest(size, zero_offset, zero_length)
@@ -344,9 +390,10 @@ def main():
             )
         print(
             f"PASS block bytes={size} sha256={actual} device={device} "
-            f"indirect_desc=yes write_zeroes=yes zero_limit={zero_limit}"
+            f"indirect_desc=yes write_zeroes=yes queues={expected_queues} "
+            f"zero_limit={zero_limit}"
         )
-    elif command == "verify" and len(sys.argv) == 5:
+    elif command == "verify" and len(sys.argv) == 6:
         wanted = sys.argv[4]
         actual = read_digest(device, size)
         if actual != wanted:
@@ -356,7 +403,7 @@ def main():
             raise RuntimeError("WRITE ZEROES range did not persist across reboot")
         print(
             f"PASS block-persist bytes={size} sha256={actual} device={device} "
-            "indirect_desc=yes write_zeroes=yes"
+            f"indirect_desc=yes write_zeroes=yes queues={expected_queues}"
         )
     else:
         raise SystemExit("invalid gblock.py command or argument count")

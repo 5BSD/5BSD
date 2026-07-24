@@ -58,8 +58,11 @@
 
 #define	VTBLK_BSIZE	512
 #define	VTBLK_RINGSZ	128
+#define	VTBLK_MAXQ	8
+#define	VTBLK_MAXREQ	(VTBLK_RINGSZ * VTBLK_MAXQ)
 
-_Static_assert(VTBLK_RINGSZ <= BLOCKIF_RING_MAX, "Each ring entry must be able to queue a request");
+_Static_assert(VTBLK_MAXREQ <= BLOCKIF_RING_MAX,
+    "All ring entries must be able to queue a request");
 
 #define	VTBLK_S_OK	0
 #define	VTBLK_S_IOERR	1
@@ -178,7 +181,9 @@ struct pci_vtblk_ioreq {
 	bool				io_stabilizing;
 	bool				io_active;
 	uint16_t			io_idx;
-	uint64_t			io_generation;
+	struct vqueue_info		*io_vq;
+	uint64_t			io_device_generation;
+	uint64_t			io_queue_generation;
 };
 
 struct virtio_blk_discard_write_zeroes {
@@ -195,17 +200,19 @@ struct pci_vtblk_softc {
 	struct virtio_softc vbsc_vs;
 	pthread_mutex_t vsc_mtx;
 	pthread_cond_t vbsc_reset_cond;
-	struct vqueue_info vbsc_vq;
+	struct vqueue_info vbsc_vqs[VTBLK_MAXQ];
 	struct vtblk_config vbsc_cfg;
 	struct virtio_consts vbsc_consts;
 	struct blockif_ctxt *bc;
+	struct pci_vtblk_ioreq *vbsc_ios;
+	uint16_t vbsc_nqueues;
 	uint64_t vbsc_generation;
 	uint64_t vbsc_qreset_generation;
+	struct vqueue_info *vbsc_qreset_vq;
 	bool vbsc_qreset_pending;
 	bool vbsc_resetting;
 	bool vbsc_reset_waiting;
 	char vbsc_ident[VTBLK_BLK_ID_BYTES];
-	struct pci_vtblk_ioreq vbsc_ios[VTBLK_RINGSZ];
 };
 
 static void pci_vtblk_reset(void *);
@@ -214,6 +221,8 @@ static int pci_vtblk_cancel_request_locked(struct pci_vtblk_softc *,
 static void pci_vtblk_reset_enter(struct pci_vtblk_softc *);
 static void pci_vtblk_reset_leave(struct pci_vtblk_softc *);
 static bool pci_vtblk_requests_drained(const struct pci_vtblk_softc *);
+static bool pci_vtblk_queue_requests_drained(
+    const struct pci_vtblk_softc *, const struct vqueue_info *);
 static bool pci_vtblk_write_needs_stabilization(
     const struct pci_vtblk_softc *);
 static void pci_vtblk_configure_range_limits(struct pci_vtblk_softc *,
@@ -257,6 +266,7 @@ pci_vtblk_reset(void *vsc)
 	DPRINTF(("vtblk: device reset requested !"));
 	pci_vtblk_reset_enter(sc);
 	sc->vbsc_qreset_pending = false;
+	sc->vbsc_qreset_vq = NULL;
 	sc->vbsc_generation++;
 	/*
 	 * Invalidate the ring before cancellation.  Stale callbacks can then
@@ -264,7 +274,7 @@ pci_vtblk_reset(void *vsc)
 	 * the host backend to stop using their data buffers.
 	 */
 	vi_reset_dev(&sc->vbsc_vs);
-	for (i = 0; i < VTBLK_RINGSZ; i++) {
+	for (i = 0; i < sc->vbsc_nqueues * VTBLK_RINGSZ; i++) {
 		io = &sc->vbsc_ios[i];
 		if (!io->io_active)
 			continue;
@@ -309,10 +319,11 @@ pci_vtblk_reset_leave(struct pci_vtblk_softc *sc)
  * the callback needs vsc_mtx.  Drop the device lock while cancelling or the
  * reset path and completion callback can wait on each other forever.
  *
- * Callers have already invalidated the queue and advanced vbsc_generation, so
- * no request can be reused while the lock is dropped.  EINVAL means the
- * backend no longer owns the request; either the callback has completed or is
- * completing it through the stale-generation path.
+ * Callers have already invalidated either the device generation or the
+ * selected queue generation, so no request can be reused while the lock is
+ * dropped.  EINVAL means the backend no longer owns the request; either the
+ * callback has completed or is completing it through the stale-generation
+ * path.
  */
 static int
 pci_vtblk_cancel_request_locked(struct pci_vtblk_softc *sc,
@@ -346,8 +357,22 @@ pci_vtblk_requests_drained(const struct pci_vtblk_softc *sc)
 {
 	int i;
 
-	for (i = 0; i < VTBLK_RINGSZ; i++) {
+	for (i = 0; i < sc->vbsc_nqueues * VTBLK_RINGSZ; i++) {
 		if (sc->vbsc_ios[i].io_active)
+			return (false);
+	}
+	return (true);
+}
+
+static bool
+pci_vtblk_queue_requests_drained(const struct pci_vtblk_softc *sc,
+    const struct vqueue_info *vq)
+{
+	int i;
+
+	for (i = 0; i < sc->vbsc_nqueues * VTBLK_RINGSZ; i++) {
+		if (sc->vbsc_ios[i].io_active &&
+		    sc->vbsc_ios[i].io_vq == vq)
 			return (false);
 	}
 	return (true);
@@ -362,23 +387,27 @@ pci_vtblk_qreset(void *vsc, struct vqueue_info *vq, uint64_t generation)
 	int error, i;
 
 	sc = vsc;
-	if (vq->vq_num != 0)
+	if (vq->vq_num >= sc->vbsc_nqueues ||
+	    vq != &sc->vbsc_vqs[vq->vq_num])
 		return (EINVAL);
+	DPRINTF(("vtblk: queue reset requested q=%u generation=%ju",
+	    vq->vq_num, (uintmax_t)generation));
 	pci_vtblk_reset_enter(sc);
 
 	/*
-	 * Invalidate every request from the old queue incarnation before
-	 * cancellation.  Pending requests are removed synchronously.  For a
-	 * busy request, EBUSY means its normal callback may still be pending;
-	 * keep queue_reset asserted until that callback has stopped using the
-	 * old guest buffers.
+	 * The modern transport has already advanced vq_generation, invalidating
+	 * every request from this queue's old incarnation.  Pending requests are
+	 * removed synchronously without touching other queues.  For a busy
+	 * request, EBUSY means its normal callback may still be pending; keep
+	 * queue_reset asserted until that callback has stopped using the old
+	 * guest buffers.
 	 */
-	sc->vbsc_generation++;
 	sc->vbsc_qreset_pending = false;
+	sc->vbsc_qreset_vq = NULL;
 	pending = false;
-	for (i = 0; i < VTBLK_RINGSZ; i++) {
+	for (i = 0; i < sc->vbsc_nqueues * VTBLK_RINGSZ; i++) {
 		io = &sc->vbsc_ios[i];
-		if (!io->io_active)
+		if (!io->io_active || io->io_vq != vq)
 			continue;
 		error = pci_vtblk_cancel_request_locked(sc, io);
 		switch (error) {
@@ -393,11 +422,12 @@ pci_vtblk_qreset(void *vsc, struct vqueue_info *vq, uint64_t generation)
 			return (error);
 		}
 	}
-	if (!pending || pci_vtblk_requests_drained(sc)) {
+	if (!pending || pci_vtblk_queue_requests_drained(sc, vq)) {
 		pci_vtblk_reset_leave(sc);
 		return (0);
 	}
 	sc->vbsc_qreset_generation = generation;
+	sc->vbsc_qreset_vq = vq;
 	sc->vbsc_qreset_pending = true;
 	return (EINPROGRESS);
 }
@@ -405,7 +435,6 @@ pci_vtblk_qreset(void *vsc, struct vqueue_info *vq, uint64_t generation)
 static void
 pci_vtblk_done_locked(struct pci_vtblk_ioreq *io, int err)
 {
-	struct pci_vtblk_softc *sc = io->io_sc;
 	uint32_t used_len;
 
 	io->io_active = false;
@@ -426,8 +455,8 @@ pci_vtblk_done_locked(struct pci_vtblk_ioreq *io, int err)
 	if (io->io_writes_data && io->io_req.br_resid >= 0 &&
 	    (uint64_t)io->io_req.br_resid <= io->io_data_len)
 		used_len += io->io_data_len - io->io_req.br_resid;
-	vq_relchain(&sc->vbsc_vq, io->io_idx, used_len);
-	vq_endchains(&sc->vbsc_vq, 0);
+	vq_relchain(io->io_vq, io->io_idx, used_len);
+	vq_endchains(io->io_vq, 0);
 }
 
 #ifdef BHYVE_SNAPSHOT
@@ -469,14 +498,18 @@ pci_vtblk_done(struct blockif_req *br, int err)
 {
 	struct pci_vtblk_ioreq *io = br->br_param;
 	struct pci_vtblk_softc *sc = io->io_sc;
+	struct vqueue_info *reset_vq;
 	uint64_t generation;
 	bool complete, reset_complete;
 
 	complete = true;
 	reset_complete = false;
+	reset_vq = NULL;
 	generation = 0;
 	pthread_mutex_lock(&sc->vsc_mtx);
-	if (io->io_active && io->io_generation == sc->vbsc_generation) {
+	if (io->io_active &&
+	    io->io_device_generation == sc->vbsc_generation &&
+	    io->io_queue_generation == io->io_vq->vq_generation) {
 		if (err == 0 && io->io_full_transfer &&
 		    io->io_req.br_resid != 0)
 			err = EIO;
@@ -497,16 +530,18 @@ pci_vtblk_done(struct blockif_req *br, int err)
 	}
 	if (sc->vbsc_reset_waiting)
 		pthread_cond_broadcast(&sc->vbsc_reset_cond);
-	if (sc->vbsc_qreset_pending && pci_vtblk_requests_drained(sc)) {
+	if (sc->vbsc_qreset_pending &&
+	    pci_vtblk_queue_requests_drained(sc, sc->vbsc_qreset_vq)) {
 		generation = sc->vbsc_qreset_generation;
+		reset_vq = sc->vbsc_qreset_vq;
 		sc->vbsc_qreset_pending = false;
+		sc->vbsc_qreset_vq = NULL;
 		pci_vtblk_reset_leave(sc);
 		reset_complete = true;
 	}
 	pthread_mutex_unlock(&sc->vsc_mtx);
 	if (reset_complete)
-		vi_pci_modern_queue_reset_complete(&sc->vbsc_vq,
-		    generation, 0);
+		vi_pci_modern_queue_reset_complete(reset_vq, generation, 0);
 }
 
 static void
@@ -671,11 +706,16 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 		return;
 	}
 
-	io = &sc->vbsc_ios[req.idx];
+	if (vq->vq_num >= sc->vbsc_nqueues || req.idx >= VTBLK_RINGSZ) {
+		pci_vtblk_complete_invalid(vq, &req, iov, n);
+		return;
+	}
+	io = &sc->vbsc_ios[vq->vq_num * VTBLK_RINGSZ + req.idx];
 	if (io->io_active) {
 		pci_vtblk_complete_invalid(vq, &req, iov, n);
 		return;
 	}
+	io->io_vq = vq;
 	io->io_data_len = 0;
 	io->io_writes_data = false;
 	io->io_full_transfer = false;
@@ -803,13 +843,14 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 	if (io->io_writes_data)
 		io->io_data_len = (uint32_t)iolen;
 
-	DPRINTF(("virtio-block: %s op, %zd bytes, %d segs, offset %ld",
-		 writeop ? "write/discard" : "read/ident", iolen,
-		 io->io_req.br_iovcnt,
-		 io->io_req.br_offset));
+	DPRINTF(("virtio-block: q=%u %s op, %zd bytes, %d segs, "
+	    "offset %ld", vq->vq_num,
+	    writeop ? "write/discard" : "read/ident", iolen,
+	    io->io_req.br_iovcnt, io->io_req.br_offset));
 
 	io->io_active = true;
-	io->io_generation = sc->vbsc_generation;
+	io->io_device_generation = sc->vbsc_generation;
+	io->io_queue_generation = vq->vq_generation;
 	switch (type) {
 	case VBH_OP_READ:
 		err = blockif_read(sc->bc, &io->io_req);
@@ -970,31 +1011,49 @@ pci_vtblk_configure_range_limits(struct pci_vtblk_softc *sc, int sectsz,
 }
 
 static int
+pci_vtblk_parse_queues(const char *value, uint16_t *nqueues,
+    const char **errstr)
+{
+	long parsed;
+
+	*errstr = NULL;
+	if (value == NULL) {
+		*nqueues = 1;
+		return (0);
+	}
+	parsed = strtonum(value, 1, VTBLK_MAXQ, errstr);
+	if (*errstr != NULL)
+		return (EINVAL);
+	*nqueues = (uint16_t)parsed;
+	return (0);
+}
+
+static int
 pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	char bident[sizeof("XXX:XXX")];
 	struct blockif_ctxt *bctxt;
-	const char *path, *serial;
+	const char *errstr, *path, *queues_value, *serial;
 	MD5_CTX mdctx;
 	u_char digest[16];
 	struct pci_vtblk_softc *sc;
 	bool intr_initialized;
 	off_t size;
+	uint16_t nqueues;
 	int i, sectsz, sts, sto;
 
 	/*
 	 * The supplied backing file has to exist
 	 */
+	queues_value = get_config_value_node(nvl, "queues");
+	if (pci_vtblk_parse_queues(queues_value, &nqueues, &errstr) != 0) {
+		EPRINTLN("virtio-blk queues is %s: %s", errstr, queues_value);
+		return (1);
+	}
 	snprintf(bident, sizeof(bident), "%u:%u", pi->pi_slot, pi->pi_func);
 	bctxt = blockif_open(nvl, bident);
 	if (bctxt == NULL) {
 		perror("Could not open backing file");
-		return (1);
-	}
-
-	if (blockif_add_boot_device(pi, bctxt)) {
-		perror("Invalid boot device");
-		blockif_close(bctxt);
 		return (1);
 	}
 
@@ -1009,38 +1068,53 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 	intr_initialized = false;
 	sc->bc = bctxt;
-	for (i = 0; i < VTBLK_RINGSZ; i++) {
+	sc->vbsc_nqueues = nqueues;
+	sc->vbsc_ios = calloc(sc->vbsc_nqueues * VTBLK_RINGSZ,
+	    sizeof(*sc->vbsc_ios));
+	if (sc->vbsc_ios == NULL)
+		goto failed_early;
+	for (i = 0; i < sc->vbsc_nqueues * VTBLK_RINGSZ; i++) {
 		struct pci_vtblk_ioreq *io = &sc->vbsc_ios[i];
 		io->io_req.br_callback = pci_vtblk_done;
 		io->io_req.br_param = io;
 		io->io_sc = sc;
-		io->io_idx = i;
+		io->io_idx = i % VTBLK_RINGSZ;
 	}
 
 	bcopy(&vtblk_vi_consts, &sc->vbsc_consts, sizeof (vtblk_vi_consts));
 	sc->vbsc_consts.vc_hv_caps = pci_vtblk_backend_caps(sc->bc);
+	sc->vbsc_consts.vc_nvq = sc->vbsc_nqueues;
 
 	if (pthread_mutex_init(&sc->vsc_mtx, NULL) != 0) {
 		blockif_close(sc->bc);
+		free(sc->vbsc_ios);
 		free(sc);
 		return (1);
 	}
 	if (pthread_cond_init(&sc->vbsc_reset_cond, NULL) != 0) {
 		pthread_mutex_destroy(&sc->vsc_mtx);
 		blockif_close(sc->bc);
+		free(sc->vbsc_ios);
 		free(sc);
 		return (1);
 	}
 
 	/* init virtio softc and virtqueues */
-	vi_softc_linkup(&sc->vbsc_vs, &sc->vbsc_consts, sc, pi, &sc->vbsc_vq);
+	vi_softc_linkup(&sc->vbsc_vs, &sc->vbsc_consts, sc, pi,
+	    sc->vbsc_vqs);
 	sc->vbsc_vs.vs_mtx = &sc->vsc_mtx;
 
-	sc->vbsc_vq.vq_qsize = VTBLK_RINGSZ;
-	/* sc->vbsc_vq.vq_notify = we have no per-queue notify */
+	for (i = 0; i < sc->vbsc_nqueues; i++)
+		sc->vbsc_vqs[i].vq_qsize = VTBLK_RINGSZ;
 	if (vi_pci_select_transport(&sc->vbsc_vs, nvl,
 	    VIRTIO_PCI_LEGACY_DEFAULT) != 0)
 		goto failed;
+	if (sc->vbsc_nqueues > 1 && !vi_pci_is_modern(&sc->vbsc_vs)) {
+		EPRINTLN("virtio-blk queues requires transport=modern");
+		goto failed;
+	}
+	if (sc->vbsc_nqueues > 1)
+		sc->vbsc_consts.vc_hv_caps |= VTBLK_F_MQ;
 
 	/*
 	 * If an explicit identifier is not given, create an
@@ -1084,6 +1158,7 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vbsc_cfg.vbc_topology.min_io_size = 0;
 	sc->vbsc_cfg.vbc_topology.opt_io_size = 0;
 	sc->vbsc_cfg.vbc_writeback = 0;
+	sc->vbsc_cfg.num_queues = htole16(sc->vbsc_nqueues);
 	pci_vtblk_configure_range_limits(sc, sectsz, sts);
 
 	/*
@@ -1110,16 +1185,27 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 			goto failed;
 	} else
 		vi_set_io_bar(&sc->vbsc_vs, 0);
+	if (blockif_add_boot_device(pi, bctxt)) {
+		perror("Invalid boot device");
+		goto failed;
+	}
 	blockif_register_resize_callback(sc->bc, pci_vtblk_resized, sc);
 	return (0);
 
 failed:
 	blockif_close(sc->bc);
 	free(sc->vbsc_vs.vs_modern);
+	free(sc->vbsc_ios);
 	if (intr_initialized)
 		pthread_mutex_destroy(&sc->vbsc_vs.vs_isr_mtx);
 	pthread_cond_destroy(&sc->vbsc_reset_cond);
 	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+	return (1);
+
+failed_early:
+	blockif_close(sc->bc);
+	free(sc->vbsc_ios);
 	free(sc);
 	return (1);
 }

@@ -66,6 +66,13 @@
 
 #define BLOCKIF_NUMTHR	8
 #define BLOCKIF_MAXREQ	(BLOCKIF_RING_MAX + BLOCKIF_NUMTHR)
+/*
+ * blockif_queuesz() historically exposed a 135-entry caller pool.  Keep that
+ * contract for AHCI and other users whose request objects are much larger
+ * than blockif_elem; virtio-blk uses BLOCKIF_RING_MAX directly for its
+ * bounded multiqueue request pool.
+ */
+#define BLOCKIF_COMPAT_QUEUESZ	(128 + BLOCKIF_NUMTHR - 1)
 
 enum blockop {
 	BOP_READ,
@@ -1073,7 +1080,7 @@ int
 blockif_queuesz(struct blockif_ctxt *bc)
 {
 	assert(bc->bc_magic == BLOCKIF_SIG);
-	return (BLOCKIF_MAXREQ - 1);
+	return (BLOCKIF_COMPAT_QUEUESZ);
 }
 
 int

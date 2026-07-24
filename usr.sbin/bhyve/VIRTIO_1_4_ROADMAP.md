@@ -43,8 +43,11 @@ soaks.
 1. **Network multiqueue and RSS.**  Add the control virtqueue, queue-pair
    negotiation, receive steering, hash reporting, and per-queue reset.  This is
    the largest immediate throughput improvement for multi-vCPU guests.
-2. **Block multiqueue.**  Add `VIRTIO_BLK_F_MQ`, independent request queues,
-   queue-local quiesce/reset, topology fields, and write-cache configuration.
+2. **Block multiqueue.**  `VIRTIO_BLK_F_MQ`, up to eight independent request
+   queues, queue-local quiesce/reset, an independent document oracle, and a
+   Linux hardware-queue gate are implemented.  The remaining block item is
+   writable `VIRTIO_BLK_F_CONFIG_WCE`; the existing topology fields are
+   already advertised and covered.
 3. **SCSI multiqueue and events.**  Scale request queues with vCPUs and cover
    hotplug/change events without disturbing unrelated queues.
 4. **9P queue reset.**  Refactor lib9p request ownership so a selected queue can

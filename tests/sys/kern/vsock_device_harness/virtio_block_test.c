@@ -21,6 +21,10 @@
 #include "virtio_1_4_wire.h"
 #include "pci_virtio_block.c"
 
+enum {
+	DUT_VTBLK_F_MQ = VTBLK_F_MQ,
+};
+
 /* Keep test protocol values independent from the included implementation. */
 #undef VBH_OP_READ
 #define	VBH_OP_READ			VIRTIO14_BLK_T_IN
@@ -50,6 +54,8 @@
 #define	VTBLK_F_RO			VIRTIO14_BLK_F_RO
 #undef VTBLK_F_FLUSH
 #define	VTBLK_F_FLUSH			VIRTIO14_BLK_F_FLUSH
+#undef VTBLK_F_MQ
+#define	VTBLK_F_MQ			VIRTIO14_BLK_F_MQ
 #undef VTBLK_F_DISCARD
 #define	VTBLK_F_DISCARD			VIRTIO14_BLK_F_DISCARD
 #undef VTBLK_F_WRITE_ZEROES
@@ -79,6 +85,7 @@ static int g_cancel_calls;
 static int g_cancel_error;
 static int g_cancel_saw_unlocked;
 static int g_rel_calls;
+static struct vqueue_info *g_rel_vq;
 static uint32_t g_rel_len;
 static int g_end_calls;
 static int g_reset_calls;
@@ -92,6 +99,7 @@ static struct virtio_blk_hdr g_header;
 static struct virtio_blk_discard_write_zeroes g_discard;
 static uint8_t g_data[VTBLK_BSIZE];
 static uint8_t g_status;
+static struct pci_vtblk_ioreq g_ios[VTBLK_MAXREQ];
 
 static void *
 complete_block_request(void *arg)
@@ -164,6 +172,7 @@ reset_mocks(void)
 	g_cancel_error = 0;
 	g_cancel_saw_unlocked = 0;
 	g_rel_calls = 0;
+	g_rel_vq = NULL;
 	g_rel_len = UINT32_MAX;
 	g_end_calls = 0;
 	g_reset_calls = 0;
@@ -175,16 +184,31 @@ reset_mocks(void)
 }
 
 static void
+setup_softc_queues(struct pci_vtblk_softc *sc, uint16_t nqueues)
+{
+
+	ATF_REQUIRE(nqueues >= 1 && nqueues <= VTBLK_MAXQ);
+	memset(sc, 0, sizeof(*sc));
+	sc->vbsc_cfg.vbc_capacity = 1024;
+	sc->vbsc_nqueues = nqueues;
+	for (uint16_t i = 0; i < nqueues; i++) {
+		sc->vbsc_vqs[i].vq_num = i;
+		sc->vbsc_vqs[i].vq_qsize = VTBLK_RINGSZ;
+	}
+	memset(g_ios, 0, sizeof(g_ios));
+	sc->vbsc_ios = g_ios;
+	for (int i = 0; i < nqueues * VTBLK_RINGSZ; i++) {
+		sc->vbsc_ios[i].io_sc = sc;
+		sc->vbsc_ios[i].io_idx = i % VTBLK_RINGSZ;
+		sc->vbsc_ios[i].io_req.br_param = &sc->vbsc_ios[i];
+	}
+}
+
+static void
 setup_softc(struct pci_vtblk_softc *sc)
 {
 
-	memset(sc, 0, sizeof(*sc));
-	sc->vbsc_cfg.vbc_capacity = 1024;
-	for (int i = 0; i < VTBLK_RINGSZ; i++) {
-		sc->vbsc_ios[i].io_sc = sc;
-		sc->vbsc_ios[i].io_idx = i;
-		sc->vbsc_ios[i].io_req.br_param = &sc->vbsc_ios[i];
-	}
+	setup_softc_queues(sc, 1);
 }
 
 int
@@ -200,11 +224,12 @@ vq_getchain(struct vqueue_info *vq __unused, struct iovec *iov, int niov,
 }
 
 void
-vq_relchain(struct vqueue_info *vq __unused, uint16_t idx, uint32_t len)
+vq_relchain(struct vqueue_info *vq, uint16_t idx, uint32_t len)
 {
 
 	ATF_CHECK(idx == g_req.idx);
 	g_rel_calls++;
+	g_rel_vq = vq;
 	g_rel_len = len;
 }
 
@@ -324,7 +349,7 @@ ATF_TC_BODY(malformed_chains, tc)
 	reset_mocks();
 	setup_softc(&sc);
 	g_iov[0].iov_len--;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_backend_reads == 0);
 	ATF_CHECK(g_status == VTBLK_S_IOERR);
 	ATF_CHECK(g_rel_calls == 1 && g_rel_len == 1);
@@ -332,20 +357,20 @@ ATF_TC_BODY(malformed_chains, tc)
 	reset_mocks();
 	setup_softc(&sc);
 	g_req.ordered = false;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_status == UINT8_MAX);
 	ATF_CHECK(g_rel_calls == 1 && g_rel_len == 0);
 
 	reset_mocks();
 	setup_softc(&sc);
 	g_chain_n = BLOCKIF_IOV_MAX + 3;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_rel_calls == 1 && g_rel_len == 0);
 
 	reset_mocks();
 	setup_softc(&sc);
 	g_chain_n = -1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_rel_calls == 0);
 }
 
@@ -357,7 +382,7 @@ ATF_TC_BODY(opcode_layouts, tc)
 	reset_mocks();
 	setup_softc(&sc);
 	g_header.vbh_type = htole32(VBH_OP_READ);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_backend_reads == 1);
 	ATF_CHECK(g_rel_calls == 0);
 	sc.vbsc_ios[g_req.idx].io_req.br_resid = 0;
@@ -371,7 +396,7 @@ ATF_TC_BODY(opcode_layouts, tc)
 	g_header.vbh_type = htole32(VBH_OP_READ);
 	g_req.readable = 2;
 	g_req.writable = 1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_backend_reads == 0);
 	ATF_CHECK(g_status == VTBLK_S_IOERR);
 
@@ -380,13 +405,13 @@ ATF_TC_BODY(opcode_layouts, tc)
 	g_header.vbh_type = htole32(VBH_OP_WRITE);
 	g_req.readable = 2;
 	g_req.writable = 1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_backend_writes == 1);
 
 	reset_mocks();
 	setup_softc(&sc);
 	g_header.vbh_type = htole32(VBH_OP_FLUSH);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_backend_flushes == 0);
 	ATF_CHECK(g_status == VTBLK_S_IOERR);
 
@@ -397,7 +422,7 @@ ATF_TC_BODY(opcode_layouts, tc)
 	g_iov[1].iov_base = &g_status;
 	g_iov[1].iov_len = 1;
 	g_header.vbh_type = htole32(0x7fffffff);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_status == VTBLK_S_UNSUPP);
 
 	reset_mocks();
@@ -405,7 +430,7 @@ ATF_TC_BODY(opcode_layouts, tc)
 	memcpy(sc.vbsc_ident, "block-identity", sizeof("block-identity") - 1);
 	g_header.vbh_type = htole32(VBH_OP_IDENT);
 	g_iov[1].iov_len = VTBLK_BLK_ID_LEN;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_status == VTBLK_S_OK);
 	ATF_CHECK(g_rel_len == VTBLK_BLK_ID_LEN + 1);
 	ATF_CHECK(memcmp(g_data, "block-identity",
@@ -414,7 +439,7 @@ ATF_TC_BODY(opcode_layouts, tc)
 	reset_mocks();
 	setup_softc(&sc);
 	g_header.vbh_type = htole32(VBH_OP_READ | VBH_FLAG_BARRIER);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_status == VTBLK_S_UNSUPP);
 }
 
@@ -448,7 +473,7 @@ ATF_TC_BODY(split_request_fields, tc)
 	g_iov[2].iov_base = writable;
 	g_iov[2].iov_len = sizeof(writable);
 
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_REQUIRE_EQ(g_backend_reads, 1);
 	io = &sc.vbsc_ios[g_req.idx];
 	ATF_CHECK_EQ(io->io_req.br_iovcnt, 1);
@@ -472,7 +497,7 @@ ATF_TC_BODY(split_request_fields, tc)
 	g_iov[1].iov_len = sizeof(writable);
 	writable[0] = 0x5a;
 	writable[sizeof(writable) - 1] = UINT8_MAX;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK_EQ(writable[0], 0x5a);
 	ATF_CHECK_EQ(writable[sizeof(writable) - 1], VTBLK_S_IOERR);
 	ATF_CHECK_EQ(g_rel_len, 1);
@@ -494,7 +519,7 @@ ATF_TC_BODY(split_request_fields, tc)
 	g_iov[2].iov_len = 1;
 	g_iov[3].iov_base = NULL;
 	g_iov[3].iov_len = 0;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_REQUIRE_EQ(g_backend_reads, 1);
 	io = &sc.vbsc_ios[g_req.idx];
 	ATF_CHECK(io->io_status == &g_status);
@@ -514,7 +539,7 @@ ATF_TC_BODY(split_request_fields, tc)
 	g_iov[1].iov_len = 1;
 	g_iov[2].iov_base = NULL;
 	g_iov[2].iov_len = 0;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK_EQ(g_status, VIRTIO14_BLK_S_IOERR);
 	ATF_CHECK_EQ(g_rel_len, 1);
 }
@@ -528,7 +553,7 @@ ATF_TC_BODY(backend_and_range_errors, tc)
 	setup_softc(&sc);
 	g_header.vbh_type = htole32(VBH_OP_READ);
 	g_backend_error = E2BIG;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_backend_reads == 1);
 	ATF_CHECK(g_status == VTBLK_S_IOERR);
 	ATF_CHECK(g_rel_calls == 1 && g_rel_len == 1);
@@ -537,7 +562,7 @@ ATF_TC_BODY(backend_and_range_errors, tc)
 	setup_softc(&sc);
 	g_header.vbh_type = htole32(VBH_OP_READ);
 	g_header.vbh_sector = htole64((uint64_t)OFF_MAX / VTBLK_BSIZE + 1);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_backend_reads == 0);
 	ATF_CHECK(g_status == VTBLK_S_IOERR);
 
@@ -545,7 +570,7 @@ ATF_TC_BODY(backend_and_range_errors, tc)
 	setup_softc(&sc);
 	g_header.vbh_type = htole32(VBH_OP_READ);
 	g_iov[1].iov_len = VTBLK_BSIZE - 1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_backend_reads == 0);
 	ATF_CHECK(g_status == VTBLK_S_IOERR);
 
@@ -557,7 +582,7 @@ ATF_TC_BODY(backend_and_range_errors, tc)
 	g_req.readable = 2;
 	g_req.writable = 1;
 	g_iov[1].iov_len = 2 * VTBLK_BSIZE;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_backend_writes == 0);
 	ATF_CHECK(g_status == VTBLK_S_IOERR);
 
@@ -569,7 +594,7 @@ ATF_TC_BODY(backend_and_range_errors, tc)
 	g_req.writable = 1;
 	g_iov[1].iov_base = &g_status;
 	g_iov[1].iov_len = 1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_backend_flushes == 0);
 	ATF_CHECK(g_status == VTBLK_S_IOERR);
 
@@ -577,7 +602,7 @@ ATF_TC_BODY(backend_and_range_errors, tc)
 	setup_softc(&sc);
 	g_header.vbh_type = htole32(VBH_OP_IDENT);
 	g_iov[1].iov_len = VTBLK_BLK_ID_LEN - 1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_status == VTBLK_S_IOERR);
 }
 
@@ -593,7 +618,7 @@ ATF_TC_BODY(discard_validation, tc)
 	g_req.writable = 1;
 	g_iov[1].iov_base = &g_discard;
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_backend_deletes == 0);
 	ATF_CHECK(g_status == VTBLK_S_UNSUPP);
 
@@ -606,7 +631,7 @@ ATF_TC_BODY(discard_validation, tc)
 	g_iov[1].iov_base = &g_discard;
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
 	g_discard.num_sectors = htole32(8);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_backend_deletes == 1);
 
 	reset_mocks();
@@ -618,7 +643,7 @@ ATF_TC_BODY(discard_validation, tc)
 	g_iov[1].iov_base = &g_discard;
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
 	g_discard.flags = htole32(1);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_backend_deletes == 0);
 	ATF_CHECK(g_status == VTBLK_S_UNSUPP);
 
@@ -633,7 +658,7 @@ ATF_TC_BODY(discard_validation, tc)
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
 	g_discard.sector = htole64(7);
 	g_discard.num_sectors = htole32(2);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK(g_backend_deletes == 0);
 	ATF_CHECK(g_status == VTBLK_S_IOERR);
 }
@@ -654,7 +679,7 @@ ATF_TC_BODY(write_zeroes_validation, tc)
 	g_iov[1].iov_base = &g_discard;
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
 	g_discard.num_sectors = htole32(8);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK_EQ(g_backend_write_zeroes, 0);
 	ATF_CHECK_EQ(g_status, VIRTIO14_BLK_S_UNSUPP);
 
@@ -670,7 +695,7 @@ ATF_TC_BODY(write_zeroes_validation, tc)
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
 	g_discard.sector = htole64(5);
 	g_discard.num_sectors = htole32(7);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_REQUIRE_EQ(g_backend_write_zeroes, 1);
 	io = &sc.vbsc_ios[g_req.idx];
 	ATF_CHECK_EQ(io->io_req.br_offset,
@@ -696,7 +721,7 @@ ATF_TC_BODY(write_zeroes_validation, tc)
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
 	g_discard.num_sectors = htole32(1);
 	g_discard.flags = htole32(VIRTIO14_BLK_WRITE_ZEROES_FLAG_UNMAP);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK_EQ(g_backend_write_zeroes, 1);
 
 	/* Any flag other than the document-defined UNMAP bit is UNSUPP. */
@@ -712,7 +737,7 @@ ATF_TC_BODY(write_zeroes_validation, tc)
 	g_discard.num_sectors = htole32(1);
 	g_discard.flags = htole32(
 	    VIRTIO14_BLK_WRITE_ZEROES_FLAG_UNMAP << 1);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK_EQ(g_backend_write_zeroes, 0);
 	ATF_CHECK_EQ(g_status, VIRTIO14_BLK_S_UNSUPP);
 
@@ -727,7 +752,7 @@ ATF_TC_BODY(write_zeroes_validation, tc)
 	g_req.writable = 1;
 	g_iov[1].iov_base = ranges;
 	g_iov[1].iov_len = 2 * VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK_EQ(g_backend_write_zeroes, 0);
 	ATF_CHECK_EQ(g_status, VIRTIO14_BLK_S_IOERR);
 
@@ -741,7 +766,7 @@ ATF_TC_BODY(write_zeroes_validation, tc)
 	g_req.writable = 1;
 	g_iov[1].iov_base = &g_discard;
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE - 1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK_EQ(g_backend_write_zeroes, 0);
 	ATF_CHECK_EQ(g_status, VIRTIO14_BLK_S_IOERR);
 
@@ -757,7 +782,7 @@ ATF_TC_BODY(write_zeroes_validation, tc)
 	g_iov[1].iov_base = &g_discard;
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
 	g_discard.num_sectors = htole32(VTBLK_MAX_WRITE_ZEROES_SECT);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK_EQ(g_backend_write_zeroes, 1);
 	io = &sc.vbsc_ios[g_req.idx];
 	ATF_CHECK_EQ(io->io_req.br_resid,
@@ -778,7 +803,7 @@ ATF_TC_BODY(write_zeroes_validation, tc)
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
 	g_discard.num_sectors =
 	    htole32(VTBLK_MAX_WRITE_ZEROES_SECT + 1);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK_EQ(g_backend_write_zeroes, 0);
 	ATF_CHECK_EQ(g_status, VIRTIO14_BLK_S_IOERR);
 
@@ -794,7 +819,7 @@ ATF_TC_BODY(write_zeroes_validation, tc)
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
 	g_discard.sector = htole64(7);
 	g_discard.num_sectors = htole32(2);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK_EQ(g_backend_write_zeroes, 0);
 	ATF_CHECK_EQ(g_status, VIRTIO14_BLK_S_IOERR);
 
@@ -809,7 +834,7 @@ ATF_TC_BODY(write_zeroes_validation, tc)
 	g_iov[1].iov_base = &g_discard;
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
 	g_discard.num_sectors = htole32(1);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK_EQ(g_backend_write_zeroes, 0);
 	ATF_CHECK_EQ(g_status, VIRTIO14_BLK_S_IOERR);
 }
@@ -862,7 +887,7 @@ ATF_TC_BODY(readonly_and_stable_writes, tc)
 	g_header.vbh_type = htole32(VBH_OP_WRITE);
 	g_req.readable = 2;
 	g_req.writable = 1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK_EQ(g_backend_writes, 0);
 	ATF_CHECK_EQ(g_status, VTBLK_S_IOERR);
 	ATF_CHECK_EQ(g_rel_len, 1);
@@ -880,7 +905,7 @@ ATF_TC_BODY(readonly_and_stable_writes, tc)
 	g_req.writable = 1;
 	g_iov[1].iov_base = &g_discard;
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK_EQ(g_backend_deletes, 0);
 	ATF_CHECK_EQ(g_status, VIRTIO14_BLK_S_UNSUPP);
 	ATF_CHECK_EQ(g_rel_len, 1);
@@ -898,7 +923,7 @@ ATF_TC_BODY(readonly_and_stable_writes, tc)
 	g_req.writable = 1;
 	g_iov[1].iov_base = &g_discard;
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_CHECK_EQ(g_backend_deletes, 0);
 	ATF_CHECK_EQ(g_status, VTBLK_S_IOERR);
 	ATF_CHECK_EQ(g_rel_len, 1);
@@ -914,7 +939,7 @@ ATF_TC_BODY(readonly_and_stable_writes, tc)
 	g_header.vbh_type = htole32(VBH_OP_WRITE);
 	g_req.readable = 2;
 	g_req.writable = 1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	io = &sc.vbsc_ios[g_req.idx];
 	ATF_REQUIRE(io->io_active);
 	io->io_req.br_resid = 0;
@@ -942,7 +967,7 @@ ATF_TC_BODY(readonly_and_stable_writes, tc)
 	g_iov[1].iov_base = &g_discard;
 	g_iov[1].iov_len = VIRTIO14_BLK_DISCARD_SEGMENT_SIZE;
 	g_discard.num_sectors = htole32(8);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	io = &sc.vbsc_ios[g_req.idx];
 	ATF_REQUIRE_EQ(g_backend_write_zeroes, 1);
 	ATF_REQUIRE(io->io_active);
@@ -967,7 +992,7 @@ ATF_TC_BODY(readonly_and_stable_writes, tc)
 	g_header.vbh_type = htole32(VBH_OP_WRITE);
 	g_req.readable = 2;
 	g_req.writable = 1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	io = &sc.vbsc_ios[g_req.idx];
 	io->io_req.br_resid = 0;
 	pci_vtblk_done(&io->io_req, 0);
@@ -983,7 +1008,7 @@ ATF_TC_BODY(readonly_and_stable_writes, tc)
 	g_header.vbh_type = htole32(VBH_OP_WRITE);
 	g_req.readable = 2;
 	g_req.writable = 1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	io = &sc.vbsc_ios[g_req.idx];
 	ATF_REQUIRE(io->io_req.br_resid != 0);
 	pci_vtblk_done(&io->io_req, 0);
@@ -999,7 +1024,7 @@ ATF_TC_BODY(readonly_and_stable_writes, tc)
 	g_header.vbh_type = htole32(VBH_OP_WRITE);
 	g_req.readable = 2;
 	g_req.writable = 1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	io = &sc.vbsc_ios[g_req.idx];
 	io->io_req.br_resid = 0;
 	g_backend_error = EIO;
@@ -1022,10 +1047,11 @@ ATF_TC_BODY(reset_discards_outstanding_io, tc)
 	ATF_REQUIRE(pthread_mutex_init(&sc.vsc_mtx, NULL) == 0);
 	ATF_REQUIRE(pthread_cond_init(&sc.vbsc_reset_cond, NULL) == 0);
 	g_header.vbh_type = htole32(VBH_OP_READ);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	io = &sc.vbsc_ios[g_req.idx];
 	ATF_REQUIRE(io->io_active);
-	ATF_CHECK(io->io_generation == 0);
+	ATF_CHECK(io->io_device_generation == 0);
+	ATF_CHECK(io->io_queue_generation == 0);
 	ATF_CHECK(g_backend_reads == 1 && g_rel_calls == 0);
 
 	/* A queued request is removed without receiving a callback. */
@@ -1047,7 +1073,7 @@ ATF_TC_BODY(reset_discards_outstanding_io, tc)
 	ATF_REQUIRE(pthread_mutex_init(&sc.vsc_mtx, NULL) == 0);
 	ATF_REQUIRE(pthread_cond_init(&sc.vbsc_reset_cond, NULL) == 0);
 	g_header.vbh_type = htole32(VBH_OP_READ);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	io = &sc.vbsc_ios[g_req.idx];
 	g_cancel_error = EBUSY;
 
@@ -1096,19 +1122,21 @@ ATF_TC_BODY(queue_reset_drains_async_io, tc)
 	setup_softc(&sc);
 	ATF_REQUIRE(pthread_mutex_init(&sc.vsc_mtx, NULL) == 0);
 	ATF_REQUIRE(pthread_cond_init(&sc.vbsc_reset_cond, NULL) == 0);
-	sc.vbsc_vq.vq_num = 0;
+	sc.vbsc_vqs[0].vq_num = 0;
 	g_header.vbh_type = htole32(VBH_OP_READ);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	io = &sc.vbsc_ios[g_req.idx];
 	ATF_REQUIRE(io->io_active);
 
 	g_cancel_error = EBUSY;
+	/* The modern transport advances the queue epoch before this callback. */
+	sc.vbsc_vqs[0].vq_generation++;
 	pthread_mutex_lock(&sc.vsc_mtx);
-	ATF_CHECK_EQ(pci_vtblk_qreset(&sc, &sc.vbsc_vq, 41), EINPROGRESS);
+	ATF_CHECK_EQ(pci_vtblk_qreset(&sc, &sc.vbsc_vqs[0], 41), EINPROGRESS);
 	pthread_mutex_unlock(&sc.vsc_mtx);
 	ATF_CHECK(sc.vbsc_qreset_pending);
 	ATF_CHECK_EQ(g_cancel_saw_unlocked, 1);
-	ATF_CHECK_EQ(sc.vbsc_generation, 1);
+	ATF_CHECK_EQ(sc.vbsc_generation, 0);
 	ATF_CHECK_EQ(g_qreset_complete_calls, 0);
 
 	/* The stale backend completion drains reset without touching the ring. */
@@ -1141,15 +1169,16 @@ ATF_TC_BODY(full_reset_waits_for_async_queue_reset, tc)
 	setup_softc(&sc);
 	ATF_REQUIRE(pthread_mutex_init(&sc.vsc_mtx, NULL) == 0);
 	ATF_REQUIRE(pthread_cond_init(&sc.vbsc_reset_cond, NULL) == 0);
-	sc.vbsc_vq.vq_num = 0;
+	sc.vbsc_vqs[0].vq_num = 0;
 	g_header.vbh_type = htole32(VBH_OP_READ);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	io = &sc.vbsc_ios[g_req.idx];
 	ATF_REQUIRE(io->io_active);
 
 	g_cancel_error = EBUSY;
+	sc.vbsc_vqs[0].vq_generation++;
 	ATF_REQUIRE(pthread_mutex_lock(&sc.vsc_mtx) == 0);
-	ATF_REQUIRE_EQ(pci_vtblk_qreset(&sc, &sc.vbsc_vq, 44),
+	ATF_REQUIRE_EQ(pci_vtblk_qreset(&sc, &sc.vbsc_vqs[0], 44),
 	    EINPROGRESS);
 	ATF_REQUIRE(pthread_mutex_unlock(&sc.vsc_mtx) == 0);
 
@@ -1194,15 +1223,16 @@ ATF_TC_BODY(queue_reset_cancels_pending_io, tc)
 	setup_softc(&sc);
 	ATF_REQUIRE(pthread_mutex_init(&sc.vsc_mtx, NULL) == 0);
 	ATF_REQUIRE(pthread_cond_init(&sc.vbsc_reset_cond, NULL) == 0);
-	sc.vbsc_vq.vq_num = 0;
+	sc.vbsc_vqs[0].vq_num = 0;
 	g_header.vbh_type = htole32(VBH_OP_READ);
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	io = &sc.vbsc_ios[g_req.idx];
 	ATF_REQUIRE(io->io_active);
 
 	g_cancel_error = 0;
+	sc.vbsc_vqs[0].vq_generation++;
 	pthread_mutex_lock(&sc.vsc_mtx);
-	ATF_CHECK_EQ(pci_vtblk_qreset(&sc, &sc.vbsc_vq, 42), 0);
+	ATF_CHECK_EQ(pci_vtblk_qreset(&sc, &sc.vbsc_vqs[0], 42), 0);
 	pthread_mutex_unlock(&sc.vsc_mtx);
 	ATF_CHECK(!io->io_active);
 	ATF_CHECK_EQ(g_cancel_saw_unlocked, 1);
@@ -1211,12 +1241,114 @@ ATF_TC_BODY(queue_reset_cancels_pending_io, tc)
 	ATF_CHECK((vtblk_vi_consts.vc_hv_caps &
 	    VIRTIO_F_RING_RESET) != 0);
 
-	sc.vbsc_vq.vq_num = 1;
+	sc.vbsc_vqs[0].vq_num = 1;
 	pthread_mutex_lock(&sc.vsc_mtx);
-	ATF_CHECK_EQ(pci_vtblk_qreset(&sc, &sc.vbsc_vq, 43), EINVAL);
+	ATF_CHECK_EQ(pci_vtblk_qreset(&sc, &sc.vbsc_vqs[0], 43), EINVAL);
 	pthread_mutex_unlock(&sc.vsc_mtx);
 	ATF_REQUIRE(pthread_cond_destroy(&sc.vbsc_reset_cond) == 0);
 	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(multiqueue_reset_isolation);
+ATF_TC_BODY(multiqueue_reset_isolation, tc)
+{
+	struct pci_vtblk_ioreq *io0, *io1;
+	struct pci_vtblk_softc sc;
+
+	reset_mocks();
+	setup_softc_queues(&sc, 2);
+	ATF_REQUIRE(pthread_mutex_init(&sc.vsc_mtx, NULL) == 0);
+	ATF_REQUIRE(pthread_cond_init(&sc.vbsc_reset_cond, NULL) == 0);
+	g_header.vbh_type = htole32(VBH_OP_READ);
+
+	/*
+	 * The same descriptor index in different request queues denotes two
+	 * different requests.  Submit both before resetting queue zero.
+	 */
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[1]);
+	io0 = &sc.vbsc_ios[g_req.idx];
+	io1 = &sc.vbsc_ios[VTBLK_RINGSZ + g_req.idx];
+	ATF_REQUIRE(io0 != io1);
+	ATF_REQUIRE(io0->io_active);
+	ATF_REQUIRE(io1->io_active);
+	ATF_CHECK(io0->io_vq == &sc.vbsc_vqs[0]);
+	ATF_CHECK(io1->io_vq == &sc.vbsc_vqs[1]);
+
+	/*
+	 * A busy request holds queue zero in reset.  Completing queue one's
+	 * request must publish only to queue one and must not finish queue
+	 * zero's asynchronous reset.
+	 */
+	g_cancel_error = EBUSY;
+	sc.vbsc_vqs[0].vq_generation++;
+	ATF_REQUIRE(pthread_mutex_lock(&sc.vsc_mtx) == 0);
+	ATF_REQUIRE_EQ(pci_vtblk_qreset(&sc, &sc.vbsc_vqs[0], 71),
+	    EINPROGRESS);
+	ATF_REQUIRE(pthread_mutex_unlock(&sc.vsc_mtx) == 0);
+	ATF_CHECK(sc.vbsc_qreset_pending);
+	ATF_CHECK(io1->io_active);
+
+	pci_vtblk_done(&io1->io_req, 0);
+	ATF_CHECK(!io1->io_active);
+	ATF_CHECK(sc.vbsc_qreset_pending);
+	ATF_CHECK_EQ(g_qreset_complete_calls, 0);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK(g_rel_vq == &sc.vbsc_vqs[1]);
+
+	/* The stale queue-zero completion drains only queue zero's reset. */
+	pci_vtblk_done(&io0->io_req, 0);
+	ATF_CHECK(!io0->io_active);
+	ATF_CHECK(!sc.vbsc_qreset_pending);
+	ATF_CHECK_EQ(g_qreset_complete_calls, 1);
+	ATF_CHECK_EQ(g_qreset_complete_generation, 71);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+
+	ATF_REQUIRE(pthread_cond_destroy(&sc.vbsc_reset_cond) == 0);
+	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(multiqueue_document_contract);
+ATF_TC_BODY(multiqueue_document_contract, tc)
+{
+	struct pci_vtblk_softc sc;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.vbsc_nqueues = VTBLK_MAXQ;
+	sc.vbsc_cfg.num_queues = htole16(sc.vbsc_nqueues);
+	sc.vbsc_consts.vc_hv_caps = VTBLK_F_MQ;
+
+	ATF_CHECK_EQ(DUT_VTBLK_F_MQ, VIRTIO14_BLK_F_MQ);
+	ATF_CHECK_EQ(le16toh(sc.vbsc_cfg.num_queues), VTBLK_MAXQ);
+	ATF_CHECK_EQ(VTBLK_MAXQ, 8);
+	ATF_CHECK_EQ(VTBLK_MAXREQ, 1024);
+	ATF_CHECK(VTBLK_MAXREQ <= BLOCKIF_RING_MAX);
+	ATF_CHECK((vtblk_vi_consts.vc_hv_caps & VIRTIO14_BLK_F_MQ) == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(multiqueue_option_validation);
+ATF_TC_BODY(multiqueue_option_validation, tc)
+{
+	const char *errstr;
+	uint16_t queues;
+
+	queues = 0;
+	ATF_REQUIRE_EQ(pci_vtblk_parse_queues(NULL, &queues, &errstr), 0);
+	ATF_CHECK_EQ(queues, 1);
+	ATF_CHECK(errstr == NULL);
+
+	ATF_REQUIRE_EQ(pci_vtblk_parse_queues("1", &queues, &errstr), 0);
+	ATF_CHECK_EQ(queues, 1);
+	ATF_REQUIRE_EQ(pci_vtblk_parse_queues("8", &queues, &errstr), 0);
+	ATF_CHECK_EQ(queues, 8);
+
+	ATF_CHECK_EQ(pci_vtblk_parse_queues("0", &queues, &errstr), EINVAL);
+	ATF_CHECK(errstr != NULL);
+	ATF_CHECK_EQ(pci_vtblk_parse_queues("9", &queues, &errstr), EINVAL);
+	ATF_CHECK(errstr != NULL);
+	ATF_CHECK_EQ(pci_vtblk_parse_queues("two", &queues, &errstr),
+	    EINVAL);
+	ATF_CHECK(errstr != NULL);
 }
 
 ATF_TC_WITHOUT_HEAD(config_read_bounds);
@@ -1264,7 +1396,7 @@ ATF_TC_BODY(document_wire_vectors, tc)
 	g_iov[0].iov_len = sizeof(header);
 	g_req.readable = 2;
 	g_req.writable = 1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_REQUIRE_EQ(g_backend_writes, 1);
 	io = &sc.vbsc_ios[g_req.idx];
 	ATF_CHECK_EQ(io->io_req.br_offset,
@@ -1293,7 +1425,7 @@ ATF_TC_BODY(document_wire_vectors, tc)
 	g_iov[1].iov_len = sizeof(discard);
 	g_req.readable = 2;
 	g_req.writable = 1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_REQUIRE_EQ(g_backend_deletes, 1);
 	io = &sc.vbsc_ios[g_req.idx];
 	ATF_CHECK_EQ(io->io_req.br_offset,
@@ -1325,7 +1457,7 @@ ATF_TC_BODY(document_wire_vectors, tc)
 	g_iov[1].iov_len = sizeof(discard);
 	g_req.readable = 2;
 	g_req.writable = 1;
-	pci_vtblk_proc(&sc, &sc.vbsc_vq);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
 	ATF_REQUIRE_EQ(g_backend_write_zeroes, 1);
 	io = &sc.vbsc_ios[g_req.idx];
 	ATF_CHECK_EQ(io->io_req.br_offset,
@@ -1403,6 +1535,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, queue_reset_drains_async_io);
 	ATF_TP_ADD_TC(tp, full_reset_waits_for_async_queue_reset);
 	ATF_TP_ADD_TC(tp, queue_reset_cancels_pending_io);
+	ATF_TP_ADD_TC(tp, multiqueue_reset_isolation);
+	ATF_TP_ADD_TC(tp, multiqueue_document_contract);
+	ATF_TP_ADD_TC(tp, multiqueue_option_validation);
 	ATF_TP_ADD_TC(tp, config_read_bounds);
 	ATF_TP_ADD_TC(tp, document_wire_vectors);
 	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);

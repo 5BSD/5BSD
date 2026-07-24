@@ -8,7 +8,7 @@
 #include "config.h"
 
 #define BLOCKIF_IOV_MAX 128
-#define BLOCKIF_RING_MAX 128
+#define BLOCKIF_RING_MAX 1024
 
 struct blockif_req {
 	int br_iovcnt;
