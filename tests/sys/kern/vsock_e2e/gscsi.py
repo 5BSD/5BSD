@@ -90,6 +90,28 @@ def require_features(child, required):
             raise RuntimeError(f"virtio-scsi did not negotiate {name}")
 
 
+def require_multiqueue(device, expected, sys_root="/sys"):
+    if expected < 1 or expected > 8:
+        raise RuntimeError("expected SCSI queue count must be from 1 through 8")
+    name = os.path.basename(device)
+    mq_path = os.path.join(sys_root, "class/block", name, "mq")
+    try:
+        queues = [
+            entry
+            for entry in os.listdir(mq_path)
+            if entry.isdigit() and os.path.isdir(os.path.join(mq_path, entry))
+        ]
+    except OSError as error:
+        raise RuntimeError(
+            f"cannot inspect Linux SCSI hardware queues at {mq_path}: {error}"
+        ) from error
+    if len(queues) != expected:
+        raise RuntimeError(
+            f"Linux exposed {len(queues)} SCSI hardware queues, "
+            f"expected {expected}"
+        )
+
+
 def pattern_chunk(counter, size):
     seed = hashlib.sha256(f"bhyve-scsi-{counter}".encode()).digest()
     return (seed * ((size + len(seed) - 1) // len(seed)))[:size]
@@ -102,6 +124,27 @@ def write_all(fd, view):
         if written <= 0:
             raise RuntimeError("short SCSI write")
         offset += written
+
+
+def pwrite_all(fd, view, offset):
+    while view:
+        written = os.pwritev(fd, [view], offset)
+        if written <= 0:
+            raise RuntimeError("short positioned SCSI write")
+        view = view[written:]
+        offset += written
+
+
+def expected_pattern_digest(size):
+    digest = hashlib.sha256()
+    offset = 0
+    counter = 0
+    while offset < size:
+        length = min(CHUNK_SIZE, size - offset)
+        digest.update(pattern_chunk(counter, length))
+        offset += length
+        counter += 1
+    return digest.hexdigest()
 
 
 def write_pattern(path, size, direct=False):
@@ -129,6 +172,82 @@ def write_pattern(path, size, direct=False):
         buffer.close()
         os.close(fd)
     return digest.hexdigest()
+
+
+def write_pattern_parallel(path, size, workers, direct=True, pin_cpus=True):
+    if workers < 1:
+        raise RuntimeError("parallel SCSI writer count must be positive")
+    chunks = (size + CHUNK_SIZE - 1) // CHUNK_SIZE
+    workers = min(workers, chunks)
+    if pin_cpus:
+        try:
+            cpus = sorted(os.sched_getaffinity(0))
+        except (AttributeError, OSError) as error:
+            raise RuntimeError(
+                "cannot discover guest CPU affinity for SCSI multiqueue: "
+                f"{error}"
+            ) from error
+        if len(cpus) < workers:
+            raise RuntimeError(
+                f"SCSI multiqueue needs {workers} available CPUs, "
+                f"found {len(cpus)}"
+            )
+    else:
+        cpus = [None] * workers
+
+    children = []
+    try:
+        for worker in range(workers):
+            pid = os.fork()
+            if pid != 0:
+                children.append(pid)
+                continue
+            status = 1
+            try:
+                if cpus[worker] is not None:
+                    os.sched_setaffinity(0, {cpus[worker]})
+                flags = os.O_WRONLY | (os.O_DIRECT if direct else 0)
+                fd = os.open(path, flags)
+                buffer = mmap.mmap(-1, CHUNK_SIZE)
+                view = memoryview(buffer)
+                try:
+                    for counter in range(worker, chunks, workers):
+                        offset = counter * CHUNK_SIZE
+                        length = min(CHUNK_SIZE, size - offset)
+                        view[:length] = pattern_chunk(counter, length)
+                        pwrite_all(fd, view[:length], offset)
+                finally:
+                    view.release()
+                    buffer.close()
+                    os.close(fd)
+                status = 0
+            except BaseException as error:
+                os.write(
+                    2,
+                    f"SCSI writer {worker} failed: {error}\n".encode(
+                        "utf-8", "replace"
+                    ),
+                )
+            finally:
+                os._exit(status)
+    except OSError as error:
+        for pid in children:
+            os.waitpid(pid, 0)
+        raise RuntimeError(f"cannot start parallel SCSI writers: {error}") from error
+
+    failed = []
+    for pid in children:
+        _, status = os.waitpid(pid, 0)
+        if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+            failed.append(pid)
+    if failed:
+        raise RuntimeError(f"parallel SCSI writers failed: {failed}")
+    fd = os.open(path, os.O_WRONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return expected_pattern_digest(size)
 
 
 def read_digest(path, size, direct=False):
@@ -182,6 +301,8 @@ def self_test():
             stream.write("0x1048\n")
         with open(block + "/size", "w", encoding="ascii") as stream:
             stream.write("4096\n")
+        for queue in range(4):
+            os.makedirs(block + f"/mq/{queue}")
         features = ["0"] * 64
         for bit, _ in MODERN_REQUIRED_FEATURES:
             features[bit] = "1"
@@ -197,6 +318,13 @@ def self_test():
                 f"wrong SCSI device: {(found, found_child)!r}"
             )
         require_features(found_child, MODERN_REQUIRED_FEATURES)
+        require_multiqueue(found, 4, sys_root)
+        try:
+            require_multiqueue(found, 3, sys_root)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("accepted the wrong SCSI hardware queue count")
         for missing_bit, missing_name in MODERN_REQUIRED_FEATURES:
             missing = features.copy()
             missing[missing_bit] = "0"
@@ -224,6 +352,13 @@ def self_test():
         wanted = write_pattern(backing, CHUNK_SIZE + 17)
         if read_digest(backing, CHUNK_SIZE + 17) != wanted:
             raise AssertionError("SCSI pattern did not round-trip")
+        with open(backing, "wb") as stream:
+            stream.truncate(2 * CHUNK_SIZE)
+        wanted = write_pattern_parallel(
+            backing, CHUNK_SIZE + 17, 2, direct=False, pin_cpus=False
+        )
+        if read_digest(backing, CHUNK_SIZE + 17) != wanted:
+            raise AssertionError("parallel SCSI pattern did not round-trip")
     print("SELFTEST PASS")
 
 
@@ -231,14 +366,16 @@ def main():
     if sys.argv[1:] == ["--self-test"]:
         self_test()
         return
-    if len(sys.argv) not in (5, 6):
+    if len(sys.argv) not in (6, 7):
         raise SystemExit(
-            "usage: gscsi.py --self-test | write transport capacity bytes | "
-            "verify transport capacity bytes sha256"
+            "usage: gscsi.py --self-test | "
+            "write transport capacity bytes queues | "
+            "verify transport capacity bytes sha256 queues"
         )
     command, transport, capacity_text, size_text = sys.argv[1:5]
     capacity = int(capacity_text)
     size = int(size_text)
+    expected_queues = int(sys.argv[-1])
     if size <= 0 or size > capacity:
         raise RuntimeError("require 0 < byte count <= SCSI capacity")
     if size % DIRECT_ALIGNMENT != 0:
@@ -250,23 +387,27 @@ def main():
     require_features(child, REQUIRED_FEATURES)
     if transport == "modern":
         require_features(child, MODERN_REQUIRED_FEATURES)
-    if command == "write" and len(sys.argv) == 5:
-        wanted = write_pattern(device, size, direct=True)
+    require_multiqueue(device, expected_queues)
+    if command == "write" and len(sys.argv) == 6:
+        if expected_queues > 1:
+            wanted = write_pattern_parallel(device, size, expected_queues)
+        else:
+            wanted = write_pattern(device, size, direct=True)
         actual = read_digest(device, size, direct=True)
         if actual != wanted:
             raise RuntimeError(f"SCSI checksum mismatch: {actual} != {wanted}")
         print(
             f"PASS scsi bytes={size} sha256={actual} device={device} "
-            "indirect_desc=yes"
+            f"indirect_desc=yes queues={expected_queues}"
         )
-    elif command == "verify" and len(sys.argv) == 6:
+    elif command == "verify" and len(sys.argv) == 7:
         wanted = sys.argv[5]
         actual = read_digest(device, size, direct=True)
         if actual != wanted:
             raise RuntimeError(f"SCSI checksum mismatch: {actual} != {wanted}")
         print(
             f"PASS scsi-persist bytes={size} sha256={actual} device={device} "
-            "indirect_desc=yes"
+            f"indirect_desc=yes queues={expected_queues}"
         )
     else:
         raise SystemExit("invalid gscsi.py command or argument count")

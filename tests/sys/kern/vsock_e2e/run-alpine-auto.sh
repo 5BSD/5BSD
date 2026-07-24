@@ -34,6 +34,7 @@ BLOCK_IMAGE_MB=${BLOCK_IMAGE_MB:-1024}
 BLOCK_QUEUES=${BLOCK_QUEUES:-2}
 SCSI_TEST_MB=${SCSI_TEST_MB:-32}
 SCSI_IMAGE_MB=${SCSI_IMAGE_MB:-128}
+SCSI_QUEUES=${SCSI_QUEUES:-2}
 VSOCK_SOAK_ITERATIONS=${VSOCK_SOAK_ITERATIONS:-0}
 VSOCK_SOAK_RESET_EVERY=${VSOCK_SOAK_RESET_EVERY:-10}
 VSOCK_SOAK_MAX_FD_GROWTH=${VSOCK_SOAK_MAX_FD_GROWTH:-0}
@@ -159,6 +160,13 @@ esac
 [ "$SCSI_TEST_MB" -gt 0 ] && [ "$SCSI_IMAGE_MB" -gt 0 ] &&
     [ "$SCSI_TEST_MB" -le "$SCSI_IMAGE_MB" ] || {
 	echo "require 0 < SCSI_TEST_MB <= SCSI_IMAGE_MB" >&2
+	exit 2
+}
+case "$SCSI_QUEUES" in
+''|*[!0-9]*) echo "SCSI_QUEUES must be an integer from 1 through 8" >&2; exit 2 ;;
+esac
+[ "$SCSI_QUEUES" -ge 1 ] && [ "$SCSI_QUEUES" -le 8 ] || {
+	echo "SCSI_QUEUES must be an integer from 1 through 8" >&2
 	exit 2
 }
 if { [ "$RESET_TEST" = yes ] || [ "$REBOOT_TEST" = yes ] ||
@@ -464,7 +472,7 @@ launch_vm()
 	[ "$run_block_device" = no ] || set -- "$@" \
 	    -s "8,virtio-blk,$block_image$block_transport_opt$block_queues_opt"
 	[ "$run_scsi_device" = no ] || set -- "$@" \
-	    -s "9,virtio-scsi,/dev/cam/ctl$scsi_transport_opt"
+	    -s "9,virtio-scsi,/dev/cam/ctl$scsi_transport_opt$scsi_queues_opt"
 	[ "$run_console_device" = no ] || set -- "$@" \
 	    -s "10,virtio-console,$console_name=$console_socket$console_transport_opt"
 	[ "$run_9p_device" = no ] || set -- "$@" \
@@ -769,7 +777,7 @@ verify_block()
 run_scsi()
 {
 	scsi_bytes=$((SCSI_TEST_MB * 1024 * 1024))
-	output=$(guest_cmd "python3 /tmp/gscsi.py write '$transport' '$scsi_size_bytes' '$scsi_bytes'" 120) || {
+	output=$(guest_cmd "python3 /tmp/gscsi.py write '$transport' '$scsi_size_bytes' '$scsi_bytes' '$scsi_queues_expected'" 120) || {
 		status=$?
 		echo "guest virtio-scsi verification failed (status $status)" >&2
 		[ -z "$output" ] || printf '%s\n' "$output" >&2
@@ -783,7 +791,7 @@ run_scsi()
 
 verify_scsi()
 {
-	output=$(guest_cmd "python3 /tmp/gscsi.py verify '$transport' '$scsi_size_bytes' '$scsi_bytes' '$scsi_sha256'" 120) || {
+	output=$(guest_cmd "python3 /tmp/gscsi.py verify '$transport' '$scsi_size_bytes' '$scsi_bytes' '$scsi_sha256' '$scsi_queues_expected'" 120) || {
 		status=$?
 		echo "post-lifecycle virtio-scsi verification failed (status $status)" >&2
 		[ -z "$output" ] || printf '%s\n' "$output" >&2
@@ -1148,6 +1156,10 @@ for transport in $TRANSPORTS; do
 		    [ "$BLOCK_QUEUES" -gt "$vm_cpus" ]; then
 			vm_cpus=$BLOCK_QUEUES
 		fi
+		if [ "$run_scsi_device" = yes ] &&
+		    [ "$SCSI_QUEUES" -gt "$vm_cpus" ]; then
+			vm_cpus=$SCSI_QUEUES
+		fi
 		net_transport_opt=",transport=modern"
 		vsock_transport_opt=",transport=modern"
 		input_transport_opt=",transport=modern"
@@ -1156,6 +1168,8 @@ for transport in $TRANSPORTS; do
 		block_queues_opt=",queues=$BLOCK_QUEUES"
 		block_queues_expected=$BLOCK_QUEUES
 		scsi_transport_opt=",transport=modern"
+		scsi_queues_opt=",queues=$SCSI_QUEUES"
+		scsi_queues_expected=$SCSI_QUEUES
 		console_transport_opt=",transport=modern"
 		ninep_transport_opt=",transport=modern"
 	else
@@ -1168,6 +1182,8 @@ for transport in $TRANSPORTS; do
 		block_queues_opt=
 		block_queues_expected=1
 		scsi_transport_opt=
+		scsi_queues_opt=
+		scsi_queues_expected=1
 		console_transport_opt=
 		ninep_transport_opt=
 	fi

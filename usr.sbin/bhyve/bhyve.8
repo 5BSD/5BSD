@@ -526,6 +526,13 @@ If omitted, the legacy PCI transport and its existing device identity are used
 for compatibility with existing guests and launch scripts.
 The modern setting selects the non-transitional VirtIO PCI transport and
 device ID 0x1048.
+For modern devices, the optional
+.Cm queues
+setting accepts a value from 1 through 8 and creates that many independent
+request virtqueues.
+Values greater than one require
+.Cm transport=modern .
+The default is one queue.
 .It Cm virtio-9p
 Virtio 9p (VirtFS) interface.
 The optional

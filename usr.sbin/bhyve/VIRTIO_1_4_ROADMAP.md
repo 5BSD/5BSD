@@ -49,8 +49,10 @@ soaks.
    writable `VIRTIO_BLK_F_CONFIG_WCE`, retain the historical writeback reset
    default, and stabilize guest-selected writethrough writes before completion.
    The existing topology fields are already advertised and covered.
-3. **SCSI multiqueue and events.**  Scale request queues with vCPUs and cover
-   hotplug/change events without disturbing unrelated queues.
+3. **SCSI multiqueue and events.**  Modern devices now expose up to eight
+   independently resettable request queues with a bounded device-wide worker
+   budget and an exact Linux hardware-queue oracle.  Hotplug/change event
+   delivery remains to be implemented without disturbing unrelated queues.
 4. **9P queue reset.**  Refactor lib9p request ownership so a selected queue can
    cancel and drain its own requests without destroying session or fid state.
 5. **Packed virtqueues.**  Implement the common packed-ring engine once and

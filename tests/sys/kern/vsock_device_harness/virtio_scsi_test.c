@@ -219,22 +219,20 @@ ctl_io_sbuf(union ctl_io *io __unused, struct sbuf *sb __unused)
 }
 
 static void
-setup_queue(struct pci_vtscsi_softc *sc, struct pci_vtscsi_request *req,
+setup_request_queue(struct pci_vtscsi_softc *sc, unsigned int queue_index,
+    struct pci_vtscsi_request *req,
     uint8_t *cmd_rd, uint8_t *cmd_wr, union ctl_io *io)
 {
 	struct pci_vtscsi_queue *q;
 
-	memset(sc, 0, sizeof(*sc));
 	memset(req, 0, sizeof(*req));
 	memset(cmd_rd, 0, VTSCSI_MAX_IN_HEADER_LEN);
 	memset(cmd_wr, 0, VTSCSI_MAX_OUT_HEADER_LEN);
 	memset(io, 0, sizeof(*io));
-	sc->vss_config.cdb_size = VIRTIO14_SCSI_DEFAULT_CDB_SIZE;
-	sc->vss_config.sense_size = VIRTIO14_SCSI_DEFAULT_SENSE_SIZE;
-	sc->vss_vq[2].vq_num = 2;
-	q = &sc->vss_queues[0];
+	sc->vss_vq[queue_index + 2].vq_num = queue_index + 2;
+	q = &sc->vss_queues[queue_index];
 	q->vsq_sc = sc;
-	q->vsq_vq = &sc->vss_vq[2];
+	q->vsq_vq = &sc->vss_vq[queue_index + 2];
 	pthread_mutex_init(&q->vsq_rmtx, NULL);
 	pthread_mutex_init(&q->vsq_fmtx, NULL);
 	pthread_mutex_init(&q->vsq_qmtx, NULL);
@@ -248,14 +246,34 @@ setup_queue(struct pci_vtscsi_softc *sc, struct pci_vtscsi_request *req,
 }
 
 static void
-teardown_queue(struct pci_vtscsi_softc *sc)
+setup_queue(struct pci_vtscsi_softc *sc, struct pci_vtscsi_request *req,
+    uint8_t *cmd_rd, uint8_t *cmd_wr, union ctl_io *io)
 {
-	struct pci_vtscsi_queue *q = &sc->vss_queues[0];
+
+	memset(sc, 0, sizeof(*sc));
+	sc->vss_config.cdb_size = VIRTIO14_SCSI_DEFAULT_CDB_SIZE;
+	sc->vss_config.sense_size = VIRTIO14_SCSI_DEFAULT_SENSE_SIZE;
+	sc->vss_nrequestq = VTSCSI_DEFAULT_REQUESTQ;
+	setup_request_queue(sc, 0, req, cmd_rd, cmd_wr, io);
+}
+
+static void
+teardown_request_queue(struct pci_vtscsi_softc *sc,
+    unsigned int queue_index)
+{
+	struct pci_vtscsi_queue *q = &sc->vss_queues[queue_index];
 
 	pthread_cond_destroy(&q->vsq_cv);
 	pthread_mutex_destroy(&q->vsq_qmtx);
 	pthread_mutex_destroy(&q->vsq_fmtx);
 	pthread_mutex_destroy(&q->vsq_rmtx);
+}
+
+static void
+teardown_queue(struct pci_vtscsi_softc *sc)
+{
+
+	teardown_request_queue(sc, 0);
 }
 
 ATF_TC_WITHOUT_HEAD(control_handler_validation);
@@ -424,12 +442,14 @@ ATF_TC_BODY(config_defaults, tc)
 	struct pci_vtscsi_softc sc;
 
 	memset(&sc, 0, sizeof(sc));
+	sc.vss_nrequestq = VTSCSI_DEFAULT_REQUESTQ;
 	sc.vss_features = UINT32_MAX;
 	pci_vtscsi_reset(&sc);
 	ATF_CHECK_EQ(sc.vss_features, 0);
-	ATF_CHECK_EQ(sc.vss_config.num_queues, VTSCSI_REQUESTQ);
+	ATF_CHECK_EQ(sc.vss_config.num_queues, VTSCSI_DEFAULT_REQUESTQ);
 	ATF_CHECK_EQ(sc.vss_config.seg_max, VTSCSI_MAXSEG - 2);
 	ATF_CHECK_EQ(sc.vss_config.max_sectors, VTSCSI_MAX_SECTORS);
+	ATF_CHECK_EQ(sc.vss_config.cmd_per_lun, VTSCSI_TOTAL_THR);
 	ATF_CHECK(
 	    (uint64_t)sc.vss_config.max_sectors *
 	    VIRTIO14_SCSI_SECTOR_BYTES +
@@ -519,10 +539,23 @@ ATF_TC_BODY(request_queue_validation, tc)
 {
 	struct pci_vtscsi_softc sc;
 	struct pci_vtscsi_request req;
+	struct vqueue_info impostor;
 	union ctl_io io;
 	uint8_t cmd_rd[VTSCSI_MAX_IN_HEADER_LEN];
 	uint8_t cmd_wr[VTSCSI_MAX_OUT_HEADER_LEN];
 	uint8_t output;
+
+	reset_mocks();
+	setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
+	impostor = sc.vss_vq[2];
+	set_chain(-1, 0, 0, true);
+	pci_vtscsi_requestq_notify(&sc, &impostor);
+	ATF_CHECK_EQ(g_chain_ready, 1);
+	sc.vss_vq[2].vq_num = 1;
+	pci_vtscsi_requestq_notify(&sc, &sc.vss_vq[2]);
+	ATF_CHECK_EQ(g_chain_ready, 1);
+	sc.vss_vq[2].vq_num = 2;
+	teardown_queue(&sc);
 
 	reset_mocks();
 	setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
@@ -683,33 +716,83 @@ ATF_TC_WITHOUT_HEAD(queue_reset_quiesces_only_selected_queue);
 ATF_TC_BODY(queue_reset_quiesces_only_selected_queue, tc)
 {
 	struct pci_vtscsi_softc sc;
-	struct pci_vtscsi_request req;
-	struct pci_vtscsi_queue *q;
-	union ctl_io io;
-	uint8_t cmd_rd[VTSCSI_MAX_IN_HEADER_LEN];
-	uint8_t cmd_wr[VTSCSI_MAX_OUT_HEADER_LEN];
+	struct pci_vtscsi_request req[2];
+	struct pci_vtscsi_queue *q0, *q1;
+	union ctl_io io[2];
+	uint8_t cmd_rd[2][VTSCSI_MAX_IN_HEADER_LEN];
+	uint8_t cmd_wr[2][VTSCSI_MAX_OUT_HEADER_LEN];
 
 	reset_mocks();
-	setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
-	q = &sc.vss_queues[0];
-	ATF_REQUIRE(pci_vtscsi_get_request(&q->vsq_free_requests) == &req);
-	pci_vtscsi_put_request(&q->vsq_requests, &req);
-	sc.vss_vq[2].vq_num = 2;
+	memset(&sc, 0, sizeof(sc));
+	sc.vss_nrequestq = 2;
+	setup_request_queue(&sc, 0, &req[0], cmd_rd[0], cmd_wr[0], &io[0]);
+	setup_request_queue(&sc, 1, &req[1], cmd_rd[1], cmd_wr[1], &io[1]);
+	q0 = &sc.vss_queues[0];
+	q1 = &sc.vss_queues[1];
+	ATF_REQUIRE(pci_vtscsi_get_request(&q0->vsq_free_requests) ==
+	    &req[0]);
+	ATF_REQUIRE(pci_vtscsi_get_request(&q1->vsq_free_requests) ==
+	    &req[1]);
+	pci_vtscsi_put_request(&q0->vsq_requests, &req[0]);
+	pci_vtscsi_put_request(&q1->vsq_requests, &req[1]);
 
 	ATF_CHECK_EQ(pci_vtscsi_qreset(&sc, &sc.vss_vq[2], 9), 0);
-	ATF_CHECK(q->vsq_quiescing);
-	ATF_CHECK(STAILQ_EMPTY(&q->vsq_requests));
-	ATF_CHECK(pci_vtscsi_get_request(&q->vsq_free_requests) == &req);
+	ATF_CHECK(q0->vsq_quiescing);
+	ATF_CHECK(STAILQ_EMPTY(&q0->vsq_requests));
+	ATF_CHECK(pci_vtscsi_get_request(&q0->vsq_free_requests) ==
+	    &req[0]);
+	ATF_CHECK(!q1->vsq_quiescing);
+	ATF_CHECK(STAILQ_FIRST(&q1->vsq_requests) == &req[1]);
 	ATF_CHECK_EQ(g_rel_calls, 0);
 	ATF_CHECK((vtscsi_vi_consts.vc_hv_caps &
 	    VIRTIO_F_RING_RESET) != 0);
 
 	ATF_CHECK_EQ(pci_vtscsi_qenable(&sc, &sc.vss_vq[2]), 0);
-	ATF_CHECK(!q->vsq_quiescing);
-	sc.vss_vq[2].vq_num = VTSCSI_MAXQ;
+	ATF_CHECK(!q0->vsq_quiescing);
+	sc.vss_vq[2].vq_num = sc.vss_nrequestq + 2;
 	ATF_CHECK_EQ(pci_vtscsi_qreset(&sc, &sc.vss_vq[2], 10), EINVAL);
 	ATF_CHECK_EQ(pci_vtscsi_qenable(&sc, &sc.vss_vq[2]), EINVAL);
-	teardown_queue(&sc);
+	pci_vtscsi_quiesce_queue(q1, false);
+	pci_vtscsi_resume_queue(q1);
+	teardown_request_queue(&sc, 1);
+	teardown_request_queue(&sc, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(multiqueue_configuration);
+ATF_TC_BODY(multiqueue_configuration, tc)
+{
+	struct pci_vtscsi_softc sc;
+	const char *errstr;
+	uint16_t queues;
+
+	ATF_REQUIRE_EQ(pci_vtscsi_parse_queues(NULL, &queues, &errstr), 0);
+	ATF_CHECK_EQ(queues, VTSCSI_DEFAULT_REQUESTQ);
+	ATF_REQUIRE_EQ(pci_vtscsi_parse_queues("8", &queues, &errstr), 0);
+	ATF_CHECK_EQ(queues, VTSCSI_MAX_REQUESTQ);
+	ATF_CHECK_EQ(pci_vtscsi_parse_queues("0", &queues, &errstr), EINVAL);
+	ATF_CHECK(errstr != NULL);
+	ATF_CHECK_EQ(pci_vtscsi_parse_queues("9", &queues, &errstr), EINVAL);
+	ATF_CHECK(errstr != NULL);
+	ATF_CHECK_EQ(pci_vtscsi_parse_queues("many", &queues, &errstr),
+	    EINVAL);
+	ATF_CHECK(errstr != NULL);
+
+	memset(&sc, 0, sizeof(sc));
+	sc.vss_nrequestq = 4;
+	sc.vss_consts = vtscsi_vi_consts;
+	sc.vss_consts.vc_nvq = sc.vss_nrequestq + 2;
+	pci_vtscsi_reset(&sc);
+	ATF_CHECK_EQ(sc.vss_config.num_queues, 4);
+	ATF_CHECK_EQ(sc.vss_consts.vc_nvq, 6);
+	for (uint16_t nrequestq = 1; nrequestq <= VTSCSI_MAX_REQUESTQ;
+	    nrequestq++) {
+		unsigned int nworkers;
+
+		nworkers = MAX(VTSCSI_MIN_THR_PER_Q,
+		    VTSCSI_TOTAL_THR / nrequestq);
+		ATF_CHECK(nworkers >= VTSCSI_MIN_THR_PER_Q);
+		ATF_CHECK(nworkers * nrequestq <= VTSCSI_TOTAL_THR);
+	}
 }
 
 ATF_TC_WITHOUT_HEAD(queue_sync_init_failures);
@@ -721,6 +804,7 @@ ATF_TC_BODY(queue_sync_init_failures, tc)
 	for (int fail_at = 1; fail_at <= 3; fail_at++) {
 		reset_mocks();
 		memset(&sc, 0, sizeof(sc));
+		sc.vss_nrequestq = VTSCSI_DEFAULT_REQUESTQ;
 		g_mutex_init_fail_at = fail_at;
 		ATF_CHECK(pci_vtscsi_init_queue(&sc, &sc.vss_queues[0], 0) ==
 		    -1);
@@ -735,6 +819,7 @@ ATF_TC_BODY(queue_sync_init_failures, tc)
 
 	reset_mocks();
 	memset(&sc, 0, sizeof(sc));
+	sc.vss_nrequestq = VTSCSI_DEFAULT_REQUESTQ;
 	g_cond_init_fail_at = 1;
 	ATF_CHECK(pci_vtscsi_init_queue(&sc, &sc.vss_queues[0], 0) == -1);
 	q = &sc.vss_queues[0];
@@ -884,6 +969,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, queue_sync_init_failures);
 	ATF_TP_ADD_TC(tp, reset_completes_pending_requests);
 	ATF_TP_ADD_TC(tp, queue_reset_quiesces_only_selected_queue);
+	ATF_TP_ADD_TC(tp, multiqueue_configuration);
 	ATF_TP_ADD_TC(tp, tmf_completes_pending_requests);
 	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
 	return (atf_no_error());

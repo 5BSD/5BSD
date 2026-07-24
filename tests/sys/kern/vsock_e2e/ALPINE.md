@@ -33,8 +33,15 @@ and attaches it through bhyve's virtio-scsi controller.  Supplying CTL's
 fake target that discards writes.  The guest verifier requires the
 upstream `virtio_scsi` driver and PCI device `1af4:1048` for modern or
 `1af4:1004` for option-omitted legacy, finds only the LUN with that exact
-capacity, and verifies a deterministic write/read checksum.  The runner
-removes only the CTL LUN it created, including on test failure.
+capacity, and verifies a deterministic write/read checksum.  Modern runs
+default to `SCSI_QUEUES=2`; the verifier counts the Linux hardware queues
+under `/sys/class/block/*/mq` and requires the exact configured count.
+Set `SCSI_QUEUES=1..8` to select another count.  The runner supplies at least
+that many vCPUs so Linux does not legitimately reduce the hardware-queue
+count, then pins concurrent writers to distinct guest CPUs and writes
+disjoint ranges before checking the whole payload.  Legacy runs retain one
+request queue.  The runner removes only the CTL LUN it created, including on
+test failure.
 
 `DEVICES=console` attaches a named virtio-console port backed by a host UNIX
 stream socket.  The guest verifier requires PCI device `1af4:1043` for modern
