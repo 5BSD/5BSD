@@ -36,6 +36,7 @@
 #include <sys/capsicum.h>
 #include <sys/endian.h>
 
+#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -79,7 +80,12 @@ struct pci_vt9p_softc {
 	struct l9p_server *      vsc_server;
 	struct l9p_connection *  vsc_conn;
 	uint64_t                 vsc_generation;
+	uint64_t                 vsc_qreset_generation;
+	size_t                   vsc_active_requests;
+	struct vqueue_info *     vsc_qreset_vq;
 	bool                     vsc_resetting;
+	bool                     vsc_queue_reset;
+	bool                     vsc_qreset_pending;
 	bool                     vsc_notify_pending;
 };
 
@@ -91,6 +97,7 @@ struct pci_vt9p_request {
 	size_t			vsr_iolen;
 	uint16_t		vsr_idx;
 	uint64_t		vsr_generation;
+	bool			vsr_active;
 };
 
 struct pci_vt9p_config {
@@ -105,6 +112,8 @@ static void pci_vt9p_drop(struct l9p_request *, const struct iovec *, size_t,
 static int pci_vt9p_get_buffer(struct l9p_request *, struct iovec *, size_t *,
     void *);
 static void pci_vt9p_reset(void *);
+static int pci_vt9p_qenable(void *, struct vqueue_info *);
+static int pci_vt9p_qreset(void *, struct vqueue_info *, uint64_t);
 static void pci_vt9p_notify(void *, struct vqueue_info *);
 static int pci_vt9p_cfgread(void *, int, int, uint32_t *);
 static void pci_vt9p_neg_features(void *, uint64_t);
@@ -139,7 +148,9 @@ static struct virtio_consts vt9p_vi_consts = {
 	.vc_qnotify =	pci_vt9p_notify,
 	.vc_cfgread =	pci_vt9p_cfgread,
 	.vc_apply_features = pci_vt9p_neg_features,
-	.vc_hv_caps =	VIRTIO_9P_F_MOUNT_TAG,
+	.vc_qenable =	pci_vt9p_qenable,
+	.vc_qreset =	pci_vt9p_qreset,
+	.vc_hv_caps =	VIRTIO_9P_F_MOUNT_TAG | VIRTIO_F_RING_RESET,
 };
 
 static int
@@ -177,6 +188,9 @@ pci_vt9p_reconnect(struct pci_vt9p_softc *sc)
 		pci_vt9p_configure_connection(newconn);
 	pthread_mutex_lock(&sc->vsc_mtx);
 	sc->vsc_conn = newconn;
+	sc->vsc_qreset_pending = false;
+	sc->vsc_qreset_vq = NULL;
+	sc->vsc_queue_reset = false;
 	sc->vsc_resetting = false;
 	/*
 	 * Every kick observed while the old connection was draining belongs to
@@ -202,11 +216,54 @@ pci_vt9p_reset(void *vsc)
 	sc = vsc;
 	DPRINTF(("vt9p: device reset requested !\n"));
 	sc->vsc_generation++;
+	sc->vsc_queue_reset = false;
 	vi_reset_dev(&sc->vsc_vs);
 	sc->vsc_features = 0;
 	error = pci_vt9p_reconnect(sc);
 	if (error != 0)
 		vi_set_needs_reset(&sc->vsc_vs);
+}
+
+static int
+pci_vt9p_qenable(void *vsc, struct vqueue_info *vq)
+{
+	struct pci_vt9p_softc *sc;
+
+	sc = vsc;
+	if (vq->vq_num != 0 || vq != &sc->vsc_vq ||
+	    sc->vsc_qreset_pending)
+		return (EINVAL);
+	sc->vsc_queue_reset = false;
+	sc->vsc_notify_pending = false;
+	return (0);
+}
+
+static int
+pci_vt9p_qreset(void *vsc, struct vqueue_info *vq, uint64_t generation)
+{
+	struct pci_vt9p_softc *sc;
+
+	sc = vsc;
+	if (vq->vq_num != 0 || vq != &sc->vsc_vq ||
+	    sc->vsc_qreset_pending)
+		return (EINVAL);
+
+	/*
+	 * Do not close the lib9p connection: queue reset must preserve the
+	 * mounted session and its fid namespace.  Advancing the generation
+	 * prevents accepted requests from publishing into the old used ring.
+	 * Their lib9p callbacks release guest buffers asynchronously and the
+	 * last callback completes the transport reset.
+	 */
+	sc->vsc_generation++;
+	sc->vsc_queue_reset = true;
+	sc->vsc_notify_pending = false;
+	if (sc->vsc_active_requests == 0)
+		return (0);
+	sc->vsc_qreset_vq = vq;
+	sc->vsc_qreset_generation = generation;
+	sc->vsc_qreset_pending = true;
+	return (EINPROGRESS);
 }
 
 static void
@@ -246,22 +303,52 @@ pci_vt9p_get_buffer(struct l9p_request *req, struct iovec *iov, size_t *niov,
 	return (0);
 }
 
+static bool
+pci_vt9p_finish_request_locked(struct pci_vt9p_softc *sc,
+    struct pci_vt9p_request *preq, struct vqueue_info **reset_vq,
+    uint64_t *generation)
+{
+
+	if (preq->vsr_active) {
+		preq->vsr_active = false;
+		assert(sc->vsc_active_requests > 0);
+		sc->vsc_active_requests--;
+	}
+	if (!sc->vsc_qreset_pending || sc->vsc_active_requests != 0)
+		return (false);
+	*reset_vq = sc->vsc_qreset_vq;
+	*generation = sc->vsc_qreset_generation;
+	sc->vsc_qreset_pending = false;
+	sc->vsc_qreset_vq = NULL;
+	return (true);
+}
+
 static int
 pci_vt9p_send(struct l9p_request *req, const struct iovec *iov __unused,
     const size_t niov __unused, const size_t iolen, void *arg __unused)
 {
 	struct pci_vt9p_request *preq = req->lr_aux;
 	struct pci_vt9p_softc *sc = preq->vsr_sc;
+	struct vqueue_info *reset_vq;
+	uint64_t generation;
+	bool reset_complete;
 
 	preq->vsr_iolen = iolen;
+	reset_vq = NULL;
+	generation = 0;
+	reset_complete = false;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
 	if (preq->vsr_generation == sc->vsc_generation) {
 		vq_relchain(&sc->vsc_vq, preq->vsr_idx, preq->vsr_iolen);
 		vq_endchains(&sc->vsc_vq, 1);
 	}
+	reset_complete = pci_vt9p_finish_request_locked(sc, preq, &reset_vq,
+	    &generation);
 	pthread_mutex_unlock(&sc->vsc_mtx);
 	free(preq);
+	if (reset_complete)
+		vi_pci_modern_queue_reset_complete(reset_vq, generation, 0);
 	return (0);
 }
 
@@ -271,14 +358,24 @@ pci_vt9p_drop(struct l9p_request *req, const struct iovec *iov __unused,
 {
 	struct pci_vt9p_request *preq = req->lr_aux;
 	struct pci_vt9p_softc *sc = preq->vsr_sc;
+	struct vqueue_info *reset_vq;
+	uint64_t generation;
+	bool reset_complete;
 
+	reset_vq = NULL;
+	generation = 0;
+	reset_complete = false;
 	pthread_mutex_lock(&sc->vsc_mtx);
 	if (preq->vsr_generation == sc->vsc_generation) {
 		vq_relchain(&sc->vsc_vq, preq->vsr_idx, 0);
 		vq_endchains(&sc->vsc_vq, 1);
 	}
+	reset_complete = pci_vt9p_finish_request_locked(sc, preq, &reset_vq,
+	    &generation);
 	pthread_mutex_unlock(&sc->vsc_mtx);
 	free(preq);
+	if (reset_complete)
+		vi_pci_modern_queue_reset_complete(reset_vq, generation, 0);
 }
 
 static void
@@ -291,7 +388,8 @@ pci_vt9p_notify(void *vsc, struct vqueue_info *vq)
 	int n;
 
 	sc = vsc;
-	if (sc->vsc_resetting || sc->vsc_conn == NULL) {
+	if (sc->vsc_resetting || sc->vsc_queue_reset ||
+	    sc->vsc_conn == NULL) {
 		sc->vsc_notify_pending = true;
 		return;
 	}
@@ -318,6 +416,8 @@ pci_vt9p_notify(void *vsc, struct vqueue_info *vq)
 		preq->vsr_niov = n;
 		preq->vsr_respidx = req.readable;
 		preq->vsr_generation = sc->vsc_generation;
+		preq->vsr_active = true;
+		sc->vsc_active_requests++;
 
 		for (int i = 0; i < n; i++) {
 			DPRINTF(("vt9p: vt9p_notify(): desc%d base=%p, "
@@ -327,6 +427,10 @@ pci_vt9p_notify(void *vsc, struct vqueue_info *vq)
 
 		if (l9p_connection_recv(sc->vsc_conn, preq->vsr_iov,
 		    preq->vsr_respidx, preq) != 0) {
+			assert(preq->vsr_active);
+			preq->vsr_active = false;
+			assert(sc->vsc_active_requests > 0);
+			sc->vsc_active_requests--;
 			vq_relchain(vq, preq->vsr_idx, 0);
 			free(preq);
 		}

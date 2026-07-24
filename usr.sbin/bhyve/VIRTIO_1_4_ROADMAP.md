@@ -53,8 +53,9 @@ soaks.
    independently resettable request queues with a bounded device-wide worker
    budget and an exact Linux hardware-queue oracle.  Hotplug/change event
    delivery remains to be implemented without disturbing unrelated queues.
-4. **9P queue reset.**  Refactor lib9p request ownership so a selected queue can
-   cancel and drain its own requests without destroying session or fid state.
+4. **9P queue reset.**  Implemented with generation-fenced asynchronous
+   request draining, preserving the lib9p connection and fid state while the
+   old queue relinquishes every guest buffer.
 5. **Packed virtqueues.**  Implement the common packed-ring engine once and
    enable it per device only after split-ring differential tests, wrap-counter
    tests, indirect descriptors, event suppression, reset, and Linux/FreeBSD

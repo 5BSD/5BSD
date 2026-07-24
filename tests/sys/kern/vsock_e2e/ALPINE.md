@@ -53,7 +53,11 @@ both directions with the host.
 The guest verifier requires the upstream `9pnet_virtio` driver and PCI device
 `1af4:1049` for modern or `1af4:1009` for option-omitted legacy.  It mounts the
 share with 9P2000.L and verifies distinct host-to-guest and guest-to-host file
-payloads.
+payloads.  Modern runs require `VIRTIO_F_RING_RESET`; reset/rebind verifies
+full-device recovery and remounting.  Linux's 9P driver does not currently
+issue selective queue reset, so the sanitizer-backed source harness separately
+proves that an in-flight selective reset drains old guest buffers without
+discarding the lib9p connection or fid namespace.
 
 The fully automated path needs only an Alpine `virt` ISO and a bhyve binary.
 The runner prefers the matching object-tree binary, using `SRCTOP` and

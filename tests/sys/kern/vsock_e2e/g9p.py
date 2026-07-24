@@ -22,9 +22,9 @@ def validate_features(child, transport):
             raise RuntimeError(
                 "virtio-9p did not negotiate VIRTIO_F_NOTIFICATION_DATA"
             )
-        if negotiated_feature(child, VIRTIO_F_RING_RESET):
+        if not negotiated_feature(child, VIRTIO_F_RING_RESET):
             raise RuntimeError(
-                "virtio-9p negotiated unadvertised VIRTIO_F_RING_RESET"
+                "virtio-9p did not negotiate VIRTIO_F_RING_RESET"
             )
 
 
@@ -94,7 +94,7 @@ def make_mock_device(root, device, features=()):
 
 def self_test():
     with tempfile.TemporaryDirectory() as root:
-        sys_root = make_mock_device(root, "0x1049", features=(0, 38))
+        sys_root = make_mock_device(root, "0x1049", features=(0, 38, 40))
         pci, device, child = find_bound_9p("modern", sys_root)
         if (pci, device) != ("0000:00:0b.0", "0x1049"):
             raise AssertionError("wrong VirtIO 9P PCI function")
@@ -102,8 +102,13 @@ def self_test():
         for missing_bit, missing_name in (
             (VIRTIO_9P_F_MOUNT_TAG, "VIRTIO_9P_F_MOUNT_TAG"),
             (VIRTIO_F_NOTIFICATION_DATA, "VIRTIO_F_NOTIFICATION_DATA"),
+            (VIRTIO_F_RING_RESET, "VIRTIO_F_RING_RESET"),
         ):
-            features = (VIRTIO_9P_F_MOUNT_TAG, VIRTIO_F_NOTIFICATION_DATA)
+            features = (
+                VIRTIO_9P_F_MOUNT_TAG,
+                VIRTIO_F_NOTIFICATION_DATA,
+                VIRTIO_F_RING_RESET,
+            )
             feature_path = child + "/features"
             bitmap = ["0"] * 64
             for bit in features:
@@ -119,18 +124,6 @@ def self_test():
                 raise AssertionError(
                     f"missing 9P feature {missing_name} was accepted"
                 )
-        bitmap = ["0"] * 64
-        bitmap[VIRTIO_9P_F_MOUNT_TAG] = "1"
-        bitmap[VIRTIO_F_NOTIFICATION_DATA] = "1"
-        bitmap[VIRTIO_F_RING_RESET] = "1"
-        with open(child + "/features", "w", encoding="ascii") as stream:
-            stream.write("".join(bitmap) + "\n")
-        try:
-            validate_features(child, "modern")
-        except RuntimeError:
-            pass
-        else:
-            raise AssertionError("9P RING_RESET over-advertisement was accepted")
         try:
             find_bound_9p("legacy", sys_root)
         except RuntimeError:
@@ -152,7 +145,7 @@ def main():
         f"PASS 9p pci={pci} device={device} driver=9pnet_virtio "
         f"mount_tag=yes notification_data="
         f"{'yes' if sys.argv[1] == 'modern' else 'n/a'} "
-        f"ring_reset={'no' if sys.argv[1] == 'modern' else 'n/a'}"
+        f"ring_reset={'yes' if sys.argv[1] == 'modern' else 'n/a'}"
     )
 
 

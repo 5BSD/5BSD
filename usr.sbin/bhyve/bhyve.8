@@ -545,6 +545,8 @@ If omitted, the legacy PCI transport and device identity are retained for
 compatibility.
 The modern setting selects the non-transitional VirtIO PCI transport and
 device ID 0x1049.
+It supports selective virtqueue reset without discarding the active 9P
+session or its fid namespace.
 .It Cm virtio-rnd
 Virtio RNG interface.
 The optional

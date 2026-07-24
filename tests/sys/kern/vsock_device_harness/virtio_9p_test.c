@@ -50,7 +50,11 @@ static int g_connection_closes;
 static int g_connection_inits;
 static int g_connection_init_result;
 static int g_needs_reset_calls;
+static int g_qreset_complete_calls;
+static uint64_t g_qreset_complete_generation;
+static int g_qreset_complete_error;
 static struct pci_vt9p_softc *g_notify_during_close;
+static bool g_drop_during_close;
 static struct l9p_connection g_connection;
 
 static void
@@ -86,7 +90,11 @@ reset_mocks(void)
 	g_connection_inits = 0;
 	g_connection_init_result = 0;
 	g_needs_reset_calls = 0;
+	g_qreset_complete_calls = 0;
+	g_qreset_complete_generation = 0;
+	g_qreset_complete_error = 0;
 	g_notify_during_close = NULL;
+	g_drop_during_close = false;
 }
 
 const char *
@@ -191,10 +199,18 @@ l9p_connection_recv(struct l9p_connection *conn __unused,
 void
 l9p_connection_close(struct l9p_connection *conn __unused)
 {
+	struct l9p_request req;
+
 	g_connection_closes++;
 	if (g_notify_during_close != NULL)
 		pci_vt9p_notify(g_notify_during_close,
 		    &g_notify_during_close->vsc_vq);
+	if (g_drop_during_close && g_recv_aux != NULL) {
+		memset(&req, 0, sizeof(req));
+		req.lr_aux = g_recv_aux;
+		g_recv_aux = NULL;
+		pci_vt9p_drop(&req, NULL, 0, NULL);
+	}
 }
 
 void
@@ -227,6 +243,16 @@ vi_set_needs_reset(struct virtio_softc *vs)
 {
 	g_needs_reset_calls++;
 	vs->vs_status |= VIRTIO_CONFIG_S_NEEDS_RESET;
+}
+
+void
+vi_pci_modern_queue_reset_complete(struct vqueue_info *vq __unused,
+    uint64_t generation, int error)
+{
+
+	g_qreset_complete_calls++;
+	g_qreset_complete_generation = generation;
+	g_qreset_complete_error = error;
 }
 
 static void
@@ -432,6 +458,97 @@ ATF_TC_BODY(stale_completion, tc)
 	destroy_softc(&sc);
 }
 
+ATF_TC_WITHOUT_HEAD(queue_reset_preserves_connection);
+ATF_TC_BODY(queue_reset_preserves_connection, tc)
+{
+	struct pci_vt9p_request *preq;
+	struct pci_vt9p_softc sc;
+	struct l9p_request req;
+	uint64_t old_generation;
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_vq.vq_num = 0;
+	pci_vt9p_notify(&sc, &sc.vsc_vq);
+	ATF_REQUIRE(g_recv_aux != NULL);
+	preq = g_recv_aux;
+	ATF_CHECK_EQ(sc.vsc_active_requests, 1);
+	old_generation = sc.vsc_generation;
+
+	ATF_REQUIRE(pthread_mutex_lock(&sc.vsc_mtx) == 0);
+	ATF_CHECK_EQ(pci_vt9p_qreset(&sc, &sc.vsc_vq, 37),
+	    EINPROGRESS);
+	ATF_REQUIRE(pthread_mutex_unlock(&sc.vsc_mtx) == 0);
+	ATF_CHECK(sc.vsc_queue_reset);
+	ATF_CHECK(sc.vsc_qreset_pending);
+	ATF_CHECK_EQ(sc.vsc_generation, old_generation + 1);
+	ATF_CHECK_EQ(g_connection_closes, 0);
+	ATF_CHECK_EQ(g_connection_inits, 0);
+
+	memset(&req, 0, sizeof(req));
+	req.lr_aux = preq;
+	(void)pci_vt9p_send(&req, NULL, 0, 17, NULL);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+	ATF_CHECK_EQ(sc.vsc_active_requests, 0);
+	ATF_CHECK(!sc.vsc_qreset_pending);
+	ATF_CHECK_EQ(g_qreset_complete_calls, 1);
+	ATF_CHECK_EQ(g_qreset_complete_generation, 37);
+	ATF_CHECK_EQ(g_qreset_complete_error, 0);
+
+	ATF_REQUIRE(pthread_mutex_lock(&sc.vsc_mtx) == 0);
+	ATF_CHECK_EQ(pci_vt9p_qenable(&sc, &sc.vsc_vq), 0);
+	ATF_REQUIRE(pthread_mutex_unlock(&sc.vsc_mtx) == 0);
+	ATF_CHECK(!sc.vsc_queue_reset);
+	ATF_CHECK(sc.vsc_conn == &g_connection);
+	destroy_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(queue_reset_without_requests);
+ATF_TC_BODY(queue_reset_without_requests, tc)
+{
+	struct pci_vt9p_softc sc;
+	struct vqueue_info impostor;
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_vq.vq_num = 0;
+	impostor = sc.vsc_vq;
+	ATF_REQUIRE(pthread_mutex_lock(&sc.vsc_mtx) == 0);
+	ATF_CHECK_EQ(pci_vt9p_qreset(&sc, &impostor, 1), EINVAL);
+	ATF_CHECK_EQ(pci_vt9p_qreset(&sc, &sc.vsc_vq, 2), 0);
+	ATF_CHECK(sc.vsc_queue_reset);
+	ATF_CHECK_EQ(pci_vt9p_qenable(&sc, &sc.vsc_vq), 0);
+	ATF_REQUIRE(pthread_mutex_unlock(&sc.vsc_mtx) == 0);
+	ATF_CHECK(!sc.vsc_queue_reset);
+	ATF_CHECK_EQ(g_qreset_complete_calls, 0);
+	destroy_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(full_reset_drains_active_request);
+ATF_TC_BODY(full_reset_drains_active_request, tc)
+{
+	struct pci_vt9p_softc sc;
+
+	reset_mocks();
+	setup_softc(&sc);
+	pci_vt9p_notify(&sc, &sc.vsc_vq);
+	ATF_REQUIRE(g_recv_aux != NULL);
+	ATF_CHECK_EQ(sc.vsc_active_requests, 1);
+	g_drop_during_close = true;
+
+	ATF_REQUIRE(pthread_mutex_lock(&sc.vsc_mtx) == 0);
+	pci_vt9p_reset(&sc);
+	ATF_REQUIRE(pthread_mutex_unlock(&sc.vsc_mtx) == 0);
+	ATF_CHECK_EQ(g_connection_closes, 1);
+	ATF_CHECK_EQ(g_connection_inits, 1);
+	ATF_CHECK_EQ(sc.vsc_active_requests, 0);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+	ATF_CHECK_EQ(g_end_calls, 1);
+	ATF_CHECK_EQ(g_qreset_complete_calls, 0);
+	ATF_CHECK(sc.vsc_conn == &g_connection);
+	destroy_softc(&sc);
+}
+
 ATF_TC_WITHOUT_HEAD(reset_reinit_failure);
 ATF_TC_BODY(reset_reinit_failure, tc)
 {
@@ -535,19 +652,15 @@ ATF_TC_BODY(modern_mount_tag_wire_bytes, tc)
 	    VT9P_MAXTAGSZ - 1], (uint8_t)'x');
 }
 
-ATF_TC_WITHOUT_HEAD(optional_queue_reset_not_advertised);
-ATF_TC_BODY(optional_queue_reset_not_advertised, tc)
+ATF_TC_WITHOUT_HEAD(queue_reset_contract);
+ATF_TC_BODY(queue_reset_contract, tc)
 {
 
-	/*
-	 * VirtIO 1.4 section 2.6.1 makes queue reset optional.  The 9P
-	 * implementation cannot cancel one queue without discarding connection
-	 * and fid state, so it must not offer VIRTIO_F_RING_RESET.
-	 */
-	ATF_CHECK(vt9p_vi_consts.vc_qreset == NULL);
-	ATF_CHECK_EQ(vt9p_vi_consts.vc_hv_caps & VIRTIO_F_RING_RESET, 0);
+	ATF_CHECK(vt9p_vi_consts.vc_qreset == pci_vt9p_qreset);
+	ATF_CHECK(vt9p_vi_consts.vc_qenable == pci_vt9p_qenable);
+	ATF_CHECK((vt9p_vi_consts.vc_hv_caps & VIRTIO_F_RING_RESET) != 0);
 	ATF_CHECK_EQ(vt9p_vi_consts.vc_hv_caps,
-	    VIRTIO14_9P_F_MOUNT_TAG);
+	    VIRTIO14_9P_F_MOUNT_TAG | VIRTIO14_F_RING_RESET);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -560,10 +673,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rejected_request);
 	ATF_TP_ADD_TC(tp, synchronous_completion);
 	ATF_TP_ADD_TC(tp, stale_completion);
+	ATF_TP_ADD_TC(tp, queue_reset_preserves_connection);
+	ATF_TP_ADD_TC(tp, queue_reset_without_requests);
+	ATF_TP_ADD_TC(tp, full_reset_drains_active_request);
 	ATF_TP_ADD_TC(tp, reset_reinit_failure);
 	ATF_TP_ADD_TC(tp, full_reset_waits_for_prior_reconnect);
 	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
 	ATF_TP_ADD_TC(tp, modern_mount_tag_wire_bytes);
-	ATF_TP_ADD_TC(tp, optional_queue_reset_not_advertised);
+	ATF_TP_ADD_TC(tp, queue_reset_contract);
 	return (atf_no_error());
 }
