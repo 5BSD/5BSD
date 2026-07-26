@@ -140,7 +140,6 @@ The unit of authority is the **instance fd** returned by MAC_CAPABILITY_CONNECT.
 | Destroy instance | MAC_CAPABILITY_TERMINATE | Kill the instance for all holders |
 | kqueue readiness | CAP_EVENT (not an ioctl) | TX has data / RX has space |
 | Prevent delegation | cap_xfer_limit(fd, CAP_XFER_NONE) | Disable fd transfer (one-way) |
-| Attenuate delegation | cap_xfer_rights/ioctls/fcntls_limit(fd, ...) | Intersect rights on transfer |
 | Permit one exec boundary | cap_cloexec_limit(fd, CAP_CLOEXEC_ONCE) | Survive one exec, then lock |
 | Permit one fork boundary | cap_clofork_limit(fd, CAP_CLOFORK_ONCE) | Inherit once, then lock both entries |
 
@@ -152,8 +151,7 @@ Rights can only be reduced, never re-escalated:
 2. **cap_ioctls_limit()** -- irreversibly whitelist specific ioctl commands.
 3. **MAC_CAPABILITY_REVOKE_SEND/RECV/CALL/MINT** -- instance-level one-way latch.
 4. **cap_xfer_limit()** -- bound fd transfer via SCM_RIGHTS and mac_capability messages.
-5. **cap_xfer_rights_limit() / cap_xfer_ioctls_limit() / cap_xfer_fcntls_limit()** -- monotonically bound the authority received after transfer without narrowing the sender.
-6. **cap_cloexec_limit() / cap_clofork_limit()** -- bound propagation across image and child-process boundaries.
+5. **cap_cloexec_limit() / cap_clofork_limit()** -- bound propagation across image and child-process boundaries.
 
 All five compose.  A process can hand a child a send-only,
 non-transferable handle by combining them.
@@ -163,8 +161,6 @@ non-transferable handle by combining them.
 Messages (SENDMSG, CALL) can carry up to `MAC_CAPABILITY_MAX_FDS` (32)
 file descriptors.  Attached fds preserve their complete Capsicum restrictions,
 including rights, ioctl allowlists, and xfer/cloexec/clofork propagation states.
-Before installation, those restrictions are intersected with the sender's
-monotonic transfer-rights ceiling.
 The DFLAG_PASSABLE check and per-fd CAP_XFER state prevent passing
 non-transferable fds.
 
@@ -699,7 +695,7 @@ Network claims support port ranges (min..max), CIDR address prefixes
 
 | Operation | What it does |
 |-----------|-------------|
-| CLAIM_VSOCK | Claim a CID, 32-bit port range, and bind, connect, or provider direction |
+| CLAIM_VSOCK | Claim a CID, 32-bit port range, and bind/connect direction |
 | RELEASE_VSOCK | Release an exact vsock claim |
 | QUERY_VSOCK | Check vsock ownership and authorization |
 | MINT_VSOCK | Create a token narrowed to a covered vsock tuple |
@@ -711,22 +707,12 @@ Socket type is intentionally outside the key, so a claim covers both stream
 and sequenced-packet sockets.  Wildcard and ephemeral binds are checked for
 overlap with exact claims rather than being allowed to bypass them.
 
-`FI_VSOCK_PROVIDER` claims the complete transport data path for one concrete
-guest CID.  Such a claim must use the full 32-bit port range and conflicts
-with provider, bind, and connect claims for that CID.  It authorizes
-attachment and later I/O on the corresponding `/dev/vsock` provider
-descriptor; a bind/connect endpoint claim alone does not grant provider
-authority.
-
-The host transport supports simultaneous providers indexed by guest CID and
-rejects duplicate attachment.  MACF pins the exact provider claim identity
-and owner nonce in the provider label at attachment.  Passing or retaining
-the descriptor after `exec` therefore requires an authorization token.
-Closing the claim instance does not silently make an already protected
-provider public, while a provider attached before a claim is created starts
-honoring that later claim.  Provider access is rechecked after blocking waits,
-at state-changing ioctl commit points, before an inbound packet is injected,
-and whenever poll or kqueue readiness is evaluated.
+The endpoint policy applies to the AF_VSOCK socket API.  The current native
+host transport allows only one privileged `/dev/vsock` provider; access to
+that device can be delegated using vnode isolation.  Supporting multiple
+simultaneous providers is an explicit integration boundary: transport attach
+must then acquire a provider-CID claim, with its own allow/deny probes and
+attach/detach/race tests.
 
 **Jail operations:**
 
