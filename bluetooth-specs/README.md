@@ -76,7 +76,8 @@ Userspace (`usr.sbin/bluetooth/btled`):
   Write Request, report ID prepending for multi-report devices.
 - BLE scanning (`btled -s`) via HCI raw socket.
 - Bonded reconnect with RPA/IRK address resolution (ah function).
-- Auto-reconnect (`-r`) with pre-allocated Capsicum-safe socket pool.
+- Auto-reconnect (`-r`) with runtime L2CAP descriptors supplied by the
+  capability-limited socket broker.
   vhid device preserved across reconnect cycles.
 - Multi-device via fork-per-device (up to 16 simultaneous).
 - Capsicum sandbox — minimal fd rights per descriptor, atexit cleanup,
@@ -106,9 +107,9 @@ fixed in commit following this review.
   now internally convert LE wire values to BE for AES-CMAC), responder
   key distribution masked to initiator constraints, SC Passkey Entry
   responder path added (20-round confirm/nonce exchange).
-- GATT (Vol 3 Part G): 26/28 PASS, 1 fixed, 1 deferred. Fix: CCCD
-  reset to 0x0000 on new non-bonded connection. Deferred: CCCD
-  persistence for bonded devices (needs bond DB schema extension).
+- GATT (Vol 3 Part G): 28/28 PASS after fixing CCCD reset for new
+  non-bonded connections and transactional CCCD persistence for bonded
+  devices.
 - HOGP: HID Service 0x1812, Report Map 0x2A4B, Report 0x2A4D, Protocol
   Mode 0x2A4E, Report Reference 0x2908 [id,type], CCCD 0x2902 — all PASS.
 
