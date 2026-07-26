@@ -1,6 +1,7 @@
 /* Tests for transport-independent FreeBSD guest VirtIO contracts. */
 #include <sys/types.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -290,7 +291,8 @@ ATF_TC_BODY(transport_feature_filter, tc)
 	    VIRTIO14_F_RING_EVENT_IDX | VIRTIO14_F_VERSION_1 |
 	    VIRTIO14_F_IN_ORDER | VIRTIO14_F_NOTIFICATION_DATA |
 	    VIRTIO14_F_RING_RESET | VIRTIO14_F_ADMIN_VQ |
-	    VIRTIO14_NET_F_GUEST_RSC6 | VIRTIO14_NET_F_MTU |
+	    VIRTIO14_NET_F_GUEST_RSC6 | VIRTIO14_F_SUSPEND |
+	    VIRTIO14_NET_F_MTU |
 	    VIRTIO14_DEVICE_FEATURE_HIGH_FIRST;
 	const uint64_t modern_expected = legacy_neutral_expected &
 	    ~(VIRTIO14_F_NOTIFY_ON_EMPTY | VIRTIO14_F_ANY_LAYOUT |
@@ -310,10 +312,34 @@ ATF_TC_BODY(transport_feature_filter, tc)
 	ATF_CHECK_EQ(virtio_modern_supported_transport_features(requested),
 	    modern_expected);
 	ATF_CHECK_EQ(virtio_mmio_supported_transport_features(
-	    VIRTIO14_MMIO_MODERN_VERSION, requested), modern_expected);
+	    VIRTIO14_MMIO_MODERN_VERSION, requested),
+	    modern_expected & ~VIRTIO14_F_SUSPEND);
 	ATF_CHECK_EQ(virtio_mmio_supported_transport_features(
 	    VIRTIO14_MMIO_LEGACY_VERSION, requested),
-	    legacy_neutral_expected & ~VIRTIO14_F_RING_RESET);
+	    legacy_neutral_expected &
+	    ~(VIRTIO14_F_RING_RESET | VIRTIO14_F_SUSPEND));
+}
+
+ATF_TC_WITHOUT_HEAD(suspend_status_predicates);
+ATF_TC_BODY(suspend_status_predicates, tc)
+{
+
+	ATF_CHECK(virtio_device_suspend_complete(VIRTIO14_STATUS_SUSPEND));
+	ATF_CHECK(virtio_device_suspend_complete(
+	    VIRTIO14_STATUS_SUSPEND | VIRTIO14_STATUS_FEATURES_OK));
+	ATF_CHECK(!virtio_device_suspend_complete(
+	    VIRTIO14_STATUS_SUSPEND | VIRTIO14_STATUS_DRIVER_OK));
+	ATF_CHECK(!virtio_device_suspend_complete(
+	    VIRTIO14_STATUS_DRIVER_OK));
+
+	ATF_CHECK(virtio_device_resume_complete(
+	    VIRTIO14_STATUS_DRIVER_OK));
+	ATF_CHECK(virtio_device_resume_complete(
+	    VIRTIO14_STATUS_DRIVER_OK | VIRTIO14_STATUS_FEATURES_OK));
+	ATF_CHECK(!virtio_device_resume_complete(
+	    VIRTIO14_STATUS_SUSPEND | VIRTIO14_STATUS_DRIVER_OK));
+	ATF_CHECK(!virtio_device_resume_complete(
+	    VIRTIO14_STATUS_SUSPEND));
 }
 
 ATF_TC_WITHOUT_HEAD(device_config_ranges);
@@ -396,6 +422,29 @@ ATF_TC_BODY(pci_capability_bar_ranges, tc)
 	ATF_CHECK(!VIRTIO_PCI_CAP_BAR_VALID(UINT8_MAX));
 }
 
+ATF_TC_WITHOUT_HEAD(pci_capability_resource_ranges);
+ATF_TC_BODY(pci_capability_resource_ranges, tc)
+{
+	const uint64_t bar_size = UINT64_C(0x1000);
+
+	ATF_CHECK(virtio_pci_cap_range_valid(bar_size, 0, 1, 1, 1));
+	ATF_CHECK(virtio_pci_cap_range_valid(bar_size, 4, 0x20, 0x10, 4));
+	ATF_CHECK(virtio_pci_cap_range_valid(bar_size, 0xff0, 0x10, 1, 4));
+
+	/*
+	 * cap.length is a byte count.  In particular, zero must not reach
+	 * bus_map_resource(), where zero has the different meaning "map the
+	 * entire resource".
+	 */
+	ATF_CHECK(!virtio_pci_cap_range_valid(bar_size, 0, 0, 0, 1));
+	ATF_CHECK(!virtio_pci_cap_range_valid(bar_size, 0, 0xf, 0x10, 1));
+	ATF_CHECK(!virtio_pci_cap_range_valid(bar_size, 2, 4, 1, 4));
+	ATF_CHECK(!virtio_pci_cap_range_valid(bar_size, 0, 4, 1, 0));
+	ATF_CHECK(!virtio_pci_cap_range_valid(bar_size, 0xfff, 2, 1, 1));
+	ATF_CHECK(!virtio_pci_cap_range_valid(bar_size + 1, UINT32_MAX, 3,
+	    1, 1));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -404,9 +453,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, notification_feature_validation);
 	ATF_TP_ADD_TC(tp, split_queue_size_limits);
 	ATF_TP_ADD_TC(tp, transport_feature_filter);
+	ATF_TP_ADD_TC(tp, suspend_status_predicates);
 	ATF_TP_ADD_TC(tp, device_config_ranges);
 	ATF_TP_ADD_TC(tp, device_config_64bit_parts);
 	ATF_TP_ADD_TC(tp, pci_capability_bar_ranges);
+	ATF_TP_ADD_TC(tp, pci_capability_resource_ranges);
 	ATF_TP_ADD_TC(tp, virtio_1_4_wire_constants);
 	ATF_TP_ADD_TC(tp, virtio_1_4_pci_layout);
 	ATF_TP_ADD_TC(tp, virtio_1_4_mmio_layout);

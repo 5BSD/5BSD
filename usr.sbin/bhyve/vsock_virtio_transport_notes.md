@@ -565,7 +565,7 @@ field width; 64-bit fields MUST support independent lo/hi 32-bit access
 | 0x00 | device_feature_select (RW) | store; no side effect |
 | 0x04 | device_feature (RO) | `sel==0` → low 32 of hv_caps; `sel==1` → high 32 (includes bit 32 VERSION_1); **`sel>=2` → 0** (MUST, §4.1.4.3.1) |
 | 0x08 | driver_feature_select (RW) | store |
-| 0x0C | driver_feature (RW) | write: merge into `vs_negotiated_caps` window masked by hv_caps; read: MUST present valid bits previously written (mask-at-write satisfies "MAY present invalid bits" latitude). Call `vc_apply_features` at FEATURES_OK, not per-write |
+| 0x0C | driver_feature (RW) | write: merge the selected 32-bit page into the driver-feature staging value and read it back unchanged until FEATURES_OK. At FEATURES_OK, reject unsupported bits and call `vc_apply_features`; a nonzero callback result clears FEATURES_OK and DRIVER_OK rather than activating an unsupported device-specific subset |
 | 0x10 | config_msix_vector (RW) | maps to `vs_msix_cfg_idx`; read MUST return mapped vector or NO_VECTOR (0xFFFF); MUST be unmapped after reset (vi_reset_dev already does, virtio.c:120) |
 | 0x12 | num_queues (RO) | `vc_nvq` |
 | 0x14 | device_status (RW) | see 8.7 reset/status |
@@ -617,11 +617,11 @@ unchanged: split-ring layout is identical under VERSION_1.
   feature selects, `vq_enabled`, the three GPAs, and driver-shrunk
   `vq_qsize` back to `vq_qsize_max`.
 - FEATURES_OK handling (new for modern): on status write containing
-  FEATURES_OK, verify `VIRTIO_F_VERSION_1` was accepted; if not, do not
-  latch FEATURES_OK (device "MAY fail to operate" without VERSION_1,
-  §6.2 — QEMU's forced-virtio-1 behaves this way). This is where
-  `vc_apply_features` moves (from the legacy GUEST_FEATURES write,
-  virtio.c:757–762).
+  FEATURES_OK, verify `VIRTIO_F_VERSION_1` was accepted and that every
+  selected bit was offered. Then call `vc_apply_features`; if the device
+  model cannot support that otherwise-valid subset or cannot configure its
+  backend, clear FEATURES_OK and DRIVER_OK. This also prevents a combined
+  FEATURES_OK|DRIVER_OK write from bypassing device-specific validation.
 - DEVICE_NEEDS_RESET (bit 6) becomes settable by the transport on fatal
   ring errors — today's `EPRINTLN + return -1` paths in vq_getchain are
   the natural producers.

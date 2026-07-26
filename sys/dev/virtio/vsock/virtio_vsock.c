@@ -110,9 +110,11 @@ SDT_PROBE_DEFINE6(vsock, , , pkt__tx,
 					    VTVSOCK_MAX_PKT_BUF, PAGE_SIZE) + 1)
 
 /*
- * Bound for the software holding queue of control/reply packets (RST,
- * RESPONSE, CREDIT_UPDATE, SHUTDOWN, ...) that cannot be placed on the TX
- * virtqueue because the host is keeping the ring full.  Rather than dropping
+ * Bound for the software holding queue of packets that cannot be placed on
+ * the TX virtqueue because the host is keeping the ring full.  Control/reply
+ * packets (RST, RESPONSE, CREDIT_UPDATE, SHUTDOWN, ...) use it individually;
+ * all fragments of a SEQPACKET message are admitted to it transactionally.
+ * Rather than dropping
  * such a reply -- which silently fails an inbound connect (lost RESPONSE),
  * stalls the peer (lost CREDIT_UPDATE), or leaks a stale peer connection
  * (lost RST), violating VirtIO 1.4 §5.10.6.1.1 -- we retain it and drain
@@ -154,9 +156,10 @@ struct vtvsock_softc {
 	uint64_t		 sc_guest_cid;
 
 	/*
-	 * Bounded FIFO software holding queue for control/reply packets that
-	 * could not be enqueued onto the TX virtqueue because the ring was
-	 * full (see VTVSOCK_TXQ_MAX).  Each slot holds a fully-built packet
+	 * Bounded FIFO software holding queue for control/reply packets and
+	 * transactionally admitted SEQPACKET fragments that could not be
+	 * enqueued onto the TX virtqueue because the ring was full (see
+	 * VTVSOCK_TXQ_MAX).  Each slot holds a fully-built packet
 	 * buffer (struct virtio_vsock_hdr + payload); the total length is
 	 * recovered on drain from the header's len field.  Drained by
 	 * vtvsock_tx_intr as TX descriptors complete.  All fields are
@@ -605,12 +608,182 @@ vtvsock_send_credit_update_locked(struct vtvsock_pcb *pcb)
  * Virtio remote transport operations
  * ---------------------------------------------------------------------- */
 
+struct vtvsock_message_fragment {
+	uint8_t	*buf;
+	size_t	 len;
+};
+
+static void
+vtvsock_message_fragments_free(struct vtvsock_message_fragment *frags,
+    u_int nfrags)
+{
+	u_int i;
+
+	if (frags == NULL)
+		return;
+	for (i = 0; i < nfrags; i++)
+		free(frags[i].buf, M_VTVSOCK);
+	free(frags, M_VTVSOCK);
+}
+
+/*
+ * Prepare and admit one SEQPACKET message atomically.  Linux places every skb
+ * generated for a message on its intermediate send queue before reporting the
+ * message accepted.  Do the same with our bounded FIFO: allocation, credit,
+ * and FIFO capacity must all succeed before the first fragment is published.
+ * EOM terminates this message; MSG_EOR independently requests EOR on its final
+ * fragment to terminate the enclosing record (VirtIO 1.4 section 5.10.6.6.1).
+ */
+static int
+vtvsock_virtio_send_seqpacket(struct vtvsock_pcb *pcb, bool nonblocking,
+    struct mbuf *m, size_t total)
+{
+	struct vtvsock_message_fragment *frags;
+	struct virtio_vsock_hdr *hdr;
+	struct vtvsock_softc *sc;
+	size_t chunk, fragment_count, offset;
+	uint32_t credit, pkt_flags;
+	u_int i, nfrags;
+	int alloc_flags, error;
+	bool capacity, credit_req_sent;
+
+	fragment_count = howmany(total, (size_t)VTVSOCK_MAX_PKT_BUF);
+	/*
+	 * Keep one bounded FIFO slot available for a protocol reply.  A larger
+	 * record cannot be admitted atomically by this transport incarnation.
+	 */
+	if (fragment_count == 0 || fragment_count >= VTVSOCK_TXQ_MAX) {
+		m_freem(m);
+		return (EMSGSIZE);
+	}
+	nfrags = (u_int)fragment_count;
+	alloc_flags = nonblocking ? M_NOWAIT : M_WAITOK;
+	frags = malloc(sizeof(*frags) * nfrags, M_VTVSOCK,
+	    alloc_flags | M_ZERO);
+	if (frags == NULL) {
+		m_freem(m);
+		return (ENOMEM);
+	}
+	offset = 0;
+	for (i = 0; i < nfrags; i++) {
+		chunk = MIN(total - offset, (size_t)VTVSOCK_MAX_PKT_BUF);
+		frags[i].len = chunk;
+		frags[i].buf = malloc(sizeof(*hdr) + chunk, M_VTVSOCK,
+		    alloc_flags | M_ZERO);
+		if (frags[i].buf == NULL) {
+			vtvsock_message_fragments_free(frags, nfrags);
+			m_freem(m);
+			return (ENOMEM);
+		}
+		m_copydata(m, (int)offset, (int)chunk,
+		    frags[i].buf + sizeof(*hdr));
+		offset += chunk;
+	}
+
+	error = 0;
+	credit_req_sent = false;
+	mtx_lock(&vtvsock_mtx);
+	for (;;) {
+		sc = vtvsock_global_softc();
+		if (sc == NULL) {
+			error = ENXIO;
+			break;
+		}
+		if (pcb->state != VTVSOCK_ESTABLISHED ||
+		    (pcb->peer_shutdown & VIRTIO_VSOCK_SHUTDOWN_RCV) != 0) {
+			error = EPIPE;
+			break;
+		}
+		if (total > MIN(pcb->peer_buf_alloc, pcb->buf_alloc)) {
+			error = EMSGSIZE;
+			break;
+		}
+
+		/*
+		 * Reclaim and drain before measuring FIFO demand.  Merely
+		 * reclaiming could leave old queued packets despite newly free
+		 * descriptors, then put this sender to sleep with no completion
+		 * left to wake it.
+		 */
+		vtvsock_txvq_reclaim(sc);
+		vtvsock_txq_drain(sc);
+		capacity =
+		    sc->sc_txq_count + nfrags < VTVSOCK_TXQ_MAX;
+		credit = 0;
+		if (capacity) {
+			credit = vtvsock_get_credit(pcb, (uint32_t)total);
+			if (credit == total)
+				break;
+			pcb->tx_cnt -= credit;
+		}
+		if (nonblocking) {
+			error = EWOULDBLOCK;
+			break;
+		}
+		if (capacity) {
+			if (!credit_req_sent) {
+				(void)vtvsock_send_pkt_locked(pcb,
+				    VIRTIO_VSOCK_OP_CREDIT_REQUEST, 0, NULL, 0);
+				credit_req_sent = true;
+			}
+			error = msleep_sbt(&pcb->tx_cnt, &vtvsock_mtx,
+			    PSOCK | PCATCH, "vsocktx",
+			    pcb->so->so_snd.sb_timeo, 0, 0);
+		} else {
+			error = msleep_sbt(&sc->sc_txvq, &vtvsock_mtx,
+			    PSOCK | PCATCH, "vsocktxr",
+			    pcb->so->so_snd.sb_timeo, 0, 0);
+		}
+		if (error != 0)
+			break;
+	}
+	if (error == 0) {
+		for (i = 0; i < nfrags; i++) {
+			hdr = (struct virtio_vsock_hdr *)frags[i].buf;
+			hdr->src_cid = htole64(pcb->local.svm_cid);
+			hdr->dst_cid = htole64(pcb->remote.svm_cid);
+			hdr->src_port = htole32(pcb->local.svm_port);
+			hdr->dst_port = htole32(pcb->remote.svm_port);
+			hdr->len = htole32((uint32_t)frags[i].len);
+			hdr->type = htole16(VIRTIO_VSOCK_TYPE_SEQPACKET);
+			hdr->op = htole16(VIRTIO_VSOCK_OP_RW);
+			pkt_flags = 0;
+			if (i == nfrags - 1) {
+				pkt_flags = VIRTIO_VSOCK_SEQ_EOM;
+				if ((m->m_flags & M_PROTO1) != 0)
+					pkt_flags |= VIRTIO_VSOCK_SEQ_EOR;
+			}
+			hdr->flags = htole32(pkt_flags);
+			hdr->buf_alloc = htole32(pcb->buf_alloc);
+			hdr->fwd_cnt = htole32(pcb->fwd_cnt);
+			SDT_PROBE6(vsock, , , pkt__tx,
+			    (uint16_t)VIRTIO_VSOCK_OP_RW,
+			    pcb->local.svm_cid, pcb->local.svm_port,
+			    pcb->remote.svm_port, (uint32_t)frags[i].len,
+			    pkt_flags);
+			sc->sc_txq_pkts[sc->sc_txq_tail] = frags[i].buf;
+			sc->sc_txq_tail =
+			    (sc->sc_txq_tail + 1) % VTVSOCK_TXQ_MAX;
+			sc->sc_txq_count++;
+			frags[i].buf = NULL;
+			counter_u64_add(vtvsock_cnt_tx_packets, 1);
+			counter_u64_add(vtvsock_cnt_tx_bytes, frags[i].len);
+		}
+		vtvsock_txq_drain(sc);
+	}
+	mtx_unlock(&vtvsock_mtx);
+	vtvsock_message_fragments_free(frags, nfrags);
+	m_freem(m);
+	return (error);
+}
+
 /*
  * Send data over the virtio TX queue.
  *
  * Each message is sent as one or more virtio packets capped at
  * VTVSOCK_MAX_PKT_BUF bytes each, subject to credit availability.
- * For SEQPACKET, EOM|EOR is set on the last fragment.
+ * For SEQPACKET, EOM is set on the last fragment and EOR is additionally set
+ * there when the application supplies MSG_EOR.
  *
  * On virtqueue_enqueue failure, return the consumed credit.
  */
@@ -647,10 +820,12 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 	if (total == 0) {
 		/*
 		 * A zero-length STREAM write is a no-op.  A zero-length
-		 * SEQPACKET write delivers an empty record (Linux semantics):
+		 * SEQPACKET write delivers an empty message:
 		 * send a single zero-payload RW with EOM (and EOR if the
 		 * application passed MSG_EOR) so the peer delivers a distinct
-		 * 0-byte message.
+		 * 0-byte message.  Linux's current virtio-vsock sender treats
+		 * this as a no-op, but its receiver accepts the wire form; the
+		 * VirtIO message/record-boundary rules do not prohibit it.
 		 */
 		error = 0;
 		if (seqpacket) {
@@ -669,6 +844,9 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 		m_freem(m);
 		return (error);
 	}
+	if (seqpacket)
+		return (vtvsock_virtio_send_seqpacket(pcb, nonblocking, m,
+		    total));
 	offset = 0;
 	error = 0;
 	credit_req_sent = false;
@@ -681,20 +859,6 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 		mtx_unlock(&vtvsock_mtx);
 		m_freem(m);
 		return (ENXIO);
-	}
-
-	/*
-	 * SEQPACKET is atomic: a record that cannot fit in the peer's advertised
-	 * receive buffer can never be delivered (the peer caps reassembly at its
-	 * buf_alloc and would RST mid-record).  Reject it up front with EMSGSIZE
-	 * -- matching the loopback transport (vtvsock_local_send) -- rather than
-	 * streaming fragments that provoke a remote reset (ECONNRESET).
-	 */
-	if (seqpacket && pcb->peer_buf_alloc != 0 &&
-	    total > pcb->peer_buf_alloc) {
-		mtx_unlock(&vtvsock_mtx);
-		m_freem(m);
-		return (EMSGSIZE);
 	}
 
 	while (offset < total) {
@@ -729,22 +893,26 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 			/*
 			 * Solicit a fresh CREDIT_UPDATE from the peer on the
 			 * first stall (spec 5.10.6.3, matching Linux's
-			 * virtio_transport_send_credit_request).  Without this
-			 * a lost or aggressively-batched CREDIT_UPDATE would
-			 * leave us polling on the 1s timeout below.  Best-effort:
-			 * ignore a send failure, the timeout still retries.
+			 * virtio_transport_send_credit_request).  Best-effort:
+			 * ignore a send failure because a later peer credit
+			 * update or connection teardown still wakes the sender.
 			 */
 			if (!credit_req_sent) {
 				(void)vtvsock_send_pkt_locked(pcb,
 				    VIRTIO_VSOCK_OP_CREDIT_REQUEST, 0, NULL, 0);
 				credit_req_sent = true;
 			}
-			/* Sleep until CREDIT_UPDATE wakes us. */
-			error = msleep(&pcb->tx_cnt, &vtvsock_mtx,
-			    PSOCK | PCATCH, "vsocktx", hz);
-			if (error != 0 && error != EWOULDBLOCK)
+			/*
+			 * CREDIT_UPDATE, transport reset, or connection teardown
+			 * wakes this channel.  Preserve SO_SNDTIMEO semantics
+			 * without periodically polling an unchanged credit
+			 * counter.
+			 */
+			error = msleep_sbt(&pcb->tx_cnt, &vtvsock_mtx,
+			    PSOCK | PCATCH, "vsocktx",
+			    pcb->so->so_snd.sb_timeo, 0, 0);
+			if (error != 0)
 				goto out;
-			error = 0;
 			/*
 			 * Re-fetch the softc after any sleep, mirroring the
 			 * TX-ring-full sleep below: a concurrent detach
@@ -774,23 +942,12 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 		hdr->src_port  = htole32(pcb->local.svm_port);
 		hdr->dst_port  = htole32(pcb->remote.svm_port);
 		hdr->len       = htole32((uint32_t)chunk);
-		hdr->type      = htole16(seqpacket ?
-		    VIRTIO_VSOCK_TYPE_SEQPACKET : VIRTIO_VSOCK_TYPE_STREAM);
+		hdr->type      = htole16(VIRTIO_VSOCK_TYPE_STREAM);
 		hdr->op        = htole16(VIRTIO_VSOCK_OP_RW);
 		hdr->buf_alloc = htole32(pcb->buf_alloc);
 		hdr->fwd_cnt   = htole32(pcb->fwd_cnt);
 
-		/*
-		 * EOM on the final fragment of a SEQPACKET message.
-		 * EOR only when the application passed MSG_EOR, which
-		 * vsock_sosend() propagates as M_PROTO1.
-		 */
 		pkt_flags = 0;
-		if (seqpacket && (offset + chunk >= total)) {
-			pkt_flags = VIRTIO_VSOCK_SEQ_EOM;
-			if (m->m_flags & M_PROTO1)
-				pkt_flags |= VIRTIO_VSOCK_SEQ_EOR;
-		}
 		hdr->flags = htole32(pkt_flags);
 
 		SDT_PROBE6(vsock, , , pkt__tx, (uint16_t)VIRTIO_VSOCK_OP_RW,
@@ -835,10 +992,11 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 			 */
 			pcb->tx_cnt -= (uint32_t)chunk;
 			free(buf, M_VTVSOCK);
-			error = msleep(&sc->sc_txvq, &vtvsock_mtx,
-			    PSOCK | PCATCH, "vsocktxr", hz);
-			if (error != 0 && error != EWOULDBLOCK)
-				break;		/* signal: propagate EINTR */
+			error = msleep_sbt(&sc->sc_txvq, &vtvsock_mtx,
+			    PSOCK | PCATCH, "vsocktxr",
+			    pcb->so->so_snd.sb_timeo, 0, 0);
+			if (error != 0)
+				break;
 			/*
 			 * A concurrent detach may have torn the transport down
 			 * while we slept (it wakes us via &sc->sc_txvq).  Re-fetch
@@ -850,7 +1008,6 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 				error = ENXIO;
 				break;
 			}
-			error = 0;
 			continue;		/* retry the same offset */
 		}
 		if (error != 0) {
@@ -868,12 +1025,10 @@ out:
 	/*
 	 * Handle partial sends (some chunks enqueued, then error).
 	 *
-	 * SEQPACKET orphaned fragments have no EOM.  STREAM has a subtler version
-	 * of the same problem: sosend_generic() has already consumed this entire
-	 * mbuf from the caller's uio, while the transport cannot report the exact
-	 * prefix placed on the wire.  Leaving either socket type established can
-	 * therefore duplicate a prefix on retry or silently gap the stream.
-	 * Reset the connection so the peer discards an incomplete record and no
+	 * sosend_generic() has already consumed this entire mbuf from the caller's
+	 * uio, while the transport cannot report the exact STREAM prefix placed
+	 * on the wire.  Leaving the socket established can therefore duplicate a
+	 * prefix on retry or silently gap the stream.  Reset the connection so no
 	 * later write can continue after a partial transport send.  Do not roll
 	 * back tx_cnt; the peer may already have accounted for the prefix.
 	 */
@@ -884,7 +1039,6 @@ out:
 		(void)vtvsock_send_rst_locked(
 		    pcb->local.svm_cid, pcb->local.svm_port,
 		    pcb->remote.svm_cid, pcb->remote.svm_port,
-		    seqpacket ? VIRTIO_VSOCK_TYPE_SEQPACKET :
 		    VIRTIO_VSOCK_TYPE_STREAM);
 		wakeup(&pcb->state);
 		mtx_unlock(&vtvsock_mtx);
@@ -1333,8 +1487,7 @@ again:
 			 * reset_locked woke per-pcb credit sleepers, but a
 			 * sender parked on a full TX ring sleeps on &sc_txvq
 			 * (not reachable from the socket layer); wake it here
-			 * so it observes its now-CLOSED connection immediately
-			 * instead of waiting out its 1 s poll.
+			 * so it observes its now-CLOSED connection immediately.
 			 */
 			wakeup(&sc->sc_txvq);
 		}
@@ -1606,8 +1759,7 @@ vtvsock_detach(device_t dev)
 	/*
 	 * Wake any sender blocked in vtvsock_virtio_send waiting on the TX ring
 	 * (msleep on &sc->sc_txvq).  It re-fetches the softc after waking, sees
-	 * it cleared above, and bails with ENXIO instead of stalling until its
-	 * 1s timeout.
+	 * it cleared above, and bails with ENXIO.
 	 */
 	wakeup(&sc->sc_txvq);
 	mtx_unlock(&vtvsock_mtx);

@@ -30,6 +30,8 @@ ATF_TESTS_C+=	virtio_host_contract_test
 ATF_TESTS_SH+=	virtio_requirements_test
 SCRIPTS+=	validate-virtio-requirements.sh
 SCRIPTSNAME_validate-virtio-requirements.sh=	validate-virtio-requirements.sh
+SCRIPTS+=	run.sh
+SCRIPTSNAME_run.sh=	run.sh
 VIRTIO_VALIDATION_FILES=	virtio-1.4-requirements.tsv \
 				bhyve_virtio_compat.h \
 				virtio_1_4_spec.h \
@@ -49,7 +51,19 @@ VIRTIO_VALIDATION_FILES=	virtio-1.4-requirements.tsv \
 				virtio_rnd_test.c \
 				virtio_scsi_test.c \
 				vsock_device_test.c
-${PACKAGE}FILES+=	${VIRTIO_VALIDATION_FILES}
+SANITIZER_HARNESS_FILES=	bhyverun.h \
+				block_if.h \
+				config.h \
+				debug.h \
+				mevent.h \
+				net_backends.h \
+				net_utils.h \
+				pci_emul.h \
+				sockstream.h \
+				virtio.h \
+				pci_checkpoint_test.c \
+				snapshot_manifest_test.c
+${PACKAGE}FILES+=	${VIRTIO_VALIDATION_FILES} ${SANITIZER_HARNESS_FILES}
 CFLAGS.vsock_device_test+=	-DWITHOUT_CAPSICUM \
 				-I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/sys

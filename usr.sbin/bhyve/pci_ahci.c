@@ -2721,7 +2721,7 @@ pci_ahci_pause(struct pci_devinst *pi)
 {
 	struct pci_ahci_softc *sc;
 	struct blockif_ctxt *bctxt;
-	int i;
+	int error, i;
 
 	sc = pi->pi_arg;
 
@@ -2730,10 +2730,24 @@ pci_ahci_pause(struct pci_devinst *pi)
 		if (bctxt == NULL)
 			continue;
 
-		blockif_pause(bctxt);
+		error = blockif_suspend(bctxt);
+		if (error != 0)
+			goto rollback;
 	}
 
 	return (0);
+
+rollback:
+	/*
+	 * PCI pause ownership is acquired only after the complete callback
+	 * succeeds, so this device callback must undo its own partial walk.
+	 */
+	while (--i >= 0) {
+		bctxt = sc->port[i].bctx;
+		if (bctxt != NULL)
+			blockif_resume(bctxt);
+	}
+	return (error);
 }
 
 static int

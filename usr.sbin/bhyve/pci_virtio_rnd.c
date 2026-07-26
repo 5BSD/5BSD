@@ -87,7 +87,12 @@ static struct virtio_consts vtrnd_vi_consts = {
 	.vc_cfgsize =	0,
 	.vc_reset =	pci_vtrnd_reset,
 	.vc_qnotify =	pci_vtrnd_notify,
-	.vc_hv_caps =	VIRTIO_F_IN_ORDER | VIRTIO_F_RING_RESET,
+	.vc_suspend =	vi_pci_lifecycle_noop,
+	.vc_resume_device = vi_pci_lifecycle_noop,
+	.vc_pause =	vi_pci_lifecycle_noop,
+	.vc_resume =	vi_pci_lifecycle_noop,
+	.vc_hv_caps =	VIRTIO_F_IN_ORDER | VIRTIO_F_RING_RESET |
+	    VIRTIO_F_SUSPEND,
 };
 
 static void
@@ -288,6 +293,8 @@ static const struct pci_devemu pci_de_vrnd = {
 	.pe_barread =	vi_pci_read,
 #ifdef BHYVE_SNAPSHOT
 	.pe_snapshot =	vi_pci_snapshot,
+	.pe_pause =	vi_pci_pause,
+	.pe_resume =	vi_pci_resume,
 #endif
 };
 PCI_EMUL_SET(pci_de_vrnd);

@@ -80,13 +80,14 @@
  *      on-wire packets while preserving one record boundary.  A record larger
  *      than the guest's full advertised window cannot be delivered; the host
  *      send may fail at the relay-socket limit, or the device resets the
- *      connection if it receives such a record.  Guest->host: records are
- *      reassembled up to 4 MiB -- BUT to RECEIVE a record larger than ~64 KiB
- *      the host app must raise SO_RCVBUF on its ACCEPTED socket.  FreeBSD caps a
- *      SOCK_SEQPACKET record at net.local.seqpacket.maxseqpacket (64 KiB) by
- *      default, and setting SO_RCVBUF on the LISTENER does NOT propagate to the
- *      accepted socket; without it a larger guest->host record is truncated to
- *      64 KiB on receipt (the device reassembled it correctly).
+ *      connection if it receives such a record.  Guest->host records are
+ *      bounded by this device's advertised VTVSOCK_BUF_ALLOC window.  To
+ *      RECEIVE a record larger than ~64 KiB the host app must also raise
+ *      SO_RCVBUF on its ACCEPTED socket.  FreeBSD caps a SOCK_SEQPACKET record
+ *      at net.local.seqpacket.maxseqpacket (64 KiB) by default, and setting
+ *      SO_RCVBUF on the LISTENER does NOT propagate to the accepted socket;
+ *      without it a larger guest->host record is truncated to 64 KiB on
+ *      receipt (the device reassembled it correctly).
  *
  *   3. NO EMPTY RECORDS host->guest.  FreeBSD silently drops a zero-length
  *      SOCK_SEQPACKET send, so a host app cannot deliver an empty record to
@@ -108,6 +109,10 @@
 #include <sys/uio.h>
 #include <sys/un.h>
 
+#ifdef BHYVE_SNAPSHOT
+#include <machine/vmm_snapshot.h>
+#endif
+
 #ifndef WITHOUT_CAPSICUM
 #include <capsicum_helpers.h>
 #endif
@@ -118,6 +123,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
+#include <pthread_np.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -148,6 +154,7 @@
 
 /* Maximum single virtio-vsock payload we will handle */
 #define	VTVSOCK_MAX_PKT		(64 * 1024)
+#define	VTVSOCK_STREAM_FALLBACK_READ	4096
 
 /*
  * Host-side receive buffer advertised to the guest.  256 KiB matches the
@@ -166,23 +173,19 @@
 
 /*
  * Device-global cap on outstanding SEQPACKET reassembly bytes across ALL
- * connections.  Each connection is already bounded to
- * VTVSOCK_MAX_PEER_BUF_ALLOC (4 MiB), but with up to VTVSOCK_MAX_CONNS (256)
- * connections that would let a guest pin ~1 GiB of host memory in partially
- * reassembled records.  Bound the aggregate to 64 MiB (16 full-size records in
- * flight simultaneously -- far above any legitimate workload); a connection
- * whose next fragment would exceed the aggregate budget is reset.
+ * connections.  Each connection is bounded to its advertised
+ * VTVSOCK_BUF_ALLOC window, but an aggregate bound is still required across
+ * VTVSOCK_MAX_CONNS connections.
  */
 #define	VTVSOCK_MAX_TOTAL_REASM		(64 * 1024 * 1024)
 
 /*
  * Device-global cap on outstanding asynchronous guest->host TX backlog bytes
  * parked in conn->tx_buf across ALL connections.  As with reassembly above,
- * the per-connection tx_buf cap (STREAM: buf_alloc; SEQPACKET:
- * VTVSOCK_MAX_PEER_BUF_ALLOC = 4 MiB) bounds a single connection, but with up
- * to VTVSOCK_MAX_CONNS (256) connections whose host consumer has stalled a
- * guest could otherwise pin ~1 GiB of host memory in parked records.  Bound
- * the aggregate to 64 MiB; a connection whose next append would exceed the
+ * the per-connection tx_buf cap (buf_alloc) bounds a single connection, but
+ * with up to VTVSOCK_MAX_CONNS connections whose host consumer has stalled a
+ * guest could otherwise pin substantial memory in parked data.  Bound the
+ * aggregate to 64 MiB; a connection whose next append would exceed the
  * aggregate budget is reset.
  */
 #define	VTVSOCK_MAX_TOTAL_TXBUF		(64 * 1024 * 1024)
@@ -417,8 +420,8 @@ struct vtvsock_conn {
 	 * poll() while holding vsc_mtx.  Bounded: a STREAM backlog is capped at
 	 * buf_alloc, and a SEQPACKET record is all-or-nothing with at most one
 	 * pending record; exceeding the cap resets the connection.  Credit
-	 * accounting is unchanged (fwd_cnt is advanced when the guest packet is
-	 * accepted, exactly as before), so this only bounds host memory.
+	 * STREAM credit advances as bytes reach the host socket.  SEQPACKET credit
+	 * advances only after the complete record is delivered atomically.
 	 */
 	uint8_t			*tx_buf;	/* pending bytes for conn->fd */
 	uint32_t		tx_buf_len;	/* valid bytes at tx_buf[0] */
@@ -518,6 +521,15 @@ struct pci_vtvsock_softc {
 	uint32_t		vsc_pend_head;
 	uint32_t		vsc_pend_count;
 	uint64_t		vsc_pend_drops;
+
+	/*
+	 * Independent host readiness sources must remain stopped while either
+	 * guest-visible suspend or checkpoint pause owns the device.  The common
+	 * VirtIO queue fence prevents new descriptor ownership; this flag extends
+	 * the same fence to control accepts, socket I/O, provider I/O, and timers.
+	 * Guarded by vsc_mtx.
+	 */
+	bool			vsc_lifecycle_paused;
 };
 
 /* Forward declarations */
@@ -528,7 +540,7 @@ static void pci_vtvsock_notify_tx(void *, struct vqueue_info *);
 static void pci_vtvsock_notify_event(void *, struct vqueue_info *);
 static int  pci_vtvsock_cfgread(void *, int, int, uint32_t *);
 static int  pci_vtvsock_cfgwrite(void *, int, int, uint32_t);
-static void pci_vtvsock_neg_features(void *, uint64_t);
+static int pci_vtvsock_neg_features(void *, uint64_t);
 static int  pci_vtvsock_legacy_config(nvlist_t *, const char *);
 static void vtvsock_conn_data_cb(int, enum ev_type, void *);
 static void vtvsock_conn_write_cb(int, enum ev_type, void *);
@@ -540,6 +552,14 @@ static void vtvsock_kernel_read_cb(int, enum ev_type, void *);
 static void vtvsock_kernel_write_cb(int, enum ev_type, void *);
 static void vtvsock_kernel_drain(struct pci_vtvsock_softc *);
 static bool vtvsock_rx_ready(struct pci_vtvsock_softc *);
+static int pci_vtvsock_suspend_device(void *);
+static int pci_vtvsock_resume_device(void *);
+static void pci_vtvsock_resume_complete(void *);
+#ifdef BHYVE_SNAPSHOT
+static int pci_vtvsock_pause(void *);
+static int pci_vtvsock_resume(void *);
+static int pci_vtvsock_snapshot(void *, struct vm_snapshot_meta *);
+#endif
 
 #define	VTVSOCK_DEVICE_FEATURES	(VIRTIO_VSOCK_F_STREAM |		\
 	    VIRTIO_VSOCK_F_SEQPACKET | VIRTIO_VSOCK_F_NO_IMPLIED_STREAM)
@@ -577,12 +597,21 @@ static struct virtio_consts vtvsock_vi_consts = {
 	.vc_cfgread =		pci_vtvsock_cfgread,
 	.vc_cfgwrite =		pci_vtvsock_cfgwrite,
 	.vc_apply_features =	pci_vtvsock_neg_features,
+	.vc_suspend =		pci_vtvsock_suspend_device,
+	.vc_resume_device =	pci_vtvsock_resume_device,
+	.vc_resume_complete =	pci_vtvsock_resume_complete,
 	/*
 	 * NO_IMPLIED_STREAM is offered per virtio 1.4 §5.10.3.2 (SHOULD),
 	 * always together with F_STREAM: this device supports stream, the
 	 * bit only makes that support explicit for 1.4-aware drivers.
 	 */
-	.vc_hv_caps =		VTVSOCK_DEVICE_FEATURES | VIRTIO_F_RING_RESET,
+	.vc_hv_caps =		VTVSOCK_DEVICE_FEATURES | VIRTIO_F_RING_RESET |
+	    VIRTIO_F_SUSPEND,
+#ifdef BHYVE_SNAPSHOT
+	.vc_pause =		pci_vtvsock_pause,
+	.vc_resume =		pci_vtvsock_resume,
+	.vc_snapshot =		pci_vtvsock_snapshot,
+#endif
 };
 
 /* -------------------------------------------------------------------------
@@ -758,10 +787,10 @@ vtvsock_conn_find(struct pci_vtvsock_softc *sc, uint32_t src_port,
  * the TX backlog).  The device-global reassembly budget (vsc_reasm_total)
  * tracks only live bytes and is released here, so the backing allocation must
  * be freed too -- retaining peak capacity for the life of the connection would
- * let a guest deliver one ~VTVSOCK_MAX_PEER_BUF_ALLOC record on each of
- * VTVSOCK_MAX_CONNS connections in turn and pin ~1 GiB of never-freed memory
- * while the live aggregate never exceeds a single record.  Safe to call with
- * rx_reasm == NULL / rx_reasm_len == 0.  Must be called with vsc_mtx held.
+ * let a guest fill every connection's VTVSOCK_BUF_ALLOC window in turn and
+ * retain the peak allocation after the live aggregate has fallen back to
+ * zero.  Safe to call with rx_reasm == NULL / rx_reasm_len == 0.  Must be
+ * called with vsc_mtx held.
  */
 static void
 vtvsock_reasm_release(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn)
@@ -1180,6 +1209,10 @@ vtvsock_kernel_read_cb(int fd, enum ev_type type __unused, void *arg)
 	struct pci_vtvsock_softc *sc = arg;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
+	if (sc->vsc_lifecycle_paused) {
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
 	vtvsock_kernel_read_locked(sc, fd);
 	pthread_mutex_unlock(&sc->vsc_mtx);
 }
@@ -1195,6 +1228,10 @@ vtvsock_kernel_write_cb(int fd, enum ev_type type __unused, void *arg)
 
 	resume = false;
 	pthread_mutex_lock(&sc->vsc_mtx);
+	if (sc->vsc_lifecycle_paused) {
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
 	if (sc->vsc_kernel_failed || sc->vsc_kernel_tx == NULL) {
 		if (sc->vsc_kernel_write_evp != NULL)
 			mevent_disable(sc->vsc_kernel_write_evp);
@@ -1438,8 +1475,7 @@ static int
 vtvsock_tx_buf_append(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn,
     const uint8_t *data, uint32_t len)
 {
-	uint32_t cap = (conn->type == VIRTIO_VSOCK_TYPE_SEQPACKET) ?
-	    VTVSOCK_MAX_PEER_BUF_ALLOC : conn->buf_alloc;
+	uint32_t cap = conn->buf_alloc;
 	uint32_t need = conn->tx_buf_len + len;
 
 	if (need < conn->tx_buf_len || need > cap)	/* overflow or over cap */
@@ -1577,11 +1613,11 @@ vtvsock_seqpkt_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 		uint32_t need = conn->rx_reasm_len + paylen;
 
 		if (need < conn->rx_reasm_len ||	/* overflow */
-		    need > VTVSOCK_MAX_PEER_BUF_ALLOC) {
+		    need > conn->buf_alloc) {
 			VSOCK_PROBE_REASM_OVERFLOW((uint32_t)sc->vsc_guest_cid,
 			    conn->guest_port, need);
 			WPRINTF(("vtvsock: SEQPACKET record exceeds %u bytes, "
-			    "resetting", VTVSOCK_MAX_PEER_BUF_ALLOC));
+			    "resetting", conn->buf_alloc));
 			goto reset;
 		}
 		/*
@@ -1613,20 +1649,6 @@ vtvsock_seqpkt_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 		memcpy(conn->rx_reasm + conn->rx_reasm_len, payload, paylen);
 		conn->rx_reasm_len = need;
 		sc->vsc_reasm_total += paylen;
-		/*
-		 * Credit SEQPACKET bytes to the guest as they are accepted into
-		 * the reassembly buffer -- the host has taken responsibility for
-		 * them (bounded by VTVSOCK_MAX_PEER_BUF_ALLOC), so the guest may
-		 * free them and keep sending.  A record LARGER than the host's
-		 * advertised buf_alloc otherwise deadlocks: the guest exhausts
-		 * its send window mid-record while the host, crediting only at
-		 * EOM, never reopens it.  The caller's maybe_credit_update()
-		 * pushes the incremental window out.  Delivery to the host
-		 * socket (inline send, EMSGSIZE drop, or tx_buf drain) must NOT
-		 * re-credit these bytes.  STREAM keeps delivery-time crediting
-		 * (its intentional slow-reader throttle); this is SEQPACKET-only.
-		 */
-		conn->fwd_cnt += paylen;
 	}
 
 	if ((rwflags & VIRTIO_VSOCK_SEQ_EOM) == 0)
@@ -1646,26 +1668,35 @@ vtvsock_seqpkt_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 	if (conn->tx_buf_len == 0) {
 		sent = send(conn->fd, conn->rx_reasm, conn->rx_reasm_len,
 		    msgflags);
-		if (sent >= 0) {		/* SEQPACKET send is all-or-nothing */
-			/* Bytes were credited at reassembly-accept time. */
+		if (sent == (ssize_t)conn->rx_reasm_len) {
+			/*
+			 * The complete record reached the host socket.  This
+			 * is when the receive bytes are consumed for credit
+			 * accounting; merely retaining fragments in the
+			 * device's reassembly buffer does not free advertised
+			 * receive capacity.
+			 */
+			conn->fwd_cnt += conn->rx_reasm_len;
 			vtvsock_reasm_release(sc, conn);	/* ready for next */
 			return (0);
+		}
+		if (sent >= 0) {
+			WPRINTF(("vtvsock: short SEQPACKET send (%zd/%u), "
+			    "resetting", sent, conn->rx_reasm_len));
+			goto reset;
 		}
 		if (errno == EMSGSIZE) {
 			/*
 			 * The record is larger than the host SOCK_SEQPACKET
-			 * socket can ever accept (SO_SNDBUF).  A SEQPACKET
-			 * record is indivisible, so it can never be delivered;
-			 * drop just this record (counted as consumed) and keep
-			 * the connection up rather than letting a guest reset
-			 * its own connection by emitting an over-large record.
+			 * socket can accept.  VirtIO promises guaranteed
+			 * SEQPACKET delivery, so silently consuming the record
+			 * would violate the transport contract.  Reset the
+			 * connection to make the delivery failure observable.
 			 */
 			WPRINTF(("vtvsock: SEQPACKET record %u bytes exceeds "
-			    "host socket limit, dropping record",
+			    "host socket limit, resetting",
 			    conn->rx_reasm_len));
-			/* Bytes were credited at reassembly-accept time. */
-			vtvsock_reasm_release(sc, conn);
-			return (0);
+			goto reset;
 		}
 		if (errno != EAGAIN && errno != EWOULDBLOCK) {
 			WPRINTF(("vtvsock: SEQPACKET send to host failed: %s",
@@ -1685,7 +1716,7 @@ vtvsock_seqpkt_rx(struct pci_vtvsock_softc *sc, struct vtvsock_conn **connp,
 		VSOCK_PROBE_TX_OVERFLOW((uint32_t)sc->vsc_guest_cid,
 		    conn->guest_port, conn->rx_reasm_len);
 		WPRINTF(("vtvsock: SEQPACKET TX backlog exceeds %u bytes, "
-		    "resetting", VTVSOCK_MAX_PEER_BUF_ALLOC));
+		    "resetting", conn->buf_alloc));
 		goto reset;
 	}
 	conn->tx_buf_eor = (msgflags & MSG_EOR) != 0;
@@ -1790,7 +1821,17 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 				vtvsock_conn_close(sc, conn);
 				return;
 			}
-			conn->peer_fwd_cnt = new_fwd_cnt;
+			/*
+			 * fwd_cnt is a free-running, monotonically increasing
+			 * counter.  Do not accept a stale or rewound update: doing
+			 * so inflates (tx_cnt - peer_fwd_cnt), can close the
+			 * advertised window indefinitely, and differs from the
+			 * guest-side transport's wrap-aware handling.  The signed
+			 * delta admits normal uint32_t wrap while rejecting an
+			 * older value within the unambiguous half-range.
+			 */
+			if ((int32_t)(new_fwd_cnt - conn->peer_fwd_cnt) > 0)
+				conn->peer_fwd_cnt = new_fwd_cnt;
 		} else {
 			/*
 			 * §5.10.6.4: packet for an unknown connection
@@ -2168,15 +2209,18 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 		 * The connection's type is fixed at OP_REQUEST time; a data
 		 * packet whose header type disagrees is a guest protocol
 		 * violation (e.g. SEQPACKET framing on a STREAM connection).
-		 * Drop the payload; count it consumed so credit stays
-		 * consistent.
+		 * Reset the flow so the loss is observable.  Silently consuming
+		 * the payload would violate guaranteed delivery and diverge from
+		 * Linux virtio_transport_recv_pkt(), which resets a socket type
+		 * mismatch before enqueueing data.
 		 */
 		if (type != conn->type) {
 			DPRINTF(("vtvsock: RW type %u mismatches conn type %u "
-			    "on %u:%u, dropping", type, conn->type,
+			    "on %u:%u, resetting", type, conn->type,
 			    src_port, dst_port));
-			conn->fwd_cnt += paylen;
-			vtvsock_maybe_credit_update(sc, conn);
+			(void)vtvsock_send_ctrl(sc, conn,
+			    VIRTIO_VSOCK_OP_RST, 0);
+			vtvsock_conn_close(sc, conn);
 			break;
 		}
 
@@ -2402,6 +2446,10 @@ pci_vtvsock_reap_timer(int fd __unused, enum ev_type type __unused, void *arg)
 	struct pci_vtvsock_softc *sc = arg;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
+	if (sc->vsc_lifecycle_paused) {
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
 	vtvsock_reap_stale(sc);
 	pthread_mutex_unlock(&sc->vsc_mtx);
 }
@@ -2423,6 +2471,10 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 	int n;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
+	if (sc->vsc_lifecycle_paused) {
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
 	DPRINTF2(("vtvsock: TX notify kernel=%d has_descs=%d failed=%d "
 	    "pending=%d", sc->vsc_kernel, vq_has_descs(vq),
 	    sc->vsc_kernel_failed, sc->vsc_kernel_tx != NULL));
@@ -2656,6 +2708,10 @@ pci_vtvsock_notify_rx(void *vsc, struct vqueue_info *vq)
 	struct vtvsock_conn *conn;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
+	if (sc->vsc_lifecycle_paused) {
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
 	DPRINTF2(("vtvsock: RX notify kernel=%d has_descs=%d failed=%d "
 	    "pending=%d", sc->vsc_kernel, vq_has_descs(vq),
 	    sc->vsc_kernel_failed, sc->vsc_kernel_rx != NULL));
@@ -2828,6 +2884,10 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 	ssize_t n;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
+	if (sc->vsc_lifecycle_paused) {
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
 
 	/*
 	 * Re-look-up the connection by fd under the lock.  This callback is
@@ -3096,7 +3156,7 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 			if (avail > 0)
 				readlen = MIN(avail, VTVSOCK_MAX_PKT);
 			else
-				readlen = 4096;
+				readlen = VTVSOCK_STREAM_FALLBACK_READ;
 			if ((uint32_t)readlen > maxread)
 				readlen = (ssize_t)maxread;
 		}
@@ -3251,6 +3311,10 @@ vtvsock_conn_write_cb(int fd, enum ev_type t __unused, void *arg)
 	struct vtvsock_conn *conn;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
+	if (sc->vsc_lifecycle_paused) {
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
 
 	/* Re-look-up by fd under the lock (the conn may have been freed). */
 	TAILQ_FOREACH(conn, &sc->vsc_conns, link) {
@@ -3282,11 +3346,13 @@ vtvsock_conn_write_cb(int fd, enum ev_type t __unused, void *arg)
 			}
 			goto write_error;
 		}
-		/*
-		 * Record consumed whole: release its buffer.  The bytes were
-		 * credited to the guest at reassembly-accept time (see
-		 * vtvsock_seqpkt_rx), so do NOT advance fwd_cnt again here.
-		 */
+		if (sent != (ssize_t)conn->tx_buf_len) {
+			WPRINTF(("vtvsock: short deferred SEQPACKET send "
+			    "(%zd/%u), resetting", sent, conn->tx_buf_len));
+			goto write_reset;
+		}
+		/* Record consumed whole: return its receive credit now. */
+		conn->fwd_cnt += conn->tx_buf_len;
 		vtvsock_txbuf_release(sc, conn);
 	} else {
 		/* STREAM: push as much as the socket will take. */
@@ -3337,6 +3403,7 @@ vtvsock_conn_write_cb(int fd, enum ev_type t __unused, void *arg)
 
 write_error:
 	WPRINTF(("vtvsock: TX drain to host fd failed: %s", strerror(errno)));
+write_reset:
 	(void)vtvsock_send_ctrl(sc, conn, VIRTIO_VSOCK_OP_RST, 0);
 	vtvsock_conn_close(sc, conn);
 	pthread_mutex_unlock(&sc->vsc_mtx);
@@ -3360,6 +3427,10 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 	ssize_t nr;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
+	if (sc->vsc_lifecycle_paused) {
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
 
 	/* Find the ctl_conn for this fd */
 	cc = NULL;
@@ -3571,12 +3642,18 @@ pci_vtvsock_ctl_accept(int fd __unused, enum ev_type t __unused, void *arg)
 	cap_rights_t rights;
 #endif
 
+	pthread_mutex_lock(&sc->vsc_mtx);
+	if (sc->vsc_lifecycle_paused) {
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
 	slen = sizeof(sun);
 	s = accept(sc->vsc_ctl_fd, (struct sockaddr *)&sun, &slen);
 	if (s < 0) {
 		if (errno != EAGAIN && errno != EWOULDBLOCK)
 			WPRINTF(("vtvsock: ctl accept failed: %s",
 			    strerror(errno)));
+		pthread_mutex_unlock(&sc->vsc_mtx);
 		return;
 	}
 	DPRINTF2(("vtvsock: accepted control fd=%d", s));
@@ -3585,6 +3662,7 @@ pci_vtvsock_ctl_accept(int fd __unused, enum ev_type t __unused, void *arg)
 		WPRINTF(("vtvsock: fcntl O_NONBLOCK failed: %s",
 		    strerror(errno)));
 		close(s);
+		pthread_mutex_unlock(&sc->vsc_mtx);
 		return;
 	}
 
@@ -3593,6 +3671,7 @@ pci_vtvsock_ctl_accept(int fd __unused, enum ev_type t __unused, void *arg)
 	if (caph_rights_limit(s, &rights) == -1) {
 		WPRINTF(("vtvsock: Unable to apply rights for ctl conn"));
 		close(s);
+		pthread_mutex_unlock(&sc->vsc_mtx);
 		return;
 	}
 	vtvsock_cap_lockdown(s);
@@ -3601,12 +3680,12 @@ pci_vtvsock_ctl_accept(int fd __unused, enum ev_type t __unused, void *arg)
 	cc = calloc(1, sizeof(*cc));
 	if (cc == NULL) {
 		close(s);
+		pthread_mutex_unlock(&sc->vsc_mtx);
 		return;
 	}
 	cc->fd = s;
 	cc->created = monotonic_seconds();
 
-	pthread_mutex_lock(&sc->vsc_mtx);
 	if (sc->vsc_ctl_conn_count >= VTVSOCK_MAX_CTL_CONNS) {
 		pthread_mutex_unlock(&sc->vsc_mtx);
 		WPRINTF(("vtvsock: ctl connection limit reached (%u)",
@@ -3641,6 +3720,241 @@ pci_vtvsock_ctl_accept(int fd __unused, enum ev_type t __unused, void *arg)
 /* -------------------------------------------------------------------------
  * Virtio device callbacks
  * ---------------------------------------------------------------------- */
+
+static bool
+vtvsock_ctl_is_referenced(const struct pci_vtvsock_softc *sc, int fd)
+{
+	const struct vtvsock_conn *conn;
+
+	TAILQ_FOREACH(conn, &sc->vsc_conns, link) {
+		if (conn->ctl_fd == fd)
+			return (true);
+	}
+	return (false);
+}
+
+/*
+ * Stop every host readiness source while vsc_mtx is owned.  Disabling an
+ * mevent does not cancel a callback that the event thread already selected,
+ * so each callback also checks vsc_lifecycle_paused after acquiring this
+ * mutex.  Together those two barriers ensure that return from suspend/pause
+ * means no host source can mutate device state.
+ */
+static void
+vtvsock_lifecycle_stop_locked(struct pci_vtvsock_softc *sc)
+{
+	struct vtvsock_conn *conn;
+	struct vtvsock_ctl_conn *cc;
+
+	assert(pthread_mutex_isowned_np(&sc->vsc_mtx));
+	sc->vsc_lifecycle_paused = true;
+	if (sc->vsc_kernel_evp != NULL)
+		mevent_disable(sc->vsc_kernel_evp);
+	if (sc->vsc_kernel_write_evp != NULL)
+		mevent_disable(sc->vsc_kernel_write_evp);
+	if (sc->vsc_ctl_evp != NULL)
+		mevent_disable(sc->vsc_ctl_evp);
+	if (sc->vsc_reap_evp != NULL)
+		mevent_disable(sc->vsc_reap_evp);
+	TAILQ_FOREACH(conn, &sc->vsc_conns, link) {
+		if (conn->evp != NULL)
+			mevent_disable(conn->evp);
+		if (conn->tx_evp != NULL)
+			mevent_disable(conn->tx_evp);
+	}
+	TAILQ_FOREACH(cc, &sc->vsc_ctl_conns, link) {
+		if (cc->evp != NULL)
+			mevent_disable(cc->evp);
+	}
+}
+
+/*
+ * Restore only sources whose protocol/flow-control state says they can make
+ * progress.  This runs from vc_resume_complete after the common queue fence
+ * has opened; enabling sources in vc_resume_device would race them against
+ * the still-quiesced virtqueues.
+ */
+static void
+vtvsock_lifecycle_start_locked(struct pci_vtvsock_softc *sc)
+{
+	struct vtvsock_conn *conn;
+	struct vtvsock_ctl_conn *cc;
+
+	assert(pthread_mutex_isowned_np(&sc->vsc_mtx));
+	if (sc->vsc_lifecycle_paused)
+		return;
+	if (sc->vsc_kernel) {
+		if (!sc->vsc_kernel_failed && sc->vsc_kernel_rx == NULL &&
+		    vtvsock_rx_ready(sc) && sc->vsc_kernel_evp != NULL)
+			mevent_enable(sc->vsc_kernel_evp);
+		if (!sc->vsc_kernel_failed && sc->vsc_kernel_tx != NULL &&
+		    sc->vsc_kernel_write_evp != NULL)
+			mevent_enable(sc->vsc_kernel_write_evp);
+		return;
+	}
+
+	if (sc->vsc_ctl_evp != NULL)
+		mevent_enable(sc->vsc_ctl_evp);
+	if (sc->vsc_reap_evp != NULL)
+		mevent_enable(sc->vsc_reap_evp);
+	TAILQ_FOREACH(cc, &sc->vsc_ctl_conns, link) {
+		if (cc->evp != NULL && !vtvsock_ctl_is_referenced(sc, cc->fd))
+			mevent_enable(cc->evp);
+	}
+	TAILQ_FOREACH(conn, &sc->vsc_conns, link) {
+		if (conn->tx_evp != NULL && conn->tx_buf_len != 0)
+			mevent_enable(conn->tx_evp);
+		if (conn->evp != NULL && conn->fd >= 0 &&
+		    conn->state == CONN_ESTABLISHED && !conn->host_eof &&
+		    (conn->peer_shutdown & VIRTIO_VSOCK_SHUTDOWN_RCV) == 0 &&
+		    vtvsock_rx_ready(sc) &&
+		    (conn->rx_resid != NULL || vtvsock_peer_credit(conn) != 0))
+			mevent_enable(conn->evp);
+	}
+}
+
+static int
+pci_vtvsock_suspend_device(void *vsc)
+{
+	struct pci_vtvsock_softc *sc;
+
+	sc = vsc;
+	/*
+	 * The modern transport invokes this callback with vs_mtx (vsc_mtx) held
+	 * and its queue fence already published.  No callback can be active while
+	 * we own the mutex; callbacks selected just before disable will observe
+	 * vsc_lifecycle_paused when they later acquire it.
+	 */
+	vtvsock_lifecycle_stop_locked(sc);
+	return (0);
+}
+
+static int
+pci_vtvsock_resume_device(void *vsc)
+{
+	struct pci_vtvsock_softc *sc;
+
+	sc = vsc;
+	sc->vsc_lifecycle_paused = sc->vsc_vs.vs_checkpoint_paused;
+	return (0);
+}
+
+static void
+pci_vtvsock_resume_complete(void *vsc)
+{
+	struct pci_vtvsock_softc *sc;
+
+	sc = vsc;
+	pthread_mutex_lock(&sc->vsc_mtx);
+	vtvsock_lifecycle_start_locked(sc);
+	pthread_mutex_unlock(&sc->vsc_mtx);
+}
+
+/*
+ * Return whether every backend-owned object can be reconstructed from the
+ * configured device plus the serialized VirtIO state.  Kept outside the
+ * snapshot build guard so the exclusion policy has direct unit coverage.
+ */
+static int __unused
+vtvsock_snapshot_state_error(const struct pci_vtvsock_softc *sc)
+{
+	if (sc->vsc_kernel)
+		return (EOPNOTSUPP);
+	if (sc->vsc_conn_count != 0 || sc->vsc_ctl_conn_count != 0 ||
+	    sc->vsc_pend_count != 0 || sc->vsc_reasm_total != 0 ||
+	    sc->vsc_txbuf_total != 0)
+		return (EBUSY);
+	return (0);
+}
+
+#ifdef BHYVE_SNAPSHOT
+#define	VTVSOCK_SNAPSHOT_MAGIC		0x56534f31U	/* "VSO1" */
+#define	VTVSOCK_SNAPSHOT_VERSION	1U
+
+static int
+pci_vtvsock_pause(void *vsc)
+{
+	struct pci_vtvsock_softc *sc;
+
+	sc = vsc;
+	/*
+	 * Retain the recursive device mutex across the snapshot operation, matching
+	 * the established net/block checkpoint contract.  vi_pci_resume() releases
+	 * this owner on every successful pause path.
+	 */
+	pthread_mutex_lock(&sc->vsc_mtx);
+	vtvsock_lifecycle_stop_locked(sc);
+	return (0);
+}
+
+static int
+pci_vtvsock_resume(void *vsc)
+{
+	struct pci_vtvsock_softc *sc;
+
+	sc = vsc;
+	/* A nested guest suspend continues to own the stopped host sources. */
+	sc->vsc_lifecycle_paused = sc->vsc_vs.vs_suspended;
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	return (0);
+}
+
+static int
+pci_vtvsock_snapshot(void *vsc, struct vm_snapshot_meta *meta)
+{
+	struct pci_vtvsock_softc *sc;
+	struct virtio_vsock_config config;
+	uint64_t features;
+	uint32_t magic, next_port, version;
+	int ret;
+
+	sc = vsc;
+	/*
+	 * The AF_VSOCK provider owns connection and socket-buffer state that the
+	 * bhyve fd ABI intentionally does not expose.  A snapshot that omitted it
+	 * would restore a device whose virtqueues and status describe connections
+	 * that no longer exist, so fail explicitly for the kernel backend.
+	 */
+	/*
+	 * Userspace Unix sockets are also host resources, not snapshot bytes.
+	 * Empty devices are reconstructible from their configured listener and
+	 * saved VirtIO state; active, pending, or buffered sessions are not.
+	 */
+	ret = vtvsock_snapshot_state_error(sc);
+	if (ret != 0)
+		return (ret);
+
+	magic = VTVSOCK_SNAPSHOT_MAGIC;
+	version = VTVSOCK_SNAPSHOT_VERSION;
+	SNAPSHOT_VAR_OR_LEAVE(magic, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(version, meta, ret, done);
+	if (magic != VTVSOCK_SNAPSHOT_MAGIC ||
+	    version != VTVSOCK_SNAPSHOT_VERSION) {
+		ret = ENOTSUP;
+		goto done;
+	}
+	config = sc->vsc_config;
+	features = sc->vsc_features;
+	next_port = sc->vsc_next_port;
+	SNAPSHOT_VAR_OR_LEAVE(config, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(features, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(next_port, meta, ret, done);
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		if (le64toh(config.guest_cid) != sc->vsc_guest_cid ||
+		    features != sc->vsc_vs.vs_negotiated_caps ||
+		    next_port < VTVSOCK_PORT_MIN || next_port == UINT32_MAX) {
+			ret = EINVAL;
+			goto done;
+		}
+		sc->vsc_config = config;
+		sc->vsc_features = features;
+		sc->vsc_next_port = next_port;
+	}
+
+done:
+	return (ret);
+}
+#endif
 
 static void
 pci_vtvsock_reset(void *vsc)
@@ -3686,6 +4000,13 @@ pci_vtvsock_reset(void *vsc)
 			close(cc->fd);
 		free(cc);
 	}
+	/*
+	 * Full reset cancels guest suspend.  Re-open host-side admission after all
+	 * per-connection state has been discarded; the outer VirtIO lock/fence
+	 * keeps callbacks from running until common reset is complete.
+	 */
+	sc->vsc_lifecycle_paused = false;
+	vtvsock_lifecycle_start_locked(sc);
 	pthread_mutex_unlock(&sc->vsc_mtx);
 
 	vi_reset_dev(&sc->vsc_vs);
@@ -3723,13 +4044,14 @@ pci_vtvsock_qreset(void *vsc, struct vqueue_info *vq,
 	return (0);
 }
 
-static void
+static int
 pci_vtvsock_neg_features(void *vsc, uint64_t negotiated_features)
 {
 	struct pci_vtvsock_softc *sc = vsc;
 	uint64_t device_features;
+	int error;
 
-	sc->vsc_features = negotiated_features;
+	error = 0;
 	if (sc->vsc_kernel) {
 		/*
 		 * The common VirtIO layer includes transport-wide bits such as
@@ -3741,6 +4063,7 @@ pci_vtvsock_neg_features(void *vsc, uint64_t negotiated_features)
 		device_features = negotiated_features & VTVSOCK_DEVICE_FEATURES;
 		if (ioctl(sc->vsc_kernel_fd,
 		    VSOCK_IOC_TRANSPORT_SET_FEATURES, &device_features) < 0) {
+			error = errno != 0 ? errno : EIO;
 			WPRINTF(("vtvsock: kernel feature update failed: %s",
 			    strerror(errno)));
 			sc->vsc_kernel_failed = true;
@@ -3751,12 +4074,18 @@ pci_vtvsock_neg_features(void *vsc, uint64_t negotiated_features)
 		 * does not restore the connection state that RESET was meant to
 		 * discard.  Reassert NEEDS_RESET when the guest renegotiates.
 		 */
-		if (sc->vsc_kernel_failed)
+		if (sc->vsc_kernel_failed) {
 			vi_set_needs_reset(&sc->vsc_vs);
+			if (error == 0)
+				error = EIO;
+		}
 	}
+	if (error == 0)
+		sc->vsc_features = negotiated_features;
 	DPRINTF(("vtvsock: negotiated features=%#jx device_caps=%#jx",
 	    (uintmax_t)negotiated_features,
 	    (uintmax_t)vtvsock_vi_consts.vc_hv_caps));
+	return (error);
 }
 
 static int
@@ -3963,7 +4292,7 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 	pci_set_cfgdata8(pi,  PCIR_CLASS,   PCIC_SIMPLECOMM);
 	/* "other" subclass: subclass 0 (UART) invites serial-driver probes */
-	pci_set_cfgdata8(pi,  PCIR_SUBCLASS, 0x80);
+	pci_set_cfgdata8(pi, PCIR_SUBCLASS, PCIS_SIMPLECOMM_OTHER);
 
 	if (sc->vsc_kernel) {
 		struct vsock_transport_attach attach;
@@ -4185,5 +4514,10 @@ static const struct pci_devemu pci_de_vtvsock = {
 	.pe_barwrite =		vi_pci_write,
 	.pe_barread =		vi_pci_read,
 	.pe_legacy_config =	pci_vtvsock_legacy_config,
+#ifdef BHYVE_SNAPSHOT
+	.pe_snapshot =		vi_pci_snapshot,
+	.pe_pause =		vi_pci_pause,
+	.pe_resume =		vi_pci_resume,
+#endif
 };
 PCI_EMUL_SET(pci_de_vtvsock);

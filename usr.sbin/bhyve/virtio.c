@@ -141,6 +141,9 @@ vi_pci_notify_queue(struct virtio_softc *vs, uint64_t qidx)
 	/* A malformed ring is fatal until the driver performs a real reset. */
 	if ((vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
 		return;
+	if (vs->vs_quiescing || vs->vs_suspended ||
+	    vs->vs_checkpoint_paused)
+		return;
 	if ((vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0) {
 		vq->vq_notify_pending = true;
 		return;
@@ -154,6 +157,36 @@ vi_pci_notify_queue(struct virtio_softc *vs, uint64_t qidx)
 	else
 		EPRINTLN("%s: qnotify queue %ju: missing vq/vc notify",
 		    vc->vc_name, (uintmax_t)qidx);
+}
+
+/*
+ * Lifecycle callback for a device whose entire request path is synchronous.
+ * Guest-visible suspend reaches it with vs_mtx held after publishing the
+ * queue-ownership fence.  Checkpoint pause reaches it after the coordinator
+ * has stopped all vCPUs and published the same fence.  In either case no
+ * independent backend worker can retain a request.
+ */
+int
+vi_pci_lifecycle_noop(void *vsc __unused)
+{
+
+	return (0);
+}
+
+void
+vi_pci_quiesce_enter(struct virtio_softc *vs)
+{
+
+	atomic_fetch_add(&vs->vs_quiescing, 1);
+}
+
+void
+vi_pci_quiesce_exit(struct virtio_softc *vs)
+{
+	unsigned int owners;
+
+	owners = atomic_fetch_sub(&vs->vs_quiescing, 1);
+	assert(owners != 0);
 }
 
 /*
@@ -180,8 +213,11 @@ vi_pci_notify_ready_queues(struct virtio_softc *vs)
 void
 vi_set_needs_reset(struct virtio_softc *vs)
 {
+	uint64_t epoch, epoch_after;
+	uint8_t old_status;
 
-	if (vs->vs_resetting) {
+	epoch = atomic_load(&vs->vs_reset_epoch);
+	if ((epoch & 1) != 0 || vs->vs_resetting) {
 		/*
 		 * A device reset must finish with status zero.  Remember a
 		 * backend reinitialization failure and expose NEEDS_RESET when
@@ -190,10 +226,27 @@ vi_set_needs_reset(struct virtio_softc *vs)
 		vs->vs_reset_failed = true;
 		return;
 	}
-	if ((vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
+	old_status = atomic_fetch_or(&vs->vs_status,
+	    VIRTIO_CONFIG_S_NEEDS_RESET);
+	/*
+	 * The worker cannot take vs_mtx here: reset callbacks hold it while
+	 * waiting for workers to drain.  If a reset crossed the atomic status
+	 * update, preserve the failure for the driver's next initialization.
+	 * Re-assert NEEDS_RESET as well in case that reset has already finished;
+	 * if it is still active, reset_failed survives its required status-zero
+	 * transition.
+	 */
+	epoch_after = atomic_load(&vs->vs_reset_epoch);
+	if (epoch_after != epoch) {
+		vs->vs_reset_failed = true;
+		vs->vs_status |= VIRTIO_CONFIG_S_NEEDS_RESET;
+		if ((epoch_after & 1) != 0 || vs->vs_resetting)
+			return;
+	}
+	if ((old_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
 		return;
-	vs->vs_status |= VIRTIO_CONFIG_S_NEEDS_RESET;
-	if ((vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
+	if ((atomic_load(&vs->vs_status) &
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
 		vi_interrupt(vs, VIRTIO_PCI_ISR_CONFIG, vs->vs_msix_cfg_idx);
 }
 
@@ -964,18 +1017,18 @@ bad:
 	case VIRTIO_PCI_GUEST_FEATURES:
 		/*
 		 * Legacy devices have no FEATURES_OK handshake.  DRIVER_OK is
-		 * therefore the last unambiguous initialization boundary; do
-		 * not let a later write change a live backend's interpretation
-		 * of descriptors.
+		 * therefore the last unambiguous initialization boundary.
+		 * Record feature-register writes here, but do not apply their
+		 * device-specific effects yet.  In particular, the legacy
+		 * virtio-blk rules prohibit changing cache mode merely because
+		 * the driver rewrote its feature bits.  Finalize the selected
+		 * features on the transition to DRIVER_OK below, and do not let
+		 * a later write change a live backend's interpretation of
+		 * descriptors.
 		 */
 		if ((vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
 			break;
 		vs->vs_negotiated_caps = value & vc->vc_hv_caps;
-		if (vc->vc_apply_features)
-			(*vc->vc_apply_features)(DEV_SOFTC(vs),
-			    vs->vs_negotiated_caps);
-		VIRTIO_PROBE_FEATURES(vc->vc_name,
-		    vs->vs_negotiated_caps);
 		break;
 	case VIRTIO_PCI_QUEUE_PFN:
 		if (vs->vs_curq >= vc->vc_nvq)
@@ -996,14 +1049,23 @@ bad:
 		vi_pci_notify_queue(vs, value);
 		break;
 	case VIRTIO_PCI_STATUS:
+	{
+		int error;
+
 		old_status = vs->vs_status;
 		if (value == 0) {
 			VIRTIO_PROBE_RESET(vc->vc_name);
 			vs->vs_reset_failed = false;
+			atomic_fetch_add(&vs->vs_reset_epoch, 1);
+			vi_pci_quiesce_enter(vs);
 			vs->vs_resetting = true;
 			(*vc->vc_reset)(DEV_SOFTC(vs));
 			vs->vs_status = 0;
+			vs->vs_suspended = false;
+			vs->vs_config_deferred = false;
+			vi_pci_quiesce_exit(vs);
 			vs->vs_resetting = false;
+			atomic_fetch_add(&vs->vs_reset_epoch, 1);
 			VIRTIO_PROBE_STATUS(vc->vc_name, old_status, 0);
 		} else {
 			value &= VIRTIO_CONFIG_STATUS_ACK |
@@ -1021,13 +1083,36 @@ bad:
 			if (vs->vs_reset_failed)
 				value |= VIRTIO_CONFIG_S_NEEDS_RESET;
 			vs->vs_status = (uint8_t)value;
+			if ((old_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0 &&
+			    (value & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0) {
+				error = 0;
+				if (vc->vc_apply_features != NULL)
+					error = (*vc->vc_apply_features)(
+					    DEV_SOFTC(vs),
+					    vs->vs_negotiated_caps);
+				if (error != 0) {
+					/*
+					 * Transitional devices have no
+					 * FEATURES_OK handshake.  Refuse to
+					 * become live and request a full reset
+					 * when the backend cannot apply the
+					 * selected legacy feature set.
+					 */
+					vs->vs_status &=
+					    ~VIRTIO_CONFIG_STATUS_DRIVER_OK;
+					vs->vs_status |=
+					    VIRTIO_CONFIG_S_NEEDS_RESET;
+				} else {
+					VIRTIO_PROBE_FEATURES(vc->vc_name,
+					    vs->vs_negotiated_caps);
+					vi_pci_notify_ready_queues(vs);
+				}
+			}
 			VIRTIO_PROBE_STATUS(vc->vc_name, old_status,
 			    vs->vs_status);
-			if ((old_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0 &&
-			    (value & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
-				vi_pci_notify_ready_queues(vs);
 		}
 		break;
+	}
 	case VIRTIO_MSI_CONFIG_VECTOR:
 		if (value == VIRTIO_MSI_NO_VECTOR ||
 		    value < (uint64_t)vs->vs_pi->pi_msix.table_count)
@@ -1058,17 +1143,42 @@ done:
 }
 
 #ifdef BHYVE_SNAPSHOT
+#define	VIRTIO_MODERN_COMMON_SNAPSHOT_MAGIC	0x56544331U	/* "VTC1" */
+#define	VIRTIO_MODERN_COMMON_SNAPSHOT_VERSION	1U
+
 int
 vi_pci_pause(struct pci_devinst *pi)
 {
 	struct virtio_softc *vs;
 	struct virtio_consts *vc;
+	int error;
 
 	vs = pi->pi_arg;
 	vc = vs->vs_vc;
 
 	assert(vc->vc_pause != NULL);
-	(*vc->vc_pause)(DEV_SOFTC(vs));
+	if (vs->vs_checkpoint_paused)
+		return (0);
+	vi_pci_quiesce_enter(vs);
+	VIRTIO_PROBE_LIFECYCLE(vc->vc_name, "checkpoint-pause", "begin", 0);
+	/*
+	 * Guest suspend drains virtqueues, but checkpoint pause also establishes
+	 * backend-specific serialization for state which can change without a
+	 * guest queue operation (for example a staged network packet or a media
+	 * resize event).  Always take that independent checkpoint ownership.
+	 * The backend pause/resume pair must preserve guest-suspend ownership
+	 * when the two lifecycles are nested.
+	 */
+	error = (*vc->vc_pause)(DEV_SOFTC(vs));
+	if (error != 0) {
+		vi_pci_quiesce_exit(vs);
+		VIRTIO_PROBE_LIFECYCLE(vc->vc_name, "checkpoint-pause",
+		    "fail", error);
+		return (error);
+	}
+	vs->vs_checkpoint_paused = true;
+	vi_pci_quiesce_exit(vs);
+	VIRTIO_PROBE_LIFECYCLE(vc->vc_name, "checkpoint-pause", "end", 0);
 
 	return (0);
 }
@@ -1078,20 +1188,130 @@ vi_pci_resume(struct pci_devinst *pi)
 {
 	struct virtio_softc *vs;
 	struct virtio_consts *vc;
+	int error;
 
 	vs = pi->pi_arg;
 	vc = vs->vs_vc;
 
 	assert(vc->vc_resume != NULL);
-	(*vc->vc_resume)(DEV_SOFTC(vs));
+	/*
+	 * vm_pause_devices() can stop after a device reports an error, while
+	 * its cleanup path resumes the complete PCI list.  Do not invoke a
+	 * backend resume callback unless this instance actually acquired
+	 * checkpoint ownership.
+	 */
+	if (!vs->vs_checkpoint_paused)
+		return (0);
+	vi_pci_quiesce_enter(vs);
+	VIRTIO_PROBE_LIFECYCLE(vc->vc_name, "checkpoint-resume", "begin", 0);
+	error = (*vc->vc_resume)(DEV_SOFTC(vs));
+	if (error != 0) {
+		vi_pci_quiesce_exit(vs);
+		VIRTIO_PROBE_LIFECYCLE(vc->vc_name, "checkpoint-resume",
+		    "fail", error);
+		return (error);
+	}
+	vs->vs_checkpoint_paused = false;
+	vi_pci_quiesce_exit(vs);
+	VIRTIO_PROBE_LIFECYCLE(vc->vc_name, "checkpoint-resume", "end", 0);
+	if (!vs->vs_suspended && vc->vc_resume_complete != NULL)
+		(*vc->vc_resume_complete)(DEV_SOFTC(vs));
+	if (vs->vs_config_deferred) {
+		vs->vs_config_deferred = false;
+		vi_pci_config_changed(vs);
+	}
+	if (!vs->vs_suspended)
+		vi_pci_notify_ready_queues(vs);
 
 	return (0);
+}
+
+static int
+vi_pci_snapshot_softc_modern(struct virtio_softc *vs,
+    struct vm_snapshot_meta *meta)
+{
+	uint64_t negotiated_caps;
+	uint32_t magic, version;
+	uint8_t config_deferred, reset_failed, status, suspended;
+	int ret;
+
+	magic = VIRTIO_MODERN_COMMON_SNAPSHOT_MAGIC;
+	version = VIRTIO_MODERN_COMMON_SNAPSHOT_VERSION;
+	SNAPSHOT_VAR_OR_LEAVE(magic, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(version, meta, ret, done);
+	if (magic != VIRTIO_MODERN_COMMON_SNAPSHOT_MAGIC ||
+	    version != VIRTIO_MODERN_COMMON_SNAPSHOT_VERSION) {
+		ret = ENOTSUP;
+		goto done;
+	}
+
+	SNAPSHOT_VAR_OR_LEAVE(vs->vs_flags, meta, ret, done);
+	negotiated_caps = vs->vs_negotiated_caps;
+	SNAPSHOT_VAR_OR_LEAVE(negotiated_caps, meta, ret, done);
+	vs->vs_negotiated_caps = negotiated_caps;
+	SNAPSHOT_VAR_OR_LEAVE(vs->vs_curq, meta, ret, done);
+	status = vs->vs_status;
+	SNAPSHOT_VAR_OR_LEAVE(status, meta, ret, done);
+	vs->vs_status = status;
+	reset_failed = vs->vs_reset_failed;
+	SNAPSHOT_VAR_OR_LEAVE(reset_failed, meta, ret, done);
+	vs->vs_reset_failed = reset_failed;
+	suspended = vs->vs_suspended;
+	SNAPSHOT_VAR_OR_LEAVE(suspended, meta, ret, done);
+	vs->vs_suspended = suspended;
+	config_deferred = vs->vs_config_deferred;
+	SNAPSHOT_VAR_OR_LEAVE(config_deferred, meta, ret, done);
+	vs->vs_config_deferred = config_deferred;
+	VS_ISR_LOCK(vs);
+	SNAPSHOT_VAR_OR_LEAVE(vs->vs_isr, meta, ret, done_isr);
+done_isr:
+	VS_ISR_UNLOCK(vs);
+	if (ret != 0)
+		goto done;
+	SNAPSHOT_VAR_OR_LEAVE(vs->vs_msix_cfg_idx, meta, ret, done);
+
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		const uint8_t valid_status = VIRTIO_CONFIG_STATUS_ACK |
+		    VIRTIO_CONFIG_STATUS_DRIVER |
+		    VIRTIO_CONFIG_STATUS_DRIVER_OK |
+		    VIRTIO_CONFIG_S_FEATURES_OK |
+		    VIRTIO_CONFIG_STATUS_FAILED |
+		    VIRTIO_CONFIG_S_NEEDS_RESET |
+		    VIRTIO_CONFIG_STATUS_SUSPEND;
+
+		if (reset_failed > 1 || suspended > 1 ||
+		    config_deferred > 1 ||
+		    (vs->vs_flags & ~VIRTIO_USE_MSIX) != 0 ||
+		    (vs->vs_isr & ~(VIRTIO_PCI_ISR_INTR |
+		    VIRTIO_PCI_ISR_CONFIG)) != 0 ||
+		    (vs->vs_msix_cfg_idx != VIRTIO_MSI_NO_VECTOR &&
+		    vs->vs_msix_cfg_idx >=
+		    vs->vs_pi->pi_msix.table_count) ||
+		    (status & ~valid_status) != 0 ||
+		    suspended !=
+		    ((status & VIRTIO_CONFIG_STATUS_SUSPEND) != 0) ||
+		    (suspended &&
+		    ((status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0 ||
+		    (negotiated_caps & VIRTIO_F_SUSPEND) == 0)) ||
+		    ((status & VIRTIO_CONFIG_S_FEATURES_OK) == 0 &&
+		    negotiated_caps != 0) ||
+		    (reset_failed &&
+		    (status & VIRTIO_CONFIG_S_NEEDS_RESET) == 0)) {
+			EPRINTLN("%s: inconsistent restored common status",
+			    vs->vs_vc->vc_name);
+			ret = EINVAL;
+		}
+	}
+
+done:
+	return (ret);
 }
 
 static int
 vi_pci_snapshot_softc(struct virtio_softc *vs, struct vm_snapshot_meta *meta)
 {
 	uint32_t legacy_negotiated_caps;
+	uint8_t status;
 	int ret;
 
 	SNAPSHOT_VAR_OR_LEAVE(vs->vs_flags, meta, ret, done);
@@ -1104,7 +1324,13 @@ vi_pci_snapshot_softc(struct virtio_softc *vs, struct vm_snapshot_meta *meta)
 	SNAPSHOT_VAR_OR_LEAVE(legacy_negotiated_caps, meta, ret, done);
 	vs->vs_negotiated_caps = legacy_negotiated_caps;
 	SNAPSHOT_VAR_OR_LEAVE(vs->vs_curq, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vs->vs_status, meta, ret, done);
+	/*
+	 * Keep the established one-byte snapshot representation; do not expose
+	 * the implementation's atomic-qualified object to snapshot machinery.
+	 */
+	status = vs->vs_status;
+	SNAPSHOT_VAR_OR_LEAVE(status, meta, ret, done);
+	vs->vs_status = status;
 	VS_ISR_LOCK(vs);
 	SNAPSHOT_VAR_OR_LEAVE(vs->vs_isr, meta, ret, done_isr);
 done_isr:
@@ -1112,6 +1338,28 @@ done_isr:
 	if (ret != 0)
 		goto done;
 	SNAPSHOT_VAR_OR_LEAVE(vs->vs_msix_cfg_idx, meta, ret, done);
+
+done:
+	return (ret);
+}
+
+static int
+vi_pci_snapshot_consts_modern(struct virtio_consts *vc,
+    struct vm_snapshot_meta *meta)
+{
+	uint64_t snapshot_hv_caps;
+	int ret;
+
+	SNAPSHOT_VAR_CMP_OR_LEAVE(vc->vc_nvq, meta, ret, done);
+	SNAPSHOT_VAR_CMP_OR_LEAVE(vc->vc_cfgsize, meta, ret, done);
+	snapshot_hv_caps = vc->vc_hv_caps;
+	SNAPSHOT_VAR_OR_LEAVE(snapshot_hv_caps, meta, ret, done);
+	if (meta->op == VM_SNAPSHOT_RESTORE &&
+	    (snapshot_hv_caps & ~vc->vc_hv_caps) != 0) {
+		EPRINTLN("%s: restored modern device lacks saved features %#jx",
+		    __func__, (uintmax_t)(snapshot_hv_caps & ~vc->vc_hv_caps));
+		ret = ENOTSUP;
+	}
 
 done:
 	return (ret);
@@ -1141,6 +1389,129 @@ vi_pci_snapshot_consts(struct virtio_consts *vc, struct vm_snapshot_meta *meta)
 		    __func__, (uintmax_t)(snapshot_legacy_hv_caps &
 		    ~current_legacy_hv_caps));
 		ret = ENOTSUP;
+	}
+
+done:
+	return (ret);
+}
+
+static int
+vi_pci_snapshot_queues_modern(struct virtio_softc *vs,
+    struct vm_snapshot_meta *meta)
+{
+	struct virtio_consts *vc;
+	struct vqueue_info *vq;
+	struct vmctx *ctx;
+	uint16_t flags, resetting;
+	uint8_t notify_pending;
+	size_t avail_size, desc_size, used_size;
+	int i, ret;
+
+	ctx = vs->vs_pi->pi_vmctx;
+	vc = vs->vs_vc;
+	for (i = 0; i < vc->vc_nvq; i++) {
+		vq = &vs->vs_queues[i];
+		if (vq_is_resetting(vq)) {
+			EPRINTLN("%s: cannot snapshot resetting queue %d",
+			    vc->vc_name, i);
+			return (EBUSY);
+		}
+
+		SNAPSHOT_VAR_OR_LEAVE(vq->vq_qsize, meta, ret, done);
+		SNAPSHOT_VAR_CMP_OR_LEAVE(vq->vq_qsize_max, meta, ret, done);
+		SNAPSHOT_VAR_CMP_OR_LEAVE(vq->vq_num, meta, ret, done);
+		flags = vq->vq_flags;
+		SNAPSHOT_VAR_OR_LEAVE(flags, meta, ret, done);
+		vq->vq_flags = flags;
+		SNAPSHOT_VAR_OR_LEAVE(vq->vq_last_avail, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(vq->vq_next_used, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(vq->vq_save_used, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(vq->vq_msix_idx, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(vq->vq_enabled, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(vq->vq_reset, meta, ret, done);
+		resetting = vq->vq_resetting;
+		SNAPSHOT_VAR_OR_LEAVE(resetting, meta, ret, done);
+		if (resetting != 0) {
+			ret = EBUSY;
+			goto done;
+		}
+		vq->vq_resetting = 0;
+		/*
+		 * Keep the existing one-byte snapshot slot, but deserialize into
+		 * an integer so a corrupt image cannot create a non-canonical
+		 * _Bool representation.
+		 */
+		notify_pending = vq->vq_notify_pending;
+		SNAPSHOT_VAR_OR_LEAVE(notify_pending, meta, ret, done);
+		if (notify_pending > 1) {
+			ret = EINVAL;
+			goto done;
+		}
+		vq->vq_notify_pending = notify_pending;
+		SNAPSHOT_VAR_OR_LEAVE(vq->vq_generation, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(vq->vq_desc_gpa, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(vq->vq_driver_gpa, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(vq->vq_device_gpa, meta, ret, done);
+
+		/*
+		 * A device is allowed to expose an unavailable queue by
+		 * reporting Queue Size zero.  Preserve that state across a
+		 * snapshot, but require it to remain completely disabled.
+		 */
+		if (vq->vq_qsize_max == 0) {
+			if (vq->vq_qsize != 0 || vq->vq_enabled != 0 ||
+			    vq->vq_reset != 0 || vq_is_allocated(vq) ||
+			    (vq->vq_msix_idx != VIRTIO_MSI_NO_VECTOR &&
+			    vq->vq_msix_idx >=
+			    vs->vs_pi->pi_msix.table_count)) {
+				ret = EINVAL;
+				goto done;
+			}
+			vq->vq_desc = NULL;
+			vq->vq_avail = NULL;
+			vq->vq_used = NULL;
+			continue;
+		}
+		if (vq->vq_qsize == 0 || !powerof2(vq->vq_qsize) ||
+		    vq->vq_qsize > vq->vq_qsize_max ||
+		    (vq->vq_flags & ~VQ_ALLOC) != 0 ||
+		    (vq->vq_enabled != 0 && vq->vq_enabled != 1) ||
+		    vq->vq_reset != 0 ||
+		    (vq->vq_enabled != 0) != vq_is_allocated(vq) ||
+		    (vq->vq_msix_idx != VIRTIO_MSI_NO_VECTOR &&
+		    vq->vq_msix_idx >= vs->vs_pi->pi_msix.table_count)) {
+			ret = EINVAL;
+			goto done;
+		}
+		if (!vq_is_allocated(vq)) {
+			vq->vq_desc = NULL;
+			vq->vq_avail = NULL;
+			vq->vq_used = NULL;
+			continue;
+		}
+		if ((vq->vq_desc_gpa & 15) != 0 ||
+		    (vq->vq_driver_gpa & 1) != 0 ||
+		    (vq->vq_device_gpa & 3) != 0) {
+			ret = EINVAL;
+			goto done;
+		}
+
+		desc_size = (size_t)vq->vq_qsize * sizeof(struct vring_desc);
+		avail_size = offsetof(struct vring_avail, ring) +
+		    (size_t)vq->vq_qsize * sizeof(uint16_t);
+		used_size = offsetof(struct vring_used, ring) +
+		    (size_t)vq->vq_qsize * sizeof(struct vring_used_elem);
+		if ((vs->vs_negotiated_caps &
+		    VIRTIO_RING_F_EVENT_IDX) != 0) {
+			avail_size += sizeof(uint16_t);
+			used_size += sizeof(uint16_t);
+		}
+		SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(ctx, vq->vq_desc,
+		    desc_size, false, meta, ret, done);
+		SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(ctx, vq->vq_avail,
+		    avail_size, false, meta, ret, done);
+		SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(ctx, vq->vq_used,
+		    used_size, false, meta, ret, done);
 	}
 
 done:
@@ -1210,20 +1581,23 @@ vi_pci_snapshot(struct vm_snapshot_meta *meta)
 	pi = meta->dev_data;
 	vs = pi->pi_arg;
 	vc = vs->vs_vc;
-	/* The existing serializer describes only bhyve's legacy transport. */
-	if (vi_pci_is_modern(vs))
-		return (EOPNOTSUPP);
 
 	/* Save virtio softc */
-	ret = vi_pci_snapshot_softc(vs, meta);
+	if (vi_pci_is_modern(vs))
+		ret = vi_pci_snapshot_softc_modern(vs, meta);
+	else
+		ret = vi_pci_snapshot_softc(vs, meta);
 	if (ret != 0)
 		goto done;
 
 	/* Save virtio consts */
-	ret = vi_pci_snapshot_consts(vc, meta);
+	if (vi_pci_is_modern(vs))
+		ret = vi_pci_snapshot_consts_modern(vc, meta);
+	else
+		ret = vi_pci_snapshot_consts(vc, meta);
 	if (ret != 0)
 		goto done;
-	if (meta->op == VM_SNAPSHOT_RESTORE &&
+	if (!vi_pci_is_modern(vs) && meta->op == VM_SNAPSHOT_RESTORE &&
 	    (vs->vs_negotiated_caps & ~vc->vc_hv_caps) != 0) {
 		EPRINTLN("%s: restored VirtIO negotiated unsupported features "
 		    "%#jx", __func__, (uintmax_t)(vs->vs_negotiated_caps &
@@ -1233,7 +1607,13 @@ vi_pci_snapshot(struct vm_snapshot_meta *meta)
 	}
 
 	/* Save virtio queue info */
-	ret = vi_pci_snapshot_queues(vs, meta);
+	if (vi_pci_is_modern(vs)) {
+		ret = vi_pci_modern_snapshot_transport(vs, meta);
+		if (ret != 0)
+			goto done;
+		ret = vi_pci_snapshot_queues_modern(vs, meta);
+	} else
+		ret = vi_pci_snapshot_queues(vs, meta);
 	if (ret != 0)
 		goto done;
 
@@ -1242,6 +1622,13 @@ vi_pci_snapshot(struct vm_snapshot_meta *meta)
 		ret = (*vc->vc_snapshot)(DEV_SOFTC(vs), meta);
 		if (ret != 0)
 			goto done;
+	}
+	if (meta->op == VM_SNAPSHOT_RESTORE && vs->vs_suspended &&
+	    vc->vc_restore_suspended != NULL) {
+		ret = (*vc->vc_restore_suspended)(DEV_SOFTC(vs));
+		if (ret != 0)
+			EPRINTLN("%s: cannot restore guest suspend ownership: %s",
+			    vc->vc_name, strerror(ret));
 	}
 
 done:

@@ -1,10 +1,10 @@
 #!/bin/sh
-# Boot the existing 5BSD test image and run the complete vsock matrix against
+# Clone an existing 5BSD test image and run the complete vsock matrix against
 # opt-in modern and default (option omitted) legacy VirtIO PCI transports.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
-IMAGE=${IMAGE:?set IMAGE to a disposable 5BSD raw disk}
+IMAGE=${IMAGE:?set IMAGE to a 5BSD raw disk base image}
 BHYVE=${BHYVE:-}
 BHYVELOAD=${BHYVELOAD:-$(command -v bhyveload 2>/dev/null || true)}
 BHYVECTL=${BHYVECTL:-$(command -v bhyvectl 2>/dev/null || true)}
@@ -16,6 +16,7 @@ CID=${CID:-3}
 CONSOLE_PORT=${CONSOLE_PORT:-}
 BULK_MB=${BULK_MB:-256}
 KEEP_VM=${KEEP_VM:-no}
+VM_FREE_GATES=${VM_FREE_GATES:-yes}
 
 if [ -z "$BHYVE" ]; then
 	object_bhyve="$OBJROOT$SRCTOP/$(uname -p).$(uname -p)/usr.sbin/bhyve/bhyve"
@@ -68,7 +69,11 @@ fi
 
 prepare_workdir "$WORKDIR"
 if [ -f "$here/Makefile" ]; then
-	make -C "$here"
+	case "$VM_FREE_GATES" in
+	yes) make -C "$here" ;;
+	no) ;;
+	*) echo "VM_FREE_GATES must be yes or no" >&2; exit 2 ;;
+	esac
 	tools=${TOOLS:-$(make -C "$here" -V .OBJDIR)}
 else
 	tools=${TOOLS:-$here}
@@ -79,7 +84,8 @@ for tool in unix-pipe vsh-connect vsh-connect-test-server uinput-inject; do
 		exit 1
 	}
 done
-TOOLS="$tools" sh "$here/host-tools-selftest.sh"
+[ "$VM_FREE_GATES" = no ] ||
+    TOOLS="$tools" sh "$here/host-tools-selftest.sh"
 kldload -n vmm
 
 if [ -z "$CONSOLE_PORT" ]; then
@@ -96,18 +102,30 @@ fi
 vm_pid=
 console_pid=
 vmname=
+image_md=
 cleanup_vm()
 {
 	[ -z "$console_pid" ] || pkill -TERM -P "$console_pid" 2>/dev/null || true
 	[ -z "$console_pid" ] || kill "$console_pid" 2>/dev/null || true
+	[ -z "$console_pid" ] || wait "$console_pid" 2>/dev/null || true
 	console_pid=
 	if [ -n "$vm_pid" ]; then
 		kill "$vm_pid" 2>/dev/null || true
+		i=0
+		while kill -0 "$vm_pid" 2>/dev/null && [ "$i" -lt 5 ]; do
+			sleep 1
+			i=$((i + 1))
+		done
+		kill -KILL "$vm_pid" 2>/dev/null || true
 		wait "$vm_pid" 2>/dev/null || true
 	fi
 	vm_pid=
 	[ -z "$vmname" ] || "$BHYVECTL" --vm="$vmname" --destroy \
 	    >/dev/null 2>&1 || true
+	if [ -n "$image_md" ]; then
+		mdconfig -d -u "$image_md" >/dev/null 2>&1 || true
+		image_md=
+	fi
 }
 cleanup_all()
 {
@@ -189,6 +207,43 @@ wait_for_guest()
 	return 1
 }
 
+prepare_guest_image()
+{
+	base=$1
+	copy=$2
+	fsck_log=$3
+
+	echo "Creating sparse per-attempt guest image"
+	dd if="$base" of="$copy" bs=4m conv=sparse status=none
+	image_md=$(mdconfig -a -t vnode -f "$copy")
+	ufs_partition=$(gpart show -p "$image_md" |
+	    awk '$4 == "freebsd-ufs" { print "/dev/" $3; exit }')
+	if [ -z "$ufs_partition" ]; then
+		echo "no FreeBSD UFS partition found in $base" >&2
+		return 1
+	fi
+	# Repair only the disposable copy.  The base image remains immutable.
+	if ! fsck_ufs -fy "$ufs_partition" >"$fsck_log" 2>&1; then
+		echo "fsck failed for cloned guest image:" >&2
+		tail -n 40 "$fsck_log" >&2
+		return 1
+	fi
+	mdconfig -d -u "$image_md"
+	image_md=
+}
+
+shutdown_guest()
+{
+	# Prefer a clean UFS unmount.  A wedged or panicked guest is bounded by
+	# cleanup_vm(), which escalates from TERM to KILL after five seconds.
+	guest_cmd 'shutdown -p now' 8 >/dev/null 2>&1 || true
+	i=0
+	while kill -0 "$vm_pid" 2>/dev/null && [ "$i" -lt 60 ]; do
+		sleep 1
+		i=$((i + 1))
+	done
+}
+
 for transport in $TRANSPORTS; do
 	case "$transport" in
 	modern)
@@ -215,15 +270,18 @@ for transport in $TRANSPORTS; do
 	console_input="$rundir/console.in"
 	console_log="$rundir/console.log"
 	bhyve_log="$rundir/bhyve.log"
+	guest_image="$rundir/guest.img"
+	fsck_log="$rundir/fsck.log"
 	mkdir -p -m 0700 "$sockdir"
 	: > "$bhyve_log"
 
 	echo "== 5BSD $transport: boot and test =="
-	"$BHYVELOAD" -c /dev/null -m 2G -d "$IMAGE" "$vmname" \
+	prepare_guest_image "$IMAGE" "$guest_image" "$fsck_log"
+	"$BHYVELOAD" -c /dev/null -m 2G -d "$guest_image" "$vmname" \
 	    >> "$bhyve_log" 2>&1
 	"$BHYVE" -c 2 -m 2G -H -w \
 	    -s 0,hostbridge \
-	    -s "3,virtio-blk,$IMAGE" \
+	    -s "3,virtio-blk,$guest_image" \
 	    -s "5,virtio-vsock,cid=$CID,path=$sockdir$transport_opt" \
 	    -s "6,virtio-rnd$transport_opt" \
 	    -s 31,lpc -l "com1,tcp=127.0.0.1:$CONSOLE_PORT" \
@@ -251,7 +309,9 @@ for transport in $TRANSPORTS; do
 	    WORK="$rundir/data" \
 	    VCMD="env CONSOLE_LOG=$console_log CONSOLE_INPUT=$console_input sh $here/acmd-console.sh" \
 	    sh "$here/run.sh"
+	shutdown_guest
 	cleanup_vm
+	rm -f "$guest_image"
 done
 
-echo "5BSD modern/default-legacy automation completed successfully"
+echo "5BSD transport automation completed successfully: $TRANSPORTS"

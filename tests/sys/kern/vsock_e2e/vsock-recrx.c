@@ -31,7 +31,7 @@ main(int argc, char **argv)
 {
 	struct sockaddr_vm a;
 	char *buf;
-	size_t bufsz = 4u * 1024 * 1024 + 4096;	/* > device max record */
+	size_t bufsz = 256u * 1024 + 4096;	/* > advertised record window */
 	unsigned long recs = 0, total = 0;
 	int l, c, port;
 	ssize_t n;

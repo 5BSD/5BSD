@@ -47,7 +47,6 @@
 #include <sys/endian.h>
 
 #include <machine/bus.h>
-#include <machine/cpu.h>
 #include <machine/resource.h>
 
 #include <dev/virtio/virtio.h>
@@ -707,14 +706,18 @@ vtmmio_reset_virtqueue(device_t dev, struct virtqueue *vq)
 
 	vtmmio_select_virtqueue(sc, idx);
 	vtmmio_write_config_4(sc, VIRTIO_MMIO_QUEUE_RESET, 1);
-	for (count = 0; count < 1000; count++) {
+	for (count = 0; count < VIRTIO_QUEUE_RESET_POLLS; count++) {
 		if (vtmmio_read_config_4(sc, VIRTIO_MMIO_QUEUE_RESET) == 0) {
 			if (vtmmio_read_config_4(sc,
 			    VIRTIO_MMIO_QUEUE_READY) != 0)
 				return (EIO);
 			return (0);
 		}
-		DELAY(1000);
+		/*
+		 * The bus reset method may be called with a child-driver mutex
+		 * held (vtrnd_detach() does this), so it must not sleep here.
+		 */
+		DELAY(VIRTIO_RESET_POLL_DELAY_US);
 	}
 
 	return (ETIMEDOUT);
@@ -1156,9 +1159,13 @@ vtmmio_reset(struct vtmmio_softc *sc)
 	 */
 	vtmmio_set_status(sc->dev, VIRTIO_CONFIG_STATUS_RESET);
 	if (sc->vtmmio_version > 1) {
+		/*
+		 * This method can be reached with a child-driver mutex held, so
+		 * throttle MMIO polling without sleeping.
+		 */
 		while (vtmmio_get_status(sc->dev) !=
 		    VIRTIO_CONFIG_STATUS_RESET)
-			cpu_spinwait();
+			DELAY(VIRTIO_RESET_POLL_DELAY_US);
 	} else
 		(void)vtmmio_get_status(sc->dev);
 	sc->vtmmio_device_config_failed = false;

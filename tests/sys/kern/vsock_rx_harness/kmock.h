@@ -151,12 +151,16 @@ sysctl_handle_long(struct sysctl_oid *o __unused, void *p __unused,
 static inline int
 sysctl_wire_old_buffer(struct sysctl_req *r __unused, size_t l __unused)
 { return (0); }
-#define SYSCTL_OUT(r, p, l)	(0)
+#define SYSCTL_OUT(r, p, l)	((void)(r), (void)(p), (void)(l), 0)
 
 /* ---- mutex ---- */
 #ifdef VSOCK_REAL_SLEEP
 #include <pthread.h>
-struct mtx { pthread_mutex_t native; };
+struct mtx {
+	pthread_mutex_t native;
+	pthread_t owner;
+	int depth;
+};
 #else
 struct mtx { int depth; };
 #endif
@@ -166,19 +170,35 @@ struct mtx { int depth; };
 #ifdef VSOCK_REAL_SLEEP
 static inline void mtx_init(struct mtx *m, const char *n __unused,
     const char *t __unused, int o __unused)
-{ if (pthread_mutex_init(&m->native, NULL) != 0) abort(); }
+{
+	m->depth = 0;
+	if (pthread_mutex_init(&m->native, NULL) != 0)
+		abort();
+}
 static inline void mtx_destroy(struct mtx *m)
 { if (pthread_mutex_destroy(&m->native) != 0) abort(); }
 static inline void mtx_lock(struct mtx *m)
-{ if (pthread_mutex_lock(&m->native) != 0) abort(); }
+{
+	if (pthread_mutex_lock(&m->native) != 0)
+		abort();
+	m->owner = pthread_self();
+	m->depth = 1;
+}
 static inline void mtx_unlock(struct mtx *m)
-{ if (pthread_mutex_unlock(&m->native) != 0) abort(); }
+{
+	m->depth = 0;
+	if (pthread_mutex_unlock(&m->native) != 0)
+		abort();
+}
+static inline int mtx_owned(struct mtx *m)
+{ return (m->depth != 0 && pthread_equal(m->owner, pthread_self())); }
 #else
 static inline void mtx_init(struct mtx *m, const char *n __unused,
     const char *t __unused, int o __unused) { m->depth = 0; }
 static inline void mtx_destroy(struct mtx *m __unused) {}
 static inline void mtx_lock(struct mtx *m) { m->depth++; }
 static inline void mtx_unlock(struct mtx *m) { m->depth--; }
+static inline int mtx_owned(struct mtx *m) { return (m->depth != 0); }
 #endif
 static inline void mtx_assert(struct mtx *m __unused, int w __unused) {}
 #define MTX_SYSINIT(a,b,c,d)
@@ -308,10 +328,24 @@ msleep(void *chan __unused, struct mtx *m __unused, int pri __unused,
     const char *w __unused, int timo __unused) { return (EWOULDBLOCK); }
 static inline void wakeup(void *chan __unused) {}
 #endif
+extern int vsock_kmock_msleep_sbt_calls;
+extern int64_t vsock_kmock_msleep_sbt_last_timeout;
 static inline int
-msleep_sbt(void *chan __unused, struct mtx *m __unused, int pri __unused,
-    const char *w __unused, int64_t sbt __unused, int64_t pr __unused,
-    int fl __unused) { return (EWOULDBLOCK); }
+msleep_sbt(void *chan, struct mtx *m, int pri,
+    const char *w __unused, int64_t sbt, int64_t pr __unused,
+    int fl __unused)
+{
+	vsock_kmock_msleep_sbt_calls++;
+	vsock_kmock_msleep_sbt_last_timeout = sbt;
+#ifdef VSOCK_REAL_SLEEP
+	return (transport_msleep(chan, m, pri, w, 0));
+#else
+	(void)chan;
+	(void)m;
+	(void)pri;
+	return (EWOULDBLOCK);
+#endif
+}
 #define tstosbt(x)	(0)
 #define sbttots(x)	(0)
 #define SBT_1S		1
@@ -459,6 +493,7 @@ struct socket {
 	int		 so_state;
 	int		 so_options;
 	int		 so_error;
+	int		 so_timeo;
 	uint64_t	 so_gencnt;
 	void		*so_pcb;
 	struct vnet	*so_vnet;

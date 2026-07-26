@@ -185,7 +185,10 @@ void vq_endchains(struct vqueue_info *vq, int i)
 { (void)vq; (void)i; g_endchains++; }
 
 /* ================= mock mevent / virtio glue ================= */
-static struct mevent { int fd; } g_mev[128];
+static struct mevent {
+	int fd;
+	bool enabled;
+} g_mev[128];
 static int g_nmev;
 static int g_mevent_enable_calls;
 static int g_mevent_disable_calls;
@@ -197,18 +200,23 @@ mevent_add(int fd, enum ev_type t, void (*cb)(int, enum ev_type, void *),
 	(void)t; (void)cb; (void)p;
 	m = &g_mev[g_nmev++ % 128];
 	m->fd = fd;
+	m->enabled = true;
 	return (m);
 }
 struct mevent *
 mevent_add_disabled(int fd, enum ev_type t,
     void (*cb)(int, enum ev_type, void *), void *p)
 {
-	return (mevent_add(fd, t, cb, p));
+	struct mevent *m;
+
+	m = mevent_add(fd, t, cb, p);
+	m->enabled = false;
+	return (m);
 }
 int mevent_enable(struct mevent *m)
-{ (void)m; g_mevent_enable_calls++; return (0); }
+{ m->enabled = true; g_mevent_enable_calls++; return (0); }
 int mevent_disable(struct mevent *m)
-{ (void)m; g_mevent_disable_calls++; return (0); }
+{ m->enabled = false; g_mevent_disable_calls++; return (0); }
 int mevent_delete(struct mevent *m) { (void)m; return (0); }
 int mevent_delete_close(struct mevent *m) { if (m) (void)close(m->fd); return (0); }
 
@@ -299,6 +307,9 @@ __wrap_connectat(int dfd, int s, const struct sockaddr *a, socklen_t l)
 	return (g_connectat_result);
 }
 static int g_send_flags;	/* flags from the most recent send() */
+static bool g_send_override;
+static ssize_t g_send_result;
+static int g_send_errno;
 ssize_t
 __wrap_send(int fd, const void *b, size_t n, int f)
 {
@@ -308,6 +319,10 @@ __wrap_send(int fd, const void *b, size_t n, int f)
 	g_send_len = n;
 	g_send_flags = f;
 	g_send_calls++;
+	if (g_send_override) {
+		errno = g_send_errno;
+		return (g_send_result);
+	}
 	return ((ssize_t)n);
 }
 /* Staged host->guest data returned by recv(); default is "no data" (EAGAIN). */
@@ -529,6 +544,7 @@ static void
 reset_caps(void)
 {
 	g_ninject = 0; g_send_calls = 0; g_send_len = 0;
+	g_send_override = false; g_send_result = 0; g_send_errno = 0;
 	g_rx_descs = 256; g_connectat_result = 0;
 	g_one_shot_vq = NULL; g_one_shot_vq_consumed = false;
 	g_socket_calls = 0; g_connectat_calls = 0;
@@ -781,31 +797,58 @@ ATF_TC_BODY(rw_forwards_to_host, tc)
 	free(sc);
 }
 
-/* --- A known but connection-mismatched RW type is discarded and counted as
- * consumed.  Crossing the reporting threshold must still send CREDIT_UPDATE,
- * or the guest can remain blocked on bytes bhyve no longer holds. --- */
-ATF_TC_WITHOUT_HEAD(rw_type_mismatch_reports_credit);
-ATF_TC_BODY(rw_type_mismatch_reports_credit, tc)
+ATF_TC_WITHOUT_HEAD(stream_eagain_drains_on_writable);
+ATF_TC_BODY(stream_eagain_drains_on_writable, tc)
 {
 	struct pci_vtvsock_softc *sc = mk_sc();
 	struct vtvsock_conn *c;
 	struct virtio_vsock_hdr h;
-	uint8_t pay[VTVSOCK_CREDIT_UPDATE_THRESHOLD];
+	const uint8_t pay[] = "hello";
 
 	reset_caps();
 	c = mk_established(sc, 1234, 80, STREAM);
+	g_send_override = true;
+	g_send_result = -1;
+	g_send_errno = EAGAIN;
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, STREAM, 3, VSOCK_CID_HOST, 1234,
+	    80, sizeof(pay) - 1, 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, pay, sizeof(pay) - 1);
+
+	ATF_CHECK_EQ(c->fwd_cnt, 0);
+	ATF_CHECK_EQ(c->tx_buf_len, sizeof(pay) - 1);
+	ATF_CHECK_EQ(sc->vsc_txbuf_total, sizeof(pay) - 1);
+	ATF_CHECK(c->tx_evp != NULL);
+
+	g_send_override = false;
+	vtvsock_conn_write_cb(c->fd, EVF_WRITE, sc);
+	ATF_CHECK_EQ(c->fwd_cnt, sizeof(pay) - 1);
+	ATF_CHECK_EQ(c->tx_buf_len, 0);
+	ATF_CHECK_EQ(sc->vsc_txbuf_total, 0);
+	ATF_CHECK_EQ(nconns(sc), 1);
+	ATF_CHECK(g_mevent_disable_calls != 0);
+	free(sc);
+}
+
+/* A known but connection-mismatched RW type resets the flow.  Silently
+ * consuming it would hide guaranteed-delivery loss from both endpoints. */
+ATF_TC_WITHOUT_HEAD(rw_type_mismatch_resets);
+ATF_TC_BODY(rw_type_mismatch_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr h;
+	uint8_t pay[VTVSOCK_CREDIT_UPDATE_THRESHOLD];
+
+	reset_caps();
+	(void)mk_established(sc, 1234, 80, STREAM);
 	memset(pay, 'M', sizeof(pay));
 	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST,
 	    1234, 80, sizeof(pay), 0, 256 * 1024, 0);
 	vtvsock_process_tx_pkt(sc, &h, pay, sizeof(pay));
 
 	ATF_CHECK(g_send_calls == 0);	/* malformed payload not relayed */
-	ATF_CHECK(nconns(sc) == 1);	/* current drop policy is nonfatal */
-	ATF_CHECK(c->fwd_cnt == sizeof(pay));
-	ATF_CHECK(c->last_fwd_cnt == c->fwd_cnt);
+	ATF_CHECK(nconns(sc) == 0);
 	ATF_CHECK(g_ninject == 1 &&
-	    g_inject[0].op == VIRTIO_VSOCK_OP_CREDIT_UPDATE &&
-	    g_inject[0].fwd_cnt == sizeof(pay));
+	    g_inject[0].op == VIRTIO_VSOCK_OP_RST);
 	free(sc);
 }
 
@@ -822,6 +865,42 @@ ATF_TC_BODY(peer_fwd_cnt_overflow_rst, tc)
 	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
 	ATF_CHECK(nconns(sc) == 0);	/* connection torn down */
 	ATF_CHECK(g_ninject >= 1 && g_inject[0].op == VIRTIO_VSOCK_OP_RST);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(peer_fwd_cnt_rewind_ignored);
+ATF_TC_BODY(peer_fwd_cnt_rewind_ignored, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->tx_cnt = 200;
+	c->peer_fwd_cnt = 100;
+
+	/* A stale credit update must not move the free-running counter back. */
+	mkhdr(&h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3,
+	    VSOCK_CID_HOST, 1234, 80, 0, 0, 256 * 1024, 50);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK_EQ(c->peer_fwd_cnt, 100);
+	ATF_CHECK_EQ(nconns(sc), 1);
+
+	/* A normal advance is accepted. */
+	mkhdr(&h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3,
+	    VSOCK_CID_HOST, 1234, 80, 0, 0, 256 * 1024, 150);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK_EQ(c->peer_fwd_cnt, 150);
+
+	/* Wraparound is an advance when the delta remains in the half-range. */
+	c->tx_cnt = 32;
+	c->peer_fwd_cnt = UINT32_MAX - 15;
+	mkhdr(&h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3,
+	    VSOCK_CID_HOST, 1234, 80, 0, 0, 256 * 1024, 16);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK_EQ(c->peer_fwd_cnt, 16);
+	ATF_CHECK_EQ(nconns(sc), 1);
 	free(sc);
 }
 
@@ -1280,6 +1359,121 @@ ATF_TC_BODY(seqpacket_reassembles_to_eom, tc)
 	free(sc);
 }
 
+ATF_TC_WITHOUT_HEAD(seqpacket_short_send_resets);
+ATF_TC_BODY(seqpacket_short_send_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr h;
+	const uint8_t pay[] = "record";
+
+	reset_caps();
+	(void)mk_established(sc, 1234, 80, SEQPACKET);
+	g_send_override = true;
+	g_send_result = 3;
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST,
+	    1234, 80, sizeof(pay) - 1,
+	    VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR,
+	    256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, pay, sizeof(pay) - 1);
+
+	ATF_CHECK_EQ(nconns(sc), 0);
+	ATF_CHECK_EQ(sc->vsc_reasm_total, 0);
+	ATF_CHECK_EQ(sc->vsc_txbuf_total, 0);
+	ATF_REQUIRE_EQ(g_ninject, 1);
+	ATF_CHECK_EQ(g_inject[0].op, VIRTIO_VSOCK_OP_RST);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(seqpacket_emsgsize_resets);
+ATF_TC_BODY(seqpacket_emsgsize_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr h;
+	const uint8_t pay[] = "record";
+
+	reset_caps();
+	(void)mk_established(sc, 1234, 80, SEQPACKET);
+	g_send_override = true;
+	g_send_result = -1;
+	g_send_errno = EMSGSIZE;
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST,
+	    1234, 80, sizeof(pay) - 1, VIRTIO_VSOCK_SEQ_EOM,
+	    256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, pay, sizeof(pay) - 1);
+
+	ATF_CHECK_EQ(nconns(sc), 0);
+	ATF_CHECK_EQ(sc->vsc_reasm_total, 0);
+	ATF_REQUIRE_EQ(g_ninject, 1);
+	ATF_CHECK_EQ(g_inject[0].op, VIRTIO_VSOCK_OP_RST);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(seqpacket_deferred_short_send_resets);
+ATF_TC_BODY(seqpacket_deferred_short_send_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+	const uint8_t pay[] = "record";
+	int fd;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	fd = c->fd;
+	g_send_override = true;
+	g_send_result = -1;
+	g_send_errno = EAGAIN;
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST,
+	    1234, 80, sizeof(pay) - 1,
+	    VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR,
+	    256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, pay, sizeof(pay) - 1);
+	ATF_REQUIRE_EQ(nconns(sc), 1);
+	ATF_CHECK_EQ(c->tx_buf_len, sizeof(pay) - 1);
+
+	g_send_result = 3;
+	g_send_errno = 0;
+	vtvsock_conn_write_cb(fd, EVF_WRITE, sc);
+	ATF_CHECK_EQ(nconns(sc), 0);
+	ATF_CHECK_EQ(sc->vsc_reasm_total, 0);
+	ATF_CHECK_EQ(sc->vsc_txbuf_total, 0);
+	ATF_REQUIRE_EQ(g_ninject, 1);
+	ATF_CHECK_EQ(g_inject[0].op, VIRTIO_VSOCK_OP_RST);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(seqpacket_deferred_delivery_returns_credit);
+ATF_TC_BODY(seqpacket_deferred_delivery_returns_credit, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+	const uint8_t pay[] = "record";
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	g_send_override = true;
+	g_send_result = -1;
+	g_send_errno = EAGAIN;
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST,
+	    1234, 80, sizeof(pay) - 1,
+	    VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR,
+	    256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, pay, sizeof(pay) - 1);
+	ATF_REQUIRE_EQ(nconns(sc), 1);
+	ATF_CHECK_EQ(c->tx_buf_len, sizeof(pay) - 1);
+	ATF_CHECK_EQ(c->fwd_cnt, 0);
+
+	g_send_result = sizeof(pay) - 1;
+	g_send_errno = 0;
+	vtvsock_conn_write_cb(c->fd, EVF_WRITE, sc);
+	ATF_CHECK_EQ(nconns(sc), 1);
+	ATF_CHECK_EQ(sc->vsc_txbuf_total, 0);
+	ATF_CHECK_EQ(c->fwd_cnt, sizeof(pay) - 1);
+	ATF_CHECK_EQ(g_ninject, 0);
+	free(sc);
+}
+
 ATF_TC_WITHOUT_HEAD(seqpacket_realloc_failure_resets_cleanly);
 ATF_TC_BODY(seqpacket_realloc_failure_resets_cleanly, tc)
 {
@@ -1306,40 +1500,35 @@ ATF_TC_BODY(seqpacket_realloc_failure_resets_cleanly, tc)
 }
 
 /*
- * --- guest->host SEQPACKET: a record LARGER than the advertised buf_alloc
- * must credit the guest incrementally as fragments are accepted, not only at
- * EOM.  Otherwise a conformant guest exhausts its send window mid-record and
- * deadlocks (it blocks for credit the host won't grant until EOM, which the
- * guest can't reach).  Regression for that hang. ---
+ * --- guest->host SEQPACKET: fragments consume the advertised receive window
+ * until the complete record reaches the host socket.  A sender must keep each
+ * record within buf_alloc; accepting a larger record by returning credit for
+ * mere reassembly would advertise capacity that is still occupied. ---
  */
-ATF_TC_WITHOUT_HEAD(seqpacket_large_record_credits_incrementally);
-ATF_TC_BODY(seqpacket_large_record_credits_incrementally, tc)
+ATF_TC_WITHOUT_HEAD(seqpacket_credit_follows_complete_delivery);
+ATF_TC_BODY(seqpacket_credit_follows_complete_delivery, tc)
 {
 	struct pci_vtvsock_softc *sc = mk_sc();
 	struct vtvsock_conn *c;
 	struct virtio_vsock_hdr h;
-	static uint8_t frag[200 * 1024];
+	static uint8_t frag[100 * 1024];
 	reset_caps();
 	c = mk_established(sc, 1234, 80, SEQPACKET);
 	memset(frag, 'Z', sizeof(frag));
 
 	/*
-	 * One 200 KiB fragment, NO EOM: the record is not complete and nothing
-	 * is delivered to the host yet, but the 200 KiB already accepted into
-	 * reassembly must be credited so the guest's window (buf_alloc = 256
-	 * KiB) does not close before it can send the rest of the record.
+	 * The first fragment is retained in the advertised receive window.
+	 * It is not consumed, and therefore is not credited, before EOM.
 	 */
 	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST, 1234, 80,
 	    sizeof(frag), 0, 256 * 1024, 0);
 	vtvsock_process_tx_pkt(sc, &h, frag, sizeof(frag));
 	ATF_CHECK(g_send_calls == 0);			/* not delivered (no EOM) */
-	ATF_CHECK(c->fwd_cnt == sizeof(frag));		/* but credited now */
+	ATF_CHECK(c->fwd_cnt == 0);			/* still consumes window */
 
 	/*
-	 * Second 200 KiB fragment with EOM: total record is 400 KiB, well over
-	 * buf_alloc, which is only deliverable because the guest kept getting
-	 * credit for the first fragment.  Delivered as one datagram; fwd_cnt
-	 * reflects the whole record exactly once (no double-count at delivery).
+	 * The complete 200 KiB record is within buf_alloc.  Once delivered as
+	 * one datagram, its receive credit is returned exactly once.
 	 */
 	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST, 1234, 80,
 	    sizeof(frag), VIRTIO_VSOCK_SEQ_EOM, 256 * 1024, 0);
@@ -1347,6 +1536,35 @@ ATF_TC_BODY(seqpacket_large_record_credits_incrementally, tc)
 	ATF_CHECK(g_send_calls == 1);			/* one host datagram */
 	ATF_CHECK(g_send_len == 2 * sizeof(frag));	/* full 400 KiB record */
 	ATF_CHECK(c->fwd_cnt == 2 * sizeof(frag));	/* credited exactly once */
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(seqpacket_record_over_advertised_window_resets);
+ATF_TC_BODY(seqpacket_record_over_advertised_window_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+	static uint8_t frag[160 * 1024];
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	memset(frag, 'Z', sizeof(frag));
+	ATF_REQUIRE_EQ(c->buf_alloc, 256 * 1024);
+
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST, 1234, 80,
+	    sizeof(frag), 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, frag, sizeof(frag));
+	ATF_REQUIRE_EQ(nconns(sc), 1);
+	ATF_CHECK_EQ(c->fwd_cnt, 0);
+
+	/* 320 KiB total is larger than the advertised 256 KiB window. */
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST, 1234, 80,
+	    sizeof(frag), VIRTIO_VSOCK_SEQ_EOM, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, frag, sizeof(frag));
+	ATF_CHECK_EQ(nconns(sc), 0);
+	ATF_REQUIRE_EQ(g_ninject, 1);
+	ATF_CHECK_EQ(g_inject[0].op, VIRTIO_VSOCK_OP_RST);
 	free(sc);
 }
 
@@ -2443,7 +2661,8 @@ ATF_TC_BODY(kernel_reset_success_recovers_backend, tc)
 	ATF_CHECK(sc->vsc_features == 0);
 	ATF_CHECK(g_mevent_disable_calls == 1);
 
-	pci_vtvsock_neg_features(sc, VIRTIO_VSOCK_F_STREAM);
+	ATF_CHECK_EQ(pci_vtvsock_neg_features(sc,
+	    VIRTIO_VSOCK_F_STREAM), 0);
 	ATF_CHECK(!sc->vsc_kernel_failed);
 	ATF_CHECK(g_ioctl_features == VIRTIO_VSOCK_F_STREAM);
 
@@ -2644,7 +2863,8 @@ ATF_TC_BODY(kernel_failure_survives_feature_update, tc)
 	sc->vsc_kernel = true;
 	sc->vsc_kernel_fd = 700;
 	sc->vsc_kernel_failed = true;
-	pci_vtvsock_neg_features(sc, VIRTIO_VSOCK_F_STREAM);
+	ATF_CHECK_EQ(pci_vtvsock_neg_features(sc,
+	    VIRTIO_VSOCK_F_STREAM), EIO);
 	ATF_CHECK(sc->vsc_kernel_failed);
 	ATF_CHECK(g_needs_reset_calls == 1);
 	ATF_CHECK((sc->vsc_vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
@@ -2661,8 +2881,8 @@ ATF_TC_BODY(kernel_feature_update_masks_transport_bits, tc)
 	sc->vsc_kernel = true;
 	sc->vsc_kernel_fd = 700;
 	negotiated = VIRTIO_F_VERSION_1 | VIRTIO_RING_F_INDIRECT_DESC |
-	    VIRTIO_VSOCK_F_SEQPACKET;
-	pci_vtvsock_neg_features(sc, negotiated);
+	    VIRTIO14_F_SUSPEND | VIRTIO_VSOCK_F_SEQPACKET;
+	ATF_CHECK_EQ(pci_vtvsock_neg_features(sc, negotiated), 0);
 	ATF_CHECK(g_ioctl_last_request ==
 	    VSOCK_IOC_TRANSPORT_SET_FEATURES);
 	ATF_CHECK(g_ioctl_features == VIRTIO_VSOCK_F_SEQPACKET);
@@ -2687,7 +2907,8 @@ ATF_TC_BODY(kernel_reset_failure_remains_fatal, tc)
 
 	/* A later successful feature update cannot repair a failed reset. */
 	g_ioctl_fail_request = 0;
-	pci_vtvsock_neg_features(sc, VIRTIO_VSOCK_F_STREAM);
+	ATF_CHECK_EQ(pci_vtvsock_neg_features(sc,
+	    VIRTIO_VSOCK_F_STREAM), EIO);
 	ATF_CHECK(sc->vsc_kernel_failed);
 	ATF_CHECK(g_needs_reset_calls == 1);
 	ATF_CHECK((sc->vsc_vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
@@ -2958,10 +3179,210 @@ ATF_TC_BODY(document_wire_vectors, tc)
 	free(sc);
 }
 
+ATF_TC_WITHOUT_HEAD(suspend_fences_and_rearms_host_sources);
+ATF_TC_BODY(suspend_fences_and_rearms_host_sources, tc)
+{
+	struct pci_vtvsock_softc *sc;
+	struct vtvsock_conn *conn, *stale;
+	struct vtvsock_ctl_conn *cc;
+
+	sc = mk_sc();
+	reset_caps();
+	sc->vsc_ctl_evp = mevent_add(40, EVF_READ,
+	    pci_vtvsock_ctl_accept, sc);
+	sc->vsc_reap_evp = mevent_add(1000, EVF_TIMER,
+	    pci_vtvsock_reap_timer, sc);
+	stale = vtvsock_conn_alloc(sc, -1, 7000);
+	ATF_REQUIRE(stale != NULL);
+	stale->state = CONN_CONNECTING;
+	stale->close_time = monotonic_seconds() - 100;
+	conn = vtvsock_conn_alloc(sc, 41, 7001);
+	ATF_REQUIRE(conn != NULL);
+	conn->state = CONN_ESTABLISHED;
+	conn->peer_buf_alloc = 1;
+	conn->evp = mevent_add(conn->fd, EVF_READ, vtvsock_conn_data_cb, sc);
+	conn->tx_evp = mevent_add(conn->fd, EVF_WRITE,
+	    vtvsock_conn_write_cb, sc);
+	conn->tx_buf = malloc(1);
+	ATF_REQUIRE(conn->tx_buf != NULL);
+	conn->tx_buf[0] = 0x5a;
+	conn->tx_buf_len = 1;
+	conn->tx_buf_cap = 1;
+	sc->vsc_txbuf_total = 1;
+	cc = calloc(1, sizeof(*cc));
+	ATF_REQUIRE(cc != NULL);
+	cc->fd = 42;
+	cc->created = monotonic_seconds();
+	cc->evp = mevent_add(cc->fd, EVF_READ, pci_vtvsock_ctl_conn_cb, sc);
+	TAILQ_INSERT_TAIL(&sc->vsc_ctl_conns, cc, link);
+	sc->vsc_ctl_conn_count++;
+
+	ATF_CHECK((vtvsock_vi_consts.vc_hv_caps & VIRTIO14_F_SUSPEND) != 0);
+	pthread_mutex_lock(&sc->vsc_mtx);
+	ATF_REQUIRE_EQ(pci_vtvsock_suspend_device(sc), 0);
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	ATF_CHECK(sc->vsc_lifecycle_paused);
+	ATF_CHECK(!sc->vsc_ctl_evp->enabled);
+	ATF_CHECK(!sc->vsc_reap_evp->enabled);
+	ATF_CHECK(!conn->evp->enabled);
+	ATF_CHECK(!conn->tx_evp->enabled);
+	ATF_CHECK(!cc->evp->enabled);
+
+	/* Callbacks selected immediately before disable must observe the fence. */
+	pci_vtvsock_reap_timer(-1, EVF_TIMER, sc);
+	vtvsock_conn_write_cb(conn->fd, EVF_WRITE, sc);
+	pci_vtvsock_ctl_conn_cb(cc->fd, EVF_READ, sc);
+	ATF_CHECK_EQ(nconns(sc), 2);
+	ATF_CHECK_EQ(conn->tx_buf_len, 1);
+	ATF_CHECK_EQ(sc->vsc_ctl_conn_count, 1);
+
+	pthread_mutex_lock(&sc->vsc_mtx);
+	ATF_REQUIRE_EQ(pci_vtvsock_resume_device(sc), 0);
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	ATF_CHECK(!sc->vsc_lifecycle_paused);
+	/* Sources remain stopped until the common queue fence has opened. */
+	ATF_CHECK(!sc->vsc_ctl_evp->enabled);
+	ATF_CHECK(!sc->vsc_reap_evp->enabled);
+	pci_vtvsock_resume_complete(sc);
+	ATF_CHECK(sc->vsc_ctl_evp->enabled);
+	ATF_CHECK(sc->vsc_reap_evp->enabled);
+	ATF_CHECK(conn->evp->enabled);
+	ATF_CHECK(conn->tx_evp->enabled);
+	ATF_CHECK(cc->evp->enabled);
+
+	/* Once resumed, the same timer is allowed to mutate connection state. */
+	pci_vtvsock_reap_timer(-1, EVF_TIMER, sc);
+	ATF_CHECK_EQ(nconns(sc), 1);
+	pthread_mutex_lock(&sc->vsc_mtx);
+	TAILQ_REMOVE(&sc->vsc_ctl_conns, cc, link);
+	sc->vsc_ctl_conn_count--;
+	vtvsock_conn_close(sc, conn);
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	free(cc);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(kernel_suspend_fences_and_rearms_provider_sources);
+ATF_TC_BODY(kernel_suspend_fences_and_rearms_provider_sources, tc)
+{
+	struct pci_vtvsock_softc *sc;
+
+	sc = mk_sc();
+	reset_caps();
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_fd = 700;
+	sc->vsc_kernel_evp = mevent_add(sc->vsc_kernel_fd, EVF_READ,
+	    vtvsock_kernel_read_cb, sc);
+	sc->vsc_kernel_write_evp = mevent_add_disabled(sc->vsc_kernel_fd,
+	    EVF_WRITE, vtvsock_kernel_write_cb, sc);
+	sc->vsc_kernel_tx = malloc(1);
+	ATF_REQUIRE(sc->vsc_kernel_tx != NULL);
+	sc->vsc_kernel_tx[0] = 0xa5;
+	sc->vsc_kernel_tx_len = 1;
+
+	pthread_mutex_lock(&sc->vsc_mtx);
+	ATF_REQUIRE_EQ(pci_vtvsock_suspend_device(sc), 0);
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	ATF_CHECK(!sc->vsc_kernel_evp->enabled);
+	ATF_CHECK(!sc->vsc_kernel_write_evp->enabled);
+
+	/* A preselected writable callback cannot consume the parked packet. */
+	vtvsock_kernel_write_cb(sc->vsc_kernel_fd, EVF_WRITE, sc);
+	ATF_CHECK_EQ(sc->vsc_kernel_tx_len, 1);
+	ATF_CHECK(!sc->vsc_kernel_failed);
+
+	pthread_mutex_lock(&sc->vsc_mtx);
+	ATF_REQUIRE_EQ(pci_vtvsock_resume_device(sc), 0);
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	ATF_CHECK(!sc->vsc_kernel_evp->enabled);
+	ATF_CHECK(!sc->vsc_kernel_write_evp->enabled);
+	pci_vtvsock_resume_complete(sc);
+	ATF_CHECK(sc->vsc_kernel_evp->enabled);
+	ATF_CHECK(sc->vsc_kernel_write_evp->enabled);
+
+	free(sc->vsc_kernel_tx);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(resume_preserves_checkpoint_owner);
+ATF_TC_BODY(resume_preserves_checkpoint_owner, tc)
+{
+	struct pci_vtvsock_softc *sc;
+
+	sc = mk_sc();
+	reset_caps();
+	sc->vsc_ctl_evp = mevent_add(40, EVF_READ,
+	    pci_vtvsock_ctl_accept, sc);
+	pthread_mutex_lock(&sc->vsc_mtx);
+	ATF_REQUIRE_EQ(pci_vtvsock_suspend_device(sc), 0);
+	sc->vsc_vs.vs_checkpoint_paused = true;
+	ATF_REQUIRE_EQ(pci_vtvsock_resume_device(sc), 0);
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	pci_vtvsock_resume_complete(sc);
+	ATF_CHECK(sc->vsc_lifecycle_paused);
+	ATF_CHECK(!sc->vsc_ctl_evp->enabled);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(reset_cancels_suspend_and_reopens_admission);
+ATF_TC_BODY(reset_cancels_suspend_and_reopens_admission, tc)
+{
+	struct pci_vtvsock_softc *sc;
+
+	sc = mk_sc();
+	reset_caps();
+	sc->vsc_ctl_evp = mevent_add(40, EVF_READ,
+	    pci_vtvsock_ctl_accept, sc);
+	pthread_mutex_lock(&sc->vsc_mtx);
+	ATF_REQUIRE_EQ(pci_vtvsock_suspend_device(sc), 0);
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	ATF_CHECK(sc->vsc_lifecycle_paused);
+	ATF_CHECK(!sc->vsc_ctl_evp->enabled);
+
+	pci_vtvsock_reset(sc);
+	ATF_CHECK(!sc->vsc_lifecycle_paused);
+	ATF_CHECK(sc->vsc_ctl_evp->enabled);
+	ATF_CHECK_EQ(sc->vsc_features, 0);
+
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_rejects_unreconstructible_backend_state);
+ATF_TC_BODY(snapshot_rejects_unreconstructible_backend_state, tc)
+{
+	struct pci_vtvsock_softc *sc;
+	struct vtvsock_conn *conn;
+
+	sc = mk_sc();
+	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc), 0);
+
+	conn = vtvsock_conn_alloc(sc, -1, 7000);
+	ATF_REQUIRE(conn != NULL);
+	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc), EBUSY);
+	pthread_mutex_lock(&sc->vsc_mtx);
+	vtvsock_conn_close(sc, conn);
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc), 0);
+
+	sc->vsc_kernel = true;
+	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc), EOPNOTSUPP);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
 	ATF_TP_ADD_TC(tp, document_wire_vectors);
+	ATF_TP_ADD_TC(tp, suspend_fences_and_rearms_host_sources);
+	ATF_TP_ADD_TC(tp, kernel_suspend_fences_and_rearms_provider_sources);
+	ATF_TP_ADD_TC(tp, resume_preserves_checkpoint_owner);
+	ATF_TP_ADD_TC(tp, reset_cancels_suspend_and_reopens_admission);
+	ATF_TP_ADD_TC(tp, snapshot_rejects_unreconstructible_backend_state);
 	ATF_TP_ADD_TC(tp, backend_names_are_userspace_and_kernel);
 	ATF_TP_ADD_TC(tp, queue_reset_discards_only_selected_queue_work);
 	ATF_TP_ADD_TC(tp, spoofed_src_cid);
@@ -2974,8 +3395,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, request_nonzero_initial_fwd_cnt_rst);
 	ATF_TP_ADD_TC(tp, request_no_listener_rst);
 	ATF_TP_ADD_TC(tp, rw_forwards_to_host);
-	ATF_TP_ADD_TC(tp, rw_type_mismatch_reports_credit);
+	ATF_TP_ADD_TC(tp, stream_eagain_drains_on_writable);
+	ATF_TP_ADD_TC(tp, rw_type_mismatch_resets);
 	ATF_TP_ADD_TC(tp, peer_fwd_cnt_overflow_rst);
+	ATF_TP_ADD_TC(tp, peer_fwd_cnt_rewind_ignored);
 	ATF_TP_ADD_TC(tp, credit_update_full_ring_parked);
 	ATF_TP_ADD_TC(tp, pending_reply_overflow_retries_credit);
 	ATF_TP_ADD_TC(tp, shutdown_both_closes);
@@ -2991,8 +3414,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, host_rx_oversized_seqpacket_record_resets);
 	ATF_TP_ADD_TC(tp, host_eof_sends_shutdown);
 	ATF_TP_ADD_TC(tp, seqpacket_reassembles_to_eom);
+	ATF_TP_ADD_TC(tp, seqpacket_short_send_resets);
+	ATF_TP_ADD_TC(tp, seqpacket_emsgsize_resets);
+	ATF_TP_ADD_TC(tp, seqpacket_deferred_short_send_resets);
+	ATF_TP_ADD_TC(tp, seqpacket_deferred_delivery_returns_credit);
 	ATF_TP_ADD_TC(tp, seqpacket_realloc_failure_resets_cleanly);
-	ATF_TP_ADD_TC(tp, seqpacket_large_record_credits_incrementally);
+	ATF_TP_ADD_TC(tp, seqpacket_credit_follows_complete_delivery);
+	ATF_TP_ADD_TC(tp, seqpacket_record_over_advertised_window_resets);
 	ATF_TP_ADD_TC(tp, seqpacket_zero_len_record);
 	ATF_TP_ADD_TC(tp, rx_chain_not_writable_dropped);
 	ATF_TP_ADD_TC(tp, tx_chain_not_readable_dropped);

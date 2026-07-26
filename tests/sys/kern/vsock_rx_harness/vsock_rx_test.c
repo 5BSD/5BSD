@@ -28,6 +28,9 @@ static int g_last_send_len;
 static int g_send_len[4];
 static int g_send_error;
 static uint64_t g_rx_drop_count;
+#define	MAX_TEST_SOCKETS	128
+static struct socket *g_test_sockets[MAX_TEST_SOCKETS];
+static size_t g_test_socket_count;
 int vsock_kmock_sock_lock_calls;
 int vsock_kmock_sock_lock_depth;
 int vsock_kmock_sndbuf_lock_calls;
@@ -36,6 +39,8 @@ int vsock_kmock_record_pkthdrs;
 int vsock_kmock_record_pkthdr_len;
 int vsock_kmock_record_len;
 int vsock_kmock_record_mflags;
+int vsock_kmock_msleep_sbt_calls;
+int64_t vsock_kmock_msleep_sbt_last_timeout;
 
 static int
 mock_send_pkt(struct vtvsock_pcb *pcb, uint16_t op, uint32_t flags,
@@ -87,12 +92,22 @@ static struct vtvsock_pcb *establish_remote(int, uint32_t, uint32_t,
 static void
 reset_state(void)
 {
-	/* The sanitizer runner executes all cases in one process.  Close remote
-	 * PCBs left by a successful-path test so counts and tuples cannot leak
-	 * into the next case; real ATF runs each case in a fresh process. */
+	/*
+	 * The sanitizer runner executes all cases in one process, unlike ATF.
+	 * Tear down every socket created by the preceding case, including bound
+	 * listeners and accepted children.  Resetting only connected PCBs leaves
+	 * port reservations behind and makes results depend on case order.
+	 */
 	mtx_lock(&vtvsock_mtx);
 	vsock_transport_reset_locked();
 	mtx_unlock(&vtvsock_mtx);
+	for (size_t i = 0; i < g_test_socket_count; i++) {
+		if (g_test_sockets[i]->so_pcb != NULL)
+			vsock_detach(g_test_sockets[i]);
+		kfree(g_test_sockets[i]);
+		g_test_sockets[i] = NULL;
+	}
+	g_test_socket_count = 0;
 	g_ncap = 0; g_credit_updates = 0;
 	g_tx_ready = true;
 	g_send_calls = 0;
@@ -111,6 +126,8 @@ reset_state(void)
 	vsock_kmock_record_pkthdr_len = 0;
 	vsock_kmock_record_len = 0;
 	vsock_kmock_record_mflags = 0;
+	vsock_kmock_msleep_sbt_calls = 0;
+	vsock_kmock_msleep_sbt_last_timeout = -1;
 	/* fresh domain state each test */
 	vtvsock_remote_transport = NULL;
 	vtvsock_remote_transport_owner = NULL;
@@ -208,6 +225,8 @@ mk_socket(int type)
 	so->so_type = type;
 	so->so_vnet = curvnet;
 	if (vsock_attach(so, 0, NULL) != 0) { kfree(so); return (NULL); }
+	ATF_REQUIRE(g_test_socket_count < nitems(g_test_sockets));
+	g_test_sockets[g_test_socket_count++] = so;
 	return (so);
 }
 
@@ -239,6 +258,20 @@ bind_listen_cid(struct socket *so, uint32_t cid, uint32_t port)
 	if (vsock_bind(so, (struct sockaddr *)&sa, NULL) != 0)
 		return (-1);
 	return (vsock_listen(so, 8, NULL));
+}
+
+static void
+cleanup_loopback(struct socket *client, struct socket *listener)
+{
+	struct vtvsock_pcb *pcb;
+	struct socket *peer;
+
+	pcb = client->so_pcb;
+	peer = pcb != NULL && pcb->peer != NULL ? pcb->peer->so : NULL;
+	vsock_detach(client);
+	if (peer != NULL)
+		vsock_detach(peer);
+	vsock_detach(listener);
 }
 
 static void
@@ -301,28 +334,54 @@ ATF_TC_BODY(reserved_cid_sanitized, tc)
 	ATF_CHECK(vtvsock_guest_cid == 3);
 }
 
-/* --- feature negotiation gates SOCK_SEQPACKET / SOCK_STREAM at attach --- */
-ATF_TC_WITHOUT_HEAD(feature_negotiation_gates);
-ATF_TC_BODY(feature_negotiation_gates, tc)
+/* --- feature negotiation is scoped to the selected remote transport --- */
+ATF_TC_WITHOUT_HEAD(feature_negotiation_gates_remote_connect);
+ATF_TC_BODY(feature_negotiation_gates_remote_connect, tc)
 {
+	struct sockaddr_vm peer;
+	struct vtvsock_pcb *pcb;
 	struct socket *so;
+	uint32_t local_port;
 
-	/* Stream-only device: SEQPACKET socket must be refused. */
+	memset(&peer, 0, sizeof(peer));
+	peer.svm_len = sizeof(peer);
+	peer.svm_family = AF_VSOCK;
+	peer.svm_cid = VSOCK_CID_HOST;
+	peer.svm_port = 9000;
+
+	/*
+	 * Stream-only device: creating a SEQPACKET socket is valid because it
+	 * can still be used over loopback.  Selecting the remote transport at
+	 * connect is where the negotiated feature must be enforced.
+	 */
 	reset_state();
 	register_mock(3, VIRTIO_VSOCK_F_STREAM);
-	so = calloc(1, sizeof(*so));
-	so->so_type = SOCK_SEQPACKET; so->so_vnet = curvnet;
-	ATF_CHECK(vsock_attach(so, 0, NULL) == EPROTONOSUPPORT);
-	kfree(so);
+	so = mk_socket(SOCK_SEQPACKET);
+	ATF_REQUIRE(so != NULL);
+	ATF_CHECK(vsock_connect(so, (struct sockaddr *)&peer, NULL) ==
+	    EPROTONOSUPPORT);
+	pcb = so->so_pcb;
+	local_port = pcb->local.svm_port;
+	ATF_CHECK(local_port != VSOCK_PORT_ANY);
+	ATF_CHECK(pcb->state == VTVSOCK_BOUND);
+	ATF_CHECK(pcb->on_boundlist);
+	ATF_CHECK(!pcb->on_connlist);
+	vsock_detach(so);
 
-	/* Seqpacket-only + NO_IMPLIED_STREAM: STREAM socket must be refused. */
+	/* The inverse applies to seqpacket-only + NO_IMPLIED_STREAM. */
 	reset_state();
 	register_mock(3, VIRTIO_VSOCK_F_SEQPACKET |
 	    VIRTIO_VSOCK_F_NO_IMPLIED_STREAM);
-	so = calloc(1, sizeof(*so));
-	so->so_type = SOCK_STREAM; so->so_vnet = curvnet;
-	ATF_CHECK(vsock_attach(so, 0, NULL) == EPROTONOSUPPORT);
-	kfree(so);
+	so = mk_socket(SOCK_STREAM);
+	ATF_REQUIRE(so != NULL);
+	ATF_CHECK(vsock_connect(so, (struct sockaddr *)&peer, NULL) ==
+	    EPROTONOSUPPORT);
+	pcb = so->so_pcb;
+	ATF_CHECK(pcb->local.svm_port != VSOCK_PORT_ANY);
+	ATF_CHECK(pcb->state == VTVSOCK_BOUND);
+	ATF_CHECK(pcb->on_boundlist);
+	ATF_CHECK(!pcb->on_connlist);
+	vsock_detach(so);
 
 	/* A device offering both admits both. */
 	reset_state();
@@ -331,6 +390,115 @@ ATF_TC_BODY(feature_negotiation_gates, tc)
 	ATF_CHECK(so != NULL);
 	so = mk_socket(SOCK_SEQPACKET);
 	ATF_CHECK(so != NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(connect_timeout_preserves_retryable_binding);
+ATF_TC_BODY(connect_timeout_preserves_retryable_binding, tc)
+{
+	struct sockaddr_vm peer;
+	struct vtvsock_pcb *pcb;
+	struct socket *listener, *so;
+	uint32_t local_port;
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	so = mk_socket(SOCK_STREAM);
+	ATF_REQUIRE(so != NULL);
+	so->so_state |= SS_NBIO;
+	memset(&peer, 0, sizeof(peer));
+	peer.svm_len = sizeof(peer);
+	peer.svm_family = AF_VSOCK;
+	peer.svm_cid = VSOCK_CID_HOST;
+	peer.svm_port = 9003;
+	/*
+	 * pr_connect initiates the request and returns zero.  kern_connectat()
+	 * converts the still-connecting state to EINPROGRESS for SS_NBIO.
+	 */
+	ATF_CHECK(vsock_connect(so, (struct sockaddr *)&peer, NULL) == 0);
+	pcb = so->so_pcb;
+	local_port = pcb->local.svm_port;
+	ATF_CHECK(local_port != VSOCK_PORT_ANY);
+	ATF_CHECK(pcb->state == VTVSOCK_CONNECTING);
+	ATF_CHECK(pcb->on_boundlist);
+	ATF_CHECK(pcb->on_connlist);
+	ATF_REQUIRE(callout_active(&pcb->connect_callout));
+
+	pcb->connect_callout.active = 0;
+	pcb->connect_callout.fn(pcb->connect_callout.arg);
+	ATF_CHECK(pcb->state == VTVSOCK_BOUND);
+	ATF_CHECK(pcb->on_boundlist);
+	ATF_CHECK(!pcb->on_connlist);
+	ATF_CHECK(pcb->local.svm_port == local_port);
+	ATF_CHECK((so->so_state & (SS_ISCONNECTING | SS_ISDISCONNECTED)) == 0);
+	ATF_CHECK((so->so_snd.sb_state & SBS_CANTSENDMORE) == 0);
+	ATF_CHECK((so->so_rcv.sb_state & SBS_CANTRCVMORE) == 0);
+	ATF_CHECK(so->so_error == ETIMEDOUT);
+
+	/*
+	 * Retry the same descriptor over loopback.  The old error must clear,
+	 * the original local port must remain reserved, and the socket buffers
+	 * must still be usable.
+	 */
+	listener = mk_socket(SOCK_STREAM);
+	ATF_REQUIRE(listener != NULL);
+	ATF_REQUIRE(bind_listen(listener, 9004) == 0);
+	peer.svm_cid = VSOCK_CID_LOCAL;
+	peer.svm_port = 9004;
+	ATF_CHECK(vsock_connect(so, (struct sockaddr *)&peer, NULL) == 0);
+	ATF_CHECK(pcb->state == VTVSOCK_ESTABLISHED);
+	ATF_CHECK(pcb->local.svm_port == local_port);
+	ATF_CHECK(so->so_error == 0);
+	ATF_CHECK((so->so_snd.sb_state & SBS_CANTSENDMORE) == 0);
+	ATF_CHECK((so->so_rcv.sb_state & SBS_CANTRCVMORE) == 0);
+	cleanup_loopback(so, listener);
+}
+
+ATF_TC_WITHOUT_HEAD(remote_features_do_not_gate_loopback);
+ATF_TC_BODY(remote_features_do_not_gate_loopback, tc)
+{
+	struct sockaddr_vm peer;
+	struct vtvsock_pcb *pcb;
+	struct socket *client, *listener;
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	listener = mk_socket(SOCK_SEQPACKET);
+	client = mk_socket(SOCK_SEQPACKET);
+	ATF_REQUIRE(listener != NULL);
+	ATF_REQUIRE(client != NULL);
+	ATF_REQUIRE(bind_listen(listener, 9001) == 0);
+	memset(&peer, 0, sizeof(peer));
+	peer.svm_len = sizeof(peer);
+	peer.svm_family = AF_VSOCK;
+	peer.svm_cid = VSOCK_CID_LOCAL;
+	peer.svm_port = 9001;
+	ATF_CHECK(vsock_connect(client, (struct sockaddr *)&peer, NULL) == 0);
+	pcb = client->so_pcb;
+	ATF_CHECK(pcb->state == VTVSOCK_ESTABLISHED);
+	ATF_CHECK(pcb->transport == &vtvsock_local_transport);
+	cleanup_loopback(client, listener);
+}
+
+ATF_TC_WITHOUT_HEAD(unnegotiated_rx_type_is_reset);
+ATF_TC_BODY(unnegotiated_rx_type_is_reset, tc)
+{
+	struct virtio_vsock_hdr h;
+	struct socket *listener;
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	listener = mk_socket(SOCK_SEQPACKET);
+	ATF_REQUIRE(listener != NULL);
+	ATF_REQUIRE(bind_listen(listener, 9002) == 0);
+	mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST, VIRTIO_VSOCK_TYPE_SEQPACKET,
+	    VSOCK_CID_HOST, 19002, 9002, 0, 0, 65536, 0);
+	vsock_rx_packet(&h, sizeof(h));
+	ATF_CHECK(cap_count(VIRTIO_VSOCK_OP_RST) == 1);
+	ATF_CHECK(g_rx_drop_count == 1);
+	mtx_lock(&vtvsock_mtx);
+	ATF_CHECK(vtvsock_pcb_lookup_connected_locked(VSOCK_CID_HOST, 19002,
+	    vtvsock_guest_cid, 9002) == NULL);
+	mtx_unlock(&vtvsock_mtx);
 }
 
 /* --- credit accounting: available = peer_buf_alloc - (tx_cnt - peer_fwd_cnt),
@@ -467,6 +635,52 @@ ATF_TC_BODY(cid_local_wire_isolation, tc)
 	ATF_CHECK(vsock_connect(client, (struct sockaddr *)&remote, NULL) ==
 	    EADDRNOTAVAIL);
 	ATF_CHECK(cap_count(VIRTIO_VSOCK_OP_REQUEST) == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(rebind_preserves_original_reservation);
+ATF_TC_BODY(rebind_preserves_original_reservation, tc)
+{
+	struct sockaddr_vm first, replacement;
+	struct socket *s1, *s2;
+	struct vtvsock_pcb *pcb;
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	s1 = mk_socket(SOCK_STREAM);
+	s2 = mk_socket(SOCK_STREAM);
+	ATF_REQUIRE(s1 != NULL);
+	ATF_REQUIRE(s2 != NULL);
+
+	memset(&first, 0, sizeof(first));
+	first.svm_family = AF_VSOCK;
+	first.svm_len = sizeof(first);
+	first.svm_cid = VSOCK_CID_ANY;
+	first.svm_port = 2083;
+	ATF_REQUIRE(vsock_bind(s1, (struct sockaddr *)&first, NULL) == 0);
+
+	memset(&replacement, 0, sizeof(replacement));
+	replacement.svm_family = AF_VSOCK;
+	replacement.svm_len = sizeof(replacement);
+	replacement.svm_cid = VSOCK_CID_ANY;
+	replacement.svm_port = 2084;
+	ATF_CHECK(vsock_bind(s1, (struct sockaddr *)&replacement, NULL) ==
+	    EINVAL);
+
+	pcb = s1->so_pcb;
+	ATF_REQUIRE(pcb != NULL);
+	ATF_CHECK(pcb->state == VTVSOCK_BOUND);
+	ATF_CHECK(pcb->on_boundlist);
+	ATF_CHECK(pcb->local.svm_cid == 3);
+	ATF_CHECK(pcb->local.svm_port == 2083);
+	mtx_lock(&vtvsock_mtx);
+	ATF_CHECK(vtvsock_pcb_lookup_bound_locked(3, 2083) == pcb);
+	mtx_unlock(&vtvsock_mtx);
+
+	first.svm_cid = 3;
+	ATF_CHECK(vsock_bind(s2, (struct sockaddr *)&first, NULL) ==
+	    EADDRINUSE);
+	vsock_detach(s2);
+	vsock_detach(s1);
 }
 
 /* --- Too many non-EOM SEQPACKET fragments force an RST and report the
@@ -628,6 +842,49 @@ ATF_TC_BODY(nonblocking_tx_not_consumed_when_ring_full, tc)
 	ATF_CHECK(g_send_calls == 1);
 	ATF_CHECK((g_last_send_flags & VTVSOCK_SEND_F_NONBLOCK) != 0);
 	ATF_CHECK(g_last_send_len == (int)(sizeof(data) - 1));
+}
+
+/*
+ * A credit-blocked send sleeps on the transport wake channel.  With no
+ * SO_SNDTIMEO it must use an indefinite sleep, rather than periodically
+ * polling; with a timeout it must pass the configured timeout through.
+ */
+ATF_TC_WITHOUT_HEAD(blocked_send_uses_event_wakeup);
+ATF_TC_BODY(blocked_send_uses_event_wakeup, tc)
+{
+	struct vtvsock_pcb *pcb;
+	struct iovec iov;
+	struct uio uio;
+	char data = 'x';
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	pcb = establish_remote(SOCK_STREAM, 96, 1253, NULL);
+	ATF_REQUIRE(pcb != NULL);
+	pcb->peer_buf_alloc = 1;
+	pcb->peer_fwd_cnt = 0;
+	pcb->tx_cnt = 1;
+	iov.iov_base = &data;
+	iov.iov_len = sizeof(data);
+	memset(&uio, 0, sizeof(uio));
+	uio.uio_iov = &iov;
+	uio.uio_iovcnt = 1;
+	uio.uio_resid = sizeof(data);
+
+	pcb->so->so_snd.sb_timeo = 0;
+	ATF_CHECK(vsock_sosend(pcb->so, NULL, &uio, NULL, NULL, 0, NULL) ==
+	    EWOULDBLOCK);
+	ATF_CHECK(vsock_kmock_msleep_sbt_calls == 1);
+	ATF_CHECK(vsock_kmock_msleep_sbt_last_timeout == 0);
+	ATF_CHECK(uio.uio_resid == sizeof(data));
+
+	vsock_kmock_msleep_sbt_calls = 0;
+	pcb->so->so_snd.sb_timeo = 123;
+	ATF_CHECK(vsock_sosend(pcb->so, NULL, &uio, NULL, NULL, 0, NULL) ==
+	    EWOULDBLOCK);
+	ATF_CHECK(vsock_kmock_msleep_sbt_calls == 1);
+	ATF_CHECK(vsock_kmock_msleep_sbt_last_timeout == 123);
+	ATF_CHECK(uio.uio_resid == sizeof(data));
 }
 
 /* --- Capacity can disappear after tx_ready() when another socket shares the
@@ -863,6 +1120,33 @@ ATF_TC_BODY(rx_control_payload_is_rejected_before_state_change, tc)
 	ATF_CHECK(g_rx_drop_count == 2);
 }
 
+/*
+ * An unsupported socket type is rejected with RST, but an RST is terminal
+ * and must never receive another RST.  This matches Linux's
+ * virtio_transport_reset_no_sock() rule and prevents two peers from creating
+ * an unbounded reset loop while echoing an unknown type.
+ */
+ATF_TC_WITHOUT_HEAD(rx_unknown_type_rst_is_terminal);
+ATF_TC_BODY(rx_unknown_type_rst_is_terminal, tc)
+{
+	struct virtio_vsock_hdr h;
+
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST, 0x7fff,
+	    VSOCK_CID_HOST, 1256, 99, 0, 0, 65536, 0);
+	vsock_rx_packet(&h, sizeof(h));
+	ATF_CHECK(cap_count(VIRTIO_VSOCK_OP_RST) == 1);
+	ATF_CHECK(g_rx_drop_count == 1);
+
+	g_ncap = 0;
+	mkhdr(&h, VIRTIO_VSOCK_OP_RST, 0x7fff,
+	    VSOCK_CID_HOST, 1256, 99, 0, 0, 0, 0);
+	vsock_rx_packet(&h, sizeof(h));
+	ATF_CHECK(g_ncap == 0);
+	ATF_CHECK(g_rx_drop_count == 2);
+}
+
 /* --- The guest-side global connection cap rejects excess REQUESTs and a
  * peer RST immediately releases a slot for another connection. --- */
 ATF_TC_WITHOUT_HEAD(inbound_connection_cap_reclaims_slot);
@@ -899,6 +1183,28 @@ ATF_TC_BODY(inbound_connection_cap_reclaims_slot, tc)
 	ATF_CHECK(cap_count(VIRTIO_VSOCK_OP_RESPONSE) == 3);
 	ATF_CHECK(vtvsock_conn_count == 2);
 	vtvsock_max_conn = saved_max_conn;
+}
+
+ATF_TC_WITHOUT_HEAD(request_nonzero_initial_fwd_cnt_rst);
+ATF_TC_BODY(request_nonzero_initial_fwd_cnt_rst, tc)
+{
+	const uint32_t invalid[] = { 1, UINT32_MAX };
+	struct socket *listener;
+	struct virtio_vsock_hdr h;
+
+	for (size_t i = 0; i < nitems(invalid); i++) {
+		reset_state();
+		register_mock(3, VIRTIO_VSOCK_F_STREAM);
+		listener = mk_socket(SOCK_STREAM);
+		ATF_REQUIRE(listener != NULL);
+		ATF_REQUIRE(bind_listen(listener, 95) == 0);
+		mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST,
+		    VIRTIO_VSOCK_TYPE_STREAM, VSOCK_CID_HOST, 1252, 95, 0,
+		    0, 65536, invalid[i]);
+		vsock_rx_packet(&h, sizeof(h));
+		ATF_CHECK(vtvsock_conn_count == 0);
+		ATF_CHECK(cap_count(VIRTIO_VSOCK_OP_RST) == 1);
+	}
 }
 
 ATF_TC_WITHOUT_HEAD(stale_transport_packet_is_dropped);
@@ -993,6 +1299,8 @@ vsock_kmock_sonewconn(struct socket *head, int connstatus)
 	    : head->so_rcv.sb_hiwat;
 	so->so_snd.sb_hiwat = so->so_rcv.sb_hiwat;
 	if (vsock_attach(so, 0, NULL) != 0) { kfree(so); return (NULL); }
+	ATF_REQUIRE(g_test_socket_count < nitems(g_test_sockets));
+	g_test_sockets[g_test_socket_count++] = so;
 	if (connstatus) soisconnected(so);
 	return (so);
 }
@@ -1000,11 +1308,15 @@ vsock_kmock_sonewconn(struct socket *head, int connstatus)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, reserved_cid_sanitized);
-	ATF_TP_ADD_TC(tp, feature_negotiation_gates);
+	ATF_TP_ADD_TC(tp, feature_negotiation_gates_remote_connect);
+	ATF_TP_ADD_TC(tp, connect_timeout_preserves_retryable_binding);
+	ATF_TP_ADD_TC(tp, remote_features_do_not_gate_loopback);
+	ATF_TP_ADD_TC(tp, unnegotiated_rx_type_is_reset);
 	ATF_TP_ADD_TC(tp, credit_arithmetic_and_clamp);
 	ATF_TP_ADD_TC(tp, rx_peer_fwd_cnt_spoof_rst);
 	ATF_TP_ADD_TC(tp, rx_flow_control_violation_rst);
 	ATF_TP_ADD_TC(tp, cid_local_wire_isolation);
+	ATF_TP_ADD_TC(tp, rebind_preserves_original_reservation);
 	ATF_TP_ADD_TC(tp, seqpacket_rx_eor_follows_wire_flag);
 	ATF_TP_ADD_TC(tp, rx_mbuf_chain_copy);
 	ATF_TP_ADD_TC(tp, seqpacket_fragment_mbuf_headers);
@@ -1013,6 +1325,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, transport_reset_and_reregister);
 	ATF_TP_ADD_TC(tp, transport_registration_is_owner_scoped);
 	ATF_TP_ADD_TC(tp, nonblocking_tx_not_consumed_when_ring_full);
+	ATF_TP_ADD_TC(tp, blocked_send_uses_event_wakeup);
 	ATF_TP_ADD_TC(tp, post_copy_send_error_preserves_uio);
 	ATF_TP_ADD_TC(tp, remote_stream_send_is_packet_atomic);
 	ATF_TP_ADD_TC(tp, send_terminal_state_checks_are_locked);
@@ -1020,7 +1333,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, seqpacket_zero_length_has_packet_header);
 	ATF_TP_ADD_TC(tp, rx_truncated_payload_is_rejected);
 	ATF_TP_ADD_TC(tp, rx_control_payload_is_rejected_before_state_change);
+	ATF_TP_ADD_TC(tp, rx_unknown_type_rst_is_terminal);
 	ATF_TP_ADD_TC(tp, inbound_connection_cap_reclaims_slot);
+	ATF_TP_ADD_TC(tp, request_nonzero_initial_fwd_cnt_rst);
 	ATF_TP_ADD_TC(tp, stale_transport_packet_is_dropped);
 	ATF_TP_ADD_TC(tp, transport_write_readiness_poll_kqueue);
 	return (atf_no_error());

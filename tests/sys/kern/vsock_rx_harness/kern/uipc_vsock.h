@@ -68,7 +68,11 @@
  */
 #define	VTVSOCK_CONNECT_TIMEOUT		(hz * 2)
 
-/* Private socket-layer-to-transport send flags. */
+/*
+ * Private flags passed from the socket layer to transport send callbacks.
+ * Keep these disjoint from PRUS_* so a transport can also receive an mbuf
+ * through the generic socket send path.
+ */
 #define	VTVSOCK_SEND_F_NONBLOCK		0x100
 
 /* -----------------------------------------------------------------------
@@ -125,6 +129,13 @@ struct vtvsock_pcb {
 	struct socket			*so;
 	struct vtvsock_pcb		*peer;		/* loopback only */
 	const struct vtvsock_transport	*transport;
+	/*
+	 * EVFILT_WRITE cannot use the generic socket send-buffer knlist:
+	 * vsock sends directly to its transport and so_snd stays empty.  Keep
+	 * write knotes on a list protected by vtvsock_mtx so their callback can
+	 * inspect both peer credit and transport capacity without a lock-order
+	 * inversion against the socket send-buffer lock.
+	 */
 	struct knlist			 tx_knlist;
 	struct sockaddr_vm		 local;
 	struct sockaddr_vm		 remote;
@@ -210,10 +221,15 @@ void	vsock_rx_packet(const void *owner, void *buf, uint32_t len);
  */
 int	vsock_transport_register_locked(const struct vtvsock_transport *ops,
 	    const void *owner, uint64_t guest_cid, uint64_t features);
+void	vsock_transport_unregister_locked(const void *owner);
 void	vsock_transport_reset_locked(void);
+void	vsock_transport_reset_cid_locked(
+	    const struct vtvsock_transport *transport, uint64_t remote_cid);
 void	vsock_tx_wakeup_locked(struct vtvsock_pcb *);
 void	vsock_transport_tx_wakeup_locked(
 	    const struct vtvsock_transport *transport);
+void	vsock_transport_tx_wakeup_cid_locked(
+	    const struct vtvsock_transport *transport, uint64_t remote_cid);
 
 /* PCB helper needed by the virtio transport ops in virtio_vsock.c */
 void	vtvsock_pcb_remove_lists_locked(struct vtvsock_pcb *);
@@ -224,6 +240,7 @@ uint32_t	vtvsock_get_credit(struct vtvsock_pcb *, uint32_t);
 /* Timeout callbacks (used by transport disconnect to arm close callout) */
 void	vtvsock_close_timeout(void *);
 
+/* /dev/vsock userspace transport endpoint. */
 int	vsock_cdev_create(void);
 
 #endif /* !_KERN_UIPC_VSOCK_H_ */

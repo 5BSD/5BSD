@@ -29,6 +29,10 @@ struct virtio_softc {
 	uint8_t vs_status;
 	bool vs_resetting;
 	bool vs_reset_failed;
+	_Atomic unsigned int vs_quiescing;
+	bool vs_suspended;
+	bool vs_checkpoint_paused;
+	bool vs_config_deferred;
 	uint8_t vs_isr;
 	uint16_t vs_msix_cfg_idx;
 	enum virtio_pci_transport vs_transport;
@@ -76,12 +80,16 @@ struct virtio_consts {
 	void (*vc_qnotify)(void *, struct vqueue_info *);
 	int (*vc_cfgread)(void *, int, int, uint32_t *);
 	int (*vc_cfgwrite)(void *, int, int, uint32_t);
-	void (*vc_apply_features)(void *, uint64_t);
+	int (*vc_apply_features)(void *, uint64_t);
 	int (*vc_qenable)(void *, struct vqueue_info *);
 	int (*vc_qreset)(void *, struct vqueue_info *, uint64_t);
+	int (*vc_suspend)(void *);
+	int (*vc_resume_device)(void *);
+	void (*vc_resume_complete)(void *);
+	int (*vc_restore_suspended)(void *);
 	uint64_t vc_hv_caps;
-	void (*vc_pause)(void *);
-	void (*vc_resume)(void *);
+	int (*vc_pause)(void *);
+	int (*vc_resume)(void *);
 	int (*vc_snapshot)(void *, struct vm_snapshot_meta *);
 };
 #define VQ_ALLOC 0x01
@@ -145,6 +153,8 @@ vq_ring_ready(struct vqueue_info *vq)
 {
 	return (vq_is_allocated(vq) &&
 	    !vq_is_resetting(vq) &&
+	    !vq->vq_vs->vs_quiescing && !vq->vq_vs->vs_suspended &&
+	    !vq->vq_vs->vs_checkpoint_paused &&
 	    (vq->vq_vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0);
 }
 #define VQ_AVAIL_EVENT_IDX(vq) \
@@ -168,8 +178,7 @@ vq_kick_disable(struct vqueue_info *vq)
 	    (vq->vq_vs->vs_negotiated_caps &
 	    VIRTIO_RING_F_EVENT_IDX) != 0) {
 		vq->vq_used->flags = 0;
-		VQ_AVAIL_EVENT_IDX(vq) =
-		    vq->vq_last_avail + vq->vq_qsize - 1;
+		VQ_AVAIL_EVENT_IDX(vq) = vq->vq_last_avail - 1;
 	} else
 		vq->vq_used->flags = VRING_USED_F_NO_NOTIFY;
 }
@@ -194,6 +203,9 @@ int  vi_pci_select_transport(struct virtio_softc *, const nvlist_t *,
     enum virtio_pci_transport_policy);
 bool vi_pci_is_modern(const struct virtio_softc *);
 void vi_pci_notify_queue(struct virtio_softc *, uint64_t);
+int  vi_pci_lifecycle_noop(void *);
+void vi_pci_quiesce_enter(struct virtio_softc *);
+void vi_pci_quiesce_exit(struct virtio_softc *);
 void vi_pci_notify_ready_queues(struct virtio_softc *);
 int  vi_pci_modern_init(struct virtio_softc *, int);
 void vi_pci_modern_set_identity(struct virtio_softc *, uint16_t);

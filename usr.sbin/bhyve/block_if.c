@@ -158,11 +158,11 @@ blockif_enqueue(struct blockif_ctxt *bc, struct blockif_req *breq,
 	switch (op) {
 	case BOP_READ:
 	case BOP_WRITE:
-	case BOP_DELETE:
 		off = breq->br_offset;
 		for (i = 0; i < breq->br_iovcnt; i++)
 			off += breq->br_iov[i].iov_len;
 		break;
+	case BOP_DELETE:
 	case BOP_WRITE_ZEROES:
 		off = breq->br_offset + breq->br_resid;
 		break;
@@ -191,9 +191,24 @@ blockif_enqueue(struct blockif_ctxt *bc, struct blockif_req *breq,
 static int
 blockif_dequeue(struct blockif_ctxt *bc, pthread_t t, struct blockif_elem **bep)
 {
-	struct blockif_elem *be;
+	struct blockif_elem *be, *tbe;
 
+	/*
+	 * A flush is a full scheduler barrier.  Once one is executing, no
+	 * later request may start.  A pending flush is selected only after all
+	 * earlier work has drained; stopping the scan at it prevents runnable
+	 * requests queued after the flush from overtaking it.
+	 */
+	TAILQ_FOREACH(tbe, &bc->bc_busyq, be_link) {
+		if (tbe->be_op == BOP_FLUSH)
+			return (0);
+	}
 	TAILQ_FOREACH(be, &bc->bc_pendq, be_link) {
+		if (be->be_op == BOP_FLUSH) {
+			if (!TAILQ_EMPTY(&bc->bc_busyq))
+				return (0);
+			break;
+		}
 		if (be->be_status == BST_PEND)
 			break;
 		assert(be->be_status == BST_BLOCK);
@@ -763,6 +778,16 @@ blockif_resized(int fd, enum ev_type type __unused, void *arg)
 	cb = NULL;
 	cb_arg = NULL;
 	pthread_mutex_lock(&bc->bc_mtx);
+	if (bc->bc_paused != 0) {
+		/*
+		 * A guest-visible suspend must not modify device
+		 * configuration, and a checkpoint needs a stable capacity.
+		 * Re-read and publish the latest size when the final pause
+		 * owner resumes.
+		 */
+		pthread_mutex_unlock(&bc->bc_mtx);
+		return;
+	}
 	if (!bc->bc_closing && bc->bc_resize_cb != NULL &&
 	    mediasize != bc->bc_size) {
 		bc->bc_size = mediasize;
@@ -887,6 +912,9 @@ int
 blockif_delete(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
 	assert(bc->bc_magic == BLOCKIF_SIG);
+	if (breq->br_offset < 0 || breq->br_resid < 0 ||
+	    breq->br_resid > OFF_MAX - breq->br_offset)
+		return (EINVAL);
 	return (blockif_request(bc, breq, BOP_DELETE));
 }
 
@@ -1097,34 +1125,68 @@ blockif_candelete(struct blockif_ctxt *bc)
 	return (bc->bc_candelete);
 }
 
-#ifdef BHYVE_SNAPSHOT
-void
-blockif_pause(struct blockif_ctxt *bc)
+static int
+blockif_quiesce(struct blockif_ctxt *bc)
 {
+	bool first;
+	int error;
+
 	assert(bc != NULL);
 	assert(bc->bc_magic == BLOCKIF_SIG);
 
 	pthread_mutex_lock(&bc->bc_mtx);
-	bc->bc_paused = 1;
+	first = bc->bc_paused == 0;
+	bc->bc_paused++;
+	pthread_mutex_unlock(&bc->bc_mtx);
+	if (first && bc->bc_resize_event != NULL)
+		(void)mevent_disable(bc->bc_resize_event);
 
 	/* The interface is paused. Wait for workers to finish their work */
-	while (!blockif_empty(bc))
+	pthread_mutex_lock(&bc->bc_mtx);
+	while (!blockif_empty(bc) || bc->bc_resize_inflight != 0)
 		pthread_cond_wait(&bc->bc_work_done_cond, &bc->bc_mtx);
 	pthread_mutex_unlock(&bc->bc_mtx);
 
-	if (!bc->bc_rdonly && blockif_flush_bc(bc))
-		EPRINTLN("%s: [WARN] failed to flush backing file.",
-			__func__);
+	error = 0;
+	if (!bc->bc_rdonly)
+		error = blockif_flush_bc(bc);
+	return (error);
+}
+
+int
+blockif_suspend(struct blockif_ctxt *bc)
+{
+	int error;
+
+	error = blockif_quiesce(bc);
+	if (error != 0)
+		blockif_resume(bc);
+	return (error);
 }
 
 void
 blockif_resume(struct blockif_ctxt *bc)
 {
+	bool final;
+
 	assert(bc != NULL);
 	assert(bc->bc_magic == BLOCKIF_SIG);
 
 	pthread_mutex_lock(&bc->bc_mtx);
-	bc->bc_paused = 0;
+	assert(bc->bc_paused > 0);
+	bc->bc_paused--;
+	final = bc->bc_paused == 0;
+	if (final) {
+		pthread_cond_broadcast(&bc->bc_cond);
+	}
 	pthread_mutex_unlock(&bc->bc_mtx);
+	if (final && bc->bc_resize_event != NULL) {
+		(void)mevent_enable(bc->bc_resize_event);
+		/*
+		 * An EVF_VNODE notification may have been consumed while
+		 * disabled.  Refresh unconditionally so capacity changes are
+		 * neither lost nor published before the last owner resumes.
+		 */
+		blockif_resized(bc->bc_fd, EVF_VNODE, bc);
+	}
 }
-#endif	/* BHYVE_SNAPSHOT */

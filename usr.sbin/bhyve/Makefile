@@ -74,7 +74,7 @@ SRCS=	\
 	vmgenc.c
 
 .if ${MK_BHYVE_SNAPSHOT} != "no"
-SRCS+=	snapshot.c
+SRCS+=	checkpoint_manifest.c snapshot.c
 .endif
 
 .include "${MACHINE_CPUARCH}/Makefile.inc"

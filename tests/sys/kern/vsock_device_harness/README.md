@@ -42,8 +42,27 @@ session and fid state.  Every modern device also implements
 `VIRTIO_F_NOTIFICATION_DATA`; the FreeBSD PCI and MMIO
 guest transports send the full available index in the 32-bit notification.
 It does not claim packed rings, notification configuration data, an IOMMU
-platform, administration queues, or suspend.  FreeBSD virtio-rng is the first
-guest consumer of individual queue reset.  Its VM acceptance test is
+platform, or administration queues.  Guest-visible VirtIO suspend now has a
+common queue/interrupt/configuration lifecycle and a FreeBSD modern-PCI guest
+handshake.  Virtio-net, block, entropy, and vsock are opted in: block and
+checkpoint quiesce use reference-counted ownership, so restoring a checkpoint
+cannot prematurely restart a still guest-suspended backend.  Vsock disables
+all host admission, relay, provider, and retry events while either the guest
+or checkpoint owns the common queue fence, and selectively rearms them only
+after the fence opens.  Checkpoint pause/resume shares the common queue gate,
+always takes backend serialization ownership, and propagates quiesce or
+stable-storage failures instead of writing an inconsistent checkpoint.
+Versioned modern common, PCI transport, and split queue state serialization is
+implemented for net, block, entropy, and an idle userspace vsock device;
+restore reconstructs independent checkpoint and guest-suspend ownership before
+devices are resumed.  Active userspace vsock sessions fail snapshot with
+`EBUSY`, and the kernel backend fails with `EOPNOTSUPP`, because neither host
+socket nor kernel AF_VSOCK connection state is serializable through the
+provider ABI.  A clean snapshot-enabled bhyve build compiles and links, but the
+option is still marked broken by the wider tree, so live running-device and
+guest-suspended checkpoint/restore round trips remain release gates.  FreeBSD
+virtio-rng is the first guest consumer of individual queue reset.  Its VM
+acceptance test is
 `../vsock_e2e/run-freebsd-vtrnd-reset.sh`.
 
 Protocol expectations in the harness come from `virtio_1_4_spec.h` and
@@ -59,6 +78,35 @@ recorded in `bhyve_virtio_compat.h`: VirtIO 1.4 assigns input no transitional
 ID, so it is not presented as a standard conformance value.
 
 ## Coverage
+
+The requirements ledger is a scoped implementation ledger, not a claim that
+every normative statement in the complete VirtIO 1.4 document is tested.
+Its denominator is the rows in `virtio-1.4-requirements.tsv`: applicable
+common transport rules, every feature this implementation advertises, and the
+device types bhyve or the reviewed FreeBSD guest drivers implement.  Rows for
+known optional exclusions make non-advertisement explicit, but the ledger does
+not create one row per `MUST`, `SHOULD`, or `MAY` in unrelated device chapters.
+Consequently, “all ledger entries validated” must not be reported as “100% of
+VirtIO 1.4.”
+
+To report the current denominator without copying a count that will become
+stale:
+
+    awk -F '\t' 'NR > 1 { total++; status[$4]++ }
+        END {
+            print "selected requirements:", total
+            for (s in status)
+                print s ":", status[s]
+        }' virtio-1.4-requirements.tsv
+
+Positive and negative columns identify semantic evidence, not just successful
+execution.  A single ATF case may appear in both columns only when that case
+contains both an accepted boundary and a rejected boundary or invariant check.
+Stateful advertised features additionally require reset or concurrency
+evidence in their dedicated ledger row or notes.  The validator proves that
+referenced cases exist and are registered, and that protocol expectations are
+independent of the implementation; it cannot prove that an assertion is
+semantically sufficient.  That remains a review obligation.
 
 Coverage includes malformed direct and indirect descriptors; EVENT_IDX;
 in-place iovec splitting (including packed virtio-scsi request/data
@@ -99,6 +147,10 @@ verifies overflow accounting without false credit advancement, drains the
 retained FIFO, and confirms that the dropped credit update is retried.
 Fault injection also forces SEQPACKET reassembly growth to fail and verifies
 RST/connection cleanup without leaking either device-global byte budget.
+Checkpoint tests cover per-device pause ownership and retry, interrupted and
+zero-progress publication writes, strict manifest parsing, generation/path
+validation, atomic replacement, failure before manifest rename, and a
+directory-fsync error after rename.
 Queue-reset coverage includes synchronous completion, asynchronous drain,
 failure and stale-completion generations, frozen configuration and
 notifications, reconfiguration with new queue addresses, per-device queue

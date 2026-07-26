@@ -116,7 +116,7 @@ static int pci_vt9p_qenable(void *, struct vqueue_info *);
 static int pci_vt9p_qreset(void *, struct vqueue_info *, uint64_t);
 static void pci_vt9p_notify(void *, struct vqueue_info *);
 static int pci_vt9p_cfgread(void *, int, int, uint32_t *);
-static void pci_vt9p_neg_features(void *, uint64_t);
+static int pci_vt9p_neg_features(void *, uint64_t);
 static void pci_vt9p_set_tag(struct pci_vt9p_softc *, const char *);
 
 static void
@@ -266,12 +266,13 @@ pci_vt9p_qreset(void *vsc, struct vqueue_info *vq, uint64_t generation)
 	return (EINPROGRESS);
 }
 
-static void
+static int
 pci_vt9p_neg_features(void *vsc, uint64_t negotiated_features)
 {
 	struct pci_vt9p_softc *sc = vsc;
 
 	sc->vsc_features = negotiated_features;
+	return (0);
 }
 
 static int
@@ -336,7 +337,6 @@ pci_vt9p_send(struct l9p_request *req, const struct iovec *iov __unused,
 	preq->vsr_iolen = iolen;
 	reset_vq = NULL;
 	generation = 0;
-	reset_complete = false;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
 	if (preq->vsr_generation == sc->vsc_generation) {
@@ -364,7 +364,6 @@ pci_vt9p_drop(struct l9p_request *req, const struct iovec *iov __unused,
 
 	reset_vq = NULL;
 	generation = 0;
-	reset_complete = false;
 	pthread_mutex_lock(&sc->vsc_mtx);
 	if (preq->vsr_generation == sc->vsc_generation) {
 		vq_relchain(&sc->vsc_vq, preq->vsr_idx, 0);
@@ -486,7 +485,6 @@ pci_vt9p_init(struct pci_devinst *pi, nvlist_t *nvl)
 	bool ro;
 	cap_rights_t rootcap;
 
-	rootfd = -1;
 	sc = NULL;
 	intr_initialized = false;
 	mtx_attr_initialized = false;
@@ -592,7 +590,6 @@ pci_vt9p_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 
 	pci_vt9p_configure_connection(sc->vsc_conn);
-	rootfd = -1;
 
 	return (0);
 

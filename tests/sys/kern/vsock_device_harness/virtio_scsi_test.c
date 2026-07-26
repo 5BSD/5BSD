@@ -28,6 +28,8 @@
 #define	VIRTIO_SCSI_T_TMF_ABORT_TASK	VIRTIO14_SCSI_T_TMF_ABORT_TASK
 #undef VIRTIO_SCSI_T_AN_QUERY
 #define	VIRTIO_SCSI_T_AN_QUERY		VIRTIO14_SCSI_T_AN_QUERY
+#undef VIRTIO_SCSI_T_AN_SUBSCRIBE
+#define	VIRTIO_SCSI_T_AN_SUBSCRIBE	VIRTIO14_SCSI_T_AN_SUBSCRIBE
 #undef VIRTIO_SCSI_S_FUNCTION_COMPLETE
 #define	VIRTIO_SCSI_S_FUNCTION_COMPLETE \
 	VIRTIO14_SCSI_S_FUNCTION_COMPLETE
@@ -78,6 +80,8 @@ static int g_mutex_init_calls;
 static int g_mutex_init_fail_at;
 static int g_cond_init_calls;
 static int g_cond_init_fail_at;
+static pthread_mutex_t *g_expected_vq_mutex;
+static bool g_getchain_had_vq_lock;
 
 int __real_pthread_mutex_init(pthread_mutex_t *, const pthread_mutexattr_t *);
 int __real_pthread_cond_init(pthread_cond_t *, const pthread_condattr_t *);
@@ -124,6 +128,8 @@ reset_mocks(void)
 	g_mutex_init_fail_at = 0;
 	g_cond_init_calls = 0;
 	g_cond_init_fail_at = 0;
+	g_expected_vq_mutex = NULL;
+	g_getchain_had_vq_lock = false;
 }
 
 static void
@@ -150,6 +156,15 @@ vq_getchain(struct vqueue_info *vq __unused, struct iovec *iov, int niov,
     struct vi_req *req)
 {
 	int copied;
+	int error;
+
+	if (g_expected_vq_mutex != NULL) {
+		error = pthread_mutex_trylock(g_expected_vq_mutex);
+		if (error == EBUSY)
+			g_getchain_had_vq_lock = true;
+		else if (error == 0)
+			pthread_mutex_unlock(g_expected_vq_mutex);
+	}
 
 	if (!g_chain_ready)
 		return (0);
@@ -289,6 +304,8 @@ ATF_TC_BODY(control_handler_validation, tc)
 	struct pci_vtscsi_ctrl_an an = {
 		.type = htole32(VIRTIO_SCSI_T_AN_QUERY),
 	};
+	uint8_t an_wire[VIRTIO14_SCSI_AN_REQUEST_SIZE +
+	    VIRTIO14_SCSI_AN_RESPONSE_SIZE];
 	uint32_t unknown;
 	size_t written;
 
@@ -309,6 +326,48 @@ ATF_TC_BODY(control_handler_validation, tc)
 	    VIRTIO14_SCSI_AN_RESPONSE_SIZE);
 	for (size_t i = 0; i < written; i++)
 		ATF_CHECK(((uint8_t *)&an)[i] == 0);
+
+	/*
+	 * Section 5.6.6.2 assigns AN_SUBSCRIBE the independent wire value 2
+	 * and the same response layout as AN_QUERY.  With no event source
+	 * advertised, the supported subscription set is empty.
+	 */
+	memset(&an, 0, sizeof(an));
+	virtio14_store_le32((uint8_t *)&an,
+	    VIRTIO14_SCSI_T_AN_SUBSCRIBE);
+	written = pci_vtscsi_control_handle(&sc, &an,
+	    VIRTIO14_SCSI_AN_EVENT_ACTUAL_OFF,
+	    VIRTIO14_SCSI_AN_EVENT_ACTUAL_SIZE +
+	    VIRTIO14_SCSI_AN_RESPONSE_SIZE);
+	ATF_REQUIRE_EQ(written, VIRTIO14_SCSI_AN_EVENT_ACTUAL_SIZE +
+	    VIRTIO14_SCSI_AN_RESPONSE_SIZE);
+	for (size_t i = 0; i < written; i++)
+		ATF_CHECK_EQ(((uint8_t *)&an)[i], 0);
+
+	/*
+	 * Section 5.6.6.2 places the AN response after the le32
+	 * event_actual field.  A malformed request with a complete writable
+	 * response must not put FAILURE into event_actual.
+	 */
+	memset(an_wire, 0xa5, sizeof(an_wire));
+	virtio14_store_le32(an_wire, VIRTIO14_SCSI_T_AN_QUERY);
+	written = pci_vtscsi_control_handle(&sc, an_wire,
+	    VIRTIO14_SCSI_AN_EVENT_ACTUAL_OFF - 1,
+	    VIRTIO14_SCSI_AN_EVENT_ACTUAL_SIZE +
+	    VIRTIO14_SCSI_AN_RESPONSE_SIZE);
+	ATF_REQUIRE_EQ(written, VIRTIO14_SCSI_AN_EVENT_ACTUAL_SIZE +
+	    VIRTIO14_SCSI_AN_RESPONSE_SIZE);
+	for (size_t i = 0; i < VIRTIO14_SCSI_AN_EVENT_ACTUAL_SIZE; i++)
+		ATF_CHECK_EQ(an_wire[i], 0);
+	ATF_CHECK_EQ(an_wire[VIRTIO14_SCSI_AN_EVENT_ACTUAL_SIZE],
+	    VIRTIO_SCSI_S_FAILURE);
+
+	memset(an_wire, 0xa5, sizeof(an_wire));
+	virtio14_store_le32(an_wire, VIRTIO14_SCSI_T_AN_QUERY);
+	written = pci_vtscsi_control_handle(&sc, an_wire,
+	    VIRTIO14_SCSI_AN_EVENT_ACTUAL_OFF - 1,
+	    VIRTIO14_SCSI_AN_EVENT_ACTUAL_SIZE);
+	ATF_CHECK_EQ(written, 0);
 
 	unknown = htole32(UINT32_MAX);
 	written = pci_vtscsi_control_handle(&sc, &unknown, sizeof(unknown), 1);
@@ -559,8 +618,10 @@ ATF_TC_BODY(request_queue_validation, tc)
 
 	reset_mocks();
 	setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
+	g_expected_vq_mutex = &sc.vss_queues[0].vsq_qmtx;
 	set_chain(-1, 0, 0, true);
 	ATF_CHECK(!pci_vtscsi_queue_request(&sc, &sc.vss_vq[2]));
+	ATF_CHECK(g_getchain_had_vq_lock);
 	ATF_CHECK(!STAILQ_EMPTY(&sc.vss_queues[0].vsq_free_requests));
 	ATF_CHECK(g_rel_calls == 0);
 	teardown_queue(&sc);
@@ -595,6 +656,25 @@ ATF_TC_BODY(request_queue_validation, tc)
 	ATF_CHECK(pci_vtscsi_queue_request(&sc, &sc.vss_vq[2]));
 	ATF_CHECK(g_rel_calls == 1 && g_rel_len == 1);
 	teardown_queue(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(report_luns_well_known_lun_unsupported);
+ATF_TC_BODY(report_luns_well_known_lun_unsupported, tc)
+{
+	/*
+	 * VirtIO 1.4 section 5.6.6.1 recommends accepting this exact
+	 * extended-addressing form for the REPORT LUNS well-known logical
+	 * unit.  Keep the literal independent of the production parser so the
+	 * test records the current, intentional conformance gap instead of
+	 * accidentally turning it into an implementation-derived oracle.
+	 */
+	static const uint8_t report_luns[8] =
+	    { 0xc1, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+	static const uint8_t target_zero_lun_zero[8] =
+	    { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
+	ATF_CHECK(!pci_vtscsi_check_lun(report_luns));
+	ATF_CHECK(pci_vtscsi_check_lun(target_zero_lun_zero));
 }
 
 ATF_TC_WITHOUT_HEAD(request_payload_validation);
@@ -974,6 +1054,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, config_defaults);
 	ATF_TP_ADD_TC(tp, document_wire_vectors);
 	ATF_TP_ADD_TC(tp, request_queue_validation);
+	ATF_TP_ADD_TC(tp, report_luns_well_known_lun_unsupported);
 	ATF_TP_ADD_TC(tp, request_payload_validation);
 	ATF_TP_ADD_TC(tp, request_response_mapping);
 	ATF_TP_ADD_TC(tp, queue_sync_init_failures);

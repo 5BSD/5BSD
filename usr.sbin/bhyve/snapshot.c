@@ -37,6 +37,7 @@
 #ifndef WITHOUT_CAPSICUM
 #include <sys/capsicum.h>
 #endif
+#include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -53,6 +54,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <libgen.h>
+#include <limits.h>
 #include <signal.h>
 #include <unistd.h>
 #include <assert.h>
@@ -72,6 +74,7 @@
 
 #include "bhyverun.h"
 #include "acpi.h"
+#include "checkpoint_manifest.h"
 #ifdef __amd64__
 #include "amd64/atkbdc.h"
 #endif
@@ -83,12 +86,6 @@
 
 #include <libxo/xo.h>
 #include <ucl.h>
-
-struct spinner_info {
-	const size_t *crtval;
-	const size_t maxval;
-	const size_t total;
-};
 
 extern int guest_ncpus;
 
@@ -141,10 +138,6 @@ static pthread_cond_t vcpus_idle = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t vcpus_can_run = PTHREAD_COND_INITIALIZER;
 static bool checkpoint_active;
 
-/*
- * TODO: Harden this function and all of its callers since 'base_str' is a user
- * provided string.
- */
 static char *
 strcat_extension(const char *base_str, const char *ext)
 {
@@ -154,8 +147,10 @@ strcat_extension(const char *base_str, const char *ext)
 	base_len = strnlen(base_str, NAME_MAX);
 	ext_len = strnlen(ext, NAME_MAX);
 
-	if (base_len + ext_len > NAME_MAX) {
+	if (base_len == NAME_MAX || ext_len == NAME_MAX ||
+	    base_len > NAME_MAX - ext_len) {
 		EPRINTLN("Filename exceeds maximum length.");
+		errno = ENAMETOOLONG;
 		return (NULL);
 	}
 
@@ -172,6 +167,17 @@ strcat_extension(const char *base_str, const char *ext)
 	return (res);
 }
 
+static int
+checkpoint_lock(int fd, int operation)
+{
+	int error;
+
+	do {
+		error = flock(fd, operation);
+	} while (error != 0 && errno == EINTR);
+	return (error == 0 ? 0 : errno);
+}
+
 void
 destroy_restore_state(struct restore_state *rstate)
 {
@@ -183,9 +189,9 @@ destroy_restore_state(struct restore_state *rstate)
 	if (rstate->kdata_map != MAP_FAILED)
 		munmap(rstate->kdata_map, rstate->kdata_len);
 
-	if (rstate->kdata_fd > 0)
+	if (rstate->kdata_fd >= 0)
 		close(rstate->kdata_fd);
-	if (rstate->vmmem_fd > 0)
+	if (rstate->vmmem_fd >= 0)
 		close(rstate->vmmem_fd);
 
 	if (rstate->meta_root_obj != NULL)
@@ -212,8 +218,8 @@ load_vmmem_file(const char *filename, struct restore_state *rstate)
 		goto err_load_vmmem;
 	}
 
-	if (sb.st_size == 0) {
-		fprintf(stderr, "Restore file is empty.\n");
+	if (sb.st_size <= 0 || (uintmax_t)sb.st_size > SIZE_MAX) {
+		fprintf(stderr, "Restore file has an invalid size.\n");
 		goto err_load_vmmem;
 	}
 
@@ -222,8 +228,9 @@ load_vmmem_file(const char *filename, struct restore_state *rstate)
 	return (0);
 
 err_load_vmmem:
-	if (rstate->vmmem_fd > 0)
+	if (rstate->vmmem_fd >= 0)
 		close(rstate->vmmem_fd);
+	rstate->vmmem_fd = -1;
 	return (-1);
 }
 
@@ -245,8 +252,8 @@ load_kdata_file(const char *filename, struct restore_state *rstate)
 		goto err_load_kdata;
 	}
 
-	if (sb.st_size == 0) {
-		fprintf(stderr, "Kernel data file is empty.\n");
+	if (sb.st_size <= 0 || (uintmax_t)sb.st_size > SIZE_MAX) {
+		fprintf(stderr, "Kernel data file has an invalid size.\n");
 		goto err_load_kdata;
 	}
 
@@ -261,8 +268,9 @@ load_kdata_file(const char *filename, struct restore_state *rstate)
 	return (0);
 
 err_load_kdata:
-	if (rstate->kdata_fd > 0)
+	if (rstate->kdata_fd >= 0)
 		close(rstate->kdata_fd);
+	rstate->kdata_fd = -1;
 	return (-1);
 }
 
@@ -309,24 +317,78 @@ err_load_metadata:
 int
 load_restore_file(const char *filename, struct restore_state *rstate)
 {
-	int err = 0;
-	char *kdata_filename = NULL, *meta_filename = NULL;
+	struct checkpoint_manifest manifest;
+	const char *vmmem_filename;
+	int err;
+	bool is_manifest;
+	char *base_copy, *data_filename, *kdata_filename, *lock_filename;
+	char *meta_filename;
+	int lock_fd;
 
 	assert(filename != NULL);
 	assert(rstate != NULL);
 
 	memset(rstate, 0, sizeof(*rstate));
+	rstate->kdata_fd = -1;
+	rstate->vmmem_fd = -1;
 	rstate->kdata_map = MAP_FAILED;
 
-	err = load_vmmem_file(filename, rstate);
-	if (err != 0) {
-		fprintf(stderr, "Failed to load guest RAM file.\n");
+	data_filename = NULL;
+	base_copy = NULL;
+	kdata_filename = NULL;
+	lock_filename = NULL;
+	meta_filename = NULL;
+	lock_fd = -1;
+	if (asprintf(&lock_filename, "%s.lock", filename) < 0)
+		goto err_restore;
+	lock_fd = open(lock_filename,
+	    O_RDONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+	if (lock_fd < 0) {
+		fprintf(stderr, "Failed to open checkpoint lock: %s\n",
+		    strerror(errno));
 		goto err_restore;
 	}
+	err = checkpoint_lock(lock_fd, LOCK_SH);
+	if (err != 0) {
+		fprintf(stderr, "Failed to lock checkpoint: %s\n", strerror(err));
+		goto err_restore;
+	}
+	err = checkpoint_manifest_read(filename, &manifest, &is_manifest);
+	if (err != 0) {
+		fprintf(stderr, "Failed to read checkpoint manifest: %s\n",
+		    strerror(err));
+		goto err_restore;
+	}
+	if (is_manifest) {
+		base_copy = strdup(filename);
+		if (base_copy == NULL ||
+		    !checkpoint_manifest_valid_for(basename(base_copy),
+		    &manifest)) {
+			fprintf(stderr, "Checkpoint manifest has invalid members.\n");
+			goto err_restore;
+		}
+		data_filename = checkpoint_member_path(filename, manifest.data);
+		kdata_filename = checkpoint_member_path(filename, manifest.kern);
+		meta_filename = checkpoint_member_path(filename, manifest.meta);
+		if (data_filename == NULL || kdata_filename == NULL ||
+		    meta_filename == NULL) {
+			fprintf(stderr, "Failed to construct checkpoint member paths.\n");
+			goto err_restore;
+		}
+		vmmem_filename = data_filename;
+	} else {
+		vmmem_filename = filename;
+		kdata_filename = strcat_extension(filename, ".kern");
+		meta_filename = strcat_extension(filename, ".meta");
+		if (kdata_filename == NULL || meta_filename == NULL) {
+			fprintf(stderr, "Failed to construct legacy checkpoint paths.\n");
+			goto err_restore;
+		}
+	}
 
-	kdata_filename = strcat_extension(filename, ".kern");
-	if (kdata_filename == NULL) {
-		fprintf(stderr, "Failed to construct kernel data filename.\n");
+	err = load_vmmem_file(vmmem_filename, rstate);
+	if (err != 0) {
+		fprintf(stderr, "Failed to load guest RAM file.\n");
 		goto err_restore;
 	}
 
@@ -336,26 +398,29 @@ load_restore_file(const char *filename, struct restore_state *rstate)
 		goto err_restore;
 	}
 
-	meta_filename = strcat_extension(filename, ".meta");
-	if (meta_filename == NULL) {
-		fprintf(stderr, "Failed to construct kernel metadata filename.\n");
-		goto err_restore;
-	}
-
 	err = load_metadata_file(meta_filename, rstate);
 	if (err != 0) {
 		fprintf(stderr, "Failed to load guest metadata file.\n");
 		goto err_restore;
 	}
 
+	free(data_filename);
+	free(base_copy);
+	free(kdata_filename);
+	free(lock_filename);
+	free(meta_filename);
+	close(lock_fd);
 	return (0);
 
 err_restore:
 	destroy_restore_state(rstate);
-	if (kdata_filename != NULL)
-		free(kdata_filename);
-	if (meta_filename != NULL)
-		free(meta_filename);
+	free(data_filename);
+	free(base_copy);
+	free(kdata_filename);
+	free(lock_filename);
+	free(meta_filename);
+	if (lock_fd >= 0)
+		close(lock_fd);
 	return (-1);
 }
 
@@ -397,16 +462,25 @@ lookup_check_dev(const char *dev_name, struct restore_state *rstate,
 	snapshot_req = NULL;
 	JSON_GET_STRING_OR_RETURN(JSON_SNAPSHOT_REQ_KEY, obj,
 				  &snapshot_req, NULL);
-	assert(snapshot_req != NULL);
 	if (!strcmp(snapshot_req, dev_name)) {
 		JSON_GET_INT_OR_RETURN(JSON_SIZE_KEY, obj,
 				       &size, NULL);
-		assert(size >= 0);
+		if (size < 0 || (uint64_t)size > SIZE_MAX) {
+			fprintf(stderr, "Invalid snapshot size for '%s'.\n",
+			    dev_name);
+			return (NULL);
+		}
 
 		JSON_GET_INT_OR_RETURN(JSON_FILE_OFFSET_KEY, obj,
 				       &file_offset, NULL);
-		assert(file_offset >= 0);
-		assert((uint64_t)file_offset + size <= rstate->kdata_len);
+		if (file_offset < 0 ||
+		    (uint64_t)file_offset > rstate->kdata_len ||
+		    (uint64_t)size >
+		    rstate->kdata_len - (uint64_t)file_offset) {
+			fprintf(stderr, "Invalid snapshot range for '%s'.\n",
+			    dev_name);
+			return (NULL);
+		}
 
 		*data_size = (size_t)size;
 		return ((uint8_t *)rstate->kdata_map + file_offset);
@@ -492,6 +566,10 @@ lookup_memflags(struct restore_state *rstate)
 		return (0);
 
 	JSON_GET_INT_OR_RETURN(JSON_MEMFLAGS_KEY, obj, &memflags, 0);
+	if (memflags < INT_MIN || memflags > INT_MAX) {
+		fprintf(stderr, "Invalid memory flags in checkpoint metadata.\n");
+		return (0);
+	}
 
 	return ((int)memflags);
 }
@@ -507,8 +585,10 @@ lookup_memsize(struct restore_state *rstate)
 		return (0);
 
 	JSON_GET_INT_OR_RETURN(JSON_MEMSIZE_KEY, obj, &memsize, 0);
-	if (memsize < 0)
-		memsize = 0;
+	if (memsize <= 0 || (uint64_t)memsize > SIZE_MAX) {
+		fprintf(stderr, "Invalid memory size in checkpoint metadata.\n");
+		return (0);
+	}
 
 	return ((size_t)memsize);
 }
@@ -525,6 +605,10 @@ lookup_guest_ncpus(struct restore_state *rstate)
 		return (0);
 
 	JSON_GET_INT_OR_RETURN(JSON_NCPUS_KEY, obj, &ncpus, 0);
+	if (ncpus < 1 || ncpus > INT_MAX) {
+		fprintf(stderr, "Invalid vCPU count in checkpoint metadata.\n");
+		return (0);
+	}
 	return ((int)ncpus);
 }
 
@@ -539,10 +623,10 @@ winch_handler(int signal __unused)
 static int
 print_progress(size_t crtval, const size_t maxval)
 {
-	size_t rc;
 	double crtval_gb, maxval_gb;
-	size_t i, win_width, prog_start, prog_done, prog_end;
-	int mval_len;
+	size_t i, output_len, win_width, prog_start, prog_done, prog_end;
+	ssize_t written;
+	int mval_len, rc;
 
 	static char prog_buf[PROG_BUF_SZ];
 	static const size_t len = sizeof(prog_buf);
@@ -576,7 +660,7 @@ print_progress(size_t crtval, const size_t maxval)
 	maxval_gb = (double) maxval / div;
 
 	rc = snprintf(prog_buf, len, "%.03lf", maxval_gb);
-	if (rc == len) {
+	if (rc < 0 || (size_t)rc >= len) {
 		fprintf(stderr, "Maxval too big\n");
 		return (-1);
 	}
@@ -585,15 +669,15 @@ print_progress(size_t crtval, const size_t maxval)
 	rc = snprintf(prog_buf, len, "\r[%*.03lf%s / %.03lf%s] |",
 		mval_len, crtval_gb, div_str, maxval_gb, div_str);
 
-	if (rc == len) {
+	if (rc < 0 || (size_t)rc >= len) {
 		fprintf(stderr, "Buffer too small to print progress\n");
 		return (-1);
 	}
 
 	win_width = min(winsize.ws_col, len);
-	prog_start = rc;
+	prog_start = (size_t)rc;
 
-	if (prog_start < (win_width - 2)) {
+	if (win_width >= 3 && prog_start < win_width - 2) {
 		prog_end = win_width - prog_start - 2;
 		prog_done = prog_end * (crtval_gb / maxval_gb);
 
@@ -614,55 +698,23 @@ print_progress(size_t crtval, const size_t maxval)
 		prog_buf[win_width - 2] = '|';
 	}
 
-	prog_buf[win_width - 1] = '\0';
-	write(STDOUT_FILENO, prog_buf, win_width);
+	output_len = strnlen(prog_buf, win_width);
+	do {
+		written = write(STDOUT_FILENO, prog_buf, output_len);
+	} while (written < 0 && errno == EINTR);
+	if (written < 0 || (size_t)written != output_len)
+		return (-1);
 
 	return (0);
-}
-
-static void *
-snapshot_spinner_cb(void *arg)
-{
-	int rc;
-	size_t crtval, maxval, total;
-	struct spinner_info *si;
-	struct timespec ts;
-
-	si = arg;
-	if (si == NULL)
-		pthread_exit(NULL);
-
-	ts.tv_sec = 0;
-	ts.tv_nsec = 50 * 1000 * 1000; /* 50 ms sleep time */
-
-	do {
-		crtval = *si->crtval;
-		maxval = si->maxval;
-		total = si->total;
-
-		rc = print_progress(crtval, total);
-		if (rc < 0) {
-			fprintf(stderr, "Failed to parse progress\n");
-			break;
-		}
-
-		nanosleep(&ts, NULL);
-	} while (crtval < maxval);
-
-	pthread_exit(NULL);
-	return NULL;
 }
 
 static int
 vm_snapshot_mem_part(const int snapfd, const size_t foff, void *src,
 		     const size_t len, const size_t totalmem, const bool op_wr)
 {
-	int rc;
 	size_t part_done, todo, rem;
 	ssize_t done;
 	bool show_progress;
-	pthread_t spinner_th;
-	struct spinner_info *si;
 
 	if (lseek(snapfd, foff, SEEK_SET) < 0) {
 		perror("Failed to change file offset");
@@ -670,25 +722,14 @@ vm_snapshot_mem_part(const int snapfd, const size_t foff, void *src,
 	}
 
 	show_progress = false;
-	if (isatty(STDIN_FILENO) && (winsize.ws_col != 0))
+	if (isatty(STDOUT_FILENO) && (winsize.ws_col != 0))
 		show_progress = true;
 
 	part_done = foff;
 	rem = len;
 
-	if (show_progress) {
-		si = &(struct spinner_info) {
-			.crtval = &part_done,
-			.maxval = foff + len,
-			.total = totalmem
-		};
-
-		rc = pthread_create(&spinner_th, 0, snapshot_spinner_cb, si);
-		if (rc) {
-			perror("Unable to create spinner thread");
-			show_progress = false;
-		}
-	}
+	if (show_progress && print_progress(part_done, totalmem) < 0)
+		show_progress = false;
 
 	while (rem > 0) {
 		if (show_progress)
@@ -701,19 +742,24 @@ vm_snapshot_mem_part(const int snapfd, const size_t foff, void *src,
 		else
 			done = read(snapfd, src, todo);
 		if (done < 0) {
-			perror("Failed to write in file");
+			if (errno == EINTR)
+				continue;
+			perror(op_wr ? "Failed to write snapshot memory" :
+			    "Failed to read snapshot memory");
+			return (-1);
+		}
+		if (done == 0) {
+			errno = EIO;
+			perror(op_wr ? "Snapshot memory write made no progress" :
+			    "Unexpected end of snapshot memory");
 			return (-1);
 		}
 
 		src = (uint8_t *)src + done;
 		part_done += done;
 		rem -= done;
-	}
-
-	if (show_progress) {
-		rc = pthread_join(spinner_th, NULL);
-		if (rc)
-			perror("Unable to end spinner thread");
+		if (show_progress && print_progress(part_done, totalmem) < 0)
+			show_progress = false;
 	}
 
 	return (0);
@@ -910,43 +956,103 @@ vm_pause_devices(void)
 int
 vm_resume_devices(void)
 {
-	int ret;
+	int error, ret;
 	struct pci_devinst *pdi = NULL;
 
+	error = 0;
 	while ((pdi = pci_next(pdi)) != NULL) {
 		ret = pci_resume(pdi);
 		if (ret) {
 			EPRINTLN("Cannot resume '%s': %d", pdi->pi_name, ret);
-			return (ret);
+			if (error == 0)
+				error = ret;
 		}
 	}
 
+	return (error);
+}
+
+static int
+snapshot_write_all(int fd, const void *buffer, size_t length)
+{
+	const uint8_t *cursor;
+	ssize_t written;
+
+	cursor = buffer;
+	while (length != 0) {
+		written = write(fd, cursor, length);
+		if (written < 0) {
+			if (errno == EINTR)
+				continue;
+			return (-1);
+		}
+		if (written == 0) {
+			errno = EIO;
+			return (-1);
+		}
+		cursor += written;
+		length -= (size_t)written;
+	}
 	return (0);
+}
+
+static void
+checkpoint_remove_old_generation(int fddir, const char *checkpoint_file,
+    const struct checkpoint_manifest *old, bool old_is_manifest)
+{
+	char *legacy_kern, *legacy_meta;
+	const char *members[3];
+
+	if (old_is_manifest) {
+		members[0] = old->data;
+		members[1] = old->kern;
+		members[2] = old->meta;
+		for (unsigned int i = 0; i < nitems(members); i++) {
+			if (unlinkat(fddir, members[i], 0) != 0 && errno != ENOENT)
+				EPRINTLN("Cannot remove old checkpoint member '%s': %s",
+				    members[i], strerror(errno));
+		}
+	} else {
+		legacy_kern = strcat_extension(checkpoint_file, ".kern");
+		legacy_meta = strcat_extension(checkpoint_file, ".meta");
+		if (legacy_kern != NULL &&
+		    unlinkat(fddir, legacy_kern, 0) != 0 && errno != ENOENT)
+			EPRINTLN("Cannot remove old checkpoint member '%s': %s",
+			    legacy_kern, strerror(errno));
+		if (legacy_meta != NULL &&
+		    unlinkat(fddir, legacy_meta, 0) != 0 && errno != ENOENT)
+			EPRINTLN("Cannot remove old checkpoint member '%s': %s",
+			    legacy_meta, strerror(errno));
+		free(legacy_kern);
+		free(legacy_meta);
+	}
+	if (fsync(fddir) != 0)
+		EPRINTLN("Cannot persist old checkpoint cleanup: %s",
+		    strerror(errno));
 }
 
 static int
 vm_save_kern_struct(struct vmctx *ctx, int data_fd, xo_handle_t *xop,
     const char *array_key, struct vm_snapshot_meta *meta, off_t *offset)
 {
-	int ret;
+	int error, ret;
 	size_t data_size;
-	ssize_t write_cnt;
 
 	ret = vm_snapshot_req(ctx, meta);
 	if (ret != 0) {
-		fprintf(stderr, "%s: Failed to snapshot struct %s\r\n",
-			__func__, meta->dev_name);
-		ret = -1;
+		error = errno != 0 ? errno : EIO;
+		fprintf(stderr, "%s: Failed to snapshot struct %s: %s\r\n",
+		    __func__, meta->dev_name, strerror(error));
+		ret = error;
 		goto done;
 	}
 
 	data_size = vm_get_snapshot_size(meta);
 
-	/* XXX-MJ no handling for short writes. */
-	write_cnt = write(data_fd, meta->buffer.buf_start, data_size);
-	if (write_cnt < 0 || (size_t)write_cnt != data_size) {
+	if (snapshot_write_all(data_fd, meta->buffer.buf_start, data_size) != 0) {
+		error = errno != 0 ? errno : EIO;
 		perror("Failed to write all snapshotted data.");
-		ret = -1;
+		ret = error;
 		goto done;
 	}
 
@@ -968,7 +1074,8 @@ static int
 vm_save_kern_structs(struct vmctx *ctx, int data_fd, xo_handle_t *xop)
 {
 	int ret, error;
-	size_t buf_size, i, offset;
+	off_t offset;
+	size_t buf_size, i;
 	char *buffer;
 	struct vm_snapshot_meta *meta;
 
@@ -1002,7 +1109,7 @@ vm_save_kern_structs(struct vmctx *ctx, int data_fd, xo_handle_t *xop)
 		ret = vm_save_kern_struct(ctx, data_fd, xop,
 		    JSON_DEV_ARR_KEY, meta, &offset);
 		if (ret != 0) {
-			error = -1;
+			error = ret;
 			goto err_vm_snapshot_kern_data;
 		}
 	}
@@ -1032,14 +1139,11 @@ static int
 vm_snapshot_dev_write_data(int data_fd, xo_handle_t *xop, const char *array_key,
 			   struct vm_snapshot_meta *meta, off_t *offset)
 {
-	ssize_t ret;
 	size_t data_size;
 
 	data_size = vm_get_snapshot_size(meta);
 
-	/* XXX-MJ no handling for short writes. */
-	ret = write(data_fd, meta->buffer.buf_start, data_size);
-	if (ret < 0 || (size_t)ret != data_size) {
+	if (snapshot_write_all(data_fd, meta->buffer.buf_start, data_size) != 0) {
 		perror("Failed to write all snapshotted data.");
 		return (-1);
 	}
@@ -1216,58 +1320,105 @@ static int
 vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
     bool stop_vm)
 {
-	int fd_checkpoint = 0, kdata_fd = 0, fd_meta;
+	struct checkpoint_manifest manifest, old_manifest;
+	int fd_checkpoint = -1, kdata_fd = -1, fd_meta = -1;
+	int lock_fd = -1;
 	int ret = 0;
 	int error = 0;
 	size_t memsz;
+	bool devices_paused = false;
+	bool devices_resumed = true;
+	bool data_created = false;
+	bool kern_created = false;
+	bool meta_created = false;
+	bool old_exists = false;
+	bool old_is_manifest = false;
+	bool published = false;
+	bool vcpus_paused = false;
 	xo_handle_t *xop = NULL;
-	char *meta_filename = NULL;
-	char *kdata_filename = NULL;
+	char *lock_filename = NULL, *manifest_tmp = NULL;
 	FILE *meta_file = NULL;
 
-	kdata_filename = strcat_extension(checkpoint_file, ".kern");
-	if (kdata_filename == NULL) {
-		fprintf(stderr, "Failed to construct kernel data filename.\n");
-		return (-1);
+	memset(&manifest, 0, sizeof(manifest));
+	memset(&old_manifest, 0, sizeof(old_manifest));
+	lock_filename = strcat_extension(checkpoint_file, ".lock");
+	if (lock_filename == NULL)
+		return (errno != 0 ? errno : ENOMEM);
+	lock_fd = openat(fddir, lock_filename,
+	    O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+	if (lock_fd < 0) {
+		error = errno;
+		fprintf(stderr, "Failed to open checkpoint lock: %s\n",
+		    strerror(error));
+		goto done;
+	}
+	error = checkpoint_lock(lock_fd, LOCK_EX);
+	if (error != 0) {
+		fprintf(stderr, "Failed to lock checkpoint: %s\n",
+		    strerror(error));
+		goto done;
+	}
+	error = checkpoint_manifest_read_at(fddir, checkpoint_file,
+	    &old_manifest, &old_exists, &old_is_manifest);
+	if (error != 0) {
+		fprintf(stderr, "Failed to read existing checkpoint manifest: %s\n",
+		    strerror(error));
+		goto done;
+	}
+	if (old_is_manifest &&
+	    !checkpoint_manifest_valid_for(checkpoint_file, &old_manifest)) {
+		fprintf(stderr, "Existing checkpoint manifest has invalid members.\n");
+		error = EINVAL;
+		goto done;
+	}
+	error = checkpoint_generation_names(checkpoint_file, &manifest,
+	    &manifest_tmp);
+	if (error != 0) {
+		fprintf(stderr, "Failed to construct checkpoint generation names.\n");
+		goto done;
 	}
 
-	kdata_fd = openat(fddir, kdata_filename, O_WRONLY | O_CREAT | O_TRUNC, 0700);
+	kdata_fd = openat(fddir, manifest.kern,
+	    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0700);
 	if (kdata_fd < 0) {
 		perror("Failed to open kernel data snapshot file.");
-		error = -1;
+		error = errno;
 		goto done;
 	}
+	kern_created = true;
 
-	fd_checkpoint = openat(fddir, checkpoint_file, O_RDWR | O_CREAT | O_TRUNC, 0700);
-
+	fd_checkpoint = openat(fddir, manifest.data,
+	    O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0700);
 	if (fd_checkpoint < 0) {
 		perror("Failed to create checkpoint file");
-		error = -1;
+		error = errno;
 		goto done;
 	}
+	data_created = true;
 
-	meta_filename = strcat_extension(checkpoint_file, ".meta");
-	if (meta_filename == NULL) {
-		fprintf(stderr, "Failed to construct vm metadata filename.\n");
-		goto done;
-	}
-
-	fd_meta = openat(fddir, meta_filename, O_WRONLY | O_CREAT | O_TRUNC, 0700);
+	fd_meta = openat(fddir, manifest.meta,
+	    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0700);
+	if (fd_meta >= 0)
+		meta_created = true;
 	if (fd_meta != -1)
 		meta_file = fdopen(fd_meta, "w");
 	if (meta_file == NULL) {
+		error = errno != 0 ? errno : EIO;
 		perror("Failed to open vm metadata snapshot file.");
-		close(fd_meta);
+		if (fd_meta >= 0)
+			close(fd_meta);
+		fd_meta = -1;
 		goto done;
 	}
-
 	xop = xo_create_to_file(meta_file, XO_STYLE_JSON, XOF_PRETTY);
 	if (xop == NULL) {
 		perror("Failed to get libxo handle on metadata file.");
+		error = ENOMEM;
 		goto done;
 	}
 
 	vm_vcpu_pause(ctx);
+	vcpus_paused = true;
 
 	ret = vm_pause_devices();
 	if (ret != 0) {
@@ -1275,59 +1426,129 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 		error = ret;
 		goto done;
 	}
+	devices_paused = true;
 
 	memsz = vm_snapshot_mem(ctx, fd_checkpoint, 0, true);
 	if (memsz == 0) {
 		perror("Could not write guest memory to file");
-		error = -1;
+		error = errno != 0 ? errno : EIO;
 		goto done;
 	}
 
 	ret = vm_snapshot_basic_metadata(ctx, xop, memsz);
 	if (ret != 0) {
 		fprintf(stderr, "Failed to snapshot vm basic metadata.\n");
-		error = -1;
+		error = ret > 0 ? ret : EIO;
 		goto done;
 	}
 
 	ret = vm_save_kern_structs(ctx, kdata_fd, xop);
 	if (ret != 0) {
 		fprintf(stderr, "Failed to snapshot vm kernel data.\n");
-		error = -1;
+		error = ret > 0 ? ret : EIO;
 		goto done;
 	}
 
 	ret = vm_snapshot_devices(kdata_fd, xop);
 	if (ret != 0) {
 		fprintf(stderr, "Failed to snapshot device state.\n");
-		error = -1;
+		error = ret > 0 ? ret : EIO;
 		goto done;
 	}
 
-	xo_finish_h(xop);
+	if (xo_finish_h(xop) < 0) {
+		fprintf(stderr, "Failed to finish vm metadata snapshot file.\n");
+		error = EIO;
+		goto done;
+	}
 
-	if (stop_vm) {
+done:
+	/*
+	 * Complete and durably flush every generation member before publishing
+	 * the manifest.  Until renameat() below, an older manifest remains the
+	 * only visible checkpoint and an interrupted generation is unreachable.
+	 */
+	if (xop != NULL)
+		xo_destroy(xop);
+	if (meta_file != NULL) {
+		if (fflush(meta_file) != 0 && error == 0)
+			error = errno != 0 ? errno : EIO;
+		if (error == 0 && fsync(fileno(meta_file)) != 0)
+			error = errno != 0 ? errno : EIO;
+		if (fclose(meta_file) != 0 && error == 0)
+			error = errno != 0 ? errno : EIO;
+		meta_file = NULL;
+		fd_meta = -1;
+	} else if (fd_meta >= 0) {
+		if (close(fd_meta) != 0 && error == 0)
+			error = errno != 0 ? errno : EIO;
+		fd_meta = -1;
+	}
+	if (fd_checkpoint >= 0) {
+		if (error == 0 && fsync(fd_checkpoint) != 0)
+			error = errno != 0 ? errno : EIO;
+		if (close(fd_checkpoint) != 0 && error == 0)
+			error = errno != 0 ? errno : EIO;
+		fd_checkpoint = -1;
+	}
+	if (kdata_fd >= 0) {
+		if (error == 0 && fsync(kdata_fd) != 0)
+			error = errno != 0 ? errno : EIO;
+		if (close(kdata_fd) != 0 && error == 0)
+			error = errno != 0 ? errno : EIO;
+		kdata_fd = -1;
+	}
+	if (error == 0 && fsync(fddir) != 0)
+		error = errno != 0 ? errno : EIO;
+	if (error == 0) {
+		error = checkpoint_publish(fddir, checkpoint_file, manifest_tmp,
+		    &manifest, &published);
+		if (published && error == 0 && old_exists)
+			checkpoint_remove_old_generation(fddir, checkpoint_file,
+			    &old_manifest, old_is_manifest);
+	}
+
+	if (stop_vm && published && error == 0) {
 		vm_destroy(ctx);
 		exit(BHYVE_EXIT_SUSPEND);
 	}
 
-done:
-	ret = vm_resume_devices();
-	if (ret != 0)
-		fprintf(stderr, "Could not resume devices\r\n");
-	vm_vcpu_resume(ctx);
-	if (fd_checkpoint > 0)
-		close(fd_checkpoint);
-	if (meta_filename != NULL)
-		free(meta_filename);
-	if (kdata_filename != NULL)
-		free(kdata_filename);
-	if (xop != NULL)
-		xo_destroy(xop);
-	if (meta_file != NULL)
-		fclose(meta_file);
-	if (kdata_fd > 0)
-		close(kdata_fd);
+	/*
+	 * pci_resume() tracks ownership per device, so a failed pause walk can
+	 * safely release just the devices which were acquired before the error.
+	 * Do not run either cleanup path for failures which happened before the
+	 * corresponding pause operation started.
+	 */
+	if (devices_paused || vcpus_paused) {
+		ret = vm_resume_devices();
+		if (ret != 0) {
+			fprintf(stderr, "Could not resume devices\r\n");
+			devices_resumed = false;
+			if (error == 0)
+				error = ret;
+		}
+	}
+	/*
+	 * Never restart guest execution while a backend still owns checkpoint
+	 * pause state.  The per-device ownership markers allow a later
+	 * checkpoint request to retry just the failed resume safely.
+	 */
+	if (vcpus_paused && devices_resumed)
+		vm_vcpu_resume(ctx);
+	if (!published) {
+		if (data_created)
+			(void)unlinkat(fddir, manifest.data, 0);
+		if (kern_created)
+			(void)unlinkat(fddir, manifest.kern, 0);
+		if (meta_created)
+			(void)unlinkat(fddir, manifest.meta, 0);
+		if (manifest_tmp != NULL)
+			(void)unlinkat(fddir, manifest_tmp, 0);
+	}
+	if (lock_fd >= 0)
+		close(lock_fd);
+	free(lock_filename);
+	free(manifest_tmp);
 	return (error);
 }
 
@@ -1355,18 +1576,29 @@ handle_message(struct vmctx *ctx, nvlist_t *nvl)
 void *
 checkpoint_thread(void *param)
 {
-	int fd;
+	int error, fd;
 	struct checkpoint_thread_info *thread_info;
 	nvlist_t *nvl;
 
 	pthread_set_name_np(pthread_self(), "checkpoint thread");
 	thread_info = (struct checkpoint_thread_info *)param;
 
-	while ((fd = accept(thread_info->socket_fd, NULL, NULL)) != -1) {
+	for (;;) {
+		fd = accept(thread_info->socket_fd, NULL, NULL);
+		if (fd < 0) {
+			if (errno == EINTR)
+				continue;
+			EPRINTLN("checkpoint accept failed: %s",
+			    strerror(errno));
+			break;
+		}
 		nvl = nvlist_recv(fd, 0);
-		if (nvl != NULL)
-			handle_message(thread_info->ctx, nvl);
-		else
+		if (nvl != NULL) {
+			error = handle_message(thread_info->ctx, nvl);
+			if (error != 0)
+				EPRINTLN("checkpoint command failed: %s",
+				    strerror(error));
+		} else
 			EPRINTLN("nvlist_recv() failed: %s", strerror(errno));
 
 		close(fd);
@@ -1403,9 +1635,9 @@ init_checkpoint_thread(struct vmctx *ctx)
 {
 	struct checkpoint_thread_info *checkpoint_info = NULL;
 	struct sockaddr_un addr;
-	int socket_fd;
+	int socket_fd = -1;
 	pthread_t checkpoint_pthread;
-	int err;
+	int err, pathlen;
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_t rights;
 #endif
@@ -1421,8 +1653,13 @@ init_checkpoint_thread(struct vmctx *ctx)
 
 	addr.sun_family = AF_UNIX;
 
-	snprintf(addr.sun_path, sizeof(addr.sun_path), "%s%s",
-		 BHYVE_RUN_DIR, vm_get_name(ctx));
+	pathlen = snprintf(addr.sun_path, sizeof(addr.sun_path), "%s%s",
+	    BHYVE_RUN_DIR, vm_get_name(ctx));
+	if (pathlen < 0 || (size_t)pathlen >= sizeof(addr.sun_path)) {
+		EPRINTLN("Checkpoint socket path is too long");
+		err = ENAMETOOLONG;
+		goto fail;
+	}
 	addr.sun_len = SUN_LEN(&addr);
 	unlink(addr.sun_path);
 
@@ -1447,6 +1684,10 @@ init_checkpoint_thread(struct vmctx *ctx)
 		errx(EX_OSERR, "Unable to apply rights for sandbox");
 #endif
 	checkpoint_info = calloc(1, sizeof(*checkpoint_info));
+	if (checkpoint_info == NULL) {
+		err = ENOMEM;
+		goto fail;
+	}
 	checkpoint_info->ctx = ctx;
 	checkpoint_info->socket_fd = socket_fd;
 
@@ -1458,7 +1699,7 @@ init_checkpoint_thread(struct vmctx *ctx)
 	return (0);
 fail:
 	free(checkpoint_info);
-	if (socket_fd > 0)
+	if (socket_fd >= 0)
 		close(socket_fd);
 	unlink(addr.sun_path);
 

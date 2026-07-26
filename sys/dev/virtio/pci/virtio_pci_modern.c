@@ -50,6 +50,9 @@
 #include <dev/virtio/pci/virtio_pci.h>
 #include <dev/virtio/pci/virtio_pci_modern_var.h>
 
+#define	VIRTIO_SUSPEND_POLL_INTERVAL	SBT_1MS
+#define	VIRTIO_SUSPEND_TIMEOUT		SBT_1S
+
 #include "virtio_bus_if.h"
 #include "virtio_pci_if.h"
 #include "virtio_if.h"
@@ -117,6 +120,7 @@ static int	vtpci_modern_register_vq_msix(device_t, int idx,
 static uint64_t	vtpci_modern_negotiate_features(device_t, uint64_t);
 static int	vtpci_modern_finalize_features(device_t);
 static bool	vtpci_modern_with_feature(device_t, uint64_t);
+static int	vtpci_modern_wait_lifecycle(struct vtpci_modern_softc *, bool);
 static int	vtpci_modern_alloc_virtqueues(device_t, int,
 		    struct vq_alloc_info *);
 static int	vtpci_modern_setup_interrupts(device_t, enum intr_type);
@@ -356,12 +360,41 @@ vtpci_modern_detach(device_t dev)
 static int
 vtpci_modern_suspend(device_t dev)
 {
-	return (bus_generic_suspend(dev));
+	struct vtpci_modern_softc *sc;
+	int error;
+
+	sc = device_get_softc(dev);
+	error = bus_generic_suspend(dev);
+	if (error != 0 ||
+	    !vtpci_modern_with_feature(dev, VIRTIO_F_SUSPEND))
+		return (error);
+
+	vtpci_modern_set_status(sc, VIRTIO_CONFIG_STATUS_SUSPEND);
+	error = vtpci_modern_wait_lifecycle(sc, true);
+	if (error != 0) {
+		device_printf(dev, "device did not complete suspend: %d\n",
+		    error);
+		(void)bus_generic_resume(dev);
+	}
+	return (error);
 }
 
 static int
 vtpci_modern_resume(device_t dev)
 {
+	struct vtpci_modern_softc *sc;
+	int error;
+
+	sc = device_get_softc(dev);
+	if (vtpci_modern_with_feature(dev, VIRTIO_F_SUSPEND)) {
+		vtpci_modern_set_status(sc, VIRTIO_CONFIG_STATUS_DRIVER_OK);
+		error = vtpci_modern_wait_lifecycle(sc, false);
+		if (error != 0) {
+			device_printf(dev, "device did not complete resume: %d\n",
+			    error);
+			return (error);
+		}
+	}
 	return (bus_generic_resume(dev));
 }
 
@@ -456,6 +489,8 @@ vtpci_modern_negotiate_features(device_t dev, uint64_t child_features)
 	 * add transport features implemented by this bus.
 	 */
 	child_features |= VIRTIO_F_VERSION_1;
+	if ((host_features & VIRTIO_F_SUSPEND) != 0)
+		child_features |= VIRTIO_F_SUSPEND;
 	child_features =
 	    virtio_modern_supported_transport_features(child_features);
 	notification_data_valid = vtpci_modern_notification_data_valid(sc);
@@ -478,6 +513,28 @@ vtpci_modern_negotiate_features(device_t dev, uint64_t child_features)
 	vtpci_modern_write_features(sc, features);
 
 	return (features);
+}
+
+static int
+vtpci_modern_wait_lifecycle(struct vtpci_modern_softc *sc, bool suspend)
+{
+	sbintime_t deadline;
+	uint8_t status;
+
+	deadline = sbinuptime() + VIRTIO_SUSPEND_TIMEOUT;
+	do {
+		status = vtpci_modern_get_status(sc);
+		if ((status & (VIRTIO_CONFIG_S_NEEDS_RESET |
+		    VIRTIO_CONFIG_STATUS_FAILED)) != 0)
+			return (EIO);
+		if (suspend ? virtio_device_suspend_complete(status) :
+		    virtio_device_resume_complete(status))
+			return (0);
+		pause_sbt("vtsusp", VIRTIO_SUSPEND_POLL_INTERVAL, 0,
+		    C_HARDCLOCK);
+	} while (sbinuptime() < deadline);
+
+	return (ETIMEDOUT);
 }
 
 static int
@@ -683,7 +740,7 @@ vtpci_modern_reset_vq(device_t dev, struct virtqueue *vq)
 
 	vtpci_modern_select_virtqueue(sc, idx);
 	vtpci_modern_write_common_2(sc, VIRTIO_PCI_COMMON_Q_RESET, 1);
-	for (count = 0; count < 1000; count++) {
+	for (count = 0; count < VIRTIO_QUEUE_RESET_POLLS; count++) {
 		if (vtpci_modern_read_common_2(sc,
 		    VIRTIO_PCI_COMMON_Q_RESET) == 0) {
 			if (vtpci_modern_read_common_2(sc,
@@ -691,7 +748,11 @@ vtpci_modern_reset_vq(device_t dev, struct virtqueue *vq)
 				return (EIO);
 			return (0);
 		}
-		DELAY(1000);
+		/*
+		 * The bus reset method may be called with a child-driver mutex
+		 * held (vtrnd_detach() does this), so it must not sleep here.
+		 */
+		DELAY(VIRTIO_RESET_POLL_DELAY_US);
 	}
 
 	return (ETIMEDOUT);
@@ -1112,9 +1173,10 @@ vtpci_modern_find_cap_resource(struct vtpci_modern_softc *sc, uint8_t cfg_type,
     int min_size, int alignment, struct vtpci_modern_resource_map *res)
 {
 	device_t dev;
+	rman_res_t bar_size;
 	uint32_t multiplier, offset, length;
-	int cap_offset, error;
-	uint8_t bar, cap_length, type;
+	int cap_offset, error, type;
+	uint8_t bar, cap_length, candidate_type;
 	bool found;
 
 	dev = sc->vtpci_dev;
@@ -1123,9 +1185,9 @@ vtpci_modern_find_cap_resource(struct vtpci_modern_softc *sc, uint8_t cfg_type,
 	     error == 0;
 	     error = pci_find_next_cap(dev, PCIY_VENDOR, cap_offset,
 	     &cap_offset)) {
-		type = pci_read_config(dev, cap_offset +
+		candidate_type = pci_read_config(dev, cap_offset +
 		    offsetof(struct virtio_pci_cap, cfg_type), 1);
-		if (type != cfg_type)
+		if (candidate_type != cfg_type)
 			continue;
 		found = true;
 
@@ -1148,9 +1210,14 @@ vtpci_modern_find_cap_resource(struct vtpci_modern_softc *sc, uint8_t cfg_type,
 		    offsetof(struct virtio_pci_cap, offset), 4);
 		length = pci_read_config(dev, cap_offset +
 		    offsetof(struct virtio_pci_cap, length), 4);
-		if (!VIRTIO_PCI_CAP_BAR_VALID(bar) ||
-		    (min_size != -1 && length < (uint32_t)min_size) ||
-		    offset % alignment != 0)
+		if (!VIRTIO_PCI_CAP_BAR_VALID(bar))
+			continue;
+		type = vtpci_modern_bar_type(sc, bar);
+		if (bus_get_resource(dev, type, PCIR_BAR(bar), NULL,
+		    &bar_size) != 0 ||
+		    !virtio_pci_cap_range_valid(bar_size, offset, length,
+		    min_size == -1 ? 1 : (uint32_t)min_size,
+		    (uint32_t)alignment))
 			continue;
 		if (cfg_type == VIRTIO_PCI_CAP_NOTIFY_CFG) {
 			multiplier = pci_read_config(dev, cap_offset +
@@ -1165,7 +1232,7 @@ vtpci_modern_find_cap_resource(struct vtpci_modern_softc *sc, uint8_t cfg_type,
 		res->vtrm_bar = bar;
 		res->vtrm_offset = offset;
 		res->vtrm_length = length;
-		res->vtrm_type = vtpci_modern_bar_type(sc, bar);
+		res->vtrm_type = type;
 		return (0);
 	}
 
@@ -1301,7 +1368,7 @@ static void
 vtpci_modern_alloc_msix_resource(struct vtpci_modern_softc *sc)
 {
 	device_t dev;
-	int rid, table_rid;
+	int pba_rid, rid, table_rid;
 
 	dev = sc->vtpci_dev;
 
@@ -1309,34 +1376,66 @@ vtpci_modern_alloc_msix_resource(struct vtpci_modern_softc *sc)
 		return;
 
 	/*
-	 * The table or PBA may share a BAR with a VirtIO capability.  In that
-	 * case the active BAR resource retained above already satisfies the PCI
-	 * MSI-X code; trying to allocate the same non-shareable resource again
-	 * would fail.  A distinct PBA BAR must be retained independently.
+	 * VirtIO capability BARs are deliberately allocated RF_UNMAPPED and
+	 * accessed through explicit subregion resource maps.  The PCI MSI-X
+	 * layer, however, stores the BAR resource itself and uses bus_read/write
+	 * on it.  Therefore an RF_UNMAPPED capability BAR cannot also serve as
+	 * the MSI-X table or PBA resource.  Fall back to MSI/INTx for that
+	 * legal PCI layout until the transport has a single mapped-BAR access
+	 * model; treating the mere presence of an active resource as sufficient
+	 * would hand the PCI layer an invalid bus handle.
 	 */
 	table_rid = pci_msix_table_bar(dev);
-	if (table_rid != -1 &&
-	    !vtpci_modern_bar_resource_allocated(sc, table_rid)) {
+	pba_rid = pci_msix_pba_bar(dev);
+	if (table_rid == -1 || pba_rid == -1) {
+		sc->vtpci_common.vtpci_flags |= VTPCI_FLAG_NO_MSIX;
+		device_printf(dev, "MSI-X capability has no usable table or "
+		    "PBA BAR; falling back to MSI/INTx\n");
+		return;
+	}
+	if (vtpci_modern_bar_resource_allocated(sc, table_rid) ||
+	    vtpci_modern_bar_resource_allocated(sc, pba_rid)) {
+		sc->vtpci_common.vtpci_flags |= VTPCI_FLAG_NO_MSIX;
+		device_printf(dev, "MSI-X BAR shares an unmapped VirtIO "
+		    "capability BAR; falling back to MSI/INTx\n");
+		return;
+	}
+
+	if (table_rid != -1) {
 		rid = table_rid;
 		sc->vtpci_msix_table_res = bus_alloc_resource_any(dev,
 		    SYS_RES_MEMORY, &rid, RF_ACTIVE);
-		if (sc->vtpci_msix_table_res == NULL)
-			device_printf(dev, "Unable to map MSI-X table\n");
-		else
-			sc->vtpci_msix_table_rid = table_rid;
+		if (sc->vtpci_msix_table_res == NULL) {
+			device_printf(dev, "Unable to map MSI-X table; "
+			    "falling back to MSI/INTx\n");
+			goto disable_msix;
+		}
+		sc->vtpci_msix_table_rid = table_rid;
 	}
 
-	rid = pci_msix_pba_bar(dev);
-	if (rid != -1 && rid != table_rid &&
-	    !vtpci_modern_bar_resource_allocated(sc, rid)) {
-		sc->vtpci_msix_pba_rid = rid;
+	if (pba_rid != -1 && pba_rid != table_rid) {
+		rid = pba_rid;
+		sc->vtpci_msix_pba_rid = pba_rid;
 		sc->vtpci_msix_pba_res = bus_alloc_resource_any(dev,
 		    SYS_RES_MEMORY, &rid, RF_ACTIVE);
 		if (sc->vtpci_msix_pba_res == NULL) {
 			sc->vtpci_msix_pba_rid = 0;
-			device_printf(dev, "Unable to map MSI-X PBA\n");
+			device_printf(dev, "Unable to map MSI-X PBA; "
+			    "falling back to MSI/INTx\n");
+			goto disable_msix;
 		}
 	}
+	return;
+
+disable_msix:
+	/*
+	 * Do not leave a partially retained MSI-X BAR behind or allow the
+	 * generic interrupt allocator to select MSI-X after one of the PCI
+	 * structures could not be mapped.  MSI and INTx do not depend on
+	 * these resources and remain valid fallbacks.
+	 */
+	vtpci_modern_free_msix_resource(sc);
+	sc->vtpci_common.vtpci_flags |= VTPCI_FLAG_NO_MSIX;
 }
 
 static void
@@ -1496,8 +1595,13 @@ vtpci_modern_reset(struct vtpci_modern_softc *sc)
 	 */
 	vtpci_modern_set_status(sc, VIRTIO_CONFIG_STATUS_RESET);
 
+	/*
+	 * A modern device may complete reset asynchronously.  This method can
+	 * be reached with a child-driver mutex held, so throttle config-space
+	 * polling without sleeping.
+	 */
 	while (vtpci_modern_get_status(sc) != VIRTIO_CONFIG_STATUS_RESET)
-		cpu_spinwait();
+		DELAY(VIRTIO_RESET_POLL_DELAY_US);
 	sc->vtpci_device_config_failed = false;
 }
 

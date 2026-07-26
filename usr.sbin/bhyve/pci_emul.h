@@ -39,6 +39,9 @@
 #include <dev/pci/pcireg.h>
 
 #include <assert.h>
+#ifdef BHYVE_SNAPSHOT
+#include <errno.h>
+#endif
 
 #include "pci_irq.h"
 
@@ -160,11 +163,107 @@ struct pci_devinst {
 
 	void      *pi_arg;		/* devemu-private data */
 
+#ifdef BHYVE_SNAPSHOT
+	/*
+	 * Checkpoint pause ownership belongs to the PCI layer, not to callers.
+	 * This makes cleanup after a partially completed device walk safe for
+	 * backends whose resume operation is not idempotent.
+	 */
+	bool	  pi_checkpoint_paused;
+#endif
+
 	u_char	  pi_cfgdata[PCI_REGMAX + 1];
 	/* ROM is handled like a BAR */
 	struct pcibar pi_bar[PCI_BARMAX_WITH_ROM + 1];
 	uint64_t pi_romoffset;
 };
+
+#ifdef BHYVE_SNAPSHOT
+typedef void (*pci_snapshot_bar_visitor)(struct pci_devinst *, int, bool,
+    void *);
+
+static inline bool
+pci_snapshot_msi_state_valid(int enabled, int maxmsgnum)
+{
+
+	if (enabled != 0 && enabled != 1)
+		return (false);
+	if (enabled == 0)
+		return (maxmsgnum == 0);
+	return (maxmsgnum >= 1 && maxmsgnum <= 32 &&
+	    (maxmsgnum & (maxmsgnum - 1)) == 0);
+}
+
+static inline bool
+pci_snapshot_bar_decoded(const struct pci_devinst *pdi, int idx)
+{
+	uint16_t command;
+
+	command = pdi->pi_cfgdata[PCIR_COMMAND] |
+	    (uint16_t)pdi->pi_cfgdata[PCIR_COMMAND + 1] << 8;
+	switch (pdi->pi_bar[idx].type) {
+	case PCIBAR_IO:
+		return ((command & PCIM_CMD_PORTEN) != 0);
+	case PCIBAR_MEM32:
+	case PCIBAR_MEM64:
+		return ((command & PCIM_CMD_MEMEN) != 0);
+	case PCIBAR_ROM:
+		return ((command & PCIM_CMD_MEMEN) != 0 &&
+		    (pdi->pi_bar[idx].lobits & PCIM_BIOS_ENABLE) != 0);
+	default:
+		return (false);
+	}
+}
+
+static inline void
+pci_snapshot_visit_decoded_bars(struct pci_devinst *pdi, bool registration,
+    pci_snapshot_bar_visitor visitor, void *arg)
+{
+
+	for (int i = 0; i < PCI_BARMAX_WITH_ROM + 1; i++) {
+		if (pci_snapshot_bar_decoded(pdi, i))
+			visitor(pdi, i, registration, arg);
+	}
+}
+
+static inline int
+pci_checkpoint_pause(struct pci_devinst *pdi)
+{
+	struct pci_devemu *pde;
+	int error;
+
+	pde = pdi->pi_d;
+	if (pde->pe_pause == NULL && pde->pe_resume == NULL)
+		return (0);
+	if (pde->pe_pause == NULL || pde->pe_resume == NULL)
+		return (ENOTSUP);
+	if (pdi->pi_checkpoint_paused)
+		return (0);
+	error = (*pde->pe_pause)(pdi);
+	if (error == 0)
+		pdi->pi_checkpoint_paused = true;
+	return (error);
+}
+
+static inline int
+pci_checkpoint_resume(struct pci_devinst *pdi)
+{
+	struct pci_devemu *pde;
+	int error;
+
+	pde = pdi->pi_d;
+	if (pde->pe_pause == NULL && pde->pe_resume == NULL)
+		return (0);
+	if (pde->pe_pause == NULL || pde->pe_resume == NULL)
+		return (ENOTSUP);
+	if (!pdi->pi_checkpoint_paused)
+		return (0);
+	error = (*pde->pe_resume)(pdi);
+	if (error == 0)
+		pdi->pi_checkpoint_paused = false;
+	return (error);
+}
+#endif
 
 struct msicap {
 	uint8_t		capid;

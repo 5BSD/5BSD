@@ -228,6 +228,7 @@ struct pci_vtscsi_ctrl_tmf {
 } __attribute__((packed));
 
 #define	VIRTIO_SCSI_T_AN_QUERY			1
+#define	VIRTIO_SCSI_T_AN_SUBSCRIBE		2
 #define	VIRTIO_SCSI_EVT_ASYNC_OPERATIONAL_CHANGE 2
 #define	VIRTIO_SCSI_EVT_ASYNC_POWER_MGMT	4
 #define	VIRTIO_SCSI_EVT_ASYNC_EXTERNAL_REQUEST	8
@@ -290,7 +291,7 @@ static void *pci_vtscsi_proc(void *);
 static void pci_vtscsi_reset(void *);
 static int pci_vtscsi_qenable(void *, struct vqueue_info *);
 static int pci_vtscsi_qreset(void *, struct vqueue_info *, uint64_t);
-static void pci_vtscsi_neg_features(void *, uint64_t);
+static int pci_vtscsi_neg_features(void *, uint64_t);
 static int pci_vtscsi_cfgread(void *, int, int, uint32_t *);
 static int pci_vtscsi_cfgwrite(void *, int, int, uint32_t);
 
@@ -511,12 +512,13 @@ pci_vtscsi_qreset(void *vsc, struct vqueue_info *vq,
 	return (0);
 }
 
-static void
+static int
 pci_vtscsi_neg_features(void *vsc, uint64_t negotiated_features)
 {
 	struct pci_vtscsi_softc *sc = vsc;
 
 	sc->vss_features = negotiated_features;
+	return (0);
 }
 
 static int
@@ -670,18 +672,35 @@ pci_vtscsi_control_handle(struct pci_vtscsi_softc *sc, void *buf,
 		    outsize < sizeof(tmf->response)) {
 			WPRINTF("ignoring tmf request with sizes %zu/%zu", insize,
 			    outsize);
-			goto failure;
+			if (outsize == 0)
+				return (0);
+			*(uint8_t *)buf = VIRTIO_SCSI_S_FAILURE;
+			return (sizeof(tmf->response));
 		}
 		tmf = (struct pci_vtscsi_ctrl_tmf *)buf;
 		pci_vtscsi_tmf_handle(sc, tmf);
 		memmove(buf, &tmf->response, sizeof(tmf->response));
 		return (sizeof(tmf->response));
-	} else if (type == VIRTIO_SCSI_T_AN_QUERY) {
+	} else if (type == VIRTIO_SCSI_T_AN_QUERY ||
+	    type == VIRTIO_SCSI_T_AN_SUBSCRIBE) {
 		if (insize != offsetof(struct pci_vtscsi_ctrl_an, event_actual) ||
 		    outsize < sizeof(an->event_actual) + sizeof(an->response)) {
 			WPRINTF("ignoring AN request with sizes %zu/%zu", insize,
 			    outsize);
-			goto failure;
+			/*
+			 * The AN response byte follows event_actual.  Do not
+			 * put a failure value in the first byte of that le32
+			 * field when the writable response is truncated.
+			 */
+			if (outsize < sizeof(an->event_actual) +
+			    sizeof(an->response))
+				return (0);
+			memset(buf, 0, sizeof(an->event_actual) +
+			    sizeof(an->response));
+			((uint8_t *)buf)[sizeof(an->event_actual)] =
+			    VIRTIO_SCSI_S_FAILURE;
+			return (sizeof(an->event_actual) +
+			    sizeof(an->response));
 		}
 		an = (struct pci_vtscsi_ctrl_an *)buf;
 		pci_vtscsi_an_handle(sc, an);
@@ -691,7 +710,6 @@ pci_vtscsi_control_handle(struct pci_vtscsi_softc *sc, void *buf,
 	}
 
 	WPRINTF("ignoring unknown control request type %u", type);
-failure:
 	if (outsize == 0)
 		return (0);
 	*(uint8_t *)buf = VIRTIO_SCSI_S_FAILURE;
@@ -993,7 +1011,14 @@ pci_vtscsi_queue_request(struct pci_vtscsi_softc *sc, struct vqueue_info *vq)
 		return (false);
 	}
 
+	/*
+	 * Completion workers publish used entries concurrently with the
+	 * emulation thread consuming available entries.  Serialize both sides
+	 * with the queue mutex; the generic virtqueue indexes are not atomic.
+	 */
+	pthread_mutex_lock(&q->vsq_qmtx);
 	n = vq_getchain(vq, req->vsr_iov, VTSCSI_MAXSEG, &vireq);
+	pthread_mutex_unlock(&q->vsq_qmtx);
 	if (n <= 0) {
 		pci_vtscsi_recycle_request(q, req);
 		return (false);
@@ -1301,16 +1326,6 @@ pci_vtscsi_request_handle(struct pci_vtscsi_softc *sc,
 	    "data_len=%u sg=%u", io->scsiio.cdb[0], io->io_hdr.flags,
 	    req->vsr_data_niov_in, req->vsr_data_niov_out, ext_data_len,
 	    ext_sg_entries);
-	if (pci_vtscsi_debug && ext_sg_entries != 0) {
-		const struct iovec *first = ext_data_ptr;
-
-		if (first->iov_len >= 4) {
-			const uint8_t *data = first->iov_base;
-
-			DPRINTF("pre-io data bytes=%02x%02x%02x%02x len=%zu",
-			    data[0], data[1], data[2], data[3], first->iov_len);
-		}
-	}
 
 	if (pci_vtscsi_debug) {
 		struct sbuf *sb = sbuf_new_auto();
@@ -1321,17 +1336,6 @@ pci_vtscsi_request_handle(struct pci_vtscsi_softc *sc,
 	}
 
 	err = ioctl(sc->vss_ctl_fd, CTL_IO, io);
-	if (pci_vtscsi_debug && ext_sg_entries != 0 &&
-	    (io->io_hdr.flags & CTL_FLAG_DATA_MASK) == CTL_FLAG_DATA_IN) {
-		const struct iovec *first = ext_data_ptr;
-
-		if (first->iov_len >= 4) {
-			const uint8_t *data = first->iov_base;
-
-			DPRINTF("post-io data bytes=%02x%02x%02x%02x len=%zu",
-			    data[0], data[1], data[2], data[3], first->iov_len);
-		}
-	}
 	DPRINTF("complete opcode=0x%02x ioctl=%d ctl_status=0x%x "
 	    "port_status=%u scsi_status=0x%x filled=%u/%u",
 	    io->scsiio.cdb[0], err, io->io_hdr.status,

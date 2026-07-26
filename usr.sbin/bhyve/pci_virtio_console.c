@@ -70,6 +70,7 @@
 #define	VTCON_MAXPORTS	16
 #define	VTCON_MAXQ	(VTCON_MAXPORTS * 2 + 2)
 #define	VTCON_SOCK_TX_MAX	(1024 * 1024)
+#define	VTCON_SOCK_TX_INITIAL	4096
 
 #define	VTCON_DEVICE_READY	0
 #define	VTCON_DEVICE_ADD	1
@@ -181,7 +182,7 @@ static void pci_vtcon_notify_rx(void *, struct vqueue_info *);
 static void pci_vtcon_notify_tx(void *, struct vqueue_info *);
 static int pci_vtcon_cfgread(void *, int, int, uint32_t *);
 static int pci_vtcon_cfgwrite(void *, int, int, uint32_t);
-static void pci_vtcon_neg_features(void *, uint64_t);
+static int pci_vtcon_neg_features(void *, uint64_t);
 static void pci_vtcon_sock_accept(int, enum ev_type,  void *);
 static void pci_vtcon_sock_rx(int, enum ev_type, void *);
 static void pci_vtcon_sock_tx_event(int, enum ev_type, void *);
@@ -283,7 +284,7 @@ pci_vtcon_qreset(void *vsc, struct vqueue_info *vq,
 	return (0);
 }
 
-static void
+static int
 pci_vtcon_neg_features(void *vsc, uint64_t negotiated_features)
 {
 	struct pci_vtcon_softc *sc = vsc;
@@ -300,6 +301,7 @@ pci_vtcon_neg_features(void *vsc, uint64_t negotiated_features)
 			sc->vsc_ports[i].vsp_open_pending = false;
 		}
 	}
+	return (0);
 }
 
 static bool
@@ -806,7 +808,7 @@ pci_vtcon_sock_tx(struct pci_vtcon_port *port __unused, void *arg,
 	}
 	need = sock->vss_tx_len + total;
 	if (need > sock->vss_tx_cap) {
-		cap = MAX((size_t)4096, sock->vss_tx_cap);
+		cap = MAX((size_t)VTCON_SOCK_TX_INITIAL, sock->vss_tx_cap);
 		while (cap < need)
 			cap = MIN(cap * 2, (size_t)VTCON_SOCK_TX_MAX);
 		buf = realloc(sock->vss_tx_buf, cap);

@@ -26,6 +26,8 @@ int vsock_kmock_record_pkthdrs;
 int vsock_kmock_record_pkthdr_len;
 int vsock_kmock_record_len;
 int vsock_kmock_record_mflags;
+int vsock_kmock_msleep_sbt_calls;
+int64_t vsock_kmock_msleep_sbt_last_timeout;
 
 void *transport_last_wakeup;
 static pthread_cond_t transport_sleep_cv = PTHREAD_COND_INITIALIZER;
@@ -174,6 +176,8 @@ reset_state(void)
 	pcb_tx_wakeup_calls = transport_tx_wakeup_calls = 0;
 	vsock_kmock_sock_lock_calls = vsock_kmock_sock_lock_depth = 0;
 	vsock_kmock_sndbuf_lock_calls = vsock_kmock_sndbuf_lock_depth = 0;
+	vsock_kmock_msleep_sbt_calls = 0;
+	vsock_kmock_msleep_sbt_last_timeout = -1;
 	registered_cid = registered_features = 0;
 	transport_rx_packet_hook = NULL;
 	kmock_nowait_malloc_fail_after = -1;
@@ -282,6 +286,7 @@ ATF_TC_BODY(seqpacket_peer_window_boundary, tc)
 	pcb.remote.svm_cid = VSOCK_CID_HOST;
 	pcb.remote.svm_port = 2000;
 	pcb.peer_buf_alloc = window;
+	pcb.buf_alloc = window;
 	atomic_store_ptr(&vtvsock_sc, &sc);
 
 	/* Exactly the advertised window is one record, fragmented on the wire. */
@@ -298,6 +303,19 @@ ATF_TC_BODY(seqpacket_peer_window_boundary, tc)
 	ATF_CHECK(le32toh(last->flags) ==
 	    (VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR));
 	ATF_CHECK(pcb.tx_cnt == window);
+	ATF_CHECK(pcb.state == VTVSOCK_ESTABLISHED);
+
+	/*
+	 * Linux bounds a SEQPACKET record by min(peer_buf_alloc, buf_alloc).
+	 * A peer cannot force a larger fragment transaction merely by
+	 * advertising a larger receive window.
+	 */
+	pcb.peer_buf_alloc = window + 1;
+	pcb.buf_alloc = window;
+	ATF_CHECK(vtvsock_virtio_send(&pcb, 0,
+	    new_data_chain((size_t)window + 1, true), NULL, NULL, NULL) ==
+	    EMSGSIZE);
+	ATF_CHECK(txvq.entry_count == 2);
 	ATF_CHECK(pcb.state == VTVSOCK_ESTABLISHED);
 
 	/* One byte beyond that window is rejected atomically and non-fatally. */
@@ -353,6 +371,164 @@ ATF_TC_BODY(per_call_nonblocking_survives_ring_race, tc)
 	ATF_CHECK(txvq.entry_count == 1);
 	ATF_REQUIRE(mock_vq_complete(&txvq, blocker, 0));
 	vtvsock_txvq_reclaim(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(seqpacket_record_stages_atomically);
+ATF_TC_BODY(seqpacket_record_stages_atomically, tc)
+{
+	const uint32_t record_len = VTVSOCK_MAX_PKT_BUF + 1;
+	struct virtio_vsock_hdr *first, *last;
+	struct socket so;
+	struct virtqueue txvq;
+	struct vtvsock_pcb pcb;
+	struct vtvsock_softc sc;
+
+	reset_state();
+	memset(&pcb, 0, sizeof(pcb));
+	memset(&sc, 0, sizeof(sc));
+	memset(&so, 0, sizeof(so));
+	/*
+	 * The ring has descriptors for only one worst-case packet.  A
+	 * two-fragment record must nevertheless be accepted as one transaction,
+	 * with its second fragment retained in the bounded software FIFO.
+	 */
+	mock_vq_init(&txvq, VTVSOCK_TX_SEGS);
+	txvq.enqueue_success_limit = 1;
+	sc.sc_txvq = &txvq;
+	so.so_type = SOCK_SEQPACKET;
+	so.so_state = SS_NBIO;
+	pcb.so = &so;
+	pcb.state = VTVSOCK_ESTABLISHED;
+	pcb.local.svm_cid = 14;
+	pcb.local.svm_port = 1000;
+	pcb.remote.svm_cid = VSOCK_CID_HOST;
+	pcb.remote.svm_port = 2000;
+	pcb.peer_buf_alloc = record_len;
+	pcb.buf_alloc = record_len;
+	atomic_store_ptr(&vtvsock_sc, &sc);
+
+	ATF_REQUIRE(vtvsock_virtio_send(&pcb, VTVSOCK_SEND_F_NONBLOCK,
+	    new_data_chain(record_len, true), NULL, NULL, NULL) == 0);
+	ATF_REQUIRE(txvq.entry_count == 1);
+	ATF_REQUIRE(sc.sc_txq_count == 1);
+	first = txvq.entries[0].cookie;
+	last = sc.sc_txq_pkts[sc.sc_txq_head];
+	ATF_CHECK(le32toh(first->len) == VTVSOCK_MAX_PKT_BUF);
+	ATF_CHECK(le32toh(first->flags) == 0);
+	ATF_CHECK(le32toh(last->len) == 1);
+	ATF_CHECK(le32toh(last->flags) ==
+	    (VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR));
+	ATF_CHECK(pcb.tx_cnt == record_len);
+	ATF_CHECK(pcb.state == VTVSOCK_ESTABLISHED);
+
+	ATF_REQUIRE(mock_vq_complete(&txvq, first, 0));
+	txvq.enqueue_success_limit = 2;
+	vtvsock_tx_intr(&sc);
+	ATF_REQUIRE(txvq.entry_count == 1);
+	ATF_CHECK(txvq.entries[0].cookie == last);
+	ATF_CHECK(sc.sc_txq_count == 0);
+	ATF_REQUIRE(mock_vq_complete(&txvq, last, 0));
+	vtvsock_tx_intr(&sc);
+	ATF_CHECK(txvq.entry_count == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(seqpacket_record_rejects_queue_pressure_atomically);
+ATF_TC_BODY(seqpacket_record_rejects_queue_pressure_atomically, tc)
+{
+	const uint32_t record_len = VTVSOCK_MAX_PKT_BUF + 1;
+	struct socket so;
+	struct virtqueue txvq;
+	struct vtvsock_pcb pcb;
+	struct vtvsock_softc sc;
+	struct sglist sg;
+	struct sglist_seg seg;
+	struct virtio_vsock_hdr *blocker;
+	u_int i;
+
+	reset_state();
+	memset(&pcb, 0, sizeof(pcb));
+	memset(&sc, 0, sizeof(sc));
+	memset(&so, 0, sizeof(so));
+	mock_vq_init(&txvq, 1);
+	sc.sc_txvq = &txvq;
+	so.so_type = SOCK_SEQPACKET;
+	so.so_state = SS_NBIO;
+	pcb.so = &so;
+	pcb.state = VTVSOCK_ESTABLISHED;
+	pcb.local.svm_cid = 14;
+	pcb.local.svm_port = 1000;
+	pcb.remote.svm_cid = VSOCK_CID_HOST;
+	pcb.remote.svm_port = 2000;
+	pcb.peer_buf_alloc = record_len;
+	pcb.buf_alloc = record_len;
+	atomic_store_ptr(&vtvsock_sc, &sc);
+
+	blocker = new_control_packet();
+	one_seg(&sg, &seg);
+	ATF_REQUIRE(virtqueue_enqueue(&txvq, blocker, &sg, 1, 0) == 0);
+	for (i = 0; i < VTVSOCK_TXQ_MAX - 2; i++) {
+		sc.sc_txq_pkts[sc.sc_txq_tail] = new_control_packet();
+		sc.sc_txq_tail = (sc.sc_txq_tail + 1) % VTVSOCK_TXQ_MAX;
+		sc.sc_txq_count++;
+	}
+
+	ATF_CHECK(vtvsock_virtio_send(&pcb, VTVSOCK_SEND_F_NONBLOCK,
+	    new_data_chain(record_len, true), NULL, NULL, NULL) == EWOULDBLOCK);
+	ATF_CHECK(sc.sc_txq_count == VTVSOCK_TXQ_MAX - 2);
+	ATF_CHECK(pcb.tx_cnt == 0);
+	ATF_CHECK(pcb.state == VTVSOCK_ESTABLISHED);
+
+	while (sc.sc_txq_count != 0) {
+		kfree(sc.sc_txq_pkts[sc.sc_txq_head]);
+		sc.sc_txq_pkts[sc.sc_txq_head] = NULL;
+		sc.sc_txq_head = (sc.sc_txq_head + 1) % VTVSOCK_TXQ_MAX;
+		sc.sc_txq_count--;
+	}
+	ATF_REQUIRE(mock_vq_complete(&txvq, blocker, 0));
+	vtvsock_txvq_reclaim(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(seqpacket_record_allocation_is_atomic);
+ATF_TC_BODY(seqpacket_record_allocation_is_atomic, tc)
+{
+	const uint32_t record_len = VTVSOCK_MAX_PKT_BUF + 1;
+	struct socket so;
+	struct virtqueue txvq;
+	struct vtvsock_pcb pcb;
+	struct vtvsock_softc sc;
+	int fail_after;
+
+	for (fail_after = 0; fail_after < 3; fail_after++) {
+		reset_state();
+		memset(&pcb, 0, sizeof(pcb));
+		memset(&sc, 0, sizeof(sc));
+		memset(&so, 0, sizeof(so));
+		mock_vq_init(&txvq, 128);
+		sc.sc_txvq = &txvq;
+		so.so_type = SOCK_SEQPACKET;
+		so.so_state = SS_NBIO;
+		pcb.so = &so;
+		pcb.state = VTVSOCK_ESTABLISHED;
+		pcb.local.svm_cid = 14;
+		pcb.local.svm_port = 1000;
+		pcb.remote.svm_cid = VSOCK_CID_HOST;
+		pcb.remote.svm_port = 2000;
+		pcb.peer_buf_alloc = record_len;
+		pcb.buf_alloc = record_len;
+		atomic_store_ptr(&vtvsock_sc, &sc);
+		kmock_nowait_malloc_fail_after = fail_after;
+
+		ATF_CHECK(vtvsock_virtio_send(&pcb,
+		    VTVSOCK_SEND_F_NONBLOCK,
+		    new_data_chain(record_len, true), NULL, NULL, NULL) ==
+		    ENOMEM);
+		ATF_CHECK(kmock_nowait_malloc_calls ==
+		    (unsigned int)fail_after + 1);
+		ATF_CHECK(pcb.tx_cnt == 0);
+		ATF_CHECK(pcb.state == VTVSOCK_ESTABLISHED);
+		ATF_CHECK(sc.sc_txq_count == 0);
+		ATF_CHECK(txvq.entry_count == 0);
+	}
 }
 
 ATF_TC_WITHOUT_HEAD(enqueue_reclaims_then_retries);
@@ -692,7 +868,6 @@ ATF_TC_BODY(detach_wakes_tx_ring_blocked_sender, tc)
 	struct vtvsock_softc sc;
 	pthread_t thread;
 	void *blocker;
-	int i;
 
 	reset_state();
 	memset(&dev, 0, sizeof(dev));
@@ -711,6 +886,7 @@ ATF_TC_BODY(detach_wakes_tx_ring_blocked_sender, tc)
 	pcb.remote.svm_cid = VSOCK_CID_HOST;
 	pcb.remote.svm_port = 2000;
 	pcb.peer_buf_alloc = 4096;
+	so.so_snd.sb_timeo = 1234567;
 	blocker = calloc(1, sizeof(struct virtio_vsock_hdr));
 	ATF_REQUIRE(blocker != NULL);
 	one_seg(&sg, &seg);
@@ -723,13 +899,12 @@ ATF_TC_BODY(detach_wakes_tx_ring_blocked_sender, tc)
 	m->m_data[0] = 'X';
 	sender = (struct blocked_sender) { .pcb = &pcb, .m = m, .result = -1 };
 	ATF_REQUIRE(pthread_create(&thread, NULL, run_blocked_sender, &sender) == 0);
-	for (i = 0; i < 5000; i++) {
-		if (wait_for_sleep_channel(&sc.sc_txvq, 1))
-			break;
-		usleep(1000);
-	}
-	ATF_REQUIRE_MSG(i < 5000, "sender did not block on the TX ring");
+	ATF_REQUIRE_MSG(wait_for_sleep_channel(&sc.sc_txvq, 5000),
+	    "sender did not block on the TX ring");
 	ATF_CHECK(pcb.tx_cnt == 0);
+	ATF_CHECK(vsock_kmock_msleep_sbt_calls == 1);
+	ATF_CHECK(vsock_kmock_msleep_sbt_last_timeout ==
+	    so.so_snd.sb_timeo);
 
 	ATF_REQUIRE(vtvsock_detach(&dev) == 0);
 	ATF_REQUIRE_MSG(join_after_flag(thread, &sender.done, 1000) == 0,
@@ -739,6 +914,61 @@ ATF_TC_BODY(detach_wakes_tx_ring_blocked_sender, tc)
 	ATF_CHECK(vtvsock_global_softc() == NULL);
 	ATF_CHECK(txvq.entry_count == 0);
 	ATF_CHECK(transport_last_wakeup == &sc.sc_txvq);
+}
+
+ATF_TC_WITHOUT_HEAD(credit_stall_uses_event_wakeup);
+ATF_TC_BODY(credit_stall_uses_event_wakeup, tc)
+{
+	struct blocked_sender sender;
+	struct fake_device dev;
+	struct socket so;
+	struct virtqueue txvq;
+	struct vtvsock_pcb pcb;
+	struct vtvsock_softc sc;
+	pthread_t thread;
+
+	reset_state();
+	memset(&dev, 0, sizeof(dev));
+	memset(&pcb, 0, sizeof(pcb));
+	memset(&sc, 0, sizeof(sc));
+	memset(&so, 0, sizeof(so));
+	mock_vq_init(&txvq, 8);
+	sc.sc_dev = &dev;
+	sc.sc_txvq = &txvq;
+	dev.softc = &sc;
+	so.so_type = SOCK_STREAM;
+	so.so_snd.sb_timeo = 7654321;
+	pcb.so = &so;
+	pcb.state = VTVSOCK_ESTABLISHED;
+	pcb.local.svm_cid = 14;
+	pcb.local.svm_port = 1000;
+	pcb.remote.svm_cid = VSOCK_CID_HOST;
+	pcb.remote.svm_port = 2000;
+	pcb.peer_buf_alloc = 1;
+	pcb.tx_cnt = 1;
+	atomic_store_ptr(&vtvsock_sc, &sc);
+
+	sender = (struct blocked_sender) {
+		.pcb = &pcb,
+		.m = new_data_chain(1, false),
+		.result = -1,
+	};
+	ATF_REQUIRE(pthread_create(&thread, NULL, run_blocked_sender,
+	    &sender) == 0);
+	ATF_REQUIRE_MSG(wait_for_sleep_channel(&pcb.tx_cnt, 5000),
+	    "sender did not block waiting for peer credit");
+	ATF_CHECK(vsock_kmock_msleep_sbt_calls == 1);
+	ATF_CHECK(vsock_kmock_msleep_sbt_last_timeout ==
+	    so.so_snd.sb_timeo);
+
+	mtx_lock(&vtvsock_mtx);
+	pcb.state = VTVSOCK_CLOSED;
+	wakeup(&pcb.tx_cnt);
+	mtx_unlock(&vtvsock_mtx);
+	ATF_REQUIRE_MSG(join_after_flag(thread, &sender.done, 1000) == 0,
+	    "credit-blocked sender was not woken");
+	ATF_CHECK(sender.result == EPIPE);
+	ATF_CHECK(txvq.entry_count == 1);
 }
 
 ATF_TC_WITHOUT_HEAD(rx_interrupt_detach_during_delivery);
@@ -1242,12 +1472,16 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, tx_ready_descriptor_threshold);
 	ATF_TP_ADD_TC(tp, seqpacket_peer_window_boundary);
 	ATF_TP_ADD_TC(tp, per_call_nonblocking_survives_ring_race);
+	ATF_TP_ADD_TC(tp, seqpacket_record_stages_atomically);
+	ATF_TP_ADD_TC(tp, seqpacket_record_rejects_queue_pressure_atomically);
+	ATF_TP_ADD_TC(tp, seqpacket_record_allocation_is_atomic);
 	ATF_TP_ADD_TC(tp, enqueue_reclaims_then_retries);
 	ATF_TP_ADD_TC(tp, control_queue_bounded);
 	ATF_TP_ADD_TC(tp, partial_ring_is_transient);
 	ATF_TP_ADD_TC(tp, tx_interrupt_drains_fifo_and_wakes);
 	ATF_TP_ADD_TC(tp, transport_reset_recycles_event_and_wakes);
 	ATF_TP_ADD_TC(tp, detach_wakes_tx_ring_blocked_sender);
+	ATF_TP_ADD_TC(tp, credit_stall_uses_event_wakeup);
 	ATF_TP_ADD_TC(tp, rx_interrupt_detach_during_delivery);
 	ATF_TP_ADD_TC(tp, transport_reset_waits_for_rx_delivery);
 	ATF_TP_ADD_TC(tp, detach_waits_for_reset_event);

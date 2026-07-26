@@ -282,6 +282,17 @@ and its payload per
 .Xr read 2
 or
 .Xr write 2 .
+Provider state is created by
+.Dv VSOCK_IOC_TRANSPORT_ATTACH .
+Before attachment, packet reads and writes fail with
+.Er ENXIO
+and readiness filters are not available.
+After attachment,
+.Xr poll 2
+and
+.Xr kqueue 2
+report packet queue readability and writability, including transitions caused
+by queue backpressure, reset, and detach.
 The
 .Dv VSOCK_IOC_TRANSPORT_ATTACH
 and

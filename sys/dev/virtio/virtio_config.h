@@ -39,6 +39,8 @@
 #define VIRTIO_CONFIG_STATUS_DRIVER_OK	0x04
 /* Driver has finished configuring features (modern only). */
 #define VIRTIO_CONFIG_S_FEATURES_OK	0x08
+/* Device is quiesced after VIRTIO_F_SUSPEND negotiation. */
+#define VIRTIO_CONFIG_STATUS_SUSPEND	0x10
 /* Device entered invalid state, driver must reset it. */
 #define VIRTIO_CONFIG_S_NEEDS_RESET	0x40
 /* We've given up on this device. */

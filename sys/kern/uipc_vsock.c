@@ -95,8 +95,8 @@ SDT_PROBE_DEFINE2(vsock, , , disconnect,
     "uint64_t",	/* remote CID */
     "uint32_t");	/* remote port */
 /*
- * Metadata-only observability probes (FOI: no payload contents are ever
- * passed -- only header fields, lengths, credit counters, and error codes).
+ * Metadata-only observability probes: no payload contents are passed, only
+ * header fields, lengths, credit counters, and error codes.
  */
 SDT_PROBE_DEFINE3(vsock, , , connect__request,
     "uint64_t",	/* remote CID */
@@ -223,8 +223,19 @@ vtvsock_rx_drop(const char *reason __unused, uint16_t op __unused,
 
 SYSCTL_NODE(_kern, OID_AUTO, vsock, CTLFLAG_RD, 0, "VSOCK");
 
-SYSCTL_U64(_kern_vsock, OID_AUTO, guest_cid, CTLFLAG_RD,
-    &vtvsock_guest_cid, 0, "VSOCK guest CID");
+static int
+sysctl_vsock_guest_cid(SYSCTL_HANDLER_ARGS)
+{
+	uint64_t cid;
+
+	mtx_lock(&vtvsock_mtx);
+	cid = vtvsock_guest_cid;
+	mtx_unlock(&vtvsock_mtx);
+	return (SYSCTL_OUT(req, &cid, sizeof(cid)));
+}
+SYSCTL_PROC(_kern_vsock, OID_AUTO, guest_cid,
+    CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    sysctl_vsock_guest_cid, "QU", "VSOCK guest CID");
 SYSCTL_UINT(_kern_vsock, OID_AUTO, cur_connections, CTLFLAG_RD,
     &vtvsock_conn_count, 0, "Current number of connected VSOCK PCBs");
 SYSCTL_UINT(_kern_vsock, OID_AUTO, max_connections, CTLFLAG_RW | CTLFLAG_MPSAFE,
@@ -499,6 +510,7 @@ DOMAIN_SET(vsock);
 static bool
 vtvsock_is_local(uint64_t dst_cid)
 {
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
 	return (dst_cid == VSOCK_CID_LOCAL || dst_cid == vtvsock_guest_cid);
 }
 
@@ -638,6 +650,53 @@ vtvsock_pcb_insert_connected_locked(struct vtvsock_pcb *pcb)
 	LIST_INSERT_HEAD(&vtvsock_conn[idx], pcb, connlink);
 	pcb->on_connlist = true;
 	vtvsock_conn_count++;
+}
+
+/*
+ * Return a failed outbound connection attempt to the bound state.
+ *
+ * connect(2) always auto-binds before selecting a remote transport.  That
+ * binding must survive a refused, timed-out, interrupted, or reset attempt:
+ * besides matching Linux AF_VSOCK retry semantics, retaining the bound-list
+ * entry keeps the chosen local port reserved.  Removing the entry while
+ * leaving pcb->local populated lets a later retry use an unreserved port and
+ * collide with another socket.
+ */
+static void
+vtvsock_pcb_connect_failed_locked(struct vtvsock_pcb *pcb)
+{
+
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
+	KASSERT(pcb->on_boundlist,
+	    ("%s: connecting pcb %p is not bound", __func__, pcb));
+	vtvsock_pcb_remove_connected_locked(pcb);
+	if (pcb->peer != NULL) {
+		pcb->peer->peer = NULL;
+		pcb->peer = NULL;
+	}
+	pcb->state = VTVSOCK_BOUND;
+	vsock_tx_wakeup_locked(pcb);
+	wakeup(&pcb->state);
+}
+
+/*
+ * Complete an asynchronous connect failure without shutting down the socket
+ * buffers.  soisdisconnected() is correct for an established connection, but
+ * it permanently sets SBS_CANTRCVMORE/SBS_CANTSENDMORE and makes the same fd
+ * unusable for the retry which failed-connect semantics permit.
+ */
+static void
+vtvsock_socket_connect_failed(struct socket *so, int error)
+{
+
+	SOCK_LOCK(so);
+	so->so_error = error;
+	so->so_state &= ~(SS_ISCONNECTING | SS_ISCONNECTED |
+	    SS_ISDISCONNECTING | SS_ISDISCONNECTED);
+	SOCK_UNLOCK(so);
+	wakeup(&so->so_timeo);
+	sorwakeup(so);
+	sowwakeup(so);
 }
 
 /* Must be called with vtvsock_mtx held. */
@@ -825,21 +884,13 @@ vtvsock_connect_timeout(void *arg)
 	if (pcb->state == VTVSOCK_CONNECTING) {
 		SDT_PROBE2(vsock, , , connect__timeout,
 		    pcb->remote.svm_cid, pcb->remote.svm_port);
-		pcb->state = VTVSOCK_CLOSED;
-		vtvsock_pcb_remove_lists_locked(pcb);
-		vsock_tx_wakeup_locked(pcb);
-		SOCK_LOCK(so);
-		so->so_error = ETIMEDOUT;
-		SOCK_UNLOCK(so);
+		vtvsock_pcb_connect_failed_locked(pcb);
 		/*
-		 * Clear SS_ISCONNECTING so the fd does not stay wedged in
-		 * EALREADY.  For a non-blocking connect() (already returned
-		 * EINPROGRESS, not sleeping) this is what completes the attempt;
-		 * the wakeup below covers a blocking connect() still in msleep.
-		 * soisdisconnected() leaves so_error intact.
+		 * Publish the asynchronous error and return the socket to an
+		 * unconnected, retryable state.  In particular, do not call
+		 * soisdisconnected(): that closes both socket buffers.
 		 */
-		soisdisconnected(so);
-		wakeup(&pcb->state);
+		vtvsock_socket_connect_failed(so, ETIMEDOUT);
 	}
 }
 
@@ -874,12 +925,22 @@ vtvsock_buf_alloc_from_so(struct socket *so)
 	return ((uint32_t)hiwat);
 }
 
+static bool
+vtvsock_features_support_type(uint64_t features, uint16_t type)
+{
+
+	if (type == VIRTIO_VSOCK_TYPE_SEQPACKET)
+		return ((features & VIRTIO_VSOCK_F_SEQPACKET) != 0);
+	if (type != VIRTIO_VSOCK_TYPE_STREAM)
+		return (false);
+	return ((features & VIRTIO_VSOCK_F_STREAM) != 0 ||
+	    (features & VIRTIO_VSOCK_F_NO_IMPLIED_STREAM) == 0);
+}
+
 static int
 vsock_attach(struct socket *so, int proto, struct thread *td)
 {
 	struct vtvsock_pcb *pcb;
-	uint64_t remote_features;
-	bool remote_present, unlock;
 	int error;
 
 	(void)proto;
@@ -892,42 +953,14 @@ vsock_attach(struct socket *so, int proto, struct thread *td)
 		return (EPROTOTYPE);
 
 	/*
-	 * SEQPACKET requires VIRTIO_VSOCK_F_SEQPACKET to have been
-	 * negotiated with the host.  Loopback-only SEQPACKET is still
-	 * permitted when no remote transport is registered.  Key the gate on
-	 * transport presence, not features != 0: a legacy host that
-	 * negotiates zero feature bits still registers a transport (STREAM
-	 * implied) and must not admit SEQPACKET sockets that can only fail
-	 * later at connect.
-	 *
-	 * STREAM is supported unless the device negotiated
-	 * F_NO_IMPLIED_STREAM without F_STREAM (virtio 1.4 §5.10.3: with no
-	 * bits negotiated, or SEQPACKET alone, stream is implied).
-	 *
-	 * attach also runs via sonewconn() on the RX path with vtvsock_mtx
-	 * already held.  Take the mutex only for direct socket creation and use
-	 * one consistent snapshot; provider attach, detach, reset, and feature
-	 * updates may otherwise race these fields.
+	 * Do not apply remote transport feature negotiation at socket creation.
+	 * The socket has no destination CID yet and may be used solely over the
+	 * local transport.  In particular, one userspace provider changing its
+	 * negotiated features must not make socket(2) fail for every other
+	 * provider or for loopback.  Match Linux's AF_VSOCK model: create the
+	 * connectible socket first, then validate the selected transport in
+	 * connect (and validate incoming requests on the RX path).
 	 */
-	unlock = !mtx_owned(&vtvsock_mtx);
-	if (unlock)
-		mtx_lock(&vtvsock_mtx);
-	remote_present = vtvsock_remote_transport != NULL;
-	remote_features = vtvsock_remote_features;
-	if (unlock)
-		mtx_unlock(&vtvsock_mtx);
-	if (so->so_type == SOCK_SEQPACKET) {
-		if (remote_present &&
-		    !(remote_features & VIRTIO_VSOCK_F_SEQPACKET))
-			return (EPROTONOSUPPORT);
-	} else {
-		if (remote_present &&
-		    (remote_features &
-		    VIRTIO_VSOCK_F_NO_IMPLIED_STREAM) != 0 &&
-		    (remote_features & VIRTIO_VSOCK_F_STREAM) == 0)
-			return (EPROTONOSUPPORT);
-	}
-
 	pcb = vtvsock_pcb_alloc(so);
 	if (pcb == NULL)
 		return (ENOBUFS);
@@ -1030,10 +1063,6 @@ vsock_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 	 */
 	if (svm->svm_cid == VSOCK_CID_HYPERVISOR)
 		return (EINVAL);
-	if (svm->svm_cid == VSOCK_CID_HOST &&
-	    vtvsock_guest_cid != VSOCK_CID_HOST)
-		return (EADDRNOTAVAIL);
-
 	/*
 	 * Binding an explicit port below 1024 (including literal port 0)
 	 * requires privilege, matching the reserved-port convention and
@@ -1057,21 +1086,29 @@ vsock_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 	 * real guest CID when a transport registers.
 	 */
 	bool bound_local = (svm->svm_cid == VSOCK_CID_LOCAL);
+	mtx_lock(&vtvsock_mtx);
+	if (svm->svm_cid == VSOCK_CID_HOST &&
+	    vtvsock_guest_cid != VSOCK_CID_HOST) {
+		mtx_unlock(&vtvsock_mtx);
+		return (EADDRNOTAVAIL);
+	}
 	if (svm->svm_cid == VSOCK_CID_ANY)
 		svm->svm_cid = (uint32_t)vtvsock_guest_cid;
 	if (svm->svm_cid != vtvsock_guest_cid &&
-	    svm->svm_cid != VSOCK_CID_LOCAL)
+	    svm->svm_cid != VSOCK_CID_LOCAL) {
+		mtx_unlock(&vtvsock_mtx);
 		return (EAFNOSUPPORT);
-
-	mtx_lock(&vtvsock_mtx);
-	if (pcb->state != VTVSOCK_CLOSED && pcb->state != VTVSOCK_BOUND) {
+	}
+	/*
+	 * Match Linux AF_VSOCK: bind is a one-time transition.  Removing an
+	 * existing bound-list entry before validating a replacement can lose the
+	 * original port reservation when the second bind fails, leaving a BOUND
+	 * PCB which is no longer discoverable and allowing another socket to
+	 * collide with its local endpoint.
+	 */
+	if (pcb->state != VTVSOCK_CLOSED || pcb->on_boundlist) {
 		mtx_unlock(&vtvsock_mtx);
 		return (EINVAL);
-	}
-	if (pcb->on_boundlist) {
-		/* Already bound; remove from list to re-bind. */
-		LIST_REMOVE(pcb, link);
-		pcb->on_boundlist = false;
 	}
 	/*
 	 * Only VSOCK_PORT_ANY requests auto-assignment; literal port 0 is a
@@ -1166,7 +1203,6 @@ vsock_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 	struct sockaddr_vm *dst = (struct sockaddr_vm *)nam;
 	struct vtvsock_pcb *listener, *child;
 	struct socket *child_so;
-	bool auto_bound;
 	bool did_connecting;
 	int error;
 
@@ -1210,8 +1246,18 @@ vsock_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 		return (ECONNRESET);
 	}
 
+	/*
+	 * A new attempt supersedes the asynchronous error from the previous
+	 * one.  Clear it before either the loopback or remote path; otherwise a
+	 * successful loopback retry can establish while the stale timeout/RST
+	 * error makes its first send fail.
+	 */
+	SOCK_LOCK(so);
+	so->so_error = 0;
+	so->so_state &= ~SS_ISDISCONNECTED;
+	SOCK_UNLOCK(so);
+
 	/* Assign a local port if not already bound. */
-	auto_bound = false;
 	did_connecting = false;
 	if (pcb->local.svm_port == VSOCK_PORT_ANY) {
 		uint32_t port;
@@ -1229,7 +1275,6 @@ vsock_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 		}
 		vtvsock_pcb_set_addr(&pcb->local, vtvsock_guest_cid, port);
 		vtvsock_pcb_insert_bound_locked(pcb);
-		auto_bound = true;
 	}
 
 	pcb->remote = *dst;
@@ -1319,6 +1364,24 @@ vsock_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 	}
 
 	/*
+	 * Feature negotiation belongs to the selected remote transport, not
+	 * socket creation.  Zero feature bits retain the historical implied
+	 * STREAM behavior; NO_IMPLIED_STREAM suppresses it unless STREAM was
+	 * negotiated explicitly (VirtIO 1.4 §5.10.3).
+	 *
+	 * A multiplexing transport may advertise the union of several
+	 * providers here.  Its send_pkt callback performs the second,
+	 * destination-specific check and returns EPROTONOSUPPORT when the
+	 * chosen CID does not support this socket type.
+	 */
+	if (!vtvsock_features_support_type(vtvsock_remote_features,
+	    so->so_type == SOCK_SEQPACKET ?
+	    VIRTIO_VSOCK_TYPE_SEQPACKET : VIRTIO_VSOCK_TYPE_STREAM)) {
+		error = EPROTONOSUPPORT;
+		goto fail;
+	}
+
+	/*
 	 * A socket explicitly bound to VSOCK_CID_LOCAL is loopback-only: its
 	 * bound CID cannot go on the wire as the source (§5.10.6.4.1 requires
 	 * guest_cid there).
@@ -1352,83 +1415,35 @@ vsock_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 	    vtvsock_connect_timeout, pcb);
 
 	/*
-	 * Non-blocking connect: leave the OP_REQUEST in flight and the
-	 * connect-timeout callout armed, then return EINPROGRESS immediately.
-	 * SS_ISCONNECTING stays set (so kern_connectat() reports EINPROGRESS);
-	 * the RX path (OP_RESPONSE/OP_RST) and the timeout callout drive
-	 * soisconnected()/soisdisconnected() asynchronously.  Loopback connects
-	 * completed synchronously above and never reach here.
+	 * pr_connect only initiates an asynchronous connection.  The generic
+	 * socket syscall layer owns blocking semantics: kern_connectat() sleeps
+	 * on so_timeo while SS_ISCONNECTING remains set, returns EINPROGRESS for
+	 * an SS_NBIO socket, and consumes so_error after an RST or timeout.
+	 *
+	 * Sleeping here as well creates two independent connect wait loops.
+	 * Besides being contrary to the protocol-switch contract, that permits
+	 * an interrupt to win the inner sleep after OP_RESPONSE has already
+	 * established the socket, incorrectly rolling the live PCB back to
+	 * BOUND.  Leave the callout armed and let OP_RESPONSE, OP_RST, provider
+	 * reset, or vtvsock_connect_timeout complete the attempt.
 	 */
-	if (so->so_state & SS_NBIO) {
-		mtx_unlock(&vtvsock_mtx);
-		return (EINPROGRESS);
-	}
-
-	/* Sleep until ESTABLISHED or error. */
-	while (pcb->state == VTVSOCK_CONNECTING) {
-		error = msleep(&pcb->state, &vtvsock_mtx, PSOCK | PCATCH,
-		    "vsconn", 0);
-		if (error != 0)
-			break;
-	}
-	callout_stop(&pcb->connect_callout);
-
-	if (error == 0 && pcb->state != VTVSOCK_ESTABLISHED) {
-		SOCK_LOCK(so);
-		/*
-		 * Remote connect ended without establishing.  Prefer the async
-		 * error the RX/timeout path recorded (ECONNRESET from a peer RST,
-		 * ETIMEDOUT from the connect callout); default to ECONNRESET to
-		 * match Linux vsock, whose only non-timeout connect failure is an
-		 * RST.  (Loopback refusals also return ECONNRESET, synchronously
-		 * above, and never reach here.)
-		 */
-		error = so->so_error != 0 ? so->so_error : ECONNRESET;
-		so->so_error = 0;
-		SOCK_UNLOCK(so);
-	}
-	if (error != 0)
-		goto fail;
 	mtx_unlock(&vtvsock_mtx);
 	return (0);
 
 fail:
-	if (auto_bound) {
-		vtvsock_pcb_remove_lists_locked(pcb);
-		pcb->state = VTVSOCK_CLOSED;
-	} else {
-		vtvsock_pcb_remove_connected_locked(pcb);
-		if (pcb->peer != NULL) {
-			pcb->peer->peer = NULL;
-			pcb->peer = NULL;
-		}
-		pcb->state = VTVSOCK_BOUND;
-	}
-	vsock_tx_wakeup_locked(pcb);
+	/* Both explicit and automatic bindings survive a failed attempt. */
+	vtvsock_pcb_connect_failed_locked(pcb);
 	/*
-	 * If we advanced to CONNECTING (soisconnecting()), clear SS_ISCONNECTING
-	 * on every failure path -- send_pkt error, EINTR/signal from msleep, and
-	 * the error==0/!ESTABLISHED fallback (connect timeout or peer RST) --
-	 * mirroring the RST teardown path.  Otherwise the fd would be stuck
-	 * returning EALREADY forever.  Loopback ECONNRESET/ENXIO failures never
-	 * called soisconnecting(), so they must not be marked disconnected.
-	 */
-	/*
-	 * Clear SS_ISCONNECTING on failure so the fd isn't wedged in EALREADY.
-	 * If the async path (RST teardown in vsock_rx_packet, or the connect
-	 * timeout callout) already disconnected the socket, SS_ISCONNECTING is
-	 * already clear -- skip the redundant second soisdisconnected() call.
-	 * Only the synchronous failures (send_pkt error, EINTR from msleep)
-	 * still have it set and need the call.
+	 * Clear SS_ISCONNECTING on synchronous failure so the fd isn't wedged
+	 * in EALREADY.  Async RST/timeout paths already did this and published
+	 * their error.  Do not call soisdisconnected(), which would close the
+	 * send and receive buffers and defeat retry on the same fd.
 	 */
 	if (did_connecting) {
-		bool need_disc;
-
 		SOCK_LOCK(so);
-		need_disc = (so->so_state & SS_ISCONNECTING) != 0;
+		so->so_state &= ~SS_ISCONNECTING;
 		SOCK_UNLOCK(so);
-		if (need_disc)
-			soisdisconnected(so);
+		wakeup(&so->so_timeo);
 	}
 	mtx_unlock(&vtvsock_mtx);
 	return (error);
@@ -2123,7 +2138,9 @@ vsock_control(struct socket *so, unsigned long cmd, void *data,
 		 * vsock_dev_ioctl); accepting it on the socket as well costs
 		 * nothing and helps ported code that has an fd handy.
 		 */
+		mtx_lock(&vtvsock_mtx);
 		*(uint32_t *)data = (uint32_t)vtvsock_guest_cid;
+		mtx_unlock(&vtvsock_mtx);
 		return (0);
 	case SIOCOUTQ:
 		inflight = 0;
@@ -2169,6 +2186,7 @@ vtvsock_local_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 {
 	struct socket *peer_so;
 	size_t len;
+	sbintime_t timo;
 	int error;
 
 	(void)flags;
@@ -2232,11 +2250,13 @@ vtvsock_local_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 		/*
 		 * Sleep with vtvsock_mtx as the interlock so it is
 		 * released during the sleep and other threads can make
-		 * progress.
+		 * progress.  The receive wrapper wakes this channel after
+		 * draining the peer buffer, so no periodic polling is needed.
 		 */
-		error = msleep(&pcb->tx_cnt, &vtvsock_mtx,
-		    PSOCK | PCATCH, "vsocklsnd", hz);
-		if (error != 0 && error != EWOULDBLOCK) {
+		timo = pcb->so->so_snd.sb_timeo;
+		error = msleep_sbt(&pcb->tx_cnt, &vtvsock_mtx,
+		    PSOCK | PCATCH, "vsocklsnd", timo, 0, 0);
+		if (error != 0) {
 			mtx_unlock(&vtvsock_mtx);
 			m_freem(m);
 			return (error);
@@ -2353,12 +2373,17 @@ vsock_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		if (seqpacket) {
 			/*
 			 * Atomic record: reject one that can never fit
-			 * (mirrors the transports' own EMSGSIZE checks).
+			 * (mirrors Linux's virtio_transport_tx_buf_size()).
+			 * The peer's advertised window is not the only bound:
+			 * accepting a record larger than our own advertised
+			 * receive window makes the two directions asymmetric and
+			 * permits an arbitrarily large peer window to force an
+			 * excessive fragment transaction.
 			 */
 			cap = (pcb->transport == &vtvsock_local_transport) ?
 			    (pcb->peer != NULL && pcb->peer->so != NULL ?
 			    pcb->peer->so->so_rcv.sb_hiwat : 0) :
-			    pcb->peer_buf_alloc;
+			    MIN(pcb->peer_buf_alloc, pcb->buf_alloc);
 			if (cap != 0 && (size_t)resid > cap) {
 				mtx_unlock(&vtvsock_mtx);
 				error = EMSGSIZE;
@@ -2394,29 +2419,22 @@ vsock_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 			}
 			/*
 			 * Solicit a CREDIT_UPDATE on a remote stall
-			 * (spec 5.10.6.3); loopback relies on the reader's
-			 * periodic wakeup below.
+			 * (spec 5.10.6.3).  A loopback reader explicitly wakes
+			 * its peer after draining the receive buffer.
 			 */
 			if (pcb->transport != &vtvsock_local_transport)
 				(void)pcb->transport->send_pkt(pcb,
 				    VIRTIO_VSOCK_OP_CREDIT_REQUEST, 0,
 				    NULL, 0);
 			/*
-			 * SO_SNDTIMEO bounds the whole wait; without one,
-			 * poll at 1s so a loopback reader draining without
-			 * an explicit wakeup still unblocks us promptly.
+			 * With SO_SNDTIMEO, bound this sleep.  With no timeout,
+			 * wait for a credit update, transport wakeup, local
+			 * receive-buffer drain, shutdown, or disconnect.
 			 */
 			timo = so->so_snd.sb_timeo;
 			error = msleep_sbt(&pcb->tx_cnt, &vtvsock_mtx,
-			    PSOCK | PCATCH, "vsosnd",
-			    timo != 0 ? timo : SBT_1S, 0, 0);
-			if (error == EWOULDBLOCK) {
-				if (timo != 0) {
-					mtx_unlock(&vtvsock_mtx);
-					goto release;
-				}
-				error = 0;	/* poll tick; re-check */
-			} else if (error != 0) {
+			    PSOCK | PCATCH, "vsosnd", timo, 0, 0);
+			if (error != 0) {
 				mtx_unlock(&vtvsock_mtx);
 				goto release;
 			}
@@ -2654,6 +2672,7 @@ vsock_rx_packet(const void *owner, void *buf, uint32_t len)
 	int teardown_errno = 0;
 	bool teardown_rst = false;
 	bool teardown_drop = false;	/* true only for genuine packet drops */
+	bool was_connecting;
 
 	if (len < sizeof(*hdr))
 		return;
@@ -2733,6 +2752,7 @@ vsock_rx_packet(const void *owner, void *buf, uint32_t len)
 		    hdr_src_port, hdr_dst_port);
 		mtx_lock(&vtvsock_mtx);
 		if (vtvsock_remote_transport_owner == owner &&
+		    hdr_op != VIRTIO_VSOCK_OP_RST &&
 		    vtvsock_remote_transport != NULL)
 			(void)vtvsock_remote_transport->send_rst(
 			    vtvsock_guest_cid, hdr_dst_port,
@@ -2744,6 +2764,27 @@ vsock_rx_packet(const void *owner, void *buf, uint32_t len)
 	mtx_lock(&vtvsock_mtx);
 	if (vtvsock_remote_transport == NULL ||
 	    vtvsock_remote_transport_owner != owner) {
+		mtx_unlock(&vtvsock_mtx);
+		return;
+	}
+
+	/*
+	 * Reject a peer packet whose socket type was not negotiated.  This is
+	 * the receive-side counterpart to the connect-time gate above and is
+	 * required now that local listeners are intentionally allowed to exist
+	 * independently of remote features.  Multiplexing transports also
+	 * enforce the selected provider's features before entering this
+	 * function; this aggregate check remains a backstop for direct virtio
+	 * transports and malformed peers.
+	 */
+	if (!vtvsock_features_support_type(vtvsock_remote_features,
+	    hdr_type)) {
+		vtvsock_rx_drop("unnegotiated-type", hdr_op, hdr_src_cid,
+		    hdr_src_port, hdr_dst_port);
+		if (hdr_op != VIRTIO_VSOCK_OP_RST)
+			(void)vtvsock_remote_transport->send_rst(
+			    vtvsock_guest_cid, hdr_dst_port, hdr_src_cid,
+			    hdr_src_port, hdr_type);
 		mtx_unlock(&vtvsock_mtx);
 		return;
 	}
@@ -2781,6 +2822,23 @@ vsock_rx_packet(const void *owner, void *buf, uint32_t len)
 		pcb = vtvsock_pcb_lookup_bound_locked(hdr_dst_cid, hdr_dst_port);
 		if (pcb == NULL || pcb->state != VTVSOCK_LISTEN) {
 			/* No listener; send RST (under lock for VQ safety). */
+			if (vtvsock_remote_transport != NULL)
+				(void)vtvsock_remote_transport->send_rst(
+				    vtvsock_guest_cid, hdr_dst_port,
+				    hdr_src_cid, hdr_src_port, hdr_type);
+			mtx_unlock(&vtvsock_mtx);
+			return;
+		}
+		/*
+		 * A new flow has tx_cnt == 0, so the peer cannot already have
+		 * consumed bytes from it.  An arbitrary initial fwd_cnt would
+		 * corrupt the unsigned credit window before the child PCB has
+		 * sent anything.  The bhyve device applies the same validation
+		 * to guest-originated requests.
+		 */
+		if (hdr_fwd_cnt != 0) {
+			vtvsock_rx_drop("request-initial-fwd-count", hdr_op,
+			    hdr_src_cid, hdr_src_port, hdr_dst_port);
 			if (vtvsock_remote_transport != NULL)
 				(void)vtvsock_remote_transport->send_rst(
 				    vtvsock_guest_cid, hdr_dst_port,
@@ -3357,6 +3415,7 @@ vsock_rx_packet(const void *owner, void *buf, uint32_t len)
 	return;
 
 teardown_close:
+	was_connecting = pcb->state == VTVSOCK_CONNECTING;
 	/*
 	 * Only count genuine drops (a packet we could not accept: bad
 	 * peer_fwd_cnt, buffer overflow, mbuf exhaustion, oversized SEQPACKET
@@ -3368,10 +3427,14 @@ teardown_close:
 		    hdr_src_port, hdr_dst_port);
 	callout_stop(&pcb->close_callout);
 	callout_stop(&pcb->connect_callout);
-	vtvsock_pcb_remove_lists_locked(pcb);
-	pcb->state = VTVSOCK_CLOSED;
-	wakeup(&pcb->state);
-	vsock_tx_wakeup_locked(pcb);
+	if (was_connecting)
+		vtvsock_pcb_connect_failed_locked(pcb);
+	else {
+		vtvsock_pcb_remove_lists_locked(pcb);
+		pcb->state = VTVSOCK_CLOSED;
+		wakeup(&pcb->state);
+		vsock_tx_wakeup_locked(pcb);
+	}
 	/*
 	 * send_pkt, not send_rst: the PCB is live here, so the RST carries
 	 * our real buf_alloc/fwd_cnt as §5.10.6.3.1 requires of every packet
@@ -3387,12 +3450,17 @@ teardown_close:
 	 * the socket) cannot free so out from under us -- the delivery-path
 	 * UAF fix, mirroring vsock_transport_reset_locked().
 	 */
-	if (teardown_errno != 0) {
-		SOCK_LOCK(so);
-		so->so_error = teardown_errno;
-		SOCK_UNLOCK(so);
+	if (was_connecting)
+		vtvsock_socket_connect_failed(so,
+		    teardown_errno != 0 ? teardown_errno : ECONNRESET);
+	else {
+		if (teardown_errno != 0) {
+			SOCK_LOCK(so);
+			so->so_error = teardown_errno;
+			SOCK_UNLOCK(so);
+		}
+		soisdisconnected(so);
 	}
-	soisdisconnected(so);
 	mtx_unlock(&vtvsock_mtx);
 }
 
@@ -3411,6 +3479,7 @@ vsock_transport_reset_matching_locked(
 {
 	struct vtvsock_pcb *pcb, *tmp;
 	struct socket *so;
+	bool was_connecting;
 
 	mtx_assert(&vtvsock_mtx, MA_OWNED);
 	if (transport == NULL)
@@ -3426,14 +3495,20 @@ vsock_transport_reset_matching_locked(
 			    __func__, pcb));
 			callout_stop(&pcb->close_callout);
 			callout_stop(&pcb->connect_callout);
-			vtvsock_pcb_remove_lists_locked(pcb);
-			pcb->state = VTVSOCK_CLOSED;
-			wakeup(&pcb->state);
-			vsock_tx_wakeup_locked(pcb);
-			SOCK_LOCK(so);
-			so->so_error = ECONNRESET;
-			SOCK_UNLOCK(so);
-			soisdisconnected(so);
+			was_connecting = pcb->state == VTVSOCK_CONNECTING;
+			if (was_connecting) {
+				vtvsock_pcb_connect_failed_locked(pcb);
+				vtvsock_socket_connect_failed(so, ECONNRESET);
+			} else {
+				vtvsock_pcb_remove_lists_locked(pcb);
+				pcb->state = VTVSOCK_CLOSED;
+				wakeup(&pcb->state);
+				vsock_tx_wakeup_locked(pcb);
+				SOCK_LOCK(so);
+				so->so_error = ECONNRESET;
+				SOCK_UNLOCK(so);
+				soisdisconnected(so);
+			}
 		}
 	}
 }

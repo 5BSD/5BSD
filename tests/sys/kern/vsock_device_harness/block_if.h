@@ -42,5 +42,7 @@ int blockif_flush(struct blockif_ctxt *, struct blockif_req *);
 int blockif_delete(struct blockif_ctxt *, struct blockif_req *);
 int blockif_cancel(struct blockif_ctxt *, struct blockif_req *);
 int blockif_close(struct blockif_ctxt *);
+int blockif_suspend(struct blockif_ctxt *);
+void blockif_resume(struct blockif_ctxt *);
 
 #endif

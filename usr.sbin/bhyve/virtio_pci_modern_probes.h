@@ -45,6 +45,9 @@
 	DTRACE_PROBE2(virtio, transport__config__changed, name, generation)
 #define	VIRTIO_PROBE_RESET(name)					\
 	DTRACE_PROBE1(virtio, transport__reset, name)
+#define	VIRTIO_PROBE_LIFECYCLE(name, operation, phase, error)	\
+	DTRACE_PROBE4(virtio, transport__lifecycle, name, operation, phase, \
+	    error)
 #define	VIRTIO_PROBE_ERROR(name, reason)				\
 	DTRACE_PROBE2(virtio, transport__error, name, reason)
 

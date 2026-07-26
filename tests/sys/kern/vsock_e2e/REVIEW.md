@@ -1,5 +1,17 @@
 # vsock deep-review findings (2026-07-09)
 
+> **2026-07-25 correction:** The D1 conclusion below was superseded after a
+> document-first comparison with VirtIO 1.4 and Linux.  A SEQPACKET sender
+> must keep a record within the receive window.  Linux caps the record against
+> `min(peer_buf_alloc, local buf_alloc)` and advances `fwd_cnt` only when
+> queued receive data is consumed.  Crediting fragments merely copied into
+> bhyve's reassembly buffer falsely advertised capacity still occupied by that
+> record and could reset a valid following record under host backpressure.
+> The userspace backend now bounds reassembly to its advertised 256 KiB
+> `buf_alloc`, returns credit only after complete host-socket delivery, and has
+> deterministic inline, deferred, and over-window regressions.  The historical
+> D1 text is retained below to document why the earlier reasoning was rejected.
+
 Three parallel reviews (device edge cases, guest-kernel correctness, test
 coverage) over the AF_VSOCK stack. Each finding below was verified against
 the source. Severity: HANG/LOSS/CRASH > throughput/spec > cosmetic.
@@ -13,17 +25,31 @@ require broad resource-exhaustion or allocation fault injection.
 
 ## Confirmed real bugs
 
+### G6 — SEQPACKET queue pressure could disconnect a healthy socket (fixed)
+
+Both kernel remote transports fragment a record into 64 KiB wire packets.
+`sys/kern/uipc_vsock_user.c:vsock_user_send_seqpacket()` and
+`sys/dev/virtio/vsock/virtio_vsock.c:vtvsock_virtio_send_seqpacket()` now
+allocate every fragment before taking transport credit, reserve complete
+record capacity under `vtvsock_mtx`, and publish all fragments in FIFO order
+or none.  Blocking sends wait on the existing event-driven capacity channel;
+nonblocking queue pressure returns `EWOULDBLOCK` with unchanged connection,
+credit, and queue state.  This mirrors Linux's intermediate
+`send_pkt_queue` admission shape while retaining bounded FreeBSD queues.
+
+Deterministic provider and virtqueue tests cover multi-fragment success,
+one-slot-short pressure, descriptor pressure, allocation failure at each
+fragment, credit rollback, and later successful retry.  No test accepts a
+prefix of a SEQPACKET record as success.
+
 ### D1 REACHABILITY (measured 2026-07-09, live guest)
 Our 5BSD guest CANNOT trigger D1: `vsock_sosend` (uipc_vsock.c:2166) rejects
 any SEQPACKET record > peer `buf_alloc` (256KB) with EMSGSIZE *before* sending
 (confirmed: a 1 MiB guest→host record returns -1/EMSGSIZE instantly, no hang).
-D1's deadlock is reachable ONLY by a sender that fragments a large record and
-streams fragments against credit without the up-front whole-record check --
-i.e. a potential LINUX-interop case, unknown until §4 runs. The D1 fix is
-correct-and-defensive regardless (the device must credit incrementally), and
-is validated by the unit harness (seqpacket_large_record_credits_incrementally,
-which drives the device reassembly as a fragmenting sender would). END-TO-END
-proof of D1 requires a Linux guest (GAP 3), not our own.
+D1's hypothesized sender is non-conforming: Linux rejects a record larger than
+the applicable receive window before fragmenting it.  Incremental credit for
+reassembly was therefore not a defensive extension and has been removed; see
+the correction above.
 
 ### D1 — SEQPACKET record >256KB deadlocks (HANG, main data path)
 `usr.sbin/bhyve/pci_virtio_vsock.c` `vtvsock_seqpkt_rx`. Host buffers guest
@@ -32,49 +58,47 @@ seqpacket fragments into `rx_reasm` but only advances `fwd_cnt` at EOM
 advertised `buf_alloc` (256KB), so a record larger than 256KB exhausts the
 guest send window mid-record and blocks forever waiting for credit the host
 won't grant until EOM. Reaper never touches it (ESTABLISHED, stall_time==0).
-Fix: credit fragments as they're accepted into `rx_reasm` (Linux receiver
-semantics); the 4MB `VTVSOCK_MAX_PEER_BUF_ALLOC` reasm cap already bounds it.
-NOTE: `fwd_cnt` is also advanced at tx_buf drain (line 1068, shared with
-STREAM) — the fix must not double-count for SEQPACKET.
+The rejected historical fix was to credit fragments as they entered
+`rx_reasm`.  The corrected implementation instead rejects a record above
+`buf_alloc` and returns credit at complete inline or deferred delivery.
 
-### G1 — Non-blocking send with full TX ring silently loses data (LOSS)
+### G1 — Non-blocking send with full TX ring silently lost data (fixed)
 `sys/kern/uipc_vsock.c` `vtvsock_tx_space` + `sys/dev/virtio/vsock/virtio_vsock.c`
-`vtvsock_virtio_send`. `vtvsock_tx_space` (remote branch) returns only
-`vtvsock_credit_available()` — it ignores TX virtqueue occupancy. On a NBIO
-send with credit available but the ring full, `vsock_sosend` consumes the uio
-via `m_uiotombuf`, `vtvsock_virtio_send` gets EWOULDBLOCK from the ring, rolls
-back credit and frees the mbuf — but `dofilewrite` sees uio progress and
-reports those (freed) bytes as written. Same class as the pr_sosend bug we
-fixed, different dimension. Fix: make the NBIO capacity gate also reflect TX
-ring free space so it returns EWOULDBLOCK before consuming the uio.
+`vtvsock_virtio_tx_ready()` now requires an empty software holding queue and
+enough free direct descriptors for a maximum packet.  `vsock_sosend()` checks
+that predicate before consuming a nonblocking caller's uio.  Threshold,
+full-ring, capacity-disappears-after-check, reclaim/retry, and detach wakeup
+cases have direct pthread-backed transport and socket-layer tests.
 
-### D3 — FIONREAD ioctl lacks CAP_IOCTL (throughput regression under Capsicum)
+### D3 — FIONREAD ioctl lacked CAP_IOCTL (fixed)
 `pci_virtio_vsock.c` line 2410 `ioctl(conn->fd, FIONREAD, &avail)`. The conn
-fd rights (lines 1417, 2753) omit CAP_IOCTL, so under a real Capsicum sandbox
-the ioctl returns ENOTCAPABLE, `avail` stays 0, and every STREAM host->guest
-read caps at 4KB/dispatch. Invisible: tests build -DWITHOUT_CAPSICUM. Fix: add
-CAP_IOCTL + cap_ioctls_limit(FIONREAD) to both conn-fd rights sites.
+fd rights now include `CAP_IOCTL`, and both guest-originated and
+control-originated relay descriptors are restricted with
+`caph_ioctls_limit()` to exactly `FIONREAD`.  The host contract test checks
+both rights sites and both calls to the common limiter.
 
-### D2 — Reaper misreads 0-length SEQPACKET record as EOF (spurious teardown)
+### D2 — Reaper misreads 0-length SEQPACKET record as EOF (fixed)
 `pci_virtio_vsock.c` `vtvsock_reap_stale` ~line 1810. Dead-peer probe uses
 bare `recv()==0`, which for SEQPACKET is returned both for EOF and for a
 legit 0-length record. The data path uses recvmsg+MSG_EOR to disambiguate;
 the reaper reintroduced the confusion. Narrow (needs 0-len record during a
 >=5s credit stall) but a real regression of a distinction the code otherwise
-defends. Fix: mirror the data path (recvmsg, treat 0+!MSG_EOR as EOF).
+defends. The reaper now mirrors the data path with `recvmsg()` and treats
+zero plus `MSG_EOR` as an empty record, not EOF.
 
 ## Lower-severity (real, minor)
 
-- **G4** `uipc_vsock.c:2559` — peer_fwd_cnt stored non-monotonically; a peer
-  that rewinds fwd_cnt inflates `used` and stalls the sender. Clamp with MAX.
-- **G5** `virtio_vsock.c:806` — TX-ring-full sleeper (`&sc->sc_txvq`) not woken
-  by `vsock_transport_reset_locked` (live migration); bounded by 1s poll.
+- **G4 (fixed)** Peer `fwd_cnt` is advanced only by wrap-aware monotonic
+  comparison and is rejected if it moves beyond locally transmitted bytes.
+- **G5 (fixed)** TX-ring-full sleepers use an explicit wakeup channel.
+  Queue completion, reset, and detach wake it; there is no periodic one-second
+  retry loop.
 - **G3 (fixed)** `uipc_vsock.c:2139` — `vsock_sosend` now reads
   `SBS_CANTSENDMORE` under the send-buffer lock and consumes `so_error` under
   `SOCK_LOCK`, serializing the read-and-clear with asynchronous reset writers.
-- **Mismatched data credit (fixed)**: bhyve's nonfatal wrong-type OP_RW drop
-  now reports consumption when it crosses the credit threshold, so the peer
-  cannot remain throttled on bytes already discarded.
+- **Mismatched data handling (fixed again)**: a wrong-type OP_RW now resets
+  the connection.  Crediting and silently discarding it hid guaranteed-
+  delivery loss and differed from Linux's connected-socket type check.
 - **Initial request credit (fixed)**: a new flow has sent no bytes, so bhyve
   rejects an OP_REQUEST with nonzero `fwd_cnt` before opening its host relay
   socket; accepting it could make unsigned credit accounting self-starve.
@@ -141,3 +165,57 @@ guest EOF/reset, and immediate reconnect.  Row 13 is automated in the direct
 guest transport harness with a pthread-blocked sender and a one-second wakeup
 deadline.  Row 14 includes live Alpine guest connects: CID 0 yields ETIMEDOUT
 and CID 2 on an unused host port yields ECONNRESET.
+
+## 2026-07 restore and multi-provider review
+
+- **virtio-blk destination identity (fixed):** restore now rejects an image
+  whose capacity, topology, queue/range limits, or 20-byte device identifier
+  differs from the destination backing store.  Only the negotiated
+  `CONFIG_WCE` writeback byte is migratable.  The negative test also checks the
+  implementation's terminating identifier byte so an unterminated snapshot
+  string cannot escape validation.
+- **virtio-net destination identity (fixed):** restore now rejects changes to
+  destination queue/RSS limits, MTU/link properties, and modern read-only MAC
+  identity.  Legacy guest-writable MAC bytes remain migratable.
+- **AF_VSOCK current-CID synchronization (fixed):** bind now validates and
+  remaps `CID_ANY` in the same `vtvsock_mtx` transaction as endpoint
+  reservation.  Socket and `/dev/vsock` `GET_LOCAL_CID`, plus the guest-CID
+  sysctl, take the same lock.  Concurrent provider attach/detach can no longer
+  produce a stale or torn local CID.
+- **Validation:** the independent VirtIO requirement validator passes; every
+  ASan/UBSan device harness suite passes; the direct AF_VSOCK/virtio-vsock
+  harness passes 335 + 1,347 checks under both the normal sanitizers and
+  ThreadSanitizer; `vsock.ko`, `virtio_vsock.ko`, and bhyve (including its USDT
+  provider object) compile and link with `-Werror`.
+- **Checkpoint coordinator failure atomicity (fixed):** checkpoint setup no
+  longer resumes devices or vCPUs when the matching pause phase never began.
+  The PCI layer records pause ownership per device, so cleanup after a partial
+  device walk resumes only devices whose pause callback succeeded.  It rejects
+  a device exposing only one half of the pause/resume contract, retains
+  ownership when resume fails so a retry is possible, and attempts every
+  device resume while returning the first error.  Guest vCPUs remain stopped
+  if any backend cannot resume, rather than running against partially paused
+  emulation.  Metadata allocation, open, finalization, `fclose()`, and data-fd
+  `close()` failures now return an error, and descriptor zero is no longer
+  leaked by cleanup.  Memory progress is driven by completed I/O rather than
+  a polling thread that raced on stack state; interrupted and short writes are
+  retried, while zero-progress reads or writes fail instead of looping
+  forever.  AHCI now propagates backing-store flush failures and rolls back
+  ports paused earlier in the same device callback; the block harness verifies
+  that a failed flush releases its quiesce owner.  The focused state-machine
+  harness covers absent and mismatched callbacks, duplicate calls, failed
+  pause, failed resume, and successful retry.  Live failure injection and
+  running/guest-suspended checkpoint round trips remain required.
+- **Checkpoint publication atomicity (fixed):** new checkpoints use three
+  generation-qualified members and a small canonical manifest.  Every member
+  and its directory entry is fsynced before an atomic manifest rename; the
+  previous generation is removed only after the replacement manifest is
+  durable.  Restore accepts legacy raw/`.kern`/`.meta` sets, rejects malformed,
+  cross-generation, and path-escaping manifests, and bounds all restored file
+  and metadata ranges.  The sanitizer harness proves that an unpublished
+  replacement cannot displace the old generation, and distinguishes failure
+  before rename from directory-fsync failure after a visible rename so cleanup
+  cannot delete files referenced by the canonical manifest.  A stable sibling
+  advisory lock spans manifest resolution/member opens and
+  publication/old-generation cleanup, preventing a concurrent restore from
+  losing the generation it selected.

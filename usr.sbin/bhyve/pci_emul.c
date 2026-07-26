@@ -2484,49 +2484,232 @@ INOUT_PORT(pci_cfgdata, CONF1_DATA_PORT+3, IOPORT_F_INOUT, pci_emul_cfgdata);
 #endif
 
 #ifdef BHYVE_SNAPSHOT
+static void
+pci_snapshot_modify_bar_registration(struct pci_devinst *pi, int idx,
+    bool registration, void *arg __unused)
+{
+
+	modify_bar_registration(pi, idx, registration);
+}
+
+static void
+pci_snapshot_set_bar_registration(struct pci_devinst *pi, bool registration)
+{
+
+	pci_snapshot_visit_decoded_bars(pi, registration,
+	    pci_snapshot_modify_bar_registration, NULL);
+}
+
+static bool
+pci_snapshot_bars_valid(const struct pci_devinst *pi,
+    const struct pcibar *bars, const u_char *cfgdata)
+{
+	uint32_t config_bar, expected;
+
+	for (int i = 0; i < (int)nitems(pi->pi_bar); i++) {
+		if (bars[i].type != pi->pi_bar[i].type ||
+		    bars[i].size != pi->pi_bar[i].size)
+			return (false);
+		switch (bars[i].type) {
+		case PCIBAR_IO:
+		case PCIBAR_MEM32:
+		case PCIBAR_MEM64:
+		case PCIBAR_ROM:
+			if (bars[i].size == 0 ||
+			    (bars[i].size & (bars[i].size - 1)) != 0 ||
+			    (bars[i].addr & (bars[i].size - 1)) != 0 ||
+			    bars[i].addr > UINT64_MAX - bars[i].size)
+				return (false);
+			break;
+		case PCIBAR_NONE:
+		case PCIBAR_MEMHI64:
+			if (bars[i].addr != pi->pi_bar[i].addr)
+				return (false);
+			break;
+		default:
+			return (false);
+		}
+		switch (bars[i].type) {
+		case PCIBAR_IO:
+			if (bars[i].addr > UINT32_MAX)
+				return (false);
+			memcpy(&config_bar, cfgdata + PCIR_BAR(i),
+			    sizeof(config_bar));
+			expected = (uint32_t)bars[i].addr |
+			    pi->pi_bar[i].lobits;
+			if (config_bar != expected)
+				return (false);
+			break;
+		case PCIBAR_MEM32:
+			if (bars[i].addr > UINT32_MAX)
+				return (false);
+			memcpy(&config_bar, cfgdata + PCIR_BAR(i),
+			    sizeof(config_bar));
+			expected = (uint32_t)bars[i].addr |
+			    pi->pi_bar[i].lobits;
+			if (config_bar != expected)
+				return (false);
+			break;
+		case PCIBAR_MEM64:
+			memcpy(&config_bar, cfgdata + PCIR_BAR(i),
+			    sizeof(config_bar));
+			expected = (uint32_t)bars[i].addr |
+			    pi->pi_bar[i].lobits;
+			if (config_bar != expected ||
+			    i == PCI_BARMAX ||
+			    bars[i + 1].type != PCIBAR_MEMHI64)
+				return (false);
+			memcpy(&config_bar, cfgdata + PCIR_BAR(i + 1),
+			    sizeof(config_bar));
+			if (config_bar != bars[i].addr >> 32)
+				return (false);
+			break;
+		case PCIBAR_ROM:
+			if (bars[i].addr > UINT32_MAX)
+				return (false);
+			memcpy(&config_bar, cfgdata + PCIR_BIOS,
+			    sizeof(config_bar));
+			expected = (uint32_t)bars[i].addr |
+			    (config_bar & PCIM_BIOS_ENABLE);
+			if (config_bar != expected)
+				return (false);
+			break;
+		case PCIBAR_NONE:
+		case PCIBAR_MEMHI64:
+			break;
+		default:
+			__assert_unreachable();
+		}
+	}
+	return (true);
+}
+
 /*
  * Saves/restores PCI device emulated state. Returns 0 on success.
  */
 static int
 pci_snapshot_pci_dev(struct vm_snapshot_meta *meta)
 {
+	struct msix_table_entry *msix_table;
+	struct pcibar bars[nitems(((struct pci_devinst *)0)->pi_bar)];
 	struct pci_devinst *pi;
+	uint64_t msi_addr, msi_msg_data;
+	uint32_t msix_pba_offset, msix_table_offset;
+	u_char cfgdata[PCI_REGMAX + 1];
+	int msi_enabled, msi_maxmsgnum;
+	int msix_enabled, msix_function_mask, msix_pba_bar, msix_pba_size;
+	int msix_table_bar, msix_table_count;
 	int i;
 	int ret;
 
 	pi = meta->dev_data;
+	msi_enabled = pi->pi_msi.enabled;
+	msi_addr = pi->pi_msi.addr;
+	msi_msg_data = pi->pi_msi.msg_data;
+	msi_maxmsgnum = pi->pi_msi.maxmsgnum;
+	msix_enabled = pi->pi_msix.enabled;
+	msix_table_bar = pi->pi_msix.table_bar;
+	msix_pba_bar = pi->pi_msix.pba_bar;
+	msix_table_offset = pi->pi_msix.table_offset;
+	msix_table_count = pi->pi_msix.table_count;
+	msix_pba_offset = pi->pi_msix.pba_offset;
+	msix_pba_size = pi->pi_msix.pba_size;
+	msix_function_mask = pi->pi_msix.function_mask;
+	msix_table = pi->pi_msix.table;
+	memcpy(cfgdata, pi->pi_cfgdata, sizeof(cfgdata));
+	memcpy(bars, pi->pi_bar, sizeof(bars));
 
-	SNAPSHOT_VAR_OR_LEAVE(pi->pi_msi.enabled, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(pi->pi_msi.addr, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(pi->pi_msi.msg_data, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(pi->pi_msi.maxmsgnum, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(msi_enabled, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(msi_addr, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(msi_msg_data, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(msi_maxmsgnum, meta, ret, done);
 
-	SNAPSHOT_VAR_OR_LEAVE(pi->pi_msix.enabled, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(pi->pi_msix.table_bar, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(pi->pi_msix.pba_bar, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(pi->pi_msix.table_offset, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(pi->pi_msix.table_count, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(pi->pi_msix.pba_offset, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(pi->pi_msix.pba_size, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(pi->pi_msix.function_mask, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(msix_enabled, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(msix_table_bar, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(msix_pba_bar, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(msix_table_offset, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(msix_table_count, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(msix_pba_offset, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(msix_pba_size, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(msix_function_mask, meta, ret, done);
 
-	SNAPSHOT_BUF_OR_LEAVE(pi->pi_cfgdata, sizeof(pi->pi_cfgdata),
-			      meta, ret, done);
+	SNAPSHOT_BUF_OR_LEAVE(cfgdata, sizeof(cfgdata), meta, ret, done);
 
 	for (i = 0; i < (int)nitems(pi->pi_bar); i++) {
-		SNAPSHOT_VAR_OR_LEAVE(pi->pi_bar[i].type, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(pi->pi_bar[i].size, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(pi->pi_bar[i].addr, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(bars[i].type, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(bars[i].size, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(bars[i].addr, meta, ret, done);
+	}
+
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		if (!pci_snapshot_msi_state_valid(msi_enabled,
+		    msi_maxmsgnum)) {
+			EPRINTLN("%s: invalid restored MSI state", pi->pi_name);
+			ret = EINVAL;
+			goto done;
+		}
+		if (msix_table_bar != pi->pi_msix.table_bar ||
+		    msix_pba_bar != pi->pi_msix.pba_bar ||
+		    msix_table_offset != pi->pi_msix.table_offset ||
+		    msix_table_count != pi->pi_msix.table_count ||
+		    msix_pba_offset != pi->pi_msix.pba_offset ||
+		    msix_pba_size != pi->pi_msix.pba_size ||
+		    (msix_table_count != 0 && msix_table == NULL)) {
+			EPRINTLN("%s: incompatible restored MSI-X topology",
+			    pi->pi_name);
+			ret = EINVAL;
+			goto done;
+		}
+		if ((msix_enabled != 0 &&
+		    msix_enabled != PCIM_MSIXCTRL_MSIX_ENABLE) ||
+		    (msix_function_mask != 0 &&
+		    msix_function_mask != PCIM_MSIXCTRL_FUNCTION_MASK)) {
+			EPRINTLN("%s: invalid restored MSI-X state", pi->pi_name);
+			ret = EINVAL;
+			goto done;
+		}
+		if (!pci_snapshot_bars_valid(pi, bars, cfgdata)) {
+			EPRINTLN("%s: incompatible restored BAR state",
+			    pi->pi_name);
+			ret = EINVAL;
+			goto done;
+		}
 	}
 
 	/* Restore MSI-X table. */
-	for (i = 0; i < pi->pi_msix.table_count; i++) {
-		SNAPSHOT_VAR_OR_LEAVE(pi->pi_msix.table[i].addr,
+	for (i = 0; i < msix_table_count; i++) {
+		SNAPSHOT_VAR_OR_LEAVE(msix_table[i].addr,
 				      meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(pi->pi_msix.table[i].msg_data,
+		SNAPSHOT_VAR_OR_LEAVE(msix_table[i].msg_data,
 				      meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(pi->pi_msix.table[i].vector_control,
+		SNAPSHOT_VAR_OR_LEAVE(msix_table[i].vector_control,
 				      meta, ret, done);
+	}
+
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		/*
+		 * A firmware-booted restore does not execute firmware again.
+		 * Recreate the I/O intercepts described by the saved BAR and
+		 * command-register state before any vCPU can access the device.
+		 */
+		pci_snapshot_set_bar_registration(pi, false);
+		pi->pi_msi.enabled = msi_enabled;
+		pi->pi_msi.addr = msi_addr;
+		pi->pi_msi.msg_data = msi_msg_data;
+		pi->pi_msi.maxmsgnum = msi_maxmsgnum;
+		pi->pi_msix.enabled = msix_enabled;
+		pi->pi_msix.function_mask = msix_function_mask;
+		memcpy(pi->pi_cfgdata, cfgdata, sizeof(pi->pi_cfgdata));
+		for (i = 0; i < (int)nitems(pi->pi_bar); i++)
+			pi->pi_bar[i].addr = bars[i].addr;
+		/*
+		 * The ROM enable bit is mutable BAR state, but the historical
+		 * snapshot format stores it only in config space.  Reconstruct
+		 * lobits before deciding whether the ROM is decoded.
+		 */
+		pi->pi_bar[PCI_ROM_IDX].lobits =
+		    pci_get_cfgdata32(pi, PCIR_BIOS) & PCIM_BIOS_ENABLE;
+		pci_snapshot_set_bar_registration(pi, true);
 	}
 
 done:
@@ -2558,27 +2741,15 @@ pci_snapshot(struct vm_snapshot_meta *meta)
 int
 pci_pause(struct pci_devinst *pdi)
 {
-	struct pci_devemu *pde = pdi->pi_d;
 
-	if (pde->pe_pause == NULL) {
-		/* The pause/resume functionality is optional. */
-		return (0);
-	}
-
-	return (*pde->pe_pause)(pdi);
+	return (pci_checkpoint_pause(pdi));
 }
 
 int
 pci_resume(struct pci_devinst *pdi)
 {
-	struct pci_devemu *pde = pdi->pi_d;
 
-	if (pde->pe_resume == NULL) {
-		/* The pause/resume functionality is optional. */
-		return (0);
-	}
-
-	return (*pde->pe_resume)(pdi);
+	return (pci_checkpoint_resume(pdi));
 }
 #endif
 

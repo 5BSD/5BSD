@@ -370,10 +370,21 @@ To map a 4 vCPU guest to host CPUs 12-15:
 .Ed
 .It Fl r Ar file
 Resume a guest from a snapshot.
-The guest memory contents are restored from
-.Ar file ,
-and the guest device and vCPU state are restored from the file
-.Dq Ar file Ns .kern .
+For current snapshots,
+.Ar file
+is a manifest naming a generation-matched guest-memory file, kernel/device
+state file, and metadata file in the same directory.
+The manifest is published atomically only after all three members have been
+durably written.
+A sibling
+.Dq Ar file Ns .lock
+serializes checkpoint replacement with restore while the referenced members
+are opened.
+Legacy snapshots in which
+.Ar file
+contains guest memory and
+.Dq Ar file Ns .kern
+contains state remain readable.
 .Pp
 Note that the current snapshot file format requires that the
 configuration of devices in the new VM match the VM from which the

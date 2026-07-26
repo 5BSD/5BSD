@@ -137,6 +137,35 @@ Set `NET_QUEUES=1..8` to select another advertised queue-pair count.  The
 runner supplies at least that many vCPUs so Linux can activate every pair.
 Legacy runs deliberately retain one pair.
 
+Set `CHECKPOINT_TEST=yes` to add two live checkpoint gates for the selected
+transport.  The runner first creates a checkpoint while the guest continues
+running and verifies that the guest and network remain usable.  It then
+replaces that checkpoint with `bhyvectl --suspend`, verifies the generation
+manifest and all three referenced members, restores the VM with the same
+device configuration, and confirms guest-RAM state plus networking survived.
+This currently accepts net, block, rng, and idle userspace-vsock devices; other
+devices are rejected until their snapshot callbacks have equivalent
+in-flight-I/O coverage.  `BHYVECTL` may name an object-tree binary when the
+installed utility does not yet match the object-tree bhyve.
+This exercises bhyve checkpoint pause while the guest devices are running.
+Both the host kernel and bhyve/bhyvectl must be built with
+`WITH_BHYVE_SNAPSHOT=yes`; the runner checks both sides before booting the
+guest.  The `VBSD` kernel configuration also enables `BHYVE_SNAPSHOT`
+explicitly.
+The separate nested case in which a guest has already set the VirtIO
+`DEVICE_SUSPEND` status bit is covered by the device state-machine harness;
+stock Alpine/Linux does not currently expose a userspace control that can
+reliably hold that state while an external checkpoint is requested.  A live
+FreeBSD guest-driver gate is still required before release.
+
+The focused modern two-queue release gate is:
+
+```sh
+env ISO=/path/to/alpine-virt.iso DEVICES=net TRANSPORTS=modern \
+    NET_QUEUES=2 CHECKPOINT_TEST=yes VM_FREE_GATES=no \
+    WORKDIR=/tmp/bhyve-net-checkpoint ./run-alpine-auto.sh
+```
+
 For acceptance testing, use `run-alpine-matrix.sh`.  It first runs the
 sanitizer-backed real-source device harnesses and VM-free host pipeline
 controls.  It then runs net, vsock, RNG, block, SCSI, console, 9P, and input
@@ -164,8 +193,13 @@ TOPOLOGIES=vsock-kernel ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
 ```
 
 The fleet gate runs two complete kernel-backed guests concurrently. It gives
-each guest a disjoint AF_VSOCK port range and exercises reset/rebind in both
-VMs while the other provider remains active:
+each guest a disjoint AF_VSOCK port range and uses three two-guest barriers:
+before the initial VSOCK data matrix, immediately before reset/rebind, and
+after post-reset verification.  A guest cannot leave any barrier until both
+providers have reached that stage.  The first barrier guarantees that both
+providers are attached before either data matrix begins; the later barriers
+prove that each remains usable while the other is active across reset/rebind,
+rather than merely overlapping the two bhyve process lifetimes:
 
 ```sh
 ISO=/path/to/alpine-virt.iso ./run-alpine-multi-vsock.sh

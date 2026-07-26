@@ -68,6 +68,8 @@ enum {
 	VIRTIO14_BLK_WRITE_ZEROES_FLAG_UNMAP
 #undef VIRTIO_F_RING_RESET
 #define	VIRTIO_F_RING_RESET		VIRTIO14_F_RING_RESET
+#undef VIRTIO_F_SUSPEND
+#define	VIRTIO_F_SUSPEND		VIRTIO14_F_SUSPEND
 
 struct blockif_ctxt {
 	int unused;
@@ -97,12 +99,22 @@ static int g_config_changes;
 static int g_qreset_complete_calls;
 static uint64_t g_qreset_complete_generation;
 static int g_qreset_complete_error;
+static int g_blockif_pause_depth;
+static int g_blockif_suspend_error;
+static bool g_modern;
 
 static struct virtio_blk_hdr g_header;
 static struct virtio_blk_discard_write_zeroes g_discard;
 static uint8_t g_data[VTBLK_BSIZE];
 static uint8_t g_status;
 static struct pci_vtblk_ioreq g_ios[VTBLK_MAXREQ];
+
+bool
+vi_pci_is_modern(const struct virtio_softc *vs __unused)
+{
+
+	return (g_modern);
+}
 
 static void *
 complete_block_request(void *arg)
@@ -184,6 +196,9 @@ reset_mocks(void)
 	g_qreset_complete_calls = 0;
 	g_qreset_complete_generation = 0;
 	g_qreset_complete_error = 0;
+	g_blockif_pause_depth = 0;
+	g_blockif_suspend_error = 0;
+	g_modern = false;
 }
 
 static void
@@ -311,6 +326,24 @@ blockif_cancel(struct blockif_ctxt *bc __unused,
 		pthread_mutex_unlock(&io->io_sc->vsc_mtx);
 	}
 	return (g_cancel_error);
+}
+
+int
+blockif_suspend(struct blockif_ctxt *bc __unused)
+{
+
+	if (g_blockif_suspend_error != 0)
+		return (g_blockif_suspend_error);
+	g_blockif_pause_depth++;
+	return (0);
+}
+
+void
+blockif_resume(struct blockif_ctxt *bc __unused)
+{
+
+	ATF_REQUIRE(g_blockif_pause_depth > 0);
+	g_blockif_pause_depth--;
 }
 
 void
@@ -853,6 +886,8 @@ ATF_TC_BODY(backend_capabilities, tc)
 	ATF_CHECK((caps & VTBLK_F_RO) == 0);
 	ATF_CHECK((caps & VTBLK_F_DISCARD) == 0);
 	ATF_CHECK((caps & VTBLK_F_WRITE_ZEROES) != 0);
+	ATF_CHECK((caps & VIRTIO_F_RING_RESET) != 0);
+	ATF_CHECK((caps & VIRTIO_F_SUSPEND) != 0);
 
 	g_backend_readonly = 1;
 	g_backend_candelete = 1;
@@ -860,6 +895,8 @@ ATF_TC_BODY(backend_capabilities, tc)
 	ATF_CHECK((caps & VTBLK_F_RO) != 0);
 	ATF_CHECK((caps & VTBLK_F_DISCARD) == 0);
 	ATF_CHECK((caps & VTBLK_F_WRITE_ZEROES) == 0);
+	ATF_CHECK((caps & VIRTIO_F_RING_RESET) != 0);
+	ATF_CHECK((caps & VIRTIO_F_SUSPEND) != 0);
 
 	/* Configuration limits agree with the capabilities exposed to Linux. */
 	memset(&sc, 0, sizeof(sc));
@@ -1318,11 +1355,11 @@ ATF_TC_BODY(multiqueue_document_contract, tc)
 
 	memset(&sc, 0, sizeof(sc));
 	sc.vbsc_nqueues = VTBLK_MAXQ;
-	sc.vbsc_cfg.num_queues = htole16(sc.vbsc_nqueues);
+	sc.vbsc_cfg.num_queues = sc.vbsc_nqueues;
 	sc.vbsc_consts.vc_hv_caps = VTBLK_F_MQ;
 
 	ATF_CHECK_EQ(DUT_VTBLK_F_MQ, VIRTIO14_BLK_F_MQ);
-	ATF_CHECK_EQ(le16toh(sc.vbsc_cfg.num_queues), VTBLK_MAXQ);
+	ATF_CHECK_EQ(sc.vbsc_cfg.num_queues, VTBLK_MAXQ);
 	ATF_CHECK_EQ(VTBLK_MAXQ, 8);
 	ATF_CHECK_EQ(VTBLK_MAXREQ, 1024);
 	ATF_CHECK(VTBLK_MAXREQ <= BLOCKIF_RING_MAX);
@@ -1374,8 +1411,7 @@ ATF_TC_BODY(write_cache_configuration, tc)
 	sc.vbsc_vs.vs_negotiated_caps =
 	    VIRTIO14_BLK_F_CONFIG_WCE | VIRTIO14_BLK_F_FLUSH;
 	pci_vtblk_neg_features(&sc, sc.vbsc_vs.vs_negotiated_caps);
-	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback,
-	    VTBLK_DEFAULT_WRITEBACK);
+	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback, 0);
 	ATF_REQUIRE_EQ(pci_vtblk_cfgwrite(&sc, offset, 1, 1), 0);
 	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback, 1);
 	ATF_CHECK(!pci_vtblk_write_needs_stabilization(&sc));
@@ -1396,8 +1432,28 @@ ATF_TC_BODY(write_cache_configuration, tc)
 	ATF_CHECK(!pci_vtblk_write_needs_stabilization(&sc));
 
 	pci_vtblk_neg_features(&sc, VIRTIO14_BLK_F_CONFIG_WCE);
+	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback,
+	    VTBLK_DEFAULT_WRITEBACK);
+	ATF_CHECK(!pci_vtblk_write_needs_stabilization(&sc));
+
+	/*
+	 * VirtIO 1.4 section 5.2.5.3: a legacy DRIVER_OK transition must
+	 * preserve a writeback value selected before DRIVER_OK whenever
+	 * CONFIG_WCE was selected.
+	 */
+	sc.vbsc_cfg.vbc_writeback = 0;
+	pci_vtblk_neg_features(&sc,
+	    VIRTIO14_BLK_F_CONFIG_WCE | VIRTIO14_BLK_F_FLUSH);
+	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback, 0);
+
+	/* The corresponding modern initialization rule is section 5.2.5.2. */
+	g_modern = true;
+	sc.vbsc_vs.vs_negotiated_caps = VIRTIO14_BLK_F_CONFIG_WCE;
+	sc.vbsc_cfg.vbc_writeback = VTBLK_DEFAULT_WRITEBACK;
+	pci_vtblk_neg_features(&sc, VIRTIO14_BLK_F_CONFIG_WCE);
 	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback, 0);
 	ATF_CHECK(pci_vtblk_write_needs_stabilization(&sc));
+	g_modern = false;
 
 	ATF_REQUIRE(pthread_cond_destroy(&sc.vbsc_reset_cond) == 0);
 	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
@@ -1410,7 +1466,7 @@ ATF_TC_BODY(config_read_bounds, tc)
 	uint32_t value;
 
 	memset(&sc, 0, sizeof(sc));
-	sc.vbsc_cfg.vbc_capacity = htole64(0x1234);
+	sc.vbsc_cfg.vbc_capacity = 0x1234;
 	value = UINT32_MAX;
 	ATF_CHECK_EQ(pci_vtblk_cfgread(&sc, 0, 4, &value), 0);
 	ATF_CHECK_EQ(value, 0x1234);
@@ -1424,6 +1480,124 @@ ATF_TC_BODY(config_read_bounds, tc)
 	ATF_CHECK_EQ(pci_vtblk_cfgread(&sc, VIRTIO14_BLK_CONFIG_SIZE - 1, 4,
 	    &value), EINVAL);
 	ATF_CHECK_EQ(value, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_backing_identity);
+ATF_TC_BODY(snapshot_backing_identity, tc)
+{
+	struct pci_vtblk_softc sc;
+	struct vtblk_config dst_config, saved;
+	char dst_ident[VTBLK_BLK_ID_BYTES], saved_ident[VTBLK_BLK_ID_BYTES];
+
+	reset_mocks();
+	setup_softc(&sc);
+	memset(&dst_config, 0, sizeof(dst_config));
+	dst_config.vbc_capacity = 4096;
+	dst_config.vbc_seg_max = 126;
+	dst_config.vbc_blk_size = 512;
+	dst_config.vbc_writeback = VTBLK_DEFAULT_WRITEBACK;
+	dst_config.num_queues = 1;
+	memset(dst_ident, 0, sizeof(dst_ident));
+	memcpy(dst_ident, "destination-disk", sizeof("destination-disk"));
+	saved = dst_config;
+	memcpy(saved_ident, dst_ident, sizeof(saved_ident));
+
+	g_modern = true;
+	sc.vbsc_vs.vs_negotiated_caps = 0;
+	ATF_CHECK(pci_vtblk_restore_state_valid(&sc, &saved, saved_ident,
+	    &dst_config, dst_ident));
+	saved.vbc_capacity++;
+	ATF_CHECK(!pci_vtblk_restore_state_valid(&sc, &saved, saved_ident,
+	    &dst_config, dst_ident));
+	saved = dst_config;
+	saved.num_queues = 2;
+	ATF_CHECK(!pci_vtblk_restore_state_valid(&sc, &saved, saved_ident,
+	    &dst_config, dst_ident));
+	saved = dst_config;
+	saved_ident[0] ^= 1;
+	ATF_CHECK(!pci_vtblk_restore_state_valid(&sc, &saved, saved_ident,
+	    &dst_config, dst_ident));
+	memcpy(saved_ident, dst_ident, sizeof(saved_ident));
+	saved_ident[VIRTIO14_BLK_ID_BYTES] = 1;
+	ATF_CHECK(!pci_vtblk_restore_state_valid(&sc, &saved, saved_ident,
+	    &dst_config, dst_ident));
+	memcpy(saved_ident, dst_ident, sizeof(saved_ident));
+
+	/* CONFIG_WCE makes either document-defined cache mode migratable. */
+	sc.vbsc_vs.vs_negotiated_caps = VIRTIO14_BLK_F_CONFIG_WCE;
+	saved.vbc_writeback = 0;
+	ATF_CHECK(pci_vtblk_restore_state_valid(&sc, &saved, saved_ident,
+	    &dst_config, dst_ident));
+	saved.vbc_writeback = 2;
+	ATF_CHECK(!pci_vtblk_restore_state_valid(&sc, &saved, saved_ident,
+	    &dst_config, dst_ident));
+
+	/* Without CONFIG_WCE the mode is implied by transport/features. */
+	saved.vbc_writeback = 0;
+	sc.vbsc_vs.vs_negotiated_caps = 0;
+	ATF_CHECK(!pci_vtblk_restore_state_valid(&sc, &saved, saved_ident,
+	    &dst_config, dst_ident));
+	g_modern = false;
+	ATF_CHECK(pci_vtblk_restore_state_valid(&sc, &saved, saved_ident,
+	    &dst_config, dst_ident));
+	sc.vbsc_vs.vs_negotiated_caps = VIRTIO14_BLK_F_FLUSH;
+	saved.vbc_writeback = VTBLK_DEFAULT_WRITEBACK;
+	ATF_CHECK(pci_vtblk_restore_state_valid(&sc, &saved, saved_ident,
+	    &dst_config, dst_ident));
+}
+
+ATF_TC_WITHOUT_HEAD(modern_config_wire_endian);
+ATF_TC_BODY(modern_config_wire_endian, tc)
+{
+	struct pci_vtblk_softc sc;
+	uint8_t expected[VIRTIO14_BLK_CONFIG_SIZE];
+	uint8_t actual[VIRTIO14_BLK_CONFIG_SIZE];
+	uint32_t value;
+	size_t offset;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(expected, 0, sizeof(expected));
+	memset(actual, 0, sizeof(actual));
+	g_modern = true;
+	sc.vbsc_cfg.vbc_capacity = UINT64_C(0x0102030405060708);
+	sc.vbsc_cfg.vbc_size_max = UINT32_C(0x11121314);
+	sc.vbsc_cfg.vbc_seg_max = UINT32_C(0x21222324);
+	sc.vbsc_cfg.vbc_geometry.cylinders = UINT16_C(0x3132);
+	sc.vbsc_cfg.vbc_blk_size = UINT32_C(0x41424344);
+	sc.vbsc_cfg.vbc_topology.min_io_size = UINT16_C(0x5152);
+	sc.vbsc_cfg.vbc_topology.opt_io_size = UINT32_C(0x61626364);
+	sc.vbsc_cfg.num_queues = UINT16_C(0x7172);
+	sc.vbsc_cfg.max_discard_sectors = UINT32_C(0x81828384);
+	sc.vbsc_cfg.max_discard_seg = UINT32_C(0x91929394);
+	sc.vbsc_cfg.discard_sector_alignment = UINT32_C(0xa1a2a3a4);
+	sc.vbsc_cfg.max_write_zeroes_sectors = UINT32_C(0xb1b2b3b4);
+	sc.vbsc_cfg.max_write_zeroes_seg = UINT32_C(0xc1c2c3c4);
+
+	/*
+	 * These offsets and encodings come from the section 5.2.4 wire
+	 * layout, not from the implementation's structure representation.
+	 */
+	virtio14_store_le64(expected + 0, UINT64_C(0x0102030405060708));
+	virtio14_store_le32(expected + 8, UINT32_C(0x11121314));
+	virtio14_store_le32(expected + 12, UINT32_C(0x21222324));
+	virtio14_store_le16(expected + 16, UINT16_C(0x3132));
+	virtio14_store_le32(expected + 20, UINT32_C(0x41424344));
+	virtio14_store_le16(expected + 26, UINT16_C(0x5152));
+	virtio14_store_le32(expected + 28, UINT32_C(0x61626364));
+	virtio14_store_le16(expected + 34, UINT16_C(0x7172));
+	virtio14_store_le32(expected + 36, UINT32_C(0x81828384));
+	virtio14_store_le32(expected + 40, UINT32_C(0x91929394));
+	virtio14_store_le32(expected + 44, UINT32_C(0xa1a2a3a4));
+	virtio14_store_le32(expected + 48, UINT32_C(0xb1b2b3b4));
+	virtio14_store_le32(expected + 52, UINT32_C(0xc1c2c3c4));
+
+	for (offset = 0; offset < sizeof(actual); offset += sizeof(value)) {
+		ATF_REQUIRE_EQ(pci_vtblk_cfgread(&sc, offset, sizeof(value),
+		    &value), 0);
+		memcpy(actual + offset, &value,
+		    MIN(sizeof(value), sizeof(actual) - offset));
+	}
+	ATF_CHECK(memcmp(actual, expected, sizeof(actual)) == 0);
 }
 
 ATF_TC_WITHOUT_HEAD(document_wire_vectors);
@@ -1572,6 +1746,67 @@ ATF_TC_BODY(virtio_1_4_wire_layout, tc)
 	    VIRTIO14_BLK_DISCARD_FLAGS_OFF);
 }
 
+ATF_TC_WITHOUT_HEAD(suspend_backend_lifecycle);
+ATF_TC_BODY(suspend_backend_lifecycle, tc)
+{
+	struct blockif_ctxt bc;
+	struct pci_vtblk_softc sc;
+	int error;
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.bc = &bc;
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc.vbsc_reset_cond, NULL), 0);
+
+	ATF_CHECK((vtblk_vi_consts.vc_hv_caps & VIRTIO_F_SUSPEND) != 0);
+	ATF_CHECK(vtblk_vi_consts.vc_suspend == pci_vtblk_suspend_device);
+	ATF_CHECK(vtblk_vi_consts.vc_resume_device ==
+	    pci_vtblk_resume_device);
+	ATF_CHECK(vtblk_vi_consts.vc_restore_suspended ==
+	    pci_vtblk_restore_suspended);
+
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	error = pci_vtblk_suspend_device(&sc);
+	ATF_CHECK_EQ(error, 0);
+	ATF_CHECK_EQ(g_blockif_pause_depth, 1);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+
+	/* Checkpoint ownership nests without releasing guest ownership. */
+	ATF_REQUIRE_EQ(blockif_suspend(&bc), 0);
+	ATF_CHECK_EQ(g_blockif_pause_depth, 2);
+	blockif_resume(&bc);
+	ATF_CHECK_EQ(g_blockif_pause_depth, 1);
+	ATF_REQUIRE_EQ(pci_vtblk_restore_suspended(&sc), 0);
+	ATF_CHECK_EQ(g_blockif_pause_depth, 2);
+	blockif_resume(&bc);
+	ATF_CHECK_EQ(g_blockif_pause_depth, 1);
+
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	ATF_CHECK_EQ(pci_vtblk_resume_device(&sc), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+	ATF_CHECK_EQ(g_blockif_pause_depth, 0);
+
+	/* Failed quiesce does not leave backend ownership behind. */
+	g_blockif_suspend_error = EIO;
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	ATF_CHECK_EQ(pci_vtblk_suspend_device(&sc), EIO);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+	ATF_CHECK_EQ(g_blockif_pause_depth, 0);
+
+	/* Reset is the recovery path from a suspended/failed-resume state. */
+	g_blockif_suspend_error = 0;
+	g_blockif_pause_depth = 1;
+	sc.vbsc_vs.vs_suspended = true;
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	pci_vtblk_reset(&sc);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+	ATF_CHECK_EQ(g_blockif_pause_depth, 0);
+
+	pthread_cond_destroy(&sc.vbsc_reset_cond);
+	pthread_mutex_destroy(&sc.vsc_mtx);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, malformed_chains);
@@ -1592,7 +1827,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, multiqueue_option_validation);
 	ATF_TP_ADD_TC(tp, write_cache_configuration);
 	ATF_TP_ADD_TC(tp, config_read_bounds);
+	ATF_TP_ADD_TC(tp, snapshot_backing_identity);
+	ATF_TP_ADD_TC(tp, modern_config_wire_endian);
 	ATF_TP_ADD_TC(tp, document_wire_vectors);
 	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
+	ATF_TP_ADD_TC(tp, suspend_backend_lifecycle);
 	return (atf_no_error());
 }

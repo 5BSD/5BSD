@@ -62,6 +62,12 @@
 #define VTNET_RINGSZ	1024
 
 #define VTNET_MAXSEGS	256
+/*
+ * Implementation policies, not VirtIO wire limits.  Eight queue pairs bound
+ * per-device queue storage and host scheduling work while still covering
+ * typical multiqueue guests.  The TX batch limit prevents one continuously
+ * busy pair from monopolizing the single TX worker before it rotates.
+ */
 #define	VTNET_MAX_PAIRS	8
 #define	VTNET_FLOW_ENTRIES	1024
 #define	VTNET_TX_BUDGET	64
@@ -131,6 +137,13 @@ struct virtio_net_config {
 #define	VTNET_CTRL_OK			0
 #define	VTNET_CTRL_ERR			1
 
+#define	VTNET_CTRL_CLASS_OFFSET		0
+#define	VTNET_CTRL_COMMAND_OFFSET	1
+#define	VTNET_CTRL_HEADER_SIZE		2
+#define	VTNET_CTRL_MQ_PAIRS_OFFSET	VTNET_CTRL_HEADER_SIZE
+#define	VTNET_CTRL_MQ_PAIRS_SIZE		\
+	(VTNET_CTRL_HEADER_SIZE + sizeof(uint16_t))
+
 #define	VTNET_RSS_HASH_TYPE_IPV4	(1U << 0)
 #define	VTNET_RSS_HASH_TYPE_TCPV4	(1U << 1)
 #define	VTNET_RSS_HASH_TYPE_UDPV4	(1U << 2)
@@ -138,11 +151,43 @@ struct virtio_net_config {
 #define	VTNET_RSS_HASH_TYPE_TCPV6	(1U << 4)
 #define	VTNET_RSS_HASH_TYPE_UDPV6	(1U << 5)
 #define	VTNET_RSS_HASH_TYPES		((1U << 6) - 1)
-#define	VTNET_RSS_COMMAND_MIN		15
-#define	VTNET_RSS_COMMAND_MAX		(13 + VTNET_RSS_TABLE_SIZE * 2 + \
-					    VTNET_RSS_KEY_SIZE)
-#define	VTNET_HASH_COMMAND_MIN		15
-#define	VTNET_HASH_COMMAND_MAX		(15 + VTNET_RSS_KEY_SIZE)
+
+/*
+ * VirtIO 1.4 sections 5.1.6.5.7.1 and 5.1.6.5.7.2 define byte-oriented
+ * control commands.  Keep their offsets explicit: these are wire layouts,
+ * not native C structure layouts.
+ */
+#define	VTNET_RSS_HASH_TYPES_OFFSET	VTNET_CTRL_HEADER_SIZE
+#define	VTNET_RSS_TABLE_MASK_OFFSET	\
+	(VTNET_RSS_HASH_TYPES_OFFSET + sizeof(uint32_t))
+#define	VTNET_RSS_UNCLASSIFIED_OFFSET	\
+	(VTNET_RSS_TABLE_MASK_OFFSET + sizeof(uint16_t))
+#define	VTNET_RSS_TABLE_OFFSET		\
+	(VTNET_RSS_UNCLASSIFIED_OFFSET + sizeof(uint16_t))
+#define	VTNET_RSS_TRAILER_PREFIX_SIZE	(sizeof(uint16_t) + sizeof(uint8_t))
+#define	VTNET_RSS_COMMAND_MIN		\
+	(VTNET_RSS_TABLE_OFFSET + sizeof(uint16_t) + \
+	    VTNET_RSS_TRAILER_PREFIX_SIZE)
+#define	VTNET_RSS_COMMAND_WIRE_MAX	\
+	(VTNET_RSS_TABLE_OFFSET + VTNET_RSS_TABLE_SIZE * sizeof(uint16_t) + \
+	    VTNET_RSS_TRAILER_PREFIX_SIZE + VTNET_RSS_KEY_SIZE)
+/*
+ * Linux uses sizeof(struct virtio_net_rss_config_trailer) for both RSS and
+ * hash configuration.  The flexible-array trailer has one byte of trailing
+ * C-structure padding, so accept that byte only when it is zero.
+ */
+#define	VTNET_RSS_COMMAND_MAX		(VTNET_RSS_COMMAND_WIRE_MAX + 1)
+#define	VTNET_HASH_RESERVED_OFFSET	\
+	(VTNET_RSS_HASH_TYPES_OFFSET + sizeof(uint32_t))
+#define	VTNET_HASH_RESERVED_SIZE		8
+#define	VTNET_HASH_KEY_LENGTH_OFFSET	\
+	(VTNET_HASH_RESERVED_OFFSET + VTNET_HASH_RESERVED_SIZE)
+#define	VTNET_HASH_KEY_OFFSET		\
+	(VTNET_HASH_KEY_LENGTH_OFFSET + sizeof(uint8_t))
+#define	VTNET_HASH_COMMAND_MIN		VTNET_HASH_KEY_OFFSET
+#define	VTNET_HASH_COMMAND_WIRE_MAX	\
+	(VTNET_HASH_KEY_OFFSET + VTNET_RSS_KEY_SIZE)
+#define	VTNET_HASH_COMMAND_MAX		(VTNET_HASH_COMMAND_WIRE_MAX + 1)
 
 #define	VTNET_HASH_REPORT_NONE		0
 #define	VTNET_HASH_REPORT_IPV4		1
@@ -151,6 +196,8 @@ struct virtio_net_config {
 #define	VTNET_HASH_REPORT_IPV6		4
 #define	VTNET_HASH_REPORT_TCPV6		5
 #define	VTNET_HASH_REPORT_UDPV6		6
+
+#define	VTNET_FLOW_HASH_PREFIX_SIZE	128
 
 struct virtio_net_hash_report {
 	uint32_t hash_value;
@@ -387,7 +434,7 @@ pci_vtnet_flow_hash(const uint8_t *frame, size_t len)
 static uint32_t
 pci_vtnet_iov_flow_hash(const struct iovec *iov, int niov, size_t offset)
 {
-	uint8_t frame[128];
+	uint8_t frame[VTNET_FLOW_HASH_PREFIX_SIZE];
 	size_t total, len;
 
 	total = count_iov(iov, niov);
@@ -483,7 +530,6 @@ pci_vtnet_rss_hash(const struct pci_vtnet_softc *sc, const uint8_t *frame,
 		l3off += ETHER_VLAN_ENCAP_LEN;
 	}
 
-	input_len = 0;
 	if (ether_type == ETHERTYPE_IP && len >= l3off + 20 &&
 	    (frame[l3off] >> 4) == 4) {
 		size_t ihl, iplen;
@@ -520,7 +566,6 @@ pci_vtnet_rss_hash(const struct pci_vtnet_softc *sc, const uint8_t *frame,
 			return (false);
 	} else if (ether_type == ETHERTYPE_IPV6 && len >= l3off + 40 &&
 	    (frame[l3off] >> 4) == 6) {
-		unsigned int extensions;
 		size_t iplen;
 
 		iplen = 40 + pci_vtnet_be16(frame + l3off + 4);
@@ -538,7 +583,7 @@ pci_vtnet_rss_hash(const struct pci_vtnet_softc *sc, const uint8_t *frame,
 		 * extension-aware hash types is enabled, the device skips IPv6
 		 * extension headers and applies the basic IPv6 hash rules.
 		 */
-		for (extensions = 0; extensions < 16; extensions++) {
+		for (;;) {
 			size_t extlen;
 
 			if (protocol == IPPROTO_HOPOPTS ||
@@ -567,8 +612,6 @@ pci_vtnet_rss_hash(const struct pci_vtnet_softc *sc, const uint8_t *frame,
 			protocol = frame[l4off];
 			l4off += extlen;
 		}
-		if (extensions == 16)
-			return (false);
 		if (!fragmented && protocol == IPPROTO_TCP &&
 		    (sc->rss_hash_types & VTNET_RSS_HASH_TYPE_TCPV6) != 0 &&
 		    packet_end >= l4off + VTNET_TCP_HEADER_MIN) {
@@ -610,10 +653,13 @@ static int pci_vtnet_qreset(void *, struct vqueue_info *, uint64_t);
 static int pci_vtnet_cfgread(void *, int, int, uint32_t *);
 static int pci_vtnet_cfgwrite(void *, int, int, uint32_t);
 static bool pci_vtnet_apply_features(struct pci_vtnet_softc *, uint64_t);
-static void pci_vtnet_neg_features(void *, uint64_t);
+static int pci_vtnet_neg_features(void *, uint64_t);
+static int pci_vtnet_suspend_device(void *);
+static int pci_vtnet_resume_device(void *);
+static void pci_vtnet_resume_complete(void *);
 #ifdef BHYVE_SNAPSHOT
-static void pci_vtnet_pause(void *);
-static void pci_vtnet_resume(void *);
+static int pci_vtnet_pause(void *);
+static int pci_vtnet_resume(void *);
 static int pci_vtnet_snapshot(void *, struct vm_snapshot_meta *);
 #endif
 
@@ -627,13 +673,36 @@ static struct virtio_consts vtnet_vi_consts = {
 	.vc_apply_features = pci_vtnet_neg_features,
 	.vc_qenable =	pci_vtnet_qenable,
 	.vc_qreset =	pci_vtnet_qreset,
-	.vc_hv_caps =	VTNET_S_HOSTCAPS | VIRTIO_F_RING_RESET,
+	.vc_suspend =	pci_vtnet_suspend_device,
+	.vc_resume_device = pci_vtnet_resume_device,
+	.vc_resume_complete = pci_vtnet_resume_complete,
+	.vc_hv_caps =	VTNET_S_HOSTCAPS | VIRTIO_F_RING_RESET |
+	    VIRTIO_F_SUSPEND,
 #ifdef BHYVE_SNAPSHOT
 	.vc_pause =	pci_vtnet_pause,
 	.vc_resume =	pci_vtnet_resume,
 	.vc_snapshot =	pci_vtnet_snapshot,
 #endif
 };
+
+/*
+ * Wait for either all transmit work, or work on one particular queue, to
+ * leave the lockless backend-send section.  Callers must first prevent the
+ * worker from selecting the queue again (device reset, control pause, queue
+ * reset, or snapshot pause).
+ */
+static void
+pci_vtnet_wait_tx_idle_locked(struct pci_vtnet_softc *sc,
+    const struct vqueue_info *vq)
+{
+	int error;
+
+	while (sc->tx_in_progress &&
+	    (vq == NULL || sc->tx_current_vq == vq)) {
+		error = pthread_cond_wait(&sc->tx_cond, &sc->tx_mtx);
+		assert(error == 0);
+	}
+}
 
 static void
 pci_vtnet_reset(void *vsc)
@@ -661,11 +730,7 @@ pci_vtnet_reset(void *vsc)
 	pthread_mutex_lock(&sc->tx_mtx);
 	sc->tx_features_negotiated = false;
 	sc->resetting = 1;
-	while (sc->tx_in_progress) {
-		pthread_mutex_unlock(&sc->tx_mtx);
-		usleep(10000);
-		pthread_mutex_lock(&sc->tx_mtx);
-	}
+	pci_vtnet_wait_tx_idle_locked(sc, NULL);
 
 	/*
 	 * Now reset rings, MSI-X vectors, and negotiated capabilities.
@@ -786,11 +851,7 @@ pci_vtnet_qreset(void *vsc, struct vqueue_info *vq,
 		 * Other active transmit queues remain available to the worker.
 		 */
 		pthread_mutex_lock(&sc->tx_mtx);
-		while (sc->tx_in_progress && sc->tx_current_vq == vq) {
-			pthread_mutex_unlock(&sc->tx_mtx);
-			usleep(10000);
-			pthread_mutex_lock(&sc->tx_mtx);
-		}
+		pci_vtnet_wait_tx_idle_locked(sc, vq);
 		pthread_mutex_unlock(&sc->tx_mtx);
 		return (0);
 	}
@@ -1084,7 +1145,8 @@ pci_vtnet_frame_within_mtu(const struct pci_vtnet_softc *sc,
 	    !pci_vtnet_iov_read(iov, niov,
 	    backend_header_len + ETHER_ADDR_LEN * 2, type_bytes,
 	    sizeof(type_bytes)))
-		return (frame_len <= (size_t)sc->vsc_config.mtu + header_len);
+		return (frame_len <=
+		    (size_t)le16toh(sc->vsc_config.mtu) + header_len);
 
 	ether_type = (uint16_t)type_bytes[0] << 8 | type_bytes[1];
 	while ((ether_type == ETHERTYPE_VLAN || ether_type == ETHERTYPE_QINQ) &&
@@ -1096,7 +1158,8 @@ pci_vtnet_frame_within_mtu(const struct pci_vtnet_softc *sc,
 			break;
 		ether_type = (uint16_t)type_bytes[0] << 8 | type_bytes[1];
 	}
-	return (frame_len <= (size_t)sc->vsc_config.mtu + header_len);
+	return (frame_len <=
+	    (size_t)le16toh(sc->vsc_config.mtu) + header_len);
 }
 
 struct virtio_mrg_rxbuf_info {
@@ -1187,6 +1250,18 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 
 	if (sc->vsc_be == NULL)
 		return;
+
+	/*
+	 * netbe_rx_disable() prevents new readiness notifications, but one
+	 * already queued by mevent can run after suspend or checkpoint pause
+	 * has completed.  Do not consume a host packet while the device is
+	 * required to leave its observable state unchanged.
+	 */
+	if (sc->vsc_vs.vs_quiescing || sc->vsc_vs.vs_suspended ||
+	    sc->vsc_vs.vs_checkpoint_paused) {
+		netbe_rx_disable(sc->vsc_be);
+		return;
+	}
 
 	/* Features must be negotiated */
 	if (!sc->features_negotiated) {
@@ -1682,6 +1757,7 @@ pci_vtnet_tx_thread(void *param)
 		    !sc->tx_features_negotiated || vq == NULL) {
 			sc->tx_in_progress = 0;
 			sc->tx_current_vq = NULL;
+			pthread_cond_broadcast(&sc->tx_cond);
 			vq = pci_vtnet_tx_arm_locked(sc);
 			if (vq != NULL)
 				break;
@@ -1719,6 +1795,7 @@ pci_vtnet_tx_thread(void *param)
 		pthread_mutex_lock(&sc->tx_mtx);
 		sc->tx_in_progress = 0;
 		sc->tx_current_vq = NULL;
+		pthread_cond_broadcast(&sc->tx_cond);
 	}
 }
 
@@ -1742,11 +1819,7 @@ pci_vtnet_set_queue_state(struct pci_vtnet_softc *sc, uint16_t tx_pairs,
 		 */
 		sc->tx_control_pause = true;
 		pthread_cond_signal(&sc->tx_cond);
-		while (sc->tx_in_progress) {
-			pthread_mutex_unlock(&sc->tx_mtx);
-			usleep(10000);
-			pthread_mutex_lock(&sc->tx_mtx);
-		}
+		pci_vtnet_wait_tx_idle_locked(sc, NULL);
 		pthread_mutex_unlock(&sc->tx_mtx);
 		for (uint16_t i = tx_pairs; i < old_pairs; i++) {
 			uint16_t budget;
@@ -1841,7 +1914,7 @@ pci_vtnet_parse_rss_config(struct pci_vtnet_softc *sc,
     const uint8_t *command, size_t command_size,
     struct pci_vtnet_rss_config *rss)
 {
-	size_t key_offset, table_entries, trailer_offset;
+	size_t command_end, key_offset, table_entries, trailer_offset;
 	uint32_t hash_types;
 	uint16_t value;
 
@@ -1851,22 +1924,24 @@ pci_vtnet_parse_rss_config(struct pci_vtnet_softc *sc,
 	 */
 	if (command_size < VTNET_RSS_COMMAND_MIN)
 		return (false);
-	memcpy(&hash_types, command + 2, sizeof(hash_types));
+	memcpy(&hash_types, command + VTNET_RSS_HASH_TYPES_OFFSET,
+	    sizeof(hash_types));
 	rss->hash_types = le32toh(hash_types);
 	if ((rss->hash_types & ~VTNET_RSS_HASH_TYPES) != 0)
 		return (false);
-	memcpy(&value, command + 6, sizeof(value));
+	memcpy(&value, command + VTNET_RSS_TABLE_MASK_OFFSET, sizeof(value));
 	rss->indirection_mask = le16toh(value);
 	table_entries = (size_t)rss->indirection_mask + 1;
 	if (table_entries > VTNET_RSS_TABLE_SIZE ||
 	    !powerof2(table_entries))
 		return (false);
-	memcpy(&value, command + 8, sizeof(value));
+	memcpy(&value, command + VTNET_RSS_UNCLASSIFIED_OFFSET, sizeof(value));
 	rss->unclassified_queue = le16toh(value);
 	if (rss->unclassified_queue >= sc->vsc_max_pairs)
 		return (false);
 
-	trailer_offset = 10 + table_entries * sizeof(uint16_t);
+	trailer_offset =
+	    VTNET_RSS_TABLE_OFFSET + table_entries * sizeof(uint16_t);
 	key_offset = trailer_offset + sizeof(uint16_t) + sizeof(uint8_t);
 	if (key_offset > command_size)
 		return (false);
@@ -1875,15 +1950,19 @@ pci_vtnet_parse_rss_config(struct pci_vtnet_softc *sc,
 	if (rss->max_tx_vq < 1 || rss->max_tx_vq > sc->vsc_max_pairs)
 		return (false);
 	rss->key_length = command[trailer_offset + sizeof(uint16_t)];
-	if (rss->key_length > VTNET_RSS_KEY_SIZE ||
-	    key_offset + rss->key_length != command_size)
+	if (rss->key_length > VTNET_RSS_KEY_SIZE)
+		return (false);
+	command_end = key_offset + rss->key_length;
+	if (command_size != command_end &&
+	    (command_size != command_end + 1 || command[command_end] != 0))
 		return (false);
 
 	memset(rss->indirection_table, 0,
 	    sizeof(rss->indirection_table));
 	rss->enabled_mask = 1U << rss->unclassified_queue;
 	for (size_t i = 0; i < table_entries; i++) {
-		memcpy(&value, command + 10 + i * sizeof(value),
+		memcpy(&value, command + VTNET_RSS_TABLE_OFFSET +
+		    i * sizeof(value),
 		    sizeof(value));
 		value = le16toh(value);
 		if (value >= sc->vsc_max_pairs)
@@ -1900,25 +1979,31 @@ static bool
 pci_vtnet_parse_hash_config(const uint8_t *command, size_t command_size,
     struct pci_vtnet_hash_config *config)
 {
+	size_t command_end;
 	uint32_t hash_types;
 
 	if (command_size < VTNET_HASH_COMMAND_MIN ||
 	    command_size > VTNET_HASH_COMMAND_MAX)
 		return (false);
-	memcpy(&hash_types, command + 2, sizeof(hash_types));
+	memcpy(&hash_types, command + VTNET_RSS_HASH_TYPES_OFFSET,
+	    sizeof(hash_types));
 	config->hash_types = le32toh(hash_types);
 	if ((config->hash_types & ~VTNET_RSS_HASH_TYPES) != 0)
 		return (false);
-	for (size_t i = 6; i < 14; i++) {
+	for (size_t i = VTNET_HASH_RESERVED_OFFSET;
+	    i < VTNET_HASH_KEY_LENGTH_OFFSET; i++) {
 		if (command[i] != 0)
 			return (false);
 	}
-	config->key_length = command[14];
-	if (config->key_length > VTNET_RSS_KEY_SIZE ||
-	    VTNET_HASH_COMMAND_MIN + config->key_length != command_size)
+	config->key_length = command[VTNET_HASH_KEY_LENGTH_OFFSET];
+	if (config->key_length > VTNET_RSS_KEY_SIZE)
+		return (false);
+	command_end = VTNET_HASH_COMMAND_MIN + config->key_length;
+	if (command_size != command_end &&
+	    (command_size != command_end + 1 || command[command_end] != 0))
 		return (false);
 	memset(config->key, 0, sizeof(config->key));
-	memcpy(config->key, command + VTNET_HASH_COMMAND_MIN,
+	memcpy(config->key, command + VTNET_HASH_KEY_OFFSET,
 	    config->key_length);
 	return (true);
 }
@@ -1942,58 +2027,110 @@ pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
 	    vq != &sc->vsc_queues[vq->vq_num] ||
 	    (sc->vsc_features & VIRTIO_NET_F_CTRL_VQ) == 0)
 		return;
-	budget = vq->vq_qsize;
-	while (budget-- != 0 && vq_has_descs(vq)) {
-		n = vq_getchain(vq, iov, nitems(iov), &req);
-		if (n <= 0)
-			break;
-		if (n > (int)nitems(iov) || !req.ordered ||
-		    req.readable == 0 || req.writable == 0 ||
-		    req.readable + req.writable != n) {
-			DPRINTF(("vtnet: invalid control descriptor chain"));
-			vq_relchain(vq, req.idx, 0);
-			continue;
-		}
-		insize = count_iov(iov, req.readable);
-		outsize = count_iov(&iov[req.readable], req.writable);
-		ack = VTNET_CTRL_ERR;
-		command_valid = insize <= sizeof(command) && insize >= 2 &&
-		    outsize >= sizeof(ack) &&
-		    pci_vtnet_iov_read(iov, req.readable, 0, command, insize);
-		if (command_valid && command[0] == VTNET_CTRL_MQ &&
-		    command[1] == VTNET_CTRL_MQ_VQ_PAIRS_SET &&
-		    insize == 4 &&
-		    (sc->vsc_features & VIRTIO_NET_F_MQ) != 0) {
-			memcpy(&pairs, &command[2], sizeof(pairs));
-			pairs = le16toh(pairs);
-			if (pairs >= 1 && pairs <= sc->vsc_max_pairs) {
-				pci_vtnet_set_active_pairs(sc, pairs);
+	DPRINTF(("vtnet: control notify q=%u avail=%u last-avail=%u "
+	    "next-used=%u", vq->vq_num,
+	    atomic_load_acq_16(&vq->vq_avail->idx),
+	    vq->vq_last_avail, vq->vq_next_used));
+	for (;;) {
+		budget = vq->vq_qsize;
+		while (budget-- != 0 && vq_has_descs(vq)) {
+			n = vq_getchain(vq, iov, nitems(iov), &req);
+			DPRINTF(("vtnet: control getchain n=%d last-avail=%u",
+			    n, vq->vq_last_avail));
+			if (n <= 0)
+				break;
+			if (n > (int)nitems(iov) || !req.ordered ||
+			    req.readable == 0 || req.writable == 0 ||
+			    req.readable + req.writable != n) {
+				DPRINTF(("vtnet: invalid control descriptor chain"));
+				vq_relchain(vq, req.idx, 0);
+				continue;
+			}
+			insize = count_iov(iov, req.readable);
+			outsize = count_iov(&iov[req.readable], req.writable);
+			ack = VTNET_CTRL_ERR;
+			command_valid = insize <= sizeof(command) &&
+			    insize >= VTNET_CTRL_HEADER_SIZE &&
+			    outsize >= sizeof(ack) &&
+			    pci_vtnet_iov_read(iov, req.readable, 0, command,
+			    insize);
+			DPRINTF(("vtnet: control chain idx=%u n=%d readable=%u "
+			    "writable=%u input=%zu output=%zu valid=%u class=%u "
+			    "command=%u", req.idx, n, req.readable, req.writable,
+			    insize, outsize, command_valid,
+			    command_valid ?
+			    command[VTNET_CTRL_CLASS_OFFSET] : UINT8_MAX,
+			    command_valid ?
+			    command[VTNET_CTRL_COMMAND_OFFSET] : UINT8_MAX));
+			if (command_valid &&
+			    command[VTNET_CTRL_CLASS_OFFSET] == VTNET_CTRL_MQ &&
+			    command[VTNET_CTRL_COMMAND_OFFSET] ==
+			    VTNET_CTRL_MQ_VQ_PAIRS_SET &&
+			    insize == VTNET_CTRL_MQ_PAIRS_SIZE &&
+			    (sc->vsc_features & VIRTIO_NET_F_MQ) != 0) {
+				memcpy(&pairs,
+				    &command[VTNET_CTRL_MQ_PAIRS_OFFSET],
+				    sizeof(pairs));
+				pairs = le16toh(pairs);
+				if (pairs >= 1 && pairs <= sc->vsc_max_pairs) {
+					pci_vtnet_set_active_pairs(sc, pairs);
+					ack = VTNET_CTRL_OK;
+				}
+			} else if (command_valid &&
+			    command[VTNET_CTRL_CLASS_OFFSET] == VTNET_CTRL_MQ &&
+			    command[VTNET_CTRL_COMMAND_OFFSET] ==
+			    VTNET_CTRL_MQ_RSS_CONFIG &&
+			    (sc->vsc_features & VIRTIO_NET_F_RSS) != 0 &&
+			    pci_vtnet_parse_rss_config(sc, command, insize,
+			    &rss)) {
+				DPRINTF(("vtnet: RSS control apply bytes=%zu "
+				    "pairs=%u mask=%#x key=%u", insize,
+				    rss.max_tx_vq, rss.enabled_mask,
+				    rss.key_length));
+				pci_vtnet_set_queue_state(sc, rss.max_tx_vq,
+				    rss.enabled_mask, 0, &rss);
+				ack = VTNET_CTRL_OK;
+				DPRINTF(("vtnet: RSS control applied"));
+			} else if (command_valid &&
+			    command[VTNET_CTRL_CLASS_OFFSET] == VTNET_CTRL_MQ &&
+			    command[VTNET_CTRL_COMMAND_OFFSET] ==
+			    VTNET_CTRL_MQ_HASH_CONFIG &&
+			    (sc->vsc_features &
+			    VIRTIO_NET_F_HASH_REPORT) != 0 &&
+			    (sc->vsc_features & VIRTIO_NET_F_RSS) == 0 &&
+			    pci_vtnet_parse_hash_config(command, insize,
+			    &hash)) {
+				pci_vtnet_set_hash_config(sc, &hash);
 				ack = VTNET_CTRL_OK;
 			}
-		} else if (command_valid && command[0] == VTNET_CTRL_MQ &&
-		    command[1] == VTNET_CTRL_MQ_RSS_CONFIG &&
-		    (sc->vsc_features & VIRTIO_NET_F_RSS) != 0 &&
-		    pci_vtnet_parse_rss_config(sc, command, insize, &rss)) {
-			pci_vtnet_set_queue_state(sc, rss.max_tx_vq,
-			    rss.enabled_mask, 0, &rss);
-			ack = VTNET_CTRL_OK;
-		} else if (command_valid && command[0] == VTNET_CTRL_MQ &&
-		    command[1] == VTNET_CTRL_MQ_HASH_CONFIG &&
-		    (sc->vsc_features & VIRTIO_NET_F_HASH_REPORT) != 0 &&
-		    (sc->vsc_features & VIRTIO_NET_F_RSS) == 0 &&
-		    pci_vtnet_parse_hash_config(command, insize, &hash)) {
-			pci_vtnet_set_hash_config(sc, &hash);
-			ack = VTNET_CTRL_OK;
+			if (outsize < sizeof(ack) ||
+			    !pci_vtnet_iov_write(&iov[req.readable],
+			    req.writable, 0, &ack, sizeof(ack))) {
+				vq_relchain(vq, req.idx, 0);
+				continue;
+			}
+			vq_relchain(vq, req.idx, sizeof(ack));
+			DPRINTF(("vtnet: control complete idx=%u ack=%u used=%u "
+			    "published=%u", req.idx, ack, vq->vq_next_used,
+			    atomic_load_acq_16(&vq->vq_used->idx)));
 		}
-		if (outsize < sizeof(ack) ||
-		    !pci_vtnet_iov_write(&iov[req.readable], req.writable,
-		    0, &ack, sizeof(ack))) {
-			vq_relchain(vq, req.idx, 0);
-			continue;
+
+		/*
+		 * Linux sends control commands synchronously.  With EVENT_IDX,
+		 * leaving avail_event at its reset value suppresses the kick for
+		 * the next command and leaves the driver spinning forever.  Ask
+		 * for the next available entry, then recheck after the full
+		 * barrier in vq_kick_enable() so a command published across this
+		 * transition cannot be stranded.
+		 */
+		vq_kick_enable(vq);
+		if (!vq_has_descs(vq)) {
+			vq_endchains(vq, 1);
+			break;
 		}
-		vq_relchain(vq, req.idx, sizeof(ack));
+		vq_kick_disable(vq);
+		vq_endchains(vq, 0);
 	}
-	vq_endchains(vq, !vq_has_descs(vq));
 }
 
 static bool
@@ -2001,6 +2138,29 @@ pci_vtnet_mtu_valid(unsigned long mtu)
 {
 
 	return (mtu >= VTNET_MIN_MTU && mtu <= VTNET_MAX_MTU);
+}
+
+/*
+ * The snapshot stream contains the complete guest-visible configuration, but
+ * most of it describes resources fixed when the destination device was
+ * created.  Never let an image resize the queue topology or RSS limits, change
+ * the destination backend's link/MTU properties, or rewrite a modern
+ * read-only MAC address.  A transitional guest may have written the legacy
+ * MAC bytes before the snapshot, so those six bytes remain migratable there.
+ */
+static bool __unused
+pci_vtnet_restore_config_valid(const struct pci_vtnet_softc *sc,
+    const struct virtio_net_config *saved,
+    const struct virtio_net_config *destination)
+{
+
+	if (memcmp(&saved->status, &destination->status,
+	    sizeof(*saved) - offsetof(struct virtio_net_config, status)) != 0)
+		return (false);
+	if (sc->vsc_vs.vs_transport == VIRTIO_PCI_TRANSPORT_MODERN &&
+	    memcmp(saved->mac, destination->mac, sizeof(saved->mac)) != 0)
+		return (false);
+	return (true);
 }
 
 static int
@@ -2037,6 +2197,12 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (pci_vtnet_parse_queues(value, &pairs, &errstr) != 0) {
 		EPRINTLN("virtio-net queues is %s: %s", errstr, value);
 		return (EINVAL);
+	}
+	value = getenv("BHYVE_VIRTIO_DEBUG");
+	if (value != NULL) {
+		pci_vtnet_debug = atoi(value);
+		if (pci_vtnet_debug < 1)
+			pci_vtnet_debug = 1;
 	}
 
 	/*
@@ -2115,7 +2281,7 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 		}
 		sc->vsc_consts.vc_hv_caps |= VIRTIO_NET_F_MTU;
 	}
-	sc->vsc_config.mtu = mtu;
+	sc->vsc_config.mtu = htole16(mtu);
 
 	/* Permit interfaces without a configured backend. */
 	if (get_config_value_node(nvl, "backend") != NULL) {
@@ -2138,7 +2304,7 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 		sc->vsc_consts.vc_hv_caps |= backend_features;
 	}
 
-	sc->vsc_config.max_virtqueue_pairs = pairs;
+	sc->vsc_config.max_virtqueue_pairs = htole16(pairs);
 	sc->vsc_config.speed = htole32(UINT32_MAX);
 	sc->vsc_config.duplex = UINT8_MAX;
 	sc->vsc_config.rss_max_key_size = VTNET_RSS_KEY_SIZE;
@@ -2148,7 +2314,7 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	    htole32(VTNET_RSS_HASH_TYPES);
 
 	/* A configured backend provides carrier; an unattached NIC is down. */
-	sc->vsc_config.status = sc->vsc_be != NULL ? 1 : 0;
+	sc->vsc_config.status = htole16(sc->vsc_be != NULL ? 1 : 0);
 
 	vi_softc_linkup(&sc->vsc_vs, &sc->vsc_consts, sc, pi, sc->vsc_queues);
 	sc->vsc_vs.vs_mtx = &sc->vsc_mtx;
@@ -2278,19 +2444,24 @@ pci_vtnet_apply_features(struct pci_vtnet_softc *sc,
 	size_t backend_vhdrlen;
 
 	/*
-	 * VirtIO 1.4 section 5.1.3 makes VIRTIO_NET_F_CTRL_VQ a
-	 * prerequisite for VIRTIO_NET_F_MQ, VIRTIO_NET_F_HASH_REPORT, and
-	 * VIRTIO_NET_F_RSS.  Treat a driver which selects any of them without
-	 * its control queue as a failed negotiation instead of exposing
-	 * functionality which can never be configured.
+	 * VirtIO 1.4 section 5.1.3 requires CTRL_VQ for MQ and RSS, and says
+	 * drivers SHOULD NOT negotiate HASH_REPORT without CTRL_VQ.  Linux
+	 * rejects all three combinations during feature validation.  Follow
+	 * that stricter interoperable subset: without the control queue there
+	 * is no way to issue HASH_CONFIG, so accepting HASH_REPORT would leave
+	 * the extended receive header permanently reporting no hash.
 	 */
 	if ((negotiated_features & (VIRTIO_NET_F_MQ |
-	    VIRTIO_NET_F_HASH_REPORT | VIRTIO_NET_F_RSS)) != 0 &&
-	    ((negotiated_features & VIRTIO_NET_F_CTRL_VQ) == 0 ||
-	    sc->vsc_max_pairs <= 1)) {
+	    VIRTIO_NET_F_RSS | VIRTIO_NET_F_HASH_REPORT)) != 0 &&
+	    (negotiated_features & VIRTIO_NET_F_CTRL_VQ) == 0) {
 		sc->features_negotiated = false;
 		sc->tx_features_negotiated = false;
-		vi_set_needs_reset(&sc->vsc_vs);
+		return (false);
+	}
+	if ((negotiated_features & (VIRTIO_NET_F_MQ |
+	    VIRTIO_NET_F_RSS)) != 0 && sc->vsc_max_pairs <= 1) {
+		sc->features_negotiated = false;
+		sc->tx_features_negotiated = false;
 		return (false);
 	}
 
@@ -2359,20 +2530,95 @@ pci_vtnet_apply_features(struct pci_vtnet_softc *sc,
 	return (true);
 }
 
-static void
+static int
 pci_vtnet_neg_features(void *vsc, uint64_t negotiated_features)
 {
 	struct pci_vtnet_softc *sc = vsc;
+	bool applied;
 
 	pthread_mutex_lock(&sc->rx_mtx);
 	pthread_mutex_lock(&sc->tx_mtx);
-	(void)pci_vtnet_apply_features(sc, negotiated_features);
+	applied = pci_vtnet_apply_features(sc, negotiated_features);
 	pthread_mutex_unlock(&sc->tx_mtx);
 	pthread_mutex_unlock(&sc->rx_mtx);
+	return (applied ? 0 : EINVAL);
+}
+
+/*
+ * Guest-visible VirtIO suspend must not retain pthread mutex ownership:
+ * resume may be requested by a different vCPU thread.  The common VirtIO
+ * layer has already fenced new queue ownership with vs_quiescing.  Taking
+ * RX and TX locks here waits for current callbacks, and tx_control_pause
+ * prevents the dedicated TX worker from selecting more work.
+ */
+static int
+pci_vtnet_suspend_device(void *vsc)
+{
+	struct pci_vtnet_softc *sc;
+
+	sc = vsc;
+	pthread_mutex_lock(&sc->rx_mtx);
+	if (sc->vsc_be != NULL)
+		netbe_rx_disable(sc->vsc_be);
+	pthread_mutex_lock(&sc->tx_mtx);
+	sc->tx_control_pause = true;
+	pthread_cond_signal(&sc->tx_cond);
+	pci_vtnet_wait_tx_idle_locked(sc, NULL);
+	pthread_mutex_unlock(&sc->tx_mtx);
+	pthread_mutex_unlock(&sc->rx_mtx);
+	return (0);
+}
+
+/*
+ * Resume callbacks run while the common lifecycle fence is still held, so a
+ * normal vq_has_descs() check deliberately reports no work.  Once that fence
+ * is released, inspect only already-validated split-ring state and restart
+ * the host readiness source if a live receive queue has buffers waiting.
+ */
+static void
+pci_vtnet_resume_complete(void *vsc)
+{
+	struct pci_vtnet_softc *sc;
+	struct vqueue_info *vq;
+
+	sc = vsc;
+	pthread_mutex_lock(&sc->rx_mtx);
+	if (sc->vsc_be != NULL && sc->features_negotiated) {
+		for (uint16_t i = 0; i < sc->vsc_max_pairs; i++) {
+			if (!pci_vtnet_rxq_enabled(sc, i))
+				continue;
+			vq = &sc->vsc_queues[pci_vtnet_rxq_index(i)];
+			if (vq_ring_ready(vq) && vq_has_descs(vq)) {
+				netbe_rx_enable(sc->vsc_be);
+				break;
+			}
+		}
+	}
+	pthread_mutex_unlock(&sc->rx_mtx);
+
+	pthread_mutex_lock(&sc->tx_mtx);
+	if (!sc->tx_control_pause && sc->tx_features_negotiated &&
+	    pci_vtnet_tx_find_work_locked(sc) != NULL)
+		pthread_cond_signal(&sc->tx_cond);
+	pthread_mutex_unlock(&sc->tx_mtx);
+}
+
+static int
+pci_vtnet_resume_device(void *vsc)
+{
+	struct pci_vtnet_softc *sc;
+
+	sc = vsc;
+	pthread_mutex_lock(&sc->rx_mtx);
+	pthread_mutex_lock(&sc->tx_mtx);
+	sc->tx_control_pause = false;
+	pthread_mutex_unlock(&sc->tx_mtx);
+	pthread_mutex_unlock(&sc->rx_mtx);
+	return (0);
 }
 
 #ifdef BHYVE_SNAPSHOT
-static void
+static int
 pci_vtnet_pause(void *vsc)
 {
 	struct pci_vtnet_softc *sc = vsc;
@@ -2381,29 +2627,35 @@ pci_vtnet_pause(void *vsc)
 
 	/* Acquire the RX lock to block RX processing. */
 	pthread_mutex_lock(&sc->rx_mtx);
+	if (sc->vsc_be != NULL)
+		netbe_rx_disable(sc->vsc_be);
 
 	/* Wait for the transmit thread to finish its processing. */
 	pthread_mutex_lock(&sc->tx_mtx);
-	while (sc->tx_in_progress) {
-		pthread_mutex_unlock(&sc->tx_mtx);
-		usleep(10000);
-		pthread_mutex_lock(&sc->tx_mtx);
-	}
+	sc->tx_control_pause = true;
+	pthread_cond_signal(&sc->tx_cond);
+	pci_vtnet_wait_tx_idle_locked(sc, NULL);
+	return (0);
 }
 
-static void
+static int
 pci_vtnet_resume(void *vsc)
 {
 	struct pci_vtnet_softc *sc = vsc;
 
 	DPRINTF(("vtnet: device resume requested !\n"));
 
-	if (sc->tx_features_negotiated &&
-	    pci_vtnet_tx_find_work_locked(sc) != NULL)
-		pthread_cond_signal(&sc->tx_cond);
+	/*
+	 * Checkpoint ownership is independent of guest-visible suspend.  A
+	 * checkpoint taken while the guest has suspended this device still
+	 * acquires these locks to serialize staged host state, but releasing the
+	 * checkpoint must not restart TX until the guest explicitly resumes.
+	 */
+	sc->tx_control_pause = sc->vsc_vs.vs_suspended;
 	pthread_mutex_unlock(&sc->tx_mtx);
 	/* The RX lock should have been acquired in vtnet_pause. */
 	pthread_mutex_unlock(&sc->rx_mtx);
+	return (0);
 }
 
 static int
@@ -2413,6 +2665,9 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	struct iovec frame_iov;
 	struct virtio_net_rxhdr hdr;
 	struct pci_vtnet_softc *sc = vsc;
+	struct virtio_net_config config, destination_config;
+	uint8_t features_negotiated, hash_configured, rss_enabled;
+	int rx_merge;
 
 	DPRINTF(("vtnet: device snapshot requested !\n"));
 
@@ -2423,17 +2678,35 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	 */
 
 	SNAPSHOT_VAR_OR_LEAVE(sc->vsc_features, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->features_negotiated, meta, ret, done);
+	features_negotiated = sc->features_negotiated;
+	SNAPSHOT_VAR_OR_LEAVE(features_negotiated, meta, ret, done);
 
-	SNAPSHOT_VAR_OR_LEAVE(sc->vsc_config, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->rx_merge, meta, ret, done);
+	/*
+	 * Deserialize into a temporary object.  Validation must precede
+	 * publication: a rejected image must not leave a partially replaced
+	 * device configuration behind.
+	 */
+	destination_config = sc->vsc_config;
+	config = destination_config;
+	SNAPSHOT_VAR_OR_LEAVE(config, meta, ret, done);
+	if (meta->op == VM_SNAPSHOT_RESTORE &&
+	    !pci_vtnet_restore_config_valid(sc, &config,
+	    &destination_config)) {
+		ret = EINVAL;
+		goto done;
+	}
+	sc->vsc_config = config;
+	rx_merge = sc->rx_merge;
+	SNAPSHOT_VAR_OR_LEAVE(rx_merge, meta, ret, done);
 
 	SNAPSHOT_VAR_OR_LEAVE(sc->vhdrlen, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->be_vhdrlen, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->rx_active_pairs, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->rx_enabled_mask, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->rss_enabled, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->hash_configured, meta, ret, done);
+	rss_enabled = sc->rss_enabled;
+	hash_configured = sc->hash_configured;
+	SNAPSHOT_VAR_OR_LEAVE(rss_enabled, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(hash_configured, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->rss_hash_types, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->rss_indirection_mask, meta, ret, done);
 	SNAPSHOT_VAR_OR_LEAVE(sc->rss_unclassified_queue, meta, ret, done);
@@ -2461,8 +2734,24 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	if (meta->op == VM_SNAPSHOT_RESTORE) {
 		uint16_t valid_mask;
 
+		if (features_negotiated > 1 || rx_merge < 0 || rx_merge > 1 ||
+		    rss_enabled > 1 || hash_configured > 1) {
+			ret = EINVAL;
+			goto done;
+		}
+		sc->features_negotiated = features_negotiated;
+		sc->rx_merge = rx_merge;
+		sc->rss_enabled = rss_enabled;
+		sc->hash_configured = hash_configured;
 		valid_mask = (1U << sc->vsc_max_pairs) - 1;
-		if (sc->rx_enabled_mask == 0 ||
+		/*
+		 * vsc_features is a device-private cache of the generic transport
+		 * value.  Accepting two different saved values would make queue and
+		 * header interpretation disagree with the features visible to the
+		 * driver after restore.
+		 */
+		if (sc->vsc_features != sc->vsc_vs.vs_negotiated_caps ||
+		    sc->rx_enabled_mask == 0 ||
 		    (sc->rx_enabled_mask & ~valid_mask) != 0 ||
 		    (sc->hash_configured &&
 		    (!sc->features_negotiated ||
@@ -2580,8 +2869,6 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 				goto done;
 			}
 		}
-		if (sc->vsc_be != NULL)
-			netbe_rx_enable(sc->vsc_be);
 	}
 
 done:

@@ -29,6 +29,8 @@
 #ifndef	_BHYVE_VIRTIO_H_
 #define	_BHYVE_VIRTIO_H_
 
+#include <stdatomic.h>
+
 #include <machine/atomic.h>
 
 #include <dev/virtio/virtio.h>
@@ -249,9 +251,36 @@ struct virtio_softc {
 	uint64_t vs_negotiated_caps;	/* negotiated capabilities */
 	struct vqueue_info *vs_queues;	/* one per vc_nvq */
 	int	vs_curq;		/* current queue */
-	uint8_t	vs_status;		/* value from last status write */
-	bool	vs_resetting;		/* device reset callback is still active */
-	bool	vs_reset_failed;	/* report reset callback failure on reinit */
+	/*
+	 * Queue workers inspect status and may report a fatal ring/backend error
+	 * without vs_mtx.  They cannot acquire vs_mtx in that path because a
+	 * device reset holds it while waiting for those workers to drain.
+	 * Keep these small cross-thread state fields atomic; device callbacks
+	 * still use vs_mtx for their larger state transitions.
+	 */
+	_Atomic uint8_t vs_status;	/* value from last status write */
+	_Atomic bool vs_resetting;	/* device reset callback is still active */
+	_Atomic bool vs_reset_failed;	/* report reset callback failure on reinit */
+	/*
+	 * Guest-visible suspend and bhyve checkpoint pause use the same queue
+	 * ownership gate.  Snapshot pause does not alter device status.
+	 */
+	/*
+	 * More than one lifecycle transition can fence queues at the same
+	 * time.  In particular, a host checkpoint can overlap the tail of a
+	 * guest-visible suspend or resume.  A reference count prevents either
+	 * owner from reopening queue access while the other still drains.
+	 */
+	_Atomic unsigned int vs_quiescing;
+	_Atomic bool vs_suspended;
+	_Atomic bool vs_checkpoint_paused;
+	_Atomic bool vs_config_deferred;
+	/*
+	 * Even outside reset, odd while a reset callback can drain workers and
+	 * temporarily drop device locks.  vi_set_needs_reset() uses the epoch
+	 * to detect a reset that crossed its lockless status update.
+	 */
+	_Atomic uint64_t vs_reset_epoch;
 	uint8_t	vs_isr;			/* PCI ISR status flags */
 	uint16_t vs_msix_cfg_idx;	/* MSI-X vector for config event */
 	enum virtio_pci_transport vs_transport;
@@ -284,15 +313,23 @@ struct virtio_consts {
 					/* called to read config regs */
 	int	(*vc_cfgwrite)(void *, int, int, uint32_t);
 					/* called to write config regs */
-	void    (*vc_apply_features)(void *, uint64_t);
+	int     (*vc_apply_features)(void *, uint64_t);
 				/* called to apply negotiated features */
 	int	(*vc_qenable)(void *, struct vqueue_info *);
 				/* called with vs_mtx held after queue enable */
 	int	(*vc_qreset)(void *, struct vqueue_info *, uint64_t);
 				/* with vs_mtx held; 0 or async EINPROGRESS */
+	int	(*vc_suspend)(void *);
+				/* quiesce/drain for guest suspend */
+	int	(*vc_resume_device)(void *);
+				/* restart after guest suspend */
+	void	(*vc_resume_complete)(void *);
+				/* lifecycle gates are open; restart queue sources */
+	int	(*vc_restore_suspended)(void *);
+				/* restore guest-suspend ownership while paused */
 	uint64_t vc_hv_caps;		/* hypervisor-provided capabilities */
-	void	(*vc_pause)(void *);	/* called to pause device activity */
-	void	(*vc_resume)(void *);	/* called to resume device activity */
+	int	(*vc_pause)(void *);	/* pause; return errno on failure */
+	int	(*vc_resume)(void *);	/* resume; return errno on failure */
 	int	(*vc_snapshot)(void *, struct vm_snapshot_meta *);
 				/* called to save / restore device state */
 };
@@ -391,6 +428,8 @@ vq_ring_ready(struct vqueue_info *vq)
 
 	return (vq_is_allocated(vq) &&
 	    !vq_is_resetting(vq) &&
+	    !vq->vq_vs->vs_quiescing && !vq->vq_vs->vs_suspended &&
+	    !vq->vq_vs->vs_checkpoint_paused &&
 	    (vq->vq_vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0);
 }
 
@@ -402,7 +441,14 @@ static inline int
 vq_has_descs(struct vqueue_info *vq)
 {
 
-	return (vq_ring_ready(vq) && vq->vq_last_avail !=
+	/*
+	 * A fatal ring error sets NEEDS_RESET.  A callback may already be
+	 * draining a batch when that happens, so blocking only later queue
+	 * notifications is insufficient: stop the current drain before it can
+	 * consume a subsequent available entry from the poisoned ring.
+	 */
+	return ((vq->vq_vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) == 0 &&
+	    vq_ring_ready(vq) && vq->vq_last_avail !=
 	    atomic_load_acq_16(&vq->vq_avail->idx));
 }
 
@@ -414,6 +460,8 @@ static inline void
 vi_interrupt(struct virtio_softc *vs, uint8_t isr, uint16_t msix_idx)
 {
 
+	if (vs->vs_suspended || vs->vs_checkpoint_paused)
+		return;
 	if (pci_msix_enabled(vs->vs_pi)) {
 		/*
 		 * VirtIO 1.4 section 4.1.4.5.1 requires the device
@@ -498,12 +546,15 @@ vq_kick_disable(struct vqueue_info *vq)
 	if ((vq->vq_vs->vs_negotiated_caps &
 	    VIRTIO_RING_F_EVENT_IDX) != 0) {
 		/*
-		 * Defer the requested notification for one full ring while the
-		 * device is actively polling or has another wakeup source.
+		 * Suppress notifications while the device is actively polling or
+		 * has another wakeup source.  Placing the event immediately behind
+		 * the last consumed index makes vring_need_event() false for every
+		 * number of outstanding buffers permitted by this ring.  Advancing
+		 * by only qsize - 1 would request a needless kick once per ring
+		 * revolution on a continuously busy queue.
 		 */
 		vq->vq_used->flags = 0;
-		VQ_AVAIL_EVENT_IDX(vq) =
-		    vq->vq_last_avail + vq->vq_qsize - 1;
+		VQ_AVAIL_EVENT_IDX(vq) = vq->vq_last_avail - 1;
 	} else
 		vq->vq_used->flags = VRING_USED_F_NO_NOTIFY;
 }
@@ -539,6 +590,9 @@ void	vi_pci_modern_queue_reset_complete(struct vqueue_info *, uint64_t,
 void	vi_pci_modern_config_changed(struct virtio_softc *);
 /* Notify a config change using the active transport; caller holds vs_mtx. */
 void	vi_pci_config_changed(struct virtio_softc *);
+int	vi_pci_lifecycle_noop(void *);
+void	vi_pci_quiesce_enter(struct virtio_softc *);
+void	vi_pci_quiesce_exit(struct virtio_softc *);
 uint64_t vi_pci_modern_read(struct pci_devinst *, int, uint64_t, int);
 void	vi_pci_modern_write(struct pci_devinst *, int, uint64_t, int,
 	    uint64_t);
@@ -569,5 +623,7 @@ void	vi_pci_write(struct pci_devinst *pi, int baridx, uint64_t offset,
 int	vi_pci_snapshot(struct vm_snapshot_meta *meta);
 int	vi_pci_pause(struct pci_devinst *pi);
 int	vi_pci_resume(struct pci_devinst *pi);
+int	vi_pci_modern_snapshot_transport(struct virtio_softc *,
+	    struct vm_snapshot_meta *);
 #endif
 #endif	/* _BHYVE_VIRTIO_H_ */

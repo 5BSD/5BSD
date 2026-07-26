@@ -255,7 +255,7 @@ static int
 send_message(const char *vmname, nvlist_t *nvl)
 {
 	struct sockaddr_un addr;
-	int err = 0, socket_fd;
+	int err = 0, pathlen, socket_fd;
 
 	socket_fd = socket(PF_UNIX, SOCK_STREAM, 0);
 	if (socket_fd < 0) {
@@ -265,8 +265,13 @@ send_message(const char *vmname, nvlist_t *nvl)
 	}
 
 	memset(&addr, 0, sizeof(struct sockaddr_un));
-	snprintf(addr.sun_path, sizeof(addr.sun_path), "%s%s",
+	pathlen = snprintf(addr.sun_path, sizeof(addr.sun_path), "%s%s",
 	    BHYVE_RUN_DIR, vmname);
+	if (pathlen < 0 || (size_t)pathlen >= sizeof(addr.sun_path)) {
+		fprintf(stderr, "bhyve checkpoint socket path is too long\n");
+		err = ENAMETOOLONG;
+		goto done;
+	}
 	addr.sun_family = AF_UNIX;
 	addr.sun_len = SUN_LEN(&addr);
 

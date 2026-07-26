@@ -231,6 +231,9 @@ static void	 vtcon_disable_interrupts(struct vtcon_softc *);
 #define vtcon_gtoh32(_sc, _val)	virtio_gtoh32(vtcon_modern(_sc), _val)
 #define vtcon_gtoh64(_sc, _val)	virtio_gtoh64(vtcon_modern(_sc), _val)
 
+static struct mtx vtcon_pending_free_mtx;
+MTX_SYSINIT(vtcon_pending_free, &vtcon_pending_free_mtx,
+    "virtio console pending free", MTX_DEF);
 static int	 vtcon_pending_free;
 
 static struct ttydevsw vtcon_tty_class = {
@@ -298,13 +301,16 @@ vtcon_drain_all(void)
 {
 	int first;
 
+	mtx_lock(&vtcon_pending_free_mtx);
 	for (first = 1; vtcon_pending_free != 0; first = 0) {
 		if (first != 0) {
 			printf("virtio_console: Waiting for all detached TTY "
 			    "devices to have open fds closed.\n");
 		}
-		pause("vtcondra", hz);
+		msleep(&vtcon_pending_free, &vtcon_pending_free_mtx, 0,
+		    "vtcondra", 0);
 	}
+	mtx_unlock(&vtcon_pending_free_mtx);
 }
 
 static int
@@ -1225,7 +1231,9 @@ vtcon_port_teardown(struct vtcon_port *port)
 	port->vtcport_flags |= VTCON_PORT_FLAG_GONE;
 
 	if (tp != NULL) {
-		atomic_add_int(&vtcon_pending_free, 1);
+		mtx_lock(&vtcon_pending_free_mtx);
+		vtcon_pending_free++;
+		mtx_unlock(&vtcon_pending_free_mtx);
 		tty_rel_gone(tp);
 	} else
 		vtcon_port_destroy(port);
@@ -1443,7 +1451,13 @@ vtcon_tty_free(void *xport)
 	port = xport;
 
 	vtcon_port_destroy(port);
-	atomic_subtract_int(&vtcon_pending_free, 1);
+	mtx_lock(&vtcon_pending_free_mtx);
+	KASSERT(vtcon_pending_free > 0,
+	    ("%s: pending free count underflow", __func__));
+	vtcon_pending_free--;
+	if (vtcon_pending_free == 0)
+		wakeup(&vtcon_pending_free);
+	mtx_unlock(&vtcon_pending_free_mtx);
 }
 
 static void

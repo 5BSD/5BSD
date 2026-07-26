@@ -1,0 +1,409 @@
+---
+version: 1
+
+defaults:
+  timeout: 1800
+  env:
+    TRANSPORTS: modern
+    VIRTIO_MSIX: "yes"
+    RESET_TEST: "no"
+    REBOOT_TEST: "no"
+    CHECKPOINT_TEST: "no"
+    VM_FREE_GATES: "no"
+
+# Deliberate command-line API for `--set`.  Allocation variables are included
+# for single-case debugging, but the orchestrator rejects global allocation
+# overrides when --jobs is greater than one.
+allowed_overrides:
+  - BHYVE
+  - BHYVECTL
+  - UEFI
+  - SRCTOP
+  - OBJROOT
+  - TOOLS
+  - TRANSPORTS
+  - DEVICES
+  - VSOCK_BACKEND
+  - CID
+  - CID1
+  - CID2
+  - PORT_OFFSET
+  - PORT_OFFSET1
+  - PORT_OFFSET2
+  - CONSOLE_PORT
+  - CONSOLE_PORT1
+  - CONSOLE_PORT2
+  - KEEP_VM
+  - VM_FREE_GATES
+  - VSOCK_DEBUG
+  - VIRTIO_DEBUG
+  - INPUT_DEBUG
+  - SCSI_DEBUG
+  - VIRTIO_MSIX
+  - RESET_TEST
+  - REBOOT_TEST
+  - CHECKPOINT_TEST
+  - BLOCK_TEST_MB
+  - BLOCK_IMAGE_MB
+  - BLOCK_QUEUES
+  - NET_QUEUES
+  - SCSI_TEST_MB
+  - SCSI_IMAGE_MB
+  - SCSI_QUEUES
+  - VSOCK_SOAK_ITERATIONS
+  - VSOCK_SOAK_RESET_EVERY
+  - VSOCK_SOAK_MAX_FD_GROWTH
+  - VSOCK_SOAK_MAX_RSS_KB
+  - VIRTIO_RESET_SOAK_ITERATIONS
+  - VIRTIO_RESET_SOAK_MAX_FD_GROWTH
+  - VIRTIO_RESET_SOAK_MAX_RSS_KB
+  - BRIDGE
+  - UPLINK
+
+# These settings change the VirtIO-visible behavior or a lifecycle contract.
+# Every entry must be the variable of a release coverage contract.
+behavior_overrides:
+  - DEVICES
+  - TRANSPORTS
+  - VSOCK_BACKEND
+  - VIRTIO_MSIX
+  - RESET_TEST
+  - REBOOT_TEST
+  - CHECKPOINT_TEST
+  - BLOCK_QUEUES
+  - NET_QUEUES
+  - SCSI_QUEUES
+
+# A release profile must demonstrate every value in these public test/device
+# option domains.  Adding an exported option requires adding a contract here
+# and cases which cover its meaningful boundaries.
+coverage:
+  - id: guest-operating-systems
+    profiles: [release]
+    variable: GUEST_OS
+    values: [alpine, 5bsd]
+  - id: devices
+    profiles: [release]
+    variable: DEVICES
+    values: [net, vsock, rng, block, scsi, console, 9p, input]
+  - id: pci-transports
+    profiles: [release]
+    variable: TRANSPORTS
+    values: [modern, legacy]
+  - id: interrupt-modes
+    profiles: [release]
+    variable: VIRTIO_MSIX
+    selector: { DEVICES: net, TRANSPORTS: modern }
+    values: ["yes", "no"]
+  - id: net-queue-boundaries
+    profiles: [release]
+    variable: NET_QUEUES
+    selector: { DEVICES: net, TRANSPORTS: modern }
+    values: ["1", "2", "8"]
+  - id: block-queue-boundaries
+    profiles: [release]
+    variable: BLOCK_QUEUES
+    selector: { DEVICES: block, TRANSPORTS: modern }
+    values: ["1", "2", "8"]
+  - id: scsi-queue-boundaries
+    profiles: [release]
+    variable: SCSI_QUEUES
+    selector: { DEVICES: scsi, TRANSPORTS: modern }
+    values: ["1", "2", "8"]
+  - id: vsock-backends
+    profiles: [release]
+    variable: VSOCK_BACKEND
+    selector: { DEVICES: vsock, TRANSPORTS: modern }
+    values: [userspace, kernel]
+  - id: reset-lifecycle
+    profiles: [release]
+    variable: RESET_TEST
+    values: ["yes", "no"]
+  - id: reboot-lifecycle
+    profiles: [release]
+    variable: REBOOT_TEST
+    values: ["yes", "no"]
+  - id: checkpoint-lifecycle
+    profiles: [release]
+    variable: CHECKPOINT_TEST
+    values: ["yes", "no"]
+  - id: checkpoint-devices
+    profiles: [checkpoint]
+    variable: DEVICES
+    selector: { CHECKPOINT_TEST: "yes" }
+    values: [net, rng, block, vsock]
+
+cases:
+  # This gate is deliberately first and exclusive.  A failure prevents every
+  # expensive VM case from starting.
+  - id: host-regression
+    executor: host-regression
+    profiles: [release]
+    timeout: 1800
+    exclusive: true
+    gate: true
+    resources: [compiler]
+
+  # The immutable base image is copied sparsely per transport.  The resource
+  # lock keeps concurrent attempts from racing while reading or validating it.
+  - id: fivebsd-virtio
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: "modern legacy"
+      VM_FREE_GATES: "no"
+
+  - id: vmfree-requirements
+    executor: requirements
+    profiles: [vmfree, smoke]
+    timeout: 300
+    resources: [compiler]
+
+  - id: vmfree-device
+    executor: device-harness
+    profiles: [vmfree, smoke]
+    timeout: 900
+    resources: [compiler]
+
+  - id: vmfree-vsock-rx
+    executor: rx-harness
+    profiles: [vmfree, smoke]
+    timeout: 900
+    resources: [compiler]
+
+  - id: vmfree-host-tools
+    executor: host-selftest
+    profiles: [vmfree, smoke]
+    timeout: 300
+
+  - id: net-modern-q1
+    executor: alpine-auto
+    profiles: [release]
+    env: { DEVICES: net, TRANSPORTS: modern, NET_QUEUES: "1" }
+
+  - id: net-modern-q2
+    executor: alpine-auto
+    profiles: [smoke, release]
+    env: { DEVICES: net, TRANSPORTS: modern, NET_QUEUES: "2" }
+
+  - id: net-modern-q8-msi
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NET_QUEUES: "8"
+      VIRTIO_MSIX: "no"
+      VIRTIO_DEBUG: "2"
+
+  - id: net-legacy
+    executor: alpine-auto
+    profiles: [release]
+    env: { DEVICES: net, TRANSPORTS: legacy, NET_QUEUES: "1" }
+
+  - id: vsock-userspace-modern
+    executor: alpine-auto
+    profiles: [smoke, release]
+    env:
+      DEVICES: vsock
+      TRANSPORTS: modern
+      VSOCK_BACKEND: userspace
+
+  - id: vsock-userspace-legacy
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: vsock
+      TRANSPORTS: legacy
+      VSOCK_BACKEND: userspace
+
+  - id: vsock-kernel-modern-lifecycle
+    executor: alpine-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [kernel-vsock]
+    env:
+      DEVICES: vsock
+      TRANSPORTS: modern
+      VSOCK_BACKEND: kernel
+      RESET_TEST: "yes"
+      REBOOT_TEST: "yes"
+
+  - id: vsock-kernel-multi
+    executor: alpine-multi-vsock
+    profiles: [release]
+    timeout: 3000
+    resources: [kernel-vsock]
+    env: { TRANSPORT: modern }
+
+  - id: rng-modern
+    executor: alpine-auto
+    profiles: [smoke, release]
+    env: { DEVICES: rng, TRANSPORTS: modern }
+
+  - id: rng-legacy
+    executor: alpine-auto
+    profiles: [release]
+    env: { DEVICES: rng, TRANSPORTS: legacy }
+
+  - id: block-modern-q1
+    executor: alpine-auto
+    profiles: [release]
+    env: { DEVICES: block, TRANSPORTS: modern, BLOCK_QUEUES: "1" }
+
+  - id: block-modern-q2
+    executor: alpine-auto
+    profiles: [smoke, release]
+    env: { DEVICES: block, TRANSPORTS: modern, BLOCK_QUEUES: "2" }
+
+  - id: block-modern-q8
+    executor: alpine-auto
+    profiles: [release]
+    env: { DEVICES: block, TRANSPORTS: modern, BLOCK_QUEUES: "8" }
+
+  - id: block-legacy
+    executor: alpine-auto
+    profiles: [release]
+    env: { DEVICES: block, TRANSPORTS: legacy, BLOCK_QUEUES: "1" }
+
+  - id: scsi-modern-q1
+    executor: alpine-auto
+    profiles: [release]
+    resources: [ctl]
+    env: { DEVICES: scsi, TRANSPORTS: modern, SCSI_QUEUES: "1" }
+
+  - id: scsi-modern-q2
+    executor: alpine-auto
+    profiles: [release]
+    resources: [ctl]
+    env: { DEVICES: scsi, TRANSPORTS: modern, SCSI_QUEUES: "2" }
+
+  - id: scsi-modern-q8
+    executor: alpine-auto
+    profiles: [release]
+    resources: [ctl]
+    env: { DEVICES: scsi, TRANSPORTS: modern, SCSI_QUEUES: "8" }
+
+  - id: scsi-legacy
+    executor: alpine-auto
+    profiles: [release]
+    resources: [ctl]
+    env: { DEVICES: scsi, TRANSPORTS: legacy, SCSI_QUEUES: "1" }
+
+  - id: console-modern
+    executor: alpine-auto
+    profiles: [release]
+    env: { DEVICES: console, TRANSPORTS: modern }
+
+  - id: console-legacy
+    executor: alpine-auto
+    profiles: [release]
+    env: { DEVICES: console, TRANSPORTS: legacy }
+
+  - id: input-modern
+    executor: alpine-auto
+    profiles: [release]
+    resources: [uinput]
+    env: { DEVICES: input, TRANSPORTS: modern }
+
+  - id: 9p-modern
+    executor: alpine-auto
+    profiles: [release]
+    env: { DEVICES: 9p, TRANSPORTS: modern }
+
+  - id: 9p-legacy
+    executor: alpine-auto
+    profiles: [release]
+    env: { DEVICES: 9p, TRANSPORTS: legacy }
+
+  - id: combined-modern
+    executor: alpine-auto
+    profiles: [release]
+    resources: [ctl, uinput]
+    timeout: 3000
+    env:
+      DEVICES: "net vsock rng block scsi console 9p input"
+      TRANSPORTS: modern
+      VSOCK_BACKEND: userspace
+
+  - id: combined-legacy
+    executor: alpine-auto
+    profiles: [release]
+    resources: [ctl]
+    timeout: 3000
+    env:
+      DEVICES: "net vsock rng block scsi console 9p"
+      TRANSPORTS: legacy
+      VSOCK_BACKEND: userspace
+
+  - id: checkpoint-net-modern
+    executor: alpine-auto
+    profiles: [checkpoint, release]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NET_QUEUES: "2"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-rng-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env: { DEVICES: rng, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+
+  - id: checkpoint-block-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: block
+      TRANSPORTS: modern
+      BLOCK_QUEUES: "2"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-vsock-userspace
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: vsock
+      TRANSPORTS: modern
+      VSOCK_BACKEND: userspace
+      CHECKPOINT_TEST: "yes"
+
+  - id: soak-vsock-userspace
+    executor: alpine-auto
+    profiles: [soak]
+    timeout: 21600
+    env:
+      DEVICES: vsock
+      TRANSPORTS: modern
+      VSOCK_BACKEND: userspace
+      VSOCK_SOAK_ITERATIONS: "100"
+
+  - id: soak-vsock-kernel
+    executor: alpine-auto
+    profiles: [soak]
+    resources: [kernel-vsock]
+    timeout: 21600
+    env:
+      DEVICES: vsock
+      TRANSPORTS: modern
+      VSOCK_BACKEND: kernel
+      VSOCK_SOAK_ITERATIONS: "100"
+      VSOCK_SOAK_RESET_EVERY: "10"
+
+  - id: soak-reset-devices
+    executor: alpine-auto
+    profiles: [soak]
+    resources: [ctl]
+    timeout: 21600
+    env:
+      DEVICES: "net vsock rng block scsi console 9p"
+      TRANSPORTS: modern
+      VSOCK_BACKEND: userspace
+      VIRTIO_RESET_SOAK_ITERATIONS: "100"

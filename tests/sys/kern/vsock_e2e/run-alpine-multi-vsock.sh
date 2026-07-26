@@ -12,6 +12,7 @@ CID1=${CID1:-40}
 CID2=${CID2:-41}
 PORT_OFFSET1=${PORT_OFFSET1:-0}
 PORT_OFFSET2=${PORT_OFFSET2:-1000}
+VSOCK_TEST_MAX_BASE_PORT=7237
 CONSOLE_PORT1=${CONSOLE_PORT1:-4480}
 CONSOLE_PORT2=${CONSOLE_PORT2:-4481}
 BRIDGE=${BRIDGE:-bridge0}
@@ -25,6 +26,12 @@ UPLINK=${UPLINK:-}
 	echo "kernel-backed multi-VM testing requires /dev/vsock" >&2
 	exit 1
 }
+providers=$(sysctl -n kern.vsock.userspace_providers)
+[ "$providers" -eq 0 ] || {
+	echo "kernel vsock provider already active (count=$providers);" \
+	    "stop oracle/other VMM providers before this exclusive gate" >&2
+	exit 1
+}
 case "$TRANSPORT" in
 modern|legacy) ;;
 *) echo "TRANSPORT must be modern or legacy" >&2; exit 2 ;;
@@ -34,6 +41,12 @@ for value in "$CID1" "$CID2" "$PORT_OFFSET1" "$PORT_OFFSET2" \
 	case "$value" in
 	''|*[!0-9]*) echo "CIDs, offsets, and console ports must be numeric" >&2; exit 2 ;;
 	esac
+done
+for value in "$PORT_OFFSET1" "$PORT_OFFSET2"; do
+	[ "$value" -le $((65535 - VSOCK_TEST_MAX_BASE_PORT)) ] || {
+		echo "PORT_OFFSET places a test port above 65535" >&2
+		exit 2
+	}
 done
 [ "$CID1" -ge 3 ] && [ "$CID2" -ge 3 ] && [ "$CID1" -ne "$CID2" ] || {
 	echo "CID1 and CID2 must be distinct non-reserved CIDs" >&2
@@ -84,10 +97,15 @@ barrier_dir="$WORKDIR/provider-barrier"
 }
 mkdir -p -m 0700 "$barrier_dir"
 chmod 0700 "$barrier_dir"
-rm -f "$barrier_dir/cid-$CID1" "$barrier_dir/cid-$CID2"
+rm -f "$barrier_dir"/initial-cid-* "$barrier_dir"/pre-reset-cid-* \
+    "$barrier_dir"/post-reset-cid-*
 
 if [ -f "$here/Makefile" ]; then
-	make -C "$here"
+	case "${VM_FREE_GATES:-yes}" in
+	yes) make -C "$here" ;;
+	no) ;;
+	*) echo "VM_FREE_GATES must be yes or no" >&2; exit 2 ;;
+	esac
 	TOOLS=${TOOLS:-$(make -C "$here" -V .OBJDIR)}
 else
 	TOOLS=${TOOLS:-$here}

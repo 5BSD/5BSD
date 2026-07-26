@@ -36,6 +36,24 @@
 /* VirtIO 1.4 section 2.7: maximum split virtqueue size. */
 #define	VIRTIO_SPLIT_QUEUE_SIZE_MAX	32768U
 
+/*
+ * Device and queue reset have no completion interrupt.  Bus reset methods
+ * can be called while a child-driver mutex is held, so transport drivers
+ * must throttle their required status polling without sleeping.
+ *
+ * Full-device reset has no recoverable timeout in the transport API and must
+ * wait for the device to relinquish its queues.  Selective queue reset does
+ * return an error, so bound it to one second: long enough for an asynchronous
+ * backend drain, but finite when a broken device never clears queue_reset.
+ */
+#define	VIRTIO_RESET_POLL_DELAY_US	1000U
+#define	VIRTIO_QUEUE_RESET_TIMEOUT_US	1000000U
+#define	VIRTIO_QUEUE_RESET_POLLS					\
+	(VIRTIO_QUEUE_RESET_TIMEOUT_US / VIRTIO_RESET_POLL_DELAY_US)
+#if VIRTIO_QUEUE_RESET_TIMEOUT_US % VIRTIO_RESET_POLL_DELAY_US != 0
+#error "VirtIO queue reset timeout must be an integral number of polls"
+#endif
+
 static inline bool
 virtio_features_subset(uint64_t available, uint64_t requested)
 {
@@ -158,6 +176,7 @@ virtio_supported_transport_features(uint64_t features)
 	mask |= VIRTIO_F_IN_ORDER;
 	mask |= VIRTIO_F_NOTIFICATION_DATA;
 	mask |= VIRTIO_F_RING_RESET;
+	mask |= VIRTIO_F_SUSPEND;
 
 	return (features & mask);
 }
@@ -180,6 +199,24 @@ virtio_modern_supported_transport_features(uint64_t features)
 	return (features);
 }
 
+static inline bool
+virtio_device_suspend_complete(uint8_t status)
+{
+
+	return ((status & (VIRTIO_CONFIG_STATUS_SUSPEND |
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK)) ==
+	    VIRTIO_CONFIG_STATUS_SUSPEND);
+}
+
+static inline bool
+virtio_device_resume_complete(uint8_t status)
+{
+
+	return ((status & (VIRTIO_CONFIG_STATUS_SUSPEND |
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK)) ==
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK);
+}
+
 /*
  * The legacy MMIO register layout has no QueueReset register.  Filter the
  * feature before negotiation so a version 1 transport cannot promise a
@@ -195,6 +232,12 @@ virtio_mmio_supported_transport_features(uint32_t version, uint64_t features)
 		features = virtio_supported_transport_features(features);
 		features &= ~VIRTIO_F_RING_RESET;
 	}
+	/*
+	 * The MMIO transport does not yet implement the device suspend status
+	 * handshake in its bus suspend/resume methods.  Never let a child opt
+	 * into a transport feature whose lifecycle this bus cannot complete.
+	 */
+	features &= ~VIRTIO_F_SUSPEND;
 	return (features);
 }
 

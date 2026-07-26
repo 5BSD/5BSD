@@ -939,11 +939,12 @@ ATF_TC_BODY(seqpacket_zero_length, tc)
 	ATF_CHECK((pfd.revents & POLLIN) != 0);
 	iov.iov_len = 0;
 	/*
-	 * Linux semantics: a zero-length SEQPACKET message is delivered as a
-	 * distinct 0-byte record (recv returns 0), not dropped -- and the
-	 * connection stays open, unlike EOF.  A following non-empty message is
-	 * received normally, which proves the 0-byte recv was a message, not
-	 * peer-close.
+	 * A zero-length SEQPACKET message is delivered as a distinct 0-byte
+	 * record (recv returns 0), not dropped, and the connection stays open,
+	 * unlike EOF.  A following non-empty message proves the 0-byte recv was
+	 * a message, not peer-close.  Linux's current virtio-vsock sender uses a
+	 * zero-length send as a no-op, so this is a deliberate FreeBSD semantic
+	 * which remains wire-compatible with Linux's receive path.
 	 */
 	ATF_CHECK(recvmsg(as, &mh, MSG_PEEK) == 0);
 	ATF_CHECK((mh.msg_flags & (MSG_EOR | MSG_TRUNC)) == 0);
@@ -1480,6 +1481,43 @@ ATF_TC_BODY(double_bind_fails, tc)
 	close(s1);
 }
 
+ATF_TC_WITHOUT_HEAD(rebind_same_socket_preserves_binding);
+ATF_TC_BODY(rebind_same_socket_preserves_binding, tc)
+{
+	struct sockaddr_vm before, after, replacement;
+	socklen_t addrlen;
+	int s1, s2;
+
+	(void)tc;
+
+	s1 = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s1 >= 0);
+	vsock_bind_any(s1, &before);
+
+	vsock_set_any(&replacement);
+	errno = 0;
+	ATF_REQUIRE(bind(s1, (struct sockaddr *)&replacement,
+	    sizeof(replacement)) == -1);
+	ATF_REQUIRE_EQ(errno, EINVAL);
+
+	addrlen = sizeof(after);
+	ATF_REQUIRE(getsockname(s1, (struct sockaddr *)&after, &addrlen) == 0);
+	assert_sockaddr_vm_eq(&before, &after);
+
+	/*
+	 * The failed rebind must not have removed the original reservation from
+	 * the bound table.
+	 */
+	s2 = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s2 >= 0);
+	errno = 0;
+	ATF_REQUIRE(bind(s2, (struct sockaddr *)&before, sizeof(before)) == -1);
+	ATF_REQUIRE_EQ(errno, EADDRINUSE);
+
+	close(s2);
+	close(s1);
+}
+
 ATF_TC_WITHOUT_HEAD(connect_after_listen);
 ATF_TC_BODY(connect_after_listen, tc)
 {
@@ -1512,29 +1550,24 @@ ATF_TC_BODY(connect_after_listen, tc)
 ATF_TC_WITHOUT_HEAD(retry_connect);
 ATF_TC_BODY(retry_connect, tc)
 {
-	struct sockaddr_vm laddr;
+	struct sockaddr_vm bound_before, bound_after, failaddr, laddr;
+	socklen_t addrlen;
 	char buf[4];
-	int ls, cs, as;
+	int ls, cs, fail_s, as;
 
 	(void)tc;
 
 	/*
-	 * First attempt: connect to a remote (CID_HOST) port.  With no virtio
-	 * transport registered in this loopback-only test environment it fails
-	 * with ENXIO; the attempt is best-effort and its errno is not asserted.
-	 * Second attempt: connect to a real local listener → success.
+	 * A failed connect must leave the same socket bound and usable for
+	 * another connect.  This mirrors Linux's autobind lifetime and
+	 * catches both accidental release of the ephemeral-port reservation and
+	 * use of soisdisconnected() on the failed attempt.
 	 */
-	cs = socket(AF_VSOCK, SOCK_STREAM, 0);
-	ATF_REQUIRE_MSG(cs >= 0, "socket failed: %s", strerror(errno));
+	fail_s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE_MSG(fail_s >= 0, "failure socket: %s",
+	    strerror(errno));
+	vsock_bind_any(fail_s, &failaddr);
 
-	vsock_set_any(&laddr);
-	laddr.svm_cid  = VSOCK_CID_HOST;
-	laddr.svm_port = 59998;
-	/* Best-effort: fails with ENXIO (no transport) in this environment */
-	(void)connect(cs, (struct sockaddr *)&laddr, sizeof(laddr));
-	close(cs);
-
-	/* Now do a proper connect to a live listener */
 	ls = socket(AF_VSOCK, SOCK_STREAM, 0);
 	ATF_REQUIRE_MSG(ls >= 0, "listener socket failed: %s", strerror(errno));
 	vsock_bind_any(ls, &laddr);
@@ -1542,7 +1575,24 @@ ATF_TC_BODY(retry_connect, tc)
 
 	cs = socket(AF_VSOCK, SOCK_STREAM, 0);
 	ATF_REQUIRE_MSG(cs >= 0, "socket failed: %s", strerror(errno));
+
+	ATF_REQUIRE_MSG(connect(cs, (struct sockaddr *)&failaddr,
+	    sizeof(failaddr)) == -1, "connected to a non-listening socket");
+	ATF_REQUIRE_EQ(errno, ECONNRESET);
+
+	addrlen = sizeof(bound_before);
+	ATF_REQUIRE_MSG(getsockname(cs, (struct sockaddr *)&bound_before,
+	    &addrlen) == 0, "getsockname after failed connect: %s",
+	    strerror(errno));
+	ATF_REQUIRE(bound_before.svm_port != VSOCK_PORT_ANY);
+
 	ATF_REQUIRE(connect(cs, (struct sockaddr *)&laddr, sizeof(laddr)) == 0);
+
+	addrlen = sizeof(bound_after);
+	ATF_REQUIRE_MSG(getsockname(cs, (struct sockaddr *)&bound_after,
+	    &addrlen) == 0, "getsockname after retry: %s", strerror(errno));
+	ATF_REQUIRE(bound_after.svm_cid == bound_before.svm_cid);
+	ATF_REQUIRE(bound_after.svm_port == bound_before.svm_port);
 
 	as = accept(ls, NULL, NULL);
 	ATF_REQUIRE_MSG(as >= 0, "accept failed: %s", strerror(errno));
@@ -1555,6 +1605,7 @@ ATF_TC_BODY(retry_connect, tc)
 	close(as);
 	close(cs);
 	close(ls);
+	close(fail_s);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2468,8 +2519,11 @@ ATF_TC_BODY(svm_len_validation, tc)
 	vsock_set_any(&svm);
 	svm.svm_len = 0;
 	ATF_REQUIRE(bind(s, (struct sockaddr *)&svm, sizeof(svm)) == 0);
+	close(s);
 
 	/* Correct svm_len should succeed */
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	ATF_REQUIRE(s >= 0);
 	vsock_set_any(&svm);
 	ATF_REQUIRE(bind(s, (struct sockaddr *)&svm, sizeof(svm)) == 0);
 
@@ -4798,7 +4852,9 @@ struct shutdown_sender_ctx {
 	int		 sender;
 	int		 result_errno;
 	size_t		 len;		/* record size; must fit peer buf */
-	volatile int	 started;
+	pthread_mutex_t	 mutex;
+	pthread_cond_t	 cond;
+	bool		 started;
 };
 
 static void *
@@ -4811,7 +4867,10 @@ shutdown_sender_thread(void *arg)
 	if (ctx->len == 0 || ctx->len > sizeof(buf))
 		ctx->len = sizeof(buf);
 	memset(buf, 'S', sizeof(buf));
-	ctx->started = 1;
+	(void)pthread_mutex_lock(&ctx->mutex);
+	ctx->started = true;
+	(void)pthread_cond_signal(&ctx->cond);
+	(void)pthread_mutex_unlock(&ctx->mutex);
 
 	/* This send should block until the receiver shuts down. */
 	rc = send(ctx->sender, buf, ctx->len, MSG_NOSIGNAL);
@@ -4866,14 +4925,27 @@ ATF_TC_BODY(shutdown_rd_wakes_blocked_sender, tc)
 	ctx.sender = cs;
 	ctx.len = 1024;
 	ctx.result_errno = 0;
-	ctx.started = 0;
+	ctx.started = false;
+	ATF_REQUIRE(pthread_mutex_init(&ctx.mutex, NULL) == 0);
+	ATF_REQUIRE(pthread_cond_init(&ctx.cond, NULL) == 0);
 	ATF_REQUIRE(pthread_create(&t, NULL,
 	    shutdown_sender_thread, &ctx) == 0);
 
-	/* Wait for the sender thread to start. */
+	ATF_REQUIRE(pthread_mutex_lock(&ctx.mutex) == 0);
 	while (!ctx.started)
-		usleep(1000);
-	usleep(50000); /* Let it block in send(). */
+		ATF_REQUIRE(pthread_cond_wait(&ctx.cond, &ctx.mutex) == 0);
+	ATF_REQUIRE(pthread_mutex_unlock(&ctx.mutex) == 0);
+	/*
+	 * Prove that send is still blocked.  A timed join waits for the thread
+	 * completion event; it does not use a scheduler-dependent fixed sleep.
+	 */
+	ATF_REQUIRE(clock_gettime(CLOCK_REALTIME, &end) == 0);
+	end.tv_nsec += 50000000;
+	if (end.tv_nsec >= 1000000000) {
+		end.tv_sec++;
+		end.tv_nsec -= 1000000000;
+	}
+	ATF_REQUIRE(pthread_timedjoin_np(t, NULL, &end) == ETIMEDOUT);
 
 	/* Shut down our receive side — sender should unblock promptly. */
 	clock_gettime(CLOCK_MONOTONIC, &start);
@@ -4884,10 +4956,6 @@ ATF_TC_BODY(shutdown_rd_wakes_blocked_sender, tc)
 	double elapsed = (end.tv_sec - start.tv_sec) +
 	    (end.tv_nsec - start.tv_nsec) / 1e9;
 
-	/*
-	 * Without the fix, the sender would sleep up to 1 second (hz timeout).
-	 * With the fix, it should wake within milliseconds.
-	 */
 	ATF_REQUIRE_MSG(elapsed < 0.5,
 	    "sender took %.3f seconds to unblock after shutdown", elapsed);
 
@@ -4895,6 +4963,8 @@ ATF_TC_BODY(shutdown_rd_wakes_blocked_sender, tc)
 	ATF_REQUIRE_MSG(ctx.result_errno == EPIPE,
 	    "expected EPIPE, got %d (%s)",
 	    ctx.result_errno, strerror(ctx.result_errno));
+	ATF_REQUIRE(pthread_cond_destroy(&ctx.cond) == 0);
+	ATF_REQUIRE(pthread_mutex_destroy(&ctx.mutex) == 0);
 
 	close(as);
 	close(cs);
@@ -5014,13 +5084,23 @@ ATF_TC_BODY(seqpacket_shutdown_rd_wakes_sender, tc)
 	ctx.sender = cs;
 	ctx.len = 32;	/* must fit the 128-byte window */
 	ctx.result_errno = 0;
-	ctx.started = 0;
+	ctx.started = false;
+	ATF_REQUIRE(pthread_mutex_init(&ctx.mutex, NULL) == 0);
+	ATF_REQUIRE(pthread_cond_init(&ctx.cond, NULL) == 0);
 	ATF_REQUIRE(pthread_create(&t, NULL,
 	    shutdown_sender_thread, &ctx) == 0);
 
+	ATF_REQUIRE(pthread_mutex_lock(&ctx.mutex) == 0);
 	while (!ctx.started)
-		usleep(1000);
-	usleep(50000);
+		ATF_REQUIRE(pthread_cond_wait(&ctx.cond, &ctx.mutex) == 0);
+	ATF_REQUIRE(pthread_mutex_unlock(&ctx.mutex) == 0);
+	ATF_REQUIRE(clock_gettime(CLOCK_REALTIME, &end) == 0);
+	end.tv_nsec += 50000000;
+	if (end.tv_nsec >= 1000000000) {
+		end.tv_sec++;
+		end.tv_nsec -= 1000000000;
+	}
+	ATF_REQUIRE(pthread_timedjoin_np(t, NULL, &end) == ETIMEDOUT);
 
 	clock_gettime(CLOCK_MONOTONIC, &start);
 	ATF_REQUIRE(shutdown(as, SHUT_RD) == 0);
@@ -5035,6 +5115,8 @@ ATF_TC_BODY(seqpacket_shutdown_rd_wakes_sender, tc)
 	ATF_REQUIRE_MSG(ctx.result_errno == EPIPE,
 	    "expected EPIPE, got %d (%s)",
 	    ctx.result_errno, strerror(ctx.result_errno));
+	ATF_REQUIRE(pthread_cond_destroy(&ctx.cond) == 0);
+	ATF_REQUIRE(pthread_mutex_destroy(&ctx.mutex) == 0);
 
 	close(as);
 	close(cs);
@@ -5630,10 +5712,58 @@ ATF_TC_BODY(kernel_transport_provider, tc)
 	provider = open("/dev/vsock", O_RDWR | O_NONBLOCK);
 	ATF_REQUIRE_MSG(provider >= 0, "open /dev/vsock: %s",
 	    strerror(errno));
+	/*
+	 * Provider state is created by ATTACH, so readiness filters are valid
+	 * only after that ioctl succeeds.  The descriptor must reject packet
+	 * I/O before attachment.
+	 */
+	{
+		struct kevent change, event;
+		struct pollfd pfd;
+		struct timespec zero = { 0, 0 };
+		int attach_kq;
+
+		ATF_REQUIRE(write(provider, packet, sizeof(*request)) == -1);
+		ATF_REQUIRE(errno == ENXIO);
+
+		memset(&attach, 0, sizeof(attach));
+		attach.version = VSOCK_TRANSPORT_VERSION;
+		attach.guest_cid = 42;
+		attach.features = VIRTIO_VSOCK_F_STREAM |
+		    VIRTIO_VSOCK_F_SEQPACKET;
+		if (ioctl(provider, VSOCK_IOC_TRANSPORT_ATTACH, &attach) < 0) {
+			close(attach_kq);
+			if (errno == EBUSY) {
+				close(provider);
+				atf_tc_skip(
+				    "an AF_VSOCK remote transport is active");
+			}
+			ATF_REQUIRE_MSG(false, "transport attach: %s",
+			    strerror(errno));
+		}
+
+		pfd.fd = provider;
+		pfd.events = POLLOUT;
+		pfd.revents = 0;
+		ATF_REQUIRE(poll(&pfd, 1, 0) == 1);
+		ATF_CHECK((pfd.revents & POLLOUT) != 0);
+		attach_kq = kqueue();
+		ATF_REQUIRE_MSG(attach_kq >= 0, "kqueue: %s",
+		    strerror(errno));
+		EV_SET(&change, provider, EVFILT_WRITE, EV_ADD | EV_CLEAR,
+		    0, 0, NULL);
+		ATF_REQUIRE(kevent(attach_kq, &change, 1, NULL, 0, NULL) == 0);
+		ATF_REQUIRE(kevent(attach_kq, NULL, 0, &event, 1,
+		    &zero) == 1);
+		ATF_CHECK(event.filter == EVFILT_WRITE);
+		ATF_CHECK(event.ident == (uintptr_t)provider);
+		close(attach_kq);
+	}
 	memset(&attach, 0, sizeof(attach));
 	attach.version = VSOCK_TRANSPORT_VERSION;
 	attach.guest_cid = 42;
-	attach.features = VIRTIO_VSOCK_F_STREAM;
+	attach.features = VIRTIO_VSOCK_F_STREAM |
+	    VIRTIO_VSOCK_F_SEQPACKET;
 	{
 		struct vsock_transport_attach invalid = attach;
 
@@ -5642,13 +5772,6 @@ ATF_TC_BODY(kernel_transport_provider, tc)
 		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_ATTACH,
 		    &invalid) == -1);
 		ATF_CHECK(errno == EINVAL);
-	}
-	if (ioctl(provider, VSOCK_IOC_TRANSPORT_ATTACH, &attach) < 0) {
-		if (errno == EBUSY) {
-			close(provider);
-			atf_tc_skip("an AF_VSOCK remote transport is active");
-		}
-		ATF_REQUIRE_MSG(false, "transport attach: %s", strerror(errno));
 	}
 	local_cid = 0;
 	ATF_REQUIRE(ioctl(provider, IOCTL_VM_SOCKETS_GET_LOCAL_CID,
@@ -5662,7 +5785,8 @@ ATF_TC_BODY(kernel_transport_provider, tc)
 		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_SET_FEATURES,
 		    &invalid_features) == -1);
 		ATF_CHECK(errno == EINVAL);
-		valid_features = VIRTIO_VSOCK_F_STREAM;
+		valid_features = VIRTIO_VSOCK_F_STREAM |
+		    VIRTIO_VSOCK_F_SEQPACKET;
 		ATF_REQUIRE(ioctl(provider, VSOCK_IOC_TRANSPORT_SET_FEATURES,
 		    &valid_features) == 0);
 	}
@@ -5734,7 +5858,8 @@ ATF_TC_BODY(kernel_transport_provider, tc)
 	ATF_CHECK(read(provider, packet, sizeof(packet)) == -1);
 	ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
 	{
-		uint64_t features = VIRTIO_VSOCK_F_STREAM;
+		uint64_t features = VIRTIO_VSOCK_F_STREAM |
+		    VIRTIO_VSOCK_F_SEQPACKET;
 
 		ATF_REQUIRE(ioctl(provider, VSOCK_IOC_TRANSPORT_SET_FEATURES,
 		    &features) == 0);
@@ -5786,7 +5911,8 @@ ATF_TC_BODY(kernel_transport_provider, tc)
 		ATF_CHECK(args.error == ECANCELED);
 		ATF_REQUIRE(fcntl(provider, F_SETFL, flags) == 0);
 		{
-			uint64_t features = VIRTIO_VSOCK_F_STREAM;
+			uint64_t features = VIRTIO_VSOCK_F_STREAM |
+			    VIRTIO_VSOCK_F_SEQPACKET;
 
 			ATF_REQUIRE(ioctl(provider,
 			    VSOCK_IOC_TRANSPORT_SET_FEATURES, &features) == 0);
@@ -5959,6 +6085,113 @@ ATF_TC_BODY(kernel_transport_provider, tc)
 	ATF_REQUIRE(errno == EAGAIN || errno == EWOULDBLOCK);
 
 	/*
+	 * A multi-fragment SEQPACKET record is one send transaction.  Leave
+	 * exactly one data slot below the provider high-water mark: the old
+	 * packet-at-a-time path published the first fragment, failed the second,
+	 * and reset the connection.  The transport must instead return
+	 * EWOULDBLOCK without exposing any fragment, remain connected, and
+	 * succeed after the unrelated queue is drained.
+	 */
+	{
+		const size_t record_len = VSOCK_TRANSPORT_MAX_PAYLOAD + 1;
+		struct virtio_vsock_hdr connect_request, connect_response;
+		uint8_t *large_packet, *record;
+		socklen_t error_len;
+		ssize_t first_len, second_len;
+		int socket_error;
+
+		large_packet = malloc(sizeof(*request) +
+		    VSOCK_TRANSPORT_MAX_PAYLOAD);
+		record = malloc(record_len);
+		ATF_REQUIRE(large_packet != NULL && record != NULL);
+		memset(record, 'Q', record_len);
+
+		s = socket(AF_VSOCK, SOCK_SEQPACKET | SOCK_NONBLOCK, 0);
+		ATF_REQUIRE_MSG(s >= 0, "seqpacket socket: %s",
+		    strerror(errno));
+		peer.svm_port = 9001;
+		errno = 0;
+		ATF_REQUIRE(connect(s, (struct sockaddr *)&peer,
+		    sizeof(peer)) == -1);
+		ATF_REQUIRE(errno == EINPROGRESS);
+		ATF_REQUIRE(read(provider, &connect_request,
+		    sizeof(connect_request)) ==
+		    (ssize_t)sizeof(connect_request));
+		ATF_CHECK(le16toh(connect_request.type) ==
+		    VIRTIO_VSOCK_TYPE_SEQPACKET);
+		memset(&connect_response, 0, sizeof(connect_response));
+		connect_response.src_cid = connect_request.dst_cid;
+		connect_response.dst_cid = connect_request.src_cid;
+		connect_response.src_port = connect_request.dst_port;
+		connect_response.dst_port = connect_request.src_port;
+		connect_response.type = connect_request.type;
+		connect_response.op =
+		    htole16(VIRTIO_VSOCK_OP_RESPONSE);
+		connect_response.buf_alloc = htole32(2 * record_len);
+		ATF_REQUIRE(write(provider, &connect_response,
+		    sizeof(connect_response)) ==
+		    (ssize_t)sizeof(connect_response));
+		error_len = sizeof(socket_error);
+		socket_error = -1;
+		ATF_REQUIRE(getsockopt(s, SOL_SOCKET, SO_ERROR,
+		    &socket_error, &error_len) == 0);
+		ATF_REQUIRE(socket_error == 0);
+
+		for (error = 0; error < 63; error++)
+			ATF_REQUIRE(write(provider, &unused_request,
+			    sizeof(unused_request)) ==
+			    (ssize_t)sizeof(unused_request));
+		errno = 0;
+		ATF_CHECK(send(s, record, record_len, MSG_DONTWAIT) == -1);
+		ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
+		for (error = 0; error < 63; error++) {
+			len = read(provider, large_packet,
+			    sizeof(*request) + VSOCK_TRANSPORT_MAX_PAYLOAD);
+			ATF_REQUIRE(len == (ssize_t)sizeof(*request));
+			request = (struct virtio_vsock_hdr *)large_packet;
+			ATF_CHECK(le16toh(request->op) ==
+			    VIRTIO_VSOCK_OP_RST);
+		}
+		errno = 0;
+		ATF_CHECK(read(provider, large_packet,
+		    sizeof(*request) + VSOCK_TRANSPORT_MAX_PAYLOAD) == -1);
+		ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
+
+		ATF_REQUIRE(send(s, record, record_len, MSG_DONTWAIT) ==
+		    (ssize_t)record_len);
+		first_len = read(provider, large_packet,
+		    sizeof(*request) + VSOCK_TRANSPORT_MAX_PAYLOAD);
+		ATF_REQUIRE(first_len == (ssize_t)(sizeof(*request) +
+		    VSOCK_TRANSPORT_MAX_PAYLOAD));
+		request = (struct virtio_vsock_hdr *)large_packet;
+		ATF_CHECK(le16toh(request->op) == VIRTIO_VSOCK_OP_RW);
+		ATF_CHECK(le16toh(request->type) ==
+		    VIRTIO_VSOCK_TYPE_SEQPACKET);
+		ATF_CHECK(le32toh(request->flags) == 0);
+		ATF_CHECK(memcmp(large_packet + sizeof(*request), record,
+		    VSOCK_TRANSPORT_MAX_PAYLOAD) == 0);
+
+		second_len = read(provider, large_packet,
+		    sizeof(*request) + VSOCK_TRANSPORT_MAX_PAYLOAD);
+		ATF_REQUIRE(second_len ==
+		    (ssize_t)(sizeof(*request) + 1));
+		request = (struct virtio_vsock_hdr *)large_packet;
+		ATF_CHECK(le32toh(request->len) == 1);
+		ATF_CHECK(le32toh(request->flags) ==
+		    VIRTIO_VSOCK_SEQ_EOM);
+		ATF_CHECK(large_packet[sizeof(*request)] ==
+		    record[VSOCK_TRANSPORT_MAX_PAYLOAD]);
+
+		close(s);
+		while (read(provider, large_packet,
+		    sizeof(*request) + VSOCK_TRANSPORT_MAX_PAYLOAD) > 0)
+			;
+		ATF_REQUIRE(errno == EAGAIN || errno == EWOULDBLOCK);
+		free(record);
+		free(large_packet);
+	}
+
+	/*
 	 * A blocking provider writer waiting behind a full queue belongs to the
 	 * pre-reset transport epoch.  Reset must wake it with ECANCELED, not let
 	 * it inject a stale guest packet after queues and PCBs were reset.
@@ -6109,7 +6342,7 @@ ATF_TC_BODY(kernel_transport_multiple_providers, tc)
 		    sizeof(payload)];
 	} packet_buf;
 	size_t count_len;
-	u_int provider_count;
+	u_int filled, provider_count;
 	ssize_t len;
 	int duplicate, p1, p2, replacement, s1, s2, s3;
 
@@ -6145,6 +6378,24 @@ ATF_TC_BODY(kernel_transport_multiple_providers, tc)
 	ATF_CHECK(ioctl(duplicate, VSOCK_IOC_TRANSPORT_ATTACH,
 	    &attach1) == -1);
 	ATF_CHECK(errno == EADDRINUSE);
+	/*
+	 * A failed attach leaves an inert cdev-private provider so concurrent
+	 * operations cannot race an explicit destructor.  The same descriptor
+	 * must remain reusable for a different, unclaimed CID.
+	 */
+	{
+		struct vsock_transport_attach retry;
+
+		retry = attach1;
+		retry.guest_cid = 44;
+		ATF_REQUIRE_MSG(ioctl(duplicate, VSOCK_IOC_TRANSPORT_ATTACH,
+		    &retry) == 0, "retry attach on same fd: %s",
+		    strerror(errno));
+	}
+	count_len = sizeof(provider_count);
+	ATF_REQUIRE(sysctlbyname("kern.vsock.userspace_providers",
+	    &provider_count, &count_len, NULL, 0) == 0);
+	ATF_CHECK(provider_count == 3);
 	close(duplicate);
 
 	count_len = sizeof(provider_count);
@@ -6222,6 +6473,37 @@ ATF_TC_BODY(kernel_transport_multiple_providers, tc)
 	ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
 
 	/*
+	 * Saturating one provider's data queue must not apply backpressure to
+	 * another guest which happens to share the stable transport vector.
+	 * This exercises active routing and wakeup isolation, unlike the scale
+	 * test below which intentionally measures attachment bookkeeping only.
+	 */
+	filled = 0;
+	while (filled < 256) {
+		len = send(s1, payload, sizeof(payload), 0);
+		if (len == -1)
+			break;
+		ATF_REQUIRE_EQ(len, (ssize_t)sizeof(payload));
+		filled++;
+	}
+	ATF_REQUIRE_MSG(filled > 0 && filled < 256,
+	    "CID 42 queue did not report bounded backpressure (filled=%u)",
+	    filled);
+	ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
+	ATF_REQUIRE(send(s2, payload, sizeof(payload), 0) ==
+	    (ssize_t)sizeof(payload));
+	len = read(p2, packet_buf.bytes, sizeof(packet_buf.bytes));
+	ATF_REQUIRE_MSG(len ==
+	    (ssize_t)(sizeof(*packet) + sizeof(payload)),
+	    "CID 43 data read with CID 42 full returned %zd", len);
+	for (u_int i = 0; i < filled; i++) {
+		len = read(p1, packet_buf.bytes, sizeof(packet_buf.bytes));
+		ATF_REQUIRE_MSG(len ==
+		    (ssize_t)(sizeof(*packet) + sizeof(payload)),
+		    "CID 42 queue drain %u returned %zd", i, len);
+	}
+
+	/*
 	 * A feature change starts a new epoch for only that CID.  It must purge
 	 * old-type packets and reset that CID without disturbing another
 	 * provider's established socket.
@@ -6237,6 +6519,30 @@ ATF_TC_BODY(kernel_transport_multiple_providers, tc)
 		    VIRTIO_VSOCK_F_NO_IMPLIED_STREAM;
 		ATF_REQUIRE(ioctl(p1, VSOCK_IOC_TRANSPORT_SET_FEATURES,
 		    &features) == 0);
+		/*
+		 * Socket creation is independent of remote feature negotiation:
+		 * this descriptor could still be used over loopback.  The
+		 * destination-specific userspace provider rejects STREAM when
+		 * connect selects CID 42.
+		 */
+		error = socket(AF_VSOCK, SOCK_STREAM | SOCK_NONBLOCK, 0);
+		ATF_REQUIRE_MSG(error >= 0,
+		    "STREAM socket creation followed aggregate features: %s",
+		    strerror(errno));
+		{
+			struct sockaddr_vm peer;
+
+			memset(&peer, 0, sizeof(peer));
+			peer.svm_len = sizeof(peer);
+			peer.svm_family = AF_VSOCK;
+			peer.svm_cid = attach1.guest_cid;
+			peer.svm_port = 9000;
+			errno = 0;
+			ATF_CHECK(connect(error, (struct sockaddr *)&peer,
+			    sizeof(peer)) == -1);
+		}
+		ATF_CHECK(errno == EPROTONOSUPPORT);
+		close(error);
 		optlen = sizeof(error);
 		error = 0;
 		ATF_REQUIRE(getsockopt(s1, SOL_SOCKET, SO_ERROR, &error,
@@ -6257,6 +6563,11 @@ ATF_TC_BODY(kernel_transport_multiple_providers, tc)
 		features = VIRTIO_VSOCK_F_STREAM;
 		ATF_REQUIRE(ioctl(p1, VSOCK_IOC_TRANSPORT_SET_FEATURES,
 		    &features) == 0);
+		error = socket(AF_VSOCK, SOCK_STREAM | SOCK_NONBLOCK, 0);
+		ATF_REQUIRE_MSG(error >= 0,
+		    "aggregate STREAM feature was not restored: %s",
+		    strerror(errno));
+		close(error);
 		s1 = provider_start_connect(attach1.guest_cid, 9001,
 		    SOCK_STREAM);
 		provider_complete_connect(p1, s1, attach1.guest_cid,
@@ -6427,7 +6738,7 @@ ATF_TC_BODY(kernel_transport_duplicate_attach_race, tc)
 	pthread_t threads[2];
 	size_t count_len;
 	u_int provider_count;
-	int error, probe;
+	int error, probe, shared;
 
 	count_len = sizeof(provider_count);
 	ATF_REQUIRE_MSG(sysctlbyname("kern.vsock.userspace_providers",
@@ -6482,6 +6793,54 @@ ATF_TC_BODY(kernel_transport_duplicate_attach_race, tc)
 			close(races[i].fd);
 		}
 		ATF_REQUIRE(pthread_barrier_destroy(&barrier) == 0);
+	}
+
+	/*
+	 * Race the first cdev-private allocation on one shared file
+	 * description as well.  Exactly one ioctl may attach it; the losing
+	 * ioctl must not clear or destroy the winning thread's provider.
+	 */
+	for (u_int round = 0; round < 64; round++) {
+		shared = open("/dev/vsock", O_RDWR | O_NONBLOCK);
+		ATF_REQUIRE(shared >= 0);
+		ATF_REQUIRE(pthread_barrier_init(&barrier, NULL, 3) == 0);
+		memset(races, 0, sizeof(races));
+		for (u_int i = 0; i < 2; i++) {
+			races[i].barrier = &barrier;
+			races[i].attach.version = VSOCK_TRANSPORT_VERSION;
+			races[i].attach.guest_cid = 6000 + round * 2 + i;
+			races[i].attach.features = VIRTIO_VSOCK_F_STREAM;
+			races[i].fd = shared;
+			ATF_REQUIRE(pthread_create(&threads[i], NULL,
+			    provider_attach_race, &races[i]) == 0);
+		}
+		error = pthread_barrier_wait(&barrier);
+		ATF_REQUIRE(error == 0 ||
+		    error == PTHREAD_BARRIER_SERIAL_THREAD);
+		for (u_int i = 0; i < 2; i++)
+			ATF_REQUIRE(pthread_join(threads[i], NULL) == 0);
+		ATF_CHECK_MSG((races[0].result == 0) !=
+		    (races[1].result == 0),
+		    "shared round %u results %d/%d errors %d/%d", round,
+		    races[0].result, races[1].result, races[0].error,
+		    races[1].error);
+		for (u_int i = 0; i < 2; i++) {
+			if (races[i].result != 0)
+				ATF_CHECK_MSG(races[i].error == EALREADY ||
+				    races[i].error == EBUSY,
+				    "shared round %u loser %u returned %s",
+				    round, i, strerror(races[i].error));
+		}
+		count_len = sizeof(provider_count);
+		ATF_REQUIRE(sysctlbyname("kern.vsock.userspace_providers",
+		    &provider_count, &count_len, NULL, 0) == 0);
+		ATF_CHECK_EQ(provider_count, 1);
+		close(shared);
+		ATF_REQUIRE(pthread_barrier_destroy(&barrier) == 0);
+		count_len = sizeof(provider_count);
+		ATF_REQUIRE(sysctlbyname("kern.vsock.userspace_providers",
+		    &provider_count, &count_len, NULL, 0) == 0);
+		ATF_CHECK_EQ(provider_count, 0);
 	}
 	count_len = sizeof(provider_count);
 	ATF_REQUIRE(sysctlbyname("kern.vsock.userspace_providers",
@@ -6558,6 +6917,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, double_bind_fails);
 	ATF_TP_ADD_TC(tp, connect_after_listen);
 	ATF_TP_ADD_TC(tp, retry_connect);
+	ATF_TP_ADD_TC(tp, rebind_same_socket_preserves_binding);
 
 	/* Group 13: Large transfers */
 	ATF_TP_ADD_TC(tp, stream_large_transfer);

@@ -29,6 +29,7 @@
 #include <unistd.h>
 
 #define RELAY_BUFSIZE (4U * 1024 * 1024)
+#define VSOCK_RECORD_MAX (256U * 1024)
 
 static int
 write_all(int fd, const void *buffer, size_t length)
@@ -112,14 +113,15 @@ bump_bufs(int fd)
 /*
  * -1: slurp all of stdin and send it as a SINGLE record with MSG_EOR (SEQPACKET)
  * so a guest->host record larger than one stdin read() chunk is delivered as one
- * record, then drain the reply.  Cap the slurp at the device's max reassembled
- * record (4 MiB).
+ * record, then drain the reply.  A record is bounded by the transport's
+ * advertised receive window; bhyve and Linux default and cap it at 256 KiB.
  */
 static int
 relay_oneshot(int sfd, bool seqpacket)
 {
-	size_t cap = 4u * 1024 * 1024, len = 0;
+	size_t cap = VSOCK_RECORD_MAX, len = 0;
 	char *buf = malloc(cap);
+	char extra;
 	ssize_t n;
 
 	if (buf == NULL) { perror("malloc"); return (1); }
@@ -129,6 +131,20 @@ relay_oneshot(int sfd, bool seqpacket)
 			free(buf); return (1); }
 		if (n == 0) break;
 		len += (size_t)n;
+	}
+	if (len == cap) {
+		do {
+			n = read(0, &extra, 1);
+		} while (n < 0 && errno == EINTR);
+		if (n != 0) {
+			if (n < 0)
+				perror("read");
+			else
+				fprintf(stderr,
+				    "input exceeds 256 KiB record limit\n");
+			free(buf);
+			return (1);
+		}
 	}
 	if (seqpacket) {
 		struct iovec io = { buf, len };

@@ -28,7 +28,8 @@ cp "$here"/*.h "$here/vsock_device_test.c" \
 	"$here/virtio_block_test.c" "$here/block_if_test.c" \
 	"$here/virtio_net_test.c" \
 	"$here/virtio_scsi_test.c" "$here/virtio_guest_contract_test.c" \
-	"$here/virtio_host_contract_test.c" \
+	"$here/virtio_host_contract_test.c" "$here/pci_checkpoint_test.c" \
+	"$here/snapshot_manifest_test.c" \
 	"$work/"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock.c"        "$work/pci_virtio_vsock.c"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock_iov.h"    "$work/pci_virtio_vsock_iov.h"
@@ -47,6 +48,8 @@ ln -s "$srctop/usr.sbin/bhyve/pci_virtio_scsi.c" "$work/pci_virtio_scsi.c"
 ln -s "$srctop/usr.sbin/bhyve/virtio.c" "$work/virtio.c"
 ln -s "$srctop/usr.sbin/bhyve/iov.c" "$work/iov.c"
 ln -s "$srctop/usr.sbin/bhyve/iov.h" "$work/iov.h"
+ln -s "$srctop/usr.sbin/bhyve/checkpoint_manifest.c" "$work/checkpoint_manifest.c"
+ln -s "$srctop/usr.sbin/bhyve/checkpoint_manifest.h" "$work/checkpoint_manifest.h"
 
 mkdir -p "$work/inc/sys"
 cp "$srctop/sys/sys/vsock.h" "$work/inc/sys/vsock.h"
@@ -65,10 +68,12 @@ static int atf_checks, atf_failed;
     fprintf(stderr, "  FAIL %s:%d: %s\n", __FILE__, __LINE__, #x); \
     atf_failed++; } } while (0)
 #define ATF_CHECK_EQ(a, b) ATF_CHECK((a) == (b))
+#define ATF_CHECK_MSG(x, ...) ATF_CHECK(x)
 #define ATF_REQUIRE(x) do { if (!(x)) { \
     fprintf(stderr, "  ABORT %s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } \
     } while (0)
 #define ATF_REQUIRE_EQ(a, b) ATF_REQUIRE((a) == (b))
+#define ATF_REQUIRE_MSG(x, ...) ATF_REQUIRE(x)
 #define ATF_TP_ADD_TC(tp, n) do { atf_tcbody_##n(); } while (0)
 #define atf_no_error() (fprintf(stderr, \
     "device harness: %d checks, %d failed\n", atf_checks, atf_failed), \
@@ -137,6 +142,23 @@ EOF
 	"$work/virtio_host_contract_test.c"
 
 "$work/host-contract-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" \
+	-DBHYVE_SNAPSHOT -I"$work/atfshim" -I"$srctop/usr.sbin" \
+	-I"$srctop/sys" -I"$srctop/usr.sbin/bhyve" \
+	-o "$work/pci-checkpoint-test" "$work/pci_checkpoint_test.c" -lpthread
+
+"$work/pci-checkpoint-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" \
+	-ffunction-sections -fdata-sections \
+	-I"$work/atfshim" -I"$work/inc" -I"$work" \
+	-I"$srctop/usr.sbin/bhyve" -I"$srctop/sys" \
+	-Wl,--gc-sections,--wrap=fsync,--wrap=write \
+	-o "$work/snapshot-manifest-test" \
+	"$work/snapshot_manifest_test.c"
+
+"$work/snapshot-manifest-test"
 
 "$cc" -g -O1 -fsanitize="$sanitizers" \
 	-I"$work/atfshim" -I"$work/inc" \

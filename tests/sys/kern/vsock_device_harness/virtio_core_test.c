@@ -21,7 +21,9 @@
 #include <bhyve/virtio.h>
 #define	MOCK_VIRTIO_H
 #include "virtio.c"
+#include "pci_virtio_net.c"
 #include "virtio_1_4_spec.h"
+#include "virtio_1_4_wire.h"
 
 /* The real core is compiled above; test-side wire values are the 1.4 oracle. */
 #undef VIRTIO_CONFIG_STATUS_ACK
@@ -81,7 +83,7 @@ struct guest_region {
 	void *host;
 };
 
-static struct guest_region g_regions[4];
+static struct guest_region g_regions[8];
 static int g_region_count;
 static int g_interrupts;
 static int g_notifications;
@@ -89,6 +91,7 @@ static int g_cfg_reads;
 static int g_cfg_writes;
 static int g_cfg_error;
 static int g_apply_features;
+static int g_apply_features_error;
 static uint64_t g_applied_features;
 static bool g_msix_enabled;
 static bool g_lintr_asserted;
@@ -98,6 +101,50 @@ static bool g_reset_reports_failure;
 static uint8_t g_reset_observed_status;
 static pthread_mutex_t g_intr_test_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_intr_test_cv = PTHREAD_COND_INITIALIZER;
+
+size_t
+count_iov(const struct iovec *iov, size_t niov)
+{
+	size_t total;
+
+	total = 0;
+	for (size_t i = 0; i < niov; i++)
+		total += iov[i].iov_len;
+	return (total);
+}
+
+void
+netbe_rx_enable(net_backend_t *be __unused)
+{
+}
+
+void
+netbe_rx_disable(net_backend_t *be __unused)
+{
+}
+
+int
+netbe_set_cap(net_backend_t *be __unused, uint64_t features __unused,
+    unsigned int header_len __unused)
+{
+
+	return (0);
+}
+
+size_t
+netbe_get_vnet_hdr_len(net_backend_t *be __unused)
+{
+
+	return (0);
+}
+
+ssize_t
+netbe_send(net_backend_t *be __unused, const struct iovec *iov __unused,
+    int iovcnt __unused)
+{
+
+	return (-1);
+}
 
 void *
 paddr_guest2host(struct vmctx *ctx __unused, uintptr_t gpa, size_t len)
@@ -254,12 +301,13 @@ test_cfgwrite(void *arg __unused, int offset __unused, int size __unused,
 	return (g_cfg_error);
 }
 
-static void
+static int
 test_apply_features(void *arg __unused, uint64_t features)
 {
 
 	g_apply_features++;
 	g_applied_features = features;
+	return (g_apply_features_error);
 }
 
 ATF_TC_WITHOUT_HEAD(legacy_live_configuration_is_frozen);
@@ -268,6 +316,7 @@ ATF_TC_BODY(legacy_live_configuration_is_frozen, tc)
 	struct virtio_consts vc = {
 		.vc_name = "legacy-lifecycle-test",
 		.vc_nvq = 1,
+		.vc_reset = reset_status,
 		.vc_apply_features = test_apply_features,
 		.vc_hv_caps = VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_F_RING_RESET,
 	};
@@ -281,6 +330,7 @@ ATF_TC_BODY(legacy_live_configuration_is_frozen, tc)
 	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
 	vs.vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
 	g_apply_features = 0;
+	g_apply_features_error = 0;
 	g_applied_features = 0;
 
 	/*
@@ -290,12 +340,20 @@ ATF_TC_BODY(legacy_live_configuration_is_frozen, tc)
 	vi_pci_write(&pi, 0, VIRTIO_PCI_GUEST_FEATURES, 4,
 	    VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_F_RING_RESET);
 	ATF_CHECK(vs.vs_negotiated_caps == VIRTIO_F_NOTIFY_ON_EMPTY);
-	ATF_CHECK(g_apply_features == 1);
-	ATF_CHECK(g_applied_features == VIRTIO_F_NOTIFY_ON_EMPTY);
+	/*
+	 * A legacy feature-register write records the selection but cannot
+	 * yet change device-specific state.  VirtIO 1.4 section 5.2.5.3
+	 * makes this observable for block cache mode: applying the selection
+	 * before DRIVER_OK would violate its legacy initialization rule.
+	 */
+	ATF_CHECK(g_apply_features == 0);
+	ATF_CHECK(g_applied_features == 0);
 
 	vq.vq_pfn = 0x1234;
 	vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 1,
 	    VIRTIO_CONFIG_STATUS_DRIVER_OK);
+	ATF_CHECK(g_apply_features == 1);
+	ATF_CHECK(g_applied_features == VIRTIO_F_NOTIFY_ON_EMPTY);
 	vi_pci_write(&pi, 0, VIRTIO_PCI_GUEST_FEATURES, 4, 0);
 	vi_pci_write(&pi, 0, VIRTIO_PCI_QUEUE_PFN, 4, 0x5678);
 	ATF_CHECK(vs.vs_negotiated_caps == VIRTIO_F_NOTIFY_ON_EMPTY);
@@ -308,6 +366,21 @@ ATF_TC_BODY(legacy_live_configuration_is_frozen, tc)
 	ATF_CHECK((vs.vs_status & (VIRTIO_CONFIG_STATUS_ACK |
 	    VIRTIO_CONFIG_STATUS_DRIVER_OK)) ==
 	    (VIRTIO_CONFIG_STATUS_ACK | VIRTIO_CONFIG_STATUS_DRIVER_OK));
+
+	/*
+	 * Legacy has no FEATURES_OK handshake.  If the backend cannot apply
+	 * the selected feature set at DRIVER_OK, keep the device stopped and
+	 * require a reset.
+	 */
+	vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 1, 0);
+	vi_pci_write(&pi, 0, VIRTIO_PCI_GUEST_FEATURES, 4,
+	    VIRTIO_F_NOTIFY_ON_EMPTY);
+	g_apply_features_error = EIO;
+	vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 1,
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	g_apply_features_error = 0;
 }
 
 ATF_TC_WITHOUT_HEAD(legacy_config_offset_overflow);
@@ -727,7 +800,15 @@ ATF_TC_BODY(indirect_mapping_validation, tc)
 	setup_queue(&vs, &vc, &pi, &vq, desc,
 	    (struct vring_avail *)avail_mem.bytes,
 	    (struct vring_used *)used_mem.bytes);
-	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
+	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC |
+	    VIRTIO_RING_F_EVENT_IDX;
+	/*
+	 * Linux's synchronous control command polls the used ring, but the
+	 * device must still perform the normal EVENT_IDX interrupt decision.
+	 * Put used_event at the documented trailing position and request the
+	 * first completion.
+	 */
+	((struct vring_avail *)avail_mem.bytes)->ring[vq.vq_qsize] = 0;
 	add_region(0x1000, payload, sizeof(payload));
 	add_region(0x2000, indirect, VIRTIO14_SPLIT_DESC_SIZE);
 	memset(indirect, 0, sizeof(indirect));
@@ -754,6 +835,220 @@ ATF_TC_BODY(indirect_mapping_validation, tc)
 	desc[0].flags = VRING_DESC_F_INDIRECT | VRING_DESC_F_NEXT;
 	desc[0].next = 1;
 	ATF_CHECK(vq_getchain(&vq, &iov, 1, &req) == -1);
+}
+
+ATF_TC_WITHOUT_HEAD(linux_control_indirect_chain);
+ATF_TC_BODY(linux_control_indirect_chain, tc)
+{
+	union { max_align_t align; uint8_t bytes[64]; } avail_mem;
+	union { max_align_t align; uint8_t bytes[128]; } used_mem;
+	struct virtio_softc vs;
+	struct virtio_consts vc = { 0 };
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	struct vring_desc desc[8], indirect[4];
+	struct vring_used *used;
+	struct vi_req req;
+	struct iovec iov[4];
+	uint8_t control_header[2] = { 4, 1 };
+	uint8_t rss_header[264] = { 0 };
+	uint8_t rss_trailer[44] = { 0 };
+	uint8_t ack = UINT8_MAX;
+
+	/*
+	 * Linux virtio-net submits its RSS control request as one indirect
+	 * chain: control header, variable RSS header, aligned trailer, and a
+	 * device-writable status byte.  Exercise that exact split-ring shape
+	 * through the real parser and used-ring publication code.
+	 */
+	used = (struct vring_used *)used_mem.bytes;
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes, used);
+	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
+	add_region(0x1000, control_header, sizeof(control_header));
+	add_region(0x2000, rss_header, sizeof(rss_header));
+	add_region(0x3000, rss_trailer, sizeof(rss_trailer));
+	add_region(0x4000, &ack, sizeof(ack));
+	add_region(0x5000, indirect,
+	    4U * VIRTIO14_SPLIT_DESC_SIZE);
+
+	memset(indirect, 0, sizeof(indirect));
+	indirect[0].addr = 0x1000;
+	indirect[0].len = sizeof(control_header);
+	indirect[0].flags = VRING_DESC_F_NEXT;
+	indirect[0].next = 1;
+	indirect[1].addr = 0x2000;
+	indirect[1].len = sizeof(rss_header);
+	indirect[1].flags = VRING_DESC_F_NEXT;
+	indirect[1].next = 2;
+	indirect[2].addr = 0x3000;
+	indirect[2].len = sizeof(rss_trailer);
+	indirect[2].flags = VRING_DESC_F_NEXT;
+	indirect[2].next = 3;
+	indirect[3].addr = 0x4000;
+	indirect[3].len = sizeof(ack);
+	indirect[3].flags = VRING_DESC_F_WRITE;
+	desc[0].addr = 0x5000;
+	desc[0].len = 4U * VIRTIO14_SPLIT_DESC_SIZE;
+	desc[0].flags = VRING_DESC_F_INDIRECT;
+
+	ATF_REQUIRE_EQ(vq_getchain(&vq, iov, nitems(iov), &req), 4);
+	ATF_CHECK(req.ordered);
+	ATF_CHECK_EQ(req.readable, 3);
+	ATF_CHECK_EQ(req.writable, 1);
+	ATF_CHECK(iov[0].iov_base == control_header);
+	ATF_CHECK(iov[1].iov_base == rss_header);
+	ATF_CHECK(iov[2].iov_base == rss_trailer);
+	ATF_CHECK(iov[3].iov_base == &ack);
+	ATF_CHECK_EQ(iov[0].iov_len + iov[1].iov_len + iov[2].iov_len,
+	    310);
+
+	*(uint8_t *)iov[3].iov_base = 0;
+	vq_relchain(&vq, req.idx, sizeof(ack));
+	ATF_CHECK_EQ(ack, 0);
+	ATF_CHECK_EQ(used->ring[0].id, 0);
+	ATF_CHECK_EQ(used->ring[0].len, sizeof(ack));
+	ATF_CHECK_EQ(atomic_load_acq_16(&used->idx), 1);
+	vq_endchains(&vq, 1);
+	ATF_CHECK_EQ(g_interrupts, 1);
+}
+
+ATF_TC_WITHOUT_HEAD(linux_rss_production_callback);
+ATF_TC_BODY(linux_rss_production_callback, tc)
+{
+	union { max_align_t align; uint8_t bytes[64]; } avail_mem;
+	union { max_align_t align; uint8_t bytes[128]; } used_mem;
+	struct pci_vtnet_softc sc;
+	struct pci_devinst pi;
+	struct vqueue_info *vq;
+	struct vring_desc desc[8], indirect[4];
+	struct vring_avail *avail;
+	struct vring_used *used;
+	uint8_t control_header[2] = {
+	    VIRTIO14_NET_CTRL_MQ, VIRTIO14_NET_CTRL_MQ_RSS_CONFIG
+	};
+	uint8_t rss_header[264] = { 0 };
+	uint8_t rss_trailer[44] = { 0 };
+	uint8_t ack = UINT8_MAX;
+	uint16_t value;
+
+	/*
+	 * Join the two formerly separate tests: dispatch an exact Linux
+	 * four-descriptor indirect RSS request through the real split-ring core
+	 * and the real pci_vtnet_ping_ctlq() callback, then verify queue-state,
+	 * acknowledgement, used-ring publication, and interrupt delivery.
+	 */
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_consts = vtnet_vi_consts;
+	sc.vsc_consts.vc_nvq = 5;
+	sc.vsc_max_pairs = 2;
+	sc.vsc_features = VIRTIO14_NET_F_CTRL_VQ | VIRTIO14_NET_F_MQ |
+	    VIRTIO14_NET_F_RSS;
+	sc.features_negotiated = true;
+	sc.tx_features_negotiated = true;
+	sc.rx_active_pairs = 1;
+	sc.rx_enabled_mask = 1;
+	sc.tx_active_pairs = 1;
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.rx_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.tx_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc.tx_cond, NULL), 0);
+
+	vq = &sc.vsc_queues[VIRTIO14_NET_MQ_CONTROLQ(2)];
+	avail = (struct vring_avail *)(void *)avail_mem.bytes;
+	used = (struct vring_used *)(void *)used_mem.bytes;
+	setup_queue(&sc.vsc_vs, &sc.vsc_consts, &pi, vq, desc, avail, used);
+	sc.vsc_vs.vs_queues = sc.vsc_queues;
+	sc.vsc_vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	sc.vsc_vs.vs_status = VIRTIO14_STATUS_DRIVER_OK;
+	sc.vsc_vs.vs_negotiated_caps = VIRTIO14_F_RING_INDIRECT_DESC |
+	    VIRTIO14_F_RING_EVENT_IDX;
+	vq->vq_num = VIRTIO14_NET_MQ_CONTROLQ(2);
+	vq->vq_enabled = 1;
+	vq->vq_notify = pci_vtnet_ping_ctlq;
+
+	virtio14_store_le32(rss_header,
+	    VIRTIO14_NET_RSS_HASH_TYPES_BASIC);
+	virtio14_store_le16(rss_header + 4, 127);
+	virtio14_store_le16(rss_header + 6, 0);
+	for (size_t i = 0; i < VIRTIO14_NET_RSS_TABLE_SIZE_MIN; i++) {
+		value = htole16(i & 1);
+		memcpy(rss_header + 8 + i * sizeof(value), &value,
+		    sizeof(value));
+	}
+	virtio14_store_le16(rss_trailer, 2);
+	rss_trailer[2] = 40;
+	for (size_t i = 0; i < 40; i++)
+		rss_trailer[3 + i] = (uint8_t)i;
+
+	add_region(0x1000, control_header, sizeof(control_header));
+	add_region(0x2000, rss_header, sizeof(rss_header));
+	add_region(0x3000, rss_trailer, sizeof(rss_trailer));
+	add_region(0x4000, &ack, sizeof(ack));
+	add_region(0x5000, indirect,
+	    4U * VIRTIO14_SPLIT_DESC_SIZE);
+	memset(indirect, 0, sizeof(indirect));
+	indirect[0].addr = htole64(0x1000);
+	indirect[0].len = htole32(sizeof(control_header));
+	indirect[0].flags = htole16(VIRTIO14_DESC_F_NEXT);
+	indirect[0].next = htole16(1);
+	indirect[1].addr = htole64(0x2000);
+	indirect[1].len = htole32(sizeof(rss_header));
+	indirect[1].flags = htole16(VIRTIO14_DESC_F_NEXT);
+	indirect[1].next = htole16(2);
+	indirect[2].addr = htole64(0x3000);
+	indirect[2].len = htole32(sizeof(rss_trailer));
+	indirect[2].flags = htole16(VIRTIO14_DESC_F_NEXT);
+	indirect[2].next = htole16(3);
+	indirect[3].addr = htole64(0x4000);
+	indirect[3].len = htole32(sizeof(ack));
+	indirect[3].flags = htole16(VIRTIO14_DESC_F_WRITE);
+	desc[0].addr = htole64(0x5000);
+	desc[0].len = htole32(4U * VIRTIO14_SPLIT_DESC_SIZE);
+	desc[0].flags = htole16(VIRTIO14_DESC_F_INDIRECT);
+
+	vi_pci_notify_queue(&sc.vsc_vs, vq->vq_num);
+	ATF_CHECK_EQ(ack, VIRTIO14_NET_CTRL_OK);
+	ATF_CHECK(sc.rss_enabled);
+	ATF_CHECK_EQ(sc.rx_enabled_mask, 3);
+	ATF_CHECK_EQ(sc.tx_active_pairs, 2);
+	ATF_CHECK_EQ(sc.rss_max_tx_vq, 2);
+	ATF_CHECK_EQ(used->ring[0].id, 0);
+	ATF_CHECK_EQ(used->ring[0].len, sizeof(ack));
+	ATF_CHECK_EQ(atomic_load_acq_16(&used->idx), 1);
+	ATF_CHECK_EQ(g_interrupts, 1);
+	ATF_CHECK_EQ(VQ_AVAIL_EVENT_IDX(vq), 1);
+
+	/*
+	 * Feed a second, malformed Linux-shaped request through the same live
+	 * control queue.  Model Linux's EVENT_IDX kick decision instead of
+	 * directly calling the device callback: this request is delivered only
+	 * if the first completion asked for the next available entry.  A table
+	 * entry naming pair 2 is outside this two-pair device.  The device must
+	 * publish ERR without partially changing the previously accepted RSS
+	 * state.
+	 */
+	virtio14_store_le16(rss_header + 8, 2);
+	ack = UINT8_MAX;
+	desc[1].addr = htole64(0x5000);
+	desc[1].len = htole32(4U * VIRTIO14_SPLIT_DESC_SIZE);
+	desc[1].flags = htole16(VIRTIO14_DESC_F_INDIRECT);
+	avail->ring[1] = htole16(1);
+	atomic_store_rel_16(&avail->idx, htole16(2));
+	if (vring_need_event(VQ_AVAIL_EVENT_IDX(vq), 2, 1))
+		vi_pci_notify_queue(&sc.vsc_vs, vq->vq_num);
+	ATF_CHECK_EQ(ack, VIRTIO14_NET_CTRL_ERR);
+	ATF_CHECK(sc.rss_enabled);
+	ATF_CHECK_EQ(sc.rx_enabled_mask, 3);
+	ATF_CHECK_EQ(sc.tx_active_pairs, 2);
+	ATF_CHECK_EQ(sc.rss_indirection_table[0], 0);
+	ATF_CHECK_EQ(used->ring[1].id, 1);
+	ATF_CHECK_EQ(used->ring[1].len, sizeof(ack));
+	ATF_CHECK_EQ(atomic_load_acq_16(&used->idx), 2);
+	ATF_CHECK_EQ(VQ_AVAIL_EVENT_IDX(vq), 2);
+
+	ATF_REQUIRE_EQ(pthread_cond_destroy(&sc.tx_cond), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.tx_mtx), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.rx_mtx), 0);
 }
 
 ATF_TC_WITHOUT_HEAD(descriptor_chain_byte_limit);
@@ -821,6 +1116,52 @@ ATF_TC_BODY(fatal_ring_error_blocks_later_kicks, tc)
 	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	vi_pci_notify_queue(&vs, 0);
 	ATF_CHECK(g_notifications == 1);
+}
+
+ATF_TC_WITHOUT_HEAD(fatal_ring_error_stops_current_batch);
+ATF_TC_BODY(fatal_ring_error_stops_current_batch, tc)
+{
+	union { max_align_t align; uint8_t bytes[64]; } avail_mem;
+	union { max_align_t align; uint8_t bytes[128]; } used_mem;
+	struct virtio_softc vs;
+	struct virtio_consts vc = { 0 };
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	struct vring_desc desc[8];
+	struct vring_avail *avail;
+	struct vi_req req;
+	struct iovec iov;
+	uint8_t payload[2];
+
+	avail = (struct vring_avail *)(void *)avail_mem.bytes;
+	setup_queue(&vs, &vc, &pi, &vq, desc, avail,
+	    (struct vring_used *)(void *)used_mem.bytes);
+	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	add_region(0x1000, payload, sizeof(payload));
+
+	/*
+	 * The first available chain becomes fatal only after its first valid
+	 * descriptor.  A second, otherwise valid request is already visible.
+	 * Once vq_getchain() poisons the device, the current callback's normal
+	 * vq_has_descs() loop must not consume that second request.
+	 */
+	desc[0].addr = 0x1000;
+	desc[0].len = 1;
+	desc[0].flags = VRING_DESC_F_NEXT;
+	desc[0].next = vq.vq_qsize;
+	desc[1].addr = 0x1001;
+	desc[1].len = 1;
+	avail->ring[0] = 0;
+	avail->ring[1] = 1;
+	atomic_store_rel_16(&avail->idx, 2);
+
+	ATF_REQUIRE(vq_has_descs(&vq));
+	ATF_CHECK_EQ(vq_getchain(&vq, &iov, 1, &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	ATF_CHECK_EQ(vq.vq_last_avail, 1);
+	ATF_CHECK(!vq_has_descs(&vq));
+	ATF_CHECK_EQ(vq.vq_last_avail, 1);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&vs.vs_isr_mtx), 0);
 }
 
 ATF_TC_WITHOUT_HEAD(chain_can_use_full_queue);
@@ -965,7 +1306,16 @@ ATF_TC_BODY(event_idx_kick_suppression, tc)
 
 	vq_kick_disable(&vq);
 	ATF_CHECK(used->flags == 0);
-	ATF_CHECK(VQ_AVAIL_EVENT_IDX(&vq) == 17);
+	ATF_CHECK(VQ_AVAIL_EVENT_IDX(&vq) == 9);
+	/*
+	 * The independent document formula must suppress every legal advance
+	 * of this eight-entry ring, not merely the first seven entries.
+	 */
+	for (uint16_t advance = 1; advance <= vq.vq_qsize; advance++) {
+		ATF_CHECK(!vring_need_event(VQ_AVAIL_EVENT_IDX(&vq),
+		    (uint16_t)(vq.vq_last_avail + advance),
+		    vq.vq_last_avail));
+	}
 
 	vs.vs_negotiated_caps = 0;
 	vq_kick_disable(&vq);
@@ -1012,8 +1362,11 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, direct_mapping_validation);
 	ATF_TP_ADD_TC(tp, indirect_mapping_validation);
+	ATF_TP_ADD_TC(tp, linux_control_indirect_chain);
+	ATF_TP_ADD_TC(tp, linux_rss_production_callback);
 	ATF_TP_ADD_TC(tp, descriptor_chain_byte_limit);
 	ATF_TP_ADD_TC(tp, fatal_ring_error_blocks_later_kicks);
+	ATF_TP_ADD_TC(tp, fatal_ring_error_stops_current_batch);
 	ATF_TP_ADD_TC(tp, chain_can_use_full_queue);
 	ATF_TP_ADD_TC(tp, legacy_queue_mapping_validation);
 	ATF_TP_ADD_TC(tp, event_idx_interrupts);

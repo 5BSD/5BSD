@@ -28,6 +28,8 @@ static ssize_t test_readv(int, const struct iovec *, int);
 
 #undef VIRTIO_F_IN_ORDER
 #define	VIRTIO_F_IN_ORDER	VIRTIO14_F_IN_ORDER
+#undef VIRTIO_F_SUSPEND
+#define	VIRTIO_F_SUSPEND	VIRTIO14_F_SUSPEND
 
 #define	TEST_HOST_RND_READ_LIMIT	(64U * 1024U)
 
@@ -43,6 +45,13 @@ static bool g_null_iov;
 static size_t g_iov_len;
 static uint8_t g_iov[VTRND_MAX_BYTES * 2];
 static int g_rel_calls, g_ret_calls, g_end_calls, g_needs_reset;
+
+int
+vi_pci_lifecycle_noop(void *vsc __unused)
+{
+
+	return (0);
+}
 static uint32_t g_rel_len;
 static uint16_t g_rel_idx[8];
 static uint16_t g_next_idx;
@@ -361,6 +370,12 @@ ATF_TC_BODY(in_order_completions, tc)
 	pci_vtrnd_notify(&sc, &vq);
 
 	ATF_CHECK((vtrnd_vi_consts.vc_hv_caps & VIRTIO_F_IN_ORDER) != 0);
+	ATF_CHECK((vtrnd_vi_consts.vc_hv_caps & VIRTIO_F_SUSPEND) != 0);
+	ATF_CHECK(vtrnd_vi_consts.vc_suspend == vi_pci_lifecycle_noop);
+	ATF_CHECK(vtrnd_vi_consts.vc_resume_device ==
+	    vi_pci_lifecycle_noop);
+	ATF_CHECK(vtrnd_vi_consts.vc_pause == vi_pci_lifecycle_noop);
+	ATF_CHECK(vtrnd_vi_consts.vc_resume == vi_pci_lifecycle_noop);
 	ATF_CHECK_EQ(g_read_calls, 3);
 	ATF_CHECK_EQ(g_rel_calls, 3);
 	ATF_CHECK_EQ(g_rel_idx[0], 7);

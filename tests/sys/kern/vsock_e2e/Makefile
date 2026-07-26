@@ -61,6 +61,16 @@ SCRIPTS+=	alpine-guest-setup.sh
 SCRIPTSNAME_alpine-guest-setup.sh=	alpine-guest-setup.sh
 SCRIPTS+=	host-tools-selftest.sh
 SCRIPTSNAME_host-tools-selftest.sh=	host-tools-selftest.sh
+SCRIPTS+=	virtio-host-regression.sh
+SCRIPTSNAME_virtio-host-regression.sh=	virtio-host-regression.sh
+SCRIPTS+=	virtio-lab.lua
+SCRIPTSNAME_virtio-lab.lua=	virtio-lab
+SCRIPTS+=	virtio-lab-selftest.sh
+SCRIPTSNAME_virtio-lab-selftest.sh=	virtio-lab-selftest.sh
+SCRIPTS+=	virtio-lab-probe.sh
+SCRIPTSNAME_virtio-lab-probe.sh=	virtio-lab-probe.sh
+SCRIPTS+=	virtio-lab-case.sh
+SCRIPTSNAME_virtio-lab-case.sh=	virtio-lab-case.sh
 
 # Guest-side tool sources (shipped for in-guest compilation / use).  Use the
 # ${PACKAGE}FILES filegroup that bsd.test.mk wires into the test package
@@ -80,5 +90,6 @@ ${PACKAGE}FILES+=	g9p.py
 ${PACKAGE}FILES+=	ALPINE.md
 ${PACKAGE}FILES+=	FIVEBSD.md
 ${PACKAGE}FILES+=	FRAMEWORK.md
+${PACKAGE}FILES+=	virtio-lab.yaml
 
 .include <bsd.test.mk>

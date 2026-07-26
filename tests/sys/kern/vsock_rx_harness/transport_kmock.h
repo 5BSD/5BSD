@@ -106,6 +106,8 @@ struct virtqueue {
 	int disable_count;
 	void *enqueue_order[MOCK_VQ_MAX];
 	int enqueue_count;
+	/* Zero is unlimited; otherwise inject ENOSPC after this many accepts. */
+	int enqueue_success_limit;
 	void (*dequeue_hook)(struct virtqueue *, void *);
 	void *dequeue_hook_arg;
 };
@@ -145,6 +147,9 @@ virtqueue_enqueue(struct virtqueue *vq, void *cookie, struct sglist *sg,
 	if (vq->nfree < needed)
 		return (EMSGSIZE);
 	if (vq->entry_count >= MOCK_VQ_MAX)
+		return (ENOSPC);
+	if (vq->enqueue_success_limit != 0 &&
+	    vq->enqueue_count >= vq->enqueue_success_limit)
 		return (ENOSPC);
 	vq->entries[vq->entry_count++] = (struct mock_vq_entry) {
 		.cookie = cookie, .ndesc = needed

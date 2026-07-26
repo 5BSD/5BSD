@@ -174,6 +174,23 @@ echo "TOTAL: $PASS passed, $FAIL failed, $SKIP skipped (of $TOTAL)" >> "$OUT"
 echo ""
 echo "Results written to $OUT"
 echo "TOTAL: $PASS passed, $FAIL failed, $SKIP skipped (of $TOTAL)"
+if [ "$FAIL" -ne 0 ]; then
+	echo ""
+	echo "Failed cases:"
+	awk '
+	    /^FAIL  / {
+		print
+		show = 1
+		next
+	    }
+	    show && /^(PASS|SKIP|FAIL)  / {
+		show = 0
+	    }
+	    show {
+		print
+	    }
+	' "$OUT"
+fi
 
 # Non-zero exit if any case failed, so callers/CI can gate on it.
 [ "$FAIL" -eq 0 ]

@@ -117,6 +117,22 @@ struct virtio_pci_cfg_cap {
  */
 #define VIRTIO_PCI_CAP_BAR_VALID(bar)	((uint8_t)(bar) <= 5)
 
+/*
+ * Validate the byte range named by a VirtIO structure capability before
+ * passing it to bus_map_resource().  A zero resource-map length means "map
+ * the whole resource" to the bus API, but cap.length == 0 names no bytes and
+ * must not acquire that unrelated meaning here.
+ */
+static inline bool
+virtio_pci_cap_range_valid(uint64_t bar_size, uint32_t offset, uint32_t length,
+    uint32_t min_length, uint32_t alignment)
+{
+
+	return (alignment != 0 && length >= min_length && length != 0 &&
+	    offset % alignment == 0 && offset <= bar_size &&
+	    length <= bar_size - offset);
+}
+
 #define VIRTIO_PCI_COMMON_DFSELECT	0
 #define VIRTIO_PCI_COMMON_DF		4
 #define VIRTIO_PCI_COMMON_GFSELECT	8

@@ -25,6 +25,9 @@
 #include "config.h"
 #include "debug.h"
 #include "pci_emul.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 #include "virtio.h"
 #include "virtio_pci_modern_probes.h"
 
@@ -53,7 +56,7 @@
 	 VIRTIO_RING_F_INDIRECT_DESC |					\
 	 VIRTIO_RING_F_EVENT_IDX | VIRTIO_F_VERSION_1 |			\
 	 VIRTIO_F_IN_ORDER | VIRTIO_F_NOTIFICATION_DATA |		\
-	 VIRTIO_F_RING_RESET |						\
+	 VIRTIO_F_RING_RESET | VIRTIO_F_SUSPEND |			\
 	 VIRTIO_MODERN_DEVICE_FEATURES_HIGH)
 #define	VIRTIO_MODERN_TRANSPORT_FEATURES				\
 	(VIRTIO_F_VERSION_1 | VIRTIO_F_NOTIFICATION_DATA)
@@ -65,8 +68,15 @@ struct virtio_pci_modern {
 	int bar;
 	uint8_t config_generation;
 	uint8_t pci_cfg_capoff;
+	bool config_changed;
 	bool config_pending;
+	bool config_deferred;
 };
+
+#ifdef BHYVE_SNAPSHOT
+#define	VIRTIO_MODERN_SNAPSHOT_MAGIC	0x56544d31U	/* "VTM1" */
+#define	VIRTIO_MODERN_SNAPSHOT_VERSION	1U
+#endif
 
 static int vi_modern_debug;
 
@@ -85,9 +95,83 @@ vi_modern_device_features(const struct virtio_softc *vs)
 
 	features = vs->vs_vc->vc_hv_caps;
 	features &= VIRTIO_MODERN_SUPPORTED_FEATURES;
+	if (vs->vs_vc->vc_suspend == NULL ||
+	    vs->vs_vc->vc_resume_device == NULL)
+		features &= ~VIRTIO_F_SUSPEND;
 	features |= VIRTIO_MODERN_TRANSPORT_FEATURES;
 	return (features);
 }
+
+#ifdef BHYVE_SNAPSHOT
+int
+vi_pci_modern_snapshot_transport(struct virtio_softc *vs,
+    struct vm_snapshot_meta *meta)
+{
+	struct virtio_pci_modern *modern;
+	uint64_t available;
+	uint32_t magic, version;
+	uint8_t config_changed, config_deferred, config_pending;
+	int ret;
+
+	modern = vs->vs_modern;
+	if (modern == NULL)
+		return (EINVAL);
+
+	magic = VIRTIO_MODERN_SNAPSHOT_MAGIC;
+	version = VIRTIO_MODERN_SNAPSHOT_VERSION;
+	SNAPSHOT_VAR_OR_LEAVE(magic, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(version, meta, ret, done);
+	if (magic != VIRTIO_MODERN_SNAPSHOT_MAGIC ||
+	    version != VIRTIO_MODERN_SNAPSHOT_VERSION) {
+		ret = ENOTSUP;
+		goto done;
+	}
+
+	SNAPSHOT_VAR_OR_LEAVE(modern->driver_features, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(modern->device_feature_select, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(modern->driver_feature_select, meta, ret, done);
+	SNAPSHOT_VAR_CMP_OR_LEAVE(modern->bar, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(modern->config_generation, meta, ret, done);
+	SNAPSHOT_VAR_CMP_OR_LEAVE(modern->pci_cfg_capoff, meta, ret, done);
+	config_changed = modern->config_changed;
+	config_pending = modern->config_pending;
+	config_deferred = modern->config_deferred;
+	SNAPSHOT_VAR_OR_LEAVE(config_changed, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(config_pending, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(config_deferred, meta, ret, done);
+
+	if (meta->op != VM_SNAPSHOT_RESTORE)
+		goto done;
+	if (config_changed > 1 || config_pending > 1 ||
+	    config_deferred > 1 ||
+	    (config_deferred != 0 && config_changed == 0) ||
+	    config_deferred != (uint8_t)vs->vs_config_deferred) {
+		EPRINTLN("%s: inconsistent restored configuration state",
+		    vs->vs_vc->vc_name);
+		ret = EINVAL;
+		goto done;
+	}
+	modern->config_changed = config_changed;
+	modern->config_pending = config_pending;
+	modern->config_deferred = config_deferred;
+	available = vi_modern_device_features(vs);
+	if ((vs->vs_status & VIRTIO_CONFIG_S_FEATURES_OK) != 0 &&
+	    ((modern->driver_features & ~available) != 0 ||
+	    modern->driver_features != vs->vs_negotiated_caps)) {
+		EPRINTLN("%s: restored modern feature state is incompatible",
+		    vs->vs_vc->vc_name);
+		ret = ENOTSUP;
+		goto done;
+	}
+	if (modern->device_feature_select >= 2)
+		modern->device_feature_select = 0;
+	if (modern->driver_feature_select >= 2)
+		modern->driver_feature_select = 0;
+
+done:
+	return (ret);
+}
+#endif
 
 static size_t
 vi_modern_common_cfg_size(const struct virtio_softc *vs)
@@ -313,6 +397,29 @@ vi_pci_modern_config_changed(struct virtio_softc *vs)
 
 	if (vs->vs_modern == NULL)
 		return;
+	/*
+	 * Latch any number of unobserved changes into one generation epoch.
+	 * config_generation is only eight bits; incrementing for every backend
+	 * change could wrap through 256 before the driver observes it and
+	 * present the old value, violating VirtIO 1.4 §4.1.4.3.1.  Consume the
+	 * latch on the next config_generation read instead.
+	 *
+	 * This still protects the driver's stable-read sequence:
+	 *
+	 *     generation = read_generation();
+	 *     read_device_configuration();
+	 *     if (generation != read_generation())
+	 *             retry;
+	 *
+	 * A change anywhere after the first generation read sets the latch, so
+	 * the final generation read consumes it and returns a different value.
+	 */
+	vs->vs_modern->config_changed = true;
+	if (vs->vs_suspended || vs->vs_checkpoint_paused) {
+		vs->vs_modern->config_deferred = true;
+		return;
+	}
+	vs->vs_modern->config_deferred = false;
 	if (vs->vs_modern->config_pending)
 		return;
 	vs->vs_modern->config_pending = true;
@@ -323,6 +430,8 @@ void
 vi_pci_config_changed(struct virtio_softc *vs)
 {
 
+	if (vs->vs_suspended || vs->vs_checkpoint_paused)
+		vs->vs_config_deferred = true;
 	if (vi_pci_is_modern(vs))
 		vi_pci_modern_config_changed(vs);
 	else {
@@ -373,7 +482,9 @@ vi_pci_modern_reset(struct virtio_softc *vs)
 	vs->vs_modern->driver_features = 0;
 	vs->vs_modern->device_feature_select = 0;
 	vs->vs_modern->driver_feature_select = 0;
+	vs->vs_modern->config_changed = false;
 	vs->vs_modern->config_pending = false;
+	vs->vs_modern->config_deferred = false;
 	for (i = 0; i < vs->vs_vc->vc_nvq; i++) {
 		vq = &vs->vs_queues[i];
 		vq->vq_generation++;
@@ -450,8 +561,18 @@ vi_modern_common_read(struct virtio_softc *vs, uint64_t offset, int size)
 			return (vs->vs_status);
 		break;
 	case VIRTIO_PCI_COMMON_CFGGENERATION:
-		if (size == 1)
+		if (size == 1) {
+			if (!vs->vs_suspended &&
+			    !vs->vs_checkpoint_paused &&
+			    vs->vs_modern->config_changed) {
+				vs->vs_modern->config_generation++;
+				vs->vs_modern->config_changed = false;
+				VIRTIO_PROBE_CONFIG_CHANGED(
+				    vs->vs_vc->vc_name,
+				    vs->vs_modern->config_generation);
+			}
 			return (vs->vs_modern->config_generation);
+		}
 		break;
 	case VIRTIO_PCI_COMMON_Q_SELECT:
 		if (size == 2)
@@ -678,15 +799,97 @@ vi_pci_modern_queue_reset_complete(struct vqueue_info *vq,
 }
 
 static void
+vi_modern_suspend(struct virtio_softc *vs)
+{
+	int error;
+	uint8_t status;
+
+	/*
+	 * Publish the queue-ownership fence before asking the backend to drain.
+	 * Lockless workers may finish the descriptor they already own, but
+	 * vq_ring_ready() prevents them from taking another one.
+	 */
+	vi_pci_quiesce_enter(vs);
+	VIRTIO_PROBE_LIFECYCLE(vs->vs_vc->vc_name, "suspend", "begin", 0);
+	error = (*vs->vs_vc->vc_suspend)((void *)vs);
+	if (error == 0 &&
+	    (vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
+		error = EIO;
+	if (error != 0) {
+		vi_pci_quiesce_exit(vs);
+		VIRTIO_PROBE_LIFECYCLE(vs->vs_vc->vc_name, "suspend",
+		    "fail", error);
+		vi_modern_set_needs_reset(vs, "device suspend failed");
+		return;
+	}
+
+	/*
+	 * The backend has returned every in-flight buffer to its used ring.
+	 * Suppress subsequent queue/config interrupts before presenting the
+	 * completed SUSPEND state to the driver.
+	 */
+	vs->vs_suspended = true;
+	status = vs->vs_status;
+	status |= VIRTIO_CONFIG_STATUS_SUSPEND;
+	status &= ~VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	vs->vs_status = status;
+	vi_pci_quiesce_exit(vs);
+	VIRTIO_PROBE_LIFECYCLE(vs->vs_vc->vc_name, "suspend", "end", 0);
+}
+
+static void
+vi_modern_resume(struct virtio_softc *vs)
+{
+	int error;
+	uint8_t status;
+
+	vi_pci_quiesce_enter(vs);
+	VIRTIO_PROBE_LIFECYCLE(vs->vs_vc->vc_name, "resume", "begin", 0);
+	error = (*vs->vs_vc->vc_resume_device)((void *)vs);
+	if (error == 0 &&
+	    (vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
+		error = EIO;
+	if (error != 0) {
+		vi_pci_quiesce_exit(vs);
+		VIRTIO_PROBE_LIFECYCLE(vs->vs_vc->vc_name, "resume",
+		    "fail", error);
+		vi_modern_set_needs_reset(vs, "device resume failed");
+		return;
+	}
+
+	status = vs->vs_status;
+	status &= ~VIRTIO_CONFIG_STATUS_SUSPEND;
+	status |= VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	vs->vs_status = status;
+	vs->vs_suspended = false;
+	vi_pci_quiesce_exit(vs);
+	VIRTIO_PROBE_LIFECYCLE(vs->vs_vc->vc_name, "resume", "end", 0);
+	if (vs->vs_vc->vc_resume_complete != NULL)
+		(*vs->vs_vc->vc_resume_complete)((void *)vs);
+
+	if (vs->vs_modern->config_deferred) {
+		vs->vs_modern->config_deferred = false;
+		vs->vs_config_deferred = false;
+		if (!vs->vs_modern->config_pending) {
+			vs->vs_modern->config_pending = true;
+			vi_modern_config_interrupt(vs);
+		}
+	}
+	vi_pci_notify_ready_queues(vs);
+}
+
+static void
 vi_modern_status_write(struct virtio_softc *vs, uint8_t status)
 {
 	const uint8_t driver_status_mask = VIRTIO_CONFIG_STATUS_ACK |
 	    VIRTIO_CONFIG_STATUS_DRIVER | VIRTIO_CONFIG_STATUS_DRIVER_OK |
 	    VIRTIO_CONFIG_S_FEATURES_OK | VIRTIO_CONFIG_STATUS_FAILED;
 	uint64_t features, negotiated_features;
-	uint8_t old_status;
+	int error;
+	uint8_t old_status, requested_status;
 
 	old_status = vs->vs_status;
+	requested_status = status;
 	MODERN_DPRINTF(2, "%s: modern status write old=%#x requested=%#x "
 	    "driver_features=%#jx", vs->vs_vc->vc_name, old_status, status,
 	    (uintmax_t)vs->vs_modern->driver_features);
@@ -700,11 +903,28 @@ vi_modern_status_write(struct virtio_softc *vs, uint8_t status)
 		 * soon as it observes zero.
 		 */
 		vs->vs_reset_failed = false;
+		atomic_fetch_add(&vs->vs_reset_epoch, 1);
+		vi_pci_quiesce_enter(vs);
 		vs->vs_resetting = true;
 		(*vs->vs_vc->vc_reset)((void *)vs);
 		vs->vs_status = 0;
+		vs->vs_suspended = false;
+		vs->vs_config_deferred = false;
+		vi_pci_quiesce_exit(vs);
 		vs->vs_resetting = false;
+		atomic_fetch_add(&vs->vs_reset_epoch, 1);
 		VIRTIO_PROBE_STATUS(vs->vs_vc->vc_name, old_status, 0);
+		return;
+	}
+	if (vs->vs_suspended) {
+		/*
+		 * A suspended driver resumes by setting DRIVER_OK.  Other
+		 * nonzero status writes cannot mutate the suspended device.
+		 */
+		if ((requested_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
+			vi_modern_resume(vs);
+		VIRTIO_PROBE_STATUS(vs->vs_vc->vc_name, old_status,
+		    vs->vs_status);
 		return;
 	}
 	/*
@@ -727,17 +947,38 @@ vi_modern_status_write(struct virtio_softc *vs, uint8_t status)
 	if ((status & VIRTIO_CONFIG_S_FEATURES_OK) == 0)
 		status &= ~VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	vs->vs_status = status;
-	VIRTIO_PROBE_STATUS(vs->vs_vc->vc_name, old_status, status);
 	if ((old_status & VIRTIO_CONFIG_S_FEATURES_OK) == 0 &&
 	    (status & VIRTIO_CONFIG_S_FEATURES_OK) != 0) {
 		negotiated_features = vs->vs_modern->driver_features & features;
-		vs->vs_negotiated_caps = negotiated_features;
+		error = 0;
 		if (vs->vs_vc->vc_apply_features != NULL)
-			(*vs->vs_vc->vc_apply_features)((void *)vs,
+			error = (*vs->vs_vc->vc_apply_features)((void *)vs,
 			    negotiated_features);
-		VIRTIO_PROBE_FEATURES(vs->vs_vc->vc_name,
-		    negotiated_features);
+		if (error != 0) {
+			/*
+			 * Section 3.1.1 requires the device to clear
+			 * FEATURES_OK when it cannot support the selected
+			 * subset.  DRIVER_OK cannot survive that rejection,
+			 * including when a non-conforming driver combines both
+			 * bits in one write.
+			 */
+			status = vs->vs_status;
+			status &= ~(VIRTIO_CONFIG_S_FEATURES_OK |
+			    VIRTIO_CONFIG_STATUS_DRIVER_OK);
+			vs->vs_status = status;
+			vs->vs_negotiated_caps = 0;
+		} else {
+			vs->vs_negotiated_caps = negotiated_features;
+			VIRTIO_PROBE_FEATURES(vs->vs_vc->vc_name,
+			    negotiated_features);
+		}
 	}
+	if ((requested_status & VIRTIO_CONFIG_STATUS_SUSPEND) != 0 &&
+	    (vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0 &&
+	    (vs->vs_negotiated_caps & VIRTIO_F_SUSPEND) != 0)
+		vi_modern_suspend(vs);
+	status = vs->vs_status;
+	VIRTIO_PROBE_STATUS(vs->vs_vc->vc_name, old_status, status);
 	if ((old_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0 &&
 	    (status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
 		vi_pci_notify_ready_queues(vs);
@@ -892,13 +1133,14 @@ vi_pci_modern_read(struct pci_devinst *pi, int baridx, uint64_t offset,
 			error = (*vs->vs_vc->vc_cfgread)((void *)vs,
 			    offset - VIRTIO_MODERN_DEVICE_OFF, size, &value);
 		if (error == 0) {
-			if (vs->vs_modern->config_pending) {
-				vs->vs_modern->config_generation++;
-				vs->vs_modern->config_pending = false;
-				VIRTIO_PROBE_CONFIG_CHANGED(
-				    vs->vs_vc->vc_name,
-				    vs->vs_modern->config_generation);
-			}
+			/*
+			 * A successful read observes the current configuration.
+			 * Clear only interrupt coalescing here.  The independent
+			 * generation latch is consumed by a generation read, so
+			 * a change during a driver's stable-read sequence cannot
+			 * be hidden by this device-configuration access.
+			 */
+			vs->vs_modern->config_pending = false;
 			result = value;
 		}
 	}
@@ -925,6 +1167,11 @@ vi_pci_modern_write(struct pci_devinst *pi, int baridx, uint64_t offset,
 	VS_LOCK(vs);
 	if (vs->vs_resetting) {
 		/* The reset callback still owns all transport and queue state. */
+	} else if (vs->vs_quiescing) {
+		/* A lifecycle callback owns the backend and queue transition. */
+	} else if (vs->vs_suspended &&
+	    !(offset == VIRTIO_PCI_COMMON_STATUS && size == 1)) {
+		/* While suspended, only device-status writes are meaningful. */
 	} else if (offset < vi_modern_common_cfg_size(vs)) {
 		vi_modern_common_write(vs, offset, size, value);
 	} else if (offset == VIRTIO_MODERN_NOTIFY_OFF) {

@@ -63,5 +63,7 @@ provider virtio {
 	probe transport__config__changed(const char *device,
 	    uint8_t generation);
 	probe transport__reset(const char *device);
+	probe transport__lifecycle(const char *device, const char *operation,
+	    const char *phase, int error);
 	probe transport__error(const char *device, const char *reason);
 };

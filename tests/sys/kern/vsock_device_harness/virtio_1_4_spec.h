@@ -288,9 +288,16 @@
 #define	VIRTIO14_NET_RSS_COMMAND_MAX	(13U + \
 	    VIRTIO14_NET_RSS_TABLE_SIZE_MIN * 2U + \
 	    VIRTIO14_NET_RSS_KEY_SIZE_MIN)
+/*
+ * Linux includes the natural-alignment tail byte from its RSS trailer
+ * structure in the control descriptor.  This is an interoperability size,
+ * not a value derived from the packed VirtIO wire-field layout above.
+ */
+#define	VIRTIO14_LINUX_NET_RSS_COMMAND_MAX	310U
 #define	VIRTIO14_NET_HASH_COMMAND_MIN	15U
 #define	VIRTIO14_NET_HASH_COMMAND_MAX	(15U + \
 	    VIRTIO14_NET_RSS_KEY_SIZE_MIN)
+#define	VIRTIO14_LINUX_NET_HASH_COMMAND_MAX	56U
 #define	VIRTIO14_NET_HASH_TYPES_OFF	2U
 #define	VIRTIO14_NET_HASH_RESERVED_OFF	6U
 #define	VIRTIO14_NET_HASH_RESERVED_SIZE	8U
@@ -393,6 +400,7 @@
 #define	VIRTIO14_SCSI_T_TMF		0U
 #define	VIRTIO14_SCSI_T_TMF_ABORT_TASK	0U
 #define	VIRTIO14_SCSI_T_AN_QUERY	1U
+#define	VIRTIO14_SCSI_T_AN_SUBSCRIBE	2U
 #define	VIRTIO14_SCSI_S_FUNCTION_COMPLETE 0U
 #define	VIRTIO14_SCSI_S_FUNCTION_SUCCEEDED 10U
 #define	VIRTIO14_SCSI_S_FUNCTION_REJECTED 11U

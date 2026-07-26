@@ -6,6 +6,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 ISO=${ISO:?set ISO to an Alpine virt ISO}
 BHYVE=${BHYVE:-}
+BHYVECTL=${BHYVECTL:-}
 UEFI=${UEFI:-}
 SRCTOP=${SRCTOP:-$(cd "$here/../../../.." && pwd)}
 OBJROOT=${OBJROOT:-/usr/obj}
@@ -15,6 +16,7 @@ DEVICES=${DEVICES:-"vsock rng input"}
 VSOCK_BACKEND=${VSOCK_BACKEND:-userspace}
 CID=${CID:-4}
 PORT_OFFSET=${PORT_OFFSET:-0}
+VSOCK_TEST_MAX_BASE_PORT=7237
 VSOCK_BARRIER_DIR=${VSOCK_BARRIER_DIR:-}
 VSOCK_BARRIER_CIDS=${VSOCK_BARRIER_CIDS:-}
 CONSOLE_PORT=${CONSOLE_PORT:-}
@@ -29,6 +31,7 @@ SCSI_DEBUG=${SCSI_DEBUG:-1}
 VIRTIO_MSIX=${VIRTIO_MSIX:-yes}
 RESET_TEST=${RESET_TEST:-no}
 REBOOT_TEST=${REBOOT_TEST:-no}
+CHECKPOINT_TEST=${CHECKPOINT_TEST:-no}
 BLOCK_TEST_MB=${BLOCK_TEST_MB:-256}
 BLOCK_IMAGE_MB=${BLOCK_IMAGE_MB:-1024}
 BLOCK_QUEUES=${BLOCK_QUEUES:-2}
@@ -64,11 +67,37 @@ if [ -z "$UEFI" ]; then
 		fi
 	done
 fi
+if [ -z "$BHYVECTL" ]; then
+	object_bhyvectl="$OBJROOT$SRCTOP/$(uname -p).$(uname -p)/usr.sbin/bhyvectl/bhyvectl"
+	if [ -x "$object_bhyvectl" ]; then
+		BHYVECTL=$object_bhyvectl
+	else
+		BHYVECTL=$(command -v bhyvectl 2>/dev/null || true)
+	fi
+fi
 
 [ "$(id -u)" -eq 0 ] || { echo "run-alpine-auto.sh must run as root" >&2; exit 1; }
 [ -f "$ISO" ] || { echo "ISO not found: $ISO" >&2; exit 1; }
 [ -x "$BHYVE" ] || { echo "bhyve not found: $BHYVE" >&2; exit 1; }
+[ "$CHECKPOINT_TEST" = no ] || [ -x "$BHYVECTL" ] || {
+	echo "CHECKPOINT_TEST requires bhyvectl" >&2
+	exit 1
+}
+if [ "$CHECKPOINT_TEST" = yes ]; then
+	checkpoint_usage=$("$BHYVECTL" --help 2>&1 || true)
+	printf '%s\n' "$checkpoint_usage" | grep -q -- '--checkpoint=<filename>' || {
+		echo "CHECKPOINT_TEST requires a WITH_BHYVE_SNAPSHOT bhyvectl" >&2
+		exit 1
+	}
+	sysctl -n kern.conftxt 2>/dev/null |
+	    grep -Eq '^options[[:space:]]+BHYVE_SNAPSHOT([[:space:]]|$)' || {
+		echo "CHECKPOINT_TEST requires a kernel built with BHYVE_SNAPSHOT" >&2
+		exit 1
+	}
+fi
 [ -f "$UEFI" ] || { echo "UEFI firmware not found: $UEFI" >&2; exit 1; }
+echo "BHYVE path=$BHYVE sha256=$(sha256 -q "$BHYVE")"
+echo "HOST kernel=$(uname -K) userland=$(uname -U)"
 case "$VSOCK_BACKEND" in
 userspace|kernel) ;;
 *) echo "VSOCK_BACKEND must be userspace or kernel" >&2; exit 2 ;;
@@ -96,8 +125,8 @@ done
 case "$PORT_OFFSET" in
 ''|*[!0-9]*) echo "PORT_OFFSET must be a non-negative integer" >&2; exit 2 ;;
 esac
-[ "$PORT_OFFSET" -le 1000000 ] || {
-	echo "PORT_OFFSET must not exceed 1000000" >&2
+[ "$PORT_OFFSET" -le $((65535 - VSOCK_TEST_MAX_BASE_PORT)) ] || {
+	echo "PORT_OFFSET places a test port above 65535" >&2
 	exit 2
 }
 
@@ -132,7 +161,8 @@ done
 }
 
 for setting in "VIRTIO_MSIX:$VIRTIO_MSIX" "RESET_TEST:$RESET_TEST" \
-    "REBOOT_TEST:$REBOOT_TEST" "KEEP_VM:$KEEP_VM"; do
+    "REBOOT_TEST:$REBOOT_TEST" "CHECKPOINT_TEST:$CHECKPOINT_TEST" \
+    "KEEP_VM:$KEEP_VM"; do
 	name=${setting%%:*}
 	value=${setting#*:}
 	case "$value" in
@@ -182,6 +212,17 @@ if { [ "$RESET_TEST" = yes ] || [ "$REBOOT_TEST" = yes ] ||
     [ "$run_input_device" = yes ]; then
 	echo "reset/reboot lifecycle tests do not yet support the one-shot input provider" >&2
 	exit 2
+fi
+if [ "$CHECKPOINT_TEST" = yes ]; then
+	for device in $DEVICES; do
+		case "$device:$VSOCK_BACKEND" in
+		net:*|block:*|rng:*|vsock:userspace) ;;
+		*)
+			echo "CHECKPOINT_TEST currently supports net, block, rng, and idle userspace vsock; unsupported: $device" >&2
+			exit 2
+			;;
+		esac
+	done
 fi
 
 for transport in $TRANSPORTS; do
@@ -245,7 +286,11 @@ if [ -n "$VSOCK_BARRIER_DIR" ]; then
 	}
 fi
 if [ -f "$here/Makefile" ]; then
-	make -C "$here"
+	case "${VM_FREE_GATES:-yes}" in
+	yes) make -C "$here" ;;
+	no) ;;
+	*) echo "VM_FREE_GATES must be yes or no" >&2; exit 2 ;;
+	esac
 	tools=${TOOLS:-$(make -C "$here" -V .OBJDIR)}
 else
 	tools=${TOOLS:-$here}
@@ -260,7 +305,9 @@ for tool in $required_tools; do
 		exit 1
 	}
 done
-[ "$run_vsock" = no ] || TOOLS="$tools" sh "$here/host-tools-selftest.sh"
+if [ "$run_vsock" != no ] && [ "${VM_FREE_GATES:-yes}" = yes ]; then
+	TOOLS="$tools" sh "$here/host-tools-selftest.sh"
+fi
 kldload -n vmm
 [ "$run_input_device" = no ] || kldload -n uinput
 [ "$run_input_device" = no ] || "$tools/uinput-inject" --kernel-self-test
@@ -340,7 +387,7 @@ cleanup_vm()
 		wait "$vm_pid" 2>/dev/null || true
 	fi
 	vm_pid=
-	[ -z "$vmname" ] || bhyvectl --vm="$vmname" --destroy >/dev/null 2>&1 || true
+	[ -z "$vmname" ] || "$BHYVECTL" --vm="$vmname" --destroy >/dev/null 2>&1 || true
 	if [ -n "$input_pid" ]; then
 		kill "$input_pid" 2>/dev/null || true
 		wait "$input_pid" 2>/dev/null || true
@@ -466,11 +513,13 @@ start_console()
 
 launch_vm()
 {
+	restore_file=${1:-}
 	set -- "$BHYVE" -c "$vm_cpus" -m 2G -H -w \
 	    -s 0,hostbridge -s "3,ahci-cd,$ISO" \
 	    -s "4,virtio-net,$tap$net_transport_opt$net_queues_opt"
 	[ "$VIRTIO_MSIX" = yes ] || set -- "$@" -W
 	[ "$REBOOT_TEST" = no ] || set -- "$@" -M
+	[ -z "$restore_file" ] || set -- "$@" -r "$restore_file"
 	[ "$run_vsock" = no ] || set -- "$@" \
 	    -s "5,virtio-vsock,cid=$CID$vsock_backend_opt$vsock_transport_opt"
 	[ "$run_input_device" = no ] || set -- "$@" \
@@ -494,6 +543,78 @@ launch_vm()
 	    >> "$bhyve_log" 2>&1 &
 	vm_pid=$!
 	start_console
+}
+
+wait_checkpoint_manifest()
+{
+	checkpoint=$1
+	old_contents=${2:-}
+	i=0
+	while [ "$i" -lt 180 ]; do
+		if [ -f "$checkpoint" ]; then
+			contents=$(cat "$checkpoint")
+			header=$(printf '%s\n' "$contents" | sed -n '1p')
+			if [ "$header" = "BHYVE-CHECKPOINT-MANIFEST-1" ] &&
+			    { [ -z "$old_contents" ] ||
+			    [ "$contents" != "$old_contents" ]; }; then
+				valid=yes
+				for key in data kern meta; do
+					member=$(printf '%s\n' "$contents" |
+					    sed -n "s/^$key=//p")
+					case "$member" in
+					''|*/*|.|..) valid=no; break ;;
+					esac
+					if [ ! -f "$(dirname "$checkpoint")/$member" ]; then
+						valid=no
+						break
+					fi
+				done
+				[ "$valid" = no ] || return 0
+			fi
+		fi
+		if [ -n "$vm_pid" ]; then
+			kill -0 "$vm_pid" 2>/dev/null || return 1
+		fi
+		sleep 1
+		i=$((i + 1))
+	done
+	echo "timed out waiting for checkpoint manifest: $checkpoint" >&2
+	return 1
+}
+
+run_checkpoint_roundtrip()
+{
+	checkpoint="$WORKDIR/$transport.checkpoint"
+	marker="checkpoint-$transport-$$"
+
+	echo "== Alpine $transport: live checkpoint and restore =="
+	rm -f "$checkpoint" "$checkpoint".*
+	guest_cmd "printf %s '$marker' > /tmp/bhyve-checkpoint-marker" 30
+	"$BHYVECTL" --vm="$vmname" --checkpoint="$checkpoint"
+	wait_checkpoint_manifest "$checkpoint"
+	first_manifest=$(cat "$checkpoint")
+	guest_cmd "test \"\$(cat /tmp/bhyve-checkpoint-marker)\" = '$marker'" 30
+	run_network_smoke
+
+	"$BHYVECTL" --vm="$vmname" --suspend="$checkpoint"
+	i=0
+	while kill -0 "$vm_pid" 2>/dev/null && [ "$i" -lt 180 ]; do
+		sleep 1
+		i=$((i + 1))
+	done
+	[ "$i" -lt 180 ] || {
+		echo "timed out waiting for suspended bhyve to exit" >&2
+		return 1
+	}
+	wait "$vm_pid" 2>/dev/null || true
+	vm_pid=
+	stop_console
+	wait_checkpoint_manifest "$checkpoint" "$first_manifest"
+
+	launch_vm "$checkpoint"
+	guest_cmd "test \"\$(cat /tmp/bhyve-checkpoint-marker)\" = '$marker'" 60
+	run_network_smoke
+	echo "PASS checkpoint restore transport=$transport manifest=$checkpoint"
 }
 
 guest_cmd()
@@ -522,7 +643,7 @@ provision_guest()
 {
 	wait_for_login 120
 	printf 'root\r' >> "$console_input"
-	sleep 2
+	wait_for ':~#' 30
 	guest_cmd 'set -eu; ip link set eth0 up; udhcpc -n -q -t 5 -T 3 -i eth0; release=$(cut -d. -f1,2 /etc/alpine-release); case "$release" in *.*) ;; *) echo "invalid Alpine release: $release" >&2; exit 1;; esac; major=${release%.*}; minor=${release#*.}; case "$major:$minor" in *[!0-9:]*|:|*:) echo "invalid Alpine release: $release" >&2; exit 1;; esac; repository="https://dl-cdn.alpinelinux.org/alpine/v${release}/main"; printf "%s\n" "$repository" > /etc/apk/repositories; apk add --no-cache ethtool python3; printf "PROVISION alpine=%s kernel=%s repository=%s " "$(cat /etc/alpine-release)" "$(uname -r)" "$repository"; python3 --version' 150
 	copy_guest_file "$here/gnet.py" /tmp/gnet.py
 	guest_cmd 'python3 /tmp/gnet.py --self-test | grep -q "^SELFTEST PASS$"' 30
@@ -581,13 +702,19 @@ run_matrix()
 
 wait_vsock_provider_barrier()
 {
+	barrier_stage=$1
+
 	[ -n "$VSOCK_BARRIER_DIR" ] || return 0
-	: > "$VSOCK_BARRIER_DIR/cid-$CID"
+	case "$barrier_stage" in
+	initial|pre-reset|post-reset) ;;
+	*) echo "invalid VSOCK provider barrier stage: $barrier_stage" >&2; return 2 ;;
+	esac
+	: > "$VSOCK_BARRIER_DIR/$barrier_stage-cid-$CID"
 	i=0
 	while :; do
 		barrier_ready=yes
 		for barrier_cid in $VSOCK_BARRIER_CIDS; do
-			[ -f "$VSOCK_BARRIER_DIR/cid-$barrier_cid" ] ||
+			[ -f "$VSOCK_BARRIER_DIR/$barrier_stage-cid-$barrier_cid" ] ||
 			    barrier_ready=no
 		done
 		[ "$barrier_ready" = yes ] && break
@@ -598,7 +725,7 @@ wait_vsock_provider_barrier()
 		sleep 1
 		i=$((i + 1))
 	done
-	echo "PASS provider barrier CIDs=$VSOCK_BARRIER_CIDS"
+	echo "PASS provider barrier stage=$barrier_stage CIDs=$VSOCK_BARRIER_CIDS"
 }
 
 process_fd_count()
@@ -658,7 +785,7 @@ run_vsock_soak()
 		if [ "$VSOCK_SOAK_RESET_EVERY" -gt 0 ] &&
 		    [ $((i % VSOCK_SOAK_RESET_EVERY)) -eq 0 ]; then
 			echo "== Alpine $transport: vsock soak reset iteration=$i =="
-			guest_cmd 'set -eu; bdf=0000:00:05.0; echo "$bdf" > /sys/bus/pci/drivers/virtio-pci/unbind; sleep 1; echo "$bdf" > /sys/bus/pci/drivers/virtio-pci/bind; sleep 1' 30
+			guest_rebind_virtio 0000:00:05.0
 			run_vsock_driver yes "$WORKDIR/$transport.soak-reset.$i"
 		fi
 		sleep 2
@@ -814,6 +941,7 @@ run_console()
 	host_token="host-$transport-$$"
 	guest_token="guest-$transport-$$"
 	console_exchange_log="$WORKDIR/$transport.console-exchange.log"
+	console_exchange_done="$WORKDIR/$transport.console-exchange.done"
 	guest_cmd "i=0; until python3 /tmp/gconsole.py check '$transport' '$console_name'; do i=\$((i + 1)); [ \"\$i\" -lt 20 ]; sleep 1; done" 30
 	i=0
 	while [ ! -S "$console_socket" ] && [ "$i" -lt 20 ]; do
@@ -825,6 +953,9 @@ run_console()
 		return 1
 	}
 	: > "$console_exchange_log"
+	rm -f "$console_exchange_done"
+	mkfifo "$console_exchange_done"
+	exec 9<>"$console_exchange_done"
 	# Do not send until the guest has opened the port and sent its token.
 	# The port node can exist before the virtio PORT_READY handshake, and bytes
 	# written in that interval are allowed to be discarded by the backend.
@@ -834,11 +965,18 @@ run_console()
 	        i=$((i + 1))
 	    done
 	    printf '%s' "$host_token"
-	    sleep 30
+	    IFS= read -r _ <&9
 	  } |
 	    timeout 35 "$tools/unix-pipe" "$console_socket" > "$console_exchange_log" ) &
 	console_exchange_pid=$!
-	guest_cmd "python3 /tmp/gconsole.py exchange '$transport' '$console_name' '$host_token' '$guest_token'" 30
+	guest_status=0
+	guest_cmd "python3 /tmp/gconsole.py exchange '$transport' '$console_name' '$host_token' '$guest_token'" 30 ||
+	    guest_status=$?
+	printf 'done\n' >&9
+	exec 9>&-
+	exec 9<&-
+	rm -f "$console_exchange_done"
+	[ "$guest_status" -eq 0 ] || return "$guest_status"
 	i=0
 	while ! grep -q "^$guest_token$" "$console_exchange_log" 2>/dev/null; do
 		kill -0 "$console_exchange_pid" 2>/dev/null || {
@@ -856,7 +994,6 @@ run_console()
 	kill "$console_exchange_pid" 2>/dev/null || true
 	wait "$console_exchange_pid" 2>/dev/null || true
 	console_exchange_pid=
-	sleep 1
 	echo "PASS console bidirectional transport=$transport name=$console_name"
 }
 
@@ -901,8 +1038,32 @@ reset_devices()
 {
 	echo "== Alpine $transport: reset and rebind virtio devices =="
 	[ "$run_9p_device" = no ] || guest_cmd 'umount /mnt/bhyve-9p' 30
-	guest_cmd "set -eu; for bdf in $virtio_bdfs; do echo \"reset \$bdf\"; echo \"\$bdf\" > /sys/bus/pci/drivers/virtio-pci/unbind; sleep 1; echo \"\$bdf\" > /sys/bus/pci/drivers/virtio-pci/bind; sleep 1; done" 90
+	guest_rebind_virtio $virtio_bdfs
 	run_lifecycle_smokes
+}
+
+guest_rebind_virtio()
+{
+	bdfs=$*
+	guest_cmd "set -eu; for bdf in $bdfs; do
+	    echo \"reset \$bdf\"
+	    echo \"\$bdf\" > /sys/bus/pci/drivers/virtio-pci/unbind
+	    i=0
+	    while [ -L \"/sys/bus/pci/devices/\$bdf/driver\" ] &&
+	        [ \"\$i\" -lt 30 ]; do
+		    sleep 1
+		    i=\$((i + 1))
+	    done
+	    [ ! -L \"/sys/bus/pci/devices/\$bdf/driver\" ]
+	    echo \"\$bdf\" > /sys/bus/pci/drivers/virtio-pci/bind
+	    i=0
+	    while [ ! -L \"/sys/bus/pci/devices/\$bdf/driver\" ] &&
+	        [ \"\$i\" -lt 30 ]; do
+		    sleep 1
+		    i=\$((i + 1))
+	    done
+	    [ -L \"/sys/bus/pci/devices/\$bdf/driver\" ]
+	done" 90
 }
 
 run_lifecycle_smokes()
@@ -1257,7 +1418,7 @@ for transport in $TRANSPORTS; do
 	provision_guest
 	run_network_smoke
 	if [ "$run_vsock" = yes ]; then
-		wait_vsock_provider_barrier
+		wait_vsock_provider_barrier initial
 		run_matrix
 		run_vsock_soak
 	fi
@@ -1268,10 +1429,17 @@ for transport in $TRANSPORTS; do
 	[ "$run_console_device" = no ] || run_console
 	[ "$run_9p_device" = no ] || run_9p
 	verify_no_msix
+	[ "$CHECKPOINT_TEST" = no ] || run_checkpoint_roundtrip
 	if [ "$VIRTIO_RESET_SOAK_ITERATIONS" -gt 0 ]; then
+		wait_vsock_provider_barrier pre-reset
 		run_reset_soak
+		wait_vsock_provider_barrier post-reset
 	else
-		[ "$RESET_TEST" = no ] || reset_devices
+		if [ "$RESET_TEST" != no ]; then
+			wait_vsock_provider_barrier pre-reset
+			reset_devices
+			wait_vsock_provider_barrier post-reset
+		fi
 	fi
 	[ "$REBOOT_TEST" = no ] || reboot_guest
 

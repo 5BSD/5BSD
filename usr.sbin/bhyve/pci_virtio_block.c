@@ -47,6 +47,7 @@
 #include <unistd.h>
 #include <assert.h>
 #include <pthread.h>
+#include <pthread_np.h>
 #include <md5.h>
 
 #include "bhyverun.h"
@@ -229,14 +230,20 @@ static bool pci_vtblk_write_needs_stabilization(
 static void pci_vtblk_configure_range_limits(struct pci_vtblk_softc *,
     int, int);
 static int pci_vtblk_qreset(void *, struct vqueue_info *, uint64_t);
-static void pci_vtblk_neg_features(void *, uint64_t);
+static int pci_vtblk_neg_features(void *, uint64_t);
+static uint16_t pci_vtblk_encode16(const struct pci_vtblk_softc *, uint16_t);
+static uint32_t pci_vtblk_encode32(const struct pci_vtblk_softc *, uint32_t);
+static uint64_t pci_vtblk_encode64(const struct pci_vtblk_softc *, uint64_t);
 static uint64_t pci_vtblk_backend_caps(struct blockif_ctxt *);
 static void pci_vtblk_notify(void *, struct vqueue_info *);
 static int pci_vtblk_cfgread(void *, int, int, uint32_t *);
 static int pci_vtblk_cfgwrite(void *, int, int, uint32_t);
+static int pci_vtblk_suspend_device(void *);
+static int pci_vtblk_resume_device(void *);
+static int pci_vtblk_restore_suspended(void *);
 #ifdef BHYVE_SNAPSHOT
-static void pci_vtblk_pause(void *);
-static void pci_vtblk_resume(void *);
+static int pci_vtblk_pause(void *);
+static int pci_vtblk_resume(void *);
 static int pci_vtblk_snapshot(void *, struct vm_snapshot_meta *);
 #endif
 
@@ -250,13 +257,90 @@ static struct virtio_consts vtblk_vi_consts = {
 	.vc_cfgwrite =	pci_vtblk_cfgwrite,
 	.vc_apply_features = pci_vtblk_neg_features,
 	.vc_qreset =	pci_vtblk_qreset,
-	.vc_hv_caps =	VTBLK_S_HOSTCAPS | VIRTIO_F_RING_RESET,
+	.vc_suspend =	pci_vtblk_suspend_device,
+	.vc_resume_device = pci_vtblk_resume_device,
+	.vc_restore_suspended = pci_vtblk_restore_suspended,
+	.vc_hv_caps =	VTBLK_S_HOSTCAPS | VIRTIO_F_RING_RESET |
+	    VIRTIO_F_SUSPEND,
 #ifdef BHYVE_SNAPSHOT
 	.vc_pause =	pci_vtblk_pause,
 	.vc_resume =	pci_vtblk_resume,
 	.vc_snapshot =	pci_vtblk_snapshot,
 #endif
 };
+
+static int
+pci_vtblk_suspend_device(void *vsc)
+{
+	struct pci_vtblk_softc *sc;
+	int error;
+
+	sc = vsc;
+	/*
+	 * blockif_suspend() waits for completion callbacks, and those callbacks
+	 * acquire vsc_mtx before returning descriptors to the used ring.  The
+	 * common VirtIO quiescing fence remains published while this lock is
+	 * dropped, so no new guest request can enter the backend.
+	 */
+	assert(pthread_mutex_isowned_np(&sc->vsc_mtx));
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	error = blockif_suspend(sc->bc);
+	pthread_mutex_lock(&sc->vsc_mtx);
+	return (error);
+}
+
+static int
+pci_vtblk_resume_device(void *vsc)
+{
+	struct pci_vtblk_softc *sc;
+
+	sc = vsc;
+	/*
+	 * The final blockif owner refreshes deferred resize state and may call
+	 * pci_vtblk_resized(), which acquires this mutex.  Keep the common
+	 * quiescing fence published while allowing that callback to run.
+	 */
+	assert(pthread_mutex_isowned_np(&sc->vsc_mtx));
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	blockif_resume(sc->bc);
+	pthread_mutex_lock(&sc->vsc_mtx);
+	return (0);
+}
+
+static int
+pci_vtblk_restore_suspended(void *vsc)
+{
+	struct pci_vtblk_softc *sc;
+
+	sc = vsc;
+	/*
+	 * Restore begins with checkpoint ownership already held.  Add the
+	 * restored guest owner so vi_pci_resume() drops only the checkpoint
+	 * reference and leaves the backend quiesced.
+	 */
+	return (blockif_suspend(sc->bc));
+}
+
+static uint16_t
+pci_vtblk_encode16(const struct pci_vtblk_softc *sc, uint16_t value)
+{
+
+	return (vi_pci_is_modern(&sc->vbsc_vs) ? htole16(value) : value);
+}
+
+static uint32_t
+pci_vtblk_encode32(const struct pci_vtblk_softc *sc, uint32_t value)
+{
+
+	return (vi_pci_is_modern(&sc->vbsc_vs) ? htole32(value) : value);
+}
+
+static uint64_t
+pci_vtblk_encode64(const struct pci_vtblk_softc *sc, uint64_t value)
+{
+
+	return (vi_pci_is_modern(&sc->vbsc_vs) ? htole64(value) : value);
+}
 
 static void
 pci_vtblk_reset(void *vsc)
@@ -290,6 +374,14 @@ pci_vtblk_reset(void *vsc)
 		pthread_cond_wait(&sc->vbsc_reset_cond, &sc->vsc_mtx);
 	}
 	sc->vbsc_reset_waiting = false;
+	/*
+	 * A full device reset is also the recovery operation after a failed
+	 * resume.  Drop the guest-suspend reference before the common layer
+	 * clears vs_suspended, otherwise the block backend would remain paused
+	 * across the next initialization.
+	 */
+	if (sc->vbsc_vs.vs_suspended)
+		blockif_resume(sc->bc);
 	pci_vtblk_reset_leave(sc);
 }
 
@@ -355,24 +447,36 @@ pci_vtblk_write_needs_stabilization(const struct pci_vtblk_softc *sc)
 	    (negotiated & VTBLK_F_FLUSH) == 0);
 }
 
-static void
+static int
 pci_vtblk_neg_features(void *vsc, uint64_t negotiated_features)
 {
 	struct pci_vtblk_softc *sc;
 
 	sc = vsc;
 	/*
-	 * Section 5.2.5.2 requires writethrough when CONFIG_WCE is selected
-	 * without FLUSH.  Otherwise retain the reset default.  A buffered
-	 * blockif backend has historically been presented as writeback when
-	 * FLUSH is negotiated, so defaulting to writeback preserves existing
-	 * performance and durability semantics.
+	 * Modern devices apply the initialization rule in section 5.2.5.2:
+	 * CONFIG_WCE without FLUSH starts in writethrough mode.
+	 *
+	 * The legacy rule in section 5.2.5.3 is deliberately different.  When
+	 * CONFIG_WCE was selected, setting DRIVER_OK must not change either
+	 * the cache mode or writeback; the driver was allowed to set writeback
+	 * before DRIVER_OK.  Without CONFIG_WCE, DRIVER_OK is the one status
+	 * transition on which the legacy device may select the implied cache
+	 * mode: FLUSH means writeback, while neither feature means
+	 * writethrough.
 	 */
-	if ((negotiated_features & VTBLK_F_CONFIG_WCE) != 0 &&
-	    (negotiated_features & VTBLK_F_FLUSH) == 0)
-		sc->vbsc_cfg.vbc_writeback = 0;
-	else
-		sc->vbsc_cfg.vbc_writeback = VTBLK_DEFAULT_WRITEBACK;
+	if (vi_pci_is_modern(&sc->vbsc_vs)) {
+		if ((negotiated_features & VTBLK_F_CONFIG_WCE) != 0 &&
+		    (negotiated_features & VTBLK_F_FLUSH) == 0)
+			sc->vbsc_cfg.vbc_writeback = 0;
+		else
+			sc->vbsc_cfg.vbc_writeback = VTBLK_DEFAULT_WRITEBACK;
+	} else if ((negotiated_features & VTBLK_F_CONFIG_WCE) == 0) {
+		sc->vbsc_cfg.vbc_writeback =
+		    (negotiated_features & VTBLK_F_FLUSH) != 0 ?
+		    VTBLK_DEFAULT_WRITEBACK : 0;
+	}
+	return (0);
 }
 
 static bool
@@ -482,23 +586,71 @@ pci_vtblk_done_locked(struct pci_vtblk_ioreq *io, int err)
 	vq_endchains(io->io_vq, 0);
 }
 
+static bool __unused
+pci_vtblk_restore_state_valid(const struct pci_vtblk_softc *sc,
+    const struct vtblk_config *saved, const char *saved_ident,
+    const struct vtblk_config *destination, const char *destination_ident)
+{
+	size_t after_writeback;
+	uint8_t expected_writeback;
+
+	/*
+	 * Capacity, topology, queue/range limits, and identity belong to the
+	 * destination backing store.  Only writeback is guest-controlled state,
+	 * and only when CONFIG_WCE was negotiated.
+	 */
+	if (memcmp(saved, destination,
+	    offsetof(struct vtblk_config, vbc_writeback)) != 0)
+		return (false);
+	after_writeback = offsetof(struct vtblk_config, vbc_writeback) +
+	    sizeof(saved->vbc_writeback);
+	if (memcmp((const uint8_t *)saved + after_writeback,
+	    (const uint8_t *)destination + after_writeback,
+	    sizeof(*saved) - after_writeback) != 0 ||
+	    memcmp(saved_ident, destination_ident, VTBLK_BLK_ID_BYTES) != 0 ||
+	    saved->vbc_writeback > 1)
+		return (false);
+
+	if ((sc->vbsc_vs.vs_negotiated_caps & VTBLK_F_CONFIG_WCE) != 0)
+		return (true);
+	if (vi_pci_is_modern(&sc->vbsc_vs))
+		expected_writeback = VTBLK_DEFAULT_WRITEBACK;
+	else
+		expected_writeback =
+		    (sc->vbsc_vs.vs_negotiated_caps & VTBLK_F_FLUSH) != 0 ?
+		    VTBLK_DEFAULT_WRITEBACK : 0;
+	return (saved->vbc_writeback == expected_writeback);
+}
+
 #ifdef BHYVE_SNAPSHOT
-static void
+static int
 pci_vtblk_pause(void *vsc)
 {
 	struct pci_vtblk_softc *sc = vsc;
+	int error;
 
 	DPRINTF(("vtblk: device pause requested !\n"));
-	blockif_pause(sc->bc);
+	error = blockif_suspend(sc->bc);
+	if (error != 0)
+		return (error);
+	/*
+	 * blockif_suspend() first drains callbacks which need vsc_mtx.  Hold
+	 * the device lock only after that drain so configuration and snapshot
+	 * state cannot change until pci_vtblk_resume().
+	 */
+	pthread_mutex_lock(&sc->vsc_mtx);
+	return (0);
 }
 
-static void
+static int
 pci_vtblk_resume(void *vsc)
 {
 	struct pci_vtblk_softc *sc = vsc;
 
 	DPRINTF(("vtblk: device resume requested !\n"));
+	pthread_mutex_unlock(&sc->vsc_mtx);
 	blockif_resume(sc->bc);
+	return (0);
 }
 
 static int
@@ -506,10 +658,25 @@ pci_vtblk_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 {
 	int ret;
 	struct pci_vtblk_softc *sc = vsc;
+	struct vtblk_config config, destination_config;
+	char destination_ident[VTBLK_BLK_ID_BYTES];
+	char ident[VTBLK_BLK_ID_BYTES];
 
-	SNAPSHOT_VAR_OR_LEAVE(sc->vbsc_cfg, meta, ret, done);
-	SNAPSHOT_BUF_OR_LEAVE(sc->vbsc_ident, sizeof(sc->vbsc_ident),
-			      meta, ret, done);
+	destination_config = sc->vbsc_cfg;
+	memcpy(destination_ident, sc->vbsc_ident, sizeof(destination_ident));
+	config = destination_config;
+	memcpy(ident, destination_ident, sizeof(ident));
+	SNAPSHOT_VAR_OR_LEAVE(config, meta, ret, done);
+	SNAPSHOT_BUF_OR_LEAVE(ident, sizeof(ident), meta, ret, done);
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		if (!pci_vtblk_restore_state_valid(sc, &config, ident,
+		    &destination_config, destination_ident)) {
+			ret = EINVAL;
+			goto done;
+		}
+		sc->vbsc_cfg = config;
+		memcpy(sc->vbsc_ident, ident, sizeof(sc->vbsc_ident));
+	}
 
 done:
 	return (ret);
@@ -1004,7 +1171,13 @@ pci_vtblk_backend_caps(struct blockif_ctxt *bc)
 {
 	uint64_t caps;
 
-	caps = VTBLK_S_HOSTCAPS | VIRTIO_F_RING_RESET;
+	/*
+	 * Keep common lifecycle capabilities when deriving the per-backend
+	 * device feature set.  pci_vtblk_init() replaces the template's
+	 * vc_hv_caps with this value, so omitting SUSPEND here silently made
+	 * the implemented suspend callbacks unreachable in real VMs.
+	 */
+	caps = VTBLK_S_HOSTCAPS | VIRTIO_F_RING_RESET | VIRTIO_F_SUSPEND;
 	if (blockif_is_ro(bc))
 		caps |= VTBLK_F_RO;
 	else {
@@ -1183,7 +1356,7 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vbsc_cfg.vbc_topology.min_io_size = 0;
 	sc->vbsc_cfg.vbc_topology.opt_io_size = 0;
 	sc->vbsc_cfg.vbc_writeback = VTBLK_DEFAULT_WRITEBACK;
-	sc->vbsc_cfg.num_queues = htole16(sc->vbsc_nqueues);
+	sc->vbsc_cfg.num_queues = sc->vbsc_nqueues;
 	pci_vtblk_configure_range_limits(sc, sectsz, sts);
 
 	/*
@@ -1259,6 +1432,7 @@ static int
 pci_vtblk_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 {
 	struct pci_vtblk_softc *sc = vsc;
+	struct vtblk_config wire;
 	void *ptr;
 
 	*retval = 0;
@@ -1266,7 +1440,29 @@ pci_vtblk_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 	    (size_t)offset > sizeof(sc->vbsc_cfg) ||
 	    (size_t)size > sizeof(sc->vbsc_cfg) - (size_t)offset)
 		return (EINVAL);
-	ptr = (uint8_t *)&sc->vbsc_cfg + offset;
+	wire = sc->vbsc_cfg;
+	wire.vbc_capacity = pci_vtblk_encode64(sc, wire.vbc_capacity);
+	wire.vbc_size_max = pci_vtblk_encode32(sc, wire.vbc_size_max);
+	wire.vbc_seg_max = pci_vtblk_encode32(sc, wire.vbc_seg_max);
+	wire.vbc_geometry.cylinders =
+	    pci_vtblk_encode16(sc, wire.vbc_geometry.cylinders);
+	wire.vbc_blk_size = pci_vtblk_encode32(sc, wire.vbc_blk_size);
+	wire.vbc_topology.min_io_size =
+	    pci_vtblk_encode16(sc, wire.vbc_topology.min_io_size);
+	wire.vbc_topology.opt_io_size =
+	    pci_vtblk_encode32(sc, wire.vbc_topology.opt_io_size);
+	wire.num_queues = pci_vtblk_encode16(sc, wire.num_queues);
+	wire.max_discard_sectors =
+	    pci_vtblk_encode32(sc, wire.max_discard_sectors);
+	wire.max_discard_seg =
+	    pci_vtblk_encode32(sc, wire.max_discard_seg);
+	wire.discard_sector_alignment =
+	    pci_vtblk_encode32(sc, wire.discard_sector_alignment);
+	wire.max_write_zeroes_sectors =
+	    pci_vtblk_encode32(sc, wire.max_write_zeroes_sectors);
+	wire.max_write_zeroes_seg =
+	    pci_vtblk_encode32(sc, wire.max_write_zeroes_seg);
+	ptr = (uint8_t *)&wire + offset;
 	memcpy(retval, ptr, size);
 	return (0);
 }

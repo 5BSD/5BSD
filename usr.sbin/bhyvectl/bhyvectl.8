@@ -68,10 +68,13 @@ Force the VM to reset.
 Force the VM to power off.
 .It Fl -checkpoint= Ns Ar <file>
 Save a snapshot of a virtual machine.
-The guest memory contents are saved in the file given in
-.Ar <file> .
-The guest device and vCPU state are saved in the file
-.Ar <file>.kern .
+The named file is an atomically published manifest.
+It refers to generation-matched guest-memory, kernel/device-state, and
+metadata files in the same directory.
+Replacing a checkpoint leaves the previous generation selected until every
+new member has been durably written.
+A persistent sibling lock file serializes replacement with concurrent restore
+and permits safe reclamation of the previous generation.
 .It Fl -suspend= Ns Ar <file>
 Save a snapshot of a virtual machine similar to
 .Fl -checkpoint .

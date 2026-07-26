@@ -34,8 +34,9 @@ Key facts that drive the setup (from the device header comment and
   directory** supplied via `path=`.  It needs no host vsock kernel support.
 * `backend=kernel` instead attaches bhyve to the host `/dev/vsock` transport.
   Host applications then use ordinary AF_VSOCK sockets, `path=` is invalid,
-  and the host `vsock` module must be loaded.  The provider is exclusive and
-  every running guest must have a unique CID.
+  and the host `vsock` module must be loaded.  Providers are keyed by guest
+  CID: distinct CIDs may run concurrently, while attaching a duplicate CID
+  fails with `EADDRINUSE`.
 * **Guest → host (`backend=userspace`):** guest connects to `CID 2 : <port>`;
   bhyve `connectat()`s to
   `<dir>/<port>` (e.g. `<dir>/80`). A host process must be **listening on that

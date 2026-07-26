@@ -81,7 +81,7 @@ function validate_evidence(field, column, requirement,    count, entry, i) {
 		sub(/[[:space:]]+$/, "", entry)
 		if (entry == "-" && count == 1)
 			continue
-		if (entry ~ /^[A-Za-z0-9_]+_test:[A-Za-z0-9_*]+$/)
+		if (entry ~ /^[A-Za-z0-9_]+_test:[A-Za-z0-9_]+$/)
 			continue
 		if (entry == "build:bhyve-dtrace" ||
 		    entry == "build:freebsd-virtio-kmods")
@@ -184,46 +184,37 @@ NR > 1 {
 ' "$catalog" |
     tr ';' '\n' |
     sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' |
-    awk '/^[A-Za-z0-9_]+_test:[A-Za-z0-9_*]+$/ { print }' |
+	    awk '/^[A-Za-z0-9_]+_test:[A-Za-z0-9_]+$/ { print }' |
     sort -u >"$references"
 
 while IFS=: read -r program test_case; do
 	source=$test_dir/$program.c
 	shell_source=$test_dir/$program.sh
 	binary=$test_dir/$program
+	case "$program" in
+	vsock_rx_test|virtio_vsock_transport_test)
+		source=$test_dir/../vsock_rx_harness/$program.c
+		shell_source=$test_dir/../vsock_rx_harness/$program.sh
+		binary=$test_dir/../vsock_rx_harness/$program
+		;;
+	esac
 
 	if [ -r "$source" ]; then
-		if [ "$test_case" = "*" ]; then
-			grep -Eq 'ATF_TC_(WITHOUT_HEAD|WITH_CLEANUP)\(' "$source" || {
-				echo "virtio requirements: $program has no ATF tests" >&2
-				exit 1
-			}
-		elif ! grep -Eq \
+		if ! grep -Eq \
 		    "ATF_TC_(WITHOUT_HEAD|WITH_CLEANUP)\\($test_case\\)" \
 		    "$source"; then
 			echo "virtio requirements: unknown test $program:$test_case" >&2
 			exit 1
 		fi
 	elif [ -r "$shell_source" ]; then
-		if [ "$test_case" = "*" ]; then
-			grep -Eq '^atf_test_case[[:space:]]+[A-Za-z0-9_]+' \
-			    "$shell_source" || {
-				echo "virtio requirements: $program has no ATF tests" >&2
-				exit 1
-			}
-		elif ! grep -Eq \
+		if ! grep -Eq \
 		    "^atf_test_case[[:space:]]+$test_case([[:space:]]|$)" \
 		    "$shell_source"; then
 			echo "virtio requirements: unknown test $program:$test_case" >&2
 			exit 1
 		fi
 	elif [ -x "$binary" ]; then
-		if [ "$test_case" = "*" ]; then
-			"$binary" -l | grep -q '^ident: ' || {
-				echo "virtio requirements: $program has no ATF tests" >&2
-				exit 1
-			}
-		elif ! "$binary" -l |
+		if ! "$binary" -l |
 		    grep -Fqx "ident: $test_case"; then
 			echo "virtio requirements: unknown test $program:$test_case" >&2
 			exit 1
@@ -235,6 +226,35 @@ while IFS=: read -r program test_case; do
 done <"$references"
 
 echo "virtio requirements: test references validated"
+
+# The catalog has both a common ring-reset inventory row and a device-specific
+# 9P row.  Keep their implementation/advertisement claims identical so a
+# historical limitation cannot silently survive beside the implemented
+# capability.
+awk -F '\t' '
+$1 == "RING-RESET-9P" {
+	common_status = $4
+	common_advertised = $5
+}
+$1 == "DEVICE-9P-QUEUE-RESET" {
+	device_status = $4
+	device_advertised = $5
+}
+END {
+	if (common_status == "" || device_status == "") {
+		print "virtio requirements: missing 9P queue-reset catalog row" \
+		    > "/dev/stderr"
+		exit 1
+	}
+	if (common_status != device_status ||
+	    common_advertised != device_advertised) {
+		print "virtio requirements: contradictory 9P queue-reset claims" \
+		    > "/dev/stderr"
+		exit 1
+	}
+}
+' "$catalog"
+echo "virtio requirements: duplicate capability claims are consistent"
 
 # Device tests include the production .c file first, then remap protocol
 # names to the independent oracle.  Enforce that discipline mechanically.

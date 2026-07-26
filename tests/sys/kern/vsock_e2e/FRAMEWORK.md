@@ -6,6 +6,104 @@ device must prove its untrusted descriptor handling without a VM, its isolated
 guest data path, its compatibility transport, and its behavior beside every
 other covered device.
 
+## Orchestrated runs
+
+`virtio-lab` is the preferred front end once more than one focused case is
+needed.  It reads `virtio-lab.yaml`, validates that the selected profile covers
+its declared public option domains, assigns every VM a distinct CID, port
+range, console port, and work directory, and schedules only cases whose
+declared host resources do not conflict.  Every run writes a concise
+`events.tsv`, one log and atomic status file per case, and a final summary.
+The existing shell runners remain the case executors and therefore retain
+their focused diagnostics and cleanup behavior.
+
+Exercise the complete VM-free layer with two scheduler slots:
+
+```sh
+/usr/tests/sys/kern/vsock_e2e/virtio-lab run \
+    --profile vmfree --jobs 2 --workdir /tmp/virtio-vmfree-1
+```
+
+Plan a release without root or booting a VM:
+
+```sh
+/usr/tests/sys/kern/vsock_e2e/virtio-lab plan --profile release
+```
+
+Run up to three independent cases concurrently:
+
+```sh
+su root -c '/usr/tests/sys/kern/vsock_e2e/virtio-lab run \
+    --profile release --jobs 3 --prepare-host \
+    --bridge bridge0 --uplink re0 --iso /path/to/alpine-virt.iso \
+    --workdir /tmp/virtio-release-1'
+```
+
+The `release` profile first runs the exclusive `host-regression` gate.  It
+executes the requirements ledger, host-helper controls, and the canonical
+VirtIO/vsock/AF_VSOCK ATF runner.  No VM worker is launched unless that gate
+passes.  The individual `vmfree` cases remain available for focused
+development and the `smoke` profile, without duplicating them in a release
+run.  A gate failure records every unstarted case as `BLOCKED`; `--resume`
+reruns the failed gate and starts VM work only after it succeeds.
+The gate includes the AF_VSOCK isolation tests, so `/dev/mac_capability` must
+be accessible.  Stop `oracled` (and any other process holding an isolation
+claim on that device) before starting a release run; host preflight reports
+this condition before creating any VM.
+
+Parallel runs require a shared bridge prepared once by the orchestrator before
+workers launch.  The uplink is always explicit; the lab does not silently
+modify the interface carrying the default route.  `run --prepare-host` performs
+the idempotent preparation shown above.  The same lifecycle is also available
+separately for preparing a host once and executing several profiles:
+
+```sh
+su root -c '/usr/tests/sys/kern/vsock_e2e/virtio-lab host-prepare \
+    --bridge bridge0 --uplink re0'
+/usr/tests/sys/kern/vsock_e2e/virtio-lab host-status --bridge bridge0
+```
+
+`host-prepare` is idempotent and records exactly whether it created the bridge
+and added the uplink in a root-owned state file under `/var/run/virtio-lab`.
+Workers create and remove their own tap interfaces but leave the shared bridge
+alone.  After all runs have stopped, remove only resources owned by the lab:
+
+```sh
+su root -c '/usr/tests/sys/kern/vsock_e2e/virtio-lab host-cleanup \
+    --bridge bridge0'
+```
+
+Cleanup refuses unmanaged bridges and bridges which still contain a VM tap.
+Cases using CTL, uinput, checkpoint publication, or the kernel-vsock provider
+declare resource locks in the manifest.  `status --workdir ...` reports
+progress without streaming guest consoles.  Stop active case children with
+`cancel --workdir ...`; cancellation is recorded as status 143 after the
+runner has received a termination signal and performed its cleanup.  If the
+front end is interrupted but its supervised cases remain alive, use the same
+manifest and settings with `run --resume --workdir ...`.  Resume reuses only
+successful cases and rejects a changed manifest, profile, ISO, or override
+set.  The `checkpoint` and `soak` profiles separate expensive lifecycle and
+longevity gates from the ordinary smoke profile.
+
+The YAML `coverage` section is the release contract for behavior-affecting
+VirtIO test options.  A release plan fails when any declared value lacks a
+case.  `allowed_overrides` is the deliberate command-line environment API, so
+a misspelled or undeclared `--set` is rejected.  Infrastructure paths,
+diagnostic verbosity, allocation values, data-set sizes, and soak thresholds
+are not treated as pairwise feature dimensions.  The standards requirements
+ledger is a separate VM-free case, which prevents an advertised or mandatory
+VirtIO requirement from silently lacking implementation and positive-test
+evidence.  Together these checks cover declared supported behavior; they do
+not claim that unsupported VirtIO features or every host backend combination
+has become supported.
+
+The allocator reserves a 1,024-port lane per selected case.  The two-VM
+provider case uses two 512-separated sub-lanes, which exceed the test suite's
+247-port span while keeping every generated port below 65536 even at the
+32-job scheduler limit.  CIDs and console TCP ports are also unique per case.
+Direct shell-runner invocations independently reject offsets that would place
+the highest test port outside the 16-bit port space.
+
 ## Required gates
 
 Run the gates in this order.  Early failures are cheaper and more specific.
@@ -60,12 +158,39 @@ and 2 once before starting the topology/transport VM matrix:
 ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
 ```
 
+The declarative release lab runs the complete sanitizer/device harness and
+the installed ATF suites once as its exclusive host gate, then starts the VM
+matrix.  It also runs `run-5bsd-auto.sh` against a caller-supplied 5BSD raw
+base image.  A private sparse copy is booted once with modern PCI transport and
+once with the default legacy command-line behavior, and validates vsock and
+RNG attachment plus the full bidirectional vsock matrix:
+
+```sh
+/usr/libexec/flua ./virtio-lab.lua run --profile release --jobs 3 \
+    --iso /path/to/alpine-virt.iso \
+    --fivebsd-image /path/to/5bsd-base.raw \
+    --prepare-host --bridge bridge0 --uplink re0 \
+    --workdir /tmp/virtio-release
+```
+
+The base image is never attached writable.  The runner serializes access,
+refuses a base already attached to bhyve, creates a sparse copy for each
+transport, forces a UFS check on the copy, and requests a clean shutdown.
+
 `vsock-kernel` is a focused matrix topology that selects bhyve's
 `backend=kernel` provider and host `AF_VSOCK` helpers.  It is intentionally
 separate from `vsock-userspace`, which remains the compatibility test for the
 default userspace socket backend.  The kernel topology forces driver reset and
 monitor-mode reboot so provider reset, detach, and re-attach are exercised as
 well as the data path.
+
+`run-alpine-multi-vsock.sh` is the multi-provider fleet gate.  It runs two
+kernel-backed guests with distinct CIDs and port ranges and synchronizes them
+before the initial VSOCK data matrix, immediately before reset/rebind, and
+after post-reset verification.  The first barrier guarantees both providers
+are attached before transport traffic begins.  Requiring both guests at the
+later barriers proves simultaneous provider usability through reset instead
+of only proving that two bhyve processes existed at the same time.
 
 The default topology order is
 `net vsock-userspace vsock-kernel rng block scsi console 9p input combined`.
@@ -124,6 +249,14 @@ source tree named by `SRCTOP` (default `/usr/src`).  The VM runners and host
 controls otherwise work from either a source/object build or an installed test
 package, using helper binaries installed beside the scripts when no Makefile is
 present.
+
+The `checkpoint` profile currently covers modern net, RNG, block, and idle
+userspace-vsock devices.  Those are the devices with complete bhyve
+pause/snapshot/resume callbacks.  SCSI, console, 9P, and input remain ordinary
+boot/reset data-path coverage and must not be reported as checkpoint-tested
+until their device-specific external and in-flight state can be quiesced,
+serialized, and restored.  The manifest's `checkpoint-devices` contract makes
+this boundary machine-checkable.
 
 ## FreeBSD guest queue-reset acceptance
 

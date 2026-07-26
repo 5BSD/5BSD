@@ -32,6 +32,7 @@
 /* mirrors struct vsock_ctl_msg in pci_virtio_vsock.c */
 struct vsock_ctl_msg { uint32_t cmd, port, type; int32_t status; };
 #define VSOCK_CTL_CONNECT 1
+#define VSOCK_RECORD_MAX (256U * 1024)
 
 static int
 write_all(int fd, const void *buffer, size_t length)
@@ -147,13 +148,14 @@ parse_port(const char *text, uint32_t *port)
  * with MSG_EOR, then drain the reply to stdout.  This lets us exercise a
  * host->guest SEQPACKET record larger than one read() chunk without the
  * default streaming relay chopping it at 64 KiB -- the record boundary is the
- * sender's MSG_EOR, exactly as the contract requires.  Cap the slurp at 4 MiB
- * (the device's max reassembled record).
+ * sender's MSG_EOR, exactly as the contract requires.  A record is bounded by
+ * the transport's advertised receive window; bhyve and Linux default and cap
+ * it at 256 KiB.
  */
 static int
 relay_oneshot(int sfd, bool seqpacket)
 {
-	size_t cap = 4u * 1024 * 1024, len = 0;
+	size_t cap = VSOCK_RECORD_MAX, len = 0;
 	char *buf = malloc(cap);
 	char extra;
 	ssize_t n;
@@ -173,7 +175,8 @@ relay_oneshot(int sfd, bool seqpacket)
 			if (n < 0)
 				perror("read");
 			else
-				fprintf(stderr, "input exceeds 4 MiB record limit\n");
+				fprintf(stderr,
+				    "input exceeds 256 KiB record limit\n");
 			free(buf);
 			return (1);
 		}
