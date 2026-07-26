@@ -503,6 +503,67 @@ mac_socket_check_visible(struct ucred *cred, struct socket *so)
 	return (error);
 }
 
+struct label *
+mac_vsock_provider_label_alloc(int flag)
+{
+	struct label *label;
+	int error;
+
+	label = mac_labelzone_alloc(flag);
+	if (label == NULL)
+		return (NULL);
+	if (flag & M_WAITOK)
+		MAC_POLICY_CHECK(vsock_provider_init_label, label, flag);
+	else
+		MAC_POLICY_CHECK_NOSLEEP(vsock_provider_init_label, label, flag);
+	if (error != 0) {
+		MAC_POLICY_PERFORM_NOSLEEP(vsock_provider_destroy_label, label);
+		mac_labelzone_free(label);
+		return (NULL);
+	}
+	return (label);
+}
+
+void
+mac_vsock_provider_label_free(struct label *label)
+{
+
+	if (label == NULL)
+		return;
+	MAC_POLICY_PERFORM_NOSLEEP(vsock_provider_destroy_label, label);
+	mac_labelzone_free(label);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vsock_provider_check_attach, "struct ucred *",
+    "uint64_t");
+
+int
+mac_vsock_provider_check_attach(struct ucred *cred, uint64_t guest_cid,
+    struct label *label)
+{
+	int error;
+
+	MAC_POLICY_CHECK_NOSLEEP(vsock_provider_check_attach, cred, guest_cid,
+	    label);
+	MAC_CHECK_PROBE2(vsock_provider_check_attach, error, cred, guest_cid);
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(vsock_provider_check_access, "struct ucred *",
+    "uint64_t");
+
+int
+mac_vsock_provider_check_access(struct ucred *cred, uint64_t guest_cid,
+    struct label *label)
+{
+	int error;
+
+	MAC_POLICY_CHECK_NOSLEEP(vsock_provider_check_access, cred, guest_cid,
+	    label);
+	MAC_CHECK_PROBE2(vsock_provider_check_access, error, cred, guest_cid);
+	return (error);
+}
+
 int
 mac_socket_label_set(struct ucred *cred, struct socket *so,
     struct label *label)

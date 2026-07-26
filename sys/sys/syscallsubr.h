@@ -101,6 +101,12 @@ int	kern_cap_ioctls_limit(struct thread *td, int fd, u_long *cmds,
 	    size_t ncmds);
 int	kern_cap_rights_limit(struct thread *td, int fd, cap_rights_t *rights);
 int	kern_cap_xfer_limit(struct thread *td, int fd, int state);
+int	kern_cap_xfer_rights_limit(struct thread *td, int fd,
+	    const cap_rights_t *rights);
+int	kern_cap_xfer_ioctls_limit(struct thread *td, int fd, u_long *cmds,
+	    size_t ncmds);
+int	kern_cap_xfer_fcntls_limit(struct thread *td, int fd,
+	    uint32_t rights);
 int	kern_cap_cloexec_limit(struct thread *td, int fd, int state);
 int	kern_cap_clofork_limit(struct thread *td, int fd, int state);
 int	kern_chdir(struct thread *td, const char *path, enum uio_seg pathseg);

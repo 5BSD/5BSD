@@ -522,6 +522,14 @@ typedef int	(*mpo_socketpeer_externalize_label_t)(struct label *label,
 		    char *element_name, struct sbuf *sb, int *claimed);
 typedef int	(*mpo_socketpeer_init_label_t)(struct label *label,
 		    int flag);
+
+typedef int	(*mpo_vsock_provider_init_label_t)(struct label *label,
+		    int flag);
+typedef void	(*mpo_vsock_provider_destroy_label_t)(struct label *label);
+typedef int	(*mpo_vsock_provider_check_attach_t)(struct ucred *cred,
+		    uint64_t guest_cid, struct label *label);
+typedef int	(*mpo_vsock_provider_check_access_t)(struct ucred *cred,
+		    uint64_t guest_cid, struct label *label);
 typedef void	(*mpo_socketpeer_set_from_mbuf_t)(struct mbuf *m,
 		    struct label *mlabel, struct socket *so,
 		    struct label *sopeerlabel);
@@ -1108,6 +1116,11 @@ struct mac_policy_ops {
 	mpo_socketpeer_destroy_label_t		mpo_socketpeer_destroy_label;
 	mpo_socketpeer_externalize_label_t	mpo_socketpeer_externalize_label;
 	mpo_socketpeer_init_label_t		mpo_socketpeer_init_label;
+
+	mpo_vsock_provider_init_label_t		mpo_vsock_provider_init_label;
+	mpo_vsock_provider_destroy_label_t	mpo_vsock_provider_destroy_label;
+	mpo_vsock_provider_check_attach_t	mpo_vsock_provider_check_attach;
+	mpo_vsock_provider_check_access_t	mpo_vsock_provider_check_access;
 	mpo_socketpeer_set_from_mbuf_t		mpo_socketpeer_set_from_mbuf;
 	mpo_socketpeer_set_from_socket_t	mpo_socketpeer_set_from_socket;
 
@@ -1290,8 +1303,9 @@ struct mac_policy_conf {
  *   5                       14.x
  *   6                       15.x
  *   7                       16.x
+ *   8                       16.x (vsock provider ownership hooks)
  */
-#define	MAC_VERSION	7
+#define	MAC_VERSION	8
 
 #define	MAC_POLICY_SET(mpops, mpname, mpfullname, mpflags, privdata_wanted) \
 	static struct mac_policy_conf mpname##_mac_policy_conf = {	\

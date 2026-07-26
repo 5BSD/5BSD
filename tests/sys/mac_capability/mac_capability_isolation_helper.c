@@ -3,6 +3,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/event.h>
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/jail.h>
@@ -261,6 +262,27 @@ vsock_access(uint64_t cid, uint32_t port, uint8_t direction)
 	return (2);
 }
 
+static int
+vsock_provider_attach(uint32_t cid)
+{
+	struct vsock_transport_attach attach;
+	int error, fd;
+
+	fd = open("/dev/vsock", O_RDWR);
+	if (fd < 0)
+		return (errno == EACCES || errno == EPERM ? 1 : 2);
+	memset(&attach, 0, sizeof(attach));
+	attach.version = VSOCK_TRANSPORT_VERSION;
+	attach.guest_cid = cid;
+	if (ioctl(fd, VSOCK_IOC_TRANSPORT_ATTACH, &attach) == 0) {
+		close(fd);
+		return (0);
+	}
+	error = errno;
+	close(fd);
+	return (error == EACCES || error == EPERM ? 1 : 2);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -289,6 +311,86 @@ main(int argc, char **argv)
 		close(s);
 		return (error == EINVAL ? 0 :
 		    (error == EACCES || error == EPERM ? 1 : 2));
+	}
+
+	if (argc == 3 && strcmp(argv[1], "vsock-provider-attach") == 0) {
+		unsigned long cid;
+
+		cid = strtoul(argv[2], &end, 10);
+		if (*end != '\0' || cid < 3 || cid >= VSOCK_CID_ANY)
+			return (2);
+		return (vsock_provider_attach((uint32_t)cid));
+	}
+
+	/*
+	 * Register provider write readiness under delegated authority, close
+	 * this process's token reference, then let the parent close the final
+	 * reference before asking kqueue for the already-active event.
+	 * The provider filter must recheck authority and suppress it.
+	 */
+	if (argc == 6 &&
+	    strcmp(argv[1], "vsock-provider-kqueue-revoke") == 0) {
+		struct kevent change, event;
+		struct timespec timeout;
+		char byte;
+		int fd, token_fd, ready_fd, go_fd, kq, n;
+
+		fd = (int)strtol(argv[2], &end, 10);
+		if (*end != '\0')
+			return (2);
+		token_fd = (int)strtol(argv[3], &end, 10);
+		if (*end != '\0')
+			return (2);
+		ready_fd = (int)strtol(argv[4], &end, 10);
+		if (*end != '\0')
+			return (2);
+		go_fd = (int)strtol(argv[5], &end, 10);
+		if (*end != '\0')
+			return (2);
+		if (fi_authorize(token_fd) != 0)
+			return (10);
+		kq = kqueue();
+		if (kq < 0)
+			return (11);
+		EV_SET(&change, fd, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
+		if (kevent(kq, &change, 1, NULL, 0, NULL) != 0)
+			return (12);
+		close(token_fd);
+		byte = 'R';
+		if (write(ready_fd, &byte, 1) != 1)
+			return (13);
+		if (read(go_fd, &byte, 1) != 1)
+			return (14);
+		timeout.tv_sec = 0;
+		timeout.tv_nsec = 100 * 1000 * 1000;
+		n = kevent(kq, NULL, 0, &event, 1, &timeout);
+		close(kq);
+		return (n == 0 ? 0 : (n > 0 ? 1 : 15));
+	}
+
+	/*
+	 * Exercise an already-attached provider descriptor after exec changed
+	 * the process nonce.  An optional token is authorized before RESET.
+	 */
+	if ((argc == 3 &&
+	    strcmp(argv[1], "vsock-provider-access") == 0) ||
+	    (argc == 4 &&
+	    strcmp(argv[1], "vsock-provider-token-access") == 0)) {
+		int fd, token_fd;
+
+		fd = (int)strtol(argv[2], &end, 10);
+		if (*end != '\0')
+			return (2);
+		if (argc == 4) {
+			token_fd = (int)strtol(argv[3], &end, 10);
+			if (*end != '\0')
+				return (2);
+			if (fi_authorize(token_fd) != 0)
+				return (10);
+		}
+		if (ioctl(fd, VSOCK_IOC_TRANSPORT_RESET) == 0)
+			return (0);
+		return (errno == EACCES || errno == EPERM ? 1 : 2);
 	}
 
 	/*

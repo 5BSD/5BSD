@@ -929,20 +929,42 @@ ATF_TC(acct_unprivileged_connect_denied);
 ATF_TC_HEAD(acct_unprivileged_connect_denied, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Non-root connect to accounting is denied with EPERM");
+	    "A delegated control fd denies non-root accounting connect with EPERM");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_accounting");
-	atf_tc_set_md_var(tc, "require.user", "unprivileged");
+	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(acct_unprivileged_connect_denied, tc)
 {
-	int fd;
+	struct mac_capability_connect_args ca;
+	pid_t pid;
+	int ctl, status;
 
-	fd = mac_capability_connect("accounting");
-	ATF_CHECK_MSG(fd == -1, "unprivileged connect should fail");
-	ATF_CHECK_EQ(errno, EPERM);
-	if (fd >= 0)
-		close(fd);
+	/*
+	 * The control device is intentionally root-only.  Open it as the
+	 * broker, then verify that MAC_CAPABILITY_CONNECT evaluates the
+	 * credentials of the unprivileged process using the delegated fd.
+	 */
+	ctl = mac_capability_open();
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		if (setgid(65534) != 0 || setuid(65534) != 0)
+			_exit(2);
+		memset(&ca, 0, sizeof(ca));
+		strlcpy(ca.name, "accounting", sizeof(ca.name));
+		if (ioctl(ctl, MAC_CAPABILITY_CONNECT, &ca) == 0) {
+			close(ca.fd);
+			_exit(3);
+		}
+		_exit(errno == EPERM ? 0 : 4);
+	}
+	close(ctl);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_EQ_MSG(WEXITSTATUS(status), 0,
+	    "unprivileged connect child failed with status %d",
+	    WEXITSTATUS(status));
 }
 
 /* ----------------------------------------------------------------

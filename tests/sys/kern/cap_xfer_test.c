@@ -9,6 +9,7 @@
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -584,6 +585,79 @@ ATF_TC_BODY(xfer_capmode, tc)
 	close(fd);
 }
 
+ATF_TC_WITHOUT_HEAD(xfer_caps_attenuate_scm_rights);
+ATF_TC_BODY(xfer_caps_attenuate_scm_rights, tc)
+{
+	cap_ioctl_t cmds[2], gotcmd;
+	cap_rights_t limit, wider, received;
+	uint32_t fcntls;
+	int fd, fd2, passfd, recvd, sv[2];
+
+	socketpair_stream(sv);
+	fd = open("/dev/null", O_RDWR);
+	ATF_REQUIRE(fd >= 0);
+
+	cap_rights_init(&limit, CAP_READ, CAP_IOCTL, CAP_FCNTL);
+	ATF_REQUIRE(cap_xfer_rights_limit(fd, &limit) == 0);
+	cmds[0] = FIONREAD;
+	ATF_REQUIRE(cap_xfer_ioctls_limit(fd, cmds, 1) == 0);
+	ATF_REQUIRE(cap_xfer_fcntls_limit(fd, CAP_FCNTL_GETFL) == 0);
+
+	/* Every ceiling is monotonic. */
+	cap_rights_init(&wider, CAP_READ, CAP_WRITE, CAP_IOCTL, CAP_FCNTL);
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    cap_xfer_rights_limit(fd, &wider) == -1);
+	cmds[1] = FIONBIO;
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    cap_xfer_ioctls_limit(fd, cmds, 2) == -1);
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    cap_xfer_fcntls_limit(fd, CAP_FCNTL_ALL) == -1);
+
+	/* dup() carries the ceiling, while the sender retains broad rights. */
+	passfd = dup(fd);
+	ATF_REQUIRE(passfd >= 0);
+	ATF_REQUIRE(sendfd(sv[0], passfd) == 0);
+	ATF_REQUIRE(recvfd(sv[1], &recvd) == 0);
+
+	ATF_REQUIRE(cap_rights_get(fd, &received) == 0);
+	ATF_REQUIRE(cap_rights_is_set(&received, CAP_WRITE));
+
+	ATF_REQUIRE(cap_rights_get(recvd, &received) == 0);
+	ATF_REQUIRE(cap_rights_is_set(&received, CAP_READ));
+	ATF_REQUIRE(!cap_rights_is_set(&received, CAP_WRITE));
+	ATF_REQUIRE(cap_rights_is_set(&received, CAP_IOCTL));
+	ATF_REQUIRE(cap_rights_is_set(&received, CAP_FCNTL));
+
+	ATF_REQUIRE(cap_ioctls_get(recvd, &gotcmd, 1) == 1);
+	ATF_REQUIRE(gotcmd == FIONREAD);
+	ATF_REQUIRE(cap_fcntls_get(recvd, &fcntls) == 0);
+	ATF_REQUIRE(fcntls == CAP_FCNTL_GETFL);
+	close(recvd);
+
+	/*
+	 * Current rights are also a hard upper bound: a ceiling that contains
+	 * WRITE cannot restore WRITE after the sender has removed it.
+	 */
+	fd2 = open("/dev/null", O_RDWR);
+	ATF_REQUIRE(fd2 >= 0);
+	cap_rights_init(&wider, CAP_READ, CAP_WRITE);
+	ATF_REQUIRE(cap_xfer_rights_limit(fd2, &wider) == 0);
+	cap_rights_init(&limit, CAP_READ);
+	ATF_REQUIRE(cap_rights_limit(fd2, &limit) == 0);
+	ATF_REQUIRE(sendfd(sv[0], fd2) == 0);
+	ATF_REQUIRE(recvfd(sv[1], &recvd) == 0);
+	ATF_REQUIRE(cap_rights_get(recvd, &received) == 0);
+	ATF_REQUIRE(cap_rights_is_set(&received, CAP_READ));
+	ATF_REQUIRE(!cap_rights_is_set(&received, CAP_WRITE));
+
+	close(recvd);
+	close(fd2);
+	close(passfd);
+	close(fd);
+	close(sv[0]);
+	close(sv[1]);
+}
+
 /* ---- test registration ---- */
 
 ATF_TP_ADD_TCS(tp)
@@ -611,6 +685,7 @@ ATF_TP_ADD_TCS(tp)
 
 	/* capability mode */
 	ATF_TP_ADD_TC(tp, xfer_capmode);
+	ATF_TP_ADD_TC(tp, xfer_caps_attenuate_scm_rights);
 
 	return (atf_no_error());
 }

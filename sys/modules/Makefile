@@ -721,6 +721,8 @@ _mpr=		mpr
 
 .if ${MK_TESTS} != "no" || defined(ALL_MODULES)
 SUBDIR+=	ktest
+SUBDIR+=	mac_capability_test_kernelstore
+SUBDIR+=	mac_capability_test_keystore
 SUBDIR+=	tests
 .endif
 

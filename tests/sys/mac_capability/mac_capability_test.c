@@ -1016,13 +1016,16 @@ ATF_TC_BODY(queue_ordering, tc)
 	ATF_REQUIRE(fd >= 0);
 
 	for (i = 0; i < 5; i++) {
-		req.op = KS_OP_FETCH;
+		req.op = i == 0 ? KS_OP_DELAY_FETCH : KS_OP_FETCH;
 		req.keyid = (uint32_t)i;
 		memset(&sa, 0, sizeof(sa));
 		sa.payload = &req;
 		sa.payload_len = sizeof(req);
 		sa.reply_token = (uint64_t)(i + 1);
 		ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == 0);
+		/* Let the delayed first handler start before queuing followers. */
+		if (i == 0)
+			usleep(20000);
 	}
 
 	for (i = 0; i < 5; i++) {
@@ -2584,6 +2587,57 @@ ATF_TC_BODY(channel_preserves_ioctl_limit, tc)
 	ATF_REQUIRE(ioctl(fd_b, MAC_CAPABILITY_RECVMSG, &ra) == 0);
 	ATF_REQUIRE_EQ(ra.nfds, 1);
 	ATF_CHECK_EQ(verify_getinfo_only(received_fd), 0);
+
+	close(received_fd);
+	close(target_peer);
+	close(target_fd);
+	close(fd_b);
+	close(fd_a);
+}
+
+ATF_TC(channel_applies_xfer_caps);
+ATF_TC_HEAD(channel_applies_xfer_caps, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "mac_capability message transfer attenuates attached fd rights");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(channel_applies_xfer_caps, tc)
+{
+	struct mac_capability_recvmsg_args ra;
+	struct mac_capability_sendmsg_args sa;
+	cap_ioctl_t cmds[] = { MAC_CAPABILITY_GETINFO };
+	cap_rights_t rights;
+	char buf[4];
+	int fd_a, fd_b, received_fd, target_fd, target_peer;
+
+	mac_capability_channel_create(&fd_a, &fd_b);
+	mac_capability_channel_create(&target_fd, &target_peer);
+
+	cap_rights_init(&rights, CAP_IOCTL);
+	ATF_REQUIRE(cap_xfer_rights_limit(target_fd, &rights) == 0);
+	ATF_REQUIRE(cap_xfer_ioctls_limit(target_fd, cmds,
+	    nitems(cmds)) == 0);
+
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = "fd";
+	sa.payload_len = 2;
+	sa.fds = &target_fd;
+	sa.nfds = 1;
+	ATF_REQUIRE(ioctl(fd_a, MAC_CAPABILITY_SENDMSG, &sa) == 0);
+
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = buf;
+	ra.payload_len = sizeof(buf);
+	ra.fds = &received_fd;
+	ra.nfds = 1;
+	ATF_REQUIRE(ioctl(fd_b, MAC_CAPABILITY_RECVMSG, &ra) == 0);
+	ATF_REQUIRE_EQ(ra.nfds, 1);
+	ATF_CHECK_EQ(verify_getinfo_only(received_fd), 0);
+
+	/* The sender remains broad; only the transferred descriptor narrows. */
+	ATF_CHECK_EQ(cap_ioctls_get(target_fd, NULL, 0), CAP_IOCTLS_ALL);
 
 	close(received_fd);
 	close(target_peer);
@@ -7346,6 +7400,7 @@ ATF_TP_ADD_TCS(tp)
 	/* Channel: additional coverage */
 	ATF_TP_ADD_TC(tp, channel_fd_passing);
 	ATF_TP_ADD_TC(tp, channel_preserves_ioctl_limit);
+	ATF_TP_ADD_TC(tp, channel_applies_xfer_caps);
 	ATF_TP_ADD_TC(tp, channel_stress);
 	ATF_TP_ADD_TC(tp, channel_getinfo);
 

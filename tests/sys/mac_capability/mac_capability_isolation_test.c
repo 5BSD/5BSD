@@ -154,6 +154,35 @@ fi_vsock_call(int svc, uint32_t op, const struct fi_vsock_request *input,
 	return (ioctl(svc, MAC_CAPABILITY_CALL, &ca));
 }
 
+static const char *fi_helper_path(const atf_tc_t *);
+
+static int
+run_vsock_provider_helper(const atf_tc_t *tc, const char *command, int fd,
+    int token)
+{
+	char fdstr[16], tokenstr[16];
+	const char *path;
+	pid_t pid;
+	int status;
+
+	path = fi_helper_path(tc);
+	snprintf(fdstr, sizeof(fdstr), "%d", fd);
+	snprintf(tokenstr, sizeof(tokenstr), "%d", token);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		if (token >= 0)
+			execl(path, path, command, fdstr, tokenstr, NULL);
+		else
+			execl(path, path, command, fdstr, NULL);
+		_exit(127);
+	}
+	waitpid(pid, &status, 0);
+	if (!WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
 static char tmppath[128];
 
 static void
@@ -3095,6 +3124,204 @@ ATF_TC_BODY(vsock_short_sockaddr_is_rejected_safely, tc)
 	close(svc);
 }
 
+VSOCK_TC_HEAD(vsock_provider_claim_requires_complete_cid,
+    "A provider claim must cover every port of one concrete guest CID")
+ATF_TC_BODY(vsock_provider_claim_requires_complete_cid, tc)
+{
+	struct fi_vsock_request req;
+	int svc;
+
+	svc = fi_connect();
+	memset(&req, 0, sizeof(req));
+	req.cid = VSOCK_CID_ANY;
+	req.port_max = UINT32_MAX;
+	req.direction = FI_VSOCK_PROVIDER;
+	errno = 0;
+	ATF_CHECK(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == -1);
+	ATF_CHECK_EQ(EINVAL, errno);
+
+	req.cid = 0x70000001;
+	req.port_min = req.port_max = 7000;
+	errno = 0;
+	ATF_CHECK(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == -1);
+	ATF_CHECK_EQ(EINVAL, errno);
+	close(svc);
+}
+
+VSOCK_TC_HEAD(vsock_endpoint_claim_does_not_grant_provider,
+    "An endpoint claim cannot authorize ownership of the whole guest CID")
+ATF_TC_BODY(vsock_endpoint_claim_does_not_grant_provider, tc)
+{
+	struct fi_vsock_request req;
+	struct vsock_transport_attach attach;
+	int fd, svc;
+
+	svc = fi_connect();
+	memset(&req, 0, sizeof(req));
+	req.cid = 0x70000002;
+	req.port_min = req.port_max = 7000;
+	req.direction = FI_NET_ANY;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == 0);
+
+	fd = open("/dev/vsock", O_RDWR);
+	ATF_REQUIRE_MSG(fd >= 0, "open /dev/vsock: %s", strerror(errno));
+	memset(&attach, 0, sizeof(attach));
+	attach.version = VSOCK_TRANSPORT_VERSION;
+	attach.guest_cid = (uint32_t)req.cid;
+	errno = 0;
+	ATF_CHECK(ioctl(fd, VSOCK_IOC_TRANSPORT_ATTACH, &attach) == -1);
+	ATF_CHECK_EQ(EACCES, errno);
+	close(fd);
+	close(svc);
+}
+
+VSOCK_TC_HEAD(vsock_provider_lifetime_authorization,
+    "Provider access follows its exact claim and delegated token lifetime")
+ATF_TC_BODY(vsock_provider_lifetime_authorization, tc)
+{
+	struct fi_vsock_request req;
+	struct vsock_transport_attach attach;
+	int fd, svc, token;
+
+	svc = fi_connect();
+	memset(&req, 0, sizeof(req));
+	req.cid = 0x70000003;
+	req.port_max = UINT32_MAX;
+	req.direction = FI_VSOCK_PROVIDER;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == 0);
+
+	fd = open("/dev/vsock", O_RDWR);
+	ATF_REQUIRE_MSG(fd >= 0, "open /dev/vsock: %s", strerror(errno));
+	memset(&attach, 0, sizeof(attach));
+	attach.version = VSOCK_TRANSPORT_VERSION;
+	attach.guest_cid = (uint32_t)req.cid;
+	ATF_REQUIRE_MSG(ioctl(fd, VSOCK_IOC_TRANSPORT_ATTACH, &attach) == 0,
+	    "provider attach: %s", strerror(errno));
+
+	/* An exec'd holder of the provider fd has a foreign nonce. */
+	ATF_CHECK_EQ(1, run_vsock_provider_helper(tc,
+	    "vsock-provider-access", fd, -1));
+
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_MINT_VSOCK, &req, &token) == 0);
+	ATF_REQUIRE(token >= 0);
+	ATF_CHECK_EQ(0, run_vsock_provider_helper(tc,
+	    "vsock-provider-token-access", fd, token));
+	close(token);
+	ATF_CHECK_EQ(1, run_vsock_provider_helper(tc,
+	    "vsock-provider-access", fd, -1));
+
+	/*
+	 * The provider label retains the exact claim identity.  Closing the
+	 * claim descriptor must not turn a protected provider into an
+	 * unclaimed, unrestricted one.
+	 */
+	close(svc);
+	errno = 0;
+	ATF_CHECK(ioctl(fd, VSOCK_IOC_TRANSPORT_RESET) == -1);
+	ATF_CHECK_EQ(EACCES, errno);
+	close(fd);
+}
+
+VSOCK_TC_HEAD(vsock_provider_honors_late_claim,
+    "A provider attached before a claim cannot bypass later CID ownership")
+ATF_TC_BODY(vsock_provider_honors_late_claim, tc)
+{
+	struct fi_vsock_request req;
+	struct vsock_transport_attach attach;
+	int fd, svc;
+
+	memset(&req, 0, sizeof(req));
+	req.cid = 0x70000004;
+	req.port_max = UINT32_MAX;
+	req.direction = FI_VSOCK_PROVIDER;
+
+	fd = open("/dev/vsock", O_RDWR);
+	ATF_REQUIRE_MSG(fd >= 0, "open /dev/vsock: %s", strerror(errno));
+	memset(&attach, 0, sizeof(attach));
+	attach.version = VSOCK_TRANSPORT_VERSION;
+	attach.guest_cid = (uint32_t)req.cid;
+	ATF_REQUIRE_MSG(ioctl(fd, VSOCK_IOC_TRANSPORT_ATTACH, &attach) == 0,
+	    "provider attach: %s", strerror(errno));
+	ATF_REQUIRE(ioctl(fd, VSOCK_IOC_TRANSPORT_RESET) == 0);
+
+	svc = fi_connect();
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == 0);
+	ATF_CHECK(ioctl(fd, VSOCK_IOC_TRANSPORT_RESET) == 0);
+	ATF_CHECK_EQ(1, run_vsock_provider_helper(tc,
+	    "vsock-provider-access", fd, -1));
+
+	/* Releasing a claim created after attach restores the unclaimed state. */
+	close(svc);
+	ATF_CHECK(ioctl(fd, VSOCK_IOC_TRANSPORT_RESET) == 0);
+	close(fd);
+}
+
+VSOCK_TC_HEAD(vsock_provider_kqueue_rechecks_revocation,
+    "Provider kqueue readiness is suppressed after delegated authority ends")
+ATF_TC_BODY(vsock_provider_kqueue_rechecks_revocation, tc)
+{
+	struct fi_vsock_request req;
+	struct vsock_transport_attach attach;
+	char byte, fdstr[16], tokenstr[16], readystr[16], gostr[16];
+	const char *path;
+	pid_t pid;
+	int fd, gofd[2], readyfd[2], status, svc, token;
+
+	svc = fi_connect();
+	memset(&req, 0, sizeof(req));
+	req.cid = 0x70000005;
+	req.port_max = UINT32_MAX;
+	req.direction = FI_VSOCK_PROVIDER;
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_CLAIM_VSOCK, &req, NULL) == 0);
+
+	fd = open("/dev/vsock", O_RDWR);
+	ATF_REQUIRE_MSG(fd >= 0, "open /dev/vsock: %s", strerror(errno));
+	memset(&attach, 0, sizeof(attach));
+	attach.version = VSOCK_TRANSPORT_VERSION;
+	attach.guest_cid = (uint32_t)req.cid;
+	ATF_REQUIRE_MSG(ioctl(fd, VSOCK_IOC_TRANSPORT_ATTACH, &attach) == 0,
+	    "provider attach: %s", strerror(errno));
+	ATF_REQUIRE(fi_vsock_call(svc, FI_OP_MINT_VSOCK, &req, &token) == 0);
+	ATF_REQUIRE(token >= 0);
+	ATF_REQUIRE(pipe(readyfd) == 0);
+	ATF_REQUIRE(pipe(gofd) == 0);
+
+	path = fi_helper_path(tc);
+	snprintf(fdstr, sizeof(fdstr), "%d", fd);
+	snprintf(tokenstr, sizeof(tokenstr), "%d", token);
+	snprintf(readystr, sizeof(readystr), "%d", readyfd[1]);
+	snprintf(gostr, sizeof(gostr), "%d", gofd[0]);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(readyfd[0]);
+		close(gofd[1]);
+		execl(path, path, "vsock-provider-kqueue-revoke", fdstr,
+		    tokenstr, readystr, gostr, NULL);
+		_exit(127);
+	}
+	close(readyfd[1]);
+	close(gofd[0]);
+	ATF_REQUIRE(read(readyfd[0], &byte, 1) == 1);
+	/*
+	 * The child closed its inherited token after authorizing and registering
+	 * the filter.  This is the final reference, so closing it revokes the
+	 * child's authorization before it scans the kqueue.
+	 */
+	close(token);
+	byte = 'G';
+	ATF_REQUIRE(write(gofd[1], &byte, 1) == 1);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_EQ_MSG(0, WEXITSTATUS(status),
+	    "kqueue revocation helper status %d", WEXITSTATUS(status));
+
+	close(readyfd[0]);
+	close(gofd[1]);
+	close(fd);
+	close(svc);
+}
+
 #undef VSOCK_TC_HEAD
 
 ATF_TC_BODY(net_token_mint_returns_fd, tc)
@@ -3928,13 +4155,13 @@ ATF_TC_BODY(token_uipc_connect, tc)
 	    tmpsockpath, strerror(errno));
 	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, sock_fd, 0, &rpl) == 0);
 
-	/* READ-only token should NOT allow connect. */
-	token = fi_mint(svc, sock_fd, FI_FS_READ);
+	/* Generic content permissions must not authorize a connection. */
+	token = fi_mint(svc, sock_fd, FI_FS_READ | FI_FS_WRITE);
 	ATF_REQUIRE(token >= 0);
 	rc = run_token_helper(tc, "token-uipc-connect", token, tmpsockpath,
 	    NULL);
 	ATF_CHECK_MSG(rc == 1,
-	    "connect should be denied with READ token (got %d)", rc);
+	    "connect should be denied without UIPC_CONNECT (got %d)", rc);
 	close(token);
 
 	/* UIPC_CONNECT token should allow connect. */
@@ -4912,6 +5139,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, vsock_wildcard_claim_allows_narrow_token);
 	ATF_TP_ADD_TC(tp, vsock_rejects_out_of_range_cid);
 	ATF_TP_ADD_TC(tp, vsock_short_sockaddr_is_rejected_safely);
+	ATF_TP_ADD_TC(tp, vsock_provider_claim_requires_complete_cid);
+	ATF_TP_ADD_TC(tp, vsock_endpoint_claim_does_not_grant_provider);
+	ATF_TP_ADD_TC(tp, vsock_provider_lifetime_authorization);
+	ATF_TP_ADD_TC(tp, vsock_provider_honors_late_claim);
+	ATF_TP_ADD_TC(tp, vsock_provider_kqueue_rechecks_revocation);
 	ATF_TP_ADD_TC(tp, net_token_mint_returns_fd);
 	ATF_TP_ADD_TC(tp, net_token_authorize_grants_bind);
 	ATF_TP_ADD_TC(tp, net_wildcard_claim_allows_narrow_token);

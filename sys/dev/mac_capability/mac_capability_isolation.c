@@ -20,7 +20,7 @@
  *                  (per port/address/protocol/direction tuple)
  *                  Supported: AF_INET, AF_INET6, AF_BLUETOOTH
  *
- *   vsock:         socket create, bind, connect
+ *   vsock:         socket create, bind, connect, and host provider ownership
  *                  (per CID/port/direction tuple for AF_VSOCK)
  *
  * Claims are bound to the mac_capability instance fd.  When the instance is
@@ -157,6 +157,12 @@ struct fi_vsock_claim {
 	struct mac_capability_instance *fv_inst;
 };
 
+struct fi_vsock_provider_label {
+	uint64_t	fpl_owner;
+	uint64_t	fpl_claim_id;
+	bool		fpl_protected;
+};
+
 /*
  * Authorization table: (accessor_nonce, owner_nonce) pairs.
  * Keyed by owner_nonce (the claim holder).  When a MACF hook
@@ -232,6 +238,12 @@ static LIST_HEAD(, fi_vsock_claim) *fi_vsock_hash;
 static u_long			    fi_vsock_hashmask;
 static struct rwlock		    fi_vsock_lock;
 static volatile u_int		    fi_vsock_claim_count;
+static int			    fi_slot;
+
+#define	FI_VSOCK_PROVIDER_SLOT(label)					\
+	((struct fi_vsock_provider_label *)mac_label_get((label), fi_slot))
+#define	FI_VSOCK_PROVIDER_SLOT_SET(label, value)				\
+	mac_label_set((label), fi_slot, (uintptr_t)(value))
 
 #define	FI_AUTH_BUCKET(nonce)	(&fi_auth_hash[(nonce) & fi_auth_hashmask])
 
@@ -705,6 +717,15 @@ static int
 fi_check_open(struct ucred *cred, struct vnode *vp,
     struct label *vplabel __unused, accmode_t accmode)
 {
+	/*
+	 * unp_connectat() performs a synthetic VREAD | VWRITE open check on
+	 * the socket vnode before invoking vnode_check_uipc_connect.  Content
+	 * access masks do not describe a Unix-domain socket connection; the
+	 * dedicated FI_FS_UIPC_CONNECT check below does.  Do not require an
+	 * unrelated READ | WRITE token before that check can run.
+	 */
+	if (vp->v_type == VSOCK && accmode == (VREAD | VWRITE))
+		return (0);
 
 	return (fi_check_vp_action(cred, vp, fi_actions_from_accmode(accmode)));
 }
@@ -1530,8 +1551,18 @@ static bool
 fi_vsock_claims_overlap(const struct fi_vsock_claim *existing,
     const struct fi_vsock_request *vr)
 {
+	bool direction_overlap;
 
-	if (!(existing->fv_direction & vr->direction))
+	/*
+	 * A provider owns the complete guest CID data path, so its claim
+	 * overlaps bind/connect claims as well as another provider claim.
+	 * Endpoint-only claims retain their independent direction semantics.
+	 */
+	direction_overlap =
+	    ((existing->fv_direction | vr->direction) &
+	    FI_VSOCK_PROVIDER) != 0 ||
+	    (existing->fv_direction & vr->direction) != 0;
+	if (!direction_overlap)
 		return (false);
 	if (existing->fv_cid != VSOCK_CID_ANY &&
 	    vr->cid != VSOCK_CID_ANY &&
@@ -1773,7 +1804,7 @@ fi_vsock_check_create(struct ucred *cred)
 			if (vc->fv_port_min != 0 ||
 			    vc->fv_port_max != UINT32_MAX)
 				continue;
-			if (vc->fv_direction != FI_NET_ANY)
+			if ((vc->fv_direction & FI_NET_ANY) != FI_NET_ANY)
 				continue;
 			if (caller_nonce != 0 &&
 			    caller_nonce == vc->fv_nonce) {
@@ -1819,6 +1850,181 @@ fi_vsock_check_create(struct ucred *cred)
 		return (EACCES);
 	}
 	return (0);
+}
+
+static int
+fi_vsock_provider_init_label(struct label *label, int flag)
+{
+	struct fi_vsock_provider_label *pl;
+
+	pl = malloc(sizeof(*pl), M_FILE_ISOLATION, flag | M_ZERO);
+	if (pl == NULL)
+		return (ENOMEM);
+	FI_VSOCK_PROVIDER_SLOT_SET(label, pl);
+	return (0);
+}
+
+static void
+fi_vsock_provider_destroy_label(struct label *label)
+{
+	struct fi_vsock_provider_label *pl;
+
+	pl = FI_VSOCK_PROVIDER_SLOT(label);
+	FI_VSOCK_PROVIDER_SLOT_SET(label, NULL);
+	free(pl, M_FILE_ISOLATION);
+}
+
+static int
+fi_vsock_provider_check_attach(struct ucred *cred, uint64_t cid,
+    struct label *label)
+{
+	struct fi_vsock_provider_label *pl;
+	struct fi_vsock_claim *vc;
+	struct fi_vsock_request vr;
+	uint64_t caller_nonce, denied_id, denied_nonce;
+	u_long i;
+	bool claimed;
+
+	pl = FI_VSOCK_PROVIDER_SLOT(label);
+	if (pl == NULL)
+		return (0);
+	memset(pl, 0, sizeof(*pl));
+	if (atomic_load_acq_int(&fi_vsock_claim_count) == 0)
+		return (0);
+
+	memset(&vr, 0, sizeof(vr));
+	vr.cid = cid;
+	vr.port_max = UINT32_MAX;
+	vr.direction = FI_VSOCK_PROVIDER;
+	caller_nonce = mac_capability_proc_nonce(cred);
+	claimed = false;
+	denied_nonce = 0;
+	denied_id = 0;
+
+	rw_rlock(&fi_vsock_lock);
+	if (caller_nonce != 0)
+		rw_rlock(&fi_auth_lock);
+	for (i = 0; i <= fi_vsock_hashmask; i++) {
+		LIST_FOREACH(vc, &fi_vsock_hash[i], fv_hashlink) {
+			if (!fi_vsock_cid_match(vc->fv_cid, cid))
+				continue;
+			claimed = true;
+			if (!fi_vsock_claim_covers_request(vc, &vr))
+				goto remember_denial;
+			if (caller_nonce == vc->fv_nonce ||
+			    (caller_nonce != 0 &&
+			    fi_is_authorized_vsock_request(caller_nonce,
+			    vc->fv_nonce, vc->fv_id, &vr))) {
+				pl->fpl_owner = vc->fv_nonce;
+				pl->fpl_claim_id = vc->fv_id;
+				pl->fpl_protected = true;
+				SDT_PROBE6(mac_capability_isolation, , ,
+				    allow__vsock, vc->fv_nonce, caller_nonce,
+				    vc->fv_id, cid, 0, FI_VSOCK_PROVIDER);
+				if (caller_nonce != 0)
+					rw_runlock(&fi_auth_lock);
+				rw_runlock(&fi_vsock_lock);
+				return (0);
+			}
+remember_denial:
+			if (denied_id == 0) {
+				denied_nonce = vc->fv_nonce;
+				denied_id = vc->fv_id;
+			}
+		}
+	}
+	if (caller_nonce != 0)
+		rw_runlock(&fi_auth_lock);
+	rw_runlock(&fi_vsock_lock);
+	if (!claimed)
+		return (0);
+	(void)denied_nonce;
+	(void)denied_id;
+	SDT_PROBE3(mac_capability_isolation, , , deny,
+	    "vsock_provider_attach", denied_nonce, caller_nonce);
+	SDT_PROBE6(mac_capability_isolation, , , deny__vsock,
+	    denied_nonce, caller_nonce, denied_id, cid, 0,
+	    FI_VSOCK_PROVIDER);
+	return (EACCES);
+}
+
+static int
+fi_vsock_provider_check_access(struct ucred *cred, uint64_t cid,
+    struct label *label)
+{
+	struct fi_vsock_provider_label *pl;
+	struct fi_vsock_claim *vc;
+	struct fi_vsock_request vr;
+	uint64_t caller_nonce, denied_id, denied_nonce;
+	u_long i;
+	bool claimed;
+
+	pl = FI_VSOCK_PROVIDER_SLOT(label);
+	if (pl == NULL)
+		return (0);
+	/*
+	 * A provider attached before a claim existed must not bypass a claim
+	 * created later.  Unprotected labels therefore use a dynamic lookup.
+	 * Labels attached under a claim stay pinned to that exact claim so
+	 * closing it cannot silently turn a protected provider into an
+	 * unrestricted one.
+	 */
+	if (!pl->fpl_protected &&
+	    atomic_load_acq_int(&fi_vsock_claim_count) == 0)
+		return (0);
+	memset(&vr, 0, sizeof(vr));
+	vr.cid = cid;
+	vr.port_max = UINT32_MAX;
+	vr.direction = FI_VSOCK_PROVIDER;
+	caller_nonce = mac_capability_proc_nonce(cred);
+	claimed = false;
+	denied_nonce = pl->fpl_owner;
+	denied_id = pl->fpl_claim_id;
+
+	rw_rlock(&fi_vsock_lock);
+	if (caller_nonce != 0)
+		rw_rlock(&fi_auth_lock);
+	for (i = 0; i <= fi_vsock_hashmask; i++) {
+		LIST_FOREACH(vc, &fi_vsock_hash[i], fv_hashlink) {
+			if (pl->fpl_protected) {
+				if (vc->fv_id != pl->fpl_claim_id ||
+				    vc->fv_nonce != pl->fpl_owner)
+					continue;
+			} else if (!fi_vsock_cid_match(vc->fv_cid, cid)) {
+				continue;
+			}
+			claimed = true;
+			if (!fi_vsock_claim_covers_request(vc, &vr))
+				goto remember_denial;
+			if (caller_nonce == vc->fv_nonce ||
+			    (caller_nonce != 0 &&
+			    fi_is_authorized_vsock_request(caller_nonce,
+			    vc->fv_nonce, vc->fv_id, &vr))) {
+				if (caller_nonce != 0)
+					rw_runlock(&fi_auth_lock);
+				rw_runlock(&fi_vsock_lock);
+				return (0);
+			}
+remember_denial:
+			if (denied_id == 0) {
+				denied_nonce = vc->fv_nonce;
+				denied_id = vc->fv_id;
+			}
+		}
+	}
+	if (caller_nonce != 0)
+		rw_runlock(&fi_auth_lock);
+	rw_runlock(&fi_vsock_lock);
+	if (!pl->fpl_protected && !claimed)
+		return (0);
+	(void)denied_nonce;
+	(void)denied_id;
+	SDT_PROBE3(mac_capability_isolation, , , deny,
+	    "vsock_provider_access", denied_nonce, caller_nonce);
+	SDT_PROBE6(mac_capability_isolation, , , deny__vsock,
+	    denied_nonce, caller_nonce, denied_id, cid, 0,
+	    FI_VSOCK_PROVIDER);
+	return (EACCES);
 }
 
 /* ----------------------------------------------------------------
@@ -2423,9 +2629,13 @@ fi_validate_vsock_request(const void *req, size_t reqlen,
 		return (EINVAL);
 	if (vr->cid > UINT32_MAX)
 		return (EINVAL);
-	if (vr->direction == 0 || (vr->direction & ~FI_NET_ANY) != 0)
+	if (vr->direction == 0 || (vr->direction & ~FI_VSOCK_ANY) != 0)
 		return (EINVAL);
 	if (vr->port_min > vr->port_max)
+		return (EINVAL);
+	if ((vr->direction & FI_VSOCK_PROVIDER) != 0 &&
+	    (vr->cid == VSOCK_CID_ANY || vr->port_min != 0 ||
+	    vr->port_max != UINT32_MAX))
 		return (EINVAL);
 	*out = *vr;
 	return (0);
@@ -3444,6 +3654,11 @@ static struct mac_policy_ops fi_mac_ops = {
 	.mpo_socket_check_create	= fi_check_socket_create,
 	.mpo_socket_check_bind		= fi_check_socket_bind,
 	.mpo_socket_check_connect	= fi_check_socket_connect,
+	/* Whole-CID host provider ownership */
+	.mpo_vsock_provider_init_label = fi_vsock_provider_init_label,
+	.mpo_vsock_provider_destroy_label = fi_vsock_provider_destroy_label,
+	.mpo_vsock_provider_check_attach = fi_vsock_provider_check_attach,
+	.mpo_vsock_provider_check_access = fi_vsock_provider_check_access,
 	/* Jail isolation */
 	.mpo_prison_check_create	= fi_check_prison_create,
 	.mpo_prison_check_get		= fi_check_prison_get,
@@ -3460,7 +3675,7 @@ static struct mac_policy_ops fi_mac_ops = {
  */
 MAC_POLICY_SET(&fi_mac_ops, mac_mac_capability_isolation,
     "MAC_CAPABILITY isolation enforcement",
-    MPC_LOADTIME_FLAG_NOTLATE, NULL);
+    MPC_LOADTIME_FLAG_NOTLATE, &fi_slot);
 
 static int
 mac_capability_isolation_modevent(module_t mod __unused, int type,

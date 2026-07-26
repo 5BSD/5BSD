@@ -595,6 +595,14 @@ int cap_fcntls_limit(int fd, uint32_t fcntlrights);
  * Limits descriptor transfer state for the given descriptor (CAP_XFER_*).
  */
 int cap_xfer_limit(int fd, int state);
+/*
+ * Monotonically limits the authority conveyed by a permitted descriptor
+ * transfer.  The receiver gets current authority intersected with these
+ * ceilings; the sender is unchanged.
+ */
+int cap_xfer_rights_limit(int fd, const cap_rights_t *rightsp);
+int cap_xfer_ioctls_limit(int fd, const cap_ioctl_t *cmds, size_t ncmds);
+int cap_xfer_fcntls_limit(int fd, uint32_t fcntlrights);
 int cap_cloexec_limit(int fd, int state);
 int cap_clofork_limit(int fd, int state);
 /*

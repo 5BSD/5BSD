@@ -672,9 +672,9 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(cap_xfer_limit_args), .sy_call = (sy_call_t *)sys_cap_xfer_limit, .sy_auevent = AUE_CAP_XFER_LIMIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 603 = cap_xfer_limit */
 	{ .sy_narg = AS(cap_cloexec_limit_args), .sy_call = (sy_call_t *)sys_cap_cloexec_limit, .sy_auevent = AUE_CAP_CLOEXEC_LIMIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 604 = cap_cloexec_limit */
 	{ .sy_narg = AS(cap_clofork_limit_args), .sy_call = (sy_call_t *)sys_cap_clofork_limit, .sy_auevent = AUE_CAP_CLOFORK_LIMIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 605 = cap_clofork_limit */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 606 =  */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 607 =  */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 608 =  */
+	{ .sy_narg = AS(cap_xfer_rights_limit_args), .sy_call = (sy_call_t *)sys_cap_xfer_rights_limit, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 606 = cap_xfer_rights_limit */
+	{ .sy_narg = AS(cap_xfer_ioctls_limit_args), .sy_call = (sy_call_t *)sys_cap_xfer_ioctls_limit, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 607 = cap_xfer_ioctls_limit */
+	{ .sy_narg = AS(cap_xfer_fcntls_limit_args), .sy_call = (sy_call_t *)sys_cap_xfer_fcntls_limit, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 608 = cap_xfer_fcntls_limit */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 609 =  */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 610 =  */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 611 =  */

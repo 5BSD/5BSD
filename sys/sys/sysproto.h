@@ -1944,6 +1944,19 @@ struct cap_clofork_limit_args {
 	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
 	char state_l_[PADL_(int)]; int state; char state_r_[PADR_(int)];
 };
+struct cap_xfer_rights_limit_args {
+	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
+	char rightsp_l_[PADL_(const cap_rights_t *)]; const cap_rights_t * rightsp; char rightsp_r_[PADR_(const cap_rights_t *)];
+};
+struct cap_xfer_ioctls_limit_args {
+	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
+	char cmds_l_[PADL_(const u_long *)]; const u_long * cmds; char cmds_r_[PADR_(const u_long *)];
+	char ncmds_l_[PADL_(size_t)]; size_t ncmds; char ncmds_r_[PADR_(size_t)];
+};
+struct cap_xfer_fcntls_limit_args {
+	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
+	char fcntlrights_l_[PADL_(uint32_t)]; uint32_t fcntlrights; char fcntlrights_r_[PADR_(uint32_t)];
+};
 struct pdself_args {
 	char fdp_l_[PADL_(int *)]; int * fdp; char fdp_r_[PADR_(int *)];
 	char flags_l_[PADL_(int)]; int flags; char flags_r_[PADR_(int)];
@@ -2375,6 +2388,9 @@ int	sys_renameat2(struct thread *, struct renameat2_args *);
 int	sys_cap_xfer_limit(struct thread *, struct cap_xfer_limit_args *);
 int	sys_cap_cloexec_limit(struct thread *, struct cap_cloexec_limit_args *);
 int	sys_cap_clofork_limit(struct thread *, struct cap_clofork_limit_args *);
+int	sys_cap_xfer_rights_limit(struct thread *, struct cap_xfer_rights_limit_args *);
+int	sys_cap_xfer_ioctls_limit(struct thread *, struct cap_xfer_ioctls_limit_args *);
+int	sys_cap_xfer_fcntls_limit(struct thread *, struct cap_xfer_fcntls_limit_args *);
 int	sys_pdself(struct thread *, struct pdself_args *);
 int	sys_pdcmp(struct thread *, struct pdcmp_args *);
 int	sys_pdincapmode(struct thread *, struct pdincapmode_args *);
@@ -3385,6 +3401,9 @@ int	freebsd14_setgroups(struct thread *, struct freebsd14_setgroups_args *);
 #define	SYS_AUE_cap_xfer_limit	AUE_CAP_XFER_LIMIT
 #define	SYS_AUE_cap_cloexec_limit	AUE_CAP_CLOEXEC_LIMIT
 #define	SYS_AUE_cap_clofork_limit	AUE_CAP_CLOFORK_LIMIT
+#define	SYS_AUE_cap_xfer_rights_limit	AUE_NULL
+#define	SYS_AUE_cap_xfer_ioctls_limit	AUE_NULL
+#define	SYS_AUE_cap_xfer_fcntls_limit	AUE_NULL
 #define	SYS_AUE_pdself	AUE_PDSELF
 #define	SYS_AUE_pdcmp	AUE_PDCMP
 #define	SYS_AUE_pdincapmode	AUE_PDINCAPMODE

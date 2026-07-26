@@ -2048,6 +2048,42 @@ ATF_TC_CLEANUP(terminate_removes_jaildesc_member, tc)
 	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
 }
 
+ATF_TC_WITH_CLEANUP(close_removes_jaildesc_member);
+ATF_TC_HEAD(close_removes_jaildesc_member, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Closing a coalition removes enlisted jaildesc members");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(close_removes_jaildesc_member, tc)
+{
+	int cfd, jail_fd;
+	int32_t status;
+
+	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
+
+	jail_fd = create_jail_with_desc(COALITION_TEST_JAIL_NAME);
+	ATF_REQUIRE_MSG(jail_fd >= 0, "create_jail_with_desc: %s",
+	    strerror(errno));
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+
+	ATF_REQUIRE(coalition_enlist(cfd, jail_fd, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+
+	close(cfd);
+	wait_for_jail_removal(COALITION_TEST_JAIL_NAME);
+
+	close(jail_fd);
+}
+ATF_TC_CLEANUP(close_removes_jaildesc_member, tc)
+{
+	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
+}
+
 ATF_TC(graceful_terminate_revokes_mac_capability);
 ATF_TC_HEAD(graceful_terminate_revokes_mac_capability, tc)
 {
@@ -2781,6 +2817,7 @@ ATF_TP_ADD_TCS(tp)
 		ATF_TP_ADD_TC(tp, terminate_kills_process);
 		ATF_TP_ADD_TC(tp, process_exit_decrements_count);
 		ATF_TP_ADD_TC(tp, terminate_removes_jaildesc_member);
+		ATF_TP_ADD_TC(tp, close_removes_jaildesc_member);
 
 	/* Graceful termination */
 	ATF_TP_ADD_TC(tp, graceful_terminate);

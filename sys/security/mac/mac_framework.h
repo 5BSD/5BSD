@@ -558,6 +558,12 @@ int	mac_socket_check_setsockopt(struct ucred *cred, struct socket *so,
 	    int level, int optname);
 int	mac_socket_check_stat(struct ucred *cred, struct socket *so);
 int	mac_socket_check_visible(struct ucred *cred, struct socket *so);
+struct label *mac_vsock_provider_label_alloc(int flag);
+void	mac_vsock_provider_label_free(struct label *label);
+int	mac_vsock_provider_check_attach(struct ucred *cred, uint64_t guest_cid,
+	    struct label *label);
+int	mac_vsock_provider_check_access(struct ucred *cred, uint64_t guest_cid,
+	    struct label *label);
 void	mac_socket_create_mbuf(struct socket *so, struct mbuf *m);
 void	mac_socket_create(struct ucred *cred, struct socket *so);
 void	mac_socket_destroy(struct socket *);

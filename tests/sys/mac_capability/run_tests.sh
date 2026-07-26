@@ -19,6 +19,19 @@ MAC_CAPABILITY_TEST_BIN="${SCRIPT_DIR}/mac_capability_test"
 die() { echo "FAIL: $1" >&2; exit 1; }
 info() { echo "=== $1 ==="; }
 
+wait_for_control_device()
+{
+	_waited=0
+	while [ ! -c /dev/mac_capability ]; do
+		_waited=$((_waited + 1))
+		if [ "$_waited" -ge 10 ]; then
+			return 1
+		fi
+		sleep 1
+	done
+	return 0
+}
+
 expected_services=0
 for _service in $SERVICE_MODULES; do
 	expected_services=$((expected_services + 1))
@@ -58,6 +71,12 @@ done
 # Load service modules — try system path first, then local
 info "Loading service modules"
 for m in $SERVICE_MODULES; do
+	# A prior interrupted test run can leave a service module loaded.  The
+	# best-effort cleanup above deliberately does not make that fatal, so do
+	# not mistake kldload(8)'s EEXIST result for a load failure here.
+	if kldstat -m "$m" >/dev/null 2>&1; then
+		continue
+	fi
 	kldload "$m" 2>/dev/null || kldload "./${m}.ko" 2>/dev/null ||
 	    die "kldload $m"
 done
@@ -69,8 +88,19 @@ for m in $SERVICE_MODULES; do
 	kldstat -m "$m" >/dev/null || die "$m not loaded"
 done
 
-# Verify /dev/mac_capability exists
-[ -c /dev/mac_capability ] || die "/dev/mac_capability not found"
+# A service unload revokes its instances synchronously, but the owning
+# processes can close their revoked descriptors just after kldunload returns.
+# An isolation instance may still be releasing a vnode claim during that
+# interval, making stat(2) of the otherwise-present control node fail with
+# EACCES.  Wait for the device to become accessible instead of misreporting
+# that transient state as ENOENT.
+if ! wait_for_control_device; then
+	echo "Control-device diagnostics:" >&2
+	ls -ld /dev /dev/mac_capability >&2 || true
+	sysctl kern.mac_capability.instances >&2 || true
+	sysctl kern.mac_capability.service_details >&2 || true
+	die "/dev/mac_capability did not become accessible"
+fi
 
 # Verify sysctls
 info "Checking sysctls"

@@ -143,6 +143,7 @@ static int	getmaxfd(struct thread *td);
 static u_long	*filecaps_copy_prep(const struct filecaps *src);
 static void	filecaps_copy_finish(const struct filecaps *src,
 		    struct filecaps *dst, u_long *ioctls);
+static void	filecaps_free_ioctl(struct filecaps *fcaps);
 static u_long 	*filecaps_free_prep(struct filecaps *fcaps);
 static void	filecaps_free_finish(u_long *ioctls);
 
@@ -337,6 +338,7 @@ fdefree_last(struct filedescent *fde)
 {
 
 	filecaps_free(&fde->fde_caps);
+	filecaps_free(&fde->fde_xfer_caps);
 }
 
 static inline void
@@ -1075,12 +1077,13 @@ kern_dup(struct thread *td, u_int mode, int flags, int old, int new)
 	struct filedescent *oldfde, *newfde;
 	struct proc *p;
 	struct file *delfp, *oldfp;
-	u_long *oioctls, *nioctls;
+	u_long *oioctls, *oxioctls, *nioctls, *nxioctls;
 	int error, maxfd;
 
 	p = td->td_proc;
 	fdp = p->p_fd;
 	oioctls = NULL;
+	oxioctls = NULL;
 
 	MPASS((flags & ~(FDDUP_FLAG_CLOEXEC | FDDUP_FLAG_CLOFORK)) == 0);
 	MPASS(mode < FDDUP_LASTMODE);
@@ -1176,6 +1179,7 @@ kern_dup(struct thread *td, u_int mode, int flags, int old, int new)
 	delfp = newfde->fde_file;
 
 	nioctls = filecaps_copy_prep(&oldfde->fde_caps);
+	nxioctls = filecaps_copy_prep(&oldfde->fde_xfer_caps);
 
 	/*
 	 * Duplicate the source descriptor.
@@ -1184,9 +1188,12 @@ kern_dup(struct thread *td, u_int mode, int flags, int old, int new)
 	seqc_write_begin(&newfde->fde_seqc);
 #endif
 	oioctls = filecaps_free_prep(&newfde->fde_caps);
+	oxioctls = filecaps_free_prep(&newfde->fde_xfer_caps);
 	fde_copy(oldfde, newfde);
 	filecaps_copy_finish(&oldfde->fde_caps, &newfde->fde_caps,
 	    nioctls);
+	filecaps_copy_finish(&oldfde->fde_xfer_caps,
+	    &newfde->fde_xfer_caps, nxioctls);
 	newfde->fde_flags = (oldfde->fde_flags & ~(UF_EXCLOSE | UF_FOCLOSE)) |
 	    fddup_to_fde_flags(flags);
 #ifdef CAPABILITIES
@@ -1207,6 +1214,7 @@ unlock:
 	}
 
 	filecaps_free_finish(oioctls);
+	filecaps_free_finish(oxioctls);
 	return (error);
 }
 
@@ -1958,6 +1966,70 @@ filecaps_fill(struct filecaps *fcaps)
 }
 
 /*
+ * Intersect a descriptor's effective rights with a transfer ceiling.
+ * Preserve the cap_rights_t metadata by expressing intersection in terms
+ * of cap_rights_remove().
+ */
+void
+filecaps_intersect(struct filecaps *dst, const struct filecaps *limit)
+{
+	cap_rights_t remove;
+	u_long *cmds;
+	int i, j, ncmds;
+
+	remove = dst->fc_rights;
+	cap_rights_remove(&remove, &limit->fc_rights);
+	cap_rights_remove(&dst->fc_rights, &remove);
+	dst->fc_fcntls &= limit->fc_fcntls;
+
+	if (!cap_rights_is_set(&dst->fc_rights, CAP_FCNTL))
+		dst->fc_fcntls = 0;
+
+	if (!cap_rights_is_set(&dst->fc_rights, CAP_IOCTL)) {
+		filecaps_free_ioctl(dst);
+		dst->fc_nioctls = 0;
+		return;
+	}
+	if (limit->fc_nioctls == -1)
+		return;
+	if (dst->fc_nioctls == -1) {
+		filecaps_free_ioctl(dst);
+		if (limit->fc_nioctls == 0) {
+			dst->fc_nioctls = 0;
+			return;
+		}
+		dst->fc_ioctls = mallocarray(limit->fc_nioctls,
+		    sizeof(dst->fc_ioctls[0]), M_FILECAPS, M_WAITOK);
+		memcpy(dst->fc_ioctls, limit->fc_ioctls,
+		    limit->fc_nioctls * sizeof(dst->fc_ioctls[0]));
+		dst->fc_nioctls = limit->fc_nioctls;
+		return;
+	}
+
+	ncmds = 0;
+	cmds = NULL;
+	if (dst->fc_nioctls != 0 && limit->fc_nioctls != 0) {
+		cmds = mallocarray(MIN(dst->fc_nioctls, limit->fc_nioctls),
+		    sizeof(cmds[0]), M_FILECAPS, M_WAITOK);
+		for (i = 0; i < dst->fc_nioctls; i++) {
+			for (j = 0; j < limit->fc_nioctls; j++) {
+				if (dst->fc_ioctls[i] == limit->fc_ioctls[j]) {
+					cmds[ncmds++] = dst->fc_ioctls[i];
+					break;
+				}
+			}
+		}
+	}
+	filecaps_free_ioctl(dst);
+	if (ncmds == 0) {
+		free(cmds, M_FILECAPS);
+		cmds = NULL;
+	}
+	dst->fc_ioctls = cmds;
+	dst->fc_nioctls = ncmds;
+}
+
+/*
  * Free memory allocated within filecaps structure.
  */
 static void
@@ -2374,6 +2446,7 @@ _finstall_prop(struct filedesc *fdp, struct file *fp, int fd, int flags,
 		filecaps_move(fcaps, &fde->fde_caps);
 	else
 		filecaps_fill(&fde->fde_caps);
+	filecaps_fill(&fde->fde_xfer_caps);
 #ifdef CAPABILITIES
 	seqc_write_end(&fde->fde_seqc);
 #endif
@@ -2710,6 +2783,8 @@ fdcopy(struct filedesc *fdp, struct proc *p1, bool isfork)
 		if (fp != NULL)
 			nfde->fde_file = fp;
 		filecaps_copy(&ofde->fde_caps, &nfde->fde_caps, true);
+		filecaps_copy(&ofde->fde_xfer_caps, &nfde->fde_xfer_caps,
+		    true);
 		if (isfork &&
 		    ofde->fde_clofork_state == CAP_CLOFORK_ONCE) {
 			ofde->fde_clofork_state = CAP_CLOFORK_LOCKED;
@@ -4185,7 +4260,7 @@ dupfdopen(struct thread *td, struct filedesc *fdp, int dfd, int mode,
 {
 	struct filedescent *newfde, *oldfde;
 	struct file *fp;
-	u_long *ioctls;
+	u_long *ioctls, *xioctls;
 	int error, indx;
 
 	KASSERT(openerror == ENODEV || openerror == ENXIO,
@@ -4235,12 +4310,15 @@ dupfdopen(struct thread *td, struct filedesc *fdp, int dfd, int mode,
 		newfde = &fdp->fd_ofiles[indx];
 		oldfde = &fdp->fd_ofiles[dfd];
 		ioctls = filecaps_copy_prep(&oldfde->fde_caps);
+		xioctls = filecaps_copy_prep(&oldfde->fde_xfer_caps);
 #ifdef CAPABILITIES
 		seqc_write_begin(&newfde->fde_seqc);
 #endif
 		fde_copy(oldfde, newfde);
 		filecaps_copy_finish(&oldfde->fde_caps, &newfde->fde_caps,
 		    ioctls);
+		filecaps_copy_finish(&oldfde->fde_xfer_caps,
+		    &newfde->fde_xfer_caps, xioctls);
 #ifdef CAPABILITIES
 		seqc_write_end(&newfde->fde_seqc);
 #endif

@@ -462,7 +462,7 @@ cap_ioctl_check(struct filedesc *fdp, int fd, u_long cmd)
  * Check if the current ioctls list can be replaced by the new one.
  */
 static int
-cap_ioctl_limit_check(struct filedescent *fdep, const u_long *cmds,
+filecaps_ioctl_limit_check(const struct filecaps *fcaps, const u_long *cmds,
     size_t ncmds)
 {
 	u_long *ocmds;
@@ -470,13 +470,13 @@ cap_ioctl_limit_check(struct filedescent *fdep, const u_long *cmds,
 	u_long i;
 	long j;
 
-	oncmds = fdep->fde_nioctls;
+	oncmds = fcaps->fc_nioctls;
 	if (oncmds == -1)
 		return (0);
 	if (oncmds < (ssize_t)ncmds)
 		return (ENOTCAPABLE);
 
-	ocmds = fdep->fde_ioctls;
+	ocmds = fcaps->fc_ioctls;
 	for (i = 0; i < ncmds; i++) {
 		for (j = 0; j < oncmds; j++) {
 			if (cmds[i] == ocmds[j])
@@ -487,6 +487,14 @@ cap_ioctl_limit_check(struct filedescent *fdep, const u_long *cmds,
 	}
 
 	return (0);
+}
+
+static int
+cap_ioctl_limit_check(struct filedescent *fdep, const u_long *cmds,
+    size_t ncmds)
+{
+
+	return (filecaps_ioctl_limit_check(&fdep->fde_caps, cmds, ncmds));
 }
 
 int
@@ -787,6 +795,186 @@ sys_cap_xfer_limit(struct thread *td, struct cap_xfer_limit_args *uap)
 }
 
 int
+kern_cap_xfer_rights_limit(struct thread *td, int fd,
+    const cap_rights_t *rights)
+{
+	struct filedesc *fdp;
+	struct filedescent *fdep;
+	u_long *ioctls;
+	int error;
+
+	fdp = td->td_proc->p_fd;
+	ioctls = NULL;
+	FILEDESC_XLOCK(fdp);
+	fdep = fdeget_noref(fdp, fd);
+	if (fdep == NULL) {
+		error = EBADF;
+		goto out;
+	}
+	error = _cap_check(&fdep->fde_xfer_caps.fc_rights, rights,
+	    CAPFAIL_INCREASE);
+	if (error != 0)
+		goto out;
+
+	seqc_write_begin(&fdep->fde_seqc);
+	fdep->fde_xfer_caps.fc_rights = *rights;
+	if (!cap_rights_is_set(rights, CAP_IOCTL)) {
+		ioctls = fdep->fde_xfer_caps.fc_ioctls;
+		fdep->fde_xfer_caps.fc_ioctls = NULL;
+		fdep->fde_xfer_caps.fc_nioctls = 0;
+	}
+	if (!cap_rights_is_set(rights, CAP_FCNTL))
+		fdep->fde_xfer_caps.fc_fcntls = 0;
+	seqc_write_end(&fdep->fde_seqc);
+	error = 0;
+out:
+	FILEDESC_XUNLOCK(fdp);
+	free(ioctls, M_FILECAPS);
+	return (error);
+}
+
+int
+sys_cap_xfer_rights_limit(struct thread *td,
+    struct cap_xfer_rights_limit_args *uap)
+{
+	cap_rights_t rights;
+	int error, version;
+
+	cap_rights_init_zero(&rights);
+	error = copyin(uap->rightsp, &rights, sizeof(rights.cr_rights[0]));
+	if (error != 0)
+		return (error);
+	version = CAPVER(&rights);
+	if (version != CAP_RIGHTS_VERSION_00)
+		return (EINVAL);
+	error = copyin(uap->rightsp, &rights,
+	    sizeof(rights.cr_rights[0]) * CAPARSIZE(&rights));
+	if (error != 0)
+		return (error);
+	if (CAPVER(&rights) != version || !cap_rights_is_valid(&rights))
+		return (EINVAL);
+	if (version != CAP_RIGHTS_VERSION) {
+		rights.cr_rights[0] &= ~(0x3ULL << 62);
+		rights.cr_rights[0] |= ((uint64_t)CAP_RIGHTS_VERSION << 62);
+	}
+	AUDIT_ARG_FD(uap->fd);
+	AUDIT_ARG_RIGHTS(&rights);
+	return (kern_cap_xfer_rights_limit(td, uap->fd, &rights));
+}
+
+int
+kern_cap_xfer_ioctls_limit(struct thread *td, int fd, u_long *cmds,
+    size_t ncmds)
+{
+	struct filedesc *fdp;
+	struct filedescent *fdep;
+	u_long *oldcmds;
+	int error;
+
+	if (ncmds > IOCTLS_MAX_COUNT) {
+		error = EINVAL;
+		goto out_free;
+	}
+	fdp = td->td_proc->p_fd;
+	FILEDESC_XLOCK(fdp);
+	fdep = fdeget_noref(fdp, fd);
+	if (fdep == NULL) {
+		error = EBADF;
+		goto out;
+	}
+	if (ncmds != 0 && !cap_rights_is_set(
+	    &fdep->fde_xfer_caps.fc_rights, CAP_IOCTL)) {
+		error = ENOTCAPABLE;
+		goto out;
+	}
+	error = filecaps_ioctl_limit_check(&fdep->fde_xfer_caps, cmds,
+	    ncmds);
+	if (error != 0)
+		goto out;
+
+	oldcmds = fdep->fde_xfer_caps.fc_ioctls;
+	seqc_write_begin(&fdep->fde_seqc);
+	fdep->fde_xfer_caps.fc_ioctls = cmds;
+	fdep->fde_xfer_caps.fc_nioctls = ncmds;
+	seqc_write_end(&fdep->fde_seqc);
+	cmds = oldcmds;
+	error = 0;
+out:
+	FILEDESC_XUNLOCK(fdp);
+out_free:
+	free(cmds, M_FILECAPS);
+	return (error);
+}
+
+int
+sys_cap_xfer_ioctls_limit(struct thread *td,
+    struct cap_xfer_ioctls_limit_args *uap)
+{
+	u_long *cmds;
+	size_t ncmds;
+	int error;
+
+	ncmds = uap->ncmds;
+	if (ncmds > IOCTLS_MAX_COUNT)
+		return (EINVAL);
+	if (ncmds == 0)
+		cmds = NULL;
+	else {
+		cmds = mallocarray(ncmds, sizeof(cmds[0]), M_FILECAPS,
+		    M_WAITOK);
+		error = copyin(uap->cmds, cmds, ncmds * sizeof(cmds[0]));
+		if (error != 0) {
+			free(cmds, M_FILECAPS);
+			return (error);
+		}
+	}
+	return (kern_cap_xfer_ioctls_limit(td, uap->fd, cmds, ncmds));
+}
+
+int
+kern_cap_xfer_fcntls_limit(struct thread *td, int fd, uint32_t rights)
+{
+	struct filedesc *fdp;
+	struct filedescent *fdep;
+	int error;
+
+	if ((rights & ~CAP_FCNTL_ALL) != 0)
+		return (EINVAL);
+	fdp = td->td_proc->p_fd;
+	FILEDESC_XLOCK(fdp);
+	fdep = fdeget_noref(fdp, fd);
+	if (fdep == NULL) {
+		error = EBADF;
+		goto out;
+	}
+	if ((rights & ~fdep->fde_xfer_caps.fc_fcntls) != 0) {
+		error = ENOTCAPABLE;
+		goto out;
+	}
+	if (rights != 0 && !cap_rights_is_set(
+	    &fdep->fde_xfer_caps.fc_rights, CAP_FCNTL)) {
+		error = ENOTCAPABLE;
+		goto out;
+	}
+	seqc_write_begin(&fdep->fde_seqc);
+	fdep->fde_xfer_caps.fc_fcntls = rights;
+	seqc_write_end(&fdep->fde_seqc);
+	error = 0;
+out:
+	FILEDESC_XUNLOCK(fdp);
+	return (error);
+}
+
+int
+sys_cap_xfer_fcntls_limit(struct thread *td,
+    struct cap_xfer_fcntls_limit_args *uap)
+{
+
+	return (kern_cap_xfer_fcntls_limit(td, uap->fd,
+	    uap->fcntlrights));
+}
+
+int
 kern_cap_cloexec_limit(struct thread *td, int fd, int state)
 {
 	struct filedesc *fdp;
@@ -1029,6 +1217,30 @@ sys_cap_fcntls_get(struct thread *td, struct cap_fcntls_get_args *uap)
 
 int
 sys_cap_xfer_limit(struct thread *td, struct cap_xfer_limit_args *uap)
+{
+
+	return (ENOSYS);
+}
+
+int
+sys_cap_xfer_rights_limit(struct thread *td,
+    struct cap_xfer_rights_limit_args *uap)
+{
+
+	return (ENOSYS);
+}
+
+int
+sys_cap_xfer_ioctls_limit(struct thread *td,
+    struct cap_xfer_ioctls_limit_args *uap)
+{
+
+	return (ENOSYS);
+}
+
+int
+sys_cap_xfer_fcntls_limit(struct thread *td,
+    struct cap_xfer_fcntls_limit_args *uap)
 {
 
 	return (ENOSYS);

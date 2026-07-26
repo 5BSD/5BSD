@@ -3448,9 +3448,25 @@
 		    int state
 		);
 	}
-606	AUE_NULL	UNIMPL
-607	AUE_NULL	UNIMPL
-608	AUE_NULL	UNIMPL
+606	AUE_NULL	STD|CAPENABLED {
+		int cap_xfer_rights_limit(
+		    int fd,
+		    _In_ const cap_rights_t *rightsp
+		);
+	}
+607	AUE_NULL	STD|CAPENABLED {
+		int cap_xfer_ioctls_limit(
+		    int fd,
+		    _In_reads_(ncmds) const u_long *cmds,
+		    size_t ncmds
+		);
+	}
+608	AUE_NULL	STD|CAPENABLED {
+		int cap_xfer_fcntls_limit(
+		    int fd,
+		    uint32_t fcntlrights
+		);
+	}
 609	AUE_NULL	UNIMPL
 610	AUE_NULL	UNIMPL
 611	AUE_NULL	UNIMPL

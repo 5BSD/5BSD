@@ -266,11 +266,11 @@ mac_capability_auto_reply(struct mac_capability_instance *s, uint64_t reply_toke
 /*
  * Taskqueue dispatch — dequeue from RX, call handler.
  *
- * Each service has a taskqueue with up to min(ncpus, 4) threads.
- * Each instance has its own struct task.  The taskqueue guarantees
- * that the same task is never run concurrently on two threads,
- * giving per-instance handler serialization with cross-instance
- * parallelism.
+ * Each service has a taskqueue with up to min(ncpus, 4) threads.  Each
+ * instance has its own struct task and ci_dispatching latch.  FreeBSD's
+ * taskqueue permits a running task to be enqueued and picked up by another
+ * worker, so the latch -- not the taskqueue itself -- provides per-instance
+ * handler serialization while retaining cross-instance parallelism.
  */
 void
 mac_capability_dispatch_task(void *context, int pending __unused)
@@ -365,6 +365,7 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 	/* If dead, drain any remaining RX messages. */
 	if (s->ci_flags & MAC_CAPABILITY_SF_DEAD)
 		mac_capability_instance_drain_rxq(s);
+	s->ci_dispatching = false;
 
 	mtx_unlock(&s->ci_mtx);
 	mac_capability_instance_rele(s);

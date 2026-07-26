@@ -971,29 +971,40 @@ ATF_TC(node_set_cred_eperm);
 ATF_TC_HEAD(node_set_cred_eperm, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "NODE_OP_SET_CRED without root returns EPERM");
+	    "NODE_OP_SET_CRED through a delegated fd returns EPERM without root");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_node");
-	atf_tc_set_md_var(tc, "require.user", "unprivileged");
+	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(node_set_cred_eperm, tc)
 {
 	struct node_cred_set sreq;
 	struct node_cred_reply reply;
-	int fd;
+	pid_t pid;
+	int fd, status;
 
 	fd = mac_capability_connect("node");
 	ATF_REQUIRE(fd >= 0);
 
-	/* Try to set own uid — should fail without privilege */
-	memset(&sreq, 0, sizeof(sreq));
-	sreq.op = NODE_OP_SET_CRED;
-	sreq.flags = NODE_CREDF_UID;
-	sreq.uid = 0;
-	ATF_REQUIRE(node_call_raw(fd, &sreq, sizeof(sreq), NULL, 0,
-	    &reply, sizeof(reply)) == 0);
-	ATF_CHECK_EQ(reply.status, NODE_STATUS_EPERM);
-
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		if (setgid(65534) != 0 || setuid(65534) != 0)
+			_exit(2);
+		memset(&sreq, 0, sizeof(sreq));
+		sreq.op = NODE_OP_SET_CRED;
+		sreq.flags = NODE_CREDF_UID;
+		sreq.uid = 0;
+		if (node_call_raw(fd, &sreq, sizeof(sreq), NULL, 0,
+		    &reply, sizeof(reply)) != 0)
+			_exit(3);
+		_exit(reply.status == NODE_STATUS_EPERM ? 0 : 4);
+	}
 	close(fd);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_EQ_MSG(WEXITSTATUS(status), 0,
+	    "unprivileged set-cred child failed with status %d",
+	    WEXITSTATUS(status));
 }
 
 ATF_TC(node_set_cred_invalid_ngroups);

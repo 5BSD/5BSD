@@ -1,5 +1,6 @@
 PACKAGE=	mac-capability-tests
 TESTSDIR=	${TESTSBASE}/sys/mac_capability
+SCRIPTSDIR=	${TESTSDIR}
 
 ATF_TESTS_C+=	mac_capability_test
 ATF_TESTS_C+=	mac_capability_coalition_test
@@ -13,6 +14,7 @@ ATF_TESTS_C+=	mac_capability_system_test
 PROGS+=		mac_capability_exec_helper
 PROGS+=		mac_capability_isolation_helper
 PROGS+=		mac_capability_shield_helper
+SCRIPTS+=	run_tests.sh
 BINDIR=		${TESTSDIR}
 
 CFLAGS+=	-I${SRCTOP}/sys/dev/mac_capability

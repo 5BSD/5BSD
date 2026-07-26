@@ -16,6 +16,7 @@
 
 #define	KS_OP_STORE	1
 #define	KS_OP_FETCH	2
+#define	KS_OP_DELAY_FETCH	3	/* test-only: pause, then fetch */
 
 #define	KS_STATUS_OK		0
 #define	KS_STATUS_NOTFOUND	1

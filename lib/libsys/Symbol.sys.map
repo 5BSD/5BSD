@@ -395,7 +395,10 @@ FBSD_1.9 {
 	cap_clofork_limit;
 	cap_lookup_capmode;
 	cap_mmap_capmode;
+	cap_xfer_fcntls_limit;
+	cap_xfer_ioctls_limit;
 	cap_xfer_limit;
+	cap_xfer_rights_limit;
 	pdcmp;
 	pdincapmode;
 	pdself;

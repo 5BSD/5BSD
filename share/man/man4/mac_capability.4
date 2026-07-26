@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd June 5, 2026
+.Dd July 25, 2026
 .Dt MAC_CAPABILITY 4
 .Os
 .Sh NAME
@@ -156,6 +156,12 @@ and
 Capabilities can carry up to 32 file descriptors per message.
 Attached fds preserve their Capsicum rights and ioctl allowlists through the
 transfer.
+The sender may impose a narrower transfer ceiling with
+.Xr cap_xfer_rights_limit 2 ,
+.Xr cap_xfer_ioctls_limit 2 ,
+and
+.Xr cap_xfer_fcntls_limit 2 ;
+the receiver obtains the intersection while the sender remains unchanged.
 .Ss Capsicum integration
 .Nm
 descriptors participate in
@@ -259,8 +265,27 @@ Provides shield, mint, authorize, capmode, and chroot operations.
 See
 .Xr mac_capability_capprotect 4 .
 .It Sy mac_capability_isolation
-File, network, and jail isolation by nonce.
+File, network, vsock, and jail isolation by nonce.
 Supports claims, tokens, and MACF enforcement.
+.Pp
+Vsock endpoint claims may cover bind or connect operations for a CID and
+32-bit port range.
+A provider claim covers the complete port range of one concrete guest CID and
+authorizes attachment and subsequent access to that CID's
+.Pa /dev/vsock
+host-transport descriptor.
+An endpoint claim does not grant provider authority.
+Multiple provider descriptors may coexist when their guest CIDs differ;
+duplicate CID attachment is rejected.
+.Pp
+Provider authority follows the descriptor, but remains scoped to the program
+nonce that owned the claim at attachment.
+After descriptor passing or
+.Xr execve 2 ,
+a foreign nonce needs a matching authorization token.
+Closing the original claim does not make an attached protected provider
+public, and a provider attached before a claim is created honors that later
+claim.
 See
 .Xr mac_capability_isolation 4 .
 .It Sy mac_capability_system

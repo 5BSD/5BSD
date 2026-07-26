@@ -1,0 +1,91 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd July 24, 2026
+.Dt CAP_XFER_RIGHTS_LIMIT 2
+.Os
+.Sh NAME
+.Nm cap_xfer_rights_limit ,
+.Nm cap_xfer_ioctls_limit ,
+.Nm cap_xfer_fcntls_limit
+.Nd attenuate descriptor rights during transfer
+.Sh LIBRARY
+.Lb libc
+.Sh SYNOPSIS
+.In sys/capsicum.h
+.Ft int
+.Fn cap_xfer_rights_limit "int fd" "const cap_rights_t *rightsp"
+.Ft int
+.Fn cap_xfer_ioctls_limit "int fd" "const cap_ioctl_t *cmds" "size_t ncmds"
+.Ft int
+.Fn cap_xfer_fcntls_limit "int fd" "uint32_t fcntlrights"
+.Sh DESCRIPTION
+These system calls set a monotonic ceiling on the authority conveyed when
+.Fa fd
+is transferred with
+.Dv SCM_RIGHTS
+or as an attached descriptor in mac_capability messaging.
+The sender's descriptor is unchanged.
+The received descriptor contains the intersection of the sender's current
+capability rights and the transfer ceiling.
+.Pp
+.Fn cap_xfer_rights_limit
+limits the
+.Xr rights 4
+mask,
+.Fn cap_xfer_ioctls_limit
+limits the ioctl command allowlist, and
+.Fn cap_xfer_fcntls_limit
+limits the
+.Dv CAP_FCNTL_*
+mask.
+All three limits can only be tightened.
+They are copied by
+.Xr dup 2
+and
+.Xr fork 2
+and survive
+.Xr execve 2
+when the descriptor itself survives.
+.Pp
+New descriptors initially have an unrestricted transfer ceiling.
+Closing the descriptor discards its ceiling.
+The ceiling is independent of
+.Xr cap_xfer_limit 2 :
+the latter controls whether and how often transfer is permitted, while these
+interfaces control the authority received after a permitted transfer.
+.Pp
+The ioctl and fcntl ceilings are effective only when the rights ceiling
+contains
+.Dv CAP_IOCTL
+and
+.Dv CAP_FCNTL ,
+respectively.
+.Sh RETURN VALUES
+.Rv -std
+.Sh ERRORS
+These functions fail if:
+.Bl -tag -width Er
+.It Bq Er EBADF
+.Fa fd
+is not an active descriptor.
+.It Bq Er EFAULT
+A user address is invalid.
+.It Bq Er EINVAL
+A rights value, ioctl count, or fcntl mask is invalid.
+.It Bq Er ENOTCAPABLE
+The requested ceiling would widen an existing ceiling.
+.It Bq Er ENOSYS
+The kernel was built without
+.Cd "options CAPABILITY_MODE" .
+.El
+.Sh SEE ALSO
+.Xr cap_fcntls_limit 2 ,
+.Xr cap_ioctls_limit 2 ,
+.Xr cap_rights_limit 2 ,
+.Xr cap_xfer_limit 2 ,
+.Xr sendmsg 2 ,
+.Xr capsicum 4
+.Sh HISTORY
+These system calls first appeared in
+.Fx 16.0 .

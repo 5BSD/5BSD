@@ -520,4 +520,15 @@
 #define	FREEBSD32_SYS_pdrfork	600
 #define	FREEBSD32_SYS_freebsd32_pdwait	601
 #define	FREEBSD32_SYS_renameat2	602
-#define	FREEBSD32_SYS_MAXSYSCALL	603
+#define	FREEBSD32_SYS_cap_xfer_limit	603
+#define	FREEBSD32_SYS_cap_cloexec_limit	604
+#define	FREEBSD32_SYS_cap_clofork_limit	605
+#define	FREEBSD32_SYS_cap_xfer_rights_limit	606
+#define	FREEBSD32_SYS_freebsd32_cap_xfer_ioctls_limit	607
+#define	FREEBSD32_SYS_cap_xfer_fcntls_limit	608
+#define	FREEBSD32_SYS_pdself	630
+#define	FREEBSD32_SYS_pdcmp	631
+#define	FREEBSD32_SYS_pdincapmode	633
+#define	FREEBSD32_SYS_cap_mmap_capmode	634
+#define	FREEBSD32_SYS_cap_lookup_capmode	635
+#define	FREEBSD32_SYS_MAXSYSCALL	636

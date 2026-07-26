@@ -111,6 +111,7 @@ struct mac_capability_instance {
 	struct knlist	ci_wknotes;		/* (M) EVFILT_WRITE knotes */
 
 	struct task	ci_task;		/* (I) taskqueue task */
+	bool		ci_dispatching;		/* (M) task scheduled or running */
 	struct mtx	ci_mtx;			/* instance lock */
 	volatile u_int	ci_refcnt;		/* (R) reference count */
 	int		ci_flags;		/* (M) MAC_CAPABILITY_SF_* */

@@ -54,6 +54,10 @@ and
 .Dv CAP_ALL
 do not affect the transfer state.
 .Pp
+The authority conveyed by a permitted transfer can be independently
+attenuated with
+.Xr cap_xfer_rights_limit 2 .
+.Pp
 The
 .Fa state
 argument must be one of the following values:
@@ -132,6 +136,7 @@ The running kernel was compiled without
 .Xr cap_cloexec_limit 2 ,
 .Xr cap_enter 2 ,
 .Xr cap_rights_limit 2 ,
+.Xr cap_xfer_rights_limit 2 ,
 .Xr dup 2 ,
 .Xr fork 2 ,
 .Xr pdfork 2 ,

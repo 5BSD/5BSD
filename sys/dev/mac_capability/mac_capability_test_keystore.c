@@ -144,6 +144,14 @@ keystore_handler(struct mac_capability_instance *s, const struct mac_capability_
 		return (0);
 	}
 
+	case KS_OP_DELAY_FETCH:
+		/*
+		 * Give a multi-threaded service taskqueue time to expose accidental
+		 * concurrent dispatch of this instance.  A correct dispatcher keeps
+		 * later requests behind this one and therefore preserves FIFO replies.
+		 */
+		pause("macksd", MAX(1, hz / 10));
+		/* FALLTHROUGH */
 	case KS_OP_FETCH: {
 		char *valbuf, *reply_buf;
 		size_t vallen, reply_len;

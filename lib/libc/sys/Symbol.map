@@ -78,6 +78,9 @@ FBSD_1.9 {
 	pdcmp;
 	pdincapmode;
 	cap_xfer_limit;
+	cap_xfer_rights_limit;
+	cap_xfer_ioctls_limit;
+	cap_xfer_fcntls_limit;
 	cap_cloexec_limit;
 	cap_clofork_limit;
 	cap_mmap_capmode;

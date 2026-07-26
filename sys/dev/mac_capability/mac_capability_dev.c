@@ -183,8 +183,17 @@ mac_capability_instance_enqueue_rx(struct mac_capability_instance *s, struct mac
 	s->ci_rxqlen++;
 
 	svc = s->ci_service;
-	if (svc != NULL && svc->csvc_taskq != NULL)
+	/*
+	 * A multi-threaded taskqueue may run the same struct task concurrently
+	 * when it is enqueued again after a worker has cleared ta_pending but
+	 * before that worker returns.  Keep one task responsible for draining an
+	 * instance so request and reply ordering stays FIFO.  Other instances
+	 * still use the service's remaining taskqueue threads in parallel.
+	 */
+	if (svc != NULL && svc->csvc_taskq != NULL && !s->ci_dispatching) {
+		s->ci_dispatching = true;
 		taskqueue_enqueue(svc->csvc_taskq, &s->ci_task);
+	}
 
 	return (0);
 }
@@ -288,6 +297,11 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 			}
 			for (i = 0; i < (int)args->nfds; i++) {
 				fde = &fdesc->fd_ofiles[fdbuf[i]];
+				filecaps_free(&msg->cm_fcaps[i]);
+				filecaps_copy(&fde->fde_caps,
+				    &msg->cm_fcaps[i], true);
+				filecaps_intersect(&msg->cm_fcaps[i],
+				    &fde->fde_xfer_caps);
 				if (fde->fde_xfer_state == CAP_XFER_ONCE) {
 					fde->fde_xfer_state = CAP_XFER_NONE;
 					msg->cm_xfer_state[i] = CAP_XFER_NONE;
@@ -687,6 +701,14 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 					    i++) {
 						fde = &fdesc->fd_ofiles[
 						    fdbuf[i]];
+						filecaps_free(
+						    &call_fcaps[i]);
+						filecaps_copy(
+						    &fde->fde_caps,
+						    &call_fcaps[i], true);
+						filecaps_intersect(
+						    &call_fcaps[i],
+						    &fde->fde_xfer_caps);
 						if (fde->fde_xfer_state ==
 						    CAP_XFER_ONCE) {
 							fde->fde_xfer_state =

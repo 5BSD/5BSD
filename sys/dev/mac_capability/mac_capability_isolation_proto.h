@@ -176,6 +176,8 @@ struct fi_reply {
 #define	FI_NET_BIND		0x01	/* gate bind() */
 #define	FI_NET_CONNECT		0x02	/* gate connect() */
 #define	FI_NET_ANY		0x03	/* bind + connect */
+#define	FI_VSOCK_PROVIDER	0x04	/* own a complete guest CID provider */
+#define	FI_VSOCK_ANY		0x07	/* provider + bind + connect */
 /* Note: listen is not separately enforced — bind is the gate.
  * socket create is enforced only for fully-wildcard (domain-wide) claims. */
 
@@ -233,7 +235,9 @@ struct fi_jail_request {
  * port_min/port_max are host byte order (32-bit vsock ports).
  * cid is the 32-bit VM context ID widened on the wire
  * (VSOCK_CID_ANY=any, else specific).  Values above UINT32_MAX are invalid.
- * Reuses FI_NET_BIND/FI_NET_CONNECT direction flags.
+ * FI_NET_BIND and FI_NET_CONNECT gate socket endpoints.
+ * FI_VSOCK_PROVIDER authorizes a /dev/vsock transport provider and is valid
+ * only for a claim covering every port of one concrete CID.
  * Socket type is intentionally not part of the key: claims cover both
  * SOCK_STREAM and SOCK_SEQPACKET endpoints.
  */
@@ -243,7 +247,7 @@ struct fi_vsock_request {
 	uint64_t	cid;		/* VSOCK_CID_ANY or specific CID */
 	uint32_t	port_min;	/* host byte order */
 	uint32_t	port_max;	/* host byte order */
-	uint8_t		direction;	/* FI_NET_* bitmask */
+	uint8_t		direction;	/* FI_NET_* and FI_VSOCK_PROVIDER */
 	uint8_t		_pad[3];
 } __packed;
 

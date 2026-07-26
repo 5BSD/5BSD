@@ -3579,6 +3579,31 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 2;
 		break;
 	}
+	/* cap_xfer_rights_limit */
+	case 606: {
+		struct cap_xfer_rights_limit_args *p = params;
+		iarg[a++] = p->fd; /* int */
+		uarg[a++] = (intptr_t)p->rightsp; /* const cap_rights_t * */
+		*n_args = 2;
+		break;
+	}
+	/* cap_xfer_ioctls_limit */
+	case 607: {
+		struct cap_xfer_ioctls_limit_args *p = params;
+		iarg[a++] = p->fd; /* int */
+		uarg[a++] = (intptr_t)p->cmds; /* const u_long * */
+		uarg[a++] = p->ncmds; /* size_t */
+		*n_args = 3;
+		break;
+	}
+	/* cap_xfer_fcntls_limit */
+	case 608: {
+		struct cap_xfer_fcntls_limit_args *p = params;
+		iarg[a++] = p->fd; /* int */
+		uarg[a++] = p->fcntlrights; /* uint32_t */
+		*n_args = 2;
+		break;
+	}
 	/* pdself */
 	case 630: {
 		struct pdself_args *p = params;
@@ -9622,6 +9647,48 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
+	/* cap_xfer_rights_limit */
+	case 606:
+		switch (ndx) {
+		case 0:
+			p = "int";
+			break;
+		case 1:
+			p = "userland const cap_rights_t *";
+			break;
+		default:
+			break;
+		};
+		break;
+	/* cap_xfer_ioctls_limit */
+	case 607:
+		switch (ndx) {
+		case 0:
+			p = "int";
+			break;
+		case 1:
+			p = "userland const u_long *";
+			break;
+		case 2:
+			p = "size_t";
+			break;
+		default:
+			break;
+		};
+		break;
+	/* cap_xfer_fcntls_limit */
+	case 608:
+		switch (ndx) {
+		case 0:
+			p = "int";
+			break;
+		case 1:
+			p = "uint32_t";
+			break;
+		default:
+			break;
+		};
+		break;
 	/* pdself */
 	case 630:
 		switch (ndx) {
@@ -11721,6 +11788,21 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* cap_clofork_limit */
 	case 605:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* cap_xfer_rights_limit */
+	case 606:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* cap_xfer_ioctls_limit */
+	case 607:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* cap_xfer_fcntls_limit */
+	case 608:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

@@ -572,10 +572,11 @@ coalition_jail_terminate(struct file *fp)
 	sx_xlock(&allprison_lock);
 	mtx_lock(&pr->pr_mtx);
 	if (prison_isalive(pr)) {
-		/* prison_remove() releases pr_mtx and allprison_lock */
+		/*
+		 * prison_remove() releases pr_mtx and allprison_lock and
+		 * consumes the reference acquired by prison_hold() above.
+		 */
 		prison_remove(pr);
-		/* Release the reference from prison_hold() above */
-		prison_free(pr);
 	} else {
 		mtx_unlock(&pr->pr_mtx);
 		sx_xunlock(&allprison_lock);

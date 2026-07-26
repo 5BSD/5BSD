@@ -569,16 +569,23 @@ envfd_kqevent(struct knote *kn, long hint)
 
 	ef = kn->kn_hook;
 	mtx_assert(&ef->ef_lock, MA_OWNED);
-	if (hint == 0)
-		return (0);
-	events = (uint32_t)hint & NOTE_ENVFD_CTRLMASK & kn->kn_sfflags;
-	if (events == 0)
-		return (0);
-	kn->kn_fflags |= events;
-	kn->kn_data = ef->ef_generation;
-	kn->kn_kevent.ext[0] =
-	    ef->ef_blob == NULL ? 0 : ef->ef_blob->eb_size;
-	return (1);
+	if (hint != 0) {
+		events = (uint32_t)hint & NOTE_ENVFD_CTRLMASK &
+		    kn->kn_sfflags;
+		if (events != 0) {
+			kn->kn_fflags |= events;
+			kn->kn_data = ef->ef_generation;
+			kn->kn_kevent.ext[0] =
+			    ef->ef_blob == NULL ? 0 : ef->ef_blob->eb_size;
+		}
+	}
+
+	/*
+	 * kqueue revalidates an active knote with a zero hint before
+	 * delivering it.  Preserve an event recorded by the notification
+	 * call until EV_CLEAR consumes it.
+	 */
+	return (kn->kn_fflags != 0);
 }
 
 static int

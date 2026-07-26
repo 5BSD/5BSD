@@ -82,6 +82,39 @@ freebsd32_cap_ioctls_limit(struct thread *td,
 }
 
 int
+freebsd32_cap_xfer_ioctls_limit(struct thread *td,
+    struct freebsd32_cap_xfer_ioctls_limit_args *uap)
+{
+	u_long *cmds;
+	uint32_t *cmds32;
+	size_t ncmds;
+	u_int i;
+	int error;
+
+	ncmds = uap->ncmds;
+	if (ncmds > 256)
+		return (EINVAL);
+	if (ncmds == 0)
+		cmds = NULL;
+	else {
+		cmds32 = mallocarray(ncmds, sizeof(cmds32[0]), M_FILECAPS,
+		    M_WAITOK);
+		error = copyin(uap->cmds, cmds32,
+		    ncmds * sizeof(cmds32[0]));
+		if (error != 0) {
+			free(cmds32, M_FILECAPS);
+			return (error);
+		}
+		cmds = mallocarray(ncmds, sizeof(cmds[0]), M_FILECAPS,
+		    M_WAITOK);
+		for (i = 0; i < ncmds; i++)
+			cmds[i] = cmds32[i];
+		free(cmds32, M_FILECAPS);
+	}
+	return (kern_cap_xfer_ioctls_limit(td, uap->fd, cmds, ncmds));
+}
+
+int
 freebsd32_cap_ioctls_get(struct thread *td,
     struct freebsd32_cap_ioctls_get_args *uap)
 {
@@ -139,6 +172,14 @@ out:
 int
 freebsd32_cap_ioctls_limit(struct thread *td,
     struct freebsd32_cap_ioctls_limit_args *uap)
+{
+
+	return (ENOSYS);
+}
+
+int
+freebsd32_cap_xfer_ioctls_limit(struct thread *td,
+    struct freebsd32_cap_xfer_ioctls_limit_args *uap)
 {
 
 	return (ENOSYS);

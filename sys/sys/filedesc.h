@@ -56,6 +56,7 @@ struct filecaps {
 struct filedescent {
 	struct file	*fde_file;	/* file structure for open file */
 	struct filecaps	 fde_caps;	/* per-descriptor rights */
+	struct filecaps	 fde_xfer_caps; /* maximum rights after transfer */
 	uint8_t		 fde_flags;	/* per-process open file flags */
 	uint8_t		 fde_xfer_state; /* transfer state (CAP_XFER_*) */
 	uint8_t		 fde_cloexec_state; /* exec propagation state */
@@ -80,6 +81,7 @@ fde_copy(struct filedescent *from, struct filedescent *to)
 
 	to->fde_file = from->fde_file;
 	to->fde_caps = from->fde_caps;
+	to->fde_xfer_caps = from->fde_xfer_caps;
 	to->fde_flags = from->fde_flags;
 	to->fde_xfer_state = from->fde_xfer_state;
 	to->fde_cloexec_state = from->fde_cloexec_state;
@@ -257,6 +259,7 @@ filecaps_init(struct filecaps *fcaps)
 }
 bool	filecaps_copy(const struct filecaps *src, struct filecaps *dst,
 	    bool locked);
+void	filecaps_intersect(struct filecaps *dst, const struct filecaps *limit);
 void	filecaps_move(struct filecaps *src, struct filecaps *dst);
 void	filecaps_free(struct filecaps *fcaps);
 
