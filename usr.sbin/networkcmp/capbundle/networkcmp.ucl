@@ -1,0 +1,16 @@
+schema = "org.5bsd.serviced.service";
+schema_version = "1.0.0";
+bundle_id = "org.5bsd.cmp.network.resolver";
+version = "1.0.0";
+author = "5BSD";
+
+program = "networkcmp";
+provides = ["org.5bsd.NetworkCmp.resolver"];
+implements = [{
+    interface = "org.5bsd.cmp.network";
+    version = "1.0.0";
+    lifetimes = ["process"];
+    sharing = ["exclusive"];
+}];
+on_demand = false;
+restart = "on-failure";

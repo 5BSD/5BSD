@@ -47,6 +47,57 @@ format_net_address(const struct ort_net_claim *nc, char *buf, size_t bufsz)
 	strlcpy(buf, "invalid", bufsz);
 }
 
+static const char *
+component_lifetime(uint32_t scope)
+{
+
+	switch (scope) {
+	case SVC_COMPONENT_JAIL:
+		return ("jail");
+	case SVC_COMPONENT_SERVICE:
+		return ("job");
+	case SVC_COMPONENT_SYSTEM:
+		return ("system");
+	default:
+		return ("process");
+	}
+}
+
+static void
+implementation_features(const struct serviced_interface *implementation,
+    char *lifetimes, size_t lifetimes_size, char *sharing,
+    size_t sharing_size)
+{
+	static const struct {
+		uint32_t bit;
+		const char *name;
+	} lifetime_names[] = {
+		{ SVC_COMPONENT_LIFETIME_BIT(SVC_COMPONENT_PRIVATE), "process" },
+		{ SVC_COMPONENT_LIFETIME_BIT(SVC_COMPONENT_SERVICE), "job" },
+		{ SVC_COMPONENT_LIFETIME_BIT(SVC_COMPONENT_JAIL), "jail" },
+		{ SVC_COMPONENT_LIFETIME_BIT(SVC_COMPONENT_SYSTEM), "system" }
+	};
+	size_t i;
+
+	lifetimes[0] = '\0';
+	for (i = 0; i < nitems(lifetime_names); i++) {
+		if ((implementation->lifetimes & lifetime_names[i].bit) == 0)
+			continue;
+		if (lifetimes[0] != '\0')
+			strlcat(lifetimes, ",", lifetimes_size);
+		strlcat(lifetimes, lifetime_names[i].name, lifetimes_size);
+	}
+	sharing[0] = '\0';
+	if ((implementation->sharing &
+	    SVC_COMPONENT_SHARING_EXCLUSIVE) != 0)
+		strlcat(sharing, "exclusive", sharing_size);
+	if ((implementation->sharing & SVC_COMPONENT_SHARING_SHARED) != 0) {
+		if (sharing[0] != '\0')
+			strlcat(sharing, ",", sharing_size);
+		strlcat(sharing, "shared", sharing_size);
+	}
+}
+
 static void
 print_bundle(const struct capbundle *b)
 {
@@ -148,6 +199,34 @@ print_bundle(const struct capbundle *b)
 			    ort_net_direction_name(m.cap_vsock[j].direction));
 		for (j = 0; j < m.ncap_services; j++)
 			printf("        service: %s\n", m.cap_services[j]);
+		for (j = 0; j < m.nimplements; j++) {
+			char lifetimes[32], sharing[32];
+
+			implementation_features(&m.implements[j], lifetimes,
+			    sizeof(lifetimes), sharing, sizeof(sharing));
+			printf("      implements: %s version=%s lifetimes=%s "
+			    "sharing=%s\n", m.implements[j].name,
+			    m.implements[j].version, lifetimes, sharing);
+		}
+		for (j = 0; j < m.ncomponents; j++)
+			printf("      component: %s interface=%s version=%s "
+			    "provider=%s lifetime=%s sharing=%s required=%s "
+			    "options=%s\n",
+			    m.components[j].name, m.components[j].interface,
+			    m.components[j].version,
+			    m.components[j].provider,
+			    component_lifetime(m.components[j].scope),
+			    m.components[j].shared ? "shared" : "exclusive",
+			    m.components[j].required ? "yes" : "no",
+			    m.components[j].options);
+		if (m.has_jail)
+			printf("      jail: name=%s path=%s hostname=%s "
+			    "ip4_addr=%s persistent=yes\n",
+			    m.jail_name, m.jail_path,
+			    m.jail_hostname[0] != '\0' ?
+			    m.jail_hostname : m.jail_name,
+			    m.jail_ip4_addr[0] != '\0' ?
+			    m.jail_ip4_addr : "inherit");
 	}
 
 }
@@ -156,9 +235,37 @@ int
 cmd_verify(int argc, char *argv[])
 {
 	struct capbundle **bundles;
+	struct capbundle_policy *policy;
+	const char *policy_path;
 	char errbuf[512];
-	int i, j, opened, result;
+	int i, j, opened, result, first;
 
+	policy = NULL;
+	policy_path = NULL;
+	first = 0;
+	while (first < argc && argv[first][0] == '-') {
+		if (strcmp(argv[first], "--effective") == 0) {
+			first++;
+			continue;
+		}
+		if (strcmp(argv[first], "--policy") == 0) {
+			if (++first >= argc)
+				errx(1, "--policy requires a path");
+			policy_path = argv[first++];
+			continue;
+		}
+		errx(1, "unknown verify option: %s", argv[first]);
+	}
+	if (first == argc)
+		errx(1, "verify requires at least one bundle");
+	argc -= first;
+	argv += first;
+	if (policy_path != NULL &&
+	    capbundle_policy_open(policy_path, &policy, errbuf,
+	    sizeof(errbuf)) == -1) {
+		warnx("verify: policy FAILED — %s", errbuf);
+		return (1);
+	}
 	bundles = calloc((size_t)argc, sizeof(*bundles));
 	if (bundles == NULL)
 		err(1, "calloc");
@@ -183,20 +290,47 @@ cmd_verify(int argc, char *argv[])
 				goto out;
 			}
 		}
-		print_bundle(bundles[i]);
+	}
+	if (capbundle_resolve_components_policy(bundles, (unsigned)argc,
+	    policy, errbuf, sizeof(errbuf)) == -1) {
+		warnx("verify: component resolution FAILED — %s", errbuf);
+		goto out;
 	}
 	if (capbundle_check_cycles(bundles, (unsigned)argc, errbuf,
 	    sizeof(errbuf)) == -1) {
 		warnx("verify: dependency graph FAILED — %s", errbuf);
 		goto out;
 	}
+	printf("Effective configuration%s%s%s:\n\n",
+	    policy_path != NULL ? " (policy " : "",
+	    policy_path != NULL ? policy_path : "",
+	    policy_path != NULL ? ")" : "");
+	for (i = 0; i < argc; i++)
+		print_bundle(bundles[i]);
 	printf("\nVerification: PASSED\n");
 	result = 0;
 out:
 	for (i = 0; i < opened; i++)
 		capbundle_close(bundles[i]);
 	free(bundles);
+	capbundle_policy_close(policy);
 	return (result);
+}
+
+int
+cmd_policy_check(const char *path)
+{
+	struct capbundle_policy *policy;
+	char errbuf[512];
+
+	policy = NULL;
+	if (capbundle_policy_open(path, &policy, errbuf, sizeof(errbuf)) == -1) {
+		warnx("policy-check: FAILED — %s", errbuf);
+		return (1);
+	}
+	capbundle_policy_close(policy);
+	printf("Policy: %s\nValidation: PASSED\n", path);
+	return (0);
 }
 
 /* Callback for bundle scanning. */

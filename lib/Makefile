@@ -60,6 +60,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libexecinfo \
 	libexpat \
 	libfetch \
+	libfilesystemcmp \
 	libgcc_eh \
 	libgcc_s \
 	libgeom \
@@ -71,6 +72,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libkldelf \
 	libkvm \
 	liblua \
+	liblwipcmp \
 	liblzma \
 	libmemstat \
 	libmd \
@@ -78,6 +80,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	lib80211 \
 	libnetbsd \
 	libnetmap \
+	libnetworkcmp \
 	libnv \
 	libnvmf \
 	libopenbsd \
@@ -96,6 +99,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	librtld_db \
 	libsbuf \
 	libservice \
+	libshmring \
 	libsmb \
 	libstdbuf \
 	libstdthreads \

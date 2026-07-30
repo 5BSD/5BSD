@@ -61,9 +61,9 @@ struct svc_req_hdr {
  *   req:  svc_req_hdr { .op = SVC_OP_READY }
  *   reply: svc_reply { .status }
  *
- * Service reports it has completed initialization and is ready
- * to accept clients.  Dependents waiting on this service's
- * provides[] will not start until READY is received.
+ * Compatibility-level application readiness advisory.  serviced does not
+ * promote a process to RUNNING from this message; it independently observes
+ * and verifies NOTE_CAPMODE on the process descriptor.
  */
 
 /*

@@ -9,11 +9,13 @@
 #ifndef SERVICECTL_H
 #define	SERVICECTL_H
 
-/* install.c */
+/* install.c and deps.c */
 int	cmd_install(const char *bundle_path);
+int	cmd_deps(const char *program);
 
 /* verify.c */
 int	cmd_verify(int argc, char *argv[]);
+int	cmd_policy_check(const char *path);
 int	cmd_bundles(void);
 
 #endif /* SERVICECTL_H */

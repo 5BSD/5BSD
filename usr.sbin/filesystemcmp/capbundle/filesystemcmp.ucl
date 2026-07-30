@@ -1,0 +1,16 @@
+schema = "org.5bsd.serviced.service";
+schema_version = "1.0.0";
+bundle_id = "org.5bsd.cmp.filesystem.scratch";
+version = "1.0.0";
+author = "5BSD";
+
+program = "filesystemcmp";
+provides = ["org.5bsd.FileSystemCmp.scratch"];
+implements = [{
+    interface = "org.5bsd.cmp.filesystem";
+    version = "1.0.0";
+    lifetimes = ["process"];
+    sharing = ["exclusive"];
+}];
+on_demand = false;
+restart = "on-failure";

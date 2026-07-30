@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd July 19, 2026
+.Dd July 29, 2026
 .Dt SERVICECTL 8
 .Os
 .Sh NAME
@@ -19,7 +19,16 @@
 .Cm install Ar path.cap
 .Nm
 .Op Fl s Ar socket
-.Cm verify Ar path.cap ...
+.Cm verify
+.Op Fl -effective
+.Op Fl -policy Ar file
+.Ar path.cap ...
+.Nm
+.Op Fl s Ar socket
+.Cm policy-check Ar file
+.Nm
+.Op Fl s Ar socket
+.Cm deps Ar program
 .Nm
 .Op Fl s Ar socket
 .Cm bundles
@@ -77,14 +86,37 @@ After copying, run
 to register the new services.
 .Pp
 Requires root privileges.
-.It Cm verify Ar path.cap ...
+.It Cm verify Op Fl -effective Op Fl -policy Ar file Ar path.cap ...
 Validate one or more
 .Pa .cap
 bundles.
 Checks that bundle structure and every manifest are valid, binaries exist and
-are executable, provided names are unique, and dependencies are acyclic.
-When multiple paths are supplied, their combined dependency graph is checked.
-Prints a summary of each bundle on success.
+are executable, provided names are unique, component interfaces resolve to
+exactly one compatible provider, provider pins match, and dependencies are
+acyclic.
+When multiple paths are supplied, their combined provider and dependency
+graph is checked.
+Consumer bundles should be verified together with the provider bundles they
+will be deployed with.
+The summary prints each resolved component provider and every derived
+dependency, including effective values for defaults omitted by manifests.
+The
+.Fl -effective
+flag documents and makes explicit this output mode.
+With
+.Fl -policy ,
+provider defaults and per-service overrides are loaded from
+.Ar file
+before resolution.
+.It Cm policy-check Ar file
+Validate the complete schema, types, limits, and duplicate-selection rules of
+a serviced administrator policy without loading any bundles.
+.It Cm deps Ar program
+Inspect a dynamic executable's library dependencies and retained
+.Pa .note.5bsd.components
+records, then print a minimal provider-neutral component manifest fragment.
+The result is advisory and must be reviewed and declared explicitly;
+dependency discovery never grants authority.
 .It Cm bundles
 List all installed bundles from
 .Pa /Capabilities/System/
@@ -93,7 +125,7 @@ and
 showing bundle ID, version, and service count for each.
 .El
 .Sh OPTIONS
-.Bl -tag -width "-s socket"
+.Bl -tag -width "--policy file"
 .It Fl s Ar socket
 Connect to the
 .Xr serviced 8
@@ -101,6 +133,11 @@ control socket at
 .Ar socket
 instead of the default
 .Pa /var/run/serviced.sock .
+.It Fl -effective
+Print the complete effective manifest, including omitted defaults and resolved
+provider dependencies.
+.It Fl -policy Ar file
+Apply the specified administrator provider policy while verifying bundles.
 .El
 .Sh EXIT STATUS
 .Ex -std
@@ -135,6 +172,19 @@ Install and activate a bundle:
 Verify a bundle's integrity:
 .Bd -literal -offset indent
 # servicectl verify /path/to/MyApp.cap
+.Ed
+.Pp
+Validate administrator selection policy and show the complete effective
+consumer configuration:
+.Bd -literal -offset indent
+# servicectl policy-check /etc/serviced/policy.ucl
+# servicectl verify --policy /etc/serviced/policy.ucl \e
+    /Capabilities/System/FileSystemCmp.cap /path/to/MyApp.cap
+.Ed
+.Pp
+Suggest provider-neutral declarations from an ELF program:
+.Bd -literal -offset indent
+$ servicectl deps /path/to/MyApp.cap/bin/myapp
 .Ed
 .Pp
 Connect to an alternate control socket:

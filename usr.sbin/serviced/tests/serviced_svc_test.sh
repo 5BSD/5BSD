@@ -325,10 +325,10 @@ service_environment_minimal_body()
 
 	atf_check -s exit:0 -o match:"^PATH=/sbin:/bin:/usr/sbin:/usr/bin$" \
 	    grep "^PATH=" env-probe.out
-	atf_check -s exit:0 -o match:"^ORACLED_CHANNEL_FD=" \
-	    grep "^ORACLED_CHANNEL_FD=" env-probe.out
-	atf_check -s exit:0 -o match:"^ORACLED_LABEL=env-probe$" \
-	    grep "^ORACLED_LABEL=" env-probe.out
+	atf_check -s exit:0 -o match:"^SERVICE_BOOTSTRAP_FD=5$" \
+	    grep "^SERVICE_BOOTSTRAP_FD=" env-probe.out
+	atf_check -s not-exit:0 grep "^ORACLED_" env-probe.out
+	atf_check -s not-exit:0 grep "^SERVICED_COMPONENT_FDS=" env-probe.out
 	atf_check -s not-exit:0 grep "SHOULD_NOT_LEAK" env-probe.out
 	assert_stack_alive
 }
@@ -545,6 +545,65 @@ svc_unregister_explicit_cleanup()
 }
 
 # ===================================================================
+# Process-descriptor capability-mode readiness
+# ===================================================================
+
+atf_test_case capmode_is_authoritative_readiness cleanup
+capmode_is_authoritative_readiness_head()
+{
+	atf_set "descr" "READY is advisory; verified NOTE_CAPMODE is the RUNNING boundary"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+capmode_is_authoritative_readiness_body()
+{
+	local i pid
+
+	find_capd_service_fixture
+	prepare_paths
+	make_svc_bin system org.test.capmode.gate \
+	    'arguments = ["readiness-gate", "protocol-ready.out", "capmode-ready.out"];' \
+	    "$capd_service_fixture"
+	write_config
+	start_stack
+
+	if ! wait_for_file protocol-ready.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "fixture did not send the legacy READY message"
+	fi
+	atf_check -s exit:0 -o match:"org.test.capmode.gate.*starting" \
+	    servicectl -s "${CTL_SOCK}" status
+	atf_check -s exit:0 -o not-match:"org.test.capmode.gate.*running" \
+	    servicectl -s "${CTL_SOCK}" status
+
+	pid=$(sed -n 's/^pid=\([0-9][0-9]*\).*/\1/p' protocol-ready.out)
+	[ -n "$pid" ] || atf_fail "fixture did not report its pid"
+	kill -USR1 "$pid"
+	if ! wait_for_file capmode-ready.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "fixture did not enter capability mode"
+	fi
+	i=0
+	while [ "$i" -lt 100 ]; do
+		if servicectl -s "${CTL_SOCK}" status |
+		    grep -q "org.test.capmode.gate.*running"; then
+			break
+		fi
+		i=$((i + 1))
+		sleep 0.1
+	done
+	[ "$i" -lt 100 ] ||
+	    atf_fail "NOTE_CAPMODE did not promote the service to RUNNING"
+	atf_check -s exit:0 -o match:"capability sandbox entered" \
+	    grep "capability sandbox entered" "$logfile"
+}
+capmode_is_authoritative_readiness_cleanup()
+{
+	cleanup_common
+	rm -f protocol-ready.out capmode-ready.out
+}
+
+# ===================================================================
 # Control-socket authorization: unprivileged peer denied privileged op
 # ===================================================================
 
@@ -623,6 +682,7 @@ atf_init_test_cases()
 
 	# Naming protocol
 	atf_add_test_case svc_unregister_explicit
+	atf_add_test_case capmode_is_authoritative_readiness
 
 	# Control-socket authorization
 	atf_add_test_case sctl_privilege_denied

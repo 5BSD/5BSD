@@ -1,0 +1,6 @@
+comment = "Capability-safe shared-memory ring library"
+
+desc = <<EOD
+Versioned single-producer/single-consumer shared-memory rings with
+role-separated Capsicum descriptor rights for component data planes.
+EOD

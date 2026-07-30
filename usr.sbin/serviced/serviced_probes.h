@@ -24,11 +24,16 @@
 #include <sys/sdt.h>
 #else
 /* No-op stubs when DTrace is disabled. */
-#define	DTRACE_PROBE(...)
-#define	DTRACE_PROBE1(...)
-#define	DTRACE_PROBE2(...)
-#define	DTRACE_PROBE3(...)
-#define	DTRACE_PROBE4(...)
+#define	DTRACE_PROBE(provider, name)	((void)0)
+#define	DTRACE_PROBE1(provider, name, arg1) \
+	do { if (0) { (void)(arg1); } } while (0)
+#define	DTRACE_PROBE2(provider, name, arg1, arg2) \
+	do { if (0) { (void)(arg1); (void)(arg2); } } while (0)
+#define	DTRACE_PROBE3(provider, name, arg1, arg2, arg3) \
+	do { if (0) { (void)(arg1); (void)(arg2); (void)(arg3); } } while (0)
+#define	DTRACE_PROBE4(provider, name, arg1, arg2, arg3, arg4) \
+	do { if (0) { (void)(arg1); (void)(arg2); (void)(arg3); \
+	    (void)(arg4); } } while (0)
 #endif
 
 /* Service lifecycle */
@@ -36,6 +41,8 @@
 	DTRACE_PROBE2(serviced, svc__start, label, pid)
 #define	SERVICED_PROBE_SVC_EXEC(label, pid)	\
 	DTRACE_PROBE2(serviced, svc__exec, label, pid)
+#define	SERVICED_PROBE_SVC_CAPMODE(label, pid, protocol_ready)	\
+	DTRACE_PROBE3(serviced, svc__capmode, label, pid, protocol_ready)
 #define	SERVICED_PROBE_SVC_EXIT(label, pid, status)	\
 	DTRACE_PROBE3(serviced, svc__exit, label, pid, status)
 #define	SERVICED_PROBE_SVC_RESTART(label, count)	\
@@ -82,6 +89,18 @@
 	DTRACE_PROBE2(serviced, cap__channel, label, result)
 #define	SERVICED_PROBE_CAP_COALITION(label, result)	\
 	DTRACE_PROBE2(serviced, cap__coalition, label, result)
+#define	SERVICED_PROBE_IDENTITY_VALIDATE(user, group, result)	\
+	DTRACE_PROBE3(serviced, identity__validate, user, group, result)
+
+/* Component session delegation */
+#define	SERVICED_PROBE_COMPONENT_RESOLVE(label, name, provider, scope)	\
+	DTRACE_PROBE4(serviced, component__resolve, label, name, provider, scope)
+#define	SERVICED_PROBE_COMPONENT_SESSION(label, name, provider, result)	\
+	DTRACE_PROBE4(serviced, component__session, label, name, provider, result)
+#define	SERVICED_PROBE_COMPONENT_INJECT(label, name, fd)	\
+	DTRACE_PROBE3(serviced, component__inject, label, name, fd)
+#define	SERVICED_PROBE_BOOTSTRAP_CREATE(label, ntokens, ndescs, result) \
+	DTRACE_PROBE4(serviced, bootstrap__create, label, ntokens, ndescs, result)
 
 /* Service exec setup duration */
 #define	SERVICED_PROBE_SVC_EXEC_DONE(label, duration_ns, ntokens)	\

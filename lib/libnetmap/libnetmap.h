@@ -295,6 +295,14 @@ int nmport_parse(struct nmport_d *d, const char *portspec);
  */
 int nmport_register(struct nmport_d *);
 
+/*
+ * Register using a caller-supplied /dev/netmap descriptor.  The descriptor
+ * is borrowed; libnetmap duplicates it and owns only the duplicate.  This
+ * permits capability-mode brokers to use openat(2) relative to a preopened,
+ * attenuated /dev directory without ambient pathname lookup.
+ */
+int nmport_register_fd(struct nmport_d *, int);
+
 /* nmport_mmap - maps the port resources into the process memory
  * @d		the nmport to be mapped
  *

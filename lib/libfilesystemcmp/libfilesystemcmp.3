@@ -1,0 +1,87 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd July 29, 2026
+.Dt LIBFILESYSTEMCMP 3
+.Os
+.Sh NAME
+.Nm libfilesystemcmp
+.Nd public client transport for FileSystemCmp providers
+.Sh LIBRARY
+.Lb libfilesystemcmp
+.Sh SYNOPSIS
+.In filesystemcmp.h
+.Ft int
+.Fn filesystemcmp_open "const char *component"
+.Ft int
+.Fn filesystemcmp_open_root "int fd" "struct filesystemcmp_handle *root"
+.Ft int
+.Fn filesystemcmp_lookup "int fd" "struct filesystemcmp_handle directory" "const char *name" "struct filesystemcmp_handle_reply *reply"
+.Ft ssize_t
+.Fn filesystemcmp_pread "int fd" "struct filesystemcmp_handle object" "void *buffer" "size_t length" "uint64_t offset"
+.Ft ssize_t
+.Fn filesystemcmp_pwrite "int fd" "struct filesystemcmp_handle object" "const void *buffer" "size_t length" "uint64_t offset"
+.Sh DESCRIPTION
+The
+.Nm
+library defines the provider-neutral
+.Dv org.5bsd.cmp.filesystem
+version
+.Dv 1.0.0
+interface.
+Providers expose opaque object handles and resolve names relative to delegated
+directory handles.
+Backing namespace descriptors remain confined to the provider.
+.Pp
+The
+.Fn filesystemcmp_open
+function opens the channel injected under the consumer manifest's local
+.Fa component
+name.
+Passing
+.Dv NULL
+uses
+.Ev FILESYSTEMCMP ,
+which
+.Xr serviced 8
+sets from the successfully injected manifest-local component name.
+With no selector, the conventional
+.Ql filesystem
+name is used.
+The variable is only a lookup key into the sealed bootstrap descriptor and
+contains no descriptor authority.
+The library never names, discovers, or falls back to a concrete provider;
+.Xr serviced 8
+resolves the requested interface and version before execution.
+This permits alternative providers to implement the same versioned protocol
+without changing application code.
+.Pp
+Names are resolved relative to opaque directory handles; absolute path
+resolution is never delegated to the client.
+Handles carry generations so stale close, lookup, or I/O requests fail closed.
+Typed calls cover feature negotiation, root acquisition, lookup, open,
+create, bounded positional I/O, stat, unlink, rename, and handle close.
+Client-side validation rejects absolute or multi-component names, dot
+components, oversized inline I/O, and unknown flag bits before transport.
+Provider errors return
+.Li -1
+and set
+.Va errno .
+Typed operations are synchronous and complete request/reply exchanges are
+serialized within the library.
+Fork handlers quiesce an in-flight exchange and leave the client lock usable
+in both parent and child.
+The descriptor returned by
+.Fn filesystemcmp_open
+is close-on-exec and owned by the caller.
+Bulk I/O may use
+.Xr libshmring 3 .
+.Pp
+The
+.Ql filesystemcmp
+DTrace provider exposes component-open, message-send, message-receive, and
+message-reject probes.
+Provider daemons audit authorization, namespace mutation, and denied
+resolution decisions through OpenBSM.
+.Sh SEE ALSO
+.Xr libservice 3 ,
+.Xr libshmring 3

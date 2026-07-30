@@ -1,0 +1,49 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 29, 2026
+.Dt NETWORKCMP 8
+.Os
+.Sh NAME
+.Nm networkcmp
+.Nd capability-mode NetworkCmp resolver provider
+.Sh DESCRIPTION
+.Nm
+is the initial base-system provider for
+.Dq org.5bsd.cmp.network
+version
+.Dq 1.0.0 .
+It is installed in
+.Pa /Capabilities/System/NetworkCmp.cap
+and launched only by
+.Xr serviced 8 .
+.Pp
+The initial provider implements bounded forward DNS resolution through an
+attenuated
+.Xr cap_net 3
+channel.
+Each consumer receives a private capability-mode worker enlisted in its
+coalition.
+The worker cannot create sockets, fork, execute, or receive unrelated
+descriptors.
+The Casper factory channel never crosses a fork; each attenuated resolver
+channel survives only its worker fork and is non-transferable and locked
+against exec propagation.
+Its
+.Dv HELLO
+reply advertises only
+.Dv NETWORKCMP_FEATURE_DNS ;
+TCP, UDP, netmap, and shared-ring operations return
+.Er EOPNOTSUPP
+until the netmap/lwIP provider is installed.
+.Pp
+Resolver requests cap host and service lengths, flags, address families, and
+result counts.
+They never read resolver configuration from the consumer filesystem.
+.Sh SECURITY
+Session creation and resolver policy decisions are recorded through OpenBSM.
+Session, resolution, and rejection paths expose DTrace probes through the
+.Dq networkcmp_provider
+provider.
+.Sh SEE ALSO
+.Xr cap_net 3 ,
+.Xr libnetworkcmp 3 ,
+.Xr serviced 8

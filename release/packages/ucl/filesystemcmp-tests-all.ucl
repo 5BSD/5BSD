@@ -1,0 +1,10 @@
+comment = "FileSystemCmp provider tests"
+
+desc = <<EOD
+Protocol-negative, model, quota, stale-handle, sandbox, bundle, and serviced
+integration tests for the FileSystemCmp scratch provider.
+EOD
+
+annotations = {
+	set = "tests"
+}

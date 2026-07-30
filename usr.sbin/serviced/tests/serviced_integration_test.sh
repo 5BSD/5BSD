@@ -59,9 +59,11 @@ capability_tokens_delivered_body()
 	atf_check -s exit:0 -o match:"channel_fd=3" cat token-check.out
 	# Every requested capability must be present before exec.  Tokens occupy
 	# a contiguous, deterministic range after the channel and capprotect fds.
-	atf_check -s exit:0 -o match:"token_fds=5,6,7" cat token-check.out
+	atf_check -s exit:0 -o match:"token_fds=6,7,8" cat token-check.out
 	atf_check -s exit:0 -o match:"valid_tokens=3" cat token-check.out
 	atf_check -s exit:0 -o match:"confined_tokens=3" cat token-check.out
+	atf_check -s exit:0 -o match:"fork_hidden_tokens=3" \
+	    cat token-check.out
 	stop_stack
 }
 capability_tokens_delivered_cleanup()
@@ -618,7 +620,7 @@ arguments = ["authorize-tokens", "token-families.out"];' \
 		cat "$logfile" 2>/dev/null
 		atf_fail "token family service did not become ready"
 	}
-	atf_check -s exit:0 -o match:'fds=5,6,7' cat token-families.out
+	atf_check -s exit:0 -o match:'fds=6,7,8' cat token-families.out
 	atf_check -s exit:0 -o match:'authorized=yes' cat token-families.out
 	oraclectl -s "$sockpath" status > token-families-status.out
 	atf_check -s exit:0 -o match:'vsock:[[:space:]]+1' \

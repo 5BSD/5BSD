@@ -217,7 +217,10 @@ usage(void)
 	    "  reload              reload service bundles\n"
 	    "  stop <label>        stop a running service\n"
 	    "  install <path.cap>  install a .cap bundle to /Capabilities/\n"
-	    "  verify <path.cap> [...]  validate bundles and dependency graph\n"
+	    "  verify [--policy file] [--effective] <path.cap> [...]\n"
+	    "                      validate and print resolved defaults/policy\n"
+	    "  policy-check <file> validate serviced provider policy\n"
+	    "  deps <program>      suggest component manifest dependencies\n"
 	    "  bundles             list all registered bundles\n");
 	exit(EX_USAGE);
 }
@@ -265,6 +268,16 @@ main(int argc, char *argv[])
 		if (argc < 2)
 			errx(EX_USAGE, "verify requires a .cap bundle path");
 		return (cmd_verify(argc - 1, argv + 1));
+	}
+	if (strcmp(cmd, "policy-check") == 0) {
+		if (argc != 2)
+			errx(EX_USAGE, "policy-check requires a policy path");
+		return (cmd_policy_check(argv[1]));
+	}
+	if (strcmp(cmd, "deps") == 0) {
+		if (argc != 2)
+			errx(EX_USAGE, "deps requires an executable path");
+		return (cmd_deps(argv[1]));
 	}
 	if (strcmp(cmd, "bundles") == 0 && argc == 1)
 		return (cmd_bundles());

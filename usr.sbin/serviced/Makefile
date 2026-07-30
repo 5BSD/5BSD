@@ -16,9 +16,19 @@ CAPABILITIESPACKAGE=	serviced
 CAPABILITIES_SYSTEM=	/Capabilities/System
 CAPABILITIES_SYSTEMPACKAGE=	serviced
 
+FILESGROUPS+=	CMP_EXAMPLES
+CMP_EXAMPLES=	examples/cmp-private.ucl \
+		examples/cmp-jail.ucl \
+		examples/cmp-service.ucl \
+		examples/cmp-system.ucl \
+		examples/component-policy.ucl
+CMP_EXAMPLESDIR=	${SHAREDIR}/examples/serviced
+CMP_EXAMPLESPACKAGE=	serviced
+
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/lib/liboraclert
 CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD=		capbundle oraclert jail ucl util bsm
 

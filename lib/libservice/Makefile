@@ -6,7 +6,7 @@ SHLIB_MAJOR=	1
 MAN=	libservice.3
 
 SRCS=	libservice.c
-INCS=	libservice.h
+INCS=	libservice.h component_session.h service_bootstrap.h
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

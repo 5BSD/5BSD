@@ -1,0 +1,6 @@
+set = "tests"
+comment = "NetworkCmp resolver provider tests"
+
+desc = <<EOD
+Verified-bundle and capability-sandbox contract tests for NetworkCmp.
+EOD

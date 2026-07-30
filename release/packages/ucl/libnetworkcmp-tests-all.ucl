@@ -1,0 +1,9 @@
+comment = "NetworkCmp protocol tests"
+
+desc = <<EOD
+Tests for the versioned public NetworkCmp client and provider protocol.
+EOD
+
+annotations = {
+	set = "tests"
+}

@@ -685,6 +685,10 @@
 #define	AUE_SERVICED_RELOAD	43324	/* 5BSD: serviced config reload */
 #define	AUE_SERVICED_ONDEMAND	43325	/* 5BSD: serviced on-demand activation */
 #define	AUE_SERVICED_ORACLE	43326	/* 5BSD: serviced oracle disconnect */
+#define	AUE_SERVICED_COMPONENT	43327	/* 5BSD: component session delegation */
+#define	AUE_NETMAPD_BEARER	43328	/* 5BSD: netmap bearer policy */
+#define	AUE_NETWORKCMP_POLICY	43329	/* 5BSD: NetworkCmp policy */
+#define	AUE_FILESYSTEMCMP_POLICY 43330	/* 5BSD: FileSystemCmp policy */
 
 /*
  * Darwin BSM uses a number of AUE_O_* definitions, which are aliased to the

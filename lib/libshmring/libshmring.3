@@ -1,0 +1,63 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd July 29, 2026
+.Dt LIBSHMRING 3
+.Os
+.Sh NAME
+.Nm shmring_create ,
+.Nm shmring_open ,
+.Nm shmring_write ,
+.Nm shmring_read ,
+.Nm shmring_write_record ,
+.Nm shmring_read_record
+.Nd capability-safe shared-memory transport rings
+.Sh LIBRARY
+.Lb libshmring
+.Sh SYNOPSIS
+.In shmring.h
+.Sh DESCRIPTION
+The
+.Nm
+library creates bounded, unidirectional shared-memory rings for communication
+between capability-mode processes.
+Each ring is single-producer, single-consumer.
+Callers with multiple producer or consumer threads must serialize access on
+the corresponding side.
+Each endpoint consists of separate immutable configuration, data,
+producer-head, and consumer-tail descriptors.
+Descriptor rights ensure that only the producer can modify data and the head,
+and only the consumer can modify the tail.
+.Pp
+.Dv SHMRING_MODE_STREAM
+provides a byte stream.
+.Dv SHMRING_MODE_RECORD
+preserves record boundaries and is suitable for datagrams and framed
+component messages.
+Capacities must be powers of two between
+.Dv SHMRING_MIN_CAPACITY
+and
+.Dv SHMRING_MAX_CAPACITY .
+.Pp
+The library does not provide wakeups.
+Users should send edge notifications over a kqueueable
+.Xr libservice 3
+channel after publishing data or freeing space.
+.Pp
+The
+.Ql shmring
+DTrace provider exposes creation, mapping, read, write, close, and invariant
+violation probes.
+.Sh SEE ALSO
+.Xr cap_enter 2 ,
+.Xr mmap 2 ,
+.Xr libservice 3
+.Sh SECURITY CONSIDERATIONS
+All shared state is validated before use.
+Object sizes and required memfd seals are checked before mappings are
+dereferenced, so forged short or mutable objects fail with
+.Er EPROTO
+rather than generating a mapping fault.
+A violated position or record invariant fails with
+.Er EPROTO .
+Callers should treat that error as a compromised peer and destroy the
+component session.

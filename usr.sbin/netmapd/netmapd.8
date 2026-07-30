@@ -1,0 +1,28 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 29, 2026
+.Dt NETMAPD 8
+.Os
+.Sh NAME
+.Nm netmapd
+.Nd restricted netmap bearer service
+.Sh DESCRIPTION
+.Nm
+is installed only in
+.Pa /Capabilities/System/Netmapd.cap .
+It is the sole base component with authority to open and register netmap
+ports for userspace network stacks.
+.Pp
+The initial policy permits only explicitly named VALE ports and rejects
+physical interfaces, host rings, netmap pipes, option injection, multiple
+queues, caller-selected buffer sizes, and unknown flags.
+The returned descriptor is limited to event polling, read-write mapping,
+metadata, and netmap TX/RX synchronization ioctls.
+.Pp
+Every request and bearer creation has a DTrace probe.
+Successful and denied creations are submitted to OpenBSM as
+.Dv AUE_NETMAPD_BEARER .
+.Sh SEE ALSO
+.Xr libnetworkcmp 3 ,
+.Xr netmap 4 ,
+.Xr cmp 7 ,
+.Xr serviced 8

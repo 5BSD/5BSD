@@ -27,6 +27,13 @@ Even root cannot bypass the MACF enforcement.
 The only way through a claimed gate is to be the claim owner
 (same nonce) or to hold an authorized token.
 .Pp
+Capability-mode callers fail closed for capability-enabled system
+operations.
+They must be the owner of a matching claim or possess authorization minted
+by that owner; an unclaimed gate is not ambient authority in capability mode.
+Callers outside capability mode retain the historical allow-by-default
+behavior for unclaimed gates.
+.Pp
 Operations are claimed by bitmask.
 Multiple operations can be claimed in a single call.
 .Ss Gated Operations
@@ -54,7 +61,7 @@ Gates are combined with bitwise OR.
 Claiming
 .Dv SYS_GATE_REBOOT | SYS_GATE_KLDLOAD
 gates only reboot and module loading; all other operations
-remain unrestricted.
+remain unrestricted for callers outside capability mode.
 .Ss Protocol
 The service is accessed via
 .Dv MAC_CAPABILITY_CALL

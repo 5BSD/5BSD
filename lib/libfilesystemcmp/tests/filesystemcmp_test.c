@@ -1,0 +1,511 @@
+#include <sys/types.h>
+
+#include <atf-c.h>
+#include <errno.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "filesystemcmp.h"
+
+union message_buffer {
+	max_align_t align;
+	struct {
+		struct filesystemcmp_msg msg;
+		uint8_t payload[FILESYSTEMCMP_MAX_MESSAGE -
+		    sizeof(struct filesystemcmp_msg)];
+	} wire;
+};
+
+static struct filesystemcmp_msg *
+make_message(union message_buffer *buffer, uint16_t opcode, bool reply,
+    size_t payload)
+{
+	struct filesystemcmp_msg *msg;
+
+	memset(buffer, 0, sizeof(*buffer));
+	msg = &buffer->wire.msg;
+	msg->magic = FILESYSTEMCMP_MAGIC;
+	msg->version = FILESYSTEMCMP_ABI_VERSION;
+	msg->opcode = opcode;
+	msg->flags = reply ? FILESYSTEMCMP_MSG_F_REPLY : 0;
+	msg->length = sizeof(*msg) + payload;
+	msg->request_id = 0xfeedfaceU;
+	return (msg);
+}
+
+static void
+check_rejected(struct filesystemcmp_msg *msg, size_t length)
+{
+
+	errno = 0;
+	ATF_CHECK_EQ(-1, filesystemcmp_validate_message(msg, length));
+	ATF_CHECK_EQ(EPROTO, errno);
+}
+
+ATF_TC(common_header);
+ATF_TC_HEAD(common_header, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FileSystemCmp validates every common-header invariant");
+}
+ATF_TC_BODY(common_header, tc)
+{
+	union message_buffer buffer;
+	struct filesystemcmp_msg *msg;
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_OPEN_ROOT, false, 0);
+	ATF_REQUIRE_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+#define	REJECT(field, value) do {					\
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_OPEN_ROOT, false, 0);\
+	msg->field = (value);						\
+	check_rejected(msg, msg->length);				\
+} while (0)
+	REJECT(magic, 0);
+	REJECT(version, FILESYSTEMCMP_ABI_VERSION + 1);
+	REJECT(opcode, 0);
+	REJECT(opcode, FILESYSTEMCMP_OP_NOTIFY + 1);
+	REJECT(flags, 0x80000000U);
+	REJECT(reserved, 1);
+	REJECT(status, -EPERM);
+	REJECT(length, sizeof(*msg) - 1);
+#undef REJECT
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_OPEN_ROOT, false, 0);
+	msg->request_id = 0;
+	check_rejected(msg, msg->length);
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_OPEN_ROOT, true, 0);
+	msg->status = -ELAST - 1;
+	check_rejected(msg, msg->length);
+	check_rejected(NULL, 0);
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_OPEN_ROOT, false, 0);
+	check_rejected(msg, sizeof(*msg) - 1);
+	check_rejected(msg, msg->length + 1);
+}
+
+ATF_TC(component_binding);
+ATF_TC_HEAD(component_binding, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FileSystemCmp opens only manifest-injected local component names");
+}
+ATF_TC_BODY(component_binding, tc)
+{
+
+	errno = 0;
+	ATF_CHECK_EQ(-1, filesystemcmp_open(""));
+	ATF_CHECK_EQ(EINVAL, errno);
+
+	/*
+	 * This test process has not called service_init().  A provider-name
+	 * lookup fallback would produce a different result or side effect.
+	 */
+	errno = 0;
+	ATF_CHECK_EQ(-1, filesystemcmp_open(NULL));
+	ATF_CHECK_EQ(ENOTCONN, errno);
+	errno = 0;
+	ATF_CHECK_EQ(-1, filesystemcmp_open("scratch"));
+	ATF_CHECK_EQ(ENOTCONN, errno);
+
+	ATF_REQUIRE_EQ(0, setenv(FILESYSTEMCMP_ENV, "", 1));
+	errno = 0;
+	ATF_CHECK_EQ(-1, filesystemcmp_open(NULL));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_REQUIRE_EQ(0, unsetenv(FILESYSTEMCMP_ENV));
+}
+
+ATF_TC(request_shapes);
+ATF_TC_HEAD(request_shapes, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Every request opcode has an exact, overflow-safe payload shape");
+}
+ATF_TC_BODY(request_shapes, tc)
+{
+	union message_buffer buffer;
+	struct filesystemcmp_msg *msg;
+	struct filesystemcmp_lookup_request *lookup;
+	struct filesystemcmp_create_request *create;
+	struct filesystemcmp_io_request *io;
+	struct filesystemcmp_rename_request *rename;
+	size_t fixed[] = {
+		[FILESYSTEMCMP_OP_HELLO] =
+		    sizeof(struct filesystemcmp_hello),
+		[FILESYSTEMCMP_OP_OPEN_ROOT] = 0,
+		[FILESYSTEMCMP_OP_OPEN] =
+		    sizeof(struct filesystemcmp_open_request),
+		[FILESYSTEMCMP_OP_READ] =
+		    sizeof(struct filesystemcmp_io_request),
+		[FILESYSTEMCMP_OP_STAT] =
+		    sizeof(struct filesystemcmp_close_request),
+		[FILESYSTEMCMP_OP_CLOSE] =
+		    sizeof(struct filesystemcmp_close_request),
+		[FILESYSTEMCMP_OP_ATTACH_RINGS] =
+		    sizeof(struct filesystemcmp_ring_request),
+		[FILESYSTEMCMP_OP_NOTIFY] = 0,
+	};
+	unsigned opcode;
+
+	for (opcode = FILESYSTEMCMP_OP_HELLO;
+	    opcode <= FILESYSTEMCMP_OP_NOTIFY; opcode++) {
+		if (opcode == FILESYSTEMCMP_OP_LOOKUP ||
+		    opcode == FILESYSTEMCMP_OP_CREATE ||
+		    opcode == FILESYSTEMCMP_OP_WRITE ||
+		    opcode == FILESYSTEMCMP_OP_UNLINK ||
+		    opcode == FILESYSTEMCMP_OP_RENAME)
+			continue;
+		msg = make_message(&buffer, opcode, false, fixed[opcode]);
+		switch (opcode) {
+		case FILESYSTEMCMP_OP_HELLO:
+			((struct filesystemcmp_hello *)(msg + 1))->max_version =
+			    FILESYSTEMCMP_ABI_VERSION;
+			break;
+		case FILESYSTEMCMP_OP_ATTACH_RINGS:
+			((struct filesystemcmp_ring_request *)(msg + 1))->
+			    tx_entries = 1;
+			((struct filesystemcmp_ring_request *)(msg + 1))->
+			    rx_entries = 1;
+			((struct filesystemcmp_ring_request *)(msg + 1))->
+			    entry_size = 1;
+			break;
+		default:
+			break;
+		}
+		ATF_CHECK_EQ_MSG(0,
+		    filesystemcmp_validate_message(msg, msg->length),
+		    "opcode %u", opcode);
+		msg->length++;
+		check_rejected(msg, msg->length);
+	}
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_LOOKUP, false,
+	    sizeof(*lookup) + 4);
+	lookup = (void *)(msg + 1);
+	lookup->name_length = 4;
+	memcpy(lookup + 1, "name", 4);
+	ATF_CHECK_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	lookup->name_length = UINT32_MAX;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_CREATE, false,
+	    sizeof(*create) + 5);
+	create = (void *)(msg + 1);
+	create->name_length = 5;
+	memcpy(create + 1, "entry", 5);
+	ATF_CHECK_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	create->name_length = 6;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_WRITE, false,
+	    sizeof(*io) + 7);
+	io = (void *)(msg + 1);
+	io->length = 7;
+	ATF_CHECK_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	io->length = UINT32_MAX;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_UNLINK, false,
+	    sizeof(struct filesystemcmp_unlink_request) + 3);
+	((struct filesystemcmp_unlink_request *)(msg + 1))->name_length = 3;
+	memcpy((struct filesystemcmp_unlink_request *)(msg + 1) + 1, "old", 3);
+	ATF_CHECK_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_RENAME, false,
+	    sizeof(*rename) + 3 + 6);
+	rename = (void *)(msg + 1);
+	rename->old_name_length = 3;
+	rename->new_name_length = 6;
+	memcpy(rename + 1, "oldnewone", 9);
+	ATF_CHECK_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	rename->new_name_length = UINT32_MAX;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_LOOKUP, false,
+	    sizeof(*lookup) + 2);
+	lookup = (void *)(msg + 1);
+	lookup->name_length = 2;
+	memcpy(lookup + 1, "..", 2);
+	check_rejected(msg, msg->length);
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_OPEN, false,
+	    sizeof(struct filesystemcmp_open_request));
+	((struct filesystemcmp_open_request *)(msg + 1))->reserved = 1;
+	check_rejected(msg, msg->length);
+}
+
+ATF_TC(reply_shapes);
+ATF_TC_HEAD(reply_shapes, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Success and error replies have canonical payloads and status");
+}
+ATF_TC_BODY(reply_shapes, tc)
+{
+	union message_buffer buffer;
+	struct filesystemcmp_msg *msg;
+	struct filesystemcmp_io_reply *io;
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_HELLO, true,
+	    sizeof(struct filesystemcmp_hello_reply));
+	((struct filesystemcmp_hello_reply *)(msg + 1))->version =
+	    FILESYSTEMCMP_ABI_VERSION;
+	ATF_CHECK_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	msg->status = 1;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_LOOKUP, true,
+	    sizeof(struct filesystemcmp_handle_reply));
+	((struct filesystemcmp_handle_reply *)(msg + 1))->type =
+	    FILESYSTEMCMP_TYPE_REGULAR;
+	ATF_CHECK_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_READ, true,
+	    sizeof(*io) + 11);
+	io = (void *)(msg + 1);
+	io->length = 11;
+	ATF_CHECK_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	io->length = 12;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_STAT, true,
+	    sizeof(struct filesystemcmp_stat_reply));
+	((struct filesystemcmp_stat_reply *)(msg + 1))->type =
+	    FILESYSTEMCMP_TYPE_REGULAR;
+	ATF_CHECK_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_CREATE, true, 0);
+	msg->status = -ENOSPC;
+	ATF_CHECK_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	msg->length++;
+	check_rejected(msg, msg->length);
+}
+
+ATF_TC(semantic_invariants);
+ATF_TC_HEAD(semantic_invariants, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "FileSystemCmp rejects unsafe names, flags and reserved fields");
+}
+ATF_TC_BODY(semantic_invariants, tc)
+{
+	union message_buffer buffer;
+	struct filesystemcmp_msg *msg;
+	struct filesystemcmp_hello *hello;
+	struct filesystemcmp_hello_reply *hello_reply;
+	struct filesystemcmp_lookup_request *lookup;
+	struct filesystemcmp_open_request *open;
+	struct filesystemcmp_create_request *create;
+	struct filesystemcmp_io_request *io;
+	struct filesystemcmp_unlink_request *unlink;
+	struct filesystemcmp_rename_request *rename;
+	struct filesystemcmp_ring_request *rings;
+	struct filesystemcmp_handle_reply *handle;
+	struct filesystemcmp_io_reply *io_reply;
+	struct filesystemcmp_stat_reply *stat_reply;
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_HELLO, false,
+	    sizeof(*hello));
+	hello = (void *)(msg + 1);
+	hello->max_version = FILESYSTEMCMP_ABI_VERSION;
+	ATF_REQUIRE_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	hello->reserved = 1;
+	check_rejected(msg, msg->length);
+	hello->reserved = 0;
+	hello->features = 0x80000000U;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_LOOKUP, false,
+	    sizeof(*lookup) + 4);
+	lookup = (void *)(msg + 1);
+	lookup->name_length = 4;
+	memcpy(lookup + 1, "name", 4);
+	ATF_REQUIRE_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	lookup->flags = 1;
+	check_rejected(msg, msg->length);
+	lookup->flags = 0;
+	memcpy(lookup + 1, "a/bb", 4);
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_OPEN, false,
+	    sizeof(*open));
+	open = (void *)(msg + 1);
+	ATF_REQUIRE_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	open->flags = ~FILESYSTEMCMP_OPEN_MASK;
+	check_rejected(msg, msg->length);
+	open->flags = 0;
+	open->reserved = 1;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_CREATE, false,
+	    sizeof(*create) + 3);
+	create = (void *)(msg + 1);
+	create->name_length = 3;
+	memcpy(create + 1, "new", 3);
+	ATF_REQUIRE_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	create->flags = ~FILESYSTEMCMP_CREATE_MASK;
+	check_rejected(msg, msg->length);
+	create->flags = 0;
+	create->reserved = 1;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_READ, false, sizeof(*io));
+	io = (void *)(msg + 1);
+	ATF_REQUIRE_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	io->flags = 1;
+	check_rejected(msg, msg->length);
+	io->flags = 0;
+	io->length = FILESYSTEMCMP_INLINE_MAX + 1;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_UNLINK, false,
+	    sizeof(*unlink) + 3);
+	unlink = (void *)(msg + 1);
+	unlink->name_length = 3;
+	memcpy(unlink + 1, "old", 3);
+	ATF_REQUIRE_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	unlink->flags = 1;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_RENAME, false,
+	    sizeof(*rename) + 3 + 3);
+	rename = (void *)(msg + 1);
+	rename->old_name_length = 3;
+	rename->new_name_length = 3;
+	memcpy(rename + 1, "oldnew", 6);
+	ATF_REQUIRE_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	rename->flags = 1;
+	check_rejected(msg, msg->length);
+	rename->flags = 0;
+	rename->reserved = 1;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_ATTACH_RINGS, false,
+	    sizeof(*rings));
+	rings = (void *)(msg + 1);
+	rings->tx_entries = rings->rx_entries = rings->entry_size = 1;
+	ATF_REQUIRE_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	rings->flags = 1;
+	check_rejected(msg, msg->length);
+	rings->flags = 0;
+	rings->entry_size = 0;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_HELLO, true,
+	    sizeof(*hello_reply));
+	hello_reply = (void *)(msg + 1);
+	hello_reply->version = FILESYSTEMCMP_ABI_VERSION;
+	ATF_REQUIRE_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	hello_reply->features = 0x80000000U;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_LOOKUP, true,
+	    sizeof(*handle));
+	handle = (void *)(msg + 1);
+	handle->type = FILESYSTEMCMP_TYPE_REGULAR;
+	ATF_REQUIRE_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	handle->reserved = 1;
+	check_rejected(msg, msg->length);
+	handle->reserved = 0;
+	handle->type = 0;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_WRITE, true,
+	    sizeof(*io_reply));
+	io_reply = (void *)(msg + 1);
+	ATF_REQUIRE_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	io_reply->reserved = 1;
+	check_rejected(msg, msg->length);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_STAT, true,
+	    sizeof(*stat_reply));
+	stat_reply = (void *)(msg + 1);
+	stat_reply->type = FILESYSTEMCMP_TYPE_DIRECTORY;
+	ATF_REQUIRE_EQ(0, filesystemcmp_validate_message(msg, msg->length));
+	stat_reply->type = 0;
+	check_rejected(msg, msg->length);
+}
+
+ATF_TC(descriptor_contract);
+ATF_TC_HEAD(descriptor_contract, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Only ATTACH_RINGS accepts exactly two four-fd ring endpoints");
+}
+ATF_TC_BODY(descriptor_contract, tc)
+{
+	union message_buffer buffer;
+	struct filesystemcmp_msg *msg;
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_OPEN_ROOT, false, 0);
+	ATF_CHECK_EQ(0, filesystemcmp_validate_fds(msg, 0));
+	ATF_CHECK_EQ(-1, filesystemcmp_validate_fds(msg, 1));
+	ATF_CHECK_EQ(EPROTO, errno);
+
+	msg = make_message(&buffer, FILESYSTEMCMP_OP_ATTACH_RINGS, false,
+	    sizeof(struct filesystemcmp_ring_request));
+	ATF_CHECK_EQ(0, filesystemcmp_validate_fds(msg, 8));
+	ATF_CHECK_EQ(-1, filesystemcmp_validate_fds(msg, 7));
+	ATF_CHECK_EQ(EPROTO, errno);
+
+	msg->flags = FILESYSTEMCMP_MSG_F_REPLY;
+	ATF_CHECK_EQ(0, filesystemcmp_validate_fds(msg, 0));
+	ATF_CHECK_EQ(-1, filesystemcmp_validate_fds(NULL, 0));
+	ATF_CHECK_EQ(EINVAL, errno);
+}
+
+ATF_TC(abi);
+ATF_TC_HEAD(abi, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Wire constants and structure sizes cannot drift silently");
+}
+ATF_TC_BODY(abi, tc)
+{
+
+	ATF_CHECK_EQ(0x46434d50U, FILESYSTEMCMP_MAGIC);
+	ATF_CHECK_STREQ("org.5bsd.cmp.filesystem",
+	    FILESYSTEMCMP_INTERFACE);
+	ATF_CHECK_STREQ("1.0.0", FILESYSTEMCMP_INTERFACE_VERSION);
+	ATF_CHECK_EQ(32, sizeof(struct filesystemcmp_msg));
+	ATF_CHECK_EQ(16, sizeof(struct filesystemcmp_handle));
+	ATF_CHECK_EQ(32, sizeof(struct filesystemcmp_io_request));
+}
+
+ATF_TC(typed_api_arguments);
+ATF_TC_HEAD(typed_api_arguments, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Typed FileSystemCmp calls reject unsafe names and sizes locally");
+}
+ATF_TC_BODY(typed_api_arguments, tc)
+{
+	struct filesystemcmp_handle handle = { 1, 1 };
+	struct filesystemcmp_handle_reply reply;
+	char buffer[1];
+
+	errno = 0;
+	ATF_CHECK_EQ(-1, filesystemcmp_lookup(-1, handle, "..", &reply));
+	ATF_CHECK_EQ(EINVAL, errno);
+	errno = 0;
+	ATF_CHECK_EQ(-1, filesystemcmp_lookup(-1, handle, "a/b", &reply));
+	ATF_CHECK_EQ(EINVAL, errno);
+	errno = 0;
+	ATF_CHECK_EQ(-1, filesystemcmp_pread(-1, handle, buffer,
+	    FILESYSTEMCMP_INLINE_MAX + 1, 0));
+	ATF_CHECK_EQ(EINVAL, errno);
+	errno = 0;
+	ATF_CHECK_EQ(-1, filesystemcmp_open_handle(-1, handle,
+	    ~FILESYSTEMCMP_OPEN_MASK, &reply));
+	ATF_CHECK_EQ(EINVAL, errno);
+}
+
+ATF_TP_ADD_TCS(tp)
+{
+	ATF_TP_ADD_TC(tp, common_header);
+	ATF_TP_ADD_TC(tp, component_binding);
+	ATF_TP_ADD_TC(tp, request_shapes);
+	ATF_TP_ADD_TC(tp, reply_shapes);
+	ATF_TP_ADD_TC(tp, semantic_invariants);
+	ATF_TP_ADD_TC(tp, descriptor_contract);
+	ATF_TP_ADD_TC(tp, abi);
+	ATF_TP_ADD_TC(tp, typed_api_arguments);
+	return (atf_no_error());
+}

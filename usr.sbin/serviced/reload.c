@@ -78,6 +78,8 @@ manifest_equal(const struct svc_manifest *a, const struct svc_manifest *b)
 	    a->on_demand != b->on_demand ||
 	    a->nprovides != b->nprovides ||
 	    a->nrequires != b->nrequires ||
+	    a->nimplements != b->nimplements ||
+	    a->ncomponents != b->ncomponents ||
 	    a->nkmod_requires != b->nkmod_requires ||
 	    a->ncap_paths != b->ncap_paths ||
 	    a->ncap_net != b->ncap_net ||
@@ -112,6 +114,19 @@ manifest_equal(const struct svc_manifest *a, const struct svc_manifest *b)
 			return (false);
 	for (i = 0; i < a->nrequires; i++)
 		if (strcmp(a->requires[i], b->requires[i]) != 0)
+			return (false);
+	for (i = 0; i < a->nimplements; i++)
+		if (strcmp(a->implements[i].name,
+		    b->implements[i].name) != 0 ||
+		    strcmp(a->implements[i].version,
+		    b->implements[i].version) != 0 ||
+		    a->implements[i].lifetimes !=
+		    b->implements[i].lifetimes ||
+		    a->implements[i].sharing != b->implements[i].sharing)
+			return (false);
+	for (i = 0; i < a->ncomponents; i++)
+		if (memcmp(&a->components[i], &b->components[i],
+		    sizeof(a->components[i])) != 0)
 			return (false);
 	for (i = 0; i < a->nkmod_requires; i++)
 		if (strcmp(a->kmod_requires[i], b->kmod_requires[i]) != 0)
@@ -208,7 +223,7 @@ svc_reregister_kevents(int kq)
 
 		if (svc->pd_fd >= 0) {
 			EV_SET(&kev, svc->pd_fd, EVFILT_PROCDESC,
-			    EV_ADD, NOTE_EXIT | NOTE_EXEC, 0, svc);
+			    EV_ADD, NOTE_EXIT | NOTE_EXEC | NOTE_CAPMODE, 0, svc);
 			if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
 				syslog(LOG_WARNING,
 				    "reload: re-register pd_fd for %s: %m",

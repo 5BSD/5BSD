@@ -595,8 +595,8 @@ nmport_undo_prepare(struct nmport_d *d)
 	nmport_delete(d);
 }
 
-int
-nmport_register(struct nmport_d *d)
+static int
+nmport_register_impl(struct nmport_d *d, int supplied_fd)
 {
 	struct nmctx *ctx = d->ctx;
 
@@ -606,7 +606,10 @@ nmport_register(struct nmport_d *d)
 		return -1;
 	}
 
-	d->fd = open("/dev/netmap", O_RDWR);
+	if (supplied_fd >= 0)
+		d->fd = fcntl(supplied_fd, F_DUPFD_CLOEXEC, 0);
+	else
+		d->fd = open("/dev/netmap", O_RDWR | O_CLOEXEC);
 	if (d->fd < 0) {
 		nmctx_ferror(ctx, "/dev/netmap: %s", strerror(errno));
 		goto err;
@@ -638,6 +641,24 @@ nmport_register(struct nmport_d *d)
 err:
 	nmport_undo_register(d);
 	return -1;
+}
+
+int
+nmport_register(struct nmport_d *d)
+{
+
+	return (nmport_register_impl(d, -1));
+}
+
+int
+nmport_register_fd(struct nmport_d *d, int fd)
+{
+
+	if (fd < 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (nmport_register_impl(d, fd));
 }
 
 void

@@ -396,6 +396,52 @@ servicectl_verify_invalid_cleanup()
 }
 
 # ===================================================================
+# servicectl deps — reads only declared ELF component dependencies
+# ===================================================================
+
+atf_test_case servicectl_deps cleanup
+servicectl_deps_head()
+{
+	atf_set "descr" "servicectl deps discovers notes without granting policy"
+}
+servicectl_deps_body()
+{
+	find_servicectl
+
+	cp /usr/bin/true no-components
+	atf_check -s exit:0 -o match:"No known component dependencies" \
+	    "$servicectl_bin" deps no-components
+
+	atf_check -s exit:0 -o save:deps-network.out \
+	    "$servicectl_bin" deps \
+	    "$(atf_get_srcdir)/deps_network_fixture"
+	atf_check -s exit:0 -o match:'interface = "org.5bsd.cmp.network"' \
+	    grep 'interface' deps-network.out
+	atf_check -s exit:1 -o empty -e empty \
+	    grep 'provider' deps-network.out
+
+	atf_check -s exit:0 -o save:deps-both.out \
+	    "$servicectl_bin" deps "$(atf_get_srcdir)/deps_both_fixture"
+	atf_check -s exit:0 -o match:'org.5bsd.cmp.filesystem' \
+	    grep 'interface' deps-both.out
+	atf_check -s exit:0 -o match:'org.5bsd.cmp.network' \
+	    grep 'interface' deps-both.out
+	atf_check -s exit:0 -o match:'discovery never grants authority' \
+	    grep 'never grants' deps-both.out
+
+	printf 'interface=org.5bsd.cmp.network\n' > not-elf
+	atf_check -s not-exit:0 -e match:"not an ELF object" \
+	    "$servicectl_bin" deps not-elf
+	ln -s no-components symlink-elf
+	atf_check -s not-exit:0 -e ignore \
+	    "$servicectl_bin" deps symlink-elf
+}
+servicectl_deps_cleanup()
+{
+	rm -f no-components not-elf symlink-elf deps-network.out deps-both.out
+}
+
+# ===================================================================
 # servicectl stop — requires label argument
 # ===================================================================
 
@@ -565,6 +611,7 @@ atf_init_test_cases()
 	# verify/stop
 	atf_add_test_case servicectl_verify
 	atf_add_test_case servicectl_verify_invalid
+	atf_add_test_case servicectl_deps
 	atf_add_test_case servicectl_stop_no_arg
 
 	# adversarial

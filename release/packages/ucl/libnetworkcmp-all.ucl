@@ -1,0 +1,6 @@
+comment = "Public NetworkCmp protocol library"
+
+desc = <<EOD
+The versioned public client and provider protocol for capability-sandboxed
+userspace networking components.
+EOD

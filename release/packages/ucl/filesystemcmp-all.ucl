@@ -1,0 +1,6 @@
+comment = "Capability-mode scratch FileSystemCmp provider"
+
+desc = <<EOD
+The base FileSystemCmp scratch provider, installed as the verified
+/Capabilities/System/FileSystemCmp.cap bundle.
+EOD

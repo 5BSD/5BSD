@@ -1,0 +1,56 @@
+# Complete consumer manifest: optional system-scoped components.
+# System scope is appropriate only for providers designed as system brokers.
+# These declarations are format examples for such providers, not capabilities
+# of the initial private scratch filesystem provider.
+schema = "org.5bsd.serviced.service";
+schema_version = "1.0.0";
+bundle_id = "org.example.observer";
+version = "1.0.0";
+author = "Example Security Team";
+
+program = "observer";
+provides = ["org.example.observer"];
+kmod_requires = ["dtraceall"];
+arguments = ["--foreground", "--format=json"];
+environment {
+    AUDIT_MODE = "strict";
+}
+user = "audit";
+group = "audit";
+on_demand = false;
+restart = "never";
+stop_timeout = 10;
+max_failures = 3;
+
+capabilities {
+    system = ["audit", "kenv_read"];
+}
+
+components {
+    system_catalog {
+        interface = "org.5bsd.cmp.filesystem";
+        version = "1.0.0";
+        lifetime = "system";
+        sharing = "shared";
+        required = false;
+        options {
+            read_only = true;
+            namespace = "public-catalog";
+            cache_entries = 8192;
+        }
+    }
+
+    system_events {
+        interface = "org.5bsd.cmp.network";
+        version = "1.0.0";
+        lifetime = "system";
+        sharing = "shared";
+        required = false;
+        options {
+            receive_only = true;
+            channel = "security-events";
+            datagram_max = 65535;
+            ring_entries = 4096;
+        }
+    }
+}

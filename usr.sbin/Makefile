@@ -26,6 +26,7 @@ SUBDIR=	adduser \
 	extattr \
 	extattrctl \
 	fifolog \
+	filesystemcmp \
 	fstyp \
 	fwcontrol \
 	fwget \
@@ -48,6 +49,8 @@ SUBDIR=	adduser \
 	mptutil \
 	mtest \
 	kldmgrd \
+	netmapd \
+	networkcmp \
 	newsyslog \
 	nfscbd \
 	nfsd \

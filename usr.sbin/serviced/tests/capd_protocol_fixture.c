@@ -183,17 +183,22 @@ kld_client(const char *inpath, const char *outpath)
 	ssize_t n;
 	int fd, raw_op;
 
-	if (service_init() == -1 || service_ready() == -1)
+	if (service_init() == -1)
 		err(1, "initialize managed service");
 	in = wait_for_input(inpath);
 	if (in == NULL)
 		err(1, "open %s", inpath);
+	out = fopen(outpath, "w");
+	if (out == NULL)
+		err(1, "fopen %s", outpath);
 	memset(op, 0, sizeof(op));
 	memset(name, 0, sizeof(name));
 	raw_op = 0;
 	if (fscanf(in, "%31s %127s %d", op, name, &raw_op) < 1)
 		errx(1, "invalid command file");
 	fclose(in);
+	if (service_ready() == -1)
+		err(1, "enter managed service sandbox");
 
 	fd = wait_for_service("org.5bsd.system.kldmgr");
 	if (fd == -1)
@@ -212,10 +217,6 @@ kld_client(const char *inpath, const char *outpath)
 	strlcpy(req.name, name, sizeof(req.name));
 	if (service_send(fd, &req, sizeof(req)) == -1)
 		err(1, "send kld request");
-	out = fopen(outpath, "w");
-	if (out == NULL)
-		err(1, "fopen %s", outpath);
-
 	if (req.op == KLDMGR_OP_LIST) {
 		char buf[sizeof(struct kldmgr_list_reply) +
 		    KLDMGR_LIST_MAX * sizeof(struct kldmgr_list_entry)];
@@ -257,8 +258,13 @@ reboot_client(const char *operation, const char *outpath)
 	ssize_t n;
 	int fd;
 
-	if (service_init() == -1 || service_ready() == -1)
+	if (service_init() == -1)
 		err(1, "initialize managed service");
+	out = fopen(outpath, "w");
+	if (out == NULL)
+		err(1, "fopen %s", outpath);
+	if (service_ready() == -1)
+		err(1, "enter managed service sandbox");
 	memset(&req, 0, sizeof(req));
 	if (strcmp(operation, "status") == 0)
 		req.op = REBOOT_OP_STATUS;
@@ -279,9 +285,6 @@ reboot_client(const char *operation, const char *outpath)
 	n = service_recv(fd, &reply, sizeof(reply), NULL);
 	if (n != (ssize_t)sizeof(reply))
 		errx(1, "short reboot reply: %zd", n);
-	out = fopen(outpath, "w");
-	if (out == NULL)
-		err(1, "fopen %s", outpath);
 	fprintf(out, "%d\n", reply.status);
 	fclose(out);
 	close(fd);

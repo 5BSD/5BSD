@@ -29,6 +29,7 @@ _PRIVATELIBS=	\
 		heimipcs \
 		kldelf \
 		ldns \
+		lwipcmp \
 		opencsd \
 		pkgconf \
 		samplerate \
@@ -159,6 +160,7 @@ _LIBRARIES=	\
 		elf \
 		execinfo \
 		fetch \
+		filesystemcmp \
 		figpar \
 		formw \
 		geom \
@@ -198,6 +200,7 @@ _LIBRARIES=	\
 		ncursesw \
 		netgraph \
 		netmap \
+		networkcmp \
 		ngatm \
 		nv \
 		nvpair \
@@ -224,6 +227,7 @@ _LIBRARIES=	\
 		sbuf \
 		sdp \
 		service \
+		shmring \
 		capability \
 		sm \
 		smb \
@@ -321,6 +325,10 @@ _DP_9p=		sbuf
 _DP_capbundle=	oraclert ucl
 _DP_oraclert=	ucl
 _DP_service=
+_DP_shmring=
+_DP_networkcmp=	pthread service shmring
+_DP_lwipcmp=
+_DP_filesystemcmp=	pthread service
 _DP_capability=	service
 .if ${MK_CASPER} != "no"
 _DP_9p+=	casper cap_pwd cap_grp

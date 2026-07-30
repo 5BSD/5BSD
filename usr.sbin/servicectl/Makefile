@@ -2,7 +2,7 @@
 
 PACKAGE=servicectl
 PROG=	servicectl
-SRCS=	servicectl.c install.c verify.c
+SRCS=	servicectl.c deps.c install.c verify.c
 MAN=	servicectl.8
 
 HAS_TESTS=
@@ -12,6 +12,6 @@ CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS+=	-I${SRCTOP}/lib/liboraclectl
 CFLAGS+=	-I${SRCTOP}/lib/liboraclert
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		capbundle oraclectl ucl
+LIBADD=		capbundle oraclectl ucl elf
 
 .include <bsd.prog.mk>

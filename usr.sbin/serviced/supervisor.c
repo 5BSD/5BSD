@@ -31,6 +31,7 @@
 #include <unistd.h>
 
 #include "serviced.h"
+#include "serviced_audit.h"
 #include "serviced_probes.h"
 
 /* Restart backoff parameters. */
@@ -164,15 +165,48 @@ supervisor_handle_procdesc(struct kevent *kev)
 	if ((kev->fflags & NOTE_EXEC) &&
 	    svc->state == SVC_STATE_STARTING) {
 		/*
-		 * NOTE_EXEC confirms the child has exec'd, but don't
-		 * promote to RUNNING yet — wait for the SVC_OP_READY
-		 * protocol message.  This ensures on-demand waiters
-		 * are only drained after the service has registered
-		 * its name and is ready to accept connections.
+		 * NOTE_EXEC confirms the child has exec'd.  Capability-mode
+		 * entry, observed independently through the process
+		 * descriptor, is the authoritative readiness boundary.
 		 */
 		syslog(LOG_INFO, "service %s: exec confirmed (pid %jd)",
 		    svc->manifest.label, (intmax_t)svc->pid);
 		SERVICED_PROBE_SVC_EXEC(svc->manifest.label, svc->pid);
+	}
+
+	if ((kev->fflags & NOTE_CAPMODE) != 0 &&
+	    (kev->fflags & NOTE_EXIT) == 0 &&
+	    svc->state == SVC_STATE_STARTING) {
+		int in_capmode;
+
+		in_capmode = pdincapmode(svc->pd_fd);
+		if (in_capmode == 1) {
+			svc->state = SVC_STATE_RUNNING;
+			syslog(LOG_INFO,
+			    "service %s: capability sandbox entered%s",
+			    svc->manifest.label,
+			    svc->protocol_ready ? ", application ready" :
+			    ", application readiness pending");
+			SERVICED_PROBE_SVC_CAPMODE(svc->manifest.label,
+			    svc->pid, svc->protocol_ready);
+			serviced_audit(AUE_SERVICED_SVC_EXEC, getuid(), 0,
+			    "svc=%s pid=%jd phase=capmode-ready "
+			    "protocol_ready=%d", svc->manifest.label,
+			    (intmax_t)svc->pid, svc->protocol_ready);
+			on_demand_check_ready(svc, serviced_kq);
+		} else {
+			int error;
+
+			error = in_capmode == -1 ? errno : EPROTO;
+			syslog(LOG_ERR,
+			    "service %s: unverified NOTE_CAPMODE: %s",
+			    svc->manifest.label, strerror(error));
+			SERVICED_PROBE_SVC_CAPMODE(svc->manifest.label,
+			    svc->pid, -error);
+			serviced_audit(AUE_SERVICED_SVC_EXEC, getuid(), error,
+			    "svc=%s pid=%jd phase=capmode-ready",
+			    svc->manifest.label, (intmax_t)svc->pid);
+		}
 	}
 
 	if (kev->fflags & NOTE_EXIT) {

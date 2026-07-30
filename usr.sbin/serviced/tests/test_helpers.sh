@@ -208,17 +208,17 @@ APPS_DIR="${WORK}/Capabilities/System"
 USER_APPS_DIR="${WORK}/Capabilities"
 CTL_SOCK="${WORK}/serviced.sock"
 
-# Build ./ready_svc, a libservice service program that reports readiness so the
-# service actually reaches SVC_STATE_RUNNING (the only promotion path is the
-# SVC_OP_READY message handled in svc_proto.c — a plain /bin/sh script that just
-# sleeps stays STARTING forever, so any "status ... running" assertion against a
-# shell service can never match).
+# Build ./ready_svc, a libservice service program that enters capability mode
+# through service_ready(), allowing serviced to verify NOTE_CAPMODE and promote
+# it to SVC_STATE_RUNNING.  A plain /bin/sh script that sleeps never crosses
+# that boundary and therefore remains STARTING.
 #
-# Behaviour: register + report ready FIRST (so serviced observes RUNNING), then
+# Behaviour: enter the sandbox and report ready, then
 # write "<name>.ready" in the CWD (the test work dir — oracled runs foreground
-# so services inherit WORK as their CWD), then block.  The 200ms pause after
-# service_ready() closes the race where the ready file appears before serviced
-# has processed the READY message and flipped the service to RUNNING.
+# so services inherit WORK as their CWD), then block.  The fixture pre-opens
+# that directory, so marker creation remains descriptor-relative after
+# cap_enter().  The 200ms pause closes the race where the marker appears before
+# serviced has processed NOTE_CAPMODE and flipped the service to RUNNING.
 #
 # The ready-file basename is argv[1] when supplied, else basename(argv[0]) — so a
 # bundle installing this as bin/<prog> produces "<prog>.ready", matching what the
@@ -392,11 +392,11 @@ make_svc_bin()
 # A lookup that can trigger an on-demand launch MUST arrive over a real
 # service channel (serviced only launches on-demand services in response to a
 # SVC_OP_LOOKUP from a managed service).  A standalone `./lookup_client name`
-# has no ORACLED_CHANNEL_FD, so the client is instead installed and run as a
+# has no serviced bootstrap descriptor, so the client is instead run as a
 # managed service (see run_lookup_client below).
 #
-# The program discovers its own label from ORACLED_LABEL (serviced always sets
-# it), reads the target name from "<label>.target" in its CWD (the test work
+# The program discovers its own label through libservice, reads the target
+# name from "<label>.target" in its CWD (the test work
 # dir — serviced does not chdir), and writes "<label>.result" with rc=0 on a
 # successful lookup or rc=1 on failure.  Using the label for the file names
 # keeps concurrent lookups (each a distinct bundle) from colliding.

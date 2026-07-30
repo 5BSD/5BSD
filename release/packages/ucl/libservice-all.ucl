@@ -1,0 +1,6 @@
+comment = "Capability service client library"
+
+desc = <<EOD
+Public client and provider support for capability services, including
+component-session bootstrap and descriptor transfer protocols.
+EOD

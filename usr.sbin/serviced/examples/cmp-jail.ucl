@@ -1,0 +1,59 @@
+# Complete consumer manifest: named persistent execution jail with
+# jail-scoped components selected by interface.
+# This requires providers that advertise jail/shared support; the initial
+# FileSystemCmp scratch provider deliberately accepts process/exclusive only.
+schema = "org.5bsd.serviced.service";
+schema_version = "1.0.0";
+bundle_id = "org.example.jail-workers";
+version = "1.4.0";
+author = "Example Operations";
+
+program = "jail-workers";
+provides = ["org.example.jail-workers"];
+arguments = ["--foreground"];
+environment {
+    WORKER_CLASS = "batch";
+}
+user = "worker";
+group = "worker";
+on_demand = true;
+restart = "always";
+stop_timeout = 45;
+max_failures = 12;
+
+jail {
+    name = "example-jail-workers";
+    path = "/jails/example-jail-workers";
+    hostname = "workers.example.invalid";
+    ip4_addr = "192.0.2.20";
+}
+
+components {
+    shared_scratch {
+        interface = "org.5bsd.cmp.filesystem";
+        version = "1.0.0";
+        lifetime = "jail";
+        sharing = "shared";
+        options {
+            namespace = "worker-scratch";
+            max_bytes = 1073741824;
+            max_objects = 65536;
+            max_file_bytes = 134217728;
+            clear_when_jail_stops = true;
+        }
+    }
+
+    jail_network {
+        interface = "org.5bsd.cmp.network";
+        version = "1.0.0";
+        lifetime = "jail";
+        sharing = "shared";
+        options {
+            address_mode = "jail";
+            dns = ["192.0.2.53", "2001:db8::53"];
+            allowed_tcp_ports = [443, 8443];
+            allowed_udp_ports = [53, 443];
+            connection_limit = 2048;
+        }
+    }
+}

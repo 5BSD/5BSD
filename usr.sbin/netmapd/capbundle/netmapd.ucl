@@ -1,0 +1,18 @@
+schema = "org.5bsd.serviced.service";
+schema_version = "1.0.0";
+bundle_id = "org.5bsd.netmapd";
+version = "1.0.0";
+author = "5BSD";
+
+program = "netmapd";
+provides = ["org.5bsd.netmapd"];
+on_demand = false;
+restart = "on-failure";
+kmod_requires = ["netmap"];
+
+capabilities {
+    files = [{
+        path = "/dev/netmap";
+        actions = ["read", "write", "stat"];
+    }];
+}

@@ -8,6 +8,7 @@
 #include <sys/ioctl.h>
 #include <sys/param.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
@@ -22,16 +23,93 @@
 #include <unistd.h>
 
 #include <libservice.h>
+#include <service_bootstrap.h>
+#include <serviced_svc_proto.h>
+
+static char result_cwd[PATH_MAX];
+static int result_dir_fd = -1;
+static volatile sig_atomic_t enter_requested;
+
+static void
+request_capmode(int signal __unused)
+{
+
+	enter_requested = 1;
+}
+
+static int
+legacy_ready_only(void)
+{
+	struct mac_capability_recvmsg_args ra;
+	struct mac_capability_sendmsg_args sa;
+	struct svc_req_hdr req;
+	struct svc_reply reply;
+	const uint64_t token = UINT64_C(0x5245414459);
+
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_READY;
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = &req;
+	sa.payload_len = sizeof(req);
+	sa.reply_token = token;
+	if (ioctl(service_channel_fd(), MAC_CAPABILITY_SENDMSG, &sa) == -1)
+		return (-1);
+	for (;;) {
+		memset(&reply, 0, sizeof(reply));
+		memset(&ra, 0, sizeof(ra));
+		ra.payload = &reply;
+		ra.payload_len = sizeof(reply);
+		if (ioctl(service_channel_fd(), MAC_CAPABILITY_RECVMSG, &ra) ==
+		    -1) {
+			if (errno == EINTR)
+				continue;
+			return (-1);
+		}
+		if (ra.reply_token != token)
+			continue;
+		if (ra.payload_len != sizeof(reply) || ra.nfds != 0) {
+			errno = EPROTO;
+			return (-1);
+		}
+		if (reply.status != 0) {
+			errno = reply.status;
+			return (-1);
+		}
+		return (0);
+	}
+}
+
+static void
+prepare_results(void)
+{
+
+	if (getcwd(result_cwd, sizeof(result_cwd)) == NULL)
+		err(1, "getcwd");
+	result_dir_fd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (result_dir_fd == -1)
+		err(1, "open current directory");
+}
 
 static void
 write_result(const char *path, const char *format, ...)
 {
 	va_list ap;
 	FILE *out;
+	const char *relative;
+	int fd;
 
-	out = fopen(path, "w");
+	relative = path;
+	if (path[0] == '/' &&
+	    strncmp(path, result_cwd, strlen(result_cwd)) == 0 &&
+	    path[strlen(result_cwd)] == '/')
+		relative = path + strlen(result_cwd) + 1;
+	fd = openat(result_dir_fd, relative,
+	    O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd == -1)
+		err(1, "openat %s", path);
+	out = fdopen(fd, "w");
 	if (out == NULL)
-		err(1, "fopen %s", path);
+		err(1, "fdopen %s", path);
 	va_start(ap, format);
 	if (vfprintf(out, format, ap) < 0)
 		err(1, "write %s", path);
@@ -185,21 +263,14 @@ static int
 scenario_token_inventory(const char *result)
 {
 	struct stat sb;
-	char *copy, *cursor, *token;
-	const char *fds;
-	int confined, fd, valid;
+	pid_t pid;
+	int confined, fd, fork_hidden, status, valid;
 
 	if (service_init() == -1 || service_ready() == -1)
 		err(1, "service initialization");
-	fds = getenv("ORACLED_TOKEN_FDS");
-	copy = fds == NULL ? strdup("") : strdup(fds);
-	if (copy == NULL)
-		err(1, "strdup");
 	confined = 0;
 	valid = 0;
-	cursor = copy;
-	while ((token = strsep(&cursor, ",")) != NULL && token[0] != '\0') {
-		fd = atoi(token);
+	for (fd = 6; fd <= 8; fd++) {
 		if (fstat(fd, &sb) == 0) {
 			valid++;
 			errno = 0;
@@ -208,25 +279,35 @@ scenario_token_inventory(const char *result)
 				confined++;
 		}
 	}
+	pid = fork();
+	if (pid == -1)
+		err(1, "fork");
+	if (pid == 0) {
+		for (fd = 6; fd <= 8; fd++) {
+			errno = 0;
+			if (fcntl(fd, F_GETFD) != -1 || errno != EBADF)
+				_exit(1);
+		}
+		_exit(0);
+	}
+	if (waitpid(pid, &status, 0) != pid)
+		err(1, "waitpid");
+	fork_hidden = WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 3 : 0;
 	write_result(result,
-	    "channel_fd=%d\ntoken_fds=%s\nvalid_tokens=%d\nconfined_tokens=%d\n",
-	    service_channel_fd(), fds == NULL ? "" : fds, valid, confined);
-	free(copy);
+	    "channel_fd=%d\ntoken_fds=6,7,8\nvalid_tokens=%d\n"
+	    "confined_tokens=%d\nfork_hidden_tokens=%d\n",
+	    service_channel_fd(), valid, confined, fork_hidden);
 	hold();
 }
 
 static int
 scenario_token_activate(const char *target, const char *result)
 {
-	const char *fds;
 	int after_errno, before_errno, fd, token_fd, consumed;
 
 	if (service_init() == -1)
 		err(1, "service_init");
-	fds = getenv("ORACLED_TOKEN_FDS");
-	if (fds == NULL || strchr(fds, ',') != NULL)
-		errx(1, "expected exactly one token descriptor");
-	token_fd = atoi(fds);
+	token_fd = 6;
 	fd = open(target, O_RDONLY);
 	before_errno = fd == -1 ? errno : 0;
 	if (fd != -1)
@@ -235,8 +316,7 @@ scenario_token_activate(const char *target, const char *result)
 		err(1, "service_authorize_capabilities");
 	/* Check before open() can reuse the consumed descriptor number. */
 	errno = 0;
-	consumed = fcntl(token_fd, F_GETFD) == -1 && errno == EBADF &&
-	    getenv("ORACLED_TOKEN_FDS") == NULL;
+	consumed = fcntl(token_fd, F_GETFD) == -1 && errno == EBADF;
 	fd = open(target, O_RDONLY);
 	after_errno = fd == -1 ? errno : 0;
 	write_result(result,
@@ -274,18 +354,11 @@ scenario_manifest_report(int argc, char **argv)
 static int
 scenario_authorize_tokens(const char *result)
 {
-	char *fds;
-
 	if (service_init() == -1)
 		err(1, "service_init");
-	fds = strdup(getenv("ORACLED_TOKEN_FDS") == NULL ? "" :
-	    getenv("ORACLED_TOKEN_FDS"));
-	if (fds == NULL)
-		err(1, "strdup");
 	if (service_authorize_capabilities() == -1)
 		err(1, "service_authorize_capabilities");
-	write_result(result, "fds=%s\nauthorized=yes\n", fds);
-	free(fds);
+	write_result(result, "fds=6,7,8\nauthorized=yes\n");
 	if (service_ready() == -1)
 		err(1, "service_ready");
 	hold();
@@ -305,8 +378,12 @@ scenario_capability_services(const char *result)
 	if (service_init() == -1)
 		err(1, "service_init");
 	if (getenv("ORACLED_TOKEN_FDS") != NULL ||
-	    getenv("ORACLED_CAPABILITY_FDS") == NULL)
-		errx(1, "unexpected capability descriptor environment");
+	    getenv("ORACLED_CAPABILITY_FDS") != NULL ||
+	    getenv("SERVICED_COMPONENT_FDS") != NULL)
+		errx(1, "legacy descriptor environment leaked");
+	if (getenv(SERVICE_BOOTSTRAP_ENV) == NULL ||
+	    strcmp(getenv(SERVICE_BOOTSTRAP_ENV), "5") != 0)
+		errx(1, "bootstrap environment descriptor discovery missing");
 	out = fopen(result, "w");
 	if (out == NULL)
 		err(1, "fopen %s", result);
@@ -388,9 +465,11 @@ scenario_compat_lookup(void)
 	FILE *input;
 	int fd, rc, saved_errno;
 
-	label = getenv("ORACLED_LABEL");
+	if (service_init() == -1)
+		err(1, "service_init");
+	label = service_label();
 	if (label == NULL || label[0] == '\0')
-		errx(1, "ORACLED_LABEL is unavailable");
+		errx(1, "service label is unavailable");
 	if (snprintf(target_path, sizeof(target_path), "%s.target", label) >=
 	    (int)sizeof(target_path) ||
 	    snprintf(result_path, sizeof(result_path), "%s.result", label) >=
@@ -403,8 +482,8 @@ scenario_compat_lookup(void)
 		errx(1, "empty lookup target");
 	(void)fclose(input);
 	target[strcspn(target, "\r\n")] = '\0';
-	if (service_init() == -1 || service_ready() == -1)
-		err(1, "service initialization");
+	if (service_ready() == -1)
+		err(1, "service readiness");
 	errno = 0;
 	fd = service_lookup(target);
 	saved_errno = errno;
@@ -414,6 +493,28 @@ scenario_compat_lookup(void)
 	if (fd != -1)
 		close(fd);
 	return (rc);
+}
+
+static int
+scenario_readiness_gate(const char *protocol_result,
+    const char *capmode_result)
+{
+
+	if (service_init() == -1)
+		err(1, "service_init");
+	if (signal(SIGUSR1, request_capmode) == SIG_ERR)
+		err(1, "signal");
+	if (legacy_ready_only() == -1)
+		err(1, "legacy READY");
+	write_result(protocol_result, "pid=%jd protocol_ready=1\n",
+	    (intmax_t)getpid());
+	while (!enter_requested)
+		pause();
+	if (cap_enter() == -1)
+		err(1, "cap_enter");
+	write_result(capmode_result, "pid=%jd capmode=1\n",
+	    (intmax_t)getpid());
+	hold();
 }
 
 static void
@@ -435,7 +536,8 @@ usage(void)
 	    "       capd_service_fixture unregister name registered result\n"
 	    "       capd_service_fixture protect result\n"
 	    "       capd_service_fixture compat-ready\n"
-	    "       capd_service_fixture compat-lookup\n");
+	    "       capd_service_fixture compat-lookup\n"
+	    "       capd_service_fixture readiness-gate protocol capmode\n");
 	exit(64);
 }
 
@@ -443,6 +545,7 @@ int
 main(int argc, char **argv)
 {
 
+	prepare_results();
 	if (argc == 3 && strcmp(argv[1], "ready") == 0)
 		return (scenario_ready(argv[2]));
 	if (argc == 4 && strcmp(argv[1], "provider") == 0)
@@ -473,5 +576,7 @@ main(int argc, char **argv)
 		return (scenario_compat_ready(argv[0]));
 	if (argc == 2 && strcmp(argv[1], "compat-lookup") == 0)
 		return (scenario_compat_lookup());
+	if (argc == 4 && strcmp(argv[1], "readiness-gate") == 0)
+		return (scenario_readiness_gate(argv[2], argv[3]));
 	usage();
 }

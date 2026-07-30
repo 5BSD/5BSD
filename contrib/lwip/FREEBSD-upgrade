@@ -1,0 +1,9 @@
+The imported sources are lwIP STABLE-2_2_1_RELEASE.
+
+Upstream:	https://github.com/lwip-tcpip/lwip
+Archive:	https://github.com/lwip-tcpip/lwip/archive/refs/tags/STABLE-2_2_1_RELEASE.zip
+SHA256:		2fdef2de21a907f7d590e91d46ff041e2bd0407f0ab1e82c37d7d39d60cbfd78
+Imported:	2026-07-30
+
+The FreeBSD port configuration and clock glue live in lib/liblwipcmp.
+Keep the contrib tree unmodified so a future vendor update remains reviewable.

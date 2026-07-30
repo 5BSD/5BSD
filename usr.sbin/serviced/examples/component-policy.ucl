@@ -1,0 +1,28 @@
+# Administrator policy is separate from signed consumer and provider bundles.
+# Consumers request interfaces; this file selects concrete implementations.
+schema = "org.5bsd.serviced.policy";
+schema_version = "1.0.0";
+
+provider_defaults {
+    "org.5bsd.cmp.filesystem" {
+        version = "1.0.0";
+        provider = "org.5bsd.FileSystemCmp.scratch";
+    }
+
+    "org.5bsd.cmp.network" {
+        version = "1.0.0";
+        # The base resolver provider supplies DNS now.  A netmap/lwIP
+        # provider can replace it without changing consumer manifests.
+        provider = "org.5bsd.NetworkCmp.resolver";
+    }
+}
+
+service_overrides {
+    "org.example.private-web" {
+        components {
+            network {
+                provider = "org.example.NetworkCmp.restricted";
+            }
+        }
+    }
+}

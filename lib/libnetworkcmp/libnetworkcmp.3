@@ -1,0 +1,182 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd July 30, 2026
+.Dt LIBNETWORKCMP 3
+.Os
+.Sh NAME
+.Nm libnetworkcmp
+.Nd public client transport for NetworkCmp providers
+.Sh LIBRARY
+.Lb libnetworkcmp
+.Sh SYNOPSIS
+.In networkcmp.h
+.Ft int
+.Fn networkcmp_open "const char *component"
+.Ft int
+.Fn networkcmp_client_open "const char *component" "const struct networkcmp_preferences *preferences" "struct networkcmp_client **client"
+.Ft int
+.Fn networkcmp_client_fd "const struct networkcmp_client *client"
+.Ft "const struct networkcmp_hello_reply *"
+.Fn networkcmp_client_limits "const struct networkcmp_client *client"
+.Ft void
+.Fn networkcmp_client_close "struct networkcmp_client *client"
+.Ft int
+.Fn networkcmp_hello "int fd" "struct networkcmp_hello_reply *reply"
+.Ft int
+.Fn networkcmp_negotiate "int fd" "const struct networkcmp_preferences *preferences" "struct networkcmp_hello_reply *reply"
+.Ft int
+.Fn networkcmp_attach_io "struct networkcmp_client *client" "struct networkcmp_handle socket" "uint32_t socket_type" "struct networkcmp_io **io"
+.Ft ssize_t
+.Fn networkcmp_write "struct networkcmp_io *io" "const void *buffer" "size_t length"
+.Ft ssize_t
+.Fn networkcmp_read "struct networkcmp_io *io" "void *buffer" "size_t capacity"
+.Ft int
+.Fn networkcmp_send_datagram "struct networkcmp_io *io" "const void *buffer" "size_t length"
+.Ft ssize_t
+.Fn networkcmp_recv_datagram "struct networkcmp_io *io" "void *buffer" "size_t capacity"
+.Ft int
+.Fn networkcmp_event_fd "const struct networkcmp_io *io"
+.Ft void
+.Fn networkcmp_io_close "struct networkcmp_io *io"
+.Ft int
+.Fn networkcmp_resolve "int fd" "const char *host" "const char *service" "uint32_t family" "uint32_t socket_type" "uint32_t flags" "struct networkcmp_resolve_result *results" "size_t *nresults" "char *canonname" "size_t canonname_size" "uint32_t *ttl_seconds"
+.Ft int
+.Fn networkcmp_getaddrinfo "int fd" "const char *host" "const char *service" "const struct addrinfo *hints" "struct addrinfo **result"
+.Ft void
+.Fn networkcmp_freeaddrinfo "struct addrinfo *result"
+.Sh DESCRIPTION
+The
+.Nm
+library defines the provider-neutral
+.Dv org.5bsd.cmp.network
+version
+.Dv 1.0.0
+interface.
+Applications communicate with private or shared NetworkCmp instances through
+brokered
+.Xr libservice 3
+channels and transfer bulk TCP or datagram data using
+.Xr libshmring 3 .
+No provider-specific networking structure is part of the public ABI.
+.Pp
+The
+.Fn networkcmp_open
+function opens the channel injected under the consumer manifest's local
+.Fa component
+name.
+Passing
+.Dv NULL
+uses the local component name in
+.Ev NETWORKCMP ,
+which
+.Xr serviced 8
+sets when exactly one NetworkCmp session is injected or when the conventional
+.Ql network
+key disambiguates several sessions.
+If the variable is absent, the conventional name is used.
+The variable contains only a key into the sealed bootstrap descriptor and
+conveys no authority.
+The library never names, discovers, or falls back to a concrete provider;
+.Xr serviced 8
+resolves the requested interface and version before execution.
+This permits alternative providers to implement the same versioned protocol
+without changing application code.
+.Pp
+Control operations use bounded messages with opaque, generation-tagged
+handles.
+.Fn networkcmp_hello
+performs feature negotiation.
+.Fn networkcmp_client_open
+is the preferred entry point.
+It opens the injected channel, performs the initial negotiation, and records
+the selected values.
+The fields of
+.Vt struct networkcmp_preferences
+request TX ring size, RX ring size, and maximum datagram size.
+Each ring size must be a power of two within the protocol limits.
+A zero field selects the default configured for the selected serviced session
+or provider.
+Preferences are requests rather than authority: the reply returned by
+.Fn networkcmp_client_limits
+is the binding contract and may contain smaller values.
+Negotiation occurs once at initial contact, not for each socket or packet.
+.Fn networkcmp_negotiate
+provides the same operation for callers managing a raw channel.
+Typed functions are provided for socket creation, bind, connect, listen,
+accept, options, shutdown, close, and name resolution.
+.Fn networkcmp_resolve
+implements bounded
+.Xr getaddrinfo 3 Ns -style
+forward resolution without exposing provider or resolver descriptors.
+The caller supplies the result-array capacity through
+.Fa nresults ;
+on success it contains the number returned.
+An optional canonical-name buffer and TTL output may be supplied.
+A TTL of zero means the selected provider does not expose TTL information.
+.Fn networkcmp_getaddrinfo
+is the familiar convenience interface.
+It translates the bounded results into a linked
+.Vt struct addrinfo
+list and returns an
+.Dv EAI_*
+status.
+The resulting list must be released with
+.Fn networkcmp_freeaddrinfo ,
+not
+.Xr freeaddrinfo 3 .
+Protocol and resolver failures return
+.Li -1
+and set
+.Va errno .
+.Pp
+Typed operations are synchronous.
+The library serializes complete request/reply exchanges so threads cannot
+consume one another's replies.
+Fork handlers quiesce an in-flight exchange and leave the client lock usable
+in both parent and child.
+The descriptor returned by
+.Fn networkcmp_open
+is close-on-exec and owned by the caller.
+.Pp
+Bulk stream and datagram payloads use role-separated
+.Xr libshmring 3
+rings, while the control channel supplies wakeups and backpressure notices.
+.Fn networkcmp_attach_io
+creates and attaches one application-producer TX ring and one
+application-consumer RX ring using the negotiated values.
+.Fn networkcmp_write
+and
+.Fn networkcmp_read
+operate on stream rings.
+.Fn networkcmp_send_datagram
+and
+.Fn networkcmp_recv_datagram
+preserve one datagram per record.
+These operations are nonblocking and report ring backpressure with
+.Er EAGAIN .
+The library serializes producers and consumers independently, preserving the
+underlying single-producer/single-consumer contract while allowing ordinary
+multithreaded application use.
+.Fn networkcmp_event_fd
+returns the borrowed control descriptor used for
+.Xr kqueue 2
+notifications.
+The client must outlive every IO object attached through it.
+.Pp
+NetworkCmp transports bytes and datagrams only.
+It does not open or save files and receives no filesystem capability.
+An application that wants persistence reads from NetworkCmp and writes through
+its independently injected FileSystemCmp.
+The injected channel is non-transferable and locked against propagation
+beyond the supervised exec.
+.Pp
+The
+.Ql networkcmp
+DTrace provider exposes component-open, message-send, message-receive, and
+message-reject probes.
+Provider daemons audit policy decisions through OpenBSM; client-library
+activity is operational telemetry and is not audited.
+.Sh SEE ALSO
+.Xr getaddrinfo 3 ,
+.Xr libservice 3 ,
+.Xr libshmring 3

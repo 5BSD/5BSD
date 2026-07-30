@@ -1,0 +1,10 @@
+comment = "libnetmap capability-mode tests"
+
+desc = <<EOD
+Tests for caller-supplied netmap descriptors and capability-mode openat
+registration.
+EOD
+
+annotations = {
+	set = "tests"
+}

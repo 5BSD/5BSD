@@ -48,6 +48,24 @@ log_loaded_manifest(const struct svc_manifest *m)
 	for (j = 0; j < m->nrequires; j++)
 		syslog(LOG_INFO, "startup: %s requires: %s",
 		    m->label, m->requires[j]);
+	for (j = 0; j < m->nimplements; j++)
+		syslog(LOG_INFO, "startup: %s implements: %s version=%s "
+		    "lifetimes=0x%x sharing=0x%x",
+		    m->label, m->implements[j].name,
+		    m->implements[j].version, m->implements[j].lifetimes,
+		    m->implements[j].sharing);
+	for (j = 0; j < m->ncomponents; j++)
+		syslog(LOG_INFO,
+		    "startup: %s component %s interface=%s version=%s provider=%s "
+		    "lifetime=%s sharing=%s required=%s",
+		    m->label, m->components[j].name,
+		    m->components[j].interface,
+		    m->components[j].version,
+		    m->components[j].provider[0] != '\0' ?
+		    m->components[j].provider : "default",
+		    component_lifetime_name(m->components[j].scope),
+		    m->components[j].shared ? "shared" : "exclusive",
+		    m->components[j].required ? "yes" : "no");
 
 	if (m->ncap_paths + m->ncap_files + m->ncap_net + m->ncap_jail +
 	    m->ncap_vsock + m->ncap_services + (m->cap_system != 0) > 0)

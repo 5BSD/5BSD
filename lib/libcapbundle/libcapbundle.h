@@ -23,7 +23,7 @@
 /* Limits */
 #define	CAPBUNDLE_MAX_SERVICES		32
 #define	CAPBUNDLE_MAX_PROVIDES		8
-#define	CAPBUNDLE_MAX_REQUIRES		8
+#define	CAPBUNDLE_MAX_REQUIRES		16
 #define	CAPBUNDLE_ID_MAX		128
 #define	CAPBUNDLE_VERSION_MAX		32
 #define	CAPBUNDLE_AUTHOR_MAX		128
@@ -31,6 +31,7 @@
 
 struct capbundle;
 struct capbundle_service;
+struct capbundle_policy;
 
 /*
  * Open and parse a .cap bundle directory.
@@ -93,6 +94,28 @@ int	capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen);
  * Returns 0 if acyclic, -1 with cycle description in errbuf.
  */
 int	capbundle_check_cycles(struct capbundle **bundles, unsigned nbundles,
+	    char *errbuf, size_t errlen);
+
+/*
+ * Resolve component requirements against a complete bundle set.
+ * Omitted providers select the unique service implementing the exact
+ * interface/version pair.  Explicit providers are policy pins and must
+ * advertise that pair.  Resolution adds dependency edges before sorting.
+ */
+int	capbundle_resolve_components(struct capbundle **bundles,
+	    unsigned nbundles, char *errbuf, size_t errlen);
+
+/*
+ * Load administrator-owned component provider policy.  Policy selects
+ * concrete implementations globally by interface/version or overrides one
+ * application-local component.  Consumer bundle manifests remain
+ * provider-neutral.
+ */
+int	capbundle_policy_open(const char *path, struct capbundle_policy **pp,
+	    char *errbuf, size_t errlen);
+void	capbundle_policy_close(struct capbundle_policy *policy);
+int	capbundle_resolve_components_policy(struct capbundle **bundles,
+	    unsigned nbundles, const struct capbundle_policy *policy,
 	    char *errbuf, size_t errlen);
 
 /*

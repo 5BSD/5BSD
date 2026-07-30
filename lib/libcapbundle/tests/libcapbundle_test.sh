@@ -760,8 +760,373 @@ reserved_environment_rejected_body() {
 environment { ORACLED_CHANNEL_FD = "99"; }
 UCL
 	atf_check -s exit:1 -e match:"invalid environment entry" servicectl verify "${dir}"
+	sed -i '' 's/ORACLED_CHANNEL_FD/SERVICE_BOOTSTRAP_FD/' \
+	    "${dir}/etc/envd.ucl"
+	atf_check -s exit:1 -e match:"invalid environment entry" \
+	    servicectl verify "${dir}"
+	sed -i '' 's/SERVICE_BOOTSTRAP_FD/NETWORKCMP/' \
+	    "${dir}/etc/envd.ucl"
+	atf_check -s exit:1 -e match:"invalid environment entry" \
+	    servicectl verify "${dir}"
+	sed -i '' 's/NETWORKCMP/FILESYSTEMCMP/' \
+	    "${dir}/etc/envd.ucl"
+	atf_check -s exit:1 -e match:"invalid environment entry" \
+	    servicectl verify "${dir}"
 }
 reserved_environment_rejected_cleanup() { rm -rf "$(atf_get_srcdir)/work.$$"; }
+
+atf_test_case component_manifest cleanup
+component_manifest_head() {
+	atf_set "descr" "Versioned components add validated provider dependencies"
+}
+component_manifest_body() {
+	TMPDIR=$(atf_get_srcdir)/work.$$
+	dir=$(create_bundle "Components" "org.test.components" "appd" \
+	    "org.test.components.app")
+	printf '#!/bin/sh\nexit 0\n' > "${dir}/bin/providerd"
+	chmod 755 "${dir}/bin/providerd"
+	cat > "${dir}/etc/providerd.ucl" <<'UCL'
+bundle_id = "org.test.components";
+version = "1.0";
+author = "test";
+program = "providerd";
+provides = ["org.test.component.provider"];
+implements = [{
+	interface = "org.5bsd.cmp.network";
+	version = "1.0.0";
+}];
+UCL
+	cat >> "${dir}/etc/appd.ucl" <<'UCL'
+components {
+	network {
+		interface = "org.5bsd.cmp.network";
+		version = "1.0.0";
+		scope = "private";
+		options { mtu = 1500; quic = false; }
+	}
+}
+UCL
+	atf_check -s exit:0 -o match:"Verification: PASSED" \
+	    servicectl verify "${dir}"
+}
+component_manifest_cleanup() { rm -rf "$(atf_get_srcdir)/work.$$"; }
+
+atf_test_case component_resolution_policy cleanup
+component_resolution_policy_head() {
+	atf_set "descr" \
+	    "Provider resolution is exact, deterministic, pinnable, and boot-ordered"
+}
+component_resolution_policy_body() {
+	TMPDIR=$(atf_get_srcdir)/work.$$
+
+	p1=$(create_bundle "ProviderOne" "org.test.provider.one" "p1d" \
+	    "org.test.provider.one")
+	cat >> "${p1}/etc/p1d.ucl" <<'UCL'
+implements = [{
+	interface = "org.test.cmp.storage";
+	version = "1.0.0";
+}];
+UCL
+	consumer=$(create_bundle "Consumer" "org.test.consumer" "consumerd" \
+	    "org.test.consumer")
+	cat >> "${consumer}/etc/consumerd.ucl" <<'UCL'
+components {
+	store {
+		interface = "org.test.cmp.storage";
+		version = "1.0.0";
+	}
+}
+UCL
+	atf_check -s exit:0 \
+	    -o match:"component: store.*provider=org.test.provider.one.*required=yes" \
+	    servicectl verify "${p1}" "${consumer}"
+	atf_check -s exit:0 \
+	    -o match:"component: store.*lifetime=process.*sharing=exclusive.*required=yes.*options=\\{\\}" \
+	    servicectl verify --effective "${p1}" "${consumer}"
+	atf_check -s exit:0 -o match:"user: capability" \
+	    servicectl verify --effective "${p1}" "${consumer}"
+	atf_check -s exit:0 -o match:"group: capability" \
+	    servicectl verify --effective "${p1}" "${consumer}"
+
+	p2=$(create_bundle "ProviderTwo" "org.test.provider.two" "p2d" \
+	    "org.test.provider.two")
+	cat >> "${p2}/etc/p2d.ucl" <<'UCL'
+implements = [{
+	interface = "org.test.cmp.storage";
+	version = "1.0.0";
+}];
+UCL
+	atf_check -s exit:1 -o ignore -e match:"has 2 providers.*pin provider" \
+	    servicectl verify "${p1}" "${p2}" "${consumer}"
+
+	pinned=$(create_bundle "Pinned" "org.test.pinned" "pinnedd" \
+	    "org.test.pinned")
+	cat >> "${pinned}/etc/pinnedd.ucl" <<'UCL'
+components {
+	store {
+		interface = "org.test.cmp.storage";
+		version = "1.0.0";
+		provider = "org.test.provider.two";
+	}
+}
+UCL
+	atf_check -s exit:0 \
+	    -o match:"component: store.*provider=org.test.provider.two" \
+	    servicectl verify "${p1}" "${p2}" "${pinned}"
+
+	ondemand=$(create_bundle "OnDemandProvider" "org.test.provider.lazy" \
+	    "lazyd" "org.test.provider.lazy")
+	cat >> "${ondemand}/etc/lazyd.ucl" <<'UCL'
+implements = [{
+	interface = "org.test.cmp.storage";
+	version = "1.0.0";
+}];
+on_demand = true;
+UCL
+	atf_check -s exit:1 -o ignore \
+	    -e match:"provider factory.*cannot be on_demand" \
+	    servicectl verify "${ondemand}" "${consumer}"
+
+	scoped=$(create_bundle "ScopedConsumer" "org.test.scoped.consumer" \
+	    "scopedd" "org.test.scoped.consumer")
+	cat >> "${scoped}/etc/scopedd.ucl" <<'UCL'
+components {
+	store {
+		interface = "org.test.cmp.storage";
+		version = "1.0.0";
+		lifetime = "jail";
+		sharing = "shared";
+	}
+}
+UCL
+	atf_check -s exit:1 -o ignore \
+	    -e match:"no provider.*sharing shared" \
+	    servicectl verify "${p1}" "${scoped}"
+
+	feature=$(create_bundle "FeatureProvider" "org.test.feature.provider" \
+	    "featured" "org.test.feature.provider")
+	cat >> "${feature}/etc/featured.ucl" <<'UCL'
+implements = [{
+	interface = "org.test.cmp.storage";
+	version = "1.0.0";
+	lifetimes = ["process", "job", "jail", "system"];
+	sharing = ["exclusive", "shared"];
+}];
+UCL
+	atf_check -s exit:0 \
+	    -o match:"provider=org.test.feature.provider.*lifetime=jail.*sharing=shared" \
+	    servicectl verify "${feature}" "${scoped}"
+}
+component_resolution_policy_cleanup() {
+	rm -rf "$(atf_get_srcdir)/work.$$"
+}
+
+atf_test_case administrator_provider_policy cleanup
+administrator_provider_policy_head() {
+	atf_set "descr" \
+	    "Administrator policy selects providers without consumer pins"
+}
+administrator_provider_policy_body() {
+	TMPDIR=$(atf_get_srcdir)/work.$$
+
+	p1=$(create_bundle "PolicyOne" "org.test.policy.one" "p1d" \
+	    "org.test.policy.one")
+	cat >> "${p1}/etc/p1d.ucl" <<'UCL'
+implements = [{
+	interface = "org.test.cmp.policy";
+	version = "1.0.0";
+}];
+UCL
+	p2=$(create_bundle "PolicyTwo" "org.test.policy.two" "p2d" \
+	    "org.test.policy.two")
+	cat >> "${p2}/etc/p2d.ucl" <<'UCL'
+implements = [{
+	interface = "org.test.cmp.policy";
+	version = "1.0.0";
+}];
+UCL
+	consumer=$(create_bundle "PolicyConsumer" "org.test.policy.consumer" \
+	    "consumerd" "org.test.policy.consumer")
+	cat >> "${consumer}/etc/consumerd.ucl" <<'UCL'
+components {
+	store {
+		interface = "org.test.cmp.policy";
+		version = "1.0.0";
+	}
+}
+UCL
+	cat > "${TMPDIR}/policy.ucl" <<'UCL'
+schema = "org.5bsd.serviced.policy";
+schema_version = "1.0.0";
+provider_defaults {
+	"org.test.cmp.policy" {
+		version = "1.0.0";
+		provider = "org.test.policy.one";
+	}
+}
+service_overrides {
+	"org.test.policy.consumer" {
+		components {
+			store { provider = "org.test.policy.two"; }
+		}
+	}
+}
+UCL
+	atf_check -s exit:0 -o match:"Validation: PASSED" \
+	    servicectl policy-check "${TMPDIR}/policy.ucl"
+	atf_check -s exit:0 -o save:effective.out \
+	    servicectl verify --effective --policy "${TMPDIR}/policy.ucl" \
+	    "${p1}" "${p2}" "${consumer}"
+	atf_check -s exit:0 -o match:"Effective configuration \\(policy " \
+	    grep "Effective configuration" effective.out
+	atf_check -s exit:0 \
+	    -o match:"component: store.*provider=org.test.policy.two" \
+	    grep "component: store" effective.out
+
+	cat > "${TMPDIR}/bad-policy.ucl" <<'UCL'
+schema = "org.5bsd.serviced.policy";
+schema_version = "1.0";
+provider_defaults = [];
+UCL
+	atf_check -s exit:1 -o ignore -e match:"schema_version" \
+	    servicectl policy-check "${TMPDIR}/bad-policy.ucl"
+}
+administrator_provider_policy_cleanup() {
+	rm -rf "$(atf_get_srcdir)/work.$$"
+}
+
+atf_test_case provider_policy_schema_hardening cleanup
+provider_policy_schema_hardening_head() {
+	atf_set "descr" \
+	    "Provider policy rejects unsafe files and malformed nested schemas"
+}
+provider_policy_schema_hardening_body() {
+	TMPDIR=$(atf_get_srcdir)/work.$$
+	mkdir -p "${TMPDIR}"
+
+	check_bad_policy()
+	{
+		name=$1
+		pattern=$2
+		shift 2
+		printf '%s\n' "$@" > "${TMPDIR}/${name}.ucl"
+		atf_check -s exit:1 -o ignore -e match:"${pattern}" \
+		    servicectl policy-check "${TMPDIR}/${name}.ucl"
+	}
+
+	: > "${TMPDIR}/empty.ucl"
+	atf_check -s exit:1 -o ignore -e match:'non-empty regular file' \
+	    servicectl policy-check "${TMPDIR}/empty.ucl"
+	check_bad_policy wrong-schema 'policy schema must be' \
+	    'schema = "org.example.policy";' \
+	    'schema_version = "1.0.0";'
+	check_bad_policy missing-version 'schema_version' \
+	    'schema = "org.5bsd.serviced.policy";'
+	check_bad_policy future-version 'schema_version' \
+	    'schema = "org.5bsd.serviced.policy";' \
+	    'schema_version = "2.0.0";'
+	check_bad_policy unknown-top 'unknown key' \
+	    'schema = "org.5bsd.serviced.policy";' \
+	    'schema_version = "1.0.0";' \
+	    'realm = "none";'
+	check_bad_policy duplicate-top 'duplicate' \
+	    'schema = "org.5bsd.serviced.policy";' \
+	    'schema = "org.5bsd.serviced.policy";' \
+	    'schema_version = "1.0.0";'
+	check_bad_policy defaults-array 'provider_defaults entries' \
+	    'schema = "org.5bsd.serviced.policy";' \
+	    'schema_version = "1.0.0";' \
+	    'provider_defaults = [];'
+	check_bad_policy bad-version 'provider_defaults entries' \
+	    'schema = "org.5bsd.serviced.policy";' \
+	    'schema_version = "1.0.0";' \
+	    'provider_defaults { "org.test.cmp" {' \
+	    'version = "1.0"; provider = "org.test.provider"; } }'
+	check_bad_policy bad-provider 'provider_defaults entries' \
+	    'schema = "org.5bsd.serviced.policy";' \
+	    'schema_version = "1.0.0";' \
+	    'provider_defaults { "org.test.cmp" {' \
+	    'version = "1.0.0"; provider = "../provider"; } }'
+	check_bad_policy default-extra 'provider_defaults entries' \
+	    'schema = "org.5bsd.serviced.policy";' \
+	    'schema_version = "1.0.0";' \
+	    'provider_defaults { "org.test.cmp" {' \
+	    'version = "1.0.0"; provider = "org.test.provider";' \
+	    'priority = 10; } }'
+	check_bad_policy duplicate-default 'duplicate' \
+	    'schema = "org.5bsd.serviced.policy";' \
+	    'schema_version = "1.0.0";' \
+	    'provider_defaults {' \
+	    '"org.test.cmp" { version = "1.0.0";' \
+	    'provider = "org.test.one"; }' \
+	    '"org.test.cmp" { version = "1.0.0";' \
+	    'provider = "org.test.two"; } }'
+	check_bad_policy override-empty 'service_overrides entries' \
+	    'schema = "org.5bsd.serviced.policy";' \
+	    'schema_version = "1.0.0";' \
+	    'service_overrides { "org.test.service" { components {} } }'
+	check_bad_policy override-extra 'service_overrides entries' \
+	    'schema = "org.5bsd.serviced.policy";' \
+	    'schema_version = "1.0.0";' \
+	    'service_overrides { "org.test.service" {' \
+	    'components { store { provider = "org.test.provider"; } }' \
+	    'priority = 10; } }'
+	check_bad_policy choice-extra 'service_overrides entries' \
+	    'schema = "org.5bsd.serviced.policy";' \
+	    'schema_version = "1.0.0";' \
+	    'service_overrides { "org.test.service" {' \
+	    'components { store { provider = "org.test.provider";' \
+	    'fallback = true; } } } }'
+	check_bad_policy duplicate-override 'duplicate' \
+	    'schema = "org.5bsd.serviced.policy";' \
+	    'schema_version = "1.0.0";' \
+	    'service_overrides { "org.test.service" { components {' \
+	    'store { provider = "org.test.one"; }' \
+	    'store { provider = "org.test.two"; } } } }'
+
+	mkdir "${TMPDIR}/directory.ucl"
+	atf_check -s exit:1 -o ignore -e match:'non-empty regular file' \
+	    servicectl policy-check "${TMPDIR}/directory.ucl"
+	printf '%s\n' \
+	    'schema = "org.5bsd.serviced.policy";' \
+	    'schema_version = "1.0.0";' > "${TMPDIR}/target.ucl"
+	ln -s target.ucl "${TMPDIR}/symlink.ucl"
+	atf_check -s exit:1 -o ignore -e ignore \
+	    servicectl policy-check "${TMPDIR}/symlink.ucl"
+	dd if=/dev/zero of="${TMPDIR}/oversized.ucl" bs=1048577 count=1 \
+	    2>/dev/null
+	atf_check -s exit:1 -o ignore -e match:'no larger than 1 MB' \
+	    servicectl policy-check "${TMPDIR}/oversized.ucl"
+}
+provider_policy_schema_hardening_cleanup() {
+	rm -rf "$(atf_get_srcdir)/work.$$"
+}
+
+atf_test_case execution_jail_manifest cleanup
+execution_jail_manifest_head() {
+	atf_set "descr" \
+	    "Named persistent execution jails and the default identity are visible"
+}
+execution_jail_manifest_body() {
+	TMPDIR=$(atf_get_srcdir)/work.$$
+	dir=$(create_bundle "Jailed" "org.test.jailed" "jailedd" \
+	    "org.test.jailed")
+	cat >> "${dir}/etc/jailedd.ucl" <<'UCL'
+jail {
+	name = "org-test-jailed";
+	path = "/jails/org-test-jailed";
+	hostname = "jailed.example.invalid";
+	ip4_addr = "192.0.2.33";
+}
+UCL
+	atf_check -s exit:0 -o match:"user: capability" \
+	    servicectl verify "${dir}"
+	atf_check -s exit:0 -o match:"jail: name=org-test-jailed.*persistent=yes" \
+	    servicectl verify "${dir}"
+}
+execution_jail_manifest_cleanup() {
+	rm -rf "$(atf_get_srcdir)/work.$$"
+}
 
 atf_test_case malformed_schema_matrix cleanup
 malformed_schema_matrix_head() {
@@ -782,9 +1147,13 @@ malformed_schema_matrix_body() {
 		    servicectl verify "$dir"
 	}
 
+	assert_bad duplicatekey "duplicate" \
+	    'bundle_id = "org.test.replacement";'
 	assert_bad args "arguments must be an array" 'arguments = "--shell words";'
 	assert_bad envtype "environment must be an object" 'environment = ["A=B"];'
 	assert_bad envname "invalid environment name" 'environment { "9BAD" = "x"; }'
+	assert_bad compenv "invalid environment entry" \
+	    'environment { SERVICED_COMPONENT_FDS = "network=99"; }'
 	assert_bad kmodname "invalid kernel module name" \
 	    'kmod_requires = ["../evil.ko"];'
 	assert_bad captype "capabilities must be an object" \
@@ -822,6 +1191,64 @@ malformed_schema_matrix_body() {
 	    'capabilities { services = ["channel"]; }'
 	assert_bad dupservice "duplicate capability service" \
 	    'capabilities { services = ["mount", "mount"]; }'
+	assert_bad comptype "components must be an object" \
+	    'components = [];'
+	assert_bad compentry "invalid components entry" \
+	    'components { network = "default"; }'
+	assert_bad compname "invalid component name" \
+	    'components { "bad,name" { interface = "org.test"; version = "1.0.0"; provider = "org.test.provider"; } }'
+	assert_bad compiface "requires a valid interface" \
+	    'components { network { provider = "org.test.provider"; } }'
+	assert_bad compoldiface "requires a valid interface" \
+	    'components { network { interface = "org.test/1"; version = "1.0.0"; provider = "org.test.provider"; } }'
+	assert_bad compversion "requires a semantic version" \
+	    'components { network { interface = "org.test"; provider = "org.test.provider"; } }'
+	assert_bad compbadversion "requires a semantic version" \
+	    'components { network { interface = "org.test"; version = "1"; provider = "org.test.provider"; } }'
+	assert_bad compprovider "invalid provider" \
+	    'components { network { interface = "org.test"; version = "1.0.0"; provider = 7; } }'
+	assert_bad compmissing "has no provider" \
+	    'components { network { interface = "org.test.unknown"; version = "1.0.0"; } }'
+	assert_bad compscope "invalid scope" \
+	    'components { network { interface = "org.test"; version = "1.0.0"; provider = "org.test.provider"; scope = "global"; } }'
+	assert_bad comprealm "invalid scope" \
+	    'components { network { interface = "org.test"; version = "1.0.0"; provider = "org.test.provider"; scope = "realm"; } }'
+	assert_bad complifetime "invalid lifetime" \
+	    'components { network { interface = "org.test"; version = "1.0.0"; lifetime = "realm"; } }'
+	assert_bad compbothscope "both scope and lifetime" \
+	    'components { network { interface = "org.test"; version = "1.0.0"; scope = "private"; lifetime = "process"; } }'
+	assert_bad compsharing "invalid sharing" \
+	    'components { network { interface = "org.test"; version = "1.0.0"; sharing = "sometimes"; } }'
+	assert_bad comprequired "required must be boolean" \
+	    'components { network { interface = "org.test"; version = "1.0.0"; provider = "org.test.provider"; required = "yes"; } }'
+	assert_bad compoptions "options must be an object" \
+	    'components { network { interface = "org.test"; version = "1.0.0"; provider = "org.test.provider"; options = []; } }'
+	assert_bad implementsold "implements entries must be interface declarations" \
+	    'implements = ["org.test/1"];'
+	assert_bad implementsversion "requires a semantic version" \
+	    'implements = [{ interface = "org.test"; version = "1.0"; }];'
+	assert_bad implementslifetimetype "implements lifetimes" \
+	    'implements = [{ interface = "org.test"; version = "1.0.0"; lifetimes = "process"; }];'
+	assert_bad implementslifetime "invalid or duplicate" \
+	    'implements = [{ interface = "org.test"; version = "1.0.0"; lifetimes = ["realm"]; }];'
+	assert_bad implementssharing "invalid or duplicate" \
+	    'implements = [{ interface = "org.test"; version = "1.0.0"; sharing = ["shared", "shared"]; }];'
+	assert_bad schemaonly "declared together" \
+	    'schema = "org.5bsd.serviced.service";'
+	assert_bad schemaname "schema must be" \
+	    'schema = "org.example.service"; schema_version = "1.0.0";'
+	assert_bad schemaversion "schema_version must be" \
+	    'schema = "org.5bsd.serviced.service"; schema_version = "2.0.0";'
+	assert_bad jailtype "jail" \
+	    'jail = [];'
+	assert_bad jailname "requires a valid non-empty name" \
+	    'jail { path = "/jails/test"; }'
+	assert_bad jailpath "requires an absolute path" \
+	    'jail { name = "test"; path = "relative"; }'
+	assert_bad jailip "invalid ip4_addr" \
+	    'jail { name = "test"; path = "/jails/test"; ip4_addr = "bad"; }'
+	assert_bad jailkey "unknown key" \
+	    'jail { name = "test"; path = "/jails/test"; vnet = true; }'
 }
 malformed_schema_matrix_cleanup() { rm -rf "$(atf_get_srcdir)/work.$$"; }
 
@@ -891,6 +1318,11 @@ atf_init_test_cases() {
 	atf_add_test_case arguments_environment_and_vsock
 	atf_add_test_case unknown_key_rejected
 	atf_add_test_case reserved_environment_rejected
+	atf_add_test_case component_manifest
+	atf_add_test_case component_resolution_policy
+	atf_add_test_case administrator_provider_policy
+	atf_add_test_case provider_policy_schema_hardening
+	atf_add_test_case execution_jail_manifest
 	atf_add_test_case malformed_schema_matrix
 	atf_add_test_case symlink_rejected
 	atf_add_test_case excess_service_manifests_rejected

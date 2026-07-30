@@ -1,0 +1,10 @@
+comment = "netmapd bearer policy tests"
+
+desc = <<EOD
+Protocol, descriptor-cardinality, interface allowlist, option-injection, and
+physical-interface denial tests for netmapd.
+EOD
+
+annotations = {
+	set = "tests"
+}

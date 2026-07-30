@@ -36,6 +36,8 @@
 
 #include <stdint.h>
 
+#include "component_session.h"
+
 /*
  * Public service_protect() flags.  Keep kernel protocol details behind
  * libservice so service programs do not need mac_capability headers.
@@ -71,9 +73,9 @@
 __BEGIN_DECLS
 
 /*
- * Initialize the library.  Reads ORACLED_CHANNEL_FD from environment.
- * Must be called before any other function.
- * Returns 0 on success, -1 on failure (pair fd not set).
+ * Initialize the library from serviced's versioned bootstrap descriptor.
+ * The descriptor is validated, mapped read-only, and closed before return.
+ * Must be called exactly once before any other function.
  */
 int	service_init(void);
 
@@ -84,6 +86,12 @@ int	service_init(void);
 int	service_channel_fd(void);
 
 /*
+ * Return the immutable serviced manifest label for this process.
+ * The returned pointer remains owned by libservice.
+ */
+const char *service_label(void);
+
+/*
  * Return a borrowed descriptor for a manifest-declared capability service.
  * Current names are "mount", "node", "accounting", and "identity".
  * These descriptors are ready for service-specific ioctls; unlike access
@@ -92,27 +100,52 @@ int	service_channel_fd(void);
 int	service_capability_fd(const char *name);
 
 /*
- * Activate every isolation token listed in ORACLED_TOKEN_FDS for the
- * calling process.  serviced only delivers tokens; policy activation is
- * deliberately an explicit service decision.  The function consumes the
- * token descriptors and removes ORACLED_TOKEN_FDS after validation.  Because
- * kernel authorization is a descriptor lease, the library retains private
- * close-on-exec references until process exit; callers must not close or
- * otherwise use the descriptor numbers from the removed environment value.
+ * Return the borrowed channel for a manifest-declared component session.
+ * The name is the key used under the manifest's components object.
+ */
+int	service_component_fd(const char *name);
+
+/*
+ * Provider-side component bootstrap helpers.  The receive helper validates
+ * the versioned frame and copies its NUL-terminated JSON options.  A
+ * successful reply must attach one procdesc or coalition membership fd;
+ * an error reply attaches no descriptor.
+ */
+int	service_component_recv_bootstrap(int fd,
+	    struct component_session_bootstrap *bootstrap, char *options,
+	    size_t options_size);
+int	service_component_send_reply(int fd, uint64_t instance_id, int status,
+	    uint32_t member_type, int member_fd);
+
+/*
+ * Activate every isolation token delivered in the bootstrap descriptor.
+ * serviced only delivers tokens; policy activation is deliberately an
+ * explicit service decision.  The function consumes the token descriptors.
+ * Because kernel authorization is a descriptor lease, the library retains
+ * private close-on-exec references until process exit.
  */
 int	service_authorize_capabilities(void);
 
 /*
  * Apply mac_capability_capprotect shielding to this service process.
- * The service must have inherited ORACLED_CAPPROTECT_FD from serviced.
+ * The service must have received a capprotect instance from serviced.
  * Use SERVICE_PROTECT_* flags.  A flags value of 0 requests all current
  * capprotect protections; explicit flags are preferable for stable policy.
  */
 int	service_protect(uint32_t flags);
 
 /*
- * Report readiness to serviced.  Dependents waiting on this
- * service's provides[] will not start until ready is sent.
+ * Drop every descriptor authority retained internally by libservice.
+ * A freshly forked component worker calls this after service_protect() and
+ * before cap_enter().  Application-owned session, ring, and bearer
+ * descriptors are not affected.
+ */
+void	service_drop_inherited_authority(void);
+
+/*
+ * Enter Capsicum capability mode, then send the compatibility readiness
+ * advisory.  serviced promotes dependents from the independently observed
+ * and verified NOTE_CAPMODE process-descriptor event.
  * Returns 0 on success, -1 on failure.
  */
 int	service_ready(void);
@@ -154,12 +187,27 @@ int	service_accept(char *client_label, size_t labelsz);
 int	service_send(int fd, const void *data, size_t len);
 
 /*
+ * Send a message with zero or more attached descriptors.
+ * The descriptors are borrowed for the duration of the call.
+ */
+int	service_send_fds(int fd, const void *data, size_t len,
+	    const int *fds, size_t nfds);
+
+/*
  * Receive a message from a pair fd.  Convenience wrapper.
  * Returns bytes received on success, -1 on failure.
  * If peer_fd is non-NULL and the message carries an attached fd,
  * it is stored there (-1 if no fd attached).
  */
 ssize_t	service_recv(int fd, void *buf, size_t bufsz, int *peer_fd);
+
+/*
+ * Receive a message and zero or more attached descriptors.
+ * On entry, *nfds is the capacity of fds[].  On success it is the number
+ * received.  The caller owns all returned descriptors.
+ */
+ssize_t	service_recv_fds(int fd, void *buf, size_t bufsz, int *fds,
+	    size_t *nfds);
 
 __END_DECLS
 

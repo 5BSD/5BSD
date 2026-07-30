@@ -1,0 +1,10 @@
+comment = "Capability service client library tests"
+
+desc = <<EOD
+Tests for capability service initialization, descriptor authorization,
+component injection, and provider bootstrap validation.
+EOD
+
+annotations = {
+	set = "tests"
+}

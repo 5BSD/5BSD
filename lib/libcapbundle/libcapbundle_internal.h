@@ -27,6 +27,28 @@
 #define	CAPBUNDLE_MAX_CAP_VSOCK		16
 #define	CAPBUNDLE_MAX_CAP_SERVICES	SERVICED_MAX_CAP_SERVICES
 #define	CAPBUNDLE_MAX_KMOD_REQUIRES	8
+#define	CAPBUNDLE_POLICY_MAX_DEFAULTS	32
+#define	CAPBUNDLE_POLICY_MAX_OVERRIDES	128
+
+struct capbundle_policy_default {
+	char	interface[SERVICED_COMPONENT_INTERFACE_MAX];
+	char	version[SERVICED_COMPONENT_VERSION_MAX];
+	char	provider[SERVICED_COMPONENT_PROVIDER_MAX];
+};
+
+struct capbundle_policy_override {
+	char	service[SERVICED_LABEL_MAX];
+	char	component[SERVICED_COMPONENT_NAME_MAX];
+	char	provider[SERVICED_COMPONENT_PROVIDER_MAX];
+};
+
+struct capbundle_policy {
+	struct capbundle_policy_default defaults[CAPBUNDLE_POLICY_MAX_DEFAULTS];
+	unsigned ndefaults;
+	struct capbundle_policy_override overrides[
+	    CAPBUNDLE_POLICY_MAX_OVERRIDES];
+	unsigned noverrides;
+};
 
 /* Internal service representation. */
 struct capbundle_service {
@@ -40,6 +62,10 @@ struct capbundle_service {
 	unsigned nprovides;
 	char	requires[CAPBUNDLE_MAX_REQUIRES][CAPBUNDLE_NAME_MAX + 1];
 	unsigned nrequires;
+	struct serviced_interface implements[SERVICED_MAX_IMPLEMENTS];
+	unsigned nimplements;
+	struct serviced_component components[SERVICED_MAX_COMPONENTS];
+	unsigned ncomponents;
 	bool	on_demand;
 	int	restart;
 	uint32_t cap_system;		/* SYS_GATE_* bitmask */
@@ -71,6 +97,13 @@ struct capbundle_service {
 	/* User/group for privilege drop */
 	char	user[64];
 	char	group[64];
+
+	/* Named persistent jail used as the service execution container. */
+	bool	has_jail;
+	char	jail_name[64];
+	char	jail_path[PATH_MAX];
+	char	jail_hostname[64];
+	char	jail_ip4_addr[64];
 
 	/* Required kernel modules */
 	char	kmod_requires[CAPBUNDLE_MAX_KMOD_REQUIRES][128];

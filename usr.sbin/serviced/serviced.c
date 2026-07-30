@@ -31,7 +31,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <limits.h>
+#include <pwd.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -174,6 +176,53 @@ usage(void)
 	exit(1);
 }
 
+/*
+ * Validate the pkgbase-installed default identity.  serviced deliberately
+ * never edits passwd or group databases during startup: installation,
+ * upgrade, rollback, and immutable-/etc handling belong to pkgbase.
+ */
+static int
+validate_default_identity(void)
+{
+	struct group *group;
+	struct passwd *user;
+
+	group = getgrnam(SERVICED_DEFAULT_GROUP);
+	user = getpwnam(SERVICED_DEFAULT_USER);
+	if (group == NULL || user == NULL) {
+		errno = ENOENT;
+		goto fail;
+	}
+	if (user->pw_uid == 0 || user->pw_gid != group->gr_gid ||
+	    strcmp(user->pw_dir, "/nonexistent") != 0 ||
+	    strcmp(user->pw_shell, "/usr/sbin/nologin") != 0) {
+		errno = EPERM;
+		goto fail;
+	}
+	syslog(LOG_INFO, "default service identity validated: %s:%s "
+	    "uid=%ju gid=%ju",
+	    SERVICED_DEFAULT_USER, SERVICED_DEFAULT_GROUP,
+	    (uintmax_t)user->pw_uid, (uintmax_t)group->gr_gid);
+	SERVICED_PROBE_IDENTITY_VALIDATE(SERVICED_DEFAULT_USER,
+	    SERVICED_DEFAULT_GROUP, 0);
+	serviced_audit(AUE_SERVICED_SVC_EXEC, getuid(), 0,
+	    "pkgbase default identity validated user=%s group=%s uid=%ju gid=%ju",
+	    SERVICED_DEFAULT_USER, SERVICED_DEFAULT_GROUP,
+	    (uintmax_t)user->pw_uid, (uintmax_t)group->gr_gid);
+	return (0);
+
+fail:
+	SERVICED_PROBE_IDENTITY_VALIDATE(SERVICED_DEFAULT_USER,
+	    SERVICED_DEFAULT_GROUP, errno != 0 ? errno : EIO);
+	syslog(LOG_CRIT, "invalid pkgbase default service identity %s:%s: %m",
+	    SERVICED_DEFAULT_USER, SERVICED_DEFAULT_GROUP);
+	serviced_audit(AUE_SERVICED_SVC_EXEC, getuid(),
+	    errno != 0 ? errno : EIO,
+	    "pkgbase default identity validation failed user=%s group=%s",
+	    SERVICED_DEFAULT_USER, SERVICED_DEFAULT_GROUP);
+	return (-1);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -314,6 +363,9 @@ main(int argc, char *argv[])
 			}
 		}
 	}
+
+	if (validate_default_identity() == -1)
+		return (1);
 
 	/* Create kqueue early — needed for signal handling during setup. */
 	serviced_kq = kqueue();

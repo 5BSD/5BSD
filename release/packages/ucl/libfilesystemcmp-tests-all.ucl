@@ -1,0 +1,9 @@
+comment = "FileSystemCmp protocol tests"
+
+desc = <<EOD
+Tests for the versioned public FileSystemCmp client and provider protocol.
+EOD
+
+annotations = {
+	set = "tests"
+}

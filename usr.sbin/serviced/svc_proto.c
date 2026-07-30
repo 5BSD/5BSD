@@ -69,11 +69,11 @@ handle_svc_ready(struct svc_runtime *svc, uint64_t reply_token)
 
 	if (svc->state == SVC_STATE_STARTING ||
 	    svc->state == SVC_STATE_RUNNING) {
-		svc->state = SVC_STATE_RUNNING;
-		syslog(LOG_INFO, "service %s: reported ready",
-		    svc->manifest.label);
-		/* Drain any on-demand waiters for this service. */
-		on_demand_check_ready(svc, serviced_kq);
+		svc->protocol_ready = true;
+		syslog(LOG_INFO, "service %s: application reported ready%s",
+		    svc->manifest.label,
+		    svc->state == SVC_STATE_RUNNING ?
+		    " after sandbox entry" : "");
 	}
 	svc_channel_reply(svc, SVC_OP_READY, 0, reply_token, NULL, 0);
 }

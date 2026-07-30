@@ -25,8 +25,8 @@
 
 /* Service runtime state */
 #define	SVC_STATE_STOPPED		0
-#define	SVC_STATE_STARTING		1	/* pdfork'd, awaiting NOTE_EXEC */
-#define	SVC_STATE_RUNNING		2	/* SVC_OP_READY received */
+#define	SVC_STATE_STARTING		1	/* pdfork'd, awaiting NOTE_CAPMODE */
+#define	SVC_STATE_RUNNING		2	/* NOTE_CAPMODE verified */
 #define	SVC_STATE_STOPPING		3	/* graceful shutdown in progress */
 
 /*
@@ -46,6 +46,7 @@ struct svc_runtime {
 	int		channel_fd;	/* oracle's end of channel */
 	int		coalition_fd;	/* coalition service instance */
 	int		jail_fd;	/* jail descriptor (-1 if no jail) */
+	bool		protocol_ready;	/* SVC_OP_READY advisory received */
 
 	/* Restart tracking */
 	unsigned	restart_count;
@@ -220,6 +221,7 @@ svc_runtime_init_fds(struct svc_runtime *svc)
 	svc->channel_fd = -1;
 	svc->coalition_fd = -1;
 	svc->jail_fd = -1;
+	svc->protocol_ready = false;
 }
 
 /*
@@ -237,6 +239,22 @@ restart_policy_name(int policy)
 		return ("on-failure");
 	default:
 		return ("never");
+	}
+}
+
+static inline const char *
+component_lifetime_name(uint32_t lifetime)
+{
+
+	switch (lifetime) {
+	case SVC_COMPONENT_JAIL:
+		return ("jail");
+	case SVC_COMPONENT_SERVICE:
+		return ("job");
+	case SVC_COMPONENT_SYSTEM:
+		return ("system");
+	default:
+		return ("process");
 	}
 }
 

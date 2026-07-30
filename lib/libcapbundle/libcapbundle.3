@@ -1,4 +1,4 @@
-.Dd July 19, 2026
+.Dd July 29, 2026
 .Dt LIBCAPBUNDLE 3
 .Os
 .Sh NAME
@@ -55,6 +55,14 @@
 .Ft int
 .Fn capbundle_check_cycles "struct capbundle **bundles" "unsigned nbundles" "char *errbuf" "size_t errlen"
 .Ft int
+.Fn capbundle_resolve_components "struct capbundle **bundles" "unsigned nbundles" "char *errbuf" "size_t errlen"
+.Ft int
+.Fn capbundle_policy_open "const char *path" "struct capbundle_policy **pp" "char *errbuf" "size_t errlen"
+.Ft void
+.Fn capbundle_policy_close "struct capbundle_policy *policy"
+.Ft int
+.Fn capbundle_resolve_components_policy "struct capbundle **bundles" "unsigned nbundles" "const struct capbundle_policy *policy" "char *errbuf" "size_t errlen"
+.Ft int
 .Fn capbundle_scan_dir "const char *dirpath" "capbundle_scan_cb cb" "void *ctx"
 .Sh DESCRIPTION
 The
@@ -85,6 +93,10 @@ parses the bundle directory and all Service.ucl files.
 .It
 .Fn capbundle_verify
 validates integrity: binaries exist, provides are unique, no self-cycles.
+.It
+.Fn capbundle_resolve_components
+resolves each component request against the complete provider set and adds
+the resulting dependency edges.
 .It
 .Fn capbundle_svc_fill_manifest
 converts a parsed service to a
@@ -124,7 +136,79 @@ Maximum 8 entries; names must fit serviced's manifest label limit.
 .It Va requires
 (string or array, optional)
 Service names this service depends on.
-Maximum 8 entries.
+Maximum 16 entries, including dependencies added for component providers.
+.It Va implements
+(array, optional)
+Up to 8 objects identifying public component interfaces implemented by the
+service.
+Each entry requires separate
+.Va interface
+and semantic
+.Va version
+strings.
+Optional
+.Va lifetimes
+and
+.Va sharing
+arrays advertise provider-supported modes.
+When omitted they default to process lifetime and exclusive sharing.
+A component request resolves only when its requested mode is advertised.
+.It Va components
+(object, optional)
+Maps up to 8 application-local names to component requests.
+Each request requires separate
+.Va interface
+and semantic
+.Va version
+strings
+and may specify a
+.Va provider ,
+.Va lifetime ,
+.Va sharing ,
+.Va required
+boolean, and provider-defined
+.Va options
+object.
+The supported lifetimes are
+.Dq process ,
+.Dq job ,
+.Dq jail ,
+and
+.Dq system ;
+the default is
+.Dq process .
+Sharing is independently
+.Dq exclusive
+or
+.Dq shared
+and defaults to exclusive.
+The provider is normally omitted.
+.Fn capbundle_resolve_components
+selects the unique exact interface/version implementation from the complete
+bundle set.
+An explicit provider is a deprecated bundle-local policy pin.
+The
+.Fn capbundle_policy_open
+and
+.Fn capbundle_resolve_components_policy
+functions instead apply a separately administered version 1.0.0 provider
+policy containing interface defaults and per-service component overrides.
+Per-service overrides take precedence.
+Missing, ambiguous, mismatched, self-provided, or on-demand provider factories
+reject resolution.
+The resolved provider is added to
+.Va requires
+and must acknowledge each session with a procdesc or coalition descriptor.
+.It Va jail
+(object, optional)
+Named persistent execution jail with required
+.Va name
+and absolute
+.Va path
+and optional
+.Va hostname
+and
+.Va ip4_addr .
 .It Va kmod_requires
 (string or array, optional)
 Up to 8 kernel module names to load before launch for system bundles.
@@ -140,6 +224,14 @@ No shell parsing is performed.
 String-valued environment variables.
 Names beginning with
 .Dq ORACLED_
+or
+.Dq SERVICED_
+and the exact name
+.Dq SERVICE_BOOTSTRAP_FD
+,
+.Dq NETWORKCMP ,
+or
+.Dq FILESYSTEMCMP
 are reserved.
 .It Va on_demand
 (boolean, optional)

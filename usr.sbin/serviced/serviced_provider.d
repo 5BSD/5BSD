@@ -6,6 +6,7 @@ provider serviced {
 	/* Service lifecycle */
 	probe svc__start(const char *label, pid_t pid);
 	probe svc__exec(const char *label, pid_t pid);
+	probe svc__capmode(const char *label, pid_t pid, int protocol_ready);
 	probe svc__exit(const char *label, pid_t pid, int status);
 	probe svc__restart(const char *label, unsigned int count);
 	probe svc__stop(const char *label, pid_t pid);
@@ -21,7 +22,7 @@ provider serviced {
 	probe naming__register(const char *name, const char *owner);
 	probe naming__unregister(const char *name);
 	probe naming__lookup(const char *name, const char *requester);
-	probe naming__deny(const char *name, int err);
+	probe naming__deny(const char *name, int error_code);
 
 	/* Control socket */
 	probe sctl__cmd(uint32_t op, uid_t uid);
@@ -33,6 +34,16 @@ provider serviced {
 	probe cap__service(const char *label, const char *name, int result);
 	probe cap__channel(const char *label, int result);
 	probe cap__coalition(const char *label, int result);
+	probe identity__validate(const char *user, const char *group, int result);
+
+	/* Component session delegation */
+	probe component__resolve(const char *label, const char *name,
+		    const char *provider_name, int scope);
+	probe component__session(const char *label, const char *name,
+		    const char *provider_name, int result);
+	probe component__inject(const char *label, const char *name, int fd);
+	probe bootstrap__create(const char *label, unsigned int ntokens,
+		    unsigned int ndescriptors, int result);
 
 	/* Service exec setup duration (channel + tokens + fork) */
 	probe svc__exec__done(const char *label, uint64_t duration_ns, unsigned int ntokens);

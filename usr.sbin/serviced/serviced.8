@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd July 20, 2026
+.Dd July 29, 2026
 .Dt SERVICED 8
 .Os
 .Sh NAME
@@ -171,70 +171,77 @@ Each
 file declares one service.
 Files are parsed strictly and topologically sorted before launch.
 An unknown key, wrong type, invalid capability, excess entry, unknown
-dependency, duplicate provider, or dependency cycle rejects the bundle set;
+dependency, missing or ambiguous component provider, mismatched provider pin,
+duplicate provider, or dependency cycle rejects the bundle set;
 authority declarations are never silently dropped.
 .Pp
 The authoritative schema, including literal arguments, environment variables,
 restart policy, and filesystem, Internet, Bluetooth, VSOCK, jail, and system
 capabilities, is documented in
 .Xr serviced 5 .
-.Sh SERVICE ENVIRONMENT
-Each launched service receives a minimal environment:
-.Bl -tag -width "ORACLED_TOKEN_FDS"
-.It Ev PATH
-.Pa /sbin:/bin:/usr/sbin:/usr/bin
-.It Ev ORACLED_CHANNEL_FD
-File descriptor number for the mac_capability channel back to
+.Sh SERVICE BOOTSTRAP
+Each launched service receives one versioned, fixed-layout bootstrap object as
+a sealed, write-once
+.Xr envfd_create 2
+environment descriptor at fd 5.
+It contains the manifest label and typed tables for the service channel,
+optional capprotect instance, activation tokens, capability services, and
+component sessions.
+The descriptor may cross exactly one fork and one exec boundary, is
+non-transferable, becomes close-on-fork and close-on-exec locked in the new
+image, and is closed by
+.Fn service_init
+after strict validation.
+The non-authoritative
+.Ev SERVICE_BOOTSTRAP_FD=5
+entry provides classic environment-based discovery.
+No token, component, or capability-service descriptor table is encoded in
+environment strings.
+When a standard component interface has an unambiguous successfully injected
+local name,
 .Nm
-(always 3).
-Services use this via
-.Xr libservice 3
-to report readiness, register names, and look up other services.
-.It Ev ORACLED_TOKEN_FDS
-Comma-separated list of file descriptor numbers for capability
-tokens (starting at 5).
-Only set if the manifest declares capabilities.
-The descriptors appear in manifest-category order: paths, files,
-network endpoints, jail operations, VSOCK endpoints, and finally one combined
-system-gate token when system gates were requested.
+also sets
+.Ev NETWORKCMP
+or
+.Ev FILESYSTEMCMP .
+These are lookup keys into the sealed descriptor, not descriptor numbers or
+provider names.
+.Pp
+The service channel is fd 3, optional capprotect is fd 4, and authority
+descriptors occupy a contiguous range beginning at fd 6.
+Tokens appear first in manifest-category order: paths, files, network
+endpoints, jail operations, VSOCK endpoints, and finally one combined
+system-gate token.
+Capability-service descriptors follow, then component-session channels.
 All requested descriptors are installed before
 .Xr execve 2 ;
-the executed program is responsible for activating them under its new
-post-exec nonce.
-.Fn service_authorize_capabilities
+failure to construct or validate the complete set prevents normal service
+initialization.
+.Pp
+Before delegation of a component session,
+.Nm
+performs a typed bootstrap handshake with its provider, requires a procdesc or
+nested coalition descriptor for the assigned worker set, and enlists that set
+in the consumer coalition.
+The application-local component name is stored in the bootstrap;
+provider names and options are not exposed to the child.
+Component channels are non-transferable and restricted to event polling,
+metadata, and the required mac_capability transport ioctls.
+.Pp
+.Fn service_authorize_capabilities ,
+.Fn service_capability_fd ,
+.Fn service_component_fd ,
+.Fn service_protect ,
+and
+.Fn service_label
 from
 .Xr libservice 3
-provides the standard opt-in operation.
-It consumes the inherited activation-token descriptor numbers after validating
-the complete list and retains private close-on-exec references for the process
-lifetime.
-The retained references are required because closing the last token reference
-revokes the kernel authorization; close-on-exec prevents inheritance by a
-later program image.
-.It Ev ORACLED_CAPABILITY_FDS
-Comma-separated
-.Dq name=fd
-map for manifest-requested mount, node, accounting, and identity capability
-service
-descriptors.
-These descriptors follow the token range, are ready for service-specific
-ioctls, and are not activated as process access tokens.
-Programs obtain the borrowed descriptor with
-.Fn service_capability_fd
-from
-.Xr libservice 3 .
-All are acquired before
-.Xr pdfork 2 ;
-failure to acquire any requested descriptor prevents execution.
-.It Ev ORACLED_CAPPROTECT_FD
-Optional capprotect instance descriptor (always fd 4 when present).
-The supervisor does not activate it.
-The program chooses its own shield flags by calling
-.Fn service_protect
-from
-.Xr libservice 3 .
-.It Ev ORACLED_LABEL
-The service label from the manifest.
+are the supported interfaces to this state.
+.Sh SERVICE ENVIRONMENT
+Each launched service receives a minimal, non-authority environment:
+.Bl -tag -width "PATH"
+.It Ev PATH
+.Pa /sbin:/bin:/usr/sbin:/usr/bin
 .It Ev USER
 Set if
 .Va user
@@ -253,12 +260,18 @@ and
 .Ev HOME
 values, but not reserved
 .Ev ORACLED_*
-protocol variables.
+or
+.Ev SERVICED_*
+namespaces,
+.Ev SERVICE_BOOTSTRAP_FD ,
+.Ev NETWORKCMP ,
+or
+.Ev FILESYSTEMCMP .
 .El
 .Pp
 Standard I/O (fds 0, 1, 2) is redirected to
 .Pa /dev/null .
-All file descriptors above the token range are closed via
+All file descriptors above the bootstrap authority range are closed via
 .Xr closefrom 2 .
 .Sh SERVICE LIFECYCLE
 .Ss Dependency Sorting
@@ -281,13 +294,24 @@ monitors via
 .Dv EVFILT_PROCDESC
 for
 .Dv NOTE_EXEC
-(exec confirmed) and
+(exec confirmed),
+.Dv NOTE_CAPMODE
+(capability sandbox entered), and
 .Dv NOTE_EXIT
 (process exited).
+The process descriptor is limited to
+.Dv CAP_EVENT ,
+.Dv CAP_PDGETPID ,
+and
+.Dv CAP_PDKILL ;
+it is non-transferable and locked against later fork or exec propagation.
 .Pp
 Each service is enlisted in a coalition.
 The process descriptor is set as the coalition leader, providing
 resource grouping for the service and any children it creates.
+Assigned component workers are enlisted before the leader is released.
+A provider returns either a worker procdesc or a nested worker coalition;
+the consuming process never receives coalition-management authority.
 .Ss Service States
 A service transitions through the following states:
 .Bl -tag -width "STOPPING (3)" -compact
@@ -297,10 +321,12 @@ Not running.
 Process created via
 .Xr pdfork 2 ,
 awaiting
-.Dv NOTE_EXEC .
+.Dv NOTE_CAPMODE .
 .It RUNNING (2)
-.Dv NOTE_EXEC
-received; service is executing.
+.Dv NOTE_CAPMODE
+received and independently confirmed with
+.Xr pdincapmode 2 ;
+the service is executing inside its capability sandbox.
 .It STOPPING (3)
 Graceful shutdown in progress.
 .El
@@ -516,6 +542,11 @@ Service process created.
 .It Li svc-exec(label, pid)
 Service exec confirmed via
 .Dv NOTE_EXEC .
+.It Li svc-capmode(label, pid, protocol-ready)
+Capability-mode readiness confirmed via
+.Dv NOTE_CAPMODE
+and
+.Xr pdincapmode 2 .
 .It Li svc-exit(label, pid, status)
 Service process exited.
 .It Li svc-restart(label, count)
@@ -575,8 +606,19 @@ Channel created.
 .It Li cap-coalition(label, result)
 Coalition created.
 .El
+.Ss Components
+.Bl -tag -width "component-resolve(label, name, provider, scope)" -compact
+.It Li component-resolve(label, name, provider, scope)
+Provider resolution began.
+.It Li component-session(label, name, provider, result)
+Bootstrap, membership validation, and session setup completed or failed.
+.It Li component-inject(label, name, fd)
+An attenuated component client channel was selected for exec.
+.El
 .Ss Exec Setup
-.Bl -tag -width "svc-exec-done(label, duration_ns, ntokens)" -compact
+.Bl -tag -width "bootstrap-create(label, ntokens, ndescriptors, result)" -compact
+.It Li bootstrap-create(label, ntokens, ndescriptors, result)
+Typed bootstrap descriptor creation completed or failed.
 .It Li svc-exec-done(label, duration_ns, ntokens)
 Service exec setup completed.
 .It Li svc-exec-fail(label, errno)

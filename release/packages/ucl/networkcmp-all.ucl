@@ -1,0 +1,6 @@
+comment = "Capability-mode NetworkCmp resolver provider"
+
+desc = <<EOD
+The base NetworkCmp DNS resolver provider, installed as the verified
+/Capabilities/System/NetworkCmp.cap bundle.
+EOD

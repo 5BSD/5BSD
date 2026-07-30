@@ -305,6 +305,186 @@ capbundle_svc_environment(const struct capbundle_service *s, unsigned idx)
 	return (idx < s->nenvironment ? s->environment[idx] : NULL);
 }
 
+static bool
+service_implements(const struct capbundle_service *service,
+    const struct serviced_component *component)
+{
+	unsigned i;
+
+	for (i = 0; i < service->nimplements; i++)
+		if (strcmp(service->implements[i].name,
+		    component->interface) == 0 &&
+		    strcmp(service->implements[i].version,
+		    component->version) == 0 &&
+		    (service->implements[i].lifetimes &
+		    SVC_COMPONENT_LIFETIME_BIT(component->scope)) != 0 &&
+		    (service->implements[i].sharing &
+		    (component->shared ? SVC_COMPONENT_SHARING_SHARED :
+		    SVC_COMPONENT_SHARING_EXCLUSIVE)) != 0)
+			return (true);
+	return (false);
+}
+
+static bool
+service_provides(const struct capbundle_service *service, const char *name)
+{
+	unsigned i;
+
+	for (i = 0; i < service->nprovides; i++)
+		if (strcmp(service->provides[i], name) == 0)
+			return (true);
+	return (false);
+}
+
+static int
+component_add_dependency(struct capbundle_service *consumer,
+    const char *provider, char *errbuf, size_t errlen)
+{
+	unsigned i;
+
+	for (i = 0; i < consumer->nrequires; i++)
+		if (strcmp(consumer->requires[i], provider) == 0)
+			return (0);
+	if (consumer->nrequires >= CAPBUNDLE_MAX_REQUIRES) {
+		snprintf(errbuf, errlen,
+		    "%s: component dependencies exceed requires limit",
+		    consumer->label);
+		return (-1);
+	}
+	strlcpy(consumer->requires[consumer->nrequires++], provider,
+	    sizeof(consumer->requires[0]));
+	return (0);
+}
+
+static const char *
+policy_provider(const struct capbundle_policy *policy, const char *service,
+    const struct serviced_component *component)
+{
+	unsigned i;
+
+	if (policy == NULL)
+		return (NULL);
+	for (i = 0; i < policy->noverrides; i++)
+		if (strcmp(policy->overrides[i].service, service) == 0 &&
+		    strcmp(policy->overrides[i].component, component->name) == 0)
+			return (policy->overrides[i].provider);
+	for (i = 0; i < policy->ndefaults; i++)
+		if (strcmp(policy->defaults[i].interface,
+		    component->interface) == 0 &&
+		    strcmp(policy->defaults[i].version,
+		    component->version) == 0)
+			return (policy->defaults[i].provider);
+	return (NULL);
+}
+
+int
+capbundle_resolve_components_policy(struct capbundle **bundles,
+    unsigned nbundles, const struct capbundle_policy *policy,
+    char *errbuf, size_t errlen)
+{
+	struct capbundle_service *consumer, *candidate, *selected;
+	struct serviced_component *component;
+	const char *endpoint, *pinned;
+	unsigned bi, si, ci, pbi, psi, matches;
+
+	if (bundles == NULL && nbundles != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	for (bi = 0; bi < nbundles; bi++) {
+		if (bundles[bi] == NULL) {
+			errno = EINVAL;
+			return (-1);
+		}
+		for (si = 0; si < bundles[bi]->nservices; si++) {
+			consumer = &bundles[bi]->services[si];
+			for (ci = 0; ci < consumer->ncomponents; ci++) {
+				component = &consumer->components[ci];
+				pinned = component->provider[0] != '\0' ?
+				    component->provider :
+				    policy_provider(policy, consumer->label,
+				    component);
+				endpoint = NULL;
+				selected = NULL;
+				matches = 0;
+				for (pbi = 0; pbi < nbundles; pbi++) {
+					for (psi = 0;
+					    psi < bundles[pbi]->nservices; psi++) {
+						candidate =
+						    &bundles[pbi]->services[psi];
+						if (!service_implements(candidate,
+						    component))
+							continue;
+						if (pinned != NULL &&
+						    !service_provides(candidate, pinned))
+							continue;
+						if (candidate == consumer) {
+							snprintf(errbuf, errlen,
+							    "%s: component %s cannot use "
+							    "its own provider service",
+							    consumer->label,
+							    component->name);
+							return (-1);
+						}
+						if (candidate->nprovides == 0)
+							continue;
+						endpoint = pinned != NULL ?
+						    pinned :
+						    candidate->provides[0];
+						selected = candidate;
+						matches++;
+					}
+				}
+				if (matches == 0) {
+					snprintf(errbuf, errlen,
+					    "%s: component %s has no provider for "
+					    "%s version %s lifetime %u sharing %s%s%s",
+					    consumer->label, component->name,
+					    component->interface, component->version,
+					    component->scope,
+					    component->shared ? "shared" : "exclusive",
+					    pinned != NULL ?
+					    " pinned as " : "",
+					    pinned != NULL ? pinned : "");
+					return (-1);
+				}
+				if (matches != 1) {
+					snprintf(errbuf, errlen,
+					    "%s: component %s has %u providers for "
+					    "%s version %s; pin provider policy",
+					    consumer->label, component->name,
+					    matches, component->interface,
+					    component->version);
+					return (-1);
+				}
+				if (selected->on_demand) {
+					snprintf(errbuf, errlen,
+					    "%s: component %s provider factory %s "
+					    "cannot be on_demand",
+					    consumer->label, component->name,
+					    endpoint);
+					return (-1);
+				}
+				strlcpy(component->provider, endpoint,
+				    sizeof(component->provider));
+				if (component_add_dependency(consumer, endpoint,
+				    errbuf, errlen) == -1)
+					return (-1);
+			}
+		}
+	}
+	return (0);
+}
+
+int
+capbundle_resolve_components(struct capbundle **bundles, unsigned nbundles,
+    char *errbuf, size_t errlen)
+{
+
+	return (capbundle_resolve_components_policy(bundles, nbundles, NULL,
+	    errbuf, errlen));
+}
+
 /*
  * Fill a svc_manifest from a bundle service.
  * This is the canonical way to populate all fields including capabilities.
@@ -347,7 +527,51 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 			return (-1);
 	}
 
+	m->nimplements = s->nimplements;
+	for (i = 0; i < s->nimplements; i++) {
+		if (manifest_copy(s->implements[i].name,
+		    m->implements[i].name,
+		    sizeof(m->implements[i].name)) == -1 ||
+		    manifest_copy(s->implements[i].version,
+		    m->implements[i].version,
+		    sizeof(m->implements[i].version)) == -1)
+			return (-1);
+		m->implements[i].lifetimes = s->implements[i].lifetimes;
+		m->implements[i].sharing = s->implements[i].sharing;
+	}
+	m->ncomponents = s->ncomponents;
+	for (i = 0; i < s->ncomponents; i++) {
+		if (manifest_copy(s->components[i].name,
+		    m->components[i].name, sizeof(m->components[i].name)) == -1 ||
+		    manifest_copy(s->components[i].interface,
+		    m->components[i].interface,
+		    sizeof(m->components[i].interface)) == -1 ||
+		    manifest_copy(s->components[i].version,
+		    m->components[i].version,
+		    sizeof(m->components[i].version)) == -1 ||
+		    manifest_copy(s->components[i].provider,
+		    m->components[i].provider,
+		    sizeof(m->components[i].provider)) == -1 ||
+		    manifest_copy(s->components[i].options,
+		    m->components[i].options,
+		    sizeof(m->components[i].options)) == -1)
+			return (-1);
+		m->components[i].scope = s->components[i].scope;
+		m->components[i].required = s->components[i].required;
+		m->components[i].shared = s->components[i].shared;
+	}
+
 	m->cap_system = s->cap_system;
+	m->has_jail = s->has_jail;
+	if (manifest_copy(s->jail_name, m->jail_name,
+	    sizeof(m->jail_name)) == -1 ||
+	    manifest_copy(s->jail_path, m->jail_path,
+	    sizeof(m->jail_path)) == -1 ||
+	    manifest_copy(s->jail_hostname, m->jail_hostname,
+	    sizeof(m->jail_hostname)) == -1 ||
+	    manifest_copy(s->jail_ip4_addr, m->jail_ip4_addr,
+	    sizeof(m->jail_ip4_addr)) == -1)
+		return (-1);
 	m->on_demand = s->on_demand;
 	m->restart = s->restart;
 	m->stop_timeout = s->stop_timeout > 0 ? s->stop_timeout : 5;

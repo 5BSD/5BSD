@@ -1,0 +1,6 @@
+comment = "Restricted netmap bearer service"
+
+desc = <<EOD
+The verified Netmapd.cap system bundle that creates attenuated VALE netmap
+bearers for capability-mode userspace network components.
+EOD

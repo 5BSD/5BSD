@@ -441,11 +441,17 @@
         ..
         libexecinfo
         ..
+        libfilesystemcmp
+        ..
         libkvm
         ..
         libmd
         ..
         libmp
+        ..
+        libnetmap
+        ..
+        libnetworkcmp
         ..
         libnv
         ..
@@ -460,6 +466,8 @@
         libsbuf
         ..
         libservice
+        ..
+        libshmring
         ..
         libsysdecode
         ..

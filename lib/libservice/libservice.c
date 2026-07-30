@@ -9,8 +9,11 @@
  */
 
 #include <sys/types.h>
+#include <sys/capsicum.h>
+#include <sys/envfd.h>
 #include <sys/param.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
 #include <dev/mac_capability/mac_capability_capprotect_proto.h>
@@ -21,12 +24,14 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 #include "libservice.h"
+#include "service_bootstrap.h"
 #include "serviced_svc_proto.h"
 
 _Static_assert(SERVICE_PROTECT_PTRACE == CP_SF_PTRACE, "capprotect ABI");
@@ -48,8 +53,10 @@ _Static_assert(SERVICE_PROTECT_NOSOCK == CP_SF_NOSOCK, "capprotect ABI");
 static int pair_fd = -1;
 static int capprotect_fd = -1;
 static uint64_t next_token = 1;
+static bool service_initialized;
+static char service_label_value[SERVICE_BOOTSTRAP_LABEL_MAX];
 
-#define	SERVICE_CAPABILITY_MAX	4
+#define	SERVICE_CAPABILITY_MAX	SERVICE_BOOTSTRAP_CAPABILITY_MAX
 struct service_capability_entry {
 	char name[16];
 	int fd;
@@ -57,13 +64,23 @@ struct service_capability_entry {
 static struct service_capability_entry capability_fds[SERVICE_CAPABILITY_MAX];
 static unsigned ncapability_fds;
 
+#define	SERVICE_COMPONENT_MAX	SERVICE_BOOTSTRAP_COMPONENT_MAX
+struct service_component_entry {
+	char name[64];
+	int fd;
+};
+static struct service_component_entry component_fds[SERVICE_COMPONENT_MAX];
+static unsigned ncomponent_fds;
+
 /*
  * Isolation authorization is a descriptor lease: the kernel revokes it when
  * the last reference to the activation token closes.  Keep private,
  * close-on-exec duplicates after consuming the descriptors supplied by
  * serviced.  They intentionally remain open until process exit.
  */
-#define	SERVICE_TOKEN_MAX	128
+#define	SERVICE_TOKEN_MAX	SERVICE_BOOTSTRAP_TOKEN_MAX
+static int bootstrap_token_fds[SERVICE_TOKEN_MAX];
+static unsigned nbootstrap_token_fds;
 static int activated_token_fds[SERVICE_TOKEN_MAX];
 static unsigned nactivated_token_fds;
 
@@ -75,54 +92,219 @@ service_capability_name_valid(const char *name)
 	    strcmp(name, "accounting") == 0 || strcmp(name, "identity") == 0);
 }
 
-static int
-parse_capability_fds(void)
+static bool
+all_zero(const void *buffer, size_t length)
 {
-	struct mac_capability_info_args info;
-	const char *value, *errstr;
-	char *copy, *cursor, *entry, *equals;
-	unsigned i;
-	int fd, error;
+	const unsigned char *p;
+	size_t i;
 
-	ncapability_fds = 0;
-	value = getenv("ORACLED_CAPABILITY_FDS");
-	if (value == NULL || value[0] == '\0')
-		return (0);
-	copy = strdup(value);
-	if (copy == NULL)
-		return (-1);
-	cursor = copy;
-	while ((entry = strsep(&cursor, ",")) != NULL) {
-		equals = strchr(entry, '=');
-		if (equals == NULL || equals == entry || equals[1] == '\0' ||
-		    strchr(equals + 1, '=') != NULL ||
-		    ncapability_fds == SERVICE_CAPABILITY_MAX)
-			goto invalid;
-		*equals++ = '\0';
-		if (!service_capability_name_valid(entry))
-			goto invalid;
-		for (i = 0; i < ncapability_fds; i++)
-			if (strcmp(capability_fds[i].name, entry) == 0)
-				goto invalid;
-		fd = (int)strtonum(equals, 0, INT_MAX, &errstr);
-		if (errstr != NULL || fcntl(fd, F_GETFD) == -1)
-			goto invalid;
-		memset(&info, 0, sizeof(info));
-		if (ioctl(fd, MAC_CAPABILITY_GETINFO, &info) == -1 ||
-		    strncmp(info.name, entry, sizeof(info.name)) != 0)
-			goto invalid;
-		strlcpy(capability_fds[ncapability_fds].name, entry,
-		    sizeof(capability_fds[ncapability_fds].name));
-		capability_fds[ncapability_fds++].fd = fd;
+	p = buffer;
+	for (i = 0; i < length; i++)
+		if (p[i] != 0)
+			return (false);
+	return (true);
+}
+
+static bool
+zero_padded_string(const char *value, size_t size, bool allow_empty)
+{
+	size_t length;
+
+	length = strnlen(value, size);
+	return (length < size && (allow_empty || length != 0) &&
+	    all_zero(value + length + 1, size - length - 1));
+}
+
+static int
+parse_service_bootstrap(void)
+{
+	struct service_bootstrap storage;
+	const struct service_bootstrap *bootstrap = &storage;
+	struct envfd_info envinfo;
+	struct mac_capability_info_args info;
+	cap_rights_t actual_rights, expected_rights;
+	struct stat sb;
+	ssize_t received;
+	unsigned i, j;
+	int error, expected_fd;
+
+	memset(&envinfo, 0, sizeof(envinfo));
+	envinfo.ei_size = sizeof(envinfo);
+	if (ioctl(SERVICE_BOOTSTRAP_FD, ENVFD_GETINFO, &envinfo) == -1)
+		goto invalid_descriptor_close;
+	if (strcmp(envinfo.ei_name, SERVICE_BOOTSTRAP_ENVFD_NAME) != 0 ||
+	    envinfo.ei_flags != ENVFD_WRITE_ONCE ||
+	    envinfo.ei_state != ENVFD_STATE_SEALED ||
+	    envinfo.ei_value_size != sizeof(storage) ||
+	    envinfo.ei_max_value_size != sizeof(storage) ||
+	    !all_zero(envinfo.ei_reserved, sizeof(envinfo.ei_reserved))) {
+		errno = EPROTO;
+		goto fail_close;
 	}
-	free(copy);
+	if (fstat(SERVICE_BOOTSTRAP_FD, &sb) == -1)
+		goto fail_close;
+	if (sb.st_size != sizeof(*bootstrap)) {
+		errno = EPROTO;
+		goto fail_close;
+	}
+	received = read(SERVICE_BOOTSTRAP_FD, &storage, sizeof(storage));
+	if (received != (ssize_t)sizeof(storage)) {
+		if (received >= 0)
+			errno = EPROTO;
+		goto fail_close;
+	}
+	if (bootstrap->magic != SERVICE_BOOTSTRAP_MAGIC ||
+	    bootstrap->version != SERVICE_BOOTSTRAP_VERSION ||
+	    bootstrap->header_size != offsetof(struct service_bootstrap, label) ||
+	    bootstrap->total_size != sizeof(*bootstrap) ||
+	    (bootstrap->flags & ~SERVICE_BOOTSTRAP_FLAGS_MASK) != 0 ||
+	    bootstrap->channel_fd != 3 ||
+	    bootstrap->ntokens > SERVICE_TOKEN_MAX ||
+	    bootstrap->ncapabilities > SERVICE_CAPABILITY_MAX ||
+	    bootstrap->ncomponents > SERVICE_COMPONENT_MAX ||
+	    !all_zero(bootstrap->reserved, sizeof(bootstrap->reserved)) ||
+	    !zero_padded_string(bootstrap->label, sizeof(bootstrap->label),
+	    false) ||
+	    (((bootstrap->flags & SERVICE_BOOTSTRAP_F_CAPPROTECT) != 0) !=
+	    (bootstrap->capprotect_fd == 4)) ||
+	    ((bootstrap->flags & SERVICE_BOOTSTRAP_F_CAPPROTECT) == 0 &&
+	    bootstrap->capprotect_fd != -1)) {
+		errno = EPROTO;
+		goto fail_storage;
+	}
+	expected_fd = SERVICE_BOOTSTRAP_FD + 1;
+	for (i = 0; i < bootstrap->ntokens; i++, expected_fd++)
+		if (bootstrap->token_fds[i] != expected_fd) {
+			errno = EPROTO;
+			goto fail_storage;
+		}
+	if (!all_zero(&bootstrap->token_fds[bootstrap->ntokens],
+	    sizeof(bootstrap->token_fds) -
+	    bootstrap->ntokens * sizeof(bootstrap->token_fds[0]))) {
+		errno = EPROTO;
+		goto fail_storage;
+	}
+	for (i = 0; i < bootstrap->ncapabilities; i++, expected_fd++) {
+		if (bootstrap->capabilities[i].fd != expected_fd ||
+		    bootstrap->capabilities[i].reserved != 0 ||
+		    strnlen(bootstrap->capabilities[i].name,
+		    SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX) ==
+		    SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX ||
+		    !zero_padded_string(bootstrap->capabilities[i].name,
+		    sizeof(bootstrap->capabilities[i].name), false) ||
+		    !service_capability_name_valid(
+		    bootstrap->capabilities[i].name))
+			goto protocol;
+		for (j = 0; j < i; j++)
+			if (strcmp(bootstrap->capabilities[i].name,
+			    bootstrap->capabilities[j].name) == 0)
+				goto protocol;
+	}
+	if (!all_zero(&bootstrap->capabilities[bootstrap->ncapabilities],
+	    sizeof(bootstrap->capabilities) -
+	    bootstrap->ncapabilities * sizeof(bootstrap->capabilities[0])))
+		goto protocol;
+	for (i = 0; i < bootstrap->ncomponents; i++, expected_fd++) {
+		if (bootstrap->components[i].fd != expected_fd ||
+		    bootstrap->components[i].reserved != 0 ||
+		    !zero_padded_string(bootstrap->components[i].name,
+		    sizeof(bootstrap->components[i].name), false))
+			goto protocol;
+		for (j = 0; j < i; j++)
+			if (strcmp(bootstrap->components[i].name,
+			    bootstrap->components[j].name) == 0)
+				goto protocol;
+	}
+	if (!all_zero(&bootstrap->components[bootstrap->ncomponents],
+	    sizeof(bootstrap->components) -
+	    bootstrap->ncomponents * sizeof(bootstrap->components[0])))
+		goto protocol;
+
+	cap_rights_init(&expected_rights, CAP_READ, CAP_FSTAT, CAP_IOCTL);
+	if (cap_rights_get(SERVICE_BOOTSTRAP_FD, &actual_rights) == -1 ||
+	    !cap_rights_contains(&actual_rights, &expected_rights) ||
+	    !cap_rights_contains(&expected_rights, &actual_rights))
+		goto invalid_descriptor;
+
+	memset(&info, 0, sizeof(info));
+	if (fcntl(bootstrap->channel_fd, F_GETFD) == -1 ||
+	    ioctl(bootstrap->channel_fd, MAC_CAPABILITY_GETINFO, &info) == -1 ||
+	    strcmp(info.name, "channel") != 0)
+		goto invalid_descriptor;
+	if ((bootstrap->flags & SERVICE_BOOTSTRAP_F_CAPPROTECT) != 0) {
+		memset(&info, 0, sizeof(info));
+		if (fcntl(bootstrap->capprotect_fd, F_GETFD) == -1 ||
+		    ioctl(bootstrap->capprotect_fd, MAC_CAPABILITY_GETINFO,
+		    &info) == -1 || strcmp(info.name, "capprotect") != 0)
+			goto invalid_descriptor;
+	}
+	for (i = 0; i < bootstrap->ntokens; i++) {
+		memset(&info, 0, sizeof(info));
+		if (fcntl(bootstrap->token_fds[i], F_GETFD) == -1 ||
+		    ioctl(bootstrap->token_fds[i], MAC_CAPABILITY_GETINFO,
+		    &info) == -1 ||
+		    (strcmp(info.name, "isolation") != 0 &&
+		    strcmp(info.name, "system") != 0))
+			goto invalid_descriptor;
+	}
+	for (i = 0; i < bootstrap->ncapabilities; i++) {
+		memset(&info, 0, sizeof(info));
+		if (fcntl(bootstrap->capabilities[i].fd, F_GETFD) == -1 ||
+		    ioctl(bootstrap->capabilities[i].fd,
+		    MAC_CAPABILITY_GETINFO, &info) == -1 ||
+		    strncmp(info.name, bootstrap->capabilities[i].name,
+		    sizeof(info.name)) != 0)
+			goto invalid_descriptor;
+	}
+	for (i = 0; i < bootstrap->ncomponents; i++) {
+		memset(&info, 0, sizeof(info));
+		if (fcntl(bootstrap->components[i].fd, F_GETFD) == -1 ||
+		    ioctl(bootstrap->components[i].fd,
+		    MAC_CAPABILITY_GETINFO, &info) == -1 ||
+		    strcmp(info.name, "channel") != 0)
+			goto invalid_descriptor;
+	}
+
+	pair_fd = bootstrap->channel_fd;
+	capprotect_fd = bootstrap->capprotect_fd;
+	nbootstrap_token_fds = bootstrap->ntokens;
+	memcpy(bootstrap_token_fds, bootstrap->token_fds,
+	    nbootstrap_token_fds * sizeof(bootstrap_token_fds[0]));
+	ncapability_fds = bootstrap->ncapabilities;
+	for (i = 0; i < ncapability_fds; i++) {
+		capability_fds[i].fd = bootstrap->capabilities[i].fd;
+		strlcpy(capability_fds[i].name, bootstrap->capabilities[i].name,
+		    sizeof(capability_fds[i].name));
+	}
+	ncomponent_fds = bootstrap->ncomponents;
+	for (i = 0; i < ncomponent_fds; i++) {
+		component_fds[i].fd = bootstrap->components[i].fd;
+		strlcpy(component_fds[i].name, bootstrap->components[i].name,
+		    sizeof(component_fds[i].name));
+	}
+	strlcpy(service_label_value, bootstrap->label,
+	    sizeof(service_label_value));
+	explicit_bzero(&storage, sizeof(storage));
+	close(SERVICE_BOOTSTRAP_FD);
 	return (0);
 
-invalid:
+protocol:
+	errno = EPROTO;
+	goto fail_storage;
+invalid_descriptor:
+	errno = EINVAL;
+fail_storage:
 	error = errno;
-	free(copy);
-	ncapability_fds = 0;
-	errno = error == ENOMEM ? ENOMEM : EINVAL;
+	explicit_bzero(&storage, sizeof(storage));
+	close(SERVICE_BOOTSTRAP_FD);
+	errno = error;
+	return (-1);
+invalid_descriptor_close:
+	errno = EINVAL;
+fail_close:
+	error = errno;
+	close(SERVICE_BOOTSTRAP_FD);
+	errno = error;
 	return (-1);
 }
 
@@ -258,61 +440,28 @@ rpc(const void *req, uint32_t reqlen, int *reply_fd)
 int
 service_init(void)
 {
-	struct mac_capability_info_args info;
-	const char *s;
-	const char *errstr;
+	const char *bootstrap_fd;
 
-	pair_fd = -1;
-	capprotect_fd = -1;
-	ncapability_fds = 0;
-	s = getenv("ORACLED_CHANNEL_FD");
-	if (s == NULL) {
-		errno = ENOENT;
+	if (service_initialized) {
+		errno = EALREADY;
 		return (-1);
 	}
-	/*
-	 * Validate strictly: a malformed value must not silently resolve to
-	 * fd 0 (stdin) and have every RPC target the wrong descriptor.
-	 * strtonum() rejects non-numeric, empty, and out-of-range input.
-	 */
-	pair_fd = (int)strtonum(s, 0, INT_MAX, &errstr);
-	if (errstr != NULL) {
-		errno = EINVAL;
+	pair_fd = capprotect_fd = -1;
+	nbootstrap_token_fds = 0;
+	ncapability_fds = ncomponent_fds = 0;
+	service_label_value[0] = '\0';
+	bootstrap_fd = getenv(SERVICE_BOOTSTRAP_ENV);
+	if (bootstrap_fd == NULL) {
+		errno = EBADF;
 		return (-1);
 	}
-	memset(&info, 0, sizeof(info));
-	if (fcntl(pair_fd, F_GETFD) == -1) {
-		pair_fd = -1;
-		errno = EINVAL;
+	if (strcmp(bootstrap_fd, "5") != 0) {
+		errno = EPROTO;
 		return (-1);
 	}
-	if (ioctl(pair_fd, MAC_CAPABILITY_GETINFO, &info) == -1 ||
-	    strcmp(info.name, "channel") != 0) {
-		pair_fd = -1;
-		errno = EINVAL;
+	if (parse_service_bootstrap() == -1)
 		return (-1);
-	}
-	s = getenv("ORACLED_CAPPROTECT_FD");
-	if (s != NULL && s[0] != '\0') {
-		capprotect_fd = (int)strtonum(s, 0, INT_MAX, &errstr);
-		if (errstr != NULL || fcntl(capprotect_fd, F_GETFD) == -1) {
-			capprotect_fd = -1;
-			errno = EINVAL;
-			return (-1);
-		}
-		memset(&info, 0, sizeof(info));
-		if (ioctl(capprotect_fd, MAC_CAPABILITY_GETINFO, &info) == -1 ||
-		    strcmp(info.name, "capprotect") != 0) {
-			capprotect_fd = -1;
-			errno = EINVAL;
-			return (-1);
-		}
-	}
-	if (parse_capability_fds() != 0) {
-		pair_fd = -1;
-		capprotect_fd = -1;
-		return (-1);
-	}
+	service_initialized = true;
 	return (0);
 }
 
@@ -321,6 +470,17 @@ service_channel_fd(void)
 {
 
 	return (pair_fd);
+}
+
+const char *
+service_label(void)
+{
+
+	if (!service_initialized) {
+		errno = ENOTCONN;
+		return (NULL);
+	}
+	return (service_label_value);
 }
 
 int
@@ -345,6 +505,113 @@ service_capability_fd(const char *name)
 }
 
 int
+service_component_fd(const char *name)
+{
+	unsigned i;
+
+	if (pair_fd < 0) {
+		errno = ENOTCONN;
+		return (-1);
+	}
+	if (name == NULL || name[0] == '\0' ||
+	    strlen(name) >= sizeof(component_fds[0].name)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	for (i = 0; i < ncomponent_fds; i++) {
+		if (strcmp(component_fds[i].name, name) == 0)
+			return (component_fds[i].fd);
+	}
+	errno = ENOENT;
+	return (-1);
+}
+
+int
+service_component_recv_bootstrap(int fd,
+    struct component_session_bootstrap *bootstrap, char *options,
+    size_t options_size)
+{
+	struct {
+		struct component_session_bootstrap header;
+		char options[COMPONENT_SESSION_OPTIONS_MAX];
+	} message;
+	size_t nfds, options_length;
+	ssize_t received;
+
+	if (bootstrap == NULL || options == NULL || options_size == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	nfds = 0;
+	received = service_recv_fds(fd, &message, sizeof(message), NULL, &nfds);
+	if (received == -1)
+		return (-1);
+	options_length = message.header.options_length;
+	if ((size_t)received < sizeof(message.header) ||
+	    message.header.magic != COMPONENT_SESSION_MAGIC ||
+	    message.header.version != COMPONENT_SESSION_VERSION ||
+	    message.header.header_size != sizeof(message.header) ||
+	    message.header.length != (uint32_t)received ||
+	    message.header.scope < COMPONENT_SESSION_SCOPE_PRIVATE ||
+	    message.header.scope > COMPONENT_SESSION_SCOPE_SYSTEM ||
+	    (message.header.flags & ~COMPONENT_SESSION_F_MASK) != 0 ||
+	    message.header.name[0] == '\0' ||
+	    memchr(message.header.name, '\0',
+	    sizeof(message.header.name)) == NULL ||
+	    message.header.interface[0] == '\0' ||
+	    memchr(message.header.interface, '\0',
+	    sizeof(message.header.interface)) == NULL ||
+	    message.header.interface_version[0] == '\0' ||
+	    memchr(message.header.interface_version, '\0',
+	    sizeof(message.header.interface_version)) == NULL ||
+	    message.header.client_label[0] == '\0' ||
+	    memchr(message.header.client_label, '\0',
+	    sizeof(message.header.client_label)) == NULL ||
+	    options_length == 0 ||
+	    options_length > COMPONENT_SESSION_OPTIONS_MAX ||
+	    sizeof(message.header) + options_length != (size_t)received ||
+	    options_length > options_size ||
+	    message.options[options_length - 1] != '\0' ||
+	    memchr(message.options, '\0', options_length - 1) != NULL) {
+		errno = EPROTO;
+		return (-1);
+	}
+	*bootstrap = message.header;
+	memcpy(options, message.options, options_length);
+	return (0);
+}
+
+int
+service_component_send_reply(int fd, uint64_t instance_id, int status,
+    uint32_t member_type, int member_fd)
+{
+	struct component_session_reply reply;
+	const int *fds;
+	size_t nfds;
+
+	if (status < 0 ||
+	    (status == 0 && member_fd < 0) ||
+	    (status == 0 &&
+	    member_type != COMPONENT_SESSION_MEMBER_PROCDESC &&
+	    member_type != COMPONENT_SESSION_MEMBER_COALITION) ||
+	    (status != 0 && member_fd >= 0)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&reply, 0, sizeof(reply));
+	reply.magic = COMPONENT_SESSION_MAGIC;
+	reply.version = COMPONENT_SESSION_VERSION;
+	reply.header_size = sizeof(reply);
+	reply.length = sizeof(reply);
+	reply.status = status;
+	reply.member_type = status == 0 ? member_type : 0;
+	reply.instance_id = instance_id;
+	fds = status == 0 ? &member_fd : NULL;
+	nfds = status == 0 ? 1 : 0;
+	return (service_send_fds(fd, &reply, sizeof(reply), fds, nfds));
+}
+
+int
 service_authorize_capabilities(void)
 {
 	struct mac_capability_call_args call;
@@ -352,52 +619,34 @@ service_authorize_capabilities(void)
 	struct fi_request req;
 	struct fi_reply reply;
 	struct sys_request sysreq;
-	const char *value, *errstr;
-	char *copy, *cursor, *field;
 	int fds[SERVICE_TOKEN_MAX], owned_fds[SERVICE_TOKEN_MAX];
 	bool system_token[SERVICE_TOKEN_MAX];
-	unsigned i, j, nfds;
+	unsigned i, nfds;
 	int error;
 
-	value = getenv("ORACLED_TOKEN_FDS");
-	if (value == NULL || value[0] == '\0')
-		return (0);
-	copy = strdup(value);
-	if (copy == NULL)
+	if (!service_initialized) {
+		errno = ENOTCONN;
 		return (-1);
-	cursor = copy;
-	nfds = 0;
-	while ((field = strsep(&cursor, ",")) != NULL) {
-		if (field[0] == '\0' || nfds == nitems(fds) ||
-		    nactivated_token_fds + nfds == SERVICE_TOKEN_MAX) {
-			errno = EINVAL;
-			goto fail;
-		}
-		fds[nfds] = (int)strtonum(field, 0, INT_MAX, &errstr);
+	}
+	nfds = nbootstrap_token_fds;
+	if (nfds == 0)
+		return (0);
+	if (nactivated_token_fds + nfds > SERVICE_TOKEN_MAX) {
+		errno = EOVERFLOW;
+		return (-1);
+	}
+	for (i = 0; i < nfds; i++) {
+		fds[i] = bootstrap_token_fds[i];
 		memset(&info, 0, sizeof(info));
-		if (errstr != NULL || fcntl(fds[nfds], F_GETFD) == -1 ||
-		    ioctl(fds[nfds], MAC_CAPABILITY_GETINFO, &info) == -1 ||
+		if (fcntl(fds[i], F_GETFD) == -1 ||
+		    ioctl(fds[i], MAC_CAPABILITY_GETINFO, &info) == -1 ||
 		    (strcmp(info.name, "isolation") != 0 &&
 		    strcmp(info.name, "system") != 0)) {
 			errno = EINVAL;
-			goto fail;
+			return (-1);
 		}
-		for (j = 0; j < nfds; j++) {
-			if (fds[j] == fds[nfds]) {
-				errno = EINVAL;
-				goto fail;
-			}
-		}
-		for (j = 0; j < nactivated_token_fds; j++) {
-			if (activated_token_fds[j] == fds[nfds]) {
-				errno = EINVAL;
-				goto fail;
-			}
-		}
-		system_token[nfds] = strcmp(info.name, "system") == 0;
-		nfds++;
+		system_token[i] = strcmp(info.name, "system") == 0;
 	}
-	free(copy);
 	for (i = 0; i < nfds; i++) {
 		owned_fds[i] = fcntl(fds[i], F_DUPFD_CLOEXEC, 0);
 		if (owned_fds[i] == -1) {
@@ -438,21 +687,19 @@ consume:
 	 */
 	for (i = 0; i < nfds; i++) {
 		(void)close(fds[i]);
+		bootstrap_token_fds[i] = -1;
 		if (error == 0)
 			activated_token_fds[nactivated_token_fds++] =
 			    owned_fds[i];
 		else
 			(void)close(owned_fds[i]);
 	}
-	(void)unsetenv("ORACLED_TOKEN_FDS");
+	nbootstrap_token_fds = 0;
 	if (error != 0) {
 		errno = error;
 		return (-1);
 	}
 	return (0);
-fail:
-	free(copy);
-	return (-1);
 }
 
 int
@@ -479,11 +726,63 @@ service_protect(uint32_t flags)
 	return (0);
 }
 
+void
+service_drop_inherited_authority(void)
+{
+	unsigned i;
+
+	if (pair_fd >= 0) {
+		close(pair_fd);
+		pair_fd = -1;
+	}
+	if (capprotect_fd >= 0) {
+		close(capprotect_fd);
+		capprotect_fd = -1;
+	}
+	for (i = 0; i < ncapability_fds; i++) {
+		if (capability_fds[i].fd >= 0)
+			close(capability_fds[i].fd);
+		explicit_bzero(&capability_fds[i], sizeof(capability_fds[i]));
+		capability_fds[i].fd = -1;
+	}
+	ncapability_fds = 0;
+	for (i = 0; i < ncomponent_fds; i++) {
+		if (component_fds[i].fd >= 0)
+			close(component_fds[i].fd);
+		explicit_bzero(&component_fds[i], sizeof(component_fds[i]));
+		component_fds[i].fd = -1;
+	}
+	ncomponent_fds = 0;
+	for (i = 0; i < nbootstrap_token_fds; i++) {
+		if (bootstrap_token_fds[i] >= 0)
+			close(bootstrap_token_fds[i]);
+		bootstrap_token_fds[i] = -1;
+	}
+	nbootstrap_token_fds = 0;
+	for (i = 0; i < nactivated_token_fds; i++) {
+		if (activated_token_fds[i] >= 0)
+			close(activated_token_fds[i]);
+		activated_token_fds[i] = -1;
+	}
+	nactivated_token_fds = 0;
+	explicit_bzero(service_label_value, sizeof(service_label_value));
+}
+
 int
 service_ready(void)
 {
 	struct svc_req_hdr req;
+	unsigned int mode;
 
+	/*
+	 * Readiness is a security boundary, not merely an application hint.
+	 * Enter capability mode before sending the compatibility notification;
+	 * serviced independently observes NOTE_CAPMODE on our procdesc.
+	 */
+	if (cap_getmode(&mode) == -1)
+		return (-1);
+	if (mode == 0 && cap_enter() == -1)
+		return (-1);
 	memset(&req, 0, sizeof(req));
 	req.op = SVC_OP_READY;
 	return (rpc(&req, sizeof(req), NULL));
@@ -626,15 +925,25 @@ service_accept(char *client_label, size_t labelsz)
 int
 service_send(int fd, const void *data, size_t len)
 {
+	return (service_send_fds(fd, data, len, NULL, 0));
+}
+
+int
+service_send_fds(int fd, const void *data, size_t len, const int *fds,
+    size_t nfds)
+{
 	struct mac_capability_sendmsg_args sa;
 
-	if (len > UINT32_MAX || (data == NULL && len != 0)) {
+	if (len > UINT32_MAX || nfds > UINT32_MAX ||
+	    (data == NULL && len != 0) || (fds == NULL && nfds != 0)) {
 		errno = EINVAL;
 		return (-1);
 	}
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = data;
 	sa.payload_len = (uint32_t)len;
+	sa.fds = fds;
+	sa.nfds = (uint32_t)nfds;
 
 	if (ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == -1)
 		return (-1);
@@ -644,31 +953,54 @@ service_send(int fd, const void *data, size_t len)
 ssize_t
 service_recv(int fd, void *buf, size_t bufsz, int *peer_fd)
 {
-	struct mac_capability_recvmsg_args ra;
+	ssize_t n;
+	size_t nfds;
 	int pfd;
 
-	if (bufsz > UINT32_MAX || (buf == NULL && bufsz != 0)) {
+	pfd = -1;
+	nfds = peer_fd != NULL ? 1 : 0;
+	n = service_recv_fds(fd, buf, bufsz,
+	    peer_fd != NULL ? &pfd : NULL, &nfds);
+	if (n == -1)
+		return (-1);
+	if (peer_fd != NULL)
+		*peer_fd = nfds == 1 ? pfd : -1;
+	return (n);
+}
+
+ssize_t
+service_recv_fds(int fd, void *buf, size_t bufsz, int *fds, size_t *nfds)
+{
+	struct mac_capability_recvmsg_args ra;
+	size_t capacity, i;
+
+	if (nfds == NULL || bufsz > UINT32_MAX || *nfds > UINT32_MAX ||
+	    (buf == NULL && bufsz != 0) || (fds == NULL && *nfds != 0)) {
 		errno = EINVAL;
 		return (-1);
 	}
-	pfd = -1;
+	capacity = *nfds;
+	for (i = 0; i < capacity; i++)
+		fds[i] = -1;
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = buf;
 	ra.payload_len = (uint32_t)bufsz;
-	if (peer_fd != NULL) {
-		ra.fds = &pfd;
-		ra.nfds = 1;
-	}
+	ra.fds = fds;
+	ra.nfds = (uint32_t)capacity;
 
 	for (;;) {
 		if (ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0)
 			break;
 		if (errno == EINTR)
 			continue;
+		for (i = 0; i < capacity; i++) {
+			if (fds[i] >= 0)
+				close(fds[i]);
+		}
+		*nfds = 0;
 		return (-1);
 	}
 
-	if (peer_fd != NULL)
-		*peer_fd = pfd;
+	*nfds = ra.nfds;
 	return ((ssize_t)ra.payload_len);
 }
