@@ -6,8 +6,8 @@ MAN=	kldmgrd.8
 SRCS=	kldmgrd_main.c
 
 CFLAGS+=	-I${SRCTOP}/lib/libservice
-CFLAGS+=	-I${SRCTOP}/lib/libcapability
-LIBADD=		capability service
+CFLAGS+=	-I${SRCTOP}/lib/libchannel
+LIBADD=		bsm channel service
 
 DIRS+=	KLDMGR_CAP KLDMGR_CAP_BIN KLDMGR_CAP_ETC
 KLDMGR_CAP=	/Capabilities/System/Kldmgr.cap
@@ -26,6 +26,11 @@ SERVICESNAME_capbundle/kldmgrd.ucl=	kldmgrd.ucl
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
+
+.if ${MK_DTRACE} != "no"
+SRCS+=		kldmgrd_provider.d
+CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
+.endif
 
 .include <bsd.prog.mk>
 

@@ -3,13 +3,13 @@
 atf_test_case manifest cleanup
 manifest_head()
 {
-	atf_set "descr" "NetworkCmp resolver is a verified system .cap bundle"
+	atf_set "descr" "Kernel NetworkCmp is a verified system .cap bundle"
 }
 manifest_body()
 {
 	srcdir="@SRCTOP@/usr.sbin/networkcmp"
 	objdir="@OBJTOP@/usr.sbin/networkcmp"
-	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/servicectl}"
+	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	manifest="${srcdir}/capbundle/networkcmp.ucl"
 	bundle="${PWD}/NetworkCmp.cap"
 
@@ -24,7 +24,9 @@ manifest_body()
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
 	    "${servicectl}" verify "${bundle}"
-	atf_check -s exit:0 -o match:'org.5bsd.cmp.network' \
+	atf_check -s exit:0 -o match:'org.5bsd.NetworkCmp' \
+	    grep 'provides' "${manifest}"
+	atf_check -s exit:1 -o empty -e empty \
 	    grep 'interface' "${manifest}"
 	atf_check -s exit:0 -o match:'version = "1.0.0"' \
 	    grep 'version = "1.0.0"' "${manifest}"
@@ -35,13 +37,13 @@ manifest_cleanup()
 	rm -rf "${PWD}/NetworkCmp.cap"
 }
 
-atf_test_case resolver_security_contract
-resolver_security_contract_head()
+atf_test_case kernel_security_contract
+kernel_security_contract_head()
 {
 	atf_set "descr" \
-	    "Resolver worker is feature-bounded, audited and capability-sandboxed"
+	    "Kernel worker uses an attenuated network broker in capability mode"
 }
-resolver_security_contract_body()
+kernel_security_contract_body()
 {
 	source="@SRCTOP@/usr.sbin/networkcmp/networkcmp.c"
 
@@ -51,10 +53,16 @@ resolver_security_contract_body()
 	    grep cap_getaddrinfo "${source}"
 	atf_check -s exit:0 -o match:'CAPNET_NAME2ADDR' \
 	    grep CAPNET_NAME2ADDR "${source}"
-	atf_check -s exit:0 -o match:'SERVICE_PROTECT_NOSOCK' \
-	    grep SERVICE_PROTECT_NOSOCK "${source}"
-	atf_check -s exit:0 -o match:'SERVICE_PROTECT_NOFDRECV' \
-	    grep SERVICE_PROTECT_NOFDRECV "${source}"
+	atf_check -s exit:0 -o match:'CAPNET_CONNECT' \
+	    grep CAPNET_CONNECT "${source}"
+	atf_check -s exit:0 -o match:'CAPNET_BIND' \
+	    grep CAPNET_BIND "${source}"
+	atf_check -s exit:0 -o match:'cap_connect' \
+	    grep cap_connect "${source}"
+	atf_check -s exit:0 -o match:'cap_bind' \
+	    grep cap_bind "${source}"
+	atf_check -s exit:0 -o match:'socket' \
+	    grep -F 'socket(' "${source}"
 	atf_check -s exit:0 -o match:'CAP_XFER_NONE' \
 	    grep CAP_XFER_NONE "${source}"
 	atf_check -s exit:0 -o match:'CAP_CLOFORK_ONCE' \
@@ -72,5 +80,5 @@ resolver_security_contract_body()
 atf_init_test_cases()
 {
 	atf_add_test_case manifest
-	atf_add_test_case resolver_security_contract
+	atf_add_test_case kernel_security_contract
 }

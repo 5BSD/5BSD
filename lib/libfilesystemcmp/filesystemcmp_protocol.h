@@ -13,19 +13,21 @@
 
 #define	FILESYSTEMCMP_MAGIC		0x46434d50U	/* "FCMP" */
 #define	FILESYSTEMCMP_ABI_VERSION	1
-#define	FILESYSTEMCMP_INTERFACE	"org.5bsd.cmp.filesystem"
+#define	FILESYSTEMCMP_INTERFACE	"org.5bsd.filesystem"
 #define	FILESYSTEMCMP_INTERFACE_VERSION	"1.0.0"
 #define	FILESYSTEMCMP_MAX_MESSAGE	14336
 #define	FILESYSTEMCMP_NAME_MAX		255
+#define	FILESYSTEMCMP_PATH_MAX		4096
 #define	FILESYSTEMCMP_INLINE_MAX	(FILESYSTEMCMP_MAX_MESSAGE - \
 	    sizeof(struct filesystemcmp_msg) - \
 	    sizeof(struct filesystemcmp_io_request))
 
-#define	FILESYSTEMCMP_MSG_F_REPLY	0x00000001U
-#define	FILESYSTEMCMP_MSG_F_MASK	FILESYSTEMCMP_MSG_F_REPLY
+#define	FILESYSTEMCMP_MSG_F_MASK	0U
 
 #define	FILESYSTEMCMP_FEATURE_INLINE_IO	0x00000001U
 #define	FILESYSTEMCMP_FEATURE_SHM_RINGS	0x00000002U
+#define	FILESYSTEMCMP_FEATURE_PERSISTENT	0x00000004U
+#define	FILESYSTEMCMP_FEATURE_BUNDLE	0x00000008U
 
 #define	FILESYSTEMCMP_OPEN_READ		0x00000001U
 #define	FILESYSTEMCMP_OPEN_WRITE	0x00000002U
@@ -49,7 +51,21 @@ enum filesystemcmp_opcode {
 	FILESYSTEMCMP_OP_RENAME,
 	FILESYSTEMCMP_OP_CLOSE,
 	FILESYSTEMCMP_OP_ATTACH_RINGS,
-	FILESYSTEMCMP_OP_NOTIFY
+	FILESYSTEMCMP_OP_OPEN_NAMESPACE,
+	FILESYSTEMCMP_OP_SYNC,
+	FILESYSTEMCMP_OP_DUP
+};
+
+enum filesystemcmp_namespace {
+	FILESYSTEMCMP_NAMESPACE_SCRATCH = 1,
+	FILESYSTEMCMP_NAMESPACE_PERSISTENT = 2,
+	FILESYSTEMCMP_NAMESPACE_BUNDLE = 3
+};
+
+enum filesystemcmp_message_role {
+	FILESYSTEMCMP_MESSAGE_REQUEST = 1,
+	FILESYSTEMCMP_MESSAGE_REPLY,
+	FILESYSTEMCMP_MESSAGE_EVENT
 };
 
 struct filesystemcmp_msg {
@@ -57,10 +73,29 @@ struct filesystemcmp_msg {
 	uint16_t	version;
 	uint16_t	opcode;
 	uint32_t	flags;
-	uint32_t	length;
-	uint64_t	request_id;
 	int32_t		status;
-	uint32_t	reserved;
+} __attribute__((aligned(8)));
+
+_Static_assert(sizeof(struct filesystemcmp_msg) == 16,
+    "filesystemcmp message header ABI");
+
+/*
+ * ATTACH_RINGS attachment slots.  The fd values are receiver-local numbers
+ * installed by the channel; only this array order is protocol-visible.
+ * Each consecutive four-slot group is a libshmring endpoint in config, data,
+ * head, tail order.  libshmring validates object sizes, seals, mappings, and
+ * producer/consumer access when opening the endpoint.
+ */
+enum filesystemcmp_ring_fd_slot {
+	FILESYSTEMCMP_RING_FD_TX_CONFIG = 0,
+	FILESYSTEMCMP_RING_FD_TX_DATA,
+	FILESYSTEMCMP_RING_FD_TX_HEAD,
+	FILESYSTEMCMP_RING_FD_TX_TAIL,
+	FILESYSTEMCMP_RING_FD_RX_CONFIG,
+	FILESYSTEMCMP_RING_FD_RX_DATA,
+	FILESYSTEMCMP_RING_FD_RX_HEAD,
+	FILESYSTEMCMP_RING_FD_RX_TAIL,
+	FILESYSTEMCMP_RING_FD_COUNT
 };
 
 struct filesystemcmp_handle {
@@ -80,6 +115,11 @@ struct filesystemcmp_hello_reply {
 	uint32_t	features;
 	uint64_t	max_bytes;
 	uint64_t	max_objects;
+};
+
+struct filesystemcmp_namespace_request {
+	uint32_t	namespace;
+	uint32_t	reserved;
 };
 
 struct filesystemcmp_handle_reply {

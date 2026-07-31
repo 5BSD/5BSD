@@ -1,7 +1,8 @@
 comment = "FileSystemCmp protocol tests"
 
 desc = <<EOD
-Tests for the versioned public FileSystemCmp client and provider protocol.
+ABI, malformed-frame, descriptor-cardinality, typed-discovery, handle, and
+public FileSystemCmp client API tests.
 EOD
 
 annotations = {

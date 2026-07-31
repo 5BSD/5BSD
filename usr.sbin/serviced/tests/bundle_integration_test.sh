@@ -55,7 +55,7 @@ on_demand_launch_body() {
 	prepare_paths
 	build_lookup_client
 	create_user_bundle "LazyApp" "org.test.lazy" "lazyd" \
-	    "org.test.lazy.svc" 'on_demand = true;'
+	    "org.test.lazy.svc" ""
 
 	start_stack
 
@@ -94,7 +94,7 @@ version = "1.0";
 author = "test";
 program = "hangd";
 provides = ["org.test.hang.svc"];
-on_demand = true;'
+'
 
 	start_stack
 
@@ -106,42 +106,6 @@ on_demand = true;'
 	fi
 }
 on_demand_timeout_cleanup() {
-	cleanup_common
-}
-
-# ---------------------------------------------------------------
-# Test: Tier-based parallel startup
-# ---------------------------------------------------------------
-atf_test_case tiered_startup cleanup
-tiered_startup_head() {
-	atf_set "descr" "Services launch in dependency order via tiers"
-	atf_set "require.user" "root"
-	require_oracle_stack_kmods
-}
-tiered_startup_body() {
-	prepare_paths
-
-	# Create two services: B depends on A
-	create_system_bundle "Base" "org.test.base" "based" \
-	    "org.test.base.svc"
-	create_system_bundle_with_requires "Dep" "org.test.dep" "depd" \
-	    "org.test.dep.svc" "org.test.base.svc"
-
-	start_stack
-	wait_for_file "${WORK}/based.ready" 5
-	wait_for_file "${WORK}/depd.ready" 10
-
-	# Both should be running (labelled by provides[0]).
-	atf_check -s exit:0 -o match:"org.test.base.svc.*running" \
-	    servicectl -s "${CTL_SOCK}" status
-	atf_check -s exit:0 -o match:"org.test.dep.svc.*running" \
-	    servicectl -s "${CTL_SOCK}" status
-
-	# Base should have started before dep (check timestamps in log)
-	atf_check -s exit:0 -o match:"tier 0.*launched 1" \
-	    grep "tier 0" "${logfile}"
-}
-tiered_startup_cleanup() {
 	cleanup_common
 }
 
@@ -260,34 +224,6 @@ reload_remove_service_body() {
 	    servicectl -s "${CTL_SOCK}" status
 }
 reload_remove_service_cleanup() {
-	cleanup_common
-}
-
-# ---------------------------------------------------------------
-# Test: Circular dependency blocked at startup
-# ---------------------------------------------------------------
-atf_test_case circular_dep_fatal cleanup
-circular_dep_fatal_head() {
-	atf_set "descr" "Circular dependency aborts serviced startup"
-	atf_set "require.user" "root"
-	require_oracle_stack_kmods
-}
-circular_dep_fatal_body() {
-	prepare_paths
-
-	# Create circular: A requires B, B requires A.  Distinct bundle_ids so
-	# the registry keeps both bundles (and the cycle actually forms).
-	create_system_bundle_with_requires "CycA" "org.test.cyc.a" "cyca" \
-	    "org.test.cyc.a" "org.test.cyc.b"
-	create_system_bundle_with_requires "CycB" "org.test.cyc.b" "cycb" \
-	    "org.test.cyc.b" "org.test.cyc.a"
-
-	# serviced should refuse to start (depgraph detects cycle)
-	start_stack_expect_failure
-	atf_check -s exit:0 -o match:"cycle detected" \
-	    grep "cycle detected" "${logfile}"
-}
-circular_dep_fatal_cleanup() {
 	cleanup_common
 }
 
@@ -463,82 +399,6 @@ dtrace_probes_cleanup() {
 		esac
 		rm -f "${WORK}/dtrace.pid"
 	fi
-	cleanup_common
-}
-
-# ---------------------------------------------------------------
-# Test: Reload rejects cyclic dependency among new services
-# ---------------------------------------------------------------
-atf_test_case reload_cycle_rejected cleanup
-reload_cycle_rejected_head() {
-	atf_set "descr" "Reload rejects new bundles that form a dependency cycle"
-	atf_set "require.user" "root"
-	require_oracle_stack_kmods
-}
-reload_cycle_rejected_body() {
-	prepare_paths
-	start_stack
-
-	# Add two user bundles that form a cycle: A requires B, B requires A
-	create_user_bundle_custom "CycX" "cycd_x" \
-	    'bundle_id = "org.test.cyc.x";
-version = "1.0";
-author = "test";
-program = "cycd_x";
-provides = ["org.test.cyc.x"];
-requires = ["org.test.cyc.y"];'
-
-	create_user_bundle_custom "CycY" "cycd_y" \
-	    'bundle_id = "org.test.cyc.y";
-version = "1.0";
-author = "test";
-program = "cycd_y";
-provides = ["org.test.cyc.y"];
-requires = ["org.test.cyc.x"];'
-
-	atf_check -s exit:0 -o ignore \
-	    servicectl -s "${CTL_SOCK}" reload
-
-	# Cycle should be detected — check log
-	atf_check -s exit:0 -o ignore \
-	    grep "cycle detected\|dependency sort failed" "${logfile}"
-}
-reload_cycle_rejected_cleanup() {
-	cleanup_common
-}
-
-# ---------------------------------------------------------------
-# Test: Reload launches new services in dependency order
-# ---------------------------------------------------------------
-atf_test_case reload_dependency_order cleanup
-reload_dependency_order_head() {
-	atf_set "descr" "Reload sorts new services by dependency before launch"
-	atf_set "require.user" "root"
-	require_oracle_stack_kmods
-}
-reload_dependency_order_body() {
-	prepare_paths
-	start_stack
-
-	# Add provider and consumer — consumer requires provider
-	create_system_bundle "Provider" "org.test.prov" "provd" \
-	    "org.test.prov.svc"
-	create_system_bundle_with_requires "Consumer" "org.test.cons" "consd" \
-	    "org.test.cons.svc" "org.test.prov.svc"
-
-	atf_check -s exit:0 -o ignore \
-	    servicectl -s "${CTL_SOCK}" reload
-
-	sleep 1
-
-	# Both should have been launched (reload logs "reload: launched '<label>'"
-	# where label is provides[0]).
-	atf_check -s exit:0 -o ignore \
-	    grep "launched.*org.test.prov" "${logfile}"
-	atf_check -s exit:0 -o ignore \
-	    grep "launched.*org.test.cons" "${logfile}"
-}
-reload_dependency_order_cleanup() {
 	cleanup_common
 }
 
@@ -730,7 +590,6 @@ SVCEOF
 	author = "test";
 	program = "crashd";
 	provides = ["org.test.crash.svc"];
-	on_demand = true;
 	restart = "on-failure";
 	UCL
 
@@ -771,21 +630,20 @@ atf_init_test_cases() {
 	atf_add_test_case system_bundle_startup
 	atf_add_test_case on_demand_launch
 	atf_add_test_case on_demand_timeout
-	atf_add_test_case tiered_startup
 	atf_add_test_case stop_service
 	atf_add_test_case stop_nonexistent
 	atf_add_test_case stop_already_stopped
 	atf_add_test_case reload_new_service
 	atf_add_test_case reload_remove_service
-	atf_add_test_case reload_cycle_rejected
-	atf_add_test_case reload_dependency_order
 	atf_add_test_case reload_changed_bundle
-	atf_add_test_case circular_dep_fatal
 	atf_add_test_case missing_system_bundle_optional
 	atf_add_test_case coalition_kill_on_timeout
 	atf_add_test_case bundles_list
 	atf_add_test_case dtrace_probes
 	atf_add_test_case on_demand_concurrent_lookup
+	atf_add_test_case multiple_provides_secondary_activation
+	atf_add_test_case multiple_provides_failure_isolated
+	atf_add_test_case requester_crash_cancels_pending_lookup
 	atf_add_test_case on_demand_crash_relaunch
 	atf_add_test_case reload_noop
 	atf_add_test_case reload_attribution
@@ -804,7 +662,7 @@ on_demand_concurrent_lookup_body() {
 	prepare_paths
 	build_lookup_client
 	create_user_bundle "Shared" "org.test.shared" "sharedd" \
-	    "org.test.shared.svc" 'on_demand = true;'
+	    "org.test.shared.svc" ""
 
 	start_stack
 
@@ -830,6 +688,180 @@ on_demand_concurrent_lookup_body() {
 }
 on_demand_concurrent_lookup_cleanup() {
 	cleanup_common
+}
+
+# ---------------------------------------------------------------
+# Test: any provided name activates the same multi-endpoint process
+# ---------------------------------------------------------------
+atf_test_case multiple_provides_secondary_activation cleanup
+multiple_provides_secondary_activation_head() {
+	atf_set "descr" \
+	    "Concurrent lookups of two provided names launch one process and route each endpoint"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+multiple_provides_secondary_activation_body() {
+	local bundle first second p1 p2
+
+	prepare_paths
+	build_lookup_client
+	find_capd_service_fixture
+	first="org.test.multi.primary"
+	second="org.test.multi.secondary"
+	bundle=$(make_svc_bin user multi-provider \
+	    "provides = [\"${first}\", \"${second}\"];
+arguments = [\"multi-provider\", \"${first}\", \"${second}\",
+		    \"${WORK}/multi-registered.out\", \"${WORK}/multi-routed.out\"];
+restart = \"on-failure\";" "${capd_service_fixture}")
+
+	start_stack
+	run_lookup_client "${second}" &
+	p2=$!
+	run_lookup_client "${first}" &
+	p1=$!
+	wait "${p1}" || atf_fail "primary-name lookup failed"
+	wait "${p2}" || atf_fail "secondary-name lookup failed"
+	wait_for_file "${WORK}/multi-routed.out" 10 ||
+	    atf_fail "multi-name provider did not route both endpoints"
+	atf_check -s exit:0 -o match:"first=${first}" \
+	    grep "first=${first}" "${WORK}/multi-routed.out"
+	atf_check -s exit:0 -o match:"second=${second}" \
+	    grep "second=${second}" "${WORK}/multi-routed.out"
+	atf_check -s exit:0 -o match:'first_activations=1' \
+	    grep first_activations "${WORK}/multi-routed.out"
+	atf_check -s exit:0 -o match:'second_activations=1' \
+	    grep second_activations "${WORK}/multi-routed.out"
+	atf_check -s exit:0 -o match:'publication_ack_before_accept=yes' \
+	    grep publication_ack_before_accept "${WORK}/multi-routed.out"
+	atf_check -s exit:0 \
+	    -o match:'org.test.multi-provider.*conns=2' \
+	    servicectl -s "${CTL_SOCK}" status
+	count=$(grep -c "on_demand: launching 'org.test.multi-provider/multi-provider'" \
+	    "${logfile}" 2>/dev/null || true)
+	[ "${count}" -eq 1 ] ||
+	    atf_fail "multi-name service launched ${count} times"
+	stop_stack
+}
+multiple_provides_secondary_activation_cleanup() {
+	cleanup_common
+	rm -f multi-registered.out multi-routed.out
+}
+
+# ---------------------------------------------------------------
+# Test: readiness rejects a partially claimed provides set
+# ---------------------------------------------------------------
+atf_test_case multiple_provides_failure_isolated cleanup
+multiple_provides_failure_isolated_head() {
+	atf_set "descr" \
+	    "a provider cannot become ready until every declared name has a listener"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+multiple_provides_failure_isolated_body() {
+	local bundle first second
+
+	prepare_paths
+	build_lookup_client
+	find_capd_service_fixture
+	first="org.test.partial.primary"
+	second="org.test.partial.secondary"
+	bundle=$(make_svc_bin user partial-provider \
+	    "provides = [\"${first}\", \"${second}\"];
+arguments = [\"partial-provider\", \"${first}\",
+		    \"${WORK}/partial-ready.out\"];
+restart = \"never\";" "${capd_service_fixture}")
+
+	start_stack
+	wait_for_file "${WORK}/partial-ready.out" 5 ||
+	    atf_fail "provider did not report its rejected readiness"
+	atf_check -s exit:0 -o match:'process_ready=0' \
+	    grep process_ready "${WORK}/partial-ready.out"
+	atf_check -s exit:0 -o match:'ready_errno=71' \
+	    grep ready_errno "${WORK}/partial-ready.out"
+	atf_check -s exit:0 -o match:'readiness rejected' \
+	    grep "readiness rejected" "${logfile}"
+	if run_lookup_client "${first}" 2; then
+		atf_fail "partially claimed provider published its first endpoint"
+	fi
+	if run_lookup_client "${second}" 2; then
+		atf_fail "partially claimed provider published its missing endpoint"
+	fi
+	stop_stack
+}
+multiple_provides_failure_isolated_cleanup() {
+	cleanup_common
+	rm -f partial-ready.out
+}
+
+# ---------------------------------------------------------------
+# Test: pending lookup ownership follows one exact requester incarnation
+# ---------------------------------------------------------------
+atf_test_case requester_crash_cancels_pending_lookup cleanup
+requester_crash_cancels_pending_lookup_head() {
+	atf_set "descr" \
+	    "a crashed requester loses its pending token and its restarted incarnation receives only its own reply"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+requester_crash_cancels_pending_lookup_body() {
+	local client_bundle first_pid i provider_bundle service_name
+
+	prepare_paths
+	find_capd_service_fixture
+	service_name="org.test.lifecycle.delayed"
+	provider_bundle=$(make_svc_bin user delayed-provider \
+	    "provides = [\"${service_name}\"];
+restart = \"on-failure\";
+arguments = [\"delayed-provider\", \"${service_name}\", \"5000\",
+    \"${WORK}/delayed-provider.started\",
+    \"${WORK}/delayed-provider.result\"];" "${capd_service_fixture}")
+	client_bundle=$(make_svc_bin system restart-client \
+	    "restart = \"on-failure\";
+arguments = [\"crash-client\", \"${service_name}\",
+    \"${WORK}/restart-client.started\",
+    \"${WORK}/restart-client.result\"];" "${capd_service_fixture}")
+
+	start_stack
+	wait_for_file "${WORK}/restart-client.started" 5 ||
+	    atf_fail "first requester did not begin its lookup"
+	wait_for_file "${WORK}/delayed-provider.started" 5 ||
+	    atf_fail "lookup did not activate the delayed provider"
+	first_pid=$(sed -n 's/^pid=\([0-9][0-9]*\).*/\1/p' \
+	    "${WORK}/restart-client.started")
+	case "${first_pid}" in
+	''|*[!0-9]*) atf_fail "requester fixture returned an invalid PID" ;;
+	esac
+	kill -KILL "${first_pid}" ||
+	    atf_fail "could not crash the first requester"
+
+	i=0
+	while ! grep -q "canceled 1 pending lookup.*restart-client" \
+	    "${logfile}" 2>/dev/null && [ "${i}" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	[ "${i}" -lt 100 ] || {
+		cat "${logfile}" 2>/dev/null
+		atf_fail "serviced did not cancel the crashed requester's token"
+	}
+	wait_for_file "${WORK}/restart-client.result" 15 || {
+		cat "${logfile}" 2>/dev/null
+		atf_fail "restarted requester did not receive a fresh session"
+	}
+	atf_check -s exit:0 -o match:'connected=1' \
+	    grep connected "${WORK}/restart-client.result"
+	atf_check -s exit:0 -o match:"reply=${service_name}" \
+	    grep reply "${WORK}/restart-client.result"
+	wait_for_file "${WORK}/delayed-provider.result" 5 ||
+	    atf_fail "provider did not record the replacement session"
+	atf_check -s exit:0 -o match:'accepted=org.test.lifecycle.delayed' \
+	    grep accepted "${WORK}/delayed-provider.result"
+	stop_stack
+}
+requester_crash_cancels_pending_lookup_cleanup() {
+	cleanup_common
+	rm -f delayed-provider.started delayed-provider.result \
+	    restart-client.started restart-client.result
 }
 
 # ---------------------------------------------------------------

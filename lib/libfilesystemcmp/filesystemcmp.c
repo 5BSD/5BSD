@@ -8,9 +8,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <pthread.h>
-#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -22,7 +22,7 @@
 
 static const char filesystemcmp_dependency_note[]
     __attribute__((section(".note.5bsd.components"), used)) =
-    "interface=org.5bsd.cmp.filesystem\n"
+    "interface=org.5bsd.filesystem\n"
     "version=1.0.0\n"
     "local-name=filesystem\n"
     "required=true\n";
@@ -36,26 +36,46 @@ union filesystemcmp_buffer {
 	} wire;
 };
 
-static _Atomic uint64_t filesystemcmp_next_request = 1;
-static pthread_mutex_t filesystemcmp_rpc_lock = PTHREAD_MUTEX_INITIALIZER;
+struct filesystemcmp_client {
+	struct service_session	*channel;
+	pid_t			 owner;
+	uint32_t		 references;
+};
+
+static pthread_mutex_t filesystemcmp_registry_lock =
+    PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t filesystemcmp_registry_ready =
+    PTHREAD_COND_INITIALIZER;
 static pthread_once_t filesystemcmp_atfork_once = PTHREAD_ONCE_INIT;
+static struct filesystemcmp_client *filesystemcmp_process_client;
 static int filesystemcmp_atfork_error;
+static bool filesystemcmp_initializing;
 
 static void filesystemcmp_atfork_prepare(void) __no_lock_analysis;
-static void filesystemcmp_atfork_release(void) __no_lock_analysis;
+static void filesystemcmp_atfork_parent(void) __no_lock_analysis;
+static void filesystemcmp_atfork_child(void) __no_lock_analysis;
 
 static void
 filesystemcmp_atfork_prepare(void)
 {
 
-	(void)pthread_mutex_lock(&filesystemcmp_rpc_lock);
+	(void)pthread_mutex_lock(&filesystemcmp_registry_lock);
 }
 
 static void
-filesystemcmp_atfork_release(void)
+filesystemcmp_atfork_parent(void)
 {
 
-	(void)pthread_mutex_unlock(&filesystemcmp_rpc_lock);
+	(void)pthread_mutex_unlock(&filesystemcmp_registry_lock);
+}
+
+static void
+filesystemcmp_atfork_child(void)
+{
+
+	filesystemcmp_process_client = NULL;
+	filesystemcmp_initializing = false;
+	(void)pthread_mutex_unlock(&filesystemcmp_registry_lock);
 }
 
 static void
@@ -63,8 +83,8 @@ filesystemcmp_atfork_init(void)
 {
 
 	filesystemcmp_atfork_error = pthread_atfork(
-	    filesystemcmp_atfork_prepare, filesystemcmp_atfork_release,
-	    filesystemcmp_atfork_release);
+	    filesystemcmp_atfork_prepare, filesystemcmp_atfork_parent,
+	    filesystemcmp_atfork_child);
 }
 
 static bool
@@ -78,58 +98,202 @@ filesystemcmp_wire_name_valid(const void *name, uint32_t length)
 	    memchr(name, '/', length) == NULL);
 }
 
-int
-filesystemcmp_open(const char *component)
+static int
+filesystemcmp_header_validate(const struct filesystemcmp_msg *msg,
+    size_t received, enum filesystemcmp_message_role role)
 {
-	int fd, error;
 
-	if (component == NULL) {
-		component = getenv(FILESYSTEMCMP_ENV);
-		if (component == NULL)
-			component = "filesystem";
-	}
-	if (component[0] == '\0') {
-		errno = EINVAL;
-		FILESYSTEMCMP_PROBE_OPEN("", EINVAL);
+	if (msg == NULL || received < sizeof(*msg) ||
+	    received > FILESYSTEMCMP_MAX_MESSAGE ||
+	    (role != FILESYSTEMCMP_MESSAGE_REQUEST &&
+	    role != FILESYSTEMCMP_MESSAGE_REPLY &&
+	    role != FILESYSTEMCMP_MESSAGE_EVENT) ||
+	    msg->magic != FILESYSTEMCMP_MAGIC ||
+	    msg->version != FILESYSTEMCMP_ABI_VERSION ||
+	    msg->opcode < FILESYSTEMCMP_OP_HELLO ||
+	    msg->opcode > FILESYSTEMCMP_OP_DUP ||
+	    (msg->flags & ~FILESYSTEMCMP_MSG_F_MASK) != 0 ||
+	    (role != FILESYSTEMCMP_MESSAGE_REPLY && msg->status != 0) ||
+	    (role == FILESYSTEMCMP_MESSAGE_REPLY &&
+	    (msg->status > 0 || msg->status < -ELAST))) {
+		errno = EPROTO;
 		return (-1);
 	}
-	fd = service_component_fd(component);
-	if (fd >= 0)
-		fd = fcntl(fd, F_DUPFD_CLOEXEC, 0);
-	error = fd == -1 ? errno : 0;
-	FILESYSTEMCMP_PROBE_OPEN(component, error);
-	return (fd);
+	return (0);
+}
+
+int
+filesystemcmp_message_init(struct filesystemcmp_msg *msg, uint16_t opcode,
+    uint32_t flags)
+{
+
+	if (msg == NULL || opcode < FILESYSTEMCMP_OP_HELLO ||
+	    opcode > FILESYSTEMCMP_OP_DUP ||
+	    (flags & ~FILESYSTEMCMP_MSG_F_MASK) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(msg, 0, sizeof(*msg));
+	msg->magic = FILESYSTEMCMP_MAGIC;
+	msg->version = FILESYSTEMCMP_ABI_VERSION;
+	msg->opcode = opcode;
+	msg->flags = flags;
+	return (0);
+}
+
+int
+filesystemcmp_message_init_reply(struct filesystemcmp_msg *reply,
+    const struct filesystemcmp_msg *request, int status)
+{
+
+	if (reply == NULL || request == NULL ||
+	    filesystemcmp_header_validate(request, sizeof(*request),
+	    FILESYSTEMCMP_MESSAGE_REQUEST) == -1 ||
+	    status > 0 || status < -ELAST) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(reply, 0, sizeof(*reply));
+	reply->magic = FILESYSTEMCMP_MAGIC;
+	reply->version = FILESYSTEMCMP_ABI_VERSION;
+	reply->opcode = request->opcode;
+	reply->status = status;
+	return (0);
+}
+
+int
+filesystemcmp_open(struct filesystemcmp_client **clientp)
+    __no_lock_analysis
+{
+	struct filesystemcmp_client *client;
+	struct service_context *service;
+	int error, fd;
+
+	if (clientp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*clientp = NULL;
+	error = pthread_once(&filesystemcmp_atfork_once,
+	    filesystemcmp_atfork_init);
+	if (error == 0)
+		error = filesystemcmp_atfork_error;
+	if (error == 0)
+		error = pthread_mutex_lock(&filesystemcmp_registry_lock);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	while (filesystemcmp_initializing) {
+		error = pthread_cond_wait(&filesystemcmp_registry_ready,
+		    &filesystemcmp_registry_lock);
+		if (error != 0) {
+			(void)pthread_mutex_unlock(
+			    &filesystemcmp_registry_lock);
+			errno = error;
+			return (-1);
+		}
+	}
+	if (filesystemcmp_process_client != NULL) {
+		filesystemcmp_process_client->references++;
+		*clientp = filesystemcmp_process_client;
+		(void)pthread_mutex_unlock(&filesystemcmp_registry_lock);
+		return (0);
+	}
+	filesystemcmp_initializing = true;
+	(void)pthread_mutex_unlock(&filesystemcmp_registry_lock);
+	client = calloc(1, sizeof(*client));
+	if (client == NULL)
+		goto fail_create;
+	if (service_acquire(&service) == -1)
+		goto fail_create;
+	if (service_local_component_open(service, FILESYSTEMCMP_INTERFACE,
+	    FILESYSTEMCMP_INTERFACE_VERSION, &fd) == -1) {
+		error = errno;
+		service_release(service);
+		errno = error;
+		goto fail_create;
+	}
+	service_release(service);
+	if (service_session_create(fd, &client->channel) == -1) {
+		error = errno;
+		close(fd);
+		errno = error;
+		goto fail_create;
+	}
+	client->owner = getpid();
+	client->references = 1;
+	error = pthread_mutex_lock(&filesystemcmp_registry_lock);
+	if (error != 0) {
+		service_session_close(client->channel);
+		free(client);
+		errno = error;
+		return (-1);
+	}
+	filesystemcmp_process_client = client;
+	filesystemcmp_initializing = false;
+	*clientp = client;
+	(void)pthread_cond_broadcast(&filesystemcmp_registry_ready);
+	(void)pthread_mutex_unlock(&filesystemcmp_registry_lock);
+	FILESYSTEMCMP_PROBE_OPEN(__DECONST(char *, FILESYSTEMCMP_INTERFACE), 0);
+	return (0);
+
+fail_create:
+	error = errno;
+	free(client);
+	if (pthread_mutex_lock(&filesystemcmp_registry_lock) == 0) {
+		filesystemcmp_initializing = false;
+		(void)pthread_cond_broadcast(&filesystemcmp_registry_ready);
+		(void)pthread_mutex_unlock(&filesystemcmp_registry_lock);
+	}
+	FILESYSTEMCMP_PROBE_OPEN(__DECONST(char *, FILESYSTEMCMP_INTERFACE),
+	    error);
+	errno = error;
+	return (-1);
+}
+
+void
+filesystemcmp_close(struct filesystemcmp_client *client)
+    __no_lock_analysis
+{
+	struct service_session *channel;
+
+	if (client == NULL)
+		return;
+	if (pthread_mutex_lock(&filesystemcmp_registry_lock) != 0)
+		return;
+	if (client != filesystemcmp_process_client ||
+	    client->owner != getpid() || client->references == 0) {
+		(void)pthread_mutex_unlock(&filesystemcmp_registry_lock);
+		return;
+	}
+	if (--client->references != 0) {
+		(void)pthread_mutex_unlock(&filesystemcmp_registry_lock);
+		return;
+	}
+	filesystemcmp_process_client = NULL;
+	channel = client->channel;
+	(void)pthread_mutex_unlock(&filesystemcmp_registry_lock);
+	service_session_close(channel);
+	free(client);
 }
 
 int
 filesystemcmp_validate_message(const struct filesystemcmp_msg *msg,
-    size_t received)
+    size_t received, enum filesystemcmp_message_role role)
 {
 	size_t payload, expected;
 	uint16_t probe_opcode;
-	bool reply;
 
 	probe_opcode = msg != NULL ? msg->opcode : 0;
-	if (msg == NULL || received < sizeof(*msg) ||
-	    msg->magic != FILESYSTEMCMP_MAGIC ||
-	    msg->version != FILESYSTEMCMP_ABI_VERSION ||
-	    msg->opcode < FILESYSTEMCMP_OP_HELLO ||
-	    msg->opcode > FILESYSTEMCMP_OP_NOTIFY ||
-	    (msg->flags & ~FILESYSTEMCMP_MSG_F_MASK) != 0 ||
-	    msg->reserved != 0 ||
-	    msg->length != received || msg->length > FILESYSTEMCMP_MAX_MESSAGE) {
-		goto reject;
-	}
-	reply = (msg->flags & FILESYSTEMCMP_MSG_F_REPLY) != 0;
-	if ((msg->opcode != FILESYSTEMCMP_OP_NOTIFY &&
-	    msg->request_id == 0) ||
-	    (!reply && msg->status != 0) ||
-	    (reply && (msg->status > 0 || msg->status < -ELAST)))
+	if (filesystemcmp_header_validate(msg, received, role) == -1)
 		goto reject;
 	payload = received - sizeof(*msg);
-	if (reply && msg->status != 0)
+	if (role == FILESYSTEMCMP_MESSAGE_EVENT)
+		goto reject;
+	if (role == FILESYSTEMCMP_MESSAGE_REPLY && msg->status != 0)
 		expected = 0;
-	else if (reply) {
+	else if (role == FILESYSTEMCMP_MESSAGE_REPLY) {
 		switch (msg->opcode) {
 		case FILESYSTEMCMP_OP_HELLO: {
 			const struct filesystemcmp_hello_reply *hello;
@@ -140,14 +304,18 @@ filesystemcmp_validate_message(const struct filesystemcmp_msg *msg,
 				if (hello->version != FILESYSTEMCMP_ABI_VERSION ||
 				    (hello->features &
 				    ~(FILESYSTEMCMP_FEATURE_INLINE_IO |
-				    FILESYSTEMCMP_FEATURE_SHM_RINGS)) != 0)
+				    FILESYSTEMCMP_FEATURE_SHM_RINGS |
+				    FILESYSTEMCMP_FEATURE_PERSISTENT |
+				    FILESYSTEMCMP_FEATURE_BUNDLE)) != 0)
 					goto reject;
 			}
 			break;
 		}
 		case FILESYSTEMCMP_OP_OPEN_ROOT:
+		case FILESYSTEMCMP_OP_OPEN_NAMESPACE:
 		case FILESYSTEMCMP_OP_LOOKUP:
 		case FILESYSTEMCMP_OP_OPEN:
+		case FILESYSTEMCMP_OP_DUP:
 		case FILESYSTEMCMP_OP_CREATE: {
 			const struct filesystemcmp_handle_reply *handle;
 
@@ -220,15 +388,31 @@ filesystemcmp_validate_message(const struct filesystemcmp_msg *msg,
 				    FILESYSTEMCMP_ABI_VERSION ||
 				    (hello->features &
 				    ~(FILESYSTEMCMP_FEATURE_INLINE_IO |
-				    FILESYSTEMCMP_FEATURE_SHM_RINGS)) != 0)
+				    FILESYSTEMCMP_FEATURE_SHM_RINGS |
+				    FILESYSTEMCMP_FEATURE_PERSISTENT |
+				    FILESYSTEMCMP_FEATURE_BUNDLE)) != 0)
 					goto reject;
 			}
 			break;
 		}
 		case FILESYSTEMCMP_OP_OPEN_ROOT:
-		case FILESYSTEMCMP_OP_NOTIFY:
 			expected = 0;
 			break;
+		case FILESYSTEMCMP_OP_OPEN_NAMESPACE: {
+			const struct filesystemcmp_namespace_request *request;
+
+			expected = sizeof(*request);
+			if (payload == expected) {
+				request = (const void *)(msg + 1);
+				if (request->namespace <
+				    FILESYSTEMCMP_NAMESPACE_SCRATCH ||
+				    request->namespace >
+				    FILESYSTEMCMP_NAMESPACE_BUNDLE ||
+				    request->reserved != 0)
+					goto reject;
+			}
+			break;
+		}
 		case FILESYSTEMCMP_OP_LOOKUP:
 			if (payload < sizeof(struct filesystemcmp_lookup_request))
 				goto reject;
@@ -294,6 +478,8 @@ filesystemcmp_validate_message(const struct filesystemcmp_msg *msg,
 			break;
 		case FILESYSTEMCMP_OP_STAT:
 		case FILESYSTEMCMP_OP_CLOSE:
+		case FILESYSTEMCMP_OP_SYNC:
+		case FILESYSTEMCMP_OP_DUP:
 			expected = sizeof(struct filesystemcmp_close_request);
 			break;
 		case FILESYSTEMCMP_OP_UNLINK:
@@ -357,7 +543,8 @@ reject:
 }
 
 int
-filesystemcmp_validate_fds(const struct filesystemcmp_msg *msg, size_t nfds)
+filesystemcmp_validate_fds(const struct filesystemcmp_msg *msg, size_t nfds,
+    enum filesystemcmp_message_role role)
 {
 	size_t expected;
 
@@ -365,8 +552,9 @@ filesystemcmp_validate_fds(const struct filesystemcmp_msg *msg, size_t nfds)
 		errno = EINVAL;
 		return (-1);
 	}
-	expected = msg->opcode == FILESYSTEMCMP_OP_ATTACH_RINGS &&
-	    (msg->flags & FILESYSTEMCMP_MSG_F_REPLY) == 0 ? 8 : 0;
+	expected = role == FILESYSTEMCMP_MESSAGE_REQUEST &&
+	    msg->opcode == FILESYSTEMCMP_OP_ATTACH_RINGS ?
+	    FILESYSTEMCMP_RING_FD_COUNT : 0;
 	if (nfds != expected) {
 		errno = EPROTO;
 		return (-1);
@@ -374,143 +562,71 @@ filesystemcmp_validate_fds(const struct filesystemcmp_msg *msg, size_t nfds)
 	return (0);
 }
 
-int
-filesystemcmp_send_message(int fd, const void *message, size_t length,
-    const int *fds, size_t nfds)
-{
-	const struct filesystemcmp_msg *msg;
-
-	if (message == NULL || length < sizeof(*msg)) {
-		errno = EINVAL;
-		return (-1);
-	}
-	msg = message;
-	if (filesystemcmp_validate_message(msg, length) == -1)
-		return (-1);
-	if (filesystemcmp_validate_fds(msg, nfds) == -1)
-		return (-1);
-	int result, probe_error;
-
-	result = service_send_fds(fd, message, length, fds, nfds);
-	probe_error = result == -1 ? errno : 0;
-	FILESYSTEMCMP_PROBE_SEND(msg->opcode, (uint32_t)length,
-	    (uint32_t)nfds, probe_error);
-	return (result);
-}
-
-ssize_t
-filesystemcmp_receive_message(int fd, void *message, size_t capacity,
-    int *fds, size_t *nfds)
-{
-	ssize_t received;
-	size_t i, received_fds;
-
-	if (message == NULL || capacity < sizeof(struct filesystemcmp_msg) ||
-	    capacity > FILESYSTEMCMP_MAX_MESSAGE) {
-		errno = EINVAL;
-		return (-1);
-	}
-	received = service_recv_fds(fd, message, capacity, fds, nfds);
-	if (received == -1)
-		return (-1);
-	received_fds = nfds != NULL ? *nfds : 0;
-	if (filesystemcmp_validate_message(message, (size_t)received) == -1 ||
-	    filesystemcmp_validate_fds(message, received_fds) == -1) {
-		for (i = 0; i < received_fds; i++) {
-			if (fds != NULL && fds[i] >= 0) {
-				close(fds[i]);
-				fds[i] = -1;
-			}
-		}
-		if (nfds != NULL)
-			*nfds = 0;
-		return (-1);
-	}
-	FILESYSTEMCMP_PROBE_RECEIVE(
-	    ((struct filesystemcmp_msg *)message)->opcode,
-	    (uint32_t)received, (uint32_t)(nfds != NULL ? *nfds : 0), 0);
-	return (received);
-}
-
-static int filesystemcmp_rpc(int, uint16_t, const void *, size_t,
+static int filesystemcmp_rpc(struct filesystemcmp_client *, uint16_t,
+    const void *, size_t,
     union filesystemcmp_buffer *, size_t *) __no_lock_analysis;
 
 static int
-filesystemcmp_rpc(int fd, uint16_t opcode, const void *payload,
-    size_t payload_length, union filesystemcmp_buffer *reply,
-    size_t *reply_length)
+filesystemcmp_rpc(struct filesystemcmp_client *client, uint16_t opcode,
+    const void *payload, size_t payload_length,
+    union filesystemcmp_buffer *reply, size_t *reply_length)
 {
 	union filesystemcmp_buffer request;
+	struct service_call_options options =
+	    SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing;
+	struct service_reply incoming;
 	struct filesystemcmp_msg *msg;
-	size_t nfds;
-	ssize_t received;
-	uint64_t request_id;
-	int error, result;
+	size_t received, request_length;
 
-	if (fd < 0 || payload_length >
+	if (client == NULL || client->owner != getpid() ||
+	    client->channel == NULL || payload_length >
 	    FILESYSTEMCMP_MAX_MESSAGE - sizeof(struct filesystemcmp_msg) ||
 	    (payload_length != 0 && payload == NULL)) {
 		errno = EINVAL;
 		return (-1);
 	}
-	error = pthread_once(&filesystemcmp_atfork_once,
-	    filesystemcmp_atfork_init);
-	if (error == 0)
-		error = filesystemcmp_atfork_error;
-	if (error != 0) {
-		errno = error;
-		return (-1);
-	}
-	error = pthread_mutex_lock(&filesystemcmp_rpc_lock);
-	if (error != 0) {
-		errno = error;
-		return (-1);
-	}
-	result = -1;
 	memset(&request, 0, sizeof(request));
 	msg = &request.wire.msg;
-	msg->magic = FILESYSTEMCMP_MAGIC;
-	msg->version = FILESYSTEMCMP_ABI_VERSION;
-	msg->opcode = opcode;
-	msg->length = sizeof(*msg) + payload_length;
-	request_id = atomic_fetch_add_explicit(&filesystemcmp_next_request, 1,
-	    memory_order_relaxed);
-	if (request_id == 0)
-		request_id = atomic_fetch_add_explicit(
-		    &filesystemcmp_next_request, 1, memory_order_relaxed);
-	msg->request_id = request_id;
+	if (filesystemcmp_message_init(msg, opcode, 0) == -1)
+		return (-1);
 	if (payload_length != 0)
 		memcpy(msg + 1, payload, payload_length);
-	if (filesystemcmp_send_message(fd, msg, msg->length, NULL, 0) == -1)
-		goto out;
-	for (;;) {
-		nfds = 0;
-		received = filesystemcmp_receive_message(fd, reply, sizeof(*reply),
-		    NULL, &nfds);
-		if (received == -1)
-			goto out;
-		msg = &reply->wire.msg;
-		if ((msg->flags & FILESYSTEMCMP_MSG_F_REPLY) == 0 &&
-		    msg->opcode == FILESYSTEMCMP_OP_NOTIFY)
-			continue;
-		if ((msg->flags & FILESYSTEMCMP_MSG_F_REPLY) == 0 ||
-		    msg->opcode != opcode || msg->request_id != request_id) {
-			errno = EPROTO;
-			goto out;
-		}
-		if (msg->status != 0) {
-			errno = -msg->status;
-			goto out;
-		}
-		*reply_length = (size_t)received;
-		result = 0;
-		break;
+	request_length = sizeof(*msg) + payload_length;
+	FILESYSTEMCMP_PROBE_SEND(opcode, (uint32_t)request_length, 0, 0);
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = msg;
+	outgoing.length = request_length;
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = reply;
+	incoming.capacity = sizeof(*reply);
+	options.timeout_ms = 30000;
+	if (service_session_call(client->channel, &outgoing, &incoming,
+	    &options) == -1) {
+		FILESYSTEMCMP_PROBE_REJECT(opcode, 0, errno);
+		return (-1);
 	}
-out:
-	error = errno;
-	(void)pthread_mutex_unlock(&filesystemcmp_rpc_lock);
-	errno = error;
-	return (result);
+	received = incoming.length;
+	msg = &reply->wire.msg;
+	if (incoming.nfds != 0 ||
+	    filesystemcmp_validate_message(msg, received,
+	    FILESYSTEMCMP_MESSAGE_REPLY) == -1 ||
+	    filesystemcmp_validate_fds(msg, incoming.nfds,
+	    FILESYSTEMCMP_MESSAGE_REPLY) == -1 || msg->opcode != opcode) {
+		errno = EPROTO;
+		FILESYSTEMCMP_PROBE_REJECT(opcode, (uint32_t)received, EPROTO);
+		return (-1);
+	}
+	FILESYSTEMCMP_PROBE_RECEIVE(opcode, (uint32_t)received,
+	    (uint32_t)incoming.nfds, 0);
+	if (msg->status != 0) {
+		errno = -msg->status;
+		return (-1);
+	}
+	*reply_length = (size_t)received;
+	return (0);
 }
 
 static bool
@@ -530,7 +646,8 @@ filesystemcmp_name_valid(const char *name, size_t *length)
 }
 
 int
-filesystemcmp_hello(int fd, struct filesystemcmp_hello_reply *reply_value)
+filesystemcmp_hello(struct filesystemcmp_client *client,
+    struct filesystemcmp_hello_reply *reply_value)
 {
 	union filesystemcmp_buffer reply;
 	struct filesystemcmp_hello request;
@@ -544,8 +661,10 @@ filesystemcmp_hello(int fd, struct filesystemcmp_hello_reply *reply_value)
 	request.min_version = FILESYSTEMCMP_ABI_VERSION;
 	request.max_version = FILESYSTEMCMP_ABI_VERSION;
 	request.features = FILESYSTEMCMP_FEATURE_INLINE_IO |
-	    FILESYSTEMCMP_FEATURE_SHM_RINGS;
-	if (filesystemcmp_rpc(fd, FILESYSTEMCMP_OP_HELLO, &request,
+	    FILESYSTEMCMP_FEATURE_SHM_RINGS |
+	    FILESYSTEMCMP_FEATURE_PERSISTENT |
+	    FILESYSTEMCMP_FEATURE_BUNDLE;
+	if (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_HELLO, &request,
 	    sizeof(request), &reply, &length) == -1)
 		return (-1);
 	memcpy(reply_value, &reply.wire.msg + 1, sizeof(*reply_value));
@@ -553,7 +672,8 @@ filesystemcmp_hello(int fd, struct filesystemcmp_hello_reply *reply_value)
 }
 
 int
-filesystemcmp_open_root(int fd, struct filesystemcmp_handle *root)
+filesystemcmp_open_root(struct filesystemcmp_client *client,
+    struct filesystemcmp_handle *root)
 {
 	union filesystemcmp_buffer reply;
 	const struct filesystemcmp_handle_reply *result;
@@ -563,8 +683,8 @@ filesystemcmp_open_root(int fd, struct filesystemcmp_handle *root)
 		errno = EINVAL;
 		return (-1);
 	}
-	if (filesystemcmp_rpc(fd, FILESYSTEMCMP_OP_OPEN_ROOT, NULL, 0, &reply,
-	    &length) == -1)
+	if (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_OPEN_ROOT, NULL, 0,
+	    &reply, &length) == -1)
 		return (-1);
 	result = (const void *)(&reply.wire.msg + 1);
 	if (result->type != FILESYSTEMCMP_TYPE_DIRECTORY) {
@@ -576,7 +696,38 @@ filesystemcmp_open_root(int fd, struct filesystemcmp_handle *root)
 }
 
 int
-filesystemcmp_lookup(int fd, struct filesystemcmp_handle directory,
+filesystemcmp_open_namespace(struct filesystemcmp_client *client,
+    uint32_t namespace_id,
+    struct filesystemcmp_handle *root)
+{
+	union filesystemcmp_buffer reply;
+	struct filesystemcmp_namespace_request request;
+	const struct filesystemcmp_handle_reply *result;
+	size_t length;
+
+	if (root == NULL ||
+	    namespace_id < FILESYSTEMCMP_NAMESPACE_SCRATCH ||
+	    namespace_id > FILESYSTEMCMP_NAMESPACE_BUNDLE) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&request, 0, sizeof(request));
+	request.namespace = namespace_id;
+	if (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_OPEN_NAMESPACE, &request,
+	    sizeof(request), &reply, &length) == -1)
+		return (-1);
+	result = (const void *)(&reply.wire.msg + 1);
+	if (result->type != FILESYSTEMCMP_TYPE_DIRECTORY) {
+		errno = EPROTO;
+		return (-1);
+	}
+	*root = result->handle;
+	return (0);
+}
+
+int
+filesystemcmp_lookup(struct filesystemcmp_client *client,
+    struct filesystemcmp_handle directory,
     const char *name, struct filesystemcmp_handle_reply *reply_value)
 {
 	union filesystemcmp_buffer request, reply;
@@ -593,7 +744,7 @@ filesystemcmp_lookup(int fd, struct filesystemcmp_handle directory,
 	lookup->directory = directory;
 	lookup->name_length = (uint32_t)name_length;
 	memcpy(lookup + 1, name, name_length);
-	if (filesystemcmp_rpc(fd, FILESYSTEMCMP_OP_LOOKUP, lookup,
+	if (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_LOOKUP, lookup,
 	    sizeof(*lookup) + name_length, &reply, &length) == -1)
 		return (-1);
 	memcpy(reply_value, &reply.wire.msg + 1, sizeof(*reply_value));
@@ -601,7 +752,8 @@ filesystemcmp_lookup(int fd, struct filesystemcmp_handle directory,
 }
 
 int
-filesystemcmp_open_handle(int fd, struct filesystemcmp_handle object,
+filesystemcmp_open_handle(struct filesystemcmp_client *client,
+    struct filesystemcmp_handle object,
     uint32_t flags, struct filesystemcmp_handle_reply *reply_value)
 {
 	union filesystemcmp_buffer reply;
@@ -615,7 +767,7 @@ filesystemcmp_open_handle(int fd, struct filesystemcmp_handle object,
 	memset(&request, 0, sizeof(request));
 	request.object = object;
 	request.flags = flags;
-	if (filesystemcmp_rpc(fd, FILESYSTEMCMP_OP_OPEN, &request,
+	if (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_OPEN, &request,
 	    sizeof(request), &reply, &length) == -1)
 		return (-1);
 	memcpy(reply_value, &reply.wire.msg + 1, sizeof(*reply_value));
@@ -623,7 +775,8 @@ filesystemcmp_open_handle(int fd, struct filesystemcmp_handle object,
 }
 
 int
-filesystemcmp_create(int fd, struct filesystemcmp_handle directory,
+filesystemcmp_create(struct filesystemcmp_client *client,
+    struct filesystemcmp_handle directory,
     const char *name, uint32_t flags, uint32_t mode,
     struct filesystemcmp_handle_reply *reply_value)
 {
@@ -644,7 +797,7 @@ filesystemcmp_create(int fd, struct filesystemcmp_handle directory,
 	create->flags = flags;
 	create->mode = mode;
 	memcpy(create + 1, name, name_length);
-	if (filesystemcmp_rpc(fd, FILESYSTEMCMP_OP_CREATE, create,
+	if (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_CREATE, create,
 	    sizeof(*create) + name_length, &reply, &length) == -1)
 		return (-1);
 	memcpy(reply_value, &reply.wire.msg + 1, sizeof(*reply_value));
@@ -652,8 +805,9 @@ filesystemcmp_create(int fd, struct filesystemcmp_handle directory,
 }
 
 ssize_t
-filesystemcmp_pread(int fd, struct filesystemcmp_handle object, void *buffer,
-    size_t length, uint64_t offset)
+filesystemcmp_pread(struct filesystemcmp_client *client,
+    struct filesystemcmp_handle object, void *buffer, size_t length,
+    uint64_t offset)
 {
 	union filesystemcmp_buffer reply;
 	struct filesystemcmp_io_request request;
@@ -669,7 +823,7 @@ filesystemcmp_pread(int fd, struct filesystemcmp_handle object, void *buffer,
 	request.object = object;
 	request.offset = offset;
 	request.length = (uint32_t)length;
-	if (filesystemcmp_rpc(fd, FILESYSTEMCMP_OP_READ, &request,
+	if (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_READ, &request,
 	    sizeof(request), &reply, &reply_length) == -1)
 		return (-1);
 	result = (const void *)(&reply.wire.msg + 1);
@@ -682,7 +836,8 @@ filesystemcmp_pread(int fd, struct filesystemcmp_handle object, void *buffer,
 }
 
 ssize_t
-filesystemcmp_pwrite(int fd, struct filesystemcmp_handle object,
+filesystemcmp_pwrite(struct filesystemcmp_client *client,
+    struct filesystemcmp_handle object,
     const void *buffer, size_t length, uint64_t offset)
 {
 	union filesystemcmp_buffer request, reply;
@@ -701,7 +856,7 @@ filesystemcmp_pwrite(int fd, struct filesystemcmp_handle object,
 	io->offset = offset;
 	io->length = (uint32_t)length;
 	memcpy(io + 1, buffer, length);
-	if (filesystemcmp_rpc(fd, FILESYSTEMCMP_OP_WRITE, io,
+	if (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_WRITE, io,
 	    sizeof(*io) + length, &reply, &reply_length) == -1)
 		return (-1);
 	result = (const void *)(&reply.wire.msg + 1);
@@ -713,7 +868,8 @@ filesystemcmp_pwrite(int fd, struct filesystemcmp_handle object,
 }
 
 int
-filesystemcmp_stat(int fd, struct filesystemcmp_handle object,
+filesystemcmp_stat(struct filesystemcmp_client *client,
+    struct filesystemcmp_handle object,
     struct filesystemcmp_stat_reply *reply_value)
 {
 	union filesystemcmp_buffer reply;
@@ -726,7 +882,7 @@ filesystemcmp_stat(int fd, struct filesystemcmp_handle object,
 	}
 	memset(&request, 0, sizeof(request));
 	request.object = object;
-	if (filesystemcmp_rpc(fd, FILESYSTEMCMP_OP_STAT, &request,
+	if (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_STAT, &request,
 	    sizeof(request), &reply, &length) == -1)
 		return (-1);
 	memcpy(reply_value, &reply.wire.msg + 1, sizeof(*reply_value));
@@ -734,7 +890,8 @@ filesystemcmp_stat(int fd, struct filesystemcmp_handle object,
 }
 
 int
-filesystemcmp_unlink(int fd, struct filesystemcmp_handle directory,
+filesystemcmp_unlink(struct filesystemcmp_client *client,
+    struct filesystemcmp_handle directory,
     const char *name, uint32_t flags)
 {
 	union filesystemcmp_buffer request, reply;
@@ -751,13 +908,14 @@ filesystemcmp_unlink(int fd, struct filesystemcmp_handle directory,
 	unlink_request->name_length = (uint32_t)name_length;
 	unlink_request->flags = flags;
 	memcpy(unlink_request + 1, name, name_length);
-	return (filesystemcmp_rpc(fd, FILESYSTEMCMP_OP_UNLINK,
+	return (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_UNLINK,
 	    unlink_request, sizeof(*unlink_request) + name_length, &reply,
 	    &length));
 }
 
 int
-filesystemcmp_rename(int fd, struct filesystemcmp_handle old_directory,
+filesystemcmp_rename(struct filesystemcmp_client *client,
+    struct filesystemcmp_handle old_directory,
     const char *old_name, struct filesystemcmp_handle new_directory,
     const char *new_name, uint32_t flags)
 {
@@ -781,13 +939,14 @@ filesystemcmp_rename(int fd, struct filesystemcmp_handle old_directory,
 	names = (char *)(rename_request + 1);
 	memcpy(names, old_name, old_length);
 	memcpy(names + old_length, new_name, new_length);
-	return (filesystemcmp_rpc(fd, FILESYSTEMCMP_OP_RENAME,
+	return (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_RENAME,
 	    rename_request, sizeof(*rename_request) + old_length + new_length,
 	    &reply, &length));
 }
 
 int
-filesystemcmp_close_handle(int fd, struct filesystemcmp_handle object)
+filesystemcmp_close_handle(struct filesystemcmp_client *client,
+    struct filesystemcmp_handle object)
 {
 	union filesystemcmp_buffer reply;
 	struct filesystemcmp_close_request request;
@@ -795,6 +954,42 @@ filesystemcmp_close_handle(int fd, struct filesystemcmp_handle object)
 
 	memset(&request, 0, sizeof(request));
 	request.object = object;
-	return (filesystemcmp_rpc(fd, FILESYSTEMCMP_OP_CLOSE, &request,
+	return (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_CLOSE, &request,
 	    sizeof(request), &reply, &length));
+}
+
+int
+filesystemcmp_sync(struct filesystemcmp_client *client,
+    struct filesystemcmp_handle object)
+{
+	union filesystemcmp_buffer reply;
+	struct filesystemcmp_close_request request;
+	size_t length;
+
+	memset(&request, 0, sizeof(request));
+	request.object = object;
+	return (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_SYNC, &request,
+	    sizeof(request), &reply, &length));
+}
+
+int
+filesystemcmp_dup(struct filesystemcmp_client *client,
+    struct filesystemcmp_handle object,
+    struct filesystemcmp_handle_reply *reply_value)
+{
+	union filesystemcmp_buffer reply;
+	struct filesystemcmp_close_request request;
+	size_t length;
+
+	if (reply_value == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&request, 0, sizeof(request));
+	request.object = object;
+	if (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_DUP, &request,
+	    sizeof(request), &reply, &length) == -1)
+		return (-1);
+	memcpy(reply_value, &reply.wire.msg + 1, sizeof(*reply_value));
+	return (0);
 }

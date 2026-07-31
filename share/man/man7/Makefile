@@ -10,7 +10,7 @@ MAN=	arch.7 \
 	c.7 \
 	d.7 \
 	clocks.7 \
-	cmp.7 \
+	component.7 \
 	crypto.7 \
 	development.7 \
 	environ.7 \

@@ -63,7 +63,6 @@ log_integrity_flags(uint32_t flags)
 int
 mac_capability_claim_path(const char *path)
 {
-	struct mac_capability_call_args call;
 	struct fi_request req;
 	struct fi_reply reply;
 	int fd;
@@ -78,15 +77,8 @@ mac_capability_claim_path(const char *path)
 	memset(&req, 0, sizeof(req));
 	req.op = FI_OP_CLAIM;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.req_fds = &fd;
-	call.req_nfds = 1;
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-
-	if (ioctl(mac_capability_isolation_fd, MAC_CAPABILITY_CALL, &call) == -1) {
+	if (mac_capability_do_call_fds(mac_capability_isolation_fd,
+	    &req, sizeof(req), &fd, 1, &reply, sizeof(reply), NULL, 0) == -1) {
 		syslog(LOG_WARNING, "isolation: claim %s: %m", path);
 		ORACLED_PROBE_CLAIM_PATH_FAIL(path);
 		close(fd);
@@ -183,7 +175,6 @@ mac_capability_claim_vsock(const struct ort_vsock_claim *vc)
 int
 mac_capability_release_path(const char *path)
 {
-	struct mac_capability_call_args call;
 	struct fi_request req;
 	struct fi_reply reply;
 	int fd;
@@ -197,15 +188,8 @@ mac_capability_release_path(const char *path)
 	memset(&req, 0, sizeof(req));
 	req.op = FI_OP_RELEASE;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.req_fds = &fd;
-	call.req_nfds = 1;
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-
-	if (ioctl(mac_capability_isolation_fd, MAC_CAPABILITY_CALL, &call) == -1) {
+	if (mac_capability_do_call_fds(mac_capability_isolation_fd,
+	    &req, sizeof(req), &fd, 1, &reply, sizeof(reply), NULL, 0) == -1) {
 		syslog(LOG_WARNING, "isolation: release %s: %m", path);
 		close(fd);
 		return (-1);

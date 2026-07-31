@@ -4,7 +4,6 @@ author = "5BSD";
 
 program = "rebootd";
 provides = ["org.5bsd.system.reboot"];
-on_demand = true;
 restart = "on-failure";
 
 capabilities {

@@ -9,7 +9,7 @@ manifest_body()
 {
 	srcdir="@SRCTOP@/usr.sbin/filesystemcmp"
 	objdir="@OBJTOP@/usr.sbin/filesystemcmp"
-	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/servicectl}"
+	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	manifest="${srcdir}/capbundle/filesystemcmp.ucl"
 	bundle="${PWD}/FileSystemCmp.cap"
 
@@ -59,10 +59,23 @@ provider_security_contract_body()
 	    grep CAP_CLOFORK_LOCKED "${source}"
 	atf_check -s exit:0 -o match:'CAP_CLOEXEC_LOCKED' \
 	    grep CAP_CLOEXEC_LOCKED "${source}"
+	atf_check -s exit:0 -o match:'harden_resource_fd' \
+	    grep harden_resource_fd "${source}"
+	atf_check -s exit:0 -o match:'CAP_RENAMEAT_SOURCE' \
+	    grep CAP_RENAMEAT_SOURCE "${source}"
+	atf_check -s exit:0 -o match:'cap_fcntls_limit' \
+	    grep cap_fcntls_limit "${source}"
 	atf_check -s exit:0 -o match:'cap_enter' \
 	    grep cap_enter "${source}"
 	atf_check -s exit:0 -o match:'AUE_FILESYSTEMCMP_POLICY' \
 	    grep AUE_FILESYSTEMCMP_POLICY "${source}"
+	atf_check -s exit:0 -o match:'FILESYSTEMCMPD_PROBE_SESSION' \
+	    grep FILESYSTEMCMPD_PROBE_SESSION "${source}"
+	atf_check -s exit:0 -o match:'FILESYSTEMCMPD_PROBE_REQUEST' \
+	    grep FILESYSTEMCMPD_PROBE_REQUEST "${source}"
+	atf_check -s exit:0 -o match:'request__done' \
+	    grep request__done \
+	    "@SRCTOP@/usr.sbin/filesystemcmp/filesystemcmp_provider.d"
 }
 
 atf_init_test_cases()

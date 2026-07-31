@@ -1,0 +1,103 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd July 30, 2026
+.Dt COMPONENT 7
+.Os
+.Sh NAME
+.Nm component
+.Nd local authority replacement and global service model
+.Sh DESCRIPTION
+Programs managed by
+.Xr serviced 8
+use typed libraries instead of ambient discovery or raw IPC protocols.
+There are two non-overlapping scopes.
+.Ss Local components
+Local components replace ambient filesystem or networking authority removed
+from a sandboxed process.
+A bundle requests them with:
+.Bd -literal -offset indent
+components = ["filesystem", "network"];
+.Ed
+.Pp
+.Xr serviced 8
+constructs every requested instance before exec, enlists its worker in the
+consumer coalition, and injects a confined descriptor through a fixed
+environment entry.
+The FileSystem and Network libraries consume that entry and expose ordinary
+typed operations.
+The application does not select a provider, protocol version, lifetime,
+sharing mode, or options object.
+Local components are mandatory and are never looked up globally.
+.Ss Global services
+A provider declares one or more reverse-domain names:
+.Bd -literal -offset indent
+provides = [
+    "org.example.control",
+    "org.example.events"
+];
+.Ed
+.Pp
+Any lookup of those names activates the one provider process.
+Concurrent lookups of different names coalesce onto that same activation.
+The provider uses
+.Xr libservice 3
+to expose one independent listener per name, and each incoming endpoint is
+routed only to its addressed listener.
+Registrations remain staged until the process has exposed its complete
+.Va provides
+set, entered capability mode, and completed
+.Fn service_ready .
+The entire endpoint set then becomes visible atomically.
+Logging, notification, tracing, and third-party services use this model.
+.Ss Failure model
+Every accepted or connected session is a fresh direct channel.
+Closing one session cannot consume another session's replies.
+Peer exit revokes the opposite endpoint, so receive operations fail with
+.Er ECONNRESET ,
+send operations fail with
+.Er EPIPE
+or
+.Er ECONNRESET ,
+and pollers observe end-of-file.
+If a provider exits during activation,
+.Xr serviced 8
+immediately fails all pending lookups instead of retaining them until a
+startup timeout.
+The libservice supervisor event descriptor reports permanent loss of
+.Xr serviced 8 ;
+listener descriptors also become readable and blocked accepts fail.
+Already established peer channels remain independent of the naming
+supervisor until a peer closes.
+.Pp
+Successful transport send means that the kernel accepted a message, not that
+the provider committed the operation.
+Typed protocols use nonzero channel reply tokens and typed replies to
+acknowledge processing.
+They may retry only operations whose protocol explicitly defines idempotency.
+Exactly-once effects across provider crashes require provider-owned durable
+deduplication and are not implied by
+.Xr libservice 3 .
+.Ss Security invariants
+.Bl -bullet
+.It
+Typed application libraries own discovery and protocol validation.
+.It
+Global registration is authorized against the exact
+.Va provides
+list.
+.It
+Authenticated client identity comes from serviced, not client payload.
+.It
+Local authority descriptors are ready before exec, non-transferable, and
+close-on-fork/exec constrained.
+.It
+Component workers join the consumer coalition and cannot outlive it.
+.It
+Security-relevant creation, denial, routing, and teardown paths provide
+OpenBSM audit events and DTrace probes.
+.El
+.Sh SEE ALSO
+.Xr libservice 3 ,
+.Xr serviced 5 ,
+.Xr serviced 8

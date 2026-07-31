@@ -28,6 +28,11 @@ SUBDIR=	blocklist \
 	rebootd \
 	serviced \
 	servicectl \
+	filesystemcmp \
+	logcmp \
+	networkcmp \
+	notifycmp \
+	tracecmp \
 	devd \
 	devmatch \
 	dhclient \
@@ -41,9 +46,16 @@ SUBDIR=	blocklist \
 	libarchive \
 	libcapability \
 	libcapbundle \
+	libchannel \
+	libfilesystemcmp \
+	liblogcmp \
+	libnetworkcmp \
+	libnotifycmp \
 	liboraclectl \
 	liboraclert \
 	libservice \
+	libshmring \
+	libtracecmp \
 	libbegemot \
 	libblocksruntime \
 	libbsdstat \
@@ -166,8 +178,14 @@ SUBDIR.${MK_TESTS}+=		vsock-tests
 SUBDIR.${MK_TESTS}+=		oracled-tests oraclectl-tests
 SUBDIR.${MK_TESTS}+=		serviced-tests servicectl-tests
 SUBDIR.${MK_TESTS}+=		libcapability-tests libcapbundle-tests
+SUBDIR.${MK_TESTS}+=		libchannel-tests libshmring-tests
+SUBDIR.${MK_TESTS}+=		libfilesystemcmp-tests libnetworkcmp-tests
+SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotifycmp-tests
+SUBDIR.${MK_TESTS}+=		libtracecmp-tests
 SUBDIR.${MK_TESTS}+=		liboraclert-tests libservice-tests
 SUBDIR.${MK_TESTS}+=		mac-capability-tests
+SUBDIR.${MK_TESTS}+=		filesystemcmp-tests networkcmp-tests
+SUBDIR.${MK_TESTS}+=		logcmp-tests notifycmp-tests tracecmp-tests
 SUBDIR.${MK_TESTS_SUPPORT}+=	atf kyua
 SUBDIR.${MK_UNBOUND}+=		local-unbound
 SUBDIR.${MK_VI}+=		vi

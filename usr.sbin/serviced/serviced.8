@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd July 29, 2026
+.Dd July 31, 2026
 .Dt SERVICED 8
 .Os
 .Sh NAME
@@ -171,8 +171,7 @@ Each
 file declares one service.
 Files are parsed strictly and topologically sorted before launch.
 An unknown key, wrong type, invalid capability, excess entry, unknown
-dependency, missing or ambiguous component provider, mismatched provider pin,
-duplicate provider, or dependency cycle rejects the bundle set;
+dependency, duplicate provided name, or dependency cycle rejects the bundle set;
 authority declarations are never silently dropped.
 .Pp
 The authoritative schema, including literal arguments, environment variables,
@@ -185,58 +184,61 @@ a sealed, write-once
 .Xr envfd_create 2
 environment descriptor at fd 5.
 It contains the manifest label and typed tables for the service channel,
-optional capprotect instance, activation tokens, capability services, and
-component sessions.
+optional capprotect instance, activation tokens, and capability services.
 The descriptor may cross exactly one fork and one exec boundary, is
 non-transferable, becomes close-on-fork and close-on-exec locked in the new
 image, and is closed by
-.Fn service_init
+.Fn service_acquire
 after strict validation.
 The non-authoritative
 .Ev SERVICE_BOOTSTRAP_FD=5
 entry provides classic environment-based discovery.
-No token, component, or capability-service descriptor table is encoded in
+No token or capability-service descriptor table is encoded in
 environment strings.
-When a standard component interface has an unambiguous successfully injected
-local name,
+When requested by the manifest,
 .Nm
 also sets
 .Ev NETWORKCMP
 or
 .Ev FILESYSTEMCMP .
-These are lookup keys into the sealed descriptor, not descriptor numbers or
-provider names.
+Each value is the decimal number of a pre-exec local authority channel.
+The corresponding typed library validates, duplicates, and consumes it.
 .Pp
 The service channel is fd 3, optional capprotect is fd 4, and authority
 descriptors occupy a contiguous range beginning at fd 6.
 Tokens appear first in manifest-category order: paths, files, network
 endpoints, jail operations, VSOCK endpoints, and finally one combined
 system-gate token.
-Capability-service descriptors follow, then component-session channels.
+Capability-service descriptors follow, then local component channels.
 All requested descriptors are installed before
 .Xr execve 2 ;
 failure to construct or validate the complete set prevents normal service
 initialization.
 .Pp
-Before delegation of a component session,
+Before delegation of a local component session,
 .Nm
-performs a typed bootstrap handshake with its provider, requires a procdesc or
+contacts the fixed internal factory, performs a typed bootstrap handshake,
+requires a procdesc or
 nested coalition descriptor for the assigned worker set, and enlists that set
 in the consumer coalition.
-The application-local component name is stored in the bootstrap;
-provider names and options are not exposed to the child.
 Component channels are non-transferable and restricted to event polling,
 metadata, and the required mac_capability transport ioctls.
 .Pp
+.Fn service_acquire ,
 .Fn service_authorize_capabilities ,
 .Fn service_capability_fd ,
-.Fn service_component_fd ,
-.Fn service_protect ,
+.Fn service_local_component_open ,
+.Fn service_connect ,
+.Fn service_worker_protect ,
 and
 .Fn service_label
 from
 .Xr libservice 3
 are the supported interfaces to this state.
+Applications normally use a service-specific typed library, which calls
+the one acquisition function appropriate to its fixed scope and hides
+descriptor ownership and the wire protocol.
+No interface tries local and global discovery.
 .Sh SERVICE ENVIRONMENT
 Each launched service receives a minimal, non-authority environment:
 .Bl -tag -width "PATH"
@@ -419,28 +421,70 @@ and connect to each other using reverse-domain names
 .Pp
 The registry is implemented as a hash table with 64 buckets.
 Names may be up to 255 characters long.
-Each service may register up to 32 names.
+Each manifest may provide up to eight names.
+All names in one declaration map to the same runtime but have independent
+provider listeners.
+A lookup of any provided name activates that runtime; concurrent requests for
+the same runtime, including requests for different names, coalesce onto one
+launch.
+.Pp
+Bundle loading reserves every declared name before its provider runs.
+A client lookup therefore has a stable activation target even while the
+process is absent.
+The first lookup launches the process if necessary; lookups for any sibling
+name coalesce onto the same runtime.
+Before its initial process-level
+.Dv SVC_OP_READY ,
+the provider checks in one listener for every declared name using
+.Dv SVC_OP_NAME_CLAIM .
+.Nm
+rejects incomplete or undeclared check-ins.
+After the complete check-in, capability-mode entry, and
+.Dv SVC_OP_READY ,
+.Nm
+sends
+.Dv SVC_OP_ACTIVATE_NAME
+only for requested names.
+The provider initializes that endpoint and returns
+.Dv SVC_OP_NAME_RESULT .
+Successful publication releases only that name's queued sessions.
+A failed result fails only that name, and a later lookup may retry it without
+affecting ready siblings.
+If the provider exits, all pending names owned by that exact runtime fail
+immediately.
 .Pp
 Services interact with the registry via
 .Xr libservice 3
 over their channel to
 .Nm .
-The following operations are supported:
-.Bl -tag -width "UNREGISTER"
-.It Dv REGISTER
-Register a reverse-domain name.
-The name must contain at least one dot and consist only of
-alphanumerics, dots, hyphens, and underscores.
-The name must appear in the service's
-.Va label
-or
-.Va provides
-array; registration is denied otherwise.
-Duplicate names are rejected with
-.Er EEXIST .
-.It Dv UNREGISTER
-Remove a previously registered name.
-Only the owning service may unregister a name.
+Service-specific libraries should wrap these operations so applications do
+not repeat names, concurrency rules, or protocol plumbing.
+The private control protocol supports:
+.Bl -tag -width "ACTIVATE_NAME"
+.It Dv NAME_CLAIM
+A correlated provider request that checks in one listener for an exact
+manifest-reserved name.
+It does not publish or initialize the endpoint.
+All initially declared names must be claimed before
+.Dv READY
+succeeds.
+.It Dv ACTIVATE_NAME
+An unsolicited, token-zero event asking the provider to initialize one
+reserved name.
+.It Dv NAME_RESULT
+A correlated provider request completing one activation with zero or a
+positive errno.
+Unrequested, stale, undeclared, and late results are rejected.
+.It Dv NAME_WITHDRAW
+Withdraw one claimed name.
+Only the owning service may withdraw it.
+Withdrawal during activation cancels that activation, fails its queued
+lookups, and makes a late
+.Dv NAME_RESULT
+stale.
+Existing direct sessions remain open.
+The manifest reservation remains, so new lookups queue until the running
+provider claims a replacement listener and activates it.
 .It Dv LOOKUP
 Connect to a named service.
 .Nm
@@ -449,12 +493,52 @@ as a
 .Dv SVC_OP_NEW_CLIENT
 notification (which includes the requesting client's label),
 and returns the other end to the requester.
+The notification also includes the exact addressed name, and libservice
+queues it only on that name's listener.
 A service cannot look up itself
 .Pq Er ELOOP .
 .El
 .Pp
-When a service exits, all names it registered are automatically
-removed.
+Both ends of this private control path use
+.Xr libchannel 3 .
+.Nm
+retains the incoming lookup request while activation is pending and responds
+through that request, so the kernel channel token remains the sole correlation
+identifier.
+Replies and descriptor-bearing events are queued under bounded backpressure
+and integrated with kqueue write readiness.
+A publication acknowledgement is queued before any
+.Dv SVC_OP_NEW_CLIENT
+event for that name.
+If a control reply cannot be queued, the channel is revoked so callers observe
+peer death instead of waiting for a reply that was dropped.
+.Pp
+When a service exits, all of its claims and published names are automatically
+removed, while manifest reservations remain available for a later process
+incarnation.
+Every restart begins with all names unclaimed; stale check-in or publication
+state never transfers to the replacement process.
+Pending requests are bound to one exact process incarnation and are freed when
+that requester exits; a restarted process cannot consume a reply belonging to
+its predecessor.
+Loss of the manager channel wakes provider listeners.
+.Xr libservice 3
+provides a pollable supervisor event descriptor and terminal status query so
+libraries can report manager death distinctly from an unknown service name.
+.Pp
+After lookup, the client and provider communicate over a fresh direct
+capability channel.
+.Nm
+does not proxy the service data stream.
+Closing or crashing either peer revokes the other endpoint.
+A successful transport send means that the kernel accepted the message; it
+does not prove that the provider processed or durably committed the request.
+Typed protocols must use nonzero channel reply tokens and typed replies for
+processing acknowledgements.
+Operations may be retried after a crash only when that protocol defines them
+as idempotent.
+Exactly-once effects across provider restart require provider-owned durable
+request deduplication.
 .Sh CONTROL SOCKET
 .Nm
 listens on a
@@ -586,6 +670,15 @@ Name operation denied.
 .It Li naming-count(n)
 Total registered name count changed.
 .El
+.Ss Endpoint Lifecycle
+.Bl -tag -width "endpoint-withdraw(label, name, errno)" -compact
+.It Li endpoint-claim(label, name, errno)
+A provider attempted to check in one manifest-reserved listener.
+.It Li endpoint-activate(label, name)
+Client demand requested initialization of one claimed endpoint.
+.It Li endpoint-withdraw(label, name, errno)
+A provider attempted to withdraw one claimed listener.
+.El
 .Ss Control Socket
 .Bl -tag -width "sctl-cmd-done(op, uid, status, duration_ns)" -compact
 .It Li sctl-cmd(op, uid)
@@ -607,8 +700,8 @@ Channel created.
 Coalition created.
 .El
 .Ss Components
-.Bl -tag -width "component-resolve(label, name, provider, scope)" -compact
-.It Li component-resolve(label, name, provider, scope)
+.Bl -tag -width "component-resolve(label, name, provider)" -compact
+.It Li component-resolve(label, name, provider)
 Provider resolution began.
 .It Li component-session(label, name, provider, result)
 Bootstrap, membership validation, and session setup completed or failed.
@@ -669,6 +762,12 @@ An on-demand lookup initiated a service launch.
 Another lookup joined an in-progress launch.
 .It Li on-demand-ready(name, nwaiters)
 The service became ready and waiting lookups were released.
+.It Li on-demand-fail(name, error, nwaiters)
+A provider failed before publication and its pending lookups were completed
+with an error.
+.It Li on-demand-cancel(requester, pid, launch_id, nwaiters)
+A requester process exited and its incarnation-bound pending lookups were
+discarded.
 .It Li on-demand-timeout(name)
 An on-demand launch exceeded its readiness deadline.
 .El

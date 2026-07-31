@@ -438,7 +438,7 @@
 		    _Inout_opt_ _Contains_long_ptr_ char *data
 		);
 	}
-55	AUE_REBOOT	STD {
+55	AUE_REBOOT	STD|CAPENABLED {
 		int reboot(
 		    int opt
 		);
@@ -1592,33 +1592,33 @@
 		    _In_z_ const char *name
 		);
 	}
-304	AUE_MODLOAD	STD {
+304	AUE_MODLOAD	STD|CAPENABLED {
 		int kldload(
 		    _In_z_ const char *file
 		);
 	}
-305	AUE_MODUNLOAD	STD {
+305	AUE_MODUNLOAD	STD|CAPENABLED {
 		int kldunload(
 		    int fileid
 		);
 	}
-306	AUE_NULL	STD {
+306	AUE_NULL	STD|CAPENABLED {
 		int kldfind(
 		    _In_z_ const char *file
 		);
 	}
-307	AUE_NULL	STD {
+307	AUE_NULL	STD|CAPENABLED {
 		int kldnext(
 		    int fileid
 		);
 	}
-308	AUE_NULL	STD {
+308	AUE_NULL	STD|CAPENABLED {
 		int kldstat(
 		    int fileid,
 		    _Out_ _Contains_long_ptr_ struct kld_file_stat *stat
 		);
 	}
-309	AUE_NULL	STD {
+309	AUE_NULL	STD|CAPENABLED {
 		int kldfirstmod(
 		    int fileid
 		);
@@ -2360,7 +2360,7 @@
 		    long id
 		);
 	}
-444	AUE_MODUNLOAD	STD {
+444	AUE_MODUNLOAD	STD|CAPENABLED {
 		int kldunloadf(
 		    int fileid,
 		    int flags

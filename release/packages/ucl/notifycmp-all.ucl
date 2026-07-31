@@ -1,0 +1,6 @@
+comment = "Capability-mode NotifyCmp provider"
+
+desc = <<EOD
+The NotifyCmp provider and verified /Capabilities/System/NotifyCmp.cap bundle,
+with a system router and coalition-scoped consumer relays.
+EOD

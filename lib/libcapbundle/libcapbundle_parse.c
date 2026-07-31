@@ -141,196 +141,14 @@ validate_string_list(const ucl_object_t *root, const char *key, unsigned max,
 	return (0);
 }
 
-static bool
-valid_interface_name(const char *name)
-{
-	const unsigned char *p;
-
-	if (name == NULL || !isalpha((unsigned char)name[0]) ||
-	    strchr(name, '/') != NULL)
-		return (false);
-	for (p = (const unsigned char *)name; *p != '\0'; p++)
-		if (!(isalnum(*p) || *p == '.' || *p == '_' || *p == '-'))
-			return (false);
-	return (strchr(name, '.') != NULL);
-}
-
-static bool
-valid_semver(const char *version)
-{
-	const char *p;
-	unsigned field;
-
-	if (version == NULL || version[0] == '\0')
-		return (false);
-	p = version;
-	for (field = 0; field < 3; field++) {
-		if (!isdigit((unsigned char)*p))
-			return (false);
-		if (*p == '0' && isdigit((unsigned char)p[1]))
-			return (false);
-		while (isdigit((unsigned char)*p))
-			p++;
-		if (field < 2) {
-			if (*p++ != '.')
-				return (false);
-		} else if (*p != '\0')
-			return (false);
-	}
-	return (true);
-}
-
-static int
-validate_implements(const ucl_object_t *root, char *errbuf, size_t errlen)
-{
-	static const char *const keys[] = { "interface", "version",
-	    "lifetimes", "sharing" };
-	const ucl_object_t *array, *entry, *interface, *version, *set, *item;
-	ucl_object_iter_t iterator, set_iterator;
-	const char *seen_interface[SERVICED_MAX_IMPLEMENTS];
-	const char *seen_version[SERVICED_MAX_IMPLEMENTS];
-	const char *name;
-	uint32_t mask;
-	unsigned count, i, nset;
-
-	array = ucl_object_lookup(root, "implements");
-	if (array == NULL)
-		return (0);
-	if (ucl_object_type(array) != UCL_ARRAY) {
-		snprintf(errbuf, errlen,
-		    "implements must be an array of interface declarations");
-		return (-1);
-	}
-	count = 0;
-	iterator = NULL;
-	while ((entry = ucl_object_iterate(array, &iterator, true)) != NULL) {
-		if (count >= SERVICED_MAX_IMPLEMENTS) {
-			snprintf(errbuf, errlen, "implements has too many entries");
-			return (-1);
-		}
-		if (ucl_object_type(entry) != UCL_OBJECT) {
-			snprintf(errbuf, errlen,
-			    "implements entries must be interface declarations");
-			return (-1);
-		}
-		if (validate_keys(entry, "implements entry", keys, nitems(keys),
-		    errbuf, errlen) != 0)
-			return (-1);
-		interface = ucl_object_lookup(entry, "interface");
-		version = ucl_object_lookup(entry, "version");
-		if (interface == NULL ||
-		    ucl_object_type(interface) != UCL_STRING ||
-		    !valid_interface_name(ucl_object_tostring(interface)) ||
-		    strlen(ucl_object_tostring(interface)) >=
-		    SERVICED_COMPONENT_INTERFACE_MAX) {
-			snprintf(errbuf, errlen,
-			    "implements entry requires a valid interface");
-			return (-1);
-		}
-		if (version == NULL || ucl_object_type(version) != UCL_STRING ||
-		    !valid_semver(ucl_object_tostring(version)) ||
-		    strlen(ucl_object_tostring(version)) >=
-		    SERVICED_COMPONENT_VERSION_MAX) {
-			snprintf(errbuf, errlen,
-			    "implements entry requires a semantic version");
-			return (-1);
-		}
-		set = ucl_object_lookup(entry, "lifetimes");
-		if (set != NULL) {
-			if (ucl_object_type(set) != UCL_ARRAY) {
-				snprintf(errbuf, errlen,
-				    "implements lifetimes must be a non-empty array");
-				return (-1);
-			}
-			mask = 0;
-			nset = 0;
-			set_iterator = NULL;
-			while ((item = ucl_object_iterate(set, &set_iterator,
-			    true)) != NULL) {
-				if (ucl_object_type(item) != UCL_STRING)
-					goto bad_lifetime;
-				name = ucl_object_tostring(item);
-				if (strcmp(name, "process") == 0)
-					i = SVC_COMPONENT_PRIVATE;
-				else if (strcmp(name, "job") == 0)
-					i = SVC_COMPONENT_SERVICE;
-				else if (strcmp(name, "jail") == 0)
-					i = SVC_COMPONENT_JAIL;
-				else if (strcmp(name, "system") == 0)
-					i = SVC_COMPONENT_SYSTEM;
-				else
-					goto bad_lifetime;
-				if ((mask & SVC_COMPONENT_LIFETIME_BIT(i)) != 0)
-					goto bad_lifetime;
-				mask |= SVC_COMPONENT_LIFETIME_BIT(i);
-				nset++;
-			}
-			if (nset == 0)
-				goto bad_lifetime;
-		}
-		set = ucl_object_lookup(entry, "sharing");
-		if (set != NULL) {
-			if (ucl_object_type(set) != UCL_ARRAY) {
-				snprintf(errbuf, errlen,
-				    "implements sharing must be a non-empty array");
-				return (-1);
-			}
-			mask = 0;
-			nset = 0;
-			set_iterator = NULL;
-			while ((item = ucl_object_iterate(set, &set_iterator,
-			    true)) != NULL) {
-				if (ucl_object_type(item) != UCL_STRING)
-					goto bad_sharing;
-				name = ucl_object_tostring(item);
-				if (strcmp(name, "exclusive") == 0)
-					i = SVC_COMPONENT_SHARING_EXCLUSIVE;
-				else if (strcmp(name, "shared") == 0)
-					i = SVC_COMPONENT_SHARING_SHARED;
-				else
-					goto bad_sharing;
-				if ((mask & i) != 0)
-					goto bad_sharing;
-				mask |= i;
-				nset++;
-			}
-			if (nset == 0)
-				goto bad_sharing;
-		}
-		for (i = 0; i < count; i++) {
-			if (strcmp(seen_interface[i],
-			    ucl_object_tostring(interface)) == 0 &&
-			    strcmp(seen_version[i],
-			    ucl_object_tostring(version)) == 0) {
-				snprintf(errbuf, errlen,
-				    "duplicate implements entry");
-				return (-1);
-			}
-		}
-		seen_interface[count] = ucl_object_tostring(interface);
-		seen_version[count] = ucl_object_tostring(version);
-		count++;
-	}
-	return (0);
-
-bad_lifetime:
-	snprintf(errbuf, errlen,
-	    "implements lifetimes contains an invalid or duplicate value");
-	return (-1);
-bad_sharing:
-	snprintf(errbuf, errlen,
-	    "implements sharing contains an invalid or duplicate value");
-	return (-1);
-}
-
 static int
 validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 {
 	static const char *const top[] = { "schema", "schema_version",
 	    "bundle_id", "version", "author",
-	    "program", "provides", "requires", "kmod_requires", "on_demand",
+	    "program", "provides", "kmod_requires",
 	    "restart", "capabilities", "user", "group", "stop_timeout",
-	    "max_failures", "arguments", "environment", "implements",
+	    "max_failures", "arguments", "environment",
 	    "components", "jail" };
 	static const char *const capkeys[] = { "paths", "files", "network",
 	    "jails", "vsock", "services", "system" };
@@ -342,8 +160,6 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	static const char *const jailkeys[] = { "jid", "name", "actions" };
 	static const char *const vsockkeys[] = { "cid", "port", "ports",
 	    "direction" };
-	static const char *const componentkeys[] = { "interface", "version",
-	    "provider", "scope", "lifetime", "sharing", "required", "options" };
 	static const char *const execution_jail_keys[] = { "name", "path",
 	    "hostname", "ip4_addr" };
 	const ucl_object_t *caps, *arr, *v, *x;
@@ -392,9 +208,9 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			return (-1);
 		}
 	}
-	v = ucl_object_lookup(root, "on_demand");
-	if (v != NULL && ucl_object_type(v) != UCL_BOOLEAN) {
-		snprintf(errbuf, errlen, "on_demand must be a boolean");
+	v = ucl_object_lookup(root, "bundle_id");
+	if (v == NULL) {
+		snprintf(errbuf, errlen, "bundle_id is required");
 		return (-1);
 	}
 	v = ucl_object_lookup(root, "restart");
@@ -419,153 +235,43 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	}
 	if (validate_string_list(root, "provides", CAPBUNDLE_MAX_PROVIDES,
 	    CAPBUNDLE_NAME_MAX + 1, errbuf, errlen) != 0 ||
-	    validate_string_list(root, "requires", CAPBUNDLE_MAX_REQUIRES,
-	    CAPBUNDLE_NAME_MAX + 1, errbuf, errlen) != 0 ||
 	    validate_string_list(root, "kmod_requires", CAPBUNDLE_MAX_KMOD_REQUIRES,
 	    sizeof(((struct capbundle_service *)0)->kmod_requires[0]), errbuf,
 	    errlen) != 0 ||
 	    validate_string_list(root, "arguments", SERVICED_MAX_ARGUMENTS,
 	    SERVICED_ARGUMENT_MAX, errbuf, errlen) != 0 ||
-	    validate_implements(root, errbuf, errlen) != 0)
+	    validate_string_list(root, "components", 2, 16, errbuf,
+	    errlen) != 0)
 		return (-1);
 
 	arr = ucl_object_lookup(root, "components");
 	if (arr != NULL) {
-		const char *key, *scope;
+		const ucl_object_t *entry;
+		ucl_object_iter_t components_it;
+		const char *name, *first;
 
-		if (ucl_object_type(arr) != UCL_OBJECT) {
-			snprintf(errbuf, errlen, "components must be an object");
-			return (-1);
-		}
-		n = 0;
-		it = NULL;
-		while ((v = ucl_object_iterate(arr, &it, true)) != NULL) {
-			if (n++ >= SERVICED_MAX_COMPONENTS) {
+		first = NULL;
+		components_it = NULL;
+		do {
+			entry = ucl_object_type(arr) == UCL_STRING ? arr :
+			    ucl_object_iterate(arr, &components_it, true);
+			if (entry == NULL)
+				break;
+			name = ucl_object_tostring(entry);
+			if (strcmp(name, "filesystem") != 0 &&
+			    strcmp(name, "network") != 0) {
 				snprintf(errbuf, errlen,
-				    "components has too many entries");
+				    "components accepts only 'filesystem' and "
+				    "'network'");
 				return (-1);
 			}
-			key = ucl_object_key(v);
-			if (key == NULL || key[0] == '\0' ||
-			    strlen(key) >= SERVICED_COMPONENT_NAME_MAX ||
-			    ucl_object_type(v) != UCL_OBJECT) {
+			if (first != NULL && strcmp(first, name) == 0) {
 				snprintf(errbuf, errlen,
-				    "invalid components entry");
+				    "components contains duplicate '%s'", name);
 				return (-1);
 			}
-			if (!(isalpha((unsigned char)key[0]) || key[0] == '_')) {
-				snprintf(errbuf, errlen,
-				    "invalid component name '%s'", key);
-				return (-1);
-			}
-			for (const char *p = key + 1; *p != '\0'; p++) {
-				if (!(isalnum((unsigned char)*p) || *p == '_' ||
-				    *p == '-' || *p == '.')) {
-					snprintf(errbuf, errlen,
-					    "invalid component name '%s'", key);
-					return (-1);
-				}
-			}
-			if (validate_keys(v, "components entry", componentkeys,
-			    nitems(componentkeys), errbuf, errlen) != 0)
-				return (-1);
-			x = ucl_object_lookup(v, "interface");
-			if (x == NULL || ucl_object_type(x) != UCL_STRING ||
-			    !valid_interface_name(ucl_object_tostring(x)) ||
-			    strlen(ucl_object_tostring(x)) >=
-			    SERVICED_COMPONENT_INTERFACE_MAX) {
-				snprintf(errbuf, errlen,
-				    "component %s requires a valid interface",
-				    key);
-				return (-1);
-			}
-			x = ucl_object_lookup(v, "version");
-			if (x == NULL || ucl_object_type(x) != UCL_STRING ||
-			    !valid_semver(ucl_object_tostring(x)) ||
-			    strlen(ucl_object_tostring(x)) >=
-			    SERVICED_COMPONENT_VERSION_MAX) {
-				snprintf(errbuf, errlen,
-				    "component %s requires a semantic version",
-				    key);
-				return (-1);
-			}
-			x = ucl_object_lookup(v, "provider");
-			if (x != NULL &&
-			    (ucl_object_type(x) != UCL_STRING ||
-			    ucl_object_tostring(x)[0] == '\0' ||
-			    strlen(ucl_object_tostring(x)) >=
-			    SERVICED_COMPONENT_PROVIDER_MAX)) {
-				snprintf(errbuf, errlen,
-				    "component %s has an invalid provider", key);
-				return (-1);
-			}
-			x = ucl_object_lookup(v, "scope");
-			if (x != NULL && ucl_object_lookup(v, "lifetime") != NULL) {
-				snprintf(errbuf, errlen,
-				    "component %s cannot declare both scope and lifetime",
-				    key);
-				return (-1);
-			}
-			if (x != NULL) {
-				if (ucl_object_type(x) != UCL_STRING) {
-					snprintf(errbuf, errlen,
-					    "component %s scope must be a string",
-					    key);
-					return (-1);
-				}
-				scope = ucl_object_tostring(x);
-				if (strcmp(scope, "private") != 0 &&
-				    strcmp(scope, "jail") != 0 &&
-				    strcmp(scope, "service") != 0 &&
-				    strcmp(scope, "system") != 0) {
-					snprintf(errbuf, errlen,
-					    "component %s has an invalid scope",
-					    key);
-					return (-1);
-				}
-			}
-			x = ucl_object_lookup(v, "lifetime");
-			if (x != NULL) {
-				if (ucl_object_type(x) != UCL_STRING) {
-					snprintf(errbuf, errlen,
-					    "component %s lifetime must be a string",
-					    key);
-					return (-1);
-				}
-				scope = ucl_object_tostring(x);
-				if (strcmp(scope, "process") != 0 &&
-				    strcmp(scope, "job") != 0 &&
-				    strcmp(scope, "jail") != 0 &&
-				    strcmp(scope, "system") != 0) {
-					snprintf(errbuf, errlen,
-					    "component %s has an invalid lifetime",
-					    key);
-					return (-1);
-				}
-			}
-			x = ucl_object_lookup(v, "sharing");
-			if (x != NULL && (ucl_object_type(x) != UCL_STRING ||
-			    (strcmp(ucl_object_tostring(x), "exclusive") != 0 &&
-			    strcmp(ucl_object_tostring(x), "shared") != 0))) {
-				snprintf(errbuf, errlen,
-				    "component %s has invalid sharing", key);
-				return (-1);
-			}
-			x = ucl_object_lookup(v, "required");
-			if (x != NULL && ucl_object_type(x) != UCL_BOOLEAN) {
-				snprintf(errbuf, errlen,
-				    "component %s required must be boolean",
-				    key);
-				return (-1);
-			}
-			x = ucl_object_lookup(v, "options");
-			if (x != NULL && ucl_object_type(x) != UCL_OBJECT) {
-				snprintf(errbuf, errlen,
-				    "component %s options must be an object",
-				    key);
-				return (-1);
-			}
-		}
+			first = name;
+		} while (ucl_object_type(arr) != UCL_STRING);
 	}
 
 	arr = ucl_object_lookup(root, "jail");
@@ -667,6 +373,9 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			    strcmp(key, "SERVICE_BOOTSTRAP_FD") == 0 ||
 			    strcmp(key, "NETWORKCMP") == 0 ||
 			    strcmp(key, "FILESYSTEMCMP") == 0 ||
+			    strcmp(key, "LOGCMP") == 0 ||
+			    strcmp(key, "TRACECMP") == 0 ||
+			    strcmp(key, "NOTIFYCMP") == 0 ||
 			    ucl_object_type(v) != UCL_STRING) {
 				snprintf(errbuf, errlen, "invalid environment entry");
 				return (-1);
@@ -1097,157 +806,45 @@ parse_restart_policy(const ucl_object_t *obj, const char *path)
 	return (CAPBUNDLE_RESTART_NEVER);
 }
 
-static uint32_t
-parse_component_scope(const char *scope)
-{
-
-	if (scope == NULL || strcmp(scope, "private") == 0)
-		return (SVC_COMPONENT_PRIVATE);
-	if (strcmp(scope, "jail") == 0)
-		return (SVC_COMPONENT_JAIL);
-	if (strcmp(scope, "service") == 0)
-		return (SVC_COMPONENT_SERVICE);
-	if (strcmp(scope, "system") == 0)
-		return (SVC_COMPONENT_SYSTEM);
-	return (0);
-}
-
 static int
 parse_components(const ucl_object_t *root, struct capbundle_service *svc,
     char *errbuf, size_t errlen)
 {
-	const ucl_object_t *components, *entry, *v;
+	const ucl_object_t *components, *entry;
 	struct serviced_component *component;
 	ucl_object_iter_t it;
-	unsigned char *emitted;
-	const char *scope;
-	size_t len;
+	const char *name, *provider;
 
+	(void)errbuf;
+	(void)errlen;
 	components = ucl_object_lookup(root, "components");
 	if (components == NULL)
 		return (0);
 	it = NULL;
-	while ((entry = ucl_object_iterate(components, &it, true)) != NULL) {
+	do {
+		entry = ucl_object_type(components) == UCL_STRING ?
+		    components : ucl_object_iterate(components, &it, true);
+		if (entry == NULL)
+			break;
+		name = ucl_object_tostring(entry);
 		component = &svc->components[svc->ncomponents];
-		strlcpy(component->name, ucl_object_key(entry),
-		    sizeof(component->name));
-		v = ucl_object_lookup(entry, "interface");
-		strlcpy(component->interface, ucl_object_tostring(v),
-		    sizeof(component->interface));
-		v = ucl_object_lookup(entry, "version");
-		strlcpy(component->version, ucl_object_tostring(v),
-		    sizeof(component->version));
-		v = ucl_object_lookup(entry, "provider");
-		if (v != NULL)
-			strlcpy(component->provider, ucl_object_tostring(v),
-			    sizeof(component->provider));
-		v = ucl_object_lookup(entry, "scope");
-		if (v == NULL) {
-			v = ucl_object_lookup(entry, "lifetime");
-			scope = v != NULL ? ucl_object_tostring(v) : NULL;
-			if (scope != NULL && strcmp(scope, "process") == 0)
-				scope = "private";
-			else if (scope != NULL && strcmp(scope, "job") == 0)
-				scope = "service";
-		} else
-			scope = ucl_object_tostring(v);
-		component->scope = parse_component_scope(scope);
-		v = ucl_object_lookup(entry, "sharing");
-		component->shared = v != NULL &&
-		    strcmp(ucl_object_tostring(v), "shared") == 0;
-		v = ucl_object_lookup(entry, "required");
-		component->required = v == NULL || ucl_object_toboolean(v);
-		v = ucl_object_lookup(entry, "options");
-		if (v != NULL) {
-			emitted = ucl_object_emit(v, UCL_EMIT_JSON_COMPACT);
-			if (emitted == NULL) {
-				snprintf(errbuf, errlen,
-				    "component %s options cannot be encoded",
-				    component->name);
-				return (-1);
-			}
-			len = strlen((const char *)emitted);
-			if (len >= sizeof(component->options)) {
-				free(emitted);
-				snprintf(errbuf, errlen,
-				    "component %s options are too large",
-				    component->name);
-				return (-1);
-			}
-			memcpy(component->options, emitted, len + 1);
-			free(emitted);
-		} else {
-			strlcpy(component->options, "{}",
-			    sizeof(component->options));
+		strlcpy(component->name, name, sizeof(component->name));
+		provider = strcmp(name, "filesystem") == 0 ?
+		    "org.5bsd.FileSystemCmp" : "org.5bsd.NetworkCmp";
+		for (unsigned i = 0; i < svc->nstartup_after; i++)
+			if (strcmp(svc->startup_after[i], provider) == 0)
+				goto dependency_present;
+		if (svc->nstartup_after >= SERVICED_MAX_COMPONENTS) {
+			snprintf(errbuf, errlen,
+			    "components exceed the startup-edge limit");
+			return (-1);
 		}
+		strlcpy(svc->startup_after[svc->nstartup_after++], provider,
+		    sizeof(svc->startup_after[0]));
+dependency_present:
 		svc->ncomponents++;
-	}
+	} while (ucl_object_type(components) != UCL_STRING);
 	return (0);
-}
-
-static void
-parse_implements(const ucl_object_t *root, struct capbundle_service *svc)
-{
-	const ucl_object_t *array, *entry, *value, *item;
-	struct serviced_interface *implementation;
-	ucl_object_iter_t iterator, jt;
-	const char *name;
-
-	array = ucl_object_lookup(root, "implements");
-	if (array == NULL)
-		return;
-	iterator = NULL;
-	while ((entry = ucl_object_iterate(array, &iterator, true)) != NULL) {
-		implementation = &svc->implements[svc->nimplements];
-		value = ucl_object_lookup(entry, "interface");
-		strlcpy(implementation->name, ucl_object_tostring(value),
-		    sizeof(implementation->name));
-		value = ucl_object_lookup(entry, "version");
-		strlcpy(implementation->version, ucl_object_tostring(value),
-		    sizeof(implementation->version));
-		implementation->lifetimes =
-		    SVC_COMPONENT_LIFETIME_BIT(SVC_COMPONENT_PRIVATE);
-		value = ucl_object_lookup(entry, "lifetimes");
-		if (value != NULL) {
-			implementation->lifetimes = 0;
-			jt = NULL;
-			while ((item = ucl_object_iterate(value, &jt,
-			    true)) != NULL) {
-				name = ucl_object_tostring(item);
-				if (strcmp(name, "process") == 0)
-					implementation->lifetimes |=
-					    SVC_COMPONENT_LIFETIME_BIT(
-					    SVC_COMPONENT_PRIVATE);
-				else if (strcmp(name, "job") == 0)
-					implementation->lifetimes |=
-					    SVC_COMPONENT_LIFETIME_BIT(
-					    SVC_COMPONENT_SERVICE);
-				else if (strcmp(name, "jail") == 0)
-					implementation->lifetimes |=
-					    SVC_COMPONENT_LIFETIME_BIT(
-					    SVC_COMPONENT_JAIL);
-				else
-					implementation->lifetimes |=
-					    SVC_COMPONENT_LIFETIME_BIT(
-					    SVC_COMPONENT_SYSTEM);
-			}
-		}
-		implementation->sharing = SVC_COMPONENT_SHARING_EXCLUSIVE;
-		value = ucl_object_lookup(entry, "sharing");
-		if (value != NULL) {
-			implementation->sharing = 0;
-			jt = NULL;
-			while ((item = ucl_object_iterate(value, &jt,
-			    true)) != NULL) {
-				name = ucl_object_tostring(item);
-				implementation->sharing |=
-				    strcmp(name, "shared") == 0 ?
-				    SVC_COMPONENT_SHARING_SHARED :
-				    SVC_COMPONENT_SHARING_EXCLUSIVE;
-			}
-		}
-		svc->nimplements++;
-	}
 }
 
 static uint32_t
@@ -1411,20 +1008,19 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 			    ucl_object_tostring(ev));
 	}
 
-	/* Label — use first provides name, or derive from program. */
+	/* Runtime identity is private and independent from exposed names. */
+	if (snprintf(svc->label, sizeof(svc->label), "%s/%s",
+	    ucl_object_tostring(ucl_object_lookup(root, "bundle_id")),
+	    program) >= (int)sizeof(svc->label)) {
+		snprintf(errbuf, errlen,
+		    "bundle_id and program produce an overlong runtime identity");
+		ucl_object_unref(root);
+		return (-1);
+	}
 	parse_string_array(root, "provides", svc->provides,
 	    CAPBUNDLE_MAX_PROVIDES, &svc->nprovides);
-	if (svc->nprovides > 0)
-		strlcpy(svc->label, svc->provides[0], sizeof(svc->label));
-	else
-		strlcpy(svc->label, program, sizeof(svc->label));
 
-	/* Requires */
-	parse_string_array(root, "requires", svc->requires,
-	    CAPBUNDLE_MAX_REQUIRES, &svc->nrequires);
-
-	/* Provider interfaces and consumed component sessions. */
-	parse_implements(root, svc);
+	/* Locally injected authority replacements. */
 	if (parse_components(root, svc, errbuf, errlen) == -1) {
 		ucl_object_unref(root);
 		return (-1);
@@ -1434,11 +1030,6 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 	parse_string_array_n(root, "kmod_requires", svc->kmod_requires,
 	    sizeof(svc->kmod_requires[0]), CAPBUNDLE_MAX_KMOD_REQUIRES,
 	    &svc->nkmod_requires);
-
-	/* On-demand */
-	v = ucl_object_lookup(root, "on_demand");
-	if (v != NULL && ucl_object_type(v) == UCL_BOOLEAN)
-		svc->on_demand = ucl_object_toboolean(v);
 
 	/* Restart policy */
 	svc->restart = parse_restart_policy(root, path);

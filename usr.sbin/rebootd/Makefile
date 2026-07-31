@@ -6,8 +6,8 @@ MAN=	rebootd.8
 SRCS=	rebootd_main.c
 
 CFLAGS+=	-I${SRCTOP}/lib/libservice
-CFLAGS+=	-I${SRCTOP}/lib/libcapability
-LIBADD=		capability service
+CFLAGS+=	-I${SRCTOP}/lib/libchannel
+LIBADD=		bsm channel service
 
 DIRS+=	REBOOT_CAP REBOOT_CAP_BIN REBOOT_CAP_ETC
 REBOOT_CAP=	/Capabilities/System/Reboot.cap
@@ -26,6 +26,11 @@ SERVICESNAME_capbundle/rebootd.ucl=	rebootd.ucl
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
+
+.if ${MK_DTRACE} != "no"
+SRCS+=		rebootd_provider.d
+CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
+.endif
 
 .include <bsd.prog.mk>
 

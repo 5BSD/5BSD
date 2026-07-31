@@ -30,6 +30,9 @@ int	mac_capability_svc_connect(const char *name);
 int	mac_capability_confine_oracle_fd(int fd, const char *name);
 int	mac_capability_do_call(int fd, const void *req, size_t reqlen,
 	    void *reply, size_t replylen);
+int	mac_capability_do_call_fds(int fd, const void *req, size_t reqlen,
+	    const int *req_fds, size_t req_nfds, void *reply, size_t replylen,
+	    int *reply_fds, size_t reply_nfds);
 
 /* Claims lifecycle (mac_capability_claims.c), called from mac_capability_setup.c. */
 int	isolate_resources(void);

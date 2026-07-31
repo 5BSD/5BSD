@@ -43,9 +43,9 @@
 #include <unistd.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
-
 #include <component_session.h>
 #include <service_bootstrap.h>
+#include <channel.h>
 
 #include "serviced.h"
 #include "serviced_audit.h"
@@ -53,13 +53,21 @@
 
 #define	SVC_CHANNEL_FD	3	/* well-known fd for the channel */
 #define	SVC_CAPPROTECT_FD	4	/* capprotect service instance */
+
+/*
+ * Main-loop-owned process incarnation counter.  A PID and service label are
+ * not sufficient identity because a restarted process can eventually reuse
+ * both.  Zero is reserved for a runtime that has not been launched.
+ */
+static uint64_t svc_launch_sequence;
 #define	SVC_TOKEN_BASE	6	/* after the typed bootstrap descriptor */
 #define	SVC_MAX_TOKENS	(SERVICED_MAX_CAP_PATHS + SERVICED_MAX_CAP_FILES + \
 				    SERVICED_MAX_CAP_NET + SERVICED_MAX_CAP_JAIL + \
 				    SERVICED_MAX_CAP_VSOCK + 1)
-#define	SVC_INTERNAL_ENV	7	/* PATH, bootstrap, selectors, USER/HOME, NULL */
+#define	SVC_INTERNAL_ENV	10	/* PATH, bootstrap, selectors, USER/HOME, NULL */
 #define	SVC_MAX_ENV	(SVC_INTERNAL_ENV + SERVICED_MAX_ENVIRONMENT)
 #define	SVC_COMPONENT_BOOTSTRAP_TIMEOUT_MS	2000
+#define	SVC_STORAGE_ROOT	"/var/db/serviced/storage"
 
 _Static_assert(SVC_CHANNEL_FD < SERVICE_BOOTSTRAP_FD,
     "service channel overlaps bootstrap descriptor");
@@ -72,176 +80,357 @@ _Static_assert(SVC_MAX_TOKENS <= SERVICE_BOOTSTRAP_TOKEN_MAX,
 _Static_assert(SERVICED_MAX_CAP_SERVICES <=
     SERVICE_BOOTSTRAP_CAPABILITY_MAX,
     "bootstrap capability table is too small");
-_Static_assert(SERVICED_MAX_COMPONENTS <= SERVICE_BOOTSTRAP_COMPONENT_MAX,
-    "bootstrap component table is too small");
 _Static_assert(SERVICED_CAP_SERVICE_NAME_MAX <=
     SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX,
     "bootstrap capability name is too small");
-_Static_assert(SERVICED_COMPONENT_NAME_MAX <=
-    SERVICE_BOOTSTRAP_COMPONENT_NAME_MAX,
-    "bootstrap component name is too small");
 _Static_assert(SERVICED_LABEL_MAX <= SERVICE_BOOTSTRAP_LABEL_MAX,
     "bootstrap label is too small");
 
-_Static_assert(SVC_COMPONENT_PRIVATE == COMPONENT_SESSION_SCOPE_PRIVATE,
-    "private component scope ABI drift");
-_Static_assert(SVC_COMPONENT_JAIL == COMPONENT_SESSION_SCOPE_JAIL,
-    "jail component scope ABI drift");
-_Static_assert(SVC_COMPONENT_SERVICE == COMPONENT_SESSION_SCOPE_SERVICE,
-    "service component scope ABI drift");
-_Static_assert(SVC_COMPONENT_SYSTEM == COMPONENT_SESSION_SCOPE_SYSTEM,
-    "system component scope ABI drift");
-
-static int
-send_component_bootstrap(int fd, const struct svc_manifest *m,
-    const struct serviced_component *component, uint64_t *instance_id)
+static const char *
+local_component_provider(const struct serviced_component *component)
 {
-	struct mac_capability_sendmsg_args sa;
-	struct {
-		struct component_session_bootstrap header;
-		char options[COMPONENT_SESSION_OPTIONS_MAX];
-	} message;
-	size_t options_length, length;
 
-	options_length = strlen(component->options) + 1;
-	if (options_length > sizeof(message.options)) {
-		errno = E2BIG;
-		return (-1);
+	if (strcmp(component->name, "filesystem") == 0)
+		return ("org.5bsd.FileSystemCmp");
+	if (strcmp(component->name, "network") == 0)
+		return ("org.5bsd.NetworkCmp");
+	return (NULL);
+}
+
+static const char *
+local_component_interface(const struct serviced_component *component)
+{
+
+	if (strcmp(component->name, "filesystem") == 0)
+		return ("org.5bsd.filesystem");
+	if (strcmp(component->name, "network") == 0)
+		return ("org.5bsd.network");
+	return (NULL);
+}
+
+struct component_call_state {
+	uint64_t		 instance_id;
+	int			 member_fd;
+	int			 error;
+	bool			 done;
+	struct channel_request	*request;
+};
+
+static void
+component_reply(struct channel_request *request,
+    struct channel_message *message, int error, void *argument)
+{
+	struct component_call_state *state;
+	const struct component_session_reply *reply;
+	size_t nfds;
+
+	state = argument;
+	state->request = NULL;
+	if (error != 0)
+		state->error = error;
+	else {
+		reply = channel_message_data(message);
+		nfds = channel_message_fd_count(message);
+		if (channel_message_length(message) != sizeof(*reply) ||
+		    reply->magic != COMPONENT_SESSION_MAGIC ||
+		    reply->version != COMPONENT_SESSION_VERSION ||
+		    reply->header_size != sizeof(*reply) ||
+		    reply->instance_id != state->instance_id ||
+		    reply->reserved[0] != 0 || reply->reserved[1] != 0 ||
+		    reply->reserved[2] != 0 || reply->reserved[3] != 0 ||
+		    reply->reserved[4] != 0)
+			state->error = EPROTO;
+		else if (reply->status != 0) {
+			state->error = nfds == 0 ?
+			    (reply->status > 0 ? reply->status : EPROTO) :
+			    EPROTO;
+		} else if (nfds != 1 ||
+		    (reply->member_type !=
+		    COMPONENT_SESSION_MEMBER_PROCDESC &&
+		    reply->member_type !=
+		    COMPONENT_SESSION_MEMBER_COALITION))
+			state->error = EPROTO;
+		else {
+			state->member_fd = channel_message_take_fd(message, 0);
+			if (state->member_fd == -1)
+				state->error = errno;
+		}
 	}
-	memset(&message, 0, sizeof(message));
-	message.header.magic = COMPONENT_SESSION_MAGIC;
-	message.header.version = COMPONENT_SESSION_VERSION;
-	message.header.header_size = sizeof(message.header);
-	message.header.scope = component->scope;
-	message.header.flags = component->required ?
-	    COMPONENT_SESSION_F_REQUIRED : 0;
-	if (component->shared)
-		message.header.flags |= COMPONENT_SESSION_F_SHARED;
-	message.header.options_length = (uint32_t)options_length;
-	arc4random_buf(&message.header.instance_id,
-	    sizeof(message.header.instance_id));
-	*instance_id = message.header.instance_id;
-	strlcpy(message.header.name, component->name,
-	    sizeof(message.header.name));
-	strlcpy(message.header.interface, component->interface,
-	    sizeof(message.header.interface));
-	strlcpy(message.header.interface_version, component->version,
-	    sizeof(message.header.interface_version));
-	strlcpy(message.header.client_label, m->label,
-	    sizeof(message.header.client_label));
-	memcpy(message.options, component->options, options_length);
-	length = sizeof(message.header) + options_length;
-	message.header.length = (uint32_t)length;
-
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = &message;
-	sa.payload_len = (uint32_t)length;
-	return (ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa));
+	if (message != NULL)
+		channel_message_free(message);
+	channel_request_release(request);
+	state->done = true;
 }
 
 static int
-receive_component_bootstrap(int fd, uint64_t instance_id, int *member_fd)
+bootstrap_component(int fd, const struct svc_manifest *m,
+    const struct serviced_component *component, const int *fds, size_t nfds,
+    int *member_fd)
 {
-	struct component_session_reply reply;
-	struct mac_capability_recvmsg_args ra;
-	struct pollfd pfd;
+	struct channel_options options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
+	struct component_call_state state;
+	struct channel *channel;
+	struct pollfd descriptor;
 	struct timespec deadline, now;
-	int64_t remaining_ms;
-	int rv;
+	struct component_session_bootstrap message;
+	const char *interface;
+	int64_t milliseconds;
+	int owned, result, timeout, wants_write;
 
-	pfd.fd = fd;
-	pfd.events = POLLIN;
-	if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
+	if (member_fd == NULL) {
+		errno = EINVAL;
 		return (-1);
+	}
+	*member_fd = -1;
+	interface = local_component_interface(component);
+	if (interface == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&message, 0, sizeof(message));
+	message.magic = COMPONENT_SESSION_MAGIC;
+	message.version = COMPONENT_SESSION_VERSION;
+	message.header_size = sizeof(message);
+	arc4random_buf(&message.instance_id, sizeof(message.instance_id));
+	strlcpy(message.name, component->name, sizeof(message.name));
+	strlcpy(message.interface, interface, sizeof(message.interface));
+	strlcpy(message.interface_version, "1.0.0",
+	    sizeof(message.interface_version));
+	strlcpy(message.client_label, m->label, sizeof(message.client_label));
+	owned = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+	if (owned == -1)
+		return (-1);
+	if (channel_create(owned, &options, &channel) == -1) {
+		result = errno;
+		close(owned);
+		errno = result;
+		return (-1);
+	}
+	memset(&state, 0, sizeof(state));
+	state.instance_id = message.instance_id;
+	state.member_fd = -1;
+	if (channel_send_request(channel,
+	    &(struct channel_outgoing){
+		.size = sizeof(struct channel_outgoing),
+		.data = &message,
+		.length = sizeof(message),
+		.fds = fds,
+		.nfds = nfds
+	    }, component_reply, &state, &state.request) == -1)
+		goto fail;
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
+		goto fail;
 	deadline.tv_sec += SVC_COMPONENT_BOOTSTRAP_TIMEOUT_MS / 1000;
 	deadline.tv_nsec +=
-	    (SVC_COMPONENT_BOOTSTRAP_TIMEOUT_MS % 1000) * 1000000L;
-	if (deadline.tv_nsec >= 1000000000L) {
+	    (SVC_COMPONENT_BOOTSTRAP_TIMEOUT_MS % 1000) * 1000000;
+	if (deadline.tv_nsec >= 1000000000) {
 		deadline.tv_sec++;
-		deadline.tv_nsec -= 1000000000L;
+		deadline.tv_nsec -= 1000000000;
 	}
-	for (;;) {
+	while (!state.done) {
 		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
-			return (-1);
-		remaining_ms = (deadline.tv_sec - now.tv_sec) * 1000 +
+			goto fail;
+		milliseconds = (deadline.tv_sec - now.tv_sec) * 1000 +
 		    (deadline.tv_nsec - now.tv_nsec + 999999) / 1000000;
-		if (remaining_ms <= 0) {
+		if (milliseconds <= 0) {
 			errno = ETIMEDOUT;
-			return (-1);
+			goto fail;
 		}
-		rv = poll(&pfd, 1, (int)remaining_ms);
-		if (rv == -1 && errno == EINTR)
-			continue;
-		if (rv == 0) {
+		timeout = milliseconds > SVC_COMPONENT_BOOTSTRAP_TIMEOUT_MS ?
+		    SVC_COMPONENT_BOOTSTRAP_TIMEOUT_MS : (int)milliseconds;
+		wants_write = channel_wants_write(channel);
+		if (wants_write == -1)
+			goto fail;
+		memset(&descriptor, 0, sizeof(descriptor));
+		descriptor.fd = channel_fd(channel);
+		descriptor.events = POLLIN | (wants_write ? POLLOUT : 0);
+		do {
+			result = poll(&descriptor, 1, timeout);
+		} while (result == -1 && errno == EINTR);
+		if (result == 0) {
 			errno = ETIMEDOUT;
-			return (-1);
+			goto fail;
 		}
-		if (rv == -1)
-			return (-1);
-		if ((pfd.revents & (POLLERR | POLLHUP)) != 0) {
-			errno = ECONNRESET;
-			return (-1);
-		}
-		break;
+		if (result == -1 ||
+		    ((descriptor.revents & POLLOUT) != 0 &&
+		    channel_flush(channel) == -1) ||
+		    ((descriptor.revents &
+		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+		    channel_dispatch(channel) == -1))
+			goto fail;
 	}
-
-	memset(&reply, 0, sizeof(reply));
-	*member_fd = -1;
-	memset(&ra, 0, sizeof(ra));
-	ra.payload = &reply;
-	ra.payload_len = sizeof(reply);
-	ra.fds = member_fd;
-	ra.nfds = 1;
-	if (ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
-		if (*member_fd >= 0) {
-			close(*member_fd);
-			*member_fd = -1;
-		}
-		return (-1);
+	if (state.error != 0) {
+		errno = state.error;
+		goto fail;
 	}
-	if (ra.payload_len != sizeof(reply) ||
-	    reply.magic != COMPONENT_SESSION_MAGIC ||
-	    reply.version != COMPONENT_SESSION_VERSION ||
-	    reply.header_size != sizeof(reply) ||
-	    reply.length != sizeof(reply) ||
-	    reply.instance_id != instance_id ||
-	    reply.reserved[0] != 0 || reply.reserved[1] != 0 ||
-	    reply.reserved[2] != 0 || reply.reserved[3] != 0) {
-		if (*member_fd >= 0) {
-			close(*member_fd);
-			*member_fd = -1;
-		}
-		errno = EPROTO;
-		return (-1);
-	}
-	if (reply.status != 0) {
-		if (ra.nfds != 0 || *member_fd >= 0) {
-			if (*member_fd >= 0)
-				close(*member_fd);
-			*member_fd = -1;
-			errno = EPROTO;
-			return (-1);
-		}
-		errno = reply.status > 0 ? reply.status : EPROTO;
-		return (-1);
-	}
-	if (ra.nfds != 1 || *member_fd < 0 ||
-	    (reply.member_type != COMPONENT_SESSION_MEMBER_PROCDESC &&
-	    reply.member_type != COMPONENT_SESSION_MEMBER_COALITION)) {
-		if (*member_fd >= 0)
-			close(*member_fd);
-		*member_fd = -1;
-		errno = EPROTO;
-		return (-1);
-	}
+	*member_fd = state.member_fd;
+	channel_destroy(channel);
 	return (0);
+
+fail:
+	result = errno;
+	if (state.request != NULL) {
+		(void)channel_request_cancel(state.request);
+		channel_request_release(state.request);
+	}
+	if (state.member_fd >= 0)
+		close(state.member_fd);
+	channel_destroy(channel);
+	errno = result;
+	return (-1);
+}
+
+static bool
+safe_storage_name(const char *name)
+{
+
+	return (name != NULL && name[0] != '\0' &&
+	    strcmp(name, ".") != 0 && strcmp(name, "..") != 0 &&
+	    strchr(name, '/') == NULL);
+}
+
+static int
+open_component_storage(const char *label, const char *component)
+{
+	struct passwd *account;
+	int base, service_dir, result, error;
+
+	if (!safe_storage_name(label) || !safe_storage_name(component)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	account = getpwnam(SERVICED_DEFAULT_USER);
+	if (account == NULL) {
+		errno = ENOENT;
+		return (-1);
+	}
+	base = open(SVC_STORAGE_ROOT,
+	    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+	if (base == -1)
+		return (-1);
+	if (mkdirat(base, label, 0700) == -1 && errno != EEXIST)
+		goto fail_base;
+	service_dir = openat(base, label,
+	    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+	if (service_dir == -1)
+		goto fail_base;
+	if (fchown(service_dir, account->pw_uid, account->pw_gid) == -1 ||
+	    fchmod(service_dir, 0700) == -1 ||
+	    (mkdirat(service_dir, component, 0700) == -1 && errno != EEXIST)) {
+		error = errno;
+		close(service_dir);
+		close(base);
+		errno = error;
+		return (-1);
+	}
+	result = openat(service_dir, component,
+	    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+	error = errno;
+	if (result != -1 &&
+	    (fchown(result, account->pw_uid, account->pw_gid) == -1 ||
+	    fchmod(result, 0700) == -1)) {
+		error = errno;
+		close(result);
+		result = -1;
+	}
+	close(service_dir);
+	close(base);
+	errno = error;
+	return (result);
+
+fail_base:
+	error = errno;
+	close(base);
+	errno = error;
+	return (-1);
+}
+
+static int
+open_consumer_bundle(const struct svc_manifest *manifest)
+{
+	char path[PATH_MAX];
+	char *marker, *next;
+
+	if (strlcpy(path, manifest->program, sizeof(path)) >= sizeof(path)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	marker = NULL;
+	for (next = strstr(path, "/bin/"); next != NULL;
+	    next = strstr(next + 1, "/bin/"))
+		marker = next;
+	if (marker == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*marker = '\0';
+	if (strlen(path) < 4 ||
+	    strcmp(path + strlen(path) - 4, ".cap") != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
+}
+
+static int
+prepare_component_resources(const struct svc_manifest *manifest,
+    const struct serviced_component *component, int fds[static
+    COMPONENT_SESSION_RESOURCE_MAX], size_t *nfdsp)
+{
+	cap_rights_t rights;
+	size_t i;
+	int error;
+
+	*nfdsp = 0;
+	if (strcmp(component->name, "filesystem") != 0)
+		return (0);
+	fds[0] = open_component_storage(manifest->label, component->name);
+	if (fds[0] == -1)
+		return (-1);
+	fds[1] = open_consumer_bundle(manifest);
+	if (fds[1] == -1) {
+		error = errno != 0 ? errno : EIO;
+		close(fds[0]);
+		errno = error;
+		return (-1);
+	}
+	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_PREAD, CAP_PWRITE,
+	    CAP_SEEK, CAP_FCNTL, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
+	    CAP_FTRUNCATE, CAP_FSYNC,
+	    CAP_CREATE, CAP_MKDIRAT, CAP_UNLINKAT, CAP_RENAMEAT_SOURCE,
+	    CAP_RENAMEAT_TARGET);
+	if (cap_rights_limit(fds[0], &rights) == -1)
+		goto fail;
+	if (cap_fcntls_limit(fds[0], 0) == -1)
+		goto fail;
+	cap_rights_init(&rights, CAP_READ, CAP_PREAD, CAP_SEEK, CAP_FCNTL,
+	    CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT);
+	if (cap_rights_limit(fds[1], &rights) == -1)
+		goto fail;
+	if (cap_fcntls_limit(fds[1], 0) == -1)
+		goto fail;
+	for (i = 0; i < 2; i++) {
+		if (cap_xfer_limit(fds[i], CAP_XFER_ONCE) == -1 ||
+		    cap_clofork_limit(fds[i], CAP_CLOFORK_ONCE) == -1 ||
+		    cap_cloexec_limit(fds[i], CAP_CLOEXEC_LOCKED) == -1)
+			goto fail;
+	}
+	*nfdsp = 2;
+	return (0);
+
+fail:
+	error = errno != 0 ? errno : EIO;
+	close(fds[0]);
+	close(fds[1]);
+	errno = error;
+	return (-1);
 }
 
 /* Build the immutable descriptor bootstrap consumed by libservice. */
 static int
 create_service_bootstrap(const struct svc_manifest *m, unsigned ntokens,
-    unsigned nservices, unsigned *component_indices, unsigned ncomponents,
-    bool have_capprotect)
+    unsigned nservices, bool have_capprotect)
 {
 	struct envfd_create_options options =
 	    ENVFD_CREATE_OPTIONS_INITIALIZER(sizeof(struct service_bootstrap));
@@ -272,7 +461,6 @@ create_service_bootstrap(const struct svc_manifest *m, unsigned ntokens,
 	    SVC_CAPPROTECT_FD : -1;
 	bootstrap.ntokens = ntokens;
 	bootstrap.ncapabilities = nservices;
-	bootstrap.ncomponents = ncomponents;
 	strlcpy(bootstrap.label, m->label, sizeof(bootstrap.label));
 	for (i = 0; i < ntokens; i++)
 		bootstrap.token_fds[i] = SVC_TOKEN_BASE + i;
@@ -280,13 +468,6 @@ create_service_bootstrap(const struct svc_manifest *m, unsigned ntokens,
 		bootstrap.capabilities[i].fd = SVC_TOKEN_BASE + ntokens + i;
 		strlcpy(bootstrap.capabilities[i].name, m->cap_services[i],
 		    sizeof(bootstrap.capabilities[i].name));
-	}
-	for (i = 0; i < ncomponents; i++) {
-		bootstrap.components[i].fd =
-		    SVC_TOKEN_BASE + ntokens + nservices + i;
-		strlcpy(bootstrap.components[i].name,
-		    m->components[component_indices[i]].name,
-		    sizeof(bootstrap.components[i].name));
 	}
 	written = write(fd, &bootstrap, sizeof(bootstrap));
 	explicit_bzero(&bootstrap, sizeof(bootstrap));
@@ -350,14 +531,13 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 {
 	char user_env[128], home_env[PATH_MAX + 8];
 	char bootstrap_env[32];
-	char network_component_env[SERVICED_COMPONENT_NAME_MAX + 32];
-	char filesystem_component_env[SERVICED_COMPONENT_NAME_MAX + 32];
+	char network_component_env[32];
+	char filesystem_component_env[32];
 	char *env[SVC_MAX_ENV];
 	char *argv[SERVICED_MAX_ARGUMENTS + 2];
-	const char *network_component, *filesystem_component;
 	int nullfd, fd;
 	bool have_capprotect;
-	unsigned i, envc, nnetwork, nfilesystem;
+	unsigned i, envc;
 
 	/* Redirect stdio to /dev/null. */
 	nullfd = open("/dev/null", O_RDWR);
@@ -441,7 +621,6 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 		if (dup2(capprotect_fd, SVC_CAPPROTECT_FD) == -1)
 			_exit(126);
 		(void)close(capprotect_fd);
-		capprotect_fd = SVC_CAPPROTECT_FD;
 	} else {
 		/*
 		 * No capprotect instance for this service.  closefrom() below
@@ -481,7 +660,6 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 		if (jail_attach_jd(jail_fd) == -1)
 			_exit(126);
 		(void)close(jail_fd);
-		jail_fd = -1;
 	}
 
 	closefrom(SVC_TOKEN_BASE + (int)ntokens + (int)nservices +
@@ -523,45 +701,35 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	env[envc++] = bootstrap_env;
 
 	/*
-	 * These variables select a local manifest key; they never contain a
-	 * descriptor or provider identity.  The libraries resolve the selected
-	 * key against the sealed bootstrap descriptor.  With multiple sessions
-	 * of one interface, the conventional key wins; otherwise callers use
-	 * the explicit-name API.
+	 * Local components are authority descriptors, not discoverable names.
+	 * Inject the final descriptor number directly.  Typed libraries consume
+	 * and remove these variables; global services never appear here.
 	 */
-	network_component = filesystem_component = NULL;
-	nnetwork = nfilesystem = 0;
 	for (i = 0; i < ncomponents; i++) {
 		const struct serviced_component *component;
+		int component_fd;
 
 		component = &m->components[component_indices[i]];
-		if (strcmp(component->interface, "org.5bsd.cmp.network") == 0) {
-			nnetwork++;
-			if (network_component == NULL ||
-			    strcmp(component->name, "network") == 0)
-				network_component = component->name;
-		} else if (strcmp(component->interface,
-		    "org.5bsd.cmp.filesystem") == 0) {
-			nfilesystem++;
-			if (filesystem_component == NULL ||
-			    strcmp(component->name, "filesystem") == 0)
-				filesystem_component = component->name;
+		component_fd = SVC_TOKEN_BASE + (int)ntokens + (int)nservices +
+		    (int)i;
+		if (strcmp(component->name, "network") == 0) {
+			if (manifest_has_env(m, SERVICE_NETWORKCMP_ENV))
+				_exit(126);
+			(void)snprintf(network_component_env,
+			    sizeof(network_component_env), "%s=%d",
+			    SERVICE_NETWORKCMP_ENV, component_fd);
+			env[envc++] = network_component_env;
+		} else if (strcmp(component->name, "filesystem") == 0) {
+			if (manifest_has_env(m, SERVICE_FILESYSTEMCMP_ENV))
+				_exit(126);
+			(void)snprintf(filesystem_component_env,
+			    sizeof(filesystem_component_env), "%s=%d",
+			    SERVICE_FILESYSTEMCMP_ENV, component_fd);
+			env[envc++] = filesystem_component_env;
+		} else {
+			/* The manifest parser must reject all other components. */
+			_exit(126);
 		}
-	}
-	if (network_component != NULL &&
-	    (nnetwork == 1 || strcmp(network_component, "network") == 0)) {
-		(void)snprintf(network_component_env,
-		    sizeof(network_component_env), "%s=%s",
-		    SERVICE_NETWORKCMP_ENV, network_component);
-		env[envc++] = network_component_env;
-	}
-	if (filesystem_component != NULL &&
-	    (nfilesystem == 1 ||
-	    strcmp(filesystem_component, "filesystem") == 0)) {
-		(void)snprintf(filesystem_component_env,
-		    sizeof(filesystem_component_env), "%s=%s",
-		    SERVICE_FILESYSTEMCMP_ENV, filesystem_component);
-		env[envc++] = filesystem_component_env;
 	}
 
 	if (m->user[0] != '\0' && !manifest_has_env(m, "USER")) {
@@ -745,7 +913,6 @@ svc_exec(struct svc_runtime *svc, int kq)
 		}
 	}
 
-	capprotect_fd = -1;
 	bootstrap_fd = -1;
 	svc->jail_fd = -1;
 
@@ -983,70 +1150,72 @@ svc_exec(struct svc_runtime *svc, int kq)
 	}
 
 	/*
-	 * Resolve component providers only after the ordinary capability set is
-	 * complete.  Every lookup creates a fresh session channel.  The
-	 * provider receives the requested instance scope in the first typed
-	 * message and must either honor it or reject the session; it must never
-	 * silently weaken PRIVATE to a shared instance.
+	 * Construct each declared local authority replacement before exec.
+	 * Component kinds map to fixed internal factories; provider selection
+	 * and per-manifest protocol options are deliberately not part of the
+	 * application model.
 	 */
 	for (i = 0; i < m->ncomponents; i++) {
 		const struct serviced_component *component;
+		const char *provider;
 		cap_rights_t component_rights;
 		cap_ioctl_t component_ioctls[] = {
 			MAC_CAPABILITY_SENDMSG,
 			MAC_CAPABILITY_RECVMSG,
 			MAC_CAPABILITY_GETINFO
 		};
-		uint64_t instance_id;
+		int resource_fds[COMPONENT_SESSION_RESOURCE_MAX];
+		size_t nresources, resource_index;
 		int error, cfd, member_fd;
 
 		component = &m->components[i];
+		provider = local_component_provider(component);
+		if (provider == NULL) {
+			syslog(LOG_ERR, "svc_exec %s: invalid component %s",
+			    m->label, component->name);
+			goto fail_tokens;
+		}
 		SERVICED_PROBE_COMPONENT_RESOLVE(m->label, component->name,
-		    component->provider, component->scope);
-		cfd = naming_lookup(component->provider, svc, &error);
+		    provider);
+		cfd = naming_lookup(provider, svc, &error);
 		if (cfd == -1) {
-			syslog(component->required ? LOG_ERR : LOG_WARNING,
+			syslog(LOG_ERR,
 			    "svc_exec %s: component %s provider %s: %s",
-			    m->label, component->name, component->provider,
+			    m->label, component->name, provider,
 			    strerror(error));
 			SERVICED_PROBE_COMPONENT_SESSION(m->label,
-			    component->name, component->provider, error);
+			    component->name, provider, error);
 			serviced_audit(AUE_SERVICED_COMPONENT, getuid(), error,
-			    "svc=%s component=%s interface=%s provider=%s "
-			    "lifetime=%s sharing=%s required=%d phase=resolve",
-			    m->label, component->name, component->interface,
-			    component->provider,
-			    component_lifetime_name(component->scope),
-			    component->shared ? "shared" : "exclusive",
-			    component->required ? 1 : 0);
-			if (component->required)
-				goto fail_tokens;
-			continue;
+			    "svc=%s component=%s provider=%s phase=resolve",
+			    m->label, component->name, provider);
+			goto fail_tokens;
 		}
-		if (cap_xfer_limit(cfd, CAP_XFER_NONE) == -1 ||
-		    cap_cloexec_limit(cfd, CAP_CLOEXEC_ONCE) == -1 ||
-		    send_component_bootstrap(cfd, m, component,
-		    &instance_id) == -1 ||
-		    receive_component_bootstrap(cfd, instance_id,
-		    &member_fd) == -1) {
-			error = errno;
+		nresources = 0;
+		error = 0;
+		member_fd = -1;
+		if (prepare_component_resources(m, component, resource_fds,
+		    &nresources) == -1)
+			error = errno != 0 ? errno : EIO;
+		else if (cap_xfer_limit(cfd, CAP_XFER_NONE) == -1 ||
+		    cap_cloexec_limit(cfd, CAP_CLOEXEC_ONCE) == -1)
+			error = errno != 0 ? errno : EIO;
+		else if (bootstrap_component(cfd, m, component,
+		    resource_fds, nresources, &member_fd) == -1)
+			error = errno != 0 ? errno : EIO;
+		for (resource_index = 0; resource_index < nresources;
+		    resource_index++)
+			close(resource_fds[resource_index]);
+		if (error != 0) {
 			close(cfd);
-			syslog(component->required ? LOG_ERR : LOG_WARNING,
+			syslog(LOG_ERR,
 			    "svc_exec %s: component %s bootstrap: %s",
 			    m->label, component->name, strerror(error));
 			SERVICED_PROBE_COMPONENT_SESSION(m->label,
-			    component->name, component->provider, error);
+			    component->name, provider, error);
 			serviced_audit(AUE_SERVICED_COMPONENT, getuid(), error,
-			    "svc=%s component=%s interface=%s provider=%s "
-			    "lifetime=%s sharing=%s required=%d phase=bootstrap",
-			    m->label, component->name, component->interface,
-			    component->provider,
-			    component_lifetime_name(component->scope),
-			    component->shared ? "shared" : "exclusive",
-			    component->required ? 1 : 0);
-			if (component->required)
-				goto fail_tokens;
-			continue;
+			    "svc=%s component=%s provider=%s phase=bootstrap",
+			    m->label, component->name, provider);
+			goto fail_tokens;
 		}
 		error = cap_xfer_limit(member_fd, CAP_XFER_ONCE) == -1 ?
 		    errno : mac_cap_coalition_enlist(coalition_fd, member_fd);
@@ -1055,23 +1224,16 @@ svc_exec(struct svc_runtime *svc, int kq)
 		if (error != 0) {
 			close(member_fd);
 			close(cfd);
-			syslog(component->required ? LOG_ERR : LOG_WARNING,
+			syslog(LOG_ERR,
 			    "svc_exec %s: component %s coalition enlist: %s",
 			    m->label, component->name, strerror(error));
 			SERVICED_PROBE_COMPONENT_SESSION(m->label,
-			    component->name, component->provider, error);
+			    component->name, provider, error);
 			serviced_audit(AUE_SERVICED_COMPONENT, getuid(), error,
-			    "svc=%s component=%s interface=%s provider=%s "
-			    "lifetime=%s sharing=%s required=%d "
+			    "svc=%s component=%s provider=%s "
 			    "phase=coalition-enlist",
-			    m->label, component->name, component->interface,
-			    component->provider,
-			    component_lifetime_name(component->scope),
-			    component->shared ? "shared" : "exclusive",
-			    component->required ? 1 : 0);
-			if (component->required)
-				goto fail_tokens;
-			continue;
+			    m->label, component->name, provider);
+			goto fail_tokens;
 		}
 		close(member_fd);
 		cap_rights_init(&component_rights, CAP_EVENT, CAP_FCNTL,
@@ -1082,38 +1244,26 @@ svc_exec(struct svc_runtime *svc, int kq)
 		    nitems(component_ioctls)) == -1) {
 			error = errno;
 			close(cfd);
-			syslog(component->required ? LOG_ERR : LOG_WARNING,
+			syslog(LOG_ERR,
 			    "svc_exec %s: component %s channel confinement: %s",
 			    m->label, component->name, strerror(error));
 			SERVICED_PROBE_COMPONENT_SESSION(m->label,
-			    component->name, component->provider, error);
+			    component->name, provider, error);
 			serviced_audit(AUE_SERVICED_COMPONENT, getuid(), error,
-			    "svc=%s component=%s interface=%s provider=%s "
-			    "lifetime=%s sharing=%s required=%d "
+			    "svc=%s component=%s provider=%s "
 			    "phase=channel-confinement",
-			    m->label, component->name, component->interface,
-			    component->provider,
-			    component_lifetime_name(component->scope),
-			    component->shared ? "shared" : "exclusive",
-			    component->required ? 1 : 0);
-			if (component->required)
-				goto fail_tokens;
-			continue;
+			    m->label, component->name, provider);
+			goto fail_tokens;
 		}
 		component_fds[ncomponents] = cfd;
 		component_indices[ncomponents] = i;
 		ncomponents++;
 		SERVICED_PROBE_COMPONENT_SESSION(m->label, component->name,
-		    component->provider, 0);
+		    provider, 0);
 		SERVICED_PROBE_COMPONENT_INJECT(m->label, component->name, cfd);
 		serviced_audit(AUE_SERVICED_COMPONENT, getuid(), 0,
-		    "svc=%s component=%s interface=%s provider=%s "
-		    "lifetime=%s sharing=%s required=%d phase=delegate",
-		    m->label, component->name, component->interface,
-		    component->provider,
-		    component_lifetime_name(component->scope),
-		    component->shared ? "shared" : "exclusive",
-		    component->required ? 1 : 0);
+		    "svc=%s component=%s provider=%s phase=delegate",
+		    m->label, component->name, provider);
 	}
 
 	if (ntokens > 0)
@@ -1160,7 +1310,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 			goto fail_child_confinement;
 
 	bootstrap_fd = create_service_bootstrap(m, ntokens, nservices,
-	    component_indices, ncomponents, capprotect_fd >= 0);
+	    capprotect_fd >= 0);
 	if (bootstrap_fd == -1) {
 		saved_errno = errno;
 		syslog(LOG_ERR, "svc_exec %s: bootstrap descriptor: %m",
@@ -1198,11 +1348,8 @@ svc_exec(struct svc_runtime *svc, int kq)
 	/* Parent. */
 	close(child_end);
 	close(bootstrap_fd);
-	bootstrap_fd = -1;
-	if (capprotect_fd >= 0) {
+	if (capprotect_fd >= 0)
 		close(capprotect_fd);
-		capprotect_fd = -1;
-	}
 	for (i = 0; i < ntokens; i++)
 		close(token_fds[i]);
 	for (i = 0; i < nservices; i++)
@@ -1256,17 +1403,29 @@ svc_exec(struct svc_runtime *svc, int kq)
 
 	/* Store state. */
 	svc->pid = pid;
+	svc->launch_id = ++svc_launch_sequence;
+	if (svc->launch_id == 0)
+		svc->launch_id = ++svc_launch_sequence;
 	svc->pd_fd = pd_fd;
-	svc->channel_fd = oracle_end;
+	if (svc_channel_attach(svc, oracle_end) == -1) {
+		saved_errno = errno;
+		oracle_end = -1;
+		syslog(LOG_ERR, "svc_exec %s: control channel: %m",
+		    m->label);
+		goto fail_postfork;
+	}
+	oracle_end = -1;
 	svc->coalition_fd = coalition_fd;
 	svc->state = SVC_STATE_STARTING;
 	svc->protocol_ready = false;
+	memset(svc->name_state, SVC_NAME_UNCLAIMED,
+	    sizeof(svc->name_state));
 	clock_gettime(CLOCK_MONOTONIC, &svc->last_start);
 
 	/* Register on kqueue. */
 	EV_SET(&kev[0], pd_fd, EVFILT_PROCDESC, EV_ADD,
 	    NOTE_EXIT | NOTE_EXEC | NOTE_CAPMODE, 0, svc);
-	EV_SET(&kev[1], oracle_end, EVFILT_READ, EV_ADD, 0, 0, svc);
+	EV_SET(&kev[1], svc->channel_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
 	EV_SET(&kev[2], coalition_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
 
 	if (kevent(kq, kev, 3, NULL, 0, NULL) == -1) {
@@ -1278,8 +1437,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 		    &minted_manifest);
 		close(svc->pd_fd);
 		svc->pd_fd = -1;
-		close(svc->channel_fd);
-		svc->channel_fd = -1;
+		svc_channel_close(svc);
 		close(svc->coalition_fd);
 		svc->coalition_fd = -1;
 		if (svc->jail_fd >= 0) {
@@ -1291,6 +1449,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 		svc->state = SVC_STATE_STOPPED;
 		return (-1);
 	}
+	svc_channel_sync_events(svc, kq);
 
 	syslog(LOG_INFO, "service %s: started pid %jd",
 	    m->label, (intmax_t)pid);

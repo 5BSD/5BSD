@@ -1,524 +1,313 @@
-.\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
-.\"
-.Dd July 29, 2026
+.\" Copyright (c) 2026 Kory Heard
+.Dd July 31, 2026
 .Dt LIBSERVICE 3
 .Os
 .Sh NAME
-.Nm service_init ,
-.Nm service_ready ,
-.Nm service_register ,
-.Nm service_unregister ,
-.Nm service_lookup ,
-.Nm service_accept ,
-.Nm service_send ,
-.Nm service_send_fds ,
-.Nm service_recv ,
-.Nm service_recv_fds ,
-.Nm service_channel_fd ,
-.Nm service_label ,
-.Nm service_capability_fd ,
-.Nm service_component_fd ,
-.Nm service_component_recv_bootstrap ,
-.Nm service_component_send_reply ,
-.Nm service_authorize_capabilities ,
-.Nm service_protect
-.Nd client library for services managed by serviced
+.Nm libservice
+.Nd serviced discovery, provider lifecycle, and typed-session support
 .Sh LIBRARY
-.Lb libservice
+Service lifecycle library
+.Pq libservice, Fl lservice
 .Sh SYNOPSIS
 .In libservice.h
 .Ft int
-.Fn service_init void
+.Fn service_acquire "struct service_context **context"
+.Ft void
+.Fn service_release "struct service_context *context"
 .Ft int
-.Fn service_ready void
+.Fn service_authorize_capabilities "struct service_context *context"
 .Ft int
-.Fn service_register "const char *name"
+.Fn service_enter_capability_mode "struct service_context *context"
 .Ft int
-.Fn service_unregister "const char *name"
+.Fn service_ready "struct service_context *context"
 .Ft int
-.Fn service_lookup "const char *name"
+.Fn service_connect "struct service_context *context" "const char *name" "int *session_fd"
 .Ft int
-.Fn service_accept "char *client_label" "size_t labelsz"
+.Fn service_local_component_open "struct service_context *context" "const char *interface" "const char *version" "int *session_fd"
 .Ft int
-.Fn service_send "int fd" "const void *data" "size_t len"
+.Fn service_supervisor_fd "struct service_context *context"
 .Ft int
-.Fn service_send_fds "int fd" "const void *data" "size_t len" "const int *fds" "size_t nfds"
-.Ft ssize_t
-.Fn service_recv "int fd" "void *buf" "size_t bufsz" "int *peer_fd"
-.Ft ssize_t
-.Fn service_recv_fds "int fd" "void *buf" "size_t bufsz" "int *fds" "size_t *nfds"
+.Fn service_supervisor_status "struct service_context *context"
+.Ft const char *
+.Fn service_label "struct service_context *context"
 .Ft int
-.Fn service_channel_fd void
-.Ft "const char *"
-.Fn service_label void
+.Fn service_capability_fd "struct service_context *context" "const char *name"
 .Ft int
-.Fn service_capability_fd "const char *name"
+.Fn service_provider_create "struct service_provider **provider"
+.Ft void
+.Fn service_provider_destroy "struct service_provider *provider"
 .Ft int
-.Fn service_component_fd "const char *name"
+.Fn service_provider_authorize_capabilities "struct service_provider *provider"
 .Ft int
-.Fn service_component_recv_bootstrap "int fd" "struct component_session_bootstrap *bootstrap" "char *options" "size_t options_size"
+.Fn service_provider_protect "struct service_provider *provider" "uint32_t flags"
 .Ft int
-.Fn service_component_send_reply "int fd" "uint64_t instance_id" "int status" "uint32_t member_type" "int member_fd"
+.Fn service_provider_expose "struct service_provider *provider" "const char *name" "struct service_listener **listener"
 .Ft int
-.Fn service_authorize_capabilities void
+.Fn service_provider_expose_lazy "struct service_provider *provider" "const char *name" "service_activation_handler activate" "void *argument" "struct service_listener **listener"
 .Ft int
-.Fn service_protect "uint32_t flags"
+.Fn service_provider_enter_capability_mode "struct service_provider *provider"
+.Ft int
+.Fn service_provider_ready "struct service_provider *provider"
+.Ft int
+.Fn service_listener_fd "const struct service_listener *listener"
+.Ft int
+.Fn service_listener_close "struct service_listener *listener"
+.Ft int
+.Fn service_listener_accept "struct service_listener *listener" "struct service_identity *identity" "int *session_fd"
+.Ft int
+.Fn service_component_accept "int fd" "struct service_component_bootstrap **bootstrap"
+.Ft const char *
+.Fn service_component_name "const struct service_component_bootstrap *bootstrap"
+.Ft const char *
+.Fn service_component_interface "const struct service_component_bootstrap *bootstrap"
+.Ft const char *
+.Fn service_component_interface_version "const struct service_component_bootstrap *bootstrap"
+.Ft const char *
+.Fn service_component_client_label "const struct service_component_bootstrap *bootstrap"
+.Ft uint64_t
+.Fn service_component_instance_id "const struct service_component_bootstrap *bootstrap"
+.Ft size_t
+.Fn service_component_resource_count "const struct service_component_bootstrap *bootstrap"
+.Ft int
+.Fn service_component_take_resource "struct service_component_bootstrap *bootstrap" "size_t slot"
+.Ft int
+.Fn service_component_complete "struct service_component_bootstrap *bootstrap" "uint32_t membership_type" "int membership_fd"
+.Ft int
+.Fn service_component_fail "struct service_component_bootstrap *bootstrap" "int error"
+.Ft void
+.Fn service_component_abort "struct service_component_bootstrap *bootstrap"
+.Ft int
+.Fn service_worker_protect "uint32_t flags"
+.Ft void
+.Fn service_worker_drop_inherited_authority "void"
+.Ft int
+.Fn service_session_create "int fd" "struct service_session **session"
+.Ft void
+.Fn service_session_close "struct service_session *session"
+.Ft int
+.Fn service_session_call "struct service_session *session" "const struct service_message *request" "struct service_reply *reply" "const struct service_call_options *options"
+.Ft int
+.Fn service_session_receive_event "struct service_session *session" "struct service_reply *event" "const struct service_call_options *options"
 .Sh DESCRIPTION
 The
-.Nm libservice
-library provides a clean API for services managed by
-.Xr serviced 8
-to communicate with the service manager over their inherited
-mac_capability pair channel.
-Services link against
-.Nm libservice
-for lifecycle and transport operations.
-Programs using a named capability service include that service's protocol
-header and issue its service-specific ioctl on the descriptor returned by
-.Fn service_capability_fd .
+.Nm
+library owns discovery and lifecycle policy above
+.Xr libchannel 3 .
+It does not define application payload schemas.
+Service-specific libraries remain the normal application interface and use
+.Nm
+internally.
 .Pp
-.Fn service_init
-reads and validates the versioned, sealed environment descriptor inherited
-from
-.Xr serviced 8 .
-The bootstrap identifies the service channel, optional capprotect instance,
-activation tokens, capability-service descriptors, component sessions, and
-manifest label.
-The classic
-.Ev SERVICE_BOOTSTRAP_FD
-environment entry identifies fd 5; it carries no authority itself.
-The bootstrap descriptor is closed before the function returns.
-Initialization rejects a bootstrap descriptor that grants anything beyond
-read access and narrowly limited metadata inspection.
-This function must be called exactly once before any other library function.
+There are two deliberately distinct discovery classes:
+.Bl -tag -width "Local component"
+.It Local component
+A pre-exec descriptor replaces ambient authority for one process or
+coalition.
+The typed library calls
+.Fn service_local_component_open
+with a fixed interface and version.
+There is no local-to-global fallback.
+.It Global service
+A manifest-declared name is reserved by
+.Xr serviced 8 ,
+may activate its provider on demand, and yields a new direct channel session
+for each successful
+.Fn service_connect .
+The supervisor is not a data-plane proxy.
+.El
 .Pp
-.Fn service_ready
-enters Capsicum capability mode and then reports application readiness to
-.Xr serviced 8 .
-The capability-mode transition is the authoritative readiness event:
-.Xr serviced 8
-observes
-.Dv NOTE_CAPMODE
-on the process descriptor and verifies it with
-.Xr pdincapmode 2 .
-The protocol report is retained as an advisory compatibility notification.
-All pathname-based setup must therefore be completed, or represented by
-pre-opened descriptors, before this call.
+Applications do not select between these classes.
+The service-specific library fixes the discovery class and wire protocol.
+.Sh SHARED CONTEXT
+.Fn service_acquire
+validates and consumes the sealed serviced bootstrap once per process.
+Initialization is thread-safe and idempotent.
+Independent typed libraries receive logical references to the same context.
+A terminal bootstrap error is stable for the process and is returned to every
+later acquisition attempt.
 .Pp
-.Fn service_register
-registers a reverse-domain name
-.Fa name
-(e.g.,
-.Dq org.5bsd.sshd )
-with the
-.Xr serviced 8
-naming registry.
-After registration, other services can connect via
-.Fn service_lookup .
-The name must contain at least one dot, consist only of
-alphanumerics, dots, hyphens, and underscores, and must not
-exceed 255 characters.
-.Pp
-.Fn service_unregister
-removes a previously registered name from the naming registry.
-Only the service that registered the name may remove it.
-.Pp
-.Fn service_lookup
-connects to a named service by requesting a brokered connection
-from
-.Xr serviced 8 .
-The service manager creates a new mac_capability pair, pushes one end
-to the provider and returns the other end to the caller.
-On success, a file descriptor for the bidirectional pair endpoint
-is returned.
-.Pp
-.Fn service_accept
-blocks until a client connects to one of this service's
-registered names via
-.Fn service_lookup .
-On success, a file descriptor for the client connection is
-returned.
-If
-.Fa client_label
-is not
-.Dv NULL ,
-the connecting service's label is copied into it, up to
-.Fa labelsz
-bytes.
-Notifications that arrive during an in-progress RPC are queued
-internally and delivered from subsequent calls to
-.Fn service_accept .
-.Pp
-.Fn service_send
-sends a message on an arbitrary mac_capability pair file descriptor
-.Fa fd .
-This is a convenience wrapper around the
-.Dv MAC_CAPABILITY_SENDMSG
-ioctl.
-.Fn service_send_fds
-is the multi-descriptor form and attaches
-.Fa nfds
-descriptors from
-.Fa fds .
-Callers should apply
-.Xr cap_xfer_limit 2
-and the
-.Xr cap_xfer_rights_limit 2
-family before delegating authority.
-.Pp
-.Fn service_recv
-receives a message from a mac_capability pair file descriptor
-.Fa fd .
-Up to
-.Fa bufsz
-bytes are read into
-.Fa buf .
-If
-.Fa peer_fd
-is not
-.Dv NULL
-and the message carries an attached file descriptor, it is
-stored in
-.Fa *peer_fd ;
-otherwise
-.Fa *peer_fd
-is set to \-1.
-This is a convenience wrapper around the
-.Dv MAC_CAPABILITY_RECVMSG
-ioctl.
-.Fn service_recv_fds
-receives up to the input value of
-.Fa *nfds
-attached descriptors and writes the actual count back.
-.Pp
-.Fn service_channel_fd
-returns the pair file descriptor to
-.Xr serviced 8
-that was established during
-.Fn service_init .
-This is useful for registering the fd with
-.Xr kqueue 2
-for event-driven services.
-Returns \-1 if the library has not been initialized.
-.Pp
-.Fn service_label
-returns the immutable manifest label copied from the validated bootstrap.
-The returned string is owned by the library.
-.Pp
-.Fn service_capability_fd
-returns the borrowed descriptor associated with a manifest-requested
-.Dq mount ,
-.Dq node ,
-.Dq accounting ,
-or
-.Dq identity
-capability service.
-The typed mapping is parsed during
-.Fn service_init ,
-and every descriptor is verified against its kernel-reported service name.
-These are authority-bearing service descriptors and require no token
-activation.
-.Pp
-.Fn service_component_fd
-returns the borrowed channel associated with a key in the manifest
-.Va components
-object.
-The typed map is parsed during
-.Fn service_init
-and every descriptor is verified as a mac_capability channel.
-The descriptor is non-transferable and locked against propagation beyond the
-supervised exec.
-.Pp
-.Fn service_component_recv_bootstrap
-is the provider-side frame validator.
-It verifies magic, ABI version, sizes, flags, scope, and the single
-NUL-terminated JSON options field before returning the bootstrap metadata.
-.Fn service_component_send_reply
-constructs the matching reply.
-A successful reply attaches exactly one procdesc or coalition descriptor,
-selected by
-.Dv COMPONENT_SESSION_MEMBER_PROCDESC
-or
-.Dv COMPONENT_SESSION_MEMBER_COALITION ;
-an error reply carries a positive errno and no descriptor.
-The provider retains responsibility for creating and sandboxing the worker
-before acknowledging it.
+.Fn service_release
+releases a logical reference.
+The process context intentionally remains alive while sessions, listeners, or
+the supervisor dispatcher may still use it.
+An inherited context is invalid in the child of
+.Xr fork 2 ;
+fresh discovery attempts fail with
+.Er ECHILD .
 .Pp
 .Fn service_authorize_capabilities
-activates every isolation token descriptor in the validated bootstrap for the
-calling process.
+activates the bootstrap tokens assigned to a managed process.
+.Fn service_enter_capability_mode
+starts lifecycle dispatch and explicitly enters Capsicum capability mode.
+.Fn service_ready
+never changes security state and fails with
+.Er EPERM
+unless capability mode has already been entered.
+These context operations are used by managed processes that are not global
+providers.
+.Pp
+.Fn service_supervisor_fd
+returns a borrowed event descriptor which becomes readable after permanent
+supervisor loss.
+.Fn service_supervisor_status
+returns the stable transport status without consuming that event.
+The private control channel read by
+.Nm
+is not public.
+.Sh GLOBAL PROVIDERS
+.Fn service_provider_create
+creates the provider lifecycle object and acquires the shared context.
+Each call to
+.Fn service_provider_expose
+creates an independent listener and synchronously claims one
+manifest-authorized name with the supervisor.
+A process may expose multiple names and route each accepted session through
+its corresponding listener.
+An undeclared name fails with
+.Er EACCES ,
+and duplicate local or supervisor claims are rejected.
+.Pp
+The manifest reserves names before launch; exposure checks in the corresponding
+listener without making the name connectable.
+When client demand activates a name,
+.Nm
+runs its activation callback and reports success or failure for that name
+without forcing the provider's other names to initialize.
+Queued clients are released only after successful per-name activation.
+.Pp
+.Fn service_provider_enter_capability_mode
+starts lifecycle dispatch and explicitly enters Capsicum capability mode if
+necessary.
+.Fn service_provider_ready
+never changes security state.
+It fails with
+.Er EPERM
+unless capability mode has already been entered, and then reports process
+readiness.
+It also fails unless every name in the manifest's
+.Va provides
+array has been claimed.
 .Xr serviced 8
-delivers tokens but never activates them; the service must explicitly call
-this function after
-.Xr execve 2
-when it chooses to accept the manifest authorities.
-The complete descriptor list is parsed and every descriptor is verified as an
-isolation or system token before any token is activated.
-After validation, private duplication must also succeed before activation
-begins; a duplication failure leaves the caller-visible state unchanged.
-Once activation begins, the inherited handles are consumed whether activation
-succeeds completely or one of the activation operations fails.
-On complete success the library retains private close-on-exec duplicates for
-the process lifetime, because closing the last token reference revokes the
-kernel authorization.
-The original descriptor numbers must not be reused by the caller.
-Calling the function again after successful activation is therefore a
-no-op.
-.Sh RETURN VALUES
-.Fn service_init ,
-.Fn service_component_recv_bootstrap ,
-.Fn service_component_send_reply ,
-.Fn service_authorize_capabilities ,
-.Fn service_protect ,
-.Fn service_ready ,
-.Fn service_register ,
-.Fn service_unregister ,
+independently verifies the process-descriptor capability-mode event.
+.Pp
+.Fn service_listener_accept
+returns zero separately from the owned session descriptor.
+The identity structure contains authenticated destination-name and client
+label information supplied by the supervisor.
+.Fn service_listener_close
+withdraws the claim, wakes blocked accepts, closes queued sessions, and
+consumes the listener.
+Existing direct sessions are unaffected.
+New lookups remain queued against the manifest reservation until the provider
+claims a replacement listener.
+.Sh LOCAL COMPONENT BOOTSTRAP
+.Fn service_component_accept
+duplicates and validates a local factory session, waits for exactly one
+bounded bootstrap request, and returns an opaque object.
+The object exposes semantic fields through accessors and retains all attached
+descriptors by zero-based slot.
+.Pp
+.Fn service_component_take_resource
+transfers one slot to the provider.
+Every untaken descriptor is closed by
+.Fn service_component_abort ,
+.Fn service_component_complete ,
+or
+.Fn service_component_fail .
+Completion attaches exactly one procdesc or coalition membership descriptor;
+serviced enlists it into the client's coalition before allowing client exec.
+Completion and failure consume the opaque object even when reply delivery
+fails.
+The public
+.Dv SERVICE_COMPONENT_SCOPE_*
+values describe supervisor-selected locality,
+.Dv SERVICE_COMPONENT_MEMBER_*
+values identify the returned membership descriptor.
+The bootstrap carries no manifest-selected scope, sharing mode, or arbitrary
+options: every component is a required local authority replacement, and its
+typed provider owns the fixed policy for that interface.
+The raw component and inherited-bootstrap wire structures are private to
+.Nm
 and
-.Fn service_send
-return 0 on success and \-1 on failure, setting
-.Va errno .
-.Pp
-.Fn service_lookup
-and
-.Fn service_accept
-return a non-negative file descriptor on success and \-1 on
-failure, setting
-.Va errno .
-.Pp
-.Fn service_recv
-returns the number of bytes received on success and \-1 on
-failure, setting
-.Va errno .
-.Pp
-.Fn service_channel_fd
-returns the pair file descriptor, or \-1 if the library has not
-been initialized.
-.Fn service_label
-returns the service label, or
-.Dv NULL
-if the library has not been initialized.
-.Fn service_capability_fd
-returns a non-negative borrowed descriptor on success and \-1 on failure.
-.Fn service_component_fd
-has the same return convention.
-.Pp
-.Fn service_protect
-applies
-.Xr mac_capability_capprotect 4
-shielding to the calling service using the capprotect descriptor inherited from
 .Xr serviced 8 .
-The
-.Fa flags
-argument is a
-.Dv SERVICE_PROTECT_*
-bitmask.
-The external-interference flags are
-.Dv SERVICE_PROTECT_PTRACE ,
-.Dv SERVICE_PROTECT_SIGNAL ,
-.Dv SERVICE_PROTECT_VISIBLE ,
-.Dv SERVICE_PROTECT_WAIT ,
-.Dv SERVICE_PROTECT_SIGKILL ,
-.Dv SERVICE_PROTECT_SIGCONT ,
-.Dv SERVICE_PROTECT_SCHED ,
-.Dv SERVICE_PROTECT_CORE ,
+.Pp
+After a component factory forks a per-consumer worker,
+.Fn service_worker_protect
+activates its assigned process-protection policy without requiring an inherited
+context object.
+.Fn service_worker_drop_inherited_authority
+then discards every private descriptor retained by libservice before the
+worker enters capability mode.
+.Pp
+The channel transport preserves attachment order but does not assign
+application meaning to slots.
+The component protocol defines each slot's type and purpose.
+Sender descriptor numbers are never transmitted.
+.Sh MANAGED SESSIONS
+.Fn service_session_create
+consumes
+.Fa fd
+on success and creates a thread-safe blocking convenience adapter over the
+asynchronous
+.Xr libchannel 3
+transport.
+It does not duplicate the transport's framing or correlation token.
+.Pp
+.Vt struct service_message
+contains a versioned payload and borrowed descriptor array.
+.Vt struct service_reply
+separates buffer and descriptor capacities from returned lengths and includes
+authenticated sender metadata.
+.Vt struct service_call_options
+sets a bounded timeout.
+.Pp
+Concurrent calls share one dispatcher and are correlated by channel reply
+tokens.
+Reply reordering cannot deliver one call's response to another.
+A timed-out or canceled call discards its late reply and closes all attached
+descriptors.
+Peer death completes every outstanding call.
+.Pp
+On
+.Er EMSGSIZE ,
+the reply reports the required payload length and descriptor count; received
+descriptors remain library-owned and are closed.
+.Fn service_session_close
+cancels active waiters, closes queued event descriptors, and consumes the
+session.
+.Sh DESCRIPTOR OWNERSHIP
+.Bl -bullet
+.It
+.Fn service_connect ,
+.Fn service_local_component_open ,
 and
-.Dv SERVICE_PROTECT_KTRACE .
-The self-restriction flags are
-.Dv SERVICE_PROTECT_NOPRIVS ,
-.Dv SERVICE_PROTECT_NOFORK ,
-.Dv SERVICE_PROTECT_NOIPC ,
-.Dv SERVICE_PROTECT_NOFDRECV ,
-.Dv SERVICE_PROTECT_NOEXEC ,
-and
-.Dv SERVICE_PROTECT_NOSOCK .
-.Dv SERVICE_PROTECT_EXTERNAL ,
-.Dv SERVICE_PROTECT_RESTRICT ,
-and
-.Dv SERVICE_PROTECT_ALL
-provide the corresponding aggregate masks.
-A flags value of 0 requests every protection known to the running kernel;
-an explicit mask gives the service a stable, reviewable policy.
-It returns 0 on success, or \-1 on failure with
-.Va errno
-set.
-.Sh EXAMPLES
-Basic provider pattern:
-.Bd -literal -offset indent
-#include <libservice.h>
-#include <stdio.h>
-
-int
-main(void)
-{
-    char label[64];
-    int client_fd;
-
-    if (service_init() == -1)
-        return (1);
-
-    if (service_authorize_capabilities() == -1)
-        return (1);
-    if (service_protect(SERVICE_PROTECT_EXTERNAL) == -1)
-        return (1);
-    if (service_register("org.example.myservice") == -1)
-        return (1);
-    if (service_ready() == -1)
-        return (1);
-
-    for (;;) {
-        client_fd = service_accept(label, sizeof(label));
-        if (client_fd == -1)
-            break;
-        printf("client connected: %s\\n", label);
-        /* handle client_fd ... */
-    }
-
-    service_unregister("org.example.myservice");
-    return (0);
-}
-.Ed
-.Pp
-Basic client pattern:
-.Bd -literal -offset indent
-#include <libservice.h>
-#include <stdio.h>
-
-int
-main(void)
-{
-    int peer;
-    char buf[256];
-    ssize_t n;
-
-    if (service_init() == -1)
-        return (1);
-
-    service_ready();
-
-    peer = service_lookup("org.example.myservice");
-    if (peer == -1)
-        return (1);
-
-    service_send(peer, "hello", 5);
-    n = service_recv(peer, buf, sizeof(buf), NULL);
-    if (n > 0)
-        printf("received %zd bytes\\n", n);
-
-    return (0);
-}
-.Ed
-.Sh ERRORS
-The following errors are common to multiple functions:
-.Bl -tag -width Er
-.It Bq Er ENOTCONN
-The library has not been initialized via
-.Fn service_init ,
-or the pair fd has become invalid.
-.It Bq Er EINVAL
-An invalid argument was passed (e.g., a malformed name).
+.Fn service_listener_accept
+return owned descriptors through output parameters.
+.It
+.Fn service_session_create
+consumes its descriptor only on success.
+.It
+Outgoing message descriptors are borrowed for the call.
+.It
+Received attachment slots remain owned by their message or bootstrap object
+until explicitly taken.
+.It
+Supervisor, label, and capability accessors return borrowed process-context
+state.
 .El
+.Sh SECURITY
+Local component descriptors are injected only from a validated serviced
+bootstrap and are removed from the environment when acquired.
+An unmanaged process cannot create authority by setting the deployment
+variable itself.
 .Pp
-.Fn service_init
-may fail with:
-.Bl -tag -width Er
-.It Bq Er EBADF
-The fixed bootstrap descriptor is absent.
-.It Bq Er EPROTO
-The bootstrap has an unsupported version, invalid size, nonzero reserved
-fields, invalid counts, duplicate names, an inconsistent descriptor layout,
-or an invalid
-.Ev SERVICE_BOOTSTRAP_FD
-value.
-.It Bq Er EINVAL
-An authority descriptor does not have the kernel-reported type named by the
-validated bootstrap.
-.It Bq Er EALREADY
-The library was already initialized.
-.El
-.Pp
-.Fn service_register
-may fail with:
-.Bl -tag -width Er
-.It Bq Er ENAMETOOLONG
-The name exceeds 255 characters.
-.It Bq Er EEXIST
-The name is already registered by another service.
-.It Bq Er ENOSPC
-The service has reached its per-service registration limit (32).
-.El
-.Pp
-.Fn service_unregister
-may fail with:
-.Bl -tag -width Er
-.It Bq Er ENAMETOOLONG
-The name exceeds 255 characters.
-.It Bq Er ENOENT
-The name is not registered.
-.It Bq Er EPERM
-The name is registered by a different service.
-.El
-.Pp
-.Fn service_lookup
-may fail with:
-.Bl -tag -width Er
-.It Bq Er ENAMETOOLONG
-The name exceeds 255 characters.
-.It Bq Er ENOENT
-The name is not registered.
-.It Bq Er ELOOP
-The caller attempted to connect to itself.
-.It Bq Er ECONNRESET
-The provider's pair channel has closed.
-.It Bq Er EDEADLK
-An on-demand circular dependency was detected
-(the provider requires a service that the caller provides).
-.It Bq Er ETIMEDOUT
-The lookup RPC did not complete within the internal timeout
-(100 ms).
-This can occur if the provider is being launched on-demand
-and has not yet registered.
-.It Bq Er EIO
-Failed to create a pair or notify the provider.
-.El
+Service names authorize discovery, not application operations.
+Typed protocols must validate magic, version, opcode, status, payload shape,
+attachment count, and every attachment slot before use.
+Delivery durability and remote cancellation remain service-specific.
 .Sh SEE ALSO
 .Xr kqueue 2 ,
-.Xr mac_capability_capprotect 4 ,
-.Xr serviced 5 ,
+.Xr libchannel 3 ,
+.Xr capsicum 4 ,
 .Xr serviced 8
-.Sh HISTORY
-.Nm libservice
-first appeared in 5BSD.
-.Sh CAVEATS
-The library is not thread-safe.
-The internal pair fd and notification queue are stored in static
-variables; concurrent access from multiple threads will produce
-undefined behavior.
-.Pp
-The library is not safe to use across
-.Xr fork 2
-without a subsequent
-.Xr execve 2 .
-The pair fd is shared between parent and child after fork, and
-interleaved messages will corrupt protocol state.
-.Pp
-Descriptors returned by
-.Fn service_lookup
-and
-.Fn service_accept
-arrive with
-.Dv CAP_XFER_NONE .
-They can be used for communication but cannot be delegated again.
-.Pp
-.Fn service_accept
-blocks on the pair fd.
-If the service needs to multiplex the pair fd with other event
-sources, use
-.Fn service_channel_fd
-to obtain the fd and register it with
-.Xr kqueue 2
-or
-.Xr poll 2 ,
-then call
-.Fn service_accept
-only when the fd is readable.

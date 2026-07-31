@@ -114,11 +114,11 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 	memset(adj, 0, sizeof(adj));
 	memset(indeg, 0, sizeof(indeg));
 
-	/* Build adjacency matrix from requires -> provides. */
+	/* Build adjacency from component-derived startup edges to factories. */
 	for (i = 0; i < nsvc; i++) {
-		for (k = 0; k < svcs[i].manifest.nrequires; k++) {
+		for (k = 0; k < svcs[i].manifest.nstartup_after; k++) {
 			provider = find_provider(svcs, nsvc,
-			    svcs[i].manifest.requires[k]);
+			    svcs[i].manifest.startup_after[k]);
 			if (provider == -2)
 				continue;	/* ORACLED — always satisfied */
 			if (provider == -1) {
@@ -133,11 +133,11 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 				 * so treat it as satisfied — but log it, since a
 				 * genuinely missing dependency also lands here.
 				 */
-				syslog(LOG_WARNING, "depgraph: %s requires "
-				    "provider '%s' not in this batch, treating "
+				syslog(LOG_WARNING, "depgraph: %s starts after "
+				    "provider '%s' outside this batch, treating "
 				    "as externally satisfied",
 				    svcs[i].manifest.label,
-				    svcs[i].manifest.requires[k]);
+				    svcs[i].manifest.startup_after[k]);
 				continue;
 			}
 			if ((unsigned)provider == i)

@@ -19,8 +19,6 @@
 #include <sys/types.h>
 #include <sys/capsicum.h>
 
-#include <dev/mac_capability/mac_capability_ioctl.h>
-
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -131,27 +129,23 @@ naming_register(const char *name, struct svc_runtime *owner)
 	}
 
 	/*
-	 * Authorization: the name must match the service's own label
-	 * or be declared in the manifest's provides[] array.  This
-	 * prevents a service from squatting on arbitrary names.
+	 * Authorization is exact: runtime identity never implies a public
+	 * endpoint.  Every exposed name must appear in provides[].
 	 */
 	{
 		unsigned j;
 		bool found;
 
-		found = (strcmp(owner->manifest.label, name) == 0);
-		if (!found) {
-			for (j = 0; j < owner->manifest.nprovides; j++) {
-				if (strcmp(owner->manifest.provides[j],
-				    name) == 0) {
-					found = true;
-					break;
-				}
+		found = false;
+		for (j = 0; j < owner->manifest.nprovides; j++) {
+			if (strcmp(owner->manifest.provides[j], name) == 0) {
+				found = true;
+				break;
 			}
 		}
 		if (!found) {
 			syslog(LOG_WARNING,
-			    "naming: '%s' denied: not in label or provides[] "
+			    "naming: '%s' denied: not in provides[] "
 			    "for '%s'", name, owner->manifest.label);
 			SERVICED_PROBE_NAMING_DENY(name, EACCES);
 			return (EACCES);
@@ -168,7 +162,10 @@ naming_register(const char *name, struct svc_runtime *owner)
 		return (ENOSPC);
 	}
 
-	if (naming_find(name) != NULL) {
+	e = naming_find(name);
+	if (e != NULL && e->owner == owner)
+		return (0);
+	if (e != NULL) {
 		syslog(LOG_WARNING,
 		    "naming: '%s' already registered (requested by '%s')",
 		    name, owner->manifest.label);
@@ -291,11 +288,12 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 	struct naming_entry *e;
 	struct svc_runtime *provider;
 	struct svc_new_client_msg notify;
-	struct mac_capability_sendmsg_args sa;
 	int provider_end, client_end;
 
 	e = naming_find(name);
-	if (e == NULL) {
+	/* A name becomes visible only after its independent activation succeeds. */
+	if (e == NULL || !e->owner->protocol_ready ||
+	    e->owner->state != SVC_STATE_RUNNING) {
 		*errp = ENOENT;
 		return (-1);
 	}
@@ -340,16 +338,12 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 	/* Push the provider's end to the owning service. */
 	memset(&notify, 0, sizeof(notify));
 	notify.op = SVC_OP_NEW_CLIENT;
+	strlcpy(notify.service_name, name, sizeof(notify.service_name));
 	strlcpy(notify.client_label, requester->manifest.label,
 	    sizeof(notify.client_label));
 
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = &notify;
-	sa.payload_len = sizeof(notify);
-	sa.fds = &provider_end;
-	sa.nfds = 1;
-
-	if (ioctl(provider->channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) {
+	if (svc_channel_send_event(provider, &notify, sizeof(notify),
+	    &provider_end, 1, serviced_kq) == -1) {
 		syslog(LOG_WARNING,
 		    "naming: lookup '%s': failed to notify provider '%s': %m",
 		    name, provider->manifest.label);
@@ -364,6 +358,12 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 	syslog(LOG_DEBUG, "naming: '%s' connected '%s' to '%s'",
 	    name, requester->manifest.label, provider->manifest.label);
 	SERVICED_PROBE_NAMING_LOOKUP(name, requester->manifest.label);
+	/*
+	 * Count at the one common broker point.  Both immediately published
+	 * and on-demand names pass through here, and the count belongs to the
+	 * provider that received the new-session endpoint, not the requester.
+	 */
+	provider->connection_count++;
 
 	*errp = 0;
 	return (client_end);

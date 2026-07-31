@@ -27,29 +27,6 @@
 #define	CAPBUNDLE_MAX_CAP_VSOCK		16
 #define	CAPBUNDLE_MAX_CAP_SERVICES	SERVICED_MAX_CAP_SERVICES
 #define	CAPBUNDLE_MAX_KMOD_REQUIRES	8
-#define	CAPBUNDLE_POLICY_MAX_DEFAULTS	32
-#define	CAPBUNDLE_POLICY_MAX_OVERRIDES	128
-
-struct capbundle_policy_default {
-	char	interface[SERVICED_COMPONENT_INTERFACE_MAX];
-	char	version[SERVICED_COMPONENT_VERSION_MAX];
-	char	provider[SERVICED_COMPONENT_PROVIDER_MAX];
-};
-
-struct capbundle_policy_override {
-	char	service[SERVICED_LABEL_MAX];
-	char	component[SERVICED_COMPONENT_NAME_MAX];
-	char	provider[SERVICED_COMPONENT_PROVIDER_MAX];
-};
-
-struct capbundle_policy {
-	struct capbundle_policy_default defaults[CAPBUNDLE_POLICY_MAX_DEFAULTS];
-	unsigned ndefaults;
-	struct capbundle_policy_override overrides[
-	    CAPBUNDLE_POLICY_MAX_OVERRIDES];
-	unsigned noverrides;
-};
-
 /* Internal service representation. */
 struct capbundle_service {
 	char	program[PATH_MAX];	/* absolute resolved path */
@@ -60,13 +37,10 @@ struct capbundle_service {
 	char	label[CAPBUNDLE_NAME_MAX + 1];
 	char	provides[CAPBUNDLE_MAX_PROVIDES][CAPBUNDLE_NAME_MAX + 1];
 	unsigned nprovides;
-	char	requires[CAPBUNDLE_MAX_REQUIRES][CAPBUNDLE_NAME_MAX + 1];
-	unsigned nrequires;
-	struct serviced_interface implements[SERVICED_MAX_IMPLEMENTS];
-	unsigned nimplements;
+	char	startup_after[SERVICED_MAX_COMPONENTS][CAPBUNDLE_NAME_MAX + 1];
+	unsigned nstartup_after;
 	struct serviced_component components[SERVICED_MAX_COMPONENTS];
 	unsigned ncomponents;
-	bool	on_demand;
 	int	restart;
 	uint32_t cap_system;		/* SYS_GATE_* bitmask */
 

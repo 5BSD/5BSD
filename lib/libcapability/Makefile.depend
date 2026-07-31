@@ -5,7 +5,6 @@ DIRDEPS = \
 	include/xlocale \
 	lib/${CSU_DIR} \
 	lib/libc \
-	lib/libservice \
 	lib/libcompiler_rt \
 
 

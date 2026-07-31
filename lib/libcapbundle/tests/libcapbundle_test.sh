@@ -9,6 +9,18 @@
 
 # Development builds can point the installed ATF program at matching object
 # binaries without tainting the atf-sh interpreter via its parent environment.
+TEST_OBJTOP="@OBJTOP@"
+export TEST_OBJTOP
+if [ -z "${TEST_BINDIR:-}" ] &&
+    [ -x "@OBJTOP@/lib/libcapbundle/tests/servicectl" ]; then
+	TEST_BINDIR="@OBJTOP@/lib/libcapbundle/tests"
+elif [ -z "${TEST_BINDIR:-}" ] &&
+    [ -x "@SRCTOP@/lib/libcapbundle/tests/servicectl" ]; then
+	TEST_BINDIR="@SRCTOP@/lib/libcapbundle/tests"
+elif [ -z "${TEST_BINDIR:-}" ] &&
+    [ -x "@OBJTOP@/usr.sbin/servicectl/servicectl" ]; then
+	TEST_BINDIR="@OBJTOP@/usr.sbin/servicectl"
+fi
 if [ -n "${TEST_BINDIR:-}" ]; then
 	PATH="${TEST_BINDIR}:${PATH}"
 	export PATH
@@ -43,19 +55,6 @@ provides = ["${provides}"];
 restart = "on-failure";
 UCL
 
-	echo "${dir}"
-}
-
-# Helper: create bundle with requires
-create_bundle_with_requires() {
-	local name="$1" bundle_id="$2" program="$3" provides="$4" requires="$5"
-	local dir
-
-	dir=$(create_bundle "$name" "$bundle_id" "$program" "$provides")
-	# Append requires to the manifest
-	cat >> "${dir}/etc/${program}.ucl" <<UCL
-requires = ["${requires}"];
-UCL
 	echo "${dir}"
 }
 
@@ -158,13 +157,13 @@ duplicate_provides_cleanup() {
 }
 
 # ---------------------------------------------------------------
-# Test: Circular dependency within bundle
+# Test: obsolete dependency keys are rejected
 # ---------------------------------------------------------------
-atf_test_case self_require cleanup
-self_require_head() {
-	atf_set "descr" "Reject service that requires its own provides"
+atf_test_case requires_key_rejected cleanup
+requires_key_rejected_head() {
+	atf_set "descr" "Reject the obsolete public requires dependency key"
 }
-self_require_body() {
+requires_key_rejected_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
 	mkdir -p "${TMPDIR}/Loop.cap/etc"
 	mkdir -p "${TMPDIR}/Loop.cap/bin"
@@ -181,37 +180,31 @@ provides = ["org.test.loopsvc"];
 requires = ["org.test.loopsvc"];
 UCL
 
-	atf_check -s exit:1 -e match:"requires itself" \
+	atf_check -s exit:1 -e match:"unknown key.*requires" \
 	    servicectl verify "${TMPDIR}/Loop.cap"
 }
-self_require_cleanup() {
+requires_key_rejected_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
 }
 
 # ---------------------------------------------------------------
-# Test: Cross-bundle cycle detection
+# Test: global dependencies are not a manifest graph
 # ---------------------------------------------------------------
-atf_test_case cross_bundle_cycle cleanup
-cross_bundle_cycle_head() {
-	atf_set "descr" "Detect circular dependency across two bundles"
+atf_test_case no_public_dependency_graph cleanup
+no_public_dependency_graph_head() {
+	atf_set "descr" "Global dependencies are acquired dynamically, not declared as startup edges"
 }
-cross_bundle_cycle_body() {
+no_public_dependency_graph_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
 
-	# Bundle A provides org.a, requires org.b
-	create_bundle_with_requires "A" "org.a" "ad" "org.a.svc" "org.b.svc"
-	# Bundle B provides org.b, requires org.a
-	create_bundle_with_requires "B" "org.b" "bd" "org.b.svc" "org.a.svc"
-
-	# Both bundles are valid individually
-	atf_check -s exit:0 -o ignore servicectl verify "${TMPDIR}/A.cap"
-	atf_check -s exit:0 -o ignore servicectl verify "${TMPDIR}/B.cap"
-
-	# Together they form a cycle and must be rejected.
-	atf_check -s exit:1 -o ignore -e match:"circular dependency" \
-	    servicectl verify "${TMPDIR}/A.cap" "${TMPDIR}/B.cap"
+	a=$(create_bundle "A" "org.a" "ad" "org.a.svc")
+	b=$(create_bundle "B" "org.b" "bd" "org.b.svc")
+	printf '%s\n' 'requires = ["org.b.svc"];' >> "${a}/etc/ad.ucl"
+	printf '%s\n' 'requires = ["org.a.svc"];' >> "${b}/etc/bd.ucl"
+	atf_check -s exit:1 -o ignore -e match:"unknown key.*requires" \
+	    servicectl verify "${a}" "${b}"
 }
-cross_bundle_cycle_cleanup() {
+no_public_dependency_graph_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
 }
 
@@ -249,7 +242,6 @@ version = "2.0";
 author = "tester";
 program = "${prog}";
 provides = ["org.test.multi.${prog}"];
-on_demand = true;
 UCL
 	done
 
@@ -257,7 +249,7 @@ UCL
 	    servicectl verify "${TMPDIR}/Multi.cap"
 	atf_check -s exit:0 -o match:"org.test.multi.alpha" \
 	    servicectl verify "${TMPDIR}/Multi.cap"
-	atf_check -s exit:0 -o match:"on_demand: yes" \
+	atf_check -s exit:0 -o match:"activation: first connection" \
 	    servicectl verify "${TMPDIR}/Multi.cap"
 }
 multi_service_bundle_cleanup() {
@@ -299,21 +291,33 @@ capabilities_parsing_cleanup() {
 }
 
 # ---------------------------------------------------------------
-# Test: on_demand flag parsing
+# Test: activation is derived from provides
 # ---------------------------------------------------------------
-atf_test_case on_demand_flag cleanup
-on_demand_flag_head() {
-	atf_set "descr" "Parse on_demand = true/false correctly"
+atf_test_case activation_derived cleanup
+activation_derived_head() {
+	atf_set "descr" "Named providers activate on first connection and unprovided tasks at boot"
 }
-on_demand_flag_body() {
+activation_derived_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
 
-	dir=$(create_bundle "Boot" "org.test.boot" "bootd" "org.test.boot.svc")
-	# Default is on_demand = false (not specified)
-	atf_check -s exit:0 -o match:"on_demand: no" \
+	dir=$(create_bundle "Named" "org.test.named" "namedd" \
+	    "org.test.named.svc")
+	atf_check -s exit:0 -o match:"activation: first connection" \
 	    servicectl verify "${dir}"
+	sed -i '' '/^provides = /d' "${dir}/etc/namedd.ucl"
+	atf_check -s exit:0 -o match:"activation: boot" \
+	    servicectl verify "${dir}"
+
+	factory=$(create_bundle "Factory" "org.test.factory" "factoryd" \
+	    "org.5bsd.FileSystemCmp")
+	sed -i '' \
+	    's/provides = .*/provides = ["org.test.diagnostics", "org.5bsd.FileSystemCmp"];/' \
+	    "${factory}/etc/factoryd.ucl"
+	atf_check -s exit:0 \
+	    -o match:"activation: boot \\(local component factory\\)" \
+	    servicectl verify "${factory}"
 }
-on_demand_flag_cleanup() {
+activation_derived_cleanup() {
 	rm -rf "$(atf_get_srcdir)/work.$$"
 }
 
@@ -551,11 +555,11 @@ missing_program_cleanup() {
 }
 
 # ---------------------------------------------------------------
-# Test: Missing provides causes verify failure
+# Test: a service without provides is a valid eager boot task
 # ---------------------------------------------------------------
 atf_test_case missing_provides cleanup
 missing_provides_head() {
-	atf_set "descr" "Service with no provides fails verification"
+	atf_set "descr" "Service with no provides is a valid boot task"
 }
 missing_provides_body() {
 	TMPDIR=$(atf_get_srcdir)/work.$$
@@ -572,7 +576,7 @@ author = "test";
 program = "npd";
 UCL
 
-	atf_check -s exit:1 -e match:"has no provides" \
+	atf_check -s exit:0 -o match:"activation: boot" \
 	    servicectl verify "${TMPDIR}/NoProv.cap"
 }
 missing_provides_cleanup() {
@@ -599,7 +603,7 @@ program = "noid";
 provides = ["org.test.noid.svc"];
 UCL
 
-	atf_check -s exit:1 -e match:"no bundle_id" \
+	atf_check -s exit:1 -e match:"bundle_id is required" \
 	    servicectl verify "${TMPDIR}/NoId.cap"
 }
 missing_bundle_id_cleanup() {
@@ -775,333 +779,6 @@ UCL
 }
 reserved_environment_rejected_cleanup() { rm -rf "$(atf_get_srcdir)/work.$$"; }
 
-atf_test_case component_manifest cleanup
-component_manifest_head() {
-	atf_set "descr" "Versioned components add validated provider dependencies"
-}
-component_manifest_body() {
-	TMPDIR=$(atf_get_srcdir)/work.$$
-	dir=$(create_bundle "Components" "org.test.components" "appd" \
-	    "org.test.components.app")
-	printf '#!/bin/sh\nexit 0\n' > "${dir}/bin/providerd"
-	chmod 755 "${dir}/bin/providerd"
-	cat > "${dir}/etc/providerd.ucl" <<'UCL'
-bundle_id = "org.test.components";
-version = "1.0";
-author = "test";
-program = "providerd";
-provides = ["org.test.component.provider"];
-implements = [{
-	interface = "org.5bsd.cmp.network";
-	version = "1.0.0";
-}];
-UCL
-	cat >> "${dir}/etc/appd.ucl" <<'UCL'
-components {
-	network {
-		interface = "org.5bsd.cmp.network";
-		version = "1.0.0";
-		scope = "private";
-		options { mtu = 1500; quic = false; }
-	}
-}
-UCL
-	atf_check -s exit:0 -o match:"Verification: PASSED" \
-	    servicectl verify "${dir}"
-}
-component_manifest_cleanup() { rm -rf "$(atf_get_srcdir)/work.$$"; }
-
-atf_test_case component_resolution_policy cleanup
-component_resolution_policy_head() {
-	atf_set "descr" \
-	    "Provider resolution is exact, deterministic, pinnable, and boot-ordered"
-}
-component_resolution_policy_body() {
-	TMPDIR=$(atf_get_srcdir)/work.$$
-
-	p1=$(create_bundle "ProviderOne" "org.test.provider.one" "p1d" \
-	    "org.test.provider.one")
-	cat >> "${p1}/etc/p1d.ucl" <<'UCL'
-implements = [{
-	interface = "org.test.cmp.storage";
-	version = "1.0.0";
-}];
-UCL
-	consumer=$(create_bundle "Consumer" "org.test.consumer" "consumerd" \
-	    "org.test.consumer")
-	cat >> "${consumer}/etc/consumerd.ucl" <<'UCL'
-components {
-	store {
-		interface = "org.test.cmp.storage";
-		version = "1.0.0";
-	}
-}
-UCL
-	atf_check -s exit:0 \
-	    -o match:"component: store.*provider=org.test.provider.one.*required=yes" \
-	    servicectl verify "${p1}" "${consumer}"
-	atf_check -s exit:0 \
-	    -o match:"component: store.*lifetime=process.*sharing=exclusive.*required=yes.*options=\\{\\}" \
-	    servicectl verify --effective "${p1}" "${consumer}"
-	atf_check -s exit:0 -o match:"user: capability" \
-	    servicectl verify --effective "${p1}" "${consumer}"
-	atf_check -s exit:0 -o match:"group: capability" \
-	    servicectl verify --effective "${p1}" "${consumer}"
-
-	p2=$(create_bundle "ProviderTwo" "org.test.provider.two" "p2d" \
-	    "org.test.provider.two")
-	cat >> "${p2}/etc/p2d.ucl" <<'UCL'
-implements = [{
-	interface = "org.test.cmp.storage";
-	version = "1.0.0";
-}];
-UCL
-	atf_check -s exit:1 -o ignore -e match:"has 2 providers.*pin provider" \
-	    servicectl verify "${p1}" "${p2}" "${consumer}"
-
-	pinned=$(create_bundle "Pinned" "org.test.pinned" "pinnedd" \
-	    "org.test.pinned")
-	cat >> "${pinned}/etc/pinnedd.ucl" <<'UCL'
-components {
-	store {
-		interface = "org.test.cmp.storage";
-		version = "1.0.0";
-		provider = "org.test.provider.two";
-	}
-}
-UCL
-	atf_check -s exit:0 \
-	    -o match:"component: store.*provider=org.test.provider.two" \
-	    servicectl verify "${p1}" "${p2}" "${pinned}"
-
-	ondemand=$(create_bundle "OnDemandProvider" "org.test.provider.lazy" \
-	    "lazyd" "org.test.provider.lazy")
-	cat >> "${ondemand}/etc/lazyd.ucl" <<'UCL'
-implements = [{
-	interface = "org.test.cmp.storage";
-	version = "1.0.0";
-}];
-on_demand = true;
-UCL
-	atf_check -s exit:1 -o ignore \
-	    -e match:"provider factory.*cannot be on_demand" \
-	    servicectl verify "${ondemand}" "${consumer}"
-
-	scoped=$(create_bundle "ScopedConsumer" "org.test.scoped.consumer" \
-	    "scopedd" "org.test.scoped.consumer")
-	cat >> "${scoped}/etc/scopedd.ucl" <<'UCL'
-components {
-	store {
-		interface = "org.test.cmp.storage";
-		version = "1.0.0";
-		lifetime = "jail";
-		sharing = "shared";
-	}
-}
-UCL
-	atf_check -s exit:1 -o ignore \
-	    -e match:"no provider.*sharing shared" \
-	    servicectl verify "${p1}" "${scoped}"
-
-	feature=$(create_bundle "FeatureProvider" "org.test.feature.provider" \
-	    "featured" "org.test.feature.provider")
-	cat >> "${feature}/etc/featured.ucl" <<'UCL'
-implements = [{
-	interface = "org.test.cmp.storage";
-	version = "1.0.0";
-	lifetimes = ["process", "job", "jail", "system"];
-	sharing = ["exclusive", "shared"];
-}];
-UCL
-	atf_check -s exit:0 \
-	    -o match:"provider=org.test.feature.provider.*lifetime=jail.*sharing=shared" \
-	    servicectl verify "${feature}" "${scoped}"
-}
-component_resolution_policy_cleanup() {
-	rm -rf "$(atf_get_srcdir)/work.$$"
-}
-
-atf_test_case administrator_provider_policy cleanup
-administrator_provider_policy_head() {
-	atf_set "descr" \
-	    "Administrator policy selects providers without consumer pins"
-}
-administrator_provider_policy_body() {
-	TMPDIR=$(atf_get_srcdir)/work.$$
-
-	p1=$(create_bundle "PolicyOne" "org.test.policy.one" "p1d" \
-	    "org.test.policy.one")
-	cat >> "${p1}/etc/p1d.ucl" <<'UCL'
-implements = [{
-	interface = "org.test.cmp.policy";
-	version = "1.0.0";
-}];
-UCL
-	p2=$(create_bundle "PolicyTwo" "org.test.policy.two" "p2d" \
-	    "org.test.policy.two")
-	cat >> "${p2}/etc/p2d.ucl" <<'UCL'
-implements = [{
-	interface = "org.test.cmp.policy";
-	version = "1.0.0";
-}];
-UCL
-	consumer=$(create_bundle "PolicyConsumer" "org.test.policy.consumer" \
-	    "consumerd" "org.test.policy.consumer")
-	cat >> "${consumer}/etc/consumerd.ucl" <<'UCL'
-components {
-	store {
-		interface = "org.test.cmp.policy";
-		version = "1.0.0";
-	}
-}
-UCL
-	cat > "${TMPDIR}/policy.ucl" <<'UCL'
-schema = "org.5bsd.serviced.policy";
-schema_version = "1.0.0";
-provider_defaults {
-	"org.test.cmp.policy" {
-		version = "1.0.0";
-		provider = "org.test.policy.one";
-	}
-}
-service_overrides {
-	"org.test.policy.consumer" {
-		components {
-			store { provider = "org.test.policy.two"; }
-		}
-	}
-}
-UCL
-	atf_check -s exit:0 -o match:"Validation: PASSED" \
-	    servicectl policy-check "${TMPDIR}/policy.ucl"
-	atf_check -s exit:0 -o save:effective.out \
-	    servicectl verify --effective --policy "${TMPDIR}/policy.ucl" \
-	    "${p1}" "${p2}" "${consumer}"
-	atf_check -s exit:0 -o match:"Effective configuration \\(policy " \
-	    grep "Effective configuration" effective.out
-	atf_check -s exit:0 \
-	    -o match:"component: store.*provider=org.test.policy.two" \
-	    grep "component: store" effective.out
-
-	cat > "${TMPDIR}/bad-policy.ucl" <<'UCL'
-schema = "org.5bsd.serviced.policy";
-schema_version = "1.0";
-provider_defaults = [];
-UCL
-	atf_check -s exit:1 -o ignore -e match:"schema_version" \
-	    servicectl policy-check "${TMPDIR}/bad-policy.ucl"
-}
-administrator_provider_policy_cleanup() {
-	rm -rf "$(atf_get_srcdir)/work.$$"
-}
-
-atf_test_case provider_policy_schema_hardening cleanup
-provider_policy_schema_hardening_head() {
-	atf_set "descr" \
-	    "Provider policy rejects unsafe files and malformed nested schemas"
-}
-provider_policy_schema_hardening_body() {
-	TMPDIR=$(atf_get_srcdir)/work.$$
-	mkdir -p "${TMPDIR}"
-
-	check_bad_policy()
-	{
-		name=$1
-		pattern=$2
-		shift 2
-		printf '%s\n' "$@" > "${TMPDIR}/${name}.ucl"
-		atf_check -s exit:1 -o ignore -e match:"${pattern}" \
-		    servicectl policy-check "${TMPDIR}/${name}.ucl"
-	}
-
-	: > "${TMPDIR}/empty.ucl"
-	atf_check -s exit:1 -o ignore -e match:'non-empty regular file' \
-	    servicectl policy-check "${TMPDIR}/empty.ucl"
-	check_bad_policy wrong-schema 'policy schema must be' \
-	    'schema = "org.example.policy";' \
-	    'schema_version = "1.0.0";'
-	check_bad_policy missing-version 'schema_version' \
-	    'schema = "org.5bsd.serviced.policy";'
-	check_bad_policy future-version 'schema_version' \
-	    'schema = "org.5bsd.serviced.policy";' \
-	    'schema_version = "2.0.0";'
-	check_bad_policy unknown-top 'unknown key' \
-	    'schema = "org.5bsd.serviced.policy";' \
-	    'schema_version = "1.0.0";' \
-	    'realm = "none";'
-	check_bad_policy duplicate-top 'duplicate' \
-	    'schema = "org.5bsd.serviced.policy";' \
-	    'schema = "org.5bsd.serviced.policy";' \
-	    'schema_version = "1.0.0";'
-	check_bad_policy defaults-array 'provider_defaults entries' \
-	    'schema = "org.5bsd.serviced.policy";' \
-	    'schema_version = "1.0.0";' \
-	    'provider_defaults = [];'
-	check_bad_policy bad-version 'provider_defaults entries' \
-	    'schema = "org.5bsd.serviced.policy";' \
-	    'schema_version = "1.0.0";' \
-	    'provider_defaults { "org.test.cmp" {' \
-	    'version = "1.0"; provider = "org.test.provider"; } }'
-	check_bad_policy bad-provider 'provider_defaults entries' \
-	    'schema = "org.5bsd.serviced.policy";' \
-	    'schema_version = "1.0.0";' \
-	    'provider_defaults { "org.test.cmp" {' \
-	    'version = "1.0.0"; provider = "../provider"; } }'
-	check_bad_policy default-extra 'provider_defaults entries' \
-	    'schema = "org.5bsd.serviced.policy";' \
-	    'schema_version = "1.0.0";' \
-	    'provider_defaults { "org.test.cmp" {' \
-	    'version = "1.0.0"; provider = "org.test.provider";' \
-	    'priority = 10; } }'
-	check_bad_policy duplicate-default 'duplicate' \
-	    'schema = "org.5bsd.serviced.policy";' \
-	    'schema_version = "1.0.0";' \
-	    'provider_defaults {' \
-	    '"org.test.cmp" { version = "1.0.0";' \
-	    'provider = "org.test.one"; }' \
-	    '"org.test.cmp" { version = "1.0.0";' \
-	    'provider = "org.test.two"; } }'
-	check_bad_policy override-empty 'service_overrides entries' \
-	    'schema = "org.5bsd.serviced.policy";' \
-	    'schema_version = "1.0.0";' \
-	    'service_overrides { "org.test.service" { components {} } }'
-	check_bad_policy override-extra 'service_overrides entries' \
-	    'schema = "org.5bsd.serviced.policy";' \
-	    'schema_version = "1.0.0";' \
-	    'service_overrides { "org.test.service" {' \
-	    'components { store { provider = "org.test.provider"; } }' \
-	    'priority = 10; } }'
-	check_bad_policy choice-extra 'service_overrides entries' \
-	    'schema = "org.5bsd.serviced.policy";' \
-	    'schema_version = "1.0.0";' \
-	    'service_overrides { "org.test.service" {' \
-	    'components { store { provider = "org.test.provider";' \
-	    'fallback = true; } } } }'
-	check_bad_policy duplicate-override 'duplicate' \
-	    'schema = "org.5bsd.serviced.policy";' \
-	    'schema_version = "1.0.0";' \
-	    'service_overrides { "org.test.service" { components {' \
-	    'store { provider = "org.test.one"; }' \
-	    'store { provider = "org.test.two"; } } } }'
-
-	mkdir "${TMPDIR}/directory.ucl"
-	atf_check -s exit:1 -o ignore -e match:'non-empty regular file' \
-	    servicectl policy-check "${TMPDIR}/directory.ucl"
-	printf '%s\n' \
-	    'schema = "org.5bsd.serviced.policy";' \
-	    'schema_version = "1.0.0";' > "${TMPDIR}/target.ucl"
-	ln -s target.ucl "${TMPDIR}/symlink.ucl"
-	atf_check -s exit:1 -o ignore -e ignore \
-	    servicectl policy-check "${TMPDIR}/symlink.ucl"
-	dd if=/dev/zero of="${TMPDIR}/oversized.ucl" bs=1048577 count=1 \
-	    2>/dev/null
-	atf_check -s exit:1 -o ignore -e match:'no larger than 1 MB' \
-	    servicectl policy-check "${TMPDIR}/oversized.ucl"
-}
-provider_policy_schema_hardening_cleanup() {
-	rm -rf "$(atf_get_srcdir)/work.$$"
-}
-
 atf_test_case execution_jail_manifest cleanup
 execution_jail_manifest_head() {
 	atf_set "descr" \
@@ -1191,48 +868,14 @@ malformed_schema_matrix_body() {
 	    'capabilities { services = ["channel"]; }'
 	assert_bad dupservice "duplicate capability service" \
 	    'capabilities { services = ["mount", "mount"]; }'
-	assert_bad comptype "components must be an object" \
-	    'components = [];'
-	assert_bad compentry "invalid components entry" \
-	    'components { network = "default"; }'
-	assert_bad compname "invalid component name" \
-	    'components { "bad,name" { interface = "org.test"; version = "1.0.0"; provider = "org.test.provider"; } }'
-	assert_bad compiface "requires a valid interface" \
-	    'components { network { provider = "org.test.provider"; } }'
-	assert_bad compoldiface "requires a valid interface" \
-	    'components { network { interface = "org.test/1"; version = "1.0.0"; provider = "org.test.provider"; } }'
-	assert_bad compversion "requires a semantic version" \
-	    'components { network { interface = "org.test"; provider = "org.test.provider"; } }'
-	assert_bad compbadversion "requires a semantic version" \
-	    'components { network { interface = "org.test"; version = "1"; provider = "org.test.provider"; } }'
-	assert_bad compprovider "invalid provider" \
-	    'components { network { interface = "org.test"; version = "1.0.0"; provider = 7; } }'
-	assert_bad compmissing "has no provider" \
-	    'components { network { interface = "org.test.unknown"; version = "1.0.0"; } }'
-	assert_bad compscope "invalid scope" \
-	    'components { network { interface = "org.test"; version = "1.0.0"; provider = "org.test.provider"; scope = "global"; } }'
-	assert_bad comprealm "invalid scope" \
-	    'components { network { interface = "org.test"; version = "1.0.0"; provider = "org.test.provider"; scope = "realm"; } }'
-	assert_bad complifetime "invalid lifetime" \
-	    'components { network { interface = "org.test"; version = "1.0.0"; lifetime = "realm"; } }'
-	assert_bad compbothscope "both scope and lifetime" \
-	    'components { network { interface = "org.test"; version = "1.0.0"; scope = "private"; lifetime = "process"; } }'
-	assert_bad compsharing "invalid sharing" \
-	    'components { network { interface = "org.test"; version = "1.0.0"; sharing = "sometimes"; } }'
-	assert_bad comprequired "required must be boolean" \
-	    'components { network { interface = "org.test"; version = "1.0.0"; provider = "org.test.provider"; required = "yes"; } }'
-	assert_bad compoptions "options must be an object" \
-	    'components { network { interface = "org.test"; version = "1.0.0"; provider = "org.test.provider"; options = []; } }'
-	assert_bad implementsold "implements entries must be interface declarations" \
-	    'implements = ["org.test/1"];'
-	assert_bad implementsversion "requires a semantic version" \
-	    'implements = [{ interface = "org.test"; version = "1.0"; }];'
-	assert_bad implementslifetimetype "implements lifetimes" \
-	    'implements = [{ interface = "org.test"; version = "1.0.0"; lifetimes = "process"; }];'
-	assert_bad implementslifetime "invalid or duplicate" \
-	    'implements = [{ interface = "org.test"; version = "1.0.0"; lifetimes = ["realm"]; }];'
-	assert_bad implementssharing "invalid or duplicate" \
-	    'implements = [{ interface = "org.test"; version = "1.0.0"; sharing = ["shared", "shared"]; }];'
+	assert_bad comptype "components must be a string or array" \
+	    'components = {};'
+	assert_bad compentry "components contains an invalid string" \
+	    'components = [7];'
+	assert_bad compname "components accepts only" \
+	    'components = ["logging"];'
+	assert_bad compduplicate "components contains duplicate" \
+	    'components = ["network", "network"];'
 	assert_bad schemaonly "declared together" \
 	    'schema = "org.5bsd.serviced.service";'
 	assert_bad schemaname "schema must be" \
@@ -1292,17 +935,60 @@ excess_service_manifests_rejected_cleanup() {
 }
 
 # ---------------------------------------------------------------
+# Test: local component schema is intentionally small and closed
+# ---------------------------------------------------------------
+atf_test_case local_component_schema cleanup
+local_component_schema_head() {
+	atf_set "descr" \
+	    "Only distinct filesystem/network string declarations are accepted"
+}
+local_component_schema_body() {
+	TMPDIR=$(atf_get_srcdir)/work.$$
+	dir=$(create_bundle "Components" "org.test.components" "componentd" \
+	    "org.test.components.service")
+	printf '%s\n' 'components = ["filesystem", "network"];' >> \
+	    "${dir}/etc/componentd.ucl"
+	atf_check -s exit:0 -o match:'component: filesystem' \
+	    servicectl verify "${dir}"
+
+	for declaration in \
+	    'components = ["filesystem", "filesystem"];' \
+	    'components = ["logging"];' \
+	    'components { network { provider = "org.test.provider"; } }'
+	do
+		bad=$(create_bundle "Bad${RANDOM:-0}" \
+		    "org.test.bad.${RANDOM:-0}" "badd" "org.test.bad.service")
+		printf '%s\n' "${declaration}" >> "${bad}/etc/badd.ucl"
+		atf_check -s exit:1 -o ignore -e ignore \
+		    servicectl verify "${bad}"
+		rm -rf "${bad}"
+	done
+
+	bad=$(create_bundle "OldKeys" "org.test.oldkeys" "oldd" \
+	    "org.test.oldkeys.service")
+	printf '%s\n' \
+	    'implements = [{ interface = "org.test"; version = "1.0.0"; }];' \
+	    >> "${bad}/etc/oldd.ucl"
+	atf_check -s exit:1 -o ignore -e ignore servicectl verify "${bad}"
+	printf '%s\n' 'on_demand = true;' >> "${dir}/etc/componentd.ucl"
+	atf_check -s exit:1 -o ignore -e ignore servicectl verify "${dir}"
+}
+local_component_schema_cleanup() {
+	rm -rf "$(atf_get_srcdir)/work.$$"
+}
+
+# ---------------------------------------------------------------
 atf_init_test_cases() {
 	atf_add_test_case open_valid_bundle
 	atf_add_test_case missing_services_dir
 	atf_add_test_case missing_binary
 	atf_add_test_case duplicate_provides
-	atf_add_test_case self_require
-	atf_add_test_case cross_bundle_cycle
+	atf_add_test_case requires_key_rejected
+	atf_add_test_case no_public_dependency_graph
 	atf_add_test_case duplicate_bundle_ids
 	atf_add_test_case multi_service_bundle
 	atf_add_test_case capabilities_parsing
-	atf_add_test_case on_demand_flag
+	atf_add_test_case activation_derived
 	atf_add_test_case network_capabilities
 	atf_add_test_case file_capabilities
 	atf_add_test_case jail_capabilities
@@ -1318,10 +1004,7 @@ atf_init_test_cases() {
 	atf_add_test_case arguments_environment_and_vsock
 	atf_add_test_case unknown_key_rejected
 	atf_add_test_case reserved_environment_rejected
-	atf_add_test_case component_manifest
-	atf_add_test_case component_resolution_policy
-	atf_add_test_case administrator_provider_policy
-	atf_add_test_case provider_policy_schema_hardening
+	atf_add_test_case local_component_schema
 	atf_add_test_case execution_jail_manifest
 	atf_add_test_case malformed_schema_matrix
 	atf_add_test_case symlink_rejected

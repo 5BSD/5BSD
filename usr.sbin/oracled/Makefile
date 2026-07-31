@@ -22,10 +22,11 @@ HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
 
 CFLAGS+= -I${SRCTOP}/sys
+CFLAGS+= -I${SRCTOP}/lib/libcapability
 CFLAGS+= -I${SRCTOP}/lib/liboraclert
 CFLAGS+= -I${SRCTOP}/lib/libcapbundle
 CFLAGS+= -I${SRCTOP}/contrib/libucl/include
-LIBADD= jail oraclert ucl util
+LIBADD= capability jail oraclert ucl util
 
 .if ${MK_DTRACE} != "no"
 SRCS+= oracled_provider.d

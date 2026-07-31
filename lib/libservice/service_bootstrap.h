@@ -14,7 +14,7 @@
 #include <stdint.h>
 
 #define	SERVICE_BOOTSTRAP_MAGIC		0x53425643U	/* "CVBS" */
-#define	SERVICE_BOOTSTRAP_VERSION	1
+#define	SERVICE_BOOTSTRAP_VERSION	3
 #define	SERVICE_BOOTSTRAP_FD		5
 #define	SERVICE_BOOTSTRAP_ENV		"SERVICE_BOOTSTRAP_FD"
 #define	SERVICE_BOOTSTRAP_ENVFD_NAME	"org.5bsd.serviced.bootstrap"
@@ -23,9 +23,7 @@
 
 #define	SERVICE_BOOTSTRAP_TOKEN_MAX	128
 #define	SERVICE_BOOTSTRAP_CAPABILITY_MAX	4
-#define	SERVICE_BOOTSTRAP_COMPONENT_MAX	8
 #define	SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX	16
-#define	SERVICE_BOOTSTRAP_COMPONENT_NAME_MAX	64
 #define	SERVICE_BOOTSTRAP_LABEL_MAX	64
 
 #define	SERVICE_BOOTSTRAP_F_CAPPROTECT	0x00000001U
@@ -34,7 +32,7 @@
 struct service_bootstrap_named_fd {
 	int32_t		fd;
 	uint32_t	reserved;
-	char		name[SERVICE_BOOTSTRAP_COMPONENT_NAME_MAX];
+	char		name[SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
 };
 
 struct service_bootstrap {
@@ -47,21 +45,18 @@ struct service_bootstrap {
 	int32_t		capprotect_fd;
 	uint32_t	ntokens;
 	uint32_t	ncapabilities;
-	uint32_t	ncomponents;
-	uint32_t	reserved[7];
+	uint32_t	reserved[8];
 	char		label[SERVICE_BOOTSTRAP_LABEL_MAX];
 	int32_t		token_fds[SERVICE_BOOTSTRAP_TOKEN_MAX];
 	struct service_bootstrap_named_fd
 	    capabilities[SERVICE_BOOTSTRAP_CAPABILITY_MAX];
-	struct service_bootstrap_named_fd
-	    components[SERVICE_BOOTSTRAP_COMPONENT_MAX];
 };
 
-_Static_assert(sizeof(struct service_bootstrap_named_fd) == 72,
+_Static_assert(sizeof(struct service_bootstrap_named_fd) == 24,
     "service bootstrap named-fd ABI drift");
 _Static_assert(__offsetof(struct service_bootstrap, label) == 64,
     "service bootstrap header ABI drift");
-_Static_assert(sizeof(struct service_bootstrap) == 1504,
+_Static_assert(sizeof(struct service_bootstrap) == 736,
     "service bootstrap ABI drift");
 
 #endif /* !_SERVICE_BOOTSTRAP_H_ */

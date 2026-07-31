@@ -1,0 +1,334 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd July 31, 2026
+.Dt LIBCHANNEL 3
+.Os
+.Sh NAME
+.Nm libchannel
+.Nd asynchronous userspace capability-channel messaging
+.Sh LIBRARY
+Capability channel library
+.Pq libchannel, Fl lchannel
+.Sh SYNOPSIS
+.In channel.h
+.Ft int
+.Fn channel_create "int fd" "const struct channel_options *options" "struct channel **channel"
+.Ft void
+.Fn channel_destroy "struct channel *channel"
+.Ft void
+.Fn channel_abandon "struct channel *channel"
+.Ft int
+.Fn channel_fd "const struct channel *channel"
+.Ft int
+.Fn channel_error "const struct channel *channel"
+.Ft int
+.Fn channel_wants_write "const struct channel *channel"
+.Ft int
+.Fo channel_send_request
+.Fa "struct channel *channel"
+.Fa "const struct channel_outgoing *message"
+.Fa "channel_reply_handler handler"
+.Fa "void *context"
+.Fa "struct channel_request **request"
+.Fc
+.Ft int
+.Fn channel_send_event "struct channel *channel" "const struct channel_outgoing *message"
+.Ft int
+.Fn channel_set_request_handler "struct channel *channel" "channel_request_handler handler" "void *context"
+.Ft int
+.Fn channel_set_event_handler "struct channel *channel" "channel_event_handler handler" "void *context"
+.Ft int
+.Fn channel_dispatch "struct channel *channel"
+.Ft int
+.Fn channel_flush "struct channel *channel"
+.Ft int
+.Fn channel_send_reply "struct channel_message *request" "const struct channel_outgoing *message"
+.Ft int
+.Fn channel_request_cancel "struct channel_request *request"
+.Ft int
+.Fn channel_request_status "const struct channel_request *request"
+.Ft void
+.Fn channel_request_release "struct channel_request *request"
+.Sh DESCRIPTION
+The
+.Nm
+library provides a nonblocking, event-loop-native abstraction over
+.Dv MAC_CAPABILITY_SENDMSG
+and
+.Dv MAC_CAPABILITY_RECVMSG .
+It does not use or expose
+.Dv MAC_CAPABILITY_CALL .
+.Pp
+A channel owns the descriptor passed successfully to
+.Fn channel_create .
+The descriptor is made nonblocking and is closed by
+.Fn channel_destroy .
+The caller registers
+.Fn channel_fd
+with kqueue for read readiness, and for write readiness while messages are
+queued.
+.Fn channel_dispatch
+drains received messages and
+.Fn channel_flush
+drains the bounded outgoing queue.
+.Fn channel_wants_write
+reports whether write readiness should be enabled.
+.Pp
+Requests have fresh nonzero correlation tokens.
+Events have token zero.
+Replies are matched to outstanding requests before provider-side request
+classification.
+Unknown or stale replies are discarded and all of their descriptors are
+closed.
+Peer death completes every outstanding request with an error.
+.Pp
+Roles are deliberately directional.
+A client may originate requests and a provider receives nonzero-token
+requests and responds.
+Either role may send events.
+A provider cannot originate a request because an unknown late reply would
+otherwise be indistinguishable from a new request without adding a redundant
+transport envelope.
+.Pp
+Payloads and descriptors passed for sending remain caller-owned.
+When backpressure requires queuing,
+.Nm
+copies the payload and duplicates the descriptors.
+Ownership of a received message is transferred to the installed handler.
+The handler may retain a provider request and respond later.
+Received messages own their installed descriptors.
+.Fn channel_message_take_fd
+transfers one descriptor to the caller; all untaken descriptors are closed
+when the message is freed.
+Every delivered message must eventually be passed to
+.Fn channel_message_free .
+.Pp
+Handlers execute synchronously from
+.Fn channel_dispatch .
+The API is intended for one dispatch context and does not create threads.
+A handler may request destruction; actual storage reclamation is deferred
+until dispatch unwinds.
+.Pp
+.Fn channel_abandon
+is the post-fork escape hatch.
+It releases inherited heap bookkeeping without invoking callbacks or closing
+numeric descriptor slots which may already have been closed and reused in the
+child.
+It must not be used for ordinary shutdown.
+.Pp
+Cancellation is local only.
+A late remote response is treated as stale and discarded.
+Remote cancellation, application schemas, operation codes, delivery
+guarantees, and descriptor-slot meanings belong to the service protocol
+above this library.
+.Sh CHANNEL CREATION
+The caller initializes
+.Vt struct channel_options
+with
+.Dv CHANNEL_OPTIONS_INITIALIZER .
+The
+.Va size
+field must be at least the structure size.
+Larger structures are accepted for forward-compatible extension.
+The role is one of:
+.Bl -tag -width CHANNEL_ROLE_PROVIDER
+.It Dv CHANNEL_ROLE_CLIENT
+May originate requests.
+An unmatched nonzero token is a stale reply and is discarded.
+.It Dv CHANNEL_ROLE_PROVIDER
+May receive nonzero-token requests and respond to them.
+It cannot originate requests.
+.El
+.Pp
+The remaining fields bound pending requests and locally queued messages,
+payload bytes, and descriptors.
+All limits must be selected before untrusted traffic is accepted.
+A successful
+.Fn channel_create
+consumes
+.Fa fd .
+The channel uses a private close-on-fork and close-on-exec duplicate, so its
+descriptor number is not required to equal
+.Fa fd ;
+call
+.Fn channel_fd
+for event-loop registration.
+On failure the caller retains it.
+.Pp
+Every send accepts a versioned
+.Vt struct channel_outgoing .
+Its
+.Va data
+and
+.Va fds
+members remain borrowed for the duration of the call.
+The payload must be nonempty, and attachment slots are interpreted only by
+the service protocol above
+.Nm .
+The
+.Va size
+field may be larger than the current structure size.
+.Sh EVENT LOOP
+.Fn channel_fd
+returns the borrowed kernel descriptor.
+Register it for
+.Dv EVFILT_READ .
+After a send operation, call
+.Fn channel_wants_write ;
+enable
+.Dv EVFILT_WRITE
+only while it returns one.
+.Fn channel_dispatch
+processes at most 64 messages per call so one busy channel cannot monopolize
+an event loop.
+It returns the number processed, including messages discarded by policy.
+.Fn channel_flush
+attempts to drain the outgoing queue and treats continued
+.Er EAGAIN
+as successful retained backpressure.
+.Pp
+The library has no internal lock.
+Creation, dispatch, sending, cancellation, and destruction of one channel must
+be serialized by its owner.
+Callbacks run synchronously in the thread calling
+.Fn channel_dispatch .
+They may retain messages, enqueue responses or events, cancel other requests,
+or call
+.Fn channel_destroy .
+They must not recursively dispatch the same channel.
+.Sh REQUESTS AND RESPONSES
+.Fn channel_send_request
+registers
+.Fa handler
+before attempting the send, generates a fresh nonzero token, and returns a
+request handle through
+.Fa request .
+The payload must be nonempty.
+The input payload and descriptor array remain caller-owned.
+The handler is invoked exactly once with either a reply and error zero, or a
+null reply and a terminal or cancellation error.
+The handler owns a nonnull reply and must free it.
+.Pp
+.Fn channel_send_reply
+uses the token and channel retained by an incoming provider request.
+It rejects token-zero messages, client-side replies, and duplicate responses.
+A provider may keep the request after its handler returns and respond
+asynchronously.
+It must eventually free the request even if no response is sent.
+.Pp
+.Fn channel_request_cancel
+removes an unsent queued request when possible and completes its callback with
+.Er ECANCELED .
+Cancellation does not send a remote message.
+A response already in flight is later recognized as stale.
+.Fn channel_request_status
+returns
+.Er EINPROGRESS
+while pending and otherwise the completion error, with zero denoting a reply.
+.Fn channel_request_release
+releases the caller's handle reference.
+It may be called while the request is pending or by its callback; reclamation
+is deferred until completion when necessary.
+.Sh EVENTS
+.Fn channel_send_event
+sends a token-zero message.
+Either role may send events.
+.Fn channel_set_event_handler
+installs the receiver.
+When no event handler is installed, events are discarded and all attached
+descriptors are closed.
+.Fn channel_set_request_handler
+installs the provider request handler.
+When no request handler is installed, incoming requests are discarded.
+.Sh MESSAGE OWNERSHIP
+The following accessors inspect a received message:
+.Bl -tag -width channel_message_fd_count
+.It Fn channel_message_kind
+Returns request, reply, or event classification.
+.It Fn channel_message_data
+Returns borrowed payload storage valid until the message is freed.
+.It Fn channel_message_length
+Returns the kernel-reported payload length.
+.It Fn channel_message_token
+Returns the channel token; events return zero.
+.It Fn channel_message_sender
+Returns borrowed authenticated badge, nonce, uid, gid, and prison metadata.
+.It Fn channel_message_fd_count
+Returns the exact attachment count.
+.It Fn channel_message_borrow_fd
+Returns a borrowed installed descriptor for one zero-based attachment slot.
+.It Fn channel_message_take_fd
+Transfers one installed descriptor to the caller and marks its slot empty.
+.El
+.Pp
+.Fn channel_message_free
+closes every untaken descriptor and releases the payload and retained channel
+reference.
+Attachment slots preserve sender array order; sender descriptor numbers are
+never part of the message.
+.Sh SHUTDOWN AND FORK
+.Fn channel_destroy
+closes the descriptor, drops queued messages and descriptors, and completes
+pending requests with
+.Er ECANCELED .
+When called by a callback, final reclamation waits until dispatch unwinds.
+.Pp
+.Fn channel_abandon
+is only for the child side of
+.Xr fork 2
+when callbacks and locks may belong to vanished threads.
+Channel descriptors and hidden queued attachment duplicates are locked
+close-on-fork and close-on-exec.
+Every channel and received attachment is process-bound.
+An inherited operation fails with
+.Er ECHILD .
+.Fn channel_abandon
+then frees inherited heap bookkeeping without invoking callbacks or closing
+numeric descriptor slots which may already have been closed and reused in the
+child.
+.Pp
+.Fn channel_error
+returns zero while healthy.
+After peer death or another terminal transport failure it returns \-1 and
+restores the stable terminal error in
+.Va errno .
+.Sh RETURN VALUES
+Unless documented otherwise, functions returning
+.Vt int
+return zero on success and \-1 on failure.
+.Fn channel_dispatch
+returns a nonnegative message count on success.
+.Fn channel_fd
+returns a nonnegative borrowed descriptor on success.
+.Fn channel_wants_write
+returns zero or one.
+.Fn channel_request_status
+returns an errno value directly.
+Message accessors return their documented neutral value for a null message.
+.Sh ERRORS
+Outgoing limits produce
+.Er ENOBUFS .
+Backpressure is retained internally and is not reported as failure.
+Protocol-role and ownership violations produce
+.Er EINVAL .
+Invalid or already completed cancellation produces
+.Er EALREADY .
+Payloads larger than the kernel channel maximum are rejected with
+.Er EINVAL .
+The terminal channel error is available through
+.Fn channel_error .
+.Sh DTRACE PROVIDER
+When built with DTrace support,
+.Nm
+publishes the
+.Qq libchannel
+USDT provider.
+Its probes cover channel creation, immediate sends, local queueing, received
+message classification, request completion, policy discards, and terminal
+peer death.
+Payload contents and descriptor numbers are never exposed by these probes.
+.Sh SEE ALSO
+.Xr fork 2 ,
+.Xr kqueue 2 ,
+.Xr libservice 3 ,
+.Xr capsicum 4

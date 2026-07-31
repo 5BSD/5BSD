@@ -6,8 +6,8 @@
 #
 # ATF tests for kldmgrd — kernel module loading manager.
 #
-# kldmgrd is a .cap-bundle service that communicates via libservice and
-# uses libcapability (cap_daemon_run).  The protocol is defined in
+# kldmgrd is a .cap-bundle service that uses libservice for lifecycle and
+# libchannel for its typed sessions.  The protocol is defined in
 # kldmgrd_proto.h.  Because kldmgrd registers through serviced, these
 # tests start the full oracled+serviced stack with kldmgrd installed
 # as a system bundle, then launch a test client service that exercises
@@ -108,7 +108,6 @@ version = "1.0";
 author = "5BSD";
 program = "kldmgrd";
 provides = ["org.5bsd.system.kldmgr"];
-on_demand = false;
 restart = "on-failure";
 capabilities {
     system = ["kldload", "kldunload", "kldstat"];
@@ -212,6 +211,7 @@ program = "kldmgr_client";
 arguments = ["kld", "${WORK}/cmd.in", "${WORK}/result.out"];
 provides = ["${label}"];
 UCL
+	sed -i '' '/^provides = /d' "${dir}/etc/kldmgr_client.ucl"
 }
 
 # Set up the allow file to permit a label (or wildcard).

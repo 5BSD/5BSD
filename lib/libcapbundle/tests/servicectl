@@ -1,0 +1,22 @@
+#!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Keep object-tree libcapbundle tests paired with a matching servicectl ABI.
+
+if [ -n "${TEST_OBJTOP:-}" ]; then
+	if [ -x "${TEST_OBJTOP}/usr.sbin/servicectl/tests/servicectl_test_bin" ];
+	then
+		exec \
+		    "${TEST_OBJTOP}/usr.sbin/servicectl/tests/servicectl_test_bin" \
+		    "$@"
+	fi
+	if [ -x "${TEST_OBJTOP}/usr.sbin/servicectl/servicectl" ] &&
+	    [ -r "${TEST_OBJTOP}/lib/libcapbundle/libcapbundle.so.1" ]; then
+		LD_LIBRARY_PATH="${TEST_OBJTOP}/lib/libcapbundle"
+		export LD_LIBRARY_PATH
+		exec "${TEST_OBJTOP}/usr.sbin/servicectl/servicectl" "$@"
+	fi
+fi
+
+exec /usr/sbin/servicectl "$@"

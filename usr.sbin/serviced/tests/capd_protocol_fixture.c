@@ -25,6 +25,8 @@
 #include "kldmgrd_proto.h"
 #include "rebootd_proto.h"
 
+static struct service_context *service_context;
+
 static int
 connect_local(const char *path)
 {
@@ -166,8 +168,7 @@ wait_for_service(const char *name)
 	int fd;
 
 	for (i = 0; i < 100; i++) {
-		fd = service_lookup(name);
-		if (fd != -1)
+		if (service_connect(service_context, name, &fd) == 0)
 			return (fd);
 		usleep(100000);
 	}
@@ -179,11 +180,14 @@ kld_client(const char *inpath, const char *outpath)
 {
 	char op[32], name[KLDMGR_NAME_MAX];
 	struct kldmgr_req req;
+	struct service_session *session;
+	struct service_message message;
+	struct service_reply service_reply;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	FILE *in, *out;
-	ssize_t n;
 	int fd, raw_op;
 
-	if (service_init() == -1)
+	if (service_acquire(&service_context) == -1)
 		err(1, "initialize managed service");
 	in = wait_for_input(inpath);
 	if (in == NULL)
@@ -197,12 +201,16 @@ kld_client(const char *inpath, const char *outpath)
 	if (fscanf(in, "%31s %127s %d", op, name, &raw_op) < 1)
 		errx(1, "invalid command file");
 	fclose(in);
-	if (service_ready() == -1)
+	if (service_enter_capability_mode(service_context) == -1 ||
+	    service_ready(service_context) == -1)
 		err(1, "enter managed service sandbox");
 
 	fd = wait_for_service("org.5bsd.system.kldmgr");
 	if (fd == -1)
 		err(1, "service_lookup kldmgrd");
+	if (service_session_create(fd, &session) == -1)
+		err(1, "create kld client");
+	options.timeout_ms = 30000;
 	memset(&req, 0, sizeof(req));
 	if (strcmp(op, "list") == 0)
 		req.op = KLDMGR_OP_LIST;
@@ -215,36 +223,56 @@ kld_client(const char *inpath, const char *outpath)
 	else
 		errx(1, "unknown kld operation: %s", op);
 	strlcpy(req.name, name, sizeof(req.name));
-	if (service_send(fd, &req, sizeof(req)) == -1)
-		err(1, "send kld request");
 	if (req.op == KLDMGR_OP_LIST) {
 		char buf[sizeof(struct kldmgr_list_reply) +
 		    KLDMGR_LIST_MAX * sizeof(struct kldmgr_list_entry)];
 		const struct kldmgr_list_reply *reply;
 		uint32_t i, count;
 
-		n = service_recv(fd, buf, sizeof(buf), NULL);
-		if (n < (ssize_t)sizeof(*reply))
-			errx(1, "short kld list reply: %zd", n);
+		memset(&message, 0, sizeof(message));
+		message.size = sizeof(message);
+		message.data = &req;
+		message.length = sizeof(req);
+		memset(&service_reply, 0, sizeof(service_reply));
+		service_reply.size = sizeof(service_reply);
+		service_reply.data = buf;
+		service_reply.capacity = sizeof(buf);
+		if (service_session_call(session, &message, &service_reply,
+		    &options) == -1)
+			err(1, "call kld list");
+		if (service_reply.length < sizeof(*reply))
+			errx(1, "short kld list reply: %zu",
+			    service_reply.length);
 		reply = (const struct kldmgr_list_reply *)buf;
 		count = reply->count;
 		fprintf(out, "status=%d\ncount=%u\n", reply->status, count);
 		for (i = 0; i < count &&
 		    sizeof(*reply) + (i + 1) * sizeof(reply->entries[0]) <=
-		    (size_t)n; i++) {
+		    service_reply.length; i++) {
 			fprintf(out, "module.%u.id=%d\nmodule.%u.name=%s\n",
 			    i, reply->entries[i].id, i, reply->entries[i].name);
 		}
 	} else {
 		struct kldmgr_reply reply;
 
-		n = service_recv(fd, &reply, sizeof(reply), NULL);
-		if (n != (ssize_t)sizeof(reply))
-			errx(1, "short kld reply: %zd", n);
+		memset(&message, 0, sizeof(message));
+		message.size = sizeof(message);
+		message.data = &req;
+		message.length = sizeof(req);
+		memset(&service_reply, 0, sizeof(service_reply));
+		service_reply.size = sizeof(service_reply);
+		service_reply.data = &reply;
+		service_reply.capacity = sizeof(reply);
+		if (service_session_call(session, &message, &service_reply,
+		    &options) == -1)
+			err(1, "call kld");
+		if (service_reply.length != sizeof(reply))
+			errx(1, "short kld reply: %zu",
+			    service_reply.length);
 		fprintf(out, "status=%d\nid=%d\n", reply.status, reply.id);
 	}
 	fclose(out);
-	close(fd);
+	service_session_close(session);
 	for (;;)
 		pause();
 }
@@ -254,16 +282,20 @@ reboot_client(const char *operation, const char *outpath)
 {
 	struct reboot_req req;
 	struct reboot_reply reply;
+	struct service_session *session;
+	struct service_message message;
+	struct service_reply service_reply;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	FILE *out;
-	ssize_t n;
 	int fd;
 
-	if (service_init() == -1)
+	if (service_acquire(&service_context) == -1)
 		err(1, "initialize managed service");
 	out = fopen(outpath, "w");
 	if (out == NULL)
 		err(1, "fopen %s", outpath);
-	if (service_ready() == -1)
+	if (service_enter_capability_mode(service_context) == -1 ||
+	    service_ready(service_context) == -1)
 		err(1, "enter managed service sandbox");
 	memset(&req, 0, sizeof(req));
 	if (strcmp(operation, "status") == 0)
@@ -277,17 +309,28 @@ reboot_client(const char *operation, const char *outpath)
 		req.flags = UINT32_MAX;
 	} else
 		errx(1, "unknown reboot operation: %s", operation);
-	fd = service_lookup("org.5bsd.system.reboot");
-	if (fd == -1)
+	if (service_connect(service_context, "org.5bsd.system.reboot",
+	    &fd) == -1)
 		err(1, "service_lookup rebootd");
-	if (service_send(fd, &req, sizeof(req)) == -1)
-		err(1, "send reboot request");
-	n = service_recv(fd, &reply, sizeof(reply), NULL);
-	if (n != (ssize_t)sizeof(reply))
-		errx(1, "short reboot reply: %zd", n);
+	if (service_session_create(fd, &session) == -1)
+		err(1, "create reboot client");
+	memset(&message, 0, sizeof(message));
+	message.size = sizeof(message);
+	message.data = &req;
+	message.length = sizeof(req);
+	memset(&service_reply, 0, sizeof(service_reply));
+	service_reply.size = sizeof(service_reply);
+	service_reply.data = &reply;
+	service_reply.capacity = sizeof(reply);
+	options.timeout_ms = 30000;
+	if (service_session_call(session, &message, &service_reply,
+	    &options) == -1)
+		err(1, "call reboot");
+	if (service_reply.length != sizeof(reply))
+		errx(1, "short reboot reply: %zu", service_reply.length);
 	fprintf(out, "%d\n", reply.status);
 	fclose(out);
-	close(fd);
+	service_session_close(session);
 	for (;;)
 		pause();
 }

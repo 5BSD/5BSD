@@ -1,199 +1,75 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd July 29, 2026
+.Dd July 30, 2026
 .Dt SERVICECTL 8
 .Os
 .Sh NAME
 .Nm servicectl
-.Nd control interface to serviced
+.Nd control and inspect serviced
 .Sh SYNOPSIS
 .Nm
 .Op Fl s Ar socket
-.Cm status | services | reload
+.Cm status | services | reload | bundles
 .Nm
 .Op Fl s Ar socket
 .Cm stop Ar label
 .Nm
-.Op Fl s Ar socket
 .Cm install Ar path.cap
 .Nm
-.Op Fl s Ar socket
-.Cm verify
-.Op Fl -effective
-.Op Fl -policy Ar file
-.Ar path.cap ...
+.Cm verify Ar path.cap ...
 .Nm
-.Op Fl s Ar socket
-.Cm policy-check Ar file
-.Nm
-.Op Fl s Ar socket
 .Cm deps Ar program
-.Nm
-.Op Fl s Ar socket
-.Cm bundles
 .Sh DESCRIPTION
 .Nm
-is the administrative command-line interface to
+is the administrative client for
 .Xr serviced 8 .
-Each invocation opens a connection to the
-.Xr serviced 8
-control socket, sends one command, prints the result, and exits.
 .Sh COMMANDS
-.Bl -tag -width "check manifest"
+.Bl -tag -width "verify path.cap ..."
 .It Cm status
-Display the overall status of
-.Xr serviced 8
-and a table of all loaded services.
-For each service, the output includes the label, current state
-.Pq running, stopped, starting, or stopping ,
-PID (if running), restart policy, and restart count.
-Available to any user.
+Show daemon and service state.
 .It Cm services
-List all loaded services.
-The output is identical to the
-.Cm status
-command.
-Available to any user.
+List loaded service runtimes.
 .It Cm reload
-Reload service manifests from disk.
-New manifests are loaded and their services started, changed
-manifests trigger a graceful restart of the affected service,
-and manifests removed from disk cause the corresponding service
-to be gracefully stopped.
-The dependency graph is re-validated before any changes are
-applied; if the new graph would contain a cycle, the reload
-is rejected and running services are unaffected.
-.Pp
-Requires root privileges.
+Transactionally rescan bundles, validate the dependency graph, and apply
+additions, changes, and removals.
+Requires root.
 .It Cm stop Ar label
-Gracefully stop a running service.
-Sends SIGTERM and waits for the service's configured
-.Va stop_timeout
-before escalating to SIGKILL.
-.Pp
-Requires root privileges.
+Gracefully stop a runtime, escalating after its configured timeout.
+Requires root.
 .It Cm install Ar path.cap
-Install a
-.Pa .cap
-bundle to
-.Pa /Capabilities/ .
-The bundle is verified before installation.
-Source ownership is not preserved: the installed policy tree is created as
-root so its original owner cannot modify it after verification.
-After copying, run
-.Cm servicectl reload
-to register the new services.
-.Pp
-Requires root privileges.
-.It Cm verify Op Fl -effective Op Fl -policy Ar file Ar path.cap ...
-Validate one or more
-.Pa .cap
-bundles.
-Checks that bundle structure and every manifest are valid, binaries exist and
-are executable, provided names are unique, component interfaces resolve to
-exactly one compatible provider, provider pins match, and dependencies are
-acyclic.
-When multiple paths are supplied, their combined provider and dependency
-graph is checked.
-Consumer bundles should be verified together with the provider bundles they
-will be deployed with.
-The summary prints each resolved component provider and every derived
-dependency, including effective values for defaults omitted by manifests.
-The
-.Fl -effective
-flag documents and makes explicit this output mode.
-With
-.Fl -policy ,
-provider defaults and per-service overrides are loaded from
-.Ar file
-before resolution.
-.It Cm policy-check Ar file
-Validate the complete schema, types, limits, and duplicate-selection rules of
-a serviced administrator policy without loading any bundles.
+Verify and copy a bundle into
+.Pa /Capabilities
+as a root-owned policy tree.
+Requires root.
+.It Cm verify Ar path.cap ...
+Strictly validate bundle structure, manifests, executables, unique provided
+names, and the combined dependency graph.
+The printed effective view shows derived activation and local components.
 .It Cm deps Ar program
-Inspect a dynamic executable's library dependencies and retained
-.Pa .note.5bsd.components
-records, then print a minimal provider-neutral component manifest fragment.
-The result is advisory and must be reviewed and declared explicitly;
-dependency discovery never grants authority.
+Inspect an ELF program and print an advisory
+.Va components
+array for linked FileSystemCmp and NetworkCmp clients.
+Global service libraries require no manifest declaration and are ignored.
 .It Cm bundles
-List all installed bundles from
-.Pa /Capabilities/System/
+List bundles installed in
+.Pa /Capabilities/System
 and
-.Pa /Capabilities/ ,
-showing bundle ID, version, and service count for each.
+.Pa /Capabilities .
 .El
 .Sh OPTIONS
-.Bl -tag -width "--policy file"
+.Bl -tag -width "-s socket"
 .It Fl s Ar socket
-Connect to the
-.Xr serviced 8
-control socket at
-.Ar socket
-instead of the default
-.Pa /var/run/serviced.sock .
-.It Fl -effective
-Print the complete effective manifest, including omitted defaults and resolved
-provider dependencies.
-.It Fl -policy Ar file
-Apply the specified administrator provider policy while verifying bundles.
+Use an alternate serviced control socket.
 .El
 .Sh EXIT STATUS
 .Ex -std
-.Pp
-.Nm
-exits 0 on success and >0 if an error occurred.
-An exit status of
-.Dv EX_UNAVAILABLE
-(69) indicates that the control socket could not be reached,
-typically because
-.Xr serviced 8
-is not running.
 .Sh EXAMPLES
-Check whether
-.Xr serviced 8
-is running and list services:
-.Bd -literal -offset indent
-# servicectl status
-.Ed
-.Pp
-Reload manifests after adding a new service:
-.Bd -literal -offset indent
-# servicectl reload
-.Ed
-.Pp
-Install and activate a bundle:
-.Bd -literal -offset indent
-# servicectl install /path/to/MyApp.cap
-# servicectl reload
-.Ed
-.Pp
-Verify a bundle's integrity:
 .Bd -literal -offset indent
 # servicectl verify /path/to/MyApp.cap
-.Ed
-.Pp
-Validate administrator selection policy and show the complete effective
-consumer configuration:
-.Bd -literal -offset indent
-# servicectl policy-check /etc/serviced/policy.ucl
-# servicectl verify --policy /etc/serviced/policy.ucl \e
-    /Capabilities/System/FileSystemCmp.cap /path/to/MyApp.cap
-.Ed
-.Pp
-Suggest provider-neutral declarations from an ELF program:
-.Bd -literal -offset indent
-$ servicectl deps /path/to/MyApp.cap/bin/myapp
-.Ed
-.Pp
-Connect to an alternate control socket:
-.Bd -literal -offset indent
-# servicectl -s /tmp/test-serviced.sock status
+# servicectl install /path/to/MyApp.cap
+# servicectl reload
 .Ed
 .Sh SEE ALSO
 .Xr serviced 5 ,
 .Xr serviced 8
-.Sh HISTORY
-.Nm
-first appeared in 5BSD.

@@ -4,7 +4,6 @@ author = "5BSD";
 
 program = "kldmgrd";
 provides = ["org.5bsd.system.kldmgr"];
-on_demand = true;
 restart = "on-failure";
 
 capabilities {

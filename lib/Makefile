@@ -46,6 +46,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libcapbundle \
 	libcapsicum \
 	libcasper \
+	libchannel \
 	libcompat \
 	libcrypt \
 	libdevctl \
@@ -71,8 +72,10 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libkiconv \
 	libkldelf \
 	libkvm \
+	liblogcmp \
+	libnotifycmp \
+	libtracecmp \
 	liblua \
-	liblwipcmp \
 	liblzma \
 	libmemstat \
 	libmd \
@@ -144,19 +147,24 @@ SUBDIR_DEPEND_libcrypt= libmd
 SUBDIR_DEPEND_libdevstat= libkvm
 SUBDIR_DEPEND_libdpv= libfigpar ncurses libutil
 SUBDIR_DEPEND_libedit= ncurses
+SUBDIR_DEPEND_libfilesystemcmp= libservice
 SUBDIR_DEPEND_libgeom= libexpat libsbuf
 .if ${MK_MITKRB5} == "no"
 SUBDIR_DEPEND_librpcsec_gss= libgssapi
 .endif
 SUBDIR_DEPEND_libmagic= libz
+SUBDIR_DEPEND_liblogcmp= libservice libshmring
 SUBDIR_DEPEND_libmemstat= libkvm
+SUBDIR_DEPEND_libnetworkcmp= libservice libshmring
+SUBDIR_DEPEND_libnotifycmp= libservice
 SUBDIR_DEPEND_libpam= libcrypt ${_libradius} librpcsvc libtacplus libutil ${_libypclnt} ${_libcom_err}
 SUBDIR_DEPEND_libpjdlog= libutil
 SUBDIR_DEPEND_libprocstat= libkvm libutil
 SUBDIR_DEPEND_libradius= libmd
 SUBDIR_DEPEND_libsmb= libkiconv
 SUBDIR_DEPEND_libcapbundle= liboraclert libucl
-SUBDIR_DEPEND_libcapability= libservice
+SUBDIR_DEPEND_libservice= libcapability libchannel
+SUBDIR_DEPEND_libtracecmp= libservice
 SUBDIR_DEPEND_liboraclert= libucl
 # See comment above about libssp_nonshared
 SUBDIR_DEPEND_libsys= libcompiler_rt libssp_nonshared

@@ -50,6 +50,20 @@ cmd_install(const char *bundle_path)
 	pid_t pid;
 	int status;
 
+	/*
+	 * Reject an unsafe destination name before parsing the bundle or
+	 * printing any metadata.  Validation must not have side effects.
+	 */
+	{
+		const char *p = strrchr(bundle_path, '/');
+		bname = (p != NULL) ? p + 1 : bundle_path;
+	}
+	if (bname[0] == '\0' || bname[0] == '.' ||
+	    strchr(bname, '/') != NULL) {
+		warnx("install: invalid bundle name: %s", bname);
+		return (1);
+	}
+
 	/* Validate bundle first. */
 	if (capbundle_open(bundle_path, &b, errbuf, sizeof(errbuf)) == -1) {
 		warnx("install: invalid bundle: %s", errbuf);
@@ -77,22 +91,15 @@ cmd_install(const char *bundle_path)
 		}
 	}
 
-	/* Derive destination path.  Reject names that could escape
-	 * the install directory. */
-	{
-		const char *p = strrchr(bundle_path, '/');
-		bname = (p != NULL) ? p + 1 : bundle_path;
-	}
-	if (bname[0] == '\0' || bname[0] == '.' ||
-	    strchr(bname, '/') != NULL) {
-		warnx("install: invalid bundle name: %s", bname);
-		return (1);
-	}
 	if (geteuid() != 0) {
 		warnx("install: root privileges are required");
 		return (1);
 	}
-	snprintf(dst, sizeof(dst), "%s/%s", idir, bname);
+	if (snprintf(dst, sizeof(dst), "%s/%s", idir, bname) >=
+	    (int)sizeof(dst)) {
+		warnx("install: destination path is too long");
+		return (1);
+	}
 
 	/* Check if already installed. */
 	if (stat(dst, &sb) == 0) {

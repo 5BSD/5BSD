@@ -2,7 +2,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd July 19, 2026
+.Dd July 30, 2026
 .Dt REBOOTD 8
 .Os
 .Sh NAME
@@ -43,7 +43,7 @@ service name is otherwise protected.
 If the file is missing, reboot and shutdown requests are denied.
 .Pp
 At startup,
-.Xr libcapability 3
+.Xr libservice 3
 validates and activates the bundle's inherited reboot token before applying
 the daemon's self-selected capprotect shield, registering its name, or
 reporting readiness.
@@ -74,6 +74,23 @@ Malformed requests receive
 .Dv REBOOT_STATUS_ERR .
 Denied reboot and shutdown requests receive
 .Dv REBOOT_STATUS_PERM .
+.Sh OBSERVABILITY
+The
+.Dq rebootd
+DTrace provider exposes
+.Fn session-start ,
+.Fn session-end ,
+.Fn request ,
+and
+.Fn malformed
+probes.
+The request and session-end probes report zero for success or an
+.Xr errno 2
+value for failure.
+Reboot and shutdown attempts, including policy denials and backend failures,
+also generate
+.Dv AUE_REBOOT
+OpenBSM audit records containing the authenticated client service label.
 .Sh BUNDLE
 .Nm
 is installed as a system
@@ -101,6 +118,6 @@ Client service-label allow list for reboot and shutdown.
 .El
 .Sh SEE ALSO
 .Xr reboot 2 ,
-.Xr libcapability 3 ,
+.Xr libchannel 3 ,
 .Xr libservice 3 ,
 .Xr serviced 8

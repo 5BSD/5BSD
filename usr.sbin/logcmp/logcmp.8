@@ -1,0 +1,47 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 30, 2026
+.Dt LOGCMP 8
+.Os
+.Sh NAME
+.Nm logcmp
+.Nd capability-mode structured logging component
+.Sh DESCRIPTION
+.Nm
+is the base provider for
+.Dq org.5bsd.log
+version
+.Dq 1.0.0 .
+It runs only from
+.Pa /Capabilities/System/LogCmp.cap .
+Each global service connection creates an isolated worker and bounded
+single-producer record ring.
+The worker drains bursts on a bounded periodic
+.Xr kqueue 2
+timer, so record publication does not require a control message per record.
+An explicit flush drains all records published before the request and submits
+them to the syslog capability before replying.
+This is a processing boundary, not a guarantee that syslogd has committed the
+records to stable storage.
+The worker enters capability mode and forwards validated records through a
+separately limited
+.Dq system.syslog
+Casper channel.
+.Pp
+The provider adds the trusted service label, component instance, provider
+sequence, and receive time at the sink.
+Clients supply severity, message text, and bounded non-reserved fields.
+Ring exhaustion is explicit and observable; it never overwrites unread
+records.
+.Sh SECURITY
+Workers cannot open files, sockets, or other sinks.
+They cannot fork or execute and neither the syslog capability nor ring
+consumer descriptors can be transferred to the client.
+The global provider remains outside consumer coalitions.
+Session creation and rejected records are audited through OpenBSM.
+Lifecycle, accepted-record, and drop paths expose DTrace probes.
+.Sh SEE ALSO
+.Xr liblogcmp 3 ,
+.Xr libshmring 3 ,
+.Xr capsicum 4 ,
+.Xr serviced 8 ,
+.Xr syslogd 8

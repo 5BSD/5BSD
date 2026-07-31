@@ -1,0 +1,88 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 30, 2026
+.Dt LIBNOTIFYCMP 3
+.Os
+.Sh NAME
+.Nm notifycmp_client_open ,
+.Nm notifycmp_subscribe ,
+.Nm notifycmp_unsubscribe ,
+.Nm notifycmp_publish ,
+.Nm notifycmp_next ,
+.Nm notifycmp_timer_add ,
+.Nm notifycmp_timer_cancel ,
+.Nm notifycmp_stats ,
+.Nm notifycmp_client_close
+.Nd bounded capability-component notifications
+.Sh LIBRARY
+.Li libnotifycmp
+.Pq Fl lnotifycmp
+.Sh SYNOPSIS
+.In notifycmp.h
+.Ft int
+.Fn notifycmp_client_open "struct notifycmp_client **client"
+.Ft int
+.Fn notifycmp_subscribe "struct notifycmp_client *client" "const char *topic"
+.Ft int
+.Fn notifycmp_publish "struct notifycmp_client *client" "const char *topic" "const void *payload" "size_t length"
+.Ft ssize_t
+.Fn notifycmp_next "struct notifycmp_client *client" "struct notifycmp_event *event" "size_t capacity" "uint32_t timeout_ms"
+.Ft int
+.Fn notifycmp_timer_add "struct notifycmp_client *client" "uint64_t timer_id" "uint32_t interval_ms" "uint32_t flags"
+.Ft int
+.Fn notifycmp_timer_cancel "struct notifycmp_client *client" "uint64_t timer_id"
+.Ft int
+.Fn notifycmp_stats "struct notifycmp_client *client" "struct notifycmp_stats *stats"
+.Ft void
+.Fn notifycmp_client_close "struct notifycmp_client *client"
+.Sh DESCRIPTION
+The
+.Nm
+library connects to the global
+.Dq org.5bsd.notify
+service through
+.Xr libservice 3 .
+It provides exact-topic publish and subscribe, bounded payloads and queues,
+and owner-scoped one-shot or periodic monotonic timers.
+applications do not supply component or provider names.
+.Pp
+.Fn notifycmp_next
+dequeues one event.
+A timeout of zero polls, while
+.Dv NOTIFYCMP_TIMEOUT_INFINITE
+waits without a deadline.
+Each open creates an independent provider session, receive queue, request
+sequence, and exchange lock.
+Threads sharing one client are serialized so replies cannot cross, while a
+blocking
+.Fn notifycmp_next
+on one client does not stall another client.
+An inherited client is invalid after
+.Xr fork 2 ;
+the child must open a fresh session.
+.Pp
+Topics are dot-separated identifiers.
+Empty segments, path syntax, control characters, and embedded NUL bytes are
+rejected.
+Published payloads are opaque bytes and publisher identity is supplied by the
+trusted router.
+Each session is deny-by-default until the provider has an authenticated,
+identity-bound exact-topic publish and subscribe policy and a separate timer
+grant.
+The trusted publisher field remains part of application-level authorization;
+topic permission alone does not authenticate message contents.
+.Pp
+A successful
+.Fn notifycmp_publish
+reply means that the router evaluated the publication and attempted fanout.
+It is not a durable-delivery acknowledgement.
+Subscriber queues are volatile and bounded; a full queue drops the newest
+event for that subscriber and records the loss in statistics.
+Events are not replayed after subscriber or router restart.
+Callers needing durable delivery require a separate typed queue protocol with
+stable event identifiers, consumer offsets, acknowledgements, and
+deduplication.
+.Sh SEE ALSO
+.Xr kqueue 2 ,
+.Xr libservice 3 ,
+.Xr capsicum 4 ,
+.Xr notifycmp 8

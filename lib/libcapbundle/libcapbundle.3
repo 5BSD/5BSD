@@ -1,9 +1,12 @@
-.Dd July 29, 2026
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd July 30, 2026
 .Dt LIBCAPBUNDLE 3
 .Os
 .Sh NAME
 .Nm libcapbundle
-.Nd parse and validate 5BSD .cap bundles
+.Nd parse and validate capability bundles
 .Sh LIBRARY
 .Lb libcapbundle
 .Sh SYNOPSIS
@@ -12,459 +15,74 @@
 .Fn capbundle_open "const char *path" "struct capbundle **bp" "char *errbuf" "size_t errlen"
 .Ft void
 .Fn capbundle_close "struct capbundle *b"
-.Ft const char *
-.Fn capbundle_id "const struct capbundle *b"
-.Ft const char *
-.Fn capbundle_version "const struct capbundle *b"
-.Ft const char *
-.Fn capbundle_author "const struct capbundle *b"
-.Ft const char *
-.Fn capbundle_path "const struct capbundle *b"
-.Ft const char *
-.Fn capbundle_name "const struct capbundle *b"
-.Ft unsigned
-.Fn capbundle_nservices "const struct capbundle *b"
-.Ft "struct capbundle_service *"
-.Fn capbundle_service "const struct capbundle *b" "unsigned idx"
-.Ft const char *
-.Fn capbundle_svc_program "const struct capbundle_service *s"
-.Ft const char *
-.Fn capbundle_svc_label "const struct capbundle_service *s"
-.Ft unsigned
-.Fn capbundle_svc_nprovides "const struct capbundle_service *s"
-.Ft const char *
-.Fn capbundle_svc_provides "const struct capbundle_service *s" "unsigned idx"
-.Ft unsigned
-.Fn capbundle_svc_nrequires "const struct capbundle_service *s"
-.Ft const char *
-.Fn capbundle_svc_requires "const struct capbundle_service *s" "unsigned idx"
-.Ft bool
-.Fn capbundle_svc_on_demand "const struct capbundle_service *s"
-.Ft unsigned
-.Fn capbundle_svc_narguments "const struct capbundle_service *s"
-.Ft const char *
-.Fn capbundle_svc_argument "const struct capbundle_service *s" "unsigned idx"
-.Ft unsigned
-.Fn capbundle_svc_nenvironment "const struct capbundle_service *s"
-.Ft const char *
-.Fn capbundle_svc_environment "const struct capbundle_service *s" "unsigned idx"
-.Ft int
-.Fn capbundle_svc_fill_manifest "const struct capbundle_service *s" "struct svc_manifest *m"
 .Ft int
 .Fn capbundle_verify "const struct capbundle *b" "char *errbuf" "size_t errlen"
 .Ft int
-.Fn capbundle_check_cycles "struct capbundle **bundles" "unsigned nbundles" "char *errbuf" "size_t errlen"
+.Fn capbundle_check_startup_cycles "struct capbundle **bundles" "unsigned nbundles" "char *errbuf" "size_t errlen"
 .Ft int
-.Fn capbundle_resolve_components "struct capbundle **bundles" "unsigned nbundles" "char *errbuf" "size_t errlen"
-.Ft int
-.Fn capbundle_policy_open "const char *path" "struct capbundle_policy **pp" "char *errbuf" "size_t errlen"
-.Ft void
-.Fn capbundle_policy_close "struct capbundle_policy *policy"
-.Ft int
-.Fn capbundle_resolve_components_policy "struct capbundle **bundles" "unsigned nbundles" "const struct capbundle_policy *policy" "char *errbuf" "size_t errlen"
-.Ft int
-.Fn capbundle_scan_dir "const char *dirpath" "capbundle_scan_cb cb" "void *ctx"
+.Fn capbundle_scan_dir "const char *path" "capbundle_scan_cb cb" "void *arg"
 .Sh DESCRIPTION
-The
 .Nm
-library parses 5BSD capability bundles (.cap directories) and provides
-access to their service declarations, metadata, and executables.
-.Pp
-A bundle has the structure:
-.Bd -literal -offset indent
-Name.cap/
-  etc/
-    service.ucl     (one or more UCL service files)
-  bin/
-    program           (executables referenced by service UCL)
-  resources/          (optional application data)
-.Ed
-.Pp
-Each Service.ucl file declares both bundle metadata
-.Pq bundle_id, version, author
-and a service definition
-.Pq program, provides, requires, capabilities .
-A bundle may contain up to 32 services.
-.Ss Bundle Lifecycle
-.Bl -enum -compact
-.It
-.Fn capbundle_open
-parses the bundle directory and all Service.ucl files.
-.It
-.Fn capbundle_verify
-validates integrity: binaries exist, provides are unique, no self-cycles.
-.It
-.Fn capbundle_resolve_components
-resolves each component request against the complete provider set and adds
-the resulting dependency edges.
-.It
-.Fn capbundle_svc_fill_manifest
-converts a parsed service to a
-.Vt struct svc_manifest
-for use by
+parses root-owned
+.Pa .cap
+application directories for
 .Xr serviced 8 .
-.It
-.Fn capbundle_close
-frees all resources.
-.El
-.Ss Service.ucl Format
-Each Service.ucl file is a UCL document with the following keys:
+A bundle contains executables in
+.Pa bin
+and strict UCL service declarations in
+.Pa etc .
 .Pp
-Parsing is strict: unknown keys, wrong types, invalid values, and entries
-beyond documented limits reject the complete bundle.
-.Bl -tag -width "capabilities"
-.It Va bundle_id
-(string, required for verification)
-Reverse-domain bundle identifier.
-Maximum 127 characters.
-.It Va version
-(string, optional)
-Version string.
-Maximum 31 characters.
-.It Va author
-(string, optional)
-Author name.
-Maximum 127 characters.
-.It Va program
-(string, required)
-Executable name relative to
-.Pa bin/ .
-.It Va provides
-(string or array, required for verification)
-One or more service names this service provides for the dependency graph.
-Maximum 8 entries; names must fit serviced's manifest label limit.
-.It Va requires
-(string or array, optional)
-Service names this service depends on.
-Maximum 16 entries, including dependencies added for component providers.
-.It Va implements
-(array, optional)
-Up to 8 objects identifying public component interfaces implemented by the
-service.
-Each entry requires separate
-.Va interface
-and semantic
-.Va version
-strings.
-Optional
-.Va lifetimes
-and
-.Va sharing
-arrays advertise provider-supported modes.
-When omitted they default to process lifetime and exclusive sharing.
-A component request resolves only when its requested mode is advertised.
-.It Va components
-(object, optional)
-Maps up to 8 application-local names to component requests.
-Each request requires separate
-.Va interface
-and semantic
-.Va version
-strings
-and may specify a
-.Va provider ,
-.Va lifetime ,
-.Va sharing ,
-.Va required
-boolean, and provider-defined
-.Va options
-object.
-The supported lifetimes are
-.Dq process ,
-.Dq job ,
-.Dq jail ,
-and
-.Dq system ;
-the default is
-.Dq process .
-Sharing is independently
-.Dq exclusive
-or
-.Dq shared
-and defaults to exclusive.
-The provider is normally omitted.
-.Fn capbundle_resolve_components
-selects the unique exact interface/version implementation from the complete
-bundle set.
-An explicit provider is a deprecated bundle-local policy pin.
-The
-.Fn capbundle_policy_open
-and
-.Fn capbundle_resolve_components_policy
-functions instead apply a separately administered version 1.0.0 provider
-policy containing interface defaults and per-service component overrides.
-Per-service overrides take precedence.
-Missing, ambiguous, mismatched, self-provided, or on-demand provider factories
-reject resolution.
-The resolved provider is added to
-.Va requires
-and must acknowledge each session with a procdesc or coalition descriptor.
-.It Va jail
-(object, optional)
-Named persistent execution jail with required
-.Va name
-and absolute
-.Va path
-and optional
-.Va hostname
-and
-.Va ip4_addr .
-.It Va kmod_requires
-(string or array, optional)
-Up to 8 kernel module names to load before launch for system bundles.
-Only letters, digits, period, underscore, and hyphen are accepted; module
-paths are rejected.
-.It Va arguments
-(array, optional)
-Literal argument strings appended after the program name in
-.Va argv .
-No shell parsing is performed.
-.It Va environment
-(object, optional)
-String-valued environment variables.
-Names beginning with
-.Dq ORACLED_
-or
-.Dq SERVICED_
-and the exact name
-.Dq SERVICE_BOOTSTRAP_FD
-,
-.Dq NETWORKCMP ,
-or
-.Dq FILESYSTEMCMP
-are reserved.
-.It Va on_demand
-(boolean, optional)
-If true, the service is launched on first lookup rather than at boot.
-Default: false.
-.It Va restart
-(string, optional)
-Restart policy:
-.Dq always ,
-.Dq on-failure ,
-or
-.Dq never .
-Default:
-.Dq never .
-Unknown values reject the manifest.
-.It Va stop_timeout
-(integer, optional)
-Seconds to wait for graceful shutdown before SIGKILL.
-Values outside 1\(en300 reject the manifest.
-Default: 5.
-.It Va max_failures
-(integer, optional)
-Consecutive rapid restarts before disabling service.
-Values outside 1\(en100 reject the manifest.
-Default: 10.
-.It Va user
-(string, optional)
-Username for privilege drop.
-Maximum 63 characters.
-.It Va group
-(string, optional)
-Group name for privilege drop.
-Maximum 63 characters.
-.It Va capabilities
-(object, optional)
-Capability claims to delegate to the service.
-See
-.Sx CAPABILITIES
-below.
-.El
-.Ss CAPABILITIES
-The
-.Va capabilities
-object may contain the following sub-keys:
-.Bl -tag -width "network"
-.It Va system
-Array of system gate name strings.
-These correspond to kernel-level operation gates defined in
-.In dev/mac_capability/mac_capability_system_proto.h .
-Valid gate names:
-.Dq kldload ,
-.Dq kldunload ,
-.Dq kldstat ,
-.Dq reboot ,
-.Dq swapon ,
-.Dq swapoff ,
-.Dq sysctl ,
-.Dq kenv ,
-.Dq kenv_read ,
-.Dq acct ,
-.Dq audit .
-Unknown names reject the manifest.
-.It Va services
-Array containing any of
-.Dq mount ,
-.Dq node ,
-.Dq accounting ,
-or
-.Dq identity .
-At most four unique entries are accepted.
-These request mac_capability service descriptors rather than activation
-tokens.
-.It Va paths
-Array of absolute filesystem paths (strings).
-Maximum 16 entries.
-Non-absolute paths reject the manifest.
-.It Va files
-Array of file capability objects, each with:
-.Bl -tag -width "actions" -compact
-.It Va path
-(required) Absolute filesystem path.
-.It Va actions
-(optional) Action list: string, array, or
-.Dq * .
-Valid actions:
-.Dq read ,
-.Dq write ,
-.Dq append ,
-.Dq create ,
-.Dq delete ,
-.Dq stat ,
-.Dq lookup ,
-.Dq exec ,
-.Dq rename_from ,
-.Dq rename_to ,
-.Dq link ,
-.Dq setattr ,
-.Dq truncate ,
-.Dq connect .
-Default if missing or
-.Dq * :
-all actions.
-.El
-Maximum 16 entries.
-.It Va network
-Array of network endpoint objects, each with:
-.Bl -tag -width "direction" -compact
-.It Va port
-Integer port number, range string
-.Pq e.g., Dq 80-8000 ,
-.Dq *
-for all, or
-.Dq .<1024
-for privileged ports.
-Default: all ports (0\(en65535).
-Port values exceeding 65535 are rejected.
-.It Va ports
-Alias for
-.Va port .
-.It Va protocol
-.Dq tcp ,
-.Dq udp ,
-.Dq hci ,
-.Dq l2cap ,
-.Dq rfcomm ,
-.Dq sco ,
-.Dq iso ,
-.Dq any ,
-or
-.Dq * .
-Default: any.
-.It Va direction
-.Dq bind ,
-.Dq connect ,
-.Dq any ,
-or
-.Dq * .
-Default: bind.
-.It Va domain
-.Dq inet ,
-.Dq inet6 ,
-.Dq bluetooth ,
-.Dq any ,
-or
-.Dq * .
-Default: inet.
-.It Va address
-IP address or CIDR notation
-.Pq e.g., Dq 192.168.1.0/24 ,
-or a BD_ADDR for the Bluetooth domain.
-A specific address requires an explicit matching domain.
-.It Va prefix
-Explicit CIDR prefix length (0\(en32 for inet, 0\(en128 for inet6).
-Requires a specific
-.Va address .
-.El
-Maximum 16 entries.
-Invalid entries reject the manifest.
-.It Va vsock
-Array of VSOCK endpoint objects.
-Each object accepts a numeric or wildcard
-.Va cid ,
-a 32-bit
-.Va port
-or
-.Va ports
-range, and a bind/connect/any
-.Va direction .
-Maximum 16 entries.
-.It Va jails
-Array of jail capability objects or shorthand values.
-Each element may be:
-.Bl -bullet -compact
-.It
-An integer (jail ID).
-.It
-A string (jail name, maximum 63 characters).
-.It
-An object with keys:
-.Va jid
-(integer),
-.Va name
-(string),
-.Va actions
-(string or array:
-.Dq create ,
-.Dq get ,
-.Dq set ,
-.Dq remove ,
-.Dq attach ,
-.Dq * ) .
-.El
-Maximum 16 entries.
-Entries with neither jid nor name reject the bundle.
-.El
+Each declaration identifies its
+.Va bundle_id ,
+.Va program ,
+zero or more global names in
+.Va provides ,
+and delegated capabilities.
+A service with at least one
+.Va provides
+entry is activated on demand by a lookup of any provided name.
+A declaration without
+.Va provides
+is an eager boot task.
+Activation is derived and cannot be selected with a manifest option.
 .Pp
-For the complete authoritative schema, value defaults, limits, and token
-activation model, see
-.Xr serviced 5 .
-.Ss Verification Checks
+The optional
+.Va components
+field is either one string or an array containing the distinct literals
+.Dq filesystem
+and
+.Dq network .
+These request mandatory process-local authority replacements constructed
+before exec.
+There are no provider, version, lifetime, sharing, optionality, or options
+fields, and local components do not participate in global service selection.
+.Pp
+A process may advertise up to eight global names.
+The names identify independent endpoints but map to the same service runtime.
+Activation is runtime-based, while connection routing remains exact-name
+based.
+.Pp
+Parsing rejects unknown keys, wrong types, duplicate names or components,
+invalid paths and claims, reserved environment variables, malformed bundle
+identity, and entries beyond fixed limits.
 .Fn capbundle_verify
-performs:
-.Bl -bullet -compact
-.It
-bundle_id must be present in at least one Service.ucl.
-.It
-Each service's program binary must exist and be executable.
-.It
-Each service must provide at least one name.
-.It
-No duplicate provides within the bundle.
-.It
-No service may require its own provides.
-.El
-.Ss Cycle Detection
-.Fn capbundle_check_cycles
-uses Kahn's algorithm across all provided bundles to detect circular
-dependencies in the provides/requires graph.
+also verifies executables and internal consistency.
+.Fn capbundle_check_startup_cycles
+validates internal component-factory startup edges across bundle sets.
+.Sh ACCESSORS
+The public header provides accessors for bundle identity, version, author,
+path and name; service count, program and derived runtime label; provided
+names; derived activation state; literal arguments and environment;
+and conversion to
+.Vt struct svc_manifest .
+Returned strings remain owned by the bundle.
 .Sh RETURN VALUES
-Functions returning int return 0 on success and \-1 on error.
-When
-.Fa errbuf
-is non-NULL, a descriptive error message is written on failure
-identifying the bundle name, the failing service, and the specific issue.
-.Pp
-.Fn capbundle_service ,
-.Fn capbundle_svc_provides ,
-and
-.Fn capbundle_svc_requires
-return NULL if the index is out of bounds.
+Functions returning
+.Vt int
+return zero on success and -1 on failure.
+When supplied, the error buffer receives a diagnostic suitable for
+administrative tools.
 .Sh SEE ALSO
 .Xr libservice 3 ,
-.Xr mac_capability_system 4 ,
 .Xr serviced 5 ,
-.Xr servicectl 8 ,
 .Xr serviced 8

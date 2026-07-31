@@ -48,6 +48,8 @@ capability_tokens_delivered_body()
 	}
 	arguments = ["token-inventory", "token-check.out"];
 " "$capd_service_fixture"
+	sed -i '' '/^provides = /d' \
+	    "${APPS_DIR}/token-test.cap/etc/token-test.ucl"
 	# Reload to pick up the bundle
 	reload_stack
 
@@ -98,6 +100,8 @@ capability_tokens_require_program_activation_body()
 }
 arguments = [\"token-activate\", \"${activation_target}\", \"token-activation.out\"];" \
 	    "$capd_service_fixture"
+	sed -i '' '/^provides = /d' \
+	    "${APPS_DIR}/token-activate.cap/etc/token-activate.ucl"
 	reload_stack
 
 	if ! wait_for_file token-activation.out; then
@@ -368,63 +372,6 @@ procdesc_is_only_signal_authority_cleanup()
 }
 
 # ===================================================================
-# dependency_order_with_caps
-# ===================================================================
-
-atf_test_case dependency_order_with_caps cleanup
-dependency_order_with_caps_head()
-{
-	atf_set "descr" "Provider starts before consumer in dependency order"
-	atf_set "require.user" "root"
-	require_oracle_stack_kmods
-}
-dependency_order_with_caps_body()
-{
-	start_stack
-
-	# Dependency ordering (consumer requires the provider's label, which
-	# is its provides[0]) is what forces provider-before-consumer,
-	# independent of bundle directory name ordering.
-	make_svc system dep-provider '' \
-	    '#!/bin/sh' \
-	    "date +%s%N > ${WORK}/provider-time.out" \
-	    'exec sleep 30'
-	make_svc system dep-consumer 'requires = ["dep-provider"];' \
-	    '#!/bin/sh' \
-	    "date +%s%N > ${WORK}/consumer-time.out" \
-	    'exec sleep 30'
-	reload_stack
-
-	if ! wait_for_file provider-time.out; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "provider did not start"
-	fi
-	if ! wait_for_file consumer-time.out; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "consumer did not start"
-	fi
-
-	# Verify log order — provider should be *launched* before consumer.
-	# Match the launch line specifically ("service <label>: started pid"):
-	# grepping any mention is wrong because bundle_registry logs a
-	# "loaded '<path>'" line per bundle in readdir order, which can mention
-	# the consumer before the provider independent of launch order.
-	provider_line=$(grep -n "service dep-provider: started" "$logfile" | head -1 | cut -d: -f1)
-	consumer_line=$(grep -n "service dep-consumer: started" "$logfile" | head -1 | cut -d: -f1)
-
-	if [ -n "$provider_line" ] && [ -n "$consumer_line" ]; then
-		if [ "$consumer_line" -le "$provider_line" ]; then
-			atf_fail "consumer started before provider"
-		fi
-	fi
-}
-dependency_order_with_caps_cleanup()
-{
-	cleanup_common
-	rm -f provider_svc consumer_svc provider-time.out consumer-time.out
-}
-
-# ===================================================================
 # reload_adds_service
 # ===================================================================
 
@@ -584,6 +531,8 @@ manifest_arguments_environment_body()
 	make_svc_bin system manifest-exec \
 	    'arguments = ["manifest-report", "manifest-exec.out", "literal value", "--flag"];
 environment { APP_MODE = "test"; EMPTY = ""; }' "$capd_service_fixture"
+	sed -i '' '/^provides = /d' \
+	    "${APPS_DIR}/manifest-exec.cap/etc/manifest-exec.ucl"
 	reload_stack
 	wait_for_file manifest-exec.out 10 || atf_fail "service did not exec"
 	atf_check -s exit:0 -o inline:'argc=3\narg1=literal value\narg2=--flag\nmode=test\nempty=\n' \
@@ -615,6 +564,8 @@ remaining_token_families_activate_body()
 }
 arguments = ["authorize-tokens", "token-families.out"];' \
 	    "$capd_service_fixture"
+	sed -i '' '/^provides = /d' \
+	    "${APPS_DIR}/token-families.cap/etc/token-families.ucl"
 	reload_stack
 	wait_for_file token-families.out 10 || {
 		cat "$logfile" 2>/dev/null
@@ -653,6 +604,8 @@ capability_service_descriptors_delivered_body()
 	    'capabilities { services = ["mount", "node", "accounting", "identity"]; }
 arguments = ["capability-services", "capability-services.out"];' \
 	    "$capd_service_fixture"
+	sed -i '' '/^provides = /d' \
+	    "${APPS_DIR}/capability-services.cap/etc/capability-services.ucl"
 	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
 	wait_for_file capability-services.out 10 || {
 		cat "$logfile" 2>/dev/null
@@ -686,6 +639,8 @@ malformed_reload_is_transactional_body()
 	make_svc_bin system reload-guard \
 	    'arguments = ["ready", "reload-guard.out"];' \
 	    "$capd_service_fixture"
+	sed -i '' '/^provides = /d' \
+	    "${APPS_DIR}/reload-guard.cap/etc/reload-guard.ucl"
 	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
 	wait_for_file reload-guard.out 10 || atf_fail "guard service did not start"
 
@@ -751,6 +706,8 @@ kmod_prerequisite_uses_oracle_body()
 	make_svc_bin system kmod-prereq \
 	    'kmod_requires = ["mac_capability"];
 arguments = ["compat-ready"];' "$(pwd)/ready_svc"
+	sed -i '' '/^provides = /d' \
+	    "${APPS_DIR}/kmod-prereq.cap/etc/kmod-prereq.ucl"
 	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
 	wait_for_file kmod-prereq.ready 10 || {
 		cat "$logfile" 2>/dev/null
@@ -776,7 +733,6 @@ atf_init_test_cases()
 	atf_add_test_case circuit_breaker_stops_restarts
 	atf_add_test_case graceful_shutdown_sigterm
 	atf_add_test_case procdesc_is_only_signal_authority
-	atf_add_test_case dependency_order_with_caps
 	atf_add_test_case reload_adds_service
 	atf_add_test_case reload_removes_service
 	atf_add_test_case audit_records_best_effort

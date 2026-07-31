@@ -1,0 +1,6 @@
+comment = "Public LogCmp protocol library"
+
+desc = <<EOD
+The typed global-service API, shared-memory client, and versioned protocol for
+structured logging from capability-sandboxed processes.
+EOD

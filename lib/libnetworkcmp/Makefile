@@ -4,7 +4,6 @@ PACKAGE=lib${LIB}
 LIB=	networkcmp
 SHLIB_MAJOR=	1
 MAN=	libnetworkcmp.3
-MLINKS+=libnetworkcmp.3 networkcmp_open.3
 MLINKS+=libnetworkcmp.3 networkcmp_hello.3
 MLINKS+=libnetworkcmp.3 networkcmp_socket.3
 MLINKS+=libnetworkcmp.3 networkcmp_bind.3
@@ -24,11 +23,12 @@ MLINKS+=libnetworkcmp.3 networkcmp_write.3
 MLINKS+=libnetworkcmp.3 networkcmp_send_datagram.3
 
 SRCS=	networkcmp.c
-INCS=	networkcmp.h networkcmp_protocol.h netmap_bearer.h
+INCS=	networkcmp.h networkcmp_protocol.h
 
 LIBADD=	pthread service shmring
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libshmring
+CFLAGS+=	-I${SRCTOP}/sys
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

@@ -25,6 +25,9 @@
 #include <arpa/inet.h>
 
 #include <errno.h>
+#include <jail.h>
+#include <limits.h>
+#include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
 #include <time.h>
@@ -45,6 +48,61 @@ static bool	nonce_set;
 /* Per-dispatch tracking for the ipc-dispatch-done probe. */
 static uint32_t dispatch_op;
 static int dispatch_status;
+
+/*
+ * Return an owned descriptor for an existing persistent jail only when its
+ * immutable launch identity matches the requested definition.  Reusing a
+ * name with different roots, hostnames, or an explicitly requested address
+ * is a policy conflict, never an implicit update.
+ */
+static int
+existing_jail_descriptor(const struct oracle_create_jail_req *req)
+{
+	char desc[32], hostname[64], ip4_addr[256], path[PATH_MAX];
+	const char *wanted_hostname;
+	char *end;
+	long fd;
+	int jid;
+
+	memset(desc, 0, sizeof(desc));
+	memset(hostname, 0, sizeof(hostname));
+	memset(ip4_addr, 0, sizeof(ip4_addr));
+	memset(path, 0, sizeof(path));
+	jid = jail_getv(JAIL_GET_DESC | JAIL_OWN_DESC,
+	    "name", __DECONST(char *, req->name),
+	    "path", path,
+	    "host.hostname", hostname,
+	    "ip4.addr", ip4_addr,
+	    "desc", desc,
+	    NULL);
+	if (jid < 0)
+		return (-1);
+	wanted_hostname = req->hostname[0] != '\0' ?
+	    req->hostname : req->name;
+	if (strcmp(path, req->path) != 0 ||
+	    strcmp(hostname, wanted_hostname) != 0 ||
+	    (req->ip4_addr[0] != '\0' &&
+	    strcmp(ip4_addr, req->ip4_addr) != 0)) {
+		errno = EEXIST;
+		goto fail;
+	}
+	errno = 0;
+	fd = strtol(desc, &end, 10);
+	if (errno != 0 || end == desc || *end != '\0' ||
+	    fd < 0 || fd > INT_MAX) {
+		errno = EPROTO;
+		goto fail;
+	}
+	return ((int)fd);
+
+fail:
+	if (desc[0] != '\0') {
+		fd = strtol(desc, NULL, 10);
+		if (fd >= 0 && fd <= INT_MAX)
+			close((int)fd);
+	}
+	return (-1);
+}
 
 /*
  * Send a reply with optional attached fds.
@@ -312,7 +370,7 @@ handle_create_jail(const void *payload, uint32_t len, uint64_t reply_token)
 	struct oracled_jail_claim jc;
 	struct iovec iov[10];
 	struct in_addr ip4;
-	int jd, persist, niov;
+	int err, jd, persist, niov;
 
 	if (len != sizeof(*req)) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
@@ -350,12 +408,15 @@ handle_create_jail(const void *payload, uint32_t len, uint64_t reply_token)
 
 	/* Verify the jail name is covered by our claimed set. */
 	memset(&jc, 0, sizeof(jc));
-	jc.actions = FI_JAIL_CREATE;
+	jc.actions = FI_JAIL_CREATE | FI_JAIL_GET;
 	strlcpy(jc.name, req->name, sizeof(jc.name));
-	if (!jail_is_claimed(&jc)) {
+	strlcpy(jc.path, req->path, sizeof(jc.path));
+	if (auto_claim_jail(&jc, &err) != 0 &&
+	    !jail_is_claimed(&jc)) {
 		syslog(LOG_NOTICE, "oracle_proto: create_jail denied: %s",
 		    req->name);
-		proto_reply(EACCES, reply_token, NULL, 0);
+		proto_reply(err != 0 ? err : EACCES,
+		    reply_token, NULL, 0);
 		return;
 	}
 
@@ -365,6 +426,35 @@ handle_create_jail(const void *payload, uint32_t len, uint64_t reply_token)
 		    "oracle_proto: create_jail path denied: %s path=%s",
 		    req->name, req->path);
 		proto_reply(EACCES, reply_token, NULL, 0);
+		release_auto_claim_jail(&jc);
+		return;
+	}
+
+	/*
+	 * Named execution jails are persistent serviced resources.  Relaunches
+	 * attach to the existing jail if its immutable definition matches.
+	 */
+	jd = existing_jail_descriptor(req);
+	if (jd >= 0) {
+		syslog(LOG_INFO,
+		    "oracle_proto: reused persistent jail %s jd=%d",
+		    req->name, jd);
+		ORACLED_PROBE_CREATE_JAIL(req->name, 0);
+		proto_reply(0, reply_token, &jd, 1);
+		close(jd);
+		release_auto_claim_jail(&jc);
+		return;
+	}
+	if (errno != ENOENT) {
+		int error;
+
+		error = errno;
+		syslog(LOG_NOTICE,
+		    "oracle_proto: persistent jail %s conflicts with request: %s",
+		    req->name, strerror(error));
+		ORACLED_PROBE_CREATE_JAIL(req->name, error);
+		proto_reply(error, reply_token, NULL, 0);
+		release_auto_claim_jail(&jc);
 		return;
 	}
 
@@ -409,9 +499,13 @@ handle_create_jail(const void *payload, uint32_t len, uint64_t reply_token)
 	jd = jail_set(iov, niov,
 	    JAIL_CREATE | JAIL_GET_DESC | JAIL_OWN_DESC);
 	if (jd < 0) {
+		int error;
+
+		error = errno;
 		syslog(LOG_ERR, "oracle_proto: jail_set(%s): %m", req->name);
-		ORACLED_PROBE_CREATE_JAIL(req->name, errno);
-		proto_reply(errno, reply_token, NULL, 0);
+		ORACLED_PROBE_CREATE_JAIL(req->name, error);
+		proto_reply(error, reply_token, NULL, 0);
+		release_auto_claim_jail(&jc);
 		return;
 	}
 
@@ -419,6 +513,7 @@ handle_create_jail(const void *payload, uint32_t len, uint64_t reply_token)
 	ORACLED_PROBE_CREATE_JAIL(req->name, 0);
 	proto_reply(0, reply_token, &jd, 1);
 	close(jd);
+	release_auto_claim_jail(&jc);
 }
 
 static void

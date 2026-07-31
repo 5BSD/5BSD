@@ -15,7 +15,6 @@ int	cmd_deps(const char *program);
 
 /* verify.c */
 int	cmd_verify(int argc, char *argv[]);
-int	cmd_policy_check(const char *path);
 int	cmd_bundles(void);
 
 #endif /* SERVICECTL_H */

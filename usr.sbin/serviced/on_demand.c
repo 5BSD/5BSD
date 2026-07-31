@@ -5,9 +5,9 @@
  *
  * On-demand service launch for serviced.
  *
- * When a service_lookup() arrives for an unregistered name that exists
- * in the bundle registry, we launch the service from its bundle, wait
- * for it to report ready, then broker the connection.
+ * When a service lookup arrives for a reserved name without a published
+ * endpoint, launch its bundle if necessary, wait for the provider to check in
+ * and activate that exact name, then broker a direct connection.
  *
  * Multiple concurrent lookups for the same service are coalesced:
  * only one launch occurs, all waiters are drained when ready.
@@ -15,6 +15,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/param.h>
@@ -29,10 +30,12 @@
 #include <unistd.h>
 
 #include <libcapbundle.h>
+#include <channel.h>
 
 #include "serviced.h"
 #include "serviced_audit.h"
 #include "serviced_probes.h"
+#include "serviced_svc_proto.h"
 
 #define	ON_DEMAND_TIMEOUT_SEC	10
 #define	ON_DEMAND_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 2))
@@ -43,9 +46,13 @@ static uintptr_t od_timer_next = ON_DEMAND_TIMER_BIT | 1;
 struct pending_lookup {
 	struct pending_lookup	*next;
 	char			 name[CAPBUNDLE_NAME_MAX + 1];
+	char			 provider_label[SERVICED_LABEL_MAX];
+	pid_t			 provider_pid;
+	uint64_t		 provider_launch_id;
 	char			 requester_label[SERVICED_LABEL_MAX];
-	int			 requester_channel_fd; /* snapshot — not owned */
-	uint64_t		 reply_token;
+	pid_t			 requester_pid;
+	uint64_t		 requester_launch_id;
+	struct channel_message	*request;
 	uintptr_t		 timeout_ident;
 };
 
@@ -53,15 +60,168 @@ static struct pending_lookup *pending_list;
 static unsigned npending;
 
 static bool
-pending_for_name(const char *name)
+pending_provider_matches(const struct pending_lookup *pending,
+    const struct svc_runtime *provider)
+{
+
+	return (pending != NULL && provider != NULL &&
+	    pending->provider_pid == provider->pid &&
+	    pending->provider_launch_id == provider->launch_id &&
+	    strcmp(pending->provider_label, provider->manifest.label) == 0);
+}
+
+static struct svc_runtime *
+pending_requester(const struct pending_lookup *pending)
+{
+	struct svc_runtime *requester;
+
+	requester = svc_by_label(pending->requester_label);
+	if (requester == NULL || requester->pid != pending->requester_pid ||
+	    requester->launch_id != pending->requester_launch_id ||
+	    requester->channel_fd < 0)
+		return (NULL);
+	return (requester);
+}
+
+static bool
+pending_for_provider_name(const struct svc_runtime *provider, const char *name)
 {
 	struct pending_lookup *p;
 
 	for (p = pending_list; p != NULL; p = p->next) {
-		if (strcmp(p->name, name) == 0)
+		if (strcmp(p->name, name) == 0 &&
+		    pending_provider_matches(p, provider))
 			return (true);
 	}
 	return (false);
+}
+
+static uintptr_t
+next_timeout_ident(void)
+{
+	struct pending_lookup *p;
+	uintptr_t ident;
+	unsigned attempt;
+	bool collision;
+
+	/*
+	 * Keep every identifier in the dedicated on-demand range and avoid
+	 * reusing an identifier that is still present in the pending list.
+	 * With at most ON_DEMAND_MAX_PENDING live timers, one more candidate
+	 * than that is sufficient to find a free identifier.
+	 */
+	for (attempt = 0; attempt <= ON_DEMAND_MAX_PENDING; attempt++) {
+		ident = od_timer_next;
+		od_timer_next = ON_DEMAND_TIMER_BIT |
+		    ((od_timer_next + 1) & (ON_DEMAND_TIMER_BIT - 1));
+		if (od_timer_next == ON_DEMAND_TIMER_BIT)
+			od_timer_next++;
+		collision = false;
+		for (p = pending_list; p != NULL; p = p->next) {
+			if (p->timeout_ident == ident) {
+				collision = true;
+				break;
+			}
+		}
+		if (!collision)
+			return (ident);
+	}
+	errno = EAGAIN;
+	return (0);
+}
+
+static int
+arm_timeout(int kq, struct pending_lookup *pending)
+{
+	struct kevent kev;
+
+	if (pending == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	pending->timeout_ident = next_timeout_ident();
+	if (pending->timeout_ident == 0)
+		return (-1);
+	EV_SET(&kev, pending->timeout_ident, EVFILT_TIMER,
+	    EV_ADD | EV_ONESHOT, NOTE_SECONDS, ON_DEMAND_TIMEOUT_SEC, pending);
+	return (kevent(kq, &kev, 1, NULL, 0, NULL));
+}
+
+static int
+provided_name_index(const struct svc_runtime *svc, const char *name)
+{
+	unsigned i;
+
+	for (i = 0; i < svc->manifest.nprovides; i++)
+		if (strcmp(svc->manifest.provides[i], name) == 0)
+			return ((int)i);
+	return (-1);
+}
+
+int
+on_demand_name_claim(struct svc_runtime *svc, const char *name)
+{
+	int index;
+
+	if (svc == NULL || name == NULL)
+		return (EINVAL);
+	index = provided_name_index(svc, name);
+	if (index < 0)
+		return (EACCES);
+	if (svc->name_state[index] != SVC_NAME_UNCLAIMED)
+		return (EALREADY);
+	svc->name_state[index] = SVC_NAME_INACTIVE;
+	return (0);
+}
+
+bool
+on_demand_all_names_claimed(const struct svc_runtime *svc)
+{
+	unsigned i;
+
+	if (svc == NULL)
+		return (false);
+	for (i = 0; i < svc->manifest.nprovides; i++)
+		if (svc->name_state[i] == SVC_NAME_UNCLAIMED)
+			return (false);
+	return (true);
+}
+
+int
+on_demand_name_withdraw(struct svc_runtime *svc, const char *name, int kq)
+{
+	int error, index;
+
+	if (svc == NULL || name == NULL)
+		return (EINVAL);
+	index = provided_name_index(svc, name);
+	if (index < 0)
+		return (EACCES);
+	switch (svc->name_state[index]) {
+	case SVC_NAME_UNCLAIMED:
+		return (ENOENT);
+	case SVC_NAME_ACTIVATING:
+		/*
+		 * Withdrawal is authoritative cancellation.  The activation
+		 * event may already be queued on the provider channel; changing
+		 * the state first makes any late NAME_RESULT stale, while
+		 * failing retained requests gives every caller a terminal result
+		 * instead of leaving an orphaned claim.
+		 */
+		on_demand_name_failed(svc, name, ECANCELED, kq);
+		break;
+	case SVC_NAME_READY:
+		error = naming_unregister(name, svc);
+		if (error != 0)
+			return (error);
+		break;
+	case SVC_NAME_INACTIVE:
+		break;
+	default:
+		return (EPROTO);
+	}
+	svc->name_state[index] = SVC_NAME_UNCLAIMED;
+	return (0);
 }
 
 /*
@@ -123,7 +283,8 @@ would_deadlock(const char *name, struct svc_runtime *requester)
 	for (p = pending_list; p != NULL; p = p->next) {
 		/* Is this pending lookup waiting on a name requester provides? */
 		for (i = 0; i < requester->manifest.nprovides; i++) {
-			if (strcmp(p->name, requester->manifest.provides[i]) == 0) {
+			if (strcmp(p->name, requester->manifest.provides[i]) == 0 &&
+			    pending_provider_matches(p, requester)) {
 				syslog(LOG_WARNING,
 				    "on_demand: circular dependency detected: "
 				    "'%s' needs '%s' which needs '%s'",
@@ -147,37 +308,63 @@ would_deadlock(const char *name, struct svc_runtime *requester)
  * Returns true if a client fd was delivered.
  */
 static bool
-on_demand_broker(struct svc_runtime *provider, const char *name,
-    struct svc_runtime *req_svc, uint64_t reply_token)
+on_demand_broker(const char *name, struct svc_runtime *req_svc,
+    struct channel_message *request)
 {
-	struct mac_capability_sendmsg_args sa;
 	int client_fd, error;
 	int32_t status;
 
-	if (req_svc == NULL || req_svc->channel_fd < 0)
+	if (req_svc == NULL || req_svc->channel_fd < 0) {
+		channel_message_free(request);
 		return (false);
+	}
 
 	client_fd = naming_lookup(name, req_svc, &error);
-
-	memset(&sa, 0, sizeof(sa));
-	sa.reply_token = reply_token;
 	if (client_fd >= 0) {
 		status = 0;
-		sa.payload = &status;
-		sa.payload_len = sizeof(status);
-		sa.fds = &client_fd;
-		sa.nfds = 1;
-		(void)ioctl(req_svc->channel_fd, MAC_CAPABILITY_SENDMSG, &sa);
+		if (cap_xfer_limit(client_fd, CAP_XFER_ONCE) == -1)
+			status = errno;
+		if (status == 0)
+			(void)channel_send_reply(request,
+			    &(struct channel_outgoing){
+				.size = sizeof(struct channel_outgoing),
+				.data = &status,
+				.length = sizeof(status),
+				.fds = &client_fd,
+				.nfds = 1
+			    });
+		else
+			(void)channel_send_reply(request,
+			    &(struct channel_outgoing)
+			    CHANNEL_OUTGOING_INITIALIZER(&status,
+			    sizeof(status)));
 		close(client_fd);
-		if (provider != NULL)
-			provider->connection_count++;
-		return (true);
+		channel_message_free(request);
+		svc_channel_sync_events(req_svc, serviced_kq);
+		return (status == 0);
 	}
 	status = error;
-	sa.payload = &status;
-	sa.payload_len = sizeof(status);
-	(void)ioctl(req_svc->channel_fd, MAC_CAPABILITY_SENDMSG, &sa);
+	(void)channel_send_reply(request, &(struct channel_outgoing)
+	    CHANNEL_OUTGOING_INITIALIZER(&status, sizeof(status)));
+	channel_message_free(request);
+	svc_channel_sync_events(req_svc, serviced_kq);
 	return (false);
+}
+
+static int
+send_activation(struct svc_runtime *provider, const char *name)
+{
+	struct svc_activate_name_msg message;
+
+	if (provider == NULL || provider->channel_fd < 0) {
+		errno = ECONNRESET;
+		return (-1);
+	}
+	memset(&message, 0, sizeof(message));
+	message.op = SVC_OP_ACTIVATE_NAME;
+	strlcpy(message.name, name, sizeof(message.name));
+	return (svc_channel_send_event(provider, &message, sizeof(message),
+	    NULL, 0, serviced_kq));
 }
 
 /*
@@ -191,7 +378,7 @@ on_demand_broker(struct svc_runtime *provider, const char *name,
  */
 int
 on_demand_launch(const char *name, struct svc_runtime *requester,
-    uint64_t reply_token, int kq)
+    struct channel_message *request, int kq)
 {
 	unsigned bundle_idx, service_idx;
 	struct capbundle *b;
@@ -199,6 +386,7 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 	struct svc_runtime *target;
 	struct pending_lookup *pl;
 	struct kevent kev;
+	int saved_errno;
 
 	/* Look up in the provides registry. */
 	if (bundle_registry_lookup(name, &bundle_idx, &service_idx) == -1)
@@ -210,27 +398,62 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 		return (-1);
 	}
 
+	/*
+	 * Reserve the bounded waiter and its timer before changing process
+	 * state.  A timer-registration failure must be terminal for this
+	 * lookup; otherwise the retained reply token could wait forever.
+	 */
+	if (npending >= ON_DEMAND_MAX_PENDING) {
+		syslog(LOG_WARNING,
+		    "on_demand: too many pending lookups");
+		errno = EAGAIN;
+		return (-1);
+	}
+	pl = calloc(1, sizeof(*pl));
+	if (pl == NULL) {
+		syslog(LOG_ERR, "on_demand: calloc pending: %m");
+		return (-1);
+	}
+	strlcpy(pl->name, name, sizeof(pl->name));
+	if (requester != NULL) {
+		strlcpy(pl->requester_label, requester->manifest.label,
+		    sizeof(pl->requester_label));
+		pl->requester_pid = requester->pid;
+		pl->requester_launch_id = requester->launch_id;
+	} else {
+		strlcpy(pl->requester_label, "unknown",
+		    sizeof(pl->requester_label));
+		pl->requester_pid = -1;
+	}
+	pl->request = request;
+	if (arm_timeout(kq, pl) == -1) {
+		syslog(LOG_WARNING, "on_demand: kevent timer: %m");
+		goto fail_waiter;
+	}
+
 	/* Check if this service is already running or being launched. */
 	target = find_launching_service(name);
 	if (target == NULL) {
 		/* Need to actually launch. */
 		b = bundle_registry_get(bundle_idx);
 		if (b == NULL)
-			return (-1);
+			goto fail_timer;
 		asvc = capbundle_service(b, service_idx);
 		if (asvc == NULL)
-			return (-1);
+			goto fail_timer;
 
 		/* Find a free slot in sd.services[]. */
 		if (sd.services == NULL) {
 			/* Service array was never allocated (startup OOM). */
-			return (-1);
+			errno = ENOMEM;
+			goto fail_timer;
 		}
 		if (sd.nservices >= SERVICED_MAX_SERVICES) {
 			syslog(LOG_ERR,
 			    "on_demand: service limit reached, cannot launch '%s'",
 			    name);
-			return (-1);
+			errno = ENOSPC;
+			goto fail_timer;
 		}
 
 		target = &sd.services[sd.nservices];
@@ -246,9 +469,9 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 			syslog(LOG_ERR,
 			    "on_demand: invalid bundle service '%s'",
 			    capbundle_svc_label(asvc));
-			return (-1);
+			goto fail_timer;
 		}
-		target->manifest.on_demand = true;
+		target->lookup_activated = true;
 
 		/* Attribution. */
 		if (requester != NULL)
@@ -268,7 +491,7 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 			sd.nservices--;
 			memset(target, 0, sizeof(*target));
 			svc_runtime_init_fds(target);
-			return (-1);
+			goto fail_timer;
 		}
 
 		syslog(LOG_INFO,
@@ -280,116 +503,280 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 		    target->manifest.label, target->launched_by);
 	} else {
 		SERVICED_PROBE_ON_DEMAND_COALESCE(name);
-		/*
-		 * If the provider is already RUNNING it has already sent its
-		 * READY notification and will not send another, so a queued
-		 * waiter would never be drained by on_demand_check_ready() and
-		 * would hang until the on-demand timeout.  Broker the
-		 * connection immediately (replying with success or the lookup
-		 * error) instead of queuing a doomed waiter.
-		 */
-		if (target->state == SVC_STATE_RUNNING) {
-			(void)on_demand_broker(target, name, requester,
-			    reply_token);
-			return (0);
-		}
 	}
 
-	/* Queue the waiter. */
-	if (npending >= ON_DEMAND_MAX_PENDING) {
-		syslog(LOG_WARNING,
-		    "on_demand: too many pending lookups");
-		return (-1);
-	}
-
-	pl = calloc(1, sizeof(*pl));
-	if (pl == NULL) {
-		syslog(LOG_ERR, "on_demand: calloc pending: %m");
-		return (-1);
-	}
-
-	strlcpy(pl->name, name, sizeof(pl->name));
-	if (requester != NULL) {
-		strlcpy(pl->requester_label, requester->manifest.label,
-		    sizeof(pl->requester_label));
-		pl->requester_channel_fd = requester->channel_fd;
-	} else {
-		strlcpy(pl->requester_label, "unknown",
-		    sizeof(pl->requester_label));
-		pl->requester_channel_fd = -1;
-	}
-	pl->reply_token = reply_token;
-
-	/* Arm timeout timer. */
-	pl->timeout_ident = od_timer_next++;
-	EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
-	    EV_ADD | EV_ONESHOT, NOTE_SECONDS, ON_DEMAND_TIMEOUT_SEC, pl);
-	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
-		syslog(LOG_WARNING, "on_demand: kevent timer: %m");
-
+	strlcpy(pl->provider_label, target->manifest.label,
+	    sizeof(pl->provider_label));
+	pl->provider_pid = target->pid;
+	pl->provider_launch_id = target->launch_id;
 	pl->next = pending_list;
 	pending_list = pl;
 	npending++;
+	if (target->state == SVC_STATE_RUNNING && target->protocol_ready)
+		on_demand_check_ready(target, kq);
 
 	return (0);
+
+fail_timer:
+	saved_errno = errno != 0 ? errno : EIO;
+	EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
+	    EV_DELETE, 0, 0, NULL);
+	(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+	errno = saved_errno;
+fail_waiter:
+	saved_errno = errno != 0 ? errno : EIO;
+	free(pl);
+	errno = saved_errno;
+	return (-1);
 }
 
 /*
- * Called when a service reports SVC_OP_READY.
- * Drain all pending lookups waiting on names this service provides.
+ * Request activation of each pending name once the process itself is ready.
  */
 void
 on_demand_check_ready(struct svc_runtime *svc, int kq)
 {
-	struct pending_lookup **pp, *pl;
-	struct kevent kev;
+	struct pending_lookup *pl;
 	unsigned i;
-	bool match;
+	bool pending;
 
-	unsigned nwaiters = 0;
-
-	pp = &pending_list;
-	while (*pp != NULL) {
-		pl = *pp;
-		match = false;
-
-		/* Match by provides name. */
-		for (i = 0; i < svc->manifest.nprovides; i++) {
-			if (strcmp(pl->name,
-			    svc->manifest.provides[i]) == 0) {
-				match = true;
-				break;
-			}
+	if (svc->state != SVC_STATE_RUNNING || !svc->protocol_ready)
+		return;
+	for (i = 0; i < svc->manifest.nprovides; i++) {
+		pending = false;
+		for (pl = pending_list; pl != NULL; pl = pl->next) {
+			if (strcmp(pl->name, svc->manifest.provides[i]) != 0)
+				continue;
+			if (!pending_provider_matches(pl, svc))
+				continue;
+			pending = true;
 		}
-
-		if (!match) {
-			pp = &(*pp)->next;
+		if (!pending || svc->name_state[i] != SVC_NAME_INACTIVE)
+			continue;
+		if (send_activation(svc, svc->manifest.provides[i]) == -1) {
+			on_demand_name_failed(svc, svc->manifest.provides[i],
+			    errno != 0 ? errno : EIO, kq);
 			continue;
 		}
+		svc->name_state[i] = SVC_NAME_ACTIVATING;
+		SERVICED_PROBE_ENDPOINT_ACTIVATE(svc->manifest.label,
+		    svc->manifest.provides[i]);
+		serviced_audit(AUE_SERVICED_ONDEMAND, getuid(), 0,
+		    "endpoint activation requested svc=%s name=%s",
+		    svc->manifest.label, svc->manifest.provides[i]);
+		syslog(LOG_INFO,
+		    "on_demand: activation of endpoint '%s' requested from "
+		    "provider '%s'", svc->manifest.provides[i],
+		    svc->manifest.label);
+	}
+}
 
-		/*
-		 * Service is ready — broker the connection.  Resolve the
-		 * requester from sd.services[] by label (its slot may have
-		 * moved after an svc_remove()) so the reply always goes to the
-		 * requester's current channel, never a cached/recycled fd.
-		 */
-		(void)on_demand_broker(svc, pl->name,
-		    svc_by_label(pl->requester_label), pl->reply_token);
+bool
+on_demand_name_activating(struct svc_runtime *svc, const char *name)
+{
+	int index;
 
-		/* Cancel timeout timer. */
+	index = provided_name_index(svc, name);
+	return (index >= 0 &&
+	    svc->name_state[index] == SVC_NAME_ACTIVATING);
+}
+
+void
+on_demand_name_ready(struct svc_runtime *svc, const char *name, int kq)
+{
+	struct pending_lookup **pp, *pl;
+	struct kevent kev;
+	unsigned nwaiters;
+	int index;
+
+	index = provided_name_index(svc, name);
+	if (index < 0)
+		return;
+	svc->name_state[index] = SVC_NAME_READY;
+	nwaiters = 0;
+	pp = &pending_list;
+	while ((pl = *pp) != NULL) {
+		if (strcmp(pl->name, name) != 0 ||
+		    !pending_provider_matches(pl, svc)) {
+			pp = &pl->next;
+			continue;
+		}
+		(void)on_demand_broker(name, pending_requester(pl), pl->request);
 		EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
 		    EV_DELETE, 0, 0, NULL);
 		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
-
-		/* Remove from list. */
 		*pp = pl->next;
 		free(pl);
 		npending--;
 		nwaiters++;
 	}
+	if (nwaiters != 0)
+		SERVICED_PROBE_ON_DEMAND_READY(name, nwaiters);
+	if (nwaiters != 0) {
+		syslog(LOG_INFO,
+		    "on_demand: activation of endpoint '%s' by provider '%s' "
+		    "ready; releasing %u waiter%s", name,
+		    svc->manifest.label, nwaiters, nwaiters == 1 ? "" : "s");
+		serviced_audit(AUE_SERVICED_ONDEMAND, getuid(), 0,
+		    "endpoint activation ready svc=%s name=%s waiters=%u",
+		    svc->manifest.label, name, nwaiters);
+	}
+}
 
-	if (nwaiters > 0)
-		SERVICED_PROBE_ON_DEMAND_READY(svc->manifest.label, nwaiters);
+void
+on_demand_name_failed(struct svc_runtime *svc, const char *name, int error,
+    int kq)
+{
+	struct pending_lookup **pp, *pl;
+	struct svc_runtime *requester;
+	struct kevent kev;
+	unsigned failed;
+	int index;
+	int32_t status;
+
+	index = provided_name_index(svc, name);
+	if (index >= 0)
+		svc->name_state[index] = SVC_NAME_INACTIVE;
+	if (error <= 0)
+		error = EIO;
+	status = error;
+	failed = 0;
+	pp = &pending_list;
+	while ((pl = *pp) != NULL) {
+		if (strcmp(pl->name, name) != 0 ||
+		    !pending_provider_matches(pl, svc)) {
+			pp = &pl->next;
+			continue;
+		}
+		requester = pending_requester(pl);
+		if (requester != NULL) {
+			(void)channel_send_reply(pl->request,
+			    &(struct channel_outgoing)
+			    CHANNEL_OUTGOING_INITIALIZER(&status,
+			    sizeof(status)));
+			svc_channel_sync_events(requester, kq);
+		}
+		channel_message_free(pl->request);
+		EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
+		    EV_DELETE, 0, 0, NULL);
+		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+		*pp = pl->next;
+		free(pl);
+		npending--;
+		failed++;
+	}
+	if (failed != 0) {
+		syslog(LOG_WARNING,
+		    "on_demand: activation of endpoint '%s' by provider '%s' "
+		    "failed: %s; failing %u waiter%s", name,
+		    svc->manifest.label, strerror(error), failed,
+		    failed == 1 ? "" : "s");
+		SERVICED_PROBE_ON_DEMAND_FAIL(name, error, failed);
+		serviced_audit(AUE_SERVICED_ONDEMAND, getuid(), error,
+		    "endpoint activation failed svc=%s name=%s waiters=%u",
+		    svc->manifest.label, name, failed);
+	}
+}
+
+/*
+ * Fail lookups immediately when their provider exits before publication.
+ * Waiting for each independent timeout would hide the crash from clients and
+ * retain reply tokens after the failed runtime is already gone.
+ */
+void
+on_demand_provider_failed(struct svc_runtime *svc, int error, int kq)
+{
+	struct pending_lookup **pp, *pl;
+	struct svc_runtime *requester;
+	struct kevent kev;
+	unsigned failed;
+	int32_t status;
+
+	if (error <= 0)
+		error = ECONNRESET;
+	status = error;
+	failed = 0;
+	pp = &pending_list;
+	while (*pp != NULL) {
+		pl = *pp;
+		if (!pending_provider_matches(pl, svc)) {
+			pp = &pl->next;
+			continue;
+		}
+
+		requester = pending_requester(pl);
+		if (requester != NULL) {
+			(void)channel_send_reply(pl->request,
+			    &(struct channel_outgoing)
+			    CHANNEL_OUTGOING_INITIALIZER(&status,
+			    sizeof(status)));
+			svc_channel_sync_events(requester, kq);
+		}
+		channel_message_free(pl->request);
+		EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
+		    EV_DELETE, 0, 0, NULL);
+		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+		syslog(LOG_WARNING,
+		    "on_demand: provider '%s' failed before endpoint '%s' "
+		    "became ready", svc->manifest.label, pl->name);
+		*pp = pl->next;
+		free(pl);
+		npending--;
+		failed++;
+	}
+	if (failed != 0) {
+		SERVICED_PROBE_ON_DEMAND_FAIL(svc->manifest.label, error,
+		    failed);
+		serviced_audit(AUE_SERVICED_ONDEMAND, getuid(), error,
+		    "on-demand provider failed svc=%s waiters=%u",
+		    svc->manifest.label, failed);
+	}
+}
+
+/*
+ * A reply token belongs to one control-channel instance, not to a persistent
+ * service label.  Drop its outstanding requests when that exact process
+ * exits so a restarted process can never consume a stale reply.
+ */
+void
+on_demand_requester_gone(struct svc_runtime *svc, int kq)
+{
+	struct pending_lookup **pp, *pl;
+	struct kevent kev;
+	unsigned canceled;
+
+	canceled = 0;
+	pp = &pending_list;
+	while (*pp != NULL) {
+		pl = *pp;
+		if (pl->requester_pid != svc->pid ||
+		    pl->requester_launch_id != svc->launch_id ||
+		    strcmp(pl->requester_label, svc->manifest.label) != 0) {
+			pp = &pl->next;
+			continue;
+		}
+		EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
+		    EV_DELETE, 0, 0, NULL);
+		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+		channel_message_free(pl->request);
+		*pp = pl->next;
+		free(pl);
+		npending--;
+		canceled++;
+	}
+	if (canceled != 0) {
+		syslog(LOG_INFO,
+		    "on_demand: canceled %u pending lookup%s for exited "
+		    "requester '%s' (pid %jd, launch %ju)",
+		    canceled, canceled == 1 ? "" : "s", svc->manifest.label,
+		    (intmax_t)svc->pid, (uintmax_t)svc->launch_id);
+		SERVICED_PROBE_ON_DEMAND_CANCEL(svc->manifest.label,
+		    svc->pid, svc->launch_id, canceled);
+		serviced_audit(AUE_SERVICED_ONDEMAND, getuid(), ECANCELED,
+		    "on-demand requester gone svc=%s pid=%jd launch=%ju "
+		    "waiters=%u", svc->manifest.label, (intmax_t)svc->pid,
+		    (uintmax_t)svc->launch_id, canceled);
+	}
 }
 
 /*
@@ -401,6 +788,9 @@ on_demand_timeout(uintptr_t ident, int kq)
 {
 	struct pending_lookup **pp, *pl;
 	char expired_name[CAPBUNDLE_NAME_MAX + 1];
+	char expired_provider[SERVICED_LABEL_MAX];
+	pid_t expired_pid;
+	uint64_t expired_launch_id;
 
 	pp = &pending_list;
 	while (*pp != NULL) {
@@ -415,41 +805,42 @@ on_demand_timeout(uintptr_t ident, int kq)
 		    pl->name, pl->requester_label);
 		SERVICED_PROBE_ON_DEMAND_TIMEOUT(pl->name);
 		strlcpy(expired_name, pl->name, sizeof(expired_name));
+		strlcpy(expired_provider, pl->provider_label,
+		    sizeof(expired_provider));
+		expired_pid = pl->provider_pid;
+		expired_launch_id = pl->provider_launch_id;
 
 		/* Send ETIMEDOUT reply.  Re-resolve the requester by
 		 * label — the original channel_fd may be stale if the
 		 * requester was restarted since the lookup. */
 		{
-			struct mac_capability_sendmsg_args sa;
 			struct svc_runtime *req;
-			int reply_fd;
 			int32_t status = ETIMEDOUT;
 
-			reply_fd = -1;
-			req = svc_by_label(pl->requester_label);
-			if (req != NULL && req->channel_fd >= 0)
-				reply_fd = req->channel_fd;
-
-			memset(&sa, 0, sizeof(sa));
-			sa.payload = &status;
-			sa.payload_len = sizeof(status);
-			sa.reply_token = pl->reply_token;
-
-			if (reply_fd >= 0)
-				(void)ioctl(reply_fd,
-				    MAC_CAPABILITY_SENDMSG, &sa);
+			req = pending_requester(pl);
+			if (req != NULL) {
+				(void)channel_send_reply(pl->request,
+				    &(struct channel_outgoing)
+				    CHANNEL_OUTGOING_INITIALIZER(&status,
+				    sizeof(status)));
+				svc_channel_sync_events(req, kq);
+			}
+			channel_message_free(pl->request);
 		}
 
 		/* Remove from list. */
 		*pp = pl->next;
 		free(pl);
 		npending--;
-		if (!pending_for_name(expired_name)) {
+		{
 			struct svc_runtime *target;
 
-			target = find_launching_service(expired_name);
-			if (target != NULL && target->manifest.on_demand &&
-			    target->state == SVC_STATE_STARTING) {
+			target = svc_by_label(expired_provider);
+			if (target != NULL && target->lookup_activated &&
+			    target->state == SVC_STATE_STARTING &&
+			    target->pid == expired_pid &&
+			    target->launch_id == expired_launch_id &&
+			    !pending_for_provider_name(target, expired_name)) {
 				syslog(LOG_WARNING,
 				    "on_demand: stopping unready '%s'",
 				    target->manifest.label);
@@ -490,18 +881,17 @@ on_demand_teardown(int kq)
 		{
 			struct svc_runtime *req;
 
-			req = svc_by_label(pl->requester_label);
-			if (req != NULL && req->channel_fd >= 0) {
-				struct mac_capability_sendmsg_args sa;
+			req = pending_requester(pl);
+			if (req != NULL) {
 				int32_t status = ESHUTDOWN;
 
-				memset(&sa, 0, sizeof(sa));
-				sa.payload = &status;
-				sa.payload_len = sizeof(status);
-				sa.reply_token = pl->reply_token;
-				(void)ioctl(req->channel_fd,
-				    MAC_CAPABILITY_SENDMSG, &sa);
+				(void)channel_send_reply(pl->request,
+				    &(struct channel_outgoing)
+				    CHANNEL_OUTGOING_INITIALIZER(&status,
+				    sizeof(status)));
+				svc_channel_sync_events(req, kq);
 			}
+			channel_message_free(pl->request);
 		}
 
 		/* Cancel timeout timer. */

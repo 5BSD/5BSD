@@ -12,9 +12,10 @@
  * Token minting (SYS_OP_MINT + SYS_OP_AUTHORIZE) grants foreign
  * nonces selective access.  Closing the token fd revokes access.
  *
- * Fast-path: when no operations are claimed (sys_active_claims
- * is 0), all MACF hooks return immediately without touching the
- * mutex.
+ * Unconfined compatibility callers retain the historical allow-by-default
+ * behavior when no operation is claimed.  Capability-mode callers fail
+ * closed: a matching claim owned by their nonce, or an authorization minted
+ * by that owner, is required for every capability-enabled system gate.
  */
 
 #include <sys/param.h>
@@ -143,11 +144,18 @@ sys_check_gate(struct ucred *cred, uint32_t gate, const char *name)
 	struct sys_claim *sc;
 	struct sys_auth *sa;
 	uint64_t caller_nonce;
+	bool capmode;
 
-	if (sys_no_claims())
+	capmode = (cred->cr_flags & CRED_FLAG_CAPMODE) != 0;
+	if (sys_no_claims() && !capmode)
 		return (0);
 
 	caller_nonce = mac_capability_proc_nonce(cred);
+	if (sys_no_claims()) {
+		SDT_PROBE3(mac_capability_system, , , deny, name,
+		    (uint64_t)0, caller_nonce);
+		return (EPERM);
+	}
 
 	mtx_lock(&sys_lock);
 
@@ -190,6 +198,11 @@ sys_check_gate(struct ucred *cred, uint32_t gate, const char *name)
 	}
 
 	mtx_unlock(&sys_lock);
+	if (capmode) {
+		SDT_PROBE3(mac_capability_system, , , deny, name,
+		    (uint64_t)0, caller_nonce);
+		return (EPERM);
+	}
 	return (0);
 }
 

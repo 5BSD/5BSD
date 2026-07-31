@@ -2,226 +2,118 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2026 Kory Heard
- *
- * libcapability — helpers for writing .cap bundle service daemons.
  */
 
 #include <sys/types.h>
-#include <sys/wait.h>
+#include <sys/ioctl.h>
 
-#include <ctype.h>
+#include <dev/mac_capability/mac_capability_ioctl.h>
+
 #include <errno.h>
-#include <signal.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include <limits.h>
+#include <stdint.h>
 #include <string.h>
-#include <syslog.h>
 #include <unistd.h>
 
-#include <libservice.h>
 #include "capability.h"
 
-
-static volatile sig_atomic_t quit;
-static volatile sig_atomic_t reap_requested;
-static int service_fd = -1;
-
-static void
-handle_term(int sig __unused)
-{
-
-	quit = 1;
-	if (service_fd >= 0)
-		close(service_fd);
-}
-
-static void
-handle_chld(int sig __unused)
-{
-
-	reap_requested = 1;
-}
-
-static void
-reap_children(void)
-{
-	int status;
-
-	reap_requested = 0;
-	while (waitpid(-1, &status, WNOHANG) > 0)
-		;
-}
-
-static int
-install_signals(void)
-{
-	struct sigaction sa;
-
-	memset(&sa, 0, sizeof(sa));
-	sigemptyset(&sa.sa_mask);
-	sa.sa_handler = handle_term;
-	if (sigaction(SIGTERM, &sa, NULL) == -1 ||
-	    sigaction(SIGINT, &sa, NULL) == -1)
-		return (-1);
-
-	memset(&sa, 0, sizeof(sa));
-	sigemptyset(&sa.sa_mask);
-	sa.sa_handler = handle_chld;
-	if (sigaction(SIGCHLD, &sa, NULL) == -1)
-		return (-1);
-
-	return (0);
-}
-
-static void
-serve_child(const struct cap_daemon_config *cfg, int client_fd,
-    const char *label)
-{
-	int channel_fd, error;
-
-	channel_fd = service_channel_fd();
-	if (channel_fd >= 0)
-		close(channel_fd);
-
-	if (cfg->client_timeout != 0)
-		alarm(cfg->client_timeout);
-
-	error = cfg->handler(client_fd, label, cfg->handler_arg);
-	close(client_fd);
-	_exit(error == 0 ? 0 : 1);
-}
+_Static_assert(CAPABILITY_CALL_MAX_FDS == MAC_CAPABILITY_MAX_FDS,
+    "libcapability descriptor limit must match the kernel ABI");
+_Static_assert(CAPABILITY_NAME_MAX == MAC_CAPABILITY_MAXNAME,
+    "libcapability name limit must match the kernel ABI");
 
 int
-cap_daemon_run(const struct cap_daemon_config *cfg)
+capability_get_info(int fd, struct capability_info *information)
 {
-	char label[CAP_LABEL_MAX];
-	int client_fd;
-	pid_t pid;
+	struct mac_capability_info_args kernel;
 
-	if (cfg == NULL || cfg->service_name == NULL || cfg->handler == NULL) {
+	if (fd < 0 || information == NULL ||
+	    (information->size != 0 &&
+	    information->size != sizeof(*information))) {
 		errno = EINVAL;
 		return (-1);
 	}
-
-	if (service_init() == -1)
+	memset(&kernel, 0, sizeof(kernel));
+	if (ioctl(fd, MAC_CAPABILITY_GETINFO, &kernel) == -1)
 		return (-1);
-	if (service_authorize_capabilities() == -1)
+	if (memchr(kernel.name, '\0', sizeof(kernel.name)) == NULL) {
+		errno = EPROTO;
 		return (-1);
-	if (service_protect(SERVICE_PROTECT_EXTERNAL) == -1)
-		return (-1);
-	syslog(LOG_INFO, "service protect active");
-	if (service_register(cfg->service_name) == -1)
-		return (-1);
-	if (service_ready() == -1)
-		return (-1);
-	service_fd = service_channel_fd();
-	if (install_signals() == -1)
-		return (-1);
-
-	while (!quit) {
-		if (reap_requested)
-			reap_children();
-
-		client_fd = service_accept(label, sizeof(label));
-		if (client_fd == -1) {
-			if (!quit)
-				syslog(LOG_WARNING, "service accept: %m");
-			continue;
-		}
-
-		pid = fork();
-		if (pid == -1) {
-			syslog(LOG_WARNING, "fork client %s: %m", label);
-			close(client_fd);
-			continue;
-		}
-		if (pid == 0)
-			serve_child(cfg, client_fd, label);
-		close(client_fd);
-		if (cfg->client_timeout != 0)
-			syslog(LOG_INFO,
-			    "client connected: %s pid %jd timeout %us",
-			    label, (intmax_t)pid, cfg->client_timeout);
-		else
-			syslog(LOG_INFO,
-			    "client connected: %s pid %jd no timeout",
-			    label, (intmax_t)pid);
 	}
-
-	reap_children();
+	memset(information, 0, sizeof(*information));
+	information->size = sizeof(*information);
+	strlcpy(information->name, kernel.name, sizeof(information->name));
+	information->badge = kernel.badge;
+	information->message_limit = kernel.msg_limit;
+	information->queue_depth = kernel.queue_depth;
+	information->transmit_limit = kernel.tx_limit;
+	information->max_fds = kernel.max_fds;
+	information->features = kernel.features;
 	return (0);
-}
-
-ssize_t
-cap_daemon_recv(int fd, void *buf, size_t bufsz, unsigned timeout)
-{
-	ssize_t n;
-
-	if (timeout != 0)
-		alarm(timeout);
-	n = service_recv(fd, buf, bufsz, NULL);
-	if (timeout != 0)
-		alarm(0);	/* cancel pending alarm */
-	return (n);
 }
 
 int
-cap_daemon_send(int fd, const void *buf, size_t len)
+capability_kernel_call(int fd, const void *request, size_t request_length,
+    const int *request_fds, size_t request_nfds, void *reply,
+    size_t *reply_length, int *reply_fds, size_t *reply_nfds)
 {
+	struct mac_capability_call_args call;
+	size_t fd_capacity, i, reply_capacity;
+	int error;
 
-	if (service_send(fd, buf, len) == -1) {
-		syslog(LOG_WARNING, "service send: %m");
+	if (reply_length == NULL || reply_nfds == NULL) {
+		errno = EINVAL;
 		return (-1);
 	}
-	return (0);
-}
-
-static char *
-trim(char *s)
-{
-	char *end;
-
-	while (isspace((unsigned char)*s))
-		s++;
-	if (*s == '\0')
-		return (s);
-	end = s + strlen(s) - 1;
-	while (end > s && isspace((unsigned char)*end))
-		*end-- = '\0';
-	return (s);
-}
-
-bool
-cap_daemon_label_allowed(const char *path, const char *label)
-{
-	char line[256], *p;
-	FILE *fp;
-	bool allowed;
-
-	if (path == NULL || label == NULL || label[0] == '\0')
-		return (false);
-
-	fp = fopen(path, "r");
-	if (fp == NULL) {
-		if (errno != ENOENT)
-			syslog(LOG_WARNING, "%s: %m", path);
-		return (false);
+	reply_capacity = *reply_length;
+	fd_capacity = *reply_nfds;
+	*reply_length = 0;
+	*reply_nfds = 0;
+	if (fd_capacity <= CAPABILITY_CALL_MAX_FDS &&
+	    (fd_capacity == 0 || reply_fds != NULL)) {
+		for (i = 0; i < fd_capacity; i++)
+			reply_fds[i] = -1;
 	}
-
-	allowed = false;
-	while (fgets(line, sizeof(line), fp) != NULL) {
-		p = strchr(line, '#');
-		if (p != NULL)
-			*p = '\0';
-		p = trim(line);
-		if (*p == '\0')
-			continue;
-		if (strcmp(p, "*") == 0 || strcmp(p, label) == 0) {
-			allowed = true;
-			break;
+	if (fd < 0 || request == NULL || request_length == 0 ||
+	    request_length > UINT32_MAX || request_nfds > UINT32_MAX ||
+	    request_nfds > CAPABILITY_CALL_MAX_FDS ||
+	    (request_nfds != 0 && request_fds == NULL) ||
+	    reply_capacity > UINT32_MAX ||
+	    fd_capacity > CAPABILITY_CALL_MAX_FDS ||
+	    (reply_capacity != 0 && reply == NULL) ||
+	    (fd_capacity != 0 && reply_fds == NULL)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&call, 0, sizeof(call));
+	call.req = request;
+	call.req_len = (uint32_t)request_length;
+	call.req_fds = request_fds;
+	call.req_nfds = (uint32_t)request_nfds;
+	call.reply = reply;
+	call.reply_len = (uint32_t)reply_capacity;
+	call.reply_fds = reply_fds;
+	call.reply_nfds = (uint32_t)fd_capacity;
+	if (ioctl(fd, MAC_CAPABILITY_CALL, &call) == -1) {
+		error = errno;
+		for (i = 0; i < fd_capacity; i++) {
+			if (reply_fds[i] >= 0)
+				close(reply_fds[i]);
+			reply_fds[i] = -1;
 		}
+		errno = error;
+		return (-1);
 	}
-	fclose(fp);
-	return (allowed);
+	if (call.reply_len > reply_capacity || call.reply_nfds > fd_capacity) {
+		for (i = 0; i < fd_capacity; i++) {
+			if (reply_fds[i] >= 0)
+				close(reply_fds[i]);
+			reply_fds[i] = -1;
+		}
+		errno = EPROTO;
+		return (-1);
+	}
+	*reply_length = call.reply_len;
+	*reply_nfds = call.reply_nfds;
+	return (0);
 }

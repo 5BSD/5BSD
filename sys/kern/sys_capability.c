@@ -761,7 +761,8 @@ kern_cap_xfer_limit(struct thread *td, int fd, int state)
 	struct filedescent *fdep;
 	int error, old_state = -1;
 
-	if (state < CAP_XFER_UNLIMITED || state > CAP_XFER_NONE)
+	if (state != CAP_XFER_UNLIMITED && state != CAP_XFER_TWICE &&
+	    state != CAP_XFER_ONCE && state != CAP_XFER_NONE)
 		return (EINVAL);
 
 	fdp = td->td_proc->p_fd;
@@ -773,7 +774,13 @@ kern_cap_xfer_limit(struct thread *td, int fd, int state)
 		goto out_probe;
 	}
 	old_state = fdep->fde_xfer_state;
-	if (state < old_state) {
+	if (old_state != CAP_XFER_UNLIMITED &&
+	    !(old_state == CAP_XFER_TWICE &&
+	    (state == CAP_XFER_TWICE || state == CAP_XFER_ONCE ||
+	    state == CAP_XFER_NONE)) &&
+	    !(old_state == CAP_XFER_ONCE &&
+	    (state == CAP_XFER_ONCE || state == CAP_XFER_NONE)) &&
+	    !(old_state == CAP_XFER_NONE && state == CAP_XFER_NONE)) {
 		FILEDESC_XUNLOCK(fdp);
 		error = ENOTCAPABLE;
 		goto out_probe;

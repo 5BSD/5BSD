@@ -38,7 +38,7 @@ provider serviced {
 
 	/* Component session delegation */
 	probe component__resolve(const char *label, const char *name,
-		    const char *provider_name, int scope);
+		    const char *provider_name);
 	probe component__session(const char *label, const char *name,
 		    const char *provider_name, int result);
 	probe component__inject(const char *label, const char *name, int fd);
@@ -77,7 +77,16 @@ provider serviced {
 	probe on__demand__launch(const char *name, const char *requester);
 	probe on__demand__coalesce(const char *name);
 	probe on__demand__ready(const char *name, unsigned int nwaiters);
+	probe on__demand__fail(const char *name, int error_code,
+		    unsigned int nwaiters);
+	probe on__demand__cancel(const char *requester, pid_t pid,
+		    uint64_t launch_id, unsigned int nwaiters);
 	probe on__demand__timeout(const char *name);
+	probe endpoint__claim(const char *label, const char *name,
+		    int error_code);
+	probe endpoint__activate(const char *label, const char *name);
+	probe endpoint__withdraw(const char *label, const char *name,
+		    int error_code);
 
 	/* Bundle registry */
 	probe bundle__load(const char *name, unsigned int nservices, int system);

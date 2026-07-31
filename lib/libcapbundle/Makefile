@@ -5,8 +5,7 @@ LIB=	capbundle
 SHLIB_MAJOR=	1
 MAN=	libcapbundle.3
 
-SRCS=	libcapbundle.c libcapbundle_parse.c libcapbundle_policy.c \
-	libcapbundle_verify.c
+SRCS=	libcapbundle.c libcapbundle_parse.c libcapbundle_verify.c
 INCS=	libcapbundle.h
 
 FILESGROUPS+=	examples

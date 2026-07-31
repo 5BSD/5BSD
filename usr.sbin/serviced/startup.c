@@ -45,27 +45,12 @@ log_loaded_manifest(const struct svc_manifest *m)
 	for (j = 0; j < m->nprovides; j++)
 		syslog(LOG_INFO, "startup: %s provides: %s",
 		    m->label, m->provides[j]);
-	for (j = 0; j < m->nrequires; j++)
-		syslog(LOG_INFO, "startup: %s requires: %s",
-		    m->label, m->requires[j]);
-	for (j = 0; j < m->nimplements; j++)
-		syslog(LOG_INFO, "startup: %s implements: %s version=%s "
-		    "lifetimes=0x%x sharing=0x%x",
-		    m->label, m->implements[j].name,
-		    m->implements[j].version, m->implements[j].lifetimes,
-		    m->implements[j].sharing);
+	for (j = 0; j < m->nstartup_after; j++)
+		syslog(LOG_INFO, "startup: %s starts after: %s",
+		    m->label, m->startup_after[j]);
 	for (j = 0; j < m->ncomponents; j++)
-		syslog(LOG_INFO,
-		    "startup: %s component %s interface=%s version=%s provider=%s "
-		    "lifetime=%s sharing=%s required=%s",
-		    m->label, m->components[j].name,
-		    m->components[j].interface,
-		    m->components[j].version,
-		    m->components[j].provider[0] != '\0' ?
-		    m->components[j].provider : "default",
-		    component_lifetime_name(m->components[j].scope),
-		    m->components[j].shared ? "shared" : "exclusive",
-		    m->components[j].required ? "yes" : "no");
+		syslog(LOG_INFO, "startup: %s local component: %s",
+		    m->label, m->components[j].name);
 
 	if (m->ncap_paths + m->ncap_files + m->ncap_net + m->ncap_jail +
 	    m->ncap_vsock + m->ncap_services + (m->cap_system != 0) > 0)
@@ -83,7 +68,7 @@ log_loaded_manifest(const struct svc_manifest *m)
 
 /*
  * Assign tiers based on dependency depth.
- * Tier 0 = no dependencies.  Tier N = max(tier of each requires) + 1.
+ * Tier 0 = no dependencies.  Tier N follows each derived component factory.
  *
  * svcs must already be topologically sorted.
  * Returns the maximum tier number.
@@ -96,12 +81,13 @@ assign_tiers(struct svc_runtime *svcs, unsigned n, unsigned *tiers)
 	max_tier = 0;
 	for (i = 0; i < n; i++) {
 		tiers[i] = 0;
-		for (j = 0; j < svcs[i].manifest.nrequires; j++) {
+		for (j = 0; j < svcs[i].manifest.nstartup_after; j++) {
 			/* Find the tier of the required service. */
 			for (k = 0; k < i; k++) {
 				unsigned p;
 				for (p = 0; p < svcs[k].manifest.nprovides; p++) {
-					if (strcmp(svcs[i].manifest.requires[j],
+					if (strcmp(
+					    svcs[i].manifest.startup_after[j],
 					    svcs[k].manifest.provides[p]) == 0) {
 						if (tiers[k] + 1 > tiers[i])
 							tiers[i] = tiers[k] + 1;
@@ -174,7 +160,8 @@ wait_tier_ready(struct svc_runtime *svcs, unsigned n, unsigned tier,
 		for (i = 0; (int)i < nev; i++) {
 			if (events[i].filter == EVFILT_PROCDESC)
 				supervisor_handle_procdesc(&events[i]);
-			else if (events[i].filter == EVFILT_READ &&
+			else if ((events[i].filter == EVFILT_READ ||
+			    events[i].filter == EVFILT_WRITE) &&
 			    events[i].udata != NULL)
 				supervisor_handle_channel(&events[i]);
 			else if (events[i].filter == EVFILT_TIMER)
@@ -245,7 +232,7 @@ startup_launch_system(int kq)
 			asvc = capbundle_service(b, si);
 			if (asvc == NULL)
 				continue;
-			if (capbundle_svc_on_demand(asvc))
+			if (bundle_service_activates_on_lookup(asvc))
 				continue;
 			if (nmanifests >= SERVICED_MAX_SERVICES) {
 				syslog(LOG_WARNING,

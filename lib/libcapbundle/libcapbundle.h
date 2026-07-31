@@ -11,7 +11,7 @@
  *   Name.cap/resources/            (optional data)
  *
  * Each Service.ucl declares bundle metadata (bundle_id, version, author)
- * alongside its service definition (program, provides, requires, etc.).
+ * alongside its service definition (program, provides, components, etc.).
  */
 
 #ifndef LIBCAPBUNDLE_H
@@ -23,7 +23,6 @@
 /* Limits */
 #define	CAPBUNDLE_MAX_SERVICES		32
 #define	CAPBUNDLE_MAX_PROVIDES		8
-#define	CAPBUNDLE_MAX_REQUIRES		16
 #define	CAPBUNDLE_ID_MAX		128
 #define	CAPBUNDLE_VERSION_MAX		32
 #define	CAPBUNDLE_AUTHOR_MAX		128
@@ -31,7 +30,6 @@
 
 struct capbundle;
 struct capbundle_service;
-struct capbundle_policy;
 
 /*
  * Open and parse a .cap bundle directory.
@@ -59,10 +57,6 @@ const char	*capbundle_svc_label(const struct capbundle_service *s);
 unsigned	 capbundle_svc_nprovides(const struct capbundle_service *s);
 const char	*capbundle_svc_provides(const struct capbundle_service *s,
 		    unsigned idx);
-unsigned	 capbundle_svc_nrequires(const struct capbundle_service *s);
-const char	*capbundle_svc_requires(const struct capbundle_service *s,
-		    unsigned idx);
-bool		 capbundle_svc_on_demand(const struct capbundle_service *s);
 unsigned	 capbundle_svc_narguments(const struct capbundle_service *s);
 const char	*capbundle_svc_argument(const struct capbundle_service *s,
 		    unsigned idx);
@@ -90,32 +84,11 @@ int	capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen);
 
 /*
  * Check for circular dependencies across multiple bundles.
- * Builds a global dependency graph from all provides/requires declarations.
+ * Checks the internal startup edges derived from local component declarations.
  * Returns 0 if acyclic, -1 with cycle description in errbuf.
  */
-int	capbundle_check_cycles(struct capbundle **bundles, unsigned nbundles,
-	    char *errbuf, size_t errlen);
-
-/*
- * Resolve component requirements against a complete bundle set.
- * Omitted providers select the unique service implementing the exact
- * interface/version pair.  Explicit providers are policy pins and must
- * advertise that pair.  Resolution adds dependency edges before sorting.
- */
-int	capbundle_resolve_components(struct capbundle **bundles,
-	    unsigned nbundles, char *errbuf, size_t errlen);
-
-/*
- * Load administrator-owned component provider policy.  Policy selects
- * concrete implementations globally by interface/version or overrides one
- * application-local component.  Consumer bundle manifests remain
- * provider-neutral.
- */
-int	capbundle_policy_open(const char *path, struct capbundle_policy **pp,
-	    char *errbuf, size_t errlen);
-void	capbundle_policy_close(struct capbundle_policy *policy);
-int	capbundle_resolve_components_policy(struct capbundle **bundles,
-	    unsigned nbundles, const struct capbundle_policy *policy,
+int	capbundle_check_startup_cycles(struct capbundle **bundles,
+	    unsigned nbundles,
 	    char *errbuf, size_t errlen);
 
 /*

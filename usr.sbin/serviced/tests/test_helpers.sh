@@ -255,19 +255,11 @@ create_system_bundle()
 	author = "test";
 	program = "${prog}";
 	provides = ["${provides}"];
-	arguments = ["compat-ready"];
+	arguments = ["compat-ready", "${provides}"];
 	${extra}
 	UCL
 
 	echo "${dir}"
-}
-
-# Create a system bundle with requires.
-create_system_bundle_with_requires()
-{
-	local name="$1" bid="$2" prog="$3" provides="$4" requires="$5"
-	create_system_bundle "$name" "$bid" "$prog" "$provides" \
-	    "requires = [\"${requires}\"];"
 }
 
 # Create a user bundle (.cap) in the fake /Capabilities.
@@ -292,7 +284,7 @@ create_user_bundle()
 	author = "test";
 	program = "${prog}";
 	provides = ["${provides}"];
-	arguments = ["compat-ready"];
+	arguments = ["compat-ready", "${provides}"];
 	${extra}
 	UCL
 
@@ -321,9 +313,7 @@ create_user_bundle_custom()
 # model (the /etc/serviced.d UCL manifest dir removed in 7311c2d).  serviced
 # now only loads .cap bundles from the SERVICED_BUNDLE_DIR_* trees.
 #
-# The service label is provides[0] (see libcapbundle_parse.c), so passing the
-# old manifest's `label` as the provides name keeps every "service <label>:"
-# log assertion matching.
+# Runtime identity is explicit and independent from provides[].
 #
 # Usage: make_svc <system|user> <label> <ucl_extra> <body-line>...
 #   <ucl_extra>  extra manifest fields as a UCL fragment, e.g.
@@ -352,7 +342,6 @@ make_svc()
 	version = "1.0";
 	author = "test";
 	program = "${label}";
-	provides = ["${label}"];
 	${extra}
 	UCL
 	echo "${dir}"
@@ -380,7 +369,6 @@ make_svc_bin()
 	version = "1.0";
 	author = "test";
 	program = "${label}";
-	provides = ["${label}"];
 	${extra}
 	UCL
 	echo "${dir}"
@@ -416,7 +404,7 @@ build_lookup_client()
 run_lookup_client()
 {
 	local name="$1" timeout="${2:-5}"
-	local label result i max
+	local bundle label result i max
 
 	build_lookup_client
 
@@ -428,9 +416,10 @@ run_lookup_client()
 
 	# Install the client as a boot-start service (runs once) and ask
 	# serviced to pick up the new bundle.
-	make_svc_bin user "$label" \
+	bundle=$(make_svc_bin user "$label" \
 	    'restart = "never"; arguments = ["compat-lookup"];' \
-	    "$(pwd)/lookup_client" >/dev/null
+	    "$(pwd)/lookup_client")
+	sed -i '' '/^provides = /d' "${bundle}/etc/${label}.ucl"
 	reload_stack
 
 	# Wait for the client to record its lookup result.

@@ -1,0 +1,6 @@
+comment = "Kernel capability-service wrapper tests"
+
+desc = <<EOD
+API-boundary, malformed-argument, descriptor-cleanup, and kernel integration
+tests for libcapability.
+EOD

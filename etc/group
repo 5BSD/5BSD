@@ -33,6 +33,7 @@ u2f:*:116:
 ntpd:*:123:
 _ypldap:*:160:
 hast:*:845:
+capability:*:976:
 tests:*:977:
 vmm:*:978:
 nogroup:*:65533:

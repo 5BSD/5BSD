@@ -1,0 +1,6 @@
+comment = "Public TraceCmp protocol library"
+
+desc = <<EOD
+The typed global-service API and versioned protocol for explicitly authorized
+DTrace descriptor delegation to capability-sandboxed processes.
+EOD

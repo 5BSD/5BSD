@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * libcapability — helpers for writing .cap bundle service daemons.
+ * Small userspace wrapper for synchronous kernel capability-service ABIs.
  */
 
 #ifndef _CAPABILITY_H_
@@ -11,23 +11,38 @@
 
 #include <sys/types.h>
 
-#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
-#define	CAP_LABEL_MAX	64
+#define	CAPABILITY_NAME_MAX	64
+#define	CAPABILITY_CALL_MAX_FDS	32
 
-typedef int (*cap_client_handler)(int, const char *, void *);
-
-struct cap_daemon_config {
-	const char		*service_name;
-	cap_client_handler	 handler;
-	void			*handler_arg;
-	unsigned		 client_timeout;
+struct capability_info {
+	size_t		size;
+	char		name[CAPABILITY_NAME_MAX];
+	uint64_t	badge;
+	uint32_t	message_limit;
+	uint32_t	queue_depth;
+	uint32_t	transmit_limit;
+	uint32_t	max_fds;
+	uint32_t	features;
+	uint32_t	reserved[4];
 };
 
-int	 cap_daemon_run(const struct cap_daemon_config *cfg);
-ssize_t	 cap_daemon_recv(int fd, void *buf, size_t bufsz, unsigned timeout);
-int	 cap_daemon_send(int fd, const void *buf, size_t len);
-bool	 cap_daemon_label_allowed(const char *path, const char *label);
+__BEGIN_DECLS
+
+int	capability_get_info(int fd, struct capability_info *);
+
+/*
+ * Invoke a synchronous kernel capability service.  Request descriptors are
+ * borrowed.  On entry, *reply_length and *reply_nfds are capacities; on
+ * success they are exact returned counts and the caller owns reply_fds[].
+ */
+int	capability_kernel_call(int fd, const void *request,
+	    size_t request_length, const int *request_fds,
+	    size_t request_nfds, void *reply, size_t *reply_length,
+	    int *reply_fds, size_t *reply_nfds);
+
+__END_DECLS
 
 #endif /* !_CAPABILITY_H_ */

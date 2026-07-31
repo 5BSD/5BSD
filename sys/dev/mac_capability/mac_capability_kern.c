@@ -279,6 +279,7 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 	struct mac_capability_service *svc;
 	struct mac_capability_msg *msg;
 	sbintime_t start __unused;
+	bool retry;
 	int error;
 
 	svc = s->ci_service;
@@ -302,8 +303,6 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 		s->ci_rxqlen--;
 		s->ci_inflight++;
 
-		/* Notify EVFILT_WRITE — SENDMSG can retry. */
-		KNOTE_LOCKED(&s->ci_wknotes, 0);
 		s->ci_handler_td = curthread;
 		mtx_unlock(&s->ci_mtx);
 
@@ -313,7 +312,9 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 		 *     mac_capability_reply(), the client gets a response.  If not,
 		 *     there is no reply — the client's next read blocks
 		 *     until something else arrives (e.g. a notification).
-		 * Return nonzero: automatic error reply sent to client.
+		 * Return MAC_CAPABILITY_HANDLER_RETRY: retain the message at
+		 * the RX head until the service explicitly kicks this instance.
+		 * Return another nonzero value: automatic error reply.
 		 */
 		SDT_PROBE2(mac_capability, , , dispatch,
 		    svc->csvc_name, msg->cm_badge);
@@ -323,14 +324,24 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 		    svc->csvc_name, msg->cm_badge, error,
 		    getsbinuptime() - start);
 
-		if (error != 0)
+		retry = error == MAC_CAPABILITY_HANDLER_RETRY;
+		if (error != 0 && !retry)
 			mac_capability_auto_reply(s, msg->cm_reply_token, error);
-
-		mac_capability_msg_free(msg);
+		if (!retry)
+			mac_capability_msg_free(msg);
 
 		mtx_lock(&s->ci_mtx);
 		s->ci_handler_td = NULL;
 		s->ci_inflight--;
+		if (retry && !(s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {
+			STAILQ_INSERT_HEAD(&s->ci_rxq, msg, cm_link);
+			s->ci_rxqlen++;
+		} else {
+			if (retry)
+				mac_capability_msg_free(msg);
+			/* SENDMSG capacity was genuinely released. */
+			KNOTE_LOCKED(&s->ci_wknotes, 0);
+		}
 		if (s->ci_inflight == 0 && (s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {
 			wakeup(&s->ci_inflight);
 			/* Wake service destroy loop waiting on svc. */
@@ -360,12 +371,22 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 				mtx_lock(&s->ci_mtx);
 			}
 		}
+		if (retry)
+			break;
 	}
 
 	/* If dead, drain any remaining RX messages. */
 	if (s->ci_flags & MAC_CAPABILITY_SF_DEAD)
 		mac_capability_instance_drain_rxq(s);
 	s->ci_dispatching = false;
+	if (STAILQ_EMPTY(&s->ci_rxq))
+		s->ci_kick_pending = false;
+	if (s->ci_kick_pending && !(s->ci_flags & MAC_CAPABILITY_SF_DEAD) &&
+	    !STAILQ_EMPTY(&s->ci_rxq)) {
+		s->ci_kick_pending = false;
+		s->ci_dispatching = true;
+		taskqueue_enqueue(svc->csvc_taskq, &s->ci_task);
+	}
 
 	mtx_unlock(&s->ci_mtx);
 	mac_capability_instance_rele(s);
@@ -671,7 +692,7 @@ mac_capability_reply(struct mac_capability_instance *s, uint64_t reply_token,
     struct file **out_fds, struct filecaps *out_fcaps, int out_nfds)
 {
 	struct mac_capability_msg *msg;
-	sbintime_t start;
+	sbintime_t start __diagused;
 	int error;
 
 	start = getsbinuptime();
@@ -714,7 +735,7 @@ mac_capability_notify(struct mac_capability_instance *s, const void *data, size_
     struct file **fds, struct filecaps *fcaps, int nfds)
 {
 	struct mac_capability_msg *msg;
-	sbintime_t start;
+	sbintime_t start __diagused;
 	int error;
 
 	start = getsbinuptime();
@@ -813,6 +834,28 @@ mac_capability_instance_rele(struct mac_capability_instance *s)
 	/* Wake close/revoke only when refcnt might have reached their threshold. */
 	if (!last && refcount_load(&s->ci_refcnt) <= 2)
 		wakeup(s);
+}
+
+void
+mac_capability_instance_kick(struct mac_capability_instance *s)
+{
+	struct mac_capability_service *svc;
+
+	mtx_lock(&s->ci_mtx);
+	svc = s->ci_service;
+	if (svc == NULL || svc->csvc_taskq == NULL ||
+	    (s->ci_flags & MAC_CAPABILITY_SF_DEAD) ||
+	    STAILQ_EMPTY(&s->ci_rxq)) {
+		mtx_unlock(&s->ci_mtx);
+		return;
+	}
+	if (s->ci_dispatching) {
+		s->ci_kick_pending = true;
+	} else {
+		s->ci_dispatching = true;
+		taskqueue_enqueue(svc->csvc_taskq, &s->ci_task);
+	}
+	mtx_unlock(&s->ci_mtx);
 }
 
 void

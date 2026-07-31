@@ -2,7 +2,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd July 19, 2026
+.Dd July 30, 2026
 .Dt KLDMGRD 8
 .Os
 .Sh NAME
@@ -44,7 +44,7 @@ service name is otherwise protected.
 If the file is missing, all requests are denied.
 .Pp
 At startup,
-.Xr libcapability 3
+.Xr libservice 3
 validates and activates the bundle's inherited system token before applying
 the daemon's self-selected capprotect shield, registering its name, or
 reporting readiness.
@@ -72,6 +72,25 @@ Malformed requests receive
 .Dv KLDMGR_STATUS_ERR .
 Denied requests receive
 .Dv KLDMGR_STATUS_PERM .
+.Sh OBSERVABILITY
+The
+.Dq kldmgrd
+DTrace provider exposes
+.Fn session-start ,
+.Fn session-end ,
+.Fn request ,
+and
+.Fn malformed
+probes.
+The request and session-end probes report zero for success or an
+.Xr errno 2
+value for failure.
+Module load and unload attempts, including policy denials and backend
+failures, generate
+.Dv AUE_MODLOAD
+or
+.Dv AUE_MODUNLOAD
+OpenBSM audit records containing the authenticated client service label.
 .Sh BUNDLE
 .Nm
 is installed as a system
@@ -99,8 +118,8 @@ Client service-label allow list.
 .El
 .Sh SEE ALSO
 .Xr kldload 2 ,
-.Xr kldunload 2 ,
 .Xr kldstat 2 ,
-.Xr libcapability 3 ,
+.Xr kldunload 2 ,
+.Xr libchannel 3 ,
 .Xr libservice 3 ,
 .Xr serviced 8

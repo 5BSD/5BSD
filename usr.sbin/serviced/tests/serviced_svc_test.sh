@@ -374,59 +374,6 @@ service_runs_as_user_cleanup()
 }
 
 # ===================================================================
-# Dependency ordering: provider starts before consumer
-# ===================================================================
-
-atf_test_case dependency_order cleanup
-dependency_order_head()
-{
-	atf_set "descr" "services start in dependency order"
-	atf_set "require.user" "root"
-	require_oracle_stack_kmods
-}
-dependency_order_body()
-{
-	prepare_paths
-	# NOTE: in the .cap model the runtime label == provides[0], so the
-	# provider's provided name and its log label are the same token.  The
-	# original manifest used label="provider" (for the log assertion) plus a
-	# distinct provides=["provider-api"] (for the dependency edge); those two
-	# namespaces are now collapsed.  We keep the label "provider"/"consumer"
-	# so the existing 'service provider:'/'service consumer:' greps match, and
-	# point the requires at "provider" so the dependency actually resolves.
-	make_svc system provider '' \
-	    '#!/bin/sh' \
-	    'exit 0'
-	make_svc system consumer 'requires = ["provider"];' \
-	    '#!/bin/sh' \
-	    'exit 0'
-
-	start_stack
-
-	# Wait for both to appear in log.
-	if ! sh -c "i=0; while ! grep -q 'service consumer' '$logfile' && [ \$i -lt 100 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service consumer' '$logfile'"; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "services did not start"
-	fi
-
-	provider_line=$(grep -n "service provider: started" "$logfile" | head -1 | cut -d: -f1)
-	consumer_line=$(grep -n "service consumer: started" "$logfile" | head -1 | cut -d: -f1)
-	if [ -z "$provider_line" ] || [ -z "$consumer_line" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "missing start log lines"
-	fi
-	if [ "$consumer_line" -le "$provider_line" ]; then
-		cat "$logfile"
-		atf_fail "consumer started before provider"
-	fi
-	assert_stack_alive
-}
-dependency_order_cleanup()
-{
-	cleanup_common
-}
-
-# ===================================================================
 # Authenticated reload: new manifests are forwarded to serviced
 # ===================================================================
 
@@ -497,13 +444,13 @@ restart_backoff_cleanup()
 }
 
 # ===================================================================
-# Explicit unregister: service unregisters its own name
+# Explicit withdrawal: a ready provider withdraws one claimed name
 # ===================================================================
 
 atf_test_case svc_unregister_explicit cleanup
 svc_unregister_explicit_head()
 {
-	atf_set "descr" "service can explicitly unregister a name via SVC_OP_UNREGISTER"
+	atf_set "descr" "a ready provider can explicitly withdraw one claimed name via SVC_OP_NAME_WITHDRAW"
 	atf_set "require.user" "root"
 	require_oracle_stack_kmods
 }
@@ -514,7 +461,8 @@ svc_unregister_explicit_body()
 	find_serviced
 	prepare_paths
 	make_svc_bin system org.test.unreg.svc \
-	    "arguments = [\"unregister\", \"org.test.unreg.svc\", \"$(pwd)/unreg-register.out\", \"$(pwd)/unreg-result.out\"];" \
+	    "provides = [\"org.test.unreg.svc\"];
+arguments = [\"unregister\", \"org.test.unreg.svc\", \"$(pwd)/unreg-register.out\", \"$(pwd)/unreg-result.out\"];" \
 	    "$capd_service_fixture"
 	write_config
 
@@ -533,9 +481,9 @@ svc_unregister_explicit_body()
 	atf_check -s exit:0 -o match:"unregister_status=0" \
 	    cat unreg-result.out
 
-	# Verify serviced logged the unregistration.
+	# Verify serviced logged the explicit lifecycle transition.
 	atf_check -s exit:0 -o ignore \
-	    grep "org.test.unreg.svc.*unregistered\|unregistered.*org.test.unreg.svc" "$logfile"
+	    grep "org.test.unreg.svc.*withdrawn\|withdrawn.*org.test.unreg.svc" "$logfile"
 	assert_stack_alive
 }
 svc_unregister_explicit_cleanup()
@@ -545,13 +493,125 @@ svc_unregister_explicit_cleanup()
 }
 
 # ===================================================================
+# Claim protocol state machine
+# ===================================================================
+
+atf_test_case svc_name_claim_state_machine cleanup
+svc_name_claim_state_machine_head()
+{
+	atf_set "descr" \
+	    "name claims enforce manifest authority, duplicate state, withdrawal, and re-claim before READY"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+svc_name_claim_state_machine_body()
+{
+	find_capd_service_fixture
+
+	prepare_paths
+	make_svc_bin system org.test.claim.svc \
+	    "provides = [\"org.test.claim.svc\"];
+arguments = [\"claim-protocol\", \"org.test.claim.svc\", \"$(pwd)/claim-state.out\"];" \
+	    "$capd_service_fixture"
+	write_config
+
+	start_stack
+	if ! wait_for_file claim-state.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "claim protocol fixture did not complete"
+	fi
+	atf_check -s exit:0 -o inline:"unauthorized=EACCES
+first=ok
+duplicate=EALREADY
+withdraw=ok
+repeated_withdraw=ENOENT
+reclaim=ok
+" cat claim-state.out
+	assert_stack_alive
+}
+svc_name_claim_state_machine_cleanup()
+{
+	cleanup_common
+	rm -f claim_svc claim_svc.c claim-state.out
+}
+
+# ===================================================================
+# Withdrawal races an in-flight activation
+# ===================================================================
+
+atf_test_case svc_withdraw_cancels_activation cleanup
+svc_withdraw_cancels_activation_head()
+{
+	atf_set "descr" \
+	    "withdrawing an activating name fails queued lookups and rejects the late result"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+svc_withdraw_cancels_activation_body()
+{
+	local client_bundle i
+
+	find_capd_service_fixture
+	prepare_paths
+	make_svc_bin system org.test.cancel.svc \
+	    "provides = [\"org.test.cancel.svc\"];
+arguments = [\"cancel-activation\", \"org.test.cancel.svc\",
+    \"$(pwd)/cancel-provider.ready\", \"$(pwd)/cancel-provider.trigger\",
+    \"$(pwd)/cancel-provider.result\"];" \
+	    "$capd_service_fixture"
+	printf '%s\n' "org.test.cancel.svc" > cancel-client.target
+	client_bundle=$(make_svc_bin system cancel-client \
+	    'restart = "never"; arguments = ["compat-lookup"];' \
+	    "$capd_service_fixture")
+	sed -i '' '/^provides = /d' \
+	    "${client_bundle}/etc/cancel-client.ucl"
+	write_config
+
+	start_stack
+	wait_for_file cancel-provider.ready ||
+	    atf_fail "provider did not complete check-in"
+	i=0
+	while ! grep -q "activation of endpoint 'org.test.cancel.svc' requested" \
+	    "$logfile" 2>/dev/null && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if [ "$i" -ge 100 ]; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "lookup did not trigger endpoint activation"
+	fi
+	touch cancel-provider.trigger
+	wait_for_file cancel-provider.result ||
+	    atf_fail "provider did not report activation cancellation"
+	wait_for_file cancel-client.result ||
+	    atf_fail "queued client did not receive cancellation"
+	atf_check -s exit:0 -o inline:"withdraw=ok
+pending=ECANCELED
+late_result=EPROTO
+" cat cancel-provider.result
+	atf_check -s exit:0 -o match:'^rc=1$' cat cancel-client.result
+	atf_check -s exit:0 -o ignore \
+	    grep "activation of endpoint 'org.test.cancel.svc'.*Operation canceled" \
+	    "$logfile"
+	assert_stack_alive
+}
+svc_withdraw_cancels_activation_cleanup()
+{
+	cleanup_common
+	rm -f cancel-client.target cancel-client.result \
+	    cancel-provider.ready cancel-provider.trigger \
+	    cancel-provider.result
+}
+
+# ===================================================================
 # Process-descriptor capability-mode readiness
 # ===================================================================
 
 atf_test_case capmode_is_authoritative_readiness cleanup
 capmode_is_authoritative_readiness_head()
 {
-	atf_set "descr" "READY is advisory; verified NOTE_CAPMODE is the RUNNING boundary"
+	atf_set "descr" \
+	    "endpoint publication requires both READY and verified capability-mode entry"
 	atf_set "require.user" "root"
 	require_oracle_stack_kmods
 }
@@ -564,6 +624,8 @@ capmode_is_authoritative_readiness_body()
 	make_svc_bin system org.test.capmode.gate \
 	    'arguments = ["readiness-gate", "protocol-ready.out", "capmode-ready.out"];' \
 	    "$capd_service_fixture"
+	sed -i '' '/^provides = /d' \
+	    "${APPS_DIR}/org.test.capmode.gate.cap/etc/org.test.capmode.gate.ucl"
 	write_config
 	start_stack
 
@@ -674,14 +736,13 @@ atf_init_test_cases()
 	atf_add_test_case service_environment_minimal
 	atf_add_test_case service_runs_as_user
 
-	# Dependencies
-	atf_add_test_case dependency_order
-
 	# Reload
 	atf_add_test_case control_reload
 
 	# Naming protocol
 	atf_add_test_case svc_unregister_explicit
+	atf_add_test_case svc_name_claim_state_machine
+	atf_add_test_case svc_withdraw_cancels_activation
 	atf_add_test_case capmode_is_authoritative_readiness
 
 	# Control-socket authorization

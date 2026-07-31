@@ -25,11 +25,13 @@
  * SUCH DAMAGE.
  */
 
-comment = "IPC library for 5BSD service name lookups"
+comment = "Capability service discovery and lifecycle library"
 
 desc = <<EOD
-libservice is an IPC library for service name lookups via serviced(8).  It
-provides the libservice API for resolving service names to capabilities at
-runtime, allowing applications to discover and connect to capability-based
-services.
+libservice provides shared process initialization, global service discovery,
+multi-name provider listeners, per-name lazy activation, explicit capability
+mode transitions, stable local-component discovery, opaque component
+bootstrap objects, structured managed sessions, and supervisor-death
+notification.  libchannel owns userspace message transport and typed service
+libraries own application protocols.
 EOD

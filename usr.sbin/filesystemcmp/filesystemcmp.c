@@ -5,15 +5,15 @@
 #include <sys/capsicum.h>
 #include <sys/procdesc.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 
 #include <bsm/audit_kevents.h>
 #include <bsm/libbsm.h>
-#include <ucl.h>
-
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -22,15 +22,17 @@
 #include <syslog.h>
 #include <unistd.h>
 
+#include <channel.h>
 #include <filesystemcmp.h>
 #include <libservice.h>
 
-#include "scratch.h"
+#include "filesystemcmp_probes.h"
+#include "store.h"
 
 #define	DEFAULT_MAX_BYTES	(64ULL * 1024 * 1024)
 #define	DEFAULT_MAX_OBJECTS	4096
 #define	DEFAULT_MAX_FILE_BYTES	(16U * 1024 * 1024)
-#define	FILESYSTEMCMP_PROVIDER_NAME	"org.5bsd.FileSystemCmp.scratch"
+#define	FILESYSTEMCMP_PROVIDER_NAME	"org.5bsd.FileSystemCmp"
 
 union wire_buffer {
 	max_align_t align;
@@ -65,124 +67,70 @@ harden_worker_fd(int fd)
 }
 
 static int
-parse_limit(const ucl_object_t *root, const char *name, uint64_t maximum,
-    uint64_t *value)
+harden_resource_fd(int fd, bool readonly)
 {
-	const ucl_object_t *object;
-	int64_t parsed;
+	struct stat status;
+	cap_rights_t rights;
 
-	object = ucl_object_lookup(root, name);
-	if (object == NULL)
-		return (0);
-	if (!ucl_object_toint_safe(object, &parsed) || parsed <= 0 ||
-	    (uint64_t)parsed > maximum) {
-		errno = EINVAL;
+	if (fstat(fd, &status) == -1 || !S_ISDIR(status.st_mode)) {
+		if (errno == 0)
+			errno = ENOTDIR;
 		return (-1);
 	}
-	*value = (uint64_t)parsed;
-	return (0);
+	cap_rights_init(&rights, CAP_READ, CAP_PREAD, CAP_SEEK, CAP_FCNTL,
+	    CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT);
+	if (!readonly)
+		cap_rights_set(&rights, CAP_WRITE, CAP_PWRITE, CAP_FTRUNCATE,
+		    CAP_FSYNC, CAP_CREATE, CAP_MKDIRAT, CAP_UNLINKAT,
+		    CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
+	return (cap_rights_limit(fd, &rights) == -1 ||
+	    cap_fcntls_limit(fd, 0) == -1 ||
+	    harden_worker_fd(fd) == -1 ? -1 : 0);
 }
 
 static int
-parse_options(const char *json, struct scratch_limits *limits)
-{
-	static const char *const names[] = {
-	    "max_bytes", "max_objects", "max_file_bytes"
-	};
-	struct ucl_parser *parser;
-	ucl_object_t *root;
-	const ucl_object_t *current;
-	ucl_object_iter_t iterator;
-	const char *key;
-	uint64_t value;
-	size_t i;
-	int error;
-
-	limits->max_bytes = DEFAULT_MAX_BYTES;
-	limits->max_objects = DEFAULT_MAX_OBJECTS;
-	limits->max_file_bytes = DEFAULT_MAX_FILE_BYTES;
-	parser = ucl_parser_new(UCL_PARSER_NO_FILEVARS |
-	    UCL_PARSER_NO_IMPLICIT_ARRAYS);
-	if (parser == NULL)
-		return (-1);
-	if (!ucl_parser_add_string(parser, json, 0)) {
-		errno = EINVAL;
-		ucl_parser_free(parser);
-		return (-1);
-	}
-	root = ucl_parser_get_object(parser);
-	if (root == NULL || ucl_object_type(root) != UCL_OBJECT) {
-		errno = EINVAL;
-		goto fail;
-	}
-	iterator = NULL;
-	while ((current = ucl_object_iterate(root, &iterator, true)) != NULL) {
-		key = ucl_object_key(current);
-		for (i = 0; i < nitems(names); i++)
-			if (strcmp(key, names[i]) == 0)
-				break;
-		if (i == nitems(names)) {
-			errno = EINVAL;
-			goto fail;
-		}
-	}
-	value = limits->max_bytes;
-	if (parse_limit(root, "max_bytes", UINT64_MAX, &value) == -1)
-		goto fail;
-	limits->max_bytes = value;
-	value = limits->max_objects;
-	if (parse_limit(root, "max_objects", 1048576, &value) == -1)
-		goto fail;
-	limits->max_objects = (uint32_t)value;
-	value = limits->max_file_bytes;
-	if (parse_limit(root, "max_file_bytes", UINT32_MAX, &value) == -1)
-		goto fail;
-	limits->max_file_bytes = (uint32_t)value;
-	if (limits->max_file_bytes > limits->max_bytes) {
-		errno = EINVAL;
-		goto fail;
-	}
-	ucl_object_unref(root);
-	ucl_parser_free(parser);
-	return (0);
-
-fail:
-	error = errno;
-	if (root != NULL)
-		ucl_object_unref(root);
-	ucl_parser_free(parser);
-	errno = error;
-	return (-1);
-}
-
-static int
-send_reply(int fd, const struct filesystemcmp_msg *request, int error,
-    const void *payload, size_t payload_length)
+send_reply(struct channel_message *request_message,
+    const char *label __unused,
+    const struct filesystemcmp_msg *request, int error, const void *payload,
+    size_t payload_length)
 {
 	union wire_buffer buffer;
 	struct filesystemcmp_msg *reply;
+	size_t length;
+	int result, saved_errno;
 
 	memset(&buffer, 0, sizeof(buffer));
 	reply = &buffer.wire.msg;
-	reply->magic = FILESYSTEMCMP_MAGIC;
-	reply->version = FILESYSTEMCMP_ABI_VERSION;
-	reply->opcode = request->opcode;
-	reply->flags = FILESYSTEMCMP_MSG_F_REPLY;
-	reply->length = sizeof(*reply) + (error == 0 ? payload_length : 0);
-	reply->request_id = request->request_id;
-	reply->status = error == 0 ? 0 : -error;
+	if (filesystemcmp_message_init_reply(reply, request,
+	    error == 0 ? 0 : -error) == -1)
+		return (-1);
 	if (error == 0 && payload_length != 0)
 		memcpy(reply + 1, payload, payload_length);
-	return (filesystemcmp_send_message(fd, reply, reply->length, NULL, 0));
+	length = sizeof(*reply) + (error == 0 ? payload_length : 0);
+	if (filesystemcmp_validate_message(reply, length,
+	    FILESYSTEMCMP_MESSAGE_REPLY) == -1 ||
+	    filesystemcmp_validate_fds(reply, 0,
+	    FILESYSTEMCMP_MESSAGE_REPLY) == -1)
+		result = -1;
+	else
+		result = channel_send_reply(request_message,
+		    &(struct channel_outgoing)
+		    CHANNEL_OUTGOING_INITIALIZER(reply, length));
+	saved_errno = result == -1 ? errno : 0;
+	FILESYSTEMCMPD_PROBE_REQUEST(label, request->opcode,
+	    error != 0 ? error : saved_errno);
+	errno = saved_errno;
+	return (result);
 }
 
 static int
-request_name(const struct filesystemcmp_msg *message, size_t fixed,
-    uint32_t length, const void **name)
+request_name(const struct filesystemcmp_msg *message, size_t received,
+    size_t fixed, uint32_t length, const void **name)
 {
 
 	if (length == 0 || length > FILESYSTEMCMP_NAME_MAX ||
-	    fixed + length != message->length - sizeof(*message)) {
+	    received < sizeof(*message) ||
+	    fixed + length != received - sizeof(*message)) {
 		errno = EPROTO;
 		return (-1);
 	}
@@ -191,8 +139,10 @@ request_name(const struct filesystemcmp_msg *message, size_t fixed,
 }
 
 static int
-dispatch(int fd, struct scratch_store *store,
-    const struct filesystemcmp_msg *message, const char *label)
+dispatch(struct channel_message *request_message,
+    struct filesystem_store *store,
+    const struct filesystemcmp_msg *message, size_t received,
+    const char *label)
 {
 	struct filesystemcmp_handle_reply handle_reply;
 	struct filesystemcmp_hello_reply hello_reply;
@@ -205,6 +155,7 @@ dispatch(int fd, struct scratch_store *store,
 	const struct filesystemcmp_rename_request *rename;
 	const struct filesystemcmp_open_request *open;
 	const struct filesystemcmp_close_request *close_request;
+	const struct filesystemcmp_namespace_request *namespace_request;
 	union wire_buffer buffer;
 	struct filesystemcmp_handle handle;
 	const void *name, *new_name;
@@ -217,54 +168,64 @@ dispatch(int fd, struct scratch_store *store,
 	case FILESYSTEMCMP_OP_HELLO:
 		memset(&hello_reply, 0, sizeof(hello_reply));
 		hello_reply.version = FILESYSTEMCMP_ABI_VERSION;
-		hello_reply.features = FILESYSTEMCMP_FEATURE_INLINE_IO;
-		return (send_reply(fd, message, 0, &hello_reply,
-		    sizeof(hello_reply)));
+		hello_reply.features = filesystem_store_features(store);
+		return (send_reply(request_message, label, message, 0,
+		    &hello_reply, sizeof(hello_reply)));
 	case FILESYSTEMCMP_OP_OPEN_ROOT:
-		if (scratch_root(store, &handle) == -1)
+		if (filesystem_store_root(store, FILESYSTEMCMP_NAMESPACE_SCRATCH,
+		    &handle) == -1)
 			break;
 		handle_reply.handle = handle;
 		handle_reply.type = FILESYSTEMCMP_TYPE_DIRECTORY;
-		return (send_reply(fd, message, 0, &handle_reply,
-		    sizeof(handle_reply)));
+		return (send_reply(request_message, label, message, 0,
+		    &handle_reply, sizeof(handle_reply)));
+	case FILESYSTEMCMP_OP_OPEN_NAMESPACE:
+		namespace_request = (const void *)(message + 1);
+		if (filesystem_store_root(store, namespace_request->namespace,
+		    &handle) == -1)
+			break;
+		handle_reply.handle = handle;
+		handle_reply.type = FILESYSTEMCMP_TYPE_DIRECTORY;
+		return (send_reply(request_message, label, message, 0,
+		    &handle_reply, sizeof(handle_reply)));
 	case FILESYSTEMCMP_OP_LOOKUP:
 		lookup = (const void *)(message + 1);
-		if (request_name(message, sizeof(*lookup), lookup->name_length,
-		    &name) == -1 ||
-		    scratch_lookup(store, lookup->directory, name,
+		if (request_name(message, received, sizeof(*lookup),
+		    lookup->name_length, &name) == -1 ||
+		    filesystem_store_lookup(store, lookup->directory, name,
 		    lookup->name_length, &handle) == -1)
 			break;
 		handle_reply.handle = handle;
-		if (scratch_stat(store, handle, &stat_reply) == -1)
+		if (filesystem_store_stat(store, handle, &stat_reply) == -1)
 			break;
 		handle_reply.type = stat_reply.type;
-		return (send_reply(fd, message, 0, &handle_reply,
-		    sizeof(handle_reply)));
+		return (send_reply(request_message, label, message, 0,
+		    &handle_reply, sizeof(handle_reply)));
 	case FILESYSTEMCMP_OP_CREATE:
 		create = (const void *)(message + 1);
-		if (request_name(message, sizeof(*create), create->name_length,
-		    &name) == -1 ||
-		    scratch_create(store, create->directory, name,
+		if (request_name(message, received, sizeof(*create),
+		    create->name_length, &name) == -1 ||
+		    filesystem_store_create_object(store, create->directory, name,
 		    create->name_length, create->flags, create->mode,
 		    &handle) == -1)
 			break;
 		handle_reply.handle = handle;
-		if (scratch_stat(store, handle, &stat_reply) == -1)
+		if (filesystem_store_stat(store, handle, &stat_reply) == -1)
 			break;
 		handle_reply.type = stat_reply.type;
 		audit_policy(label, "create", 0);
-		return (send_reply(fd, message, 0, &handle_reply,
-		    sizeof(handle_reply)));
+		return (send_reply(request_message, label, message, 0,
+		    &handle_reply, sizeof(handle_reply)));
 	case FILESYSTEMCMP_OP_OPEN:
 		open = (const void *)(message + 1);
-		if (scratch_open(store, open->object, open->flags) == -1)
+		if (filesystem_store_open(store, open->object, open->flags) == -1)
 			break;
 		handle_reply.handle = open->object;
-		if (scratch_stat(store, open->object, &stat_reply) == -1)
+		if (filesystem_store_stat(store, open->object, &stat_reply) == -1)
 			break;
 		handle_reply.type = stat_reply.type;
-		return (send_reply(fd, message, 0, &handle_reply,
-		    sizeof(handle_reply)));
+		return (send_reply(request_message, label, message, 0,
+		    &handle_reply, sizeof(handle_reply)));
 	case FILESYSTEMCMP_OP_READ:
 		io = (const void *)(message + 1);
 		if (io->length > FILESYSTEMCMP_INLINE_MAX) {
@@ -272,40 +233,41 @@ dispatch(int fd, struct scratch_store *store,
 			break;
 		}
 		io_reply = (void *)(buffer.wire.payload);
-		count = scratch_read(store, io->object, io->offset, io_reply + 1,
-		    io->length);
+		count = filesystem_store_read(store, io->object, io->offset,
+		    io_reply + 1, io->length);
 		if (count == -1)
 			break;
 		memset(io_reply, 0, sizeof(*io_reply));
 		io_reply->length = (uint32_t)count;
-		return (send_reply(fd, message, 0, io_reply,
+		return (send_reply(request_message, label, message, 0, io_reply,
 		    sizeof(*io_reply) + (size_t)count));
 	case FILESYSTEMCMP_OP_WRITE:
 		io = (const void *)(message + 1);
-		count = scratch_write(store, io->object, io->offset, io + 1,
-		    io->length);
+		count = filesystem_store_write(store, io->object, io->offset,
+		    io + 1, io->length);
 		if (count == -1)
 			break;
 		memset(buffer.wire.payload, 0, sizeof(*io_reply));
 		io_reply = (void *)buffer.wire.payload;
 		io_reply->length = (uint32_t)count;
-		return (send_reply(fd, message, 0, io_reply,
+		return (send_reply(request_message, label, message, 0, io_reply,
 		    sizeof(*io_reply)));
 	case FILESYSTEMCMP_OP_STAT:
 		close_request = (const void *)(message + 1);
-		if (scratch_stat(store, close_request->object, &stat_reply) == -1)
+		if (filesystem_store_stat(store, close_request->object,
+		    &stat_reply) == -1)
 			break;
-		return (send_reply(fd, message, 0, &stat_reply,
-		    sizeof(stat_reply)));
+		return (send_reply(request_message, label, message, 0,
+		    &stat_reply, sizeof(stat_reply)));
 	case FILESYSTEMCMP_OP_UNLINK:
 		unlink = (const void *)(message + 1);
-		if (request_name(message, sizeof(*unlink), unlink->name_length,
-		    &name) == -1 ||
-		    scratch_unlink(store, unlink->directory, name,
+		if (request_name(message, received, sizeof(*unlink),
+		    unlink->name_length, &name) == -1 ||
+		    filesystem_store_unlink(store, unlink->directory, name,
 		    unlink->name_length) == -1)
 			break;
 		audit_policy(label, "unlink", 0);
-		return (send_reply(fd, message, 0, NULL, 0));
+		return (send_reply(request_message, label, message, 0, NULL, 0));
 	case FILESYSTEMCMP_OP_RENAME:
 		rename = (const void *)(message + 1);
 		if (rename->old_name_length == 0 ||
@@ -317,36 +279,96 @@ dispatch(int fd, struct scratch_store *store,
 		}
 		name = rename + 1;
 		new_name = (const uint8_t *)name + rename->old_name_length;
-		if (scratch_rename(store, rename->old_directory, name,
+		if (filesystem_store_rename(store, rename->old_directory, name,
 		    rename->old_name_length, rename->new_directory, new_name,
 		    rename->new_name_length) == -1)
 			break;
 		audit_policy(label, "rename", 0);
-		return (send_reply(fd, message, 0, NULL, 0));
+		return (send_reply(request_message, label, message, 0, NULL, 0));
 	case FILESYSTEMCMP_OP_CLOSE:
-	case FILESYSTEMCMP_OP_NOTIFY:
-		return (send_reply(fd, message, 0, NULL, 0));
+		close_request = (const void *)(message + 1);
+		if (filesystem_store_close(store, close_request->object) == -1)
+			break;
+		return (send_reply(request_message, label, message, 0, NULL, 0));
+	case FILESYSTEMCMP_OP_SYNC:
+		close_request = (const void *)(message + 1);
+		if (filesystem_store_sync(store, close_request->object) == -1)
+			break;
+		audit_policy(label, "sync", 0);
+		return (send_reply(request_message, label, message, 0, NULL, 0));
+	case FILESYSTEMCMP_OP_DUP:
+		close_request = (const void *)(message + 1);
+		if (filesystem_store_dup(store, close_request->object,
+		    &handle) == -1)
+			break;
+		if (filesystem_store_stat(store, handle, &stat_reply) == -1) {
+			error = errno;
+			(void)filesystem_store_close(store, handle);
+			errno = error;
+			break;
+		}
+		handle_reply.handle = handle;
+		handle_reply.type = stat_reply.type;
+		return (send_reply(request_message, label, message, 0,
+		    &handle_reply, sizeof(handle_reply)));
 	case FILESYSTEMCMP_OP_ATTACH_RINGS:
 		errno = EOPNOTSUPP;
 		break;
 	}
 	error = errno != 0 ? errno : EIO;
 	audit_policy(label, "request-denied", error);
-	return (send_reply(fd, message, error, NULL, 0));
+	return (send_reply(request_message, label, message, error, NULL, 0));
+}
+
+struct worker_state {
+	struct filesystem_store	*store;
+	const char		*label;
+	int			 terminal_error;
+};
+
+static void
+handle_request(struct channel *channel __unused,
+    struct channel_message *request_message, void *argument)
+{
+	struct worker_state *state;
+	const struct filesystemcmp_msg *message;
+	size_t length;
+
+	state = argument;
+	message = channel_message_data(request_message);
+	length = channel_message_length(request_message);
+	if (filesystemcmp_validate_message(message, length,
+	    FILESYSTEMCMP_MESSAGE_REQUEST) == -1 ||
+	    filesystemcmp_validate_fds(message,
+	    channel_message_fd_count(request_message),
+	    FILESYSTEMCMP_MESSAGE_REQUEST) == -1) {
+		state->terminal_error = EPROTO;
+		audit_policy(state->label, "malformed-request", EPROTO);
+		channel_message_free(request_message);
+		return;
+	}
+	if (dispatch(request_message, state->store, message, length,
+	    state->label) == -1)
+		state->terminal_error = errno;
+	channel_message_free(request_message);
 }
 
 static int
 worker(int fd, int barrier, const struct scratch_limits *limits,
-    const char *label)
+    int persistent_fd, int bundle_fd, const char *label)
 {
-	union wire_buffer buffer;
-	struct scratch_store *store;
-	size_t nfds, i;
-	ssize_t received;
+	struct channel_options options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	struct worker_state state;
+	struct channel *channel;
+	struct pollfd descriptor;
 	char byte;
-	int fds[8], error;
+	int error, result, wants_write;
 
-	if (service_protect(SERVICE_PROTECT_EXTERNAL |
+	memset(&state, 0, sizeof(state));
+	channel = NULL;
+	state.label = label;
+	if (service_worker_protect(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOEXEC |
 	    SERVICE_PROTECT_NOSOCK) == -1) {
@@ -354,73 +376,113 @@ worker(int fd, int barrier, const struct scratch_limits *limits,
 		(void)write(barrier, &error, sizeof(error));
 		return (1);
 	}
-	service_drop_inherited_authority();
+	service_worker_drop_inherited_authority();
 	if (cap_enter() == -1) {
 		error = errno;
 		(void)write(barrier, &error, sizeof(error));
 		return (1);
 	}
-	if (scratch_store_create(limits, &store) == -1) {
+	if (filesystem_store_create(limits, persistent_fd, bundle_fd,
+	    &state.store) == -1) {
 		error = errno;
+		close(persistent_fd);
+		close(bundle_fd);
+		(void)write(barrier, &error, sizeof(error));
+		return (1);
+	}
+	close(persistent_fd);
+	close(bundle_fd);
+	if (channel_create(fd, &options, &channel) == -1 ||
+	    channel_set_request_handler(channel, handle_request, &state) ==
+	    -1) {
+		error = errno;
+		if (channel != NULL)
+			channel_destroy(channel);
+		filesystem_store_destroy(state.store);
 		(void)write(barrier, &error, sizeof(error));
 		return (1);
 	}
 	error = 0;
 	if (write(barrier, &error, sizeof(error)) != sizeof(error) ||
 	    read(barrier, &byte, 1) != 1) {
-		scratch_store_destroy(store);
+		channel_destroy(channel);
+		filesystem_store_destroy(state.store);
 		return (1);
 	}
 	close(barrier);
 	for (;;) {
-		nfds = nitems(fds);
-		received = filesystemcmp_receive_message(fd, &buffer,
-		    sizeof(buffer), fds, &nfds);
-		if (received == -1) {
-			if (errno == ECONNRESET || errno == EPIPE)
-				break;
-			audit_policy(label, "malformed-request", errno);
+		wants_write = channel_wants_write(channel);
+		if (wants_write == -1)
+			break;
+		memset(&descriptor, 0, sizeof(descriptor));
+		descriptor.fd = channel_fd(channel);
+		descriptor.events = POLLIN | (wants_write ? POLLOUT : 0);
+		do {
+			result = poll(&descriptor, 1, -1);
+		} while (result == -1 && errno == EINTR);
+		if (result == -1)
+			break;
+		if ((descriptor.revents & POLLOUT) != 0 &&
+		    channel_flush(channel) == -1)
+			break;
+		if ((descriptor.revents &
+		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+		    channel_dispatch(channel) == -1)
+			break;
+		if (state.terminal_error != 0) {
+			errno = state.terminal_error;
 			break;
 		}
-		for (i = 0; i < nfds; i++)
-			close(fds[i]);
-		if (dispatch(fd, store, &buffer.wire.msg, label) == -1)
-			break;
 	}
-	scratch_store_destroy(store);
-	close(fd);
+	channel_destroy(channel);
+	filesystem_store_destroy(state.store);
 	return (0);
 }
 
 static int
 start_session(int fd, const char *peer_label)
 {
-	struct component_session_bootstrap bootstrap;
+	struct service_component_bootstrap *bootstrap;
 	struct scratch_limits limits;
-	char options[COMPONENT_SESSION_OPTIONS_MAX];
+	uint64_t instance_id __unused;
+	int resources[2] = { -1, -1 };
 	int syncfd[2], pd, child_error, error;
 	pid_t pid;
 	char byte;
 	ssize_t n;
 
-	if (service_component_recv_bootstrap(fd, &bootstrap, options,
-	    sizeof(options)) == -1)
+	bootstrap = NULL;
+	if (service_component_accept(fd, &bootstrap) == -1) {
+		FILESYSTEMCMPD_PROBE_SESSION(peer_label, 0, errno);
 		return (-1);
-	if (strcmp(bootstrap.interface, FILESYSTEMCMP_INTERFACE) != 0 ||
-	    strcmp(bootstrap.interface_version,
-	    FILESYSTEMCMP_INTERFACE_VERSION) != 0 ||
-	    bootstrap.scope != COMPONENT_SESSION_SCOPE_PRIVATE) {
+	}
+	instance_id = service_component_instance_id(bootstrap);
+	if (service_component_resource_count(bootstrap) != nitems(resources)) {
+		error = EPROTO;
+		goto reject;
+	}
+	if (strcmp(service_component_interface(bootstrap),
+	    FILESYSTEMCMP_INTERFACE) != 0 ||
+	    strcmp(service_component_interface_version(bootstrap),
+	    FILESYSTEMCMP_INTERFACE_VERSION) != 0) {
 		error = EOPNOTSUPP;
 		goto reject;
 	}
-	if (harden_worker_fd(fd) == -1) {
+	resources[0] = service_component_take_resource(bootstrap, 0);
+	resources[1] = service_component_take_resource(bootstrap, 1);
+	if (resources[0] == -1 || resources[1] == -1) {
 		error = errno;
 		goto reject;
 	}
-	if (parse_options(options, &limits) == -1) {
+	if (harden_worker_fd(fd) == -1 ||
+	    harden_resource_fd(resources[0], false) == -1 ||
+	    harden_resource_fd(resources[1], true) == -1) {
 		error = errno;
 		goto reject;
 	}
+	limits.max_bytes = DEFAULT_MAX_BYTES;
+	limits.max_objects = DEFAULT_MAX_OBJECTS;
+	limits.max_file_bytes = DEFAULT_MAX_FILE_BYTES;
 	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, syncfd) == -1) {
 		error = errno;
 		goto reject;
@@ -443,8 +505,12 @@ start_session(int fd, const char *peer_label)
 	}
 	if (pid == 0) {
 		close(syncfd[0]);
-		_exit(worker(fd, syncfd[1], &limits, peer_label));
+		_exit(worker(fd, syncfd[1], &limits, resources[0], resources[1],
+		    peer_label));
 	}
+	close(resources[0]);
+	close(resources[1]);
+	resources[0] = resources[1] = -1;
 	close(syncfd[1]);
 	n = read(syncfd[0], &child_error, sizeof(child_error));
 	if (n != sizeof(child_error) || child_error != 0) {
@@ -454,27 +520,39 @@ start_session(int fd, const char *peer_label)
 		close(syncfd[0]);
 		goto reject;
 	}
-	if (service_component_send_reply(fd, bootstrap.instance_id, 0,
-	    COMPONENT_SESSION_MEMBER_PROCDESC, pd) == -1) {
+	if (service_component_complete(bootstrap,
+	    SERVICE_COMPONENT_MEMBER_PROCDESC, pd) == -1) {
+		bootstrap = NULL;
 		error = errno;
 		(void)pdkill(pd, SIGKILL);
 		close(pd);
 		close(syncfd[0]);
 		audit_policy(peer_label, "session-bootstrap", error);
+		FILESYSTEMCMPD_PROBE_SESSION(peer_label, instance_id,
+		    error);
 		errno = error;
 		return (-1);
 	}
+	bootstrap = NULL;
 	close(pd);
 	byte = 1;
 	(void)write(syncfd[0], &byte, 1);
 	close(syncfd[0]);
 	audit_policy(peer_label, "session-bootstrap", 0);
+	FILESYSTEMCMPD_PROBE_SESSION(peer_label, instance_id, 0);
 	return (0);
 
 reject:
-	(void)service_component_send_reply(fd, bootstrap.instance_id, error, 0,
-	    -1);
+	if (resources[0] >= 0)
+		close(resources[0]);
+	if (resources[1] >= 0)
+		close(resources[1]);
+	if (bootstrap != NULL) {
+		(void)service_component_fail(bootstrap, error);
+		bootstrap = NULL;
+	}
 	audit_policy(peer_label, "session-bootstrap", error);
+	FILESYSTEMCMPD_PROBE_SESSION(peer_label, instance_id, error);
 	errno = error;
 	return (-1);
 }
@@ -482,29 +560,35 @@ reject:
 int
 main(void)
 {
-	char label[COMPONENT_SESSION_LABEL_MAX];
+	struct service_identity identity;
+	struct service_listener *listener;
+	struct service_provider *provider;
 	int fd;
 
 	openlog("filesystemcmp", LOG_PID | LOG_NDELAY, LOG_DAEMON);
-	if (service_init() == -1 ||
-	    service_authorize_capabilities() == -1 ||
-	    service_protect(SERVICE_PROTECT_EXTERNAL |
+	if (service_provider_create(&provider) == -1 ||
+	    service_provider_authorize_capabilities(provider) == -1 ||
+	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOEXEC) == -1 ||
-	    service_register(FILESYSTEMCMP_PROVIDER_NAME) == -1 ||
-	    service_ready() == -1) {
+	    service_provider_expose(provider, FILESYSTEMCMP_PROVIDER_NAME,
+	    &listener) == -1 ||
+	    service_provider_enter_capability_mode(provider) == -1 ||
+	    service_provider_ready(provider) == -1) {
 		syslog(LOG_ERR, "initialization: %m");
 		return (1);
 	}
 	for (;;) {
-		fd = service_accept(label, sizeof(label));
-		if (fd == -1) {
+		memset(&identity, 0, sizeof(identity));
+		identity.size = sizeof(identity);
+		if (service_listener_accept(listener, &identity, &fd) == -1) {
 			if (errno == EINTR)
 				continue;
-			syslog(LOG_ERR, "service_accept: %m");
+			syslog(LOG_ERR, "service_listener_accept: %m");
 			return (1);
 		}
-		if (start_session(fd, label) == -1)
-			syslog(LOG_WARNING, "session for %s rejected: %m", label);
+		if (start_session(fd, identity.client_label) == -1)
+			syslog(LOG_WARNING, "session for %s rejected: %m",
+			    identity.client_label);
 		close(fd);
 	}
 }

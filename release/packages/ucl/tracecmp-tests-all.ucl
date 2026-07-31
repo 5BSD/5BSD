@@ -1,0 +1,10 @@
+comment = "TraceCmp provider tests"
+
+desc = <<EOD
+Protocol, bounded-transfer, sandbox, bundle, audit, and DTrace tests for the
+TraceCmp provider.
+EOD
+
+annotations = {
+	set = "tests"
+}

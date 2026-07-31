@@ -1,5 +1,5 @@
-comment = "Tests for the managed-daemon capability library"
+comment = "Tests for the kernel capability-service wrapper library"
 
 desc = <<EOD
-ATF/Kyua lifecycle and authorization tests for libcapability.
+ATF/Kyua validation and descriptor-ownership tests for libcapability.
 EOD

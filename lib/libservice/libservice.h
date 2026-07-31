@@ -9,24 +9,9 @@
  * over their inherited pair fd.  Services link against libservice
  * without exposing the common mac_capability transport ioctls.
  *
- * Typical usage:
- *
- *   service_init();
- *   service_authorize_capabilities();
- *   service_protect(SERVICE_PROTECT_EXTERNAL);
- *   service_register("org.5bsd.myservice");
- *   service_ready();
- *
- *   for (;;) {
- *       int client = service_accept();
- *       // handle client on the returned fd
- *   }
- *
- * Or for a client connecting to another service:
- *
- *   service_init();
- *   int peer = service_lookup("org.5bsd.myservice");
- *   // talk to peer
+ * Applications normally use a typed service library.  Global providers use a
+ * service_provider; local/global discovery policy remains inside the typed
+ * library rather than becoming an application choice.
  */
 
 #ifndef _LIBSERVICE_H_
@@ -36,11 +21,10 @@
 
 #include <stdint.h>
 
-#include "component_session.h"
-
 /*
- * Public service_protect() flags.  Keep kernel protocol details behind
- * libservice so service programs do not need mac_capability headers.
+ * Public process-protection flags used by service_provider_protect() and
+ * service_worker_protect().  Keep kernel protocol details behind libservice
+ * so service programs do not need mac_capability headers.
  */
 #define	SERVICE_PROTECT_PTRACE		0x0001
 #define	SERVICE_PROTECT_SIGNAL		0x0002
@@ -70,26 +54,85 @@
 #define	SERVICE_PROTECT_ALL		(SERVICE_PROTECT_EXTERNAL | \
 	 SERVICE_PROTECT_RESTRICT)
 
+struct service_listener;
+struct service_session;
+struct service_context;
+struct service_provider;
+struct service_component_bootstrap;
+typedef int (*service_activation_handler)(const char *name, void *context);
+
+enum service_component_member_type {
+	SERVICE_COMPONENT_MEMBER_PROCDESC = 1,
+	SERVICE_COMPONENT_MEMBER_COALITION = 2
+};
+
+struct service_identity {
+	size_t	size;
+	char	service_name[256];
+	char	client_label[64];
+	uint64_t reserved[4];
+};
+
+/*
+ * Metadata stamped or carried by a mac_capability channel message.  Attached
+ * descriptors are returned separately in attachment-slot order.
+ */
+struct service_message_metadata {
+	size_t		size;
+	size_t		payload_length;
+	uint64_t	sender_badge;
+	uint64_t	sender_nonce;
+	uint32_t	sender_uid;
+	uint32_t	sender_gid;
+	int32_t		sender_prison;
+	uint32_t	reserved[3];
+};
+
 __BEGIN_DECLS
 
 /*
- * Initialize the library from serviced's versioned bootstrap descriptor.
- * The descriptor is validated, mapped read-only, and closed before return.
- * Must be called exactly once before any other function.
+ * Acquire the process-wide serviced context.  Initialization is idempotent,
+ * thread-safe, and shared by every typed service library in the process.
+ * The first terminal bootstrap error is returned consistently to all callers.
+ * Releasing the last logical reference does not invalidate active sessions or
+ * listeners.
  */
-int	service_init(void);
+int	service_acquire(struct service_context **);
+void	service_release(struct service_context *);
+int	service_authorize_capabilities(struct service_context *);
+int	service_enter_capability_mode(struct service_context *);
+int	service_ready(struct service_context *);
 
 /*
- * Return the channel fd to serviced.  Useful for kqueue registration.
- * Returns -1 if not initialized.
+ * A provider owns global-name exposure and makes the capability-mode security
+ * transition explicit.  service_provider_ready() never enters capability
+ * mode; callers must seal the process first.
  */
-int	service_channel_fd(void);
+int	service_provider_create(struct service_provider **);
+void	service_provider_destroy(struct service_provider *);
+int	service_provider_authorize_capabilities(struct service_provider *);
+int	service_provider_protect(struct service_provider *, uint32_t flags);
+int	service_provider_expose(struct service_provider *, const char *name,
+	    struct service_listener **);
+int	service_provider_expose_lazy(struct service_provider *, const char *name,
+	    service_activation_handler, void *, struct service_listener **);
+int	service_provider_enter_capability_mode(struct service_provider *);
+int	service_provider_ready(struct service_provider *);
+
+/*
+ * Monitor the supervising serviced connection.  The borrowed event fd becomes
+ * readable once the connection is permanently lost.  status returns zero
+ * while the dispatcher is healthy and otherwise returns -1 with the terminal
+ * transport error in errno.  It never consumes the event indication.
+ */
+int	service_supervisor_fd(struct service_context *);
+int	service_supervisor_status(struct service_context *);
 
 /*
  * Return the immutable serviced manifest label for this process.
  * The returned pointer remains owned by libservice.
  */
-const char *service_label(void);
+const char *service_label(struct service_context *);
 
 /*
  * Return a borrowed descriptor for a manifest-declared capability service.
@@ -97,25 +140,36 @@ const char *service_label(void);
  * These descriptors are ready for service-specific ioctls; unlike access
  * tokens, they are not activated.  The descriptor remains owned by libservice.
  */
-int	service_capability_fd(const char *name);
+int	service_capability_fd(struct service_context *, const char *name);
+
+int	service_local_component_open(struct service_context *,
+	    const char *interface, const char *version, int *session_fd);
 
 /*
- * Return the borrowed channel for a manifest-declared component session.
- * The name is the key used under the manifest's components object.
+ * Provider-side local-component bootstrap.  The opaque object owns every
+ * received descriptor until its attachment slot is explicitly taken.
+ * complete() and fail() consume the object on both success and failure.
  */
-int	service_component_fd(const char *name);
-
-/*
- * Provider-side component bootstrap helpers.  The receive helper validates
- * the versioned frame and copies its NUL-terminated JSON options.  A
- * successful reply must attach one procdesc or coalition membership fd;
- * an error reply attaches no descriptor.
- */
-int	service_component_recv_bootstrap(int fd,
-	    struct component_session_bootstrap *bootstrap, char *options,
-	    size_t options_size);
-int	service_component_send_reply(int fd, uint64_t instance_id, int status,
-	    uint32_t member_type, int member_fd);
+int	service_component_accept(int fd,
+	    struct service_component_bootstrap **);
+const char *service_component_name(
+	    const struct service_component_bootstrap *);
+const char *service_component_interface(
+	    const struct service_component_bootstrap *);
+const char *service_component_interface_version(
+	    const struct service_component_bootstrap *);
+const char *service_component_client_label(
+	    const struct service_component_bootstrap *);
+uint64_t service_component_instance_id(
+	    const struct service_component_bootstrap *);
+size_t	service_component_resource_count(
+	    const struct service_component_bootstrap *);
+int	service_component_take_resource(
+	    struct service_component_bootstrap *, size_t slot);
+int	service_component_complete(struct service_component_bootstrap *,
+	    enum service_component_member_type, int member_fd);
+int	service_component_fail(struct service_component_bootstrap *, int error);
+void	service_component_abort(struct service_component_bootstrap *);
 
 /*
  * Activate every isolation token delivered in the bootstrap descriptor.
@@ -124,90 +178,76 @@ int	service_component_send_reply(int fd, uint64_t instance_id, int status,
  * Because kernel authorization is a descriptor lease, the library retains
  * private close-on-exec references until process exit.
  */
-int	service_authorize_capabilities(void);
-
-/*
- * Apply mac_capability_capprotect shielding to this service process.
- * The service must have received a capprotect instance from serviced.
- * Use SERVICE_PROTECT_* flags.  A flags value of 0 requests all current
- * capprotect protections; explicit flags are preferable for stable policy.
- */
-int	service_protect(uint32_t flags);
+int	service_worker_protect(uint32_t flags);
 
 /*
  * Drop every descriptor authority retained internally by libservice.
- * A freshly forked component worker calls this after service_protect() and
- * before cap_enter().  Application-owned session, ring, and bearer
+ * A freshly forked component worker calls this after
+ * service_worker_protect() and before cap_enter().  Application-owned
+ * session, ring, and bearer
  * descriptors are not affected.
  */
-void	service_drop_inherited_authority(void);
+void	service_worker_drop_inherited_authority(void);
 
 /*
- * Enter Capsicum capability mode, then send the compatibility readiness
- * advisory.  serviced promotes dependents from the independently observed
- * and verified NOTE_CAPMODE process-descriptor event.
- * Returns 0 on success, -1 on failure.
+ * Every exposed global name has an independent listener and accept queue.
+ * service_listener_close() consumes the listener and withdraws that name.
  */
-int	service_ready(void);
+int	service_listener_close(struct service_listener *listener);
+int	service_listener_fd(const struct service_listener *listener);
+int	service_listener_accept(struct service_listener *,
+	    struct service_identity *, int *session_fd);
 
 /*
- * Register a reverse-domain name with serviced.
- * After registration, clients can connect via service_lookup().
- * Returns 0 on success, -1 on failure (sets errno).
+ * Connect to a global service.  The returned session descriptor is owned by
+ * the caller.  serviced supplies authenticated provider and client
+ * identities when it creates the direct channel.
  */
-int	service_register(const char *name);
+int	service_connect(struct service_context *, const char *name,
+	    int *session_fd);
 
-/*
- * Deregister a previously registered name.
- * Returns 0 on success, -1 on failure (sets errno).
- */
-int	service_unregister(const char *name);
+#define	SERVICE_CLIENT_TIMEOUT_INFINITE	UINT32_MAX
 
-/*
- * Connect to a named service.
- * Returns a file descriptor for the connection, or -1 on failure.
- * The returned fd is a bidirectional pair endpoint.
- */
-int	service_lookup(const char *name);
+struct service_message {
+	size_t		size;
+	const void	*data;
+	size_t		length;
+	const int	*fds;
+	size_t		nfds;
+};
 
-/*
- * Accept a new client connection.
- * Blocks until a client connects via service_lookup() to one of
- * this service's registered names.
- * Returns a file descriptor for the client, or -1 on failure.
- * Also fills client_label (if non-NULL) with the connecting
- * service's label (up to labelsz bytes).
- */
-int	service_accept(char *client_label, size_t labelsz);
+struct service_reply {
+	size_t		size;
+	void		*data;
+	size_t		capacity;
+	size_t		length;
+	int		*fds;
+	size_t		fd_capacity;
+	size_t		nfds;
+	struct service_message_metadata metadata;
+};
 
-/*
- * Send a message on a pair fd.  Convenience wrapper.
- * Returns 0 on success, -1 on failure.
- */
-int	service_send(int fd, const void *data, size_t len);
+struct service_call_options {
+	size_t		size;
+	uint32_t	timeout_ms;
+	uint32_t	flags;
+	uint64_t	reserved[2];
+};
 
-/*
- * Send a message with zero or more attached descriptors.
- * The descriptors are borrowed for the duration of the call.
- */
-int	service_send_fds(int fd, const void *data, size_t len,
-	    const int *fds, size_t nfds);
+#define	SERVICE_CALL_OPTIONS_INITIALIZER {			\
+	.size = sizeof(struct service_call_options),		\
+	.timeout_ms = SERVICE_CLIENT_TIMEOUT_INFINITE,		\
+	.flags = 0,						\
+	.reserved = { 0, 0 }					\
+}
 
-/*
- * Receive a message from a pair fd.  Convenience wrapper.
- * Returns bytes received on success, -1 on failure.
- * If peer_fd is non-NULL and the message carries an attached fd,
- * it is stored there (-1 if no fd attached).
- */
-ssize_t	service_recv(int fd, void *buf, size_t bufsz, int *peer_fd);
-
-/*
- * Receive a message and zero or more attached descriptors.
- * On entry, *nfds is the capacity of fds[].  On success it is the number
- * received.  The caller owns all returned descriptors.
- */
-ssize_t	service_recv_fds(int fd, void *buf, size_t bufsz, int *fds,
-	    size_t *nfds);
+int	service_session_create(int fd, struct service_session **session);
+void	service_session_close(struct service_session *session);
+int	service_session_call(struct service_session *,
+	    const struct service_message *, struct service_reply *,
+	    const struct service_call_options *);
+int	service_session_receive_event(struct service_session *,
+	    struct service_reply *, const struct service_call_options *);
 
 __END_DECLS
 

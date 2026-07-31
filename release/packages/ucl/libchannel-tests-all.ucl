@@ -1,0 +1,10 @@
+comment = "Asynchronous capability-channel library tests"
+
+desc = <<EOD
+Tests for channel lifecycle, message ownership, correlation, backpressure,
+cancellation, provider dispatch, and peer-death behavior.
+EOD
+
+annotations = {
+	set = "tests"
+}

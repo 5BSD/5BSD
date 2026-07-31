@@ -80,22 +80,12 @@ inspect_component_note(Elf_Scn *scn, bool *filesystem, bool *network)
 		if (data->d_buf == NULL)
 			continue;
 		if (contains(data->d_buf, data->d_size,
-		    "interface=org.5bsd.cmp.network"))
+		    "interface=org.5bsd.network"))
 			*network = true;
 		if (contains(data->d_buf, data->d_size,
-		    "interface=org.5bsd.cmp.filesystem"))
+		    "interface=org.5bsd.filesystem"))
 			*filesystem = true;
 	}
-}
-
-static void
-print_component(const char *name, const char *interface)
-{
-
-	printf("    %s {\n", name);
-	printf("        interface = \"%s\";\n", interface);
-	printf("        version = \"1.0.0\";\n");
-	printf("    }\n");
 }
 
 int
@@ -142,22 +132,22 @@ cmd_deps(const char *program)
 		if (strcmp(name, ".note.5bsd.components") == 0)
 			inspect_component_note(scn, &filesystem, &network);
 		if (shdr.sh_type == SHT_DYNAMIC)
-			inspect_dynamic(elf, scn, &shdr, &filesystem,
-			    &network);
+			inspect_dynamic(elf, scn, &shdr, &filesystem, &network);
 	}
 
-	printf("# Suggested declarations for %s.\n", program);
-	printf("# Review explicitly: discovery never grants authority.\n");
+	printf("# Suggested local authority components for %s.\n", program);
+	printf("# Global service libraries discover their named services at runtime.\n");
 	if (!network && !filesystem) {
-		printf("# No known component dependencies found.\n");
+		printf("# No local component dependencies found.\n");
 	} else {
-		printf("components {\n");
+		printf("components = [");
 		if (filesystem)
-			print_component("filesystem",
-			    "org.5bsd.cmp.filesystem");
+			printf("\"filesystem\"");
+		if (filesystem && network)
+			printf(", ");
 		if (network)
-			print_component("network", "org.5bsd.cmp.network");
-		printf("}\n");
+			printf("\"network\"");
+		printf("];\n");
 	}
 	elf_end(elf);
 	close(fd);

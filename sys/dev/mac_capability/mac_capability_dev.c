@@ -127,7 +127,7 @@ mac_capability_probe_error(struct mac_capability_instance *s, u_long op, int err
     struct thread *td)
 {
 	struct mac_capability_service *svc;
-	const char *svc_name;
+	const char *svc_name __diagused;
 
 	if (error == 0)
 		return;
@@ -142,7 +142,7 @@ mac_capability_probe_rights_change(struct mac_capability_instance *s, u_long cmd
     struct thread *td)
 {
 	struct mac_capability_service *svc;
-	int flags, restricted;
+	int flags __diagused, restricted __diagused;
 
 	svc = s->ci_service;
 	if (svc == NULL)
@@ -160,13 +160,12 @@ mac_capability_probe_rights_change(struct mac_capability_instance *s, u_long cmd
 }
 
 static int
-mac_capability_instance_enqueue_rx(struct mac_capability_instance *s, struct mac_capability_msg *msg)
+mac_capability_instance_rx_ready(struct mac_capability_instance *s)
 {
 	struct mac_capability_service *svc;
 
 	mtx_assert(&s->ci_mtx, MA_OWNED);
 	if (s->ci_flags & MAC_CAPABILITY_SF_DEAD) {
-		mac_capability_msg_free(msg);
 		return (ECONNRESET);
 	}
 	if (s->ci_rxqlen >= s->ci_rxqlimit) {
@@ -176,9 +175,20 @@ mac_capability_instance_enqueue_rx(struct mac_capability_instance *s, struct mac
 			    svc->csvc_name, s->ci_badge, "rx",
 			    s->ci_rxqlen, s->ci_rxqlimit);
 		}
-		mac_capability_msg_free(msg);
 		return (EAGAIN);
 	}
+	return (0);
+}
+
+static void
+mac_capability_instance_enqueue_rx_committed(
+    struct mac_capability_instance *s, struct mac_capability_msg *msg)
+{
+	struct mac_capability_service *svc;
+
+	mtx_assert(&s->ci_mtx, MA_OWNED);
+	KASSERT(mac_capability_instance_rx_ready(s) == 0,
+	    ("%s: RX queue no longer has room", __func__));
 	STAILQ_INSERT_TAIL(&s->ci_rxq, msg, cm_link);
 	s->ci_rxqlen++;
 
@@ -194,7 +204,21 @@ mac_capability_instance_enqueue_rx(struct mac_capability_instance *s, struct mac
 		s->ci_dispatching = true;
 		taskqueue_enqueue(svc->csvc_taskq, &s->ci_task);
 	}
+}
 
+static int
+mac_capability_instance_enqueue_rx(struct mac_capability_instance *s,
+    struct mac_capability_msg *msg)
+{
+	int error;
+
+	mtx_assert(&s->ci_mtx, MA_OWNED);
+	error = mac_capability_instance_rx_ready(s);
+	if (error != 0) {
+		mac_capability_msg_free(msg);
+		return (error);
+	}
+	mac_capability_instance_enqueue_rx_committed(s, msg);
 	return (0);
 }
 
@@ -263,18 +287,19 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 			    NULL, &msg->cm_fds[i], &msg->cm_fcaps[i]);
 			if (error != 0)
 				goto sendmsg_fd_err;
+			msg->cm_nfds++;
 			if (!(msg->cm_fds[i]->f_ops->fo_flags &
 			    DFLAG_PASSABLE)) {
 				error = EINVAL;
-				fdrop(msg->cm_fds[i], td);
-				msg->cm_fds[i] = NULL;
-				filecaps_free(&msg->cm_fcaps[i]);
 				goto sendmsg_fd_err;
 			}
 		}
-		msg->cm_nfds = args->nfds;
 
-		/* Check and consume transfer state under exclusive lock. */
+		/*
+		 * Validate transfer state and reserve RX capacity under one
+		 * critical section.  Transfer authority is consumed only after
+		 * the message is known to be accepted, so EAGAIN is retryable.
+		 */
 		{
 			struct filedesc *fdesc = td->td_proc->p_fd;
 			struct filedescent *fde;
@@ -285,15 +310,21 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 				if (fde->fde_file != msg->cm_fds[i]) {
 					FILEDESC_XUNLOCK(fdesc);
 					error = EBADF;
-					i = (int)args->nfds;
 					goto sendmsg_fd_err;
 				}
 				if (fde->fde_xfer_state == CAP_XFER_NONE) {
 					FILEDESC_XUNLOCK(fdesc);
 					error = ENOTCAPABLE;
-					i = (int)args->nfds;
 					goto sendmsg_fd_err;
 				}
+			}
+
+			mtx_lock(&s->ci_mtx);
+			error = mac_capability_instance_rx_ready(s);
+			if (error != 0) {
+				mtx_unlock(&s->ci_mtx);
+				FILEDESC_XUNLOCK(fdesc);
+				goto sendmsg_fd_err;
 			}
 			for (i = 0; i < (int)args->nfds; i++) {
 				fde = &fdesc->fd_ofiles[fdbuf[i]];
@@ -302,7 +333,11 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 				    &msg->cm_fcaps[i], true);
 				filecaps_intersect(&msg->cm_fcaps[i],
 				    &fde->fde_xfer_caps);
-				if (fde->fde_xfer_state == CAP_XFER_ONCE) {
+				if (fde->fde_xfer_state == CAP_XFER_TWICE) {
+					fde->fde_xfer_state = CAP_XFER_NONE;
+					msg->cm_xfer_state[i] = CAP_XFER_ONCE;
+				} else if (fde->fde_xfer_state ==
+				    CAP_XFER_ONCE) {
 					fde->fde_xfer_state = CAP_XFER_NONE;
 					msg->cm_xfer_state[i] = CAP_XFER_NONE;
 				} else {
@@ -317,30 +352,22 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 				    fde->fde_flags &
 				    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 			}
-			FILEDESC_XUNLOCK(fdesc);
-
 			msg->cm_badge = s->ci_badge;
 			msg->cm_reply_token = args->reply_token;
 			msg->cm_cred = crhold(td->td_ucred);
 
-			mtx_lock(&s->ci_mtx);
-			error = mac_capability_instance_enqueue_rx(s, msg);
+			mac_capability_instance_enqueue_rx_committed(s, msg);
 			mtx_unlock(&s->ci_mtx);
+			FILEDESC_XUNLOCK(fdesc);
 
-			if (error == 0)
-				SDT_PROBE3(mac_capability, , , send,
-				    svc->csvc_name, s->ci_badge,
-				    args->payload_len);
+			SDT_PROBE3(mac_capability, , , send,
+			    svc->csvc_name, s->ci_badge, args->payload_len);
+			error = 0;
 			goto out;
 		}
 
 sendmsg_fd_err:
-		while (--i >= 0) {
-			fdrop(msg->cm_fds[i], td);
-			msg->cm_fds[i] = NULL;
-			filecaps_free(&msg->cm_fcaps[i]);
-		}
-		uma_zfree(mac_capability_msg_zone, msg);
+		mac_capability_msg_free(msg);
 		goto out;
 	}
 
@@ -443,6 +470,15 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 	STAILQ_REMOVE_HEAD(&s->ci_txq, cm_link);
 	s->ci_txqlen--;
 	mtx_unlock(&s->ci_mtx);
+
+	/*
+	 * Notify a bearer after capacity is genuinely released.  The callback
+	 * may schedule a peer whose accepted RX head is waiting to forward.
+	 */
+	if (s->ci_service != NULL &&
+	    s->ci_service->csvc_ops->co_txdrain != NULL)
+		s->ci_service->csvc_ops->co_txdrain(s,
+		    s->ci_service->csvc_arg);
 
 	/* Copyout payload. */
 	if (msg->cm_datalen > 0)
@@ -710,6 +746,12 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 						    &call_fcaps[i],
 						    &fde->fde_xfer_caps);
 						if (fde->fde_xfer_state ==
+						    CAP_XFER_TWICE) {
+							fde->fde_xfer_state =
+							    CAP_XFER_NONE;
+							call_xfer_state[i] =
+							    CAP_XFER_ONCE;
+						} else if (fde->fde_xfer_state ==
 						    CAP_XFER_ONCE) {
 							fde->fde_xfer_state =
 							    CAP_XFER_NONE;

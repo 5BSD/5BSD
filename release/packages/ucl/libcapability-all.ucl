@@ -1,0 +1,8 @@
+comment = "Kernel capability-service wrapper library"
+
+desc = <<EOD
+Validated wrappers for the specialized synchronous kernel capability-service
+ABI.  The library checks request and reply bounds, descriptor cardinality, and
+descriptor ownership while keeping MAC_CAPABILITY_CALL out of general
+userspace messaging libraries.
+EOD

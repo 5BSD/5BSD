@@ -56,10 +56,7 @@ svc_close_fds(struct svc_runtime *svc)
 		close(svc->pd_fd);
 		svc->pd_fd = -1;
 	}
-	if (svc->channel_fd >= 0) {
-		close(svc->channel_fd);
-		svc->channel_fd = -1;
-	}
+	svc_channel_close(svc);
 	if (svc->coalition_fd >= 0) {
 		close(svc->coalition_fd);
 		svc->coalition_fd = -1;
@@ -193,7 +190,8 @@ supervisor_handle_procdesc(struct kevent *kev)
 			    "svc=%s pid=%jd phase=capmode-ready "
 			    "protocol_ready=%d", svc->manifest.label,
 			    (intmax_t)svc->pid, svc->protocol_ready);
-			on_demand_check_ready(svc, serviced_kq);
+			if (svc->protocol_ready)
+				on_demand_check_ready(svc, serviced_kq);
 		} else {
 			int error;
 
@@ -236,6 +234,9 @@ supervisor_handle_procdesc(struct kevent *kev)
 
 		waitpid(svc->pid, NULL, WNOHANG);
 		cancel_stop_timer(svc);
+		on_demand_provider_failed(svc,
+		    was_stopping ? ESHUTDOWN : ECONNRESET, serviced_kq);
+		on_demand_requester_gone(svc, serviced_kq);
 		naming_remove_owner(svc);
 
 		/* Release dynamic claims for this service. */

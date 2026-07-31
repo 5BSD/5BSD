@@ -3352,7 +3352,8 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		${_kerberos5_lib_libwind} \
 		${_krb5_util_et} \
 		${_krb5_util_profile} \
-		lib/libbz2 ${_libcom_err} lib/libcrypt \
+		lib/libbz2 ${_libcom_err} lib/libcapability lib/libchannel \
+		lib/libcrypt \
 		lib/libc++ \
 		lib/libelf lib/libexpat \
 		lib/libfigpar \
@@ -3378,7 +3379,8 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		${_krb5_lib_kadm5srvmit} \
 		${_krb5_lib_kadm5clntmit} \
 		lib/libpam/libpam lib/libthr \
-		${_lib_libradius} lib/libsbuf lib/libservice lib/libtacplus \
+		${_lib_libradius} lib/libsbuf lib/libservice lib/libshmring \
+		lib/libtacplus \
 		lib/libgeom \
 		${_lib_librt} \
 		${_cddl_lib_libumem} ${_cddl_lib_libnvpair} \
@@ -3394,6 +3396,8 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		lib/libxo \
 		${_secure_lib_libcrypto} ${_secure_lib_libssl} \
 		${_lib_libldns} ${_secure_lib_libssh}
+
+lib/libservice__L: lib/libcapability__L lib/libchannel__L
 
 .if ${MK_DIALOG} != "no"
 _prebuild_libs+= gnu/lib/libdialog

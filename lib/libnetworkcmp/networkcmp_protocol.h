@@ -13,10 +13,10 @@
 
 #define	NETWORKCMP_MAGIC		0x4e434d50U	/* "NCMP" */
 #define	NETWORKCMP_ABI_VERSION		1
-#define	NETWORKCMP_INTERFACE		"org.5bsd.cmp.network"
+#define	NETWORKCMP_INTERFACE		"org.5bsd.network"
 #define	NETWORKCMP_INTERFACE_VERSION	"1.0.0"
 #define	NETWORKCMP_MAX_MESSAGE		14336
-#define	NETWORKCMP_RING_FDS		8
+#define	NETWORKCMP_RING_FDS		NETWORKCMP_RING_FD_COUNT
 #define	NETWORKCMP_NAME_MAX		253
 #define	NETWORKCMP_SERVICE_MAX		32
 #define	NETWORKCMP_CANONNAME_MAX	253
@@ -25,9 +25,10 @@
 #define	NETWORKCMP_RING_MAX_SIZE		(1U << 30)
 #define	NETWORKCMP_RING_DEFAULT_SIZE	(256U * 1024)
 #define	NETWORKCMP_DATAGRAM_DEFAULT_MAX	65535U
+#define	NETWORKCMP_INLINE_MAX		12288U
+#define	NETWORKCMP_IO_TIMEOUT_MAX	60000U
 
-#define	NETWORKCMP_MSG_F_REPLY		0x00000001U
-#define	NETWORKCMP_MSG_F_MASK		NETWORKCMP_MSG_F_REPLY
+#define	NETWORKCMP_MSG_F_MASK		0U
 
 #define	NETWORKCMP_FEATURE_TCP		0x00000001U
 #define	NETWORKCMP_FEATURE_UDP		0x00000002U
@@ -54,8 +55,14 @@ enum networkcmp_opcode {
 	NETWORKCMP_OP_CLOSE,
 	NETWORKCMP_OP_RESOLVE,
 	NETWORKCMP_OP_ATTACH_RINGS,
-	NETWORKCMP_OP_NOTIFY
+	NETWORKCMP_OP_SEND,
+	NETWORKCMP_OP_RECV,
+	NETWORKCMP_OP_CONNECT_STATUS
 };
+
+#define	NETWORKCMP_IO_F_EOF		0x00000001U
+#define	NETWORKCMP_IO_F_TRUNCATED	0x00000002U
+#define	NETWORKCMP_IO_F_MASK		0x00000003U
 
 enum networkcmp_family {
 	NETWORKCMP_AF_UNSPEC = 0,
@@ -69,15 +76,39 @@ enum networkcmp_socket_type {
 	NETWORKCMP_SOCK_DGRAM = 2
 };
 
+enum networkcmp_message_role {
+	NETWORKCMP_MESSAGE_REQUEST = 1,
+	NETWORKCMP_MESSAGE_REPLY,
+	NETWORKCMP_MESSAGE_EVENT
+};
+
 struct networkcmp_msg {
 	uint32_t	magic;
 	uint16_t	version;
 	uint16_t	opcode;
 	uint32_t	flags;
-	uint32_t	length;
-	uint64_t	request_id;
 	int32_t		status;
-	uint32_t	reserved;
+} __attribute__((aligned(8)));
+
+_Static_assert(sizeof(struct networkcmp_msg) == 16,
+    "networkcmp message header ABI");
+
+/*
+ * ATTACH_RINGS attachment slots.  Sender fd numbers are never encoded.
+ * The channel installs receiver-local descriptors in this order.  TX and RX
+ * are each libshmring endpoints in config, data, head, tail order, whose
+ * object shape, seals, mappings, and role access are validated on open.
+ */
+enum networkcmp_ring_fd_slot {
+	NETWORKCMP_RING_FD_TX_CONFIG = 0,
+	NETWORKCMP_RING_FD_TX_DATA,
+	NETWORKCMP_RING_FD_TX_HEAD,
+	NETWORKCMP_RING_FD_TX_TAIL,
+	NETWORKCMP_RING_FD_RX_CONFIG,
+	NETWORKCMP_RING_FD_RX_DATA,
+	NETWORKCMP_RING_FD_RX_HEAD,
+	NETWORKCMP_RING_FD_RX_TAIL,
+	NETWORKCMP_RING_FD_COUNT
 };
 
 struct networkcmp_endpoint {
@@ -188,6 +219,22 @@ struct networkcmp_ring_request {
 	struct networkcmp_handle socket;
 	uint32_t	tx_mode;
 	uint32_t	rx_mode;
+};
+
+struct networkcmp_inline_request {
+	struct networkcmp_handle socket;
+	uint32_t	length;
+	uint32_t	flags;
+	uint32_t	timeout_ms;
+	uint32_t	reserved;
+	/* SEND carries length bytes.  RECV carries no trailing bytes. */
+};
+
+struct networkcmp_inline_reply {
+	uint32_t	length;
+	uint32_t	flags;
+	uint32_t	reserved[2];
+	/* A successful RECV carries length bytes. */
 };
 
 #endif /* !_NETWORKCMP_PROTOCOL_H_ */

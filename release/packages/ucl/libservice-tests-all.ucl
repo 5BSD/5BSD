@@ -2,7 +2,8 @@ comment = "Capability service client library tests"
 
 desc = <<EOD
 Tests for capability service initialization, descriptor authorization,
-component injection, and provider bootstrap validation.
+typed local/global discovery, concurrent registry dispatch and accept,
+fork isolation, component injection, and provider bootstrap validation.
 EOD
 
 annotations = {

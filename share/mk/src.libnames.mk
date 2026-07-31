@@ -29,7 +29,6 @@ _PRIVATELIBS=	\
 		heimipcs \
 		kldelf \
 		ldns \
-		lwipcmp \
 		opencsd \
 		pkgconf \
 		samplerate \
@@ -131,6 +130,7 @@ _LIBRARIES=	\
 		calendar \
 		cam \
 		casper \
+		channel \
 		cap_dns \
 		cap_fileargs \
 		cap_grp \
@@ -190,6 +190,9 @@ _LIBRARIES=	\
 		krb5support \
 		kvm \
 		l \
+		logcmp \
+		notifycmp \
+		tracecmp \
 		lzma \
 		m \
 		magic \
@@ -324,12 +327,14 @@ _DP_80211=	sbuf bsdxml
 _DP_9p=		sbuf
 _DP_capbundle=	oraclert ucl
 _DP_oraclert=	ucl
-_DP_service=
+_DP_service=	capability channel pthread
 _DP_shmring=
 _DP_networkcmp=	pthread service shmring
-_DP_lwipcmp=
 _DP_filesystemcmp=	pthread service
-_DP_capability=	service
+_DP_logcmp=	pthread service shmring
+_DP_notifycmp=	pthread service
+_DP_tracecmp=	service
+_DP_capability=
 .if ${MK_CASPER} != "no"
 _DP_9p+=	casper cap_pwd cap_grp
 .endif

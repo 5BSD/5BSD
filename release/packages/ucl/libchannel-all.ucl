@@ -1,0 +1,8 @@
+comment = "Asynchronous capability-channel messaging library"
+
+desc = <<EOD
+Kqueue-native userspace request, reply, and event dispatch over capability
+channels, including bounded backpressure queues, descriptor ownership,
+sender metadata, cancellation, stale-reply rejection, and peer-death
+notification.
+EOD

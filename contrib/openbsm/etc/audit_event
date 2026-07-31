@@ -711,9 +711,11 @@
 43325:AUE_SERVICED_ONDEMAND:serviced on-demand activation:pc
 43326:AUE_SERVICED_ORACLE:serviced oracle disconnect:ad
 43327:AUE_SERVICED_COMPONENT:serviced component session:pc
-43328:AUE_NETMAPD_BEARER:netmap bearer policy:nt
 43329:AUE_NETWORKCMP_POLICY:NetworkCmp policy:nt
 43330:AUE_FILESYSTEMCMP_POLICY:FileSystemCmp policy:fa
+43331:AUE_LOGCMP_POLICY:LogCmp policy:ad
+43332:AUE_TRACECMP_POLICY:TraceCmp policy:ad
+43333:AUE_NOTIFYCMP_POLICY:NotifyCmp policy:ad
 #
 # OpenBSM-managed application event space.
 #

@@ -28,7 +28,6 @@
  */
 #define	SERVICED_MAX_SERVICES		64
 #define	SERVICED_MAX_PROVIDES		8
-#define	SERVICED_MAX_REQUIRES		16
 #define	SERVICED_MAX_CAP_PATHS		16
 #define	SERVICED_MAX_CAP_FILES		16
 #define	SERVICED_MAX_CAP_NET		16
@@ -45,11 +44,6 @@
 #define	SERVICED_ENVIRONMENT_MAX	1024
 #define	SERVICED_MAX_COMPONENTS		8
 #define	SERVICED_COMPONENT_NAME_MAX	64
-#define	SERVICED_COMPONENT_INTERFACE_MAX	128
-#define	SERVICED_COMPONENT_VERSION_MAX		32
-#define	SERVICED_COMPONENT_PROVIDER_MAX	256
-#define	SERVICED_COMPONENT_OPTIONS_MAX	4096
-#define	SERVICED_MAX_IMPLEMENTS		8
 #define	SERVICED_DEFAULT_USER		"capability"
 #define	SERVICED_DEFAULT_GROUP		"capability"
 
@@ -57,22 +51,6 @@
 #define	SVC_RESTART_NEVER		0
 #define	SVC_RESTART_ALWAYS		1
 #define	SVC_RESTART_ON_FAILURE		2
-
-/* Component provider instance scope. */
-#define	SVC_COMPONENT_PRIVATE		1
-#define	SVC_COMPONENT_JAIL		2
-#define	SVC_COMPONENT_SERVICE		3
-#define	SVC_COMPONENT_SYSTEM		4
-#define	SVC_COMPONENT_LIFETIME_BIT(v)	(1U << ((v) - 1))
-#define	SVC_COMPONENT_SHARING_EXCLUSIVE	0x01U
-#define	SVC_COMPONENT_SHARING_SHARED	0x02U
-
-struct serviced_interface {
-	char		name[SERVICED_COMPONENT_INTERFACE_MAX];
-	char		version[SERVICED_COMPONENT_VERSION_MAX];
-	uint32_t	lifetimes;
-	uint32_t	sharing;
-};
 
 struct serviced_file_cap {
 	char		path[PATH_MAX];
@@ -87,13 +65,6 @@ struct serviced_jail_claim {
 
 struct serviced_component {
 	char		name[SERVICED_COMPONENT_NAME_MAX];
-	char		interface[SERVICED_COMPONENT_INTERFACE_MAX];
-	char		version[SERVICED_COMPONENT_VERSION_MAX];
-	char		provider[SERVICED_COMPONENT_PROVIDER_MAX];
-	char		options[SERVICED_COMPONENT_OPTIONS_MAX];
-	uint32_t	scope;
-	bool		required;
-	bool		shared;
 };
 
 /*
@@ -113,15 +84,13 @@ struct svc_manifest {
 	char		user[64];
 	char		group[64];
 
-	/* Dependency graph edges */
+	/* Publication and internal component-startup edges. */
 	char		provides[SERVICED_MAX_PROVIDES][SERVICED_LABEL_MAX];
 	unsigned	nprovides;
-	char		requires[SERVICED_MAX_REQUIRES][SERVICED_LABEL_MAX];
-	unsigned	nrequires;
+	char		startup_after[SERVICED_MAX_COMPONENTS][SERVICED_LABEL_MAX];
+	unsigned	nstartup_after;
 
-	/* Provider interfaces implemented and component sessions consumed. */
-	struct serviced_interface implements[SERVICED_MAX_IMPLEMENTS];
-	unsigned	nimplements;
+	/* Local authority-replacement components consumed by this service. */
 	struct serviced_component components[SERVICED_MAX_COMPONENTS];
 	unsigned	ncomponents;
 
@@ -151,8 +120,6 @@ struct svc_manifest {
 	int		restart;	/* SVC_RESTART_* */
 	int		stop_timeout;	/* seconds before SIGKILL (default 5) */
 	unsigned	max_failures;	/* circuit breaker threshold (default 10) */
-	bool		on_demand;	/* true = launch on first lookup */
-
 	/* Required kernel modules (ensured by oracled before launch) */
 	char		kmod_requires[SERVICED_MAX_KMOD_REQUIRES][SERVICED_KMOD_NAME_MAX];
 	unsigned	nkmod_requires;

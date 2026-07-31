@@ -5,7 +5,7 @@
  *
  * libservice — client library for services managed by serviced(8).
  *
- * Wraps common mac_capability lifecycle and transport ioctls into a clean API.
+ * Implements serviced discovery and lifecycle over libchannel.
  */
 
 #include <sys/types.h>
@@ -15,7 +15,6 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 
-#include <dev/mac_capability/mac_capability_ioctl.h>
 #include <dev/mac_capability/mac_capability_capprotect_proto.h>
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
 #include <dev/mac_capability/mac_capability_system_proto.h>
@@ -23,6 +22,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <poll.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -30,7 +31,11 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <capability.h>
+#include <channel.h>
+
 #include "libservice.h"
+#include "service_private.h"
 #include "service_bootstrap.h"
 #include "serviced_svc_proto.h"
 
@@ -51,10 +56,77 @@ _Static_assert(SERVICE_PROTECT_NOEXEC == CP_SF_NOEXEC, "capprotect ABI");
 _Static_assert(SERVICE_PROTECT_NOSOCK == CP_SF_NOSOCK, "capprotect ABI");
 
 static int pair_fd = -1;
+static struct channel *service_control_channel;
 static int capprotect_fd = -1;
-static uint64_t next_token = 1;
 static bool service_initialized;
+struct service_context {
+	pid_t	owner;
+	size_t	references;
+	bool	entered;
+	bool	ready;
+};
+struct service_provider {
+	struct service_context	*context;
+	pid_t			 owner;
+};
+static struct service_context service_default_context;
+static pthread_mutex_t service_init_lock = PTHREAD_MUTEX_INITIALIZER;
+static bool service_init_attempted;
+static int service_init_error;
 static char service_label_value[SERVICE_BOOTSTRAP_LABEL_MAX];
+static pthread_mutex_t service_state_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t service_channel_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t service_atfork_once = PTHREAD_ONCE_INIT;
+static int service_atfork_error;
+static pthread_t service_dispatch_thread;
+static bool service_dispatch_started;
+static int service_dispatch_error;
+static int service_supervisor_pipe[2] = { -1, -1 };
+static void service_after_fork_child(void);
+static int rpc(const void *, uint32_t, int *);
+
+struct service_rpc_waiter {
+	pthread_cond_t	cond;
+	int		status;
+	int		fd;
+	bool		want_fd;
+	bool		done;
+};
+
+static void
+service_atfork_prepare(void) __no_lock_analysis
+{
+
+	(void)pthread_mutex_lock(&service_init_lock);
+	(void)pthread_mutex_lock(&service_channel_lock);
+	(void)pthread_mutex_lock(&service_state_lock);
+}
+
+static void
+service_atfork_parent(void) __no_lock_analysis
+{
+
+	(void)pthread_mutex_unlock(&service_state_lock);
+	(void)pthread_mutex_unlock(&service_channel_lock);
+	(void)pthread_mutex_unlock(&service_init_lock);
+}
+
+static void
+service_atfork_child(void) __no_lock_analysis
+{
+	service_after_fork_child();
+	(void)pthread_mutex_unlock(&service_state_lock);
+	(void)pthread_mutex_unlock(&service_channel_lock);
+	(void)pthread_mutex_unlock(&service_init_lock);
+}
+
+static void
+service_atfork_init(void)
+{
+
+	service_atfork_error = pthread_atfork(service_atfork_prepare,
+	    service_atfork_parent, service_atfork_child);
+}
 
 #define	SERVICE_CAPABILITY_MAX	SERVICE_BOOTSTRAP_CAPABILITY_MAX
 struct service_capability_entry {
@@ -63,14 +135,6 @@ struct service_capability_entry {
 };
 static struct service_capability_entry capability_fds[SERVICE_CAPABILITY_MAX];
 static unsigned ncapability_fds;
-
-#define	SERVICE_COMPONENT_MAX	SERVICE_BOOTSTRAP_COMPONENT_MAX
-struct service_component_entry {
-	char name[64];
-	int fd;
-};
-static struct service_component_entry component_fds[SERVICE_COMPONENT_MAX];
-static unsigned ncomponent_fds;
 
 /*
  * Isolation authorization is a descriptor lease: the kernel revokes it when
@@ -121,7 +185,7 @@ parse_service_bootstrap(void)
 	struct service_bootstrap storage;
 	const struct service_bootstrap *bootstrap = &storage;
 	struct envfd_info envinfo;
-	struct mac_capability_info_args info;
+	struct capability_info info;
 	cap_rights_t actual_rights, expected_rights;
 	struct stat sb;
 	ssize_t received;
@@ -161,7 +225,6 @@ parse_service_bootstrap(void)
 	    bootstrap->channel_fd != 3 ||
 	    bootstrap->ntokens > SERVICE_TOKEN_MAX ||
 	    bootstrap->ncapabilities > SERVICE_CAPABILITY_MAX ||
-	    bootstrap->ncomponents > SERVICE_COMPONENT_MAX ||
 	    !all_zero(bootstrap->reserved, sizeof(bootstrap->reserved)) ||
 	    !zero_padded_string(bootstrap->label, sizeof(bootstrap->label),
 	    false) ||
@@ -204,22 +267,6 @@ parse_service_bootstrap(void)
 	    sizeof(bootstrap->capabilities) -
 	    bootstrap->ncapabilities * sizeof(bootstrap->capabilities[0])))
 		goto protocol;
-	for (i = 0; i < bootstrap->ncomponents; i++, expected_fd++) {
-		if (bootstrap->components[i].fd != expected_fd ||
-		    bootstrap->components[i].reserved != 0 ||
-		    !zero_padded_string(bootstrap->components[i].name,
-		    sizeof(bootstrap->components[i].name), false))
-			goto protocol;
-		for (j = 0; j < i; j++)
-			if (strcmp(bootstrap->components[i].name,
-			    bootstrap->components[j].name) == 0)
-				goto protocol;
-	}
-	if (!all_zero(&bootstrap->components[bootstrap->ncomponents],
-	    sizeof(bootstrap->components) -
-	    bootstrap->ncomponents * sizeof(bootstrap->components[0])))
-		goto protocol;
-
 	cap_rights_init(&expected_rights, CAP_READ, CAP_FSTAT, CAP_IOCTL);
 	if (cap_rights_get(SERVICE_BOOTSTRAP_FD, &actual_rights) == -1 ||
 	    !cap_rights_contains(&actual_rights, &expected_rights) ||
@@ -228,21 +275,20 @@ parse_service_bootstrap(void)
 
 	memset(&info, 0, sizeof(info));
 	if (fcntl(bootstrap->channel_fd, F_GETFD) == -1 ||
-	    ioctl(bootstrap->channel_fd, MAC_CAPABILITY_GETINFO, &info) == -1 ||
+	    capability_get_info(bootstrap->channel_fd, &info) == -1 ||
 	    strcmp(info.name, "channel") != 0)
 		goto invalid_descriptor;
 	if ((bootstrap->flags & SERVICE_BOOTSTRAP_F_CAPPROTECT) != 0) {
 		memset(&info, 0, sizeof(info));
 		if (fcntl(bootstrap->capprotect_fd, F_GETFD) == -1 ||
-		    ioctl(bootstrap->capprotect_fd, MAC_CAPABILITY_GETINFO,
-		    &info) == -1 || strcmp(info.name, "capprotect") != 0)
+		    capability_get_info(bootstrap->capprotect_fd, &info) == -1 ||
+		    strcmp(info.name, "capprotect") != 0)
 			goto invalid_descriptor;
 	}
 	for (i = 0; i < bootstrap->ntokens; i++) {
 		memset(&info, 0, sizeof(info));
 		if (fcntl(bootstrap->token_fds[i], F_GETFD) == -1 ||
-		    ioctl(bootstrap->token_fds[i], MAC_CAPABILITY_GETINFO,
-		    &info) == -1 ||
+		    capability_get_info(bootstrap->token_fds[i], &info) == -1 ||
 		    (strcmp(info.name, "isolation") != 0 &&
 		    strcmp(info.name, "system") != 0))
 			goto invalid_descriptor;
@@ -250,21 +296,12 @@ parse_service_bootstrap(void)
 	for (i = 0; i < bootstrap->ncapabilities; i++) {
 		memset(&info, 0, sizeof(info));
 		if (fcntl(bootstrap->capabilities[i].fd, F_GETFD) == -1 ||
-		    ioctl(bootstrap->capabilities[i].fd,
-		    MAC_CAPABILITY_GETINFO, &info) == -1 ||
+		    capability_get_info(bootstrap->capabilities[i].fd,
+		    &info) == -1 ||
 		    strncmp(info.name, bootstrap->capabilities[i].name,
 		    sizeof(info.name)) != 0)
 			goto invalid_descriptor;
 	}
-	for (i = 0; i < bootstrap->ncomponents; i++) {
-		memset(&info, 0, sizeof(info));
-		if (fcntl(bootstrap->components[i].fd, F_GETFD) == -1 ||
-		    ioctl(bootstrap->components[i].fd,
-		    MAC_CAPABILITY_GETINFO, &info) == -1 ||
-		    strcmp(info.name, "channel") != 0)
-			goto invalid_descriptor;
-	}
-
 	pair_fd = bootstrap->channel_fd;
 	capprotect_fd = bootstrap->capprotect_fd;
 	nbootstrap_token_fds = bootstrap->ntokens;
@@ -275,12 +312,6 @@ parse_service_bootstrap(void)
 		capability_fds[i].fd = bootstrap->capabilities[i].fd;
 		strlcpy(capability_fds[i].name, bootstrap->capabilities[i].name,
 		    sizeof(capability_fds[i].name));
-	}
-	ncomponent_fds = bootstrap->ncomponents;
-	for (i = 0; i < ncomponent_fds; i++) {
-		component_fds[i].fd = bootstrap->components[i].fd;
-		strlcpy(component_fds[i].name, bootstrap->components[i].name,
-		    sizeof(component_fds[i].name));
 	}
 	strlcpy(service_label_value, bootstrap->label,
 	    sizeof(service_label_value));
@@ -308,139 +339,613 @@ fail_close:
 	return (-1);
 }
 
-/*
- * Pending notification queue.  Notifications (SVC_OP_NEW_CLIENT)
- * can arrive while we're waiting for an RPC reply.  We queue them
- * here and deliver them from service_accept().
- */
-#define	PENDING_MAX	256
+#define	SERVICE_LISTENER_QUEUE_MAX	64
 
-struct pending_notify {
+struct service_listener_connection {
 	struct svc_new_client_msg msg;
 	int	fd;
 };
 
-static struct pending_notify pending[PENDING_MAX];
-static int npending;
+struct service_listener {
+	struct service_listener	*next;
+	struct service_provider	*provider;
+	pthread_cond_t		 cond;
+	pid_t			 owner;
+	char			 name[SERVICED_NAME_MAX + 1];
+	struct service_listener_connection
+				 queue[SERVICE_LISTENER_QUEUE_MAX];
+	unsigned		 head;
+	unsigned		 count;
+	unsigned		 waiters;
+	unsigned		 activations;
+	bool			 overflow;
+	bool			 closing;
+	bool			 claimed;
+	bool			 active;
+	bool			 activating;
+	service_activation_handler activate;
+	void			*activate_context;
+	int			 event_pipe[2];
+};
 
-static void
-queue_notification(const struct svc_new_client_msg *msg, int fd)
+static struct service_listener *service_listeners;
+
+struct service_activation_work {
+	struct service_listener	*listener;
+	char			 name[SERVICED_NAME_MAX + 1];
+};
+
+/*
+ * Report activation completion as an ordinary correlated control request.
+ * The worker, rather than the dispatcher, waits for serviced's reply so the
+ * sole channel reader is never blocked and listener state cannot get ahead
+ * of the naming registry.
+ */
+static int
+service_name_result_rpc(const char *name, int status)
 {
+	struct svc_name_result_req request;
 
-	if (npending < PENDING_MAX) {
-		pending[npending].msg = *msg;
-		pending[npending].fd = fd;
-		npending++;
-	} else {
-		/* Queue full — drop the notification. */
-		if (fd >= 0)
-			close(fd);
-	}
+	if (status < 0)
+		status = EIO;
+	memset(&request, 0, sizeof(request));
+	request.op = SVC_OP_NAME_RESULT;
+	request.status = status;
+	strlcpy(request.name, name, sizeof(request.name));
+	return (rpc(&request, sizeof(request), NULL));
 }
 
 /*
- * Send a request and wait for the reply.
- * Notifications that arrive before the reply are queued.
+ * The dispatcher cannot perform an RPC through the channel it is draining.
+ * This path is restricted to rejecting malformed or unowned activation
+ * events.  Its correlated acknowledgement is deliberately ignored.
+ */
+static void
+service_discard_reply(struct channel_request *request,
+    struct channel_message *message, int error, void *context)
+{
+
+	(void)error;
+	(void)context;
+	channel_message_free(message);
+	channel_request_release(request);
+}
+
+/*
+ * Called only from the libchannel event handler, which already owns the
+ * control channel's dispatch context.
  */
 static int
-rpc(const void *req, uint32_t reqlen, int *reply_fd)
+service_name_result_reject(const char *name, int status)
 {
-	struct mac_capability_sendmsg_args sa;
-	struct mac_capability_recvmsg_args ra;
-	union {
-		struct svc_reply rpl;
-		struct svc_new_client_msg notify;
-	} buf;
-	uint64_t token;
-	int fd;
+	struct svc_name_result_req request;
+	struct channel_request *pending;
 
+	if (status <= 0 || status > ELAST)
+		status = EIO;
+	memset(&request, 0, sizeof(request));
+	request.op = SVC_OP_NAME_RESULT;
+	request.status = status;
+	strlcpy(request.name, name, sizeof(request.name));
+	return (channel_send_request(service_control_channel,
+	    &(struct channel_outgoing)
+	    CHANNEL_OUTGOING_INITIALIZER(&request, sizeof(request)),
+	    service_discard_reply, NULL, &pending));
+}
+
+static void *
+service_activation_worker(void *argument) __no_lock_analysis
+{
+	struct service_activation_work *work;
+	struct service_listener *listener;
+	bool published;
+	int error, report_error, result;
+
+	work = argument;
+	listener = work->listener;
+	errno = 0;
+	result = listener->activate == NULL ? 0 :
+	    listener->activate(work->name, listener->activate_context);
+	if (result == -1)
+		result = errno != 0 ? errno : EIO;
+	else if (result < 0 || result > ELAST)
+		result = EIO;
+
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error == 0) {
+		if (listener->closing)
+			result = ECANCELED;
+		(void)pthread_mutex_unlock(&service_state_lock);
+	}
+	report_error = service_name_result_rpc(work->name, result);
+	published = result == 0 && report_error == 0;
+	if (pthread_mutex_lock(&service_state_lock) == 0) {
+		listener->active = published;
+		listener->activating = false;
+		listener->activations--;
+		if (published)
+			(void)pthread_cond_broadcast(&listener->cond);
+		if (listener->closing && listener->activations == 0 &&
+		    listener->waiters == 0)
+			(void)pthread_cond_signal(&listener->cond);
+		(void)pthread_mutex_unlock(&service_state_lock);
+	}
+	free(work);
+	return (NULL);
+}
+
+static int
+service_listener_activate_locked(struct service_listener *listener)
+{
+	struct service_activation_work *work;
+	pthread_t thread;
+	int error;
+
+	/*
+	 * serviced coalesces activation requests for a name.  An ACTIVATE event
+	 * for an already-published listener therefore indicates stale or
+	 * inconsistent supervisor state and must not rerun application setup.
+	 */
+	if (listener->active) {
+		errno = EALREADY;
+		return (-1);
+	}
+	if (listener->activating)
+		return (0);
+	work = calloc(1, sizeof(*work));
+	if (work == NULL)
+		return (-1);
+	work->listener = listener;
+	strlcpy(work->name, listener->name, sizeof(work->name));
+	listener->activating = true;
+	listener->activations++;
+	error = pthread_create(&thread, NULL, service_activation_worker, work);
+	if (error != 0) {
+		listener->activating = false;
+		listener->activations--;
+		free(work);
+		errno = error;
+		return (-1);
+	}
+	(void)pthread_detach(thread);
+	return (0);
+}
+
+static struct service_listener *
+service_listener_find_locked(const char *name)
+{
+	struct service_listener *listener;
+
+	for (listener = service_listeners; listener != NULL;
+	    listener = listener->next)
+		if (strcmp(listener->name, name) == 0)
+			return (listener);
+	return (NULL);
+}
+
+static void
+service_listener_signal(struct service_listener *listener)
+{
+	const uint8_t byte = 1;
+
+	(void)write(listener->event_pipe[1], &byte, sizeof(byte));
+	(void)pthread_cond_signal(&listener->cond);
+}
+
+static void
+service_after_fork_child(void)
+{
+	struct service_listener *listener;
+	unsigned i;
+
+	service_default_context.owner = -1;
+	service_default_context.references = 0;
+
+	/*
+	 * The dispatcher thread and all waiters disappear across fork.  Every
+	 * descriptor retained by libservice is process authority and is
+	 * CAP_CLOFORK_LOCKED after the supervised exec, so its numeric slot is
+	 * normally already absent in the child.  Clear the complete inventory
+	 * anyway: otherwise a later open could reuse one of those numbers and a
+	 * stale component entry could accidentally designate unrelated data.
+	 *
+	 * pdfork(2) does not run pthread_atfork(3) handlers.  Provider workers
+	 * therefore call service_worker_drop_inherited_authority() explicitly after
+	 * applying their protection policy; that function uses this same path.
+	 */
+	if (service_control_channel != NULL)
+		channel_abandon(service_control_channel);
+	else if (pair_fd >= 0)
+		(void)close(pair_fd);
+	service_control_channel = NULL;
+	pair_fd = -1;
+	if (service_supervisor_pipe[0] >= 0)
+		(void)close(service_supervisor_pipe[0]);
+	if (service_supervisor_pipe[1] >= 0)
+		(void)close(service_supervisor_pipe[1]);
+	service_supervisor_pipe[0] = -1;
+	service_supervisor_pipe[1] = -1;
+	service_dispatch_started = false;
+	service_dispatch_error = ENOTCONN;
+	for (listener = service_listeners; listener != NULL;
+	    listener = listener->next) {
+		for (i = 0; i < listener->count; i++)
+			(void)close(listener->queue[(listener->head + i) %
+			    SERVICE_LISTENER_QUEUE_MAX].fd);
+		(void)close(listener->event_pipe[0]);
+		(void)close(listener->event_pipe[1]);
+		listener->owner = -1;
+		listener->count = 0;
+		listener->overflow = false;
+	}
+	service_listeners = NULL;
+	if (capprotect_fd >= 0)
+		(void)close(capprotect_fd);
+	capprotect_fd = -1;
+	for (i = 0; i < ncapability_fds; i++) {
+		if (capability_fds[i].fd >= 0)
+			(void)close(capability_fds[i].fd);
+		explicit_bzero(&capability_fds[i], sizeof(capability_fds[i]));
+		capability_fds[i].fd = -1;
+	}
+	ncapability_fds = 0;
+	for (i = 0; i < nbootstrap_token_fds; i++) {
+		if (bootstrap_token_fds[i] >= 0)
+			(void)close(bootstrap_token_fds[i]);
+		bootstrap_token_fds[i] = -1;
+	}
+	nbootstrap_token_fds = 0;
+	for (i = 0; i < nactivated_token_fds; i++) {
+		if (activated_token_fds[i] >= 0)
+			(void)close(activated_token_fds[i]);
+		activated_token_fds[i] = -1;
+	}
+	nactivated_token_fds = 0;
+	explicit_bzero(service_label_value, sizeof(service_label_value));
+}
+
+static void
+service_control_reply(struct channel_request *request,
+    struct channel_message *message, int error, void *argument)
+    __no_lock_analysis
+{
+	struct service_rpc_waiter *waiter;
+	const struct svc_reply *reply;
+
+	waiter = argument;
+	if (pthread_mutex_lock(&service_state_lock) != 0) {
+		channel_message_free(message);
+		channel_request_release(request);
+		return;
+	}
+	waiter->status = error != 0 ? error : EPROTO;
+	if (error == 0 && message != NULL &&
+	    channel_message_length(message) == sizeof(*reply)) {
+		reply = channel_message_data(message);
+		if (reply->status >= 0 &&
+		    channel_message_fd_count(message) ==
+		    (size_t)(reply->status == 0 && waiter->want_fd ? 1 : 0)) {
+			waiter->status = reply->status;
+			if (reply->status == 0 && waiter->want_fd)
+				waiter->fd = channel_message_take_fd(message, 0);
+		}
+	}
+	waiter->done = true;
+	(void)pthread_cond_signal(&waiter->cond);
+	(void)pthread_mutex_unlock(&service_state_lock);
+	channel_message_free(message);
+	channel_request_release(request);
+}
+
+static void
+service_control_event(struct channel *channel,
+    struct channel_message *message, void *unused) __no_lock_analysis
+{
+	const struct svc_activate_name_msg *activate;
+	const struct svc_new_client_msg *notify;
+	struct service_listener *listener;
+	char reject_name[SERVICED_NAME_MAX + 1];
+	unsigned tail;
+	int error, fd, reject_error;
+
+	(void)channel;
+	(void)unused;
+	fd = -1;
+	reject_error = 0;
+	reject_name[0] = '\0';
+	if (pthread_mutex_lock(&service_state_lock) != 0) {
+		channel_message_free(message);
+		return;
+	}
+	if (channel_message_length(message) == sizeof(*activate) &&
+	    channel_message_fd_count(message) == 0) {
+		activate = channel_message_data(message);
+		if (activate->op == SVC_OP_ACTIVATE_NAME &&
+		    activate->flags == 0 &&
+		    strnlen(activate->name, sizeof(activate->name)) <
+		    sizeof(activate->name)) {
+			listener = service_listener_find_locked(activate->name);
+			if (listener == NULL || listener->closing) {
+				strlcpy(reject_name, activate->name,
+				    sizeof(reject_name));
+				reject_error = ENOENT;
+			} else if (service_listener_activate_locked(listener) ==
+			    -1) {
+				error = errno != 0 ? errno : EIO;
+				strlcpy(reject_name, activate->name,
+				    sizeof(reject_name));
+				reject_error = error;
+			}
+		}
+	} else if (channel_message_length(message) == sizeof(*notify) &&
+	    channel_message_fd_count(message) == 1) {
+		notify = channel_message_data(message);
+		if (notify->op == SVC_OP_NEW_CLIENT && notify->flags == 0 &&
+		    strnlen(notify->service_name,
+		    sizeof(notify->service_name)) <
+		    sizeof(notify->service_name) &&
+		    strnlen(notify->client_label,
+		    sizeof(notify->client_label)) <
+		    sizeof(notify->client_label)) {
+			listener = service_listener_find_locked(
+			    notify->service_name);
+			if (listener != NULL &&
+			    listener->count < SERVICE_LISTENER_QUEUE_MAX) {
+				fd = channel_message_take_fd(message, 0);
+				tail = (listener->head + listener->count) %
+				    SERVICE_LISTENER_QUEUE_MAX;
+				listener->queue[tail].msg = *notify;
+				listener->queue[tail].fd = fd;
+				listener->count++;
+				service_listener_signal(listener);
+			} else if (listener != NULL) {
+				listener->overflow = true;
+				service_listener_signal(listener);
+			}
+		}
+	}
+	(void)pthread_mutex_unlock(&service_state_lock);
+	if (reject_error != 0)
+		(void)service_name_result_reject(reject_name, reject_error);
+	channel_message_free(message);
+}
+
+static void *
+service_dispatch(void *unused) __no_lock_analysis
+{
+	struct service_listener *listener;
+	struct pollfd descriptor;
+	int error, result, wants_write;
+
+	(void)unused;
+	error = 0;
+	for (;;) {
+		if (pthread_mutex_lock(&service_channel_lock) != 0) {
+			error = EDEADLK;
+			break;
+		}
+		wants_write = channel_wants_write(service_control_channel);
+		descriptor.fd = channel_fd(service_control_channel);
+		(void)pthread_mutex_unlock(&service_channel_lock);
+		if (wants_write == -1 || descriptor.fd == -1) {
+			error = errno;
+			break;
+		}
+		descriptor.events = POLLIN | (wants_write ? POLLOUT : 0);
+		descriptor.revents = 0;
+		do {
+			result = poll(&descriptor, 1, 25);
+		} while (result == -1 && errno == EINTR);
+		if (result == -1) {
+			error = errno;
+			break;
+		}
+		if (result == 0)
+			continue;
+		if (pthread_mutex_lock(&service_channel_lock) != 0) {
+			error = EDEADLK;
+			break;
+		}
+		if ((descriptor.revents & POLLOUT) != 0 &&
+		    channel_flush(service_control_channel) == -1)
+			error = errno;
+		if (error == 0 &&
+		    (descriptor.revents &
+		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+		    channel_dispatch(service_control_channel) == -1)
+			error = errno;
+		(void)pthread_mutex_unlock(&service_channel_lock);
+		if (error != 0)
+			break;
+	}
+
+	(void)pthread_mutex_lock(&service_state_lock);
+	if (service_dispatch_error == 0)
+		service_dispatch_error = error == 0 ? EIO : error;
+	if (service_supervisor_pipe[1] >= 0) {
+		const uint8_t byte = 1;
+
+		(void)write(service_supervisor_pipe[1], &byte, sizeof(byte));
+	}
+	for (listener = service_listeners; listener != NULL;
+	    listener = listener->next) {
+		service_listener_signal(listener);
+		(void)pthread_cond_broadcast(&listener->cond);
+	}
+	(void)pthread_mutex_unlock(&service_state_lock);
+	return (NULL);
+}
+
+static int
+service_start_dispatch(void) __no_lock_analysis
+{
+	struct channel_options options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
+	int error;
+
+	error = pthread_once(&service_atfork_once, service_atfork_init);
+	if (error == 0)
+		error = service_atfork_error;
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	error = pthread_mutex_lock(&service_channel_lock);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0) {
+		(void)pthread_mutex_unlock(&service_channel_lock);
+		errno = error;
+		return (-1);
+	}
+	if (service_dispatch_started) {
+		error = service_dispatch_error;
+		(void)pthread_mutex_unlock(&service_state_lock);
+		(void)pthread_mutex_unlock(&service_channel_lock);
+		if (error != 0) {
+			errno = error;
+			return (-1);
+		}
+		return (0);
+	}
 	if (pair_fd < 0) {
+		(void)pthread_mutex_unlock(&service_state_lock);
+		(void)pthread_mutex_unlock(&service_channel_lock);
 		errno = ENOTCONN;
 		return (-1);
 	}
-
-	token = next_token++;
-
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = req;
-	sa.payload_len = reqlen;
-	sa.reply_token = token;
-
-	if (ioctl(pair_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1)
+	if (service_control_channel == NULL &&
+	    channel_create(pair_fd, &options, &service_control_channel) == -1) {
+		error = errno;
+		(void)pthread_mutex_unlock(&service_state_lock);
+		(void)pthread_mutex_unlock(&service_channel_lock);
+		errno = error;
 		return (-1);
-
-	for (;;) {
-		uint32_t op;
-
-		fd = -1;
-		memset(&buf, 0, sizeof(buf));
-		memset(&ra, 0, sizeof(ra));
-		ra.payload = &buf;
-		ra.payload_len = sizeof(buf);
-		ra.fds = &fd;
-		ra.nfds = 1;
-
-		if (ioctl(pair_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
-			if (errno == EINTR)
-				continue;
-			return (-1);
-		}
-
-		/* Check if this is our reply (matching token). */
-		if (ra.reply_token == token) {
-			/* Reject a reply too short to hold a status word,
-			 * rather than reading uninitialized memory. */
-			if (ra.payload_len != sizeof(buf.rpl)) {
-				if (fd >= 0)
-					close(fd);
-				errno = EPROTO;
-				return (-1);
-			}
-			if (ra.nfds != (uint32_t)(buf.rpl.status == 0 &&
-			    reply_fd != NULL ? 1 : 0)) {
-				if (fd >= 0)
-					close(fd);
-				errno = EPROTO;
-				return (-1);
-			}
-			if (reply_fd != NULL)
-				*reply_fd = fd;
-			else if (fd >= 0)
-				close(fd);
-
-			if (buf.rpl.status != 0) {
-				errno = buf.rpl.status;
-				return (-1);
-			}
-			return (0);
-		}
-
-		/*
-		 * Not our reply — check if it's a notification.
-		 * Queue it for service_accept().
-		 */
-		if (ra.payload_len == sizeof(buf.notify) && ra.nfds == 1 &&
-		    buf.notify.flags == 0 &&
-		    strnlen(buf.notify.client_label,
-		    sizeof(buf.notify.client_label)) <
-		    sizeof(buf.notify.client_label)) {
-			memcpy(&op, &buf, sizeof(op));
-			if (op == SVC_OP_NEW_CLIENT) {
-				queue_notification(&buf.notify, fd);
-				continue;
-			}
-		}
-
-		/* Unknown message — discard. */
-		if (fd >= 0)
-			close(fd);
 	}
+	pair_fd = channel_fd(service_control_channel);
+	if (channel_set_event_handler(service_control_channel,
+	    service_control_event, NULL) == -1) {
+		error = errno;
+		channel_destroy(service_control_channel);
+		service_control_channel = NULL;
+		pair_fd = -1;
+		(void)pthread_mutex_unlock(&service_state_lock);
+		(void)pthread_mutex_unlock(&service_channel_lock);
+		errno = error;
+		return (-1);
+	}
+	error = pthread_create(&service_dispatch_thread, NULL, service_dispatch,
+	    NULL);
+	if (error == 0) {
+		service_dispatch_started = true;
+		(void)pthread_detach(service_dispatch_thread);
+	}
+	(void)pthread_mutex_unlock(&service_state_lock);
+	(void)pthread_mutex_unlock(&service_channel_lock);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	return (0);
 }
 
-int
-service_init(void)
+static int
+rpc(const void *req, uint32_t reqlen, int *reply_fd) __no_lock_analysis
+{
+	struct channel_request *request;
+	struct service_rpc_waiter waiter;
+	int cancel_state, error, result;
+
+	if (service_start_dispatch() == -1)
+		return (-1);
+	memset(&waiter, 0, sizeof(waiter));
+	waiter.fd = -1;
+	waiter.want_fd = reply_fd != NULL;
+	error = pthread_cond_init(&waiter.cond, NULL);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	error = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cancel_state);
+	if (error != 0) {
+		(void)pthread_cond_destroy(&waiter.cond);
+		errno = error;
+		return (-1);
+	}
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0) {
+		(void)pthread_cond_destroy(&waiter.cond);
+		(void)pthread_setcancelstate(cancel_state, NULL);
+		errno = error;
+		return (-1);
+	}
+	if (service_dispatch_error != 0) {
+		error = service_dispatch_error;
+		(void)pthread_mutex_unlock(&service_state_lock);
+		(void)pthread_cond_destroy(&waiter.cond);
+		(void)pthread_setcancelstate(cancel_state, NULL);
+		errno = error;
+		return (-1);
+	}
+	(void)pthread_mutex_unlock(&service_state_lock);
+	error = pthread_mutex_lock(&service_channel_lock);
+	if (error != 0) {
+		(void)pthread_cond_destroy(&waiter.cond);
+		(void)pthread_setcancelstate(cancel_state, NULL);
+		errno = error;
+		return (-1);
+	}
+	if (channel_send_request(service_control_channel,
+	    &(struct channel_outgoing)
+	    CHANNEL_OUTGOING_INITIALIZER(req, reqlen),
+	    service_control_reply, &waiter, &request) == -1) {
+		error = errno;
+		(void)pthread_mutex_unlock(&service_channel_lock);
+		(void)pthread_cond_destroy(&waiter.cond);
+		(void)pthread_setcancelstate(cancel_state, NULL);
+		errno = error;
+		return (-1);
+	}
+	(void)pthread_mutex_unlock(&service_channel_lock);
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0) {
+		/*
+		 * This process can no longer synchronize with its callback.
+		 * Leave the request to be failed by channel teardown.
+		 */
+		(void)pthread_cond_destroy(&waiter.cond);
+		(void)pthread_setcancelstate(cancel_state, NULL);
+		errno = error;
+		return (-1);
+	}
+	while (!waiter.done) {
+		error = pthread_cond_wait(&waiter.cond, &service_state_lock);
+		if (error != 0) {
+			waiter.status = error;
+			break;
+		}
+	}
+	error = waiter.status;
+	if (error == 0 && reply_fd != NULL)
+		*reply_fd = waiter.fd;
+	else if (waiter.fd >= 0)
+		(void)close(waiter.fd);
+	result = error == 0 ? 0 : -1;
+	(void)pthread_mutex_unlock(&service_state_lock);
+	(void)pthread_cond_destroy(&waiter.cond);
+	(void)pthread_setcancelstate(cancel_state, NULL);
+	errno = error;
+	return (result);
+}
+
+static int
+service_initialize_default(void)
 {
 	const char *bootstrap_fd;
+	int error;
 
 	if (service_initialized) {
 		errno = EALREADY;
@@ -448,7 +953,7 @@ service_init(void)
 	}
 	pair_fd = capprotect_fd = -1;
 	nbootstrap_token_fds = 0;
-	ncapability_fds = ncomponent_fds = 0;
+	ncapability_fds = 0;
 	service_label_value[0] = '\0';
 	bootstrap_fd = getenv(SERVICE_BOOTSTRAP_ENV);
 	if (bootstrap_fd == NULL) {
@@ -461,35 +966,368 @@ service_init(void)
 	}
 	if (parse_service_bootstrap() == -1)
 		return (-1);
+	if (pipe2(service_supervisor_pipe, O_CLOEXEC | O_NONBLOCK) == -1) {
+		error = errno;
+		service_worker_drop_inherited_authority();
+		errno = error;
+		return (-1);
+	}
+	{
+		cap_rights_t rights;
+
+		cap_rights_init(&rights, CAP_EVENT, CAP_FCNTL, CAP_FSTAT,
+		    CAP_READ);
+		if (cap_rights_limit(service_supervisor_pipe[0], &rights) == -1 ||
+		    cap_fcntls_limit(service_supervisor_pipe[0], 0) == -1)
+			goto supervisor_pipe_fail;
+		cap_rights_init(&rights, CAP_FCNTL, CAP_FSTAT, CAP_WRITE);
+		if (cap_rights_limit(service_supervisor_pipe[1], &rights) == -1 ||
+		    cap_fcntls_limit(service_supervisor_pipe[1], 0) == -1 ||
+		    cap_clofork_limit(service_supervisor_pipe[0],
+		    CAP_CLOFORK_LOCKED) == -1 ||
+		    cap_clofork_limit(service_supervisor_pipe[1],
+		    CAP_CLOFORK_LOCKED) == -1 ||
+		    cap_cloexec_limit(service_supervisor_pipe[0],
+		    CAP_CLOEXEC_LOCKED) == -1 ||
+		    cap_cloexec_limit(service_supervisor_pipe[1],
+		    CAP_CLOEXEC_LOCKED) == -1)
+			goto supervisor_pipe_fail;
+	}
+	/*
+	 * Local-only consumers may never start the serviced dispatcher.  Install
+	 * the child cleanup hook now so a fork before service_ready() cannot
+	 * leave stale numeric entries for close-on-fork component descriptors.
+	 */
+	error = pthread_once(&service_atfork_once, service_atfork_init);
+	if (error == 0)
+		error = service_atfork_error;
+	if (error != 0) {
+		service_worker_drop_inherited_authority();
+		errno = error;
+		return (-1);
+	}
 	service_initialized = true;
+	return (0);
+
+supervisor_pipe_fail:
+	error = errno;
+	service_worker_drop_inherited_authority();
+	errno = error;
+	return (-1);
+}
+
+int
+service_acquire(struct service_context **contextp) __no_lock_analysis
+{
+	int error;
+
+	if (contextp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*contextp = NULL;
+	error = pthread_mutex_lock(&service_init_lock);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	if (service_init_attempted) {
+		error = service_init_error;
+		if (error == 0 && service_default_context.owner != getpid())
+			error = ECHILD;
+	} else {
+		service_init_attempted = true;
+		if (service_initialize_default() == -1)
+			service_init_error = errno != 0 ? errno : EIO;
+		else {
+			service_default_context.owner = getpid();
+			service_init_error = 0;
+		}
+		error = service_init_error;
+	}
+	if (error == 0) {
+		service_default_context.references++;
+		*contextp = &service_default_context;
+	}
+	(void)pthread_mutex_unlock(&service_init_lock);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	return (0);
+}
+
+void
+service_release(struct service_context *context) __no_lock_analysis
+{
+	int saved_errno;
+
+	if (context == NULL)
+		return;
+	saved_errno = errno;
+	if (pthread_mutex_lock(&service_init_lock) == 0) {
+		if (context == &service_default_context &&
+		    context->owner == getpid() && context->references != 0)
+			context->references--;
+		(void)pthread_mutex_unlock(&service_init_lock);
+	}
+	errno = saved_errno;
+}
+
+static bool
+service_provider_valid(const struct service_provider *provider)
+{
+
+	return (provider != NULL && provider->owner == getpid() &&
+	    provider->context == &service_default_context &&
+	    provider->context->owner == getpid());
+}
+
+int
+service_provider_create(struct service_provider **providerp)
+{
+	struct service_provider *provider;
+
+	if (providerp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*providerp = NULL;
+	provider = calloc(1, sizeof(*provider));
+	if (provider == NULL)
+		return (-1);
+	if (service_acquire(&provider->context) == -1) {
+		free(provider);
+		return (-1);
+	}
+	provider->owner = getpid();
+	*providerp = provider;
+	return (0);
+}
+
+void
+service_provider_destroy(struct service_provider *provider) __no_lock_analysis
+{
+	struct service_listener *listener;
+	int saved_errno;
+
+	if (provider == NULL)
+		return;
+	saved_errno = errno;
+	if (service_provider_valid(provider)) {
+		for (;;) {
+			if (pthread_mutex_lock(&service_state_lock) != 0)
+				break;
+			for (listener = service_listeners; listener != NULL;
+			    listener = listener->next)
+				if (listener->provider == provider)
+					break;
+			(void)pthread_mutex_unlock(&service_state_lock);
+			if (listener == NULL)
+				break;
+			(void)service_listener_close(listener);
+		}
+		service_release(provider->context);
+	}
+	explicit_bzero(provider, sizeof(*provider));
+	free(provider);
+	errno = saved_errno;
+}
+
+int
+service_provider_authorize_capabilities(struct service_provider *provider)
+{
+
+	if (!service_provider_valid(provider)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (service_authorize_capabilities(provider->context));
+}
+
+int
+service_provider_protect(struct service_provider *provider, uint32_t flags)
+{
+
+	if (!service_provider_valid(provider)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (service_worker_protect(flags));
+}
+
+int
+service_enter_capability_mode(struct service_context *context)
+{
+	unsigned int mode;
+
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (service_start_dispatch() == -1 || cap_getmode(&mode) == -1)
+		return (-1);
+	if (mode == 0 && cap_enter() == -1)
+		return (-1);
+	context->entered = true;
 	return (0);
 }
 
 int
-service_channel_fd(void)
+service_ready(struct service_context *context)
+{
+	struct svc_req_hdr req;
+	unsigned int mode;
+
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (!context->entered) {
+		errno = EPERM;
+		return (-1);
+	}
+	if (cap_getmode(&mode) == -1)
+		return (-1);
+	if (mode == 0) {
+		errno = EPERM;
+		return (-1);
+	}
+	if (context->ready) {
+		errno = EALREADY;
+		return (-1);
+	}
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_READY;
+	if (rpc(&req, sizeof(req), NULL) == -1)
+		return (-1);
+	context->ready = true;
+	return (0);
+}
+
+int
+service_provider_enter_capability_mode(struct service_provider *provider)
 {
 
-	return (pair_fd);
+	if (!service_provider_valid(provider)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (service_enter_capability_mode(provider->context));
+}
+
+int
+service_provider_ready(struct service_provider *provider)
+{
+
+	if (!service_provider_valid(provider)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (service_ready(provider->context));
+}
+
+int
+service_private_control_fd(struct service_context *context) __no_lock_analysis
+{
+	int error, fd;
+
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+	error = pthread_mutex_lock(&service_channel_lock);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	fd = service_control_channel != NULL ?
+	    channel_fd(service_control_channel) : pair_fd;
+	(void)pthread_mutex_unlock(&service_channel_lock);
+	return (fd);
+}
+
+int
+service_supervisor_fd(struct service_context *context) __no_lock_analysis
+{
+	const uint8_t byte = 1;
+	int error;
+
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (service_start_dispatch() == -1)
+		return (-1);
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	if (service_supervisor_pipe[0] < 0)
+		error = ENOTCONN;
+	if (error != 0) {
+		(void)pthread_mutex_unlock(&service_state_lock);
+		errno = error;
+		return (-1);
+	}
+	if (service_dispatch_error != 0)
+		(void)write(service_supervisor_pipe[1], &byte, sizeof(byte));
+	error = service_supervisor_pipe[0];
+	(void)pthread_mutex_unlock(&service_state_lock);
+	return (error);
+}
+
+int
+service_supervisor_status(struct service_context *context) __no_lock_analysis
+{
+	int error;
+
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (service_start_dispatch() == -1)
+		return (-1);
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	error = service_dispatch_error;
+	(void)pthread_mutex_unlock(&service_state_lock);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	return (0);
 }
 
 const char *
-service_label(void)
+service_label(struct service_context *context)
 {
 
-	if (!service_initialized) {
-		errno = ENOTCONN;
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
 		return (NULL);
 	}
 	return (service_label_value);
 }
 
 int
-service_capability_fd(const char *name)
+service_capability_fd(struct service_context *context, const char *name)
 {
 	unsigned i;
 
-	if (pair_fd < 0) {
-		errno = ENOTCONN;
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
 		return (-1);
 	}
 	if (name == NULL || !service_capability_name_valid(name)) {
@@ -504,118 +1342,90 @@ service_capability_fd(const char *name)
 	return (-1);
 }
 
-int
-service_component_fd(const char *name)
+static int
+service_component_open_environment(const char *environment_name)
 {
-	unsigned i;
+	struct capability_info info;
+	const char *error_string, *value;
+	long long descriptor;
+	int fd;
 
-	if (pair_fd < 0) {
-		errno = ENOTCONN;
-		return (-1);
-	}
-	if (name == NULL || name[0] == '\0' ||
-	    strlen(name) >= sizeof(component_fds[0].name)) {
+	if (environment_name == NULL || environment_name[0] == '\0') {
 		errno = EINVAL;
 		return (-1);
 	}
-	for (i = 0; i < ncomponent_fds; i++) {
-		if (strcmp(component_fds[i].name, name) == 0)
-			return (component_fds[i].fd);
+	value = getenv(environment_name);
+	if (value == NULL) {
+		errno = ENOENT;
+		return (-1);
 	}
-	errno = ENOENT;
-	return (-1);
+	error_string = NULL;
+	descriptor = strtonum(value, 0, INT_MAX, &error_string);
+	if (error_string != NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&info, 0, sizeof(info));
+	if (fcntl((int)descriptor, F_GETFD) == -1 ||
+	    capability_get_info((int)descriptor, &info) == -1)
+		return (-1);
+	if (strcmp(info.name, "channel") != 0) {
+		errno = EPROTOTYPE;
+		return (-1);
+	}
+	fd = fcntl((int)descriptor, F_DUPFD_CLOEXEC, 0);
+	if (fd == -1)
+		return (-1);
+	if (unsetenv(environment_name) == -1) {
+		int error;
+
+		error = errno;
+		(void)close(fd);
+		errno = error;
+		return (-1);
+	}
+	return (fd);
 }
 
 int
-service_component_recv_bootstrap(int fd,
-    struct component_session_bootstrap *bootstrap, char *options,
-    size_t options_size)
+service_local_component_open(struct service_context *context,
+    const char *interface, const char *version, int *session_fdp)
 {
-	struct {
-		struct component_session_bootstrap header;
-		char options[COMPONENT_SESSION_OPTIONS_MAX];
-	} message;
-	size_t nfds, options_length;
-	ssize_t received;
+	const char *environment_name, *expected_version;
+	int fd;
 
-	if (bootstrap == NULL || options == NULL || options_size == 0) {
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid() || interface == NULL || version == NULL ||
+	    session_fdp == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
-	nfds = 0;
-	received = service_recv_fds(fd, &message, sizeof(message), NULL, &nfds);
-	if (received == -1)
-		return (-1);
-	options_length = message.header.options_length;
-	if ((size_t)received < sizeof(message.header) ||
-	    message.header.magic != COMPONENT_SESSION_MAGIC ||
-	    message.header.version != COMPONENT_SESSION_VERSION ||
-	    message.header.header_size != sizeof(message.header) ||
-	    message.header.length != (uint32_t)received ||
-	    message.header.scope < COMPONENT_SESSION_SCOPE_PRIVATE ||
-	    message.header.scope > COMPONENT_SESSION_SCOPE_SYSTEM ||
-	    (message.header.flags & ~COMPONENT_SESSION_F_MASK) != 0 ||
-	    message.header.name[0] == '\0' ||
-	    memchr(message.header.name, '\0',
-	    sizeof(message.header.name)) == NULL ||
-	    message.header.interface[0] == '\0' ||
-	    memchr(message.header.interface, '\0',
-	    sizeof(message.header.interface)) == NULL ||
-	    message.header.interface_version[0] == '\0' ||
-	    memchr(message.header.interface_version, '\0',
-	    sizeof(message.header.interface_version)) == NULL ||
-	    message.header.client_label[0] == '\0' ||
-	    memchr(message.header.client_label, '\0',
-	    sizeof(message.header.client_label)) == NULL ||
-	    options_length == 0 ||
-	    options_length > COMPONENT_SESSION_OPTIONS_MAX ||
-	    sizeof(message.header) + options_length != (size_t)received ||
-	    options_length > options_size ||
-	    message.options[options_length - 1] != '\0' ||
-	    memchr(message.options, '\0', options_length - 1) != NULL) {
-		errno = EPROTO;
+	*session_fdp = -1;
+	if (strcmp(interface, "org.5bsd.filesystem") == 0) {
+		environment_name = SERVICE_FILESYSTEMCMP_ENV;
+		expected_version = "1.0.0";
+	} else if (strcmp(interface, "org.5bsd.network") == 0) {
+		environment_name = SERVICE_NETWORKCMP_ENV;
+		expected_version = "1.0.0";
+	} else {
+		errno = ENOENT;
 		return (-1);
 	}
-	*bootstrap = message.header;
-	memcpy(options, message.options, options_length);
+	if (strcmp(version, expected_version) != 0) {
+		errno = EPROTONOSUPPORT;
+		return (-1);
+	}
+	fd = service_component_open_environment(environment_name);
+	if (fd == -1)
+		return (-1);
+	*session_fdp = fd;
 	return (0);
 }
 
 int
-service_component_send_reply(int fd, uint64_t instance_id, int status,
-    uint32_t member_type, int member_fd)
+service_authorize_capabilities(struct service_context *context)
 {
-	struct component_session_reply reply;
-	const int *fds;
-	size_t nfds;
-
-	if (status < 0 ||
-	    (status == 0 && member_fd < 0) ||
-	    (status == 0 &&
-	    member_type != COMPONENT_SESSION_MEMBER_PROCDESC &&
-	    member_type != COMPONENT_SESSION_MEMBER_COALITION) ||
-	    (status != 0 && member_fd >= 0)) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(&reply, 0, sizeof(reply));
-	reply.magic = COMPONENT_SESSION_MAGIC;
-	reply.version = COMPONENT_SESSION_VERSION;
-	reply.header_size = sizeof(reply);
-	reply.length = sizeof(reply);
-	reply.status = status;
-	reply.member_type = status == 0 ? member_type : 0;
-	reply.instance_id = instance_id;
-	fds = status == 0 ? &member_fd : NULL;
-	nfds = status == 0 ? 1 : 0;
-	return (service_send_fds(fd, &reply, sizeof(reply), fds, nfds));
-}
-
-int
-service_authorize_capabilities(void)
-{
-	struct mac_capability_call_args call;
-	struct mac_capability_info_args info;
+	struct capability_info info;
 	struct fi_request req;
 	struct fi_reply reply;
 	struct sys_request sysreq;
@@ -624,8 +1434,9 @@ service_authorize_capabilities(void)
 	unsigned i, nfds;
 	int error;
 
-	if (!service_initialized) {
-		errno = ENOTCONN;
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
 		return (-1);
 	}
 	nfds = nbootstrap_token_fds;
@@ -639,7 +1450,7 @@ service_authorize_capabilities(void)
 		fds[i] = bootstrap_token_fds[i];
 		memset(&info, 0, sizeof(info));
 		if (fcntl(fds[i], F_GETFD) == -1 ||
-		    ioctl(fds[i], MAC_CAPABILITY_GETINFO, &info) == -1 ||
+		    capability_get_info(fds[i], &info) == -1 ||
 		    (strcmp(info.name, "isolation") != 0 &&
 		    strcmp(info.name, "system") != 0)) {
 			errno = EINVAL;
@@ -663,16 +1474,23 @@ service_authorize_capabilities(void)
 	memset(&sysreq, 0, sizeof(sysreq));
 	sysreq.op = SYS_OP_AUTHORIZE;
 	for (i = 0; i < nfds; i++) {
+		size_t reply_length, reply_nfds;
+
 		memset(&reply, 0, sizeof(reply));
-		memset(&call, 0, sizeof(call));
-		call.req = system_token[i] ? (const void *)&sysreq : &req;
-		call.req_len = system_token[i] ? sizeof(sysreq) : sizeof(req);
-		if (!system_token[i]) {
-			call.reply = &reply;
-			call.reply_len = sizeof(reply);
-		}
-		if (ioctl(owned_fds[i], MAC_CAPABILITY_CALL, &call) == -1) {
+		reply_length = system_token[i] ? 0 : sizeof(reply);
+		reply_nfds = 0;
+		if (capability_kernel_call(owned_fds[i],
+		    system_token[i] ? (const void *)&sysreq : &req,
+		    system_token[i] ? sizeof(sysreq) : sizeof(req), NULL, 0,
+		    system_token[i] ? NULL : &reply, &reply_length, NULL,
+		    &reply_nfds) == -1) {
 			error = errno;
+			goto consume;
+		}
+		if (reply_length !=
+		    (system_token[i] ? 0 : sizeof(reply)) ||
+		    reply_nfds != 0) {
+			error = EPROTO;
 			goto consume;
 		}
 	}
@@ -703,10 +1521,10 @@ consume:
 }
 
 int
-service_protect(uint32_t flags)
+service_worker_protect(uint32_t flags)
 {
-	struct mac_capability_call_args call;
 	struct cp_request req;
+	size_t reply_length, reply_nfds;
 
 	if (capprotect_fd < 0) {
 		errno = ENOTSUP;
@@ -717,81 +1535,45 @@ service_protect(uint32_t flags)
 	req.op = CP_OP_SHIELD;
 	req.flags = flags;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-
-	if (ioctl(capprotect_fd, MAC_CAPABILITY_CALL, &call) == -1)
+	reply_length = 0;
+	reply_nfds = 0;
+	if (capability_kernel_call(capprotect_fd, &req, sizeof(req), NULL, 0,
+	    NULL, &reply_length, NULL, &reply_nfds) == -1)
 		return (-1);
 	return (0);
 }
 
 void
-service_drop_inherited_authority(void)
+service_worker_drop_inherited_authority(void)
 {
-	unsigned i;
-
-	if (pair_fd >= 0) {
-		close(pair_fd);
-		pair_fd = -1;
-	}
-	if (capprotect_fd >= 0) {
-		close(capprotect_fd);
-		capprotect_fd = -1;
-	}
-	for (i = 0; i < ncapability_fds; i++) {
-		if (capability_fds[i].fd >= 0)
-			close(capability_fds[i].fd);
-		explicit_bzero(&capability_fds[i], sizeof(capability_fds[i]));
-		capability_fds[i].fd = -1;
-	}
-	ncapability_fds = 0;
-	for (i = 0; i < ncomponent_fds; i++) {
-		if (component_fds[i].fd >= 0)
-			close(component_fds[i].fd);
-		explicit_bzero(&component_fds[i], sizeof(component_fds[i]));
-		component_fds[i].fd = -1;
-	}
-	ncomponent_fds = 0;
-	for (i = 0; i < nbootstrap_token_fds; i++) {
-		if (bootstrap_token_fds[i] >= 0)
-			close(bootstrap_token_fds[i]);
-		bootstrap_token_fds[i] = -1;
-	}
-	nbootstrap_token_fds = 0;
-	for (i = 0; i < nactivated_token_fds; i++) {
-		if (activated_token_fds[i] >= 0)
-			close(activated_token_fds[i]);
-		activated_token_fds[i] = -1;
-	}
-	nactivated_token_fds = 0;
-	explicit_bzero(service_label_value, sizeof(service_label_value));
-}
-
-int
-service_ready(void)
-{
-	struct svc_req_hdr req;
-	unsigned int mode;
-
 	/*
-	 * Readiness is a security boundary, not merely an application hint.
-	 * Enter capability mode before sending the compatibility notification;
-	 * serviced independently observes NOTE_CAPMODE on our procdesc.
+	 * pdfork(2) callers must not depend on pthread_atfork(3) having run.
+	 * Close both the control channel and any client endpoints that the
+	 * parent's dispatcher had queued before dropping the remaining sealed
+	 * bootstrap authority.
 	 */
-	if (cap_getmode(&mode) == -1)
+	service_after_fork_child();
+}
+
+static int
+service_claim_name(const char *name)
+{
+	struct svc_name_claim_req req;
+
+	if (name == NULL) {
+		errno = EINVAL;
 		return (-1);
-	if (mode == 0 && cap_enter() == -1)
-		return (-1);
+	}
 	memset(&req, 0, sizeof(req));
-	req.op = SVC_OP_READY;
+	req.op = SVC_OP_NAME_CLAIM;
+	strlcpy(req.name, name, sizeof(req.name));
 	return (rpc(&req, sizeof(req), NULL));
 }
 
-int
-service_register(const char *name)
+static int
+service_withdraw_name(const char *name)
 {
-	struct svc_register_req req;
+	struct svc_name_withdraw_req req;
 
 	if (name == NULL) {
 		errno = EINVAL;
@@ -803,41 +1585,25 @@ service_register(const char *name)
 	}
 
 	memset(&req, 0, sizeof(req));
-	req.op = SVC_OP_REGISTER;
+	req.op = SVC_OP_NAME_WITHDRAW;
 	strlcpy(req.name, name, sizeof(req.name));
 	return (rpc(&req, sizeof(req), NULL));
 }
 
 int
-service_unregister(const char *name)
-{
-	struct svc_unregister_req req;
-
-	if (name == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	if (strlen(name) > SERVICED_NAME_MAX) {
-		errno = ENAMETOOLONG;
-		return (-1);
-	}
-
-	memset(&req, 0, sizeof(req));
-	req.op = SVC_OP_UNREGISTER;
-	strlcpy(req.name, name, sizeof(req.name));
-	return (rpc(&req, sizeof(req), NULL));
-}
-
-int
-service_lookup(const char *name)
+service_connect(struct service_context *context, const char *name,
+    int *session_fdp)
 {
 	struct svc_lookup_req req;
 	int fd;
 
-	if (name == NULL) {
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid() || name == NULL ||
+	    session_fdp == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
+	*session_fdp = -1;
 	if (strlen(name) > SERVICED_NAME_MAX) {
 		errno = ENAMETOOLONG;
 		return (-1);
@@ -853,154 +1619,296 @@ service_lookup(const char *name)
 		errno = EIO;
 		return (-1);
 	}
-	return (fd);
-}
-
-int
-service_accept(char *client_label, size_t labelsz)
-{
-	struct mac_capability_recvmsg_args ra;
-	struct svc_new_client_msg msg;
-	int client_fd;
-
-	if (pair_fd < 0) {
-		errno = ENOTCONN;
-		return (-1);
-	}
-
-	/* Check pending queue first (notifications queued during rpc). */
-	if (npending > 0) {
-		struct pending_notify *pn;
-
-		pn = &pending[0];
-		if (client_label != NULL && labelsz > 0)
-			strlcpy(client_label, pn->msg.client_label, labelsz);
-		client_fd = pn->fd;
-
-		/* Shift queue down. */
-		npending--;
-		if (npending > 0)
-			memmove(&pending[0], &pending[1],
-			    (size_t)npending * sizeof(pending[0]));
-		return (client_fd);
-	}
-
-	/* No pending — block on the pair fd. */
-	for (;;) {
-		uint32_t op;
-
-		client_fd = -1;
-		memset(&ra, 0, sizeof(ra));
-		ra.payload = &msg;
-		ra.payload_len = sizeof(msg);
-		ra.fds = &client_fd;
-		ra.nfds = 1;
-
-		if (ioctl(pair_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
-			if (errno == EINTR)
-				continue;
-			return (-1);
-		}
-
-		if (ra.payload_len == sizeof(msg) && ra.nfds == 1 &&
-		    msg.flags == 0 &&
-		    strnlen(msg.client_label, sizeof(msg.client_label)) <
-		    sizeof(msg.client_label)) {
-			memcpy(&op, &msg, sizeof(op));
-			if (op == SVC_OP_NEW_CLIENT)
-				break;
-		}
-
-		/* Not a notification — discard. */
-		if (client_fd >= 0)
-			close(client_fd);
-	}
-
-	if (client_label != NULL && labelsz > 0)
-		strlcpy(client_label, msg.client_label, labelsz);
-
-	return (client_fd);
-}
-
-int
-service_send(int fd, const void *data, size_t len)
-{
-	return (service_send_fds(fd, data, len, NULL, 0));
-}
-
-int
-service_send_fds(int fd, const void *data, size_t len, const int *fds,
-    size_t nfds)
-{
-	struct mac_capability_sendmsg_args sa;
-
-	if (len > UINT32_MAX || nfds > UINT32_MAX ||
-	    (data == NULL && len != 0) || (fds == NULL && nfds != 0)) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = data;
-	sa.payload_len = (uint32_t)len;
-	sa.fds = fds;
-	sa.nfds = (uint32_t)nfds;
-
-	if (ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == -1)
-		return (-1);
+	*session_fdp = fd;
 	return (0);
 }
 
-ssize_t
-service_recv(int fd, void *buf, size_t bufsz, int *peer_fd)
+static int
+service_expose_internal(struct service_provider *provider, const char *name,
+    service_activation_handler activate, void *context,
+    struct service_listener **listenerp)
+    __no_lock_analysis
 {
-	ssize_t n;
-	size_t nfds;
-	int pfd;
+	struct service_listener *listener;
+	int error;
 
-	pfd = -1;
-	nfds = peer_fd != NULL ? 1 : 0;
-	n = service_recv_fds(fd, buf, bufsz,
-	    peer_fd != NULL ? &pfd : NULL, &nfds);
-	if (n == -1)
-		return (-1);
-	if (peer_fd != NULL)
-		*peer_fd = nfds == 1 ? pfd : -1;
-	return (n);
-}
-
-ssize_t
-service_recv_fds(int fd, void *buf, size_t bufsz, int *fds, size_t *nfds)
-{
-	struct mac_capability_recvmsg_args ra;
-	size_t capacity, i;
-
-	if (nfds == NULL || bufsz > UINT32_MAX || *nfds > UINT32_MAX ||
-	    (buf == NULL && bufsz != 0) || (fds == NULL && *nfds != 0)) {
+	if (name == NULL || listenerp == NULL || name[0] == '\0') {
 		errno = EINVAL;
 		return (-1);
 	}
-	capacity = *nfds;
-	for (i = 0; i < capacity; i++)
-		fds[i] = -1;
-	memset(&ra, 0, sizeof(ra));
-	ra.payload = buf;
-	ra.payload_len = (uint32_t)bufsz;
-	ra.fds = fds;
-	ra.nfds = (uint32_t)capacity;
-
-	for (;;) {
-		if (ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0)
-			break;
-		if (errno == EINTR)
-			continue;
-		for (i = 0; i < capacity; i++) {
-			if (fds[i] >= 0)
-				close(fds[i]);
-		}
-		*nfds = 0;
+	if (strlen(name) > SERVICED_NAME_MAX) {
+		errno = ENAMETOOLONG;
 		return (-1);
 	}
+	*listenerp = NULL;
+	listener = calloc(1, sizeof(*listener));
+	if (listener == NULL)
+		return (-1);
+	listener->event_pipe[0] = listener->event_pipe[1] = -1;
+	listener->owner = getpid();
+	listener->provider = provider;
+	listener->activate = activate;
+	listener->activate_context = context;
+	strlcpy(listener->name, name, sizeof(listener->name));
+	error = pthread_cond_init(&listener->cond, NULL);
+	if (error != 0)
+		goto fail;
+	if (pipe2(listener->event_pipe, O_CLOEXEC | O_NONBLOCK) == -1) {
+		error = errno;
+		(void)pthread_cond_destroy(&listener->cond);
+		goto fail;
+	}
+	if (service_start_dispatch() == -1)
+		goto fail_pipe;
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0) {
+		errno = error;
+		goto fail_pipe;
+	}
+	if (service_listener_find_locked(name) != NULL) {
+		(void)pthread_mutex_unlock(&service_state_lock);
+		errno = EEXIST;
+		goto fail_pipe;
+	}
+	listener->next = service_listeners;
+	service_listeners = listener;
+	(void)pthread_mutex_unlock(&service_state_lock);
+	if (service_claim_name(name) == -1)
+		goto fail_registered;
+	listener->claimed = true;
+	*listenerp = listener;
+	return (0);
 
-	*nfds = ra.nfds;
-	return ((ssize_t)ra.payload_len);
+fail_registered:
+	error = errno;
+	if (pthread_mutex_lock(&service_state_lock) != 0) {
+		/*
+		 * The process can no longer synchronize with its dispatcher.
+		 * Retain the unreachable listener rather than freeing memory
+		 * still linked from the dispatch path.
+		 */
+		errno = error;
+		return (-1);
+	}
+	if (service_listeners == listener)
+		service_listeners = listener->next;
+	else {
+		struct service_listener *previous;
+
+		for (previous = service_listeners;
+		    previous != NULL && previous->next != listener;
+		    previous = previous->next)
+			;
+		if (previous != NULL)
+			previous->next = listener->next;
+	}
+	(void)pthread_mutex_unlock(&service_state_lock);
+	errno = error;
+	goto fail_pipe;
+
+fail_pipe:
+	error = errno;
+	(void)close(listener->event_pipe[0]);
+	(void)close(listener->event_pipe[1]);
+	(void)pthread_cond_destroy(&listener->cond);
+	errno = error;
+fail:
+	free(listener);
+	errno = error;
+	return (-1);
+}
+
+int
+service_provider_expose_lazy(struct service_provider *provider,
+    const char *name, service_activation_handler activate, void *context,
+    struct service_listener **listenerp)
+{
+	struct service_listener *listener;
+
+	if (!service_provider_valid(provider)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (service_expose_internal(provider, name, activate, context,
+	    &listener) == -1)
+		return (-1);
+	*listenerp = listener;
+	return (0);
+}
+
+int
+service_provider_expose(struct service_provider *provider, const char *name,
+    struct service_listener **listenerp)
+{
+
+	return (service_provider_expose_lazy(provider, name, NULL, NULL,
+	    listenerp));
+}
+
+int
+service_listener_close(struct service_listener *listener) __no_lock_analysis
+{
+	struct service_listener *previous;
+	unsigned i;
+	int error, withdraw_error;
+	bool was_claimed;
+
+	if (listener == NULL || listener->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+	withdraw_error = 0;
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	previous = NULL;
+	for (struct service_listener *current = service_listeners;
+	    current != NULL && current != listener; current = current->next)
+		previous = current;
+	if ((previous == NULL && service_listeners != listener) ||
+	    (previous != NULL && previous->next != listener)) {
+		(void)pthread_mutex_unlock(&service_state_lock);
+		errno = EINVAL;
+		return (-1);
+	}
+	listener->closing = true;
+	(void)pthread_cond_broadcast(&listener->cond);
+	while (listener->waiters != 0 || listener->activations != 0)
+		(void)pthread_cond_wait(&listener->cond, &service_state_lock);
+	was_claimed = listener->claimed;
+	previous = NULL;
+	for (struct service_listener *current = service_listeners;
+	    current != NULL && current != listener; current = current->next)
+		previous = current;
+	if (previous == NULL)
+		service_listeners = listener->next;
+	else
+		previous->next = listener->next;
+	for (i = 0; i < listener->count; i++)
+		(void)close(listener->queue[(listener->head + i) %
+		    SERVICE_LISTENER_QUEUE_MAX].fd);
+	listener->count = 0;
+	(void)pthread_mutex_unlock(&service_state_lock);
+	if (was_claimed && service_withdraw_name(listener->name) == -1)
+		withdraw_error = errno;
+	(void)close(listener->event_pipe[0]);
+	(void)close(listener->event_pipe[1]);
+	(void)pthread_cond_destroy(&listener->cond);
+	explicit_bzero(listener, sizeof(*listener));
+	free(listener);
+	if (withdraw_error != 0) {
+		errno = withdraw_error;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+service_listener_fd(const struct service_listener *listener)
+{
+
+	if (listener == NULL || listener->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (listener->event_pipe[0]);
+}
+
+static int
+service_listener_accept_fd(struct service_listener *listener,
+    struct service_identity *identity) __no_lock_analysis
+{
+	struct service_listener_connection connection;
+	uint8_t byte;
+	int cancel_state, error;
+	bool registered_waiter;
+
+	if (listener == NULL || listener->owner != getpid() ||
+	    (identity != NULL && identity->size != sizeof(*identity))) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (service_start_dispatch() == -1)
+		return (-1);
+	error = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cancel_state);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0) {
+		(void)pthread_setcancelstate(cancel_state, NULL);
+		errno = error;
+		return (-1);
+	}
+	registered_waiter = false;
+	if (listener->closing)
+		error = ECANCELED;
+	else {
+		listener->waiters++;
+		registered_waiter = true;
+	}
+	while (error == 0 && !listener->closing &&
+	    (!listener->active || listener->count == 0) &&
+	    !listener->overflow &&
+	    service_dispatch_error == 0) {
+		error = pthread_cond_wait(&listener->cond, &service_state_lock);
+		if (error != 0)
+			break;
+	}
+	if (error == 0 && listener->closing)
+		error = ECANCELED;
+	if (error == 0 && listener->overflow) {
+		listener->overflow = false;
+		(void)read(listener->event_pipe[0], &byte, sizeof(byte));
+		error = ENOBUFS;
+	}
+	if (error == 0 && listener->count == 0)
+		error = service_dispatch_error != 0 ? service_dispatch_error : EIO;
+	if (registered_waiter) {
+		listener->waiters--;
+		if (listener->closing && listener->waiters == 0)
+			(void)pthread_cond_signal(&listener->cond);
+	}
+	if (error != 0) {
+		(void)pthread_mutex_unlock(&service_state_lock);
+		(void)pthread_setcancelstate(cancel_state, NULL);
+		errno = error;
+		return (-1);
+	}
+	connection = listener->queue[listener->head];
+	listener->head = (listener->head + 1) % SERVICE_LISTENER_QUEUE_MAX;
+	listener->count--;
+	(void)pthread_mutex_unlock(&service_state_lock);
+	(void)pthread_setcancelstate(cancel_state, NULL);
+	(void)read(listener->event_pipe[0], &byte, sizeof(byte));
+	if (identity != NULL) {
+		memset(identity, 0, sizeof(*identity));
+		identity->size = sizeof(*identity);
+		strlcpy(identity->service_name, connection.msg.service_name,
+		    sizeof(identity->service_name));
+		strlcpy(identity->client_label, connection.msg.client_label,
+		    sizeof(identity->client_label));
+	}
+	return (connection.fd);
+}
+
+int
+service_listener_accept(struct service_listener *listener,
+    struct service_identity *identity, int *session_fdp)
+{
+	int fd;
+
+	if (session_fdp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*session_fdp = -1;
+	fd = service_listener_accept_fd(listener, identity);
+	if (fd == -1)
+		return (-1);
+	*session_fdp = fd;
+	return (0);
 }

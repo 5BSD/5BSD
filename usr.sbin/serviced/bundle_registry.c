@@ -109,34 +109,6 @@ static unsigned nbundles;
 static unsigned bundles_cap;
 static struct provides_entry *provides_hash[PROVIDES_HASH_SIZE];
 
-static int
-load_provider_policy(struct capbundle_policy **policyp, char *errbuf,
-    size_t errlen)
-{
-	struct stat st;
-	const char *path;
-
-	*policyp = NULL;
-	path = getenv("SERVICED_POLICY");
-	if (path == NULL || path[0] == '\0')
-		path = "/etc/serviced/policy.ucl";
-	if (lstat(path, &st) == -1) {
-		if (errno == ENOENT)
-			return (0);
-		snprintf(errbuf, errlen, "%s: %s", path, strerror(errno));
-		return (-1);
-	}
-	if (!S_ISREG(st.st_mode) || st.st_uid != 0 ||
-	    (st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
-		snprintf(errbuf, errlen,
-		    "%s: policy must be a root-owned regular file and not "
-		    "group/world-writable", path);
-		errno = EPERM;
-		return (-1);
-	}
-	return (capbundle_policy_open(path, policyp, errbuf, errlen));
-}
-
 static unsigned
 provides_hashfn(const char *s)
 {
@@ -382,11 +354,9 @@ bundle_registry_init(void)
 	char errbuf[512];
 	struct stat sb;
 	struct capbundle **cycle_bundles;
-	struct capbundle_policy *policy;
 	unsigned i, old_nbundles, old_bundles_cap, nservices;
 	int cycle_ret;
 
-	policy = NULL;
 	old_bundles = bundles;
 	old_nbundles = nbundles;
 	old_bundles_cap = bundles_cap;
@@ -431,11 +401,6 @@ bundle_registry_init(void)
 		registry_dispose(old_bundles, old_nbundles, old_hash);
 		return (0);
 	}
-	if (load_provider_policy(&policy, errbuf, sizeof(errbuf)) == -1) {
-		syslog(LOG_CRIT, "bundle_registry: provider policy rejected: %s",
-		    errbuf);
-		goto fail;
-	}
 	nservices = 0;
 	for (i = 0; i < nbundles; i++) {
 		nservices += capbundle_nservices(bundles[i].bundle);
@@ -451,12 +416,22 @@ bundle_registry_init(void)
 		struct capbundle *b = bundles[i].bundle;
 		for (si = 0; si < capbundle_nservices(b); si++) {
 			struct capbundle_service *svc = capbundle_service(b, si);
-			for (ri = 0; ri < capbundle_svc_nrequires(svc); ri++) {
-				const char *req = capbundle_svc_requires(svc, ri);
-				if (strcmp(req, "ORACLED") != 0 && !provides_exists(req)) {
+			struct svc_manifest manifest;
+
+			if (capbundle_svc_fill_manifest(svc, &manifest) == -1) {
+				syslog(LOG_CRIT,
+				    "bundle_registry: invalid service manifest %s",
+				    capbundle_svc_label(svc));
+				goto fail;
+			}
+			for (ri = 0; ri < manifest.nstartup_after; ri++) {
+				const char *provider =
+				    manifest.startup_after[ri];
+				if (strcmp(provider, "ORACLED") != 0 &&
+				    !provides_exists(provider)) {
 					syslog(LOG_CRIT,
-					    "bundle_registry: %s requires unknown provider %s",
-					    capbundle_svc_label(svc), req);
+					    "bundle_registry: %s has unknown startup provider %s",
+					    capbundle_svc_label(svc), provider);
 					SERVICED_PROBE_MANIFEST_REJECT(
 					    capbundle_name(b), "unknown provider",
 					    bundles[i].system ? 1 : 0);
@@ -482,22 +457,9 @@ bundle_registry_init(void)
 	for (i = 0; i < nbundles; i++)
 		cycle_bundles[i] = bundles[i].bundle;
 
-	if (capbundle_resolve_components_policy(cycle_bundles, nbundles,
-	    policy, errbuf, sizeof(errbuf)) == -1) {
-		syslog(LOG_CRIT,
-		    "bundle_registry: component resolution failed: %s",
-		    errbuf);
-		free(cycle_bundles);
-		capbundle_policy_close(policy);
-		policy = NULL;
-		goto fail;
-	}
-
-	cycle_ret = capbundle_check_cycles(cycle_bundles, nbundles,
+	cycle_ret = capbundle_check_startup_cycles(cycle_bundles, nbundles,
 	    errbuf, sizeof(errbuf));
 	free(cycle_bundles);
-	capbundle_policy_close(policy);
-	policy = NULL;
 	if (cycle_ret == -1) {
 		syslog(LOG_CRIT,
 		    "bundle_registry: %s — cannot start", errbuf);
@@ -512,7 +474,6 @@ bundle_registry_init(void)
 	return (0);
 
 fail:
-	capbundle_policy_close(policy);
 	registry_dispose(bundles, nbundles, provides_hash);
 	bundles = old_bundles;
 	nbundles = old_nbundles;
@@ -565,6 +526,29 @@ bundle_registry_is_system(unsigned idx)
 	if (idx >= nbundles)
 		return (false);
 	return (bundles[idx].system);
+}
+
+/*
+ * Activation policy is a serviced property, not a manifest knob.
+ * Ordinary named providers start on first lookup.  The two local component
+ * factories start during bootstrap because their endpoints must exist before
+ * a consumer can be executed in capability mode.
+ */
+bool
+bundle_service_activates_on_lookup(const struct capbundle_service *service)
+{
+	const char *name;
+	unsigned i;
+
+	if (capbundle_svc_nprovides(service) == 0)
+		return (false);
+	for (i = 0; i < capbundle_svc_nprovides(service); i++) {
+		name = capbundle_svc_provides(service, i);
+		if (strcmp(name, "org.5bsd.FileSystemCmp") == 0 ||
+		    strcmp(name, "org.5bsd.NetworkCmp") == 0)
+			return (false);
+	}
+	return (true);
 }
 
 /*

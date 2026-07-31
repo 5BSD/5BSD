@@ -17,20 +17,18 @@ CAPABILITIES_SYSTEM=	/Capabilities/System
 CAPABILITIES_SYSTEMPACKAGE=	serviced
 
 FILESGROUPS+=	CMP_EXAMPLES
-CMP_EXAMPLES=	examples/cmp-private.ucl \
-		examples/cmp-jail.ucl \
-		examples/cmp-service.ucl \
-		examples/cmp-system.ucl \
-		examples/component-policy.ucl
+CMP_EXAMPLES=	examples/local-components.ucl
 CMP_EXAMPLESDIR=	${SHAREDIR}/examples/serviced
 CMP_EXAMPLESPACKAGE=	serviced
 
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/lib/liboraclert
 CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS+=	-I${SRCTOP}/lib/libcapability
+CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		capbundle oraclert jail ucl util bsm
+LIBADD=		capability capbundle channel oraclert jail ucl util bsm
 
 # Emit OpenBSM audit records for security-relevant events (control-socket
 # privileged commands, service exec under changed credentials, capability

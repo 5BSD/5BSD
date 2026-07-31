@@ -1,6 +1,8 @@
-comment = "Capability-mode NetworkCmp resolver provider"
+comment = "Capability-mode NetworkCmp TCP/UDP provider"
 
 desc = <<EOD
-The base NetworkCmp DNS resolver provider, installed as the verified
-/Capabilities/System/NetworkCmp.cap bundle.
+The base NetworkCmp provider, installed as the verified
+/Capabilities/System/NetworkCmp.cap bundle.  It provides bounded DNS, TCP,
+connected UDP, endpoint policy, socket lifecycle, and inline data movement
+without delegating kernel socket descriptors to consumers.
 EOD

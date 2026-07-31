@@ -1,6 +1,11 @@
-set = "tests"
-comment = "NetworkCmp resolver provider tests"
+comment = "NetworkCmp provider tests"
 
 desc = <<EOD
-Verified-bundle and capability-sandbox contract tests for NetworkCmp.
+Protocol-negative, TCP/UDP state-machine, datagram-boundary, timeout,
+endpoint-policy, resource-exhaustion, capability-sandbox, and verified-bundle
+tests for NetworkCmp.
 EOD
+
+annotations = {
+	set = "tests"
+}

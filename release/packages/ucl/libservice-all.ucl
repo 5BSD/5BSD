@@ -2,5 +2,9 @@ comment = "Capability service client library"
 
 desc = <<EOD
 Public client and provider support for capability services, including
-component-session bootstrap and descriptor transfer protocols.
+multi-name endpoint exposure, atomic readiness, direct client sessions,
+serviced-death indication, component bootstrap, token-correlated channel
+lifecycle, stable local-component discovery, provider activation, and
+structured session calls.  Message transport and typed service protocols
+remain separate libraries.
 EOD

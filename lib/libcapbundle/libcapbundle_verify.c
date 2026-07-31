@@ -95,14 +95,10 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 			return (-1);
 		}
 
-		/* Must provide at least one name. */
-		if (s->nprovides == 0) {
-			if (errbuf)
-				snprintf(errbuf, errlen,
-				    "%s: service '%s' has no provides",
-				    b->name, s->label);
-			return (-1);
-		}
+		/*
+		 * A service with no exported names is an eager boot task.
+		 * Exported names turn the service into an on-demand provider.
+		 */
 		if (strlen(s->label) >= SERVICED_LABEL_MAX) {
 			if (errbuf)
 				snprintf(errbuf, errlen,
@@ -128,20 +124,22 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 				}
 			}
 		}
-		for (j = 0; j < s->nrequires; j++) {
-			if (strlen(s->requires[j]) >= SERVICED_LABEL_MAX) {
+		for (j = 0; j < s->nstartup_after; j++) {
+			if (strlen(s->startup_after[j]) >= SERVICED_LABEL_MAX) {
 				if (errbuf)
 					snprintf(errbuf, errlen,
-					    "%s: requires name too long: %s",
-					    b->name, s->requires[j]);
+					    "%s: startup edge name too long: %s",
+					    b->name, s->startup_after[j]);
 				return (-1);
 			}
-			for (k = j + 1; k < s->nrequires; k++) {
-				if (strcmp(s->requires[j], s->requires[k]) == 0) {
+			for (k = j + 1; k < s->nstartup_after; k++) {
+				if (strcmp(s->startup_after[j],
+				    s->startup_after[k]) == 0) {
 					if (errbuf)
 						snprintf(errbuf, errlen,
-						    "%s: duplicate requires '%s'",
-						    b->name, s->requires[j]);
+						    "%s: duplicate startup edge '%s'",
+						    b->name,
+						    s->startup_after[j]);
 					return (-1);
 				}
 			}
@@ -165,14 +163,14 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 			}
 		}
 
-		/* Intra-bundle cycle: service requires its own provides. */
-		for (j = 0; j < s->nrequires; j++) {
+		/* A component consumer cannot also be its own factory. */
+		for (j = 0; j < s->nstartup_after; j++) {
 			for (k = 0; k < s->nprovides; k++) {
-				if (strcmp(s->requires[j],
+				if (strcmp(s->startup_after[j],
 				    s->provides[k]) == 0) {
 					if (errbuf)
 						snprintf(errbuf, errlen,
-						    "%s: '%s' requires itself",
+						    "%s: '%s' has a self startup edge",
 						    b->name, s->label);
 					return (-1);
 				}
@@ -186,13 +184,13 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 /* --- Cycle Detection (Kahn's Algorithm) --- */
 
 int
-capbundle_check_cycles(struct capbundle **bundles, unsigned nbundles,
+capbundle_check_startup_cycles(struct capbundle **bundles, unsigned nbundles,
     char *errbuf, size_t errlen)
 {
 	/*
-	 * Build adjacency from provides -> requires.
+	 * Build adjacency from provides to internal component-startup edges.
 	 * Each provides name is a node.  An edge exists from node A to
-	 * node B if the service providing B requires A.
+	 * node B if the service providing B must start after A.
 	 *
 	 * Use a simple flat array of all service nodes.
 	 */
@@ -249,7 +247,7 @@ capbundle_check_cycles(struct capbundle **bundles, unsigned nbundles,
 	}
 
 	/*
-	 * Build edges: for each service's requires[], find the node that
+	 * Build edges: for each service's startup_after[], find the node that
 	 * provides that name, and add an edge (provider -> this service).
 	 */
 	nnodes = 0;
@@ -258,7 +256,7 @@ capbundle_check_cycles(struct capbundle **bundles, unsigned nbundles,
 			const struct capbundle_service *svc =
 			    &bundles[bi]->services[si];
 
-			for (j = 0; j < svc->nrequires; j++) {
+			for (j = 0; j < svc->nstartup_after; j++) {
 				/* Find provider of this requirement. */
 				unsigned provider_idx = (unsigned)-1;
 				unsigned ni = 0;
@@ -270,7 +268,7 @@ capbundle_check_cycles(struct capbundle **bundles, unsigned nbundles,
 						    &bundles[b2]->services[s2];
 						for (k = 0; k < p->nprovides; k++) {
 							if (strcmp(p->provides[k],
-							    svc->requires[j]) == 0) {
+							    svc->startup_after[j]) == 0) {
 								provider_idx = ni;
 								goto found;
 							}

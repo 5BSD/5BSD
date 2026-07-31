@@ -1,688 +1,172 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd July 20, 2026
+.Dd July 30, 2026
 .Dt SERVICED 5
 .Os
 .Sh NAME
 .Nm serviced
-.Nd service manifest format for 5BSD
+.Nd capability bundle service manifest format
 .Sh DESCRIPTION
-Service manifests are UCL files that declare one service each.
-They are typically embedded in capability bundles under
-.Pa etc/
-and parsed by
-.Xr libcapbundle 3 .
-New manifests declare
-.Va schema
-as
-.Dq org.5bsd.serviced.service
-and the separate
-.Va schema_version
-as
-.Dq 1.0.0 .
-Legacy manifests without these two keys remain accepted during migration;
-declaring only one, an unknown schema, or another schema version is rejected.
-A bundle may contain at most 32 service manifests, and at most 64 services may
-be loaded across the complete bundle set.
-.Pp
-Labels must be globally unique across all manifests.
-Bundle identifiers must be globally unique across the loaded bundle set.
-Labels and capability names should use reverse-domain format
-(containing at least one dot) for the naming registry.
-.Ss Required Keys
-.Bl -tag -width "program"
-.It Va bundle_id
-Stable reverse-domain identifier shared by every service manifest in the
-bundle.
-.It Va program
-Path relative to the bundle's
-.Pa bin/
-directory.
-Absolute paths, empty paths, and paths containing
-.Dq ..
-are rejected.
-.It Va provides
-A globally unique service name or array of names.
-The first name is the service label used by serviced.
-.El
-.Ss Optional Keys
-.Bl -tag -width "max_failures"
-.It Va version
-Bundle version string.
-If present, it must match across every service manifest in the bundle.
-.It Va author
-Bundle author string.
-If present, it must match across every service manifest in the bundle.
-.It Va arguments
-Array of literal argument strings placed after
-.Va argv[0] .
-No shell is invoked and no word splitting, expansion, or substitution occurs.
-Maximum 32 arguments of 255 bytes each.
-.It Va environment
-Object mapping environment-variable names to string values.
-Maximum 32 entries.
-Names use the portable identifier form (a letter or underscore followed by
-letters, digits, or underscores), values must be strings, and each resulting
-.Dq name=value
-entry must be shorter than 1024 bytes.
-Names beginning with
-.Dq ORACLED_
-or
-.Dq SERVICED_
-and the exact name
-.Dq SERVICE_BOOTSTRAP_FD
-,
-.Dq NETWORKCMP ,
-or
-.Dq FILESYSTEMCMP
-are reserved and rejected.
-.It Va user
-Drop privileges to this user before executing the service.
-The user is resolved via
-.Xr getpwnam 3
-and supplementary groups via
-.Xr getgrouplist 3
-at exec time.
-If the user does not exist when the service is launched, the
-service fails to start and the error is logged.
-If omitted,
-.Nm
-uses the dedicated
-.Dq capability
-account installed by pkgbase.
-At startup
-.Nm
-validates that the account is non-root, uses the
-.Dq capability
-primary group, has home
-.Pa /nonexistent ,
-and uses
-.Pa /usr/sbin/nologin .
-It never modifies the password or group database.
-An omitted identity never means root.
-.It Va group
-Drop privileges to this primary group.
-Overrides the group obtained from
-.Va user
-if both are specified.
-If the group does not exist at launch time, the service fails to start.
-If omitted, the dedicated
-.Dq capability
-group installed by pkgbase is used.
-.It Va restart
-Restart policy when the service exits.
-One of:
-.Bl -tag -width "on-failure" -compact
-.It Dq never
-Do not restart the service.
-This is the default.
-.It Dq always
-Restart unconditionally after exit.
-.It Dq on-failure
-Restart only on non-zero exit status or signal death.
-.El
-.It Va stop_timeout
-Seconds to wait after sending
-.Dv SIGTERM
-before escalating to
-.Dv SIGKILL .
-Must be in the range 1\(en300.
-Default: 5.
-.It Va max_failures
-Circuit breaker threshold.
-After this many consecutive rapid failures, the service is permanently
-disabled until the next manifest reload.
-Must be in the range 1\(en100.
-Default: 10.
-.It Va requires
-A service name or array of service names this service depends on.
-Maximum 16 entries, including provider dependencies added by
-.Va components .
-The service will not start until all required capabilities are
-available.
-.It Va on_demand
-Boolean.
-If true, the service is not started during initial launch but instead
-launched on first
-.Xr service_lookup 3
-request for one of its provided names.
-Default: false.
-.It Va kmod_requires
-String or array of up to 8 kernel module names that must be loaded before
-launch.
-Only system bundles may request module loading.
-Names may contain only letters, digits, period, underscore, and hyphen;
-paths are rejected.
-The request is executed by
-.Xr oracled 8
-under its nonce so
-.Nm
-does not retain ambient kernel-module authority.
-.It Va capabilities
-Object containing capability tokens and service descriptors to delegate.
-See
-.Sx Capabilities
-below.
-.It Va implements
-Array of up to 8 objects describing public component interfaces implemented
-by this service.
-Each object contains an
-.Va interface
-name and a separate semantic
-.Va version
-in
-.Dq major.minor.patch
-form.
-Optional
-.Va lifetimes
-and
-.Va sharing
-arrays advertise non-default modes.
-When omitted they safely mean process lifetime and exclusive sharing.
-Resolution requires the provider to advertise the requested mode, so an
-unsupported lifetime or sharing combination fails before launch.
-The implementation registers its provider name through
-.Xr service_register 3 .
-.It Va components
-Object mapping application-local component names to requests.
-Names begin with a letter or underscore and may then contain letters, digits,
-underscore, hyphen, or period.
-There may be at most 8.
-Each request has:
-.Bl -tag -width "interface" -compact
-.It Va interface
-Required public interface, such as
-.Dq org.5bsd.cmp.network
-or
-.Dq org.5bsd.cmp.filesystem .
-Version suffixes in this field are rejected.
-.It Va version
-Required semantic interface version, such as
-.Dq 1.0.0 .
-.It Va provider
-Deprecated bundle-local policy pin retained for format compatibility.
-New consumer manifests omit it; administrator selection belongs in
-.Pa /etc/serviced/policy.ucl .
-After loading the complete bundle set,
-.Nm
-selects the unique service whose
-.Va implements
-declaration exactly matches
-.Va interface
-and
-.Va version .
-No match or multiple matches reject the bundle set.
-An explicit pin must exist and advertise the requested interface and version.
-.It Va lifetime
-Resource lifetime:
-.Dq process ,
-.Dq job ,
-.Dq jail ,
-or
-.Dq system .
-The default is
-.Dq process .
-The deprecated
-.Va scope
-spellings
-.Dq private
-and
-.Dq service
-map to
-.Dq process
-and
-.Dq job .
-Declaring both is rejected.
-.It Va sharing
-Either
-.Dq exclusive
-or
-.Dq shared ;
-defaults to
-.Dq exclusive .
-This controls backing-resource sharing only.
-Every consumer still receives a separately attributable session worker or
-session endpoint that can follow the consumer coalition lifetime.
-.It Va required
-Boolean; defaults to true and should normally be omitted.
-Set false only when the program has an explicitly tested degraded mode.
-.It Va options
-Provider-defined object encoded as bounded compact JSON.
-It is sent in the typed component bootstrap frame, not added to
-.Va argv
-or the process environment.
-.El
-.Pp
-The application-local component name is the key accepted by
-.Fn service_component_fd .
-It is delivered in the versioned bootstrap descriptor consumed by
-.Xr libservice 3 ;
-applications do not name or discover concrete providers and no authority map
-is placed in the environment.
-For the standard interfaces,
-.Nm
-may add
-.Ev NETWORKCMP
-and
-.Ev FILESYSTEMCMP
-containing the selected manifest-local key.
-These variables are convenience selectors only; the corresponding descriptor
-must still be present in, and validated from, the sealed bootstrap
-descriptor.
-Consumer manifests may not override these reserved names.
-.Pp
-Provider factories are ordinary supervised services and must not declare
-.Va on_demand .
-Their per-consumer workers or sessions are created dynamically when the
-consumer launches.
-Every provider acknowledges bootstrap with exactly one procdesc or nested
-coalition descriptor identifying its assigned worker set.
 .Xr serviced 8
-enlists it in the consuming service coalition before exec.
-A shared provider factory may create workers, but an assigned worker set
-cannot be silently shared across unrelated coalitions.
+loads service definitions from verified
+.Pa .cap
+bundles.
+A service manifest is a UCL object stored below the bundle's
+.Pa etc
+directory.
+Unknown keys are errors.
+.Pp
+Runtime identity and public service names are separate.
+The private identity is derived from
+.Va bundle_id
+and
+.Va program .
+The
+.Va provides
+array contains only globally connectable endpoint names.
+.Sh TOP-LEVEL KEYS
+.Bl -tag -width max_failures
+.It Va schema
+Optional schema identifier.
+When present it must be
+.Dq org.5bsd.serviced.service .
+.It Va schema_version
+Required with
+.Va schema
+and currently
+.Dq 1.0.0 .
+.It Va bundle_id
+Required globally unique bundle identifier.
+.It Va version
+Bundle version.
+.It Va author
+Bundle author.
+.It Va program
+Required executable name below the bundle's
+.Pa bin
+directory.
+Absolute paths and parent traversal are rejected.
+.It Va arguments
+String array passed after
+.Va program .
+.It Va environment
+Object containing the program's explicit environment.
+It cannot override reserved component or bootstrap variables.
+.It Va user , group
+Execution credentials.
+.It Va provides
+A string or array of global names exposed by this program.
+A provider may declare and expose several names.
+Each name is routed to the listener that exposed that exact name.
+The declarations form one initial check-in transaction:
+the provider cannot report application readiness until every name is claimed.
+No name becomes connectable until that complete check-in,
+application readiness,
+.Nm serviced
+independently verifies capability-mode entry, and client demand successfully
+activates that particular name.
+Sibling names remain independently lazy after the common readiness barrier.
+All public named services are launched on first connection.
+There are no
+.Va on_demand
+or
+.Va requires
+options; global dependencies are acquired dynamically by typed libraries.
+.It Va components
+One string or an array containing
+.Dq filesystem ,
+.Dq network ,
+or both.
+No component options, provider selection, interface version, lifetime, or
+sharing keys exist.
+The declaration requests a required process-local authority replacement.
+.Xr serviced 8
+constructs the component before exec, enlists its worker in the consumer's
+coalition, and injects its channel through the fixed environment variable
+consumed by the typed library.
+.It Va restart
+One of
+.Dq never ,
+.Dq on-failure ,
+or
+.Dq always .
+.It Va stop_timeout
+Seconds before forced termination.
+.It Va max_failures
+Circuit-breaker threshold.
+.It Va kmod_requires
+Kernel modules that the privileged module service must ensure are loaded.
 .It Va jail
-Named persistent execution-jail object.
-It requires
-.Va name
-and an absolute
+Optional execution-jail object with
+.Va name ,
 .Va path ,
-and may specify
-.Va hostname
+.Va hostname ,
 and
 .Va ip4_addr .
-On relaunch,
-.Nm
-reattaches to an existing jail with the same name only when its root,
-hostname, and explicitly requested address match.
-A conflicting definition is rejected rather than updating an existing jail.
-The oracle acquires and releases the narrow jail-management claim needed for
-this lifecycle operation.
-No jail token is delegated to the application unless it separately declares
-one under
-.Va capabilities.jails .
+.It Va capabilities
+Direct kernel authorities delegated by the Oracle.
+Supported groups include
+.Va paths ,
+.Va files ,
+.Va network ,
+.Va jails ,
+.Va vsock ,
+.Va services ,
+and
+.Va system .
+These declarations remain distinct from local components and global services.
 .El
-.Pp
-Unknown keys, wrong value types, excess array entries, invalid capability
-entries, and out-of-range values reject the entire bundle.
-Security declarations are never silently discarded or truncated.
-Reload validation is transactional: a rejected replacement leaves the previous
-registry and running services intact.
-.Ss Provider Policy
-The optional root-owned
-.Pa /etc/serviced/policy.ucl
-file declares schema
-.Dq org.5bsd.serviced.policy
-and schema version
-.Dq 1.0.0 .
-Its
-.Va provider_defaults
-object selects a provider for an exact interface and version.
-Its
-.Va service_overrides
-object selects a provider for a service label and application-local component
-name.
-Service overrides take precedence over interface defaults.
-Policy is applied after bundle verification and before dependency-cycle
-checking.
-Unknown policy keys, duplicate selections, missing implementations, and
-untrusted policy ownership reject the complete transactional reload.
-.Pp
-For example:
+.Sh SERVICE EXAMPLE
 .Bd -literal -offset indent
-schema = "org.5bsd.serviced.policy";
+schema = "org.5bsd.serviced.service";
 schema_version = "1.0.0";
+bundle_id = "org.example.index";
+version = "1.0.0";
+author = "Example";
 
-provider_defaults {
-    "org.5bsd.cmp.filesystem" {
-        version = "1.0.0";
-        provider = "org.5bsd.FileSystemCmp.scratch";
-    }
-}
-
-service_overrides {
-    "org.example.web" {
-        components {
-            network {
-                provider = "org.example.NetworkCmp.restricted";
-            }
-        }
-    }
-}
-.Ed
-.Pp
-Provider policy is deliberately absent from signed consumer manifests.
-The same application bundle can therefore be deployed with a different
-implementation without being rebuilt or resigned.
-.Ss Capabilities
-The
-.Va capabilities
-object requests capability tokens from
-.Xr oracled 8
-on behalf of the service.
-Resources listed here that are not pre-declared in
-.Xr oracled.conf 5
-are automatically claimed by the oracle at runtime.
-These
-.Em dynamic claims
-are reference-counted across all services; when the last service
-using a dynamic claim exits, the claim is released from the kernel.
-Resources that are declared in
-.Xr oracled.conf 5
-are
-.Em policy claims
-and are never released.
-.Pp
-Every requested isolation authority is minted before
-.Xr pdfork 2 .
-If any mint fails or the set is incomplete, the program is not executed.
-The token descriptors are inherited after
-.Xr execve 2
-through the versioned, sealed environment descriptor.
-The classic
-.Ev SERVICE_BOOTSTRAP_FD=5
-entry locates that descriptor but conveys no authority.
-They remain inactive until the program calls
-.Fn service_authorize_capabilities
-from
-.Xr libservice 3
-or explicitly performs the equivalent authorization operation.
-The standard library operation consumes the activation handles after
-validating the complete set and closes the inherited descriptor numbers.
-It retains private close-on-exec references for the process lifetime because
-closing the last reference would revoke the kernel authorization.
-Likewise, process shielding is a program decision made through
-.Fn service_protect
-from
-.Xr libservice 3 ;
-it is not a manifest or supervisor policy.
-.Pp
-This object covers every delegable token family implemented by the
-mac_capability isolation and system services, plus the explicitly requested
-mount, process-node, accounting, and identity service descriptors.
-Channel, coalition, procdesc, Capsicum, and capprotect descriptors remain
-lifecycle plumbing or explicit per-process confinement decisions.
-.Pp
-It may contain the following sub-keys:
-.Bl -tag -width "network"
-.It Va paths
-Array of absolute filesystem paths (maximum 16).
-.Xr serviced 8
-requests an isolation access token from the oracle for each path
-and passes it to the service at launch.
-.It Va files
-Array of fine-grained file capability objects (maximum 16).
-Each object contains:
-.Bl -tag -width "actions" -compact
-.It Va path
-Absolute path to the target file.
-Required.
-.It Va actions
-A string, array of strings, or
-.Dq * .
-Individual action names are:
-.Dq read ,
-.Dq write ,
-.Dq exec ,
-.Dq create ,
-.Dq delete ,
-.Dq stat ,
-.Dq lookup ,
-.Dq append ,
-.Dq rename_from ,
-.Dq rename_to ,
-.Dq link ,
-.Dq setattr ,
-.Dq truncate ,
-and
-.Dq connect .
-The special values
-.Dq *
-and
-.Dq all
-grant all actions.
-.El
-.It Va network
-Array of network endpoint capability objects (maximum 16).
-Each object contains:
-.Bl -tag -width "direction" -compact
-.It Va domain
-Address family:
-.Dq inet
-(default),
-.Dq inet6 ,
-.Dq bluetooth ,
-or
-.Dq * .
-.It Va protocol
-Transport protocol:
-.Dq tcp ,
-.Dq udp ,
-.Dq hci ,
-.Dq l2cap ,
-.Dq rfcomm ,
-.Dq sco ,
-.Dq iso ,
-or
-.Dq * .
-.It Va port
-Integer port number, or
-.Dq * .
-.It Va ports
-Port range as a string
-.Dq min-max ,
-or
-.Dq * .
-Only one of
-.Va port
-or
-.Va ports
-should be specified.
-.It Va direction
-.Dq bind
-(default),
-.Dq connect ,
-or
-.Dq * .
-.It Va address
-IP address or CIDR notation
-.Pq e.g., Dq 10.0.0.0/24 ,
-or a Bluetooth BD_ADDR when
-.Va domain
-is
-.Dq bluetooth .
-Optional.
-A specific address requires an explicit, matching
-.Va domain ;
-the wildcard domain may only be combined with a wildcard address.
-.It Va prefix
-CIDR prefix length as an integer.
-Optional; provides an alternative to embedding the prefix in
-.Va address .
-It requires a specific address.
-.El
-.It Va jails
-Array of jail operation tokens (maximum 16).
-Grants the service authority to perform jail operations via
-delegated capability tokens.
-An entry may be a positive numeric JID, a non-empty jail name, or an object
-containing
-.Va jid
-and/or
-.Va name
-plus optional
-.Va actions .
-Actions are
-.Dq create ,
-.Dq get ,
-.Dq set ,
-.Dq remove ,
-and
-.Dq attach ;
-omitting actions grants all jail actions.
-.It Va services
-Array containing any of
-.Dq mount ,
-.Dq node ,
-.Dq accounting ,
-or
-.Dq identity
-(maximum 4, without duplicates).
-These entries request authority-bearing mac_capability service descriptors,
-not activation tokens.
-They are delivered through the typed bootstrap descriptor and obtained by
-name with
-.Fn service_capability_fd
-from
-.Xr libservice 3 .
-.It Va vsock
-Array of VSOCK endpoint capability objects (maximum 16).
-Each object accepts
-.Va cid
-as an integer or
-.Dq any ,
-.Va port
-as a 32-bit integer or
-.Va ports
-as
-.Dq min-max ,
-and
-.Va direction
-as
-.Dq bind ,
-.Dq connect ,
-or
-.Dq any .
-The defaults are any CID, all ports, and bind direction.
-.It Va system
-Array of system gate names (maximum 11).
-.Xr serviced 8
-requests a system access token from the oracle with the specified
-gates and passes it to the service.
-The complete set is
-.Dq kldload ,
-.Dq kldunload ,
-.Dq kldstat ,
-.Dq reboot ,
-.Dq swapon ,
-.Dq swapoff ,
-.Dq sysctl ,
-.Dq kenv ,
-.Dq acct ,
-.Dq audit ,
-and
-.Dq kenv_read .
-.El
-.Ss Dependency Resolution
-Before launching services,
-.Xr serviced 8
-topologically sorts all loaded manifests by their
-.Va provides
-and
-.Va requires
-declarations.
-Services that provide capabilities are started before services
-that require them.
-.Pp
-The following rules apply:
-.Bl -bullet
-.It
-.Dq ORACLED
-is an implicit provider that is always satisfied.
-Services may list it in
-.Va requires
-without a corresponding
-.Va provides .
-.It
-Unknown providers reject the bundle set.
-.It
-Dependency cycles are fatal: no services are started if a cycle is
-detected.
-.It
-Duplicate
-.Va label
-values or duplicate
-.Va provides
-names across manifests cause the entire reload to be rejected.
-.El
-.Sh FILES
-.Bl -tag -width "/Capabilities/System/"
-.It Pa /Capabilities/System/
-System capability bundles.
-Each
-.Pa *.cap
-directory may contain Service.ucl files in the same format;
-see
-.Xr libcapbundle 3 .
-.It Pa /Capabilities/
-User-installed capability bundles.
-.El
-.Pp
-Both bundle roots and every loaded bundle tree must be owned by root and must
-not be writable by group or other.
-Symlinks and non-regular objects inside a bundle are rejected.
-This makes manifests executable security policy rather than mutable
-application data.
-.Sh EXAMPLES
-Minimal service manifest:
-.Bd -literal -offset indent
-# myservice.ucl
-bundle_id = "org.example.myservice";
-program = "myservice";
-provides = ["org.example.myservice"];
-restart = "always";
-.Ed
-.Pp
-Service with dependencies and file capabilities:
-.Bd -literal -offset indent
-bundle_id = "org.example.webapp";
-program = "webapp";
-provides = ["org.example.webapp"];
-arguments = ["--foreground", "--config", "/etc/webapp.conf"];
-environment { APP_MODE = "production"; }
-user = "www";
-group = "www";
-requires = ["database"];
+program = "indexd";
+provides = [
+    "org.example.index.query",
+    "org.example.index.admin"
+];
+components = ["filesystem", "network"];
 restart = "on-failure";
-stop_timeout = 10;
-max_failures = 20;
-capabilities {
-    paths = ["/var/www"];
-    files = [
-        {
-            path = "/var/log/webapp.log";
-            actions = ["write", "create", "append"];
-        },
-    ];
-    network = [
-        {
-            port = 8080;
-            protocol = "tcp";
-            direction = "bind";
-            address = "127.0.0.1";
-        },
-        {
-            domain = "inet";
-            protocol = "tcp";
-            direction = "connect";
-            address = "10.0.0.0/24";
-            ports = "5432-5433";
-        },
-    ];
-    system = ["sysctl"];
-}
 .Ed
-.Sh SEE ALSO
-.Xr libcapbundle 3 ,
-.Xr mac_capability 4 ,
-.Xr mac_capability_isolation 4 ,
-.Xr mac_capability_system 4 ,
-.Xr oracled.conf 5 ,
-.Xr oracled 8 ,
-.Xr servicectl 8 ,
+.Pp
+The provider calls
+.Xr service_provider_expose 3
+once for each declared name.
+Each call checks in that name's listener with
+.Nm serviced .
+The two names can use different protocols and event loops.
+.Sh SCOPE MODEL
+.Bl -tag -width "Local component"
+.It Local component
+Private to one supervised consumer and its coalition.
+It replaces ambient filesystem or network authority and is available before
+the consumer starts.
+It is never looked up by name.
+.It Global service
+Registered by a first- or third-party provider and connected by an agreed
+name.
+It runs in its own coalition and is launched on demand.
+.It Capability
+A kernel-enforced descriptor or token delegated directly to the process.
+.El
+.Pp
+Application code should use a typed library.
+The library author fixes the scope: FileSystem and Network use local
+components; global service libraries use
+.Xr service_connect 3 .
+There is no fallback between scopes.
+.Sh RESERVED INTERNAL NAMES
+The base FileSystem and Network component factories use reserved internal
+registration names.
+Ordinary client lookup of those names is denied.
+Their registration exists only so
 .Xr serviced 8
-.Sh HISTORY
-The
-.Nm
-manifest format first appeared in 5BSD.
+can construct local sessions before consumer exec.
+.Sh SEE ALSO
+.Xr libservice 3 ,
+.Xr serviced 8

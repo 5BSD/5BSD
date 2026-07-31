@@ -2,266 +2,476 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2026 Kory Heard
- *
- * Service channel protocol dispatch for serviced.
- *
- * Handles messages received on a service's channel:
- * ready notification, name registration, unregistration, and
- * service lookup.
  */
 
-#include <sys/ioctl.h>
 #include <sys/capsicum.h>
+#include <sys/event.h>
+#include <sys/ioctl.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
+#include <channel.h>
 #include <errno.h>
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
 
 #include "serviced.h"
+#include "serviced_audit.h"
 #include "serviced_probes.h"
 #include "serviced_svc_proto.h"
 
-/*
- * Send a reply to a service on its channel.
- */
-static void
-svc_channel_reply(struct svc_runtime *svc, uint32_t op, int status,
-    uint64_t reply_token, int *fds, int nfds)
+static int
+svc_channel_reply(struct svc_runtime *svc, struct channel_message *request,
+    uint32_t op, int status, int *fds, size_t nfds)
 {
-	struct mac_capability_sendmsg_args sa;
-	struct svc_reply rpl;
+	struct svc_reply reply;
+	size_t i;
 
-	rpl.status = status;
-
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = &rpl;
-	sa.payload_len = sizeof(rpl);
-	sa.reply_token = reply_token;
-	if (nfds > 0 && fds != NULL) {
-		for (int i = 0; i < nfds; i++) {
-			if (cap_xfer_limit(fds[i], CAP_XFER_ONCE) == -1) {
-				rpl.status = errno;
-				fds = NULL;
-				nfds = 0;
-				break;
-			}
+	reply.status = status;
+	for (i = 0; i < nfds; i++) {
+		if (cap_xfer_limit(fds[i], CAP_XFER_ONCE) == -1) {
+			reply.status = errno;
+			fds = NULL;
+			nfds = 0;
+			break;
 		}
 	}
-	if (nfds > 0 && fds != NULL) {
-		sa.fds = fds;
-		sa.nfds = (uint32_t)nfds;
-	}
+	if (channel_send_reply(request,
+	    &(struct channel_outgoing){
+		.size = sizeof(struct channel_outgoing),
+		.data = &reply,
+		.length = sizeof(reply),
+		.fds = fds,
+		.nfds = nfds
+	    }) == -1) {
+		int error;
 
-	if (ioctl(svc->channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) {
+		error = errno;
 		syslog(LOG_WARNING, "service %s: channel reply: %m",
 		    svc->manifest.label);
 		SERVICED_PROBE_ERROR("svc_proto", "channel reply failed");
-	} else
-		SERVICED_PROBE_IPC_REPLY(svc->manifest.label, op, rpl.status);
+		/*
+		 * A control reply that cannot be queued is not recoverable:
+		 * the peer is waiting on this exact token.  Revoke the control
+		 * channel so every waiter observes peer death instead of
+		 * hanging behind a silently lost acknowledgement.
+		 */
+		naming_remove_owner(svc);
+		svc_channel_close(svc);
+		errno = error;
+		return (-1);
+	}
+	SERVICED_PROBE_IPC_REPLY(svc->manifest.label, op, reply.status);
+	svc_channel_sync_events(svc, serviced_kq);
+	return (0);
+}
+
+void
+svc_channel_sync_events(struct svc_runtime *svc, int kq)
+{
+	struct kevent change;
+	int wants;
+
+	if (svc == NULL || svc->control_channel == NULL ||
+	    svc->channel_fd < 0)
+		return;
+	wants = channel_wants_write(svc->control_channel);
+	if (wants == -1)
+		return;
+	EV_SET(&change, svc->channel_fd, EVFILT_WRITE,
+	    EV_ADD | (wants ? EV_ENABLE : EV_DISABLE), 0, 0, svc);
+	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1)
+		syslog(LOG_WARNING, "service %s: update channel write event: %m",
+		    svc->manifest.label);
+}
+
+int
+svc_channel_send_event(struct svc_runtime *svc, const void *data,
+    size_t length,
+    const int *fds, size_t nfds, int kq)
+{
+
+	if (svc == NULL || svc->control_channel == NULL) {
+		errno = ECONNRESET;
+		return (-1);
+	}
+	if (channel_send_event(svc->control_channel,
+	    &(struct channel_outgoing){
+		.size = sizeof(struct channel_outgoing),
+		.data = data,
+		.length = length,
+		.fds = fds,
+		.nfds = nfds
+	    }) == -1) {
+		int error;
+
+		error = errno;
+		if (channel_error(svc->control_channel) == -1) {
+			naming_remove_owner(svc);
+			svc_channel_close(svc);
+		}
+		errno = error;
+		return (-1);
+	}
+	svc_channel_sync_events(svc, kq);
+	return (0);
 }
 
 static void
-handle_svc_ready(struct svc_runtime *svc, uint64_t reply_token)
+handle_ready(struct svc_runtime *svc, struct channel_message *request)
 {
+	int error;
 
+	error = 0;
 	if (svc->state == SVC_STATE_STARTING ||
 	    svc->state == SVC_STATE_RUNNING) {
-		svc->protocol_ready = true;
-		syslog(LOG_INFO, "service %s: application reported ready%s",
-		    svc->manifest.label,
-		    svc->state == SVC_STATE_RUNNING ?
-		    " after sandbox entry" : "");
-	}
-	svc_channel_reply(svc, SVC_OP_READY, 0, reply_token, NULL, 0);
+		if (svc->protocol_ready)
+			error = EALREADY;
+		else if (!on_demand_all_names_claimed(svc))
+			error = EPROTO;
+		else {
+			svc->protocol_ready = true;
+			syslog(LOG_INFO,
+			    "service %s: application reported ready%s",
+			    svc->manifest.label,
+			    svc->state == SVC_STATE_RUNNING ?
+			    " after sandbox entry" : "");
+			if (svc->state == SVC_STATE_RUNNING)
+				on_demand_check_ready(svc, serviced_kq);
+		}
+	} else
+		error = EBUSY;
+	if (error != 0)
+		syslog(LOG_WARNING,
+		    "service %s: readiness rejected: %s",
+		    svc->manifest.label, strerror(error));
+	(void)svc_channel_reply(svc, request, SVC_OP_READY, error, NULL, 0);
 }
 
 static void
-handle_svc_register(struct svc_runtime *svc, const void *payload,
-    uint32_t len, uint64_t reply_token)
+handle_name_claim(struct svc_runtime *svc, struct channel_message *request)
 {
-	const struct svc_register_req *req;
+	const struct svc_name_claim_req *req;
 	int error;
 
-	if (len != sizeof(*req)) {
-		svc_channel_reply(svc, SVC_OP_REGISTER, EINVAL, reply_token,
-		    NULL, 0);
+	if (channel_message_length(request) != sizeof(*req)) {
+		(void)svc_channel_reply(svc, request, SVC_OP_NAME_CLAIM,
+		    EINVAL, NULL, 0);
 		return;
 	}
-	req = payload;
+	req = channel_message_data(request);
+	if (req->flags != 0 ||
+	    strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
+		(void)svc_channel_reply(svc, request, SVC_OP_NAME_CLAIM,
+		    EINVAL, NULL, 0);
+		return;
+	}
+	error = on_demand_name_claim(svc, req->name);
+	SERVICED_PROBE_ENDPOINT_CLAIM(svc->manifest.label, req->name, error);
+	serviced_audit(AUE_SERVICED_ONDEMAND, getuid(), error,
+	    "endpoint claim svc=%s name=%s", svc->manifest.label, req->name);
+	if (svc_channel_reply(svc, request, SVC_OP_NAME_CLAIM, error,
+	    NULL, 0) == 0 && error == 0 &&
+	    svc->state == SVC_STATE_RUNNING && svc->protocol_ready)
+		on_demand_check_ready(svc, serviced_kq);
+}
 
-	if (req->flags != 0) {
-		svc_channel_reply(svc, SVC_OP_REGISTER, EINVAL, reply_token,
-		    NULL, 0);
+static void
+handle_name_result(struct svc_runtime *svc, struct channel_message *request)
+{
+	const struct svc_name_result_req *req;
+	int error;
+
+	if (channel_message_length(request) != sizeof(*req)) {
+		(void)svc_channel_reply(svc, request, SVC_OP_NAME_RESULT,
+		    EINVAL, NULL, 0);
+		return;
+	}
+	req = channel_message_data(request);
+	if (req->flags != 0 || req->reserved != 0 || req->status < 0 ||
+	    req->status > ELAST) {
+		(void)svc_channel_reply(svc, request, SVC_OP_NAME_RESULT,
+		    EINVAL, NULL, 0);
 		return;
 	}
 	if (strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
-		svc_channel_reply(svc, SVC_OP_REGISTER, ENAMETOOLONG,
-		    reply_token, NULL, 0);
+		(void)svc_channel_reply(svc, request, SVC_OP_NAME_RESULT,
+		    ENAMETOOLONG, NULL, 0);
 		return;
 	}
-
-	error = naming_register(req->name, svc);
-	svc_channel_reply(svc, SVC_OP_REGISTER, error, reply_token, NULL, 0);
+	if (!on_demand_name_activating(svc, req->name)) {
+		(void)svc_channel_reply(svc, request, SVC_OP_NAME_RESULT,
+		    EPROTO, NULL, 0);
+		return;
+	}
+	if (req->status == 0) {
+		error = naming_register(req->name, svc);
+		if (error == 0) {
+			/*
+			 * Queue the publication acknowledgement before releasing
+			 * client sessions.  Channel FIFO ordering then guarantees
+			 * the provider observes NAME_RESULT completion before any
+			 * NEW_CLIENT event for the newly active endpoint.
+			 */
+			if (svc_channel_reply(svc, request,
+			    SVC_OP_NAME_RESULT, 0, NULL, 0) == 0) {
+				on_demand_name_ready(svc, req->name,
+				    serviced_kq);
+				return;
+			}
+			(void)naming_unregister(req->name, svc);
+			on_demand_name_failed(svc, req->name, ECONNRESET,
+			    serviced_kq);
+			return;
+		} else
+			on_demand_name_failed(svc, req->name, error,
+			    serviced_kq);
+	} else {
+		/*
+		 * Acknowledge the provider before reporting failure to
+		 * unrelated requester channels.  The provider channel order
+		 * remains independent from each requester's reply stream.
+		 */
+		error = svc_channel_reply(svc, request, SVC_OP_NAME_RESULT,
+		    0, NULL, 0);
+		if (error == -1)
+			return;
+		(void)naming_unregister(req->name, svc);
+		on_demand_name_failed(svc, req->name, req->status,
+		    serviced_kq);
+		return;
+	}
+	(void)svc_channel_reply(svc, request, SVC_OP_NAME_RESULT, error,
+	    NULL, 0);
 }
 
 static void
-handle_svc_unregister(struct svc_runtime *svc, const void *payload,
-    uint32_t len, uint64_t reply_token)
+handle_name_withdraw(struct svc_runtime *svc,
+    struct channel_message *request)
 {
-	const struct svc_unregister_req *req;
+	const struct svc_name_withdraw_req *req;
 	int error;
 
-	if (len != sizeof(*req)) {
-		svc_channel_reply(svc, SVC_OP_UNREGISTER, EINVAL, reply_token,
-		    NULL, 0);
+	if (channel_message_length(request) != sizeof(*req)) {
+		(void)svc_channel_reply(svc, request, SVC_OP_NAME_WITHDRAW,
+		    EINVAL, NULL, 0);
 		return;
 	}
-	req = payload;
-
+	req = channel_message_data(request);
 	if (req->flags != 0) {
-		svc_channel_reply(svc, SVC_OP_UNREGISTER, EINVAL, reply_token,
-		    NULL, 0);
+		(void)svc_channel_reply(svc, request, SVC_OP_NAME_WITHDRAW,
+		    EINVAL, NULL, 0);
 		return;
 	}
 	if (strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
-		svc_channel_reply(svc, SVC_OP_UNREGISTER, ENAMETOOLONG,
-		    reply_token, NULL, 0);
+		(void)svc_channel_reply(svc, request, SVC_OP_NAME_WITHDRAW,
+		    ENAMETOOLONG, NULL, 0);
 		return;
 	}
-
-	error = naming_unregister(req->name, svc);
-	svc_channel_reply(svc, SVC_OP_UNREGISTER, error, reply_token, NULL, 0);
+	error = on_demand_name_withdraw(svc, req->name, serviced_kq);
+	SERVICED_PROBE_ENDPOINT_WITHDRAW(svc->manifest.label, req->name,
+	    error);
+	serviced_audit(AUE_SERVICED_ONDEMAND, getuid(), error,
+	    "endpoint withdraw svc=%s name=%s", svc->manifest.label,
+	    req->name);
+	if (error == 0)
+		syslog(LOG_INFO, "service %s: endpoint %s withdrawn",
+		    svc->manifest.label, req->name);
+	(void)svc_channel_reply(svc, request, SVC_OP_NAME_WITHDRAW, error,
+	    NULL, 0);
 }
 
-static void
-handle_svc_lookup(struct svc_runtime *svc, const void *payload,
-    uint32_t len, uint64_t reply_token)
+/* Returns true when on-demand state retained the request. */
+static bool
+handle_lookup(struct svc_runtime *svc, struct channel_message *request)
 {
 	const struct svc_lookup_req *req;
 	int client_fd, error;
 
-	if (len != sizeof(*req)) {
-		svc_channel_reply(svc, SVC_OP_LOOKUP, EINVAL, reply_token,
+	if (channel_message_length(request) != sizeof(*req)) {
+		(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, EINVAL,
 		    NULL, 0);
-		return;
+		return (false);
 	}
-	req = payload;
-
+	req = channel_message_data(request);
 	if (req->flags != 0) {
-		svc_channel_reply(svc, SVC_OP_LOOKUP, EINVAL, reply_token,
+		(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, EINVAL,
 		    NULL, 0);
-		return;
+		return (false);
 	}
 	if (strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
-		svc_channel_reply(svc, SVC_OP_LOOKUP, ENAMETOOLONG, reply_token,
-		    NULL, 0);
-		return;
+		(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP,
+		    ENAMETOOLONG, NULL, 0);
+		return (false);
 	}
-
+	if (strcmp(req->name, "org.5bsd.FileSystemCmp") == 0 ||
+	    strcmp(req->name, "org.5bsd.NetworkCmp") == 0) {
+		(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, EACCES,
+		    NULL, 0);
+		return (false);
+	}
 	client_fd = naming_lookup(req->name, svc, &error);
 	if (client_fd < 0) {
 		if (error == ENOENT) {
-			/* Try on-demand launch from bundle registry. */
-			if (on_demand_launch(req->name, svc,
-			    reply_token, serviced_kq) == 0)
-				return;  /* reply deferred until ready */
-			/* on_demand_launch failed — use its errno if set. */
+			if (on_demand_launch(req->name, svc, request,
+			    serviced_kq) == 0)
+				return (true);
 			if (errno == EDEADLK)
 				error = EDEADLK;
 		}
-		svc_channel_reply(svc, SVC_OP_LOOKUP, error, reply_token,
+		(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, error,
 		    NULL, 0);
-		return;
+		return (false);
 	}
-
-	svc_channel_reply(svc, SVC_OP_LOOKUP, 0, reply_token, &client_fd, 1);
+	(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, 0,
+	    &client_fd, 1);
 	close(client_fd);
-	svc->connection_count++;
+	return (false);
 }
 
-void
-supervisor_handle_channel(struct kevent *kev)
+static void
+svc_request(struct channel *channel, struct channel_message *request,
+    void *context)
 {
-	struct mac_capability_recvmsg_args ra;
 	struct svc_runtime *svc;
-	char buf[sizeof(struct svc_register_req)];
+	const uint32_t *opp;
 	uint32_t op;
+	bool retained;
 
-	svc = kev->udata;
-
-	/* Coalition events — drain the message to prevent busy-loop. */
-	if ((int)kev->ident == svc->coalition_fd) {
-		struct mac_capability_recvmsg_args cra;
-		char cbuf[64];
-
-		memset(&cra, 0, sizeof(cra));
-		cra.payload = cbuf;
-		cra.payload_len = sizeof(cbuf);
-		(void)ioctl(svc->coalition_fd, MAC_CAPABILITY_RECVMSG, &cra);
-		return;
+	(void)channel;
+	svc = context;
+	retained = false;
+	if (channel_message_fd_count(request) != 0 ||
+	    channel_message_length(request) < sizeof(op)) {
+		(void)svc_channel_reply(svc, request, 0, EINVAL, NULL, 0);
+		goto out;
 	}
-
-	if (kev->flags & EV_EOF) {
-		syslog(LOG_INFO, "service %s: channel closed",
-		    svc->manifest.label);
-		/*
-		 * The service can no longer answer lookups once its channel is
-		 * gone.  Purge its naming entries now so a later svc_remove()
-		 * array compaction cannot leave a stale owner pointer that an
-		 * unrelated service would inherit.
-		 */
-		naming_remove_owner(svc);
-		close(svc->channel_fd);
-		svc->channel_fd = -1;
-		return;
-	}
-
-	/* Read the message from the service's channel. */
-	memset(&ra, 0, sizeof(ra));
-	ra.payload = buf;
-	ra.payload_len = sizeof(buf);
-
-	if (ioctl(svc->channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
-		if (errno != EAGAIN)
-			syslog(LOG_WARNING, "service %s: channel recvmsg: %m",
-			    svc->manifest.label);
-		return;
-	}
-
-	if (ra.payload_len < sizeof(uint32_t)) {
-		syslog(LOG_WARNING, "service %s: short channel message",
-		    svc->manifest.label);
-		return;
-	}
-
-	memcpy(&op, buf, sizeof(op));
+	opp = channel_message_data(request);
+	memcpy(&op, opp, sizeof(op));
 	SERVICED_PROBE_IPC_RECV(svc->manifest.label, op);
-
 	switch (op) {
 	case SVC_OP_READY:
-		if (ra.payload_len != sizeof(struct svc_req_hdr))
-			svc_channel_reply(svc, op, EINVAL, ra.reply_token,
+		if (channel_message_length(request) != sizeof(struct svc_req_hdr))
+			(void)svc_channel_reply(svc, request, op, EINVAL,
 			    NULL, 0);
 		else
-			handle_svc_ready(svc, ra.reply_token);
+			handle_ready(svc, request);
 		break;
-	case SVC_OP_REGISTER:
-		handle_svc_register(svc, buf, ra.payload_len, ra.reply_token);
+	case SVC_OP_NAME_RESULT:
+		handle_name_result(svc, request);
 		break;
-	case SVC_OP_UNREGISTER:
-		handle_svc_unregister(svc, buf, ra.payload_len,
-		    ra.reply_token);
+	case SVC_OP_NAME_WITHDRAW:
+		handle_name_withdraw(svc, request);
+		break;
+	case SVC_OP_NAME_CLAIM:
+		handle_name_claim(svc, request);
 		break;
 	case SVC_OP_LOOKUP:
-		handle_svc_lookup(svc, buf, ra.payload_len, ra.reply_token);
+		retained = handle_lookup(svc, request);
 		break;
 	default:
 		syslog(LOG_WARNING, "service %s: unknown channel op %u",
 		    svc->manifest.label, op);
-		svc_channel_reply(svc, op, ENOTSUP, ra.reply_token, NULL, 0);
+		(void)svc_channel_reply(svc, request, op, ENOTSUP, NULL, 0);
 		break;
 	}
+out:
+	if (!retained)
+		channel_message_free(request);
+}
+
+int
+svc_channel_attach(struct svc_runtime *svc, int fd)
+{
+	struct channel_options options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+
+	if (svc == NULL || fd < 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	options.max_pending_requests = 64;
+	options.max_queued_messages = 256;
+	options.max_queued_bytes = 1024 * 1024;
+	options.max_queued_fds = 256;
+	if (channel_create(fd, &options, &svc->control_channel) == -1) {
+		int error;
+
+		error = errno;
+		close(fd);
+		errno = error;
+		return (-1);
+	}
+	svc->channel_fd = channel_fd(svc->control_channel);
+	if (channel_set_request_handler(svc->control_channel, svc_request,
+	    svc) == -1) {
+		channel_destroy(svc->control_channel);
+		svc->control_channel = NULL;
+		svc->channel_fd = -1;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+svc_channel_rebind(struct svc_runtime *svc)
+{
+
+	if (svc == NULL || svc->control_channel == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (channel_set_request_handler(svc->control_channel, svc_request,
+	    svc));
+}
+
+void
+svc_channel_close(struct svc_runtime *svc)
+{
+
+	if (svc == NULL)
+		return;
+	if (svc->control_channel != NULL)
+		channel_destroy(svc->control_channel);
+	else if (svc->channel_fd >= 0)
+		close(svc->channel_fd);
+	svc->control_channel = NULL;
+	svc->channel_fd = -1;
+}
+
+void
+supervisor_handle_channel(struct kevent *event)
+{
+	struct mac_capability_recvmsg_args receive;
+	struct svc_runtime *svc;
+	char buffer[64];
+
+	svc = event->udata;
+	if ((int)event->ident == svc->coalition_fd) {
+		memset(&receive, 0, sizeof(receive));
+		receive.payload = buffer;
+		receive.payload_len = sizeof(buffer);
+		(void)ioctl(svc->coalition_fd, MAC_CAPABILITY_RECVMSG,
+		    &receive);
+		return;
+	}
+	if (svc->control_channel == NULL)
+		return;
+	if (event->flags & EV_EOF)
+		goto dead;
+	if (event->filter == EVFILT_WRITE) {
+		if (channel_flush(svc->control_channel) == -1)
+			goto dead;
+	} else if (event->filter == EVFILT_READ) {
+		if (channel_dispatch(svc->control_channel) == -1)
+			goto dead;
+	}
+	svc_channel_sync_events(svc, serviced_kq);
+	return;
+dead:
+	syslog(LOG_INFO, "service %s: channel closed: %s",
+	    svc->manifest.label, strerror(errno != 0 ? errno : ECONNRESET));
+	naming_remove_owner(svc);
+	svc_channel_close(svc);
 }

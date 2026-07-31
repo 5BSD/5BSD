@@ -1,0 +1,39 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 30, 2026
+.Dt LIBTRACECMP 3
+.Os
+.Sh NAME
+.Nm tracecmp_open
+.Nd explicitly authorized DTrace descriptor delegation
+.Sh LIBRARY
+.Li libtracecmp
+.Pq Fl ltracecmp
+.Sh SYNOPSIS
+.In tracecmp.h
+.Ft int
+.Fn tracecmp_open "int *dtracefd"
+.Sh DESCRIPTION
+.Fn tracecmp_open
+connects to the global
+.Dq org.5bsd.trace
+service through
+.Xr libservice 3 ,
+negotiates version 1.0.0, and requests one DTrace consumer descriptor.
+Applications do not supply a component or provider name.
+.Pp
+The base provider currently advertises no raw-descriptor feature and rejects
+the open operation with
+.Er EACCES .
+Any future provider that implements this interface deliberately exposes raw
+DTrace authority and is suitable only under an explicit administrator policy.
+Such a descriptor must have a complete DTrace ioctl allowlist, be
+non-transferable, and be closed on exec.
+.Sh SEE ALSO
+.Xr dtrace 1 ,
+.Xr capsicum 4 ,
+.Xr tracecmp 8
+.Sh SECURITY CONSIDERATIONS
+Capsicum rights and ioctl lists cannot express D language probe, predicate,
+or action policy.
+A future broker-owned session API should be preferred for untrusted tracing
+programs.

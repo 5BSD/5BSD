@@ -75,10 +75,8 @@ manifest_equal(const struct svc_manifest *a, const struct svc_manifest *b)
 	    a->restart != b->restart ||
 	    a->stop_timeout != b->stop_timeout ||
 	    a->max_failures != b->max_failures ||
-	    a->on_demand != b->on_demand ||
 	    a->nprovides != b->nprovides ||
-	    a->nrequires != b->nrequires ||
-	    a->nimplements != b->nimplements ||
+	    a->nstartup_after != b->nstartup_after ||
 	    a->ncomponents != b->ncomponents ||
 	    a->nkmod_requires != b->nkmod_requires ||
 	    a->ncap_paths != b->ncap_paths ||
@@ -112,17 +110,8 @@ manifest_equal(const struct svc_manifest *a, const struct svc_manifest *b)
 	for (i = 0; i < a->nprovides; i++)
 		if (strcmp(a->provides[i], b->provides[i]) != 0)
 			return (false);
-	for (i = 0; i < a->nrequires; i++)
-		if (strcmp(a->requires[i], b->requires[i]) != 0)
-			return (false);
-	for (i = 0; i < a->nimplements; i++)
-		if (strcmp(a->implements[i].name,
-		    b->implements[i].name) != 0 ||
-		    strcmp(a->implements[i].version,
-		    b->implements[i].version) != 0 ||
-		    a->implements[i].lifetimes !=
-		    b->implements[i].lifetimes ||
-		    a->implements[i].sharing != b->implements[i].sharing)
+	for (i = 0; i < a->nstartup_after; i++)
+		if (strcmp(a->startup_after[i], b->startup_after[i]) != 0)
 			return (false);
 	for (i = 0; i < a->ncomponents; i++)
 		if (memcmp(&a->components[i], &b->components[i],
@@ -230,12 +219,17 @@ svc_reregister_kevents(int kq)
 				    svc->manifest.label);
 		}
 		if (svc->channel_fd >= 0) {
+			if (svc_channel_rebind(svc) == -1)
+				syslog(LOG_WARNING,
+				    "reload: rebind channel for %s: %m",
+				    svc->manifest.label);
 			EV_SET(&kev, svc->channel_fd, EVFILT_READ,
 			    EV_ADD, 0, 0, svc);
 			if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
 				syslog(LOG_WARNING,
 				    "reload: re-register channel_fd for %s: %m",
 				    svc->manifest.label);
+			svc_channel_sync_events(svc, kq);
 		}
 		if (svc->coalition_fd >= 0) {
 			EV_SET(&kev, svc->coalition_fd, EVFILT_READ,
@@ -431,7 +425,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 
 				asvc = capbundle_service(ab, si);
 				if (asvc == NULL ||
-				    capbundle_svc_on_demand(asvc))
+				    bundle_service_activates_on_lookup(asvc))
 					continue;
 				if (svc_by_label(capbundle_svc_label(asvc))
 				    != NULL)

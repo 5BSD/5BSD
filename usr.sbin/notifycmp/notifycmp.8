@@ -1,0 +1,54 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 30, 2026
+.Dt NOTIFYCMP 8
+.Os
+.Sh NAME
+.Nm notifycmp
+.Nd capability-mode publish, subscribe, and timer service
+.Sh DESCRIPTION
+.Nm
+implements
+.Dq org.5bsd.notify
+version 1.0.0 from
+.Pa /Capabilities/System/NotifyCmp.cap .
+A system-scoped router owns the topic index, bounded client queues, and
+monotonic
+.Xr kqueue 2
+timers.
+Each global service connection receives a separate relay worker that enters
+capability mode.
+The provider and router remain in their own coalition, so one consumer exit
+cannot
+terminate notification delivery for other services.
+.Pp
+Subscriptions are exact topic matches.
+Publisher identity comes from the authenticated component bootstrap and
+cannot be supplied by the publisher.
+Queues, topic count, timer count, topic length, and payload size are bounded.
+A full subscriber queue drops the newest event for that subscriber and
+increments its drop counter without blocking unrelated subscribers.
+Queues are volatile.
+A publish reply confirms router processing and loss accounting, not durable
+subscriber delivery; events are not replayed after restart.
+.Sh SECURITY
+The router receives session endpoints only from the provider factory.
+Consumer channels and router endpoints are non-transferable and locked
+against fork and exec propagation.
+Relays cannot create sockets, fork, exec, receive descriptors, or use ambient
+filesystem authority.
+Subscription, publication, timer, bootstrap, and rejection decisions are
+available through OpenBSM audit records and DTrace probes.
+.Pp
+Each session is deny-by-default.
+Until an authenticated identity-bound ACL source is implemented, publication,
+subscription, and timers are denied.
+The relay enforces these grants before forwarding a request to the shared
+router.
+Subscribers should also validate the authenticated publisher identity carried
+in each event when that identity is relevant to application policy.
+.Sh SEE ALSO
+.Xr kqueue 2 ,
+.Xr libnotifycmp 3 ,
+.Xr libservice 3 ,
+.Xr capsicum 4 ,
+.Xr serviced 8

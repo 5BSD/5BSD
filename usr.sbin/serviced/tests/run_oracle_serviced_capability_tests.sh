@@ -423,7 +423,7 @@ set -- \
 	manifest_exec_vsock_schema=libcapbundle_test:arguments_environment_and_vsock \
 	manifest_malformed_matrix=libcapbundle_test:malformed_schema_matrix \
 	manifest_symlink_rejected=libcapbundle_test:symlink_rejected \
-	daemon_authorization_order=libcapability_test:daemon_lifecycle_authorization_order \
+	kernel_capability_boundary=libcapability_test:kernel_boundary \
 	network_name_roundtrip=claim_parse_test:protocol_names \
 	guardian_lease_recovery=capd_test_guardian_test:lease_loss \
 	service_descriptor_type_validation=libservice_api_test:api_rejects_invalid_descriptors_and_arguments \

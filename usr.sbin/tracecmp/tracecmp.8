@@ -1,0 +1,29 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 30, 2026
+.Dt TRACECMP 8
+.Os
+.Sh NAME
+.Nm tracecmp
+.Nd coalition-scoped raw DTrace descriptor component
+.Sh DESCRIPTION
+.Nm
+is the global provider for
+.Dq org.5bsd.trace
+version 1.0.0 from
+.Pa /Capabilities/System/TraceCmp.cap .
+Each global connection creates a capability-mode worker.
+The base provider advertises no raw DTrace feature and denies descriptor-open
+requests.
+.Sh SECURITY
+Raw DTrace authority must remain an administrator-only feature of a future
+provider.
+An ioctl allowlist cannot constrain D programs, probes, actions, targets, or
+buffer allocation.
+A provider-owned query and aggregation protocol is required for ordinary
+untrusted consumers.
+Delegation and denial are audited and expose DTrace probes.
+.Sh SEE ALSO
+.Xr dtrace 1 ,
+.Xr libtracecmp 3 ,
+.Xr capsicum 4 ,
+.Xr serviced 8

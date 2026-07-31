@@ -1,5 +1,6 @@
 PACKAGE=	libshmring-tests
 TESTSDIR=	${TESTSBASE}/lib/libshmring
+NO_SHARED=
 
 ATF_TESTS_C+=	shmring_test
 

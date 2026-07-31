@@ -135,7 +135,7 @@ mac_capability_execve_transition(struct ucred *old, struct ucred *new,
     struct label *execlabel)
 {
 	struct mac_capability_label *cl;
-	uint64_t old_nonce, new_nonce;
+	uint64_t old_nonce __diagused, new_nonce __diagused;
 
 	old_nonce = mac_capability_proc_nonce(old);
 	cl = SLOT(new->cr_label);

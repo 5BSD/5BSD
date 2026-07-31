@@ -76,6 +76,11 @@ enum mac_capability_revoke_reason {
  *
  *     Return 0: message consumed.  Call mac_capability_reply() if the client
  *         expects a response.  No reply = fire-and-forget.
+ *     Return MAC_CAPABILITY_HANDLER_RETRY: leave the message at the head of
+ *         the instance RX queue without producing a reply.  The service must
+ *         later call mac_capability_instance_kick() when progress may be
+ *         possible.  This is intended for bounded bearer services which
+ *         forward into another backpressured queue.
  *     Return nonzero: automatic error reply sent to the client.
  *     Never concurrent with another co_handler for the same instance.
  *     msg valid only during the call.
@@ -113,7 +118,15 @@ enum mac_capability_revoke_reason {
  *     Lets services track handle count.  NOT called on final close
  *     (co_revoke covers that).
  *     NULL → no notification.
+ *
+ * co_txdrain(instance, arg)
+ *     Called after userspace removes one message from the instance TX queue.
+ *     No mac_capability locks are held.  Bearer services use this to kick a
+ *     peer whose RX head is waiting to forward into this queue.
+ *     NULL → no notification.
  */
+#define	MAC_CAPABILITY_HANDLER_RETRY	(-1)
+
 struct mac_capability_ops {
 	int	(*co_connect)(struct ucred *cred, void *arg,
 		    uint64_t *badge_out);
@@ -124,6 +137,7 @@ struct mac_capability_ops {
 		    enum mac_capability_revoke_reason reason, void *arg);
 	void	(*co_fdclose)(struct mac_capability_instance *s, int fd,
 		    struct thread *td, void *arg);
+	void	(*co_txdrain)(struct mac_capability_instance *s, void *arg);
 	int	(*co_call)(struct mac_capability_instance *s,
 		    const void *req, size_t reqlen,
 		    struct file **fds, struct filecaps *fcaps, int nfds,
@@ -180,6 +194,7 @@ int	mac_capability_forward(struct mac_capability_instance *s, const struct mac_c
 void	mac_capability_instance_revoke(struct mac_capability_instance *s);
 void	mac_capability_instance_hold(struct mac_capability_instance *s);
 void	mac_capability_instance_rele(struct mac_capability_instance *s);
+void	mac_capability_instance_kick(struct mac_capability_instance *s);
 void	mac_capability_instance_set_priv(struct mac_capability_instance *s, void *priv);
 void   *mac_capability_instance_get_priv(struct mac_capability_instance *s);
 uint64_t mac_capability_instance_get_badge(struct mac_capability_instance *s);

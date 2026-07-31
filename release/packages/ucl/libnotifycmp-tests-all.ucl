@@ -1,0 +1,9 @@
+comment = "NotifyCmp client library tests"
+
+desc = <<EOD
+ABI, malformed-frame, topic, event, and client API tests for libnotifycmp.
+EOD
+
+annotations = {
+	set = "tests"
+}

@@ -5,6 +5,7 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/servicectl
 
 .PATH: ${SRCTOP}/usr.sbin/oracled/tests
 .PATH: ${SRCTOP}/usr.sbin/serviced/tests
+.PATH: ${SRCTOP}/usr.sbin/servicectl
 
 ATF_TESTS_SH+=	servicectl_test
 
@@ -12,10 +13,18 @@ PROGS+=		capd_test_guardian
 PROGS+=		capd_protocol_fixture
 PROGS+=		deps_network_fixture
 PROGS+=		deps_both_fixture
+PROGS+=		servicectl_test_bin
 BINDIR=		${TESTSDIR}
 
 SRCS.deps_network_fixture=	deps_network_fixture.c
 SRCS.deps_both_fixture=	deps_both_fixture.c
+SRCS.servicectl_test_bin=	servicectl.c deps.c install.c verify.c
+NO_SHARED.servicectl_test_bin=	yes
+CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/liboraclectl
+CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/contrib/libucl/include
+LIBADD.servicectl_test_bin+=	capbundle oraclectl ucl elf
 
 LIBADD.capd_protocol_fixture+=	service
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice
@@ -24,4 +33,17 @@ CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/usr.sbin/kldmgrd
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/usr.sbin/rebootd
 
 ${PACKAGE}FILES+=	capd_test_harness.sh
+
+# ATF shell programs execute from the object directory before installation.
+# Keep the shared oracle harness beside the generated test program so object
+# tree and installed test runs have identical inputs.
+.if ${.OBJDIR} != ${.CURDIR}
+${.OBJDIR}/capd_test_harness.sh: \
+    ${SRCTOP}/usr.sbin/oracled/tests/capd_test_harness.sh
+	${CP} ${.ALLSRC} ${.TARGET}
+
+all: ${.OBJDIR}/capd_test_harness.sh
+CLEANFILES+=	capd_test_harness.sh
+.endif
+
 .include <bsd.test.mk>

@@ -43,7 +43,6 @@ mac_capability_mint_path_token(const char *path)
 int
 mac_capability_mint_file_token(const char *path, uint64_t actions)
 {
-	struct mac_capability_call_args call;
 	struct fi_request req;
 	struct fi_reply reply;
 	int fd, token_fd;
@@ -65,17 +64,9 @@ mac_capability_mint_file_token(const char *path, uint64_t actions)
 	req.op = FI_OP_MINT;
 	req.actions = actions;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.req_fds = &fd;
-	call.req_nfds = 1;
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-	call.reply_fds = &token_fd;
-	call.reply_nfds = 1;
-
-	if (ioctl(mac_capability_isolation_fd, MAC_CAPABILITY_CALL, &call) == -1) {
+	if (mac_capability_do_call_fds(mac_capability_isolation_fd,
+	    &req, sizeof(req), &fd, 1, &reply, sizeof(reply),
+	    &token_fd, 1) == -1) {
 		syslog(LOG_WARNING, "mint_path_token: mint %s: %m", path);
 		close(fd);
 		return (-1);
@@ -93,7 +84,6 @@ mac_capability_mint_file_token(const char *path, uint64_t actions)
 int
 mac_capability_mint_net_token(const struct ort_net_claim *nc)
 {
-	struct mac_capability_call_args call;
 	struct fi_net_request req;
 	struct fi_reply reply;
 	int token_fd;
@@ -115,15 +105,9 @@ mac_capability_mint_net_token(const struct ort_net_claim *nc)
 	req.prefix = nc->prefix;
 	memcpy(req.addr, nc->addr, sizeof(req.addr));
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-	call.reply_fds = &token_fd;
-	call.reply_nfds = 1;
-
-	if (ioctl(mac_capability_isolation_fd, MAC_CAPABILITY_CALL, &call) == -1) {
+	if (mac_capability_do_call_fds(mac_capability_isolation_fd,
+	    &req, sizeof(req), NULL, 0, &reply, sizeof(reply),
+	    &token_fd, 1) == -1) {
 		syslog(LOG_WARNING, "mint_net_token: %m");
 		return (-1);
 	}
@@ -134,7 +118,6 @@ mac_capability_mint_net_token(const struct ort_net_claim *nc)
 int
 mac_capability_mint_jail_token(const struct oracled_jail_claim *jc)
 {
-	struct mac_capability_call_args call;
 	struct fi_jail_request req;
 	struct fi_reply reply;
 	int token_fd;
@@ -152,15 +135,9 @@ mac_capability_mint_jail_token(const struct oracled_jail_claim *jc)
 	req.actions = jc->actions;
 	strlcpy(req.name, jc->name, sizeof(req.name));
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-	call.reply_fds = &token_fd;
-	call.reply_nfds = 1;
-
-	if (ioctl(mac_capability_isolation_fd, MAC_CAPABILITY_CALL, &call) == -1) {
+	if (mac_capability_do_call_fds(mac_capability_isolation_fd,
+	    &req, sizeof(req), NULL, 0, &reply, sizeof(reply),
+	    &token_fd, 1) == -1) {
 		syslog(LOG_WARNING, "mint_jail_token: jid=%d name=%s: %m",
 		    jc->jid, jc->name);
 		return (-1);
@@ -172,7 +149,6 @@ mac_capability_mint_jail_token(const struct oracled_jail_claim *jc)
 int
 mac_capability_mint_vsock_token(const struct ort_vsock_claim *vc)
 {
-	struct mac_capability_call_args call;
 	struct fi_vsock_request req;
 	struct fi_reply reply;
 	int token_fd = -1;
@@ -183,14 +159,9 @@ mac_capability_mint_vsock_token(const struct ort_vsock_claim *vc)
 	req.port_min = vc->port_min;
 	req.port_max = vc->port_max;
 	req.direction = vc->direction;
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-	call.reply_fds = &token_fd;
-	call.reply_nfds = 1;
-	if (ioctl(mac_capability_isolation_fd, MAC_CAPABILITY_CALL, &call) == -1)
+	if (mac_capability_do_call_fds(mac_capability_isolation_fd,
+	    &req, sizeof(req), NULL, 0, &reply, sizeof(reply),
+	    &token_fd, 1) == -1)
 		return (-1);
 	return (token_fd);
 }
@@ -202,7 +173,6 @@ mac_capability_mint_vsock_token(const struct ort_vsock_claim *vc)
 int
 mac_capability_mint_system_token(uint32_t gates)
 {
-	struct mac_capability_call_args call;
 	struct sys_request req;
 	int token_fd;
 
@@ -217,14 +187,8 @@ mac_capability_mint_system_token(uint32_t gates)
 	req.op = SYS_OP_MINT;
 	req.gates = gates;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.reply_len = 0;
-	call.reply_fds = &token_fd;
-	call.reply_nfds = 1;
-
-	if (ioctl(mac_capability_system_fd, MAC_CAPABILITY_CALL, &call) == -1) {
+	if (mac_capability_do_call_fds(mac_capability_system_fd,
+	    &req, sizeof(req), NULL, 0, NULL, 0, &token_fd, 1) == -1) {
 		syslog(LOG_WARNING, "mint_system_token: mint 0x%x: %m", gates);
 		return (-1);
 	}

@@ -1,7 +1,8 @@
 comment = "NetworkCmp protocol tests"
 
 desc = <<EOD
-Tests for the versioned public NetworkCmp client and provider protocol.
+ABI, malformed-frame, descriptor-cardinality, typed-discovery, endpoint, and
+public NetworkCmp client API tests.
 EOD
 
 annotations = {

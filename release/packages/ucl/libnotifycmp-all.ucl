@@ -1,0 +1,6 @@
+comment = "NotifyCmp client library"
+
+desc = <<EOD
+Typed global-service API and validated protocol for policy-controlled publish,
+subscribe, and timer notifications.
+EOD

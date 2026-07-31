@@ -15,10 +15,14 @@
 #include <netinet/in.h>
 
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 
 #include "serviced_manifest.h"
 #include "oracled_svc_proto.h"
+
+struct channel;
+struct channel_message;
 
 /* Timeout for mac_capability channel RPC calls (oracle and direct). */
 #define	SERVICED_RPC_TIMEOUT_MS		100
@@ -28,6 +32,11 @@
 #define	SVC_STATE_STARTING		1	/* pdfork'd, awaiting NOTE_CAPMODE */
 #define	SVC_STATE_RUNNING		2	/* NOTE_CAPMODE verified */
 #define	SVC_STATE_STOPPING		3	/* graceful shutdown in progress */
+
+#define	SVC_NAME_UNCLAIMED		0
+#define	SVC_NAME_INACTIVE		1
+#define	SVC_NAME_ACTIVATING		2
+#define	SVC_NAME_READY			3
 
 /*
  * Runtime state for a launched service.
@@ -42,11 +51,15 @@ struct svc_runtime {
 	/* Process state */
 	int		state;		/* SVC_STATE_* */
 	pid_t		pid;
+	uint64_t	launch_id;	/* unique for each exec attempt */
 	int		pd_fd;		/* process descriptor (parent holds) */
 	int		channel_fd;	/* oracle's end of channel */
+	struct channel	*control_channel; /* owns channel_fd */
 	int		coalition_fd;	/* coalition service instance */
 	int		jail_fd;	/* jail descriptor (-1 if no jail) */
 	bool		protocol_ready;	/* SVC_OP_READY advisory received */
+	bool		lookup_activated; /* launched to satisfy a named lookup */
+	uint8_t		name_state[SERVICED_MAX_PROVIDES];
 
 	/* Restart tracking */
 	unsigned	restart_count;
@@ -157,6 +170,12 @@ void	schedule_restart(struct svc_runtime *svc, int kq);
 
 /* svc_proto.c — service channel protocol dispatch */
 void	supervisor_handle_channel(struct kevent *kev);
+int	svc_channel_attach(struct svc_runtime *, int);
+int	svc_channel_rebind(struct svc_runtime *);
+void	svc_channel_close(struct svc_runtime *);
+void	svc_channel_sync_events(struct svc_runtime *, int);
+int	svc_channel_send_event(struct svc_runtime *, const void *, size_t,
+	    const int *, size_t, int);
 
 /* reload.c — hot reload logic */
 int	supervisor_reload(int kq, char *summary, size_t sumlen);
@@ -166,12 +185,14 @@ void	svc_reregister_kevents(int kq);
 
 /* bundle_registry.c — .cap bundle scanning and provides lookup */
 struct capbundle;
+struct capbundle_service;
 int	bundle_registry_init(void);
 int	bundle_registry_lookup(const char *name, unsigned *bundle_idx,
 	    unsigned *service_idx);
 struct capbundle *bundle_registry_get(unsigned idx);
 bool	bundle_registry_is_system(unsigned idx);
 unsigned bundle_registry_count(void);
+bool	bundle_service_activates_on_lookup(const struct capbundle_service *);
 void	bundle_registry_teardown(void);
 
 /* startup.c — tier-based parallel service launch */
@@ -179,8 +200,16 @@ int	startup_launch_system(int kq);
 
 /* on_demand.c — on-demand service launch for user bundles */
 int	on_demand_launch(const char *name, struct svc_runtime *requester,
-	    uint64_t reply_token, int kq);
+	    struct channel_message *request, int kq);
 void	on_demand_check_ready(struct svc_runtime *svc, int kq);
+bool	on_demand_name_activating(struct svc_runtime *, const char *);
+int	on_demand_name_claim(struct svc_runtime *, const char *);
+bool	on_demand_all_names_claimed(const struct svc_runtime *);
+int	on_demand_name_withdraw(struct svc_runtime *, const char *, int);
+void	on_demand_name_ready(struct svc_runtime *, const char *, int);
+void	on_demand_name_failed(struct svc_runtime *, const char *, int, int);
+void	on_demand_provider_failed(struct svc_runtime *svc, int error, int kq);
+void	on_demand_requester_gone(struct svc_runtime *svc, int kq);
 void	on_demand_timeout(uintptr_t ident, int kq);
 bool	on_demand_is_timer(uintptr_t ident);
 void	on_demand_teardown(int kq);
@@ -219,9 +248,12 @@ svc_runtime_init_fds(struct svc_runtime *svc)
 
 	svc->pd_fd = -1;
 	svc->channel_fd = -1;
+	svc->control_channel = NULL;
 	svc->coalition_fd = -1;
 	svc->jail_fd = -1;
 	svc->protocol_ready = false;
+	memset(svc->name_state, SVC_NAME_UNCLAIMED,
+	    sizeof(svc->name_state));
 }
 
 /*
@@ -239,22 +271,6 @@ restart_policy_name(int policy)
 		return ("on-failure");
 	default:
 		return ("never");
-	}
-}
-
-static inline const char *
-component_lifetime_name(uint32_t lifetime)
-{
-
-	switch (lifetime) {
-	case SVC_COMPONENT_JAIL:
-		return ("jail");
-	case SVC_COMPONENT_SERVICE:
-		return ("job");
-	case SVC_COMPONENT_SYSTEM:
-		return ("system");
-	default:
-		return ("process");
 	}
 }
 

@@ -29,22 +29,14 @@
 int
 mac_capability_coalition_enlist(int coalition_fd, int member_fd)
 {
-	struct mac_capability_call_args call;
 	struct coalition_req_hdr req;
 	struct coalition_reply reply;
 
 	memset(&req, 0, sizeof(req));
 	req.op = COALITION_OP_ENLIST;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.req_fds = &member_fd;
-	call.req_nfds = 1;
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-
-	if (ioctl(coalition_fd, MAC_CAPABILITY_CALL, &call) == -1)
+	if (mac_capability_do_call_fds(coalition_fd, &req, sizeof(req),
+	    &member_fd, 1, &reply, sizeof(reply), NULL, 0) == -1)
 		return (-1);
 	return (reply.status);
 }
@@ -52,22 +44,14 @@ mac_capability_coalition_enlist(int coalition_fd, int member_fd)
 int
 mac_capability_coalition_set_leader(int coalition_fd, int leader_fd)
 {
-	struct mac_capability_call_args call;
 	struct coalition_req_hdr req;
 	struct coalition_reply reply;
 
 	memset(&req, 0, sizeof(req));
 	req.op = COALITION_OP_SET_LEADER;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.req_fds = &leader_fd;
-	call.req_nfds = 1;
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-
-	if (ioctl(coalition_fd, MAC_CAPABILITY_CALL, &call) == -1)
+	if (mac_capability_do_call_fds(coalition_fd, &req, sizeof(req),
+	    &leader_fd, 1, &reply, sizeof(reply), NULL, 0) == -1)
 		return (-1);
 	return (reply.status);
 }

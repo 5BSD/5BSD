@@ -29,6 +29,8 @@
 #include <syslog.h>
 #include <unistd.h>
 
+#include <capability.h>
+
 #include "oracled.h"
 #include "gates.h"
 #include "probes.h"
@@ -59,20 +61,42 @@ mac_capability_confine_oracle_fd(int fd, const char *name)
 /* --- Shared helpers --- */
 
 /*
- * Helper: perform a simple MAC_CAPABILITY_CALL with no fd-passing.
+ * Perform an exact synchronous kernel-service call through libcapability.
  */
+int
+mac_capability_do_call_fds(int fd, const void *req, size_t reqlen,
+    const int *req_fds, size_t req_nfds, void *reply, size_t replylen,
+    int *reply_fds, size_t expected_reply_nfds)
+{
+	size_t actual_reply_nfds, actual_replylen, i;
+	int error;
+
+	actual_replylen = replylen;
+	actual_reply_nfds = expected_reply_nfds;
+	if (capability_kernel_call(fd, req, reqlen, req_fds, req_nfds,
+	    reply, &actual_replylen, reply_fds, &actual_reply_nfds) == -1)
+		return (-1);
+	if (actual_replylen == replylen &&
+	    actual_reply_nfds == expected_reply_nfds)
+		return (0);
+	error = EPROTO;
+	for (i = 0; i < actual_reply_nfds; i++) {
+		if (reply_fds[i] >= 0) {
+			close(reply_fds[i]);
+			reply_fds[i] = -1;
+		}
+	}
+	errno = error;
+	return (-1);
+}
+
 int
 mac_capability_do_call(int fd, const void *req, size_t reqlen,
     void *reply, size_t replylen)
 {
-	struct mac_capability_call_args call;
 
-	memset(&call, 0, sizeof(call));
-	call.req = req;
-	call.req_len = reqlen;
-	call.reply = reply;
-	call.reply_len = replylen;
-	return (ioctl(fd, MAC_CAPABILITY_CALL, &call));
+	return (mac_capability_do_call_fds(fd, req, reqlen, NULL, 0,
+	    reply, replylen, NULL, 0));
 }
 
 /*

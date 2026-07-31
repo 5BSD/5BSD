@@ -1,6 +1,8 @@
-comment = "Capability-mode scratch FileSystemCmp provider"
+comment = "Capability-mode FileSystemCmp provider"
 
 desc = <<EOD
-The base FileSystemCmp scratch provider, installed as the verified
-/Capabilities/System/FileSystemCmp.cap bundle.
+The base FileSystemCmp provider, installed as the verified
+/Capabilities/System/FileSystemCmp.cap bundle, with private scratch,
+persistent service storage with explicit sync, and read-only consumer-bundle
+namespaces.
 EOD

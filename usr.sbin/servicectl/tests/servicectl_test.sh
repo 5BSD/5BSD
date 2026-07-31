@@ -33,6 +33,7 @@ find_servicectl()
 	_machine=$(uname -m)
 	_arch=$(uname -p)
 	for p in \
+	    "$(atf_get_srcdir)/servicectl_test_bin" \
 	    /usr/obj/usr/src/${_machine}.${_arch}/usr.sbin/servicectl/servicectl \
 	    /usr/sbin/servicectl \
 	    "$(command -v servicectl 2>/dev/null)"
@@ -387,7 +388,7 @@ program = "nonexistent";
 provides = ["org.test.bad.svc"];
 EOF
 
-	atf_check -s not-exit:0 -e match:"FAILED\|invalid\|not found" \
+	atf_check -s not-exit:0 -e match:"FAILED" \
 	    "$servicectl_bin" verify "${bdir}"
 }
 servicectl_verify_invalid_cleanup()
@@ -396,40 +397,42 @@ servicectl_verify_invalid_cleanup()
 }
 
 # ===================================================================
-# servicectl deps — reads only declared ELF component dependencies
+# servicectl deps — suggests only local authority components
 # ===================================================================
 
 atf_test_case servicectl_deps cleanup
 servicectl_deps_head()
 {
-	atf_set "descr" "servicectl deps discovers notes without granting policy"
+	atf_set "descr" \
+	    "servicectl deps suggests filesystem/network and ignores global service libraries"
 }
 servicectl_deps_body()
 {
 	find_servicectl
 
 	cp /usr/bin/true no-components
-	atf_check -s exit:0 -o match:"No known component dependencies" \
+	atf_check -s exit:0 -o match:"No local component dependencies" \
 	    "$servicectl_bin" deps no-components
 
 	atf_check -s exit:0 -o save:deps-network.out \
 	    "$servicectl_bin" deps \
 	    "$(atf_get_srcdir)/deps_network_fixture"
-	atf_check -s exit:0 -o match:'interface = "org.5bsd.cmp.network"' \
-	    grep 'interface' deps-network.out
+	atf_check -s exit:0 -o match:'components = \["network"\];' \
+	    grep 'components' deps-network.out
 	atf_check -s exit:1 -o empty -e empty \
 	    grep 'provider' deps-network.out
 
 	atf_check -s exit:0 -o save:deps-both.out \
 	    "$servicectl_bin" deps "$(atf_get_srcdir)/deps_both_fixture"
-	atf_check -s exit:0 -o match:'org.5bsd.cmp.filesystem' \
-	    grep 'interface' deps-both.out
-	atf_check -s exit:0 -o match:'org.5bsd.cmp.network' \
-	    grep 'interface' deps-both.out
-	atf_check -s exit:0 -o match:'discovery never grants authority' \
-	    grep 'never grants' deps-both.out
+	atf_check -s exit:0 \
+	    -o match:'components = \["filesystem", "network"\];' \
+	    grep 'components' deps-both.out
+	atf_check -s exit:1 -o empty -e empty \
+	    grep -E 'log|trace|notify|interface|sharing' deps-both.out
+	atf_check -s exit:0 -o match:'discover their named services' \
+	    grep 'discover' deps-both.out
 
-	printf 'interface=org.5bsd.cmp.network\n' > not-elf
+	printf 'interface=org.5bsd.network\n' > not-elf
 	atf_check -s not-exit:0 -e match:"not an ELF object" \
 	    "$servicectl_bin" deps not-elf
 	ln -s no-components symlink-elf

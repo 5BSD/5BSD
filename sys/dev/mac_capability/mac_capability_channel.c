@@ -162,10 +162,44 @@ channel_handler(struct mac_capability_instance *s, const struct mac_capability_m
 	    mac_capability_msg_datalen(msg));
 	error = mac_capability_forward(peer, msg);
 	mac_capability_instance_rele(peer);
+	if (error == EAGAIN || error == ENOBUFS)
+		error = MAC_CAPABILITY_HANDLER_RETRY;
+	else if (error != 0) {
+		/*
+		 * A connected channel never synthesizes a service-protocol
+		 * reply.  Transport failure is reported as peer death.
+		 */
+		mac_capability_instance_revoke(s);
+		error = 0;
+	}
 out:
 	SDT_PROBE4(mac_capability_channel, , , handler__done, op,
 	    mac_capability_instance_get_badge(s), error, getsbinuptime() - start);
 	return (error);
+}
+
+static void
+channel_txdrain(struct mac_capability_instance *s, void *arg __unused)
+{
+	struct mac_capability_cap_channel *cp;
+	struct mac_capability_instance *peer;
+
+	cp = mac_capability_instance_get_priv(s);
+	if (cp == NULL)
+		return;
+
+	mtx_lock(&cp->cp_mtx);
+	peer = s == cp->cp_a ? cp->cp_b : cp->cp_a;
+	if (!cp->cp_dead && peer != NULL)
+		mac_capability_instance_hold(peer);
+	else
+		peer = NULL;
+	mtx_unlock(&cp->cp_mtx);
+
+	if (peer != NULL) {
+		mac_capability_instance_kick(peer);
+		mac_capability_instance_rele(peer);
+	}
 }
 
 static void
@@ -216,6 +250,7 @@ static const struct mac_capability_ops channel_ops = {
 	.co_connect = channel_connect,
 	.co_handler = channel_handler,
 	.co_revoke = channel_revoke,
+	.co_txdrain = channel_txdrain,
 };
 
 static int

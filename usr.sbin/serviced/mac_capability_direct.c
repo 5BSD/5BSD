@@ -28,10 +28,31 @@
 #include <syslog.h>
 #include <unistd.h>
 
+#include <capability.h>
+
 #include "serviced.h"
 
 /* Timeout for mac_capability channel recvmsg (milliseconds). */
 #define	MAC_CAP_DIRECT_TIMEOUT_MS	SERVICED_RPC_TIMEOUT_MS
+
+static int
+kernel_call(int fd, const void *request, size_t request_length,
+    const int *request_fds, size_t request_nfds, void *reply,
+    size_t expected_reply_length)
+{
+	size_t reply_length, reply_nfds;
+
+	reply_length = expected_reply_length;
+	reply_nfds = 0;
+	if (capability_kernel_call(fd, request, request_length, request_fds,
+	    request_nfds, reply, &reply_length, NULL, &reply_nfds) == -1)
+		return (-1);
+	if (reply_length != expected_reply_length || reply_nfds != 0) {
+		errno = EPROTO;
+		return (-1);
+	}
+	return (0);
+}
 
 /*
  * Mint a fresh instance from an existing service instance fd.
@@ -174,22 +195,14 @@ mac_cap_create_coalition(void)
 int
 mac_cap_coalition_enlist(int coalition_fd, int member_fd)
 {
-	struct mac_capability_call_args call;
 	struct coalition_req_hdr req;
 	struct coalition_reply reply;
 
 	memset(&req, 0, sizeof(req));
 	req.op = COALITION_OP_ENLIST;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.req_fds = &member_fd;
-	call.req_nfds = 1;
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-
-	if (ioctl(coalition_fd, MAC_CAPABILITY_CALL, &call) == -1)
+	if (kernel_call(coalition_fd, &req, sizeof(req), &member_fd, 1,
+	    &reply, sizeof(reply)) == -1)
 		return (-1);
 	return (reply.status);
 }
@@ -197,22 +210,14 @@ mac_cap_coalition_enlist(int coalition_fd, int member_fd)
 int
 mac_cap_coalition_set_leader(int coalition_fd, int leader_fd)
 {
-	struct mac_capability_call_args call;
 	struct coalition_req_hdr req;
 	struct coalition_reply reply;
 
 	memset(&req, 0, sizeof(req));
 	req.op = COALITION_OP_SET_LEADER;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.req_fds = &leader_fd;
-	call.req_nfds = 1;
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-
-	if (ioctl(coalition_fd, MAC_CAPABILITY_CALL, &call) == -1)
+	if (kernel_call(coalition_fd, &req, sizeof(req), &leader_fd, 1,
+	    &reply, sizeof(reply)) == -1)
 		return (-1);
 	return (reply.status);
 }
@@ -220,7 +225,6 @@ mac_cap_coalition_set_leader(int coalition_fd, int leader_fd)
 int
 mac_cap_coalition_graceful(int coalition_fd, int sig, unsigned timeout_ms)
 {
-	struct mac_capability_call_args call;
 	struct coalition_graceful_req req;
 	struct coalition_reply reply;
 
@@ -229,13 +233,8 @@ mac_cap_coalition_graceful(int coalition_fd, int sig, unsigned timeout_ms)
 	req.signal = sig;
 	req.timeout_ms = timeout_ms;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-
-	if (ioctl(coalition_fd, MAC_CAPABILITY_CALL, &call) == -1)
+	if (kernel_call(coalition_fd, &req, sizeof(req), NULL, 0,
+	    &reply, sizeof(reply)) == -1)
 		return (-1);
 	if (reply.status != 0) {
 		errno = reply.status;
@@ -251,20 +250,14 @@ mac_cap_coalition_graceful(int coalition_fd, int sig, unsigned timeout_ms)
 int
 mac_cap_coalition_terminate(int coalition_fd)
 {
-	struct mac_capability_call_args call;
 	struct coalition_req_hdr req;
 	struct coalition_reply reply;
 
 	memset(&req, 0, sizeof(req));
 	req.op = COALITION_OP_TERMINATE;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-
-	if (ioctl(coalition_fd, MAC_CAPABILITY_CALL, &call) == -1)
+	if (kernel_call(coalition_fd, &req, sizeof(req), NULL, 0,
+	    &reply, sizeof(reply)) == -1)
 		return (-1);
 	return (reply.status);
 }

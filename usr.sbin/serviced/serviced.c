@@ -23,11 +23,9 @@
 
 #include <sys/capsicum.h>
 #include <sys/event.h>
-#include <sys/ioctl.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_capprotect_proto.h>
-#include <dev/mac_capability/mac_capability_ioctl.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -42,6 +40,7 @@
 #include <unistd.h>
 
 #include <libcapbundle.h>
+#include <capability.h>
 
 #include "serviced.h"
 #include "serviced_audit.h"
@@ -159,7 +158,8 @@ event_loop(void)
 			}
 
 			/* Service channel events. */
-			if (kev->filter == EVFILT_READ &&
+			if ((kev->filter == EVFILT_READ ||
+			    kev->filter == EVFILT_WRITE) &&
 			    kev->udata != NULL) {
 				supervisor_handle_channel(kev);
 				continue;
@@ -422,8 +422,8 @@ main(int argc, char *argv[])
 		syslog(LOG_CRIT, "capprotect descriptor not delegated");
 		return (1);
 	} else {
-		struct mac_capability_call_args call;
 		struct cp_request cp_req;
+		size_t reply_length, reply_nfds;
 
 		memset(&cp_req, 0, sizeof(cp_req));
 		cp_req.op = CP_OP_SHIELD;
@@ -431,11 +431,11 @@ main(int argc, char *argv[])
 		    CP_SF_SIGKILL | CP_SF_SIGCONT | CP_SF_SCHED |
 		    CP_SF_CORE | CP_SF_KTRACE;
 
-		memset(&call, 0, sizeof(call));
-		call.req = &cp_req;
-		call.req_len = sizeof(cp_req);
-
-		if (ioctl(sd.capprotect_fd, MAC_CAPABILITY_CALL, &call) == -1) {
+		reply_length = 0;
+		reply_nfds = 0;
+		if (capability_kernel_call(sd.capprotect_fd, &cp_req,
+		    sizeof(cp_req), NULL, 0, NULL, &reply_length, NULL,
+		    &reply_nfds) == -1) {
 			syslog(LOG_CRIT, "capprotect shield: %m");
 			return (1);
 		}

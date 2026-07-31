@@ -12,6 +12,7 @@ EXPORT_SYMS=	mac_capability_service_create	\
 		mac_capability_instance_revoke	\
 		mac_capability_instance_hold	\
 		mac_capability_instance_rele	\
+		mac_capability_instance_kick	\
 		mac_capability_instance_set_priv	\
 		mac_capability_instance_get_priv	\
 		mac_capability_instance_get_badge	\

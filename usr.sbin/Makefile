@@ -49,8 +49,10 @@ SUBDIR=	adduser \
 	mptutil \
 	mtest \
 	kldmgrd \
-	netmapd \
+	logcmp \
 	networkcmp \
+	notifycmp \
+	tracecmp \
 	newsyslog \
 	nfscbd \
 	nfsd \

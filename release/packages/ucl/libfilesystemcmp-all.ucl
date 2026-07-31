@@ -1,6 +1,8 @@
 comment = "Public FileSystemCmp protocol library"
 
 desc = <<EOD
-The versioned public client and provider protocol for capability-sandboxed
-filesystem components.
+The typed injected-component API and versioned protocol for capability-sandboxed
+filesystem services, including explicit persistent-storage synchronization and
+per-caller UNIX-like logical current directories confined to delegated
+namespace roots.
 EOD

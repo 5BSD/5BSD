@@ -3,14 +3,14 @@
 PACKAGE=	networkcmp
 PROG=		networkcmp
 MAN=		networkcmp.8
-SRCS=		networkcmp.c
+SRCS=		io.c networkcmp.c policy.c session.c
 
 CFLAGS+=	-DWITH_CASPER
+CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libnetworkcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
-CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS+=	-I${SRCTOP}/sys
-LIBADD=		bsm cap_net casper networkcmp service ucl
+LIBADD=		bsm cap_net casper channel networkcmp service
 
 DIRS+=		NETWORKCMP_CAP NETWORKCMP_CAP_BIN NETWORKCMP_CAP_ETC
 NETWORKCMP_CAP=	/Capabilities/System/NetworkCmp.cap

@@ -61,7 +61,6 @@ net_claim_address_string(const struct ort_net_claim *nc, char *buf,
 static bool
 query_path_claimed(const char *path)
 {
-	struct mac_capability_call_args call;
 	struct fi_request req;
 	struct fi_reply reply;
 	int fd;
@@ -77,15 +76,8 @@ query_path_claimed(const char *path)
 	req.op = FI_OP_QUERY;
 	req.actions = FI_FS_ALL;
 
-	memset(&call, 0, sizeof(call));
-	call.req = &req;
-	call.req_len = sizeof(req);
-	call.req_fds = &fd;
-	call.req_nfds = 1;
-	call.reply = &reply;
-	call.reply_len = sizeof(reply);
-
-	if (ioctl(mac_capability_isolation_fd, MAC_CAPABILITY_CALL, &call) == -1) {
+	if (mac_capability_do_call_fds(mac_capability_isolation_fd,
+	    &req, sizeof(req), &fd, 1, &reply, sizeof(reply), NULL, 0) == -1) {
 		close(fd);
 		return (false);
 	}

@@ -10,10 +10,11 @@
  * MAC_CAPABILITY_RECVMSG with reply_token correlation.
  *
  * Services use this protocol to:
+ *   - Check in each manifest-authorized listener (NAME_CLAIM)
  *   - Report readiness (READY)
- *   - Register reverse-domain names (REGISTER)
+ *   - Publish or fail one requested name (NAME_RESULT)
+ *   - Withdraw a checked-in listener (NAME_WITHDRAW)
  *   - Connect to named services (LOOKUP)
- *   - Deregister names (UNREGISTER)
  *
  * Serviced pushes connection notifications to registered services
  * when a client looks up their name.  The notification carries an
@@ -29,7 +30,7 @@
 
 #include <sys/types.h>
 
-#define	SERVICED_SVC_PROTO_VERSION	1
+#define	SERVICED_SVC_PROTO_VERSION	3
 
 /* Maximum reverse-domain name length. */
 #define	SERVICED_NAME_MAX		255
@@ -40,13 +41,15 @@
  * Service → serviced (requests):
  */
 #define	SVC_OP_READY		1	/* service initialization complete */
-#define	SVC_OP_REGISTER		2	/* register a reverse-domain name */
-#define	SVC_OP_UNREGISTER	3	/* deregister a name */
+#define	SVC_OP_NAME_RESULT	2	/* per-name activation result */
+#define	SVC_OP_NAME_WITHDRAW	3	/* stop serving one active name */
 #define	SVC_OP_LOOKUP		4	/* connect to a named service */
+#define	SVC_OP_NAME_CLAIM	5	/* claim one provides[] listener */
 
 /*
  * Serviced → service (notifications):
  */
+#define	SVC_OP_ACTIVATE_NAME	127	/* initialize one reserved name */
 #define	SVC_OP_NEW_CLIENT	128	/* new client connection (pushed) */
 
 /*
@@ -61,40 +64,56 @@ struct svc_req_hdr {
  *   req:  svc_req_hdr { .op = SVC_OP_READY }
  *   reply: svc_reply { .status }
  *
- * Compatibility-level application readiness advisory.  serviced does not
- * promote a process to RUNNING from this message; it independently observes
- * and verifies NOTE_CAPMODE on the process descriptor.
+ * Application readiness advisory.  Every provides[] name must already have
+ * been claimed.  serviced does not promote a process to RUNNING from this
+ * message; it independently observes and verifies NOTE_CAPMODE on the process
+ * descriptor.  Per-name publication remains demand-driven after both gates.
  */
 
 /*
- * SVC_OP_REGISTER
- *   req:  svc_register_req
+ * SVC_OP_NAME_RESULT
+ *   req:  svc_name_result_req
  *   reply: svc_reply { .status }
  *
- * Register a reverse-domain name (e.g., "org.5bsd.sshd").
- * The name is bound to the calling service.  Only one service
- * may own a name at a time.  EEXIST if already registered.
- *
- * After registration, when a client issues LOOKUP for this name,
- * serviced pushes a SVC_OP_NEW_CLIENT notification to this
- * service with the client's channel endpoint attached as a fd.
+ * Complete a preceding ACTIVATE_NAME event.  status is zero when the
+ * endpoint is operational, otherwise a positive errno value.  Publication
+ * is authorized only for names reserved by this process's provides[].
  */
-struct svc_register_req {
-	uint32_t	op;		/* SVC_OP_REGISTER */
+struct svc_name_result_req {
+	uint32_t	op;		/* SVC_OP_NAME_RESULT */
+	uint32_t	flags;		/* reserved, must be 0 */
+	int32_t		status;		/* 0 or positive errno */
+	uint32_t	reserved;
+	char		name[SERVICED_NAME_MAX + 1];
+};
+
+/*
+ * SVC_OP_NAME_CLAIM
+ *   req:  svc_name_claim_req
+ *   reply: svc_reply { .status }
+ *
+ * Check in one local listener for a manifest-reserved provides[] name.
+ * Every declared name must be claimed before the initial READY succeeds.
+ * Claiming does not publish or initialize the endpoint; client demand still
+ * drives ACTIVATE_NAME independently for each name.
+ */
+struct svc_name_claim_req {
+	uint32_t	op;		/* SVC_OP_NAME_CLAIM */
 	uint32_t	flags;		/* reserved, must be 0 */
 	char		name[SERVICED_NAME_MAX + 1];
 };
 
 /*
- * SVC_OP_UNREGISTER
- *   req:  svc_unregister_req
+ * SVC_OP_NAME_WITHDRAW
+ *   req:  svc_name_withdraw_req
  *   reply: svc_reply { .status }
  *
- * Deregister a previously registered name.  ENOENT if not
- * registered by this service.
+ * Withdraw one claimed name without terminating the process.  Existing
+ * direct sessions remain valid, but new lookups wait for a new claim and
+ * activation.
  */
-struct svc_unregister_req {
-	uint32_t	op;		/* SVC_OP_UNREGISTER */
+struct svc_name_withdraw_req {
+	uint32_t	op;		/* SVC_OP_NAME_WITHDRAW */
 	uint32_t	flags;		/* reserved, must be 0 */
 	char		name[SERVICED_NAME_MAX + 1];
 };
@@ -117,6 +136,18 @@ struct svc_lookup_req {
 };
 
 /*
+ * SVC_OP_ACTIVATE_NAME (event, serviced -> service)
+ *
+ * The manifest has already reserved the name.  libservice dispatches this
+ * event to the name's activation handler.  No descriptors are attached.
+ */
+struct svc_activate_name_msg {
+	uint32_t	op;
+	uint32_t	flags;
+	char		name[SERVICED_NAME_MAX + 1];
+};
+
+/*
  * SVC_OP_NEW_CLIENT (notification, serviced → service)
  *   payload: svc_new_client_msg
  *   fds[0] = channel endpoint to the new client
@@ -128,6 +159,7 @@ struct svc_lookup_req {
 struct svc_new_client_msg {
 	uint32_t	op;		/* SVC_OP_NEW_CLIENT */
 	uint32_t	flags;		/* reserved */
+	char		service_name[SERVICED_NAME_MAX + 1];
 	char		client_label[64]; /* label of the connecting service */
 };
 

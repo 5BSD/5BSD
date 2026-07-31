@@ -93,8 +93,8 @@
 	DTRACE_PROBE3(serviced, identity__validate, user, group, result)
 
 /* Component session delegation */
-#define	SERVICED_PROBE_COMPONENT_RESOLVE(label, name, provider, scope)	\
-	DTRACE_PROBE4(serviced, component__resolve, label, name, provider, scope)
+#define	SERVICED_PROBE_COMPONENT_RESOLVE(label, name, provider)	\
+	DTRACE_PROBE3(serviced, component__resolve, label, name, provider)
 #define	SERVICED_PROBE_COMPONENT_SESSION(label, name, provider, result)	\
 	DTRACE_PROBE4(serviced, component__session, label, name, provider, result)
 #define	SERVICED_PROBE_COMPONENT_INJECT(label, name, fd)	\
@@ -151,8 +151,19 @@
 	DTRACE_PROBE1(serviced, on__demand__coalesce, name)
 #define	SERVICED_PROBE_ON_DEMAND_READY(name, nwaiters)	\
 	DTRACE_PROBE2(serviced, on__demand__ready, name, nwaiters)
+#define	SERVICED_PROBE_ON_DEMAND_FAIL(name, error, nwaiters)	\
+	DTRACE_PROBE3(serviced, on__demand__fail, name, error, nwaiters)
+#define	SERVICED_PROBE_ON_DEMAND_CANCEL(requester, pid, launch_id, nwaiters) \
+	DTRACE_PROBE4(serviced, on__demand__cancel, requester, pid, launch_id, \
+	    nwaiters)
 #define	SERVICED_PROBE_ON_DEMAND_TIMEOUT(name)	\
 	DTRACE_PROBE1(serviced, on__demand__timeout, name)
+#define	SERVICED_PROBE_ENDPOINT_CLAIM(label, name, error)	\
+	DTRACE_PROBE3(serviced, endpoint__claim, label, name, error)
+#define	SERVICED_PROBE_ENDPOINT_ACTIVATE(label, name)	\
+	DTRACE_PROBE2(serviced, endpoint__activate, label, name)
+#define	SERVICED_PROBE_ENDPOINT_WITHDRAW(label, name, error)	\
+	DTRACE_PROBE3(serviced, endpoint__withdraw, label, name, error)
 
 /* Bundle registry */
 #define	SERVICED_PROBE_BUNDLE_LOAD(name, nservices, system)	\

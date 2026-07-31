@@ -1,0 +1,9 @@
+comment = "Public TraceCmp library tests"
+
+desc = <<EOD
+ABI, malformed-frame, descriptor-cardinality, and API tests for libtracecmp.
+EOD
+
+annotations = {
+	set = "tests"
+}

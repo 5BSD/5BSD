@@ -112,6 +112,7 @@ struct mac_capability_instance {
 
 	struct task	ci_task;		/* (I) taskqueue task */
 	bool		ci_dispatching;		/* (M) task scheduled or running */
+	bool		ci_kick_pending;	/* (M) retry wakeup raced dispatch */
 	struct mtx	ci_mtx;			/* instance lock */
 	volatile u_int	ci_refcnt;		/* (R) reference count */
 	int		ci_flags;		/* (M) MAC_CAPABILITY_SF_* */

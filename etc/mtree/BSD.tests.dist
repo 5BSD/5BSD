@@ -433,6 +433,8 @@
                 ..
             ..
         ..
+        libchannel
+        ..
         libcrypt
         ..
         libdevdctl
@@ -444,6 +446,12 @@
         libfilesystemcmp
         ..
         libkvm
+        ..
+        liblogcmp
+        ..
+        libnotifycmp
+        ..
+        libtracecmp
         ..
         libmd
         ..
@@ -900,6 +908,8 @@
             ..
             tty
             ..
+            vsock_device_harness
+            ..
             vsock_e2e
             ..
         ..
@@ -1311,9 +1321,17 @@
         ..
         extattr
         ..
+        filesystemcmp
+        ..
         fstyp
         ..
         jail
+        ..
+        logcmp
+        ..
+        notifycmp
+        ..
+        tracecmp
         ..
         makefs
         ..
@@ -1322,6 +1340,8 @@
         newsyslog
         ..
         nmtree
+        ..
+        networkcmp
         ..
         oracled
         ..

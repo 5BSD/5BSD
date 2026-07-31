@@ -11,13 +11,14 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdbool.h>
-#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <libservice.h>
@@ -32,7 +33,7 @@
  */
 static const char networkcmp_dependency_note[]
     __attribute__((section(".note.5bsd.components"), used)) =
-    "interface=org.5bsd.cmp.network\n"
+    "interface=org.5bsd.network\n"
     "version=1.0.0\n"
     "local-name=network\n"
     "required=true\n";
@@ -47,12 +48,13 @@ union networkcmp_buffer {
 };
 
 struct networkcmp_client {
-	int				fd;
+	struct service_session		*channel;
 	struct networkcmp_hello_reply	limits;
+	pid_t				 owner;
+	uint32_t			 references;
 };
 
 struct networkcmp_io {
-	int			fd;
 	uint32_t		socket_type;
 	struct shmring		*tx;
 	struct shmring		*rx;
@@ -60,26 +62,38 @@ struct networkcmp_io {
 	pthread_mutex_t		rx_lock;
 };
 
-static _Atomic uint64_t networkcmp_next_request = 1;
-static pthread_mutex_t networkcmp_rpc_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t networkcmp_registry_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t networkcmp_registry_ready = PTHREAD_COND_INITIALIZER;
 static pthread_once_t networkcmp_atfork_once = PTHREAD_ONCE_INIT;
+static struct networkcmp_client *networkcmp_process_client;
 static int networkcmp_atfork_error;
+static bool networkcmp_initializing;
 
 static void networkcmp_atfork_prepare(void) __no_lock_analysis;
-static void networkcmp_atfork_release(void) __no_lock_analysis;
+static void networkcmp_atfork_parent(void) __no_lock_analysis;
+static void networkcmp_atfork_child(void) __no_lock_analysis;
 
 static void
 networkcmp_atfork_prepare(void)
 {
 
-	(void)pthread_mutex_lock(&networkcmp_rpc_lock);
+	(void)pthread_mutex_lock(&networkcmp_registry_lock);
 }
 
 static void
-networkcmp_atfork_release(void)
+networkcmp_atfork_parent(void)
 {
 
-	(void)pthread_mutex_unlock(&networkcmp_rpc_lock);
+	(void)pthread_mutex_unlock(&networkcmp_registry_lock);
+}
+
+static void
+networkcmp_atfork_child(void)
+{
+
+	networkcmp_process_client = NULL;
+	networkcmp_initializing = false;
+	(void)pthread_mutex_unlock(&networkcmp_registry_lock);
 }
 
 static void
@@ -87,7 +101,7 @@ networkcmp_atfork_init(void)
 {
 
 	networkcmp_atfork_error = pthread_atfork(networkcmp_atfork_prepare,
-	    networkcmp_atfork_release, networkcmp_atfork_release);
+	    networkcmp_atfork_parent, networkcmp_atfork_child);
 }
 
 static bool
@@ -116,57 +130,85 @@ networkcmp_ring_size_valid(uint32_t size)
 	    size <= NETWORKCMP_RING_MAX_SIZE && (size & (size - 1)) == 0);
 }
 
-int
-networkcmp_open(const char *component)
+static int
+networkcmp_header_validate(const struct networkcmp_msg *msg, size_t received,
+    enum networkcmp_message_role role)
 {
-	int fd, error;
 
-	if (component == NULL) {
-		component = getenv(NETWORKCMP_ENV);
-		if (component == NULL)
-			component = "network";
-	}
-	if (component[0] == '\0') {
-		errno = EINVAL;
-		NETWORKCMP_PROBE_OPEN("", EINVAL);
+	if (msg == NULL || received < sizeof(*msg) ||
+	    received > NETWORKCMP_MAX_MESSAGE ||
+	    (role != NETWORKCMP_MESSAGE_REQUEST &&
+	    role != NETWORKCMP_MESSAGE_REPLY &&
+	    role != NETWORKCMP_MESSAGE_EVENT) ||
+	    msg->magic != NETWORKCMP_MAGIC ||
+	    msg->version != NETWORKCMP_ABI_VERSION ||
+	    msg->opcode < NETWORKCMP_OP_HELLO ||
+	    msg->opcode > NETWORKCMP_OP_CONNECT_STATUS ||
+	    (msg->flags & ~NETWORKCMP_MSG_F_MASK) != 0 ||
+	    (role != NETWORKCMP_MESSAGE_REPLY && msg->status != 0) ||
+	    (role == NETWORKCMP_MESSAGE_REPLY &&
+	    (msg->status > 0 || msg->status < -ELAST))) {
+		errno = EPROTO;
 		return (-1);
 	}
-	fd = service_component_fd(component);
-	if (fd >= 0)
-		fd = fcntl(fd, F_DUPFD_CLOEXEC, 0);
-	error = fd == -1 ? errno : 0;
-	NETWORKCMP_PROBE_OPEN(component, error);
-	return (fd);
+	return (0);
+}
+
+int
+networkcmp_message_init(struct networkcmp_msg *msg, uint16_t opcode,
+    uint32_t flags)
+{
+
+	if (msg == NULL || opcode < NETWORKCMP_OP_HELLO ||
+	    opcode > NETWORKCMP_OP_CONNECT_STATUS ||
+	    (flags & ~NETWORKCMP_MSG_F_MASK) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(msg, 0, sizeof(*msg));
+	msg->magic = NETWORKCMP_MAGIC;
+	msg->version = NETWORKCMP_ABI_VERSION;
+	msg->opcode = opcode;
+	msg->flags = flags;
+	return (0);
+}
+
+int
+networkcmp_message_init_reply(struct networkcmp_msg *reply,
+    const struct networkcmp_msg *request, int status)
+{
+
+	if (reply == NULL || request == NULL ||
+	    networkcmp_header_validate(request, sizeof(*request),
+	    NETWORKCMP_MESSAGE_REQUEST) == -1 ||
+	    status > 0 || status < -ELAST) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(reply, 0, sizeof(*reply));
+	reply->magic = NETWORKCMP_MAGIC;
+	reply->version = NETWORKCMP_ABI_VERSION;
+	reply->opcode = request->opcode;
+	reply->status = status;
+	return (0);
 }
 
 int
 networkcmp_validate_message(const struct networkcmp_msg *msg,
-    size_t received)
+    size_t received, enum networkcmp_message_role role)
 {
 	size_t payload, expected;
-	bool reply;
 	uint16_t probe_opcode;
 
 	probe_opcode = msg != NULL ? msg->opcode : 0;
-	if (msg == NULL || received < sizeof(*msg) ||
-	    msg->magic != NETWORKCMP_MAGIC ||
-	    msg->version != NETWORKCMP_ABI_VERSION ||
-	    msg->opcode < NETWORKCMP_OP_HELLO ||
-	    msg->opcode > NETWORKCMP_OP_NOTIFY ||
-	    (msg->flags & ~NETWORKCMP_MSG_F_MASK) != 0 ||
-	    msg->reserved != 0 ||
-	    msg->length != received || msg->length > NETWORKCMP_MAX_MESSAGE) {
-		goto reject;
-	}
-	reply = (msg->flags & NETWORKCMP_MSG_F_REPLY) != 0;
-	if ((msg->opcode != NETWORKCMP_OP_NOTIFY && msg->request_id == 0) ||
-	    (!reply && msg->status != 0) ||
-	    (reply && (msg->status > 0 || msg->status < -ELAST)))
+	if (networkcmp_header_validate(msg, received, role) == -1)
 		goto reject;
 	payload = received - sizeof(*msg);
-	if (reply && msg->status != 0)
+	if (role == NETWORKCMP_MESSAGE_EVENT)
+		goto reject;
+	if (role == NETWORKCMP_MESSAGE_REPLY && msg->status != 0)
 		expected = 0;
-	else if (reply) {
+	else if (role == NETWORKCMP_MESSAGE_REPLY) {
 		switch (msg->opcode) {
 		case NETWORKCMP_OP_HELLO: {
 			const struct networkcmp_hello_reply *hello;
@@ -213,6 +255,22 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 		case NETWORKCMP_OP_ACCEPT:
 			expected = sizeof(struct networkcmp_handle_reply);
 			break;
+		case NETWORKCMP_OP_SEND:
+			expected = sizeof(struct networkcmp_inline_reply);
+			break;
+		case NETWORKCMP_OP_RECV: {
+			const struct networkcmp_inline_reply *io;
+
+			if (payload < sizeof(*io))
+				goto reject;
+			io = (const void *)(msg + 1);
+			if (io->length > NETWORKCMP_INLINE_MAX ||
+			    (io->flags & ~NETWORKCMP_IO_F_MASK) != 0 ||
+			    io->reserved[0] != 0 || io->reserved[1] != 0)
+				goto reject;
+			expected = sizeof(*io) + io->length;
+			break;
+		}
 		case NETWORKCMP_OP_RESOLVE: {
 			const struct networkcmp_resolve_reply *resolve;
 			const struct networkcmp_resolve_result *results;
@@ -328,6 +386,7 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 		}
 		case NETWORKCMP_OP_ACCEPT:
 		case NETWORKCMP_OP_CLOSE:
+		case NETWORKCMP_OP_CONNECT_STATUS:
 			expected = sizeof(struct networkcmp_close_request);
 			break;
 		case NETWORKCMP_OP_SETOPT:
@@ -389,9 +448,21 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 					goto reject;
 			}
 			break;
-		case NETWORKCMP_OP_NOTIFY:
-			expected = 0;
+		case NETWORKCMP_OP_SEND:
+		case NETWORKCMP_OP_RECV: {
+			const struct networkcmp_inline_request *io;
+
+			if (payload < sizeof(*io))
+				goto reject;
+			io = (const void *)(msg + 1);
+			if (io->length == 0 || io->length > NETWORKCMP_INLINE_MAX ||
+			    io->flags != 0 || io->reserved != 0 ||
+			    io->timeout_ms != 0)
+				goto reject;
+			expected = sizeof(*io) +
+			    (msg->opcode == NETWORKCMP_OP_SEND ? io->length : 0);
 			break;
+		}
 		default:
 			goto reject;
 		}
@@ -408,7 +479,8 @@ reject:
 }
 
 int
-networkcmp_validate_fds(const struct networkcmp_msg *msg, size_t nfds)
+networkcmp_validate_fds(const struct networkcmp_msg *msg, size_t nfds,
+    enum networkcmp_message_role role)
 {
 	size_t expected;
 
@@ -416,9 +488,9 @@ networkcmp_validate_fds(const struct networkcmp_msg *msg, size_t nfds)
 		errno = EINVAL;
 		return (-1);
 	}
-	expected = msg->opcode == NETWORKCMP_OP_ATTACH_RINGS &&
-	    (msg->flags & NETWORKCMP_MSG_F_REPLY) == 0 ?
-	    NETWORKCMP_RING_FDS : 0;
+	expected = role == NETWORKCMP_MESSAGE_REQUEST &&
+	    msg->opcode == NETWORKCMP_OP_ATTACH_RINGS ?
+	    NETWORKCMP_RING_FD_COUNT : 0;
 	if (nfds != expected) {
 		errno = EPROTO;
 		return (-1);
@@ -426,163 +498,98 @@ networkcmp_validate_fds(const struct networkcmp_msg *msg, size_t nfds)
 	return (0);
 }
 
-int
-networkcmp_send_message(int fd, const void *message, size_t length,
-    const int *fds, size_t nfds)
-{
-	const struct networkcmp_msg *msg;
-
-	if (message == NULL || length < sizeof(*msg)) {
-		errno = EINVAL;
-		return (-1);
-	}
-	msg = message;
-	if (networkcmp_validate_message(msg, length) == -1)
-		return (-1);
-	if (networkcmp_validate_fds(msg, nfds) == -1)
-		return (-1);
-	int result, probe_error;
-
-	result = service_send_fds(fd, message, length, fds, nfds);
-	probe_error = result == -1 ? errno : 0;
-	NETWORKCMP_PROBE_SEND(msg->opcode, (uint32_t)length, (uint32_t)nfds,
-	    probe_error);
-	return (result);
-}
-
-ssize_t
-networkcmp_receive_message(int fd, void *message, size_t capacity, int *fds,
-    size_t *nfds)
-{
-	ssize_t received;
-	size_t i, received_fds;
-
-	if (message == NULL || capacity < sizeof(struct networkcmp_msg) ||
-	    capacity > NETWORKCMP_MAX_MESSAGE) {
-		errno = EINVAL;
-		return (-1);
-	}
-	received = service_recv_fds(fd, message, capacity, fds, nfds);
-	if (received == -1)
-		return (-1);
-	received_fds = nfds != NULL ? *nfds : 0;
-	if (networkcmp_validate_message(message, (size_t)received) == -1 ||
-	    networkcmp_validate_fds(message, received_fds) == -1) {
-		for (i = 0; i < received_fds; i++) {
-			if (fds != NULL && fds[i] >= 0) {
-				close(fds[i]);
-				fds[i] = -1;
-			}
-		}
-		if (nfds != NULL)
-			*nfds = 0;
-		return (-1);
-	}
-	NETWORKCMP_PROBE_RECEIVE(
-	    ((struct networkcmp_msg *)message)->opcode, (uint32_t)received,
-	    (uint32_t)(nfds != NULL ? *nfds : 0), 0);
-	return (received);
-}
-
-static int networkcmp_rpc_fds(int, uint16_t, const void *, size_t,
+static int networkcmp_rpc_fds(struct networkcmp_client *, uint16_t,
+    const void *, size_t,
     const int *, size_t, union networkcmp_buffer *, size_t *)
     __no_lock_analysis;
 
 static int
-networkcmp_rpc_fds(int fd, uint16_t opcode, const void *payload,
+networkcmp_rpc_fds(struct networkcmp_client *client, uint16_t opcode,
+    const void *payload,
     size_t payload_length, const int *fds, size_t nfds,
     union networkcmp_buffer *reply, size_t *reply_length)
 {
 	union networkcmp_buffer request;
+	struct service_call_options options =
+	    SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing;
+	struct service_reply incoming;
 	struct networkcmp_msg *msg;
-	size_t received_nfds;
-	ssize_t received;
-	uint64_t request_id;
-	int error, result;
+	size_t received, request_length;
 
-	if (fd < 0 || payload_length >
+	if (client == NULL || client->owner != getpid() ||
+	    client->channel == NULL || payload_length >
 	    NETWORKCMP_MAX_MESSAGE - sizeof(struct networkcmp_msg) ||
 	    (payload_length != 0 && payload == NULL)) {
 		errno = EINVAL;
 		return (-1);
 	}
-	error = pthread_once(&networkcmp_atfork_once, networkcmp_atfork_init);
-	if (error == 0)
-		error = networkcmp_atfork_error;
-	if (error != 0) {
-		errno = error;
-		return (-1);
-	}
-	error = pthread_mutex_lock(&networkcmp_rpc_lock);
-	if (error != 0) {
-		errno = error;
-		return (-1);
-	}
-	result = -1;
 	memset(&request, 0, sizeof(request));
 	msg = &request.wire.msg;
-	msg->magic = NETWORKCMP_MAGIC;
-	msg->version = NETWORKCMP_ABI_VERSION;
-	msg->opcode = opcode;
-	msg->length = sizeof(*msg) + payload_length;
-	request_id = atomic_fetch_add_explicit(&networkcmp_next_request, 1,
-	    memory_order_relaxed);
-	if (request_id == 0)
-		request_id = atomic_fetch_add_explicit(&networkcmp_next_request, 1,
-		    memory_order_relaxed);
-	msg->request_id = request_id;
+	if (networkcmp_message_init(msg, opcode, 0) == -1)
+		return (-1);
 	if (payload_length != 0)
 		memcpy(msg + 1, payload, payload_length);
-	if (networkcmp_send_message(fd, msg, msg->length, fds, nfds) == -1)
-		goto out;
-	for (;;) {
-		received_nfds = 0;
-		received = networkcmp_receive_message(fd, reply, sizeof(*reply),
-		    NULL, &received_nfds);
-		if (received == -1)
-			goto out;
-		msg = &reply->wire.msg;
-		if ((msg->flags & NETWORKCMP_MSG_F_REPLY) == 0 &&
-		    msg->opcode == NETWORKCMP_OP_NOTIFY)
-			continue;
-		if ((msg->flags & NETWORKCMP_MSG_F_REPLY) == 0 ||
-		    msg->opcode != opcode || msg->request_id != request_id) {
-			errno = EPROTO;
-			goto out;
-		}
-		if (msg->status != 0) {
-			errno = -msg->status;
-			goto out;
-		}
-		*reply_length = (size_t)received;
-		result = 0;
-		break;
+	request_length = sizeof(*msg) + payload_length;
+	NETWORKCMP_PROBE_SEND(opcode, (uint32_t)request_length,
+	    (uint32_t)nfds, 0);
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = msg;
+	outgoing.length = request_length;
+	outgoing.fds = fds;
+	outgoing.nfds = nfds;
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = reply;
+	incoming.capacity = sizeof(*reply);
+	options.timeout_ms = 30000;
+	if (service_session_call(client->channel, &outgoing, &incoming,
+	    &options) == -1) {
+		NETWORKCMP_PROBE_REJECT(opcode, 0, errno);
+		return (-1);
 	}
-out:
-	error = errno;
-	(void)pthread_mutex_unlock(&networkcmp_rpc_lock);
-	errno = error;
-	return (result);
+	received = incoming.length;
+	msg = &reply->wire.msg;
+	if (incoming.nfds != 0 ||
+	    networkcmp_validate_message(msg, received,
+	    NETWORKCMP_MESSAGE_REPLY) == -1 ||
+	    networkcmp_validate_fds(msg, incoming.nfds,
+	    NETWORKCMP_MESSAGE_REPLY) == -1 || msg->opcode != opcode) {
+		errno = EPROTO;
+		NETWORKCMP_PROBE_REJECT(opcode, (uint32_t)received, EPROTO);
+		return (-1);
+	}
+	NETWORKCMP_PROBE_RECEIVE(opcode, (uint32_t)received,
+	    (uint32_t)incoming.nfds, 0);
+	if (msg->status != 0) {
+		errno = -msg->status;
+		return (-1);
+	}
+	*reply_length = (size_t)received;
+	return (0);
 }
 
 static int
-networkcmp_rpc(int fd, uint16_t opcode, const void *payload,
+networkcmp_rpc(struct networkcmp_client *client, uint16_t opcode,
+    const void *payload,
     size_t payload_length, union networkcmp_buffer *reply, size_t *reply_length)
 {
 
-	return (networkcmp_rpc_fds(fd, opcode, payload, payload_length, NULL, 0,
-	    reply, reply_length));
+	return (networkcmp_rpc_fds(client, opcode, payload, payload_length,
+	    NULL, 0, reply, reply_length));
 }
 
 int
-networkcmp_hello(int fd, struct networkcmp_hello_reply *reply_value)
+networkcmp_hello(struct networkcmp_client *client,
+    struct networkcmp_hello_reply *reply_value)
 {
 
-	return (networkcmp_negotiate(fd, NULL, reply_value));
+	return (networkcmp_negotiate(client, NULL, reply_value));
 }
 
 int
-networkcmp_negotiate(int fd,
+networkcmp_negotiate(struct networkcmp_client *client,
     const struct networkcmp_preferences *preferences,
     struct networkcmp_hello_reply *reply_value)
 {
@@ -612,53 +619,101 @@ networkcmp_negotiate(int fd,
 		request.preferred_rx_ring_size = preferences->rx_ring_size;
 		request.preferred_max_datagram = preferences->max_datagram;
 	}
-	if (networkcmp_rpc(fd, NETWORKCMP_OP_HELLO, &request, sizeof(request),
-	    &reply, &length) == -1)
+	if (networkcmp_rpc(client, NETWORKCMP_OP_HELLO, &request,
+	    sizeof(request), &reply, &length) == -1)
 		return (-1);
 	memcpy(reply_value, &reply.wire.msg + 1, sizeof(*reply_value));
 	return (0);
 }
 
 int
-networkcmp_client_open(const char *component,
-    const struct networkcmp_preferences *preferences,
-    struct networkcmp_client **clientp)
+networkcmp_client_open(const struct networkcmp_preferences *preferences,
+    struct networkcmp_client **clientp) __no_lock_analysis
 {
 	struct networkcmp_client *client;
-	int error;
+	struct service_context *service;
+	int error, fd;
 
 	if (clientp == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
 	*clientp = NULL;
-	client = calloc(1, sizeof(*client));
-	if (client == NULL)
-		return (-1);
-	client->fd = networkcmp_open(component);
-	if (client->fd == -1 ||
-	    networkcmp_negotiate(client->fd, preferences, &client->limits) ==
-	    -1) {
-		error = errno;
-		if (client->fd != -1)
-			close(client->fd);
-		free(client);
+	error = pthread_once(&networkcmp_atfork_once, networkcmp_atfork_init);
+	if (error == 0)
+		error = networkcmp_atfork_error;
+	if (error == 0)
+		error = pthread_mutex_lock(&networkcmp_registry_lock);
+	if (error != 0) {
 		errno = error;
 		return (-1);
 	}
-	*clientp = client;
-	return (0);
-}
-
-int
-networkcmp_client_fd(const struct networkcmp_client *client)
-{
-
-	if (client == NULL) {
-		errno = EINVAL;
-		return (-1);
+	while (networkcmp_initializing) {
+		error = pthread_cond_wait(&networkcmp_registry_ready,
+		    &networkcmp_registry_lock);
+		if (error != 0) {
+			(void)pthread_mutex_unlock(&networkcmp_registry_lock);
+			errno = error;
+			return (-1);
+		}
 	}
-	return (client->fd);
+	if (networkcmp_process_client != NULL) {
+		networkcmp_process_client->references++;
+		*clientp = networkcmp_process_client;
+		(void)pthread_mutex_unlock(&networkcmp_registry_lock);
+		return (0);
+	}
+	networkcmp_initializing = true;
+	(void)pthread_mutex_unlock(&networkcmp_registry_lock);
+	client = calloc(1, sizeof(*client));
+	if (client == NULL)
+		goto fail;
+	if (service_acquire(&service) == -1)
+		goto fail;
+	if (service_local_component_open(service, NETWORKCMP_INTERFACE,
+	    NETWORKCMP_INTERFACE_VERSION, &fd) == -1) {
+		error = errno;
+		service_release(service);
+		errno = error;
+		goto fail;
+	}
+	service_release(service);
+	if (service_session_create(fd, &client->channel) == -1) {
+		error = errno;
+		close(fd);
+		errno = error;
+		goto fail;
+	}
+	client->owner = getpid();
+	if (networkcmp_negotiate(client, preferences, &client->limits) == -1)
+		goto fail;
+	client->references = 1;
+	error = pthread_mutex_lock(&networkcmp_registry_lock);
+	if (error != 0) {
+		errno = error;
+		goto fail;
+	}
+	networkcmp_process_client = client;
+	networkcmp_initializing = false;
+	*clientp = client;
+	(void)pthread_cond_broadcast(&networkcmp_registry_ready);
+	(void)pthread_mutex_unlock(&networkcmp_registry_lock);
+	NETWORKCMP_PROBE_OPEN(__DECONST(char *, NETWORKCMP_INTERFACE), 0);
+	return (0);
+
+fail:
+	error = errno;
+	if (client != NULL && client->channel != NULL)
+		service_session_close(client->channel);
+	free(client);
+	if (pthread_mutex_lock(&networkcmp_registry_lock) == 0) {
+		networkcmp_initializing = false;
+		(void)pthread_cond_broadcast(&networkcmp_registry_ready);
+		(void)pthread_mutex_unlock(&networkcmp_registry_lock);
+	}
+	NETWORKCMP_PROBE_OPEN(__DECONST(char *, NETWORKCMP_INTERFACE), error);
+	errno = error;
+	return (-1);
 }
 
 const struct networkcmp_hello_reply *
@@ -673,12 +728,27 @@ networkcmp_client_limits(const struct networkcmp_client *client)
 }
 
 void
-networkcmp_client_close(struct networkcmp_client *client)
+networkcmp_client_close(struct networkcmp_client *client) __no_lock_analysis
 {
+	struct service_session *channel;
 
 	if (client == NULL)
 		return;
-	close(client->fd);
+	if (pthread_mutex_lock(&networkcmp_registry_lock) != 0)
+		return;
+	if (client != networkcmp_process_client ||
+	    client->owner != getpid() || client->references == 0) {
+		(void)pthread_mutex_unlock(&networkcmp_registry_lock);
+		return;
+	}
+	if (--client->references != 0) {
+		(void)pthread_mutex_unlock(&networkcmp_registry_lock);
+		return;
+	}
+	networkcmp_process_client = NULL;
+	channel = client->channel;
+	(void)pthread_mutex_unlock(&networkcmp_registry_lock);
+	service_session_close(channel);
 	free(client);
 }
 
@@ -741,7 +811,7 @@ networkcmp_attach_io(struct networkcmp_client *client,
 	request.socket = socket;
 	request.tx_mode = mode;
 	request.rx_mode = mode;
-	if (networkcmp_rpc_fds(client->fd, NETWORKCMP_OP_ATTACH_RINGS,
+	if (networkcmp_rpc_fds(client, NETWORKCMP_OP_ATTACH_RINGS,
 	    &request, sizeof(request), fds, nitems(fds), &reply, &length) == -1)
 		goto fail;
 	error = pthread_mutex_init(&io->tx_lock, NULL);
@@ -756,7 +826,6 @@ networkcmp_attach_io(struct networkcmp_client *client,
 		goto fail;
 	}
 	rx_mutex_ready = 1;
-	io->fd = client->fd;
 	io->socket_type = socket_type;
 	shmring_fds_close(&tx_producer);
 	shmring_fds_close(&tx_consumer);
@@ -873,17 +942,6 @@ networkcmp_recv_datagram(struct networkcmp_io *io, void *buffer,
 	return (result);
 }
 
-int
-networkcmp_event_fd(const struct networkcmp_io *io)
-{
-
-	if (io == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	return (io->fd);
-}
-
 void
 networkcmp_io_close(struct networkcmp_io *io)
 {
@@ -898,8 +956,9 @@ networkcmp_io_close(struct networkcmp_io *io)
 }
 
 int
-networkcmp_socket(int fd, uint32_t family, uint32_t type, uint32_t protocol,
-    uint32_t flags, struct networkcmp_handle *socket)
+networkcmp_socket(struct networkcmp_client *client, uint32_t family,
+    uint32_t type, uint32_t protocol, uint32_t flags,
+    struct networkcmp_handle *socket)
 {
 	union networkcmp_buffer reply;
 	struct networkcmp_socket_request request;
@@ -917,8 +976,8 @@ networkcmp_socket(int fd, uint32_t family, uint32_t type, uint32_t protocol,
 	request.type = type;
 	request.protocol = protocol;
 	request.flags = flags;
-	if (networkcmp_rpc(fd, NETWORKCMP_OP_SOCKET, &request, sizeof(request),
-	    &reply, &length) == -1)
+	if (networkcmp_rpc(client, NETWORKCMP_OP_SOCKET, &request,
+	    sizeof(request), &reply, &length) == -1)
 		return (-1);
 	result = (const void *)(&reply.wire.msg + 1);
 	*socket = result->socket;
@@ -926,7 +985,7 @@ networkcmp_socket(int fd, uint32_t family, uint32_t type, uint32_t protocol,
 }
 
 static int
-networkcmp_endpoint_rpc(int fd, uint16_t opcode,
+networkcmp_endpoint_rpc(struct networkcmp_client *client, uint16_t opcode,
     struct networkcmp_handle socket,
     const struct networkcmp_endpoint *endpoint)
 {
@@ -943,30 +1002,47 @@ networkcmp_endpoint_rpc(int fd, uint16_t opcode,
 	memset(&request, 0, sizeof(request));
 	request.socket = socket;
 	request.endpoint = *endpoint;
-	return (networkcmp_rpc(fd, opcode, &request, sizeof(request), &reply,
-	    &length));
+	return (networkcmp_rpc(client, opcode, &request, sizeof(request),
+	    &reply, &length));
 }
 
 int
-networkcmp_bind(int fd, struct networkcmp_handle socket,
+networkcmp_bind(struct networkcmp_client *client,
+    struct networkcmp_handle socket,
     const struct networkcmp_endpoint *endpoint)
 {
 
-	return (networkcmp_endpoint_rpc(fd, NETWORKCMP_OP_BIND, socket,
+	return (networkcmp_endpoint_rpc(client, NETWORKCMP_OP_BIND, socket,
 	    endpoint));
 }
 
 int
-networkcmp_connect(int fd, struct networkcmp_handle socket,
+networkcmp_connect(struct networkcmp_client *client,
+    struct networkcmp_handle socket,
     const struct networkcmp_endpoint *endpoint)
 {
 
-	return (networkcmp_endpoint_rpc(fd, NETWORKCMP_OP_CONNECT, socket,
+	return (networkcmp_endpoint_rpc(client, NETWORKCMP_OP_CONNECT, socket,
 	    endpoint));
 }
 
 int
-networkcmp_listen(int fd, struct networkcmp_handle socket, uint32_t backlog)
+networkcmp_connect_status(struct networkcmp_client *client,
+    struct networkcmp_handle socket)
+{
+	union networkcmp_buffer reply;
+	struct networkcmp_close_request request;
+	size_t length;
+
+	memset(&request, 0, sizeof(request));
+	request.socket = socket;
+	return (networkcmp_rpc(client, NETWORKCMP_OP_CONNECT_STATUS, &request,
+	    sizeof(request), &reply, &length));
+}
+
+int
+networkcmp_listen(struct networkcmp_client *client,
+    struct networkcmp_handle socket, uint32_t backlog)
 {
 	union networkcmp_buffer reply;
 	struct networkcmp_listen_request request;
@@ -975,12 +1051,13 @@ networkcmp_listen(int fd, struct networkcmp_handle socket, uint32_t backlog)
 	memset(&request, 0, sizeof(request));
 	request.socket = socket;
 	request.backlog = backlog;
-	return (networkcmp_rpc(fd, NETWORKCMP_OP_LISTEN, &request,
+	return (networkcmp_rpc(client, NETWORKCMP_OP_LISTEN, &request,
 	    sizeof(request), &reply, &length));
 }
 
 int
-networkcmp_accept(int fd, struct networkcmp_handle socket,
+networkcmp_accept(struct networkcmp_client *client,
+    struct networkcmp_handle socket,
     struct networkcmp_handle *accepted)
 {
 	union networkcmp_buffer reply;
@@ -994,8 +1071,8 @@ networkcmp_accept(int fd, struct networkcmp_handle socket,
 	}
 	memset(&request, 0, sizeof(request));
 	request.socket = socket;
-	if (networkcmp_rpc(fd, NETWORKCMP_OP_ACCEPT, &request, sizeof(request),
-	    &reply, &length) == -1)
+	if (networkcmp_rpc(client, NETWORKCMP_OP_ACCEPT, &request,
+	    sizeof(request), &reply, &length) == -1)
 		return (-1);
 	result = (const void *)(&reply.wire.msg + 1);
 	*accepted = result->socket;
@@ -1003,8 +1080,9 @@ networkcmp_accept(int fd, struct networkcmp_handle socket,
 }
 
 int
-networkcmp_setopt(int fd, struct networkcmp_handle socket, uint32_t level,
-    uint32_t option, const void *value, size_t value_length)
+networkcmp_setopt(struct networkcmp_client *client,
+    struct networkcmp_handle socket, uint32_t level, uint32_t option,
+    const void *value, size_t value_length)
 {
 	union networkcmp_buffer request, reply;
 	struct networkcmp_setopt_request *setopt;
@@ -1024,12 +1102,13 @@ networkcmp_setopt(int fd, struct networkcmp_handle socket, uint32_t level,
 	setopt->value_length = (uint32_t)value_length;
 	if (value_length != 0)
 		memcpy(setopt + 1, value, value_length);
-	return (networkcmp_rpc(fd, NETWORKCMP_OP_SETOPT, setopt,
+	return (networkcmp_rpc(client, NETWORKCMP_OP_SETOPT, setopt,
 	    sizeof(*setopt) + value_length, &reply, &length));
 }
 
 int
-networkcmp_shutdown(int fd, struct networkcmp_handle socket, uint32_t how)
+networkcmp_shutdown(struct networkcmp_client *client,
+    struct networkcmp_handle socket, uint32_t how)
 {
 	union networkcmp_buffer reply;
 	struct networkcmp_shutdown_request request;
@@ -1038,12 +1117,13 @@ networkcmp_shutdown(int fd, struct networkcmp_handle socket, uint32_t how)
 	memset(&request, 0, sizeof(request));
 	request.socket = socket;
 	request.how = how;
-	return (networkcmp_rpc(fd, NETWORKCMP_OP_SHUTDOWN, &request,
+	return (networkcmp_rpc(client, NETWORKCMP_OP_SHUTDOWN, &request,
 	    sizeof(request), &reply, &length));
 }
 
 int
-networkcmp_close_socket(int fd, struct networkcmp_handle socket)
+networkcmp_close_socket(struct networkcmp_client *client,
+    struct networkcmp_handle socket)
 {
 	union networkcmp_buffer reply;
 	struct networkcmp_close_request request;
@@ -1051,12 +1131,106 @@ networkcmp_close_socket(int fd, struct networkcmp_handle socket)
 
 	memset(&request, 0, sizeof(request));
 	request.socket = socket;
-	return (networkcmp_rpc(fd, NETWORKCMP_OP_CLOSE, &request,
+	return (networkcmp_rpc(client, NETWORKCMP_OP_CLOSE, &request,
 	    sizeof(request), &reply, &length));
 }
 
+ssize_t
+networkcmp_send_inline(struct networkcmp_client *client,
+    struct networkcmp_handle socket,
+    const void *buffer, size_t length)
+{
+	union networkcmp_buffer request, reply;
+	struct networkcmp_inline_request *io;
+	const struct networkcmp_inline_reply *result;
+	size_t reply_length;
+
+	if (buffer == NULL || length == 0 || length > NETWORKCMP_INLINE_MAX) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&request, 0, sizeof(request));
+	io = (void *)request.wire.payload;
+	io->socket = socket;
+	io->length = (uint32_t)length;
+	memcpy(io + 1, buffer, length);
+	if (networkcmp_rpc(client, NETWORKCMP_OP_SEND, io,
+	    sizeof(*io) + length,
+	    &reply, &reply_length) == -1)
+		return (-1);
+	result = (const void *)(&reply.wire.msg + 1);
+	if (result->length > length) {
+		errno = EPROTO;
+		return (-1);
+	}
+	return ((ssize_t)result->length);
+}
+
+ssize_t
+networkcmp_recv_inline(struct networkcmp_client *client,
+    struct networkcmp_handle socket, void *buffer, size_t capacity,
+    uint32_t timeout_ms, uint32_t *flags)
+{
+	union networkcmp_buffer reply;
+	struct networkcmp_inline_request request;
+	const struct networkcmp_inline_reply *result;
+	struct timespec deadline, now, pause;
+	size_t reply_length;
+	int64_t remaining;
+
+	if (buffer == NULL || capacity == 0 || capacity > NETWORKCMP_INLINE_MAX ||
+	    timeout_ms > NETWORKCMP_IO_TIMEOUT_MAX) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&request, 0, sizeof(request));
+	request.socket = socket;
+	request.length = (uint32_t)capacity;
+	request.timeout_ms = 0;
+	if (timeout_ms != 0) {
+		if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
+			return (-1);
+		deadline.tv_sec += timeout_ms / 1000;
+		deadline.tv_nsec += (timeout_ms % 1000) * 1000000L;
+		if (deadline.tv_nsec >= 1000000000L) {
+			deadline.tv_sec++;
+			deadline.tv_nsec -= 1000000000L;
+		}
+	}
+	for (;;) {
+		if (networkcmp_rpc(client, NETWORKCMP_OP_RECV, &request,
+		    sizeof(request), &reply, &reply_length) == 0)
+			break;
+		if (errno != EAGAIN || timeout_ms == 0)
+			return (-1);
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+			return (-1);
+		remaining = (deadline.tv_sec - now.tv_sec) * 1000000000LL +
+		    deadline.tv_nsec - now.tv_nsec;
+		if (remaining <= 0) {
+			errno = ETIMEDOUT;
+			return (-1);
+		}
+		pause.tv_sec = 0;
+		pause.tv_nsec = MIN(remaining, 10000000LL);
+		while (nanosleep(&pause, &pause) == -1)
+			if (errno != EINTR)
+				return (-1);
+	}
+	result = (const void *)(&reply.wire.msg + 1);
+	if (result->length > capacity) {
+		errno = EPROTO;
+		return (-1);
+	}
+	memcpy(buffer, result + 1, result->length);
+	if (flags != NULL)
+		*flags = result->flags;
+	return ((ssize_t)result->length);
+}
+
 int
-networkcmp_resolve(int fd, const char *host, const char *service,
+networkcmp_resolve(struct networkcmp_client *client, const char *host,
+    const char *service,
     uint32_t family, uint32_t socket_type, uint32_t flags,
     struct networkcmp_resolve_result *results, size_t *nresults,
     char *canonname, size_t canonname_size, uint32_t *ttl_seconds)
@@ -1096,7 +1270,7 @@ networkcmp_resolve(int fd, const char *host, const char *service,
 	if (service_length != 0)
 		memcpy((char *)(resolve + 1) + host_length, service,
 		    service_length);
-	if (networkcmp_rpc(fd, NETWORKCMP_OP_RESOLVE, resolve,
+	if (networkcmp_rpc(client, NETWORKCMP_OP_RESOLVE, resolve,
 	    sizeof(*resolve) + host_length + service_length, &reply,
 	    &length) == -1)
 		return (-1);
@@ -1169,7 +1343,8 @@ networkcmp_gai_error(int error)
 }
 
 int
-networkcmp_getaddrinfo(int fd, const char *host, const char *service,
+networkcmp_getaddrinfo(struct networkcmp_client *client, const char *host,
+    const char *service,
     const struct addrinfo *hints, struct addrinfo **result)
 {
 	struct networkcmp_resolve_result resolved[NETWORKCMP_RESOLVE_MAX_RESULTS];
@@ -1240,7 +1415,8 @@ networkcmp_getaddrinfo(int fd, const char *host, const char *service,
 			flags |= NETWORKCMP_RESOLVE_F_NUMERIC_SERVICE;
 	}
 	count = nitems(resolved);
-	if (networkcmp_resolve(fd, host, service, family, socket_type, flags,
+	if (networkcmp_resolve(client, host, service, family, socket_type,
+	    flags,
 	    resolved, &count, canonical, sizeof(canonical), NULL) == -1)
 		return (networkcmp_gai_error(errno));
 	tail = result;

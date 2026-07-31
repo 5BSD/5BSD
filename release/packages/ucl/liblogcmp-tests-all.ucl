@@ -1,0 +1,10 @@
+comment = "Public LogCmp library tests"
+
+desc = <<EOD
+ABI, malformed-frame, structured-record, descriptor-cardinality, and client
+API tests for liblogcmp.
+EOD
+
+annotations = {
+	set = "tests"
+}
