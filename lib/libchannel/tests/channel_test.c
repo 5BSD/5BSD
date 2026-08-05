@@ -675,6 +675,52 @@ ATF_TC_CLEANUP(stale_reply_closes_descriptors, tc)
 	(void)tc;
 }
 
+ATF_TC_WITH_CLEANUP(queued_attachments_close_on_destroy);
+ATF_TC_HEAD(queued_attachments_close_on_destroy, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "backpressured attachment duplicates are all closed with their channel");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(queued_attachments_close_on_destroy, tc)
+{
+	struct channel_options client_options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_CLIENT);
+	struct channel_options provider_options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_PROVIDER);
+	struct channel *client, *provider;
+	char byte;
+	unsigned sends;
+	int ends[2], first, second;
+
+	(void)tc;
+	capability_channel_pair(&first, &second);
+	ATF_REQUIRE(channel_create(first, &client_options, &client) == 0);
+	ATF_REQUIRE(channel_create(second, &provider_options, &provider) == 0);
+	ATF_REQUIRE(pipe(ends) == 0);
+	for (sends = 0; sends < MAC_CAPABILITY_DEFAULT_QUEUE_DEPTH + 2;
+	    sends++) {
+		ATF_REQUIRE(channel_send_event(client,
+		    OUT_FDS("fd", 2, &ends[1], 1)) == 0);
+		if (channel_wants_write(client) == 1)
+			break;
+	}
+	ATF_REQUIRE_MSG(channel_wants_write(client) == 1,
+	    "kernel channel never applied backpressure after %u sends", sends);
+	close(ends[1]);
+	channel_destroy(client);
+	channel_destroy(provider);
+	ATF_REQUIRE(fcntl(ends[0], F_SETFL, O_NONBLOCK) == 0);
+	ATF_CHECK_EQ(0, read(ends[0], &byte, 1));
+	close(ends[0]);
+}
+ATF_TC_CLEANUP(queued_attachments_close_on_destroy, tc)
+{
+	(void)tc;
+}
+
 ATF_TC_WITH_CLEANUP(destroy_from_callback);
 ATF_TC_HEAD(destroy_from_callback, tc)
 {
@@ -723,6 +769,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, client_death_notifies_provider);
 	ATF_TP_ADD_TC(tp, fork_rejects_inherited_channels);
 	ATF_TP_ADD_TC(tp, stale_reply_closes_descriptors);
+	ATF_TP_ADD_TC(tp, queued_attachments_close_on_destroy);
 	ATF_TP_ADD_TC(tp, destroy_from_callback);
 	return (atf_no_error());
 }

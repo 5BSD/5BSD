@@ -1,0 +1,56 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 31, 2026
+.Dt LOGCTL 8
+.Os
+.Sh NAME
+.Nm logctl
+.Nd validate and operate the LogCmp service
+.Sh SYNOPSIS
+.Nm
+.Cm configtest
+.Op Ar file
+.Nm
+.Cm emit
+.Ar subsystem category severity message
+.Nm
+.Cm flush
+.Nm
+.Cm stats
+.Nm
+.Cm show
+.Op Ar minimum-severity
+.Sh DESCRIPTION
+.Nm
+is the administrator and diagnostic client for
+.Xr logd 8 .
+It uses
+.Xr liblogcmp 3
+for all live operations and receives no private service endpoint or
+administrative bypass.
+.Pp
+.Cm configtest
+validates the supplied file, or
+.Pa /etc/logd.conf
+by default, with exactly the daemon's strict parser, including ring,
+drain interval, segment size, retained-segment, severity, and rate-limit
+bounds.
+.Cm emit
+writes and flushes one public diagnostic record.
+Its severity is one of
+.Cm trace , debug , info , warn , error ,
+or
+.Cm fatal .
+.Cm flush
+establishes the service's documented processing boundary, and
+.Cm stats
+prints accepted, malformed-rejection, client-ring-loss, provider-filtering,
+and provider-rate-limit counters for the command's isolated service session.
+.Cm show
+prints retained records belonging to the immutable serviced identity of the
+caller, optionally filtering out records below
+.Ar minimum-severity .
+It cannot select another identity or request an all-system view.
+.Sh SEE ALSO
+.Xr liblogcmp 3 ,
+.Xr logd 8 ,
+.Xr serviced 8

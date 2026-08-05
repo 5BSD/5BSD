@@ -1,7 +1,8 @@
 comment = "NotifyCmp client library tests"
 
 desc = <<EOD
-ABI, malformed-frame, topic, event, and client API tests for libnotifycmp.
+ABI, malformed-frame, topic, event, saturating-timeout, and client API tests
+for libnotifycmp.
 EOD
 
 annotations = {

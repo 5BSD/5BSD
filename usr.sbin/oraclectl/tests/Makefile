@@ -10,4 +10,12 @@ BINDIR=		${TESTSDIR}
 
 ${PACKAGE}FILES+=	capd_test_harness.sh
 
+.if ${.OBJDIR} != ${.CURDIR}
+${.OBJDIR}/capd_test_harness.sh: ${SRCTOP}/usr.sbin/oracled/tests/capd_test_harness.sh
+	${CP} ${.ALLSRC} ${.TARGET}
+
+all: ${.OBJDIR}/capd_test_harness.sh
+CLEANFILES+=	capd_test_harness.sh
+.endif
+
 .include <bsd.test.mk>

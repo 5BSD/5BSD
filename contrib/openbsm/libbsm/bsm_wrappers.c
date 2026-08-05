@@ -70,11 +70,12 @@ audit_submit(short au_event, au_id_t auid, char status,
 	int acond;
 	va_list ap;
 	pid_t pid;
-	int error, afd, subj_ex;
+	int acond_unknown, error, afd, subj_ex;
 	struct auditinfo ai;
 	struct auditinfo_addr aia;
 	au_tid_t atid;
 
+	acond_unknown = 0;
 	if (audit_get_cond(&acond) != 0) {
 		/*
 		 * If auditon(2) returns ENOSYS, then audit has not been
@@ -82,11 +83,29 @@ audit_submit(short au_event, au_id_t auid, char status,
 		 */
 		if (errno == ENOSYS)
 			return (0);
-		error = errno;
-		syslog(LOG_AUTH | LOG_ERR, "audit: auditon failed: %s",
-		    strerror(errno));
-		errno = error;
-		return (-1);
+#ifdef ECAPMODE
+		/*
+		 * auditon(2) deliberately remains unavailable in capability
+		 * mode because most of its commands administer system-wide
+		 * audit policy.  A privileged capability-mode service may
+		 * nevertheless submit a fully constructed record via the
+		 * capability-enabled audit(2) system call.  In that case,
+		 * optimistically attempt submission.  If auditing is disabled,
+		 * audit(2) reports ENOTSUP and the operation remains the same
+		 * no-op that the condition check would have selected.
+		 */
+		if (errno == ECAPMODE) {
+			acond_unknown = 1;
+			acond = AUC_AUDITING;
+		} else
+#endif
+		{
+			error = errno;
+			syslog(LOG_AUTH | LOG_ERR,
+			    "audit: auditon failed: %s", strerror(errno));
+			errno = error;
+			return (-1);
+		}
 	}
 	if (acond == AUC_NOAUDIT)
 		return (0);
@@ -200,6 +219,8 @@ audit_submit(short au_event, au_id_t auid, char status,
 	}
 	if (au_close(afd, AU_TO_WRITE, au_event) < 0) {
 		error = errno;
+		if (acond_unknown != 0 && error == ENOTSUP)
+			return (0);
 		syslog(LOG_AUTH | LOG_ERR, "audit: record not committed");
 		errno = error;
 		return (-1);

@@ -1,0 +1,9 @@
+comment = "Authenticated capability-mode BSM audit broker"
+
+desc = <<EOD
+AuditCmp is the narrowly privileged global audit service for capability
+components.  It maps serviced-authenticated provider identities to fixed BSM
+events, validates bounded records, rate limits each session, and performs
+audit submission from capability-mode workers without making functional
+components root.
+EOD

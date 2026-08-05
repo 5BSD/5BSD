@@ -11,6 +11,7 @@
 #include <limits.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -18,6 +19,7 @@
 #include <libservice.h>
 
 #include "filesystemcmp.h"
+#include "filesystemcmp_server.h"
 #include "filesystemcmp_probes.h"
 
 static const char filesystemcmp_dependency_note[]
@@ -40,6 +42,7 @@ struct filesystemcmp_client {
 	struct service_session	*channel;
 	pid_t			 owner;
 	uint32_t		 references;
+	_Atomic int		 terminal_error;
 };
 
 static pthread_mutex_t filesystemcmp_registry_lock =
@@ -256,8 +259,6 @@ void
 filesystemcmp_close(struct filesystemcmp_client *client)
     __no_lock_analysis
 {
-	struct service_session *channel;
-
 	if (client == NULL)
 		return;
 	if (pthread_mutex_lock(&filesystemcmp_registry_lock) != 0)
@@ -271,11 +272,13 @@ filesystemcmp_close(struct filesystemcmp_client *client)
 		(void)pthread_mutex_unlock(&filesystemcmp_registry_lock);
 		return;
 	}
-	filesystemcmp_process_client = NULL;
-	channel = client->channel;
+	/*
+	 * The injected component channel is process-lifetime authority.
+	 * Retain its sole managed reader at zero public borrows so a later
+	 * open can reacquire it without racing a second reader on the same
+	 * kernel channel or requiring ambient rediscovery.
+	 */
 	(void)pthread_mutex_unlock(&filesystemcmp_registry_lock);
-	service_session_close(channel);
-	free(client);
 }
 
 int
@@ -304,7 +307,6 @@ filesystemcmp_validate_message(const struct filesystemcmp_msg *msg,
 				if (hello->version != FILESYSTEMCMP_ABI_VERSION ||
 				    (hello->features &
 				    ~(FILESYSTEMCMP_FEATURE_INLINE_IO |
-				    FILESYSTEMCMP_FEATURE_SHM_RINGS |
 				    FILESYSTEMCMP_FEATURE_PERSISTENT |
 				    FILESYSTEMCMP_FEATURE_BUNDLE)) != 0)
 					goto reject;
@@ -388,7 +390,6 @@ filesystemcmp_validate_message(const struct filesystemcmp_msg *msg,
 				    FILESYSTEMCMP_ABI_VERSION ||
 				    (hello->features &
 				    ~(FILESYSTEMCMP_FEATURE_INLINE_IO |
-				    FILESYSTEMCMP_FEATURE_SHM_RINGS |
 				    FILESYSTEMCMP_FEATURE_PERSISTENT |
 				    FILESYSTEMCMP_FEATURE_BUNDLE)) != 0)
 					goto reject;
@@ -514,19 +515,6 @@ filesystemcmp_validate_message(const struct filesystemcmp_msg *msg,
 			    rename->new_name_length)))
 				goto reject;
 			break;
-		case FILESYSTEMCMP_OP_ATTACH_RINGS: {
-			const struct filesystemcmp_ring_request *rings;
-
-			expected = sizeof(struct filesystemcmp_ring_request);
-			if (payload == expected) {
-				rings = (const void *)(msg + 1);
-				if (rings->tx_entries == 0 ||
-				    rings->rx_entries == 0 ||
-				    rings->entry_size == 0 || rings->flags != 0)
-					goto reject;
-			}
-			break;
-		}
 		default:
 			goto reject;
 		}
@@ -546,16 +534,13 @@ int
 filesystemcmp_validate_fds(const struct filesystemcmp_msg *msg, size_t nfds,
     enum filesystemcmp_message_role role)
 {
-	size_t expected;
-
-	if (msg == NULL) {
+	if (msg == NULL || (role != FILESYSTEMCMP_MESSAGE_REQUEST &&
+	    role != FILESYSTEMCMP_MESSAGE_REPLY &&
+	    role != FILESYSTEMCMP_MESSAGE_EVENT)) {
 		errno = EINVAL;
 		return (-1);
 	}
-	expected = role == FILESYSTEMCMP_MESSAGE_REQUEST &&
-	    msg->opcode == FILESYSTEMCMP_OP_ATTACH_RINGS ?
-	    FILESYSTEMCMP_RING_FD_COUNT : 0;
-	if (nfds != expected) {
+	if (nfds != 0) {
 		errno = EPROTO;
 		return (-1);
 	}
@@ -578,6 +563,7 @@ filesystemcmp_rpc(struct filesystemcmp_client *client, uint16_t opcode,
 	struct service_reply incoming;
 	struct filesystemcmp_msg *msg;
 	size_t received, request_length;
+	int terminal_error;
 
 	if (client == NULL || client->owner != getpid() ||
 	    client->channel == NULL || payload_length >
@@ -586,6 +572,9 @@ filesystemcmp_rpc(struct filesystemcmp_client *client, uint16_t opcode,
 		errno = EINVAL;
 		return (-1);
 	}
+	terminal_error = atomic_load(&client->terminal_error);
+	if (terminal_error != 0)
+		return (errno = terminal_error, -1);
 	memset(&request, 0, sizeof(request));
 	msg = &request.wire.msg;
 	if (filesystemcmp_message_init(msg, opcode, 0) == -1)
@@ -616,6 +605,7 @@ filesystemcmp_rpc(struct filesystemcmp_client *client, uint16_t opcode,
 	    filesystemcmp_validate_fds(msg, incoming.nfds,
 	    FILESYSTEMCMP_MESSAGE_REPLY) == -1 || msg->opcode != opcode) {
 		errno = EPROTO;
+		atomic_store(&client->terminal_error, EPROTO);
 		FILESYSTEMCMP_PROBE_REJECT(opcode, (uint32_t)received, EPROTO);
 		return (-1);
 	}
@@ -661,7 +651,6 @@ filesystemcmp_hello(struct filesystemcmp_client *client,
 	request.min_version = FILESYSTEMCMP_ABI_VERSION;
 	request.max_version = FILESYSTEMCMP_ABI_VERSION;
 	request.features = FILESYSTEMCMP_FEATURE_INLINE_IO |
-	    FILESYSTEMCMP_FEATURE_SHM_RINGS |
 	    FILESYSTEMCMP_FEATURE_PERSISTENT |
 	    FILESYSTEMCMP_FEATURE_BUNDLE;
 	if (filesystemcmp_rpc(client, FILESYSTEMCMP_OP_HELLO, &request,

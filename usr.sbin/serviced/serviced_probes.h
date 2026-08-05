@@ -87,6 +87,8 @@
 	DTRACE_PROBE3(serviced, cap__service, label, name, result)
 #define	SERVICED_PROBE_CAP_CHANNEL(label, result)	\
 	DTRACE_PROBE2(serviced, cap__channel, label, result)
+#define	SERVICED_PROBE_WORKER_CHANNEL(label, result)	\
+	DTRACE_PROBE2(serviced, worker__channel, label, result)
 #define	SERVICED_PROBE_CAP_COALITION(label, result)	\
 	DTRACE_PROBE2(serviced, cap__coalition, label, result)
 #define	SERVICED_PROBE_IDENTITY_VALIDATE(user, group, result)	\
@@ -111,6 +113,10 @@
 	DTRACE_PROBE1(serviced, svc__count, nservices)
 #define	SERVICED_PROBE_NAMING_COUNT(nnames)	\
 	DTRACE_PROBE1(serviced, naming__count, nnames)
+#define	SERVICED_PROBE_FD_RESERVE(soft_limit, hard_limit, reserve_count)	\
+	DTRACE_PROBE3(serviced, fd__reserve, soft_limit, hard_limit, reserve_count)
+#define	SERVICED_PROBE_FD_PRESSURE(purpose, required, denied)	\
+	DTRACE_PROBE3(serviced, fd__pressure, purpose, required, denied)
 
 /* Service IPC — channel messages */
 #define	SERVICED_PROBE_IPC_RECV(label, op)	\
@@ -129,6 +135,10 @@
 	DTRACE_PROBE1(serviced, shutdown__start, nservices)
 #define	SERVICED_PROBE_SHUTDOWN_DONE(duration_ns)	\
 	DTRACE_PROBE1(serviced, shutdown__done, duration_ns)
+#define	SERVICED_PROBE_QUIESCE_REQUEST(label, reason, deadline_ms)	\
+	DTRACE_PROBE3(serviced, quiesce__request, label, reason, deadline_ms)
+#define	SERVICED_PROBE_QUIESCE_COMPLETE(label, status)	\
+	DTRACE_PROBE2(serviced, quiesce__complete, label, status)
 
 /* Connection tracking */
 #define	SERVICED_PROBE_CONN_ACCEPT(uid, nconns)	\

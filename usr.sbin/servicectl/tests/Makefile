@@ -8,6 +8,7 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/servicectl
 .PATH: ${SRCTOP}/usr.sbin/servicectl
 
 ATF_TESTS_SH+=	servicectl_test
+ATF_TESTS_C+=	transport_test
 
 PROGS+=		capd_test_guardian
 PROGS+=		capd_protocol_fixture
@@ -21,16 +22,22 @@ SRCS.deps_both_fixture=	deps_both_fixture.c
 SRCS.servicectl_test_bin=	servicectl.c deps.c install.c verify.c
 NO_SHARED.servicectl_test_bin=	yes
 CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/liboraclectl
 CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/liboraclert
 CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD.servicectl_test_bin+=	capbundle oraclectl ucl elf
+LIBADD.servicectl_test_bin+=	capbundle ucl elf
+
+CFLAGS.transport_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.transport_test+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.transport_test+=	-I${SRCTOP}/contrib/libucl/include
+CFLAGS.transport_test+=	-ffunction-sections -fdata-sections
+LDFLAGS.transport_test+=	-Wl,--gc-sections
+NO_SHARED.transport_test=	yes
 
 LIBADD.capd_protocol_fixture+=	service
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/liboraclert
-CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/usr.sbin/kldmgrd
-CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/usr.sbin/rebootd
+CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libkldmgr
+CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/librebootctl
 
 ${PACKAGE}FILES+=	capd_test_harness.sh
 

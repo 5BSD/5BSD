@@ -1,0 +1,10 @@
+comment = "LogCmp provider tests"
+
+desc = <<EOD
+Protocol, ring attachment, sequence, backpressure, crash-recovery, unsafe
+configuration, sandbox, bundle, audit, and DTrace tests for LogCmp.
+EOD
+
+annotations = {
+	set = "tests"
+}

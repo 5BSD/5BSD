@@ -111,6 +111,8 @@ int	service_ready(struct service_context *);
 int	service_provider_create(struct service_provider **);
 void	service_provider_destroy(struct service_provider *);
 int	service_provider_authorize_capabilities(struct service_provider *);
+int	service_provider_worker_channel(struct service_provider *,
+	    int *provider_fd, int *worker_fd);
 int	service_provider_protect(struct service_provider *, uint32_t flags);
 int	service_provider_expose(struct service_provider *, const char *name,
 	    struct service_listener **);
@@ -118,6 +120,8 @@ int	service_provider_expose_lazy(struct service_provider *, const char *name,
 	    service_activation_handler, void *, struct service_listener **);
 int	service_provider_enter_capability_mode(struct service_provider *);
 int	service_provider_ready(struct service_provider *);
+int	service_provider_quiescing(struct service_provider *);
+int	service_provider_quiesce_complete(struct service_provider *, int status);
 
 /*
  * Monitor the supervising serviced connection.  The borrowed event fd becomes
@@ -135,12 +139,14 @@ int	service_supervisor_status(struct service_context *);
 const char *service_label(struct service_context *);
 
 /*
- * Return a borrowed descriptor for a manifest-declared capability service.
+ * Open an owned descriptor for a manifest-declared capability service.
  * Current names are "mount", "node", "accounting", and "identity".
  * These descriptors are ready for service-specific ioctls; unlike access
- * tokens, they are not activated.  The descriptor remains owned by libservice.
+ * tokens, they are not activated.  The caller must close the returned
+ * close-on-exec descriptor.
  */
-int	service_capability_fd(struct service_context *, const char *name);
+int	service_capability_open(struct service_context *, const char *name,
+	    int *fd);
 
 int	service_local_component_open(struct service_context *,
 	    const char *interface, const char *version, int *session_fd);
@@ -242,6 +248,7 @@ struct service_call_options {
 }
 
 int	service_session_create(int fd, struct service_session **session);
+int	service_session_fail(struct service_session *session, int error);
 void	service_session_close(struct service_session *session);
 int	service_session_call(struct service_session *,
 	    const struct service_message *, struct service_reply *,

@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd July 30, 2026
+.Dd July 31, 2026
 .Dt LIBNOTIFYCMP 3
 .Os
 .Sh NAME
@@ -7,6 +7,8 @@
 .Nm notifycmp_subscribe ,
 .Nm notifycmp_unsubscribe ,
 .Nm notifycmp_publish ,
+.Nm notifycmp_state_set ,
+.Nm notifycmp_state_get ,
 .Nm notifycmp_next ,
 .Nm notifycmp_timer_add ,
 .Nm notifycmp_timer_cancel ,
@@ -24,6 +26,10 @@
 .Fn notifycmp_subscribe "struct notifycmp_client *client" "const char *topic"
 .Ft int
 .Fn notifycmp_publish "struct notifycmp_client *client" "const char *topic" "const void *payload" "size_t length"
+.Ft int
+.Fn notifycmp_state_set "struct notifycmp_client *client" "const char *topic" "uint64_t state"
+.Ft int
+.Fn notifycmp_state_get "struct notifycmp_client *client" "const char *topic" "struct notifycmp_state_reply *state"
 .Ft ssize_t
 .Fn notifycmp_next "struct notifycmp_client *client" "struct notifycmp_event *event" "size_t capacity" "uint32_t timeout_ms"
 .Ft int
@@ -43,13 +49,16 @@ service through
 .Xr libservice 3 .
 It provides exact-topic publish and subscribe, bounded payloads and queues,
 and owner-scoped one-shot or periodic monotonic timers.
-applications do not supply component or provider names.
+Applications do not supply component or provider names.
 .Pp
 .Fn notifycmp_next
 dequeues one event.
 A timeout of zero polls, while
 .Dv NOTIFYCMP_TIMEOUT_INFINITE
 waits without a deadline.
+Finite waits use saturating deadline arithmetic, so values near
+.Dv UINT32_MAX
+cannot wrap into an unexpectedly short client deadline.
 Each open creates an independent provider session, receive queue, request
 sequence, and exchange lock.
 Threads sharing one client are serialized so replies cannot cross, while a
@@ -59,6 +68,32 @@ on one client does not stall another client.
 An inherited client is invalid after
 .Xr fork 2 ;
 the child must open a fresh session.
+.Pp
+Ephemeral publications may contain up to
+.Dv NOTIFYCMP_MAX_PAYLOAD
+opaque bytes whose schema belongs to the topic-specific typed library.
+They must not contain secrets or the only copy of application state.
+.Fn notifycmp_state_set
+stores a 64-bit topic state and atomically advances a broker-assigned
+generation.
+.Fn notifycmp_state_get
+returns the current router epoch, generation, and state.
+Subscribers should subscribe before reading state and query the owning typed
+service when a notification only identifies what changed.
+.Pp
+Every event identifies the random router epoch.
+Queue overflow produces
+.Dv NOTIFYCMP_EVENT_GAP
+with an exact saturated loss count.
+If the provider connection dies,
+.Fn notifycmp_next
+reconnects, restores exact-topic subscriptions, and returns one
+.Dv NOTIFYCMP_EVENT_RESET
+for the new epoch rather than claiming continuous delivery.
+If any other operation observes peer death, that operation returns the
+transport error because its acceptance is unknown and is never replayed.
+The dead session is retired; the next operation opens a fresh session and
+restores subscriptions before sending its own request.
 .Pp
 Topics are dot-separated identifiers.
 Empty segments, path syntax, control characters, and embedded NUL bytes are
@@ -76,7 +111,7 @@ A successful
 reply means that the router evaluated the publication and attempted fanout.
 It is not a durable-delivery acknowledgement.
 Subscriber queues are volatile and bounded; a full queue drops the newest
-event for that subscriber and records the loss in statistics.
+event for that subscriber and reports the loss in statistics and a gap event.
 Events are not replayed after subscriber or router restart.
 Callers needing durable delivery require a separate typed queue protocol with
 stable event identifiers, consumer offsets, acknowledgements, and
@@ -85,4 +120,4 @@ deduplication.
 .Xr kqueue 2 ,
 .Xr libservice 3 ,
 .Xr capsicum 4 ,
-.Xr notifycmp 8
+.Xr bsdnotify 8

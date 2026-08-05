@@ -1,14 +1,17 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd July 30, 2026
+.Dd July 31, 2026
 .Dt LIBLOGCMP 3
 .Os
 .Sh NAME
 .Nm logcmp_client_open ,
-.Nm logcmp_log ,
+.Nm logcmp_logger_create ,
+.Nm logcmp_emit ,
 .Nm logcmp_flush ,
 .Nm logcmp_stats ,
+.Nm logcmp_query_next ,
+.Nm logcmp_logger_destroy ,
 .Nm logcmp_client_close
-.Nd structured capability-component logging client
+.Nd structured privacy-aware logging client
 .Sh LIBRARY
 .Li liblogcmp
 .Pq Fl llogcmp
@@ -17,70 +20,175 @@
 .Ft int
 .Fn logcmp_client_open "struct logcmp_client **client"
 .Ft int
-.Fn logcmp_log "struct logcmp_client *client" "uint32_t severity" "const char *message" "const char *fields"
+.Fo logcmp_logger_create
+.Fa "struct logcmp_client *client"
+.Fa "const char *subsystem"
+.Fa "const char *category"
+.Fa "struct logcmp_logger **logger"
+.Fc
+.Ft int
+.Fn logcmp_emit "struct logcmp_logger *logger" "const struct logcmp_emit_options *options"
 .Ft int
 .Fn logcmp_flush "struct logcmp_client *client"
 .Ft int
 .Fn logcmp_stats "struct logcmp_client *client" "struct logcmp_stats *stats"
+.Ft int
+.Fo logcmp_query_next
+.Fa "struct logcmp_client *client"
+.Fa "uint32_t minimum_severity"
+.Fa "struct logcmp_query_cursor *cursor"
+.Fa "void *record"
+.Fa "size_t capacity"
+.Fa "size_t *record_length"
+.Fc
+.Ft void
+.Fn logcmp_logger_destroy "struct logcmp_logger *logger"
 .Ft void
 .Fn logcmp_client_close "struct logcmp_client *client"
 .Sh DESCRIPTION
 The
 .Nm
-library implements
+library implements version 5 of the global
 .Dq org.5bsd.log
-version
-.Dq 1.0.0 .
-It connects to the global
-.Dq org.5bsd.log
-service through
-.Xr libservice 3
-and prefers a bounded, single-producer
-.Xr libshmring 3
-record ring.
-It falls back to bounded inline records when the provider does not offer a
-shared-memory ring.
-The provider owns all sink descriptors.
-Multiple opens in one process share one reference-counted client, request
-sequence, lock, and ring.
-The final close detaches the ring and closes the independent global service
-session, so a later open starts a clean producer sequence.
+service.
+Applications use this typed API; the library performs serviced discovery,
+session negotiation, shared-memory attachment, framing, and descriptor
+ownership internally.
+Multiple opens in one process share one reference-counted client and one
+independent provider session.
 .Pp
-.Fn logcmp_log
-submits a severity, message, and optional newline-separated
-.Li KEY=value
-fields.
-Fields beginning with an underscore are reserved for trusted provider
-metadata and are rejected.
-Messages and fields are copied into the ring; pointers need not remain valid.
-Ring publication performs no per-record control RPC.
-The provider drains all available records in batches on a bounded periodic
-.Xr kqueue 2
-timer, while
-.Fn logcmp_flush
-provides an explicit synchronous processing boundary.
+Opening a client allocates no shared-memory ring.
+Low-volume records travel inline over the service channel.
+After sustained traffic the library lazily attaches a 16 KiB compact SPSC
+ring.
+If that ring fills, committed records are flushed, the compact ring is
+detached, and a provider-negotiated bulk SPSC ring is attached before the
+uncommitted record is retried.
+Shape selection and watermarks are library policy and are not application
+tuning knobs.
+.Pp
+.Fn logcmp_logger_create
+creates an immutable logger handle for a subsystem and category.
+The subsystem should be a stable reverse-domain identifier and the category
+should identify a functional area.
+The logger retains the client, so the caller may close its original client
+reference after creating the logger.
+.Pp
+.Fn logcmp_emit
+copies one bounded record into the process transport.
+The options structure specifies a normalized severity from 1 through 24,
+record kind, public, private, or private-hash message classification,
+optional event, activity, signpost, trace, and span identifiers, and up to
+.Dv LOGCMP_MAX_ATTRIBUTES
+typed attributes.
+Private fields are replaced by a fixed marker before retention.
+Private-hash fields are replaced by a keyed 128-bit digest which is stable
+only within the current LogCmp storage-manager epoch.
+The random key is not persisted, so private hashes deliberately change after
+a provider restart and are unsuitable as durable identifiers.
+Attribute keys beginning with an underscore are reserved for authenticated
+provider metadata.
+Duplicate keys and malformed or oversized values are rejected.
+Records whose privacy representation would exceed the negotiated record limit
+are rejected with
+.Er EMSGSIZE
+before publication.
+Every string and value is copied before the function returns.
+.Pp
+Normal publication performs no per-record control RPC.
 Ring saturation returns
 .Er EAGAIN
 and increments the client drop counter.
-.Pp
+After capacity recovers, the next publication first emits one public synthetic
+event with subsystem
+.Ql org.5bsd.logcmp ,
+category
+.Ql delivery ,
+event name
+.Ql records-dropped ,
+and a typed unsigned
+.Ql count
+attribute.
+Once a record is committed to a shared ring, failure of its coalesced wakeup
+does not turn the publication into a retryable error.
+The library abandons the damaged session and reports success for that record;
+the provider may already have consumed it or may consume it through its
+fallback drain.
+Use
 .Fn logcmp_flush
-waits until the provider has consumed all records published before the flush
-and submitted them to its configured sink.
-It does not promise that
-.Xr syslogd 8
-has written those records to stable storage.
-An application requiring crash-stable records needs a typed durable sink
-protocol rather than treating ordinary logging as an audit trail.
+when a caller requires a reported durability outcome.
+The pending count is cleared only after that event is accepted; the cumulative
+and per-severity statistics are never reset.
+.Fn logcmp_flush
+is an explicit synchronous durability boundary: it waits until the provider
+has consumed records published before the request, submitted their redacted
+representations to syslog, drained its bounded internal storage ring, and
+synchronized the LogCmp store.
+It does not claim that syslogd has committed
+its separate copy to stable storage.
 .Fn logcmp_stats
-returns accepted, rejected, and dropped counts and the last accepted sequence.
+returns provider accepted and rejected counts, the local drop count, and the
+last accepted sequence.
+The statistics also contain 24 per-severity client drop counters indexed by
+the normalized severity number minus one.
+Provider-filtered and provider-rate-limited records are reported separately;
+rate-limited counts also have 24 per-severity buckets.
+Both deliberate drop
+classes advance the provider's last-sequence value without being written to
+the retained store or syslog projection.
+.Pp
+.Fn logcmp_query_next
+returns the next retained, privacy-redacted record for the caller's immutable
+serviced identity.
+It returns 1 with one validated record, 0 at the current end, and -1 on error.
+The caller initializes the cursor to zero and preserves it between calls.
+A nonzero minimum severity filters lower-severity records.
+The provider performs long searches in bounded slices and services other
+storage requests between slices; this internal continuation is transparent to
+the caller and remains subject to one total call deadline.
+An
+.Er EMSGSIZE
+failure does not advance the cursor, so the call may be retried with a larger
+buffer.
+There is deliberately no API for selecting another service identity or for
+turning an ordinary session into an administrative all-system reader.
+.Pp
+If the provider dies, the operation that observes the failure returns the
+transport error because its acceptance is unknown.
+The next operation reconnects the process-wide client and creates a fresh
+ring when necessary.
+The library never replays an ambiguously accepted record, so reconnect cannot
+silently duplicate diagnostics.
+.Pp
+.Fn logcmp_logger_destroy
+releases a logger's retained client reference.
+The final
+.Fn logcmp_client_close
+requests a bounded drain, detaches the ring, and closes the service session,
+so a later open creates a fresh producer sequence.
+This is best-effort cleanup because the close API cannot report an error;
+call
+.Fn logcmp_flush
+and check its result before close when delivery is required.
+.Sh THREAD AND FORK SAFETY
+Calls through different or shared logger handles are serialized safely within
+one process.
+Client and logger handles are not valid in a child after
+.Xr fork 2 ;
+the child must open a new client.
+Destroying a handle concurrently with a call using that same handle is not
+permitted.
 .Sh SEE ALSO
 .Xr libservice 3 ,
 .Xr libshmring 3 ,
-.Xr logcmp 8 ,
+.Xr logd 8 ,
 .Xr syslogd 8
 .Sh SECURITY CONSIDERATIONS
-The service label, component instance, receive time, and provider sequence are
-trusted metadata obtained from the broker or generated by the provider.
+The service label, provider instance, receive time, and provider sequence are
+trusted metadata obtained from serviced or generated by the provider.
 Clients cannot supply reserved fields or sink routing.
+Private values are not rendered by the ordinary syslog projection.
+The retained query contains only the same privacy-redacted representation and
+is scoped by the authenticated serviced label, not by a caller-supplied name.
 Application logging is not an audit trail; security decisions continue to use
 OpenBSM.

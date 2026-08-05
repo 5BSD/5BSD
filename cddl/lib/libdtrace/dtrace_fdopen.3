@@ -1,0 +1,62 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 31, 2026
+.Dt DTRACE_FDOPEN 3
+.Os
+.Sh NAME
+.Nm dtrace_fdopen
+.Nd create a DTrace handle from a delegated consumer descriptor
+.Sh LIBRARY
+.Lb libdtrace
+.Sh SYNOPSIS
+.In dtrace.h
+.Ft dtrace_hdl_t *
+.Fn dtrace_fdopen "int fd" "int version" "int flags" "int *errp"
+.Sh DESCRIPTION
+The
+.Fn dtrace_fdopen
+function is the capability-safe counterpart of
+.Fn dtrace_open .
+It initializes a DTrace handle using an already-open DTrace consumer
+descriptor instead of opening
+.Pa /dev/dtrace/dtrace .
+It does not inspect provider device paths, load kernel modules, or open the
+fasttrap device.
+.Pp
+The supplied descriptor is duplicated with close-on-exec set.
+The caller retains ownership of
+.Fa fd
+on both success and failure.
+The returned handle owns the duplicate, which is released by
+.Fn dtrace_close .
+.Pp
+.Dv DTRACE_O_NODEV
+and vector operation are incompatible with a supplied consumer descriptor.
+Provider modules needed by the tracing program must already be loaded.
+Fasttrap-based providers are unavailable unless a future delegated-session
+interface supplies their separately constrained resources.
+.Sh RETURN VALUES
+On success,
+.Fn dtrace_fdopen
+returns a DTrace handle.
+On failure it returns
+.Dv NULL
+and, when
+.Fa errp
+is non-null, stores either an errno value or a libdtrace error code there.
+.Sh ERRORS
+In addition to errors reported by
+.Fn dtrace_open ,
+.Fn dtrace_fdopen
+fails with
+.Er EINVAL
+for a negative descriptor or incompatible flags, and with errors from
+.Xr fcntl 2
+or DTrace ioctls when the descriptor is unusable.
+.Sh SEE ALSO
+.Xr fcntl 2 ,
+.Xr capsicum 4 ,
+.Xr dtrace 1
+.Sh SECURITY CONSIDERATIONS
+Descriptor rights and ioctl restrictions limit operations on the DTrace
+consumer but do not express probe, target, predicate, or D action policy.
+Delegation must therefore remain an explicit administrator decision.

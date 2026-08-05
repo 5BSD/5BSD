@@ -1,0 +1,11 @@
+comment = "servicectl tests"
+
+desc = <<EOD
+Command-line, malformed-control-message, privilege, bundle-installation,
+effective-component configuration, dependency-discovery, reload, status, and
+live serviced integration tests for servicectl.
+EOD
+
+annotations = {
+	set = "tests"
+}

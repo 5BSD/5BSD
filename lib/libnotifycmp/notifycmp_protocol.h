@@ -8,9 +8,9 @@
 #include <stdint.h>
 
 #define	NOTIFYCMP_INTERFACE		"org.5bsd.notify"
-#define	NOTIFYCMP_INTERFACE_VERSION	"1.0.0"
+#define	NOTIFYCMP_INTERFACE_VERSION	"2.0.0"
 #define	NOTIFYCMP_MAGIC			0x4e544643U	/* "NTFC" */
-#define	NOTIFYCMP_ABI_VERSION		1
+#define	NOTIFYCMP_ABI_VERSION		2
 
 #define	NOTIFYCMP_MAX_TOPIC		128
 #define	NOTIFYCMP_MAX_PAYLOAD		2048
@@ -19,11 +19,14 @@
 #define	NOTIFYCMP_MAX_SUBSCRIPTIONS	64
 #define	NOTIFYCMP_DEFAULT_QUEUE		256
 #define	NOTIFYCMP_MAX_TIMERS		64
+#define	NOTIFYCMP_MAX_STATES		4096
 #define	NOTIFYCMP_TIMEOUT_INFINITE	UINT32_MAX
 
 #define	NOTIFYCMP_FEATURE_PUBSUB		0x00000001U
 #define	NOTIFYCMP_FEATURE_TIMERS		0x00000002U
 #define	NOTIFYCMP_FEATURE_BOUNDED_QUEUE	0x00000004U
+#define	NOTIFYCMP_FEATURE_STATE		0x00000008U
+#define	NOTIFYCMP_FEATURE_LOSS_REPORTING	0x00000010U
 
 #define	NOTIFYCMP_MSG_F_MASK		0U
 
@@ -38,13 +41,21 @@ enum notifycmp_opcode {
 	NOTIFYCMP_OP_NEXT,
 	NOTIFYCMP_OP_TIMER_ADD,
 	NOTIFYCMP_OP_TIMER_CANCEL,
-	NOTIFYCMP_OP_STATS
+	NOTIFYCMP_OP_STATS,
+	NOTIFYCMP_OP_STATE_SET,
+	NOTIFYCMP_OP_STATE_GET
 };
 
 enum notifycmp_event_type {
 	NOTIFYCMP_EVENT_PUBLISH = 1,
-	NOTIFYCMP_EVENT_TIMER
+	NOTIFYCMP_EVENT_TIMER,
+	NOTIFYCMP_EVENT_STATE,
+	NOTIFYCMP_EVENT_GAP,
+	NOTIFYCMP_EVENT_RESET
 };
+
+#define	NOTIFYCMP_EVENT_F_GAP		0x00000001U
+#define	NOTIFYCMP_EVENT_F_MASK		NOTIFYCMP_EVENT_F_GAP
 
 enum notifycmp_message_role {
 	NOTIFYCMP_MESSAGE_REQUEST = 1,
@@ -71,7 +82,8 @@ struct notifycmp_hello_reply {
 	uint32_t	max_subscriptions;
 	uint32_t	queue_depth;
 	uint32_t	max_timers;
-	uint32_t	reserved;
+	uint32_t	max_states;
+	uint64_t	router_epoch;
 };
 
 struct notifycmp_topic_request {
@@ -105,12 +117,30 @@ struct notifycmp_timer_cancel_request {
 	uint64_t	reserved;
 };
 
+struct notifycmp_state_set_request {
+	uint64_t	state;
+	uint16_t	topic_length;
+	uint16_t	reserved16;
+	uint32_t	reserved32;
+	char		topic[NOTIFYCMP_MAX_TOPIC];
+};
+
+struct notifycmp_state_reply {
+	uint64_t	router_epoch;
+	uint64_t	generation;
+	uint64_t	state;
+};
+
 struct notifycmp_event {
 	uint32_t	type;
 	uint32_t	flags;
+	uint64_t	router_epoch;
 	uint64_t	sequence;
 	uint64_t	timestamp_ns;
 	uint64_t	timer_id;
+	uint64_t	generation;
+	uint64_t	state;
+	uint64_t	lost_count;
 	uint16_t	publisher_length;
 	uint16_t	topic_length;
 	uint32_t	payload_length;

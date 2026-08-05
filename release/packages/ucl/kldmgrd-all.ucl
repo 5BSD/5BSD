@@ -1,0 +1,8 @@
+comment = "Capability-mode kernel module manager"
+
+desc = <<EOD
+kldmgrd is the root global service for validated kernel module load, unload,
+and inventory operations.  It authenticates serviced client labels, applies
+a default-deny allow list, confines one worker per session, and records
+security-relevant operations through OpenBSM and DTrace.
+EOD

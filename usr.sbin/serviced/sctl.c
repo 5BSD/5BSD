@@ -33,6 +33,7 @@
 #include "serviced.h"
 #include "serviced_audit.h"
 #include "serviced_ctl.h"
+#include "fd_budget.h"
 #include "serviced_probes.h"
 
 /* Module-private state. */
@@ -104,6 +105,7 @@ static uintptr_t conn_timer_next = 50000;
 static void
 sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 {
+	struct serviced_fd_budget_stats fd_stats;
 	size_t off;
 	unsigned i, nrunning, nstopped, nstarting, nstopping;
 	static const char *state_names[] = {
@@ -132,6 +134,14 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 		    " (%u running, %u stopped, %u starting, %u stopping)",
 		    nrunning, nstopped, nstarting, nstopping);
 	BUF_APPEND(summary, sumlen, &off, "\n");
+	serviced_fd_budget_get_stats(&fd_stats);
+	BUF_APPEND(summary, sumlen, &off,
+	    "fd-budget: soft=%ju hard=%ju reserve=%zu denied=%ju "
+	    "control-shed=%ju\n",
+	    (uintmax_t)fd_stats.soft_limit, (uintmax_t)fd_stats.hard_limit,
+	    fd_stats.reserve_count,
+	    (uintmax_t)fd_stats.admission_denied,
+	    (uintmax_t)fd_stats.control_shed);
 
 	if (sd.nservices > 0) {
 		BUF_APPEND(summary, sumlen, &off, "\n");
@@ -599,6 +609,10 @@ sctl_accept(void)
 	gid_t egid;
 	int cfd;
 
+	if (serviced_fd_budget_check(1, "control connection") == -1) {
+		serviced_fd_budget_shed_control(sctl_sock);
+		return;
+	}
 	cfd = accept4(sctl_sock, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
 	if (cfd == -1) {
 		if (errno != EAGAIN && errno != EWOULDBLOCK)

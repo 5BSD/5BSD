@@ -1,0 +1,11 @@
+comment = "kldmgrd tests"
+
+desc = <<EOD
+Protocol, identity-policy, malformed-request, injected module enumeration and
+mutation backends, privilege-boundary, verified-bundle, and live serviced
+integration tests for kldmgrd.
+EOD
+
+annotations = {
+	set = "tests"
+}

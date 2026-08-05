@@ -2,7 +2,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd July 30, 2026
+.Dd July 31, 2026
 .Dt REBOOTD 8
 .Os
 .Sh NAME
@@ -18,10 +18,10 @@ It registers the service name
 with
 .Xr serviced 8 .
 .Pp
-Clients connect with
-.Fn service_lookup
-from
-.Xr libservice 3 .
+Applications use the typed
+.Xr librebootctl 3
+API; it discovers the service, creates an independent session, and validates
+the versioned protocol.
 The
 .Xr serviced 8
 naming layer authenticates the provider name but does not authorize
@@ -36,10 +36,11 @@ The file contains one service label per line.
 Blank lines and comments beginning with
 .Ql #
 are ignored.
-The special label
-.Ql *
-allows all clients and should only be used on systems where the
-service name is otherwise protected.
+Wildcard entries are rejected; reboot authority must always be granted to
+explicit authenticated service labels.
+The file must be a regular file owned by the daemon's effective user, must not
+be group- or world-writable, is opened without following symbolic links, and
+must not exceed 64 KiB or contain embedded NUL bytes.
 If the file is missing, reboot and shutdown requests are denied.
 .Pp
 At startup,
@@ -48,11 +49,22 @@ validates and activates the bundle's inherited reboot token before applying
 the daemon's self-selected capprotect shield, registering its name, or
 reporting readiness.
 Token activation failure is fatal.
+.Nm
+intentionally runs as root because the system capability gate is an
+additional authorization check and does not replace the kernel's traditional
+reboot or audit-submission privilege checks.
+After initialization it is in capability mode.
+The daemon uses one bounded kqueue coordinator rather than a process per
+client.  It prohibits fork, new IPC creation, exec, and new sockets after
+initialization; received session descriptors are immediately made
+non-transferable.
 .Sh PROTOCOL
-Requests use
-.Vt struct reboot_req .
-.Bl -tag -width REBOOT_OP_SHUTDOWN
-.It Dv REBOOT_OP_REBOOT Pq 1
+The protocol is owned by
+.Xr librebootctl 3
+and uses an exact typed header with magic, version, opcode, flags, and
+negative errno status.
+.Bl -tag -width REBOOTCTL_OP_SHUTDOWN
+.It Dv REBOOTCTL_OP_REBOOT Pq 1
 Reboot the system.
 The
 .Va flags
@@ -62,18 +74,33 @@ field may contain only
 or
 .Dv RB_REROOT .
 Unknown flags are rejected.
-.It Dv REBOOT_OP_SHUTDOWN Pq 2
+Only one reboot or shutdown operation may be pending in the daemon's
+authoritative scheduler; a competing request fails with
+.Er EALREADY .
+.It Dv REBOOTCTL_OP_SHUTDOWN Pq 2
 Perform a clean shutdown
 .Pq Dv RB_HALT | RB_POWEROFF .
-.It Dv REBOOT_OP_STATUS Pq 3
+.It Dv REBOOTCTL_OP_STATUS Pq 3
 Query whether this daemon has initiated shutdown.
 This operation does not require an allow-list entry.
+Every client observes the same scheduler state.  The schedule survives the
+requesting client's disconnect and records trusted request, execution, and
+monotonic timing data.
+The scheduler writes a versioned, checksummed record through the process's
+private FileSystemCmp persistent namespace before acknowledging an operation.
+It uses a synced temporary object, atomic rename, and directory sync as the
+durability boundary.  After a daemon crash, the coordinator reconstructs its
+monotonic deadline from the persisted real-time deadline and republishes the
+scheduled state before accepting clients.  Corrupt state fails startup closed.
+.It Dv REBOOTCTL_OP_CANCEL Pq 4
+Cancel the pending operation.  Cancellation is authorized by the same
+exact-label policy as reboot and shutdown and fails with
+.Er ENOENT
+when no operation is pending.
 .El
 .Pp
-Malformed requests receive
-.Dv REBOOT_STATUS_ERR .
-Denied reboot and shutdown requests receive
-.Dv REBOOT_STATUS_PERM .
+Malformed frames terminate the session.
+Policy and backend failures are returned as negative errno status values.
 .Sh OBSERVABILITY
 The
 .Dq rebootd
@@ -105,8 +132,10 @@ bundle:
 The bundle manifest declares:
 .Bd -literal -offset indent
 bundle_id = "org.5bsd.system.reboot";
+components = ["filesystem"];
 program = "rebootd";
 provides = ["org.5bsd.system.reboot"];
+user = "root";
 capabilities {
     system = ["reboot"];
 }
@@ -119,5 +148,7 @@ Client service-label allow list for reboot and shutdown.
 .Sh SEE ALSO
 .Xr reboot 2 ,
 .Xr libchannel 3 ,
+.Xr librebootctl 3 ,
 .Xr libservice 3 ,
+.Xr rebootctl 8 ,
 .Xr serviced 8

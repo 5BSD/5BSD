@@ -21,8 +21,8 @@ ATF_TESTS_SH_SED_component_integration_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
 ${PACKAGE}FILES+=	test_helpers.sh
 ${PACKAGE}FILES+=	capd_test_harness.sh
 ${PACKAGE}FILES+=	CapabilityKyuafile
-${PACKAGE}FILES+=	run_oracle_serviced_capability_tests.sh
-${PACKAGE}FILESMODE_run_oracle_serviced_capability_tests.sh=	0555
+${PACKAGE}FILES+=	run_oracled_serviced_capability_tests.sh
+${PACKAGE}FILESMODE_run_oracled_serviced_capability_tests.sh=	0555
 
 # ATF shell programs execute from the object directory before installation.
 # Keep their shared harnesses beside them so raw object-tree test runs are as
@@ -44,6 +44,7 @@ PROGS+=		capd_service_fixture
 PROGS+=		capd_protocol_fixture
 PROGS+=		component_fixture
 ATF_TESTS_C+=	on_demand_test
+ATF_TESTS_C+=	fd_budget_test
 BINDIR=		${TESTSDIR}
 
 LIBADD.capd_service_fixture+=	capability channel service pthread
@@ -56,8 +57,8 @@ CFLAGS.capd_service_fixture+=	-I${SRCTOP}/sys
 LIBADD.capd_protocol_fixture+=	service
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/liboraclert
-CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/usr.sbin/kldmgrd
-CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/usr.sbin/rebootd
+CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libkldmgr
+CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/librebootctl
 
 LIBADD.component_fixture+=	filesystemcmp logcmp networkcmp notifycmp tracecmp service pthread
 CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libservice
@@ -74,5 +75,6 @@ CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/liboraclert
 CFLAGS.on_demand_test+=		-I${SRCTOP}/sys
 CFLAGS.on_demand_test+=		-ffunction-sections -fdata-sections
 LDFLAGS.on_demand_test+=	-Wl,--gc-sections
+CFLAGS.fd_budget_test+=	-I${SRCTOP}/sys
 
 .include <bsd.test.mk>

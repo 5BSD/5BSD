@@ -8,18 +8,13 @@
 #include <sys/types.h>
 
 #include <stddef.h>
+#include <dtrace.h>
 
 #include "tracecmp_protocol.h"
 
 __BEGIN_DECLS
 int	tracecmp_open(int *);
-int	tracecmp_validate_message(const struct tracecmp_msg *, size_t,
-	    enum tracecmp_message_role);
-int	tracecmp_message_init(struct tracecmp_msg *, uint16_t, uint32_t);
-int	tracecmp_message_init_reply(struct tracecmp_msg *,
-	    const struct tracecmp_msg *, int);
-int	tracecmp_validate_fds(const struct tracecmp_msg *, size_t,
-	    enum tracecmp_message_role);
+dtrace_hdl_t *tracecmp_dtrace_open(int, int *);
 __END_DECLS
 
 #endif

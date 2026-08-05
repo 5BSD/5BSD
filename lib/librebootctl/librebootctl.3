@@ -1,0 +1,63 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 31, 2026
+.Dt LIBREBOOTCTL 3
+.Os
+.Sh NAME
+.Nm rebootctl_client_open ,
+.Nm rebootctl_reboot ,
+.Nm rebootctl_shutdown ,
+.Nm rebootctl_cancel ,
+.Nm rebootctl_status ,
+.Nm rebootctl_notification_decode ,
+.Nm rebootctl_client_close
+.Nd typed client API for the supervised reboot service
+.Sh LIBRARY
+.Li librebootctl
+.Pq Fl lrebootctl
+.Sh SYNOPSIS
+.In rebootctl.h
+.Ft int
+.Fn rebootctl_client_open "struct rebootctl_client **client"
+.Ft void
+.Fn rebootctl_client_close "struct rebootctl_client *client"
+.Ft int
+.Fn rebootctl_reboot "struct rebootctl_client *client" "uint32_t howto"
+.Ft int
+.Fn rebootctl_shutdown "struct rebootctl_client *client"
+.Ft int
+.Fn rebootctl_reboot_after "struct rebootctl_client *client" "uint32_t howto" "uint32_t delay_ms"
+.Ft int
+.Fn rebootctl_shutdown_after "struct rebootctl_client *client" "uint32_t delay_ms"
+.Ft int
+.Fn rebootctl_cancel "struct rebootctl_client *client"
+.Ft int
+.Fn rebootctl_status "struct rebootctl_client *client" "bool *pending"
+.Ft int
+.Fn rebootctl_status_detailed "struct rebootctl_client *client" "struct rebootctl_status_reply *status"
+.Ft int
+.Fn rebootctl_notification_decode "const char *topic" "const void *payload" "size_t length" "struct rebootctl_notification *notification"
+.Sh DESCRIPTION
+The library discovers
+.Dq org.5bsd.system.reboot
+through
+.Xr libservice 3 ,
+owns an independent direct session, validates every reply, and hides the
+service name and wire protocol from applications.
+Mutating operations remain subject to the provider's authenticated
+service-label policy.
+The default reboot and shutdown helpers request a ten-second delay.
+.Pp
+.Fn rebootctl_notification_decode
+strictly validates a shutdown notification received through
+.Xr libnotifycmp 3 ,
+including its topic/state pairing, exact payload size, version, timestamps,
+flags, error value, and requester label, before copying it to
+.Fa notification .
+.Pp
+.Fn rebootctl_cancel
+cancels the single pending operation and fails with
+.Er ENOENT
+when no operation is pending.
+.Sh SEE ALSO
+.Xr libservice 3 ,
+.Xr rebootd 8

@@ -117,6 +117,14 @@ and
 .Va system .
 These declarations remain distinct from local components and global services.
 .El
+.Sh DESCRIPTOR LIMITS
+There is no per-service descriptor-limit key.
+.Xr serviced 8
+raises its own
+.Dv RLIMIT_NOFILE
+ceiling before launching programs; each program inherits that ceiling and may
+lower its own limits with
+.Xr setrlimit 2 .
 .Sh SERVICE EXAMPLE
 .Bd -literal -offset indent
 schema = "org.5bsd.serviced.service";

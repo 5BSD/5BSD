@@ -2,6 +2,7 @@
 
 SUBDIR=	adduser \
 	arp \
+	auditbrokerd \
 	binmiscctl \
 	boottrace \
 	bsdconfig \
@@ -26,7 +27,8 @@ SUBDIR=	adduser \
 	extattr \
 	extattrctl \
 	fifolog \
-	filesystemcmp \
+	localfilesystem \
+	filesystemcmpctl \
 	fstyp \
 	fwcontrol \
 	fwget \
@@ -49,10 +51,15 @@ SUBDIR=	adduser \
 	mptutil \
 	mtest \
 	kldmgrd \
-	logcmp \
-	networkcmp \
-	notifycmp \
-	tracecmp \
+	kldmgrctl \
+	logd \
+	logctl \
+	localnetwork \
+	networkcmpctl \
+	bsdnotify \
+	notifyctl \
+	traced \
+	tracectl \
 	newsyslog \
 	nfscbd \
 	nfsd \
@@ -77,6 +84,7 @@ SUBDIR=	adduser \
 	quot \
 	rarpd \
 	rebootd \
+	rebootctl \
 	rmt \
 	rpcbind \
 	rpc.lockd \

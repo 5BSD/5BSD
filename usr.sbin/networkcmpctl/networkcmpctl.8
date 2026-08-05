@@ -1,0 +1,43 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 31, 2026
+.Dt NETWORKCMPCTL 8
+.Os
+.Sh NAME
+.Nm networkcmpctl
+.Nd inspect an injected NetworkCmp component
+.Sh SYNOPSIS
+.Nm
+.Cm config
+.Nm
+.Cm info
+.Nm
+.Cm resolve
+.Ar host
+.Op Ar service
+.Sh DESCRIPTION
+.Nm
+is a bounded diagnostic client for a NetworkCmp session injected by
+.Xr serviced 8 .
+All live operations use
+.Xr libnetworkcmp 3 ;
+the utility never opens kernel sockets and receives no additional network
+authority.
+.Pp
+The commands are:
+.Bl -tag -width resolve
+.It Cm config
+Print the canonical service-manifest declaration for this local component.
+.It Cm info
+Print the negotiated protocol version, feature mask, socket ceiling, and I/O
+limits.
+.It Cm resolve Ar host Op Ar service
+Resolve a name through the component's bounded resolver and print each typed
+endpoint.
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh SEE ALSO
+.Xr libnetworkcmp 3 ,
+.Xr serviced 5 ,
+.Xr localnetwork 8 ,
+.Xr serviced 8

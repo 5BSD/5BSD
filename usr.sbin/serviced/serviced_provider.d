@@ -33,6 +33,7 @@ provider serviced {
 	probe cap__mint(const char *label, const char *type, int result);
 	probe cap__service(const char *label, const char *name, int result);
 	probe cap__channel(const char *label, int result);
+	probe worker__channel(const char *label, int result);
 	probe cap__coalition(const char *label, int result);
 	probe identity__validate(const char *user, const char *group, int result);
 
@@ -51,6 +52,10 @@ provider serviced {
 	/* Resource counts */
 	probe svc__count(unsigned int nservices);
 	probe naming__count(unsigned int nnames);
+	probe fd__reserve(uint64_t soft_limit, uint64_t hard_limit,
+		    size_t reserve_count);
+	probe fd__pressure(const char *purpose, size_t required,
+		    uint64_t denied_total);
 
 	/* Service IPC — channel messages */
 	probe ipc__recv(const char *label, uint32_t op);
@@ -63,6 +68,9 @@ provider serviced {
 	/* Shutdown drain */
 	probe shutdown__start(unsigned int nservices);
 	probe shutdown__done(uint64_t duration_ns);
+	probe quiesce__request(const char *label, uint32_t reason,
+		    uint32_t deadline_ms);
+	probe quiesce__complete(const char *label, int status);
 
 	/* Connection tracking */
 	probe conn__accept(uid_t uid, unsigned int nconns);

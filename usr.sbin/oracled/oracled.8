@@ -6,7 +6,7 @@
 .Os
 .Sh NAME
 .Nm oracled
-.Nd Oracle authority daemon
+.Nd capability authority daemon
 .Sh SYNOPSIS
 .Nm
 .Op Fl d
@@ -16,7 +16,7 @@
 .Op Fl T
 .Sh DESCRIPTION
 .Nm
-is the system authority daemon for the Oracle capability world.
+is the system authority daemon for the capability world.
 It claims system resources exclusively via the
 .Xr mac_capability 4
 MAC capability, protects its own integrity via
@@ -430,7 +430,7 @@ before transmission.
 Successful transmission consumes that state and installs the descriptor in
 the receiver as
 .Dv CAP_XFER_NONE .
-Oracle-owned capability descriptors are irreversibly restricted against
+Authority-owned capability descriptors are irreversibly restricted against
 transfer, fork inheritance, and exec inheritance.
 .Pp
 Before launching a system-bundle service with
@@ -601,11 +601,11 @@ Named capability service descriptor delegated for a service launch.
 .Em IPC :
 .Bl -tag -width "ipc-dispatch-done(op, status, duration_ns)" -compact
 .It Li ipc-recv(op)
-Oracle protocol message received from serviced.
+Authority protocol message received from serviced.
 .It Li ipc-reply(op, status)
-Oracle protocol reply sent.
+Authority protocol reply sent.
 .It Li ipc-dispatch-done(op, status, duration_ns)
-Oracle protocol dispatch complete.
+Authority protocol dispatch complete.
 .El
 .Pp
 .Em Bootstrap :
@@ -744,4 +744,4 @@ claims {
 .Xr serviced 8
 .Sh HISTORY
 .Nm
-first appeared in 5BSD as the Oracle authority daemon.
+first appeared in 5BSD as the capability authority daemon.

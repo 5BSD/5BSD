@@ -19,10 +19,10 @@ PKG_DEPS.serviced-tests+=	libservice-dev
 PKG_DEPS.serviced-tests+=	liboraclert-dev
 PKG_DEPS.serviced-tests+=	clang
 PKG_DEPS.serviced-tests+=	dtrace
-PKG_DEPS.serviced-tests+=	filesystemcmp
-PKG_DEPS.serviced-tests+=	logcmp
-PKG_DEPS.serviced-tests+=	networkcmp
-PKG_DEPS.serviced-tests+=	notifycmp
-PKG_DEPS.serviced-tests+=	tracecmp
+PKG_DEPS.serviced-tests+=	localfilesystem
+PKG_DEPS.serviced-tests+=	logd
+PKG_DEPS.serviced-tests+=	localnetwork
+PKG_DEPS.serviced-tests+=	bsdnotify
+PKG_DEPS.serviced-tests+=	traced
 
 .include <bsd.pkg.mk>

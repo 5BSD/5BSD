@@ -1,0 +1,10 @@
+schema = "org.5bsd.serviced.service";
+schema_version = "1.0.0";
+bundle_id = "org.5bsd.NetworkCmp";
+version = "1.0.0";
+author = "5BSD";
+
+program = "localnetwork";
+provides = ["org.5bsd.NetworkCmp"];
+restart = "on-failure";
+user = "capability";

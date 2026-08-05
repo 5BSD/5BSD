@@ -192,15 +192,37 @@ deadline_expired(const struct timespec *deadline, uint32_t timeout_ms)
 	    now.tv_nsec >= deadline->tv_nsec));
 }
 
+static int
+remaining_poll_ms(const struct timespec *deadline, uint32_t timeout_ms)
+{
+	struct timespec now;
+	int64_t nanoseconds, milliseconds;
+
+	if (timeout_ms == SERVICE_CLIENT_TIMEOUT_INFINITE)
+		return (CLIENT_POLL_MS);
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		return (0);
+	nanoseconds = (deadline->tv_sec - now.tv_sec) * INT64_C(1000000000) +
+	    deadline->tv_nsec - now.tv_nsec;
+	if (nanoseconds <= 0)
+		return (0);
+	milliseconds = (nanoseconds + INT64_C(999999)) / INT64_C(1000000);
+	return (milliseconds < CLIENT_POLL_MS ?
+	    (int)milliseconds : CLIENT_POLL_MS);
+}
+
 static void
-wait_slice(pthread_cond_t *condition, pthread_mutex_t *lock)
+wait_slice(pthread_cond_t *condition, pthread_mutex_t *lock, int timeout_ms)
     __no_lock_analysis
 {
 	struct timespec until;
 
+	if (timeout_ms <= 0)
+		return;
 	if (clock_gettime(CLOCK_REALTIME, &until) == -1)
 		return;
-	until.tv_nsec += CLIENT_POLL_MS * 1000000L;
+	until.tv_sec += timeout_ms / 1000;
+	until.tv_nsec += (timeout_ms % 1000) * 1000000L;
 	if (until.tv_nsec >= 1000000000L) {
 		until.tv_sec++;
 		until.tv_nsec -= 1000000000L;
@@ -328,14 +350,18 @@ fail_client(struct service_client *client, int error) __no_lock_analysis
 }
 
 static int
-pump(struct service_client *client) __no_lock_analysis
+pump(struct service_client *client, int timeout_ms, bool *busy)
+    __no_lock_analysis
 {
 	struct pollfd descriptor;
 	int error, result, wants_write;
 
+	*busy = false;
 	error = pthread_mutex_trylock(&client->channel_lock);
-	if (error == EBUSY)
+	if (error == EBUSY) {
+		*busy = true;
 		return (0);
+	}
 	if (error != 0) {
 		errno = error;
 		return (-1);
@@ -349,7 +375,7 @@ pump(struct service_client *client) __no_lock_analysis
 	descriptor.fd = channel_fd(client->channel);
 	descriptor.events = POLLIN | (wants_write ? POLLOUT : 0);
 	do {
-		result = poll(&descriptor, 1, CLIENT_POLL_MS);
+		result = poll(&descriptor, 1, timeout_ms);
 	} while (result == -1 && errno == EINTR);
 	if (result <= 0) {
 		error = result == -1 ? errno : 0;
@@ -472,7 +498,8 @@ service_client_call_internal(struct service_client *client,
 	struct timespec deadline;
 	size_t i;
 	ssize_t result;
-	int cancel_state, error, pumped;
+	int cancel_state, error, poll_ms, pumped;
+	bool busy, dispatch_attempted;
 
 	if (client == NULL || request_data == NULL || request_length == 0 ||
 	    reply == NULL || reply_capacity == 0 || reply_nfds == NULL ||
@@ -520,6 +547,7 @@ service_client_call_internal(struct service_client *client,
 	}
 	client->active++;
 	(void)pthread_mutex_unlock(&client->lock);
+	dispatch_attempted = false;
 
 	if (lock_mutex(&client->channel_lock) == -1) {
 		error = errno;
@@ -548,24 +576,30 @@ service_client_call_internal(struct service_client *client,
 			(void)pthread_mutex_unlock(&client->lock);
 			break;
 		}
-		if (client->closing || deadline_expired(&deadline, timeout_ms)) {
-			error = client->closing ? ECANCELED : ETIMEDOUT;
+		if (client->closing || client->terminal_error != 0 ||
+		    (deadline_expired(&deadline, timeout_ms) &&
+		    (timeout_ms != 0 || dispatch_attempted))) {
+			error = client->terminal_error != 0 ?
+			    client->terminal_error :
+			    (client->closing ? ECANCELED : ETIMEDOUT);
 			(void)pthread_mutex_unlock(&client->lock);
 			goto cancel;
 		}
 		(void)pthread_mutex_unlock(&client->lock);
-		pumped = pump(client);
+		poll_ms = remaining_poll_ms(&deadline, timeout_ms);
+		pumped = pump(client, poll_ms, &busy);
+		dispatch_attempted = true;
 		if (pumped == -1) {
 			error = errno;
 			goto cancel;
 		}
-		if (pumped == 0) {
+		if (pumped == 0 && busy && timeout_ms != 0) {
 			if (lock_mutex(&client->lock) == -1) {
 				error = errno;
 				goto cancel;
 			}
 			if (!call.done)
-				wait_slice(&call.cond, &client->lock);
+				wait_slice(&call.cond, &client->lock, poll_ms);
 			(void)pthread_mutex_unlock(&client->lock);
 		}
 	}
@@ -627,7 +661,8 @@ service_client_event_internal(struct service_client *client, void *data,
 	struct timespec deadline;
 	size_t i;
 	ssize_t result;
-	int cancel_state, error, pumped;
+	int cancel_state, error, poll_ms, pumped;
+	bool busy, dispatch_attempted;
 
 	if (client == NULL || data == NULL || capacity == 0 || nfdsp == NULL ||
 	    (*nfdsp != 0 && fds == NULL) || *nfdsp > CLIENT_FD_MAX ||
@@ -657,6 +692,7 @@ service_client_event_internal(struct service_client *client, void *data,
 	}
 	client->active++;
 	(void)pthread_mutex_unlock(&client->lock);
+	dispatch_attempted = false;
 	for (i = 0; i < *nfdsp; i++)
 		fds[i] = -1;
 	for (;;) {
@@ -679,16 +715,28 @@ service_client_event_internal(struct service_client *client, void *data,
 			(void)pthread_mutex_unlock(&client->lock);
 			goto fail_active;
 		}
-		if (deadline_expired(&deadline, timeout_ms)) {
+		if (deadline_expired(&deadline, timeout_ms) &&
+		    (timeout_ms != 0 || dispatch_attempted)) {
 			error = ETIMEDOUT;
 			(void)pthread_mutex_unlock(&client->lock);
 			goto fail_active;
 		}
 		(void)pthread_mutex_unlock(&client->lock);
-		pumped = pump(client);
+		poll_ms = remaining_poll_ms(&deadline, timeout_ms);
+		pumped = pump(client, poll_ms, &busy);
+		dispatch_attempted = true;
 		if (pumped == -1) {
 			error = errno;
 			goto fail_active;
+		}
+		if (pumped == 0 && busy && timeout_ms != 0) {
+			if (lock_mutex(&client->lock) == -1) {
+				error = errno;
+				goto fail_active;
+			}
+			if (client->events_head == NULL)
+				wait_slice(&client->idle, &client->lock, poll_ms);
+			(void)pthread_mutex_unlock(&client->lock);
 		}
 	}
 	if (event->length > capacity || event->nfds > *nfdsp) {
@@ -824,6 +872,24 @@ service_session_create(int fd, struct service_session **sessionp)
 	}
 	(void)close(fd);
 	*sessionp = session;
+	return (0);
+}
+
+int
+service_session_fail(struct service_session *session, int error)
+{
+
+	if (session == NULL || session->client == NULL || error <= 0 ||
+	    error > ELAST) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (session->client->owner != getpid()) {
+		errno = ECHILD;
+		return (-1);
+	}
+	fail_client(session->client, error);
+	errno = error;
 	return (0);
 }
 

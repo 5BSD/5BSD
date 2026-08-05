@@ -11,6 +11,7 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/un.h>
 
 #include <err.h>
@@ -21,7 +22,6 @@
 #include <sysexits.h>
 #include <unistd.h>
 
-#include "oraclectl.h"
 #include "serviced_ctl.h"
 #include "servicectl.h"
 
@@ -33,7 +33,9 @@ sctl_connect(void)
 	struct sockaddr_un un;
 	int fd;
 
-	fd = socket(PF_LOCAL, SOCK_STREAM, 0);
+	if (strlen(sockpath) >= sizeof(un.sun_path))
+		errx(EX_USAGE, "socket path is too long");
+	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (fd == -1)
 		err(EX_UNAVAILABLE, "socket");
 
@@ -50,21 +52,50 @@ sctl_connect(void)
 static void
 write_all(int fd, const void *buf, size_t len)
 {
-	int error;
+	struct timeval timeout;
+	ssize_t amount;
+	size_t offset;
 
-	error = oraclectl_writen(fd, buf, len);
-	if (error != 0)
-		errc(1, error, "write");
+	timeout.tv_sec = 30;
+	timeout.tv_usec = 0;
+	(void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
+	    sizeof(timeout));
+	for (offset = 0; offset < len; ) {
+		amount = send(fd, (const char *)buf + offset, len - offset,
+		    MSG_NOSIGNAL);
+		if (amount == -1) {
+			if (errno == EINTR)
+				continue;
+			err(1, "send");
+		}
+		if (amount == 0)
+			errx(1, "send: peer made no progress");
+		offset += (size_t)amount;
+	}
 }
 
 static void
 read_all(int fd, void *buf, size_t len)
 {
-	int error;
+	struct timeval timeout;
+	ssize_t amount;
+	size_t offset;
 
-	error = oraclectl_readn(fd, buf, len);
-	if (error != 0)
-		errc(1, error, "read");
+	timeout.tv_sec = 30;
+	timeout.tv_usec = 0;
+	(void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+	    sizeof(timeout));
+	for (offset = 0; offset < len; ) {
+		amount = recv(fd, (char *)buf + offset, len - offset, 0);
+		if (amount == -1) {
+			if (errno == EINTR)
+				continue;
+			err(1, "recv");
+		}
+		if (amount == 0)
+			errx(1, "recv: unexpected end of stream");
+		offset += (size_t)amount;
+	}
 }
 
 /*
@@ -77,10 +108,14 @@ sctl_rpc(uint32_t op, uint32_t flags, const char *payload,
 {
 	struct sctl_request req;
 	struct sctl_reply reply;
+	size_t payload_length;
 	uint32_t datalen;
 	int fd;
 
-	datalen = (payload != NULL) ? (uint32_t)strlen(payload) : 0;
+	payload_length = payload != NULL ? strlen(payload) : 0;
+	if (payload_length > SERVICED_CTL_MAX_PAYLOAD)
+		errx(EX_USAGE, "request payload exceeds protocol limit");
+	datalen = (uint32_t)payload_length;
 
 	fd = sctl_connect();
 
@@ -95,6 +130,8 @@ sctl_rpc(uint32_t op, uint32_t flags, const char *payload,
 		write_all(fd, payload, datalen);
 
 	read_all(fd, &reply, sizeof(reply));
+	if (reply.flags > SERVICED_CTL_SUMMARY_MAX)
+		errx(1, "invalid reply summary length");
 
 	if (reply.flags > 0 && summary != NULL && sumlen > 0) {
 		size_t toread;

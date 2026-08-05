@@ -12,10 +12,12 @@
 #define	TRACECMP_PROBE_RECEIVE(a, b, c)	TRACECMP_RECEIVE(a, b, c)
 #define	TRACECMP_PROBE_REJECT(a, b)	TRACECMP_REJECT(a, b)
 #else
-#define	TRACECMP_PROBE_OPEN(a, b)	do { } while (0)
-#define	TRACECMP_PROBE_SEND(a, b, c)	do { } while (0)
-#define	TRACECMP_PROBE_RECEIVE(a, b, c)	do { } while (0)
-#define	TRACECMP_PROBE_REJECT(a, b)	do { } while (0)
+#define	TRACECMP_PROBE_OPEN(a, b)	((void)(a), (void)(b))
+#define	TRACECMP_PROBE_SEND(a, b, c)	\
+	((void)(a), (void)(b), (void)(c))
+#define	TRACECMP_PROBE_RECEIVE(a, b, c)	\
+	((void)(a), (void)(b), (void)(c))
+#define	TRACECMP_PROBE_REJECT(a, b)	((void)(a), (void)(b))
 #endif
 
 #endif

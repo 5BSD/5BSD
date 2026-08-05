@@ -45,16 +45,37 @@ install_local_factory()
 	test -x "${binary}" || atf_skip "${kind} provider is unavailable"
 	bundle=$(make_svc_bin system "${kind}-factory" \
 	    "provides = [\"${endpoint}\"];" "${binary}")
+	sed -i '' \
+	    "s/^bundle_id = .*/bundle_id = \"${endpoint}\";/" \
+	    "${bundle}/etc/${kind}-factory.ucl"
 }
 
 install_global_service()
 {
-	local label="$1" binary="$2" endpoint="$3" bundle
+	local label="$1" binary="$2" endpoint="$3" identity="${4:-$3}" bundle
 
 	test -x "${binary}" || atf_skip "${label} provider is unavailable"
 	bundle=$(make_svc_bin system "${label}" \
 	    "provides = [\"${endpoint}\"];
 restart = \"on-failure\";" "${binary}")
+	sed -i '' \
+	    "s/^bundle_id = .*/bundle_id = \"${identity}\";/" \
+	    "${bundle}/etc/${label}.ucl"
+}
+
+install_audit_service()
+{
+	local binary bundle
+
+	binary="@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd"
+	test -x "${binary}" || atf_skip "AuditCmp provider is unavailable"
+	bundle=$(make_svc_bin system audit-service \
+	    'provides = ["org.5bsd.audit"];
+restart = "on-failure";
+user = "root";' "${binary}")
+	sed -i '' \
+	    's/^bundle_id = .*/bundle_id = "org.5bsd.AuditCmp";/' \
+	    "${bundle}/etc/audit-service.ucl"
 }
 
 local_component_test_head()
@@ -78,8 +99,9 @@ filesystem_local_end_to_end_body()
 	install -d -o capability -g capability -m 0700 \
 	    /var/db/serviced /var/db/serviced/storage
 	start_stack
+	install_audit_service
 	install_local_factory filesystem \
-	    "@OBJTOP@/usr.sbin/filesystemcmp/filesystemcmp" \
+	    "@OBJTOP@/usr.sbin/localfilesystem/localfilesystem" \
 	    "org.5bsd.FileSystemCmp"
 	make_boot_consumer filesystem-consumer \
 	    "[\"filesystem-consumer\", \"${WORK}/filesystem-result.out\"]" \
@@ -117,8 +139,9 @@ network_local_end_to_end_body()
 	require_mac_capability
 	find_component_fixture
 	start_stack
+	install_audit_service
 	install_local_factory network \
-	    "@OBJTOP@/usr.sbin/networkcmp/networkcmp" \
+	    "@OBJTOP@/usr.sbin/localnetwork/localnetwork" \
 	    "org.5bsd.NetworkCmp"
 	make_boot_consumer network-consumer \
 	    "[\"network-consumer\", \"${WORK}/network-result.out\"]" \
@@ -153,8 +176,10 @@ log_global_on_demand_body()
 	require_mac_capability
 	find_component_fixture
 	start_stack
+	install_audit_service
 	install_global_service log-service \
-	    "@OBJTOP@/usr.sbin/logcmp/logcmp" "org.5bsd.log"
+	    "@OBJTOP@/usr.sbin/logd/logd" "org.5bsd.log" \
+	    "org.5bsd.LogCmp"
 	make_boot_consumer log-consumer \
 	    "[\"log-consumer\", \"${WORK}/log-result.out\"]" ""
 	reload_stack
@@ -188,8 +213,10 @@ notify_global_sessions_body()
 	require_mac_capability
 	find_component_fixture
 	start_stack
+	install_audit_service
 	install_global_service notify-service \
-	    "@OBJTOP@/usr.sbin/notifycmp/notifycmp" "org.5bsd.notify"
+	    "@OBJTOP@/usr.sbin/bsdnotify/bsdnotify" "org.5bsd.notify" \
+	    "org.5bsd.NotifyCmp"
 	make_boot_consumer notify-consumer \
 	    "[\"notify-subscriber\", \"${WORK}/notify-result.out\"]" ""
 	reload_stack
@@ -221,7 +248,7 @@ trace_global_safe_api_body()
 	find_component_fixture
 	start_stack
 	install_global_service trace-service \
-	    "@OBJTOP@/usr.sbin/tracecmp/tracecmp" "org.5bsd.trace"
+	    "@OBJTOP@/usr.sbin/traced/traced" "org.5bsd.trace"
 	make_boot_consumer trace-consumer \
 	    "[\"trace-consumer\", \"${WORK}/trace-result.out\"]" ""
 	reload_stack

@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd July 30, 2026
+.Dd July 31, 2026
 .Dt LIBNETWORKCMP 3
 .Os
 .Sh NAME
@@ -20,15 +20,8 @@
 .Nm networkcmp_client_open ,
 .Nm networkcmp_client_limits ,
 .Nm networkcmp_client_close ,
-.Nm networkcmp_negotiate ,
 .Nm networkcmp_send_inline ,
-.Nm networkcmp_recv_inline ,
-.Nm networkcmp_attach_io ,
-.Nm networkcmp_write ,
-.Nm networkcmp_read ,
-.Nm networkcmp_send_datagram ,
-.Nm networkcmp_recv_datagram ,
-.Nm networkcmp_io_close
+.Nm networkcmp_recv_inline
 .Nd public client transport for NetworkCmp providers
 .Sh LIBRARY
 .Li libnetworkcmp
@@ -36,7 +29,7 @@
 .Sh SYNOPSIS
 .In networkcmp.h
 .Ft int
-.Fn networkcmp_client_open "const struct networkcmp_preferences *preferences" "struct networkcmp_client **client"
+.Fn networkcmp_client_open "struct networkcmp_client **client"
 .Ft "const struct networkcmp_hello_reply *"
 .Fn networkcmp_client_limits "const struct networkcmp_client *client"
 .Ft void
@@ -44,25 +37,11 @@
 .Ft int
 .Fn networkcmp_hello "struct networkcmp_client *client" "struct networkcmp_hello_reply *reply"
 .Ft int
-.Fn networkcmp_negotiate "struct networkcmp_client *client" "const struct networkcmp_preferences *preferences" "struct networkcmp_hello_reply *reply"
-.Ft int
 .Fn networkcmp_connect_status "struct networkcmp_client *client" "struct networkcmp_handle socket"
 .Ft ssize_t
 .Fn networkcmp_send_inline "struct networkcmp_client *client" "struct networkcmp_handle socket" "const void *buffer" "size_t length"
 .Ft ssize_t
 .Fn networkcmp_recv_inline "struct networkcmp_client *client" "struct networkcmp_handle socket" "void *buffer" "size_t capacity" "uint32_t timeout_ms" "uint32_t *flags"
-.Ft int
-.Fn networkcmp_attach_io "struct networkcmp_client *client" "struct networkcmp_handle socket" "uint32_t socket_type" "struct networkcmp_io **io"
-.Ft ssize_t
-.Fn networkcmp_write "struct networkcmp_io *io" "const void *buffer" "size_t length"
-.Ft ssize_t
-.Fn networkcmp_read "struct networkcmp_io *io" "void *buffer" "size_t capacity"
-.Ft int
-.Fn networkcmp_send_datagram "struct networkcmp_io *io" "const void *buffer" "size_t length"
-.Ft ssize_t
-.Fn networkcmp_recv_datagram "struct networkcmp_io *io" "void *buffer" "size_t capacity"
-.Ft void
-.Fn networkcmp_io_close "struct networkcmp_io *io"
 .Ft int
 .Fn networkcmp_resolve "struct networkcmp_client *client" "const char *host" "const char *service" "uint32_t family" "uint32_t socket_type" "uint32_t flags" "struct networkcmp_resolve_result *results" "size_t *nresults" "char *canonname" "size_t canonname_size" "uint32_t *ttl_seconds"
 .Ft int
@@ -104,18 +83,10 @@ performs feature negotiation.
 The library creates one process-wide, token-correlated client session,
 performs the initial negotiation, and records the selected values.
 Repeated opens return references to that same local authority.
-The fields of
-.Vt struct networkcmp_preferences
-request TX ring size, RX ring size, and maximum datagram size.
-Each ring size must be a power of two within the protocol limits.
-A zero field selects the default configured for the selected serviced session
-or provider.
-Preferences are requests rather than authority: the reply returned by
+The reply returned by
 .Fn networkcmp_client_limits
-is the binding contract and may contain smaller values.
+is the binding contract for limits and negotiated features.
 Negotiation occurs once at initial contact, not for each socket or packet.
-.Fn networkcmp_negotiate
-renegotiates typed preferences on the existing client.
 Typed functions are provided for socket creation, bind, connect, listen,
 accept, options, shutdown, close, and name resolution.
 .Fn networkcmp_connect
@@ -161,6 +132,10 @@ The caller supplies the result-array capacity through
 on success it contains the number returned.
 An optional canonical-name buffer and TTL output may be supplied.
 A TTL of zero means the selected provider does not expose TTL information.
+The base provider resolves independently of its socket RPC loop and permits
+one active resolution per private component session.
+An overlapping resolution fails with
+.Er EBUSY .
 .Fn networkcmp_getaddrinfo
 is the familiar convenience interface.
 It translates the bounded results into a linked
@@ -186,33 +161,27 @@ A reply acknowledges provider processing, not remote-host receipt.
 Socket creation, connect, send, bind, accept, and shutdown are not
 automatically replayed after an ambiguous channel failure.
 The opaque client is process-bound.
+The injected component session is retained as process-lifetime authority;
+.Fn networkcmp_client_close
+releases a library borrow, and a later
+.Fn networkcmp_client_open
+reacquires the same managed session without creating another channel reader.
+If the provider returns a malformed typed reply, the library marks this
+process-lifetime authority terminal.
+The failing operation and every later operation return
+.Er EPROTO
+without sending another request, including after public close and reopen.
+This fail-closed state prevents continued use of a provider that has violated
+the negotiated protocol.
 After
 .Xr fork 2 ,
 the child cannot reuse the parent's session and must open a separately
 injected authority if one exists.
 .Pp
-Providers which negotiate
-.Dv NETWORKCMP_FEATURE_SHM_RINGS
-can additionally move bulk stream and datagram payloads through role-separated
-.Xr libshmring 3
-rings, while the control channel supplies wakeups and backpressure notices.
-.Fn networkcmp_attach_io
-creates and attaches one application-producer TX ring and one
-application-consumer RX ring using the negotiated values.
-.Fn networkcmp_write
-and
-.Fn networkcmp_read
-operate on stream rings.
-.Fn networkcmp_send_datagram
-and
-.Fn networkcmp_recv_datagram
-preserve one datagram per record.
-These operations are nonblocking and report ring backpressure with
-.Er EAGAIN .
-The library serializes producers and consumers independently, preserving the
-underlying single-producer/single-consumer contract while allowing ordinary
-multithreaded application use.
-The client must outlive every IO object attached through it.
+Version 1 deliberately exposes only the bounded inline data path.
+Any future bulk transport will use a separately negotiated protocol version
+rather than reserving public structures and operations before their semantics
+are implemented and tested.
 .Pp
 NetworkCmp transports bytes and datagrams only.
 It does not open or save files and receives no filesystem capability.
@@ -230,5 +199,4 @@ activity is operational telemetry and is not audited.
 .Sh SEE ALSO
 .Xr getaddrinfo 3 ,
 .Xr libchannel 3 ,
-.Xr libservice 3 ,
-.Xr libshmring 3
+.Xr libservice 3

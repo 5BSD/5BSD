@@ -1,0 +1,5 @@
+comment = "Reboot service typed client library"
+
+desc = <<EOD
+Typed global-service client API and validated protocol for rebootd.
+EOD

@@ -8,6 +8,7 @@ SUBDIR+=	apm
 .endif
 .if ${MK_BHYVE} != "no"
 SUBDIR+=	bhyve
+SUBDIR+=	virtiofsd
 SUBDIR+=	bhyvectl
 SUBDIR+=	bhyveload
 .endif

@@ -1,0 +1,10 @@
+comment = "libauditcmp tests"
+
+desc = <<EOD
+Wire validation, attachment rejection, ownership, and client API tests for
+libauditcmp.
+EOD
+
+annotations = {
+	set = "tests"
+}

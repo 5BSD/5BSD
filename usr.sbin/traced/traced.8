@@ -1,0 +1,81 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 31, 2026
+.Dt TRACED 8
+.Os
+.Sh NAME
+.Nm traced
+.Nd administrator-authorized DTrace descriptor service
+.Sh DESCRIPTION
+.Nm
+is the global provider for
+.Dq org.5bsd.trace
+version 1.0.0 from
+.Pa /Capabilities/System/Trace.cap .
+Each global connection creates a capability-mode worker.
+.Nm
+runs as root because opening and operating a DTrace consumer and submitting
+its BSM policy records still require traditional kernel privilege.
+The worker prohibits fork, IPC, incoming descriptor transfer, exec, and new
+socket creation.
+The supervisor admits at most 256 concurrent workers, retains their process
+descriptors, and observes exit through
+.Dv EVFILT_PROCDESC .
+Managed shutdown stops admission, gives workers five seconds to exit after
+.Dv SIGTERM ,
+then terminates stragglers and reaps every worker before acknowledging
+quiesce to
+.Xr serviced 8 .
+Clients named explicitly in
+.Pa /etc/traced.allow
+may request one independently opened DTrace consumer descriptor.
+All other clients are denied.
+Wildcard policy entries are rejected.
+The allow list is opened without following symbolic links and must be a
+regular file owned by the daemon's effective user with no group or world
+write bits.
+It must not exceed 64 KiB or contain embedded NUL bytes.
+An absent file is an empty, default-deny policy; an unsafe file is a fatal
+configuration error.
+The descriptor is close-on-fork, close-on-exec, transferable once, and limited
+to the ioctl set required by
+.Xr libdtrace 3 .
+.Sh SECURITY
+Raw DTrace authority is an administrator-only capability.
+An ioctl allowlist cannot constrain D programs, probes, actions, targets, or
+buffer allocation.
+A successful client-side
+.Fn tracecmp_dtrace_open
+applies bounded RAM- and CPU-aware libdtrace buffer defaults, but raw
+authorized clients can still change buffer sizes within the kernel's limits.
+A provider-owned query and aggregation protocol is still required for
+ordinary untrusted consumers.
+Delegation and denial are audited and expose DTrace probes.
+.Sh DTRACE PROBES
+The
+.Dq tracecmpd
+provider exports
+.Sy session-start ,
+.Sy session-end ,
+.Sy delegate ,
+and
+.Sy reject .
+They report the authenticated client label, component instance or rejected
+opcode, and a zero success result or
+.Xr errno 2
+failure value.
+Idle pre-delegation sessions are closed after 30 seconds so an authorized
+client cannot retain an unused DTrace consumer indefinitely.
+No D program, DOF, or probe-selection payload is exposed.
+.Sh FILES
+.Bl -tag -width "/etc/traced.allow"
+.It Pa /etc/traced.allow
+Explicit serviced-authenticated labels allowed to receive raw DTrace
+authority, one per line.
+The file must be root-owned and must not be group- or world-writable.
+.El
+.Sh SEE ALSO
+.Xr dtrace 1 ,
+.Xr libtracecmp 3 ,
+.Xr capsicum 4 ,
+.Xr tracectl 8 ,
+.Xr serviced 8

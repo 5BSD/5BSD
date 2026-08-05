@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "networkcmp.h"
+#include "networkcmp_server.h"
 
 union message_buffer {
 	max_align_t align;
@@ -100,22 +101,22 @@ ATF_TC_BODY(component_binding, tc)
 
 	errno = 0;
 	ATF_REQUIRE_EQ(0, setenv("NETWORKCMP", "", 1));
-	ATF_CHECK_EQ(-1, networkcmp_client_open(NULL, &client));
+	ATF_CHECK_EQ(-1, networkcmp_client_open(&client));
 	ATF_CHECK_EQ(EBADF, errno);
 	ATF_REQUIRE_EQ(0, unsetenv("NETWORKCMP"));
 
 	errno = 0;
-	ATF_CHECK_EQ(-1, networkcmp_client_open(NULL, &client));
+	ATF_CHECK_EQ(-1, networkcmp_client_open(&client));
 	ATF_CHECK_EQ(EBADF, errno);
 	errno = 0;
 	ATF_REQUIRE_EQ(0, setenv("NETWORKCMP", "egress", 1));
-	ATF_CHECK_EQ(-1, networkcmp_client_open(NULL, &client));
+	ATF_CHECK_EQ(-1, networkcmp_client_open(&client));
 	ATF_CHECK_EQ(EBADF, errno);
 	ATF_REQUIRE_EQ(0, unsetenv("NETWORKCMP"));
 
 	ATF_REQUIRE_EQ(0, setenv("NETWORKCMP", "", 1));
 	errno = 0;
-	ATF_CHECK_EQ(-1, networkcmp_client_open(NULL, &client));
+	ATF_CHECK_EQ(-1, networkcmp_client_open(&client));
 	ATF_CHECK_EQ(EBADF, errno);
 	ATF_REQUIRE_EQ(0, unsetenv("NETWORKCMP"));
 }
@@ -149,8 +150,6 @@ ATF_TC_BODY(request_shapes, tc)
 		    sizeof(struct networkcmp_close_request),
 		[NETWORKCMP_OP_RESOLVE] =
 		    sizeof(struct networkcmp_resolve_request) + 3 + 2,
-		[NETWORKCMP_OP_ATTACH_RINGS] =
-		    sizeof(struct networkcmp_ring_request),
 		[NETWORKCMP_OP_SEND] =
 		    sizeof(struct networkcmp_inline_request) + 3,
 		[NETWORKCMP_OP_RECV] =
@@ -182,10 +181,6 @@ ATF_TC_BODY(request_shapes, tc)
 		case NETWORKCMP_OP_CONNECT:
 			((struct networkcmp_endpoint_request *)(msg + 1))->
 			    endpoint.family = NETWORKCMP_AF_INET4;
-			break;
-		case NETWORKCMP_OP_ATTACH_RINGS:
-			((struct networkcmp_ring_request *)(msg + 1))->tx_mode = 1;
-			((struct networkcmp_ring_request *)(msg + 1))->rx_mode = 1;
 			break;
 		case NETWORKCMP_OP_SEND:
 		case NETWORKCMP_OP_RECV:
@@ -254,8 +249,15 @@ ATF_TC_BODY(reply_shapes, tc)
 
 	msg = make_message(&buffer, NETWORKCMP_OP_HELLO, true,
 	    sizeof(struct networkcmp_hello_reply));
-	((struct networkcmp_hello_reply *)(msg + 1))->version =
-	    NETWORKCMP_ABI_VERSION;
+	*(struct networkcmp_hello_reply *)(msg + 1) =
+	    (struct networkcmp_hello_reply){
+		.version = NETWORKCMP_ABI_VERSION,
+		.max_sockets = 1,
+		.max_inline = NETWORKCMP_INLINE_MAX,
+		.max_datagram = NETWORKCMP_INLINE_MAX,
+		.max_resolve_results = 1,
+		.io_timeout_max = NETWORKCMP_IO_TIMEOUT_MAX,
+	    };
 	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
 	msg = make_message(&buffer, NETWORKCMP_OP_SOCKET, true,
 	    sizeof(struct networkcmp_handle_reply));
@@ -337,18 +339,6 @@ ATF_TC_BODY(semantic_invariants, tc)
 	hello->max_version = NETWORKCMP_ABI_VERSION;
 	hello->features = 0x80000000U;
 	reject(msg, wire_length);
-	hello->features = NETWORKCMP_FEATURE_SHM_RINGS;
-	hello->reserved2 = 1;
-	reject(msg, wire_length);
-	hello->reserved2 = 0;
-	hello->preferred_tx_ring_size = NETWORKCMP_RING_MIN_SIZE + 1;
-	reject(msg, wire_length);
-	hello->preferred_tx_ring_size = NETWORKCMP_RING_MIN_SIZE;
-	hello->preferred_rx_ring_size = NETWORKCMP_RING_MAX_SIZE + 1U;
-	reject(msg, wire_length);
-	hello->preferred_rx_ring_size = NETWORKCMP_RING_MIN_SIZE;
-	hello->preferred_max_datagram = NETWORKCMP_RING_MAX_SIZE;
-	reject(msg, wire_length);
 
 	msg = make_message(&buffer, NETWORKCMP_OP_SOCKET, false,
 	    sizeof(*socket));
@@ -400,37 +390,27 @@ ATF_TC_BODY(semantic_invariants, tc)
 	    sizeof(*hello_reply));
 	hello_reply = (void *)(msg + 1);
 	hello_reply->version = NETWORKCMP_ABI_VERSION;
+	hello_reply->max_inline = NETWORKCMP_INLINE_MAX;
+	hello_reply->max_datagram = NETWORKCMP_INLINE_MAX;
+	hello_reply->max_resolve_results = NETWORKCMP_RESOLVE_MAX_RESULTS;
+	hello_reply->io_timeout_max = NETWORKCMP_IO_TIMEOUT_MAX;
 	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
 	hello_reply->version = 0;
 	reject(msg, wire_length);
 	hello_reply->version = NETWORKCMP_ABI_VERSION;
 	hello_reply->features = 0x80000000U;
 	reject(msg, wire_length);
-	hello_reply->features = NETWORKCMP_FEATURE_SHM_RINGS;
-	hello_reply->max_ring_size = NETWORKCMP_RING_DEFAULT_SIZE;
-	hello_reply->tx_ring_size = NETWORKCMP_RING_DEFAULT_SIZE;
-	hello_reply->rx_ring_size = NETWORKCMP_RING_DEFAULT_SIZE;
-	hello_reply->max_datagram = NETWORKCMP_DATAGRAM_DEFAULT_MAX;
-	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
-	hello_reply->tx_ring_size++;
-	reject(msg, wire_length);
-	hello_reply->tx_ring_size = NETWORKCMP_RING_DEFAULT_SIZE;
-	hello_reply->max_datagram = NETWORKCMP_RING_DEFAULT_SIZE;
-	reject(msg, wire_length);
-	hello_reply->max_datagram = NETWORKCMP_DATAGRAM_DEFAULT_MAX;
 	hello_reply->features = 0;
+	hello_reply->max_inline = 0;
 	reject(msg, wire_length);
-
-	msg = make_message(&buffer, NETWORKCMP_OP_ATTACH_RINGS, false,
-	    sizeof(struct networkcmp_ring_request));
-	struct networkcmp_ring_request *rings = (void *)(msg + 1);
-	rings->tx_mode = 1;
-	rings->rx_mode = 1;
-	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
-	rings->rx_mode = 2;
+	hello_reply->max_inline = NETWORKCMP_INLINE_MAX;
+	hello_reply->max_datagram = NETWORKCMP_INLINE_MAX + 1;
 	reject(msg, wire_length);
-	rings->tx_mode = 0;
-	rings->rx_mode = 0;
+	hello_reply->max_datagram = NETWORKCMP_INLINE_MAX;
+	hello_reply->max_resolve_results = 0;
+	reject(msg, wire_length);
+	hello_reply->max_resolve_results = NETWORKCMP_RESOLVE_MAX_RESULTS;
+	hello_reply->io_timeout_max = NETWORKCMP_IO_TIMEOUT_MAX + 1;
 	reject(msg, wire_length);
 
 	msg = make_message(&buffer, NETWORKCMP_OP_RECV, false, sizeof(*io));
@@ -461,7 +441,7 @@ ATF_TC(descriptor_contract);
 ATF_TC_HEAD(descriptor_contract, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Only ATTACH_RINGS accepts exactly eight role-separated fds");
+	    "The baseline NetworkCmp protocol accepts no descriptors");
 }
 ATF_TC_BODY(descriptor_contract, tc)
 {
@@ -472,13 +452,6 @@ ATF_TC_BODY(descriptor_contract, tc)
 	    sizeof(struct networkcmp_socket_request));
 	ATF_CHECK_EQ(0, networkcmp_validate_fds(msg, 0, wire_role));
 	ATF_CHECK_EQ(-1, networkcmp_validate_fds(msg, 1, wire_role));
-	ATF_CHECK_EQ(EPROTO, errno);
-	msg = make_message(&buffer, NETWORKCMP_OP_ATTACH_RINGS, false,
-	    sizeof(struct networkcmp_ring_request));
-	ATF_CHECK_EQ(0, networkcmp_validate_fds(msg,
-	    NETWORKCMP_RING_FD_COUNT, wire_role));
-	ATF_CHECK_EQ(-1, networkcmp_validate_fds(msg,
-	    NETWORKCMP_RING_FD_COUNT - 1, wire_role));
 	ATF_CHECK_EQ(EPROTO, errno);
 	wire_role = NETWORKCMP_MESSAGE_REPLY;
 	ATF_CHECK_EQ(0, networkcmp_validate_fds(msg, 0, wire_role));
@@ -499,17 +472,17 @@ ATF_TC_BODY(abi, tc)
 	ATF_CHECK_STREQ("org.5bsd.network", NETWORKCMP_INTERFACE);
 	ATF_CHECK_STREQ("1.0.0", NETWORKCMP_INTERFACE_VERSION);
 	ATF_CHECK_EQ(16, sizeof(struct networkcmp_msg));
-	ATF_CHECK_EQ(32, sizeof(struct networkcmp_hello));
-	ATF_CHECK_EQ(32, sizeof(struct networkcmp_hello_reply));
+	ATF_CHECK_EQ(16, sizeof(struct networkcmp_hello));
+	ATF_CHECK_EQ(36, sizeof(struct networkcmp_hello_reply));
 	ATF_CHECK_EQ(16, sizeof(struct networkcmp_handle));
 	ATF_CHECK_EQ(40, sizeof(struct networkcmp_endpoint_request));
 	ATF_CHECK_EQ(24, sizeof(struct networkcmp_resolve_request));
 	ATF_CHECK_EQ(32, sizeof(struct networkcmp_resolve_result));
 	ATF_CHECK_EQ(32, sizeof(struct networkcmp_inline_request));
 	ATF_CHECK_EQ(16, sizeof(struct networkcmp_inline_reply));
-	ATF_CHECK_EQ(12, NETWORKCMP_OP_SEND);
-	ATF_CHECK_EQ(13, NETWORKCMP_OP_RECV);
-	ATF_CHECK_EQ(14, NETWORKCMP_OP_CONNECT_STATUS);
+	ATF_CHECK_EQ(11, NETWORKCMP_OP_SEND);
+	ATF_CHECK_EQ(12, NETWORKCMP_OP_RECV);
+	ATF_CHECK_EQ(13, NETWORKCMP_OP_CONNECT_STATUS);
 }
 
 ATF_TC(typed_api_arguments);
@@ -521,7 +494,6 @@ ATF_TC_HEAD(typed_api_arguments, tc)
 ATF_TC_BODY(typed_api_arguments, tc)
 {
 	struct networkcmp_handle handle;
-	struct networkcmp_preferences preferences;
 	struct networkcmp_resolve_result result;
 	struct addrinfo hints, *addresses;
 	size_t nresults;
@@ -557,16 +529,8 @@ ATF_TC_BODY(typed_api_arguments, tc)
 	    NETWORKCMP_IO_TIMEOUT_MAX + 1, NULL));
 	ATF_CHECK_EQ(EINVAL, errno);
 
-	memset(&preferences, 0, sizeof(preferences));
-	preferences.tx_ring_size = NETWORKCMP_RING_MIN_SIZE + 1;
 	errno = 0;
-	ATF_CHECK_EQ(-1, networkcmp_negotiate(NULL, &preferences,
-	    (struct networkcmp_hello_reply *)&result));
-	ATF_CHECK_EQ(EINVAL, errno);
-	memset(&preferences, 0, sizeof(preferences));
-	preferences.reserved = 1;
-	errno = 0;
-	ATF_CHECK_EQ(-1, networkcmp_client_open(&preferences, NULL));
+	ATF_CHECK_EQ(-1, networkcmp_client_open(NULL));
 	ATF_CHECK_EQ(EINVAL, errno);
 	nresults = 1;
 	errno = 0;

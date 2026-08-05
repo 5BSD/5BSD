@@ -20,10 +20,9 @@
 #include <unistd.h>
 
 #include <libservice.h>
+#include <kldmgr_protocol.h>
+#include <rebootctl_protocol.h>
 #include <serviced_ctl.h>
-
-#include "kldmgrd_proto.h"
-#include "rebootd_proto.h"
 
 static struct service_context *service_context;
 
@@ -179,7 +178,10 @@ static int
 kld_client(const char *inpath, const char *outpath)
 {
 	char op[32], name[KLDMGR_NAME_MAX];
-	struct kldmgr_req req;
+	struct {
+		struct kldmgr_msg msg;
+		struct kldmgr_module_request module;
+	} req;
 	struct service_session *session;
 	struct service_message message;
 	struct service_reply service_reply;
@@ -213,26 +215,30 @@ kld_client(const char *inpath, const char *outpath)
 	options.timeout_ms = 30000;
 	memset(&req, 0, sizeof(req));
 	if (strcmp(op, "list") == 0)
-		req.op = KLDMGR_OP_LIST;
+		req.msg.opcode = KLDMGR_OP_LIST;
 	else if (strcmp(op, "load") == 0)
-		req.op = KLDMGR_OP_LOAD;
+		req.msg.opcode = KLDMGR_OP_LOAD;
 	else if (strcmp(op, "unload") == 0)
-		req.op = KLDMGR_OP_UNLOAD;
+		req.msg.opcode = KLDMGR_OP_UNLOAD;
 	else if (strcmp(op, "raw") == 0)
-		req.op = (uint32_t)raw_op;
+		req.msg.opcode = (uint16_t)raw_op;
 	else
 		errx(1, "unknown kld operation: %s", op);
-	strlcpy(req.name, name, sizeof(req.name));
-	if (req.op == KLDMGR_OP_LIST) {
-		char buf[sizeof(struct kldmgr_list_reply) +
+	req.msg.magic = KLDMGR_MAGIC;
+	req.msg.version = KLDMGR_ABI_VERSION;
+	strlcpy(req.module.name, name, sizeof(req.module.name));
+	if (req.msg.opcode == KLDMGR_OP_LIST) {
+		char buf[sizeof(struct kldmgr_msg) +
+		    sizeof(struct kldmgr_list_reply) +
 		    KLDMGR_LIST_MAX * sizeof(struct kldmgr_list_entry)];
+		const struct kldmgr_msg *header;
 		const struct kldmgr_list_reply *reply;
 		uint32_t i, count;
 
 		memset(&message, 0, sizeof(message));
 		message.size = sizeof(message);
 		message.data = &req;
-		message.length = sizeof(req);
+		message.length = sizeof(req.msg);
 		memset(&service_reply, 0, sizeof(service_reply));
 		service_reply.size = sizeof(service_reply);
 		service_reply.data = buf;
@@ -240,20 +246,27 @@ kld_client(const char *inpath, const char *outpath)
 		if (service_session_call(session, &message, &service_reply,
 		    &options) == -1)
 			err(1, "call kld list");
-		if (service_reply.length < sizeof(*reply))
+		if (service_reply.length < sizeof(*header) + sizeof(*reply))
 			errx(1, "short kld list reply: %zu",
 			    service_reply.length);
-		reply = (const struct kldmgr_list_reply *)buf;
+		header = (const void *)buf;
+		reply = (const void *)(header + 1);
 		count = reply->count;
-		fprintf(out, "status=%d\ncount=%u\n", reply->status, count);
+		fprintf(out, "status=%d\ncount=%u\n",
+		    header->status == 0 ? 0 : 1, count);
 		for (i = 0; i < count &&
-		    sizeof(*reply) + (i + 1) * sizeof(reply->entries[0]) <=
+		    sizeof(*header) + sizeof(*reply) +
+		    (i + 1) * sizeof(reply->entries[0]) <=
 		    service_reply.length; i++) {
 			fprintf(out, "module.%u.id=%d\nmodule.%u.name=%s\n",
 			    i, reply->entries[i].id, i, reply->entries[i].name);
 		}
 	} else {
-		struct kldmgr_reply reply;
+		struct {
+			struct kldmgr_msg msg;
+			struct kldmgr_id_reply id;
+		} reply;
+		int status;
 
 		memset(&message, 0, sizeof(message));
 		message.size = sizeof(message);
@@ -264,12 +277,18 @@ kld_client(const char *inpath, const char *outpath)
 		service_reply.data = &reply;
 		service_reply.capacity = sizeof(reply);
 		if (service_session_call(session, &message, &service_reply,
-		    &options) == -1)
-			err(1, "call kld");
-		if (service_reply.length != sizeof(reply))
-			errx(1, "short kld reply: %zu",
-			    service_reply.length);
-		fprintf(out, "status=%d\nid=%d\n", reply.status, reply.id);
+		    &options) == -1) {
+			status = 1;
+			reply.id.id = -1;
+		} else {
+			if (service_reply.length < sizeof(reply.msg))
+				errx(1, "short kld reply: %zu",
+				    service_reply.length);
+			status = reply.msg.status == 0 ? 0 :
+			    reply.msg.status == -ENOENT ? 2 :
+			    reply.msg.status == -EACCES ? 3 : 1;
+		}
+		fprintf(out, "status=%d\nid=%d\n", status, reply.id.id);
 	}
 	fclose(out);
 	service_session_close(session);
@@ -280,8 +299,14 @@ kld_client(const char *inpath, const char *outpath)
 static int
 reboot_client(const char *operation, const char *outpath)
 {
-	struct reboot_req req;
-	struct reboot_reply reply;
+	struct {
+		struct rebootctl_msg msg;
+		struct rebootctl_request request;
+	} req;
+	struct {
+		struct rebootctl_msg msg;
+		struct rebootctl_status_reply status;
+	} reply;
 	struct service_session *session;
 	struct service_message message;
 	struct service_reply service_reply;
@@ -299,16 +324,18 @@ reboot_client(const char *operation, const char *outpath)
 		err(1, "enter managed service sandbox");
 	memset(&req, 0, sizeof(req));
 	if (strcmp(operation, "status") == 0)
-		req.op = REBOOT_OP_STATUS;
+		req.msg.opcode = REBOOTCTL_OP_STATUS;
 	else if (strcmp(operation, "reboot") == 0)
-		req.op = REBOOT_OP_REBOOT;
+		req.msg.opcode = REBOOTCTL_OP_REBOOT;
 	else if (strcmp(operation, "unknown") == 0)
-		req.op = 99;
+		req.msg.opcode = 99;
 	else if (strcmp(operation, "invalid-flags") == 0) {
-		req.op = REBOOT_OP_REBOOT;
-		req.flags = UINT32_MAX;
+		req.msg.opcode = REBOOTCTL_OP_REBOOT;
+		req.request.howto = UINT32_MAX;
 	} else
 		errx(1, "unknown reboot operation: %s", operation);
+	req.msg.magic = REBOOTCTL_MAGIC;
+	req.msg.version = REBOOTCTL_ABI_VERSION;
 	if (service_connect(service_context, "org.5bsd.system.reboot",
 	    &fd) == -1)
 		err(1, "service_lookup rebootd");
@@ -317,7 +344,9 @@ reboot_client(const char *operation, const char *outpath)
 	memset(&message, 0, sizeof(message));
 	message.size = sizeof(message);
 	message.data = &req;
-	message.length = sizeof(req);
+	message.length = sizeof(req.msg) +
+	    (req.msg.opcode == REBOOTCTL_OP_STATUS ? 0 :
+	    sizeof(req.request));
 	memset(&service_reply, 0, sizeof(service_reply));
 	service_reply.size = sizeof(service_reply);
 	service_reply.data = &reply;
@@ -325,10 +354,14 @@ reboot_client(const char *operation, const char *outpath)
 	options.timeout_ms = 30000;
 	if (service_session_call(session, &message, &service_reply,
 	    &options) == -1)
-		err(1, "call reboot");
-	if (service_reply.length != sizeof(reply))
-		errx(1, "short reboot reply: %zu", service_reply.length);
-	fprintf(out, "%d\n", reply.status);
+		fprintf(out, "1\n");
+	else {
+		int status;
+
+		status = reply.msg.status == 0 ? 0 :
+		    reply.msg.status == -EACCES ? 3 : 1;
+		fprintf(out, "%d\n", status);
+	}
 	fclose(out);
 	service_session_close(session);
 	for (;;)

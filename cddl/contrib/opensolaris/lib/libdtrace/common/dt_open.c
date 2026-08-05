@@ -1026,7 +1026,7 @@ dt_get_sysinfo(int cmd, char *buf, size_t len)
 
 static dtrace_hdl_t *
 dt_vopen(int version, int flags, int *errp,
-    const dtrace_vector_t *vector, void *arg)
+    const dtrace_vector_t *vector, void *arg, int supplied_fd)
 {
 	dtrace_hdl_t *dtp = NULL;
 	int dtfd = -1, ftfd = -1, fterr = 0;
@@ -1084,9 +1084,26 @@ dt_vopen(int version, int flags, int *errp,
 
 	if (vector == NULL && arg != NULL)
 		return (set_open_errno(dtp, errp, EINVAL));
+	if (supplied_fd >= 0 && (vector != NULL || (flags & DTRACE_O_NODEV)))
+		return (set_open_errno(dtp, errp, EINVAL));
 
 	if (elf_version(EV_CURRENT) == EV_NONE)
 		return (set_open_errno(dtp, errp, EDT_ELFVERSION));
+
+	/*
+	 * A supplied descriptor is the capability-safe equivalent of opening
+	 * /dev/dtrace/dtrace.  Duplicate it so ownership is unambiguous: the
+	 * caller always retains its descriptor and dtrace_close() owns ours.
+	 * Do not inspect provider device paths or attempt module loading here;
+	 * those operations require ambient filesystem authority.
+	 */
+	if (supplied_fd >= 0) {
+		dtfd = fcntl(supplied_fd, F_DUPFD_CLOEXEC, 0);
+		if (dtfd == -1)
+			return (set_open_errno(dtp, errp, errno));
+		fterr = EACCES;
+		goto alloc;
+	}
 
 	if (vector != NULL || (flags & DTRACE_O_NODEV))
 		goto alloc; /* do not attempt to open dtrace device */
@@ -1170,7 +1187,11 @@ dt_vopen(int version, int flags, int *errp,
 
 alloc:
 	if ((dtp = malloc(sizeof (dtrace_hdl_t))) == NULL) {
-	        dt_provmod_destroy(&provmod);
+		if (dtfd != -1)
+			(void) close(dtfd);
+		if (ftfd != -1)
+			(void) close(ftfd);
+		dt_provmod_destroy(&provmod);
 		return (set_open_errno(dtp, errp, EDT_NOMEM));
 	}
 
@@ -1616,14 +1637,22 @@ alloc:
 dtrace_hdl_t *
 dtrace_open(int version, int flags, int *errp)
 {
-	return (dt_vopen(version, flags, errp, NULL, NULL));
+	return (dt_vopen(version, flags, errp, NULL, NULL, -1));
+}
+
+dtrace_hdl_t *
+dtrace_fdopen(int fd, int version, int flags, int *errp)
+{
+	if (fd < 0)
+		return (set_open_errno(NULL, errp, EINVAL));
+	return (dt_vopen(version, flags, errp, NULL, NULL, fd));
 }
 
 dtrace_hdl_t *
 dtrace_vopen(int version, int flags, int *errp,
     const dtrace_vector_t *vector, void *arg)
 {
-	return (dt_vopen(version, flags, errp, vector, arg));
+	return (dt_vopen(version, flags, errp, vector, arg, -1));
 }
 
 void

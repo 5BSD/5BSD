@@ -68,6 +68,8 @@ struct service_context {
 struct service_provider {
 	struct service_context	*context;
 	pid_t			 owner;
+	bool			 quiescing;
+	bool			 quiesce_complete;
 };
 static struct service_context service_default_context;
 static pthread_mutex_t service_init_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -84,12 +86,13 @@ static int service_dispatch_error;
 static int service_supervisor_pipe[2] = { -1, -1 };
 static void service_after_fork_child(void);
 static int rpc(const void *, uint32_t, int *);
+static int rpc_fds(const void *, uint32_t, int *, size_t);
 
 struct service_rpc_waiter {
 	pthread_cond_t	cond;
 	int		status;
-	int		fd;
-	bool		want_fd;
+	int		fds[2];
+	size_t		nfds;
 	bool		done;
 };
 
@@ -624,10 +627,12 @@ service_control_reply(struct channel_request *request,
 		reply = channel_message_data(message);
 		if (reply->status >= 0 &&
 		    channel_message_fd_count(message) ==
-		    (size_t)(reply->status == 0 && waiter->want_fd ? 1 : 0)) {
+		    (reply->status == 0 ? waiter->nfds : 0)) {
 			waiter->status = reply->status;
-			if (reply->status == 0 && waiter->want_fd)
-				waiter->fd = channel_message_take_fd(message, 0);
+			if (reply->status == 0)
+				for (size_t i = 0; i < waiter->nfds; i++)
+					waiter->fds[i] =
+					    channel_message_take_fd(message, i);
 		}
 	}
 	waiter->done = true;
@@ -643,6 +648,7 @@ service_control_event(struct channel *channel,
 {
 	const struct svc_activate_name_msg *activate;
 	const struct svc_new_client_msg *notify;
+	const struct svc_quiesce_msg *quiesce;
 	struct service_listener *listener;
 	char reject_name[SERVICED_NAME_MAX + 1];
 	unsigned tail;
@@ -700,6 +706,21 @@ service_control_event(struct channel *channel,
 				service_listener_signal(listener);
 			} else if (listener != NULL) {
 				listener->overflow = true;
+				service_listener_signal(listener);
+			}
+		}
+	} else if (channel_message_length(message) == sizeof(*quiesce) &&
+	    channel_message_fd_count(message) == 0) {
+		quiesce = channel_message_data(message);
+		if (quiesce->op == SVC_OP_QUIESCE && quiesce->flags == 0 &&
+		    quiesce->deadline_ms != 0 &&
+		    quiesce->reason >= SVC_QUIESCE_REASON_STOP &&
+		    quiesce->reason <= SVC_QUIESCE_REASON_RELOAD) {
+			for (listener = service_listeners; listener != NULL;
+			    listener = listener->next) {
+				listener->provider->quiescing = true;
+				listener->closing = true;
+				(void)pthread_cond_broadcast(&listener->cond);
 				service_listener_signal(listener);
 			}
 		}
@@ -853,7 +874,8 @@ service_start_dispatch(void) __no_lock_analysis
 }
 
 static int
-rpc(const void *req, uint32_t reqlen, int *reply_fd) __no_lock_analysis
+rpc_fds(const void *req, uint32_t reqlen, int *reply_fds, size_t reply_nfds)
+    __no_lock_analysis
 {
 	struct channel_request *request;
 	struct service_rpc_waiter waiter;
@@ -861,9 +883,13 @@ rpc(const void *req, uint32_t reqlen, int *reply_fd) __no_lock_analysis
 
 	if (service_start_dispatch() == -1)
 		return (-1);
+	if (reply_nfds > nitems(waiter.fds) ||
+	    (reply_nfds != 0 && reply_fds == NULL))
+		return (errno = EINVAL, -1);
 	memset(&waiter, 0, sizeof(waiter));
-	waiter.fd = -1;
-	waiter.want_fd = reply_fd != NULL;
+	waiter.nfds = reply_nfds;
+	for (size_t i = 0; i < nitems(waiter.fds); i++)
+		waiter.fds[i] = -1;
 	error = pthread_cond_init(&waiter.cond, NULL);
 	if (error != 0) {
 		errno = error;
@@ -929,16 +955,27 @@ rpc(const void *req, uint32_t reqlen, int *reply_fd) __no_lock_analysis
 		}
 	}
 	error = waiter.status;
-	if (error == 0 && reply_fd != NULL)
-		*reply_fd = waiter.fd;
-	else if (waiter.fd >= 0)
-		(void)close(waiter.fd);
+	if (error == 0) {
+		for (size_t i = 0; i < reply_nfds; i++)
+			reply_fds[i] = waiter.fds[i];
+	} else {
+		for (size_t i = 0; i < nitems(waiter.fds); i++)
+			if (waiter.fds[i] >= 0)
+				(void)close(waiter.fds[i]);
+	}
 	result = error == 0 ? 0 : -1;
 	(void)pthread_mutex_unlock(&service_state_lock);
 	(void)pthread_cond_destroy(&waiter.cond);
 	(void)pthread_setcancelstate(cancel_state, NULL);
 	errno = error;
 	return (result);
+}
+
+static int
+rpc(const void *req, uint32_t reqlen, int *reply_fd)
+{
+
+	return (rpc_fds(req, reqlen, reply_fd, reply_fd != NULL ? 1 : 0));
 }
 
 static int
@@ -1146,6 +1183,39 @@ service_provider_authorize_capabilities(struct service_provider *provider)
 }
 
 int
+service_provider_worker_channel(struct service_provider *provider,
+    int *provider_fdp, int *worker_fdp)
+{
+	struct svc_req_hdr request;
+	int endpoints[2], error;
+
+	if (!service_provider_valid(provider) || provider_fdp == NULL ||
+	    worker_fdp == NULL || provider_fdp == worker_fdp ||
+	    provider->context->entered)
+		return (errno = EINVAL, -1);
+	*provider_fdp = *worker_fdp = -1;
+	memset(&request, 0, sizeof(request));
+	request.op = SVC_OP_WORKER_CHANNEL;
+	if (rpc_fds(&request, sizeof(request), endpoints,
+	    nitems(endpoints)) == -1)
+		return (-1);
+	if (cap_xfer_limit(endpoints[0], CAP_XFER_NONE) == -1 ||
+	    cap_xfer_limit(endpoints[1], CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(endpoints[0], CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_clofork_limit(endpoints[1], CAP_CLOFORK_ONCE) == -1 ||
+	    cap_cloexec_limit(endpoints[0], CAP_CLOEXEC_LOCKED) == -1 ||
+	    cap_cloexec_limit(endpoints[1], CAP_CLOEXEC_LOCKED) == -1) {
+		error = errno;
+		close(endpoints[0]);
+		close(endpoints[1]);
+		return (errno = error, -1);
+	}
+	*provider_fdp = endpoints[0];
+	*worker_fdp = endpoints[1];
+	return (0);
+}
+
+int
 service_provider_protect(struct service_provider *provider, uint32_t flags)
 {
 
@@ -1227,6 +1297,52 @@ service_provider_ready(struct service_provider *provider)
 		return (-1);
 	}
 	return (service_ready(provider->context));
+}
+
+int
+service_provider_quiescing(struct service_provider *provider)
+    __no_lock_analysis
+{
+	int error, result;
+
+	if (!service_provider_valid(provider))
+		return (errno = EINVAL, -1);
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0)
+		return (errno = error, -1);
+	result = provider->quiescing ? 1 : 0;
+	(void)pthread_mutex_unlock(&service_state_lock);
+	return (result);
+}
+
+int
+service_provider_quiesce_complete(struct service_provider *provider,
+    int status) __no_lock_analysis
+{
+	struct svc_quiesce_result_req request;
+	int error;
+
+	if (!service_provider_valid(provider) || status < 0)
+		return (errno = EINVAL, -1);
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0)
+		return (errno = error, -1);
+	if (!provider->quiescing || provider->quiesce_complete) {
+		(void)pthread_mutex_unlock(&service_state_lock);
+		return (errno = provider->quiesce_complete ? EALREADY : EPERM, -1);
+	}
+	(void)pthread_mutex_unlock(&service_state_lock);
+	memset(&request, 0, sizeof(request));
+	request.op = SVC_OP_QUIESCE_RESULT;
+	request.status = status;
+	if (rpc(&request, sizeof(request), NULL) == -1)
+		return (-1);
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0)
+		return (errno = error, -1);
+	provider->quiesce_complete = true;
+	(void)pthread_mutex_unlock(&service_state_lock);
+	return (0);
 }
 
 int
@@ -1321,22 +1437,30 @@ service_label(struct service_context *context)
 }
 
 int
-service_capability_fd(struct service_context *context, const char *name)
+service_capability_open(struct service_context *context, const char *name,
+    int *fdp)
 {
+	int fd;
 	unsigned i;
 
 	if (context == NULL || context != &service_default_context ||
-	    context->owner != getpid()) {
+	    context->owner != getpid() || fdp == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
+	*fdp = -1;
 	if (name == NULL || !service_capability_name_valid(name)) {
 		errno = EINVAL;
 		return (-1);
 	}
 	for (i = 0; i < ncapability_fds; i++) {
-		if (strcmp(capability_fds[i].name, name) == 0)
-			return (capability_fds[i].fd);
+		if (strcmp(capability_fds[i].name, name) != 0)
+			continue;
+		fd = fcntl(capability_fds[i].fd, F_DUPFD_CLOEXEC, 0);
+		if (fd == -1)
+			return (-1);
+		*fdp = fd;
+		return (0);
 	}
 	errno = ENOENT;
 	return (-1);
@@ -1384,6 +1508,12 @@ service_component_open_environment(const char *environment_name)
 		errno = error;
 		return (-1);
 	}
+	/*
+	 * The returned duplicate is now the sole library-facing authority.
+	 * Consume the injected descriptor as well as its environment locator so
+	 * an unused second reference cannot be discovered or read directly.
+	 */
+	(void)close((int)descriptor);
 	return (fd);
 }
 

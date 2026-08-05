@@ -1,0 +1,7 @@
+comment = "Typed AuditCmp client library"
+
+desc = <<EOD
+libauditcmp provides authenticated global audit-service discovery, bounded
+typed records, and an explicit prepare/adopt lifecycle for capability
+component worker forks.
+EOD

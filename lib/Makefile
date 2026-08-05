@@ -34,6 +34,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	lib9p \
 	libalias \
 	libarchive \
+	libauditcmp \
 	libbegemot \
 	libblocksruntime \
 	libbsddialog \
@@ -71,9 +72,11 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libjail \
 	libkiconv \
 	libkldelf \
+	libkldmgr \
 	libkvm \
 	liblogcmp \
 	libnotifycmp \
+	librebootctl \
 	libtracecmp \
 	liblua \
 	liblzma \
@@ -141,6 +144,7 @@ SUBDIR_DEPEND_libc++:= libcxxrt
 # libssp_nonshared doesn't need to be linked into libc on every arch, but it is
 # small enough to build that this bit of serialization is likely insignificant.
 SUBDIR_DEPEND_libc= libsys libcompiler_rt libssp_nonshared
+SUBDIR_DEPEND_libauditcmp= libservice
 SUBDIR_DEPEND_libcam= libsbuf
 SUBDIR_DEPEND_libcasper= libnv
 SUBDIR_DEPEND_libcrypt= libmd
@@ -154,9 +158,11 @@ SUBDIR_DEPEND_librpcsec_gss= libgssapi
 .endif
 SUBDIR_DEPEND_libmagic= libz
 SUBDIR_DEPEND_liblogcmp= libservice libshmring
+SUBDIR_DEPEND_libkldmgr= libservice
 SUBDIR_DEPEND_libmemstat= libkvm
 SUBDIR_DEPEND_libnetworkcmp= libservice libshmring
 SUBDIR_DEPEND_libnotifycmp= libservice
+SUBDIR_DEPEND_librebootctl= libservice
 SUBDIR_DEPEND_libpam= libcrypt ${_libradius} librpcsvc libtacplus libutil ${_libypclnt} ${_libcom_err}
 SUBDIR_DEPEND_libpjdlog= libutil
 SUBDIR_DEPEND_libprocstat= libkvm libutil

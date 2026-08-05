@@ -93,14 +93,18 @@ pkgbase_component_metadata_body()
 {
 	src="@SRCTOP@"
 
-	for package in filesystemcmp filesystemcmp-tests logcmp logcmp-tests \
-	    notifycmp notifycmp-tests \
-	    tracecmp tracecmp-tests \
-	    networkcmp \
-	    networkcmp-tests \
+	for package in auditbrokerd auditbrokerd-tests \
+	    localfilesystem localfilesystem-tests logd logd-tests \
+	    kldmgrd kldmgrd-tests rebootd rebootd-tests \
+	    bsdnotify bsdnotify-tests \
+	    traced traced-tests \
+	    localnetwork \
+	    localnetwork-tests \
+	    libauditcmp libauditcmp-tests libcapability libcapability-tests \
 	    libchannel libchannel-tests \
 	    libservice libservice-tests \
 	    libfilesystemcmp libfilesystemcmp-tests \
+	    libkldmgr libkldmgr-tests librebootctl librebootctl-tests \
 	    liblogcmp liblogcmp-tests \
 	    libnotifycmp libnotifycmp-tests \
 	    libtracecmp libtracecmp-tests \
@@ -111,11 +115,21 @@ pkgbase_component_metadata_body()
 		test -s "${file}" ||
 		    atf_fail "missing pkgbase metadata for ${package}"
 	done
-	for package in filesystemcmp-tests logcmp-tests tracecmp-tests \
-	    notifycmp-tests \
-	    networkcmp-tests \
-	    libchannel-tests \
+	test -s "${src}/packages/liboraclectl-tests/Makefile" ||
+	    atf_fail "missing liboraclectl-tests pkgbase metadata"
+	atf_check -s exit:0 -o match:'WORLDPACKAGE=.*liboraclectl-tests' \
+	    grep '^WORLDPACKAGE' \
+	    "${src}/packages/liboraclectl-tests/Makefile"
+	atf_check -s exit:0 -o match:'PKG_SETS=.*tests' \
+	    grep '^PKG_SETS' "${src}/packages/liboraclectl-tests/Makefile"
+	for package in auditbrokerd-tests localfilesystem-tests logd-tests \
+	    kldmgrd-tests rebootd-tests \
+	    traced-tests \
+	    bsdnotify-tests \
+	    localnetwork-tests \
+	    libauditcmp-tests libcapability-tests libchannel-tests \
 	    libservice-tests \
+	    libkldmgr-tests librebootctl-tests \
 	    liblogcmp-tests \
 	    libtracecmp-tests \
 	    libnotifycmp-tests \
@@ -126,18 +140,26 @@ pkgbase_component_metadata_body()
 		    "${src}/release/packages/ucl/${package}-all.ucl"
 	done
 
-	atf_check -s exit:0 -o match:'PACKAGE=.*filesystemcmp' \
-	    grep '^PACKAGE' "${src}/usr.sbin/filesystemcmp/Makefile"
-	atf_check -s exit:0 -o match:'PACKAGE=.*networkcmp' \
-	    grep '^PACKAGE' "${src}/usr.sbin/networkcmp/Makefile"
-	atf_check -s exit:0 -o match:'PACKAGE=.*logcmp' \
-	    grep '^PACKAGE' "${src}/usr.sbin/logcmp/Makefile"
-	atf_check -s exit:0 -o match:'PACKAGE=.*tracecmp' \
-	    grep '^PACKAGE' "${src}/usr.sbin/tracecmp/Makefile"
-	atf_check -s exit:0 -o match:'PACKAGE=.*notifycmp' \
-	    grep '^PACKAGE' "${src}/usr.sbin/notifycmp/Makefile"
+	# Every packaged Kyua suite needs an install root in BSD.tests.dist.
+	mtree="${src}/etc/mtree/BSD.tests.dist"
+	for testdir in libauditcmp libkldmgr liboraclectl liboraclert \
+	    librebootctl \
+	    auditbrokerd filesystemcmpctl kldmgrctl kldmgrd logctl \
+	    networkcmpctl notifyctl rebootctl rebootd tracectl
+	do
+		atf_check -s exit:0 -o ignore grep -E \
+		    "^[[:space:]]{8}${testdir}$" "${mtree}"
+	done
+
+	for provider in localfilesystem localnetwork logd bsdnotify \
+	    traced auditbrokerd rebootd kldmgrd; do
+		atf_check -s exit:0 -o match:"PACKAGE=.*${provider}" \
+		    grep '^PACKAGE' "${src}/usr.sbin/${provider}/Makefile"
+	done
 	atf_check -s exit:0 -o match:'PACKAGE=lib.*LIB' \
 	    grep '^PACKAGE' "${src}/lib/libchannel/Makefile"
+	atf_check -s exit:0 -o match:'PACKAGE=lib.*LIB' \
+	    grep '^PACKAGE' "${src}/lib/libauditcmp/Makefile"
 	atf_check -s exit:0 -o match:'PACKAGE=lib.*LIB' \
 	    grep '^PACKAGE' "${src}/lib/libservice/Makefile"
 	atf_check -s exit:0 -o match:'PACKAGE=lib.*LIB' \
@@ -150,9 +172,14 @@ pkgbase_component_metadata_body()
 	    grep '^PACKAGE' "${src}/lib/libtracecmp/Makefile"
 	atf_check -s exit:0 -o match:'PACKAGE=lib.*LIB' \
 	    grep '^PACKAGE' "${src}/lib/libnotifycmp/Makefile"
-	for package in libchannel libshmring libfilesystemcmp libnetworkcmp \
-	    liblogcmp libnotifycmp libtracecmp filesystemcmp networkcmp \
-	    logcmp notifycmp tracecmp
+	atf_check -s exit:0 -o match:'PACKAGE=lib.*LIB' \
+	    grep '^PACKAGE' "${src}/lib/libkldmgr/Makefile"
+	atf_check -s exit:0 -o match:'PACKAGE=lib.*LIB' \
+	    grep '^PACKAGE' "${src}/lib/librebootctl/Makefile"
+	for package in libauditcmp libchannel libshmring libfilesystemcmp \
+	    libnetworkcmp libkldmgr librebootctl \
+	    liblogcmp libnotifycmp libtracecmp localfilesystem localnetwork \
+	    auditbrokerd logd bsdnotify traced kldmgrd rebootd
 	do
 		atf_check -s exit:0 -o match:"WORLDPACKAGE=.*${package}" \
 		    grep '^WORLDPACKAGE' \
@@ -161,9 +188,10 @@ pkgbase_component_metadata_body()
 		    grep -E "^[[:space:]]*${package}[[:space:]]*\\\\" \
 		    "${src}/packages/Makefile"
 	done
-	for package in libchannel libshmring libfilesystemcmp libnetworkcmp \
-	    liblogcmp libnotifycmp libtracecmp filesystemcmp networkcmp \
-	    logcmp notifycmp tracecmp
+	for package in libauditcmp libchannel libshmring libfilesystemcmp \
+	    libnetworkcmp libkldmgr librebootctl \
+	    liblogcmp libnotifycmp libtracecmp localfilesystem localnetwork \
+	    auditbrokerd logd bsdnotify traced kldmgrd rebootd
 	do
 		atf_check -s exit:0 \
 		    -o match:"WORLDPACKAGE=.*${package}-tests" \
@@ -176,6 +204,25 @@ pkgbase_component_metadata_body()
 	atf_check -s exit:0 -o match:'PKG_DEPS.serviced.*libchannel' \
 	    grep 'PKG_DEPS.serviced.*libchannel' \
 	    "${src}/packages/serviced/Makefile"
+	atf_check -s exit:0 -o match:'PKG_DEPS.auditbrokerd.*libauditcmp' \
+	    grep 'PKG_DEPS.auditbrokerd.*libauditcmp' \
+	    "${src}/packages/auditbrokerd/Makefile"
+	for provider in kldmgrd rebootd; do
+		atf_check -s exit:0 -o match:"PKG_DEPS.${provider}.*audit" \
+		    grep "PKG_DEPS.${provider}.*audit" \
+		    "${src}/packages/${provider}/Makefile"
+		atf_check -s exit:0 -o match:"PKG_DEPS.${provider}.*serviced" \
+		    grep "PKG_DEPS.${provider}.*serviced" \
+		    "${src}/packages/${provider}/Makefile"
+	done
+	for provider in localfilesystem localnetwork logd bsdnotify; do
+		atf_check -s exit:0 -o match:"PKG_DEPS.${provider}.*auditbrokerd" \
+		    grep "PKG_DEPS.${provider}.*auditbrokerd" \
+		    "${src}/packages/${provider}/Makefile"
+		atf_check -s exit:0 -o match:"PKG_DEPS.${provider}.*libauditcmp" \
+		    grep "PKG_DEPS.${provider}.*libauditcmp" \
+		    "${src}/packages/${provider}/Makefile"
+	done
 	atf_check -s exit:0 -o match:'PKG_DEPS.serviced.*audit' \
 	    grep 'PKG_DEPS.serviced.*audit' \
 	    "${src}/packages/serviced/Makefile"
@@ -189,6 +236,15 @@ pkgbase_component_metadata_body()
 	    grep '^_DP_service' "${src}/share/mk/src.libnames.mk"
 	atf_check -s exit:0 -o match:'_DP_service=.*channel' \
 	    grep '^_DP_service' "${src}/share/mk/src.libnames.mk"
+	atf_check -s exit:1 -o empty -e empty grep -E \
+	    'LIBADD=.*oraclectl' "${src}/usr.sbin/servicectl/Makefile"
+	atf_check -s exit:1 -o empty -e empty grep -E \
+	    'PKG_DEPS\.servicectl.*liboraclectl' \
+	    "${src}/packages/servicectl/Makefile"
+	atf_check -s exit:1 -o empty -e empty grep -E \
+	    'oraclectl_(readn|writen)' \
+	    "${src}/lib/liboraclectl/oraclectl.h"
+	atf_check -s exit:0 test ! -e "${src}/lib/liblwipcmp/Makefile"
 	atf_check -s exit:0 -o match:'lib/libcapability lib/libchannel' \
 	    grep 'lib/libcapability lib/libchannel' \
 	    "${src}/Makefile.inc1"
@@ -203,12 +259,21 @@ pkgbase_component_metadata_body()
 	    'service_protocol\\.(c|h)|SERVICE_PROTOCOL_HEADER_FIELDS' \
 	    "${src}/lib/libservice/Makefile" \
 	    "${src}/lib/libservice/libservice.h"
-	for typed in filesystemcmp networkcmp logcmp notifycmp tracecmp; do
+	for typed in auditcmp filesystemcmp networkcmp logcmp notifycmp tracecmp; do
 		atf_check -s exit:0 -o match:"${typed}_message_init" \
+		    grep "${typed}_message_init" \
+		    "${src}/lib/lib${typed}/${typed}_server.h"
+		atf_check -s exit:1 -o empty \
 		    grep "${typed}_message_init" \
 		    "${src}/lib/lib${typed}/${typed}.h"
 		atf_check -s exit:1 -o empty grep 'service_protocol.h' \
 		    "${src}/lib/lib${typed}/${typed}_protocol.h"
+	done
+	for typed in auditcmp filesystemcmp networkcmp logcmp notifycmp tracecmp \
+	    kldmgr rebootctl; do
+		atf_check -s exit:0 -o match:'STATIC_CFLAGS.*PICFLAG' \
+		    grep 'STATIC_CFLAGS.*PICFLAG' \
+		    "${src}/lib/lib${typed}/Makefile"
 	done
 	for suffix in '%-lib32' '%-lib' '%-dev' '%-man' '%-dbg'; do
 		atf_check -s exit:0 -o match:"${suffix}" \
@@ -216,31 +281,26 @@ pkgbase_component_metadata_body()
 		    "${src}/release/packages/generate-ucl.lua"
 	done
 
-	atf_check -s exit:0 -o match:'CAP_BINPACKAGE=.*filesystemcmp' \
-	    grep 'CAP_BINPACKAGE' "${src}/usr.sbin/filesystemcmp/Makefile"
-	atf_check -s exit:0 -o match:'CAP_ETCPACKAGE=.*filesystemcmp' \
-	    grep 'CAP_ETCPACKAGE' "${src}/usr.sbin/filesystemcmp/Makefile"
-	atf_check -s exit:0 -o match:'CAP_BINPACKAGE=.*networkcmp' \
-	    grep 'CAP_BINPACKAGE' "${src}/usr.sbin/networkcmp/Makefile"
-	atf_check -s exit:0 -o match:'CAP_ETCPACKAGE=.*networkcmp' \
-	    grep 'CAP_ETCPACKAGE' "${src}/usr.sbin/networkcmp/Makefile"
-	atf_check -s exit:0 -o match:'CAP_BINPACKAGE=.*logcmp' \
-	    grep 'CAP_BINPACKAGE' "${src}/usr.sbin/logcmp/Makefile"
-	atf_check -s exit:0 -o match:'CAP_ETCPACKAGE=.*logcmp' \
-	    grep 'CAP_ETCPACKAGE' "${src}/usr.sbin/logcmp/Makefile"
-	atf_check -s exit:0 -o match:'CAP_BINPACKAGE=.*tracecmp' \
-	    grep 'CAP_BINPACKAGE' "${src}/usr.sbin/tracecmp/Makefile"
-	atf_check -s exit:0 -o match:'CAP_ETCPACKAGE=.*tracecmp' \
-	    grep 'CAP_ETCPACKAGE' "${src}/usr.sbin/tracecmp/Makefile"
-	atf_check -s exit:0 -o match:'CAP_BINPACKAGE=.*notifycmp' \
-	    grep 'CAP_BINPACKAGE' "${src}/usr.sbin/notifycmp/Makefile"
-	atf_check -s exit:0 -o match:'CAP_ETCPACKAGE=.*notifycmp' \
-	    grep 'CAP_ETCPACKAGE' "${src}/usr.sbin/notifycmp/Makefile"
-	atf_check -s exit:0 -o match:'serviced.*mode=0700.*package=filesystemcmp' \
-	    grep 'serviced.*mode=0700.*package=filesystemcmp' \
+	for spec in \
+	    'localfilesystem:FILESYSTEMCMP:localfilesystem' \
+	    'localnetwork:NETWORKCMP:localnetwork' \
+	    'logd:LOGCMP:logd' \
+	    'traced:TRACECMP:traced' \
+	    'bsdnotify:NOTIFYCMP:bsdnotify'; do
+		dir=${spec%%:*}
+		rest=${spec#*:}
+		prefix=${rest%%:*}
+		package=${rest#*:}
+		atf_check -s exit:0 -o match:"${prefix}_CAP_BINPACKAGE=.*${package}" \
+		    grep "${prefix}_CAP_BINPACKAGE" "${src}/usr.sbin/${dir}/Makefile"
+		atf_check -s exit:0 -o match:"${prefix}_CAP_ETCPACKAGE=.*${package}" \
+		    grep "${prefix}_CAP_ETCPACKAGE" "${src}/usr.sbin/${dir}/Makefile"
+	done
+	atf_check -s exit:0 -o match:'serviced.*mode=0700.*package=localfilesystem' \
+	    grep 'serviced.*mode=0700.*package=localfilesystem' \
 	    "${src}/etc/mtree/BSD.var.dist"
-	atf_check -s exit:0 -o match:'storage.*mode=0700.*package=filesystemcmp' \
-	    grep 'storage.*mode=0700.*package=filesystemcmp' \
+	atf_check -s exit:0 -o match:'storage.*mode=0700.*package=localfilesystem' \
+	    grep 'storage.*mode=0700.*package=localfilesystem' \
 	    "${src}/etc/mtree/BSD.var.dist"
 	atf_check -s exit:1 -o ignore -e ignore \
 	    grep -E '(^|[[:space:]])(serviced|storage).*uname=capability' \
@@ -273,18 +333,26 @@ pkgbase_component_metadata_body()
 	atf_check -s exit:0 -o match:'^43333:AUE_NOTIFYCMP_POLICY:.*:ad$' \
 	    grep '^43333:AUE_NOTIFYCMP_POLICY:' \
 	    "${src}/contrib/openbsm/etc/audit_event"
-	atf_check -s exit:0 -o match:'AUE_FILESYSTEMCMP_POLICY' \
-	    grep AUE_FILESYSTEMCMP_POLICY \
-	    "${src}/usr.sbin/filesystemcmp/filesystemcmp.c"
-	atf_check -s exit:0 -o match:'AUE_NETWORKCMP_POLICY' \
-	    grep AUE_NETWORKCMP_POLICY \
-	    "${src}/usr.sbin/networkcmp/networkcmp.c"
-	atf_check -s exit:0 -o match:'AUE_LOGCMP_POLICY' \
-	    grep AUE_LOGCMP_POLICY "${src}/usr.sbin/logcmp/logcmp.c"
+	for provider in localfilesystem localnetwork logd bsdnotify; do
+		case ${provider} in
+		localfilesystem) source=filesystemcmp.c ;;
+		localnetwork) source=networkcmp.c ;;
+		logd) source=logcmp.c ;;
+		bsdnotify) source=notifycmp.c ;;
+		esac
+		atf_check -s exit:0 -o match:'auditcmp_submit' \
+		    grep auditcmp_submit \
+		    "${src}/usr.sbin/${provider}/${source}"
+		atf_check -s exit:1 -o empty -e empty grep 'audit_submit(' \
+		    "${src}/usr.sbin/${provider}/${source}"
+	done
+	for event in AUE_FILESYSTEMCMP_POLICY AUE_NETWORKCMP_POLICY \
+	    AUE_LOGCMP_POLICY AUE_NOTIFYCMP_POLICY; do
+		atf_check -s exit:0 -o match:"${event}" grep "${event}" \
+		    "${src}/usr.sbin/auditbrokerd/auditcmp_policy.c"
+	done
 	atf_check -s exit:0 -o match:'AUE_TRACECMP_POLICY' \
-	    grep AUE_TRACECMP_POLICY "${src}/usr.sbin/tracecmp/tracecmp.c"
-	atf_check -s exit:0 -o match:'AUE_NOTIFYCMP_POLICY' \
-	    grep AUE_NOTIFYCMP_POLICY "${src}/usr.sbin/notifycmp/notifycmp.c"
+	    grep AUE_TRACECMP_POLICY "${src}/usr.sbin/traced/tracecmp.c"
 	atf_check -s exit:0 -o match:'probe bootstrap__create' \
 	    grep 'probe bootstrap__create' \
 	    "${src}/usr.sbin/serviced/serviced_provider.d"
@@ -320,13 +388,13 @@ pkgbase_component_metadata_body()
 	    grep CAP_FSYNC "${src}/usr.sbin/serviced/execute.c"
 	atf_check -s exit:0 -o match:'audit_policy.*sync' \
 	    grep -E 'audit_policy.*"sync"' \
-	    "${src}/usr.sbin/filesystemcmp/filesystemcmp.c"
+	    "${src}/usr.sbin/localfilesystem/filesystemcmp.c"
 	for provider in \
 	    "${src}/usr.sbin/serviced/serviced_provider.d" \
-	    "${src}/usr.sbin/networkcmp/networkcmp_provider.d" \
-	    "${src}/usr.sbin/logcmp/logcmp_provider.d" \
-	    "${src}/usr.sbin/tracecmp/tracecmp_provider.d" \
-	    "${src}/usr.sbin/notifycmp/notifycmp_provider.d" \
+	    "${src}/usr.sbin/localnetwork/localnetwork_provider.d" \
+	    "${src}/usr.sbin/logd/logd_provider.d" \
+	    "${src}/usr.sbin/traced/traced_provider.d" \
+	    "${src}/usr.sbin/bsdnotify/bsdnotify_provider.d" \
 	    "${src}/usr.sbin/rebootd/rebootd_provider.d" \
 	    "${src}/usr.sbin/kldmgrd/kldmgrd_provider.d" \
 	    "${src}/lib/libnetworkcmp/networkcmp_provider.d" \
@@ -346,9 +414,13 @@ pkgbase_component_metadata_body()
 			    grep "probe ${probe}" \
 			    "${src}/usr.sbin/${daemon}/${daemon}_provider.d"
 		done
+		case ${daemon} in
+		rebootd) source=rebootd_main.c ;;
+		kldmgrd) source=kldmgrd_main.c ;;
+		esac
 		atf_check -s exit:0 -o match:'audit_submit' \
 		    grep audit_submit \
-		    "${src}/usr.sbin/${daemon}/${daemon}_main.c"
+		    "${src}/usr.sbin/${daemon}/${source}"
 	done
 }
 
@@ -398,6 +470,12 @@ component_selector_contract_body()
 	    grep -E 'implements|LOCAL_THEN_GLOBAL|component.*provider' \
 	    "${src}/lib/libcapbundle/libcapbundle.h" \
 	    "${src}/lib/libcapbundle/serviced_manifest.h"
+	atf_check -s exit:1 -o empty -e empty \
+	    grep -E 'nofile|descriptor_limit|max_descriptors' \
+	    "${src}/lib/libcapbundle/serviced_manifest.h"
+	atf_check -s exit:0 -o match:'kern.maxfilesperproc' \
+	    grep kern.maxfilesperproc \
+	    "${src}/usr.sbin/serviced/fd_budget.c"
 }
 
 atf_test_case serviced_channel_layering
@@ -405,6 +483,127 @@ serviced_channel_layering_head()
 {
 	atf_set "descr" \
 	    "serviced control traffic uses libchannel framing, correlation, ownership, and backpressure"
+}
+
+atf_test_case operational_name_contract
+operational_name_contract_head()
+{
+	atf_set "descr" \
+	    "Operational daemon, rc, package, and capability-bundle names stay coherent"
+}
+operational_name_contract_body()
+{
+	src="@SRCTOP@"
+	rcscript="${src}/libexec/rc/rc.d/oracled"
+	rcconf="${src}/libexec/rc/rc.conf"
+
+	atf_check -s exit:0 -o match:'^name="oracled"$' \
+	    grep '^name=' "${rcscript}"
+	atf_check -s exit:0 -o match:'^rcvar="oracled_enable"$' \
+	    grep '^rcvar=' "${rcscript}"
+	for hook in stop reload status; do
+		atf_check -s exit:0 -o match:"^oracled_${hook}\\(\\)" \
+		    grep "^oracled_${hook}()" "${rcscript}"
+	done
+	atf_check -s exit:0 -o match:'^oracled_enable=' \
+	    grep '^oracled_enable=' "${rcconf}"
+	atf_check -s exit:0 -o match:'^oracled_flags=' \
+	    grep '^oracled_flags=' "${rcconf}"
+	atf_check -s exit:1 -o empty -e empty \
+	    grep -E '^(trailbossd_enable|trailbossd_flags|wranglerd_enable|wranglerd_flags)=' "${rcconf}"
+
+	for daemon in oracled serviced localfilesystem localnetwork logd \
+	    bsdnotify traced auditbrokerd rebootd kldmgrd; do
+		makefile="${src}/usr.sbin/${daemon}/Makefile"
+		atf_check -s exit:0 -o match:"^PROG[[:space:]]*=.*${daemon}$" \
+		    grep '^PROG' "${makefile}"
+		atf_check -s exit:0 -o match:"^PACKAGE[[:space:]]*=.*${daemon}$" \
+		    grep '^PACKAGE' "${makefile}"
+		test -s "${src}/packages/${daemon}/Makefile" ||
+		    atf_fail "missing ${daemon} pkgbase definition"
+		if ! test -s "${src}/release/packages/ucl/${daemon}-all.ucl" &&
+		    ! test -s "${src}/packages/${daemon}/${daemon}.ucl"; then
+			atf_fail "missing ${daemon} package metadata"
+		fi
+	done
+
+	for mapping in \
+	    'localfilesystem:LocalFilesystem.cap' \
+	    'localnetwork:LocalNetwork.cap' \
+	    'logd:Log.cap' \
+	    'bsdnotify:BsdNotify.cap' \
+	    'traced:Trace.cap' \
+	    'auditbrokerd:Audit.cap' \
+	    'rebootd:Reboot.cap' \
+	    'kldmgrd:Kldmgr.cap'; do
+		daemon=${mapping%%:*}
+		bundle=${mapping#*:}
+		atf_check -s exit:0 -o match:"/Capabilities/System/${bundle}" \
+		    grep '/Capabilities/System/' \
+		    "${src}/usr.sbin/${daemon}/Makefile"
+	done
+
+	# Old names are not compatibility aliases: reject them at public rc and
+	# deployment boundaries.  Internal protocol identifiers are deliberately
+	# outside this check.
+	atf_check -s exit:1 -o empty -e empty grep -E \
+		'/var/run/(trailbossd|wranglerd)([./"]|$)|/var/db/wranglerd([/"]|$)|/etc/(trailbossd|logcmp|notifycmp|tracecmp|auditcmp)([.]|/|"|$)' \
+	    "${rcscript}" "${rcconf}" \
+	    "${src}/usr.sbin/oracled/oracled.conf" \
+	    "${src}/usr.sbin/oracled/oracled.conf.5"
+	atf_check -s exit:1 -o empty -e empty grep -E \
+		'^\\.Xr (filesystemcmp|networkcmp|logcmp|notifycmp|tracecmp|auditcmp|trailbossd|wranglerd) 8' \
+	    "${src}/lib/libfilesystemcmp/libfilesystemcmp.3" \
+	    "${src}/lib/libnetworkcmp/libnetworkcmp.3" \
+	    "${src}/lib/liblogcmp/liblogcmp.3" \
+	    "${src}/lib/libnotifycmp/libnotifycmp.3" \
+	    "${src}/lib/libtracecmp/libtracecmp.3" \
+	    "${src}/lib/libauditcmp/libauditcmp.3" \
+	    "${src}/lib/libkldmgr/libkldmgr.3" \
+	    "${src}/lib/librebootctl/librebootctl.3"
+	atf_check -s exit:0 -o match:'org.5bsd.system.reboot/rebootd' \
+	    grep 'org.5bsd.system.reboot/rebootd' \
+	    "${src}/usr.sbin/bsdnotify/capbundle/bsdnotify.conf"
+	atf_check -s exit:1 -o empty -e empty grep -E \
+	    '@OBJTOP@/usr.sbin/(filesystemcmp|networkcmp|logcmp|notifycmp|tracecmp|auditcmp)/' \
+	    "${src}/usr.sbin/serviced/tests/component_integration_test.sh"
+	atf_check -s exit:0 -o match:'cap_openlog.*"logd"' \
+	    grep 'cap_openlog.*"logd"' \
+	    "${src}/usr.sbin/logd/logcmp.c"
+}
+
+atf_test_case typed_header_boundaries
+typed_header_boundaries_head()
+{
+	atf_set "descr" \
+	    "Typed client headers exclude provider framing and provider bootstrap APIs"
+}
+typed_header_boundaries_body()
+{
+	src="@SRCTOP@"
+
+	for library in filesystemcmp networkcmp logcmp notifycmp tracecmp \
+	    auditcmp kldmgr rebootctl
+	do
+		client="${src}/lib/lib${library}/${library}.h"
+		server="${src}/lib/lib${library}/${library}_server.h"
+		makefile="${src}/lib/lib${library}/Makefile"
+		test -s "${server}" ||
+		    atf_fail "missing ${library} server header"
+		atf_check -s exit:1 -o empty -e empty \
+		    grep -E '(message_init|validate_(message|fds|request|reply|record|topic))' \
+		    "${client}"
+		atf_check -s exit:0 -o match:'validate_|message_init' \
+		    grep -E '(message_init|validate_)' "${server}"
+		atf_check -s exit:0 -o match:"${library}_server.h" \
+		    grep '^INCS=' "${makefile}"
+	done
+	atf_check -s exit:1 -o empty -e empty \
+	    grep -E 'auditcmp_client_(prepare|adopt)' \
+	    "${src}/lib/libauditcmp/auditcmp.h"
+	atf_check -s exit:0 -o match:'auditcmp_client_prepare' \
+	    grep auditcmp_client_prepare \
+	    "${src}/lib/libauditcmp/auditcmp_server.h"
 }
 serviced_channel_layering_body()
 {
@@ -441,4 +640,6 @@ atf_init_test_cases()
 	atf_add_test_case pkgbase_component_metadata
 	atf_add_test_case component_selector_contract
 	atf_add_test_case serviced_channel_layering
+	atf_add_test_case typed_header_boundaries
+	atf_add_test_case operational_name_contract
 }

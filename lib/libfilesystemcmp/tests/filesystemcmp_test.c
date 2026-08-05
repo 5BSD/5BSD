@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "filesystemcmp.h"
+#include "filesystemcmp_server.h"
 
 union message_buffer {
 	max_align_t align;
@@ -140,8 +141,6 @@ ATF_TC_BODY(request_shapes, tc)
 		    sizeof(struct filesystemcmp_close_request),
 		[FILESYSTEMCMP_OP_CLOSE] =
 		    sizeof(struct filesystemcmp_close_request),
-		[FILESYSTEMCMP_OP_ATTACH_RINGS] =
-		    sizeof(struct filesystemcmp_ring_request),
 		[FILESYSTEMCMP_OP_OPEN_NAMESPACE] =
 		    sizeof(struct filesystemcmp_namespace_request),
 		[FILESYSTEMCMP_OP_SYNC] =
@@ -164,14 +163,6 @@ ATF_TC_BODY(request_shapes, tc)
 		case FILESYSTEMCMP_OP_HELLO:
 			((struct filesystemcmp_hello *)(msg + 1))->max_version =
 			    FILESYSTEMCMP_ABI_VERSION;
-			break;
-		case FILESYSTEMCMP_OP_ATTACH_RINGS:
-			((struct filesystemcmp_ring_request *)(msg + 1))->
-			    tx_entries = 1;
-			((struct filesystemcmp_ring_request *)(msg + 1))->
-			    rx_entries = 1;
-			((struct filesystemcmp_ring_request *)(msg + 1))->
-			    entry_size = 1;
 			break;
 		case FILESYSTEMCMP_OP_OPEN_NAMESPACE:
 			((struct filesystemcmp_namespace_request *)(msg + 1))->
@@ -312,7 +303,6 @@ ATF_TC_BODY(semantic_invariants, tc)
 	struct filesystemcmp_io_request *io;
 	struct filesystemcmp_unlink_request *unlink;
 	struct filesystemcmp_rename_request *rename;
-	struct filesystemcmp_ring_request *rings;
 	struct filesystemcmp_handle_reply *handle;
 	struct filesystemcmp_io_reply *io_reply;
 	struct filesystemcmp_stat_reply *stat_reply;
@@ -394,17 +384,6 @@ ATF_TC_BODY(semantic_invariants, tc)
 	rename->reserved = 1;
 	check_rejected(msg, wire_length);
 
-	msg = make_message(&buffer, FILESYSTEMCMP_OP_ATTACH_RINGS, false,
-	    sizeof(*rings));
-	rings = (void *)(msg + 1);
-	rings->tx_entries = rings->rx_entries = rings->entry_size = 1;
-	ATF_REQUIRE_EQ(0, filesystemcmp_validate_message(msg, wire_length, wire_role));
-	rings->flags = 1;
-	check_rejected(msg, wire_length);
-	rings->flags = 0;
-	rings->entry_size = 0;
-	check_rejected(msg, wire_length);
-
 	msg = make_message(&buffer, FILESYSTEMCMP_OP_HELLO, true,
 	    sizeof(*hello_reply));
 	hello_reply = (void *)(msg + 1);
@@ -455,7 +434,7 @@ ATF_TC(descriptor_contract);
 ATF_TC_HEAD(descriptor_contract, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Only ATTACH_RINGS accepts exactly two four-fd ring endpoints");
+	    "The baseline filesystem protocol accepts no descriptors");
 }
 ATF_TC_BODY(descriptor_contract, tc)
 {
@@ -465,14 +444,6 @@ ATF_TC_BODY(descriptor_contract, tc)
 	msg = make_message(&buffer, FILESYSTEMCMP_OP_OPEN_ROOT, false, 0);
 	ATF_CHECK_EQ(0, filesystemcmp_validate_fds(msg, 0, wire_role));
 	ATF_CHECK_EQ(-1, filesystemcmp_validate_fds(msg, 1, wire_role));
-	ATF_CHECK_EQ(EPROTO, errno);
-
-	msg = make_message(&buffer, FILESYSTEMCMP_OP_ATTACH_RINGS, false,
-	    sizeof(struct filesystemcmp_ring_request));
-	ATF_CHECK_EQ(0, filesystemcmp_validate_fds(msg,
-	    FILESYSTEMCMP_RING_FD_COUNT, wire_role));
-	ATF_CHECK_EQ(-1, filesystemcmp_validate_fds(msg,
-	    FILESYSTEMCMP_RING_FD_COUNT - 1, wire_role));
 	ATF_CHECK_EQ(EPROTO, errno);
 
 	wire_role = FILESYSTEMCMP_MESSAGE_REPLY;
@@ -498,9 +469,9 @@ ATF_TC_BODY(abi, tc)
 	ATF_CHECK_EQ(16, sizeof(struct filesystemcmp_handle));
 	ATF_CHECK_EQ(32, sizeof(struct filesystemcmp_io_request));
 	ATF_CHECK_EQ(8, sizeof(struct filesystemcmp_namespace_request));
-	ATF_CHECK_EQ(13, FILESYSTEMCMP_OP_OPEN_NAMESPACE);
-	ATF_CHECK_EQ(14, FILESYSTEMCMP_OP_SYNC);
-	ATF_CHECK_EQ(15, FILESYSTEMCMP_OP_DUP);
+	ATF_CHECK_EQ(12, FILESYSTEMCMP_OP_OPEN_NAMESPACE);
+	ATF_CHECK_EQ(13, FILESYSTEMCMP_OP_SYNC);
+	ATF_CHECK_EQ(14, FILESYSTEMCMP_OP_DUP);
 	ATF_CHECK_EQ(4096, FILESYSTEMCMP_PATH_MAX);
 }
 

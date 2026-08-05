@@ -24,12 +24,17 @@
  */
 
 #include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/sysctl.h>
+#include <sys/wait.h>
 
 #include <bsm/audit.h>
+#include <bsm/audit_kevents.h>
+#include <bsm/libbsm.h>
 #include <machine/sysarch.h>
 
 #include <atf-c.h>
+#include <errno.h>
 #include <unistd.h>
 
 #include "utils.h"
@@ -38,6 +43,38 @@ static pid_t pid;
 static char miscreg[80];
 static struct pollfd fds[1];
 static const char *auclass = "ot";
+
+ATF_TC(capmode_submit);
+ATF_TC_HEAD(capmode_submit, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "audit_submit(3) works in capability "
+	    "mode without capability-enabling auditon(2)");
+}
+
+ATF_TC_BODY(capmode_submit, tc)
+{
+	pid_t child;
+	int acond, status;
+
+	child = fork();
+	ATF_REQUIRE(child != -1);
+	if (child == 0) {
+		if (cap_enter() == -1)
+			_exit(1);
+		errno = 0;
+		if (audit_get_cond(&acond) != -1 || errno != ECAPMODE)
+			_exit(2);
+		if (audit_submit((short)AUE_AUDIT,
+		    AU_DEFAUDITID, 0, 0, "capability-mode audit test") == -1)
+			_exit(3);
+		_exit(0);
+	}
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE_MSG(WIFEXITED(status),
+	    "audit child terminated by signal %d", WTERMSIG(status));
+	ATF_REQUIRE_EQ_MSG(0, WEXITSTATUS(status),
+	    "audit child failed at stage %d", WEXITSTATUS(status));
+}
 
 
 /*
@@ -213,6 +250,7 @@ ATF_TC_CLEANUP(sysctl_failure, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, capmode_submit);
 	ATF_TP_ADD_TC(tp, audit_failure);
 
 	ATF_TP_ADD_TC(tp, sysarch_success);

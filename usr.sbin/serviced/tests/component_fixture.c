@@ -110,6 +110,50 @@ filesystem_thread(void *argument)
 	return (NULL);
 }
 
+static int
+emit_log(struct logcmp_client *client, const char *message)
+{
+	static const char case_value[] = "serviced";
+	static const char result_value[] = "ok";
+	struct logcmp_attribute attributes[2];
+	struct logcmp_emit_options options;
+	struct logcmp_logger *logger;
+	int error;
+
+	memset(attributes, 0, sizeof(attributes));
+	attributes[0].size = sizeof(attributes[0]);
+	attributes[0].key = "case";
+	attributes[0].type = LOGCMP_ATTR_STRING;
+	attributes[0].privacy = LOGCMP_PRIVACY_PUBLIC;
+	attributes[0].value = case_value;
+	attributes[0].value_length = sizeof(case_value) - 1;
+	attributes[1].size = sizeof(attributes[1]);
+	attributes[1].key = "result";
+	attributes[1].type = LOGCMP_ATTR_STRING;
+	attributes[1].privacy = LOGCMP_PRIVACY_PUBLIC;
+	attributes[1].value = result_value;
+	attributes[1].value_length = sizeof(result_value) - 1;
+	memset(&options, 0, sizeof(options));
+	options.size = sizeof(options);
+	options.severity = LOGCMP_SEVERITY_INFO;
+	options.kind = LOGCMP_KIND_LOG;
+	options.message_privacy = LOGCMP_PRIVACY_PUBLIC;
+	options.message = message;
+	options.attributes = attributes;
+	options.nattributes = nitems(attributes);
+	if (logcmp_logger_create(client, "org.5bsd.serviced.tests",
+	    "integration", &logger) == -1)
+		return (-1);
+	if (logcmp_emit(logger, &options) == -1) {
+		error = errno;
+		logcmp_logger_destroy(logger);
+		errno = error;
+		return (-1);
+	}
+	logcmp_logger_destroy(logger);
+	return (0);
+}
+
 static void *
 log_thread(void *argument)
 {
@@ -121,8 +165,7 @@ log_thread(void *argument)
 	for (i = 0; i < context->count; i++) {
 		(void)snprintf(message, sizeof(message), "integration record %u",
 		    context->first + i);
-		if (logcmp_log(context->client, LOGCMP_NOTICE, message,
-		    "CASE=serviced\nRESULT=ok") == -1) {
+		if (emit_log(context->client, message) == -1) {
 			context->error = errno;
 			break;
 		}
@@ -255,12 +298,16 @@ run_filesystem_consumer(const char *output_path)
 	    FILESYSTEMCMP_CREATE_EXCLUSIVE, 0600, &object) != -1 ||
 	    errno != EROFS)
 		return (1);
+	filesystemcmp_close(component);
+	if (filesystemcmp_open(&reopened) == -1 ||
+	    filesystemcmp_hello(reopened, &hello) == -1)
+		return (1);
+	filesystemcmp_close(reopened);
 	if (dprintf(out,
 	    "scratch=ok\npersistent=ok\nbundle=ok\nbundle_readonly=ok\n"
 	    "durable_sync=ok\nlogical_cwd=ok\nmulti_open=ok\nconcurrent=ok\n"
 	    "close_reopen=ok\n") < 0)
 		return (1);
-	filesystemcmp_close(component);
 	close(out);
 	return (0);
 }
@@ -321,12 +368,12 @@ run_log_consumer(const char *output_path)
 	    stats.accepted != 100 || stats.rejected != 0)
 		return (1);
 	logcmp_client_close(client);
-	if (logcmp_log(second, LOGCMP_NOTICE, "after first close", NULL) == -1 ||
+	if (emit_log(second, "after first close") == -1 ||
 	    logcmp_flush(second) == -1)
 		return (1);
 	logcmp_client_close(second);
 	if (logcmp_client_open(&reopened) == -1 ||
-	    logcmp_log(reopened, LOGCMP_NOTICE, "after reopen", NULL) == -1 ||
+	    emit_log(reopened, "after reopen") == -1 ||
 	    logcmp_flush(reopened) == -1 ||
 	    logcmp_stats(reopened, &stats) == -1 ||
 	    stats.accepted != 102 || stats.rejected != 0)
@@ -358,8 +405,8 @@ run_network_consumer(const char *output_path)
 	    service_worker_protect(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOEXEC | SERVICE_PROTECT_NOSOCK) == -1 ||
-	    networkcmp_client_open(NULL, &client) == -1 ||
-	    networkcmp_client_open(NULL, &second) == -1 ||
+	    networkcmp_client_open(&client) == -1 ||
+	    networkcmp_client_open(&second) == -1 ||
 	    fixture_service_ready() == -1 ||
 	    networkcmp_hello(client, &hello) == -1 ||
 	    (hello.features & NETWORKCMP_FEATURE_TCP) == 0)
@@ -378,7 +425,7 @@ run_network_consumer(const char *output_path)
 	    contexts[0].error != 0 || contexts[1].error != 0)
 		return (1);
 	networkcmp_client_close(second);
-	if (networkcmp_client_open(NULL, &reopened) == -1 ||
+	if (networkcmp_client_open(&reopened) == -1 ||
 	    networkcmp_hello(reopened, &hello) == -1)
 		return (1);
 	networkcmp_client_close(reopened);
@@ -409,11 +456,15 @@ run_network_consumer(const char *output_path)
 	}
 	if (i == 200 || networkcmp_close_socket(client, socket) == -1)
 		return (1);
+	networkcmp_client_close(client);
+	if (networkcmp_client_open(&reopened) == -1 ||
+	    networkcmp_hello(reopened, &hello) == -1)
+		return (1);
+	networkcmp_client_close(reopened);
 	if (dprintf(out, "network=ok\nnonblocking=ok\nconnect_status=ok\n"
 	    "connect_only=ok\nprovider_owned_sockets=ok\nmulti_session=ok\n"
 	    "concurrent=ok\nclose_reopen=ok\n") < 0)
 		return (1);
-	networkcmp_client_close(client);
 	close(out);
 	return (0);
 }

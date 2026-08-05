@@ -9,6 +9,9 @@
 
 . "$(atf_get_srcdir)/capd_test_harness.sh"
 
+PATH="$(dirname "$(atf_get_srcdir)"):${PATH}"
+export PATH
+
 daemon_pid=
 pidfile=
 conffile=

@@ -625,6 +625,14 @@ ATF_TC_BODY(api_rejects_invalid_descriptors_and_arguments, tc)
 	ATF_CHECK_ERRNO(EINVAL,
 	    service_provider_expose(NULL, "org.test", &listener) == -1);
 	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL,
+	    service_provider_worker_channel(NULL, &fd, &fd) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_provider_quiescing(NULL) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL,
+	    service_provider_quiesce_complete(NULL, 0) == -1);
+	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_listener_close(NULL) == -1);
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_connect(NULL, NULL, &fd) == -1);
@@ -636,6 +644,8 @@ ATF_TC_BODY(api_rejects_invalid_descriptors_and_arguments, tc)
 	errno = 0;
 	ATF_CHECK(service_session_create(fd, &session) == -1);
 	ATF_CHECK(fcntl(fd, F_GETFD) != -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_session_fail(NULL, EPROTO) == -1);
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL,
 	    service_component_complete(NULL,
@@ -893,6 +903,21 @@ ATF_TC_BODY(service_session_lifecycle, tc)
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_session_call(client, &outgoing,
 	    &incoming, &options) == -1);
+	ATF_REQUIRE_EQ(0, service_session_fail(client, EPROTO));
+	errno = 0;
+	ATF_CHECK_ERRNO(EPROTO,
+	    test_session_call(client, "x", 1, reply, sizeof(reply), 0,
+	    NULL) == -1);
+	/* A later invalidation cannot disguise the first protocol failure. */
+	ATF_REQUIRE_EQ(0, service_session_fail(client, EIO));
+	errno = 0;
+	ATF_CHECK_ERRNO(EPROTO,
+	    test_session_call(client, "x", 1, reply, sizeof(reply), 0,
+	    NULL) == -1);
+	service_session_close(client);
+	close(peer);
+	capability_channel_pair(&fd, &peer);
+	ATF_REQUIRE_EQ(0, service_session_create(fd, &client));
 	ATF_REQUIRE(pipe(started) == 0);
 	memset(&context, 0, sizeof(context));
 	context.client = client;
@@ -947,6 +972,7 @@ ATF_TC_BODY(service_session_payload_and_attachment_lifecycle, tc)
 	struct service_reply incoming;
 	struct session_provider_context provider;
 	struct service_session *session;
+	struct timespec timeout_after, timeout_before;
 	pthread_t thread;
 	char byte, event[32], reply[64], small[4];
 	int channel[2], event_pipe[2], large_pipe[2], late_pipe[2];
@@ -980,7 +1006,11 @@ ATF_TC_BODY(service_session_payload_and_attachment_lifecycle, tc)
 	ATF_REQUIRE_EQ(0, service_session_create(channel[0], &session));
 	ATF_REQUIRE(read(ready_pipe[0], &byte, sizeof(byte)) == sizeof(byte));
 
-	options.timeout_ms = 2000;
+	/*
+	 * The provider queued this event before publishing readiness.  A zero
+	 * timeout must still perform one nonblocking channel dispatch.
+	 */
+	options.timeout_ms = 0;
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = small;
@@ -994,6 +1024,7 @@ ATF_TC_BODY(service_session_payload_and_attachment_lifecycle, tc)
 	ATF_CHECK_ERRNO(EAGAIN,
 	    read(event_pipe[0], &byte, sizeof(byte)) == -1);
 
+	options.timeout_ms = 2000;
 	received_fd = -1;
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
@@ -1027,9 +1058,14 @@ ATF_TC_BODY(service_session_payload_and_attachment_lifecycle, tc)
 	ATF_CHECK_EQ(0, read(large_pipe[0], &byte, sizeof(byte)));
 
 	errno = 0;
+	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &timeout_before) == 0);
 	ATF_CHECK_ERRNO(ETIMEDOUT,
 	    test_session_call(session, "T", 1, reply, sizeof(reply), 10,
 	    NULL) == -1);
+	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &timeout_after) == 0);
+	ATF_CHECK_MSG(timeout_after.tv_sec - timeout_before.tv_sec +
+	    (timeout_after.tv_nsec - timeout_before.tv_nsec) / 1000000000.0 <
+	    0.075, "10 ms call deadline exceeded its scheduling allowance");
 	ATF_REQUIRE_EQ(0,
 	    test_session_call(session, "K", 1, reply, sizeof(reply), 2000,
 	    &received));

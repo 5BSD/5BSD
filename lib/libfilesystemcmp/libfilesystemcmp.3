@@ -215,6 +215,18 @@ Scratch sync succeeds as a no-op.
 After an ambiguous peer disconnect, mutating operations must not be retried
 blindly.
 The opaque client is process-bound.
+The injected component session is retained as process-lifetime authority;
+.Fn filesystemcmp_close
+releases a library borrow, and a later
+.Fn filesystemcmp_open
+reacquires the same managed session without creating another channel reader.
+If the provider returns a malformed typed reply, the library marks this
+process-lifetime authority terminal.
+The failing operation and every later operation return
+.Er EPROTO
+without sending another request, including after public close and reopen.
+This fail-closed state prevents continued use of a provider that has violated
+the negotiated protocol.
 After
 .Xr fork 2 ,
 the child cannot reuse the parent's session and must open its own injected

@@ -34,10 +34,6 @@ struct oraclectl_status {
 };
 
 __BEGIN_DECLS
-/* Low-level IPC helpers: EINTR-retrying read/write loops. */
-int	oraclectl_readn(int fd, void *buf, size_t len);
-int	oraclectl_writen(int fd, const void *buf, size_t len);
-
 int	oraclectl_open(const char *sockpath);
 int	oraclectl_status(int fd, struct oraclectl_status *st,
 	    char *summary, size_t sumlen);

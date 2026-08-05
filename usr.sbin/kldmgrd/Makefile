@@ -3,11 +3,12 @@
 PACKAGE=kldmgrd
 PROG=	kldmgrd
 MAN=	kldmgrd.8
-SRCS=	kldmgrd_main.c
+SRCS=	kldmgrd_main.c kldmgrd_ops.c kldmgrd_policy.c
 
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
-LIBADD=		bsm channel service
+CFLAGS+=	-I${SRCTOP}/lib/libkldmgr
+LIBADD=		bsm channel kldmgr service
 
 DIRS+=	KLDMGR_CAP KLDMGR_CAP_BIN KLDMGR_CAP_ETC
 KLDMGR_CAP=	/Capabilities/System/Kldmgr.cap

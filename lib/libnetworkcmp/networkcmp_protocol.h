@@ -16,15 +16,10 @@
 #define	NETWORKCMP_INTERFACE		"org.5bsd.network"
 #define	NETWORKCMP_INTERFACE_VERSION	"1.0.0"
 #define	NETWORKCMP_MAX_MESSAGE		14336
-#define	NETWORKCMP_RING_FDS		NETWORKCMP_RING_FD_COUNT
 #define	NETWORKCMP_NAME_MAX		253
 #define	NETWORKCMP_SERVICE_MAX		32
 #define	NETWORKCMP_CANONNAME_MAX	253
 #define	NETWORKCMP_RESOLVE_MAX_RESULTS	32
-#define	NETWORKCMP_RING_MIN_SIZE		4096U
-#define	NETWORKCMP_RING_MAX_SIZE		(1U << 30)
-#define	NETWORKCMP_RING_DEFAULT_SIZE	(256U * 1024)
-#define	NETWORKCMP_DATAGRAM_DEFAULT_MAX	65535U
 #define	NETWORKCMP_INLINE_MAX		12288U
 #define	NETWORKCMP_IO_TIMEOUT_MAX	60000U
 
@@ -33,9 +28,7 @@
 #define	NETWORKCMP_FEATURE_TCP		0x00000001U
 #define	NETWORKCMP_FEATURE_UDP		0x00000002U
 #define	NETWORKCMP_FEATURE_IPV6		0x00000004U
-#define	NETWORKCMP_FEATURE_SHM_RINGS	0x00000008U
-#define	NETWORKCMP_FEATURE_QUIC_DATAGRAM	0x00000010U
-#define	NETWORKCMP_FEATURE_DNS		0x00000020U
+#define	NETWORKCMP_FEATURE_DNS		0x00000008U
 
 #define	NETWORKCMP_RESOLVE_F_PASSIVE		0x00000001U
 #define	NETWORKCMP_RESOLVE_F_CANONNAME		0x00000002U
@@ -54,7 +47,6 @@ enum networkcmp_opcode {
 	NETWORKCMP_OP_SHUTDOWN,
 	NETWORKCMP_OP_CLOSE,
 	NETWORKCMP_OP_RESOLVE,
-	NETWORKCMP_OP_ATTACH_RINGS,
 	NETWORKCMP_OP_SEND,
 	NETWORKCMP_OP_RECV,
 	NETWORKCMP_OP_CONNECT_STATUS
@@ -93,24 +85,6 @@ struct networkcmp_msg {
 _Static_assert(sizeof(struct networkcmp_msg) == 16,
     "networkcmp message header ABI");
 
-/*
- * ATTACH_RINGS attachment slots.  Sender fd numbers are never encoded.
- * The channel installs receiver-local descriptors in this order.  TX and RX
- * are each libshmring endpoints in config, data, head, tail order, whose
- * object shape, seals, mappings, and role access are validated on open.
- */
-enum networkcmp_ring_fd_slot {
-	NETWORKCMP_RING_FD_TX_CONFIG = 0,
-	NETWORKCMP_RING_FD_TX_DATA,
-	NETWORKCMP_RING_FD_TX_HEAD,
-	NETWORKCMP_RING_FD_TX_TAIL,
-	NETWORKCMP_RING_FD_RX_CONFIG,
-	NETWORKCMP_RING_FD_RX_DATA,
-	NETWORKCMP_RING_FD_RX_HEAD,
-	NETWORKCMP_RING_FD_RX_TAIL,
-	NETWORKCMP_RING_FD_COUNT
-};
-
 struct networkcmp_endpoint {
 	uint8_t		family;
 	uint8_t		prefix;
@@ -124,21 +98,17 @@ struct networkcmp_hello {
 	uint32_t	max_version;
 	uint32_t	features;
 	uint32_t	reserved;
-	uint32_t	preferred_tx_ring_size;
-	uint32_t	preferred_rx_ring_size;
-	uint32_t	preferred_max_datagram;
-	uint32_t	reserved2;
 };
 
 struct networkcmp_hello_reply {
 	uint32_t	version;
 	uint32_t	features;
 	uint32_t	max_sockets;
-	uint32_t	max_ring_size;
-	uint32_t	tx_ring_size;
-	uint32_t	rx_ring_size;
+	uint32_t	max_inline;
 	uint32_t	max_datagram;
-	uint32_t	reserved;
+	uint32_t	max_resolve_results;
+	uint32_t	io_timeout_max;
+	uint32_t	reserved[2];
 };
 
 struct networkcmp_handle {
@@ -213,12 +183,6 @@ struct networkcmp_resolve_result {
 	struct networkcmp_endpoint endpoint;
 	uint32_t	socket_type;
 	uint32_t	protocol;
-};
-
-struct networkcmp_ring_request {
-	struct networkcmp_handle socket;
-	uint32_t	tx_mode;
-	uint32_t	rx_mode;
 };
 
 struct networkcmp_inline_request {

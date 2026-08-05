@@ -3,7 +3,8 @@
 .Dt LIBTRACECMP 3
 .Os
 .Sh NAME
-.Nm tracecmp_open
+.Nm tracecmp_open ,
+.Nm tracecmp_dtrace_open
 .Nd explicitly authorized DTrace descriptor delegation
 .Sh LIBRARY
 .Li libtracecmp
@@ -12,6 +13,8 @@
 .In tracecmp.h
 .Ft int
 .Fn tracecmp_open "int *dtracefd"
+.Ft dtrace_hdl_t *
+.Fn tracecmp_dtrace_open "int flags" "int *errp"
 .Sh DESCRIPTION
 .Fn tracecmp_open
 connects to the global
@@ -21,17 +24,43 @@ service through
 negotiates version 1.0.0, and requests one DTrace consumer descriptor.
 Applications do not supply a component or provider name.
 .Pp
-The base provider currently advertises no raw-descriptor feature and rejects
-the open operation with
+.Fn tracecmp_dtrace_open
+is the normal application interface.
+It requests the delegated descriptor, constructs a
+.Xr libdtrace 3
+handle with
+.Fn dtrace_fdopen ,
+and closes the intermediate descriptor.
+The descriptor constructor duplicates its input, so the caller retains
+ownership on both success and failure.
+The
+.Dv DTRACE_O_NODEV
+flag is rejected because a delegated consumer is the purpose of this API.
+.Pp
+The constructor configures automatic buffer resizing, switch buffers, and a
+250 millisecond switch rate.
+Principal and aggregation buffer sizes scale with physical RAM and online CPU
+count and are capped at 32 MiB per CPU; dynamic-variable storage is capped at
+64 MiB.
+On systems where topology cannot be queried, the fallback is 4 MiB.
+Applications may call
+.Fn dtrace_setopt
+before enabling probes to replace these defaults.
+.Fn tracecmp_open
+is the lower-level interface for consumers that deliberately manage the raw
+descriptor.
+.Pp
+The provider advertises the raw-descriptor feature only for a client label
+listed explicitly in
+.Pa /etc/traced.allow .
+Unlisted clients receive
 .Er EACCES .
-Any future provider that implements this interface deliberately exposes raw
-DTrace authority and is suitable only under an explicit administrator policy.
 Such a descriptor must have a complete DTrace ioctl allowlist, be
-non-transferable, and be closed on exec.
+transferable only for its initial delivery, and be closed on fork and exec.
 .Sh SEE ALSO
 .Xr dtrace 1 ,
 .Xr capsicum 4 ,
-.Xr tracecmp 8
+.Xr traced 8
 .Sh SECURITY CONSIDERATIONS
 Capsicum rights and ioctl lists cannot express D language probe, predicate,
 or action policy.

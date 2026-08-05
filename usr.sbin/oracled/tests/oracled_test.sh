@@ -1,4 +1,6 @@
 #
+PATH="$(dirname "$(atf_get_srcdir)"):${PATH}"
+export PATH
 # SPDX-License-Identifier: BSD-2-Clause
 #
 

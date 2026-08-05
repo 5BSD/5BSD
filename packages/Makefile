@@ -17,6 +17,7 @@
 .include <src.opts.mk>
 
 SUBDIR=	blocklist \
+	auditbrokerd \
 	bsdconfig \
 	bzip2 \
 	clibs \
@@ -28,11 +29,11 @@ SUBDIR=	blocklist \
 	rebootd \
 	serviced \
 	servicectl \
-	filesystemcmp \
-	logcmp \
-	networkcmp \
-	notifycmp \
-	tracecmp \
+	localfilesystem \
+	logd \
+	localnetwork \
+	bsdnotify \
+	traced \
 	devd \
 	devmatch \
 	dhclient \
@@ -43,14 +44,17 @@ SUBDIR=	blocklist \
 	geom \
 	ggate \
 	lib9p \
+	libauditcmp \
 	libarchive \
 	libcapability \
 	libcapbundle \
 	libchannel \
 	libfilesystemcmp \
+	libkldmgr \
 	liblogcmp \
 	libnetworkcmp \
 	libnotifycmp \
+	librebootctl \
 	liboraclectl \
 	liboraclert \
 	libservice \
@@ -178,14 +182,17 @@ SUBDIR.${MK_TESTS}+=		vsock-tests
 SUBDIR.${MK_TESTS}+=		oracled-tests oraclectl-tests
 SUBDIR.${MK_TESTS}+=		serviced-tests servicectl-tests
 SUBDIR.${MK_TESTS}+=		libcapability-tests libcapbundle-tests
+SUBDIR.${MK_TESTS}+=		libauditcmp-tests auditbrokerd-tests
 SUBDIR.${MK_TESTS}+=		libchannel-tests libshmring-tests
 SUBDIR.${MK_TESTS}+=		libfilesystemcmp-tests libnetworkcmp-tests
 SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotifycmp-tests
+SUBDIR.${MK_TESTS}+=		libkldmgr-tests librebootctl-tests
+SUBDIR.${MK_TESTS}+=		kldmgrd-tests rebootd-tests
 SUBDIR.${MK_TESTS}+=		libtracecmp-tests
-SUBDIR.${MK_TESTS}+=		liboraclert-tests libservice-tests
+SUBDIR.${MK_TESTS}+=		liboraclectl-tests liboraclert-tests libservice-tests
 SUBDIR.${MK_TESTS}+=		mac-capability-tests
-SUBDIR.${MK_TESTS}+=		filesystemcmp-tests networkcmp-tests
-SUBDIR.${MK_TESTS}+=		logcmp-tests notifycmp-tests tracecmp-tests
+SUBDIR.${MK_TESTS}+=		localfilesystem-tests localnetwork-tests
+SUBDIR.${MK_TESTS}+=		logd-tests bsdnotify-tests traced-tests
 SUBDIR.${MK_TESTS_SUPPORT}+=	atf kyua
 SUBDIR.${MK_UNBOUND}+=		local-unbound
 SUBDIR.${MK_VI}+=		vi

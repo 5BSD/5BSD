@@ -99,15 +99,6 @@ int	filesystemcmp_path_sync(struct filesystemcmp_path_context *,
 int	filesystemcmp_path_close_handle(struct filesystemcmp_path_context *,
 	    struct filesystemcmp_handle object);
 
-/* Provider and advanced-client framing primitives. */
-int	filesystemcmp_validate_message(const struct filesystemcmp_msg *msg,
-	    size_t received, enum filesystemcmp_message_role role);
-int	filesystemcmp_message_init(struct filesystemcmp_msg *msg,
-	    uint16_t opcode, uint32_t flags);
-int	filesystemcmp_message_init_reply(struct filesystemcmp_msg *reply,
-	    const struct filesystemcmp_msg *request, int status);
-int	filesystemcmp_validate_fds(const struct filesystemcmp_msg *msg,
-	    size_t nfds, enum filesystemcmp_message_role role);
 __END_DECLS
 
 #endif /* !_FILESYSTEMCMP_H_ */

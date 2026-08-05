@@ -1,0 +1,59 @@
+." SPDX-License-Identifier: BSD-2-Clause
+.Dd July 31, 2026
+.Dt REBOOTCTL 8
+.Os
+.Sh NAME
+.Nm rebootctl
+.Nd validate rebootd policy and query shutdown state
+.Sh SYNOPSIS
+.Nm
+.Cm configtest
+.Op Ar file
+.Nm
+.Cm status
+.Nm
+.Cm cancel
+.Nm
+.Cm reboot
+.Op Ar delay-seconds
+.Nm
+.Cm reroot
+.Op Ar delay-seconds
+.Nm
+.Cm shutdown
+.Op Ar delay-seconds
+.Sh DESCRIPTION
+.Cm configtest
+validates the explicit-label allow list used by
+.Xr rebootd 8 ,
+defaulting to
+.Pa /etc/rebootd.allow .
+A missing or empty file is valid and means default deny for mutating
+operations; status remains readable according to the service protocol.
+.Cm status
+uses
+.Xr librebootctl 3
+to report whether the service has initiated shutdown.
+It performs no reboot or shutdown operation.
+.Cm cancel
+cancels the pending operation after the daemon has durably published its
+cancellation notification.
+It fails with
+.Er ENOENT
+when no operation is pending and remains subject to the daemon's exact-label
+policy.
+.Cm reboot ,
+.Cm reroot ,
+and
+.Cm shutdown
+request the corresponding privileged operation through
+.Xr librebootctl 3 .
+The default delay is 10 seconds.  An optional non-negative delay, bounded to
+24 hours, may be supplied in seconds.
+They return only after the daemon has accepted or rejected the request; an
+accepted request may prevent the command from printing its confirmation if
+the kernel transition completes first.
+The daemon's exact-label policy remains authoritative.
+.Sh SEE ALSO
+.Xr librebootctl 3 ,
+.Xr rebootd 8

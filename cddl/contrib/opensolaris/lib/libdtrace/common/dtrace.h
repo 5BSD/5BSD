@@ -74,6 +74,7 @@ typedef struct dtrace_aggdata dtrace_aggdata_t;
 #define	DTRACE_O_MASK		0x0f	/* mask of valid flags to dtrace_open */
 
 extern dtrace_hdl_t *dtrace_open(int, int, int *);
+extern dtrace_hdl_t *dtrace_fdopen(int, int, int, int *);
 extern dtrace_hdl_t *dtrace_vopen(int, int, int *,
     const dtrace_vector_t *, void *);
 

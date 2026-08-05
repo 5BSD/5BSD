@@ -9,8 +9,10 @@ with private daemon lifecycle code and C programs compiled from heredocs.
 The scope is:
 
 - the `mac_capability` kernel framework and its capability services;
-- `liboraclert`, `libcapability`, `libcapbundle`, and `libservice`;
+- `liboraclert`, `libcapability`, `libchannel`, `libservice`, `libshmring`,
+  `libcapbundle`, and every typed service library;
 - `oracled`, `serviced`, `oraclectl`, and `servicectl`;
+- FileSystemCmp, NetworkCmp, LogCmp, NotifyCmp, TraceCmp, and AuditCmp;
 - privileged managed services such as `kldmgrd` and `rebootd`;
 - capability-managed device brokers such as `blued`.
 
@@ -115,7 +117,7 @@ conformance library rather than duplicating setup code.
 ### L2: daemon component tests
 
 These run daemon subsystems with injected backends and socketpairs, without a
-live protected Oracle stack.  Production logic must expose narrow interfaces;
+live protected Oracled stack. Production logic must expose narrow interfaces;
 tests must not copy implementations.
 
 `oracled` component coverage:
@@ -163,7 +165,7 @@ state-transition cases.
 
 ### `liboraclert`
 
-- encode/decode round trips for every Oracle request and reply;
+- encode/decode round trips for every Oracled request and reply;
 - exact wire size, alignment, byte order, version, operation, flag, and reserved
   field validation;
 - descriptor count/type/order validation and cleanup after partial receipt;
@@ -176,17 +178,28 @@ state-transition cases.
 
 ### `libcapability`
 
-- connect, call, mint, authorize, release, and descriptor-access APIs across
-  their complete state machines;
-- exact behavior for missing, malformed, duplicate, stale, closed, and wrong-
-  type descriptors;
+- kernel-service metadata and synchronous-call APIs across their complete
+  state machines;
+- exact behavior for missing, malformed, stale, closed, and wrong-type kernel
+  capability descriptors;
 - descriptor ownership on every success and failure path, including proof that
   caller-owned descriptors are not accidentally consumed;
-- transfer, fork, exec, close-on-exec, close-on-fork, and multithreaded use;
-- environment parsing without mutation on failure and idempotent activation;
-- cancellation/interruption and concurrent calls on shared and separate
-  handles;
+- attachment-slot order, zero-capacity replies, oversized kernel results,
+  interruption, and concurrent calls on shared and separate handles;
 - leak checks under deterministic allocation and syscall failures.
+
+### `libchannel`
+
+- asynchronous request, reply, and event dispatch using the kernel channel
+  token as the sole correlation identifier;
+- ordered attachment ownership, take/borrow semantics, automatic cleanup of
+  unclaimed descriptors, and duplicate-response rejection;
+- queue and byte/fd limits, backpressure, flush readiness, cancellation, late
+  replies, unknown tokens, and peer death;
+- concurrent outstanding requests, intentionally reordered replies, fork, and
+  channel destruction with queued attachments; and
+- proof that the library uses only `SENDMSG`/`RECVMSG` and contains no service
+  discovery, blocking adapter, internal thread, or `MAC_CAPABILITY_CALL` path.
 
 ### `libcapbundle`
 
@@ -205,15 +218,39 @@ state-transition cases.
 
 - every public call before initialization, after initialization, after channel
   loss, and after relevant one-shot operations;
-- ready, register, unregister, lookup, accept, send, receive, protection,
-  capability activation, and descriptor access success/denial paths;
+- ready, expose, withdraw, lookup, accept, protection, capability activation,
+  component bootstrap, managed call/event, and descriptor access
+  success/denial paths;
 - declared-name authorization, duplicate registration, self-lookup, provider
   exit, waiter cancellation, and reconnect policy;
-- payload boundary values, null/zero combinations, descriptor passing, peer
-  closure, interruption, and protocol mismatch;
+- payload boundary values, null/zero combinations, descriptor passing, reply
+  reordering, cancellation, peer closure, interruption, and protocol mismatch;
 - descriptor type and confinement verified by an independent observer;
 - fork and exec behavior and an explicitly documented thread-safety contract;
 - static and shared linking against both object-tree and installed libraries.
+
+### `libshmring` and typed service libraries
+
+- `libshmring` independently covers wraparound, full/empty transitions,
+  malformed sealed metadata, exact endpoint rights, object aliasing, position
+  corruption and overflow, producer/consumer ordering, ownership, and cleanup;
+  availability queries must distinguish corruption from empty/full state, and
+  the library must not depend on `libservice`;
+- each typed library covers its exact magic/version/opcode/status schema,
+  attachment-slot meanings, malformed replies, descriptor cleanup, and its
+  statically selected local or global discovery path;
+- `libfilesystemcmp` covers namespaces and cwd contexts;
+  `libnetworkcmp` covers socket, DNS, deadline, and cancellation calls;
+  `liblogcmp` covers shared process lifecycle, lazy ring activation and
+  promotion, coalesced wakeups, bounded drain-before-detach, ambiguous RPC
+  failure, descriptor baselines, corrupt-ring recovery, flush, and fork;
+  `libnotifycmp` covers independent sessions, events, default denial, and
+  saturating timeout boundaries;
+  `libtracecmp` covers raw ownership and tuned libdtrace construction;
+  `libauditcmp`, `libkldmgr`, and `librebootctl` cover typed global requests;
+  and
+- no application-facing typed API exposes environment-variable names,
+  service-discovery strategy, channel tokens, or serviced control messages.
 
 ### Common library quality gates
 
@@ -237,6 +274,12 @@ Each program has a component matrix independent of the ten cross-stack cases.
 | `serviced` | registry, graph, startup/on-demand, naming, token delivery, descriptor layout, reload, restart/backoff, coalition cleanup, audit |
 | `oraclectl` | CLI grammar, exact request encoding, all reply statuses, incompatible version, partial/closed socket, exit-status contract |
 | `servicectl` | CLI grammar, status/list/reload/stop, verification and installation safety, authorization, exact exit-status contract |
+| `localfilesystem` | scratch/persistent/bundle namespaces, durable byte/object quotas, reconstruction, rollback, cwd/path contexts, malformed frames, worker confinement |
+| `localnetwork` | TCP/UDP, IPv4/IPv6, DNS, nonblocking deadlines/cancellation, socket limits, malformed frames, worker confinement |
+| `logd` | independent sessions, shared-ring lifecycle, batching/coalescing, loss accounting, flush and sink failures, close/reopen/fork |
+| `bsdnotify` | independent sessions, default-deny policy, subscriptions/timers, queue pressure, event ordering, close/reopen/fork |
+| `traced` | explicit-label policy, DTrace descriptor rights/propagation, tuned buffer defaults, unavailable device, worker confinement |
+| `auditbrokerd` | identity/rate policy, typed validation, injected audit backend, response mapping, no backend call on denial, worker confinement |
 | `kldmgrd` | label policy, request validation, injected kld backend, response mapping, no backend call on denial |
 | `rebootd` | label policy, request validation, injected reboot backend, response mapping, no backend call on denial |
 | `blued` | config/persistence/control protocols, virtual-HCI behavior, serviced activation, Bluetooth claim confinement and revocation |
@@ -251,13 +294,13 @@ nonzero result.
 
 ### L3: full-stack security contract tests
 
-These run the real kernel services, Oracle, service manager, libraries, and
+These run the real kernel services, Oracled, Serviced, libraries, and
 managed fixture processes.  They are root-only, exclusive, deliberately few,
 and each proves a cross-boundary invariant that cannot be established below.
 
 Required full-stack cases:
 
-1. Oracle boots serviced with a confined channel and sole procdesc supervision
+1. Oracled boots serviced with a confined channel and sole procdesc supervision
    authority, reaches ready, and performs a clean authenticated shutdown.
 2. A managed service receives exactly its declared tokens and capability
    service descriptors, with correct type and transfer/fork/exec restrictions.
@@ -266,15 +309,16 @@ Required full-stack cases:
    unauthorized client are denied.
 4. On-demand activation has one launch under concurrent lookup, propagates
    success to all waiters, and cancels all waiters on timeout/crash.
-5. Reload is transactional across manifests and Oracle claims: success changes
+5. Reload is transactional across manifests and Oracled claims: success changes
    the effective set, and every injected failure leaves the old set intact.
 6. Service exit and bundle removal release dynamic claims exactly once while
    policy claims remain intact.
 7. Direct ambient signal, trace, visibility, descriptor transfer, and `/dev`
    access attacks fail; the retained procdesc and authenticated control paths
    still work.
-8. Serviced crash closes/revokes subordinate authority and follows the declared
-   Oracle restart policy without preserving stale registrations or claims.
+8. Serviced crash closes or revokes subordinate authority and follows the
+   declared Oracled restart policy without preserving stale registrations or
+   claims.
 9. A real privileged broker (`kldmgrd` or a non-destructive `rebootd` status
    path) authenticates its client label end to end.  Dangerous operations stay
    in L2 with injected backends.
@@ -307,19 +351,19 @@ the stress reproducer is considered fixed.
 ### `capd_test_guardian`
 
 A compiled guardian is the only supported way for shell tests to launch a
-protected Oracle.
+protected Oracled.
 
 The guardian:
 
 1. creates a lease socketpair with the test;
-2. starts Oracle with `pdfork(2)` and retains the process descriptor;
-3. records the exact Oracle PID only for diagnostics;
+2. starts Oracled with `pdfork(2)` and retains the process descriptor;
+3. records the exact Oracled PID only for diagnostics;
 4. reports startup and exit events over a small versioned protocol;
 5. accepts `shutdown`, `kill`, `status`, and `wait` commands;
 6. attempts authenticated control-socket shutdown first;
 7. uses `pdkill(2)` as the bounded recovery authority;
-8. kills and reaps Oracle if the test's lease closes unexpectedly;
-9. does not exit until Oracle and its supervised subtree are gone.
+8. kills and reaps Oracled if the test's lease closes unexpectedly;
+9. does not exit until Oracled and its supervised subtree are gone.
 
 The guardian must be outside the protected subtree it supervises.  Its own
 unexpected death is covered by a runner-level guardian census and is treated
@@ -371,7 +415,7 @@ completed.  It never uses a sleep to establish ordering.
 
 ### `capd_wire_fixture`
 
-A raw client for Oracle, serviced, service, kld, and reboot protocols.  It can
+A raw client for Oracled, serviced, service, kld, and reboot protocols. It can
 send exact byte sequences and descriptor sets, fragment writes, close early,
 delay a protocol phase under harness control, and report exact replies.  This
 replaces one-off raw clients embedded in shell tests.
@@ -402,7 +446,7 @@ Every deadline failure prints:
 
 - the expected event and elapsed deadline;
 - guardian status and exact owned process tree;
-- Oracle and serviced status replies when available;
+- Oracled and serviced status replies when available;
 - the tail of each relevant log;
 - fixture records received so far;
 - open control/result endpoints and retained process descriptors.
@@ -456,11 +500,11 @@ Exit gate: no newly modified test can report pass while its stack is alive.
 - Implement `capd_test_harness.sh` and its self-tests.
 - Migrate `libservice_test:libservice_naming` first because it exercises the
   leaked-daemon failure mode.
-- Migrate Oracle bootstrap, serviced integration, servicectl, oraclectl,
+- Migrate Oracled bootstrap, serviced integration, servicectl, oraclectl,
   kldmgrd, and rebootd suites.
 - Delete superseded lifecycle functions after the final caller migrates.
 
-Exit gate: killing or timing out a test body leaves no Oracle, serviced, or
+Exit gate: killing or timing out a test body leaves no Oracled, serviced, or
 managed fixture process in 100 consecutive fault-injected runs.
 
 ### Phase 2: compiled fixtures
@@ -512,3 +556,148 @@ The redesign is complete when:
   package operation are continuously verified;
 - every daemon state and transition appears in a reviewed transition-coverage
   report.
+
+## Current validation status
+
+The latest July 31, 2026 object-tree results cover 34 suites and report 472
+passed, zero failed, zero broken, and 178 root-only cases skipped. The eight
+typed component/service client libraries account for 120 passes. Nine
+configuration and diagnostic tool suites, including `filesystemcmpctl` and
+`networkcmpctl`, passed 59 unprivileged tests and skipped ten root-only cases.
+The direct `liboraclectl` suite adds six transport and framing passes. Clean
+`MK_DTRACE=yes` and `MK_DTRACE=no` builds passed for the affected libraries
+and providers; the non-DTrace matrix ran 255 passing unprivileged tests with
+30 privileged skips. AuditCmp, kldmgrd, and rebootd use injected production
+backend interfaces to
+prove denial-without-side-effect, success, error mapping, and rollback without
+performing a privileged audit, module, reboot, or shutdown operation.
+The module backend now covers enumeration failure and bounded ordering as well
+as mutation. Reboot tests cover atomic pending-state serialization and
+visibility across forked workers.
+
+`libshmring` additionally proves that opened mappings are `INHERIT_NONE`, an
+inherited object returns `ECHILD`, and the parent endpoint remains usable.
+The clean-build gate links every PIE provider against freshly built
+position-independent typed static archives in both DTrace configurations,
+eliminating reliance on stale installed libraries.
+
+Beacon tests require a pending event wait to remain asynchronous with respect
+to client dispatch and peer death. The event-driven router retains the exact
+channel request for the response, bounds each session to one pending `NEXT`,
+and rejects overlap with `EBUSY`; client timeout tests cover saturation
+immediately below the reserved infinite value.
+
+FileSystemCmp persistent-store tests also reject hard-linked files during
+restart reconstruction and after live link injection. The latter exercises
+write, truncate, existing-file create, rename, and unlink through an already
+open handle. Restart reconstruction independently enforces the per-file size
+ceiling as well as aggregate byte and object limits.
+
+The skipped cases are not passes. They require a disposable root test host for
+the real Capsicum, mac_capability, coalition, jail, network, auditd, DTrace,
+kernel-module, and non-destructive reboot-status boundaries. This host has no
+`doas` executable, so that live gate was not run. Focused pkgbase DESTDIR and
+METALOG staging has verified suffixes, ownership, configuration, dependency,
+and provider/tool grouping. A full package archive install/upgrade/removal run
+remains pending because unrelated base-tree buildworld failures prevent
+producing the complete package set.
+
+NotifyCmp is default-deny for publish, subscribe, state, and timers. Beacon's
+runtime policy is loaded before sandbox entry from `/etc/bsdnotify.conf`,
+keyed by the immutable serviced client label, and enforced in each relay
+before forwarding to the shared router. Unit and dispatcher tests cover
+policy parsing, unknown-label denial, identity-specific grants, exact bounded
+binary payloads, publisher identity, queue isolation, loss reporting, and a
+publish-to-next wire round trip. Successful live ACL paths and label
+authentication remain part of the root release gate. Exact commands,
+per-suite counts, pkgbase staging evidence, and the live release checklist are
+maintained in `docs/capability-components-validation.md`.
+
+The July 31 production-readiness follow-up added deterministic NetworkCmp
+resolver isolation, LogCmp interrupted-rotation reconstruction and strict
+configuration loading, normal build-time `libcapability` ATF cases, and direct
+Oracled-control-library failure tests. It also added an operational-name
+contract covering every daemon `PROG`/`PACKAGE`, rc.d hook and variable,
+pkgbase definition, and `.cap` bundle path. The `libcapability` suite no longer
+compiles a C heredoc at runtime. Privileged resolver, kernel metadata, and live
+capability cases remain release gates because this host has no privilege
+wrapper.
+
+The public operational names are `oracled`, `serviced`, `localfilesystem`,
+`localnetwork`, `logd`, `bsdnotify`, `traced`, `auditbrokerd`, `rebootd`,
+and `kldmgrd`. Component and typed-library names remain descriptive API names.
+The final source contract specifically prevents the rc-variable/hook mismatch
+found during the rename from recurring.
+
+The library-boundary review removed raw socket-loop symbols from the public
+Oracled control library and removed `servicectl`'s accidental link to that
+protocol-specific library. Six `liboraclectl` tests and three isolated
+`servicectl` transport tests cover dead peers, valid replies, truncation,
+oversized lengths, bounded buffers, and error propagation. Root-only Armory,
+Sundown, and servicectl fixtures now generate the current
+`serviced_control_socket` key and current `.cap`/program names. The unused
+`liblwipcmp` scaffold was deleted so only Roadrunner's reviewed kernel-socket
+architecture ships; userspace packet networking remains future work.
+
+These results do not yet constitute a release sign-off. The Beacon descriptor
+admission conflict is resolved without weakening `SERVICE_PROTECT_NOFDRECV`:
+the provider and fixed router now use an unnamed mac_capability channel created
+through `service_provider_worker_channel()`. Provider session endpoints start
+with `CAP_XFER_TWICE`; delivery to the provider leaves `CAP_XFER_ONCE`, and the
+single router handoff installs `CAP_XFER_NONE`. The private pair is itself
+non-transferable and has one-fork propagation bounds. The obsolete UNIX-domain
+`SCM_RIGHTS` helpers and tests were removed, while malformed attachment counts,
+bounded replies, peer death, and descriptor-bearing client requests continue
+to fail closed. A root-only end-to-end worker-channel test verifies fork
+propagation, non-transferability, payload exchange, and supervisor creation.
+The kernel suite also verifies that `NOFDRECV` rejects `SCM_RIGHTS` while an
+attachment on an already-held capability channel remains usable and arrives
+non-transferable.
+Production sign-off still requires that live test, the other root-only cases,
+and the full build/pkgbase artifact gates on a clean tree.
+
+## Final naming and production-readiness review
+
+The operational names deliberately describe roles without exposing protocol
+or implementation names. The Texas/animal vocabulary is confined to program,
+package, bundle, and manual-page identity; stable typed C libraries retain
+descriptive names so application code remains obvious.
+
+| Program | Role | Readiness disposition |
+| --- | --- | --- |
+| `oracled` | capability oracle and root bootstrap | Code-complete; live kernel, audit, and DTrace gates remain. |
+| `serviced` | service activation, naming, coalitions, and lifecycle | Code-complete; root crash/restart, descriptor-pressure, and private-worker-channel gates remain. |
+| `localfilesystem` | coalition-local filesystem authority | Code-complete; live jail, mount, persistence, and hard-link defenses remain to be qualified. |
+| `localnetwork` | coalition-local socket and resolver authority | Code-complete; live network-policy, resolver-stall, and cancellation gates remain. |
+| `logd` | bounded, persistent structured log service | Code-complete; crash/power-loss, sustained-load, retention, and package-upgrade qualification remain. |
+| `bsdnotify` | bounded publish/subscribe, state, and timer service | Code-complete; live identity-policy and capability-channel attachment qualification remain. |
+| `traced` | administrator-only DTrace capability broker | Restricted-production only; raw DTrace delegation must remain explicitly privileged until a provider-owned query API replaces it. |
+| `auditbrokerd` | rate-limited OpenBSM submission service | Code-complete; live auditd backpressure, rotation, and failure qualification remain. |
+| `rebootd` | durable reboot scheduling and Beacon publication | Code-complete; only non-destructive status paths are eligible for routine CI; real reboot recovery requires a disposable host. |
+| `kldmgrd` | policy-controlled kernel-module management | Code-complete; live load/unload rollback requires a disposable host and dedicated test module. |
+
+“Code-complete” is not a release sign-off. It means the reviewed architecture,
+bounded resource model, typed API, sandbox transition, managed quiesce path,
+audit/DTrace surface, pkgbase metadata, configuration or diagnostic surface
+where applicable, and deterministic
+unprivileged tests are present. None of these programs should be called
+production-ready until the skipped root/live matrix, repeated stress and
+forced-crash lanes, clean full-world build, and package archive
+install/upgrade/removal gates pass on release-equivalent systems.
+
+The naming contract rejects stale daemon manual-page references and ties every
+public name to its `PROG`, package, bundle path, and rc boundary. Internal wire
+identifiers and typed library names such as `notifycmp` and `logcmp` are not
+daemon aliases and remain intentionally descriptive.
+The final audit also corrected Rebootd's authenticated Beacon policy identity,
+Ledger's syslog tag, and every root-only provider object path; those are now
+covered by the same operational-name contract.
+
+The authoritative outstanding qualification backlog is the
+“Outstanding production qualification plan” in
+`docs/capability-components-validation.md`. It assigns stable test IDs and
+pass criteria to private worker channels, Beacon admission ambiguity,
+Sundown-to-Beacon delivery, Ledger crash/privacy/loss behavior, filesystem and
+network scale, the remaining privileged global services, pkgbase lifecycle,
+sanitizers, fuzzing, repetition, and retained release evidence. Those cases
+are requirements, not claims of completed coverage.

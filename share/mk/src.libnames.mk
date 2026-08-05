@@ -113,6 +113,7 @@ _LIBRARIES=	\
 		alias \
 		capbundle \
 		archive \
+		auditcmp \
 		asn1 \
 		avl \
 		BlocksRuntime \
@@ -189,9 +190,11 @@ _LIBRARIES=	\
 		krb5profile \
 		krb5support \
 		kvm \
+		kldmgr \
 		l \
 		logcmp \
 		notifycmp \
+		rebootctl \
 		tracecmp \
 		lzma \
 		m \
@@ -325,15 +328,18 @@ LIBVERIEXEC?=	${LIBVERIEXECDIR}/libveriexec.a
 # 2nd+ order consumers.  Auto-generating this would be better.
 _DP_80211=	sbuf bsdxml
 _DP_9p=		sbuf
+_DP_auditcmp=	service
 _DP_capbundle=	oraclert ucl
 _DP_oraclert=	ucl
 _DP_service=	capability channel pthread
 _DP_shmring=
-_DP_networkcmp=	pthread service shmring
+_DP_networkcmp=	pthread service
 _DP_filesystemcmp=	pthread service
 _DP_logcmp=	pthread service shmring
+_DP_kldmgr=	service
 _DP_notifycmp=	pthread service
-_DP_tracecmp=	service
+_DP_rebootctl=	service
+_DP_tracecmp=	dtrace service
 _DP_capability=
 .if ${MK_CASPER} != "no"
 _DP_9p+=	casper cap_pwd cap_grp

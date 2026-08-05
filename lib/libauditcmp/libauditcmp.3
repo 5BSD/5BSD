@@ -1,0 +1,58 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 31, 2026
+.Dt LIBAUDITCMP 3
+.Os
+.Sh NAME
+.Nm auditcmp_client_open ,
+.Nm auditcmp_client_prepare ,
+.Nm auditcmp_client_adopt ,
+.Nm auditcmp_submit
+.Nd authenticated BSM audit broker client
+.Sh SYNOPSIS
+.In auditcmp.h
+.Ft int
+.Fn auditcmp_client_open "struct auditcmp_client **client"
+.Ft int
+.Fn auditcmp_submit "struct auditcmp_client *client" "const char *subject" "const char *operation" "int error"
+.Ft void
+.Fn auditcmp_client_close "struct auditcmp_client *client"
+.In auditcmp_server.h
+.Ft int
+.Fn auditcmp_client_prepare "int *session_fd"
+.Ft int
+.Fn auditcmp_client_adopt "int session_fd" "struct auditcmp_client **client"
+.Sh DESCRIPTION
+The
+.Nm
+library submits bounded policy records to the privileged
+.Xr auditbrokerd 8
+service.
+The provider maps the serviced-authenticated caller identity to a fixed BSM
+event; clients cannot choose event numbers, audit user IDs, or provider
+labels.
+.Pp
+.Fn auditcmp_client_prepare
+creates a global service session configured to cross exactly one fork.
+The child calls
+.Fn auditcmp_client_adopt
+before applying restrictions that prohibit incoming descriptor transfer.
+The parent must close its copy after the fork.
+.Fn auditcmp_client_adopt
+always consumes
+.Fa session_fd ,
+including on failure.
+.Pp
+The preparation and adoption calls are provider bootstrap interfaces and are
+therefore declared in
+.In auditcmp_server.h ,
+not the ordinary application header.
+.Sh RETURN VALUES
+Functions returning
+.Vt int
+return zero on success and \-1 on failure with
+.Va errno
+set.
+.Sh SEE ALSO
+.Xr audit 2 ,
+.Xr libservice 3 ,
+.Xr auditbrokerd 8

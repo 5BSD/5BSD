@@ -15,9 +15,10 @@ MLINKS+=libnotifycmp.3 notifycmp_stats.3
 MLINKS+=libnotifycmp.3 notifycmp_client_close.3
 
 SRCS=	notifycmp.c
-INCS=	notifycmp.h notifycmp_protocol.h
+INCS=	notifycmp.h notifycmp_protocol.h notifycmp_server.h
 LIBADD=	pthread service
 CFLAGS+=	-I${SRCTOP}/lib/libservice
+STATIC_CFLAGS+=	${PICFLAG}
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

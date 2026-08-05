@@ -1,0 +1,33 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include <bsm/audit_kevents.h>
+#include <atf-c.h>
+
+#include "auditcmp_policy.h"
+
+ATF_TC_WITHOUT_HEAD(identity_map);
+ATF_TC_BODY(identity_map, tc)
+{
+
+	ATF_CHECK_EQ(AUE_FILESYSTEMCMP_POLICY,
+	    auditcmp_policy_event("org.5bsd.FileSystemCmp"));
+	ATF_CHECK_EQ(AUE_NETWORKCMP_POLICY,
+	    auditcmp_policy_event("org.5bsd.NetworkCmp"));
+	ATF_CHECK_EQ(AUE_LOGCMP_POLICY,
+	    auditcmp_policy_event("org.5bsd.LogCmp"));
+	ATF_CHECK_EQ(AUE_NOTIFYCMP_POLICY,
+	    auditcmp_policy_event("org.5bsd.NotifyCmp"));
+	ATF_CHECK_EQ(0, auditcmp_policy_event("org.5bsd.FileSystemCmp.child"));
+	ATF_CHECK_EQ(0, auditcmp_policy_event("*"));
+	ATF_CHECK_EQ(0, auditcmp_policy_event(""));
+	ATF_CHECK_EQ(0, auditcmp_policy_event(NULL));
+}
+
+ATF_TP_ADD_TCS(tp)
+{
+
+	ATF_TP_ADD_TC(tp, identity_map);
+	return (atf_no_error());
+}

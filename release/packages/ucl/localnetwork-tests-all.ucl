@@ -1,0 +1,11 @@
+comment = "NetworkCmp provider tests"
+
+desc = <<EOD
+Protocol-negative, TCP/UDP state-machine, datagram-boundary, timeout,
+endpoint-policy, asynchronous resolver isolation, resource-exhaustion,
+capability-sandbox, and verified-bundle tests for NetworkCmp.
+EOD
+
+annotations = {
+	set = "tests"
+}

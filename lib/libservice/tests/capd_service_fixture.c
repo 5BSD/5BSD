@@ -90,10 +90,10 @@ fixture_service_label(void)
 }
 
 static int
-fixture_service_capability_fd(const char *name)
+fixture_service_capability_open(const char *name, int *fd)
 {
 
-	return (service_capability_fd(fixture_service_context, name));
+	return (service_capability_open(fixture_service_context, name, fd));
 }
 
 static int
@@ -1086,9 +1086,8 @@ scenario_capability_services(const char *result)
 	if (out == NULL)
 		err(1, "fopen %s", result);
 	for (i = 0; i < nitems(names); i++) {
-		fd = fixture_service_capability_fd(names[i]);
-		if (fd == -1)
-			err(1, "service_capability_fd %s", names[i]);
+		if (fixture_service_capability_open(names[i], &fd) == -1)
+			err(1, "service_capability_open %s", names[i]);
 		memset(&info, 0, sizeof(info));
 		if (capability_get_info(fd, &info) == -1 ||
 		    strcmp(info.name, names[i]) != 0)
@@ -1098,10 +1097,16 @@ scenario_capability_services(const char *result)
 		confined = cap_xfer_limit(fd, CAP_XFER_ONCE) == -1 &&
 		    errno == ENOTCAPABLE;
 		fprintf(out, "%s=valid confined=%d\n", names[i], confined);
+		close(fd);
+		if (fixture_service_capability_open(names[i], &fd) == -1)
+			err(1, "reopen capability service %s", names[i]);
+		close(fd);
 	}
 	if (fclose(out) == EOF)
 		err(1, "close %s", result);
-	if (fixture_service_capability_fd("channel") != -1 || errno != EINVAL)
+	fd = -1;
+	if (fixture_service_capability_open("channel", &fd) != -1 ||
+	    errno != EINVAL || fd != -1)
 		errx(1, "invalid capability service name was accepted");
 	if (fixture_service_ready() == -1)
 		err(1, "service_ready");
@@ -1322,6 +1327,82 @@ scenario_readiness_gate(const char *protocol_result,
 	hold();
 }
 
+static int
+scenario_quiesce(const char *name, const char *ready, const char *result)
+{
+	struct service_identity identity;
+	struct service_listener *listener;
+	int fd;
+
+	listener = NULL;
+	if (fixture_service_initialize() == -1 ||
+	    service_provider_expose(fixture_service_provider, name,
+	    &listener) == -1 || fixture_service_ready() == -1)
+		err(1, "quiesce provider initialization");
+	write_result(ready, "ready=1\n");
+	memset(&identity, 0, sizeof(identity));
+	identity.size = sizeof(identity);
+	errno = 0;
+	if (service_listener_accept(listener, &identity, &fd) != -1 ||
+	    errno != ECANCELED ||
+	    service_provider_quiescing(fixture_service_provider) != 1)
+		errx(1, "listener was not quiesced atomically");
+	if (service_provider_quiesce_complete(fixture_service_provider, 0) == -1)
+		err(1, "service_provider_quiesce_complete");
+	write_result(result, "admission=closed\nresult=complete\n");
+	for (;;)
+		pause();
+}
+
+static int
+scenario_worker_channel(const char *result)
+{
+	char message[32];
+	ssize_t received;
+	pid_t child;
+	int provider_fd, status, worker_fd;
+
+	if (fixture_service_initialize() == -1 ||
+	    service_provider_worker_channel(fixture_service_provider,
+	    &provider_fd, &worker_fd) == -1)
+		err(1, "service_provider_worker_channel");
+	child = fork();
+	if (child == -1)
+		err(1, "fork worker");
+	if (child == 0) {
+		if (fcntl(provider_fd, F_GETFD) != -1 || errno != EBADF)
+			_exit(10);
+		if (fcntl(worker_fd, F_GETFD) == -1)
+			_exit(11);
+		errno = 0;
+		if (cap_xfer_limit(worker_fd, CAP_XFER_ONCE) != -1 ||
+		    errno != ENOTCAPABLE)
+			_exit(12);
+		if (fixture_event_send(worker_fd, "worker", 7) == -1)
+			_exit(13);
+		close(worker_fd);
+		_exit(0);
+	}
+	close(worker_fd);
+	if (fixture_service_ready() == -1)
+		err(1, "worker-channel readiness");
+	received = fixture_event_recv(provider_fd, message, sizeof(message));
+	if (received != 7 || strcmp(message, "worker") != 0)
+		errx(1, "worker-channel payload mismatch");
+	if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+	    WEXITSTATUS(status) != 0)
+		errx(1, "worker child failed: %#x", status);
+	errno = 0;
+	if (cap_xfer_limit(provider_fd, CAP_XFER_ONCE) != -1 ||
+	    errno != ENOTCAPABLE)
+		errx(1, "provider endpoint remained transferable");
+	close(provider_fd);
+	write_result(result,
+	    "pair=private\nprovider_in_child=closed\nworker_in_child=open\n"
+	    "transfer=none\npayload=worker\n");
+	hold();
+}
+
 static void
 usage(void)
 {
@@ -1353,7 +1434,9 @@ usage(void)
 	    "       capd_service_fixture compat-ready [provided-name]\n"
 	    "       capd_service_fixture supervisor-monitor ready result\n"
 	    "       capd_service_fixture compat-lookup\n"
-	    "       capd_service_fixture readiness-gate protocol capmode\n");
+	    "       capd_service_fixture readiness-gate protocol capmode\n"
+	    "       capd_service_fixture quiesce name ready result\n"
+	    "       capd_service_fixture worker-channel result\n");
 	exit(64);
 }
 
@@ -1418,5 +1501,9 @@ main(int argc, char **argv)
 		return (scenario_compat_lookup());
 	if (argc == 4 && strcmp(argv[1], "readiness-gate") == 0)
 		return (scenario_readiness_gate(argv[2], argv[3]));
+	if (argc == 5 && strcmp(argv[1], "quiesce") == 0)
+		return (scenario_quiesce(argv[2], argv[3], argv[4]));
+	if (argc == 3 && strcmp(argv[1], "worker-channel") == 0)
+		return (scenario_worker_channel(argv[2]));
 	usage();
 }

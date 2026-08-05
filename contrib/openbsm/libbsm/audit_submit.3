@@ -24,7 +24,7 @@
 .\" IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd January 18, 2008
+.Dd July 31, 2026
 .Dt AUDIT_SUBMIT 3
 .Os
 .Sh NAME
@@ -83,6 +83,21 @@ subject will be retrieved from the kernel via
 .Xr getaudit 2 ,
 or
 .Xr getaudit_addr 2 .
+.Pp
+On
+.Fx ,
+.Fn audit_submit
+may be called from capability mode.
+The system-wide audit condition cannot be queried there because
+.Xr auditon 2
+is intentionally not capability enabled.
+The function instead attempts submission through
+.Xr audit 2 ;
+if kernel auditing is disabled, the resulting
+.Er ENOTSUP
+is treated as a successful no-op.
+The caller must still hold the privilege required by
+.Xr audit 2 .
 .Sh RETURN VALUES
 If successful,
 .Nm
@@ -135,6 +150,7 @@ trailer,94
 .Ed
 .Sh SEE ALSO
 .Xr auditon 2 ,
+.Xr capsicum 4 ,
 .Xr getaudit 2 ,
 .Xr libbsm 3 ,
 .Xr stdarg 3

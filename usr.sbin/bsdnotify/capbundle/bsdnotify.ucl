@@ -1,0 +1,10 @@
+schema = "org.5bsd.serviced.service";
+schema_version = "1.0.0";
+bundle_id = "org.5bsd.NotifyCmp";
+version = "1.0.0";
+author = "5BSD";
+
+program = "bsdnotify";
+provides = ["org.5bsd.notify"];
+restart = "on-failure";
+user = "capability";

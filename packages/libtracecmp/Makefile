@@ -6,5 +6,6 @@ PKG_LICENSES=	BSD2CLAUSE
 UCLSRC=	${SRCTOP}/release/packages/ucl/libtracecmp-all.ucl
 
 PKG_DEPS.libtracecmp+=	libservice
+PKG_DEPS.libtracecmp+=	dtrace
 
 .include <bsd.pkg.mk>

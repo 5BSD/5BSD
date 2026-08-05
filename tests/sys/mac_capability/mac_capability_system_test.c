@@ -11,6 +11,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/ioctl.h>
 #include <sys/linker.h>
 #include <sys/wait.h>
@@ -506,6 +507,69 @@ ATF_TC_BODY(mint_narrow_zero_gives_all, tc)
 	close(svc);
 }
 
+ATF_TC(capmode_authorized_kldstat);
+ATF_TC_HEAD(capmode_authorized_kldstat, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A system-gate holder can query kernel modules in capability mode");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(capmode_authorized_kldstat, tc)
+{
+	pid_t pid;
+	int status, svc;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int id;
+		struct kld_file_stat stat;
+
+		if (cap_enter() == -1)
+			_exit(2);
+		id = kldnext(0);
+		if (id < 0)
+			_exit(3);
+		memset(&stat, 0, sizeof(stat));
+		stat.version = sizeof(stat);
+		_exit(kldstat(id, &stat) == 0 ? 0 : 4);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "capability-mode kld query failed with child status %#x", status);
+	close(svc);
+}
+
+ATF_TC(capmode_system_gate_fails_closed);
+ATF_TC_HEAD(capmode_system_gate_fails_closed, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Capability mode cannot use a system gate without a claim or token");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(capmode_system_gate_fails_closed, tc)
+{
+	pid_t pid;
+	int status;
+
+	/* Connect once so a missing policy module is reported as a skip. */
+	close(sys_connect());
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		if (cap_enter() == -1)
+			_exit(2);
+		errno = 0;
+		_exit(kldnext(0) == -1 && errno == EPERM ? 0 : 3);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "unclaimed capability-mode system gate was not denied: %#x",
+	    status);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -522,6 +586,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mint_narrow_subset);
 	ATF_TP_ADD_TC(tp, mint_narrow_rejects_unclaimed);
 	ATF_TP_ADD_TC(tp, mint_narrow_zero_gives_all);
+	ATF_TP_ADD_TC(tp, capmode_authorized_kldstat);
+	ATF_TP_ADD_TC(tp, capmode_system_gate_fails_closed);
 
 	return (atf_no_error());
 }

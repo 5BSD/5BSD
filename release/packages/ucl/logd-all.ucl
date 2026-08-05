@@ -1,0 +1,9 @@
+comment = "Capability-mode structured LogCmp provider"
+
+desc = <<EOD
+The base LogCmp provider and verified /Capabilities/System/Log.cap bundle.
+It accepts bounded structured records over role-separated shared-memory rings
+and persists privacy-redacted, checksummed, rotating segments through an
+isolated storage worker.  A limited system.syslog capability remains the
+compatibility sink.
+EOD

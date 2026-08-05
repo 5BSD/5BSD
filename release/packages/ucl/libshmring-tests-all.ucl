@@ -1,8 +1,8 @@
 comment = "Capability-safe shared-memory ring tests"
 
 desc = <<EOD
-Tests for the shared-memory ring protocol, descriptor rights, corruption
-detection, and capability-mode operation.
+Tests for the shared-memory ring protocol, descriptor rights, fork mapping
+revocation, corruption detection, and capability-mode operation.
 EOD
 
 annotations = {

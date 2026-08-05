@@ -5,289 +5,234 @@
  */
 
 #include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/linker.h>
 #include <sys/module.h>
 #include <sys/param.h>
 #include <sys/procdesc.h>
+#include <sys/wait.h>
 
 #include <bsm/audit_kevents.h>
 #include <bsm/libbsm.h>
-#include <ctype.h>
 #include <errno.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <channel.h>
+#include <kldmgr.h>
+#include <kldmgr_server.h>
 #include <libservice.h>
 
-#include "kldmgrd_proto.h"
+#include "kldmgrd_policy.h"
+#include "kldmgrd_ops.h"
 #include "kldmgrd_probes.h"
+#ifdef KLDMGRD_TESTING
+#include "kldmgrd_test.h"
+#endif
 
-#define	KLDMGR_SERVICE_NAME	"org.5bsd.system.kldmgr"
-#define	KLDMGR_ALLOW_FILE	"/etc/kldmgrd.allow"
 #define	KLDMGR_CLIENT_TIMEOUT_MS	30000
 
-struct label_policy {
-	char	labels[256][64];
-	size_t	count;
-	bool	wildcard;
-};
+static int
+prepare_worker_channel(int fd)
+{
+
+	/* The session belongs to exactly one worker process. */
+	return (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+}
+
+#ifdef KLDMGRD_TESTING
+int
+kldmgrd_test_prepare_worker_fd(int fd)
+{
+
+	return (prepare_worker_channel(fd));
+}
+#endif
 
 struct session {
 	const char	*label;
+	const struct kldmgrd_backend *backend;
 	bool		 allowed;
 	int		 error;
 };
 
+#ifdef KLDMGRD_TESTING
+static void
+audit_request(const char *label __unused, uint32_t opcode __unused,
+    int error __unused)
+{
+}
+#else
 static void
 audit_request(const char *label, uint32_t opcode, int error)
 {
 	short event;
 
 	event = opcode == KLDMGR_OP_UNLOAD ? AUE_MODUNLOAD : AUE_MODLOAD;
-	(void)audit_submit(event, getuid(), (char)error, error != 0,
+	(void)audit_submit(event, AU_DEFAUDITID, (char)error, error != 0,
 	    "client=%s opcode=%u result=%d", label, opcode, error);
 }
 
-static char *
-trim(char *text)
+static int
+backend_load(const char *name, void *context __unused)
 {
-	char *end;
 
-	while (isspace((unsigned char)*text))
-		text++;
-	if (*text == '\0')
-		return (text);
-	end = text + strlen(text) - 1;
-	while (end > text && isspace((unsigned char)*end))
-		*end-- = '\0';
-	return (text);
+	return (kldload(name));
 }
 
 static int
-load_policy(const char *path, struct label_policy *policy)
+backend_find(const char *name, void *context __unused)
 {
-	char line[256], *entry, *comment;
-	FILE *file;
 
-	memset(policy, 0, sizeof(*policy));
-	file = fopen(path, "r");
-	if (file == NULL) {
-		if (errno == ENOENT)
-			return (0);
+	return (kldfind(name));
+}
+
+static int
+backend_unload(int id, void *context __unused)
+{
+
+	return (kldunload(id));
+}
+
+static int
+backend_next(int id, void *context __unused)
+{
+
+	return (kldnext(id));
+}
+
+static int
+backend_stat(int id, struct kld_file_stat *status, void *context __unused)
+{
+
+	return (kldstat(id, status));
+}
+
+static const struct kldmgrd_backend system_backend = {
+	.load = backend_load,
+	.find = backend_find,
+	.unload = backend_unload,
+	.next = backend_next,
+	.stat = backend_stat,
+	.context = NULL
+};
+#endif /* KLDMGRD_TESTING */
+
+static int
+send_reply(struct channel_message *message, uint16_t opcode, int error,
+    const void *payload, size_t payload_length)
+{
+	uint8_t buffer[KLDMGR_MAX_MESSAGE];
+	struct kldmgr_msg *reply;
+	size_t length;
+
+	if (payload_length > sizeof(buffer) - sizeof(*reply))
+		return (errno = EOVERFLOW, -1);
+	memset(buffer, 0, sizeof(buffer));
+	reply = (void *)buffer;
+	reply->magic = KLDMGR_MAGIC;
+	reply->version = KLDMGR_ABI_VERSION;
+	reply->opcode = opcode;
+	reply->status = error == 0 ? 0 : -error;
+	if (error == 0 && payload_length != 0)
+		memcpy(reply + 1, payload, payload_length);
+	length = sizeof(*reply) + (error == 0 ? payload_length : 0);
+	if (kldmgr_validate_reply(reply, length) == -1)
 		return (-1);
-	}
-	while (fgets(line, sizeof(line), file) != NULL) {
-		comment = strchr(line, '#');
-		if (comment != NULL)
-			*comment = '\0';
-		entry = trim(line);
-		if (*entry == '\0')
-			continue;
-		if (strcmp(entry, "*") == 0) {
-			policy->wildcard = true;
-			break;
-		}
-		if (strlen(entry) >= sizeof(policy->labels[0]) ||
-		    policy->count == nitems(policy->labels)) {
-			fclose(file);
-			errno = E2BIG;
-			return (-1);
-		}
-		strlcpy(policy->labels[policy->count++], entry,
-		    sizeof(policy->labels[0]));
-	}
-	if (ferror(file)) {
-		fclose(file);
-		return (-1);
-	}
-	return (fclose(file));
-}
-
-static bool
-policy_allows(const struct label_policy *policy, const char *label)
-{
-	size_t i;
-
-	if (label == NULL || label[0] == '\0')
-		return (false);
-	if (policy->wildcard)
-		return (true);
-	for (i = 0; i < policy->count; i++)
-		if (strcmp(policy->labels[i], label) == 0)
-			return (true);
-	return (false);
+	return (channel_send_reply(message,
+	    &(struct channel_outgoing)
+	    CHANNEL_OUTGOING_INITIALIZER(buffer, length)));
 }
 
 static int
-module_name_valid(const char *name, size_t length)
-{
-	size_t i, name_length;
-
-	name_length = strnlen(name, length);
-	if (name_length == 0 || name_length >= length)
-		return (0);
-	for (i = 0; i < name_length; i++) {
-		if ((name[i] >= 'a' && name[i] <= 'z') ||
-		    (name[i] >= 'A' && name[i] <= 'Z') ||
-		    (name[i] >= '0' && name[i] <= '9') ||
-		    name[i] == '_' || name[i] == '-' || name[i] == '.')
-			continue;
-		return (0);
-	}
-	return (1);
-}
-
-static void
-handle_load(const struct kldmgr_req *request, struct kldmgr_reply *reply)
-{
-	int id;
-
-	reply->id = -1;
-	if (!module_name_valid(request->name, sizeof(request->name))) {
-		reply->status = KLDMGR_STATUS_ERR;
-		return;
-	}
-	id = kldload(request->name);
-	if (id == -1) {
-		syslog(LOG_WARNING, "kldload %s: %m", request->name);
-		reply->status = errno == ENOENT ?
-		    KLDMGR_STATUS_NOTFOUND : KLDMGR_STATUS_ERR;
-	} else {
-		syslog(LOG_INFO, "loaded %s (id %d)", request->name, id);
-		reply->status = KLDMGR_STATUS_OK;
-		reply->id = id;
-	}
-}
-
-static void
-handle_unload(const struct kldmgr_req *request, struct kldmgr_reply *reply)
-{
-	int id;
-
-	reply->id = -1;
-	if (!module_name_valid(request->name, sizeof(request->name))) {
-		reply->status = KLDMGR_STATUS_ERR;
-		return;
-	}
-	id = kldfind(request->name);
-	if (id == -1) {
-		reply->status = KLDMGR_STATUS_NOTFOUND;
-		return;
-	}
-	if (kldunload(id) == -1) {
-		syslog(LOG_WARNING, "kldunload %s (id %d): %m",
-		    request->name, id);
-		reply->status = KLDMGR_STATUS_ERR;
-	} else {
-		syslog(LOG_INFO, "unloaded %s (id %d)", request->name, id);
-		reply->status = KLDMGR_STATUS_OK;
-		reply->id = id;
-	}
-}
-
-static int
-respond_list(struct channel_message *message)
+respond_list(struct channel_message *message, bool allowed,
+	const struct kldmgrd_backend *backend, int *operation_error)
 {
 	char buffer[sizeof(struct kldmgr_list_reply) +
 	    KLDMGR_LIST_MAX * sizeof(struct kldmgr_list_entry)];
 	struct kldmgr_list_reply *reply;
-	struct kld_file_stat status;
-	uint32_t count;
-	int id;
+	size_t count;
+	int error;
 
 	memset(buffer, 0, sizeof(buffer));
 	reply = (void *)buffer;
-	reply->status = KLDMGR_STATUS_OK;
-	count = 0;
-	for (id = kldnext(0); id > 0 && count < KLDMGR_LIST_MAX;
-	    id = kldnext(id)) {
-		memset(&status, 0, sizeof(status));
-		status.version = sizeof(status);
-		if (kldstat(id, &status) == -1)
-			continue;
-		reply->entries[count].id = id;
-		strlcpy(reply->entries[count].name, status.name,
-		    sizeof(reply->entries[count].name));
-		count++;
-	}
-	reply->count = count;
-	return (channel_send_reply(message,
-	    &(struct channel_outgoing)CHANNEL_OUTGOING_INITIALIZER(buffer,
-	    sizeof(*reply) + count * sizeof(struct kldmgr_list_entry))));
+	error = kldmgrd_list(allowed, backend, reply->entries,
+	    KLDMGR_LIST_MAX, &count);
+	*operation_error = error;
+	if (error != 0)
+		return (send_reply(message, KLDMGR_OP_LIST, error, NULL, 0));
+	reply->count = (uint32_t)count;
+	return (send_reply(message, KLDMGR_OP_LIST, 0, buffer,
+	    sizeof(*reply) + count * sizeof(struct kldmgr_list_entry)));
 }
 
 static void
 handle_request(struct channel *channel __unused,
     struct channel_message *message, void *argument)
 {
-	const struct kldmgr_req *request;
-	struct kldmgr_reply reply;
+	const struct kldmgr_msg *request;
+	const struct kldmgr_module_request *module;
+	struct kldmgr_id_reply reply;
 	struct session *session;
-	int result;
+	int error, result;
 
 	session = argument;
 	request = NULL;
+	error = 0;
+	result = 0;
 	memset(&reply, 0, sizeof(reply));
 	reply.id = -1;
-	if (channel_message_length(message) != sizeof(*request) ||
-	    channel_message_fd_count(message) != 0) {
-		reply.status = KLDMGR_STATUS_ERR;
+	if (channel_message_fd_count(message) != 0 ||
+	    kldmgr_validate_request(channel_message_data(message),
+	    channel_message_length(message)) == -1) {
 		KLDMGRD_PROBE_MALFORMED(
 		    __DECONST(char *, session->label), EPROTO);
-		result = channel_send_reply(message,
-		    &(struct channel_outgoing)
-		    CHANNEL_OUTGOING_INITIALIZER(&reply, sizeof(reply)));
+		session->error = EPROTO;
 		goto out;
 	}
 	request = channel_message_data(message);
-	if (!session->allowed) {
-		reply.status = KLDMGR_STATUS_PERM;
-		result = channel_send_reply(message,
-		    &(struct channel_outgoing)
-		    CHANNEL_OUTGOING_INITIALIZER(&reply, sizeof(reply)));
-		goto out;
-	}
-	switch (request->op) {
+	module = (const void *)(request + 1);
+	error = 0;
+	switch (request->opcode) {
 	case KLDMGR_OP_LOAD:
-		handle_load(request, &reply);
-		result = channel_send_reply(message,
-		    &(struct channel_outgoing)
-		    CHANNEL_OUTGOING_INITIALIZER(&reply, sizeof(reply)));
-		break;
 	case KLDMGR_OP_UNLOAD:
-		handle_unload(request, &reply);
-		result = channel_send_reply(message,
-		    &(struct channel_outgoing)
-		    CHANNEL_OUTGOING_INITIALIZER(&reply, sizeof(reply)));
+		error = kldmgrd_execute_module(request->opcode, module,
+		    session->allowed, session->backend, &reply.id);
+		if (error != 0)
+			syslog(LOG_WARNING, "module operation %u for %s: %s",
+			    request->opcode, module->name, strerror(error));
+		else
+			syslog(LOG_INFO, "module operation %u for %s (id %d)",
+			    request->opcode, module->name, reply.id);
+		result = send_reply(message, request->opcode, error, &reply,
+		    sizeof(reply));
 		break;
 	case KLDMGR_OP_LIST:
-		result = respond_list(message);
+		result = respond_list(message, session->allowed, session->backend,
+		    &error);
 		break;
 	default:
-		reply.status = KLDMGR_STATUS_ERR;
-		result = channel_send_reply(message,
-		    &(struct channel_outgoing)
-		    CHANNEL_OUTGOING_INITIALIZER(&reply, sizeof(reply)));
+		error = EOPNOTSUPP;
+		result = send_reply(message, request->opcode, error, NULL, 0);
 		break;
 	}
 out:
 	if (request != NULL) {
-		int audit_error;
-
-		audit_error = reply.status == KLDMGR_STATUS_OK ? 0 :
-		    reply.status == KLDMGR_STATUS_PERM ? EACCES :
-		    reply.status == KLDMGR_STATUS_NOTFOUND ? ENOENT : EIO;
-		if (request->op == KLDMGR_OP_LOAD ||
-		    request->op == KLDMGR_OP_UNLOAD)
-			audit_request(session->label, request->op, audit_error);
+		if (request->opcode == KLDMGR_OP_LOAD ||
+		    request->opcode == KLDMGR_OP_UNLOAD)
+			audit_request(session->label, request->opcode, error);
 		KLDMGRD_PROBE_REQUEST(__DECONST(char *, session->label),
-		    request->op, audit_error);
+		    request->opcode, error);
 	}
 	if (result == -1)
 		session->error = errno;
@@ -295,7 +240,8 @@ out:
 }
 
 static int
-serve_client(int fd, const char *label, bool allowed)
+serve_session(int fd, const char *label, bool allowed,
+    const struct kldmgrd_backend *backend, bool protect)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
@@ -304,9 +250,23 @@ serve_client(int fd, const char *label, bool allowed)
 	struct session session;
 	int loop_error, result, wants_write;
 
-	service_worker_drop_inherited_authority();
+	if (fd < 0 || label == NULL || label[0] == '\0' || backend == NULL ||
+	    backend->load == NULL || backend->find == NULL ||
+	    backend->unload == NULL || backend->next == NULL ||
+	    backend->stat == NULL)
+		return (errno = EINVAL, -1);
+	if (protect && service_worker_protect(SERVICE_PROTECT_EXTERNAL |
+	    SERVICE_PROTECT_NOFORK | SERVICE_PROTECT_NOIPC |
+	    SERVICE_PROTECT_NOFDRECV | SERVICE_PROTECT_NOEXEC |
+	    SERVICE_PROTECT_NOSOCK) == -1) {
+		KLDMGRD_PROBE_SESSION_END(__DECONST(char *, label), errno);
+		return (1);
+	}
+	if (protect)
+		service_worker_drop_inherited_authority();
 	memset(&session, 0, sizeof(session));
 	session.label = label;
+	session.backend = backend;
 	session.allowed = allowed;
 	loop_error = 0;
 	KLDMGRD_PROBE_SESSION_START(__DECONST(char *, label));
@@ -362,51 +322,204 @@ serve_client(int fd, const char *label, bool allowed)
 	return (loop_error == 0 ? 0 : 1);
 }
 
+#ifdef KLDMGRD_TESTING
+int
+kldmgrd_test_serve(int fd, const char *label, bool allowed,
+    const struct kldmgrd_backend *backend)
+{
+
+	return (serve_session(fd, label, allowed, backend, false));
+}
+#else
+
+static int
+serve_client(int fd, const char *label, bool allowed)
+{
+
+	return (serve_session(fd, label, allowed, &system_backend, true));
+}
+
+#define	KLDMGRD_MAX_WORKERS	256U
+
+struct kld_worker {
+	struct kld_worker *next;
+	int pd;
+	pid_t pid;
+};
+
+static void
+worker_remove(struct kld_worker **workers, struct kld_worker *worker,
+    size_t *count)
+{
+	struct kld_worker **cursor;
+	int status;
+
+	for (cursor = workers; *cursor != NULL && *cursor != worker;
+	    cursor = &(*cursor)->next)
+		;
+	if (*cursor == worker)
+		*cursor = worker->next;
+	(void)pdwait(worker->pd, &status, WNOHANG, NULL, NULL);
+	close(worker->pd);
+	free(worker);
+	if (*count != 0)
+		(*count)--;
+}
+
+static void
+workers_shutdown(int kq, struct kld_worker **workers, size_t *count)
+{
+	struct kld_worker *worker, *next;
+	struct kevent event;
+	struct timespec deadline, now, timeout;
+	int result, status;
+
+	for (worker = *workers; worker != NULL; worker = worker->next)
+		(void)pdkill(worker->pd, SIGTERM);
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) == 0)
+		deadline.tv_sec += 5;
+	while (*workers != NULL &&
+	    clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
+		if (now.tv_sec > deadline.tv_sec ||
+		    (now.tv_sec == deadline.tv_sec &&
+		    now.tv_nsec >= deadline.tv_nsec))
+			break;
+		timeout.tv_sec = deadline.tv_sec - now.tv_sec;
+		timeout.tv_nsec = deadline.tv_nsec - now.tv_nsec;
+		if (timeout.tv_nsec < 0) {
+			timeout.tv_sec--;
+			timeout.tv_nsec += 1000000000L;
+		}
+		result = kevent(kq, NULL, 0, &event, 1, &timeout);
+		if (result == 0)
+			break;
+		if (result == -1) {
+			if (errno == EINTR)
+				continue;
+			break;
+		}
+		if (event.filter == EVFILT_PROCDESC)
+			worker_remove(workers, event.udata, count);
+	}
+	for (worker = *workers; worker != NULL; worker = worker->next)
+		(void)pdkill(worker->pd, SIGKILL);
+	for (worker = *workers; worker != NULL; worker = next) {
+		next = worker->next;
+		(void)pdwait(worker->pd, &status, 0, NULL, NULL);
+		close(worker->pd);
+		free(worker);
+	}
+	*workers = NULL;
+	*count = 0;
+}
+
 int
 main(void)
 {
+	struct kld_worker *worker, *workers;
+	struct kevent event, change;
 	struct service_identity identity;
 	struct service_listener *listener;
 	struct service_provider *provider;
-	struct label_policy policy;
+	struct kldmgrd_policy policy;
 	char label[sizeof(identity.client_label)];
-	int client, pd;
+	size_t nworkers;
+	int client, error, kq, status;
 	pid_t pid;
 
 	openlog("kldmgrd", LOG_PID | LOG_NDELAY, LOG_DAEMON);
-	if (load_policy(KLDMGR_ALLOW_FILE, &policy) == -1 ||
+	workers = NULL;
+	nworkers = 0;
+	kq = kqueuex(KQUEUE_CLOEXEC);
+	if (kq == -1 ||
+	    kldmgrd_policy_load(KLDMGRD_POLICY_PATH, &policy) == -1 ||
 	    service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL) == -1 ||
-	    service_provider_expose(provider, KLDMGR_SERVICE_NAME,
-	    &listener) == -1 ||
+	    service_provider_expose(provider, KLDMGR_INTERFACE,
+	    &listener) == -1)
+		goto fail;
+	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
+	    EV_ADD | EV_ENABLE, 0, 0, listener);
+	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		goto fail;
 	for (;;) {
-		memset(&identity, 0, sizeof(identity));
-		identity.size = sizeof(identity);
-		if (service_listener_accept(listener, &identity, &client) == -1) {
+		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
 			if (errno == EINTR)
 				continue;
 			goto fail;
 		}
+		if (event.filter == EVFILT_PROCDESC) {
+			worker_remove(&workers, event.udata, &nworkers);
+			continue;
+		}
+		memset(&identity, 0, sizeof(identity));
+		identity.size = sizeof(identity);
+		if (service_listener_accept(listener, &identity, &client) == -1) {
+			error = errno;
+			if (service_provider_quiescing(provider) == 1)
+				break;
+			errno = error;
+			if (errno == EINTR)
+				continue;
+			goto fail;
+		}
+		if (nworkers >= KLDMGRD_MAX_WORKERS) {
+			syslog(LOG_WARNING, "session limit for %s",
+			    identity.client_label);
+			close(client);
+			continue;
+		}
 		strlcpy(label, identity.client_label, sizeof(label));
-		pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+		worker = calloc(1, sizeof(*worker));
+		if (worker == NULL || prepare_worker_channel(client) == -1) {
+			syslog(LOG_WARNING, "protect session for %s: %m", label);
+			close(client);
+			free(worker);
+			continue;
+		}
+		pid = pdfork(&worker->pd, PD_CLOEXEC | PD_DAEMON);
 		if (pid == -1) {
 			syslog(LOG_WARNING, "fork client %s: %m", label);
 			close(client);
+			free(worker);
 			continue;
 		}
 		if (pid == 0)
 			_exit(serve_client(client, label,
-			    policy_allows(&policy, label)));
-		close(pd);
+		    kldmgrd_policy_allows(&policy, label)));
 		close(client);
+		worker->pid = pid;
+		EV_SET(&change, worker->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+		    NOTE_EXIT, 0, worker);
+		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
+			(void)pdkill(worker->pd, SIGKILL);
+			(void)pdwait(worker->pd, &status, 0, NULL, NULL);
+			close(worker->pd);
+			free(worker);
+			continue;
+		}
+		worker->next = workers;
+		workers = worker;
+		nworkers++;
 	}
+	workers_shutdown(kq, &workers, &nworkers);
+	status = service_provider_quiesce_complete(provider, 0);
+	close(kq);
+	closelog();
+	return (status == 0 ? 0 : 1);
 
 fail:
+	error = errno != 0 ? errno : EIO;
+	if (workers != NULL)
+		workers_shutdown(kq, &workers, &nworkers);
+	if (kq >= 0)
+		close(kq);
+	errno = error;
 	syslog(LOG_ERR, "initialization or service loop: %m");
 	closelog();
 	return (1);
 }
+#endif /* !KLDMGRD_TESTING */

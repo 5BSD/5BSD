@@ -46,53 +46,59 @@ All operations use
 (synchronous).
 .Ss Shield flags
 .Bl -tag -width CP_SF_NOFDRECV
-.It Dv CP_SF_PTRACE Ta 0x001
+.It Dv CP_SF_PTRACE Pq 0x001
 Block
 .Xr ptrace 2
 attach from foreign programs.
-.It Dv CP_SF_SIGNAL Ta 0x002
+.It Dv CP_SF_SIGNAL Pq 0x002
 Block signals from foreign programs.
 SIGKILL and SIGCONT require their own flags.
-.It Dv CP_SF_VISIBLE Ta 0x004
+.It Dv CP_SF_VISIBLE Pq 0x004
 Hide the process from credential visibility checks
 .Pq Xr ps 1 , Xr top 1 , procfs enumeration .
-.It Dv CP_SF_WAIT Ta 0x008
+.It Dv CP_SF_WAIT Pq 0x008
 Block
 .Xr wait4 2
 from non-parent foreign processes.
-.It Dv CP_SF_SIGKILL Ta 0x010
+.It Dv CP_SF_SIGKILL Pq 0x010
 Block SIGKILL from foreign programs.
 Makes the process unkillable except by the same program or authorized holders.
-.It Dv CP_SF_SIGCONT Ta 0x020
+.It Dv CP_SF_SIGCONT Pq 0x020
 Block SIGCONT from foreign programs.
-.It Dv CP_SF_SCHED Ta 0x040
+.It Dv CP_SF_SCHED Pq 0x040
 Block
 .Xr getpriority 2 ,
 .Xr setpriority 2 ,
 and
 .Xr cpuset 2
 manipulation from foreign programs.
-.It Dv CP_SF_CORE Ta 0x080
+.It Dv CP_SF_CORE Pq 0x080
 Suppress core dumps for the protected process.
-.It Dv CP_SF_KTRACE Ta 0x100
+.It Dv CP_SF_KTRACE Pq 0x100
 Block
 .Xr ktrace 1
 from foreign programs.
-.It Dv CP_SF_NOPRIVS Ta 0x200
+.It Dv CP_SF_NOPRIVS Pq 0x200
 Strip all privileges from the protected process.
-.It Dv CP_SF_NOFORK Ta 0x400
+.It Dv CP_SF_NOFORK Pq 0x400
 Block
 .Xr fork 2 ,
 .Xr vfork 2 ,
 and
 .Xr rfork 2 .
-.It Dv CP_SF_NOIPC Ta 0x800
+.It Dv CP_SF_NOIPC Pq 0x800
 Block SysV and POSIX IPC operations.
-.It Dv CP_SF_NOFDRECV Ta 0x1000
+.It Dv CP_SF_NOFDRECV Pq 0x1000
 Block incoming
 .Dv SCM_RIGHTS
-file descriptor transfers.
-.It Dv CP_SF_ALL Ta 0x1fff
+file descriptor transfers over local-domain sockets.
+This flag removes ambient descriptor receipt; it does not block attachments
+received over a previously held
+.Xr mac_capability_channel 4
+endpoint.
+Such attachments remain subject to the channel's explicit authority,
+descriptor-transfer limit, close-on-exec state, and close-on-fork state.
+.It Dv CP_SF_ALL Pq 0x1fff
 All protections.
 .El
 .Pp
@@ -101,19 +107,19 @@ Passing
 enables all protections.
 .Ss Operations
 .Bl -tag -width CP_OP_AUTHORIZE
-.It Dv CP_OP_SHIELD Ta 1
+.It Dv CP_OP_SHIELD Pq 1
 Shield the calling program with the specified flags.
 Closing the capability fd removes protection.
-.It Dv CP_OP_MINT Ta 2
+.It Dv CP_OP_MINT Pq 2
 Create an access token (returned as a reply fd).
 Only available on an active shield instance.
-.It Dv CP_OP_AUTHORIZE Ta 3
+.It Dv CP_OP_AUTHORIZE Pq 3
 Called on a token fd.
 Authorizes the calling program to interact with the shielded target
 despite the shield.
-.It Dv CP_OP_CAPMODE Ta 4
+.It Dv CP_OP_CAPMODE Pq 4
 Enter Capsicum capability mode for the calling process.
-.It Dv CP_OP_CHROOT Ta 5
+.It Dv CP_OP_CHROOT Pq 5
 Change the filesystem root.
 The new root directory fd is attached to the message.
 .El
@@ -147,16 +153,24 @@ privilege checks,
 .Xr fork 2 ,
 IPC operations,
 and fd receiving.
+.Sh FILES
+.Bl -tag -width indent
+.It Pa /dev/mac_capability
+The
+.Xr mac_capability 4
+device node used by
+.Fn mac_capability_connect .
+.El
 .Sh DTRACE PROBES
 The following DTrace probes are available under the
 .Nm mac_capability_capprotect
 provider:
 .Bl -tag -width "state"
-.It Li deny Ns ( Ns Fa reason , target_nonce , accessor_nonce Ns )
+.It Li "deny(reason, target_nonce, accessor_nonce)"
 Fires when a shield denies an operation from a foreign program.
-.It Li allow Ns ( Ns Fa reason , target_nonce , accessor_nonce Ns )
+.It Li "allow(reason, target_nonce, accessor_nonce)"
 Fires when an operation is allowed (same nonce or valid token).
-.It Li state Ns ( Ns Fa operation , target , caller , flags , pid , error Ns )
+.It Li "state(operation, target, caller, flags, pid, error)"
 Fires on a state change (shield, mint, or authorize).
 .El
 .Sh EXAMPLES
@@ -186,21 +200,13 @@ called without an active shield.
 .It Bq Er ENOTCAPABLE
 The capability fd lacks the required rights for the operation.
 .El
-.Sh FILES
-.Bl -tag -width indent
-.It Pa /dev/mac_capability
-The
-.Xr mac_capability 4
-device node used by
-.Fn mac_capability_connect .
-.El
 .Sh SEE ALSO
 .Xr ptrace 2 ,
-.Xr mac_capability 4 ,
 .Xr mac 4 ,
+.Xr mac_capability 4 ,
 .Xr oracled 8
 .Sh HISTORY
 The
 .Nm
 service first appeared in
-.Tn 5BSD .
+5BSD.

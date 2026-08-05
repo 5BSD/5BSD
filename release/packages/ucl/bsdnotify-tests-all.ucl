@@ -1,0 +1,10 @@
+comment = "NotifyCmp provider tests"
+
+desc = <<EOD
+Routing, identity, queue pressure, timer, asynchronous relay lifecycle,
+sandbox, bundle, audit, and DTrace tests for the NotifyCmp provider.
+EOD
+
+annotations = {
+	set = "tests"
+}

@@ -11,12 +11,16 @@
 # kldmgrd_proto.h.  Because kldmgrd registers through serviced, these
 # tests start the full oracled+serviced stack with kldmgrd installed
 # as a system bundle, then launch a test client service that exercises
-# the protocol.
+# the public libkldmgr protocol.
 #
 # Requires: root, mac_capability device available.
 #
 
-. "$(atf_get_srcdir)/capd_test_harness.sh"
+harness="$(atf_get_srcdir)/capd_test_harness.sh"
+if [ ! -r "${harness}" ]; then
+	harness="@SRCTOP@/usr.sbin/oracled/tests/capd_test_harness.sh"
+fi
+. "${harness}"
 
 # ---------------------------------------------------------------
 # Helpers — inlined because kldmgrd lives outside the serviced tree.
@@ -103,12 +107,15 @@ install_kldmgrd_bundle()
 	cp "${kldmgrd_bin}" "${dir}/bin/kldmgrd"
 	chmod 755 "${dir}/bin/kldmgrd"
 	cat > "${dir}/etc/kldmgrd.ucl" <<'UCL'
+schema = "org.5bsd.serviced.service";
+schema_version = "1.0.0";
 bundle_id = "org.5bsd.system.kldmgr";
-version = "1.0";
+version = "1.0.0";
 author = "5BSD";
 program = "kldmgrd";
 provides = ["org.5bsd.system.kldmgr"];
 restart = "on-failure";
+user = "root";
 capabilities {
     system = ["kldload", "kldunload", "kldstat"];
 }
@@ -263,7 +270,7 @@ kldmgrd_list_body()
 	prepare_paths
 	install_kldmgrd_bundle
 	install_client_bundle
-	setup_allow_file "*"
+	setup_allow_file "org.test.kldclient"
 	write_config
 	start_stack
 
@@ -315,7 +322,7 @@ kldmgrd_load_invalid_name_body()
 	prepare_paths
 	install_kldmgrd_bundle
 	install_client_bundle
-	setup_allow_file "*"
+	setup_allow_file "org.test.kldclient"
 	write_config
 	start_stack
 
@@ -357,7 +364,7 @@ kldmgrd_load_nonexistent_body()
 	prepare_paths
 	install_kldmgrd_bundle
 	install_client_bundle
-	setup_allow_file "*"
+	setup_allow_file "org.test.kldclient"
 	write_config
 	start_stack
 
@@ -399,7 +406,7 @@ kldmgrd_load_special_chars_body()
 	prepare_paths
 	install_kldmgrd_bundle
 	install_client_bundle
-	setup_allow_file "*"
+	setup_allow_file "org.test.kldclient"
 	write_config
 	start_stack
 
@@ -486,7 +493,7 @@ kldmgrd_unknown_op_body()
 	prepare_paths
 	install_kldmgrd_bundle
 	install_client_bundle
-	setup_allow_file "*"
+	setup_allow_file "org.test.kldclient"
 	write_config
 	start_stack
 

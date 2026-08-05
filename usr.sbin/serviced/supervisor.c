@@ -33,6 +33,7 @@
 #include "serviced.h"
 #include "serviced_audit.h"
 #include "serviced_probes.h"
+#include "serviced_svc_proto.h"
 
 /* Restart backoff parameters. */
 #define	RESTART_MIN_UPTIME_SEC	5	/* rapid restart threshold */
@@ -360,6 +361,7 @@ supervisor_handle_timer(struct kevent *kev)
 void
 svc_graceful_stop(struct svc_runtime *svc, int kq)
 {
+	struct svc_quiesce_msg message;
 
 	if (svc->state != SVC_STATE_RUNNING &&
 	    svc->state != SVC_STATE_STARTING)
@@ -369,6 +371,22 @@ svc_graceful_stop(struct svc_runtime *svc, int kq)
 	syslog(LOG_INFO, "service %s: stopping (pid %jd)",
 	    svc->manifest.label, (intmax_t)svc->pid);
 	SERVICED_PROBE_SVC_STOP(svc->manifest.label, svc->pid);
+	schedule_stop_kill(svc, kq);
+	if (svc->protocol_ready && svc->control_channel != NULL) {
+		memset(&message, 0, sizeof(message));
+		message.op = SVC_OP_QUIESCE;
+		message.reason = sd.shutting_down ? SVC_QUIESCE_REASON_SHUTDOWN :
+		    (svc->reload_pending ? SVC_QUIESCE_REASON_RELOAD :
+		    SVC_QUIESCE_REASON_STOP);
+		message.deadline_ms = svc->manifest.stop_timeout * 1000;
+		if (svc_channel_send_event(svc, &message, sizeof(message), NULL, 0,
+		    kq) == 0) {
+			svc->quiesce_pending = true;
+			SERVICED_PROBE_QUIESCE_REQUEST(svc->manifest.label,
+			    message.reason, message.deadline_ms);
+			return;
+		}
+	}
 
 	if (svc->coalition_fd >= 0) {
 		if (mac_cap_coalition_graceful(svc->coalition_fd, SIGTERM,
@@ -378,13 +396,28 @@ svc_graceful_stop(struct svc_runtime *svc, int kq)
 			    svc->manifest.label);
 			if (svc->pd_fd >= 0)
 				pdkill(svc->pd_fd, SIGTERM);
-			schedule_stop_kill(svc, kq);
 		}
 	} else {
 		if (svc->pd_fd >= 0)
 			pdkill(svc->pd_fd, SIGTERM);
-		schedule_stop_kill(svc, kq);
 	}
+}
+
+void
+svc_quiesce_complete(struct svc_runtime *svc, int status, int kq)
+{
+
+	if (svc == NULL || svc->state != SVC_STATE_STOPPING ||
+	    !svc->quiesce_pending)
+		return;
+	svc->quiesce_pending = false;
+	SERVICED_PROBE_QUIESCE_COMPLETE(svc->manifest.label, status);
+	if (status != 0)
+		syslog(LOG_WARNING, "service %s: quiesce completed with %s",
+		    svc->manifest.label, strerror(status));
+	if (svc->pd_fd >= 0)
+		(void)pdkill(svc->pd_fd, SIGTERM);
+	svc_channel_sync_events(svc, kq);
 }
 
 void

@@ -16,15 +16,16 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
 #include <libservice.h>
-#include <shmring.h>
 
 #include "networkcmp.h"
+#include "networkcmp_server.h"
 #include "networkcmp_probes.h"
 
 /*
@@ -52,14 +53,7 @@ struct networkcmp_client {
 	struct networkcmp_hello_reply	limits;
 	pid_t				 owner;
 	uint32_t			 references;
-};
-
-struct networkcmp_io {
-	uint32_t		socket_type;
-	struct shmring		*tx;
-	struct shmring		*rx;
-	pthread_mutex_t		tx_lock;
-	pthread_mutex_t		rx_lock;
+	_Atomic int			 terminal_error;
 };
 
 static pthread_mutex_t networkcmp_registry_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -120,14 +114,6 @@ networkcmp_endpoint_valid(const struct networkcmp_endpoint *endpoint)
 	default:
 		return (false);
 	}
-}
-
-static bool
-networkcmp_ring_size_valid(uint32_t size)
-{
-
-	return (size >= NETWORKCMP_RING_MIN_SIZE &&
-	    size <= NETWORKCMP_RING_MAX_SIZE && (size & (size - 1)) == 0);
 }
 
 static int
@@ -217,36 +203,22 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 			if (payload == expected) {
 				hello = (const void *)(msg + 1);
 				if (hello->version != NETWORKCMP_ABI_VERSION ||
-				    hello->reserved != 0 ||
+				    hello->reserved[0] != 0 ||
+				    hello->reserved[1] != 0 ||
 				    (hello->features &
 				    ~(NETWORKCMP_FEATURE_TCP |
 				    NETWORKCMP_FEATURE_UDP |
 				    NETWORKCMP_FEATURE_IPV6 |
-				    NETWORKCMP_FEATURE_SHM_RINGS |
-				    NETWORKCMP_FEATURE_QUIC_DATAGRAM |
-				    NETWORKCMP_FEATURE_DNS)) != 0)
-					goto reject;
-				if ((hello->features &
-				    NETWORKCMP_FEATURE_SHM_RINGS) == 0) {
-					if (hello->max_ring_size != 0 ||
-					    hello->tx_ring_size != 0 ||
-					    hello->rx_ring_size != 0 ||
-					    hello->max_datagram != 0)
-						goto reject;
-				} else if (!networkcmp_ring_size_valid(
-				    hello->max_ring_size) ||
-				    !networkcmp_ring_size_valid(
-				    hello->tx_ring_size) ||
-				    !networkcmp_ring_size_valid(
-				    hello->rx_ring_size) ||
-				    hello->tx_ring_size >
-				    hello->max_ring_size ||
-				    hello->rx_ring_size >
-				    hello->max_ring_size ||
+				    NETWORKCMP_FEATURE_DNS)) != 0 ||
+				    hello->max_inline == 0 ||
+				    hello->max_inline > NETWORKCMP_INLINE_MAX ||
 				    hello->max_datagram == 0 ||
-				    hello->max_datagram >
-				    MIN(hello->tx_ring_size,
-				    hello->rx_ring_size) - sizeof(uint32_t))
+				    hello->max_datagram > hello->max_inline ||
+				    hello->max_resolve_results == 0 ||
+				    hello->max_resolve_results >
+				    NETWORKCMP_RESOLVE_MAX_RESULTS ||
+				    hello->io_timeout_max == 0 ||
+				    hello->io_timeout_max > NETWORKCMP_IO_TIMEOUT_MAX)
 					goto reject;
 			}
 			break;
@@ -320,7 +292,6 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 			if (payload == expected) {
 				hello = (const void *)(msg + 1);
 				if (hello->reserved != 0 ||
-				    hello->reserved2 != 0 ||
 				    hello->min_version > hello->max_version ||
 				    hello->min_version >
 				    NETWORKCMP_ABI_VERSION ||
@@ -330,17 +301,7 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 				    ~(NETWORKCMP_FEATURE_TCP |
 				    NETWORKCMP_FEATURE_UDP |
 				    NETWORKCMP_FEATURE_IPV6 |
-				    NETWORKCMP_FEATURE_SHM_RINGS |
-				    NETWORKCMP_FEATURE_QUIC_DATAGRAM |
-				    NETWORKCMP_FEATURE_DNS)) != 0 ||
-				    (hello->preferred_tx_ring_size != 0 &&
-				    !networkcmp_ring_size_valid(
-				    hello->preferred_tx_ring_size)) ||
-				    (hello->preferred_rx_ring_size != 0 &&
-				    !networkcmp_ring_size_valid(
-				    hello->preferred_rx_ring_size)) ||
-				    hello->preferred_max_datagram >
-				    NETWORKCMP_RING_MAX_SIZE - sizeof(uint32_t))
+				    NETWORKCMP_FEATURE_DNS)) != 0)
 					goto reject;
 			}
 			break;
@@ -436,18 +397,6 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 				goto reject;
 			break;
 		}
-		case NETWORKCMP_OP_ATTACH_RINGS:
-			expected = sizeof(struct networkcmp_ring_request);
-			if (payload == expected) {
-				const struct networkcmp_ring_request *rings;
-
-				rings = (const void *)(msg + 1);
-				if ((rings->tx_mode != SHMRING_MODE_STREAM &&
-				    rings->tx_mode != SHMRING_MODE_RECORD) ||
-				    rings->rx_mode != rings->tx_mode)
-					goto reject;
-			}
-			break;
 		case NETWORKCMP_OP_SEND:
 		case NETWORKCMP_OP_RECV: {
 			const struct networkcmp_inline_request *io;
@@ -482,16 +431,13 @@ int
 networkcmp_validate_fds(const struct networkcmp_msg *msg, size_t nfds,
     enum networkcmp_message_role role)
 {
-	size_t expected;
-
-	if (msg == NULL) {
+	if (msg == NULL || (role != NETWORKCMP_MESSAGE_REQUEST &&
+	    role != NETWORKCMP_MESSAGE_REPLY &&
+	    role != NETWORKCMP_MESSAGE_EVENT)) {
 		errno = EINVAL;
 		return (-1);
 	}
-	expected = role == NETWORKCMP_MESSAGE_REQUEST &&
-	    msg->opcode == NETWORKCMP_OP_ATTACH_RINGS ?
-	    NETWORKCMP_RING_FD_COUNT : 0;
-	if (nfds != expected) {
+	if (nfds != 0) {
 		errno = EPROTO;
 		return (-1);
 	}
@@ -516,6 +462,7 @@ networkcmp_rpc_fds(struct networkcmp_client *client, uint16_t opcode,
 	struct service_reply incoming;
 	struct networkcmp_msg *msg;
 	size_t received, request_length;
+	int terminal_error;
 
 	if (client == NULL || client->owner != getpid() ||
 	    client->channel == NULL || payload_length >
@@ -524,6 +471,9 @@ networkcmp_rpc_fds(struct networkcmp_client *client, uint16_t opcode,
 		errno = EINVAL;
 		return (-1);
 	}
+	terminal_error = atomic_load(&client->terminal_error);
+	if (terminal_error != 0)
+		return (errno = terminal_error, -1);
 	memset(&request, 0, sizeof(request));
 	msg = &request.wire.msg;
 	if (networkcmp_message_init(msg, opcode, 0) == -1)
@@ -557,6 +507,7 @@ networkcmp_rpc_fds(struct networkcmp_client *client, uint16_t opcode,
 	    networkcmp_validate_fds(msg, incoming.nfds,
 	    NETWORKCMP_MESSAGE_REPLY) == -1 || msg->opcode != opcode) {
 		errno = EPROTO;
+		atomic_store(&client->terminal_error, EPROTO);
 		NETWORKCMP_PROBE_REJECT(opcode, (uint32_t)received, EPROTO);
 		return (-1);
 	}
@@ -584,27 +535,11 @@ int
 networkcmp_hello(struct networkcmp_client *client,
     struct networkcmp_hello_reply *reply_value)
 {
-
-	return (networkcmp_negotiate(client, NULL, reply_value));
-}
-
-int
-networkcmp_negotiate(struct networkcmp_client *client,
-    const struct networkcmp_preferences *preferences,
-    struct networkcmp_hello_reply *reply_value)
-{
 	union networkcmp_buffer reply;
 	struct networkcmp_hello request;
 	size_t length;
 
-	if (reply_value == NULL ||
-	    (preferences != NULL && (preferences->reserved != 0 ||
-	    (preferences->tx_ring_size != 0 &&
-	    !networkcmp_ring_size_valid(preferences->tx_ring_size)) ||
-	    (preferences->rx_ring_size != 0 &&
-	    !networkcmp_ring_size_valid(preferences->rx_ring_size)) ||
-	    preferences->max_datagram >
-	    NETWORKCMP_RING_MAX_SIZE - sizeof(uint32_t)))) {
+	if (client == NULL || reply_value == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -612,13 +547,7 @@ networkcmp_negotiate(struct networkcmp_client *client,
 	request.min_version = NETWORKCMP_ABI_VERSION;
 	request.max_version = NETWORKCMP_ABI_VERSION;
 	request.features = NETWORKCMP_FEATURE_TCP | NETWORKCMP_FEATURE_UDP |
-	    NETWORKCMP_FEATURE_IPV6 | NETWORKCMP_FEATURE_SHM_RINGS |
-	    NETWORKCMP_FEATURE_QUIC_DATAGRAM | NETWORKCMP_FEATURE_DNS;
-	if (preferences != NULL) {
-		request.preferred_tx_ring_size = preferences->tx_ring_size;
-		request.preferred_rx_ring_size = preferences->rx_ring_size;
-		request.preferred_max_datagram = preferences->max_datagram;
-	}
+	    NETWORKCMP_FEATURE_IPV6 | NETWORKCMP_FEATURE_DNS;
 	if (networkcmp_rpc(client, NETWORKCMP_OP_HELLO, &request,
 	    sizeof(request), &reply, &length) == -1)
 		return (-1);
@@ -627,8 +556,7 @@ networkcmp_negotiate(struct networkcmp_client *client,
 }
 
 int
-networkcmp_client_open(const struct networkcmp_preferences *preferences,
-    struct networkcmp_client **clientp) __no_lock_analysis
+networkcmp_client_open(struct networkcmp_client **clientp) __no_lock_analysis
 {
 	struct networkcmp_client *client;
 	struct service_context *service;
@@ -685,7 +613,7 @@ networkcmp_client_open(const struct networkcmp_preferences *preferences,
 		goto fail;
 	}
 	client->owner = getpid();
-	if (networkcmp_negotiate(client, preferences, &client->limits) == -1)
+	if (networkcmp_hello(client, &client->limits) == -1)
 		goto fail;
 	client->references = 1;
 	error = pthread_mutex_lock(&networkcmp_registry_lock);
@@ -730,8 +658,6 @@ networkcmp_client_limits(const struct networkcmp_client *client)
 void
 networkcmp_client_close(struct networkcmp_client *client) __no_lock_analysis
 {
-	struct service_session *channel;
-
 	if (client == NULL)
 		return;
 	if (pthread_mutex_lock(&networkcmp_registry_lock) != 0)
@@ -745,214 +671,12 @@ networkcmp_client_close(struct networkcmp_client *client) __no_lock_analysis
 		(void)pthread_mutex_unlock(&networkcmp_registry_lock);
 		return;
 	}
-	networkcmp_process_client = NULL;
-	channel = client->channel;
+	/*
+	 * Keep the one injected process session alive with no public borrows.
+	 * Reopening then reuses the existing managed reader rather than
+	 * duplicating a channel receive queue or attempting global discovery.
+	 */
 	(void)pthread_mutex_unlock(&networkcmp_registry_lock);
-	service_session_close(channel);
-	free(client);
-}
-
-static void
-networkcmp_flatten_fds(const struct shmring_fds *rings, int fds[SHMRING_NFDS])
-{
-
-	fds[0] = rings->config_fd;
-	fds[1] = rings->data_fd;
-	fds[2] = rings->head_fd;
-	fds[3] = rings->tail_fd;
-}
-
-int
-networkcmp_attach_io(struct networkcmp_client *client,
-    struct networkcmp_handle socket, uint32_t socket_type,
-    struct networkcmp_io **iop)
-{
-	union networkcmp_buffer reply;
-	struct networkcmp_ring_request request;
-	struct shmring_fds tx_producer, tx_consumer;
-	struct shmring_fds rx_producer, rx_consumer;
-	struct networkcmp_io *io;
-	int fds[NETWORKCMP_RING_FDS];
-	uint32_t max_record, mode;
-	size_t length;
-	int error, rx_mutex_ready, tx_mutex_ready;
-
-	if (client == NULL || iop == NULL ||
-	    (socket_type != NETWORKCMP_SOCK_STREAM &&
-	    socket_type != NETWORKCMP_SOCK_DGRAM) ||
-	    (client->limits.features & NETWORKCMP_FEATURE_SHM_RINGS) == 0) {
-		errno = EINVAL;
-		return (-1);
-	}
-	*iop = NULL;
-	mode = socket_type == NETWORKCMP_SOCK_STREAM ?
-	    SHMRING_MODE_STREAM : SHMRING_MODE_RECORD;
-	max_record = mode == SHMRING_MODE_RECORD ?
-	    client->limits.max_datagram : 0;
-	memset(&tx_producer, -1, sizeof(tx_producer));
-	memset(&tx_consumer, -1, sizeof(tx_consumer));
-	memset(&rx_producer, -1, sizeof(rx_producer));
-	memset(&rx_consumer, -1, sizeof(rx_consumer));
-	io = calloc(1, sizeof(*io));
-	if (io == NULL)
-		return (-1);
-	tx_mutex_ready = 0;
-	rx_mutex_ready = 0;
-	if (shmring_create(client->limits.tx_ring_size, mode, max_record,
-	    socket.generation, &tx_producer, &tx_consumer) == -1 ||
-	    shmring_create(client->limits.rx_ring_size, mode, max_record,
-	    socket.generation, &rx_producer, &rx_consumer) == -1 ||
-	    shmring_open(&io->tx, &tx_producer, SHMRING_ROLE_PRODUCER) == -1 ||
-	    shmring_open(&io->rx, &rx_consumer, SHMRING_ROLE_CONSUMER) == -1)
-		goto fail;
-	networkcmp_flatten_fds(&tx_consumer, fds);
-	networkcmp_flatten_fds(&rx_producer, fds + SHMRING_NFDS);
-	memset(&request, 0, sizeof(request));
-	request.socket = socket;
-	request.tx_mode = mode;
-	request.rx_mode = mode;
-	if (networkcmp_rpc_fds(client, NETWORKCMP_OP_ATTACH_RINGS,
-	    &request, sizeof(request), fds, nitems(fds), &reply, &length) == -1)
-		goto fail;
-	error = pthread_mutex_init(&io->tx_lock, NULL);
-	if (error != 0) {
-		errno = error;
-		goto fail;
-	}
-	tx_mutex_ready = 1;
-	error = pthread_mutex_init(&io->rx_lock, NULL);
-	if (error != 0) {
-		errno = error;
-		goto fail;
-	}
-	rx_mutex_ready = 1;
-	io->socket_type = socket_type;
-	shmring_fds_close(&tx_producer);
-	shmring_fds_close(&tx_consumer);
-	shmring_fds_close(&rx_producer);
-	shmring_fds_close(&rx_consumer);
-	*iop = io;
-	return (0);
-
-fail:
-	error = errno;
-	if (rx_mutex_ready)
-		(void)pthread_mutex_destroy(&io->rx_lock);
-	if (tx_mutex_ready)
-		(void)pthread_mutex_destroy(&io->tx_lock);
-	shmring_close(io->tx);
-	shmring_close(io->rx);
-	free(io);
-	shmring_fds_close(&tx_producer);
-	shmring_fds_close(&tx_consumer);
-	shmring_fds_close(&rx_producer);
-	shmring_fds_close(&rx_consumer);
-	errno = error;
-	return (-1);
-}
-
-ssize_t
-networkcmp_write(struct networkcmp_io *io, const void *buffer, size_t length)
-    __no_lock_analysis
-{
-	ssize_t result;
-	int error;
-
-	if (io == NULL || io->socket_type != NETWORKCMP_SOCK_STREAM) {
-		errno = EINVAL;
-		return (-1);
-	}
-	error = pthread_mutex_lock(&io->tx_lock);
-	if (error != 0) {
-		errno = error;
-		return (-1);
-	}
-	result = shmring_write(io->tx, buffer, length);
-	error = errno;
-	(void)pthread_mutex_unlock(&io->tx_lock);
-	errno = error;
-	return (result);
-}
-
-ssize_t
-networkcmp_read(struct networkcmp_io *io, void *buffer, size_t capacity)
-    __no_lock_analysis
-{
-	ssize_t result;
-	int error;
-
-	if (io == NULL || io->socket_type != NETWORKCMP_SOCK_STREAM) {
-		errno = EINVAL;
-		return (-1);
-	}
-	error = pthread_mutex_lock(&io->rx_lock);
-	if (error != 0) {
-		errno = error;
-		return (-1);
-	}
-	result = shmring_read(io->rx, buffer, capacity);
-	error = errno;
-	(void)pthread_mutex_unlock(&io->rx_lock);
-	errno = error;
-	return (result);
-}
-
-int
-networkcmp_send_datagram(struct networkcmp_io *io, const void *buffer,
-    size_t length) __no_lock_analysis
-{
-	int result, error;
-
-	if (io == NULL || io->socket_type != NETWORKCMP_SOCK_DGRAM) {
-		errno = EINVAL;
-		return (-1);
-	}
-	error = pthread_mutex_lock(&io->tx_lock);
-	if (error != 0) {
-		errno = error;
-		return (-1);
-	}
-	result = shmring_write_record(io->tx, buffer, length);
-	error = errno;
-	(void)pthread_mutex_unlock(&io->tx_lock);
-	errno = error;
-	return (result);
-}
-
-ssize_t
-networkcmp_recv_datagram(struct networkcmp_io *io, void *buffer,
-    size_t capacity) __no_lock_analysis
-{
-	ssize_t result;
-	int error;
-
-	if (io == NULL || io->socket_type != NETWORKCMP_SOCK_DGRAM) {
-		errno = EINVAL;
-		return (-1);
-	}
-	error = pthread_mutex_lock(&io->rx_lock);
-	if (error != 0) {
-		errno = error;
-		return (-1);
-	}
-	result = shmring_read_record(io->rx, buffer, capacity);
-	error = errno;
-	(void)pthread_mutex_unlock(&io->rx_lock);
-	errno = error;
-	return (result);
-}
-
-void
-networkcmp_io_close(struct networkcmp_io *io)
-{
-
-	if (io == NULL)
-		return;
-	(void)pthread_mutex_destroy(&io->tx_lock);
-	(void)pthread_mutex_destroy(&io->rx_lock);
-	shmring_close(io->tx);
-	shmring_close(io->rx);
-	free(io);
 }
 
 int

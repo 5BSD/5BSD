@@ -409,6 +409,8 @@
             ttyio
             ..
         ..
+        libauditcmp
+        ..
         libcam
         ..
         libcapability
@@ -445,11 +447,17 @@
         ..
         libfilesystemcmp
         ..
+        libkldmgr
+        ..
         libkvm
         ..
         liblogcmp
         ..
         libnotifycmp
+        ..
+        liboraclectl
+        ..
+        liboraclert
         ..
         libtracecmp
         ..
@@ -468,6 +476,8 @@
         libregex
             data
             ..
+        ..
+        librebootctl
         ..
         librt
         ..
@@ -1305,6 +1315,8 @@
         ..
     ..
     usr.sbin
+        auditbrokerd
+        ..
         bluetooth
             blued
             ..
@@ -1321,17 +1333,21 @@
         ..
         extattr
         ..
-        filesystemcmp
+        localfilesystem
+        ..
+        filesystemcmpctl
         ..
         fstyp
         ..
         jail
         ..
-        logcmp
+        kldmgrctl
         ..
-        notifycmp
+        kldmgrd
         ..
-        tracecmp
+        logd
+        ..
+        logctl
         ..
         makefs
         ..
@@ -1341,7 +1357,13 @@
         ..
         nmtree
         ..
-        networkcmp
+        localnetwork
+        ..
+        networkcmpctl
+        ..
+        bsdnotify
+        ..
+        notifyctl
         ..
         oracled
         ..
@@ -1350,6 +1372,10 @@
         pw
         ..
         quot
+        ..
+        rebootctl
+        ..
+        rebootd
         ..
         rpcbind
         ..
@@ -1362,6 +1388,10 @@
         syslogd
         ..
         sysrc
+        ..
+        traced
+        ..
+        tracectl
         ..
         traceroute
         ..

@@ -1,10 +1,15 @@
+schema = "org.5bsd.serviced.service";
+schema_version = "1.0.0";
 bundle_id = "org.5bsd.system.reboot";
-version = "1.0";
+version = "1.0.0";
 author = "5BSD";
 
 program = "rebootd";
 provides = ["org.5bsd.system.reboot"];
 restart = "on-failure";
+user = "root";
+
+components = ["filesystem"];
 
 capabilities {
     system = ["reboot"];

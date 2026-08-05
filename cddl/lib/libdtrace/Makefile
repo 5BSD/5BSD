@@ -7,6 +7,7 @@ SHLIBDIR?=	/lib
 
 PACKAGE=	dtrace
 LIB=		dtrace
+MAN=		dtrace_fdopen.3
 
 SRCS=		dt_aggregate.c \
 		dt_as.c \

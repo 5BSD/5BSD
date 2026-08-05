@@ -48,6 +48,7 @@
 #include <channel.h>
 
 #include "serviced.h"
+#include "fd_budget.h"
 #include "serviced_audit.h"
 #include "serviced_probes.h"
 
@@ -858,6 +859,24 @@ svc_exec(struct svc_runtime *svc, int kq)
 	if (expected_tokens > SVC_MAX_TOKENS) {
 		syslog(LOG_ERR, "svc_exec %s: too many capability tokens: %u",
 		    m->label, expected_tokens);
+		return (-1);
+	}
+	/*
+	 * Admit the complete launch before acquiring its first descriptor.
+	 * The fixed margin covers the service channel pair, coalition,
+	 * capprotect lease, bootstrap envfd, process descriptor, jail handoff,
+	 * and peak queued attachment duplicates.  Capability, named-service,
+	 * and local-component descriptors are added explicitly.
+	 */
+	if (serviced_fd_budget_check((size_t)expected_tokens +
+	    m->ncap_services + m->ncomponents + 12,
+	    "service launch") == -1) {
+		saved_errno = errno;
+		syslog(LOG_ERR,
+		    "svc_exec %s: descriptor admission denied: %s",
+		    m->label, strerror(saved_errno));
+		SERVICED_PROBE_SVC_EXEC_FAIL(m->label, saved_errno);
+		errno = saved_errno;
 		return (-1);
 	}
 

@@ -26,8 +26,8 @@
 
 #include "oraclectl.h"
 
-int
-oraclectl_readn(int fd, void *buf, size_t len)
+static int
+control_readn(int fd, void *buf, size_t len)
 {
 	struct timeval tv;
 	ssize_t n;
@@ -52,14 +52,21 @@ oraclectl_readn(int fd, void *buf, size_t len)
 	return (0);
 }
 
-int
-oraclectl_writen(int fd, const void *buf, size_t len)
+static int
+control_writen(int fd, const void *buf, size_t len)
 {
+	struct timeval tv;
 	ssize_t n;
 	size_t off;
 
+	/* Bound a stalled peer and never turn a transport error into SIGPIPE. */
+	tv.tv_sec = 30;
+	tv.tv_usec = 0;
+	(void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
 	for (off = 0; off < len; ) {
-		n = write(fd, (const char *)buf + off, len - off);
+		n = send(fd, (const char *)buf + off, len - off,
+		    MSG_NOSIGNAL);
 		if (n == -1) {
 			if (errno == EINTR)
 				continue;
@@ -89,16 +96,16 @@ do_call(int fd, uint32_t op, uint32_t flags,
 	req.flags = flags;
 	req.datalen = datalen;
 
-	error = oraclectl_writen(fd, &req, sizeof(req));
+	error = control_writen(fd, &req, sizeof(req));
 	if (error != 0)
 		return (error);
 	if (datalen > 0) {
-		error = oraclectl_writen(fd, data, datalen);
+		error = control_writen(fd, data, datalen);
 		if (error != 0)
 			return (error);
 	}
 
-	error = oraclectl_readn(fd, rpl, sizeof(*rpl));
+	error = control_readn(fd, rpl, sizeof(*rpl));
 	return (error);
 }
 
@@ -144,15 +151,14 @@ oraclectl_status(int fd, struct oraclectl_status *st,
 	struct ctl_reply rpl;
 	int error;
 
+	memset(&rpl, 0, sizeof(rpl));
 	error = do_call_summary(fd, ORACLECTL_STATUS, 0, NULL, 0,
 	    summary, sumlen, &rpl);
-	if (error != 0)
-		return (error);
 	if (st != NULL) {
-		st->error = rpl.status;
+		st->error = error;
 		st->uptime_usec = rpl.uptime_usec;
 	}
-	return (rpl.status);
+	return (error);
 }
 
 int
@@ -183,10 +189,12 @@ do_call_summary(int fd, uint32_t op, uint32_t flags,
 		return (error);
 
 	textlen = rpl->flags;
+	if (textlen > ORACLECTL_SUMMARY_MAX)
+		return (EPROTO);
 	if (textlen > 0 && summary != NULL && sumlen > 0) {
 		if (textlen >= sumlen)
 			textlen = (uint32_t)(sumlen - 1);
-		error = oraclectl_readn(fd, summary, textlen);
+		error = control_readn(fd, summary, textlen);
 		if (error != 0)
 			return (error);
 		summary[textlen] = '\0';
@@ -204,4 +212,3 @@ oraclectl_reload(int fd, char *summary, size_t sumlen)
 	return (do_call_summary(fd, ORACLECTL_RELOAD, 0, NULL, 0,
 	    summary, sumlen, &rpl));
 }
-

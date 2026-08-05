@@ -367,6 +367,41 @@ servicectl_verify_cleanup()
 	rm -rf VerifyTest.cap
 }
 
+atf_test_case servicectl_verify_local_components cleanup
+servicectl_verify_local_components_head()
+{
+	atf_set "descr" \
+	    "servicectl shows the effective FileSystemCmp and NetworkCmp configuration"
+}
+servicectl_verify_local_components_body()
+{
+	find_servicectl
+	local bdir="$(pwd)/ComponentsTest.cap"
+	mkdir -p "${bdir}/etc" "${bdir}/bin"
+	printf '#!/bin/sh\nexit 0\n' > "${bdir}/bin/consumer"
+	chmod 755 "${bdir}/bin/consumer"
+	cat > "${bdir}/etc/consumer.ucl" <<EOF
+bundle_id = "org.test.components";
+version = "1.0";
+author = "test";
+program = "consumer";
+components = ["filesystem", "network"];
+EOF
+
+	atf_check -s exit:0 -o save:components.out \
+	    "$servicectl_bin" verify "${bdir}"
+	atf_check -s exit:0 -o match:'component: filesystem' \
+	    grep 'component:' components.out
+	atf_check -s exit:0 -o match:'component: network' \
+	    grep 'component:' components.out
+	atf_check -s exit:0 -o match:'activation: boot' \
+	    grep 'activation:' components.out
+}
+servicectl_verify_local_components_cleanup()
+{
+	rm -rf ComponentsTest.cap components.out
+}
+
 # ===================================================================
 # servicectl verify — rejects invalid bundle
 # ===================================================================
@@ -614,6 +649,7 @@ atf_init_test_cases()
 	# verify/stop
 	atf_add_test_case servicectl_verify
 	atf_add_test_case servicectl_verify_invalid
+	atf_add_test_case servicectl_verify_local_components
 	atf_add_test_case servicectl_deps
 	atf_add_test_case servicectl_stop_no_arg
 

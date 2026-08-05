@@ -44,6 +44,7 @@
 
 #include "serviced.h"
 #include "serviced_audit.h"
+#include "fd_budget.h"
 #include "serviced_probes.h"
 
 struct serviced_state sd;
@@ -366,6 +367,16 @@ main(int argc, char *argv[])
 
 	if (validate_default_identity() == -1)
 		return (1);
+	if (serviced_fd_budget_raise_limit() == -1) {
+		syslog(LOG_CRIT,
+		    "cannot raise descriptor limit: %m");
+		return (1);
+	}
+	if (serviced_fd_budget_init() == -1) {
+		syslog(LOG_CRIT,
+		    "cannot establish descriptor emergency reserve: %m");
+		return (1);
+	}
 
 	/* Create kqueue early — needed for signal handling during setup. */
 	serviced_kq = kqueue();
@@ -505,6 +516,7 @@ main(int argc, char *argv[])
 	supervisor_teardown_state();
 	bundle_registry_teardown();
 	sctl_teardown();
+	serviced_fd_budget_fini();
 
 	syslog(LOG_INFO, "serviced exiting");
 	close(serviced_kq);

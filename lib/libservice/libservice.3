@@ -32,13 +32,15 @@ Service lifecycle library
 .Ft const char *
 .Fn service_label "struct service_context *context"
 .Ft int
-.Fn service_capability_fd "struct service_context *context" "const char *name"
+.Fn service_capability_open "struct service_context *context" "const char *name" "int *fd"
 .Ft int
 .Fn service_provider_create "struct service_provider **provider"
 .Ft void
 .Fn service_provider_destroy "struct service_provider *provider"
 .Ft int
 .Fn service_provider_authorize_capabilities "struct service_provider *provider"
+.Ft int
+.Fn service_provider_worker_channel "struct service_provider *provider" "int *provider_fd" "int *worker_fd"
 .Ft int
 .Fn service_provider_protect "struct service_provider *provider" "uint32_t flags"
 .Ft int
@@ -72,7 +74,7 @@ Service lifecycle library
 .Ft int
 .Fn service_component_take_resource "struct service_component_bootstrap *bootstrap" "size_t slot"
 .Ft int
-.Fn service_component_complete "struct service_component_bootstrap *bootstrap" "uint32_t membership_type" "int membership_fd"
+.Fn service_component_complete "struct service_component_bootstrap *bootstrap" "enum service_component_member_type membership_type" "int membership_fd"
 .Ft int
 .Fn service_component_fail "struct service_component_bootstrap *bootstrap" "int error"
 .Ft void
@@ -83,6 +85,8 @@ Service lifecycle library
 .Fn service_worker_drop_inherited_authority "void"
 .Ft int
 .Fn service_session_create "int fd" "struct service_session **session"
+.Ft int
+.Fn service_session_fail "struct service_session *session" "int error"
 .Ft void
 .Fn service_session_close "struct service_session *session"
 .Ft int
@@ -155,6 +159,23 @@ returns the stable transport status without consuming that event.
 The private control channel read by
 .Nm
 is not public.
+.Pp
+.Fn service_capability_open
+duplicates a manifest-declared kernel capability-service descriptor into
+.Fa fd .
+The caller owns the returned close-on-exec descriptor and must close it.
+Closing it never invalidates libservice's retained bootstrap descriptor or a
+later open.
+The accepted names are
+.Dq mount ,
+.Dq node ,
+.Dq accounting ,
+and
+.Dq identity .
+Unknown names fail with
+.Er EINVAL ;
+an accepted but undeclared name fails with
+.Er ENOENT .
 .Sh GLOBAL PROVIDERS
 .Fn service_provider_create
 creates the provider lifecycle object and acquires the shared context.
@@ -201,6 +222,20 @@ consumes the listener.
 Existing direct sessions are unaffected.
 New lookups remain queued against the manifest reservation until the provider
 claims a replacement listener.
+.Pp
+.Fn service_provider_worker_channel
+asks the supervisor to create an unnamed capability-channel pair for a
+provider and one internal worker.
+It must be called before capability-mode entry.
+On success both returned descriptors are owned by the caller,
+non-transferable, and locked against exec propagation.
+The provider endpoint is forced closed in a child; the worker endpoint may
+cross exactly one fork boundary and is then forced closed by any later fork
+in both processes.
+The pair is never entered in the global service namespace.
+Providers use
+.Xr libchannel 3
+or a managed session on these endpoints; libservice assigns no payload schema.
 .Sh LOCAL COMPONENT BOOTSTRAP
 .Fn service_component_accept
 duplicates and validates a local factory session, waits for exactly one
@@ -220,8 +255,6 @@ serviced enlists it into the client's coalition before allowing client exec.
 Completion and failure consume the opaque object even when reply delivery
 fails.
 The public
-.Dv SERVICE_COMPONENT_SCOPE_*
-values describe supervisor-selected locality,
 .Dv SERVICE_COMPONENT_MEMBER_*
 values identify the returned membership descriptor.
 The bootstrap carries no manifest-selected scope, sharing mode, or arbitrary
@@ -269,6 +302,17 @@ A timed-out or canceled call discards its late reply and closes all attached
 descriptors.
 Peer death completes every outstanding call.
 .Pp
+When a typed library detects a malformed service-protocol reply,
+.Fn service_session_fail
+atomically marks the session terminal with a positive
+.Xr errno 2
+value.
+The first terminal error wins, concurrent waiters are awakened, and every
+later call returns that error without sending another message.
+This lets typed protocol code fail closed without racing session destruction;
+transport framing and concurrency remain owned by
+.Nm .
+.Pp
 On
 .Er EMSGSIZE ,
 the reply reports the required payload length and descriptor count; received
@@ -281,8 +325,9 @@ session.
 .It
 .Fn service_connect ,
 .Fn service_local_component_open ,
-and
-.Fn service_listener_accept
+.Fn service_listener_accept ,
+and both outputs from
+.Fn service_provider_worker_channel
 return owned descriptors through output parameters.
 .It
 .Fn service_session_create
@@ -298,7 +343,9 @@ state.
 .El
 .Sh SECURITY
 Local component descriptors are injected only from a validated serviced
-bootstrap and are removed from the environment when acquired.
+bootstrap.
+Their environment locators and original injected descriptors are consumed
+when acquired.
 An unmanaged process cannot create authority by setting the deployment
 variable itself.
 .Pp

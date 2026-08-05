@@ -1,0 +1,55 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 31, 2026
+.Dt NOTIFYCTL 8
+.Os
+.Sh NAME
+.Nm notifyctl
+.Nd validate and operate the NotifyCmp service
+.Sh SYNOPSIS
+.Nm
+.Cm configtest
+.Op Ar file
+.Nm
+.Cm publish
+.Ar topic
+.Op Ar payload
+.Nm
+.Cm state-get
+.Ar topic
+.Nm
+.Cm state-set
+.Ar topic value
+.Nm
+.Cm watch
+.Ar topic
+.Op Ar timeout-ms
+.Nm
+.Cm stats
+.Sh DESCRIPTION
+.Nm
+is the administrator and diagnostic client for
+.Xr bsdnotify 8 .
+It uses
+.Xr libnotifycmp 3
+for all live service operations and is therefore subject to the immutable
+serviced identity policy of the invoking service.
+It receives no implicit administrative bypass.
+.Pp
+The
+.Cm configtest
+command parses the supplied policy file, or
+.Pa /etc/bsdnotify.conf
+by default, with the same strict parser used by the daemon.
+It does not modify or reload the running service.
+.Cm publish ,
+.Cm state-get ,
+.Cm state-set ,
+.Cm watch ,
+and
+.Cm stats
+provide bounded diagnostic access to the corresponding public API.
+Payload output is written as opaque bytes after one metadata line.
+.Sh SEE ALSO
+.Xr libnotifycmp 3 ,
+.Xr bsdnotify 8 ,
+.Xr serviced 8

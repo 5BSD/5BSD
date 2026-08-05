@@ -30,7 +30,7 @@
 
 #include <sys/types.h>
 
-#define	SERVICED_SVC_PROTO_VERSION	3
+#define	SERVICED_SVC_PROTO_VERSION	5
 
 /* Maximum reverse-domain name length. */
 #define	SERVICED_NAME_MAX		255
@@ -45,12 +45,31 @@
 #define	SVC_OP_NAME_WITHDRAW	3	/* stop serving one active name */
 #define	SVC_OP_LOOKUP		4	/* connect to a named service */
 #define	SVC_OP_NAME_CLAIM	5	/* claim one provides[] listener */
+#define	SVC_OP_QUIESCE_RESULT	6	/* managed shutdown completion */
+#define	SVC_OP_WORKER_CHANNEL	7	/* private provider/worker channel */
 
 /*
  * Serviced → service (notifications):
  */
 #define	SVC_OP_ACTIVATE_NAME	127	/* initialize one reserved name */
 #define	SVC_OP_NEW_CLIENT	128	/* new client connection (pushed) */
+#define	SVC_OP_QUIESCE		129	/* stop admission and drain */
+
+#define	SVC_QUIESCE_REASON_STOP		1
+#define	SVC_QUIESCE_REASON_SHUTDOWN	2
+#define	SVC_QUIESCE_REASON_RELOAD	3
+
+struct svc_quiesce_msg {
+	uint32_t	op;		/* SVC_OP_QUIESCE */
+	uint32_t	reason;		/* SVC_QUIESCE_REASON_* */
+	uint32_t	deadline_ms;
+	uint32_t	flags;		/* reserved */
+};
+
+struct svc_quiesce_result_req {
+	uint32_t	op;		/* SVC_OP_QUIESCE_RESULT */
+	int32_t		status;		/* zero or positive errno */
+};
 
 /*
  * Common request header — for ops with no extra params (READY).
@@ -58,6 +77,18 @@
 struct svc_req_hdr {
 	uint32_t	op;
 };
+
+/*
+ * SVC_OP_WORKER_CHANNEL
+ *   req:  svc_req_hdr { .op = SVC_OP_WORKER_CHANNEL }
+ *   reply: svc_reply { .status }
+ *   reply_fds[0] = provider endpoint
+ *   reply_fds[1] = worker endpoint
+ *
+ * Create an unnamed capability-channel pair for an internal provider worker.
+ * The pair is not registered in the global namespace.  libservice applies
+ * one-fork and non-transferable propagation policy before returning it.
+ */
 
 /*
  * SVC_OP_READY

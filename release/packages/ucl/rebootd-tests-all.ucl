@@ -1,0 +1,11 @@
+comment = "rebootd tests"
+
+desc = <<EOD
+Protocol, identity-policy, invalid-flag, injected reboot backend, shared
+cross-worker pending state, privilege-boundary, verified-bundle, and live
+serviced integration tests for rebootd.
+EOD
+
+annotations = {
+	set = "tests"
+}

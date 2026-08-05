@@ -9,6 +9,9 @@
 # active.  They run against the live system daemon and require root.
 #
 
+PATH="$(dirname "$(atf_get_srcdir)"):${PATH}"
+export PATH
+
 require_pidfile()
 {
 	if [ ! -f /var/run/oracled.pid ]; then

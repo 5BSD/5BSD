@@ -1,0 +1,90 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 31, 2026
+.Dt BSDNOTIFY 8
+.Os
+.Sh NAME
+.Nm bsdnotify
+.Nd capability-mode publish, subscribe, and timer service
+.Sh DESCRIPTION
+.Nm
+implements
+.Dq org.5bsd.notify
+version 2.0.0 from
+.Pa /Capabilities/System/BsdNotify.cap .
+A system-scoped router owns the topic index, bounded client queues, and
+monotonic
+.Xr kqueue 2
+timers.
+Ephemeral publications carry optional bounded opaque data.
+State publications retain one 64-bit value and monotonically increasing
+generation per topic for the lifetime of a random router epoch.
+The provider admits each global service connection to one fixed,
+event-driven router worker over an unnamed capability channel.
+No process or private ring is allocated per client.
+The router permits at most one outstanding long-poll request per client while
+continuing to dispatch unrelated client channels.
+Concurrent requests receive
+.Er EBUSY .
+Client death therefore closes the router endpoint immediately, including
+while an infinite event wait is pending, and the router removes the session,
+subscriptions, and timers.
+The provider and router remain in their own coalition, so one consumer exit
+cannot
+terminate notification delivery for other services.
+.Pp
+Subscriptions are exact topic matches.
+Publisher identity comes from the authenticated component bootstrap and
+cannot be supplied by the publisher.
+Queues, topic count, timer count, topic length, and payload size are bounded.
+A full subscriber queue drops the newest event for that subscriber and
+increments its drop counter without blocking unrelated subscribers.
+The next read also receives an explicit gap event with the loss count.
+Queues are volatile.
+A publish reply confirms router processing and loss accounting, not durable
+subscriber delivery; events are not replayed after restart.
+.Sh SECURITY
+The router receives session endpoints only from the provider over its private
+capability channel.
+Consumer channels and router endpoints are non-transferable and locked
+against fork and exec propagation.
+The router cannot create sockets, fork, exec, receive ambient
+.Dv SCM_RIGHTS
+descriptors, or use ambient filesystem authority.
+Its sole descriptor admission path is the pre-created capability channel;
+each admitted session consumes the last hop of a linear transfer budget and
+arrives non-transferable.
+Subscription, publication, timer, bootstrap, and rejection decisions are
+available through OpenBSM audit records and DTrace probes.
+.Pp
+Each session is deny-by-default.
+Authority is loaded before sandbox entry from the root-owned
+.Pa /etc/bsdnotify.conf
+policy and keyed by the immutable serviced client label.
+The policy must be a regular file owned by root or the daemon's effective
+user, must not be group- or world-writable, is opened without following
+symbolic links, and must not exceed 64 KiB or contain embedded NUL bytes.
+Undeclared labels are denied; applications cannot grant themselves publish,
+subscribe, state, or timer authority.
+The router enforces these grants before dispatching a request.
+Subscribers should also validate the authenticated publisher identity carried
+in each event when that identity is relevant to application policy.
+.Sh DTRACE PROBES
+The
+.Dq bsdnotify
+provider exports
+.Sy session ,
+.Sy subscribe ,
+.Sy publish ,
+.Sy deliver ,
+.Sy timer ,
+and
+.Sy reject .
+Probe arguments contain authenticated labels, topic names, bounded payload
+lengths, operation identifiers, and result codes; notification payload bytes
+are not exposed.
+.Sh SEE ALSO
+.Xr kqueue 2 ,
+.Xr libnotifycmp 3 ,
+.Xr libservice 3 ,
+.Xr capsicum 4 ,
+.Xr serviced 8

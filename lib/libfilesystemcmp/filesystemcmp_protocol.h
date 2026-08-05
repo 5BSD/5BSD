@@ -25,9 +25,8 @@
 #define	FILESYSTEMCMP_MSG_F_MASK	0U
 
 #define	FILESYSTEMCMP_FEATURE_INLINE_IO	0x00000001U
-#define	FILESYSTEMCMP_FEATURE_SHM_RINGS	0x00000002U
-#define	FILESYSTEMCMP_FEATURE_PERSISTENT	0x00000004U
-#define	FILESYSTEMCMP_FEATURE_BUNDLE	0x00000008U
+#define	FILESYSTEMCMP_FEATURE_PERSISTENT	0x00000002U
+#define	FILESYSTEMCMP_FEATURE_BUNDLE	0x00000004U
 
 #define	FILESYSTEMCMP_OPEN_READ		0x00000001U
 #define	FILESYSTEMCMP_OPEN_WRITE	0x00000002U
@@ -50,7 +49,6 @@ enum filesystemcmp_opcode {
 	FILESYSTEMCMP_OP_UNLINK,
 	FILESYSTEMCMP_OP_RENAME,
 	FILESYSTEMCMP_OP_CLOSE,
-	FILESYSTEMCMP_OP_ATTACH_RINGS,
 	FILESYSTEMCMP_OP_OPEN_NAMESPACE,
 	FILESYSTEMCMP_OP_SYNC,
 	FILESYSTEMCMP_OP_DUP
@@ -78,25 +76,6 @@ struct filesystemcmp_msg {
 
 _Static_assert(sizeof(struct filesystemcmp_msg) == 16,
     "filesystemcmp message header ABI");
-
-/*
- * ATTACH_RINGS attachment slots.  The fd values are receiver-local numbers
- * installed by the channel; only this array order is protocol-visible.
- * Each consecutive four-slot group is a libshmring endpoint in config, data,
- * head, tail order.  libshmring validates object sizes, seals, mappings, and
- * producer/consumer access when opening the endpoint.
- */
-enum filesystemcmp_ring_fd_slot {
-	FILESYSTEMCMP_RING_FD_TX_CONFIG = 0,
-	FILESYSTEMCMP_RING_FD_TX_DATA,
-	FILESYSTEMCMP_RING_FD_TX_HEAD,
-	FILESYSTEMCMP_RING_FD_TX_TAIL,
-	FILESYSTEMCMP_RING_FD_RX_CONFIG,
-	FILESYSTEMCMP_RING_FD_RX_DATA,
-	FILESYSTEMCMP_RING_FD_RX_HEAD,
-	FILESYSTEMCMP_RING_FD_RX_TAIL,
-	FILESYSTEMCMP_RING_FD_COUNT
-};
 
 struct filesystemcmp_handle {
 	uint64_t	object;
@@ -191,13 +170,6 @@ struct filesystemcmp_stat_reply {
 	uint64_t	modified_sec;
 	uint32_t	mode;
 	uint32_t	type;
-};
-
-struct filesystemcmp_ring_request {
-	uint32_t	tx_entries;
-	uint32_t	rx_entries;
-	uint32_t	entry_size;
-	uint32_t	flags;
 };
 
 enum filesystemcmp_object_type {

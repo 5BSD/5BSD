@@ -1,18 +1,22 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd July 29, 2026
+.Dd July 31, 2026
 .Dt LIBSHMRING 3
 .Os
 .Sh NAME
+.Nm shmring_create_with_options ,
 .Nm shmring_create ,
 .Nm shmring_open ,
 .Nm shmring_write ,
 .Nm shmring_read ,
 .Nm shmring_write_record ,
-.Nm shmring_read_record
+.Nm shmring_read_record ,
+.Nm shmring_readable ,
+.Nm shmring_writable
 .Nd capability-safe shared-memory transport rings
 .Sh LIBRARY
-.Lb libshmring
+.Li libshmring
+.Pq Fl lshmring
 .Sh SYNOPSIS
 .In shmring.h
 .Sh DESCRIPTION
@@ -20,13 +24,44 @@ The
 .Nm
 library creates bounded, unidirectional shared-memory rings for communication
 between capability-mode processes.
-Each ring is single-producer, single-consumer.
+The versioned
+.Vt struct shmring_options
+selects a small number of transport shapes, not arbitrary implementation
+tuning.
+.Dv SHMRING_SHAPE_COMPACT_SPSC
+is a 4 through 64 KiB single-producer, single-consumer ring for ordinary
+component traffic.
+.Dv SHMRING_SHAPE_BULK_SPSC
+is a 64 KiB through 1 GiB SPSC ring for sustained bulk traffic.
+The 64 KiB boundary is valid for either shape so a typed library can state
+its intended policy unambiguously.
+.Dv SHMRING_SHAPE_TRUSTED_MPSC
+is reserved for trusted internal shard workers and currently fails with
+.Er ENOTSUP ;
+it will not be enabled until a reservation/commit API can preserve records
+when a producer stalls or dies.
+.Pp
+Applications should not select these shapes directly.
+A typed client library should begin on its control channel, allocate a compact
+ring only after sustained traffic, and promote to bulk only under pressure.
+Idle sessions therefore consume no shared-memory ring.
+.Pp
+Supported rings are single-producer, single-consumer.
 Callers with multiple producer or consumer threads must serialize access on
 the corresponding side.
 Each endpoint consists of separate immutable configuration, data,
 producer-head, and consumer-tail descriptors.
 Descriptor rights ensure that only the producer can modify data and the head,
 and only the consumer can modify the tail.
+.Pp
+Opened ring mappings are marked
+.Dv INHERIT_NONE
+and are therefore unmapped in children created by
+.Xr fork 2 .
+Ring objects also record their creating process and reject use from a child
+with
+.Er ECHILD .
+A child that needs a ring must receive and open a newly authorized endpoint.
 .Pp
 .Dv SHMRING_MODE_STREAM
 provides a byte stream.
@@ -37,24 +72,40 @@ Capacities must be powers of two between
 .Dv SHMRING_MIN_CAPACITY
 and
 .Dv SHMRING_MAX_CAPACITY .
+Optional low and high watermarks are immutable policy hints carried with the
+ring and must be ordered within its capacity.
+They do not themselves perform notification or flow control.
 .Pp
 The library does not provide wakeups.
 Users should send edge notifications over a kqueueable
 .Xr libservice 3
 channel after publishing data or freeing space.
 .Pp
+.Fn shmring_readable
+and
+.Fn shmring_writable
+return the currently available byte count, or -1 on error.
+In particular, an empty or full ring returns zero while corrupt shared
+positions return -1 with
+.Er EPROTO .
+Callers must not store these results in an unsigned type before checking for
+failure.
+.Pp
 The
 .Ql shmring
-DTrace provider exposes creation, mapping, read, write, close, and invariant
-violation probes.
+DTrace provider exposes creation and mapping with shape and mode, plus read,
+write, close, and invariant-violation probes.
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
+.Xr fork 2 ,
+.Xr minherit 2 ,
 .Xr mmap 2 ,
 .Xr libservice 3
 .Sh SECURITY CONSIDERATIONS
 All shared state is validated before use.
-Object sizes and required memfd seals are checked before mappings are
-dereferenced, so forged short or mutable objects fail with
+Object identity, exact role-specific capability rights, sizes, required memfd
+seals, and immutable geometry are checked before mappings are dereferenced,
+so aliased, over-authorized, short, mutable, or malformed objects fail with
 .Er EPROTO
 rather than generating a mapping fault.
 A violated position or record invariant fails with

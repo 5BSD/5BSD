@@ -34,6 +34,41 @@ and circuit-breaker protection, and operates a naming registry that
 allows services to discover and connect to each other by
 reverse-domain names.
 .Pp
+At startup,
+.Nm
+raises its soft and hard
+.Dv RLIMIT_NOFILE
+limits to the kernel's
+.Va kern.maxfilesperproc
+ceiling before launching any program.
+Managed programs inherit that ceiling and may lower their own limits with
+.Xr setrlimit 2 ;
+there is no per-program manifest field.
+This raises capacity but grants no additional filesystem or networking
+authority to a capability-mode process.
+.Pp
+At startup,
+.Nm
+reserves eight confined descriptors that are never available to ordinary
+service launches or client sessions.
+Before launching a service or brokering a global connection it probes for the
+complete required descriptor headroom beyond that reserve and fails the
+operation with
+.Er EMFILE
+or
+.Er ENFILE
+before partially allocating it.
+When descriptor exhaustion prevents an administrative socket accept, one
+reserve slot is temporarily released to accept and close a queued connection,
+preventing a persistent readable-event spin, and is then restored.
+The control status output reports the effective soft and hard descriptor
+limits, reserve count, denied admissions, and shed control connections.
+The
+.Dq fd-reserve
+and
+.Dq fd-pressure
+DTrace probes expose initialization and pressure events.
+.Pp
 Administrative commands are sent via
 .Xr servicectl 8
 over a local control socket.
@@ -226,7 +261,7 @@ metadata, and the required mac_capability transport ioctls.
 .Pp
 .Fn service_acquire ,
 .Fn service_authorize_capabilities ,
-.Fn service_capability_fd ,
+.Fn service_capability_open ,
 .Fn service_local_component_open ,
 .Fn service_connect ,
 .Fn service_worker_protect ,

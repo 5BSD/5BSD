@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "serviced.h"
+#include "fd_budget.h"
 #include "serviced_audit.h"
 #include "serviced_probes.h"
 #include "serviced_svc_proto.h"
@@ -147,6 +148,54 @@ handle_ready(struct svc_runtime *svc, struct channel_message *request)
 		    "service %s: readiness rejected: %s",
 		    svc->manifest.label, strerror(error));
 	(void)svc_channel_reply(svc, request, SVC_OP_READY, error, NULL, 0);
+}
+
+static void
+handle_quiesce_result(struct svc_runtime *svc,
+    struct channel_message *request)
+{
+	const struct svc_quiesce_result_req *req;
+	int error;
+
+	error = 0;
+	if (channel_message_length(request) != sizeof(*req))
+		error = EINVAL;
+	else {
+		req = channel_message_data(request);
+		if (req->status < 0)
+			error = EINVAL;
+		else if (svc->state != SVC_STATE_STOPPING ||
+		    !svc->quiesce_pending)
+			error = EBUSY;
+	}
+	(void)svc_channel_reply(svc, request, SVC_OP_QUIESCE_RESULT, error,
+	    NULL, 0);
+	if (error == 0)
+		svc_quiesce_complete(svc, req->status, serviced_kq);
+}
+
+static void
+handle_worker_channel(struct svc_runtime *svc,
+    struct channel_message *request)
+{
+	int endpoints[2], error;
+
+	endpoints[0] = endpoints[1] = -1;
+	error = 0;
+	/* Two endpoints and their two in-flight reply attachments. */
+	if (serviced_fd_budget_check(4, "private worker channel") == -1)
+		error = errno;
+	else if (mac_cap_create_channel(&endpoints[0], &endpoints[1]) == -1)
+		error = errno != 0 ? errno : EIO;
+	SERVICED_PROBE_WORKER_CHANNEL(svc->manifest.label, error);
+	serviced_audit(AUE_SERVICED_COMPONENT, getuid(), error,
+	    "private worker channel svc=%s", svc->manifest.label);
+	(void)svc_channel_reply(svc, request, SVC_OP_WORKER_CHANNEL, error,
+	    error == 0 ? endpoints : NULL, error == 0 ? nitems(endpoints) : 0);
+	if (endpoints[0] >= 0)
+		close(endpoints[0]);
+	if (endpoints[1] >= 0)
+		close(endpoints[1]);
 }
 
 static void
@@ -367,8 +416,18 @@ svc_request(struct channel *channel, struct channel_message *request,
 	case SVC_OP_NAME_CLAIM:
 		handle_name_claim(svc, request);
 		break;
+	case SVC_OP_QUIESCE_RESULT:
+		handle_quiesce_result(svc, request);
+		break;
 	case SVC_OP_LOOKUP:
 		retained = handle_lookup(svc, request);
+		break;
+	case SVC_OP_WORKER_CHANNEL:
+		if (channel_message_length(request) != sizeof(struct svc_req_hdr))
+			(void)svc_channel_reply(svc, request, op, EINVAL,
+			    NULL, 0);
+		else
+			handle_worker_channel(svc, request);
 		break;
 	default:
 		syslog(LOG_WARNING, "service %s: unknown channel op %u",

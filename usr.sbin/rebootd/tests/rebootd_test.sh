@@ -6,7 +6,7 @@
 #
 # Integration tests for rebootd — reboot and shutdown manager.
 #
-# Tests the rebootd wire protocol (rebootd_proto.h) via inline C
+# Tests the public librebootctl wire protocol via inline C
 # test client services launched by the oracled + serviced stack.
 #
 # IMPORTANT: No test case exercises actual reboot or shutdown.
@@ -14,7 +14,11 @@
 # Requires: root, mac_capability device, cc(1).
 #
 
-. "$(atf_get_srcdir)/capd_test_harness.sh"
+harness="$(atf_get_srcdir)/capd_test_harness.sh"
+if [ ! -r "${harness}" ]; then
+	harness="@SRCTOP@/usr.sbin/oracled/tests/capd_test_harness.sh"
+fi
+. "${harness}"
 
 # ---------------------------------------------------------------
 # Helpers
@@ -28,6 +32,10 @@ sockpath=
 logfile=
 serviced_bin=
 rebootd_bin=
+auditcmp_bin=
+filesystemcmp_bin=
+notifycmp_bin=
+saved_allow_file=
 
 WORK="$(pwd)"
 APPS_DIR="${WORK}/Capabilities/System"
@@ -43,6 +51,7 @@ find_rebootd()
 {
 	local p
 	for p in \
+	    "@OBJTOP@/usr.sbin/rebootd/rebootd" \
 	    "$(command -v rebootd 2>/dev/null)" \
 	    /Capabilities/System/Reboot.cap/bin/rebootd \
 	    /usr/obj/usr/src/arm64.aarch64/usr.sbin/rebootd/rebootd
@@ -53,6 +62,16 @@ find_rebootd()
 		fi
 	done
 	atf_skip "rebootd binary not found"
+}
+
+find_support_providers()
+{
+	auditcmp_bin="@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd"
+	filesystemcmp_bin="@OBJTOP@/usr.sbin/localfilesystem/localfilesystem"
+	notifycmp_bin="@OBJTOP@/usr.sbin/bsdnotify/bsdnotify"
+	for p in "$auditcmp_bin" "$filesystemcmp_bin" "$notifycmp_bin"; do
+		[ -x "$p" ] || atf_skip "support provider unavailable: $p"
+	done
 }
 
 require_mac_capability()
@@ -128,6 +147,13 @@ cleanup_common()
 	stop_stack || return 1
 	capd_cleanup_stack || return 1
 	sleep 0.2
+	if [ -n "${saved_allow_file}" ] &&
+	    [ -f "${saved_allow_file}" ]; then
+		cp "${saved_allow_file}" /etc/rebootd.allow
+	elif [ -n "${saved_allow_file}" ]; then
+		rm -f /etc/rebootd.allow
+	fi
+	saved_allow_file=
 	rm -rf "${WORK}/oracled.pid" "${WORK}/oracled.conf" \
 	    "${WORK}/serviced.d" "${WORK}/oracled.sock" \
 	    "${WORK}/oracled.log" "${WORK}/serviced.sock" \
@@ -136,7 +162,57 @@ cleanup_common()
 	    "${WORK}/rebootd_status_client" \
 	    "${WORK}/rebootd_perm_client" \
 	    "${WORK}/rebootd_unknown_client" \
-	    "${WORK}/rebootd_flags_client"
+	    "${WORK}/rebootd_flags_client" "${WORK}/allow_backup" \
+	    "${WORK}/allow_backup.absent"
+	rm -rf /var/db/serviced/storage/org.5bsd.system.reboot
+}
+
+create_provider_bundle()
+{
+	local directory="$1" program="$2" binary="$3" bundle_id="$4"
+	local provides="$5" user="$6"
+
+	mkdir -p "${directory}/bin" "${directory}/etc"
+	ln -sf "${binary}" "${directory}/bin/${program}"
+	cat >"${directory}/etc/${program}.ucl" <<UCL
+schema = "org.5bsd.serviced.service";
+schema_version = "1.0.0";
+bundle_id = "${bundle_id}";
+version = "1.0.0";
+author = "5BSD tests";
+program = "${program}";
+provides = ["${provides}"];
+restart = "on-failure";
+user = "${user}";
+UCL
+}
+
+create_support_bundles()
+{
+	find_support_providers
+	install -d -o capability -g capability -m 0700 \
+	    /var/db/serviced /var/db/serviced/storage
+	create_provider_bundle "${APPS_DIR}/Audit.cap" auditbrokerd \
+	    "$auditcmp_bin" org.5bsd.AuditCmp org.5bsd.audit root
+	create_provider_bundle "${APPS_DIR}/LocalFilesystem.cap" localfilesystem \
+	    "$filesystemcmp_bin" org.5bsd.FileSystemCmp \
+	    org.5bsd.FileSystemCmp capability
+	create_provider_bundle "${APPS_DIR}/BsdNotify.cap" bsdnotify \
+	    "$notifycmp_bin" org.5bsd.NotifyCmp org.5bsd.notify capability
+}
+
+setup_allow_file()
+{
+	local content="$1"
+
+	saved_allow_file="${WORK}/allow_backup"
+	if [ -f /etc/rebootd.allow ]; then
+		cp /etc/rebootd.allow "${saved_allow_file}"
+	else
+		touch "${saved_allow_file}.absent"
+		saved_allow_file="${saved_allow_file}.absent"
+	fi
+	printf "%s\n" "${content}" > /etc/rebootd.allow
 }
 
 # ---------------------------------------------------------------
@@ -154,9 +230,16 @@ create_rebootd_bundle()
 	ln -sf "${rebootd_bin}" "${dir}/bin/rebootd"
 
 	cat > "${dir}/etc/rebootd.ucl" <<UCL
+schema = "org.5bsd.serviced.service";
+schema_version = "1.0.0";
 bundle_id = "org.5bsd.system.reboot";
+version = "1.0.0";
+author = "5BSD";
 program = "rebootd";
 provides = ["org.5bsd.system.reboot"];
+restart = "on-failure";
+user = "root";
+components = ["filesystem"];
 capabilities {
     system = ["reboot"];
 }
@@ -223,6 +306,7 @@ rebootd_status_body()
 	build_rebootd_client "rebootd_status_client"
 
 	start_stack
+	create_support_bundles
 	create_rebootd_bundle
 
 	create_client_manifest "test-reboot-status" \
@@ -260,10 +344,9 @@ rebootd_permission_denied_body()
 {
 	require_mac_capability
 	build_rebootd_client "rebootd_perm_client"
-	mkdir -p "${WORK}/rebootd_etc"
-	printf "org.5bsd.not.our.service\n" > "${WORK}/rebootd_etc/rebootd.allow"
-	export REBOOTD_ALLOW_FILE="${WORK}/rebootd_etc/rebootd.allow"
+	setup_allow_file "org.5bsd.not.our.service"
 	start_stack
+	create_support_bundles
 	create_rebootd_bundle
 	create_client_manifest "test-reboot-perm" "${WORK}/rebootd_perm_client" \
 	    "TEST_OUTPUT" "${WORK}/perm.out"
@@ -277,7 +360,6 @@ rebootd_permission_denied_body()
 rebootd_permission_denied_cleanup()
 {
 	cleanup_common
-	rm -rf "${WORK}/rebootd_etc"
 }
 
 atf_test_case rebootd_unknown_op cleanup
@@ -293,6 +375,7 @@ rebootd_unknown_op_body()
 	require_mac_capability
 	build_rebootd_client "rebootd_unknown_client"
 	start_stack
+	create_support_bundles
 	create_rebootd_bundle
 	create_client_manifest "test-reboot-unknown" \
 	    "${WORK}/rebootd_unknown_client" "TEST_OUTPUT" "${WORK}/unknown.out"
@@ -320,10 +403,9 @@ rebootd_invalid_flags_body()
 {
 	require_mac_capability
 	build_rebootd_client "rebootd_flags_client"
-	mkdir -p "${WORK}/rebootd_etc"
-	printf "test-reboot-flags\n" > "${WORK}/rebootd_etc/rebootd.allow"
-	export REBOOTD_ALLOW_FILE="${WORK}/rebootd_etc/rebootd.allow"
+	setup_allow_file "test-reboot-flags"
 	start_stack
+	create_support_bundles
 	create_rebootd_bundle
 	create_client_manifest "test-reboot-flags" "${WORK}/rebootd_flags_client" \
 	    "TEST_OUTPUT" "${WORK}/flags.out"
@@ -337,7 +419,6 @@ rebootd_invalid_flags_body()
 rebootd_invalid_flags_cleanup()
 {
 	cleanup_common
-	rm -rf "${WORK}/rebootd_etc"
 }
 
 atf_init_test_cases()

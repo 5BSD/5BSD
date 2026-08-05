@@ -1,0 +1,23 @@
+." SPDX-License-Identifier: BSD-2-Clause
+.Dd July 31, 2026
+.Dt TRACECTL 8
+.Os
+.Sh NAME
+.Nm tracectl
+.Nd validate TraceCmp authorization policy
+.Sh SYNOPSIS
+.Nm
+.Cm configtest
+.Op Ar file
+.Sh DESCRIPTION
+.Nm
+validates the explicit-label policy used by
+.Xr traced 8 ,
+defaulting to
+.Pa /etc/traced.allow .
+It uses the daemon's parser and rejects wildcard, duplicate, malformed, and
+oversized entries.
+A missing or empty file is valid and means default deny.
+.Sh SEE ALSO
+.Xr libtracecmp 3 ,
+.Xr traced 8

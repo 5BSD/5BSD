@@ -297,6 +297,85 @@ shutdown_kills_subtree_cleanup()
 }
 
 # ===================================================================
+# Managed quiesce: admission closes before the provider acknowledges drain
+# ===================================================================
+
+atf_test_case managed_quiesce_roundtrip cleanup
+managed_quiesce_roundtrip_head()
+{
+	atf_set "descr" "serviced requests managed quiesce and waits for the provider result before termination"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+managed_quiesce_roundtrip_body()
+{
+	find_capd_service_fixture
+	prepare_paths
+	make_svc_bin system org.test.quiesce \
+	    "provides = [\"org.test.quiesce\"];
+stop_timeout = 5;
+arguments = [\"quiesce\", \"org.test.quiesce\", \"$(pwd)/quiesce.ready\", \"$(pwd)/quiesce.result\"];" \
+	    "$capd_service_fixture"
+	write_config
+	start_stack
+	wait_for_file quiesce.ready || atf_fail "quiesce provider did not become ready"
+	atf_check -s exit:0 -o match:"stopping" \
+	    servicectl -s "${CTL_SOCK}" stop org.test.quiesce
+	wait_for_file quiesce.result || {
+		cat "$logfile" 2>/dev/null
+		atf_fail "provider did not complete managed quiesce"
+	}
+	atf_check -s exit:0 -o inline:"admission=closed
+result=complete
+" cat quiesce.result
+	atf_check -s exit:0 -o ignore grep "service org.test.quiesce: stopping" "$logfile"
+	assert_stack_alive
+}
+managed_quiesce_roundtrip_cleanup()
+{
+	cleanup_common
+	rm -f quiesce.ready quiesce.result
+}
+
+# ===================================================================
+# Private worker channels: explicit, linear authority handoff
+# ===================================================================
+
+atf_test_case private_worker_channel cleanup
+private_worker_channel_head()
+{
+	atf_set "descr" "libservice creates a private worker channel whose endpoints survive only the intended fork and cannot be delegated"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+private_worker_channel_body()
+{
+	find_capd_service_fixture
+	prepare_paths
+	make_svc_bin system worker-channel \
+	    'restart = "never"; arguments = ["worker-channel", "worker-channel.out"];' \
+	    "$capd_service_fixture"
+	write_config
+	start_stack
+	if ! wait_for_file worker-channel.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "worker-channel fixture did not complete"
+	fi
+	atf_check -s exit:0 -o inline:"pair=private
+provider_in_child=closed
+worker_in_child=open
+transfer=none
+payload=worker
+" cat worker-channel.out
+	assert_stack_alive
+}
+private_worker_channel_cleanup()
+{
+	cleanup_common
+	rm -f worker-channel.out
+}
+
+# ===================================================================
 # Service environment is minimal
 # ===================================================================
 
@@ -335,6 +414,64 @@ service_environment_minimal_body()
 service_environment_minimal_cleanup()
 {
 	cleanup_common
+}
+
+# ===================================================================
+# Descriptor limits: serviced raises the inherited ceiling
+# ===================================================================
+
+atf_test_case service_descriptor_limit_inheritance cleanup
+service_descriptor_limit_inheritance_head()
+{
+	atf_set "descr" \
+	    "serviced raises its descriptor limit; children inherit it and may lower it"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+service_descriptor_limit_inheritance_body()
+{
+	prepare_paths
+	make_svc system fd-limit '' \
+	    '#!/bin/sh' \
+	    "ulimit -n > ${WORK}/fd-limit.out" \
+	    'ulimit -S -n 256' \
+	    "ulimit -n >> ${WORK}/fd-limit.out" \
+	    'sleep 20'
+
+	start_stack
+	if ! wait_for_file fd-limit.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "service did not report its descriptor limits"
+	fi
+	i=0
+	while [ "$(wc -l < fd-limit.out)" -lt 2 ] && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	[ "$(wc -l < fd-limit.out)" -eq 2 ] ||
+	    atf_fail "service did not finish reporting descriptor limits"
+	atf_check -s exit:0 -o save:fd-status.out \
+	    servicectl -s "${CTL_SOCK}" status
+
+	inherited=$(sed -n '1p' fd-limit.out)
+	lowered=$(sed -n '2p' fd-limit.out)
+	reported=$(sed -n \
+	    's/.*fd-budget: soft=\([0-9][0-9]*\).*/\1/p' fd-status.out)
+	kernel_max=$(sysctl -n kern.maxfilesperproc)
+
+	[ -n "$reported" ] || atf_fail "status omitted descriptor budget"
+	[ "$inherited" = "$reported" ] ||
+	    atf_fail "child inherited $inherited descriptors; serviced reports $reported"
+	[ "$inherited" -ge "$kernel_max" ] ||
+	    atf_fail "serviced limit $inherited is below kernel maximum $kernel_max"
+	[ "$lowered" = 256 ] ||
+	    atf_fail "child could not lower its soft descriptor limit: $lowered"
+	assert_stack_alive
+}
+service_descriptor_limit_inheritance_cleanup()
+{
+	cleanup_common
+	rm -f fd-status.out
 }
 
 # ===================================================================
@@ -731,9 +868,12 @@ atf_init_test_cases()
 	# Shutdown
 	atf_add_test_case shutdown_kills_sigterm_ignorer
 	atf_add_test_case shutdown_kills_subtree
+	atf_add_test_case managed_quiesce_roundtrip
+	atf_add_test_case private_worker_channel
 
 	# Service contracts
 	atf_add_test_case service_environment_minimal
+	atf_add_test_case service_descriptor_limit_inheritance
 	atf_add_test_case service_runs_as_user
 
 	# Reload

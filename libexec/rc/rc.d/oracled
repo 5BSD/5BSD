@@ -9,7 +9,7 @@
 . /etc/rc.subr
 
 name="oracled"
-desc="Oracle capability-world service manager"
+desc="Capability-world authority and service supervisor"
 rcvar="oracled_enable"
 command="/usr/sbin/${name}"
 pidfile="/var/run/${name}.pid"

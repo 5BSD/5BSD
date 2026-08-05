@@ -1,0 +1,62 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd July 31, 2026
+.Dt AUDITBROKERD 8
+.Os
+.Sh NAME
+.Nm auditbrokerd
+.Nd authenticated BSM audit broker
+.Sh DESCRIPTION
+.Nm
+provides the global
+.Dq org.5bsd.audit
+service from
+.Pa /Capabilities/System/Audit.cap .
+It runs as root because
+.Xr audit 2
+requires
+.Dv PRIV_AUDIT_SUBMIT .
+It cannot run in a jail because the kernel rejects audit submission from
+jailed credentials.
+Each client receives a capability-mode worker which prohibits fork, IPC,
+incoming descriptor transfer, exec, and new sockets.
+The supervisor retains each worker's process descriptor, observes exit through
+.Dv EVFILT_PROCDESC ,
+and admits at most 4096 concurrent workers.  On managed quiesce it first stops
+admission, terminates and reaps every worker, and only then acknowledges
+shutdown to
+.Xr serviced 8 .
+.Pp
+The serviced-authenticated provider identity selects a fixed BSM event.
+Requests cannot choose an event number, audit user ID, or provider identity.
+Only the built-in FileSystemCmp, NetworkCmp, LogCmp, and NotifyCmp identities
+are accepted.
+Each session is rate limited to a burst of 200 records and 100 records per
+second.
+.Sh SECURITY
+.Nm
+exists so functional components do not need root merely to produce trusted
+audit records.
+Subject and operation fields have fixed bounds and a restricted character
+set.
+Unknown providers are rejected before a worker is created.
+The
+.Xr audit 2
+system call is capability-mode enabled but retains its root privilege check
+and jail prohibition.
+.Sh OBSERVABILITY
+The
+.Dq auditcmpd
+DTrace provider exports
+.Sy session ,
+.Sy submit ,
+and
+.Sy reject
+probes.
+They report the authenticated provider label, selected fixed event, submitted
+error value, and operation result without exposing an arbitrary audit record.
+Submission and rejection outcomes are also represented by the broker's BSM
+records where a record can be submitted safely.
+.Sh SEE ALSO
+.Xr audit 2 ,
+.Xr libauditcmp 3 ,
+.Xr libservice 3

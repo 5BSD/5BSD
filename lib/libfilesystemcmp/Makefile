@@ -34,10 +34,11 @@ MLINKS+=libfilesystemcmp.3 filesystemcmp_path_sync.3
 MLINKS+=libfilesystemcmp.3 filesystemcmp_path_close_handle.3
 
 SRCS=	filesystemcmp.c filesystemcmp_path.c
-INCS=	filesystemcmp.h filesystemcmp_protocol.h
+INCS=	filesystemcmp.h filesystemcmp_protocol.h filesystemcmp_server.h
 
 LIBADD=	pthread service
 CFLAGS+=	-I${SRCTOP}/lib/libservice
+STATIC_CFLAGS+=	${PICFLAG}
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

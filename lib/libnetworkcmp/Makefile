@@ -17,18 +17,14 @@ MLINKS+=libnetworkcmp.3 networkcmp_resolve.3
 MLINKS+=libnetworkcmp.3 networkcmp_getaddrinfo.3
 MLINKS+=libnetworkcmp.3 networkcmp_freeaddrinfo.3
 MLINKS+=libnetworkcmp.3 networkcmp_client_open.3
-MLINKS+=libnetworkcmp.3 networkcmp_negotiate.3
-MLINKS+=libnetworkcmp.3 networkcmp_attach_io.3
-MLINKS+=libnetworkcmp.3 networkcmp_write.3
-MLINKS+=libnetworkcmp.3 networkcmp_send_datagram.3
 
 SRCS=	networkcmp.c
-INCS=	networkcmp.h networkcmp_protocol.h
+INCS=	networkcmp.h networkcmp_protocol.h networkcmp_server.h
 
-LIBADD=	pthread service shmring
+LIBADD=	pthread service
 CFLAGS+=	-I${SRCTOP}/lib/libservice
-CFLAGS+=	-I${SRCTOP}/lib/libshmring
 CFLAGS+=	-I${SRCTOP}/sys
+STATIC_CFLAGS+=	${PICFLAG}
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

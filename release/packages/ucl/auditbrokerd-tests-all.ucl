@@ -1,0 +1,10 @@
+comment = "AuditCmp tests"
+
+desc = <<EOD
+Protocol, identity-policy, rate-limit, injected audit-submission backend,
+sandbox-contract, and verified-bundle tests for AuditCmp.
+EOD
+
+annotations = {
+	set = "tests"
+}

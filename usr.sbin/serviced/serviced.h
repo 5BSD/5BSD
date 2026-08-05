@@ -66,6 +66,7 @@ struct svc_runtime {
 	bool		restart_pending;	/* timer scheduled */
 	uintptr_t	timer_ident;		/* unique kevent ident */
 	bool		stop_kill_pending;	/* SIGKILL timer scheduled */
+	bool		quiesce_pending;	/* awaiting SVC_OP_QUIESCE_RESULT */
 	uintptr_t	stop_timer_ident;
 	bool		remove_pending;		/* remove after NOTE_EXIT */
 	bool		reload_pending;		/* swap manifest after NOTE_EXIT */
@@ -166,6 +167,7 @@ void	supervisor_stop(int kq);
 bool	supervisor_is_stopped(void);
 void	supervisor_teardown_state(void);
 void	svc_graceful_stop(struct svc_runtime *svc, int kq);
+void	svc_quiesce_complete(struct svc_runtime *, int status, int kq);
 void	schedule_restart(struct svc_runtime *svc, int kq);
 
 /* svc_proto.c — service channel protocol dispatch */

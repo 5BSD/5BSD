@@ -1,0 +1,7 @@
+comment = "Capability-mode TraceCmp provider"
+
+desc = <<EOD
+The TraceCmp provider and verified /Capabilities/System/Trace.cap bundle.
+It delegates one broker-opened DTrace descriptor across a bounded two-hop
+transfer path to an explicitly authorized consumer.
+EOD

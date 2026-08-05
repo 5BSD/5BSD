@@ -37,6 +37,8 @@ Application
 Typed service library
     |
     +----> libservice ----> libchannel
+    |           |
+    |           +----> libcapability (bootstrap/token/protection kernel ABI)
     |
     +----> libshmring        (only for bulk data)
 
@@ -58,13 +60,22 @@ kernel capability wrapper -> libcapability -> specialized kernel ABI
   required/optional, or arbitrary-options fields.
 - A typed library owns magic/version/opcode/status, payload and attachment-slot
   schemas, and a fixed choice of local component or global service. The
-  application cannot select discovery policy.
+  application cannot select discovery policy. Its ordinary `<name>.h` header
+  exposes only the client API; wire construction and validation live in the
+  separately installed `<name>_server.h` provider-author header. AuditCmp's
+  pre-capability bootstrap/adoption helpers are provider-only for the same
+  reason.
 - `libshmring` is independent of `libservice`; any typed library may combine
-  them without reversing dependencies.
+  them without reversing dependencies. Opened mappings use `INHERIT_NONE`
+  and process ownership checks, so a forked child cannot retain ring authority
+  after close-on-fork descriptors disappear.
 - `libcapbundle` validates declarations for serviced and servicectl.
-- `libcapability` wraps only synchronous kernel capability-service ABIs. It has
-  no serviced lifecycle, name lookup, userspace channel transport, daemon
-  framework, allow-list policy, or payload dispatch.
+- `libcapability` wraps only synchronous kernel capability-service ABIs.
+  `libservice` uses that narrow layer to authenticate inherited bootstrap
+  descriptors, activate kernel capability tokens, and apply capprotect. It is
+  never used for userspace service messaging and has no serviced lifecycle,
+  name lookup, userspace channel transport, daemon framework, allow-list
+  policy, or payload dispatch.
 
 A third-party provider may use `libservice` to expose and accept each declared
 name, then use `libchannel` directly for its own typed protocol. This is the
@@ -235,7 +246,10 @@ The FileSystem component supplies three namespaces:
 Object and byte quotas are durable properties of the namespace, not merely
 open-handle limits. Creation must reserve accounting before mutation or roll
 back completely. Directories count as objects. Restart scans reconstruct both
-byte and object totals and reject corrupt or over-quota stores.
+byte and object totals and reject corrupt or over-quota stores. Writable files
+must have exactly one link: reconstruction rejects hard links, and every
+lookup or mutation path revalidates link count and the per-file size ceiling
+so an injected alias cannot carry writes outside the delegated tree.
 The initial interface uses provider-owned fixed limits (64 MiB total, 4096
 objects, and 16 MiB per file); manifests cannot inject parser input or weaken
 them. A future administrator policy source can narrow those limits without
@@ -286,31 +300,99 @@ library as bounded nonblocking requests, so a waiting client thread cannot
 head-of-line block other session calls. DNS resolution is part of the
 typed library/provider
 protocol; applications do not discover a separate DNS component.
+The base provider performs DNS on one worker thread per private session using
+a distinct attenuated Casper channel. Socket RPC dispatch therefore remains
+responsive while resolution is pending. One resolution may be active per
+session; overlap returns `EBUSY`, and token matching safely discards late
+replies after a caller timeout.
 
 The typed library maps all duplicates of one injected session to the same RPC
-lock domain. Shared-memory rings use `libshmring`.
+lock domain. Version 1 uses bounded inline data only. A future bulk-data
+protocol may compose `libshmring`, but it must be introduced as a negotiated,
+fully implemented protocol version rather than a placeholder ABI.
 
 ## Global base services
 
 - `org.5bsd.log` is a global structured logging service. Every serviced
   connection is an independent provider session. Shared-memory ring wakeups
   are coalesced and draining is batched; flush remains explicit. Flush
-  confirms provider drain and sink submission, not syslog disk durability.
+  confirms provider drain, submission of the redacted syslog copy, draining
+  of the bounded worker-to-storage ring, and synchronization of the private
+  LogCmp store. It does not claim durability for syslogd's separate copy.
+  Retained queries are cursor-driven, contain only privacy-redacted records,
+  and are restricted to the immutable serviced identity on that session.
+  Searches are sliced by record, byte, and segment budgets so a no-match scan
+  cannot monopolize the storage event loop; the typed client hides internal
+  continuations under one total deadline. Private fields use a fixed marker.
+  Private-hash fields use a keyed 128-bit digest with a random, non-persisted
+  storage-manager epoch key, permitting within-epoch correlation without
+  stable cross-restart identifiers or a store-resident dictionary oracle.
+  Logging policy includes a per-session burst limiter, an
+  administrator-selected minimum ingested severity, and explicit filtered
+  and rate-limited counters.  A producer session that exceeds its budget must not
+  monopolize storage or terminate unrelated sessions; sequence accounting must
+  continue across deliberate drops.  These controls follow the useful parts of
+  modern journal designs while retaining LogCmp's identity-scoped store and
+  typed privacy model.  Live following and richer subsystem/category/time
+  predicates belong in the query protocol, not in libservice or libchannel.
+  An eventual all-system administrative reader must be a separately declared
+  service with explicit identity policy, never a request flag.
 - `org.5bsd.notify` is a global event service. The current safe default denies
   publish, subscribe, and timer authority until an identity-bound ACL is
   supplied. Every open has an independent channel and lock. Topics are not
   security boundaries by themselves. Publish replies confirm router
   processing, while bounded subscriber queues remain volatile, lossy under
-  pressure, and non-replayable.
-- `org.5bsd.trace` is a global tracing service. The safe default does not
-  delegate a raw DTrace descriptor. A provider-owned constrained query and
-  aggregation API is required for ordinary clients. Any future raw consumer
-  path must remain an explicit administrator-only grant.
+  pressure, and non-replayable. A relay keeps at most one private-router
+  operation outstanding but continues dispatching its public channel, so
+  concurrent calls receive `EBUSY` and client death tears down an infinite
+  event wait without retaining the router session. Finite client waits use
+  saturating grace deadlines and cannot wrap near `UINT32_MAX`.
+- `org.5bsd.trace` is a global tracing service. Raw descriptor delegation is
+  available only to explicit serviced-authenticated labels in
+  `/etc/traced.allow`; wildcard grants are invalid. The delivered descriptor
+  has the complete libdtrace ioctl allowlist plus one-time transfer and locked
+  fork/exec propagation. It remains administrator-only because those limits
+  cannot constrain D programs, probe targets, actions, or buffer allocation.
+  A provider-owned constrained query and aggregation API is still required
+  for ordinary clients.
+  The friendly `tracecmp_dtrace_open()` constructor applies RAM- and
+  CPU-aware defaults: per-CPU principal and aggregation buffers are bounded
+  between the kernel-safe computed value and 32 MiB, dynamic variables are
+  bounded at 64 MiB, buffer resize remains automatic, and switching occurs
+  every 250 ms. Callers may override these libdtrace options before enabling
+  probes. The raw descriptor API intentionally applies no policy.
+- `org.5bsd.audit` is a global structured-audit service. It accepts only the
+  typed record schema implemented by `libauditcmp`, authenticates the serviced
+  client label, applies label policy and rate limits before submission, and
+  emits records through OpenBSM. It does not delegate the audit descriptor or
+  arbitrary BSM construction authority to clients.
 
 ## Security invariants
 
+- Packrat, Roadrunner, Ledger, and Beacon run as the pkgbase
+  `capability` account. Their parents open only their predeclared resources,
+  apply external-process protection plus `NOPRIVS`, then enter capability
+  mode. Packrat workers reject incoming descriptor transfer. Beacon's fixed
+  router rejects ambient `SCM_RIGHTS` receipt. Its only admission path is a
+  pre-created unnamed capability channel from the provider. Serviced gives a
+  provider endpoint a two-hop linear transfer budget; receipt by the provider
+  leaves one hop, and admission to the router consumes it so the installed
+  endpoint is non-transferable. Descriptor-bearing client protocol requests
+  are rejected and closed. Roadrunner and Ledger retain descriptor receipt
+  only for their typed attachment phases.
+- Sentinel, Bloodhound, Armory, and Sundown run as root deliberately. DTrace device
+  access, traditional kernel-module/reboot privilege checks, and custom BSM
+  audit submission still require root even after the MAC system gate
+  authorizes the nonce. Their parents enter capability mode and their
+  per-client workers prohibit fork, IPC, incoming descriptor transfer, exec,
+  and new sockets. Root removal requires a separately reviewed kernel
+  privilege-grant design; `SERVICE_PROTECT_NOPRIVS` must not be set while
+  these providers depend on traditional privilege checks.
 - Component channels are non-transferable and locked against fork/exec
   propagation except for the one supervised exec performed by serviced.
+- Shared-memory endpoint mappings are explicitly non-inheritable; descriptor
+  propagation controls alone are not treated as revocation of an existing
+  mapping.
 - Provider workers enter capability mode, shed inherited libservice authority,
   and join the consumer coalition before the consumer starts.
 - Global providers remain in their own coalitions.
@@ -330,7 +412,8 @@ The release gate includes:
   reordering, listener close while accept is blocked, close/reopen, fork, queue
   overflow, and provider death;
 - FileSystem namespace, read-only bundle, persistence, durable object and byte
-  quotas, rollback at every allocation failure, restart reconstruction,
+  quotas, hard-link confinement, per-file restart bounds, rollback at every
+  allocation failure, restart reconstruction,
   relative and absolute path resolution, independent cwd contexts, root-clamped
   parent traversal, atomic failed `chdir`, handle duplication, concurrent
   clients, malformed frames, and coalition teardown;
@@ -338,12 +421,27 @@ The release gate includes:
   deadlines, cancellation, descriptor and socket-table exhaustion, concurrent
   sessions, malformed frames, and coalition teardown;
 - Log ring wrap, batching, wakeup coalescing, high-water behavior, loss
-  accounting, flush, fork, close/reopen, and sink failure;
+  accounting, flush, fork, close/reopen, sink failure, keyed privacy
+  expansion boundaries, bounded retained scans, and peer-death recovery
+  without ambiguous replay;
 - Notify default-deny and identity ACL tests before publish/subscribe is
-  enabled;
-- Trace proof that raw descriptor delegation is unavailable by default;
-- DTrace probe argument tests, audit success/failure tests, pkgbase package
-  contents, suffix builds, and upgrade/removal tests;
+  enabled, plus independent clients, concurrent calls, close/reopen, fork,
+  malformed replies, subscription restoration, peer death during every
+  operation family, loss/reset events, timers, state, and payload limits;
+- Trace default-deny policy, explicit-label delegation, ioctl, one-time
+  transfer, fork/exec, duplicate-open, and unavailable-device tests;
+- DTrace probe argument tests, build-time DOF presence/absence checks for both
+  `MK_DTRACE=yes` and `MK_DTRACE=no`, live probe-firing tests, audit
+  success/failure tests, pkgbase package
+  contents, PIE links against fresh typed static archives, suffix builds, and
+  upgrade/removal tests;
+- each typed client library must independently cover discovery, session
+  ownership, concurrent opens and calls, timeouts, malformed and reordered
+  replies, unexpected descriptors, peer death, close/reopen, and fork; each
+  configurable global service must ship a strict config-test/diagnostic tool
+  with argument, parser, unavailable-service, success, and operation-failure
+  tests. Local FileSystem and Network policy remains cap-bundle configuration
+  validated by servicectl rather than a second daemon configuration format;
 - root-only live tests for Capsicum, mac_capability propagation, coalition
   teardown, jails, auditd, DTrace, and real network sockets.
 
@@ -351,3 +449,32 @@ Root-only or live-environment tests that cannot run in an unprivileged object
 tree must be recorded explicitly in the handoff rather than treated as
 passing.  The current results and privileged rerun obligations are recorded in
 `docs/capability-components-validation.md`.
+
+## Operational provider names
+
+Provider process names are an operator-facing identity, not a protocol or API.
+The provider executables, cap bundles, packages, manuals, DTrace providers,
+and operator-visible paths use one western/animal naming set.  No compatibility
+binaries or aliases are installed:
+
+| Interface or subsystem | Executable | Role mnemonic |
+|---|---|---|
+| boot authority | `oracled` | top-level boot and policy supervisor |
+| service manager | `serviced` | service reservation, activation, and lifecycle |
+| FileSystemCmp | `localfilesystem` | private durable and scratch object store |
+| NetworkCmp | `localnetwork` | local network authority and socket operations |
+| logging | `logd` | structured persistent system record |
+| notifications | `bsdnotify` | global state and event notification |
+| tracing | `traced` | privileged tracing and diagnosis |
+| auditing | `auditbrokerd` | security audit policy and submission |
+| reboot coordination | `rebootd` | coordinated shutdown and reboot |
+| kernel modules | `kldmgrd` | controlled kernel-module inventory |
+
+The two local component executables retain the mandatory `cmp` suffix; global
+providers retain daemon names.  Typed library names, C symbols, manifest
+component selectors, and reverse-DNS interface identifiers remain functional
+and descriptive.  The completed rename covers executable and manual names, source
+directories, cap-bundle program entries and paths, pkgbase package metadata,
+DTrace provider names where they identify the process, test fixtures, control
+tool diagnostics, and operator documentation.  Repository-wide old-name scans
+and package content tests enforce the boundary.

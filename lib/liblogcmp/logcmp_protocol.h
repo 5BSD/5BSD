@@ -8,18 +8,31 @@
 #include <stdint.h>
 
 #define	LOGCMP_INTERFACE		"org.5bsd.log"
-#define	LOGCMP_INTERFACE_VERSION	"1.0.0"
+#define	LOGCMP_INTERFACE_VERSION	"5.0.0"
 #define	LOGCMP_MAGIC			0x4c4f4743U	/* "LOGC" */
-#define	LOGCMP_ABI_VERSION		1
+#define	LOGCMP_ABI_VERSION		5
 #define	LOGCMP_MAX_MESSAGE		8192
 #define	LOGCMP_MAX_RECORD		4096
 #define	LOGCMP_MAX_TEXT			2048
 #define	LOGCMP_MAX_FIELDS		2048
+#define	LOGCMP_MAX_SUBSYSTEM		96
+#define	LOGCMP_MAX_CATEGORY		64
+#define	LOGCMP_MAX_EVENT_NAME		96
+#define	LOGCMP_MAX_ATTRIBUTES		32
+#define	LOGCMP_MAX_ATTRIBUTE_KEY	64
+#define	LOGCMP_MAX_ATTRIBUTE_VALUE	512
 #define	LOGCMP_RING_FDS			LOGCMP_ATTACH_FD_COUNT
+#define	LOGCMP_PRIVATE_REDACTED_LENGTH	9U
+#define	LOGCMP_PRIVATE_HASH_LENGTH	42U
 
 #define	LOGCMP_FEATURE_INLINE		0x00000001U
 #define	LOGCMP_FEATURE_SHM_RING		0x00000002U
 #define	LOGCMP_FEATURE_SYSLOG		0x00000004U
+#define	LOGCMP_FEATURE_TYPED_RECORDS	0x00000008U
+#define	LOGCMP_FEATURE_PRIVACY		0x00000010U
+#define	LOGCMP_FEATURE_TRACE_CONTEXT	0x00000020U
+#define	LOGCMP_FEATURE_EDGE_WAKEUP	0x00000040U
+#define	LOGCMP_FEATURE_SCOPED_QUERY	0x00000080U
 
 #define	LOGCMP_MSG_F_MASK		0U
 
@@ -33,7 +46,8 @@ enum logcmp_opcode {
 	LOGCMP_OP_WRITE,
 	LOGCMP_OP_FLUSH,
 	LOGCMP_OP_STATS,
-	LOGCMP_OP_DETACH
+	LOGCMP_OP_DETACH,
+	LOGCMP_OP_QUERY
 };
 
 /*
@@ -46,18 +60,40 @@ enum logcmp_attach_fd_slot {
 	LOGCMP_ATTACH_FD_DATA,
 	LOGCMP_ATTACH_FD_HEAD,
 	LOGCMP_ATTACH_FD_TAIL,
+	LOGCMP_ATTACH_FD_WAKE_READ,
 	LOGCMP_ATTACH_FD_COUNT
 };
 
 enum logcmp_severity {
-	LOGCMP_EMERG = 0,
-	LOGCMP_ALERT,
-	LOGCMP_CRIT,
-	LOGCMP_ERR,
-	LOGCMP_WARNING,
-	LOGCMP_NOTICE,
-	LOGCMP_INFO,
-	LOGCMP_DEBUG
+	LOGCMP_SEVERITY_TRACE = 1,
+	LOGCMP_SEVERITY_DEBUG = 5,
+	LOGCMP_SEVERITY_INFO = 9,
+	LOGCMP_SEVERITY_WARN = 13,
+	LOGCMP_SEVERITY_ERROR = 17,
+	LOGCMP_SEVERITY_FATAL = 21
+};
+
+enum logcmp_record_kind {
+	LOGCMP_KIND_LOG = 1,
+	LOGCMP_KIND_EVENT,
+	LOGCMP_KIND_SIGNPOST_BEGIN,
+	LOGCMP_KIND_SIGNPOST_END,
+	LOGCMP_KIND_SIGNPOST_POINT
+};
+
+enum logcmp_privacy {
+	LOGCMP_PRIVACY_PUBLIC = 1,
+	LOGCMP_PRIVACY_PRIVATE,
+	LOGCMP_PRIVACY_PRIVATE_HASH
+};
+
+enum logcmp_attribute_type {
+	LOGCMP_ATTR_STRING = 1,
+	LOGCMP_ATTR_BYTES,
+	LOGCMP_ATTR_INT64,
+	LOGCMP_ATTR_UINT64,
+	LOGCMP_ATTR_DOUBLE,
+	LOGCMP_ATTR_BOOL
 };
 
 enum logcmp_message_role {
@@ -101,17 +137,59 @@ struct logcmp_attach_request {
 
 struct logcmp_record {
 	uint64_t	sequence;
+	/* Client event time, followed by provider-trusted receive clocks. */
+	uint64_t	timestamp_ns;
+	uint64_t	receive_timestamp_ns;
+	uint64_t	receive_monotonic_ns;
+	uint64_t	activity_id;
+	uint64_t	signpost_id;
+	uint8_t		trace_id[16];
+	uint8_t		span_id[8];
 	uint32_t	severity;
+	uint32_t	kind;
 	uint32_t	flags;
+	uint32_t	message_privacy;
+	uint16_t	subsystem_length;
+	uint16_t	category_length;
+	uint16_t	event_name_length;
+	uint16_t	attribute_count;
 	uint32_t	message_length;
-	uint32_t	fields_length;
+	uint32_t	attributes_length;
+};
+
+struct logcmp_attribute_wire {
+	uint16_t	key_length;
+	uint8_t		type;
+	uint8_t		privacy;
+	uint32_t	value_length;
 };
 
 struct logcmp_stats {
 	uint64_t	accepted;
 	uint64_t	rejected;
 	uint64_t	client_dropped;
+	uint64_t	provider_filtered;
+	uint64_t	provider_rate_limited;
 	uint64_t	last_sequence;
+	uint64_t	client_dropped_by_severity[24];
+	uint64_t	provider_rate_limited_by_severity[24];
+};
+
+struct logcmp_query_cursor {
+	uint64_t	generation;
+	uint64_t	offset;
+};
+
+struct logcmp_query_request {
+	struct logcmp_query_cursor cursor;
+	uint32_t	minimum_severity;
+	uint32_t	reserved;
+};
+
+struct logcmp_query_reply {
+	struct logcmp_query_cursor cursor;
+	uint32_t	result;
+	uint32_t	record_length;
 };
 
 #endif

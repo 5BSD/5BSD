@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #include "serviced.h"
+#include "fd_budget.h"
 #include "serviced_probes.h"
 #include "serviced_svc_proto.h"
 
@@ -306,17 +307,28 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 		return (-1);
 	}
 
+	/* Two endpoints plus one queued attachment on each direct channel. */
+	if (serviced_fd_budget_check(4, "global service connection") == -1) {
+		*errp = errno;
+		SERVICED_PROBE_NAMING_DENY(name, *errp);
+		return (-1);
+	}
+
 	/* Create a channel for the connection. */
 	if (mac_cap_create_channel(&provider_end, &client_end) != 0) {
 		syslog(LOG_WARNING,
 		    "naming: lookup '%s': failed to create channel", name);
 		SERVICED_PROBE_ERROR("naming", "lookup channel creation failed");
-		*errp = EIO;
+		*errp = errno != 0 ? errno : EIO;
 		return (-1);
 	}
-	/* Each endpoint crosses exactly one channel-message edge.  The kernel
-	 * consumes CAP_XFER_ONCE and installs CAP_XFER_NONE at the service. */
-	if (cap_xfer_limit(provider_end, CAP_XFER_ONCE) == -1 ||
+	/*
+	 * The provider endpoint may cross one additional, linear process edge to
+	 * an already-created worker.  The first delivery installs CAP_XFER_ONCE
+	 * at the provider; a worker handoff then installs CAP_XFER_NONE.  The
+	 * client endpoint is never delegable after delivery.
+	 */
+	if (cap_xfer_limit(provider_end, CAP_XFER_TWICE) == -1 ||
 	    cap_xfer_limit(client_end, CAP_XFER_ONCE) == -1) {
 		close(provider_end);
 		close(client_end);

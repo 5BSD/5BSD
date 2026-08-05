@@ -3,11 +3,15 @@
 PACKAGE=rebootd
 PROG=	rebootd
 MAN=	rebootd.8
-SRCS=	rebootd_main.c
+SRCS=	rebootd_main.c rebootd_ops.c rebootd_policy.c rebootd_state.c \
+	rebootd_store.c
 
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
-LIBADD=		bsm channel service
+CFLAGS+=	-I${SRCTOP}/lib/librebootctl
+CFLAGS+=	-I${SRCTOP}/lib/libnotifycmp
+CFLAGS+=	-I${SRCTOP}/lib/libfilesystemcmp
+LIBADD=		bsm channel filesystemcmp notifycmp rebootctl service
 
 DIRS+=	REBOOT_CAP REBOOT_CAP_BIN REBOOT_CAP_ETC
 REBOOT_CAP=	/Capabilities/System/Reboot.cap

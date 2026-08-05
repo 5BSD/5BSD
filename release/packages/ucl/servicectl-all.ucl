@@ -1,0 +1,7 @@
+comment = "serviced administration and bundle validation utility"
+
+desc = <<EOD
+servicectl controls and inspects serviced, installs and verifies capability
+bundles, prints effective local FileSystemCmp and NetworkCmp configuration,
+and derives local component declarations from typed-library ELF dependencies.
+EOD
