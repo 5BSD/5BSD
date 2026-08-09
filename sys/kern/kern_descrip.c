@@ -2762,8 +2762,17 @@ fdcopy(struct filedesc *fdp, struct proc *p1, bool isfork)
 		    (ofde->fde_flags & UF_FOCLOSE) == 0 &&
 		    ofde->fde_clofork_state != CAP_CLOFORK_LOCKED) {
 			if (ops->fo_fork(newfdp, ofde->fde_file, &fp, p1,
-			    curthread) != 0)
+			    curthread) != 0) {
+				/*
+				 * The slot stays empty in the child; keep
+				 * the free-fd hint at or below the lowest
+				 * free slot or later allocations skip it
+				 * (and fdcheckstd() asserts).
+				 */
+				if (i < newfdp->fd_freefile)
+					newfdp->fd_freefile = i;
 				continue;
+			}
 			fork_pass = true;
 		} else if ((ops->fo_flags & DFLAG_PASSABLE) == 0 ||
 		    (ofde->fde_flags & UF_FOCLOSE) != 0 ||
@@ -2774,7 +2783,7 @@ fdcopy(struct filedesc *fdp, struct proc *p1, bool isfork)
 				    ofde->fde_file, i,
 				    curthread->td_proc->p_pid,
 				    ofde->fde_file->f_type);
-			if (newfdp->fd_freefile == fdp->fd_freefile)
+			if (i < newfdp->fd_freefile)
 				newfdp->fd_freefile = i;
 			continue;
 		}
