@@ -225,13 +225,16 @@ control_socket_bad_version_body()
 	require_pidfile
 	# Send version=99, op=STATUS, expect ENOTSUP in reply.
 	# The first 4 bytes of the reply are the status (uint32 LE).
-	# ENOTSUP is 45 (0x2d) on FreeBSD.
+	# ENOTSUP is 45 (0x2d) on FreeBSD.  Use octal escapes: the
+	# FreeBSD printf(1)/sh builtin supports \NNN but NOT \xHH, so hex
+	# would emit literal text and corrupt the request (it would still
+	# mismatch the version, passing this test for the wrong reason).
 	atf_check -s exit:0 -o match:"2d" sh -c '
 		{
-			printf "\\x63\\x00\\x00\\x00"
-			printf "\\x02\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
+			printf "\\143\\000\\000\\000"
+			printf "\\002\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
 		} | nc -U /var/run/oracled.sock | od -A n -t x1 | head -1
 	'
 }
@@ -249,13 +252,16 @@ control_socket_unknown_op_head()
 control_socket_unknown_op_body()
 {
 	require_pidfile
-	# Send version=1, op=255 (unknown), expect ENOTSUP.
+	# Send version=1, op=255 (unknown), expect ENOTSUP.  Octal escapes
+	# (see control_socket_bad_version): with hex, version=1 would not
+	# be emitted, so this would test version mismatch, not the unknown
+	# opcode it claims to.
 	atf_check -s exit:0 -o match:"2d" sh -c '
 		{
-			printf "\\x01\\x00\\x00\\x00"
-			printf "\\xff\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
+			printf "\\001\\000\\000\\000"
+			printf "\\377\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
 		} | nc -U /var/run/oracled.sock | od -A n -t x1 | head -1
 	'
 }

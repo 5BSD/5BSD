@@ -2,6 +2,7 @@ PACKAGE=	oracled-tests
 
 ATF_TESTS_SH+=	oracled_test
 ATF_TESTS_SH+=	oracled_init_test
+ATF_TESTS_SH+=	oracled_lifecycle_test
 ATF_TESTS_SH+=	oracled_bootstrap_test
 ATF_TESTS_SH+=	capd_test_guardian_test
 
