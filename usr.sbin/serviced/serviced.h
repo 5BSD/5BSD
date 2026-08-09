@@ -27,11 +27,38 @@ struct channel_message;
 /* Timeout for mac_capability channel RPC calls (oracle and direct). */
 #define	SERVICED_RPC_TIMEOUT_MS		100
 
+/*
+ * Unit kind.  serviced manages a heterogeneous graph of units; the kind
+ * selects the launch method, the readiness contract, and the default
+ * restart policy.  NATIVE == 0 so a calloc'd svc_runtime defaults to the
+ * current capability-service behavior and every existing code path is
+ * unchanged until a unit is explicitly given another kind.
+ *
+ * The unit's stable identity is its manifest.label: the dependency graph
+ * node is keyed by label, so a unit may migrate between kinds (an rc
+ * service rewritten as a .cap bundle: RC -> NATIVE) without changing its
+ * graph node or disturbing dependents.  bundle_idx is merely origin and
+ * is only meaningful for bundle-sourced units.
+ *
+ * SVC_KIND_RC provides rc(8) compatibility — serviced can run existing
+ * rc.d services via service(8) so the base boots and migrates one service
+ * at a time.  (This is unrelated to daemon version compatibility, which we
+ * do not support: serviced and oracled are always built and run together.)
+ */
+enum svc_kind {
+	SVC_KIND_NATIVE = 0,	/* .cap bundle: cap mode + minted tokens */
+	SVC_KIND_RC,		/* rc.d service via service(8); unconfined */
+	SVC_KIND_ONESHOT,	/* runs once to completion; no restart */
+	SVC_KIND_TARGET,	/* synthetic sync point; no process */
+	SVC_KIND_TIMER,		/* schedule that activates another unit */
+};
+
 /* Service runtime state */
 #define	SVC_STATE_STOPPED		0
-#define	SVC_STATE_STARTING		1	/* pdfork'd, awaiting NOTE_CAPMODE */
-#define	SVC_STATE_RUNNING		2	/* NOTE_CAPMODE verified */
+#define	SVC_STATE_STARTING		1	/* pdfork'd, awaiting readiness */
+#define	SVC_STATE_RUNNING		2	/* ready (see svc_kind readiness) */
 #define	SVC_STATE_STOPPING		3	/* graceful shutdown in progress */
+#define	SVC_STATE_DONE			4	/* oneshot completed successfully */
 
 #define	SVC_NAME_UNCLAIMED		0
 #define	SVC_NAME_INACTIVE		1
@@ -47,6 +74,7 @@ struct channel_message;
  */
 struct svc_runtime {
 	struct svc_manifest	manifest;
+	enum svc_kind	kind;		/* launch method + readiness contract */
 
 	/* Process state */
 	int		state;		/* SVC_STATE_* */

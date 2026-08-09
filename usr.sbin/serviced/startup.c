@@ -184,7 +184,13 @@ wait_tier_ready(struct svc_runtime *svcs, unsigned n, unsigned tier,
 		for (i = 0; i < n; i++) {
 			if (tiers[i] != tier)
 				continue;
+			/*
+			 * RUNNING = ready (native capmode, or RC "started");
+			 * DONE = oneshot completed; STOPPED = crashed/failed,
+			 * which still unblocks the tier so boot proceeds.
+			 */
 			if (svcs[i].state == SVC_STATE_RUNNING ||
+			    svcs[i].state == SVC_STATE_DONE ||
 			    svcs[i].state == SVC_STATE_STOPPED)
 				ready_count++;
 		}

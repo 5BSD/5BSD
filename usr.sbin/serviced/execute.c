@@ -781,8 +781,227 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	_exit(127);
 }
 
+static int svc_exec_native(struct svc_runtime *svc, int kq);
+static int svc_exec_rc(struct svc_runtime *svc, int kq);
+static int svc_exec_oneshot(struct svc_runtime *svc, int kq);
+
+/*
+ * Launch a unit.  Dispatch by kind to the method that matches its
+ * readiness contract and confinement.  NATIVE is the capability-service
+ * path (fork -> cap mode -> minted tokens).  RC and ONESHOT run a command
+ * to completion and are judged by exit status (see svc_exec_command).
+ */
 int
 svc_exec(struct svc_runtime *svc, int kq)
+{
+
+	switch (svc->kind) {
+	case SVC_KIND_NATIVE:
+		return (svc_exec_native(svc, kq));
+	case SVC_KIND_RC:
+		return (svc_exec_rc(svc, kq));
+	case SVC_KIND_ONESHOT:
+		return (svc_exec_oneshot(svc, kq));
+	case SVC_KIND_TARGET:
+	case SVC_KIND_TIMER:
+		syslog(LOG_ERR, "svc_exec %s: unit kind %d not yet supported",
+		    svc->manifest.label, svc->kind);
+		errno = ENOSYS;
+		return (-1);
+	}
+	syslog(LOG_ERR, "svc_exec %s: unknown unit kind %d",
+	    svc->manifest.label, svc->kind);
+	errno = EINVAL;
+	return (-1);
+}
+
+/*
+ * Resolve a manifest's user/group into uid/gid + supplementary groups.
+ * have_creds stays false when neither is set, meaning "run as serviced's
+ * own credentials" (root).  Separate from svc_exec_native's inline copy so
+ * the native path is untouched.
+ */
+static int
+command_resolve_creds(const struct svc_manifest *m, uid_t *uidp, gid_t *gidp,
+    gid_t *groups, int *ngroupsp, bool *have_credsp)
+{
+	struct passwd *pw;
+	struct group *gr;
+	uid_t uid = 0;
+	gid_t gid = 0;
+	int ngroups = 0;
+	bool have = false;
+
+	if (m->user[0] != '\0') {
+		if ((pw = getpwnam(m->user)) == NULL) {
+			syslog(LOG_ERR, "unit %s: unknown user %s",
+			    m->label, m->user);
+			return (-1);
+		}
+		uid = pw->pw_uid;
+		gid = pw->pw_gid;
+		have = true;
+	}
+	if (m->group[0] != '\0') {
+		if ((gr = getgrnam(m->group)) == NULL) {
+			syslog(LOG_ERR, "unit %s: unknown group %s",
+			    m->label, m->group);
+			return (-1);
+		}
+		gid = gr->gr_gid;
+		have = true;
+	}
+	if (have) {
+		ngroups = NGROUPS_MAX + 1;
+		if (getgrouplist(m->user[0] != '\0' ? m->user : "nobody",
+		    gid, groups, &ngroups) == -1) {
+			syslog(LOG_ERR, "unit %s: getgrouplist failed", m->label);
+			return (-1);
+		}
+	}
+	*uidp = uid;
+	*gidp = gid;
+	*ngroupsp = ngroups;
+	*have_credsp = have;
+	return (0);
+}
+
+/*
+ * Launch an RC or ONESHOT unit: run argv to completion under a process
+ * descriptor and judge the unit by the command's exit status.  These
+ * units do NOT enter capability mode and are not long-lived children of
+ * serviced — an rc daemon daemonizes and reparents to init, so serviced
+ * supervises only the start command.  Readiness is delivered later, on
+ * NOTE_EXIT, by the supervisor (RC exit 0 -> RUNNING/"started";
+ * ONESHOT exit 0 -> DONE).  The child gets a clean fd table (closefrom)
+ * so it never inherits serviced's oracle channel, kqueue, or sockets.
+ */
+static int
+svc_exec_command(struct svc_runtime *svc, int kq, char *argv[])
+{
+	struct svc_manifest *m = &svc->manifest;
+	struct kevent kev;
+	gid_t groups[NGROUPS_MAX + 1];
+	uid_t uid = 0;
+	gid_t gid = 0;
+	int ngroups = 0;
+	bool have_creds = false;
+	pid_t pid;
+	int pd_fd;
+
+	if (svc->state != SVC_STATE_STOPPED && svc->state != SVC_STATE_DONE) {
+		syslog(LOG_WARNING, "unit %s: not stopped (state %d)",
+		    m->label, svc->state);
+		return (-1);
+	}
+	if (command_resolve_creds(m, &uid, &gid, groups, &ngroups,
+	    &have_creds) == -1) {
+		SERVICED_PROBE_SVC_EXEC_FAIL(m->label, errno);
+		return (-1);
+	}
+
+	/*
+	 * These units have no channel/coalition/jail.  Force the fd fields
+	 * to -1 so any close-guard treats them as absent and never closes
+	 * fd 0 (their calloc default).
+	 */
+	svc->channel_fd = -1;
+	svc->coalition_fd = -1;
+	svc->jail_fd = -1;
+	svc->control_channel = NULL;
+
+	pid = pdfork(&pd_fd, PD_CLOEXEC);
+	if (pid == -1) {
+		syslog(LOG_ERR, "unit %s: pdfork: %m", m->label);
+		SERVICED_PROBE_SVC_EXEC_FAIL(m->label, errno);
+		return (-1);
+	}
+	if (pid == 0) {
+		sigset_t mask;
+		int nullfd;
+
+		nullfd = open("/dev/null", O_RDWR);
+		if (nullfd == -1)
+			_exit(126);
+		if (dup2(nullfd, STDIN_FILENO) == -1 ||
+		    dup2(nullfd, STDOUT_FILENO) == -1 ||
+		    dup2(nullfd, STDERR_FILENO) == -1)
+			_exit(126);
+		if (nullfd > STDERR_FILENO)
+			(void)close(nullfd);
+		closefrom(STDERR_FILENO + 1);
+		if (have_creds) {
+			if (setgroups(ngroups, groups) == -1 ||
+			    setgid(gid) == -1 || setuid(uid) == -1)
+				_exit(126);
+		}
+		sigemptyset(&mask);
+		(void)sigprocmask(SIG_SETMASK, &mask, NULL);
+		(void)signal(SIGPIPE, SIG_DFL);
+		execv(argv[0], argv);
+		_exit(127);
+	}
+
+	svc->pid = pid;
+	svc->pd_fd = pd_fd;
+	svc->launch_id++;
+	svc->state = SVC_STATE_STARTING;
+	clock_gettime(CLOCK_MONOTONIC, &svc->last_start);
+	SERVICED_PROBE_SVC_START(m->label, pid);
+
+	/* Only NOTE_EXIT: these units never enter capability mode. */
+	EV_SET(&kev, pd_fd, EVFILT_PROCDESC, EV_ADD, NOTE_EXIT, 0, svc);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
+		syslog(LOG_ERR, "unit %s: procdesc register: %m", m->label);
+
+	syslog(LOG_INFO, "unit %s: launched %s (pid %jd)",
+	    m->label, argv[0], (intmax_t)pid);
+	return (0);
+}
+
+/*
+ * RC unit: start the rc.d service via service(8), which sources rc.conf,
+ * applies jail/KEYWORD filtering, and starts the daemon exactly as a
+ * normal boot would.  The unit's label is the rc.d service name.
+ */
+static int
+svc_exec_rc(struct svc_runtime *svc, int kq)
+{
+	char service_cmd[] = "/usr/sbin/service";
+	char faststart[] = "faststart";
+	char *argv[4];
+
+	argv[0] = service_cmd;
+	argv[1] = svc->manifest.label;
+	argv[2] = faststart;
+	argv[3] = NULL;
+	return (svc_exec_command(svc, kq, argv));
+}
+
+/*
+ * ONESHOT unit: run the manifest's program+arguments once to completion.
+ */
+static int
+svc_exec_oneshot(struct svc_runtime *svc, int kq)
+{
+	struct svc_manifest *m = &svc->manifest;
+	char *argv[SERVICED_MAX_ARGUMENTS + 2];
+	unsigned i;
+
+	if (m->program[0] != '/') {
+		syslog(LOG_ERR, "unit %s: program must be absolute: %s",
+		    m->label, m->program);
+		return (-1);
+	}
+	argv[0] = m->program;
+	for (i = 0; i < m->narguments && i < SERVICED_MAX_ARGUMENTS; i++)
+		argv[i + 1] = m->arguments[i];
+	argv[i + 1] = NULL;
+	return (svc_exec_command(svc, kq, argv));
+}
+
+static int
+svc_exec_native(struct svc_runtime *svc, int kq)
 {
 	struct svc_manifest *m;
 	struct kevent kev[3];

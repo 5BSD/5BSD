@@ -151,6 +151,55 @@ cancel_stop_timer(struct svc_runtime *svc)
 	svc->stop_timer_ident = 0;
 }
 
+/*
+ * NOTE_EXIT handling for RC and ONESHOT units.  The process that exited is
+ * the start (or stop) command, not a supervised daemon: an rc daemon
+ * daemonizes and reparents to init, so serviced tracks only the command's
+ * result.  exit 0 => the unit started (RC -> RUNNING) or the task
+ * completed (ONESHOT -> DONE); a stop command completing => STOPPED.  None
+ * of the native teardown (naming, dynamic claims, on-demand, channel and
+ * coalition fds) applies — these units have none of that.
+ */
+static void
+supervisor_command_exited(struct svc_runtime *svc, int exit_status)
+{
+	bool ok, was_stopping;
+
+	ok = WIFEXITED(exit_status) && WEXITSTATUS(exit_status) == 0;
+	was_stopping = (svc->state == SVC_STATE_STOPPING);
+
+	waitpid(svc->pid, NULL, WNOHANG);
+	cancel_stop_timer(svc);
+	if (svc->pd_fd >= 0) {
+		(void)close(svc->pd_fd);	/* EVFILT_PROCDESC auto-removed */
+		svc->pd_fd = -1;
+	}
+	svc->pid = 0;
+
+	if (was_stopping) {
+		svc->state = SVC_STATE_STOPPED;
+		syslog(LOG_INFO, "unit %s: stopped", svc->manifest.label);
+		return;
+	}
+	if (svc->kind == SVC_KIND_ONESHOT) {
+		svc->state = ok ? SVC_STATE_DONE : SVC_STATE_STOPPED;
+		if (ok)
+			syslog(LOG_INFO, "oneshot %s: complete",
+			    svc->manifest.label);
+		else
+			syslog(LOG_ERR, "oneshot %s: failed (status %#x)",
+			    svc->manifest.label, exit_status);
+		return;
+	}
+	/* RC */
+	svc->state = ok ? SVC_STATE_RUNNING : SVC_STATE_STOPPED;
+	if (ok)
+		syslog(LOG_INFO, "rc unit %s: started", svc->manifest.label);
+	else
+		syslog(LOG_ERR, "rc unit %s: faststart failed (status %#x)",
+		    svc->manifest.label, exit_status);
+}
+
 void
 supervisor_handle_procdesc(struct kevent *kev)
 {
@@ -228,6 +277,16 @@ supervisor_handle_procdesc(struct kevent *kev)
 
 		SERVICED_PROBE_SVC_EXIT(svc->manifest.label,
 		    svc->pid, exit_status);
+
+		/*
+		 * RC/ONESHOT units are judged by their command's exit; they
+		 * have no capability-mode daemon to supervise or tear down.
+		 */
+		if (svc->kind == SVC_KIND_RC ||
+		    svc->kind == SVC_KIND_ONESHOT) {
+			supervisor_command_exited(svc, exit_status);
+			return;
+		}
 
 		was_stopping = (svc->state == SVC_STATE_STOPPING);
 		reload_pending = svc->reload_pending;
