@@ -89,12 +89,11 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 {
 	/*
 	 * adj[i][j] = 1 means service i depends on service j
-	 * (j must start before i).
-	 *
-	 * Stack usage: 4096 + 768 = 4864 bytes with SERVICED_MAX_SERVICES=64.
-	 * If SERVICED_MAX_SERVICES is increased significantly, move adj[] to heap.
+	 * (j must start before i).  adj is SERVICED_MAX_SERVICES^2 bytes
+	 * (64 KiB at 256), so it is heap-allocated; the linear arrays stay
+	 * on the stack (a few KiB).
 	 */
-	uint8_t adj[SERVICED_MAX_SERVICES][SERVICED_MAX_SERVICES];
+	uint8_t (*adj)[SERVICED_MAX_SERVICES];
 	unsigned indeg[SERVICED_MAX_SERVICES];
 	unsigned queue[SERVICED_MAX_SERVICES];
 	unsigned order[SERVICED_MAX_SERVICES];
@@ -111,7 +110,11 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 	if (check_duplicates(svcs, nsvc) == -1)
 		return (-1);
 
-	memset(adj, 0, sizeof(adj));
+	adj = calloc(SERVICED_MAX_SERVICES, sizeof(*adj));
+	if (adj == NULL) {
+		syslog(LOG_ERR, "depgraph: calloc adj: %m");
+		return (-1);
+	}
 	memset(indeg, 0, sizeof(indeg));
 
 	/* Build adjacency from component-derived startup edges to factories. */
@@ -179,6 +182,7 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 				    "in a dependency cycle",
 				    svcs[i].manifest.label);
 		}
+		free(adj);
 		return (-1);
 	}
 
@@ -186,6 +190,7 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 	tmp = calloc(nsvc, sizeof(*tmp));
 	if (tmp == NULL) {
 		syslog(LOG_ERR, "depgraph: calloc: %m");
+		free(adj);
 		return (-1);
 	}
 
@@ -194,6 +199,7 @@ depgraph_sort(struct svc_runtime *svcs, unsigned nsvc)
 	for (i = 0; i < nsvc; i++)
 		svcs[i] = tmp[i];
 	free(tmp);
+	free(adj);
 
 	syslog(LOG_INFO, "depgraph: sorted %u services", nsvc);
 	return (0);
