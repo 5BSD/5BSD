@@ -6,7 +6,7 @@ BINDIR=	/usr/libexec
 MAN=	serviced.8
 SRCS=	serviced.c bundle_registry.c mac_capability_direct.c depgraph.c execute.c \
 	fd_budget.c \
-	kldmgr_client.c naming.c on_demand.c oracle_client.c \
+	kldmgr_client.c naming.c on_demand.c oracle_client.c rc_ingest.c \
 	reload.c sctl.c serviced_audit.c startup.c svc_proto.c supervisor.c
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

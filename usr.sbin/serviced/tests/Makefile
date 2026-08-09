@@ -45,7 +45,13 @@ PROGS+=		capd_protocol_fixture
 PROGS+=		component_fixture
 ATF_TESTS_C+=	on_demand_test
 ATF_TESTS_C+=	fd_budget_test
+ATF_TESTS_C+=	rc_ingest_test
 BINDIR=		${TESTSDIR}
+
+# rc_ingest_test compiles the parser directly (pure logic, no daemon deps).
+SRCS.rc_ingest_test=	rc_ingest_test.c ${SRCTOP}/usr.sbin/serviced/rc_ingest.c
+CFLAGS.rc_ingest_test+=	-I${SRCTOP}/usr.sbin/serviced
+CFLAGS.rc_ingest_test+=	-I${SRCTOP}/lib/libcapbundle
 
 LIBADD.capd_service_fixture+=	capability channel service pthread
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libcapability
