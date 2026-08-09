@@ -38,6 +38,22 @@
 #define	CTL_OP_RELOAD		3	/* reload configuration (root) */
 
 /*
+ * System lifecycle operations.  Valid only when oracled is PID 1
+ * (oracle-init); an ordinary daemon rejects them with EPERM.  These
+ * replace init(8)'s traditional signal ABI (see
+ * docs/oracle-control-abi-design.md).  All require root.  Opcodes 7-9
+ * remain reserved (removed check/load/services); do not reuse them.
+ */
+#define	CTL_OP_REBOOT		4	/* reboot (RB_AUTOBOOT) */
+#define	CTL_OP_HALT		5	/* halt (RB_HALT) */
+#define	CTL_OP_POWEROFF		6	/* halt + power off */
+#define	CTL_OP_POWERCYCLE	10	/* power-cycle */
+#define	CTL_OP_SINGLE		11	/* shut down to single-user */
+#define	CTL_OP_REROOT		12	/* root-filesystem reroot */
+#define	CTL_OP_RESCAN		13	/* reread /etc/ttys (was SIGHUP) */
+#define	CTL_OP_CATATONIA	14	/* stop new logins (was SIGTSTP) */
+
+/*
  * Request header.  For variable-length commands, datalen bytes of
  * payload follow immediately after the header.
  */

@@ -15,6 +15,7 @@ void	config_apply_claims(const struct oracled_config *newcfg);
 void	cmd_status(uint64_t uptime, struct ctl_reply *reply,
 	    char *summary, size_t sumlen);
 int	cmd_shutdown(uid_t euid, struct ctl_reply *reply);
+int	cmd_lifecycle(uid_t euid, uint32_t op, struct ctl_reply *reply);
 void	cmd_reload(uid_t euid, struct ctl_reply *reply,
 	    char *summary, size_t sumlen);
 

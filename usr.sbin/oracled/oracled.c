@@ -35,6 +35,7 @@
 #include <unistd.h>
 
 #include "oracled.h"
+#include "oracle_init.h"
 #include "probes.h"
 
 struct oracled_state od;
@@ -57,6 +58,14 @@ main(int argc, char *argv[])
 	const char *bootstrap_override, *conffile, *pidfile_override;
 	pid_t otherpid;
 	int ch;
+
+	/*
+	 * PID 1 personality: when the kernel (or stock init via
+	 * init_exec) starts us as init, the ordinary daemon path —
+	 * daemonize, pidfile, exit on error — must never run.
+	 */
+	if (getpid() == 1)
+		oracle_init_main(argc, argv);
 
 	bootstrap_override = NULL;
 	conffile = ORACLED_DEFAULT_CONFFILE;

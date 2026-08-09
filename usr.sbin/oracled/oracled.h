@@ -63,9 +63,18 @@ int	mac_capability_coalition_recv_event(int coalition_fd, uint32_t *flagsp);
 int	mac_capability_reload_claims(const struct oracled_config *newcfg);
 void	mac_capability_format_status(char *buf, size_t bufsz, size_t *offp);
 
-/* control.c — control socket lifecycle */
+/* control.c — control socket lifecycle.
+ *
+ * ctl_conn_event() returns an action bitmask.  For CTL_ACTION_LIFECYCLE
+ * the requesting connection's opcode is carried in bits 8+ (see
+ * CTL_ACTION_OP) so the transition is applied from the exact request
+ * that set it — never through shared state that concurrent connections
+ * could race on. */
 #define	CTL_ACTION_NONE		0
 #define	CTL_ACTION_SHUTDOWN	0x01
+#define	CTL_ACTION_LIFECYCLE	0x02	/* PID 1 lifecycle request */
+#define	CTL_ACTION_OP_SHIFT	8
+#define	CTL_ACTION_OP(a)	(((a) >> CTL_ACTION_OP_SHIFT) & 0xff)
 
 int	ctl_setup(void);
 void	ctl_teardown(void);

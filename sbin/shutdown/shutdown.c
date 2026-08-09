@@ -32,9 +32,11 @@
 #include <sys/param.h>
 #include <sys/boottrace.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syslog.h>
 #include <sys/time.h>
+#include <sys/un.h>
 
 #include <ctype.h>
 #include <err.h>
@@ -49,6 +51,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include "oracled_ctl.h"
 
 #ifdef DEBUG
 #undef _PATH_NOLOGIN
@@ -86,7 +90,64 @@ static char mbuf[BUFSIZ];
 static const char *nosync, *whom;
 
 static void badtime(void);
+static int oracle_lifecycle(uint32_t op);
 static void die_you_gravy_sucking_pig_dog(void);
+
+/*
+ * Ask oracle-init to perform a lifecycle transition over its control
+ * socket.  Returns 0 if accepted, an errno on a daemon-reported refusal,
+ * or -1 (errno set) when the socket is absent/unusable so the caller
+ * falls back to the signal ABI.  Inlined rather than using liboraclectl:
+ * shutdown(8) is a /sbin tool and must not depend on /usr.
+ */
+static int
+oracle_lifecycle(uint32_t op)
+{
+	struct sockaddr_un un;
+	struct ctl_request req;
+	struct ctl_reply rpl;
+	ssize_t n;
+	size_t off;
+	int fd, saved;
+
+	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
+	if (fd == -1)
+		return (-1);
+	memset(&un, 0, sizeof(un));
+	un.sun_family = AF_LOCAL;
+	strlcpy(un.sun_path, ORACLED_CTL_SOCK, sizeof(un.sun_path));
+	if (connect(fd, (struct sockaddr *)&un, sizeof(un)) == -1) {
+		saved = errno;
+		close(fd);
+		errno = saved;
+		return (-1);
+	}
+	memset(&req, 0, sizeof(req));
+	req.version = CTL_VERSION;
+	req.op = op;
+	for (off = 0; off < sizeof(req); off += n) {
+		n = send(fd, (char *)&req + off, sizeof(req) - off,
+		    MSG_NOSIGNAL);
+		if (n <= 0) {
+			saved = (n == 0) ? EIO : errno;
+			close(fd);
+			errno = saved;
+			return (-1);
+		}
+	}
+	for (off = 0; off < sizeof(rpl); off += n) {
+		n = read(fd, (char *)&rpl + off, sizeof(rpl) - off);
+		if (n <= 0) {
+			saved = (n == 0) ? ECONNRESET : errno;
+			close(fd);
+			errno = saved;
+			return (-1);
+		}
+	}
+	close(fd);
+	return ((int)rpl.status);
+}
+
 static void finish(int);
 static void getoffset(char *);
 static void loop(bool);
@@ -398,12 +459,28 @@ die_you_gravy_sucking_pig_dog(void)
 	(void)printf("\nkill -HUP 1\n");
 #else
 	if (!oflag) {
-		BOOTTRACE("signal to init(8)...");
-		(void)kill(1, doreboot ? SIGINT :	/* reboot */
-			      dohalt ? SIGUSR1 :	/* halt */
-			      dopower ? SIGUSR2 :	/* power-down */
-			      docycle ? SIGWINCH :	/* power-cycle */
-			      SIGTERM);			/* single-user */
+		uint32_t op = doreboot ? CTL_OP_REBOOT :
+			      dohalt ? CTL_OP_HALT :
+			      dopower ? CTL_OP_POWEROFF :
+			      docycle ? CTL_OP_POWERCYCLE :
+			      CTL_OP_SINGLE;
+		/*
+		 * Prefer oracle-init's authenticated control socket; fall
+		 * back to the signal ABI on any failure — the socket being
+		 * absent (stock init) or a refusal from a non-PID-1 oracled
+		 * that is not the real init.  Only a clean accept skips the
+		 * signal.
+		 */
+		if (oracle_lifecycle(op) == 0) {
+			BOOTTRACE("lifecycle op %u to oracle-init...", op);
+		} else {
+			BOOTTRACE("signal to init(8)...");
+			(void)kill(1, doreboot ? SIGINT :	/* reboot */
+				      dohalt ? SIGUSR1 :	/* halt */
+				      dopower ? SIGUSR2 :	/* power-down */
+				      docycle ? SIGWINCH :	/* power-cycle */
+				      SIGTERM);			/* single-user */
+		}
 	} else {
 		if (doreboot) {
 			BOOTTRACE("exec reboot(8) -l...");
@@ -436,8 +513,14 @@ die_you_gravy_sucking_pig_dog(void)
 				_PATH_HALT);
 			warn(_PATH_HALT);
 		}
-		BOOTTRACE("SIGTERM to init(8)...");
-		(void)kill(1, SIGTERM);		/* to single-user */
+		/*
+		 * Reached for oflag single-user, or as a last resort if the
+		 * fastboot/fasthalt exec above failed.  Prefer the socket
+		 * (oracle-init is signal-shielded); fall back to SIGTERM.
+		 */
+		BOOTTRACE("single-user to init(8)...");
+		if (oracle_lifecycle(CTL_OP_SINGLE) != 0)
+			(void)kill(1, SIGTERM);		/* to single-user */
 	}
 #endif
 	finish(0);

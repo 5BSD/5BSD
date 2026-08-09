@@ -1,6 +1,11 @@
 PACKAGE=runtime
 PROG=	reboot
 MAN=	reboot.8 nextboot.8
+
+# For the oracled control-socket wire protocol header (oracled_ctl.h).
+# Header-only: reboot/halt stay self-contained /sbin binaries with no
+# /usr runtime dependency.
+CFLAGS+=	-I${SRCTOP}/lib/liboraclert
 MLINKS=	reboot.8 halt.8 reboot.8 fastboot.8 reboot.8 fasthalt.8
 
 .if exists(${.CURDIR}/boot_${MACHINE}.8)

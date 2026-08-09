@@ -391,6 +391,19 @@ apply_integrity(void)
 
 	/* Defense in depth: configuration may never reopen PID signalling. */
 	flags = od.cfg.integrity_flags | ORACLED_REQUIRED_INTEGRITY_FLAGS;
+
+	/*
+	 * The full signal shield applies even when Oracle is PID 1.
+	 * shutdown(8)/reboot(8)/halt(8) no longer signal init; they use
+	 * the authenticated control socket (CTL_OP_REBOOT etc., see
+	 * docs/oracle-control-abi-design.md), so nothing needs the signal
+	 * ABI.  Kernel-internal signals are unaffected by the shield
+	 * (the MAC proc_check_signal hook fires only on the kill(2) user
+	 * path), so SIGCHLD reaping, SIGALRM timeouts, and oracled's own
+	 * pdkill authority over serviced continue to work.  The init
+	 * signal handlers remain installed only for the early-boot window
+	 * before this shield is applied and the control socket exists.
+	 */
 	od.cfg.integrity_flags = flags;
 
 	memset(&req, 0, sizeof(req));

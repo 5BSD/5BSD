@@ -212,3 +212,23 @@ oraclectl_reload(int fd, char *summary, size_t sumlen)
 	return (do_call_summary(fd, ORACLECTL_RELOAD, 0, NULL, 0,
 	    summary, sumlen, &rpl));
 }
+
+/*
+ * Request a system lifecycle transition (reboot, halt, single-user,
+ * ...) from oracle-init.  op is one of the ORACLECTL_* lifecycle
+ * opcodes.  Returns 0 if the request was accepted (the transition then
+ * proceeds asynchronously), or an errno — notably EPERM if the peer is
+ * not root or oracled is not PID 1.
+ */
+int
+oraclectl_lifecycle(int fd, uint32_t op)
+{
+	struct ctl_reply rpl;
+	int error;
+
+	memset(&rpl, 0, sizeof(rpl));
+	error = do_call(fd, op, 0, NULL, 0, &rpl);
+	if (error != 0)
+		return (error);
+	return (rpl.status);
+}

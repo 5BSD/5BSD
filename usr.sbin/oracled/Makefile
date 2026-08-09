@@ -6,7 +6,7 @@ MAN= oracled.8
 SRCS= oracled.c bootstrap.c mac_capability_setup.c mac_capability_claims.c mac_capability_reload.c \
 	mac_capability_status.c mac_capability_mint.c \
 	mac_capability_coal.c commands.c config.c control.c event.c \
-	oracle_proto.c oracle_proto_claims.c proc.c
+	oracle_init.c oracle_proto.c oracle_proto_claims.c proc.c
 CONFS= oracled.conf
 
 FILESGROUPS+= examples
@@ -26,7 +26,7 @@ CFLAGS+= -I${SRCTOP}/lib/libcapability
 CFLAGS+= -I${SRCTOP}/lib/liboraclert
 CFLAGS+= -I${SRCTOP}/lib/libcapbundle
 CFLAGS+= -I${SRCTOP}/contrib/libucl/include
-LIBADD= capability jail oraclert ucl util
+LIBADD= capability crypt jail oraclert ucl util
 
 .if ${MK_DTRACE} != "no"
 SRCS+= oracled_provider.d

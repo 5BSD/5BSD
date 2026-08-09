@@ -193,6 +193,21 @@ conn_dispatch(struct ctl_conn *c)
 		cmd_reload(c->euid, reply,
 		    c->summary, sizeof(c->summary));
 		break;
+	case CTL_OP_REBOOT:
+	case CTL_OP_HALT:
+	case CTL_OP_POWEROFF:
+	case CTL_OP_POWERCYCLE:
+	case CTL_OP_SINGLE:
+	case CTL_OP_REROOT:
+	case CTL_OP_RESCAN:
+	case CTL_OP_CATATONIA:
+		if (req->datalen != 0) {
+			reply->status = EINVAL;
+			break;
+		}
+		if (cmd_lifecycle(c->euid, req->op, reply))
+			c->action = CTL_ACTION_LIFECYCLE;
+		break;
 	default:
 		reply->status = ENOTSUP;
 		break;
@@ -501,6 +516,13 @@ ctl_conn_event(struct kevent *kev)
 		ORACLED_PROBE_CTL_CMD_DONE(c->req.op, c->euid,
 		    c->reply.status, dur);
 		action = c->action;
+		/*
+		 * Carry the lifecycle opcode out with the action so the
+		 * dispatcher applies this connection's request, not one a
+		 * concurrent connection may have overwritten.
+		 */
+		if (action & CTL_ACTION_LIFECYCLE)
+			action |= (int)(c->req.op & 0xff) << CTL_ACTION_OP_SHIFT;
 		conn_destroy(c);
 	}
 

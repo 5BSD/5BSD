@@ -1,6 +1,10 @@
 PACKAGE=runtime
 PROG=	shutdown
 MAN=	shutdown.8
+
+# Header-only use of the oracled control-socket wire protocol
+# (oracled_ctl.h); keeps shutdown a self-contained /sbin binary.
+CFLAGS+=	-I${SRCTOP}/lib/liboraclert
 LINKS=	${BINDIR}/shutdown ${BINDIR}/poweroff
 MLINKS=	shutdown.8 poweroff.8
 

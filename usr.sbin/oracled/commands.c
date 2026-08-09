@@ -22,6 +22,7 @@
 #include <syslog.h>
 #include <time.h>
 #include <ucl.h>
+#include <unistd.h>
 
 #include "oracled.h"
 #include "oracled_ctl.h"
@@ -114,6 +115,20 @@ int
 cmd_shutdown(uid_t euid, struct ctl_reply *reply)
 {
 
+	/*
+	 * CTL_OP_SHUTDOWN stops the oracled daemon.  When oracled is
+	 * PID 1 there is no daemon to stop and no coherent "stop the
+	 * capability world but stay multi-user" state, so reject it:
+	 * whole-system lifecycle uses the CTL_OP_REBOOT/HALT/SINGLE/...
+	 * ops instead.
+	 */
+	if (getpid() == 1) {
+		reply->status = EPERM;
+		syslog(LOG_WARNING,
+		    "control: shutdown rejected: oracled is PID 1");
+		ORACLED_PROBE_CTL_DENY(CTL_OP_SHUTDOWN, euid);
+		return (0);
+	}
 	if (euid != 0) {
 		reply->status = EPERM;
 		syslog(LOG_WARNING, "control: shutdown denied uid %u", euid);
@@ -122,6 +137,44 @@ cmd_shutdown(uid_t euid, struct ctl_reply *reply)
 	}
 	reply->status = CTL_STATUS_OK;
 	syslog(LOG_INFO, "control: shutdown uid %u", euid);
+	return (1);
+}
+
+/*
+ * System lifecycle request (reboot/halt/single-user/reroot/...).  Valid
+ * only when oracled is PID 1; an ordinary daemon has no authority to
+ * reboot the machine.  Records the request in od.lifecycle_request for
+ * oracle-init's event loop to translate into a state transition, and
+ * returns 1 so control.c sets CTL_ACTION_LIFECYCLE.  This is the
+ * authenticated replacement for init(8)'s signal ABI.
+ */
+int
+cmd_lifecycle(uid_t euid, uint32_t op, struct ctl_reply *reply)
+{
+
+	if (getpid() != 1) {
+		reply->status = EPERM;
+		syslog(LOG_WARNING,
+		    "control: lifecycle op %u rejected: not PID 1", op);
+		ORACLED_PROBE_CTL_DENY(op, euid);
+		return (0);
+	}
+	if (euid != 0) {
+		reply->status = EPERM;
+		syslog(LOG_WARNING, "control: lifecycle op %u denied uid %u",
+		    op, euid);
+		ORACLED_PROBE_CTL_DENY(op, euid);
+		return (0);
+	}
+
+	/*
+	 * Accept.  The opcode is not stashed in shared state here — it
+	 * travels with the per-connection action (see CTL_ACTION_OP), so
+	 * concurrent lifecycle requests cannot race on which op is
+	 * applied.
+	 */
+	reply->status = CTL_STATUS_OK;
+	syslog(LOG_INFO, "control: lifecycle op %u uid %u", op, euid);
 	return (1);
 }
 

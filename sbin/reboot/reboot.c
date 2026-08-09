@@ -33,8 +33,10 @@
 #include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 
 #include <err.h>
@@ -52,6 +54,8 @@
 #include <syslog.h>
 #include <unistd.h>
 #include <utmpx.h>
+
+#include "oracled_ctl.h"
 
 extern char **environ;
 
@@ -231,16 +235,105 @@ add_env(char **env, const char *key, const char *value)
 	free(oldenv);
 }
 
+/*
+ * Ask oracle-init to perform a lifecycle transition over its control
+ * socket.  Returns 0 if accepted, an errno on a daemon-reported refusal,
+ * or -1 (with errno) if the socket is absent/unusable — signalling that
+ * the caller should fall back to the signal ABI.
+ *
+ * A minimal inline client is used deliberately rather than liboraclectl:
+ * reboot(8)/halt(8) live in /sbin and must not acquire a /usr runtime
+ * dependency, since they have to work before /usr is mounted.
+ */
+static int
+oracle_lifecycle(uint32_t op)
+{
+	struct sockaddr_un un;
+	struct ctl_request req;
+	struct ctl_reply rpl;
+	ssize_t n;
+	size_t off;
+	int fd, saved;
+
+	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
+	if (fd == -1)
+		return (-1);
+	memset(&un, 0, sizeof(un));
+	un.sun_family = AF_LOCAL;
+	strlcpy(un.sun_path, ORACLED_CTL_SOCK, sizeof(un.sun_path));
+	if (connect(fd, (struct sockaddr *)&un, sizeof(un)) == -1) {
+		saved = errno;
+		close(fd);
+		errno = saved;
+		return (-1);		/* no oracle-init socket: fall back */
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.version = CTL_VERSION;
+	req.op = op;
+	for (off = 0; off < sizeof(req); off += n) {
+		n = send(fd, (char *)&req + off, sizeof(req) - off,
+		    MSG_NOSIGNAL);
+		if (n <= 0) {
+			saved = (n == 0) ? EIO : errno;
+			close(fd);
+			errno = saved;
+			return (-1);
+		}
+	}
+	for (off = 0; off < sizeof(rpl); off += n) {
+		n = read(fd, (char *)&rpl + off, sizeof(rpl) - off);
+		if (n <= 0) {
+			saved = (n == 0) ? ECONNRESET : errno;
+			close(fd);
+			errno = saved;
+			return (-1);
+		}
+	}
+	close(fd);
+	return ((int)rpl.status);
+}
+
 static void
-shutdown(int howto)
+reboot_request(int howto)
 {
 	char sigstr[SIG2STR_MAX];
+	uint32_t op =
+	    howto & RB_POWERCYCLE ? CTL_OP_POWERCYCLE :
+	    howto & RB_POWEROFF ? CTL_OP_POWEROFF :
+	    howto & RB_HALT ? CTL_OP_HALT :
+	    howto & RB_REROOT ? CTL_OP_REROOT :
+	    CTL_OP_REBOOT;
 	int signo =
 	    howto & RB_POWERCYCLE ? SIGWINCH :
 	    howto & RB_POWEROFF ? SIGUSR2 :
 	    howto & RB_HALT ? SIGUSR1 :
 	    howto & RB_REROOT ? SIGEMT :
 	    SIGINT;
+	int error;
+
+	/*
+	 * Prefer the authenticated Oracle control socket: when PID 1 is
+	 * oracle-init, it is shielded from the signal ABI and lifecycle
+	 * requests arrive over the socket.  Fall back to signalling init
+	 * directly when the socket is absent (stock init, or oracle-init
+	 * before its capability engine has started).
+	 */
+	error = oracle_lifecycle(op);
+	if (error == 0) {
+		BOOTTRACE("lifecycle op %u to oracle-init", op);
+		exit(0);
+	}
+	if (error > 0) {
+		/*
+		 * Socket present but the request was refused — e.g. a
+		 * non-PID-1 oracled owns the socket while the real init is
+		 * a signalable stock init.  Fall back to the signal ABI
+		 * rather than failing outright.
+		 */
+		warnx("oracle-init lifecycle request refused (%s); "
+		    "signalling init", strerror(error));
+	}
 
 	(void)sig2str(signo, sigstr);
 	BOOTTRACE("SIG%s to init(8)...", sigstr);
@@ -469,12 +562,18 @@ main(int argc, char *argv[])
 	 * Common case: clean shutdown.
 	 */
 	if (!dofast)
-		shutdown(howto);
+		reboot_request(howto);
 
-	/* Just stop init -- if we fail, we'll restart it. */
-	BOOTTRACE("SIGTSTP to init(8)...");
-	if (kill(1, SIGTSTP) == -1)
-		err(1, "SIGTSTP init");
+	/*
+	 * Stop init from respawning gettys during teardown.  oracle-init
+	 * is signal-shielded, so prefer the control socket (CATATONIA);
+	 * fall back to SIGTSTP for stock init.  Best-effort: reboot(2)
+	 * below still completes if init cannot be quiesced, so this must
+	 * not be fatal (a fatal error here would abort the fast reboot).
+	 */
+	BOOTTRACE("quiescing init(8)...");
+	if (oracle_lifecycle(CTL_OP_CATATONIA) != 0 && kill(1, SIGTSTP) == -1)
+		warn("could not quiesce init; continuing");
 
 	/* Send a SIGTERM first, a chance to save the buffers. */
 	BOOTTRACE("SIGTERM to all other processes...");
