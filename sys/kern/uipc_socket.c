@@ -4504,18 +4504,25 @@ sohasoutofband(struct socket *so)
 	selwakeuppri(&so->so_rdsel, PSOCK);
 }
 
+/*
+ * Atomic protocols consume one queued record at a time regardless of
+ * SO_RCVLOWAT.  In particular, an empty record is readable even though it
+ * contributes no bytes to sbavail().  Only protocols using the classic mbuf
+ * sockbuf may be checked this way: PR_SOCKBUF protocols overlay sb_mb with
+ * protocol-private state that is not a valid record pointer.
+ */
+static bool
+soreadable_atomic_record(struct socket *so)
+{
+	return ((so->so_proto->pr_flags & (PR_ATOMIC | PR_SOCKBUF)) ==
+	    PR_ATOMIC && so->so_rcv.sb_mb != NULL);
+}
+
 bool
 soreadabledata(struct socket *so)
 {
-
-	/*
-	 * Atomic protocols consume one queued record at a time regardless of
-	 * SO_RCVLOWAT.  In particular, an empty record is readable even though
-	 * it contributes no bytes to sbavail().
-	 */
 	return (sbavail(&so->so_rcv) >= so->so_rcv.sb_lowat ||
-	    ((so->so_proto->pr_flags & PR_ATOMIC) != 0 &&
-	    so->so_rcv.sb_mb != NULL) || so->so_error || so->so_rerror);
+	    soreadable_atomic_record(so) || so->so_error || so->so_rerror);
 }
 
 int
@@ -4670,6 +4677,9 @@ filt_soread(struct knote *kn, long hint)
 		if (kn->kn_data >= kn->kn_sdata)
 			return (1);
 	} else if (sbavail(&so->so_rcv) >= so->so_rcv.sb_lowat)
+		return (1);
+
+	if (soreadable_atomic_record(so))
 		return (1);
 
 #ifdef SOCKET_HHOOK
