@@ -45,4 +45,19 @@ struct rc_unit_meta {
  */
 int	rc_parse_header(const char *text, struct rc_unit_meta *meta);
 
+/* One ingested rc.d service: the script basename plus its parsed header. */
+struct rc_unit {
+	char			name[SERVICED_LABEL_MAX];   /* rc.d service name */
+	struct rc_unit_meta	meta;
+};
+
+/*
+ * Scan rc.d directory dir, parse each executable regular file's header,
+ * and append every orderable service (nprovides > 0 and not KEYWORD
+ * nostart) to units, up to max.  Returns the count appended, or -1 if the
+ * directory cannot be opened.  Only the leading part of each script is
+ * read — enough for the rcorder header.
+ */
+int	rc_ingest_scan(const char *dir, struct rc_unit *units, unsigned max);
+
 #endif /* SERVICED_RC_INGEST_H */

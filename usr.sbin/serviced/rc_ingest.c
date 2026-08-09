@@ -6,7 +6,14 @@
  * rc(8) header parser — see rc_ingest.h.  Pure string logic, no I/O.
  */
 
+#include <sys/param.h>
+#include <sys/stat.h>
+
+#include <dirent.h>
+#include <fcntl.h>
+#include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "rc_ingest.h"
 
@@ -117,4 +124,49 @@ rc_parse_header(const char *text, struct rc_unit_meta *meta)
 			parse_keywords(rest, meta);
 	}
 	return (0);
+}
+
+int
+rc_ingest_scan(const char *dir, struct rc_unit *units, unsigned max)
+{
+	DIR *d;
+	struct dirent *de;
+	unsigned n = 0;
+
+	d = opendir(dir);
+	if (d == NULL)
+		return (-1);
+	while ((de = readdir(d)) != NULL) {
+		char path[PATH_MAX], buf[8192];
+		struct rc_unit_meta meta;
+		struct stat st;
+		int fd;
+		ssize_t r;
+
+		if (de->d_name[0] == '.')
+			continue;
+		(void)snprintf(path, sizeof(path), "%s/%s", dir, de->d_name);
+		if (stat(path, &st) != 0 || !S_ISREG(st.st_mode))
+			continue;
+		if (access(path, X_OK) != 0)
+			continue;
+		if ((fd = open(path, O_RDONLY)) == -1)
+			continue;
+		r = read(fd, buf, sizeof(buf) - 1);
+		(void)close(fd);
+		if (r <= 0)
+			continue;
+		buf[r] = '\0';
+
+		rc_parse_header(buf, &meta);
+		if (meta.nprovides == 0 || meta.kw_nostart)
+			continue;	/* not an orderable, auto-started service */
+		if (n >= max)
+			break;
+		strlcpy(units[n].name, de->d_name, sizeof(units[n].name));
+		units[n].meta = meta;
+		n++;
+	}
+	(void)closedir(d);
+	return ((int)n);
 }

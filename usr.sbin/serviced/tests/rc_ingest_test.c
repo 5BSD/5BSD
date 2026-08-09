@@ -6,11 +6,26 @@
  * Hermetic unit tests for the rc.d header parser (rc_ingest.c).
  */
 
+#include <sys/stat.h>
+
+#include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <atf-c.h>
 
 #include "rc_ingest.h"
+
+static void
+write_script(const char *path, const char *body, mode_t mode)
+{
+	FILE *f = fopen(path, "w");
+
+	ATF_REQUIRE(f != NULL);
+	fputs(body, f);
+	fclose(f);
+	ATF_REQUIRE(chmod(path, mode) == 0);
+}
 
 static bool
 has(char list[][SERVICED_LABEL_MAX], unsigned n, const char *name)
@@ -114,6 +129,39 @@ ATF_TC_BODY(provide_overflow_bounded, tc)
 	ATF_CHECK(m.nprovides <= SERVICED_MAX_PROVIDES);
 }
 
+ATF_TC_WITHOUT_HEAD(scan_dir);
+ATF_TC_BODY(scan_dir, tc)
+{
+	struct rc_unit units[16];
+	int n;
+
+	ATF_REQUIRE(mkdir("rcd", 0755) == 0);
+	write_script("rcd/sshd",
+	    "#!/bin/sh\n# PROVIDE: sshd\n# REQUIRE: LOGIN\n", 0755);
+	write_script("rcd/skipme",		/* nostart -> skipped */
+	    "#!/bin/sh\n# PROVIDE: skipme\n# KEYWORD: nostart\n", 0755);
+	write_script("rcd/noprov",		/* no PROVIDE -> skipped */
+	    "#!/bin/sh\n# REQUIRE: X\n", 0755);
+	write_script("rcd/notexec",		/* not executable -> skipped */
+	    "#!/bin/sh\n# PROVIDE: notexec\n", 0644);
+
+	n = rc_ingest_scan("rcd", units, 16);
+	ATF_CHECK_EQ(1, n);			/* only sshd qualifies */
+	if (n == 1) {
+		ATF_CHECK_STREQ("sshd", units[0].name);
+		ATF_CHECK_EQ(1, units[0].meta.nprovides);
+		ATF_CHECK_EQ(1, units[0].meta.nreq);
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(scan_missing_dir);
+ATF_TC_BODY(scan_missing_dir, tc)
+{
+	struct rc_unit units[4];
+
+	ATF_CHECK_EQ(-1, rc_ingest_scan("no/such/dir", units, 4));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -122,5 +170,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, no_provide);
 	ATF_TP_ADD_TC(tp, header_ends_at_code);
 	ATF_TP_ADD_TC(tp, provide_overflow_bounded);
+	ATF_TP_ADD_TC(tp, scan_dir);
+	ATF_TP_ADD_TC(tp, scan_missing_dir);
 	return (atf_no_error());
 }
