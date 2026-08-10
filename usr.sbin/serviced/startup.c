@@ -23,6 +23,7 @@
 #include <string.h>
 #include <syslog.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <libcapbundle.h>
 
@@ -200,6 +201,94 @@ wait_tier_ready(struct svc_runtime *svcs, unsigned n, unsigned tier,
 }
 
 /*
+ * Transitional rc world: run /etc/rc once, as a oneshot, and block until
+ * it finishes.  serviced now owns rc startup (init no longer runs
+ * /etc/rc), so this reproduces the traditional boot -- the full rc
+ * sequence runs before native capability services launch.  /etc/rc
+ * normally exits 0 even when individual rc.d services fail, so a non-zero
+ * result here means rc itself is broken; it is logged but not fatal
+ * (native services still launch).  Returns 0 if /etc/rc exited 0.
+ */
+static int
+run_rc_bootstrap(int kqunused)
+{
+	static struct svc_runtime rc;	/* static: stable kevent udata */
+	struct kevent kev;
+	int rckq, nev;
+
+	(void)kqunused;
+
+	/*
+	 * Use a dedicated kqueue so the ONLY event this wait sees is
+	 * /etc/rc's process-descriptor exit.  On the shared serviced kqueue
+	 * a level-triggered channel/socket event that we do not consume
+	 * here would be re-reported every call and starve the exit event,
+	 * wedging boot forever.
+	 */
+	rckq = kqueue();
+	if (rckq == -1) {
+		syslog(LOG_ERR, "startup: kqueue for /etc/rc: %m");
+		return (-1);
+	}
+
+	memset(&rc, 0, sizeof(rc));
+	rc.kind = SVC_KIND_ONESHOT;
+	strlcpy(rc.manifest.label, "etc-rc", sizeof(rc.manifest.label));
+	/*
+	 * /etc/rc is a non-executable (0644) /bin/sh script, exactly as init
+	 * runs it: execve(_PATH_BSHELL, {"sh", "/etc/rc", "autoboot"}).  Exec
+	 * it through /bin/sh -- execv("/etc/rc") directly fails EACCES (child
+	 * _exit(127)), which silently skips the entire rc boot (no rw remount,
+	 * no /var), stalling convergence.
+	 */
+	strlcpy(rc.manifest.program, "/bin/sh", sizeof(rc.manifest.program));
+	strlcpy(rc.manifest.arguments[0], "/etc/rc",
+	    sizeof(rc.manifest.arguments[0]));
+	strlcpy(rc.manifest.arguments[1], "autoboot",
+	    sizeof(rc.manifest.arguments[1]));
+	rc.manifest.narguments = 2;
+	rc.manifest.restart = SVC_RESTART_NEVER;
+	rc.state = SVC_STATE_STOPPED;
+	rc.want_console = true;		/* rc progress must be visible on console */
+	svc_runtime_init_fds(&rc);
+
+	syslog(LOG_INFO, "startup: running /etc/rc");
+	if (svc_exec(&rc, rckq) == -1) {
+		syslog(LOG_ERR, "startup: cannot launch /etc/rc");
+		(void)close(rckq);
+		return (-1);
+	}
+
+	/*
+	 * Wait for /etc/rc to finish, however long it takes.  rc has no
+	 * knowable deadline (fsck, key generation, network/entropy waits can
+	 * all be legitimately slow), and init historically waited on /etc/rc
+	 * indefinitely -- so we do the same.  Detecting a genuinely wedged
+	 * boot is left to the operator (console), exactly as before.
+	 */
+	while (rc.state == SVC_STATE_STARTING) {
+		nev = kevent(rckq, NULL, 0, &kev, 1, NULL);
+		if (nev == -1) {
+			if (errno == EINTR)
+				continue;
+			syslog(LOG_ERR, "startup: kevent during /etc/rc: %m");
+			break;
+		}
+		if (nev > 0 && kev.filter == EVFILT_PROCDESC)
+			supervisor_handle_procdesc(&kev);
+	}
+	(void)close(rckq);
+
+	if (rc.state == SVC_STATE_DONE) {
+		syslog(LOG_INFO, "startup: /etc/rc completed");
+		return (0);
+	}
+	syslog(LOG_WARNING, "startup: /etc/rc did not exit cleanly (state %d)",
+	    rc.state);
+	return (-1);
+}
+
+/*
  * Launch all system services using tier-based parallelism.
  *
  * 1. Scan bundle registry for non-on-demand services
@@ -220,6 +309,17 @@ startup_launch_system(int kq)
 	struct timespec start_ts;
 
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
+
+	/*
+	 * Transitional rc world: serviced owns rc startup.  Run /etc/rc
+	 * once (as a oneshot) and block until it completes, before
+	 * launching native capability services -- preserving the ordering
+	 * the boot had when init ran /etc/rc directly.  A non-zero /etc/rc
+	 * is reported so the caller can signal non-convergence, but native
+	 * services still launch.  (Per-service rc units replace this
+	 * monolithic step in a later phase.)
+	 */
+	(void)run_rc_bootstrap(kq);
 
 	/* Collect all non-on-demand service manifests from bundles. */
 	manifests = calloc(SERVICED_MAX_SERVICES, sizeof(*manifests));

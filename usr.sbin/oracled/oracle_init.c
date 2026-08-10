@@ -179,6 +179,8 @@ static bool oi_ctl_up;
 static void oi_engine_start(void);
 static void oi_dispatch(struct kevent *);
 static void oi_lifecycle_apply(int op);
+static int oi_await_convergence(void);
+static void oi_ctl_try_setup(void);
 static void oi_drain_children(void);
 static void oi_world_stop(void);
 
@@ -988,42 +990,135 @@ single_user(void)
 static state_func_t
 runcom(void)
 {
-	state_func_t next_transition;
-	char runcom_path[PATH_MAX];
-	const char *rc_script;
 
-	if (kenv(KENV_GET, "init_rc", runcom_path, sizeof(runcom_path)) > 0)
-		rc_script = runcom_path;
-	else
-		rc_script = _PATH_RUNCOM;
-
-	BOOTTRACE("%s starting...", rc_script);
-	if ((next_transition = run_script(rc_script)) != NULL)
-		return next_transition;
-	BOOTTRACE("%s finished", rc_script);
-
-	runcom_mode = AUTOBOOT;		/* the default */
+	/*
+	 * serviced owns rc startup now: it runs /etc/rc as a oneshot, then
+	 * launches native capability services.  PID 1 therefore does NOT run
+	 * /etc/rc; it brings up the capability engine (which starts
+	 * serviced) in establish_authority.  This state is retained only as
+	 * the entry into establish_authority so the single-user -> multi-user
+	 * path is unchanged; init_rc/autoboot no longer apply here.
+	 */
+	BOOTTRACE("rc startup delegated to serviced");
+	runcom_mode = AUTOBOOT;
 	return (state_func_t) establish_authority;
 }
 
 /*
- * Phase two of boot: bring up the Oracle capability engine now that
- * the rc world (filesystems, devfs, syslogd, kernel modules) exists.
- * Engine failure is logged but never blocks the Unix world: the
- * system continues to multi-user with rc-managed services only.
+ * Phase two of boot: bring up the Oracle capability engine, which starts
+ * serviced, which runs /etc/rc and the native services.  Because serviced
+ * now owns rc startup, PID 1 must not proceed to multi-user until serviced
+ * signals convergence -- and if serviced cannot bring the system up, PID 1
+ * must reach a recovery shell rather than a dead multi-user with no rc
+ * world.  This is the converge-or-recover gate.
  */
 static state_func_t
 establish_authority(void)
 {
 
 	oi_engine_start();
+	if (!oi_engine_up) {
+		/* No serviced => nothing runs /etc/rc.  Recover. */
+		emergency("capability engine did not start; entering recovery");
+		return (state_func_t) single_user;
+	}
+	if (oi_await_convergence() != 0) {
+		emergency("serviced did not converge; entering recovery");
+		return (state_func_t) single_user;
+	}
+	/*
+	 * / is read-write now that /etc/rc has run.  Retry the control socket
+	 * that could not bind during the read-only early boot.
+	 */
+	oi_ctl_try_setup();
 	return (state_func_t) read_ttys;
+}
+
+/*
+ * Wait for serviced to signal boot convergence: it creates
+ * SERVICED_READY_PATH after running /etc/rc and launching native
+ * services.  The engine kqueue is serviced meanwhile so serviced's
+ * channel/procdesc events -- including crash and restart -- are handled.
+ *
+ * There is deliberately no time deadline: /etc/rc has no knowable
+ * duration (fsck, key generation, network/entropy waits), and init
+ * historically waited on it indefinitely.  Recovery is triggered only by
+ * serviced *permanently* dying -- the restart circuit breaker tripping --
+ * not by a clock, so a legitimately slow boot is never cut short.  A
+ * wedged-but-alive serviced hangs boot exactly as a wedged /etc/rc hung
+ * init before; that remains an operator/console matter.
+ *
+ * Returns 0 on convergence, -1 if serviced has permanently failed.
+ */
+static int
+oi_await_convergence(void)
+{
+	struct kevent kev;
+	struct timespec ts;
+	struct stat sb;
+	int nev;
+
+	BOOTTRACE("awaiting serviced convergence");
+	for (;;) {
+		if (stat(SERVICED_READY_PATH, &sb) == 0) {
+			BOOTTRACE("serviced converged");
+			return (0);
+		}
+		if (bootstrap_has_given_up()) {
+			warning("serviced permanently failed before convergence");
+			return (-1);
+		}
+
+		if (oi_kq < 0) {
+			sleep(1);
+			oi_drain_children();
+			continue;
+		}
+		ts.tv_sec = 1;
+		ts.tv_nsec = 0;
+		nev = kevent(oi_kq, NULL, 0, &kev, 1, &ts);
+		if (nev == -1) {
+			if (errno != EINTR)
+				warning("kevent awaiting convergence: %m");
+		} else if (nev > 0) {
+			if (kev.filter == EVFILT_SIGNAL &&
+			    (int)kev.ident == SIGCHLD)
+				oi_drain_children();
+			else
+				oi_dispatch(&kev);
+		}
+		oi_drain_children();
+	}
+}
+
+/*
+ * Bind PID 1's control socket (/var/run/oracled.sock), idempotently.  Called
+ * from oi_engine_start (before /etc/rc) and again after convergence: the early
+ * attempt fails with EROFS because / is still read-only, so the socket must be
+ * retried once serviced has run /etc/rc and remounted / read-write.
+ */
+static void
+oi_ctl_try_setup(void)
+{
+	struct kevent kev;
+
+	if (oi_ctl_up)
+		return;
+	/* control.c registers connection events on event_kq. */
+	event_kq = oi_kq;
+	if (ctl_setup() == -1) {
+		warning("oracle control socket unavailable (will retry)");
+		return;
+	}
+	oi_ctl_up = true;
+	EV_SET(&kev, ctl_fd(), EVFILT_READ, EV_ADD, 0, 0, NULL);
+	if (kevent(oi_kq, &kev, 1, NULL, 0, NULL) == -1)
+		warning("kevent control socket: %m");
 }
 
 static void
 oi_engine_start(void)
 {
-	struct kevent kev;
 
 	if (oi_engine_up)
 		return;
@@ -1070,19 +1165,7 @@ oi_engine_start(void)
 		oi_mac_up = true;
 	}
 
-	if (!oi_ctl_up) {
-		/* control.c registers connection events on event_kq. */
-		event_kq = oi_kq;
-		if (ctl_setup() == -1) {
-			warning("oracle control socket unavailable");
-		} else {
-			oi_ctl_up = true;
-			EV_SET(&kev, ctl_fd(), EVFILT_READ, EV_ADD,
-			    0, 0, NULL);
-			if (kevent(oi_kq, &kev, 1, NULL, 0, NULL) == -1)
-				warning("kevent control socket: %m");
-		}
-	}
+	oi_ctl_try_setup();
 
 	od.shutting_down = false;
 	if (bootstrap_start(oi_kq) == -1) {

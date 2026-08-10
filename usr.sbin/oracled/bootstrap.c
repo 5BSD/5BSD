@@ -643,6 +643,19 @@ bootstrap_is_stopped(void)
 	return (!bs.started);
 }
 
+/*
+ * True once the restart circuit breaker has tripped: serviced has failed
+ * BOOTSTRAP_MAX_FAILURES times and will not be restarted again.  This is
+ * the definitive "serviced is permanently dead" signal (as opposed to a
+ * transient stop during a restart backoff).
+ */
+bool
+bootstrap_has_given_up(void)
+{
+
+	return (!bs.started && bs.restart_count >= BOOTSTRAP_MAX_FAILURES);
+}
+
 bool
 bootstrap_is_procdesc(struct kevent *kev)
 {

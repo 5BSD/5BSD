@@ -46,6 +46,7 @@
 #include "serviced_audit.h"
 #include "fd_budget.h"
 #include "serviced_probes.h"
+#include "oracled_ctl.h"		/* SERVICED_READY_PATH */
 
 struct serviced_state sd;
 int serviced_kq;
@@ -238,7 +239,14 @@ main(int argc, char *argv[])
 	sd.capprotect_fd = -1;
 	sd.identity_fd = -1;
 
-	openlog("serviced", LOG_PID | LOG_NDELAY | LOG_PERROR, LOG_DAEMON);
+	/*
+	 * LOG_CONS: during early boot serviced runs before syslogd exists, so
+	 * syslog() to /var/run/log is undeliverable; LOG_CONS makes those
+	 * messages fall back to /dev/console instead of vanishing.  Essential
+	 * for diagnosing a boot that wedges before convergence.
+	 */
+	openlog("serviced", LOG_PID | LOG_NDELAY | LOG_PERROR | LOG_CONS,
+	    LOG_DAEMON);
 
 	/* Parse arguments. */
 	while ((ch = getopt(argc, argv, "")) != -1) {
@@ -398,13 +406,6 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
-	/* Set up control socket. */
-	if (sctl_setup() == 0) {
-		EV_SET(&kev, sctl_fd(), EVFILT_READ, EV_ADD, 0, 0, NULL);
-		if (kevent(serviced_kq, &kev, 1, NULL, 0, NULL) == -1)
-			syslog(LOG_WARNING, "kevent sctl: %m");
-	}
-
 	/* Register signals. */
 	/* A client that closes early must produce EPIPE, not kill the manager. */
 	(void)signal(SIGPIPE, SIG_IGN);
@@ -470,6 +471,36 @@ main(int argc, char *argv[])
 	if (startup_launch_system(serviced_kq) != 0) {
 		syslog(LOG_ERR, "startup: system service launch failed");
 		/* Continue running — on-demand and reload can still work. */
+	}
+
+	/*
+	 * Set up the control socket only now.  /etc/rc (run inside
+	 * startup_launch_system) has remounted / read-write and populated
+	 * /var/run; binding earlier fails with EROFS and the socket would
+	 * never appear (clients then see "Bad file descriptor").
+	 */
+	if (sctl_setup() == 0) {
+		EV_SET(&kev, sctl_fd(), EVFILT_READ, EV_ADD, 0, 0, NULL);
+		if (kevent(serviced_kq, &kev, 1, NULL, 0, NULL) == -1)
+			syslog(LOG_WARNING, "kevent sctl: %m");
+	}
+
+	/*
+	 * Boot has converged: /etc/rc ran and native services were
+	 * launched.  Signal oracle-init (PID 1) so it proceeds past its
+	 * converge-or-recover deadline.  Individual service failures do not
+	 * block convergence; only serviced never reaching this point (crash
+	 * or wedge) triggers PID 1 recovery.
+	 */
+	{
+		int rfd = open(SERVICED_READY_PATH,
+		    O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+		if (rfd != -1)
+			(void)close(rfd);
+		else
+			syslog(LOG_WARNING, "cannot write %s: %m",
+			    SERVICED_READY_PATH);
 	}
 
 	event_loop();

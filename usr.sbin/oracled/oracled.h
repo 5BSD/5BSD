@@ -95,6 +95,7 @@ void	bootstrap_handle_timer(int kq);
 void	bootstrap_signal(int sig);
 void	bootstrap_stop(void);
 bool	bootstrap_is_stopped(void);
+bool	bootstrap_has_given_up(void);
 bool	bootstrap_is_procdesc(struct kevent *kev);
 bool	bootstrap_is_channel(struct kevent *kev);
 bool	bootstrap_is_timer(struct kevent *kev);
