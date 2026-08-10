@@ -698,8 +698,15 @@ ATF_TC_BODY(queued_attachments_close_on_destroy, tc)
 	ATF_REQUIRE(channel_create(first, &client_options, &client) == 0);
 	ATF_REQUIRE(channel_create(second, &provider_options, &provider) == 0);
 	ATF_REQUIRE(pipe(ends) == 0);
-	for (sends = 0; sends < MAC_CAPABILITY_DEFAULT_QUEUE_DEPTH + 2;
-	    sends++) {
+	/*
+	 * Sends flow through two kernel stages before the client sees
+	 * backpressure: the sender's tx queue (csvc_tx_limit) drains into the
+	 * provider's rx queue (csvc_queue_depth).  channel_wants_write only
+	 * becomes true once SENDMSG returns EAGAIN, i.e. after both fill -- so
+	 * drive enough sends to fill both, not just the receive depth.
+	 */
+	for (sends = 0; sends < MAC_CAPABILITY_DEFAULT_QUEUE_DEPTH +
+	    MAC_CAPABILITY_DEFAULT_TX_LIMIT + 2; sends++) {
 		ATF_REQUIRE(channel_send_event(client,
 		    OUT_FDS("fd", 2, &ends[1], 1)) == 0);
 		if (channel_wants_write(client) == 1)
