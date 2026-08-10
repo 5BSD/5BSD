@@ -5,6 +5,7 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/serviced
 
 .PATH: ${SRCTOP}/usr.sbin/oracled/tests
 .PATH: ${SRCTOP}/lib/libservice/tests
+.PATH: ${SRCTOP}/usr.sbin/serviced
 
 ATF_TESTS_SH+=	serviced_naming_test
 ATF_TESTS_SH+=	serviced_svc_test
@@ -49,7 +50,10 @@ ATF_TESTS_C+=	rc_ingest_test
 BINDIR=		${TESTSDIR}
 
 # rc_ingest_test compiles the parser directly (pure logic, no daemon deps).
-SRCS.rc_ingest_test=	rc_ingest_test.c ${SRCTOP}/usr.sbin/serviced/rc_ingest.c
+# rc_ingest.c comes from the serviced source dir via .PATH above; referencing
+# it by basename keeps its object in the objdir (an absolute ${SRCTOP} path in
+# SRCS would place the object inside $SRCTOP, which objdir builds forbid).
+SRCS.rc_ingest_test=	rc_ingest_test.c rc_ingest.c
 CFLAGS.rc_ingest_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.rc_ingest_test+=	-I${SRCTOP}/lib/libcapbundle
 
