@@ -39,6 +39,8 @@
 #include <assert.h>
 #include <capsicum_helpers.h>
 #include <err.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <netdb.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -72,7 +74,9 @@ struct fifo {
 struct uart_softc {
 	struct ttyfd	tty;
 	struct fifo	rxfifo;
-	struct mevent	*mev;
+	struct mevent	*mev;		/* active connection (rx) event */
+	struct mevent	*mev_listen;	/* TCP listener accept event */
+	int		log_fd;		/* ",log=" console tee, or -1 */
 	pthread_mutex_t mtx;
 };
 
@@ -219,15 +223,24 @@ uart_rxfifo_drain(struct uart_softc *sc, bool loopback)
 int
 uart_rxfifo_putchar(struct uart_softc *sc, uint8_t ch, bool loopback)
 {
-	if (loopback) {
+	if (loopback)
 		return (rxfifo_putchar(sc, ch));
-	} else if (sc->tty.opened) {
+
+	/*
+	 * Tee to the console log (",log=" backend option), if configured,
+	 * before considering the socket.  This is unconditional so the full
+	 * console stream is captured even when no client is attached.
+	 */
+	if (sc->log_fd >= 0)
+		(void)write(sc->log_fd, &ch, 1);
+
+	if (sc->tty.opened) {
 		/* write returning -1 means disconnected. */
 		if (ttywrite(&sc->tty, ch) == -1 && sc->tty.is_socket)
 			uart_tcp_disconnect(sc);
 		return (0);
 	} else {
-		/* Drop on the floor. */
+		/* Drop on the floor (still logged above if ",log=" set). */
 		return (0);
 	}
 }
@@ -498,7 +511,7 @@ uart_tcp_backend(struct uart_softc *sc, const char *path,
 		errx(EX_OSERR, "Unable to apply fcntls for sandbox");
 #endif
 
-	if ((sc->mev = mevent_add(bind_fd, EVF_READ, uart_tcp_listener,
+	if ((sc->mev_listen = mevent_add(bind_fd, EVF_READ, uart_tcp_listener,
 	    socket_softc)) == NULL)
 		goto clean;
 
@@ -521,9 +534,40 @@ uart_init(void)
 	if (sc == NULL)
 		return (NULL);
 
+	sc->log_fd = -1;
 	pthread_mutex_init(&sc->mtx, NULL);
 
 	return (sc);
+}
+
+/*
+ * Open a console log file for the ",log=<path>" backend suffix and record it
+ * on the softc.  Every byte the guest transmits is tee'd here unconditionally
+ * (see uart_rxfifo_putchar), independent of the underlying backend and of
+ * whether any client is attached -- making console capture deterministic.
+ * This is intentionally backend-agnostic: it applies to stdio, tcp, and
+ * device backends alike.
+ */
+static void
+uart_open_log(struct uart_softc *sc, const char *logpath)
+{
+	int lf;
+
+	lf = open(logpath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+	if (lf == -1) {
+		warn("uart: cannot open console log %s", logpath);
+		return;
+	}
+#ifndef WITHOUT_CAPSICUM
+	{
+		cap_rights_t lrights;
+
+		cap_rights_init(&lrights, CAP_WRITE);
+		if (caph_rights_limit(lf, &lrights) == -1)
+			errx(EX_OSERR, "Unable to apply rights for sandbox");
+	}
+#endif
+	sc->log_fd = lf;
 }
 
 int
@@ -531,6 +575,24 @@ uart_tty_open(struct uart_softc *sc, const char *path,
     void (*drain)(int, enum ev_type, void *), void *arg)
 {
 	int retval;
+	char *cleanpath, *logspec;
+
+	/*
+	 * Peel off an optional ",log=<path>" suffix before dispatching, so the
+	 * backends see only their own path syntax.  Works for any backend.
+	 */
+	cleanpath = strdup(path);
+	if (cleanpath == NULL)
+		return (-1);
+	logspec = strstr(cleanpath, ",log=");
+	if (logspec != NULL) {
+		char logfile[PATH_MAX];
+
+		if (sscanf(logspec, ",log=%1023[^,]", logfile) == 1)
+			uart_open_log(sc, logfile);
+		*logspec = '\0';	/* hide suffix from the backend parser */
+	}
+	path = cleanpath;
 
 	if (strcmp("stdio", path) == 0)
 		retval = uart_stdio_backend(sc);
@@ -549,6 +611,7 @@ uart_tty_open(struct uart_softc *sc, const char *path,
 		assert(sc->mev != NULL);
 	}
 
+	free(cleanpath);
 	return (retval);
 }
 

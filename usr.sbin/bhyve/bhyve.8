@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 24, 2026
+.Dd August 1, 2026
 .Dt BHYVE 8
 .Os
 .Sh NAME
@@ -328,8 +328,10 @@ parameters overrides the total VM memory size specified by the
 .Fl m
 flag.
 However, if at least one domain memory size parameter is
-missing, the total VM memory size will be equally distributed across
-all emulated domains.
+missing, the total VM memory size will be distributed across all
+emulated domains in whole host-page units.
+The resulting sizes differ by at most one host page and their sum is
+exactly the configured total.
 The
 .Em cpuset
 parameter specifies the set of CPUs that are part of the domain.
@@ -380,11 +382,18 @@ A sibling
 .Dq Ar file Ns .lock
 serializes checkpoint replacement with restore while the referenced members
 are opened.
+Current manifests include unkeyed SHA-256 values for each member and verify
+them before publishing restored state.
+These values detect accidental or post-publication changes but do not
+authenticate an untrusted checkpoint producer.
+The manifest, its members, and their containing directory must therefore be
+controlled by a trusted operator.
 Legacy snapshots in which
 .Ar file
 contains guest memory and
 .Dq Ar file Ns .kern
 contains state remain readable.
+Version-2 manifests also remain readable and do not contain member digests.
 .Pp
 Note that the current snapshot file format requires that the
 configuration of devices in the new VM match the VM from which the
@@ -502,6 +511,10 @@ If omitted, the legacy PCI transport and its existing device identity are used
 for compatibility with existing guests and launch scripts.
 The modern setting selects the non-transitional VirtIO PCI transport and
 device ID 0x1041.
+For modern devices,
+.Cm packed=true
+enables the explicitly selected packed-virtqueue implementation.
+It is disabled by default.
 .It Cm virtio-blk
 Virtio block storage interface.
 The optional
@@ -521,6 +534,9 @@ Values greater than 1 advertise
 .Dv VIRTIO_BLK_F_MQ
 and create that many independent request virtqueues.
 The default is one queue.
+For modern devices,
+.Cm packed=true
+enables packed virtqueues and is disabled by default.
 Modern block devices also advertise
 .Dv VIRTIO_BLK_F_CONFIG_WCE .
 They retain the historical writeback default, permit the guest to select
@@ -544,6 +560,9 @@ request virtqueues.
 Values greater than one require
 .Cm transport=modern .
 The default is one queue.
+For modern devices,
+.Cm packed=true
+enables packed virtqueues and is disabled by default.
 .It Cm virtio-9p
 Virtio 9p (VirtFS) interface.
 The optional
@@ -556,8 +575,52 @@ If omitted, the legacy PCI transport and device identity are retained for
 compatibility.
 The modern setting selects the non-transitional VirtIO PCI transport and
 device ID 0x1049.
+For modern devices,
+.Cm packed=true
+enables the packed virtqueue and is disabled by default.
 It supports selective virtqueue reset without discarding the active 9P
 session or its fid namespace.
+.It Cm virtio-fs
+Modern-only, non-DAX Virtio filesystem interface using non-transitional
+device ID 0x105a.
+The required
+.Cm path
+setting is the absolute pathname of a local
+.Dv SOCK_SEQPACKET
+backend socket speaking the versioned VFSB protocol.
+The required
+.Cm tag
+setting is the UTF-8 mount tag exposed to the guest and is limited to 36
+bytes.
+The optional
+.Cm queues
+setting accepts 1 through 64 request queues and defaults to one; the device
+also exposes one high-priority queue.
+The optional
+.Cm packed=true
+setting enables packed virtqueues and is disabled by default.
+The optional
+.Cm identity
+setting supplies a stable backend identity for checkpoint compatibility.
+When it is present,
+.Nm
+requires the backend to negotiate explicit freeze and state-transfer support.
+Checkpoint then uses bounded, event-driven QUIESCE and THAW exchanges; the
+backend returns an opaque state record when quiescing and consumes that record
+when thawing.
+The identity and negotiated backend limits must match at restore.
+If
+.Cm identity
+is omitted, ordinary filesystem operation remains available but checkpointing
+this device returns
+.Er ENOTSUP .
+The backend peer must have the same effective user and group identity as
+.Nm
+and must negotiate cancellation support.
+The device therefore advertises selective virtqueue reset.
+It does not advertise notifications, DAX, or a shared-memory region.
+The tree currently provides the device-side protocol and test peers, not a
+production filesystem backend daemon.
 .It Cm virtio-rnd
 Virtio RNG interface.
 The optional
@@ -570,6 +633,300 @@ If omitted, the legacy PCI transport and its existing device identity are used
 for compatibility with existing guests and launch scripts.
 The modern setting selects the non-transitional VirtIO PCI transport and
 device ID 0x1044.
+For qualification of packed virtqueues, the experimental
+.Cm packed=true
+setting advertises
+.Dv VIRTIO_F_RING_PACKED .
+It is valid only with
+.Cm transport=modern
+and is disabled by default.
+.It Cm virtio-pmem
+Virtio persistent-memory interface.
+This device is modern PCI only, uses device ID 27 and non-transitional PCI
+device ID 0x105b, and exposes its bytes through shared-memory region zero.
+The required
+.Cm path
+setting names a nonempty regular backing file.
+.Nm
+maps that file shared, holds a nonblocking exclusive advisory lock, and
+rejects symbolic links, competing device instances, and backing identity or
+size changes detected at a flush boundary.
+The required
+.Cm id
+setting supplies a stable operator identity of at most 255 bytes.
+It is the portable external-backend contract: restore requires the same
+identity and size, while host paths, inode numbers, mappings, and file
+descriptors are deliberately not serialized.
+Operators must assign a separate backing file to each device unless the
+workload explicitly accepts the sharing risks described by VirtIO 1.4.
+The device completes a guest FLUSH only after synchronous mapping and file
+persistence; a backend failure is returned as the specification-defined
+minus one.
+Reset, selective queue reset, suspend, and checkpoint close admission and use
+a bounded event-driven drain.
+Checkpoint adds one final persistence operation before publishing portable
+state, and a failed checkpoint reopens the still-running source
+transactionally.
+The optional
+.Cm packed=true
+setting advertises packed virtqueues and is disabled by default.
+.It Cm virtio-gpu
+Virtio GPU 2D interface.
+This device is modern PCI only and uses non-transitional device ID 0x1050.
+It exposes one scanout, a control queue, and a cursor queue.
+The optional
+.Cm width
+and
+.Cm height
+settings select the scanout dimensions and default to 1024 by 768.
+The selected pair must fit the EDID 1.4 detailed-timing representation.
+The initial feature surface supports the eight baseline 32-bit 2D formats,
+resource creation and backing, guest-to-host transfers, scanout selection,
+flush, the 64 by 64 cursor protocol, and
+.Dv VIRTIO_GPU_F_EDID .
+The EDID response is a deterministic one-block EDID 1.4 description of the
+configured virtual monitor.
+The device does not advertise accelerated rendering, resource UUIDs, or
+context initialization.
+The experimental
+.Cm blob=true
+setting advertises guest-memory blob resources and blob alignment, and adds a
+256 MiB sparse host-visible shared-memory aperture in a dedicated 64-bit BAR.
+It accepts guest blobs, including Linux's shareable dumb-buffer convention,
+but not host-renderer or cross-device blobs.
+Mapped aperture accesses are reported uncached and are translated through the
+same architecture-neutral DMA boundary as descriptor-backed resources.
+The setting is disabled by default pending live Linux and checkpoint
+qualification.
+If no host display consumer is configured, the scanout remains headless while
+the complete guest-visible resource and queue behavior remains active.
+The optional
+.Cm display=true
+setting registers the Virtio GPU scanout and cursor as the process-wide
+framebuffer producer.
+To expose that producer over VNC, configure one
+.Cm fbuf
+device with
+.Cm source=external,vga=off
+and with
+.Cm w
+and
+.Cm h
+equal to the Virtio GPU dimensions.
+Framebuffer producer ownership is exclusive; configuration fails instead of
+silently replacing another display device.
+The optional
+.Cm packed=true
+setting advertises
+.Dv VIRTIO_F_RING_PACKED
+and is disabled by default.
+Checkpoint state uses a bounded, versioned little-endian representation of
+monitor identity, resources, host pixels, guest physical backing descriptors,
+blob identities and mappings, scanout, and cursor state.
+Restore rejects a destination configured with different monitor dimensions.
+Host mappings, pointers, display handles, and architecture-specific state are
+never serialized.
+.It Cm virtio-mem
+Virtio memory hotplug interface.
+This device is modern PCI only and uses the non-transitional device ID
+0x1058.
+The required
+.Cm size
+setting reserves a device-memory region outside ordinary boot RAM.
+The optional
+.Cm requested
+setting asks the guest to plug that amount initially and defaults to zero.
+The optional
+.Cm block-size
+setting defaults to 2 MiB.
+The region and requested sizes must be block aligned, the block size must be a
+power of two and at least one host page, and the requested size cannot exceed
+the region size.
+The optional
+.Cm packed=true
+setting advertises
+.Dv VIRTIO_F_RING_PACKED
+and is disabled by default.
+The device does not advertise ACPI proximity domains,
+.Dv VIRTIO_MEM_F_UNPLUGGED_INACCESSIBLE ,
+or persistent suspend.
+Consequently, unplugged blocks remain CPU-addressable but their contents are
+undefined and their host pages may be reclaimed.
+Ordinary VirtIO reset preserves plugged blocks as required by the
+specification.
+Checkpoint state uses a bounded, versioned little-endian bitmap and a generic
+device-memory payload record; host mappings, pointers, file descriptors, and
+architecture-specific state are not serialized.
+.It Cm virtio-snd
+Virtio sound interface.
+This device is modern PCI only and uses the non-transitional device ID
+0x1059.
+It exposes the standard control, event, playback, and capture queues, with
+one signed 16-bit mono or stereo output stream and one input stream at
+44.1 or 48 kHz.
+The current deterministic null backend discards output and returns zero-filled
+input; it is intended for guest-driver, queue, lifecycle, and checkpoint
+qualification and does not connect to host audio hardware.
+The optional
+.Cm backend=null
+setting selects this behavior.
+The provisional
+.Cm backend=oss
+setting uses nonblocking OSS playback and capture devices.
+The
+.Cm play=/dev/dsp
+and
+.Cm record=/dev/dsp
+settings select those endpoints.
+OSS readiness is integrated with the event loop; a vCPU notification never
+waits for host audio I/O, and at most one bounded request is retained per
+stream.
+The OSS mode remains provisional pending live Linux playback, capture, reset,
+and checkpoint qualification with representative host audio devices.
+The optional
+.Cm packed=true
+setting advertises
+.Dv VIRTIO_F_RING_PACKED
+and is disabled by default.
+Checkpoint state is fixed-width, versioned, little-endian, and contains no
+host pointers, file descriptors, locks, or architecture-specific state.
+It records the backend kind and exact configured playback and capture paths;
+restore rejects a destination configured with different audio side effects.
+.It Cm virtio-iommu
+Modern-only VirtIO IOMMU interface.
+This option enables a PCI IOMMU passthrough binding model for modern virtio
+endpoints and supports non-shared request/event queues.
+The optional
+.Cm packed=true
+setting advertises
+.Dv VIRTIO_F_RING_PACKED
+for qualification.
+.It Cm virtio-balloon
+Virtio traditional memory-balloon interface.
+This device is modern PCI only and uses the non-transitional device ID
+0x1045.
+The optional
+.Cm target
+setting selects the startup balloon target as a memory size.
+The target must be a multiple of 4096 bytes and cannot exceed configured
+guest RAM.
+The guest reports its current balloon size through the standard
+.Dv actual
+configuration field.
+The optional
+.Cm stats_interval=N
+setting advertises
+.Dv VIRTIO_BALLOON_F_STATS_VQ
+and requests refreshed guest memory statistics every
+.Ar N
+seconds, where
+.Ar N
+is between 1 and 3600.
+The device retains at most one statistics buffer and uses a monotonic,
+event-driven timer.
+Omitting the setting leaves the optional queue unadvertised.
+The optional
+.Cm deflate_on_oom=true
+setting advertises
+.Dv VIRTIO_BALLOON_F_DEFLATE_ON_OOM ,
+allowing a conforming guest to return ballooned pages through the deflate
+queue when required for guest stability even when the configured target has
+not decreased.
+The option changes only guest policy permission: returned pages still use the
+normal validated deflate path and, because
+.Dv VIRTIO_BALLOON_F_MUST_TELL_HOST
+is also offered, cannot be reused until the device acknowledges them.
+It is disabled by default.
+The optional
+.Cm free_page_hinting=true
+setting advertises
+.Dv VIRTIO_BALLOON_F_FREE_PAGE_HINT
+and exposes the standard free-page-hint virtqueue.
+The device accepts the standard command identifier before processing writable
+guest-RAM ranges, bounds each notification by the queue size, and stops the
+current round if a range cannot be reverse-mapped or discarded.
+Hinting is disabled by default pending live Linux qualification.
+The optional
+.Cm free_page_reporting=true
+setting advertises
+.Dv VIRTIO_BALLOON_F_PAGE_REPORTING
+and exposes the standard reporting virtqueue.
+Each request must contain only device-writable guest-RAM ranges.
+For each native-page-aligned range,
+.Nm
+may release the corresponding host backing before acknowledging the request;
+unmappable or unaligned ranges are safely ignored because page release is an
+optional optimization.
+Reporting is disabled by default pending live Linux qualification.
+The optional
+.Cm page_poison=true
+setting advertises
+.Dv VIRTIO_BALLOON_F_PAGE_POISON .
+The guest may write the standard
+.Dv poison_val
+configuration field before setting
+.Dv DRIVER_OK ;
+attempts to change it while the device is operational are ignored.
+When page poisoning and free-page reporting are both negotiated,
+.Nm
+preserves the reported guest-memory contents instead of applying the optional
+host discard optimization, as required to retain the poison pattern.
+Page poisoning is disabled by default.
+The optional
+.Cm packed=true
+setting advertises
+.Dv VIRTIO_F_RING_PACKED
+for qualification and is disabled by default.
+Balloon page frame numbers always describe 4096-byte units.
+.Nm
+advertises
+.Dv VIRTIO_BALLOON_F_MUST_TELL_HOST
+because its host discard operation may be deferred.
+On deflation, cancellation of the discard hint is requested for the complete
+native host page before the request is acknowledged.
+Host discard and cancellation calls are paging optimizations: their failure is
+traced but does not reverse the standard ownership transfer represented by a
+completed request, which has no status field.
+On hosts with a larger native page size,
+.Nm
+waits until every 4096-byte unit in a native page has been inflated before
+reclaiming that native page.
+Invalid or non-RAM page frame numbers are ignored without preventing valid
+entries in the same request from completing.
+Checkpoint state preserves the target and guest-reported actual size, but does
+not serialize host pointers or a reconstructed page-frame list.
+.It Cm virtio-rtc
+Virtio RTC interface.
+This device is modern PCI only and uses the non-transitional device ID
+0x1051.
+It exposes one dense UTC-like clock through the standard request queue.
+Clock readings are unsigned little-endian nanoseconds since the Unix epoch
+and are obtained after the request becomes available.
+The clock type is
+.Dv VIRTIO_RTC_CLOCK_UTC_MAYBE_SMEARED
+because host
+.Dv CLOCK_REALTIME
+policy may either step or smear around a leap second.
+By default, the feature surface does not advertise alarms or cross timestamps;
+alarm requests then return
+.Dv VIRTIO_RTC_S_ENODEV ,
+and unsupported cross-timestamp reads return
+.Dv VIRTIO_RTC_S_EOPNOTSUPP .
+The optional
+.Cm alarm=true
+setting advertises
+.Dv VIRTIO_RTC_F_ALARM
+and adds the standard alarm notification queue.
+Alarm control uses nanoseconds on clock zero, and expiration delivery is
+driven by a host timer rather than periodic polling.
+The optional
+.Cm packed=true
+setting advertises
+.Dv VIRTIO_F_RING_PACKED
+for qualification and is disabled by default.
+Checkpoint state is a fixed-width version record containing only portable
+alarm state; host clock values, timer handles, and host pointers are never
+serialized.
 .It Cm virtio-console
 Virtio console interface, which exposes multiple ports
 to the guest in the form of simple char devices for simple IO
@@ -584,6 +941,19 @@ If omitted, the legacy PCI transport and device identity are retained for
 compatibility.
 The modern setting selects the non-transitional VirtIO PCI transport and
 device ID 0x1043.
+For modern devices,
+.Cm packed=true
+enables packed virtqueues and is disabled by default.
+Each configured port accepts a
+.Cm console
+boolean, disabled by default, which nominates that port to the guest as a
+text console after the guest acknowledges the port.
+More than one port may be nominated.
+The legacy
+.Fl s
+option syntax spells the same selection as
+.Cm console-port= Ns Ar N
+and may be repeated.
 .It Cm virtio-input
 Virtio input interface.
 The required
@@ -610,6 +980,9 @@ The explicit
 .Cm legacy
 setting retains bhyve's historical register interface for compatibility, but
 VirtIO 1.4 assigns no transitional PCI device ID to the input device.
+With the modern transport,
+.Cm packed=true
+enables packed virtqueues and is disabled by default.
 .It Cm virtio-vsock
 Virtio vsock interface for host-guest socket transport.
 The device is configured with
@@ -636,6 +1009,9 @@ If omitted, the legacy PCI transport is used for compatibility with existing
 guests and launch scripts.
 The modern setting selects the non-transitional VirtIO PCI transport and
 device ID 0x1053.
+For modern devices,
+.Cm packed=true
+enables packed virtqueues and is disabled by default.
 Guest connections to a host port use a socket named for the port inside this
 directory.
 For host-to-guest connections, host processes connect to
@@ -658,6 +1034,15 @@ Kernel backends for distinct guest CIDs may run concurrently.
 A second instance using an already attached CID fails with
 .Er EADDRINUSE .
 The host routes each connection and provider reset by its remote guest CID.
+.Pp
+Checkpoint state for either backend is portable only while no vsock
+connection or buffered provider packet is active.
+The kernel backend uses the
+.Xr vsock 4
+provider freeze/thaw ioctls to enforce that condition atomically.
+The userspace backend rejects a checkpoint while Unix relay or control
+connections remain because their host descriptors cannot be reconstructed
+in another process.
 See
 .Xr vsock 4
 for details.
@@ -797,6 +1182,15 @@ The device writes the resulting hash value and protocol report into the
 extended receive header while retaining the base header expected by host
 network backends.
 .Pp
+The optional
+.Cm checkpoint_identity
+parameter supplies an opaque, stable network-backend identity for checkpoint
+restore and migration.
+It must be nonempty and at most 255 bytes, and must identify the same logical
+network attachment at the destination.
+When omitted, the backend type and configured backend name form a host-local
+identity; an explicit value is recommended for cross-host migration.
+.Pp
 With
 .Cm netgraph
 backend, the
@@ -872,6 +1266,18 @@ if not explicitly specified.
 Disable emulation of guest trim requests via
 .Dv DIOCGDELETE
 requests.
+.It Cm checkpoint_identity= Ns Ar identifier
+Set the stable identity used to verify that checkpoint restore or migration
+has opened the intended backing store.
+The identifier must be nonempty and at most 255 bytes.
+It is an opaque operator contract and must name the same logical volume on
+the source and destination.
+When omitted,
+.Nm
+derives a host-local identity from the already-open file or device.
+That fallback detects replacement of a path on the same host, but is
+deliberately not portable across hosts; cross-host migration should always
+specify an explicit identity.
 .It Li bootindex= Ns Ar index
 Add the device to the boot order at
 .Ar index .
@@ -942,6 +1348,23 @@ connection is active.
 Note that this feature allows unprivileged users to access the guest console,
 so ensure that access is appropriately restricted.
 .El
+.Pp
+Any TTY backend may be followed by a
+.Cm \&, Ns Cm log= Ns Ar path
+suffix, for example
+.Ar tcp=127.0.0.1:4321,log=/var/log/vm0-console.log
+or
+.Cm stdio Ns Cm ,log= Ns Ar path .
+Every byte the guest transmits on the serial port is appended to
+.Ar path
+unconditionally, independent of the backend and of whether any client is
+attached.
+Unlike the plain
+.Ar tcp=
+backend, which drops output while no client is connected, the log file
+captures the entire console stream, including boot output emitted before a
+client connects.
+This makes it suitable for capturing headless or automated boots.
 .Ss TPM device backends
 .Bl -bullet
 .Sm off
@@ -1131,6 +1554,7 @@ exits.
 .Op Cm ,w= Ar width
 .Op Cm ,h= Ar height
 .Op Cm ,vga= Ar vgaconf
+.Op Cm ,source= Ar source
 .Op Cm ,wait
 .Op Cm ,password= Ar password
 .Sm on
@@ -1197,6 +1621,21 @@ VGA adapter is present if they detect the I/O ports.
 An example of such a guest is
 .Ox
 in UEFI mode.
+.It Cm source= Ns Ar source
+Selects the framebuffer producer.
+The default,
+.Cm fbuf ,
+uses the emulated VGA framebuffer.
+.Cm external
+leaves pixel production to a separately configured display device, such as
+.Cm virtio-gpu,display=true ,
+while retaining this device's VNC server and framebuffer storage.
+The external setting requires
+.Cm vga=off .
+Only one producer may own the framebuffer, and its dimensions must match
+.Cm w
+and
+.Cm h .
 .Pp
 Please refer to the
 .Nm
@@ -1392,8 +1831,10 @@ When built with DTrace support,
 provides
 .Dq virtio
 USDT probes for feature and status negotiation, queue enable, notification,
-queue-reset begin, completion and failure, configuration-window access,
-configuration changes, device reset, and transport errors.
+accepted direct and indirect descriptor chains, split and packed event-index
+decisions, queue-reset begin, completion and failure, configuration-window
+access, configuration changes, network receive hash-report publication,
+device reset, and transport errors.
 The first argument of every probe is the device-model name, such as
 .Dq vtnet ,
 .Dq vtblk ,
@@ -1409,6 +1850,20 @@ Queue-reset probes include the queue index and a generation number, allowing a
 consumer to correlate an asynchronous reset completion with the reset that
 started it.
 The failure probe also includes the backend error.
+.Pp
+The descriptor-chain probe reports the queue, ring layout, whether the request
+used an indirect table, and the number of data descriptors accepted by the
+common decoder.
+The two event-index probes report the driver threshold, the device producer
+cursor, and the resulting interrupt decision for split and packed rings.
+The
+.Dq net-rx-hash
+probe reports the receive virtqueue, hash value, specification-defined packet
+class, and frame length when
+.Dv VIRTIO_NET_F_HASH_REPORT
+metadata is published to a guest.
+These probes are dormant unless a DTrace consumer enables them and therefore
+do not add diagnostic logging to the queue hot path.
 For example, the following reports queue-reset failures from running
 .Nm
 processes:
