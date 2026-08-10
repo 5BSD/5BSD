@@ -271,8 +271,8 @@ serve_session(int fd, int dtrace_fd, bool authorized, int device_error,
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct worker_state state;
 	struct channel *channel;
-	struct pollfd descriptor;
-	int loop_error, result, wants_write;
+	int ready;
+	int loop_error, wants_write;
 
 	memset(&state, 0, sizeof(state));
 	state.client_label = client_label;
@@ -294,27 +294,22 @@ serve_session(int fd, int dtrace_fd, bool authorized, int device_error,
 			loop_error = errno;
 			break;
 		}
-		memset(&descriptor, 0, sizeof(descriptor));
-		descriptor.fd = channel_fd(channel);
-		descriptor.events = POLLIN | (wants_write ? POLLOUT : 0);
-		do {
-			result = poll(&descriptor, 1, TRACECMP_CLIENT_TIMEOUT_MS);
-		} while (result == -1 && errno == EINTR);
-		if (result == 0) {
+		ready = channel_wait(channel, wants_write,
+		    TRACECMP_CLIENT_TIMEOUT_MS);
+		if (ready == 0) {
 			loop_error = ETIMEDOUT;
 			break;
 		}
-		if (result == -1) {
+		if (ready == -1) {
 			loop_error = errno;
 			break;
 		}
-		if ((descriptor.revents & POLLOUT) != 0 &&
+		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
 		    channel_flush(channel) == -1) {
 			loop_error = errno;
 			break;
 		}
-		if ((descriptor.revents &
-		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+		if ((ready & CHANNEL_WAIT_READ) != 0 &&
 		    channel_dispatch(channel) == -1) {
 			loop_error = errno;
 			break;

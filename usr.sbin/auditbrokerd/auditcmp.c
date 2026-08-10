@@ -167,11 +167,10 @@ serve_session(int fd, const char *provider, int event,
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
-	struct pollfd descriptor;
 	struct channel *channel;
 	struct session session;
 	struct timespec now;
-	int result, wants_write;
+	int ready, wants_write;
 
 	if (fd < 0 || provider == NULL || provider[0] == '\0' || event == 0 ||
 	    backend == NULL || backend->submit == NULL)
@@ -194,19 +193,13 @@ serve_session(int fd, const char *provider, int event,
 		wants_write = channel_wants_write(channel);
 		if (wants_write == -1)
 			break;
-		memset(&descriptor, 0, sizeof(descriptor));
-		descriptor.fd = channel_fd(channel);
-		descriptor.events = POLLIN | (wants_write ? POLLOUT : 0);
-		do {
-		    result = poll(&descriptor, 1, -1);
-		} while (result == -1 && errno == EINTR);
-		if (result <= 0)
+		ready = channel_wait(channel, wants_write, -1);
+		if (ready <= 0)
 			break;
-		if ((descriptor.revents & POLLOUT) != 0 &&
+		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
 		    channel_flush(channel) == -1)
 			break;
-		if ((descriptor.revents &
-		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+		if ((ready & CHANNEL_WAIT_READ) != 0 &&
 		    channel_dispatch(channel) == -1)
 			break;
 		if (session.error != 0)

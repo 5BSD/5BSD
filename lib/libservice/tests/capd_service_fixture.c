@@ -135,7 +135,6 @@ static int
 pump_channel(struct channel *channel, bool until_event,
     struct event_receive *receive)
 {
-	struct pollfd descriptor;
 	int result, wants_write;
 
 	for (;;) {
@@ -146,21 +145,15 @@ pump_channel(struct channel *channel, bool until_event,
 			return (-1);
 		if (!until_event && !wants_write)
 			return (0);
-		memset(&descriptor, 0, sizeof(descriptor));
-		descriptor.fd = channel_fd(channel);
-		descriptor.events = POLLIN | (wants_write ? POLLOUT : 0);
-		do {
-			result = poll(&descriptor, 1, 5000);
-		} while (result == -1 && errno == EINTR);
+		result = channel_wait(channel, wants_write, 5000);
 		if (result == 0) {
 			errno = ETIMEDOUT;
 			return (-1);
 		}
 		if (result == -1 ||
-		    ((descriptor.revents & POLLOUT) != 0 &&
+		    ((result & CHANNEL_WAIT_WRITE) != 0 &&
 		    channel_flush(channel) == -1) ||
-		    ((descriptor.revents &
-		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+		    ((result & CHANNEL_WAIT_READ) != 0 &&
 		    channel_dispatch(channel) == -1))
 			return (-1);
 	}
@@ -542,7 +535,6 @@ scenario_mux_provider(const char *result)
 	struct service_identity identity;
 	struct service_listener *listener;
 	struct channel *channel;
-	struct pollfd descriptor;
 	const char *request;
 	int client, i, poll_result, wants_write;
 
@@ -560,10 +552,7 @@ scenario_mux_provider(const char *result)
 	if (channel_set_request_handler(channel, mux_request, &provider) == -1)
 		err(1, "channel_set_request_handler");
 	while (provider.count != nitems(provider.requests)) {
-		memset(&descriptor, 0, sizeof(descriptor));
-		descriptor.fd = channel_fd(channel);
-		descriptor.events = POLLIN;
-		poll_result = poll(&descriptor, 1, 5000);
+		poll_result = channel_wait(channel, 0, 5000);
 		if (poll_result <= 0 || channel_dispatch(channel) == -1)
 			err(1, "mux request dispatch");
 		if (provider.error != 0)
@@ -587,10 +576,7 @@ scenario_mux_provider(const char *result)
 			err(1, "mux channel state");
 		if (!wants_write)
 			break;
-		memset(&descriptor, 0, sizeof(descriptor));
-		descriptor.fd = channel_fd(channel);
-		descriptor.events = POLLOUT;
-		poll_result = poll(&descriptor, 1, 5000);
+		poll_result = channel_wait(channel, 1, 5000);
 		if (poll_result <= 0 || channel_flush(channel) == -1)
 			err(1, "mux flush");
 	}

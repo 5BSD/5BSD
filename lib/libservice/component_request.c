@@ -75,9 +75,8 @@ remaining_timeout(const struct timespec *deadline)
 static int
 pump_until_request(struct channel *channel, struct receive_state *state)
 {
-	struct pollfd descriptor;
 	struct timespec deadline;
-	int result, timeout;
+	int ready, timeout;
 
 	if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
 		return (-1);
@@ -92,20 +91,14 @@ pump_until_request(struct channel *channel, struct receive_state *state)
 		timeout = remaining_timeout(&deadline);
 		if (timeout == -1)
 			return (-1);
-		memset(&descriptor, 0, sizeof(descriptor));
-		descriptor.fd = channel_fd(channel);
-		descriptor.events = POLLIN;
-		do {
-			result = poll(&descriptor, 1, timeout);
-		} while (result == -1 && errno == EINTR);
-		if (result == 0) {
+		ready = channel_wait(channel, 0, timeout);
+		if (ready == 0) {
 			errno = ETIMEDOUT;
 			return (-1);
 		}
-		if (result == -1)
+		if (ready == -1)
 			return (-1);
-		if ((descriptor.revents &
-		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+		if ((ready & CHANNEL_WAIT_READ) != 0 &&
 		    channel_dispatch(channel) == -1)
 			return (-1);
 	}
@@ -202,11 +195,10 @@ service_component_respond(struct service_component_bootstrap *bootstrap,
     int status, uint32_t member_type, int member_fd)
 {
 	struct component_session_reply reply;
-	struct pollfd descriptor;
 	struct timespec deadline;
 	const int *fds;
 	size_t nfds;
-	int result, timeout;
+	int result, ready, timeout;
 
 	if (bootstrap == NULL || bootstrap->message == NULL || status < 0 ||
 	    (status == 0 && member_fd < 0) ||
@@ -248,17 +240,12 @@ service_component_respond(struct service_component_bootstrap *bootstrap,
 		timeout = remaining_timeout(&deadline);
 		if (timeout == -1)
 			goto fail;
-		memset(&descriptor, 0, sizeof(descriptor));
-		descriptor.fd = channel_fd(bootstrap->channel);
-		descriptor.events = POLLOUT;
-		do {
-			result = poll(&descriptor, 1, timeout);
-		} while (result == -1 && errno == EINTR);
-		if (result == 0) {
+		ready = channel_wait(bootstrap->channel, 1, timeout);
+		if (ready == 0) {
 			errno = ETIMEDOUT;
 			goto fail;
 		}
-		if (result == -1 || channel_flush(bootstrap->channel) == -1)
+		if (ready == -1 || channel_flush(bootstrap->channel) == -1)
 			goto fail;
 	}
 	service_component_abort(bootstrap);

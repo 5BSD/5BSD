@@ -87,6 +87,7 @@ struct svc_runtime {
 	int		jail_fd;	/* jail descriptor (-1 if no jail) */
 	bool		protocol_ready;	/* SVC_OP_READY advisory received */
 	bool		lookup_activated; /* launched to satisfy a named lookup */
+	bool		want_console;	/* stdio on /dev/console (rc bootstrap) */
 	uint8_t		name_state[SERVICED_MAX_PROVIDES];
 
 	/* Restart tracking */

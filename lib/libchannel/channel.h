@@ -88,6 +88,14 @@ int	channel_fd(const struct channel *);
 int	channel_error(const struct channel *);
 int	channel_wants_write(const struct channel *);
 
+/*
+ * Readiness wait (kqueue-only; channels do not support poll(2)/select(2)).
+ * Returns a bitmask of the ready filters, 0 on timeout, or -1 on error.
+ */
+#define	CHANNEL_WAIT_READ	0x1
+#define	CHANNEL_WAIT_WRITE	0x2
+int	channel_wait(struct channel *, int /*want_write*/, int /*timeout_ms*/);
+
 int	channel_send_request(struct channel *, const struct channel_outgoing *,
 	    channel_reply_handler, void *, struct channel_request **);
 int	channel_send_event(struct channel *, const struct channel_outgoing *);

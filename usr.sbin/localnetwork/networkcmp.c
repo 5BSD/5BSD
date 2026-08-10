@@ -9,6 +9,8 @@
 #include <sys/procdesc.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/event.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 
 #include <libcasper.h>
@@ -774,8 +776,10 @@ serve_session(int fd, cap_channel_t *capnet, cap_channel_t *resolver_capnet,
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct session_state state;
 	struct channel *channel;
-	struct pollfd descriptors[2];
-	int poll_timeout, result, wants_write;
+	struct kevent kev, kout[3];
+	struct timespec ts, *tsp;
+	int kq, nev, i, poll_timeout, result, wants_write;
+	bool chan_read, chan_write, pipe_read;
 	uint64_t now, remaining;
 
 	if (fd < 0 || policy == NULL || policy->max_sockets == 0 ||
@@ -808,15 +812,32 @@ serve_session(int fd, cap_channel_t *capnet, cap_channel_t *resolver_capnet,
 		networkcmp_session_destroy(&state.sockets);
 		goto fail;
 	}
-	for (;;) {
+	/*
+	 * Channels are kqueue-only, and this session also waits on the resolver
+	 * pipe, so watch both fds on one kqueue.  Read interest on the channel
+	 * and pipe is registered once; the channel write filter is toggled per
+	 * iteration to match pending outbound data.
+	 */
+	kq = kqueue();
+	if (kq == -1)
+		state.terminal_error = errno;
+	else {
+		EV_SET(&kev, channel_fd(channel), EVFILT_READ, EV_ADD, 0, 0, NULL);
+		if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
+			state.terminal_error = errno;
+		EV_SET(&kev, state.resolver_pipe[0], EVFILT_READ, EV_ADD, 0, 0,
+		    NULL);
+		if (state.terminal_error == 0 &&
+		    kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
+			state.terminal_error = errno;
+	}
+	while (state.terminal_error == 0) {
 		wants_write = channel_wants_write(channel);
 		if (wants_write == -1)
 			break;
-		memset(descriptors, 0, sizeof(descriptors));
-		descriptors[0].fd = channel_fd(channel);
-		descriptors[0].events = POLLIN | (wants_write ? POLLOUT : 0);
-		descriptors[1].fd = state.resolver_pipe[0];
-		descriptors[1].events = POLLIN;
+		EV_SET(&kev, channel_fd(channel), EVFILT_WRITE,
+		    wants_write ? EV_ADD : EV_DELETE, 0, 0, NULL);
+		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
 		poll_timeout = -1;
 		if (state.resolver != NULL) {
 			now = monotonic_ns();
@@ -828,31 +849,45 @@ serve_session(int fd, cap_channel_t *capnet, cap_channel_t *resolver_capnet,
 			poll_timeout = (int)MIN((remaining + 999999) / 1000000,
 			    INT_MAX);
 		}
+		if (poll_timeout < 0) {
+			tsp = NULL;
+		} else {
+			ts.tv_sec = poll_timeout / 1000;
+			ts.tv_nsec = (long)(poll_timeout % 1000) * 1000000L;
+			tsp = &ts;
+		}
 		do {
-			result = poll(descriptors, nitems(descriptors), poll_timeout);
-		} while (result == -1 && errno == EINTR);
-		if (result == -1)
+			nev = kevent(kq, NULL, 0, kout, nitems(kout), tsp);
+		} while (nev == -1 && errno == EINTR);
+		if (nev == -1)
 			break;
-		if (result == 0) {
+		if (nev == 0) {
 			state.terminal_error = ETIMEDOUT;
 			break;
 		}
-		if ((descriptors[1].revents &
-		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0 &&
-		    finish_resolve(&state) == -1)
+		chan_read = chan_write = pipe_read = false;
+		for (i = 0; i < nev; i++) {
+			if ((int)kout[i].ident == state.resolver_pipe[0] &&
+			    kout[i].filter == EVFILT_READ)
+				pipe_read = true;
+			else if (kout[i].filter == EVFILT_READ)
+				chan_read = true;
+			else if (kout[i].filter == EVFILT_WRITE)
+				chan_write = true;
+		}
+		if (pipe_read && finish_resolve(&state) == -1)
 			break;
-		if ((descriptors[0].revents & POLLOUT) != 0 &&
-		    channel_flush(channel) == -1)
+		if (chan_write && channel_flush(channel) == -1)
 			break;
-		if ((descriptors[0].revents &
-		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0 &&
-		    channel_dispatch(channel) == -1)
+		if (chan_read && channel_dispatch(channel) == -1)
 			break;
 		if (state.terminal_error != 0) {
 			errno = state.terminal_error;
 			break;
 		}
 	}
+	if (kq != -1)
+		close(kq);
 	networkcmp_session_destroy(&state.sockets);
 	channel_destroy(channel);
 	if (state.resolver == NULL) {

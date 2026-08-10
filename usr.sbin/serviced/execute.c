@@ -172,12 +172,11 @@ bootstrap_component(int fd, const struct svc_manifest *m,
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
 	struct component_call_state state;
 	struct channel *channel;
-	struct pollfd descriptor;
 	struct timespec deadline, now;
 	struct component_session_bootstrap message;
 	const char *interface;
 	int64_t milliseconds;
-	int owned, result, timeout, wants_write;
+	int owned, ready, result, timeout, wants_write;
 
 	if (member_fd == NULL) {
 		errno = EINVAL;
@@ -243,21 +242,15 @@ bootstrap_component(int fd, const struct svc_manifest *m,
 		wants_write = channel_wants_write(channel);
 		if (wants_write == -1)
 			goto fail;
-		memset(&descriptor, 0, sizeof(descriptor));
-		descriptor.fd = channel_fd(channel);
-		descriptor.events = POLLIN | (wants_write ? POLLOUT : 0);
-		do {
-			result = poll(&descriptor, 1, timeout);
-		} while (result == -1 && errno == EINTR);
-		if (result == 0) {
+		ready = channel_wait(channel, wants_write, timeout);
+		if (ready == 0) {
 			errno = ETIMEDOUT;
 			goto fail;
 		}
-		if (result == -1 ||
-		    ((descriptor.revents & POLLOUT) != 0 &&
+		if (ready == -1 ||
+		    ((ready & CHANNEL_WAIT_WRITE) != 0 &&
 		    channel_flush(channel) == -1) ||
-		    ((descriptor.revents &
-		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+		    ((ready & CHANNEL_WAIT_READ) != 0 &&
 		    channel_dispatch(channel) == -1))
 			goto fail;
 	}
@@ -920,15 +913,42 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[])
 		sigset_t mask;
 		int nullfd;
 
-		nullfd = open("/dev/null", O_RDWR);
-		if (nullfd == -1)
-			_exit(126);
-		if (dup2(nullfd, STDIN_FILENO) == -1 ||
-		    dup2(nullfd, STDOUT_FILENO) == -1 ||
-		    dup2(nullfd, STDERR_FILENO) == -1)
-			_exit(126);
-		if (nullfd > STDERR_FILENO)
-			(void)close(nullfd);
+		/*
+		 * stdio.  Ordinary commands get /dev/null.  The rc bootstrap
+		 * oneshot (want_console) gets /dev/console with a controlling
+		 * terminal, exactly as init gave /etc/rc: its progress is visible
+		 * on the console and scripts that expect a tty (fsck prompts, job
+		 * control) work.  Console setup is best-effort — on failure we
+		 * fall back to /dev/null so the child still runs.
+		 */
+		nullfd = -1;
+		if (svc->want_console) {
+			int cfd;
+
+			(void)setsid();
+			cfd = open("/dev/console", O_RDWR);
+			if (cfd != -1) {
+				(void)ioctl(cfd, TIOCSCTTY, NULL);
+				if (dup2(cfd, STDIN_FILENO) == -1 ||
+				    dup2(cfd, STDOUT_FILENO) == -1 ||
+				    dup2(cfd, STDERR_FILENO) == -1)
+					_exit(126);
+				if (cfd > STDERR_FILENO)
+					(void)close(cfd);
+			} else {
+				nullfd = open("/dev/null", O_RDWR);
+			}
+		} else {
+			nullfd = open("/dev/null", O_RDWR);
+		}
+		if (nullfd != -1) {
+			if (dup2(nullfd, STDIN_FILENO) == -1 ||
+			    dup2(nullfd, STDOUT_FILENO) == -1 ||
+			    dup2(nullfd, STDERR_FILENO) == -1)
+				_exit(126);
+			if (nullfd > STDERR_FILENO)
+				(void)close(nullfd);
+		}
 		closefrom(STDERR_FILENO + 1);
 		if (have_creds) {
 			if (setgroups(ngroups, groups) == -1 ||

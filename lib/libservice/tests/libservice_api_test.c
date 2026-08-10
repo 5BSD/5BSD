@@ -285,7 +285,6 @@ session_provider_thread(void *argument)
 	struct session_provider_context *context;
 	struct channel_outgoing outgoing;
 	struct channel *channel;
-	struct pollfd descriptor;
 	char ready;
 	int result, wants_write;
 
@@ -323,23 +322,17 @@ session_provider_thread(void *argument)
 		wants_write = channel_wants_write(channel);
 		if (wants_write == -1)
 			break;
-		memset(&descriptor, 0, sizeof(descriptor));
-		descriptor.fd = channel_fd(channel);
-		descriptor.events = POLLIN | (wants_write ? POLLOUT : 0);
-		do {
-			result = poll(&descriptor, 1, 1000);
-		} while (result == -1 && errno == EINTR);
+		result = channel_wait(channel, wants_write, 1000);
 		if (result == -1) {
 			context->error = errno;
 			break;
 		}
 		if (result == 0)
 			continue;
-		if ((descriptor.revents & POLLOUT) != 0 &&
+		if ((result & CHANNEL_WAIT_WRITE) != 0 &&
 		    channel_flush(channel) == -1)
 			break;
-		if ((descriptor.revents &
-		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+		if ((result & CHANNEL_WAIT_READ) != 0 &&
 		    channel_dispatch(channel) == -1)
 			break;
 	}
@@ -675,7 +668,6 @@ ATF_TC_BODY(component_bootstrap_roundtrip, tc)
 	struct component_reply_context reply;
 	struct channel_request *request;
 	struct channel *channel;
-	struct pollfd descriptor;
 	pthread_t thread;
 	int endpoints[2], member[2], resource[2], result, wants_write;
 
@@ -715,17 +707,11 @@ ATF_TC_BODY(component_bootstrap_roundtrip, tc)
 	while (!reply.done) {
 		wants_write = channel_wants_write(channel);
 		ATF_REQUIRE(wants_write >= 0);
-		memset(&descriptor, 0, sizeof(descriptor));
-		descriptor.fd = channel_fd(channel);
-		descriptor.events = POLLIN | (wants_write ? POLLOUT : 0);
-		do {
-			result = poll(&descriptor, 1, 5000);
-		} while (result == -1 && errno == EINTR);
+		result = channel_wait(channel, wants_write, 5000);
 		ATF_REQUIRE(result > 0);
-		if ((descriptor.revents & POLLOUT) != 0)
+		if ((result & CHANNEL_WAIT_WRITE) != 0)
 			ATF_REQUIRE(channel_flush(channel) == 0);
-		if ((descriptor.revents &
-		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0)
+		if ((result & CHANNEL_WAIT_READ) != 0)
 			ATF_REQUIRE(channel_dispatch(channel) == 0);
 	}
 	ATF_REQUIRE_EQ(0, pthread_join(thread, NULL));

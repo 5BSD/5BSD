@@ -6,7 +6,9 @@
 
 #include <sys/types.h>
 #include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/ioctl.h>
+#include <sys/time.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
@@ -47,6 +49,7 @@ struct channel_queue_entry {
 
 struct channel {
 	int			 fd;
+	int			 kqueue_fd;	/* lazy kqueue for channel_wait */
 	pid_t			 owner;
 	int			 error;
 	enum channel_role	 role;
@@ -380,6 +383,7 @@ channel_create(int fd, const struct channel_options *options,
 	}
 	(void)close(fd);
 	channel->fd = owned;
+	channel->kqueue_fd = -1;
 	channel->owner = getpid();
 	channel->role = options->role;
 	channel->max_pending_requests = options->max_pending_requests;
@@ -405,6 +409,9 @@ channel_destroy_now(struct channel *channel)
 	if (channel->fd >= 0)
 		(void)close(channel->fd);
 	channel->fd = -1;
+	if (channel->kqueue_fd >= 0)
+		(void)close(channel->kqueue_fd);
+	channel->kqueue_fd = -1;
 	/*
 	 * A callback-owned message still references the channel.  When abandon
 	 * is used during dispatch, defer the owner's release until dispatch
@@ -465,6 +472,10 @@ channel_abandon(struct channel *channel)
 	if (channel->fd >= 0 && !inherited)
 		(void)close(channel->fd);
 	channel->fd = -1;
+	/* The kqueue is process-local and never inherited; always close it. */
+	if (channel->kqueue_fd >= 0)
+		(void)close(channel->kqueue_fd);
+	channel->kqueue_fd = -1;
 	if (!channel->owner_released) {
 		channel->owner_released = true;
 		channel_release(channel);
@@ -482,6 +493,71 @@ channel_fd(const struct channel *channel)
 		return (-1);
 	}
 	return (channel->fd);
+}
+
+/*
+ * Wait for the channel to become ready via kqueue.  Capability channels are
+ * kqueue-only (poll(2)/select(2) are unsupported by the kernel), so this is
+ * the sole readiness primitive.  A lazily-created kqueue is cached on the
+ * channel with a persistent EVFILT_READ registration; EVFILT_WRITE is toggled
+ * per call to match want_write.  timeout_ms < 0 blocks indefinitely, 0 polls
+ * once.  Returns a CHANNEL_WAIT_READ|CHANNEL_WAIT_WRITE bitmask of ready
+ * filters (0 on timeout), or -1 with errno set on error.  A dead/EOF channel
+ * reports CHANNEL_WAIT_READ ready so the caller's dispatch observes the error.
+ */
+int
+channel_wait(struct channel *channel, int want_write, int timeout_ms)
+{
+	struct kevent chg, out[2];
+	struct timespec ts, *tsp;
+	int n, i, ready;
+
+	if (!channel_owned(channel) || channel->destroy_pending ||
+	    channel->fd < 0) {
+		errno = EBADF;
+		return (-1);
+	}
+	if (channel->kqueue_fd < 0) {
+		channel->kqueue_fd = kqueue();
+		if (channel->kqueue_fd < 0)
+			return (-1);
+		(void)cap_cloexec_limit(channel->kqueue_fd, CAP_CLOEXEC_LOCKED);
+		EV_SET(&chg, channel->fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+		if (kevent(channel->kqueue_fd, &chg, 1, NULL, 0, NULL) == -1) {
+			(void)close(channel->kqueue_fd);
+			channel->kqueue_fd = -1;
+			return (-1);
+		}
+	}
+	/*
+	 * Match the write filter to want_write.  EV_DELETE of an absent filter
+	 * returns ENOENT and EV_ADD on a recv-only channel may return
+	 * EOPNOTSUPP; both are benign here, so the change result is ignored.
+	 */
+	EV_SET(&chg, channel->fd, EVFILT_WRITE,
+	    want_write ? EV_ADD : EV_DELETE, 0, 0, NULL);
+	(void)kevent(channel->kqueue_fd, &chg, 1, NULL, 0, NULL);
+
+	if (timeout_ms < 0) {
+		tsp = NULL;
+	} else {
+		ts.tv_sec = timeout_ms / 1000;
+		ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
+		tsp = &ts;
+	}
+	do {
+		n = kevent(channel->kqueue_fd, NULL, 0, out, 2, tsp);
+	} while (n == -1 && errno == EINTR);
+	if (n == -1)
+		return (-1);
+	ready = 0;
+	for (i = 0; i < n; i++) {
+		if (out[i].filter == EVFILT_READ)
+			ready |= CHANNEL_WAIT_READ;
+		else if (out[i].filter == EVFILT_WRITE)
+			ready |= CHANNEL_WAIT_WRITE;
+	}
+	return (ready);
 }
 
 int

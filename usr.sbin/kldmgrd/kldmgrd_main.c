@@ -246,9 +246,9 @@ serve_session(int fd, const char *label, bool allowed,
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct channel *channel;
-	struct pollfd descriptor;
+	int ready;
 	struct session session;
-	int loop_error, result, wants_write;
+	int loop_error, wants_write;
 
 	if (fd < 0 || label == NULL || label[0] == '\0' || backend == NULL ||
 	    backend->load == NULL || backend->find == NULL ||
@@ -276,9 +276,9 @@ serve_session(int fd, const char *label, bool allowed,
 	}
 	if (channel_set_request_handler(channel, handle_request, &session) ==
 	    -1) {
-		result = errno;
+		int err __unused = errno;
 		channel_destroy(channel);
-		KLDMGRD_PROBE_SESSION_END(__DECONST(char *, label), result);
+		KLDMGRD_PROBE_SESSION_END(__DECONST(char *, label), err);
 		return (1);
 	}
 	for (;;) {
@@ -287,27 +287,22 @@ serve_session(int fd, const char *label, bool allowed,
 			loop_error = errno;
 			break;
 		}
-		memset(&descriptor, 0, sizeof(descriptor));
-		descriptor.fd = channel_fd(channel);
-		descriptor.events = POLLIN | (wants_write ? POLLOUT : 0);
-		do {
-			result = poll(&descriptor, 1, KLDMGR_CLIENT_TIMEOUT_MS);
-		} while (result == -1 && errno == EINTR);
-		if (result == 0) {
+		ready = channel_wait(channel, wants_write,
+		    KLDMGR_CLIENT_TIMEOUT_MS);
+		if (ready == 0) {
 			loop_error = ETIMEDOUT;
 			break;
 		}
-		if (result == -1) {
+		if (ready == -1) {
 			loop_error = errno;
 			break;
 		}
-		if ((descriptor.revents & POLLOUT) != 0 &&
+		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
 		    channel_flush(channel) == -1) {
 			loop_error = errno;
 			break;
 		}
-		if ((descriptor.revents &
-		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+		if ((ready & CHANNEL_WAIT_READ) != 0 &&
 		    channel_dispatch(channel) == -1) {
 			loop_error = errno;
 			break;

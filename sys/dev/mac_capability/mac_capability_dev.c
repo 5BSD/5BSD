@@ -31,6 +31,7 @@
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
+#include <sys/poll.h>
 #include <sys/proc.h>
 #include <sys/stat.h>
 #include <sys/syscallsubr.h>
@@ -64,6 +65,7 @@ SDT_PROBE_DECLARE(mac_capability, , , state);
 SDT_PROBE_DECLARE(mac_capability, , , queue__pressure);
 
 static fo_ioctl_t	mac_capability_instance_ioctl;
+static fo_poll_t	mac_capability_instance_poll;
 static fo_kqfilter_t	mac_capability_instance_kqfilter;
 static fo_stat_t	mac_capability_instance_stat;
 static fo_close_t	mac_capability_instance_close;
@@ -76,7 +78,7 @@ const struct fileops mac_capability_instance_ops = {
 	.fo_write = invfo_rdwr,
 	.fo_truncate = invfo_truncate,
 	.fo_ioctl = mac_capability_instance_ioctl,
-	.fo_poll = invfo_poll,
+	.fo_poll = mac_capability_instance_poll,
 	.fo_kqfilter = mac_capability_instance_kqfilter,
 	.fo_stat = mac_capability_instance_stat,
 	.fo_close = mac_capability_instance_close,
@@ -1047,6 +1049,22 @@ call_done:
 	default:
 		return (ENOTTY);
 	}
+}
+
+/*
+ * Capability channels are kqueue-only.  poll(2)/select(2) are deliberately
+ * unsupported: readiness is level state that only the EVFILT_READ/EVFILT_WRITE
+ * kqfilters report correctly.  Return POLLNVAL so a poll/select caller fails
+ * loudly (it must switch to kqueue) rather than receiving invfo_poll's
+ * unconditional "readable/writable", which busy-spins a poll loop against a
+ * channel that has no pending message.
+ */
+static int
+mac_capability_instance_poll(struct file *fp __unused, int events __unused,
+    struct ucred *active_cred __unused, struct thread *td __unused)
+{
+
+	return (POLLNVAL);
 }
 
 /* EVFILT_READ */

@@ -528,9 +528,8 @@ serve_session(int fd, const char *label, bool allowed,
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct channel *channel;
-	struct pollfd descriptor;
 	struct session session;
-	int loop_error, result, wants_write;
+	int loop_error, ready, timeout, wants_write;
 
 	if (fd < 0 || label == NULL || label[0] == '\0' || pending == NULL ||
 	    backend == NULL || backend->reboot == NULL)
@@ -559,9 +558,9 @@ serve_session(int fd, const char *label, bool allowed,
 	}
 	if (channel_set_request_handler(channel, handle_request, &session) ==
 	    -1) {
-		result = errno;
+		int err __unused = errno;
 		channel_destroy(channel);
-		REBOOTD_PROBE_SESSION_END(__DECONST(char *, label), result);
+		REBOOTD_PROBE_SESSION_END(__DECONST(char *, label), err);
 		return (1);
 	}
 	for (;;) {
@@ -570,9 +569,6 @@ serve_session(int fd, const char *label, bool allowed,
 			loop_error = errno;
 			break;
 		}
-		memset(&descriptor, 0, sizeof(descriptor));
-		descriptor.fd = channel != NULL ? channel_fd(channel) : -1;
-		descriptor.events = POLLIN | (wants_write ? POLLOUT : 0);
 		if (session.scheduled) {
 			uint64_t now, wake;
 
@@ -582,16 +578,25 @@ serve_session(int fd, const char *label, bool allowed,
 			    wake > (uint64_t)REBOOTCTL_IMMINENT_MS * 1000000)
 				wake -= (uint64_t)REBOOTCTL_IMMINENT_MS * 1000000;
 			if (now >= wake)
-				result = 0;
+				timeout = 0;
 			else
-				result = (int)MIN((wake - now + 999999) / 1000000,
+				timeout = (int)MIN((wake - now + 999999) / 1000000,
 				    INT_MAX);
 		} else
-			result = REBOOT_CLIENT_TIMEOUT_MS;
-		do {
-			result = poll(&descriptor, 1, result);
-		} while (result == -1 && errno == EINTR);
-		if (result == 0) {
+			timeout = REBOOT_CLIENT_TIMEOUT_MS;
+		if (channel != NULL) {
+			ready = channel_wait(channel, wants_write, timeout);
+		} else {
+			/*
+			 * No client attached: wait out the scheduled-reboot
+			 * timer.  Channels are kqueue-only, but with no channel
+			 * this is just a timed sleep on no descriptors.
+			 */
+			do {
+				ready = poll(NULL, 0, timeout);
+			} while (ready == -1 && errno == EINTR);
+		}
+		if (ready == 0) {
 			if (!session.scheduled) {
 				loop_error = ETIMEDOUT;
 				break;
@@ -623,17 +628,16 @@ serve_session(int fd, const char *label, bool allowed,
 			}
 			break;
 		}
-		if (result == -1) {
+		if (ready == -1) {
 			loop_error = errno;
 			break;
 		}
-		if (channel != NULL && (descriptor.revents & POLLOUT) != 0 &&
+		if (channel != NULL && (ready & CHANNEL_WAIT_WRITE) != 0 &&
 		    channel_flush(channel) == -1) {
 			loop_error = errno;
 			break;
 		}
-		if (channel != NULL && (descriptor.revents &
-		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+		if (channel != NULL && (ready & CHANNEL_WAIT_READ) != 0 &&
 		    channel_dispatch(channel) == -1) {
 			loop_error = errno;
 			if (!session.scheduled)

@@ -353,8 +353,7 @@ static int
 pump(struct service_client *client, int timeout_ms, bool *busy)
     __no_lock_analysis
 {
-	struct pollfd descriptor;
-	int error, result, wants_write;
+	int error, result, ready, wants_write;
 
 	*busy = false;
 	error = pthread_mutex_trylock(&client->channel_lock);
@@ -371,23 +370,19 @@ pump(struct service_client *client, int timeout_ms, bool *busy)
 		error = errno;
 		goto fail;
 	}
-	memset(&descriptor, 0, sizeof(descriptor));
-	descriptor.fd = channel_fd(client->channel);
-	descriptor.events = POLLIN | (wants_write ? POLLOUT : 0);
-	do {
-		result = poll(&descriptor, 1, timeout_ms);
-	} while (result == -1 && errno == EINTR);
-	if (result <= 0) {
-		error = result == -1 ? errno : 0;
+	ready = channel_wait(client->channel, wants_write, timeout_ms);
+	if (ready <= 0) {
+		error = ready == -1 ? errno : 0;
+		result = ready;
 		goto out;
 	}
-	if ((descriptor.revents & POLLOUT) != 0 &&
+	result = ready;
+	if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
 	    channel_flush(client->channel) == -1) {
 		error = errno;
 		goto fail;
 	}
-	if ((descriptor.revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL)) !=
-	    0) {
+	if ((ready & CHANNEL_WAIT_READ) != 0) {
 		result = channel_dispatch(client->channel);
 		if (result == -1) {
 			error = errno;

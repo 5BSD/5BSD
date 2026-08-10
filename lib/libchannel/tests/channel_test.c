@@ -106,18 +106,16 @@ capability_channel_pair(int *first, int *second)
 static int
 dispatch_wait(struct channel *channel)
 {
-	struct pollfd pollfd;
-	int result;
+	int ready;
 
-	memset(&pollfd, 0, sizeof(pollfd));
-	pollfd.fd = channel_fd(channel);
-	ATF_REQUIRE(pollfd.fd >= 0);
-	pollfd.events = POLLIN;
-	do {
-		result = poll(&pollfd, 1, 5000);
-	} while (result == -1 && errno == EINTR);
-	ATF_REQUIRE_MSG(result == 1, "channel readiness: %s",
-	    result == 0 ? "timed out" : strerror(errno));
+	/*
+	 * Channels are kqueue-only; wait via channel_wait, not poll(2).  A
+	 * dead/EOF channel reports readable so the following channel_dispatch
+	 * observes the terminal error.
+	 */
+	ready = channel_wait(channel, 0, 5000);
+	ATF_REQUIRE_MSG(ready > 0, "channel readiness: %s",
+	    ready == 0 ? "timed out" : strerror(errno));
 	return (channel_dispatch(channel));
 }
 
@@ -759,10 +757,92 @@ ATF_TC_CLEANUP(destroy_from_callback, tc)
 	(void)tc;
 }
 
+/*
+ * Capability channels are kqueue-only: poll(2)/select(2) must fail with
+ * POLLNVAL rather than reporting a bogus always-ready result.  This guards the
+ * kernel fo_poll behaviour that channel_wait's readiness contract depends on.
+ */
+ATF_TC_WITH_CLEANUP(poll_is_unsupported);
+ATF_TC_HEAD(poll_is_unsupported, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "poll(2) on a channel returns POLLNVAL");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(poll_is_unsupported, tc)
+{
+	struct pollfd pollfd;
+	int first, second;
+
+	(void)tc;
+	capability_channel_pair(&first, &second);
+	memset(&pollfd, 0, sizeof(pollfd));
+	pollfd.fd = first;
+	pollfd.events = POLLIN | POLLOUT;
+	ATF_REQUIRE_MSG(poll(&pollfd, 1, 0) == 1, "poll: %s", strerror(errno));
+	ATF_CHECK_EQ_MSG(POLLNVAL, pollfd.revents & POLLNVAL,
+	    "expected POLLNVAL, got %#x", pollfd.revents);
+	ATF_CHECK_EQ(0, pollfd.revents & (POLLIN | POLLOUT));
+	(void)close(first);
+	(void)close(second);
+}
+ATF_TC_CLEANUP(poll_is_unsupported, tc)
+{
+	(void)tc;
+}
+
+/*
+ * channel_wait: times out when idle, reports CHANNEL_WAIT_READ once a peer
+ * message is pending, and fails EBADF on a destroyed channel.
+ */
+ATF_TC_WITH_CLEANUP(channel_wait_readiness);
+ATF_TC_HEAD(channel_wait_readiness, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "channel_wait reports channel readiness");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(channel_wait_readiness, tc)
+{
+	struct channel_options client_options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
+	struct channel_options provider_options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	struct exchange_state state;
+	struct channel *client, *provider;
+	int first, second;
+
+	(void)tc;
+	memset(&state, 0, sizeof(state));
+	state.taken_fd = -1;
+	capability_channel_pair(&first, &second);
+	ATF_REQUIRE(channel_create(first, &client_options, &client) == 0);
+	ATF_REQUIRE(channel_create(second, &provider_options, &provider) == 0);
+	ATF_REQUIRE(channel_set_event_handler(provider, event_handler,
+	    &state) == 0);
+
+	/* Idle: no message pending, so a bounded wait times out (0). */
+	ATF_CHECK_EQ(0, channel_wait(provider, 0, 100));
+
+	/* After a send, the provider end becomes readable. */
+	ATF_REQUIRE(channel_send_event(client, OUT("event", 5)) == 0);
+	ATF_CHECK_EQ(CHANNEL_WAIT_READ,
+	    channel_wait(provider, 0, 5000) & CHANNEL_WAIT_READ);
+	ATF_CHECK(channel_dispatch(provider) >= 0);
+	ATF_CHECK_EQ(1, state.events);
+
+	channel_destroy(client);
+	channel_destroy(provider);
+}
+ATF_TC_CLEANUP(channel_wait_readiness, tc)
+{
+	(void)tc;
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, invalid_arguments);
 	ATF_TP_ADD_TC(tp, message_null_accessors);
+	ATF_TP_ADD_TC(tp, poll_is_unsupported);
+	ATF_TP_ADD_TC(tp, channel_wait_readiness);
 	ATF_TP_ADD_TC(tp, request_reply_event_and_cancellation);
 	ATF_TP_ADD_TC(tp, reordered_replies_and_retained_requests);
 	ATF_TP_ADD_TC(tp, peer_death_fails_outstanding_requests);

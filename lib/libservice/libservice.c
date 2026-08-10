@@ -735,8 +735,7 @@ static void *
 service_dispatch(void *unused) __no_lock_analysis
 {
 	struct service_listener *listener;
-	struct pollfd descriptor;
-	int error, result, wants_write;
+	int error, ready, wants_write;
 
 	(void)unused;
 	error = 0;
@@ -746,33 +745,33 @@ service_dispatch(void *unused) __no_lock_analysis
 			break;
 		}
 		wants_write = channel_wants_write(service_control_channel);
-		descriptor.fd = channel_fd(service_control_channel);
 		(void)pthread_mutex_unlock(&service_channel_lock);
-		if (wants_write == -1 || descriptor.fd == -1) {
+		if (wants_write == -1) {
 			error = errno;
 			break;
 		}
-		descriptor.events = POLLIN | (wants_write ? POLLOUT : 0);
-		descriptor.revents = 0;
-		do {
-			result = poll(&descriptor, 1, 25);
-		} while (result == -1 && errno == EINTR);
-		if (result == -1) {
+		/*
+		 * Block until the control channel is ready (kqueue-only; channels
+		 * do not support poll(2)).  An indefinite wait means the thread is
+		 * truly idle -- 0% CPU -- between events; outbound writes are
+		 * flushed from this same thread's dispatch handlers, so no
+		 * cross-thread wakeup is required to re-arm write interest.
+		 */
+		ready = channel_wait(service_control_channel, wants_write, -1);
+		if (ready == -1) {
 			error = errno;
 			break;
 		}
-		if (result == 0)
+		if (ready == 0)
 			continue;
 		if (pthread_mutex_lock(&service_channel_lock) != 0) {
 			error = EDEADLK;
 			break;
 		}
-		if ((descriptor.revents & POLLOUT) != 0 &&
+		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
 		    channel_flush(service_control_channel) == -1)
 			error = errno;
-		if (error == 0 &&
-		    (descriptor.revents &
-		    (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+		if (error == 0 && (ready & CHANNEL_WAIT_READ) != 0 &&
 		    channel_dispatch(service_control_channel) == -1)
 			error = errno;
 		(void)pthread_mutex_unlock(&service_channel_lock);
