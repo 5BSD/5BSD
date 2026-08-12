@@ -887,6 +887,12 @@ void	mac_vnode_execve_transition(struct ucred *oldcred,
 int	mac_vnode_execve_will_transition(struct ucred *cred,
 	    struct vnode *vp, struct label *interpvplabel,
 	    struct image_params *imgp);
+int	mac_vnode_execve_will_relabel(struct ucred *cred,
+	    struct vnode *vp, struct label *interpvplabel,
+	    struct image_params *imgp);
+void	mac_vnode_execve_relabel(struct ucred *oldcred,
+	    struct ucred *newcred, struct vnode *vp,
+	    struct label *interpvplabel, struct image_params *imgp);
 void	mac_vnode_relabel(struct ucred *cred, struct vnode *vp,
 	    struct label *newlabel);
 int	mac_vnode_check_truncate(struct ucred *cred, struct vnode *vp);

@@ -119,8 +119,17 @@ mac_capability_cred_destroy_label(struct label *label)
 	}
 }
 
+/*
+ * Rotate the per-credential identity nonce on exec via the label-refresh
+ * hook, NOT execve_will_transition.  A will_transition return of true is
+ * treated by the kernel as a set-id credential change and calls
+ * setsugid(), which taints every exec'd process (issetugid() == 1, so
+ * rtld runs in secure mode).  Nonce rotation is an identity refresh, not
+ * a privilege change, so it uses the relabel hook, which gets a private
+ * credential without the set-id semantics.
+ */
 static int
-mac_capability_execve_will_transition(struct ucred *old, struct vnode *vp,
+mac_capability_execve_will_relabel(struct ucred *old, struct vnode *vp,
     struct label *vplabel, struct label *interpvplabel,
     struct image_params *imgp, struct label *execlabel)
 {
@@ -129,7 +138,7 @@ mac_capability_execve_will_transition(struct ucred *old, struct vnode *vp,
 }
 
 static void
-mac_capability_execve_transition(struct ucred *old, struct ucred *new,
+mac_capability_execve_relabel(struct ucred *old, struct ucred *new,
     struct vnode *vp, struct label *vplabel,
     struct label *interpvplabel, struct image_params *imgp,
     struct label *execlabel)
@@ -190,8 +199,8 @@ static struct mac_policy_ops mac_capability_label_mac_ops = {
 	.mpo_cred_create_init = mac_capability_cred_create_init,
 	.mpo_cred_copy_label = mac_capability_cred_copy_label,
 	.mpo_cred_destroy_label = mac_capability_cred_destroy_label,
-	.mpo_vnode_execve_will_transition = mac_capability_execve_will_transition,
-	.mpo_vnode_execve_transition = mac_capability_execve_transition,
+	.mpo_vnode_execve_will_relabel = mac_capability_execve_will_relabel,
+	.mpo_vnode_execve_relabel = mac_capability_execve_relabel,
 };
 
 MAC_POLICY_SET(&mac_capability_label_mac_ops, mac_mac_capability, "MAC_CAPABILITY credential nonce",

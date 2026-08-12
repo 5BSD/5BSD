@@ -412,7 +412,9 @@ do_execve(struct thread *td, struct image_args *args, struct mac *mac_p,
 	bool credential_changing;
 #ifdef MAC
 	struct label *interpvplabel = NULL;
+	struct ucred *relabelcred = NULL;
 	bool will_transition;
+	bool will_relabel;
 #endif
 #ifdef HWPMC_HOOKS
 	struct pmckern_procexec pe;
@@ -654,6 +656,29 @@ interpret:
 			change_svgid(imgp->newcred, imgp->newcred->cr_gid);
 		}
 	}
+#ifdef MAC
+	/*
+	 * A MAC policy may need to refresh per-exec credential label state
+	 * (e.g. an identity nonce) without this being a set-id privilege
+	 * transition.  Prepare a private (copy-on-write) credential now,
+	 * while no process lock is held.  It is tracked separately from
+	 * newcred so that execve_nosetid() (setuid stripping / no_new_privs)
+	 * cannot discard it; it is applied and installed below.  Recomputed
+	 * for the interpreter across a #! re-interpret.
+	 */
+	if (relabelcred != NULL) {
+		crfree(relabelcred);
+		relabelcred = NULL;
+	}
+	will_relabel = mac_vnode_execve_will_relabel(oldcred, imgp->vp,
+	    interpvplabel, imgp) != 0;
+	if (will_relabel) {
+		VOP_UNLOCK(imgp->vp);
+		relabelcred = crdup(oldcred);
+		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+	}
+#endif
+
 	/* The new credentials are installed into the process later. */
 
 	/*
@@ -874,6 +899,25 @@ interpret:
 		    oldcred->cr_gid == oldcred->cr_rgid)
 			p->p_flag &= ~P_SUGID;
 	}
+#ifdef MAC
+	/*
+	 * Apply a non-privilege label refresh (e.g. identity-nonce
+	 * rotation).  If the exec produced no new credential — an ordinary
+	 * exec, or a set-id credential stripped by execve_nosetid() for a
+	 * no_new_privs / disallowed-setid exec — adopt the private
+	 * credential prepared above so the refresh still takes effect.
+	 * PROC_LOCK is held and the text vnode is locked here (matching
+	 * mac_vnode_execve_transition()); nothing below sleeps.
+	 */
+	if (will_relabel) {
+		if (imgp->newcred == NULL) {
+			imgp->newcred = relabelcred;
+			relabelcred = NULL;
+		}
+		mac_vnode_execve_relabel(oldcred, imgp->newcred, imgp->vp,
+		    interpvplabel, imgp);
+	}
+#endif
 	/*
 	 * Set the new credentials.
 	 */
@@ -1019,6 +1063,11 @@ exec_fail:
 
 	if (imgp->newcred != NULL && oldcred != NULL)
 		crfree(imgp->newcred);
+#ifdef MAC
+	/* Free the relabel credential if it was prepared but not adopted. */
+	if (relabelcred != NULL)
+		crfree(relabelcred);
+#endif
 
 #ifdef MAC
 	mac_execve_exit(imgp);

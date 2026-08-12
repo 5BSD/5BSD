@@ -739,6 +739,20 @@ typedef int	(*mpo_vnode_execve_will_transition_t)(struct ucred *old,
 		    struct vnode *vp, struct label *vplabel,
 		    struct label *interpvplabel, struct image_params *imgp,
 		    struct label *execlabel);
+/*
+ * execve_relabel refreshes per-exec credential label state (e.g. an
+ * identity nonce) WITHOUT this being a set-id privilege transition, so it
+ * does not cause setsugid()/issetugid().  Unlike execve_transition, the
+ * framework supplies a private (COW) credential to mutate.
+ */
+typedef int	(*mpo_vnode_execve_will_relabel_t)(struct ucred *old,
+		    struct vnode *vp, struct label *vplabel,
+		    struct label *interpvplabel, struct image_params *imgp,
+		    struct label *execlabel);
+typedef void	(*mpo_vnode_execve_relabel_t)(struct ucred *old,
+		    struct ucred *new, struct vnode *vp,
+		    struct label *vplabel, struct label *interpvplabel,
+		    struct image_params *imgp, struct label *execlabel);
 typedef int	(*mpo_vnode_externalize_label_t)(struct label *label,
 		    char *element_name, struct sbuf *sb, int *claimed);
 typedef void	(*mpo_vnode_init_label_t)(struct label *label);
@@ -1215,6 +1229,8 @@ struct mac_policy_ops {
 	mpo_vnode_create_extattr_t		mpo_vnode_create_extattr;
 	mpo_vnode_execve_transition_t		mpo_vnode_execve_transition;
 	mpo_vnode_execve_will_transition_t	mpo_vnode_execve_will_transition;
+	mpo_vnode_execve_will_relabel_t		mpo_vnode_execve_will_relabel;
+	mpo_vnode_execve_relabel_t		mpo_vnode_execve_relabel;
 	mpo_vnode_externalize_label_t		mpo_vnode_externalize_label;
 	mpo_vnode_init_label_t			mpo_vnode_init_label;
 	mpo_vnode_internalize_label_t		mpo_vnode_internalize_label;
@@ -1304,8 +1320,9 @@ struct mac_policy_conf {
  *   6                       15.x
  *   7                       16.x
  *   8                       16.x (vsock provider ownership hooks)
+ *   9                       16.x (vnode_execve_relabel hooks)
  */
-#define	MAC_VERSION	8
+#define	MAC_VERSION	9
 
 #define	MAC_POLICY_SET(mpops, mpname, mpfullname, mpflags, privdata_wanted) \
 	static struct mac_policy_conf mpname##_mac_policy_conf = {	\

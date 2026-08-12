@@ -417,6 +417,38 @@ mac_vnode_execve_will_transition(struct ucred *old, struct vnode *vp,
 	return (result);
 }
 
+int
+mac_vnode_execve_will_relabel(struct ucred *old, struct vnode *vp,
+    struct label *interpvplabel, struct image_params *imgp)
+{
+	int result;
+
+	ASSERT_VOP_LOCKED(vp, "mac_vnode_execve_will_relabel");
+
+	result = 0;
+	/*
+	 * Unlike execve_will_transition, this is called early in exec with
+	 * no process lock held (only the text vnode is locked); callbacks
+	 * must still not sleep.
+	 */
+	MAC_POLICY_BOOLEAN_NOSLEEP(vnode_execve_will_relabel, ||, old, vp,
+	    vp->v_label, interpvplabel, imgp, imgp->execlabel);
+
+	return (result);
+}
+
+void
+mac_vnode_execve_relabel(struct ucred *old, struct ucred *new,
+    struct vnode *vp, struct label *interpvplabel, struct image_params *imgp)
+{
+
+	ASSERT_VOP_LOCKED(vp, "mac_vnode_execve_relabel");
+
+	/* Caller holds PROC_LOCK(p), so policy callbacks must not sleep. */
+	MAC_POLICY_PERFORM_NOSLEEP(vnode_execve_relabel, old, new, vp,
+	    vp->v_label, interpvplabel, imgp, imgp->execlabel);
+}
+
 MAC_CHECK_PROBE_DEFINE3(vnode_check_access, "struct ucred *",
     "struct vnode *", "accmode_t");
 
