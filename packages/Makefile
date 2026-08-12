@@ -34,6 +34,7 @@ SUBDIR=	blocklist \
 	localnetwork \
 	bsdnotify \
 	traced \
+	mac-capability \
 	devd \
 	devmatch \
 	dhclient \

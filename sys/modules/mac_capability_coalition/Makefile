@@ -1,4 +1,4 @@
-PACKAGE=	mac_capability
+PACKAGE=	mac-capability
 .PATH: ${SRCTOP}/sys/dev/mac_capability
 
 KMOD=	mac_capability_coalition
