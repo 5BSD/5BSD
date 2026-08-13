@@ -458,7 +458,17 @@ Alias for
 Link Close.
 .It Cm remote-prov status
 Report the Remote Provisioning client scan/link FSM state.
+.It Cm remote-prov reports
+List the unsolicited Reports (Scan Report, Link Report, PDU Report) the Client
+has received from a Server.
 .El
+.Pp
+When
+.Nm
+acts as a Remote Provisioning Server it emits unsolicited Scan/Link/PDU Reports
+to the Client that addressed it; as a Client it decodes those Reports, drives its
+scan/link FSMs and the inbound PDU tunnel, and buffers them for
+.Cm remote-prov reports .
 .Sh BEARER INTEGRATION
 .Nm
 uses

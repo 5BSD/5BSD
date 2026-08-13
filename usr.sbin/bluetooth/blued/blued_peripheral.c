@@ -952,6 +952,14 @@ peripheral_build_gattdb(struct att_db *db, struct att_attr *attrs,
 			LOG_ATT(1, "config service '%s' added at "
 			    "handle 0x%04x", svc->name, sh);
 
+			for (int ii = 0; ii < svc->nincludes; ii++) {
+				const struct blued_include_conf *inc =
+				    &svc->includes[ii];
+
+				attdb_add_include(db, sh, inc->start,
+				    inc->end, inc->uuid16);
+			}
+
 			for (int ci = 0; ci < svc->nchars; ci++) {
 				const struct blued_char_conf *ch;
 				uint16_t ch_handle;
@@ -981,6 +989,25 @@ peripheral_build_gattdb(struct att_db *db, struct att_attr *attrs,
 				}
 				if (ch->has_cccd)
 					attdb_add_cccd(db);
+				for (int di = 0; di < ch->ndescs; di++) {
+					const struct blued_desc_conf *desc =
+					    &ch->descs[di];
+
+					if (desc->uuid16 != 0)
+						attdb_add_descriptor(db,
+						    desc->uuid16,
+						    desc->permissions,
+						    desc->value_len > 0 ?
+						    desc->value : NULL,
+						    desc->value_len);
+					else
+						attdb_add_descriptor128(db,
+						    desc->uuid128,
+						    desc->permissions,
+						    desc->value_len > 0 ?
+						    desc->value : NULL,
+						    desc->value_len);
+				}
 			}
 		}
 	}

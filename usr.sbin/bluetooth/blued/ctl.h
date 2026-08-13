@@ -111,6 +111,24 @@ void	ctl_acquire_conn_gone(const struct blued_conn *conn);
 void	ctl_gatt_conn_gone(const struct blued_conn *conn);
 
 /*
+ * Runtime-added local GATT server-DB persistence (finding 137).
+ *
+ * CTL_GATT_OWNER_PERSISTED marks an attribute restored from a previous run: it
+ * has no live client owner (served as a static attribute, like a built-in) but
+ * is still re-serialized so it survives repeated restarts.
+ *
+ * ctl_gatt_persist_runtime: serialize every runtime attribute of the live
+ * periph_gatt_db (owner_fd >= 0 or CTL_GATT_OWNER_PERSISTED) to the gattsrv
+ * artifact; called under gatt_db_lock after each structural change.
+ * ctl_gatt_load_persisted_services: replay that artifact into periph_gatt_db
+ * after the peripheral build; called once at startup.
+ */
+#define CTL_GATT_OWNER_PERSISTED	(-2)
+void	ctl_gatt_set_base_count(void);
+void	ctl_gatt_persist_runtime(void);
+void	ctl_gatt_load_persisted_services(int dirfd);
+
+/*
  * Release a departing control client's remote GATT subscriptions.  Shared
  * CCCDs remain enabled; last-owner CCCDs are disabled asynchronously on the
  * per-connection GATT worker queue.  The client must already have been

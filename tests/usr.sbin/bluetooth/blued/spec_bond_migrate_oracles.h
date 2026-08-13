@@ -15,10 +15,11 @@
 #define BT_BOND_PC4_VERSION_OFFSET	4
 #define BT_BOND_PC4_STRUCT_SIZE_OFFSET	8
 #define BT_BOND_PC4_HEADER_LEN		12
-#define BT_BOND_PC4_VERSION		1
+/* v2 added the HOGP hid_ctrl_handle + multi-instance report-map handles. */
+#define BT_BOND_PC4_VERSION		2
 
 static const uint8_t bt_bond_pc4_prefix[] = {
-	'B', 'R', 'E', 'C', 0x01, 0x00, 0x00, 0x00
+	'B', 'R', 'E', 'C', 0x02, 0x00, 0x00, 0x00
 };
 
 /* Core 6.3 Vol 3 Part H §2.3.4 and Vol 6 Part B §1.3 address types. */

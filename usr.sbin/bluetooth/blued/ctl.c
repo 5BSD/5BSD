@@ -3422,6 +3422,12 @@ ctl_security_resolv_result(struct blued_adapter *adp, uint16_t opcode,
 	struct smp_bond *bond;
 	uint8_t irk[16], hci_type;
 	bool bad;
+	/*
+	 * Finding 138: only a client-*supplied* IRK (a non-bond runtime entry)
+	 * is persisted; an IRK derived from a bond is already covered by the
+	 * bond database and rebuilt from it at init.
+	 */
+	bool client_supplied_irk = have_irk;
 	int error = IPC_ERR_NONE;
 
 	if (adp == NULL)
@@ -3436,8 +3442,11 @@ ctl_security_resolv_result(struct blued_adapter *adp, uint16_t opcode,
 		hci_le_set_addr_resolution_enable(adp->hci_fd, 0);
 		if (hci_le_clear_resolving_list(adp->hci_fd) < 0)
 			error = IPC_ERR_IO;
-		else
+		else {
 			memset(&adp->reslist, 0, sizeof(adp->reslist));
+			/* Drop persisted runtime entries too (finding 138). */
+			blued_runtime_resolv_clear();
+		}
 		hci_le_set_addr_resolution_enable(adp->hci_fd,
 		    blued_cfg.privacy ? 1 : 0);
 		pthread_mutex_unlock(&blued_g.reslist_lock);
@@ -3479,18 +3488,92 @@ ctl_security_resolv_result(struct blued_adapter *adp, uint16_t opcode,
 			(void)hci_le_remove_dev_resolving_list(adp->hci_fd,
 			    hci_type, (const uint8_t *)addr);
 			error = IPC_ERR_IO;
-		} else
+		} else {
 			(void)blued_reslist_add(&adp->reslist,
 			    (const uint8_t *)addr, addr_type);
+			/*
+			 * Persist a non-bond runtime entry with its supplied
+			 * IRK so it survives a restart (finding 138).
+			 */
+			if (client_supplied_irk)
+				blued_runtime_resolv_record(
+				    (const uint8_t *)addr, addr_type, irk);
+		}
 	} else if (hci_le_remove_dev_resolving_list(adp->hci_fd, hci_type,
 	    (const uint8_t *)addr) < 0)
 		error = IPC_ERR_IO;
-	else
+	else {
 		(void)blued_reslist_remove(&adp->reslist,
 		    (const uint8_t *)addr, addr_type);
+		blued_runtime_resolv_forget((const uint8_t *)addr, addr_type);
+	}
 	hci_le_set_addr_resolution_enable(adp->hci_fd,
 	    blued_cfg.privacy ? 1 : 0);
 	pthread_mutex_unlock(&blued_g.reslist_lock);
+	return (error);
+}
+
+/*
+ * Filter Accept List operator surface (finding 135).  ADD/REMOVE program the
+ * (addr_type, addr) on every powered adapter; CLEAR removes only the persisted
+ * runtime entries (never the bond-derived ones, so it does not issue a
+ * controller-wide clear).  The persisted shadow is updated on success so the
+ * entries survive a restart.
+ */
+static int
+ctl_security_acceptlist_result(uint16_t opcode, const bdaddr_t *addr,
+    uint8_t addr_type)
+{
+	struct blued_adapter *adp;
+	uint8_t at = addr_type == BDADDR_LE_RANDOM ? 0x01 : 0x00;
+	int error = IPC_ERR_NONE;
+	bool any = false;
+
+	if (opcode == IPC_SECURITY_ACCEPT_CLEAR) {
+		struct blued_persist_accept_entry snap[IPC_SECURITY_ACCEPT_MAX];
+		uint32_t n, i;
+
+		n = blued_acceptlist_snapshot(snap, nitems(snap));
+		LIST_FOREACH(adp, &blued_g.adapters, entries) {
+			if (!adp->active)
+				continue;
+			any = true;
+			for (i = 0; i < n; i++) {
+				uint8_t eat = snap[i].addr_type ==
+				    BDADDR_LE_RANDOM ? 0x01 : 0x00;
+
+				(void)hci_le_remove_device_from_filter_accept_list(
+				    adp->hci_fd, eat, snap[i].addr);
+			}
+		}
+		if (!any)
+			return (IPC_ERR_NOT_FOUND);
+		blued_acceptlist_clear_all();
+		return (IPC_ERR_NONE);
+	}
+
+	LIST_FOREACH(adp, &blued_g.adapters, entries) {
+		if (!adp->active)
+			continue;
+		any = true;
+		if (opcode == IPC_SECURITY_ACCEPT_ADD) {
+			if (hci_le_add_device_to_filter_accept_list(adp->hci_fd,
+			    at, (const uint8_t *)addr) != 0)
+				error = IPC_ERR_IO;
+		} else if (hci_le_remove_device_from_filter_accept_list(
+		    adp->hci_fd, at, (const uint8_t *)addr) != 0)
+			error = IPC_ERR_IO;
+	}
+	if (!any)
+		return (IPC_ERR_NOT_FOUND);
+	if (error == IPC_ERR_NONE) {
+		if (opcode == IPC_SECURITY_ACCEPT_ADD)
+			(void)blued_acceptlist_record((const uint8_t *)addr,
+			    addr_type);
+		else
+			(void)blued_acceptlist_forget((const uint8_t *)addr,
+			    addr_type);
+	}
 	return (error);
 }
 
@@ -3513,6 +3596,7 @@ ctl_process_typed_security(struct blued_ctl_client *client,
 	    opcode != IPC_SECURITY_GET_INFO &&
 	    opcode != IPC_SECURITY_BOND_LIST &&
 	    opcode != IPC_SECURITY_RESOLV_LIST &&
+	    opcode != IPC_SECURITY_ACCEPT_LIST &&
 	    !ctl_client_privileged(client)) {
 		ctl_send_op_error(client, IPC_OP_DOMAIN_SECURITY, IPC_ERR_PERM,
 		    "permission denied");
@@ -3780,6 +3864,49 @@ ctl_process_typed_security(struct blued_ctl_client *client,
 		    payload + 16,
 		    (payload[12] & IPC_SECURITY_RESOLV_F_IRK) != 0);
 		break;
+	case IPC_SECURITY_ACCEPT_ADD:
+	case IPC_SECURITY_ACCEPT_REMOVE:
+	case IPC_SECURITY_ACCEPT_CLEAR:
+		if (plen != IPC_SECURITY_REQ_SIZE) {
+			error = IPC_ERR_PROTO;
+			break;
+		}
+		pthread_mutex_lock(&blued_g.reslist_lock);
+		error = ctl_security_acceptlist_result(opcode, &addr, addr_type);
+		pthread_mutex_unlock(&blued_g.reslist_lock);
+		break;
+	case IPC_SECURITY_ACCEPT_LIST: {
+		uint8_t reply[IPC_OP_PREFIX_SIZE +
+		    IPC_SECURITY_ACCEPT_REPLY_HDR_SIZE + IPC_SECURITY_ACCEPT_MAX *
+		    IPC_SECURITY_ACCEPT_RECORD_SIZE];
+		uint8_t *body = reply + IPC_OP_PREFIX_SIZE;
+		struct blued_persist_accept_entry snap[IPC_SECURITY_ACCEPT_MAX];
+		uint32_t count, i;
+
+		if (plen != IPC_SECURITY_REQ_SIZE) {
+			error = IPC_ERR_PROTO;
+			break;
+		}
+		memset(reply, 0, sizeof(reply));
+		ipc_op_prefix_encode(reply, client->active_request_id, 0, 0);
+		ipc_put_le16(body, opcode);
+		pthread_mutex_lock(&blued_g.reslist_lock);
+		count = blued_acceptlist_snapshot(snap, nitems(snap));
+		pthread_mutex_unlock(&blued_g.reslist_lock);
+		for (i = 0; i < count; i++) {
+			uint8_t *record = body +
+			    IPC_SECURITY_ACCEPT_REPLY_HDR_SIZE + i *
+			    IPC_SECURITY_ACCEPT_RECORD_SIZE;
+
+			record[0] = snap[i].addr_type == BDADDR_LE_RANDOM ? 1 : 0;
+			memcpy(record + 1, snap[i].addr, 6);
+		}
+		ipc_put_le16(body + 2, (uint16_t)count);
+		ctl_send_frame(client, IPC_T_OP_REPLY, IPC_OP_DOMAIN_SECURITY,
+		    reply, IPC_OP_PREFIX_SIZE + IPC_SECURITY_ACCEPT_REPLY_HDR_SIZE +
+		    count * IPC_SECURITY_ACCEPT_RECORD_SIZE);
+		return;
+	}
 	case IPC_SECURITY_BOND_LIST: {
 		uint8_t reply[IPC_OP_PREFIX_SIZE +
 		    IPC_SECURITY_BOND_REPLY_HDR_SIZE + SMP_MAX_BONDS *

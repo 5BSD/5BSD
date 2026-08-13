@@ -619,6 +619,177 @@ blued_parse_hex_value(const char *hex, uint8_t *out, size_t maxlen)
 }
 
 /*
+ * Parse a single "descriptor" sub-block within a characteristic (finding 136).
+ * A descriptor carries a UUID (required), optional permissions, and an optional
+ * hex value.  CCCDs remain auto-generated from notify/indicate and are not
+ * authored here.
+ */
+static void
+config_parse_descriptor(struct blued_char_conf *ch, const ucl_object_t *obj,
+    const char *name)
+{
+	const ucl_object_t *val;
+	struct blued_desc_conf *d;
+	const char *str;
+	int len;
+
+	if (ch->ndescs >= BLUED_MAX_CONF_DESCS ||
+	    ucl_object_type(obj) != UCL_OBJECT)
+		return;
+
+	d = &ch->descs[ch->ndescs];
+	memset(d, 0, sizeof(*d));
+
+	/* UUID (required) */
+	val = ucl_object_lookup(obj, "uuid");
+	if (val == NULL || ucl_object_type(val) != UCL_STRING)
+		return;
+	if (blued_parse_uuid(ucl_object_tostring(val),
+	    &d->uuid16, d->uuid128) != 0) {
+		fprintf(stderr, "blued: descriptor '%s': invalid uuid '%s'\n",
+		    name, ucl_object_tostring(val));
+		return;
+	}
+
+	/* Permissions */
+	val = ucl_object_lookup(obj, "permissions");
+	if (val != NULL && ucl_object_type(val) == UCL_STRING)
+		d->permissions =
+		    blued_parse_gatt_permissions(ucl_object_tostring(val));
+
+	/* Value (hex string) */
+	val = ucl_object_lookup(obj, "value");
+	if (val != NULL && ucl_object_type(val) == UCL_STRING) {
+		str = ucl_object_tostring(val);
+		len = blued_parse_hex_value(str, d->value, sizeof(d->value));
+		if (len < 0) {
+			fprintf(stderr, "blued: descriptor '%s': invalid hex "
+			    "value '%s'\n", name, str);
+			return;
+		}
+		d->value_len = (uint16_t)len;
+	}
+
+	ch->ndescs++;
+}
+
+/*
+ * Walk the "descriptor" sub-blocks of a characteristic object, handling the
+ * same three UCL shapes as the characteristic walk (single unnamed, named
+ * sub-objects, unnamed array).
+ */
+static void
+config_parse_descriptors(struct blued_char_conf *ch, const ucl_object_t *obj)
+{
+	const ucl_object_t *val, *d_obj;
+	ucl_object_iter_t di;
+
+	val = ucl_object_lookup(obj, "descriptor");
+	if (val == NULL)
+		return;
+	if (ucl_object_type(val) == UCL_OBJECT) {
+		if (ucl_object_lookup(val, "uuid") != NULL) {
+			config_parse_descriptor(ch, val, "descriptor");
+		} else {
+			di = ucl_object_iterate_new(val);
+			while ((d_obj = ucl_object_iterate_safe(di, true)) !=
+			    NULL) {
+				if (ucl_object_type(d_obj) == UCL_OBJECT)
+					config_parse_descriptor(ch, d_obj,
+					    ucl_object_key(d_obj));
+			}
+			ucl_object_iterate_free(di);
+		}
+	} else if (ucl_object_type(val) == UCL_ARRAY) {
+		di = ucl_object_iterate_new(val);
+		while ((d_obj = ucl_object_iterate_safe(di, true)) != NULL) {
+			if (ucl_object_type(d_obj) == UCL_OBJECT)
+				config_parse_descriptor(ch, d_obj,
+				    ucl_object_key(d_obj));
+		}
+		ucl_object_iterate_free(di);
+	}
+}
+
+/*
+ * Parse a single "include" sub-block within a service (finding 136).
+ * Requires start+end handles; uuid is optional.
+ */
+static void
+config_parse_include(struct blued_service_conf *svc, const ucl_object_t *obj,
+    const char *name)
+{
+	const ucl_object_t *val;
+	struct blued_include_conf *inc;
+	uint16_t uuid16 = 0;
+	uint8_t uuid128[16];
+	int64_t start = 0, end = 0;
+
+	if (svc->nincludes >= BLUED_MAX_CONF_INCLUDES ||
+	    ucl_object_type(obj) != UCL_OBJECT)
+		return;
+
+	val = ucl_object_lookup(obj, "start");
+	if (val != NULL && ucl_object_type(val) == UCL_INT)
+		start = ucl_object_toint(val);
+	val = ucl_object_lookup(obj, "end");
+	if (val != NULL && ucl_object_type(val) == UCL_INT)
+		end = ucl_object_toint(val);
+	if (start <= 0 || start > 0xffff || end <= 0 || end > 0xffff ||
+	    end < start) {
+		fprintf(stderr, "blued: service '%s' include '%s': invalid "
+		    "start/end handle range\n", svc->name, name);
+		return;
+	}
+
+	val = ucl_object_lookup(obj, "uuid");
+	if (val != NULL && ucl_object_type(val) == UCL_STRING) {
+		if (blued_parse_uuid(ucl_object_tostring(val), &uuid16,
+		    uuid128) != 0)
+			uuid16 = 0;	/* 128-bit include UUIDs are optional */
+	}
+
+	inc = &svc->includes[svc->nincludes];
+	inc->start = (uint16_t)start;
+	inc->end = (uint16_t)end;
+	inc->uuid16 = uuid16;
+	svc->nincludes++;
+}
+
+static void
+config_parse_includes(struct blued_service_conf *svc, const ucl_object_t *obj)
+{
+	const ucl_object_t *val, *i_obj;
+	ucl_object_iter_t ii;
+
+	val = ucl_object_lookup(obj, "include");
+	if (val == NULL)
+		return;
+	if (ucl_object_type(val) == UCL_OBJECT) {
+		if (ucl_object_lookup(val, "start") != NULL) {
+			config_parse_include(svc, val, "include");
+		} else {
+			ii = ucl_object_iterate_new(val);
+			while ((i_obj = ucl_object_iterate_safe(ii, true)) !=
+			    NULL) {
+				if (ucl_object_type(i_obj) == UCL_OBJECT)
+					config_parse_include(svc, i_obj,
+					    ucl_object_key(i_obj));
+			}
+			ucl_object_iterate_free(ii);
+		}
+	} else if (ucl_object_type(val) == UCL_ARRAY) {
+		ii = ucl_object_iterate_new(val);
+		while ((i_obj = ucl_object_iterate_safe(ii, true)) != NULL) {
+			if (ucl_object_type(i_obj) == UCL_OBJECT)
+				config_parse_include(svc, i_obj,
+				    ucl_object_key(i_obj));
+		}
+		ucl_object_iterate_free(ii);
+	}
+}
+
+/*
  * Parse a single "characteristic" sub-block within a service.
  */
 static void
@@ -681,6 +852,9 @@ config_parse_characteristic(struct blued_service_conf *svc,
 	/* Auto-add CCCD if notify or indicate */
 	ch->has_cccd = (ch->properties &
 	    (GATT_PROP_NOTIFY | GATT_PROP_INDICATE)) != 0;
+
+	/* Non-CCCD descriptor sub-blocks (finding 136). */
+	config_parse_descriptors(ch, obj);
 
 	svc->nchars++;
 }
@@ -785,6 +959,9 @@ config_parse_service(struct blued_config *cfg, const ucl_object_t *obj,
 			ucl_object_iterate_free(ci);
 		}
 	}
+
+	/* Included-service sub-blocks (finding 136). */
+	config_parse_includes(svc, obj);
 
 	cfg->nservices++;
 }

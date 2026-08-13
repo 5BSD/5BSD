@@ -179,6 +179,11 @@
 #define	IPC_SECURITY_RESOLV_LIST 19
 #define	IPC_SECURITY_BOND_EXPORT 20
 #define	IPC_SECURITY_BOND_IMPORT 21
+/* Filter Accept List operator surface (finding 135). */
+#define	IPC_SECURITY_ACCEPT_ADD	22
+#define	IPC_SECURITY_ACCEPT_REMOVE 23
+#define	IPC_SECURITY_ACCEPT_CLEAR 24
+#define	IPC_SECURITY_ACCEPT_LIST 25
 #define	IPC_SECURITY_REQ_SIZE	12
 /*
  * Passkey/numcmp reply (client -> server) uses the standard typed-security
@@ -211,6 +216,11 @@
 #define	IPC_SECURITY_RESOLV_REPLY_HDR_SIZE 4
 #define	IPC_SECURITY_RESOLV_RECORD_SIZE 8
 #define	IPC_SECURITY_RESOLV_F_IN_LIST 0x01u
+/* ACCEPT_LIST reply: [opcode le16][count le16] then count 8-byte records
+ * [addr_type u8][addr[6]][reserved u8]. */
+#define	IPC_SECURITY_ACCEPT_REPLY_HDR_SIZE 4
+#define	IPC_SECURITY_ACCEPT_RECORD_SIZE 8
+#define	IPC_SECURITY_ACCEPT_MAX 32
 #define	IPC_SECURITY_BOND_EXPORT_REPLY_HDR_SIZE 4
 #define	IPC_SECURITY_BOND_IMPORT_REQ_HDR_SIZE 16
 #define	IPC_SECURITY_POLICY_F_MITM 0x0001u

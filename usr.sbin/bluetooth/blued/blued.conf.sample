@@ -132,3 +132,27 @@ features {
 #         value = "0000"
 #     }
 # }
+
+# A characteristic may carry non-CCCD "descriptor" blocks, and a service may
+# declare "include" blocks referencing another service's handle range.  (The
+# CCCD is still auto-added from notify/indicate; author only other descriptors
+# here, e.g. Characteristic User Description 0x2901, Report Reference 0x2908.)
+# service "Battery" {
+#     uuid = "0x180F"
+#     include {
+#         start = 16          # handle range of the included service
+#         end   = 32
+#         uuid  = "0x1801"    # optional included-service UUID
+#     }
+#     characteristic "Battery Level" {
+#         uuid = "0x2A19"
+#         properties = "read,notify"
+#         permissions = "read"
+#         value = "64"
+#         descriptor {
+#             uuid = "0x2901"         # Characteristic User Description
+#             permissions = "read"
+#             value = "4C6576656C"    # "Level"
+#         }
+#     }
+# }

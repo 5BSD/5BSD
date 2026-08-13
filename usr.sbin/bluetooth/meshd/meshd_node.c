@@ -460,10 +460,18 @@ meshd_devkey_rx(void *arg, uint16_t src, uint16_t dst,
     size_t *reply_len)
 {
 	struct meshd_node *nd = arg;
+	struct mesh_access_pdu ap;
 
 	if (nd == NULL || dst != nd->addr)
 		return (-1);
-	(void)src;
+	/*
+	 * Remember the RPR Client's unicast so the Server can later address it
+	 * with unsolicited Scan/Link/PDU Reports (finding 128).
+	 */
+	if (mesh_access_pdu_parse(access, access_len, &ap) == 0 &&
+	    ap.opcode >= MESH_RP_OP_SCAN_CAPABILITIES_GET &&
+	    ap.opcode <= MESH_RP_OP_PDU_REPORT)
+		nd->rpr.client_addr = src;
 	return (meshd_foundation_recv(nd, access, access_len, reply,
 	    MESH_ACCESS_PAYLOAD_MAX, reply_len));
 }
@@ -487,8 +495,17 @@ static int
 meshd_remote_devkey_rx(void *arg, uint32_t seq, uint16_t src, uint16_t dst,
     const uint8_t *upper, size_t upper_len)
 {
+	int r;
 
-	return (meshd_cfg_client_rx(arg, seq, src, dst, upper, upper_len));
+	/*
+	 * A DevKey-sealed message from a roster node is first offered to the
+	 * in-flight Config/DF/RPR Client transaction (Status correlation); if
+	 * that does not consume it, it may be an unsolicited RPR Report.
+	 */
+	r = meshd_cfg_client_rx(arg, seq, src, dst, upper, upper_len);
+	if (r == 1)
+		return (1);
+	return (meshd_rpr_client_rx(arg, seq, src, dst, upper, upper_len));
 }
 
 void
@@ -3252,6 +3269,9 @@ h_df_control_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	if (mesh_cfg_directed_control_set_parse(pdu, len, &c) != 0)
 		return (-1);
 	nd->df.control = c;
+	/* Turning Directed Forwarding on enables the sim node's DF roles. */
+	if (c.directed_forwarding)
+		meshd_df_enable(nd);
 	if (mesh_cfg_directed_control_status_build(MESH_CFG_STATUS_SUCCESS, &c,
 	    buf, &blen) != 0)
 		return (-1);
@@ -3586,6 +3606,221 @@ meshd_rpr_server_recv(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	}
 }
 
+/*
+ * Seal an RPR access message under this node's DevKey and transmit it to dst
+ * (the RPR Client) over the bearer - the unsolicited Report emit primitive.
+ * The Client opens it with this node's DevKey held in its roster.
+ */
+static int
+meshd_rpr_emit(struct meshd_node *nd, uint16_t dst, const uint8_t *access,
+    size_t access_len)
+{
+	uint8_t upper[MESH_ACCESS_PAYLOAD_MAX + 8];
+	size_t ulen;
+	uint32_t seq0, iv;
+	int n;
+
+	if (nd == NULL || nd->self == NULL || !nd->have_local_devkey ||
+	    dst == 0x0000 || access == NULL || access_len == 0 ||
+	    access_len > MESH_ACCESS_PAYLOAD_MAX)
+		return (-1);
+	if (nd->bearer == NULL || nd->bearer->tx == NULL)
+		return (-1);
+	seq0 = mesh_sim_node_seq(nd->self);
+	iv = mesh_sim_node_iv(nd->self);
+	if (mesh_upper_encrypt(nd->local_devkey, 0, 0, seq0, nd->addr, dst, iv,
+	    NULL, access, access_len, upper, &ulen) != 0)
+		return (-1);
+	n = mesh_sim_send_upper(&nd->sim, nd->self, dst, seq0, upper, ulen, 0, 0,
+	    nd->cfg.default_ttl);
+	if (n < 0)
+		return (-1);
+	nd->self->seq = seq0 + (uint32_t)n;
+	meshd_drain_tx(nd);
+	return (0);
+}
+
+/* Record an inbound Report in the client-side ring for "remote-prov reports". */
+static void
+meshd_rpr_buffer(struct meshd_node *nd, uint32_t opcode, uint16_t src,
+    const uint8_t *data, size_t len)
+{
+	struct meshd_rpr_report *r;
+
+	r = &nd->rpr.reports[nd->rpr.report_head];
+	if (len > sizeof(r->data))
+		len = sizeof(r->data);
+	r->opcode = opcode;
+	r->src = src;
+	r->len = len;
+	if (len > 0)
+		memcpy(r->data, data, len);
+	nd->rpr.report_head = (nd->rpr.report_head + 1) % MESHD_RPR_MAX_REPORTS;
+	nd->rpr.n_reports++;
+}
+
+int
+meshd_rpr_server_report_scan(struct meshd_node *nd, const uint8_t uuid[16],
+    uint16_t oob, int8_t rssi, uint64_t now)
+{
+	struct mesh_rp_scan_report rep;
+	uint8_t access[MESH_RP_MSG_MAX];
+	size_t alen;
+	int emit = 0;
+
+	if (nd == NULL || uuid == NULL || nd->rpr.client_addr == 0x0000)
+		return (-1);
+	if (mesh_rp_scan_server_device_seen(&nd->rpr.scan_server, uuid, oob,
+	    rssi, now, &rep, &emit) != 0)
+		return (-1);
+	if (!emit)
+		return (0);
+	if (mesh_rp_scan_report_build(&rep, access, &alen) != 0)
+		return (-1);
+	if (meshd_rpr_emit(nd, nd->rpr.client_addr, access, alen) != 0)
+		return (-1);
+	return (1);
+}
+
+int
+meshd_rpr_server_report_bearer(struct meshd_node *nd)
+{
+	struct mesh_rp_link_report rep;
+	uint8_t access[MESH_RP_MSG_MAX];
+	size_t alen;
+
+	if (nd == NULL || nd->rpr.client_addr == 0x0000)
+		return (-1);
+	if (mesh_rp_server_link_bearer_open(&nd->rpr.server_link, &rep) != 0)
+		return (0);			/* not OPENING: nothing to report */
+	if (mesh_rp_link_report_build(&rep, access, &alen) != 0)
+		return (-1);
+	if (meshd_rpr_emit(nd, nd->rpr.client_addr, access, alen) != 0)
+		return (-1);
+	return (1);
+}
+
+int
+meshd_rpr_server_report_pdu(struct meshd_node *nd, const uint8_t *prov_pdu,
+    size_t len)
+{
+	struct mesh_rp_pdu_report rep;
+	uint8_t access[MESH_RP_MSG_MAX];
+	size_t alen;
+
+	if (nd == NULL || prov_pdu == NULL || nd->rpr.client_addr == 0x0000)
+		return (-1);
+	if (mesh_rp_server_link_report_pdu(&nd->rpr.server_link, prov_pdu, len,
+	    &rep) != 0)
+		return (-1);
+	if (mesh_rp_pdu_report_build(&rep, access, &alen) != 0)
+		return (-1);
+	if (meshd_rpr_emit(nd, nd->rpr.client_addr, access, alen) != 0)
+		return (-1);
+	return (1);
+}
+
+int
+meshd_rpr_client_send_pdu(struct meshd_node *nd, const uint8_t *prov_pdu,
+    size_t len, uint64_t now)
+{
+	uint8_t access[MESH_RP_MSG_MAX];
+	size_t alen;
+
+	(void)now;
+	if (nd == NULL || prov_pdu == NULL)
+		return (-1);
+	if (!nd->mgr_active || nd->mgr == NULL || nd->rpr.server_addr == 0x0000)
+		return (-1);
+	if (mesh_rp_client_link_send_pdu(&nd->rpr.client_link, prov_pdu, len,
+	    access, &alen) != 0)
+		return (-1);
+	/*
+	 * PDU Send is sealed under the Server's DevKey and transmitted without a
+	 * Config-Client transaction: the Server answers with a PDU Outbound
+	 * Report which returns unsolicited through meshd_rpr_client_rx.
+	 */
+	return (meshd_send_devkey_raw(nd, nd->rpr.server_addr, 1,
+	    nd->mgr->netkey_index, access, alen));
+}
+
+int
+meshd_rpr_client_rx(struct meshd_node *nd, uint32_t seq, uint16_t src,
+    uint16_t dst, const uint8_t *upper, size_t upper_len)
+{
+	struct mesh_mgr_node *node;
+	struct mesh_access_pdu ap;
+	uint8_t plain[MESH_ACCESS_MAX];
+	size_t plen;
+
+	if (nd == NULL || upper == NULL)
+		return (-1);
+	if (!nd->mgr_active || nd->mgr == NULL)
+		return (0);
+	node = mesh_mgr_find_by_addr(nd->mgr, src);
+	if (node == NULL)
+		return (0);
+	plen = sizeof(plain);
+	if (mesh_mgr_devkey_open(nd->mgr, node, seq, src, dst, upper, upper_len,
+	    plain, &plen) != 0)
+		return (0);
+	if (mesh_access_pdu_parse(plain, plen, &ap) != 0)
+		return (0);
+
+	switch (ap.opcode) {
+	case MESH_RP_OP_SCAN_REPORT: {
+		struct mesh_rp_scan_report rep;
+
+		if (mesh_rp_scan_report_parse(plain, plen, &rep) != 0)
+			return (0);
+		(void)mesh_rp_scan_client_on_report(&nd->rpr.scan_client, &rep);
+		meshd_rpr_buffer(nd, ap.opcode, src, rep.uuid, sizeof(rep.uuid));
+		return (1);
+	}
+	case MESH_RP_OP_LINK_REPORT: {
+		struct mesh_rp_link_report rep;
+		uint8_t d[2];
+
+		if (mesh_rp_link_report_parse(plain, plen, &rep) != 0)
+			return (0);
+		(void)mesh_rp_client_link_on_report(&nd->rpr.client_link, &rep);
+		nd->rpr.client_active =
+		    mesh_rp_client_link_is_active(&nd->rpr.client_link);
+		d[0] = rep.status;
+		d[1] = rep.rp_state;
+		meshd_rpr_buffer(nd, ap.opcode, src, d, sizeof(d));
+		return (1);
+	}
+	case MESH_RP_OP_PDU_OUTBOUND_REPORT: {
+		uint8_t num;
+
+		if (mesh_rp_pdu_outbound_report_parse(plain, plen, &num) != 0)
+			return (0);
+		(void)mesh_rp_client_link_on_outbound_report(
+		    &nd->rpr.client_link, num);
+		meshd_rpr_buffer(nd, ap.opcode, src, &num, 1);
+		return (1);
+	}
+	case MESH_RP_OP_PDU_REPORT: {
+		struct mesh_rp_pdu_report rep;
+		uint8_t prov[MESH_RP_PROV_PDU_MAX];
+		size_t pl = sizeof(prov);
+
+		if (mesh_rp_pdu_report_parse(plain, plen, &rep) != 0)
+			return (0);
+		if (mesh_rp_client_link_on_pdu_report(&nd->rpr.client_link, &rep,
+		    prov, &pl) != 0)
+			return (0);
+		memcpy(nd->rpr.inbound_pdu, prov, pl);
+		nd->rpr.inbound_pdu_len = pl;
+		meshd_rpr_buffer(nd, ap.opcode, src, prov, pl);
+		return (1);
+	}
+	default:
+		return (0);
+	}
+}
+
 /* (Re)initialise the DF + RPR model state on (re)provision. */
 static void
 meshd_df_rpr_init(struct meshd_node *nd)
@@ -3600,9 +3835,13 @@ meshd_df_rpr_init(struct meshd_node *nd)
 	nd->df.lanes.wanted_lanes = 1;
 	nd->df.two_way.net_idx = nd->netkey_index;
 	nd->df.echo.net_idx = nd->netkey_index;
-	mesh_df_node_init(&nd->df.node, nd->addr, nd->addr,
-	    MESH_DF_LIFETIME_2_HOUR, nd->df.two_way.two_way_path);
-	nd->df.disc_active = 0;
+	/*
+	 * Enable Directed Forwarding on the sim node so the received-PDU path
+	 * relays and answers DF transport-control PDUs over the live bearer
+	 * (finding 129).  Managed flooding stays available as the fallback.
+	 */
+	mesh_sim_set_df(nd->self, 1);
+	nd->df.enabled = 1;
 
 	memset(&nd->rpr, 0, sizeof(nd->rpr));
 	mesh_rp_scan_server_init(&nd->rpr.scan_server, MESH_RP_SCAN_FOUND_MAX, 1);
@@ -4097,15 +4336,16 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 		(void)meshd_unprov_beacon_emit(nd);
 
 	/*
-	 * Directed Forwarding (finding 129): age out established paths and echo
-	 * deadlines, and fail a Path Origin discovery whose reply budget elapsed.
+	 * Directed Forwarding (finding 129): age out established Forwarding Table
+	 * paths on the sim node and fail a Path Origin discovery whose reply
+	 * budget elapsed.  Relay/target processing itself happens on the
+	 * received-PDU path (meshd_bearer_rx).
 	 */
-	(void)mesh_df_table_expire(&nd->df.node.table, now_ms);
-	(void)mesh_df_echo_expire(&nd->df.node, now_ms);
-	if (nd->df.disc_active &&
-	    mesh_df_discovery_timed_out(&nd->df.disc, now_ms)) {
-		if (nd->df.disc.state != MESH_DF_DISC_ESTABLISHED)
-			nd->df.disc_active = 0;
+	if (nd->self->df_enabled) {
+		mesh_sim_df_expire(&nd->sim);
+		if (nd->self->df_disc.state == MESH_DF_DISC_REQUEST_SENT)
+			(void)mesh_df_discovery_timed_out(&nd->self->df_disc,
+			    now_ms);
 	}
 
 	/*
@@ -4124,75 +4364,107 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 /* ================================================================
  * Directed Forwarding drive (finding 129, MshPRT_v1.1 Section 3.6.7).
  *
- * meshd_df_discover_begin arms the local Path Origin discovery FSM toward a
- * target; the reply/confirmation exchange and the per-hop relay are driven by
- * meshd_df_recv_control (the node's relay/target role) and completed by the
- * FSM.  Full per-hop Network-layer encryption of the emitted transport-control
- * PDUs over the live bearer is a follow-up; the FSM + forwarding-table state are
- * driven and observable here (and from the node tick's expiry pass).
+ * The relay / target / Path-Origin reply-and-confirm roles run inside the sim
+ * node (enabled by mesh_sim_set_df) and are driven by the received-PDU path:
+ * meshd_bearer_rx -> mesh_sim_reinject + mesh_sim_step decrypts an inbound DF
+ * transport-control PDU, the sim's DF dispatch relays/answers it onto the tx
+ * queue, and meshd_drain_tx flushes those to the bearer.  meshd only has to
+ * enable DF, originate the initial Path Request, and expire aged paths.
  * ================================================================ */
-int
-meshd_df_discover_begin(struct meshd_node *nd, uint16_t target, uint64_t now)
-{
-	struct mesh_df_path_request req;
-	uint8_t fn;
 
-	if (nd == NULL || nd->self == NULL || !nd->provisioned)
+void
+meshd_df_enable(struct meshd_node *nd)
+{
+
+	if (nd == NULL || nd->self == NULL)
+		return;
+	mesh_sim_set_df(nd->self, 1);
+	nd->df.enabled = 1;
+}
+
+/*
+ * Network-encrypt a transport-control PDU (CTL=1) under the primary subnet's
+ * managed-flooding credential and hand it to the bearer as a Network PDU - the
+ * same wire form the sim produces for Heartbeat/DF, so a peer's mesh_net_decrypt
+ * recovers it.  opcode is a 7-bit transport-control opcode; params/plen are the
+ * parameter octets (no opcode byte).  Advances the node SEQ like the sim's TX.
+ */
+static int
+meshd_df_send_control(struct meshd_node *nd, uint8_t opcode, uint16_t dst,
+    uint8_t ttl, const uint8_t *params, size_t plen)
+{
+	const struct mesh_node *self;
+	struct mesh_net_pdu np;
+	uint8_t frame[64];
+	size_t flen;
+	uint32_t iv;
+
+	if (nd == NULL || nd->self == NULL || nd->bearer == NULL ||
+	    nd->bearer->tx == NULL)
 		return (-1);
-	if (nd->df.disc_active &&
-	    nd->df.disc.state == MESH_DF_DISC_REQUEST_SENT)
-		return (-1);			/* one discovery in flight */
-	fn = mesh_df_fn_next((uint8_t)mesh_sim_node_seq(nd->self));
-	if (mesh_df_discovery_start(&nd->df.disc, nd->addr, target, fn,
-	    nd->df.metric.metric_type, nd->df.metric.lifetime,
-	    nd->df.lanes.wanted_lanes ? nd->df.lanes.wanted_lanes : 1,
-	    nd->df.two_way.two_way_path, 20000, now, &req) != 0)
+	if (plen + 1 > MESH_NET_MAX_CONTROL_TRANSPORT_PDU)
+		return (-1);			/* would need segmentation */
+	/* Primary subnet managed-flooding credential (held on the node). */
+	self = nd->self;
+	iv = mesh_iv_tx_index(&nd->self->iv);
+	memset(&np, 0, sizeof(np));
+	np.ivi = (uint8_t)(iv & 1);
+	np.nid = self->nid;
+	np.ctl = 1;
+	np.ttl = ttl;
+	np.seq = nd->self->seq;
+	np.src = nd->addr;
+	np.dst = dst;
+	np.transport[0] = (uint8_t)(opcode & 0x7f);
+	if (plen > 0)
+		memcpy(np.transport + 1, params, plen);
+	np.transport_len = plen + 1;
+	if (mesh_net_encrypt(self->enckey, self->privkey, self->nid, iv,
+	    &np, frame, &flen) != 0)
 		return (-1);
-	nd->df.disc_active = 1;
+	nd->self->seq++;
+	nd->tx_frames++;
+	if (nd->bearer->tx(nd->bearer->arg, MESHD_PDU_NET, frame, flen) != 0) {
+		nd->tx_errors++;
+		return (-1);
+	}
 	return (0);
 }
 
 int
-meshd_df_recv_control(struct meshd_node *nd, uint16_t src, uint16_t dst,
-    uint8_t ttl, uint8_t bearer, uint8_t opcode, const uint8_t *pdu,
-    size_t len, uint64_t now)
+meshd_df_discover_begin(struct meshd_node *nd, uint16_t target, uint64_t now)
 {
-	struct mesh_df_recv_ctx ctx;
-	struct mesh_df_output out;
-	int rc;
+	struct mesh_df_path_request req;
+	uint8_t params[MESH_ACCESS_PAYLOAD_MAX];
+	size_t plen;
 
-	if (nd == NULL || pdu == NULL)
+	if (nd == NULL || nd->self == NULL || !nd->provisioned)
 		return (-1);
-	memset(&ctx, 0, sizeof(ctx));
-	ctx.src = src;
-	ctx.dst = dst;
-	ctx.ttl = ttl;
-	ctx.bearer = bearer;
-	ctx.now = now;
-	memset(&out, 0, sizeof(out));
-	rc = mesh_df_recv_control(&nd->df.node, &ctx, opcode, pdu, len, &out);
+	if (nd->bearer == NULL || nd->bearer->tx == NULL)
+		return (-1);			/* origination needs a bearer */
+	if (!nd->self->df_enabled)
+		meshd_df_enable(nd);
+	if (nd->self->df_disc.state == MESH_DF_DISC_REQUEST_SENT)
+		return (-1);			/* one discovery in flight */
 
 	/*
-	 * When the local node is the Path Origin, feed a Path Reply into the
-	 * discovery FSM and, if a confirmation is required, advance to
-	 * ESTABLISHED.
+	 * Arm the sim node's Path Origin FSM so the received-PDU path completes
+	 * the Reply/Confirmation exchange, then originate the Path Request onto
+	 * the bearer.  (mesh_sim_df_discover would pump the local single-node
+	 * medium and consume the frame instead of transmitting it.)
 	 */
-	if (nd->df.disc_active && opcode == MESH_DF_OP_PATH_REPLY) {
-		struct mesh_df_path_reply rep;
-		struct mesh_df_path_confirmation conf;
-		int need_confirm = 0;
-
-		if (mesh_df_path_reply_parse(pdu, len, &rep) == 0 &&
-		    mesh_df_discovery_on_reply(&nd->df.disc, &rep,
-		    &need_confirm) == 1) {
-			if (need_confirm)
-				(void)mesh_df_discovery_confirm(&nd->df.disc,
-				    &conf);
-			if (nd->df.disc.state == MESH_DF_DISC_ESTABLISHED)
-				nd->df.disc_active = 0;
-		}
-	}
-	return (rc);
+	if (mesh_df_discovery_start(&nd->self->df_disc, nd->addr, target,
+	    nd->self->df_fn, nd->df.metric.metric_type, nd->df.metric.lifetime,
+	    nd->df.lanes.wanted_lanes ? nd->df.lanes.wanted_lanes : 1,
+	    nd->df.two_way.two_way_path, 30000, now, &req) != 0)
+		return (-1);
+	nd->self->df_fn = mesh_df_fn_next(nd->self->df_fn);
+	if (mesh_df_path_request_build(&req, params, &plen) != 0)
+		return (-1);
+	if (meshd_df_send_control(nd, MESH_DF_OP_PATH_REQUEST, MESH_ADDR_ALL_DF,
+	    5, params, plen) != 0)
+		return (-1);
+	return (0);
 }
 
 /* ================================================================

@@ -323,111 +323,142 @@ ATF_TC_BODY(df_verb_dispatch, tc)
 }
 
 /* ================================================================
- * Path Origin discovery FSM (df discover + node tick timeout).
+ * Live Directed Forwarding over the bearer (two nodes sharing a subnet).
+ *
+ * Each node's tx is captured; a captured Network PDU is shuttled to the peer
+ * via meshd_bearer_rx, whose mesh_sim_step decrypts it, runs the sim's DF
+ * relay/target/origin dispatch, and re-emits any Path Reply/Confirmation to the
+ * capture buffer.  This exercises the real encrypt -> bearer -> decrypt ->
+ * forward path, not a standalone FSM.
  * ================================================================ */
-ATF_TC_WITHOUT_HEAD(df_discovery_reply_establishes);
-ATF_TC_BODY(df_discovery_reply_establishes, tc)
+#define	DF_MAXCAP	32
+static struct df_capframe {
+	uint8_t			buf[64];
+	size_t			len;
+	enum meshd_pdu_class	cls;
+} g_cap[DF_MAXCAP];
+static size_t g_ncap;
+
+static int
+df_cap_tx(void *arg, enum meshd_pdu_class cls, const uint8_t *pdu, size_t len)
 {
-	MESH_HEAP(struct meshd_node, client);
-	MESH_HEAP(struct meshd_node, dev);
-	struct meshd_config ccfg, dcfg;
-	struct mesh_mgr_node *node;
-	struct mesh_df_path_reply rep;
-	uint8_t repbuf[64];
-	size_t replen;
+
+	(void)arg;
+	if (g_ncap < DF_MAXCAP && len <= sizeof(g_cap[0].buf)) {
+		memcpy(g_cap[g_ncap].buf, pdu, len);
+		g_cap[g_ncap].len = len;
+		g_cap[g_ncap].cls = cls;
+		g_ncap++;
+	}
+	return (0);
+}
+
+/* Deliver every currently-captured Network PDU to node `to`. */
+static void
+df_pump(struct meshd_node *to)
+{
+	struct df_capframe snap[DF_MAXCAP];
+	size_t n, i;
+
+	n = g_ncap;
+	memcpy(snap, g_cap, n * sizeof(snap[0]));
+	g_ncap = 0;
+	for (i = 0; i < n; i++)
+		if (snap[i].cls == MESHD_PDU_NET)
+			(void)meshd_bearer_rx(to, snap[i].buf, snap[i].len);
+}
+
+/* Provision a node into a fixed shared subnet at addr. */
+static void
+df_provision(struct meshd_node *nd, struct meshd_config *cfg, uint16_t addr)
+{
+
+	meshd_config_defaults(cfg);
+	memset(cfg->netkey, 0x33, 16);
+	cfg->have_netkey = 1;
+	memset(cfg->appkey, 0x44, 16);
+	cfg->have_appkey = 1;
+	cfg->netkey_index = 0;
+	cfg->appkey_index = 0;
+	cfg->unicast_addr = addr;
+	cfg->iv_index = 0;
+	cfg->default_ttl = 7;
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, cfg));
+}
+
+ATF_TC_WITHOUT_HEAD(df_discover_live_establishes);
+ATF_TC_BODY(df_discover_live_establishes, tc)
+{
+	MESH_HEAP(struct meshd_node, a);
+	MESH_HEAP(struct meshd_node, b);
+	struct meshd_config acfg, bcfg;
+	struct meshd_bearer abear = { .tx = df_cap_tx };
+	struct meshd_bearer bbear = { .tx = df_cap_tx };
 	char reply[128];
-	char *av[3];
+	char *av[2];
 
-	setup(client, dev, &ccfg, &dcfg, &node, 0x0002);
+	df_provision(a, &acfg, 0x0001);
+	df_provision(b, &bcfg, 0x0005);
+	meshd_set_bearer(a, &abear);
+	meshd_set_bearer(b, &bbear);
+	/* DF is enabled on both at setup. */
+	ATF_REQUIRE(a->self->df_enabled);
+	ATF_REQUIRE(b->self->df_enabled);
 
-	/* df discover 0x0005 -> Path Origin FSM enters REQUEST_SENT. */
+	/* Origin A discovers target B: the Path Request is emitted to the bearer. */
+	g_ncap = 0;
 	av[0] = (char *)(uintptr_t)"discover";
 	av[1] = (char *)(uintptr_t)"0x0005";
-	ATF_CHECK_EQ(0, meshd_df_client_verb(client, 2, av, 0, reply,
-	    sizeof(reply)));
-	ATF_CHECK_EQ(1, client->df.disc_active);
-	ATF_CHECK_EQ(MESH_DF_DISC_REQUEST_SENT, client->df.disc.state);
+	ATF_CHECK_EQ(0, meshd_df_client_verb(a, 2, av, 0, reply, sizeof(reply)));
+	ATF_CHECK_EQ(MESH_DF_DISC_REQUEST_SENT, a->self->df_disc.state);
+	ATF_REQUIRE(g_ncap >= 1);
+	ATF_CHECK_EQ(MESHD_PDU_NET, g_cap[0].cls);
 
-	/* A matching Path Reply (confirmation requested) drives -> ESTABLISHED. */
-	memset(&rep, 0, sizeof(rep));
-	rep.on_behalf_of_dependent_target = 0;
-	rep.confirmation_request = 1;
-	rep.forwarding_number = client->df.disc.forwarding_number;
-	rep.path_origin = client->addr;
-	rep.target.range_start = 0x0005;
-	rep.target.range_length = 1;
-	ATF_REQUIRE_EQ(0, mesh_df_path_reply_build(&rep, repbuf, &replen));
-	/*
-	 * The origin has no forwarding-table entry for its own reply, so the
-	 * relay role drops it (MESH_DF_RECV_DROP); the discovery FSM still
-	 * consumes it and advances to ESTABLISHED.
-	 */
-	(void)meshd_df_recv_control(client, 0x0005, client->addr, 5, 1,
-	    MESH_DF_OP_PATH_REPLY, repbuf, replen, 10);
-	ATF_CHECK_EQ(MESH_DF_DISC_ESTABLISHED, client->df.disc.state);
-	ATF_CHECK_EQ(0, client->df.disc_active);
-	free(client->mgr);
+	/* Request -> B: B is the target, installs a reverse path and replies. */
+	df_pump(b);
+	ATF_CHECK(b->self->df_table.count >= 1);
+	ATF_REQUIRE(g_ncap >= 1);		/* B emitted a Path Reply */
+
+	/* Reply -> A: A confirms and the path is established. */
+	df_pump(a);
+	ATF_CHECK_EQ(MESH_DF_DISC_ESTABLISHED, a->self->df_disc.state);
+	ATF_CHECK(a->self->df_table.count >= 1);
+
+	/* Confirmation -> B: B installs the forward path. */
+	df_pump(b);
+	ATF_CHECK(b->self->df_table.count >= 1);
 }
 
-ATF_TC_WITHOUT_HEAD(df_discovery_tick_timeout);
-ATF_TC_BODY(df_discovery_tick_timeout, tc)
+ATF_TC_WITHOUT_HEAD(df_discover_requires_bearer);
+ATF_TC_BODY(df_discover_requires_bearer, tc)
 {
-	MESH_HEAP(struct meshd_node, client);
-	MESH_HEAP(struct meshd_node, dev);
-	struct meshd_config ccfg, dcfg;
-	struct mesh_mgr_node *node;
+	MESH_HEAP(struct meshd_node, a);
+	struct meshd_config acfg;
+
+	df_provision(a, &acfg, 0x0001);
+	/* No bearer attached: origination cannot transmit. */
+	ATF_CHECK_EQ(-1, meshd_df_discover_begin(a, 0x0005, 0));
+	ATF_CHECK(a->self->df_disc.state != MESH_DF_DISC_REQUEST_SENT);
+}
+
+ATF_TC_WITHOUT_HEAD(df_discover_tick_timeout);
+ATF_TC_BODY(df_discover_tick_timeout, tc)
+{
+	MESH_HEAP(struct meshd_node, a);
+	struct meshd_config acfg;
+	struct meshd_bearer abear = { .tx = df_cap_tx };
 	int ivc;
 
-	setup(client, dev, &ccfg, &dcfg, &node, 0x0002);
+	df_provision(a, &acfg, 0x0001);
+	meshd_set_bearer(a, &abear);
 
-	ATF_REQUIRE_EQ(0, meshd_df_discover_begin(client, 0x0005, 1000));
-	ATF_CHECK_EQ(MESH_DF_DISC_REQUEST_SENT, client->df.disc.state);
+	g_ncap = 0;
+	ATF_REQUIRE_EQ(0, meshd_df_discover_begin(a, 0x0005, 1000));
+	ATF_CHECK_EQ(MESH_DF_DISC_REQUEST_SENT, a->self->df_disc.state);
 
-	/* Before the 20 s budget: still REQUEST_SENT. */
-	ATF_REQUIRE(meshd_node_tick(client, 1000 + 19999, &ivc) >= 0);
-	ATF_CHECK_EQ(MESH_DF_DISC_REQUEST_SENT, client->df.disc.state);
-
-	/* Past the budget: the tick fails the discovery. */
-	ATF_REQUIRE(meshd_node_tick(client, 1000 + 20001, &ivc) >= 0);
-	ATF_CHECK_EQ(MESH_DF_DISC_FAILED, client->df.disc.state);
-	ATF_CHECK_EQ(0, client->df.disc_active);
-	free(client->mgr);
-}
-
-/* ================================================================
- * Relay/target role: a Path Request installs a reverse forwarding entry.
- * ================================================================ */
-ATF_TC_WITHOUT_HEAD(df_relay_installs_reverse_path);
-ATF_TC_BODY(df_relay_installs_reverse_path, tc)
-{
-	MESH_HEAP(struct meshd_node, client);
-	MESH_HEAP(struct meshd_node, dev);
-	struct meshd_config ccfg, dcfg;
-	struct mesh_mgr_node *node;
-	struct mesh_df_path_request req;
-	uint8_t reqbuf[64];
-	size_t reqlen;
-	int rc;
-
-	setup(client, dev, &ccfg, &dcfg, &node, 0x0002);
-
-	/* Build a Path Request 0x0007 -> 0x0009 and relay it through dev. */
-	memset(&req, 0, sizeof(req));
-	req.forwarding_number = mesh_df_fn_next(0x40);
-	req.metric_type = MESH_DF_METRIC_NODE_COUNT;
-	req.lifetime = MESH_DF_LIFETIME_2_HOUR;
-	req.path_metric = 0;
-	req.destination = 0x0009;
-	req.origin.range_start = 0x0007;
-	req.origin.range_length = 1;
-	ATF_REQUIRE_EQ(0, mesh_df_path_request_build(&req, reqbuf, &reqlen));
-
-	rc = meshd_df_recv_control(dev, 0x0007, MESH_DF_ADDR_ALL_DIRECTED, 5, 1,
-	    MESH_DF_OP_PATH_REQUEST, reqbuf, reqlen, 100);
-	ATF_CHECK_EQ(MESH_DF_RECV_FORWARD, rc);
-	/* The relay recorded a forwarding-table entry toward the origin. */
-	ATF_CHECK(dev->df.node.table.count >= 1);
-	free(client->mgr);
+	/* No reply arrives; past the 30 s budget the node tick fails discovery. */
+	ATF_REQUIRE(meshd_node_tick(a, 1000 + 30001, &ivc) >= 0);
+	ATF_CHECK_EQ(MESH_DF_DISC_FAILED, a->self->df_disc.state);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -438,9 +469,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, df_lanes_two_way_echo_e2e);
 	ATF_TP_ADD_TC(tp, df_transmit_e2e);
 	ATF_TP_ADD_TC(tp, df_verb_dispatch);
-	ATF_TP_ADD_TC(tp, df_discovery_reply_establishes);
-	ATF_TP_ADD_TC(tp, df_discovery_tick_timeout);
-	ATF_TP_ADD_TC(tp, df_relay_installs_reverse_path);
+	ATF_TP_ADD_TC(tp, df_discover_live_establishes);
+	ATF_TP_ADD_TC(tp, df_discover_requires_bearer);
+	ATF_TP_ADD_TC(tp, df_discover_tick_timeout);
 
 	return (atf_no_error());
 }

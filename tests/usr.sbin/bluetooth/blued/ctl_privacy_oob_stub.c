@@ -11,8 +11,24 @@
 #include <string.h>
 
 #include "blued_devmgr.h"
+#include "blued_persist.h"
 #include "hci_util.h"
 #include "smp.h"
+
+/*
+ * Prototypes for the runtime resolving-list / accept-list helpers (blued.c).
+ * Declared here rather than via blued.h, which pulls in ng_btsocket.h and its
+ * -Werror #warning.
+ */
+void	blued_runtime_resolv_record(const uint8_t addr[6], uint8_t addr_type,
+	    const uint8_t irk[16]);
+void	blued_runtime_resolv_forget(const uint8_t addr[6], uint8_t addr_type);
+void	blued_runtime_resolv_clear(void);
+int	blued_acceptlist_record(const uint8_t addr[6], uint8_t addr_type);
+int	blued_acceptlist_forget(const uint8_t addr[6], uint8_t addr_type);
+void	blued_acceptlist_clear_all(void);
+uint32_t blued_acceptlist_snapshot(struct blued_persist_accept_entry *out,
+	    uint32_t max);
 
 extern uint8_t blued_local_irk[16];
 extern bool blued_has_local_irk;
@@ -135,4 +151,82 @@ smp_sc_oob_generate_local(uint8_t confirm[16], uint8_t random[16],
 void
 smp_sc_oob_clear_local(void)
 {
+}
+
+/*
+ * Runtime resolving-list (138), Filter Accept List (135) and runtime GATT
+ * service persistence (137) live in blued.c / blued_persist.c, which these
+ * ctl-only test programs do not link.  Provide inert stubs.
+ */
+void
+blued_runtime_resolv_record(const uint8_t addr[6] __unused,
+    uint8_t addr_type __unused, const uint8_t irk[16] __unused)
+{
+}
+
+void
+blued_runtime_resolv_forget(const uint8_t addr[6] __unused,
+    uint8_t addr_type __unused)
+{
+}
+
+void
+blued_runtime_resolv_clear(void)
+{
+}
+
+int
+blued_acceptlist_record(const uint8_t addr[6] __unused,
+    uint8_t addr_type __unused)
+{
+
+	return (0);
+}
+
+int
+blued_acceptlist_forget(const uint8_t addr[6] __unused,
+    uint8_t addr_type __unused)
+{
+
+	return (0);
+}
+
+void
+blued_acceptlist_clear_all(void)
+{
+}
+
+uint32_t
+blued_acceptlist_snapshot(struct blued_persist_accept_entry *out __unused,
+    uint32_t max __unused)
+{
+
+	return (0);
+}
+
+int
+hci_le_add_device_to_filter_accept_list(int hci_fd __unused,
+    uint8_t addr_type __unused, const uint8_t addr[6] __unused)
+{
+
+	return (0);
+}
+
+int
+blued_persist_gattsrv_save(int dirfd __unused,
+    const struct blued_persist_gatt_srv_attr *attrs __unused,
+    uint32_t nattrs __unused)
+{
+
+	return (0);
+}
+
+int
+blued_persist_gattsrv_load(int dirfd __unused,
+    struct blued_persist_gatt_srv_attr *attrs __unused, uint32_t *nattrs)
+{
+
+	if (nattrs != NULL)
+		*nattrs = 0;
+	return (-1);
 }

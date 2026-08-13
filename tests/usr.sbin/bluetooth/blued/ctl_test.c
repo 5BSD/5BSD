@@ -901,6 +901,19 @@ static int	ctl_test_set_privacy_mode_rc;	/* finding 122 */
 static int	ctl_test_resolv_remove_calls;	/* finding 122: rollback counter */
 static int	ctl_test_oob_generate_rc;
 
+/* Finding 135: Filter Accept List handler mocks/stubs. */
+static int	ctl_test_accept_add_rc;
+static int	ctl_test_accept_add_calls;
+static int	ctl_test_accept_remove_calls;
+static int	ctl_test_acceptlist_record_calls;
+static int	ctl_test_acceptlist_forget_calls;
+static int	ctl_test_acceptlist_clear_calls;
+static uint32_t	ctl_test_acceptlist_snapshot_count;
+/* Finding 138: runtime resolving-list persistence stubs. */
+static int	ctl_test_runtime_resolv_record_calls;
+static int	ctl_test_runtime_resolv_forget_calls;
+static int	ctl_test_runtime_resolv_clear_calls;
+
 size_t
 smp_bond_export_record(const struct smp_bond *bond __unused, uint8_t *out,
     size_t outsz)
@@ -976,6 +989,111 @@ hci_le_remove_device_from_filter_accept_list(int hci_fd __unused,
     uint8_t addr_type __unused, const uint8_t addr[6] __unused)
 {
 
+	ctl_test_accept_remove_calls++;
+	return (0);
+}
+
+int
+hci_le_add_device_to_filter_accept_list(int hci_fd __unused,
+    uint8_t addr_type __unused, const uint8_t addr[6] __unused)
+{
+
+	ctl_test_accept_add_calls++;
+	return (ctl_test_accept_add_rc);
+}
+
+/* Finding 135: blued.c accept-list shadow stubs. */
+int
+blued_acceptlist_record(const uint8_t addr[6] __unused,
+    uint8_t addr_type __unused)
+{
+
+	ctl_test_acceptlist_record_calls++;
+	return (1);
+}
+
+int
+blued_acceptlist_forget(const uint8_t addr[6] __unused,
+    uint8_t addr_type __unused)
+{
+
+	ctl_test_acceptlist_forget_calls++;
+	return (1);
+}
+
+void
+blued_acceptlist_clear_all(void)
+{
+
+	ctl_test_acceptlist_clear_calls++;
+}
+
+uint32_t
+blued_acceptlist_snapshot(struct blued_persist_accept_entry *out, uint32_t max)
+{
+	uint32_t n = ctl_test_acceptlist_snapshot_count;
+
+	if (n > max)
+		n = max;
+	if (out != NULL)
+		memset(out, 0, n * sizeof(out[0]));
+	return (n);
+}
+
+/* Finding 138: blued.c runtime resolving-list persistence stubs. */
+void
+blued_runtime_resolv_record(const uint8_t addr[6] __unused,
+    uint8_t addr_type __unused, const uint8_t irk[16] __unused)
+{
+
+	ctl_test_runtime_resolv_record_calls++;
+}
+
+void
+blued_runtime_resolv_forget(const uint8_t addr[6] __unused,
+    uint8_t addr_type __unused)
+{
+
+	ctl_test_runtime_resolv_forget_calls++;
+}
+
+void
+blued_runtime_resolv_clear(void)
+{
+
+	ctl_test_runtime_resolv_clear_calls++;
+}
+
+/* Finding 137: in-memory blued_persist gattsrv artifact for the DB replay. */
+static struct blued_persist_gatt_srv_attr
+    ctl_test_gattsrv[BLUED_PERSIST_MAX_GATTSRV_ATTRS];
+static uint32_t	ctl_test_gattsrv_count;
+static int	ctl_test_gattsrv_save_calls;
+
+int
+blued_persist_gattsrv_save(int dirfd __unused,
+    const struct blued_persist_gatt_srv_attr *attrs, uint32_t nattrs)
+{
+
+	if (nattrs > BLUED_PERSIST_MAX_GATTSRV_ATTRS)
+		nattrs = BLUED_PERSIST_MAX_GATTSRV_ATTRS;
+	if (nattrs > 0)
+		memcpy(ctl_test_gattsrv, attrs, nattrs * sizeof(attrs[0]));
+	ctl_test_gattsrv_count = nattrs;
+	ctl_test_gattsrv_save_calls++;
+	return (0);
+}
+
+int
+blued_persist_gattsrv_load(int dirfd __unused,
+    struct blued_persist_gatt_srv_attr *attrs, uint32_t *nattrs)
+{
+
+	if (ctl_test_gattsrv_count == 0)
+		return (-1);
+	memcpy(attrs, ctl_test_gattsrv,
+	    ctl_test_gattsrv_count * sizeof(attrs[0]));
+	*nattrs = ctl_test_gattsrv_count;
 	return (0);
 }
 
@@ -4713,6 +4831,68 @@ ATF_TC_BODY(test_ctl_gatt_result_matrix, tc)
 	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, ctl_gatt_rollback_result(52));
 }
 
+/*
+ * Finding 137: a runtime-added local GATT service is serialized to the gattsrv
+ * persist artifact on mutation, and replayed into a freshly built periph_gatt_db
+ * at startup (simulating a restart) with its original handle and value, marked
+ * with the CTL_GATT_OWNER_PERSISTED sentinel so it re-persists and is served as
+ * a static attribute.
+ */
+ATF_TC_WITHOUT_HEAD(test_gatt_runtime_db_persist);
+ATF_TC_BODY(test_gatt_runtime_db_persist, tc)
+{
+	uint8_t value[] = { 0xDE, 0xAD, 0xBE, 0xEF };
+	uint16_t service = 0, characteristic = 0;
+	int svc_idx = -1, val_idx = -1;
+
+	test_init();
+	build_ctl_test_db();
+	ctl_gatt_set_base_count();	/* built-in/config high-water mark */
+	blued_g.persist_dirfd = 0;	/* >= 0 so persistence proceeds */
+	ctl_test_gattsrv_count = 0;
+	ctl_test_gattsrv_save_calls = 0;
+
+	/* A runtime add (owner_fd 61) mutates the live DB and persists it. */
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(61, 0x1810,
+	    NULL, &service));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_char_result(61, service,
+	    0x2A35, NULL, GATT_PROP_READ, ATT_PERM_READ, 0, value, sizeof(value),
+	    &characteristic));
+	ATF_CHECK(ctl_test_gattsrv_save_calls > 0);
+	ATF_CHECK(ctl_test_gattsrv_count >= 2);
+
+	/* Simulate a restart: rebuild the base DB, then replay the artifact. */
+	build_ctl_test_db();
+	{
+		uint32_t before = (uint32_t)periph_gatt_db.count;
+
+		ctl_gatt_load_persisted_services(0);
+		ATF_CHECK(periph_gatt_db.count > (int)before);
+	}
+	for (int i = 0; i < periph_gatt_db.count; i++) {
+		if (periph_gatt_db.attrs[i].handle == service)
+			svc_idx = i;
+		if (periph_gatt_db.attrs[i].handle == characteristic &&
+		    periph_gatt_db.attrs[i].is_char_value)
+			val_idx = i;
+	}
+	ATF_REQUIRE(svc_idx >= 0);
+	/* Primary Service declaration (0x2800) whose value is the 0x1810 UUID. */
+	ATF_CHECK_EQ(0x2800, periph_gatt_db.attrs[svc_idx].uuid16);
+	ATF_REQUIRE_EQ(2, periph_gatt_db.attrs[svc_idx].value_len);
+	ATF_CHECK_EQ(0x10, periph_gatt_db.attrs[svc_idx].value[0]);
+	ATF_CHECK_EQ(0x18, periph_gatt_db.attrs[svc_idx].value[1]);
+	ATF_CHECK_EQ(CTL_GATT_OWNER_PERSISTED,
+	    periph_gatt_db.attrs[svc_idx].owner_fd);
+	ATF_REQUIRE(val_idx >= 0);
+	ATF_CHECK_EQ(0x2A35, periph_gatt_db.attrs[val_idx].uuid16);
+	ATF_CHECK_EQ(sizeof(value), periph_gatt_db.attrs[val_idx].value_len);
+	ATF_CHECK_EQ(0, memcmp(periph_gatt_db.attrs[val_idx].value, value,
+	    sizeof(value)));
+
+	blued_g.persist_dirfd = -1;
+}
+
 ATF_TC_WITHOUT_HEAD(test_ctl_gatt_staged_remove_service_changed_range);
 ATF_TC_BODY(test_ctl_gatt_staged_remove_service_changed_range, tc)
 {
@@ -5823,6 +6003,97 @@ ATF_TC_BODY(test_typed_security_valid_matrix, tc)
 	ipc_put_le16(body, 0x7fff);
 	ATF_CHECK_EQ(IPC_ERR_UNKNOWN_CMD, dispatch_domain_request(client, sp[1],
 	    IPC_OP_DOMAIN_SECURITY, body, IPC_SECURITY_REQ_SIZE));
+
+	/*
+	 * Finding 135: Filter Accept List verbs.  ADD/REMOVE program every
+	 * powered adapter and update the persisted shadow; a controller failure
+	 * surfaces as IPC_ERR_IO; CLEAR drops only the runtime entries; LIST
+	 * returns the shadow snapshot.
+	 */
+	ctl_test_accept_add_rc = 0;
+	ctl_test_accept_add_calls = ctl_test_accept_remove_calls = 0;
+	ctl_test_acceptlist_record_calls = ctl_test_acceptlist_forget_calls = 0;
+	ctl_test_acceptlist_clear_calls = 0;
+	memset(body, 0, IPC_SECURITY_REQ_SIZE);
+	ipc_put_le16(body, IPC_SECURITY_ACCEPT_ADD);
+	body[5] = 0x77;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, IPC_SECURITY_REQ_SIZE));
+	ATF_CHECK(ctl_test_accept_add_calls > 0);
+	ATF_CHECK(ctl_test_acceptlist_record_calls > 0);
+
+	ctl_test_accept_add_rc = -1;	/* controller add fails */
+	ATF_CHECK_EQ(IPC_ERR_IO, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, IPC_SECURITY_REQ_SIZE));
+	ctl_test_accept_add_rc = 0;
+
+	ipc_put_le16(body, IPC_SECURITY_ACCEPT_REMOVE);
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, IPC_SECURITY_REQ_SIZE));
+	ATF_CHECK(ctl_test_accept_remove_calls > 0);
+	ATF_CHECK(ctl_test_acceptlist_forget_calls > 0);
+
+	ipc_put_le16(body, IPC_SECURITY_ACCEPT_CLEAR);
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, IPC_SECURITY_REQ_SIZE));
+	ATF_CHECK(ctl_test_acceptlist_clear_calls > 0);
+
+	/* LIST returns the snapshot count on the wire. */
+	ctl_test_acceptlist_snapshot_count = 3;
+	{
+		uint8_t req[IPC_OP_PREFIX_SIZE + IPC_SECURITY_REQ_SIZE];
+		uint8_t reply[512];
+		uint16_t type, dom;
+		size_t plen;
+
+		client->handshaked = true;
+		memset(req, 0, sizeof(req));
+		ipc_op_prefix_encode(req, ++ipc_test_request_id, 0, 0);
+		ipc_put_le16(req + IPC_OP_PREFIX_SIZE, IPC_SECURITY_ACCEPT_LIST);
+		ipc_send_raw(sp[1], IPC_T_OP_REQ, IPC_OP_DOMAIN_SECURITY, req,
+		    sizeof(req));
+		ATF_REQUIRE_EQ(0, blued_ctl_dispatch(client));
+		plen = ipc_recv(sp[1], &type, &dom, reply, sizeof(reply));
+		ATF_CHECK_EQ(IPC_T_OP_REPLY, type);
+		ATF_CHECK_EQ(IPC_OP_DOMAIN_SECURITY, dom);
+		ATF_REQUIRE(plen >= IPC_OP_PREFIX_SIZE +
+		    IPC_SECURITY_ACCEPT_REPLY_HDR_SIZE);
+		ATF_CHECK_EQ(IPC_SECURITY_ACCEPT_LIST,
+		    ipc_get_le16(reply + IPC_OP_PREFIX_SIZE));
+		ATF_CHECK_EQ(3, ipc_get_le16(reply + IPC_OP_PREFIX_SIZE + 2));
+	}
+	ctl_test_acceptlist_snapshot_count = 0;
+
+	/*
+	 * Finding 138: a RESOLV_ADD carrying a client-supplied IRK persists a
+	 * runtime entry; REMOVE forgets it; CLEAR drops all runtime entries.
+	 */
+	ctl_test_runtime_resolv_record_calls = 0;
+	ctl_test_runtime_resolv_forget_calls = 0;
+	ctl_test_runtime_resolv_clear_calls = 0;
+	memset(body, 0, IPC_SECURITY_RESOLV_REQ_SIZE);
+	ipc_put_le16(body, IPC_SECURITY_RESOLV_ADD);
+	body[12] = IPC_SECURITY_RESOLV_F_IRK;
+	memset(body + 16, 0x5a, 16);
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, IPC_SECURITY_RESOLV_REQ_SIZE));
+	ATF_CHECK(ctl_test_runtime_resolv_record_calls > 0);
+	ipc_put_le16(body, IPC_SECURITY_RESOLV_REMOVE);
+	body[12] = 0;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, IPC_SECURITY_RESOLV_REQ_SIZE));
+	ATF_CHECK(ctl_test_runtime_resolv_forget_calls > 0);
+	ipc_put_le16(body, IPC_SECURITY_RESOLV_CLEAR);
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, IPC_SECURITY_RESOLV_REQ_SIZE));
+	ATF_CHECK(ctl_test_runtime_resolv_clear_calls > 0);
+
+	/* No active adapter -> accept-list ADD reports NOT_FOUND. */
+	adp.active = false;
+	ipc_put_le16(body, IPC_SECURITY_ACCEPT_ADD);
+	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, IPC_SECURITY_REQ_SIZE));
+	adp.active = true;
 
 	/* Exercise every connection-state arm of the typed EATT broker. */
 	memset(body, 0, IPC_L2CAP_REQ_SIZE);
@@ -7759,6 +8030,7 @@ ATF_TP_ADD_TCS(tp)
 
 	/* GATT service management commands */
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_result_matrix);
+	ATF_TP_ADD_TC(tp, test_gatt_runtime_db_persist);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_staged_remove_service_changed_range);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_conn_gone_purges_peer_routes);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_subscribe_routes_before_cccd_response);

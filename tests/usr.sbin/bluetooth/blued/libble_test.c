@@ -606,6 +606,76 @@ ATF_TC_BODY(path_loss_invalid_inputs, tc)
 	ble_close(ctx);
 }
 
+/*
+ * Finding 135: Filter Accept List client API.  add/remove/clear emit one typed
+ * SECURITY operation each with the right opcode; a NULL/invalid address is
+ * rejected locally; entries() parses the snapshot reply.
+ */
+ATF_TC_WITHOUT_HEAD(acceptlist_command_family);
+ATF_TC_BODY(acceptlist_command_family, tc)
+{
+	ble_addr_t addr = { .addr = { 1, 2, 3, 4, 5, 6 }, .addr_type = 1 };
+	ble_addr_t entries[2];
+	ble_ctx_t *ctx;
+	uint8_t payload[IPC_OP_PREFIX_SIZE + IPC_MAX_PAYLOAD];
+	uint8_t body[IPC_SECURITY_ACCEPT_REPLY_HDR_SIZE +
+	    2 * IPC_SECURITY_ACCEPT_RECORD_SIZE];
+	uint16_t type, domain;
+	size_t payload_len;
+	int daemon_fd;
+
+	/* add/remove/clear each emit exactly one SECURITY op with its opcode. */
+	ctx = make_mock_ctx(&daemon_fd);
+	ATF_CHECK_EQ(ble_acceptlist_add(ctx, &addr), 0);
+	ATF_CHECK_EQ(ble_acceptlist_remove(ctx, &addr), 0);
+	ATF_CHECK_EQ(ble_acceptlist_clear(ctx), 0);
+	{
+		static const uint16_t want[3] = { IPC_SECURITY_ACCEPT_ADD,
+		    IPC_SECURITY_ACCEPT_REMOVE, IPC_SECURITY_ACCEPT_CLEAR };
+		for (int i = 0; i < 3; i++) {
+			read_frame(daemon_fd, &type, &domain, payload,
+			    sizeof(payload), &payload_len);
+			ATF_CHECK_EQ(type, IPC_T_OP_REQ);
+			ATF_CHECK_EQ(domain, IPC_OP_DOMAIN_SECURITY);
+			ATF_REQUIRE(payload_len >=
+			    IPC_OP_PREFIX_SIZE + IPC_SECURITY_REQ_SIZE);
+			ATF_CHECK_EQ(want[i],
+			    ipc_get_le16(payload + IPC_OP_PREFIX_SIZE));
+		}
+	}
+	close(daemon_fd);
+	ble_close(ctx);
+
+	/* entries() parses a two-record snapshot reply. */
+	ctx = make_mock_ctx(&daemon_fd);
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_SECURITY_ACCEPT_LIST);
+	ipc_put_le16(body + 2, 2);
+	body[IPC_SECURITY_ACCEPT_REPLY_HDR_SIZE + 0] = 0;	/* public */
+	memcpy(body + IPC_SECURITY_ACCEPT_REPLY_HDR_SIZE + 1,
+	    "\xaa\xbb\xcc\xdd\xee\xff", 6);
+	body[IPC_SECURITY_ACCEPT_REPLY_HDR_SIZE +
+	    IPC_SECURITY_ACCEPT_RECORD_SIZE + 0] = 1;		/* random */
+	memcpy(body + IPC_SECURITY_ACCEPT_REPLY_HDR_SIZE +
+	    IPC_SECURITY_ACCEPT_RECORD_SIZE + 1, "\x11\x22\x33\x44\x55\x66", 6);
+	send_sync_reply(daemon_fd, IPC_OP_DOMAIN_SECURITY, body, sizeof(body));
+	ATF_REQUIRE_EQ(2, ble_acceptlist_entries(ctx, entries, 2));
+	ATF_CHECK_EQ(0, entries[0].addr_type);
+	ATF_CHECK_EQ(0, memcmp(entries[0].addr, "\xaa\xbb\xcc\xdd\xee\xff", 6));
+	ATF_CHECK_EQ(1, entries[1].addr_type);
+	close(daemon_fd);
+	ble_close(ctx);
+
+	/* Local validation rejects NULL/zero-length without I/O. */
+	ctx = make_mock_ctx(&daemon_fd);
+	ATF_CHECK_EQ(ble_acceptlist_add(ctx, NULL), -1);
+	ATF_CHECK_EQ(ble_acceptlist_remove(ctx, NULL), -1);
+	ATF_CHECK_EQ(ble_acceptlist_entries(ctx, NULL, 1), -1);
+	ATF_CHECK_EQ(ble_acceptlist_entries(ctx, entries, 0), -1);
+	close(daemon_fd);
+	ble_close(ctx);
+}
+
 ATF_TC_WITHOUT_HEAD(public_api_command_families);
 ATF_TC_BODY(public_api_command_families, tc)
 {
@@ -1860,6 +1930,7 @@ ATF_TC_BODY(sync_op_drains_partial_frame, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, security_reply_encoding);
+	ATF_TP_ADD_TC(tp, acceptlist_command_family);
 	ATF_TP_ADD_TC(tp, pending_count_drains_reply);
 	ATF_TP_ADD_TC(tp, sync_op_drains_partial_frame);
 	ATF_TP_ADD_TC(tp, acquire_notify_typed);

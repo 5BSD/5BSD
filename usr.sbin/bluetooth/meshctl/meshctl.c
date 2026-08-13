@@ -306,6 +306,8 @@ static const struct verb verbs[] = {
 	    "Remote Provisioning Link Close" },
 	{ "remote-prov status",	"",
 	    "show the Remote Provisioning client scan/link FSM state" },
+	{ "remote-prov reports", "",
+	    "list unsolicited Reports received from a Remote Provisioning Server" },
 };
 
 static void

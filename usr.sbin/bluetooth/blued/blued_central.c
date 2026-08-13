@@ -105,6 +105,11 @@ hogp_bond_commit_metadata(struct hogp_device *dev, const struct smp_bond *src)
 		dst->report_map_handle = src->report_map_handle;
 		dst->hid_info_handle = src->hid_info_handle;
 		dst->protocol_mode_handle = src->protocol_mode_handle;
+		/* Finding 68: HID Control Point + multi-instance report maps. */
+		dst->hid_ctrl_handle = src->hid_ctrl_handle;
+		dst->num_report_maps = src->num_report_maps;
+		memcpy(dst->report_map_handles, src->report_map_handles,
+		    sizeof(dst->report_map_handles));
 		memcpy(dst->report_handles, src->report_handles,
 		    sizeof(dst->report_handles));
 		memcpy(dst->report_cccd_handles, src->report_cccd_handles,
@@ -1058,12 +1063,21 @@ hogp_cache_save(struct hogp_device *dev, struct smp_bond *bond)
 	bond->report_map_handle = 0;
 	bond->hid_info_handle = 0;
 	bond->protocol_mode_handle = 0;
+	/* Finding 68: persist the HID Control Point + report-map handles. */
+	bond->hid_ctrl_handle = dev->hid_ctrl_handle;
+	bond->num_report_maps = 0;
+	memset(bond->report_map_handles, 0, sizeof(bond->report_map_handles));
 
 	for (i = 0; i < dev->hid_disc.nchars; i++) {
-		if (dev->hid_disc.chars[i].uuid16 == UUID_REPORT_MAP)
+		if (dev->hid_disc.chars[i].uuid16 == UUID_REPORT_MAP) {
 			bond->report_map_handle =
 			    dev->hid_disc.chars[i].value_handle;
-		else if (dev->hid_disc.chars[i].uuid16 == UUID_HID_INFORMATION)
+			if (bond->num_report_maps <
+			    (int)nitems(bond->report_map_handles))
+				bond->report_map_handles[
+				    bond->num_report_maps++] =
+				    dev->hid_disc.chars[i].value_handle;
+		} else if (dev->hid_disc.chars[i].uuid16 == UUID_HID_INFORMATION)
 			bond->hid_info_handle =
 			    dev->hid_disc.chars[i].value_handle;
 		else if (dev->hid_disc.chars[i].uuid16 == UUID_PROTOCOL_MODE)
@@ -1125,7 +1139,12 @@ hogp_cache_restore(struct hogp_device *dev, struct smp_bond *bond)
 	 * refuse to overwrite the persisted metadata with zeros (finding 118).
 	 */
 	memset(&dev->hid_disc, 0, sizeof(dev->hid_disc));
-	dev->hid_ctrl_handle = 0;
+	/*
+	 * Finding 68: restore the HID Control Point handle from the bond cache
+	 * so a cache-hit reconnect issues the Exit-Suspend write (below) without
+	 * rediscovery.  Zero when the cached peer had no control point.
+	 */
+	dev->hid_ctrl_handle = bond->hid_ctrl_handle;
 	dev->hid_bcdHID = 0;
 	dev->idVendor = 0;
 	dev->idProduct = 0;

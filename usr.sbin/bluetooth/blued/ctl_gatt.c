@@ -1097,6 +1097,137 @@ ctl_recompute_hash_and_notify(uint16_t start, uint16_t end)
 		}
 	}
 	pthread_rwlock_unlock(&blued_g.conns_lock);
+
+	/* Finding 137: persist the runtime-added local GATT server DB. */
+	ctl_gatt_persist_runtime();
+}
+
+/*
+ * Finding 137: base attribute count captured immediately after the peripheral
+ * build (built-in + config services).  Attributes at index >= this mark were
+ * added at runtime (add-service and friends) and are the ones serialized;
+ * built-in/config attributes are rebuilt from scratch each boot.  Note that
+ * runtime service/characteristic *declaration* attributes keep owner_fd == -1
+ * (only char-value attrs carry the owner), so the high-water mark -- not
+ * owner_fd -- is what distinguishes a runtime attribute here.
+ */
+static int	ctl_gatt_base_count;
+
+void
+ctl_gatt_set_base_count(void)
+{
+
+	ctl_gatt_base_count = periph_gatt_db.count;
+}
+
+/*
+ * Finding 137: serialize the runtime-added attributes (index >= base count) of
+ * the live periph_gatt_db to the gattsrv persist artifact.  Called under
+ * gatt_db_lock after each structural change / value update.
+ */
+void
+ctl_gatt_persist_runtime(void)
+{
+	static struct blued_persist_gatt_srv_attr
+	    rows[BLUED_PERSIST_MAX_GATTSRV_ATTRS];
+	struct att_db *db = &periph_gatt_db;
+	uint32_t n = 0;
+
+	if (blued_g.persist_dirfd < 0)
+		return;
+	for (int i = ctl_gatt_base_count; i < db->count &&
+	    n < BLUED_PERSIST_MAX_GATTSRV_ATTRS; i++) {
+		const struct att_attr *a = &db->attrs[i];
+		struct blued_persist_gatt_srv_attr *r;
+		uint16_t vlen;
+
+		r = &rows[n++];
+		memset(r, 0, sizeof(*r));
+		r->handle = a->handle;
+		r->uuid16 = a->uuid16;
+		memcpy(r->uuid128, a->uuid128, sizeof(r->uuid128));
+		r->perms = a->perms;
+		r->flags = a->flags;
+		r->is_char_value = a->is_char_value ? 1 : 0;
+		r->value_maxlen = a->value_maxlen;
+		r->end_group_handle = a->end_group_handle;
+		vlen = a->value_len;
+		if (vlen > BLUED_PERSIST_GATTSRV_VALLEN)
+			vlen = BLUED_PERSIST_GATTSRV_VALLEN;
+		r->value_len = vlen;
+		if (vlen > 0 && a->value != NULL)
+			memcpy(r->value, a->value, vlen);
+	}
+	(void)blued_persist_gattsrv_save(blued_g.persist_dirfd, rows, n);
+}
+
+/*
+ * Finding 137: replay the persisted runtime GATT server attributes into
+ * periph_gatt_db after the peripheral build.  Restored attributes keep their
+ * original handles and carry the CTL_GATT_OWNER_PERSISTED sentinel so they are
+ * re-serialized on subsequent saves but served as static attributes (no live
+ * app backing).  The DB hash is recomputed to include them.
+ */
+void
+ctl_gatt_load_persisted_services(int dirfd)
+{
+	static struct blued_persist_gatt_srv_attr
+	    rows[BLUED_PERSIST_MAX_GATTSRV_ATTRS];
+	struct att_db *db = &periph_gatt_db;
+	uint32_t nrows = 0, i;
+	bool added = false;
+
+	if (dirfd < 0)
+		return;
+	if (blued_persist_gattsrv_load(dirfd, rows, &nrows) != 0 || nrows == 0)
+		return;
+	pthread_mutex_lock(&blued_g.gatt_db_lock);
+	for (i = 0; i < nrows; i++) {
+		const struct blued_persist_gatt_srv_attr *r = &rows[i];
+		struct att_attr *a;
+		uint16_t vlen = r->value_len;
+
+		if (db->count >= db->max)
+			break;
+		if (vlen > BLUED_PERSIST_GATTSRV_VALLEN)
+			vlen = BLUED_PERSIST_GATTSRV_VALLEN;
+		if ((size_t)vlen > db->val_size - db->val_used)
+			break;		/* out of value backing store */
+		a = &db->attrs[db->count];
+		memset(a, 0, sizeof(*a));
+		a->handle = r->handle;
+		a->uuid16 = r->uuid16;
+		memcpy(a->uuid128, r->uuid128, sizeof(a->uuid128));
+		a->perms = r->perms;
+		a->flags = r->flags;
+		a->is_char_value = r->is_char_value != 0;
+		a->owner_fd = CTL_GATT_OWNER_PERSISTED;
+		a->value_len = vlen;
+		a->value_maxlen = r->value_maxlen;
+		a->end_group_handle = r->end_group_handle;
+		if (vlen > 0) {
+			a->value = db->val_store + db->val_used;
+			memcpy(a->value, r->value, vlen);
+			db->val_used += vlen;
+		}
+		db->count++;
+		if (r->handle >= db->next_handle)
+			db->next_handle = (uint16_t)(r->handle + 1);
+		added = true;
+	}
+	if (added) {
+		uint8_t db_hash[16];
+
+		attdb_compute_db_hash(db, db_hash);
+		for (int j = 0; j < db->count; j++) {
+			if (db->attrs[j].uuid16 == 0x2B2A &&
+			    db->attrs[j].value_len == 16) {
+				memcpy(db->attrs[j].value, db_hash, 16);
+				break;
+			}
+		}
+	}
+	pthread_mutex_unlock(&blued_g.gatt_db_lock);
 }
 
 /*

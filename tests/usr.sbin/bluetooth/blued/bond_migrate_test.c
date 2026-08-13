@@ -523,9 +523,41 @@ ATF_TC_BODY(test_db_import_persist_roundtrip, tc)
 	unlink(path);
 }
 
+/*
+ * Finding 68: the HOGP HID Control Point handle and multi-instance report-map
+ * handles round-trip through the bond record so a cache-hit reconnect can issue
+ * the Exit-Suspend write and restore the full report map without rediscovery.
+ */
+ATF_TC_WITHOUT_HEAD(test_record_carries_hogp_ctrl);
+ATF_TC_BODY(test_record_carries_hogp_ctrl, tc)
+{
+	struct smp_bond in, out;
+	uint8_t rec[SMP_BOND_REC_LEN];
+
+	fill_bond(&in, 0x33);
+	in.has_handle_cache = true;
+	in.hid_ctrl_handle = 0x0042;
+	in.report_map_handle = 0x0021;
+	in.num_report_maps = 2;
+	in.report_map_handles[0] = 0x0021;
+	in.report_map_handles[1] = 0x0055;
+
+	ATF_REQUIRE(smp_bond_export_record(&in, rec, sizeof(rec)) ==
+	    SMP_BOND_REC_LEN);
+	memset(&out, 0, sizeof(out));
+	ATF_REQUIRE_EQ(smp_bond_import_record(rec, SMP_BOND_REC_LEN, &out), 0);
+
+	ATF_CHECK_EQ(0x0042, out.hid_ctrl_handle);
+	ATF_CHECK_EQ(2, out.num_report_maps);
+	ATF_CHECK_EQ(0x0021, out.report_map_handles[0]);
+	ATF_CHECK_EQ(0x0055, out.report_map_handles[1]);
+	ATF_CHECK(out.has_handle_cache);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, test_record_carries_hogp_ctrl);
 	ATF_TP_ADD_TC(tp, test_record_roundtrip);
 	ATF_TP_ADD_TC(tp, test_record_carries_irk);
 	ATF_TP_ADD_TC(tp, test_export_buffer_too_small);

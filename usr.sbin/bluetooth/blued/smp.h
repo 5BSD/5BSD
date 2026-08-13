@@ -183,6 +183,19 @@ struct smp_bond {
 	uint16_t	report_map_handle;
 	uint16_t	hid_info_handle;
 	uint16_t	protocol_mode_handle;
+	/*
+	 * HID Control Point value handle (finding 68).  Cached so a cache-hit
+	 * reconnect can issue the Exit-Suspend write without rediscovery; 0 when
+	 * the peer exposes no control point.  report_map_handles[] holds the
+	 * Report Map value handle of each HID service instance (multi-instance
+	 * HOGP) so the full report map can be restored on a cache hit;
+	 * num_report_maps is how many are valid (instance 0 mirrors the legacy
+	 * report_map_handle above).
+	 */
+	uint16_t	hid_ctrl_handle;
+	uint16_t	report_map_handles[4];
+	uint8_t		num_report_maps;
+	uint8_t		_hogp_pad0;
 	uint16_t	report_handles[16];	/* Input/Output/Feature report value handles */
 	uint16_t	report_cccd_handles[16]; /* Corresponding CCCD handles */
 	uint8_t		report_types[16];	/* Report type (Input=1, Output=2, Feature=3) */
@@ -443,7 +456,8 @@ int	smp_bond_db_replace_keys(struct smp_bond_db *db,
  */
 #define SMP_BOND_REC_MAGIC	"BREC"
 #define SMP_BOND_REC_MAGIC_LEN	4
-#define SMP_BOND_REC_VERSION	1
+/* v2 adds the HOGP hid_ctrl_handle + multi-instance report-map handles. */
+#define SMP_BOND_REC_VERSION	2
 /* magic(4) + version(4 LE) + struct_size(4 LE) + raw struct smp_bond */
 #define SMP_BOND_REC_HDR	(SMP_BOND_REC_MAGIC_LEN + 4 + 4)
 #define SMP_BOND_REC_LEN	(SMP_BOND_REC_HDR + (size_t)sizeof(struct smp_bond))

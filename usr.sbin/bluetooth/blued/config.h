@@ -15,6 +15,8 @@
 #define BLUED_MAX_DEVICES	16
 #define BLUED_MAX_CONF_SERVICES	8
 #define BLUED_MAX_CONF_CHARS	8	/* per service */
+#define BLUED_MAX_CONF_DESCS	4	/* per characteristic (non-CCCD) */
+#define BLUED_MAX_CONF_INCLUDES	4	/* per service */
 
 /* Default paths and tuning constants */
 #define BLUED_PIDFILE_DEFAULT		"/var/run/blued.pid"
@@ -39,6 +41,19 @@
  */
 #define BLUED_KEY_DIST_DEFAULT	0x0b	/* SMP_KEY_DIST_ENC|ID|LINK */
 
+/*
+ * A non-CCCD characteristic descriptor authored in the config (finding 136).
+ * CCCDs are still auto-added from the notify/indicate properties; this covers
+ * everything else (e.g. CUD 0x2901, Report Reference 0x2908, ...).
+ */
+struct blued_desc_conf {
+	uint16_t	uuid16;		/* 0 if using uuid128 */
+	uint8_t		uuid128[16];
+	uint8_t		permissions;	/* ATT_PERM_* flags */
+	uint8_t		value[64];
+	uint16_t	value_len;
+};
+
 struct blued_char_conf {
 	uint16_t	uuid16;		/* 0 if using uuid128 */
 	uint8_t		uuid128[16];
@@ -47,6 +62,15 @@ struct blued_char_conf {
 	uint8_t		initial_value[64];
 	uint16_t	initial_value_len;
 	bool		has_cccd;	/* auto-add CCCD if notify or indicate */
+	struct blued_desc_conf descs[BLUED_MAX_CONF_DESCS];
+	int		ndescs;
+};
+
+/* An included-service declaration authored in the config (finding 136). */
+struct blued_include_conf {
+	uint16_t	start;		/* included service start handle */
+	uint16_t	end;		/* included service end handle */
+	uint16_t	uuid16;		/* included service UUID (0 if unknown) */
 };
 
 struct blued_service_conf {
@@ -55,6 +79,8 @@ struct blued_service_conf {
 	uint8_t		uuid128[16];
 	struct blued_char_conf chars[BLUED_MAX_CONF_CHARS];
 	int		nchars;
+	struct blued_include_conf includes[BLUED_MAX_CONF_INCLUDES];
+	int		nincludes;
 };
 
 struct blued_device_conf {

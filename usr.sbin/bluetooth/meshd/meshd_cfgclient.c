@@ -1036,14 +1036,16 @@ meshd_df_client_verb(struct meshd_node *nd, int argc, char **argv, uint64_t now,
 		}
 		snprintf(reply, reply_max,
 		    "OK df discover target=0x%04x state=%d", (uint16_t)a,
-		    nd->df.disc.state);
+		    nd->self->df_disc.state);
 		return (0);
 	}
 	if (strcmp(v, "discover-status") == 0) {
 		snprintf(reply, reply_max,
-		    "OK df discover-status active=%d state=%d origin=0x%04x "
-		    "target=0x%04x", nd->df.disc_active, nd->df.disc.state,
-		    nd->df.disc.origin, nd->df.disc.target);
+		    "OK df discover-status enabled=%d state=%d origin=0x%04x "
+		    "target=0x%04x", nd->self != NULL && nd->self->df_enabled,
+		    nd->self != NULL ? nd->self->df_disc.state : 0,
+		    nd->self != NULL ? nd->self->df_disc.origin : 0,
+		    nd->self != NULL ? nd->self->df_disc.target : 0);
 		return (0);
 	}
 
@@ -1390,10 +1392,49 @@ meshd_rpr_client_verb(struct meshd_node *nd, int argc, char **argv,
 	if (strcmp(v, "status") == 0) {
 		snprintf(reply, reply_max,
 		    "OK remote-prov status server=0x%04x active=%d "
-		    "link-active=%d scanning=%d found=%zu", nd->rpr.server_addr,
-		    nd->rpr.client_active,
+		    "link-active=%d scanning=%d found=%zu reports=%zu",
+		    nd->rpr.server_addr, nd->rpr.client_active,
 		    mesh_rp_client_link_is_active(&nd->rpr.client_link),
-		    nd->rpr.scan_client.scanning, nd->rpr.scan_client.nfound);
+		    nd->rpr.scan_client.scanning, nd->rpr.scan_client.nfound,
+		    nd->rpr.n_reports);
+		return (0);
+	}
+	/* List the buffered unsolicited Reports received from a Server. */
+	if (strcmp(v, "reports") == 0) {
+		size_t i, shown, off, first;
+
+		shown = nd->rpr.n_reports < MESHD_RPR_MAX_REPORTS ?
+		    nd->rpr.n_reports : MESHD_RPR_MAX_REPORTS;
+		first = (nd->rpr.report_head + MESHD_RPR_MAX_REPORTS - shown) %
+		    MESHD_RPR_MAX_REPORTS;
+		off = (size_t)snprintf(reply, reply_max,
+		    "OK remote-prov reports total=%zu shown=%zu",
+		    nd->rpr.n_reports, shown);
+		for (i = 0; i < shown && off < reply_max; i++) {
+			const struct meshd_rpr_report *r =
+			    &nd->rpr.reports[(first + i) % MESHD_RPR_MAX_REPORTS];
+			int w;
+			size_t k;
+
+			w = snprintf(reply + off, reply_max - off,
+			    " [op=0x%04x src=0x%04x ", r->opcode, r->src);
+			if (w < 0 || (size_t)w >= reply_max - off)
+				break;
+			off += (size_t)w;
+			for (k = 0; k < r->len && off + 2 < reply_max; k++) {
+				w = snprintf(reply + off, reply_max - off,
+				    "%02x", r->data[k]);
+				if (w < 0 || (size_t)w >= reply_max - off)
+					break;
+				off += (size_t)w;
+			}
+			if (off < reply_max)
+				reply[off++] = ']';
+		}
+		if (off < reply_max)
+			reply[off] = '\0';
+		else if (reply_max > 0)
+			reply[reply_max - 1] = '\0';
 		return (0);
 	}
 

@@ -486,9 +486,136 @@ ATF_TC_BODY(advconfig_multi_set_round_trip, tc)
 	close(d);
 }
 
+/* ================================================================
+ * Finding 138: runtime resolving-list IRK entries round-trip and a
+ * simulated restart reloads exactly what was saved (with the IRK).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(resolv_round_trip);
+ATF_TC_BODY(resolv_round_trip, tc)
+{
+	struct blued_persist_resolv_entry in[2], out[BLUED_PERSIST_MAX_RESOLV];
+	uint32_t n = 0;
+	int d = open_cwd_dir();
+
+	memset(in, 0, sizeof(in));
+	memcpy(in[0].addr, "\x01\x02\x03\x04\x05\x06", 6);
+	in[0].addr_type = 1;
+	memset(in[0].irk, 0x11, sizeof(in[0].irk));
+	memcpy(in[1].addr, "\xAA\xBB\xCC\xDD\xEE\xFF", 6);
+	in[1].addr_type = 0;
+	memset(in[1].irk, 0x22, sizeof(in[1].irk));
+
+	ATF_REQUIRE_EQ(0, blued_persist_resolv_save(d, in, 2));
+
+	/* Fresh load == simulate restart. */
+	memset(out, 0xEE, sizeof(out));
+	ATF_REQUIRE_EQ(0, blued_persist_resolv_load(d, out, &n));
+	ATF_REQUIRE_EQ(2, n);
+	ATF_CHECK_EQ(0, memcmp(out[0].addr, "\x01\x02\x03\x04\x05\x06", 6));
+	ATF_CHECK_EQ(1, out[0].addr_type);
+	ATF_CHECK_EQ(0x11, out[0].irk[0]);
+	ATF_CHECK_EQ(0x11, out[0].irk[15]);
+	ATF_CHECK_EQ(0, memcmp(out[1].addr, "\xAA\xBB\xCC\xDD\xEE\xFF", 6));
+	ATF_CHECK_EQ(0x22, out[1].irk[7]);
+
+	/* Missing file -> reject (defaults). */
+	(void)unlinkat(d, BLUED_PERSIST_RESOLV_FILE, 0);
+	n = 99;
+	ATF_CHECK_EQ(-1, blued_persist_resolv_load(d, out, &n));
+	ATF_CHECK_EQ(0, n);
+	close(d);
+}
+
+/* ================================================================
+ * Finding 135: runtime Filter Accept List entries round-trip and a
+ * simulated restart reloads exactly what was saved.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(acceptlist_round_trip);
+ATF_TC_BODY(acceptlist_round_trip, tc)
+{
+	struct blued_persist_accept_entry in[3], out[BLUED_PERSIST_MAX_ACCEPT];
+	uint32_t n = 0;
+	int d = open_cwd_dir();
+
+	memset(in, 0, sizeof(in));
+	memcpy(in[0].addr, "\x10\x20\x30\x40\x50\x60", 6);
+	in[0].addr_type = 0;
+	memcpy(in[1].addr, "\x11\x21\x31\x41\x51\x61", 6);
+	in[1].addr_type = 1;
+	memcpy(in[2].addr, "\x12\x22\x32\x42\x52\x62", 6);
+	in[2].addr_type = 1;
+
+	ATF_REQUIRE_EQ(0, blued_persist_accept_save(d, in, 3));
+
+	memset(out, 0xEE, sizeof(out));
+	ATF_REQUIRE_EQ(0, blued_persist_accept_load(d, out, &n));
+	ATF_REQUIRE_EQ(3, n);
+	ATF_CHECK_EQ(0, memcmp(out[0].addr, "\x10\x20\x30\x40\x50\x60", 6));
+	ATF_CHECK_EQ(0, out[0].addr_type);
+	ATF_CHECK_EQ(1, out[1].addr_type);
+	ATF_CHECK_EQ(0, memcmp(out[2].addr, "\x12\x22\x32\x42\x52\x62", 6));
+	close(d);
+}
+
+/* ================================================================
+ * Finding 137: runtime-added local GATT server attributes round-trip
+ * (flat rows + inline value) and reload after a simulated restart.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(gattsrv_round_trip);
+ATF_TC_BODY(gattsrv_round_trip, tc)
+{
+	struct blued_persist_gatt_srv_attr in[3];
+	struct blued_persist_gatt_srv_attr out[BLUED_PERSIST_MAX_GATTSRV_ATTRS];
+	uint32_t n = 0;
+	int d = open_cwd_dir();
+
+	memset(in, 0, sizeof(in));
+	/* Service declaration. */
+	in[0].handle = 0x0040;
+	in[0].uuid16 = 0x180F;
+	in[0].end_group_handle = 0x0043;
+	/* Characteristic value attr with an inline value. */
+	in[1].handle = 0x0042;
+	in[1].uuid16 = 0x2A19;
+	in[1].perms = 0x01;
+	in[1].is_char_value = 1;
+	in[1].value_len = 2;
+	in[1].value_maxlen = 2;
+	in[1].value[0] = 0x64;
+	in[1].value[1] = 0x00;
+	/* Descriptor (CUD). */
+	in[2].handle = 0x0043;
+	in[2].uuid16 = 0x2901;
+	in[2].perms = 0x01;
+	in[2].value_len = 3;
+	memcpy(in[2].value, "abc", 3);
+
+	ATF_REQUIRE_EQ(0, blued_persist_gattsrv_save(d, in, 3));
+
+	memset(out, 0, sizeof(out));
+	ATF_REQUIRE_EQ(0, blued_persist_gattsrv_load(d, out, &n));
+	ATF_REQUIRE_EQ(3, n);
+	ATF_CHECK_EQ(0x0040, out[0].handle);
+	ATF_CHECK_EQ(0x180F, out[0].uuid16);
+	ATF_CHECK_EQ(0x0043, out[0].end_group_handle);
+	ATF_CHECK_EQ(0x2A19, out[1].uuid16);
+	ATF_CHECK_EQ(1, out[1].is_char_value);
+	ATF_CHECK_EQ(2, out[1].value_len);
+	ATF_CHECK_EQ(0x64, out[1].value[0]);
+	ATF_CHECK_EQ(0x2901, out[2].uuid16);
+	ATF_CHECK_EQ(3, out[2].value_len);
+	ATF_CHECK_EQ(0, memcmp(out[2].value, "abc", 3));
+
+	/* A truncated value_len from a corrupt file is clamped on load. */
+	close(d);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, resolv_round_trip);
+	ATF_TP_ADD_TC(tp, acceptlist_round_trip);
+	ATF_TP_ADD_TC(tp, gattsrv_round_trip);
 	ATF_TP_ADD_TC(tp, settings_preferred_mtu_round_trip);
 	ATF_TP_ADD_TC(tp, advconfig_multi_set_round_trip);
 	ATF_TP_ADD_TC(tp, crc32_known_vector);

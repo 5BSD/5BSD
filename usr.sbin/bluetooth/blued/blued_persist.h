@@ -43,6 +43,9 @@
 #define BLUED_PERSIST_DEVCACHE_FILE	"devcache"
 #define BLUED_PERSIST_GATTCACHE_FILE	"gattcache"
 #define BLUED_PERSIST_ADVCONFIG_FILE	"advconfig"
+#define BLUED_PERSIST_RESOLV_FILE	"resolv"
+#define BLUED_PERSIST_ACCEPT_FILE	"acceptlist"
+#define BLUED_PERSIST_GATTSRV_FILE	"gattsrv"
 
 /* Frame header size in bytes (see blued_persist.c for the field layout). */
 #define BLUED_PERSIST_HDR_SIZE		28
@@ -168,6 +171,70 @@ struct blued_persist_adv_set {
 };
 
 /* ================================================================
+ * Artifact 5: runtime resolving-list IRK entries (finding 138).
+ *
+ * IPC_SECURITY_RESOLV_ADD can program a controller resolving-list entry for a
+ * non-bonded address with a caller-supplied IRK.  Bonded entries are rebuilt
+ * from the bond database at init; these non-bond runtime entries have no other
+ * home, so they are persisted here and reprogrammed at adapter init.
+ * ================================================================ */
+#define BLUED_PERSIST_RESOLV_MAGIC	"BLUEDRSV"
+#define BLUED_PERSIST_RESOLV_VERSION	1
+#define BLUED_PERSIST_MAX_RESOLV	16
+
+struct blued_persist_resolv_entry {
+	uint8_t		addr[6];		/* peer identity address */
+	uint8_t		addr_type;		/* BDADDR_LE_* */
+	uint8_t		_pad0;
+	uint8_t		irk[16];		/* peer IRK (supplied at runtime) */
+};
+
+/* ================================================================
+ * Artifact 6: runtime Filter Accept List entries (finding 135).
+ *
+ * The controller Filter Accept List is otherwise populated only from bonds at
+ * init and pruned on unbond; a runtime, operator-added non-bond entry has no
+ * other home, so it is persisted here and reprogrammed at adapter init.
+ * ================================================================ */
+#define BLUED_PERSIST_ACCEPT_MAGIC	"BLUEDACL"
+#define BLUED_PERSIST_ACCEPT_VERSION	1
+#define BLUED_PERSIST_MAX_ACCEPT	32
+
+struct blued_persist_accept_entry {
+	uint8_t		addr[6];
+	uint8_t		addr_type;
+	uint8_t		_pad0;
+};
+
+/* ================================================================
+ * Artifact 7: runtime-added local GATT server attributes (finding 137).
+ *
+ * add-service / add-characteristic / add-descriptor / add-include mutate the
+ * live periph_gatt_db, which is otherwise rebuilt only from config/hardcoded
+ * services.  Each runtime attribute (owner_fd >= 0) is serialized here as a
+ * flat row and replayed into periph_gatt_db after the peripheral build.
+ * ================================================================ */
+#define BLUED_PERSIST_GATTSRV_MAGIC	"BLUEDGSV"
+#define BLUED_PERSIST_GATTSRV_VERSION	1
+#define BLUED_PERSIST_MAX_GATTSRV_ATTRS	128
+#define BLUED_PERSIST_GATTSRV_VALLEN	64
+
+struct blued_persist_gatt_srv_attr {
+	uint16_t	handle;
+	uint16_t	uuid16;			/* 0 if uuid128 is used */
+	uint8_t		uuid128[16];
+	uint8_t		perms;
+	uint8_t		flags;			/* ATT_ATTR_F_* app-backing */
+	uint8_t		is_char_value;
+	uint8_t		_pad0;
+	uint16_t	value_len;
+	uint16_t	value_maxlen;
+	uint16_t	end_group_handle;
+	uint16_t	_pad1;
+	uint8_t		value[BLUED_PERSIST_GATTSRV_VALLEN];
+};
+
+/* ================================================================
  * Generic framed record engine.
  *
  * Both operate relative to a directory fd (dirfd) using *at() syscalls so
@@ -211,6 +278,21 @@ int	blued_persist_advconfig_save(int dirfd,
 	    const struct blued_persist_adv_set *sets, uint32_t nsets);
 int	blued_persist_advconfig_load(int dirfd,
 	    struct blued_persist_adv_set *sets, uint32_t *nsets);
+
+int	blued_persist_resolv_save(int dirfd,
+	    const struct blued_persist_resolv_entry *ents, uint32_t nents);
+int	blued_persist_resolv_load(int dirfd,
+	    struct blued_persist_resolv_entry *ents, uint32_t *nents);
+
+int	blued_persist_accept_save(int dirfd,
+	    const struct blued_persist_accept_entry *ents, uint32_t nents);
+int	blued_persist_accept_load(int dirfd,
+	    struct blued_persist_accept_entry *ents, uint32_t *nents);
+
+int	blued_persist_gattsrv_save(int dirfd,
+	    const struct blued_persist_gatt_srv_attr *attrs, uint32_t nattrs);
+int	blued_persist_gattsrv_load(int dirfd,
+	    struct blued_persist_gatt_srv_attr *attrs, uint32_t *nattrs);
 
 /* ================================================================
  * Helpers.

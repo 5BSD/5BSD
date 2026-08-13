@@ -4634,6 +4634,103 @@ ble_resolv_entries(ble_ctx_t *ctx, ble_resolv_entry_t *entries,
 	return ((int)count);
 }
 
+/*
+ * ============================================================
+ * Filter Accept List management (finding 135)
+ * ============================================================
+ */
+
+static int
+ble_acceptlist_simple(ble_ctx_t *ctx, uint16_t opcode, const ble_addr_t *addr)
+{
+	uint8_t payload[IPC_SECURITY_REQ_SIZE];
+
+	ble_clear_error(ctx);
+	if (addr != NULL && !ble_addr_valid(addr)) {
+		ble_set_error(ctx, BLE_ERR_INVAL, "invalid address");
+		return (-1);
+	}
+	ble_security_req_encode(payload, opcode, addr);
+	return (ble_send_operation(ctx, IPC_OP_DOMAIN_SECURITY, opcode,
+	    payload, sizeof(payload), NULL, NULL, NULL));
+}
+
+int
+ble_acceptlist_add(ble_ctx_t *ctx, const ble_addr_t *addr)
+{
+
+	ble_clear_error(ctx);
+	if (!ble_addr_valid(addr)) {
+		ble_set_error(ctx, BLE_ERR_INVAL, "null address");
+		return (-1);
+	}
+	return (ble_acceptlist_simple(ctx, IPC_SECURITY_ACCEPT_ADD, addr));
+}
+
+int
+ble_acceptlist_remove(ble_ctx_t *ctx, const ble_addr_t *addr)
+{
+
+	ble_clear_error(ctx);
+	if (!ble_addr_valid(addr)) {
+		ble_set_error(ctx, BLE_ERR_INVAL, "null address");
+		return (-1);
+	}
+	return (ble_acceptlist_simple(ctx, IPC_SECURITY_ACCEPT_REMOVE, addr));
+}
+
+int
+ble_acceptlist_clear(ble_ctx_t *ctx)
+{
+
+	return (ble_acceptlist_simple(ctx, IPC_SECURITY_ACCEPT_CLEAR, NULL));
+}
+
+int
+ble_acceptlist_entries(ble_ctx_t *ctx, ble_addr_t *entries, int max_entries)
+{
+	uint8_t request[IPC_SECURITY_REQ_SIZE];
+	uint8_t reply[IPC_SECURITY_ACCEPT_REPLY_HDR_SIZE +
+	    IPC_SECURITY_ACCEPT_MAX * IPC_SECURITY_ACCEPT_RECORD_SIZE];
+	size_t reply_len;
+	uint16_t count;
+
+	ble_clear_error(ctx);
+	if (entries == NULL || max_entries <= 0) {
+		ble_set_error(ctx, BLE_ERR_INVAL, "invalid arguments");
+		return (-1);
+	}
+	ble_security_req_encode(request, IPC_SECURITY_ACCEPT_LIST, NULL);
+	if (ble_sync_operation(ctx, IPC_OP_DOMAIN_SECURITY,
+	    IPC_SECURITY_ACCEPT_LIST, request, sizeof(request), reply,
+	    sizeof(reply), &reply_len) < 0)
+		return (-1);
+	if (reply_len < IPC_SECURITY_ACCEPT_REPLY_HDR_SIZE ||
+	    ipc_get_le16(reply) != IPC_SECURITY_ACCEPT_LIST ||
+	    (count = ipc_get_le16(reply + 2)) > IPC_SECURITY_ACCEPT_MAX ||
+	    reply_len != IPC_SECURITY_ACCEPT_REPLY_HDR_SIZE + count *
+	    IPC_SECURITY_ACCEPT_RECORD_SIZE) {
+		ble_set_error(ctx, BLE_ERR_PROTO, "invalid accept-list snapshot");
+		return (-1);
+	}
+	if (count > (uint16_t)max_entries)
+		count = (uint16_t)max_entries;
+	for (uint16_t i = 0; i < count; i++) {
+		const uint8_t *record = reply +
+		    IPC_SECURITY_ACCEPT_REPLY_HDR_SIZE + i *
+		    IPC_SECURITY_ACCEPT_RECORD_SIZE;
+
+		if (record[0] > 1) {
+			ble_set_error(ctx, BLE_ERR_PROTO,
+			    "invalid accept-list record");
+			return (-1);
+		}
+		entries[i].addr_type = record[0];
+		memcpy(entries[i].addr, record + 1, 6);
+	}
+	return ((int)count);
+}
+
 void
 ble_on_keypress(ble_ctx_t *ctx, ble_keypress_cb cb, void *arg)
 {

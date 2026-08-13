@@ -386,6 +386,78 @@ blued_persist_advconfig_load(int dirfd, struct blued_persist_adv_set *sets,
 	return (0);
 }
 
+int
+blued_persist_resolv_save(int dirfd,
+    const struct blued_persist_resolv_entry *ents, uint32_t nents)
+{
+	if (nents > BLUED_PERSIST_MAX_RESOLV)
+		nents = BLUED_PERSIST_MAX_RESOLV;
+	return (blued_persist_save_records(dirfd, BLUED_PERSIST_RESOLV_FILE,
+	    BLUED_PERSIST_RESOLV_MAGIC, BLUED_PERSIST_RESOLV_VERSION,
+	    (uint32_t)sizeof(ents[0]), nents, ents));
+}
+
+int
+blued_persist_resolv_load(int dirfd, struct blued_persist_resolv_entry *ents,
+    uint32_t *nents)
+{
+	return (blued_persist_load_records(dirfd, BLUED_PERSIST_RESOLV_FILE,
+	    BLUED_PERSIST_RESOLV_MAGIC, BLUED_PERSIST_RESOLV_VERSION,
+	    (uint32_t)sizeof(ents[0]), BLUED_PERSIST_MAX_RESOLV, ents,
+	    nents, NULL));
+}
+
+int
+blued_persist_accept_save(int dirfd,
+    const struct blued_persist_accept_entry *ents, uint32_t nents)
+{
+	if (nents > BLUED_PERSIST_MAX_ACCEPT)
+		nents = BLUED_PERSIST_MAX_ACCEPT;
+	return (blued_persist_save_records(dirfd, BLUED_PERSIST_ACCEPT_FILE,
+	    BLUED_PERSIST_ACCEPT_MAGIC, BLUED_PERSIST_ACCEPT_VERSION,
+	    (uint32_t)sizeof(ents[0]), nents, ents));
+}
+
+int
+blued_persist_accept_load(int dirfd, struct blued_persist_accept_entry *ents,
+    uint32_t *nents)
+{
+	return (blued_persist_load_records(dirfd, BLUED_PERSIST_ACCEPT_FILE,
+	    BLUED_PERSIST_ACCEPT_MAGIC, BLUED_PERSIST_ACCEPT_VERSION,
+	    (uint32_t)sizeof(ents[0]), BLUED_PERSIST_MAX_ACCEPT, ents,
+	    nents, NULL));
+}
+
+int
+blued_persist_gattsrv_save(int dirfd,
+    const struct blued_persist_gatt_srv_attr *attrs, uint32_t nattrs)
+{
+	if (nattrs > BLUED_PERSIST_MAX_GATTSRV_ATTRS)
+		nattrs = BLUED_PERSIST_MAX_GATTSRV_ATTRS;
+	return (blued_persist_save_records(dirfd, BLUED_PERSIST_GATTSRV_FILE,
+	    BLUED_PERSIST_GATTSRV_MAGIC, BLUED_PERSIST_GATTSRV_VERSION,
+	    (uint32_t)sizeof(attrs[0]), nattrs, attrs));
+}
+
+int
+blued_persist_gattsrv_load(int dirfd,
+    struct blued_persist_gatt_srv_attr *attrs, uint32_t *nattrs)
+{
+	uint32_t i;
+
+	if (blued_persist_load_records(dirfd, BLUED_PERSIST_GATTSRV_FILE,
+	    BLUED_PERSIST_GATTSRV_MAGIC, BLUED_PERSIST_GATTSRV_VERSION,
+	    (uint32_t)sizeof(attrs[0]), BLUED_PERSIST_MAX_GATTSRV_ATTRS, attrs,
+	    nattrs, NULL) != 0)
+		return (-1);
+	/* Clamp each stored value length to the physical buffer. */
+	for (i = 0; i < *nattrs; i++) {
+		if (attrs[i].value_len > BLUED_PERSIST_GATTSRV_VALLEN)
+			attrs[i].value_len = BLUED_PERSIST_GATTSRV_VALLEN;
+	}
+	return (0);
+}
+
 /* ================================================================
  * Helpers.
  * ================================================================ */

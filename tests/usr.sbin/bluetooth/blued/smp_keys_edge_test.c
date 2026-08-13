@@ -86,7 +86,7 @@
 #define TEST_IMPL_BOND_TAG_LEN	16
 #define TEST_IMPL_BOND_REC_MAGIC	"BREC"
 #define TEST_IMPL_BOND_REC_MAGIC_LEN	4
-#define TEST_IMPL_BOND_REC_VERSION	1
+#define TEST_IMPL_BOND_REC_VERSION	2	/* finding 68: +HOGP ctrl/report-map */
 #define TEST_IMPL_BOND_REC_HEADER_LEN	12
 
 /* ================================================================

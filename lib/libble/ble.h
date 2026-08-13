@@ -1005,6 +1005,18 @@ int	ble_resolv_entries(ble_ctx_t *ctx, ble_resolv_entry_t *entries,
 	    int max_entries);
 
 /*
+ * Controller Filter Accept List management (finding 135).  Add/remove/list/
+ * clear the operator-managed (non-bond) accept-list entries.  ble_acceptlist_add
+ * and _remove program every powered adapter; _clear drops only the runtime
+ * entries; _entries returns a snapshot of the runtime entries.
+ */
+int	ble_acceptlist_add(ble_ctx_t *ctx, const ble_addr_t *addr);
+int	ble_acceptlist_remove(ble_ctx_t *ctx, const ble_addr_t *addr);
+int	ble_acceptlist_clear(ble_ctx_t *ctx);
+int	ble_acceptlist_entries(ble_ctx_t *ctx, ble_addr_t *entries,
+	    int max_entries);
+
+/*
  * Inbound Keypress Notification callback (Core Spec Vol 3 Part H §3.5.8).
  * Fires for each keypress the peer sends during Passkey Entry; 'type' is one of
  * the BLE_KEYPRESS_* codes.  Requires the push-events feature.

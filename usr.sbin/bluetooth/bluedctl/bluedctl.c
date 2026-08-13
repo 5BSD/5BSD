@@ -825,6 +825,89 @@ handle_typed_command(ble_ctx_t *ctx, int argc, char **argv)
 			printf("characteristic handle=0x%04x\n", handle);
 		goto result;
 	}
+	if (strcmp(argv[0], "add-include") == 0 && argc == 5) {
+		uint32_t svc, start, end, uuid;
+		uint16_t handle = 0;
+
+		if (parse_u32(argv[1], 1, UINT16_MAX, &svc) != 0 ||
+		    parse_u32(argv[2], 1, UINT16_MAX, &start) != 0 ||
+		    parse_u32(argv[3], 1, UINT16_MAX, &end) != 0 ||
+		    parse_u32(argv[4], 1, UINT16_MAX, &uuid) != 0)
+			goto usage;
+		rc = ble_add_include(ctx, (uint16_t)svc, (uint16_t)start,
+		    (uint16_t)end, (uint16_t)uuid, &handle);
+		if (rc == 0)
+			rc = wait_typed_handle(ctx, &handle);
+		if (rc == 0)
+			printf("include handle=0x%04x\n", handle);
+		goto result;
+	}
+	if (strcmp(argv[0], "add-descriptor") == 0 &&
+	    (argc == 4 || argc == 5)) {
+		static const char *const perm_names[] = { "read", "write",
+		    "read_encrypt", "write_encrypt", "read_authen",
+		    "write_authen" };
+		static const uint8_t perm_bits[] = { BLE_PERM_READ,
+		    BLE_PERM_WRITE, BLE_PERM_READ_ENCRYPT, BLE_PERM_WRITE_ENCRYPT,
+		    BLE_PERM_READ_AUTHEN, BLE_PERM_WRITE_AUTHEN };
+		ble_uuid_t uuid;
+		uint16_t handle = 0;
+		uint8_t perms;
+
+		value_len = 0;
+		if (parse_u32(argv[1], 1, UINT16_MAX, &a) != 0 ||
+		    parse_uuid16(argv[2], &uuid) != 0 ||
+		    parse_name_mask(argv[3], perm_names, perm_bits,
+		    sizeof(perm_names) / sizeof(perm_names[0]), &perms) != 0 ||
+		    (argc == 5 && parse_hex_value(argv[4], value, sizeof(value),
+		    &value_len) != 0))
+			goto usage;
+		rc = ble_add_descriptor(ctx, (uint16_t)a, &uuid, perms,
+		    value_len != 0 ? value : NULL, value_len, &handle);
+		if (rc == 0)
+			rc = wait_typed_handle(ctx, &handle);
+		if (rc == 0)
+			printf("descriptor handle=0x%04x\n", handle);
+		goto result;
+	}
+	if (strcmp(argv[0], "accept-list") == 0 && argc >= 2) {
+		if ((strcmp(argv[1], "add") == 0 ||
+		    strcmp(argv[1], "remove") == 0) && (argc == 3 || argc == 4)) {
+			uint8_t type = argc == 4 &&
+			    strcmp(argv[3], "random") == 0 ? 1 : 0;
+
+			if (argc == 4 && strcmp(argv[3], "public") != 0 &&
+			    type == 0)
+				goto usage;
+			if (ble_addr_parse(argv[2], type, &addr) != 0)
+				goto usage;
+			rc = strcmp(argv[1], "add") == 0 ?
+			    ble_acceptlist_add(ctx, &addr) :
+			    ble_acceptlist_remove(ctx, &addr);
+			goto result;
+		}
+		if (strcmp(argv[1], "clear") == 0 && argc == 2) {
+			rc = ble_acceptlist_clear(ctx);
+			goto result;
+		}
+		if (strcmp(argv[1], "list") == 0 && argc == 2) {
+			ble_addr_t entries[32];
+			char abuf[32], line[64];
+			int count = ble_acceptlist_entries(ctx, entries,
+			    (int)(sizeof(entries) / sizeof(entries[0])));
+
+			if (count < 0)
+				goto result_error;
+			for (int i = 0; i < count; i++) {
+				ble_addr_str(&entries[i], abuf);
+				snprintf(line, sizeof(line), "%s type=%s", abuf,
+				    entries[i].addr_type ? "random" : "public");
+				print_result_line(line);
+			}
+			return (1);
+		}
+		goto usage;
+	}
 	if ((strcmp(argv[0], "gatt-begin") == 0 ||
 	    strcmp(argv[0], "gatt-commit") == 0 ||
 	    strcmp(argv[0], "gatt-rollback") == 0) && argc == 1) {
@@ -1995,6 +2078,8 @@ static const struct {
 	{ "set-value",		"<handle> <hex>",	"Set a local attribute value" },
 	{ "add-service",	"<uuid>",		"Add a local GATT service" },
 	{ "add-char",		"<svc> <uuid> <props> <perms> [value]", "Add a local characteristic" },
+	{ "add-include",	"<svc> <start> <end> <uuid>", "Add an included-service declaration" },
+	{ "add-descriptor",	"<char> <uuid> <perms> [value]", "Add a characteristic descriptor" },
 	{ "gatt-begin",		"",			"Begin an atomic GATT update" },
 	{ "gatt-commit",	"",			"Commit an atomic GATT update" },
 	{ "gatt-rollback",	"",			"Abort an atomic GATT update" },
@@ -2005,6 +2090,7 @@ static const struct {
 	{ "confirm",		"<addr> yes|no",	"Answer a numeric-comparison prompt" },
 	{ "bond-export",	"<addr>",		"Export bond metadata" },
 	{ "resolv",		"list",			"List the LE privacy resolving list" },
+	{ "accept-list",	"add|remove <addr> [public|random] | list | clear", "Manage the controller Filter Accept List" },
 	{ "connparams",		"[addr]",		"Show connection parameters" },
 	{ "connparams-update",	"<addr> <min> <max> <latency> <timeout>", "Request LE connection update" },
 	{ "conninfo",		"[addr]",		"Show handle/role/MTU/encryption" },

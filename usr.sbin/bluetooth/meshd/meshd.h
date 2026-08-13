@@ -353,9 +353,14 @@ struct meshd_df_state {
 	struct mesh_cfg_path_echo_interval	echo;
 	struct mesh_cfg_transmit		net_transmit;
 	struct mesh_cfg_transmit		relay_retransmit;
-	struct mesh_df_node			node;	/* relay/target role */
-	struct mesh_df_discovery		disc;	/* Path Origin FSM */
-	int					disc_active;
+	/*
+	 * The live relay / target / Path-Origin roles run on the sim node
+	 * (mesh_sim_set_df + nd->self->df_table / df_disc), driven by the
+	 * received-PDU path (meshd_bearer_rx -> mesh_sim_step -> the sim's DF
+	 * transport-control dispatch) and drained to the bearer.  Only the
+	 * Configuration Server sub-states above are held here.
+	 */
+	int					enabled;
 };
 
 /*
@@ -366,6 +371,8 @@ struct meshd_df_state {
  * Provisioning Client model) is driven by the "remote-prov" verbs over the
  * DevKey Config-Client transaction engine.
  */
+#define	MESHD_RPR_MAX_REPORTS	8
+
 struct meshd_rpr_state {
 	struct mesh_rp_scan_server	scan_server;	/* Server model */
 	struct mesh_rp_server_link	server_link;	/* Server model */
@@ -373,6 +380,27 @@ struct meshd_rpr_state {
 	struct mesh_rp_client_link	client_link;	/* Client model */
 	uint16_t			server_addr;	/* remote RPR Server */
 	int				client_active;
+	/*
+	 * Server role: the RPR Client's unicast (recorded from an inbound RPR
+	 * request) that unsolicited Scan/Link/PDU Reports are sent back to.
+	 */
+	uint16_t			client_addr;
+	/*
+	 * Client role: a ring of unsolicited Reports received from a Server,
+	 * surfaced to the operator via "remote-prov reports".  report_head is
+	 * the next write slot; n_reports the lifetime count.
+	 */
+	struct meshd_rpr_report {
+		uint32_t	opcode;
+		uint16_t	src;
+		uint8_t		data[64];
+		size_t		len;
+	}				reports[MESHD_RPR_MAX_REPORTS];
+	size_t				report_head;
+	size_t				n_reports;
+	/* Client role: last Provisioning PDU tunnelled in via a PDU Report. */
+	uint8_t				inbound_pdu[MESH_RP_PROV_PDU_MAX];
+	size_t				inbound_pdu_len;
 };
 
 struct meshd_node {
@@ -1022,24 +1050,24 @@ int	meshd_df_client_verb(struct meshd_node *nd, int argc, char **argv,
 	    uint64_t now, char *reply, size_t reply_max);
 
 /*
+ * Enable Directed Forwarding on the sim node (idempotent): turns on the sim's
+ * DF relay/proxy/friend features with managed flooding as the fallback so the
+ * node relays and answers Path Request/Reply/Confirmation/Echo received over
+ * the bearer.  Called at node setup and when the DF Configuration Server's
+ * Directed Forwarding state is turned on.
+ */
+void	meshd_df_enable(struct meshd_node *nd);
+
+/*
  * Start a Path Origin path discovery toward target on the primary subnet: arms
- * the discovery FSM (-> REQUEST_SENT) and, if a bearer is attached, emits the
- * Path Request as a directed-control PDU.  Returns 0, -1 on a bad argument or if
- * a discovery is already in flight.
+ * the sim node's discovery FSM (-> REQUEST_SENT), advances the Forwarding
+ * Number, network-encrypts the Path Request as a transport-control PDU and
+ * transmits it on the bearer.  The Path Reply/Confirmation exchange is completed
+ * by the received-PDU path.  Returns 0, -1 on a bad argument, no bearer, or if a
+ * discovery is already in flight.
  */
 int	meshd_df_discover_begin(struct meshd_node *nd, uint16_t target,
 	    uint64_t now);
-
-/*
- * Feed a received Directed-Forwarding transport-control PDU (opcode is a 7-bit
- * MESH_DF_OP_*) to the relay/target node role, and, when the local node is the
- * Path Origin, to the discovery FSM.  Any PDU the DF library asks to be
- * forwarded/answered is transmitted over the bearer.  Returns the mesh_df
- * receive disposition (>=0), -1 on a bad argument.
- */
-int	meshd_df_recv_control(struct meshd_node *nd, uint16_t src, uint16_t dst,
-	    uint8_t ttl, uint8_t bearer, uint8_t opcode, const uint8_t *pdu,
-	    size_t len, uint64_t now);
 
 /* ================================================================
  * Remote Provisioning (finding 128, MshPRT_v1.1 Section 5.4.4).
@@ -1066,6 +1094,42 @@ int	meshd_rpr_client_verb(struct meshd_node *nd, int argc, char **argv,
 int	meshd_rpr_server_recv(struct meshd_node *nd,
 	    const struct mesh_access_pdu *ap, const uint8_t *pdu, size_t len,
 	    uint8_t *reply, size_t reply_max, size_t *reply_len);
+
+/*
+ * Remote Provisioning Server unsolicited Report emitters.  Each drives the
+ * server FSM and, if a report is due, seals it under this node's DevKey and
+ * transmits it to the recorded RPR Client (nd->rpr.client_addr) over the bearer.
+ * A client address must have been recorded (from a prior inbound RPR request).
+ * Return 1 if a report was emitted, 0 if none was due, -1 on error.
+ *
+ *   _report_scan   - offer a discovered device UUID to the scan server.
+ *   _report_bearer - the device-side bearer opened (Link Report ACTIVE).
+ *   _report_pdu    - the device returned a Provisioning PDU (PDU Report).
+ */
+int	meshd_rpr_server_report_scan(struct meshd_node *nd,
+	    const uint8_t uuid[16], uint16_t oob, int8_t rssi, uint64_t now);
+int	meshd_rpr_server_report_bearer(struct meshd_node *nd);
+int	meshd_rpr_server_report_pdu(struct meshd_node *nd,
+	    const uint8_t *prov_pdu, size_t len);
+
+/*
+ * Remote Provisioning Client: tunnel one outbound Provisioning PDU to the
+ * Server over the active link (a PDU Send sealed under the Server's DevKey).
+ * Returns 0, -1 if the link is not active or on a seal/transmit error.
+ */
+int	meshd_rpr_client_send_pdu(struct meshd_node *nd, const uint8_t *prov_pdu,
+	    size_t len, uint64_t now);
+
+/*
+ * Remote Provisioning Client inbound Report path: decode an Upper Transport PDU
+ * sealed under a Server's DevKey (src) and, if it carries an unsolicited RPR
+ * Report (Scan/Link/PDU/Outbound), drive the matching client FSM, buffer it for
+ * "remote-prov reports", and (for a PDU Report) capture the tunnelled
+ * Provisioning PDU.  Returns 1 if handled, 0 if not an RPR Report, -1 on error.
+ * Called from the remote-DevKey receive seam after the Config Client txn path.
+ */
+int	meshd_rpr_client_rx(struct meshd_node *nd, uint32_t seq, uint16_t src,
+	    uint16_t dst, const uint8_t *upper, size_t upper_len);
 
 /* ================================================================
  * Control surface.

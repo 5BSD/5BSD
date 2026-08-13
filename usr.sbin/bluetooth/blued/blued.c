@@ -1003,6 +1003,214 @@ blued_host_rpa_set(int hci_fd, uint8_t rpa[6])
 	return (0);
 }
 
+/*
+ * Runtime resolving-list IRK entries (finding 138).
+ *
+ * IPC_SECURITY_RESOLV_ADD with a client-supplied IRK for a non-bonded address
+ * programs the controller but the shadow (adp->reslist) keeps only the address.
+ * The bond database rebuilds the list at init; these non-bond entries would be
+ * lost.  Keep a persisted shadow of the (addr, type, irk) and reprogram it in
+ * load_resolving_list() alongside the bond-derived entries.  Mutations happen
+ * under blued_g.reslist_lock (held by the ctl resolv handler).
+ */
+static struct blued_persist_resolv_entry
+    blued_runtime_resolv[BLUED_PERSIST_MAX_RESOLV];
+static uint32_t blued_runtime_resolv_count;
+
+static void
+blued_runtime_resolv_persist(void)
+{
+
+	if (blued_g.persist_dirfd >= 0)
+		(void)blued_persist_resolv_save(blued_g.persist_dirfd,
+		    blued_runtime_resolv, blued_runtime_resolv_count);
+}
+
+/* Load persisted runtime resolving-list entries into the shadow (init only). */
+void
+blued_runtime_resolv_load(void)
+{
+	uint32_t n = 0;
+
+	if (blued_g.persist_dirfd < 0)
+		return;
+	if (blued_persist_resolv_load(blued_g.persist_dirfd,
+	    blued_runtime_resolv, &n) == 0)
+		blued_runtime_resolv_count = n;
+}
+
+void
+blued_runtime_resolv_record(const uint8_t addr[6], uint8_t addr_type,
+    const uint8_t irk[16])
+{
+	uint32_t i;
+
+	for (i = 0; i < blued_runtime_resolv_count; i++) {
+		if (blued_runtime_resolv[i].addr_type == addr_type &&
+		    memcmp(blued_runtime_resolv[i].addr, addr, 6) == 0) {
+			memcpy(blued_runtime_resolv[i].irk, irk, 16);
+			blued_runtime_resolv_persist();
+			return;
+		}
+	}
+	if (blued_runtime_resolv_count >= BLUED_PERSIST_MAX_RESOLV)
+		return;
+	i = blued_runtime_resolv_count++;
+	memset(&blued_runtime_resolv[i], 0, sizeof(blued_runtime_resolv[i]));
+	memcpy(blued_runtime_resolv[i].addr, addr, 6);
+	blued_runtime_resolv[i].addr_type = addr_type;
+	memcpy(blued_runtime_resolv[i].irk, irk, 16);
+	blued_runtime_resolv_persist();
+}
+
+void
+blued_runtime_resolv_forget(const uint8_t addr[6], uint8_t addr_type)
+{
+	uint32_t i;
+
+	for (i = 0; i < blued_runtime_resolv_count; i++) {
+		if (blued_runtime_resolv[i].addr_type == addr_type &&
+		    memcmp(blued_runtime_resolv[i].addr, addr, 6) == 0) {
+			explicit_bzero(&blued_runtime_resolv[i],
+			    sizeof(blued_runtime_resolv[i]));
+			blued_runtime_resolv[i] =
+			    blued_runtime_resolv[--blued_runtime_resolv_count];
+			explicit_bzero(
+			    &blued_runtime_resolv[blued_runtime_resolv_count],
+			    sizeof(blued_runtime_resolv[0]));
+			blued_runtime_resolv_persist();
+			return;
+		}
+	}
+}
+
+void
+blued_runtime_resolv_clear(void)
+{
+
+	explicit_bzero(blued_runtime_resolv, sizeof(blued_runtime_resolv));
+	blued_runtime_resolv_count = 0;
+	blued_runtime_resolv_persist();
+}
+
+/*
+ * Runtime Filter Accept List entries (finding 135).
+ *
+ * The controller Filter Accept List is otherwise populated only from bonds at
+ * init.  Operator-added non-bond entries are held in this persisted shadow; the
+ * ctl handler programs/unprograms the controllers, and these helpers keep the
+ * shadow + on-disk artifact in sync and reprogram at init.
+ */
+static struct blued_persist_accept_entry
+    blued_acceptlist_shadow[BLUED_PERSIST_MAX_ACCEPT];
+static uint32_t blued_acceptlist_shadow_count;
+
+static void
+blued_acceptlist_persist(void)
+{
+
+	if (blued_g.persist_dirfd >= 0)
+		(void)blued_persist_accept_save(blued_g.persist_dirfd,
+		    blued_acceptlist_shadow, blued_acceptlist_shadow_count);
+}
+
+void
+blued_acceptlist_load(void)
+{
+	uint32_t n = 0;
+
+	if (blued_g.persist_dirfd < 0)
+		return;
+	if (blued_persist_accept_load(blued_g.persist_dirfd,
+	    blued_acceptlist_shadow, &n) == 0)
+		blued_acceptlist_shadow_count = n;
+}
+
+/* Record a runtime entry; returns 1 if newly added, 0 if present/full. */
+int
+blued_acceptlist_record(const uint8_t addr[6], uint8_t addr_type)
+{
+	uint32_t i;
+
+	for (i = 0; i < blued_acceptlist_shadow_count; i++) {
+		if (blued_acceptlist_shadow[i].addr_type == addr_type &&
+		    memcmp(blued_acceptlist_shadow[i].addr, addr, 6) == 0)
+			return (0);
+	}
+	if (blued_acceptlist_shadow_count >= BLUED_PERSIST_MAX_ACCEPT)
+		return (0);
+	i = blued_acceptlist_shadow_count++;
+	memset(&blued_acceptlist_shadow[i], 0,
+	    sizeof(blued_acceptlist_shadow[i]));
+	memcpy(blued_acceptlist_shadow[i].addr, addr, 6);
+	blued_acceptlist_shadow[i].addr_type = addr_type;
+	blued_acceptlist_persist();
+	return (1);
+}
+
+/* Forget a runtime entry; returns 1 if it was present and removed. */
+int
+blued_acceptlist_forget(const uint8_t addr[6], uint8_t addr_type)
+{
+	uint32_t i;
+
+	for (i = 0; i < blued_acceptlist_shadow_count; i++) {
+		if (blued_acceptlist_shadow[i].addr_type == addr_type &&
+		    memcmp(blued_acceptlist_shadow[i].addr, addr, 6) == 0) {
+			blued_acceptlist_shadow[i] =
+			    blued_acceptlist_shadow[
+			    --blued_acceptlist_shadow_count];
+			memset(&blued_acceptlist_shadow[
+			    blued_acceptlist_shadow_count], 0,
+			    sizeof(blued_acceptlist_shadow[0]));
+			blued_acceptlist_persist();
+			return (1);
+		}
+	}
+	return (0);
+}
+
+void
+blued_acceptlist_clear_all(void)
+{
+
+	memset(blued_acceptlist_shadow, 0, sizeof(blued_acceptlist_shadow));
+	blued_acceptlist_shadow_count = 0;
+	blued_acceptlist_persist();
+}
+
+uint32_t
+blued_acceptlist_snapshot(struct blued_persist_accept_entry *out, uint32_t max)
+{
+	uint32_t n = blued_acceptlist_shadow_count;
+
+	if (n > max)
+		n = max;
+	if (n > 0 && out != NULL)
+		memcpy(out, blued_acceptlist_shadow, n * sizeof(out[0]));
+	return (n);
+}
+
+/*
+ * Reprogram persisted runtime accept-list entries onto one controller at init,
+ * after the bond-derived entries have been loaded.  Best-effort.
+ */
+void
+blued_acceptlist_reprogram(int hci_fd)
+{
+	uint32_t i;
+
+	if (hci_fd < 0)
+		return;
+	for (i = 0; i < blued_acceptlist_shadow_count; i++) {
+		uint8_t at = (blued_acceptlist_shadow[i].addr_type ==
+		    BDADDR_LE_RANDOM) ? 0x01 : 0x00;
+
+		(void)hci_le_add_device_to_filter_accept_list(hci_fd, at,
+		    blued_acceptlist_shadow[i].addr);
+	}
+}
+
 static int
 load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 {
@@ -1058,6 +1266,27 @@ load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 			goto fail;
 		/* Track only the fully programmed controller record. */
 		if (!blued_reslist_add(reslist, b->addr, b->addr_type))
+			goto fail;
+		loaded++;
+	}
+
+	/*
+	 * Finding 138: reprogram persisted runtime (non-bond) resolving-list
+	 * entries in the same resolution-disabled window.  Skip any address a
+	 * bond already programmed above (idempotent, avoids a duplicate add).
+	 */
+	for (uint32_t ri = 0; ri < blued_runtime_resolv_count; ri++) {
+		struct blued_persist_resolv_entry *e = &blued_runtime_resolv[ri];
+		uint8_t at = (e->addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
+
+		if (blued_reslist_contains(reslist, e->addr, e->addr_type))
+			continue;
+		if (hci_le_add_dev_resolving_list(dev->hci_fd, at,
+		    e->addr, e->irk, local_irk) != 0 ||
+		    hci_le_set_privacy_mode(dev->hci_fd, at, e->addr,
+		    blued_cfg.privacy_mode) != 0)
+			goto fail;
+		if (!blued_reslist_add(reslist, e->addr, e->addr_type))
 			goto fail;
 		loaded++;
 	}
@@ -3022,6 +3251,14 @@ blued_persist_restore(struct blued_config *cfg)
 		LOG_HOGP(1, "persist: restored advertising config "
 		    "(enabled=%u)", advs[0].enabled);
 	}
+
+	/*
+	 * Restore the runtime resolving-list IRK entries (finding 138) and the
+	 * runtime Filter Accept List entries (finding 135) into their shadows;
+	 * they are reprogrammed onto each controller during adapter init.
+	 */
+	blued_runtime_resolv_load();
+	blued_acceptlist_load();
 }
 
 /*
@@ -3463,6 +3700,14 @@ main(int argc, char *argv[])
 		peripheral_build_gattdb(&periph_gatt_db, periph_gatt_attrs,
 		    periph_gatt_val_buf, sizeof(periph_gatt_val_buf), &cfg);
 
+		/*
+		 * Finding 137: mark the built-in/config base, then replay
+		 * runtime-added local GATT services persisted from a previous
+		 * run into the freshly built DB.
+		 */
+		ctl_gatt_set_base_count();
+		ctl_gatt_load_persisted_services(blued_g.persist_dirfd);
+
 		/* Open bond database -- heap-allocate so threads can safely
 		 * reference blued_g.bond_db without depending on main()'s
 		 * stack frame lifetime. */
@@ -3519,6 +3764,8 @@ main(int argc, char *argv[])
 					nbonded = MAX(nbonded,
 					    load_filter_accept_list(pa->hci_fd,
 					    blued_g.bond_db));
+					/* Runtime accept-list entries (135). */
+					blued_acceptlist_reprogram(pa->hci_fd);
 				}
 			}
 		}
@@ -4121,6 +4368,8 @@ main(int argc, char *argv[])
 			rdev.hci_fd = ra->hci_fd;
 			if (load_resolving_list(&rdev, cfg.rpa_timeout) != 0)
 				err(1, "program resolving list");
+			/* Runtime accept-list entries (finding 135). */
+			blued_acceptlist_reprogram(ra->hci_fd);
 		}
 	}
 

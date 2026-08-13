@@ -938,9 +938,93 @@ ATF_TC_BODY(test_config_auto_connect_max_tries_removed, tc)
 	ATF_CHECK(cfg.auto_connect);
 }
 
+/* ================================================================
+ * Finding 136: descriptor { } and include { } sub-blocks are parsed
+ * into the service/characteristic config so operators can author
+ * non-CCCD descriptors and included services without a program.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_config_descriptor_and_include);
+ATF_TC_BODY(test_config_descriptor_and_include, tc)
+{
+	struct blued_config cfg;
+	char pbuf[PATH_MAX];
+	const char *path = cfg_path(pbuf, sizeof(pbuf), "desc_inc.conf");
+	const struct blued_char_conf *ch;
+	const struct blued_service_conf *svc;
+
+	write_config(path,
+	    "service {\n"
+	    "  uuid = \"0x180F\";\n"
+	    "  include {\n"
+	    "    start = 16;\n"
+	    "    end = 32;\n"
+	    "    uuid = \"0x1801\";\n"
+	    "  }\n"
+	    "  characteristic {\n"
+	    "    uuid = \"0x2A19\";\n"
+	    "    properties = \"read,notify\";\n"
+	    "    permissions = \"read\";\n"
+	    "    value = \"64\";\n"
+	    "    descriptor {\n"
+	    "      uuid = \"0x2901\";\n"
+	    "      permissions = \"read\";\n"
+	    "      value = \"4C6576656C\";\n"
+	    "    }\n"
+	    "  }\n"
+	    "}\n");
+
+	blued_config_defaults(&cfg);
+	ATF_REQUIRE_EQ(blued_config_load(&cfg, path), 0);
+	ATF_REQUIRE_EQ(cfg.nservices, 1);
+	svc = &cfg.services[0];
+	ATF_CHECK_EQ(svc->uuid16, 0x180F);
+
+	/* Included service parsed. */
+	ATF_REQUIRE_EQ(svc->nincludes, 1);
+	ATF_CHECK_EQ(svc->includes[0].start, 16);
+	ATF_CHECK_EQ(svc->includes[0].end, 32);
+	ATF_CHECK_EQ(svc->includes[0].uuid16, 0x1801);
+
+	/* Characteristic + descriptor parsed. */
+	ATF_REQUIRE_EQ(svc->nchars, 1);
+	ch = &svc->chars[0];
+	ATF_CHECK_EQ(ch->uuid16, 0x2A19);
+	ATF_REQUIRE_EQ(ch->ndescs, 1);
+	ATF_CHECK_EQ(ch->descs[0].uuid16, 0x2901);
+	ATF_CHECK_EQ(ch->descs[0].permissions, ATT_PERM_READ);
+	ATF_REQUIRE_EQ(ch->descs[0].value_len, 5);
+	ATF_CHECK_EQ(ch->descs[0].value[0], 0x4C);
+	ATF_CHECK_EQ(ch->descs[0].value[4], 0x6C);
+}
+
+/* An include with an inverted/zero handle range is rejected (not stored). */
+ATF_TC_WITHOUT_HEAD(test_config_include_bad_range);
+ATF_TC_BODY(test_config_include_bad_range, tc)
+{
+	struct blued_config cfg;
+	char pbuf[PATH_MAX];
+	const char *path = cfg_path(pbuf, sizeof(pbuf), "inc_bad.conf");
+
+	write_config(path,
+	    "service {\n"
+	    "  uuid = \"0x180A\";\n"
+	    "  include {\n"
+	    "    start = 40;\n"
+	    "    end = 20;\n"
+	    "  }\n"
+	    "}\n");
+
+	blued_config_defaults(&cfg);
+	ATF_REQUIRE_EQ(blued_config_load(&cfg, path), 0);
+	ATF_REQUIRE_EQ(cfg.nservices, 1);
+	ATF_CHECK_EQ(cfg.services[0].nincludes, 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, test_config_descriptor_and_include);
+	ATF_TP_ADD_TC(tp, test_config_include_bad_range);
 	ATF_TP_ADD_TC(tp, defaults_for_missing_config);
 	ATF_TP_ADD_TC(tp, parses_nested_sample_shape);
 	ATF_TP_ADD_TC(tp, parses_auto_adapter);
